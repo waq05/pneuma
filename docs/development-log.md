@@ -1878,3 +1878,39 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 - **打包版没验**：界面产物打包后进的是 `app.asar`，宿主（utilityProcess）能不能从 asar 里读到还没试；dev 走的是仓库里的真实目录。打包时限 `DSC_UI_ASSETS` 指向 extraResources 里的副本，或把界面产物移出 asar——留到打包阶段。
 - 渲染层的 `bridge.ts` 还没拆（`window.dsc` 全量走 IPC）。这一步只是让**窗口**成为 web 文档；让**普通浏览器**也能跑同一份界面（桥接走 WebSocket）是下一步。
 - 端口每次宿主启动都由系统分配，窗口地址随之变化；要稳定端口可以设 `DSC_UI_PORT`。
+
+## 阶段 92：界面壳接上运行时数据通道——SSE 推帧 + POST 调方法（未发版，C-真 第三步）
+
+阶段 90 的壳只有静态的启动清单，阶段 91 让窗口成了 web 文档。这一步补上最后一块地基：**壳能看到宿主状态、能调宿主方法**——而且是在普通浏览器里（不用 Electron），这是"桌面与远程共用一份 UI"成立的前提。探针从 93 条扩到 125 条。
+
+**为什么选 SSE + POST，而不是像遥控端那样上 WebSocket**：
+
+1. 这条链路只需要「宿主 → 页面」单向推 + 一问一答，SSE 够用；
+2. **浏览器自带重连**，而且重连时会带上 `Last-Event-ID`——那正好是帧 hub 的补帧入口（`resume(after)`）。自己写重连状态机是这条链路里最容易出错的一段，能省则省；
+3. invoke 走普通 POST，直接复用 HTTP 层已有的请求体读取、Host 校验与 Cookie 闸。
+
+**与遥控端共用的是帧的产生与缓冲**（`core/remote/frames.ts` 的 `RemoteFrameHub`：全局单调 seq、增量 diff、120 帧环形缓冲），所以两边一套口径。**白名单不同**：本机界面服务是同机回环 + Cookie 认证，用整张 `INVOKABLE_METHODS`（与桌面 IPC 那条路同等信任，实测 61 个方法）；遥控端另有更小的子集。
+
+**落点**：
+
+- `core/ui-events.ts`（新）：SSE 推帧（`/api/events`）+ 方法派发（`/api/invoke`）。鉴权不在这里（由 `ui-server` 先过 Host 头与 Cookie 两道闸），所以它不依赖 cordis、能单独起真服务测。推送节流 80ms（与 host-stdio / remote 同一口径），15 秒心跳防中间设备掐空闲连接。**没有连接时不造帧**（省算力；新连接一律先拿一帧全量）。
+- `core/ui-server.ts`：挂上这两条路由（Cookie 闸之内），`events` 是可选项——不给就是纯静态服务（测试与"只发页面"的场景用得上）。
+- `plugins/webserver.ts`：用 `ctx.ui` 造通道（快照 = 运行时快照切出已定稿条目与直播尾，`sessionId` 从状态取，与遥控端同一份帧契约），插件卸载时先停通道再关服务。
+- `ui/frames.ts`（新，共用核心）：壳侧的帧归并。与遥控端那份是**同一份线协议**，但这里是**严格版**——遥控端要容忍版本漂移（页面可能是旧构建），壳与宿主永远同一次构建一起发，认不出的帧当场报错，省掉两遍兜底口径。
+- `ui-shell/src/host-channel.ts`（新）：EventSource + POST 客户端；状态放在 React 之外（`getSnapshot()` 要能直接喂 `useSyncExternalStore`，两次变化之间必须同引用——遥控端同款做法）。
+- `ui-shell/src/runtime-context.tsx`（新）：把通道接进 React，并从 `@dsc/ui` 交给插件三个 hook（`useHostSnapshot` / `useChannelStatus` / `useHostHello`）——插件 bundle 只能 require 白名单模块，拿不到壳的内部模块，所以 hook 必须由壳提供。
+- `ui/plugin.ts`：插件 API 增加 `runtime`（订阅 + 调方法）。内置插件与第三方用的是同一份 API，没有内置特权。
+- `ui-shell/src/plugins/runtime/ui.tsx`（新内置插件）：实时状态卡片 + 一枚状态条徽标 + 一个"调宿主方法"按钮（调 `listTools`）。
+
+**验证**：
+
+- `scripts/ui-plugin-test.mjs` 扩到 **125 条**（新增两节）——`[4c]` 数据通道（没凭据 401、SSE 握手带协议版本与放行方法、首帧全量、宿主变化推增量、第二条连接同样收到、**带 `last-event-id` 重连只补漏掉的那一帧**、合法调用回值、方法抛错回 `ok:false` 而不是 5xx、白名单外 403、请求体不是 JSON 400）；`[4d]` **宿主产帧 → 壳消费的往返一致性**（用真的 `RemoteFrameHub` 产帧喂给壳的 `applyHostFrame`：全量进空状态、增量改条目、直播尾全量给、消失的条目被删、缺 seq / 条目缺 id 当场报错）。
+- 浏览器端到端（隔离 HOME 起真宿主 + `DSC_UI_SERVER=1`）：页面顶部 `已连接宿主 · 协议 v1 · 放行 61 个方法`；运行时卡片读到**真数据**——`帧号 1 / 已定稿条目 3 / 会话 1f8159b4 / 档位 default / 回合 idle / 用量 入0 出0`（与宿主 stderr 里的快照逐项对得上）；点按钮**真的调到了宿主方法**：`listTools 返回 21 个工具：skill、run_code、todo_write、exit_plan_mode、ask_user、bash …`；状态条 `插件 2/2 · 槽 4 · 登记 4`。截图 `desktop/shots/ui-shell-live-data.png`（gitignored）。
+- 双侧 typecheck 全绿；node 电池与桌面自检见当轮报告。
+
+**诚实边界**：
+
+- 壳目前**只消费快照**，没有会话列表/审批/输入框这些交互面——那些是阶段 4（把现有 UI 按区域搬成插件）的活。这一步证明的是"数据与控制通道成立"，不是"界面能用了"。
+- 帧归并与遥控端那份**暂时是两份实现**（壳用严格版、遥控端用容忍版）。归并它们要在遥控端也引共用核心，而遥控端还有一整套 `normalize*` 兜底与自己的类型，动它得配一遍遥控端自检——登记为后续小步，不在本轮混做。
+- SSE 在反向代理后面的行为（有人把本机界面挂出去时）没验：`x-accel-buffering: no` 与心跳是标准做法，但没有实测环境。
+- 桌面窗口这一侧**还没用这条通道**（它走 IPC，见阶段 91 的边界）：等阶段 4 把壳搬成桌面 UI 时才切过去，那时 `bridge.ts` 才真正退役。

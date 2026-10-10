@@ -17,7 +17,7 @@
 import * as React from 'react'
 import * as ReactDOM from 'react-dom'
 import * as jsxRuntime from 'react/jsx-runtime'
-import type { UiBootGraph, UiHostInfo, UiPluginLoadReport } from '@dsc/ui-core'
+import type { UiBootGraph, UiHostInfo, UiPluginLoadReport, UiRuntimeApi } from '@dsc/ui-core'
 import * as pluginApi from './plugin-api'
 import type { UiPluginApi, UiSlots } from './plugin-api'
 
@@ -63,7 +63,7 @@ export async function readBootGraph(): Promise<UiBootGraph> {
  */
 export async function loadUiPlugins(
   graph: UiBootGraph,
-  options: { slots: UiSlots; host: UiHostInfo },
+  options: { slots: UiSlots; host: UiHostInfo; runtime: UiRuntimeApi },
 ): Promise<UiPluginLoadReport[]> {
   const reports: UiPluginLoadReport[] = []
   for (const entry of graph.entries) {
@@ -78,7 +78,7 @@ export async function loadUiPlugins(
       const module_ = (exported as { default?: unknown } | null)?.default ?? exported
       const apply = (module_ as { apply?: unknown } | null)?.apply
       if (typeof apply !== 'function') throw new Error('插件没有导出 apply(ui)')
-      const api: UiPluginApi = { id: entry.id, slots: options.slots, host: options.host }
+      const api: UiPluginApi = { id: entry.id, slots: options.slots, host: options.host, runtime: options.runtime }
       ;(apply as (ui: UiPluginApi) => void)(api)
       reports.push({ id: entry.id, ok: true })
     } catch (error) {

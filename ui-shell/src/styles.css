@@ -63,3 +63,27 @@ body {
 .diag-plugins .empty { color: var(--dim); }
 .diag-line { margin: 4px 0; word-break: break-all; }
 .diagnostics code { color: var(--text); }
+
+/* 顶栏的连接状态与运行时卡片 */
+.channel-state { font-size: 12px; color: var(--dim); }
+.channel-state[data-channel='open'] { color: var(--ok); }
+.channel-state[data-channel='closed'] { color: var(--bad); }
+
+.runtime-badge { color: var(--dim); font-size: 12px; }
+.runtime-card { padding: 14px 16px; }
+.runtime-card h2 { margin: 0 0 6px; font-size: 16px; }
+.runtime-hint { margin: 0 0 12px; color: var(--dim); font-size: 13px; }
+.runtime-grid {
+  display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px;
+  margin: 0 0 12px; font-size: 13px;
+}
+.runtime-grid dt { color: var(--dim); }
+.runtime-grid dd { margin: 0; font-variant-numeric: tabular-nums; }
+.runtime-card button {
+  background: #1f2430; color: var(--text); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 12px; font-size: 13px; cursor: pointer;
+}
+.runtime-card button:disabled { opacity: 0.6; cursor: default; }
+.runtime-probe { margin: 10px 0 0; font-size: 13px; }
+.runtime-probe.ok { color: var(--ok); }
+.runtime-probe.bad { color: var(--bad); }

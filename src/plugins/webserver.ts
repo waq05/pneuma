@@ -20,13 +20,21 @@
  * @module dsc/plugins/webserver
  */
 import type { Plugin } from '@deepseek-ai/cordis'
+import { INVOKABLE_METHODS, isInvokableMethod } from '../core/host-methods.js'
 import { resolvePluginConfig } from '../core/plugin-registry.js'
+import { createUiEvents, type UiEventsHandle } from '../core/ui-events.js'
 import { createUiServer, type UiServerHandle } from '../core/ui-server.js'
 import { DSC_VERSION } from '../core/version.js'
 import type { WebServerService } from '../services/types.js'
 
 /** 配置键（`~/.dsc/plugins.json` 里 file 等于这个名字的那一项）。 */
 const CONFIG_KEY = 'webserver'
+
+/**
+ * 数据通道的协议版本：加字段不涨，改字段含义/删字段才涨（界面壳按它决定认不认这份宿主）。
+ * 1 = SSE 推帧（全量/增量）+ POST invoke。
+ */
+export const UI_EVENTS_PROTOCOL_VERSION = 1
 
 /** 这个插件最终要用的三样配置。 */
 export interface UiServerConfig {
@@ -65,18 +73,50 @@ export function readUiServerConfig(passed: unknown): UiServerConfig {
 export const webserverPlugin: Plugin.Object = {
   name: 'webserver',
   provide: 'webServer',
+  inject: ['ui'],
   apply(ctx, passed) {
     const config = readUiServerConfig(passed)
+    const runtime = ctx.ui
     let handle: UiServerHandle | null = null
+    let events: UiEventsHandle | null = null
     let starting: Promise<UiServerHandle> | null = null
 
     const start = async (): Promise<UiServerHandle> => {
+      // 数据通道：帧的产生与缓冲复用遥控端那一套（core/remote/frames.ts），
+      // 白名单用整张 INVOKABLE_METHODS——本机回环 + Cookie 认证，与桌面 IPC 那条路同等信任。
+      const channel = createUiEvents({
+        // 帧的形状与遥控端同一份契约：已定稿条目（正 id）与直播尾（负 id）分开放，
+        // sessionId 从状态里取（会话切换时 hub 据此立刻发全量）。
+        snapshot: () => {
+          const base = runtime.getSnapshot()
+          return {
+            ...base,
+            sessionId: base.status.sessionId ?? '',
+            entries: base.entries.filter((entry) => entry.id > 0),
+            liveEntries: base.entries.filter((entry) => entry.id < 0),
+          }
+        },
+        invoke: async (method, args) => {
+          if (!isInvokableMethod(method)) throw new Error(`协议不允许调用的方法：${method}`)
+          // 方法名已经收窄成 DscRuntime 的键（与 host-stdio 同一处惯例）。
+          return (await Reflect.apply(runtime[method], runtime, args)) ?? null
+        },
+        methods: INVOKABLE_METHODS,
+        hello: () => ({
+          protocolVersion: UI_EVENTS_PROTOCOL_VERSION,
+          methods: [...INVOKABLE_METHODS],
+          host: { name: 'Muse Code', version: DSC_VERSION },
+        }),
+        subscribe: (onChange) => runtime.subscribe(onChange),
+      })
       const server = await createUiServer({
         host: { name: 'Muse Code', version: DSC_VERSION },
         port: config.port,
+        events: channel,
         ...(config.assetsDir === undefined ? {} : { assetsDir: config.assetsDir }),
       })
       handle = server
+      events = channel
       // 这条打印是「界面可以访问了」的就绪信号：用户拿它进浏览器。
       // 桌面主进程不走这条（它从服务上取地址），这样 stdout 是否被 TUI 接管都无所谓。
       console.log(`Muse Code 界面： ${server.url}`)
@@ -98,10 +138,14 @@ export const webserverPlugin: Plugin.Object = {
     ctx.provide('webServer', service)
 
     // 插件卸载时把服务关掉：端口不该留在已经卸掉的插件手里。
+    // 数据通道先停（它订阅着宿主变化），再关服务。
     ctx.effect(() => () => {
+      const channel = events
       const server = handle
       handle = null
+      events = null
       starting = null
+      if (channel !== null) channel.stop()
       if (server !== null) void server.close()
     }, 'webserver: 关闭界面服务')
 

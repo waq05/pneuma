@@ -45,6 +45,8 @@ const { inside } = await import('../lib/core/web-static.js')
 const { readUiServerConfig } = await import('../lib/plugins/webserver.js')
 const { isUiBundleRequest, resolveUiBundleRequest } = await import('../lib/core/ui-route.js')
 const { createUiServer } = await import('../lib/core/ui-server.js')
+const { createUiEvents } = await import('../lib/core/ui-events.js')
+const { RemoteFrameHub } = await import('../lib/core/remote/frames.js')
 
 let failures = 0
 const check = (name, condition, detail = '') => {
@@ -69,8 +71,8 @@ function makeTree(name, files) {
   return dir
 }
 
-/** 发一个 HTTP 请求（用 node:http，好自定义 Host 头与 Cookie）。 */
-function http(method, port, path, headers = {}) {
+/** 发一个 HTTP 请求（用 node:http，好自定义 Host 头、Cookie 与请求体）。 */
+function http(method, port, path, headers = {}, body = undefined) {
   return new Promise((resolve, reject) => {
     const req = request(
       { host: '127.0.0.1', port, method, path, headers },
@@ -87,7 +89,7 @@ function http(method, port, path, headers = {}) {
       },
     )
     req.on('error', reject)
-    req.end()
+    req.end(body === undefined ? undefined : Buffer.from(body, 'utf8'))
   })
 }
 
@@ -420,6 +422,186 @@ console.log('\n[4b] 服务配置')
   check('自定义产物目录生效', page.status === 200 && page.body.includes('桌面渲染层产物'), page.body.slice(0, 80))
   check('没有插件目录也能起服务', custom.boot().entries.length === 0)
   await custom.close()
+}
+
+// ── 4c. 数据通道（SSE 推帧 + POST 调方法） ─────────────────────────────────────
+console.log('\n[4c] 数据通道')
+{
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const assetsDir = makeTree('events-assets', { 'index.html': '<!doctype html><html><body>x</body></html>' })
+  const pluginsDir = makeTree('events-plugins', {
+    'manifest.json': JSON.stringify({ version: 1, plugins: [] }),
+  })
+
+  // 假宿主：一份会变的快照 + 两个方法（一个正常、一个抛错）
+  let tick = 0
+  const subscribers = []
+  const snapshot = () => ({
+    sessionId: 'sess-1',
+    status: { sessionId: 'sess-1', model: 'fake-model', turnState: 'idle' },
+    entries: [{ id: 1, kind: 'user', text: `第 ${String(tick)} 帧` }],
+    liveEntries: [],
+  })
+  const events = createUiEvents({
+    snapshot,
+    invoke: async (method, args) => {
+      if (method === 'boom') throw new Error('方法炸了')
+      return { method, args, tick }
+    },
+    methods: ['ok', 'boom'],
+    hello: () => ({ protocolVersion: 1, methods: ['ok', 'boom'], host: { name: 'Muse Code', version: 'test' } }),
+    subscribe: (onChange) => {
+      subscribers.push(onChange)
+      return () => {
+        const at = subscribers.indexOf(onChange)
+        if (at >= 0) subscribers.splice(at, 1)
+      }
+    },
+    throttleMs: 20,
+  })
+  const server = await createUiServer({
+    host: { name: 'Muse Code', version: 'test' },
+    assetsDir,
+    pluginsDir,
+    events,
+    log: () => {},
+  })
+  const token = new URL(server.url).searchParams.get('token') ?? ''
+  const handshake = await http('GET', server.port, `/?token=${token}`)
+  const cookie = String(handshake.headers['set-cookie']?.[0] ?? '').split(';')[0]
+
+  const anonymous = await http('POST', server.port, '/api/invoke', { 'content-type': 'application/json' }, '{}')
+  check('没凭据调方法 401', anonymous.status === 401, String(anonymous.status))
+
+  /** 开一条 SSE 连接并读一小段（返回快照文本的读取器）。 */
+  const openSse = async (headers = {}) => {
+    const state = { text: '' }
+    const req = request(
+      { host: '127.0.0.1', port: server.port, method: 'GET', path: '/api/events', headers },
+      (res) => {
+        res.setEncoding('utf8')
+        res.on('data', (chunk) => {
+          state.text += chunk
+        })
+      },
+    )
+    req.end()
+    await sleep(120)
+    return { state, close: () => req.destroy() }
+  }
+
+  const first = await openSse({ cookie })
+  check('SSE 连接建立', first.state.text.includes('event: hello'), first.state.text.slice(0, 80))
+  check('握手带协议版本与放行方法', first.state.text.includes('"protocolVersion":1') && first.state.text.includes('"ok"'))
+  check('首帧是全量（含 seq 与 full）', first.state.text.includes('event: frame') && first.state.text.includes('"full":true'))
+  check('首帧带宿主状态', first.state.text.includes('fake-model'))
+
+  // 第二个连接（补帧要有人接着收才测得出：没有连接时不会造帧——那是有意的省算）
+  const second = await openSse({ cookie })
+  check('第二个连接也拿到全量帧', second.state.text.includes('"full":true'))
+
+  // 宿主变一次 → 两条连接都该收到增量帧
+  tick = 1
+  for (const notify of [...subscribers]) notify()
+  await sleep(150)
+  check('宿主变化推来下一帧（增量）', first.state.text.includes('"type":"delta"'), first.state.text.slice(-160))
+  check('另一条连接也收到了', second.state.text.includes('"type":"delta"'))
+  const pushedSeq = Number(/"seq":(\d+)/.exec(second.state.text.split('event: frame').pop() ?? '')?.[1] ?? 0)
+  check('推来的帧带单调帧号', pushedSeq > 2, String(pushedSeq))
+
+  // 断开一号连接，宿主再变一次（只有二号在收）
+  first.close()
+  tick = 2
+  for (const notify of [...subscribers]) notify()
+  await sleep(150)
+
+  // 一号带着「我已经收到 N 帧」重连：应该只补它漏掉的那一帧
+  const resumed = await openSse({ cookie, 'last-event-id': String(pushedSeq) })
+  check('带 last-event-id 重连时补帧', resumed.state.text.includes(`"seq":${String(pushedSeq + 1)}`), resumed.state.text.slice(-160))
+  check('补帧不重发已经收到的帧', !resumed.state.text.includes(`"seq":${String(pushedSeq)}`), resumed.state.text.slice(0, 200))
+  resumed.close()
+  second.close()
+
+  // 调用：正常 / 抛错 / 不在白名单
+  const okCall = await http(
+    'POST',
+    server.port,
+    '/api/invoke',
+    { cookie, 'content-type': 'application/json' },
+    JSON.stringify({ method: 'ok', args: [1, 'a'] }),
+  )
+  check('合法调用 200 且回值', okCall.status === 200 && okCall.body.includes('"ok":true'), okCall.body)
+  check('调用参数原样送到宿主', okCall.body.includes('"args":[1,"a"]'), okCall.body)
+  const boomCall = await http(
+    'POST',
+    server.port,
+    '/api/invoke',
+    { cookie, 'content-type': 'application/json' },
+    JSON.stringify({ method: 'boom' }),
+  )
+  check('方法抛错回 ok:false 而不是 5xx', boomCall.status === 200 && boomCall.body.includes('方法炸了'), boomCall.body)
+  const deniedCall = await http(
+    'POST',
+    server.port,
+    '/api/invoke',
+    { cookie, 'content-type': 'application/json' },
+    JSON.stringify({ method: 'exit' }),
+  )
+  check('白名单外的方法 403', deniedCall.status === 403, String(deniedCall.status))
+  const badBody = await http('POST', server.port, '/api/invoke', { cookie, 'content-type': 'application/json' }, '不是 JSON')
+  check('请求体不是 JSON 400', badBody.status === 400, String(badBody.status))
+
+  check('通道报出连接数', events.clients >= 0)
+  events.stop()
+  await server.close()
+}
+
+// ── 4d. 宿主产帧 → 壳消费（往返一致性） ────────────────────────────────────────
+console.log('\n[4d] 帧往返（宿主产 → 壳并）')
+{
+  const hub = new RemoteFrameHub()
+  const applyHostFrame = (await import('../lib/ui/frames.js')).applyHostFrame
+
+  const snap = (text, live) => ({
+    sessionId: 's-1',
+    status: { sessionId: 's-1', model: 'm' },
+    entries: [
+      { id: 1, kind: 'user', text: '第一条' },
+      { id: 2, kind: 'assistant', text },
+    ],
+    liveEntries: live,
+  })
+
+  const first = JSON.parse(hub.build(snap('甲', []), true).text)
+  let state = applyHostFrame(null, first)
+  check('全量帧并进空状态', state.entries.length === 2 && state.entries[0].text === '第一条')
+  check('状态字段进 meta', state['status']?.model === 'm', JSON.stringify(state['status']))
+
+  const second = JSON.parse(hub.build(snap('乙', [{ id: -1, kind: 'thinking', text: '想…' }]), false).text)
+  state = applyHostFrame(state, second)
+  check('增量帧更新已有条目', state.entries.find((entry) => entry.id === 2)?.text === '乙')
+  check('增量帧带上直播尾', state.liveEntries.length === 1 && state.liveEntries[0].id === -1)
+  check('帧号单调前进', state.seq === 2, String(state.seq))
+
+  const third = JSON.parse(hub.build({ ...snap('乙', []), entries: [{ id: 1, kind: 'user', text: '第一条' }] }, false).text)
+  state = applyHostFrame(state, third)
+  check('消失的条目被删掉', state.entries.length === 1 && state.entries[0].id === 1)
+  check('条目不变量：直播尾清空', state.liveEntries.length === 0)
+
+  let threw = null
+  try {
+    applyHostFrame(state, { type: 'delta', full: false })
+  } catch (error) {
+    threw = error
+  }
+  check('缺 seq 的帧当场报错（严格版）', threw !== null)
+  let threw2 = null
+  try {
+    applyHostFrame(state, { type: 'snapshot', full: true, seq: 9, entries: [{ kind: 'user' }] })
+  } catch (error) {
+    threw2 = error
+  }
+  check('条目缺 id 当场报错', threw2 !== null)
 }
 
 // ── 5. 真实构建产物 ───────────────────────────────────────────────────────────

@@ -10,6 +10,7 @@
 import type { ReactNode } from 'react'
 import type { UiBootGraph, UiPluginLoadReport } from '@dsc/ui-core'
 import { ALLOWED_MODULES } from './boot'
+import { useChannelStatus, useHostHello } from './runtime-context'
 import { SlotOutlet } from './slots-react'
 import { SLOT } from './slots'
 import type { UiSlots } from './plugin-api'
@@ -28,6 +29,7 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
       <header className="shell-header">
         <span className="brand">{boot.host.name}</span>
         <span className="version">{boot.host.version}</span>
+        <ChannelState />
         <span className="spacer" />
         <SlotOutlet slots={slots} slot={SLOT.header} />
       </header>
@@ -50,6 +52,19 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
 
       <Diagnostics slots={slots} boot={boot} reports={reports} />
     </div>
+  )
+}
+
+/** 顶栏上的连接状态：数据通道通不通、握手拿到的协议版本是多少。 */
+function ChannelState(): ReactNode {
+  const status = useChannelStatus()
+  const hello = useHostHello()
+  const text = status === 'open' ? '已连接宿主' : status === 'connecting' ? '连接宿主中…' : '宿主已断开'
+  return (
+    <span className="channel-state" data-channel={status} data-protocol={hello?.protocolVersion ?? ''}>
+      {text}
+      {hello === null ? '' : ` · 协议 v${String(hello.protocolVersion)} · 放行 ${String(hello.methods.length)} 个方法`}
+    </span>
   )
 }
 

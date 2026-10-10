@@ -10,6 +10,7 @@
  *
  * @module dsc/ui/plugin
  */
+import type { HostSnapshot } from './frames.js'
 import type { SlotRegistry } from './slots.js'
 
 /** 界面要显示的宿主身份。 */
@@ -18,6 +19,26 @@ export interface UiHostInfo {
   name: string
   /** 宿主版本，例如 `0.6.67`。 */
   version: string
+}
+
+/**
+ * 插件拿到的运行时通道：订阅宿主快照 + 调宿主方法。
+ *
+ * 这一份是界面壳对「宿主」的全部认识——插件不必知道底下是 SSE、WebSocket 还是 IPC
+ * （桌面窗口走的是宿主伺服的同一份壳，浏览器里跑的是同一份代码）。
+ */
+export interface UiRuntimeApi {
+  /** 当前快照；还没收到第一帧时 null。 */
+  getSnapshot(): HostSnapshot | null
+  /** 订阅变化（配合 React 的 useSyncExternalStore 用）。 */
+  subscribe(listener: () => void): () => void
+  /**
+   * 调一个宿主方法（方法名与参数形状就是 `INVOKABLE_METHODS` 那一份白名单）。
+   * @param method - 方法名
+   * @param args - 实参
+   * @throws {Error} 方法不在白名单里、或执行失败
+   */
+  invoke<T = unknown>(method: string, args?: unknown[]): Promise<T>
 }
 
 /**
@@ -32,6 +53,8 @@ export interface UiPluginApi<C = unknown> {
   slots: SlotRegistry<C>
   /** 宿主身份。 */
   host: UiHostInfo
+  /** 运行时通道：看状态、调方法。 */
+  runtime: UiRuntimeApi
 }
 
 /** 插件 bundle 必须导出的形状。 */

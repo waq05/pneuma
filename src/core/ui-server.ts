@@ -27,6 +27,7 @@
 import { randomBytes } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { composeUiBootGraph, type UiBootGraph, type UiPluginRow } from '../ui/manifest.js'
+import type { UiEventsHandle } from './ui-events.js'
 import { collectUiPluginArtifacts, uiAssetsDir, uiPluginsDir } from './ui-bundles.js'
 import { isUiBundleRequest, resolveUiBundleRequest } from './ui-route.js'
 import { hostHeaderAllowed, readCookie, sendJson, sendText } from './web-http.js'
@@ -73,6 +74,11 @@ export interface UiServerOptions {
   assetsDir?: string
   /** 插件目录，缺省 `lib/ui/plugins`。 */
   pluginsDir?: string
+  /**
+   * 数据通道（`/api/events` 与 `/api/invoke`）。不给就是纯静态界面服务——
+   * 单元测试与「只发页面不带数据」的场景都用得着。
+   */
+  events?: UiEventsHandle
   /** 监听端口，0 = 让系统分配（缺省 0）。 */
   port?: number
   /** 一次性令牌有效期，缺省 10 分钟。 */
@@ -100,6 +106,7 @@ export interface UiServerHandle {
 export async function createUiServer(options: UiServerOptions): Promise<UiServerHandle> {
   const assetsDir = options.assetsDir ?? uiAssetsDir()
   const pluginsDir = options.pluginsDir ?? uiPluginsDir()
+  const events = options.events ?? null
   const log = options.log ?? ((line: string): void => { process.stderr.write(`${line}\n`) })
   const ttl = options.tokenTtlMs ?? DEFAULT_TOKEN_TTL_MS
 
@@ -199,6 +206,15 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
     }
     if (req.method === 'GET' && url.pathname === '/api/boot') {
       sendJson(res, 200, buildBoot())
+      return
+    }
+    // 数据通道：SSE 推帧 + POST 调方法（通道本体在 core/ui-events.ts，鉴权在这一层）。
+    if (events !== null && req.method === 'GET' && url.pathname === '/api/events') {
+      events.handleEvents(req, res)
+      return
+    }
+    if (events !== null && req.method === 'POST' && url.pathname === '/api/invoke') {
+      await events.handleInvoke(req, res)
       return
     }
     if (req.method === 'GET' || req.method === 'HEAD') {
