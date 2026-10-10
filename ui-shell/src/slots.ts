@@ -19,6 +19,8 @@ import type { SlotKind } from '@dsc/ui-core'
 export const SLOT = {
   /** 顶栏右侧：状态小药丸、版本徽标之类，横着排。 */
   header: 'shell.header',
+  /** 左侧栏：会话列表这类「换主体」的东西。 */
+  sidebar: 'shell.sidebar',
   /** 主区域：一张一张卡片。 */
   main: 'shell.main',
   /** 底部状态条右侧。 */
@@ -30,6 +32,7 @@ export const SLOT = {
 /** 界面壳声明的槽：名字 → 形态（键从 `SLOT` 取，值在这里定）。 */
 export const SHELL_SLOTS: Readonly<Record<string, SlotKind>> = {
   [SLOT.header]: 'list',
+  [SLOT.sidebar]: 'list',
   [SLOT.main]: 'list',
   [SLOT.statusbarRight]: 'list',
   [SLOT.notice]: 'single',

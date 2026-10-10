@@ -21,7 +21,7 @@ body {
   font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
 }
 
-.shell { display: flex; flex-direction: column; min-height: 100vh; }
+.shell { display: flex; flex-direction: column; height: 100vh; }
 
 .shell-header {
   display: flex; align-items: center; gap: 10px;
@@ -31,7 +31,13 @@ body {
 .version { color: var(--dim); font-size: 12px; }
 .spacer { flex: 1; }
 
-.shell-main { flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+/* 侧栏 + 主区：两块各自滚动，谁都不把整页撑高。 */
+.shell-body { flex: 1; display: flex; min-height: 0; }
+.shell-sidebar {
+  width: 260px; flex: none; border-right: 1px solid var(--line);
+  background: #12141c; overflow-y: auto;
+}
+.shell-main { flex: 1; min-height: 0; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 
 .shell-statusbar {
   display: flex; align-items: center; gap: 14px;
@@ -76,8 +82,7 @@ body {
 .channel-state[data-channel='closed'] { color: var(--bad); }
 
 .runtime-badge { color: var(--dim); font-size: 12px; }
-.runtime-card { padding: 14px 16px; }
-.runtime-card h2 { margin: 0 0 6px; font-size: 16px; }
+.runtime-card { padding: 14px 16px; }.runtime-card h2 { margin: 0 0 6px; font-size: 16px; }
 .runtime-hint { margin: 0 0 12px; color: var(--dim); font-size: 13px; }
 .runtime-grid {
   display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px;
@@ -93,3 +98,103 @@ body {
 .runtime-probe { margin: 10px 0 0; font-size: 13px; }
 .runtime-probe.ok { color: var(--ok); }
 .runtime-probe.bad { color: var(--bad); }
+
+/* ── 左侧会话列表 ─────────────────────────────────────────────────────────── */
+.sessions { display: flex; flex-direction: column; }
+.sessions-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; border-bottom: 1px solid var(--line);
+}
+.sessions-title { font-size: 12px; color: var(--dim); flex: 1; }
+.sessions-new {
+  background: #1f2430; color: var(--text); border: 1px solid var(--line);
+  border-radius: 6px; padding: 3px 9px; font-size: 12px; cursor: pointer;
+}
+.sessions-new:hover { border-color: var(--accent); }
+.sessions-fault { margin: 8px 12px; color: var(--bad); font-size: 12px; }
+.sessions-empty { margin: 12px; color: var(--dim); font-size: 12px; }
+.sessions-list { list-style: none; margin: 0; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.sessions-row {
+  width: 100%; text-align: left; display: flex; flex-direction: column; gap: 2px;
+  background: none; border: 1px solid transparent; border-radius: 6px;
+  padding: 6px 8px; color: var(--text); cursor: pointer; font: inherit;
+}
+.sessions-row:hover { background: #1b1f2a; }
+.sessions-row.current { background: #1d2433; border-color: var(--accent); }
+.sessions-row-top { display: flex; align-items: center; gap: 6px; }
+.sessions-pin { color: #e0b341; font-size: 11px; }
+.sessions-name { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sessions-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--dim); }
+.sessions-dot[data-state='干活中'] { background: var(--ok); }
+.sessions-dot[data-state='等审批'] { background: #e0b341; }
+.sessions-dot[data-state='刚完成'] { background: var(--accent); }
+.sessions-meta { font-size: 11px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── 对话消息流：主区里不要卡片外壳，正文自己排版 ─────────────────────────── */
+.shell-main .slot-entry[data-entry='transcript.flow'] { border: 0; border-radius: 0; background: none; }
+.flow { display: flex; flex-direction: column; gap: 10px; }
+.flow-empty { margin: 0; color: var(--dim); font-size: 13px; }
+.flow-end { height: 1px; }
+.row { font-size: 13.5px; line-height: 1.62; }
+.row.live { opacity: 0.86; }
+.row-text { margin: 0; white-space: pre-wrap; word-break: break-word; }
+.row-dim { margin: 0; color: var(--dim); font-size: 12px; }
+.row-tags { display: flex; flex-wrap: wrap; gap: 8px; margin: 3px 0 0; color: var(--dim); font-size: 11px; }
+.row-tag {
+  border: 1px solid var(--line); border-radius: 4px;
+  padding: 0 5px; font-size: 11px; color: var(--dim);
+}
+.row-tag.bad { color: var(--bad); border-color: var(--bad); }
+
+.row-user { display: flex; flex-direction: column; align-items: flex-end; }
+.row-user-bubble {
+  max-width: 84%; border: 1px solid var(--line); border-radius: 10px;
+  background: #1b2130; padding: 8px 12px;
+}
+.row-user .row-tags { justify-content: flex-end; }
+.row-images { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
+.row-images img { max-width: 160px; max-height: 120px; border-radius: 6px; border: 1px solid var(--line); }
+
+.row-assistant { padding-left: 2px; }
+.row-system { margin: 0; color: var(--dim); font-size: 12px; border-left: 2px solid var(--line); padding-left: 8px; }
+.row-turn-end {
+  margin: 0; color: var(--dim); font-size: 11px; text-align: center;
+  border-top: 1px solid var(--line); padding-top: 6px;
+}
+
+.row-thinking, .row-tool {
+  border: 1px solid var(--line); border-radius: 8px; background: #14161e; padding: 6px 10px;
+}
+.row-thinking > summary, .row-tool > summary {
+  cursor: pointer; display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--dim); list-style: none;
+}
+.row-thinking > summary::-webkit-details-marker, .row-tool > summary::-webkit-details-marker { display: none; }
+.row-pre {
+  margin: 6px 0 0; padding: 8px; background: #0e1017; border-radius: 6px;
+  font-size: 12px; line-height: 1.5; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+  max-height: 380px; overflow-y: auto;
+}
+.row-tool-name { color: var(--text); font-size: 12.5px; }
+.row-tool-args {
+  flex: 1; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.row-tool-body { margin-top: 2px; }
+.row-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--dim); }
+.row-dot[data-status='running'], .row-dot[data-status='working'] { background: #e0b341; }
+.row-dot[data-status='done'], .row-dot[data-status='idle'] { background: var(--ok); }
+.row-dot[data-status='failed'], .row-dot[data-status='rejected'], .row-dot[data-status='stopped'] { background: var(--bad); }
+
+.row-card { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 10px 12px; }
+.row-card-head { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 13px; }
+.row-changed { display: flex; align-items: center; gap: 8px; margin: 2px 0; font-size: 12px; }
+.row-changed code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-added { color: var(--ok); }
+.row-removed { color: var(--bad); }
+.row-crash { margin: 0; color: var(--bad); font-size: 12px; }
+
+/* ── 状态条读数 ───────────────────────────────────────────────────────────── */
+.readout { display: inline-flex; align-items: center; gap: 12px; font-variant-numeric: tabular-nums; }
+.readout-item { color: var(--dim); font-size: 12px; }
+.readout-item[data-turn='working'], .readout-item[data-turn='thinking'] { color: #e0b341; }
+.readout-item[data-turn='awaiting-approval'] { color: var(--bad); }

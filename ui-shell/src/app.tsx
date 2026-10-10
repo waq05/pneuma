@@ -36,10 +36,15 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
 
       <HostErrorStrip />
 
-      <main className="shell-main">
-        <SlotOutlet slots={slots} slot={SLOT.notice} />
-        <SlotOutlet slots={slots} slot={SLOT.main} />
-      </main>
+      <div className="shell-body">
+        <aside className="shell-sidebar">
+          <SlotOutlet slots={slots} slot={SLOT.sidebar} />
+        </aside>
+        <main className="shell-main">
+          <SlotOutlet slots={slots} slot={SLOT.notice} />
+          <SlotOutlet slots={slots} slot={SLOT.main} />
+        </main>
+      </div>
 
       <footer className="shell-statusbar">
         <span data-field="plugins">

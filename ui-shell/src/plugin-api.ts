@@ -106,3 +106,19 @@ export function hostStatus(snapshot: HostSnapshot | null): HostStatusView | null
 export { useChannelStatus, useHostChannel, useHostError, useHostSelector, useHostSnapshot } from './runtime-context'
 export type { ChannelStatus, HostHello } from './host-channel'
 export type { SlotEntry, SlotKind, UiHostInfo, UiRuntimeApi, UiSlotApi, HostSnapshot }
+// 宿主视图类型原样转出去：插件按它们写渲染，宿主改字段时插件这边编不过（而不是线上画空）。
+export type {
+  ChangedFileView,
+  ContextSegmentsView,
+  PlanView,
+  QueuedMessageView,
+  SessionRunState,
+  SessionSummary,
+  StatusView,
+  SubagentCardView,
+  TokenUsageView,
+  ToolCallView,
+  ToolStatus,
+  TranscriptEntry,
+  TurnEndReason,
+} from '@dsc/ui-core'

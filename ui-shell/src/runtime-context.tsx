@@ -8,7 +8,7 @@
  *
  * @module dsc-ui-shell/runtime-context
  */
-import { createContext, useContext, useRef, useSyncExternalStore, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { HostSnapshot } from '@dsc/ui-core'
 import type { ChannelStatus, HostChannel, HostHello } from './host-channel'
 
@@ -37,10 +37,12 @@ export function useHostSnapshot(): HostSnapshot | null {
 }
 
 /**
- * 只订阅快照里的一小块：选出来的值没变（按 `isEqual` 比）就不重渲染。
+ * 只订阅快照里的一小块：选出来的值没变（按 `isEqual` 比）就**不重渲染**。
  *
- * 为什么需要它：宿主每个回合都在推帧，快照整体换引用，只用 `useHostSnapshot()`
- * 的组件会被无差别刷新——一个只显示「回合状态」的徽标不该因为别的字段变了而重画。
+ * 为什么需要它：宿主每个回合都在推帧，快照整体换引用，只用 `useHostSnapshot()` 的组件
+ * 会被无差别刷新——一个只显示「回合状态」的徽标不该因为别的字段变了而重画。
+ *
+ * `select` / `isEqual` 不必自己包 `useCallback`：它们存在 ref 里，订阅只建一次。
  * @param select - 从快照里取值
  * @param isEqual - 相等判断；缺省按引用比（返回对象时建议自己给一个）
  */
@@ -48,11 +50,25 @@ export function useHostSelector<T>(
   select: (snapshot: HostSnapshot | null) => T,
   isEqual: (previous: T, next: T) => boolean = Object.is,
 ): T {
-  const snapshot = useHostSnapshot()
-  const held = useRef<{ value: T } | null>(null)
-  const next = select(snapshot)
-  if (held.current === null || !isEqual(held.current.value, next)) held.current = { value: next }
-  return held.current.value
+  const channel = useHostChannel()
+  const selectRef = useRef(select)
+  selectRef.current = select
+  const equalRef = useRef(isEqual)
+  equalRef.current = isEqual
+  const [value, setValue] = useState<T>(() => select(channel.getSnapshot()))
+  const heldRef = useRef(value)
+  useEffect(() => {
+    const read = (): void => {
+      const next = selectRef.current(channel.getSnapshot())
+      if (equalRef.current(heldRef.current, next)) return
+      heldRef.current = next
+      setValue(next)
+    }
+    // 挂载时先对一次：订阅之前可能已经有帧到了。
+    read()
+    return channel.subscribe(read)
+  }, [channel])
+  return value
 }
 
 /** 订阅连接状态（顶栏显示「连接中 / 已连接」用）。 */

@@ -12,26 +12,12 @@ import { useState, type ReactElement } from 'react'
 import { defineUiPlugin, hostStatus, useChannelStatus, useHostChannel, useHostSnapshot } from '@dsc/ui'
 
 export default defineUiPlugin({
-  name: '运行时状态',
+  name: '运行时状态（自检用）',
   apply(ui) {
-    // order 1：排在示例卡片之前（它是这一版最该被看见的一块）。
-    ui.slots.register('shell.main', { id: 'runtime.status', order: 1 }, RuntimeCard)
-    ui.slots.register('statusbar.right', { id: 'runtime.badge', order: 1 }, RuntimeBadge)
+    // order 90：真实区段排在前面，这张卡是「数据通道通不通」的自检依据，压到最后。
+    ui.slots.register('shell.main', { id: 'runtime.status', order: 90 }, RuntimeCard)
   },
 })
-
-/** 状态条上的小徽标：连接状态 + 回合状态 + 条目数。 */
-function RuntimeBadge() {
-  const snapshot = useHostSnapshot()
-  const status = useChannelStatus()
-  const state = hostStatus(snapshot)
-  const label = status !== 'open' ? (status === 'connecting' ? '连接中' : '已断开') : (state?.turnState ?? '已连接')
-  return (
-    <span className="runtime-badge" data-channel={status} data-turn={state?.turnState ?? ''}>
-      {label} · 条目 {snapshot?.entries.length ?? 0}
-    </span>
-  )
-}
 
 /** 主卡片：宿主推来的实时状态 + 一次真实的宿主方法调用。 */
 function RuntimeCard() {
