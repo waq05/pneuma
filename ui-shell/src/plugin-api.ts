@@ -191,6 +191,37 @@ export function useHostNative(): HostNative {
 }
 
 /**
+ * ── 外观改动的请求口（插件写、壳落地）────────────────────────────────────────────
+ *
+ * 为什么不让插件直接调 `applyAppearance`：那份实现的模块级状态（最近一次报出去的控件条
+ * 颜色、跟随系统的监听）**只能有一份**——插件 bundle 里内联一份就会出现两个 applier
+ * 各记各的状态。所以插件只说"改成这样"，落地由壳里那一份做。
+ *
+ * 用法与写入顺序（照旧界面的口径）：先 `requestAppearance(patch)` 让界面立刻跟手，
+ * 再 `setUiPrefs(patch)` 落盘；写失败就再 `requestAppearance(原值)` 回滚。
+ */
+export type AppearancePatch = {
+  themeMode?: 'dark' | 'light' | 'system'
+  fontSize?: number
+  density?: 'compact' | 'standard' | 'roomy'
+}
+
+const appearanceListeners = new Set<(patch: AppearancePatch) => void>()
+
+/** 请求壳把外观改成这样（没有监听者时是空操作——插件单独跑时不该崩）。 */
+export function requestAppearance(patch: AppearancePatch): void {
+  for (const listener of appearanceListeners) listener(patch)
+}
+
+/** 壳注册外观落地函数；返回退订。 */
+export function onAppearanceRequest(listener: (patch: AppearancePatch) => void): () => void {
+  appearanceListeners.add(listener)
+  return () => {
+    appearanceListeners.delete(listener)
+  }
+}
+
+/**
  * ── 停靠区（壳让位给面板的那一块）─────────────────────────────────────────────
  *
  * 插件这样用：在 `shell.header` 里放一颗开合钮（写状态），在 `shell.dock` 里放面板本身

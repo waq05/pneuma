@@ -2461,3 +2461,49 @@ class 名照旧界面的文件树与预览写（`.files-pane` / `.files-list` / 
 - **面板宽度写死**（终端那块读 `dsc.dockWidth`，文件这块固定 460），拖拽手柄两处都没做。
 - **两块面板不能并排**：同一时刻只显示一块（面板 id 互斥）。旧界面的 dock 是多页签 + 分栏，
   要还原得先把"停靠区的外壳"（页签条与分栏）也搬进壳，而不是每块面板自带一层 `.dock`。
+
+## 阶段 102（对齐计划 5.4）：设置面板——外观 / 技能 / 插件三组（未发版）
+
+形态照旧桌面端的设置弹窗（`.settings-mask` → `.settings` → `.settings-nav` + `.settings-main`
+那一整套现成样式），入口是顶栏一颗齿轮钮；面板用 `position: fixed` 自己浮起来，
+所以不必给壳再加一个"浮层槽"。
+
+### 三组
+
+- **外观**：主题（深/浅/跟随系统）、字号（85%–135% 滑杆）、密度（紧凑/标准/宽松）。
+  走 `getUiPrefs` / `setUiPrefs`；改一项**先落到界面上再写宿主**（外观是"跟手"的设置），
+  写失败就回滚显示并说明原因。
+- **技能**：`listSkills` + `setSkillEnabled`，不可单独启停的（插件注册的虚拟技能）画成说明不给假开关。
+- **插件**：`listPlugins` + `setPluginEnabled`，内核插件同理画成"不可停用"。
+- 「装技能 / 装插件」**故意没有按钮**：那是系统文件选择器 + 复制进 `~/.dsc/` 的供应链写入口
+  （界面通道与原生桥都排除它们），面板里只**写清去哪做**，不假装有按钮。
+
+### 一处架构修补：外观的落地只能有一份
+
+设置面板要改外观，但它**不能**直接 import 壳的 `appearance.ts`——那个模块带模块级状态
+（最近报出去的控件条颜色、跟随系统的监听），插件 bundle 内联一份就会出现两个 applier 各记各的。
+所以 `@dsc/ui` 新增一个"请求口"：插件发 `requestAppearance(patch)`，**壳在 `main.tsx` 里注册**
+真正的落地函数（`onAppearanceRequest`）。归一化那一小段（三档枚举 + 字号夹取）在插件里重写了一遍，
+比多一个 applier 划算。
+
+### 验证（隔离宿主 + 浏览器实机，逐条读 DOM 与落盘文件）
+
+- 面板能开、三个分组在（外观 / 技能 / 插件）；插件页列出 45 行（宿主全部插件）。
+- **主题**：切浅色 → `document.documentElement.dataset.theme` 变 `light`，
+  且隔离档案 `~/.dsc/settings.json` 的 `ui.themeMode` 落成 `"light"`。
+- **字号**：滑杆拉到 120% → `--dsc-font-scale` 由 `1` 变 `1.2`、旁边读数变 `120%`，
+  并且 `~/.dsc/settings.json` 的 `ui.fontSize` 落成 `1.2`。
+  （探针这边踩了个坑：React 的 `onChange` 在 `<input type=range>` 上认的是原生 `input` 事件，
+  而且要用 `HTMLInputElement.prototype` 的原生 setter 改值才会被它的值跟踪器认到——直接
+  `range.value = '120'` + 派发 `change` 是不动的。）
+- **技能**：往隔离目录放一枚 `demo-skill/SKILL.md` → 面板列出 1 行 → 点开关 `true → false`，
+  且 `~/.dsc/skills.json` 的 `disabled` 里出现 `"demo-skill"`（**重启宿主后仍是这个状态**）。
+- 四个界面探针全绿（`ui-plugin-test` / `ui-serve-test` / `ui-events-test` / `ui-native-bridge-test` 53 条）。
+
+### 诚实边界
+
+- **八个设置分区只搬了三组**：模型与服务（改端点要写 API key——`setProviderKey` / `saveProvider`
+  正是为此被排除在界面通道外）、预设详情、关于、记忆 / 钩子 / 队友这些还没搬。
+- **外观只有三项**：旧界面那几项（过程折叠程度、思考/工具默认展开、完成提示音与通知、
+  状态栏段显隐）还没搬进来；它们在宿主存档里由旧界面管着。
+- **「按钮大小」没有这一项**：这条轴在阶段 97 就退场了，面板里只用一句话说明。

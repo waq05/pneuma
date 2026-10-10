@@ -13,13 +13,21 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { SlotRegistry, type UiBootGraph, type UiPluginLoadResult, type UiPrefsView } from '@dsc/ui-core'
+import { onAppearanceRequest } from './plugin-api'
 import { readBootGraph, loadUiPlugins } from './boot'
 import { createHostChannel } from './host-channel'
 import { RuntimeProvider } from './runtime-context'
 import { SHELL_SLOTS } from './slots'
 import { App } from './app'
 import type { UiComponent, UiSlots } from './plugin-api'
-import { applyAppearance, appearanceFromPrefs, loadCachedAppearance, saveCachedAppearance } from './appearance'
+import {
+  applyAppearance,
+  appearanceFromPrefs,
+  DEFAULT_APPEARANCE,
+  loadCachedAppearance,
+  saveCachedAppearance,
+  type Appearance,
+} from './appearance'
 // 顺序即层叠：令牌 → 全局基线 → 原语 → 各视图（从旧渲染层原样搬来的四份）
 // → 壳自己的补充。反了就会互相覆盖，与旧渲染层 main.tsx:6-9 同一套次序。
 import './legacy/tokens.css'
@@ -47,13 +55,31 @@ async function syncAppearance(channel: ReturnType<typeof createHostChannel>): Pr
   applyAppearance(loadCachedAppearance())
   try {
     const prefs = await channel.invoke<UiPrefsView>('getUiPrefs')
-    const appearance = appearanceFromPrefs(prefs)
+    appearance = appearanceFromPrefs(prefs)
     applyAppearance(appearance)
     saveCachedAppearance(appearance)
   } catch (error) {
     console.warn('[ui-shell] 读界面偏好失败，沿用上次的外观镜像', error)
   }
 }
+
+/** 最后一次生效的外观：设置面板改一项时以它为底（见下面那个注册）。 */
+let appearance: Appearance = DEFAULT_APPEARANCE
+
+/**
+ * 把「外观改动的请求」接到真正的那份实现上。
+ *
+ * 为什么绕一道（`requestAppearance` → 这里）：`applyAppearance` 带着模块级状态
+ * （最近报出去的控件条颜色、跟随系统的监听），**只该有一份**。插件 bundle 里内联一份
+ * 就会出现两个 applier；而外观又是"插件改、壳落地"的事，所以插件只发请求。
+ *
+ * 写盘由插件自己做（它调 `setUiPrefs`）——这里只负责让界面立刻跟上与记住镜像。
+ */
+onAppearanceRequest((patch) => {
+  appearance = { ...appearance, ...patch }
+  applyAppearance(appearance)
+  saveCachedAppearance(appearance)
+})
 
 async function bootstrap(): Promise<void> {
   const container = document.getElementById('root')
