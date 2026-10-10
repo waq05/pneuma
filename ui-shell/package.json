@@ -1,0 +1,26 @@
+{
+  "name": "dsc-ui-shell",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Muse Code 插件化界面壳：槽位宿主 + 插件加载器。壳产物落 ../lib/ui/assets，插件 bundle 落 ../lib/ui/plugins，由宿主 webserver 插件伺服。",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json --noEmit && vite build && node build-plugins.mjs",
+    "build:app": "vite build",
+    "build:plugins": "node build-plugins.mjs"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.0.0"
+  }
+}

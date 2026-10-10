@@ -1,0 +1,65 @@
+/* 界面壳的样式：够看清结构就行，具体外观留给后面的阶段。 */
+
+:root {
+  color-scheme: dark;
+  --bg: #0f1117;
+  --panel: #171a23;
+  --line: #262b38;
+  --text: #e6e8ee;
+  --dim: #8b93a7;
+  --accent: #4c8dff;
+  --bad: #ff6b6b;
+  --ok: #47c17e;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+.shell { display: flex; flex-direction: column; min-height: 100vh; }
+
+.shell-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.brand { font-weight: 600; }
+.version { color: var(--dim); font-size: 12px; }
+.spacer { flex: 1; }
+
+.shell-main { flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+
+.shell-statusbar {
+  display: flex; align-items: center; gap: 14px;
+  padding: 6px 16px; border-top: 1px solid var(--line);
+  background: var(--panel); color: var(--dim); font-size: 12px;
+}
+
+/* 槽里的一块：外壳只画边框，内容归插件。 */
+.slot-entry { display: block; }
+.shell-main .slot-entry {
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+}
+.shell-header .slot-entry, .shell-statusbar .slot-entry, .shell-notice .slot-entry { display: inline-block; }
+
+.slot-crash {
+  border: 1px solid var(--bad); border-radius: 8px; padding: 12px;
+  color: var(--bad); font-size: 13px;
+}
+
+.diagnostics {
+  margin: 0 16px 16px; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+  color: var(--dim); font-size: 12px;
+}
+.diagnostics summary { cursor: pointer; }
+.diag-plugins { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.diag-plugins .ok { color: var(--ok); }
+.diag-plugins .bad { color: var(--bad); }
+.diag-plugins .empty { color: var(--dim); }
+.diag-line { margin: 4px 0; word-break: break-all; }
+.diagnostics code { color: var(--text); }

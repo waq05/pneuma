@@ -1813,3 +1813,38 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **测试**：statusbar-test 新增 5b 段——传 registerClick 收集器直测 hit 几何（两枚 chip 时点第二枚列区间只命中第二枚、空白列全不命中、第一枚区间只命中第一枚；**registerClick 要配 onOpenAgent 传**，BackgroundChip 的点击区注册被 onOpenAgent 门控）；commands-battery 加裸 /model 段 + /fork 真机形状。全量电池绿，双包 typecheck 绿，`msc --version` → 0.6.66。
 
 **教训**：① 「整屏视口 + 内联渲染」在滚动面前是脆的，锚点一漂移擦除就全错——全屏 TUI 的标准答案是备用屏，ink 原生没有就手写 1049 序列 + exit 兜底；② mock 快照要复刻**真机的字段语义**（uuid vs 路径），不然测试在给 bug 背书；③ 给提示加「交互即清」前，先枚举所有会触发同类事件的**程序化**路径（撤回灌文本、preset 回填），它们和用户打字不可区分。
+
+## 阶段 90：插件版界面地基——宿主发 bundle、壳按槽位拼装（未发版，C-真 第一步）
+
+用户要求把界面改成 dsh 那样的插件结构，并选定 **C-真**：桌面壳将来改成"宿主托管的 web 文档"，与远程设备共用**同一份**界面（dsh 的桌面就是本地 web 文档 + 认证转发，见 `web-document.ts`）。本阶段只做地基——**老 UI 一行没动**，先把"清单 → 下发 → 槽位注册 → 渲染"这条链跑通。
+
+**新增的共用核心（浏览器安全，宿主与界面壳同一份源码）**：
+
+- `src/ui/slots.ts`：槽位注册表。四种槽先做三种（`single` / `list` / `keyed`，`chain` 用到再加）；注册返回退订函数（cordis 的效果语义）；往**未声明**的槽注册当场报错并把已知槽名列出来（拼错槽名的 bug 最难查）。刻意不 import React——同一份注册表将来要给 TUI 的 ink 组件用，所以"组件"只当泛型 `C`。`winners()` 带结果缓存：它对 single/keyed 要建新数组，不缓存就会让 `useSyncExternalStore` 每次拿到新引用、界面掉进无限重渲染。
+- `src/ui/manifest.ts`：启动图。拓扑排序（`inject` 是"先注册工厂"的边）+ 成环时**报出环上成员**而不是死循环；`pluginBundleUrl` 给出相对页面的内容寻址地址；`artifactRev` 用文件的 mtime/ctime/大小算 12 位短哈希（不读内容，构建完立刻能算）；`shortHash` 用 FNV-1a 四轮拼 48 位——浏览器壳里没有 `node:crypto`，而这个哈希只承担"换文件就换地址"，不承担安全职责。
+- `src/ui/plugin.ts`：插件契约（`apply(ui)` + `defineUiPlugin`）与加载报告类型。
+
+**宿主半边**：
+
+- `src/core/ui-bundles.ts`：读 `lib/ui/plugins/manifest.json`、按文件指纹算版本、缺文件的进 `problems` 而不是静默跳过；id 与文件名都过正则与目录守卫（`..` 逃逸在解析层就挡掉）。
+- `src/core/ui-route.ts`：`/plugins/<id>/<file>?rev=` 的解析，**宿主界面服务与远程控制共用一份**（C-真 的要点是桌面与远程看同一份界面，判断口径不能两处各写一遍）。`rev` 与当下算出来的不一致就 404：旧地址不拿新代码，新地址不拿旧代码。
+- `src/core/ui-server.ts`：本机回环 HTTP（可独立测试，不依赖 cordis）。一次性令牌 → `/?token=` 换 HttpOnly `dsc_ui` Cookie → 302 到 `/`；令牌用一次作废。**Host 头校验是所有路由的总闸**（防 DNS rebinding，恶意网页把自己的域名解析到 127.0.0.1 也打不进来）。送 `index.html` 之前把启动图塞进 `window.__DSC_BOOT__`（与 dsh 同一个位置、同一个名字）。静态资源目录不存在时返回一张"界面资产未构建"的占位页。
+- `src/core/web-http.ts` / `src/core/web-static.ts`：把 remote 里的 Host 校验、Bearer 解析、请求体读取、静态伺服上移到 core 共用；`plugins/remote/http.ts` 退化成一层转发（远程那边的引用一行没改），`plugins/remote/routes.ts` 的静态兜底页改调共用实现。
+- `src/plugins/webserver.ts`：新宿主插件，`provide: 'webServer'`。**默认不监听**——终端里跑 `msc` 的人不该平白多出一个端口；桌面主进程将来通过协议要地址，自检与终端调试用 `DSC_UI_SERVER=1` 或插件配置 `enabled: true`。起来时打印一条带一次性令牌的地址（`Muse Code 界面： http://127.0.0.1:<port>/?token=…`）。已进 `host/kernel.ts` 的 `BUILTIN_PLUGINS` 与装配序列（排在 runtime 之后）。
+
+**界面壳（新包 `ui-shell/`，与 remote-web 同构）**：
+
+- 壳应用：声明四个槽（`shell.header` / `shell.main` / `statusbar.right` / `shell.notice`）→ 装插件 → 渲染。**顺序不能反**：槽必须先声明再让插件注册。每个槽条目套一层错误边界（一个插件组件抛异常只让那一块显示错误，不打白整页）。诊断区摊开"清单里有什么、谁装上了、谁失败了、壳放行了哪些模块"。
+- 插件加载器：`fetch` 取 bundle → `new Function('require','module','exports', code)` 执行 CJS 工厂 → `require` **只看白名单表**（`react` / `react-dom` / `react/jsx-runtime` / `@dsc/ui`），表外一律抛错。插件 bundle 是 CJS 而不是 ESM，正是为了让壳提供那一份 React——两份 React 会让 hooks 直接崩；与 dsh 的客户端模块系统同形（工厂 + 模块表）。
+- 构建：`vite build` 出壳应用 → `lib/ui/assets`；`build-plugins.mjs`（vite JS API）把 `src/plugins/<id>/ui.tsx` 打成 CJS → `lib/ui/plugins/<id>/client.js`，并写 `manifest.json`。可选 `plugin.json` 声明 `inject` / `external` / `immediately`（第三方插件将来用同一份字段）。根 `package.json` 加 `build:ui` 与 `ui:serve` 两个脚本；`pnpm build` 仍只跑 tsc（前端构建要装 ui-shell 的依赖，不塞进主构建）。
+
+**验证**：根 `tsc` 全绿、ui-shell typecheck 全绿、desktop 两个 typecheck 全绿；新探针 `scripts/ui-plugin-test.mjs` **80/80**（槽位 18、清单 16、bundle 发现 22、真起服务的端到端 24）；真机端到端——`node scripts/ui-shell-serve.mjs`（隔离 HOME 起 headless 宿主）→ 浏览器打开带令牌地址 → 302 换 Cookie → 页面出现插件卡片（标题"界面插件已生效"）、状态条 `插件 1/1 · 槽 4 · 登记 2 · 清单 6fb2a961cb86 · 插件已生效`、点按钮计数器 0→1（证明插件里的 React 状态是活的，不是静态 HTML）；截图 `desktop/shots/ui-plugin-phase1.png`（gitignored）。
+
+**诚实边界**：
+
+- 这一版**只有地基**：界面壳是最小的（顶栏 / 主区 / 状态条 / 诊断），老 UI（`src/app/` 与 `desktop/src/renderer/`）一行没动，桌面壳还没切过来——那是阶段 2。
+- 插件清单目前只认 `lib/ui/plugins/manifest.json`（内置插件由 ui-shell 构建产出）。第三方插件的界面半边走同一份清单与同一批字段，但"从 `~/.dsc/plugins/*.js` 发现第三方界面半边"要等阶段 5。
+- **没有运行时数据**：这一版界面只显示插件自己的东西与宿主身份，没有 WebSocket 帧通道，会话/用量/审批都不在里面（阶段 2 桌面接运行时数据时再加）。
+- 没有 HMR、没有懒加载（`immediately` 字段已进清单但没人消费）、没有信任确认 UI 与 `apiVersion` 门禁（阶段 5）。
+- remote 的 `/plugins` 路由已接上共享解析，但手机端界面（`remote-web/`）还没加载插件——加载插件的是插件版壳，阶段 3/4 才轮到它。
+- ui-shell 是独立包：要先 `pnpm -C ui-shell install` 再 `pnpm build:ui`；界面服务的产物不进 npm 包的话，装出来的 CLI 跑 `DSC_UI_SERVER=1` 只会看到"界面资产未构建"的占位页（发布时的产物携带策略待阶段 6 定）。

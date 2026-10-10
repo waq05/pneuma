@@ -1,0 +1,59 @@
+/**
+ * 界面插件的契约：第三方与内置插件写的是同一份东西。
+ *
+ * 一个界面插件就是一个 JS bundle + 一次 `apply(ui)` 调用。它拿到的 `ui`
+ * 上有槽位注册表（往界面上放组件）和宿主身份（要显示版本号之类的用），
+ * 没有别的——网络、会话、宿主的 RPC 都**不**从这里给，那属于壳自己的事。
+ *
+ * 为什么不给插件任意 import 权限：界面代码跑在渲染进程里，能调宿主暴露的全部方法；
+ * 所以加载器只放行白名单模块（react / react-dom / @dsc/ui），其余 require 直接抛。
+ *
+ * @module dsc/ui/plugin
+ */
+import type { SlotRegistry } from './slots.js'
+
+/** 界面要显示的宿主身份。 */
+export interface UiHostInfo {
+  /** 产品的显示名，例如 `Muse Code`。 */
+  name: string
+  /** 宿主版本，例如 `0.6.67`。 */
+  version: string
+}
+
+/**
+ * 插件拿到的那一份 API。
+ *
+ * @typeParam C - 组件类型（浏览器壳是 React 组件，TUI 壳是 ink 组件）
+ */
+export interface UiPluginApi<C = unknown> {
+  /** 这个插件的 id（清单里那一条），诊断与去重都用它。 */
+  id: string
+  /** 槽位注册表：声明过的槽才能注册，没声明的当场报错。 */
+  slots: SlotRegistry<C>
+  /** 宿主身份。 */
+  host: UiHostInfo
+}
+
+/** 插件 bundle 必须导出的形状。 */
+export interface UiPluginModule<C = unknown> {
+  /** 显示名（可缺省，缺省就用清单里的 id）。 */
+  name?: string
+  /** 界面半边：注册自己的槽位。只能在这里登记，不要起副作用之外的定时器。 */
+  apply(ui: UiPluginApi<C>): void
+}
+
+/**
+ * 标识函数：给插件作者写 `export default defineUiPlugin({ apply })` 用的，
+ * 作用只是让类型检查提前发现「apply 写错了」这类笔误。
+ */
+export function defineUiPlugin<C>(module: UiPluginModule<C>): UiPluginModule<C> {
+  return module
+}
+
+/** 一个插件的加载结果（界面壳把失败的列出来，不要静默）。 */
+export interface UiPluginLoadReport {
+  id: string
+  ok: boolean
+  /** 失败原因（加载脚本失败、没导出 apply、apply 抛错都算）。 */
+  error?: string
+}

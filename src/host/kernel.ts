@@ -51,6 +51,7 @@ import { compactPlugin } from '../plugins/compact.js'
 import { sessionTitlePlugin } from '../plugins/session-title.js'
 import { agentPlugin } from '../plugins/agent.js'
 import { runtimePlugin } from '../plugins/runtime.js'
+import { webserverPlugin } from '../plugins/webserver.js'
 import { subagentPlugin } from '../plugins/subagent.js'
 import { teamPlugin } from '../plugins/team.js'
 import { computerUsePlugin } from '../plugins/computer-use.js'
@@ -296,6 +297,11 @@ export const BUILTIN_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
     settingsSection: 'memory',
   },
   { file: 'runtime', name: '运行时适配器', description: '把服务织成 UI 消费的 DscRuntime' },
+  {
+    file: 'webserver',
+    name: '本机界面服务',
+    description: '插件版界面的宿主半边：回环 HTTP + 一次性令牌 + 插件 bundle 下发（默认不占端口，桌面或 DSC_UI_SERVER=1 时才起来）',
+  },
 ]
 
 /** 创建内核并装好 base 插件集（服务全部就绪；UI 与外部插件未装）。 */
@@ -335,6 +341,8 @@ export async function createKernel(options: KernelOptions): Promise<Context> {
   // 长期记忆排在 agent 之后：轮次结束时它要用 agent.followup 启动一次记忆复盘。
   await root.plugin(memoryPlugin, getPluginConfig('memory'))
   await root.plugin(runtimePlugin)
+  // 本机界面服务：挂载本身零成本（不监听），有人要（桌面主进程 / DSC_UI_SERVER=1）才占端口。
+  await root.plugin(webserverPlugin, getPluginConfig('webserver'))
   await root.plugin(desktopDockPlugin, { cwd: process.cwd() })
   await root.plugin(pluginManagerPlugin)
   // 运行时查询要等工具、插件表、模式都就位，所以排在最后

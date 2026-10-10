@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "useUnknownInCatchVariables": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@dsc/ui-core": ["../src/ui/index.ts"],
+      "@dsc/ui": ["./src/plugin-api.ts"]
+    }
+  },
+  "include": ["src", "../src/ui"]
+}

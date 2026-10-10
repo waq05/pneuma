@@ -9,31 +9,14 @@
  *
  * @module dsc/plugins/remote/routes
  */
-import { existsSync, readFileSync, statSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { extname, resolve, sep } from 'node:path'
 import { errText } from '../../core/err-text.js'
 import { TICKET_TTL_MS } from '../../core/remote/tickets.js'
 import { UPLOAD_MAX_BYTES } from '../../core/remote/uploads.js'
+import { isUiBundleRequest, resolveUiBundleRequest } from '../../core/ui-route.js'
+import { serveStatic as serveAssets } from '../../core/web-static.js'
 import { bearerToken, hostHeaderAllowed, isRecord, readBody, readBodyBytes, sendJson } from './http.js'
 import type { RemoteServerDeps } from './types.js'
-
-const CONTENT_TYPES: Readonly<Record<string, string>> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.webp': 'image/webp',
-  '.ico': 'image/x-icon',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-  '.map': 'application/json; charset=utf-8',
-}
 
 /** 资源目录不存在（界面还没构建）时 `/` 返回的占位页。 */
 const PLACEHOLDER_HTML = `<!doctype html>
@@ -55,30 +38,7 @@ const PLACEHOLDER_HTML = `<!doctype html>
 `
 
 function serveStatic(res: ServerResponse, pathname: string, assetsDir: string): void {
-  const rel = pathname === '/' ? 'index.html' : decodeURIComponent(pathname).replace(/^\/+/, '')
-  const target = resolve(assetsDir, rel)
-  const inside = target === assetsDir || target.startsWith(assetsDir + sep)
-  if (inside && existsSync(target) && statSync(target).isFile()) {
-    const body = readFileSync(target)
-    res.writeHead(200, {
-      'content-type': CONTENT_TYPES[extname(target).toLowerCase()] ?? 'application/octet-stream',
-      'content-length': body.length,
-      // 界面产物带内容哈希，但 index.html 不带：一律 no-cache，刷新就能拿到新版
-      'cache-control': 'no-cache',
-    })
-    res.end(body)
-    return
-  }
-  if (pathname === '/') {
-    res.writeHead(200, {
-      'content-type': 'text/html; charset=utf-8',
-      'content-length': Buffer.byteLength(PLACEHOLDER_HTML),
-      'cache-control': 'no-cache',
-    })
-    res.end(PLACEHOLDER_HTML)
-    return
-  }
-  res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('没有这个文件')
+  serveAssets(res, pathname, assetsDir, { placeholderHtml: PLACEHOLDER_HTML })
 }
 
 /** 造路由处理器要的闭包状态：宿主能力 + 「吊销设备要顺手断连接」的回调。 */
@@ -287,6 +247,19 @@ export function createRequestHandler(ctx: RouteContext): (req: IncomingMessage, 
       return
     }
     if (req.method === 'GET' || req.method === 'HEAD') {
+      // 插件 bundle：与本机界面服务同一份解析（C-真 的桌面与远程看同一份界面，
+      // 插件 bundle 自然也要能从远程这一侧取到）。
+      if (isUiBundleRequest(url.pathname)) {
+        const resolved = resolveUiBundleRequest(url.pathname, url.searchParams.get('rev'))
+        if (resolved.status !== 200 || resolved.body === undefined) {
+          res.writeHead(resolved.status, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end(resolved.reason ?? '没有这个插件资源')
+          return
+        }
+        res.writeHead(resolved.status, resolved.headers)
+        res.end(resolved.body)
+        return
+      }
       serveStatic(res, url.pathname, deps.assetsDir)
       return
     }
