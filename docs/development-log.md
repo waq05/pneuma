@@ -2104,3 +2104,39 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
   - 宿主已经退出时，调用失败的原因显示的是浏览器原文（`Failed to fetch`，英文）；要更人话得在通道层包一层 —— `host-channel.ts` 是浏览器代码，没有自动化测试，动它要格外小心。
   - 冻结还**没有上锁**：`PROVENANCE.md` 声明「桌面渲染层那份进入冻结」，今天两份确实逐字节相同，但没有脚本守住它。**现在也还不到上锁的时候**——桌面这一版仍在加载旧渲染层那份样式，改它仍然是合理的改动；等桌面切到插件壳（阶段 5）再来上这条校验。
 - 这一轮**没发版**：桌面走的还是老 UI，用户可见行为没有变化。新增的开发辅助（`scripts/_fake-llm.mjs`、隔离走查档位 `scripts/.ui-shell-home/`）都不进测试电池——前者带 `_` 前缀，后者进 `.gitignore`。
+
+## 阶段 96（对齐计划 5.0）：桌面的界面切换点收成一个档案开关（未发版）
+
+阶段 90–95 把插件壳做出来了，但桌面窗口加载的一直是旧渲染层产物——`desktop/electron/main/index.ts:51` 的 `rendererDir()` 一个人干了两件事：既回答「回落用哪份文件」，又回答「宿主该伺服哪份界面」。这一步把后者拆出来，让「伺服哪份界面」变成一个**可切换、可回退的档案字段**。
+
+### 改了什么
+
+- `rendererDir()` 退回它该管的范围（回落用的旧渲染层产物），文件头的注释改掉——它不再是「伺服哪份界面」的唯一答案。
+- 新增 `shellDir()`：插件壳产物目录。**两态不同源**——开发态是仓库的 `lib/ui/assets`；打包态是 `join(process.resourcesPath, 'dsc-core', 'lib', 'ui', 'assets')`，因为 `desktop/scripts/prepare-runtime.mjs:31-33` 把整个 `lib/` 复制进 extraResources 的 dsc-core，壳产物跟着走，所以**它在 asar 之外**。
+- 新增 `uiProfile()`：读 `~/.dsc/desktop.json` 的 `ui` 字段（`'shell'` / `'legacy'`），缺省、读坏、值不认识一律落到 `DEFAULT_UI_PROFILE`（迁移期是 `'legacy'`）。`DSC_UI_SHELL=1` / `=0` 是自检与开发期的直通开关，压过档案（自动化脚本不该改用户档案）。
+- `uiAssetsDir()`：档案 → 目录（壳走 `shellDir()`，否则 `rendererDir()`）。`hostEnv()` 改成收一个目录参数，`startHost()` 里算一次、交给宿主。
+- `startHost()` 加一行 stderr：`[dsc-desktop] 界面形态=…，宿主伺服 …（产物存在=…）`。**切换期验收看这一行，不看绿不绿**（阶段 93 的教训：认证回落会把「没切过去」藏在一路绿灯里）。
+- `desktop.json` 的 `DesktopState` 加 `ui?: 'shell' | 'legacy'` 字段并写明含义。
+
+### 为什么默认旧界面、且回落路径原样留着
+
+迁移期用户摸到的是旧界面，插件壳还缺能力（终端、文件预览、设置、会话库管理都还没搬）。默认 `'legacy'` 保证**开关不动就与今天逐字节一致**；回落用的 `loadFile(join(__dirname, '../renderer/index.html'))` 一个字没动——认证失败、拿不到地址、壳产物缺失，窗口都退回旧界面。
+
+### 验证
+
+- `pnpm -C desktop typecheck` 绿（node + web 两套）。
+- 新自检 `desktop/shots/ui-shell-switch.ps1` 两用例，同一个构建产物只差 `DSC_UI_SHELL`：
+
+  | 用例 | stderr 界面形态行 | 页面真正加载的入口 | 槽条目 | 启动图 |
+  | --- | --- | --- | --- | --- |
+  | `ui-legacy`（默认） | `界面形态=legacy，宿主伺服 D:\dsc\desktop\out\renderer` | `/assets/index-BKl5o8No.js` | 0 | `undefined` |
+  | `ui-shell`（`=1`） | `界面形态=shell，宿主伺服 D:\dsc\lib\ui\assets` | `/app-Aw_xAEoR.js` | 10 | 8 条 |
+
+  两个用例的 stderr 里都有 `[dsc-desktop] 窗口来自宿主界面服务 http://127.0.0.1:<port>`——即窗口确实加载的是**宿主伺服的那份文档**。`ui-shell.png` 目检：侧栏、消息流、输入区、状态条、诊断角标都在，是插件壳的版式（不是旧渲染层）。
+- 真实 `~/.dsc` 跑前跑后 **335 个文件、内容聚合 SHA256 一致**（`edf0b67f…76d`）——零污染。自检走 `app.exit()`，不触发窗口 `close`，不写 `desktop.json`。
+
+### 诚实边界
+
+- **打包态的 `shellDir()` 路径没验过**：只从 `prepare-runtime.mjs` 读出「`lib/` 随 extraResources 走」，没真装过包（阶段 8 的第一件事）。
+- **「档案」其实是用户档案，不是随包发布的文件**：落在 `~/.dsc/desktop.json` 的好处是回退改一个字段、不用重打包；代价是发版想翻默认得改 `DEFAULT_UI_PROFILE` 这一行常量。两处都能切，写清楚免得日后误以为「档案缺失 = 跟随发布版默认」。
+- **开壳只是「提前暴露路径问题」**：此刻壳里没有终端/文件/设置/会话库管理，所以 `DSC_UI_SHELL=1` 跑起来是功能不全的——按计划 5.0 的验收口径，这一步只要证明「路径对、切得过去、回得来」就够了。

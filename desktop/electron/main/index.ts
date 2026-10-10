@@ -43,22 +43,60 @@ function isChromeColor(value: unknown): value is string {
 // ── 宿主生命周期 ──────────────────────────────────────────────────────────────
 
 /**
- * 界面产物目录：与回落用的 `loadFile` 是同一处。
+ * 旧渲染层产物目录：回落用的 `loadFile` 加载的就是这里。
  *
- * 这个目录同时也是「宿主该伺服哪份界面」的答案——经 `DSC_UI_ASSETS` 交给宿主进程，
- * 于是窗口加载的那份文档与回落时加载的那份文件内容完全一致（同一份构建产物）。
+ * 迁移期它是「默认伺服的那份界面」，但**不再**是「宿主该伺服哪份界面」这个问题的
+ * 唯一答案——那份答案现在由 {@link uiAssetsDir} 按档案给出，插件壳开了就伺服壳产物。
+ * 这条回落路径必须一直留着：认证失败、拿不到地址、壳产物缺失，窗口都退回这里。
  */
 function rendererDir(): string {
   return join(__dirname, '../renderer')
 }
 
+/**
+ * 插件壳产物目录：`pnpm -C ui-shell build` 写出的静态产物。
+ *
+ * 两态路径不同源：开发态在仓库的 `lib/ui/assets`；打包态在 extraResources 的
+ * `dsc-core/lib/ui/assets`——`scripts/prepare-runtime.mjs` 把整个 `lib/` 复制进
+ * dsc-core，壳产物跟着走，所以它在 asar 之外（与宿主从同一处读 `lib/ui/plugins` 一致）。
+ */
+function shellDir(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'dsc-core', 'lib', 'ui', 'assets')
+    : join(__dirname, '..', '..', '..', 'lib', 'ui', 'assets')
+}
+
+/**
+ * 迁移期默认的界面形态：发版要把默认翻成壳，改的就是这一行。
+ * 档案缺失/读坏/值不认识一律落到它，于是「回退」永远是改一个字段的事。
+ */
+const DEFAULT_UI_PROFILE = 'legacy' as const
+
+/**
+ * 当前该伺服哪份界面：档案（`~/.dsc/desktop.json` 的 `ui`）说了算。
+ *
+ * `DSC_UI_SHELL` 是自检与开发期的直通开关（`1` 强制壳、`0` 强制旧界面），
+ * 压过档案——自动化脚本不该去改用户的档案，也不该依赖它。
+ */
+function uiProfile(): 'legacy' | 'shell' {
+  if (process.env['DSC_UI_SHELL'] === '1') return 'shell'
+  if (process.env['DSC_UI_SHELL'] === '0') return 'legacy'
+  const fromState = readState().ui
+  return fromState === 'shell' ? 'shell' : DEFAULT_UI_PROFILE
+}
+
+/** 宿主该伺服的界面产物目录（经 `DSC_UI_ASSETS` 交给宿主进程）。 */
+function uiAssetsDir(): string {
+  return uiProfile() === 'shell' ? shellDir() : rendererDir()
+}
+
 /** 传给宿主进程的环境：Electron 的 env 只收字符串值，undefined 的键直接丢掉。 */
-function hostEnv(): Record<string, string> {
+function hostEnv(assetsDir: string): Record<string, string> {
   const out: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) out[key] = value
   }
-  out['DSC_UI_ASSETS'] = rendererDir()
+  out['DSC_UI_ASSETS'] = assetsDir
   return out
 }
 
@@ -141,7 +179,13 @@ function desktopPageUrl(): string {
 function startHost(cwd: string): void {
   hostCwd = cwd
   const entry = resolveHeadlessEntry()
-  protocol = new HostProtocol(entry, cwd, hostEnv())
+  const assetsDir = uiAssetsDir()
+  // 这一行是「界面形态」的唯一可观测信号：切换期验收看 stderr，不看绿不绿
+  // （阶段 93 的教训——认证回落会把「没切过去」藏在一路绿灯里）。
+  process.stderr.write(
+    `[dsc-desktop] 界面形态=${uiProfile()}，宿主伺服 ${assetsDir}（产物存在=${existsSync(assetsDir)}）\n`,
+  )
+  protocol = new HostProtocol(entry, cwd, hostEnv(assetsDir))
 
   protocol.onSnapshot((snapshot) => {
     mainWindow?.webContents.send('dsc:snapshot', snapshot)

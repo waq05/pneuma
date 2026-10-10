@@ -38,6 +38,13 @@ export interface DesktopState {
   trayHintShown?: boolean
   /** 窗口大小/位置记忆：关窗与退出时由主进程落盘，下次开窗恢复。 */
   windowBounds?: { width: number; height: number; x: number; y: number; maximized: boolean }
+  /**
+   * 界面形态档案：宿主伺服哪份界面资产。
+   * `'shell'` = 插件壳产物（`lib/ui/assets`），`'legacy'` 或缺省 = 旧渲染层产物
+   * （`desktop/out/renderer`）。这是「打包 profile」的落点——迁移期改这一个字段就能在
+   * 两份界面之间切换与回退，不必重新打包，也不靠环境变量。
+   */
+  ui?: 'shell' | 'legacy'
 }
 
 export function statePath(): string {
