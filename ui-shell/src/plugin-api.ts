@@ -360,4 +360,7 @@ export type {
   UiDensity,
   UiFontSize,
   UiPrefsView,
+  UsageDayView,
+  UsageModelView,
+  UsageStatsView,
 } from '@dsc/ui-core'

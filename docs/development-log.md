@@ -2743,3 +2743,47 @@ class 名照旧界面的文件树与预览写（`.files-pane` / `.files-list` / 
   `removeProvider` 在界面通道排除清单里的直接后果，不是没做完。
 - 「拉取清单」只列出来，不能把线上模型加进端点（加模型要写 `saveProvider`，被排除）。
 - 上面那条宿主机柄问题**未修**（属宿主行为，超出本阶段范围），只记在这里与汇报里。
+
+## 阶段 108（对齐计划 5.4 收尾 4）：设置 → 用量统计面板（热力图 + 趋势 + 模型占比）（未发版）
+
+第四个结构化分区（新模块 `ui-shell/src/plugins/settings/usage.tsx`），数据走界面通道白名单里的
+`usageStats`（**零实参只读**，`src/core/ui-methods.ts:88,247`）。版式整体搬旧桌面端 `UsagePanel.tsx`
+（393 行）：顶部一排汇总卡、GitHub 式 Token 活动年历热力图、每日 Token 趋势折线（近 7/30 日切换）、
+模型用量环形图。图全用内联 SVG / CSS 网格手画，不引图表库。
+
+### 做了什么
+
+- **一行 CSS 都没加**：`usage-*` / `hm-*` / `trend-*` / `donut-*` 样式在 `legacy/views.css:6143-6403`
+  里原样等着（当初整份搬 legacy 的伏笔），`dsc-segmented` 在 `legacy/primitives.css:242`。
+- 三个 `Usage*View` 契约类型补进转出链（`src/ui/index.ts` → `@dsc/ui-core` → `ui-shell/src/plugin-api.ts`，
+  全 `export type` 编译期擦除）。
+- 与旧面板的适配差异只有一处：`proxy.usageStats()` → `channel.invoke<UsageStatsView>('usageStats')`；
+  读取失败就地显示原因 + 重试（旧面板同款，不走 Toast）。
+- 接线：`settings/ui.tsx` 的 custom 分区分发加 `usage → <UsageGroup />`，`NOT_YET` 从三档减到两档
+  （归档 / 远程）。
+- 防御式收尾：`days` 为空不画格子（hooks 先行、条件 return 在后）；`sinceTs` 非空但 `days` 空时
+  说「记录文件可能损坏」而不是白屏。
+
+### 验证（隔离宿主 + 浏览器实机，134 行真形状用量夹具）
+
+- `npx tsc -p tsconfig.json` 全绿；`pnpm -C ui-shell build` 过（12 个插件）；四个界面探针全绿
+  （插件产物 / 伺服 / 事件 42 断言 / 原生桥 53 断言）。
+- 夹具：往 `desktop/shots/ui-settings-home/.dsc/usage/usage.jsonl` 造 40 天 134 行（双模型、
+  带缓存命中、隔几天空档）。
+- 实机读数逐项对上：**134 轮 = 134 行**；汇总卡 6 张（累计 952.3 万 / 峰值 59.7 万 / 活跃 39 天 /
+  当前连续 9 天 / 最长连续 28 天 / 缓存命中 55%）；热力图 365 格 + 13 个月标签；趋势双折线；
+  环形两段（alpha-large / alpha-mini）。
+- 「近 7 日 → 近 30 日」切换生效（aria-selected 翻转，x 轴刻度变 8 个日期刻度）。
+- 版式按 §6.4 口径读计算样式验收：热力图 686×88px（53 列×13px 正好）、满档格色 = `--dsc-accent`
+  蓝、折线/环形两色 = 蓝+绿（`SERIES_COLORS` 前两位）、卡片 grid 排布圆角 10px、页脚 dim——
+  **零写死色值**（截图管线在本页连超两次，按既定口径用计算样式代替肉眼）。
+- 桌面自检 `ui-shell-switch.ps1` 两用例全绿（legacy / shell 各就各位，shell 侧 bootEntries=12、
+  原生桥 v2 就绪、终端与文件面板正常）；真实 `~/.dsc` 跑前跑后逐文件哈希一致（335 文件，
+  聚合 `edf0b67f…`，零污染）。
+
+### 诚实边界
+
+- 归档 / 远程两个结构化分区仍走占位说明（归档的恢复入口在会话栏「归档」页，已有）。
+- 面板只有读数：没有时间范围筛选、没有按会话/按天的下钻——旧桌面端也没有，属于同一能力面。
+- 造的数据是夹具（`usage.jsonl` 手写行），非真实模型请求产生的记录；聚合层的口径没变，
+  走的是宿主 `usageStats` 的真聚合。

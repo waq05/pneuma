@@ -57,6 +57,7 @@ import {
 } from '@dsc/ui'
 import { PresetsGroup } from './presets'
 import { ModelsGroup } from './models'
+import { UsageGroup } from './usage'
 
 /** 拿异常的文字形态（宿主与桥都可能抛 Error，也可能是别的值）。 */
 function text(error: unknown): string {
@@ -229,6 +230,8 @@ function SettingsPanel(): ReactNode {
                 <PresetsGroup />
               ) : section.id === 'models' ? (
                 <ModelsGroup />
+              ) : section.id === 'usage' ? (
+                <UsageGroup />
               ) : (
                 <NotYetPanel section={section} />
               )
@@ -807,12 +810,12 @@ function PluginsGroup(): ReactNode {
  * 结构化分区（`custom`）里，壳这一版还没手画的那几个：说清**为什么没有**、**去哪做**，
  * 不画一个空壳假装有界面。
  *
- * 这五个分区（模型 / 模式 / 技能 / 归档 / 用量）的界面都由桌面端自己画；这一版搬了技能、模式与模型。
+ * 这六个分区（模型 / 模式 / 技能 / 归档 / 用量 / 远程）的界面都由桌面端自己画；
+ * 这一版搬了技能、模式、模型与用量统计。
  */
 const NOT_YET: Readonly<Record<string, string>> = {
   archive:
     '归档会话的恢复在左侧会话栏的「归档」页里已经可用。永久删除（purgeSessions）被有意排除，这里不做。',
-  usage: '用量统计的面板还没搬（Token 活动热力图、趋势与模型占比）。',
   remote: '远程与手机连接的面板还没搬。',
 }
 
