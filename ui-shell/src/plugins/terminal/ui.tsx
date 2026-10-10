@@ -24,7 +24,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import { IconClose, IconTerminal } from '@dsc/ui'
-import { defineUiPlugin, getHostNative, readCssColor, readCssValue, setDockOpen, useDockOpen } from '@dsc/ui'
+import { defineUiPlugin, getHostNative, readCssColor, readCssValue, setDockPanel, useDockPanel } from '@dsc/ui'
 
 /** 支持的 shell：与宿主 `spawnShell` 的白名单一字不差（对不上会被宿主回落成 PowerShell）。 */
 const SHELLS = [
@@ -36,6 +36,9 @@ const SHELLS = [
 ] as const
 
 type ShellId = (typeof SHELLS)[number]['id']
+
+/** 这一块面板在停靠区里的 id（壳拿它决定同一时刻显示哪一块）。 */
+const PANEL = 'terminal'
 
 /** 面板宽度记忆的键（与旧界面同一个键，但两者不同源，不会互相覆盖）。 */
 const WIDTH_KEY = 'dsc.dockWidth'
@@ -64,7 +67,7 @@ export default defineUiPlugin({
 
 /** 顶栏里的开合钮：终端是"进得去出得来"的地方，入口放在常驻可见的顶栏。 */
 function TerminalToggle(): ReactNode {
-  const open = useDockOpen()
+  const open = useDockPanel() === PANEL
   return (
     <button
       type="button"
@@ -73,7 +76,7 @@ function TerminalToggle(): ReactNode {
       aria-label="终端面板"
       aria-pressed={open}
       onClick={() => {
-        setDockOpen(!open)
+        setDockPanel(open ? null : PANEL)
       }}
     >
       <IconTerminal size={16} />
@@ -83,9 +86,14 @@ function TerminalToggle(): ReactNode {
 
 /** 停靠面板：标题条 + 终端。 */
 function DockPanel(): ReactNode {
+  const active = useDockPanel() === PANEL
   const native = getHostNative()
   const [width] = useState(readWidth)
   const [shell, setShell] = useState<ShellId>('pwsh')
+
+  // 停靠区里同一时刻只画一块面板：不是自己就把位置让出去（面积小的那一版，
+  // 将来要"并排"再改成壳按 entries 顺序横排）。
+  if (!active) return null
 
   return (
     <aside className="dock" style={{ width }} data-shell={shell}>
@@ -100,7 +108,7 @@ function DockPanel(): ReactNode {
           title="收起终端面板"
           aria-label="收起终端面板"
           onClick={() => {
-            setDockOpen(false)
+            setDockPanel(null)
           }}
         >
           <IconClose size={15} />

@@ -507,3 +507,38 @@
   font-size: var(--dsc-fs-caption);
   padding: 12px;
 }
+
+/* ── 文件面板（legacy 有 `.files-*` / `.file-*` 那一套，这里只补它没有的几处）── */
+/* 选中的文件行：与 hover 同底色，但常亮（点完鼠标移开还要看得出在看哪个）。 */
+.file-row.on {
+  background: var(--dsc-row-active-bg);
+  color: var(--dsc-text-primary);
+}
+/* 树行右端的大小：靠右、等宽数字，短行也不会因为它左右晃。 */
+.file-size {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  font-size: var(--dsc-fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+/* 预览区：`.files-pane` 是纵向 flex，预览占下半（旧界面里两者是页签/分栏，这一版上下排）。 */
+.shell-files-preview {
+  border-top: 1px solid var(--dsc-stroke-4);
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+/* 纯文本预览的行号列（legacy 的 `.file-code-body .line::before` 是给 shiki 用的，
+   这一版没有 shiki，行号由 JSX 画成 `.file-line-no`）。 */
+.file-line-no {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  padding-right: 10px;
+  text-align: right;
+  user-select: none;
+  width: 3.2em;
+}
+.file-code-plain .line {
+  display: flex;
+}

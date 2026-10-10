@@ -20,7 +20,7 @@ import { ALLOWED_MODULES } from './boot'
 import { useChannelStatus, useHostError, useHostHello, useHostSelector } from './runtime-context'
 import { SlotOutlet, useSlotFaults } from './slots-react'
 import { SLOT } from './slots'
-import { getHostNative, useDockOpen, type UiSlots } from './plugin-api'
+import { getHostNative, useDockPanel, type UiSlots } from './plugin-api'
 
 /** 应用参数。 */
 export interface AppProps {
@@ -31,7 +31,7 @@ export interface AppProps {
 
 export function App({ slots, boot, reports }: AppProps): ReactNode {
   const failed = reports.filter((report) => !report.ok)
-  const dockOn = useDockOpen()
+  const dockOn = useDockPanel() !== null
   return (
     <>
       <div className="app">

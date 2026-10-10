@@ -12,24 +12,30 @@
  * @module dsc-ui-shell/dock-state
  */
 
-let open = false
+/**
+ * 当前打开的是哪一块面板（`null` = 收起）。
+ *
+ * 为什么是"面板 id"而不是一个布尔：停靠区里可以有几块互斥的面板（终端 / 文件与预览），
+ * 同一时刻只该显示一块，而"谁被点开了"这件事只能有一个真源。头栏那几颗开合钮
+ * 各自写自己的 id，面板自己比对 id 决定画不画——两侧都不必认识对方。
+ */
+let panel: string | null = null
 const listeners = new Set<() => void>()
 
-/** 停靠面板现在开着吗（`useSyncExternalStore` 的取数函数）。 */
-export function dockOpen(): boolean {
-  return open
+/** 现在开的是哪一块面板（`useSyncExternalStore` 的取数函数；null = 收起）。 */
+export function dockPanel(): string | null {
+  return panel
 }
 
 /**
- * 开 / 收停靠面板。
+ * 打开某一块面板（`null` = 收起）。
  *
- * 面板的**内容**由插件自己决定渲染什么（现在只有终端）；收起时壳不渲染
- * `shell.dock` 这个槽，于是插件那一块被卸载——这是有意的：
- * 收起面板不该在布局里留一条看不见的占位。
+ * 面板的**内容**由插件自己决定渲染什么；收起时壳不渲染 `shell.dock` 这个槽，
+ * 于是所有面板都被卸载——这是有意的：收起面板不该在布局里留一条看不见的占位。
  */
-export function setDockOpen(next: boolean): void {
-  if (next === open) return
-  open = next
+export function setDockPanel(next: string | null): void {
+  if (next === panel) return
+  panel = next
   for (const listener of listeners) listener()
 }
 

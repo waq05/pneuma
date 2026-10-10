@@ -24,7 +24,7 @@ import type {
   UiSlotApi,
 } from '@dsc/ui-core'
 import { NATIVE_BRIDGE_VERSION, type NativeEvent, type NativeOp } from '@dsc/ui-core'
-import { dockOpen, subscribeDock } from './dock-state'
+import { dockPanel, subscribeDock } from './dock-state'
 
 /**
  * 壳交给插件组件的渲染能力（每个条目都有）。
@@ -196,16 +196,16 @@ export function useHostNative(): HostNative {
  * 插件这样用：在 `shell.header` 里放一颗开合钮（写状态），在 `shell.dock` 里放面板本身
  * （读状态自己决定画什么；收起时壳根本不渲染这个槽）。
  */
-export { setDockOpen } from './dock-state'
+export { setDockPanel } from './dock-state'
 
-/** 停靠面板开着吗（订阅式；壳与插件都能用）。 */
-export function useDockOpen(): boolean {
-  return useSyncExternalStore(subscribeDock, dockOpen, () => false)
+/** 现在开着哪一块停靠面板（订阅式；`null` = 收起）。 */
+export function useDockPanel(): string | null {
+  return useSyncExternalStore(subscribeDock, dockPanel, () => null)
 }
 
 /** 槽名常量表也从这里转出去：插件写 `SLOT.header` 比手打字符串不容易错。 */
 export { SLOT, type ShellSlot } from './slots'
-export { subscribeDock, dockOpen } from './dock-state'
+export { subscribeDock, dockPanel } from './dock-state'
 
 /**
  * ── 读一个 CSS 变量算出来的颜色 ─────────────────────────────────────────────────
