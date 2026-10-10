@@ -23,8 +23,16 @@ export const SLOT = {
   sidebar: 'shell.sidebar',
   /** 主区域：一张一张卡片。 */
   main: 'shell.main',
-  /** 底部状态条右侧。 */
-  statusbarRight: 'statusbar.right',
+  /**
+   * 输入区：输入框、排队条与插在输入框上方的各种卡（审批 / 提问 / 计划）。
+   *
+   * 为什么把卡也放进来：旧界面里它们就是输入区这个纵向容器里的兄弟节点，上下顺序
+   * 由 `order` 定（卡在前、输入框在中、排队条在后）。拆成两个槽的话，「卡在输入框上方」
+   * 这条布局关系就得靠壳的硬编码去维持，而它本来是插件之间的一次排序。
+   */
+  composer: 'shell.composer',
+  /** 底部状态栏：一段一段的读数，居中排。 */
+  statusbar: 'shell.statusbar',
   /** 播报区：一句话的提示（同一时刻只显示第一条）。 */
   notice: 'shell.notice',
 } as const
@@ -34,7 +42,8 @@ export const SHELL_SLOTS: Readonly<Record<string, SlotKind>> = {
   [SLOT.header]: 'list',
   [SLOT.sidebar]: 'list',
   [SLOT.main]: 'list',
-  [SLOT.statusbarRight]: 'list',
+  [SLOT.composer]: 'list',
+  [SLOT.statusbar]: 'list',
   [SLOT.notice]: 'single',
 }
 

@@ -43,12 +43,12 @@ function RuntimeCard() {
   }
 
   return (
-    <div className="runtime-card">
+    <div className="shell-runtime">
       <h2>运行时状态</h2>
-      <p className="runtime-hint">
+      <p className="shell-runtime-hint">
         这些数字来自宿主推来的帧（SSE），不是写死的；按钮真的会调宿主的方法。
       </p>
-      <dl className="runtime-grid">
+      <dl className="shell-runtime-grid">
         <Row label="连接" value={status === 'open' ? '已连接' : status === 'connecting' ? '连接中…' : '已断开'} />
         <Row label="帧号" value={snapshot === null ? '等第一帧' : String(snapshot.seq)} />
         <Row label="已定稿条目" value={String(snapshot?.entries.length ?? 0)} />
@@ -66,7 +66,7 @@ function RuntimeCard() {
         {busy ? '调用中…' : '调宿主方法 listTools'}
       </button>
       {probe === null ? null : (
-        <p className={probe.ok ? 'runtime-probe ok' : 'runtime-probe bad'} data-probe={probe.ok ? 'ok' : 'bad'}>
+        <p className={probe.ok ? 'shell-runtime-probe ok' : 'shell-runtime-probe bad'} data-probe={probe.ok ? 'ok' : 'bad'}>
           {probe.text}
         </p>
       )}

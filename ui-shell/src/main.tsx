@@ -12,17 +12,45 @@
  */
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { SlotRegistry, type UiBootGraph, type UiPluginLoadResult } from '@dsc/ui-core'
+import { SlotRegistry, type UiBootGraph, type UiPluginLoadResult, type UiPrefsView } from '@dsc/ui-core'
 import { readBootGraph, loadUiPlugins } from './boot'
 import { createHostChannel } from './host-channel'
 import { RuntimeProvider } from './runtime-context'
 import { SHELL_SLOTS } from './slots'
 import { App } from './app'
 import type { UiComponent, UiSlots } from './plugin-api'
+import { applyAppearance, appearanceFromPrefs, loadCachedAppearance, saveCachedAppearance } from './appearance'
+// 顺序即层叠：令牌 → 全局基线 → 原语 → 各视图（从旧渲染层原样搬来的四份）
+// → 壳自己的补充。反了就会互相覆盖，与旧渲染层 main.tsx:6-9 同一套次序。
+import './legacy/tokens.css'
+import './legacy/base.css'
+import './legacy/primitives.css'
+import './legacy/views.css'
 import './styles.css'
 
 /** 什么都没装上时的装载结果（清单取不到也要起壳，不能白屏）。 */
 const NOTHING_LOADED: UiPluginLoadResult = { reports: [], disposeAll: () => undefined }
+
+/**
+ * 首帧先按上次的外观镜像上色，再向宿主问一次真值。
+ *
+ * 为什么要有镜像这一手：宿主回读是异步的，等它回来才上色的话，浅色主题的用户每次
+ * 打开都会先闪一下深色。镜像读不出来就按默认深色起，不影响后面这一次覆盖。
+ *
+ * 为什么失败只告警不抛：外观拿不到顶多是配色不对，界面还能用；把启动卡死在这里
+ * 才是真的用不了。
+ */
+async function syncAppearance(channel: ReturnType<typeof createHostChannel>): Promise<void> {
+  applyAppearance(loadCachedAppearance())
+  try {
+    const prefs = await channel.invoke<UiPrefsView>('getUiPrefs')
+    const appearance = appearanceFromPrefs(prefs)
+    applyAppearance(appearance)
+    saveCachedAppearance(appearance)
+  } catch (error) {
+    console.warn('[ui-shell] 读界面偏好失败，沿用上次的外观镜像', error)
+  }
+}
 
 async function bootstrap(): Promise<void> {
   const container = document.getElementById('root')
@@ -32,8 +60,11 @@ async function bootstrap(): Promise<void> {
   const slots: UiSlots = new SlotRegistry<UiComponent>()
   const declared = Object.entries(SHELL_SLOTS).map(([slot, kind]) => slots.declare(slot, kind))
 
-  // 2. 宿主数据通道（异步连，失败也会自己重连）。
+  // 2. 宿主数据通道（异步连，失败也会自己重连）+ 外观。
+  // 外观**不 await**：函数体在第一个 await 之前就把上次的镜像涂上去了，首帧已经是对的颜色，
+  // 等宿主回读回来再覆盖一次。await 的话，宿主卡住时最坏要等一次 invoke 超时（30 秒）才出首帧。
   const channel = createHostChannel()
+  void syncAppearance(channel)
 
   // 3. 启动清单 + 装插件。清单取不到也要起壳：空壳 + 一条诊断，比白屏好查。
   let boot: UiBootGraph = { rev: 'unavailable', entries: [], host: { name: 'Muse Code', version: '未知版本' } }

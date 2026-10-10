@@ -1,16 +1,22 @@
 /**
- * 界面壳的最小应用：顶栏 + 主区 + 状态条 + 诊断区。
+ * 界面壳的应用骨架：侧栏 + 主区（顶栏 / 消息流 / 输入区 / 状态栏）+ 诊断区。
  *
- * 这一版刻意什么都不"自带"——它只声明槽、把宿主身份显示出来、把插件加载报告摊开，
- * 界面上的每一块都由插件放进来。这样"清单 → 下发 → 槽位注册 → 渲染"这条链
- * 是不是真的通了，一眼就能看出来（有卡片 = 通了；诊断区有红字 = 哪个插件没起来）。
+ * **这一层的 class 名与嵌套是照旧桌面界面 `App.tsx` 写的**，所以壳自己一行样式都不用写：
+ * `.app`（flex 行）→ `.sidebar` + `.main`（flex 列）→ `.topbar` / `.thread-zone` /
+ * `.statusbar` 全部吃 `legacy/views.css` 里现成的规则。壳新增的东西（诊断面板、宿主
+ * 异常条、数据通道状态）写在 `styles.css` 里，与旧界面那套一眼能分开。
+ *
+ * 为什么槽条目要做成 `display:contents`（见 `styles.css`）：旧界面的布局规则全是按
+ * **直接子节点**写的——侧栏是 flex 列、聊天区是 flex 列、输入区靠 `.composer-zone > *`
+ * 定宽。壳为了给每个条目套错误边界必须多包一层 div，那一层会把上面这些规则全部挡掉。
+ * `display:contents` 让这一层不生成盒子，插件放进去的东西就等于直接挂在外壳里。
  *
  * @module dsc-ui-shell/app
  */
 import type { ReactNode } from 'react'
 import type { UiBootGraph, UiPluginLoadReport } from '@dsc/ui-core'
 import { ALLOWED_MODULES } from './boot'
-import { useChannelStatus, useHostError, useHostHello } from './runtime-context'
+import { useChannelStatus, useHostError, useHostHello, useHostSelector } from './runtime-context'
 import { SlotOutlet, useSlotFaults } from './slots-react'
 import { SLOT } from './slots'
 import type { UiSlots } from './plugin-api'
@@ -25,41 +31,67 @@ export interface AppProps {
 export function App({ slots, boot, reports }: AppProps): ReactNode {
   const failed = reports.filter((report) => !report.ok)
   return (
-    <div className="shell">
-      <header className="shell-header">
-        <span className="brand">{boot.host.name}</span>
-        <span className="version">{boot.host.version}</span>
-        <ChannelState />
-        <span className="spacer" />
-        <SlotOutlet slots={slots} slot={SLOT.header} />
-      </header>
-
-      <HostErrorStrip />
-
-      <div className="shell-body">
-        <aside className="shell-sidebar">
+    <>
+      <div className="app">
+        <aside className="sidebar">
+          <div className="sidebar-header">
+            <span className="brand">{boot.host.name}</span>
+            <ChannelState />
+          </div>
           <SlotOutlet slots={slots} slot={SLOT.sidebar} />
         </aside>
-        <main className="shell-main">
+
+        <div className="main">
+          <div className="topbar">
+            <div className="topbar-title-row">
+              <span className="title">
+                <SessionTitle />
+              </span>
+              <div className="drag-fill" />
+              <SlotOutlet slots={slots} slot={SLOT.header} />
+              <span className="shell-build" data-boot-rev={boot.rev}>
+                {boot.host.version}
+              </span>
+            </div>
+          </div>
+
+          <HostErrorStrip />
+
+          <div className="thread-zone">
+            <div className="thread-main">
+              <div className="chat-wrap">
+                <div className="chat">
+                  <div className="chat-inner">
+                    <SlotOutlet slots={slots} slot={SLOT.main} />
+                  </div>
+                </div>
+              </div>
+              <div className="composer-zone">
+                <SlotOutlet slots={slots} slot={SLOT.composer} />
+              </div>
+            </div>
+          </div>
+
+          <div className="statusbar">
+            <SlotOutlet slots={slots} slot={SLOT.statusbar} />
+          </div>
+        </div>
+
+        {/* 播报区用旧界面的浮层容器（`.dsc-toasts`），空着时它自己不可见。 */}
+        <div className="dsc-toasts">
           <SlotOutlet slots={slots} slot={SLOT.notice} />
-          <SlotOutlet slots={slots} slot={SLOT.main} />
-        </main>
+        </div>
       </div>
 
-      <footer className="shell-statusbar">
-        <span data-field="plugins">
-          插件 {reports.length - failed.length}/{reports.length}
-        </span>
-        <span data-field="slots">槽 {slots.slots.length}</span>
-        <span data-field="entries">登记 {slots.size}</span>
-        <span data-field="boot-rev">清单 {boot.rev}</span>
-        <span className="spacer" />
-        <SlotOutlet slots={slots} slot={SLOT.statusbarRight} />
-      </footer>
-
-      <Diagnostics slots={slots} boot={boot} reports={reports} />
-    </div>
+      <Diagnostics slots={slots} boot={boot} reports={reports} failed={failed.length} />
+    </>
   )
+}
+
+/** 顶栏标题：当前会话的显示名；找不到就说「新会话」（旧界面同一口径）。 */
+function SessionTitle(): ReactNode {
+  const title = useHostSelector(readSessionTitle)
+  return <>{title}</>
 }
 
 /**
@@ -78,20 +110,28 @@ function HostErrorStrip(): ReactNode {
   )
 }
 
-/** 顶栏上的连接状态：数据通道通不通、握手拿到的协议版本是多少。 */
+/** 侧栏头上的数据通道状态：通不通、协议版本、放行了多少方法。 */
 function ChannelState(): ReactNode {
   const status = useChannelStatus()
   const hello = useHostHello()
   const text =
     status === 'open'
-      ? '已连接宿主'
+      ? '已连接'
       : status === 'connecting'
-        ? '连接宿主中…'
-        : '宿主已断开（宿主重启后令牌会失效，请用新打印的地址重新打开）'
+        ? '连接中…'
+        : '已断开（请用宿主新打印的地址重开）'
   return (
-    <span className="channel-state" data-channel={status} data-protocol={hello?.protocolVersion ?? ''}>
+    <span
+      className="channel-state"
+      data-channel={status}
+      data-protocol={hello?.protocolVersion ?? ''}
+      data-tip={
+        hello === null
+          ? '还没拿到宿主握手'
+          : `协议 v${String(hello.protocolVersion)}，放行 ${String(hello.methods.length)} 个方法`
+      }
+    >
       {text}
-      {hello === null ? '' : ` · 协议 v${String(hello.protocolVersion)} · 放行 ${String(hello.methods.length)} 个方法`}
     </span>
   )
 }
@@ -101,14 +141,16 @@ function Diagnostics({
   slots,
   boot,
   reports,
+  failed,
 }: {
   slots: UiSlots
   boot: UiBootGraph
   reports: readonly UiPluginLoadReport[]
+  failed: number
 }): ReactNode {
   const faults = useSlotFaults(slots)
   return (
-    <details className="diagnostics" open={reports.some((report) => !report.ok) || faults.length > 0}>
+    <details className="diagnostics" open={failed > 0 || faults.length > 0}>
       <summary>
         诊断（{reports.length} 个插件 / {slots.slots.length} 个槽
         {faults.length === 0 ? '' : ` / ${String(faults.length)} 处故障`}）
@@ -142,4 +184,21 @@ function Diagnostics({
       <p className="diag-line">放行的模块：{ALLOWED_MODULES.join('、')}</p>
     </details>
   )
+}
+
+/** 当前会话的显示名：从会话列表里按 `status.sessionPath` 找。 */
+function readSessionTitle(snapshot: Record<string, unknown> | null): string {
+  const status = snapshot?.['status']
+  const sessions = snapshot?.['sessions']
+  if (typeof status !== 'object' || status === null || !Array.isArray(sessions)) return '新会话'
+  const path = (status as Record<string, unknown>)['sessionPath']
+  if (typeof path !== 'string') return '新会话'
+  for (const item of sessions) {
+    if (typeof item !== 'object' || item === null) continue
+    const record = item as Record<string, unknown>
+    if (record['id'] !== path) continue
+    const title = record['title']
+    return typeof title === 'string' && title !== '' ? title : '新会话'
+  }
+  return '新会话'
 }

@@ -1,337 +1,730 @@
 /**
- * 内置插件：对话消息流。
+ * 内置插件：对话消息流（对照旧桌面界面 `ChatView.tsx` 的座位与逐行渲染）。
  *
- * 数据是宿主推来的转录条目（已定稿的 `entries` + 正在流式的 `liveEntries`），
- * 按 `kind` 分别渲染。这一版刻意**只读**：输入、审批、提问都还没搬过来，
- * 所以它画得出「发生了什么」，但用户还不能从这里回话。
+ * 三条与旧界面一致的结构约定，改的时候别破坏：
  *
- * 两条刻意的取舍：
+ *   1. **一轮一个 `.turn-seat`**：旧界面把「用户消息 → 过程 → 最终回答 → 改动卡 → 轮尾」
+ *      装进一个座位，行距靠 `.turn-seat` 的 `gap` 加几条 `:has()` 补差
+ *      （views.css:8466-8485）。我们同样按「遇到 user 条目就开新座位」切分，于是那些
+ *      行距规则原样生效。还没进任何一轮的条目挂在 `.chat-inner` 下，与旧界面一致。
+ *   2. **一行一个 `.entry-row`**：`data-round` 是本轮序号（0 基）。
+ *   3. **右缘刻度条、整轮折叠、阶段组、吸附快捷栏这一版没搬**：它们各自要一套滚动与
+ *      折叠状态机（`.turn-fold` / `.step-seat` / `.think-bar` / `.tc-bar`），是下一步的活。
+ *      所以长会话的过程行现在全部直着排，不会被折起来。
  *
- *   1. **每行一个错误边界**：整个消息流是**一条**槽登记，一行渲染抛异常不该让
- *      整条流退位（壳的错误边界是按条目退位的，粒度太粗）。所以插件自己在行级兜一层。
- *   2. **markdown 还没渲染**：正文按 `pre-wrap` 原样显示。老渲染层有完整的一份
- *      markdown（代码块高亮、表格、链接），搬它是一整步，不塞在这一步里混做。
+ * 与旧界面已知的差异（都是「功能还没有」而不是「样式对不上」）：
+ *   - 正文不渲染 markdown，纯文本走 `.shell-plain` 保住换行；
+ *   - 用户消息下面那颗「编辑并重发」不画（宿主侧的分叉/重发入口还没接）；
+ *   - 队友卡旧消息流里没有对应物，这一块是壳自己补的（`.shell-subagent`）。
+ *
+ * 样式与 class 名照抄旧版（`ui-shell/src/legacy/views.css`，行号同旧 `styles.css`）：
+ * `.chat-inner` 1297、`.turn-seat` 8466、`.entry-row` 6852、`.entry-user` 1307、
+ * `.entry-text` 1319、`.think-block` 7208、`.entry.tool-card` 1832、`.entry-system` 1442、
+ * `.plan-card` 6632、`.changes-card` 9469、`.round-foot` 7001、`.diff-*` 9762 起。
  *
  * @module dsc-ui-shell/plugins/transcript
  */
-import { Component, useEffect, useRef, type ReactElement, type ReactNode } from 'react'
+import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { IconChevronDown, IconCode, IconCopy, IconSpark } from '@dsc/ui'
 import {
   defineUiPlugin,
-  useHostSnapshot,
+  useHostSelector,
   type ChangedFileView,
-  type SubagentCardView,
-  type ToolCallView,
-  type ToolStatus,
+  type DiffHunkView,
+  type HostSnapshot,
   type TranscriptEntry,
 } from '@dsc/ui'
 
-/** 条目本来就带 id（宿主发的正数），这里把它并进联合类型，渲染时直接用得上。 */
-type Entry = TranscriptEntry & { id: number }
+/** 空的条目表：没拿到快照时共用一份，省得每帧新建数组。 */
+const NO_ENTRIES: readonly TranscriptEntry[] = Object.freeze([])
 
 export default defineUiPlugin({
-  name: '对话消息流',
+  name: '消息流',
   apply(ui) {
-    // order 1：主区的主体。
-    ui.slots.register('shell.main', { id: 'transcript.flow', order: 1 }, Transcript)
+    ui.slots.register('shell.main', { id: 'transcript.flow', order: 1 }, TranscriptFlow)
   },
 })
 
-function Transcript() {
-  const snapshot = useHostSnapshot()
-  const entries = (snapshot?.entries ?? []) as Entry[]
-  const live = (snapshot?.liveEntries ?? []) as Entry[]
-  const endRef = useRef<HTMLDivElement | null>(null)
+/** 座位里的一行：条目 + 它是不是「正在直播的那一条」（直播行多一个光标与展开态）。 */
+interface Row {
+  entry: TranscriptEntry
+  live: boolean
+}
+
+/** 一轮的座位。`round` 是序号（0 基），写进 `.entry-row` 的 `data-round`。 */
+interface Seat {
+  round: number
+  rows: Row[]
+}
+
+/**
+ * 跟着底部的自动滚动：用户停在底部时新条目进来就跟着走，自己往上翻过就不打扰。
+ *
+ * 阈值 160px 是旧界面的口径（离底不到一屏零头都算「还在底部」），照抄避免两处手感不同。
+ * 为什么要传 `dep`：条目数组每帧都是新的，拿引用当依赖会让每次快照都强制滚一次，
+ * 用户往上翻立刻被拽回去。
+ */
+function useFollowBottom(dep: number): (node: HTMLDivElement | null) => void {
+  const [end, setEnd] = useState<HTMLDivElement | null>(null)
+  const pinned = useRef(true)
 
   useEffect(() => {
-    const end = endRef.current
-    if (end === null) return
-    const scroller = end.closest('.shell-main')
-    if (!(scroller instanceof HTMLElement)) return
-    const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
-    // 只在「本来就在底部附近」时跟着滚：用户翻上去看历史时不该被拽回来。
-    if (distance > 160) return
-    end.scrollIntoView({ block: 'end' })
-  }, [entries.length, live.length, snapshot?.seq])
+    const scroller = end?.closest('.chat')
+    if (!(scroller instanceof HTMLElement)) return undefined
+    const onScroll = (): void => {
+      pinned.current = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 160
+    }
+    onScroll()
+    scroller.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      scroller.removeEventListener('scroll', onScroll)
+    }
+  }, [end])
 
-  if (snapshot === null) {
-    return <p className="flow-empty">等宿主推第一帧…</p>
+  useEffect(() => {
+    if (!pinned.current) return
+    const scroller = end?.closest('.chat')
+    if (scroller instanceof HTMLElement) scroller.scrollTop = scroller.scrollHeight
+  }, [end, dep])
+
+  return setEnd
+}
+
+function TranscriptFlow(): ReactNode {
+  const entries = useHostSelector(readEntries)
+  const live = useHostSelector(readLive)
+  const seats = useMemo(() => buildSeats(entries, live), [entries, live])
+  const endRef = useFollowBottom(entries.length + live.length)
+
+  if (seats.leading.length === 0 && seats.rounds.length === 0) {
+    return <div className="sidebar-empty">这一段还没有对话。</div>
   }
-  if (entries.length === 0 && live.length === 0) {
-    return <p className="flow-empty">这条会话还没有内容。发一条消息就开始。</p>
-  }
+
   return (
-    <div className="flow" data-entries={entries.length} data-live={live.length}>
-      {entries.map((entry) => (
-        <Row key={entry.id} entry={entry} live={false} />
+    <>
+      {seats.leading.map((row) => (
+        <RowBoundary key={keyOf(row)} entry={row.entry}>
+          <div className="entry-row">
+            <RowBody row={row} />
+          </div>
+        </RowBoundary>
       ))}
-      {live.map((entry) => (
-        <Row key={entry.id} entry={entry} live />
+      {seats.rounds.map((seat) => (
+        <div className="turn-seat" data-round-seat={seat.round} key={seat.round}>
+          <SeatBody seat={seat} />
+        </div>
       ))}
-      <div ref={endRef} className="flow-end" />
-    </div>
+      <div ref={endRef} />
+    </>
   )
 }
 
-/** 一行：先按 kind 选择画法，整行套一个边界（一行坏了不影响别的行）。 */
-function Row({ entry, live }: { entry: Entry; live: boolean }): ReactNode {
+/** 一个座位的全部行：过程行与正文行 + 改动卡 + 轮尾。 */
+function SeatBody({ seat }: { seat: Seat }): ReactNode {
   return (
-    <RowBoundary id={entry.id} kind={String(entry.kind)}>
-      <div className={live ? 'row live' : 'row'} data-kind={String(entry.kind)} data-entry-id={entry.id}>
-        <RowBody entry={entry} />
-      </div>
-    </RowBoundary>
+    <>
+      {seat.rows.map((row) => (
+        <RowBoundary key={keyOf(row)} entry={row.entry}>
+          <div className="entry-row" data-round={seat.round}>
+            <RowBody row={row} />
+          </div>
+        </RowBoundary>
+      ))}
+      <ChangesCard rows={seat.rows} />
+      <RoundFoot rows={seat.rows} />
+    </>
   )
 }
 
-function RowBody({ entry }: { entry: Entry }): ReactNode {
+/** 一行的内容：按条目种类分派。 */
+function RowBody({ row }: { row: Row }): ReactNode {
+  const entry = row.entry
   switch (entry.kind) {
     case 'user':
       return <UserRow entry={entry} />
     case 'text':
-      return <TextRow entry={entry} />
+      return (
+        <div className={row.live ? 'entry-text live' : 'entry-text'}>
+          {/* 不套真正的 markdown：壳里还没有渲染器，纯文本走 .shell-plain 保住换行。 */}
+          <div className="markdown">
+            <p className="shell-plain">{entry.text}</p>
+          </div>
+        </div>
+      )
     case 'thinking':
-      return <ThinkingRow entry={entry} />
+      return <ThinkRow entry={entry} live={row.live} />
     case 'tool':
       return <ToolRow entry={entry} />
     case 'system':
-      return <SystemRow entry={entry} />
-    case 'turn-end':
-      return (
-        <p className="row-turn-end" data-reason={entry.reason}>
-          {entry.reason === 'completed' ? '这一轮结束' : entry.reason === 'aborted' ? '这一轮被中断' : '这一轮出错结束'}
-        </p>
-      )
+      return <div className="entry-system">{entry.text}</div>
     case 'turn-max-tokens':
-      return <p className="row-dim">输出撞上了长度上限</p>
+      return (
+        <div className="entry-system" data-turn-notice="max-tokens">
+          这一轮的输出达到长度上限，已被截断
+        </div>
+      )
     case 'model-retry':
       return (
-        <p className="row-dim">
-          模型请求失败，正在重试（第 {entry.attempt} 次）：{oneLine(entry.text, 120)}
-        </p>
+        <div className="entry-system" data-turn-notice="model-retry">
+          模型请求失败，正在重试（第 {entry.attempt} 次）：{entry.text}
+        </div>
       )
+    case 'turn-end':
+      // 旧界面这一条不上屏（结束状态写在整轮开关那一行）。我们还没有那一行，
+      // 于是只把「没好好答完」的两种原因显出来——正常结束保持安静。
+      if (entry.reason === 'completed') return null
+      return <div className="entry-system">{entry.reason === 'aborted' ? '这一轮被中断' : '这一轮过程失败'}</div>
     case 'plan':
       return (
-        <div className="row-card">
-          <p className="row-card-head">
-            计划 · {entry.plan.title}
-            <span className="row-tag" data-decision={entry.plan.decision}>
-              {entry.plan.decision === 'pending' ? '等你批' : entry.plan.decision === 'approved' ? '已批准' : '已拒绝'}
+        <div className={`plan-card ${entry.plan.decision === 'pending' ? 'pending' : 'settled'}`}>
+          <div className="plan-head">
+            <span className="plan-title">{entry.plan.title}</span>
+            <span className="plan-verdict">
+              {entry.plan.decision === 'pending' ? '等你批' : entry.plan.decision === 'approved' ? '已批准' : '未批准'}
             </span>
-          </p>
-          <pre className="row-pre">{entry.plan.text}</pre>
-          <p className="row-dim">{entry.plan.file}</p>
+          </div>
+          <pre className="plan-body">{entry.plan.text}</pre>
+          <div className="plan-foot">
+            <span className="plan-file" title={entry.plan.file}>
+              {entry.plan.file}
+            </span>
+          </div>
         </div>
       )
     case 'subagent':
-      return <SubagentRow card={entry.sub} />
+      return <SubagentRow entry={entry} />
     case 'changes':
-      return <ChangedRow file={entry.file} />
     case 'turnDiff':
-      return (
-        <div className="row-card">
-          <p className="row-card-head">本回合改动的文件（{entry.files.length}）</p>
-          {entry.files.map((file) => (
-            <ChangedRow key={file.path} file={file} />
-          ))}
-        </div>
-      )
-    default:
-      // 认不出的种类照样上屏（说清是什么），比整条流少一块好查。
-      // 类型上这里已经是 never（联合类型被穷尽），所以只能从原对象上取名字。
-      return <p className="row-dim">认不出的条目：{String((entry as { kind?: unknown }).kind)}</p>
+      // 这两种条目本身不上屏：同一轮里的改动聚合成轮尾一张卡（见 ChangesCard）。
+      return null
+    default: {
+      // 宿主加了新种类而壳还没跟上时，显式说一句，不要静悄悄地少一块。
+      const kind = (entry as { kind?: unknown }).kind
+      return <div className="entry-system">认不出的条目：{String(kind)}</div>
+    }
   }
 }
 
-/** 用户消息：气泡 + 图上缩略图 + 「插话 / 压缩 / 非人打的」标记。 */
-function UserRow({ entry }: { entry: Extract<Entry, { kind: 'user' }> }): ReactElement {
-  return (
-    <div className="row-user">
-      <div className="row-user-bubble">
-        {entry.internal === true ? (
-          <p className="row-dim">子任务状态更新</p>
-        ) : null}
-        <p className="row-text">{entry.text}</p>
-        {(entry.images ?? []).length === 0 ? null : (
-          <p className="row-images">
-            {entry.images?.map((source, index) => (
-              <img key={index} src={source} alt={`附图 ${String(index + 1)}`} />
-            ))}
-          </p>
-        )}
+/** 用户消息：气泡 + 贴图条。 */
+function UserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'user' }> }): ReactNode {
+  // 运行时投递进来的消息（队友汇报）不拿它当人打的字渲染，与旧界面一致地压成一行。
+  if (entry.internal === true) {
+    return (
+      <div className="entry-system" data-internal="1" title={entry.text}>
+        子任务状态更新
       </div>
-      <p className="row-tags">
-        {entry.ts === undefined ? null : <span>{clock(entry.ts)}</span>}
-        {entry.steering === true ? <span className="row-tag">插话</span> : null}
-        {entry.compaction === undefined ? null : <span className="row-tag">第 {entry.compaction.count} 次压缩</span>}
-      </p>
+    )
+  }
+  return (
+    <div className="user-turn">
+      <div className="entry-user">
+        {entry.images === undefined || entry.images.length === 0 ? null : (
+          <div className="entry-user-images">
+            {entry.images.map((url, index) => (
+              <a key={index} href={url} target="_blank" rel="noreferrer" data-tip="点开看原图">
+                <img src={url} alt={`第 ${String(index + 1)} 张贴图`} />
+              </a>
+            ))}
+          </div>
+        )}
+        {entry.text}
+      </div>
     </div>
   )
 }
 
-/** 助手正文。 */
-function TextRow({ entry }: { entry: Extract<Entry, { kind: 'text' }> }): ReactElement {
+/** 思考块：可折的一行头 + 原文体。旧界面默认收起，跑动中的那一条永远展开。 */
+function ThinkRow({
+  entry,
+  live,
+}: {
+  entry: Extract<TranscriptEntry, { kind: 'thinking' }>
+  live: boolean
+}): ReactNode {
+  const [open, setOpen] = useState(live)
+  const firstLine = entry.text.split('\n', 1)[0]?.replaceAll('**', '').trim() ?? ''
+  const toggle = (): void => {
+    setOpen((current) => !current)
+  }
   return (
-    <div className="row-assistant">
-      <p className="row-text">{entry.text}</p>
-      <UsageLine usage={entry.usage} ts={entry.ts} />
-    </div>
-  )
-}
-
-/** 思考：默认收起，展开才看正文（默认档位下它是最长的那块）。 */
-function ThinkingRow({ entry }: { entry: Extract<Entry, { kind: 'thinking' }> }): ReactElement {
-  const seconds = entry.durationMs === undefined ? null : Math.round(entry.durationMs / 1000)
-  return (
-    <details className="row-thinking">
-      <summary>
-        思考{seconds === null || seconds < 1 ? '' : ` · ${String(seconds)} 秒`} · {oneLine(entry.text, 40)}
-      </summary>
-      <pre className="row-pre">{entry.text}</pre>
-    </details>
-  )
-}
-
-/** 工具调用：一行摘要（状态点 + 工具名 + 耗时），展开看参数与结果。 */
-function ToolRow({ entry }: { entry: Extract<Entry, { kind: 'tool' }> }): ReactElement {
-  const call: ToolCallView = entry.call
-  return (
-    <details className="row-tool" data-status={call.status}>
-      <summary>
-        <span className="row-dot" data-status={call.status} title={statusLabel(call.status)} />
-        <code className="row-tool-name">{call.name}</code>
-        {call.durationMs === undefined ? null : <span className="row-dim">{formatMs(call.durationMs)}</span>}
-        {call.status === 'running' ? <span className="row-dim">跑着…</span> : null}
-        {call.status === 'failed' || call.status === 'rejected' ? (
-          <span className="row-tag bad">{statusLabel(call.status)}</span>
-        ) : null}
-        <span className="row-tool-args">{oneLine(call.argsText, 80)}</span>
-      </summary>
-      <div className="row-tool-body">
-        {call.argsText === '' ? null : <pre className="row-pre">{call.argsText}</pre>}
-        {call.resultText === undefined || call.resultText === '' ? null : (
+    <div className={`think-block${open ? ' open' : ''}`} data-state={live ? 'running' : 'ok'}>
+      <div
+        className="think-head"
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        data-tip={open ? '点击收起这段思考过程' : '点击展开这段思考过程'}
+        onClick={toggle}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return
+          event.preventDefault()
+          toggle()
+        }}
+      >
+        <IconSpark size={12} className="think-star" />
+        <span className="think-label">思考过程</span>
+        {firstLine === '' ? null : (
           <>
-            <p className="row-dim">结果</p>
-            <pre className="row-pre">{clip(call.resultText, 4000)}</pre>
+            <span className="think-dot" aria-hidden="true" />
+            <span className="think-summary">
+              <span className="think-summary-text">{firstLine}</span>
+            </span>
+          </>
+        )}
+        <span className="think-status">{live ? <i className="think-spin" aria-hidden="true" /> : null}</span>
+        <IconChevronDown size={11} className="think-chevron" />
+      </div>
+      <div className="think-body">
+        <div className="think-body-clip">
+          <div className="think-text">{entry.text}</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** 各工具的摘要字段；不在表里的走 {@link DEFAULT_FIELDS}。 */
+const SUMMARY_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  bash: ['command', 'description'],
+  shell: ['command', 'description'],
+  read: ['file_path', 'path'],
+  read_file: ['file_path', 'path'],
+  write: ['file_path', 'path'],
+  edit: ['file_path', 'path'],
+  glob: ['pattern', 'path'],
+  grep: ['pattern', 'path'],
+  webfetch: ['url'],
+  fetch: ['url'],
+  task: ['description', 'prompt'],
+}
+
+/** 不认识的工具：只挑最像「目标」的几个字段。 */
+const DEFAULT_FIELDS: readonly string[] = [
+  'file_path',
+  'path',
+  'command',
+  'pattern',
+  'query',
+  'url',
+  'description',
+]
+
+/** 换行压成空格，超长截断。 */
+function oneLine(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  const chars = Array.from(flat)
+  return chars.length > max ? `${chars.slice(0, max).join('')}…` : flat
+}
+
+/** URL 只留主机名（旧界面也是这个口径：整条链接太占地方）。 */
+function shortUrl(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
+}
+
+/**
+ * 工具调用的入参摘要：从 JSON 参数里挑两个关键字段拼成一行。
+ *
+ * 这是旧界面 `toolSummary` 的简化版：挑字段的口径照抄，但字段表只覆盖常用工具
+ * （旧版按每个工具手写），认不出的工具回落到「目标」类字段。
+ */
+function toolSummary(name: string, argsText: string): string {
+  let args: unknown
+  try {
+    args = JSON.parse(argsText) as unknown
+  } catch {
+    // 参数还没吐全（preparing）时不是合法 JSON，直接把原文当摘要（旧界面同样兜这一手）。
+    return oneLine(argsText, 72)
+  }
+  if (typeof args !== 'object' || args === null) return ''
+  const record = args as Record<string, unknown>
+  const picks = SUMMARY_FIELDS[name] ?? DEFAULT_FIELDS
+  const parts: string[] = []
+  for (const field of picks) {
+    const value = record[field]
+    if (typeof value !== 'string' || value === '') continue
+    parts.push(oneLine(field === 'url' ? shortUrl(value) : value, 48))
+    if (parts.length === 2) break
+  }
+  return oneLine(parts.join(' · '), 72)
+}
+
+/** 工具状态词（旧界面同一套说法）。 */
+const TOOL_STATUS_TEXT: Readonly<Record<string, string>> = {
+  preparing: '准备中',
+  running: '进行中',
+  done: '完成',
+  failed: '失败',
+  rejected: '被拒',
+}
+
+/** 参数原文能格式化就格式化，不能就原样——绝不因为格式坏掉而不显示参数。 */
+function prettyJson(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text) as unknown, null, 2)
+  } catch {
+    return text
+  }
+}
+
+/** 工具卡：一行头（名字 + 摘要 + 状态）+ 展开后的参数与结果。 */
+function ToolRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'tool' }> }): ReactNode {
+  const call = entry.call
+  const [open, setOpen] = useState(false)
+  // 参数还没到齐的这一次调用不可展开——展开也看不到东西，还会让「点一下」白点。
+  const expandable = call.status !== 'preparing'
+  const bodyOpen = open && expandable
+  const summary = toolSummary(call.name, call.argsText)
+  const toggle = (): void => {
+    if (expandable) setOpen((current) => !current)
+  }
+  return (
+    <div className={`entry tool-card status-${call.status}${bodyOpen ? ' open' : ''}`}>
+      <div
+        className="tool-head"
+        role="button"
+        tabIndex={expandable ? 0 : -1}
+        {...(expandable ? { 'aria-expanded': bodyOpen } : {})}
+        data-tip={expandable ? (bodyOpen ? '点击收起参数与结果' : '点击展开参数与结果') : '正在准备参数'}
+        onClick={toggle}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return
+          event.preventDefault()
+          toggle()
+        }}
+      >
+        <span className="name">{call.name}</span>
+        <span className="preview">{summary}</span>
+        <span className="status">
+          {call.status === 'running' ? <i className="tc-spin" aria-hidden="true" /> : null}
+          {TOOL_STATUS_TEXT[call.status] ?? call.status}
+          {call.durationMs === undefined ? '' : ` · ${(call.durationMs / 1000).toFixed(1)} 秒`}
+        </span>
+        {expandable ? <IconChevronDown size={11} className="tc-chevron" /> : null}
+      </div>
+      {bodyOpen ? (
+        <div className="tool-body">
+          <div className="label">参数</div>
+          <div className="args">{prettyJson(call.argsText)}</div>
+          {call.resultText === undefined || call.resultText === '' ? null : (
+            <>
+              <div className="label">结果</div>
+              <div className="result">{call.resultText}</div>
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/** 队友卡的状态词。 */
+const SUB_STATE_TEXT: Readonly<Record<string, string>> = {
+  working: '干活中',
+  idle: '已收工',
+  stopped: '被打断',
+  failed: '过程失败',
+}
+
+/** token 数缩写（旧界面的 k/M 口径）。 */
+function formatTokens(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`
+  return String(value)
+}
+
+/** 队友卡：旧消息流里没有对应物，这一块是壳自己补的（属于已知的样式增量）。 */
+function SubagentRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'subagent' }> }): ReactNode {
+  const sub = entry.sub
+  return (
+    <div className="shell-subagent" data-state={sub.state}>
+      <div className="shell-subagent-head">
+        <span className="shell-subagent-name">{sub.name}</span>
+        <span className="shell-subagent-role">{sub.role}</span>
+        <span className="shell-subagent-state">{SUB_STATE_TEXT[sub.state] ?? sub.state}</span>
+      </div>
+      <p className="shell-subagent-task">{oneLine(sub.task, 160)}</p>
+      <p className="shell-subagent-meta">
+        {sub.rounds} 轮 · {sub.toolCalls} 次工具
+        {sub.tokens === undefined ? '' : ` · ${formatTokens(sub.tokens)} tok`}
+        {sub.lastTool === undefined ? '' : ` · 当前 ${sub.lastTool.name}`}
+      </p>
+      {sub.error === undefined ? null : <p className="shell-subagent-error">{sub.error}</p>}
+    </div>
+  )
+}
+
+/** 差异段：一行四格（旧行号 / 新行号 / 记号 / 内容），颜色交给 `.diff-add` / `.diff-del`。 */
+function DiffRows({ hunks }: { hunks: readonly DiffHunkView[] }): ReactNode {
+  return (
+    <div className="diff-body" data-wrap="">
+      {hunks.map((hunk, hunkIndex) => (
+        <div className="diff-hunk" key={hunkIndex}>
+          <div className="diff-hunk-head">{`@@ -${String(hunk.oldStart)},${String(hunk.oldCount)} +${String(hunk.newStart)},${String(hunk.newCount)} @@`}</div>
+          {hunk.lines.map((line, lineIndex) => (
+            <div
+              className={`diff-line ${line.kind === 'add' ? 'diff-add' : line.kind === 'remove' ? 'diff-del' : 'diff-ctx'}`}
+              key={lineIndex}
+            >
+              <span className="diff-no">{line.oldLine ?? ''}</span>
+              <span className="diff-no">{line.newLine ?? ''}</span>
+              <span className="diff-sign">{line.kind === 'add' ? '+' : line.kind === 'remove' ? '-' : ''}</span>
+              <span className="diff-text">{line.text}</span>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * 把本轮改动合成一份清单。
+ *
+ * 优先级照旧界面：先看有没有 `turnDiff`（回合基线的聚合差异），有就只用它；否则把逐条
+ * `changes` 按路径合并（同文件多刀把增删行数相加、差异段顺次拼起来）。
+ */
+function mergeChanges(rows: readonly Row[]): ChangedFileView[] {
+  const turnDiff = rows.findLast((row) => row.entry.kind === 'turnDiff')
+  if (turnDiff !== undefined && turnDiff.entry.kind === 'turnDiff') return turnDiff.entry.files
+  const byPath = new Map<string, ChangedFileView>()
+  for (const row of rows) {
+    if (row.entry.kind !== 'changes') continue
+    const file = row.entry.file
+    const existing = byPath.get(file.path)
+    byPath.set(
+      file.path,
+      existing === undefined
+        ? file
+        : {
+            ...existing,
+            added: existing.added + file.added,
+            removed: existing.removed + file.removed,
+            hunks: [...existing.hunks, ...file.hunks],
+            ...(existing.truncated === true || file.truncated === true ? { truncated: true } : {}),
+          },
+    )
+  }
+  return [...byPath.values()]
+}
+
+function baseName(path: string): string {
+  const parts = path.split(/[\\/]/)
+  return parts[parts.length - 1] ?? path
+}
+
+/**
+ * 轮尾的「文件已更改」卡：把本轮所有改动聚成一张。
+ *
+ * 旧界面的「审查 / 打开」两颗按钮要接审查面板与文件预览（壳里都还没有），所以这里
+ * 换成点一行就地展开差异——同样的信息，不用再把用户带到别处。
+ */
+function ChangesCard({ rows }: { rows: readonly Row[] }): ReactNode {
+  const [openPath, setOpenPath] = useState<string | null>(null)
+  const files = useMemo(() => mergeChanges(rows), [rows])
+  if (files.length === 0) return null
+  const totalAdded = files.reduce((sum, file) => sum + file.added, 0)
+  const totalRemoved = files.reduce((sum, file) => sum + file.removed, 0)
+  const single = files.length === 1 ? files[0] : undefined
+  return (
+    <div className="entry-row">
+      <div className="changes-card" data-changed-files="" {...(single === undefined ? {} : { 'data-single': '1' })}>
+        <div className="changes-head">
+          <span className="changes-tile">
+            <IconCode size={20} />
+          </span>
+          <span className="changes-titles">
+            <span className="changes-title">
+              {single === undefined ? `${String(files.length)} 个文件已更改` : baseName(single.path)}
+            </span>
+            <span className="changes-stat">
+              <span className="changes-counts">
+                <span className="changes-added">+{totalAdded}</span>
+                <span className="changes-removed">-{totalRemoved}</span>
+              </span>
+              <span className="changes-hint">点一行看差异</span>
+            </span>
+          </span>
+        </div>
+        <ul className="changes-list">
+          {files.map((file) => (
+            <li className="changes-row-wrap" key={file.path}>
+              <button
+                type="button"
+                className="changes-row"
+                aria-expanded={openPath === file.path}
+                onClick={() => {
+                  setOpenPath((current) => (current === file.path ? null : file.path))
+                }}
+              >
+                <span className="changes-path" title={file.path}>
+                  {file.status === 'added' ? <span className="changes-badge">新增</span> : null}
+                  {baseName(file.path)}
+                </span>
+                <span className="changes-counts">
+                  <span className="changes-added">+{file.added}</span>
+                  <span className="changes-removed">-{file.removed}</span>
+                </span>
+              </button>
+              {openPath === file.path ? (
+                <div className="shell-diff">
+                  <DiffRows hunks={file.hunks} />
+                </div>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  )
+}
+
+/** 带整轮用量读数的条目（口径与条目契约一致：只有 text / tool 两类会带）。 */
+type UsageRow = Row & { entry: Extract<TranscriptEntry, { kind: 'text' | 'tool' }> }
+
+function hasUsage(row: Row): row is UsageRow {
+  const entry = row.entry
+  return (entry.kind === 'text' || entry.kind === 'tool') && entry.usage !== undefined
+}
+
+/**
+ * 轮尾一行：用量、时刻、复制。全空就不画（旧界面同样整行不渲染）。
+ *
+ * 「用时」不占行面，只写进整行的 `title`——旧界面就是这么处理的（一行里塞三个数字
+ * 会把轮尾撑成第二条状态栏）。
+ */
+function RoundFoot({ rows }: { rows: readonly Row[] }): ReactNode {
+  const [copied, setCopied] = useState(false)
+  const first = rows[0]?.entry.ts
+  const last = rows[rows.length - 1]?.entry.ts
+  const usage = rows.findLast(hasUsage)
+  const text = rows
+    .filter((row): row is Row & { entry: Extract<TranscriptEntry, { kind: 'text' }> } => row.entry.kind === 'text')
+    .map((row) => row.entry.text)
+    .join('\n\n')
+  const seconds = first === undefined || last === undefined || last <= first ? undefined : (last - first) / 1000
+  const tokens = usage?.entry.usage
+
+  if (tokens === undefined && first === undefined && text === '') return null
+
+  return (
+    <div className="entry-row">
+      <div
+        className="round-foot"
+        title={seconds === undefined ? undefined : `用时 ${seconds.toFixed(1)} 秒（这一轮从发出到最后一笔写入）`}
+      >
+        {text === '' ? null : (
+          <button
+            type="button"
+            className="round-act"
+            title="复制这条回复的原文"
+            aria-label="复制这条回复的原文"
+            onClick={() => {
+              // 剪贴板被浏览器拒绝（非安全上下文）时不给假反馈，所以 .catch 里什么都不做。
+              void navigator.clipboard
+                .writeText(text)
+                .then(() => {
+                  setCopied(true)
+                  window.setTimeout(() => {
+                    setCopied(false)
+                  }, 1200)
+                })
+                .catch(() => undefined)
+            }}
+          >
+            <IconCopy size={17} />
+          </button>
+        )}
+        {copied ? <span className="round-tokens">已复制</span> : null}
+        {tokens === undefined ? null : (
+          <span className="round-tokens" title="宿主上报的真实用量">
+            用量 {formatTokens(tokens.inputTokens + tokens.outputTokens)} tok
+          </span>
+        )}
+        {first === undefined ? null : (
+          <>
+            <span className="round-sep" aria-hidden="true">
+              ·
+            </span>
+            <span className="round-clock" title="这条消息发出的时刻（本机时区）">
+              {new Date(first).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
           </>
         )}
       </div>
-      <UsageLine usage={entry.usage} ts={entry.ts} />
-    </details>
-  )
-}
-
-/** 系统提示行（含压缩落点标记）。 */
-function SystemRow({ entry }: { entry: Extract<Entry, { kind: 'system' }> }): ReactElement {
-  return (
-    <p className="row-system">
-      {entry.compaction === undefined ? null : <span className="row-tag">第 {entry.compaction.count} 次压缩</span>}
-      {entry.text}
-    </p>
-  )
-}
-
-/** 队友内联卡：状态 + 任务 + 轮数/工具数 + 当前工具。 */
-function SubagentRow({ card }: { card: SubagentCardView }): ReactElement {
-  return (
-    <div className="row-card" data-subagent={card.name}>
-      <p className="row-card-head">
-        <span className="row-dot" data-status={card.state} title={card.state} />
-        队友 {card.name}（{card.role}）
-        <span className="row-dim">
-          {card.rounds} 轮 / {card.toolCalls} 次工具
-          {card.tokens === undefined ? '' : ` / ${String(card.tokens)} tokens`}
-        </span>
-      </p>
-      <p className="row-dim">{oneLine(card.task, 160)}</p>
-      {card.lastTool === undefined ? null : (
-        <p className="row-dim">
-          当前工具 <code>{card.lastTool.name}</code> · {card.lastTool.status}
-        </p>
-      )}
-      {card.error === undefined ? null : <p className="row-tag bad">{card.error}</p>}
     </div>
   )
 }
 
-/** 一个文件的实际改动：路径 + 增删行数。 */
-function ChangedRow({ file }: { file: ChangedFileView }): ReactElement {
-  return (
-    <p className="row-changed" data-file={file.path}>
-      <code>{file.path}</code>
-      <span className="row-added">+{file.added}</span>
-      <span className="row-removed">−{file.removed}</span>
-      {file.status === 'added' ? <span className="row-tag">新建</span> : null}
-      {file.truncated === true ? <span className="row-tag">只显示前一部分</span> : null}
-    </p>
-  )
-}
+/**
+ * 一行一个错误边界。
+ *
+ * 为什么行级也要兜：消息流整条流是**一个**槽条目，壳的错误边界是按条目退位的——
+ * 一行渲染崩了会让整条流消失。多包一层之后，坏的那一行显示原因，其余照常。
+ *
+ * 条目更新时清掉错误再试一次：工具卡从「跑动中」变成「完成」是同一个条目换数据，
+ * 如果一次画崩就永久留住错误，那一行会一直显示错误而看不到后来的正确内容。
+ */
+class RowBoundary extends Component<{ entry: TranscriptEntry; children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null }
 
-/** 一行用量（轮内最后一条才是整轮真值，这里只是把读数摊出来）。 */
-function UsageLine({ usage, ts }: { usage?: { inputTokens: number; outputTokens: number }; ts?: number }): ReactElement | null {
-  if (usage === undefined && ts === undefined) return null
-  return (
-    <p className="row-tags">
-      {ts === undefined ? null : <span>{clock(ts)}</span>}
-      {usage === undefined ? null : (
-        <span>
-          入 {usage.inputTokens} / 出 {usage.outputTokens} tokens
-        </span>
-      )}
-    </p>
-  )
-}
-
-/** 行级错误边界：一行渲染崩了只让那一行显示原因，别的行照旧。 */
-class RowBoundary extends Component<{ id: number; kind: string; children: ReactNode }, { error: string | null }> {
-  constructor(props: { id: number; kind: string; children: ReactNode }) {
-    super(props)
-    this.state = { error: null }
+  static getDerivedStateFromError(error: Error): { error: Error } {
+    return { error }
   }
 
-  static getDerivedStateFromError(error: unknown): { error: string } {
-    return { error: error instanceof Error ? error.message : String(error) }
+  componentDidUpdate(previous: { entry: TranscriptEntry }): void {
+    if (this.state.error !== null && previous.entry !== this.props.entry) this.setState({ error: null })
   }
 
-  override render(): ReactNode {
+  render(): ReactNode {
     if (this.state.error !== null) {
-      return (
-        <p className="row-crash" data-kind={this.props.kind} data-entry-id={this.props.id}>
-          这条（{this.props.kind}）画不出来：{this.state.error}
-        </p>
-      )
+      return <div className="entry-system">这一条没画出来：{this.state.error.message}</div>
     }
     return this.props.children
   }
 }
 
-/** 工具状态 → 中文。 */
-function statusLabel(status: ToolStatus | SubagentCardView['state']): string {
-  if (status === 'running' || status === 'working') return '进行中'
-  if (status === 'done' || status === 'idle') return '完成'
-  if (status === 'failed') return '失败'
-  if (status === 'rejected') return '被拒'
-  if (status === 'stopped') return '被打断'
-  return '准备中'
+/** 一行的 React key：条目 id 在会话内单调递增，直播条目是负 id，都不会撞。 */
+function keyOf(row: Row): string {
+  return `${String(row.entry.id)}|${String(row.entry.ts ?? 0)}`
 }
 
-/** 时刻 → `HH:MM`。 */
-function clock(ts: number): string {
-  const date = new Date(ts)
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+/** 把条目按「遇到 user 就开新座位」切分，直播条目挂在最后一个座位上。 */
+function buildSeats(
+  entries: readonly TranscriptEntry[],
+  live: readonly TranscriptEntry[],
+): { leading: Row[]; rounds: Seat[] } {
+  const leading: Row[] = []
+  const rounds: Seat[] = []
+  for (const entry of entries) {
+    const row: Row = { entry, live: false }
+    if (entry.kind === 'user') {
+      rounds.push({ round: rounds.length, rows: [row] })
+      continue
+    }
+    const current = rounds[rounds.length - 1]
+    if (current === undefined) leading.push(row)
+    else current.rows.push(row)
+  }
+  for (const entry of live) {
+    const row: Row = { entry, live: true }
+    const current = rounds[rounds.length - 1]
+    if (current === undefined) leading.push(row)
+    else current.rows.push(row)
+  }
+  return { leading, rounds }
 }
 
-/** 毫秒 → 「1.2 秒」/「340 毫秒」。 */
-function formatMs(ms: number): string {
-  return ms >= 1000 ? `${(ms / 1000).toFixed(1)} 秒` : `${String(ms)} 毫秒`
+/** 帧里的条目只保证有 `id`，视图字段的收窄在插件这一侧完成（共用核心不认识具体种类）。 */
+function readEntries(snapshot: HostSnapshot | null): readonly TranscriptEntry[] {
+  const value = snapshot?.entries
+  return Array.isArray(value) ? (value as unknown as TranscriptEntry[]) : NO_ENTRIES
 }
 
-/** 掐成一行（摘要行上用；换行一律换成空格）。 */
-function oneLine(text: string, max: number): string {
-  const flat = text.replace(/\s+/g, ' ').trim()
-  return flat.length <= max ? flat : `${flat.slice(0, max)}…`
-}
-
-/** 长文本按字符截断（工具结果可能很长）。 */
-function clip(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, max)}\n…（还有 ${String(text.length - max)} 个字符）`
+function readLive(snapshot: HostSnapshot | null): readonly TranscriptEntry[] {
+  const value = snapshot?.liveEntries
+  return Array.isArray(value) ? (value as unknown as TranscriptEntry[]) : NO_ENTRIES
 }

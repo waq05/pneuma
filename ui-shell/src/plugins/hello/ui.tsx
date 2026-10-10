@@ -21,7 +21,7 @@ export default defineUiPlugin({
       { id: 'hello.card', order: 10, children: { [FOOTER_SLOT]: 'list' } },
       HelloCard,
     )
-    ui.slots.register('statusbar.right', { id: 'hello.badge', order: 10 }, () => (
+    ui.slots.register('shell.statusbar', { id: 'hello.badge', order: 10 }, () => (
       <span className="hello-badge">插件已生效</span>
     ))
   },
@@ -33,7 +33,7 @@ function HelloCard({ renderSlot }: SlotComponentProps) {
   return (
     <div style={{ padding: '14px 16px' }}>
       <h2 style={{ margin: '0 0 6px', fontSize: 16 }}>界面插件已生效</h2>
-      <p style={{ margin: '0 0 10px', color: '#8b93a7', fontSize: 13 }}>
+      <p style={{ margin: '0 0 10px', color: 'var(--dsc-text-tertiary)', fontSize: 13 }}>
         这一块来自插件 <code>hello</code>，由宿主下发 bundle、注册进 <code>shell.main</code> 槽；
         下面那一行是**别的插件**往本卡片开的子槽里放的东西。
       </p>

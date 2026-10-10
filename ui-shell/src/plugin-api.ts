@@ -106,19 +106,42 @@ export function hostStatus(snapshot: HostSnapshot | null): HostStatusView | null
 export { useChannelStatus, useHostChannel, useHostError, useHostSelector, useHostSnapshot } from './runtime-context'
 export type { ChannelStatus, HostHello } from './host-channel'
 export type { SlotEntry, SlotKind, UiHostInfo, UiRuntimeApi, UiSlotApi, HostSnapshot }
+// 图标集原样转出去：插件 bundle 里 `import { IconPin } from '@dsc/ui'` 即可，
+// 不必各自内联一份 SVG（同一枚图标在多个插件里内联，改一次要改好几处）。
+export * from './icons'
 // 宿主视图类型原样转出去：插件按它们写渲染，宿主改字段时插件这边编不过（而不是线上画空）。
 export type {
+  ApprovalAnswer,
+  ApprovalDiffView,
+  ApprovalPolicy,
+  ApprovalRequestView,
+  AskOptionView,
+  AskUserView,
   ChangedFileView,
+  CollaborationMode,
   ContextSegmentsView,
+  DiffHunkView,
+  EffortLevel,
+  ModeSurface,
+  ModelChoiceView,
+  Modality,
+  PlanDecision,
   PlanView,
+  PolicySurface,
   QueuedMessageView,
   SessionRunState,
   SessionSummary,
   StatusView,
   SubagentCardView,
+  ThemeMode,
+  ThinkingLevel,
+  TierOption,
   TokenUsageView,
   ToolCallView,
   ToolStatus,
   TranscriptEntry,
   TurnEndReason,
+  UiDensity,
+  UiFontSize,
+  UiPrefsView,
 } from '@dsc/ui-core'
