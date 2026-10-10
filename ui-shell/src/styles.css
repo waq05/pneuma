@@ -595,3 +595,11 @@
 .file-code-plain .line {
   display: flex;
 }
+
+/* 设置面板标题区：旧 `legacy/views.css` 只搬了 `.settings-head` 这条 flex 规则的祖先，
+   没把它里面包 h2/p 的那层 `.settings-head-text` 带过来（旧渲染层的这块 CSS 漏了）。
+   这里补一条最小的：让标题块占满、左对齐，关闭钮被挤到最右。 */
+.settings-head-text {
+  flex: 1;
+  min-width: 0;
+}
