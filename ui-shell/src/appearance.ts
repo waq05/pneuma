@@ -1,15 +1,19 @@
 /**
- * 外观偏好：主题模式、字号、密度、按钮大小四项怎么落到 DOM 上（浏览器侧）。
+ * 外观偏好：主题模式、字号、密度三项怎么落到 DOM 上（浏览器侧）。
  *
  * 与桌面渲染层 `desktop/src/renderer/appearance.ts` 同一套语义：真源在宿主的
  * `~/.dsc/settings.json`（走 `getUiPrefs`），这里另存一份 localStorage 镜像，
  * 只为首帧不闪——宿主回读还没到，就能按上次的设置上色。
  *
- * 从旧版搬过来时**故意删掉**两件事（不是漏了）：
+ * 从旧版搬过来时**故意删掉**三件事（不是漏了）：
  *   1. `pushWindowChrome`：那是在跟 Electron 主进程报原生窗口控件区的颜色，
  *      浏览器里没有这个口子，桌面窗口切到本壳时由主进程自己那一侧解决；
  *   2. `dsc.setThemeSource`：原生弹出层（select 下拉、右键菜单）的深浅由主进程定，
- *      同理归桌面侧。所以这里只负责页面内的那一半。
+ *      同理归桌面侧。所以这里只负责页面内的那一半；
+ *   3. **按钮大小这条轴**：dsh 没有按钮缩放变量（它的全局轴是字号），按「按钮尺寸对齐
+ *      dsh」的口径，本壳不再往 `--dsc-btn-scale` 写值——那批 `calc(Npx * var(--dsc-btn-scale))`
+ *      在 `styles.css` 里被固定尺寸覆盖掉了。旧存档里的 `buttonScale` 读得到就忽略，
+ *      不做迁移提示（它只影响观感，不影响功能）。
  *
  * @module dsc-ui-shell/appearance
  */
@@ -23,29 +27,21 @@ export const FONT_SCALE_MAX = 1.35
 /** 基准倍率：正文 13px 原样。 */
 export const FONT_SCALE_DEFAULT = 1
 
-/** 按钮缩放倍率的可调范围；口径同上。 */
-export const BUTTON_SCALE_MIN = 0.9
-export const BUTTON_SCALE_MAX = 1.5
-/** 基准倍率：图标按钮静息 26px 原样。 */
-export const BUTTON_SCALE_DEFAULT = 1
-
 /** 旧存档里的三档字号（0.6 之前存的是字符串），迁移成倍率。 */
 const LEGACY_FONT_SCALES: Record<string, number> = { sm: 0.92, md: 1, lg: 1.12 }
 
-/** 一项外观设置。 */
+/** 一项外观设置。按钮大小不在这里——那条轴已经退场（见文件头第 3 条）。 */
 export interface Appearance {
   themeMode: ThemeMode
   fontSize: UiFontSize
   density: UiDensity
-  buttonScale: number
 }
 
-/** 出厂默认：深色、标准字号、标准密度、按钮原样。真源是 `core/prefs.ts` 的 readPrefs 默认值。 */
+/** 出厂默认：深色、标准字号、标准密度。真源是 `core/prefs.ts` 的 readPrefs 默认值。 */
 export const DEFAULT_APPEARANCE: Appearance = {
   themeMode: 'dark',
   fontSize: FONT_SCALE_DEFAULT,
   density: 'standard',
-  buttonScale: BUTTON_SCALE_DEFAULT,
 }
 
 /**
@@ -62,17 +58,6 @@ export function normalizeFontScale(value: unknown): number {
   const legacy = typeof value === 'string' ? LEGACY_FONT_SCALES[value] : undefined
   const scale = legacy ?? (typeof value === 'number' && Number.isFinite(value) ? value : FONT_SCALE_DEFAULT)
   return Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, Math.round(scale * 100) / 100))
-}
-
-/**
- * 把外部来的按钮缩放值归一成能用的倍率。
- *
- * @param value 任意来源的按钮缩放值
- * @returns 可以直接写进 `--dsc-btn-scale` 的倍率
- */
-export function normalizeButtonScale(value: unknown): number {
-  const scale = typeof value === 'number' && Number.isFinite(value) ? value : BUTTON_SCALE_DEFAULT
-  return Math.min(BUTTON_SCALE_MAX, Math.max(BUTTON_SCALE_MIN, Math.round(scale * 100) / 100))
 }
 
 /** 密度只有三档；认不出的值回落 standard。 */
@@ -95,7 +80,6 @@ export function appearanceFromPrefs(prefs: Partial<UiPrefsView> | null | undefin
     themeMode: normalizeTheme(prefs?.themeMode),
     fontSize: normalizeFontScale(prefs?.fontSize),
     density: normalizeDensity(prefs?.density),
-    buttonScale: normalizeButtonScale(prefs?.buttonScale),
   }
 }
 
@@ -123,7 +107,8 @@ export function applyAppearance(appearance: Appearance): void {
   root.dataset.theme = mode
   root.dataset.density = appearance.density
   root.style.setProperty('--dsc-font-scale', String(normalizeFontScale(appearance.fontSize)))
-  root.style.setProperty('--dsc-btn-scale', String(normalizeButtonScale(appearance.buttonScale)))
+  // 注意这里**不再写** `--dsc-btn-scale`：按钮大小那条轴已退场（见文件头第 3 条）。
+  // views.css 里那批 `calc(Npx * var(--dsc-btn-scale))` 由 styles.css 固定尺寸覆盖。
 
   // 只有跟随系统时才需要挂监听；系统翻脸就按 current 重画一次。
   if (!media) return

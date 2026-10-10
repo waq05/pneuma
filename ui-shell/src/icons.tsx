@@ -1,7 +1,7 @@
 /**
  * 线性 SVG 图标集（stroke 1.6 / currentColor），对照 dsh 桌面端的细线风格。
  * 全部为纯函数组件，尺寸由 CSS 或 size 属性控制；每个 svg 额外带上
- * `--dsc-icon-size`，按钮里的图标据此跟 `--dsc-btn-scale` 一起缩放。
+ * `--dsc-icon-size`，按钮里的图标据此按固定尺寸对齐 dsh（按钮缩放轴已退场）。
  *
  * @module desktop/renderer/icons
  */
@@ -12,9 +12,8 @@ type IconProps = { size?: number; className?: string }
 /**
  * 把图标本来的像素尺寸另外挂一份 CSS 变量。
  *
- * `width`/`height` 属性只写死了数字，样式表读不到它，而按钮里的图标要跟着
- * `--dsc-btn-scale` 一起放大（见 styles.css「按钮大小滑杆」段）；挂上变量后，
- * 那一段用 `calc(var(--dsc-icon-size) * var(--dsc-btn-scale))` 覆盖宽高。
+ * `width`/`height` 属性只写死了数字，样式表读不到它；按钮场景的图标尺寸由
+ * `styles.css` 的按钮段统一成 dsh 的值（16px），那一段读这个变量。
  * 只有按钮场景的规则会读它，正文、状态栏那些图标照旧按属性画。
  *
  * @param size 图标边长（px）

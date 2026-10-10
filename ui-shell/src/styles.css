@@ -238,3 +238,212 @@
 .shell-runtime-probe.bad {
   color: var(--dsc-red);
 }
+
+/* ══════════ 尺寸口径：按钮与控件对齐 dsh ══════════
+ *
+ * 三条来源（冲突时按这个判，见 docs/ui-plugin-parity-plan.md §6.1）：
+ *   版式 / 结构 / 配色体系 = 旧桌面端（legacy 那四份）；
+ *   按钮与控件的**尺寸** = dsh；会话区的**行内**配色与工具图标 = codex。
+ *
+ * 为什么写在这个文件而不是改 `legacy/`：那四份是逐字节副本（PROVENANCE.md 那条
+ * 可验证的事实要靠它成立，阶段 8 的冻结检查也要据它比对）。这里用**同选择器、
+ * 更靠后**的规则覆盖，副本一个字节不动。每处都写清「为什么覆盖」。
+ *
+ * 为什么用固定 px 而不是把 `--dsc-btn-scale` 置 1：那条轴已经退场（`appearance.ts`
+ * 不再写它），壳里就不该再有东西依赖它；写死尺寸后，即便有人在 `<html>` 上留了
+ * 行内倍率，按钮也不会被拉大。 */
+
+:root {
+  /* dsh Button sm / lg 的高度（ui-primitives/src/Button.module.css）：次档 28、主档 36。 */
+  --dsc-ctl: 28px;
+  --dsc-ctl-lg: 36px;
+  /* 发送键 34 正圆（dsh InputBar 的发送键）。 */
+  --dsc-send: 34px;
+  /* 输入框最小高 36（dsh InputBar 停靠态）。legacy 是 26，太薄，光标行都贴着边。 */
+  --dsc-input-min-h: 36px;
+}
+
+/* ── 图标按钮：静息 28×28、圆角 8（dsh 的 sm 档；legacy 是 26 与 4px 圆角）。 */
+.icon-btn {
+  border-radius: 8px;
+  height: 28px;
+  width: 28px;
+}
+
+/* 侧栏行尾那组按钮与工作区行的几何一致（legacy 已经给了 28，这里只是把它从
+   `calc(28px * 倍率)` 固定下来，去岁那条轴）。 */
+.sidebar .group-row > .row-actions .icon-btn,
+.sidebar .sess-item > .row-actions .icon-btn {
+  height: 28px;
+  width: 28px;
+}
+
+/* 菜单行内距与勾选列（legacy 跟着 button 倍率走，这里固定）。 */
+.row-menu .menu-item {
+  padding: 5px 8px;
+}
+.menu-check {
+  width: 15px;
+}
+
+/* 按钮/菜单里的图标槽：16px（dsh 的图标按钮里就是 16）。legacy 走
+   `calc(var(--dsc-icon-size) * 倍率)`，图标实际按各自传入的 size 画（14/13 居多）。 */
+.icon-btn svg {
+  height: 16px;
+  width: 16px;
+}
+
+/* 插件页 / 技能页头部那两颗：legacy 是 `calc(30px * 倍率)`，这里固定 30（比图标
+   按钮主档大一档，是页面级动作的位置）。 */
+.plugins-actions .icon-btn,
+.skills-actions .icon-btn {
+  height: 30px;
+  width: 30px;
+}
+
+/* ── 主档按钮：36 高、圆角 12、字号 14、内距 0 14px（dsh Button lg）。
+   批准 / 提交 / 计划卡那几颗走 .btn 与 .btn-primary（legacy 的 .btn 裸类本来没有
+   几何规则，只有 .btn-primary / .btn-ghost 有，这里一并补齐）。 */
+.btn,
+.btn-primary {
+  border-radius: 12px;
+  font-size: var(--dsc-fs-ui-lg);
+  min-height: 36px;
+  padding: 0 14px;
+}
+
+/* ── 次按钮 / chip：28 高、圆角 8、字号 12、内距 0 10px（dsh Button sm）。 */
+.btn-ghost {
+  border-radius: 8px;
+  font-size: var(--dsc-fs-caption);
+  min-height: 28px;
+  padding: 0 10px;
+}
+
+/* ── 模型 / 档位 chip：28 高、圆角 8、内距 `0 4px 0 8px`、字号 13 / 行高 20
+   （dsh 的模型选择器）。legacy 是胶囊（radius 999）与 3px/10px 内距。 */
+.model-chip {
+  border-radius: 8px;
+  font-size: var(--dsc-fs-body);
+  gap: 4px;
+  line-height: 20px;
+  min-height: 28px;
+  padding: 0 4px 0 8px;
+}
+
+/* 档位按钮（浮层里的三档）：28 高、圆角 8，跟 chip 同一档。 */
+.effort-btn {
+  border-radius: 8px;
+  min-height: 28px;
+  padding: 0;
+}
+
+/* ── 发送键：34 正圆（legacy 的 `.send-btn` 已经在读 `--dsc-send`，令牌改了就够，
+   圆角本来就是 `--dsc-r-pill`）。这里只补一处：把它的图标固定成 16。
+   dsh 那侧还有 `translateY(-2px)`，那是补偿它自己 InputBar 的内距，不照搬。 */
+.send-btn svg {
+  height: 16px;
+  width: 16px;
+}
+
+/* ── 侧栏「新建会话」：38 高（dsh 的新建会话按钮）。legacy 走 `--dsc-row-h`（26→32），
+   作为列表第一行它该比会话行（32）再高一档，就像 dsh 把主行动单独抬出来。 */
+.btn-new {
+  min-height: 38px;
+}
+
+/* ── composer 工具行：图标之间 12px（dsh InputBar 的动作行），窄于 560px 收到 8px
+   （legacy 是 6px，两颗 chip 贴在一起看不出是两组）。 */
+.composer-bar {
+  gap: 12px;
+}
+@media (max-width: 560px) {
+  .composer-bar {
+    gap: 8px;
+  }
+}
+
+/* ── 对话区那几处跟 button 倍率绑定的尺寸，一并固定（去岁那条轴）。 */
+.round-foot .round-act,
+.user-turn .user-act,
+.round-foot .user-act {
+  align-items: center;
+  display: inline-flex;
+  height: 28px;
+  justify-content: center;
+  padding: 0;
+  width: 28px;
+}
+
+.round-foot .round-act svg,
+.user-turn .user-act svg,
+.round-foot .user-act svg {
+  height: var(--dsc-icon-size, 1em);
+  width: var(--dsc-icon-size, 1em);
+}
+
+.chat-to-bottom {
+  height: 28px;
+  padding: 0 12px;
+}
+
+/* ══════════ 会话区：工具行 / 思考行按 codex 的口径调安静 ══════════
+ *
+ * 只借 codex「工具行与思考行怎么更安静、层级怎么分、图标用什么」，**版式仍照旧桌面端**
+ * （不搬它的左对齐与无卡片风格）——这是 §6.1 第 3 条的边界。codex 那边的证据在
+ * `D:\codex\codex\codex-rs\tui\src\exec_cell\render.rs` 与 `history_cell\messages.rs`。 */
+
+/* 工具行状态圆点：就绪绿、失败红、被拒黄、进行中走强调色（codex 的 bullet：
+   成功绿 / 失败红 / 进行中 dim 闪）。比左侧竖条更贴近 codex 的「行首一枚点」。 */
+.tool-dot {
+  border-radius: var(--dsc-r-pill);
+  flex: none;
+  height: 7px;
+  width: 7px;
+}
+.tool-card.status-running .tool-dot {
+  background: var(--dsc-accent);
+}
+.tool-card.status-done .tool-dot {
+  background: var(--dsc-green);
+}
+.tool-card.status-failed .tool-dot {
+  background: var(--dsc-red);
+}
+.tool-card.status-rejected .tool-dot {
+  background: var(--dsc-yellow);
+}
+.tool-card.status-preparing .tool-dot {
+  background: var(--dsc-text-quaternary);
+}
+
+/* 工具图标：与动词同行的 14px 细线图标，取三级灰——它是识别用的，不是内容。 */
+.tool-head .tool-icon {
+  flex: none;
+  height: 14px;
+  width: 14px;
+  color: var(--dsc-text-tertiary);
+}
+
+/* 动词：加粗、次要文字色（比工具名那枚等宽徽标更「是内容」）。codex 的
+   `Ran` / `Running` 也是加粗的一档。 */
+.tool-head .verb {
+  color: var(--dsc-text-secondary);
+  flex: none;
+  font-weight: 600;
+}
+
+/* 命令行与输出分档（codex：命令按语法高亮、输出整体 DIM，命令对比度**高于**输出）。
+   legacy 里 `.args` 与 `.result` 共用一条规则、同一个颜色，这里把结果压下一档。 */
+.tool-body .result {
+  color: var(--dsc-text-tertiary);
+}
+
+/* 思考行收起态更安静：低对比 + 斜体（codex 的思考行默认 dim + italic）。
+   跑动中的那一条（`.think-block.live`）保持原样，它正被读。 */
+.think-block:not(.live):not(.open) .think-head {
+  color: var(--dsc-text-tertiary);
+}
+.think-block:not(.live):not(.open) .think-label {
+  font-style: italic;
+}

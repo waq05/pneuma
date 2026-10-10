@@ -24,8 +24,17 @@
  *
  * @module dsc-ui-shell/plugins/transcript
  */
-import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { IconChevronDown, IconCode, IconCopy, IconSpark } from '@dsc/ui'
+import { Component, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react'
+import {
+  IconChevronDown,
+  IconCode,
+  IconCopy,
+  IconEdit,
+  IconFolder,
+  IconSearch,
+  IconSpark,
+  IconTerminal,
+} from '@dsc/ui'
 import {
   defineUiPlugin,
   useHostSelector,
@@ -361,6 +370,44 @@ const TOOL_STATUS_TEXT: Readonly<Record<string, string>> = {
   rejected: '被拒',
 }
 
+/**
+ * 已知工具的「动词 + 图标」。
+ *
+ * 照 codex 的口径（`D:\codex\codex\codex-rs\tui\src\exec_cell\render.rs` 的
+ * `• Ran <command>`）：行首一枚状态点、一枚图标、一个**加粗动词**，命令行跟在后面。
+ * 动词中文化（跑了 / 读了 / 搜了…），状态点与图标承担「这是什么工具」，所以知名工具
+ * 不再单独印一枚等宽工具名徽标；认不出的工具（MCP 那些）保留原名，免得看不出是什么。
+ */
+const KNOWN_TOOLS: Readonly<
+  Record<string, { verb: string; Icon: ComponentType<{ size?: number; className?: string }> }>
+> = {
+  bash: { verb: '跑', Icon: IconTerminal },
+  shell: { verb: '跑', Icon: IconTerminal },
+  read: { verb: '读', Icon: IconFolder },
+  read_file: { verb: '读', Icon: IconFolder },
+  write: { verb: '写', Icon: IconEdit },
+  edit: { verb: '改', Icon: IconEdit },
+  glob: { verb: '搜', Icon: IconSearch },
+  grep: { verb: '搜', Icon: IconSearch },
+  webfetch: { verb: '取', Icon: IconSearch },
+  fetch: { verb: '取', Icon: IconSearch },
+  task: { verb: '派', Icon: IconSpark },
+}
+
+/** 认不出的工具的图标。 */
+const UNKNOWN_TOOL_ICON = IconCode
+
+/**
+ * 动词随状态变（codex 的 `Ran` / `Running` 同一套二分）。
+ * 失败 / 被拒不改动词——那种情形由行尾的状态词说，不用把动词也拧一遍。
+ */
+function toolVerb(name: string, status: string): string {
+  const base = KNOWN_TOOLS[name]?.verb ?? '调用'
+  if (status === 'running') return `正在${base}`
+  if (status === 'preparing') return `准备${base}`
+  return `${base}了`
+}
+
 /** 参数原文能格式化就格式化，不能就原样——绝不因为格式坏掉而不显示参数。 */
 function prettyJson(text: string): string {
   try {
@@ -370,7 +417,7 @@ function prettyJson(text: string): string {
   }
 }
 
-/** 工具卡：一行头（名字 + 摘要 + 状态）+ 展开后的参数与结果。 */
+/** 工具卡：一行头（状态点 + 图标 + 动词 + 摘要 + 状态）+ 展开后的参数与结果。 */
 function ToolRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'tool' }> }): ReactNode {
   const call = entry.call
   const [open, setOpen] = useState(false)
@@ -378,6 +425,8 @@ function ToolRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'tool' }> 
   const expandable = call.status !== 'preparing'
   const bodyOpen = open && expandable
   const summary = toolSummary(call.name, call.argsText)
+  const known = KNOWN_TOOLS[call.name]
+  const Icon = known?.Icon ?? UNKNOWN_TOOL_ICON
   const toggle = (): void => {
     if (expandable) setOpen((current) => !current)
   }
@@ -396,12 +445,18 @@ function ToolRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'tool' }> 
           toggle()
         }}
       >
-        <span className="name">{call.name}</span>
+        {/* 行首状态点：成功绿 / 失败红 / 被拒黄 / 进行中强调色（codex 的 bullet）。 */}
+        <span className="tool-dot" aria-hidden="true" />
+        <Icon size={14} className="tool-icon" />
+        <span className="verb">{toolVerb(call.name, call.status)}</span>
+        {/* 认不出的工具保留原名：没有它就看不出这是哪家的工具（MCP 那些名字不直观）。 */}
+        {known === undefined ? <span className="name">{call.name}</span> : null}
         <span className="preview">{summary}</span>
         <span className="status">
           {call.status === 'running' ? <i className="tc-spin" aria-hidden="true" /> : null}
-          {TOOL_STATUS_TEXT[call.status] ?? call.status}
-          {call.durationMs === undefined ? '' : ` · ${(call.durationMs / 1000).toFixed(1)} 秒`}
+          {/* 定稿不说「完成」：状态点已经绿了，再印一遍是噪声（codex 也只留圆点）。 */}
+          {call.status === 'done' ? '' : (TOOL_STATUS_TEXT[call.status] ?? call.status)}
+          {call.durationMs === undefined ? '' : `${call.status === 'done' ? '' : ' · '}${(call.durationMs / 1000).toFixed(1)} 秒`}
         </span>
         {expandable ? <IconChevronDown size={11} className="tc-chevron" /> : null}
       </div>
@@ -591,16 +646,18 @@ function hasUsage(row: Row): row is UsageRow {
 }
 
 /**
- * 轮尾一行：用量、时刻、复制。全空就不画（旧界面同样整行不渲染）。
+ * 轮尾一行：用时、工具次数、用量、时刻、复制（codex 的 `Worked for 3s • 14:20`
+ * 与 `Local tools: N calls (Xs)` 合成一行）。全空就不画（旧界面同样整行不渲染）。
  *
- * 「用时」不占行面，只写进整行的 `title`——旧界面就是这么处理的（一行里塞三个数字
- * 会把轮尾撑成第二条状态栏）。
+ * 与旧界面的差别（按 §6.3 的口径）：**用时从 `title` 提到行面上**——旧界面把它藏进
+ * 悬浮提示，一行里只印 token 与时刻；codex 把用时当轮尾的第二个信息，这里对齐它。
  */
 function RoundFoot({ rows }: { rows: readonly Row[] }): ReactNode {
   const [copied, setCopied] = useState(false)
   const first = rows[0]?.entry.ts
   const last = rows[rows.length - 1]?.entry.ts
   const usage = rows.findLast(hasUsage)
+  const toolCount = rows.filter((row) => row.entry.kind === 'tool').length
   const text = rows
     .filter((row): row is Row & { entry: Extract<TranscriptEntry, { kind: 'text' }> } => row.entry.kind === 'text')
     .map((row) => row.entry.text)
@@ -612,10 +669,7 @@ function RoundFoot({ rows }: { rows: readonly Row[] }): ReactNode {
 
   return (
     <div className="entry-row">
-      <div
-        className="round-foot"
-        title={seconds === undefined ? undefined : `用时 ${seconds.toFixed(1)} 秒（这一轮从发出到最后一笔写入）`}
-      >
+      <div className="round-foot">
         {text === '' ? null : (
           <button
             type="button"
@@ -639,10 +693,26 @@ function RoundFoot({ rows }: { rows: readonly Row[] }): ReactNode {
           </button>
         )}
         {copied ? <span className="round-tokens">已复制</span> : null}
-        {tokens === undefined ? null : (
-          <span className="round-tokens" title="宿主上报的真实用量">
-            用量 {formatTokens(tokens.inputTokens + tokens.outputTokens)} tok
+        {seconds === undefined ? null : (
+          <span className="round-tokens" title="这一轮从发出到最后一笔写入">
+            用时 {seconds.toFixed(1)} 秒
           </span>
+        )}
+        {toolCount === 0 ? null : (
+          <>
+            <span className="round-sep" aria-hidden="true">·</span>
+            <span className="round-tokens" title="这一轮调用的工具次数">{toolCount} 次工具</span>
+          </>
+        )}
+        {tokens === undefined ? null : (
+          <>
+            {seconds === undefined && toolCount === 0 ? null : (
+              <span className="round-sep" aria-hidden="true">·</span>
+            )}
+            <span className="round-tokens" title="宿主上报的真实用量">
+              用量 {formatTokens(tokens.inputTokens + tokens.outputTokens)} tok
+            </span>
+          </>
         )}
         {first === undefined ? null : (
           <>
