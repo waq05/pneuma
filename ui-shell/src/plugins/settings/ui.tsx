@@ -14,8 +14,8 @@
  * - **声明式**（`fields` 非空）：走 {@link GenericFields}，text / number / select / switch /
  *   info / button 六种控件 + `group` 组头，逐条对位旧桌面端的同名组件；
  * - **结构化**（`custom: true`）：模型 / 模式 / 技能 / 归档 / 用量这五个由桌面端手画。这一版
- *   搬了**技能**与**模式（预设）**，其余给一条**诚实的说明**（说清去哪做、为什么壳里没有），
- *   不假装有界面；
+ *   搬了**技能**、**模式（预设）**与**模型**（模型只做只读端点 + 选默认模型，增删端点与写 key 被
+ *   有意排除），其余给一条**诚实的说明**（说清去哪做、为什么壳里没有），不假装有界面；
  * - **外观**：宿主没有这个分区（那几项只有渲染层消费），照旧桌面端的做法**追加在「通用」分区末尾**。
  *
  * ## 壳自己加的一项：插件
@@ -56,6 +56,7 @@ import {
   type UiPrefsView,
 } from '@dsc/ui'
 import { PresetsGroup } from './presets'
+import { ModelsGroup } from './models'
 
 /** 拿异常的文字形态（宿主与桥都可能抛 Error，也可能是别的值）。 */
 function text(error: unknown): string {
@@ -226,6 +227,8 @@ function SettingsPanel(): ReactNode {
                 <SkillsGroup />
               ) : section.id === 'presets' ? (
                 <PresetsGroup />
+              ) : section.id === 'models' ? (
+                <ModelsGroup />
               ) : (
                 <NotYetPanel section={section} />
               )
@@ -804,11 +807,9 @@ function PluginsGroup(): ReactNode {
  * 结构化分区（`custom`）里，壳这一版还没手画的那几个：说清**为什么没有**、**去哪做**，
  * 不画一个空壳假装有界面。
  *
- * 这五个分区（模型 / 模式 / 技能 / 归档 / 用量）的界面都由桌面端自己画；这一版搬了技能与模式。
+ * 这五个分区（模型 / 模式 / 技能 / 归档 / 用量）的界面都由桌面端自己画；这一版搬了技能、模式与模型。
  */
 const NOT_YET: Readonly<Record<string, string>> = {
-  models:
-    '端点与 API key 的编辑不在界面通道里——saveProvider / setProviderKey 被有意排除（它们写凭据），所以这一版没有模型面板，也改不了默认模型。要改端点、换 key、选默认模型，请用桌面端旧界面或命令行的相关指令。',
   archive:
     '归档会话的恢复在左侧会话栏的「归档」页里已经可用。永久删除（purgeSessions）被有意排除，这里不做。',
   usage: '用量统计的面板还没搬（Token 活动热力图、趋势与模型占比）。',
