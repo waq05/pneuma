@@ -7,7 +7,8 @@
  * 与旧界面的层级一致——外层 flex 列布局因此不用改一行 CSS 就能对上。
  *
  * 数据来自宿主快照（`sessions` + `sessionStates` + `status.sessionPath`），动作经界面
- * 通道调宿主方法（`refreshSessions` / `openSession` / `setSessionPinned` / `archiveSessions`）。
+ * 通道调宿主方法（`refreshSessions` / `openSession` / `setSessionPinned` / `archiveSessions`
+ * / `renameSession` / `listUserMessages` + `forkSession`）。
  *
  * 样式与 class 名一律照抄旧版（`ui-shell/src/legacy/views.css` 里有对应规则，行号同
  * 旧 `desktop/src/renderer/styles.css`）：`.sidebar-scroll` 287、`.section-head` 243、
@@ -17,7 +18,7 @@
  * @module dsc-ui-shell/plugins/sessions
  */
 import { useEffect, useState, type KeyboardEvent, type MouseEvent } from 'react'
-import { IconArchive, IconPin, IconPlus, IconQueue, IconRefresh } from '@dsc/ui'
+import { IconArchive, IconBranch, IconEdit, IconPin, IconPlus, IconQueue, IconRefresh } from '@dsc/ui'
 import { defineUiPlugin, useHostChannel, useHostSelector, type HostSnapshot, type SessionRunState, type SessionSummary } from '@dsc/ui'
 
 /** 空的会话列表常量：没拿到快照时共用一份，省得每帧新建数组。 */
@@ -69,6 +70,8 @@ function SessionList() {
   const currentPath = useHostSelector(readCurrentPath)
   const loading = useHostSelector(readLoading)
   const [fault, setFault] = useState<string | null>(null)
+  /** 正在挑"从哪条消息分叉"（null = 没在挑）。 */
+  const [forking, setForking] = useState<{ id: string; messages: string[] } | null>(null)
 
   useEffect(() => {
     void channel.invoke('refreshSessions').catch((reason: unknown) => {
@@ -100,6 +103,49 @@ function SessionList() {
   }
 
   // 置顶在前，其余按最后写入时间倒序——与宿主给的顺序无关，界面自己定怎么排。
+  /** 改名（宿主写会话标题；名字为空 = 撤销改名，交回宿主自己的推断）。 */
+  const rename = (id: string, name: string): void => {
+    void run('renameSession', [id, name])
+  }
+
+  /**
+   * 分叉：先问宿主「这条会话里有哪些用户消息」，弹一个小选择列表，选哪条就从那里分叉。
+   *
+   * 为什么不直接分叉在最后一条：分叉的意思是"从某一句话重来"，选哪一句是用户的事
+   * （旧界面同样先列用户消息再点）。只有一条候选时仍然弹列表——省一步点击换来的
+   * 是"不知道分叉在哪"的困惑。
+   */
+  const startFork = (id: string): void => {
+    void (async () => {
+      setFault(null)
+      try {
+        const messages = await channel.invoke<string[]>('listUserMessages', [id])
+        setForking({ id, messages })
+      } catch (reason) {
+        setFault(reason instanceof Error ? reason.message : String(reason))
+      }
+    })()
+  }
+
+  /** 真的分叉：宿主复制到第 index 条用户消息之前，返回新会话路径；分完打开它。 */
+  const doFork = (id: string, index: number): void => {
+    setForking(null)
+    void (async () => {
+      setFault(null)
+      try {
+        const result = await channel.invoke<{ ok: boolean; path?: string; error?: string }>('forkSession', [id, index])
+        if (result.ok !== true) {
+          setFault(result.error ?? '分叉失败')
+          return
+        }
+        await run('openSession', result.path === undefined ? [] : [result.path])
+        await run('refreshSessions', [])
+      } catch (reason) {
+        setFault(reason instanceof Error ? reason.message : String(reason))
+      }
+    })()
+  }
+
   const sorted = [...sessions].sort((left, right) => {
     const pin = (right.pinnedAt ?? 0) - (left.pinnedAt ?? 0)
     return pin !== 0 ? pin : right.updatedAt - left.updatedAt
@@ -131,6 +177,39 @@ function SessionList() {
 
         {fault === null ? null : <div className="sidebar-empty">列表没读出来：{fault}</div>}
 
+        {forking === null ? null : (
+          <div className="shell-fork-picker">
+            <div className="settings-group-title">从哪句话分叉？</div>
+            {forking.messages.length === 0 ? (
+              <div className="settings-empty">这条会话里还没有用户消息。</div>
+            ) : (
+              forking.messages.map((text, index) => (
+                <button
+                  key={index}
+                  type="button"
+                  className="shell-fork-item"
+                  title={text}
+                  onClick={() => {
+                    doFork(forking.id, index)
+                  }}
+                >
+                  <span className="shell-fork-no">{index + 1}</span>
+                  {oneLine(text)}
+                </button>
+              ))
+            )}
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => {
+                setForking(null)
+              }}
+            >
+              取消
+            </button>
+          </div>
+        )}
+
         {sorted.length === 0 ? (
           <div className="sidebar-empty">
             <IconQueue size={24} />
@@ -147,6 +226,8 @@ function SessionList() {
               onOpen={open}
               onPin={(pinned) => run('setSessionPinned', [session.id, pinned])}
               onArchive={() => run('archiveSessions', [[session.id]])}
+              onRename={(name) => rename(session.id, name)}
+              onFork={() => startFork(session.id)}
             />
           ))
         )}
@@ -163,6 +244,8 @@ function SessionRow({
   onOpen,
   onPin,
   onArchive,
+  onRename,
+  onFork,
 }: {
   session: SessionSummary
   state: SessionRunState | undefined
@@ -170,7 +253,11 @@ function SessionRow({
   onOpen: (id?: string) => void
   onPin: (pinned: boolean) => void
   onArchive: () => void
+  onRename: (name: string) => void
+  onFork: () => void
 }) {
+  /** 改名中的草稿（null = 没在改名）。回车提交、Esc 撤销、失焦也算提交。 */
+  const [draft, setDraft] = useState<string | null>(null)
   const pinned = session.pinnedAt !== undefined
   const title = session.title ?? '新会话'
   const dot = state === undefined ? undefined : DOT_CLASS[state]
@@ -217,10 +304,59 @@ function SessionRow({
         </span>
       )}
 
-      <span className="title">{title}</span>
+      {draft === null ? (
+        <span className="title">{title}</span>
+      ) : (
+        <input
+          className="shell-rename-input"
+          autoFocus
+          value={draft}
+          aria-label="会话名"
+          onClick={stop}
+          onChange={(event) => {
+            setDraft(event.target.value)
+          }}
+          onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+            // 行本身也认回车（打开会话），这里必须先拦住再决定提交还是撤销。
+            event.stopPropagation()
+            if (event.key === 'Enter') {
+              onRename(draft.trim())
+              setDraft(null)
+            } else if (event.key === 'Escape') {
+              setDraft(null)
+            }
+          }}
+          onBlur={() => {
+            if (draft !== null) {
+              onRename(draft.trim())
+              setDraft(null)
+            }
+          }}
+        />
+      )}
       <span className="when">{relativeTime(session.updatedAt)}</span>
 
       <span className="row-actions" onClick={stop}>
+        <button
+          type="button"
+          className="icon-btn"
+          data-tip="改名"
+          aria-label="改名"
+          onClick={() => {
+            setDraft(title)
+          }}
+        >
+          <IconEdit size={14} />
+        </button>
+        <button
+          type="button"
+          className="icon-btn"
+          data-tip="从某条消息分叉出新会话"
+          aria-label="分叉会话"
+          onClick={onFork}
+        >
+          <IconBranch size={14} />
+        </button>
         <button
           type="button"
           className="icon-btn"
@@ -233,6 +369,13 @@ function SessionRow({
       </span>
     </div>
   )
+}
+
+/** 一行里的用户消息：换行压成空格、超长截断（分叉选择列表用）。 */
+function oneLine(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  const chars = Array.from(flat)
+  return chars.length > 60 ? `${chars.slice(0, 60).join('')}…` : flat
 }
 
 /** 从快照里取会话列表；取不到给共用空数组（引用稳定，选择器才拦得住重渲染）。 */
