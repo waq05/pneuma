@@ -8,7 +8,10 @@
  *
  * 数据来自宿主快照（`sessions` + `sessionStates` + `status.sessionPath`），动作经界面
  * 通道调宿主方法（`refreshSessions` / `openSession` / `setSessionPinned` / `archiveSessions`
- * / `renameSession` / `listUserMessages` + `forkSession`）。
+ * / `renameSession` / `listUserMessages` + `forkSession` / `listArchivedSessions` + `restoreSessions`）。
+ *
+ * 这一栏有两个视图：**会话**（活的，来自快照）与**归档**（`listArchivedSessions` 现拉，
+ * 每行给一颗「恢复」）。归档区不订阅快照——它是一份按需读的档案，没有"每帧变"这回事。
  *
  * 样式与 class 名一律照抄旧版（`ui-shell/src/legacy/views.css` 里有对应规则，行号同
  * 旧 `desktop/src/renderer/styles.css`）：`.sidebar-scroll` 287、`.section-head` 243、
@@ -18,8 +21,16 @@
  * @module dsc-ui-shell/plugins/sessions
  */
 import { useEffect, useState, type KeyboardEvent, type MouseEvent } from 'react'
-import { IconArchive, IconBranch, IconEdit, IconPin, IconPlus, IconQueue, IconRefresh } from '@dsc/ui'
-import { defineUiPlugin, useHostChannel, useHostSelector, type HostSnapshot, type SessionRunState, type SessionSummary } from '@dsc/ui'
+import { IconArchive, IconArchiveOff, IconBranch, IconEdit, IconPin, IconPlus, IconQueue, IconRefresh } from '@dsc/ui'
+import {
+  defineUiPlugin,
+  useHostChannel,
+  useHostSelector,
+  type ArchivedSessionView,
+  type HostSnapshot,
+  type SessionRunState,
+  type SessionSummary,
+} from '@dsc/ui'
 
 /** 空的会话列表常量：没拿到快照时共用一份，省得每帧新建数组。 */
 const NO_SESSIONS: readonly SessionSummary[] = Object.freeze([])
@@ -72,6 +83,10 @@ function SessionList() {
   const [fault, setFault] = useState<string | null>(null)
   /** 正在挑"从哪条消息分叉"（null = 没在挑）。 */
   const [forking, setForking] = useState<{ id: string; messages: string[] } | null>(null)
+  /** 当前看的是哪一页：活着的会话，还是归档区。 */
+  const [view, setView] = useState<'active' | 'archived'>('active')
+  /** 归档页（只在切过去时读一次；恢复/归档后再读）。 */
+  const [archived, setArchived] = useState<ArchivedSessionView[] | null>(null)
 
   useEffect(() => {
     void channel.invoke('refreshSessions').catch((reason: unknown) => {
@@ -146,6 +161,37 @@ function SessionList() {
     })()
   }
 
+  /** 读归档页（切过去、归档完、恢复完都会走）。 */
+  const loadArchived = (): void => {
+    setFault(null)
+    void channel
+      .invoke<{ items: ArchivedSessionView[] }>('listArchivedSessions')
+      .then((page) => {
+        setArchived(page.items)
+      })
+      .catch((reason: unknown) => {
+        setFault(reason instanceof Error ? reason.message : String(reason))
+      })
+  }
+
+  /** 归档一批（活会话列表里那一颗按钮走这里，归档完把归档页一起刷新）。 */
+  const archive = (id: string): void => {
+    void (async () => {
+      await run('archiveSessions', [[id]])
+      await run('refreshSessions', [])
+      if (archived !== null) loadArchived()
+    })()
+  }
+
+  /** 从归档区恢复一条：恢复完刷新归档页与活列表（它会回到活列表里）。 */
+  const restore = (path: string): void => {
+    void (async () => {
+      await run('restoreSessions', [[path]])
+      loadArchived()
+      await run('refreshSessions', [])
+    })()
+  }
+
   const sorted = [...sessions].sort((left, right) => {
     const pin = (right.pinnedAt ?? 0) - (left.pinnedAt ?? 0)
     return pin !== 0 ? pin : right.updatedAt - left.updatedAt
@@ -160,15 +206,39 @@ function SessionList() {
 
       <div className="sidebar-scroll">
         <div className="section-head">
-          <span className="side-title">会话</span>
+          <span className="side-title">{view === 'active' ? '会话' : '归档'}</span>
           <span className="head-actions">
             <button
               type="button"
+              className={`shell-tab${view === 'active' ? ' on' : ''}`}
+              aria-pressed={view === 'active'}
+              onClick={() => {
+                setView('active')
+              }}
+            >
+              会话
+            </button>
+            <button
+              type="button"
+              className={`shell-tab${view === 'archived' ? ' on' : ''}`}
+              aria-pressed={view === 'archived'}
+              onClick={() => {
+                setView('archived')
+                loadArchived()
+              }}
+            >
+              归档
+            </button>
+            <button
+              type="button"
               className="icon-btn"
-              data-tip="重新读一遍会话列表"
-              aria-label="刷新会话列表"
-              disabled={loading}
-              onClick={() => void run('refreshSessions', [])}
+              data-tip={view === 'active' ? '重新读一遍会话列表' : '重新读一遍归档'}
+              aria-label="刷新"
+              disabled={view === 'active' && loading}
+              onClick={() => {
+                if (view === 'archived') loadArchived()
+                else void run('refreshSessions', [])
+              }}
             >
               <IconRefresh size={15} />
             </button>
@@ -210,7 +280,27 @@ function SessionList() {
           </div>
         )}
 
-        {sorted.length === 0 ? (
+        {view === 'archived' ? (
+          archived === null ? (
+            <div className="sidebar-empty">正在读归档…</div>
+          ) : archived.length === 0 ? (
+            <div className="sidebar-empty">
+              <IconArchive size={24} />
+              <div>归档区是空的。</div>
+              <div>归档的会话会留在这里，随时可以恢复。</div>
+            </div>
+          ) : (
+            archived.map((item) => (
+              <ArchivedRow
+                key={item.path}
+                item={item}
+                onRestore={() => {
+                  restore(item.path)
+                }}
+              />
+            ))
+          )
+        ) : sorted.length === 0 ? (
           <div className="sidebar-empty">
             <IconQueue size={24} />
             <div>{loading ? '正在读会话列表…' : '还没有历史会话。'}</div>
@@ -225,7 +315,9 @@ function SessionList() {
               current={currentPath !== null && session.id === currentPath}
               onOpen={open}
               onPin={(pinned) => run('setSessionPinned', [session.id, pinned])}
-              onArchive={() => run('archiveSessions', [[session.id]])}
+              onArchive={() => {
+                archive(session.id)
+              }}
               onRename={(name) => rename(session.id, name)}
               onFork={() => startFork(session.id)}
             />
@@ -234,6 +326,40 @@ function SessionList() {
       </div>
     </>
   )
+}
+
+/**
+ * 归档区里的一行：标题 + 原工作目录 + 归档时刻 + 一颗恢复钮。
+ *
+ * 它不复用 {@link SessionRow}：归档行没有"打开/置顶/分叉"这些动作（会话已经挪进 `.archived/`），
+ * 硬塞进同一个组件只会让那个组件长出一堆 `if`。
+ */
+function ArchivedRow({ item, onRestore }: { item: ArchivedSessionView; onRestore: () => void }) {
+  const title = item.title ?? baseName(item.path)
+  return (
+    <div className="sess-item" data-tip={`${item.cwd}
+归档于 ${new Date(item.archivedAt).toLocaleString()}`}>
+      <span className="row-slot" />
+      <span className="title">{title}</span>
+      <span className="when">{relativeTime(item.archivedAt)}</span>
+      <span className="row-actions">
+        <button
+          type="button"
+          className="icon-btn"
+          data-tip="恢复到会话列表"
+          aria-label="恢复会话"
+          onClick={onRestore}
+        >
+          <IconArchiveOff size={14} />
+        </button>
+      </span>
+    </div>
+  )
+}
+
+/** 路径里的文件名（归档行没有标题时拿它顶上）。两种分隔符都切，按仓库惯例（`ChatView.tsx:77`）。 */
+function baseName(path: string): string {
+  return path.split(/[\\/]/).pop() ?? path
 }
 
 /** 一行会话。DOM 与 class 照旧版 `Sidebar.tsx:579-825`，行根是 div 扮按钮（不是 button）。 */

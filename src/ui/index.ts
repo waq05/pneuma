@@ -27,6 +27,8 @@ export * from '../core/native-bridge.js'
  */
 export type {
   ApprovalAnswer,
+  ArchivedPage,
+  ArchivedSessionView,
   ApprovalDiffView,
   ApprovalPolicy,
   ApprovalRequestView,

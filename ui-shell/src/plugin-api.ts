@@ -312,6 +312,8 @@ export * from './icons'
 // 宿主视图类型原样转出去：插件按它们写渲染，宿主改字段时插件这边编不过（而不是线上画空）。
 export type {
   ApprovalAnswer,
+  ArchivedPage,
+  ArchivedSessionView,
   ApprovalDiffView,
   ApprovalPolicy,
   ApprovalRequestView,

@@ -479,7 +479,7 @@
 .shell-term-note[data-tone='error'] {
   color: var(--dsc-red);
 }
-/* 停靠面板的页签（现在只有一个：终端；文件与预览是阶段 5.3 的活）。 */
+/* 壳里的切换页签：停靠面板用它切面板，侧栏会话区用它切「会话 / 归档」，所以放全局不绑面板。 */
 .shell-tab {
   border-radius: var(--dsc-r-control);
   color: var(--dsc-text-tertiary);
