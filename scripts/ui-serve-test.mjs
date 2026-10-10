@@ -102,9 +102,16 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 // ── 1. 界面通道的方法白名单与实参校验（纯函数） ─────────────────────────────────
 console.log('\n[1] 方法白名单与实参校验')
 {
-  const excluded = ['setProviderKey', 'saveProvider', 'removeProvider', 'runCommand', 'purgeSessions', 'setPolicy', 'dock', 'installMarketSkill', 'setMarketSources']
+  const excluded = ['setProviderKey', 'saveProvider', 'removeProvider', 'runCommand', 'purgeSessions', 'setPolicy', 'installMarketSkill', 'setMarketSources']
   check('凭据 / 破坏性 / 命令执行 / 策略这几类都不在白名单', excluded.every((name) => !isUiMethod(name)), excluded.filter(isUiMethod).join(','))
-  const allowed = ['submit', 'interrupt', 'openSession', 'answerApproval', 'answerQuestion', 'answerPlan', 'setModel', 'refreshSessions', 'listModels', 'setUiPrefs', 'getUiPrefs', 'listPlugins', 'setPluginEnabled', 'listTools', 'listSkills', 'getSettingsSections', 'getSectionValues', 'setSettingValue', 'runSettingAction', 'getModelConfig', 'goalAction', 'clearTodos', 'listPresets', 'usePreset', 'editQueued', 'removeQueued', 'steerQueued', 'compact', 'setEffort', 'setMode']
+  // `dock` 从 2026-10-10（阶段 5.2）起在放行面，但**只放读 + 写两档**：终端那三档
+  // （term-spawn / term-input / term-kill）只走桌面窗口的原生桥，不进这条 HTTP 面。
+  check('dock 在放行面（读 + 写两档）', isUiMethod('dock'))
+  const dockOpShape = UI_ARG_SPECS['dock'][0].shape
+  const dockOps = dockOpShape.kind === 'enum' ? [...dockOpShape.values] : []
+  check('dock 放行的 op 里一个 term-* 都没有', dockOps.length > 0 && dockOps.every((op) => !op.startsWith('term-')), dockOps.join(','))
+  check('HTTP 面里传 term-spawn 被实参校验拒', !validateUiArgs('dock', ['term-spawn', { cwd: '.' }]).ok)
+  const allowed = ['submit', 'interrupt', 'openSession', 'answerApproval', 'answerQuestion', 'answerPlan', 'setModel', 'refreshSessions', 'listModels', 'setUiPrefs', 'getUiPrefs', 'listPlugins', 'setPluginEnabled', 'listTools', 'listSkills', 'getSettingsSections', 'getSectionValues', 'setSettingValue', 'runSettingAction', 'getModelConfig', 'goalAction', 'clearTodos', 'listPresets', 'usePreset', 'editQueued', 'removeQueued', 'steerQueued', 'compact', 'setEffort', 'setMode', 'dock']
   check('界面真正要用的方法都放行', allowed.every((name) => isUiMethod(name)), allowed.filter((name) => !isUiMethod(name)).join(','))
   check('每个放行的方法都有实参规格', UI_METHODS.every((name) => UI_ARG_SPECS[name] !== undefined) && Object.keys(UI_ARG_SPECS).length === UI_METHODS.length, `${String(Object.keys(UI_ARG_SPECS).length)} vs ${String(UI_METHODS.length)}`)
 

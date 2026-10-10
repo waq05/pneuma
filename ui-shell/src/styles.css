@@ -447,3 +447,63 @@
 .think-block:not(.live):not(.open) .think-label {
   font-style: italic;
 }
+
+/* ══════════ 停靠面板（终端所在的那一块） ══════════
+ *
+ * 打开时主区从「一列」变成「正文 + 面板」两列——与 legacy 的
+ * `.thread-zone[data-review]`（审查面板）同一套行布局，但用**独立属性名**：
+ * 两件事互不相干，将来审查面板搬进来时各自开合、互不牵动。
+ *
+ * 面板本体直接用 legacy 的 `.dock`（左边框、侧栏底色、纵向 flex 都在那份里写了），
+ * 宽度由插件写在行内（与旧界面一样可拖，拖拽手柄这版还没做）。 */
+.thread-zone[data-dock='1'] {
+  flex-direction: row;
+}
+.thread-zone[data-dock='1'] .thread-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.dock {
+  max-width: 70vw;
+}
+
+/* 终端面板的底栏：状态一行（会话名 / 退出提示 / 启动失败原因）。 */
+.shell-term-note {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-caption);
+  padding: 0 4px;
+}
+.shell-term-note[data-tone='error'] {
+  color: var(--dsc-red);
+}
+/* 停靠面板的页签（现在只有一个：终端；文件与预览是阶段 5.3 的活）。 */
+.shell-tab {
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-ui);
+  padding: 3px 8px;
+}
+.shell-tab.on {
+  background: var(--dsc-row-active-bg);
+  color: var(--dsc-text-primary);
+}
+/* 面板里那颗选 shell 的下拉：legacy 没给 select 定过样式，这里按控件令牌补一条最小的。 */
+.shell-select {
+  background: var(--dsc-fill-quaternary);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-secondary);
+  font-size: var(--dsc-fs-caption);
+  height: var(--dsc-ctl);
+  padding: 0 4px;
+}
+/* 「终端只在桌面版里有」这类整块说明（浏览器 / 远程壳里）。 */
+.shell-term-empty {
+  color: var(--dsc-text-tertiary);
+  flex: 1;
+  font-size: var(--dsc-fs-caption);
+  padding: 12px;
+}

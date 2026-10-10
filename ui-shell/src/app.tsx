@@ -20,7 +20,7 @@ import { ALLOWED_MODULES } from './boot'
 import { useChannelStatus, useHostError, useHostHello, useHostSelector } from './runtime-context'
 import { SlotOutlet, useSlotFaults } from './slots-react'
 import { SLOT } from './slots'
-import { getHostNative, type UiSlots } from './plugin-api'
+import { getHostNative, useDockOpen, type UiSlots } from './plugin-api'
 
 /** 应用参数。 */
 export interface AppProps {
@@ -31,6 +31,7 @@ export interface AppProps {
 
 export function App({ slots, boot, reports }: AppProps): ReactNode {
   const failed = reports.filter((report) => !report.ok)
+  const dockOn = useDockOpen()
   return (
     <>
       <div className="app">
@@ -58,7 +59,7 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
 
           <HostErrorStrip />
 
-          <div className="thread-zone">
+          <div className="thread-zone" {...(dockOn ? { 'data-dock': '1' } : {})}>
             <div className="thread-main">
               <div className="chat-wrap">
                 <div className="chat">
@@ -71,6 +72,8 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
                 <SlotOutlet slots={slots} slot={SLOT.composer} />
               </div>
             </div>
+            {/* 停靠面板：开的时候才渲染（收起时不在布局里留占位，见 dock-state.ts）。 */}
+            {dockOn ? <SlotOutlet slots={slots} slot={SLOT.dock} /> : null}
           </div>
 
           <div className="statusbar">

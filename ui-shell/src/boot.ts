@@ -20,6 +20,8 @@ import * as React from 'react'
 import * as ReactDOM from 'react-dom'
 import * as ReactDOMClient from 'react-dom/client'
 import * as jsxRuntime from 'react/jsx-runtime'
+import * as xterm from '@xterm/xterm'
+import * as xtermFit from '@xterm/addon-fit'
 import type {
   UiBootGraph,
   UiHostInfo,
@@ -49,6 +51,10 @@ const FACTORY_GLOBAL = '__DSC_UI_FACTORIES__'
  *
  * 故意不在表里的：`@dsc/ui-core`（壳的内部实现，插件只该用 `@dsc/ui`；
  * 它被构建期保留成 require，所以真当值用了会得到一句明确的「白名单外的模块」）。
+ *
+ * `@xterm/xterm` 与 `@xterm/addon-fit` 在表里（2026-10-10 加的）：终端插件要用它们，
+ * 而"每个插件自带一份 xterm"会让每个用到终端的插件都拖进 ~400KB。放进平台表之后
+ * 只有壳带一份（xterm 的 CSS 也由壳在 `main.tsx` 里静态 import，插件拿不到样式文件）。
  */
 const MODULES: Readonly<Record<string, unknown>> = {
   react: React,
@@ -56,6 +62,8 @@ const MODULES: Readonly<Record<string, unknown>> = {
   'react-dom/client': ReactDOMClient,
   'react/jsx-runtime': jsxRuntime,
   '@dsc/ui': pluginApi,
+  '@xterm/xterm': xterm,
+  '@xterm/addon-fit': xtermFit,
 }
 
 /** 白名单里的模块名（诊断与提前校验用）。 */

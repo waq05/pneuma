@@ -35,6 +35,14 @@ export const SLOT = {
   statusbar: 'shell.statusbar',
   /** 播报区：一句话的提示（同一时刻只显示第一条）。 */
   notice: 'shell.notice',
+  /**
+   * 停靠面板：终端这类「主区下面的第二条」。
+   *
+   * 为什么单开一个槽而不塞进 `main`：`main` 是消息流的滚动区（`.chat` 那一列），
+   * 停靠面板不属于那个滚动区——它贴在主区底部、有自己的高度。旧界面里它同样是
+   * `.main` 里 `.thread-zone` 的**兄弟**节点。
+   */
+  dock: 'shell.dock',
 } as const
 
 /** 界面壳声明的槽：名字 → 形态（键从 `SLOT` 取，值在这里定）。 */
@@ -45,6 +53,7 @@ export const SHELL_SLOTS: Readonly<Record<string, SlotKind>> = {
   [SLOT.composer]: 'list',
   [SLOT.statusbar]: 'list',
   [SLOT.notice]: 'single',
+  [SLOT.dock]: 'list',
 }
 
 /** 槽名（联合类型）：插件里写 `SLOT.header` 时能查出错字。 */

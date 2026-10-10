@@ -26,6 +26,9 @@ import './legacy/tokens.css'
 import './legacy/base.css'
 import './legacy/primitives.css'
 import './legacy/views.css'
+// 终端（xterm）的样式必须由**壳**加载：插件 bundle 是纯 JS，带不了 CSS 文件，
+// 而 xterm 的网格与滚动条要靠它自己的样式表才画得对。放在 legacy 之后、styles.css 之前。
+import '@xterm/xterm/css/xterm.css'
 import './styles.css'
 
 /** 什么都没装上时的装载结果（清单取不到也要起壳，不能白屏）。 */

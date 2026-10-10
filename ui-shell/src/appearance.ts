@@ -19,7 +19,7 @@
  * @module dsc-ui-shell/appearance
  */
 import type { ThemeMode, UiDensity, UiFontSize, UiPrefsView } from '@dsc/ui'
-import { getHostNative } from './plugin-api'
+import { getHostNative, readCssColor } from './plugin-api'
 
 export type { ThemeMode, UiDensity, UiFontSize }
 
@@ -91,8 +91,6 @@ const media = typeof window === 'undefined' ? undefined : window.matchMedia?.('(
 let systemWatcher: ((event: MediaQueryListEvent) => void) | undefined
 /** 最近一次报出去的两个控件条颜色（`bar symbol`）；没变就不重复报。 */
 let lastChrome: string | null = null
-/** 读令牌颜色用的隐藏探针（挂在 <html> 上，零尺寸、不可见）。 */
-let chromeProbe: HTMLDivElement | undefined
 /** 最近一次生效的外观：系统偏好监听读它，而不是读挂载当时那份快照，
  *  否则「先选跟随系统、后改字号」会丢——切换时重画的是老字号。 */
 let current: Appearance = DEFAULT_APPEARANCE
@@ -160,54 +158,15 @@ function pushNativeChrome(requested: ThemeMode): void {
 /**
  * 读 `--dsc-chrome-bar` / `--dsc-chrome-symbol` 两个令牌，压平成 `#rrggbb`。
  *
- * 为什么要绕一层隐藏探针：令牌是 `color-mix()` 算出来的，`getComputedStyle` 只认
- * 元素上生效的颜色。探针零尺寸、不可见、不参与布局（`position:absolute` + `visibility:hidden`），
- * 读两个颜色就丢掉。
+ * 为什么要绕一层（`readCssColor` 里的隐藏探针）：令牌是 `color-mix()` 算出来的，
+ * `getComputedStyle` 只认元素上生效的颜色，读不了"变量本身"。
  *
  * @returns `"#rrggbb #rrggbb"`；读不出来（令牌缺失、带 alpha）给 null
  */
 function readChromeColors(): string | null {
-  if (typeof document === 'undefined') return null
-  if (chromeProbe === undefined) {
-    chromeProbe = document.createElement('div')
-    chromeProbe.style.cssText =
-      'position:absolute;top:0;left:0;width:0;height:0;visibility:hidden;pointer-events:none'
-    document.documentElement.append(chromeProbe)
-  }
-  const probe = chromeProbe
-  const read = (token: string): string | null => {
-    probe.style.backgroundColor = `var(${token})`
-    return toHexColor(getComputedStyle(probe).backgroundColor)
-  }
-  const bar = read('--dsc-chrome-bar')
-  const symbol = read('--dsc-chrome-symbol')
+  const bar = readCssColor('--dsc-chrome-bar')
+  const symbol = readCssColor('--dsc-chrome-symbol')
   return bar === null || symbol === null ? null : `${bar} ${symbol}`
-}
-
-/**
- * 把浏览器算出来的颜色转成 `#rrggbb`。
- *
- * 同一个 `color-mix()` 令牌在不同内核版本里可能被写成 `rgb(13, 13, 15)` 或
- * `color(srgb 0.051 0.051 0.059)`，两种都要认（主进程只收 `#rrggbb`：带 alpha 的
- * 颜色到了系统那侧会被丢掉）。
- *
- * @param color getComputedStyle 读到的 background-color
- * @returns 不透明颜色的十六进制写法；带 alpha 或不是 sRGB 时给 null
- */
-function toHexColor(color: string): string | null {
-  const parts = /^(rgb|color)\((.+)\)$/i.exec(color.trim())
-  if (!parts) return null
-  const srgb = parts[1].toLowerCase() === 'color'
-  const body = srgb ? parts[2].replace(/^\s*srgb\s+/i, '') : parts[2]
-  const nums = body.split(/[,/\s]+/).filter((piece) => piece !== '').map(Number)
-  if (nums.length < 3 || nums.slice(0, 4).some((n) => !Number.isFinite(n))) return null
-  if (nums.length > 3 && nums[3] < 0.999) return null
-  const scale = srgb ? 255 : 1
-  const hex = (n: number): string =>
-    Math.min(255, Math.max(0, Math.round(n * scale)))
-      .toString(16)
-      .padStart(2, '0')
-  return `#${hex(nums[0])}${hex(nums[1])}${hex(nums[2])}`
 }
 
 /**

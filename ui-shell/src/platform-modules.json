@@ -3,5 +3,7 @@
   "react-dom",
   "react-dom/client",
   "react/jsx-runtime",
-  "@dsc/ui"
+  "@dsc/ui",
+  "@xterm/xterm",
+  "@xterm/addon-fit"
 ]
