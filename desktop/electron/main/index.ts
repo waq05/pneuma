@@ -631,6 +631,14 @@ const NATIVE_HANDLERS: Readonly<Record<NativeOp, (args: readonly unknown[]) => u
   quit: () => {
     mainWindow?.close()
   },
+  /**
+   * 终端：把 `[op, payload]` 转给宿主的 dock 服务。这是**唯一**一条从界面调 dock 终端的路
+   * （界面 HTTP 面的 op 枚举里没有 term-*），而这条通道只对主窗口的文档开放。
+   */
+  terminal: ([op, payload]) => {
+    if (protocol === null) throw new Error('宿主进程未运行')
+    return protocol.invoke('dock', [String(op), (payload ?? {}) as Record<string, unknown>])
+  },
 }
 
 /**

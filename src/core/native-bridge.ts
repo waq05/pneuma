@@ -28,16 +28,21 @@
  *   - `installPlugin` / `installSkill`：系统选择器把文件复制进 `~/.dsc/`，是供应链写入口，
  *     与界面通道排除 `installMarketSkill` / `setMarketSources` 同一个理由。
  *   - 内嵌浏览器那几个（`dockBrowser` / `browserNav` / `onBrowserState`）：它们是原生
- *     `WebContentsView` 覆盖层，跟终端一起在阶段 5.2 落地，那时一并进桥。
+ *     `WebContentsView` 覆盖层，还没搬进壳（终端已经进了，见 `terminal` 那个操作）。
+ *
+ * 除了 `call` 之外，桥还有**一个订阅口**：`on(event, listener)`，事件名由 {@link NATIVE_EVENTS}
+ * 白名单（现在只有终端输出流）。事件不做实参校验——它是主进程往外推的，不是页面往里送的。
  *
  * @module dsc/core/native-bridge
  */
+
+import { DOCK_TERM_OPS } from './dock-ops.js'
 
 /**
  * 桥的协议版本：**加操作不涨**，改某个操作的实参或语义才涨。
  * 桌面主进程与壳握手时对一下，不一致就在诊断区说明白（不静默降级）。
  */
-export const NATIVE_BRIDGE_VERSION = 1
+export const NATIVE_BRIDGE_VERSION = 2
 
 /** 桥放行的操作，一字不差就是分派表的键。 */
 export const NATIVE_OPS = [
@@ -54,7 +59,26 @@ export const NATIVE_OPS = [
   'notify',
   'restartHost',
   'quit',
+  /**
+   * 终端（dock 通道的第三档）。**这是终端唯一的入口**：界面 HTTP 面里没有 term-*
+   * （放行面的 op 枚举是 `DOCK_UI_OPS`，只有读 + 写），所以"起一个 shell 进程"
+   * 这件事只在装了 preload 的桌面窗口里做得到。实参是 `[op, payload]`，
+   * payload 由宿主插件自己净化（路径限 cwd、shell 白名单）。
+   */
+  'terminal',
 ] as const
+
+/** 桥能推给页面的事件（订阅入口按它白名单，别的名字直接拒）。 */
+export const NATIVE_EVENTS = [
+  /** dock 终端输出流：`{ id, data }`（id 是 term-spawn 给的会话 id）。 */
+  'dock-data',
+] as const
+
+/** 桥认得的一个事件名。 */
+export type NativeEvent = (typeof NATIVE_EVENTS)[number]
+
+/** 事件名查表。 */
+export const NATIVE_EVENT_SET: ReadonlySet<string> = new Set<string>(NATIVE_EVENTS)
 
 /** 桥认得的一个操作名。 */
 export type NativeOp = (typeof NATIVE_OPS)[number]
@@ -68,6 +92,7 @@ type ArgShape =
   | { kind: 'hex' }
   | { kind: 'enum'; values: readonly string[] }
   | { kind: 'notify' }
+  | { kind: 'json'; maxBytes: number }
 
 /** 一个实参的规格。 */
 interface ArgSpec {
@@ -83,6 +108,8 @@ const MAX_ID = 200
 /** 通知标题 / 正文的长度上限（正文比标题长一档）。 */
 const MAX_NOTIFY_TITLE = 200
 const MAX_NOTIFY_BODY = 1000
+/** 终端 payload 的上限：里面是一行命令或一段按键，8KB 富余得多。 */
+const MAX_TERM_PAYLOAD = 8192
 
 const THEME_SOURCES = ['dark', 'light', 'system'] as const
 const WORKSPACE_KINDS = ['terminal', 'explorer', 'vscode'] as const
@@ -119,6 +146,14 @@ export const NATIVE_ARG_SPECS: Readonly<Record<NativeOp, readonly ArgSpec[]>> = 
   restartHost: [],
   /** 退出应用（关主窗口 → 优雅停宿主 → quit）。 */
   quit: [],
+  /**
+   * 终端：`[op, payload]`。op 钉死在 `DOCK_TERM_OPS` 那三个上（spawn / input / kill），
+   * payload 是给宿主插件的小对象——它自己再净化一遍（路径限 cwd、shell 走白名单）。
+   */
+  terminal: [
+    { shape: { kind: 'enum', values: DOCK_TERM_OPS } },
+    { shape: { kind: 'json', maxBytes: MAX_TERM_PAYLOAD }, optional: true },
+  ],
 }
 
 /** 一次桥调用的校验结果：过了就带收窄后的操作名与实参，没过给一句能读的错。 */
@@ -212,5 +247,20 @@ function checkShape(shape: ArgShape, value: unknown): string | null {  switch (s
       if (typeof body === 'string' && body.length > MAX_NOTIFY_BODY) return `的 body 太长（> ${String(MAX_NOTIFY_BODY)} 字符）`
       return null
     }
+    case 'json': {
+      const text = jsonText(value)
+      if (text === null) return '不是可序列化的 JSON 值'
+      if (text.length > shape.maxBytes) return `是 JSON 但太长（${String(text.length)} > ${String(shape.maxBytes)} 字符）`
+      return null
+    }
+  }
+}
+
+/** 一段 JSON 文本；序列化不了（循环引用、BigInt、函数）给 null。 */
+function jsonText(value: unknown): string | null {
+  try {
+    return JSON.stringify(value) ?? null
+  } catch {
+    return null
   }
 }

@@ -11,7 +11,7 @@
  * @module desktop/preload
  */
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
-import { NATIVE_BRIDGE_VERSION } from '@dsc/runtime/core/native-bridge.js'
+import { NATIVE_BRIDGE_VERSION, NATIVE_EVENT_SET } from '@dsc/runtime/core/native-bridge.js'
 import type { SessionUsageView } from '../main/session-usage.js'
 
 const api = {
@@ -175,6 +175,23 @@ const native = {
    */
   call(op: string, args: unknown[] = []): Promise<unknown> {
     return ipcRenderer.invoke('dsc:native', op, args)
+  },
+  /**
+   * 订阅桥推上来的事件（现在只有终端的输出流）。
+   *
+   * 事件名不在白名单里就**当场抛**（名字写错属于编码错误，早发现比静默收不到好）；
+   * 桥不存在时（浏览器里）这件事由壳那一侧处理，这里只管桌面。
+   *
+   * @param event 事件名（见 `NATIVE_EVENTS`）
+   * @param listener 收到推送时调用
+   * @returns 退订函数
+   */
+  on(event: string, listener: (data: unknown) => void): () => void {
+    if (!NATIVE_EVENT_SET.has(event)) throw new Error(`原生桥没有这个事件：${event}`)
+    const channel = `dsc:${event}`
+    const handler = (_event: IpcRendererEvent, data: unknown): void => listener(data)
+    ipcRenderer.on(channel, handler)
+    return () => ipcRenderer.removeListener(channel, handler)
   },
 }
 

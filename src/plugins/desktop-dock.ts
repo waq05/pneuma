@@ -5,6 +5,10 @@
  * 安全边界：路径限定在宿主 cwd 内（fs-read 文本 ≤512KB、图片 ≤5MB、PDF/XLSX 整读 ≤10MB、
  * 二进制扩展名不读内容）；git 全部 execFile 固定子命令 + safeArg 参数净化（拒绝选项注入），无 shell。
  *
+ * 三档（2026-10-10，见 `core/dock-ops.ts` 的对照表）：读类直接放行；**写类先过审批**
+ * （与工具调用同一套裁决，权限模式对它同样成立）；终端那档**不进界面 HTTP 面**，
+ * 只从桌面窗口的原生桥进来。这里承担写类的闸门；终端那档由传输侧保证。
+ *
  * @module dsc/plugins/desktop-dock
  */
 import { execFile, spawn } from 'node:child_process'
@@ -12,6 +16,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import type { ChildProcess } from 'node:child_process'
+import { DOCK_WRITE_LABEL, isDockWriteOp, type DockWriteOp } from '../core/dock-ops.js'
 
 /** 受控执行 git（固定首参字面量 + 参数数组；无 shell）。超时由 execFile 自己收进程。 */
 function git(cwd: string, args: string[], timeoutMs = 15000): Promise<string> {
@@ -103,7 +108,30 @@ export const desktopDockPlugin: Plugin.Object = {
     const terms = new Map<string, ChildProcess>()
     let termSeq = 0
 
+    /**
+     * 写类 op 的审批闸：与工具调用同一套裁决（`approval.decide`），所以权限模式
+     * （只读 / 自动编辑 / 完全访问 / AI 审查）对"文件面板里按一下暂存"同样成立，
+     * 不需要给界面另立一套策略。
+     *
+     * 不带 `sessionPath`：`ApprovalRequest` 缺它时归到**当前会话**（宿主的 `pathOf` 口径），
+     * 这与界面按钮"点的是我正在看的这个会话"一致。
+     *
+     * 失败方向：**审批服务没起来就拒**——宁可这次点不动，也不要在没有闸门的情况下改仓库。
+     */
+    const requireWriteApproval = async (op: DockWriteOp, payload: Record<string, unknown>): Promise<void> => {
+      const approval = ctx.get('approval')
+      if (approval === undefined) throw new Error(`写操作 ${op} 需要审批服务，但它没有起来`)
+      const label = DOCK_WRITE_LABEL[op]
+      const decision = await approval.decide(
+        { toolName: label.toolName, argsSummary: label.summary(payload), args: { ...payload }, cwd },
+        new AbortController().signal,
+      )
+      if (decision === 'reject') throw new Error(`已拒绝：${label.toolName}`)
+    }
+
     const handle = async (op: string, payload: Record<string, unknown>): Promise<unknown> => {
+      // 写类先过闸，再进 switch（闸门只挡写类，读类与终端不受影响）。
+      if (isDockWriteOp(op)) await requireWriteApproval(op, payload)
       switch (op) {
         // ---- 终端（管道模式；无 tty，交互式全屏程序不可用） ----
         case 'term-spawn': {

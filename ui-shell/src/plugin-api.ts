@@ -23,7 +23,7 @@ import type {
   UiRuntimeApi,
   UiSlotApi,
 } from '@dsc/ui-core'
-import { NATIVE_BRIDGE_VERSION, type NativeOp } from '@dsc/ui-core'
+import { NATIVE_BRIDGE_VERSION, type NativeEvent, type NativeOp } from '@dsc/ui-core'
 
 /**
  * 壳交给插件组件的渲染能力（每个条目都有）。
@@ -129,12 +129,21 @@ export interface HostNative {
    * 不必先判 available 再包一层。
    */
   invoke<T = unknown>(op: NativeOp, args?: readonly unknown[]): Promise<T>
+  /**
+   * 订阅桥推上来的事件（现在只有终端输出流）。
+   *
+   * 与 `invoke` 的取向不同：桥缺席时**返回一个空的退订函数**，不抛也不拒。
+   * 理由是这类订阅都写在组件的 `useEffect` 里——"浏览器里没有终端"不该让插件崩，
+   * 只该让它收不到东西（订阅本身没有"失败"这个语义）。
+   */
+  on(event: NativeEvent, listener: (data: unknown) => void): () => void
 }
 
 /** `window.dscNative` 在页面上的形状（preload 暴露的那个对象）。 */
 interface NativeBridgeGlobal {
   version?: unknown
   call?: (op: string, args: unknown[]) => Promise<unknown>
+  on?: (event: string, listener: (data: unknown) => void) => () => void
 }
 
 /** 读一次全局对象；形状不对就当桥不在（宁可降级，也不要调到一个半残的对象）。 */
@@ -157,12 +166,17 @@ function bridgeGlobal(): NativeBridgeGlobal | null {
  */
 export function getHostNative(): HostNative {
   const bridge = bridgeGlobal()
+  const listeners = bridge?.on
   return {
     available: bridge !== null,
     version: bridge === null ? null : typeof bridge.version === 'number' ? bridge.version : NATIVE_BRIDGE_VERSION,
     invoke<T = unknown>(op: NativeOp, args: readonly unknown[] = []): Promise<T> {
       if (bridge === null) return Promise.reject(new Error(NATIVE_UNAVAILABLE))
       return bridge.call!(op, [...args]) as Promise<T>
+    },
+    on(event: NativeEvent, listener: (data: unknown) => void): () => void {
+      if (listeners === undefined) return () => undefined
+      return listeners(event, listener)
     },
   }
 }

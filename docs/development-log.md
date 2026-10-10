@@ -2283,3 +2283,80 @@ views.css 里那批 `calc(Npx * var(--dsc-btn-scale))` 用**固定 px** 覆盖�
   但同一个页面里第三方插件脚本也能直接摸 `window.dscNative`。真正的边界是**白名单本身窄**
   （没有执行/读写任意东西的操作），而不是"插件只能走包装"——这一点别记反。
 - **`Notify` 的字段是宽容的**：多传的字段被忽略而不是被拒（只校验 title/body 两项的形状）。
+
+## 阶段 99（对齐计划 5.2 上半）：dock 通道按动作分三档——读放行、写审批、终端只走原生桥（未发版）
+
+`dock` 原来是**整条**被界面通道排除的，理由是它混着 `term-spawn`（起 pwsh/cmd/bash/node）。
+一锅端掉的代价是"文件面板"永远搬不进壳；整条放行的代价是把"执行任意命令"交出去。
+这一步按**动作落在谁手里**把它拆开。
+
+### 三档（规格在新增的 `src/core/dock-ops.ts`）
+
+| 档 | op | 走哪条路 |
+| --- | --- | --- |
+| 读 | `fs-list` `fs-read` `git-status` `git-log` `git-diff` | 界面 HTTP 面**直接放行** |
+| 写 | `git-stage` `git-unstage` `git-commit` | 界面 HTTP 面，但**先过审批**（`approval.decide`，与工具调用同一套裁决） |
+| 终端 | `term-spawn` `term-input` `term-kill` | **只走桌面窗口的原生桥**，不进 HTTP 面 |
+
+「终端只走桌面窗口」是**真的只走那条路**，不是口号：
+- 界面通道放行 `dock` 时把第一个实参钉成枚举 `DOCK_UI_OPS`（读 + 写，**没有** term op），
+  于是 `POST /api/invoke {method:'dock', args:['term-spawn', …]}` 在实参校验那一层就被拒；
+- 终端的入口是原生桥的 `terminal` op，而桥只对主窗口的文档开放
+  （`event.sender === mainWindow?.webContents`），所以"只在桌面有效"由**传输**保证，
+  而不是靠 payload 里一个谁都能填的标记位。
+
+### 改了哪些
+
+- 新增 `src/core/dock-ops.ts`（零依赖、浏览器安全）：三档常量 + `DOCK_UI_OPS` +
+  `isDockWriteOp` / `isDockTermOp` + 写类的审批卡文案（`git: 暂存` / `git: 取消暂存` / `git: 提交`，
+  摘要只放这次要动什么）。
+- `src/core/ui-methods.ts`：`dock` 从排除名单挪到放行面，实参规格
+  `[enum(DOCK_UI_OPS), json]`；文件头把"为什么原来排除、现在为什么能放两档"写清。
+- `src/plugins/desktop-dock.ts`：写类 op 进 switch **之前**先过 `requireWriteApproval`；
+  审批服务没起来就**拒**（失败关闭）。读类与终端不受影响。
+- `src/core/native-bridge.ts`：加 `terminal` op（`[enum(DOCK_TERM_OPS), json≤8KB]`）与
+  事件白名单 `NATIVE_EVENTS = ['dock-data']`；协议版本 2。
+- preload：桥多一个 `on(event, listener)` 订阅口，事件名不在白名单里当场拒。
+- 主进程：加 `terminal` 分派（把 `[op, payload]` 转给宿主的 dock 服务——这是界面调终端**唯一**的路）。
+- 壳的 `@dsc/ui`：`HostNative.on()`——桥缺席时返回**空的退订函数**（订阅没有"失败"这个语义，
+  浏览器里不该让插件的 useEffect 崩）。
+- 诊断区多一行原生桥读数（在不在、版本、操作清单、试点调一次 `recentCwds`），
+  以及**版本对不上时的告警**。
+
+### 验证
+
+- `npx tsc` + 桌面 `typecheck` + 壳构建全绿。
+- 探针 `scripts/ui-native-bridge-test.mjs` 扩到 **53 条断言全过**，其中这一轮新增的一组直接
+  钉住上面那张表：`dock` 在放行面、不在排除清单、放行的枚举**逐个**等于 `DOCK_UI_OPS`、
+  枚举里一个 `term-*` 都没有、`DOCK_UI_OPS ∩ DOCK_TERM_OPS = ∅`、三档加起来正好是全部 op、
+  `validateUiArgs('dock', ['term-spawn', …])` 当场拒、桥里有 `terminal` 且枚举是 `DOCK_TERM_OPS`。
+- **HTTP 面实机取样**（隔离宿主 + 浏览器，`fetch('/api/invoke')` 直接打）：
+  - `dock ['term-spawn', …]` → `{"ok":false,"error":"界面通道：dock 的第 1 个实参必须是这几个值之一：
+    fs-list / fs-read / git-status / git-log / git-diff / git-stage / git-unstage / git-commit"}`；
+  - `dock ['fs-list', {dir:'.'}]` → `ok` 且带回真实目录清单（读类真放行）；
+  - `runCommand` → 403「协议不允许调用的方法」。
+- **写类审批实机走了一整趟**（宿主 cwd 换成一间**一次性 git 仓库**——`_ui-shell-serve.mjs` 新增
+  `DSC_UI_SERVE_CWD`，因为写类 op 真的会改仓库，拿真仓库当靶子会动用户的索引）：
+  界面发 `dock ['git-commit', {message:'探针提交'}]` → 壳里**真的弹出了审批卡**
+  （`toolName` = `git: 提交`、`argsSummary` = `提交：探针提交`、模式行「权限 自动编辑 · 模式 执行」、
+  三颗标准按钮在）→ 点「拒绝」→ 那次调用以 `{"ok":false,"error":"已拒绝：git: 提交"}` 收场，
+  仓库**一个字节没动**（仍只有 `init` 一条提交、`a.txt` 仍改着、`b.txt` 仍未跟踪）。
+- **终端走桥实机走了一趟**（桌面壳，自检预跑脚本里读 DOM）：
+  `terminal ['term-spawn', {cwd:'.', shell:'pwsh'}]` → `{id:'t1', shell:'pwsh'}` →
+  `term-input` 喂 `echo dsc-native-term` → **收到 17 字节回显且含该串** → `term-kill`；
+  同时 `call('dock', ['fs-list', …])` 得到「原生桥不认识这个操作：dock」——终端的入口**只有** `terminal`。
+- 壳诊断区的原生桥读数也自证了一次漂移：改完 core 规格但**没重建壳**时它显示「v2 已就绪（13 个操作）」
+  （壳 bundle 里还是旧的 13 项），重建后变成「14 个操作 …、terminal」。这条读数因此加了一句
+  **版本对不上就告警**。
+- 真实 `~/.dsc` 跑前跑后 335 个文件内容聚合一致——零污染。
+
+### 诚实边界
+
+- **写类审批只在 auto-edit / readonly / ai-review 下真的会拦**：`full-access` 档下策略本来就
+  「全部自动放行」，所以那时 `git-commit` 不问直接执行——这与工具调用的口径一致（不是漏了）。
+  想验"一定问人"得用 `forceAskReason`，那会让每次点暂存都弹卡，产品上更烦，这轮没做。
+- **壳里还没有能触发写类 op 的按钮**：文件面板是阶段 5.3 的活。这一轮的证据是直接从
+  `/api/invoke` 打进去的（等价于将来那个按钮会做的事），界面上的按钮还没有。
+- **终端进程不随界面卸载而收**：宿主插件热卸载时会杀掉自己记着的终端子进程（原有行为），
+  但"浏览器里把页面关了终端还活着"这件事没变——桌面那侧在窗口关闭时靠 `stopHost` 收宿主，
+  端口级的行为与旧渲染层一致。

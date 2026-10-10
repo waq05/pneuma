@@ -28,9 +28,13 @@ const {
   NATIVE_BRIDGE_VERSION,
   NATIVE_OPS,
   NATIVE_OP_SET,
+  NATIVE_EVENTS,
+  NATIVE_EVENT_SET,
   NATIVE_ARG_SPECS,
   validateNativeCall,
 } = await import('../lib/core/native-bridge.js')
+const { DOCK_OPS, DOCK_UI_OPS, DOCK_TERM_OPS } = await import('../lib/core/dock-ops.js')
+const { UI_METHODS, UI_EXCLUDED, UI_ARG_SPECS, validateUiArgs } = await import('../lib/core/ui-methods.js')
 
 let passed = 0
 let failures = 0
@@ -62,9 +66,10 @@ check('每个操作名都进了查表集合', NATIVE_OPS.every((op) => NATIVE_OP
 check(
   '规格里的参数形状都是认得的',
   Object.values(NATIVE_ARG_SPECS).every((spec) =>
-    spec.every((arg) => ['string', 'hex', 'enum', 'notify'].includes(arg.shape.kind)),
+    spec.every((arg) => ['string', 'hex', 'enum', 'notify', 'json'].includes(arg.shape.kind)),
   ),
 )
+check('事件白名单非空且都能查表', NATIVE_EVENTS.length > 0 && NATIVE_EVENTS.every((name) => NATIVE_EVENT_SET.has(name)))
 
 console.log('\n── 白名单里不许有的东西 ──')
 /** 名点要排除的：供应链写入口、内嵌浏览器（阶段 5.2 再进）、以及任何泛用执行口。 */
@@ -76,11 +81,35 @@ for (const name of FORBIDDEN) {
  * 白名单的每一项都必须是"既定动作 + 实参枚举"，所以操作名的**第一个词**只能是
  * 这批动作动词之一；冒出一个没见过的动词（`exec…` / `spawn…` / `write…`）当场红。
  */
-const ACTION_VERBS = ['set', 'choose', 'switch', 'recent', 'remove', 'open', 'session', 'notify', 'restart', 'quit']
+const ACTION_VERBS = ['set', 'choose', 'switch', 'recent', 'remove', 'open', 'session', 'notify', 'restart', 'quit', 'terminal']
 const oddVerbs = NATIVE_OPS.filter(
   (op) => !ACTION_VERBS.some((verb) => op.toLowerCase().startsWith(verb)),
 )
 check('每个操作名都由既定动作动词开头', oddVerbs.length === 0, `可疑项：${oddVerbs.join('、')}`)
+
+console.log('\n── dock 三档：终端进不了 HTTP 面 ──')
+check('dock 在界面放行面里', UI_METHODS.includes('dock'))
+check('dock 不在排除清单里', !UI_EXCLUDED.includes('dock'))
+check('dock 的牌子真有实参规格', Object.hasOwn(UI_ARG_SPECS, 'dock'))
+const dockOpSpec = UI_ARG_SPECS['dock'][0].shape
+const dockEnum = dockOpSpec.kind === 'enum' ? [...dockOpSpec.values] : []
+check('放行的 op 就是 DOCK_UI_OPS', dockEnum.join('|') === DOCK_UI_OPS.join('|'), `实际：${dockEnum.join('、')}`)
+check('放行的 op 里一个 term-* 都没有', dockEnum.every((op) => !op.startsWith('term-')))
+check('DOCK_UI_OPS 与 DOCK_TERM_OPS 不相交', DOCK_UI_OPS.every((op) => !DOCK_TERM_OPS.includes(op)))
+check('三档加起来正好是全部 op', DOCK_OPS.length === DOCK_UI_OPS.length + DOCK_TERM_OPS.length)
+check(
+  'HTTP 面里传 term-spawn 会被实参校验拒（不看宿主，先看这一层）',
+  (() => {
+    const result = validateUiArgs('dock', ['term-spawn', { cwd: '.' }])
+    return result.ok === false && result.error.includes('必须是这几个值之一')
+  })(),
+)
+check('HTTP 面里传读/写 op 能过校验', validateUiArgs('dock', ['fs-list', { dir: '.' }]).ok === true)
+check('桥里有 terminal op（终端唯一的入口）', NATIVE_OP_SET.has('terminal'))
+check('terminal 的 op 枚举就是 DOCK_TERM_OPS', (() => {
+  const shape = NATIVE_ARG_SPECS.terminal[0].shape
+  return shape.kind === 'enum' && shape.values.join('|') === DOCK_TERM_OPS.join('|')
+})())
 
 console.log('\n── 校验真的在拦 ──')
 check('未知操作被拒', rejects('nope', []))
@@ -100,6 +129,10 @@ check('notify 缺标题被拒', rejects('notify', [{}]))
 check('notify 标题是空串被拒', rejects('notify', [{ title: '' }]))
 check('notify 正文类型不对被拒', rejects('notify', [{ title: '好了', body: 7 }]))
 check('notify 正常一对象通过', validateNativeCall('notify', [{ title: '好了', body: '干完了' }]).ok === true)
+check('terminal 的 op 不认识时被拒', rejects('terminal', ['term-rm', {}]))
+check('terminal 可以不传 payload', validateNativeCall('terminal', ['term-kill']).ok === true)
+check('terminal 的 payload 太大被拒', rejects('terminal', ['term-input', { data: 'x'.repeat(9000) }]))
+check('terminal 正常一次通过', validateNativeCall('terminal', ['term-spawn', { cwd: '.', shell: 'pwsh' }]).ok === true)
 
 console.log('\n── 规格与桌面两侧的接线 ──')
 const mainSource = readFileSync(join(root, 'desktop', 'electron', 'main', 'index.ts'), 'utf8')
@@ -108,7 +141,8 @@ check('主进程注册了 dsc:native 通道', mainSource.includes("ipcMain.handl
 check('主进程先校验再分派', mainSource.includes('validateNativeCall('))
 check('主进程只收主窗口的调用', mainSource.includes("event.sender !== mainWindow?.webContents"))
 check('preload 挂了 window.dscNative', preloadSource.includes("exposeInMainWorld('dscNative'"))
-check('preload 的桥只有一个 call 入口', /call\(op: string, args: unknown\[\] = \[\]\)/.test(preloadSource))
+check('preload 的桥的调用口是 call(op, args)', /call\(op: string, args: unknown\[\] = \[\]\)/.test(preloadSource))
+check('preload 的订阅口按事件白名单拒生名字', preloadSource.includes('NATIVE_EVENT_SET.has(event)'))
 const missing = NATIVE_OPS.filter((op) => !new RegExp(`\\b${op}:`).test(mainSource))
 check('每个操作都在主进程的分派表里出现过', missing.length === 0, `缺：${missing.join('、')}`)
 

@@ -15,7 +15,7 @@
  */
 import { useEffect, useState, type ReactNode } from 'react'
 import type { UiBootGraph, UiPluginLoadReport } from '@dsc/ui-core'
-import { NATIVE_OPS } from '@dsc/ui-core'
+import { NATIVE_BRIDGE_VERSION, NATIVE_OPS } from '@dsc/ui-core'
 import { ALLOWED_MODULES } from './boot'
 import { useChannelStatus, useHostError, useHostHello, useHostSelector } from './runtime-context'
 import { SlotOutlet, useSlotFaults } from './slots-react'
@@ -193,6 +193,9 @@ function Diagnostics({
         {native.available
           ? `v${String(native.version ?? '?')} 已就绪（${String(NATIVE_OPS.length)} 个操作：${NATIVE_OPS.join('、')}）`
           : '浏览器里没有（桌面窗口才有）'}
+        {native.available && native.version !== null && native.version !== NATIVE_BRIDGE_VERSION
+          ? ` ⚠ 版本对不上：这一版壳按 v${String(NATIVE_BRIDGE_VERSION)} 写，外壳的桥是 v${String(native.version)}（多半是壳产物没跟着外壳一起重建）`
+          : ''}
         {probe.detail === '' ? '' : ` · ${probe.detail}`}
       </p>
     </details>

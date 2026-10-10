@@ -27,18 +27,26 @@
  *   - 设置页：`getSettingsSections` / `getSectionValues` / `setSettingValue` / `runSettingAction`
  *   - 队友：`listTeammates` / `stopTeammate` / `messageTeammate` / `removeTeammate`
  *   - 任务与目标：`clearTodos` / `goalAction`
+ *   - 工作区文件与 git：`dock`——但**只放读与写两档**，终端那档不在放行面（见下）
  *
  * **排除**（`UI_EXCLUDED`，逐条有理由）：
  *   - 凭据类 `setProviderKey` / `saveProvider` / `removeProvider`：写 API key 与端点，
  *     是"用户要在终端或设置页亲手做一次"的动作；页面（尤其第三方插件）不该有能力改端点，
  *     否则一次 XSS 就顺手把流量指到攻击者的服务器。
- *   - 任意命令执行 `runCommand`，以及 `dock`：`dock` 的 op 里有 `term-spawn`（起 pwsh/cmd/bash/node），
- *     与 `runCommand` 同级，不是"界面能力"而是"在用户机器上执行任意命令"。
+ *   - 任意命令执行 `runCommand`。
  *   - 破坏性 `purgeSessions`：永久删除会话（移进回收站再 30 天清），不可逆；删除必须由人亲手点。
  *   - 策略 `setPolicy`：审批策略（要不要弹卡、沙箱档位）是安全闸门本身，
  *     能让页面改它，前面所有闸门就都成了摆设。
  *   - 往本机装东西 `installMarketSkill` / `setMarketSources`：下载并安装第三方技能、
  *     改来源列表，等于供应链写入口（`browseMarket` 只是读列表，故放行）。
+ *
+ * **`dock` 为什么从排除名单挪到放行面（2026-10-10，阶段 5.2）**：原来整条排除的理由是
+ * 它里面混着 `term-spawn`（起 pwsh/cmd/bash/node）。现在按动作分三档（规格在
+ * `core/dock-ops.ts`）：读类直接放行、写类走审批、**终端那档一步都没进这里**——
+ * 放行的实参规格把 op 钉成 `DOCK_UI_OPS` 那个枚举（读 + 写），所以
+ * `/api/invoke { method: 'dock', args: ['term-spawn', …] }` 会被实参校验当场拒。
+ * 终端要走的是**桌面窗口的原生桥**（只对主窗口的文档开放），于是"只在桌面有效"
+ * 由传输保证，而不是靠 payload 里一个谁都能填的标记位。
  *
  * `UI_EXCLUDED` 与 `UI_METHODS` 一起做编译期核对（`EXCLUSION_COVERAGE`）：往
  * `INVOKABLE_METHODS` 新加一个方法时，如果它既没进界面白名单也没写进排除清单，就编不过。
@@ -55,6 +63,7 @@
  * @module dsc/core/ui-methods
  */
 import type { ApprovalAnswer, CollaborationMode, EffortLevel, PlanDecision } from '../contract.js'
+import { DOCK_UI_OPS } from './dock-ops.js'
 import { INVOKABLE_METHODS, type InvokableMethod } from './host-methods.js'
 
 /** 界面通道放行的方法。 */
@@ -122,6 +131,8 @@ export const UI_METHODS = [
   // 任务与目标
   'clearTodos',
   'goalAction',
+  // 工作区文件与 git（dock 通道的读 + 写两档；终端那档留在原生桥，见 core/dock-ops.ts）
+  'dock',
 ] as const satisfies readonly InvokableMethod[]
 
 /** 界面通道认得的方法名。 */
@@ -131,7 +142,6 @@ export type UiMethod = (typeof UI_METHODS)[number]
 export const UI_EXCLUDED = [
   'runCommand',
   'setPolicy',
-  'dock',
   'purgeSessions',
   'saveProvider',
   'removeProvider',
@@ -290,6 +300,13 @@ export const UI_ARG_SPECS: Readonly<Record<UiMethod, MethodSpec>> = {
   // ── 任务与目标 ────────────────────────────────────────────────────────────
   clearTodos: [],
   goalAction: [{ shape: { kind: 'enum', values: GOAL_ACTIONS } }],
+  // ── 工作区文件与 git ──────────────────────────────────────────────────────
+  // 第一个实参是 op，钉死在 `DOCK_UI_OPS`（读 + 写）；**终端那档不在枚举里**，
+  // 于是走 HTTP 的 term-spawn 会被这一层的枚举校验当场拒，而不是进到宿主才算。
+  dock: [
+    { shape: { kind: 'enum', values: DOCK_UI_OPS } },
+    { shape: { kind: 'json', maxBytes: MAX_PREF_JSON }, optional: true },
+  ],
 }
 
 /** 校验结果：过了一条新实参数组（尾部空值已去掉），没过给一句能读的错。 */

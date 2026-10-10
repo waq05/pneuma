@@ -26,8 +26,15 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const home = process.env.DSC_UI_SERVE_HOME ?? mkdtempSync(join(tmpdir(), 'dsc-ui-serve-'))
 mkdirSync(home, { recursive: true })
 
+/**
+ * 宿主的工作目录。默认是仓库根（驱动界面要用真实工作区），
+ * 但**要试写类 op（git 暂存/提交）时必须换成一间一次性仓库**——那些 op 真的会改仓库，
+ * 拿真仓库当靶子会动用户的索引。`DSC_UI_SERVE_CWD` 就是为这件事留的。
+ */
+const cwd = process.env.DSC_UI_SERVE_CWD ?? root
+
 const child = spawn(process.execPath, [join(root, 'bin', 'headless.cjs')], {
-  cwd: root,
+  cwd,
   env: {
     ...process.env,
     HOME: home,
@@ -39,7 +46,7 @@ const child = spawn(process.execPath, [join(root, 'bin', 'headless.cjs')], {
   stdio: ['pipe', 'pipe', 'pipe'],
 })
 
-process.stdout.write(`[ui-serve] 隔离 HOME：${home}\n`)
+process.stdout.write(`[ui-serve] 隔离 HOME：${home}\n[ui-serve] 工作目录：${cwd}\n`)
 child.stdout.setEncoding('utf8')
 child.stderr.setEncoding('utf8')
 child.stdout.on('data', (chunk) => process.stdout.write(chunk))
