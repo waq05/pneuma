@@ -13,13 +13,14 @@
  *
  * @module dsc-ui-shell/app
  */
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { UiBootGraph, UiPluginLoadReport } from '@dsc/ui-core'
+import { NATIVE_OPS } from '@dsc/ui-core'
 import { ALLOWED_MODULES } from './boot'
 import { useChannelStatus, useHostError, useHostHello, useHostSelector } from './runtime-context'
 import { SlotOutlet, useSlotFaults } from './slots-react'
 import { SLOT } from './slots'
-import type { UiSlots } from './plugin-api'
+import { getHostNative, type UiSlots } from './plugin-api'
 
 /** 应用参数。 */
 export interface AppProps {
@@ -149,6 +150,8 @@ function Diagnostics({
   failed: number
 }): ReactNode {
   const faults = useSlotFaults(slots)
+  const native = getHostNative()
+  const probe = useNativeProbe()
   return (
     <details className="diagnostics" open={failed > 0 || faults.length > 0}>
       <summary>
@@ -182,8 +185,59 @@ function Diagnostics({
       </p>
       <p className="diag-line">槽：{slots.slots.join('、') || '无'}</p>
       <p className="diag-line">放行的模块：{ALLOWED_MODULES.join('、')}</p>
+      {/* 原生桥在不在：桌面窗口里有（走 preload 的 window.dscNative），浏览器里没有。
+          写在诊断区是因为它决定了插件能不能做"打开路径/系统通知"这类事，而这件事
+          只看代码看不出来（同一个壳两种载体）。 */}
+      <p className="diag-line" data-native={native.available ? 'on' : 'off'} data-native-probe={probe.state}>
+        原生桥：
+        {native.available
+          ? `v${String(native.version ?? '?')} 已就绪（${String(NATIVE_OPS.length)} 个操作：${NATIVE_OPS.join('、')}）`
+          : '浏览器里没有（桌面窗口才有）'}
+        {probe.detail === '' ? '' : ` · ${probe.detail}`}
+      </p>
     </details>
   )
+}
+
+/**
+ * 原生桥的自检读数：**真的调一次**只读操作（`recentCwds`）看回不回得来。
+ *
+ * 为什么值得摆在诊断区：桥"在"与桥"通"是两件事——白名单装错了、主进程那一侧没注册、
+ * preload 没挂上，都会表现成"界面上那个按钮点了没反应"。这里把结论直接写出来：
+ * 桌面上应是「n 个最近工作区」，浏览器里应是桥那句"没有"的人话（也就是**降级路径真的走过**）。
+ */
+function useNativeProbe(): { state: 'pending' | 'ok' | 'off' | 'error'; detail: string } {
+  const [probe, setProbe] = useState<{ state: 'pending' | 'ok' | 'off' | 'error'; detail: string }>({
+    state: 'pending',
+    detail: '',
+  })
+  useEffect(() => {
+    const native = getHostNative()
+    let alive = true
+    void native
+      .invoke<unknown>('recentCwds')
+      .then((list) => {
+        if (!alive) return
+        setProbe({
+          state: 'ok',
+          detail: `试点 recentCwds 回了 ${String(Array.isArray(list) ? list.length : 0)} 个最近工作区`,
+        })
+      })
+      .catch((error: unknown) => {
+        if (!alive) return
+        const message = error instanceof Error ? error.message : String(error)
+        // 桥本来就不在（浏览器 / 远程壳）——那是**预期**，不是故障：降级路径就该长这样。
+        setProbe(
+          native.available
+            ? { state: 'error', detail: `试点未通过：${message}` }
+            : { state: 'off', detail: `降级正常：${message}` },
+        )
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+  return probe
 }
 
 /** 当前会话的显示名：从会话列表里按 `status.sessionPath` 找。 */

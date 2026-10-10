@@ -2,9 +2,16 @@
  * preload：contextBridge 暴露 window.dsc——renderer 与主进程之间的窄接口。
  * 快照/宿主事件走推送通道；请求走 invoke；目录选择/重启宿主是壳能力。
  *
+ * 另有一条更窄的 `window.dscNative`（{@link native}）：插件壳能摸到的**原生**能力
+ * （窗口控件区颜色、原生弹层深浅、系统对话框、通知、退出/重启…），逐条白名单 + 实参
+ * 校验，规格在 `core/native-bridge.ts`——宿主与壳读同一份。两条通道不合并：`window.dsc`
+ * 是旧渲染层那 26 个 IPC 的入口（里面还有装插件/装技能这两个供应链写入口），
+ * `window.dscNative` 只给插件壳，条目少得多。
+ *
  * @module desktop/preload
  */
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { NATIVE_BRIDGE_VERSION } from '@dsc/runtime/core/native-bridge.js'
 import type { SessionUsageView } from '../main/session-usage.js'
 
 const api = {
@@ -148,3 +155,29 @@ const api = {
 contextBridge.exposeInMainWorld('dsc', api)
 
 export type DscBridge = typeof api
+
+/**
+ * 原生桥：插件壳能用的那小组原生能力。
+ *
+ * 形状刻意极小——**一个 `call` 入口 + 一个版本号**。不做成 26 个具名方法的原因：
+ * 具名方法会诱惑后来者往这里加"顺手"的能力，而白名单的价值恰恰在于加一条要改规格、
+ * 要过校验、要被探针看见。校验在宿主侧（`validateNativeCall`），这里只是转发。
+ */
+const native = {
+  /** 桥的协议版本；壳拿它跟自己的规格对一下，不一致就在诊断区说明白。 */
+  version: NATIVE_BRIDGE_VERSION,
+  /**
+   * 调一个原生操作。
+   *
+   * @param op 操作名（白名单见 `core/native-bridge.ts` 的 `NATIVE_OPS`）
+   * @param args 实参（宿主侧按每条操作的规格校验：个数、类型、长度、枚举）
+   * @returns 该操作的返回值；被拒时抛一句能读的错
+   */
+  call(op: string, args: unknown[] = []): Promise<unknown> {
+    return ipcRenderer.invoke('dsc:native', op, args)
+  },
+}
+
+contextBridge.exposeInMainWorld('dscNative', native)
+
+export type DscNativeBridge = typeof native

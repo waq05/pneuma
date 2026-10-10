@@ -11,7 +11,7 @@
  *
  * @module dsc-ui-shell/plugin-api
  */
-import type { ComponentType, ReactNode } from 'react'
+import { useMemo, type ComponentType, type ReactNode } from 'react'
 import type {
   HostSnapshot,
   SlotEntry,
@@ -23,6 +23,7 @@ import type {
   UiRuntimeApi,
   UiSlotApi,
 } from '@dsc/ui-core'
+import { NATIVE_BRIDGE_VERSION, type NativeOp } from '@dsc/ui-core'
 
 /**
  * 壳交给插件组件的渲染能力（每个条目都有）。
@@ -101,6 +102,77 @@ export function hostStatus(snapshot: HostSnapshot | null): HostStatusView | null
         : null,
     ...(typeof record['contextWindow'] === 'number' ? { contextWindow: record['contextWindow'] } : {}),
   }
+}
+
+/**
+ * ── 原生桥 ─────────────────────────────────────────────────────────────────────
+ *
+ * 桌面窗口里，preload 会额外挂一个 `window.dscNative`（一条极窄的原生能力通道：
+ * 窗口控件区颜色、原生弹层深浅、系统对话框、通知、退出/重启…，规格见
+ * `core/native-bridge.ts`，宿主与壳共用那一份）。浏览器与远程壳里**没有**这个对象——
+ * 插件因此必须把"没有原生能力"当常态处理，而不是当异常。
+ */
+
+/** 桥缺席时给插件的一句话（浏览器里就是这样：没有 Electron，也就没有原生桥）。 */
+export const NATIVE_UNAVAILABLE = '这条能力来自桌面外壳的原生桥，浏览器里没有它'
+
+/** 原生桥的调用面。 */
+export interface HostNative {
+  /** 桥在不在：桌面窗口里 true，浏览器 / 远程壳里 false。 */
+  readonly available: boolean
+  /** 桥的协议版本；缺席时 null。壳拿它跟自己的规格对一下，不一致可以在诊断区说明白。 */
+  readonly version: number | null
+  /**
+   * 调一个原生操作。
+   *
+   * 桥缺席时返回**拒绝的 Promise**（而不是同步抛）：调用点因此可以统一写一个 try/catch，
+   * 不必先判 available 再包一层。
+   */
+  invoke<T = unknown>(op: NativeOp, args?: readonly unknown[]): Promise<T>
+}
+
+/** `window.dscNative` 在页面上的形状（preload 暴露的那个对象）。 */
+interface NativeBridgeGlobal {
+  version?: unknown
+  call?: (op: string, args: unknown[]) => Promise<unknown>
+}
+
+/** 读一次全局对象；形状不对就当桥不在（宁可降级，也不要调到一个半残的对象）。 */
+function bridgeGlobal(): NativeBridgeGlobal | null {
+  const value = (globalThis as { dscNative?: unknown }).dscNative
+  if (value === null || typeof value !== 'object') return null
+  const record = value as NativeBridgeGlobal
+  return typeof record.call === 'function' ? record : null
+}
+
+/**
+ * 取原生桥。插件这样用：
+ *
+ *     const native = useHostNative()
+ *     if (!native.available) return <p>这条能力只在桌面版里有</p>
+ *     await native.invoke('openPath', ['D:\\dsc'])
+ *
+ * 每次调用都重新读一遍全局对象：自检会在同一个页面里把桥拿掉再调一次（验证降级那条路），
+ * 缓存下来就把结论钉死了。读一个对象引用是常数开销，不值得为它冒这个险。
+ */
+export function getHostNative(): HostNative {
+  const bridge = bridgeGlobal()
+  return {
+    available: bridge !== null,
+    version: bridge === null ? null : typeof bridge.version === 'number' ? bridge.version : NATIVE_BRIDGE_VERSION,
+    invoke<T = unknown>(op: NativeOp, args: readonly unknown[] = []): Promise<T> {
+      if (bridge === null) return Promise.reject(new Error(NATIVE_UNAVAILABLE))
+      return bridge.call!(op, [...args]) as Promise<T>
+    },
+  }
+}
+
+/**
+ * {@link getHostNative} 的 hook 形态（桥在页面生命周期内不会出现/消失，所以取一次就够）。
+ * 需要"桥回来了要重画"的场景才用它，否则直接调 `getHostNative()` 更省。
+ */
+export function useHostNative(): HostNative {
+  return useMemo(() => getHostNative(), [])
 }
 
 export { useChannelStatus, useHostChannel, useHostError, useHostSelector, useHostSnapshot } from './runtime-context'

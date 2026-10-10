@@ -12,6 +12,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync,
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { BrowserWindow, Menu, Notification, Tray, WebContentsView, app, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, screen, session, shell, utilityProcess, type UtilityProcess } from 'electron'
 import type { NativeImage } from 'electron'
+import { validateNativeCall, type NativeOp } from '@dsc/runtime/core/native-bridge.js'
 import { HostProtocol } from './protocol.js'
 import { registerDockIpc } from './dock.js'
 import { readState, resolveHeadlessEntry, writeState } from './dsc-core.js'
@@ -377,18 +378,10 @@ function registerIpc(): void {
 
   ipcMain.handle('dsc:get-cwd', () => hostCwd)
 
-  ipcMain.handle('dsc:choose-directory', async () => {
-    if (mainWindow === null) return null
-    const outcome = await dialog.showOpenDialog(mainWindow, {
-      title: '选择 Muse Code 工作目录',
-      properties: ['openDirectory'],
-      defaultPath: hostCwd || undefined,
-    })
-    if (outcome.canceled || outcome.filePaths.length === 0) return null
-    const next = resolve(outcome.filePaths[0] ?? '')
-    if (next !== hostCwd) await restartHost(next)
-    return next
-  })
+  // ── 旧渲染层那批通道 ──────────────────────────────────────────────────────
+  // 默认界面仍是旧渲染层（档案开关默认 legacy），这些一个都不能少。实现体统一抽成
+  // 上面/下面的具名函数，好让原生桥与它们走同一条路（改一处两处都跟着变）。
+  ipcMain.handle('dsc:choose-directory', () => chooseDirectory())
 
   ipcMain.handle('dsc:restart-host', async () => {
     await restartHost(hostCwd)
@@ -396,24 +389,15 @@ function registerIpc(): void {
   })
 
   // 切到指定工作目录（侧栏点工作区名走这条，不弹对话框）
-  ipcMain.handle('dsc:switch-cwd', async (_event, path: string) => {
-    const next = resolve(String(path ?? ''))
-    if (!existsSync(next) || !statSync(next).isDirectory()) {
-      return { ok: false, error: `目录不存在：${next}` }
-    }
-    if (next !== hostCwd) await restartHost(next)
-    return { ok: true, cwd: hostCwd }
-  })
+  ipcMain.handle('dsc:switch-cwd', (_event, path: unknown) => switchCwdTo(String(path ?? '')))
 
   // 最近用过的工作目录（侧栏切换菜单与「有会话的目录」合并成候选清单）
   ipcMain.handle('dsc:recent-cwds', (): string[] => readState().recentCwds ?? [])
 
   // 从最近工作目录里移除一条（侧栏「删除工作区」：会话归档后把空组从侧栏撤下）。
   // 只动 recentCwds 不碰会话数据；目录切回来时由 dsc:switch-cwd 重新前插。
-  ipcMain.handle('dsc:remove-recent-cwd', (_event, path: string): void => {
-    const target = String(path ?? '')
-    if (target === '') return
-    writeState({ recentCwds: (readState().recentCwds ?? []).filter((entry) => entry !== target) })
+  ipcMain.handle('dsc:remove-recent-cwd', (_event, path: unknown): void => {
+    removeRecentCwdEntry(String(path ?? ''))
   })
 
   // 当前会话的累计用量（底部状态栏第二段与上下文悬浮卡的数据源）。
@@ -479,53 +463,27 @@ function registerIpc(): void {
   })
 
   // 在系统文件管理器里打开路径（设置「关于」里的路径行）；只接受绝对路径
-  ipcMain.handle('dsc:open-path', (_event, path: string) => {
-    if (typeof path !== 'string' || !isAbsolute(path)) return '只允许打开绝对路径'
-    return shell.openPath(path)
-  })
+  ipcMain.handle('dsc:open-path', (_event, path: unknown) => openPathBySystem(path))
 
   // 用系统浏览器打开链接（检查更新的「打开发布页」）；只放行 http/https，
   // 免得 file:/自定义协议被渲染层来的字符串拿着 shell 去开。
-  ipcMain.handle('dsc:open-external', (_event, url: string) => {
-    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return
-    void shell.openExternal(url)
+  ipcMain.handle('dsc:open-external', (_event, url: unknown) => {
+    openExternalUrl(url)
   })
 
   // 系统通知（任务完成提醒）：渲染层在一轮干完且窗口离开前台时打过来。
   // 声音不归这里——渲染层的完成提示音负责发声（开关独立），通知一律 silent，
   // 免得 Windows 的 toast 提示音和我们的音效同一时刻叠两声。
-  ipcMain.handle('dsc:notify', (event, payload: unknown) => {
-    if (mainWindow === null || event.sender !== mainWindow.webContents) return false
-    const title = typeof (payload as { title?: unknown } | null)?.title === 'string' ? (payload as { title: string }).title.trim() : ''
-    if (title === '') return false
-    const rawBody = typeof (payload as { body?: unknown } | null)?.body === 'string' ? (payload as { body: string }).body.trim() : ''
-    const iconDir = app.isPackaged ? process.resourcesPath : join(__dirname, '..', '..', 'build')
-    const iconFile = [join(iconDir, 'icon.png'), join(iconDir, 'icon-tray.png')].find((p) => existsSync(p))
-    const notification = new Notification({
-      title,
-      ...(rawBody !== '' ? { body: rawBody } : {}),
-      ...(iconFile !== undefined ? { icon: iconFile } : {}),
-      silent: true,
-    })
-    if (process.env.DSC_DESKTOP_SHOT !== undefined && process.env.DSC_DESKTOP_SHOT !== '') {
-      process.stderr.write(`[selfcheck] 系统通知：${title}${rawBody === '' ? '' : ` / ${rawBody}`}\n`)
-    }
-    // 点通知 = 回到主窗口（缩托盘/最小化时尤其实用）
-    notification.on('click', () => showMainWindow())
-    notification.show()
-    return true
-  })
+  ipcMain.handle('dsc:notify', (event, payload: unknown) =>
+    event.sender === mainWindow?.webContents ? notifyUser(payload) : false,
+  )
 
   // 原生弹出层（select 的下拉选项列表、右键菜单）的深浅只认 nativeTheme，
   // 页面 CSS 够不着：renderer 在主题生效时把模式报上来。跟随系统就原样透传，
   // 让 OS 自己翻面；值不对就拒收，保持上一次的主题。
   ipcMain.on('dsc:theme-source', (event, mode: unknown) => {
     if (event.sender !== mainWindow?.webContents) return
-    if (mode !== 'dark' && mode !== 'light' && mode !== 'system') return
-    if (process.env.DSC_DESKTOP_SHOT !== undefined && process.env.DSC_DESKTOP_SHOT !== '') {
-      process.stderr.write(`[selfcheck] 原生主题源 ${mode}\n`)
-    }
-    nativeTheme.themeSource = mode
+    applyThemeSource(mode)
   })
 
   // 用多种方式打开当前工作区（顶栏文件夹按钮的下拉；对照 dsh）。
@@ -540,13 +498,154 @@ function registerIpc(): void {
   // 切换时由 renderer 把两个颜色报上来。只收 #rrggbb：带 alpha 的颜色到了系统
   // 那侧会被丢掉，宁可拒收也不要在浅色主题下留一块错色的条。
   ipcMain.on('dsc:set-window-chrome', (event, bar: unknown, symbol: unknown) => {
-    if (process.env.DSC_DESKTOP_SHOT !== undefined && process.env.DSC_DESKTOP_SHOT !== '') {
-      process.stderr.write(`[selfcheck] 控件条颜色 ${String(bar)} ${String(symbol)}，发来自当前窗口=${event.sender === mainWindow?.webContents}\n`)
-    }
     if (event.sender !== mainWindow?.webContents) return
-    if (!isChromeColor(bar) || !isChromeColor(symbol) || !mainWindow) return
-    mainWindow.setTitleBarOverlay({ color: bar, symbolColor: symbol, height: CAPTION_HEIGHT })
-    mainWindow.setBackgroundColor(bar)
+    applyWindowChrome(bar, symbol)
+  })
+
+  registerNativeBridge()
+}
+
+// ── 那条窄接口的两侧共用实现 ──────────────────────────────────────────────────
+// 抽出来是为了让「旧渲染层的 IPC 通道」与「插件壳的原生桥」走同一段代码：
+// 两边各写一份的下场是行为分叉，而这两条路今天同时活着（档案开关切界面，不改桥）。
+
+/** 弹系统目录选择框并切过去；取消给 null。 */
+async function chooseDirectory(): Promise<string | null> {
+  if (mainWindow === null) return null
+  const outcome = await dialog.showOpenDialog(mainWindow, {
+    title: '选择 Muse Code 工作目录',
+    properties: ['openDirectory'],
+    defaultPath: hostCwd || undefined,
+  })
+  if (outcome.canceled || outcome.filePaths.length === 0) return null
+  const next = resolve(outcome.filePaths[0] ?? '')
+  if (next !== hostCwd) await restartHost(next)
+  return next
+}
+
+/** 切到指定工作目录（无对话框）；失败给一句能直接看的原因。 */
+async function switchCwdTo(path: string): Promise<{ ok: true; cwd: string } | { ok: false; error: string }> {
+  const next = resolve(path)
+  if (!existsSync(next) || !statSync(next).isDirectory()) {
+    return { ok: false, error: `目录不存在：${next}` }
+  }
+  if (next !== hostCwd) await restartHost(next)
+  return { ok: true, cwd: hostCwd }
+}
+
+/** 从「最近用过」里撤下一条；空串是空操作。 */
+function removeRecentCwdEntry(path: string): void {
+  if (path === '') return
+  writeState({ recentCwds: (readState().recentCwds ?? []).filter((entry) => entry !== path) })
+}
+
+/** 用系统文件管理器打开一个绝对路径；返回空串表示成功。 */
+function openPathBySystem(path: unknown): Promise<string> {
+  if (typeof path !== 'string' || !isAbsolute(path)) return Promise.resolve('只允许打开绝对路径')
+  return shell.openPath(path)
+}
+
+/** 用系统浏览器打开 http/https 链接；别的协议一律丢掉。 */
+function openExternalUrl(url: unknown): void {
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return
+  void shell.openExternal(url)
+}
+
+/** 原生窗口控件区上色：只收 #rrggbb（带 alpha 的颜色到了系统那侧会被丢掉）。 */
+function applyWindowChrome(bar: unknown, symbol: unknown): void {
+  if (isSelfCheck()) {
+    process.stderr.write(`[selfcheck] 控件条颜色 ${String(bar)} ${String(symbol)}\n`)
+  }
+  if (!isChromeColor(bar) || !isChromeColor(symbol) || !mainWindow) return
+  mainWindow.setTitleBarOverlay({ color: bar, symbolColor: symbol, height: CAPTION_HEIGHT })
+  mainWindow.setBackgroundColor(bar)
+}
+
+/** 原生弹层（下拉、右键菜单）的深浅。 */
+function applyThemeSource(mode: unknown): void {
+  if (mode !== 'dark' && mode !== 'light' && mode !== 'system') return
+  if (isSelfCheck()) process.stderr.write(`[selfcheck] 原生主题源 ${mode}\n`)
+  nativeTheme.themeSource = mode
+}
+
+/** 系统通知：点通知 = 回到主窗口（缩托盘/最小化时尤其实用）。返回是否真的弹了。 */
+function notifyUser(payload: unknown): boolean {
+  if (mainWindow === null) return false
+  const title = typeof (payload as { title?: unknown } | null)?.title === 'string' ? (payload as { title: string }).title.trim() : ''
+  if (title === '') return false
+  const rawBody = typeof (payload as { body?: unknown } | null)?.body === 'string' ? (payload as { body: string }).body.trim() : ''
+  const iconDir = app.isPackaged ? process.resourcesPath : join(__dirname, '..', '..', 'build')
+  const iconFile = [join(iconDir, 'icon.png'), join(iconDir, 'icon-tray.png')].find((p) => existsSync(p))
+  const notification = new Notification({
+    title,
+    ...(rawBody !== '' ? { body: rawBody } : {}),
+    ...(iconFile !== undefined ? { icon: iconFile } : {}),
+    silent: true,
+  })
+  if (isSelfCheck()) {
+    process.stderr.write(`[selfcheck] 系统通知：${title}${rawBody === '' ? '' : ` / ${rawBody}`}\n`)
+  }
+  notification.on('click', () => showMainWindow())
+  notification.show()
+  return true
+}
+
+/** 是不是自检跑（`DSC_DESKTOP_SHOT` 有值）；自检时把原生动作写进 stderr 当证据。 */
+function isSelfCheck(): boolean {
+  return (process.env.DSC_SELFTEST ?? process.env.DSC_DESKTOP_SHOT ?? '') !== ''
+}
+
+// ── 原生桥（插件壳走这条） ────────────────────────────────────────────────────
+
+/**
+ * 桥的分派表。
+ *
+ * 类型写成 `Readonly<Record<NativeOp, …>>`：规格里加了操作而这里忘了实现，**编不过**——
+ * "白名单"与"真有实现"被绑在一起（与 `core/ui-methods.ts` 的 `UI_ARG_SPECS` 同一个套路）。
+ * 实参在进这里之前已经过 `validateNativeCall`，所以下面按已校验收窄的用法取值。
+ */
+const NATIVE_HANDLERS: Readonly<Record<NativeOp, (args: readonly unknown[]) => unknown>> = {
+  setWindowChrome: ([bar, symbol]) => {
+    applyWindowChrome(bar, symbol)
+  },
+  setThemeSource: ([mode]) => {
+    applyThemeSource(mode)
+  },
+  chooseDirectory: () => chooseDirectory(),
+  switchCwd: ([path]) => switchCwdTo(String(path)),
+  recentCwds: (): string[] => readState().recentCwds ?? [],
+  removeRecentCwd: ([path]) => {
+    removeRecentCwdEntry(String(path))
+  },
+  openPath: ([path]) => openPathBySystem(path),
+  openExternal: ([url]) => {
+    openExternalUrl(url)
+  },
+  openWorkspace: ([kind]) => openWorkspace(String(kind)),
+  sessionUsage: ([id]) => readSessionUsage(String(id ?? '')),
+  notify: ([payload]) => notifyUser(payload),
+  restartHost: async () => {
+    await restartHost(hostCwd)
+    return true
+  },
+  quit: () => {
+    mainWindow?.close()
+  },
+}
+
+/**
+ * 注册桥通道（`dsc:native`）。
+ *
+ * 只有一种调用方合法：主窗口里那份文档（旧渲染层或插件壳，同一扇窗、两份界面）；
+ * 内嵌浏览器那个 `WebContentsView` 与别的任何窗口都不给。校验与分派的顺序是
+ * **先校验再分派**——规格在 `core/native-bridge.ts`，宿主与壳读同一份源码。
+ */
+function registerNativeBridge(): void {
+  ipcMain.handle('dsc:native', (event, op: unknown, args: unknown) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error('原生桥：只接受主窗口的调用')
+    const call = validateNativeCall(op, args)
+    if (!call.ok) throw new Error(call.error)
+    return NATIVE_HANDLERS[call.op](call.args)
   })
 }
 

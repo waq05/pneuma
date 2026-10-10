@@ -2216,3 +2216,70 @@ views.css 里那批 `calc(Npx * var(--dsc-btn-scale))` 用**固定 px** 覆盖�
 - **附件「+」没做**：壳里还没有附件按钮（旧界面那个在输入区，这一版没搬），无对象可对齐。
 - **`translateY(-2px)` 没抄**：dsh 发送键那个上移是补偿它自己 InputBar 的内距，单抄会把键挤出基线。
 - **用户/助手气泡没动**：codex 是左对齐无气泡，按 §6.1 第 1 条保留旧桌面端的左右对齐气泡版式。
+
+## 阶段 98（对齐计划 5.1）：插件壳的原生桥——一条只放既定动作的窄通道（未发版）
+
+旧渲染层那 26 个 IPC 能力里有一类**宿主做不了**：它们要 Electron 主进程（原生窗口控件区
+的颜色、原生弹层的深浅、系统文件选择框、用系统程序打开路径/链接、托盘通知、退出与重启
+宿主）。插件壳跑在宿主伺服的 web 文档里，要摸这些只能走主进程给的一条窄通道——这一步把
+它建起来。
+
+### 形状：规格一份，两侧共用
+
+- 新增 `src/core/native-bridge.ts`：**零依赖**（不 import node、不 import electron）的规格——
+  13 个操作的白名单 + 每个操作的实参形状 + `validateNativeCall`。由 `src/ui/index.ts`
+  转出去，于是**宿主主进程与界面壳读的是同一份源码**（与 `@dsc/ui-core`、
+  `platform-modules.json` 同一个套路）。
+- 桌面主进程加 `dsc:native` 通道：**先校验再分派**，分派表写成
+  `Record<NativeOp, 处理函数>`——规格里加了操作而这里忘了实现就编不过。
+- preload 挂 `window.dscNative`，形状刻意只有 **一个 `call(op, args)` + 一个版本号**：
+  不做成 13 个具名方法，免得后来者顺手往里加"刚好需要"的能力（薄白名单的价值就在改一条要动规格）。
+- 壳这边 `@dsc/ui` 给 `getHostNative()` / `useHostNative()`：桥缺席时 `available=false`，
+  `invoke` 返回**拒绝的 Promise**（不是同步抛），调用点一个 try/catch 就够。
+
+13 个操作：`setWindowChrome` / `setThemeSource` / `chooseDirectory` / `switchCwd` / `recentCwds` /
+`removeRecentCwd` / `openPath` / `openExternal` / `openWorkspace` / `sessionUsage` / `notify` /
+`restartHost` / `quit`。
+
+**故意不在桥里的两类**（各有理由，写在规格文件头）：
+- `installPlugin` / `installSkill`（系统选择器把文件复制进 `~/.dsc/`）——供应链写入口，
+  与界面通道排除 `installMarketSkill` / `setMarketSources` 同一个理由；
+- 内嵌浏览器那几个（`dockBrowser` / `browserNav` / `onBrowserState`）——它们跟终端一起在
+  阶段 5.2 落地，那时一并进桥。
+
+### 换回了两件阶段 95 故意删掉的事
+
+阶段 95 把旧渲染层的 `appearance.ts` 搬进壳时，**故意删掉了** `pushWindowChrome` 与
+`dsc.setThemeSource`（"浏览器里没有这个口子，到桌面切壳时归主进程那一侧解决"）。现在经桥换回来：
+`applyAppearance()` 末尾调 `pushNativeChrome()`，桥缺席时整段是空操作。
+
+### 验证
+
+- `npx tsc`（根）+ 桌面 `typecheck` + `pnpm -C ui-shell build` 全绿。
+- 新探针 `scripts/ui-native-bridge-test.mjs` **36 条断言全过**：规格形状（每个操作都有规格、
+  没有多余规格）、白名单的排除项（点名 7 个不许出现的 + 每个操作名必须由既定动作动词开头）、
+  校验真的在拦（未知操作/非数组/多传/少传/错类型/超长/坏枚举/坏 `#rrggbb`/`notify` 字段形状）、
+  以及两侧接线（主进程注册了 `dsc:native`、先校验再分派、只收主窗口调用；preload 挂了
+  `dscNative` 且只有一个 `call` 口；每个操作都在分派表里出现过）。
+- **浏览器里降级**（实机读 DOM）：`data-native="off"`、`data-native-probe="off"`，
+  文本是「原生桥：浏览器里没有（桌面窗口才有） · 降级正常：这条能力来自桌面外壳的原生桥，
+  浏览器里没有它」——**没有异常、界面照常渲染 10 个槽条目**。
+- **桌面里真的通**（`desktop/shots/ui-shell-switch.ps1` 的壳用例实机读 DOM）：
+  `state="on"`、`probe="ok"`，文本是「原生桥：v1 已就绪（13 个操作：…）· 试点 recentCwds
+  回了 6 个最近工作区」——**经桥真调了一次宿主之外的能力并拿到真数据**。
+- 同一个自检里，壳窗口推上去的原生控件条颜色是 `#151517 #bebec0`、主题源 `dark`，
+  与旧渲染层推的**完全一致**（同一份令牌算出来的）。
+- node 电池：除既有的三份"逐条 PASS 无汇总"脚本与存量 `remote-e2e` 72/74 外全绿。
+- 真实 `~/.dsc` 跑前跑后 335 个文件内容聚合一致——零污染。
+
+### 诚实边界
+
+- **内嵌浏览器与终端还没进桥**：`dockBrowser` 那几个要用原生 `WebContentsView` 覆盖层，
+  按计划落在阶段 5.2；这一版的桥是它们的先决条件，但还不是它们的实现。
+- **桥只对主窗口的文档开放**：校验里那句 `event.sender !== mainWindow?.webContents` 意味着
+  将来内嵌浏览器里加载的页面**没有**这条通道（这是有意的，但那时候要重新想一遍"浏览器面板里
+  的页面该有哪些能力"）。
+- **插件直连 `window.dscNative` 仍绕不过**：`@dsc/ui` 的包装是给插件用的**正常**入口，
+  但同一个页面里第三方插件脚本也能直接摸 `window.dscNative`。真正的边界是**白名单本身窄**
+  （没有执行/读写任意东西的操作），而不是"插件只能走包装"——这一点别记反。
+- **`Notify` 的字段是宽容的**：多传的字段被忽略而不是被拒（只校验 title/body 两项的形状）。

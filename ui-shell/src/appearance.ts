@@ -6,10 +6,11 @@
  * 只为首帧不闪——宿主回读还没到，就能按上次的设置上色。
  *
  * 从旧版搬过来时**故意删掉**三件事（不是漏了）：
- *   1. `pushWindowChrome`：那是在跟 Electron 主进程报原生窗口控件区的颜色，
- *      浏览器里没有这个口子，桌面窗口切到本壳时由主进程自己那一侧解决；
- *   2. `dsc.setThemeSource`：原生弹出层（select 下拉、右键菜单）的深浅由主进程定，
- *      同理归桌面侧。所以这里只负责页面内的那一半；
+ *   1. `pushWindowChrome`：那是在跟 Electron 主进程报原生窗口控件区的颜色——浏览器里
+ *      没有这个口子。**现在回来了**：走原生桥（`pushNativeChrome` → `getHostNative()`），
+ *      桥缺席时整段是空操作。桌面窗口切到本壳时，这一条才是有用的那一条。
+ *   2. `dsc.setThemeSource`：原生弹出层（select 下拉、右键菜单）的深浅同理——同样经
+ *      原生桥回来了（`pushNativeChrome` 里那一次 `setThemeSource`）。
  *   3. **按钮大小这条轴**：dsh 没有按钮缩放变量（它的全局轴是字号），按「按钮尺寸对齐
  *      dsh」的口径，本壳不再往 `--dsc-btn-scale` 写值——那批 `calc(Npx * var(--dsc-btn-scale))`
  *      在 `styles.css` 里被固定尺寸覆盖掉了。旧存档里的 `buttonScale` 读得到就忽略，
@@ -18,6 +19,7 @@
  * @module dsc-ui-shell/appearance
  */
 import type { ThemeMode, UiDensity, UiFontSize, UiPrefsView } from '@dsc/ui'
+import { getHostNative } from './plugin-api'
 
 export type { ThemeMode, UiDensity, UiFontSize }
 
@@ -87,6 +89,10 @@ export function appearanceFromPrefs(prefs: Partial<UiPrefsView> | null | undefin
 const STORAGE_KEY = 'dsc.appearance'
 const media = typeof window === 'undefined' ? undefined : window.matchMedia?.('(prefers-color-scheme: light)')
 let systemWatcher: ((event: MediaQueryListEvent) => void) | undefined
+/** 最近一次报出去的两个控件条颜色（`bar symbol`）；没变就不重复报。 */
+let lastChrome: string | null = null
+/** 读令牌颜色用的隐藏探针（挂在 <html> 上，零尺寸、不可见）。 */
+let chromeProbe: HTMLDivElement | undefined
 /** 最近一次生效的外观：系统偏好监听读它，而不是读挂载当时那份快照，
  *  否则「先选跟随系统、后改字号」会丢——切换时重画的是老字号。 */
 let current: Appearance = DEFAULT_APPEARANCE
@@ -110,6 +116,11 @@ export function applyAppearance(appearance: Appearance): void {
   // 注意这里**不再写** `--dsc-btn-scale`：按钮大小那条轴已退场（见文件头第 3 条）。
   // views.css 里那批 `calc(Npx * var(--dsc-btn-scale))` 由 styles.css 固定尺寸覆盖。
 
+  // 两件"桌面窗口专有"的事：原生控件区的颜色、原生弹层的深浅。浏览器里桥缺席，
+  // 整段是空操作——这正是阶段 95 从旧版搬过来时**故意删掉**的那两件，现在经原生桥
+  // （窄接口，见 plugin-api.ts 的 getHostNative）回到壳里。
+  pushNativeChrome(requested)
+
   // 只有跟随系统时才需要挂监听；系统翻脸就按 current 重画一次。
   if (!media) return
   if (requested === 'system' && !systemWatcher) {
@@ -121,6 +132,82 @@ export function applyAppearance(appearance: Appearance): void {
     media.removeEventListener('change', systemWatcher)
     systemWatcher = undefined
   }
+}
+
+/**
+ * 把窗口底色 / 原生控件区的颜色、以及原生弹层的深浅报给桌面外壳。
+ *
+ * 为什么需要它：原生窗口控件区（Windows 的最小化/最大化/关闭）与原生弹层
+ * （select 下拉、右键菜单）都由系统画，**样式表够不着**——只能把算出来的颜色与模式
+ * 报给主进程。浏览器里桥缺席，这里是空操作（两件事都是桌面窗口专有）。
+ *
+ * 为什么传「请求的」主题模式而不是解析后的 dark/light：跟随系统时让主进程也跟着系统翻面。
+ *
+ * @param requested 用户选的主题档（dark / light / system）
+ */
+function pushNativeChrome(requested: ThemeMode): void {
+  const native = getHostNative()
+  if (!native.available) return
+  void native.invoke('setThemeSource', [requested]).catch(() => undefined)
+  const colors = readChromeColors()
+  if (colors === null) return
+  if (colors === lastChrome) return
+  lastChrome = colors
+  const [bar, symbol] = colors.split(' ')
+  void native.invoke('setWindowChrome', [bar, symbol]).catch(() => undefined)
+}
+
+/**
+ * 读 `--dsc-chrome-bar` / `--dsc-chrome-symbol` 两个令牌，压平成 `#rrggbb`。
+ *
+ * 为什么要绕一层隐藏探针：令牌是 `color-mix()` 算出来的，`getComputedStyle` 只认
+ * 元素上生效的颜色。探针零尺寸、不可见、不参与布局（`position:absolute` + `visibility:hidden`），
+ * 读两个颜色就丢掉。
+ *
+ * @returns `"#rrggbb #rrggbb"`；读不出来（令牌缺失、带 alpha）给 null
+ */
+function readChromeColors(): string | null {
+  if (typeof document === 'undefined') return null
+  if (chromeProbe === undefined) {
+    chromeProbe = document.createElement('div')
+    chromeProbe.style.cssText =
+      'position:absolute;top:0;left:0;width:0;height:0;visibility:hidden;pointer-events:none'
+    document.documentElement.append(chromeProbe)
+  }
+  const probe = chromeProbe
+  const read = (token: string): string | null => {
+    probe.style.backgroundColor = `var(${token})`
+    return toHexColor(getComputedStyle(probe).backgroundColor)
+  }
+  const bar = read('--dsc-chrome-bar')
+  const symbol = read('--dsc-chrome-symbol')
+  return bar === null || symbol === null ? null : `${bar} ${symbol}`
+}
+
+/**
+ * 把浏览器算出来的颜色转成 `#rrggbb`。
+ *
+ * 同一个 `color-mix()` 令牌在不同内核版本里可能被写成 `rgb(13, 13, 15)` 或
+ * `color(srgb 0.051 0.051 0.059)`，两种都要认（主进程只收 `#rrggbb`：带 alpha 的
+ * 颜色到了系统那侧会被丢掉）。
+ *
+ * @param color getComputedStyle 读到的 background-color
+ * @returns 不透明颜色的十六进制写法；带 alpha 或不是 sRGB 时给 null
+ */
+function toHexColor(color: string): string | null {
+  const parts = /^(rgb|color)\((.+)\)$/i.exec(color.trim())
+  if (!parts) return null
+  const srgb = parts[1].toLowerCase() === 'color'
+  const body = srgb ? parts[2].replace(/^\s*srgb\s+/i, '') : parts[2]
+  const nums = body.split(/[,/\s]+/).filter((piece) => piece !== '').map(Number)
+  if (nums.length < 3 || nums.slice(0, 4).some((n) => !Number.isFinite(n))) return null
+  if (nums.length > 3 && nums[3] < 0.999) return null
+  const scale = srgb ? 255 : 1
+  const hex = (n: number): string =>
+    Math.min(255, Math.max(0, Math.round(n * scale)))
+      .toString(16)
+      .padStart(2, '0')
+  return `#${hex(nums[0])}${hex(nums[1])}${hex(nums[2])}`
 }
 
 /**

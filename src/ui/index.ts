@@ -8,6 +8,14 @@ export * from './frames.js'
 export * from './manifest.js'
 export * from './plugin.js'
 export * from './slots.js'
+/**
+ * 原生桥的规格（操作名 + 实参形状 + 校验）也从这里转出去。
+ *
+ * 为什么宿主侧的一份 `core` 模块能进界面壳的入口：`core/native-bridge.ts` 与上面几份
+ * 守同一个约束——**零 node 依赖、浏览器安全**。桌面主进程与界面壳因此读的是同一份规格：
+ * 加一个原生操作，两侧同时知道；漂移在编译期就暴露（而不是等线上某个插件调到 undefined）。
+ */
+export * from '../core/native-bridge.js'
 
 /**
  * 宿主那些**界面要读的**视图类型的再导出。
