@@ -11,7 +11,7 @@
  * @module dsc/ui/plugin
  */
 import type { HostSnapshot } from './frames.js'
-import type { SlotRegistry } from './slots.js'
+import type { SlotEntry, SlotKind, SlotRegisterOptions } from './slots.js'
 
 /** 界面要显示的宿主身份。 */
 export interface UiHostInfo {
@@ -19,6 +19,28 @@ export interface UiHostInfo {
   name: string
   /** 宿主版本，例如 `0.6.67`。 */
   version: string
+}
+
+/**
+ * 插件看到的那一面槽位注册表。
+ *
+ * 为什么给接口而不是直接把注册表类交出去：插件只需要「声明槽、注册组件、等一个槽
+ * 出现、查已经画了什么」，不需要知道谁崩了、怎么退位（那是壳的事）。接口窄一点，
+ * 将来给壳加内部能力时不会顺手把权限也扩给插件；而且加载器可以传一个**记账外壳**
+ * 进去，插件卸载或重试时按账本回滚。
+ *
+ * @typeParam C - 组件类型
+ */
+export interface UiSlotApi<C = unknown> {
+  /** 已声明的槽名（诊断与「这个槽在不在」的判断用）。 */
+  readonly slots: string[]
+  /** 某个槽的形态；没声明过给 undefined。 */
+  spec(slot: string): SlotKind | undefined
+  declare(slot: string, kind: SlotKind): () => void
+  register(slot: string, options: SlotRegisterOptions, component: C): () => void
+  injectSlot(slot: string, contribute: () => void | (() => void)): () => void
+  entriesOf(slot: string): readonly SlotEntry<C>[]
+  winners(slot: string): readonly SlotEntry<C>[]
 }
 
 /**
@@ -49,8 +71,8 @@ export interface UiRuntimeApi {
 export interface UiPluginApi<C = unknown> {
   /** 这个插件的 id（清单里那一条），诊断与去重都用它。 */
   id: string
-  /** 槽位注册表：声明过的槽才能注册，没声明的当场报错。 */
-  slots: SlotRegistry<C>
+  /** 槽位注册表：声明过的槽才能注册，没声明的当场报错；想等一个槽出现用 `injectSlot`。 */
+  slots: UiSlotApi<C>
   /** 宿主身份。 */
   host: UiHostInfo
   /** 运行时通道：看状态、调方法。 */
@@ -61,8 +83,12 @@ export interface UiPluginApi<C = unknown> {
 export interface UiPluginModule<C = unknown> {
   /** 显示名（可缺省，缺省就用清单里的 id）。 */
   name?: string
-  /** 界面半边：注册自己的槽位。只能在这里登记，不要起副作用之外的定时器。 */
-  apply(ui: UiPluginApi<C>): void
+  /**
+   * 界面半边：注册自己的槽位。只能在这里登记，不要起副作用之外的定时器。
+   * @param ui - 插件 API
+   * @returns 可选的退订函数：壳体卸载这个插件时调用（HMR、重试都靠它）
+   */
+  apply(ui: UiPluginApi<C>): void | (() => void)
 }
 
 /**
@@ -76,7 +102,24 @@ export function defineUiPlugin<C>(module: UiPluginModule<C>): UiPluginModule<C> 
 /** 一个插件的加载结果（界面壳把失败的列出来，不要静默）。 */
 export interface UiPluginLoadReport {
   id: string
+  /** 插件自己报的显示名（没报就没有这一项）。 */
+  name?: string
   ok: boolean
   /** 失败原因（加载脚本失败、没导出 apply、apply 抛错都算）。 */
   error?: string
+  /** 第几次尝试才装上（1 = 一次就成；依赖别的插件的会 > 1）。 */
+  attempts?: number
+}
+
+/** 一次装载的总结果。 */
+export interface UiPluginLoadResult {
+  /** 每个插件一条，成功的也记（诊断区看得见谁装上了）。 */
+  reports: UiPluginLoadReport[]
+  /**
+   * 撤掉这一轮装上的全部插件。
+   *
+   * 为什么要有：`apply` 交回来的退订函数原先被直接丢掉，于是「装完就固定」——
+   * 想再挂一个新插件只能整页刷新。有了它，热更新、失败重试、测试收尾都有落点。
+   */
+  disposeAll(): void
 }

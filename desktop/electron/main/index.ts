@@ -81,7 +81,10 @@ async function authenticateUiServer(url: string): Promise<boolean> {
     const response = await fetch(url, { redirect: 'manual' })
     const cookie = response.headers.get('set-cookie')
     await response.body?.cancel()
-    if (response.status !== 302 || cookie === null) return false
+    // 状态码别钉死：换票成功是 303（303 与 302 都认）。这里原来写 `!== 302`，
+    // 服务端按 HTTP 语义把 302 改成 303 之后，桌面就静默回落到本机文件加载了。
+    const redirected = response.status === 303 || response.status === 302
+    if (!redirected || cookie === null) return false
     const pair = cookie.split(';')[0] ?? ''
     const index = pair.indexOf('=')
     if (index <= 0) return false

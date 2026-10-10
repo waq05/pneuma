@@ -53,6 +53,9 @@ export interface UiBootGraph {
 /** 短哈希长度（与 dsh 的 12 位一致：够短不撞，也够眼睛扫）。 */
 const HASH_LENGTH = 12
 
+/** 摘要函数：把若干字段拼成一个短哈希。默认那份不依赖 node，浏览器壳也能算。 */
+export type HashFn = (...parts: readonly string[]) => string
+
 /**
  * 一个插件包的地址。相对路径：页面挂在 `/` 或子路径下都成立。
  * @param id - 插件 id
@@ -88,14 +91,16 @@ export interface ArtifactStat {
   size: number
 }
 
-/** 由文件指纹算产物版本（不读文件内容，构建后立刻能算）。 */
-export function artifactRev(stat: ArtifactStat): string {
-  return shortHash(
-    'artifact',
-    String(Math.trunc(stat.mtimeMs)),
-    String(Math.trunc(stat.ctimeMs)),
-    String(stat.size),
-  )
+/**
+ * 由文件指纹算产物版本（不读文件内容，构建后立刻能算）。
+ *
+ * 指纹取毫秒原值而不是取整：同一毫秒内、大小又恰好相同的重写会算出同一个版本，
+ * 那样浏览器一年内都不会回源拿新字节。
+ * @param stat - 文件指纹
+ * @param hash - 摘要函数；宿主侧传 sha256 那份（浏览器壳用不到这个函数）
+ */
+export function artifactRev(stat: ArtifactStat, hash: HashFn = shortHash): string {
+  return hash('artifact', String(stat.mtimeMs), String(stat.ctimeMs), String(stat.size))
 }
 
 /**
@@ -104,13 +109,21 @@ export function artifactRev(stat: ArtifactStat): string {
  * 快照顺序来自宿主的扫描顺序（调用方传进来的顺序），只有依赖边会改变它，
  * 所以同一批插件每次算出来的顺序都一样，界面不会重排。
  *
+ * 顺序只是**优化**不是正确性前提：插件要往别人声明的槽里放东西，用
+ * `slots.injectSlot` 等声明出现即可，排不排都能成。
+ *
  * @param rows - 宿主发现的插件包
  * @returns 排好序的一份新数组
- * @throws {Error} 成环时抛出，消息里列出环上的 id
+ * @throws {Error} 成环或 id 重复时抛出（后者会让界面静默少一块，不能放过）
  */
 export function orderUiPlugins<T extends UiPluginRow>(rows: readonly T[]): T[] {
   const byId = new Map<string, T>()
-  for (const row of rows) byId.set(row.id, row)
+  for (const row of rows) {
+    if (byId.has(row.id)) {
+      throw new Error(`启动清单里有两个 id 相同的界面插件：${row.id}（按 id 去重会静默少装一个）`)
+    }
+    byId.set(row.id, row)
+  }
   const ordered: T[] = []
   const placed = new Set<string>()
   const open: string[] = []
@@ -139,6 +152,10 @@ export function orderUiPlugins<T extends UiPluginRow>(rows: readonly T[]): T[] {
 
 /**
  * 由「插件 id + 产物版本」拼出启动图。顺序在这里定，地址在这里算。
+ *
+ * 整图 rev 对**整条 entry**（含 inject / external / immediately）做摘要，不是只对
+ * id 与产物版本做：只改清单里的声明（不动 bundle）时整图 rev 也必须跟着变，
+ * 否则「靠 rev 判断要不要重载」的那一侧会漏掉声明类变更。
  * @param host - 宿主身份
  * @param artifacts - 已算出 rev 的插件包（顺序即扫描顺序）
  */
@@ -154,6 +171,6 @@ export function composeUiBootGraph(
     ...(artifact.external === undefined ? {} : { external: artifact.external }),
     ...(artifact.immediately === true ? { immediately: true } : {}),
   }))
-  const rev = shortHash('uiboot', ...entries.flatMap((entry) => [entry.id, entry.rev]))
+  const rev = shortHash('uiboot', JSON.stringify(entries))
   return { rev, entries, host }
 }

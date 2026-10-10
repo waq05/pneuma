@@ -3,34 +3,49 @@
  *
  * 这是 C-真 路线里"宿主常驻的那半个 web 服务"。它比远程控制那套简单得多，因为它只服务
  * **本机回环**：没有配对码、没有设备令牌、没有推送，只有一道一次性令牌换 Cookie 的门。
- * 带得走的东西（Host 头防护、静态伺服、内容寻址的 bundle 地址）都从 core 共用。
+ * 带得走的东西（信任闸、静态伺服、内容寻址的 bundle 地址）都从 core 共用。
  *
- * 四件事：
+ * 五件事：
  *
  * 1. **进来要先换票**：宿主启动时生成一枚一次性令牌，打印成
  *    `http://127.0.0.1:<port>/?token=xxx`。浏览器带着它访问 `/`，服务下一条 HttpOnly
- *    Cookie 并 302 到 `/`——令牌就此作废（用一次），之后的 `/api/*` 与 `/plugins/*`
+ *    Cookie 并 303 到 `/`——令牌就此作废（用一次），之后的 `/api/*` 与 `/plugins/*`
  *    都靠这条 Cookie。为什么不用 URL 里的令牌直接当凭据：它会被写进历史记录、
  *    被 Referer 带出去、被日志记下来；换 Cookie 只用一次，暴露面小一圈。
+ *    换票响应带 `cache-control: no-store` 与 `referrer-policy: no-referrer`：这条带令牌的
+ *    响应不该进任何缓存，跳转后的地址也不该把令牌漏给下一页。用 303 而不是 302：
+ *    303 明确要求后续请求改用 GET，语义上不会让带体的请求被"重放"。
  *
- * 2. **Host 头必须对得上**（`core/web-http.ts` 的 hostHeaderAllowed）：DNS rebinding
- *    能让恶意网页照自己的域名打本机端口，这道闸拦的就是它，而且是**所有路由的总闸**。
+ * 2. **三道闸收在 `core/ui-trust.ts`**：Host（防 DNS rebinding，所有路由的总闸）、
+ *    `sec-fetch-site: cross-site`、以及"带了 Origin 就必须等于本服务 authority"。
+ *    后两道是补充，理由与边界都写在那份文件的头注释里。
  *
- * 3. **插件 bundle 走内容寻址**：地址里带 `?rev=<文件指纹>`；rev 与服务端当前算出来的
- *    不一致就 404（旧地址不该拿到新代码，新地址也不该拿到旧代码），一致则给一年不可变缓存。
+ * 3. **会话 Cookie 是签名过的**：值是 `authority + 过期时间` 的 HMAC-SHA256，密钥落盘在
+ *    `<DSC_HOME>/ui-secret`（0600）。为什么要落盘：原来 Cookie 值每次进程启动重新随机，
+ *    宿主一重启页面就 401；密钥落盘后，同 authority（同端口）下的旧页面重启后仍然有效。
+ *    为什么要签 authority：Cookie 的作用域不含端口，签上 authority 之后，"另一个回环端口
+ *    反射回来的 Cookie"送到本服务也不成立。密钥本身绝不进日志。
  *
- * 4. **启动清单注进页面**：送 index.html 之前把启动图塞进 `window.__DSC_BOOT__`
+ * 4. **插件 bundle 走内容寻址**：地址里带 `?rev=<文件指纹>`；命中当下这一代或上一代才 200，
+ *    其余 404（旧地址不该拿到新代码，新地址也不该拿到旧代码），命中给一年不可变缓存。
+ *    HEAD 复用 GET 的头但不给体；非 GET / HEAD 回 405。解析口径在 `core/ui-route.ts`。
+ *
+ * 5. **启动清单注进页面**：送 index.html 之前把启动图塞进 `window.__DSC_BOOT__`
  *    （与 dsh 同一个位置、同一个名字），界面壳一进来就有，不必再发一次请求。
  *
  * @module dsc/core/ui-server
  */
 import { randomBytes } from 'node:crypto'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { dirname } from 'node:path'
 import { composeUiBootGraph, type UiBootGraph, type UiPluginRow } from '../ui/manifest.js'
+import { dscPath } from './path-policy.js'
 import type { UiEventsHandle } from './ui-events.js'
 import { collectUiPluginArtifacts, uiAssetsDir, uiPluginsDir } from './ui-bundles.js'
-import { isUiBundleRequest, resolveUiBundleRequest } from './ui-route.js'
-import { hostHeaderAllowed, readCookie, sendJson, sendText } from './web-http.js'
+import { isUiBundleRequest, resolveUiBundleRequest, type UiBundleResponse } from './ui-route.js'
+import { checkUiRequestTrust, issueUiCookie, requestAuthority, timingSafeEqualText, verifyUiCookie } from './ui-trust.js'
+import { readCookie, sendJson, sendText } from './web-http.js'
 import { serveStatic } from './web-static.js'
 
 /** 会话 Cookie 名。 */
@@ -38,6 +53,15 @@ export const UI_COOKIE = 'dsc_ui'
 
 /** 一进来给的那条 `/?token=` 的有效期（毫秒）：够用户从终端复制到浏览器。 */
 const DEFAULT_TOKEN_TTL_MS = 10 * 60 * 1000
+
+/** 会话 Cookie 的有效期：30 天（与参考实现同口径）。 */
+export const UI_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
+
+/** 签名密钥文件（`<DSC_HOME>/ui-secret`），只放本机、权限 0600，绝不进日志。 */
+export const UI_SECRET_FILE = 'ui-secret'
+
+/** 签名密钥长度（字节）。 */
+const SECRET_BYTES = 32
 
 /** 启动图注入页面时用的全局名（与 dsh 的 `window.__DSH_BOOT__` 对应）。 */
 export const BOOT_GLOBAL = '__DSC_BOOT__'
@@ -102,6 +126,54 @@ export interface UiServerHandle {
   close(): Promise<void>
 }
 
+/**
+ * 取（或首次生成）界面会话的签名密钥。
+ *
+ * 读取时先按形状校验：文件在但内容不成形（被截断、被改坏）就重新生成一份覆盖它——
+ * 那会让已下发的 Cookie 全部失效（用户重新换一次票），但比拿一段坏密钥签名安全得多。
+ *
+ * 落盘失败（只读盘、权限不足）不致命：退回进程内随机密钥，只是宿主重启后旧页面要重新
+ * 换票。这种情况会写一行日志（**只说事、不打印密钥**）。
+ */
+function loadUiSigningKey(log: (line: string) => void): Buffer {
+  const file = dscPath(UI_SECRET_FILE)
+  let corrupt = false
+  try {
+    const text = readFileSync(file, 'utf8').trim()
+    if (/^[A-Za-z0-9_-]{43}$/.test(text)) {
+      const key = Buffer.from(text.replaceAll('-', '+').replaceAll('_', '/'), 'base64')
+      if (key.byteLength === SECRET_BYTES) return key
+    }
+    corrupt = true
+  } catch {
+    // 首次运行：文件还没有。不算异常。
+  }
+  const key = randomBytes(SECRET_BYTES)
+  try {
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, `${key.toString('base64url')}\n`, { mode: 0o600 })
+    if (corrupt) log(`[ui-server] 签名密钥文件形状不对，已重新生成（${file}）`)
+    return key
+  } catch (error) {
+    log(
+      `[ui-server] 签名密钥没法落盘（${error instanceof Error ? error.message : String(error)}）：`
+      + '本次会话的 Cookie 只在内存里有效，宿主重启后页面要重新换票',
+    )
+    return key
+  }
+}
+
+/** 把 bundle 解析结果写出去：200 给头（与体），其余给状态码 + 理由 + Allow 之类的头。 */
+function sendBundleResponse(res: ServerResponse, resolved: UiBundleResponse): void {
+  if (resolved.status === 200) {
+    res.writeHead(200, resolved.headers ?? {})
+    res.end(resolved.body)
+    return
+  }
+  res.writeHead(resolved.status, { 'content-type': 'text/plain; charset=utf-8', ...(resolved.headers ?? {}) })
+  res.end(resolved.reason ?? '没有这个插件资源')
+}
+
 /** 启动服务并把入口地址算出来。 */
 export async function createUiServer(options: UiServerOptions): Promise<UiServerHandle> {
   const assetsDir = options.assetsDir ?? uiAssetsDir()
@@ -110,11 +182,12 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
   const log = options.log ?? ((line: string): void => { process.stderr.write(`${line}\n`) })
   const ttl = options.tokenTtlMs ?? DEFAULT_TOKEN_TTL_MS
 
-  // 一次性令牌：换到 Cookie 就作废；过期也作废。
+  // 一次性令牌：换到 Cookie 就作废；过期也作废。比对用定长时间（时序侧信道）。
   const token = randomBytes(24).toString('base64url')
   const tokenExpiresAt = Date.now() + ttl
   let tokenUsed = false
-  const session = randomBytes(24).toString('base64url')
+  // 会话 Cookie 的签名密钥：落盘复用，于是同 authority 下宿主重启后旧页面仍然有效。
+  const signingKey = loadUiSigningKey(log)
 
   // 插件清单：启动时收一次，构建完界面壳可以 refresh 重收。
   let artifacts = collectUiPluginArtifacts(pluginsDir, 'web')
@@ -127,9 +200,9 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
    */
   let currentPort = 0
 
-  /** 现在这一刻的启动图（每次调用重算 rev，文件被换掉立刻反映出来）。 */
+  /** 现在这一刻的启动图（强制重算产物表：文件被换掉立刻反映出来）。 */
   const buildBoot = (): UiBootGraph => {
-    const fresh = collectUiPluginArtifacts(pluginsDir, 'web')
+    const fresh = collectUiPluginArtifacts(pluginsDir, 'web', { force: true })
     artifacts = fresh
     const rows: (UiPluginRow & { rev: string })[] = fresh.entries.map((entry) => ({
       id: entry.id,
@@ -163,61 +236,90 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
 
   async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const port = currentPort
-    // 总闸一：Host 头必须是本机的 IP 字面量或 localhost，且端口对得上。
-    if (!hostHeaderAllowed(req.headers.host, port)) {
-      sendText(res, 403, 'Host 头不被接受')
+    // 总闸：Host / Sec-Fetch-Site / Origin 三道，**所有**路由（含换票、静态、/api/*）都从这里进。
+    const denial = checkUiRequestTrust(req.headers, port)
+    if (denial !== null) {
+      sendText(res, denial.status, denial.reason)
       return
     }
     const url = new URL(req.url ?? '/', `http://127.0.0.1:${String(port)}`)
-    const queryToken = url.searchParams.get('token')
-    const cookie = readCookie(req.headers.cookie, UI_COOKIE)
+    const method = req.method ?? 'GET'
+    // Host 已经过闸，这里的 authority 一定成形；Cookie 的签名与校验都绑在它上面。
+    const authority = requestAuthority(req.headers.host)
+    const tokens = url.searchParams.getAll('token')
 
-    // 总闸二：凭据。带一次性令牌访问根路径 = 换 Cookie 并跳转（令牌就此作废）。
-    if (url.pathname === '/' && queryToken !== null) {
-      if (tokenUsed || Date.now() > tokenExpiresAt || queryToken !== token) {
+    // 凭据闸：带一次性令牌访问根路径 = 换 Cookie 并跳转（令牌就此作废）。
+    if (url.pathname === '/' && tokens.length > 0) {
+      if (method !== 'GET') {
+        sendText(res, 405, '换票只认 GET')
+        return
+      }
+      const valid = tokens.length === 1
+        && !tokenUsed
+        && Date.now() <= tokenExpiresAt
+        && timingSafeEqualText(tokens[0], token)
+      if (!valid) {
         sendText(res, 403, '令牌无效或已用过，请用宿主最新打印的地址')
         return
       }
       tokenUsed = true
-      res.writeHead(302, {
+      const expiresAt = Date.now() + UI_COOKIE_MAX_AGE_MS
+      res.writeHead(303, {
+        'cache-control': 'no-store',
         location: '/',
-        'set-cookie': `${UI_COOKIE}=${session}; HttpOnly; SameSite=Strict; Path=/`,
+        'referrer-policy': 'no-referrer',
+        'set-cookie': [
+          `${UI_COOKIE}=${issueUiCookie(signingKey, authority, expiresAt)}`,
+          `Max-Age=${String(Math.floor(UI_COOKIE_MAX_AGE_MS / 1000))}`,
+          `Expires=${new Date(expiresAt).toUTCString()}`,
+          'Path=/',
+          'HttpOnly',
+          'SameSite=Strict',
+        ].join('; '),
       })
       res.end()
       return
     }
-    if (cookie !== session) {
-      res.writeHead(401, { 'content-type': 'text/html; charset=utf-8' })
+    if (!verifyUiCookie(signingKey, authority, readCookie(req.headers.cookie, UI_COOKIE), Date.now())) {
+      res.writeHead(401, { 'cache-control': 'no-store', 'content-type': 'text/html; charset=utf-8' })
       res.end(UNAUTHORIZED_HTML)
       return
     }
 
-    // 插件 bundle：内容寻址，rev 对不上就 404（旧地址不拿新代码）。
+    // 插件 bundle：内容寻址；HEAD 复用 GET 的头，非 GET/HEAD 405。
     // 解析口径与远程控制共用 core/ui-route.ts 那一份。
-    if (req.method === 'GET' && isUiBundleRequest(url.pathname)) {
-      const resolved = resolveUiBundleRequest(url.pathname, url.searchParams.get('rev'), pluginsDir)
-      if (resolved.status !== 200 || resolved.body === undefined) {
-        sendText(res, resolved.status, resolved.reason ?? '没有这个插件资源')
-        return
-      }
-      res.writeHead(resolved.status, resolved.headers)
-      res.end(resolved.body)
+    if (isUiBundleRequest(url.pathname)) {
+      sendBundleResponse(res, resolveUiBundleRequest(url.pathname, url.searchParams.get('rev'), pluginsDir, method))
       return
     }
-    if (req.method === 'GET' && url.pathname === '/api/boot') {
+    if (url.pathname === '/api/boot') {
+      if (method !== 'GET' && method !== 'HEAD') {
+        sendText(res, 405, '启动图只认 GET 与 HEAD')
+        return
+      }
+      // HEAD 不用特殊处理：node 对 HEAD 只发头、不发体（content-length 照给）。
       sendJson(res, 200, buildBoot())
       return
     }
     // 数据通道：SSE 推帧 + POST 调方法（通道本体在 core/ui-events.ts，鉴权在这一层）。
-    if (events !== null && req.method === 'GET' && url.pathname === '/api/events') {
+    if (events !== null && url.pathname === '/api/events') {
+      if (method !== 'GET') {
+        // SSE 是一条长连接，HEAD 没有意义，因此这里连 HEAD 也拒（只认 GET）。
+        sendText(res, 405, '事件流只认 GET')
+        return
+      }
       events.handleEvents(req, res)
       return
     }
-    if (events !== null && req.method === 'POST' && url.pathname === '/api/invoke') {
+    if (events !== null && url.pathname === '/api/invoke') {
+      if (method !== 'POST') {
+        sendText(res, 405, '调用只认 POST')
+        return
+      }
       await events.handleInvoke(req, res)
       return
     }
-    if (req.method === 'GET' || req.method === 'HEAD') {
+    if (method === 'GET' || method === 'HEAD') {
       const served = serveStatic(res, url.pathname, assetsDir, {
         placeholderHtml: PLACEHOLDER_HTML,
         transformHtml: transformIndex,
@@ -254,7 +356,7 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
     },
     boot: () => buildBoot(),
     refresh: () => {
-      const fresh = collectUiPluginArtifacts(pluginsDir, 'web')
+      const fresh = collectUiPluginArtifacts(pluginsDir, 'web', { force: true })
       artifacts = fresh
       return { entries: fresh.entries.length, problems: fresh.problems }
     },

@@ -20,9 +20,9 @@
  * @module dsc/plugins/webserver
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { INVOKABLE_METHODS, isInvokableMethod } from '../core/host-methods.js'
 import { resolvePluginConfig } from '../core/plugin-registry.js'
 import { createUiEvents, type UiEventsHandle } from '../core/ui-events.js'
+import { isUiMethod, UI_METHODS, validateUiArgs } from '../core/ui-methods.js'
 import { createUiServer, type UiServerHandle } from '../core/ui-server.js'
 import { DSC_VERSION } from '../core/version.js'
 import type { WebServerService } from '../services/types.js'
@@ -82,8 +82,11 @@ export const webserverPlugin: Plugin.Object = {
     let starting: Promise<UiServerHandle> | null = null
 
     const start = async (): Promise<UiServerHandle> => {
-      // 数据通道：帧的产生与缓冲复用遥控端那一套（core/remote/frames.ts），
-      // 白名单用整张 INVOKABLE_METHODS——本机回环 + Cookie 认证，与桌面 IPC 那条路同等信任。
+      // 数据通道：帧的产生与缓冲复用遥控端那一套（core/remote/frames.ts）。
+      // 白名单**不是**整张 INVOKABLE_METHODS：页面里跑着第三方插件 bundle，与壳同源，
+      // 任一插件被投毒就等于拿到 Cookie；所以只放界面真正要用的子集，凭据类 / 破坏性 /
+      // 任意命令执行 / 策略写入一律排除，理由逐条写在 core/ui-methods.ts 的文件头。
+      // 实参也不再原样铺开：先过 validateUiArgs 的个数 / 类型 / 长度 / 枚举校验。
       const channel = createUiEvents({
         // 帧的形状与遥控端同一份契约：已定稿条目（正 id）与直播尾（负 id）分开放，
         // sessionId 从状态里取（会话切换时 hub 据此立刻发全量）。
@@ -97,17 +100,24 @@ export const webserverPlugin: Plugin.Object = {
           }
         },
         invoke: async (method, args) => {
-          if (!isInvokableMethod(method)) throw new Error(`协议不允许调用的方法：${method}`)
+          if (!isUiMethod(method)) throw new Error(`界面通道不允许调用的方法：${method}`)
+          const checked = validateUiArgs(method, args)
+          if (!checked.ok) throw new Error(checked.error)
           // 方法名已经收窄成 DscRuntime 的键（与 host-stdio 同一处惯例）。
-          return (await Reflect.apply(runtime[method], runtime, args)) ?? null
+          return (await Reflect.apply(runtime[method], runtime, checked.args)) ?? null
         },
-        methods: INVOKABLE_METHODS,
+        methods: UI_METHODS,
         hello: () => ({
           protocolVersion: UI_EVENTS_PROTOCOL_VERSION,
-          methods: [...INVOKABLE_METHODS],
+          methods: [...UI_METHODS],
           host: { name: 'Muse Code', version: DSC_VERSION },
         }),
         subscribe: (onChange) => runtime.subscribe(onChange),
+        // 通道自己的异常（对端不读、造帧失败、连接数超限）走宿主 logger：
+        // 不接的话只写 stderr，进不了统一日志，线上排查看不到。
+        log: (line) => {
+          ctx.logger.warn(line)
+        },
       })
       const server = await createUiServer({
         host: { name: 'Muse Code', version: DSC_VERSION },

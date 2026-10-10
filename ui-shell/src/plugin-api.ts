@@ -5,40 +5,56 @@
  * 所以插件 bundle 里不要内联它——只能当外部模块引用，这样壳与插件共用同一套类型与
  * 同一份实现（按类型写代码，按依赖换实现）。
  *
- * 刻意只放"写插件需要的东西"：槽位类型、宿主身份、运行时 hook、defineUiPlugin。
- * React 与 react-dom 也从白名单里拿（插件 bundle 里是 `require('react')`），
+ * 刻意只放"写插件需要的东西"：槽位类型、组件 props 契约、宿主身份、运行时 hook、
+ * defineUiPlugin。React 与 react-dom 也从白名单里拿（插件 bundle 里是 `require('react')`），
  * 不另开端口——否则 React 会有两份，hooks 立刻崩。
  *
  * @module dsc-ui-shell/plugin-api
  */
-import type { ComponentType } from 'react'
+import type { ComponentType, ReactNode } from 'react'
 import type {
   HostSnapshot,
   SlotEntry,
   SlotKind,
   SlotRegistry,
   UiHostInfo,
+  UiPluginApi as CoreUiPluginApi,
   UiPluginModule,
   UiRuntimeApi,
+  UiSlotApi,
 } from '@dsc/ui-core'
 
-/** 浏览器壳里「组件」就是 React 组件。 */
-export type UiComponent = ComponentType
+/**
+ * 壳交给插件组件的渲染能力（每个条目都有）。
+ *
+ * 为什么要交给组件而不是从 `ui.slots` 里直接渲染：槽是**位置**，位置归渲染它的人管。
+ * 一个工具卡要在自己尾巴上留个洞，得由它说明「这个洞叫什么」，别人再往里放东西；
+ * 这样 `renderSlot` 只能渲染本条目自己声明过的名字，拼错当场报装配错误。
+ */
+export interface SlotRenderApi {
+  /** 渲染本条目声明过的子槽（没声明过的名字调用会抛装配错误）。 */
+  renderSlot(name: string, props?: Record<string, unknown>): ReactNode
+  /** 本条目声明出来的子槽名（诊断用）。 */
+  childSlots: readonly string[]
+}
 
-/** 壳里的槽位注册表。 */
+/** 槽条目组件收到的 props：渲染位置给的 owner 值（展开在顶层）+ 渲染能力。 */
+export type SlotComponentProps<Owner = Record<string, never>> = Owner & SlotRenderApi
+
+/**
+ * 浏览器壳里「组件」就是 React 组件。
+ *
+ * 这里用 `any` 是刻意的：owner props 的形态由每个槽自己定（消息流的组件要知道
+ * 「我在渲染哪条消息」），注册表只把它们当「能渲染的东西」；写 `unknown` 会把
+ * 插件作者的类型全部挡掉，注册一个组件都得先做类型断言。
+ */
+export type UiComponent = ComponentType<any>
+
+/** 壳内部的槽位注册表：渲染与诊断都要用到壳的那几个能力（订阅、退位、故障表）。 */
 export type UiSlots = SlotRegistry<UiComponent>
 
-/** 插件 `apply(ui)` 拿到的那一份。 */
-export interface UiPluginApi {
-  /** 这个插件的 id（宿主清单里那一条）。 */
-  id: string
-  /** 槽位注册表：只能往已声明的槽里注册，拼错槽名当场报错。 */
-  slots: UiSlots
-  /** 宿主身份（要显示版本号之类的用）。 */
-  host: UiHostInfo
-  /** 运行时通道：看状态、调方法。 */
-  runtime: UiRuntimeApi
-}
+/** 插件 `apply(ui)` 拿到的那一份（核心定义 + 组件类型特化，不再手抄一遍）。 */
+export type UiPluginApi = CoreUiPluginApi<UiComponent>
 
 /** 插件 bundle 要导出的形状。 */
 export type UiPlugin = UiPluginModule<UiComponent>
@@ -87,6 +103,6 @@ export function hostStatus(snapshot: HostSnapshot | null): HostStatusView | null
   }
 }
 
-export { useChannelStatus, useHostChannel, useHostHello, useHostSnapshot } from './runtime-context'
+export { useChannelStatus, useHostChannel, useHostError, useHostSelector, useHostSnapshot } from './runtime-context'
 export type { ChannelStatus, HostHello } from './host-channel'
-export type { SlotEntry, SlotKind, UiHostInfo, UiRuntimeApi, HostSnapshot }
+export type { SlotEntry, SlotKind, UiHostInfo, UiRuntimeApi, UiSlotApi, HostSnapshot }

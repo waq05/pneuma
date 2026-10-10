@@ -36,7 +36,13 @@ delete process.env.DSC_UI_SERVER
 delete process.env.DSC_UI_ASSETS
 delete process.env.DSC_UI_PORT
 
-const { SlotRegistry, UndeclaredSlotError, DuplicateSlotIdError } = await import('../lib/ui/slots.js')
+const {
+  SlotRegistry,
+  UndeclaredSlotError,
+  DuplicateSlotError,
+  SlotKindConflictError,
+  KeyedSlotKeyError,
+} = await import('../lib/ui/slots.js')
 const { artifactRev, composeUiBootGraph, orderUiPlugins, pluginBundleUrl, shortHash } = await import('../lib/ui/manifest.js')
 const { collectUiPluginArtifacts, readUiPluginBundle, readUiPluginManifest, uiPluginsDir } = await import(
   '../lib/core/ui-bundles.js'
@@ -136,15 +142,23 @@ console.log('\n[1] 槽位核心')
   } catch (error) {
     duplicate = error
   }
-  check('同一个槽里 id 重复报错', duplicate instanceof DuplicateSlotIdError, String(duplicate))
+  check('同一个格子同 priority 重复报错', duplicate instanceof DuplicateSlotError, String(duplicate))
+  check(
+    '重复报错里点名占位者并给出改法',
+    duplicate !== null && String(duplicate.message).includes('early') && String(duplicate.message).includes('priority'),
+    duplicate === null ? '' : String(duplicate.message),
+  )
 
   let declaredTwice = null
   try {
-    slots.declare('shell.main', 'list')
+    slots.declare('shell.main', 'keyed')
   } catch (error) {
     declaredTwice = error
   }
-  check('槽被声明两次报错', declaredTwice !== null)
+  check('同一个槽声明成两种形态报错', declaredTwice instanceof SlotKindConflictError, String(declaredTwice))
+  const offAgain = slots.declare('shell.main', 'list')
+  check('同形态重复声明合法（引用计数 +1）', slots.slots.includes('shell.main'))
+  offAgain()
 
   let notified = 0
   const offSub = slots.subscribe(() => {
@@ -163,19 +177,106 @@ console.log('\n[1] 槽位核心')
   const single = new SlotRegistry()
   single.declare('shell.notice', 'single')
   single.register('shell.notice', { id: 'a', order: 1 }, 'a')
-  single.register('shell.notice', { id: 'b', order: 2 }, 'b')
-  check('single 槽只画第一条', single.winners('shell.notice').map((entry) => entry.id).join(',') === 'a')
+  single.register('shell.notice', { id: 'b', order: 2, priority: 1 }, 'b')
+  check('single 槽只画一条（priority 小的胜）', single.winners('shell.notice').map((entry) => entry.id).join(',') === 'a')
 
   const keyed = new SlotRegistry()
   keyed.declare('tool.call', 'keyed')
   keyed.register('tool.call', { id: 'read-impl', key: 'read', order: 1 }, 'read-1')
-  keyed.register('tool.call', { id: 'read-other', key: 'read', order: 2 }, 'read-2')
+  keyed.register('tool.call', { id: 'read-other', key: 'read', order: 2, priority: 1 }, 'read-2')
   keyed.register('tool.call', { id: 'write-impl', key: 'write', order: 1 }, 'write')
   check(
-    'keyed 槽每格只取第一条',
+    'keyed 槽每格只取一条',
     keyed.winners('tool.call').map((entry) => entry.id).join(',') === 'read-impl,write-impl',
     keyed.winners('tool.call').map((entry) => entry.id).join(','),
   )
+
+  // 遮蔽：同一个格子里可以合法地放多份，priority 小的胜；同 priority 是装配错误。
+  const shadow = new SlotRegistry()
+  shadow.declare('tool.card', 'list')
+  shadow.register('tool.card', { id: 'builtin', order: 1 }, 'builtin')
+  shadow.register('tool.card', { id: 'builtin', order: 1, priority: -1 }, 'override')
+  check(
+    '同 id 不同 priority 是合法替换（小者胜）',
+    shadow.winners('tool.card').map((entry) => entry.component).join(',') === 'override',
+    shadow.winners('tool.card').map((entry) => entry.component).join(','),
+  )
+  check('被遮蔽的那份仍在登记表里（诊断看得见）', shadow.entriesOf('tool.card').length === 2)
+
+  // keyed 不给 key 会把所有登记静默压成一格，必须当场报错。
+  const keyless = new SlotRegistry()
+  keyless.declare('tool.call', 'keyed')
+  let noKey = null
+  try {
+    keyless.register('tool.call', { id: 'x' }, 'x')
+  } catch (error) {
+    noKey = error
+  }
+  check('keyed 槽没给 key 当场报错', noKey instanceof KeyedSlotKeyError, String(noKey))
+
+  // 子槽 + injectSlot：贡献者可以比声明者先加载，不必靠顺序排依赖。
+  const nested = new SlotRegistry()
+  nested.declare('shell.main', 'list')
+  let echoes = 0
+  const offWait = nested.injectSlot('card.footer', () => {
+    echoes += 1
+    return nested.register('card.footer', { id: 'echo' }, 'echo')
+  })
+  check('等一个还没声明的槽不会跑贡献', echoes === 0, String(echoes))
+  const offCard = nested.register('shell.main', { id: 'card', children: { 'card.footer': 'list' } }, 'card')
+  check('声明者一登记，等待者就被叫醒', echoes === 1, String(echoes))
+  check('子槽里出现了贡献', nested.winners('card.footer').map((entry) => entry.component).join(',') === 'echo')
+  check(
+    '条目记住了自己声明的子槽',
+    nested.entriesOf('shell.main')[0].children.join(',') === 'card.footer',
+    nested.entriesOf('shell.main')[0].children.join(','),
+  )
+  offCard()
+  check('声明者退订后子槽消失', nested.spec('card.footer') === undefined)
+  nested.declare('card.footer', 'list')
+  check('槽重新声明时等待者再贡献一次', echoes === 2, String(echoes))
+  offWait()
+
+  // 引用计数：多份登记可以把同一个子槽当共享扩展点。
+  const shared = new SlotRegistry()
+  shared.declare('shell.main', 'list')
+  shared.register('shell.main', { id: 'c1', children: { 'list.footer': 'list' } }, 'c1')
+  shared.register('shell.main', { id: 'c2', children: { 'list.footer': 'list' } }, 'c2')
+  check('同名同形态的子槽可被多份登记共享', shared.spec('list.footer') === 'list')
+  let badChild = null
+  try {
+    shared.register('shell.main', { id: 'c3', children: { 'list.footer': 'single' } }, 'c3')
+  } catch (error) {
+    badChild = error
+  }
+  check('同名不同形态的子槽报错', badChild instanceof SlotKindConflictError, String(badChild))
+
+  // 按槽的版本号：一个槽的登记不该让别的槽的快照换引用（否则一次登记放大成整页重渲染）。
+  const isolated = new SlotRegistry()
+  isolated.declare('a', 'list')
+  isolated.declare('b', 'list')
+  isolated.register('a', { id: 'x' }, 'x')
+  const versionA = isolated.version('a')
+  const snapshotA2 = isolated.winners('a')
+  isolated.register('b', { id: 'y' }, 'y')
+  check('登记 b 不动 a 的版本号', isolated.version('a') === versionA)
+  check('登记 b 不让 a 的快照换引用', isolated.winners('a') === snapshotA2)
+  check('全局版本号仍然前进（诊断区靠它）', isolated.getVersion() > 0)
+
+  // 崩溃退位：格子里的下一名顶上，故障记下来给诊断看。
+  const healing = new SlotRegistry()
+  healing.declare('notice', 'single')
+  healing.register('notice', { id: 'first' }, 'first')
+  healing.register('notice', { id: 'second', priority: 1 }, 'second')
+  check('退位前画 priority 小的那个', healing.winners('notice')[0].component === 'first')
+  const recorded = []
+  const offFault = healing.onFault((fault) => recorded.push(fault))
+  healing.reportFault(healing.entriesOf('notice').find((entry) => entry.component === 'first'), new Error('炸了'))
+  check('崩过的条目退位，下一名顶上', healing.winners('notice')[0].component === 'second')
+  check('故障被记录并广播', recorded.length === 1 && recorded[0].phase === 'render', JSON.stringify(recorded))
+  check('故障表可读（诊断区用）', healing.faults.length === 1)
+  check('退位是一次性的（不自动复活）', healing.winners('notice').length === 1)
+  offFault()
 }
 
 // ── 2. 启动清单 ────────────────────────────────────────────────────────────────
@@ -189,6 +290,14 @@ console.log('\n[2] 启动清单')
   const stat = { mtimeMs: 1000, ctimeMs: 2000, size: 30 }
   check('文件指纹稳定', artifactRev(stat) === artifactRev({ ...stat }))
   check('大小变了版本就变', artifactRev(stat) !== artifactRev({ ...stat, size: 31 }))
+  check(
+    '指纹取毫秒原值（同毫秒不同小数能分开，避免复查拿旧字节）',
+    artifactRev({ ...stat, mtimeMs: 1000.5 }) !== artifactRev({ ...stat, mtimeMs: 1000.9 }),
+  )
+  check(
+    '可换摘要函数（宿主侧传 sha256 那份）',
+    artifactRev(stat, (...parts) => parts.join('/')).includes('/'),
+  )
 
   const rows = [
     { id: 'c', rev: 'r3', inject: ['b'] },
@@ -220,6 +329,17 @@ console.log('\n[2] 启动清单')
   }
   check('自己 inject 自己报错', selfInject !== null)
 
+  let dupId = null
+  try {
+    orderUiPlugins([
+      { id: 'x', rev: 'r1' },
+      { id: 'x', rev: 'r2' },
+    ])
+  } catch (error) {
+    dupId = error
+  }
+  check('清单里两个 id 相同报错（不能静默少装一个）', dupId !== null, dupId === null ? '' : String(dupId.message))
+
   const graph = composeUiBootGraph({ name: 'Muse Code', version: '9.9.9' }, rows)
   check('启动图带宿主身份', graph.host.name === 'Muse Code' && graph.host.version === '9.9.9')
   check('启动图条目按依赖排序', graph.entries.map((entry) => entry.id).join(',') === 'a,b,c')
@@ -229,6 +349,16 @@ console.log('\n[2] 启动清单')
     '插件版本变了整图 rev 就变',
     composeUiBootGraph({ name: 'x', version: 'y' }, [{ id: 'a', rev: 'r9' }]).rev
       !== composeUiBootGraph({ name: 'x', version: 'y' }, [{ id: 'a', rev: 'r1' }]).rev,
+  )
+  check(
+    '只改声明（不动 bundle）整图 rev 也变',
+    composeUiBootGraph({ name: 'x', version: 'y' }, [{ id: 'a', rev: 'r', immediately: true }]).rev
+      !== composeUiBootGraph({ name: 'x', version: 'y' }, [{ id: 'a', rev: 'r' }]).rev,
+  )
+  check(
+    '改 external 声明整图 rev 也变',
+    composeUiBootGraph({ name: 'x', version: 'y' }, [{ id: 'a', rev: 'r', external: ['react-dom'] }]).rev
+      !== composeUiBootGraph({ name: 'x', version: 'y' }, [{ id: 'a', rev: 'r' }]).rev,
   )
 }
 
@@ -240,6 +370,7 @@ console.log('\n[3] bundle 发现')
       version: 1,
       plugins: [
         { id: 'demo', file: 'client.js', platform: 'web' },
+        { id: '@scope/name', file: 'client.js', platform: 'web' },
         { id: 'tui-only', file: 'client.js', platform: 'tui' },
         { id: 'gone', file: 'client.js', platform: 'web' },
         { id: '../evil', file: 'client.js', platform: 'web' },
@@ -247,11 +378,17 @@ console.log('\n[3] bundle 发现')
       ],
     }),
     'demo/client.js': 'module.exports={apply(){}}',
+    '@scope/name/client.js': 'module.exports={apply(){}}',
   })
   const manifest = readUiPluginManifest(dir)
   check('清单里非法 id 被丢掉', !manifest.some((entry) => entry.id.includes('evil')), manifest.map((e) => e.id).join(','))
   check('文件名带路径分隔符的被丢掉', !manifest.some((entry) => entry.id === 'badfile'))
   check('清单保留合法项', manifest.some((entry) => entry.id === 'demo') && manifest.some((entry) => entry.id === 'gone'))
+  check(
+    '作用域名形状的 id（@scope/name）保留',
+    manifest.some((entry) => entry.id === '@scope/name'),
+    manifest.map((e) => e.id).join(','),
+  )
 
   const collected = collectUiPluginArtifacts(dir, 'web')
   check('只收 web 载体的插件', !collected.entries.some((entry) => entry.id === 'tui-only'))
@@ -269,13 +406,31 @@ console.log('\n[3] bundle 发现')
 
   // 路由解析（本机界面服务与远程控制共用这一份）
   check('路由前缀识别', isUiBundleRequest('/plugins/demo/client.js') && !isUiBundleRequest('/api/boot'))
-  const hit = resolveUiBundleRequest('/plugins/demo/client.js', null, dir)
+  const hit = resolveUiBundleRequest('/plugins/demo/client.js', demo.rev, dir)
   check('路由解析命中 200', hit.status === 200 && (hit.body?.length ?? 0) > 0, String(hit.status))
   check('命中带不可变缓存', String(hit.headers?.['cache-control'] ?? '').includes('immutable'))
-  check('不带 rev 时不校验版本', resolveUiBundleRequest('/plugins/demo/client.js', null, dir).status === 200)
+  check(
+    '缺 rev 一律 404（地址不带指纹就不是内容寻址地址）',
+    resolveUiBundleRequest('/plugins/demo/client.js', null, dir).status === 404,
+  )
   check(
     '给了错 rev 就 404',
     resolveUiBundleRequest('/plugins/demo/client.js', 'deadbeef', dir).status === 404,
+  )
+  check(
+    '非 GET/HEAD 回 405 并带 Allow',
+    resolveUiBundleRequest('/plugins/demo/client.js', demo.rev, dir, 'POST').status === 405,
+  )
+  const head = resolveUiBundleRequest('/plugins/demo/client.js', demo.rev, dir, 'HEAD')
+  check(
+    'HEAD 复用 GET 的头但不给体',
+    head.status === 200 && head.body === undefined && head.headers?.['content-length'] !== undefined,
+    `status=${String(head.status)} body=${String(head.body === undefined)}`,
+  )
+  const scoped = collected.entries.find((entry) => entry.id === '@scope/name')
+  check(
+    '多段 id（@scope/name）能按内容寻址取到',
+    scoped !== undefined && resolveUiBundleRequest('/plugins/@scope/name/client.js', scoped.rev, dir).status === 200,
   )
   check('目录外的 id 404', resolveUiBundleRequest('/plugins/%2E%2E/manifest.json', null, dir).status === 404)
   check('文件名带斜杠 404', resolveUiBundleRequest('/plugins/demo/a/b.js', null, dir).status === 404)
@@ -310,7 +465,13 @@ console.log('\n[4] 界面服务')
   check('错令牌 403', wrongToken.status === 403, String(wrongToken.status))
 
   const handshake = await http('GET', port, `/?token=${token}`)
-  check('带令牌换 Cookie 是 302', handshake.status === 302, String(handshake.status))
+  check('带令牌换 Cookie 是 303（换票后一律 GET）', handshake.status === 303, String(handshake.status))
+  check(
+    '换票响应不许被缓存、不带 Referer',
+    String(handshake.headers?.['cache-control'] ?? '').includes('no-store')
+      && String(handshake.headers?.['referrer-policy'] ?? '').includes('no-referrer'),
+    JSON.stringify(handshake.headers),
+  )
   const setCookie = String(handshake.headers['set-cookie']?.[0] ?? '')
   check('下发 HttpOnly 会话 Cookie', setCookie.startsWith('dsc_ui=') && setCookie.includes('HttpOnly'), setCookie)
   const cookie = setCookie.split(';')[0]
@@ -614,12 +775,30 @@ console.log('\n[5] 真实构建产物')
     const collected = collectUiPluginArtifacts()
     check('产物里有界面插件', collected.entries.length > 0, JSON.stringify(collected.entries.map((e) => e.id)))
     check('产物没有缺文件的问题', collected.problems.length === 0, collected.problems.join(' | '))
-    const first = collected.entries[0]
-    const body = readUiPluginBundle(first.id, first.file) ?? Buffer.alloc(0)
-    const text = body.toString('utf8')
-    check('插件 bundle 不内联 React（由壳提供）', text.includes('require("react")'), text.slice(0, 200))
-    check('插件 bundle 引用壳的插件 API', text.includes('require("@dsc/ui")'))
-    check('插件 bundle 是工厂形状（导出 apply）', text.includes('apply'))
+    const bundles = collected.entries.map((entry) => ({
+      id: entry.id,
+      text: (readUiPluginBundle(entry.id, entry.file) ?? Buffer.alloc(0)).toString('utf8'),
+    }))
+    // 加载器用 <script> 执行 bundle（要的 CSP 只是 script-src 'self'），
+    // 所以每份产物外面必须包一层「把工厂注册进全局表」的壳。
+    check(
+      '每个 bundle 都注册进全局工厂表',
+      bundles.every((bundle) => bundle.text.startsWith('(globalThis.__DSC_UI_FACTORIES__')),
+      bundles.filter((b) => !b.text.startsWith('(globalThis.__DSC_UI_FACTORIES__')).map((b) => b.id).join(','),
+    )
+    check(
+      '工厂签名是受控的 require/module/exports',
+      bundles.every((bundle) => bundle.text.includes('function (require, module, exports) {')),
+    )
+    const reactUser = bundles.find((bundle) => bundle.text.includes('useState')) ?? bundles[0]
+    check('用 React 的 bundle 走 require 而不是内联', reactUser.text.includes('require("react")'), reactUser.id)
+    check(
+      '没有 bundle 内联 React 实现（那会让 hooks 崩）',
+      bundles.every((bundle) => !bundle.text.includes('__SECRET_INTERNALS') && !bundle.text.includes('Minified React error')),
+    )
+    check('插件 bundle 引用壳的插件 API', bundles.every((bundle) => bundle.text.includes('require("@dsc/ui")')))
+    check('插件 bundle 是工厂形状（导出 apply）', bundles.every((bundle) => bundle.text.includes('apply')))
+    check('子槽示例插件在产物里', bundles.some((bundle) => bundle.id === 'echo'))
     check('宿主侧能读到界面壳的静态页', existsSync(join(uiPluginsDir(), '..', 'assets', 'index.html')))
     const shellPage = readFileSync(join(uiPluginsDir(), '..', 'assets', 'index.html'), 'utf8')
     check('壳页面挂了入口脚本', shellPage.includes('app-'))

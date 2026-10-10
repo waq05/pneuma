@@ -12,6 +12,9 @@
  *
  * 条目按 id 合并后统一按 id 升序：宿主发号递增，id 序就是时间序，比维护插入序少一处状态。
  *
+ * 另外这里**认帧号**（`seq`）：首帧必须是全量、游标只许前进、增量不许跳号。
+ * 遥控端那份只看内容不看序号，所以漏帧要等下一帧全量锚才发现；壳这边当场就能发现。
+ *
  * @module dsc/ui/frames
  */
 
@@ -31,6 +34,17 @@ export interface HostSnapshot {
 
 /** 认不出的帧抛这个（严格版：宁可报错也不要画出一份半对不对的状态）。 */
 export class HostFrameError extends Error {}
+
+/**
+ * 帧号中间缺了几帧抛这个。
+ *
+ * 为什么单独成一个类型：缺口的处理方式与「帧认不出」不同——认不出的帧扔掉就行，缺口却
+ * 永远补不回来（增量是相对上一帧的差），只能整条通道重开去换一帧全量。调用方
+ * （`ui-shell/src/host-channel.ts`）据此主动断开 EventSource 触发干净重连。
+ *
+ * 继承 HostFrameError：只判「帧有问题」的调用方不必改。
+ */
+export class HostFrameGapError extends HostFrameError {}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null
@@ -82,18 +96,39 @@ function readRemovedIds(raw: unknown): number[] {
 
 /**
  * 把一帧并进当前快照。
+ *
+ * 三条序号不变量（对齐 `packages/api/gateway/src/client/snapshot-stream.ts` 的语义：
+ * 每一代（一次连接）的第一帧必须是全量，游标只许前进）：
+ *
+ *   1. `previous === null` 时只收全量帧：增量是相对上一帧的差，没有基准可并；
+ *   2. `seq <= previous.seq`（重复帧、回退帧）直接丢掉，返回原状态——重连补帧会重发；
+ *   3. 增量帧 `seq > previous.seq + 1`（缺口）抛 {@link HostFrameGapError}。
+ *      全量帧不查缺口：它自带完整状态，跳多远都能直接顶上（跨窗口重连给的正是这种）。
+ *
  * @param previous - 当前快照（首帧传 null）
  * @param raw - 宿主推来的一帧（已 JSON 解析）
- * @returns 新的快照
- * @throws {HostFrameError} 帧认不出（不是对象、全量帧缺 seq、条目形状不对）
+ * @returns 新的快照；回退/重复帧返回传入的 `previous`（引用不变）
+ * @throws {HostFrameGapError} 增量帧跳号（缺口）
+ * @throws {HostFrameError} 帧认不出（不是对象、缺 seq、首帧不是全量、条目形状不对）
  */
 export function applyHostFrame(previous: HostSnapshot | null, raw: unknown): HostSnapshot {
   const frame = asRecord(raw)
   if (frame === null) throw new HostFrameError('帧不是对象')
   const seq = readFrameSeq(frame)
   if (seq === null) throw new HostFrameError('帧缺少 seq')
+  const full = isFullFrame(frame)
 
-  if (isFullFrame(frame)) {
+  if (previous === null && !full) throw new HostFrameError('第一帧必须是全量帧')
+
+  if (previous !== null) {
+    // 回退或重复：丢弃而不是报错——重连补帧本来就可能重发，报错会把正常重连打成故障。
+    if (seq <= previous.seq) return previous
+    if (!full && seq > previous.seq + 1) {
+      throw new HostFrameGapError(`帧号跳号：手上有 seq ${String(previous.seq)}，收到 seq ${String(seq)}`)
+    }
+  }
+
+  if (full) {
     const meta: Record<string, unknown> = {}
     for (const [key, value] of Object.entries(frame)) {
       if (key === 'entries' || key === 'liveEntries' || key === 'type' || key === 'full') continue

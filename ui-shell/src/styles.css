@@ -51,6 +51,12 @@ body {
   color: var(--bad); font-size: 13px;
 }
 
+/* 宿主那一侧的异常：安静时不占位置，出事时压在顶栏下面一条。 */
+.host-error {
+  margin: 0; padding: 6px 16px; border-bottom: 1px solid var(--bad);
+  background: #2a1a1e; color: var(--bad); font-size: 12px;
+}
+
 .diagnostics {
   margin: 0 16px 16px; padding: 10px 12px;
   border: 1px solid var(--line); border-radius: 8px; background: var(--panel);

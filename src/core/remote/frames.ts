@@ -107,8 +107,6 @@ export class RemoteFrameHub {
    */
   build<T extends FrameInput>(snapshot: T, forceFull = false): BuiltFrame {
     const record = snapshot as unknown as Record<string, unknown>
-    this.seq += 1
-    const seq = this.seq
     const sessionChanged = this.emitted && this.lastSessionId !== snapshot.sessionId
     const full =
       forceFull ||
@@ -117,27 +115,38 @@ export class RemoteFrameHub {
       this.deltasSinceFull >= this.anchorFrames ||
       this.now() - this.lastFullAt >= this.anchorMs
 
+    // 先把字节造出来、把该记的都算进本地变量，**全都成功之后**再一次性提交状态。
+    // 之前是先自增 seq 再序列化：万一序列化抛错（快照里有循环引用之类），这一号就白吃了，
+    // 所有客户端下一帧都会看到跳号，各自重开一次流换全量——自愈但白跑一个往返。
+    const seq = this.seq + 1
+    const nextEntries = new Map<number, string>()
+    const nextOrder: number[] = []
+    let deltasSinceFull = this.deltasSinceFull
+    let lastFullAt = this.lastFullAt
     let text: string
+
     if (full) {
       text = JSON.stringify({ type: 'snapshot', seq, full: true, ...record })
-      this.deltasSinceFull = 0
-      this.lastFullAt = this.now()
+      for (const entry of snapshot.entries) {
+        nextEntries.set(entry.id, JSON.stringify(entry))
+        nextOrder.push(entry.id)
+      }
+      deltasSinceFull = 0
+      lastFullAt = this.now()
     } else {
       const added: unknown[] = []
       const updated: unknown[] = []
-      const next = new Map<number, string>()
-      const nextOrder: number[] = []
       for (const entry of snapshot.entries ?? []) {
         const json = JSON.stringify(entry)
         const before = this.prevEntries.get(entry.id)
         if (before === undefined) added.push(entry)
         else if (before !== json) updated.push(entry)
-        next.set(entry.id, json)
+        nextEntries.set(entry.id, json)
         nextOrder.push(entry.id)
       }
       const removedIds: number[] = []
       for (const id of this.prevOrder) {
-        if (!next.has(id)) removedIds.push(id)
+        if (!nextEntries.has(id)) removedIds.push(id)
       }
       const meta: Record<string, unknown> = {}
       for (const [key, value] of Object.entries(record)) {
@@ -154,23 +163,15 @@ export class RemoteFrameHub {
         removedIds,
         liveEntries: snapshot.liveEntries ?? [],
       })
-      this.deltasSinceFull += 1
-      this.prevEntries = next
-      this.prevOrder = nextOrder
+      deltasSinceFull = this.deltasSinceFull + 1
     }
 
-    if (full) {
-      // 全量帧之后 diff 基准重挂：下一帧的「上一帧」就是这一帧的条目
-      const next = new Map<number, string>()
-      const nextOrder: number[] = []
-      for (const entry of snapshot.entries) {
-        next.set(entry.id, JSON.stringify(entry))
-        nextOrder.push(entry.id)
-      }
-      this.prevEntries = next
-      this.prevOrder = nextOrder
-    }
-
+    // —— 提交：到这里为止没有抛错，状态与帧号一起前进。
+    this.seq = seq
+    this.prevEntries = nextEntries
+    this.prevOrder = nextOrder
+    this.deltasSinceFull = deltasSinceFull
+    this.lastFullAt = lastFullAt
     this.lastSessionId = snapshot.sessionId
     this.emitted = true
     this.buffer.push({ seq, text })

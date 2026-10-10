@@ -12,7 +12,7 @@
  */
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { SlotRegistry, type UiBootGraph } from '@dsc/ui-core'
+import { SlotRegistry, type UiBootGraph, type UiPluginLoadResult } from '@dsc/ui-core'
 import { readBootGraph, loadUiPlugins } from './boot'
 import { createHostChannel } from './host-channel'
 import { RuntimeProvider } from './runtime-context'
@@ -20,6 +20,9 @@ import { SHELL_SLOTS } from './slots'
 import { App } from './app'
 import type { UiComponent, UiSlots } from './plugin-api'
 import './styles.css'
+
+/** 什么都没装上时的装载结果（清单取不到也要起壳，不能白屏）。 */
+const NOTHING_LOADED: UiPluginLoadResult = { reports: [], disposeAll: () => undefined }
 
 async function bootstrap(): Promise<void> {
   const container = document.getElementById('root')
@@ -34,12 +37,15 @@ async function bootstrap(): Promise<void> {
 
   // 3. 启动清单 + 装插件。清单取不到也要起壳：空壳 + 一条诊断，比白屏好查。
   let boot: UiBootGraph = { rev: 'unavailable', entries: [], host: { name: 'Muse Code', version: '未知版本' } }
-  let reports: Awaited<ReturnType<typeof loadUiPlugins>> = []
+  let loaded: UiPluginLoadResult = NOTHING_LOADED
   try {
     boot = await readBootGraph()
-    reports = await loadUiPlugins(boot, { slots, host: boot.host, runtime: channel })
+    loaded = await loadUiPlugins(boot, { slots, host: boot.host, runtime: channel })
   } catch (error) {
-    reports = [{ id: 'boot', ok: false, error: error instanceof Error ? error.message : String(error) }]
+    loaded = {
+      reports: [{ id: 'boot', ok: false, error: error instanceof Error ? error.message : String(error) }],
+      disposeAll: () => undefined,
+    }
   }
   void declared
 
@@ -47,7 +53,7 @@ async function bootstrap(): Promise<void> {
   createRoot(container).render(
     <StrictMode>
       <RuntimeProvider channel={channel}>
-        <App slots={slots} boot={boot} reports={reports} />
+        <App slots={slots} boot={boot} reports={loaded.reports} />
       </RuntimeProvider>
     </StrictMode>,
   )

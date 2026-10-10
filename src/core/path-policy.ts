@@ -39,6 +39,9 @@ const READ_DENIED_BASENAMES = new Set([
   '_netrc',
   'credentials.yaml',
   'credentials.yml',
+  // 界面服务的 Cookie 签名密钥：读到它就能伪造界面凭据。读它的主体多半本来就有宿主权限，
+  // 但让模型的文件工具顺手读走、进而抄进对话与日志，是另一回事。
+  'ui-secret',
   'auth.json',
   'id_rsa',
   'id_ed25519',
