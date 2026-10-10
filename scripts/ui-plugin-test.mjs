@@ -26,12 +26,23 @@ import { request } from 'node:http'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
+// 隔离 HOME / DSC_HOME：这个探针会读插件的条目树（`~/.dsc/plugins.json`）来验配置解析，
+// 不隔离就会读到使用者真实的那份，断言随环境飘。
+const home = mkdtempSync(join(tmpdir(), 'dsc-ui-home-'))
+process.env.HOME = home
+process.env.USERPROFILE = home
+process.env.DSC_HOME = join(home, '.dsc')
+delete process.env.DSC_UI_SERVER
+delete process.env.DSC_UI_ASSETS
+delete process.env.DSC_UI_PORT
+
 const { SlotRegistry, UndeclaredSlotError, DuplicateSlotIdError } = await import('../lib/ui/slots.js')
 const { artifactRev, composeUiBootGraph, orderUiPlugins, pluginBundleUrl, shortHash } = await import('../lib/ui/manifest.js')
 const { collectUiPluginArtifacts, readUiPluginBundle, readUiPluginManifest, uiPluginsDir } = await import(
   '../lib/core/ui-bundles.js'
 )
 const { inside } = await import('../lib/core/web-static.js')
+const { readUiServerConfig } = await import('../lib/plugins/webserver.js')
 const { isUiBundleRequest, resolveUiBundleRequest } = await import('../lib/core/ui-route.js')
 const { createUiServer } = await import('../lib/core/ui-server.js')
 
@@ -350,6 +361,65 @@ console.log('\n[4] 界面服务')
     refused = true
   }
   check('close 之后连不上', refused)
+}
+
+// ── 4b. 服务配置（环境变量与插件条目树） ───────────────────────────────────────
+console.log('\n[4b] 服务配置')
+{
+  const defaults = readUiServerConfig(undefined)
+  check('默认不起服务', defaults.enabled === false)
+  check('默认端口交给系统分配', defaults.port === 0, String(defaults.port))
+  check('默认不指定产物目录（用 lib/ui/assets）', defaults.assetsDir === undefined)
+
+  process.env.DSC_UI_SERVER = '1'
+  check('DSC_UI_SERVER=1 就起来', readUiServerConfig(undefined).enabled === true)
+  process.env.DSC_UI_PORT = '17399'
+  check('DSC_UI_PORT 生效', readUiServerConfig(undefined).port === 17399, String(readUiServerConfig(undefined).port))
+  process.env.DSC_UI_PORT = 'abc'
+  check('端口写坏了回落到系统分配', readUiServerConfig(undefined).port === 0)
+  process.env.DSC_UI_ASSETS = join(work, 'somewhere')
+  check('DSC_UI_ASSETS 生效', readUiServerConfig(undefined).assetsDir === join(work, 'somewhere'))
+  delete process.env.DSC_UI_SERVER
+  delete process.env.DSC_UI_PORT
+  delete process.env.DSC_UI_ASSETS
+
+  // 条目树里的插件配置也要认（用户改 ~/.dsc/plugins.json 就能换目录与端口）
+  const configDir = join(home, '.dsc')
+  mkdirSync(configDir, { recursive: true })
+  writeFileSync(
+    join(configDir, 'plugins.json'),
+    JSON.stringify({
+      version: 1,
+      entries: [
+        { file: 'webserver', disabled: false, config: { enabled: true, port: 17400, assetsDir: join(work, 'from-file') } },
+      ],
+    }),
+  )
+  const fromFile = readUiServerConfig(undefined)
+  check('条目树里 enabled 生效', fromFile.enabled === true)
+  check('条目树里 port 生效', fromFile.port === 17400, String(fromFile.port))
+  check('条目树里 assetsDir 生效', fromFile.assetsDir === join(work, 'from-file'))
+  process.env.DSC_UI_ASSETS = join(work, 'from-env')
+  check('环境变量盖过条目树', readUiServerConfig(undefined).assetsDir === join(work, 'from-env'))
+  delete process.env.DSC_UI_ASSETS
+
+  // 换一份产物目录：服务要照它伺服（迁移期桌面窗口伺服的就是渲染层自己的产物）
+  const customAssets = makeTree('custom-assets', {
+    'index.html': '<!doctype html><html><body>桌面渲染层产物</body></html>',
+  })
+  const custom = await createUiServer({
+    host: { name: 'Muse Code', version: 'test' },
+    assetsDir: customAssets,
+    pluginsDir: join(work, 'no-plugins'),
+    log: () => {},
+  })
+  const token = new URL(custom.url).searchParams.get('token') ?? ''
+  const handshake = await http('GET', custom.port, `/?token=${token}`)
+  const cookie = String(handshake.headers['set-cookie']?.[0] ?? '').split(';')[0]
+  const page = await http('GET', custom.port, '/', { cookie })
+  check('自定义产物目录生效', page.status === 200 && page.body.includes('桌面渲染层产物'), page.body.slice(0, 80))
+  check('没有插件目录也能起服务', custom.boot().entries.length === 0)
+  await custom.close()
 }
 
 // ── 5. 真实构建产物 ───────────────────────────────────────────────────────────

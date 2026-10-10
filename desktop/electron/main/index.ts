@@ -10,7 +10,7 @@
 import { spawn } from 'node:child_process'
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve } from 'node:path'
-import { BrowserWindow, Menu, Notification, Tray, WebContentsView, app, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, screen, shell, utilityProcess, type UtilityProcess } from 'electron'
+import { BrowserWindow, Menu, Notification, Tray, WebContentsView, app, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, screen, session, shell, utilityProcess, type UtilityProcess } from 'electron'
 import type { NativeImage } from 'electron'
 import { HostProtocol } from './protocol.js'
 import { registerDockIpc } from './dock.js'
@@ -42,11 +42,103 @@ function isChromeColor(value: unknown): value is string {
 
 // ── 宿主生命周期 ──────────────────────────────────────────────────────────────
 
+/**
+ * 界面产物目录：与回落用的 `loadFile` 是同一处。
+ *
+ * 这个目录同时也是「宿主该伺服哪份界面」的答案——经 `DSC_UI_ASSETS` 交给宿主进程，
+ * 于是窗口加载的那份文档与回落时加载的那份文件内容完全一致（同一份构建产物）。
+ */
+function rendererDir(): string {
+  return join(__dirname, '../renderer')
+}
+
+/** 传给宿主进程的环境：Electron 的 env 只收字符串值，undefined 的键直接丢掉。 */
+function hostEnv(): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) out[key] = value
+  }
+  out['DSC_UI_ASSETS'] = rendererDir()
+  return out
+}
+
+/**
+ * 宿主界面服务的地址：`origin` 这一份已经认证过（会话 Cookie 落在 Electron 的 session 上），
+ * 可以拿来加载窗口。宿主每次启动都是新端口 + 新令牌，所以这里存的是「最近一次」。
+ */
+let uiServerOrigin: string | null = null
+/** 窗口是否已经切到宿主伺服的那份文档（切过一次就不再重载，免得刷掉界面状态）。 */
+let servedPageLoaded = false
+
+/**
+ * 用一次性令牌换会话 Cookie：宿主那条带 `?token=` 的地址只能换一次，换到的是
+ * HttpOnly 会话 Cookie——令牌因此不必留在窗口地址里（历史记录、Referer 都带不走它）。
+ * @param url - 宿主给的入口地址（带令牌）
+ * @returns 拿到 Cookie 就是 true；令牌过期/已用/服务不可达都是 false
+ */
+async function authenticateUiServer(url: string): Promise<boolean> {
+  try {
+    const response = await fetch(url, { redirect: 'manual' })
+    const cookie = response.headers.get('set-cookie')
+    await response.body?.cancel()
+    if (response.status !== 302 || cookie === null) return false
+    const pair = cookie.split(';')[0] ?? ''
+    const index = pair.indexOf('=')
+    if (index <= 0) return false
+    const origin = new URL(url).origin
+    await session.defaultSession.cookies.set({
+      url: origin,
+      name: pair.slice(0, index),
+      value: pair.slice(index + 1),
+      httpOnly: true,
+      sameSite: 'strict',
+    })
+    return true
+  } catch (error) {
+    process.stderr.write(`[dsc-desktop] 界面服务认证失败：${String(error)}\n`)
+    return false
+  }
+}
+
+/**
+ * 接收宿主报来的界面地址：认证一次、记下根地址，然后（仅第一次）把窗口切到那份文档。
+ *
+ * 为什么不在宿主重启后重新加载：重启后渲染层的 `window.dsc` 通道照旧（IPC 走主进程，
+ * 主进程换的是协议对象），重载只会把界面状态（打开的会话、草稿）刷掉；这里只刷新
+ * Cookie，让用户之后手动刷新页面时仍然进得去。
+ */
+async function adoptUiServer(info: { url: string; origin: string }): Promise<void> {
+  const ok = await authenticateUiServer(info.url)
+  if (!ok) {
+    process.stderr.write('[dsc-desktop] 界面地址认证失败，窗口继续用本机文件加载\n')
+    return
+  }
+  uiServerOrigin = info.origin
+  const window = mainWindow
+  if (window === null || window.isDestroyed()) return
+  // 开发模式下页面来自 vite，别把窗口抢过去；已经切过的也不重载。
+  if ((process.env.ELECTRON_RENDERER_URL ?? '') !== '' || servedPageLoaded) return
+  servedPageLoaded = true
+  process.stderr.write(`[dsc-desktop] 窗口来自宿主界面服务 ${info.origin}\n`)
+  void window.loadURL(desktopPageUrl())
+}
+
+/** 窗口该加载的地址：带自检查询参数（demo / search）的那一份。 */
+function desktopPageUrl(): string {
+  const query = [
+    process.env.DSC_DESKTOP_DEMO === '1' ? 'demo=1' : '',
+    process.env.DSC_DESKTOP_SEARCH ?? '',
+  ]
+    .filter((part) => part !== '')
+    .join('&')
+  return query === '' ? (uiServerOrigin ?? '') : `${uiServerOrigin ?? ''}/?${query}`
+}
+
 /** 启动 headless 宿主（utilityProcess；入口为应用自有编译产物，无用户输入）。 */
 function startHost(cwd: string): void {
   hostCwd = cwd
   const entry = resolveHeadlessEntry()
-  protocol = new HostProtocol(entry, cwd)
+  protocol = new HostProtocol(entry, cwd, hostEnv())
 
   protocol.onSnapshot((snapshot) => {
     mainWindow?.webContents.send('dsc:snapshot', snapshot)
@@ -56,6 +148,9 @@ function startHost(cwd: string): void {
   })
   protocol.onDockData((data) => {
     mainWindow?.webContents.send('dsc:dock-data', data)
+  })
+  protocol.onUiUrl((info) => {
+    void adoptUiServer(info)
   })
   protocol.onClose(({ code }) => {
     const silent = suppressHostExit
@@ -569,7 +664,14 @@ function createWindow(): void {
     .join('&')
   if (devServerUrl !== undefined && devServerUrl !== '') {
     void mainWindow.loadURL(`${devServerUrl}/${query === '' ? '' : `?${query}`}`)
+  } else if (uiServerOrigin !== null) {
+    // 宿主比窗口先起来（内核快时走这条）：直接加载伺服的那份文档，不必先落文件再切。
+    servedPageLoaded = true
+    process.stderr.write(`[dsc-desktop] 窗口来自宿主界面服务 ${uiServerOrigin}\n`)
+    void mainWindow.loadURL(desktopPageUrl())
   } else {
+    // 先用本机文件把窗口开起来（渲染层自己会显示「连接中」），宿主报来界面地址后再切过去。
+    // 那份文件与宿主伺服的是同一份构建产物（都出自 desktop/out/renderer）。
     void mainWindow.loadFile(join(__dirname, '../renderer/index.html'), {
       search: query === '' ? undefined : query,
     })

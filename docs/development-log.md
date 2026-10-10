@@ -1848,3 +1848,33 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 - 没有 HMR、没有懒加载（`immediately` 字段已进清单但没人消费）、没有信任确认 UI 与 `apiVersion` 门禁（阶段 5）。
 - remote 的 `/plugins` 路由已接上共享解析，但手机端界面（`remote-web/`）还没加载插件——加载插件的是插件版壳，阶段 3/4 才轮到它。
 - ui-shell 是独立包：要先 `pnpm -C ui-shell install` 再 `pnpm build:ui`；界面服务的产物不进 npm 包的话，装出来的 CLI 跑 `DSC_UI_SERVER=1` 只会看到"界面资产未构建"的占位页（发布时的产物携带策略待阶段 6 定）。
+
+## 阶段 91：桌面壳的窗口改成宿主伺服的 web 文档（未发版，C-真 第二步）
+
+阶段 90 把"宿主发 bundle、壳按槽位拼装"这条链跑通了，但那条链还只有演示壳在用。这一步动的是**桌面壳自己**：窗口不再加载 `file://` 的本机页面，改为加载宿主界面服务伺服的那份文档——C-真 的核心（桌面与远程看同一份界面）从这一步开始成立。
+
+**宿主侧**：
+
+- `plugins/webserver.ts`：新增 `assetsDir` 配置与 `DSC_UI_ASSETS` / `DSC_UI_PORT` 两个环境变量。为什么需要它：迁移期桌面窗口要伺服的**不是**插件版壳的产物（`lib/ui/assets`），而是渲染层自己的产物（`desktop/out/renderer`）——同一个服务靠这两个开关分清伺服哪份界面。配置读取抽成导出的 `readUiServerConfig`，可单测（环境变量优先于条目树）。
+- `services/types.ts`：新增 `WebServerService` 契约与 Context 声明，其他插件用 `ctx.get('webServer')` 取它。
+- `plugins/host-stdio.ts`：握手（hello + 首帧快照）之后向父进程补发一条 `{type:'ui-url', url, origin}`。地址带一次性令牌，只走这条已被父进程接管的链路，不落盘、不进日志。起不来只记一条 warn：桌面壳收不到这条就回落到原来的文件加载，不该因为新路径失败而开不了窗。
+
+**桌面侧**：
+
+- `main/protocol.ts`：`HostProtocol` 支持额外 env 与 `onUiUrl` 监听；消息类型补 `ui-url`。
+- `main/index.ts`：`startHost` 把 `DSC_UI_ASSETS=rendererDir()` 交给宿主进程（与回落用的 `loadFile` 是同一处目录，因此窗口加载的文档与回落加载的文件是同一份构建产物）；收到地址后用**一次性令牌换 HttpOnly 会话 Cookie** 落在 Electron 的 session 上，然后（仅第一次）把窗口切到那份文档。
+
+**三个取舍**（都是为了不把老行为搞坏）：
+
+1. **令牌换 Cookie，而不是把令牌留在窗口地址里**：地址栏、历史记录、Referer 都带不走它；之后页面里的 `/plugins/*` 请求靠 Cookie 过闸。
+2. **宿主重启不重载页面**：重启后渲染层的 `window.dsc` 照旧能用（IPC 走主进程，主进程换的只是协议对象），重载只会把界面状态（打开的会话、草稿）刷掉——所以只刷新 Cookie，让用户之后手动刷新页面时仍然进得去。
+3. **保留回落**：开发模式（vite 伺服）不抢窗口；拿不到地址、认证失败、界面资产缺失，都回落到原来的本机文件加载。
+
+**验证**：根 `tsc`、ui-shell typecheck、desktop 两个 typecheck 全绿；`scripts/ui-plugin-test.mjs` 从 80 条扩到 **93 条**（新增"服务配置"一节：默认不起服务、`DSC_UI_SERVER` / `DSC_UI_PORT` / `DSC_UI_ASSETS` 三个环境变量、条目树里的插件配置、环境变量盖过条目树、换一份产物目录后真伺服那一份）；桌面实机自检 `desktop/shots/ui-fix-shots.ps1` 三用例全绿（折叠行几何、开始页整组居中、dock 终端挂载），三个用例的 stderr 里都写着 `[dsc-desktop] 窗口来自宿主界面服务 http://127.0.0.1:<port>`——**窗口加载的确实是宿主伺服的那份文档**，而且 dock 终端（Electron 特权能力）在 http 源下照旧工作；真实 `~/.dsc` 跑前跑后 334 个文件逐文件哈希一致（零污染）。node 电池 21/22 绿，唯一的 `remote-e2e` 是存量失败（`git stash` 回基线复跑同样 72/74、同样两条：设备清单缺 info 行、主控位仲裁）。
+
+**诚实边界**：
+
+- 迁移期"先落本机文件、拿到地址再切"会让启动时有一次重挂（宿主比窗口慢时能看见闪一下）。彻底消除它要等插件版界面成为唯一的那份文档。
+- **打包版没验**：界面产物打包后进的是 `app.asar`，宿主（utilityProcess）能不能从 asar 里读到还没试；dev 走的是仓库里的真实目录。打包时限 `DSC_UI_ASSETS` 指向 extraResources 里的副本，或把界面产物移出 asar——留到打包阶段。
+- 渲染层的 `bridge.ts` 还没拆（`window.dsc` 全量走 IPC）。这一步只是让**窗口**成为 web 文档；让**普通浏览器**也能跑同一份界面（桥接走 WebSocket）是下一步。
+- 端口每次宿主启动都由系统分配，窗口地址随之变化；要稳定端口可以设 `DSC_UI_PORT`。

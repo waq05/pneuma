@@ -1038,6 +1038,23 @@ export interface InteractiveService {
   reachable(): boolean
 }
 
+/**
+ * 本机界面服务：宿主把一个回环 HTTP 服务开起来，把插件版界面伺服给浏览器（桌面窗口看的
+ * 就是它伺服的那份文档，与远程设备共用同一份）。
+ *
+ * 默认**不起**（挂载只是登记服务）：终端里跑 `msc` 的人不该平白多出一个监听端口。
+ * 谁来要：桌面主进程经宿主协议拿地址，或者 `DSC_UI_SERVER=1` / 插件配置 `enabled: true`。
+ */
+export interface WebServerService {
+  /**
+   * 要服务（幂等）：已经起来就直接给地址，没起来就现在起。
+   * @returns 入口地址（带一次性令牌）、本机根地址与端口
+   */
+  ensure(): Promise<{ url: string; origin: string; port: number }>
+  /** 已经起来的那个句柄；没起来给 null。 */
+  readonly running: unknown
+}
+
 // ── cordis 声明合并 ──────────────────────────────────────────────────────────
 
 declare module '@deepseek-ai/cordis' {
@@ -1090,6 +1107,11 @@ declare module '@deepseek-ai/cordis' {
     approvalFloor?: ApprovalFloorService
     /** 界面可达性（tui / host-stdio 入口登记；脚本环境里不存在，读它要用 `ctx.get('interactive')`）。 */
     interactive?: InteractiveService
+    /**
+     * 本机界面服务（webserver 插件提供；挂载即存在，真正监听要调 `ensure()`）。
+     * 桌面主进程拿它取窗口地址，`DSC_UI_SERVER=1` 时插件自己起来。
+     */
+    webServer?: WebServerService
     /** 沙箱（sandbox 插件提供；插件没开时不存在，读它要用 `ctx.get('sandbox')`）。 */
     sandbox?: SandboxService
     /** desktop-dock 服务（桌面端面板的工作区文件系统 + git）。 */

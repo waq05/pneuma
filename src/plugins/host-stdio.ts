@@ -56,6 +56,11 @@ export type RuntimeToHostMessage =
   | { type: 'ui'; action: 'open-picker' | 'open-models' }
   /** dock 终端输出流（desktop-dock 服务 → 桌面端面板）。 */
   | { type: 'dock-data'; id: string; data: string }
+  /**
+   * 本机界面地址（webserver 插件起来之后发一次）：桌面壳拿它加载窗口。
+   * `url` 带一次性令牌（换 Cookie 用一次就作废），`origin` 是换完 Cookie 之后的根地址。
+   */
+  | { type: 'ui-url'; url: string; origin: string }
 
 // ── 传输抽象 ──────────────────────────────────────────────────────────────────
 
@@ -230,5 +235,21 @@ export const hostStdioPlugin: Plugin.Object = {
     // ---- 握手 + 初始快照 ----
     transport.send({ type: 'hello', protocolVersion: HOST_PROTOCOL_VERSION })
     scheduleSnapshot()
+
+    // ---- 本机界面地址 ----
+    // 桌面壳的窗口加载的是宿主伺服的那份 web 文档（C-真）。地址里带一次性令牌，
+    // 只在这条已被父进程接管的链路上走一次，不进日志、不落盘。
+    // 起不来不算错误：桌面壳收不到这条就回落到本地文件加载（老行为）。
+    const web = ctx.get('webServer')
+    if (web !== undefined) {
+      void web
+        .ensure()
+        .then(({ url, origin }) => {
+          transport.send({ type: 'ui-url', url, origin })
+        })
+        .catch((error: unknown) => {
+          ctx.logger.warn(`host-stdio: 本机界面服务起不来（${errText(error)}），桌面壳将回落到本地文件加载`)
+        })
+    }
   },
 }

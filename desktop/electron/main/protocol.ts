@@ -31,6 +31,11 @@ type RuntimeToHostMessage =
   | { type: 'snapshot'; snapshot: RuntimeSnapshot }
   | { type: 'ui'; action: 'open-picker' | 'open-models' }
   | { type: 'dock-data'; id: string; data: string }
+  /**
+   * 本机界面地址：宿主把界面服务开起来之后发一次。窗口加载它伺服的那份文档，
+   * 本机文件加载只作为回落（宿主没起来 / 界面资产缺失）。
+   */
+  | { type: 'ui-url'; url: string; origin: string }
 
 type HostToRuntimeMessage =
   | { type: 'invoke'; id: number; method: string; args?: unknown[] }
@@ -48,10 +53,15 @@ export class HostProtocol {
   private closeListeners = new Set<(info: { code: number | null }) => void>()
   private uiListeners = new Set<(action: 'open-picker' | 'open-models') => void>()
   private dockDataListeners = new Set<(data: { id: string; data: string }) => void>()
+  private uiUrlListeners = new Set<(info: { url: string; origin: string }) => void>()
   private exitForwarded = false
 
-  constructor(entry: string, cwd: string) {
-    this.child = utilityProcess.fork(entry, [], { serviceName: 'dsc-host', cwd })
+  constructor(entry: string, cwd: string, env?: Record<string, string | undefined>) {
+    this.child = utilityProcess.fork(entry, [], {
+      serviceName: 'dsc-host',
+      cwd,
+      ...(env === undefined ? {} : { env }),
+    })
     this.child.on('message', (message: RuntimeToHostMessage) => {
       if (message === null || typeof message !== 'object' || !('type' in message)) return
       if (message.type === 'hello') {
@@ -77,6 +87,10 @@ export class HostProtocol {
       }
       if (message.type === 'dock-data') {
         for (const listener of this.dockDataListeners) listener({ id: message.id, data: message.data })
+        return
+      }
+      if (message.type === 'ui-url') {
+        for (const listener of this.uiUrlListeners) listener({ url: message.url, origin: message.origin })
       }
     })
     this.child.on('exit', (code) => {
@@ -133,5 +147,9 @@ export class HostProtocol {
   /** dock 终端输出流（desktop-dock 服务）。 */
   onDockData(listener: (data: { id: string; data: string }) => void): void {
     this.dockDataListeners.add(listener)
+  }
+  /** 本机界面地址（宿主界面服务起来后一次）。 */
+  onUiUrl(listener: (info: { url: string; origin: string }) => void): void {
+    this.uiUrlListeners.add(listener)
   }
 }
