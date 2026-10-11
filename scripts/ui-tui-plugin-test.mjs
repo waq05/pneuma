@@ -7,6 +7,7 @@
  *      （platform web / tui）指向同一个 client.js（演示插件已按拍板移除，样本自造）。
  *   3. 装载语义与浏览器壳一致：失败报告不静默、白名单外 require 被拒、
  *      顺序依赖（先注册后声明）靠重试一轮自愈。
+ *   4. invoke 与 web 通道同一张面：排除清单的方法拒、实参不合规格拒、合规的通。
  *
  * 运行：pnpm build && pnpm -C ui-shell build && node scripts/ui-tui-plugin-test.mjs
  *
@@ -51,6 +52,20 @@ const SAMPLE_BUNDLE = [
   `          ui.slots.register(TUI_SLOTS.noticeExtensions, { id: 'sample.line', order: 1 }, function () {`,
   `            return React.createElement(Text, null, '探针样本已接入终端壳');`,
   `          }),`,
+  `        );`,
+  `        // invoke 契约探针：两个载体同一张面（webserver.ts 的 invoke 同款顺序）——`,
+  `        // 白名单外拒、实参不合规格拒、白名单内且合规的通。结果落全局，宿主侧断言取用。`,
+  `        ui.runtime.invoke('runCommand', ['/anything']).then(`,
+  `          function () { globalThis.__PROBE_INVOKE_EXCLUDED = '放行'; },`,
+  `          function (cause) { globalThis.__PROBE_INVOKE_EXCLUDED = '拒：' + String(cause && cause.message); },`,
+  `        );`,
+  `        ui.runtime.invoke('submit', [12345]).then(`,
+  `          function () { globalThis.__PROBE_INVOKE_BADARGS = '放行'; },`,
+  `          function (cause) { globalThis.__PROBE_INVOKE_BADARGS = '拒：' + String(cause && cause.message); },`,
+  `        );`,
+  `        ui.runtime.invoke('listModels', []).then(`,
+  `          function (value) { globalThis.__PROBE_INVOKE_OK = '通：' + JSON.stringify(value); },`,
+  `          function (cause) { globalThis.__PROBE_INVOKE_OK = '拒：' + String(cause && cause.message); },`,
   `        );`,
   `      }`,
   `    },`,
@@ -219,6 +234,24 @@ async function renderFrame(registry, slot) {
   check('没有导出 apply 的插件被点名拒绝', noapply?.ok === false && (noapply.error ?? '').includes('apply'), JSON.stringify(noapply))
   const badimport = load.reports.find((r) => r.id === 'badimport')
   check('白名单外的 require 被拒并说明允许表', badimport?.ok === false && (badimport.error ?? '').includes('白名单外'), JSON.stringify(badimport))
+
+  // invoke 契约：与 web 通道同一张面（ui-methods 白名单 + validateUiArgs 实参校验）。
+  await sleep(50)
+  check(
+    '排除清单里的方法（runCommand）invoke 被拒',
+    String(globalThis.__PROBE_INVOKE_EXCLUDED).startsWith('拒：') && String(globalThis.__PROBE_INVOKE_EXCLUDED).includes('界面通道'),
+    String(globalThis.__PROBE_INVOKE_EXCLUDED),
+  )
+  check(
+    '白名单内但实参不合规格（submit 吃字符串）被拒',
+    String(globalThis.__PROBE_INVOKE_BADARGS).startsWith('拒：'),
+    String(globalThis.__PROBE_INVOKE_BADARGS),
+  )
+  check(
+    '白名单内且实参合规的方法照常通',
+    String(globalThis.__PROBE_INVOKE_OK).startsWith('通：'),
+    String(globalThis.__PROBE_INVOKE_OK),
+  )
 
   const frame = await renderFrame(registry, TUI_SLOTS.noticeExtensions)
   check('帧里出现插件贡献的那一行', frame.text.includes('探针样本已接入终端壳'))

@@ -20,7 +20,7 @@ import {
   readThirdPartyUiPluginBundle,
   readUiPluginBundle,
 } from '../core/ui-bundles.js'
-import { isInvokableMethod } from '../core/host-methods.js'
+import { isUiMethod, validateUiArgs } from '../core/ui-methods.js'
 import type { DscRuntime } from '../contract.js'
 import { SlotRegistry } from './slots.js'
 import type { UiHostInfo, UiPluginLoadReport, UiPluginLoadResult, UiRuntimeApi } from './plugin.js'
@@ -216,8 +216,10 @@ function scopedSlots(slots: SlotRegistry<InkComponent>, ledger: (() => void)[]) 
 /**
  * 进程内的 `UiRuntimeApi` 适配：快照按 web 通道同一形状投影（`plugins/webserver.ts`
  * 组帧的同一段逻辑——`HostSnapshot` 契约只有一份；seq 终端壳没有帧的概念，
- * 用自增计数顶上，语义是「快照版本号」）。订阅直接转发，`invoke` 过一遍方法白名单
- * 再转发——同进程不等于可以绕开契约，白名单就是契约的形状。
+ * 用自增计数顶上，语义是「快照版本号」）。订阅直接转发，`invoke` 与 web 通道**同一张面**
+ * （webserver.ts 的 invoke：界面方法白名单收窄 + 实参过同一份规格校验）——同进程不等于
+ * 可以绕开契约，白名单就是契约的形状；两个载体能力面不一致的话，插件就会出现
+ * 「浏览器里被拒、终端里放行」的暗中分叉。
  */
 function tuiRuntime(runtime: DscRuntime): UiRuntimeApi {
   let seq = 0
@@ -235,12 +237,15 @@ function tuiRuntime(runtime: DscRuntime): UiRuntimeApi {
     },
     subscribe: (listener) => runtime.subscribe(listener),
     invoke<T = unknown>(method: string, args?: unknown[]): Promise<T> {
-      if (!isInvokableMethod(method)) {
-        return Promise.reject(new Error(`协议没有这个方法：${method}`))
+      // 顺序照 webserver.ts 的 invoke：先白名单收窄，再实参校验，最后才碰运行期。
+      if (!isUiMethod(method)) {
+        return Promise.reject(new Error(`界面通道没有这个方法：${method}`))
       }
+      const checked = validateUiArgs(method, args ?? [])
+      if (!checked.ok) return Promise.reject(new Error(checked.error))
       try {
         const value = (runtime as unknown as Record<string, (...callArgs: unknown[]) => unknown>)[method](
-          ...(args ?? []),
+          ...checked.args,
         )
         return Promise.resolve(value as T)
       } catch (error) {
