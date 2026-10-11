@@ -145,8 +145,25 @@ function TranscriptFlow({
   const seats = useMemo(() => buildSeats(entries, live), [entries, live])
   const endRef = useFollowBottom(entries.length + live.length)
 
-  if (seats.leading.length === 0 && seats.rounds.length === 0) {
-    return <div className="sidebar-empty">这一段还没有对话。</div>
+  // 空会话欢迎态（与旧桌面界面同一份文案）：开场 system 提示行作注脚，
+  // 「会话 x · 模型 y」那条开场标不画——它在状态栏悬浮卡里，再画一遍是重复。
+  if (seats.rounds.length === 0 && seats.leading.every((row) => row.entry.kind === 'system')) {
+    return (
+      <div className="welcome">
+        <h1>有什么可以帮忙的？</h1>
+        <p>
+          输入 <code>/</code> 查看可用指令 · 消息会携带当前工作目录上下文
+        </p>
+        {seats.leading.map((row) => {
+          const text = row.entry.kind === 'system' ? row.entry.text : ''
+          return isSessionMarker(text) ? null : (
+            <div className="welcome-note" key={keyOf(row)}>
+              {text}
+            </div>
+          )
+        })}
+      </div>
+    )
   }
 
   return (
@@ -833,6 +850,18 @@ class RowBoundary extends Component<{ entry: TranscriptEntry; children: ReactNod
 /** 一行的 React key：条目 id 在会话内单调递增，直播条目是负 id，都不会撞。 */
 function keyOf(row: Row): string {
   return `${String(row.entry.id)}|${String(row.entry.ts ?? 0)}`
+}
+
+/**
+ * 识别宿主开场写进消息流的那条「会话 xxx · 模型 yyy」（桌面端 session-marker.ts 同款）。
+ * 状态栏悬浮卡已经带着会话 id 与模型，欢迎态里再画一遍是重复。
+ * 为什么按正文形状认而不是按 kind 认：system 这一个 kind 混着十几种通知，
+ * 只有这一条的正文长得出来这个形状；认不出就不动它。
+ */
+const SESSION_MARKER = /^会话 \S+ · 模型 \S+$/
+
+function isSessionMarker(text: string): boolean {
+  return SESSION_MARKER.test(text.trim())
 }
 
 /** 把条目按「遇到 user 就开新座位」切分，直播条目挂在最后一个座位上。 */

@@ -40,21 +40,6 @@ type ShellId = (typeof SHELLS)[number]['id']
 /** 这一块面板在停靠区里的 id（壳拿它决定同一时刻显示哪一块）。 */
 const PANEL = 'terminal'
 
-/** 面板宽度记忆的键（与旧界面同一个键，但两者不同源，不会互相覆盖）。 */
-const WIDTH_KEY = 'dsc.dockWidth'
-/** 默认宽度：与旧界面一致（420，可调区间 300–820）。 */
-const DEFAULT_WIDTH = 420
-
-/** 记住的面板宽度：读不出来 / 越界就用默认值。 */
-function readWidth(): number {
-  try {
-    const saved = Number(localStorage.getItem(WIDTH_KEY))
-    return Number.isFinite(saved) && saved >= 300 && saved <= 820 ? saved : DEFAULT_WIDTH
-  } catch {
-    return DEFAULT_WIDTH
-  }
-}
-
 export default defineUiPlugin({
   name: '终端',
   apply(ui) {
@@ -84,19 +69,18 @@ function TerminalToggle(): ReactNode {
   )
 }
 
-/** 停靠面板：标题条 + 终端。 */
+/** 停靠面板：标题条 + 终端。
+ *
+ * 保活对齐桌面端（「收起=滑出右缘不卸载」）：面板**永远渲染**，不是自己的回合
+ * （别的面板开着）或整体收起时用 `data-hidden` 藏——组件树与 spawn 出来的进程
+ * 都活着，输出继续进缓冲，重新展开时原会话原样接上。卸载只发生在整壳关闭。 */
 function DockPanel(): ReactNode {
   const active = useDockPanel() === PANEL
   const native = getHostNative()
-  const [width] = useState(readWidth)
   const [shell, setShell] = useState<ShellId>('pwsh')
 
-  // 停靠区里同一时刻只画一块面板：不是自己就把位置让出去（面积小的那一版，
-  // 将来要"并排"再改成壳按 entries 顺序横排）。
-  if (!active) return null
-
   return (
-    <aside className="dock" style={{ width }} data-shell={shell}>
+    <aside className="dock" style={{ width: '100%' }} data-hidden={active ? undefined : '1'} data-shell={shell}>
       <div className="dock-strip">
         <span className="shell-tab on">终端</span>
         <span className="dock-strip-fill" />
@@ -131,9 +115,9 @@ function DockPanel(): ReactNode {
 /**
  * 一台终端：启动 → 输入 → 收输出 → 关掉。
  *
- * 生命周期与旧界面一致的点：**离开面板就杀掉会话**（这一版收起面板会卸载整块，
- * 与旧界面"收起仍保活"不同，写在 development-log 的诚实边界里）。
- */
+ * 生命周期与桌面端一致（收起仍保活）：面板收起或被别的面板顶替时组件只是被
+ * `data-hidden` 藏住，spawn 出来的进程与终端缓冲都活着；「结束」按钮与整壳卸载
+ * 才会杀会话。 */
 function TerminalPane({ shell, onShell }: { shell: ShellId; onShell: (next: ShellId) => void }): ReactNode {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const native = getHostNative()

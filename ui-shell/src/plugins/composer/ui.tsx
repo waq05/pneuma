@@ -29,6 +29,8 @@
  * @module dsc-ui-shell/plugins/composer
  */
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+/** DOM 原生键盘事件（`window.addEventListener` 用；React 的 KeyboardEvent 是另一个类型）。 */
+type WindowKeyboardEvent = globalThis.KeyboardEvent
 import { IconArrowUp, IconCheck, IconChevronDown, IconClose, IconEdit, IconQueue, IconShield, IconStop, IconTrash } from '@dsc/ui'
 import {
   defineUiPlugin,
@@ -91,6 +93,17 @@ function ComposerBox(): ReactNode {
   const [sending, setSending] = useState(false)
   const [models, setModels] = useState<readonly ModelChoiceView[]>([])
   const [panelOpen, setPanelOpen] = useState(false)
+  // Esc 关模型浮层（与遮罩点击同效；设置面板、确认框各自也拦 Esc，谁开着归谁）。
+  useEffect(() => {
+    if (!panelOpen) return undefined
+    const onKey = (event: WindowKeyboardEvent): void => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      event.preventDefault()
+      setPanelOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [panelOpen])
   const area = useRef<HTMLTextAreaElement | null>(null)
   const history = useRef<string[]>([])
   const [historyAt, setHistoryAt] = useState<number | null>(null)

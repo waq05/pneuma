@@ -134,6 +134,21 @@ function SettingsPanel(): ReactNode {
   const [active, setActive] = useState('')
   const [loadError, setLoadError] = useState('')
 
+  // Esc 关面板（关闭钮的 title 一直这么承诺）。捕获阶段拦下会跟确认框抢键——
+  // 确认框自己也在捕获段拦（components 那套移植在 platform/confirm.ts），它先挂先停，
+  // 这里用冒泡段就正好排在它后面：确认框开着时 Esc 归它，面板不跟着关。
+  useEffect(() => {
+    if (!open) return undefined
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      if (event.defaultPrevented) return
+      event.preventDefault()
+      setSettingsOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open])
+
   // 每次打开重取分区清单（读者会改插件启停，分区会变）。
   // 插件贡献的分区不进设置：它们的配置就地画在插件中心的详情页里（对照 dsh），
   // 所以这里只取 builtin——与旧桌面端同一条过滤。

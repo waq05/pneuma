@@ -324,6 +324,10 @@ export { highlightLines, langForPath, type HighlightedLine } from './platform/hi
 export { CodeView } from './platform/code-view'
 export { MarkdownView, type FsRead } from './platform/markdown'
 export { PdfView } from './platform/pdf-view'
+// 一次性反馈与确认框（桌面端 components/toast.ts / confirm.ts 的同构移植）：
+// 插件的失败不能再「静默什么都没发生」，破坏性动作动手前先过确认框。
+export { toastOk, toastErr } from './platform/toast'
+export { confirmAction, type ConfirmSpec } from './platform/confirm'
 // 宿主视图类型原样转出去：插件按它们写渲染，宿主改字段时插件这边编不过（而不是线上画空）。
 export type {
   ApprovalAnswer,

@@ -79,7 +79,10 @@ function FilesToggle(): ReactNode {
   )
 }
 
-/** 文件面板：页签切「文件树 / git 变更」，右边预览（预览那一块由子槽贡献者画）。 */
+/** 文件面板：页签切「文件树 / git 变更」，右边预览（预览那一块由子槽贡献者画）。
+ *
+ * 保活对齐桌面端：面板永远渲染，被顶替或收起时 `data-hidden` 藏——已展开的目录、
+ * 选中与页签状态都活着（旧界面的 files-tree-store 在壳里的对等物）。 */
 function FilesPanel({ renderSlot }: SlotComponentProps): ReactNode {
   const active = useDockPanel() === PANEL
   const channel = useHostChannel()
@@ -108,8 +111,6 @@ function FilesPanel({ renderSlot }: SlotComponentProps): ReactNode {
       alive = false
     }
   }, [active, root, channel])
-
-  if (!active) return null
 
   /** 展开 / 收起一个目录（展开时第一次取它的清单）。 */
   const toggleDir = (dir: string): void => {
@@ -157,7 +158,7 @@ function FilesPanel({ renderSlot }: SlotComponentProps): ReactNode {
     })
 
   return (
-    <aside className="dock" style={{ width: 460 }}>
+    <aside className="dock" style={{ width: '100%' }} data-hidden={active ? undefined : '1'}>
       <div className="dock-strip">
         <button
           type="button"

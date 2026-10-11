@@ -603,3 +603,37 @@
   flex: 1;
   min-width: 0;
 }
+
+/* ══════════ 布局对齐：面板几何与保活（对照桌面端 panels.ts / Dock.tsx）══════════ */
+
+/* 停靠面板的壳容器：宽度由壳写进 --dsc-dock-w（拖拽落盘，对齐桌面端 dsc.dockWidth）。
+   收起时 display:none——**组件树不卸载**（桌面端「收起=滑出右缘不卸载」的对等物）：
+   终端进程活着、文件树的展开与选中都留着，重新展开时原样接上。 */
+.dock-slot {
+  display: flex;
+  flex-shrink: 0;
+  min-width: 0;
+  position: relative;
+  width: var(--dsc-dock-w, 420px);
+}
+.dock-slot[data-open='0'] {
+  display: none;
+}
+/* 面板被顶替（另一块面板开着）时自己藏起来，与收起一样是保活不是卸载。 */
+.dock[data-hidden='1'] {
+  display: none;
+}
+/* 面板本体填满壳容器（宽度归壳管，插件不再自带 460px）。 */
+.dock-slot > .dock {
+  flex: 1;
+  min-width: 0;
+}
+/* 拖宽热区：legacy 的 .dock-resizer 是「贴 aside 左缘」的绝对定位，壳里它挂在
+   .dock-slot 上（.dock 的哥哥），语义不变——一样压在面板左缘那条线上。 */
+
+/* 侧栏折叠（Ctrl/Cmd+B 或顶栏钮）：完全收起，展开钮留在顶栏。
+   桌面端还有 56px 图标窄栏（rail）那一档；壳的侧栏内容在插件槽里，
+   rail 形态要壳替插件画导航，这一版先只做「全收起」。 */
+.app[data-sidebar='0'] .sidebar {
+  display: none;
+}

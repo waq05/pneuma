@@ -13,14 +13,33 @@
  *
  * @module dsc-ui-shell/app
  */
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import type { UiBootGraph, UiPluginLoadReport } from '@dsc/ui-core'
 import { NATIVE_BRIDGE_VERSION, NATIVE_OPS } from '@dsc/ui-core'
+import { IconSidebar } from './icons'
 import { ALLOWED_MODULES } from './boot'
 import { useChannelStatus, useHostError, useHostHello, useHostSelector } from './runtime-context'
 import { SlotOutlet, useSlotFaults } from './slots-react'
 import { SLOT } from './slots'
-import { getHostNative, useDockPanel, type UiSlots } from './plugin-api'
+import { getHostNative, setDockPanel, useDockPanel, type UiSlots } from './plugin-api'
+import { ThreadResizer } from './platform/thread-resizer'
+import {
+  DOCK_DEFAULT_WIDTH,
+  DOCK_MAX_WIDTH,
+  DOCK_MIN_WIDTH,
+  PANEL_KEYS,
+  SIDEBAR_MAX,
+  SIDEBAR_MIN,
+  STORED_MAX,
+  THREAD_MIN,
+  readStoredFlag,
+  readStoredPx,
+  readSidebarDefaultPx,
+  setRootVar,
+  useWidthDrag,
+  writeStoredFlag,
+  writeStoredPx,
+} from './platform/panels'
 
 /** 应用参数。 */
 export interface AppProps {
@@ -31,21 +50,143 @@ export interface AppProps {
 
 export function App({ slots, boot, reports }: AppProps): ReactNode {
   const failed = reports.filter((report) => !report.ok)
-  const dockOn = useDockPanel() !== null
+  const dockPanel = useDockPanel()
+  const dockOn = dockPanel !== null
+  // 空会话走 `.thread-main-empty`：欢迎文案与输入框垂直居中成一组（legacy 现成规则）。
+  const hasEntries = useHostSelector(readHasEntries)
+
+  // ── 面板几何（对齐桌面端 panels.ts 的三件事：侧栏宽、正文列宽、dock 宽）────────
+  // 宽度只写 CSS 变量/行内样式，存档走 localStorage（与桌面渲染层共用同一批键）。
+  const [sidebarWidth, setSidebarWidth] = useState<number | null>(() =>
+    readStoredPx(PANEL_KEYS.sidebarWidth, SIDEBAR_MIN, SIDEBAR_MAX),
+  )
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() =>
+    readStoredFlag(PANEL_KEYS.sidebarCollapsed),
+  )
+  const [threadWidth, setThreadWidth] = useState<number | null>(() =>
+    readStoredPx(PANEL_KEYS.threadWidth, THREAD_MIN, STORED_MAX),
+  )
+  const [dockWidth, setDockWidth] = useState<number>(() =>
+    readStoredPx(PANEL_KEYS.dockWidth, DOCK_MIN_WIDTH, DOCK_MAX_WIDTH) ?? DOCK_DEFAULT_WIDTH,
+  )
+
+  useEffect(() => {
+    setRootVar('--dsc-sidebar-w', sidebarWidth === null ? null : `${String(sidebarWidth)}px`)
+  }, [sidebarWidth])
+  useEffect(() => {
+    setRootVar('--dsc-dock-w', `${String(dockWidth)}px`)
+  }, [dockWidth])
+  useEffect(() => {
+    // 正文列宽只有 ThreadResizer 的拖动路径会每帧写变量；这里负责把存档在启动时铺上。
+    if (threadWidth !== null) setRootVar('--dsc-thread-max', `${String(threadWidth)}px`)
+    return () => setRootVar('--dsc-thread-max', null)
+  }, [threadWidth])
+
+  const commitSidebarWidth = (px: number | null): void => {
+    setSidebarWidth(px)
+    writeStoredPx(PANEL_KEYS.sidebarWidth, px)
+  }
+  const commitThreadWidth = (px: number): void => {
+    setThreadWidth(px)
+    writeStoredPx(PANEL_KEYS.threadWidth, px)
+  }
+  const resetThreadWidth = (): void => {
+    setThreadWidth(null)
+    writeStoredPx(PANEL_KEYS.threadWidth, null)
+  }
+  const commitDockWidth = (px: number): void => {
+    setDockWidth(px)
+    writeStoredPx(PANEL_KEYS.dockWidth, px)
+  }
+
+  // 侧栏开合（Ctrl/Cmd+B）：完全收起，展开钮留在顶栏。
+  const toggleSidebar = (): void => {
+    setSidebarCollapsed((current) => {
+      writeStoredFlag(PANEL_KEYS.sidebarCollapsed, !current)
+      return !current
+    })
+  }
+
+  // 全局快捷键（对齐桌面端）：Ctrl/Cmd+B 侧栏、Ctrl+P 文件面板、Ctrl+` 终端面板。
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      const mod = event.ctrlKey || event.metaKey
+      if (!mod) return
+      if (event.key === 'b' || event.key === 'B') {
+        event.preventDefault()
+        toggleSidebar()
+      } else if (event.key === 'p' || event.key === 'P') {
+        event.preventDefault()
+        setDockPanel('files')
+      } else if (event.key === '`') {
+        event.preventDefault()
+        setDockPanel('terminal')
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // dock 左缘拖宽：mousedown 后挂 window 监听，夹在 [300, 820]，双击复位 420（对齐桌面端）。
+  const startDockResize = (event: ReactMouseEvent): void => {
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = dockWidth
+    const onMove = (move: MouseEvent): void => {
+      commitDockWidth(Math.min(DOCK_MAX_WIDTH, Math.max(DOCK_MIN_WIDTH, startWidth - (move.clientX - startX))))
+    }
+    const onUp = (): void => {
+      document.body.classList.remove('resizing')
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    document.body.classList.add('resizing')
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+  // 侧栏右缘拖宽（200–420，双击复位成样式表默认）。
+  const sidebarDrag = useWidthDrag({
+    sign: 1,
+    getBase: () => sidebarWidth ?? readSidebarDefaultPx(),
+    clamp: (px) => Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, px)),
+    onDrag: (px) => setRootVar('--dsc-sidebar-w', `${String(px)}px`),
+    onCommit: (px) => commitSidebarWidth(px),
+  })
+
   return (
     <>
-      <div className="app">
-        <aside className="sidebar">
+      <div className="app" data-sidebar={sidebarCollapsed ? '0' : '1'}>
+        <aside className="sidebar" aria-hidden={sidebarCollapsed || undefined}>
           <div className="sidebar-header">
             <span className="brand">{boot.host.name}</span>
             <ChannelState />
           </div>
           <SlotOutlet slots={slots} slot={SLOT.sidebar} />
+          <div
+            className="sidebar-resizer"
+            data-tip="拖拽调整侧栏宽度，双击复位"
+            onPointerDown={sidebarDrag.onPointerDown}
+            onPointerMove={sidebarDrag.onPointerMove}
+            onPointerUp={sidebarDrag.onPointerUp}
+            onPointerCancel={sidebarDrag.onPointerCancel}
+            onDoubleClick={() => commitSidebarWidth(null)}
+          />
         </aside>
 
         <div className="main">
           <div className="topbar">
             <div className="topbar-title-row">
+              {sidebarCollapsed ? (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  title="展开侧栏（Ctrl+B）"
+                  aria-label="展开侧栏"
+                  onClick={toggleSidebar}
+                >
+                  <IconSidebar size={16} />
+                </button>
+              ) : null}
               <span className="title">
                 <SessionTitle />
               </span>
@@ -60,7 +201,7 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
           <HostErrorStrip />
 
           <div className="thread-zone" {...(dockOn ? { 'data-dock': '1' } : {})}>
-            <div className="thread-main">
+            <div className={hasEntries ? 'thread-main' : 'thread-main thread-main-empty'}>
               <div className="chat-wrap">
                 <div className="chat">
                   <div className="chat-inner">
@@ -72,8 +213,20 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
                 <SlotOutlet slots={slots} slot={SLOT.composer} />
               </div>
             </div>
-            {/* 停靠面板：开的时候才渲染（收起时不在布局里留占位，见 dock-state.ts）。 */}
-            {dockOn ? <SlotOutlet slots={slots} slot={SLOT.dock} /> : null}
+            <ThreadResizer width={threadWidth} onCommit={commitThreadWidth} onReset={resetThreadWidth} />
+            {/* 停靠面板：**常驻渲染**（对齐桌面端「收起=滑出右缘不卸载」——终端进程、
+                文件树滚动位都活着），收起时用 CSS 藏掉、不在布局里占位。 */}
+            <div className="dock-slot" data-open={dockOn ? '1' : '0'} aria-hidden={dockOn ? undefined : 'true'}>
+              {dockOn ? (
+                <div
+                  className="dock-resizer"
+                  data-tip="拖拽调整面板宽度，双击复位"
+                  onMouseDown={startDockResize}
+                  onDoubleClick={() => commitDockWidth(DOCK_DEFAULT_WIDTH)}
+                />
+              ) : null}
+              <SlotOutlet slots={slots} slot={SLOT.dock} />
+            </div>
           </div>
 
           <div className="statusbar">
@@ -261,4 +414,11 @@ function readSessionTitle(snapshot: Record<string, unknown> | null): string {
     return typeof title === 'string' && title !== '' ? title : '新会话'
   }
   return '新会话'
+}
+
+/** 消息流里有没有条目（含直播尾）：空会话的居中欢迎态靠它切换。 */
+function readHasEntries(snapshot: Record<string, unknown> | null): boolean {
+  const entries = snapshot?.['entries']
+  const live = snapshot?.['liveEntries']
+  return (Array.isArray(entries) && entries.length > 0) || (Array.isArray(live) && live.length > 0)
 }
