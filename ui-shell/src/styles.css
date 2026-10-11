@@ -786,4 +786,13 @@
   overflow-y: auto;
 }
 
+/* ── 浮层豁免窗口拖拽区（header 槽浮层的公共坑）───────────────────────────
+   topbar 整条是 -webkit-app-region: drag（拖窗口的把手），而设置面板、队友面板
+   都从 header 槽渲染，DOM 上是 topbar 的子孙：position:fixed 只改视觉位置，不改
+   命中判定——Electron 的拖拽区按元素矩形算，fixed 全屏照样被 drag 覆盖，整个面板
+   的点击都被当成「拖窗口」吞掉（桌面端原版没这个问题：它的模态渲染在应用根层，
+   不在任何 drag 区里）。浮层容器必须自己声明 no-drag，把这块矩形从拖拽区里挖出来。 */
+.settings-mask,
+.team-pop {
+  -webkit-app-region: no-drag;
 }
