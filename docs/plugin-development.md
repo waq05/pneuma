@@ -640,3 +640,28 @@ cd ~/.dsc/plugins && npm install <dsh 插件包>
 **产物复核（rev 的语义）**：内置插件的 rev 是文件指纹（mtime/ctime/size），只承担「换文件
 就换地址」；第三方插件的 rev 是**内容摘要**（sha256 前 16 位）——目录里换了字节 rev 必变，
 旧页面的旧地址拿旧字节、新地址拿新字节，同一份字节永远同 rev。
+
+### 10.4 chain 槽与壳内置平台层（1.1.0 起可用）
+
+**chain 槽**：第四种槽形态，「条目自己选举」。声明方把它开成子槽（`children: { 'xxx.yyy': 'chain' }`），
+渲染方对每一份 owner 值问一遍链上的登记：按 `priority` 升序逐个调 `select(owner)`，
+第一个**不返回 null** 的当选——返回值原样交给组件的 `matched` prop；全体弃权时渲染方画兜底。
+注册语法：`ui.slots.register(slot, { id, priority, select: (owner) => ... }, component)`——
+**select 必填**，且必须是纯函数（只读 owner、不碰外部状态）。同 priority 多条并存合法（按注册序排队）。
+
+内置例子：消息流插件声明 `transcript.toolview`（chain），内置工具卡是链上一条
+catch-all（priority 100）。想接管某类工具卡的渲染：往这个槽注册一条 priority 更小、
+`select` 只认领自己那类工具的登记即可，认领范围外返回 `null` 让给后面。
+
+**壳内置平台层（仅 web 值面）**：`@dsc/ui` 从 1.1.0 起额外导出四件壳内置实现，
+供界面插件直接用、**不必也不许**自带这些重依赖（平台模块表里没有它们）：
+
+| 导出 | 用途 |
+| --- | --- |
+| `highlightLines(code, path)` | 按扩展名把一段代码高亮成逐行 token HTML（shiki 双主题 CSS 变量；无语法/超限返回 null） |
+| `CodeView` | 代码视图组件（装语法期间纯文本回落、超限截断、`targetLine` 行号定位） |
+| `MarkdownView` | markdown 渲染（react-markdown + gfm；代码块 shiki；传 `fsRead` 解析相对路径图片） |
+| `PdfView` | PDF 逐页渲染（吃 fs-read 的 base64，≤50 页） |
+
+终端壳（TUI 载体）的 `@dsc/ui` 不导出这四件——它们是 DOM 组件；双载体插件里请先判
+`ui.host.platform` 再引用。

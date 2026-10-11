@@ -3132,3 +3132,69 @@ node_modules，ui-shell 从「共享根副本」变成「持有独立副本」�
 - 浏览器实机走查（一次性仓库：暂存 + 未暂存 + 未跟踪各一）：分支与「3 处更改」读数正确；
   全量 diff 段 +3−1 与真实 git diff 逐行吻合（增 3 / 删 1 / 上下文 2）；单文件视图、
   data-expanded 高亮、untracked 禁用态全对；增删行底色来自令牌 color-mix（读计算样式核实）。
+
+## 收尾（2026-10-11）：chain 槽 + 工具调用选举 + 预览保真度（shiki/markdown/PDF）（未发版）
+
+用户点名把三件挂账一次收掉。收完之后，计划 §2 七条验收 **7/7**。
+
+### chain 槽：第四形态 + 选举
+
+- `src/ui/slots.ts`：SlotKind 加 `chain`——每条登记带一个 `select(owner)` 选择器；渲染时按
+  priority 升序依次问（小者先问、同值按注册序），第一个**不返回 null** 的当选，返回值
+  原样交给组件的 `matched` prop；全体弃权由渲染方画兜底。chain 没有格子的概念——
+  同 priority 多条并存合法（按注册序排队），register 不做占用冲突检查；选择器抛异常视同
+  弃权并记故障（一个坏选择器不烧整条链）；当选者渲染崩溃走既有的退位机制，选举落到下一位。
+  `winners()` 对 chain 返回全部幸存候选人（诊断口径）。机制形状对齐 dsh 的
+  `ChainSelect` 选举（「声明即占用」之外唯一没抄的是它的 overlay 选项——那是 composer 专用）。
+- React 出口（`ui-shell/src/slots-react.tsx`）：新增 `ChainOutlet`（选举 + 挂当选者；全体弃权
+  返回 null、兜底由调用方画）；`renderSlot` 对 chain 形态的子槽改走 ChainOutlet。
+- **工具调用按选举渲染**（`plugins/transcript/ui.tsx`）：消息流条目声明 `transcript.toolview`
+  chain 子槽；内置工具卡成为链上的一条 catch-all（priority 100，选择器把「图标 + 动词」作为
+  matched 交出）。「谁负责展示这个工具调用」从此由链上选举决定——任何插件注册一个更小的
+  priority、选择器认领自己的工具就赢过内置，`KNOWN_TOOLS` 那张表不再是唯一裁决者。
+- 探针补 10 条断言（ui-plugin-test）：缺 select 当场报错、认领者赢过 catch-all、弃权问下一位、
+  全员弃权返回 null、小 priority 弃权不挡后面、同 priority 并存、退位后选举下移、坏选择器
+  记故障不烧链、非 chain 槽 elect 报装配错误、winners 诊断口径。
+
+### 壳内置平台层：shiki / react-markdown / pdfjs 进 vendor
+
+- `ui-shell/src/platform/` 新五份（highlight / lang-table / code-view / markdown / pdf-view +
+  vite-env）——从旧渲染层 file-preview.tsx / diff-highlight.ts / file-util.ts 移植：单例
+  highlighter（JS regex 引擎免 WASM）+ 语法按需懒装载 + 双主题出 CSS 变量（浅/深由
+  data-theme 切换，不重解析）；react-markdown + remark-gfm；pdfjs 逐页 canvas（worker 走
+  同源 `?url` 资产，CSP 的 script-src 'self' 兜得住 worker）。
+- 经 `@dsc/ui` 的 web 值面转出（plugin-api.ts 再导出 `highlightLines` / `CodeView` /
+  `MarkdownView` / `PdfView`）——插件 bundle 不自带这些重依赖（平台模块表里没有它们），
+  壳的实现只有一份。**版本纪律首次实战：纯增量 → ui-shell 1.0.0 → 1.1.0**（清单 apiVersion
+  随动；api-gate 探针那条「钉具体版本」改钉「apiVersion == 壳包版本」这个不变量，以后不用再跟）。
+- 围栏语言别名表（```ts → typescript 等 12 条）：旧渲染层把围栏语言直接喂 shiki，```ts
+  这类最常用写法会静默降级成纯文本——这里顺手修掉（实机证据：夹具 md 的 ts 块从无色到
+  12 个 token 上色）。
+- diff 上色：`files/changes.tsx` 的 DiffRows 走 `highlightLines`（整块喂保跨行语法状态、
+  超限降级纯文本），legacy 的 `.diff-*` 样式一行未动。
+
+### 预览保真度：markdown / shiki / PDF
+
+- `plugins/preview/ui.tsx` 分流升级：markdown → MarkdownView（相对路径图片经 dock `fs-read`
+  转 base64，缺图占位）；PDF → PdfView（逐页渲染 ≤50 页）；代码/文本 → CodeView（shiki
+  按扩展名高亮，装不上语法回落纯文本）；图片/二进制同前。
+- **csv/xlsx 表格视图没搬**（csv 落到代码视图按文本看；xlsx 仍走「用系统程序打开」）——
+  用户点名的三件是 markdown/shiki/PDF，表格类是明确剩余、不是遗漏。
+- TUI 值面不动：这批是 web 独有的 DOM 组件，终端壳的 `@dsc/ui` 不导出它们。
+
+### 验证
+
+- tsc + 壳构建过（vendor 新增懒 chunk：pdf worker / 各语法独立成块）。
+- 八个探针全绿（chain 10 条新断言 + api-gate 版本不变量改写在内）。
+- 桌面自检四用例全绿 + 真实 `~/.dsc` 零污染（335 文件指纹逐文件一致）——**pnpm install
+  之后按〔双 React〕的规矩跑的**。
+- 实机走查（假端点驱动真回合 + 一次性仓库）：① 发消息 → 假端点回 bash 工具调用 →
+  **工具卡由 chain 选举渲染**（DOM 证据：挂在 `.slot-entry[data-slot="transcript.toolview"]`、
+  当选者 `transcript.toolview.builtin`）→ 审批卡 → 批准 → status-done「跑了」→ 收尾正文；
+  ② 变更页签 app.ts diff 上色（85 个 token span、`--shiki-light/--shiki-dark` 双变量）；
+  ③ 预览 demo.md（h1/加粗/行内代码/缺图占位/代码块上色带行号）；④ 预览 app.ts
+  （48 个 token 上色）；⑤ 预览 demo.pdf（pdfjs 逐页出图）。诊断区槽计数 8 → 9（+toolview）。
+
+### 收尾之后
+
+计划 §2 七条验收 7/7；验收 3 的回填见计划文档 §2。
