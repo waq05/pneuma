@@ -31,14 +31,17 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 /** DOM 原生键盘事件（`window.addEventListener` 用；React 的 KeyboardEvent 是另一个类型）。 */
 type WindowKeyboardEvent = globalThis.KeyboardEvent
-import { IconArrowUp, IconCheck, IconChevronDown, IconClose, IconEdit, IconQueue, IconShield, IconStop, IconTrash } from '@dsc/ui'
+import { IconArrowUp, IconCheck, IconChevronDown, IconClose, IconEdit, IconLayers, IconQueue, IconShield, IconStop, IconTrash } from '@dsc/ui'
 import {
   defineUiPlugin,
+  toastErr,
+  toastOk,
   useHostChannel,
   useHostSelector,
   type EffortLevel,
   type HostSnapshot,
   type ModelChoiceView,
+  type PresetView,
   type QueuedMessageView,
 } from '@dsc/ui'
 
@@ -84,6 +87,7 @@ function ComposerBox(): ReactNode {
   const blocked = useHostSelector(readHasApproval)
   const queuedCount = useHostSelector(readQueuedCount)
   const policy = useHostSelector(readPolicy)
+  const presetCurrent = useHostSelector(readPresetCurrent)
   const model = useHostSelector(readModel)
   const effort = useHostSelector(readEffort)
   const draftKey = useHostSelector(readSessionPath)
@@ -93,6 +97,9 @@ function ComposerBox(): ReactNode {
   const [sending, setSending] = useState(false)
   const [models, setModels] = useState<readonly ModelChoiceView[]>([])
   const [panelOpen, setPanelOpen] = useState(false)
+  // 模式（预设）旋钮：清单懒取（第一次展开才拉），当前档从快照 surfaces.preset.current 读。
+  const [presetOpen, setPresetOpen] = useState(false)
+  const [presets, setPresets] = useState<readonly PresetView[]>([])
   // Esc 关模型浮层（与遮罩点击同效；设置面板、确认框各自也拦 Esc，谁开着归谁）。
   useEffect(() => {
     if (!panelOpen) return undefined
@@ -166,7 +173,23 @@ function ComposerBox(): ReactNode {
     const value = text.trim()
     if (value === '' || blocked || sending) return
     if (value.startsWith('/')) {
-      setFault('“/” 开头的指令这条路还没接到界面通道，请用桌面端或终端执行')
+      // 斜杠指令里只有 /compact 有专门的通道方法（compress 整个会话历史），就地执行；
+      // 其余指令（runCommand 不在白名单）保持拦截说明——那是安全设计不是缺口。
+      if (value === '/compact') {
+        setSending(true)
+        setFault(null)
+        setText('')
+        void channel
+          .invoke('compact', [])
+          .then(() => toastOk('已开始压缩会话历史'))
+          .catch((reason: unknown) => {
+            setFault(`压缩失败：${reason instanceof Error ? reason.message : String(reason)}`)
+            setText(value)
+          })
+          .finally(() => setSending(false))
+        return
+      }
+      setFault('“/” 开头的指令这条路还没接到界面通道，请用桌面端或终端执行（/compact 除外）')
       return
     }
     const steerIndex = steer && working ? queuedCount : null
@@ -281,6 +304,73 @@ function ComposerBox(): ReactNode {
               <IconShield size={13} />
               {POLICY_LABEL[policy.current] ?? policy.current}
             </button>
+          </div>
+          {/* 模式（预设）旋钮：与权限旋钮并排。清单来自宿主 listPresets，点选即 usePreset
+              （新建/编辑在设置 → 模式，与旧界面同一句引导）。 */}
+          <div className="model-anchor">
+            <button
+              type="button"
+              className={`model-btn${presetOpen ? ' open' : ''}`}
+              data-tip="模式：切换这套会话的工具与提示词（新建/编辑：设置 → 模式）"
+              onClick={() => {
+                setPresetOpen((open) => !open)
+                if (presets.length === 0) {
+                  void channel
+                    .invoke<readonly PresetView[]>('listPresets', [])
+                    .then((list) => setPresets(list))
+                    .catch(() => undefined)
+                }
+              }}
+            >
+              <IconLayers size={13} />
+              {presetLabel}
+            </button>
+            {presetOpen ? (
+              <>
+                <div
+                  className="pop-mask"
+                  onClick={() => {
+                    setPresetOpen(false)
+                  }}
+                />
+                <div className="model-pop">
+                  <div className="pop-label">模式</div>
+                  <div className="model-list">
+                    {presets.length === 0 ? (
+                      <div className="pop-item">
+                        <span className="name">清单没取到</span>
+                      </div>
+                    ) : (
+                      presets.map((preset) => (
+                        <button
+                          type="button"
+                          key={preset.name}
+                          className={`pop-item${preset.name === presetCurrent ? ' on' : ''}`}
+                          title={preset.description}
+                          onClick={() => {
+                            setPresetOpen(false)
+                            void channel
+                              .invoke('usePreset', [preset.name])
+                              .then(() => toastOk(`已切到「${preset.label}」模式`))
+                              .catch((reason: unknown) => {
+                                toastErr(`切换失败：${reason instanceof Error ? reason.message : String(reason)}`)
+                              })
+                          }}
+                        >
+                          <span className="name">{preset.label}</span>
+                          {preset.builtin ? <span className="pop-note">内置</span> : null}
+                          {preset.problem === undefined ? null : <span className="pop-note" data-warn="1">有问题</span>}
+                          {preset.name === presetCurrent ? <IconCheck size={13} /> : null}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                  <div className="pop-note" style={{ padding: '4px 10px 8px' }}>
+                    新建 / 编辑：设置 → 模式
+                  </div>
+                </div>
+              </>
+            ) : null}
           </div>
         </div>
 
@@ -711,6 +801,19 @@ function readPolicy(snapshot: HostSnapshot | null): { current: string } {
   const current = (policy as Record<string, unknown>)['current']
   return { current: typeof current === 'string' ? current : '未知' }
 }
+
+/** 当前用的模式（预设）名（快照 surfaces.preset.current；取不到给空串）。 */
+function readPresetCurrent(snapshot: HostSnapshot | null): string {
+  const surfaces = snapshot?.['surfaces']
+  if (typeof surfaces !== 'object' || surfaces === null) return ''
+  const preset = (surfaces as Record<string, unknown>)['preset']
+  if (typeof preset !== 'object' || preset === null) return ''
+  const current = (preset as Record<string, unknown>)['current']
+  return typeof current === 'string' ? current : ''
+}
+
+/** 预设旋钮上显示的名字：当前模式清单里对得上的用显示名，对不上用原名。 */
+const presetLabel = '模式'
 
 function readQueuedCount(snapshot: HostSnapshot | null): number {
   const value = snapshot?.['queued']
