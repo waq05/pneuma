@@ -1,9 +1,10 @@
 /**
- * 内置插件：工作区文件树（停靠面板里的一块）。
+ * 内置插件：工作区文件树 + git 变更（停靠面板里的一块，页签切换）。
  *
  * 数据源是 dock 通道的**读类** op `fs-list`（阶段 5.2 起在界面通道放行面上，
  * 见 `src/core/dock-ops.ts` —— 读类直接放行，写类才要审批）。所以这一块在浏览器里
- * 也能用，与终端不同（终端要起进程，只走桌面窗口的原生桥）。
+ * 也能用，与终端不同（终端要起进程，只走桌面窗口的原生桥）。「变更」页签走
+ * `git-status` / `git-diff` 两个读类 op，见 changes.tsx。
  *
  * ## 与旧界面对齐的部分
  *
@@ -26,6 +27,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { IconChevronDown, IconChevronRight, IconCode, IconFolder, IconFolderOpen, IconTerminal } from '@dsc/ui'
 import { defineUiPlugin, setDockPanel, useDockPanel, useHostChannel, type SlotComponentProps } from '@dsc/ui'
+import { ChangesPanel } from './changes'
 
 /** 这一块面板在停靠区里的 id。 */
 const PANEL = 'files'
@@ -77,10 +79,12 @@ function FilesToggle(): ReactNode {
   )
 }
 
-/** 文件面板：左边树，右边预览（预览那一块由子槽贡献者画）。 */
+/** 文件面板：页签切「文件树 / git 变更」，右边预览（预览那一块由子槽贡献者画）。 */
 function FilesPanel({ renderSlot }: SlotComponentProps): ReactNode {
   const active = useDockPanel() === PANEL
   const channel = useHostChannel()
+  /** 页签：文件树 / git 变更（变更那块在 changes.tsx，只读）。 */
+  const [tab, setTab] = useState<'files' | 'changes'>('files')
   const [root, setRoot] = useState<Listing | null>(null)
   /** 已展开的目录 → 它的清单（懒加载：展开才取）。 */
   const [dirs, setDirs] = useState<Record<string, Entry[]>>({})
@@ -155,7 +159,26 @@ function FilesPanel({ renderSlot }: SlotComponentProps): ReactNode {
   return (
     <aside className="dock" style={{ width: 460 }}>
       <div className="dock-strip">
-        <span className="shell-tab on">文件</span>
+        <button
+          type="button"
+          className={`shell-tab${tab === 'files' ? ' on' : ''}`}
+          aria-pressed={tab === 'files'}
+          onClick={() => {
+            setTab('files')
+          }}
+        >
+          文件
+        </button>
+        <button
+          type="button"
+          className={`shell-tab${tab === 'changes' ? ' on' : ''}`}
+          aria-pressed={tab === 'changes'}
+          onClick={() => {
+            setTab('changes')
+          }}
+        >
+          变更
+        </button>
         <span className="dock-strip-fill" />
         <button
           type="button"
@@ -170,23 +193,27 @@ function FilesPanel({ renderSlot }: SlotComponentProps): ReactNode {
         </button>
       </div>
       <div className="dock-body">
-        <div className="files-pane">
-          <div className="files-bar">
-            <span className="files-cwd" title={root?.cwd ?? ''}>
-              {root === null ? '加载中…' : root.cwd}
-            </span>
+        {tab === 'files' ? (
+          <div className="files-pane">
+            <div className="files-bar">
+              <span className="files-cwd" title={root?.cwd ?? ''}>
+                {root === null ? '加载中…' : root.cwd}
+              </span>
+            </div>
+            <div className="files-list">
+              {note === '' ? null : <div className="tree-note">{note}</div>}
+              {root === null ? null : rowsOf(root.cwd, root.entries, 0)}
+              {root !== null && root.truncated ? <div className="tree-note">这个目录太长，只列了前一批</div> : null}
+            </div>
+            {picked === '' ? (
+              <div className="file-preview-empty">点左边一个文件看内容</div>
+            ) : (
+              <div className="shell-files-preview">{renderSlot(PREVIEW_SLOT, { path: picked, cwd: root?.cwd ?? '' })}</div>
+            )}
           </div>
-          <div className="files-list">
-            {note === '' ? null : <div className="tree-note">{note}</div>}
-            {root === null ? null : rowsOf(root.cwd, root.entries, 0)}
-            {root !== null && root.truncated ? <div className="tree-note">这个目录太长，只列了前一批</div> : null}
-          </div>
-          {picked === '' ? (
-            <div className="file-preview-empty">点左边一个文件看内容</div>
-          ) : (
-            <div className="shell-files-preview">{renderSlot(PREVIEW_SLOT, { path: picked, cwd: root?.cwd ?? '' })}</div>
-          )}
-        </div>
+        ) : (
+          <ChangesPanel />
+        )}
       </div>
     </aside>
   )

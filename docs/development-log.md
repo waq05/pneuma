@@ -3075,3 +3075,60 @@ node_modules，ui-shell 从「共享根副本」变成「持有独立副本」�
 
 - 打包四条 PASS（证据见上）；打包期间桌面自检四用例再跑一遍全绿（真实 `~/.dsc` 零污染）。
 - 计划文档 §8「没验过的」第 1 条回填为「已验过」，其余四条保留。
+
+## 审查修复（2026-10-11）：全面审查后的两处收敛 + 一处补口（未发版）
+
+计划收官后做了一轮全面审查（完成度 + 代码质量 + 令牌规范），查出三处值得动手的问题，本轮全部修掉。
+
+### 审查结论（先记结果）
+
+- 令牌规范：非 legacy 代码硬编码色值 **0**（终端 xterm 主题走 getComputedStyle 读令牌解析成 hex）；
+  幽灵令牌 6 个全在 legacy 冻结副本且 CSS 带回退值（4 个是未搬 resizer 的运行时写入：
+  DiffPane/panels/ThreadResizer，2 个 shiki 库内联），在壳里惰性无害。
+- 架构不变量全过：platform-modules.json 双端同读 + 启动漂移自检、semver 门禁 fail-closed、
+  第三方发现顺序撞名→门禁→停用→信任、uiTrust 段写前保留、ink 装配错误穿透。
+- 七条验收核算 6/7：验收 2 此前汇报有虚报——git 变更 diff 视图没搬（本轮补上，见修 3）。
+
+### 修 1：壳文档补内容安全策略（CSP）
+
+- `src/core/ui-server.ts`：启动图从内联 `<script>` 改为**同源外链 `/boot.js`**（`</head>` 前同步
+  执行完，客户端契约 `window.__DSC_BOOT__` 不变）——内联注入要配 nonce，多一套机制不值得。
+  CSP：script-src 'self'；style-src 'self' 'unsafe-inline'（React 行内样式与 xterm 都是 style
+  属性，收掉破相）；img-src 'self' data:（预览 base64）；frame-ancestors 'none' 等。
+- `src/core/web-static.ts`：StaticOptions 加 `contentSecurityPolicy` 选项（命中与占位页都下发）；
+  只有宿主界面服务传它，remote 路由不受影响。
+- 设计预期兑现：boot.ts 头注释当初就写了「`<script src>` 要的 CSP 只有 script-src 'self'」——
+  插件执行走 appendScript 的 `<script src>`，正好在放行面里。
+- 探针更新（ui-plugin-test）：旧的内联断言按新事实改写（页面不再含 `__DSC_BOOT__` 字面量），
+  新钉四条：页面挂外链脚本、CSP 头存在且脚本面 'self'、/boot.js 注入宿主身份、没凭据 401。
+
+### 修 2：TUI 载体 invoke 收敛到界面通道白名单
+
+- `src/ui/tui-plugins.ts`：invoke 原来过的是 host-methods 的进程协议全量白名单（61 方法）且
+  实参不校验直接铺开；改成与 webserver.ts 同款顺序——`isUiMethod` 白名单收窄 +
+  `validateUiArgs` 实参校验。进程内不算安全边界（插件代码本来就在同进程），算契约卫生：
+  两个载体能力面不一致的话，插件会出现「浏览器里被拒、终端里放行」的暗中分叉。
+- 探针补 3 条断言（ui-tui-plugin-test）：排除清单方法（runCommand）拒、实参不合规格
+  （submit 吃字符串给了数字）拒、白名单内合规的通——样本插件 apply 里直接走 ui.runtime.invoke。
+
+### 修 3：文件面板「变更」页签（验收 2 补口）
+
+- `ui-shell/src/plugins/files/`：新增「变更」页签（changes.tsx + diff.ts），git 状态三分组
+  （已暂存/未暂存/未跟踪）+ 单文件或全量未提交 diff 视图；数据走 dock 读类 op
+  `git-status` / `git-diff`，浏览器里也能用。
+- **只读是刻意的边界**：暂存/取消暂存/提交是写类 op（要走审批），旧界面做在同一面板里，
+  这版不搬——审批卡与终端都干得了这件事，面板只负责「看」，不负责「改」。
+- diff 解析器从旧渲染层 unified-diff.ts 逐字移植（含「\ No newline」标注行与按 `diff --git`
+  切段）；行渲染照 DiffPane.tsx 的 unified 视图（旧行号/新行号/记号/内容）；样式全用 legacy
+  的 `.git-*` / `.diff-*`，零新 CSS；shiki 高亮没搬（壳没有那个平台模块），就是纯文本。
+- untracked 行禁用（没有 diff），`data-expanded` 高亮与旧界面一致。
+
+### 验证
+
+- tsc + 壳构建过；八个 UI 探针全绿（含新增断言）。
+- 桌面自检四用例全绿：CSP 下壳完整渲染（bootEntries=9、原生桥 v2、终端/文件面板正常），
+  boot.js 在真窗口注入成功；legacy / fallback 照旧（legacy 的 meta CSP 与响应头 CSP 叠加后
+  依旧能跑——它本来就没有内联脚本）；真实 `~/.dsc` 零污染（335 文件指纹逐文件一致）。
+- 浏览器实机走查（一次性仓库：暂存 + 未暂存 + 未跟踪各一）：分支与「3 处更改」读数正确；
+  全量 diff 段 +3−1 与真实 git diff 逐行吻合（增 3 / 删 1 / 上下文 2）；单文件视图、
+  data-expanded 高亮、untracked 禁用态全对；增删行底色来自令牌 color-mix（读计算样式核实）。
