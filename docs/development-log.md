@@ -2824,3 +2824,49 @@ class 名照旧界面的文件树与预览写（`.files-pane` / `.files-list` / 
 - 「永久删除」在壳里没有入口（有意排除），回收站的立即清空只能去旧界面或文件管理器。
 - 远程控制分区保持占位（`NOT_YET` 现在只剩这一条），理由如上。
 - 归档视图与左侧会话栏的「归档」页并存（两个入口同一份数据），与旧桌面端一致。
+
+## 阶段 110（对齐计划 5.6 下半）：正式切换 + 回落实测 + bridge 归位表（未发版）
+
+计划 5.6 的最后三件事一次做完。**桌面默认界面从这一版起是插件壳**；旧渲染层从此是回落。
+
+### 做了什么（`desktop/electron/main/index.ts`）
+
+- `DEFAULT_UI_PROFILE` 从 `'legacy'` 翻成 `'shell'`（当初 5.0 就把切换点收在这一行）。
+- `uiProfile()` 补了半个洞：原来档案里**显式写 `legacy` 也会被忽略**（`fromState === 'shell' ? 'shell' : DEFAULT`，
+  翻转默认后写 legacy 的人会被吞掉）。现在显式 `shell` / `legacy` 都被尊重，只有缺失/读坏/不认识落默认。
+- `uiAssetsDir()` 加**存在性闸**：profile=shell 但壳产物目录不存在（路径解析错、构建没跑）→
+  退回旧渲染层 + stderr 说清，**切换不允许变成一张白屏**。
+
+### 回落实测（自检脚本 `ui-shell-switch.ps1` 从两用例扩成四用例）
+
+| 用例 | 条件 | stderr 证据 | 页面证据 |
+| --- | --- | --- | --- |
+| ui-default | 无开关无档案 | `界面形态=shell，宿主伺服 D:\dsc\lib\ui\assets` | looksLikeShell=true，bootEntries=12 |
+| ui-shell | `DSC_UI_SHELL=1` | 同上 | 同上 |
+| ui-legacy | `DSC_UI_SHELL=0` | `界面形态=legacy，宿主伺服 …out\renderer` | looksLikeLegacy=true |
+| ui-fallback | `=1` 且壳产物目录被临时挪走 | `插件壳产物不存在（…），退回旧渲染层` + 伺服 out\renderer | looksLikeLegacy=true（不是白屏） |
+
+四用例全绿；真实 `~/.dsc` 跑前跑后逐文件哈希一致（335 文件，零污染）；挪走的产物目录
+在 finally 里恢复（跑后核对 assets 在、无 `.fallback-test` 残留）。「拿不到地址 / 认证失败」
+这两个回落分支走的是同一条 `loadFile` 路（窗口停在初始加载），与 ui-fallback 共用同一份
+旧渲染层产物——产物在，窗口就在；产物缺失的闸已实测。
+
+### bridge.ts 退役归位表（`desktop/src/renderer/bridge.ts` 头注释）
+
+DscBridge 的 26 个成员逐个标注了壳里的承担者：5 个走 `@dsc/ui` 的通道与快照，14 个被
+原生桥同名 op 覆盖，2 个（dock / onDockData）按三档拆分（读/写档走界面通道、`term-*`
+走原生桥），getCwd 退化为快照字段（不再需要单独 IPC）。**没有全部归位，所以不删**：
+
+- `dockBrowser` / `browserNav` / `onBrowserState`：内置浏览器（WebContentsView）还没进原生桥；
+- `installPlugin` / `installSkill`：主进程对话框 + 复制文件这类写入口不在界面通道，壳里没有去处。
+
+物理退役的三条前置（浏览器进桥或砍掉、装插件/技能有去处、旧渲染层退出安装包）写进
+归位表；在那之前 bridge.ts 随回落路径保留。
+
+### 诚实边界
+
+- **打包态还没验**（阶段 8 第一件事）：开发态四用例全绿不代表 `extraResources` 那份路径解析对；
+  存在性闸正是为打包态兜底设计的，但它被真正触发的那一天要靠打包验证。
+- 用户真实的 `~/.dsc/desktop.json` 若写着 `ui: 'legacy'`，翻转后仍会看到旧界面（显式优先）——
+  这是特性；想切壳删掉那个字段即可。
+- 阶段 8 的冻结横幅与「一份还是两份 UI」决定未动（依赖本次切换稳定一轮）。

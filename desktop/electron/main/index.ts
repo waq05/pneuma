@@ -68,14 +68,17 @@ function shellDir(): string {
 }
 
 /**
- * 迁移期默认的界面形态：发版要把默认翻成壳，改的就是这一行。
- * 档案缺失/读坏/值不认识一律落到它，于是「回退」永远是改一个字段的事。
+ * 默认伺服的界面形态（阶段 5.6 翻转）：**插件壳**。旧渲染层从此是回落——
+ * 档案里写 `ui: 'legacy'`、`DSC_UI_SHELL=0`、或壳产物缺失，都会退回它。
+ * 「回退」永远是改一个字段（或删掉那份壳产物）的事。
  */
-const DEFAULT_UI_PROFILE = 'legacy' as const
+const DEFAULT_UI_PROFILE = 'shell' as const
 
 /**
  * 当前该伺服哪份界面：档案（`~/.dsc/desktop.json` 的 `ui`）说了算。
  *
+ * 显式写的 `shell` / `legacy` 都被尊重（用户把默认掰回去是合法操作）；
+ * 缺失 / 读坏 / 值不认识落到 {@link DEFAULT_UI_PROFILE}。
  * `DSC_UI_SHELL` 是自检与开发期的直通开关（`1` 强制壳、`0` 强制旧界面），
  * 压过档案——自动化脚本不该去改用户的档案，也不该依赖它。
  */
@@ -83,12 +86,21 @@ function uiProfile(): 'legacy' | 'shell' {
   if (process.env['DSC_UI_SHELL'] === '1') return 'shell'
   if (process.env['DSC_UI_SHELL'] === '0') return 'legacy'
   const fromState = readState().ui
-  return fromState === 'shell' ? 'shell' : DEFAULT_UI_PROFILE
+  if (fromState === 'shell') return 'shell'
+  if (fromState === 'legacy') return 'legacy'
+  return DEFAULT_UI_PROFILE
 }
 
 /** 宿主该伺服的界面产物目录（经 `DSC_UI_ASSETS` 交给宿主进程）。 */
 function uiAssetsDir(): string {
-  return uiProfile() === 'shell' ? shellDir() : rendererDir()
+  if (uiProfile() === 'shell') {
+    const dir = shellDir()
+    // 壳产物缺失（路径解析错、构建没跑）时退回旧渲染层并说清，别让用户对一张白屏。
+    // 这道闸就是自检 ui-fallback 用例的落点：打包态的路径解析错了，窗口仍有完整旧界面。
+    if (existsSync(dir)) return dir
+    process.stderr.write(`[dsc-desktop] 插件壳产物不存在（${dir}），退回旧渲染层\n`)
+  }
+  return rendererDir()
 }
 
 /** 传给宿主进程的环境：Electron 的 env 只收字符串值，undefined 的键直接丢掉。 */

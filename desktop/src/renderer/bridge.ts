@@ -5,6 +5,23 @@
  * 进程内同步的契约方法（listSkills / getModelConfig 等）经协议必然异步，
  * 代理里把它们改成返回 Promise，调用方统一 await。
  *
+ * ── 退役归位表（阶段 5.6，2026-10-11）───────────────────────────────────────
+ * 插件壳已是默认界面（`desktop/electron/main/index.ts` 的 `DEFAULT_UI_PROFILE`），
+ * 本文件从此只服务**回落路径**（旧渲染层）。每个主进程经手的成员在壳里的归属：
+ *
+ * | DscBridge 成员 | 壳里的承担者 |
+ * | --- | --- |
+ * | invoke / onSnapshot / onUi / onHostLog / onHostExit | `@dsc/ui` 的 useHostChannel（白名单方法）、useHostSnapshot、useHostEvents、诊断区通知帧、useChannelStatus |
+ * | getCwd | 快照 `status.cwd`（不再需要单独一条 IPC） |
+ * | chooseDirectory / restartHost / switchCwd / recentCwds / removeRecentCwd / sessionUsage / openPath / openWorkspace / setWindowChrome / setThemeSource / openExternal / notify / quit | 原生桥同名 op（`src/core/native-bridge.ts`，壳经 `getHostNative()`） |
+ * | dock / onDockData | dock 通道三档：读/写档走界面通道 `dock`，`term-*` 走原生桥 `terminal` + 事件 `dock-data`（`src/core/dock-ops.ts`） |
+ * | dockBrowser / browserNav / onBrowserState | **原生桥待补**：内置浏览器（WebContentsView）还没进桥，壳里没有这个面板 |
+ * | installPlugin / installSkill | **壳未提供**：主进程对话框 + 复制文件这类写入口不在界面通道白名单，装插件/技能走旧界面或手放目录 |
+ *
+ * 物理退役（删掉本文件）要同时满足三条：① 内置浏览器进桥或明确砍掉；
+ * ② installPlugin / installSkill 有了去处；③ 旧渲染层整体退出安装包（阶段 8 的
+ * 「一份还是两份 UI」决定）。在那之前它随回落路径保留。
+ *
  * @module desktop/renderer/bridge
  */
 import type {
