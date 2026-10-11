@@ -71,6 +71,7 @@ export type {
   SettingsValues,
   StatusView,
   SubagentCardView,
+  TeammateView,
   ThemeMode,
   ThinkingLevel,
   TierOption,
