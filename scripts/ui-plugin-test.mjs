@@ -485,8 +485,21 @@ console.log('\n[4] 界面服务')
 
   const page = await http('GET', port, '/', { cookie })
   check('带 Cookie 拿到页面 200', page.status === 200, String(page.status))
-  check('页面注入了启动清单全局名', page.body.includes('__DSC_BOOT__'), page.body.slice(0, 120))
-  check('注入的是宿主身份', page.body.includes('Muse Code') && page.body.includes('test-1.2.3'))
+  check('页面挂了启动清单外链脚本', page.body.includes('<script src="/boot.js">'), page.body.slice(0, 160))
+  check(
+    '页面带内容安全策略且脚本面收成 self',
+    String(page.headers['content-security-policy'] ?? '').includes("script-src 'self'"),
+    JSON.stringify(page.headers),
+  )
+  const bootScript = await http('GET', port, '/boot.js', { cookie })
+  check(
+    '/boot.js 注入启动清单全局名',
+    bootScript.status === 200 && bootScript.body.includes('__DSC_BOOT__'),
+    `${String(bootScript.status)} ${bootScript.body.slice(0, 120)}`,
+  )
+  check('/boot.js 注入的是宿主身份', bootScript.body.includes('Muse Code') && bootScript.body.includes('test-1.2.3'))
+  const anonymousBootScript = await http('GET', port, '/boot.js')
+  check('没凭据取 /boot.js 401', anonymousBootScript.status === 401, String(anonymousBootScript.status))
 
   const boot = await http('GET', port, '/api/boot', { cookie })
   check('取启动图 200', boot.status === 200, String(boot.status))

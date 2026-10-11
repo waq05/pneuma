@@ -46,6 +46,11 @@ export interface StaticOptions {
    * 插件 bundle 走内容寻址，调用方会显式传一年不可变。
    */
   cacheControl?: string
+  /**
+   * 内容安全策略。给了就随每个命中响应下发（对 HTML 文档生效，其余资源无害）。
+   * 只有宿主界面服务传它——文档里跑着第三方插件 bundle，是唯一值得收口的面。
+   */
+  contentSecurityPolicy?: string
 }
 
 /**
@@ -76,6 +81,7 @@ export function serveStatic(
       'content-type': type,
       'content-length': buffer.length,
       'cache-control': cacheControl,
+      ...(options.contentSecurityPolicy === undefined ? {} : { 'content-security-policy': options.contentSecurityPolicy }),
     })
     res.end(buffer)
     return true
@@ -86,6 +92,7 @@ export function serveStatic(
       'content-type': 'text/html; charset=utf-8',
       'content-length': Buffer.byteLength(body),
       'cache-control': 'no-cache',
+      ...(options.contentSecurityPolicy === undefined ? {} : { 'content-security-policy': options.contentSecurityPolicy }),
     })
     res.end(body)
     return false

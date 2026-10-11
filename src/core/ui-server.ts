@@ -221,9 +221,28 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
   const bootJson = (graph: UiBootGraph): string =>
     JSON.stringify(graph).replace(/</g, '\\u003c')
 
+  /**
+   * 壳文档的内容安全策略。启动图走同源外链 `/boot.js`（见 transformIndex），
+   * 脚本面才能收成 `'self'`——内联注入就得配 nonce，多一套机制不值得。
+   * `'unsafe-inline'` 只留给 style：React 的行内样式与 xterm 的运行期样式都是
+   * style 属性，收掉会全线破相；`img-src` 放开 `data:` 是预览插件的 base64 图片。
+   */
+  const CONTENT_SECURITY_POLICY = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self'",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+  ].join('; ')
+
   const transformIndex = (html: string, pathname: string): string => {
     void pathname
-    const tag = `<script>globalThis.${BOOT_GLOBAL}=${bootJson(buildBoot())}</script>`
+    const tag = `<script src="/boot.js"></script>`
     const head = html.indexOf('</head>')
     return head < 0 ? `${tag}${html}` : `${html.slice(0, head)}${tag}${html.slice(head)}`
   }
@@ -304,6 +323,22 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
       sendJson(res, 200, buildBoot())
       return
     }
+    // 启动图的外链脚本：与昔日内联注入等价（</head> 前同步执行完，页面脚本跑起来时
+    // 全局已就位），但 CSP 的 script-src 才能收成 'self'。同样在 Cookie 闸之后。
+    if (url.pathname === '/boot.js') {
+      if (method !== 'GET' && method !== 'HEAD') {
+        sendText(res, 405, '启动图脚本只认 GET 与 HEAD')
+        return
+      }
+      const body = `globalThis.${BOOT_GLOBAL}=${bootJson(buildBoot())}`
+      res.writeHead(200, {
+        'content-type': 'text/javascript; charset=utf-8',
+        'content-length': Buffer.byteLength(body),
+        'cache-control': 'no-cache',
+      })
+      res.end(method === 'HEAD' ? undefined : body)
+      return
+    }
     // 数据通道：SSE 推帧 + POST 调方法（通道本体在 core/ui-events.ts，鉴权在这一层）。
     if (events !== null && url.pathname === '/api/events') {
       if (method !== 'GET') {
@@ -326,6 +361,7 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
       const served = serveStatic(res, url.pathname, assetsDir, {
         placeholderHtml: PLACEHOLDER_HTML,
         transformHtml: transformIndex,
+        contentSecurityPolicy: CONTENT_SECURITY_POLICY,
       })
       if (!served) log(`[ui-server] 未命中静态文件：${url.pathname}`)
       return

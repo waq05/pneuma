@@ -10,9 +10,8 @@
  *   - 一个插件加载失败只记一条报告，不拖垮壳与别的插件（失败的列在诊断区里）。
  *
  * 为什么用 `<script>` 标签而不是 `new Function`：后者要求页面放开 `unsafe-eval`。
- * 现在这份页面没设 CSP 所以能跑，但一旦加上（安全审查最自然的下一步），
- * 所有插件会**同时**失效，而且报错来自浏览器的安全策略，不会出现在我们的诊断里。
- * `<script src>` 让浏览器自己执行字节码，要的 CSP 只有 `script-src 'self'`。
+ * 宿主的 CSP 已经加上（`core/ui-server.ts`，script-src 'self'）——插件走 `<script src>`
+ * 正好在放行面里；eval 一旦进了某段代码，报错来自浏览器安全策略，不会出现在诊断区。
  *
  * @module dsc-ui-shell/boot
  */
@@ -84,8 +83,8 @@ if (MODULE_DRIFT.length > 0) {
 type Factory = (require: (spec: string) => unknown, module: { exports: unknown }, exports: unknown) => void
 
 /**
- * 取启动图：优先用宿主注入的那一份（不必多一次请求，也不会慢一拍），
- * 本地 `pnpm dev` 直连 vite 时注入不存在，回落到 `/api/boot`。
+ * 取启动图：优先用宿主注入的那一份（外链 /boot.js 在 `</head>` 前同步执行完，
+ * 页面脚本跑起来时全局已就位），本地 `pnpm dev` 直连 vite 时没有它，回落到 `/api/boot`。
  */
 export async function readBootGraph(): Promise<UiBootGraph> {
   const injected = (globalThis as Record<string, unknown>)[BOOT_GLOBAL]
