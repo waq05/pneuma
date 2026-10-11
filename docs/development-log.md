@@ -3042,3 +3042,36 @@ node_modules，ui-shell 从「共享根副本」变成「持有独立副本」�
   清单与实际目录对得上。这条检查守住「改它不再影响界面」的承诺：谁单方面动了任何一边，
   下一次跑检查就报。
 - 验证：9 条全过（当前两边确实一字未动）。
+
+## 阶段 116（对齐计划 8c/8d）：打包态验证四条全过 + remote-web 切壳明确延后（未发版）
+
+### 8d：打包态验证（「没验过」变「验过」）
+
+- **打包配置修一处**：`desktop/electron-builder.yml` 加 `electronDist: node_modules/electron/dist`
+  ——electron-builder 从 GitHub Releases 下载 electron zip 在本机必挂（ECONNRESET / 600s 超时
+  都撞过；镜像变量救不了 zip 这一步），改用 devDependencies 里同版本（44.4.5）的本地发行目录，
+  离线可复现。
+- `pnpm -C desktop run dist:dir` 产出 `dist/win-unpacked/Muse Code.exe`；隔离 HOME 实跑，四条
+  验收全 PASS：
+  1. **壳产物路径解析对**：stderr `界面形态=shell，宿主伺服 …\resources\dsc-core\lib\ui\assets（产物存在=true）`——
+     extraResources 那份（与「界面产物随 lib/ 走、不在 asar」的推演一致）；
+  2. **宿主从打包内 manifest 组图**：渲染进程预跑读数 `bootEntries=9`（删演示插件后的数）、
+     `slotEntries=10`、`looksLikeShell=true`、原生桥 `on`——预跑 eval 用的是桌面自检同一手段
+     （打包态实测可用，与截图时序的配合要先跑通：eval 的 waitFor 别贴着截图的 app.exit）；
+  3. **认证握手成功** + 4. **窗口来自宿主界面服务**（stderr 行）。
+- 附带核对：打包内 `resources/dsc-core/lib/ui/plugins/manifest.json` 的 `apiVersion: 1.0.0`、
+  9 个插件——门禁与第三方发现读的就是这份。
+
+### 8c：remote-web 切壳——明确延后（范围决定，不是遗漏）
+
+计划里「手机端 remote-web/ 也切到同一份壳」一句话，实际是一项独立中型工程：远程侧要换
+静态载荷（lib/remote/assets → 壳产物）、boot 图注入要接远程的配对认证、壳的桌面布局要有
+移动端适配（宽度断点/触控目标）。而阶段 8 的验收七条里**没有** remote-web 条目；远程的
+**bundle 伺服**在阶段 7c 已与本地同构（同一份 `resolveUiBundleRequest`，含第三方）。决定：
+**延后到壳有移动端适配一轮之后再做**，本阶段不动 remote-web——它的现状（独立移动端实现）
+仍然工作，切换的收益（UI 归一）小于当下成本（移动适配从零起）。
+
+### 验证与收尾
+
+- 打包四条 PASS（证据见上）；打包期间桌面自检四用例再跑一遍全绿（真实 `~/.dsc` 零污染）。
+- 计划文档 §8「没验过的」第 1 条回填为「已验过」，其余四条保留。

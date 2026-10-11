@@ -3,6 +3,10 @@ productName: Muse Code
 directories:
   output: dist
   buildResources: build
+# 打包用的 Electron 发行目录：用 devDependencies 里那份（版本与 electron-builder 要的
+# electronVersion 一致），不从 GitHub Releases 下载——本机直连 GitHub 不稳
+# （ECONNRESET / 600s 超时都撞过），离线可复现也是打包该有的性质。
+electronDist: node_modules/electron/dist
 files:
   - out/**
   - package.json

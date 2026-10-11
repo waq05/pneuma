@@ -260,7 +260,16 @@ codex 的证据都在 `D:\codex\codex\codex-rs\tui\src\`（`exec_cell/render.rs`
 
 ## 8. 没验过的（别当已知事实）
 
-1. **打包态全流程**：我只从代码读出「`lib/` 随 extraResources 走、壳产物因此不在 asar 里」，没有真正装包跑过（阶段 8 的第一件事）。
+> 2026-10-11 回填：第 1 条已在阶段 8d 验过（`dist:dir` 产物 `win-unpacked` 实跑四条全过），
+> 其余四条仍按原文保留。
+
+1. **打包态全流程**：✅ **已验过**（2026-10-11，阶段 8d）。`pnpm -C desktop run dist:dir` 产出
+   `dist/win-unpacked/Muse Code.exe`，隔离 HOME 实跑：①壳产物路径解析对（stderr
+   `界面形态=shell，宿主伺服 …\resources\dsc-core\lib\ui\assets（产物存在=true）`）；
+   ②宿主从打包内 manifest 组图（渲染进程预跑读数 bootEntries=9、槽 10、原生桥 on）；
+   ③④认证握手成功、窗口来自宿主界面服务。打包配置修了一处：`electronDist` 指向
+   devDependencies 那份 electron——本机直连 GitHub 下载 zip 会 ECONNRESET/600s 超时，
+   离线可复现也是打包该有的性质。
 2. **utilityProcess 读 asar**：旧渲染层产物在 asar 内（`files: out/**`）且今天由宿主伺服，所以「宿主读 asar」这条路理论上在跑，但同样没在打包态验过。
 3. **原生桥在 Electron 里的完整能力面**：`WebContentsView` 覆盖层（内置浏览器）怎么在「宿主 serviced 的页面」里定位与生命周期管理，需要 5.1 期间实测。
 4. **dsh 的应用文档是否有 CSP**：调研没找到，但不排除在别处注入；这一条只影响「要不要给壳加 CSP」的判断，不影响上面任何一步。
