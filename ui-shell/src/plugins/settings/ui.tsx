@@ -58,6 +58,7 @@ import {
 import { PresetsGroup } from './presets'
 import { ModelsGroup } from './models'
 import { UsageGroup } from './usage'
+import { ArchiveGroup } from './archive'
 
 /** 拿异常的文字形态（宿主与桥都可能抛 Error，也可能是别的值）。 */
 function text(error: unknown): string {
@@ -232,6 +233,8 @@ function SettingsPanel(): ReactNode {
                 <ModelsGroup />
               ) : section.id === 'usage' ? (
                 <UsageGroup />
+              ) : section.id === 'archive' ? (
+                <ArchiveGroup />
               ) : (
                 <NotYetPanel section={section} />
               )
@@ -810,13 +813,11 @@ function PluginsGroup(): ReactNode {
  * 结构化分区（`custom`）里，壳这一版还没手画的那几个：说清**为什么没有**、**去哪做**，
  * 不画一个空壳假装有界面。
  *
- * 这六个分区（模型 / 模式 / 技能 / 归档 / 用量 / 远程）的界面都由桌面端自己画；
- * 这一版搬了技能、模式、模型与用量统计。
+ * 六个结构化分区里只有「远程控制」还占位：它需要的宿主方法（远程服务的启停与配对）
+ * 一条都不在界面通道白名单里——远程是网络暴露面，这是有意收紧的结果，不是没做完。
  */
 const NOT_YET: Readonly<Record<string, string>> = {
-  archive:
-    '归档会话的恢复在左侧会话栏的「归档」页里已经可用。永久删除（purgeSessions）被有意排除，这里不做。',
-  remote: '远程与手机连接的面板还没搬。',
+  remote: '远程与手机连接的面板还没搬（宿主方法不在界面通道白名单里，要接得先扩白名单）。',
 }
 
 /** 还没搬的结构化分区：标题 + 一条诚实的说明。 */
