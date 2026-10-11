@@ -559,17 +559,27 @@ function AppearanceRows(): ReactNode {
   /**
    * 改一项：**先落到界面上再写宿主**——外观是"跟手"的设置，等写入回来才变会有一顿。
    * 写失败就回滚显示并说明原因（不能显示成一个没生效的值）。
+   * 写成功后广播 `shell.uiprefs`：消息流那边（折叠档、思考/工具默认态）自己读一次。
    */
-  const change = (patch: AppearancePatch): void => {
+  const change = (patch: Partial<Appearance> & Record<string, unknown>): void => {
     if (appearance === null) return
     const next = { ...appearance, ...patch }
     setAppearance(next)
-    requestAppearance(patch)
-    void channel.invoke('setUiPrefs', [patch]).catch((error: unknown) => {
-      setAppearance(appearance)
-      requestAppearance(appearance)
-      setNote(`没写进去：${text(error)}`)
-    })
+    const appearanceKeys = ['themeMode', 'fontSize', 'density'] as const
+    const appearanceOnly = Object.fromEntries(
+      Object.entries(patch).filter(([key]) => (appearanceKeys as readonly string[]).includes(key)),
+    )
+    if (Object.keys(appearanceOnly).length > 0) requestAppearance(appearanceOnly as AppearancePatch)
+    void channel
+      .invoke('setUiPrefs', [patch])
+      .then(() => {
+        window.dispatchEvent(new CustomEvent('shell.uiprefs'))
+      })
+      .catch((error: unknown) => {
+        setAppearance(appearance)
+        requestAppearance(appearance)
+        setNote(`没写进去：${text(error)}`)
+      })
   }
 
   if (appearance === null) return <div className="settings-empty">{note === '' ? '正在读外观…' : note}</div>
@@ -638,6 +648,68 @@ function AppearanceRows(): ReactNode {
           </select>
         </div>
       </div>
+      <div className="settings-group-title">对话折叠</div>
+      <div className="setting-row">
+        <div className="setting-text">
+          <div className="setting-label">过程折叠程度</div>
+          <div className="setting-help">
+            定稿的回合把思考与工具调用收得多紧：紧凑=全折；标准=折+实时详情；详细=只折历史回合；完全展开=不折。
+          </div>
+        </div>
+        <div className="setting-control">
+          <select
+            className="shell-select"
+            aria-label="过程折叠程度"
+            value={appearance.processFold}
+            onChange={(event) => {
+              change({ processFold: event.target.value as Appearance['processFold'] })
+            }}
+          >
+            <option value="compact">紧凑</option>
+            <option value="standard">标准</option>
+            <option value="detailed">详细</option>
+            <option value="verbose">完全展开</option>
+          </select>
+        </div>
+      </div>
+      <div className="setting-row">
+        <div className="setting-text">
+          <div className="setting-label">定稿的思考行</div>
+          <div className="setting-help">跑动中的思考永远展开；这里管已经定稿的那些默认收起还是展开。</div>
+        </div>
+        <div className="setting-control">
+          <select
+            className="shell-select"
+            aria-label="定稿的思考行默认态"
+            value={appearance.reasoningOpen ? 'open' : 'folded'}
+            onChange={(event) => {
+              change({ reasoningDefaultOpen: event.target.value === 'open' })
+            }}
+          >
+            <option value="folded">默认收起</option>
+            <option value="open">默认展开</option>
+          </select>
+        </div>
+      </div>
+      <div className="setting-row">
+        <div className="setting-text">
+          <div className="setting-label">工具卡</div>
+          <div className="setting-help">工具调用的默认态：只显示一行摘要，还是连参数与结果一起摊开。</div>
+        </div>
+        <div className="setting-control">
+          <select
+            className="shell-select"
+            aria-label="工具卡默认态"
+            value={appearance.toolOpen ? 'open' : 'folded'}
+            onChange={(event) => {
+              change({ toolDefaultOpen: event.target.value === 'open' })
+            }}
+          >
+            <option value="folded">默认收起</option>
+            <option value="open">默认展开</option>
+          </select>
+        </div>
+      </div>
       {note === '' ? null : <div className="settings-note error">{note}</div>}
       <div className="settings-note">
         「按钮大小」这条轴已经取消：按钮尺寸改为对齐参考实现的固定档位（见 docs/ui-plugin-parity-plan.md §6）。
@@ -646,11 +718,17 @@ function AppearanceRows(): ReactNode {
   )
 }
 
-/** 面板里那三项的本地形态（归一化的权威在壳的 appearance.ts，这里只为自己画控件）。 */
+/** 面板里那几项的本地形态（归一化的权威在壳的 appearance.ts，这里只为自己画控件）。 */
 interface Appearance {
   themeMode: 'dark' | 'light' | 'system'
   fontSize: number
   density: 'compact' | 'standard' | 'roomy'
+  /** 过程折叠程度（紧凑/标准/详细/完全展开）——消息流整轮折叠的能力表。 */
+  processFold: 'compact' | 'standard' | 'detailed' | 'verbose'
+  /** 定稿的思考行默认展开吗。 */
+  reasoningOpen: boolean
+  /** 工具卡默认展开吗。 */
+  toolOpen: boolean
 }
 
 /**
@@ -670,6 +748,12 @@ function normalizePrefs(prefs: Partial<UiPrefsView> | null | undefined): Appeara
     themeMode: prefs?.themeMode === 'light' || prefs?.themeMode === 'system' ? prefs.themeMode : 'dark',
     fontSize: Math.min(1.35, Math.max(0.85, Math.round(second * 100) / 100)),
     density: prefs?.density === 'compact' || prefs?.density === 'roomy' ? prefs.density : 'standard',
+    processFold:
+      prefs?.processFold === 'compact' || prefs?.processFold === 'detailed' || prefs?.processFold === 'verbose'
+        ? prefs.processFold
+        : 'standard',
+    reasoningOpen: prefs?.reasoningDefaultOpen === true,
+    toolOpen: prefs?.toolDefaultOpen === true,
   }
 }
 
