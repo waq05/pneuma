@@ -29,7 +29,8 @@ const check = (name, condition, detail = '') => {
 // ── 真内置清单：构建产物自带 apiVersion，全部插件放行 ──────────────────────────
 const builtin = collectUiPluginArtifacts()
 check('内置清单带 apiVersion 且是 1.0.0', builtin.apiVersion === '1.0.0', String(builtin.apiVersion))
-check('内置清单的全部插件都进了产物表', builtin.problems.length === 0 && builtin.entries.length >= 10, `entries=${String(builtin.entries.length)} problems=${JSON.stringify(builtin.problems)}`)
+// 数量不钉死（演示插件已按拍板移除，内置清单会变）：零 problem、至少有一个即可。
+check('内置清单的全部插件都进了产物表', builtin.problems.length === 0 && builtin.entries.length > 0, `entries=${String(builtin.entries.length)} problems=${JSON.stringify(builtin.problems)}`)
 check('内置清单的条目不带 api 声明（与壳同源）', builtin.entries.every((entry) => entry.api === undefined))
 
 // ── 门禁函数逐条规则 ───────────────────────────────────────────────────────────
@@ -55,8 +56,8 @@ try {
   mkdirSync(join(dir, 'good'), { recursive: true })
   mkdirSync(join(dir, 'greedy'), { recursive: true })
   // bundle 随便拿个真的（门禁不看内容，只看文件在不在）
-  cpSync('lib/ui/plugins/echo/client.js', join(dir, 'good', 'client.js'))
-  cpSync('lib/ui/plugins/echo/client.js', join(dir, 'greedy', 'client.js'))
+  cpSync('lib/ui/plugins/composer/client.js', join(dir, 'good', 'client.js'))
+  cpSync('lib/ui/plugins/composer/client.js', join(dir, 'greedy', 'client.js'))
   writeFileSync(
     join(dir, 'manifest.json'),
     JSON.stringify({

@@ -2,10 +2,9 @@
  * 阶段 6 探针：TUI 同进程载体——终端壳装 `platform: 'tui'` 的界面插件。
  *
  * 验收口径（对齐 ui-plugin-parity-plan §3 阶段 6）：
- *   1. TUI 里至少一个槽位由插件贡献：真 echo bundle 装进注册表，ink 帧里出现它的话。
- *   2. **同一份插件源码**在 web 与 tui 两种载体下各跑一次：清单里 echo 两条
- *      （platform web / tui）指向同一个 client.js——web 侧由 ui-plugin-test 钉住，
- *      这里钉的是「装载的就是那个文件」。
+ *   1. TUI 里至少一个槽位由插件贡献：样本 bundle 装进注册表，ink 帧里出现它的话。
+ *   2. **同一份插件源码**在 web 与 tui 两种载体下各跑一次：自造清单里 sample 两条
+ *      （platform web / tui）指向同一个 client.js（演示插件已按拍板移除，样本自造）。
  *   3. 装载语义与浏览器壳一致：失败报告不静默、白名单外 require 被拒、
  *      顺序依赖（先注册后声明）靠重试一轮自愈。
  *
@@ -13,7 +12,7 @@
  *
  * @module dsc/scripts/ui-tui-plugin-test
  */
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -37,20 +36,35 @@ const check = (name, condition, detail = '') => {
 }
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-// ── 前置：真清单里 echo 是「同一份 bundle、两个载体」──────────────────────────
-const manifest = JSON.parse(readFileSync('lib/ui/plugins/manifest.json', 'utf8'))
-const echoRows = manifest.plugins.filter((p) => p.id === 'echo')
-check('清单里 echo 有 web 与 tui 两行', echoRows.length === 2 && new Set(echoRows.map((r) => r.platform)).size === 2)
-check('两行指向同一个 client.js（同一份插件源码）', new Set(echoRows.map((r) => r.file)).size === 1, JSON.stringify(echoRows.map((r) => r.file)))
-const echoBundle = join('lib', 'ui', 'plugins', 'echo', echoRows[0]?.file ?? 'client.js')
+// ── 自造样本：一份双载体清单（web + tui 两行同一个文件）+ 两个坏样本 ─────────────
+// 演示插件（hello/echo/runtime）已按拍板移除（阶段 8），样本不再借内置产物：
+// 双载体语义由这份自造清单钉住，与内置清单的内容解耦。
+const SAMPLE_BUNDLE = [
+  `(globalThis.__DSC_UI_FACTORIES__ ??= {})['sample'] = function (require, module, exports) {`,
+  `  const React = require('react');`,
+  `  const { defineUiPlugin, TUI_SLOTS, Text } = require('@dsc/ui');`,
+  `  module.exports = defineUiPlugin({`,
+  `    name: '探针样本',`,
+  `    apply(ui) {`,
+  `      if (ui.host.platform === 'tui') {`,
+  `        ui.slots.injectSlot(TUI_SLOTS.noticeExtensions, () =>`,
+  `          ui.slots.register(TUI_SLOTS.noticeExtensions, { id: 'sample.line', order: 1 }, function () {`,
+  `            return React.createElement(Text, null, '探针样本已接入终端壳');`,
+  `          }),`,
+  `        );`,
+  `      }`,
+  `    },`,
+  `  });`,
+  `};`,
+  ``,
+].join('\n')
 
-// ── 隔离插件目录：真 echo bundle + 两个坏样本 ─────────────────────────────────
 const work = mkdtempSync(join(tmpdir(), 'dsc-ui-tui-plugins-'))
 const pluginsDir = join(work, 'plugins')
-mkdirSync(join(pluginsDir, 'echo'), { recursive: true })
+mkdirSync(join(pluginsDir, 'sample'), { recursive: true })
 mkdirSync(join(pluginsDir, 'noapply'), { recursive: true })
 mkdirSync(join(pluginsDir, 'badimport'), { recursive: true })
-cpSync(echoBundle, join(pluginsDir, 'echo', 'client.js'))
+writeFileSync(join(pluginsDir, 'sample', 'client.js'), SAMPLE_BUNDLE, 'utf8')
 // 坏样本一：bundle 形状对，但没有导出 apply。
 writeFileSync(
   join(pluginsDir, 'noapply', 'client.js'),
@@ -67,8 +81,10 @@ writeFileSync(
   join(pluginsDir, 'manifest.json'),
   JSON.stringify({
     version: 1,
+    apiVersion: '1.0.0',
     plugins: [
-      { id: 'echo', file: 'client.js', platform: 'tui' },
+      { id: 'sample', file: 'client.js', platform: 'web' },
+      { id: 'sample', file: 'client.js', platform: 'tui' },
       { id: 'noapply', file: 'client.js', platform: 'tui' },
       { id: 'badimport', file: 'client.js', platform: 'tui' },
     ],
@@ -184,7 +200,7 @@ async function renderFrame(registry, slot) {
   return { text: output, unmount: () => instance.unmount() }
 }
 
-// ── 用例一：真 echo 装进终端壳，帧里看得见 ────────────────────────────────────
+// ── 用例一：自造样本装进终端壳，帧里看得见 ────────────────────────────────────
 {
   const registry = new SlotRegistry()
   registry.declare(TUI_SLOTS.noticeExtensions, 'list')
@@ -196,21 +212,16 @@ async function renderFrame(registry, slot) {
     pluginsDir,
     onReport: (report) => reports.push(report),
   })
-  const echo = load.reports.find((r) => r.id === 'echo')
-  check('echo 装载成功', echo?.ok === true, JSON.stringify(echo))
-  const normalized = echoBundle.replaceAll('\\', '/')
-  check(
-    '装载的就是 web 侧同一个 client.js',
-    normalized === 'lib/ui/plugins/echo/client.js',
-    normalized,
-  )
+  const sample = load.reports.find((r) => r.id === 'sample')
+  check('样本装载成功', sample?.ok === true, JSON.stringify(sample))
+  check('双载体清单里只装载 tui 行（web 行留给浏览器壳）', load.reports.filter((r) => r.id === 'sample').length === 1)
   const noapply = load.reports.find((r) => r.id === 'noapply')
   check('没有导出 apply 的插件被点名拒绝', noapply?.ok === false && (noapply.error ?? '').includes('apply'), JSON.stringify(noapply))
   const badimport = load.reports.find((r) => r.id === 'badimport')
   check('白名单外的 require 被拒并说明允许表', badimport?.ok === false && (badimport.error ?? '').includes('白名单外'), JSON.stringify(badimport))
 
   const frame = await renderFrame(registry, TUI_SLOTS.noticeExtensions)
-  check('帧里出现插件贡献的那一行', frame.text.includes('界面插件 echo 已接入终端壳（同一份 bundle）'))
+  check('帧里出现插件贡献的那一行', frame.text.includes('探针样本已接入终端壳'))
   frame.unmount()
   load.disposeAll()
 }

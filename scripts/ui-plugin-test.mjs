@@ -798,7 +798,8 @@ console.log('\n[5] 真实构建产物')
     )
     check('插件 bundle 引用壳的插件 API', bundles.every((bundle) => bundle.text.includes('require("@dsc/ui")')))
     check('插件 bundle 是工厂形状（导出 apply）', bundles.every((bundle) => bundle.text.includes('apply')))
-    check('子槽示例插件在产物里', bundles.some((bundle) => bundle.id === 'echo'))
+    // 演示插件（hello/echo/runtime）按拍板从发布面移除（阶段 8）：点名它们的产物断言随之
+    // 删除——子槽语义的活体证据由槽位注册表单测（本文件 220-240 行）承担，不靠演示 bundle。
     check('宿主侧能读到界面壳的静态页', existsSync(join(uiPluginsDir(), '..', 'assets', 'index.html')))
     const shellPage = readFileSync(join(uiPluginsDir(), '..', 'assets', 'index.html'), 'utf8')
     check('壳页面挂了入口脚本', shellPage.includes('app-'))

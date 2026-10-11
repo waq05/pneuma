@@ -28,6 +28,10 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: { '@dsc/ui-core': uiCore },
+    // pnpm workspace 下 ui-shell 有自己的一份 react 物理副本，而 @dsc/ui-core（../src/ui）
+    // 解析到根仓库的那份——两份 React 的 dispatcher 互不相通，渲染期直接白屏
+    // （Cannot read properties of null (reading 'useCallback')）。dedupe 把全图钉到根那份。
+    dedupe: ['react', 'react-dom', 'react/jsx-runtime', 'react-dom/client'],
   },
   server: {
     host: '127.0.0.1',

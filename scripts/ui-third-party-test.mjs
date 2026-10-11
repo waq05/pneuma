@@ -39,9 +39,31 @@ const check = (name, condition, detail = '') => {
 }
 
 // ── 夹具：内置清单（apiVersion 1.0.0）+ 第三方目录 ─────────────────────────────
+// 样本 bundle 自造（演示插件已按拍板移除，不再借内置产物）：工厂注册名必须等于目录 id
+// （打包约定），装载器按 id 从工厂表里取——拿别人的 bundle 原样放进自己的目录，
+// 装载器会报「没有注册工厂」。
+const SAMPLE_BUNDLE = [
+  `(globalThis.__DSC_UI_FACTORIES__ ??= {})['__ID__'] = function (require, module, exports) {`,
+  `  const React = require('react');`,
+  `  const { defineUiPlugin, TUI_SLOTS, Text } = require('@dsc/ui');`,
+  `  module.exports = defineUiPlugin({`,
+  `    name: '第三方样本',`,
+  `    apply(ui) {`,
+  `      if (ui.host.platform === 'tui') {`,
+  `        ui.slots.injectSlot(TUI_SLOTS.noticeExtensions, () =>`,
+  `          ui.slots.register(TUI_SLOTS.noticeExtensions, { id: 'sample.line', order: 1 }, function () {`,
+  `            return React.createElement(Text, null, '第三方样本已接入终端壳');`,
+  `          }),`,
+  `        );`,
+  `      }`,
+  `    },`,
+  `  });`,
+  `};`,
+  ``,
+].join('\n')
 const builtinDir = join(home, 'builtin-plugins')
 mkdirSync(join(builtinDir, 'builtin-one'), { recursive: true })
-cpSync('lib/ui/plugins/echo/client.js', join(builtinDir, 'builtin-one', 'client.js'))
+writeFileSync(join(builtinDir, 'builtin-one', 'client.js'), SAMPLE_BUNDLE.replaceAll('__ID__', 'builtin-one'), 'utf8')
 writeFileSync(
   join(builtinDir, 'manifest.json'),
   JSON.stringify({ version: 1, apiVersion: '1.0.0', plugins: [{ id: 'builtin-one', file: 'client.js', platform: 'web' }] }),
@@ -49,12 +71,9 @@ writeFileSync(
 )
 
 const thirdRoot = join(process.env.DSC_HOME, 'plugins')
-// 样本 bundle 拿真 echo 产物改：工厂注册名必须等于目录 id（打包约定），装载器按 id 从
-// 工厂表里取——拿别人的 bundle 原样放进自己的目录，装载器会报「没有注册工厂」。
-const mkThird = (name, api, platforms, bundle) => {
+const mkThird = (name, api, platforms) => {
   mkdirSync(join(thirdRoot, name, 'ui'), { recursive: true })
-  const raw = readFileSync(bundle ?? 'lib/ui/plugins/echo/client.js', 'utf8')
-  writeFileSync(join(thirdRoot, name, 'ui', 'client.js'), raw.replace('["echo"]', `["${name}"]`), 'utf8')
+  writeFileSync(join(thirdRoot, name, 'ui', 'client.js'), SAMPLE_BUNDLE.replaceAll('__ID__', name), 'utf8')
   writeFileSync(join(thirdRoot, name, 'plugin.json'), JSON.stringify({ api, ...(platforms === undefined ? {} : { platforms }) }), 'utf8')
 }
 mkThird('good-ui', '^1.0.0')

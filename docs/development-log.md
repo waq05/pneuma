@@ -2998,3 +2998,34 @@ apiVersion 不匹配被拒并说明原因、信任确认走一次**。示例在 
 - 第三方插件的 `plugin.json` 只认 `api`/`platforms` 三个字段；宿主半边（plugin.js）与目录形式
   宿主插件不在本阶段。
 - 双平台第三方插件的 tui 行依赖宿主以 `platform: 'tui'` 收集——远程壳切同一份壳时自动受益。
+
+## 阶段 114（对齐计划 8a）：删演示插件 + 修一份 pnpm install 诱发的双 React 白屏（未发版）
+
+计划拍板第 4 条落地：hello / echo / runtime 从发布面移除（构建清单 12 → 9），连同阶段 6 的
+echo 双载体行。点名它们的产物断言**删除**（不是改成迎合实现）；探针里借内置产物当样本的
+三处（ui-tui-plugin-test / ui-third-party-test）换成**自造样本 bundle**（与内置清单内容解耦），
+ui-api-gate-test 的占位换 composer；ui-api-gate-test 钉「≥10 个插件」的读数断言松绑为「>0」。
+
+### 实机抓到并修掉一个 P0：壳白屏（双 React）
+
+删完插件跑桌面自检，壳两用例**白屏**（#root 空、诊断区消失）。sourcemap + trace-mapping 把
+压缩堆栈翻回源码后实锤：**bundle 里有两份 react**——`ui-shell/node_modules` 一份、根仓库
+`node_modules` 一份。pnpm workspace 下两个包各持有一份 react 物理副本，而
+`@dsc/ui-core`（`../src/ui`）解析到根的那份、壳自己的模块解析到自己那份——
+两份 React 的 dispatcher 互不相通，渲染期 `Cannot read properties of null (reading 'useCallback')`。
+
+时间线（为什么阶段 6/7 时是绿的）：7d 的 `pnpm add semver` 重排过 workspace 的
+node_modules，ui-shell 从「共享根副本」变成「持有独立副本」；8a 重建后分裂第一次真正
+进了渲染路径。基线对照（stash 回 dc38242 重建）证明分裂在此之前已存在——
+**只要再跑一次 pnpm install 就会炸，与删不删演示插件无关**，8a 只是第一个撞上的。
+
+**修复**：`ui-shell/vite.config.ts` 加 `resolve.dedupe: ['react','react-dom','react/jsx-runtime',
+'react-dom/client']`——全图钉到根副本（重建后 sourcemap 实测 react 本体副本 = 1）。
+这条坑已记进记忆：**动过 pnpm install 后必须跑一次桌面自检**。
+
+### 验证
+
+- 七个 UI 探针全绿（ui-plugin / tui / third-party / api-gate / serve / events 42 / native 53）。
+- 桌面自检四用例恢复全绿：壳侧 bootEntries=9、原生桥 v2 就绪、终端与文件面板正常；
+  legacy / fallback 照旧；真实 `~/.dsc` 零污染。
+- 浏览器实机：壳渲染恢复（诊断区 9 个插件、槽清单、桥降级说明齐全），槽条目 17 → 10。
