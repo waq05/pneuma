@@ -3029,3 +3029,16 @@ node_modules，ui-shell 从「共享根副本」变成「持有独立副本」�
 - 桌面自检四用例恢复全绿：壳侧 bootEntries=9、原生桥 v2 就绪、终端与文件面板正常；
   legacy / fallback 照旧；真实 `~/.dsc` 零污染。
 - 浏览器实机：壳渲染恢复（诊断区 9 个插件、槽清单、桥降级说明齐全），槽条目 17 → 10。
+
+## 阶段 115（对齐计划 8b）：桌面渲染层冻结 + 逐字节分叉检查（未发版）
+
+- **冻结横幅**：`desktop/src/renderer/FROZEN.md`——声明本目录进入冻结（经典版留档，回落
+  路径专用）：不改样式（家在 `ui-shell/src/legacy/` 与壳的 `styles.css`）、不做新能力（走插件
+  与原生桥）、唯一合法改动是回落路径必需的修复；`bridge.ts` 的退役归位表与「两份 UI」决定
+  的关系也写明了。与 `ui-shell/src/legacy/PROVENANCE.md`（「谁是家」）互为呼应。
+- **分叉检查**：新探针 `scripts/legacy-frozen-check.mjs`（9 条断言）——四对样式文件
+  （tokens/base/primitives/views ⇄ styles/三份 + styles.css）SHA256 两两一致、
+  与 PROVENANCE 记录的「复制时哈希」一致（连 legacy 一侧也没人动过）、PROVENANCE 的
+  清单与实际目录对得上。这条检查守住「改它不再影响界面」的承诺：谁单方面动了任何一边，
+  下一次跑检查就报。
+- 验证：9 条全过（当前两边确实一字未动）。
