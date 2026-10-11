@@ -3198,3 +3198,102 @@ node_modules，ui-shell 从「共享根副本」变成「持有独立副本」�
 ### 收尾之后
 
 计划 §2 七条验收 7/7；验收 3 的回填见计划文档 §2。
+
+## 界面对齐（2026-10-11）：壳的布局与操作逻辑逐项对齐桌面渲染层（未发版）
+
+背景：插件化计划七条验收收官后用户问「ui 布局和操作逻辑对齐桌面端了吗」。把桌面渲染层
+（`desktop/src/renderer`，约 2.1 万行）与壳逐区盘点对表，差距分四批补齐，六个提交。
+
+### 批 1：布局与全局（布局三拖拽 / dock 保活 / 欢迎态 / toast / confirm / Esc / 快捷键）
+
+- **面板几何三拖拽**（`ui-shell/src/platform/panels.ts` + `thread-resizer.tsx`，桌面端
+  `panels.ts` / `ThreadResizer.tsx` 的同构移植）：侧栏宽（200–420）、正文列宽
+  （`--dsc-thread-max` 一变量带动正文/审批/输入三处，480 到窗口宽，双击复位 76ch）、
+  dock 宽（300–820）。**localStorage 键与桌面渲染层共用**（`dsc.sidebarWidth` /
+  `dsc.threadWidth` / `dsc.dockWidth`）——桌面窗口与壳同源，拖过的宽度两边延续。
+- **dock 常驻保活**（对齐桌面端「收起=滑出右缘不卸载」）：壳的 dock 槽改为**常驻渲染**，
+  收起 `display:none` 不卸载组件树；面板互斥从「return null 卸载」改成 `data-hidden` 藏。
+  终端进程、文件树展开状态从此活过收起（终端不再「收起即杀」）。
+- 欢迎态（空会话居中「有什么可以帮忙的？」，会话开场标不上屏——`session-marker` 移植）；
+  Ctrl+B 侧栏折叠 / Ctrl+P 文件面板 / Ctrl+` 终端面板；设置面板与模型浮层补 Esc
+  （修掉设置关闭钮 title 承诺了 Esc 却没实现的旧账）。
+- `platform/toast.ts` + `platform/confirm.ts`（桌面端 components/toast.ts、confirm.ts 的
+  纯 DOM 同构移植，样式类全在 legacy/primitives.css），经 `@dsc/ui` 转出
+  `toastOk` / `toastErr` / `confirmAction`——插件的失败从此有回执，破坏性动作先过确认框。
+
+### 批 2：侧栏（`plugins/sessions/`）
+
+- `grouping.ts`（桌面端 `sidebar-groups.ts` 移植）：按工作区/树/单列表三档分组、
+  归档三档筛选、搜索过滤、组内置顶块+时间排序；树挂层级用 `nestByPath` 同构移植。
+- 「会话/归档」双页签**换成旧界面形态**：快照本就含归档会话（`session.ts` 列表合并了
+  归档区），显隐走「视图选项 → 筛选会话」三档（`setUiPrefs` 写回，失败回滚+toast）。
+- 视图选项菜单（分组/排序/筛选三组单选）；工作区组行（展开态持久化 `sessionExpansion`、
+  组行 `···` 菜单：资源管理器打开/重命名显示名/恢复真实目录名/批量恢复）；
+  每组默认 5 条「展开剩余」+5 增量、收组重置。
+- 会话行右键菜单（置顶/重命名/分叉/复制 ID/停止运行（`interrupt(path)` 停后台会话）/
+  归档（先过确认框，文案照旧）/恢复）；双击标题改名；行级快捷键
+  Ctrl+Alt+R / Ctrl+Alt+F / Ctrl+Shift+A；行尾只剩归档/恢复一颗钮（其余进右键）。
+- 底部工作目录行 + 当前会话用量行；最近工作区经原生桥 `recentCwds`（浏览器降级不显示）。
+
+### 批 3：消息流（`plugins/transcript/`）
+
+- **整轮折叠**（`round-fold.tsx` 移植 `round-fold.tsx` + `fold-policy.ts` + `timing.ts`）：
+  定稿轮过程收成一行「用时 X」，跑动中/插话（steering）/中断/失败的轮强制展开或画
+  不可点的抬头；四档能力表跟 `processFold` 偏好；收起的过程行挂 `hidden="until-found"`
+  （Ctrl+F 命中自动展开）。手动开合是组件内记忆（桌面端是 localStorage 按会话持久，简化）。
+- **正文 markdown**：`MarkdownView`（GFM）接入 text 条目，直播尾同渲染。
+- **进行中状态行**（`TurnStatusLine` + `liveActivity` 移植）：阶段说明 + 活动名（真工具名）
+  + 每秒计时，回合结束消失。
+- 视口：只渲染最近 8 轮 + 「加载更早的 N 轮」（锚点补偿按 `chat-earlier` 类名）；
+  上翻暂停跟随并浮出「回到底部」。
+- 轮尾脚注补赞/踩（localStorage `dsc.messageFeedback`，按轮首条目 id 键控）与
+  「分叉这一轮」（保留到本轮用户消息，第 1 轮禁用——桌面端同语义）。
+- **编辑重发**：用户消息 hover 编辑钮 → 原地编辑 → 重发 = 分叉新会话（第 1 条前无内容
+  则开全新会话），原会话保留——桌面端 ChatView 的 editAndRefork 同款。
+- 设置 → 对话折叠：过程折叠程度四档 + 定稿思考行/工具卡默认态两行；保存后广播
+  `shell.uiprefs` 自定义事件，消息流即时跟档。
+
+### 批 4：输入区与面板
+
+- **tasks 插件**（新）：任务清单条（done/total + 进度条 + 当前步骤 + 展开清单 + 清空）与
+  会话目标条（状态/轮数 + 暂停/继续/放宽轮次/清除）——快照 `surfaces.todos` / `surfaces.goal`
+  驱动，动作 `clearTodos` / `goalAction`。挂在审批卡之后输入框之前（order 20/22）。
+- composer：**/compact 就地执行**（通道里有专门方法；其余斜杠指令保持拦截——
+  `runCommand` 不在白名单是安全设计不是缺口）；**模式（预设）旋钮**（`listPresets` 懒取 +
+  `usePreset` 即点即切，与权限旋钮并排）。
+- **变更页签不再只读**：行尾暂存/取消暂存钮、提交区（feat:/fix:/chore: 占位、无暂存禁用）、
+  提交历史（hash+信息+作者·日期，`git-log`）。三个写类 op 在宿主侧过审批——面板只管
+  发调用，裁决与审批卡走工具调用的同一套。
+- **@ 文件提及补全**（`composer/mention.ts`）：@ 触发、`fs-list` 懒递归（深度 4 / 500 条 /
+  60s 缓存）、文件名前缀>包含的模糊排序、↑↓/Tab/Enter/Esc、Esc 后同 token 不再弹。
+- **完成提示音与后台通知**：`completion-sound.ts` 整体移植（14 种 Web Audio 合成音色，
+  无音频资产）；同会话跑动→空闲的那一拍按 `turnCompleteSound`/`turnCompleteSoundVariant`
+  播；页面在后台且 `turnCompleteNotify` 开着时经原生桥 `notify` 发系统通知（浏览器降级）。
+- **team 插件**（新）：顶栏「队友」钮 + 浮层（每 3 秒轮询 `listTeammates`）；行内
+  停止/发话/移除（确认框）；点行看运行记录（`peekTranscript` 只读简版流）。白名单里
+  一直有、壳里一直没接的四个队友方法从此接上。
+
+### 诚实边界（受安全设计或工程量约束，全部有意）
+
+- **通道白名单保持不动**：`runCommand`（斜杠指令）/`setPolicy`（权限档切换）/
+  `purgeSessions`（永久删除）/端点凭据写入/市场技能安装——`core/ui-methods.ts` 头注逐条
+  写了理由（XSS 防线），界面对齐到此为止；壳里相应入口给的是说明不是假按钮。
+- **浏览器页签**（桌面 WebContentsView 原生层）无法在 web 壳对齐；**贴图**受请求体
+  64KB 上限约束（单图 32KB，桌面端走 IPC 才有 6MB）。
+- **阶段组**（process-groups 的 14 类过程聚合 + 组体滚动跟随）与**右缘刻度条 JumpStrip**、
+  折叠吸附快捷栏、**手动排序拖拽**（会话/工作区，依赖 `sessionOrder` 拖拽写回）未搬——
+  各自是独立大件，整轮折叠不依赖阶段组（compact 档=只折整轮）。
+- **csv/xlsx 表格预览**仍走代码视图/系统程序打开（要装 papaparse+xlsx，留给发版批次）。
+- 团队面板是精简版：无「其它会话的队友」折叠组，运行记录无完整座位/折叠体系。
+- 终端仍无 TTY（管道模式固有限制）、无多标签；正文 markdown 的行内代码 chip
+  （点开预览/悬浮 diff 卡）未接——它需要跨插件联动文件面板，留待预览页签形态定型。
+
+### 验证
+
+- 壳与宿主双侧 tsc 绿；壳构建过（内置清单 9 → 11：+tasks、+team）。
+- 八探针全绿（ui-plugin / ui-serve / ui-events 42 / ui-native-bridge 53 / ui-tui-plugin /
+  ui-api-gate / ui-third-party / legacy-frozen-check）。
+- 桌面自检四用例全绿：壳用例 `looksLikeShell:true`、`bootEntries:11`、原生桥 14 操作
+  （notify 在列）、终端起停与文件面板实测；fallback 用例退回旧渲染层；
+  真实 `~/.dsc` 跑前跑后 335 文件指纹逐字节一致（零污染）。
+- 六个提交：布局与全局 / 侧栏 / 消息流 / 任务条+composer / Git+@补全+提示音 / 团队面板。
