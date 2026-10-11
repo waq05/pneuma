@@ -31,7 +31,7 @@ import { spawn } from 'node:child_process'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Box, Text, useInput, useStdout } from 'ink'
 import type { DOMElement } from 'ink'
-import type { JSX } from 'react'
+import type { JSX, ReactNode } from 'react'
 import type {
   ArchivedSessionView,
   DscRuntime,
@@ -126,12 +126,15 @@ export function App({
   runtime,
   clipboardReader,
   imageRenderer,
+  tuiNoticeExtras,
 }: {
   runtime: DscRuntime
   /** 剪贴板读取（测试注入口；省略用 PowerShell 真实现）。 */
   clipboardReader?: () => Promise<ClipboardResult>
   /** 图片→半块字符画渲染（测试注入口；省略用 PowerShell 真实现）。 */
   imageRenderer?: typeof renderImageBlock
+  /** 界面插件贡献的通知区扩展块（阶段 6；终端插件装载后传入，测试不传就没有这一块）。 */
+  tuiNoticeExtras?: ReactNode
 }): JSX.Element {
   const snapshot = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot)
   const approval = snapshot.surfaces.pendingApproval
@@ -1639,6 +1642,8 @@ export function App({
                 </Text>
               </Box>
             ) : null}
+            {/* 界面插件贡献的块（阶段 6）：与 notice 同一区的动态行，出现才占行，不动固定帧的行数数学。 */}
+            {tuiNoticeExtras}
             {chatAnchor !== null ? (
               <TailIndicator
                 hidden={snapshot.entries.length - chatEnd}

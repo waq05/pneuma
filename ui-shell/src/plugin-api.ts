@@ -26,6 +26,14 @@ import type {
 import { NATIVE_BRIDGE_VERSION, type NativeEvent, type NativeOp } from '@dsc/ui-core'
 import { dockPanel, subscribeDock } from './dock-state'
 
+// 载体基元与槽名契约：终端壳的对应物在 `src/ui/tui-plugin-api.ts`。
+// 槽名两边导出同名常量——插件 import 它写注册目标，字符串字面量不散落。
+export { Text } from './plugin-text.js'
+export const TUI_SLOTS = {
+  /** 通知盒下方的插件扩展行（list）：插件在这里放一行状态说明。 */
+  noticeExtensions: 'tui.notice.extensions',
+} as const
+
 /**
  * 壳交给插件组件的渲染能力（每个条目都有）。
  *

@@ -1,38 +1,22 @@
 /**
  * React 绑定：把槽位注册表接到 React 的订阅模型上。
  *
- * 要点只有两条：
- *
- *   1. `useSyncExternalStore` 的快照必须**引用稳定**，否则每次渲染都被判成「变了」，
- *      界面掉进无限重渲染。稳定性由注册表按槽保证（同一个槽版本没变就返回同一个数组），
- *      而订阅也是**按槽**的——别的槽登记新东西不该把这一块也叫醒。
- *   2. 每个条目都套一层错误边界，而且崩溃要**上报 + 退位**：只画一句「这块坏了」的话，
- *      格子里明明还有健康的实现也永远顶不上来，线上也只能靠用户截图定位。
+ * 订阅逻辑（useSlot / useSlotFaults）已下沉到共享层（`@dsc/ui-core` 的
+ * `slots-react.ts`——终端壳要用同一份语义）；这里留的是**浏览器壳自己的渲染出口**：
+ * 条目外层套 `<div class="slot-entry">`（自检脚本靠它认块），崩溃视图也是 DOM。
  *
  * 装配错误（壳与插件的契约没对上，例如渲染一个没声明过的子槽）不在此列：那种必须炸出来。
  *
  * @module dsc-ui-shell/slots-react
  */
-import { Component, useCallback, useMemo, useSyncExternalStore, type ReactNode } from 'react'
-import { SlotAssemblyError, type SlotEntry, type SlotFault } from '@dsc/ui-core'
+import { Component, useCallback, useMemo, type ReactNode } from 'react'
+import { SlotAssemblyError, useSlot, type SlotEntry } from '@dsc/ui-core'
 import type { SlotRenderApi, UiComponent, UiSlots } from './plugin-api'
 
 /** 渲染位置不关心 owner 值时共用这一个空对象。 */
 const NO_OWNER: Readonly<Record<string, never>> = Object.freeze({})
 
-/** 订阅一个槽里的登记（快照的引用稳定由注册表按槽版本保证）。 */
-export function useSlot(slots: UiSlots, slot: string): readonly SlotEntry<UiComponent>[] {
-  const subscribe = useCallback((onChange: () => void) => slots.subscribe(onChange, slot), [slots, slot])
-  const snapshot = useCallback(() => slots.winners(slot), [slots, slot])
-  return useSyncExternalStore(subscribe, snapshot, snapshot)
-}
-
-/** 订阅壳记下的故障（诊断区用：哪个插件的哪一块崩了、崩在哪一步）。 */
-export function useSlotFaults(slots: UiSlots): readonly SlotFault[] {
-  const subscribe = useCallback((onChange: () => void) => slots.subscribe(onChange), [slots])
-  const snapshot = useCallback(() => slots.faults, [slots])
-  return useSyncExternalStore(subscribe, snapshot, snapshot)
-}
+export { useSlot, useSlotFaults } from '@dsc/ui-core'
 
 /**
  * 渲染一个槽里的全部条目。

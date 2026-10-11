@@ -75,11 +75,14 @@ function readMeta(dir) {
     if (doc.immediately !== true) throw new Error(`${dir}/plugin.json 的 immediately 只能是 true`)
     meta.immediately = true
   }
-  if (doc.platform !== undefined) {
-    if (doc.platform !== 'web') {
-      throw new Error(`${dir}/plugin.json 的 platform 只支持 "web"（收到 ${JSON.stringify(doc.platform)}）`)
+  if (doc.platforms !== undefined) {
+    // 阶段 6 起，载体无关的插件声明 `platforms: ['web', 'tui']`：产物构建一次，
+    // 清单里出两条（platform web + tui，同一个 client.js）——两种壳各自的
+    // collect 按 platform 过滤，互不干扰；require('@dsc/ui') 由各自的表解析。
+    if (!Array.isArray(doc.platforms) || doc.platforms.some((v) => v !== 'web' && v !== 'tui')) {
+      throw new Error(`${dir}/plugin.json 的 platforms 只能是 'web' / 'tui' 的数组`)
     }
-    meta.platform = 'web'
+    meta.platforms = doc.platforms
   }
   return meta
 }
@@ -140,8 +143,14 @@ for (const id of ids) {
     'utf8',
   )
   const meta = readMeta(join(srcDir, id))
-  plugins.push({ id, file: 'client.js', platform: 'web', ...meta })
-  console.log(`[build-plugins] ${id} → lib/ui/plugins/${id}/client.js`)
+  const platforms = meta.platforms ?? ['web']
+  delete meta.platforms
+  // 载体无关的插件出两条清单行（同一份 client.js）；每行都带 platform，
+  // 宿主与终端壳各自按自己的载体取（collectUiPluginArtifacts 按 platform 过滤）。
+  for (const platform of platforms) {
+    plugins.push({ id, file: 'client.js', platform, ...meta })
+  }
+  console.log(`[build-plugins] ${id} → lib/ui/plugins/${id}/client.js（${platforms.join(' + ')}）`)
 }
 
 /** 宿主只读这份清单（见 `src/core/ui-bundles.ts`）。 */

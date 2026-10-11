@@ -12,6 +12,7 @@
  */
 import type { HostSnapshot } from './frames.js'
 import type { SlotEntry, SlotKind, SlotRegisterOptions } from './slots.js'
+import type { UiPlatform } from './manifest.js'
 
 /** 界面要显示的宿主身份。 */
 export interface UiHostInfo {
@@ -19,6 +20,12 @@ export interface UiHostInfo {
   name: string
   /** 宿主版本，例如 `0.6.67`。 */
   version: string
+  /**
+   * 装载这个插件的载体（阶段 6 起）。插件按它分支注册进哪条槽——
+   * 同一份 bundle 在浏览器壳与终端壳里各跑一次，靠的就是这一个字段；
+   * 缺省当 `web`（清单里 platform 缺省也是这个语义）。
+   */
+  platform?: UiPlatform
 }
 
 /**

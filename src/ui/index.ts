@@ -9,6 +9,12 @@ export * from './manifest.js'
 export * from './plugin.js'
 export * from './slots.js'
 /**
+ * 槽位注册表的 React 订阅面（useSlot / useSlotFaults）：浏览器壳与终端壳共用。
+ * 为什么在共享层：两个壳的「组件」都是 React 组件，订阅语义只有一份；
+ * 渲染出口（SlotOutlet）各壳自持——条目外层的包装是载体自己的事。
+ */
+export * from './slots-react.js'
+/**
  * 原生桥的规格（操作名 + 实参形状 + 校验）也从这里转出去。
  *
  * 为什么宿主侧的一份 `core` 模块能进界面壳的入口：`core/native-bridge.ts` 与上面几份

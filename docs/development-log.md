@@ -2870,3 +2870,47 @@ DscBridge 的 26 个成员逐个标注了壳里的承担者：5 个走 `@dsc/ui`
 - 用户真实的 `~/.dsc/desktop.json` 若写着 `ui: 'legacy'`，翻转后仍会看到旧界面（显式优先）——
   这是特性；想切壳删掉那个字段即可。
 - 阶段 8 的冻结横幅与「一份还是两份 UI」决定未动（依赖本次切换稳定一轮）。
+
+## 阶段 111（对齐计划 6）：TUI 同进程载体——终端壳吃同一套界面插件（未发版）
+
+计划阶段 6 的验收两条都达成：**TUI 里至少一个槽位由插件贡献**；**同一份插件源码在 web 与 tui
+两种载体下各跑一次**。核心设计一句话：插件只站在 `apply(ui)` 契约与 `@dsc/ui` 的**载体基元**上，
+bundle 构建一份、清单出两行（platform web / tui，同一个 client.js），两种壳各自的 require 表
+解析各自的 `@dsc/ui` 实现——插件源码零分支渲染（分支只在 `apply` 里按 `ui.host.platform` 挑槽）。
+
+### 做了什么
+
+- **载体身份**：`UiHostInfo` 加 `platform?: UiPlatform`（`src/ui/plugin.ts`）——插件按它分支注册进哪条槽。
+- **共享订阅面**：`useSlot` / `useSlotFaults` 下沉到 `src/ui/slots-react.ts`（两种壳的组件都是 React）；
+  渲染出口各壳自持——浏览器壳保留 `<div class="slot-entry">`（自检认块），新写 `src/ui/slots-ink.tsx`
+  （ink 版 outlet + 错误边界，崩一行退一行，装配错误照旧穿透）。
+- **TUI 版 `@dsc/ui` 值面**（`src/ui/tui-plugin-api.ts`）：`defineUiPlugin`（同一实现）+ 基元 `Text`
+  （ink 的）；槽名契约 `TUI_SLOTS.noticeExtensions = 'tui.notice.extensions'` 两边导出同名常量。
+  浏览器壳补 `Text`（span，`ui-shell/src/plugin-text.tsx`）与同名 `TUI_SLOTS`——导出面两壳对齐。
+- **node 侧装载器**（`src/ui/tui-plugins.ts`）：`collectUiPluginArtifacts(dir,'tui')` → 读 bundle →
+  `new Function` 求值（node 无 CSP，求值只注册工厂）→ 白名单 require（react / react/jsx-runtime /
+  `@dsc/ui`）→ 记账外壳 `scopedSlots` → `apply`。装载语义与浏览器壳同形：顺序装、失败重试一轮、
+  每条报告不静默（终端没有诊断区，失败的进 transcript system 条目）。快照按 web 通道同一段逻辑
+  投影成 `HostSnapshot`（seq 用自增计数顶上）；`invoke` 过 `isInvokableMethod` 白名单再转发——
+  同进程不等于可以绕开契约。
+- **接线**：`tui.ts` 建注册表、声明扩展槽、装载、卸载时 `disposeAll`；App 加 `tuiNoticeExtras`
+  可选 props（渲染在 notice 同一区的动态行，出现才占行，不动固定帧的行数数学）。
+- **构建**：`build-plugins.mjs` 放开 `platforms: ['web','tui']`（plugin.json 声明；产物一份，
+  清单两条）。echo 改造成双载体样板：web 进 hello 的子槽，tui 进通知区扩展槽。
+
+### 验证
+
+- 新探针 `scripts/ui-tui-plugin-test.mjs`（9 条断言）：真 echo bundle 装载成功且**就是 web 侧
+  同一个 client.js**、帧里出现插件贡献行、没导出 apply 被点名拒、白名单外 require（连 node 内置
+  模块都不给）被拒并说明允许表、顺序依赖（裸 register 未声明槽）靠重试一轮自愈。
+- **真 TUI 实机**（隔离 HOME spawn bin/dsc.js）：终端帧里出现「界面插件 echo 已接入终端壳（同一份 bundle）」。
+- 回归：tsc、壳构建、四 UI 探针（42+53 断言）、tui-features（29 条）/ composer / statusbar /
+  settings / commands-battery 全绿。
+
+### 诚实边界
+
+- TUI 只有**一个**扩展点（通知区扩展行）——App 其余分区（状态栏、消息流）还是写死的；按载体
+  逐步开槽是后续节奏，计划验收只要求「至少一个」。
+- echo 的 tui 行是演示插件（阶段 8 会连同 hello/echo/runtime 一起处理，届时探针断言同步收）。
+- `@dsc/ui` 的 tui 值面只有 `Text` 一个基元——够 echo 用，插件要 Box/边框时再扩（走增量，
+  不预先堆）。
