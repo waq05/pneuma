@@ -50,6 +50,35 @@ export function SlotOutlet({
   )
 }
 
+/**
+ * 渲染一个 chain 槽：为这份 owner 值选出渲染者并挂载它。
+ *
+ * 与 SlotOutlet 的差别：chain 槽每一份 owner 只该由**一个**当选者渲染（选举语义），
+ * 全体弃权返回 null——兜底由调用方画（`renderSlot(...) ?? <兜底>`）。
+ * 订阅照走 useSlot：登记增减、退位都会换快照引用，选举在下一帧重跑。
+ */
+export function ChainOutlet({
+  slots,
+  slot,
+  owner,
+}: {
+  slots: UiSlots
+  slot: string
+  owner: Record<string, unknown>
+}): ReactNode {
+  useSlot(slots, slot)
+  const hit = slots.elect(slot, owner)
+  if (hit === null) return null
+  return (
+    <SlotEntryHost
+      key={`${hit.entry.cell}|${hit.entry.id}|${String(hit.entry.priority)}|${String(hit.entry.seq)}`}
+      slots={slots}
+      entry={hit.entry}
+      owner={{ ...owner, matched: hit.matched }}
+    />
+  )
+}
+
 /** 单条登记：套错误边界、注入渲染能力、带上 data 属性（自检脚本靠它认块）。 */
 function SlotEntryHost({
   slots,
@@ -69,7 +98,12 @@ function SlotEntryHost({
             `（声明过的：${entry.children.length === 0 ? '无' : entry.children.join('、')}）`,
         )
       }
-      return <SlotOutlet slots={slots} slot={name} owner={props ?? NO_OWNER} />
+      // chain 子槽走选举（一个 owner 只有一个当选者），其余形态全量渲染。
+      return slots.spec(name) === 'chain' ? (
+        <ChainOutlet slots={slots} slot={name} owner={props ?? NO_OWNER} />
+      ) : (
+        <SlotOutlet slots={slots} slot={name} owner={props ?? NO_OWNER} />
+      )
     },
     [slots, entry],
   )

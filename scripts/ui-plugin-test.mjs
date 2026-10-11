@@ -42,6 +42,7 @@ const {
   DuplicateSlotError,
   SlotKindConflictError,
   KeyedSlotKeyError,
+  ChainSlotSelectError,
 } = await import('../lib/ui/slots.js')
 const { artifactRev, composeUiBootGraph, orderUiPlugins, pluginBundleUrl, shortHash } = await import('../lib/ui/manifest.js')
 const { collectUiPluginArtifacts, readUiPluginBundle, readUiPluginManifest, uiPluginsDir } = await import(
@@ -277,6 +278,69 @@ console.log('\n[1] 槽位核心')
   check('故障表可读（诊断区用）', healing.faults.length === 1)
   check('退位是一次性的（不自动复活）', healing.winners('notice').length === 1)
   offFault()
+
+  // ── chain：条目自己选举（第四形态）─────────────────────────────────────────────
+  const chain = new SlotRegistry()
+  chain.declare('tool.view', 'chain')
+  let noSelect = null
+  try {
+    chain.register('tool.view', { id: 'no-select' }, 'no-select')
+  } catch (error) {
+    noSelect = error
+  }
+  check('chain 槽没给 select 当场报错', noSelect instanceof ChainSlotSelectError, String(noSelect))
+
+  chain.register('tool.view', { id: 'builtin', priority: 100, select: (owner) => ({ verb: owner.name }) }, 'builtin')
+  chain.register('tool.view', { id: 'hijack', priority: 1, select: (owner) => (owner.name === 'bash' ? '接管' : null) }, 'hijack')
+  check('认领者赢过 catch-all（priority 小者先问）', chain.elect('tool.view', { name: 'bash' })?.entry.id === 'hijack')
+  check('弃权（null）问下一位', chain.elect('tool.view', { name: 'read' })?.entry.id === 'builtin')
+  check('matched 原样透传', chain.elect('tool.view', { name: 'read' })?.matched?.verb === 'read')
+
+  // 先问的弃权不挡后面的：priority 更小的 picky 弃权后，链照常走到内置。
+  chain.register('tool.view', { id: 'picky', priority: 0, select: () => null }, 'picky')
+  check('priority 最小的弃权不挡后面的当选', chain.elect('tool.view', { name: 'read' })?.entry.id === 'builtin')
+
+  // 全体弃权：渲染方画兜底（elect 返回 null）。
+  const shy = new SlotRegistry()
+  shy.declare('tool.view', 'chain')
+  shy.register('tool.view', { id: 'picky', priority: 0, select: () => null }, 'picky')
+  check('全员弃权返回 null', shy.elect('tool.view', { name: 'read' }) === null)
+
+  // 同 priority 并存合法（chain 没有格子冲突），按注册序排队。
+  const tied = new SlotRegistry()
+  tied.declare('tool.view', 'chain')
+  tied.register('tool.view', { id: 'first', priority: 5, select: () => 'a' }, 'first')
+  tied.register('tool.view', { id: 'second', priority: 5, select: () => 'b' }, 'second')
+  check('chain 同 priority 并存不报冲突', tied.entriesOf('tool.view').length === 2)
+  check('同 priority 按注册序先问', tied.elect('tool.view', {})?.entry.id === 'first')
+
+  // 当选者崩溃（renderFault）后退位，选举落到下一位。
+  const chainHealing = new SlotRegistry()
+  chainHealing.declare('tool.view', 'chain')
+  chainHealing.register('tool.view', { id: 'cranky', priority: 1, select: () => 'x' }, 'cranky')
+  chainHealing.register('tool.view', { id: 'backup', priority: 2, select: () => 'y' }, 'backup')
+  chainHealing.reportFault(chainHealing.entriesOf('tool.view').find((entry) => entry.id === 'cranky'), new Error('渲染炸了'))
+  check('当选者退位后选举落到下一位', chainHealing.elect('tool.view', {})?.entry.id === 'backup')
+
+  // 选择器自己抛异常：视同弃权并记故障，链继续走（一个坏选择器不烧整条链）。
+  const rotten = new SlotRegistry()
+  rotten.declare('tool.view', 'chain')
+  const rottenFaults = []
+  rotten.onFault((fault) => rottenFaults.push(fault))
+  rotten.register('tool.view', { id: 'throws', priority: 1, select: () => { throw new Error('选择器有 bug') } }, 'throws')
+  rotten.register('tool.view', { id: 'fine', priority: 2, select: () => 'ok' }, 'fine')
+  check('抛异常的选择器视同弃权', rotten.elect('tool.view', {})?.entry.id === 'fine')
+  check('坏选择器被记故障并退位', rottenFaults.length === 1 && rotten.entriesOf('tool.view').length === 2)
+
+  // elect 只对 chain 有意义；winners 对 chain 返回全部幸存候选人（诊断口径）。
+  let notChain = null
+  try {
+    chain.elect('shell.main', {})
+  } catch (error) {
+    notChain = error
+  }
+  check('对非 chain 槽 elect 抛装配错误', notChain !== null, String(notChain))
+  check('winners 对 chain 返回全部幸存候选人', chain.winners('tool.view').length === 3)
 }
 
 // ── 2. 启动清单 ────────────────────────────────────────────────────────────────

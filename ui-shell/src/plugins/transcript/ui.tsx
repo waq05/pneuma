@@ -41,18 +41,54 @@ import {
   type ChangedFileView,
   type DiffHunkView,
   type HostSnapshot,
+  type ToolCallView,
   type TranscriptEntry,
 } from '@dsc/ui'
 
 /** 空的条目表：没拿到快照时共用一份，省得每帧新建数组。 */
 const NO_ENTRIES: readonly TranscriptEntry[] = Object.freeze([])
 
+/** 工具条目（ToolRow 与 toolview 选举的 owner 形状）。 */
+type ToolEntry = Extract<TranscriptEntry, { kind: 'tool' }>
+
+/** 工具调用视图的 chain 槽：每一条工具调用由选举出的渲染者负责（见下）。 */
+export const TOOLVIEW_SLOT = 'transcript.toolview'
+
+/**
+ * 内置渲染器在链里的位置：priority 大（后问）——任何想接管某种工具的插件注册一个
+ * 更小的 priority、选择器认领自己的工具就赢；内置选择器全认领（catch-all），
+ * 所以链空着的时候工具卡照常画，链上有人接就归别人。
+ */
+const BUILTIN_TOOLVIEW_PRIORITY = 100
+
 export default defineUiPlugin({
   name: '消息流',
   apply(ui) {
-    ui.slots.register('shell.main', { id: 'transcript.flow', order: 1 }, TranscriptFlow)
+    // toolview 是本条目声明出来的 chain 子槽：「谁渲染这条工具调用」由选举决定，
+    // 不在渲染体里写死 if——内置渲染器也只是链上的一条（见下一条注册）。
+    ui.slots.register(
+      'shell.main',
+      { id: 'transcript.flow', order: 1, children: { [TOOLVIEW_SLOT]: 'chain' } },
+      TranscriptFlow,
+    )
+    ui.slots.register(
+      TOOLVIEW_SLOT,
+      {
+        id: 'transcript.toolview.builtin',
+        priority: BUILTIN_TOOLVIEW_PRIORITY,
+        select: (owner) => matchTool(toolOwnerCall(owner).name),
+      },
+      BuiltinToolView,
+    )
   },
 })
+
+/** 从选举 owner 里取工具调用（选择器与当选组件共用这一个读法）。 */
+function toolOwnerCall(owner: unknown): ToolCallView {
+  const call = (owner as { entry?: { call?: ToolCallView } } | null)?.entry?.call
+  if (call === undefined) throw new Error('toolview 的 owner 里没有工具调用（渲染方传的是 { entry }）')
+  return call
+}
 
 /** 座位里的一行：条目 + 它是不是「正在直播的那一条」（直播行多一个光标与展开态）。 */
 interface Row {
@@ -99,7 +135,11 @@ function useFollowBottom(dep: number): (node: HTMLDivElement | null) => void {
   return setEnd
 }
 
-function TranscriptFlow(): ReactNode {
+function TranscriptFlow({
+  renderSlot,
+}: {
+  renderSlot?: (name: string, props?: Record<string, unknown>) => ReactNode
+}): ReactNode {
   const entries = useHostSelector(readEntries)
   const live = useHostSelector(readLive)
   const seats = useMemo(() => buildSeats(entries, live), [entries, live])
@@ -114,13 +154,13 @@ function TranscriptFlow(): ReactNode {
       {seats.leading.map((row) => (
         <RowBoundary key={keyOf(row)} entry={row.entry}>
           <div className="entry-row">
-            <RowBody row={row} />
+            <RowBody row={row} renderSlot={renderSlot} />
           </div>
         </RowBoundary>
       ))}
       {seats.rounds.map((seat) => (
         <div className="turn-seat" data-round-seat={seat.round} key={seat.round}>
-          <SeatBody seat={seat} />
+          <SeatBody seat={seat} renderSlot={renderSlot} />
         </div>
       ))}
       <div ref={endRef} />
@@ -129,13 +169,19 @@ function TranscriptFlow(): ReactNode {
 }
 
 /** 一个座位的全部行：过程行与正文行 + 改动卡 + 轮尾。 */
-function SeatBody({ seat }: { seat: Seat }): ReactNode {
+function SeatBody({
+  seat,
+  renderSlot,
+}: {
+  seat: Seat
+  renderSlot?: (name: string, props?: Record<string, unknown>) => ReactNode
+}): ReactNode {
   return (
     <>
       {seat.rows.map((row) => (
         <RowBoundary key={keyOf(row)} entry={row.entry}>
           <div className="entry-row" data-round={seat.round}>
-            <RowBody row={row} />
+            <RowBody row={row} renderSlot={renderSlot} />
           </div>
         </RowBoundary>
       ))}
@@ -146,7 +192,13 @@ function SeatBody({ seat }: { seat: Seat }): ReactNode {
 }
 
 /** 一行的内容：按条目种类分派。 */
-function RowBody({ row }: { row: Row }): ReactNode {
+function RowBody({
+  row,
+  renderSlot,
+}: {
+  row: Row
+  renderSlot?: (name: string, props?: Record<string, unknown>) => ReactNode
+}): ReactNode {
   const entry = row.entry
   switch (entry.kind) {
     case 'user':
@@ -163,7 +215,9 @@ function RowBody({ row }: { row: Row }): ReactNode {
     case 'thinking':
       return <ThinkRow entry={entry} live={row.live} />
     case 'tool':
-      return <ToolRow entry={entry} />
+      // 这条工具调用谁画由 toolview 链选举：链上有人认领就归它（matched 一并交给它），
+      // 全体弃权（或链上没人）落回内置工具卡——内置渲染器自己也在链上，这只是兜底位。
+      return renderSlot?.(TOOLVIEW_SLOT, { entry }) ?? <ToolRow entry={entry} />
     case 'system':
       return <div className="entry-system">{entry.text}</div>
     case 'turn-max-tokens':
@@ -397,12 +451,26 @@ const KNOWN_TOOLS: Readonly<
 /** 认不出的工具的图标。 */
 const UNKNOWN_TOOL_ICON = IconCode
 
+/** 一次工具匹配的结果：图标 + 基础动词 + 是不是知名工具（决定要不要印原名）。 */
+interface ToolMatch {
+  Icon: ComponentType<{ size?: number; className?: string }>
+  known: boolean
+  base: string
+}
+
+/** 按工具名配「图标 + 动词」；认不出的回落到通用图标与「调用」。 */
+function matchTool(name: string): ToolMatch {
+  const known = KNOWN_TOOLS[name]
+  return known !== undefined
+    ? { Icon: known.Icon, known: true, base: known.verb }
+    : { Icon: UNKNOWN_TOOL_ICON, known: false, base: '调用' }
+}
+
 /**
  * 动词随状态变（codex 的 `Ran` / `Running` 同一套二分）。
  * 失败 / 被拒不改动词——那种情形由行尾的状态词说，不用把动词也拧一遍。
  */
-function toolVerb(name: string, status: string): string {
-  const base = KNOWN_TOOLS[name]?.verb ?? '调用'
+function toolVerb(base: string, status: string): string {
   if (status === 'running') return `正在${base}`
   if (status === 'preparing') return `准备${base}`
   return `${base}了`
@@ -417,16 +485,21 @@ function prettyJson(text: string): string {
   }
 }
 
+/** 内置当选者：选举把 matched（图标 + 动词）算好交过来，渲染与兜底共用 ToolRow。 */
+function BuiltinToolView(props: { entry: { call: ToolCallView }; matched: ToolMatch }): ReactNode {
+  return <ToolRow entry={props.entry as ToolEntry} matched={props.matched} />
+}
+
 /** 工具卡：一行头（状态点 + 图标 + 动词 + 摘要 + 状态）+ 展开后的参数与结果。 */
-function ToolRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'tool' }> }): ReactNode {
+function ToolRow({ entry, matched }: { entry: ToolEntry; matched?: ToolMatch }): ReactNode {
   const call = entry.call
   const [open, setOpen] = useState(false)
   // 参数还没到齐的这一次调用不可展开——展开也看不到东西，还会让「点一下」白点。
   const expandable = call.status !== 'preparing'
   const bodyOpen = open && expandable
   const summary = toolSummary(call.name, call.argsText)
-  const known = KNOWN_TOOLS[call.name]
-  const Icon = known?.Icon ?? UNKNOWN_TOOL_ICON
+  const match = matched ?? matchTool(call.name)
+  const Icon = match.Icon
   const toggle = (): void => {
     if (expandable) setOpen((current) => !current)
   }
@@ -448,9 +521,9 @@ function ToolRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'tool' }> 
         {/* 行首状态点：成功绿 / 失败红 / 被拒黄 / 进行中强调色（codex 的 bullet）。 */}
         <span className="tool-dot" aria-hidden="true" />
         <Icon size={14} className="tool-icon" />
-        <span className="verb">{toolVerb(call.name, call.status)}</span>
+        <span className="verb">{toolVerb(match.base, call.status)}</span>
         {/* 认不出的工具保留原名：没有它就看不出这是哪家的工具（MCP 那些名字不直观）。 */}
-        {known === undefined ? <span className="name">{call.name}</span> : null}
+        {match.known ? null : <span className="name">{call.name}</span>}
         <span className="preview">{summary}</span>
         <span className="status">
           {call.status === 'running' ? <i className="tc-spin" aria-hidden="true" /> : null}

@@ -9,7 +9,7 @@
  * 刻意不依赖 React：同一份注册表要被两种壳复用（浏览器壳用 React 组件、
  * TUI 壳用 ink 组件），所以这里对「组件」只当作一个泛型 C，不 import 任何框架。
  *
- * 三条规则（前两条对齐 dsh 的 ui-slots 语义）：
+ * 四条规则（前三条对齐 dsh 的 ui-slots 语义）：
  *   - **格子与遮蔽**：一种形态决定「什么算一个格子」——single 整个槽一个格子、
  *     list 每个 id 一个格子、keyed 每个 key 一个格子。同一个格子里可以合法地放多份，
  *     按 `priority` 小者胜（这叫遮蔽）；同格子同 priority 是装配错误，当场报错——
@@ -18,12 +18,17 @@
  *     格子里的下一名顶上；坏掉的条目不会自己复活（要复活就重新注册）。
  *   - **往未声明的槽注册当场报错**，但可以用 `injectSlot` 说「等这个槽出现我再贡献」，
  *     于是插件之间不再需要靠加载顺序排依赖。
+ *   - **chain：条目自己选举**。每条登记带一个 `select(owner)` 选择器，渲染时按
+ *     priority 升序依次问（小者先试，同值按注册序），第一个**不返回 null** 的当选；
+ *     全都弃权就落给渲染方的兜底。「谁负责展示这个工具调用」这类分派不再写死 if——
+ *     内置渲染器与第三方渲染器在**同一条链**里按优先级竞争。chain 没有格子的概念，
+ *     同 priority 允许多条并存（按注册序排队），register 也不做占用冲突检查。
  *
  * @module dsc/ui/slots
  */
 
-/** 槽的三种形态（第四种「条目自己选举」暂不需要，用到再加）。 */
-export type SlotKind = 'single' | 'list' | 'keyed'
+/** 槽的四种形态：single/list/keyed 各管「几个格子」，chain 管「谁来渲染这一份」。 */
+export type SlotKind = 'single' | 'list' | 'keyed' | 'chain'
 
 /** 一条登记：某插件往某槽放了一个组件。 */
 export interface SlotEntry<C> {
@@ -41,6 +46,8 @@ export interface SlotEntry<C> {
   cell: string
   /** 这条登记声明出来的子槽名（`renderSlot` 只认这几个名字）。 */
   children: readonly string[]
+  /** chain 槽的选举选择器；其它形态为 null。 */
+  select: ((owner: unknown) => unknown) | null
   /** 组件本身（浏览器壳里是 React 组件，TUI 壳里是 ink 组件）。 */
   component: C
   /** 注册序号：order 与 priority 都持平时的稳定次序。 */
@@ -52,10 +59,16 @@ export interface SlotRegisterOptions {
   id: string
   /** 缺省 0；list 槽里决定横向次序。 */
   order?: number
-  /** 缺省 0；同一个格子里小者胜（遮蔽）。 */
+  /** 缺省 0；同一个格子里小者胜（遮蔽）。chain 槽里小者**先被问**（先试先当选）。 */
   priority?: number
   /** keyed 槽必填：这条登记负责哪个 key。 */
   key?: string
+  /**
+   * chain 槽必填：这条登记的选举选择器。渲染时拿到渲染方给的 owner 值，
+   * 返回非 null 就当选（返回值原样交给组件的 `matched` prop），返回 null 表示
+   * 「这单我不接，问下一位」。必须写成纯函数——只读 owner，不碰外部可变状态。
+   */
+  select?: (owner: unknown) => unknown
   /**
    * 这条登记自己开出来的子槽（槽名 → 形态）。
    *
@@ -107,6 +120,20 @@ export class KeyedSlotKeyError extends Error {
   constructor(slot: string) {
     super(`槽位 ${slot} 是 keyed 形态，register 必须给 key（决定这条登记负责哪一格）`)
   }
+}
+
+/** chain 槽的登记没给选择器时抛这个：没有选择器的条目永远无法当选，只能是死登记。 */
+export class ChainSlotSelectError extends Error {
+  constructor(slot: string) {
+    super(`槽位 ${slot} 是 chain 形态，register 必须给 select（这条登记靠它参与选举）`)
+  }
+}
+
+/** 一次选举的结果：当选的登记 + 选择器交回来的 matched 值。 */
+export interface SlotElectResult<C> {
+  entry: SlotEntry<C>
+  /** 选择器的返回值原样透传（渲染层把它展开成组件的 `matched` prop）。 */
+  matched: unknown
 }
 
 /**
@@ -233,10 +260,13 @@ export class SlotRegistry<C = unknown> {
     if (spec === undefined) throw new UndeclaredSlotError(slot, this.slots)
     const key = spec.kind === 'keyed' ? options.key : null
     if (spec.kind === 'keyed' && (key === undefined || key === '')) throw new KeyedSlotKeyError(slot)
+    if (spec.kind === 'chain' && options.select === undefined) throw new ChainSlotSelectError(slot)
     const priority = options.priority ?? 0
-    const cell = spec.kind === 'list' ? options.id : spec.kind === 'keyed' ? (key as string) : ''
+    // chain 没有格子的概念（每条登记都是独立的候选人），也不做占用冲突检查——
+    // 同 priority 并存是合法的，选举时按注册序排队。
+    const cell = spec.kind === 'chain' ? '' : spec.kind === 'list' ? options.id : spec.kind === 'keyed' ? (key as string) : ''
     const list = this.entries.get(slot) ?? []
-    const clash = list.find((entry) => entry.cell === cell && entry.priority === priority)
+    const clash = spec.kind === 'chain' ? undefined : list.find((entry) => entry.cell === cell && entry.priority === priority)
     if (clash !== undefined) throw new DuplicateSlotError(slot, cell, priority, clash.id, options.id)
     const releases = this.declareChildren(options.children)
     const entry: SlotEntry<C> = {
@@ -247,6 +277,7 @@ export class SlotRegistry<C = unknown> {
       key: key ?? null,
       cell,
       children: Object.keys(options.children ?? {}),
+      select: options.select ?? null,
       component,
       seq: this.seq,
     }
@@ -265,6 +296,38 @@ export class SlotRegistry<C = unknown> {
       }
       for (const release of releases) release()
     }
+  }
+
+  /**
+   * 让一个 chain 槽为这份 owner 值选出渲染者。
+   *
+   * 按 priority 升序逐个问选择器（同 priority 按注册序），第一个不返回 null 的当选；
+   * 选择器抛异常视同弃权（记一条故障，链继续走——一个坏选择器不该烧掉整条链）；
+   * 全部弃权（或槽里没有幸存者）返回 null，渲染方画自己的兜底。
+   * @param slot - chain 形态的槽名
+   * @param owner - 渲染位置的上下文（例如「这一条工具调用」），原样交给选择器
+   * @throws {Error} 槽不是 chain 形态时抛装配错误（选举只对 chain 有意义）
+   */
+  elect(slot: string, owner: unknown): SlotElectResult<C> | null {
+    if (this.kinds.get(slot)?.kind !== 'chain') {
+      throw new SlotAssemblyError(`槽位 ${slot} 不是 chain 形态（elect 只对 chain 有意义）`)
+    }
+    const list = [...(this.entries.get(slot) ?? EMPTY)].sort(compareChain)
+    for (const entry of list) {
+      if (this.broken.has(entry)) continue
+      try {
+        const select = entry.select
+        const matched = select === null ? null : select(owner)
+        if (matched !== null && matched !== undefined) return { entry, matched }
+      } catch (error) {
+        // 选择器是登记作者写的纯函数，抛了说明它有 bug：记一条故障让它退位，
+        // 然后照常问下一位——不因为一个坏选择器把整条链废掉。
+        this.broken.add(entry)
+        this.record({ slot, id: entry.id, phase: 'render', error: toError(error) })
+        this.bump(slot)
+      }
+    }
+    return null
   }
 
   /**
@@ -317,7 +380,14 @@ export class SlotRegistry<C = unknown> {
     const version = this.versions.get(slot) ?? 0
     const cached = this.winnersCache.get(slot)
     if (cached !== undefined && cached.version === version) return cached.list
-    const list = this.kinds.has(slot) ? deriveWinners(this.entries.get(slot) ?? EMPTY, this.broken) : EMPTY
+    const kind = this.kinds.get(slot)?.kind
+    const list = !this.kinds.has(slot)
+      ? EMPTY
+      : kind === 'chain'
+        ? // chain 没有「每格一名」的遮蔽语义：诊断与订阅都看**全部幸存候选人**，
+          // 按（priority，注册序）排——这正是 elect 逐个问的顺序。
+          [...(this.entries.get(slot) ?? EMPTY)].filter((entry) => !this.broken.has(entry)).sort(compareChain)
+        : deriveWinners(this.entries.get(slot) ?? EMPTY, this.broken)
     this.winnersCache.set(slot, { version, list })
     return list
   }
@@ -475,6 +545,11 @@ function compareEntries<C>(a: SlotEntry<C>, b: SlotEntry<C>): number {
 function compareShadow<C>(a: SlotEntry<C>, b: SlotEntry<C>): number {
   if (a.priority !== b.priority) return a.priority - b.priority
   return compareEntries(a, b)
+}
+
+/** 选举序：priority 小者先被问；持平时注册早的先被问。 */
+function compareChain<C>(a: SlotEntry<C>, b: SlotEntry<C>): number {
+  return a.priority === b.priority ? a.seq - b.seq : a.priority - b.priority
 }
 
 /** 把抛出来的东西收敛成 Error（JS 里可以 throw 任何值）。 */
