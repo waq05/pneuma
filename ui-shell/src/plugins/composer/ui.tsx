@@ -89,6 +89,7 @@ function ComposerBox(): ReactNode {
   const queuedCount = useHostSelector(readQueuedCount)
   const policy = useHostSelector(readPolicy)
   const presetCurrent = useHostSelector(readPresetCurrent)
+  const presetLabel = useHostSelector(readPresetLabel)
   const model = useHostSelector(readModel)
   const effort = useHostSelector(readEffort)
   const draftKey = useHostSelector(readSessionPath)
@@ -298,7 +299,7 @@ function ComposerBox(): ReactNode {
     ? '等待审批…'
     : working
       ? '回合进行中：回车把消息排进队里，Ctrl+Enter 插话（打断当前输出）'
-      : '发消息，回车发送，Shift+Enter 换行，Ctrl+Enter 插话'
+      : '发消息，@ 引用文件，回车发送，Ctrl+Enter 插话'
 
   return (
     <div
@@ -366,6 +367,23 @@ function ComposerBox(): ReactNode {
 
       <div className="composer-bar">
         <div className="bar-left">
+          {/* 「+」钮（旧界面同款）：正文为空时点击插入 "/"，把用户带到指令清单的门口。 */}
+          <button
+            type="button"
+            className="icon-btn"
+            data-tip="插入指令（/）"
+            aria-label="插入指令"
+            onClick={() => {
+              if (text.trim() !== '') return
+              setText('/')
+              window.requestAnimationFrame(() => {
+                area.current?.focus()
+                area.current?.setSelectionRange(1, 1)
+              })
+            }}
+          >
+            +
+          </button>
           {/* 权限模式：只显示当前档位。宿主没把 setPolicy 放进通道，所以这里不给菜单。 */}
           <div className="model-anchor">
             <button
@@ -885,8 +903,23 @@ function readPresetCurrent(snapshot: HostSnapshot | null): string {
   return typeof current === 'string' ? current : ''
 }
 
-/** 预设旋钮上显示的名字：当前模式清单里对得上的用显示名，对不上用原名。 */
-const presetLabel = '模式'
+/** 当前模式的显示名（快照 preset.options 里按 current 找 label；找不着显示「模式」）。 */
+function readPresetLabel(snapshot: HostSnapshot | null): string {
+  const surfaces = snapshot?.['surfaces']
+  if (typeof surfaces !== 'object' || surfaces === null) return '模式'
+  const preset = (surfaces as Record<string, unknown>)['preset']
+  if (typeof preset !== 'object' || preset === null) return '模式'
+  const record = preset as Record<string, unknown>
+  const current = record['current']
+  const options = record['options']
+  if (typeof current !== 'string' || !Array.isArray(options)) return '模式'
+  for (const option of options) {
+    if (typeof option !== 'object' || option === null) continue
+    const item = option as Record<string, unknown>
+    if (item['name'] === current && typeof item['label'] === 'string') return item['label']
+  }
+  return current
+}
 
 function readQueuedCount(snapshot: HostSnapshot | null): number {
   const value = snapshot?.['queued']

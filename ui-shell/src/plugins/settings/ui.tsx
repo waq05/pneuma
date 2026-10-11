@@ -134,6 +134,17 @@ function SettingsPanel(): ReactNode {
   const [active, setActive] = useState('')
   const [loadError, setLoadError] = useState('')
 
+  // 侧栏的「技能 / 插件 / 设置」入口经事件请它开门：打开面板并跳到指定分区（缺省留在原地）。
+  useEffect(() => {
+    const onOpen = (event: Event): void => {
+      setSettingsOpen(true)
+      const section = (event as CustomEvent<{ section?: string }>).detail?.section
+      if (typeof section === 'string' && section !== '') setActive(section)
+    }
+    window.addEventListener('shell.settings.open', onOpen)
+    return () => window.removeEventListener('shell.settings.open', onOpen)
+  }, [])
+
   // Esc 关面板（关闭钮的 title 一直这么承诺）。捕获阶段拦下会跟确认框抢键——
   // 确认框自己也在捕获段拦（components 那套移植在 platform/confirm.ts），它先挂先停，
   // 这里用冒泡段就正好排在它后面：确认框开着时 Esc 归它，面板不跟着关。

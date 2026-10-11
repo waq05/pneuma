@@ -91,6 +91,9 @@ function StatusSegments(): ReactNode {
   const effort = useStatusField(readEffort)
   const sessionId = useStatusField(readSessionId)
   const cwd = useStatusField(readCwd)
+  // 轮数/步数从消息流条目统计（旧界面第一段「N 轮 N 步」的同一口径），"轮/步" 字符串稳定。
+  const tally = useHostSelector(readRoundStep)
+  const [rounds, steps] = tally.split('/')
   const inputTokens = useStatusField(readUsageInput)
   const outputTokens = useStatusField(readUsageOutput)
   const cacheHit = useStatusField(readCacheHit)
@@ -118,6 +121,8 @@ function StatusSegments(): ReactNode {
         effort={effort}
         sessionId={sessionId}
         cwd={cwd}
+        rounds={Number(rounds)}
+        steps={Number(steps)}
       />,
     )
   }
@@ -169,13 +174,19 @@ function TurnSegment(props: {
   effort: string | null
   sessionId: string | null
   cwd: string | null
+  /** 消息流里统计的轮数（用户消息数）与步数（工具调用数）。 */
+  rounds: number
+  steps: number
 }): ReactNode {
   const stateText = TURN_TEXT[props.turnState]
+  // 主文案对齐旧界面：空闲报「N 轮 N 步」，跑动中报状态字。
+  const lead = props.turnState === 'idle' ? `${String(props.rounds)} 轮 ${String(props.steps)} 步` : stateText
   // 尾部读数：模型与档位各是一截，缺哪截少哪截，都不缺才用一个 `·` 连起来（分隔符规则
   // 与段之间一致：同一段里也只用中点）。
   const readout = [props.model, props.effort].filter((part) => part !== null && part !== '').join(' · ')
   const hint = [
     `当前状态：${stateText}`,
+    `${String(props.rounds)} 轮 ${String(props.steps)} 步`,
     props.sessionId === null ? null : `会话 ${props.sessionId.slice(0, 8)}`,
     props.model === '' ? null : `模型 ${props.model}`,
     props.effort === null ? null : `档位 ${props.effort}`,
@@ -190,7 +201,7 @@ function TurnSegment(props: {
         <span className={`seg-icon state-${props.turnState}`}>
           <IconActivity size={12} />
         </span>
-        {stateText}
+        {lead}
         {readout === '' ? null : <span className="seg-dim"> · {readout}</span>}
       </button>
       <div className="ctx-card" role="note">
@@ -637,4 +648,20 @@ function formatCacheHitPercent(
     }
   }
   return `99.${'9'.repeat(distinguishingPlaces - 1)}${String(10 - roundedLoss)}`
+}
+
+/** 轮数/步数统计（旧界面第一段「N 轮 N 步」同口径）：用户消息（非插话）计轮，工具调用计步。
+    返回 "轮/步" 字符串——useSyncExternalStore 的取值要引用稳定，数组对象会每帧换引用。 */
+function readRoundStep(snapshot: HostSnapshot | null): string {
+  const entries = snapshot?.['entries']
+  if (!Array.isArray(entries)) return '0/0'
+  let rounds = 0
+  let steps = 0
+  for (const entry of entries) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const record = entry as Record<string, unknown>
+    if (record['kind'] === 'user' && record['steering'] !== true) rounds += 1
+    else if (record['kind'] === 'tool') steps += 1
+  }
+  return `${String(rounds)}/${String(steps)}`
 }

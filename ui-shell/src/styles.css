@@ -763,3 +763,27 @@
   font-size: var(--dsc-fs-caption);
   margin: 4px 0;
 }
+
+/* ── 布局对齐第二轮（对照旧界面截图逐项修）────────────────────────────── */
+
+/* 空会话整组垂直居中：旧界面的 welcome 与 composer 是 .thread-main-empty 的直接子项
+   （margin:auto 一夹就居中）；壳的 welcome 在 chat-wrap>chat>chat-inner 三层深处，
+   那三层得自己变成 flex 纵链，margin:auto 才有 flex 上下文可用。 */
+.thread-main-empty .chat-wrap,
+.thread-main-empty .chat,
+.thread-main-empty .chat-inner {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.thread-main-empty .chat-inner .welcome {
+  margin-top: auto;
+  margin-bottom: 28px;
+}
+/* chat 是滚动容器：内容真的多起来时（欢迎态 + 开场提示超出屏）退回普通流可滚。 */
+.thread-main-empty .chat {
+  overflow-y: auto;
+}
+
+}

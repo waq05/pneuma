@@ -18,9 +18,10 @@
  *
  * @module dsc-ui-shell/plugins/sessions
  */
-import { useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from 'react'
+import { useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import {
   IconArchive,
+  IconBolt,
   IconArchiveOff,
   IconBranch,
   IconCheck,
@@ -30,9 +31,11 @@ import {
   IconEdit,
   IconFolder,
   IconFolderOpen,
+  IconGear,
   IconFlatList,
   IconMore,
   IconPin,
+  IconPuzzle,
   IconPlus,
   IconQueue,
   IconRefresh,
@@ -338,6 +341,24 @@ function SessionList() {
         新会话
       </button>
 
+      {/* 技能/插件一级入口（旧界面侧栏同位）：壳里这两个都住设置面板，事件请它开门并跳过去。 */}
+      <nav className="sidebar-nav">
+        <button
+          type="button"
+          className="nav-item"
+          onClick={() => window.dispatchEvent(new CustomEvent('shell.settings.open', { detail: { section: 'skills' } }))}
+        >
+          <IconBolt size={15} /> 技能
+        </button>
+        <button
+          type="button"
+          className="nav-item"
+          onClick={() => window.dispatchEvent(new CustomEvent('shell.settings.open', { detail: { section: 'plugins' } }))}
+        >
+          <IconPuzzle size={15} /> 插件
+        </button>
+      </nav>
+
       <div className="sidebar-scroll">
         <div className="section-head">
           <span className="side-title">{prefs.group === 'flat' ? '会话' : '工作区'}</span>
@@ -373,6 +394,7 @@ function SessionList() {
             >
               <IconSort size={15} />
             </button>
+            <AddWorkspaceButton />
           </span>
         </div>
 
@@ -882,6 +904,16 @@ function SidebarFooter(): React.ReactNode {
           <span className="num">{compactTokens(usage)} tok</span>
         </div>
       )}
+      {/* 设置行（旧界面左下角同位）：事件请设置面板开门。 */}
+      <button
+        type="button"
+        className="row row-btn"
+        data-tip="设置：外观、模型、模式、技能、插件"
+        onClick={() => window.dispatchEvent(new CustomEvent('shell.settings.open'))}
+      >
+        <IconGear size={14} />
+        <span>设置</span>
+      </button>
     </div>
   )
 }
@@ -1174,4 +1206,36 @@ function readUsageTokens(snapshot: HostSnapshot | null): number | null {
   const output = (usage as Record<string, unknown>)['outputTokens']
   if (typeof input !== 'number' || typeof output !== 'number') return null
   return input + output
+}
+
+/** 「添加工作区」钮（旧界面工作区标题行的 ➕）：选目录 → 原生桥 switchCwd 切过去。
+    浏览器里没有原生桥，给一句说明而不是无声无息。 */
+function AddWorkspaceButton(): ReactNode {
+  const native = getHostNative()
+  const pick = (): void => {
+    if (!native.available) {
+      toastErr('添加工作区要用桌面版（浏览器里没有选目录的原生桥）')
+      return
+    }
+    void (async () => {
+      try {
+        const dir = await native.invoke<string>('chooseDirectory')
+        if (typeof dir !== 'string' || dir === '') return
+        await native.invoke('switchCwd', [dir])
+      } catch (reason) {
+        toastErr(`切换工作区失败：${reason instanceof Error ? reason.message : String(reason)}`)
+      }
+    })()
+  }
+  return (
+    <button
+      type="button"
+      className="icon-btn"
+      data-tip="添加工作区（选择目录）"
+      aria-label="添加工作区"
+      onClick={pick}
+    >
+      <IconPlus size={15} />
+    </button>
+  )
 }

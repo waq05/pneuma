@@ -108,6 +108,7 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
   }
 
   // 全局快捷键（对齐桌面端）：Ctrl/Cmd+B 侧栏、Ctrl+P 文件面板、Ctrl+` 终端面板。
+  // 插件（侧栏品牌行的折叠钮）经 window 事件请求折叠——壳是布局真源。
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       const mod = event.ctrlKey || event.metaKey
@@ -123,8 +124,13 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
         setDockPanel('terminal')
       }
     }
+    const onToggle = (): void => toggleSidebar()
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('shell.sidebar.toggle', onToggle)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('shell.sidebar.toggle', onToggle)
+    }
   }, [])
 
   // dock 左缘拖宽：mousedown 后挂 window 监听，夹在 [300, 820]，双击复位 420（对齐桌面端）。
@@ -159,6 +165,15 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
         <aside className="sidebar" aria-hidden={sidebarCollapsed || undefined}>
           <div className="sidebar-header">
             <span className="brand">{boot.host.name}</span>
+            <button
+              type="button"
+              className="icon-btn"
+              title="收起侧栏（Ctrl+B）"
+              aria-label="收起侧栏"
+              onClick={toggleSidebar}
+            >
+              <IconSidebar size={16} />
+            </button>
             <ChannelState />
           </div>
           <SlotOutlet slots={slots} slot={SLOT.sidebar} />
@@ -174,6 +189,9 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
         </aside>
 
         <div className="main">
+          {/* 窗口控件条占位（旧界面同一行）：最小化/最大化/关闭画在窗口右上，
+              顶栏的内容从这行**下面**开始，不会被原生控件盖住。 */}
+          <div className="caption-bar" aria-hidden="true" />
           <div className="topbar">
             <div className="topbar-title-row">
               {sidebarCollapsed ? (
@@ -293,7 +311,11 @@ function ChannelState(): ReactNode {
   )
 }
 
-/** 诊断区：清单里有什么、谁装上了、谁没起来、哪一块崩了、壳放行的模块有哪些。 */
+/** 诊断区：清单里有什么、谁装上了、谁没起来、哪一块崩了、壳放行的模块有哪些。
+ *
+ * 默认**不渲染**（旧界面没有这个东西，用户视野里不该有一行开发者读数）；
+ * 有插件装载失败或槽位故障时自动出现，`?diag=1` 强制常显（自检与排障用）——
+ * 自检脚本 querySelector 读 `data-native` 行，隐藏的 DOM 照样命中，不受影响。 */
 function Diagnostics({
   slots,
   boot,
@@ -306,8 +328,10 @@ function Diagnostics({
   failed: number
 }): ReactNode {
   const faults = useSlotFaults(slots)
+  const [forced] = useState(() => new URLSearchParams(location.search).has('diag'))
   const native = getHostNative()
   const probe = useNativeProbe()
+  if (!forced && failed === 0 && faults.length === 0) return null
   return (
     <details className="diagnostics" open={failed > 0 || faults.length > 0}>
       <summary>
@@ -416,9 +440,14 @@ function readSessionTitle(snapshot: Record<string, unknown> | null): string {
   return '新会话'
 }
 
-/** 消息流里有没有条目（含直播尾）：空会话的居中欢迎态靠它切换。 */
+/** 消息流里有没有**对话内容**（含直播尾）：空会话的居中欢迎态靠它切换。
+    开场 system 条目（会话标、「没有可用的模型端点」这类提示）不算——欢迎态自己把它们
+    画成注脚；口径与消息流的欢迎态判定一致，两边不能各说各话。 */
 function readHasEntries(snapshot: Record<string, unknown> | null): boolean {
   const entries = snapshot?.['entries']
+  if (Array.isArray(entries) && entries.some((entry) => (entry as { kind?: unknown })['kind'] !== 'system')) {
+    return true
+  }
   const live = snapshot?.['liveEntries']
-  return (Array.isArray(entries) && entries.length > 0) || (Array.isArray(live) && live.length > 0)
+  return Array.isArray(live) && live.length > 0
 }
