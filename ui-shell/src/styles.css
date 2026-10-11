@@ -693,3 +693,73 @@
   padding: 4px 8px 2px;
   border-top: 1px solid var(--dsc-stroke-4);
 }
+
+/* ── 智能体团队浮层（壳自补块；桌面的 .team-row/.tm-* 在 legacy 里，浮层壳是新画）── */
+.team-pop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--dsc-z-modal, 100);
+}
+.team-pop-card {
+  background: var(--dsc-bg-raised);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-block);
+  display: flex;
+  flex-direction: column;
+  left: 50%;
+  max-height: 70vh;
+  max-width: min(720px, 92vw);
+  min-width: 480px;
+  overflow: hidden;
+  position: absolute;
+  top: 64px;
+  transform: translateX(-50%);
+}
+.team-pop-head {
+  align-items: center;
+  border-bottom: 1px solid var(--dsc-stroke-4);
+  display: flex;
+  font-size: var(--dsc-fs-ui);
+  gap: 8px;
+  justify-content: space-between;
+  padding: 8px 12px;
+}
+.team-list {
+  overflow-y: auto;
+  padding: 6px;
+}
+.team-empty {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+  padding: 20px 16px;
+  text-align: center;
+}
+.team-pop .pop-mask {
+  position: absolute;
+  inset: 0;
+}
+.peek-flow {
+  overflow-y: auto;
+  padding: 10px 14px;
+}
+.peek-text {
+  font-size: var(--dsc-fs-body);
+  margin: 6px 0;
+  white-space: pre-wrap;
+}
+.peek-tool {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+  margin: 4px 0;
+}
+.peek-think {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-caption);
+  font-style: italic;
+  margin: 4px 0;
+}
+.peek-system {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-caption);
+  margin: 4px 0;
+}
