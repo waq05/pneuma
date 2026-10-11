@@ -41,6 +41,7 @@ import {
 import {
   defineUiPlugin,
   MarkdownView,
+  getHostNative,
   toastErr,
   toastOk,
   useHostChannel,
@@ -53,6 +54,7 @@ import {
 } from '@dsc/ui'
 import { buildRoundFolds, processFoldPolicy, TurnFoldRow, useTurnFoldMemory, type ProcessFold } from './round-fold'
 import { formatDuration, liveActivity, roundInfos, turnStartedAt, type RoundInfo } from './timing'
+import { playCompletionSound } from '../../platform/completion-sound'
 
 /** 折叠偏好经 context 穿进深处的 ThinkRow / ToolRow / 座位（插件树就在壳的树里，可用）。 */
 interface FoldPrefs {
@@ -195,7 +197,13 @@ function TranscriptFlow({
   const follow = useFollowBottom(entries.length + live.length)
 
   // 折叠偏好：mount 时读一次 uiPrefs，设置页改档位时经自定义事件同步进来。
+  // 行为偏好（完成提示音/通知）也在这份里：同会话跑动→空闲的那一下要用。
   const [prefs, setPrefs] = useState<FoldPrefs>(FOLD_PREFS)
+  const [behavior, setBehavior] = useState<{ sound: boolean; variant: number; notify: boolean }>({
+    sound: true,
+    variant: 1,
+    notify: true,
+  })
   useEffect(() => {
     const read = (): void => {
       void channel
@@ -206,6 +214,12 @@ function TranscriptFlow({
             reasoningOpen: value['reasoningDefaultOpen'] === true,
             toolOpen: value['toolDefaultOpen'] === true,
           })
+          const variant = value['turnCompleteSoundVariant']
+          setBehavior({
+            sound: value['turnCompleteSound'] !== false,
+            variant: typeof variant === 'number' && Number.isFinite(variant) ? variant : 1,
+            notify: value['turnCompleteNotify'] !== false,
+          })
         })
         .catch(() => undefined)
     }
@@ -213,6 +227,33 @@ function TranscriptFlow({
     window.addEventListener('shell.uiprefs', read)
     return () => window.removeEventListener('shell.uiprefs', read)
   }, [channel])
+
+  // 回合完成提醒（桌面端 App 的同款判定）：**同一会话**从跑动变空闲的那一拍，
+  // 按偏好播一声完成提示音；页面不在前台时再弹一条系统通知（只有桌面原生桥有）。
+  const prevState = useRef<string>(turnState)
+  const behaviorRef = useRef(behavior)
+  behaviorRef.current = behavior
+  const sessionRef = useRef(sessionPath)
+  useEffect(() => {
+    const was = prevState.current
+    prevState.current = turnState
+    if (was === 'idle' || turnState !== 'idle') return
+    // 会话换了不算完成（切走时那个会话跑完是后台事件，侧栏状态点已经说过它）。
+    if (sessionRef.current !== sessionPath) return
+    if (behaviorRef.current.sound) playCompletionSound(behaviorRef.current.variant)
+    const background = document.hidden || !document.hasFocus()
+    const native = getHostNative()
+    if (background && behaviorRef.current.notify && native.available) {
+      const last = [...entries].reverse().find((entry) => entry.kind === 'text')
+      const body =
+        last !== undefined && last.kind === 'text'
+          ? last.text.replace(/\s+/g, ' ').trim().slice(0, 120)
+          : '任务完成'
+      void native
+        .invoke('notify', [{ title: '任务完成', body }])
+        .catch(() => undefined)
+    }
+  }, [turnState, sessionPath, entries])
 
   // 分页：只渲染最后 PAGE_ROUNDS 轮，更早的点「加载更早」再放出来（换会话重置）。
   const [firstVisible, setFirstVisible] = useState(0)

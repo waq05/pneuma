@@ -44,6 +44,7 @@ import {
   type PresetView,
   type QueuedMessageView,
 } from '@dsc/ui'
+import { useMention } from './mention'
 
 /** 输入框自动增高的上限（旧界面同一个值：200px）。 */
 const MAX_INPUT_HEIGHT = 200
@@ -223,7 +224,39 @@ function ComposerBox(): ReactNode {
   }
 
   /** 上下键翻本机历史；翻到底回到草稿。 */
+  /** @ 文件提及补全：track 跟输入走，pick 把候选替换进文本并落光标。 */
+  const mention = useMention({
+    channel,
+    area,
+    apply: (next, caret) => {
+      setText(next)
+      // 光标落位要等 React 把新值刷进 DOM：requestAnimationFrame 一拍后设。
+      window.requestAnimationFrame(() => {
+        area.current?.setSelectionRange(caret, caret)
+      })
+    },
+  })
+
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    // @ 文件补全面板开着时，↑↓/Tab/Enter/Esc 先归它（不进历史、不发送）。
+    if (mention.open) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        mention.move(event.key === 'ArrowDown' ? 1 : -1)
+        return
+      }
+      if (event.key === 'Tab' || event.key === 'Enter') {
+        event.preventDefault()
+        event.stopPropagation()
+        mention.pick()
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        mention.close()
+        return
+      }
+    }
     if (event.key === 'Enter') {
       if (event.shiftKey || event.nativeEvent.isComposing) return
       event.preventDefault()
@@ -248,6 +281,13 @@ function ComposerBox(): ReactNode {
         setText(history.current[next] ?? '')
       }
     }
+  }
+
+  /** 输入框每次变化都问一句：光标前面是不是一个 @ 文件提及（是就把面板亮出来）。 */
+  const onTextChange = (value: string, caret: number): void => {
+    setText(value)
+    setHistoryAt(null)
+    mention.track(value, caret)
   }
 
   const sendable = text.trim() !== ''
@@ -285,11 +325,44 @@ function ComposerBox(): ReactNode {
         disabled={blocked}
         aria-label="消息输入框"
         onChange={(event) => {
-          setHistoryAt(null)
-          setText(event.target.value)
+          onTextChange(event.target.value, event.target.selectionStart ?? event.target.value.length)
         }}
         onKeyDown={onKeyDown}
       />
+
+      {/* @ 文件提及的候选面板：贴在输入框上方（textarea 是 relative 容器的兄弟）。 */}
+      {mention.open ? (
+        <div className="mention-pop" role="listbox" aria-label="文件提及候选">
+          {mention.loading ? (
+            <div className="mention-item" data-loading="1">
+              正在读取工作区文件…
+            </div>
+          ) : mention.items.length === 0 ? (
+            <div className="mention-item" data-empty="1">
+              没有匹配的文件
+            </div>
+          ) : (
+            mention.items.map((path, index) => (
+              <button
+                type="button"
+                key={path}
+                role="option"
+                aria-selected={index === mention.at}
+                className={`mention-item${index === mention.at ? ' on' : ''}`}
+                title={path}
+                onMouseDown={(event) => {
+                  // mousedown 而不是 click：抢在 textarea 失焦之前把候选插进去。
+                  event.preventDefault()
+                  mention.pick()
+                }}
+              >
+                {path}
+              </button>
+            ))
+          )}
+          <div className="mention-hint">↑↓ 选 · Tab/Enter 补全 · Esc 关闭</div>
+        </div>
+      ) : null}
 
       <div className="composer-bar">
         <div className="bar-left">

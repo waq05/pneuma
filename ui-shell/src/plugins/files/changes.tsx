@@ -1,14 +1,11 @@
 /**
- * 文件面板的「变更」页签：git 状态三分组 + 未提交改动的 diff 视图。
+ * 文件面板的「变更」页签：git 状态三分组 + 暂存/提交 + 提交历史 + diff 视图。
  *
- * 数据全走 dock 通道的**读类** op（`git-status` / `git-diff`，放行面见
- * `src/core/dock-ops.ts`），所以浏览器里也能用。**只读**是刻意的边界：暂存/取消
- * 暂存/提交是写类 op（要走审批），旧界面把它们做在同一个面板里，这一版不搬——
- * 审批卡与终端都干得了这件事，面板只负责「看」，不负责「改」。
+ * 读类 op（`git-status` / `git-diff` / `git-log`）直接放行，浏览器里也能用；
+ * 写类 op（`git-stage` / `git-unstage` / `git-commit`）在界面通道**过审批**——
+ * 面板只管发调用，宿主的权限裁决与审批卡（prompt 插件）走同一套，与工具调用同口径。
  *
  * 样式零新写：`.git-*` 与 `.diff-*` 全在 legacy/views.css 里（整份搬运时的伏笔）。
- * diff 行渲染照旧渲染层 DiffPane.tsx 的 unified 视图（旧行号/新行号/记号/内容）；
- * shiki 高亮没搬（壳没有那个平台模块），这里就是纯文本。
  *
  * @module dsc-ui-shell/plugins/files/changes
  */
@@ -17,6 +14,8 @@ import {
   IconChevronDown,
   IconChevronRight,
   highlightLines,
+  toastErr,
+  toastOk,
   useHostChannel,
   type HighlightedLine,
 } from '@dsc/ui'
@@ -33,6 +32,14 @@ interface GitStatus {
   staged: string[]
   unstaged: string[]
   untracked: string[]
+}
+
+/** 提交历史的一行（`git-log` 的 `%h%x09%an%x09%ad%x09%s` 切出来）。 */
+interface LogLine {
+  hash: string
+  author: string
+  date: string
+  subject: string
 }
 
 /** git status 行里的状态码前缀剥掉，剩下的才是文件路径（照旧渲染层 fileOf 的字符类：
@@ -52,6 +59,11 @@ export function ChangesPanel(): ReactNode {
    * `file === null` = 全量未提交改动。
    */
   const [diff, setDiff] = useState<{ file: string | null; loading: boolean; text: string } | null>(null)
+  /** 提交信息的草稿（遵循 feat:/fix:/chore: 规范的占位提示）。 */
+  const [message, setMessage] = useState('')
+  const [committing, setCommitting] = useState(false)
+  /** 提交历史（面板第一次打开时读一次；提交/刷新后重读）。 */
+  const [log, setLog] = useState<LogLine[] | null>(null)
 
   const refresh = useCallback((): void => {
     void channel
@@ -61,6 +73,22 @@ export function ChangesPanel(): ReactNode {
         setError('')
       })
       .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
+    void channel
+      .invoke<{ log: string }>('dock', ['git-log', {}])
+      .then((data) => {
+        setLog(
+          String(data?.log ?? '')
+            .split('\n')
+            .filter((line) => line.trim() !== '')
+            .map((line) => {
+              const [hash, author, date, ...rest] = line.split('\t')
+              return { hash: hash ?? '', author: author ?? '', date: date ?? '', subject: rest.join('\t') }
+            }),
+        )
+      })
+      .catch(() => {
+        setLog([])
+      })
   }, [channel])
 
   useEffect(() => {
@@ -83,6 +111,36 @@ export function ChangesPanel(): ReactNode {
         setDiff(null)
         setError(cause instanceof Error ? cause.message : String(cause))
       })
+  }
+
+  /** 暂存 / 取消暂存一批文件（写类 op：宿主侧过审批，界面等回执）。 */
+  const stage = (op: 'git-stage' | 'git-unstage', files: string[], tip: string): void => {
+    void channel
+      .invoke('dock', [op, { files }])
+      .then(() => {
+        toastOk(tip)
+        refresh()
+        // 暂存状态变了，刚展开的 diff 已经过期，收掉它免得误导。
+        setDiff(null)
+      })
+      .catch((cause: unknown) => toastErr(`${op === 'git-stage' ? '暂存' : '取消暂存'}失败：${cause instanceof Error ? cause.message : String(cause)}`))
+  }
+
+  /** 提交（写类 op：过审批）。提交完清空草稿、刷新状态与历史、收起过期 diff。 */
+  const commit = (): void => {
+    const text = message.trim()
+    if (text === '' || committing) return
+    setCommitting(true)
+    void channel
+      .invoke<{ output: string }>('dock', ['git-commit', { message: text }])
+      .then(() => {
+        toastOk('已提交')
+        setMessage('')
+        refresh()
+        setDiff(null)
+      })
+      .catch((cause: unknown) => toastErr(`提交失败：${cause instanceof Error ? cause.message : String(cause)}`))
+      .finally(() => setCommitting(false))
   }
 
   if (status === null) {
@@ -132,26 +190,67 @@ export function ChangesPanel(): ReactNode {
         files={status.staged}
         expandedFile={diff?.file ?? undefined}
         onShowDiff={toggleDiff}
+        onStage={(files) => stage('git-unstage', files, '已取消暂存')}
+        stageTip="取消暂存"
       />
       <GitGroup
         title={`未暂存（${String(status.unstaged.length)}）`}
         files={status.unstaged}
         expandedFile={diff?.file ?? undefined}
         onShowDiff={toggleDiff}
+        onStage={(files) => stage('git-stage', files, '已暂存')}
+        stageTip="暂存"
       />
       <GitGroup title={`未跟踪（${String(status.untracked.length)}）`} files={status.untracked} />
+      {/* 提交区：无暂存禁用（旧界面同款）；提交信息走写类 op 的审批。 */}
+      <div className="git-commit">
+        <textarea
+          rows={2}
+          placeholder="遵循 feat:/fix:/chore: 规范"
+          value={message}
+          aria-label="提交信息"
+          onChange={(event) => setMessage(event.target.value)}
+        />
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={committing || status.staged.length === 0 || message.trim() === ''}
+          onClick={commit}
+        >
+          {committing ? '提交中…' : '提交'}
+        </button>
+      </div>
+      {/* 提交历史：hash + 信息 + 作者 · 日期（旧界面同一行结构）。 */}
+      {log === null || log.length === 0 ? null : (
+        <div className="git-log">
+          {log.map((line) => (
+            <div className="git-log-row" key={line.hash + line.date + line.subject} title={`${line.hash} ${line.author} ${line.date}`}>
+              <code>{line.hash}</code>
+              <span className="git-log-msg">{line.subject}</span>
+              <span className="git-log-meta">
+                {line.author} · {line.date}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {diff === null ? null : <GitDiffView diff={diff} onClose={() => setDiff(null)} />}
     </div>
   )
 }
 
-/** 一组文件行：可点的展开该文件的 diff；不可点的（untracked）给禁用态。 */
+/** 一组文件行：可点的展开该文件的 diff；不可点的（untracked）给禁用态。
+    给了 onStage 时行尾带一颗暂存/取消暂存钮（写类 op，走宿主审批）。 */
 function GitGroup(props: {
   title: string
   files: readonly string[]
   onShowDiff?: (file: string) => void
   /** 当前 diff 视图正显示的文件（行高亮用）。 */
   expandedFile?: string
+  /** 行尾的暂存/取消暂存动作（未给就不画这颗钮）。 */
+  onStage?: (files: string[]) => void
+  /** 那颗钮的提示词（「暂存」/「取消暂存」）。 */
+  stageTip?: string
 }): ReactNode {
   const [open, setOpen] = useState(true)
   if (props.files.length === 0) return null
@@ -182,6 +281,17 @@ function GitGroup(props: {
               >
                 {file}
               </button>
+              {props.onStage === undefined ? null : (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  data-tip={props.stageTip}
+                  aria-label={`${props.stageTip} ${path}`}
+                  onClick={() => props.onStage?.([path])}
+                >
+                  {props.stageTip === '暂存' ? '+' : '−'}
+                </button>
+              )}
             </div>
           )
         })}
