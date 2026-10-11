@@ -523,9 +523,12 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
       },
       setDefaultModel(provider: string, model: string): SettingsMutation {
         return mutateWith(() => {
+          // 先在运行期校验并切换当前会话，成功后才落盘：没配密钥的端点不进运行期
+          // （core/config.ts 的 toProvider 拦下），反过来先写文件会留下
+          // 「回执说失败、config.yaml 却已改」的残局（旧界面同样能触发）。
+          ctx.llm.setModel(provider, model)
           writeDefaultModel(provider, model)
           reloadLive()
-          ctx.llm.setModel(provider, model)
           return `默认模型已设为 ${provider}/${model}`
         })
       },
