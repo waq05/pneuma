@@ -586,3 +586,34 @@ cd ~/.dsc/plugins && npm install <dsh 插件包>
 
 自包含的 dsh 风格插件见 [examples/plugins/dsh-style-clock.js](../examples/plugins/dsh-style-clock.js)；
 兼容层的自检（解析钩子、工具兼容面、logger 桥、不支持项拒绝）跑 `node shots/dsh-compat-check.mjs`。
+
+---
+
+## 10. 界面插件（`@dsc/ui` 契约）与版本纪律
+
+宿主插件（上文 1–9 节）扩展**内核**；界面插件是另一条体系：一个 CJS bundle（构建产物外裹
+`(globalThis.__DSC_UI_FACTORIES__ ??= {})[id] = function (require, module, exports) {…}`），
+`apply(ui)` 里往槽位注册表登记组件，由浏览器壳或终端壳装载。两条体系版本独立、并存不合并。
+
+### 10.1 契约版本与门禁
+
+- 界面插件面对的契约是 **`@dsc/ui`**（壳的导出面 + 槽位语义 + 清单字段含义），契约版本从
+  **1.0.0** 起（`ui-shell/package.json` 的 version，构建时写进 `lib/ui/plugins/manifest.json`
+  顶层 `apiVersion`）。
+- 第三方界面插件**必须**声明自己对着哪个区间（`plugin.json` 的 `api` 字段，semver，如
+  `^1.0.0`）。宿主在组启动图时做 `satisfies(壳版本, 区间)` 判定：不满足就**不进启动图**，
+  原因（「插件 X 要求 @dsc/ui ^2.0.0，当前壳 1.0.0，已跳过加载」）进诊断区。判定在宿主侧，
+  浏览器产物里没有 semver。
+- `workspace:` 前缀与非法区间一律拒绝——**请写具体版本区间**，没有「等于当前」的猜法。
+- 豁免通道第一期不做。
+
+### 10.2 升级纪律（壳作者遵守；插件作者按它写区间）
+
+| 改动 | 版本动作 |
+| --- | --- |
+| 删导出、改导出语义、改槽位 options 形状、改 `inject`/清单字段含义 | **主版本 +1** |
+| 纯增量（新导出、新槽、新可选字段） | 次版本 +1 |
+| 修 bug 不改形状 | 补丁 +1 |
+
+插件作者按此写区间：只用旧能力写 `^1.0.0`；用上新能力再抬下限。区间写宽了在语义变更的
+大版本里会「加载成功但行为不对」——这正是门禁防的事，区间别写宽。

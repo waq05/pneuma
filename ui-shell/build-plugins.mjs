@@ -154,9 +154,14 @@ for (const id of ids) {
 }
 
 /** 宿主只读这份清单（见 `src/core/ui-bundles.ts`）。 */
+// 顶层 apiVersion = 插件面对的 `@dsc/ui` 契约版本（即本包的 version，1.0.0 起）。
+// 宿主按它做第三方插件的 semver 门禁；清单带着它也标记了「这是构建产物的内置清单」
+// （条目无需逐条声明 api）。升级纪律见 docs/plugin-development.md：删导出、改语义、
+// 改槽位 options 形状 = 主版本 +1；纯增量 = 次版本 +1。
+const shellVersion = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version
 writeFileSync(
   join(stageRoot, 'manifest.json'),
-  `${JSON.stringify({ version: 1, plugins }, null, 2)}\n`,
+  `${JSON.stringify({ version: 1, apiVersion: shellVersion, plugins }, null, 2)}\n`,
   'utf8',
 )
 

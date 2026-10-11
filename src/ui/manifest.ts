@@ -27,6 +27,13 @@ export interface UiPluginRow {
   immediately?: boolean
   /** 缺省 web。 */
   platform?: UiPlatform
+  /**
+   * 插件声明的 `@dsc/ui` 契约版本区间（semver，如 `^1.0.0`）。宿主拿它对壳的
+   * `apiVersion` 做门禁：不满足就不进启动图，原因写进 problems——
+   * 判定在宿主侧，浏览器产物里不需要 semver。内置清单（构建产物自带
+   * `apiVersion`）的条目没有这一项，视为与壳同源、总是满足。
+   */
+  api?: string
 }
 
 /** 清单里的一条（已经算好地址与版本）。 */

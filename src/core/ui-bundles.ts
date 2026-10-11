@@ -29,6 +29,7 @@
 import { readFileSync, statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { satisfies, validRange } from 'semver'
 import { artifactRev, type UiPlatform, type UiPluginRow } from '../ui/manifest.js'
 import { inside } from './web-static.js'
 
@@ -72,12 +73,56 @@ export interface UiPluginArtifacts {
   entries: (UiPluginManifestEntry & { rev: string })[]
   /** 声明了但文件不在（或文件/字段不合法）的，逐条说清楚——不静默跳过。 */
   problems: string[]
+  /**
+   * 这份清单对应的 `@dsc/ui` 契约版本（构建产物写下的壳版本，1.0.0 起）。
+   * 第三方目录合成的清单没有这一项——它们的条目必须逐条带 `api` 区间，
+   * 门禁按 entry 侧的声明判（`evaluateUiApiGate`）。
+   */
+  apiVersion?: string
 }
 
 /** 读清单的结果：条目 + 所有"丢弃了什么"的问题记录。 */
 export interface UiPluginManifestReport {
   entries: UiPluginManifestEntry[]
   problems: string[]
+  /** 清单顶层的 `@dsc/ui` 契约版本；没有（第三方清单或旧构建）就没有这一项。 */
+  apiVersion?: string
+}
+
+/**
+ * API 门禁（阶段 7）：判断一个插件条目能不能对着「当前壳的 `@dsc/ui` 契约版本」加载。
+ * 通过给 `null`；拒绝给一句**给人看的原因**（进 problems，界面诊断区原样画出来）。
+ *
+ * 规则（对齐 ui-plugin-parity-plan §5.1 拍板的六条）：
+ *   - 内置清单（顶层带 `apiVersion`，即构建产物）的条目没写 `api` 视为与壳同源，放行；
+ *   - 第三方清单（没有 `apiVersion`）的条目**必须**声明区间，缺失即拒（失败关闭）；
+ *   - `workspace:` 前缀与解析不了的区间直接拒——请写具体版本区间，不做「等于当前」的猜法；
+ *   - `satisfies(壳版本, 区间)` 不满足（含预发布版）即拒。
+ */
+export function evaluateUiApiGate(api: string | undefined, apiVersion: string | undefined): string | null {
+  if (apiVersion === undefined) {
+    if (api === undefined) {
+      return null // 兼容旧清单（尚无 apiVersion 的构建产物）：没有声明依据，不拦
+    }
+    return matchGate(api, '(清单未声明 apiVersion)')
+  }
+  if (api === undefined) return null // 内置条目：与壳同源
+  return matchGate(api, apiVersion)
+}
+
+/** 拿插件的声明区间对壳版本判一次；给拒绝理由或 null。 */
+function matchGate(api: string, shellVersion: string): string | null {
+  if (api.startsWith('workspace:')) {
+    return `插件声明的 api 区间是「${api}」——请写具体的 semver 区间（如 ^1.0.0），这里不做「等于当前」的猜法`
+  }
+  const range = validRange(api)
+  if (range === null) {
+    return `插件声明的 api 区间「${api}」不是合法的 semver 区间（要像 ^1.0.0 / 1.x 这样）`
+  }
+  if (!satisfies(shellVersion, range, { includePrerelease: true })) {
+    return `插件要求 @dsc/ui ${api}，当前壳 ${shellVersion}，已跳过加载`
+  }
+  return null
 }
 
 /** 一次 bundle 查询的结果（当前代 / 上一代 / 没有这一代）。 */
@@ -122,6 +167,13 @@ export function readUiPluginManifestReport(dir: string = uiPluginsDir()): UiPlug
     problems.push(`${UI_PLUGIN_MANIFEST}: 顶层没有 plugins 数组，整份清单作废`)
     return { entries, problems }
   }
+  // 顶层 apiVersion：构建产物写下「这份清单对着哪个 @dsc/ui 版本」。有它 = 内置清单，
+  // 条目无需逐条声明 api；没有（第三方清单）则条目必须逐条带 api（门禁见 evaluateUiApiGate）。
+  const rawApiVersion = (doc as { apiVersion?: unknown }).apiVersion
+  const apiVersion = typeof rawApiVersion === 'string' && rawApiVersion.trim() !== '' ? rawApiVersion.trim() : undefined
+  if (rawApiVersion !== undefined && apiVersion === undefined) {
+    problems.push(`${UI_PLUGIN_MANIFEST}: 顶层 apiVersion 不是非空字符串（${JSON.stringify(rawApiVersion)}），当没写处理`)
+  }
   for (let index = 0; index < plugins.length; index += 1) {
     const raw = plugins[index]
     const where = `${UI_PLUGIN_MANIFEST} 第 ${String(index + 1)} 条`
@@ -148,16 +200,23 @@ export function readUiPluginManifestReport(dir: string = uiPluginsDir()): UiPlug
     }
     const inject = readNameList(record['inject'], id, 'inject', problems)
     const external = readNameList(record['external'], id, 'external', problems)
+    // api：插件声明的 @dsc/ui 区间（第三方必需；形状校验放门禁判定，这里只管类型）。
+    const rawApi = record['api']
+    const api = typeof rawApi === 'string' && rawApi.trim() !== '' ? rawApi.trim() : undefined
+    if (rawApi !== undefined && api === undefined) {
+      problems.push(`${id}: api 不是非空字符串（${JSON.stringify(rawApi)}），当没声明处理`)
+    }
     entries.push({
       id,
       file,
       ...(inject === undefined ? {} : { inject }),
       ...(external === undefined ? {} : { external }),
       ...(record['immediately'] === true ? { immediately: true } : {}),
+      ...(api === undefined ? {} : { api }),
       ...(platform === undefined ? {} : { platform: platform as UiPlatform }),
     })
   }
-  return { entries, problems }
+  return { entries, problems, ...(apiVersion === undefined ? {} : { apiVersion }) }
 }
 
 /**
@@ -230,6 +289,7 @@ class UiArtifactCache {
   private manifestKey: string | null = null
   private entries: (UiPluginManifestEntry & { rev: string })[] = []
   private problems: string[] = []
+  private apiVersion: string | undefined = undefined
   private readonly byKey = new Map<string, CachedRow>()
   /** `${id}\0${file}\0${rev}` → 字节（服务过一次才在）。 */
   private readonly bytes = new Map<string, Buffer>()
@@ -263,6 +323,14 @@ class UiArtifactCache {
     const nextByKey = new Map<string, CachedRow>()
     for (const entry of report.entries) {
       if ((entry.platform ?? 'web') !== this.platform) continue
+      // API 门禁（阶段 7）：插件声明的 @dsc/ui 区间对不上这份清单的契约版本就不进产物表，
+      // 原因写进 problems——「不匹配就不进启动图，壳只负责把原因画出来」。带上 id：
+      // 多个插件被拒时诊断区要能对上号。
+      const denied = evaluateUiApiGate(entry.api, report.apiVersion)
+      if (denied !== null) {
+        problems.push(`${entry.id}: ${denied}`)
+        continue
+      }
       const path = resolve(this.dir, entry.id, entry.file)
       if (!inside(this.dir, path)) {
         problems.push(`${entry.id}: 文件跑到目录外了（${entry.file}）`)
@@ -305,6 +373,7 @@ class UiArtifactCache {
     this.manifestKey = fingerprint
     this.entries = [...nextByKey.values()].map((cached) => cached.row)
     this.problems = problems
+    this.apiVersion = report.apiVersion
     this.byKey.clear()
     for (const [key, cached] of nextByKey) this.byKey.set(key, cached)
     this.previous.clear()
@@ -314,13 +383,13 @@ class UiArtifactCache {
   /** 现在的产物表（清单没换就不重算）。 */
   table(): UiPluginArtifacts {
     this.rebuild(false)
-    return { entries: [...this.entries], problems: [...this.problems] }
+    return { entries: [...this.entries], problems: [...this.problems], ...(this.apiVersion === undefined ? {} : { apiVersion: this.apiVersion }) }
   }
 
   /** 强制重算（页面每次加载、`refresh()` 用：文件被手工换掉也立刻反映）。 */
   refresh(): UiPluginArtifacts {
     this.rebuild(true)
-    return { entries: [...this.entries], problems: [...this.problems] }
+    return { entries: [...this.entries], problems: [...this.problems], ...(this.apiVersion === undefined ? {} : { apiVersion: this.apiVersion }) }
   }
 
   /**

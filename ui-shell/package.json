@@ -1,7 +1,7 @@
 {
   "name": "dsc-ui-shell",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "description": "Muse Code 插件化界面壳：槽位宿主 + 插件加载器。壳产物落 ../lib/ui/assets，插件 bundle 落 ../lib/ui/plugins，由宿主 webserver 插件伺服。",
   "scripts": {

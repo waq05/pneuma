@@ -2914,3 +2914,42 @@ bundle 构建一份、清单出两行（platform web / tui，同一个 client.js
 - echo 的 tui 行是演示插件（阶段 8 会连同 hello/echo/runtime 一起处理，届时探针断言同步收）。
 - `@dsc/ui` 的 tui 值面只有 `Text` 一个基元——够 echo 用，插件要 Box/边框时再扩（走增量，
   不预先堆）。
+
+## 阶段 112（对齐计划 7a/7b）：`@dsc/ui` 契约版本 + 宿主侧 semver 门禁（未发版）
+
+计划 §5.1 拍板的第三方版本门禁落地。四条契约里缺的「插件 ↔ 壳的界面 API」这条补上了：
+`@dsc/ui` 从 1.0.0 起有真版本号，第三方插件声明区间，宿主判定，不匹配不进启动图并说人话。
+
+### 做了什么
+
+- **`@dsc/ui` 1.0.0**（`ui-shell/package.json`），构建时写进清单顶层 `apiVersion`
+  （`build-plugins.mjs` 读包版本）。清单带着它也标记了「这是构建产物的内置清单」。
+- **条目 `api` 字段**（`src/ui/manifest.ts` 的 `UiPluginRow` + `core/ui-bundles.ts` 校验）：
+  插件声明的 semver 区间，类型不对记 problems。
+- **门禁 `evaluateUiApiGate(api, apiVersion)`**（`core/ui-bundles.ts`，semver 依赖入宿主）：
+  - 内置清单（带 apiVersion）条目无声明 = 与壳同源，放行；
+  - 清单无 apiVersion 且条目无声明 = 放行（兼容旧构建产物；第三方的「必须声明」由 7c 的
+    发现层把门——分层清晰：发现管声明完整性，门禁管区间判定）；
+  - `workspace:` 前缀、非法区间直接拒（「请写具体的 semver 区间」）；
+  - `satisfies(壳版本, 区间, {includePrerelease:true})` 不满足拒：「插件要求 @dsc/ui ^9.0.0，
+    当前壳 1.0.0，已跳过加载」。
+- **collect 时生效**：不满足的条目不进产物表（自然不进 web 启动图与 TUI 装载），原因带插件 id
+  进 problems（多个被拒时诊断区能对上号）。web 与 tui 两个视图走同一个 collect，门禁自动全覆盖。
+- 升级纪律写进 `docs/plugin-development.md` §10（删导出/改语义/改槽位形状 = 主版本+1；
+  纯增量 = 次版本+1；区间别写宽）。
+
+### 验证（新探针 `scripts/ui-api-gate-test.mjs`，14 条断言）
+
+- 真内置清单：apiVersion=1.0.0、12 个插件全过、条目不带 api。
+- 门禁规则逐条：区间满足（`^1.0.0` / `1.x`）放行；不满足（`^2.0.0` 对 1.0.0、更低下限）拒并
+  带双方版本；`workspace:` 与非法区间拒并要求写具体区间；双方无版本依据放行（兼容旧产物）。
+- 端到端：临时清单混一个 `api: '^9.0.0'` 的条目 → collect 剔除它、放行 `^1.0.0` 的那个、
+  problems 里有人话（含 id）。
+- 回归：ui-plugin-test、ui-tui-plugin-test 全绿（内置路径零变化）。
+
+### 诚实边界
+
+- 门禁已通到「产物表」，但 problems 在 web 诊断区的显示链路用的是既有 boot-notices 机制，
+  「第三方被拒的原因用户看得见」的端到端要走 7c（第三方发现接上后一起实机走查）。
+- `@dsc/ui` 的 1.0.0 是**契约起点**不是稳定承诺——阶段 7/8 还会加导出（信任确认、徽标等），
+  按纪律走次版本。
