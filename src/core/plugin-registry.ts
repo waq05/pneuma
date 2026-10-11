@@ -88,6 +88,61 @@ export interface PluginEntry {
 
 const PLUGINS_JSON = dscPath('plugins.json')
 
+// ── 第三方界面插件的信任记录（阶段 7）─────────────────────────────────────────
+//
+// 首次发现第三方界面插件时不自动加载：装了什么、能调哪些宿主方法要摊给用户看，答过一次
+// 才装（落盘 plugins.json 顶层 `uiTrust` 段，与宿主插件的启停同住一份记录，不是每次问）。
+// 键与启停条目同一个 `file` 形状（`<目录名>/ui/client.js`）。
+
+/** 一条界面插件信任记录。 */
+export interface UiPluginTrustEntry {
+  /** 答应的时刻（毫秒）。 */
+  trustedAt: number
+}
+
+/** 读全部界面插件信任记录（文件缺失/损坏/形状不对按空处理）。 */
+export function readUiPluginTrust(): Record<string, UiPluginTrustEntry> {
+  try {
+    if (!existsSync(PLUGINS_JSON)) return {}
+    const doc = JSON.parse(readFileSync(PLUGINS_JSON, 'utf8')) as { uiTrust?: unknown }
+    if (doc.uiTrust === null || typeof doc.uiTrust !== 'object' || Array.isArray(doc.uiTrust)) return {}
+    const out: Record<string, UiPluginTrustEntry> = {}
+    for (const [key, value] of Object.entries(doc.uiTrust as Record<string, unknown>)) {
+      if (typeof value !== 'object' || value === null) continue
+      const trustedAt = (value as { trustedAt?: unknown }).trustedAt
+      if (typeof trustedAt === 'number') out[key] = { trustedAt }
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+/** 查一个第三方界面插件有没有被信任过。 */
+export function isUiPluginTrusted(fileKey: string): boolean {
+  return readUiPluginTrust()[fileKey] !== undefined
+}
+
+/** 落一条信任记录（信任确认动作的终点；重复信任无害）。 */
+export function trustUiPlugin(fileKey: string): void {
+  mkdirSync(dscPath(), { recursive: true })
+  const doc = (() => {
+    try {
+      if (!existsSync(PLUGINS_JSON)) return { version: 1, entries: [] as PluginEntry[], uiTrust: {} }
+      return JSON.parse(readFileSync(PLUGINS_JSON, 'utf8')) as {
+        version?: number
+        entries?: PluginEntry[]
+        uiTrust?: Record<string, UiPluginTrustEntry>
+      }
+    } catch {
+      return { version: 1, entries: [] as PluginEntry[], uiTrust: {} }
+    }
+  })()
+  const uiTrust = doc.uiTrust !== null && typeof doc.uiTrust === 'object' && !Array.isArray(doc.uiTrust) ? doc.uiTrust : {}
+  uiTrust[fileKey] = { trustedAt: Date.now() }
+  writeFileSync(PLUGINS_JSON, `${JSON.stringify({ version: 1, entries: doc.entries ?? [], uiTrust }, null, 2)}\n`, 'utf8')
+}
+
 /** 读取条目树（文件缺失/损坏按空处理；兼容旧版 disabled 数组格式）。 */
 export function readPluginEntries(): PluginEntry[] {
   try {
@@ -123,9 +178,18 @@ export function readPluginEntries(): PluginEntry[] {
 /** 写入条目树（原子性不追求——个人版单写者）。 */
 export function writePluginEntries(entries: PluginEntry[]): void {
   mkdirSync(dscPath(), { recursive: true })
+  // 保留文件里其他顶层段（uiTrust 等）——这份文件被多条体系共用，各写各的段。
+  const previousUiTrust = (() => {
+    try {
+      const doc = JSON.parse(readFileSync(PLUGINS_JSON, 'utf8')) as { uiTrust?: unknown }
+      return doc.uiTrust !== null && typeof doc.uiTrust === 'object' && !Array.isArray(doc.uiTrust) ? doc.uiTrust : undefined
+    } catch {
+      return undefined
+    }
+  })()
   writeFileSync(
     PLUGINS_JSON,
-    `${JSON.stringify({ version: 1, entries }, null, 2)}\n`,
+    `${JSON.stringify({ version: 1, entries, ...(previousUiTrust === undefined ? {} : { uiTrust: previousUiTrust }) }, null, 2)}\n`,
     'utf8',
   )
 }

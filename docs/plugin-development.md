@@ -617,3 +617,26 @@ cd ~/.dsc/plugins && npm install <dsh 插件包>
 
 插件作者按此写区间：只用旧能力写 `^1.0.0`；用上新能力再抬下限。区间写宽了在语义变更的
 大版本里会「加载成功但行为不对」——这正是门禁防的事，区间别写宽。
+
+### 10.3 第三方界面插件：目录形状、信任与 rev
+
+**装在哪**：`~/.dsc/plugins/<目录名>/`（宿主插件与界面插件同住一个目录）：
+
+```
+~/.dsc/plugins/demo-greeter/
+  plugin.json     ← { "api": "^1.0.0", "platforms": ["web", "tui"] }（api 必填）
+  ui/client.js    ← 界面半边（CJS 工厂，注册名必须等于目录 id）
+```
+
+最小可抄的例子在 [examples/ui-plugin-demo/](../examples/ui-plugin-demo/)（手写 CJS，无需构建工具；
+正式开发用打包器按同样的包装形状产出）。
+
+**首次安装的信任确认**：发现新目录后宿主**不装载**，会话流里出现「还没有信任记录」提示；
+用 `/ui-trust <目录名>` 确认——它会摊开这个插件声明对着哪个契约版本、跑在哪种壳、能调什么
+（界面通道白名单方法 + 桌面窗口的原生桥），答一次落盘（`plugins.json` 顶层 `uiTrust` 段），
+不是每次问。停用与宿主插件同格：`plugins.json` 的 `entries` 里写
+`{ "file": "demo-greeter/ui/client.js", "disabled": true }`。
+
+**产物复核（rev 的语义）**：内置插件的 rev 是文件指纹（mtime/ctime/size），只承担「换文件
+就换地址」；第三方插件的 rev 是**内容摘要**（sha256 前 16 位）——目录里换了字节 rev 必变，
+旧页面的旧地址拿旧字节、新地址拿新字节，同一份字节永远同 rev。

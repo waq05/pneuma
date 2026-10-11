@@ -32,7 +32,9 @@ const GOODBYE = 'Muse Code 已退出，会话已保存（/resume 可继续）。
 
 export const tuiPlugin: Plugin.Object = {
   name: 'tui',
-  inject: ['ui'],
+  // transcript：界面插件装载失败的原因（没信任、api 不匹配…）进会话流——
+  // 「插件怎么不见了」不能只写在 stderr 里。
+  inject: ['ui', 'transcript'],
   apply(ctx) {
     const runtime = ctx.ui
     const stdout = process.stdout

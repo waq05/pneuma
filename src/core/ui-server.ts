@@ -42,7 +42,7 @@ import { dirname } from 'node:path'
 import { composeUiBootGraph, type UiBootGraph, type UiPluginRow } from '../ui/manifest.js'
 import { dscPath } from './path-policy.js'
 import type { UiEventsHandle } from './ui-events.js'
-import { collectUiPluginArtifacts, uiAssetsDir, uiPluginsDir } from './ui-bundles.js'
+import { collectUiArtifactsForPlatform, uiAssetsDir, uiPluginsDir } from './ui-bundles.js'
 import { isUiBundleRequest, resolveUiBundleRequest, type UiBundleResponse } from './ui-route.js'
 import { checkUiRequestTrust, issueUiCookie, requestAuthority, timingSafeEqualText, verifyUiCookie } from './ui-trust.js'
 import { readCookie, sendJson, sendText } from './web-http.js'
@@ -122,6 +122,8 @@ export interface UiServerHandle {
   boot(): UiBootGraph
   /** 重新扫插件目录（界面壳重新构建后不必重启宿主）。 */
   refresh(): { entries: number; problems: string[] }
+  /** 当前积累的装载问题（第三方没信任、api 不匹配、bundle 缺失…），给调用方转成会话流。 */
+  problems(): string[]
   /** 关服务（幂等）。 */
   close(): Promise<void>
 }
@@ -190,7 +192,7 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
   const signingKey = loadUiSigningKey(log)
 
   // 插件清单：启动时收一次，构建完界面壳可以 refresh 重收。
-  let artifacts = collectUiPluginArtifacts(pluginsDir, 'web')
+  let artifacts = collectUiArtifactsForPlatform('web', { builtinDir: pluginsDir })
   const manifest = artifacts.entries
 
   /**
@@ -202,7 +204,8 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
 
   /** 现在这一刻的启动图（强制重算产物表：文件被换掉立刻反映出来）。 */
   const buildBoot = (): UiBootGraph => {
-    const fresh = collectUiPluginArtifacts(pluginsDir, 'web', { force: true })
+    // 内置 + 第三方合成（~/.dsc/plugins/ 的界面半边）；门禁与信任都在 collect 层做过。
+    const fresh = collectUiArtifactsForPlatform('web', { force: true, builtinDir: pluginsDir })
     artifacts = fresh
     const rows: (UiPluginRow & { rev: string })[] = fresh.entries.map((entry) => ({
       id: entry.id,
@@ -355,8 +358,9 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
       return `http://127.0.0.1:${String(currentPort)}/?token=${token}`
     },
     boot: () => buildBoot(),
+    problems: () => [...artifacts.problems],
     refresh: () => {
-      const fresh = collectUiPluginArtifacts(pluginsDir, 'web', { force: true })
+      const fresh = collectUiArtifactsForPlatform('web', { force: true, builtinDir: pluginsDir })
       artifacts = fresh
       return { entries: fresh.entries.length, problems: fresh.problems }
     },

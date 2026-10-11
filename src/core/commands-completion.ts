@@ -30,6 +30,7 @@ export const BUILT_IN_COMMANDS: CommandSpec[] = [
   { name: 'thinking', args: '[on|off]', description: '切换思考块展开显示（无参数 = 翻转，会话内生效）' },
   { name: 'fork', args: '', description: '分叉当前会话为可恢复的副本（当前会话不变）', duringTask: 'deny' },
   { name: 'plugins', args: '', description: '查看已挂载插件清单（启停与详情在桌面端插件中心）' },
+  { name: 'ui-trust', args: '<插件目录名>', description: '信任一个第三方界面插件（首次安装的确认动作）' },
   { name: 'update', args: '', description: '检查有没有新版（只查不装）', duringTask: 'deny' },
   { name: 'status', args: '', description: '查看上下文占用与压缩余量' },
   { name: 'usage', args: '', description: '查看累计用量统计（含缓存命中率）' },

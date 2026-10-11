@@ -20,6 +20,7 @@
  * @module dsc/plugins/webserver
  */
 import type { Plugin } from '@deepseek-ai/cordis'
+import { bootNoticeOnce } from '../core/boot-notices.js'
 import { resolvePluginConfig } from '../core/plugin-registry.js'
 import { createUiEvents, type UiEventsHandle } from '../core/ui-events.js'
 import { isUiMethod, UI_METHODS, validateUiArgs } from '../core/ui-methods.js'
@@ -127,6 +128,12 @@ export const webserverPlugin: Plugin.Object = {
       })
       handle = server
       events = channel
+      // 插件装载的问题（第三方没信任、api 不匹配、bundle 缺失…）进会话流：
+      // 「插件怎么不见了」不能只写在日志里。bootNoticeOnce 按文本去重——
+      // 同一句话（重启后重新发现也一样）只报一次。
+      for (const problem of server.problems()) {
+        if (bootNoticeOnce(`ui-server.problem:${problem}`, problem)) ctx.transcript.system(problem)
+      }
       // 这条打印是「界面可以访问了」的就绪信号：用户拿它进浏览器。
       // 桌面主进程不走这条（它从服务上取地址），这样 stdout 是否被 TUI 接管都无所谓。
       console.log(`Muse Code 界面： ${server.url}`)

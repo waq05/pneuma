@@ -2953,3 +2953,48 @@ bundle 构建一份、清单出两行（platform web / tui，同一个 client.js
   「第三方被拒的原因用户看得见」的端到端要走 7c（第三方发现接上后一起实机走查）。
 - `@dsc/ui` 的 1.0.0 是**契约起点**不是稳定承诺——阶段 7/8 还会加导出（信任确认、徽标等），
   按纪律走次版本。
+
+## 阶段 113（对齐计划 7c/7d）：第三方界面插件——发现/伺服/启停/信任确认（未发版）
+
+计划阶段 7 的四条验收全部达成：**造一个第三方插件、从 `~/.dsc/plugins/` 装进去、能启停、
+apiVersion 不匹配被拒并说明原因、信任确认走一次**。示例在 `examples/ui-plugin-demo/`
+（手写 CJS 无需构建工具），探针 `scripts/ui-third-party-test.mjs`（20 条断言）+ 真 TUI 实机两轮。
+
+### 做了什么
+
+- **目录形状**：`~/.dsc/plugins/<目录名>/{plugin.json, ui/client.js}`（宿主插件与界面半边同住；
+  `api` 必填，`platforms` 可选）。发现层逐条把门：目录名不成形、plugin.json 缺失/坏、没写 api、
+  与内置 id 撞名、api 区间不满足（复用 7b 门禁）——这些记 problems 丢弃；**停用**（plugins.json
+  的 entries，键 `<目录名>/ui/client.js`，与宿主插件同格）静默跳过；**未信任**提示等确认。
+- **信任门 + 确认动作**：`plugins.json` 顶层 `uiTrust` 段（`core/plugin-registry.ts` 读写）；
+  发现顺序是「先判装不装得上（撞名/门禁），再问要不要信任」。确认走 **`/ui-trust`**（无参数列
+  等确认清单，带参数摊开能力面：@dsc/ui 区间、载体、界面通道白名单方法 + 原生桥），答一次
+  落盘不是每次问。
+- **伺服**：第三方 bundle 走同一条 `/plugins/<id>/client.js?rev=` 路由——内置查不到再查第三方表，
+  内容寻址/上一代/缺 rev 404 的规矩与内置一字不差（`core/ui-route.ts`）。
+- **rev 决定（拍板）**：第三方用**内容摘要**（sha256 前 16 位），内置保持 mtime 指纹——「同目录
+  换了字节 rev 必变」是第三方该有的语义，文档写明。
+- **合成口**：`collectUiArtifactsForPlatform(platform)` = 内置 + 第三方一张表；web 启动图与 TUI
+  装载都从它取。第三方条目带 `origin: 'third-party'`，装载器按它去 `ui/` 子目录读字节。
+- **problems 进会话流**：ui-server 把装载问题经 `bootNoticeOnce` 去重转 transcript.system（web
+  侧）；TUI 侧装载器的 onReport 本来就接 transcript。**修了一个实机抓到的启动炸**：tui.ts 只
+  inject 了 `['ui']`，problems 一非空 `ctx.transcript` 直接抛「cannot get property without inject」
+  把整个 TUI 启动带崩——补 `inject: ['ui', 'transcript']`。
+- 修了 `writePluginEnabled` 重写 plugins.json 时把 `uiTrust` 段抹掉的 bug（写前保留其他顶层段）。
+
+### 验证
+
+- 探针 20 条：信任门前拦/信任后合成、双平台双行、停用静默、api 缺失/不满足/撞名逐条拒绝、
+  rev 是 16 位内容摘要且同字节稳定/换字节必变、伺服 200/旧 rev 404/缺 rev 404、TUI 装载第三方
+  tui 条目进注册表。
+- 实机两轮（隔离 HOME 真内核）：未信任 → 会话流出现「还没有信任记录」提示且未装载、TUI 不崩；
+  预置信任 → 终端帧里出现「来自第三方插件 demo-greeter 的问候（同一份 bundle）」。
+- 回归：命令电池、tui-features 29 条、七个 UI 探针、桌面自检四用例全绿；真实 `~/.dsc` 零污染。
+
+### 诚实边界
+
+- 信任确认的**桌面壳入口**还没有（/ui-trust 在终端与 CLI 可用；桌面端输入框的 runCommand 被界面
+  通道有意排除）——插件中心加信任卡是后续节奏，验收的「确认走一次」已由指令达成。
+- 第三方插件的 `plugin.json` 只认 `api`/`platforms` 三个字段；宿主半边（plugin.js）与目录形式
+  宿主插件不在本阶段。
+- 双平台第三方插件的 tui 行依赖宿主以 `platform: 'tui'` 收集——远程壳切同一份壳时自动受益。

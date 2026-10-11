@@ -8,7 +8,7 @@
  *
  * @module dsc/plugins/commands
  */
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
@@ -24,6 +24,10 @@ import { estimateTokens } from '../core/compact.js'
 import { exportSessionMarkdown } from '../core/session-export.js'
 import { checkForUpdate } from '../core/update-check.js'
 import { errText } from '../core/err-text.js'
+import { discoverThirdPartyUiArtifacts, readUiPluginManifestReport } from '../core/ui-bundles.js'
+import { dscPath } from '../core/path-policy.js'
+import { trustUiPlugin } from '../core/plugin-registry.js'
+import { DSC_VERSION } from '../core/version.js'
 import {
   addExtraSpec,
   allSpecs,
@@ -32,6 +36,11 @@ import {
   helpText,
   removeExtraSpec,
 } from '../core/commands-completion.js'
+
+/** 当前壳的 `@dsc/ui` 契约版本（内置清单顶层那个）；读不到就不设门（发现层会给出问题清单）。 */
+function shellApiVersionForTrust(): string | undefined {
+  return readUiPluginManifestReport().apiVersion
+}
 
 export const commandsPlugin: Plugin.Object = {
   name: 'commands',
@@ -426,6 +435,48 @@ export const commandsPlugin: Plugin.Object = {
             ui.notice(result.data?.url !== undefined ? `${result.notice}\n发布页：${result.data.url}` : result.notice)
           })
           .catch((cause: unknown) => ui.notice(`/update 失败：${errText(cause)}`))
+      },
+    )
+    service.register(
+      { name: 'ui-trust', args: '<插件目录名>', description: '信任一个第三方界面插件（首次安装的确认动作）' },
+      ({ args, ui }) => {
+        const name = args[0] ?? ''
+        if (name === '') {
+          // 列出当前等着被确认的（discover 的 problems 里就有它们的名字）。
+          const pending = discoverThirdPartyUiArtifacts(shellApiVersionForTrust(), new Set())
+          const waiting = pending.problems.filter((line) => line.includes('还没有信任记录'))
+          if (waiting.length === 0) {
+            ui.notice('没有等着确认的第三方界面插件。装法：把 <目录名>/{plugin.json, ui/client.js} 放进 ~/.dsc/plugins/。')
+            return
+          }
+          ui.notice(
+            ['还没确认的第三方界面插件（能调宿主的界面方法与原生桥，确认前不装载）：', ...waiting.map((line) => `  ${line}`), '确认：/ui-trust <插件目录名>'].join('\n'),
+          )
+          return
+        }
+        const fileKey = `${name}/ui/client.js`
+        // 摊开能力面再落信任：它声明对着哪个契约版本、跑在哪种壳，以及两条通用能力。
+        const manifestPath = join(dscPath('plugins'), name, 'plugin.json')
+        let api = '(没写)'
+        let platforms = 'web'
+        try {
+          const doc = JSON.parse(readFileSync(manifestPath, 'utf8')) as { api?: unknown; platforms?: unknown }
+          if (typeof doc.api === 'string') api = doc.api
+          if (Array.isArray(doc.platforms) && doc.platforms.length > 0) platforms = doc.platforms.join('/')
+        } catch {
+          ui.notice(`读不到 ${fileKey} 的 plugin.json——目录名对吗？（要的是 ~/.dsc/plugins/<目录名>）`)
+          return
+        }
+        trustUiPlugin(fileKey)
+        ui.notice(
+          [
+            `已信任第三方界面插件「${name}」`,
+            `  @dsc/ui 区间：${api}（当前壳 ${DSC_VERSION}，不满足会被门禁拦下并说明）`,
+            `  载体：${platforms}`,
+            '  能力：调用宿主界面通道的白名单方法；桌面窗口里可用原生桥（打开目录、终端等 14 个操作）',
+            '  生效：重启宿主（或刷新浏览器页面）后装载；停用走 plugins.json 的启停或插件中心',
+          ].join('\n'),
+        )
       },
     )
     service.register(

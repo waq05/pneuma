@@ -68,6 +68,29 @@ export function uiPluginsDir(): string {
 /** 清单里的一条：插件行 + 它的文件名。 */
 export type UiPluginManifestEntry = UiPluginRow & { file: string }
 
+/**
+ * 第三方条目的来源标记：`~/.dsc/plugins/` 的界面半边带 `origin: 'third-party'`，
+ * 内置条目没有这一项。装载器按它决定去哪个目录读 bundle 字节——两边磁盘布局不同
+ * （内置 `<dir>/<id>/<file>`，第三方 `<root>/<id>/ui/client.js`）。
+ */
+export interface ThirdPartyOrigin {
+  origin: 'third-party'
+  /** 相对第三方根目录的目录名（= id）。 */
+  source: string
+}
+
+/** 读一个第三方 bundle 的字节（`<root>/<id>/ui/client.js`；不存在给 null）。 */
+export function readThirdPartyUiPluginBundle(id: string, dir: string = thirdPartyUiRoot()): Buffer | null {
+  if (!PLUGIN_ID.test(id)) return null
+  const path = resolve(dir, id, 'ui', 'client.js')
+  if (!inside(dir, path)) return null
+  try {
+    return readFileSync(path)
+  } catch {
+    return null
+  }
+}
+
 /** 清单 + 已算好版本的条目。 */
 export interface UiPluginArtifacts {
   entries: (UiPluginManifestEntry & { rev: string })[]
@@ -489,4 +512,226 @@ export function readUiPluginBundle(
   } catch {
     return null
   }
+}
+
+// ── 第三方界面插件（阶段 7）────────────────────────────────────────────────────
+//
+// 住 `~/.dsc/plugins/<目录名>/`：`ui/client.js` 是界面半边，`plugin.json` 声明
+// `api`（必填，@dsc/ui 区间）与可选的 `platforms`。发现、启停（plugins.json 的
+// entries，键 `<目录名>/ui/client.js`）、信任（plugins.json 顶层 `uiTrust`）与
+// 内置插件合成为同一张产物表——「不用分内置还是第三方，只认文件在不在」。
+
+import { readdirSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { dscPath } from './path-policy.js'
+import { isPluginEnabled, isUiPluginTrusted, readUiPluginTrust } from './plugin-registry.js'
+
+/** 第三方 bundle 的 rev：**内容摘要**（sha256 前 16 位）。内置产物用 mtime 指纹（开发期
+ *  频繁重编，快且够）；第三方的字节是「别人放进来的一份代码」，rev 承担内容复核——
+ *  同一目录里换了字节，rev 必须变。 */
+function contentRev(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex').slice(0, 16)
+}
+
+/** 第三方插件目录（宿主插件与界面半边同住 `~/.dsc/plugins/`）。 */
+export function thirdPartyUiRoot(): string {
+  return dscPath('plugins')
+}
+
+/** 第三方目录里的一条发现结果（rev 已按内容算好）。 */
+export interface ThirdPartyUiEntry extends UiPluginRow, ThirdPartyOrigin {
+  file: string
+  rev: string
+}
+
+/** 第三方发现的清单视图：合成后的条目 + 所有问题记录。 */
+export interface ThirdPartyUiReport {
+  entries: ThirdPartyUiEntry[]
+  problems: string[]
+}
+
+/** 第三方缓存：一条发现的字节与指纹。 */
+interface ThirdPartyCached {
+  row: ThirdPartyUiEntry
+  bytes: Buffer
+  fingerprint: string
+  /** 上一代（更新前的字节与 rev；旧页面还拿着旧地址时要用）。 */
+  previous: { rev: string; bytes: Buffer } | null
+}
+
+/** 模块级缓存：目录 → 表。进程内只有宿主这一个写者。 */
+const thirdPartyCaches = new Map<string, Map<string, ThirdPartyCached>>()
+
+function thirdPartyCache(dir: string): Map<string, ThirdPartyCached> {
+  const existing = thirdPartyCaches.get(dir)
+  if (existing !== undefined) return existing
+  const created = new Map<string, ThirdPartyCached>()
+  thirdPartyCaches.set(dir, created)
+  return created
+}
+
+/**
+ * 扫第三方插件目录，合成界面半边的发现清单。
+ *
+ * 每一步失败/拒绝都记进 problems 并跳过那一条，不静默：
+ * 目录名不成形、`plugin.json` 缺失或坏、`api` 没声明、被停用（plugins.json）、
+ * 没有信任记录（首次安装要答一次）、api 区间对不上当前壳、与内置 id 撞名。
+ *
+ * @param shellApiVersion - 当前壳的 `@dsc/ui` 契约版本（内置清单顶层那个）
+ * @param builtinIds - 内置清单里已有的 id（撞名时第三方让路）
+ * @param dir - 第三方根目录，缺省 `~/.dsc/plugins`
+ */
+export function discoverThirdPartyUiArtifacts(
+  shellApiVersion: string | undefined,
+  builtinIds: ReadonlySet<string>,
+  dir: string = thirdPartyUiRoot(),
+): ThirdPartyUiReport {
+  const entries: ThirdPartyUiEntry[] = []
+  const problems: string[] = []
+  let names: string[]
+  try {
+    names = readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith('.')).map((e) => e.name)
+  } catch {
+    return { entries, problems } // 目录还没有 = 还没装过第三方，正常态
+  }
+  const cache = thirdPartyCache(dir)
+  const trusted = readUiPluginTrust()
+  for (const name of names) {
+    const where = `${name}/ui/client.js`
+    const manifestPath = resolve(dir, name, 'plugin.json')
+    let doc: Record<string, unknown>
+    try {
+      doc = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>
+    } catch {
+      // 没有 plugin.json 的目录可能是宿主插件的资料目录：只在没有界面半边时当没看见。
+      if (!existsClient(dir, name)) problems.push(`${where}: 没有 plugin.json（第三方界面插件必须声明 api 区间）`)
+      continue
+    }
+    const rawApi = doc['api']
+    const api = typeof rawApi === 'string' && rawApi.trim() !== '' ? rawApi.trim() : undefined
+    if (api === undefined) {
+      problems.push(`${where}: plugin.json 没写 api（@dsc/ui 的版本区间，如 "^1.0.0"）——第三方必须声明`)
+      continue
+    }
+    const rawPlatforms = doc['platforms']
+    const platforms = Array.isArray(rawPlatforms)
+      ? rawPlatforms.filter((value): value is UiPlatform => value === 'web' || value === 'tui')
+      : (['web'] as UiPlatform[])
+    if (rawPlatforms !== undefined && platforms.length === 0) {
+      problems.push(`${where}: platforms 不认识（${JSON.stringify(rawPlatforms)}），只认 web / tui`)
+      continue
+    }
+    const fileKey = `${name}/ui/client.js`
+    // 先判「这份代码装不装得上」（撞名、门禁），再问用户要不要信任——
+    // 别让人信任一个注定进不了启动图的东西。
+    if (builtinIds.has(name)) {
+      problems.push(`${where}: id 与内置插件撞名，第三方这份被跳过`)
+      continue
+    }
+    const gate = evaluateUiApiGate(api, shellApiVersion)
+    if (gate !== null) {
+      problems.push(`${name}: ${gate}`)
+      continue
+    }
+    if (!isPluginEnabled(fileKey)) {
+      continue // 停用不是问题：启停是用户的开关，不进 problems
+    }
+    if (trusted[fileKey] === undefined) {
+      problems.push(`${where}: 还没有信任记录——首次安装需要在插件中心确认一次（它将能调用宿主的界面方法）`)
+      continue
+    }
+    const bytes = readFileSyncSafe(resolve(dir, name, 'ui', 'client.js'))
+    if (bytes === null) {
+      problems.push(`${where}: plugin.json 在，但 ui/client.js 读不到`)
+      continue
+    }
+    const rev = contentRev(bytes)
+    const cached = cache.get(fileKey)
+    const fingerprint = `${rev}`
+    const row: ThirdPartyUiEntry = {
+      id: name,
+      file: 'client.js',
+      rev,
+      api,
+      origin: 'third-party',
+      source: name,
+    }
+    // 双平台插件进两个平台视图：web 行缺省（无 platform 字段），tui 行显式写。
+    // origin 标记第三方：装载器按它去 ui/ 子目录读字节（磁盘布局与内置不同）。
+    for (const platform of platforms) {
+      entries.push({ ...row, origin: 'third-party', ...(platform === 'web' ? {} : { platform }) })
+    }
+    if (cached === undefined || cached.fingerprint !== fingerprint) {
+      cache.set(fileKey, {
+        row,
+        bytes,
+        fingerprint,
+        previous: cached === undefined ? null : { rev: cached.row.rev, bytes: cached.bytes },
+      })
+    }
+  }
+  return { entries, problems }
+}
+
+function existsClient(dir: string, name: string): boolean {
+  try {
+    statSync(resolve(dir, name, 'ui', 'client.js'))
+    return true
+  } catch {
+    return false
+  }
+}
+
+function readFileSyncSafe(path: string): Buffer | null {
+  try {
+    return readFileSync(path)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 第三方 bundle 的内容寻址查询：rev 对上当前给字节，对上上一代给旧字节，都没有 404。
+ * 形状与内置的 `lookupUiPluginBundle` 同一份 `UiBundleLookup`——伺服路由先查内置、
+ * 再查这里，两边口径一致。
+ */
+export function lookupThirdPartyUiBundle(
+  id: string,
+  file: string,
+  rev: string,
+  dir: string = thirdPartyUiRoot(),
+  wantBody = true,
+): UiBundleLookup {
+  void file // 第三方的文件名固定 client.js；file 参与 key 但查询按 id 定位
+  const empty: UiBundleLookup = { known: false, current: false, previous: false, size: null, body: null }
+  if (!PLUGIN_ID.test(id)) return empty
+  const cache = thirdPartyCaches.get(dir)
+  const cached = cache?.get(`${id}/ui/client.js`)
+  if (cached === undefined) return { ...empty, known: false }
+  if (cached.row.rev === rev) {
+    return { known: true, current: true, previous: false, size: cached.bytes.length, body: wantBody ? cached.bytes : null }
+  }
+  if (cached.previous !== null && cached.previous.rev === rev) {
+    return { known: true, current: false, previous: true, size: cached.previous.bytes.length, body: wantBody ? cached.previous.bytes : null }
+  }
+  return { known: true, current: false, previous: false, size: null, body: null }
+}
+
+/**
+ * 一个平台视图下的**全部**界面插件：内置（构建产物清单）+ 第三方（`~/.dsc/plugins/`
+ * 里带界面半边的目录）。启动图（web）与终端装载器（tui）都从这一个口子取，
+ * 谁也不许自己再拼一份——口径分叉就是从这里开始的。
+ */
+export function collectUiArtifactsForPlatform(
+  platform: 'web' | 'tui',
+  options: { force?: boolean; builtinDir?: string; thirdPartyDir?: string } = {},
+): UiPluginArtifacts {
+  const builtin = collectUiPluginArtifacts(options.builtinDir, platform, { force: options.force })
+  const third = discoverThirdPartyUiArtifacts(builtin.apiVersion, new Set(builtin.entries.map((entry) => entry.id)), options.thirdPartyDir)
+  const entries = [
+    ...builtin.entries,
+    ...third.entries.filter((entry) => (entry.platform ?? 'web') === platform),
+  ]
+  const problems = [...builtin.problems, ...third.problems]
+  return { entries, problems, ...(builtin.apiVersion === undefined ? {} : { apiVersion: builtin.apiVersion }) }
 }

@@ -16,9 +16,9 @@
 import React from 'react'
 import * as jsxRuntime from 'react/jsx-runtime'
 import {
-  collectUiPluginArtifacts,
+  collectUiArtifactsForPlatform,
+  readThirdPartyUiPluginBundle,
   readUiPluginBundle,
-  uiPluginsDir,
 } from '../core/ui-bundles.js'
 import { isInvokableMethod } from '../core/host-methods.js'
 import type { DscRuntime } from '../contract.js'
@@ -68,7 +68,11 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
   const reportById = new Map<string, UiPluginLoadReport>()
   const disposers = new Map<string, () => void>()
 
-  const artifacts = collectUiPluginArtifacts(options.pluginsDir ?? uiPluginsDir(), 'tui')
+  const artifacts = collectUiArtifactsForPlatform('tui', {
+    // 隔离目录测试：内置清单指向注入的目录；第三方目录不由这里传——
+    // 它随 DSC_HOME 走（隔离环境自然落在临时 home 的 plugins）。
+    ...(options.pluginsDir === undefined ? {} : { builtinDir: options.pluginsDir }),
+  })
   for (const problem of artifacts.problems) {
     options.onReport?.({ id: problem, ok: false, error: problem })
   }
@@ -81,8 +85,8 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
   }
 
   /** 把 bundle 字节求值成工厂（求值只注册工厂，不物化）。 */
-  const factoryOf = (id: string, file: string): (() => unknown) => {
-    const code = readUiPluginBundle(id, file, options.pluginsDir)
+  const factoryOf = (id: string, file: string, origin: string | undefined): (() => unknown) => {
+    const code = origin === 'third-party' ? readThirdPartyUiPluginBundle(id) : readUiPluginBundle(id, file, options.pluginsDir)
     if (code === null) throw new Error(`读不到插件 bundle：${id}/${file}`)
     const table = globalThis as unknown as Record<string, Record<string, unknown>>
     const existing = table[FACTORY_GLOBAL]
@@ -97,7 +101,7 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
   }
 
   /** 跑工厂拿导出（require 只认白名单——与浏览器壳的 `instantiate` 同形）。 */
-  const install = (id: string, file: string, attempt: number): string | null => {
+  const install = (id: string, file: string, origin: string | undefined, attempt: number): string | null => {
     // 这个插件的登记账本：中途抛错时按它回滚，重试才不会撞「id 已被占用」。
     const ledger: (() => void)[] = []
     const rollback = (): void => {
@@ -111,7 +115,7 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
       ledger.length = 0
     }
     try {
-      const exported = instantiate(factoryOf(id, file), require_)
+      const exported = instantiate(factoryOf(id, file, origin), require_)
       // vite 的 cjs 产物把 `export default` 放在 `.default` 上（与浏览器壳 boot.ts 同一处理）。
       const module_ = (exported as { default?: unknown } | null)?.default ?? exported
       const apply = (module_ as { apply?: unknown } | null)?.apply
@@ -141,14 +145,15 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
     }
   }
 
-  const failed: Array<{ id: string; file: string }> = []
+  const failed: Array<{ id: string; file: string; origin: string | undefined }> = []
   for (const entry of artifacts.entries) {
-    if (install(entry.id, entry.file, 1) !== null) failed.push({ id: entry.id, file: entry.file })
+    const origin = (entry as { origin?: string }).origin
+    if (install(entry.id, entry.file, origin, 1) !== null) failed.push({ id: entry.id, file: entry.file, origin })
   }
   // 失败重试一轮（语义同浏览器壳）：真的写错了不能靠反复重试掩盖，但一次失败也不能永久缺席。
   for (const entry of failed) {
     if (reportById.get(entry.id)?.ok === true) continue
-    install(entry.id, entry.file, 2)
+    install(entry.id, entry.file, entry.origin, 2)
   }
 
   const reports = artifacts.entries.map(
