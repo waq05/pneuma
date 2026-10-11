@@ -13,7 +13,13 @@
  * @module dsc-ui-shell/plugins/files/changes
  */
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { IconChevronDown, IconChevronRight, useHostChannel } from '@dsc/ui'
+import {
+  IconChevronDown,
+  IconChevronRight,
+  highlightLines,
+  useHostChannel,
+  type HighlightedLine,
+} from '@dsc/ui'
 import {
   parseUnifiedDiff,
   splitUnifiedDiffByFile,
@@ -228,7 +234,7 @@ function GitDiffView(props: {
                   <span className="changes-removed">{`-${String(section.removed)}`}</span>
                 </span>
               </div>
-              <DiffRows hunks={section.hunks} />
+              <DiffRows hunks={section.hunks} path={section.path} />
             </div>
           ))}
         </div>
@@ -237,28 +243,55 @@ function GitDiffView(props: {
   )
 }
 
-/** 结构化 hunk → unified 行（照旧渲染层 DiffPane.tsx 的 DiffRow：旧行号/新行号/记号/内容）。 */
-function DiffRows({ hunks }: { hunks: readonly DiffHunkView[] }): ReactNode {
+/**
+ * 结构化 hunk → unified 行（照旧渲染层 DiffPane.tsx 的 DiffRow：旧行号/新行号/记号/内容），
+ * 逐 token 上色走壳平台层的 `highlightLines`（按文件扩展名挑语法，装不上回落纯文本）。
+ */
+function DiffRows({ hunks, path }: { hunks: readonly DiffHunkView[]; path: string }): ReactNode {
+  const [highlights, setHighlights] = useState<HighlightedLine[] | null>(null)
+  // 拼接放渲染体里、effect 认字符串：hunks 数组每次渲染都是新引用时也不会反复触发高亮。
+  const code = hunks.map((hunk) => hunk.lines.map((line) => line.text).join('\n')).join('\n')
+  useEffect(() => {
+    let on = true
+    setHighlights(null)
+    void highlightLines(code, path).then((result) => {
+      if (on) setHighlights(result)
+    })
+    return () => {
+      on = false
+    }
+  }, [code, path])
+  /** 当前 hunk 起始行在整块高亮结果里的下标。 */
+  let cursor = 0
   return (
     <div className="diff-body">
-      {hunks.map((hunk, index) => (
-        <div className="diff-hunk" key={String(index)}>
-          <div className="diff-hunk-head">
-            {`@@ -${String(hunk.oldStart)},${String(hunk.oldCount)} +${String(hunk.newStart)},${String(hunk.newCount)} @@`}
+      {hunks.map((hunk, index) => {
+        const head = cursor
+        cursor += hunk.lines.length
+        return (
+          <div className="diff-hunk" key={String(index)}>
+            <div className="diff-hunk-head">
+              {`@@ -${String(hunk.oldStart)},${String(hunk.oldCount)} +${String(hunk.newStart)},${String(hunk.newCount)} @@`}
+            </div>
+            {hunk.lines.map((line, at) => {
+              const kind = line.kind === 'add' ? 'add' : line.kind === 'remove' ? 'del' : 'ctx'
+              const highlight = highlights?.[head + at]
+              return (
+                <div className={`diff-line diff-${kind}`} key={String(at)}>
+                  <span className="diff-no">{line.oldLine === null ? '' : String(line.oldLine)}</span>
+                  <span className="diff-no">{line.newLine === null ? '' : String(line.newLine)}</span>
+                  <span className="diff-sign">{line.kind === 'add' ? '+' : line.kind === 'remove' ? '-' : ''}</span>
+                  {highlight === undefined ? (
+                    <span className="diff-text">{line.text}</span>
+                  ) : (
+                    <span className="diff-text" dangerouslySetInnerHTML={{ __html: highlight.segments.join('') }} />
+                  )}
+                </div>
+              )
+            })}
           </div>
-          {hunk.lines.map((line, at) => {
-            const kind = line.kind === 'add' ? 'add' : line.kind === 'remove' ? 'del' : 'ctx'
-            return (
-              <div className={`diff-line diff-${kind}`} key={String(at)}>
-                <span className="diff-no">{line.oldLine === null ? '' : String(line.oldLine)}</span>
-                <span className="diff-no">{line.newLine === null ? '' : String(line.newLine)}</span>
-                <span className="diff-sign">{line.kind === 'add' ? '+' : line.kind === 'remove' ? '-' : ''}</span>
-                <span className="diff-text">{line.text}</span>
-              </div>
-            )
-          })}
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

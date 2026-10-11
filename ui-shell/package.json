@@ -1,7 +1,7 @@
 {
   "name": "dsc-ui-shell",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "description": "Muse Code 插件化界面壳：槽位宿主 + 插件加载器。壳产物落 ../lib/ui/assets，插件 bundle 落 ../lib/ui/plugins，由宿主 webserver 插件伺服。",
   "scripts": {
@@ -12,10 +12,16 @@
     "build:plugins": "node build-plugins.mjs"
   },
   "dependencies": {
+    "@shikijs/langs": "^4.5.0",
+    "@shikijs/themes": "^4.5.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "pdfjs-dist": "^6.3.289",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.0",
+    "shiki": "^4.5.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

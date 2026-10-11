@@ -317,6 +317,13 @@ export type { SlotEntry, SlotKind, UiHostInfo, UiRuntimeApi, UiSlotApi, HostSnap
 // 图标集原样转出去：插件 bundle 里 `import { IconPin } from '@dsc/ui'` 即可，
 // 不必各自内联一份 SVG（同一枚图标在多个插件里内联，改一次要改好几处）。
 export * from './icons'
+// 壳内置平台层转出（web 值面独有；终端壳的 @dsc/ui 不导出 DOM 组件）：
+// shiki / react-markdown / pdfjs 这些重依赖只在壳 vendor 里有一份（平台模块表里
+// 没有它们，插件 bundle 不许自带），插件经这里用壳的实现，实现只有一份。
+export { highlightLines, langForPath, type HighlightedLine } from './platform/highlight'
+export { CodeView } from './platform/code-view'
+export { MarkdownView, type FsRead } from './platform/markdown'
+export { PdfView } from './platform/pdf-view'
 // 宿主视图类型原样转出去：插件按它们写渲染，宿主改字段时插件这边编不过（而不是线上画空）。
 export type {
   ApprovalAnswer,

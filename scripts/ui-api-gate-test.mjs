@@ -28,7 +28,10 @@ const check = (name, condition, detail = '') => {
 
 // ── 真内置清单：构建产物自带 apiVersion，全部插件放行 ──────────────────────────
 const builtin = collectUiPluginArtifacts()
-check('内置清单带 apiVersion 且是 1.0.0', builtin.apiVersion === '1.0.0', String(builtin.apiVersion))
+// apiVersion 与壳包版本必须一起走（build-plugins.mjs 从 ui-shell/package.json 读）：
+// 钉「相等」这个不变量，而不是钉某个具体值——版本纪律是次版本随导出增量走。
+const shellVersion = JSON.parse(readFileSync(new URL('../ui-shell/package.json', import.meta.url), 'utf8')).version
+check('内置清单带 apiVersion 且与壳包版本一致', builtin.apiVersion === shellVersion, `${String(builtin.apiVersion)} ≠ ${shellVersion}`)
 // 数量不钉死（演示插件已按拍板移除，内置清单会变）：零 problem、至少有一个即可。
 check('内置清单的全部插件都进了产物表', builtin.problems.length === 0 && builtin.entries.length > 0, `entries=${String(builtin.entries.length)} problems=${JSON.stringify(builtin.problems)}`)
 check('内置清单的条目不带 api 声明（与壳同源）', builtin.entries.every((entry) => entry.api === undefined))

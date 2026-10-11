@@ -8,20 +8,29 @@
  *
  * 数据源是 dock 通道的读类 op `fs-read`（在界面通道放行面里，读类直接放行）。
  * 分流照旧界面的口径（`desktop/src/renderer/file-util.ts` 的 `previewKindFor`）：
- * 图片 → `<img>`；二进制 → 占位；PDF/XLSX（`kind:'bytes'`）→ 占位 + 用系统程序打开；
- * 其余按文本渲染（带行号）。
+ *   - markdown（md/mdx/markdown）→ `MarkdownView`（react-markdown + 代码块 shiki
+ *     + 相对路径图片走 fs-read 转 base64）；
+ *   - PDF（kind:'bytes' + application/pdf）→ `PdfView`（pdfjs 逐页渲染）；
+ *   - 代码/文本 → `CodeView`（shiki 按扩展名高亮，装不上语法回落纯文本）；
+ *   - 图片 → `<img>`；二进制 / 超限 → 占位；xlsx（bytes 其余 mime）→ 占位 +
+ *     用系统程序打开。
  *
- * ## 没搬的四样（写在 development-log 的诚实边界里）
- *
- * 旧界面的预览还会做 **markdown 渲染**、**代码语法高亮（shiki）**、**PDF 分页渲染**与
- * **xlsx 表格**——那四样各自是几百 KB 的重依赖（在桌面渲染层里是懒 chunk）。这一版按
- * 纯文本 + 行号渲染，PDF/XLSX 另给一颗「用系统程序打开」（走原生桥的 `openPath`，
- * 桌面上可用；浏览器里那颗按钮是禁用的）。
+ * markdown / shiki / pdf 三件来自 `@dsc/ui` 的壳内置平台层（重依赖只有壳 vendor
+ * 里那一份，插件 bundle 不自带）。与旧界面剩余的差距：**csv/xlsx 表格视图没搬**
+ * （csv 落到代码视图按纯文本看；xlsx 仍走「用系统程序打开」）。
  *
  * @module dsc-ui-shell/plugins/preview
  */
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { defineUiPlugin, getHostNative, useHostChannel, type SlotComponentProps } from '@dsc/ui'
+import { useEffect, useState, type ReactNode } from 'react'
+import {
+  CodeView,
+  MarkdownView,
+  PdfView,
+  defineUiPlugin,
+  getHostNative,
+  useHostChannel,
+  type SlotComponentProps,
+} from '@dsc/ui'
 
 /** `fs-read` 回来的形状（宿主 `desktop-dock` 插件的契约）。 */
 interface ReadResult {
@@ -75,8 +84,8 @@ function PreviewPane({ path = '', cwd = '' }: SlotComponentProps<PreviewProps>):
     }
   }, [path, channel])
 
-  /** 行号列：文本按行切开（大文件已经在宿主那侧截断，这里不做二次切分）。 */
-  const lines = useMemo(() => (read?.kind === 'text' && read.text !== undefined ? read.text.split('\n') : []), [read])
+  /** markdown 里相对路径图片的解析口：把 dock 的 fs-read 交给平台层。 */
+  const fsRead = (file: string): Promise<unknown> => channel.invoke('dock', ['fs-read', { file }])
 
   /** 用系统程序打开（原生桥；浏览器里没有桥，按钮禁用并说明原因）。 */
   const openWithSystem = (): void => {
@@ -103,14 +112,14 @@ function PreviewPane({ path = '', cwd = '' }: SlotComponentProps<PreviewProps>):
       </div>
       <div className="file-preview-body">
         {note === '' ? null : <div className="tree-note">{note}</div>}
-        {read === null ? null : renderBody(read, lines)}
+        {read === null ? null : renderBody(read, fsRead)}
       </div>
     </>
   )
 }
 
 /** 按宿主给的 kind 分流（口径与旧界面 `previewKindFor` 一致）。 */
-function renderBody(read: ReadResult, lines: readonly string[]): ReactNode {
+function renderBody(read: ReadResult, fsRead: (file: string) => Promise<unknown>): ReactNode {
   if (read.tooLarge) {
     return (
       <div className="file-preview-empty">
@@ -129,22 +138,27 @@ function renderBody(read: ReadResult, lines: readonly string[]): ReactNode {
     return <div className="file-preview-empty">二进制文件（{formatSize(read.size ?? 0)}），这里不预览。</div>
   }
   if (read.kind === 'bytes') {
+    // bytes 只有两种宿主会给：application/pdf 走逐页渲染，其余（xlsx 等）给占位。
+    if (read.mime === 'application/pdf' && read.base64 !== undefined) {
+      return <PdfView base64={read.base64} />
+    }
     return (
       <div className="file-preview-empty">
         这类文件（{read.mime ?? '未知类型'}，{formatSize(read.size ?? 0)}）要看内容请用「用系统程序打开」。
       </div>
     )
   }
-  return (
-    <pre className="file-code-plain">
-      {lines.map((line, index) => (
-        <div className="line" key={index}>
-          <span className="file-line-no">{String(index + 1).padStart(4, ' ')}</span>
-          {line}
-        </div>
-      ))}
-    </pre>
-  )
+  if (isMarkdown(read.path)) {
+    return <MarkdownView text={read.text ?? ''} path={read.path} fsRead={fsRead} />
+  }
+  return <CodeView text={read.text ?? ''} path={read.path} />
+}
+
+/** markdown 分流：md / mdx / markdown 三个扩展名（旧界面 previewKindFor 同款）。 */
+function isMarkdown(path: string): boolean {
+  const name = path.toLowerCase()
+  const ext = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : name
+  return ext === 'md' || ext === 'mdx' || ext === 'markdown'
 }
 
 /** 展示用的短路径：工作目录内给相对路径，其余原样（与旧界面 `displayPathOf` 的口径一致）。 */
