@@ -27,7 +27,17 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
-import { defineUiPlugin, getHostNative, IconTerminal, readCssColor, readCssValue, useDockPanel, registerDockPanel, useHostSelector, type HostSnapshot } from '@dsc/ui'
+import {
+  defineUiPlugin,
+  getHostNative,
+  IconTerminal,
+  readCssColor,
+  readCssValue,
+  registerDockTab,
+  useHostSelector,
+  type DockTabBodyProps,
+  type HostSnapshot,
+} from '@dsc/ui'
 import { Select } from '../../platform/select'
 
 /** 终端 shell 候选：与宿主 `spawnShell` 的白名单一致（对不上会被宿主回落成 PowerShell）。 */
@@ -41,29 +51,33 @@ const SHELL_OPTIONS = [
 
 type ShellValue = (typeof SHELL_OPTIONS)[number]['value']
 
-/** 这一块面板在停靠区里的 id（壳拿它决定同一时刻显示哪一块）。 */
-const PANEL = 'terminal'
-
 /** shell 记忆键：与旧界面同一份（两个界面共享用户习惯）。 */
 const SHELL_KEY = 'dsc.dockShell'
 
 export default defineUiPlugin({
   name: '终端',
-  apply(ui) {
-    // 面板本体注册在 `shell.dock`（收起时那一槽整块不渲染）；头条页签与开合钮
-    // 由壳统一画（旧界面同构）——报名只交出 id 与页签标题。
-    registerDockPanel({ id: PANEL, label: '终端', order: 10, icon: <IconTerminal size={13} /> })
-    ui.slots.register('shell.dock', { id: 'terminal.pane', order: 10 }, DockPanel)
+  apply() {
+    // 报名一种页签界面（kind = 'terminal'）：壳的页签条与页签体照它画，多开由壳
+    // 按页签各挂一个实例（旧桌面版「终端可无限多开」同款）。keepMounted：切页签 /
+    // 切窗格 / 收起侧栏都只藏不卸，spawn 出来的 shell 与输出缓冲都活着。
+    registerDockTab({
+      kind: 'terminal',
+      label: '终端',
+      icon: <IconTerminal size={13} />,
+      component: TerminalTab,
+      keepMounted: true,
+    })
   },
 })
 
-/** 停靠面板：终端。
+/**
+ * 终端页签体：原生桥不在（浏览器 / 远程壳）时给一句人话；桌面窗口里是一台完整终端。
  *
- * 保活对齐桌面端（「收起=滑出右缘不卸载」）：面板**永远渲染**，不是自己的回合
- * （别的面板开着）或整体收起时用 `data-hidden` 藏——组件树与 spawn 出来的进程
- * 都活着，输出继续进缓冲，重新展开时原会话原样接上。卸载只发生在整壳关闭。 */
-function DockPanel(): ReactNode {
-  const active = useDockPanel() === PANEL
+ * 保活对齐旧桌面版（「收起=滑出右缘不卸载」）：内容永远渲染，不是自己回合时由壳
+ * 用 display:none 藏住——组件树与 spawn 出来的进程都活着，重新展开原样接上。
+ * 卸载只发生在整壳关闭（或这张页签被关掉）。
+ */
+function TerminalTab({ active }: DockTabBodyProps): ReactNode {
   const native = getHostNative()
   const [shell, setShell] = useState<ShellValue>(() => {
     let saved: string | null = null
@@ -75,20 +89,15 @@ function DockPanel(): ReactNode {
     return SHELL_OPTIONS.some((option) => option.value === saved) ? (saved as ShellValue) : 'powershell'
   })
 
-  return (
-    <aside className="dock" style={{ width: '100%' }} data-hidden={active ? undefined : '1'} data-shell={shell}>
-      <div className="dock-body">
-        {native.available ? (
-          <TerminalPane shell={shell} visible={active} onShell={setShell} />
-        ) : (
-          <p className="shell-term-empty">
-            终端来自桌面外壳的原生桥，浏览器里没有它。要用终端请打开桌面版（或者在终端里跑
-            <code> msc</code>）。
-          </p>
-        )}
-      </div>
-    </aside>
-  )
+  if (!native.available) {
+    return (
+      <p className="shell-term-empty">
+        终端来自桌面外壳的原生桥，浏览器里没有它。要用终端请打开桌面版（或者在终端里跑
+        <code> msc</code>）。
+      </p>
+    )
+  }
+  return <TerminalPane shell={shell} visible={active} onShell={setShell} />
 }
 
 /**

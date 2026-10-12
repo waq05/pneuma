@@ -7,10 +7,11 @@
  *
  * @module dsc-ui-shell/plugins/transcript/round-fold
  */
-import { useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import type { TranscriptEntry } from '@dsc/ui'
 import { IconChevronDown } from '@dsc/ui'
 import { formatDuration, roundDuration, type RoundInfo } from './timing'
+import { readFold, writeFold } from './fold-state'
 
 /** 过程折叠程度（UiProcessFold 的四档；契约里定义，这里本地复述一份取值）。 */
 export type ProcessFold = 'compact' | 'standard' | 'detailed' | 'verbose'
@@ -20,9 +21,8 @@ export interface ProcessFoldPolicy {
   /** 定稿轮把过程收成一行「用时 X」总开关。 */
   foldTurns: boolean
   /**
-   * 阶段分组：全部轮给组头 / 只有历史轮给组头 / 不给组头。
-   * 壳还没搬阶段组（process-groups 的大件），三档暂时都按 none 走——
-   * 整轮折叠不依赖它，档位差异先体现在 foldTurns 上。
+   * 阶段分组：全部轮给组头（collapsed）/ 只有历史轮给组头（history——跑动中的轮
+   * 不分组，直播里那一段由状态行承载）/ 不给组头（none）。
    */
   stepGrouping: 'collapsed' | 'history' | 'none'
   /** 运行中的组头显示实时任务详情。 */
@@ -178,24 +178,40 @@ export function TurnFoldRow(props: {
   )
 }
 
-/** 一次折叠开合的记忆（`fold-state.ts` 的对等物）：整轮折叠的用户手动开合按轮记。
+/**
+ * 折叠开合的双层记忆（旧桌面版 ChatView 的同款组合）：React state 管「点一下当场重画」，
+ * fold-state（进程内的存档）管「重挂后读回来」——键由 turnFoldKey / stepGroupFoldKey
+ * 拼（会话 id + 轮 + 组），切会话重挂时展开态原样回来。
  *
- * map 存的是「**手动展开**」标记（存在=true）。默认收起是空表——「收起」不需要记，
- * 记展开就够（旧界面的 fold-state 也是这个语义：没有存档 = 按默认态走）。 */
-export function useTurnFoldMemory(): {
-  isOpen(roundIndex: number): boolean
-  set(roundIndex: number, open: boolean): void
+ * reset 是「轮收尾复位」用的：一轮从跑动落到定稿那一刻，把整轮与它下面所有阶段组的
+ * 开合写回默认（收起）——旧版语义「收起整轮会重置内部组及推理、工具的开合」。
+ */
+export function useFoldMemory(): {
+  open(key: string, fallback: boolean): boolean
+  set(key: string, open: boolean): void
+  reset(keys: readonly string[]): void
 } {
-  const [state, setState] = useState<Map<number, boolean>>(() => new Map())
-  return {
-    isOpen: (roundIndex) => state.get(roundIndex) === true,
-    set: (roundIndex, open) => {
-      setState((current) => {
-        const next = new Map(current)
-        if (open) next.set(roundIndex, true)
-        else next.delete(roundIndex)
-        return next
-      })
-    },
-  }
+  const [map, setMap] = useState<Record<string, boolean>>({})
+  const open = useCallback(
+    (key: string, fallback: boolean): boolean => map[key] ?? readFold(key, fallback),
+    [map],
+  )
+  const set = useCallback((key: string, next: boolean): void => {
+    writeFold(key, next)
+    setMap((current) => ({ ...current, [key]: next }))
+  }, [])
+  const reset = useCallback((keys: readonly string[]): void => {
+    if (keys.length === 0) return
+    for (const key of keys) writeFold(key, false)
+    setMap((current) => {
+      let next = current
+      for (const key of keys) {
+        if (next[key] === undefined) continue
+        if (next === current) next = { ...current }
+        delete next[key]
+      }
+      return next
+    })
+  }, [])
+  return useMemo(() => ({ open, set, reset }), [open, set, reset])
 }

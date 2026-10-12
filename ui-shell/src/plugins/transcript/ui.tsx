@@ -8,12 +8,14 @@
  *      （views.css:8466-8485）。我们同样按「遇到 user 条目就开新座位」切分，于是那些
  *      行距规则原样生效。还没进任何一轮的条目挂在 `.chat-inner` 下，与旧界面一致。
  *   2. **一行一个 `.entry-row`**：`data-round` 是本轮序号（0 基）。
- *   3. **整轮折叠已搬**（round-fold.ts，四档能力表跟着 `processFold` 偏好走）：
- *      定稿轮的过程收成一行「用时 X」，跑动中/插话/中断/失败的轮强制展开。
- *      **阶段组、右缘刻度条、吸附快捷栏还没搬**（见文件尾的诚实边界）。
+ *   3. **整轮折叠与阶段组都已搬**（round-fold.ts / process-groups.ts / fold-seats.tsx，
+ *      与旧桌面渲染层同构）：定稿轮的过程收成一行「用时 X」；轮内再切一层阶段组——
+ *      组头是类别聚合（「已读取文件，执行了命令」），组体是那一段的过程条目，默认收起、
+ *      有自己的限高滚动与方向渐隐。四档能力表跟着 `processFold` 偏好走（stepGrouping /
+ *      liveDetail / reasoningPreview 逐格生效）。
  *
  * 与旧界面已知的差异（都是「功能还没有」而不是「样式对不上」）：
- *   - 阶段组（14 类过程聚合）与右缘刻度条未搬，长会话折叠后过程按条直排；
+ *   - 右缘刻度条（JumpStrip）与吸附快捷栏未搬，长会话的跨轮跳转还没有落点；
  *   - 队友卡旧消息流里没有对应物，这一块是壳自己补的（`.shell-subagent`）。
  *
  * 样式与 class 名照抄旧版（`ui-shell/src/legacy/views.css`，行号同旧 `styles.css`）：
@@ -45,7 +47,6 @@ import {
   defineUiPlugin,
   estimateTextTokens,
   getHostNative,
-  setDockPanel,
   setDockPreview,
   setDockReview,
   toastErr,
@@ -57,10 +58,12 @@ import {
   type ToolCallView,
   type TranscriptEntry,
 } from '@dsc/ui'
-import { buildRoundFolds, processFoldPolicy, TurnFoldRow, useTurnFoldMemory, type ProcessFold } from './round-fold'
+import { buildRoundFolds, processFoldPolicy, TurnFoldRow, useFoldMemory, type ProcessFold } from './round-fold'
 import { formatClock, formatDuration, liveActivity, roundDuration, roundInfos, turnStartedAt, type RoundInfo } from './timing'
 import { useIntendedDiff } from './intended-diff'
-import { readFold, writeFold } from './fold-state'
+import { readFold, writeFold, stepGroupFoldKey, turnFoldKey } from './fold-state'
+import { groupSteps, type StepGroup, type StepGrouping } from './process-groups'
+import { RowSeat, StepGroupSeat } from './fold-seats'
 import { baseNameOf, displayPathOf } from '../../platform/paths'
 import { useHoverDelay } from '../../platform/hover-delay'
 import { playCompletionSound } from '../../platform/completion-sound'
@@ -159,6 +162,9 @@ interface Seat {
 
 /** 独立条目（不进过程区）：收起整轮不能把「等你点批准」「结束标记」也一起藏掉。 */
 const TURN_INDEPENDENT: ReadonlySet<string> = new Set(['user', 'plan', 'system', 'turn-end', 'turn-max-tokens'])
+
+/** 空的分组结果（verbose 档共用一份，引用稳定，不给每帧新建空 Map）。 */
+const EMPTY_STEP_GROUPING: StepGrouping = { groups: [], headAt: new Map(), at: new Map() }
 
 /**
  * 跟着底部的自动滚动（对齐桌面端 use-chat-viewport 的核心行为）：
@@ -288,8 +294,8 @@ function TranscriptFlow({
     setFirstVisible(Math.max(0, seats.rounds.length - PAGE_ROUNDS))
   }, [sessionPath, seats.rounds.length])
 
-  // 整轮折叠：四档能力表 + 每轮的折叠预算 + 用户手动开合（组件内记忆）。
-  const foldMemory = useTurnFoldMemory()
+  // 整轮折叠：四档能力表 + 每轮的折叠预算 + 用户手动开合（双层记忆：当场重画 + 重挂读回）。
+  const foldMemory = useFoldMemory()
   const rounds = useMemo(
     () => roundInfos([...entries, ...live]),
     [entries, live],
@@ -299,6 +305,43 @@ function TranscriptFlow({
     () => buildRoundFolds([...entries, ...live], rounds, { foldTurns: prefs.policy.foldTurns, live: turnState !== 'idle', lastRoundIndex: liveRoundIndex }),
     [entries, live, rounds, prefs.policy.foldTurns, turnState, liveRoundIndex],
   )
+  // 阶段分组（档位表能力之一）：一轮里连续的过程条目按「正文 / 计划卡 / 独立条目」封组，
+  // 组头只说「这一阶段干了哪类事」。none 档给空表（引用稳定的常量），整轮折叠不依赖它。
+  const stepGrouping = useMemo<StepGrouping>(
+    () =>
+      prefs.policy.stepGrouping === 'none'
+        ? EMPTY_STEP_GROUPING
+        : groupSteps(
+            [...entries, ...live],
+            rounds,
+            // running 谓词直接复用 roundFold——口径单点，别处不再重判
+            (roundIndex) => roundFolds.get(roundIndex)?.running ?? false,
+            prefs.policy.stepGrouping === 'history',
+          ),
+    [entries, live, rounds, roundFolds, prefs.policy.stepGrouping],
+  )
+  // 轮收尾复位（旧桌面版语义）：一轮从跑动落到定稿的那一刻，把整轮与它下面所有阶段组的
+  // 开合写回默认（收起）——用户点开过的那一组不会在下一轮里弹回去，但同一轮的残留收干净。
+  const runningRounds = useMemo(() => {
+    const set = new Set<number>()
+    for (const fold of roundFolds.values()) if (fold.running) set.add(fold.roundIndex)
+    return set
+  }, [roundFolds])
+  const prevRunningRounds = useRef<Set<number>>(new Set())
+  useEffect(() => {
+    const settled: string[] = []
+    for (const roundIndex of prevRunningRounds.current) {
+      if (runningRounds.has(roundIndex)) continue
+      settled.push(turnFoldKey(sessionId, roundIndex))
+      for (const group of stepGrouping.groups) {
+        if (group.roundIndex === roundIndex) settled.push(stepGroupFoldKey(sessionId, roundIndex, group.seq))
+      }
+    }
+    foldMemory.reset(settled)
+    prevRunningRounds.current = runningRounds
+    // foldMemory.reset 是稳定引用（useFoldMemory 里 useCallback 包过），不进依赖清单。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runningRounds, stepGrouping, sessionId])
 
   // 页脚「分叉这一轮」：保留到本轮用户消息（含），从这一轮的回答重来——旧界面同一语义。
   // 第 1 轮不给分（分完还是这一轮，没有意义）。
@@ -413,6 +456,7 @@ function TranscriptFlow({
             cwd={cwd}
             roundFolds={roundFolds}
             foldMemory={foldMemory}
+            stepGrouping={stepGrouping}
             renderSlot={renderSlot}
             onFork={sessionPath === null || seat.round === 0 ? undefined : () => forkRound(seat)}
           />
@@ -484,6 +528,7 @@ function SeatBody({
   cwd,
   roundFolds,
   foldMemory,
+  stepGrouping,
   renderSlot,
   onFork,
 }: {
@@ -502,7 +547,9 @@ function SeatBody({
   /** 会话工作目录：相对路径展示 + 「将做的改动」推演的相对路径基准。 */
   cwd: string
   roundFolds: ReadonlyMap<number, import('./round-fold').RoundFold>
-  foldMemory: ReturnType<typeof useTurnFoldMemory>
+  foldMemory: ReturnType<typeof useFoldMemory>
+  /** 阶段分组（哪些连续条目成一组、组头挂在哪条之前，都从它来；none 档是空表）。 */
+  stepGrouping: StepGrouping
   renderSlot?: (name: string, props?: Record<string, unknown>) => ReactNode
   /** 页脚「分叉这一轮」；undefined = 分不了（没在会话里 / 第 1 轮）。 */
   onFork?: () => void
@@ -511,9 +558,16 @@ function SeatBody({
   // 跑动中的轮连总开关都不画（永远展开）；可折的定稿轮才有开合。
   const foldRunning = fold?.running === true
   const foldable = fold !== undefined && fold.foldable && fold.hasContent && !foldRunning && !fold.blocked
-  const processOpen = !foldable || foldMemory.isOpen(seat.round)
-  // 无过程内容的定稿轮：总开关画成不可点的抬头（照 dsh 的 disabled），位置在用户消息之后。
-  const showFoldRow = fold !== undefined && !foldRunning && shouldShowFoldRow(fold)
+  const turnKey = turnFoldKey(sessionId, seat.round)
+  const turnOpen = foldMemory.open(turnKey, false)
+  /** 整轮收起来没有：可折 + 有内容 + 已收尾 + 用户没收起来（默认就是收起）。 */
+  const collapsed = foldable && !turnOpen
+  /** 把整轮放出来（座位被 Ctrl+F 命中、或焦点落在收起的内容里时由座位自己调）。 */
+  const reveal = (): void => {
+    foldMemory.set(turnKey, true)
+  }
+  // 总开关行：可折的定稿轮才画（不可折的档位——verbose——连抬头都不画，照旧版）。
+  const showFoldRow = fold !== undefined && fold.foldable && !foldRunning
   // roundInfos 与座位是同一次切分出来的，正常一对一；真缺了（宿主刚清空这类中间帧）
   // 就给一份「做不到计时」的空轮次，界面照画、只是不报时间。
   const roundInfo: RoundInfo = round ?? {
@@ -538,36 +592,84 @@ function SeatBody({
     (row): row is Row & { entry: Extract<TranscriptEntry, { kind: 'text' | 'tool' }> } =>
       (row.entry.kind === 'text' || row.entry.kind === 'tool') && row.entry.usage !== undefined,
   )?.entry.usage
+  /**
+   * 一行条目：真盒子（RowSeat：收起时挂 hidden="until-found" 而不是卸载——Ctrl+F 能命中，
+   * 键盘焦点不会被抽走）+ 行级错误边界 + 行体。组内成员与过程行都走它。
+   */
+  const seatRow = (row: Row, hidden: boolean): ReactNode => (
+    <RowSeat
+      key={keyOf(row)}
+      hidden={hidden}
+      onReveal={reveal}
+      roundIndex={seat.round}
+    >
+      <RowBoundary entry={row.entry}>
+        <RowBody row={row} renderSlot={renderSlot} />
+      </RowBoundary>
+    </RowSeat>
+  )
+  /** 一组现在展开没有（键：会话 + 轮 + 组序号；默认一律收起——组头承载「现在在干什么」）。 */
+  const groupOpen = (group: StepGroup): boolean =>
+    foldMemory.open(stepGroupFoldKey(sessionId, group.roundIndex, group.seq), false)
+  const toggleGroup = (group: StepGroup): void => {
+    foldMemory.set(stepGroupFoldKey(sessionId, group.roundIndex, group.seq), !groupOpen(group))
+  }
+  const liveDetail = useContext(FoldPrefsContext).policy.liveDetail
+  // 过程区分块：连续的过程条目收进阶段组（组体是「真盒子」，才有自己的限高与滚动），
+  // 其余按「过程 / 之后」两档摆——独立节点（计划卡、system、轮尾标记）永远在「之后」，
+  // 收起整轮不把它们一起藏掉。
+  const rowByAt = new Map(seat.rows.map((row) => [row.at, row]))
+  const processBlocks: ReactNode[] = []
+  const afterBlocks: ReactNode[] = []
+  for (const row of seat.rows.slice(1)) {
+    const head = stepGrouping.headAt.get(row.at)
+    if (head !== undefined) {
+      const members: Row[] = []
+      for (let at = head.startIndex; at <= head.endIndex; at += 1) {
+        const member = rowByAt.get(at)
+        if (member !== undefined) members.push(member)
+      }
+      processBlocks.push(
+        <StepGroupSeat
+          key={`step-${String(head.roundIndex)}-${String(head.seq)}`}
+          group={head}
+          turnCollapsed={collapsed}
+          open={groupOpen(head)}
+          showDetail={liveDetail}
+          onToggle={() => toggleGroup(head)}
+          onRevealTurn={reveal}
+        >
+          {members.map((member) => seatRow(member, false))}
+        </StepGroupSeat>,
+      )
+      continue
+    }
+    const inProcess =
+      fold !== undefined && fold.foldable && fold.hasContent
+      && row.at >= fold.startIndex && row.at <= fold.endIndex
+    if (inProcess && !TURN_INDEPENDENT.has(row.entry.kind)) processBlocks.push(seatRow(row, collapsed))
+    else afterBlocks.push(seatRow(row, false))
+  }
   return (
     <>
-      {seat.rows.map((row) => (
-        <span key={keyOf(row)} style={{ display: 'contents' }}>
-          {showFoldRow && fold !== undefined && row.at === foldRowAt(fold, seat) ? (
-            <div className="entry-row" data-round={seat.round}>
-              <TurnFoldRow
-                open={processOpen}
-                round={roundInfo}
-                disabled={!foldable}
-                endReason={fold.endReason}
-                onToggle={() => foldMemory.set(seat.round, !processOpen)}
-              />
-            </div>
-          ) : null}
-          <RowBoundary entry={row.entry}>
-            <div
-              className="entry-row"
-              data-round={seat.round}
-              // 过程区收起时整行挂 hidden="until-found"：不占版面，但 Ctrl+F 命中会自动展开。
-              // @types/react 的 hidden 还只有 boolean，运行时 React 19 认字符串值，这里断言一次。
-              {...(inFoldRange(fold, foldable, processOpen, row)
-                ? { hidden: 'until-found' as unknown as boolean }
-                : {})}
-            >
-              <RowBody row={row} renderSlot={renderSlot} />
-            </div>
-          </RowBoundary>
-        </span>
-      ))}
+      {seat.rows.length === 0 ? null : seatRow(seat.rows[0]!, false)}
+      {showFoldRow && fold !== undefined ? (
+        <div className="entry-row" data-round={seat.round}>
+          <TurnFoldRow
+            open={!collapsed}
+            round={roundInfo}
+            // 不可折的两种情况：这一轮压根没有过程内容，或者它被中断 / 跑挂 / 轮内插过话。
+            // 照旧版的做法这一行照样画出来，只是点不动——用户得看得见「这一轮收成什么样」。
+            disabled={!fold.hasContent || fold.blocked}
+            endReason={fold.endReason}
+            onToggle={() => {
+              foldMemory.set(turnKey, collapsed)
+            }}
+          />
+        </div>
+      ) : null}
+      {processBlocks}
+      {afterBlocks}
       <ChangesCard rows={seat.rows} cwd={cwd} />
       <RoundFoot
         round={roundInfo}
@@ -581,28 +683,6 @@ function SeatBody({
       />
     </>
   )
-}
-
-/** 总开关行这一轮画不画：跑动中不画；其余定稿轮都画（可折或不可点的抬头）。 */
-function shouldShowFoldRow(fold: { running: boolean }): boolean {
-  return !fold.running
-}
-
-/** 总开关画在哪条之前：有过程内容画在过程区第一条前，没有就画在用户消息（本座位第一行）之后。 */
-function foldRowAt(fold: { hasContent: boolean; startIndex: number }, seat: Seat): number {
-  return fold.hasContent ? fold.startIndex : seat.rows[0]?.at ?? -1
-}
-
-/** 这一行在不在「收起的过程区」里（独立条目永不在）。 */
-function inFoldRange(
-  fold: { startIndex: number; endIndex: number; hasContent: boolean; foldable: boolean } | undefined,
-  foldable: boolean,
-  processOpen: boolean,
-  row: Row,
-): boolean {
-  if (fold === undefined || !foldable || processOpen || !fold.hasContent) return false
-  if (row.at < fold.startIndex || row.at > fold.endIndex) return false
-  return !TURN_INDEPENDENT.has(row.entry.kind)
 }
 
 /** 一行的内容：按条目种类分派。 */
@@ -1376,15 +1456,13 @@ function ChangesCard({ rows, cwd }: { rows: readonly Row[]; cwd: string }): Reac
   const totalRemoved = files.reduce((sum, file) => sum + file.removed, 0)
   const single = files.length === 1 ? files[0] : undefined
   const visible = expanded ? files : files.slice(0, COLLAPSED_ROWS)
-  /** 开审查面板：把这一轮的清单与下标交给它（旧界面：并排右栏定位到该文件）。 */
+  /** 开审查栏：把这一轮的清单与下标交给它（旧界面：并排右栏定位到该文件）。 */
   const reviewAt = (index: number): void => {
     setDockReview({ files, index, cwd })
-    setDockPanel('review')
   }
   /** 进文件预览页签（看文件当前内容，审查看的是修改当时的快照）。 */
   const openAt = (path: string): void => {
     setDockPreview({ path, cwd })
-    setDockPanel('preview')
   }
   const armHover = (file: ChangedFileView, anchor: DOMRect): void => {
     hoverDelay.arm(file, anchor, cardRef.current?.offsetWidth ?? 480)

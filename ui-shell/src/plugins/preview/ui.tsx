@@ -1,10 +1,10 @@
 /**
- * 内置插件：文件预览（停靠区里独占一整块的面板）。
+ * 内置插件：文件预览（右侧栏里的预览页签）。
  *
- * 形态对齐旧界面：预览是 dock 的一个**页签**——点文件（文件树里、或以后会话流里）
- * 开这个页签并整块显示（`dockOpenPreview` 的同款行为），不是挤在文件树下面的一半。
- * 交接走壳的停靠区状态：`setDockPreview` 放目标、`useDockPreview` 取目标
- * （两块面板是两个插件，不必认识对方）。
+ * 形态对齐旧界面：预览是 dock 的一个**页签**——点文件（文件树里、改动卡「打开」）
+ * 开这个页签并整块显示（旧桌面版 `openPreview` 同款）：同一份文件按路径去重、
+ * 每窗格至多 10 张，这些规则都在壳的布局模型里。页签自带路径（tab.path），
+ * 这里不读任何「预览目标」状态。
  *
  * 数据源是 dock 通道的读类 op `fs-read`（在界面通道放行面里，读类直接放行）。
  * 分流照旧界面的口径（`desktop/src/renderer/file-util.ts` 的 `previewKindFor`）：
@@ -32,14 +32,12 @@ import {
   XlsxView,
   defineUiPlugin,
   getHostNative,
-  registerDockPanel,
-  useDockPanel,
-  useDockPreview,
+  registerDockTab,
   useHostChannel,
+  useHostSelector,
+  type DockTabBodyProps,
+  type HostSnapshot,
 } from '@dsc/ui'
-
-/** 这一块面板在停靠区里的 id。 */
-const PANEL = 'preview'
 
 /** `fs-read` 回来的形状（宿主 `desktop-dock` 插件的契约）。 */
 interface ReadResult {
@@ -54,30 +52,22 @@ interface ReadResult {
 
 export default defineUiPlugin({
   name: '文件预览',
-  apply(ui) {
-    // 头条页签与开合钮由壳统一画（旧界面同构）——这里只报名面板、注册本体。
-    // 页签图标：旧界面预览 chip 用的是「文件自己的彩色图标」（每张页签一个文件）；
-    // 壳里预览是一块固定面板，取同一族里的通用文档符号。
-    registerDockPanel({ id: PANEL, label: '预览', order: 40, icon: <IconCode size={13} /> })
-    ui.slots.register('shell.dock', { id: 'preview.pane', order: 40 }, PreviewDock)
+  apply() {
+    // 报名一种页签界面（kind = 'preview'）：每张预览页签自带文件路径（tab.path）——
+    // 「同文件去重、每格至多 10 张」这些规则在壳的布局模型里（旧桌面版同款）。
+    // 不 keepMounted：切走不挂载、切回重读盘（旧桌面版同规则——省一份常驻监听）。
+    registerDockTab({ kind: 'preview', label: '预览', icon: <IconCode size={13} />, component: PreviewTab })
   },
 })
 
-/** 预览面板：整块显示「现在要看的那个文件」。没点过文件时给一句引导。 */
-function PreviewDock(): ReactNode {
-  const active = useDockPanel() === PANEL
-  const target = useDockPreview()
-  return (
-    <aside className="dock" style={{ width: '100%' }} data-hidden={active ? undefined : '1'}>
-      <div className="dock-body">
-        {target === null ? (
-          <div className="file-preview-empty">在「文件」页签里点一个文件，这里整块显示它</div>
-        ) : (
-          <PreviewBody path={target.path} cwd={target.cwd} />
-        )}
-      </div>
-    </aside>
-  )
+/** 预览页签体：整块显示这张页签带的那个文件。 */
+function PreviewTab({ tab }: DockTabBodyProps): ReactNode {
+  const cwd = useHostSelector(readCwd)
+  const path = tab.path ?? ''
+  if (path === '') {
+    return <div className="file-preview-empty">这张预览页签没有文件路径（关掉它，从文件树重新点一个）。</div>
+  }
+  return <PreviewBody path={path} cwd={cwd ?? ''} />
 }
 
 /** 预览本体：头部（相对路径 + 用系统程序打开）+ 内容。换文件整块重读。 */
@@ -217,4 +207,12 @@ function formatSize(size: number): string {
   if (size < 1024) return `${String(size)}B`
   if (size < 1024 * 1024) return `${String(Math.max(1, Math.round(size / 1024)))}KB`
   return `${(size / 1024 / 1024).toFixed(1)}MB`
+}
+
+/** 当前会话的工作目录（把绝对路径裁成短路径用；与侧栏底部同一字段）。 */
+function readCwd(snapshot: HostSnapshot | null): string | null {
+  const status = snapshot?.['status']
+  if (typeof status !== 'object' || status === null) return null
+  const value = (status as Record<string, unknown>)['cwd']
+  return typeof value === 'string' && value !== '' ? value : null
 }

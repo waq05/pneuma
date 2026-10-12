@@ -13,7 +13,7 @@
  *
  * @module dsc-ui-shell/app
  */
-import { useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import type { UiBootGraph, UiPluginLoadReport } from '@dsc/ui-core'
 import { NATIVE_BRIDGE_VERSION, NATIVE_OPS } from '@dsc/ui-core'
 import {
@@ -29,16 +29,10 @@ import { ALLOWED_MODULES } from './boot'
 import { useChannelStatus, useHostError, useHostHello, useHostSelector } from './runtime-context'
 import { SlotOutlet, useSlotFaults } from './slots-react'
 import { SLOT } from './slots'
-import {
-  getHostNative,
-  lastDockPanel,
-  setDockPanel,
-  setShellPage,
-  useDockPanel,
-  useDockPanels,
-  useShellPage,
-  type UiSlots,
-} from './plugin-api'
+import { getHostNative, setShellPage, useShellPage, type UiSlots } from './plugin-api'
+import { Dock } from './dock'
+import { ReviewPane } from './review-pane'
+import { dockActions, openDockTab, setDockSession, useDockReview, useDockSurface } from './dock-state'
 import { ThreadResizer } from './platform/thread-resizer'
 import {
   DOCK_DEFAULT_WIDTH,
@@ -67,12 +61,26 @@ export interface AppProps {
 
 export function App({ slots, boot, reports }: AppProps): ReactNode {
   const failed = reports.filter((report) => !report.ok)
-  const dockPanel = useDockPanel()
-  const dockOn = dockPanel !== null
+  // 右侧栏布局（每会话一份，状态在 dock-state）；审查目标（并排栏）也住那儿。
+  const surface = useDockSurface()
+  const review = useDockReview()
+  const sessionId = useHostSelector(readDockSessionId)
   // 主区整页（插件中心这类）：非 null 时顶栏与正文整块换成那一页（旧界面同构）。
   const page = useShellPage()
   // 空会话走 `.thread-main-empty`：欢迎文案与输入框垂直居中成一组（legacy 现成规则）。
   const hasEntries = useHostSelector(readHasEntries)
+
+  // 会话切换 → 右侧栏整份布局跟着换（旧桌面版 App 的同款接线：surface 按会话取）。
+  // 新会话在首条消息落盘前没有 sessionId（null）——那时先切到空布局，Dock 不渲染。
+  useEffect(() => {
+    setDockSession(sessionId ?? '')
+  }, [sessionId])
+  // `?dock=1` 自检钩子：展开右侧栏停在「开始」页（会话 id 到了才开得动，排在后面）。
+  const shotDock = useMemo(() => new URLSearchParams(location.search).has('dock'), [])
+  useEffect(() => {
+    if (!shotDock || sessionId === null) return
+    openDockTab('guide')
+  }, [shotDock, sessionId])
 
   // ── 面板几何（对齐桌面端 panels.ts 的三件事：侧栏宽、正文列宽、dock 宽）────────
   // 宽度只写 CSS 变量/行内样式，存档走 localStorage（与桌面渲染层共用同一批键）。
@@ -92,9 +100,6 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
   useEffect(() => {
     setRootVar('--dsc-sidebar-w', sidebarWidth === null ? null : `${String(sidebarWidth)}px`)
   }, [sidebarWidth])
-  useEffect(() => {
-    setRootVar('--dsc-dock-w', `${String(dockWidth)}px`)
-  }, [dockWidth])
   useEffect(() => {
     // 正文列宽只有 ThreadResizer 的拖动路径会每帧写变量；这里负责把存档在启动时铺上。
     if (threadWidth !== null) setRootVar('--dsc-thread-max', `${String(threadWidth)}px`)
@@ -139,21 +144,25 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
     })
   }
 
-  // 全局快捷键（对齐桌面端）：Ctrl/Cmd+B 侧栏、Ctrl+P 文件面板、Ctrl+` 终端面板。
-  // 插件（侧栏品牌行的折叠钮）经 window 事件请求折叠——壳是布局真源。
+  // 全局快捷键（对齐桌面版）：Ctrl/Cmd+B 侧栏、Ctrl+P 文件页签、Ctrl+` 终端页签、
+  // Ctrl+T 浏览器页签。后三个开页 = 展开右侧栏 +（开始页还挂着时就地替换）——旧桌面版
+  // 的 openDock 同一套接线。插件（侧栏品牌行的折叠钮）经 window 事件请求折叠——壳是布局真源。
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       const mod = event.ctrlKey || event.metaKey
-      if (!mod) return
+      if (!mod || event.altKey || event.shiftKey) return
       if (event.key === 'b' || event.key === 'B') {
         event.preventDefault()
         toggleSidebar()
       } else if (event.key === 'p' || event.key === 'P') {
         event.preventDefault()
-        setDockPanel('files')
-      } else if (event.key === '`') {
+        openDockTab('files')
+      } else if (event.key === '`' || event.code === 'Backquote') {
         event.preventDefault()
-        setDockPanel('terminal')
+        openDockTab('terminal')
+      } else if (event.key === 't' || event.key === 'T') {
+        event.preventDefault()
+        openDockTab('browser')
       }
     }
     const onToggle = (): void => toggleSidebar()
@@ -165,24 +174,8 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
     }
   }, [])
 
-  // dock 左缘拖宽：mousedown 后挂 window 监听，夹在 [300, 820]，双击复位 420（对齐桌面端）。
-  const startDockResize = (event: ReactMouseEvent): void => {
-    event.preventDefault()
-    const startX = event.clientX
-    const startWidth = dockWidth
-    const onMove = (move: MouseEvent): void => {
-      commitDockWidth(Math.min(DOCK_MAX_WIDTH, Math.max(DOCK_MIN_WIDTH, startWidth - (move.clientX - startX))))
-    }
-    const onUp = (): void => {
-      document.body.classList.remove('resizing')
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-    }
-    document.body.classList.add('resizing')
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-  }
-  // 侧栏右缘拖宽（200–420，双击复位成样式表默认）。
+  // 侧栏右缘拖宽（200–420，双击复位成样式表默认）。右侧栏的拖宽手柄在 Dock 组件里
+  // （贴 aside 左缘的 `.dock-resizer`，旧桌面版同款）。
   const sidebarDrag = useWidthDrag({
     sign: 1,
     getBase: () => sidebarWidth ?? readSidebarDefaultPx(),
@@ -263,7 +256,9 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
 
               <HostErrorStrip />
 
-              <div className="thread-zone" {...(dockOn ? { 'data-dock': '1' } : {})}>
+              {/* 正文轨道 + 并排审查栏（旧界面 `.thread-zone[data-review]` 同构：
+                  审查开着时正文让位，右缘的拖拽条一并让位）。 */}
+              <div className="thread-zone" {...(review !== null ? { 'data-review': '1' } : {})}>
                 <div className={hasEntries ? 'thread-main' : 'thread-main thread-main-empty'}>
                   <div className="chat-wrap">
                     <div className="chat">
@@ -276,22 +271,10 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
                     <SlotOutlet slots={slots} slot={SLOT.composer} />
                   </div>
                 </div>
-                <ThreadResizer width={threadWidth} onCommit={commitThreadWidth} onReset={resetThreadWidth} />
-                {/* 停靠面板：**常驻渲染**（对齐桌面端「收起=滑出右缘不卸载」——终端进程、
-                    文件树滚动位都活着），收起时用 CSS 藏掉、不在布局里占位。
-                    头条（页签 + 收起钮）由壳画：页签来自面板注册表，旧界面 dock 同构。 */}
-                <div className="dock-slot" data-open={dockOn ? '1' : '0'} aria-hidden={dockOn ? undefined : 'true'}>
-                  {dockOn ? (
-                    <div
-                      className="dock-resizer"
-                      data-tip="拖拽调整面板宽度，双击复位"
-                      onMouseDown={startDockResize}
-                      onDoubleClick={() => commitDockWidth(DOCK_DEFAULT_WIDTH)}
-                    />
-                  ) : null}
-                  {dockOn ? <DockTabs /> : null}
-                  <SlotOutlet slots={slots} slot={SLOT.dock} />
-                </div>
+                {review === null ? (
+                  <ThreadResizer width={threadWidth} onCommit={commitThreadWidth} onReset={resetThreadWidth} />
+                ) : null}
+                <ReviewPane />
               </div>
             </>
           ) : (
@@ -303,6 +286,10 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
             <SlotOutlet slots={slots} slot={SLOT.statusbar} />
           </div>
         </div>
+
+        {/* 右侧栏（dock）：**常驻挂载**（对齐旧桌面版「收起=滑出右缘不卸载」——终端进程、
+            文件树滚动位都活着），布局随会话走；新会话在首条消息落盘前没有 id，先不挂。 */}
+        {sessionId !== null ? <Dock width={dockWidth} onResize={commitDockWidth} /> : null}
 
         {/* 播报区用旧界面的浮层容器（`.dsc-toasts`），空着时它自己不可见。 */}
         <div className="dsc-toasts">
@@ -321,62 +308,23 @@ function SessionTitle(): ReactNode {
   return <>{title}</>
 }
 
-/** 顶栏的「工作区面板」开合钮：只在收起时出现（旧界面同款——展开时由面板头条尾的
- *  收起钮管，同一颗钮不该出现两处）。点开回到上次看的面板，没开过就默认文件。 */
+/** 顶栏的「工作区面板」开合钮：只在收起时出现（旧桌面版同款——展开时由页签条尾的
+ *  收起钮管，同一颗钮不该出现两处）。点开回到上次那套页签布局（布局本身记在会话上）。 */
 function DockToggle(): ReactNode {
-  const open = useDockPanel() !== null
-  if (open) return null
+  const surface = useDockSurface()
+  if (surface.expanded) return null
   return (
     <button
       type="button"
       className="icon-btn dock-toggle"
-      title="工作区面板：文件、变更、终端与预览"
+      data-tip="工作区面板：开始、终端、浏览器、文件、Git"
       aria-label="工作区面板"
       onClick={() => {
-        setDockPanel(lastDockPanel())
+        dockActions.setExpanded(true)
       }}
     >
       <IconSidebar size={15} />
     </button>
-  )
-}
-
-/** 停靠区头条：页签（按面板注册表画，小的在左）+ 收起钮（旧界面 dock 同构）。
- *  页签是「图标 + 标题」的 chip（图标由面板报名时给）；壳里面板是插件常驻注册的，
- *  没有「关上再打开」的入口——收起整块由条尾那颗钮管。 */
-function DockTabs(): ReactNode {
-  const panels = useDockPanels()
-  const active = useDockPanel()
-  return (
-    <div className="dock-strip">
-      {panels.map((panel) => (
-        <button
-          key={panel.id}
-          type="button"
-          className={`dock-chip${panel.id === active ? ' on' : ''}`}
-          aria-pressed={panel.id === active}
-          title={panel.label}
-          onClick={() => {
-            setDockPanel(panel.id)
-          }}
-        >
-          {panel.icon === undefined ? null : <span className="dock-chip-icon">{panel.icon}</span>}
-          <span className="dock-chip-label">{panel.label}</span>
-        </button>
-      ))}
-      <span className="dock-strip-fill" />
-      <button
-        type="button"
-        className="icon-btn"
-        title="收起面板"
-        aria-label="收起面板"
-        onClick={() => {
-          setDockPanel(null)
-        }}
-      >
-        <IconChevronRight size={15} />
-      </button>
-    </div>
   )
 }
 
@@ -636,4 +584,13 @@ function readHasEntries(snapshot: Record<string, unknown> | null): boolean {
   }
   const live = snapshot?.['liveEntries']
   return Array.isArray(live) && live.length > 0
+}
+
+/** 右侧栏布局的会话键：宿主快照里的当前会话 uuid（与旧桌面版同一口径——布局存档
+    的键就是它，两个界面共享用户摆好的页签组）。新会话落盘前是 null。 */
+function readDockSessionId(snapshot: Record<string, unknown> | null): string | null {
+  const status = snapshot?.['status']
+  if (typeof status !== 'object' || status === null) return null
+  const value = (status as Record<string, unknown>)['sessionId']
+  return typeof value === 'string' && value !== '' ? value : null
 }

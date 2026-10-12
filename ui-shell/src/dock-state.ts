@@ -1,69 +1,87 @@
 /**
- * 停靠面板的开合状态（壳的布局真源）。
+ * 右侧栏（dock）的布局真源：**每个会话一份页签布局**，剪贴在这份模块状态里。
  *
- * 为什么放在壳这一侧而不是插件自己的 state：打开面板要**改壳的布局**——
- * `.thread-zone` 从「一列」变成「正文 + 面板」两列（见 `styles.css` 的 `[data-dock]`）。
- * 插件只该说「我要一块停靠区」，怎么让位是壳的事。所以这一份是个极小的订阅式状态：
- * 插件写、壳读，双方都不必认识对方。
+ * 与旧桌面版同构（布局算法在 `./dock-model`，这一份是它的 React 接线）：
+ *   - 会话切换时整份布局跟着换（`setDockSession`，壳从宿主快照的 sessionId 调）；
+ *   - 任何变更**顺手落盘**（localStorage `dsc.dock.surfaces`，键与旧界面共用——
+ *     两个界面切来切去时页签组不会各摆各的）；
+ *   - 展示态（展开 / 全屏 / 分栏比）也在布局里，所以「切回会话，面板组还是那一套」。
  *
- * 为什么不用 React context：槽条目的渲染树与壳的 App 不在同一条 props 链上
- * （插件是壳按启动图动态装上去的），而这一份状态本来就与渲染树无关。
+ * ## 页签内容从哪来
  *
- * 四样东西都挂在同一份订阅上（同一次 notify，各自取各自的快照）：
- * - **当前面板**（开合真源）；
- * - **面板清单**（注册表）：每块面板开工时报名 id/标题/顺序，壳的头条按它画页签——
- *   旧界面 dock 的多页签就是这么来的，壳里页签与面板因此不必互相硬编；
- * - **预览目标**：文件面板点一个文件 → 预览面板显示它（两块面板是两个插件，
- *   目标文件放这里做一次性交接）；
- * - **审查目标**：轮尾「文件已更改」卡点「审查」→ 审查面板显示那一轮的文件清单与
- *   当前文件下标（旧界面是并排右栏，壳里并进停靠区做同一件事）。
+ * 布局只管「有哪些页签」（kind + 可选 path），**每种 kind 长什么样**由插件经
+ * {@link registerDockTab} 报名：图标 / 标题 / 渲染组件 / 是否 keepMounted。
+ * 这与旧桌面版的内置页面表同构，但壳里内容归插件（终端、文件、预览各是各的），
+ * 「开始」页与浏览器是壳自己的两个内置 kind。
+ *
+ * ## 为什么不用 React context
+ *
+ * 槽条目的渲染树与壳的 App 不在同一条 props 链上（插件是壳按启动图动态装上去的），
+ * 而这一份状态本来就与渲染树无关——订阅式单例最贴合。
  *
  * @module dsc-ui-shell/dock-state
  */
-import type { ReactNode } from 'react'
+import { useSyncExternalStore, type ComponentType, type ReactNode } from 'react'
 import type { ChangedFileView } from '@dsc/ui-core'
+import {
+  closeTab as modelCloseTab,
+  defaultSurface,
+  focusPane as modelFocusPane,
+  focusTab as modelFocusTab,
+  loadSurfaces,
+  openPreview as modelOpenPreview,
+  openTab as modelOpenTab,
+  placeTab as modelPlaceTab,
+  saveSurfaces,
+  setExpanded as modelSetExpanded,
+  setFraction as modelSetFraction,
+  splitPane as modelSplitPane,
+  toggleMode as modelToggleMode,
+  unsplitPane as modelUnsplitPane,
+  type DockActions,
+  type DockSurface,
+  type DockSurfaces,
+  type DockTab,
+  type DockTabKind,
+} from './dock-model'
 
-/**
- * 当前打开的是哪一块面板（`null` = 收起）。
- *
- * 为什么是"面板 id"而不是一个布尔：停靠区里可以有几块互斥的面板（终端 / 文件 /
- * 变更 / 预览），同一时刻只该显示一块，而"谁被点开了"这件事只能有一个真源。
- */
-let panel: string | null = null
+export type { DockActions, DockPane, DockSurface, DockTab, DockTabKind } from './dock-model'
 
-/** 订阅者（开合 / 面板清单 / 预览目标三样共用这一份，改动都走同一次通知）。 */
+// ── 布局状态（每会话一份） ────────────────────────────────────────────────────
+
+let surfaces: DockSurfaces = loadSurfaces()
+let sessionId = ''
+let surface: DockSurface = surfaces[''] ?? defaultSurface()
+
 const listeners = new Set<() => void>()
 
-/**
- * 上一次打开过的面板 id：顶栏那颗「工作区面板」开合钮在收起态点开时用它
- * （旧界面同款手感——收起前看的是哪个，展开就回哪个；没开过就默认文件）。
- */
-let lastPanel = 'files'
-
-/** 现在开的是哪一块面板（`useSyncExternalStore` 的取数函数；null = 收起）。 */
-export function dockPanel(): string | null {
-  return panel
-}
-
-/** 收起前最后看过的面板（顶栏开合钮的展开目标）。 */
-export function lastDockPanel(): string {
-  return lastPanel
-}
-
-/**
- * 打开某一块面板（`null` = 收起）。
- *
- * 面板的**内容**由插件自己决定渲染什么；收起时壳不渲染 `shell.dock` 这个槽，
- * 于是所有面板都被卸载——这是有意的：收起面板不该在布局里留一条看不见的占位。
- */
-export function setDockPanel(next: string | null): void {
-  if (next === panel) return
-  if (next !== null) lastPanel = next
-  panel = next
+function notify(): void {
   for (const listener of listeners) listener()
 }
 
-/** 订阅开合变化（`useSyncExternalStore` 的订阅函数）。 */
+/**
+ * 切到某个会话的布局（壳从宿主快照的 sessionId 调；没会话时传空串）。
+ *
+ * 切走的会话布局留在 {@link surfaces} 与 localStorage 里——切回来还是那一套页签。
+ */
+export function setDockSession(id: string): void {
+  if (id === sessionId) return
+  sessionId = id
+  surface = surfaces[id] ?? defaultSurface()
+  notify()
+}
+
+/** 派发一个布局变更：以当前会话布局为基，算完顺手落盘（布局很小，写 localStorage 便宜）。 */
+function mutate(fn: (s: DockSurface) => DockSurface): void {
+  const next = fn(surface)
+  if (next === surface) return
+  surface = next
+  surfaces = { ...surfaces, [sessionId]: next }
+  saveSurfaces(surfaces)
+  notify()
+}
+
+/** 订阅布局变化（`useSyncExternalStore` 的订阅函数）。 */
 export function subscribeDock(listener: () => void): () => void {
   listeners.add(listener)
   return () => {
@@ -71,71 +89,132 @@ export function subscribeDock(listener: () => void): () => void {
   }
 }
 
-/** 停靠面板在头条里的报名（壳按顺序画页签）。 */
-export interface DockPanelMeta {
-  /** 面板 id（与 `setDockPanel` 用同一个值）。 */
-  id: string
-  /** 页签上的短标题。 */
-  label: string
-  /** 页签顺序（小的在左）。 */
-  order: number
-  /**
-   * 页签上的小图标（旧界面 dock 的 chip 就是「图标 + 标题」）。
-   * 存 ReactNode 而不是组件：不同面板的图标来自不同图标集，壳不必认识它们。
-   */
-  icon?: ReactNode
-}
-
-const metas = new Map<string, DockPanelMeta>()
-let metasSnapshot: readonly DockPanelMeta[] = []
-
-function rebuildMetas(): void {
-  metasSnapshot = [...metas.values()].sort((a, b) => a.order - b.order)
+/** 当前会话的布局（`useSyncExternalStore` 的取数函数；引用稳定，变更才换）。 */
+export function dockSurface(): DockSurface {
+  return surface
 }
 
 /**
- * 报名一块停靠面板（插件 `apply` 里调一次）。
+ * 布局动作表（旧桌面版 App 里的同一套接线：开预览顺手展开侧栏）。
  *
- * 返回撤销函数（插件卸载时把页签也带走）；重复 id 覆盖——同一个插件重装时
- * 不该在头条里留下两枚同名页签。
+ * 做常量而不是工厂：动作全是 `mutate` 的薄包装，没有闭包状态，引用天然稳定。
  */
-export function registerDockPanel(meta: DockPanelMeta): () => void {
-  metas.set(meta.id, meta)
-  rebuildMetas()
-  for (const listener of listeners) listener()
+export const dockActions: DockActions = {
+  openTab: (kind, options) => {
+    mutate((s) => modelOpenTab(s, kind, options))
+  },
+  openPreview: (path, line) => {
+    mutate((s) => modelSetExpanded(modelOpenPreview(s, path, line), true))
+  },
+  closeTab: (tabId) => {
+    mutate((s) => modelCloseTab(s, tabId))
+  },
+  focusTab: (tabId) => {
+    mutate((s) => modelFocusTab(s, tabId))
+  },
+  focusPane: (paneId) => {
+    mutate((s) => modelFocusPane(s, paneId))
+  },
+  splitPane: (paneId) => {
+    mutate((s) => modelSplitPane(s, paneId))
+  },
+  unsplit: () => {
+    mutate((s) => modelUnsplitPane(s))
+  },
+  placeTab: (tabId, paneId) => {
+    mutate((s) => modelPlaceTab(s, tabId, paneId))
+  },
+  setExpanded: (expanded) => {
+    mutate((s) => modelSetExpanded(s, expanded))
+  },
+  toggleMode: () => {
+    mutate((s) => modelToggleMode(s))
+  },
+  setFraction: (fraction) => {
+    mutate((s) => modelSetFraction(s, fraction))
+  },
+}
+
+/** 展开右侧栏并就地替换「开始」页（开始页入口卡与快捷键的路径，旧界面同款）。 */
+export function openDockTab(kind: DockTabKind): void {
+  mutate((s) => modelSetExpanded(modelOpenTab(s, kind, { replaceGuide: true }), true))
+}
+
+// ── 页签内容注册表（kind → 渲染组件） ────────────────────────────────────────
+
+/** 页签体的 props：布局对象 + 这一张现在的可见性。 */
+export interface DockTabBodyProps {
+  /** 这张页签（preview 用 tab.path / tab.line）。 */
+  tab: DockTab
+  /** 这一张是不是它窗格的激活页签。 */
+  active: boolean
+  /** dock 整块展开着没有（收起 = 滑出右缘；keepMounted 的终端这时仍活着）。 */
+  expanded: boolean
+}
+
+/** 一种页签的界面（插件经 {@link registerDockTab} 报名）。 */
+export interface DockTabKindMeta {
+  kind: DockTabKind
+  /** chip 上的短标题（preview 不用——标题取文件名）。 */
+  label: string
+  /** chip 上的小图标。 */
+  icon?: ReactNode
+  /** 内容组件。 */
+  component: ComponentType<DockTabBodyProps>
+  /**
+   * 切走只藏不卸（终端的进程与输出活着）。
+   * 为假时只在「激活且展开」挂载——重挂无副作用的页面（文件 / Git / 预览）省一份常驻监听。
+   */
+  keepMounted?: boolean
+}
+
+const kindMetas = new Map<DockTabKind, DockTabKindMeta>()
+let kindSnapshot: readonly DockTabKindMeta[] = []
+
+function rebuildKinds(): void {
+  kindSnapshot = [...kindMetas.values()]
+}
+
+/**
+ * 报名一种页签的界面（插件 `apply` 里调一次）。
+ *
+ * 返回撤销函数；重复 kind 覆盖——同一个插件重装时不该在注册表里留下两份。
+ */
+export function registerDockTab(meta: DockTabKindMeta): () => void {
+  kindMetas.set(meta.kind, meta)
+  rebuildKinds()
+  notify()
   return () => {
-    metas.delete(meta.id)
-    rebuildMetas()
-    for (const listener of listeners) listener()
+    kindMetas.delete(meta.kind)
+    rebuildKinds()
+    notify()
   }
 }
 
-/** 已报名的面板清单（排好序；壳的头条按它画页签）。 */
-export function dockPanels(): readonly DockPanelMeta[] {
-  return metasSnapshot
+/** 已报名的页签界面（壳的页签条与页签体都按它画）。 */
+export function dockTabKinds(): readonly DockTabKindMeta[] {
+  return kindSnapshot
 }
 
-/** 预览目标：文件面板点的一个文件（预览面板显示它）。 */
-export interface DockPreview {
-  path: string
-  cwd: string
+/** 某种 kind 的界面（没报名给 undefined——页签体画占位）。 */
+export function dockTabMeta(kind: DockTabKind): DockTabKindMeta | undefined {
+  return kindMetas.get(kind)
 }
 
-let preview: DockPreview | null = null
+// ── 预览 / 审查目标 ──────────────────────────────────────────────────────────
 
-/** 现在要预览哪个文件；没点过是 null。 */
-export function dockPreview(): DockPreview | null {
-  return preview
-}
-
-/** 交接预览目标（文件面板点文件时调；通知与开合共用同一份订阅）。 */
-export function setDockPreview(next: DockPreview | null): void {
-  preview = next
-  for (const listener of listeners) listener()
+/**
+ * 打开一张文件预览页签（文件树点一个文件、改动卡点「打开」都走它）。
+ *
+ * `cwd` 保留在签名里只是为了调用方少改（旧面板时代的交接结构），打开页签只需要路径——
+ * 页面显示用的相对路径由预览组件自己按当前会话 cwd 裁。
+ */
+export function setDockPreview(target: { path: string; cwd?: string }): void {
+  dockActions.openPreview(target.path)
 }
 
 /**
- * 审查目标：轮尾「文件已更改」卡的「审查」把**那一轮的文件清单**交给审查面板。
+ * 审查目标：轮尾「文件已更改」卡的「审查」把**那一轮的文件清单**交给并排审查面板。
  *
  * 为什么带 index：卡上点的是第几个文件，面板打开就该定位到第几个——
  * 旧界面的并排审查栏是同一个语义（onReview(files, index)）。
@@ -153,8 +232,38 @@ export function dockReview(): DockReview | null {
   return review
 }
 
-/** 交接审查目标（卡上点「审查」时调；面板读它画）。 */
+/** 交接审查目标（卡上点「审查」时调；并排面板读它画）。 */
 export function setDockReview(next: DockReview | null): void {
   review = next
-  for (const listener of listeners) listener()
+  notify()
+}
+
+// ── React 接线 ───────────────────────────────────────────────────────────────
+
+/** 当前会话的布局（组件里读它画页签条与页签体）。 */
+export function useDockSurface(): DockSurface {
+  return useSyncExternalStore(subscribeDock, dockSurface, dockSurface)
+}
+
+/** 现在要审查哪一轮的哪些文件（并排面板读它；没点过是 null）。 */
+export function useDockReview(): DockReview | null {
+  return useSyncExternalStore(subscribeDock, dockReview, () => null)
+}
+
+/**
+ * 当前激活的预览页签路径（文件树拿它给正在预览的那一行点亮）。
+ *
+ * 从布局里推，而不是另存一份「预览目标」——目标就是那张活着的页签，
+ * 关掉页签、切走激活页签，高亮跟着消失，不会留下幽灵状态。
+ */
+export function useActivePreviewPath(): string | null {
+  return useSyncExternalStore(
+    subscribeDock,
+    () => {
+      const activePane = surface.panes.find((pane) => pane.id === surface.activePaneId) ?? surface.panes[0]
+      const tab = activePane?.tabs.find((item) => item.id === activePane.activeTabId)
+      return tab?.kind === 'preview' && tab.path !== undefined ? tab.path : null
+    },
+    () => null,
+  )
 }

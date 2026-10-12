@@ -1,228 +1,230 @@
 /**
- * 内置插件：工作区文件树 + git 变更（停靠区里的两块页签面板，头条由壳统一画）。
+ * 内置插件：工作区文件树 + git 变更（右侧栏「文件」「Git」两个页签的页签体）。
  *
- * 数据源是 dock 通道的**读类** op `fs-list`（阶段 5.2 起在界面通道放行面上，
- * 见 `src/core/dock-ops.ts` —— 读类直接放行，写类才要审批）。所以这一块在浏览器里
- * 也能用，与终端不同（终端要起进程，只走桌面窗口的原生桥）。「变更」面板走
- * `git-status` / `git-diff` 两个读类 op，见 changes.tsx。
+ * 布局与开合（页签条、分栏、全屏、收起）归壳；这里报名两种 kind 的内容，
+ * 页面体是旧桌面版 `Dock.tsx` 的同构：文件树的展开集 / 各层 listing / 滚动位
+ * 存在 `./tree-store`（**每个工作区根一棵树**——切会话各回各的树，与旧桌面版同款）。
  *
- * 点一个文件 → 交给**预览面板**整块显示（旧界面：dockOpenPreview 开 preview 页签；
- * 预览本体在 preview 插件，交接走壳的 `setDockPreview`）。
+ * 数据源是 dock 通道的**读类** op `fs-list`（读类直接放行，见 `src/core/dock-ops.ts`），
+ * 所以这一块在浏览器里也能用（与终端不同）。「变更」页签走 `git-status` / `git-log` /
+ * `git-diff` 三个读类 op 与 `git-stage` / `git-unstage` / `git-commit` 三个写类 op
+ * （写类过审批闸），见 changes.tsx。
  *
- * ## 与旧界面对齐的部分
+ * 点一个文件 → 开一张**预览页签**（壳的布局模型按路径去重；旧桌面版同款）。
  *
- * class 名照旧界面的文件树写（`.files-pane` / `.files-bar` / `.files-cwd` /
- * `.files-list` / `.tree-item` / `.file-row` / `.file-icon` / `.file-name` /
- * `.tree-note`），所以样式一行都不用新写。懒加载 + 每级 18px 缩进（`.tree-level`）
- * 也是旧界面的口径。彩色文件图标（`FileIcon`）与旧界面同源：壳平台层里那份
- * 生成映射就是同一个生成器产出的同源拷贝。刷新钮、根目录行的读法、空目录 /
- * 截断的状态行文案全部照旧界面。
+ * ## 与旧桌面版对齐的细节
  *
- * ## 已知的一处简化（写在 development-log 的诚实边界里）
+ * - class 名全照旧界面（`.files-pane` / `.files-bar` / `.files-cwd` / `.files-list` /
+ *   `.tree-item` / `.file-row` / `.file-icon` / `.file-name` / `.file-size` /
+ *   `.tree-level` / `.tree-note`），样式一行都不用新写；
+ * - 懒加载：目录展开才拉那一层；根目录行写「工作区根目录」；
+ * - 树行结构：目录一行「文件夹图标（开合两态）+ 名字」、文件一行「彩色文件图标 +
+ *   名字 + 大小」——树行里没有单独的箭头格，别再加回来；
+ * - 目录排序：目录在前、自然序（数字按值、大小写不敏感）。
  *
- * - **不做虚拟滚动**：旧界面的树是一次列一层的懒加载，几千个文件的目录会全渲染。
- *   目录大了会卡，需要时再接虚拟列表。
+ * 工作区根 = **当前会话的 cwd**（宿主 desktop-dock 插件按会话解析，切会话即换根）。
  *
  * @module dsc-ui-shell/plugins/files
  */
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { FileIcon, IconBranch, IconCode, IconFolder, IconFolderOpen, IconRefresh } from '@dsc/ui'
+import { useEffect, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import {
+  FileIcon,
+  IconBranch,
+  IconFolder,
+  IconFolderOpen,
+  IconRefresh,
   defineUiPlugin,
-  registerDockPanel,
-  setDockPanel,
+  registerDockTab,
   setDockPreview,
-  useDockPanel,
-  useDockPreview,
+  useActivePreviewPath,
   useHostChannel,
+  useHostSelector,
+  type HostSnapshot,
 } from '@dsc/ui'
+import type { HostChannel } from '../../host-channel'
 import { ChangesPanel } from './changes'
-import { ReviewPanel } from './review'
+import {
+  getTree,
+  needsLoad,
+  orderEntries,
+  setLevel,
+  setScrollTop,
+  subscribe as subscribeTree,
+  toggleExpanded,
+  type TreeEntry,
+} from './tree-store'
 
-/** 文件树面板在停靠区里的 id（壳拿它决定同一时刻显示哪一块）。 */
-const PANEL = 'files'
-/** 变更面板的 id（同一插件的第二块面板：旧界面 dock 里它们也是两个页签）。 */
-const CHANGES_PANEL = 'changes'
-/** 审查面板的 id（轮尾「文件已更改」卡点「审查」时顶到前台）。 */
-const REVIEW_PANEL = 'review'
-
-/** `fs-list` 回来的一个条目（宿主 `desktop-dock` 插件的形状）。 */
-interface Entry {
-  name: string
-  dir: boolean
-  size: number
-}
-
-/** `fs-list` 的回包。 */
+/** `fs-list` 回来的清单（宿主 `desktop-dock` 插件的形状）。 */
 interface Listing {
   cwd: string
-  entries: Entry[]
+  entries: TreeEntry[]
   truncated: boolean
 }
 
 export default defineUiPlugin({
   name: '文件',
-  apply(ui) {
-    // 头条页签与开合钮由壳统一画（旧界面同构）——这里只报名三块面板、注册本体。
-    registerDockPanel({ id: PANEL, label: '文件', order: 20, icon: <IconFolder size={13} /> })
-    registerDockPanel({ id: CHANGES_PANEL, label: '变更', order: 30, icon: <IconBranch size={13} /> })
-    ui.slots.register('shell.dock', { id: 'files.panel', order: 20 }, FilesPanel)
-    ui.slots.register('shell.dock', { id: 'files.changes', order: 30 }, ChangesDock)
-    // 审查面板（旧界面是正文右侧的并排栏；壳里并进停靠区，见 review.tsx 的模块注释）。
-    registerDockPanel({ id: REVIEW_PANEL, label: '审查', order: 35, icon: <IconCode size={13} /> })
-    ui.slots.register('shell.dock', { id: 'files.review', order: 35 }, ReviewPanel)
+  apply() {
+    // 报名两种页签界面：文件（工作区树）与 Git（变更面板）。开合/分栏归壳。
+    registerDockTab({ kind: 'files', label: '文件', icon: <IconFolder size={13} />, component: FilesTab })
+    registerDockTab({ kind: 'git', label: 'Git', icon: <IconBranch size={13} />, component: GitTab })
   },
 })
 
-/** 文件面板：工作区文件树。点一个文件交给预览面板显示（旧界面：开 preview 页签）。
- *
- * 行的结构照旧界面 `Dock.tsx` 的 TreeLevel：目录一行「文件夹图标（开合两态）+ 名字」，
- * 文件一行「彩色文件图标 + 名字 + 大小」——旧界面树行里没有单独的箭头格，别再加回来。
- *
- * 保活对齐桌面端：面板永远渲染，被顶替或收起时 `data-hidden` 藏——已展开的目录、
- * 滚动位都活着（旧界面的 files-tree-store 在壳里的对等物）。 */
-function FilesPanel(): ReactNode {
-  const active = useDockPanel() === PANEL
-  const preview = useDockPreview()
-  const channel = useHostChannel()
-  const [root, setRoot] = useState<Listing | null>(null)
-  /** 已展开的目录 → 它的清单（懒加载：展开才取）。 */
-  const [dirs, setDirs] = useState<Record<string, Entry[]>>({})
-  const [open, setOpen] = useState<readonly string[]>([])
-  const [note, setNote] = useState('')
+/** 文件页签体：当前会话工作区的树。 */
+function FilesTab(): ReactNode {
+  const cwd = useHostSelector(readCwd)
+  if (cwd === null || cwd === '') {
+    // 快照还没到（宿主刚起来）：给一句能读的状态，别画一棵空树。
+    return (
+      <div className="files-pane">
+        <div className="tree-note">读取中…</div>
+      </div>
+    )
+  }
+  return <FilesPane cwd={cwd} />
+}
 
-  /** 拉一层清单进状态（根与展开的目录共用；失败把原因摊在列表上方）。 */
-  const listDir = useCallback(
-    (dir: string, onDone: (listing: Listing) => void): void => {
-      void channel
-        .invoke<Listing>('dock', ['fs-list', { dir }])
-        .then((listing) => {
-          onDone(listing)
-        })
-        .catch((error: unknown) => {
-          setNote(`列目录失败：${error instanceof Error ? error.message : String(error)}`)
-        })
-    },
-    [channel],
+/** Git 页签体：变更面板（分支/暂存/提交/历史；组件自身按挂载时机重读）。 */
+function GitTab(): ReactNode {
+  return <ChangesPanel />
+}
+
+/** 拉一层目录的 listing 进 store（成功置 ready、失败存 message，渲染侧自己画状态行）。 */
+function loadLevel(channel: HostChannel, cwd: string, path: string): void {
+  void channel
+    .invoke<Listing>('dock', ['fs-list', { dir: path }])
+    .then((data) => {
+      setLevel(cwd, path, { kind: 'ready', entries: data.entries, truncated: data.truncated === true })
+    })
+    .catch((error: unknown) => {
+      setLevel(cwd, path, { kind: 'failed', message: error instanceof Error ? error.message : String(error) })
+    })
+}
+
+/** 树的状态行（加载中/为空/失败/截断），旧桌面版 `.tree-note` 同位。 */
+function TreeNote({ kind, message }: { kind: 'loading' | 'empty' | 'failed' | 'truncated'; message?: string }): ReactNode {
+  const text = kind === 'loading' ? '读取中…' : kind === 'empty' ? '（空目录）' : kind === 'truncated' ? '条目过多，已截断显示' : (message ?? '读取失败')
+  return (
+    <div className="tree-note" data-tree-note={kind}>
+      {text}
+    </div>
   )
+}
 
-  // 根清单只在面板第一次真正打开时取（收起时不发请求）。
+/**
+ * 树的一层：本层状态行 + 条目行 + 已展开子层（递归）。
+ *
+ * `cwd` 是树的身份（一个工作区根一棵树），`path` 是本层目录的绝对路径；
+ * 两者分开是因为子层的绝对路径都从根拼出来，而 store 按 cwd 找树。
+ */
+function TreeLevel({ cwd, path, depth }: { cwd: string; path: string; depth: number }): ReactNode {
+  const channel = useHostChannel()
+  const previewPath = useActivePreviewPath()
+  const tree = useSyncExternalStore(subscribeTree, () => getTree(cwd))
+  const level = tree.levels[path]
+  // 根层由 FilesPane 拉；子层展开时若还没 listing（store 里没有或失败过），这里补拉
   useEffect(() => {
-    if (!active || root !== null) return
-    listDir('.', (listing) => {
-      setRoot(listing)
-    })
-  }, [active, root, listDir])
-
-  /** 刷新（旧界面 files-bar 的刷新钮）：重拉根层与全部已展开层，回来原地换内容。 */
-  const refresh = (): void => {
-    setNote('')
-    listDir('.', (listing) => {
-      setRoot(listing)
-    })
-    for (const dir of open) {
-      listDir(dir, (listing) => {
-        setDirs((current) => ({ ...current, [dir]: listing.entries }))
-      })
-    }
-  }
-
-  /** 展开 / 收起一个目录（展开时第一次取它的清单）。 */
-  const toggleDir = (dir: string): void => {
-    if (open.includes(dir)) {
-      setOpen(open.filter((item) => item !== dir))
-      return
-    }
-    setOpen([...open, dir])
-    if (dirs[dir] !== undefined) return
-    listDir(dir, (listing) => {
-      setDirs((current) => ({ ...current, [dir]: listing.entries }))
-    })
-  }
-
-  /** 画一个目录下的条目（递归：展开了的目录继续往下画一层）。 */
-  const rowsOf = (parent: string, entries: readonly Entry[], depth: number): ReactNode[] =>
-    entries.flatMap((entry) => {
-      const path = joinPath(parent, entry.name)
-      const row = (
-        <button
-          type="button"
-          className={`file-row${preview?.path === path ? ' on' : ''}`}
-          key={path}
-          style={{ paddingLeft: 8 + depth * 18 }}
-          title={entry.dir ? path : `${path}（${formatSize(entry.size)}）`}
-          onClick={() => {
-            if (entry.dir) {
-              toggleDir(path)
-              return
-            }
-            // 点文件 → 切到预览面板整块显示它（旧界面：dockOpenPreview 开 preview 页签）。
-            setDockPreview({ path, cwd: root?.cwd ?? '' })
-            setDockPanel('preview')
-          }}
-        >
-          {entry.dir ? (
-            <span className="file-icon tree-folder">{folderIcon(open.includes(path))}</span>
-          ) : (
+    if (depth > 0 && needsLoad(cwd, path)) loadLevel(channel, cwd, path)
+  }, [cwd, path, depth, channel])
+  if (level === undefined || level.kind === 'loading') return <TreeNote kind="loading" />
+  if (level.kind === 'failed') return <TreeNote kind="failed" message={level.message} />
+  const entries = orderEntries(level.entries)
+  if (entries.length === 0) return <TreeNote kind="empty" />
+  return (
+    <>
+      {level.truncated ? <TreeNote kind="truncated" /> : null}
+      {entries.map((entry) => {
+        const entryPath = joinPath(path, entry.name)
+        if (entry.dir) {
+          const expanded = tree.expanded.includes(entryPath)
+          return (
+            <div key={entry.name} className="tree-item" data-tree-entry="directory">
+              <button className="file-row" aria-expanded={expanded} onClick={() => toggleExpanded(cwd, entryPath)}>
+                <span className="file-icon tree-folder">{expanded ? <IconFolderOpen size={15} /> : <IconFolder size={15} />}</span>
+                <span className="file-name">{entry.name}</span>
+              </button>
+              {expanded && (
+                <div className="tree-level">
+                  <TreeLevel cwd={cwd} path={entryPath} depth={depth + 1} />
+                </div>
+              )}
+            </div>
+          )
+        }
+        return (
+          <button
+            key={entry.name}
+            className={`file-row${previewPath === entryPath ? ' on' : ''}`}
+            data-tree-entry="file"
+            title={entryPath}
+            onClick={() => setDockPreview({ path: entryPath })}
+          >
             <span className="file-icon">
               <FileIcon name={entry.name} size={15} />
             </span>
-          )}
-          <span className="file-name">{entry.name}</span>
-          {entry.dir ? null : <span className="file-size">{formatSize(entry.size)}</span>}
+            <span className="file-name">{entry.name}</span>
+            <span className="file-size">{formatSize(entry.size)}</span>
+          </button>
+        )
+      })}
+    </>
+  )
+}
+
+/**
+ * 文件树面板本体（旧桌面版 FilesPane 同构）：根行 + 滚动区。
+ *
+ * 保活对齐旧桌面版：树状态在 store（进程内），页签切走重挂后展开集与滚动位原样回来；
+ * 切会话（cwd 变）就换到那棵树——两棵树的展开与滚动各记各的。
+ */
+function FilesPane({ cwd }: { cwd: string }): ReactNode {
+  const channel = useHostChannel()
+  const tree = useSyncExternalStore(subscribeTree, () => getTree(cwd))
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const scrollTopRef = useRef(0)
+
+  /** 刷新 = 重拉根层与全部已展开层（先标 loading，回来原地换内容）。 */
+  const loadAll = (): void => {
+    for (const path of tree.expanded) setLevel(cwd, path, { kind: 'loading' })
+    for (const path of tree.expanded) loadLevel(channel, cwd, path)
+  }
+
+  // 首挂与切会话：根层没有 listing（或上次失败）就拉一次。
+  useEffect(() => {
+    if (needsLoad(cwd, cwd)) loadLevel(channel, cwd, cwd)
+  }, [cwd, channel])
+
+  // 滚动位：挂载时从 store 播种，卸载时写回（旧桌面版同款——滚动本身不重渲染）
+  useEffect(() => {
+    const body = bodyRef.current
+    if (body !== null && tree.scrollTop > 0) body.scrollTop = tree.scrollTop
+    return () => {
+      if (bodyRef.current !== null) setScrollTop(cwd, scrollTopRef.current)
+    }
+  }, [cwd, tree.scrollTop])
+
+  const relative = tree.root.slice(cwd.length)
+  return (
+    <div className="files-pane">
+      <div className="files-bar">
+        <span className="files-cwd" data-tip={tree.root} data-files-root title={tree.root}>
+          {relative === '' ? '工作区根目录' : relative}
+        </span>
+        <button type="button" className="icon-btn" data-tip="刷新" aria-label="刷新文件树" onClick={loadAll}>
+          <IconRefresh size={13} />
         </button>
-      )
-      const children = entry.dir && open.includes(path) ? (dirs[path] ?? null) : null
-      if (children === null) return [row]
-      return [
-        row,
-        ...(children.length === 0
-          ? [<div className="tree-note" key={`${path}:empty`}>（空目录）</div>]
-          : rowsOf(path, children, depth + 1)),
-      ]
-    })
-
-  return (
-    <aside className="dock" style={{ width: '100%' }} data-hidden={active ? undefined : '1'}>
-      <div className="dock-body">
-        <div className="files-pane">
-          <div className="files-bar">
-            <span className="files-cwd" data-tip={root?.cwd ?? ''} title={root?.cwd ?? ''}>
-              {root === null ? '读取中…' : '工作区根目录'}
-            </span>
-            <button type="button" className="icon-btn" data-tip="刷新" aria-label="刷新文件树" onClick={refresh}>
-              <IconRefresh size={13} />
-            </button>
-          </div>
-          <div className="files-list">
-            {note === '' ? null : <div className="tree-note">{note}</div>}
-            {root !== null && root.entries.length === 0 && note === '' ? (
-              <div className="tree-note">（空目录）</div>
-            ) : null}
-            {root === null ? null : rowsOf(root.cwd, root.entries, 0)}
-            {root !== null && root.truncated ? <div className="tree-note">条目过多，已截断显示</div> : null}
-          </div>
-        </div>
       </div>
-    </aside>
-  )
-}
-
-/** 变更面板（本插件的第二块 dock 面板）：git 状态 + 提交历史（变更那块在 changes.tsx）。 */
-function ChangesDock(): ReactNode {
-  const active = useDockPanel() === CHANGES_PANEL
-  return (
-    <aside className="dock" style={{ width: '100%' }} data-hidden={active ? undefined : '1'}>
-      <div className="dock-body">
-        <ChangesPanel />
+      <div
+        ref={bodyRef}
+        className="files-list"
+        onScroll={(event) => {
+          scrollTopRef.current = event.currentTarget.scrollTop
+        }}
+      >
+        <TreeLevel cwd={cwd} path={tree.root} depth={0} />
       </div>
-    </aside>
+    </div>
   )
-}
-
-/** 目录图标：开了口用 IconFolderOpen，否则 IconFolder。 */
-function folderIcon(open: boolean): ReactNode {
-  return open ? <IconFolderOpen size={14} /> : <IconFolder size={14} />
 }
 
 /** Windows 风格的子路径拼接（`fs-list` / `fs-read` 都吃反斜杠绝对路径）。 */
@@ -235,4 +237,12 @@ function formatSize(size: number): string {
   if (size < 1024) return `${String(size)}B`
   if (size < 1024 * 1024) return `${String(Math.max(1, Math.round(size / 1024)))}KB`
   return `${(size / 1024 / 1024).toFixed(1)}MB`
+}
+
+/** 当前会话的工作目录（文件树的根；与侧栏底部同一字段）。 */
+function readCwd(snapshot: HostSnapshot | null): string | null {
+  const status = snapshot?.['status']
+  if (typeof status !== 'object' || status === null) return null
+  const value = (status as Record<string, unknown>)['cwd']
+  return typeof value === 'string' && value !== '' ? value : null
 }

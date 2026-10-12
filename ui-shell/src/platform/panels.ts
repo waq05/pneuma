@@ -41,6 +41,8 @@ export const PANEL_KEYS = {
   sidebarCollapsed: 'dsc.uiSidebarCollapsed',
   threadWidth: 'dsc.threadWidth',
   dockWidth: 'dsc.dockWidth',
+  // 并排审查面板的宽度（旧渲染层 DiffPane 同一键：两个界面共享用户拖过的宽度）
+  diffPaneWidth: 'dsc.diffPaneWidth',
 } as const
 
 /**

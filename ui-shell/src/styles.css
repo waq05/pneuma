@@ -435,27 +435,9 @@
   font-style: italic;
 }
 
-/* ══════════ 停靠面板（终端所在的那一块） ══════════
- *
- * 打开时主区从「一列」变成「正文 + 面板」两列——与 legacy 的
- * `.thread-zone[data-review]`（审查面板）同一套行布局，但用**独立属性名**：
- * 两件事互不相干，将来审查面板搬进来时各自开合、互不牵动。
- *
- * 面板本体直接用 legacy 的 `.dock`（左边框、侧栏底色、纵向 flex 都在那份里写了），
- * 宽度由插件写在行内（与旧界面一样可拖，拖拽手柄这版还没做）。 */
-.thread-zone[data-dock='1'] {
-  flex-direction: row;
-}
-.thread-zone[data-dock='1'] .thread-main {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-height: 0;
-  min-width: 0;
-}
-.dock {
-  max-width: 70vw;
-}
+/* 右侧栏（dock）的布局规则全在 legacy/views.css 的 `.dock` 系列里（它就是照旧
+   桌面版拷来的那份：`.app` 的第三列、收起滑出右缘、全屏盖顶栏以下）——壳里的
+   Dock 组件照旧结构写，这一份不必再补。 */
 
 /* 终端面板的底栏：状态一行（会话名 / 退出提示 / 启动失败原因）。 */
 .shell-term-note {
@@ -545,37 +527,6 @@
 }
 
 /* ══════════ 布局对齐：面板几何与保活（对照桌面端 panels.ts / Dock.tsx）══════════ */
-
-/* 停靠面板的壳容器：宽度由壳写进 --dsc-dock-w（拖拽落盘，对齐桌面端 dsc.dockWidth）。
-   收起时 display:none——**组件树不卸载**（桌面端「收起=滑出右缘不卸载」的对等物）：
-   终端进程活着、文件树的展开与选中都留着，重新展开时原样接上。
-   列向：头条（页签条）在上、面板本体在下——旧界面的 dock 就是这个结构（strip 是
-   aside.dock 的第一个子节点）。行向会把页签条挤成面板左边一条竖带（chips 在窄条里
-   换行、又被 align-items:center 居中到半高），位置全错。 */
-.dock-slot {
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
-  min-height: 0;
-  min-width: 0;
-  position: relative;
-  width: var(--dsc-dock-w, 420px);
-}
-.dock-slot[data-open='0'] {
-  display: none;
-}
-/* 面板被顶替（另一块面板开着）时自己藏起来，与收起一样是保活不是卸载。 */
-.dock[data-hidden='1'] {
-  display: none;
-}
-/* 面板本体填满壳容器（宽度归壳管，插件不再自带 460px）。 */
-.dock-slot > .dock {
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-}
-/* 拖宽热区：legacy 的 .dock-resizer 是「贴 aside 左缘」的绝对定位，壳里它挂在
-   .dock-slot 上（.dock 的哥哥），语义不变——一样压在面板左缘那条线上。 */
 
 /* 侧栏折叠（Ctrl/Cmd+B 或侧栏头那颗钮）：收成 56px 图标窄栏（rail），
    与旧界面同款——窄栏由壳画（logo/新会话/技能/插件/目录/设置），

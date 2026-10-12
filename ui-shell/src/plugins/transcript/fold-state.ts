@@ -24,3 +24,22 @@ export function writeFold(key: string | undefined, open: boolean): void {
   if (key === undefined) return
   folds.set(key, open)
 }
+
+/**
+ * 整轮折叠的存档键（旧桌面渲染层同款）：`会话id:turn:轮序号`。
+ *
+ * 会话 id 可能在宿主落盘前缺席（null）——归一成空串，同一次进程里键仍然唯一。
+ */
+export function turnFoldKey(sessionId: string | null, roundIndex: number): string {
+  return `${sessionId ?? ''}:turn:${String(roundIndex)}`
+}
+
+/**
+ * 阶段组折叠的存档键（旧桌面渲染层同款）：`会话id:step:轮序号:组序号`。
+ *
+ * 组序号是「轮内第几个组」（0 基）——直播中尾组吸新工具不换号，用户展开的那一组
+ * 不会被新内容重置。
+ */
+export function stepGroupFoldKey(sessionId: string | null, roundIndex: number, groupSeq: number): string {
+  return `${sessionId ?? ''}:step:${String(roundIndex)}:${String(groupSeq)}`
+}
