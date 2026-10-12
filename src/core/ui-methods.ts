@@ -36,7 +36,10 @@
  *   - 任意命令执行 `runCommand`。
  *   - 破坏性 `purgeSessions`：永久删除会话（移进回收站再 30 天清），不可逆；删除必须由人亲手点。
  *   - 策略 `setPolicy`：审批策略（要不要弹卡、沙箱档位）是安全闸门本身，
- *     能让页面改它，前面所有闸门就都成了摆设。
+ *     能让页面改它，前面所有闸门就都成了摆设。**写口开在原生桥**（`NATIVE_OPS.setPolicy`）：
+ *     旧桌面版的输入框本来就有这根能切的旋钮（`desktop/src/renderer/Composer.tsx` 的
+ *     `proxy.setPolicy`），壳不能比旧版少一样东西；而桥只对装了 preload 的桌面窗口
+ *     那份文档开放，浏览器页签 / 远程页面够不着——与 `saveProvider` 那三件同一先例。
  *   - 往本机装东西 `installMarketSkill` / `setMarketSources`：下载并安装第三方技能、
  *     改来源列表，等于供应链写入口（`browseMarket` 只是读列表，故放行）。
  *   - 落信任记录 `setUiTrust`：信任一个第三方界面插件等于放它进启动图（它从此能调界面

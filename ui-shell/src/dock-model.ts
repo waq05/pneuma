@@ -24,14 +24,32 @@
  * @module dsc-ui-shell/dock-model
  */
 
-export type DockTabKind = 'guide' | 'terminal' | 'browser' | 'files' | 'git' | 'preview'
+export type DockTabKind =
+  | 'guide' | 'terminal' | 'browser' | 'files' | 'git' | 'preview'
+  /**
+   * 子智能体（一个子智能体一张，`path` 是它的会话文件路径）。
+   *
+   * 为什么单开一种 kind 而不是复用 preview：它渲染的不是文件内容，而是那个子智能体的
+   * 运行记录（`peekTranscript` 回的只读条目流），而且点一行子智能体就该把它落到右侧栏
+   * ——与 dsh 的 `sidebarRight.openResource(subagentChatAddress(...), {kind:'subagentchat'})`
+   * 同一条路（右侧栏是只读的伴读面，不是模态框）。
+   */
+  | 'subagent'
 
 /** 一张页签：id 是毫秒 + 随机尾巴，进程内唯一即可（持久化恢复后也不与现存冲突）。 */
 export interface DockTab {
   id: string
   kind: DockTabKind
-  /** 仅 preview 页签：预览文件的绝对路径（chip 标题与预览体都从它来）。 */
+  /** preview = 预览文件的绝对路径；subagent = 那个子智能体的会话文件路径。 */
   path?: string
+  /**
+   * chip 上显示的标题（可缺）。
+   *
+   * 为什么要有它：子智能体的会话文件名是 uuid（`e8888…-….jsonl`），拿文件名当页签标题
+   * 等于给用户一列看不懂的哈希；而它的**名字**（`reader-1`）只有开页签的那一方知道
+   * （名册在 subagent 插件里）。所以标题由调用方一并交过来，壳只负责显示。
+   */
+  label?: string
   /** 仅 preview 页签：打开时定位到的 1-based 行号（/review findings 的行号跳转用）。 */
   line?: number
 }
@@ -65,6 +83,8 @@ export interface DockActions {
   openTab(kind: DockTabKind, options?: { replaceGuide?: boolean }): void
   /** 开一张文件预览页签（同路径去重 = 聚焦；对齐 dsh 的 openResource）；line = 定位行号。 */
   openPreview(path: string, line?: number): void
+  /** 开一张子智能体页签（同会话文件去重 = 聚焦）；label = chip 上显示的队友名。 */
+  openSubagent(path: string, label?: string): void
   closeTab(tabId: string): void
   focusTab(tabId: string): void
   focusPane(paneId: string): void
@@ -186,6 +206,30 @@ export function openPreview(surface: DockSurface, path: string, line?: number): 
   const tab = { ...makeTab('preview', path), ...patched }
   tabs = [...tabs, tab]
   return replacePane(surface, pane.id, { ...pane, tabs, activeTabId: tab.id })
+}
+
+/**
+ * 开一张子智能体页签（照 {@link openPreview} 的形状）：同一个子智能体（按会话文件认）
+ * 只有一张，已开即聚焦；新开的追加到激活窗格末尾，不设上限——右侧栏同时盯着几个队友
+ * 是正常用法，而且它们各自只读、不吃内存里的大对象。
+ */
+export function openSubagent(surface: DockSurface, path: string, label?: string): DockSurface {
+  const existing = surface.panes.flatMap((pane) => pane.tabs).find((tab) => tab.kind === 'subagent' && tab.path === path)
+  if (existing !== undefined) {
+    const focused = focusTab(surface, existing.id)
+    return label === undefined
+      ? focused
+      : {
+          ...focused,
+          panes: focused.panes.map((pane) => ({
+            ...pane,
+            tabs: pane.tabs.map((tab) => (tab.id === existing.id ? { ...tab, label } : tab)),
+          })),
+        }
+  }
+  const pane = activePane(surface)
+  const tab = { ...makeTab('subagent', path), ...(label === undefined ? {} : { label }) }
+  return replacePane(surface, pane.id, { ...pane, tabs: [...pane.tabs, tab], activeTabId: tab.id })
 }
 
 /** 找到持有某张页签的窗格 id。 */
@@ -340,11 +384,20 @@ function parseSurface(value: unknown): DockSurface | null {
     for (const item of pane.tabs) {
       const entry = item as Partial<DockTab>
       if (typeof entry?.id !== 'string' || typeof entry?.kind !== 'string') return null
-      if (!['guide', 'terminal', 'browser', 'files', 'git', 'preview'].includes(entry.kind)) return null
+      if (!['guide', 'terminal', 'browser', 'files', 'git', 'preview', 'subagent'].includes(entry.kind)) return null
       // preview 页签落盘要带路径；路径丢了这张页签就没有内容，整格作废重画
       if (entry.kind === 'preview') {
         if (typeof entry.path !== 'string' || entry.path === '') return null
         tabs.push({ id: entry.id, kind: 'preview', path: entry.path, ...(typeof entry.line === 'number' ? { line: entry.line } : {}) })
+      } else if (entry.kind === 'subagent') {
+        // 子智能体页签：路径就是它的全部内容（丢了这张页签没东西可读），label 是标题。
+        if (typeof entry.path !== 'string' || entry.path === '') return null
+        tabs.push({
+          id: entry.id,
+          kind: 'subagent',
+          path: entry.path,
+          ...(typeof entry.label === 'string' && entry.label !== '' ? { label: entry.label } : {}),
+        })
       } else {
         tabs.push({ id: entry.id, kind: entry.kind as DockTabKind })
       }

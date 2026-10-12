@@ -21,6 +21,12 @@
  * 三者在对话流里是紧挨着的「过程」条目，命中区不一样的话，扫视时要重新认一遍哪里能点
  * （对照 dsh 的 DisclosureRow expandOnRowClick，ReasoningRow.tsx:95）。
  *
+ * 行尾两格是 0.6.68 加的：**「N 项」+ 常显箭头**。原来箭头只在悬停时顶替类别图标
+ * （照 dsh 的叠放互换），静息看就是「图标 + 一句话」，像状态说明而不像控件；同一条流里
+ * 高一层的整轮总开关（`.turn-fold`）却是常显箭头，两行长相不一致，语义也就读不出来。
+ * 现在统一成「左边类别、右边 N 项 + 箭头」；codex 的 `+ Show details` / `+ N lines`
+ * （transcript_view/layout.rs:24-58）是同一思路——把开合这件事写在明面上。
+ *
  * 「正在… / 已…」两套文案由 group.closed 决定（见 process-groups.ts 的 stepGroupTitle）。
  * 已结束且一类工具都没调过的组显示「已完成分析」——那是「只思考没动手」的那一阶段。
  *
@@ -149,7 +155,12 @@ export function StepGroupRow(props: {
       data-step-counts={counts}
       data-step-detail={detail === '' ? undefined : detail}
       aria-expanded={props.open}
-      data-tip={props.open ? '收起这一阶段' : '展开这一阶段的过程（思考与工具调用）'}
+      // 提示语带上条数：点一下到底会发生什么，读提示就能答（不必先点一次试）。
+      data-tip={
+        props.open
+          ? `收起这一阶段（${String(props.group.size)} 项思考与工具调用）`
+          : `展开这一阶段，放出 ${String(props.group.size)} 项思考与工具调用`
+      }
       onClick={(event) => {
         // 先把焦点落到组头自己身上再开合（对照 ChatGroupSeat.tsx:116 的
         // `event.currentTarget.focus(); toggle()`）：收起组体时，焦点如果正落在组里某个
@@ -158,14 +169,12 @@ export function StepGroupRow(props: {
         props.onToggle()
       }}
     >
-      {/* 图标位与箭头叠放在同一格：静息显示类别图标，悬停 / 聚焦 / 展开时换成箭头
-          （对照 dsh 的 .leading 把 activityIcon 与 chevron 叠在一起，ChatGroupSeat.tsx:117-121）。 */}
+      {/* 类别图标（左边一格）+ 行尾「N 项 + 箭头」（右边一格）。
+          箭头常显：组头是一行能点开的折叠条，与它上面的整轮总开关（`.turn-fold` 的
+          「用时 X」+ 常显箭头）同一种语言，静息也看得出能点（见 views.css 那一段注释）。 */}
       <span className="step-fold-leading" aria-hidden="true">
         <span className="step-fold-icon" data-step-icon>
           {ACTIVITY_ICON[activity]}
-        </span>
-        <span className="step-fold-chevron" data-step-chevron>
-          <IconChevronDown size={12} />
         </span>
       </span>
       {/* 标题与实时详情各占一行（.step-fold-text 柱）：详情原来用「 · 」接在标题后，
@@ -185,6 +194,14 @@ export function StepGroupRow(props: {
             {detail}
           </span>
         )}
+      </span>
+      {/* 「点开会得到什么」写在明面上：这一组收着几条（思考段 + 工具调用合起来数）。
+          用户在长会话里看到的是一列组头，光看标题猜不出里面有多少东西。 */}
+      <span className="step-fold-count" data-step-size={props.group.size}>
+        {`${String(props.group.size)} 项`}
+      </span>
+      <span className="step-fold-chevron" data-step-chevron>
+        <IconChevronDown size={12} />
       </span>
     </button>
   )

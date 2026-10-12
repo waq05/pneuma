@@ -86,15 +86,21 @@ export interface StreamRequest {
 }
 
 /** 取消息的纯文本（content 为数组时拼接 text 片段，图像不计入）。 */
-export function contentText(content: string | null | ChatContentPart[]): string {
-  if (content === null) return ''
+export function contentText(content: string | null | undefined | ChatContentPart[]): string {
+  // undefined 也要兜：类型上写着非可缺，但**从盘上读回来的老日志**可能整条没有 content
+  // （2026-10 自检里撞到过一次：一条 tool 记录没带正文，重放整段抛异常，用户打开那条
+  // 会话看到的是一片空白——历史看起来像丢了）。这里退成空串，界面照常显示其余条目。
+  if (content === null || content === undefined) return ''
   if (typeof content === 'string') return content
+  // 认不出形状（数字、对象、被写坏的那一行）也退成空串：这一层的职责是「取文本」，
+  // 取不到就交白卷，绝不该把「打开一条会话」这种动作炸掉。
+  if (!Array.isArray(content)) return ''
   return content.map((part) => (part.type === 'text' ? part.text : '')).join('')
 }
 
 /** 取消息里的图像清单（data URL；给界面渲染缩略图用）。 */
-export function contentImages(content: string | null | ChatContentPart[]): string[] {
-  if (typeof content === 'string' || content === null) return []
+export function contentImages(content: string | null | undefined | ChatContentPart[]): string[] {
+  if (typeof content === 'string' || content === null || content === undefined) return []
   return content.flatMap((part) => (part.type === 'image_url' ? [part.image_url.url] : []))
 }
 

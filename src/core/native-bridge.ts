@@ -30,9 +30,11 @@
  * 直接 IPC 是同一扇门。前两个弹系统文件选择器（人选了文件才算数），后两个转给
  * 宿主（按市场源下载安装到 `~/.dsc/skills`、把源清单写回 settings.json）。
  * 同一理由的还有 `setUiTrust`（落第三方界面插件的信任记录——放它进启动图这声
- * 「我信任」必须是人在桌面窗口里答的），以及模型端点三件套
+ * 「我信任」必须是人在桌面窗口里答的），模型端点三件套
  * （`saveProvider` / `removeProvider` / `setProviderKey`——写 config.yaml 与凭据库，
- * 是设置 → 模型页可编辑形态的写入口；旧渲染层这三件事走的就是直接 IPC）。
+ * 是设置 → 模型页可编辑形态的写入口；旧渲染层这三件事走的就是直接 IPC），
+ * 以及 `setPolicy`（审批策略是安全闸门本身，界面通道同样持续排除；旧渲染层的输入框
+ * 里本来就有这根能切的旋钮，桥替它把写口留住）。
  *
  * 内嵌浏览器三件套（`dockBrowser` / `browserNav` + `browser-state` 事件）2026-10
  * 搬进壳：它们操作的是原生 `WebContentsView` 覆盖层（旧渲染层直连 IPC 的那个），
@@ -46,6 +48,7 @@
  */
 
 import { DOCK_TERM_OPS } from './dock-ops.js'
+import type { ApprovalPolicy } from '../contract.js'
 
 /**
  * 桥的协议版本：**加操作不涨**，改某个操作的实参或语义才涨。
@@ -79,6 +82,17 @@ export const NATIVE_OPS = [
   'saveProvider',
   'removeProvider',
   'setProviderKey',
+  /**
+   * 权限模式（只读 / 自动编辑 / 完全访问 / AI 复核）。
+   *
+   * 为什么在这里而不在界面通道：`UI_EXCLUDED` 里写明了理由——审批策略是安全闸门本身，
+   * 「能让页面改它，前面所有闸门就都成了摆设」。但旧桌面版的输入框里本来就有这根能切的
+   * 旋钮（`desktop/src/renderer/Composer.tsx` 的 `policyOpen` → `proxy.setPolicy`），
+   * 壳不能比旧版少一样东西，所以按同一先例挪到桥上：**只有装了 preload 的桌面窗口
+   * 那份文档**够得着，浏览器页签 / 远程页面够不着。实参是四档枚举（下面 POLICIES），
+   * 到了宿主那侧仍走 `approval.setPolicy`（它自己会发一条 system 条目并记审计）。
+   */
+  'setPolicy',
   'sessionUsage',
   'notify',
   'restartHost',
@@ -161,6 +175,13 @@ const MAX_PROVIDER_KEY = 4096
 
 const THEME_SOURCES = ['dark', 'light', 'system'] as const
 const WORKSPACE_KINDS = ['terminal', 'explorer', 'vscode'] as const
+/**
+ * 权限模式的四档（与 `contract.ts` 的 `ApprovalPolicy` 一字不差）。
+ *
+ * 写成字面量数组而不是 import 那个类型：桥的校验住不了类型那侧（实参从网络来），
+ * 枚举必须落成运行时的值。宿主那侧`satisfies ApprovalPolicy[]` 会让漏一档编不过。
+ */
+const POLICIES = ['readonly', 'auto-edit', 'full-access', 'ai-review'] as const satisfies readonly ApprovalPolicy[]
 /** 内嵌浏览器的导航动作（与主进程 `navigateDockBrowser` 认的那几个一字不差）。 */
 const NAV_ACTIONS = ['load', 'back', 'forward', 'reload'] as const
 /** 页面报上来的矩形上限（窗口再大也到不了；只是挡住存坏的脏值）。 */
@@ -200,6 +221,8 @@ export const NATIVE_ARG_SPECS: Readonly<Record<NativeOp, readonly ArgSpec[]>> = 
   setMarketSources: [{ shape: { kind: 'marketSources' } }],
   /** 落一条第三方界面插件的信任记录（插件中心信任卡「确认信任」的终点）。 */
   setUiTrust: [{ shape: { kind: 'string', max: MAX_ID } }],
+  /** 切权限模式：四档枚举之一（宿主那侧仍是 `approval.setPolicy`，它自己记审计与系统条目）。 */
+  setPolicy: [{ shape: { kind: 'enum', values: POLICIES } }],
   /**
    * 新增或编辑一个端点（写 config.yaml）：一整份 `ProviderDraft`。
    * 形状只查「是可序列化的 JSON 且不超过 64KB」——字段级校验（名字形状、模型 id 去重、

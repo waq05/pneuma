@@ -16,7 +16,7 @@
  * @module dsc-ui-shell/dock
  */
 import { useCallback, useEffect, useRef, useState, type JSX, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
-import { IconBranch, IconFolder, IconGlobe, IconSidebar, IconTerminal } from './icons'
+import { IconBranch, IconFolder, IconGlobe, IconSidebar, IconTerminal, IconTree } from './icons'
 import { FileIcon } from './platform/file-icons'
 import { canAddTab, type DockPane, type DockSurface, type DockTab, type DockTabKind } from './dock-model'
 import { dockActions, dockTabMeta, useDockSurface } from './dock-state'
@@ -24,13 +24,22 @@ import { dockActions, dockTabMeta, useDockSurface } from './dock-state'
 /** 窄视口自动全屏的阈值（对齐旧桌面版）。 */
 const NARROW_VIEWPORT = 768
 
-/** 页签 chip 上的图标与标题；preview 的 chip 用文件自己的彩色图标，见 Chip。 */
-const KIND_META: Record<Exclude<DockTabKind, 'preview'>, { title: string; icon: (props: { size: number }) => JSX.Element }> = {
+/**
+ * 页签 chip 上的图标与标题；preview 的 chip 用文件自己的彩色图标，见 Chip。
+ *
+ * `titleFromPath`：标题取页签自己那个路径的文件名（子智能体页签用它——chip 上要看到
+ * 「这是哪个队友」，一堆都写「子智能体」就分不出来了）。图标仍是这一档的类别图标。
+ */
+const KIND_META: Record<
+  Exclude<DockTabKind, 'preview'>,
+  { title: string; icon: (props: { size: number }) => JSX.Element; titleFromPath?: boolean }
+> = {
   guide: { title: '开始', icon: IconGlobe },
   terminal: { title: '终端', icon: IconTerminal },
   browser: { title: '浏览器', icon: IconGlobe },
   files: { title: '文件', icon: IconFolder },
   git: { title: 'Git', icon: IconBranch },
+  subagent: { title: '子智能体', icon: IconTree, titleFromPath: true },
 }
 
 /** 「开始」页的入口卡（旧桌面版同款：最多四张，都带描述与快捷键角标）。 */
@@ -320,7 +329,13 @@ function Chip(props: {
 }): JSX.Element {
   // preview 页签：图标是文件自己的彩色图标，标题是文件名（其它的走 KIND_META）
   const meta = props.tab.kind === 'preview' ? undefined : KIND_META[props.tab.kind]
-  const title = meta !== undefined ? meta.title : basenameOf(props.tab.path ?? '')
+  // 标题来源三档：页签自带的 label（子智能体那种「文件名不可读」的页签）→ 类别名 → 路径尾段。
+  const title =
+    props.tab.label !== undefined && props.tab.label !== ''
+      ? props.tab.label
+      : meta === undefined || meta.titleFromPath === true
+        ? basenameOf(props.tab.path ?? '')
+        : meta.title
   return (
     <button
       className={`dock-chip${props.on ? ' on' : ''}${props.menuOpen ? ' menu' : ''}`}

@@ -672,6 +672,16 @@ const NATIVE_HANDLERS: Readonly<Record<NativeOp, (args: readonly unknown[]) => u
     return protocol.invoke('setUiTrust', [String(name)])
   },
   /**
+   * 切权限模式：转给宿主的 approval 插件（与旧渲染层 `proxy.setPolicy` 同一个方法）。
+   * 界面通道里这个方法持续排除（审批策略是安全闸门本身，见 `UI_EXCLUDED`），
+   * 但旧桌面版的输入框本来就有这根能切的旋钮，所以写口按同一先例开在桥上。
+   * 四档枚举已过桥校验（`NATIVE_ARG_SPECS.setPolicy`）。
+   */
+  setPolicy: ([policy]) => {
+    if (protocol === null) throw new Error('宿主进程未运行')
+    return protocol.invoke('setPolicy', [String(policy)])
+  },
+  /**
    * 模型端点三件套：转给宿主的 settings 插件（与旧渲染层的直接 IPC 同一批方法）。
    * 界面通道里这三个方法持续排除（写 config.yaml / 凭据库），桥只对主窗口开放。
    * setProviderKey 的第二个实参允许 null = 清除（已过桥的 stringOrNull 校验）。

@@ -30,6 +30,7 @@ import {
   focusTab as modelFocusTab,
   loadSurfaces,
   openPreview as modelOpenPreview,
+  openSubagent as modelOpenSubagent,
   openTab as modelOpenTab,
   placeTab as modelPlaceTab,
   saveSurfaces,
@@ -105,6 +106,9 @@ export const dockActions: DockActions = {
   },
   openPreview: (path, line) => {
     mutate((s) => modelSetExpanded(modelOpenPreview(s, path, line), true))
+  },
+  openSubagent: (path, label) => {
+    mutate((s) => modelSetExpanded(modelOpenSubagent(s, path, label), true))
   },
   closeTab: (tabId) => {
     mutate((s) => modelCloseTab(s, tabId))
@@ -211,6 +215,17 @@ export function dockTabMeta(kind: DockTabKind): DockTabKindMeta | undefined {
  */
 export function setDockPreview(target: { path: string; cwd?: string }): void {
   dockActions.openPreview(target.path)
+}
+
+/**
+ * 打开一张子智能体页签（那一条队友消息里的「在右侧栏看运行记录」、状态面板点一行都走它）。
+ *
+ * 为什么与 {@link setDockPreview} 并排放在这里而不是塞进 `dockActions`：动作面
+ * （`DockActions`）是「Dock 组件自己会调的那些」，而这是一个**插件发起的目标式请求**
+ * （给一个子智能体、把右侧栏开到它上面），与预览同一性质——壳是布局真源，插件只说意图。
+ */
+export function setDockSubagent(target: { path: string; label?: string }): void {
+  dockActions.openSubagent(target.path, target.label)
 }
 
 /**

@@ -9,6 +9,16 @@
 - **壳补**：旧版没有、壳里多出来的东西（功能是超集，不算缺口）；
 - **未搬**：旧版有、壳里还没有（写进诚实边界，不装作对齐）。
 
+> 第八批（2026-10-13 凌晨）更新：**思考块的两条报障（抽搐 / 关不掉）修好了**——根因是
+  行 key 里带了直播段每口 delta 都刷新的 `ts`（每来一个字就重挂一次，`@starting-style`
+  的高度过渡反复重播），外加壳版漏了旧版的「展开区条件渲染」；**阶段组的开合被摆到明面上**
+  （行尾常显箭头 + 「N 项」读数，收起时 `.step-body` 有了自己的规则、真的收起来）；
+  **输入区两根旋钮补齐**（预设菜单从快照读、不再崩掉输入区；权限模式接回旧版那条可切的
+  路，写口开在原生桥）；新增**状态面板**插件（胶囊 / 面板两态，进程 + 智能体总览）与
+  **子智能体右侧栏页签**（点队友行不再弹模态框）。同一个自检里还撞出并修掉一个真 bug：
+  会话文件里一条没有正文的消息会让整段历史重放抛异常（打开那条会话是一片空白）。
+> 第七批（2026-10-12 深夜）更新：轨迹页与右缘刻度条搬进壳，「在轨迹中查看」药丸、
+  顶栏「对话 / 轨迹」两张脸；设置 → 模型页从只读变可编辑（写入口走原生桥）。
 > 第六批（2026-10-12 晚）更新：**旧 dock 的动态页签系统整体搬进壳**（dock-model +
   Dock 渲染：开始页 / 页签多开 / 分栏 / 全屏 / 拖拽 / 每会话布局 / 宽度拖拽），
   右侧栏结构从此与旧桌面版逐块同构；**阶段组**（14 类过程聚合）搬进消息流；
@@ -41,13 +51,14 @@
 | 用户消息：气泡、贴图、hover 编辑并重发（Enter/Shift+Enter/Esc） | 已对齐 |
 | 最终回答 markdown 渲染 | 已对齐 |
 | 整轮过程折叠总开关「用时 X」四档能力表、跑动/插话/中断/失败强制展开 | 已修（第五批：用时口径不再被「已恢复会话」system 行拉成天文数字） |
-| 轮尾一行：复制 · 赞 · 踩 · 分叉 · 用量 · 时刻 | 已修（第五批：对齐旧版可见面与 title 口径） |
+| 轮尾一行：复制 · 分叉 · 用量 · 时刻（**赞 / 踩已按产品决定去掉**，第七批） | 已修（第五批：对齐旧版可见面与 title 口径；第七批去掉评价两颗钮——只记本机、没有上传通道） |
 | 「文件已更改」聚合卡 | 已修（第五批：悬停 500ms 浮层预览、卡头点审查、行内「审查/打开」、>4 行折叠、彩色图标） |
 | 工具卡：折叠行 + 参数/结果 | 已修（第五批：将做的改动、吸附快捷栏、跨重挂存档、formatDuration） |
 | 工具卡行头形态 | 壳补（旧版是「工具名 + 摘要」卡行；壳保留 codex 风格的动词行） |
 | 错误行 / 计划卡 / 结束标记 / 直播状态行 | 已对齐 |
 | 队友卡（子智能体状态） | 壳补（旧消息流里没有对应物，`.shell-subagent` 是壳自己补的） |
-| **阶段组（14 类过程聚合）**：组头 = 类别聚合 + 实时任务详情（150ms 防抖）、组体限高滚动与方向渐隐、默认收起、开合存档（`会话:step:轮:组`）、轮收尾复位、Ctrl+F 命中自动展开、键盘焦点保护 | **已搬**（第六批：`process-groups.ts` / `step-group-row.tsx` / `fold-seats.tsx` 从旧渲染层原样搬入，四档能力表的 stepGrouping / liveDetail 逐格生效） |
+| **阶段组（14 类过程聚合）**：组头 = 类别聚合 + 实时任务详情（150ms 防抖）、组体限高滚动与方向渐隐、默认收起、开合存档（`会话:step:轮:组`）、轮收尾复位、Ctrl+F 命中自动展开、键盘焦点保护 | **已搬**（第六批：`process-groups.ts` / `step-group-row.tsx` / `fold-seats.tsx` 从旧渲染层原样搬入，四档能力表的 stepGrouping / liveDetail 逐格生效；**第八批把开合摆到明面上**：行尾常显箭头 + 「N 项」读数（`StepGroup.size`）、类别图标不再与箭头互换，且 `.step-body[hidden]` 补了显式收起规则（原来只押在内核 `[hidden=until-found]` 上，实测出现过「组头像收起的、组体却摊着」） |
+| **思考块**（旧 `ThinkingBlock.tsx` ↔ `ThinkRow`）：折叠态一行「星标 + 标题 + 分隔点 + 摘要」、跑动中取「最新一个写完的段落的首行」+ 右缘渐隐 + 扫光、展开区高度过渡、展开态存档、>400px 的吸附快捷栏 | **已修**（第八批：**行 key 去掉 ts**（直播段每口 delta 都刷新它，每字重挂 → 抽搐且关不掉）+ **展开区改回条件渲染**（壳版漏了 `open && …`，收起只转箭头）；摘要口径、`.think-sr` 读屏标签、`data-preview`、吸附栏一并照旧版补回） |
 | 右缘刻度条（`jump-rail.tsx`，对照 dsh 的 TurnNavigator 重做） | **已搬**（第七批：20×2 刻度三态（静息 0.6 / 悬停 0.9 / 当前 1）、悬停预览卡（题面一行 + 回复三行）、轨道内滚动与两端 24px 渐隐、点「还没画出来」的早轮先放出来再滚、900px 窄容器整条收起；轨道宽 32→36px 与 `--dsc-jump-lane` 同步） |
 | 轨迹页（旧 `TraceView`/`TraceTimeline`/`TraceInspector`/`trace-format` ↔ `plugins/trace`） | **已搬**（第七批：时间概览条（拖选 / 悬停提示 / 点或右键清除）、轮次记录表（折叠、压缩区段行、行内时刻·耗时·用量）、检查器（输入 / 输出 / 思考 / 子代理 / 系统 / 计划 / 计时 / 用量 + JSON 格式化 + 附件放大），尾部跟随同旧。壳增量：**搜索**（命中步骤高亮、未命中的轮收起来）、**滚轮缩放 + 右键平移**（旧版留的「这一轮不做」已补）、子代理 / 轮结束 / 长度上限 / 模型重试四类事件的行渲染（旧版这四类画成空行）） |
 | 工具行「在轨迹中查看」药丸（dsh 同款） | **壳补**（第七批：hover / 键盘聚焦浮出，点一下切轨迹页并聚焦闪烁；跳转经 `thread-view` 的一次性 focus 指令） |
@@ -69,6 +80,7 @@
 | 预览头部「用系统程序打开」 | 壳补（旧预览头部没有这颗钮；保留超集能力） |
 | Git 页签（旧 `GitPane`）：状态三分组、暂存/取消暂存、提交（带审批）、提交历史、单文件/全量 diff | 已对齐（第五批结构照旧；第六批改挂进动态页签） |
 | 浏览器页签：原生 `WebContentsView` 覆盖层、地址栏 / 后退 / 前进 / 刷新、URL 记忆 `dsc.dock.browserUrl` | **已搬**（第六批：原生桥加 `dockBrowser` / `browserNav` / `browser-state` 三件套，页面只报「显示在哪」） |
+| 子智能体页签（`kind: 'subagent'`，对照 dsh 的 `sidebarRight.openResource(…, {kind:'subagentchat'})`）：一个子智能体一张，同会话文件去重 = 聚焦，页签体是只读运行记录（`peekTranscript`） | **壳补**（第八批：`dock-model.ts` 的 `openSubagent` 照 `openPreview` 的形状；`DockTab` 加 `label`——子智能体的会话文件名是 uuid，标题要用名册里的名字。队友下拉点一行也改走这里，不再弹模态框盖住正在跑的会话） |
 | 审查栏（旧 `DiffPane` 并排右栏）：文件下拉、分栏/换行、彩色图标、系统打开、打开（进预览页签）、关闭、宽度拖拽 `dsc.diffPaneWidth` | **已搬回并排形态**（第六批：从「停靠区一块面板」改回正文右侧并排栏，`.thread-zone[data-review]` 同旧版；正文拖拽条在审查开着时让位） |
 
 ## 四、顶栏 / 输入区 / 状态栏 / 整页（旧 `App.tsx` / `Composer.tsx` / `StatusBar.tsx` / `SkillsView.tsx` / `PluginsView.tsx` / `SettingsModal.tsx` / `TeamPanel.tsx` ↔ app.tsx 与对应插件）
@@ -76,7 +88,10 @@
 | 功能点 | 状态 |
 | --- | --- |
 | 顶栏：会话标题、智能体团队入口、工作区打开组、面板开合钮 | 已对齐 |
-| 输入区：发送/打断、排队条、模型与思考强度、模式、权限档位、@ 文件提及、贴图、草稿按会话 | 已对齐 |
+| 输入区：发送/打断、排队条、模型与思考强度、@ 文件提及、贴图、草稿按会话 | 已对齐 |
+| 输入区**权限档位**（旧 `Composer.tsx:475-511` 的 `policyOpen` 菜单 ↔ 壳） | 已修（第八批：壳里原来是一颗 `disabled` 的死按钮；现在四项菜单可切、悬浮给档位说明。写口走原生桥 `NATIVE_OPS.setPolicy`——界面通道按安全闸门理由持续排除，与 `saveProvider` 同一先例。**与 dsh 的有意差异**：dsh 对「完全访问 / AI 复核」加风险确认弹窗，这里按「旧版有的照旧版」不加） |
+| 输入区**模式（预设）旋钮** | 已修（第八批：原来把 `listPresets` 的回执当数组用（宿主回的是 `PresetSurface`），点一下 `presets.map` 抛异常、错误边界把整个输入区顶掉——「点预设按钮输入框没了」即此；改为从快照 `surfaces.preset` 读，菜单带「默认 / 有问题」小标） |
+| **状态面板**（正文右上角浮层，对照 ZCode 的「状态」面板） | **壳补**（第八批：胶囊态报「N 个智能体在跑 / 进程 N/M」，面板态分「进程 / 智能体」两节、行是胶囊行（状态点 + 标题 + 时长 + 停止），三档展示策略（自动 / 始终展开 / 始终收起），定位靠哨兵找 `.chat-wrap` 再 portal——不写像素） |
 | 状态栏：轮次·步数、实时耗时、用量与上下文百分比、吞吐读数 | 已对齐 |
 | 技能页 / 插件页 / 设置各分区 | 已对齐（前三/四批实现） |
 | **设置 → 模型：可编辑形态**（旧 `SettingsModal` 的 `ModelsPanel`/`ProviderForm`/`ModelRow` ↔ `plugins/settings/models.tsx`） | **已搬**（第七批：端点卡片（密钥快捷行 / 拉取清单 / 编辑 / 删除）、**端点表单**（名字 / 显示名 / Base URL / **API key** 一次改完 + **批量文本**模式）、**模型行**（id / 显示名 / 上下文 / 最大输出 + **思考档位四档 chip + 思考参数下拉 + reasoning_effort 逐档线上值 + 输入模态三档**——与宿主 `core/model-caps.ts` 同一份枚举）、默认模型两个自绘下拉。dsh 式增量：列表尾「＋添加端点」虚线卡、**拉取清单弹窗**（搜索 + 全选 + 复选 + 一次采用）。**写入口走原生桥**（`saveProvider`/`removeProvider`/`setProviderKey` 被界面通道有意排除，见第五节）；浏览器无桥时整页降级只读并说明 |
@@ -95,6 +110,13 @@
 | 原生桥新增模型端点三件套 `saveProvider` / `removeProvider` / `setProviderKey`（`src/core/native-bridge.ts` + 主进程 `NATIVE_HANDLERS` 转发 `protocol.invoke`） | 三个方法都写 `config.yaml` 或凭据库，界面通道（浏览器与远程页够得着的那条面）持续排除——写口只开在桌面窗口那份文档上，与 `installMarketSkill` / `setUiTrust` 同一先例。规格里新加 `stringOrNull` 形状：`setProviderKey` 的 null 是**清除**而不是省略 |
 | `core/model-caps.ts` 进共享面（`src/ui/index.ts` 的 `export * from`） | 思考档位 / 档位字段 / 输入模态三组枚举与中文标签**只有一份**：界面勾的四档与宿主发请求时算的字段不会各说各话；`ProviderDraft` / `ThinkingParam` / `EffortMap` 三个类型也补进 `@dsc/ui-core` 的类型转出面 |
 | 轨迹页的口径件也归了平台层 | `platform/time.ts`（`entryTs`/`formatClock`/`formatDuration`/`formatTraceDuration`，消息流与轨迹页共用）、`platform/tokens.ts`（`formatTokens`）、`platform/tool-summary.ts`（工具摘要 / 状态词 / 图标动词，对话页与轨迹页共用） |
+
+## 五之三、宿主侧配套（第八批）
+
+| 项 | 说明 |
+| --- | --- |
+| 原生桥新增 `setPolicy`（`src/core/native-bridge.ts` + 主进程转发） | 四档枚举校验（`readonly` / `auto-edit` / `full-access` / `ai-review`，`satisfies readonly ApprovalPolicy[]` 保证漏一档编不过）。界面通道的 `UI_EXCLUDED` 条目一并写明「写口去哪了、为什么」——审批策略是安全闸门本身，能改它的仍只有桌面窗口那份文档 |
+| `contentText` / `contentImages` 兜住 `undefined` 与认不出的形状（`src/core/llm.ts:89`） | **自检里撞出的真 bug**：会话文件里一条没有 `content` 的消息（类型上写着非可缺，盘上的老日志却可能没有）会让 `replayHistory` 当场抛异常——用户打开那条会话看到的是一片空白，历史像丢了。这一层的职责是「取文本」，取不到交白卷即可 |
 
 ## 六、验证落点（第六批）
 
@@ -130,3 +152,21 @@
   `save`、新增模型三件套一节 15 条）；`ui-api-gate-test` / `ui-plugin-test` /
   `ui-third-party-test` / `ui-serve-test` / `ui-tui-plugin-test` 全绿。
 - 三侧 TypeScript 全绿；宿主 `lib/`、壳 `lib/ui/`（含 trace 插件）、desktop `out/` 重建。
+
+## 六之三、验证落点（第八批）
+
+- `desktop/shots/ui-batch8-check.ps1`：**37/37 通过**（新增）。种子 = 两轮定稿会话
+  （思考 + 工具）+ 一条「已收工」队友名册（`~/.dsc/team/roster.json` + `sessions/.teammates`
+  下的运行记录）+ 本机假端点 `_batch8-fake-llm.mjs`（四拍：慢速长思考 → `todo_write` →
+  `read` → 收尾）。覆盖：思考块的收放（定稿块收起时正文不在 DOM 里、点开有内容、再点消失）、
+  **直播块点收起后连推三拍仍是同一个 DOM 节点且仍收起**（抽搐 / 关不掉的回归判据）、
+  阶段组（「N 项」读数 + 常显箭头 + 收起时高度真为 0 + 开合双态）、两根旋钮（权限菜单四项
+  且菜单开着时输入框还在、点非当前档文案跟手、预设菜单可开且当前档不可点）、
+  状态面板（`1/3` 进度 + 三行任务 + 一行队友）、**点队友行在右侧栏开出 `reader-1` 页签
+  并读出只读运行记录**、`~/.dsc` 零污染。
+- 回归：`ui-batch6-check.ps1` **38/38**、`ui-batch7-check.ps1` **41/41**（都没跟改——
+  组头 DOM 与 CSS 的改动对旧断言透明）。
+- 探针：`ui-api-gate-test` / `ui-plugin-test` / `ui-third-party-test` / `ui-serve-test` /
+  `ui-tui-plugin-test` / `ui-native-bridge-test` / `legacy-frozen-check`。
+- 三侧 TypeScript 全绿；宿主 `lib/`、壳 `lib/ui/`（16 个插件，新增 `status`）、
+  desktop `out/` 重建。

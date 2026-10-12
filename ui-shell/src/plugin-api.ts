@@ -243,6 +243,8 @@ export function onAppearanceRequest(listener: (patch: AppearancePatch) => void):
 export {
   setDockPreview,
   setDockReview,
+  /** 把某个子智能体的运行记录开到右侧栏（队友行、状态面板点一行都走它）。 */
+  setDockSubagent,
   registerDockTab,
   dockActions,
   openDockTab,

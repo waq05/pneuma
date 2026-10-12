@@ -3938,3 +3938,153 @@ csv/xlsx 表格预览、手动排序拖拽、桌面信任卡、remote-web 切壳
   用请求**计数**最稳；③自检的 eval 预算（`DSC_DESKTOP_SHOT_DELAY − EVAL_LEAD`）要按
   最坏路径留足（这一批从 150s 一路试到 420s）：撞上截止时截图照落，但读数会整份丢，
   表现是「只有 2/3 通过」这种假故障。
+
+## 第八批（2026-10-13 凌晨）：思考块不抽搐也关得掉 + 阶段组开合明面化 + 输入区两根旋钮 + 状态面板与子智能体右栏页签（未发版）
+
+用户原话六条（逐字）：「1思考输出时，显示会抽搐。 2 思考内容无法关闭 3
+点击模式和预设按钮后，输入框直接没了，需要将模式完全对齐dsh，预设完全对齐dsh。
+3 这个已调用工具，已分析点击的作用是什么？逻辑怪异。梳理dsh和codex的折叠逻辑。
+4字智能体点击后，在右侧边栏显示，并且将任务、子智能体等逻辑设计成胶囊形式，
+参考zcode源码,完整实现，不要缩减留尾巴。完成任务后整体审查一遍代码质量与插件开发规范。」
+外加一句判断：「上一轮可能没重新打包」。查证：产物是新的（`lib/ui` 21:32 晚于
+`src/plugins/composer/ui.tsx`），三条报障都是**代码里的真 bug**，不是没编译。
+
+### 一、思考块：抽搐与「关不掉」是**同一个根因**
+
+两条报障的根因都在行 key 上，不在样式上：
+
+- `src/adapter/transcript.ts:600` 的 `last.ts = ts` —— 直播段的 `ts` 在**每一口 delta**
+  上被刷新；
+- 而壳的行 key 是 `${id}|${ts}`（旧 `keyOf`，现 `ui.tsx:1806`）——于是**每来一个字，
+  这一行就重挂一次**。重挂的两个后果正好是用户报的两条：`@starting-style` 那段
+  `grid-template-rows: 0fr → 1fr` 的高度过渡每次重挂都重播一遍（**一抽一抽**）；
+  组件的 `useState` 初值重新算（跑动中的思考行算出来是「展开」），点收起立刻被打回
+  展开态（**关不掉**）。
+
+改法三件（都照旧桌面渲染层 `ThinkingBlock.tsx` 的口径补齐，壳这一版当初漏了两件）：
+
+1. **key 改成「会话标识 + 条目 id」**，不含 ts（`ui.tsx:1806`）——同一段内容里键不动，
+   换会话键必换（id 只在会话内唯一，纯用 id 会让两条会话的组件实例串味）；
+2. **展开区改回有条件渲染**（`ui.tsx:964` 的 `ThinkRow`：`open && <div className="think-body">`）。
+   旧版就是条件渲染，壳版把这一条丢了，于是收起时正文照样在 DOM 里、照样占高度——
+   点箭头只转个方向。这是「思考内容无法关闭」的第二半；
+3. **跑动中的摘要取「最新一个写完的段落的首行」**（`ui.tsx:927` 的
+   `latestCompletedParagraphFirstLine`，旧版 `ThinkingBlock.tsx:54-70` 同款），
+   不是首行——直播时最后一段还在往外吐字，拿它当摘要一个字跳一次。
+
+顺带补齐旧版有、壳里没有的四件：展开态**走存档**（`fold-state` 的
+`${sessionId}:think:${id}`，切会话回来还开在原处）、`.think-sr` 读屏运行标签、
+`data-preview`（紧凑档不画摘要，对齐 dsh 的 `settledReasoningPreview`）、
+展开超过 400px 时的 `.think-bar` 吸附快捷栏（含「收起」，跑动中也给——思考段是只读文本，
+收起它不会被理解成取消任务）。
+
+### 二、阶段组：「已调用工具并执行了命令」点一下到底干什么
+
+用户问「这个点击的作用是什么？逻辑怪异」。先梳理两家的折叠模型（都读过了）：
+
+- **dsh**：两级。轮级 `TurnProcessNodeView`（「已完成，用时 18秒」）+ 轮内阶段组
+  `ProcessGroupHeader`（`ChatGroupSeat.tsx:91-128`），组头文案由类别聚合拼成
+  （`done.tools` + `并` + `done.commands`，`step-process.ts:11-28`）。组头**默认收起**，
+  组体 `min(400px,50vh)` 内部滚动 + 上下渐隐；开合控件是**隐式**的——类别图标与箭头
+  **叠在同一格**，悬停/展开时才把图标换成箭头（`ChatGroupSeat.tsx:117-121`）。
+- **codex**：`ActivityGroup` + 每个活动一个**显式**开合控件：`+ Show details` /
+  `+ N lines` / `− Show less`（`transcript_view/layout.rs:24-58`）。reasoning 在主滚动区
+  **根本不显示**（`transcript-only`，`history_cell/messages.rs:400-406`），只在展开视图里出现。
+- dsc 现有的阶段组（`ui-shell/src/plugins/transcript/process-groups.ts`）与旧桌面版
+  **逐字节同构**，也就是说它本来就是照 dsh 写的——所以「怪异」不在文案与分组规则，
+  在**开合这件事没有被表达出来**：静息只显示类别图标，整行读起来像一句状态说明；
+  而同一条流里高一层的整轮总开关（`.turn-fold`）却是**行尾常显箭头**——两种折叠行两种
+  长相，语义自然对不上。另外实测到一个自相矛盾的画面：组头显示「收起」的图标，组体却
+  摊着（直到 0.6.67，`.step-body` 的收起只押在内核那条
+  `[hidden=until-found] { content-visibility: hidden }` 上，没有自己的规则）。
+
+改法定成「取 codex 的明面化 + 保 dsh 的两级结构」：
+
+- 组头行尾加**常显箭头**与**「N 项」读数**（`step-group-row.tsx:200`，`StepGroup.size`
+  由 `process-groups.ts:587` 给）——点一下会放出几项，读提示就知道，不必先点一次试；
+  类别图标改回**常显**（不再与箭头互换），两条折叠行统一成「左边类别/时长、右边读数 + 箭头」；
+- `.step-body[hidden]` 补一条显式规则（`views.css`：`max-height: 0; overflow: hidden`）。
+  用 `max-height` 而不是 `display: none`：内容要留在 DOM 里、仍参与浏览器查找
+  （Ctrl+F 命中的 `beforematch` 会把这一组放出来，那正是 `until-found` 的用途）。
+
+### 三、输入区两根旋钮：一个崩溃 + 一处回退
+
+- **「点预设按钮输入框直接没了」**：`composer/ui.tsx` 拿 `listPresets` 的回执当数组用
+  （`.then((list) => setPresets(list))`），而宿主回的是 `PresetSurface`
+  （`{ current, defaultName, options, droppable }`）——`presets.map` 当场抛，
+  壳的槽错误边界把整个输入区换成错误卡。改成**从快照的 `surfaces.preset` 读**
+  （`readPresetSurface`，`composer/ui.tsx:1026`），与旧界面接 `props.preset` 同一条路；
+  两份投影都加了逐字段相等判断，避免快照每帧换引用导致逐帧重画。
+- **权限模式旋钮是死的**：壳里画成 `disabled` 一颗，注释写「界面通道刻意不放行
+  setPolicy」。但**旧桌面版的输入框里本来就有这根能切的旋钮**
+  （`desktop/src/renderer/Composer.tsx:475-511` 的 `policyOpen` → `proxy.setPolicy`），
+  壳不能比旧版少一样东西。按 `saveProvider` 那三件的**同一先例**把写口开在原生桥：
+  `NATIVE_OPS.setPolicy` + 四档枚举校验 + 主进程转发（`native-bridge.ts`、
+  `desktop/electron/main/index.ts`），界面通道的 `UI_EXCLUDED` 理由与去向一并写清。
+- 两根旋钮都照旧界面写法补全：权限菜单四项带 `hint`（悬浮说明）、预设菜单带「默认」
+  与「有问题」小标（`.pop-badge.warn` 那条规则旧版 markup 写着、样式里却没有，一并补上），
+  三根旋钮互斥（开一根收另两根）。
+- 与 dsh 的**有意差异**：dsh 对「完全访问 / AI 复核」两档加了一次风险确认弹窗；
+  旧桌面版没有，这里按「旧版有的照旧版」不加——四档的后果写在 `hint` 里
+  （悬浮可读），并在这条日志与代码注释里留档。
+
+### 四、状态面板（新插件）+ 子智能体右侧栏页签
+
+- **`ui-shell/src/plugins/status/`（第 16 个插件）**：正文右上角的浮层，形状照 ZCode 的
+  「状态」面板（用户给了截图）——**胶囊态**报当前最该知道的一条（有队友在跑报队友，
+  否则报「进程 N/M」），**面板态**分「进程 / 智能体」两节，每行是一颗**胶囊行**
+  （状态点 + 标题 + 时长；跑着的给「停止」）。展示档三档（自动 / 始终展开 / 始终收起），
+  自动档按 1280px 判宽，存档在 localStorage。定位**不写像素**：一个 hidden 哨兵在
+  `shell.main` 里占位，组件从它往上找 `.chat-wrap` 再 portal 进去（右缘刻度条同一套做法），
+  于是自动避开左右两栏的宽度变化。数据：任务 = 快照 `surfaces.todos`；
+  智能体 = `listTeammates`（5 秒轮询，比队友面板的 3 秒松一档）。
+- **子智能体落右侧栏**：新增 dock 页签 kind `subagent`（`dock-model.ts:216` 的
+  `openSubagent`，照 `openPreview` 的形状：同会话文件去重 = 聚焦），页签体由 team 插件
+  报名（复用它的 `PeekView` → `peekTranscript`，只读），打开动作走
+  `setDockSubagent({ path, label })`。**加了 `DockTab.label`**：子智能体的会话文件名是
+  uuid，拿它当页签标题等于给用户一列哈希，名字只有名册那侧知道，所以标题由调用方交过来。
+  队友下拉里点一行也改走这里（原来弹模态框盖住正在跑的会话）。
+  这一步与 dsh 的 `sidebarRight.openResource(…, {kind:'subagentchat'})` 是同一条路。
+
+### 五、顺手修的一个真 bug（自检里撞出来的）
+
+自检第二版一直报「打开会话后座位数 0、界面是欢迎态」——查下来是我的种子数据里有一条
+工具消息没带正文，`Session.load` 读出来就成了「有 role 没 content」的消息，而
+`contentText`（`src/core/llm.ts:89`）只兜了 `null` 与数组形状，遇到 `undefined` 直接
+`.map` 抛——**整段历史重放当场炸掉，用户打开那条会话看到的是一片空白**（历史看起来像丢了）。
+这不是自检专用的形态：类型上写着 `content` 非可缺，盘上的老日志却可能整条没有它。
+改法：`contentText` / `contentImages` 接受 `undefined` 与「认不出的形状」，一律退成空串——
+这一层的职责是「取文本」，取不到就交白卷，绝不该把「打开一条会话」这种动作炸掉。
+
+### 验证（硬证据）
+
+- **`desktop/shots/ui-batch8-check.ps1` 37/37 通过**（新增；种子 = 两轮定稿会话 +
+  一条「已收工」队友名册 + 本机假端点 `_batch8-fake-llm.mjs`，四拍按请求计数：
+  慢速长思考 → `todo_write` → `read` → 收尾）。关键几条：
+  - 思考块：定稿块默认收起时 `.think-body` **不在 DOM 里**；点开有内容；再点关得掉；
+  - 直播块：点收起后**连推三拍仍是同一个 DOM 节点**（`__b8tag` 标记没被重挂冲掉）且
+    **仍然收起**；摘要跟着长；再点能展开回来——这两条正是「抽搐 / 关不掉」的回归判据；
+  - 阶段组：组头带「N 项」、箭头常显、默认收起、`.step-body` 收起时高度**真的是 0**、
+    点开高度 > 0、再点回 0；
+  - 两根旋钮：权限菜单四项且**菜单开着时输入框还在**（上一批这里是整块崩掉）、
+    点非当前档→旋钮文案跟着变、再切回；
+  - 状态面板：`data-sp-progress = 1/3`、任务节三行、智能体节一行 `reader-1`；
+  - 点队友行 → 右侧栏开出 chip **`reader-1`**（不是 uuid 文件名）、页签体读出只读运行记录；
+  - 跑前跑后真实 `~/.dsc` 的文件数 + 内容聚合 SHA256 不变。
+- 回归：`ui-batch6-check.ps1` **38/38**、`ui-batch7-check.ps1` **41/41**（都没跟改，
+  组头 DOM 与 CSS 的加法对旧断言透明）；
+- 探针：`ui-native-bridge-test`（形状表加了 `setPolicy` 那一条）、`ui-api-gate-test` /
+  `ui-plugin-test` / `ui-third-party-test` / `ui-serve-test` / `ui-tui-plugin-test` /
+  `legacy-frozen-check`；
+- 三侧 TypeScript 全绿；宿主 `lib/`、壳 `lib/ui/`（**16 个插件**，新增 status）、
+  desktop `out/` 全部重建。
+
+### 诚实边界
+
+①子智能体页签只走查了「名册里已收工的队友」这一条（种子名册 + `peekTranscript`），
+  **没有**真派一个队友跑起来看「运行中」那一态的面板呼吸点与「停止」按钮
+  （派真队友要过三坎：预写 plugins.json、角色白名单、观察窗，本批种子名册绕开了）；
+②状态面板的**窄窗口自动收起**只核到实现（1280px 判定 + 胶囊态渲染路径），自检窗口
+  1440px 走的是展开档；「始终收起/始终展开」两档也没各自截图；
+③`updraft`-less：权限切档**没有**风险确认弹窗（见第三节的「有意差异」）；
+④代码注释里保留 dsh/codex/ZCode 的原文位置（对外文本一律不提，本日志是内部文档）。

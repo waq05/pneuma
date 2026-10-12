@@ -18,12 +18,16 @@ import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react
 import {
   IconChevronDown,
   IconClose,
+  IconTree,
   confirmAction,
   defineUiPlugin,
+  registerDockTab,
+  setDockSubagent,
   toastErr,
   toastOk,
   useHostChannel,
   useHostSelector,
+  type DockTabBodyProps,
   type HostSnapshot,
   type TranscriptEntry,
   type TeammateView,
@@ -95,6 +99,16 @@ export default defineUiPlugin({
     // 标题旁的两簇（旧界面同构）：子智能体下拉在前，团队钮在后。
     ui.slots.register('shell.header.lead', { id: 'team.subagents', order: 10 }, SubagentMenu)
     ui.slots.register('shell.header.lead', { id: 'team.toggle', order: 20 }, TeamButton)
+    // 子智能体的运行记录落**右侧栏**（一种 dock 页签）：点队友那一行不该弹模态框盖住
+    // 正在跑的会话——右侧栏是只读的伴读面，可以与主会话并排看（照 dsh 的
+    // `sidebarRight.openResource(..., {kind:'subagentchat'})`）。名册与运行记录同属
+    // 「队友」这件事，所以页签在这里报名，打开动作由任何一处发起（队友行 / 状态面板）。
+    registerDockTab({
+      kind: 'subagent',
+      label: '子智能体',
+      icon: <IconTree size={13} />,
+      component: SubagentTabBody,
+    })
   },
 })
 
@@ -183,7 +197,8 @@ function SubagentMenu(): ReactNode {
                 compact
                 onOpen={() => {
                   setOpen(false)
-                  setPanelOpen(true, mate.name)
+                  // 名字一并交过去：页签标题要显示「哪个队友」，而会话文件名是 uuid。
+                  setDockSubagent({ path: mate.file, label: mate.name })
                 }}
               />
             ))}
@@ -532,6 +547,34 @@ function PeekView({ file }: { file: string }): ReactNode {
       })}
     </div>
   )
+}
+
+/**
+ * 右侧栏里的子智能体页签体：头部一行（名字 / 角色 / 状态）+ 只读运行记录。
+ *
+ * 数据完全复用 {@link PeekView}（同一个 `peekTranscript`），所以这里没有第二条读取路径——
+ * 模态面板里看到的与右栏里看到的永远是同一份。
+ */
+function SubagentTabBody({ tab }: DockTabBodyProps): ReactNode {
+  const file = tab.path ?? ''
+  return (
+    <div className="sub-tab">
+      <div className="sub-tab-head" data-subagent-file={file}>
+        <IconTree size={13} />
+        <span className="sub-tab-name">{basename(file)}</span>
+        <span className="sub-tab-note">只读运行记录</span>
+      </div>
+      <div className="sub-tab-body">
+        <PeekView file={file} />
+      </div>
+    </div>
+  )
+}
+
+/** 路径尾段（子智能体页签的标题用它——队友的会话文件名就是它的名字）。 */
+function basename(path: string): string {
+  const cut = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return cut === -1 ? path : path.slice(cut + 1).replace(/\.jsonl$/, '')
 }
 
 /** 换行压空格、超长截断（运行记录行的参数摘要用）。 */

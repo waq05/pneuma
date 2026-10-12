@@ -8742,22 +8742,27 @@ body.resizing iframe {
   background: var(--dsc-row-hover-bg);
 }
 
-/* 类别图标与箭头**叠在同一格**，悬停 / 键盘聚焦 / 展开时显示箭头、否则显示图标
-   （对照 dsh 的 .leading 里 .activityIcon 与 .chevron 绝对定位叠放，ChatGroupSeat.tsx:117-121
-   与 conversation-nodes/README.zh.md:168）。
+/* 类别图标与行尾箭头**各占一格**（0.6.68 改；原来是「叠在同一格、悬停时用箭头换掉图标」）。
+   改的原因是一条读了会误解的实测：组头静息只显示类别图标（⚡ / 🔍 / ⌨），整行读起来
+   像一句状态说明，看不出它能点开——用户的原话是「这个『已调用工具并执行了命令』点击的
+   作用是什么？逻辑怪异」。同一条会话里，它的上一行（整轮总开关「用时 18秒」）却是
+   **行尾常显箭头**，两种折叠行两种长相，语义自然对不上。
 
-   为什么叠放而不是并排：组头读完只有两个信息——「这一组属于哪类活」和「它能不能点开」。
-   并排会把图标位撑成两格宽，整行读起来像有四个元素；叠放则任何时刻只显一个，
-   静息看类别、要动手时才把「能点」显出来。 */
+   现在两条折叠行统一成一种视觉语言：**左边类别/时长，右边「N 项 + 箭头」**——
+   类别标记在左（这一组属于哪类活），可比的东西在右（点开会放出几项；箭头指向开合态）。
+   dsh 那边确实是叠放互换（ChatGroupSeat.tsx:117-121），但 codex 的对应控件（`+ Show details`
+   / `− Show less`，transcript_view/layout.rs:24-58）是**把开合这件事写在明面上**的——
+   我们取后者：隐式箭头在长会话里太容易被当成装饰。 */
 .step-fold-leading {
-  display: inline-grid;
+  display: inline-flex;
   flex: none;
+}
   place-items: center;
 }
 
-/* 叠放：图标与箭头同占一格（grid 的同一个 cell），靠显隐切换。 */
-.step-fold-leading > * {
-  grid-area: 1 / 1;
+/* 叠放用的 grid-area 已随「图标/箭头互换」一起撤掉（见上一条注释）。 */
+.step-fold-leading > * + * {
+  margin-left: 4px;
 }
 
 /* 类别图标：静息压到 quaternary——它是「这一组属于哪类活」的标记，不该比标题抢眼。 */
@@ -8765,45 +8770,39 @@ body.resizing iframe {
   align-items: center;
   color: var(--dsc-text-quaternary);
   display: inline-flex;
-  transition: opacity var(--dsc-dur) var(--dsc-ease);
 }
 
-/* 箭头：静息藏起来（图标占位），悬停 / 聚焦 / 展开时顶上。 */
+/* 行尾箭头：**常显**（与 .turn-fold-chevron 同一套语言），收起 ∨、展开 ∧（转 180°）。 */
 .step-fold-chevron {
   color: var(--dsc-text-quaternary);
   display: inline-flex;
-  opacity: 0;
+  flex: none;
   transition:
-    opacity var(--dsc-dur) var(--dsc-ease),
-    transform var(--dsc-dur) var(--dsc-ease);
-}
-
-.step-fold:hover .step-fold-icon,
-.step-fold:focus-visible .step-fold-icon,
-.step-fold[data-open] .step-fold-icon {
-  opacity: 0;
+    transform var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
 }
 
 .step-fold:hover .step-fold-chevron,
-.step-fold:focus-visible .step-fold-chevron,
-.step-fold[data-open] .step-fold-chevron {
+.step-fold:focus-visible .step-fold-chevron {
   color: var(--dsc-text-tertiary);
-  opacity: 1;
 }
 
-/* 展开态：箭头转 180°（收起 ∨、展开 ∧，与 .turn-fold-chevron 同一套写法）。 */
+/* 展开态：箭头逆时针转 180°，颜色提一档（与 .turn-fold 同一套写法）。 */
 .step-fold[data-open] .step-fold-chevron {
+  color: var(--dsc-text-tertiary);
   transform: rotate(180deg);
 }
 
-/* 截图钩子（?reveal=1）也要把箭头显出来：那一档专门拍「悬停长什么样」。 */
-.shot-reveal .step-fold-icon {
-  opacity: 0;
-}
-
-.shot-reveal .step-fold-chevron {
-  color: var(--dsc-text-tertiary);
-  opacity: 1;
+/* 组内条目数：把「点开会得到什么」写在明面上（codex 的 `+ N lines` 就是这个意思）。
+   吃掉剩余宽度把自己推到行尾（`.step-fold-text` 是 flex:1，余量本来就归它，这里只要
+   把它推过去）。数字用等宽 + tabular-nums：组头是一列竖排的读数，不等宽会看歪。 */
+.step-fold-count {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-tool);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
 }
 
 /* 组头的文本柱：类别标题一行、实时详情一行（0.6.46 起分开——详情原来用「 · 」接在标题后，
@@ -8971,6 +8970,18 @@ body.resizing iframe {
     #000 calc(100% - 24px),
     transparent 100%
   );
+}
+
+/* 组体收起（0.6.68 补）：**显式**收起来，不把「收起来」这件事只押在内核那条
+   `[hidden=until-found] { content-visibility: hidden }` 上。
+   为什么用 max-height: 0 + overflow: hidden 而不是 display: none：内容要留在 DOM 里、
+   仍参与浏览器查找（Ctrl+F 命中时 `beforematch` 会把这一组放出来，见 fold-seats.tsx 的
+   useSearchableHidden）——那正是 `until-found` 这个取值的全部意义，display: none 会把它废掉。
+   收起态与组头「N 项 + 箭头」的朝向现在是同一件事的两种说法，不会再出现
+   「组头像是收起的、内容却摊着」这种自相矛盾的画面。 */
+.step-body[hidden] {
+  max-height: 0;
+  overflow: hidden;
 }
 
 /* 组体里的内容列：不限高（限高在 .step-body 上），行距与座位里的过程行同一档

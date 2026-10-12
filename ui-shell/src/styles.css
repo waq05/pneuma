@@ -723,3 +723,421 @@
     display: none;
   }
 }
+
+/* ══════════ 输入区两根旋钮的浮层（权限模式 / 模式）══════════
+   这两块样式在旧桌面渲染层的 styles.css 里（`.model-pop.policy-pop` 2272、
+   `.model-pop.preset-pop` 2277 与 2281、`.composer-bar .bar-left .model-pop.policy-pop`
+   7979），搬 legacy/views.css 那一份时没跟过来——那时壳里的权限旋钮是只读的、模式旋钮
+   也没有菜单，所以这两条规则没有落点。现在两根旋钮都成了能切的菜单（照旧界面
+   `Composer.tsx:475-556` 的写法），把缺的补上。
+
+   宽度：权限四项都是短标签，240px 够；模式名带「默认 / 有问题」小标，宽一档到 300px。
+   对齐：面板挂在 `.model-anchor` 上（右缘对齐），而权限旋钮是底栏左组的第一颗——
+   按右缘铺开会向左探出输入框浮到正文上（旧版实测探出 100px），所以它是唯一一颗
+   改成左对齐、向右铺开的浮层。 */
+.model-pop.policy-pop {
+  left: 0;
+  right: auto;
+  width: 240px;
+}
+
+.model-pop.preset-pop {
+  width: 300px;
+}
+
+/* 模式名 + 两枚小标排成一行：名字长度不一，标签跟着文字走而不是拉满整行。 */
+.model-pop.preset-pop .pop-item .name {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+/* 「有问题」标：旧版 markup 就写着 `pop-badge warn`，但那份样式里没有这条规则
+   （`.preset-badge.warn` 是设置页专用的），于是标一直是中性色。这里把它点亮成告警色——
+   该说的（这个模式文件有问题）得看得出来。 */
+.model-pop .pop-badge.warn {
+  background: color-mix(in srgb, var(--dsc-yellow) 18%, transparent);
+  color: var(--dsc-yellow);
+}
+
+/* ══════════ 状态面板（正文右上角的进程 / 智能体总览浮层）══════════
+   形状对照 ZCode 的「状态」浮层：胶囊态是一颗高 34px 的药丸，面板态是一块 320px 宽的
+   浮层，标题栏右缘两颗小钮（展开策略 / 收起为胶囊），分节列表里每行是一颗胶囊行。
+
+   定位：宿主是 `.chat-wrap`（`position: relative`，右缘刻度条也用同一个宿主），
+   所以它天生避开左侧栏与右侧 dock 的宽度变化，不需要知道任何像素。
+   层级取 `--dsc-z-menu`：它要盖住正文与刻度条，但必须让位给浮层菜单（`.model-pop` 那一档）
+   与遮罩（`--dsc-z-backdrop`）——点它上面的按钮时不能再被它自己盖住。 */
+.sp-host {
+  position: absolute;
+  top: var(--dsc-sp-4);
+  right: calc(var(--dsc-jump-lane) + var(--dsc-sp-3));
+  /* 浮层默认不吃鼠标：正文里的选区、链接照常可点；只有它自己的盒子接事件。 */
+  pointer-events: none;
+  z-index: var(--dsc-z-menu);
+}
+
+.sp-host > * {
+  pointer-events: auto;
+}
+
+/* ── 面板 ── 底色不透明（下方是正文，半透明会读出重影），圆角与浮层菜单同一档。 */
+.sp {
+  background: var(--dsc-bg-raised);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-overlay);
+  box-shadow: var(--dsc-shadow-float);
+  display: flex;
+  flex-direction: column;
+  max-height: min(64vh, 512px);
+  overflow: hidden;
+  position: relative;
+  width: 320px;
+}
+
+/* 标题栏：两颗图标钮贴右上角（ZCode 同位置）。 */
+.sp-toolbar {
+  display: flex;
+  gap: var(--dsc-sp-1);
+  justify-content: flex-end;
+  padding: var(--dsc-sp-2) var(--dsc-sp-2) 0;
+  position: relative;
+}
+
+.sp-icon-btn {
+  align-items: center;
+  background: none;
+  border: none;
+  border-radius: var(--dsc-r-icon);
+  color: var(--dsc-text-quaternary);
+  cursor: pointer;
+  display: inline-flex;
+  height: 22px;
+  justify-content: center;
+  padding: 0;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+  width: 22px;
+}
+
+.sp-icon-btn:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.sp-icon-btn:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
+}
+
+/* 展开策略的下拉：与 `.model-pop` 同一套（这里是浮层内的小菜单，宽度跟着内容走）。 */
+.sp-mask {
+  inset: 0;
+  position: fixed;
+  z-index: 1;
+}
+
+.sp-menu {
+  background: var(--dsc-bg-raised);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-block);
+  box-shadow: var(--dsc-shadow-float);
+  display: flex;
+  flex-direction: column;
+  min-width: 120px;
+  padding: var(--dsc-sp-1);
+  position: absolute;
+  right: var(--dsc-sp-2);
+  top: 26px;
+  z-index: 2;
+}
+
+.sp-menu-item {
+  align-items: center;
+  background: none;
+  border: none;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-secondary);
+  cursor: pointer;
+  display: flex;
+  font-size: var(--dsc-fs-ui);
+  justify-content: space-between;
+  padding: 4px var(--dsc-sp-2);
+  text-align: left;
+}
+
+.sp-menu-item:hover {
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.sp-menu-item.on {
+  color: var(--dsc-accent-text);
+}
+
+/* 分节与列表。内容区自己滚（面板整体限高），滚动条贴面板右缘。 */
+.sp-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dsc-sp-3);
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--dsc-sp-2) var(--dsc-sp-2) var(--dsc-sp-3);
+}
+
+.sp-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dsc-sp-1);
+}
+
+/* 分节头：左边标题（比正文小一档、加粗），右边读数（等宽 + tabular-nums，竖排数字才不抖）。 */
+.sp-section-head {
+  align-items: baseline;
+  display: flex;
+  gap: var(--dsc-sp-2);
+  justify-content: space-between;
+  padding: 0 var(--dsc-sp-2);
+}
+
+.sp-section-title {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+  font-weight: 600;
+}
+
+.sp-section-trail {
+  color: var(--dsc-text-quaternary);
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-tool);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 已完成全部：读数走成功色（一眼看出「这条线走完了」，对照 ZCode 的 success 色）。 */
+.sp-section[data-sp-section='todo'] .sp-section-trail[data-sp-progress$='/0'] {
+  color: var(--dsc-text-quaternary);
+}
+
+.sp-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dsc-sp-0);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* 胶囊行：圆角药丸底 + 状态点 + 一格文字 + 尾部读数。 */
+.sp-row {
+  align-items: center;
+  border-radius: var(--dsc-r-pill);
+  display: flex;
+  gap: var(--dsc-sp-2);
+  min-height: 26px;
+  padding: 0 var(--dsc-sp-3);
+  position: relative;
+}
+
+.sp-row-agent {
+  padding-right: var(--dsc-sp-1);
+}
+
+/* 整行可点的那一层：铺满整个药丸（绝对定位），行内按钮再叠在它上面。 */
+.sp-row-open {
+  align-items: center;
+  background: none;
+  border: none;
+  border-radius: var(--dsc-r-pill);
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  flex: 1 1 auto;
+  gap: var(--dsc-sp-2);
+  min-height: 26px;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+}
+
+.sp-row:hover,
+.sp-row-open:hover {
+  background: var(--dsc-row-hover-bg);
+}
+
+.sp-row-open:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
+}
+
+/* 状态点：与左缘刻度条、工具行同一枚 6px 圆点；颜色由 data-status / data-state 定。 */
+.sp-dot {
+  background: var(--dsc-text-quaternary);
+  border-radius: var(--dsc-r-pill);
+  flex: none;
+  height: 6px;
+  width: 6px;
+}
+
+/* 跑着的状态点呼吸（复用队友点那套 tm-pulse：6px 的圆点上转圈看不出来，呼吸才看得见）。 */
+.sp-row[data-status='running'] .sp-dot,
+.sp-row[data-state='working'] .sp-dot {
+  animation: tm-pulse 1400ms ease-in-out infinite;
+  background: var(--dsc-accent);
+}
+
+.sp-row[data-status='done'] .sp-dot {
+  background: var(--dsc-green);
+}
+
+.sp-row[data-status='cancelled'] .sp-dot {
+  background: var(--dsc-text-quaternary);
+}
+
+.sp-row[data-state='failed'] .sp-dot {
+  background: var(--dsc-red);
+}
+
+.sp-row[data-state='stopped'] .sp-dot {
+  background: var(--dsc-yellow);
+}
+
+.sp-row[data-state='idle'] .sp-dot {
+  background: var(--dsc-green);
+}
+
+/* 行正文：一行截断（这是总览，读的是「有哪几条」而不是全文）。 */
+.sp-row-text {
+  color: var(--dsc-text-secondary);
+  flex: 1 1 auto;
+  font-size: var(--dsc-fs-ui);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 收工的行压一档：跑着的才是要盯的。 */
+.sp-row[data-status='done'] .sp-row-text,
+.sp-row[data-status='cancelled'] .sp-row-text,
+.sp-row[data-state='idle'] .sp-row-text {
+  color: var(--dsc-text-tertiary);
+}
+
+.sp-row-note,
+.sp-row-state,
+.sp-row-time {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  font-size: var(--dsc-fs-tool);
+}
+
+.sp-row-time {
+  font-family: var(--dsc-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.sp-row-more {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+}
+
+.sp-row-stop {
+  align-items: center;
+  background: none;
+  border: none;
+  border-radius: var(--dsc-r-icon);
+  color: var(--dsc-text-quaternary);
+  cursor: pointer;
+  display: inline-flex;
+  flex: none;
+  height: 22px;
+  justify-content: center;
+  width: 22px;
+}
+
+.sp-row-stop:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-red);
+}
+
+/* ── 胶囊态 ── 一颗药丸：图标 + 一句读数；点它展开成面板。 */
+.sp-mini {
+  align-items: center;
+  background: var(--dsc-bg-raised);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-pill);
+  box-shadow: var(--dsc-shadow-sm);
+  color: var(--dsc-text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: var(--dsc-fs-ui);
+  gap: var(--dsc-sp-2);
+  height: 34px;
+  max-width: 240px;
+  padding: 0 var(--dsc-sp-4);
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+}
+
+.sp-mini:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.sp-mini:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
+}
+
+.sp-mini-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 右侧栏里的子智能体页签 ── */
+.sub-tab {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sub-tab-head {
+  align-items: center;
+  border-bottom: 1px solid var(--dsc-stroke-3);
+  color: var(--dsc-text-tertiary);
+  display: flex;
+  flex: none;
+  font-size: var(--dsc-fs-ui);
+  gap: var(--dsc-sp-2);
+  padding: var(--dsc-sp-3) var(--dsc-sp-4);
+}
+
+.sub-tab-name {
+  color: var(--dsc-text-primary);
+  font-weight: 600;
+}
+
+.sub-tab-note {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+  margin-left: auto;
+}
+
+.sub-tab-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--dsc-sp-3) var(--dsc-sp-4);
+}
+
+/* 系统里说「少动」就真不动：呼吸停成一颗静态强调色点（信息一条不少）。 */
+@media (prefers-reduced-motion: reduce) {
+  .sp-row[data-status='running'] .sp-dot,
+  .sp-row[data-state='working'] .sp-dot {
+    animation: none;
+  }
+}

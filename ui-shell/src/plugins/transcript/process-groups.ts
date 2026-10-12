@@ -72,6 +72,13 @@ export interface StepGroup {
   startIndex: number
   /** 组内最后一条可折叠条目在 entries 里的下标（含）。 */
   endIndex: number
+  /**
+   * 组里收着几条（思考段 + 工具调用一起数）。
+   *
+   * 为什么单独给一个字段而不是让界面自己减下标：下标之差在「组里有不渲染的条目」时是错的，
+   * 而组头要把「点开会放出几项」写在明面上（`.step-fold-count`）。
+   */
+  size: number
   /** 这一组的工具调用按类别计数，按次数降序、同数按首次出现顺序。 */
   counts: ActivityCount[]
   /**
@@ -577,6 +584,7 @@ export function groupSteps(
         seq,
         startIndex: first,
         endIndex: last,
+        size: pending.length,
         counts: countActivities(entries, pending),
         closed,
       }
