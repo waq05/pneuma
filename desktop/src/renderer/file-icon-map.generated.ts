@@ -3,7 +3,9 @@
  *
  * 常用扩展名/文件名 → vscode-icons 图标 body 的固化映射（全集 ~4MB 里抽出来的常用子集，
  * 未知图标回落 default-file）。key 是 fileIconName() 的产物（iconify 图标 id，下划线转连字符）。
- * 生成时间：2026-10-02T16:53:00.480Z；图标 115 个，body 合计 ≈ 511 KB。
+ * 生成时间：2026-10-12T05:29:24.899Z；图标 115 个，body 合计 ≈ 511 KB。
+ *
+ * 这一份供旧渲染层的 file-icons.tsx 使用；另一份是同一生成器产出的同源拷贝（改清单重跑即两份同刷）。
  */
 /** 图标 body（path/gradient 等 svg 内联内容）与原始 viewBox 尺寸。 */
 export interface GeneratedIconBody {

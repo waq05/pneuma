@@ -28,9 +28,11 @@ import {
   dockPanel,
   dockPanels,
   dockPreview,
+  dockReview,
   subscribeDock,
   type DockPanelMeta,
   type DockPreview,
+  type DockReview,
 } from './dock-state'
 import { shellPage, subscribePage } from './page-state'
 
@@ -244,7 +246,7 @@ export function onAppearanceRequest(listener: (patch: AppearancePatch) => void):
  * `shell.dock` 槽里、读 `useDockPanel()` 决定画不画（别的面板在前台时 `data-hidden` 藏）。
  * 顶栏那颗总开合钮由壳画，插件不再各自画开合钮（旧界面同构）。
  */
-export { setDockPanel, lastDockPanel, registerDockPanel, setDockPreview } from './dock-state'
+export { setDockPanel, lastDockPanel, registerDockPanel, setDockPreview, setDockReview } from './dock-state'
 
 /** 现在开着哪一块停靠面板（订阅式；`null` = 收起）。 */
 export function useDockPanel(): string | null {
@@ -259,6 +261,11 @@ export function useDockPanels(): readonly DockPanelMeta[] {
 /** 现在要预览哪一分文件（预览面板读；null = 还没点过）。 */
 export function useDockPreview(): DockPreview | null {
   return useSyncExternalStore(subscribeDock, dockPreview, () => null)
+}
+
+/** 现在要审查哪一轮的哪些文件（审查面板读；null = 还没点过）。 */
+export function useDockReview(): DockReview | null {
+  return useSyncExternalStore(subscribeDock, dockReview, () => null)
 }
 
 /**
@@ -277,7 +284,7 @@ export function useShellPage(): string | null {
 /** 槽名常量表也从这里转出去：插件写 `SLOT.header` 比手打字符串不容易错。 */
 export { SLOT, type ShellSlot } from './slots'
 export { subscribeDock, dockPanel } from './dock-state'
-export type { DockPanelMeta, DockPreview } from './dock-state'
+export type { DockPanelMeta, DockPreview, DockReview } from './dock-state'
 export { subscribePage, shellPage } from './page-state'
 
 /**
@@ -351,10 +358,18 @@ export type { SlotEntry, SlotKind, UiHostInfo, UiRuntimeApi, UiSlotApi, HostSnap
 // 图标集原样转出去：插件 bundle 里 `import { IconPin } from '@dsc/ui'` 即可，
 // 不必各自内联一份 SVG（同一枚图标在多个插件里内联，改一次要改好几处）。
 export * from './icons'
+// 彩色文件图标（vscode-icons 常用子集 + FileIcon 组件）与正文 token 粗估：
+// 前者轮尾「文件已更改」卡 / 悬停预览 / 审查面板 / 文件树共用一份，
+// 后者与宿主自动压缩同源（见 src/ui/index.ts 的说明）——都在壳里只有一份实现。
+export { FileIcon, fileIconName } from './platform/file-icons'
+export { estimateTextTokens } from '@dsc/ui-core'
+// 文本差异算法也转出去（工具卡的「将做的改动」要用；与宿主算轮尾差异同一份实现）。
+export { diffLines, type DiffResult } from '@dsc/ui-core'
 // 壳内置平台层转出（web 值面独有；终端壳的 @dsc/ui 不导出 DOM 组件）：
 // shiki / react-markdown / pdfjs 这些重依赖只在壳 vendor 里有一份（平台模块表里
 // 没有它们，插件 bundle 不许自带），插件经这里用壳的实现，实现只有一份。
 export { highlightLines, langForPath, type HighlightedLine } from './platform/highlight'
+export { DiffRows } from './platform/diff-rows'
 export { CodeView } from './platform/code-view'
 export { MarkdownView, type FsRead } from './platform/markdown'
 export { PdfView } from './platform/pdf-view'
@@ -377,6 +392,7 @@ export type {
   CollaborationMode,
   ContextSegmentsView,
   DiffHunkView,
+  DiffLineView,
   EffortLevel,
   GoalView,
   ModeSurface,

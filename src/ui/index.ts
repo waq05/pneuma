@@ -22,6 +22,18 @@ export * from './slots-react.js'
  * 加一个原生操作，两侧同时知道；漂移在编译期就暴露（而不是等线上某个插件调到 undefined）。
  */
 export * from '../core/native-bridge.js'
+/**
+ * 正文 token 粗估（`core/token-estimate.ts`）也进共享面：消息流的「~N tok」回落读数
+ * 与宿主自动压缩的阈值必须同源。它与 native-bridge 守同一条约束——纯函数、零 node 依赖、
+ * 浏览器安全，所以界面壳可以直接拿这一份，不必在壳里再抄一个口径。
+ */
+export * from '../core/token-estimate.js'
+
+/**
+ * 文本差异算法（`core/diff-text.ts`）同理进共享面：工具卡的「将做的改动」在界面侧
+ * 从参数 + 盘上现值推演 diff，用的就是宿主算轮尾差异的同一份算法。
+ */
+export * from '../core/diff-text.js'
 
 /**
  * 宿主那些**界面要读的**视图类型的再导出。
@@ -44,6 +56,7 @@ export type {
   CollaborationMode,
   ContextSegmentsView,
   DiffHunkView,
+  DiffLineView,
   EffortLevel,
   GoalView,
   ModeSurface,

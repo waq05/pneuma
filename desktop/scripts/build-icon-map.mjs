@@ -90,14 +90,16 @@ if (bodies.get('default-file') === undefined) {
 
 const entries = [...bodies.entries()].sort(([a], [b]) => (a < b ? -1 : 1))
 const totalBytes = entries.reduce((sum, [, v]) => sum + v.body.length, 0)
-const out = `/**
+const header = (where) => `/**
  * 本文件由 desktop/scripts/build-icon-map.mjs 生成——不要手改，改清单后重跑生成器。
  *
  * 常用扩展名/文件名 → vscode-icons 图标 body 的固化映射（全集 ~4MB 里抽出来的常用子集，
  * 未知图标回落 default-file）。key 是 fileIconName() 的产物（iconify 图标 id，下划线转连字符）。
  * 生成时间：${new Date().toISOString()}；图标 ${entries.length} 个，body 合计 ≈ ${Math.round(totalBytes / 1024)} KB。
- */
-/** 图标 body（path/gradient 等 svg 内联内容）与原始 viewBox 尺寸。 */
+ *
+ * 这一份供${where}；另一份是同一生成器产出的同源拷贝（改清单重跑即两份同刷）。
+ */`
+const body = `/** 图标 body（path/gradient 等 svg 内联内容）与原始 viewBox 尺寸。 */
 export interface GeneratedIconBody {
   body: string
   width?: number
@@ -109,6 +111,13 @@ ${entries.map(([id, v]) => `  '${id}': { body: ${JSON.stringify(v.body)}${v.widt
 }
 `
 
-writeFileSync(join(desktopRoot, 'src', 'renderer', 'file-icon-map.generated.ts'), out)
-console.log(`生成 ${entries.length} 个图标，body 合计 ≈ ${Math.round(totalBytes / 1024)} KB → src/renderer/file-icon-map.generated.ts`)
+// 两份产物：桌面渲染层（旧界面）与界面壳的平台层（新界面）——同一次生成，两个界面同图标。
+const targets = [
+  { file: join(desktopRoot, 'src', 'renderer', 'file-icon-map.generated.ts'), where: '旧渲染层的 file-icons.tsx 使用' },
+  { file: join(desktopRoot, '..', 'ui-shell', 'src', 'platform', 'file-icon-map.generated.ts'), where: '界面壳的平台层 FileIcon 使用' },
+]
+for (const target of targets) {
+  writeFileSync(target.file, `${header(target.where)}\n${body}`)
+  console.log(`生成 ${entries.length} 个图标，body 合计 ≈ ${Math.round(totalBytes / 1024)} KB → ${target.file}`)
+}
 if (misses.length > 0) console.log(`未解析（跳过，运行时回落 default-file）：\n  ${misses.join('\n  ')}`)
