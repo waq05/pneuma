@@ -3717,3 +3717,106 @@ csv/xlsx 表格预览、手动排序拖拽、桌面信任卡、remote-web 切壳
   在自检里根本不出现；④React 的 `onMouseEnter` 是合成事件，探针里派发原生 `mouseenter`
   不触发——要派发 `mouseover`（带 relatedTarget）；⑤PowerShell 的 `-replace '\', '\\'`
   会产出 4 个反斜杠（JSON 里要 2 个）——这个坑 8 月记过，这次又踩了一遍，自检种子已改回。
+
+---
+
+## 第六批（2026-10-12 晚）：阶段组 + 旧 dock 动态页签系统搬进壳 + 右侧栏对齐 + 文件根修复
+
+用户三条：「1 补齐 阶段组, 旧 dock 的动态页签系统未搬的」；「2 如图所示，右侧边栏需要
+对齐 dsh 的实现方式，并且现在的文件管理显示的不是对应工作区的文件」。总规则沿用：
+旧桌面版有的照旧桌面版。
+
+### 真 bug：文件树 / git / 终端的根不是当前会话的工作区
+
+- **根因**：宿主 `src/plugins/desktop-dock.ts` 的工作目录在**插件挂载时**钉死
+  （`config.cwd ?? process.cwd()`，即宿主进程启动目录）；而常驻多会话模型下（0.6.48 起）
+  同一宿主进程里不同会话的 cwd 不同——切到别的工作区的会话后，文件树/git/终端继续指着
+  启动目录。桌面自检复现（宿主启动目录 start-dir ≠ 会话 cwd ws-b：切到 ws-b 的会话后
+  文件树仍列 start-dir 的 marker）。
+- **修法**：基准目录改为**每次请求现取当前会话的 cwd**（`ctx.get('session').current().meta.cwd`），
+  取不到才落回启动目录；安全边界（`inside` 越界检查）不动，只是基准从进程目录换成会话目录
+  ——与沙箱 `canWrite(path, cwd)` 的既有口径（「可写根随会话走」）对齐。
+- 壳侧配套：文件树的树状态按工作区根分份（搬回旧版 `files-tree-store` 的口径：每 cwd
+  一棵树，各层 listing / 展开集 / 滚动位都活着），切会话自动换根，各回各的树。
+
+### 旧 dock 的动态页签系统整体搬进壳
+
+- `ui-shell/src/dock-model.ts`：**原样拷贝**旧渲染层那份纯模型（页签多开 / guide 门面 /
+  分栏 ≤2 格 / 每会话布局 / `dsc.dock.surfaces` 持久化），只改 module 注释；
+- `ui-shell/src/dock-state.ts` 重写：从「面板 id」模型升级为「每会话布局 + `setDockSession`
+  （壳从宿主快照的 sessionId 切）+ `dockActions`（包 dock-model 的 reducer + 落盘）」；
+  旧的 `registerDockPanel/dockPanel/lastDockPanel` 全删；
+- `ui-shell/src/dock.tsx`（新）：Dock / Pane / Chip / GuideBody / 罗盘 / 全屏两钮 / 右键菜单 /
+  分栏拖拽条 / 左缘拖宽——从旧 `Dock.tsx` 搬，class 与结构逐块同构（样式全在 legacy views.css）；
+- 页签内容注册面换成 `registerDockTab({kind, label, icon, component, keepMounted})`：
+  终端（keepMounted 保活、可无限多开）、文件 / Git（files 插件）、预览（按 tab.path 渲染，
+  同文件去重）、浏览器（新插件）、开始页（壳内置门面）；
+- 右侧栏从「正文右侧的停靠区」改回**`.app` 直属的第三列**（旧桌面版布局：贴边占轨道、
+  收起滑出右缘、全屏盖顶栏以下、窄视口自动全屏、左缘拖宽 `dsc.dockWidth` 双击复位 420）；
+- 审查面板从「停靠区一块面板」**搬回并排右栏**（旧 `DiffPane` 形态：`.thread-zone[data-review]`
+  里 `aside.diff-pane` + 宽度拖拽 `dsc.diffPaneWidth` + 分栏/换行/系统打开/打开/关闭）；
+  挪到壳层 `ui-shell/src/review-pane.tsx`（app.tsx 直接渲染，与旧渲染层同为一等能力）；
+- 快捷键照旧版：Ctrl+P / Ctrl+\` / Ctrl+T = 展开右侧栏 +（开始页挂着就地替换 / 单例聚焦）；
+  顶栏开合钮只在收起时出现；
+- `?dock=1` 自检钩子（展开停在开始页）。
+
+### 浏览器页签：原生桥三件套
+
+- `src/core/native-bridge.ts`：加 `dockBrowser`（visible + rect，新 `bool`/`rect` 两种实参形状）、
+  `browserNav`（url + 动作枚举）与 `browser-state` 事件——桥里原先「故意没有」的内嵌浏览器
+  由此补齐；主进程 `NATIVE_HANDLERS` 两条转发（dock.ts 的 `setDockBrowser` /
+  新抽出的 `navigateDockBrowser`，与旧渲染层 IPC 共用实现）；preload 的通用 `call` 与
+  事件白名单自动携带；
+- 壳侧新插件 `plugins/browser/`：地址栏 + 后退/前进/刷新 + `browser-holder` 上报矩形 +
+  URL 记忆（`dsc.dock.browserUrl`）——旧 `BrowserPane` 同构，内容仍是主进程的
+  `WebContentsView` 覆盖层，页面只报「显示在哪」。
+
+### 阶段组（14 类过程聚合）搬进消息流
+
+- 从旧渲染层原样搬入 `process-groups.ts`（分组口径：正文/计划卡封组、system 不进不封、
+  尾组收尾才算闭；实时详情取参键序、150ms 防抖）、`step-group-row.tsx`（组头：类别图标 ⊗
+  箭头叠放、聚合文案、data-step-* 供自检）、`fold-seats.tsx`（RowSeat/StepGroupSeat +
+  `useSearchableHidden`（Ctrl+F 命中自动展开、焦点保护）+ `useProcessScroll`（限高滚动、
+  方向渐隐、未闭贴底/已闭回顶））；
+- 壳 transcript 接线：`groupSteps(entries+live, rounds, running 谓词取自 roundFolds)`；
+  四档能力表的 `stepGrouping / liveDetail` 从「未消费」变为逐格生效；折叠开合换旧版双层
+  记忆（React state 当场重画 + `fold-state` 进程内存档重挂读回，键 `会话id:step:轮:组`），
+  并补上「轮收尾复位」；SeatBody 从「逐行平铺」改为按块产出（组块 vs 过程行 vs 之后）；
+- `AT_BOTTOM_EPS = 32` 本地常量（旧从 JumpStrip 导出；刻度条未搬）。
+
+### 验证（全部硬证据）
+
+- **新专项 `ui-batch6-check.ps1` 37/37**：阶段组（组头 counts=read=1,search=1 /
+  commands=1、聚合文案「已读取文件并搜索代码」、默认收起、点开见成员、再点收起）、
+  文件树根=会话工作区、开始页四卡与快捷键角标、终端（开始页入口 + 管道模式横幅）、
+  分栏两格 + 双击收回、全屏进出、浏览器页签（单例）、并排审查（在 thread-zone、不在 dock）、
+  收起/展开 + 顶栏 toggle、预览页签进条、`~/.dsc` 零污染；
+- 回归：`ui-batch5-check.ps1` 27/27（E/F/G 三处断言按新行为跟改：并排审查 / 预览页签 /
+  开始页开终端——另修一处脚本逻辑：「开始」页签被预览顶到后台时 GuideBody 不渲染，
+  要先点它的 chip）；`ui-batch4-check.ps1` 29/29（dock 打开路径改 Ctrl+P）；
+  三组界面探针（ui-parity / ui-statusbar / ui-switch-cwd）全绿；
+- 探针：`ui-native-bridge-test` **79/79**（跟改：形状表加 bool/rect、桥有浏览器三件套的
+  正向断言、动词表加 dock/browser——原先「桥里没有 dockBrowser」的断言翻面）；
+  `remote-e2e` 83/85（与基线同两条预存在失败；启动图「已登记 14 个界面插件」= browser 进列）；
+- 三侧 tsc 全绿；`dist:dir` 重打（先 taskkill 占用的 Muse Code 进程）+ asar/产物内容核对
+  （browser 插件 bundle、新 dock/阶段组代码都在包里）+ `pkg-smoke` rendered:true。
+
+### 诚实边界
+
+①右缘刻度条（JumpStrip）与吸附快捷栏仍未搬（组体滚动用它同值的本地常量）；轨迹页未建；
+②快捷键在「既无开始页、又没开过该单例页签」时不生效——**与旧桌面版逐字一致**（旧
+  `openTab(replaceGuide)` 在无 guide 时原样返回），本批按「原样搬」处理，未擅自改行为；
+③审查栏的宽度/拖拽与旧版同键同法，但壳里没有旧的「正文两侧其他轨道」可对齐，位置观感
+  以 `.thread-resizer` 让位实现；④浏览器页签的真机加载（WebContentsView 渲染网页）只核到
+  DOM 与桥调用，未逐站点核交互；⑤「经典待弃」标注（旧渲染层退居二线后的标记）仍未做。
+
+### 教训
+
+①**自检截图与原生覆盖层互斥**：浏览器页签（`WebContentsView`）挂着时 `capturePage` 直接
+  抛 `UnknownVizError`——batch6 的 eval 末尾要「静场」（关掉浏览器页签、切回文件页签）截图
+  才落得下来；这条已写进自检脚本注释与对照表；②`capturePage` 之前那版失败与功能无关，
+  别被「截图失败」带着怀疑功能（本轮 37 条功能断言在截图失败的那两跑里也是全绿的）；
+③旧模型文件搬运要连它的**注释与不变量**一起搬（dock-model 的「不变量逐条」与
+  `dsc.dock.surfaces` 同键决定了两界面共享布局），只抄行为会漂；④探索先行省了大功夫：
+  「开始页实为右栏门面」「dock 是 .app 第三列」「GuideBody 只在激活时渲染」这些点
+  在动手前就查清了，没走「先写了一版再推倒」的回头路。
