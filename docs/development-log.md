@@ -3484,3 +3484,117 @@ UI 四件套探针（ui-serve / ui-native-bridge / ui-third-party / ui-api-gate 
 都是 drag 区，缺 no-drag 豁免就会被当拖窗口）；②自检隔离要把**桌面记忆文件**一起钉住
 （Electron 的 home 不认 USERPROFILE，`DSC_DESKTOP_STATE` 是这道开关）；③宿主重启 = 换源，
 壳页面必须跟着重载——这是「同一份 web 文档」架构与旧 IPC 架构的分水岭。
+
+## 第四批：写入口补齐 + 表格预览 + 拖拽排序 + 桌面信任卡 + 手机端切壳（2026-10-12 下午，未发版）
+
+用户点的五件事一次做完：技能页/插件页功能补全（对齐旧桌面版，写法参考 dsh）、
+csv/xlsx 表格预览、手动排序拖拽、桌面信任卡、remote-web 切壳。
+
+### 1. 技能页 / 插件页写入口补齐（对齐旧桌面版）
+
+- **落点裁定**：旧桌面当年是「主进程对话框 IPC + 宿主方法」。迁到新壳的正确位置是
+  **原生桥**（只对主窗口那份文档开放），**界面通道的排除维持不动**——浏览器/远程页
+  够得着的那条面上依旧没有供应链写入口。新增桥操作四个：`installSkill` / `installPlugin`
+  （弹系统文件选择器 + 复制进 `~/.dsc`，人没选文件就不算数）、`installMarketSkill` /
+  `setMarketSources`（转给宿主，读市场源、装技能、写 settings.json）。`NATIVE_OPS` 14→18。
+- **壳接线**：技能页「导入技能」、市场「安装」（带 `安装中…` 态与 `?skillinstall=` 自检钩子）、
+  「编辑源」textarea（一行「名字, 地址」，保存即覆盖 + 重抓第一个源）；插件页「+ 添加插件」。
+  浏览器里点：一句诚实的说明（桥不在）。
+- **对照 dsh 的口径**：dsh 没有技能页/市场（技能是 preset 级目录配置）；插件管理是 npm/pnpm
+  制式（`pluginManager.installBundle`），与本仓库「单文件宿主插件 + 目录制界面插件」是两套
+  发行模型——**对齐的是功能覆盖与保护面思路**（能装、能启停、能配置、失败说清原因），机制按
+  本仓库架构落地。写入口的「桌面窗口专属」与 dsh 的 `danger-full-access` 闸同理。
+
+### 2. csv / xlsx 表格预览（旧桌面版有，照它搬）
+
+- 平台层新增 `platform/table-view.tsx`（`CsvView` / `XlsxView`）：papaparse 自动嗅探分隔符
+  （tsv 显式制表符）、SheetJS 读 bytes、首行当表头、**500 行 × 100 列截断**、多 sheet 页签、
+  解析中/解析失败占位——逐条对齐旧 `file-preview.tsx`。预览插件分流加两档（`kind:'bytes'`
+  非 pdf → `XlsxView`；csv/tsv → `CsvView`）。依赖（papaparse / xlsx 0.20.3 CDN tarball）进
+  ui-shell，**两个库都是 dynamic import 的懒 chunk**（`chunk-DlC-OlHO.js` 796KB 只在点开表格时加载）。
+
+### 3. 手动排序拖拽（旧桌面版有，照它搬）
+
+- `grouping.ts` 恢复 `manual` 档（宿主缺省档就是它——此前壳读丢了回落 recent，本轮修正），
+  移植旧 `workspace-order.ts` 的 `moveWithin` / `moveToEnd` 与 `sidebar-groups.ts` 的
+  `orderedSessions`（置顶块约束 + 块内 weave）。壳侧补：视图菜单「手动排序」项（IconSwap）、
+  工作区行拖拽（`drop-above/drop-below` 指示线 + 「放到最后」落点尾巴 + 拖后 150ms 压制 click）、
+  manual 档会话行同组同块互拖；落盘走既有 `setUiPrefs`（`workspaceOrder` / `sessionOrder`）。
+
+### 4. 桌面信任卡（旧桌面没有，按计划 §7 做）
+
+- 宿主：`scanThirdPartyUiTrusts`（结构化扫 `~/.dsc/plugins/<目录名>`：api 区间 / 载体 /
+  信任态 / 启停 / 装不上的原因）+ `trustThirdPartyUiPlugin`（目录名形状先钉死再写
+  `plugins.json#uiTrust`）；runtime 两个方法 `listUiTrust` / `setUiTrust` 进 `INVOKABLE_METHODS`；
+  **`listUiTrust` 进界面通道（读），`setUiTrust` 走原生桥（写）**——「我信任」这声必须是人在
+  桌面窗口里答的。
+- 壳：插件中心新增「第三方界面插件」组（有目录才出现）：待确认卡摊开能力面（契约区间 / 载体 /
+  界面通道方法 + 原生桥 / 生效时机，与 `/ui-trust` 同一套话术）→ 确认信任 → 写 uiTrust；
+  门禁不过的只报原因不给按钮；已信任的给启停开关（键 `<目录名>/ui/client.js`，走
+  `setPluginEnabled`——runtime 对这类键做了特判：没有宿主半边可挂，写盘即完事）。
+
+### 5. remote-web 切壳（计划 §8c 的延后项，本轮做掉）
+
+- **默认伺服同一份壳**：remote 服务器静态面换成 `lib/ui/assets` + `/boot.js` 启动图（与本地
+  界面服务同一份 compose 与 CSP）+ `/api/events`+`/api/invoke` 数据通道（`createUiEvents`，
+  方法面 **`REMOTE_SHELL_METHODS`** = REMOTE_METHODS + `setUiPrefs` + `restoreSessions`，
+  实参过 `validateUiArgs`）。经典档（remote-web 自己的移动端应用）留在
+  `DSC_REMOTE_UI=classic` / 配置 `ui:'classic'` 后面，也作为壳产物缺失时的回落。
+- **配对与凭据**：未配对的浏览器落在**配对页**（`/` 与任意路径都只给它 + `/pair.js`，全部在
+  凭据闸后面）；配对成功除返回 token 外**顺手下 HttpOnly 设备 Cookie**——壳的 EventSource
+  带不了自定义头，同源 Cookie 是 SSE 与 POST 共用凭据的唯一正路（比经典档的 localStorage 还严一档）。
+- **移动端适配（能用档）**：窄屏（≤860px）侧栏默认收成 56px 窄栏、展开态是 86vw 浮层（带阴影）、
+  停靠区整块隐藏、caption-bar 隐藏；触控目标沿用既有尺寸。
+
+### 两个真 bug（本轮排查中发现并修掉）
+
+1. **界面服务拒起 → 静默回落旧界面（P0）**：webserver 插件在把装载问题写进会话流时用了
+   `ctx.transcript`，但 `inject` 只声明了 `['ui']`。只要 `~/.dsc/plugins` 里存在任何一条问题
+   （比如一个没信任的第三方插件目录），`ensure()` 就整个 reject——桌面壳收不到界面地址，
+   **静默用旧渲染层**（日志里只有「界面形态=shell」，却永远看不到「窗口来自宿主界面服务」）。
+   修：`inject: ['ui', 'transcript']`，并在 `onUiUrl` 回调加一行可观测日志
+   （「宿主报来界面地址（窗口在）」）——这类「没切过去」之前是零信号的。
+2. **市场改名后装不上**：市场清单缓存按 URL 落盘，条目里烙着上次读时的源名；用户改名后
+   浏览列出的行仍标旧名，点安装按旧名回查 → 「没有名为 X 的市场源」。修：出缓存一律
+   **按当前源名重新盖章**（`skills.ts` 的 `browseRemote`）。
+
+### 验证（全部硬证据）
+
+- 类型：root / desktop（node+web）/ ui-shell 三侧 tsc 绿；壳构建 13 插件。
+- **新专项 `ui-batch4-check.ps1`：29 条断言全绿**（隔离 home；种子含两个工作区、csv/xlsx 样本、
+  两个第三方插件目录、本地市场源 `scripts/_market-local.mjs`）：manual 缺省档 + 菜单三项 /
+  组行与会话行拖拽指示线 + DOM 顺序翻转 + `settings.json` 的 `workspaceOrder`/`sessionOrder`
+  落盘同序 / csv 表头三列三行不截断 / xlsx 两 sheet 页签且切换生效 / listUiTrust 直查 2 行 /
+  信任卡披露含「@dsc/ui 区间：^1.0.0」与「原生桥」/ 确认信任后开关出现 + `plugins.json`
+  的 uiTrust 落 key / demo-bad 只报门禁原因 / 编辑源预填 + 保存写盘（自检源B）/ 新源名重抓 +
+  安装落 `~/.dsc/skills/selftest-skill.md`；真实 `~/.dsc` 零污染（334 文件指纹一致）。
+- **手机端切壳浏览器走查**（Browser Use，390×844）：配对页（配对码输入 → 配对）→ 成功进壳；
+  实测 `matchMedia(≤860px)=true`、侧栏自动收成 **56px** 窄栏、`.dock-slot` display:none、
+  composer/状态栏在位；点窄栏 logo 展开 → `position:absolute` + 86vw 上限 + 阴影浮层。
+  截图留档 `desktop/shots/ui-batch4-mobile.png` 与 `-mobile-rail.png`。
+- 回归：`ui-parity-check.ps1` 八处照旧全绿；`ui-native-bridge-test`（72 条，探针改钉**新边界**：
+  install 四操作在桥、界面通道排除清单照旧）/ `ui-serve-test` / `ui-events-test`（42）/
+  `ui-third-party-test` / `ui-api-gate-test` / `ui-plugin-test` / `settings-sections-check` 全绿；
+  `remote-e2e.mjs` **83 通过 / 2 条预存在失败**（设备行「创建于」探针漂移 + 第二宿主休眠等待，
+  与本批无关：两处代码面未触碰，基线即 72/74 同两条），新增壳档 11 条断言全绿（配对页 /
+  /pair.js / 启动图 / Cookie / invoke 通与 sub集拒绝 / SSE hello / 未配对全拦）。
+- 打包：`dist:dir` 重打 + 逐项验证（13 插件 manifest v1.1.0、xlsx 懒 chunk 796KB、
+  app.asar 含 installSkill/宿主报来界面地址/DSC_DESKTOP_STATE、插件 bundle 含「第三方界面插件」
+  「手动排序」、remote.js 含配对页文案）+ `pkg-smoke`（rendered:true）。
+
+### 诚实边界
+
+①「导入技能/添加插件」的系统文件选择器**无法自动化**（原生模态框），走查只验按钮接线与
+  市场安装这条可脚本化的真链路；②远程壳的方法面是 `REMOTE_SHELL_METHODS` 子集不是全量
+  ——手机上文件/预览/终端这些桌面形态面板不可用（dock 也按窄屏隐藏），设置写入同样不开放
+  （与既有远程口径一致，面板会以错误提示退化）；③移动端适配是「能用」档（会话/阅读/审批/输入），
+  没有做虚拟键盘回避、下拉刷新等移动细节；④经典档 remote-web 保留但本轮探针只盖壳档；
+  ⑤旧渲染层的 `bridge.ts` 只补了类型面两个方法（listUiTrust/setUiTrust 的转发），
+  旧界面没有画信任卡。
+
+### 教训
+
+①「界面形态=shell」不等于「窗口在壳上」——自检/日志必须有一条**「窗口真来自宿主界面服务」**
+  的正信号，否则回落会藏在一路绿灯里；②插件声明 `inject` 少一个服务，症状可能出现在一个完全
+  不相关的入口（界面服务起不来→窗口回落）；③缓存文件里存了**当时读时的上下文**（源名），
+  改名类操作就会错位——出缓存要按当前上下文重新盖章。

@@ -134,7 +134,7 @@
 - **决定一份还是两份 UI**：切换期保留回落意味着安装包里同时有旧渲染层（asar 内 `out/renderer`）与壳（extraResources 里 `lib/ui`）。稳定一轮后要么删回落、要么明确长期双份的代价。
 - **冻结**：给 `desktop/src/renderer/` 加冻结横幅（`legacy/PROVENANCE.md` 已经声明「家在新目录」），并加一条检查守住两份样式表不再分叉——**只能等桌面切壳之后加**（切之前改那份仍是合理的）。
 - 老 UI 标「经典待弃」（用户口径：稳定之后再标）。
-- 手机端 `remote-web/` 也切到同一份壳（它现在没用这套区段）。
+- 手机端 `remote-web/` 也切到同一份壳（它现在没用这套区段）。——**已做**（2026-10-12）：默认伺服壳产物 + 配对页换 HttpOnly 设备 Cookie + `/boot.js` 启动图 + `/api/events`//`/api/invoke` 数据通道（方法面 `REMOTE_SHELL_METHODS`）；经典档留在 `DSC_REMOTE_UI=classic` / 配置 `ui: 'classic'` 后面。详见 development-log 第四批。
 
 ## 4. 次序与依赖
 
