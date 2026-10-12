@@ -3,8 +3,11 @@
  * 走 HTTP 配对 + WebSocket 遥控，把宿主半边整条链验一遍（协议 v3）。
  *
  * 覆盖：
- *   - 静态页与 Host 检查（占位页 200 / 域名 Host 403 / 端口不符 403）
- *   - 配对：错码 5 次锁 1 小时（429）→ 重新生成 → 换到 token + deviceId；64KB 请求体上限
+ *   - 壳档静态（手机端切壳）：未配对只给配对页（`/` 与任意路径都是它，/pair.js 例外）；
+ *     配对后 `GET /` 是壳的 index（启动图外链已注入）、`/boot.js` 是启动图、目录穿越 404
+ *   - 数据通道：带设备 Cookie 的 `POST /api/invoke`（listSkills 通 / runCommand 拒）、
+ *     `GET /api/events` 的 SSE 握手（hello + 方法表）；不带凭据一律进不去
+ *   - 配对：错码 5 次锁 1 小时（429）→ 重新生成 → 换到 token + deviceId（并下好 HttpOnly Cookie）；64KB 请求体上限
  *   - 「连接手机」动作：返回 { kind:'pair-code', code, url, expiresAt }（半小时 TTL），
  *     返回 string 的老动作照旧只给 notice
  *   - 票据：无 token 401 / 假票据 401 / 域名 Host 升级 403 / 一次性
@@ -343,6 +346,45 @@ function httpCall(path, options = {}) {
   })
 }
 
+/** 连一条 SSE（壳档 /api/events），攒到第一次 `event: hello` 或 6 秒超时就断开。 */
+function sseProbe(cookie) {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (value) => {
+      if (settled) return
+      settled = true
+      try {
+        req.destroy()
+      } catch {
+        // 可能已经断了
+      }
+      resolve(value)
+    }
+    const req = httpRequest(
+      {
+        host: '127.0.0.1',
+        port: remotePort,
+        path: '/api/events',
+        method: 'GET',
+        headers: { accept: 'text/event-stream', ...(cookie === '' ? {} : { cookie }) },
+      },
+      (res) => {
+        let text = ''
+        res.setEncoding('utf8')
+        res.on('data', (chunk) => {
+          text += chunk
+          if (text.includes('event: hello')) finish({ status: res.statusCode, type: String(res.headers['content-type'] ?? ''), text })
+        })
+        res.on('end', () => finish({ status: res.statusCode, type: String(res.headers['content-type'] ?? ''), text }))
+        res.on('error', () => finish({ status: res.statusCode ?? 0, type: '', text }))
+      },
+    )
+    req.on('error', () => finish({ status: 0, type: '', text: '' }))
+    setTimeout(() => finish({ status: 0, type: '', text: '等待 hello 超时' }), 6000).unref?.()
+    req.end()
+  })
+}
+
 /** 开一条 WS：攒下每条帧的原文与解析结果，并把它们喂给一个重放视图。 */
 function openSocket(ticketOrUrl, wsOptions = {}) {
   const url = ticketOrUrl.startsWith('ws:')
@@ -500,24 +542,27 @@ try {
   const setHook = await hostInvoke(host, 'setSettingValue', ['remote', 'notifyWebhook', webhookUrl])
   check('设置页存得下通知 Webhook（不带占位符 = ntfy 那种 POST JSON）', setHook.value?.ok === true, JSON.stringify(setHook.value))
 
+  // ── 1. 壳档静态（手机端切壳）：没配对之前，除配对页与它的脚本什么都拿不到 ──────
+  console.log('壳档静态与凭据闸')
+  const shellIndex = existsSync(join(repo, 'lib', 'ui', 'assets', 'index.html'))
   const page = await httpCall('/')
-  const builtIndex = existsSync(join(repo, 'lib', 'remote', 'assets', 'index.html'))
   check(
-    builtIndex ? 'GET / 把界面产物（index.html）伺服出去' : 'GET / 返回「资产未构建」占位页',
-    page.status === 200 && (builtIndex ? page.body.includes('<div id="root"') : page.body.includes('资产未构建')),
+    shellIndex ? '未配对的 GET / 是配对页（不是界面本体）' : '壳产物不在时退回经典档（先在仓库构建 ui-shell）',
+    shellIndex ? page.status === 200 && page.body.includes('配对码') && page.body.includes('/pair.js') : page.status === 200,
     `${String(page.status)} ${page.body.slice(0, 80)}`,
   )
-  if (builtIndex) {
-    const assetName = /<script[^>]+src="\.\/([^"]+)"/.exec(page.body)?.[1] ?? ''
-    const asset = await httpCall(`/${assetName}`)
-    check(
-      '静态资源按文件名伺服，Content-Type 认得出来',
-      assetName !== '' && asset.status === 200 && String(asset.headers['content-type']).includes('javascript'),
-      `${assetName} → ${String(asset.status)} ${String(asset.headers['content-type'])}`,
-    )
-  }
-  const traversal = await httpCall('/%2e%2e/package.json')
-  check('目录穿越被挡住（assets 目录之外一律 404）', traversal.status === 404, String(traversal.status))
+  const pairJs = await httpCall('/pair.js')
+  check(
+    '配对页的脚本 /pair.js 拿得到（外链才过得了 CSP 的 script-src self）',
+    pairJs.status === 200 && String(pairJs.headers['content-type']).includes('javascript'),
+    `${String(pairJs.status)} ${String(pairJs.headers['content-type'])}`,
+  )
+  const trailer = await httpCall('/%2e%2e/package.json')
+  check(
+    '未配对时目录穿越也只见配对页（静态资产整面在凭据闸后面）',
+    trailer.status === 200 && trailer.body.includes('配对码'),
+    String(trailer.status),
+  )
   const badHost = await httpCall('/', { host: `evil.example.com:${String(remotePort)}` })
   check('Host 是域名时 403（DNS rebinding 挡在门口）', badHost.status === 403, String(badHost.status))
   const badPort = await httpCall('/', { host: '127.0.0.1:1' })
@@ -564,6 +609,82 @@ try {
     body: JSON.stringify({ code: freshCode, name: 'x'.repeat(70 * 1024) }),
   })
   check('请求体超过 64KB 被拒（413）', tooBig.status === 413, `${String(tooBig.status)} ${tooBig.body}`)
+
+  // ── 2b. 配对之后：壳档的静态、启动图与数据通道（都带设备 Cookie） ────────────
+  console.log('壳档：配对之后的静态 / 启动图 / 数据通道')
+  const cookie = (pair.headers['set-cookie'] ?? [])[0]?.split(';')[0] ?? ''
+  check(
+    '配对响应顺手下了 HttpOnly 设备 Cookie（壳的 SSE 带不了自定义头，只能靠它）',
+    cookie.startsWith('dsc_remote=') && String(pair.headers['set-cookie']?.[0] ?? '').includes('HttpOnly'),
+    cookie,
+  )
+  const authHeaders = { cookie }
+  if (shellIndex) {
+    const index = await httpCall('/', { headers: authHeaders })
+    check(
+      '配对后的 GET / 是壳的 index（外链启动图标签已注入）',
+      index.status === 200 && index.body.includes('<div id="root"') && index.body.includes('/boot.js'),
+      `${String(index.status)} ${index.body.slice(0, 80)}`,
+    )
+    const boot = await httpCall('/boot.js', { headers: authHeaders })
+    check(
+      '/boot.js 给启动图（挂到 __DSC_BOOT__ 上，entries 是插件清单）',
+      boot.status === 200 && boot.body.includes('__DSC_BOOT__') && boot.body.includes('"entries"'),
+      `${String(boot.status)} ${boot.body.slice(0, 80)}`,
+    )
+    const traversal = await httpCall('/%2e%2e/package.json', { headers: authHeaders })
+    check('配对后目录穿越被挡住（assets 目录之外一律 404）', traversal.status === 404, String(traversal.status))
+    const badBoot = await httpCall('/boot.js')
+    check(
+      '不带凭据拿不到启动图（落回配对页，不吐插件清单）',
+      badBoot.status === 200 && badBoot.body.includes('配对码') && !badBoot.body.includes('__DSC_BOOT__'),
+      String(badBoot.status),
+    )
+    const invoke = await httpCall('/api/invoke', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...authHeaders },
+      body: JSON.stringify({ method: 'listSkills', args: [] }),
+    })
+    check(
+      '带 Cookie 的 /api/invoke 通（listSkills 拿得到）',
+      invoke.status === 200 && JSON.parse(invoke.body).ok === true,
+      invoke.body.slice(0, 120),
+    )
+    const badArgs = await httpCall('/api/invoke', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...authHeaders },
+      body: JSON.stringify({ method: 'setModel', args: [123] }),
+    })
+    check(
+      '实参过 validateUiArgs（setModel 收数字被拒）',
+      badArgs.status === 200 && JSON.parse(badArgs.body).ok === false,
+      badArgs.body.slice(0, 120),
+    )
+    const denied = await httpCall('/api/invoke', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...authHeaders },
+      body: JSON.stringify({ method: 'runCommand', args: ['dir'] }),
+    })
+    check('壳的数据通道只开远程子集（runCommand 403）', denied.status === 403, `${String(denied.status)} ${denied.body.slice(0, 120)}`)
+    const anonymous = await httpCall('/api/invoke', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ method: 'listSkills', args: [] }),
+    })
+    check('不带凭据的 /api/invoke 进不去（401）', anonymous.status === 401, String(anonymous.status))
+    const sse = await sseProbe(cookie)
+    check(
+      'SSE 握手：hello 里报方法表（远程壳子集，setUiPrefs 在内）',
+      sse.status === 200 && sse.text.includes('event: hello') && sse.text.includes('setUiPrefs'),
+      `${String(sse.status)} ${sse.text.slice(0, 100)}`,
+    )
+    const sseAnon = await sseProbe('')
+    check(
+      '不带凭据的 SSE 落回配对页（不是事件流）',
+      sseAnon.status === 200 && sseAnon.type.includes('text/html'),
+      `${String(sseAnon.status)} ${sseAnon.type}`,
+    )
+  }
 
   // ── 3. 票据 ────────────────────────────────────────────────────────────────
   console.log('一次性 WS 票据')

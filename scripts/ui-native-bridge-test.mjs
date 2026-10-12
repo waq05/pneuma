@@ -35,6 +35,7 @@ const {
 } = await import('../lib/core/native-bridge.js')
 const { DOCK_OPS, DOCK_UI_OPS, DOCK_TERM_OPS } = await import('../lib/core/dock-ops.js')
 const { UI_METHODS, UI_EXCLUDED, UI_ARG_SPECS, validateUiArgs } = await import('../lib/core/ui-methods.js')
+const { trustThirdPartyUiPlugin } = await import('../lib/core/ui-bundles.js')
 
 let passed = 0
 let failures = 0
@@ -66,14 +67,19 @@ check('每个操作名都进了查表集合', NATIVE_OPS.every((op) => NATIVE_OP
 check(
   '规格里的参数形状都是认得的',
   Object.values(NATIVE_ARG_SPECS).every((spec) =>
-    spec.every((arg) => ['string', 'hex', 'enum', 'notify', 'json'].includes(arg.shape.kind)),
+    spec.every((arg) => ['string', 'hex', 'enum', 'notify', 'marketSources', 'json'].includes(arg.shape.kind)),
   ),
 )
 check('事件白名单非空且都能查表', NATIVE_EVENTS.length > 0 && NATIVE_EVENTS.every((name) => NATIVE_EVENT_SET.has(name)))
 
 console.log('\n── 白名单里不许有的东西 ──')
-/** 名点要排除的：供应链写入口、内嵌浏览器（阶段 5.2 再进）、以及任何泛用执行口。 */
-const FORBIDDEN = ['invoke', 'runCommand', 'installPlugin', 'installSkill', 'dockBrowser', 'browserNav', 'onBrowserState']
+/**
+ * 名点要排除的：泛用执行口、内嵌浏览器（阶段 5.2 再进）。
+ * 装东西（installSkill / installPlugin / installMarketSkill / setMarketSources）与
+ * 落信任（setUiTrust）**在桥里**——它们是供应链写入口，只对主窗口开放式；
+ * 界面通道那边的排除在下一节钉住（浏览器与远程页够得着的那条面不能有它们）。
+ */
+const FORBIDDEN = ['invoke', 'runCommand', 'dockBrowser', 'browserNav', 'onBrowserState']
 for (const name of FORBIDDEN) {
   check(`没有 ${name}`, !NATIVE_OP_SET.has(name))
 }
@@ -81,11 +87,38 @@ for (const name of FORBIDDEN) {
  * 白名单的每一项都必须是"既定动作 + 实参枚举"，所以操作名的**第一个词**只能是
  * 这批动作动词之一；冒出一个没见过的动词（`exec…` / `spawn…` / `write…`）当场红。
  */
-const ACTION_VERBS = ['set', 'choose', 'switch', 'recent', 'remove', 'open', 'session', 'notify', 'restart', 'quit', 'terminal']
+const ACTION_VERBS = ['set', 'choose', 'switch', 'recent', 'remove', 'open', 'install', 'session', 'notify', 'restart', 'quit', 'terminal']
 const oddVerbs = NATIVE_OPS.filter(
   (op) => !ACTION_VERBS.some((verb) => op.toLowerCase().startsWith(verb)),
 )
 check('每个操作名都由既定动作动词开头', oddVerbs.length === 0, `可疑项：${oddVerbs.join('、')}`)
+
+console.log('\n── 供应链写入口：桥有、界面通道没有 ──')
+for (const name of ['installSkill', 'installPlugin', 'installMarketSkill', 'setMarketSources', 'setUiTrust']) {
+  check(`桥里有 ${name}`, NATIVE_OP_SET.has(name) && Object.hasOwn(NATIVE_ARG_SPECS, name))
+}
+for (const name of ['installMarketSkill', 'setMarketSources', 'setUiTrust']) {
+  check(`界面通道排除 ${name}`, UI_EXCLUDED.includes(name) && !UI_METHODS.includes(name))
+}
+check('界面通道放行 listUiTrust（信任卡要能看见状态）', UI_METHODS.includes('listUiTrust'))
+check('listUiTrust 的实参规格是空表', Array.isArray(UI_ARG_SPECS.listUiTrust) && UI_ARG_SPECS.listUiTrust.length === 0)
+check('marketSources 形状：一份合法源表能过', validateNativeCall('setMarketSources', [[{ name: 'anthropics', url: 'https://github.com/anthropics/skills' }]]).ok === true)
+check('marketSources 形状：空表被拒', rejects('setMarketSources', [[]]))
+check('marketSources 形状：不是数组被拒', rejects('setMarketSources', ['oops']))
+check('marketSources 形状：缺 url 被拒', rejects('setMarketSources', [[{ name: 'a' }]]))
+check('marketSources 形状：空名字被拒', rejects('setMarketSources', [[{ name: '', url: 'https://x' }]]))
+check('marketSources 形状：超长 url 被拒', rejects('setMarketSources', [[{ name: 'a', url: `https://x/${'y'.repeat(3000)}` }]]))
+check('installMarketSkill 收两个名字', validateNativeCall('installMarketSkill', ['anthropics', 'pdf']).ok === true)
+check('installMarketSkill 少一个实参被拒', rejects('installMarketSkill', ['anthropics']))
+check('setUiTrust 收目录名', validateNativeCall('setUiTrust', ['demo-plugin']).ok === true)
+// 目录名的形状（空串 / 路径分隔符 / ..）由核层的落地函数钉死：预检在碰盘之前就拒。
+check(
+  'setUiTrust 的空串/带分隔符/.. 在落信任前被拒（路径穿越挡在拼路径之前）',
+  trustThirdPartyUiPlugin('', undefined, new Set()).ok === false &&
+    trustThirdPartyUiPlugin('a/b', undefined, new Set()).ok === false &&
+    trustThirdPartyUiPlugin('..', undefined, new Set()).ok === false,
+)
+check('installSkill / installPlugin 不收实参', validateNativeCall('installSkill', []).ok === true && rejects('installPlugin', [1]))
 
 console.log('\n── dock 三档：终端进不了 HTTP 面 ──')
 check('dock 在界面放行面里', UI_METHODS.includes('dock'))
