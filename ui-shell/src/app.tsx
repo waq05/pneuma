@@ -101,6 +101,19 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
     return () => setRootVar('--dsc-thread-max', null)
   }, [threadWidth])
 
+  // 窄屏（手机浏览器，含「手机端 remote-web 切壳」后的形态）：侧栏默认收起成 56px
+  // 窄栏——展开态在窄屏下是浮层（styles.css 的窄屏段），正文拿全宽。
+  // 只在**跨进窄屏**那一刻收一次：收不收的决定权随后仍在用户手里（Ctrl+B / 窄栏 logo）。
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 860px)')
+    const apply = (): void => {
+      if (query.matches) setSidebarCollapsed(true)
+    }
+    apply()
+    query.addEventListener('change', apply)
+    return () => query.removeEventListener('change', apply)
+  }, [])
+
   const commitSidebarWidth = (px: number | null): void => {
     setSidebarWidth(px)
     writeStoredPx(PANEL_KEYS.sidebarWidth, px)

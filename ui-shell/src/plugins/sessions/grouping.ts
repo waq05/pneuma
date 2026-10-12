@@ -1,11 +1,7 @@
 /**
- * 侧栏会话列表的纯数据整形（桌面渲染层 `sidebar-groups.ts` 的同构移植，简化两处）：
- * 工作区分组、树分组、组内排序、搜索过滤、显示名。
- *
- * 与桌面端的差异（都是有意收窄，见 development-log 的诚实边界）：
- *   - 排序档没有「手动排序」：那档依赖会话行拖拽 + `sessionOrder` 写回，拖拽交互
- *     本版没搬，菜单里也就不放一个点了没用的档；
- *   - `sessionOrder` 参数整个不需要了。
+ * 侧栏会话列表的纯数据整形（桌面渲染层 `sidebar-groups.ts` 的同构移植）：
+ * 工作区分组、树分组、组内排序（含手动排序档）、搜索过滤、显示名，以及手动
+ * 排序的落点纯函数（旧渲染层 `workspace-order.ts` 的 moveWithin / moveToEnd）。
  *
  * 命名约定：分组键是会话的 `cwd`，「工作区」是界面对它的称呼。
  *
@@ -15,10 +11,16 @@ import type { SessionSummary } from '@dsc/ui'
 
 /** 分组方式：按工作区（平铺）/ 按工作区树（目录前缀挂层级）/ 单列表。 */
 export type GroupKey = 'workspace' | 'tree' | 'flat'
-/** 排序方式：最近更新 / 创建时间（手动排序档未搬，见文件头）。 */
-export type SortKey = 'recent' | 'created'
+/** 排序方式：手动排序 / 最近更新 / 创建时间（宿主缺省档就是 manual，同旧界面）。 */
+export type SortKey = 'manual' | 'recent' | 'created'
 /** 归档筛选：hide 只看活动区，only 只看归档区，show 两区并成一份列表。 */
 export type ArchivedFilter = 'hide' | 'show' | 'only'
+
+/** 手动排序档里每个工作区的会话顺序（UiPrefsView.sessionOrder）。 */
+export type SessionOrder = Record<string, string[]>
+
+/** 工作区手动顺序（UiPrefsView.workspaceOrder）。 */
+export type WorkspaceOrder = string[]
 
 /** 一个工作区分组：分组键（会话 cwd）+ 该组排好序的会话 + 树分组的层级信息。 */
 export interface WorkGroup {
@@ -65,13 +67,56 @@ export function lastSegment(path: string): string {
 }
 
 /**
- * 会话行排序：置顶块照旧排最前（置顶时间倒序），其余按时间。
+ * 会话行排序：置顶块照旧排最前（置顶时间倒序）；manual 档按 `sessionOrder`
+ * 里拖出来的顺序走（dsh 的 reconcileManualOrder 语义——表里没有的会话按
+ * 最近使用接在所属置顶块末尾），其余档按时间。cwd 缺省（单列表）没有拖拽序。
  */
-export function orderedSessions(list: SessionSummary[], sort: SortKey): SessionSummary[] {
-  return [...list].sort((left, right) => {
+export function orderedSessions(
+  cwd: string | undefined,
+  list: SessionSummary[],
+  sort: SortKey,
+  sessionOrder: SessionOrder,
+): SessionSummary[] {
+  const sorted = [...list].sort((left, right) => {
     if ((left.pinnedAt ?? 0) !== (right.pinnedAt ?? 0)) return (right.pinnedAt ?? 0) - (left.pinnedAt ?? 0)
     return sort === 'created' ? right.createdAt - left.createdAt : right.updatedAt - left.updatedAt
   })
+  if (sort !== 'manual' || cwd === undefined) return sorted
+  const saved = sessionOrder[cwd]
+  if (saved === undefined || saved.length === 0) return sorted
+  const rank = new Map(saved.map((id, index) => [id, index]))
+  // 置顶块约束：拖拽只在同一块内进行，落盘序也只在块内生效，两块之间仍是置顶在前。
+  const weave = (part: SessionSummary[]): SessionSummary[] =>
+    [...part].sort((a, b) => {
+      const ra = rank.get(a.id)
+      const rb = rank.get(b.id)
+      if (ra !== undefined && rb !== undefined) return ra - rb
+      if (ra !== undefined) return -1
+      if (rb !== undefined) return 1
+      return 0
+    })
+  return [
+    ...weave(sorted.filter((session) => session.pinnedAt !== undefined)),
+    ...weave(sorted.filter((session) => session.pinnedAt === undefined)),
+  ]
+}
+
+/**
+ * 把 `source` 从 `order` 里摘出来，插到 `target` 之前（after=false）或之后（after=true）。
+ * `target` 不在列表里，或者顺序本来就一样时，原样返回（旧渲染层 workspace-order.ts 同款）。
+ */
+export function moveWithin(order: string[], source: string, target: string, after: boolean): string[] {
+  if (source === target) return order
+  const rest = order.filter((item) => item !== source)
+  let at = rest.indexOf(target)
+  if (at < 0) return order
+  if (after) at += 1
+  return [...rest.slice(0, at), source, ...rest.slice(at)]
+}
+
+/** 把 `source` 挪到列表末尾（拖到「放到最后」落点）。 */
+export function moveToEnd(order: string[], source: string): string[] {
+  return [...order.filter((item) => item !== source), source]
 }
 
 /** 归档筛选：hide 只看活动区，only 只看归档区，show 两区并成一份列表。 */
@@ -86,7 +131,7 @@ export interface GroupInput {
   sessions: SessionSummary[]
   /** 「切过去还没发消息」的工作区也要出现在列表里（原生桥给；浏览器里没有就空着）。 */
   recentCwds: string[]
-  /** 当前活动工作区。 */
+  /** 当前活动工作区（manual 档没排过序时活动组置顶）。 */
   cwd: string
   sort: SortKey
   group: GroupKey
@@ -94,6 +139,10 @@ export interface GroupInput {
   /** 搜索词（已 trim + 小写；空串 = 不过滤）。 */
   trimmed: string
   aliases: WorkspaceAliases
+  /** 手动拖出来的工作区顺序（cwd 绝对路径）。 */
+  order: WorkspaceOrder
+  /** 手动拖出来的组内会话顺序（cwd → 会话 id 序列）。 */
+  sessionOrder: SessionOrder
 }
 
 /**
@@ -101,7 +150,7 @@ export interface GroupInput {
  * 归档筛选 → 分桶（cwd）→ 搜索过滤 → 组内排序 → 组间排序 → （tree 档）按目录前缀挂树。
  */
 export function buildWorkGroups(input: GroupInput): WorkGroup[] {
-  const { sessions, recentCwds, cwd, sort, group, archived, trimmed, aliases } = input
+  const { sessions, recentCwds, cwd, sort, group, archived, trimmed, aliases, order, sessionOrder } = input
   const map = new Map<string, SessionSummary[]>()
   // 只有「切过去还没发消息」的工作区没有会话，也要留在列表里；只看归档时它们没意义
   if (archived !== 'only') for (const dir of recentCwds) map.set(dir, [])
@@ -118,11 +167,27 @@ export function buildWorkGroups(input: GroupInput): WorkGroup[] {
     dir.toLowerCase().includes(trimmed) ||
     list.some((session) => (session.title ?? '新会话').toLowerCase().includes(trimmed))
   const visible = [...map.entries()].filter(([dir, list]) => match(dir, list))
+  const rank = (dir: string): number => order.indexOf(dir)
   const lastUsed = (list: SessionSummary[]): number => list.reduce((max, s) => Math.max(max, s.updatedAt), 0)
   const lastCreated = (list: SessionSummary[]): number => list.reduce((max, s) => Math.max(max, s.createdAt), 0)
   const sorted = visible
-    .map(([dir, list]) => [dir, orderedSessions(list, sort)] as [string, SessionSummary[]])
+    .map(([dir, list]) => [dir, orderedSessions(dir, list, sort, sessionOrder)] as [string, SessionSummary[]])
     .sort((a, b) => {
+      if (sort === 'manual') {
+        // 手动排过序就完全按手动顺序（活动组不再抢位）；没排过则活动组置顶，其余按最近使用
+        if (order.length > 0) {
+          const ra = rank(a[0])
+          const rb = rank(b[0])
+          if (ra !== rb) {
+            if (ra < 0) return 1
+            if (rb < 0) return -1
+            return ra - rb
+          }
+        } else if ((a[0] === cwd) !== (b[0] === cwd)) {
+          return a[0] === cwd ? -1 : 1
+        }
+        return lastUsed(b[1]) - lastUsed(a[1])
+      }
       // 最近更新 / 创建时间这两档两级都按时间，不再人为把活动组顶上去
       return sort === 'created' ? lastCreated(b[1]) - lastCreated(a[1]) : lastUsed(b[1]) - lastUsed(a[1])
     })

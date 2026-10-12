@@ -11,21 +11,23 @@
  *   - markdown（md/mdx/markdown）→ `MarkdownView`（react-markdown + 代码块 shiki
  *     + 相对路径图片走 fs-read 转 base64）；
  *   - PDF（kind:'bytes' + application/pdf）→ `PdfView`（pdfjs 逐页渲染）；
+ *   - xlsx/xlsm（kind:'bytes' 其余 mime）→ `XlsxView`（SheetJS，多 sheet 页签）；
+ *   - csv/tsv → `CsvView`（papaparse，首行当表头，500 行 × 100 列截断）；
  *   - 代码/文本 → `CodeView`（shiki 按扩展名高亮，装不上语法回落纯文本）；
- *   - 图片 → `<img>`；二进制 / 超限 → 占位；xlsx（bytes 其余 mime）→ 占位 +
- *     用系统程序打开。
+ *   - 图片 → `<img>`；二进制 / 超限 → 占位。
  *
- * markdown / shiki / pdf 三件来自 `@dsc/ui` 的壳内置平台层（重依赖只有壳 vendor
- * 里那一份，插件 bundle 不自带）。与旧界面剩余的差距：**csv/xlsx 表格视图没搬**
- * （csv 落到代码视图按纯文本看；xlsx 仍走「用系统程序打开」）。
+ * markdown / shiki / pdf / 表格四件来自 `@dsc/ui` 的壳内置平台层（重依赖只有壳
+ * vendor 里那一份，插件 bundle 不自带）。
  *
  * @module dsc-ui-shell/plugins/preview
  */
 import { useEffect, useState, type ReactNode } from 'react'
 import {
   CodeView,
+  CsvView,
   MarkdownView,
   PdfView,
+  XlsxView,
   defineUiPlugin,
   getHostNative,
   registerDockPanel,
@@ -154,10 +156,12 @@ function renderBody(read: ReadResult, fsRead: (file: string) => Promise<unknown>
     return <div className="file-preview-empty">二进制文件（{formatSize(read.size ?? 0)}），这里不预览。</div>
   }
   if (read.kind === 'bytes') {
-    // bytes 只有两种宿主会给：application/pdf 走逐页渲染，其余（xlsx 等）给占位。
+    // bytes 只有两种宿主会给：application/pdf 走逐页渲染，其余（xlsx/xlsm）走
+    // SheetJS 表格视图——与旧界面 previewKindFor 的口径一致。
     if (read.mime === 'application/pdf' && read.base64 !== undefined) {
       return <PdfView base64={read.base64} />
     }
+    if (read.base64 !== undefined) return <XlsxView base64={read.base64} />
     return (
       <div className="file-preview-empty">
         这类文件（{read.mime ?? '未知类型'}，{formatSize(read.size ?? 0)}）要看内容请用「用系统程序打开」。
@@ -167,7 +171,18 @@ function renderBody(read: ReadResult, fsRead: (file: string) => Promise<unknown>
   if (isMarkdown(read.path)) {
     return <MarkdownView text={read.text ?? ''} path={read.path} fsRead={fsRead} />
   }
+  // csv/tsv 走表格视图（papaparse）；其余文本落到代码视图。
+  if (isDelimited(read.path)) {
+    return <CsvView text={read.text ?? ''} path={read.path} />
+  }
   return <CodeView text={read.text ?? ''} path={read.path} />
+}
+
+/** csv/tsv 分流（旧界面 previewKindFor 同款）。 */
+function isDelimited(path: string): boolean {
+  const name = path.toLowerCase()
+  const ext = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : name
+  return ext === 'csv' || ext === 'tsv'
 }
 
 /** markdown 分流：md / mdx / markdown 三个扩展名（旧界面 previewKindFor 同款）。 */

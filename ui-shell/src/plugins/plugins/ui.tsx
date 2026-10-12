@@ -15,8 +15,14 @@
  *
  * 数据走 `listPlugins` / `setPluginEnabled`（都在界面通道放行面上）。页头三颗钮
  * 与旧界面同构：刷新（重取清单）、重启宿主（原生桥 `restartHost`；浏览器里禁用并
- * 说明）、+ 添加插件（**写入口**：装插件要往 ~/.dsc 写文件 + 系统文件选择器，属于
- * 供应链写入口，与装技能同一个理由不在界面通道放行——点击给一句诚实的说明）。
+ * 说明）、+ 添加插件（原生桥 `installPlugin`：系统文件选择器把 .js 复制进
+ * `~/.dsc/plugins/`——供应链写入口走桥不走界面通道，浏览器里给一句诚实的说明）。
+ *
+ * 第四组「第三方界面插件」是**信任卡**（计划 §7 的桌面入口）：`~/.dsc/plugins/<目录名>/
+ * {plugin.json, ui/client.js}` 这一类首次发现不装载，卡片把能力面（契约区间 / 载体 /
+ * 界面通道白名单方法 + 原生桥）摊开让用户答一次；「确认信任」写 plugins.json 的
+ * uiTrust 段，写口同样只在桌面窗口的原生桥（`setUiTrust`）；列状态走界面通道
+ * `listUiTrust`（读），启停走 `setPluginEnabled`（键 `<目录名>/ui/client.js`）。
  *
  * @module dsc-ui-shell/plugins/plugins
  */
@@ -62,6 +68,17 @@ interface PluginRow {
   problem?: string
 }
 
+/** `listUiTrust` 回来的形状（宿主契约 `UiTrustView`；第三方界面插件的信任卡行）。 */
+interface TrustRow {
+  name: string
+  api?: string
+  platforms: string[]
+  trusted: boolean
+  trustedAt?: number
+  enabled: boolean
+  problem?: string
+}
+
 export default defineUiPlugin({
   name: '插件中心',
   apply(ui) {
@@ -85,6 +102,12 @@ function PluginsView(): ReactNode {
   // 详情页选中的插件：存 file 键，渲染时回 rows 里取最新值——开关一翻列表就换成
   // 新数组，存对象会让详情页看到过期的 enabled（旧界面同款的处理）。
   const [detailFile, setDetailFile] = useState<string | null>(null)
+  /** 第三方界面插件的信任状态（信任卡那一组；宿主 `listUiTrust`）。 */
+  const [trusts, setTrusts] = useState<TrustRow[]>([])
+  /** 正在展开能力披露的那个目录名（null = 都收着）。 */
+  const [trustOpen, setTrustOpen] = useState<string | null>(null)
+  const [trustNote, setTrustNote] = useState('')
+  const [trustBusy, setTrustBusy] = useState(false)
 
   const refresh = (): void => {
     void channel
@@ -100,8 +123,66 @@ function PluginsView(): ReactNode {
 
   useEffect(() => {
     refresh()
+    loadTrusts()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channel])
+
+  /** 读第三方界面插件的信任状态（读类；失败摊在那一组下面，不静默）。 */
+  const loadTrusts = (): void => {
+    void channel
+      .invoke<TrustRow[]>('listUiTrust')
+      .then((list) => {
+        setTrusts(Array.isArray(list) ? list : [])
+        setTrustNote('')
+      })
+      .catch((error: unknown) => {
+        setTrustNote(`读第三方界面插件状态失败：${text(error)}`)
+      })
+  }
+
+  /**
+   * 确认信任一个第三方界面插件：写 plugins.json 的 uiTrust 段。
+   * 写口在桌面窗口的原生桥（`setUiTrust`）——「我信任」这声必须人在桌面上答。
+   */
+  const confirmTrust = (row: TrustRow): void => {
+    if (!native.available) {
+      toastErr('信任确认要写 ~/.dsc/plugins.json，只桌面版能做（浏览器里没有这条桥）')
+      return
+    }
+    setTrustBusy(true)
+    void native
+      .invoke<{ ok: boolean; notice?: string; error?: string }>('setUiTrust', [row.name])
+      .then((result) => {
+        if (!result.ok) {
+          toastErr(`确认失败：${result.error ?? '未知原因'}`)
+          return
+        }
+        toastOk(result.notice ?? `已信任「${row.name}」`)
+        setTrustOpen(null)
+        loadTrusts()
+      })
+      .catch((error: unknown) => {
+        toastErr(`确认失败：${text(error)}`)
+      })
+      .finally(() => {
+        setTrustBusy(false)
+      })
+  }
+
+  /** 启停一个第三方界面插件（键 `<目录名>/ui/client.js`；写盘后刷新页面生效）。 */
+  const toggleTrust = (row: TrustRow, next: boolean): void => {
+    setTrusts((current) => current.map((item) => (item.name === row.name ? { ...item, enabled: next } : item)))
+    void channel
+      .invoke('setPluginEnabled', [`${row.name}/ui/client.js`, next])
+      .then(() => {
+        toastOk(`已${next ? '启用' : '停用'}第三方界面插件「${row.name}」，刷新页面（或重启宿主）后生效`)
+        setTimeout(loadTrusts, 600)
+      })
+      .catch((error: unknown) => {
+        setTrusts((current) => current.map((item) => (item.name === row.name ? { ...item, enabled: !next } : item)))
+        toastErr(`没改成功：${text(error)}`)
+      })
+  }
 
   const toggle = (row: PluginRow, next: boolean): void => {
     setRows((current) => current?.map((item) => (item.file === row.file ? { ...item, enabled: next } : item)) ?? null)
@@ -126,6 +207,27 @@ function PluginsView(): ReactNode {
     void native.invoke('restartHost').catch((reason: unknown) => {
       toastErr(`重启失败：${reason instanceof Error ? reason.message : String(reason)}`)
     })
+  }
+
+  /**
+   * 添加插件（旧界面同款）：系统文件选择器选 .js 文件，主进程复制进 ~/.dsc/plugins/
+   * （原生桥 `installPlugin`；人没选文件就不算数），装完刷新清单。
+   */
+  const installPlugin = (): void => {
+    if (!native.available) {
+      toastErr('装插件来自桌面外壳的文件选择器，浏览器里没有它')
+      return
+    }
+    void native
+      .invoke<string[]>('installPlugin')
+      .then((installed) => {
+        if (!Array.isArray(installed) || installed.length === 0) return
+        toastOk(`已安装 ${installed.join('、')}，即时生效`)
+        setTimeout(refresh, 600)
+      })
+      .catch((reason: unknown) => {
+        toastErr(`安装失败：${reason instanceof Error ? reason.message : String(reason)}`)
+      })
   }
 
   const detail = detailFile === null ? null : ((rows ?? []).find((row) => row.file === detailFile) ?? null)
@@ -170,9 +272,8 @@ function PluginsView(): ReactNode {
             <button
               type="button"
               className="btn-primary plugins-add"
-              onClick={() => {
-                toastOk('装插件要往 ~/.dsc 写文件（系统文件选择器 + 复制），属于供应链写入口，界面通道刻意不放行——命令行或旧界面里装，这里只做启停')
-              }}
+              data-tip="选择 .js 插件文件装进 ~/.dsc/plugins（桌面版）"
+              onClick={installPlugin}
             >
               + 添加插件
             </button>
@@ -196,6 +297,34 @@ function PluginsView(): ReactNode {
                 后重启宿主。
               </div>
             )}
+
+            {trusts.length > 0 ? (
+              <>
+                <div className="plugin-group-label">
+                  <IconPuzzle size={13} /> 第三方界面插件 <span className="count">{trusts.length}</span>
+                  <span className="group-hint">~/.dsc/plugins/&lt;目录名&gt;/ui/client.js（信任一次后才装载）</span>
+                </div>
+                {trusts.map((row) => (
+                  <TrustCard
+                    key={row.name}
+                    row={row}
+                    open={trustOpen === row.name}
+                    busy={trustBusy && trustOpen === row.name}
+                    onOpen={() => {
+                      setTrustOpen(trustOpen === row.name ? null : row.name)
+                    }}
+                    onConfirm={() => {
+                      confirmTrust(row)
+                    }}
+                    onToggle={(next) => {
+                      toggleTrust(row, next)
+                    }}
+                  />
+                ))}
+              </>
+            ) : null}
+            {/* 读失败要说出来：没有这一行，invoke 出错时这一组会「静默消失」。 */}
+            {trustNote === '' ? null : <div className="plugins-empty">{trustNote}</div>}
 
             <div className="plugin-group-label">
               官方可开关 <span className="count">{official.length}</span>
@@ -293,6 +422,94 @@ function PluginCard({
           if (row.toggleable) onToggle(row, !row.enabled)
         }}
       />
+    </div>
+  )
+}
+
+/**
+ * 第三方界面插件的一张信任卡：卡体复用行样式，没答过信任的摊开能力披露让用户答一次，
+ * 答过的给启停开关。披露文案对着 `/ui-trust` 的能力面口径写（契约区间 / 载体 /
+ * 两条通用能力 / 生效时机）——卡片与命令说的是同一件事。
+ */
+function TrustCard({
+  row,
+  open,
+  busy,
+  onOpen,
+  onConfirm,
+  onToggle,
+}: {
+  row: TrustRow
+  open: boolean
+  busy: boolean
+  onOpen: () => void
+  onConfirm: () => void
+  onToggle: (next: boolean) => void
+}): ReactNode {
+  const hello = useHostChannel().getHello()
+  const trustedAt = row.trustedAt === undefined ? '' : `（${new Date(row.trustedAt).toLocaleDateString()}）`
+  return (
+    <div className="trust-card" data-trust={row.name}>
+      <div className={`plugin-row${row.enabled ? '' : ' off'}`}>
+        <div className="plugin-icon" style={{ background: iconColor(row.name) }}>
+          {row.name.slice(0, 1).toUpperCase()}
+        </div>
+        <div className="plugin-info">
+          <div className="plugin-name">
+            {row.name}
+            {row.api !== undefined ? <span className="plugin-apiver">@dsc/ui {row.api}</span> : null}
+            <span className="plugin-apiver">{row.platforms.join('/')}</span>
+            {row.trusted ? <span className="plugin-apiver">已信任{trustedAt}</span> : null}
+          </div>
+          <div className={`plugin-desc${row.problem !== undefined ? ' problem' : ''}`}>
+            {row.problem !== undefined
+              ? `⚠ ${row.problem}`
+              : row.trusted
+                ? '已确认信任，可以启停（停用或启用都在刷新页面后生效）'
+                : '还没有信任记录——首次安装需要在插件中心确认一次（它将能调用宿主的界面方法）'}
+          </div>
+        </div>
+        {row.problem === undefined && !row.trusted ? (
+          <button type="button" className="btn-primary" onClick={onOpen}>
+            {open ? '收起' : '查看并信任'}
+          </button>
+        ) : null}
+        {row.trusted ? (
+          <button
+            type="button"
+            className={`switch${row.enabled ? ' on' : ''}`}
+            role="switch"
+            aria-checked={row.enabled}
+            aria-label={`${row.name} 开关`}
+            data-tip={row.enabled ? '停用，刷新页面后生效' : '启用，刷新页面后生效'}
+            onClick={() => {
+              onToggle(!row.enabled)
+            }}
+          />
+        ) : null}
+      </div>
+      {open ? (
+        <div className="trust-disclosure">
+          <div className="settings-group-title">信任后它能做什么</div>
+          <ul>
+            <li>
+              @dsc/ui 区间：{row.api ?? '(没写)'}
+              {hello === null ? '' : `（当前壳 v${hello.host.version}，不满足会被门禁拦下并说明）`}
+            </li>
+            <li>载体：{row.platforms.join('/')}</li>
+            <li>能力：调用宿主界面通道的白名单方法；桌面窗口里可用原生桥（打开目录、终端等操作）</li>
+            <li>生效：重启宿主（或刷新页面）后装载；停用与启用都走这张卡上的开关</li>
+          </ul>
+          <div className="trust-actions">
+            <button type="button" className="btn-primary" disabled={busy} onClick={onConfirm}>
+              {busy ? '正在写…' : '确认信任'}
+            </button>
+            <button type="button" className="btn-ghost" onClick={onOpen}>
+              取消
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

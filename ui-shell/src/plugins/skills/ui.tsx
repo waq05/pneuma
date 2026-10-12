@@ -4,17 +4,20 @@
  * 形态对齐旧界面：侧栏「技能」入口把主区整页切成这一页（顶栏与正文一起让位，
  * 再点一次侧栏入口回对话页）。两个 tab 与旧界面同款：
  *
- * - **已安装**：本机扫出来的技能（含插件贡献的虚拟技能），可启停、看正文、开出目录；
- * - **市场**：从配置的市场源（默认 anthropics/skills 与本仓库 .agents/skills）浏览条目。
+ * - **已安装**：本机扫出来的技能（含插件贡献的虚拟技能），可启停、看正文、开出目录、
+ *   从磁盘导入；
+ * - **市场**：从配置的市场源（默认 anthropics/skills 与本仓库 .agents/skills）浏览条目，
+ *   可安装、可编辑源清单。
  *
  * 数据走 `listSkills` / `readSkill` / `setSkillEnabled` / `browseMarket`（都在界面通道
- * 放行面上）；「导入技能」与「安装市场技能」是系统文件选择器 + 往 `~/.dsc` 写文件的
- * **供应链写入口**（`installMarketSkill` / `setMarketSources` 有意不在放行面上），
- * 与插件页的「+ 添加插件」同一条边界：点它给一句诚实的说明，不假装有按钮。
+ * 放行面上）；「导入技能」「安装市场技能」「保存市场源」是**供应链写入口**——它们走
+ * 桌面窗口的原生桥（`installSkill` / `installMarketSkill` / `setMarketSources`），
+ * 界面通道（浏览器与远程页够得着的那条面）持续排除这几个方法。浏览器的说法是
+ * 一句诚实的「只桌面版能做」，不是假装有按钮。
  *
  * @module dsc-ui-shell/plugins/skills
  */
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   IconBolt,
   IconFolder,
@@ -114,6 +117,11 @@ function SkillsView(): ReactNode {
   const [marketSource, setMarketSource] = useState('')
   const [marketLoading, setMarketLoading] = useState(false)
   const [sourcesOpen, setSourcesOpen] = useState(false)
+  /** 市场源的编辑草稿（展开编辑时从当前清单填「名字, 地址」一行一条）。 */
+  const [sourcesText, setSourcesText] = useState('')
+  const [savingSources, setSavingSources] = useState(false)
+  /** 正在装的条目（`源/名字`；空串 = 没有在装）。装中按钮禁用，防连点。 */
+  const [installing, setInstalling] = useState('')
 
   const reloadSkills = (): void => {
     void channel
@@ -137,6 +145,7 @@ function SkillsView(): ReactNode {
         // 抓取失败的原因挂在面板里（带重试按钮）；手动刷新额外补一条 Toast 回执。
         if (result.error !== undefined && refresh) toastErr(`获取失败：${result.error}`)
         else if (refresh) toastOk(`已从 ${result.source} 获取 ${String(result.items.length)} 个技能`)
+        maybeAutoInstall()
       })
       .catch((error: unknown) => {
         toastErr(`获取失败：${text(error)}`)
@@ -209,6 +218,7 @@ function SkillsView(): ReactNode {
       })
   }
 
+  /** 打开所在目录走系统文件管理器（原生桥 `openPath`；浏览器里没有桥）。 */
   const openFolder = (path: string): void => {
     const native = getHostNative()
     if (!native.available) {
@@ -220,12 +230,120 @@ function SkillsView(): ReactNode {
     })
   }
 
-  /** 装东西是供应链写入口：界面通道没有它，这里只把话说明白。 */
-  const writeDoorNote = (what: string): void => {
-    toastOk(
-      `${what}要往 ~/.dsc 写文件（系统文件选择器 + 复制），属于供应链写入口，界面通道刻意不放行——` +
-        '命令行或旧界面里做，这里只做浏览与启停',
-    )
+  /**
+   * 导入技能（旧界面同款）：系统文件选择器选「含 SKILL.md 的目录」或 .md 文件，
+   * 主进程复制进 ~/.dsc/skills/（原生桥 `installSkill`；人没选文件就不算数）。
+   */
+  const importSkill = (): void => {
+    const native = getHostNative()
+    if (!native.available) {
+      toastErr('导入技能来自桌面外壳的文件选择器，浏览器里没有它')
+      return
+    }
+    void native
+      .invoke<string[]>('installSkill')
+      .then((names) => {
+        if (!Array.isArray(names) || names.length === 0) return
+        toastOk(`已导入 ${names.join('、')}`)
+        reloadSkills()
+      })
+      .catch((error: unknown) => {
+        toastErr(`导入失败：${text(error)}`)
+      })
+  }
+
+  /** 装一条市场技能（原生桥 `installMarketSkill`：宿主按源下载并写 ~/.dsc/skills）。 */
+  const install = (item: MarketSkillView): void => {
+    const native = getHostNative()
+    if (!native.available) {
+      toastErr('安装技能要往 ~/.dsc/skills 写文件，只桌面版能做（浏览器里没有这条桥）')
+      return
+    }
+    setInstalling(`${item.source}/${item.name}`)
+    void native
+      .invoke<{ ok: boolean; notice?: string; error?: string }>('installMarketSkill', [item.source, item.name])
+      .then((result) => {
+        if (!result.ok) {
+          toastErr(`安装失败：${result.error ?? '未知原因'}`)
+          return
+        }
+        toastOk(result.notice ?? `已安装 ${item.name}`)
+        reloadSkills()
+        setMarket((current) =>
+          current === null
+            ? current
+            : {
+                ...current,
+                items: current.items.map((entry) =>
+                  entry.name === item.name && entry.source === item.source ? { ...entry, installed: true } : entry,
+                ),
+              },
+        )
+      })
+      .catch((error: unknown) => {
+        toastErr(`安装失败：${text(error)}`)
+      })
+      .finally(() => {
+        setInstalling('')
+      })
+  }
+
+  /**
+   * 保存市场源（原生桥 `setMarketSources`）：一行一个「名字, 地址」，覆盖整份清单，
+   * 写回 ~/.dsc/settings.json；存完清空缓存并从第一个源重新抓一次（旧界面同款）。
+   */
+  const saveSources = (): void => {
+    const sources = sourcesText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line !== '')
+      .map((line) => {
+        const [name, url] = line.split(/[,，\t ]+/)
+        return { name: (name ?? '').trim(), url: (url ?? '').trim() }
+      })
+      .filter((source) => source.name !== '' && source.url !== '')
+    if (sources.length === 0) {
+      toastErr('请按格式填写，一行一个源：名字, 仓库地址')
+      return
+    }
+    const native = getHostNative()
+    if (!native.available) {
+      toastErr('改市场源要写 ~/.dsc 里的设置，只桌面版能做（浏览器里没有这条桥）')
+      return
+    }
+    setSavingSources(true)
+    void native
+      .invoke<{ ok: boolean; notice?: string; error?: string }>('setMarketSources', [sources])
+      .then((result) => {
+        if (!result.ok) {
+          toastErr(`保存失败：${result.error ?? '未知原因'}`)
+          return
+        }
+        toastOk(result.notice ?? '市场源已保存')
+        setSourcesOpen(false)
+        setMarket(null)
+        browse(sources[0]?.name ?? '', false)
+      })
+      .catch((error: unknown) => {
+        toastErr(`保存失败：${text(error)}`)
+      })
+      .finally(() => {
+        setSavingSources(false)
+      })
+  }
+
+  // 自检钩子：?skillinstall=<源>/<名字> 时，市场清单到手后自动装一次
+  //（验证抓取与落盘的真链路，旧界面同款钩子——只是改走原生桥）。
+  const autoInstall = useRef(new URLSearchParams(location.search).get('skillinstall'))
+  const maybeAutoInstall = (): void => {
+    const raw = autoInstall.current
+    if (raw === null || !getHostNative().available) return
+    autoInstall.current = null
+    const slash = raw.indexOf('/')
+    if (slash <= 0) return
+    const source = raw.slice(0, slash)
+    const name = raw.slice(slash + 1)
+    install({ name, description: '', source, installed: false })
   }
 
   return (
@@ -243,9 +361,7 @@ function SkillsView(): ReactNode {
             type="button"
             className="btn-primary"
             data-tip="从磁盘导入：选含 SKILL.md 的目录或 .md 文件"
-            onClick={() => {
-              writeDoorNote('导入技能')
-            }}
+            onClick={importSkill}
           >
             <IconPlus size={14} /> 导入技能
           </button>
@@ -384,10 +500,16 @@ function SkillsView(): ReactNode {
               type="button"
               className="text-btn"
               onClick={() => {
-                setSourcesOpen((open) => !open)
+                if (sourcesOpen) {
+                  setSourcesOpen(false)
+                  return
+                }
+                // 展开时把当前清单填成「名字, 地址」一行一条（旧界面同款）。
+                setSourcesText((market?.sources ?? []).map((source) => `${source.name}, ${source.url}`).join('\n'))
+                setSourcesOpen(true)
               }}
             >
-              {sourcesOpen ? '收起' : '查看源'}
+              {sourcesOpen ? '收起' : '编辑源'}
             </button>
             <button
               type="button"
@@ -403,16 +525,24 @@ function SkillsView(): ReactNode {
 
           {sourcesOpen && (
             <div className="market-edit">
-              <div className="market-edit-hint">
-                市场源（只读）：改源要写 <code>~/.dsc</code> 里的设置，属于写入口，界面通道没有放行这道口子——
-                命令行或旧界面里改。
-              </div>
-              {(market?.sources ?? []).map((source) => (
-                <div key={source.name} className="mono skill-path">
-                  {source.name} · {source.url}
-                  {source.ok ? '' : '（抓取失败）'}
-                </div>
-              ))}
+              <div className="market-edit-hint">一行一个源：名字, 仓库地址（GitHub 仓库或 index.json）。保存即覆盖整份清单。</div>
+              <textarea
+                className="setting-input mono tall"
+                value={sourcesText}
+                placeholder={'名字, https://github.com/…'}
+                aria-label="市场源清单"
+                onChange={(event) => {
+                  setSourcesText(event.target.value)
+                }}
+              />
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={savingSources}
+                onClick={saveSources}
+              >
+                {savingSources ? '保存中…' : '保存市场源'}
+              </button>
             </div>
           )}
 
@@ -447,12 +577,13 @@ function SkillsView(): ReactNode {
               <button
                 type="button"
                 className={`btn-primary market-install${item.installed ? ' done' : ''}`}
-                data-tip={item.installed ? '本地已有同名技能' : '安装是写入口：界面通道没有放行'}
+                data-tip={item.installed ? '本地已有同名技能' : '安装到 ~/.dsc/skills（桌面版）'}
+                disabled={installing === `${item.source}/${item.name}`}
                 onClick={() => {
-                  if (!item.installed) writeDoorNote('安装技能')
+                  if (!item.installed) install(item)
                 }}
               >
-                {item.installed ? '已安装' : '安装'}
+                {installing === `${item.source}/${item.name}` ? '安装中…' : item.installed ? '已安装' : '安装'}
               </button>
             </div>
           ))}

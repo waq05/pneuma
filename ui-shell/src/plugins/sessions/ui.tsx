@@ -14,16 +14,19 @@
  * `setUiPrefs`）、工作区分组行（展开态持久化 `sessionExpansion`）、每组默认 5 条
  * 「展开剩余」、会话行右键菜单（置顶/重命名/分叉/复制 ID/停止/归档/恢复）、
  * 双击标题改名、行级快捷键（Ctrl+Alt+R / Ctrl+Alt+F / Ctrl+Shift+A）、
+ * **手动排序拖拽**（工作区行拖动排序写 `workspaceOrder`；manual 档会话行在
+ * 同一置顶块内互拖写 `sessionOrder`；指示线与「放到最后」落点同款）、
  * 底部工作目录与用量行。
  *
  * @module dsc-ui-shell/plugins/sessions
  */
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import {
   IconArchive,
   IconBolt,
   IconArchiveOff,
   IconBranch,
+  IconCalendar,
   IconCheck,
   IconChevronDown,
   IconClock,
@@ -66,7 +69,7 @@ import {
   type SessionRunState,
   type SessionSummary,
 } from '@dsc/ui'
-import { buildWorkGroups, displayName, type ArchivedFilter, type GroupKey, type SortKey } from './grouping'
+import { buildWorkGroups, displayName, moveToEnd, moveWithin, orderedSessions, type ArchivedFilter, type GroupKey, type SortKey } from './grouping'
 
 /** 空的会话列表常量：没拿到快照时共用一份，省得每帧新建数组。 */
 const NO_SESSIONS: readonly SessionSummary[] = Object.freeze([])
@@ -127,9 +130,20 @@ interface SidebarPrefs {
   aliases: Record<string, string>
   /** 各工作区分组的展开状态（cwd → 展开？），与旧界面同键持久化。 */
   expansion: Record<string, boolean>
+  /** 手动拖出来的工作区顺序（workspaceOrder）与组内会话顺序（sessionOrder）。 */
+  order: string[]
+  sessionOrder: Record<string, string[]>
 }
 
-const DEFAULT_PREFS: SidebarPrefs = { group: 'workspace', sort: 'recent', archived: 'hide', aliases: {}, expansion: {} }
+const DEFAULT_PREFS: SidebarPrefs = {
+  group: 'workspace',
+  sort: 'manual',
+  archived: 'hide',
+  aliases: {},
+  expansion: {},
+  order: [],
+  sessionOrder: {},
+}
 
 function SessionList() {
   const channel = useHostChannel()
@@ -160,6 +174,18 @@ function SessionList() {
   const [groupRenaming, setGroupRenaming] = useState<{ cwd: string; value: string } | null>(null)
   /** 正在改名的会话 id（右键菜单 / Ctrl+Alt+R 请求行内改名时置上）。 */
   const [renaming, setRenaming] = useState<string | null>(null)
+  /** 工作区行拖拽（旧界面 dragCwd / dropAt 同款）：源 cwd 与落点（哪一组、上半还是下半）。 */
+  const [dragCwd, setDragCwd] = useState<string | null>(null)
+  const [dropAt, setDropAt] = useState<{ cwd: string; after: boolean } | null>(null)
+  /** 会话行拖拽（manual 档、同一组、同一置顶块内互拖）。 */
+  const [sessDrag, setSessDrag] = useState<{
+    cwd: string
+    id: string
+    pinned: boolean
+    over: { id: string; half: 'before' | 'after' } | null
+  } | null>(null)
+  /** 刚拖完的那一下会带一次 click：短暂压住组行的展开/收起（旧界面 justDragged 同款）。 */
+  const justDragged = useRef(false)
 
   useEffect(() => {
     void channel.invoke('refreshSessions').catch((reason: unknown) => {
@@ -170,10 +196,13 @@ function SessionList() {
       .then((value) => {
         setPrefs({
           group: readEnum(value['sessionGroup'], ['workspace', 'tree', 'flat'] as const, 'workspace'),
-          sort: readEnum(value['sessionSort'], ['recent', 'created'] as const, 'recent'),
+          // 缺省档对齐宿主与旧界面：`manual`（宿主 prefs 的出厂值就是它）。
+          sort: readEnum(value['sessionSort'], ['manual', 'recent', 'created'] as const, 'manual'),
           archived: readEnum(value['archivedFilter'], ['hide', 'show', 'only'] as const, 'hide'),
           aliases: readStringRecord(value['workspaceAliases']),
           expansion: readRecord(value['sessionExpansion']),
+          order: readStringList(value['workspaceOrder']),
+          sessionOrder: readStringListRecord(value['sessionOrder']),
         })
       })
       .catch(() => undefined)
@@ -210,6 +239,8 @@ function SessionList() {
         if (patch.archived !== undefined) body['archivedFilter'] = patch.archived
         if (patch.aliases !== undefined) body['workspaceAliases'] = patch.aliases
         if (patch.expansion !== undefined) body['sessionExpansion'] = patch.expansion
+        if (patch.order !== undefined) body['workspaceOrder'] = patch.order
+        if (patch.sessionOrder !== undefined) body['sessionOrder'] = patch.sessionOrder
         await channel.invoke('setUiPrefs', [body])
       } catch (reason) {
         setPrefs((current) => ({ ...current, ...patchOfUndo(patch) }))
@@ -423,8 +454,10 @@ function SessionList() {
         archived: prefs.archived,
         trimmed,
         aliases: prefs.aliases,
+        order: prefs.order,
+        sessionOrder: prefs.sessionOrder,
       }),
-    [sessions, recentCwds, cwd, prefs.sort, prefs.group, prefs.archived, trimmed, prefs.aliases],
+    [sessions, recentCwds, cwd, prefs.sort, prefs.group, prefs.archived, trimmed, prefs.aliases, prefs.order, prefs.sessionOrder],
   )
   /** 单列表档：不分工作区，会话混成一条流（不设条数上限）。 */
   const flatSessions = useMemo(() => groups.flatMap((group) => group.sessions), [groups])
@@ -441,6 +474,116 @@ function SessionList() {
     return cwd
   }, [sessions, currentPath, cwd])
 
+  // ── 手动排序拖拽（旧界面 Sidebar.tsx 的同款语义）────────────────────────────
+
+  /** 把源工作区挪到落点之前/之后，其余保持当前视觉顺序（顺序没变就不写盘）。 */
+  const reorder = (source: string, target: string, after: boolean): void => {
+    const current = groups.map((item) => item.cwd)
+    const next = moveWithin(current, source, target, after)
+    if (next.join('\n') === current.join('\n')) return
+    patchPrefs({ order: next })
+  }
+
+  /** 拖到列表末尾的落点（「放到最后」）。 */
+  const dropAtEnd = (source: string): void => {
+    const current = groups.map((item) => item.cwd)
+    const next = moveToEnd(current, source)
+    if (next.join('\n') === current.join('\n')) return
+    patchPrefs({ order: next })
+  }
+
+  /** 一次工作区拖拽收尾：清掉指示线，并短暂压制紧随其后的 click（点一下组行会展开/收起）。 */
+  const endDrag = (): void => {
+    setDragCwd(null)
+    setDropAt(null)
+    justDragged.current = true
+    setTimeout(() => {
+      justDragged.current = false
+    }, 150)
+  }
+
+  /** 点工作区行 = 只切换它自己的展开/收起；刚拖完那一拍不触发。 */
+  const clickGroup = (key: string): void => {
+    if (justDragged.current) return
+    toggleGroup(key)
+  }
+
+  /** 会话行拖拽的行内落点（指针在行的上/下半段，旧界面同款）。 */
+  const sessRowHalf = (event: { clientY: number; currentTarget: HTMLElement }): 'before' | 'after' => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+  }
+
+  /**
+   * 会话行拖拽收尾：把来源会话插到落点之前/之后，保存这一组的完整会话顺序。
+   * 置顶块约束由拖拽侧保证（只允许同块目标），这里再按块校验一遍插入位，跨块的落点直接丢弃。
+   */
+  const commitSessDrag = (): void => {
+    const current = sessDrag
+    setSessDrag(null)
+    if (current === null || current.over === null) return
+    const { cwd: groupCwd, id: sourceId, pinned, over } = current
+    if (over.id === sourceId) return
+    const group = groups.find((item) => item.cwd === groupCwd)
+    if (group === undefined) return
+    const ordered = orderedSessions(groupCwd, group.sessions, prefs.sort, prefs.sessionOrder)
+    const full = ordered.map((session) => session.id)
+    const section = ordered.filter((session) => (session.pinnedAt !== undefined) === pinned)
+    const sourceIndex = section.findIndex((session) => session.id === sourceId)
+    if (sourceIndex === -1) return
+    const withoutSource = section.filter((session) => session.id !== sourceId)
+    const insertAt = withoutSource.findIndex((session) => session.id === over.id) + (over.half === 'after' ? 1 : 0)
+    if (insertAt === sourceIndex) return
+    const next = full.filter((id) => id !== sourceId)
+    const targetIndex = next.indexOf(over.id)
+    if (targetIndex === -1) return
+    next.splice(targetIndex + (over.half === 'after' ? 1 : 0), 0, sourceId)
+    patchPrefs({ sessionOrder: { ...prefs.sessionOrder, [groupCwd]: next } })
+  }
+
+  /**
+   * 一行会话的拖拽参数（manual 档才有）：归档行不拖；只有同组、同置顶块的行接落点
+   * （别的行不给 onDragOver，指针划过去不认——旧界面 dragCompatible 同款）。
+   */
+  const dragFor = (groupCwd: string, session: SessionSummary): {
+    enabled: boolean
+    mark: 'before' | 'after' | null
+    onStart: (event: DragEvent<HTMLDivElement>) => void
+    onOver?: (event: DragEvent<HTMLDivElement>) => void
+    onDrop?: (event: DragEvent<HTMLDivElement>) => void
+    onEnd: () => void
+  } => {
+    const compatible =
+      sessDrag !== null && sessDrag.cwd === groupCwd && sessDrag.pinned === (session.pinnedAt !== undefined)
+    return {
+      enabled: prefs.sort === 'manual' && session.archivedAt === undefined,
+      mark: sessDrag !== null && sessDrag.over !== null && sessDrag.over.id === session.id ? sessDrag.over.half : null,
+      onStart: (event: DragEvent<HTMLDivElement>) => {
+        event.dataTransfer.effectAllowed = 'move'
+        event.dataTransfer.setData('text/plain', session.id)
+        setSessDrag({ cwd: groupCwd, id: session.id, pinned: session.pinnedAt !== undefined, over: null })
+      },
+      onOver: compatible
+        ? (event: DragEvent<HTMLDivElement>) => {
+            event.preventDefault()
+            event.dataTransfer.dropEffect = 'move'
+            const half = sessRowHalf(event)
+            setSessDrag((current) =>
+              current === null || (current.over?.id === session.id && current.over.half === half)
+                ? current
+                : { ...current, over: { id: session.id, half } },
+            )
+          }
+        : undefined,
+      onDrop: compatible
+        ? (event: DragEvent<HTMLDivElement>) => {
+            event.preventDefault()
+            commitSessDrag()
+          }
+        : undefined,
+      onEnd: commitSessDrag,
+    }
+  }
 
   return (
     <>
@@ -613,26 +756,61 @@ function SessionList() {
             />
           ))
         ) : (
-          groups.map((group) => {
+          <>
+            {groups.map((group) => {
             const key = `w:${group.cwd}`
             const expanded = prefs.expansion[key] ?? isDefaultExpanded(key, cwd, prefs.group)
             const limit = trimmed !== '' ? Number.MAX_SAFE_INTEGER : (limits[key] ?? PREVIEW_COUNT)
             const visible = expanded ? group.sessions.slice(0, limit) : []
             const rest = group.sessions.length - visible.length
+            // 拖拽排序只属于「按工作区」这一档：树顺序由目录层级决定，单列表没有工作区行
+            const sortable = prefs.group === 'workspace' && groupRenaming === null
+            // 指示线画在整个工作区块的上沿或下沿，也就是两组之间
+            const drop =
+              dropAt !== null && dropAt.cwd === group.cwd && dragCwd !== group.cwd
+                ? dropAt.after
+                  ? ' drop-below'
+                  : ' drop-above'
+                : ''
             return (
-              <div key={group.cwd} className={`group depth-${Math.min(group.depth, 4)}`}>
+              <div key={group.cwd} className={`group depth-${Math.min(group.depth, 4)}${drop}`}>
                 <div
-                  className={`group-row${group.cwd === activeCwd ? ' active' : ''}`}
+                  className={`group-row${group.cwd === activeCwd ? ' active' : ''}${dragCwd === group.cwd ? ' dragging' : ''}`}
                   role="button"
                   tabIndex={0}
                   aria-expanded={expanded}
-                  data-tip={`${group.cwd} · ${group.sessions.length} 个会话，点击展开/收起`}
-                  onClick={() => toggleGroup(key)}
+                  data-tip={`${group.cwd} · ${group.sessions.length} 个会话，点击展开/收起${sortable ? '，拖动排序' : ''}`}
+                  draggable={sortable}
+                  onClick={() => clickGroup(key)}
                   onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
                     if (event.key !== 'Enter' && event.key !== ' ') return
                     event.preventDefault()
                     toggleGroup(key)
                   }}
+                  onDragStart={(event: DragEvent<HTMLDivElement>) => {
+                    event.dataTransfer.effectAllowed = 'move'
+                    event.dataTransfer.setData('text/plain', group.cwd)
+                    setDragCwd(group.cwd)
+                  }}
+                  onDragOver={(event: DragEvent<HTMLDivElement>) => {
+                    if (dragCwd === null || dragCwd === group.cwd) return
+                    event.preventDefault()
+                    event.dataTransfer.dropEffect = 'move'
+                    // 鼠标停在这一行的上半段就插到它前面，下半段就插到它后面
+                    const rect = event.currentTarget.getBoundingClientRect()
+                    const after = event.clientY > rect.top + rect.height / 2
+                    if (dropAt === null || dropAt.cwd !== group.cwd || dropAt.after !== after) {
+                      setDropAt({ cwd: group.cwd, after })
+                    }
+                  }}
+                  onDrop={(event: DragEvent<HTMLDivElement>) => {
+                    event.preventDefault()
+                    const source = event.dataTransfer.getData('text/plain') || dragCwd
+                    const after = dropAt !== null && dropAt.cwd === group.cwd ? dropAt.after : false
+                    if (source !== null && source !== '') reorder(source, group.cwd, after)
+                    endDrag()
+                  }}
+                  onDragEnd={endDrag}
                 >
                   <span className="folder-icon">
                     {expanded ? <IconFolderOpen size={15} /> : <IconFolder size={15} />}
@@ -719,6 +897,7 @@ function SessionList() {
                         state={states[session.id]}
                         current={currentPath !== null && session.id === currentPath}
                         renameRequest={renaming === session.id}
+                        drag={dragFor(group.cwd, session)}
                         onOpen={open}
                         onPin={(pinned) => run('setSessionPinned', [session.id, pinned])}
                         onArchive={() => archive(session.id, session.title ?? '新会话')}
@@ -752,7 +931,27 @@ function SessionList() {
                 ) : null}
               </div>
             )
-          })
+          })}
+            {/* 拖动时才对出现：整列表末尾的落点，保证「放到最后一个」永远有地方放 */}
+            {dragCwd !== null && prefs.group === 'workspace' && groups.length > 1 ? (
+              <div
+                className="drop-tail"
+                onDragOver={(event: DragEvent<HTMLDivElement>) => {
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'move'
+                  setDropAt(null)
+                }}
+                onDrop={(event: DragEvent<HTMLDivElement>) => {
+                  event.preventDefault()
+                  const source = event.dataTransfer.getData('text/plain') || dragCwd
+                  if (source !== null && source !== '') dropAtEnd(source)
+                  endDrag()
+                }}
+              >
+                放到最后
+              </div>
+            ) : null}
+          </>
         )}
       </div>
 
@@ -780,8 +979,9 @@ function SessionList() {
             <div className="menu-label">排序方式</div>
             {(
               [
+                ['manual', '手动排序', <IconSwap key="i" size={15} />],
                 ['recent', '最近更新', <IconClock key="i" size={15} />],
-                ['created', '创建时间', <IconClock key="i" size={15} />],
+                ['created', '创建时间', <IconCalendar key="i" size={15} />],
               ] as const
             ).map(([id, text, icon]) => (
               <MenuRadio key={id} active={prefs.sort === id} text={text} icon={icon} onPick={() => patchPrefs({ sort: id })} />
@@ -1133,6 +1333,21 @@ function readRecord(value: unknown): Record<string, boolean> {
   return out
 }
 
+/** 从字符串数组字段读一份列表（workspaceOrder）；线上不是数组就给空表。 */
+function readStringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item !== '') : []
+}
+
+/** 从「cwd → 字符串数组」字段读一份记录（sessionOrder）；形状不对的条目直接丢。 */
+function readStringListRecord(value: unknown): Record<string, string[]> {
+  if (typeof value !== 'object' || value === null) return {}
+  const out: Record<string, string[]> = {}
+  for (const [key, item] of Object.entries(value)) {
+    if (Array.isArray(item)) out[key] = readStringList(item)
+  }
+  return out
+}
+
 /**
  * 分组展开的默认态（与旧界面同一口径）：当前工作区的组展开，其余收起。
  * 显式写过的键（sessionExpansion 里有的）优先于这个默认。
@@ -1150,6 +1365,8 @@ function patchOfUndo(patch: Partial<SidebarPrefs>): Partial<SidebarPrefs> {
   if (patch.archived !== undefined) undo.archived = DEFAULT_PREFS.archived
   if (patch.aliases !== undefined) undo.aliases = DEFAULT_PREFS.aliases
   if (patch.expansion !== undefined) undo.expansion = DEFAULT_PREFS.expansion
+  if (patch.order !== undefined) undo.order = DEFAULT_PREFS.order
+  if (patch.sessionOrder !== undefined) undo.sessionOrder = DEFAULT_PREFS.sessionOrder
   return undo
 }
 
@@ -1159,6 +1376,7 @@ function SessionRow({
   state,
   current,
   renameRequest,
+  drag,
   onOpen,
   onPin,
   onArchive,
@@ -1173,6 +1391,15 @@ function SessionRow({
   current: boolean
   /** 外面（右键菜单 / 行级快捷键）请求进入改名：true 那一拍自动亮出输入框。 */
   renameRequest: boolean
+  /** 手动排序档的行拖拽（enabled + 落点标记 + 事件；单列表档不给这组参数）。 */
+  drag?: {
+    enabled: boolean
+    mark: 'before' | 'after' | null
+    onStart: (event: DragEvent<HTMLDivElement>) => void
+    onOver?: (event: DragEvent<HTMLDivElement>) => void
+    onDrop?: (event: DragEvent<HTMLDivElement>) => void
+    onEnd: () => void
+  }
   onOpen: (id?: string) => void
   onPin: (pinned: boolean) => void
   onArchive: () => void
@@ -1234,10 +1461,17 @@ function SessionRow({
 
   return (
     <div
-      className={`sess-item${current ? ' active' : ''}${archived ? ' archived' : ''}`}
+      className={`sess-item${current ? ' active' : ''}${archived ? ' archived' : ''}${
+        drag?.mark === 'before' ? ' drop-above' : ''
+      }${drag?.mark === 'after' ? ' drop-below' : ''}`}
       role="button"
       tabIndex={0}
       data-tip={`${title}；回车打开，右键更多操作`}
+      draggable={drag?.enabled === true}
+      onDragStart={drag?.enabled === true ? drag.onStart : undefined}
+      onDragOver={drag?.enabled === true ? drag.onOver : undefined}
+      onDrop={drag?.enabled === true ? drag.onDrop : undefined}
+      onDragEnd={drag?.enabled === true ? drag.onEnd : undefined}
       onClick={() => onOpen(session.id)}
       onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
         rowKeys(event)

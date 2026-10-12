@@ -766,3 +766,65 @@
 .settings-mask {
   -webkit-app-region: no-drag;
 }
+
+/* ══════════ 插件中心：第三方界面插件的信任卡（壳新增，legacy 里没有这一块）══════════ */
+
+/* 卡体复用 legacy 的 .plugin-row；这张卡比行多一层：展开的能力披露挂在行下面，
+   所以外面套一列容器（行仍是整行 flex）。 */
+.trust-card {
+  display: flex;
+  flex-direction: column;
+}
+.trust-disclosure {
+  margin: -4px 0 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-block);
+  background: var(--dsc-bg-raised);
+  color: var(--dsc-text-secondary);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.trust-disclosure ul {
+  margin: 6px 0 10px;
+  padding-left: 18px;
+}
+.trust-disclosure li {
+  margin: 2px 0;
+}
+.trust-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ══════════ 窄屏（手机浏览器：含「手机端 remote-web 切壳」后的形态）══════════ */
+
+/* 手机上的取舍（最小可用档：会话 / 阅读 / 审批 / 输入四件事拿全宽）：
+   - 停靠区（文件 / 预览 / 终端 / 变更）整块不给——它们是桌面形态（要鼠标与宽屏），
+     远程方法面上也没有这些能力；
+   - 侧栏展开态变成浮层（盖在正文上）：390px 宽的屏幕上，行内的 300px 侧栏会把
+     对话挤到不可读；收起态仍是行内的 56px 窄栏（壳画的导航还在）；
+   - 顶部那条窗口控件占位（caption-bar）是桌面窗口的，浏览器里只是一条空带。 */
+@media (max-width: 860px) {
+  .app {
+    position: relative;
+  }
+  .dock-slot {
+    display: none;
+  }
+  .caption-bar {
+    display: none;
+  }
+  .sidebar:not(.rail) {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 40;
+    max-width: 86vw;
+    box-shadow: 12px 0 40px rgba(0, 0, 0, 0.45);
+  }
+  .sidebar-resizer {
+    display: none;
+  }
+}
