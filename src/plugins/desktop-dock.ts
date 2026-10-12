@@ -2,8 +2,9 @@
  * desktop-dock 插件：为桌面端 dock 面板提供工作区文件系统与 git 能力
  * （renderer 经 DscRuntime.dock(op, payload) 透传调用）。
  *
- * 安全边界：路径限定在宿主 cwd 内（fs-read 文本 ≤512KB、图片 ≤5MB、PDF/XLSX 整读 ≤10MB、
- * 二进制扩展名不读内容）；git 全部 execFile 固定子命令 + safeArg 参数净化（拒绝选项注入），无 shell。
+ * 安全边界：路径限定在**当前会话的工作目录**内（fs-read 文本 ≤512KB、图片 ≤5MB、
+ * PDF/XLSX 整读 ≤10MB、二进制扩展名不读内容）；git 全部 execFile 固定子命令 +
+ * safeArg 参数净化（拒绝选项注入），无 shell。
  *
  * 三档（2026-10-10，见 `core/dock-ops.ts` 的对照表）：读类直接放行；**写类先过审批**
  * （与工具调用同一套裁决，权限模式对它同样成立）；终端那档**不进界面 HTTP 面**，
@@ -102,7 +103,30 @@ export const desktopDockPlugin: Plugin.Object = {
   name: 'desktop-dock',
   provide: 'dock',
   apply(ctx, config) {
-    const cwd = (config as { cwd?: string } | undefined)?.cwd ?? process.cwd()
+    /**
+     * 兜底工作目录：插件挂载时进程的启动目录。只在拿不到当前会话时用它
+     * （宿主刚起来还没有会话的极短窗口）。它不是主基准——见 {@link baseCwd}。
+     */
+    const fallbackCwd = (config as { cwd?: string } | undefined)?.cwd ?? process.cwd()
+
+    /**
+     * 本次请求的工作目录基准：**当前会话的 cwd**，取不到才落回启动目录。
+     *
+     * 为什么不用挂载时定死的 `process.cwd()`：常驻多会话模型下（0.6.48 起），
+     * 同一宿主进程里不同会话的 cwd 不同，进程 cwd 只是「宿主从哪启动的」。
+     * 拿启动目录当基准，用户切到别的工作区的会话后，文件树 / git / 终端会
+     * 继续指着那个目录（0.6.67 报障：文件管理显示的不是对应工作区的文件）。
+     * 沙箱的 `canWrite(path, cwd)` 早就用「会话工作目录随会话走」的口径，
+     * 这一份与它对齐；安全边界（`inside` 检查）仍然在，只是基准从进程目录
+     * 换成了会话目录——越界读写与从前一样被拒。
+     */
+    const baseCwd = (): string => {
+      const session = ctx.get('session') as
+        | { current(): { meta?: { cwd?: unknown } } }
+        | undefined
+      const cwd = session?.current().meta?.cwd
+      return typeof cwd === 'string' && cwd !== '' ? cwd : fallbackCwd
+    }
 
     // ---- 终端会话（管道模式：行缓冲输入由 renderer 负责，这里每行执行） ----
     const terms = new Map<string, ChildProcess>()
@@ -118,7 +142,11 @@ export const desktopDockPlugin: Plugin.Object = {
      *
      * 失败方向：**审批服务没起来就拒**——宁可这次点不动，也不要在没有闸门的情况下改仓库。
      */
-    const requireWriteApproval = async (op: DockWriteOp, payload: Record<string, unknown>): Promise<void> => {
+    const requireWriteApproval = async (
+      op: DockWriteOp,
+      payload: Record<string, unknown>,
+      cwd: string,
+    ): Promise<void> => {
       const approval = ctx.get('approval')
       if (approval === undefined) throw new Error(`写操作 ${op} 需要审批服务，但它没有起来`)
       const label = DOCK_WRITE_LABEL[op]
@@ -130,8 +158,10 @@ export const desktopDockPlugin: Plugin.Object = {
     }
 
     const handle = async (op: string, payload: Record<string, unknown>): Promise<unknown> => {
+      // 基准目录按「当前会话」现取：切会话后下一次读取就落到新工作区（终端/git 同理）。
+      const cwd = baseCwd()
       // 写类先过闸，再进 switch（闸门只挡写类，读类与终端不受影响）。
-      if (isDockWriteOp(op)) await requireWriteApproval(op, payload)
+      if (isDockWriteOp(op)) await requireWriteApproval(op, payload, cwd)
       switch (op) {
         // ---- 终端（管道模式；无 tty，交互式全屏程序不可用） ----
         case 'term-spawn': {
