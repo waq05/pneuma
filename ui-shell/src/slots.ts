@@ -17,10 +17,22 @@ import type { SlotKind } from '@dsc/ui-core'
 
 /** 槽名的常量表。 */
 export const SLOT = {
-  /** 顶栏右侧：状态小药丸、版本徽标之类，横着排。 */
+  /**
+   * 顶栏右侧：工作区打开组、开合钮这类**贴右缘**的操作，横着排。
+   *
+   * 「子智能体 / 智能体团队」不在这里——旧界面它们跟在标题后面（左簇），
+   * 与右侧的操作组隔着一根弹性填充；见 {@link headerLead}。
+   */
   header: 'shell.header',
+  /** 顶栏标题旁（左簇）：子智能体菜单、智能体团队钮。 */
+  headerLead: 'shell.header.lead',
   /** 左侧栏：会话列表这类「换主体」的东西。 */
   sidebar: 'shell.sidebar',
+  /**
+   * 主区整页（插件中心这类）：`shell.page` 的条目自己读 page-state 决定画不画。
+   * 有人顶上时壳不渲染 `thread-zone`（顶栏与正文都换成页自己的，旧界面同构）。
+   */
+  page: 'shell.page',
   /** 主区域：一张一张卡片。 */
   main: 'shell.main',
   /**
@@ -48,7 +60,9 @@ export const SLOT = {
 /** 界面壳声明的槽：名字 → 形态（键从 `SLOT` 取，值在这里定）。 */
 export const SHELL_SLOTS: Readonly<Record<string, SlotKind>> = {
   [SLOT.header]: 'list',
+  [SLOT.headerLead]: 'list',
   [SLOT.sidebar]: 'list',
+  [SLOT.page]: 'list',
   [SLOT.main]: 'list',
   [SLOT.composer]: 'list',
   [SLOT.statusbar]: 'list',

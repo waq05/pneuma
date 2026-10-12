@@ -25,8 +25,10 @@ import {
   IconArchiveOff,
   IconBranch,
   IconCheck,
+  IconChevronDown,
   IconClock,
   IconClose,
+  IconCode,
   IconCopy,
   IconEdit,
   IconFolder,
@@ -43,6 +45,7 @@ import {
   IconSort,
   IconStop,
   IconSwap,
+  IconTerminal,
   IconTriangleRightFill,
   IconTree,
 } from '@dsc/ui'
@@ -50,10 +53,12 @@ import {
   confirmAction,
   defineUiPlugin,
   getHostNative,
+  setShellPage,
   toastErr,
   toastOk,
   useHostChannel,
   useHostSelector,
+  useShellPage,
   type HostSnapshot,
   type SessionRunState,
   type SessionSummary,
@@ -73,6 +78,8 @@ const ARCHIVE_DETAIL_ONE =
 export default defineUiPlugin({
   name: '会话列表',
   apply(ui) {
+    // 顶栏的工作区打开组（旧界面同款：主钮开资源管理器，下拉里还有终端 / VS Code / 复制路径）。
+    ui.slots.register('shell.header', { id: 'sessions.workspace-open', order: 10 }, WorkspaceOpenGroup)
     // order 1：这一栏的主体，别的贡献排在它下面。
     ui.slots.register('shell.sidebar', { id: 'sessions.list', order: 1 }, SessionList)
   },
@@ -128,6 +135,8 @@ function SessionList() {
   const currentPath = useHostSelector(readCurrentPath)
   const loading = useHostSelector(readLoading)
   const cwd = useHostSelector(readCwd)
+  /** 主区是不是顶在插件页上（侧栏「插件」入口的点亮态与再点回退）。 */
+  const page = useShellPage()
   const [fault, setFault] = useState<string | null>(null)
   /** 正在挑"从哪条消息分叉"（null = 没在挑）。 */
   const [forking, setForking] = useState<{ id: string; messages: string[] } | null>(null)
@@ -341,7 +350,8 @@ function SessionList() {
         新会话
       </button>
 
-      {/* 技能/插件一级入口（旧界面侧栏同位）：壳里这两个都住设置面板，事件请它开门并跳过去。 */}
+      {/* 技能/插件一级入口（旧界面侧栏同位）：技能住设置面板（事件请它开门）；
+          插件是**主区独立整页**（旧界面同款），再点一次回对话页。 */}
       <nav className="sidebar-nav">
         <button
           type="button"
@@ -352,8 +362,11 @@ function SessionList() {
         </button>
         <button
           type="button"
-          className="nav-item"
-          onClick={() => window.dispatchEvent(new CustomEvent('shell.settings.open', { detail: { section: 'plugins' } }))}
+          className={`nav-item${page === 'plugins' ? ' on' : ''}`}
+          aria-pressed={page === 'plugins'}
+          onClick={() => {
+            setShellPage(page === 'plugins' ? null : 'plugins')
+          }}
         >
           <IconPuzzle size={15} /> 插件
         </button>
@@ -1237,5 +1250,122 @@ function AddWorkspaceButton(): ReactNode {
     >
       <IconPlus size={15} />
     </button>
+  )
+}
+
+/**
+ * 顶栏的「工作区打开组」（旧界面同款：文件夹主钮 + caret 下拉）：
+ * 主钮直接开文件资源管理器；下拉里还有终端 / VS Code / 复制路径——全走原生桥
+ * （`openWorkspace` 三个档 + clipboard），浏览器里没有桥就给一句说明。
+ */
+function WorkspaceOpenGroup(): ReactNode {
+  const cwd = useHostSelector(readCwd)
+  const native = getHostNative()
+  const [menuOpen, setMenuOpen] = useState(false)
+
+  const open = (kind: 'terminal' | 'explorer' | 'vscode'): void => {
+    setMenuOpen(false)
+    if (cwd === null) {
+      toastErr('还没有工作目录（先开一个会话或添加工作区）')
+      return
+    }
+    if (!native.available) {
+      toastErr('这条能力来自桌面外壳的原生桥，浏览器里没有它')
+      return
+    }
+    void native
+      .invoke<{ ok: boolean; error?: string }>('openWorkspace', [kind])
+      .then((result) => {
+        if (result !== null && typeof result === 'object' && result.ok === false) {
+          toastErr(`打开失败：${result.error ?? '宿主没说什么原因'}`)
+        }
+      })
+      .catch((reason: unknown) => {
+        toastErr(`打开失败：${reason instanceof Error ? reason.message : String(reason)}`)
+      })
+  }
+
+  const copyPath = (): void => {
+    setMenuOpen(false)
+    if (cwd === null) return
+    void navigator.clipboard.writeText(cwd).then(
+      () => {
+        toastOk('工作区路径已复制')
+      },
+      () => {
+        toastErr('复制失败，请手动选中')
+      },
+    )
+  }
+
+  return (
+    <div className="ws-open">
+      <button
+        type="button"
+        className="ws-open-main"
+        data-tip="在文件资源管理器中打开工作区"
+        aria-label="在文件资源管理器中打开工作区"
+        onClick={() => {
+          open('explorer')
+        }}
+      >
+        <IconFolderOpen size={15} />
+      </button>
+      <button
+        type="button"
+        className={`ws-open-caret${menuOpen ? ' on' : ''}`}
+        data-tip="更多打开方式"
+        aria-label="更多打开方式"
+        aria-expanded={menuOpen}
+        onClick={() => {
+          setMenuOpen((current) => !current)
+        }}
+      >
+        <IconChevronDown size={13} />
+      </button>
+      {menuOpen ? (
+        <>
+          <div
+            className="menu-backdrop"
+            onClick={() => {
+              setMenuOpen(false)
+            }}
+          />
+          <div className="row-menu ws-open-menu" role="menu">
+            <button
+              type="button"
+              className="menu-item"
+              onClick={() => {
+                open('terminal')
+              }}
+            >
+              <IconTerminal size={14} /> 在终端中打开
+            </button>
+            <button
+              type="button"
+              className="menu-item"
+              onClick={() => {
+                open('explorer')
+              }}
+            >
+              <IconFolderOpen size={14} /> 在文件资源管理器中打开
+            </button>
+            <button
+              type="button"
+              className="menu-item"
+              onClick={() => {
+                open('vscode')
+              }}
+            >
+              <IconCode size={14} /> 在 VS Code 中打开
+            </button>
+            <div className="menu-sep" />
+            <button type="button" className="menu-item" onClick={copyPath}>
+              <IconCopy size={14} /> 复制工作区路径
+            </button>
+          </div>
+        </>
+      ) : null}
+    </div>
   )
 }

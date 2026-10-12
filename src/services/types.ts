@@ -136,6 +136,12 @@ export interface LlmService {
   /** 校验并切换端点/模型；失败抛错（消息可直接展示）。 */
   setModel(provider: string, model: string): void
   /**
+   * 解析「[端点/]模型」引用：端点名做**最长前缀匹配**——模型 id 自己可能带斜杠
+   * （如 command 端点的 `deepseek/deepseek-v4.1-flash`），按首个斜杠切会把模型名切碎。
+   * 没带已知端点前缀时整串当当前端点的模型名（/model 直接打模型名的用法）。
+   */
+  parseModelRef(ref: string): { provider: string; model: string }
+  /**
    * 设置思考强度档位（off=关闭思考，low/high/max=开启思考）。
    * 当前模型没声明这一档时抛错（消息可直接展示），越界的旧档位会随模型切换退回「默认」。
    */

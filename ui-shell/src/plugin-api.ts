@@ -24,7 +24,15 @@ import type {
   UiSlotApi,
 } from '@dsc/ui-core'
 import { NATIVE_BRIDGE_VERSION, type NativeEvent, type NativeOp } from '@dsc/ui-core'
-import { dockPanel, subscribeDock } from './dock-state'
+import {
+  dockPanel,
+  dockPanels,
+  dockPreview,
+  subscribeDock,
+  type DockPanelMeta,
+  type DockPreview,
+} from './dock-state'
+import { shellPage, subscribePage } from './page-state'
 
 // 载体基元与槽名契约：终端壳的对应物在 `src/ui/tui-plugin-api.ts`。
 // 槽名两边导出同名常量——插件 import 它写注册目标，字符串字面量不散落。
@@ -232,19 +240,45 @@ export function onAppearanceRequest(listener: (patch: AppearancePatch) => void):
 /**
  * ── 停靠区（壳让位给面板的那一块）─────────────────────────────────────────────
  *
- * 插件这样用：在 `shell.header` 里放一颗开合钮（写状态），在 `shell.dock` 里放面板本身
- * （读状态自己决定画什么；收起时壳根本不渲染这个槽）。
+ * 插件这样用：`registerDockPanel` 给面板报名（头条照它画页签），面板本体注册在
+ * `shell.dock` 槽里、读 `useDockPanel()` 决定画不画（别的面板在前台时 `data-hidden` 藏）。
+ * 顶栏那颗总开合钮由壳画，插件不再各自画开合钮（旧界面同构）。
  */
-export { setDockPanel } from './dock-state'
+export { setDockPanel, lastDockPanel, registerDockPanel, setDockPreview } from './dock-state'
 
 /** 现在开着哪一块停靠面板（订阅式；`null` = 收起）。 */
 export function useDockPanel(): string | null {
   return useSyncExternalStore(subscribeDock, dockPanel, () => null)
 }
 
+/** 已报名的面板清单（壳的头条按它画页签；插件偶尔也要知道谁在）。 */
+export function useDockPanels(): readonly DockPanelMeta[] {
+  return useSyncExternalStore(subscribeDock, dockPanels, () => [])
+}
+
+/** 现在要预览哪一分文件（预览面板读；null = 还没点过）。 */
+export function useDockPreview(): DockPreview | null {
+  return useSyncExternalStore(subscribeDock, dockPreview, () => null)
+}
+
+/**
+ * ── 主区整页（插件中心这类「顶上来的整页」）────────────────────────────────────
+ *
+ * 页条目注册在 `shell.page` 槽里，自己读 `useShellPage()` 比对自己的 id：
+ * 不是自己就返回 null。侧栏入口（或页自己的返回钮）写 `setShellPage`。
+ */
+export { setShellPage } from './page-state'
+
+/** 现在顶在主区的是哪一页（订阅式；`null` = 对话页）。 */
+export function useShellPage(): string | null {
+  return useSyncExternalStore(subscribePage, shellPage, () => null)
+}
+
 /** 槽名常量表也从这里转出去：插件写 `SLOT.header` 比手打字符串不容易错。 */
 export { SLOT, type ShellSlot } from './slots'
 export { subscribeDock, dockPanel } from './dock-state'
+export type { DockPanelMeta, DockPreview } from './dock-state'
+export { subscribePage, shellPage } from './page-state'
 
 /**
  * ── 读一个 CSS 变量算出来的颜色 ─────────────────────────────────────────────────

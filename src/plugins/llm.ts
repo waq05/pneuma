@@ -178,6 +178,15 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
         ctx.session.current().appendState('model', { provider, model })
         ctx.emit('dsc/changed')
       },
+      parseModelRef(ref) {
+        // 长端点名优先：「command/deepseek/deepseek-v4.1-flash」必须命中 command，
+        // 而不是被前缀更短的「deepseek/」抢走（那会把模型名连斜杠一起切碎）。
+        const names = Object.keys(config.providers ?? {}).sort((a, b) => b.length - a.length)
+        for (const name of names) {
+          if (ref.startsWith(`${name}/`)) return { provider: name, model: ref.slice(name.length + 1) }
+        }
+        return { provider: currentProvider, model: ref }
+      },
       listModels(): ModelChoiceView[] {
         const choices: ModelChoiceView[] = []
         for (const provider of Object.values(config.providers)) {

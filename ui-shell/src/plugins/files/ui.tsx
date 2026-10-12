@@ -1,10 +1,13 @@
 /**
- * 内置插件：工作区文件树 + git 变更（停靠面板里的一块，页签切换）。
+ * 内置插件：工作区文件树 + git 变更（停靠区里的两块页签面板，头条由壳统一画）。
  *
  * 数据源是 dock 通道的**读类** op `fs-list`（阶段 5.2 起在界面通道放行面上，
  * 见 `src/core/dock-ops.ts` —— 读类直接放行，写类才要审批）。所以这一块在浏览器里
- * 也能用，与终端不同（终端要起进程，只走桌面窗口的原生桥）。「变更」页签走
+ * 也能用，与终端不同（终端要起进程，只走桌面窗口的原生桥）。「变更」面板走
  * `git-status` / `git-diff` 两个读类 op，见 changes.tsx。
+ *
+ * 点一个文件 → 交给**预览面板**整块显示（旧界面：dockOpenPreview 开 preview 页签；
+ * 预览本体在 preview 插件，交接走壳的 `setDockPreview`）。
  *
  * ## 与旧界面对齐的部分
  *
@@ -25,14 +28,22 @@
  * @module dsc-ui-shell/plugins/files
  */
 import { useEffect, useState, type ReactNode } from 'react'
-import { IconChevronDown, IconChevronRight, IconCode, IconFolder, IconFolderOpen, IconTerminal } from '@dsc/ui'
-import { defineUiPlugin, setDockPanel, useDockPanel, useHostChannel, type SlotComponentProps } from '@dsc/ui'
+import { IconChevronDown, IconChevronRight, IconCode, IconFolder, IconFolderOpen } from '@dsc/ui'
+import {
+  defineUiPlugin,
+  registerDockPanel,
+  setDockPanel,
+  setDockPreview,
+  useDockPanel,
+  useDockPreview,
+  useHostChannel,
+} from '@dsc/ui'
 import { ChangesPanel } from './changes'
 
-/** 这一块面板在停靠区里的 id。 */
+/** 文件树面板在停靠区里的 id（壳拿它决定同一时刻显示哪一块）。 */
 const PANEL = 'files'
-/** 本插件开出来的子槽：预览块由别的插件往这里放（见 preview 插件）。 */
-const PREVIEW_SLOT = 'files.preview'
+/** 变更面板的 id（同一插件的第二块面板：旧界面 dock 里它们也是两个页签）。 */
+const CHANGES_PANEL = 'changes'
 
 /** `fs-list` 回来的一个条目（宿主 `desktop-dock` 插件的形状）。 */
 interface Entry {
@@ -51,48 +62,26 @@ interface Listing {
 export default defineUiPlugin({
   name: '文件',
   apply(ui) {
-    ui.slots.register('shell.header', { id: 'files.toggle', order: 21 }, FilesToggle)
-    ui.slots.register(
-      'shell.dock',
-      { id: 'files.panel', order: 20, children: { [PREVIEW_SLOT]: 'list' } },
-      FilesPanel,
-    )
+    // 头条页签与开合钮由壳统一画（旧界面同构）——这里只报名两块面板、注册本体。
+    registerDockPanel({ id: PANEL, label: '文件', order: 20 })
+    registerDockPanel({ id: CHANGES_PANEL, label: '变更', order: 30 })
+    ui.slots.register('shell.dock', { id: 'files.panel', order: 20 }, FilesPanel)
+    ui.slots.register('shell.dock', { id: 'files.changes', order: 30 }, ChangesDock)
   },
 })
 
-/** 顶栏里的开合钮（与终端那颗并排；同一时刻只有一块面板显示）。 */
-function FilesToggle(): ReactNode {
-  const open = useDockPanel() === PANEL
-  return (
-    <button
-      type="button"
-      className={`icon-btn dock-toggle${open ? ' on' : ''}`}
-      title={open ? '收起文件面板' : '打开文件面板'}
-      aria-label="文件面板"
-      aria-pressed={open}
-      onClick={() => {
-        setDockPanel(open ? null : PANEL)
-      }}
-    >
-      <IconFolder size={16} />
-    </button>
-  )
-}
-
-/** 文件面板：页签切「文件树 / git 变更」，右边预览（预览那一块由子槽贡献者画）。
+/** 文件面板：工作区文件树。点一个文件交给预览面板显示（旧界面：开 preview 页签）。
  *
  * 保活对齐桌面端：面板永远渲染，被顶替或收起时 `data-hidden` 藏——已展开的目录、
- * 选中与页签状态都活着（旧界面的 files-tree-store 在壳里的对等物）。 */
-function FilesPanel({ renderSlot }: SlotComponentProps): ReactNode {
+ * 滚动位都活着（旧界面的 files-tree-store 在壳里的对等物）。 */
+function FilesPanel(): ReactNode {
   const active = useDockPanel() === PANEL
+  const preview = useDockPreview()
   const channel = useHostChannel()
-  /** 页签：文件树 / git 变更（变更那块在 changes.tsx，只读）。 */
-  const [tab, setTab] = useState<'files' | 'changes'>('files')
   const [root, setRoot] = useState<Listing | null>(null)
   /** 已展开的目录 → 它的清单（懒加载：展开才取）。 */
   const [dirs, setDirs] = useState<Record<string, Entry[]>>({})
   const [open, setOpen] = useState<readonly string[]>([])
-  const [picked, setPicked] = useState('')
   const [note, setNote] = useState('')
 
   // 根清单只在面板第一次真正打开时取（收起时不发请求）。
@@ -137,13 +126,18 @@ function FilesPanel({ renderSlot }: SlotComponentProps): ReactNode {
       const row = (
         <button
           type="button"
-          className={`file-row${picked === path ? ' on' : ''}`}
+          className={`file-row${preview?.path === path ? ' on' : ''}`}
           key={path}
           style={{ paddingLeft: 8 + depth * 18 }}
           title={entry.dir ? path : `${path}（${formatSize(entry.size)}）`}
           onClick={() => {
-            if (entry.dir) toggleDir(path)
-            else setPicked(path)
+            if (entry.dir) {
+              toggleDir(path)
+              return
+            }
+            // 点文件 → 切到预览面板整块显示它（旧界面：dockOpenPreview 开 preview 页签）。
+            setDockPreview({ path, cwd: root?.cwd ?? '' })
+            setDockPanel('preview')
           }}
         >
           <span className="file-icon">{entry.dir ? chevron(open.includes(path)) : <IconCode size={14} />}</span>
@@ -159,62 +153,31 @@ function FilesPanel({ renderSlot }: SlotComponentProps): ReactNode {
 
   return (
     <aside className="dock" style={{ width: '100%' }} data-hidden={active ? undefined : '1'}>
-      <div className="dock-strip">
-        <button
-          type="button"
-          className={`shell-tab${tab === 'files' ? ' on' : ''}`}
-          aria-pressed={tab === 'files'}
-          onClick={() => {
-            setTab('files')
-          }}
-        >
-          文件
-        </button>
-        <button
-          type="button"
-          className={`shell-tab${tab === 'changes' ? ' on' : ''}`}
-          aria-pressed={tab === 'changes'}
-          onClick={() => {
-            setTab('changes')
-          }}
-        >
-          变更
-        </button>
-        <span className="dock-strip-fill" />
-        <button
-          type="button"
-          className="icon-btn"
-          title="收起文件面板"
-          aria-label="收起文件面板"
-          onClick={() => {
-            setDockPanel(null)
-          }}
-        >
-          <IconChevronRight size={15} />
-        </button>
-      </div>
       <div className="dock-body">
-        {tab === 'files' ? (
-          <div className="files-pane">
-            <div className="files-bar">
-              <span className="files-cwd" title={root?.cwd ?? ''}>
-                {root === null ? '加载中…' : root.cwd}
-              </span>
-            </div>
-            <div className="files-list">
-              {note === '' ? null : <div className="tree-note">{note}</div>}
-              {root === null ? null : rowsOf(root.cwd, root.entries, 0)}
-              {root !== null && root.truncated ? <div className="tree-note">这个目录太长，只列了前一批</div> : null}
-            </div>
-            {picked === '' ? (
-              <div className="file-preview-empty">点左边一个文件看内容</div>
-            ) : (
-              <div className="shell-files-preview">{renderSlot(PREVIEW_SLOT, { path: picked, cwd: root?.cwd ?? '' })}</div>
-            )}
+        <div className="files-pane">
+          <div className="files-bar">
+            <span className="files-cwd" title={root?.cwd ?? ''}>
+              {root === null ? '加载中…' : root.cwd}
+            </span>
           </div>
-        ) : (
-          <ChangesPanel />
-        )}
+          <div className="files-list">
+            {note === '' ? null : <div className="tree-note">{note}</div>}
+            {root === null ? null : rowsOf(root.cwd, root.entries, 0)}
+            {root !== null && root.truncated ? <div className="tree-note">这个目录太长，只列了前一批</div> : null}
+          </div>
+        </div>
+      </div>
+    </aside>
+  )
+}
+
+/** 变更面板（本插件的第二块 dock 面板）：git 状态 + 提交历史（变更那块在 changes.tsx）。 */
+function ChangesDock(): ReactNode {
+  const active = useDockPanel() === CHANGES_PANEL
+  return (
+    <aside className="dock" style={{ width: '100%' }} data-hidden={active ? undefined : '1'}>
+      <div className="dock-body">
+        <ChangesPanel />
       </div>
     </aside>
   )

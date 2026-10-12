@@ -178,19 +178,22 @@ export function TurnFoldRow(props: {
   )
 }
 
-/** 一次折叠开合的记忆（`fold-state.ts` 的对等物）：整轮折叠的用户手动开合按轮记。 */
+/** 一次折叠开合的记忆（`fold-state.ts` 的对等物）：整轮折叠的用户手动开合按轮记。
+ *
+ * map 存的是「**手动展开**」标记（存在=true）。默认收起是空表——「收起」不需要记，
+ * 记展开就够（旧界面的 fold-state 也是这个语义：没有存档 = 按默认态走）。 */
 export function useTurnFoldMemory(): {
   isOpen(roundIndex: number): boolean
   set(roundIndex: number, open: boolean): void
 } {
   const [state, setState] = useState<Map<number, boolean>>(() => new Map())
   return {
-    isOpen: (roundIndex) => state.get(roundIndex) ?? false,
+    isOpen: (roundIndex) => state.get(roundIndex) === true,
     set: (roundIndex, open) => {
       setState((current) => {
         const next = new Map(current)
-        if (open) next.delete(roundIndex)
-        else next.set(roundIndex, true)
+        if (open) next.set(roundIndex, true)
+        else next.delete(roundIndex)
         return next
       })
     },

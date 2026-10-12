@@ -39,7 +39,6 @@ import {
   IconInfo,
   IconLayers,
   IconPhone,
-  IconPuzzle,
   IconSpark,
 } from '@dsc/ui'
 import {
@@ -86,7 +85,6 @@ function sectionIcon(id: string): ReactNode {
   if (id === 'usage') return <IconChart size={size} />
   if (id === 'remote') return <IconPhone size={size} />
   if (id === 'about') return <IconInfo size={size} />
-  if (id === 'plugins') return <IconPuzzle size={size} />
   return <IconGear size={size} />
 }
 
@@ -102,29 +100,11 @@ function setSettingsOpen(next: boolean): void {
 export default defineUiPlugin({
   name: '设置',
   apply(ui) {
-    ui.slots.register('shell.header', { id: 'settings.open', order: 30 }, SettingsButton)
+    // 只有面板：齿轮钮在旧界面顶栏并不存在（设置入口在侧栏底部），壳里对齐旧界面——
+    // 展开侧栏时走底部「设置」行，收起后 Ctrl+B 展开即可。
     ui.slots.register('shell.header', { id: 'settings.panel', order: 31 }, SettingsPanel)
   },
 })
-
-/** 顶栏那颗齿轮。 */
-function SettingsButton(): ReactNode {
-  const open = useSettingsOpen()
-  return (
-    <button
-      type="button"
-      className={`icon-btn${open ? ' on' : ''}`}
-      title="设置"
-      aria-label="设置"
-      aria-pressed={open}
-      onClick={() => {
-        setSettingsOpen(!open)
-      }}
-    >
-      <IconGear size={16} />
-    </button>
-  )
-}
 
 /** 面板本体：遮罩 + 左导航 + 右分区。导航项与字段表都来自宿主。 */
 function SettingsPanel(): ReactNode {
@@ -173,7 +153,7 @@ function SettingsPanel(): ReactNode {
         if (!alive) return
         const list = all.filter((section) => section.builtin)
         setSections(list)
-        setActive((current) => (list.some((item) => item.id === current) ? current : (list[0]?.id ?? 'plugins')))
+        setActive((current) => (list.some((item) => item.id === current) ? current : (list[0]?.id ?? '')))
       })
       .catch((error: unknown) => {
         if (!alive) return
@@ -187,11 +167,13 @@ function SettingsPanel(): ReactNode {
 
   if (!open) return null
 
-  // 导航 = 宿主内置分区（按 order 排好序，宿主已排）+ 壳自己那项「插件」。
-  const nav: NavItem[] = [
-    ...(sections ?? []).map((section) => ({ id: section.id, title: section.title, subtitle: section.subtitle })),
-    { id: 'plugins', title: '插件', subtitle: '插件的来源与启停（壳把旧界的插件中心并进了设置）' },
-  ]
+  // 导航 = 宿主内置分区（按 order 排好序，宿主已排）。插件启停不在这里：它是
+  // 主区的独立整页（侧栏「插件」入口），旧界面同款——设置里不再有合成的插件分区。
+  const nav: NavItem[] = (sections ?? []).map((section) => ({
+    id: section.id,
+    title: section.title,
+    subtitle: section.subtitle,
+  }))
   const section = (sections ?? []).find((item) => item.id === active)
   const head = nav.find((item) => item.id === active)
 
@@ -246,8 +228,6 @@ function SettingsPanel(): ReactNode {
           <div className="settings-body">
             {active === '' ? (
               <div className="settings-empty">{loadError === '' ? '正在读取分区…' : `分区加载失败：${loadError}`}</div>
-            ) : active === 'plugins' ? (
-              <PluginsGroup />
             ) : section === undefined ? (
               <div className="settings-empty">分区加载失败：{loadError === '' ? '未知分区' : loadError}</div>
             ) : section.custom ? (
@@ -778,16 +758,6 @@ interface SkillRow {
   toggleable?: boolean
 }
 
-/** 插件条目（宿主 `listPlugins` 的形状）。 */
-interface PluginRow {
-  file: string
-  name: string
-  description: string
-  enabled: boolean
-  source: 'builtin' | 'external'
-  toggleable: boolean
-}
-
 /** 技能：列出来 + 拨开关（`setSkillEnabled` 真的生效，重启宿主后仍是那个状态）。 */
 function SkillsGroup(): ReactNode {
   const channel = useHostChannel()
@@ -855,69 +825,7 @@ function SkillsGroup(): ReactNode {
   )
 }
 
-/** 插件：列出来 + 启停（内置不可停用的那几档画成说明，不给假开关）。 */
-function PluginsGroup(): ReactNode {
-  const channel = useHostChannel()
-  const [rows, setRows] = useState<PluginRow[] | null>(null)
-  const [note, setNote] = useState('')
-
-  useEffect(() => {
-    let alive = true
-    void channel
-      .invoke<PluginRow[]>('listPlugins')
-      .then((list) => {
-        if (alive) setRows(list)
-      })
-      .catch((error: unknown) => {
-        if (alive) setNote(`读插件失败：${text(error)}`)
-      })
-    return () => {
-      alive = false
-    }
-  }, [channel])
-
-  const toggle = (row: PluginRow): void => {
-    setRows((current) => current?.map((item) => (item.file === row.file ? { ...item, enabled: !item.enabled } : item)) ?? null)
-    void channel.invoke('setPluginEnabled', [row.file, !row.enabled]).catch((error: unknown) => {
-      setRows((current) => current?.map((item) => (item.file === row.file ? { ...item, enabled: row.enabled } : item)) ?? null)
-      setNote(`没改成功：${text(error)}`)
-    })
-  }
-
-  if (rows === null) return <div className="settings-empty">{note === '' ? '正在读插件…' : note}</div>
-  return (
-    <div>
-      {rows.map((row) => (
-        <div className="setting-row" key={row.file}>
-          <div className="setting-text">
-            <div className="setting-label">{row.name}</div>
-            <div className="setting-help">{row.description === '' ? row.file : row.description}</div>
-          </div>
-          <div className="setting-control">
-            {row.toggleable ? (
-              <button
-                type="button"
-                className={`switch${row.enabled ? ' on' : ''}`}
-                role="switch"
-                aria-checked={row.enabled}
-                aria-label={`${row.name} 开关`}
-                onClick={() => {
-                  toggle(row)
-                }}
-              />
-            ) : (
-              <span className="settings-note">内核插件，不可停用</span>
-            )}
-          </div>
-        </div>
-      ))}
-      <div className="settings-note">
-        装插件同样不在界面里做（与装技能同一个理由）。停用插件立刻生效，重启宿主后仍是那个状态。
-      </div>
-      {note === '' ? null : <div className="settings-note error">{note}</div>}
-    </div>
-  )
-}
+/** 插件启停不住设置里：主区有独立整页（`plugins` 插件复制旧界面 PluginsView）。 */
 
 /**
  * 结构化分区（`custom`）里，壳这一版还没手画的那几个：说清**为什么没有**、**去哪做**，

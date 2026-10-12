@@ -177,11 +177,13 @@ async function adoptUiServer(info: { url: string; origin: string }): Promise<voi
   void window.loadURL(desktopPageUrl())
 }
 
-/** 窗口该加载的地址：带自检查询参数（demo / search）的那一份。 */
+/** 窗口该加载的地址：带自检查询参数（demo / search / ui-query）的那一份。 */
 function desktopPageUrl(): string {
   const query = [
     process.env.DSC_DESKTOP_DEMO === '1' ? 'demo=1' : '',
     process.env.DSC_DESKTOP_SEARCH ?? '',
+    // 自检要看的壳侧参数（例如 diag=1 让诊断区常显——它的 DOM 是自检的读数面）。
+    process.env.DSC_UI_QUERY ?? '',
   ]
     .filter((part) => part !== '')
     .join('&')
@@ -820,11 +822,13 @@ function createWindow(): void {
     })
   }
 
-  // 自检参数：DSC_DESKTOP_DEMO=1 自动跑一轮真实对话；DSC_DESKTOP_SEARCH 直接打开某个界面
+  // 自检参数：DSC_DESKTOP_DEMO=1 自动跑一轮真实对话；DSC_DESKTOP_SEARCH 直接打开某个界面；
+  // DSC_UI_QUERY 透传给壳（例如 diag=1）。
   const devServerUrl = process.env.ELECTRON_RENDERER_URL
   const query = [
     process.env.DSC_DESKTOP_DEMO === '1' ? 'demo=1' : '',
     process.env.DSC_DESKTOP_SEARCH ?? '',
+    process.env.DSC_UI_QUERY ?? '',
   ]
     .filter((part) => part !== '')
     .join('&')

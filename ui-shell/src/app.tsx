@@ -16,12 +16,12 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import type { UiBootGraph, UiPluginLoadReport } from '@dsc/ui-core'
 import { NATIVE_BRIDGE_VERSION, NATIVE_OPS } from '@dsc/ui-core'
-import { IconSidebar } from './icons'
+import { IconChevronRight, IconSidebar } from './icons'
 import { ALLOWED_MODULES } from './boot'
 import { useChannelStatus, useHostError, useHostHello, useHostSelector } from './runtime-context'
 import { SlotOutlet, useSlotFaults } from './slots-react'
 import { SLOT } from './slots'
-import { getHostNative, setDockPanel, useDockPanel, type UiSlots } from './plugin-api'
+import { getHostNative, lastDockPanel, setDockPanel, useDockPanel, useDockPanels, useShellPage, type UiSlots } from './plugin-api'
 import { ThreadResizer } from './platform/thread-resizer'
 import {
   DOCK_DEFAULT_WIDTH,
@@ -52,6 +52,8 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
   const failed = reports.filter((report) => !report.ok)
   const dockPanel = useDockPanel()
   const dockOn = dockPanel !== null
+  // 主区整页（插件中心这类）：非 null 时顶栏与正文整块换成那一页（旧界面同构）。
+  const page = useShellPage()
   // 空会话走 `.thread-main-empty`：欢迎文案与输入框垂直居中成一组（legacy 现成规则）。
   const hasEntries = useHostSelector(readHasEntries)
 
@@ -190,62 +192,75 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
 
         <div className="main">
           {/* 窗口控件条占位（旧界面同一行）：最小化/最大化/关闭画在窗口右上，
-              顶栏的内容从这行**下面**开始，不会被原生控件盖住。 */}
+              顶栏的内容从这行**下面**开始，不会被原生控件盖住。整页模式也保留。 */}
           <div className="caption-bar" aria-hidden="true" />
-          <div className="topbar">
-            <div className="topbar-title-row">
-              {sidebarCollapsed ? (
-                <button
-                  type="button"
-                  className="icon-btn"
-                  title="展开侧栏（Ctrl+B）"
-                  aria-label="展开侧栏"
-                  onClick={toggleSidebar}
-                >
-                  <IconSidebar size={16} />
-                </button>
-              ) : null}
-              <span className="title">
-                <SessionTitle />
-              </span>
-              <div className="drag-fill" />
-              <SlotOutlet slots={slots} slot={SLOT.header} />
-              <span className="shell-build" data-boot-rev={boot.rev}>
-                {boot.host.version}
-              </span>
-            </div>
-          </div>
-
-          <HostErrorStrip />
-
-          <div className="thread-zone" {...(dockOn ? { 'data-dock': '1' } : {})}>
-            <div className={hasEntries ? 'thread-main' : 'thread-main thread-main-empty'}>
-              <div className="chat-wrap">
-                <div className="chat">
-                  <div className="chat-inner">
-                    <SlotOutlet slots={slots} slot={SLOT.main} />
+          {page === null ? (
+            <>
+              <div className="topbar">
+                <div className="topbar-title-row">
+                  {sidebarCollapsed ? (
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      title="展开侧栏（Ctrl+B）"
+                      aria-label="展开侧栏"
+                      onClick={toggleSidebar}
+                    >
+                      <IconSidebar size={16} />
+                    </button>
+                  ) : null}
+                  <span className="title">
+                    <SessionTitle />
+                  </span>
+                  {/* 左簇：子智能体、智能体团队——旧界面它们跟在标题后面，与右侧的操作组隔一根弹性填充 */}
+                  <div className="topbar-cluster">
+                    <SlotOutlet slots={slots} slot={SLOT.headerLead} />
                   </div>
+                  <div className="drag-fill" />
+                  {/* 右簇：工作区打开组（在资源管理器打开 + 更多打开方式） */}
+                  <SlotOutlet slots={slots} slot={SLOT.header} />
+                  {/* 工作区面板开合钮：只在收起时出现（展开时由面板头条尾的收起钮管） */}
+                  <DockToggle />
                 </div>
               </div>
-              <div className="composer-zone">
-                <SlotOutlet slots={slots} slot={SLOT.composer} />
+
+              <HostErrorStrip />
+
+              <div className="thread-zone" {...(dockOn ? { 'data-dock': '1' } : {})}>
+                <div className={hasEntries ? 'thread-main' : 'thread-main thread-main-empty'}>
+                  <div className="chat-wrap">
+                    <div className="chat">
+                      <div className="chat-inner">
+                        <SlotOutlet slots={slots} slot={SLOT.main} />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="composer-zone">
+                    <SlotOutlet slots={slots} slot={SLOT.composer} />
+                  </div>
+                </div>
+                <ThreadResizer width={threadWidth} onCommit={commitThreadWidth} onReset={resetThreadWidth} />
+                {/* 停靠面板：**常驻渲染**（对齐桌面端「收起=滑出右缘不卸载」——终端进程、
+                    文件树滚动位都活着），收起时用 CSS 藏掉、不在布局里占位。
+                    头条（页签 + 收起钮）由壳画：页签来自面板注册表，旧界面 dock 同构。 */}
+                <div className="dock-slot" data-open={dockOn ? '1' : '0'} aria-hidden={dockOn ? undefined : 'true'}>
+                  {dockOn ? (
+                    <div
+                      className="dock-resizer"
+                      data-tip="拖拽调整面板宽度，双击复位"
+                      onMouseDown={startDockResize}
+                      onDoubleClick={() => commitDockWidth(DOCK_DEFAULT_WIDTH)}
+                    />
+                  ) : null}
+                  {dockOn ? <DockTabs /> : null}
+                  <SlotOutlet slots={slots} slot={SLOT.dock} />
+                </div>
               </div>
-            </div>
-            <ThreadResizer width={threadWidth} onCommit={commitThreadWidth} onReset={resetThreadWidth} />
-            {/* 停靠面板：**常驻渲染**（对齐桌面端「收起=滑出右缘不卸载」——终端进程、
-                文件树滚动位都活着），收起时用 CSS 藏掉、不在布局里占位。 */}
-            <div className="dock-slot" data-open={dockOn ? '1' : '0'} aria-hidden={dockOn ? undefined : 'true'}>
-              {dockOn ? (
-                <div
-                  className="dock-resizer"
-                  data-tip="拖拽调整面板宽度，双击复位"
-                  onMouseDown={startDockResize}
-                  onDoubleClick={() => commitDockWidth(DOCK_DEFAULT_WIDTH)}
-                />
-              ) : null}
-              <SlotOutlet slots={slots} slot={SLOT.dock} />
-            </div>
-          </div>
+            </>
+          ) : (
+            // 整页模式（插件中心这类）：顶栏与正文整块换成页自己的，状态栏照旧占底部。
+            <SlotOutlet slots={slots} slot={SLOT.page} />
+          )}
 
           <div className="statusbar">
             <SlotOutlet slots={slots} slot={SLOT.statusbar} />
@@ -267,6 +282,61 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
 function SessionTitle(): ReactNode {
   const title = useHostSelector(readSessionTitle)
   return <>{title}</>
+}
+
+/** 顶栏的「工作区面板」开合钮：只在收起时出现（旧界面同款——展开时由面板头条尾的
+ *  收起钮管，同一颗钮不该出现两处）。点开回到上次看的面板，没开过就默认文件。 */
+function DockToggle(): ReactNode {
+  const open = useDockPanel() !== null
+  if (open) return null
+  return (
+    <button
+      type="button"
+      className="icon-btn dock-toggle"
+      title="工作区面板：文件、变更、终端与预览"
+      aria-label="工作区面板"
+      onClick={() => {
+        setDockPanel(lastDockPanel())
+      }}
+    >
+      <IconSidebar size={15} />
+    </button>
+  )
+}
+
+/** 停靠区头条：页签（按面板注册表画，小的在左）+ 收起钮（旧界面 dock 同构）。 */
+function DockTabs(): ReactNode {
+  const panels = useDockPanels()
+  const active = useDockPanel()
+  return (
+    <div className="dock-strip">
+      {panels.map((panel) => (
+        <button
+          key={panel.id}
+          type="button"
+          className={`dock-chip${panel.id === active ? ' on' : ''}`}
+          aria-pressed={panel.id === active}
+          onClick={() => {
+            setDockPanel(panel.id)
+          }}
+        >
+          {panel.label}
+        </button>
+      ))}
+      <span className="dock-strip-fill" />
+      <button
+        type="button"
+        className="icon-btn"
+        title="收起面板"
+        aria-label="收起面板"
+        onClick={() => {
+          setDockPanel(null)
+        }}
+      >
+        <IconChevronRight size={15} />
+      </button>
+    </div>
+  )
 }
 
 /**
@@ -333,7 +403,7 @@ function Diagnostics({
   const probe = useNativeProbe()
   if (!forced && failed === 0 && faults.length === 0) return null
   return (
-    <details className="diagnostics" open={failed > 0 || faults.length > 0}>
+    <details className="diagnostics">
       <summary>
         诊断（{reports.length} 个插件 / {slots.slots.length} 个槽
         {faults.length === 0 ? '' : ` / ${String(faults.length)} 处故障`}）

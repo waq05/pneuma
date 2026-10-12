@@ -77,10 +77,17 @@
   padding: 6px 16px;
 }
 
+/* 顶栏左簇（子智能体 / 智能体团队）：`display: contents` 让槽包装层不生成盒子，
+   槽条目就等于直接排进 `.topbar-title-row` 这条 flex 行（与别处槽包装同一招）。 */
+.topbar-cluster {
+  display: contents;
+}
+
 /* ── 诊断面板（壳自己的工具，旧界面没有对应物）────────────────────────────────
  *
- * 为什么固定在右下角：它是开发期工具，不该占用正文的布局位置，也不该把
- * `.app` 那条 flex 行撑出第三列。 */
+ * 为什么固定在**左下角（错开侧栏）**：它是开发期工具，不该占用正文的布局位置。
+ * 旧位置在右下，展开时从下往上长会盖住居中的输入区（用户反馈「点了一下诊断，
+ * 输入框直接没了」）；输入区在版心正中，左下角（侧栏右缘之后）是重叠最少的位置。 */
 .diagnostics {
   background: var(--dsc-bg-card);
   border: 1px solid var(--dsc-stroke-3);
@@ -89,12 +96,12 @@
   box-shadow: var(--dsc-shadow-md);
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-caption);
+  left: calc(var(--dsc-sidebar-w, 260px) + 12px);
   max-height: 40vh;
   max-width: 460px;
   overflow: auto;
   padding: 8px 10px;
   position: fixed;
-  right: 10px;
   z-index: var(--dsc-z-menu);
 }
 .diagnostics summary {
@@ -574,17 +581,8 @@
   font-size: var(--dsc-fs-micro);
   font-variant-numeric: tabular-nums;
 }
-/* 预览区：`.files-pane` 是纵向 flex，预览占下半（旧界面里两者是页签/分栏，这一版上下排）。 */
-.shell-files-preview {
-  border-top: 1px solid var(--dsc-stroke-4);
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-height: 0;
-}
 /* 纯文本预览的行号列（legacy 的 `.file-code-body .line::before` 是给 shiki 用的，
-   这一版没有 shiki，行号由 JSX 画成 `.file-line-no`）。 */
-.file-line-no {
+   这一版没有 shiki，行号由 JSX 画成 `.file-line-no`）。 */.file-line-no {
   color: var(--dsc-text-quaternary);
   flex: none;
   padding-right: 10px;
@@ -694,49 +692,11 @@
   border-top: 1px solid var(--dsc-stroke-4);
 }
 
-/* ── 智能体团队浮层（壳自补块；桌面的 .team-row/.tm-* 在 legacy 里，浮层壳是新画）── */
-.team-pop {
-  position: fixed;
-  inset: 0;
-  z-index: var(--dsc-z-modal, 100);
-}
-.team-pop-card {
-  background: var(--dsc-bg-raised);
-  border: 1px solid var(--dsc-stroke-3);
-  border-radius: var(--dsc-r-block);
-  display: flex;
-  flex-direction: column;
-  left: 50%;
-  max-height: 70vh;
-  max-width: min(720px, 92vw);
-  min-width: 480px;
-  overflow: hidden;
-  position: absolute;
-  top: 64px;
-  transform: translateX(-50%);
-}
-.team-pop-head {
-  align-items: center;
-  border-bottom: 1px solid var(--dsc-stroke-4);
-  display: flex;
-  font-size: var(--dsc-fs-ui);
-  gap: 8px;
-  justify-content: space-between;
-  padding: 8px 12px;
-}
+/* 团队面板的名单容器：legacy 的 .team-list 管 flex 排布，这里补内滚与间距
+   （旧界面名单自己就是面板里的滚动区）。 */
 .team-list {
   overflow-y: auto;
   padding: 6px;
-}
-.team-empty {
-  color: var(--dsc-text-tertiary);
-  font-size: var(--dsc-fs-caption);
-  padding: 20px 16px;
-  text-align: center;
-}
-.team-pop .pop-mask {
-  position: absolute;
-  inset: 0;
 }
 .peek-flow {
   overflow-y: auto;
@@ -766,20 +726,30 @@
 
 /* ── 布局对齐第二轮（对照旧界面截图逐项修）────────────────────────────── */
 
-/* 空会话整组垂直居中：旧界面的 welcome 与 composer 是 .thread-main-empty 的直接子项
-   （margin:auto 一夹就居中）；壳的 welcome 在 chat-wrap>chat>chat-inner 三层深处，
-   那三层得自己变成 flex 纵链，margin:auto 才有 flex 上下文可用。 */
-.thread-main-empty .chat-wrap,
+/* 空会话整组垂直居中（对照 legacy 的 .thread-main-empty 三条规则）：旧界面 welcome 与
+   composer 是 .thread-main-empty 的直接子项，「上边距 auto + 下边距 auto」一夹就整组居中；
+   壳的 welcome 在 chat-wrap>chat>chat-inner 三层深处，上推边距被埋在一层没有富余空间的
+   容器里——把上推搬到最外层 chat-wrap（配对 legacy 里 .composer-zone 的 margin-bottom:auto）。
+   注意 chat-wrap 不能 flex:1：那会把剩余空间全吃掉，下推边距落空，整组贴底。 */
+.thread-main-empty .chat-wrap {
+  display: flex;
+  /* legacy 的 .chat-wrap 基础规则是 flex:1（非空态把 composer 顶到底用的）；
+     空态要让它按内容高站住，剩余空间才轮到上下两个 auto 边距去分（居中）。 */
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: auto;
+}
 .thread-main-empty .chat,
 .thread-main-empty .chat-inner {
   display: flex;
-  flex: 1;
   flex-direction: column;
   min-height: 0;
 }
+/* 别双推：welcome 自己那条 margin-top:auto（legacy 现成的）在这层没有富余空间可用，
+   留着只会和 chat-wrap 上的配对边距打架。下边距 28px 是 welcome 与 composer 的间距，保留。 */
 .thread-main-empty .chat-inner .welcome {
-  margin-top: auto;
-  margin-bottom: 28px;
+  margin-top: 0;
 }
 /* chat 是滚动容器：内容真的多起来时（欢迎态 + 开场提示超出屏）退回普通流可滚。 */
 .thread-main-empty .chat {
@@ -787,12 +757,12 @@
 }
 
 /* ── 浮层豁免窗口拖拽区（header 槽浮层的公共坑）───────────────────────────
-   topbar 整条是 -webkit-app-region: drag（拖窗口的把手），而设置面板、队友面板
-   都从 header 槽渲染，DOM 上是 topbar 的子孙：position:fixed 只改视觉位置，不改
+   topbar 整条是 -webkit-app-region: drag（拖窗口的把手），而设置面板、智能体团队
+   面板都从 header 槽渲染，DOM 上是 topbar 的子孙：position:fixed 只改视觉位置，不改
    命中判定——Electron 的拖拽区按元素矩形算，fixed 全屏照样被 drag 覆盖，整个面板
    的点击都被当成「拖窗口」吞掉（桌面端原版没这个问题：它的模态渲染在应用根层，
-   不在任何 drag 区里）。浮层容器必须自己声明 no-drag，把这块矩形从拖拽区里挖出来。 */
-.settings-mask,
-.team-pop {
+   不在任何 drag 区里）。浮层容器必须自己声明 no-drag，把这块矩形从拖拽区里挖出来
+   （标题旁那几颗按钮的豁免在 legacy 里现成：.sub-open / .team-btn / .ws-open）。 */
+.settings-mask {
   -webkit-app-region: no-drag;
 }

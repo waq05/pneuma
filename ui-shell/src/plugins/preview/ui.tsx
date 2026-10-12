@@ -1,10 +1,10 @@
 /**
- * 内置插件：文件预览（文件面板右半边）。
+ * 内置插件：文件预览（停靠区里独占一整块的面板）。
  *
- * 它往**别人开的**子槽里放东西：`files.preview` 是 `files` 插件在它的面板里开的子槽，
- * 渲染位置由那一侧决定（`renderSlot('files.preview', { path, cwd })`）。两个插件因此
- * 不必知道对方是谁、也不必排加载顺序——本插件用 `injectSlot` 等那个声明出现
- * （与示例插件 `echo` 等 `hello` 是同一套机制）。
+ * 形态对齐旧界面：预览是 dock 的一个**页签**——点文件（文件树里、或以后会话流里）
+ * 开这个页签并整块显示（`dockOpenPreview` 的同款行为），不是挤在文件树下面的一半。
+ * 交接走壳的停靠区状态：`setDockPreview` 放目标、`useDockPreview` 取目标
+ * （两块面板是两个插件，不必认识对方）。
  *
  * 数据源是 dock 通道的读类 op `fs-read`（在界面通道放行面里，读类直接放行）。
  * 分流照旧界面的口径（`desktop/src/renderer/file-util.ts` 的 `previewKindFor`）：
@@ -28,9 +28,14 @@ import {
   PdfView,
   defineUiPlugin,
   getHostNative,
+  registerDockPanel,
+  useDockPanel,
+  useDockPreview,
   useHostChannel,
-  type SlotComponentProps,
 } from '@dsc/ui'
+
+/** 这一块面板在停靠区里的 id。 */
+const PANEL = 'preview'
 
 /** `fs-read` 回来的形状（宿主 `desktop-dock` 插件的契约）。 */
 interface ReadResult {
@@ -43,23 +48,34 @@ interface ReadResult {
   tooLarge: boolean
 }
 
-/** 预览块的 owner props（`files` 面板给的那两个）。 */
-interface PreviewProps {
-  path?: string
-  cwd?: string
-}
-
 export default defineUiPlugin({
   name: '文件预览',
   apply(ui) {
-    // 等 `files.preview` 这个子槽被声明（声明方是 files 插件，加载顺序不保证）。
-    ui.slots.injectSlot('files.preview', () =>
-      ui.slots.register('files.preview', { id: 'preview.pane', order: 1 }, PreviewPane),
-    )
+    // 头条页签与开合钮由壳统一画（旧界面同构）——这里只报名面板、注册本体。
+    registerDockPanel({ id: PANEL, label: '预览', order: 40 })
+    ui.slots.register('shell.dock', { id: 'preview.pane', order: 40 }, PreviewDock)
   },
 })
 
-function PreviewPane({ path = '', cwd = '' }: SlotComponentProps<PreviewProps>): ReactNode {
+/** 预览面板：整块显示「现在要看的那个文件」。没点过文件时给一句引导。 */
+function PreviewDock(): ReactNode {
+  const active = useDockPanel() === PANEL
+  const target = useDockPreview()
+  return (
+    <aside className="dock" style={{ width: '100%' }} data-hidden={active ? undefined : '1'}>
+      <div className="dock-body">
+        {target === null ? (
+          <div className="file-preview-empty">在「文件」页签里点一个文件，这里整块显示它</div>
+        ) : (
+          <PreviewBody path={target.path} cwd={target.cwd} />
+        )}
+      </div>
+    </aside>
+  )
+}
+
+/** 预览本体：头部（相对路径 + 用系统程序打开）+ 内容。换文件整块重读。 */
+function PreviewBody({ path, cwd }: { path: string; cwd: string }): ReactNode {
   const channel = useHostChannel()
   const native = getHostNative()
   const [read, setRead] = useState<ReadResult | null>(null)

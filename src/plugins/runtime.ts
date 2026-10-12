@@ -89,11 +89,12 @@ export const runtimePlugin: Plugin.Object = {
       },
 
       async setModel(model: string) {
-        const [providerPart, modelPart] = model.includes('/')
-          ? (model.split('/', 2) as [string, string])
-          : [ctx.llm.provider, model]
+        // 引用的解析交给 llm 服务（端点名最长前缀匹配）：模型 id 自己可能带斜杠，
+        // 在界面通道这层按首个斜杠切会把「command/deepseek/deepseek-v4.1-flash」
+        // 切碎成「command + deepseek」，报出「端点 command 没有模型 deepseek」。
+        const target = ctx.llm.parseModelRef(model)
         try {
-          ctx.llm.setModel(providerPart, modelPart)
+          ctx.llm.setModel(target.provider, target.model)
           ctx.transcript.system(`模型切换为 ${ctx.llm.provider}/${ctx.llm.model}（下一次请求生效）`)
         } catch (error) {
           ctx.transcript.system(errText(error))

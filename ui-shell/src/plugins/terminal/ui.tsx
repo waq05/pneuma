@@ -23,8 +23,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
-import { IconClose, IconTerminal } from '@dsc/ui'
-import { defineUiPlugin, getHostNative, readCssColor, readCssValue, setDockPanel, useDockPanel } from '@dsc/ui'
+import { defineUiPlugin, getHostNative, readCssColor, readCssValue, useDockPanel, registerDockPanel } from '@dsc/ui'
 
 /** 支持的 shell：与宿主 `spawnShell` 的白名单一字不差（对不上会被宿主回落成 PowerShell）。 */
 const SHELLS = [
@@ -43,33 +42,14 @@ const PANEL = 'terminal'
 export default defineUiPlugin({
   name: '终端',
   apply(ui) {
-    // 顶栏那颗开合钮（`shell.header` 是 list 槽，可以有几个条目），
-    // 与停靠面板本身（`shell.dock`）分注册两处——面板收起时那一槽整块不渲染。
-    ui.slots.register('shell.header', { id: 'terminal.toggle', order: 20 }, TerminalToggle)
+    // 面板本体注册在 `shell.dock`（收起时那一槽整块不渲染）；头条页签与开合钮
+    // 由壳统一画（旧界面同构）——报名只交出 id 与页签标题。
+    registerDockPanel({ id: PANEL, label: '终端', order: 10 })
     ui.slots.register('shell.dock', { id: 'terminal.pane', order: 10 }, DockPanel)
   },
 })
 
-/** 顶栏里的开合钮：终端是"进得去出得来"的地方，入口放在常驻可见的顶栏。 */
-function TerminalToggle(): ReactNode {
-  const open = useDockPanel() === PANEL
-  return (
-    <button
-      type="button"
-      className={`icon-btn dock-toggle${open ? ' on' : ''}`}
-      title={open ? '收起终端面板' : '打开终端面板'}
-      aria-label="终端面板"
-      aria-pressed={open}
-      onClick={() => {
-        setDockPanel(open ? null : PANEL)
-      }}
-    >
-      <IconTerminal size={16} />
-    </button>
-  )
-}
-
-/** 停靠面板：标题条 + 终端。
+/** 停靠面板：终端。
  *
  * 保活对齐桌面端（「收起=滑出右缘不卸载」）：面板**永远渲染**，不是自己的回合
  * （别的面板开着）或整体收起时用 `data-hidden` 藏——组件树与 spawn 出来的进程
@@ -81,23 +61,6 @@ function DockPanel(): ReactNode {
 
   return (
     <aside className="dock" style={{ width: '100%' }} data-hidden={active ? undefined : '1'} data-shell={shell}>
-      <div className="dock-strip">
-        <span className="shell-tab on">终端</span>
-        <span className="dock-strip-fill" />
-        {/* 浏览器里没有桥：把话说明白，别让人以为是"坏了"。 */}
-        <span className="shell-term-note">{native.available ? '' : '只在桌面版里有'}</span>
-        <button
-          type="button"
-          className="icon-btn"
-          title="收起终端面板"
-          aria-label="收起终端面板"
-          onClick={() => {
-            setDockPanel(null)
-          }}
-        >
-          <IconClose size={15} />
-        </button>
-      </div>
       <div className="dock-body">
         {native.available ? (
           <TerminalPane shell={shell} onShell={setShell} />
