@@ -50,8 +50,15 @@ function BrowserTab(_props: DockTabBodyProps): ReactNode {
     const report = (): void => {
       const rect = element.getBoundingClientRect()
       void native
-        .invoke('dockBrowser', [true, { x: rect.x, y: rect.y, width: rect.width, height: rect.height }])
-        .catch(() => undefined)
+        .invoke<boolean>('dockBrowser', [true, { x: rect.x, y: rect.y, width: rect.width, height: rect.height }])
+        .then((bound) => {
+          // 回执写进 data 属性：自检靠它证「原生视图层真的接住了」（拍不到原生层，
+          // DOM 里只看得到占位区；bind=false 说明主进程没接住——窗口引用/桥版本问题）。
+          element.dataset.browserBound = bound === false ? '0' : '1'
+        })
+        .catch(() => {
+          element.dataset.browserBound = '0'
+        })
     }
     report()
     const observer = new ResizeObserver(report)
