@@ -39,6 +39,9 @@
  *     能让页面改它，前面所有闸门就都成了摆设。
  *   - 往本机装东西 `installMarketSkill` / `setMarketSources`：下载并安装第三方技能、
  *     改来源列表，等于供应链写入口（`browseMarket` 只是读列表，故放行）。
+ *   - 落信任记录 `setUiTrust`：信任一个第三方界面插件等于放它进启动图（它从此能调界面
+ *     通道方法与桌面窗口的原生桥），这声「我信任」必须是人在桌面窗口里答的——
+ *     写走原生桥；列状态（`listUiTrust`）是读，放行。
  *
  * **`dock` 为什么从排除名单挪到放行面（2026-10-10，阶段 5.2）**：原来整条排除的理由是
  * 它里面混着 `term-spawn`（起 pwsh/cmd/bash/node）。现在按动作分三档（规格在
@@ -105,6 +108,9 @@ export const UI_METHODS = [
   // 插件
   'listPlugins',
   'setPluginEnabled',
+  // 第三方界面插件的信任：列状态是读，放行（「还没信过」的那些要能在卡片里看见）；
+  // 落信任记录是写，走桌面窗口的原生桥（见 `UI_EXCLUDED` 与 native-bridge 的文件头）。
+  'listUiTrust',
   // 工具与技能
   'listTools',
   'listSkills',
@@ -148,6 +154,7 @@ export const UI_EXCLUDED = [
   'setProviderKey',
   'installMarketSkill',
   'setMarketSources',
+  'setUiTrust',
 ] as const satisfies readonly InvokableMethod[]
 
 /** 白名单里有没有协议根本不认识的方法（名字打错、方法被删）：有就报下面那个元组类型。 */
@@ -270,6 +277,7 @@ export const UI_ARG_SPECS: Readonly<Record<UiMethod, MethodSpec>> = {
   // ── 插件 ──────────────────────────────────────────────────────────────────
   listPlugins: [],
   setPluginEnabled: [{ shape: { kind: 'string', max: MAX_PATH } }, { shape: { kind: 'boolean' } }],
+  listUiTrust: [],
   // ── 工具与技能 ────────────────────────────────────────────────────────────
   listTools: [],
   listSkills: [],

@@ -176,6 +176,37 @@ function sendBundleResponse(res: ServerResponse, resolved: UiBundleResponse): vo
   res.end(resolved.reason ?? '没有这个插件资源')
 }
 
+/**
+ * 壳文档的内容安全策略。启动图走同源外链 `/boot.js`（见 {@link injectBootScriptTag}），
+ * 脚本面才能收成 `'self'`——内联注入就得配 nonce，多一套机制不值得。
+ * `'unsafe-inline'` 只留给 style：React 的行内样式与 xterm 的运行期样式都是
+ * style 属性，收掉会全线破相；`img-src` 放开 `data:` 是预览插件的 base64 图片。
+ *
+ * 导出给远程控制复用：手机端切壳后伺服的也是这一份文档，同一套策略不该抄第二遍。
+ */
+export const UI_CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "font-src 'self'",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+].join('; ')
+
+/**
+ * 把启动图外链标签插进 `</head>` 之前（本机界面服务与远程壳两份伺服共用这一份实现）。
+ * 页面脚本跑起来时 `window.__DSC_BOOT__` 已就位，而 CSP 的 script-src 才能收成 `'self'`。
+ */
+export function injectBootScriptTag(html: string): string {
+  const tag = '<script src="/boot.js"></script>'
+  const head = html.indexOf('</head>')
+  return head < 0 ? `${tag}${html}` : `${html.slice(0, head)}${tag}${html.slice(head)}`
+}
+
 /** 启动服务并把入口地址算出来。 */
 export async function createUiServer(options: UiServerOptions): Promise<UiServerHandle> {
   const assetsDir = options.assetsDir ?? uiAssetsDir()
@@ -220,32 +251,6 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
   /** 启动图求值一次给注入用（页面每次请求都注入当下的那一份）。 */
   const bootJson = (graph: UiBootGraph): string =>
     JSON.stringify(graph).replace(/</g, '\\u003c')
-
-  /**
-   * 壳文档的内容安全策略。启动图走同源外链 `/boot.js`（见 transformIndex），
-   * 脚本面才能收成 `'self'`——内联注入就得配 nonce，多一套机制不值得。
-   * `'unsafe-inline'` 只留给 style：React 的行内样式与 xterm 的运行期样式都是
-   * style 属性，收掉会全线破相；`img-src` 放开 `data:` 是预览插件的 base64 图片。
-   */
-  const CONTENT_SECURITY_POLICY = [
-    "default-src 'self'",
-    "script-src 'self'",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
-    "font-src 'self'",
-    "connect-src 'self'",
-    "object-src 'none'",
-    "base-uri 'none'",
-    "frame-ancestors 'none'",
-    "form-action 'self'",
-  ].join('; ')
-
-  const transformIndex = (html: string, pathname: string): string => {
-    void pathname
-    const tag = `<script src="/boot.js"></script>`
-    const head = html.indexOf('</head>')
-    return head < 0 ? `${tag}${html}` : `${html.slice(0, head)}${tag}${html.slice(head)}`
-  }
 
   const server: Server = createServer((req, res) => {
     handleRequest(req, res).catch((error: unknown) => {
@@ -360,8 +365,8 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
     if (method === 'GET' || method === 'HEAD') {
       const served = serveStatic(res, url.pathname, assetsDir, {
         placeholderHtml: PLACEHOLDER_HTML,
-        transformHtml: transformIndex,
-        contentSecurityPolicy: CONTENT_SECURITY_POLICY,
+        transformHtml: injectBootScriptTag,
+        contentSecurityPolicy: UI_CONTENT_SECURITY_POLICY,
       })
       if (!served) log(`[ui-server] 未命中静态文件：${url.pathname}`)
       return

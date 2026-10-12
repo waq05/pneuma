@@ -331,8 +331,12 @@ export const skillsPlugin: Plugin.Object = {
       const cached = entriesCache.get(source.name)
       if (cached !== undefined && !force) return cached
       const entries = await browseMarketSource(source, { refresh: force })
-      entriesCache.set(source.name, entries)
-      return entries
+      // 缓存文件按 URL 存（改名字还是同一份），条目里会烙着**上次读时的源名**——
+      // 出缓存一律按当前源名重新盖章：改名后浏览列出的行、点安装回查的键
+      // 才与清单里的名字对得上（否则安装会报「没有名为 X 的市场源」）。
+      const stamped = entries.map((entry) => ({ ...entry, source: source.name }))
+      entriesCache.set(source.name, stamped)
+      return stamped
     }
 
     // ── `skill` 工具：模型按名字取正文 ──

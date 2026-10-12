@@ -74,7 +74,11 @@ export function readUiServerConfig(passed: unknown): UiServerConfig {
 export const webserverPlugin: Plugin.Object = {
   name: 'webserver',
   provide: 'webServer',
-  inject: ['ui'],
+  // transcript 是给「装载问题进会话流」那段用的（下面 start 里的 problems 循环）——
+  // 少了它，只要界面上有任何一条问题（比如一个没信任的第三方插件目录），
+  // `ctx.transcript.system` 就会抛「cannot get property "transcript" without inject」，
+  // ensure() 整个 reject：桌面壳收不到界面地址，**静默回落旧渲染层**（真踩过）。
+  inject: ['ui', 'transcript'],
   apply(ctx, passed) {
     const config = readUiServerConfig(passed)
     const runtime = ctx.ui

@@ -919,6 +919,30 @@ export interface PluginInfoView {
   problem?: string
 }
 
+/**
+ * 第三方界面插件的一条状态（插件中心「第三方界面插件」信任卡）。
+ *
+ * 与宿主插件（`PluginInfoView`）不是一回事：那些住 `~/.dsc/plugins/*.js`，这边是
+ * `<目录名>/{plugin.json, ui/client.js}` 的界面半边——首次发现要答一次信任才装载
+ *（`UiTrustView` 就是那张卡的数据源）。
+ */
+export interface UiTrustView {
+  /** 目录名（`~/.dsc/plugins/<name>`；信任记录与启停键的前半段）。 */
+  name: string
+  /** plugin.json 声明的 `@dsc/ui` 版本区间；没写/读不到时 undefined。 */
+  api?: string
+  /** 声明的载体（web/tui）；缺省 `['web']`。 */
+  platforms: string[]
+  /** 有没有信任记录（plugins.json 顶层 `uiTrust`）。 */
+  trusted: boolean
+  /** 答应的时刻（毫秒）；未信任时 undefined。 */
+  trustedAt?: number
+  /** 启停开关（plugins.json entries，键 `<name>/ui/client.js`）。 */
+  enabled: boolean
+  /** 现在装不上的原因（缺 plugin.json / 没写 api / 与内置撞名 / api 区间不匹配 / client.js 读不到）；能装时 undefined。 */
+  problem?: string
+}
+
 /** 一个队友（智能体团队派出去的子智能体）；侧栏「队友」这一档看到的行。 */
 export interface TeammateView {
   /** 队友名，例如 writer-1。 */
@@ -1304,6 +1328,10 @@ export interface DscRuntime {
   listPlugins(): PluginInfoView[]
   /** 更新外部插件启用状态（热生效：热挂载/卸载，写 ~/.dsc/plugins.json 持久化）。 */
   setPluginEnabled(file: string, enabled: boolean): void
+  /** 第三方界面插件的信任状态清单（插件中心信任卡的数据源）。 */
+  listUiTrust(): UiTrustView[]
+  /** 落一条第三方界面插件的信任记录（确认动作的终点；写 plugins.json 的 uiTrust 段）。 */
+  setUiTrust(name: string): SettingsMutation
   /**
    * 队友清单（智能体团队开着才有内容；关着返回空数组）。
    * UI 在「队友」这一档开着时轮询它。

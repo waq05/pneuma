@@ -219,6 +219,7 @@ function startHost(cwd: string): void {
     mainWindow?.webContents.send('dsc:dock-data', data)
   })
   protocol.onUiUrl((info) => {
+    process.stderr.write(`[dsc-desktop] 宿主报来界面地址 ${info.origin}（窗口${mainWindow === null ? '未就绪' : '在'}）\n`)
     void adoptUiServer(info)
   })
   protocol.onClose(({ code }) => {
@@ -391,6 +392,66 @@ function openWorkspace(kind: string): WorkspaceOpenResult | Promise<WorkspaceOpe
   return { ok: false, error: `未知的打开方式：${kind}` }
 }
 
+// 选择 .js 插件文件并复制到 ~/.dsc/plugins/；返回复制的文件名（取消返回 []）。
+// 抽成具名函数：旧渲染层的 IPC 与插件壳的原生桥走同一条路（改一处两处都跟着变）。
+async function installPluginsByDialog(): Promise<string[]> {
+  if (mainWindow === null) return []
+  const outcome = await dialog.showOpenDialog(mainWindow, {
+    title: '选择 Muse Code 插件文件',
+    filters: [{ name: 'Muse Code 插件', extensions: ['js'] }],
+    properties: ['openFile', 'multiSelections'],
+  })
+  if (outcome.canceled || outcome.filePaths.length === 0) return []
+  const dir = join(app.getPath('home'), '.dsc', 'plugins')
+  mkdirSync(dir, { recursive: true })
+  const installed: string[] = []
+  for (const src of outcome.filePaths) {
+    const dest = join(dir, basename(src))
+    copyFileSync(src, dest)
+    installed.push(basename(dest))
+  }
+  return installed
+}
+
+// 选择技能（SKILL.md 所在目录，或扁平 .md 文件）并复制到 ~/.dsc/skills/。
+// 具名函数的理由与 installPluginsByDialog 相同。
+async function installSkillsByDialog(): Promise<string[]> {
+  if (mainWindow === null) return []
+  const outcome = await dialog.showOpenDialog(mainWindow, {
+    title: '选择技能：含 SKILL.md 的目录，或 .md 文件',
+    filters: [{ name: '技能文件', extensions: ['md'] }],
+    properties: ['openFile', 'openDirectory', 'multiSelections'],
+  })
+  if (outcome.canceled || outcome.filePaths.length === 0) return []
+  const dir = join(app.getPath('home'), '.dsc', 'skills')
+  mkdirSync(dir, { recursive: true })
+  const installed: string[] = []
+  for (const src of outcome.filePaths) {
+    const name = basename(src)
+    if (statSync(src).isDirectory()) {
+      if (existsSync(join(src, 'SKILL.md'))) {
+        // 一个技能包：整目录（含 references/、scripts/）复制过去
+        cpSync(src, join(dir, name), { recursive: true })
+        installed.push(name)
+        continue
+      }
+      // 用户选的是一捆：把里面每个含 SKILL.md 的子目录当作一个技能
+      for (const child of readdirSync(src)) {
+        const childPath = join(src, child)
+        if (existsSync(join(childPath, 'SKILL.md'))) {
+          cpSync(childPath, join(dir, child), { recursive: true })
+          installed.push(child)
+        }
+      }
+      continue
+    }
+    if (!name.toLowerCase().endsWith('.md')) continue
+    copyFileSync(src, join(dir, name))
+    installed.push(name.replace(/\.md$/i, ''))
+  }
+  return installed
+}
+
 function registerIpc(): void {
   ipcMain.handle('dsc:invoke', (_event, method: string, args: unknown[]) => {
     if (protocol === null) throw new Error('宿主进程未运行')
@@ -426,62 +487,10 @@ function registerIpc(): void {
   ipcMain.handle('dsc:session-usage', (_event, sessionId: unknown) => readSessionUsage(String(sessionId ?? '')))
 
   // 选择 .js 插件文件并复制到 ~/.dsc/plugins/；返回复制的文件名（取消返回 []）
-  ipcMain.handle('dsc:plugins-install', async () => {
-    if (mainWindow === null) return []
-    const outcome = await dialog.showOpenDialog(mainWindow, {
-      title: '选择 Muse Code 插件文件',
-      filters: [{ name: 'Muse Code 插件', extensions: ['js'] }],
-      properties: ['openFile', 'multiSelections'],
-    })
-    if (outcome.canceled || outcome.filePaths.length === 0) return []
-    const dir = join(app.getPath('home'), '.dsc', 'plugins')
-    mkdirSync(dir, { recursive: true })
-    const installed: string[] = []
-    for (const src of outcome.filePaths) {
-      const dest = join(dir, basename(src))
-      copyFileSync(src, dest)
-      installed.push(basename(dest))
-    }
-    return installed
-  })
+  ipcMain.handle('dsc:plugins-install', () => installPluginsByDialog())
 
   // 选择技能（SKILL.md 所在目录，或扁平 .md 文件）并复制到 ~/.dsc/skills/
-  ipcMain.handle('dsc:skills-install', async () => {
-    if (mainWindow === null) return []
-    const outcome = await dialog.showOpenDialog(mainWindow, {
-      title: '选择技能：含 SKILL.md 的目录，或 .md 文件',
-      filters: [{ name: '技能文件', extensions: ['md'] }],
-      properties: ['openFile', 'openDirectory', 'multiSelections'],
-    })
-    if (outcome.canceled || outcome.filePaths.length === 0) return []
-    const dir = join(app.getPath('home'), '.dsc', 'skills')
-    mkdirSync(dir, { recursive: true })
-    const installed: string[] = []
-    for (const src of outcome.filePaths) {
-      const name = basename(src)
-      if (statSync(src).isDirectory()) {
-        if (existsSync(join(src, 'SKILL.md'))) {
-          // 一个技能包：整目录（含 references/、scripts/）复制过去
-          cpSync(src, join(dir, name), { recursive: true })
-          installed.push(name)
-          continue
-        }
-        // 用户选的是一捆：把里面每个含 SKILL.md 的子目录当作一个技能
-        for (const child of readdirSync(src)) {
-          const childPath = join(src, child)
-          if (existsSync(join(childPath, 'SKILL.md'))) {
-            cpSync(childPath, join(dir, child), { recursive: true })
-            installed.push(child)
-          }
-        }
-        continue
-      }
-      if (!name.toLowerCase().endsWith('.md')) continue
-      copyFileSync(src, join(dir, name))
-      installed.push(name.replace(/\.md$/i, ''))
-    }
-    return installed
-  })
+  ipcMain.handle('dsc:skills-install', () => installSkillsByDialog())
 
   // 在系统文件管理器里打开路径（设置「关于」里的路径行）；只接受绝对路径
   ipcMain.handle('dsc:open-path', (_event, path: unknown) => openPathBySystem(path))
@@ -643,6 +652,25 @@ const NATIVE_HANDLERS: Readonly<Record<NativeOp, (args: readonly unknown[]) => u
     openExternalUrl(url)
   },
   openWorkspace: ([kind]) => openWorkspace(String(kind)),
+  installSkill: () => installSkillsByDialog(),
+  installPlugin: () => installPluginsByDialog(),
+  /**
+   * 市场安装与改源：转给宿主（技能市场与 settings.json 都归宿主管）。
+   * 界面通道里这两个方法持续排除（浏览器与远程页够得着的那条面），桥只对主窗口开放。
+   */
+  installMarketSkill: ([source, name]) => {
+    if (protocol === null) throw new Error('宿主进程未运行')
+    return protocol.invoke('installMarketSkill', [String(source), String(name)])
+  },
+  setMarketSources: ([sources]) => {
+    if (protocol === null) throw new Error('宿主进程未运行')
+    return protocol.invoke('setMarketSources', [sources])
+  },
+  /** 落一条第三方界面插件的信任记录（信任卡确认动作；写口只开在这条桌面上）。 */
+  setUiTrust: ([name]) => {
+    if (protocol === null) throw new Error('宿主进程未运行')
+    return protocol.invoke('setUiTrust', [String(name)])
+  },
   sessionUsage: ([id]) => readSessionUsage(String(id ?? '')),
   notify: ([payload]) => notifyUser(payload),
   restartHost: async () => {

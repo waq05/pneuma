@@ -10,6 +10,7 @@ import type { Plugin } from '@deepseek-ai/cordis'
 import { errText } from '../adapter/transcript.js'
 import { listPluginInfos, writePluginEnabled } from '../core/plugin-registry.js'
 import { setPluginEnabledHot } from '../core/plugin-loader.js'
+import { readUiPluginManifestReport, isThirdPartyUiEntry, scanThirdPartyUiTrusts, trustThirdPartyUiPlugin } from '../core/ui-bundles.js'
 import { buildUsageStats } from '../core/usage-log.js'
 import type { DscRuntime, SettingsMutation } from '../contract.js'
 
@@ -130,6 +131,14 @@ export const runtimePlugin: Plugin.Object = {
           ctx.transcript.touch()
           return
         }
+        // 第三方界面插件（<目录名>/ui/client.js）没有宿主半边可挂：到处热路径不适用，
+        // 写盘即完事，生效在页面下一次加载（启停现场合成进启动图）。
+        if (isThirdPartyUiEntry(file)) {
+          const name = file.split('/')[0] ?? file
+          ctx.transcript.system(`已${enabled ? '启用' : '停用'}第三方界面插件「${name}」，刷新页面（或重启宿主）后生效`)
+          ctx.transcript.touch()
+          return
+        }
         const shown = listPluginInfos().find((item) => item.file === file)?.name ?? file
         // 热启停：即时挂载/卸载，写盘持久化；失败回滚（挂载失败自动停用）
         const outcome = await setPluginEnabledHot(file, enabled)
@@ -139,6 +148,16 @@ export const runtimePlugin: Plugin.Object = {
           ctx.transcript.system(`已${enabled ? '启用' : '停用'}插件「${shown}」，即时生效`)
         }
         ctx.transcript.touch()
+      },
+
+      listUiTrust() {
+        const report = readUiPluginManifestReport()
+        return scanThirdPartyUiTrusts(report.apiVersion, new Set(report.entries.map((entry) => entry.id)))
+      },
+
+      setUiTrust(name) {
+        const report = readUiPluginManifestReport()
+        return trustThirdPartyUiPlugin(name, report.apiVersion, new Set(report.entries.map((entry) => entry.id)))
       },
 
       listTeammates() {

@@ -48,6 +48,7 @@ import type {
   ToolEntryView,
   TranscriptEntry,
   UiPrefsView,
+  UiTrustView,
   UsageStatsView,
 } from '@dsc/runtime/contract.js'
 
@@ -190,6 +191,9 @@ export function createRuntimeProxy(): RuntimeProxy {
     installMarketSkill: (source, name) =>
       call<SettingsMutation>('installMarketSkill', source, name),
     setMarketSources: (sources) => call<SettingsMutation>('setMarketSources', sources),
+    // 第三方界面插件的信任（插件中心信任卡的通道；旧渲染层不画这张卡，转发即得）
+    listUiTrust: () => call<UiTrustView[]>('listUiTrust'),
+    setUiTrust: (name) => call<SettingsMutation>('setUiTrust', name),
 
     // ── 设置界面 ──
     getSettingsSections: () => call<SettingsSectionView[]>('getSettingsSections'),

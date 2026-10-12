@@ -24,11 +24,17 @@
  * 3. **主进程那一侧按 `NativeOp` 建分派表**（`Record<NativeOp, 处理函数>`），
  *    漏实现一个操作同样编不过——"白名单"与"真有实现"被绑在一起。
  *
- * 桥里**故意没有**的两类（各有理由，别顺手加）：
- *   - `installPlugin` / `installSkill`：系统选择器把文件复制进 `~/.dsc/`，是供应链写入口，
- *     与界面通道排除 `installMarketSkill` / `setMarketSources` 同一个理由。
- *   - 内嵌浏览器那几个（`dockBrowser` / `browserNav` / `onBrowserState`）：它们是原生
- *     `WebContentsView` 覆盖层，还没搬进壳（终端已经进了，见 `terminal` 那个操作）。
+ * 装东西的四个操作（`installSkill` / `installPlugin` / `installMarketSkill` /
+ * `setMarketSources`）**走桥，不在界面通道**：它们是供应链写入口，界面通道
+ * （浏览器与远程页都够得着）持续排除；桥只对主窗口那份文档开放，与旧渲染层的
+ * 直接 IPC 是同一扇门。前两个弹系统文件选择器（人选了文件才算数），后两个转给
+ * 宿主（按市场源下载安装到 `~/.dsc/skills`、把源清单写回 settings.json）。
+ * 同一理由的还有 `setUiTrust`（落第三方界面插件的信任记录——放它进启动图这声
+ * 「我信任」必须是人在桌面窗口里答的）。
+ *
+ * 桥里**故意没有**的是内嵌浏览器那几个（`dockBrowser` / `browserNav` /
+ * `onBrowserState`）：它们是原生 `WebContentsView` 覆盖层，还没搬进壳
+ * （终端已经进了，见 `terminal` 那个操作）。
  *
  * 除了 `call` 之外，桥还有**一个订阅口**：`on(event, listener)`，事件名由 {@link NATIVE_EVENTS}
  * 白名单（现在只有终端输出流）。事件不做实参校验——它是主进程往外推的，不是页面往里送的。
@@ -55,6 +61,11 @@ export const NATIVE_OPS = [
   'openPath',
   'openExternal',
   'openWorkspace',
+  'installSkill',
+  'installPlugin',
+  'installMarketSkill',
+  'setMarketSources',
+  'setUiTrust',
   'sessionUsage',
   'notify',
   'restartHost',
@@ -92,6 +103,7 @@ type ArgShape =
   | { kind: 'hex' }
   | { kind: 'enum'; values: readonly string[] }
   | { kind: 'notify' }
+  | { kind: 'marketSources' }
   | { kind: 'json'; maxBytes: number }
 
 /** 一个实参的规格。 */
@@ -110,6 +122,10 @@ const MAX_NOTIFY_TITLE = 200
 const MAX_NOTIFY_BODY = 1000
 /** 终端 payload 的上限：里面是一行命令或一段按键，8KB 富余得多。 */
 const MAX_TERM_PAYLOAD = 8192
+/** 市场源清单的上限：源数、每项名字与地址的长度（几何级地够用，手填撑不破）。 */
+const MAX_MARKET_SOURCES = 50
+const MAX_SOURCE_NAME = 100
+const MAX_SOURCE_URL = 2048
 
 const THEME_SOURCES = ['dark', 'light', 'system'] as const
 const WORKSPACE_KINDS = ['terminal', 'explorer', 'vscode'] as const
@@ -138,6 +154,16 @@ export const NATIVE_ARG_SPECS: Readonly<Record<NativeOp, readonly ArgSpec[]>> = 
   openExternal: [{ shape: { kind: 'string', max: MAX_PATH } }],
   /** 用终端 / 资源管理器 / VS Code 打开当前工作区。 */
   openWorkspace: [{ shape: { kind: 'enum', values: WORKSPACE_KINDS } }],
+  /** 弹系统文件选择器，把选中的技能（含 SKILL.md 的目录或 .md 文件）复制进 ~/.dsc/skills/；返回装好的名字（取消给空表）。 */
+  installSkill: [],
+  /** 弹系统文件选择器，把选中的 .js 插件复制进 ~/.dsc/plugins/；返回装好的文件名（取消给空表）。 */
+  installPlugin: [],
+  /** 从市场源安装一个技能到 ~/.dsc/skills/（转给宿主，与旧界面同一个方法）。 */
+  installMarketSkill: [{ shape: { kind: 'string', max: MAX_ID } }, { shape: { kind: 'string', max: MAX_ID } }],
+  /** 覆盖市场源清单（写 ~/.dsc/settings.json；形状是 [{name, url}]，逐项校验）。 */
+  setMarketSources: [{ shape: { kind: 'marketSources' } }],
+  /** 落一条第三方界面插件的信任记录（插件中心信任卡「确认信任」的终点）。 */
+  setUiTrust: [{ shape: { kind: 'string', max: MAX_ID } }],
   /** 当前会话在宿主用量日志里的累计（只读；没有记录时 null）。 */
   sessionUsage: [{ shape: { kind: 'string', max: MAX_ID } }],
   /** 弹一条系统通知；字段只有标题与正文两项。 */
@@ -245,6 +271,24 @@ function checkShape(shape: ArgShape, value: unknown): string | null {  switch (s
       const body = record['body']
       if (body !== undefined && typeof body !== 'string') return '的 body 必须是字符串'
       if (typeof body === 'string' && body.length > MAX_NOTIFY_BODY) return `的 body 太长（> ${String(MAX_NOTIFY_BODY)} 字符）`
+      return null
+    }
+    case 'marketSources': {
+      if (!Array.isArray(value)) return '必须是市场源数组（[{name, url}]）'
+      if (value.length === 0) return '至少要有一个市场源'
+      if (value.length > MAX_MARKET_SOURCES) return `里最多 ${String(MAX_MARKET_SOURCES)} 个市场源（收到 ${String(value.length)} 个）`
+      for (const entry of value) {
+        if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return '的每一项必须是 {name, url} 对象'
+        const record = entry as Record<string, unknown>
+        const name = record['name']
+        const url = record['url']
+        if (typeof name !== 'string' || name.trim() === '' || name.length > MAX_SOURCE_NAME) {
+          return `的每一项要带非空的 name（≤${String(MAX_SOURCE_NAME)} 字符）`
+        }
+        if (typeof url !== 'string' || url.trim() === '' || url.length > MAX_SOURCE_URL) {
+          return `的每一项要带非空的 url（≤${String(MAX_SOURCE_URL)} 字符）`
+        }
+      }
       return null
     }
     case 'json': {

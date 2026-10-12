@@ -80,6 +80,9 @@ export const INVOKABLE_METHODS = [
   'browseMarket',
   'installMarketSkill',
   'setMarketSources',
+  // 第三方界面插件的信任（信任卡：列状态 + 落信任记录）
+  'listUiTrust',
+  'setUiTrust',
   // 设置界面
   'getSettingsSections',
   'getSectionValues',

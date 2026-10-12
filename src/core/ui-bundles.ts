@@ -523,8 +523,9 @@ export function readUiPluginBundle(
 
 import { readdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
+import type { UiTrustView } from '../contract.js'
 import { dscPath } from './path-policy.js'
-import { isPluginEnabled, isUiPluginTrusted, readUiPluginTrust } from './plugin-registry.js'
+import { isPluginEnabled, isUiPluginTrusted, readUiPluginTrust, trustUiPlugin } from './plugin-registry.js'
 
 /** 第三方 bundle 的 rev：**内容摘要**（sha256 前 16 位）。内置产物用 mtime 指纹（开发期
  *  频繁重编，快且够）；第三方的字节是「别人放进来的一份代码」，rev 承担内容复核——
@@ -682,12 +683,136 @@ function existsClient(dir: string, name: string): boolean {
   }
 }
 
+/**
+ * 第三方界面插件的信任卡视图：把 `~/.dsc/plugins/` 扫一遍，逐条给出「能不能装、
+ * 信没信、启没启」。判定与 {@link discoverThirdPartyUiArtifacts} 同一套（目录形状 /
+ * api 门禁 / 撞名 / 停用 / 信任），差别只在输出形状：那边是「装得上的条目 + 一句句
+ * 问题」，这边是**每一条的状态**——插件中心的信任卡要把没信任的那些摊出来给用户确认。
+ *
+ * 既没有 plugin.json 也没有界面半边的目录（宿主插件的资料目录）不出现。
+ *
+ * @param shellApiVersion - 当前壳的 `@dsc/ui` 契约版本（内置清单顶层那个）
+ * @param builtinIds - 内置清单里已有的 id（撞名时第三方让路）
+ * @param dir - 第三方根目录，缺省 `~/.dsc/plugins`
+ */
+export function scanThirdPartyUiTrusts(
+  shellApiVersion: string | undefined,
+  builtinIds: ReadonlySet<string>,
+  dir: string = thirdPartyUiRoot(),
+): UiTrustView[] {
+  const out: UiTrustView[] = []
+  let names: string[]
+  try {
+    names = readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+      .map((entry) => entry.name)
+  } catch {
+    return out // 目录还没有 = 还没装过第三方，正常态
+  }
+  const trusted = readUiPluginTrust()
+  for (const name of names) {
+    const hasClient = existsClient(dir, name)
+    let doc: Record<string, unknown> | null
+    try {
+      doc = JSON.parse(readFileSync(resolve(dir, name, 'plugin.json'), 'utf8')) as Record<string, unknown>
+    } catch {
+      doc = null
+    }
+    if (doc === null && !hasClient) continue
+    const fileKey = `${name}/ui/client.js`
+    const trust = trusted[fileKey]
+    const row: UiTrustView = {
+      name,
+      platforms: ['web'],
+      trusted: trust !== undefined,
+      enabled: isPluginEnabled(fileKey),
+      ...(trust === undefined ? {} : { trustedAt: trust.trustedAt }),
+    }
+    if (doc === null) {
+      row.problem = '没有 plugin.json（第三方界面插件必须声明 api 区间）'
+      out.push(row)
+      continue
+    }
+    const rawApi = doc['api']
+    const api = typeof rawApi === 'string' && rawApi.trim() !== '' ? rawApi.trim() : undefined
+    if (api !== undefined) row.api = api
+    const rawPlatforms = doc['platforms']
+    if (Array.isArray(rawPlatforms)) {
+      const platforms = rawPlatforms.filter((value): value is UiPlatform => value === 'web' || value === 'tui')
+      if (platforms.length > 0) row.platforms = platforms
+    }
+    if (api === undefined) {
+      row.problem = 'plugin.json 没写 api（@dsc/ui 的版本区间，如 "^1.0.0"）——第三方必须声明'
+    } else if (builtinIds.has(name)) {
+      row.problem = 'id 与内置插件撞名，这份会被跳过'
+    } else {
+      const gate = evaluateUiApiGate(api, shellApiVersion)
+      if (gate !== null) row.problem = gate
+      else if (!hasClient) row.problem = 'plugin.json 在，但 ui/client.js 读不到'
+    }
+    out.push(row)
+  }
+  return out
+}
+
+/**
+ * 落一条信任记录（信任卡「确认信任」的终点）：先按发现层的同一批判定复核一遍，
+ * 全过才写 plugins.json 的 `uiTrust` 段。
+ *
+ * 目录名在这里**先钉死形状**：它会拼成路径（`<dir>/<name>/ui/client.js`），
+ * 带分隔符或 `..` 的名字要在拼路径之前挡住（路径穿越）。
+ */
+export function trustThirdPartyUiPlugin(
+  name: string,
+  shellApiVersion: string | undefined,
+  builtinIds: ReadonlySet<string>,
+  dir: string = thirdPartyUiRoot(),
+): { ok: true; notice?: string } | { ok: false; error: string } {
+  if (name === '' || name.length > 200) return { ok: false, error: '插件目录名不合法' }
+  if (/[\\/]/.test(name) || name === '.' || name === '..') {
+    return { ok: false, error: '插件目录名不合法（不能带路径分隔符）' }
+  }
+  let doc: Record<string, unknown>
+  try {
+    doc = JSON.parse(readFileSync(resolve(dir, name, 'plugin.json'), 'utf8')) as Record<string, unknown>
+  } catch {
+    return { ok: false, error: `读不到 ${name}/plugin.json——目录名对吗？（要的是 ~/.dsc/plugins/<目录名>）` }
+  }
+  const rawApi = doc['api']
+  const api = typeof rawApi === 'string' && rawApi.trim() !== '' ? rawApi.trim() : undefined
+  if (api === undefined) return { ok: false, error: `${name}: plugin.json 没写 api（@dsc/ui 的版本区间），装不上` }
+  if (builtinIds.has(name)) return { ok: false, error: `${name}: id 与内置插件撞名，这份会被跳过` }
+  const gate = evaluateUiApiGate(api, shellApiVersion)
+  if (gate !== null) return { ok: false, error: `${name}: ${gate}` }
+  if (!existsClient(dir, name)) return { ok: false, error: `${name}: ui/client.js 读不到，装不上` }
+  if (isUiPluginTrusted(`${name}/ui/client.js`)) {
+    return { ok: true, notice: `「${name}」早就信任过了——重启宿主（或刷新页面）后装载` }
+  }
+  trustUiPlugin(`${name}/ui/client.js`)
+  return { ok: true, notice: `已信任「${name}」——重启宿主（或刷新页面）后装载` }
+}
+
 function readFileSyncSafe(path: string): Buffer | null {
   try {
     return readFileSync(path)
   } catch {
     return null
   }
+}
+
+/**
+ * 这个启停键是不是第三方界面插件（`<目录名>/ui/client.js`，住 `~/.dsc/plugins/<目录名>/ui/`）。
+ *
+ * 热启停（plugin-loader 的 setPluginEnabledHot）只认**宿主半边**的 .js 文件；界面半边
+ * 在页面加载时按 plugins.json 的启停现场合成，没有「热挂载」这回事。runtime 用这个
+ * 判定把界面半边的开关导向「写盘 + 提示刷新」，而不是去挂一个不存在的宿主插件。
+ */
+export function isThirdPartyUiEntry(file: string): boolean {
+  const at = file.indexOf('/ui/')
+  if (at <= 0) return false
+  const name = file.slice(0, at)
+  if (/[\\/]/.test(name)) return false
+  return existsClient(thirdPartyUiRoot(), name)
 }
 
 /**
