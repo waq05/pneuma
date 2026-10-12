@@ -34,11 +34,19 @@
  * 静态资源目录是 `lib/remote/assets`（批 B 的 vite 产物落点，见 remote-web/vite.config.ts）；
  * 目录不存在（还没构建界面）时 `/` 返回一张「资产未构建」的占位页。
  *
+ * **手机端切壳（对齐计划 8c）**：默认伺服的界面是**同一份插件壳**（`lib/ui/assets`，
+ * 与桌面同源）——静态产物、启动图（`/boot.js`）、数据通道（`/api/events` + `/api/invoke`，
+ * 方法面是 `REMOTE_SHELL_METHODS` 子集）三件都从这一侧出；未配对的浏览器先落在配对页
+ * （`POST /api/pair` 换 HttpOnly 设备 Cookie，EventSource 带不了自定义头，只能靠它）。
+ * 经典档（remote-web 自己的移动端应用）保留在 `DSC_REMOTE_UI=classic` 或插件配置
+ * `ui: 'classic'` 后面，也作为壳产物缺失时的回落。
+ *
  * @module dsc/plugins/remote
  */
 import { createServer, type Server } from 'node:http'
+import { existsSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
-import { dirname, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import type { Duplex } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import type { Plugin } from '@deepseek-ai/cordis'
@@ -54,19 +62,29 @@ import { RemotePairing } from '../core/remote/pairing.js'
 import { RemotePush, type PushSendResult } from '../core/remote/push.js'
 import { TicketStore } from '../core/remote/tickets.js'
 import { RemoteUploads } from '../core/remote/uploads.js'
+import { collectUiArtifactsForPlatform, uiAssetsDir } from '../core/ui-bundles.js'
+import { createUiEvents } from '../core/ui-events.js'
+import { validateUiArgs, type UiMethod } from '../core/ui-methods.js'
 import { DSC_VERSION } from '../core/version.js'
+import { readCookie } from '../core/web-http.js'
+import { composeUiBootGraph, type UiBootGraph, type UiPluginRow } from '../ui/manifest.js'
 import type { RuntimeSnapshot, SettingsField, StatusView } from '../contract.js'
 import type { SettingsSectionSpec } from '../services/types.js'
-import { hostHeaderAllowed, isRecord, readLastSeq, sendJson } from './remote/http.js'
+import { bearerToken, hostHeaderAllowed, isRecord, readLastSeq, sendJson } from './remote/http.js'
 import { createRequestHandler } from './remote/routes.js'
 import {
+  REMOTE_COOKIE,
   REMOTE_METHODS,
   REMOTE_PROTOCOL_VERSION,
   REMOTE_SET,
+  REMOTE_SHELL_METHODS,
+  REMOTE_SHELL_SET,
   type RemoteServerDeps,
   type RemoteServerHandle,
+  type RemoteShellUi,
   type RemoteSnapshot,
 } from './remote/types.js'
+import { UI_EVENTS_PROTOCOL_VERSION } from './webserver.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'remote'
@@ -114,6 +132,18 @@ function readAssetsDir(passed: unknown): string {
   const raw = resolvePluginConfig(CONFIG_KEY, passed)
   const dir = raw.assetsDir
   return typeof dir === 'string' && dir.trim() !== '' ? resolve(dir) : remoteAssetsDir()
+}
+
+/**
+ * 手机端伺服哪份界面：`'shell'` = 插件壳产物（默认，切壳后的形态）；
+ * `'classic'` = remote-web 自己的移动端应用（回落档）。
+ * 环境变量优先（自检与回退用，不必改用户配置）；壳产物缺失时由调用方再降级。
+ */
+function readUiMode(passed: unknown): 'shell' | 'classic' {
+  const env = process.env['DSC_REMOTE_UI']
+  if (env === 'classic' || env === 'shell') return env
+  const raw = resolvePluginConfig(CONFIG_KEY, passed).ui
+  return raw === 'classic' ? 'classic' : 'shell'
 }
 
 /** 本机的局域网 IPv4（设置页显示「手机该输哪个地址」；找不到给 null）。 */
@@ -486,6 +516,74 @@ export const remotePlugin: Plugin.Object = {
       return key
     }
 
+    // ── 壳档（手机端切壳）：静态产物 + 启动图 + 数据通道 ───────────────────────
+
+    /**
+     * 壳档的伺服面：第一次真起服务时造一次（没开远程就不造）；经典档、或壳产物还
+     * 没构建时给 null（路由层退回经典资产）。数据通道的方法面是
+     * {@link REMOTE_SHELL_METHODS}，实参过 `validateUiArgs`（与本地界面通道同一份规格）。
+     */
+    let shellUiBuilt: RemoteShellUi | null | undefined = undefined
+    const shellUiOf = (): RemoteShellUi | null => {
+      if (shellUiBuilt !== undefined) return shellUiBuilt
+      if (readUiMode(passed) === 'classic') {
+        shellUiBuilt = null
+        return shellUiBuilt
+      }
+      const assetsDir = uiAssetsDir()
+      if (!existsSync(join(assetsDir, 'index.html'))) {
+        ctx.emit(
+          'dsc/notice',
+          `远程壳产物不存在（${join(assetsDir, 'index.html')}）：手机端先按远程经典界面伺服；构建 ui-shell 后重启宿主即可切回`,
+        )
+        shellUiBuilt = null
+        return shellUiBuilt
+      }
+      const events = createUiEvents({
+        snapshot: () => ({ ...snapshot() }),
+        invoke: async (method, args) => {
+          if (!REMOTE_SHELL_SET.has(method)) throw new Error(`远程壳不开放这个方法：${method}`)
+          const checked = validateUiArgs(method as UiMethod, args)
+          if (!checked.ok) throw new Error(checked.error)
+          return (await invoke(method, checked.args)) ?? null
+        },
+        methods: REMOTE_SHELL_METHODS,
+        hello: () => ({
+          protocolVersion: UI_EVENTS_PROTOCOL_VERSION,
+          methods: [...REMOTE_SHELL_METHODS],
+          host: { name: 'Muse Code', version: DSC_VERSION },
+        }),
+        subscribe: (listener) => ctx.transcript.subscribe(listener),
+        log: (line) => ctx.logger.warn(line),
+      })
+      const boot = (): UiBootGraph => {
+        // 与本地界面服务同一份 compose：内置 + 第三方合成（门禁与信任在 collect 层）。
+        const fresh = collectUiArtifactsForPlatform('web', { force: true })
+        const rows: (UiPluginRow & { rev: string })[] = fresh.entries.map((entry) => ({
+          id: entry.id,
+          rev: entry.rev,
+          ...(entry.inject === undefined ? {} : { inject: entry.inject }),
+          ...(entry.external === undefined ? {} : { external: entry.external }),
+          ...(entry.immediately === true ? { immediately: true } : {}),
+        }))
+        return composeUiBootGraph({ name: 'Muse Code', version: DSC_VERSION }, rows)
+      }
+      shellUiBuilt = {
+        assetsDir,
+        boot,
+        events,
+        authenticated: (req) => {
+          const token = bearerToken(req.headers.authorization) ?? readCookie(req.headers.cookie, REMOTE_COOKIE)
+          return token !== null && pairing.verifyToken(token) !== null
+        },
+      }
+      return shellUiBuilt
+    }
+    // 插件卸载时把通道停掉（SSE 连接断开、退订会话流）。
+    ctx.effect(() => () => {
+      shellUiBuilt?.events.stop()
+    }, 'remote: 停掉壳档数据通道')
+
     // ── 推送：Web Push 与通知 Webhook 同一触发点同时发，互不影响 ─────────────
 
     /** 同类推送 10 秒节流（键是触发类别：approval / turn-end）。 */
@@ -657,6 +755,7 @@ export const remotePlugin: Plugin.Object = {
         pushPublicKey,
         pushSubscribe: (payload, deviceId) => pushStore.add(payload, deviceId),
         pushUnsubscribe: (endpoint) => pushStore.remove(endpoint),
+        shellUi: shellUiOf(),
       })
       server = instance
       instance.ready.then(
