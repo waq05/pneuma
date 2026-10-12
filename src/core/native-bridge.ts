@@ -32,9 +32,10 @@
  * 同一理由的还有 `setUiTrust`（落第三方界面插件的信任记录——放它进启动图这声
  * 「我信任」必须是人在桌面窗口里答的）。
  *
- * 桥里**故意没有**的是内嵌浏览器那几个（`dockBrowser` / `browserNav` /
- * `onBrowserState`）：它们是原生 `WebContentsView` 覆盖层，还没搬进壳
- * （终端已经进了，见 `terminal` 那个操作）。
+ * 内嵌浏览器三件套（`dockBrowser` / `browserNav` + `browser-state` 事件）2026-10
+ * 搬进壳：它们操作的是原生 `WebContentsView` 覆盖层（旧渲染层直连 IPC 的那个），
+ * 桥只转发「显示/隐藏 + 摆到哪 + 导航到哪」，页面管不到那个视图的内容。终端
+ * （`terminal`）同款——能力留在主进程，界面只说意图。
  *
  * 除了 `call` 之外，桥还有**一个订阅口**：`on(event, listener)`，事件名由 {@link NATIVE_EVENTS}
  * 白名单（现在只有终端输出流）。事件不做实参校验——它是主进程往外推的，不是页面往里送的。
@@ -77,12 +78,21 @@ export const NATIVE_OPS = [
    * payload 由宿主插件自己净化（路径限 cwd、shell 白名单）。
    */
   'terminal',
+  /**
+   * 内嵌浏览器（dock 的浏览器页签）：`[visible, rect?]`——显示/隐藏那个原生
+   * `WebContentsView` 覆盖层，并把它摆到页面报上来的矩形处（页面坐标 = 窗口内容坐标）。
+   */
+  'dockBrowser',
+  /** 内嵌浏览器导航：`[url, action]`（load / back / forward / reload；协议在主进程再校验一次）。 */
+  'browserNav',
 ] as const
 
 /** 桥能推给页面的事件（订阅入口按它白名单，别的名字直接拒）。 */
 export const NATIVE_EVENTS = [
   /** dock 终端输出流：`{ id, data }`（id 是 term-spawn 给的会话 id）。 */
   'dock-data',
+  /** 内嵌浏览器的地址变化：`{ url }`（前进/后退/页面内跳转都推）。 */
+  'browser-state',
 ] as const
 
 /** 桥认得的一个事件名。 */
@@ -100,10 +110,12 @@ export const NATIVE_OP_SET: ReadonlySet<string> = new Set<string>(NATIVE_OPS)
 /** 一个实参的形状。取值集合刻意很小：这一层要的正是"最小且能读懂"。 */
 type ArgShape =
   | { kind: 'string'; max: number }
+  | { kind: 'bool' }
   | { kind: 'hex' }
   | { kind: 'enum'; values: readonly string[] }
   | { kind: 'notify' }
   | { kind: 'marketSources' }
+  | { kind: 'rect' }
   | { kind: 'json'; maxBytes: number }
 
 /** 一个实参的规格。 */
@@ -129,6 +141,10 @@ const MAX_SOURCE_URL = 2048
 
 const THEME_SOURCES = ['dark', 'light', 'system'] as const
 const WORKSPACE_KINDS = ['terminal', 'explorer', 'vscode'] as const
+/** 内嵌浏览器的导航动作（与主进程 `navigateDockBrowser` 认的那几个一字不差）。 */
+const NAV_ACTIONS = ['load', 'back', 'forward', 'reload'] as const
+/** 页面报上来的矩形上限（窗口再大也到不了；只是挡住存坏的脏值）。 */
+const RECT_MAX = 100_000
 
 /**
  * 每个操作的实参规格：数组长度就是参数个数上限，下标就是参数位置。
@@ -179,6 +195,13 @@ export const NATIVE_ARG_SPECS: Readonly<Record<NativeOp, readonly ArgSpec[]>> = 
   terminal: [
     { shape: { kind: 'enum', values: DOCK_TERM_OPS } },
     { shape: { kind: 'json', maxBytes: MAX_TERM_PAYLOAD }, optional: true },
+  ],
+  /** 内嵌浏览器：`[visible, rect?]`。visible 为假（隐藏）时 rect 可省。 */
+  dockBrowser: [{ shape: { kind: 'bool' } }, { shape: { kind: 'rect' }, optional: true }],
+  /** 内嵌浏览器导航：`[url, action]`（url 只在 load 时用，协议在主进程校验）。 */
+  browserNav: [
+    { shape: { kind: 'string', max: MAX_PATH } },
+    { shape: { kind: 'enum', values: NAV_ACTIONS } },
   ],
 }
 
@@ -250,11 +273,14 @@ function describeOp(op: unknown): string {
 }
 
 /** 校验一个值是不是这个形状；不是就回一句人话。 */
-function checkShape(shape: ArgShape, value: unknown): string | null {  switch (shape.kind) {
+function checkShape(shape: ArgShape, value: unknown): string | null {
+  switch (shape.kind) {
     case 'string':
       if (typeof value !== 'string') return '必须是字符串'
       if (value.length > shape.max) return `是字符串但太长（${String(value.length)} > ${String(shape.max)} 字符）`
       return null
+    case 'bool':
+      return typeof value === 'boolean' ? null : '必须是布尔值'
     case 'hex':
       // 只收压平过的 #rrggbb：半透明颜色到了系统那侧会被丢掉，宁可当场拒。
       return typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value) ? null : '必须是 #rrggbb 形状的颜色'
@@ -287,6 +313,17 @@ function checkShape(shape: ArgShape, value: unknown): string | null {  switch (s
         }
         if (typeof url !== 'string' || url.trim() === '' || url.length > MAX_SOURCE_URL) {
           return `的每一项要带非空的 url（≤${String(MAX_SOURCE_URL)} 字符）`
+        }
+      }
+      return null
+    }
+    case 'rect': {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) return '必须是 { x, y, width, height } 对象'
+      const record = value as Record<string, unknown>
+      for (const key of ['x', 'y', 'width', 'height'] as const) {
+        const number = record[key]
+        if (typeof number !== 'number' || !Number.isFinite(number) || Math.abs(number) > RECT_MAX) {
+          return `的 ${key} 必须是有界的有限数`
         }
       }
       return null

@@ -50,7 +50,27 @@ export function setDockBrowser(
   return true
 }
 
-/** 注册 dock 的 IPC（内置浏览器控制）。 */
+/**
+ * 内嵌浏览器导航：load / back / forward / reload（IPC 与原生桥共用这一份实现）。
+ * load 只收 http/https——页面给的地址不经这一步会被当成任意 URL 交给 Chromium。
+ */
+export function navigateDockBrowser(
+  url: string,
+  action: 'load' | 'back' | 'forward' | 'reload',
+): { ok: boolean; url?: string; error?: string } {
+  if (dockView === null) return { ok: false }
+  const contents = dockView.webContents
+  if (action === 'back') contents.goBack()
+  else if (action === 'forward') contents.goForward()
+  else if (action === 'reload') contents.reload()
+  else {
+    if (!/^https?:\/\//i.test(url)) return { ok: false, error: '仅支持 http/https' }
+    void contents.loadURL(url).catch(() => {})
+  }
+  return { ok: true, url: contents.getURL() }
+}
+
+/** 注册 dock 的 IPC（内置浏览器控制；旧渲染层直连这条路，插件壳走原生桥）。 */
 export function registerDockIpc(): void {
   ipcMain.handle(
     'dsc:dock-browser',
@@ -59,15 +79,6 @@ export function registerDockIpc(): void {
     },
   )
   ipcMain.handle('dsc:browser-nav', (_event, url: string, action: 'load' | 'back' | 'forward' | 'reload') => {
-    if (dockView === null) return { ok: false }
-    const contents = dockView.webContents
-    if (action === 'back') contents.goBack()
-    else if (action === 'forward') contents.goForward()
-    else if (action === 'reload') contents.reload()
-    else {
-      if (!/^https?:\/\//i.test(url)) return { ok: false, error: '仅支持 http/https' }
-      void contents.loadURL(url).catch(() => {})
-    }
-    return { ok: true, url: contents.getURL() }
+    return navigateDockBrowser(url, action)
   })
 }

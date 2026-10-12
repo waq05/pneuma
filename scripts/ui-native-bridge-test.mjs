@@ -67,19 +67,23 @@ check('每个操作名都进了查表集合', NATIVE_OPS.every((op) => NATIVE_OP
 check(
   '规格里的参数形状都是认得的',
   Object.values(NATIVE_ARG_SPECS).every((spec) =>
-    spec.every((arg) => ['string', 'hex', 'enum', 'notify', 'marketSources', 'json'].includes(arg.shape.kind)),
+    spec.every((arg) => ['string', 'bool', 'hex', 'enum', 'notify', 'marketSources', 'rect', 'json'].includes(arg.shape.kind)),
   ),
 )
 check('事件白名单非空且都能查表', NATIVE_EVENTS.length > 0 && NATIVE_EVENTS.every((name) => NATIVE_EVENT_SET.has(name)))
 
 console.log('\n── 白名单里不许有的东西 ──')
 /**
- * 名点要排除的：泛用执行口、内嵌浏览器（阶段 5.2 再进）。
+ * 名点要排除的：泛用执行口（能把一段字符串变成一次执行的）。
  * 装东西（installSkill / installPlugin / installMarketSkill / setMarketSources）与
  * 落信任（setUiTrust）**在桥里**——它们是供应链写入口，只对主窗口开放式；
  * 界面通道那边的排除在下一节钉住（浏览器与远程页够得着的那条面不能有它们）。
+ *
+ * 内嵌浏览器三件套（dockBrowser / browserNav / browser-state）2026-10 已搬进桥——
+ * 正向断言在下面一节；`onBrowserState` 这种"具名回调式"的名字仍然不许出现，
+ * 桥只有一个订阅口 `on(event, listener)`。
  */
-const FORBIDDEN = ['invoke', 'runCommand', 'dockBrowser', 'browserNav', 'onBrowserState']
+const FORBIDDEN = ['invoke', 'runCommand', 'onBrowserState']
 for (const name of FORBIDDEN) {
   check(`没有 ${name}`, !NATIVE_OP_SET.has(name))
 }
@@ -87,11 +91,22 @@ for (const name of FORBIDDEN) {
  * 白名单的每一项都必须是"既定动作 + 实参枚举"，所以操作名的**第一个词**只能是
  * 这批动作动词之一；冒出一个没见过的动词（`exec…` / `spawn…` / `write…`）当场红。
  */
-const ACTION_VERBS = ['set', 'choose', 'switch', 'recent', 'remove', 'open', 'install', 'session', 'notify', 'restart', 'quit', 'terminal']
+const ACTION_VERBS = ['set', 'choose', 'switch', 'recent', 'remove', 'open', 'install', 'session', 'notify', 'restart', 'quit', 'terminal', 'dock', 'browser']
 const oddVerbs = NATIVE_OPS.filter(
   (op) => !ACTION_VERBS.some((verb) => op.toLowerCase().startsWith(verb)),
 )
 check('每个操作名都由既定动作动词开头', oddVerbs.length === 0, `可疑项：${oddVerbs.join('、')}`)
+
+console.log('\n── 内嵌浏览器三件套（2026-10 搬进桥：旧渲染层直连的那两个 + 一个事件）──')
+check('桥里有 dockBrowser（带实参规格）', NATIVE_OP_SET.has('dockBrowser') && Object.hasOwn(NATIVE_ARG_SPECS, 'dockBrowser'))
+check('桥里有 browserNav（带实参规格）', NATIVE_OP_SET.has('browserNav') && Object.hasOwn(NATIVE_ARG_SPECS, 'browserNav'))
+check('事件白名单里有 browser-state', NATIVE_EVENT_SET.has('browser-state'))
+check('dockBrowser 正常一次通过', validateNativeCall('dockBrowser', [true, { x: 0, y: 0, width: 100, height: 100 }]).ok === true)
+check('dockBrowser 可以只传 visible（隐藏路径）', validateNativeCall('dockBrowser', [false]).ok === true)
+check('dockBrowser 的 visible 必须是布尔（字符串被拒）', rejects('dockBrowser', ['yes']))
+check('dockBrowser 的 rect 四边都必须是数（少字段被拒）', rejects('dockBrowser', [true, { x: 0, y: 0, width: 10 }]))
+check('browserNav 的动作是枚举（未知动作被拒）', rejects('browserNav', ['https://a.example', 'print']))
+check('browserNav 正常一次通过', validateNativeCall('browserNav', ['https://a.example', 'load']).ok === true)
 
 console.log('\n── 供应链写入口：桥有、界面通道没有 ──')
 for (const name of ['installSkill', 'installPlugin', 'installMarketSkill', 'setMarketSources', 'setUiTrust']) {

@@ -14,7 +14,7 @@ import { BrowserWindow, Menu, Notification, Tray, WebContentsView, app, desktopC
 import type { NativeImage } from 'electron'
 import { validateNativeCall, type NativeOp } from '@dsc/runtime/core/native-bridge.js'
 import { HostProtocol } from './protocol.js'
-import { registerDockIpc } from './dock.js'
+import { navigateDockBrowser, registerDockIpc, setDockBrowser } from './dock.js'
 import { readState, resolveHeadlessEntry, writeState } from './dsc-core.js'
 import { readSessionUsage } from './session-usage.js'
 
@@ -687,6 +687,17 @@ const NATIVE_HANDLERS: Readonly<Record<NativeOp, (args: readonly unknown[]) => u
   terminal: ([op, payload]) => {
     if (protocol === null) throw new Error('宿主进程未运行')
     return protocol.invoke('dock', [String(op), (payload ?? {}) as Record<string, unknown>])
+  },
+  /** 内嵌浏览器：显示/隐藏原生覆盖层并摆位置（rect 已过桥的规格校验）。 */
+  dockBrowser: ([visible, rect]) => {
+    return setDockBrowser(
+      visible === true,
+      rect as { x: number; y: number; width: number; height: number } | undefined,
+    )
+  },
+  /** 内嵌浏览器导航（实参已过桥的规格校验：动作枚举 + url 长度）。 */
+  browserNav: ([url, action]) => {
+    return navigateDockBrowser(String(url), action as 'load' | 'back' | 'forward' | 'reload')
   },
 }
 
