@@ -16,12 +16,29 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import type { UiBootGraph, UiPluginLoadReport } from '@dsc/ui-core'
 import { NATIVE_BRIDGE_VERSION, NATIVE_OPS } from '@dsc/ui-core'
-import { IconChevronRight, IconSidebar } from './icons'
+import {
+  IconBolt,
+  IconChevronRight,
+  IconFolder,
+  IconGear,
+  IconPlus,
+  IconPuzzle,
+  IconSidebar,
+} from './icons'
 import { ALLOWED_MODULES } from './boot'
 import { useChannelStatus, useHostError, useHostHello, useHostSelector } from './runtime-context'
 import { SlotOutlet, useSlotFaults } from './slots-react'
 import { SLOT } from './slots'
-import { getHostNative, lastDockPanel, setDockPanel, useDockPanel, useDockPanels, useShellPage, type UiSlots } from './plugin-api'
+import {
+  getHostNative,
+  lastDockPanel,
+  setDockPanel,
+  setShellPage,
+  useDockPanel,
+  useDockPanels,
+  useShellPage,
+  type UiSlots,
+} from './plugin-api'
 import { ThreadResizer } from './platform/thread-resizer'
 import {
   DOCK_DEFAULT_WIDTH,
@@ -163,31 +180,47 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
 
   return (
     <>
-      <div className="app" data-sidebar={sidebarCollapsed ? '0' : '1'}>
-        <aside className="sidebar" aria-hidden={sidebarCollapsed || undefined}>
-          <div className="sidebar-header">
+      <div className="app" data-rail={sidebarCollapsed ? '1' : '0'}>
+        <aside className={`sidebar${sidebarCollapsed ? ' rail' : ''}`}>
+          {/* 品牌行（旧界面同款）：logo + 名字 + 行尾的收起钮。整行是窗口拖拽区
+              （legacy `.sidebar-header`），按钮靠 `.rail-toggle` 自带 no-drag——没有
+              这个类名点击会被当拖窗口吞掉（「点了没反应」的根因）。 */}
+          <div
+            className="sidebar-header"
+            data-rail-hidden={sidebarCollapsed ? '1' : undefined}
+            aria-hidden={sidebarCollapsed || undefined}
+          >
+            <img src="icon.png" alt="Muse Code" draggable={false} />
             <span className="brand">{boot.host.name}</span>
             <button
               type="button"
-              className="icon-btn"
+              className="icon-btn rail-toggle"
+              data-tip="收起侧边栏，快捷键 Ctrl+B"
               title="收起侧栏（Ctrl+B）"
               aria-label="收起侧栏"
               onClick={toggleSidebar}
             >
-              <IconSidebar size={16} />
+              <IconSidebar size={15} />
             </button>
-            <ChannelState />
           </div>
-          <SlotOutlet slots={slots} slot={SLOT.sidebar} />
-          <div
-            className="sidebar-resizer"
-            data-tip="拖拽调整侧栏宽度，双击复位"
-            onPointerDown={sidebarDrag.onPointerDown}
-            onPointerMove={sidebarDrag.onPointerMove}
-            onPointerUp={sidebarDrag.onPointerUp}
-            onPointerCancel={sidebarDrag.onPointerCancel}
-            onDoubleClick={() => commitSidebarWidth(null)}
-          />
+          {/* 收起态：56px 图标窄栏（旧界面的 rail 分支），壳替插件画导航。 */}
+          {sidebarCollapsed ? <SidebarRail onExpand={toggleSidebar} /> : null}
+          {/* 插件的侧栏内容：收起时整块藏起来但不卸载（见 styles.css 的说明）；
+              展开态经 display:contents 包装层直排进 .sidebar（与别处槽包装同一招）。 */}
+          <div className="sidebar-slot" data-rail-hidden={sidebarCollapsed ? '1' : undefined}>
+            <SlotOutlet slots={slots} slot={SLOT.sidebar} />
+          </div>
+          {sidebarCollapsed ? null : (
+            <div
+              className="sidebar-resizer"
+              data-tip="拖拽调整侧栏宽度，双击复位"
+              onPointerDown={sidebarDrag.onPointerDown}
+              onPointerMove={sidebarDrag.onPointerMove}
+              onPointerUp={sidebarDrag.onPointerUp}
+              onPointerCancel={sidebarDrag.onPointerCancel}
+              onDoubleClick={() => commitSidebarWidth(null)}
+            />
+          )}
         </aside>
 
         <div className="main">
@@ -198,17 +231,8 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
             <>
               <div className="topbar">
                 <div className="topbar-title-row">
-                  {sidebarCollapsed ? (
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      title="展开侧栏（Ctrl+B）"
-                      aria-label="展开侧栏"
-                      onClick={toggleSidebar}
-                    >
-                      <IconSidebar size={16} />
-                    </button>
-                  ) : null}
+                  {/* 侧栏收起时不在这里放展开钮（旧界面顶栏没有它）：窄栏顶上那颗
+                      logo 就是展开入口，Ctrl+B 也照旧。 */}
                   <span className="title">
                     <SessionTitle />
                   </span>
@@ -355,30 +379,92 @@ function HostErrorStrip(): ReactNode {
   )
 }
 
-/** 侧栏头上的数据通道状态：通不通、协议版本、放行了多少方法。 */
-function ChannelState(): ReactNode {
-  const status = useChannelStatus()
-  const hello = useHostHello()
-  const text =
-    status === 'open'
-      ? '已连接'
-      : status === 'connecting'
-        ? '连接中…'
-        : '已断开（请用宿主新打印的地址重开）'
+/**
+ * 收起态的 56px 图标窄栏（旧界面 `Sidebar.tsx` 的 rail 分支同构）。
+ *
+ * 为什么由壳画而不是插件：窄栏内容（logo/新会话/技能/插件/目录/设置）就是**壳的
+ * 导航替身**，与展开态里插件画的侧栏内容一一对应；插件内容这时整块藏在槽里
+ * （不卸载），窄栏上的「新会话」经 `shell.session.new` 事件请会话列表插件去开。
+ */
+function SidebarRail({ onExpand }: { onExpand: () => void }): ReactNode {
+  const page = useShellPage()
+  const cwd = useHostSelector(readRailCwd)
   return (
-    <span
-      className="channel-state"
-      data-channel={status}
-      data-protocol={hello?.protocolVersion ?? ''}
-      data-tip={
-        hello === null
-          ? '还没拿到宿主握手'
-          : `协议 v${String(hello.protocolVersion)}，放行 ${String(hello.methods.length)} 个方法`
-      }
-    >
-      {text}
-    </span>
+    <>
+      {/* 窄栏里 logo 就代表「点开侧栏」，不再另摆一颗开关（旧界面同款）。 */}
+      <button type="button" className="rail-logo" data-tip="展开侧边栏，快捷键 Ctrl+B" title="展开侧栏（Ctrl+B）" aria-label="展开侧栏" onClick={onExpand}>
+        <img src="icon.png" alt="Muse Code" draggable={false} />
+      </button>
+      <button
+        type="button"
+        className="rail-btn"
+        data-tip="新会话"
+        aria-label="新会话"
+        onClick={() => {
+          window.dispatchEvent(new CustomEvent('shell.session.new'))
+        }}
+      >
+        <IconPlus size={18} />
+      </button>
+      <nav className="rail-nav">
+        <button
+          type="button"
+          className={`rail-btn${page === 'skills' ? ' on' : ''}`}
+          data-tip="技能"
+          aria-label="技能"
+          aria-pressed={page === 'skills'}
+          onClick={() => {
+            setShellPage(page === 'skills' ? null : 'skills')
+          }}
+        >
+          <IconBolt size={18} />
+        </button>
+        <button
+          type="button"
+          className={`rail-btn${page === 'plugins' ? ' on' : ''}`}
+          data-tip="插件"
+          aria-label="插件"
+          aria-pressed={page === 'plugins'}
+          onClick={() => {
+            setShellPage(page === 'plugins' ? null : 'plugins')
+          }}
+        >
+          <IconPuzzle size={18} />
+        </button>
+      </nav>
+      <div className="rail-foot">
+        <button
+          type="button"
+          className="rail-btn"
+          data-tip={cwd === null ? '展开侧栏后可选择会话' : `工作目录 ${cwd}，展开侧栏后可选择会话`}
+          aria-label="展开侧栏（查看工作目录）"
+          onClick={onExpand}
+        >
+          <IconFolder size={18} />
+        </button>
+        {/* 设置收进左下角（对照 dsh 的底部锚位），窄栏里排在目录按钮下面。 */}
+        <button
+          type="button"
+          className="rail-btn"
+          data-tip="设置：外观、模型、模式、技能、插件"
+          aria-label="设置"
+          onClick={() => {
+            window.dispatchEvent(new CustomEvent('shell.settings.open'))
+          }}
+        >
+          <IconGear size={18} />
+        </button>
+      </div>
+    </>
   )
+}
+
+/** 窄栏那颗「工作目录」按钮的悬浮说明要的 cwd（没有会话时给 null）。 */
+function readRailCwd(snapshot: Record<string, unknown> | null): string | null {
+  const status = snapshot?.['status']
+  if (typeof status !== 'object' || status === null) return null
+  const cwd = (status as Record<string, unknown>)['cwd']
+  return typeof cwd === 'string' && cwd !== '' ? cwd : null
 }
 
 /** 诊断区：清单里有什么、谁装上了、谁没起来、哪一块崩了、壳放行的模块有哪些。
@@ -401,6 +487,9 @@ function Diagnostics({
   const [forced] = useState(() => new URLSearchParams(location.search).has('diag'))
   const native = getHostNative()
   const probe = useNativeProbe()
+  // 数据通道读数住这里（原来挂在侧栏头上写「已连接」占着用户视野；旧界面头上没有它）。
+  const channel = useChannelStatus()
+  const hello = useHostHello()
   if (!forced && failed === 0 && faults.length === 0) return null
   return (
     <details className="diagnostics">
@@ -435,6 +524,16 @@ function Diagnostics({
       </p>
       <p className="diag-line">槽：{slots.slots.join('、') || '无'}</p>
       <p className="diag-line">放行的模块：{ALLOWED_MODULES.join('、')}</p>
+      {/* 数据通道在不在、通不通：断了要醒目（凭据失效后重连也回不来），
+          所以这一行留在诊断区；排查「界面冻住」时第一时间看它。 */}
+      <p className="diag-line diag-channel" data-channel={channel} data-protocol={hello?.protocolVersion ?? ''}>
+        数据通道：
+        {channel === 'open'
+          ? `已连接${hello === null ? '' : `（协议 v${String(hello.protocolVersion)}，放行 ${String(hello.methods.length)} 个方法）`}`
+          : channel === 'connecting'
+            ? '连接中…'
+            : '已断开（请用宿主新打印的地址重开）'}
+      </p>
       {/* 原生桥在不在：桌面窗口里有（走 preload 的 window.dscNative），浏览器里没有。
           写在诊断区是因为它决定了插件能不能做"打开路径/系统通知"这类事，而这件事
           只看代码看不出来（同一个壳两种载体）。 */}

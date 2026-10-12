@@ -47,7 +47,16 @@ export interface DesktopState {
   ui?: 'shell' | 'legacy'
 }
 
+/**
+ * 工作目录记忆文件的路径（默认 `~/.dsc/desktop.json`）。
+ *
+ * 可以由 `DSC_DESKTOP_STATE` 指到别处——自检环境要的正是这条：`app.getPath('home')`
+ * 认的是系统账户主目录、**不读 USERPROFILE**，没有这个开关，自检（a）会读到真实桌面状态
+ * （工作区列表跟机器走，断言不稳），（b）像「删除工作区」这类动作会真写用户的记忆文件。
+ */
 export function statePath(): string {
+  const override = process.env.DSC_DESKTOP_STATE
+  if (override !== undefined && override !== '') return override
   return join(app.getPath('home'), '.dsc', 'desktop.json')
 }
 

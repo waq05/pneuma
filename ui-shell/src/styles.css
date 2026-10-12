@@ -48,23 +48,11 @@
 
 /* ── 壳的应用级状态 ───────────────────────────────────────────────────────── */
 
-/* 数据通道状态：正常时安静，断了才醒目（凭据失效后重连也回不来，必须让用户看见）。 */
-.channel-state {
-  color: var(--dsc-text-quaternary);
-  font-size: var(--dsc-fs-tool);
-  margin-left: auto;
-}
-.channel-state[data-channel='open'] {
-  color: var(--dsc-text-tertiary);
-}
-.channel-state[data-channel='closed'] {
+/* 「已连接」那类数据通道读数不占用户视野（旧界面侧栏头上没有这一行）——它收在
+   诊断区里当一行读数；这里只留它的警示色规则：断了才醒目（凭据失效后重连也回不来）。
+   注：`.diag-channel` 上的属性由诊断区自己写，读法照旧（data-channel）。 */
+.diag-channel[data-channel='closed'] {
   color: var(--dsc-red);
-}
-
-/* 顶栏右端的版本号。 */
-.shell-build {
-  color: var(--dsc-text-quaternary);
-  font-size: var(--dsc-fs-tool);
 }
 
 /* 宿主那一侧的异常：安静时不占位置，出事时压在顶栏下面一条。 */
@@ -606,10 +594,15 @@
 
 /* 停靠面板的壳容器：宽度由壳写进 --dsc-dock-w（拖拽落盘，对齐桌面端 dsc.dockWidth）。
    收起时 display:none——**组件树不卸载**（桌面端「收起=滑出右缘不卸载」的对等物）：
-   终端进程活着、文件树的展开与选中都留着，重新展开时原样接上。 */
+   终端进程活着、文件树的展开与选中都留着，重新展开时原样接上。
+   列向：头条（页签条）在上、面板本体在下——旧界面的 dock 就是这个结构（strip 是
+   aside.dock 的第一个子节点）。行向会把页签条挤成面板左边一条竖带（chips 在窄条里
+   换行、又被 align-items:center 居中到半高），位置全错。 */
 .dock-slot {
   display: flex;
+  flex-direction: column;
   flex-shrink: 0;
+  min-height: 0;
   min-width: 0;
   position: relative;
   width: var(--dsc-dock-w, 420px);
@@ -624,15 +617,22 @@
 /* 面板本体填满壳容器（宽度归壳管，插件不再自带 460px）。 */
 .dock-slot > .dock {
   flex: 1;
+  min-height: 0;
   min-width: 0;
 }
 /* 拖宽热区：legacy 的 .dock-resizer 是「贴 aside 左缘」的绝对定位，壳里它挂在
    .dock-slot 上（.dock 的哥哥），语义不变——一样压在面板左缘那条线上。 */
 
-/* 侧栏折叠（Ctrl/Cmd+B 或顶栏钮）：完全收起，展开钮留在顶栏。
-   桌面端还有 56px 图标窄栏（rail）那一档；壳的侧栏内容在插件槽里，
-   rail 形态要壳替插件画导航，这一版先只做「全收起」。 */
-.app[data-sidebar='0'] .sidebar {
+/* 侧栏折叠（Ctrl/Cmd+B 或侧栏头那颗钮）：收成 56px 图标窄栏（rail），
+   与旧界面同款——窄栏由壳画（logo/新会话/技能/插件/目录/设置），
+   插件往侧栏槽里放的内容整块藏起来但**不卸载**（录入中的搜索词、展开态这些
+   本地状态留着；窄栏上的「新会话」也要靠插件活着的监听器接住）。 */
+/* 槽包装层透明（与别处同一招）：让插件的顶层块在展开态仍是 .sidebar 的直接子节点。
+   注意这条必须在 [data-rail-hidden] 之前：两条选择器优先级分不出高下，靠源码序定胜负。 */
+.sidebar-slot {
+  display: contents;
+}
+[data-rail-hidden='1'] {
   display: none;
 }
 

@@ -1,40 +1,35 @@
 /**
- * 内置插件：底部状态栏（照旧桌面界面的三段式状态栏重写）。
+ * 内置插件：底部状态栏（照旧桌面界面 `StatusBar.tsx` 的三段式重写）。
  *
- * 为什么 class 名逐字照搬旧版：旧样式表（`legacy/views.css`，旧
- * `desktop/src/renderer/styles.css` 的逐字节副本）已经整份搬进壳里，`.segments`、
- * `.segment`、`.ctx-card` 这一套选择器就是「状态栏长什么样」的唯一原件。壳早期自己
- * 发明的那套 `.readout` / `.readout-item` 在新样式表里一条规则都没有，画出来是一行
- * 裸文字，所以整份删掉重写。
+ * 为什么 class 名逐字照搬旧版：旧样式表（`legacy/views.css`，旧渲染层 styles.css 的逐字节
+ * 副本）整份搬进壳里，`.segments` / `.segment` / `.ctx-card` / `.ctx-bar` / `.ctx-legend`
+ * 这一套选择器就是「状态栏长什么样」的唯一原件。段与段之间的 `·` 分隔符由
+ * `.segment:not(:first-child)::before` 伪元素画（views.css:3935-3939），这里不手写分隔符。
  *
- * 这一版只渲染 `.segments`：外面那层 `<div className="statusbar">`（居中、左右内距、
- * tabular-nums）由壳摆；段与段之间的 `·` 分隔符由 `.segment:not(:first-child)::before`
- * 伪元素画（views.css:3935-3939），这里不手写分隔符，也不写 `<style>`。
+ * 三段与三张悬浮卡与旧版一一对应：
  *
- * 四段各自的数据来源与「没有就不画」（宁可整段缺席，也不把「不知道」画成 0）：
+ *   1. `seg-turn`：轮次/步数（从消息流条目数）+ 输出速度（拿得到时）。悬浮卡「会话进度」
+ *      列轮数、步数、速度、首字延迟（平均）、LLM 耗时、工具耗时与会话时钟。
+ *   2. `seg-tokens`：本会话累计 token（累计为 0 时整段不画——0 不是读数，是「还没发生」）。
+ *      悬浮卡「会话用量」列请求数、前缀缓存命中/未命中、输入输出与最近请求时刻。
+ *   3. `seg-context`：上下文占用的圆环 + 百分比（分母 `contextWindow` 为 0 时整段不画，
+ *      没有分母就谈不上百分比）。悬浮卡「上下文已用」画进度条与构成分解。
  *
- *   1. `seg-turn`：`turnState` 出状态字，`model` / `effort` 出尾部读数；卡里列会话短
- *      id、工作目录、模型、档位。旧版那一段报的是「N 轮 N 步 / tok/s」，那要数消息流
- *      条目、再读宿主的用量日志；壳这边两样都没有，所以这一段改成「状态 + 模型身份」，
- *      读数不编。
- *   2. `seg-tokens`：`usage.inputTokens` / `outputTokens`。整个 usage 缺席、或两个数
- *      加起来是 0（这个会话还没发生过一次请求）时，整段不画——0 不是读数，是「还没发生」。
- *   3. `seg-context`：`contextUsed / contextWindow` 的百分比与圆环。分母认不到
- *      （`contextWindow` 为 0）时整段不画：没有分母，百分比、圆环、进度条都无从谈起。
- *   4. `seg-cost`：只在宿主给了 `cost` 时画（只有 DeepSeek 官方端点、且模型在价目表里
- *      才有这个字段，见 contract.ts:518-522）。
+ * 数据来源分三层，拿不到的那一项整行省略，绝不编数：
  *
- * 悬浮卡常驻 DOM，显隐交给 CSS（`.ctx-card` 默认 `opacity:0; visibility:hidden`，
- * `:hover` / `:focus-within` 才显形，见 views.css:3987-4012、6802-6808），所以这里既没有
- * 「点开/收起」状态，也不用 JS 管显隐。
+ *   - 轮次/步数与构成估算：宿主快照（`entries` / `status.contextSegments`，服务端真值）；
+ *   - 输出速度、首字延迟与两项耗时：桌面原生桥 `sessionUsage`（壳进程读
+ *     `~/.dsc/usage/usage.jsonl` 的汇总，口径见 core/throughput.ts）——浏览器里没有这条桥，
+ *     那几行整行省略，其余照常；
+ *   - 会话开始/最近活动：界面侧观察（快照变化的时刻——宿主快照里没有时间戳）。
  *
  * @module dsc-ui-shell/plugins/statusbar
  */
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
   defineUiPlugin,
+  getHostNative,
   IconActivity,
-  IconCoins,
   IconDatabase,
   useHostSelector,
   type ContextSegmentsView,
@@ -49,13 +44,13 @@ export default defineUiPlugin({
   },
 })
 
-/** 回合状态：契约里的四种取值（contract.ts:506）。 */
+/** 回合状态：契约里的四种取值（contract.ts）。 */
 type TurnState = StatusView['turnState']
 
 /** 认状态字用的白名单：快照是 `unknown` 来的，没在这张表里的字一律当「没有状态」。 */
 const TURN_STATES: readonly TurnState[] = ['idle', 'thinking', 'working', 'awaiting-approval']
 
-/** 状态文案：与旧 StatusBar.tsx:34-39 一字不差（executing 那段旧版叫「执行中」）。 */
+/** 状态文案：与旧 StatusBar.tsx 一字不差。 */
 const TURN_TEXT: Record<TurnState, string> = {
   idle: '空闲',
   thinking: '思考中',
@@ -64,33 +59,35 @@ const TURN_TEXT: Record<TurnState, string> = {
 }
 
 /**
- * 上下文构成卡的图例行：契约里的五个分段各占一行，名字用仓库里已有的说法
- * （系统提示词、工具定义、思考过程，见 contract.ts 与 transcript 插件）。
- *
- * 圆点色只有两种可选：样式表只给了 `.ctx-dot-messages`（强调色）与 `.ctx-dot-base`
- * （紫色）两个色块（views.css:4071-4077）。所以按旧卡片的分类上色——对话那三段（用户
- * 输入 / 助手回复 / 思考过程）用强调色，系统提示词与工具定义用紫色；颜色相同的两行
- * 靠行首文字区分，不为它们发明样式表里没有的圆点 class。
+ * 用量日志的会话投影（桌面原生桥 `sessionUsage` 的返回；形状原件在
+ * `src/contract.ts` 的 SessionUsageView——插件拉不到那个模块，结构逐字对上）。
  */
-const CONTEXT_LEGEND: readonly { key: keyof ContextSegmentsView; label: string; dot: string }[] = [
-  { key: 'prompt', label: '用户输入', dot: 'ctx-dot-messages' },
-  { key: 'assistant', label: '助手回复', dot: 'ctx-dot-messages' },
-  { key: 'thinking', label: '思考过程', dot: 'ctx-dot-messages' },
-  { key: 'system', label: '系统提示词', dot: 'ctx-dot-base' },
-  { key: 'tools', label: '工具定义', dot: 'ctx-dot-base' },
-]
+interface SessionUsageView {
+  requests: number
+  inputTokens: number
+  outputTokens: number
+  cacheHitTokens: number
+  cacheMissTokens: number
+  lastInputTokens: number
+  lastAt: number
+  llmMs: number
+  ttftMs: number
+  ttftSteps: number
+  decodeMs: number
+  decodeTokens: number
+  toolMs: number
+  toolCalls: number
+}
 
 /** status 缺席时读字段用的空壳：下面每个 reader 对空壳都回「没有」。 */
 const EMPTY_STATUS: Readonly<Record<string, unknown>> = Object.freeze({})
 
-/** 装配三段（+ 可选的费用段）。 */
+/** 装配三段。 */
 function StatusSegments(): ReactNode {
   // 一个字段一个订阅，值没变就不重渲染——为什么这么切见 useStatusField。
   const turnState = useStatusField(readTurnState)
   const model = useStatusField(readModel)
-  const effort = useStatusField(readEffort)
   const sessionId = useStatusField(readSessionId)
-  const cwd = useStatusField(readCwd)
   // 轮数/步数从消息流条目统计（旧界面第一段「N 轮 N 步」的同一口径），"轮/步" 字符串稳定。
   const tally = useHostSelector(readRoundStep)
   const [rounds, steps] = tally.split('/')
@@ -105,11 +102,20 @@ function StatusSegments(): ReactNode {
   const segAssistant = useStatusField(readSegment('assistant'))
   const segThinking = useStatusField(readSegment('thinking'))
   const segTools = useStatusField(readSegment('tools'))
-  const costTotal = useStatusField(readCostTotal)
-  const costPeak = useStatusField(readCostPeak)
+  // 会话时钟与用量日志的两个观察面（旧界面同款的两个 hook）。
+  const activity = useHostSelector(readActivityKey)
+  const hasContent = useHostSelector(readHasContent)
 
-  // 累计用量：输入或输出任一缺席就说不清「累计是多少」，这一整段就缺席（不当 0 补）。
-  const totalTokens = inputTokens === null || outputTokens === null ? null : inputTokens + outputTokens
+  // 快照口径的本会话累计 token；它一变就说明有一次请求刚落进日志（useSessionUsage 的重读键）。
+  const settledTokens = (inputTokens ?? 0) + (outputTokens ?? 0)
+  const logged = useSessionUsage(sessionId, turnState, settledTokens)
+  const clock = useSessionClock(sessionId, activity, hasContent)
+  // 输出速度 = 已定稿请求的输出 token ÷ 纯解码时间（整会话累计，口径见 core/throughput.ts）；
+  // 日志里没有这条会话、或老行没记解码期 → null，整截省略（不拿快照增量估一个顶上去）。
+  const speed = logged === null ? null : tokensPerSecond(logged)
+  // 累计用量优先读用量日志（含切到本进程之前的历史请求）；日志里还没有这条会话时，
+  // 退回快照里的会话累计（只算本进程开着的这段时间）。两个都是真值，只是口径不同。
+  const total = logged === null ? settledTokens : logged.inputTokens + logged.outputTokens
 
   const parts: ReactNode[] = []
   if (turnState !== null) {
@@ -118,22 +124,23 @@ function StatusSegments(): ReactNode {
         key="turn"
         turnState={turnState}
         model={model}
-        effort={effort}
         sessionId={sessionId}
-        cwd={cwd}
         rounds={Number(rounds)}
         steps={Number(steps)}
+        speed={speed}
+        logged={logged}
+        clock={clock}
       />,
     )
   }
-  if (totalTokens !== null && totalTokens > 0) {
+  if (total > 0) {
     parts.push(
       <TokenSegment
         key="tokens"
-        inputTokens={inputTokens ?? 0}
-        outputTokens={outputTokens ?? 0}
-        cacheHit={cacheHit}
-        cacheMiss={cacheMiss}
+        total={total}
+        snapshot={{ input: inputTokens ?? 0, output: outputTokens ?? 0 }}
+        logged={logged}
+        speedContext={{ cacheHit, cacheMiss }}
       />,
     )
   }
@@ -153,9 +160,6 @@ function StatusSegments(): ReactNode {
       />,
     )
   }
-  if (costTotal !== null) {
-    parts.push(<CostSegment key="cost" total={costTotal} peakNow={costPeak} />)
-  }
 
   // 一段都画不出来（宿主一帧没推、或这一版快照没有 status）就整条不占位置。
   if (parts.length === 0) return null
@@ -163,60 +167,71 @@ function StatusSegments(): ReactNode {
 }
 
 /**
- * 第一段：回合状态 + 模型身份，悬浮出会话明细卡。
+ * 第一段：轮次/步数（跑动时速度跟在后面），悬浮出「会话进度」卡。
  *
- * `.seg-icon` 上的 `state-*` 只染图标（views.css:3942-3954），所以状态色不会把整段
- * 文字染蓝；模型与档位压在 `.seg-dim` 里当次级读数——这一段的主信息是「现在在干什么」。
+ * 与旧版同一条口径：主文案永远是「N 轮 N 步」——当前在干什么由图标颜色与悬浮说明表达，
+ * 模型/会话这些身份读数收进悬浮说明（宿主开场写进消息流的那条「会话 x · 模型 y」已经
+ * 不画了，信息在这一点上不丢）。
  */
 function TurnSegment(props: {
   turnState: TurnState
   model: string
-  effort: string | null
   sessionId: string | null
-  cwd: string | null
   /** 消息流里统计的轮数（用户消息数）与步数（工具调用数）。 */
   rounds: number
   steps: number
+  speed: number | null
+  logged: SessionUsageView | null
+  clock: SessionClock | null
 }): ReactNode {
   const stateText = TURN_TEXT[props.turnState]
-  // 主文案对齐旧界面：空闲报「N 轮 N 步」，跑动中报状态字。
-  const lead = props.turnState === 'idle' ? `${String(props.rounds)} 轮 ${String(props.steps)} 步` : stateText
-  // 尾部读数：模型与档位各是一截，缺哪截少哪截，都不缺才用一个 `·` 连起来（分隔符规则
-  // 与段之间一致：同一段里也只用中点）。
-  const readout = [props.model, props.effort].filter((part) => part !== null && part !== '').join(' · ')
+  const startedAt = props.clock?.startedAt ?? null
+  const lastActiveAt = props.clock?.lastActiveAt ?? null
+  const logged = props.logged
+  // 首字延迟报平均（累计 ÷ 样本数）：单看累计毫秒没有可比性，请求一多就只见涨。
+  const ttft = logged === null ? null : averageTtftMs(logged)
+  const ttftText = ttft === null ? null : formatDuration(ttft)
+  const toolText = logged === null || logged.toolCalls === 0 ? null : formatDuration(logged.toolMs)
+  const llmText = logged === null || !(logged.llmMs > 0) ? null : formatDuration(logged.llmMs)
   const hint = [
     `当前状态：${stateText}`,
-    `${String(props.rounds)} 轮 ${String(props.steps)} 步`,
     props.sessionId === null ? null : `会话 ${props.sessionId.slice(0, 8)}`,
     props.model === '' ? null : `模型 ${props.model}`,
-    props.effort === null ? null : `档位 ${props.effort}`,
-    props.cwd === null ? null : `目录 ${props.cwd}`,
   ]
     .filter((part) => part !== null)
     .join(' · ')
-
   return (
     <span className="segment seg-turn seg-hover">
-      <button type="button" className="ctx-trigger" title={`${hint}；点开看会话明细`}>
+      <button type="button" className="ctx-trigger" title={`${hint}；点开看轮次、步骤、速度与时间`}>
         <span className={`seg-icon state-${props.turnState}`}>
           <IconActivity size={12} />
         </span>
-        {lead}
-        {readout === '' ? null : <span className="seg-dim"> · {readout}</span>}
+        {props.rounds} 轮 {props.steps} 步
+        {props.speed !== null && <span className="seg-dim"> · {formatTokensPerSecond(props.speed)} tok/s</span>}
       </button>
       <div className="ctx-card" role="note">
         <div className="ctx-head">
-          <span className="ctx-title">会话状态</span>
-          <span className="ctx-numbers">{stateText}</span>
+          <span className="ctx-title">会话进度</span>
+          <span className="ctx-numbers">
+            {props.rounds} 轮 · {props.steps} 步
+          </span>
         </div>
         <div className="ctx-rule" />
         <div className="ctx-rows">
-          {props.sessionId === null ? null : (
-            <CardRow label="会话" value={props.sessionId.slice(0, 8)} />
+          <CardRow label="用户轮数" value={`${String(props.rounds)} 轮`} />
+          <CardRow label="工具调用" value={`${String(props.steps)} 步`} />
+          {props.speed !== null && <CardRow label="输出速度" value={`${formatTokensPerSecond(props.speed)} tok/s`} />}
+          {ttftText !== null && logged !== null && (
+            <CardRow label="首字延迟" value={`${ttftText}（平均 ${String(logged.ttftSteps)} 次）`} />
           )}
-          {props.cwd === null ? null : <CardRow label="工作目录" value={shortCwd(props.cwd)} />}
-          {props.model === '' ? null : <CardRow label="模型" value={props.model} />}
-          {props.effort === null ? null : <CardRow label="档位" value={props.effort} />}
+          {llmText !== null && <CardRow label="LLM 耗时" value={llmText} />}
+          {toolText !== null && logged !== null && (
+            <CardRow label="工具耗时" value={`${toolText} · ${String(logged.toolCalls)} 次`} />
+          )}
+          {startedAt !== null && <CardRow label="会话开始" value={clockText(startedAt)} />}
+          {lastActiveAt !== null && (
+            <CardRow label="最近活动" value={`${clockText(lastActiveAt)}（${agoText(lastActiveAt)}）`} />
+          )}
         </div>
       </div>
     </span>
@@ -224,56 +239,53 @@ function TurnSegment(props: {
 }
 
 /**
- * 第二段：会话累计用量。
+ * 第二段：本会话累计 token（日志口径优先，见上面 total 的口径注释）。
  *
- * 段上给的是紧凑读数（`↑12.3K ↓4.5K`，K/M 缩写口径照搬旧渲染层 token-estimate.ts 的
- * `formatTokens`），卡里给精确值（千分位，同旧文件 `formatExactTokens`）。缓存三行只在
- * 端点真上报过缓存明细时出现，否则退回一行「输入 token」——分母只吃上报过的请求，
- * 命中率才不会被老数据稀释（口径与旧 TokenCard 一致；本仓库没有「模型请求次数」这一项，
- * 所以旧卡那行没搬）。
+ * 卡里给精确值（千分位）与明细：请求数、前缀缓存三行、输入/输出、最近请求时刻。
+ * 缓存三行只在端点真上报过缓存明细时出现，否则退回一行「输入 token」——分母只吃
+ * 上报过的请求，命中率才不会被老数据稀释（与旧 TokenCard 同口径）。
  */
 function TokenSegment(props: {
-  inputTokens: number
-  outputTokens: number
-  cacheHit: number | null
-  cacheMiss: number | null
+  total: number
+  snapshot: { input: number; output: number }
+  logged: SessionUsageView | null
+  /** 快照口径的缓存两栏（日志缺席时的兜底读数）。 */
+  speedContext: { cacheHit: number | null; cacheMiss: number | null }
 }): ReactNode {
-  const total = props.inputTokens + props.outputTokens
-  // 两个缓存字段成对上报；只要有一项缺席，就说明这条会话还没有可用的缓存口径。
-  const cachePrompt =
-    props.cacheHit === null || props.cacheMiss === null ? 0 : props.cacheHit + props.cacheMiss
-  // 分母为 0（没有上报过明细，或明细恰好全是 0）时这个函数自己回 null，调用方整块退回。
-  const hitPercent = formatCacheHitPercent(props.cacheHit ?? 0, cachePrompt)
-
+  const logged = props.logged
+  const input = logged?.inputTokens ?? props.snapshot.input
+  const output = logged?.outputTokens ?? props.snapshot.output
+  const requests = logged?.requests ?? null
+  const lastAt = logged !== null && logged.lastAt > 0 ? logged.lastAt : null
+  // 命中率的分母只算上报过缓存明细的请求（老日志没有 ch/cm）：日志在就用日志，否则用快照。
+  const cacheHit = logged !== null ? logged.cacheHitTokens : props.speedContext.cacheHit
+  const cacheMiss = logged !== null ? logged.cacheMissTokens : props.speedContext.cacheMiss
+  const cachePrompt = cacheHit === null || cacheMiss === null ? 0 : cacheHit + cacheMiss
+  const hitPercent = formatCacheHitPercent(cacheHit ?? 0, cachePrompt)
   return (
     <span className="segment seg-tokens seg-hover">
-      <button
-        type="button"
-        className="ctx-trigger"
-        title="这个会话的累计 token（↑ 输入 / ↓ 输出）；点开看输入输出明细"
-      >
+      <button type="button" className="ctx-trigger" title="这个会话的累计 token；点开看请求数与输入/输出明细">
         <span className="seg-icon">
           <IconDatabase size={12} />
         </span>
-        ↑{formatTokens(props.inputTokens)} ↓{formatTokens(props.outputTokens)}
+        {formatTokens(props.total)} tok
       </button>
       <div className="ctx-card" role="note">
         <div className="ctx-head">
           <span className="ctx-title">会话用量</span>
-          <span className="ctx-numbers">{formatExactTokens(total)} tok</span>
+          <span className="ctx-numbers">{formatExactTokens(props.total)} tok</span>
         </div>
         <div className="ctx-rule" />
         <div className="ctx-rows">
-          {hitPercent === null ? (
-            <CardRow label="输入 token" value={formatExactTokens(props.inputTokens)} />
-          ) : (
-            <>
-              <CardRow label="缓存命中" value={`${hitPercent}%`} />
-              <CardRow label="未缓存输入" value={formatExactTokens(props.cacheMiss ?? 0)} />
-              <CardRow label="缓存读取" value={formatExactTokens(props.cacheHit ?? 0)} />
-            </>
+          {requests !== null && <CardRow label="模型请求" value={`${String(requests)} 次`} />}
+          {hitPercent !== null && <CardRow label="缓存命中" value={`${hitPercent}%`} />}
+          {hitPercent !== null && cacheMiss !== null && (
+            <CardRow label="未缓存输入" value={formatExactTokens(cacheMiss)} />
           )}
-          <CardRow label="输出" value={formatExactTokens(props.outputTokens)} />
+          {hitPercent !== null && cacheHit !== null && <CardRow label="缓存读取" value={formatExactTokens(cacheHit)} />}
+          {hitPercent === null && <CardRow label="输入 token" value={formatExactTokens(input)} />}
+          <CardRow label="输出" value={formatExactTokens(output)} />
+          {lastAt !== null && <CardRow label="最近请求" value={`${clockText(lastAt)}（${agoText(lastAt)}）`} />}
         </div>
       </div>
     </span>
@@ -281,11 +293,16 @@ function TokenSegment(props: {
 }
 
 /**
- * 第三段：圆环 + 百分比，悬浮出上下文构成卡。
+ * 第三段：圆环 + 百分比，悬浮出「上下文已用」卡。
  *
  * 占用读数用 `contextUsed`（最近一次请求的 prompt_tokens，服务端真值），不是 `usage`
- * 累计——累计会把早已滚出窗口的内容也算进去，条会虚胖（口径见 contract.ts:510-515）。
- * 真的超过窗口时不假装还在 100% 以内：数字照实报，圆环与进度条按 100% 画满。
+ * 累计——累计会把早已滚出窗口的内容也算进去，条会虚胖。分子与分解的关系照旧版：
+ * 「对话消息」（用户输入/助手回复/思考过程三段之和）与「系统提示词 + 工具定义」
+ * （系统提示词/工具定义两段之和）都来自宿主按请求内容估的分段；真值 `contextUsed`
+ * 与分段之和的差（角色标记、工具 JSON 信封那些零头）画进对话消息那一块里。
+ *
+ * 分段讲不通时（估算跑偏：对话消息为 0、或大过真值）只画整条进度条，不摆一行
+ * 自相矛盾的账（旧卡片同一条诚实规矩）。
  */
 function ContextSegment(props: {
   used: number
@@ -294,14 +311,11 @@ function ContextSegment(props: {
 }): ReactNode {
   const percent = Math.round((props.used / props.windowTokens) * 100)
   const shown = Math.min(Math.max(percent, 0), 100)
-  const barRatio =
-    Math.min(Math.max(props.used, 0), props.windowTokens) / props.windowTokens
-  // 空闲段的分母也是窗口，而分子用**权威占用**倒推（窗口 − 已用），不是分段估算之和：
-  // 分段只描述「已用里各占多少颜色」，估算与真值本来就有差（口径同 src/app/StatusBar.tsx）。
-  const free = Math.max(0, props.windowTokens - props.used)
-  const share = (value: number): string => `${((value / props.windowTokens) * 100).toFixed(1)}%`
-  const rows = CONTEXT_LEGEND.filter((row) => props.segments[row.key] > 0)
-
+  const messages = props.segments.prompt + props.segments.assistant + props.segments.thinking
+  const base = props.segments.system + props.segments.tools
+  const split = messages > 0 && messages < props.used
+  const widthOf = (tokens: number): string =>
+    `${((Math.min(tokens, props.windowTokens) / props.windowTokens) * 100).toFixed(2)}%`
   return (
     <span className="segment seg-context seg-hover">
       <button type="button" className="ctx-trigger" aria-label={`上下文已用 ${String(percent)}%`}>
@@ -312,72 +326,27 @@ function ContextSegment(props: {
         <div className="ctx-head">
           <span className="ctx-title">上下文已用 {percent}%</span>
           <span className="ctx-numbers">
-            {formatTokens(props.used)} / {formatTokens(props.windowTokens)}
+            ~{formatTokens(props.used)} / {formatTokens(props.windowTokens)}
           </span>
         </div>
-        {/* 轨道（`.ctx-bar` 的底色）就是空闲段：填充只有一块 = 占用比例，
-            所以没有再画 `.ctx-bar-base`——它在这套单填充的画法里是 0 宽的死标记。
-            分段估算另在图例里逐行列出。 */}
         <div className="ctx-bar">
-          <span className="ctx-bar-fill" style={{ width: `${(barRatio * 100).toFixed(2)}%` }} />
+          <span className="ctx-bar-fill" style={{ width: widthOf(split ? messages : props.used) }} />
+          {split && <span className="ctx-bar-base" style={{ width: widthOf(props.used - messages) }} />}
         </div>
-        <div className="ctx-legend">
-          {rows.map((row) => (
-            <div key={row.key} className="ctx-legend-row">
-              <i className={`ctx-dot ${row.dot}`} />
-              <span className="ctx-legend-label">{row.label}</span>
-              <span className="ctx-legend-value">
-                {formatTokens(props.segments[row.key])} · {share(props.segments[row.key])}
-              </span>
-            </div>
-          ))}
-          {free > 0 ? (
+        {split && (
+          <div className="ctx-legend">
             <div className="ctx-legend-row">
-              {/* 空闲没有专属圆点色（样式表只给对话色与紫色两块），这里用轨道底色画，
-                  不给它发明一个 `.ctx-dot-idle`（那会是没有背景色的隐形圆点）。 */}
-              <i className="ctx-dot" style={{ background: 'var(--dsc-fill-quaternary)' }} />
-              <span className="ctx-legend-label">空闲</span>
-              <span className="ctx-legend-value">
-                {formatTokens(free)} · {share(free)}
-              </span>
+              <i className="ctx-dot ctx-dot-messages" />
+              <span className="ctx-legend-label">对话消息</span>
+              <span className="ctx-legend-value">~{formatTokens(messages)}</span>
             </div>
-          ) : null}
-        </div>
-      </div>
-    </span>
-  )
-}
-
-/**
- * 可选第四段：会话费用估算（只在 DeepSeek 官方端点有价目时才有数据）。
- *
- * 卡里只有一条真数据（计价时段），不为了把卡片填满而编行；峰谷的判定依据
- * （按北京时段分桶）收在按钮的悬浮说明里。
- */
-function CostSegment(props: { total: number; peakNow: boolean }): ReactNode {
-  const amount = `${props.total.toFixed(2)} 元`
-  return (
-    <span className="segment seg-cost seg-hover">
-      <button
-        type="button"
-        className="ctx-trigger"
-        title="这个会话的费用估算（DeepSeek 官方价目表，峰谷按北京时段分桶）"
-      >
-        <span className="seg-icon">
-          <IconCoins size={12} />
-        </span>
-        {amount}
-        <span className="seg-dim"> · {props.peakNow ? '峰时' : '谷时'}</span>
-      </button>
-      <div className="ctx-card" role="note">
-        <div className="ctx-head">
-          <span className="ctx-title">会话费用</span>
-          <span className="ctx-numbers">{amount}</span>
-        </div>
-        <div className="ctx-rule" />
-        <div className="ctx-rows">
-          <CardRow label="计价时段" value={props.peakNow ? '峰时' : '谷时'} />
-        </div>
+            <div className="ctx-legend-row">
+              <i className="ctx-dot ctx-dot-base" />
+              <span className="ctx-legend-label">系统提示词 + 工具定义</span>
+              <span className="ctx-legend-value">~{formatTokens(props.used - messages)}</span>
+            </div>
+          </div>
+        )}
       </div>
     </span>
   )
@@ -393,7 +362,7 @@ function CardRow(props: { label: string; value: string }): ReactNode {
   )
 }
 
-/** 段的圆环图标：按占用百分比填充的一圈（尺寸与画法照搬旧 StatusBar.tsx:299-318）。 */
+/** 段的圆环图标：按占用百分比填充的一圈（尺寸与画法照搬旧 StatusBar.tsx）。 */
 function ContextRing({ percent }: { percent: number }): ReactNode {
   const radius = 5.2
   const circumference = 2 * Math.PI * radius
@@ -466,28 +435,16 @@ function readTurnState(status: Record<string, unknown>): TurnState | null {
     : null
 }
 
-/** 模型名：宿主没选模型时给 `'unknown'`（contract.ts:503），那不是名字，别当名字画出来。 */
+/** 模型名：宿主没选模型时给 `'unknown'`，那不是名字，别当名字画出来。 */
 function readModel(status: Record<string, unknown>): string {
   const model = readText(status, 'model')
   return model === 'unknown' ? '' : model
 }
 
-/** 档位（effort）：空串当没有。 */
-function readEffort(status: Record<string, unknown>): string | null {
-  const effort = readText(status, 'effort')
-  return effort === '' ? null : effort
-}
-
-/** 会话 id：没有会话（还没开）时是 null。 */
+/** 会话 id（uuid）：没有会话（还没开）时是 null。 */
 function readSessionId(status: Record<string, unknown>): string | null {
   const sessionId = readText(status, 'sessionId')
   return sessionId === '' ? null : sessionId
-}
-
-/** 工作目录：快照组装自会话元数据，缺了就是空串。 */
-function readCwd(status: Record<string, unknown>): string | null {
-  const cwd = readText(status, 'cwd')
-  return cwd === '' ? null : cwd
 }
 
 /** `usage` 那一片：这个会话还没请求过模型时是 null。 */
@@ -505,7 +462,7 @@ function readUsageOutput(status: Record<string, unknown>): number | null {
   return usage === null ? null : readNumber(usage, 'outputTokens')
 }
 
-/** 前缀缓存命中 tokens：端点没上报过明细时这个字段根本不存在（contract.ts:392）。 */
+/** 前缀缓存命中 tokens：端点没上报过明细时这个字段根本不存在。 */
 function readCacheHit(status: Record<string, unknown>): number | null {
   const usage = usageOf(status)
   return usage === null ? null : readNumber(usage, 'cacheHitTokens')
@@ -517,7 +474,7 @@ function readCacheMiss(status: Record<string, unknown>): number | null {
   return usage === null ? null : readNumber(usage, 'cacheMissTokens')
 }
 
-/** 上下文窗口：0 是契约里写明的「未知」（contract.ts:508），调用方据此整段不画。 */
+/** 上下文窗口：0 是契约里写明的「未知」，调用方据此整段不画。 */
 function readContextWindow(status: Record<string, unknown>): number {
   return readNumber(status, 'contextWindow') ?? 0
 }
@@ -527,12 +484,12 @@ function readContextUsed(status: Record<string, unknown>): number {
   return readNumber(status, 'contextUsed') ?? 0
 }
 
-/** `contextSegments` 那一片：没有请求记录时宿主给全 0（contract.ts:516-517）。 */
+/** `contextSegments` 那一片：没有请求记录时宿主给全 0。 */
 function segmentsOf(status: Record<string, unknown>): Record<string, unknown> | null {
   return asRecord(status['contextSegments'])
 }
 
-/** 取一个分段估算值的 reader（喂给 `useStatusField`；缺字段按 0 理解，故不画那一行）。 */
+/** 取一个分段估算值的 reader（喂给 `useStatusField`；缺字段按 0 理解，故不画那一块）。 */
 function readSegment(key: keyof ContextSegmentsView): (status: Record<string, unknown>) => number {
   return (status) => {
     const segments = segmentsOf(status)
@@ -540,33 +497,151 @@ function readSegment(key: keyof ContextSegmentsView): (status: Record<string, un
   }
 }
 
-/** `cost` 那一片：只在 DeepSeek 官方端点 + 模型在价目表里 + 至少回过一笔用量时才有。 */
-function costOf(status: Record<string, unknown>): Record<string, unknown> | null {
-  return asRecord(status['cost'])
-}
-
-function readCostTotal(status: Record<string, unknown>): number | null {
-  const cost = costOf(status)
-  return cost === null ? null : readNumber(cost, 'total')
-}
-
-function readCostPeak(status: Record<string, unknown>): boolean {
-  return costOf(status)?.['peakNow'] === true
+/**
+ * 轮数/步数统计（旧界面第一段「N 轮 N 步」同口径）：用户消息计轮（插话不算—它是排队机制），
+ * 工具调用计步。返回 "轮/步" 字符串——useHostSelector 的取值要引用稳定，数组对象会每帧换引用。
+ */
+function readRoundStep(snapshot: HostSnapshot | null): string {
+  const entries = snapshot?.['entries']
+  if (!Array.isArray(entries)) return '0/0'
+  let rounds = 0
+  let steps = 0
+  for (const entry of entries) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const record = entry as Record<string, unknown>
+    if (record['kind'] === 'user' && record['steering'] !== true) rounds += 1
+    else if (record['kind'] === 'tool') steps += 1
+  }
+  return `${String(rounds)}/${String(steps)}`
 }
 
 /**
- * 工作目录在卡里只给最后两段：卡片固定 272px 宽，整条路径会把「值」那一列撑爆。
- * 口径与终端状态栏的 `shortCwd` 一致（src/app/StatusBar.tsx），完整路径留在段按钮的
- * 悬浮说明里。
+ * 快照变化的指纹：条目数、回合状态、累计 token 三者任一变了就算「有活动」。
+ *
+ * 为什么不用时间戳：快照里根本没有时间，能被观察到的只有「什么时候变了」。
  */
-function shortCwd(cwd: string): string {
-  const parts = cwd.split(/[\\/]/).filter((part) => part !== '')
-  return parts.length <= 2 ? cwd : `…${parts.slice(-2).join('/')}`
+function readActivityKey(snapshot: HostSnapshot | null): string {
+  const entries = snapshot?.['entries']
+  const count = Array.isArray(entries) ? entries.length : 0
+  const status = statusOf(snapshot) ?? EMPTY_STATUS
+  const usage = usageOf(status)
+  const input = usage === null ? 0 : (readNumber(usage, 'inputTokens') ?? 0)
+  const output = usage === null ? 0 : (readNumber(usage, 'outputTokens') ?? 0)
+  return `${String(count)}:${readText(status, 'turnState')}:${String(input)}:${String(output)}`
 }
 
-// ─────────── 数量格式化：下面这一段逐字照搬旧渲染层 desktop/src/renderer/token-estimate.ts ───────────
-// 为什么原样抄一份而不是 import：插件能 require 的只有 react 与 @dsc/ui（boot.ts:53-59），
-// 拉不到旧渲染层的模块；而「状态栏上的数字怎么缩写」本来就只有这一个口径，改写它就是换口径。
+/**
+ * 这条会话是不是已经有真实内容：system 灰条只是宿主发给界面的通知（新建的空会话
+ * 也有），所以它不算内容；累计 token 动了也算有内容（旧 sessionHasContent 同款）。
+ */
+function readHasContent(snapshot: HostSnapshot | null): boolean {
+  const status = statusOf(snapshot)
+  if (status !== null) {
+    const usage = usageOf(status)
+    if (usage !== null && (readNumber(usage, 'inputTokens') ?? 0) + (readNumber(usage, 'outputTokens') ?? 0) > 0) {
+      return true
+    }
+  }
+  const entries = snapshot?.['entries']
+  if (!Array.isArray(entries)) return false
+  return entries.some((entry) => (entry as { kind?: unknown })['kind'] !== 'system')
+}
+
+/**
+ * 会话累计用量与各项耗时：切会话时取一次，之后每轮跑完（忙转闲）与每次请求定稿
+ * （快照累计 token 一变）再取一次——日志里会变的就是这些时刻（旧 useSessionUsage 移植；
+ * 桥不在的载体上直接记 null，「拿不到就不画」与读文件失败同一条路）。
+ *
+ * @param settledTokens - 快照口径的本会话累计 token；它一变就说明有一次请求刚落进日志。
+ */
+function useSessionUsage(
+  sessionId: string | null,
+  turnState: TurnState | null,
+  settledTokens: number,
+): SessionUsageView | null {
+  // 连会话 id 一起存：切会话那一刻旧数字必须立刻作废，不能把上一条会话的账挂在新的底下。
+  const [bag, setBag] = useState<{ id: string; view: SessionUsageView | null } | null>(null)
+  const busy = turnState !== null && turnState !== 'idle'
+  useEffect(() => {
+    if (sessionId === null) {
+      setBag(null)
+      return
+    }
+    const native = getHostNative()
+    if (!native.available) {
+      // 浏览器 / 远程壳里没有这条桥：用量读数整块省略（降级路径，不是故障）。
+      setBag({ id: sessionId, view: null })
+      return
+    }
+    let alive = true
+    void native.invoke<SessionUsageView | null>('sessionUsage', [sessionId]).then(
+      (view) => {
+        if (alive) setBag({ id: sessionId, view: view ?? null })
+      },
+      () => {
+        // 用量日志读不了（还没生成 / 被占用）不是错误：这一段自然省略。
+        if (alive) setBag({ id: sessionId, view: null })
+      },
+    )
+    return () => {
+      alive = false
+    }
+  }, [sessionId, busy, settledTokens])
+  return bag !== null && bag.id === sessionId ? bag.view : null
+}
+
+/** 界面侧观察到的会话时钟（宿主快照不带时间戳，这两个时刻只能自己记）。 */
+interface SessionClock {
+  sessionId: string
+  /** 本进程内第一次看到这条会话有内容的时刻；一直没内容就是 null。 */
+  startedAt: number | null
+  /** 最近一次看到快照变化的时刻。 */
+  lastActiveAt: number
+}
+
+/**
+ * 会话时钟：切会话时重置，之后每有一次快照变化就把「最近活动」推到当下，
+ * 并在第一次看到内容时定下「会话开始」（旧 useSessionClock 移植）。
+ *
+ * 存 id 一起是必要的：切会话那一刻旧时钟必须立刻作废，不能把上一条会话的
+ * 开始时间挂到新会话底下（与 useSessionUsage 同一个理由）。
+ */
+function useSessionClock(sessionId: string | null, activity: string, content: boolean): SessionClock | null {
+  const [clock, setClock] = useState<SessionClock | null>(null)
+  useEffect(() => {
+    if (sessionId === null) {
+      setClock(null)
+      return
+    }
+    const now = Date.now()
+    setClock((current) =>
+      current === null || current.sessionId !== sessionId
+        ? { sessionId, startedAt: content ? now : null, lastActiveAt: now }
+        : { ...current, startedAt: current.startedAt ?? (content ? now : null), lastActiveAt: now },
+    )
+  }, [sessionId, activity, content])
+  return clock !== null && clock.sessionId === sessionId ? clock : null
+}
+
+/** 时刻写成 24 小时制的 HH:MM（旧 clockText 同款）。 */
+function clockText(at: number): string {
+  const date = new Date(at)
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
+/** 相对时间：只到分钟与天，够读就行，不引第三方日期库（旧 agoText 同款）。 */
+function agoText(at: number): string {
+  const minutes = Math.floor((Date.now() - at) / 60000)
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${String(minutes)} 分钟前`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${String(hours)} 小时前`
+  return `${String(Math.floor(hours / 24))} 天前`
+}
+
+// ─────────── 数量与耗时格式化：原件在旧渲染层 token-estimate.ts / trace-format.ts ───────────
+// 为什么原样抄一份而不是 import：插件能 require 的只有 react 与 @dsc/ui（boot.ts 的白名单），
+// 拉不到别的模块；这几段本来就是「数字怎么读」的唯一口径，改写它就是换口径。
 
 /** 去掉小数末尾多余的 0：46.0K → 46K，1.00M → 1M。 */
 function trimZero(value: number): string {
@@ -574,16 +649,51 @@ function trimZero(value: number): string {
   return text.endsWith('.0') ? text.slice(0, -2) : text
 }
 
-/** 数量按 K / M 压短（对照 dsh 的 123M tok / ~46.1K）：1000 以下给原值，128000 读成 128K。 */
+/** 数量按 K / M 压短：1000 以下给原值，128000 读成 128K。 */
 function formatTokens(count: number): string {
   if (count < 1_000) return String(Math.round(count))
   if (count < 1_000_000) return `${trimZero(count / 1_000)}K`
   return `${trimZero(count / 1_000_000)}M`
 }
 
-/** 精确数量：千分位逗号（对照 dsh 的 6,912,345 tok）：单行读数用紧凑那份，卡片里给精确值。 */
+/** 精确数量：千分位逗号：单行读数用紧凑那份，卡片里给精确值。 */
 function formatExactTokens(count: number): string {
   return Math.round(count).toLocaleString('en-US')
+}
+
+/**
+ * 输出速度（token/秒）：整个会话累计，除以纯解码时间。解码期为 0 时回 null，
+ * 界面据此整段省略——绝不去除一个 0 印出天文数字（口径原件 core/throughput.ts）。
+ */
+function tokensPerSecond(totals: Pick<SessionUsageView, 'decodeMs' | 'decodeTokens'>): number | null {
+  if (!(totals.decodeMs > 0)) return null
+  return totals.decodeTokens / (totals.decodeMs / 1_000)
+}
+
+/** 首字延迟平均（毫秒）：没有样本时回 null，界面据此省略这一行（同 core/throughput.ts）。 */
+function averageTtftMs(totals: Pick<SessionUsageView, 'ttftMs' | 'ttftSteps'>): number | null {
+  if (!(totals.ttftSteps > 0)) return null
+  return totals.ttftMs / totals.ttftSteps
+}
+
+/** 速度读数格式：10 以上给整数，10 以下给一位小数——8.4 / 12（同 core/throughput.ts）。 */
+function formatTokensPerSecond(tps: number): string {
+  const clamped = Math.max(0, tps)
+  return clamped >= 10 ? String(Math.round(clamped)) : String(Math.round(clamped * 10) / 10)
+}
+
+/** 耗时读数：先四舍五入到 0.1 秒再决定用秒还是用分（同旧 trace-format.ts）。 */
+function formatDuration(ms: number): string | null {
+  if (!Number.isFinite(ms) || ms < 0) return null
+  const tenths = Math.round(ms / 100) / 10
+  if (tenths < 60) return `${tenths.toFixed(1)}s`
+  const total = Math.round(ms / 1000)
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  const seconds = total % 60
+  const minutes = Math.floor(total / 60) % 60
+  const hours = Math.floor(total / 3600)
+  if (hours > 0) return `${String(hours)}h${pad(minutes)}m`
+  return `${String(minutes)}m${pad(seconds)}s`
 }
 
 /** 把命中率换算成「百分比整数单位」（0 位小数 = 1 单位 1%，1 位小数 = 1 单位 0.1%）。 */
@@ -615,9 +725,8 @@ function displayPercentUnits(units: number, decimalPlaces: 0 | 1): string {
 }
 
 /**
- * 前缀缓存命中率（对照 dsh 的 formatCacheHitPercent）：部分命中绝不四舍五入成 100%——
- * 差几个 token 时加位数把它和满命中区分开（99.9 / 99.996…）。分母（prompt 侧总量）为 0
- * 时返回 null，调用方整行省略。
+ * 前缀缓存命中率：部分命中绝不四舍五入成 100%——差几个 token 时加位数把它和满命中
+ * 区分开（99.9 / 99.996…）。分母（prompt 侧总量）为 0 时返回 null，调用方整行省略。
  */
 function formatCacheHitPercent(
   cacheReadTokens: number,
@@ -648,20 +757,4 @@ function formatCacheHitPercent(
     }
   }
   return `99.${'9'.repeat(distinguishingPlaces - 1)}${String(10 - roundedLoss)}`
-}
-
-/** 轮数/步数统计（旧界面第一段「N 轮 N 步」同口径）：用户消息（非插话）计轮，工具调用计步。
-    返回 "轮/步" 字符串——useSyncExternalStore 的取值要引用稳定，数组对象会每帧换引用。 */
-function readRoundStep(snapshot: HostSnapshot | null): string {
-  const entries = snapshot?.['entries']
-  if (!Array.isArray(entries)) return '0/0'
-  let rounds = 0
-  let steps = 0
-  for (const entry of entries) {
-    if (typeof entry !== 'object' || entry === null) continue
-    const record = entry as Record<string, unknown>
-    if (record['kind'] === 'user' && record['steering'] !== true) rounds += 1
-    else if (record['kind'] === 'tool') steps += 1
-  }
-  return `${String(rounds)}/${String(steps)}`
 }

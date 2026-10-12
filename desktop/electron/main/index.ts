@@ -155,11 +155,13 @@ async function authenticateUiServer(url: string): Promise<boolean> {
 }
 
 /**
- * 接收宿主报来的界面地址：认证一次、记下根地址，然后（仅第一次）把窗口切到那份文档。
+ * 接收宿主报来的界面地址：认证一次、记下根地址，然后把窗口切到那份文档。
  *
- * 为什么不在宿主重启后重新加载：重启后渲染层的 `window.dsc` 通道照旧（IPC 走主进程，
- * 主进程换的是协议对象），重载只会把界面状态（打开的会话、草稿）刷掉；这里只刷新
- * Cookie，让用户之后手动刷新页面时仍然进得去。
+ * 首次启动之外还有一种必须重载的情形：**宿主重启换了一个源**（切工作目录 / 重启宿主
+ * 都会重启宿主进程，端口随之变）。壳页面的数据全走这个源的 HTTP（SSE 推帧 +
+ * `/api/invoke` 调方法），不重载就钉死在旧端口上——界面看着还在、点什么都不动。
+ * 旧渲染层不同：它的数据走 IPC（主进程换个协议对象即可），重载反而会把打开的会话与
+ * 草稿刷掉，所以那一档保持「只换 Cookie 不重载」（与下面这段老注释同一条理由）。
  */
 async function adoptUiServer(info: { url: string; origin: string }): Promise<void> {
   const ok = await authenticateUiServer(info.url)
@@ -167,13 +169,18 @@ async function adoptUiServer(info: { url: string; origin: string }): Promise<voi
     process.stderr.write('[dsc-desktop] 界面地址认证失败，窗口继续用本机文件加载\n')
     return
   }
+  const previous = uiServerOrigin
   uiServerOrigin = info.origin
   const window = mainWindow
   if (window === null || window.isDestroyed()) return
-  // 开发模式下页面来自 vite，别把窗口抢过去；已经切过的也不重载。
-  if ((process.env.ELECTRON_RENDERER_URL ?? '') !== '' || servedPageLoaded) return
+  // 开发模式下页面来自 vite，别把窗口抢过去。
+  if ((process.env.ELECTRON_RENDERER_URL ?? '') !== '') return
+  const restarted = servedPageLoaded && previous !== info.origin
+  if (servedPageLoaded && !(restarted && uiProfile() === 'shell')) return
   servedPageLoaded = true
-  process.stderr.write(`[dsc-desktop] 窗口来自宿主界面服务 ${info.origin}\n`)
+  process.stderr.write(
+    `[dsc-desktop] 窗口来自宿主界面服务 ${info.origin}${restarted ? '（宿主重启，窗口重新加载）' : ''}\n`,
+  )
   void window.loadURL(desktopPageUrl())
 }
 

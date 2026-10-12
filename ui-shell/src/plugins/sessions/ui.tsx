@@ -18,7 +18,7 @@
  *
  * @module dsc-ui-shell/plugins/sessions
  */
-import { useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import {
   IconArchive,
   IconBolt,
@@ -29,6 +29,7 @@ import {
   IconClock,
   IconClose,
   IconCode,
+  IconCoins,
   IconCopy,
   IconEdit,
   IconFolder,
@@ -36,6 +37,7 @@ import {
   IconGear,
   IconFlatList,
   IconMore,
+  IconNewChat,
   IconPin,
   IconPuzzle,
   IconPlus,
@@ -46,6 +48,7 @@ import {
   IconStop,
   IconSwap,
   IconTerminal,
+  IconTrash,
   IconTriangleRightFill,
   IconTree,
 } from '@dsc/ui'
@@ -220,11 +223,46 @@ function SessionList() {
    *
    * 开完再重扫一次列表：新建的会话要等它落盘才会出现在列表里，而且当前会话的标记与
    * 排序也跟着变——不重扫的话，刚建的会话在侧栏里看不见，用户会以为没成功。
+   *
+   * 开任何会话同时也回对话页（旧界面 `openSession` 里 `setView('chat')` 同款）：
+   * 在技能/插件整页上点会话不该把页留在原地。
    */
   const open = (id?: string): void => {
+    setShellPage(null)
     void (async () => {
       await run('openSession', id === undefined ? [] : [id])
       await run('refreshSessions', [])
+    })()
+  }
+
+  /**
+   * 在指定工作区里新建会话（工作区行那颗「新建会话」钮，旧界面 newSessionIn 同款）。
+   *
+   * 新会话的 cwd 是宿主进程启动时的目录，换工作区要先切目录（原生桥 switchCwd
+   * 返回值就等在那里）；切不过去（目录被删、宿主起不来）把原因摊出来，不冒出一句假成功。
+   */
+  const newSessionIn = (target: string): void => {
+    if (target === (cwd ?? '')) {
+      open()
+      return
+    }
+    const native = getHostNative()
+    if (!native.available) {
+      toastErr('在别的工作区新建会话要用桌面版（浏览器里没有切目录的原生桥）')
+      return
+    }
+    void (async () => {
+      setFault(null)
+      try {
+        const result = await native.invoke<{ ok: boolean; cwd?: string; error?: string }>('switchCwd', [target])
+        if (result !== null && typeof result === 'object' && result.ok === false) {
+          setFault(result.error ?? '切换工作目录失败')
+          return
+        }
+        open()
+      } catch (reason) {
+        setFault(reason instanceof Error ? reason.message : String(reason))
+      }
     })()
   }
 
@@ -232,6 +270,55 @@ function SessionList() {
   const rename = (id: string, name: string): void => {
     void run('renameSession', [id, name])
   }
+
+  /**
+   * 删除工作区（组菜单，旧界面 onDeleteWorkspace 同款）：先把目录从最近列表撤下
+   * （空组立即消失，不用等归档回包），再归档该组全部会话。归档失败时组会随会话行
+   * 重新出现（分组按会话 cwd 兜底），不会丢数据。
+   */
+  const deleteWorkspace = (target: string, sessionsOfGroup: readonly SessionSummary[]): void => {
+    void (async () => {
+      const count = sessionsOfGroup.length
+      const detail =
+        count > 0
+          ? `其下 ${String(count)} 个会话会全部归档（移进「设置 → 归档」，消息一个字不删，可恢复），工作区从侧栏移除。`
+          : '该工作区还没有会话，将从侧栏移除。'
+      const current = target === (cwd ?? '') ? '它仍是当前目录，新建会话后会重新出现在侧栏。' : ''
+      const ok = await confirmAction({
+        title: `删除工作区「${displayName(target, prefs.aliases)}」？`,
+        detail: detail + current,
+        confirmLabel: '删除',
+      })
+      if (!ok) return
+      setRecentCwds((list) => list.filter((item) => item !== target))
+      const native = getHostNative()
+      if (native.available) {
+        void native.invoke('removeRecentCwd', [target]).catch(() => undefined)
+      }
+      if (count === 0) {
+        toastOk('已从侧栏移除该工作区')
+        return
+      }
+      try {
+        await channel.invoke('archiveSessions', [sessionsOfGroup.map((session) => session.id)])
+        await run('refreshSessions', [])
+        toastOk(`工作区已删除，${String(count)} 个会话已归档`)
+      } catch {
+        toastErr('会话归档失败，工作区随会话保留在侧栏')
+      }
+    })()
+  }
+
+  /** 窄栏（壳画的 rail）上的「新会话」经事件请这里开：监听器常驻，读最新的 open。 */
+  const openRef = useRef(open)
+  openRef.current = open
+  useEffect(() => {
+    const onNew = (): void => {
+      openRef.current()
+    }
+    window.addEventListener('shell.session.new', onNew)
+    return () => window.removeEventListener('shell.session.new', onNew)
+  }, [])
 
   /**
    * 分叉：先问宿主「这条会话里有哪些用户消息」，弹一个小选择列表，选哪条就从那里分叉。
@@ -342,6 +429,18 @@ function SessionList() {
   /** 单列表档：不分工作区，会话混成一条流（不设条数上限）。 */
   const flatSessions = useMemo(() => groups.flatMap((group) => group.sessions), [groups])
 
+  /**
+   * 组行的活动指示跟选中会话走（旧界面 activeCwd 同口径）：跨工作区点开历史会话时，
+   * 所属工作区的图标也跟着亮；没有选中会话（或它被筛出列表）时回落宿主 cwd。
+   */
+  const activeCwd = useMemo(() => {
+    if (currentPath !== null) {
+      const owner = sessions.find((session) => session.id === currentPath)
+      if (owner !== undefined) return owner.cwd
+    }
+    return cwd
+  }, [sessions, currentPath, cwd])
+
 
   return (
     <>
@@ -350,13 +449,16 @@ function SessionList() {
         新会话
       </button>
 
-      {/* 技能/插件一级入口（旧界面侧栏同位）：技能住设置面板（事件请它开门）；
-          插件是**主区独立整页**（旧界面同款），再点一次回对话页。 */}
+      {/* 技能/插件一级入口（旧界面侧栏同位）：两个都是**主区独立整页**（旧界面同款），
+          再点一次回对话页。 */}
       <nav className="sidebar-nav">
         <button
           type="button"
-          className="nav-item"
-          onClick={() => window.dispatchEvent(new CustomEvent('shell.settings.open', { detail: { section: 'skills' } }))}
+          className={`nav-item${page === 'skills' ? ' on' : ''}`}
+          aria-pressed={page === 'skills'}
+          onClick={() => {
+            setShellPage(page === 'skills' ? null : 'skills')
+          }}
         >
           <IconBolt size={15} /> 技能
         </button>
@@ -520,7 +622,7 @@ function SessionList() {
             return (
               <div key={group.cwd} className={`group depth-${Math.min(group.depth, 4)}`}>
                 <div
-                  className={`group-row${group.cwd === cwd ? ' active' : ''}`}
+                  className={`group-row${group.cwd === activeCwd ? ' active' : ''}`}
                   role="button"
                   tabIndex={0}
                   aria-expanded={expanded}
@@ -593,6 +695,19 @@ function SessionList() {
                       }}
                     >
                       <IconMore size={15} />
+                    </button>
+                    {/* 行尾第二颗（旧界面同款）：在这个工作区里新建会话——
+                        当前工作区直接开新会话，别的区先切目录（宿主重启）再开。 */}
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      data-tip={`在 ${displayName(group.cwd, prefs.aliases)} 新建会话`}
+                      aria-label="在此工作区新建会话"
+                      onClick={() => {
+                        newSessionIn(group.cwd)
+                      }}
+                    >
+                      <IconNewChat size={15} />
                     </button>
                   </span>
                 </div>
@@ -830,23 +945,40 @@ function SessionList() {
                         }}
                       />
                     ) : null}
-                    {prefs.archived === 'only' && group.sessions.length > 0 ? (
+                    {prefs.archived === 'only' ? (
+                      group.sessions.length > 0 ? (
+                        <>
+                          <div className="menu-sep" />
+                          <MenuItem
+                            icon={<IconRefresh size={15} />}
+                            text={`恢复这 ${String(group.sessions.length)} 个会话`}
+                            onClick={() => {
+                              setMenu(null)
+                              void (async () => {
+                                await run('restoreSessions', [group.sessions.map((session) => session.id)])
+                                await run('refreshSessions', [])
+                                toastOk(`已恢复 ${String(group.sessions.length)} 个会话`)
+                              })()
+                            }}
+                          />
+                        </>
+                      ) : null
+                    ) : (
                       <>
                         <div className="menu-sep" />
+                        {/* 删除工作区（原「归档这 N 个会话」）：空组也显示，否则只切过来
+                            还没发消息的工作区删不掉（旧界面 0.6.45 报障后统一成这一个入口）。 */}
                         <MenuItem
-                          icon={<IconRefresh size={15} />}
-                          text={`恢复这 ${String(group.sessions.length)} 个会话`}
+                          icon={<IconTrash size={15} />}
+                          text="删除工作区"
+                          danger
                           onClick={() => {
                             setMenu(null)
-                            void (async () => {
-                              await run('restoreSessions', [group.sessions.map((session) => session.id)])
-                              await run('refreshSessions', [])
-                              toastOk(`已恢复 ${String(group.sessions.length)} 个会话`)
-                            })()
+                            deleteWorkspace(cwdOf, group.sessions)
                           }}
                         />
                       </>
-                    ) : null}
+                    )}
                   </div>
                 </>
               )
@@ -900,23 +1032,51 @@ function MenuItem({
   )
 }
 
-/** 侧栏底部（旧界面同位）：当前工作目录 + 当前会话用量。 */
-function SidebarFooter(): React.ReactNode {
-  const cwd = useHostSelector(readCwd)
+/** 侧栏底部（旧界面同位）：当前工作目录（点一下换目录）+ 当前会话用量 + 设置入口。 */
+function SidebarFooter(): ReactNode {
+  const cwdOf = useHostSelector(readCwd)
   const usage = useHostSelector(readUsageTokens)
+  /**
+   * 点目录行 = 浏览其他目录（旧界面「点击浏览其他目录」同款）：弹系统选择框，
+   * 选中就切过去（原生桥 switchCwd 会重启宿主换 cwd）。
+   */
+  const browse = (): void => {
+    const native = getHostNative()
+    if (!native.available) {
+      toastErr('换工作目录要用桌面版（浏览器里没有选目录的原生桥）')
+      return
+    }
+    void (async () => {
+      try {
+        const dir = await native.invoke<string | null>('chooseDirectory')
+        if (typeof dir !== 'string' || dir === '') return
+        const result = await native.invoke<{ ok: boolean; error?: string }>('switchCwd', [dir])
+        if (result !== null && typeof result === 'object' && result.ok === false) {
+          toastErr(`切换失败：${result.error ?? '未知原因'}`)
+        }
+      } catch (reason) {
+        toastErr(`切换工作目录失败：${reason instanceof Error ? reason.message : String(reason)}`)
+      }
+    })()
+  }
   return (
     <div className="sidebar-footer">
-      <div className="row" data-tip={cwd === null ? '还没有工作目录' : cwd}>
+      <div
+        className="row"
+        data-tip={cwdOf === null ? '还没有工作目录' : `${cwdOf}，点击浏览其他目录`}
+        title={cwdOf === null ? undefined : '点击浏览其他目录'}
+        onClick={browse}
+      >
         <IconFolder size={14} />
-        <span className="dir">{cwd === null ? '没有工作目录' : cwd}</span>
+        <span className="dir">{cwdOf === null ? '没有工作目录' : cwdOf}</span>
       </div>
-      {usage === null ? null : (
-        <div className="row" data-tip="当前会话累计用量（输入 + 输出）">
-          <IconQueue size={14} />
-          <span>会话用量</span>
-          <span className="num">{compactTokens(usage)} tok</span>
-        </div>
-      )}
+      {/* 用量行常显（旧界面同款）：还没有请求时读作 0 tok，「不知道」与「真是 0」在这里
+          本来就是一回事——这是本会话的账。 */}
+      <div className="row" data-tip="当前会话累计用量（输入 + 输出）">
+        <IconCoins size={14} />
+        <span>会话用量</span>
+        <span className="num">{formatTokens(usage ?? 0)} tok</span>
+      </div>
       {/* 设置行（旧界面左下角同位）：事件请设置面板开门。 */}
       <button
         type="button"
@@ -931,12 +1091,21 @@ function SidebarFooter(): React.ReactNode {
   )
 }
 
-/** 用量的紧凑读法（K/M 压短；底部一行放不下千分位全值，悬浮卡有详情）。 */
-function compactTokens(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return '0'
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
-  if (value >= 1000) return `${(value / 1000).toFixed(1)}K`
-  return String(Math.round(value))
+// ─────────── 数量格式化：与状态栏插件里的那一份同口径，原件在旧渲染层 token-estimate.ts ───────────
+// 「状态栏/侧栏上的数字怎么缩写」只有这一个口径（K/M 两级、小数末尾的 0 去掉）。
+
+/** 去掉小数末尾多余的 0：46.0K → 46K，1.00M → 1M。 */
+function trimZero(value: number): string {
+  const text = value >= 100 ? value.toFixed(0) : value.toFixed(1)
+  return text.endsWith('.0') ? text.slice(0, -2) : text
+}
+
+/** 数量按 K / M 压短：1000 以下给原值，128000 读成 128K。 */
+function formatTokens(count: number): string {
+  if (!Number.isFinite(count) || count <= 0) return '0'
+  if (count < 1_000) return String(Math.round(count))
+  if (count < 1_000_000) return `${trimZero(count / 1_000)}K`
+  return `${trimZero(count / 1_000_000)}M`
 }
 
 /** 从枚举字段读一个已知取值；线上来的值对不上就回落默认（旧值/新值混跑时的兜底）。 */
