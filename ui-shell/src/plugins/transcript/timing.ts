@@ -1,14 +1,18 @@
 /**
  * 对话区的时间口径（桌面渲染层 `turn-timing.ts` 的同构移植）：每轮的起止时刻、
- * 时刻与用时的格式化、进行中状态行的两行文案。
+ * 进行中状态行的两行文案。
  *
- * 数据缺口（这一块的难点）：transcript 条目上的 `ts` 是可选的——2026-09 之前的会话
- * 日志没记时间。所以这里每个函数对「没有 ts」「ts 不是有限数」「用时算出来是负的」
- * 一律返回 null，由界面决定「不画」。绝不显示 NaN，也不拿「现在」冒充历史时刻。
+ * 三个底层格式化（`entryTs` / `formatClock` / `formatDuration`）已搬去平台层
+ * （`platform/time.ts`）——轨迹页要读同一份，这里只转出去保持调用点不变。
+ * 数据缺口的口径见那边的注释：拿不到时间就返回 null，界面不画，绝不显示 NaN。
  *
  * @module dsc-ui-shell/plugins/transcript/timing
  */
 import type { TranscriptEntry } from '@dsc/ui'
+import { entryTs } from '../../platform/time'
+
+// 平台层的读数原样转出（消息流内部的 import 不变）。
+export { entryTs, formatClock, formatDuration } from '../../platform/time'
 
 /** 一轮对话：一条用户消息 → 模型回复结束（中间的工具调用也算这一轮）。 */
 export interface RoundInfo {
@@ -27,37 +31,6 @@ export interface RoundInfo {
   endTs: number | null
   /** 这一轮有没有助手侧的内容（回复、思考、工具卡都算）。 */
   answered: boolean
-}
-
-/** 取出条目上可信的时间戳；没有或不是有限正数就是 null。 */
-export function entryTs(entry: TranscriptEntry | undefined): number | null {
-  if (entry === undefined) return null
-  const ts = entry.ts
-  return typeof ts === 'number' && Number.isFinite(ts) && ts > 0 ? ts : null
-}
-
-/** 毫秒时间戳 → 本机时区的 `HH:mm`；拿不到合法时间戳返回 null。 */
-export function formatClock(ts: number | null): string | null {
-  if (ts === null || !Number.isFinite(ts) || ts <= 0) return null
-  const at = new Date(ts)
-  if (Number.isNaN(at.getTime())) return null
-  return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
-}
-
-/**
- * 毫秒 → 「2分41秒」/「8秒」/「1时02分05秒」。
- * 不足 1 秒也写「1秒」：真实耗时可以是 400ms，写「0秒」看着像坏了。
- */
-export function formatDuration(ms: number | null): string | null {
-  if (ms === null || !Number.isFinite(ms) || ms < 0) return null
-  const total = Math.max(1, Math.round(ms / 1000))
-  const seconds = total % 60
-  const minutes = Math.floor(total / 60) % 60
-  const hours = Math.floor(total / 3600)
-  const pad = (value: number): string => String(value).padStart(2, '0')
-  if (hours > 0) return `${String(hours)}时${pad(minutes)}分${pad(seconds)}秒`
-  if (minutes > 0) return `${String(minutes)}分${String(seconds)}秒`
-  return `${String(seconds)}秒`
 }
 
 /**

@@ -22,6 +22,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import {
+  IconActivity,
   IconArchive,
   IconBolt,
   IconArchiveOff,
@@ -59,6 +60,7 @@ import {
   confirmAction,
   defineUiPlugin,
   getHostNative,
+  openTrace,
   setShellPage,
   toastErr,
   toastOk,
@@ -281,6 +283,18 @@ function SessionList() {
       await run('openSession', id === undefined ? [] : [id])
       await run('refreshSessions', [])
     })()
+  }
+
+  /**
+   * 右键菜单的「查看轨迹」：先切正文区到轨迹页，再打开那条会话。
+   *
+   * 为什么视图先切：`openSession` 是异步的，而轨迹页读的是快照——视图切过去不会画错
+   * （快照一刷新就换成新会话的轨迹），先切省一次「等会话开完才动」的迟滞。会话本来就是
+   * 当前这条时，这一下等于「就地切到轨迹」。
+   */
+  const showTrace = (id: string): void => {
+    openTrace()
+    open(id)
   }
 
   /**
@@ -1094,6 +1108,16 @@ function SessionList() {
                       onClick={() => {
                         setMenu(null)
                         copyId(session.id)
+                      }}
+                    />
+                    {/* 查看轨迹：打开这条会话并把正文区切到轨迹页（顶栏页签的同一个去处）。 */}
+                    <MenuItem
+                      icon={<IconActivity size={15} />}
+                      text="查看轨迹"
+                      hint="执行过程与耗时"
+                      onClick={() => {
+                        setMenu(null)
+                        showTrace(session.id)
                       }}
                     />
                     {!archived && stoppable ? (

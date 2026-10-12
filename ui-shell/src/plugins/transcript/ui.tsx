@@ -15,7 +15,8 @@
  *      liveDetail / reasoningPreview 逐格生效）。
  *
  * 与旧界面已知的差异（都是「功能还没有」而不是「样式对不上」）：
- *   - 右缘刻度条（JumpStrip）与吸附快捷栏未搬，长会话的跨轮跳转还没有落点；
+ *   - 吸附快捷栏未搬（工具卡的 tc-bar 吸附已单独实现，长会话的跨轮跳转由右侧
+ *     刻度条 JumpRail 负责，见 jump-rail.tsx）；
  *   - 队友卡旧消息流里没有对应物，这一块是壳自己补的（`.shell-subagent`）。
  *
  * 样式与 class 名照抄旧版（`ui-shell/src/legacy/views.css`，行号同旧 `styles.css`）：
@@ -26,7 +27,7 @@
  *
  * @module dsc-ui-shell/plugins/transcript
  */
-import { Component, createContext, useContext, useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type ReactNode } from 'react'
+import { Component, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
   DiffRows,
@@ -34,19 +35,14 @@ import {
   IconBranch,
   IconChevronDown,
   IconChevronUp,
-  IconCode,
   IconCopy,
   IconEdit,
-  IconFolder,
-  IconSearch,
   IconSpark,
-  IconTerminal,
-  IconThumbDown,
-  IconThumbUp,
   MarkdownView,
   defineUiPlugin,
   estimateTextTokens,
   getHostNative,
+  openTrace,
   setDockPreview,
   setDockReview,
   toastErr,
@@ -64,9 +60,12 @@ import { useIntendedDiff } from './intended-diff'
 import { readFold, writeFold, stepGroupFoldKey, turnFoldKey } from './fold-state'
 import { groupSteps, type StepGroup, type StepGrouping } from './process-groups'
 import { RowSeat, StepGroupSeat } from './fold-seats'
+import { JumpRail, previewText } from './jump-rail'
 import { baseNameOf, displayPathOf } from '../../platform/paths'
 import { useHoverDelay } from '../../platform/hover-delay'
 import { playCompletionSound } from '../../platform/completion-sound'
+import { matchTool, oneLine, prettyJson, TOOL_STATUS_TEXT, toolSummary, toolVerb, type ToolMatch } from '../../platform/tool-summary'
+import { formatTokens } from '../../platform/tokens'
 
 /** 折叠偏好经 context 穿进深处的 ThinkRow / ToolRow / 座位（插件树就在壳的树里，可用）。 */
 interface FoldPrefs {
@@ -400,6 +399,29 @@ function TranscriptFlow({
   const activity = useMemo(() => liveActivity([...entries, ...live], turnState), [entries, live, turnState])
   const startedAt = useMemo(() => turnStartedAt([...entries, ...live]), [entries, live])
 
+  // 右侧刻度条的数据：每轮的题面（用户消息）与回复摘要（该轮最后一条定稿正文）。
+  // 含「还没画出来」的早轮——那正是刻度条要先把它们画出来的用途（点击 → onReveal）。
+  // 放在空会话提前 return 之前：hook 数量不能因分支而变。
+  const railRounds = useMemo(
+    () =>
+      seats.rounds.map((seat) => {
+        const user = seat.rows[0]?.entry
+        const answer = seat.rows
+          .map((row) => row.entry)
+          .filter((entry): entry is Extract<TranscriptEntry, { kind: 'text' }> => entry.kind === 'text' && entry.id >= 0)
+          .at(-1)
+        return {
+          round: seat.round,
+          prompt: user?.kind === 'user' ? previewText(user.text, 'prompt') : '',
+          response: answer === undefined ? '' : previewText(answer.text, 'response'),
+        }
+      }),
+    [seats.rounds],
+  )
+  const revealRound = useCallback((round: number): void => {
+    setFirstVisible((current) => Math.min(current, round))
+  }, [])
+
   // 空会话欢迎态（与旧桌面界面同一份文案）：开场 system 提示行作注脚，
   // 「会话 x · 模型 y」那条开场标不画——它在状态栏悬浮卡里，再画一遍是重复。
   if (seats.rounds.length === 0 && seats.leading.every((row) => row.entry.kind === 'system')) {
@@ -426,6 +448,9 @@ function TranscriptFlow({
     <ShellCwdContext.Provider value={cwd ?? ''}>
     <FoldPrefsContext.Provider value={prefs}>
       <FlowActionsContext.Provider value={actions}>
+      {/* 右侧回合刻度条（对照 dsh 的 TurnNavigator）：绝对定位到 .chat-wrap，
+          不参与文档流；它自己找滚动容器做当前轮判定与跳转。 */}
+      <JumpRail rounds={railRounds} renderedFrom={firstVisible} onReveal={revealRound} />
       {firstVisible > 0 ? (
         <button
           type="button"
@@ -674,9 +699,7 @@ function SeatBody({
       <RoundFoot
         round={roundInfo}
         running={running}
-        sessionId={sessionId}
         copyText={answer?.text}
-        copyId={answer?.id}
         usage={usage ?? null}
         tokens={tokens > 0 ? tokens : null}
         onFork={onFork}
@@ -921,145 +944,6 @@ function ThinkRow({
   )
 }
 
-/** 各工具的摘要字段；不在表里的走 {@link DEFAULT_FIELDS}。 */
-const SUMMARY_FIELDS: Readonly<Record<string, readonly string[]>> = {
-  bash: ['command', 'description'],
-  shell: ['command', 'description'],
-  read: ['file_path', 'path'],
-  read_file: ['file_path', 'path'],
-  write: ['file_path', 'path'],
-  edit: ['file_path', 'path'],
-  glob: ['pattern', 'path'],
-  grep: ['pattern', 'path'],
-  webfetch: ['url'],
-  fetch: ['url'],
-  task: ['description', 'prompt'],
-}
-
-/** 不认识的工具：只挑最像「目标」的几个字段。 */
-const DEFAULT_FIELDS: readonly string[] = [
-  'file_path',
-  'path',
-  'command',
-  'pattern',
-  'query',
-  'url',
-  'description',
-]
-
-/** 换行压成空格，超长截断。 */
-function oneLine(text: string, max: number): string {
-  const flat = text.replace(/\s+/g, ' ').trim()
-  const chars = Array.from(flat)
-  return chars.length > max ? `${chars.slice(0, max).join('')}…` : flat
-}
-
-/** URL 只留主机名（旧界面也是这个口径：整条链接太占地方）。 */
-function shortUrl(url: string): string {
-  try {
-    return new URL(url).host
-  } catch {
-    return url
-  }
-}
-
-/**
- * 工具调用的入参摘要：从 JSON 参数里挑两个关键字段拼成一行。
- *
- * 这是旧界面 `toolSummary` 的简化版：挑字段的口径照抄，但字段表只覆盖常用工具
- * （旧版按每个工具手写），认不出的工具回落到「目标」类字段。
- */
-function toolSummary(name: string, argsText: string): string {
-  let args: unknown
-  try {
-    args = JSON.parse(argsText) as unknown
-  } catch {
-    // 参数还没吐全（preparing）时不是合法 JSON，直接把原文当摘要（旧界面同样兜这一手）。
-    return oneLine(argsText, 72)
-  }
-  if (typeof args !== 'object' || args === null) return ''
-  const record = args as Record<string, unknown>
-  const picks = SUMMARY_FIELDS[name] ?? DEFAULT_FIELDS
-  const parts: string[] = []
-  for (const field of picks) {
-    const value = record[field]
-    if (typeof value !== 'string' || value === '') continue
-    parts.push(oneLine(field === 'url' ? shortUrl(value) : value, 48))
-    if (parts.length === 2) break
-  }
-  return oneLine(parts.join(' · '), 72)
-}
-
-/** 工具状态词（旧界面同一套说法）。 */
-const TOOL_STATUS_TEXT: Readonly<Record<string, string>> = {
-  preparing: '准备中',
-  running: '进行中',
-  done: '完成',
-  failed: '失败',
-  rejected: '被拒',
-}
-
-/**
- * 已知工具的「动词 + 图标」。
- *
- * 照 codex 的口径（`D:\codex\codex\codex-rs\tui\src\exec_cell\render.rs` 的
- * `• Ran <command>`）：行首一枚状态点、一枚图标、一个**加粗动词**，命令行跟在后面。
- * 动词中文化（跑了 / 读了 / 搜了…），状态点与图标承担「这是什么工具」，所以知名工具
- * 不再单独印一枚等宽工具名徽标；认不出的工具（MCP 那些）保留原名，免得看不出是什么。
- */
-const KNOWN_TOOLS: Readonly<
-  Record<string, { verb: string; Icon: ComponentType<{ size?: number; className?: string }> }>
-> = {
-  bash: { verb: '跑', Icon: IconTerminal },
-  shell: { verb: '跑', Icon: IconTerminal },
-  read: { verb: '读', Icon: IconFolder },
-  read_file: { verb: '读', Icon: IconFolder },
-  write: { verb: '写', Icon: IconEdit },
-  edit: { verb: '改', Icon: IconEdit },
-  glob: { verb: '搜', Icon: IconSearch },
-  grep: { verb: '搜', Icon: IconSearch },
-  webfetch: { verb: '取', Icon: IconSearch },
-  fetch: { verb: '取', Icon: IconSearch },
-  task: { verb: '派', Icon: IconSpark },
-}
-
-/** 认不出的工具的图标。 */
-const UNKNOWN_TOOL_ICON = IconCode
-
-/** 一次工具匹配的结果：图标 + 基础动词 + 是不是知名工具（决定要不要印原名）。 */
-interface ToolMatch {
-  Icon: ComponentType<{ size?: number; className?: string }>
-  known: boolean
-  base: string
-}
-
-/** 按工具名配「图标 + 动词」；认不出的回落到通用图标与「调用」。 */
-function matchTool(name: string): ToolMatch {
-  const known = KNOWN_TOOLS[name]
-  return known !== undefined
-    ? { Icon: known.Icon, known: true, base: known.verb }
-    : { Icon: UNKNOWN_TOOL_ICON, known: false, base: '调用' }
-}
-
-/**
- * 动词随状态变（codex 的 `Ran` / `Running` 同一套二分）。
- * 失败 / 被拒不改动词——那种情形由行尾的状态词说，不用把动词也拧一遍。
- */
-function toolVerb(base: string, status: string): string {
-  if (status === 'running') return `正在${base}`
-  if (status === 'preparing') return `准备${base}`
-  return `${base}了`
-}
-
-/** 参数原文能格式化就格式化，不能就原样——绝不因为格式坏掉而不显示参数。 */
-function prettyJson(text: string): string {
-  try {
-    return JSON.stringify(JSON.parse(text) as unknown, null, 2)
-  } catch {
-    return text
-  }
-}
-
 /** 内置当选者：选举把 matched（图标 + 动词）算好交过来，渲染与兜底共用 ToolRow。 */
 function BuiltinToolView(props: { entry: { call: ToolCallView }; matched: ToolMatch; storeKey?: string }): ReactNode {
   return <ToolRow entry={props.entry as ToolEntry} matched={props.matched} storeKey={props.storeKey} />
@@ -1225,6 +1109,21 @@ function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matched?: Too
           {call.status === 'done' ? '' : (TOOL_STATUS_TEXT[call.status] ?? call.status)}
           {duration === null || call.status === 'done' ? '' : ` · 用时 ${duration}`}
         </span>
+        {/* 「在轨迹中查看」（对照 dsh 工具行 hover 的药丸）：切到轨迹页并聚焦这一条。
+            默认透明（不抢行内的注意力），悬停/键盘聚焦才浮出来。 */}
+        <button
+          type="button"
+          className="tc-trace"
+          data-trace-jump={String(entry.id)}
+          data-tip="在轨迹页查看这条调用的时刻与耗时"
+          aria-label="在轨迹中查看"
+          onClick={(event) => {
+            event.stopPropagation()
+            openTrace(entry.id)
+          }}
+        >
+          在轨迹中查看
+        </button>
         {expandable ? <IconChevronDown size={11} className="tc-chevron" /> : null}
       </div>
       {bodyOpen ? (
@@ -1285,24 +1184,6 @@ const SUB_STATE_TEXT: Readonly<Record<string, string>> = {
   idle: '已收工',
   stopped: '被打断',
   failed: '过程失败',
-}
-
-/** 去掉小数末尾多余的 0：46.0K → 46K，1.00M → 1M（旧渲染层 token-estimate 同款）。 */
-function trimZero(value: number): string {
-  const text = value >= 100 ? value.toFixed(0) : value.toFixed(1)
-  return text.endsWith('.0') ? text.slice(0, -2) : text
-}
-
-/**
- * token 数缩写（旧界面的 K/M 口径，与状态栏/侧栏同一份口径）：1000 以下四舍五入成
- * 整数——估算值可以是小数（中文 0.65 token/字），直接 String() 会把 `~17.970000000000002`
- * 这种浮点尾巴摊给用户。
- */
-function formatTokens(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return '0'
-  if (value < 1_000) return String(Math.round(value))
-  if (value < 1_000_000) return `${trimZero(value / 1_000)}K`
-  return `${trimZero(value / 1_000_000)}M`
 }
 
 /** 队友卡：旧消息流里没有对应物，这一块是壳自己补的（属于已知的样式增量）。 */
@@ -1468,8 +1349,9 @@ function ChangesCard({ rows, cwd }: { rows: readonly Row[]; cwd: string }): Reac
     hoverDelay.arm(file, anchor, cardRef.current?.offsetWidth ?? 480)
   }
   return (
-    <div className="entry-row">
-      <div className="changes-card" ref={cardRef} data-changed-files="" {...(single === undefined ? {} : { 'data-single': '1' })}>
+    // 不再包 `.entry-row`：旧版里 `.changes-card` 是 `.turn-seat` 的直接子项，间距靠
+    // `.turn-seat > .changes-card` 那条规则给（多包一层会让选择器失配）。
+    <div className="changes-card" ref={cardRef} data-changed-files="" {...(single === undefined ? {} : { 'data-single': '1' })}>
         <button
           type="button"
           className="changes-head"
@@ -1578,48 +1460,16 @@ function ChangesCard({ rows, cwd }: { rows: readonly Row[]; cwd: string }): Reac
             onClose={hoverDelay.close}
           />
         ) : null}
-      </div>
     </div>
   )
 }
 
-/** 赞踩记录的 localStorage 键（桌面渲染层 chat/feedback.ts 同款：键 = `会话:条目`）。 */
-const FEEDBACK_KEY = 'dsc.messageFeedback'
-
-/** 本机评价的说明只弹一次（第一次点的时候），免得每点一次都弹一条提示（旧界面同款）。 */
-let toldFeedbackOnce = false
-
-/** 读这一轮的赞踩记录（键 = `会话uuid:最终回答条目id`，与旧界面同一份存档）；键损坏当没记。 */
-function readFeedback(key: string): 'up' | 'down' | null {
-  try {
-    const raw = JSON.parse(localStorage.getItem(FEEDBACK_KEY) ?? '{}') as unknown
-    if (typeof raw !== 'object' || raw === null) return null
-    const value = (raw as Record<string, unknown>)[key]
-    return value === 'up' || value === 'down' ? value : null
-  } catch {
-    return null
-  }
-}
-
-/** 写这一轮的赞踩记录（再点一次取消 = 删键）；第一次评价时弹一次说明。 */
-function writeFeedback(key: string, value: 'up' | 'down' | null): void {
-  try {
-    const raw = JSON.parse(localStorage.getItem(FEEDBACK_KEY) ?? '{}') as Record<string, unknown>
-    if (value === null) delete raw[key]
-    else raw[key] = value
-    localStorage.setItem(FEEDBACK_KEY, JSON.stringify(raw))
-  } catch {
-    // 写不进去就算了：这是纯界面记录，不影响任何功能。
-  }
-  if (!toldFeedbackOnce) {
-    toldFeedbackOnce = true
-    toastOk('已在本机记下你的评价（宿主还没有评价上传通道）')
-  }
-}
-
 /**
- * 轮尾一行（桌面端 `TurnFooter.tsx` 的同构移植）：复制 · 赞 · 踩 · 分叉 · 用量 · 时刻，
+ * 轮尾一行（桌面端 `TurnFooter.tsx` 的同构移植）：复制 · 分叉 · 用量 · 时刻，
  * 一条左对齐行。
+ *
+ * 赞 / 踩两颗钮**去掉了**（产品决定）：评价只记本机、没有上传通道，留两颗按了不出声的
+ * 钮只会让人以为「反馈发出去了」；本机存档（`dsc.messageFeedback`）也一并不再读写。
  *
  * 「用时」不占行面、只挂在整行的 title 上（旧界面口径：它是这一行里分量最轻的一项，
  * 形态上也与 dsh 不同——dsh 只在整轮过程总开关的标签上报时长）。**别再把它印成可见的
@@ -1635,12 +1485,8 @@ function RoundFoot(props: {
   round: RoundInfo
   /** 这一轮还在跑：时刻与用量先不画。 */
   running: boolean
-  /** 当前会话 uuid（评价存档键的前半截）。 */
-  sessionId: string | null
-  /** 这一轮最终回答的原文；没有（以工具结果收尾）就不画复制与评价。 */
+  /** 这一轮最终回答的原文；没有（以工具结果收尾）就不画复制。 */
   copyText?: string
-  /** 最终回答条目的 id（评价存档键的后半截；老日志重放时与旧界面同键）。 */
-  copyId?: number
   /** 宿主上报的整轮真实用量（该轮最后一条带 usage 的条目）。 */
   usage: { inputTokens: number; outputTokens: number } | null
   /** 这一轮正文的 token 估算（没有真值时回落显示，带 ~）。 */
@@ -1659,112 +1505,76 @@ function RoundFoot(props: {
   // 回落口径：没有宿主上报的用量才用正文估算顶上（显示时带 ~）。
   const estimated = real !== null || props.running || props.tokens === null || props.tokens <= 0 ? null : props.tokens
   const copy = props.copyText !== undefined && props.copyText !== ''
-  const feedbackKey = copy && props.copyId !== undefined ? `${props.sessionId ?? ''}:${String(props.copyId)}` : undefined
-  const vote = feedbackKey !== undefined
   const fork = props.onFork !== undefined
-  const [feedback, setFeedback] = useState<'up' | 'down' | null>(() => (feedbackKey === undefined ? null : readFeedback(feedbackKey)))
-  useEffect(() => {
-    setFeedback(feedbackKey === undefined ? null : readFeedback(feedbackKey))
-  }, [feedbackKey])
   // 老会话什么时间都拿不到、又没有动作与用量要画：这一行不必占位（旧界面整行不渲染）。
-  if (clock === null && !copy && !vote && !fork && real === null && estimated === null) return null
+  if (clock === null && !copy && !fork && real === null && estimated === null) return null
   return (
-    <div className="entry-row">
-      <div
-        className="round-foot"
-        // 「用时」不占行面，放在整行的悬停提示里（口径与旧界面一致）。
-        title={
-          used === null
-            ? undefined
-            : `用时 ${used}（从发出这条消息到这一轮最后一次写入，中间的工具调用与思考都算在内）`
-        }
-      >
-        {copy ? (
-          <button
-            type="button"
-            className="round-act"
-            title="复制这条回复的原文"
-            aria-label="复制这条回复的原文"
-            onClick={() => {
-              // 剪贴板被浏览器拒绝（非安全上下文）时不给假反馈，所以 .catch 里什么都不做。
-              void navigator.clipboard.writeText(props.copyText ?? '').catch(() => undefined)
-            }}
-          >
-            <IconCopy size={17} />
-          </button>
-        ) : null}
-        {vote ? (
-          <>
-            <button
-              type="button"
-              className={`round-act${feedback === 'up' ? ' on' : ''}`}
-              title="这条回复不错（只记在本机）"
-              aria-label="这条回复不错（只记在本机）"
-              aria-pressed={feedback === 'up'}
-              onClick={() => {
-                const next = feedback === 'up' ? null : 'up'
-                setFeedback(next)
-                writeFeedback(feedbackKey, next)
-              }}
-            >
-              <IconThumbUp size={17} />
-            </button>
-            <button
-              type="button"
-              className={`round-act${feedback === 'down' ? ' on' : ''}`}
-              title="这条回复不好（只记在本机）"
-              aria-label="这条回复不好（只记在本机）"
-              aria-pressed={feedback === 'down'}
-              onClick={() => {
-                const next = feedback === 'down' ? null : 'down'
-                setFeedback(next)
-                writeFeedback(feedbackKey, next)
-              }}
-            >
-              <IconThumbDown size={17} />
-            </button>
-          </>
-        ) : null}
-        {fork ? (
-          <button
-            type="button"
-            className="user-act"
-            title="以这条消息为界分叉出新会话"
-            aria-label="以这条消息为界分叉出新会话"
-            disabled={props.running}
-            onClick={props.onFork}
-          >
-            {/* 图标 15px：方向性动作用小图标（与旧界面同一档），读数（用量、时刻）才用大的。 */}
-            <IconBranch size={15} />
-          </button>
-        ) : null}
-        {real !== null ? (
-          <span
-            className="round-tokens"
-            title="这一轮所有模型请求的 prompt 与 completion 之和（宿主上报的真实用量）"
-          >
-            用量 {formatTokens(real)} tok
-          </span>
-        ) : null}
-        {estimated !== null ? (
-          <span
-            className="round-tokens"
-            title="这一轮助手正文的 token 估算（中文约 0.65 token/字、其余约 0.33）；老会话没有宿主上报的用量，这是估算值"
-          >
-            ~{formatTokens(estimated)} tok
-          </span>
-        ) : null}
-        {clock !== null && (real !== null || estimated !== null) ? (
-          <span className="round-sep" aria-hidden="true">
-            ·
-          </span>
-        ) : null}
-        {clock !== null ? (
-          <span className="round-clock" title="这条消息发出的时刻（本机时区）">
-            {clock}
-          </span>
-        ) : null}
-      </div>
+    // 与 `.changes-card` 同理：不再包 `.entry-row`，让 `.turn-seat > .round-foot` 的
+    // 间距规则命中——包一层之后那条规则失配，回落到 `.round-foot` 自带的 -15px
+    // 负外边距（它本来是给旧版 `.chat-inner` 的 16px 间距设计的），会把这一行顶进
+    // 上面的改动卡里（截图里的「底部按钮与文件变更重叠」就是这么来的）。
+    <div
+      className="round-foot"
+      // 「用时」不占行面，放在整行的悬停提示里（口径与旧界面一致）。
+      title={
+        used === null
+          ? undefined
+          : `用时 ${used}（从发出这条消息到这一轮最后一次写入，中间的工具调用与思考都算在内）`
+      }
+    >
+      {copy ? (
+        <button
+          type="button"
+          className="round-act"
+          title="复制这条回复的原文"
+          aria-label="复制这条回复的原文"
+          onClick={() => {
+            // 剪贴板被浏览器拒绝（非安全上下文）时不给假反馈，所以 .catch 里什么都不做。
+            void navigator.clipboard.writeText(props.copyText ?? '').catch(() => undefined)
+          }}
+        >
+          <IconCopy size={17} />
+        </button>
+      ) : null}
+      {fork ? (
+        <button
+          type="button"
+          className="user-act"
+          title="以这条消息为界分叉出新会话"
+          aria-label="以这条消息为界分叉出新会话"
+          disabled={props.running}
+          onClick={props.onFork}
+        >
+          {/* 图标 15px：方向性动作用小图标（与旧界面同一档），读数（用量、时刻）才用大的。 */}
+          <IconBranch size={15} />
+        </button>
+      ) : null}
+      {real !== null ? (
+        <span
+          className="round-tokens"
+          title="这一轮所有模型请求的 prompt 与 completion 之和（宿主上报的真实用量）"
+        >
+          用量 {formatTokens(real)} tok
+        </span>
+      ) : null}
+      {estimated !== null ? (
+        <span
+          className="round-tokens"
+          title="这一轮助手正文的 token 估算（中文约 0.65 token/字、其余约 0.33）；老会话没有宿主上报的用量，这是估算值"
+        >
+          ~{formatTokens(estimated)} tok
+        </span>
+      ) : null}
+      {clock !== null && (real !== null || estimated !== null) ? (
+        <span className="round-sep" aria-hidden="true">
+          ·
+        </span>
+      ) : null}
+      {clock !== null ? (
+        <span className="round-clock" title="这条消息发出的时刻（本机时区）">
+          {clock}
+        </span>
+      ) : null}
     </div>
   )
 }

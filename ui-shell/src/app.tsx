@@ -29,7 +29,7 @@ import { ALLOWED_MODULES } from './boot'
 import { useChannelStatus, useHostError, useHostHello, useHostSelector } from './runtime-context'
 import { SlotOutlet, useSlotFaults } from './slots-react'
 import { SLOT } from './slots'
-import { getHostNative, setShellPage, useShellPage, type UiSlots } from './plugin-api'
+import { getHostNative, setShellPage, setThreadView, useShellPage, useThreadView, type UiSlots } from './plugin-api'
 import { Dock } from './dock'
 import { ReviewPane } from './review-pane'
 import { dockActions, openDockTab, setDockSession, useDockReview, useDockSurface } from './dock-state'
@@ -67,6 +67,9 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
   const sessionId = useHostSelector(readDockSessionId)
   // 主区整页（插件中心这类）：非 null 时顶栏与正文整块换成那一页（旧界面同构）。
   const page = useShellPage()
+  // 正文区的两张脸：对话（消息流）/ 轨迹（执行过程）。轨迹激活时 `.chat-wrap` 整块
+  // 换成 `shell.thread` 槽（输入区与状态栏照旧，旧界面同构）。
+  const threadView = useThreadView()
   // 空会话走 `.thread-main-empty`：欢迎文案与输入框垂直居中成一组（legacy 现成规则）。
   const hasEntries = useHostSelector(readHasEntries)
 
@@ -252,6 +255,32 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
                   {/* 工作区面板开合钮：只在收起时出现（展开时由面板头条尾的收起钮管） */}
                   <DockToggle />
                 </div>
+                {/* 对话 / 轨迹页签（旧界面顶栏第二行同款）：两张脸共用正文位，
+                    页签是显式入口——另一个入口是会话右键菜单的「查看轨迹」。 */}
+                <nav className="tabs" role="tablist" aria-label="正文区视图">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={threadView === 'chat'}
+                    className={threadView === 'chat' ? 'on' : ''}
+                    onClick={() => {
+                      setThreadView('chat')
+                    }}
+                  >
+                    对话
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={threadView === 'trace'}
+                    className={threadView === 'trace' ? 'on' : ''}
+                    onClick={() => {
+                      setThreadView('trace')
+                    }}
+                  >
+                    轨迹
+                  </button>
+                </nav>
               </div>
 
               <HostErrorStrip />
@@ -259,14 +288,26 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
               {/* 正文轨道 + 并排审查栏（旧界面 `.thread-zone[data-review]` 同构：
                   审查开着时正文让位，右缘的拖拽条一并让位）。 */}
               <div className="thread-zone" {...(review !== null ? { 'data-review': '1' } : {})}>
-                <div className={hasEntries ? 'thread-main' : 'thread-main thread-main-empty'}>
-                  <div className="chat-wrap">
-                    <div className="chat">
-                      <div className="chat-inner">
-                        <SlotOutlet slots={slots} slot={SLOT.main} />
+                <div
+                  className={
+                    // 空会话的垂直居中态只给对话页（旧界面 `tab !== 'trace' && empty` 同款）：
+                    // 轨迹页有自己的空态文案，不该跟着输入框居中。
+                    threadView === 'chat' && hasEntries ? 'thread-main' : threadView === 'chat' ? 'thread-main thread-main-empty' : 'thread-main'
+                  }
+                >
+                  {threadView === 'trace' ? (
+                    // 轨迹页（`shell.thread` 槽）：自己画 `.trace-page > .chat`，
+                    // 输入区照旧跟在下面——两张脸在旧界面里就是这样的兄弟关系。
+                    <SlotOutlet slots={slots} slot={SLOT.thread} />
+                  ) : (
+                    <div className="chat-wrap">
+                      <div className="chat">
+                        <div className="chat-inner">
+                          <SlotOutlet slots={slots} slot={SLOT.main} />
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  )}
                   <div className="composer-zone">
                     <SlotOutlet slots={slots} slot={SLOT.composer} />
                   </div>

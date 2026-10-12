@@ -3820,3 +3820,121 @@ csv/xlsx 表格预览、手动排序拖拽、桌面信任卡、remote-web 切壳
   `dsc.dock.surfaces` 同键决定了两界面共享布局），只抄行为会漂；④探索先行省了大功夫：
   「开始页实为右栏门面」「dock 是 .app 第三列」「GuideBody 只在激活时渲染」这些点
   在动手前就查清了，没走「先写了一版再推倒」的回头路。
+
+---
+
+## 第七批（2026-10-12 深夜）：轨迹页 + 右缘刻度条 + 可编辑的模型配置（未发版）
+
+用户六条（去掉赞/踩、修轮尾与改动卡重叠、右键「查看轨迹」且轨迹要 dsh 全套、
+模型配置要能新增模型与配能力且对齐旧版+dsh、修所有选项主题色、补右缘刻度条）。
+前两条与主题色是收尾性质的修补，后三条是这一批的主体。
+
+### 一、消息流的两处修补
+
+- **赞 / 踩按钮去掉**（产品决定）：`RoundFoot` 只留「复制 · 分叉 · 用量 · 时刻」，
+  `FEEDBACK_KEY` / `readFeedback` / `writeFeedback` 整块与 `dsc.messageFeedback` 存档一并删；
+  相关自检断言跟改（`fold-shots` 的 `acts === 1`、`ui-batch5-check` 的「两颗钮」口径）。
+- **轮尾与「文件已更改」卡重叠的真 bug**：壳里给 `.changes-card` 与 `.round-foot` 多包了
+  一层 `.entry-row`，而 legacy 的行距规则写的是 `.turn-seat > .changes-card, .turn-seat >
+  .round-foot`——直接子选择器失配后 `.round-foot` 回落到自带的 `-15px` 负外边距，
+  把页脚顶进改动卡（用户截图红框处）。修法 = 还原旧版 DOM（去掉那层包裹）。
+  教训照旧：**legacy 的规则按直接子节点写，多加一层包装必出事**。
+
+### 二、右缘刻度条：对照 dsh 的 TurnNavigator 重做
+
+- 新 `plugins/transcript/jump-rail.tsx`：哨兵 + `createPortal` 到 `.chat-wrap`（与旧版
+  「刻度条是 .chat 的兄弟」同构），自己找 `.chat` 做当前轮判定（贴底 → 最后一条；
+  否则探针线 `elementFromPoint` 命中 `[data-round]`；再兜底几何换算）；
+- 几何与三态照 dsh：轨道 28px、右缘 12px、`max-height: min(100% - 64px, 420px)`、
+  刻度 20×2 圆角（静息 `scaleX(0.6)` / 悬停 0.9 / 当前 1）、未加载轮 0.4+0.6、忙时闪烁；
+  悬停预览卡（题面一行 50 字 + 回复三行 120 字）贴轨道左侧；轨道内滚动 + 两端 24px 渐隐；
+  900px 窄容器整条收起；
+- 轨宽口径连带改：`--dsc-jump-lane` 32 → **36px**（可见刻度 20 + 与正文 4 + 与滚动条 12），
+  `platform/panels.ts` 的默认值同步（`readRightRailPx`）；
+- 壳的差异点用等价实现消化：分页（`firstVisible`）导致早轮没画出来时，点刻度先
+  `onReveal` 把它们放出来、再 rAF 轮询等锚点出现后滚动（最多 40 帧）。
+
+### 三、轨迹页：旧版全套搬进壳 + dsh 的几件增量
+
+- `thread-view`（壳的视图真源）：`chat | trace` 两张脸共用正文位；顶栏加
+  「对话 / 轨迹」页签（旧版顶栏同构）、会话右键加「查看轨迹」、工具行加
+  「在轨迹中查看」药丸（dsh 同款，hover 浮出）；切换走 `SLOT.thread` 槽
+  （壳按状态渲染哪一张脸，插件不自己互斥）；**跳转聚焦**经一次性 focus 指令
+  传递（`openTrace(stepId)` → trace 插件读到后展开该轮 + 滚过去 + 1.6s 闪烁 + 清除）；
+- 新插件 `plugins/trace/`：`trace-format.ts`（轮次/压缩区段/时间标记投影，
+  「拿不到耗时就不画宽度」的诚实口径逐字保留）、`timeline.tsx`（时间概览条 +
+  **滚轮缩放（指针锚点）+ 右键拖动平移**——旧版留的「这一轮不做」补上）、
+  `inspector.tsx`（输入/输出/思考全文/子代理/系统/计划/计时/用量 + JSON 格式化 +
+  附件放大 + Esc）、`ui.tsx`（轮次表 + **sticky 工具栏 + 搜索**：命中高亮、
+  未命中的轮收起来；子代理/轮结束/长度上限/模型重试四类事件的行渲染——旧版这四类画成空行）；
+- 平台层抽共用件：`platform/time.ts`（`entryTs`/`formatClock`/`formatDuration`/
+  `formatTraceDuration`）、`platform/tokens.ts`（`formatTokens`）、`platform/tool-summary.ts`
+  （工具摘要/状态词/图标动词——对话页与轨迹页对同一条调用给同一句话）。
+  跨插件不能互相 import（独立 bundle），共用件只能住平台层；
+- 工具卡：轨迹页自带轻量版（`.entry.tool-card` 同一套 class，无吸附栏与「将做的改动」
+  推演——轨迹页看的是「已经发生了什么」）。
+
+### 四、设置 → 模型：可编辑形态（走原生桥）
+
+- **桥加三件套** `saveProvider` / `removeProvider` / `setProviderKey`：它们写 config.yaml
+  与凭据库，界面通道持续排除（`UI_EXCLUDED` 的既有理由），写口只开在桌面窗口那份文档上
+  （与 `installMarketSkill` / `setUiTrust` 同一先例）；主进程 `NATIVE_HANDLERS` 转发
+  `protocol.invoke`。规格新增 **`stringOrNull`** 形状——`setProviderKey` 的 `null` 是
+  「清除」而不是「省略」，不能按可选参数处理（`validateNativeCall` 为此加了一条前置分支）；
+- **`core/model-caps.ts` 进共享面**（`src/ui/index.ts` 转出）：思考档位四档 / 档位字段 /
+  输入模态三组枚举与中文标签只有一份，界面勾的四档与宿主发请求算的字段不会各说各话；
+  `ProviderDraft` / `ThinkingParam` / `EffortMap` 三个类型补进类型转出面；
+- `plugins/settings/models.tsx` 重写：端点卡片（密钥快捷行 / 拉取清单 / 编辑 / 删除）、
+  **端点表单**（名字 / 显示名 / Base URL / **API key** + **批量文本**模式）、
+  **模型行**（id / 显示名 / 上下文 / 最大输出 + 思考档位四档 chip + 思考参数下拉 +
+  `reasoning_effort` 逐档线上值 + 输入模态三档）、默认模型两个自绘下拉；
+  dsh 式增量：列表尾「＋添加端点」虚线卡、**拉取清单弹窗**（搜索 + 全选 + 复选 + 一次采用）；
+  保存前本地校验（端点名形状 / 模型 id 去重 / 正整数），失败顶在 Toast 且表单不收起；
+  浏览器无桥时整页降级只读（改配置的按钮不画，页首一条说明）；
+- 主题色的收尾（用户第 5 条）：全壳最后几处原生 `<select>`（设置通用字段、外观五处、
+  插件页通用字段、审查面板文件下拉）全部换成自绘 `Select`——原生弹层由 Chromium 绘制，
+  页面 CSS 够不着，深色主题里必是白底（旧界面 0.6.21 的老结论）。
+
+### 验证（全部硬证据）
+
+- **新专项 `ui-batch7-check.ps1` 41/41**：种子 = 三轮会话（3 工具 + 2 思考）+ 本机假端点
+  （`_batch7-fake-llm.mjs`，含 `GET /v1/models`）。覆盖：页签切轨迹页（`.chat-wrap` 收走、
+  输入区仍在）、时间条（6 标记 = 3 有条宽的工具条 + 3 起点刻度 + 3 轮次分隔；宿主重放路径
+  用 jsonl 的 ts 差算出 200/400/1000ms）、轮次表（默认只展开最新一轮 / 开合双态 / 轮头统计）、
+  检查器、搜索（命中计数 / 未命中轮收起 / 清除复原）、拖选（chip / `is-hit` / 点一下清除）、
+  滚轮缩放（全览复位）、右键「查看轨迹」、刻度条（3 刻度非隐藏）、药丸（逐卡一致 +
+  点击切页闪烁）、**实跑一轮**（真跑一次 read：新工具卡 + 新轮 + 行内「用时」读数）；
+- **`ui-batch7b-models-check.ps1` 34/34**：模型页专项（形态 / 表单能力项 / 改能力保存 /
+  新增端点 / 拉取清单弹窗 / 删除确认），断言分两层：eval 读 DOM + **PowerShell 直接读
+  隔离 HOME 的 `config.yaml`**（`thinkingLevels: [off, high]` 非默认组合写回、
+  `modalities` 带 image、`thinkingParam: reasoning-effort`、nova 删净、fake-fast/pro 采纳）；
+- 探针：`ui-native-bridge-test` **96/96**（跟改：形状白名单加 `stringOrNull`、动词表加
+  `save`、新增模型三件套一节 15 条——含「null 是清除」「少传第二个被拒」）；
+  `ui-api-gate-test` / `ui-plugin-test` / `ui-third-party-test` / `ui-serve-test` /
+  `ui-tui-plugin-test` / `legacy-frozen-check` 全绿（后者跟改口径：**冻结的是桌面渲染层
+  那四份**，legacy 侧的 `tokens.css` / `views.css` 已是「新家」允许分叉、只记 INFO）；
+  三侧 TypeScript 全绿；宿主 `lib/`、壳 `lib/ui/`（含 trace 插件，清单 15 个）、
+  desktop `out/` 全部重建；`ui-batch6-check.ps1` 回归 **38/38**（它的 eval 窗口按
+  「本批顶栏多了一行页签 + 对话页多了刻度条」跟改：150s → 240s，与 batch7 同因）。
+
+### 诚实边界
+
+①轨迹页对 dsh 的**未搬项**：等宽/实际时长口径开关、台账表虚拟化与历史分页、
+  检查器的 overview/options/usage/timing 页签形态（本版按旧版分区分块）、
+  请求头与 system prompt 原文视图（数据模型里没有这些字段——宿主不上报，界面编不出来）；
+②刻度条的「点未加载轮先放出来再滚」只核到实现路径（种子 3 轮不触发分页，
+  `PAGE_ROUNDS = 8`），未在自检里造出 >8 轮的会话实测；
+③模型页的「工作区级只读降级」只核了桥可用路径（浏览器路径由 `data-models-readonly`
+  的条件渲染保证，未单独走查）；
+④赞/踩去掉后，旧的 `dsc.messageFeedback` 存档不再读写（本地残留不清理，无害）。
+
+### 教训
+
+①**自检脚本里同一 tick 连点两个按钮会被 React 批处理合并**：模型页自检第一版在同一个
+  tick 里先点「去掉低档」再点「勾上照片」，两次 `setState` 都基于同一个旧 draft，
+  后一次把前一次覆盖掉——界面本身没错（真实点击之间隔着事件循环），是脚本要每个点击
+  之间留一拍；②假端点判断「这一拍该发工具还是收尾」别依赖请求体形状（历史里有工具消息
+  会让整个 `messages` 的 `role=tool` 判定失灵，自检里曾陷入 741 张工具卡的无限循环），
+  用请求**计数**最稳；③自检的 eval 预算（`DSC_DESKTOP_SHOT_DELAY − EVAL_LEAD`）要按
+  最坏路径留足（这一批从 150s 一路试到 420s）：撞上截止时截图照落，但读数会整份丢，
+  表现是「只有 2/3 通过」这种假故障。

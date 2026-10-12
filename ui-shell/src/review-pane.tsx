@@ -18,6 +18,7 @@ import { displayPathOf } from './platform/paths'
 import { DiffRows } from './platform/diff-rows'
 import { toastErr } from './platform/toast'
 import { PANEL_KEYS, readRootPx, readStoredPx, setRootVar, useWidthDrag, writeStoredPx } from './platform/panels'
+import { Select } from './platform/select'
 import { getHostNative } from './plugin-api'
 import { dockActions, setDockReview, useDockReview } from './dock-state'
 
@@ -101,20 +102,18 @@ export function ReviewPane(): ReactNode {
       />
       <div className="diff-head">
         {review.files.length > 1 ? (
-          <select
+          <Select
             className="diff-file-select"
+            ariaLabel="选择要审查的文件"
             value={String(index)}
-            onChange={(event) => {
-              setIndex(Number(event.target.value))
+            options={review.files.map((entry, at) => ({
+              value: String(at),
+              label: displayPathOf(entry.path, review.cwd),
+            }))}
+            onPick={(next) => {
+              setIndex(Number(next))
             }}
-            aria-label="选择要审查的文件"
-          >
-            {review.files.map((entry, at) => (
-              <option key={entry.path} value={String(at)} title={entry.path}>
-                {displayPathOf(entry.path, review.cwd)}
-              </option>
-            ))}
-          </select>
+          />
         ) : (
           file !== undefined && (
             <span className="diff-file-name" title={file.path}>

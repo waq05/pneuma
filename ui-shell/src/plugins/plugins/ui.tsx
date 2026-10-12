@@ -45,6 +45,7 @@ import {
   type SettingsValue,
   type SettingsValues,
 } from '@dsc/ui'
+import { Select } from '../../platform/select'
 
 /** 这一页在 page-state 里的 id（侧栏入口与页条目约定同一个值）。 */
 const PAGE = 'plugins'
@@ -777,20 +778,15 @@ function ConfigFields({ section, onAction }: { section: SettingsSectionView; onA
             {field.help === undefined ? null : <div className="setting-help">{field.help}</div>}
           </div>
           <div className="setting-control">
-            <select
+            <Select
               className="setting-select"
-              aria-label={field.label}
+              ariaLabel={field.label}
               value={current}
-              onChange={(event) => {
-                commit(field.key, event.target.value)
+              options={options}
+              onPick={(next) => {
+                commit(field.key, next)
               }}
-            >
-              {options.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+            />
           </div>
         </div>
       )

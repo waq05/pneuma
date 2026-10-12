@@ -1554,6 +1554,12 @@
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-caption);
   font-variant-numeric: tabular-nums;
+  /* 工具条吸顶（对照 dsh 的 sticky 工具栏）：长会话滚下去之后搜索框还在手边。
+     fill-quinary 是半透明底，配一层背景模糊把下面滚过去的行糊掉，文字才不叠字。 */
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  backdrop-filter: blur(8px);
 }
 
 .trace-stats > span {
@@ -1565,6 +1571,69 @@
 /* 统计条右端的一键展开/折叠：靠 auto 外边距顶到行尾，不占上面那组计数的间距。 */
 .trace-toggle-all {
   margin-left: auto;
+}
+
+/* ── 轨迹页的搜索框（对照 dsh 的工具栏搜索）──
+   住在统计条右端：命中步骤的行会高亮，未命中的轮先收起来（见 trace/ui.tsx 的过滤语义）。 */
+.trace-search {
+  align-items: center;
+  background: var(--dsc-bg-input);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-pill);
+  color: var(--dsc-text-quaternary);
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 6px;
+  height: calc(24px * var(--dsc-ctl-scale));
+  padding: 0 10px;
+  transition: border-color var(--dsc-dur) var(--dsc-ease);
+}
+
+.trace-search:focus-within {
+  border-color: var(--dsc-accent);
+  color: var(--dsc-text-tertiary);
+}
+
+.trace-search-input {
+  background: transparent;
+  border: 0;
+  color: var(--dsc-text-primary);
+  font-family: inherit;
+  font-size: var(--dsc-fs-caption);
+  outline: none;
+  width: 180px;
+}
+
+.trace-search-input::placeholder {
+  color: var(--dsc-text-quaternary);
+}
+
+/* Chromium 给 type=search 画的清除叉是浅底深字的默认图形，深色主题下几乎看不见、
+   又不能上色；关掉它，清除用旁边那颗自绘的 ×（跟随主题与控件尺寸）。 */
+.trace-search-input::-webkit-search-cancel-button {
+  appearance: none;
+  display: none;
+}
+
+.trace-search-clear {
+  align-items: center;
+  border-radius: var(--dsc-r-icon);
+  color: var(--dsc-text-quaternary);
+  display: inline-flex;
+  flex-shrink: 0;
+  height: 16px;
+  justify-content: center;
+  width: 16px;
+}
+
+.trace-search-clear:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-secondary);
+}
+
+.trace-search-clear:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsc-accent) 50%, transparent);
+  outline: none;
 }
 
 /* 轮头一行：折叠时整轮就只剩这一行。 */
@@ -1879,6 +1948,47 @@
   flex-shrink: 0;
   font-size: var(--dsc-fs-tool);
   font-variant-numeric: tabular-nums;
+}
+
+/* ── 工具行的「在轨迹中查看」药丸（对照 dsh 工具行 hover 的那颗）──
+   默认透明不占视线，悬停行 / 键盘聚焦到它时才浮出来。仍在 tab 顺序里——
+   键盘用户 Tab 到它（:focus-visible）同样看得到。 */
+.tc-trace {
+  background: var(--dsc-fill-quaternary);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-pill);
+  color: var(--dsc-text-secondary);
+  flex-shrink: 0;
+  font-size: var(--dsc-fs-micro);
+  line-height: 1;
+  opacity: 0;
+  padding: 3px 8px;
+  transition:
+    opacity var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease),
+    border-color var(--dsc-dur) var(--dsc-ease);
+}
+
+.tool-head:hover .tc-trace,
+.tool-head:focus-within .tc-trace,
+.tc-trace:focus-visible {
+  opacity: 1;
+}
+
+.tc-trace:hover {
+  border-color: var(--dsc-stroke-1);
+  color: var(--dsc-text-primary);
+}
+
+.tc-trace:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsc-accent) 50%, transparent);
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tc-trace {
+    transition: none;
+  }
 }
 
 .tool-body {
@@ -4864,6 +4974,183 @@ body.resizing iframe {
   font-size: var(--dsc-fs-caption);
 }
 
+/* 「刷新」挨着端点计数放（外部改过 config.yaml 时重读一遍）。 */
+.models-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--dsc-fs-caption);
+}
+
+/* ＋添加端点卡（dsh 式）：虚线卡占一行，点一下就地长出新端点表单。 */
+.models-add-card {
+  align-items: center;
+  background: transparent;
+  border: 1px dashed var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-icon);
+  color: var(--dsc-text-tertiary);
+  display: flex;
+  font-size: var(--dsc-fs-caption);
+  gap: 6px;
+  justify-content: center;
+  min-height: calc(44px * var(--dsc-density));
+  transition:
+    border-color var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease),
+    background var(--dsc-dur) var(--dsc-ease);
+}
+
+.models-add-card:hover {
+  background: var(--dsc-control-hover-bg);
+  border-color: var(--dsc-stroke-1);
+  color: var(--dsc-text-secondary);
+}
+
+.models-add-card:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsc-accent) 50%, transparent);
+  outline: none;
+}
+
+/* ── 拉取清单弹窗（dsh 式：搜索 + 全选 + 复选 + 一次采用）──
+   外层吃原语层的 .dsc-overlay（遮罩 + 卡片），这里只画卡内四块。 */
+.models-discover-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: min(70vh, 560px);
+  width: min(520px, 92vw);
+}
+
+.models-discover-head {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+}
+
+.models-discover-title {
+  color: var(--dsc-text-primary);
+  font-size: var(--dsc-fs-body);
+  font-weight: 600;
+}
+
+.models-discover-count {
+  color: var(--dsc-text-quaternary);
+  flex: 1;
+  font-size: var(--dsc-fs-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.models-discover-search {
+  align-items: center;
+  color: var(--dsc-text-quaternary);
+  display: flex;
+  gap: 8px;
+}
+
+.models-discover-search .setting-input {
+  flex: 1;
+}
+
+/* Chromium 默认的清除叉在深色主题里几乎看不见；这一格用自绘的（与轨迹页搜索同款处理）。 */
+.models-discover-search .setting-input::-webkit-search-cancel-button {
+  appearance: none;
+  display: none;
+}
+
+.models-discover-list {
+  border: 1px solid var(--dsc-stroke-4);
+  border-radius: var(--dsc-r-control);
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  list-style: none;
+  margin: 0;
+  min-height: 120px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.models-discover-item {
+  align-items: center;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-secondary);
+  display: flex;
+  font-size: var(--dsc-fs-caption);
+  gap: 8px;
+  min-height: var(--dsc-row-h);
+  padding: 0 8px;
+  text-align: left;
+  transition: background var(--dsc-dur) var(--dsc-ease);
+  width: 100%;
+}
+
+.models-discover-item:hover:not(:disabled) {
+  background: var(--dsc-control-hover-bg);
+}
+
+.models-discover-item:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsc-accent) 50%, transparent);
+  outline: none;
+}
+
+.models-discover-item.on {
+  color: var(--dsc-text-primary);
+}
+
+.models-discover-item.exists,
+.models-discover-item:disabled {
+  color: var(--dsc-text-quaternary);
+  opacity: 0.75;
+}
+
+/* 勾选框：14px 小方块，勾上用强调色（自绘，不引原生 checkbox）。 */
+.models-discover-check {
+  align-items: center;
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-icon);
+  color: var(--dsc-accent-text);
+  display: inline-flex;
+  flex-shrink: 0;
+  height: 14px;
+  justify-content: center;
+  width: 14px;
+}
+
+.models-discover-item.on .models-discover-check {
+  background: color-mix(in srgb, var(--dsc-accent) 18%, transparent);
+  border-color: var(--dsc-accent);
+}
+
+.models-discover-tag {
+  background: var(--dsc-fill-secondary);
+  border-radius: var(--dsc-r-pill);
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-micro);
+  margin-left: auto;
+  padding: 0 6px;
+}
+
+.models-discover-none {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-caption);
+  padding: 12px 8px;
+  text-align: center;
+}
+
+.models-discover-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.models-discover-actions .btn-primary {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  padding: 6px 12px;
+}
+
 .provider-card {
   display: flex;
   flex-direction: column;
@@ -6023,7 +6310,7 @@ body.resizing iframe {
   padding: 1px 5px;
 }
 
-/* ══════════ 回合刻度条（右缘快速跳转，对照 dsh） ══════════ */
+/* ══════════ 回合刻度条（右缘快速跳转，对照 dsh 的 TurnNavigator） ══════════ */
 
 /* 包住滚动容器一层：刻度条要贴着消息区右缘定位，又不随内容滚走 */
 .chat-wrap {
@@ -6034,53 +6321,208 @@ body.resizing iframe {
   position: relative;
 }
 
-.jump-strip {
-  align-items: flex-end;
+/* 轨道：28px 宽、垂直居中于消息区（.chat-wrap 的高度已排除输入区，即 dsh 的 band）、
+   最高 min(高度 − 64px, 420px)——照 dsh 的 .frame（TurnNavigator.module.css:35-60）。
+   刻度多到装不下时在轨道内滚动，不把刻度推到输入区底下。 */
+.jump-rail {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-height: 62%;
-  overflow: hidden;
-  pointer-events: none; /* 刻度稀疏，刻度之间的空档让给滚动条 */
+  max-height: min(calc(100% - 64px), 420px);
   position: absolute;
-  /* 离右缘 16px：贴边会压在滚动条上；dsh 同款留缝，刻度悬在正文与滚动条之间 */
-  right: 16px;
+  /* 右缘让开滚动条 12px（与 dsh 的 right: 12px 同口径，壳里滚动条占 5px） */
+  right: calc(var(--dsc-scrollbar-w) + 12px);
   top: 50%;
   transform: translateY(-50%);
+  width: 28px;
   z-index: 1;
 }
 
+/* `hidden` 属性要压过上面的 display: flex（窄容器整条收起时用） */
+.jump-rail[hidden] {
+  display: none;
+}
+
+/* 轨道内部滚动：不画滚动条、不把滚动传给外层消息流、两头 24px 渐隐（dsh 的 .scroller）。 */
+.jump-rail-scroll {
+  max-height: inherit;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.jump-rail-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.jump-rail-scroll[data-fade-up] {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 100%);
+}
+
+.jump-rail-scroll[data-fade-down] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 24px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 24px), transparent 100%);
+}
+
+.jump-rail-scroll[data-fade-up][data-fade-down] {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 24px,
+    #000 calc(100% - 24px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 24px,
+    #000 calc(100% - 24px),
+    transparent 100%
+  );
+}
+
+/* 一枚刻度：hit 区 10px 高（步距 10px，逐枚相邻）、可视线 20×2px 贴右缘。
+   静息 scaleX(0.6)、悬停/预览 0.9、当前 1——三级递进照 dsh 的 .mark 三态；
+   颜色从 stroke-1（最轻的描边灰）到 tertiary、primary 逐级提亮。 */
 .jump-tick {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  display: block;
+  flex: none;
   height: 10px;
+  padding: 0;
   position: relative;
-  pointer-events: auto;
-  width: 16px;
+  width: 100%;
 }
 
 .jump-tick::before {
-  background: var(--dsc-scrollbar-thumb);
-  border-radius: var(--dsc-r-pill);
+  background: var(--dsc-stroke-1);
+  border-radius: 2px;
   content: '';
   height: 2px;
-  left: 0;
   position: absolute;
   right: 0;
-  top: 4px;
-  transition: background var(--dsc-dur) var(--dsc-ease);
+  top: 50%;
+  transform: translateY(-50%) scaleX(0.6);
+  transform-origin: right center;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    transform var(--dsc-dur) var(--dsc-ease);
+  width: 20px;
+}
+
+/* 还没放出来的早轮：更短更淡（dsh 的 .markUnloaded） */
+.jump-tick.is-unloaded::before {
+  opacity: 0.6;
+  transform: translateY(-50%) scaleX(0.4);
 }
 
 .jump-tick:hover::before {
-  background: var(--dsc-scrollbar-thumb-hover);
+  background: var(--dsc-text-tertiary);
+  transform: translateY(-50%) scaleX(0.9);
 }
 
-/* 键盘/程序化聚焦时画品牌蓝 ring；不补这条会落到系统默认环，颜色跟主题脱节 */
+/* 当前读到的轮：整宽最亮（dsh 的 .markActive；按住 hover 不反超 active） */
+.jump-tick.on::before {
+  background: var(--dsc-text-primary);
+  transform: translateY(-50%) scaleX(1);
+}
+
+/* 等待放出来期间闪烁（dsh 的 .markBusy） */
+.jump-tick.is-busy::before {
+  animation: dsc-turn-mark-busy 1s ease-in-out infinite;
+}
+
+@keyframes dsc-turn-mark-busy {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* 键盘焦点：品牌蓝整宽 + 细环（dsh 的 :focus-visible 同款；不补会落到系统默认环） */
 .jump-tick:focus-visible {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsc-accent) 50%, transparent);
   outline: none;
 }
 
-.jump-tick.on::before {
+.jump-tick:focus-visible::before {
   background: var(--dsc-accent);
+  transform: translateY(-50%) scaleX(1);
+}
+
+.jump-tick:focus-visible::after {
+  border: 1px solid var(--dsc-accent);
+  border-radius: 2px;
+  content: '';
+  height: 10px;
+  position: absolute;
+  right: -1px;
+  top: 0;
+  width: 22px;
+}
+
+/* 悬停预览卡：一行题面 + 最多三行回复摘要，贴轨道左侧（dsh 的 .preview）。
+   垂直位置跟着被悬停的刻度（--jump-preview-center 由组件写），并夹在轨道高度内。 */
+.jump-preview {
+  animation: dsc-turn-preview-enter 120ms ease-out;
+  background: var(--dsc-bg-popover);
+  border-radius: var(--dsc-r-overlay);
+  box-shadow: var(--dsc-shadow-md);
+  box-sizing: border-box;
+  color: var(--dsc-text-primary);
+  max-height: 100px;
+  overflow: hidden;
+  padding: 10px 12px;
+  pointer-events: none;
+  position: absolute;
+  right: calc(100% + 10px);
+  top: clamp(0px, calc(var(--jump-preview-center, 0px) - 50px), calc(100% - 100px));
+  width: min(300px, 60vw);
+}
+
+.jump-preview-prompt,
+.jump-preview-response {
+  -webkit-box-orient: vertical;
+  display: -webkit-box;
+  overflow: hidden;
+}
+
+.jump-preview-prompt {
+  -webkit-line-clamp: 1;
+  font-size: var(--dsc-fs-body);
+  font-weight: 600;
+}
+
+.jump-preview-response {
+  -webkit-line-clamp: 3;
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-caption);
+  margin-top: 4px;
+}
+
+@keyframes dsc-turn-preview-enter {
+  from {
+    opacity: 0;
+    transform: translateX(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jump-tick::before,
+  .jump-preview {
+    animation: none;
+    transition: none;
+  }
 }
 
 /* ══════════ 顶栏：多种方式打开工作区（对照 dsh 的「文件夹+下拉」分组钮） ══════════ */
@@ -6876,19 +7318,14 @@ body.resizing iframe {
    旧规则把刻度条放在 right: 16px，这个数字与滚动条宽度毫无关系，而且正文可以一直
    伸到右缘——实测（1124px 窗口）旧布局里正文可用的右缘是 1116，刻度条占 1092–1108，
    整条落在正文的内容带里，与滚动条也只隔 8px。本次改成三条互不重叠的纵向带：
-     [正文] 4px [刻度条 16px] 12px [滚动条 8px] 窗口边
+     [正文] 4px [刻度条 20px] 12px [滚动条 5px] 窗口边
    - scrollbar-gutter: stable 让滚动条那一栏永久预留，滚动条出现/消失都不推动正文，
      刻度条因此有个固定不变的参照；
-   - 刻度条的 right 由 --dsc-scrollbar-w 算出来：滚动条画宽（主题、缩放不同）时
-     它自动往左让位，不会像写死 16px 那样被压住。
-   （覆盖的是顶部 .chat { padding: 12px 0 20px } 与 .jump-strip { right: 16px }。） */
+   - 刻度条（.jump-rail）的 right 由 --dsc-scrollbar-w 算出来：滚动条画宽（主题、
+     缩放不同）时它自动往左让位，不会像写死 16px 那样被压住。 */
 .chat-wrap > .chat {
   padding-right: var(--dsc-jump-lane);
   scrollbar-gutter: stable;
-}
-
-.chat-wrap > .jump-strip {
-  right: calc(var(--dsc-scrollbar-w) + 12px);
 }
 
 /* ── 回合进行中的状态行 ──
@@ -8115,7 +8552,7 @@ body.resizing iframe {
   width: calc(var(--dsc-icon-size, 1em) * var(--dsc-btn-scale));
 }
 
-/* 页脚那一行现在有四颗按钮（复制 / 赞 / 踩 / 分叉），行高由它们撑着；文字与按钮的中线对齐交给
+/* 页脚那一行现在有三颗按钮（复制 / 分叉 / 时刻行），行高由它们撑着；文字与按钮的中线对齐交给
    .round-foot 的 align-items: center，图标之间的横向节奏交给它原有的 6px gap，
    这里不再动旧规则。 */
 
@@ -8123,8 +8560,8 @@ body.resizing iframe {
    触发条件是用户在流式输出里往上翻（见 ChatView 的 followRef）；那一刻新内容不再把他
    拽回底部，所以得给一条显式的回头路，否则要自己一路滚到底才知道跟随恢复了。
    位置：对话区右下角，右缘与刻度条同一条参照线（--dsc-scrollbar-w + 12px，见
-   .chat-wrap > .jump-strip），所以既不压滚动条也不落进正文列；刻度条竖直居中、
-   最多 62% 高，够不着这里。
+   .jump-rail），所以既不压滚动条也不落进正文列；刻度条竖直居中、
+   最多「高度 − 64px」且不超过 420px 高，够不着这里。
    尺寸吃 --dsc-btn-scale（与上面那批按钮联动），颜色走全站卡片与控件令牌。 */
 .chat-to-bottom {
   align-items: center;
@@ -8545,12 +8982,11 @@ body.resizing iframe {
   gap: var(--dsc-stack-gap);
 }
 
-/* ── 页脚里那三颗新按钮（复制 / 赞 / 踩）──
+/* ── 页脚里的按钮（复制 / 分叉）──
    它们从助手消息末尾的 .entry-meta 搬进每轮页脚（.round-foot），28px 的框与图标倍率在
    上面「对话区修正批」那一段（与分叉、用户消息的编辑按钮同一套规格）。
-   这里只补颜色与三态：静息 tertiary、悬停提一档并给底色、点过的评价常亮。
-   评价常亮为什么必要：赞 / 踩只记在本机（localStorage），不给常亮的话切一次会话回来
-   就看不出自己点没点过——这一条沿用改版前 .meta-btn.on 的口径。 */
+   这里只补颜色与两态：静息 tertiary、悬停提一档并给底色。
+   （赞 / 踩两颗钮与 .round-act.on 常亮态已随产品决定去掉：评价只记本机、没有上传通道。） */
 .round-foot .round-act {
   border-radius: var(--dsc-r-control);
   color: var(--dsc-text-tertiary);
@@ -8571,11 +9007,6 @@ body.resizing iframe {
 .round-foot .round-act:focus-visible {
   box-shadow: inset 0 0 0 1px var(--dsc-accent);
   outline: none;
-}
-
-.round-foot .round-act.on {
-  background: var(--dsc-control-active-bg);
-  color: var(--dsc-accent);
 }
 
 /* 分叉那颗分叉图标与复制 / 赞 / 踩同处一行，静息色提到同一档（quaternary → tertiary）：
@@ -8715,6 +9146,15 @@ body.resizing iframe {
   margin-top: 4px;
   position: relative;
   touch-action: none;
+}
+
+/* 缩放过：右键按住可以左右平移（光标给个抓取的提示；拖动中是抓手）。 */
+.ttl-track[data-zoomed] {
+  cursor: grab;
+}
+
+.ttl-track[data-zoomed]:active {
+  cursor: grabbing;
 }
 
 .ttl-track::after {
@@ -8929,6 +9369,47 @@ body.resizing iframe {
 
 .trace-step.is-inspecting {
   background: var(--dsc-row-active-bg);
+}
+
+/* 搜索命中的行：左侧一条黄色标记（与时间轴拖选的蓝线区分开——两种「聚焦」不是一回事）。 */
+.trace-step.is-search-hit {
+  background: color-mix(in srgb, var(--dsc-yellow) 7%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--dsc-yellow) 72%, transparent);
+}
+
+/* 「在轨迹中查看」跳进来的那一条：闪一下（1.6s 灭）。给眼睛一个落点，但不留痕。 */
+.trace-step.is-flash {
+  animation: dsc-trace-flash 1600ms ease-out;
+}
+
+@keyframes dsc-trace-flash {
+  0%,
+  30% {
+    background: color-mix(in srgb, var(--dsc-accent) 22%, transparent);
+    box-shadow: inset 2px 0 0 var(--dsc-accent);
+  }
+
+  100% {
+    background: transparent;
+    box-shadow: inset 2px 0 0 transparent;
+  }
+}
+
+/* 轮级/旁路事件行（子代理、轮结束、长度上限、模型重试）：一行文字的可读渲染
+   （旧版这四类会画成空行）。 */
+.trace-event {
+  gap: 8px;
+}
+
+.trace-event .event-text {
+  color: var(--dsc-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trace-event .event-state {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-micro);
 }
 
 /* 计划卡：轨迹页原本把它渲染成一个空行（只有圆点没有内容），这里补一行可读的摘要。 */
@@ -9254,6 +9735,13 @@ body.resizing iframe {
   .trace-lightbox,
   .trace-scrim {
     animation: none;
+  }
+
+  /* 聚焦闪烁改成静态高亮一下（不闪，但落点仍然看得见）。 */
+  .trace-step.is-flash {
+    animation: none;
+    background: color-mix(in srgb, var(--dsc-accent) 16%, transparent);
+    box-shadow: inset 2px 0 0 var(--dsc-accent);
   }
 }
 

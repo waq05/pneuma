@@ -58,6 +58,7 @@ import { PresetsGroup } from './presets'
 import { ModelsGroup } from './models'
 import { UsageGroup } from './usage'
 import { ArchiveGroup } from './archive'
+import { Select } from '../../platform/select'
 
 /** 拿异常的文字形态（宿主与桥都可能抛 Error，也可能是别的值）。 */
 function text(error: unknown): string {
@@ -420,20 +421,15 @@ function GenericFields({ section, extra }: { section: SettingsSectionView; extra
             {field.help === undefined ? null : <div className="setting-help">{field.help}</div>}
           </div>
           <div className="setting-control">
-            <select
+            <Select
               className="setting-select"
-              aria-label={field.label}
+              ariaLabel={field.label}
               value={current}
-              onChange={(event) => {
-                commit(field.key, event.target.value)
+              options={options}
+              onPick={(next) => {
+                commit(field.key, next)
               }}
-            >
-              {options.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+            />
           </div>
         </div>
       )
@@ -584,18 +580,19 @@ function AppearanceRows(): ReactNode {
           <div className="setting-help">「跟随系统」随系统的深浅自动切换。</div>
         </div>
         <div className="setting-control">
-          <select
-            className="shell-select"
-            aria-label="主题"
+          <Select
+            className="setting-select"
+            ariaLabel="主题"
             value={appearance.themeMode}
-            onChange={(event) => {
-              change({ themeMode: event.target.value as Appearance['themeMode'] })
+            options={[
+              { value: 'dark', label: '深色' },
+              { value: 'light', label: '浅色' },
+              { value: 'system', label: '跟随系统' },
+            ]}
+            onPick={(next) => {
+              change({ themeMode: next })
             }}
-          >
-            <option value="dark">深色</option>
-            <option value="light">浅色</option>
-            <option value="system">跟随系统</option>
-          </select>
+          />
         </div>
       </div>
       <div className="setting-row">
@@ -625,18 +622,19 @@ function AppearanceRows(): ReactNode {
           <div className="setting-help">行高与纵向间距的整体松紧。</div>
         </div>
         <div className="setting-control">
-          <select
-            className="shell-select"
-            aria-label="密度"
+          <Select
+            className="setting-select"
+            ariaLabel="密度"
             value={appearance.density}
-            onChange={(event) => {
-              change({ density: event.target.value as Appearance['density'] })
+            options={[
+              { value: 'compact', label: '紧凑' },
+              { value: 'standard', label: '标准' },
+              { value: 'roomy', label: '宽松' },
+            ]}
+            onPick={(next) => {
+              change({ density: next })
             }}
-          >
-            <option value="compact">紧凑</option>
-            <option value="standard">标准</option>
-            <option value="roomy">宽松</option>
-          </select>
+          />
         </div>
       </div>
       <div className="settings-group-title">对话折叠</div>
@@ -648,19 +646,20 @@ function AppearanceRows(): ReactNode {
           </div>
         </div>
         <div className="setting-control">
-          <select
-            className="shell-select"
-            aria-label="过程折叠程度"
+          <Select
+            className="setting-select"
+            ariaLabel="过程折叠程度"
             value={appearance.processFold}
-            onChange={(event) => {
-              change({ processFold: event.target.value as Appearance['processFold'] })
+            options={[
+              { value: 'compact', label: '紧凑' },
+              { value: 'standard', label: '标准' },
+              { value: 'detailed', label: '详细' },
+              { value: 'verbose', label: '完全展开' },
+            ]}
+            onPick={(next) => {
+              change({ processFold: next })
             }}
-          >
-            <option value="compact">紧凑</option>
-            <option value="standard">标准</option>
-            <option value="detailed">详细</option>
-            <option value="verbose">完全展开</option>
-          </select>
+          />
         </div>
       </div>
       <div className="setting-row">
@@ -669,17 +668,18 @@ function AppearanceRows(): ReactNode {
           <div className="setting-help">跑动中的思考永远展开；这里管已经定稿的那些默认收起还是展开。</div>
         </div>
         <div className="setting-control">
-          <select
-            className="shell-select"
-            aria-label="定稿的思考行默认态"
+          <Select
+            className="setting-select"
+            ariaLabel="定稿的思考行默认态"
             value={appearance.reasoningOpen ? 'open' : 'folded'}
-            onChange={(event) => {
-              change({ reasoningDefaultOpen: event.target.value === 'open' })
+            options={[
+              { value: 'folded', label: '默认收起' },
+              { value: 'open', label: '默认展开' },
+            ]}
+            onPick={(next) => {
+              change({ reasoningDefaultOpen: next === 'open' })
             }}
-          >
-            <option value="folded">默认收起</option>
-            <option value="open">默认展开</option>
-          </select>
+          />
         </div>
       </div>
       <div className="setting-row">
@@ -688,17 +688,18 @@ function AppearanceRows(): ReactNode {
           <div className="setting-help">工具调用的默认态：只显示一行摘要，还是连参数与结果一起摊开。</div>
         </div>
         <div className="setting-control">
-          <select
-            className="shell-select"
-            aria-label="工具卡默认态"
+          <Select
+            className="setting-select"
+            ariaLabel="工具卡默认态"
             value={appearance.toolOpen ? 'open' : 'folded'}
-            onChange={(event) => {
-              change({ toolDefaultOpen: event.target.value === 'open' })
+            options={[
+              { value: 'folded', label: '默认收起' },
+              { value: 'open', label: '默认展开' },
+            ]}
+            onPick={(next) => {
+              change({ toolDefaultOpen: next === 'open' })
             }}
-          >
-            <option value="folded">默认收起</option>
-            <option value="open">默认展开</option>
-          </select>
+          />
         </div>
       </div>
       {note === '' ? null : <div className="settings-note error">{note}</div>}

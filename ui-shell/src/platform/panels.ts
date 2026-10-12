@@ -30,7 +30,7 @@ export const DOCK_DEFAULT_WIDTH = 420
  * 数字从样式表现读（见 readRootPx），tokens.css 里改了轨道宽这里跟着变。
  */
 export function readRightRailPx(): number {
-  return readRootPx('--dsc-jump-lane', 32) + readRootPx('--dsc-scrollbar-w', 5)
+  return readRootPx('--dsc-jump-lane', 36) + readRootPx('--dsc-scrollbar-w', 5)
 }
 /** 读档时的宽度天花板。真正的上限是当时的窗口宽，拖的时候现场算；这里只挡住存坏的脏值。 */
 export const STORED_MAX = 3200

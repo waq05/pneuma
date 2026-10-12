@@ -30,7 +30,9 @@
  * 直接 IPC 是同一扇门。前两个弹系统文件选择器（人选了文件才算数），后两个转给
  * 宿主（按市场源下载安装到 `~/.dsc/skills`、把源清单写回 settings.json）。
  * 同一理由的还有 `setUiTrust`（落第三方界面插件的信任记录——放它进启动图这声
- * 「我信任」必须是人在桌面窗口里答的）。
+ * 「我信任」必须是人在桌面窗口里答的），以及模型端点三件套
+ * （`saveProvider` / `removeProvider` / `setProviderKey`——写 config.yaml 与凭据库，
+ * 是设置 → 模型页可编辑形态的写入口；旧渲染层这三件事走的就是直接 IPC）。
  *
  * 内嵌浏览器三件套（`dockBrowser` / `browserNav` + `browser-state` 事件）2026-10
  * 搬进壳：它们操作的是原生 `WebContentsView` 覆盖层（旧渲染层直连 IPC 的那个），
@@ -67,6 +69,16 @@ export const NATIVE_OPS = [
   'installMarketSkill',
   'setMarketSources',
   'setUiTrust',
+  /**
+   * 模型端点三件套（设置 → 模型的可编辑形态，2026-10）：`saveProvider` /
+   * `removeProvider` / `setProviderKey` 都写 config.yaml 或凭据库，与上面那几个
+   * 供应链写入口同一性质，界面通道持续排除（`UI_EXCLUDED` 里有逐条理由），
+   * 桥只对主窗口那份文档开放。宿主那侧还是老方法（`protocol.invoke` 原样转发），
+   * 校验（名字形状、模型 id 去重、正整数）仍在 settings 插件里。
+   */
+  'saveProvider',
+  'removeProvider',
+  'setProviderKey',
   'sessionUsage',
   'notify',
   'restartHost',
@@ -110,6 +122,8 @@ export const NATIVE_OP_SET: ReadonlySet<string> = new Set<string>(NATIVE_OPS)
 /** 一个实参的形状。取值集合刻意很小：这一层要的正是"最小且能读懂"。 */
 type ArgShape =
   | { kind: 'string'; max: number }
+  /** 字符串或 `null`：`null` 是**有意义的取值**（如 setProviderKey 的「清除」，别当省略）。 */
+  | { kind: 'stringOrNull'; max: number }
   | { kind: 'bool' }
   | { kind: 'hex' }
   | { kind: 'enum'; values: readonly string[] }
@@ -138,6 +152,12 @@ const MAX_TERM_PAYLOAD = 8192
 const MAX_MARKET_SOURCES = 50
 const MAX_SOURCE_NAME = 100
 const MAX_SOURCE_URL = 2048
+/** 端点草稿的上限：名字、地址、模型清单加起来；几百个模型也撑不破 64KB。 */
+const MAX_PROVIDER_NAME = 200
+const MAX_PROVIDER_URL = 4096
+const MAX_PROVIDER_DRAFT = 65536
+/** API key 的长度上限（真实 key 几十字符，4KB 富余得多）。 */
+const MAX_PROVIDER_KEY = 4096
 
 const THEME_SOURCES = ['dark', 'light', 'system'] as const
 const WORKSPACE_KINDS = ['terminal', 'explorer', 'vscode'] as const
@@ -180,6 +200,22 @@ export const NATIVE_ARG_SPECS: Readonly<Record<NativeOp, readonly ArgSpec[]>> = 
   setMarketSources: [{ shape: { kind: 'marketSources' } }],
   /** 落一条第三方界面插件的信任记录（插件中心信任卡「确认信任」的终点）。 */
   setUiTrust: [{ shape: { kind: 'string', max: MAX_ID } }],
+  /**
+   * 新增或编辑一个端点（写 config.yaml）：一整份 `ProviderDraft`。
+   * 形状只查「是可序列化的 JSON 且不超过 64KB」——字段级校验（名字形状、模型 id 去重、
+   * 正整数）在宿主 settings 插件里，那里才是这些规矩的真源。
+   */
+  saveProvider: [{ shape: { kind: 'json', maxBytes: MAX_PROVIDER_DRAFT } }],
+  /** 删一个端点（写 config.yaml；默认端点被删时宿主自动改指）。 */
+  removeProvider: [{ shape: { kind: 'string', max: MAX_PROVIDER_NAME } }],
+  /**
+   * 写入或清除端点的 API key（写 ~/.dsc/credentials.yaml）：第二个实参 `null` 是
+   * **清除**而不是省略——所以它的形状是 stringOrNull 而不是可选的 string。
+   */
+  setProviderKey: [
+    { shape: { kind: 'string', max: MAX_PROVIDER_NAME } },
+    { shape: { kind: 'stringOrNull', max: MAX_PROVIDER_KEY } },
+  ],
   /** 当前会话在宿主用量日志里的累计（只读；没有记录时 null）。 */
   sessionUsage: [{ shape: { kind: 'string', max: MAX_ID } }],
   /** 弹一条系统通知；字段只有标题与正文两项。 */
@@ -232,6 +268,11 @@ export function validateNativeCall(op: unknown, args: unknown): NativeCall {
   for (let index = 0; index < list.length; index += 1) {
     const value: unknown = list[index]
     const arg = spec[index]
+    // stringOrNull：null 是**取值**不是省略（setProviderKey 的「清除」走这条）。
+    if (value === null && arg.shape.kind === 'stringOrNull') {
+      checked.push(null)
+      continue
+    }
     if (value === null || value === undefined) {
       if (arg.optional !== true) {
         return { ok: false, error: `原生桥：${name} 的第 ${String(index + 1)} 个实参不能为空` }
@@ -277,6 +318,11 @@ function checkShape(shape: ArgShape, value: unknown): string | null {
   switch (shape.kind) {
     case 'string':
       if (typeof value !== 'string') return '必须是字符串'
+      if (value.length > shape.max) return `是字符串但太长（${String(value.length)} > ${String(shape.max)} 字符）`
+      return null
+    case 'stringOrNull':
+      if (value === null) return null
+      if (typeof value !== 'string') return '必须是字符串或 null'
       if (value.length > shape.max) return `是字符串但太长（${String(value.length)} > ${String(shape.max)} 字符）`
       return null
     case 'bool':

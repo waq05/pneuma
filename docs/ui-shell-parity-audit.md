@@ -48,7 +48,10 @@
 | 错误行 / 计划卡 / 结束标记 / 直播状态行 | 已对齐 |
 | 队友卡（子智能体状态） | 壳补（旧消息流里没有对应物，`.shell-subagent` 是壳自己补的） |
 | **阶段组（14 类过程聚合）**：组头 = 类别聚合 + 实时任务详情（150ms 防抖）、组体限高滚动与方向渐隐、默认收起、开合存档（`会话:step:轮:组`）、轮收尾复位、Ctrl+F 命中自动展开、键盘焦点保护 | **已搬**（第六批：`process-groups.ts` / `step-group-row.tsx` / `fold-seats.tsx` 从旧渲染层原样搬入，四档能力表的 stepGrouping / liveDetail 逐格生效） |
-| 右缘刻度条（JumpStrip）、轨迹页（TraceView/Timeline/Inspector） | **未搬**（旧桌面版有；壳里跨轮跳转没有刻度落点、轨迹页未建。既有差距） |
+| 右缘刻度条（`jump-rail.tsx`，对照 dsh 的 TurnNavigator 重做） | **已搬**（第七批：20×2 刻度三态（静息 0.6 / 悬停 0.9 / 当前 1）、悬停预览卡（题面一行 + 回复三行）、轨道内滚动与两端 24px 渐隐、点「还没画出来」的早轮先放出来再滚、900px 窄容器整条收起；轨道宽 32→36px 与 `--dsc-jump-lane` 同步） |
+| 轨迹页（旧 `TraceView`/`TraceTimeline`/`TraceInspector`/`trace-format` ↔ `plugins/trace`） | **已搬**（第七批：时间概览条（拖选 / 悬停提示 / 点或右键清除）、轮次记录表（折叠、压缩区段行、行内时刻·耗时·用量）、检查器（输入 / 输出 / 思考 / 子代理 / 系统 / 计划 / 计时 / 用量 + JSON 格式化 + 附件放大），尾部跟随同旧。壳增量：**搜索**（命中步骤高亮、未命中的轮收起来）、**滚轮缩放 + 右键平移**（旧版留的「这一轮不做」已补）、子代理 / 轮结束 / 长度上限 / 模型重试四类事件的行渲染（旧版这四类画成空行）） |
+| 工具行「在轨迹中查看」药丸（dsh 同款） | **壳补**（第七批：hover / 键盘聚焦浮出，点一下切轨迹页并聚焦闪烁；跳转经 `thread-view` 的一次性 focus 指令） |
+| 顶栏「对话 / 轨迹」页签 + 会话右键「查看轨迹」 | **壳补**（第七批：两张脸共用正文位（`SLOT.thread`），输入区与状态栏照旧；右键入口先开会话再切视图） |
 
 ## 三、右侧栏（旧 `Dock.tsx` + `dock-model.ts` + `DiffPane.tsx` ↔ `src/dock.tsx` + `dock-model.ts` + `plugins/{terminal,files,preview,browser}` + `review-pane.tsx`）
 
@@ -76,6 +79,7 @@
 | 输入区：发送/打断、排队条、模型与思考强度、模式、权限档位、@ 文件提及、贴图、草稿按会话 | 已对齐 |
 | 状态栏：轮次·步数、实时耗时、用量与上下文百分比、吞吐读数 | 已对齐 |
 | 技能页 / 插件页 / 设置各分区 | 已对齐（前三/四批实现） |
+| **设置 → 模型：可编辑形态**（旧 `SettingsModal` 的 `ModelsPanel`/`ProviderForm`/`ModelRow` ↔ `plugins/settings/models.tsx`） | **已搬**（第七批：端点卡片（密钥快捷行 / 拉取清单 / 编辑 / 删除）、**端点表单**（名字 / 显示名 / Base URL / **API key** 一次改完 + **批量文本**模式）、**模型行**（id / 显示名 / 上下文 / 最大输出 + **思考档位四档 chip + 思考参数下拉 + reasoning_effort 逐档线上值 + 输入模态三档**——与宿主 `core/model-caps.ts` 同一份枚举）、默认模型两个自绘下拉。dsh 式增量：列表尾「＋添加端点」虚线卡、**拉取清单弹窗**（搜索 + 全选 + 复选 + 一次采用）。**写入口走原生桥**（`saveProvider`/`removeProvider`/`setProviderKey` 被界面通道有意排除，见第五节）；浏览器无桥时整页降级只读并说明 |
 | 审批卡 / 计划卡 / 提问卡 / 目标条 / 任务条 / 队友面板 | 已对齐 |
 
 ## 五、宿主侧配套修复（第六批，`src/plugins/desktop-dock.ts`）
@@ -83,6 +87,14 @@
 | 项 | 说明 |
 | --- | --- |
 | dock 读写的基准目录 = **当前会话的 cwd**（原来钉在 `process.cwd()` 挂载时的值） | fs-list / fs-read / git-* / term-spawn 全部改按会话解析；安全边界（`inside` 越界检查）仍在，只是基准从「进程启动目录」换成「会话工作目录」——与沙箱 `canWrite(path, cwd)` 的既有口径对齐。用户报障「文件管理显示的不是对应工作区的文件」即此 |
+
+## 五之二、宿主侧配套（第七批）
+
+| 项 | 说明 |
+| --- | --- |
+| 原生桥新增模型端点三件套 `saveProvider` / `removeProvider` / `setProviderKey`（`src/core/native-bridge.ts` + 主进程 `NATIVE_HANDLERS` 转发 `protocol.invoke`） | 三个方法都写 `config.yaml` 或凭据库，界面通道（浏览器与远程页够得着的那条面）持续排除——写口只开在桌面窗口那份文档上，与 `installMarketSkill` / `setUiTrust` 同一先例。规格里新加 `stringOrNull` 形状：`setProviderKey` 的 null 是**清除**而不是省略 |
+| `core/model-caps.ts` 进共享面（`src/ui/index.ts` 的 `export * from`） | 思考档位 / 档位字段 / 输入模态三组枚举与中文标签**只有一份**：界面勾的四档与宿主发请求时算的字段不会各说各话；`ProviderDraft` / `ThinkingParam` / `EffortMap` 三个类型也补进 `@dsc/ui-core` 的类型转出面 |
+| 轨迹页的口径件也归了平台层 | `platform/time.ts`（`entryTs`/`formatClock`/`formatDuration`/`formatTraceDuration`，消息流与轨迹页共用）、`platform/tokens.ts`（`formatTokens`）、`platform/tool-summary.ts`（工具摘要 / 状态词 / 图标动词，对话页与轨迹页共用） |
 
 ## 六、验证落点（第六批）
 
@@ -99,3 +111,22 @@
   新 dock/阶段组代码都在包里）+ `pkg-smoke` `rendered:true`。
 - 自检知识：浏览器页签（原生 WebContentsView）挂着时 `capturePage` 会失败
   （UnknownVizError）——截图前先关掉浏览器页签。
+
+## 六之二、验证落点（第七批）
+
+- `desktop/shots/ui-batch7-check.ps1`：**41/41 通过**。种子 = 三轮会话（3 工具 + 2 思考）+
+  本机假端点（`_batch7-fake-llm.mjs`，含 `GET /v1/models`）。覆盖：顶栏页签与
+  `.trace-page` 切换（`.chat-wrap` 收走、输入区仍在）、时间条（6 个标记 = 3 工具条
+  （宿主重放路径用 jsonl 的 ts 差算出 200/400/1000ms）+ 3 个起点刻度 + 3 条轮次分隔）、
+  轮次表（默认只展开最新一轮、轮头统计、开合双态、压缩区段）、检查器（kind/分区/Esc）、
+  搜索（命中计数 / `is-search-hit` / 未命中轮收起 / 清除复原）、拖选（选区 chip /
+  `is-hit` / 点一下清除）、滚轮缩放（`data-zoomed` / 全览复位）、会话右键「查看轨迹」、
+  刻度条（3 刻度、非隐藏）、药丸（卡数与药丸数一致 + 点击切页并闪烁）、**实跑一轮**
+  （假端点真跑一次 read：新工具卡 + 新轮 + 轨迹条数增加 + 行内「用时」读数）。
+- `desktop/shots/ui-batch7b-models-check.ps1`：模型页专项（形态 / 编辑表单能力项 /
+  改能力保存 / 新增端点 / 拉取清单弹窗 / 删除确认），断言分两层：eval 读 DOM +
+  **PowerShell 直接读隔离 HOME 的 `config.yaml`**（落盘证据）。
+- 探针：`ui-native-bridge-test` **96/96**（跟改：形状表加 `stringOrNull`、动词表加
+  `save`、新增模型三件套一节 15 条）；`ui-api-gate-test` / `ui-plugin-test` /
+  `ui-third-party-test` / `ui-serve-test` / `ui-tui-plugin-test` 全绿。
+- 三侧 TypeScript 全绿；宿主 `lib/`、壳 `lib/ui/`（含 trace 插件）、desktop `out/` 重建。

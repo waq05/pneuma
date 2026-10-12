@@ -36,6 +36,14 @@ export const SLOT = {
   /** 主区域：一张一张卡片。 */
   main: 'shell.main',
   /**
+   * 正文区的「另一张脸」：执行轨迹页（`thread-view` 切到 `trace` 时才渲染）。
+   *
+   * 为什么单开一个槽而不是让轨迹插件也住 `shell.main`：两张脸在旧界面里就是互斥的
+   * 分支（`tab === 'trace' ? <TraceView/> : <ChatView/>`），由壳来切比让两个插件
+   * 各读状态互斥干净——槽里站着谁就是谁，不会出现「两个条目都在画，靠 CSS 藏一个」。
+   */
+  thread: 'shell.thread',
+  /**
    * 输入区：输入框、排队条与插在输入框上方的各种卡（审批 / 提问 / 计划）。
    *
    * 为什么把卡也放进来：旧界面里它们就是输入区这个纵向容器里的兄弟节点，上下顺序
@@ -56,6 +64,7 @@ export const SHELL_SLOTS: Readonly<Record<string, SlotKind>> = {
   [SLOT.sidebar]: 'list',
   [SLOT.page]: 'list',
   [SLOT.main]: 'list',
+  [SLOT.thread]: 'list',
   [SLOT.composer]: 'list',
   [SLOT.statusbar]: 'list',
   [SLOT.notice]: 'single',

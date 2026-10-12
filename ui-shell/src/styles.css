@@ -459,16 +459,6 @@
   background: var(--dsc-row-active-bg);
   color: var(--dsc-text-primary);
 }
-/* 面板里那颗选 shell 的下拉：legacy 没给 select 定过样式，这里按控件令牌补一条最小的。 */
-.shell-select {
-  background: var(--dsc-fill-quaternary);
-  border: 1px solid var(--dsc-stroke-3);
-  border-radius: var(--dsc-r-control);
-  color: var(--dsc-text-secondary);
-  font-size: var(--dsc-fs-caption);
-  height: var(--dsc-ctl);
-  padding: 0 4px;
-}
 /* 「终端只在桌面版里有」这类整块说明（浏览器 / 远程壳里）。 */
 .shell-term-empty {
   color: var(--dsc-text-tertiary);

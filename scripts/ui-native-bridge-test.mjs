@@ -67,7 +67,9 @@ check('每个操作名都进了查表集合', NATIVE_OPS.every((op) => NATIVE_OP
 check(
   '规格里的参数形状都是认得的',
   Object.values(NATIVE_ARG_SPECS).every((spec) =>
-    spec.every((arg) => ['string', 'bool', 'hex', 'enum', 'notify', 'marketSources', 'rect', 'json'].includes(arg.shape.kind)),
+    spec.every((arg) =>
+      ['string', 'stringOrNull', 'bool', 'hex', 'enum', 'notify', 'marketSources', 'rect', 'json'].includes(arg.shape.kind),
+    ),
   ),
 )
 check('事件白名单非空且都能查表', NATIVE_EVENTS.length > 0 && NATIVE_EVENTS.every((name) => NATIVE_EVENT_SET.has(name)))
@@ -91,7 +93,7 @@ for (const name of FORBIDDEN) {
  * 白名单的每一项都必须是"既定动作 + 实参枚举"，所以操作名的**第一个词**只能是
  * 这批动作动词之一；冒出一个没见过的动词（`exec…` / `spawn…` / `write…`）当场红。
  */
-const ACTION_VERBS = ['set', 'choose', 'switch', 'recent', 'remove', 'open', 'install', 'session', 'notify', 'restart', 'quit', 'terminal', 'dock', 'browser']
+const ACTION_VERBS = ['set', 'save', 'choose', 'switch', 'recent', 'remove', 'open', 'install', 'session', 'notify', 'restart', 'quit', 'terminal', 'dock', 'browser']
 const oddVerbs = NATIVE_OPS.filter(
   (op) => !ACTION_VERBS.some((verb) => op.toLowerCase().startsWith(verb)),
 )
@@ -134,6 +136,30 @@ check(
     trustThirdPartyUiPlugin('..', undefined, new Set()).ok === false,
 )
 check('installSkill / installPlugin 不收实参', validateNativeCall('installSkill', []).ok === true && rejects('installPlugin', [1]))
+
+console.log('\n── 模型端点三件套：桥有、界面通道没有（2026-10）──')
+for (const name of ['saveProvider', 'removeProvider', 'setProviderKey']) {
+  check(`桥里有 ${name}`, NATIVE_OP_SET.has(name) && Object.hasOwn(NATIVE_ARG_SPECS, name))
+  check(`界面通道排除 ${name}`, UI_EXCLUDED.includes(name) && !UI_METHODS.includes(name))
+}
+check('界面通道仍放行 getModelConfig / setDefaultModel / discoverModels', ['getModelConfig', 'setDefaultModel', 'discoverModels'].every((m) => UI_METHODS.includes(m)))
+check(
+  'saveProvider 收一份可序列化的草稿',
+  validateNativeCall('saveProvider', [{ oldName: null, name: 'x', displayName: '', baseUrl: 'https://x/v1', models: [] }]).ok === true,
+)
+check('saveProvider 草稿不可序列化（循环引用）被拒', (() => {
+  const loop = {}
+  loop.self = loop
+  return rejects('saveProvider', [loop])
+})())
+check('saveProvider 草稿超过 64KB 被拒', rejects('saveProvider', [{ blob: 'x'.repeat(70_000) }]))
+check('removeProvider 收一个名字', validateNativeCall('removeProvider', ['deepseek']).ok === true)
+check('removeProvider 少传被拒', rejects('removeProvider', []))
+check('setProviderKey 收 name + key', validateNativeCall('setProviderKey', ['deepseek', 'sk-abc']).ok === true)
+check('setProviderKey 收 name + null（清除语义：null 是取值不是省略）', validateNativeCall('setProviderKey', ['deepseek', null]).ok === true)
+check('setProviderKey 的 key 类型不对被拒', rejects('setProviderKey', ['deepseek', 7]))
+check('setProviderKey 的 key 超长被拒', rejects('setProviderKey', ['deepseek', 'k'.repeat(5000)]))
+check('setProviderKey 少了第二个实参被拒（清除要显式传 null）', rejects('setProviderKey', ['deepseek']))
 
 console.log('\n── dock 三档：终端进不了 HTTP 面 ──')
 check('dock 在界面放行面里', UI_METHODS.includes('dock'))

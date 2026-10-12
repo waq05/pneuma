@@ -671,6 +671,23 @@ const NATIVE_HANDLERS: Readonly<Record<NativeOp, (args: readonly unknown[]) => u
     if (protocol === null) throw new Error('宿主进程未运行')
     return protocol.invoke('setUiTrust', [String(name)])
   },
+  /**
+   * 模型端点三件套：转给宿主的 settings 插件（与旧渲染层的直接 IPC 同一批方法）。
+   * 界面通道里这三个方法持续排除（写 config.yaml / 凭据库），桥只对主窗口开放。
+   * setProviderKey 的第二个实参允许 null = 清除（已过桥的 stringOrNull 校验）。
+   */
+  saveProvider: ([draft]) => {
+    if (protocol === null) throw new Error('宿主进程未运行')
+    return protocol.invoke('saveProvider', [draft])
+  },
+  removeProvider: ([name]) => {
+    if (protocol === null) throw new Error('宿主进程未运行')
+    return protocol.invoke('removeProvider', [String(name)])
+  },
+  setProviderKey: ([name, apiKey]) => {
+    if (protocol === null) throw new Error('宿主进程未运行')
+    return protocol.invoke('setProviderKey', [String(name), apiKey === null ? null : String(apiKey)])
+  },
   sessionUsage: ([id]) => readSessionUsage(String(id ?? '')),
   notify: ([payload]) => notifyUser(payload),
   restartHost: async () => {

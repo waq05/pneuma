@@ -271,6 +271,26 @@ export { SLOT, type ShellSlot } from './slots'
 export { subscribePage, shellPage } from './page-state'
 
 /**
+ * ── 正文区的两张脸（对话 / 轨迹）──────────────────────────────────────────────
+ *
+ * 顶栏页签、会话右键的「查看轨迹」、工具行的「在轨迹中查看」药丸都往这里写；
+ * 轨迹插件读 `useThreadView()` 决定画不画、读 `useTraceFocus()` 拿一次性聚焦目标。
+ */
+import { clearTraceFocus, openTrace, setThreadView, shellThreadView, subscribeThreadView, traceFocusStep } from './thread-view'
+export { clearTraceFocus, openTrace, setThreadView, subscribeThreadView, traceFocusStep, shellThreadView }
+export type { ThreadView } from './thread-view'
+
+/** 正文区现在显示的是对话还是轨迹（订阅式）。 */
+export function useThreadView(): 'chat' | 'trace' {
+  return useSyncExternalStore(subscribeThreadView, shellThreadView, () => 'chat')
+}
+
+/** 待处理的聚焦目标步骤 id（没设过是 null）。消费方滚到位后调 `clearTraceFocus`。 */
+export function useTraceFocus(): number | null {
+  return useSyncExternalStore(subscribeThreadView, traceFocusStep, () => null)
+}
+
+/**
  * ── 读一个 CSS 变量算出来的颜色 ─────────────────────────────────────────────────
  *
  * 有些地方拿不到"令牌名"，只能拿到**算完的颜色**：xterm 的配色、桌面原生窗口控件区的
@@ -348,6 +368,21 @@ export { FileIcon, fileIconName } from './platform/file-icons'
 export { estimateTextTokens } from '@dsc/ui-core'
 // 文本差异算法也转出去（工具卡的「将做的改动」要用；与宿主算轮尾差异同一份实现）。
 export { diffLines, type DiffResult } from '@dsc/ui-core'
+/**
+ * 模型能力枚举与中文标签（设置 → 模型页的思考档位 / 档位字段 / 输入模态三组勾选读它）：
+ * 与宿主发请求时用的 `core/model-caps.ts` 是**同一份文件**（见 src/ui/index.ts 的说明），
+ * 界面上勾的四档与线上真发的字段不会各说各话。
+ */
+export {
+  THINKING_LEVELS,
+  THINKING_LEVEL_LABELS,
+  THINKING_PARAMS,
+  THINKING_PARAM_LABELS,
+  MODALITIES,
+  MODALITY_LABELS,
+  EFFORT_WIRE_HINT,
+  DEFAULT_CAPS,
+} from '@dsc/ui-core'
 // 壳内置平台层转出（web 值面独有；终端壳的 @dsc/ui 不导出 DOM 组件）：
 // shiki / react-markdown / pdfjs 这些重依赖只在壳 vendor 里有一份（平台模块表里
 // 没有它们，插件 bundle 不许自带），插件经这里用壳的实现，实现只有一份。
@@ -377,6 +412,7 @@ export type {
   DiffHunkView,
   DiffLineView,
   EffortLevel,
+  EffortMap,
   GoalView,
   ModeSurface,
   ModelChoiceView,
@@ -389,6 +425,7 @@ export type {
   PresetFileView,
   PresetSurface,
   PresetView,
+  ProviderDraft,
   ProviderModelView,
   ProviderView,
   QueuedMessageView,
@@ -405,6 +442,7 @@ export type {
   TeammateView,
   ThemeMode,
   ThinkingLevel,
+  ThinkingParam,
   TierOption,
   TodoItemView,
   TodoStatus,

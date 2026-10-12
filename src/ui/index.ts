@@ -28,6 +28,12 @@ export * from '../core/native-bridge.js'
  * 浏览器安全，所以界面壳可以直接拿这一份，不必在壳里再抄一个口径。
  */
 export * from '../core/token-estimate.js'
+/**
+ * 模型能力枚举（`core/model-caps.ts`）：设置 → 模型页的思考档位 / 档位字段 / 输入模态
+ * 三组勾选与这里一字不差——档位清单、中文标签、线上值提示只有一份，宿主发请求的口径
+ * 与界面上勾的东西才不会各说各话。同一条约束（type-only import，浏览器安全）。
+ */
+export * from '../core/model-caps.js'
 
 /**
  * 文本差异算法（`core/diff-text.ts`）同理进共享面：工具卡的「将做的改动」在界面侧
@@ -58,6 +64,7 @@ export type {
   DiffHunkView,
   DiffLineView,
   EffortLevel,
+  EffortMap,
   GoalView,
   ModeSurface,
   ModelChoiceView,
@@ -70,6 +77,7 @@ export type {
   PresetFileView,
   PresetSurface,
   PresetView,
+  ProviderDraft,
   ProviderModelView,
   ProviderView,
   QueuedMessageView,
@@ -87,6 +95,7 @@ export type {
   TeammateView,
   ThemeMode,
   ThinkingLevel,
+  ThinkingParam,
   TierOption,
   TodoItemView,
   TodoStatus,
