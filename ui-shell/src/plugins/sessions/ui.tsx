@@ -69,7 +69,7 @@ import {
   type SessionRunState,
   type SessionSummary,
 } from '@dsc/ui'
-import { buildWorkGroups, displayName, moveToEnd, moveWithin, orderedSessions, type ArchivedFilter, type GroupKey, type SortKey } from './grouping'
+import { buildWorkGroups, displayName, lastSegment, moveToEnd, moveWithin, orderedSessions, type ArchivedFilter, type GroupKey, type SortKey } from './grouping'
 
 /** 空的会话列表常量：没拿到快照时共用一份，省得每帧新建数组。 */
 const NO_SESSIONS: readonly SessionSummary[] = Object.freeze([])
@@ -115,11 +115,11 @@ const DOT_CLASS: Readonly<Record<SessionRunState, string>> = {
   'just-finished': 'just-finished',
 }
 
-/** 运行状态 → 悬浮说明。 */
+/** 运行状态 → 悬浮说明（旧界面同一套说法）。 */
 const DOT_LABEL: Readonly<Record<SessionRunState, string>> = {
-  working: '正在干活',
-  'awaiting-approval': '等你审批',
-  'just-finished': '后台跑完，还没看过',
+  working: '这个会话正在跑',
+  'awaiting-approval': '挂着等你审批',
+  'just-finished': '后台已完成（点开查看）',
 }
 
 /** 侧栏本地的界面偏好副本（读写都走宿主 `getUiPrefs` / `setUiPrefs`）。 */
@@ -218,11 +218,28 @@ function SessionList() {
     }
   }, [channel])
 
-  /** 调一个宿主方法；失败就把原因摊在列表上方（不静默）。 */
-  const run = async (method: string, args: unknown[]): Promise<void> => {
+  /**
+   * 跑一个会话库操作（旧界面 `Sidebar.tsx` 的 run 同款）：SettingsMutation 形状的回执
+   * 按 ok / notice / error 报 Toast，成功后再刷新一次列表；非 mutation 形状的调用
+   * （openSession / refreshSessions / interrupt 这些回 void）原样过，各自的调用点管回执。
+   *
+   * 为什么必须认回执：宿主的方法失败时返回 `{ok:false, error}` 而不是抛——只看「没抛」
+   * 就把失败当成功，界面会静静地什么都不发生（重命名没改、归档没动，用户只会以为卡了）。
+   */
+  const run = async (method: string, args: unknown[], then?: () => void): Promise<void> => {
     setFault(null)
     try {
-      await channel.invoke(method, args)
+      const result = await channel.invoke<unknown>(method, args)
+      if (result !== null && typeof result === 'object' && typeof (result as { ok?: unknown }).ok === 'boolean') {
+        const reply = result as { ok: boolean; error?: unknown; notice?: unknown }
+        if (!reply.ok) {
+          toastErr(`操作失败：${typeof reply.error === 'string' ? reply.error : '宿主没说什么原因'}`)
+          return
+        }
+        toastOk(typeof reply.notice === 'string' && reply.notice !== '' ? reply.notice : '已完成')
+        await channel.invoke('refreshSessions', [])
+        then?.()
+      }
     } catch (reason) {
       setFault(reason instanceof Error ? reason.message : String(reason))
     }
@@ -355,14 +372,17 @@ function SessionList() {
    * 分叉：先问宿主「这条会话里有哪些用户消息」，弹一个小选择列表，选哪条就从那里分叉。
    *
    * 为什么不直接分叉在最后一条：分叉的意思是"从某一句话重来"，选哪句是用户的事
-   * （旧界面同样先列用户消息再点）。只有一条候选时仍然弹列表——省一步点击换来的
-   * 是"不知道分叉在哪"的困惑。
+   * （旧界面同样先列用户消息再点）。位置不足两条直接报错不开框（旧界面同一句文案）。
    */
   const startFork = (id: string): void => {
     void (async () => {
       setFault(null)
       try {
         const messages = await channel.invoke<string[]>('listUserMessages', [id])
+        if (messages.length < 2) {
+          toastErr('可分叉的位置不足，至少需要两条用户消息')
+          return
+        }
         setForking({ id, messages })
       } catch (reason) {
         setFault(reason instanceof Error ? reason.message : String(reason))
@@ -370,7 +390,7 @@ function SessionList() {
     })()
   }
 
-  /** 真的分叉：宿主复制到第 index 条用户消息之前，返回新会话路径；分完打开它。 */
+  /** 真的分叉：宿主复制到第 index 条用户消息之前，返回新会话路径；分完打开它（旧界面同款回执）。 */
   const doFork = (id: string, index: number): void => {
     setForking(null)
     void (async () => {
@@ -383,13 +403,14 @@ function SessionList() {
         }
         await run('openSession', result.path === undefined ? [] : [result.path])
         await run('refreshSessions', [])
+        toastOk(`已分叉出新会话，包含第 ${String(index + 1)} 条消息之前的内容`)
       } catch (reason) {
         setFault(reason instanceof Error ? reason.message : String(reason))
       }
     })()
   }
 
-  /** 归档一条：先过确认框把去向说清楚（旧界面同一句文案），再动手。 */
+  /** 归档一条：先过确认框把去向说清楚（旧界面同一句文案），再动手（回执与刷新走 run）。 */
   const archive = (id: string, title: string): void => {
     void (async () => {
       const ok = await confirmAction({
@@ -399,24 +420,25 @@ function SessionList() {
       })
       if (!ok) return
       await run('archiveSessions', [[id]])
-      await run('refreshSessions', [])
     })()
   }
 
-  /** 从归档区恢复一条：恢复完刷新活列表（它会回到活列表里）。 */
+  /** 从归档区恢复一条（回执与刷新走 run——旧界面对归档/恢复一视同仁）。 */
   const restore = (path: string): void => {
-    void (async () => {
-      await run('restoreSessions', [[path]])
-      await run('refreshSessions', [])
-      toastOk('会话已恢复到列表')
-    })()
+    void run('restoreSessions', [[path]])
   }
 
-  /** 复制会话 ID（右键菜单项）：uuid 没法手抄，剪贴板是唯一正道。 */
+  /**
+   * 复制会话 ID：写进剪贴板的是会话 uuid，不是标题、也不是 jsonl 的完整路径。
+   *
+   * 注意 `SessionSummary.id` 存的是 jsonl 的绝对路径（宿主契约），uuid 只是它的文件名，
+   * 所以这里先剥一层（旧界面同款）。
+   */
   const copyId = (id: string): void => {
+    const uuid = lastSegment(id).replace(/\.jsonl$/, '')
     void navigator.clipboard
-      .writeText(id)
-      .then(() => toastOk('会话 ID 已复制'))
+      .writeText(uuid)
+      .then(() => toastOk('已复制会话 ID'))
       .catch((reason: unknown) => toastErr(`复制失败：${reason instanceof Error ? reason.message : String(reason)}`))
   }
 
@@ -431,8 +453,7 @@ function SessionList() {
 
   /** 点工作区行：只切换它自己（别的组不跟着动），展开态持久化。 */
   const toggleGroup = (key: string): void => {
-    const expanded = prefs.expansion[key] ?? isDefaultExpanded(key, cwd, prefs.group)
-    patchPrefs({ expansion: { ...prefs.expansion, [key]: !expanded } })
+    patchPrefs({ expansion: { ...prefs.expansion, [key]: !isExpandedGroup(key) } })
     // 收组重置这一组的「展开剩余」进度（旧界面同款：下次展开从头数 5 条）。
     setLimits((current) => {
       if (current[key] === undefined) return current
@@ -461,6 +482,8 @@ function SessionList() {
   )
   /** 单列表档：不分工作区，会话混成一条流（不设条数上限）。 */
   const flatSessions = useMemo(() => groups.flatMap((group) => group.sessions), [groups])
+  /** 树里带子分组的行（折叠它要连带收起后代，且默认展开；旧界面 parents 同款）。 */
+  const parents = useMemo(() => new Set(groups.filter((item) => item.hasChildren).map((item) => item.cwd)), [groups])
 
   /**
    * 组行的活动指示跟选中会话走（旧界面 activeCwd 同口径）：跨工作区点开历史会话时，
@@ -473,6 +496,43 @@ function SessionList() {
     }
     return cwd
   }, [sessions, currentPath, cwd])
+
+  /**
+   * 当前工作区（树模式连同祖先链）自动展开并落盘——旧界面 `setGroupExpanded(currentGroup, true)`
+   * 的同款：点开哪个工作区的会话，那个组就保持展开，切走再回来也不会塌。
+   *
+   * 「没有记录才补展开」的守卫（旧界面 Object.hasOwn 同款）：用户显式收起过的组必须尊重，
+   * 否则会话列表一刷新 effect 重跑就把收起弹回去了。展开键直接用 cwd（与旧界面同一份
+   * 落盘格式——老界面里存下的展开了的组，切回壳里照样认得）。
+   */
+  useEffect(() => {
+    if (cwd === null || cwd === '') return
+    const chain = [cwd]
+    if (prefs.group === 'tree') {
+      for (const item of groups) {
+        if (item.cwd === cwd) chain.push(...item.ancestors)
+      }
+    }
+    const patch: Record<string, boolean> = {}
+    for (const key of chain) {
+      if (prefs.expansion[key] === undefined) patch[key] = true
+    }
+    if (Object.keys(patch).length === 0) return
+    patchPrefs({ expansion: { ...prefs.expansion, ...patch } })
+    // patchPrefs 每次渲染都是新函数，这条 effect 只认 cwd / group / groups 这几个真值。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cwd, prefs.group, groups])
+
+  /** 一组的展开真值（旧界面 isExpanded 同口径）：显式记录 → 默认档（树模式父节点展开、
+   *  其余只有当前工作区展开）；搜索时照旧全部展开。 */
+  const isExpandedGroup = (cwdOf: string): boolean => {
+    if (trimmed !== '') return true
+    return prefs.expansion[cwdOf] ?? isDefaultExpanded(cwdOf, cwd, prefs.group, parents)
+  }
+
+  /** 祖先里只要有一个被折叠，这一组就不出现在列表里（树折叠是连带收后代）。 */
+  const hiddenByAncestor = (item: (typeof groups)[number]): boolean =>
+    item.ancestors.slice(0, -1).some((ancestor) => !isExpandedGroup(ancestor))
 
   // ── 手动排序拖拽（旧界面 Sidebar.tsx 的同款语义）────────────────────────────
 
@@ -687,39 +747,6 @@ function SessionList() {
 
         {fault === null ? null : <div className="sidebar-empty">列表没读出来：{fault}</div>}
 
-        {forking === null ? null : (
-          <div className="shell-fork-picker">
-            <div className="settings-group-title">从哪句话分叉？</div>
-            {forking.messages.length === 0 ? (
-              <div className="settings-empty">这条会话里还没有用户消息。</div>
-            ) : (
-              forking.messages.map((text, index) => (
-                <button
-                  key={index}
-                  type="button"
-                  className="shell-fork-item"
-                  title={text}
-                  onClick={() => {
-                    doFork(forking.id, index)
-                  }}
-                >
-                  <span className="shell-fork-no">{index + 1}</span>
-                  {oneLine(text)}
-                </button>
-              ))
-            )}
-            <button
-              type="button"
-              className="btn-ghost"
-              onClick={() => {
-                setForking(null)
-              }}
-            >
-              取消
-            </button>
-          </div>
-        )}
-
         {sessions.length === 0 && recentCwds.length === 0 ? (
           <div className="sidebar-empty">
             <IconQueue size={24} />
@@ -744,6 +771,7 @@ function SessionList() {
               session={session}
               state={states[session.id]}
               current={currentPath !== null && session.id === currentPath}
+              sort={prefs.sort}
               renameRequest={renaming === session.id}
               onOpen={open}
               onPin={(pinned) => run('setSessionPinned', [session.id, pinned])}
@@ -757,9 +785,9 @@ function SessionList() {
           ))
         ) : (
           <>
-            {groups.map((group) => {
-            const key = `w:${group.cwd}`
-            const expanded = prefs.expansion[key] ?? isDefaultExpanded(key, cwd, prefs.group)
+            {groups.filter((group) => !hiddenByAncestor(group)).map((group) => {
+            const key = group.cwd
+            const expanded = isExpandedGroup(key)
             const limit = trimmed !== '' ? Number.MAX_SAFE_INTEGER : (limits[key] ?? PREVIEW_COUNT)
             const visible = expanded ? group.sessions.slice(0, limit) : []
             const rest = group.sessions.length - visible.length
@@ -783,9 +811,16 @@ function SessionList() {
                   draggable={sortable}
                   onClick={() => clickGroup(key)}
                   onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
-                    if (event.key !== 'Enter' && event.key !== ' ') return
-                    event.preventDefault()
-                    toggleGroup(key)
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      toggleGroup(key)
+                      return
+                    }
+                    // 行级快捷键（旧界面 rowKeys 同款）：Ctrl+Alt+R 改这个工作区的显示名。
+                    if (event.ctrlKey && event.altKey && event.key.toLowerCase() === 'r') {
+                      event.preventDefault()
+                      setGroupRenaming({ cwd: group.cwd, value: displayName(group.cwd, prefs.aliases) })
+                    }
                   }}
                   onDragStart={(event: DragEvent<HTMLDivElement>) => {
                     event.dataTransfer.effectAllowed = 'move'
@@ -848,11 +883,7 @@ function SessionList() {
                         data-tip="把这个工作区的会话全部恢复"
                         aria-label="全部恢复"
                         onClick={() => {
-                          void (async () => {
-                            await run('restoreSessions', [group.sessions.map((session) => session.id)])
-                            await run('refreshSessions', [])
-                            toastOk(`已恢复 ${String(group.sessions.length)} 个会话`)
-                          })()
+                          void run('restoreSessions', [group.sessions.map((session) => session.id)])
                         }}
                       >
                         <IconRefresh size={14} />
@@ -896,6 +927,7 @@ function SessionList() {
                         session={session}
                         state={states[session.id]}
                         current={currentPath !== null && session.id === currentPath}
+                        sort={prefs.sort}
                         renameRequest={renaming === session.id}
                         drag={dragFor(group.cwd, session)}
                         onOpen={open}
@@ -1028,6 +1060,53 @@ function SessionList() {
                     }}
                     onClick={(event) => event.stopPropagation()}
                   >
+                    {/* 菜单项与旧界面同一套：归档行也给置顶 / 重命名 / 分叉 / 复制 ID，
+                        只是最后一组换成「恢复会话」而不是「归档会话」。 */}
+                    <MenuItem
+                      icon={<IconPin size={15} />}
+                      text={session.pinnedAt !== undefined ? '取消置顶' : '置顶会话'}
+                      onClick={() => {
+                        setMenu(null)
+                        void run('setSessionPinned', [session.id, session.pinnedAt === undefined])
+                      }}
+                    />
+                    <MenuItem
+                      icon={<IconEdit size={15} />}
+                      text="重命名"
+                      hint="Ctrl+Alt+R"
+                      onClick={() => {
+                        setMenu(null)
+                        setRenaming(session.id)
+                      }}
+                    />
+                    <MenuItem
+                      icon={<IconSwap size={15} />}
+                      text="分叉会话"
+                      hint="Ctrl+Alt+F"
+                      onClick={() => {
+                        setMenu(null)
+                        startFork(session.id)
+                      }}
+                    />
+                    <MenuItem
+                      icon={<IconCopy size={15} />}
+                      text="复制会话 ID"
+                      onClick={() => {
+                        setMenu(null)
+                        copyId(session.id)
+                      }}
+                    />
+                    {!archived && stoppable ? (
+                      <MenuItem
+                        icon={<IconStop size={15} />}
+                        text="停止运行"
+                        onClick={() => {
+                          setMenu(null)
+                          void run('interrupt', [session.id])
+                        }}
+                      />
+                    ) : null}
+                    <div className="menu-sep" />
                     {archived ? (
                       <MenuItem
                         icon={<IconRefresh size={15} />}
@@ -1038,70 +1117,23 @@ function SessionList() {
                         }}
                       />
                     ) : (
-                      <>
-                        <MenuItem
-                          icon={<IconPin size={15} />}
-                          text={session.pinnedAt !== undefined ? '取消置顶' : '置顶会话'}
-                          onClick={() => {
-                            setMenu(null)
-                            void run('setSessionPinned', [session.id, session.pinnedAt === undefined])
-                          }}
-                        />
-                        <MenuItem
-                          icon={<IconEdit size={15} />}
-                          text="重命名"
-                          hint="Ctrl+Alt+R"
-                          onClick={() => {
-                            setMenu(null)
-                            setRenaming(session.id)
-                          }}
-                        />
-                        <MenuItem
-                          icon={<IconSwap size={15} />}
-                          text="分叉会话"
-                          hint="Ctrl+Alt+F"
-                          onClick={() => {
-                            setMenu(null)
-                            startFork(session.id)
-                          }}
-                        />
-                        <MenuItem
-                          icon={<IconCopy size={15} />}
-                          text="复制会话 ID"
-                          onClick={() => {
-                            setMenu(null)
-                            copyId(session.id)
-                          }}
-                        />
-                        {stoppable ? (
-                          <MenuItem
-                            icon={<IconStop size={15} />}
-                            text="停止运行"
-                            onClick={() => {
-                              setMenu(null)
-                              void run('interrupt', [session.id])
-                            }}
-                          />
-                        ) : null}
-                        <div className="menu-sep" />
-                        <MenuItem
-                          icon={<IconArchive size={15} />}
-                          text="归档会话"
-                          hint="Ctrl+Shift+A"
-                          danger
-                          onClick={() => {
-                            setMenu(null)
-                            archive(session.id, session.title ?? '新会话')
-                          }}
-                        />
-                      </>
+                      <MenuItem
+                        icon={<IconArchive size={15} />}
+                        text="归档会话"
+                        hint="Ctrl+Shift+A"
+                        danger
+                        onClick={() => {
+                          setMenu(null)
+                          archive(session.id, session.title ?? '新会话')
+                        }}
+                      />
                     )}
                   </div>
                 </>
               )
             })()
           : (() => {
-              const cwdOf = menu.id.slice(2)
+              const cwdOf = menu.id
               const group = groups.find((item) => item.cwd === cwdOf)
               if (group === undefined) return null
               return (
@@ -1154,11 +1186,7 @@ function SessionList() {
                             text={`恢复这 ${String(group.sessions.length)} 个会话`}
                             onClick={() => {
                               setMenu(null)
-                              void (async () => {
-                                await run('restoreSessions', [group.sessions.map((session) => session.id)])
-                                await run('refreshSessions', [])
-                                toastOk(`已恢复 ${String(group.sessions.length)} 个会话`)
-                              })()
+                              void run('restoreSessions', [group.sessions.map((session) => session.id)])
                             }}
                           />
                         </>
@@ -1183,6 +1211,30 @@ function SessionList() {
                 </>
               )
             })()}
+
+      {/* 分叉位置选择器（旧界面 fork-picker 同款：居中浮层 + 背景遮罩）。 */}
+      {forking === null ? null : (
+        <>
+          <div
+            className="menu-backdrop"
+            onClick={() => {
+              setForking(null)
+            }}
+          />
+          <div className="fork-picker">
+            <div className="fork-head">分叉到第几条消息之前？</div>
+            <div className="fork-list">
+              {forking.messages.map((text, index) => (
+                <button key={`${String(index)}-${text}`} type="button" className="fork-item" onClick={() => doFork(forking.id, index)}>
+                  <span className="no">{index + 1}</span>
+                  <span className="txt">{oneLine(text)}</span>
+                </button>
+              ))}
+            </div>
+            <p className="fork-note">新会话包含这个位置之前的全部消息，原会话不变。</p>
+          </div>
+        </>
+      )}
 
       <SidebarFooter />
     </>
@@ -1281,7 +1333,7 @@ function SidebarFooter(): ReactNode {
       <button
         type="button"
         className="row row-btn"
-        data-tip="设置：外观、模型、模式、技能、插件"
+        data-tip="设置：模型、权限、技能源"
         onClick={() => window.dispatchEvent(new CustomEvent('shell.settings.open'))}
       >
         <IconGear size={14} />
@@ -1349,12 +1401,13 @@ function readStringListRecord(value: unknown): Record<string, string[]> {
 }
 
 /**
- * 分组展开的默认态（与旧界面同一口径）：当前工作区的组展开，其余收起。
- * 显式写过的键（sessionExpansion 里有的）优先于这个默认。
+ * 分组展开的默认态（与旧界面同一口径）：树模式只有**父节点**默认展开（子节点收起，
+ * 与目录树一致），其余档只有当前工作区的组展开。显式写过的键（sessionExpansion 里有的）
+ * 优先于这个默认。
  */
-function isDefaultExpanded(key: string, cwd: string | null, group: GroupKey): boolean {
-  if (group === 'tree') return true
-  return cwd !== null && key === `w:${cwd}`
+function isDefaultExpanded(cwdOf: string, cwd: string | null, group: GroupKey, parents: ReadonlySet<string>): boolean {
+  if (group === 'tree') return parents.has(cwdOf)
+  return cwd !== null && cwdOf === cwd
 }
 
 /** patchPrefs 的撤销面：把刚打的补丁逐字段退回去。 */
@@ -1375,6 +1428,7 @@ function SessionRow({
   session,
   state,
   current,
+  sort,
   renameRequest,
   drag,
   onOpen,
@@ -1389,6 +1443,8 @@ function SessionRow({
   session: SessionSummary
   state: SessionRunState | undefined
   current: boolean
+  /** 排序档：`created` 时行尾时间显示创建时刻而不是最近更新（旧界面同口径）。 */
+  sort: SortKey
   /** 外面（右键菜单 / 行级快捷键）请求进入改名：true 那一拍自动亮出输入框。 */
   renameRequest: boolean
   /** 手动排序档的行拖拽（enabled + 落点标记 + 事件；单列表档不给这组参数）。 */
@@ -1418,6 +1474,14 @@ function SessionRow({
   const title = session.title ?? '新会话'
   const dot = state === undefined ? undefined : DOT_CLASS[state]
   const dotLabel = state === undefined ? '' : DOT_LABEL[state]
+  /** 打开一条会话；归档行先拦下（旧界面同款回执：先恢复再打开）。 */
+  const openRow = (): void => {
+    if (archived) {
+      toastErr('这个会话已归档：先点行尾的「恢复」再打开')
+      return
+    }
+    onOpen(session.id)
+  }
 
   // 外面请求改名（右键菜单 / Ctrl+Alt+R）：这一拍亮出输入框，请求随即清掉。
   useEffect(() => {
@@ -1427,15 +1491,15 @@ function SessionRow({
     }
   }, [renameRequest, session.title, onRenameDone])
 
-  /** 行级快捷键（焦点在行上）：重命名 / 分叉 / 归档，与右键菜单同一批动作。 */
+  /** 行级快捷键（焦点在行上）：回车打开；重命名 / 分叉 / 归档，与右键菜单同一批动作。 */
   const rowKeys = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (!event.ctrlKey && !event.metaKey) return
-    const lower = event.key.toLowerCase()
-    if (event.key === 'Enter' || event.key === ' ') {
+    if (event.key === 'Enter') {
       event.preventDefault()
-      onOpen(session.id)
+      openRow()
       return
     }
+    if (!event.ctrlKey && !event.metaKey) return
+    const lower = event.key.toLowerCase()
     if (event.ctrlKey && event.altKey && lower === 'r') {
       event.preventDefault()
       if (!archived) {
@@ -1466,13 +1530,18 @@ function SessionRow({
       }${drag?.mark === 'after' ? ' drop-below' : ''}`}
       role="button"
       tabIndex={0}
-      data-tip={`${title}；回车打开，右键更多操作`}
-      draggable={drag?.enabled === true}
-      onDragStart={drag?.enabled === true ? drag.onStart : undefined}
-      onDragOver={drag?.enabled === true ? drag.onOver : undefined}
-      onDrop={drag?.enabled === true ? drag.onDrop : undefined}
-      onDragEnd={drag?.enabled === true ? drag.onEnd : undefined}
-      onClick={() => onOpen(session.id)}
+      data-tip={
+        archived
+          ? `${title}（已归档）；恢复后才能在对话里打开`
+          : `${title}；双击标题改名 · Ctrl+Alt+F 分叉 · Ctrl+Shift+A 归档`
+      }
+      // 改名中不拖行（旧界面 editing === null 的守卫）：输入框里选字别把整行拎起来。
+      draggable={drag?.enabled === true && draft === null}
+      onDragStart={drag?.enabled === true && draft === null ? drag.onStart : undefined}
+      onDragOver={drag?.enabled === true && draft === null ? drag.onOver : undefined}
+      onDrop={drag?.enabled === true && draft === null ? drag.onDrop : undefined}
+      onDragEnd={drag?.enabled === true && draft === null ? drag.onEnd : undefined}
+      onClick={openRow}
       onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
         rowKeys(event)
       }}
@@ -1517,7 +1586,7 @@ function SessionRow({
         </span>
       ) : (
         <input
-          className="shell-rename-input"
+          className="row-rename"
           autoFocus
           value={draft}
           aria-label="会话名"
@@ -1543,7 +1612,8 @@ function SessionRow({
           }}
         />
       )}
-      <span className="when">{relativeTime(archived ? (session.archivedAt ?? session.updatedAt) : session.updatedAt)}</span>
+      {/* 行尾时间在「创建时间」档读创建时刻，其余档读最近更新/归档时刻（旧界面同口径）。 */}
+      <span className="when">{relativeTime(sort === 'created' ? session.createdAt : (session.archivedAt ?? session.updatedAt))}</span>
 
       {/* 行尾 hover 钮对齐旧界面：只剩归档/恢复一件事——重命名/分叉/复制都在右键菜单里。 */}
       <span className="row-actions" onClick={stop}>
@@ -1551,11 +1621,11 @@ function SessionRow({
           <button
             type="button"
             className="icon-btn"
-            data-tip="恢复到会话列表"
+            data-tip="恢复这个会话，移回活动区"
             aria-label="恢复会话"
             onClick={() => onRestore()}
           >
-            <IconArchiveOff size={14} />
+            <IconRefresh size={14} />
           </button>
         ) : (
           <button
