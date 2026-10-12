@@ -9,15 +9,19 @@
  * 为什么不用 React context：槽条目的渲染树与壳的 App 不在同一条 props 链上
  * （插件是壳按启动图动态装上去的），而这一份状态本来就与渲染树无关。
  *
- * 三样东西都挂在同一份订阅上（同一次 notify，各自取各自的快照）：
+ * 四样东西都挂在同一份订阅上（同一次 notify，各自取各自的快照）：
  * - **当前面板**（开合真源）；
  * - **面板清单**（注册表）：每块面板开工时报名 id/标题/顺序，壳的头条按它画页签——
  *   旧界面 dock 的多页签就是这么来的，壳里页签与面板因此不必互相硬编；
  * - **预览目标**：文件面板点一个文件 → 预览面板显示它（两块面板是两个插件，
- *   目标文件放这里做一次性交接）。
+ *   目标文件放这里做一次性交接）；
+ * - **审查目标**：轮尾「文件已更改」卡点「审查」→ 审查面板显示那一轮的文件清单与
+ *   当前文件下标（旧界面是并排右栏，壳里并进停靠区做同一件事）。
  *
  * @module dsc-ui-shell/dock-state
  */
+import type { ReactNode } from 'react'
+import type { ChangedFileView } from '@dsc/ui-core'
 
 /**
  * 当前打开的是哪一块面板（`null` = 收起）。
@@ -75,6 +79,11 @@ export interface DockPanelMeta {
   label: string
   /** 页签顺序（小的在左）。 */
   order: number
+  /**
+   * 页签上的小图标（旧界面 dock 的 chip 就是「图标 + 标题」）。
+   * 存 ReactNode 而不是组件：不同面板的图标来自不同图标集，壳不必认识它们。
+   */
+  icon?: ReactNode
 }
 
 const metas = new Map<string, DockPanelMeta>()
@@ -122,5 +131,30 @@ export function dockPreview(): DockPreview | null {
 /** 交接预览目标（文件面板点文件时调；通知与开合共用同一份订阅）。 */
 export function setDockPreview(next: DockPreview | null): void {
   preview = next
+  for (const listener of listeners) listener()
+}
+
+/**
+ * 审查目标：轮尾「文件已更改」卡的「审查」把**那一轮的文件清单**交给审查面板。
+ *
+ * 为什么带 index：卡上点的是第几个文件，面板打开就该定位到第几个——
+ * 旧界面的并排审查栏是同一个语义（onReview(files, index)）。
+ */
+export interface DockReview {
+  files: ChangedFileView[]
+  index: number
+  cwd: string
+}
+
+let review: DockReview | null = null
+
+/** 现在要审查哪一轮的哪些文件；没点过是 null。 */
+export function dockReview(): DockReview | null {
+  return review
+}
+
+/** 交接审查目标（卡上点「审查」时调；面板读它画）。 */
+export function setDockReview(next: DockReview | null): void {
+  review = next
   for (const listener of listeners) listener()
 }

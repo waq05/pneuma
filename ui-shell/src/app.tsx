@@ -341,7 +341,9 @@ function DockToggle(): ReactNode {
   )
 }
 
-/** 停靠区头条：页签（按面板注册表画，小的在左）+ 收起钮（旧界面 dock 同构）。 */
+/** 停靠区头条：页签（按面板注册表画，小的在左）+ 收起钮（旧界面 dock 同构）。
+ *  页签是「图标 + 标题」的 chip（图标由面板报名时给）；壳里面板是插件常驻注册的，
+ *  没有「关上再打开」的入口——收起整块由条尾那颗钮管。 */
 function DockTabs(): ReactNode {
   const panels = useDockPanels()
   const active = useDockPanel()
@@ -353,11 +355,13 @@ function DockTabs(): ReactNode {
           type="button"
           className={`dock-chip${panel.id === active ? ' on' : ''}`}
           aria-pressed={panel.id === active}
+          title={panel.label}
           onClick={() => {
             setDockPanel(panel.id)
           }}
         >
-          {panel.label}
+          {panel.icon === undefined ? null : <span className="dock-chip-icon">{panel.icon}</span>}
+          <span className="dock-chip-label">{panel.label}</span>
         </button>
       ))}
       <span className="dock-strip-fill" />

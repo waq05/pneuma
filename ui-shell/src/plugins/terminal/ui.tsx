@@ -1,16 +1,20 @@
 /**
  * 内置插件：终端（停靠面板里的那一个页签）。
  *
- * ## 三件与旧界面一致、改的时候别破坏的事
+ * ## 与旧界面一致、改的时候别破坏的事
  *
  * 1. **管道模式**：宿主的 `term-spawn` 起的是非交互子进程（pwsh / cmd / bash / node，
  *    见 `src/plugins/desktop-dock.ts`），没有 tty，所以**行编辑由界面自己做**——
  *    回车前由这里维护输入行、本地回显、退格本地编辑，回车才把整行 + `\n` 发下去。
  *    交互式全屏程序（vim、top）在这个模式下不可用，这是管道模式的固有代价。
- * 2. **spawn 必须由用户显式动作触发**：挂载时不自动起进程，界面上先给一颗「启动」。
- *    这条是阶段 5.2 定的（`core/dock-ops.ts` 的第三档），别为了"顺手"改成自动。
+ * 2. **首次可见即起 shell**（旧界面 `Dock.tsx` 的 TerminalPane 同款）：面板第一次被
+ *    翻开就 spawn 一个 shell，栏里只留一枚 Shell 下拉（切换 = 杀旧起新）；不摆
+ *    「启动 / 结束」两颗钮。这条 2026-10 按用户「完全复刻旧版」的裁定回改过一版
+ *    （更早的形态是显式点「启动」），别改回显式按钮。
  * 3. **终端只走原生桥**：界面 HTTP 面里没有 `term-*`（放行面的 op 枚举是读 + 写），
  *    所以浏览器 / 远程壳里这一块**必然**缺席——那时显示一句话，而不是报错崩掉。
+ * 4. **shell 选择记在 localStorage**（`dsc.dockShell`，与旧界面同键）：重开界面回到
+ *    上次那个 shell。
  *
  * ## 为什么 xterm 从 `@xterm/xterm` 拿
  *
@@ -23,28 +27,32 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
-import { defineUiPlugin, getHostNative, readCssColor, readCssValue, useDockPanel, registerDockPanel } from '@dsc/ui'
+import { defineUiPlugin, getHostNative, IconTerminal, readCssColor, readCssValue, useDockPanel, registerDockPanel, useHostSelector, type HostSnapshot } from '@dsc/ui'
+import { Select } from '../../platform/select'
 
-/** 支持的 shell：与宿主 `spawnShell` 的白名单一字不差（对不上会被宿主回落成 PowerShell）。 */
-const SHELLS = [
-  { id: 'pwsh', label: 'PowerShell 7', prompt: 'PS>' },
-  { id: 'powershell', label: 'Windows PowerShell', prompt: 'PS>' },
-  { id: 'cmd', label: '命令提示符', prompt: '>' },
-  { id: 'bash', label: 'Git Bash', prompt: '$' },
-  { id: 'node', label: 'Node.js', prompt: '>' },
+/** 终端 shell 候选：与宿主 `spawnShell` 的白名单一致（对不上会被宿主回落成 PowerShell）。 */
+const SHELL_OPTIONS = [
+  { value: 'powershell', label: 'PowerShell', prompt: 'PS>' },
+  { value: 'pwsh', label: 'PowerShell 7 (pwsh)', prompt: 'PS>' },
+  { value: 'cmd', label: 'CMD', prompt: '>' },
+  { value: 'bash', label: 'Git Bash', prompt: '$' },
+  { value: 'node', label: 'Node REPL', prompt: '>' },
 ] as const
 
-type ShellId = (typeof SHELLS)[number]['id']
+type ShellValue = (typeof SHELL_OPTIONS)[number]['value']
 
 /** 这一块面板在停靠区里的 id（壳拿它决定同一时刻显示哪一块）。 */
 const PANEL = 'terminal'
+
+/** shell 记忆键：与旧界面同一份（两个界面共享用户习惯）。 */
+const SHELL_KEY = 'dsc.dockShell'
 
 export default defineUiPlugin({
   name: '终端',
   apply(ui) {
     // 面板本体注册在 `shell.dock`（收起时那一槽整块不渲染）；头条页签与开合钮
     // 由壳统一画（旧界面同构）——报名只交出 id 与页签标题。
-    registerDockPanel({ id: PANEL, label: '终端', order: 10 })
+    registerDockPanel({ id: PANEL, label: '终端', order: 10, icon: <IconTerminal size={13} /> })
     ui.slots.register('shell.dock', { id: 'terminal.pane', order: 10 }, DockPanel)
   },
 })
@@ -57,13 +65,21 @@ export default defineUiPlugin({
 function DockPanel(): ReactNode {
   const active = useDockPanel() === PANEL
   const native = getHostNative()
-  const [shell, setShell] = useState<ShellId>('pwsh')
+  const [shell, setShell] = useState<ShellValue>(() => {
+    let saved: string | null = null
+    try {
+      saved = localStorage.getItem(SHELL_KEY)
+    } catch {
+      // 隐私模式读不到就当没存过
+    }
+    return SHELL_OPTIONS.some((option) => option.value === saved) ? (saved as ShellValue) : 'powershell'
+  })
 
   return (
     <aside className="dock" style={{ width: '100%' }} data-hidden={active ? undefined : '1'} data-shell={shell}>
       <div className="dock-body">
         {native.available ? (
-          <TerminalPane shell={shell} onShell={setShell} />
+          <TerminalPane shell={shell} visible={active} onShell={setShell} />
         ) : (
           <p className="shell-term-empty">
             终端来自桌面外壳的原生桥，浏览器里没有它。要用终端请打开桌面版（或者在终端里跑
@@ -76,20 +92,27 @@ function DockPanel(): ReactNode {
 }
 
 /**
- * 一台终端：启动 → 输入 → 收输出 → 关掉。
+ * 一台终端：首次可见起 shell → 输入 → 收输出。
  *
  * 生命周期与桌面端一致（收起仍保活）：面板收起或被别的面板顶替时组件只是被
- * `data-hidden` 藏住，spawn 出来的进程与终端缓冲都活着；「结束」按钮与整壳卸载
- * 才会杀会话。 */
-function TerminalPane({ shell, onShell }: { shell: ShellId; onShell: (next: ShellId) => void }): ReactNode {
+ * `data-hidden` 藏住，spawn 出来的进程与终端缓冲都活着；整个壳卸载才会杀会话。
+ * 切换 Shell 下拉 = 杀旧会话、按新 shell 重开（旧界面 pickShell 同款）。 */
+function TerminalPane({ shell, visible, onShell }: { shell: ShellValue; visible: boolean; onShell: (next: ShellValue) => void }): ReactNode {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const native = getHostNative()
-  // 会话 id 与终端实例都放在 ref 里：它们跨渲染存活，且改动不该触发重画。
+  const cwd = useHostSelector(readCwd)
+  // 会话 id、终端实例与当前 shell 都放在 ref 里：它们跨渲染存活，且改动不该触发重画。
   const sessionRef = useRef('')
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
-  const [note, setNote] = useState<{ tone: 'info' | 'error'; text: string }>({ tone: 'info', text: '点「启动」开一个 shell' })
-  const [busy, setBusy] = useState(false)
+  const shellRef = useRef(shell)
+  shellRef.current = shell
+  const [error, setError] = useState('')
+  // 首次可见才起进程（旧界面同款：dock 常驻挂载，不能一开应用就 spawn）。
+  const [booted, setBooted] = useState(false)
+  useEffect(() => {
+    if (visible && !booted) setBooted(true)
+  }, [visible, booted])
 
   // 装配 xterm（只做一次）：字体与配色都从现有令牌读，不另起一套主题。
   useEffect(() => {
@@ -104,7 +127,7 @@ function TerminalPane({ shell, onShell }: { shell: ShellId; onShell: (next: Shel
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(host)
-    // 面板宽度会变（窗口大小、将来拖动调宽），不重排的话 xterm 的网格还是旧的。
+    // 面板宽度会变（窗口大小、拖宽），不重排的话 xterm 的网格还是旧的。
     const observer = new ResizeObserver(() => {
       try {
         fit.fit()
@@ -115,18 +138,28 @@ function TerminalPane({ shell, onShell }: { shell: ShellId; onShell: (next: Shel
     observer.observe(host)
     termRef.current = term
     fitRef.current = fit
-    term.writeln(`\x1b[90m管道模式：输入命令回车执行，交互式全屏程序（vim/top 之类）用不了\x1b[0m`)
 
     // 行缓冲：管道 stdin 没有行编辑，回车之前这一行由界面自己维护。
     let line = ''
+    let promptShown = false
+    const promptOf = (): string => SHELL_OPTIONS.find((option) => option.value === shellRef.current)?.prompt ?? ''
+    const shellLabelOf = (): string => SHELL_OPTIONS.find((option) => option.value === shellRef.current)?.label ?? ''
+    const showPrompt = (): void => {
+      if (!promptShown && sessionRef.current !== '') {
+        term.write(`\x1b[90m${promptOf()}\x1b[0m `)
+        promptShown = true
+      }
+    }
     const onData = term.onData((data) => {
       const id = sessionRef.current
       if (id === '') return
       for (const char of data) {
         if (char === '\r') {
+          // 回车：本地回显换行，发送整行；空行也发一个换行（shell 会重画提示符）
           term.write('\r\n')
           const command = line
           line = ''
+          promptShown = false
           void native.invoke('terminal', ['term-input', { id, data: `${command}\n` }]).catch(() => undefined)
         } else if (char === '\u007f') {
           if (line.length > 0) {
@@ -134,8 +167,11 @@ function TerminalPane({ shell, onShell }: { shell: ShellId; onShell: (next: Shel
             term.write('\b \b')
           }
         } else if (char === '\u0003') {
-          term.write('^C\r\n')
+          // Ctrl+C：取消当前行（管道模式无法中断运行中的命令）
+          term.write('^C')
           line = ''
+          promptShown = false
+          showPrompt()
         } else {
           line += char
           term.write(char)
@@ -143,12 +179,17 @@ function TerminalPane({ shell, onShell }: { shell: ShellId; onShell: (next: Shel
       }
     })
 
-    // 宿主推上来的输出只认自己那个会话 id。
+    // 宿主推上来的输出只认自己那个会话 id；输出落定后再补提示符（管道模式不回显命令）。
     const offData = native.on('dock-data', (data) => {
       if (data === null || typeof data !== 'object') return
       const record = data as { id?: unknown; data?: unknown }
       if (typeof record.id !== 'string' || record.id !== sessionRef.current) return
-      if (typeof record.data === 'string') term.write(record.data)
+      if (typeof record.data !== 'string') return
+      term.write(record.data.replace(/\n/g, '\r\n'))
+      if (record.data.includes('\n')) {
+        promptShown = false
+        showPrompt()
+      }
     })
 
     return () => {
@@ -166,78 +207,73 @@ function TerminalPane({ shell, onShell }: { shell: ShellId; onShell: (next: Shel
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  /** 起一个 shell。只有这一条路会调 term-spawn（用户显式动作）。 */
-  const start = (): void => {
+  // 起 shell：首次可见、或切了 Shell 下拉时（切 = 杀旧起新）。
+  useEffect(() => {
+    if (!booted || cwd === null || cwd === '') return
     const term = termRef.current
-    if (term === null || sessionRef.current !== '') return
-    setBusy(true)
-    setNote({ tone: 'info', text: `正在启动 ${shellLabel(shell)}…` })
+    if (term === null) return
+    const previous = sessionRef.current
+    sessionRef.current = ''
+    if (previous !== '') void native.invoke('terminal', ['term-kill', { id: previous }]).catch(() => undefined)
+    setError('')
+    const meta = SHELL_OPTIONS.find((option) => option.value === shell) ?? SHELL_OPTIONS[0]
+    term.writeln(`\x1b[90m${meta.label} · 管道模式：输入命令回车执行，不支持交互式全屏程序\x1b[0m\r\n`)
     void native
-      .invoke<{ id: string; shell: string }>('terminal', ['term-spawn', { cwd: '.', shell }])
+      .invoke<{ id: string }>('terminal', ['term-spawn', { cwd, shell }])
       .then((spawned) => {
         sessionRef.current = spawned.id
-        setNote({ tone: 'info', text: `${shellLabel(shell)} 已就绪（${spawned.id}）` })
         try {
           fitRef.current?.fit()
         } catch {
           // 面板此刻不可见时忽略
         }
+        term.write(`\x1b[90m${meta.prompt}\x1b[0m `)
       })
-      .catch((error: unknown) => {
+      .catch((reason: unknown) => {
         // 常见失败：目标 shell 没装（pwsh 未装、Git Bash 不在 PATH）
-        setNote({ tone: 'error', text: `启动失败：${error instanceof Error ? error.message : String(error)}` })
+        const message = reason instanceof Error ? reason.message : String(reason)
+        setError(`${meta.label} 启动失败：${message}`)
+        term.write(`\r\n\x1b[31m${meta.label} 启动失败：${message}\x1b[0m\r\n`)
       })
-      .finally(() => {
-        setBusy(false)
-      })
-  }
+    // cwd 只在切工作区时变（那时旧 shell 的目录已经不对了，重开一个在新目录）。
+  }, [booted, cwd, shell, native])
 
-  /** 关掉当前会话（进程被杀，面板留着，可以再启动）。 */
-  const stop = (): void => {
-    const id = sessionRef.current
-    if (id === '') return
-    sessionRef.current = ''
-    setNote({ tone: 'info', text: '会话已结束' })
-    void native.invoke('terminal', ['term-kill', { id }]).catch(() => undefined)
+  // 重新可见时重排：display:none 期间 xterm 量到的尺寸是 0。
+  useEffect(() => {
+    if (visible) {
+      try {
+        fitRef.current?.fit()
+      } catch {
+        // 忽略（下一轮 ResizeObserver 会再排）
+      }
+    }
+  }, [visible])
+
+  const pickShell = (value: ShellValue): void => {
+    try {
+      localStorage.setItem(SHELL_KEY, value)
+    } catch {
+      // 存不下（隐私模式/配额满）只影响下次启动的默认 shell，不该打断选择
+    }
+    onShell(value)
   }
 
   return (
     <div className="term-pane">
       <div className="term-bar">
-        <span className="shell-term-note">Shell</span>
-        <select
-          className="shell-select"
-          aria-label="选择 shell"
+        <span className="term-bar-label">Shell</span>
+        <Select
           value={shell}
-          disabled={sessionRef.current !== ''}
-          onChange={(event) => {
-            onShell(event.target.value as ShellId)
-          }}
-        >
-          {SHELLS.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.label}
-            </option>
-          ))}
-        </select>
-        <button type="button" className="btn-ghost" disabled={busy} onClick={start}>
-          启动
-        </button>
-        <button type="button" className="btn-ghost" onClick={stop}>
-          结束
-        </button>
-        <span className="shell-term-note" data-tone={note.tone}>
-          {note.text}
-        </span>
+          options={SHELL_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+          onPick={pickShell}
+          className="term-select"
+          ariaLabel="终端 Shell"
+        />
       </div>
       <div className="term-host" ref={hostRef} />
+      {error === '' ? null : <div className="notice">{error}</div>}
     </div>
   )
-}
-
-/** shell 的显示名（未知取值回落成它自己）。 */
-function shellLabel(shell: ShellId): string {
-  return SHELLS.find((item) => item.id === shell)?.label ?? shell
 }
 
 /** 终端字号跟着正文那一档走（`--dsc-fs-code`，实际值如 `11.2px`）。 */
@@ -268,4 +304,12 @@ function readTheme(): Record<string, string> {
   pick('magenta', '--dsc-purple')
   pick('cyan', '--dsc-cyan')
   return theme
+}
+
+/** 当前会话的工作目录（终端起 shell 的 cwd；与侧栏底部同一字段）。 */
+function readCwd(snapshot: HostSnapshot | null): string | null {
+  const status = snapshot?.['status']
+  if (typeof status !== 'object' || status === null) return null
+  const value = (status as Record<string, unknown>)['cwd']
+  return typeof value === 'string' && value !== '' ? value : null
 }

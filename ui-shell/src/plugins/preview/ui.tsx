@@ -25,6 +25,8 @@ import { useEffect, useState, type ReactNode } from 'react'
 import {
   CodeView,
   CsvView,
+  FileIcon,
+  IconCode,
   MarkdownView,
   PdfView,
   XlsxView,
@@ -54,7 +56,9 @@ export default defineUiPlugin({
   name: '文件预览',
   apply(ui) {
     // 头条页签与开合钮由壳统一画（旧界面同构）——这里只报名面板、注册本体。
-    registerDockPanel({ id: PANEL, label: '预览', order: 40 })
+    // 页签图标：旧界面预览 chip 用的是「文件自己的彩色图标」（每张页签一个文件）；
+    // 壳里预览是一块固定面板，取同一族里的通用文档符号。
+    registerDockPanel({ id: PANEL, label: '预览', order: 40, icon: <IconCode size={13} /> })
     ui.slots.register('shell.dock', { id: 'preview.pane', order: 40 }, PreviewDock)
   },
 })
@@ -115,7 +119,9 @@ function PreviewBody({ path, cwd }: { path: string; cwd: string }): ReactNode {
   return (
     <>
       <div className="file-preview-head">
+        {/* 头部 = 彩色文件图标 + 相对路径（旧界面同款）。 */}
         <span className="file-preview-path" title={read?.path ?? path}>
+          <FileIcon name={read?.path ?? path} size={14} />
           {shortPath(read?.path ?? path, cwd)}
         </span>
         <button
@@ -130,7 +136,13 @@ function PreviewBody({ path, cwd }: { path: string; cwd: string }): ReactNode {
       </div>
       <div className="file-preview-body">
         {note === '' ? null : <div className="tree-note">{note}</div>}
-        {read === null ? null : renderBody(read, fsRead)}
+        {read === null ? (
+          note === '' ? (
+            <div className="file-preview-empty">读取中…</div>
+          ) : null
+        ) : (
+          renderBody(read, fsRead)
+        )}
       </div>
     </>
   )
@@ -141,7 +153,7 @@ function renderBody(read: ReadResult, fsRead: (file: string) => Promise<unknown>
   if (read.tooLarge) {
     return (
       <div className="file-preview-empty">
-        这个文件太大（{formatSize(read.size ?? 0)}），这里不预览——用「用系统程序打开」看它。
+        文件过大（{formatSize(read.size ?? 0)}），仅支持预览 10MB 以内的文件。
       </div>
     )
   }
@@ -153,7 +165,7 @@ function renderBody(read: ReadResult, fsRead: (file: string) => Promise<unknown>
     )
   }
   if (read.kind === 'binary') {
-    return <div className="file-preview-empty">二进制文件（{formatSize(read.size ?? 0)}），这里不预览。</div>
+    return <div className="file-preview-empty">二进制文件（{formatSize(read.size ?? 0)}），暂不支持预览。</div>
   }
   if (read.kind === 'bytes') {
     // bytes 只有两种宿主会给：application/pdf 走逐页渲染，其余（xlsx/xlsm）走

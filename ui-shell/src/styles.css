@@ -177,14 +177,6 @@
   margin: 2px 0 0;
 }
 
-/* 行内差异：`.diff-body` 本体在 `legacy/views.css` 里，这里只给它一个可滚动的框。 */
-.shell-diff {
-  border-top: 1px solid var(--dsc-stroke-4);
-  margin-top: 2px;
-  max-height: 320px;
-  overflow: auto;
-}
-
 /* 输入区与排队条的提示行（宿主拒绝、插话没赶上这类）。 */
 .shell-composer-fault {
   color: var(--dsc-red);
@@ -503,57 +495,19 @@
   padding: 12px;
 }
 
-/* ── 会话行的改名与分叉（阶段 5.6；旧界面这两件事各在自己的入口，壳里并到行内）── */
-/* 改名时的行内输入：占住标题那一格，样式贴会话标题（不要看起来像一个奇怪的表单）。 */
-.shell-rename-input {
-  background: var(--dsc-fill-quaternary);
-  border: 1px solid var(--dsc-stroke-2);
-  border-radius: var(--dsc-r-control);
-  color: var(--dsc-text-primary);
-  flex: 1;
-  font-family: inherit;
-  font-size: var(--dsc-fs-body);
-  min-width: 0;
-  outline: none;
-  padding: 1px 6px;
-}
-.shell-rename-input:focus {
-  border-color: var(--dsc-accent);
-}
-/* 分叉选择列表：贴在会话列表上方的一小块（不是浮层——它只需要用户点一下）。 */
-.shell-fork-picker {
-  background: var(--dsc-bg-raised);
-  border: 1px solid var(--dsc-stroke-3);
-  border-radius: var(--dsc-r-block);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 4px 8px 8px;
-  max-height: 280px;
-  overflow-y: auto;
-  padding: 8px;
-}
-.shell-fork-item {
-  align-items: center;
-  border-radius: var(--dsc-r-control);
-  color: var(--dsc-text-secondary);
-  display: flex;
-  font-size: var(--dsc-fs-caption);
-  gap: 8px;
-  padding: 4px 6px;
-  text-align: left;
+/* ── 审查面板与停靠区页签的两条壳内补丁（2026-10-12 对齐旧版这批加的）── */
+/* 审查面板并进停靠区（旧界面是正文右侧的并排栏）：宽度归停靠区那根拖宽条，
+   面板本身不再自带 flex-basis / 左描边（那是「并排栏」的形态），其余全走 legacy。 */
+.diff-pane[data-embed='1'] {
+  border-left: 0;
+  flex: 1 1 auto;
+  min-height: 0;
   width: 100%;
 }
-.shell-fork-item:hover {
-  background: var(--dsc-row-hover-bg);
-  color: var(--dsc-text-primary);
-}
-.shell-fork-no {
-  color: var(--dsc-text-quaternary);
+/* 页签 chip 里的小图标：不参与收缩，永远跟着字走（没有它，窄面板下图标会被压扁）。 */
+.dock-chip-icon {
+  display: inline-flex;
   flex: none;
-  font-variant-numeric: tabular-nums;
-  min-width: 1.6em;
-  text-align: right;
 }
 
 /* ── 文件面板（legacy 有 `.files-*` / `.file-*` 那一套，这里只补它没有的几处）── */
