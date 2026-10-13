@@ -1,0 +1,559 @@
+/**
+ * 线性 SVG 图标集（stroke 1.6 / currentColor），对照 dsh 桌面端的细线风格。
+ * 全部为纯函数组件，尺寸由 CSS 或 size 属性控制；每个 svg 额外带上
+ * `--dsc-icon-size`，按钮里的图标据此按固定尺寸对齐 dsh（按钮缩放轴已退场）。
+ *
+ * @module desktop/renderer/icons
+ */
+import type { CSSProperties, JSX } from 'react'
+
+type IconProps = { size?: number; className?: string }
+
+/**
+ * 把图标本来的像素尺寸另外挂一份 CSS 变量。
+ *
+ * `width`/`height` 属性只写死了数字，样式表读不到它；按钮场景的图标尺寸由
+ * `styles.css` 的按钮段统一成 dsh 的值（16px），那一段读这个变量。
+ * 只有按钮场景的规则会读它，正文、状态栏那些图标照旧按属性画。
+ *
+ * @param size 图标边长（px）
+ */
+function sized(size: number): CSSProperties {
+  return { '--dsc-icon-size': `${size}px` } as CSSProperties
+}
+
+function base(path: JSX.Element, { size = 16, className }: IconProps, viewBox = '0 0 24 24'): JSX.Element {
+  return (
+    <svg
+      width={size}
+      height={size}
+      style={sized(size)}
+      viewBox={viewBox}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      {path}
+    </svg>
+  )
+}
+
+export function IconPlus(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </>,
+    props,
+  )
+}
+
+export function IconFolder(props: IconProps): JSX.Element {
+  return base(
+    <path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4.2c.4 0 .8.16 1.06.44L11.5 6.7h7A1.5 1.5 0 0 1 20 8.2v9.3a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5Z" />,
+    props,
+  )
+}
+
+export function IconFolderOpen(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M4 9V6.5A1.5 1.5 0 0 1 5.5 5h3.7c.4 0 .78.16 1.06.44L11.5 6.7h7A1.5 1.5 0 0 1 20 8.2V9" />
+      <path d="M2.8 12.6 4.4 8.4A1.2 1.2 0 0 1 5.5 7.6h13a1.2 1.2 0 0 1 1.13 1.55l-1.7 6.1a1.5 1.5 0 0 1-1.44 1.1H4.2a1.5 1.5 0 0 1-1.4-2.05Z" />
+    </>,
+    props,
+  )
+}
+
+export function IconSearch(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="m20 20-3.8-3.8" />
+    </>,
+    props,
+  )
+}
+
+export function IconChevronDown(props: IconProps): JSX.Element {
+  return base(<path d="m6 9.5 6 6 6-6" />, props)
+}
+
+export function IconChevronRight(props: IconProps): JSX.Element {
+  return base(<path d="m9.5 6 6 6-6 6" />, props)
+}
+
+/** 收起（∨ 的镜像）：工具卡展开区快捷栏的「收起」按钮用。 */
+export function IconChevronUp(props: IconProps): JSX.Element {
+  return base(<path d="m6 14.5 6-6 6 6" />, props)
+}
+
+export function IconArrowUp(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M12 19V5" />
+      <path d="m6 11 6-6 6 6" />
+    </>,
+    props,
+  )
+}
+
+export function IconStop(props: IconProps): JSX.Element {
+  return base(<rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" stroke="none" />, props)
+}
+
+export function IconCopy(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" />
+    </>,
+    props,
+  )
+}
+
+export function IconSwap(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M7 4v13" />
+      <path d="m3.5 7.5 3.5-3.5 3.5 3.5" />
+      <path d="M17 20V7" />
+      <path d="m13.5 16.5 3.5 3.5 3.5-3.5" />
+    </>,
+    props,
+  )
+}
+
+export function IconSidebar(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
+      <path d="M9.5 4.5v15" />
+    </>,
+    props,
+  )
+}
+
+export function IconClock(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7.5V12l3 2" />
+    </>,
+    props,
+  )
+}
+
+export function IconShield(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M12 3.5 5 6.2v5.1c0 4.4 3 7.6 7 9.2 4-1.6 7-4.8 7-9.2V6.2Z" />
+      <path d="m9 11.8 2.2 2.2L15.5 9.5" />
+    </>,
+    props,
+  )
+}
+
+export function IconPuzzle(props: IconProps): JSX.Element {
+  return base(
+    <path d="M10 3.5a2 2 0 0 1 4 0c0 .4-.12.8-.32 1.1h3.82c.55 0 1 .45 1 1v3.1a2 2 0 1 0 0 3.6v3.1c0 .55-.45 1-1 1h-3.32c.2.3.32.7.32 1.1a2 2 0 0 1-4 0c0-.4.12-.8.32-1.1H7a1 1 0 0 1-1-1v-3.1a2 2 0 1 1 0-3.6V5.6c0-.55.45-1 1-1h3.32A1.99 1.99 0 0 1 10 3.5Z" />,
+    props,
+  )
+}
+
+export function IconRefresh(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1" />
+      <path d="M20.5 3.5v4h-4" />
+    </>,
+    props,
+  )
+}
+
+export function IconRestart(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M12 3v8" />
+      <path d="M6.4 6.9a8 8 0 1 0 11.2 0" />
+    </>,
+    props,
+  )
+}
+
+export function IconCheck(props: IconProps): JSX.Element {
+  return base(<path d="m5 12.5 4.5 4.5L19 7.5" />, props)
+}
+
+export function IconCoins(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <ellipse cx="12" cy="6.5" rx="7" ry="3" />
+      <path d="M5 6.5v5c0 1.66 3.13 3 7 3s7-1.34 7-3v-5" />
+      <path d="M5 11.5v5c0 1.66 3.13 3 7 3s7-1.34 7-3v-5" />
+    </>,
+    props,
+  )
+}
+
+export function IconGear(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.826-3.31 2.37-2.37c1 .608 2.296.07 2.572-1.065z" />
+      <circle cx="12" cy="12" r="3" />
+    </>,
+    props,
+  )
+}
+
+/** 远程控制（手机）：圆角机身 + 顶部听筒线 + 底部主屏点。 */
+export function IconPhone(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <rect x="7" y="3.5" width="10" height="17" rx="2.2" />
+      <path d="M10.5 6h3" />
+      <circle cx="12" cy="17.2" r="0.9" fill="currentColor" stroke="none" />
+    </>,
+    props,
+  )
+}
+
+export function IconSpark(props: IconProps): JSX.Element {
+  return base(<path d="M12 2.8 14.2 9l6.2 2.2-6.2 2.2L12 19.6 9.8 13.4 3.6 11.2 9.8 9Z" />, props)
+}
+
+export function IconBolt(props: IconProps): JSX.Element {
+  return base(<path d="M13.2 2.8 5.4 13.4h5l-1.2 7.8 7.8-10.6h-5Z" />, props)
+}
+
+/** 模式（预设）：三层叠片 —— 人格、工具目录、提示词是叠在一起的三件事。 */
+export function IconLayers(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M12 3.2 3.4 8 12 12.8 20.6 8Z" />
+      <path d="M3.4 12.6 12 17.4l8.6-4.8" />
+      <path d="M3.4 16.9 12 21.7l8.6-4.8" />
+    </>,
+    props,
+  )
+}
+
+export function IconInfo(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5.5" />
+      <circle cx="12" cy="7.9" r="0.9" fill="currentColor" stroke="none" />
+    </>,
+    props,
+  )
+}
+
+/**
+ * 地球：阶段组头给「搜网页 / 访问网页 / 开浏览器」这三类共用。
+ * 为什么单加一个而不是复用搜索图标：浏览器与网页抓取是「出网」，代码搜索是「在本地找」，
+ * 同一段过程里两类经常前后脚出现，图标一样就分不出这一步在干什么。
+ */
+export function IconGlobe(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3.2 12h17.6" />
+      <path d="M12 3c2.5 2.4 3.9 5.6 3.9 9s-1.4 6.6-3.9 9c-2.5-2.4-3.9-5.6-3.9-9S9.5 5.4 12 3Z" />
+    </>,
+    props,
+  )
+}
+
+export function IconStore(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M4 9.5V19a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V9.5" />
+      <path d="M3.2 9.5 5 4.2h14l1.8 5.3a3 3 0 0 1-5.6 1.6 3 3 0 0 1-5.4 0 3 3 0 0 1-5.6-1.6Z" />
+      <path d="M9.6 20v-4.6h4.8V20" />
+    </>,
+    props,
+  )
+}
+
+export function IconClose(props: IconProps): JSX.Element {
+  return base(<path d="M6 6l12 12M18 6 6 18" />, props)
+}
+
+export function IconTrash(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M4.5 6.8h15" />
+      <path d="M9.5 6.8V4.6h5v2.2" />
+      <path d="M6.6 6.8 7.5 20a1 1 0 0 0 1 .9h7a1 1 0 0 0 1-.9l.9-13.2" />
+      <path d="M10.4 10.5v6.4M13.6 10.5v6.4" />
+    </>,
+    props,
+  )
+}
+
+export function IconEdit(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M4.5 19.5h4l10-10a2.1 2.1 0 0 0-3-3l-10 10Z" />
+      <path d="M13.5 6.5l3 3" />
+    </>,
+    props,
+  )
+}
+
+/** 分叉（一条主干分出两条支线，对照 git 的分支图形）。 */
+export function IconBranch(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <circle cx="7" cy="5.5" r="2.1" />
+      <circle cx="7" cy="18.5" r="2.1" />
+      <circle cx="17" cy="9.5" r="2.1" />
+      <path d="M7 7.6v8.8" />
+      <path d="M7 12.2h3.6a4.3 4.3 0 0 0 4.3-4.3V9.5" />
+    </>,
+    props,
+  )
+}
+
+export function IconKey(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <circle cx="8.2" cy="12" r="3.4" />
+      <path d="M11.6 12H20" />
+      <path d="M17 12v3M14.3 12v2.2" />
+    </>,
+    props,
+  )
+}
+
+/** 更多操作（水平三点）。 */
+export function IconMore(props: IconProps): JSX.Element {
+  return base(
+    <g fill="currentColor" stroke="none">
+      <circle cx="5.5" cy="12" r="1.15" />
+      <circle cx="12" cy="12" r="1.15" />
+      <circle cx="18.5" cy="12" r="1.15" />
+    </g>,
+    props,
+  )
+}
+
+/** 排序（两条滑轨 + 两个把手，对照 dsh 头部那个图标）。 */
+export function IconSort(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M4 7.5h8.5" />
+      <circle cx="16.2" cy="7.5" r="2" />
+      <path d="M20.5 7.5h-.3" />
+      <path d="M20 16.5h-8.5" />
+      <circle cx="12.2" cy="16.5" r="2" />
+      <path d="M4 16.5h4.3" />
+    </>,
+    props,
+  )
+}
+
+/** 归档（箱子）。 */
+export function IconArchive(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M3.8 4.8h16.4a.8.8 0 0 1 .8.8v2.4H3v-2.4a.8.8 0 0 1 .8-.8Z" />
+      <path d="M5 8v9.4a1.6 1.6 0 0 0 1.6 1.6h10.8A1.6 1.6 0 0 0 19 17.4V8" />
+      <path d="M9.8 11.6h4.4" />
+    </>,
+    props,
+  )
+}
+
+/** 置顶（图钉）。 */
+export function IconPin(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M14.2 3.6 20.4 9.8" />
+      <path d="M16.4 5.6 12 11.4l-5.6 2.4 3.8 3.8 2.4-5.6 5.8-4.4Z" />
+      <path d="M9.6 17.4 6.4 20.6" />
+    </>,
+    props,
+  )
+}
+
+/** 终端（方框 + 提示符）。 */
+export function IconTerminal(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <rect x="3.5" y="5" width="17" height="14" rx="2" />
+      <path d="m7 9.5 3 2.5-3 2.5" />
+      <path d="M12.5 15H17" />
+    </>,
+    props,
+  )
+}
+
+/** 代码（尖括号对，VS Code 打开目录菜单用）。 */
+export function IconCode(props: IconProps): JSX.Element {
+  return base(<path d="m9 8-4 4 4 4M15 8l4 4-4 4" />, props)
+}
+
+/** 用量统计（柱状图）。 */
+export function IconChart(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M4 20h16" />
+      <path d="M7.5 20v-6" />
+      <path d="M12 20V7.5" />
+      <path d="M16.5 20v-9" />
+    </>,
+    props,
+  )
+}
+
+/** 工作区树（层级线 + 两个节点框）：视图选项里的「按工作区树」。 */
+export function IconTree(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M4.2 4.5v14" />
+      <path d="M4.2 8h4.3" />
+      <path d="M4.2 15h4.3" />
+      <rect x="8.5" y="5.6" width="11.3" height="4.8" rx="1.4" />
+      <rect x="8.5" y="12.6" width="11.3" height="4.8" rx="1.4" />
+    </>,
+    props,
+  )
+}
+
+/** 单列表（三条等长横线）：视图选项里的「单列表」与「全部对话」。 */
+export function IconFlatList(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M4 7h16" />
+      <path d="M4 12h16" />
+      <path d="M4 17h16" />
+    </>,
+    props,
+  )
+}
+
+/** 创建时间（日历）。 */
+export function IconCalendar(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <rect x="3.8" y="5.4" width="16.4" height="14.2" rx="2" />
+      <path d="M3.8 9.8h16.4" />
+      <path d="M8.4 3.6v3.4M15.6 3.6v3.4" />
+    </>,
+    props,
+  )
+}
+
+/** 隐藏已归档（归档箱划掉）。 */
+export function IconArchiveOff(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M3.8 4.8h16.4a.8.8 0 0 1 .8.8v2.4H3v-2.4a.8.8 0 0 1 .8-.8Z" />
+      <path d="M5 8v9.4a1.6 1.6 0 0 0 1.6 1.6h10.8A1.6 1.6 0 0 0 19 17.4V8" />
+      <path d="M4 3.6 20 19.6" />
+    </>,
+    props,
+  )
+}
+
+/** 展开成完整清单（列表 + 向下箭头）：筛选会话里的「全部对话」。 */
+export function IconQueue(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M4 6.5h9.5M4 12h9.5M4 17.5h6" />
+      <path d="M17.5 6.5v11" />
+      <path d="m14.6 14.8 2.9 2.9 2.9-2.9" />
+    </>,
+    props,
+  )
+}
+
+/** 轮次（圆环 + 中心点）：状态栏第一段「N 轮 M 步」。 */
+export function IconActivity(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <circle cx="12" cy="12" r="3" />
+    </>,
+    props,
+  )
+}
+
+/** 累计用量（数据库柱体）：状态栏第二段「N tok」。 */
+export function IconDatabase(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <ellipse cx="12" cy="6" rx="7.5" ry="3" />
+      <path d="M4.5 6v12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3V6" />
+      <path d="M4.5 12c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3" />
+    </>,
+    props,
+  )
+}
+
+/** 赞（拇指向上）：消息底部的本机评价。 */
+export function IconThumbUp(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M7 10.5 10.8 3.6a2 2 0 0 1 2.7 2.5L12.6 9.6h4.9a1.8 1.8 0 0 1 1.74 2.28l-1.3 5.2A2 2 0 0 1 16 18.6H7" />
+      <rect x="3.4" y="10.5" width="3.6" height="8.1" rx="1" />
+    </>,
+    props,
+  )
+}
+
+/** 踩（拇指向下）：同一对评价的否定那半。 */
+export function IconThumbDown(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M17 13.5 13.2 20.4a2 2 0 0 1-2.7-2.5l.9-3.5H6.5a1.8 1.8 0 0 1-1.74-2.28l1.3-5.2A2 2 0 0 1 8 5.4h9" />
+      <rect x="17" y="5.4" width="3.6" height="8.1" rx="1" />
+    </>,
+    props,
+  )
+}
+
+/** 实心右三角（dsh IconTriangleRightFill artwork 原样移植）：工作区行 hover 时
+ *  替换 folder 的展开箭头，展开态由样式表旋转 90°，fill 几何与线宽无关。 */
+export function IconTriangleRightFill(props: IconProps): JSX.Element {
+  const size = props.size ?? 14
+  return (
+    <svg width={size} height={size} style={sized(size)} viewBox="0 0 16 16" fill="none" className={props.className} aria-hidden>
+      <path
+        d="M5.5 4.5C5.5 4.40714 5.52586 4.31612 5.57467 4.23713C5.62349 4.15815 5.69334 4.09431 5.77639 4.05279C5.85945 4.01126 5.95242 3.99368 6.0449 4.00202C6.13738 4.01036 6.22572 4.04429 6.3 4.1L10.967 7.6C11.0291 7.64657 11.0795 7.70697 11.1142 7.77639C11.1489 7.84582 11.167 7.92238 11.167 8C11.167 8.07762 11.1489 8.15418 11.1142 8.22361C11.0795 8.29303 11.0291 8.35343 10.967 8.4L6.3 11.9C6.22572 11.9557 6.13738 11.9896 6.0449 11.998C5.95242 12.0063 5.85945 11.9887 5.77639 11.9472C5.69334 11.9057 5.62349 11.8419 5.57467 11.7629C5.52586 11.6839 5.5 11.5929 5.5 11.5V4.5Z"
+        fill="currentColor"
+      />
+    </svg>
+  )
+}
+
+/** 对话气泡 + 加号（dsh NewChatOutlineArtwork 原样移植，1px 细线）：
+ *  工作区行尾的「在此新建会话」按钮。 */
+export function IconNewChat(props: IconProps): JSX.Element {
+  const size = props.size ?? 16
+  return (
+    <svg
+      width={size}
+      height={size}
+      style={sized(size)}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className}
+      aria-hidden
+    >
+      <path d="M2.37091 11.2501C1.58745 9.89288 1.32067 8.29835 1.61969 6.76006C1.91872 5.22177 2.76342 3.8433 3.99826 2.87846C5.2331 1.91362 6.77494 1.42737 8.33988 1.50925C9.90482 1.59113 11.3875 2.23562 12.5149 3.32406C13.6425 4.41269 14.3387 5.87206 14.4754 7.4334C14.612 8.99474 14.18 10.5529 13.2587 11.8209C12.3375 13.0888 10.9891 13.9813 9.46194 14.3337C8.18691 14.628 6.85895 14.5294 5.64989 14.0605C5.1712 13.8748 4.76962 13.4932 4.26534 13.3967C3.67413 13.2835 2.95257 13.5598 2.03794 14.3337" />
+      <path d="M8 5V11" />
+      <path d="M5 8H11" />
+    </svg>
+  )
+}

@@ -21,9 +21,9 @@
  *
  * @module dsc/scripts/ui-plugin-test
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { request } from 'node:http'
-import { join, resolve } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
@@ -945,6 +945,90 @@ console.log('\n[5b] 分包落点')
   // 插件当值用时运行期拿到「白名单外的模块」那句错，而不是静默内联一份私有实现）。
   const platformModules = JSON.parse(readFileSync(join(uiShell, 'src', 'platform-modules.json'), 'utf8'))
   check('@dsc/ui-core 不在平台模块表里（故意不给插件）', !platformModules.includes('@dsc/ui-core'), platformModules.join(','))
+
+  // ── 包内分层：三个逻辑包的单向依赖（E2/E3/E5） ─────────────────────────────
+  // 逻辑分包没有 workspace 的依赖图兜底：反向依赖编译器不拦，症状是运行期解析出两份实现
+  // （hooks 直接崩）或插件 bundle 把整层内联进去。这里对三包逐文件走查 import 说明符
+  // （先剔注释再取 `from '…'` / `import('…')` / 裸 `import '…'`），把
+  // 「primitives ← dockkit ← layout」这条单向链钉死。
+  const layerDirs = {
+    '@dsc/ui-primitives': join(uiShell, 'src', 'ui-primitives'),
+    '@dsc/ui-dockkit': join(uiShell, 'src', 'ui-dockkit'),
+    '@dsc/ui-layout': join(uiShell, 'src', 'ui-layout'),
+  }
+  // 每包**不许**出现的包名：往上走的那些。`@dsc/ui`（聚合面）转出的正是这三层，
+  // 从下面往回引等于把插件 API 拖进环里（alias 会解析出第二份实现）。
+  const forbiddenUpward = {
+    '@dsc/ui-primitives': ['@dsc/ui-dockkit', '@dsc/ui-layout', '@dsc/ui'],
+    '@dsc/ui-dockkit': ['@dsc/ui-layout', '@dsc/ui'],
+    '@dsc/ui-layout': [],
+  }
+  // ui-layout 的**过渡期**向上边（E4 拆出槽位包 / 渲染器包、宿主桥下沉之前只能这样取）：
+  // 逐条列出来；白名单之外任何一处走出包或往上的 import 都会红。
+  const layoutTransitionUpward = new Set(['../boot', '../slots', '../slots-react'])
+  const sourceFilesOf = (dir, out = []) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const file = join(dir, entry.name)
+      if (entry.isDirectory()) sourceFilesOf(file, out)
+      else if (/\.tsx?$/.test(entry.name)) out.push(file)
+    }
+    return out
+  }
+  const importsOf = (text) => {
+    const clean = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1')
+    const specs = new Set()
+    for (const m of clean.matchAll(/\bfrom\s*['"]([^'"]+)['"]/g)) specs.add(m[1])
+    for (const m of clean.matchAll(/\bimport\s*\(\s*['"]([^'"]+)['"]/g)) specs.add(m[1])
+    for (const m of clean.matchAll(/^\s*import\s*['"]([^'"]+)['"]/gm)) specs.add(m[1])
+    return [...specs]
+  }
+
+  const layerNames = Object.keys(layerDirs)
+  check(
+    '三个逻辑包的入口都在盘上',
+    layerNames.every((name) => existsSync(join(layerDirs[name], 'index.ts'))),
+    layerNames.filter((name) => !existsSync(join(layerDirs[name], 'index.ts'))).join(','),
+  )
+  // 包身份与 @dsc/ui-core 同一套纪律：name = 包名、private、version 与壳同源（契约版本
+  // 一起走）、types 指入口。写错了不会影响构建，只会让「这是哪个包」在以后认不出来。
+  const badIdentity = layerNames.filter((name) => {
+    const pkg = JSON.parse(readFileSync(join(layerDirs[name], 'package.json'), 'utf8'))
+    return (
+      pkg.name !== name ||
+      pkg.private !== true ||
+      pkg.version !== shellPackage.version ||
+      pkg.types !== 'index.ts'
+    )
+  })
+  check('三包的包身份与壳同源（name / private / version / types）', badIdentity.length === 0, badIdentity.join('、'))
+
+  const upwardEdges = []
+  const outsideEdges = []
+  for (const name of layerNames) {
+    const dir = layerDirs[name]
+    for (const file of sourceFilesOf(dir)) {
+      for (const spec of importsOf(readFileSync(file, 'utf8'))) {
+        if (forbiddenUpward[name].includes(spec)) {
+          upwardEdges.push(`${relative(uiShell, file)} → ${spec}`)
+          continue
+        }
+        if (!spec.startsWith('.')) continue
+        const target = resolve(dirname(file), spec)
+        if (target === dir || target.startsWith(dir + sep)) continue
+        if (name === '@dsc/ui-layout' && layoutTransitionUpward.has(spec)) continue
+        outsideEdges.push(`${relative(uiShell, file)} → ${spec}`)
+      }
+    }
+  }
+  check('包内不出现反向依赖（primitives ← dockkit ← layout）', upwardEdges.length === 0, upwardEdges.join('；'))
+  check('相对 import 不出包（ui-layout 的三条过渡边除外）', outsideEdges.length === 0, outsideEdges.join('；'))
+  // E6 才把这三个包加进平台模块表（下发给插件）——本轮只建包与搬家，提前登记等于给插件
+  // 开了一条没有实现的路（运行期「白名单外的模块」那句子就变成假的）。
+  check(
+    '三个新包不在平台模块表里（E6 的活，本轮不给插件）',
+    layerNames.every((name) => !platformModules.includes(name)),
+    platformModules.join(','),
+  )
 }
 
 rmSync(work, { recursive: true, force: true })

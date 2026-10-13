@@ -1,0 +1,9 @@
+{
+  "name": "@dsc/ui-primitives",
+  "private": true,
+  "version": "1.1.0",
+  "type": "module",
+  "description": "界面壳的基元库（图标 + 载体基元 + 平台视图 + 面板几何/格式化口径）：壳里最下层，E6 起作为平台种子下发给插件。",
+  "sideEffects": false,
+  "types": "index.ts"
+}

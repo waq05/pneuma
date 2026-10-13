@@ -1,15 +1,4 @@
-/**
- * 浏览器壳的载体基元：插件渲染层站在这上面，就不必知道自己在哪种壳里。
- *
- * 终端壳的同名基元在 `src/ui/tui-plugin-api.ts`（那里 `Text` 是 ink 的 `<Text>`）。
- * 同一份插件 bundle 两个载体各拿各的实现（require 表各自解析 `@dsc/ui`），
- * 这就是阶段 6「同一份插件源码两种载体各跑一次」的落点。
- *
- * @module dsc-ui-shell/plugin-text
+/** 迁移期转发壳：实现已搬进 `src/ui-primitives/plugin-text.tsx`（`@dsc/ui-primitives`）——调用点不归本轮改，
+ * 让它们照旧 import 旧路径；**收尾时删除本文件**。
  */
-import type { ReactNode } from 'react'
-
-/** 一段行内文本（终端壳里对应 ink 的 `<Text>`）。className 只在浏览器壳有意义。 */
-export function Text(props: { children?: ReactNode; className?: string }): ReactNode {
-  return <span className={props.className}>{props.children}</span>
-}
+export * from '@dsc/ui-primitives'

@@ -16,7 +16,10 @@
     "baseUrl": ".",
     "paths": {
       "@dsc/ui-core": ["../src/ui/index.ts"],
-      "@dsc/ui": ["./src/plugin-api.ts"]
+      "@dsc/ui": ["./src/plugin-api.ts"],
+      "@dsc/ui-dockkit": ["./src/ui-dockkit/index.ts"],
+      "@dsc/ui-layout": ["./src/ui-layout/index.ts"],
+      "@dsc/ui-primitives": ["./src/ui-primitives/index.ts"]
     }
   },
   "include": ["src", "../src/ui"]

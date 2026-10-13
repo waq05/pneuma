@@ -14,5 +14,12 @@
    **只给壳自己用**就加进 `build-plugins.mjs` 的 `EXTERNAL`（构建期保留成 require、
    运行期故意不给——插件当值用它时得到「白名单外的模块」那句错）。
 
-将来那五个包（`@dsc/ui-primitives` / `ui-dockkit` / `ui-slots` / `ui-renderer` / `ui-layout`）
-**刻意不预注册**：alias 指向不存在的文件只会把"漏改的包名"从编译错误变成运行期怪事。
+E2/E3/E5（第 5 波）起 `@dsc/ui-primitives` / `@dsc/ui-dockkit` / `@dsc/ui-layout` 已按上面
+配方登记（源码在 `src/ui-<包名后半>/`，每包一个 `index.ts`）。`@dsc/ui-slots` /
+`@dsc/ui-renderer` **仍刻意不预注册**：这两个包要到 E4 才拆出来，alias 指向不存在的文件只会
+把"漏改的包名"从编译错误变成运行期怪事。
+
+旧路径（`src/icons.tsx`、`src/dock-state.ts`、`src/platform/*` …）上留了**迁移期转发壳**
+（一行 `export * from '<包名>'`）：调用点（`plugin-api.ts` / `boot.ts` / `main.tsx` /
+`src/plugins/**`）不归拆包那一轮改，让它们照旧 import 旧路径。E4/收尾把调用点改成包名之后，
+那些壳应逐个删掉——它们只是过渡态，不是新接口。

@@ -1,0 +1,8 @@
+{
+  "name": "@dsc/ui-dockkit",
+  "private": true,
+  "version": "1.1.0",
+  "type": "module",
+  "description": "界面壳右侧栏的工具包（分栏模型 + 会话级状态 + React 画法）：只依赖基元库，不许反向。",
+  "types": "index.ts"
+}
