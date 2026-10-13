@@ -29,7 +29,7 @@ import {
   type UiPluginApi,
 } from '@dsc/ui'
 // 路径/时刻/工具摘要口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
-import { TOOL_STATUS_TEXT, displayPathOf, formatDuration, matchTool, prettyJson, toolSummary, toolVerb, type ToolMatch } from '@dsc/ui-primitives'
+import { TOOL_STATUS_TEXT, displayPathOf, formatDuration, matchTool, prettyJson, toolArgFields, toolSummary, toolVerb, type ToolMatch } from '@dsc/ui-primitives'
 import { readFold, writeFold } from '../fold-state'
 import { useIntendedDiff, type IntendedDiff } from '../intended-diff'
 /**
@@ -73,8 +73,8 @@ declare module '@dsc/ui' {
         preview: { props: { intended: IntendedDiff | null; summary: string; cwd: string; targetPath: string | null; change: ChangedFileView | null } }
         /** 状态列：父决定耗时口径（中文口径 / 轨迹的 4.2s 口径）。 */
         statusDetail: { props: { call: ToolCallView } }
-        /** 展开体里的额外块：对话页给「将做的改动」diff。 */
-        bodyExtra: { props: { intended: IntendedDiff | null } }
+        /** 展开体里的额外块：对话页给「将做的改动」diff，落地后给「这次改动」diff。 */
+        bodyExtra: { props: { intended: IntendedDiff | null; change: ChangedFileView | null } }
         /** 头行尾部：对话页给「在轨迹中查看」。 */
         trailing: { props: { entry: ToolEntry } }
       }
@@ -146,8 +146,18 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
   // 局部位置（按 occurrence）：父没选就用定义自己的 fallback。
   const Preview = props.useFactorySlot('preview', SummaryPreview)
   const StatusDetail = props.useFactorySlot('statusDetail', ChatStatus)
-  const BodyExtra = props.useFactorySlot('bodyExtra', NoBodyExtra)
+  // bodyExtra 的 fallback 就是「这次改动」那一块本身：轨迹页不选它，但落地后的 diff
+  // 两边都该看得见（见 IntendedBody 的注释）。
+  const BodyExtra = props.useFactorySlot('bodyExtra', IntendedBody)
   const Trailing = props.useFactorySlot('trailing', NoTrailing)
+  /**
+   * 展开体里要不要画 diff：进行中按参数推演（intended），落地后由工具结果带来的实际改动
+   * （call.change，adapter 按 callId 缝回）接手。有 diff 时**不再摊原始参数 JSON**——
+   * 参数里那一大坨正文换成 diff，其余字段走参数表（见 {@link toolArgFields}）。
+   */
+  const patch = intended?.file ?? call.change ?? null
+  const argView = toolArgFields(call.name, call.argsText)
+  const paramsAsFields = patch !== null && argView.mutating
 
   /** 展开态一变就写回存档（不持久化的调用点 writeFold 自己空操作）。 */
   const setOpenPersisted = (next: boolean): void => {
@@ -254,9 +264,24 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
               )}
             </div>
           ) : null}
-          <BodyExtra intended={intended} />
+          <BodyExtra intended={intended} change={call.change ?? null} />
           <div className="label">参数</div>
-          <div className="args">{prettyJson(call.argsText)}</div>
+          {paramsAsFields ? (
+            /* 会改文件的工具：正文已经在上面那块 diff 里，这里只列剩下的字段。
+               dsh 对 write / edit 干脆一个参数字段都不印，壳多留一栏是因为
+               dsc 的 write / edit 还带 justification / sandbox_permissions 这类
+               「这次为什么这么写」的元信息，扔掉可惜；形状仍是一行一字段，不是 JSON。 */
+            <div className="args arg-fields" data-tc-argfields="">
+              {argView.fields.map((field) => (
+                <div className="arg-field" key={field.key}>
+                  <span className="arg-key">{field.key}</span>
+                  <span className="arg-value">{field.value}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="args">{prettyJson(call.argsText)}</div>
+          )}
           {call.resultText === undefined || call.resultText === '' ? null : (
             <>
               <div className="label">结果</div>
@@ -289,11 +314,6 @@ export function ChatStatus(props: FactoryLocalProps<typeof TOOLCARD_FACTORY, 'st
       {duration === null || call.status === 'done' ? '' : ` · 用时 ${duration}`}
     </span>
   )
-}
-
-/** 没有额外块的父（轨迹页）用这个顶 bodyExtra。 */
-function NoBodyExtra(): ReactNode {
-  return null
 }
 
 /** 没有尾部动作的父（轨迹页）用这个顶 trailing。 */
@@ -400,25 +420,49 @@ export function IntendedPreview(props: FactoryLocalProps<typeof TOOLCARD_FACTORY
   )
 }
 
-/** 展开体里的「将做的改动」diff 块（对话页独有：轨迹页看的是已经发生了什么）。 */
+/**
+ * 展开体里的 diff 块：进行中给「将做的改动」（按参数 + 盘上现值推演），落地后给
+ * 「这次改动」（工具结果带来的实际改动，adapter 按 callId 缝回工具卡）。
+ *
+ * 两档同形（都是 ChangedFileView / IntendedDiff），落地后 intended 为空就换后者接手——
+ * 这块**同时是 bodyExtra 的 fallback**（轨迹页不选局部组件），所以它不能依赖
+ * 「对话页才有的 intended」：轨迹页拿到的 intended 恒为 null，照样画出这次改动。
+ *
+ * 对话页在 running 期只有 intended、落地后 intended 归 null，于是同一位置从
+ * 「将做的改动」平滑换成「这次改动」，不会两个 diff 叠在一起。
+ */
 export function IntendedBody(props: FactoryLocalProps<typeof TOOLCARD_FACTORY, 'bodyExtra'>): ReactNode {
   const intended = props.intended
-  if (intended === null) return null
-  return (
-    <div className="tc-intended">
-      <div className="tc-intended-head">
-        <span className="tc-intended-title">将做的改动</span>
-        {intended.fellBack && <span className="tc-warn">读不到文件当前内容，以下按参数推算</span>}
-        {intended.mismatch === 'missing' && <span className="tc-warn">old 在文件中不存在，执行会失败</span>}
-        {intended.mismatch === 'ambiguous' && <span className="tc-warn">old 匹配多处，执行会失败</span>}
-      </div>
-      {intended.file === null ? (
-        <p className="tc-intended-note">两段内容一致，不会有实际改动。</p>
-      ) : (
-        <div className="tc-intended-diff">
-          <DiffRows hunks={intended.file.hunks} path={intended.absPath} />
+  const change = props.change
+  if (intended !== null) {
+    return (
+      <div className="tc-intended">
+        <div className="tc-intended-head">
+          <span className="tc-intended-title">将做的改动</span>
+          {intended.fellBack && <span className="tc-warn">读不到文件当前内容，以下按参数推算</span>}
+          {intended.mismatch === 'missing' && <span className="tc-warn">old 在文件中不存在，执行会失败</span>}
+          {intended.mismatch === 'ambiguous' && <span className="tc-warn">old 匹配多处，执行会失败</span>}
         </div>
-      )}
+        {intended.file === null ? (
+          <p className="tc-intended-note">两段内容一致，不会有实际改动。</p>
+        ) : (
+          <div className="tc-intended-diff">
+            <DiffRows hunks={intended.file.hunks} path={intended.absPath} />
+          </div>
+        )}
+      </div>
+    )
+  }
+  if (change === null) return null
+  return (
+    <div className="tc-intended" data-tc-change="">
+      <div className="tc-intended-head">
+        <span className="tc-intended-title">这次改动</span>
+        {change.truncated === true && <span className="tc-warn">改动较大，这里只显示了前一部分</span>}
+      </div>
+      <div className="tc-intended-diff">
+        <DiffRows hunks={change.hunks} path={change.path} />
+      </div>
     </div>
   )
 }

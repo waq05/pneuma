@@ -2147,6 +2147,38 @@
   letter-spacing: 0.06em;
 }
 
+/* ── 会改文件的工具卡的「参数」栏：一行一字段，不是 JSON ──
+   正文（write 的 content / edit 的 old+new）已经在上面那块 diff 里，这里只列剩下的
+   字段（justification / sandbox_permissions / path 这类）。等宽字体与 .args 同一档，
+   但值是自然换行的散文，所以不用 pre-wrap 的缩进网格。 */
+.arg-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.arg-field {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+}
+
+.arg-field .arg-key {
+  color: var(--dsc-text-quaternary);
+  flex: 0 0 auto;
+  font-size: var(--dsc-fs-tool);
+  letter-spacing: 0.04em;
+  max-width: 40%;
+  overflow-wrap: anywhere;
+}
+
+.arg-field .arg-value {
+  color: var(--dsc-text-secondary);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* ── 工具卡的「将做的改动」（dsh 的 intended diff：write/edit 进行中摊出将产生的 diff） ── */
 .tc-intended {
   margin-top: 4px;
