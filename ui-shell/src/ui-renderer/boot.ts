@@ -227,6 +227,21 @@ export interface UiBootSession {
   uninstall(id: string): void
   /** 已经装上的 rev（HMR 幂等判据：同 rev 忽略）。 */
   installedRev(id: string): string | undefined
+  /**
+   * 把一件「装/卸」排进会话的**安装器队列**。
+   *
+   * 批安装与 HMR 对账都从这里走（参考实现的图同步/重试/单条换装也是同一条队列）：
+   * 两条并行的安装器各自 await 取字节之后都会 apply，第二次就会撞「同一个格子已经有人了」
+   * ——真机走查抓到过：plugins / prompt / sessions 三条报失败，界面其实已经装上了。
+   */
+  enqueue<T>(task: () => Promise<T>): Promise<T>
+  /**
+   * 这一条所属的批还没轮到装（pending / scheduled）。
+   *
+   * 帧对账读它：这类条目**留给批装**，别按单资源抢先装——抢先装会把一条 combo 拆成 N 条
+   * 单资源请求，A3 的取数口径（16 个插件 2 条请求）就没了。
+   */
+  awaitingBatch(id: string): boolean
   /** 服务表（A1）：装载期「谁提供、谁消费」的那张表；`main.tsx` 用它包 ServicesProvider。 */
   readonly services: ServiceRegistry
   /** 卸载全部并停止（页面卸载/失败兜底用）。 */
@@ -271,6 +286,11 @@ export async function createBootSession(
       attempts: 0,
     }
   }
+  /** 条目 → 它那份批状态（`awaitingBatch` 与批安装共用同一批对象，读的就是这一个）。 */
+  const batchStateByEntry = new Map<string, UiBootBatchState>()
+  for (let index = 0; index < batches.length; index += 1) {
+    for (const id of batches[index].entries) batchStateByEntry.set(id, state.batches[index])
+  }
   // 账本先挂上再开始装：探针在任意时刻读到的都是「进行中的真实状态」。
   ;(globalThis as Record<string, unknown>)[BOOT_STATE_GLOBAL] = state
   notifyBootState()
@@ -278,6 +298,24 @@ export async function createBootSession(
   const ledger = new UiArrivalLedger()
   const table = factoryTable()
   const disposers = new Map<string, () => void>()
+  /**
+   * 安装器队列：批安装与 HMR 对账共用这一条。
+   *
+   * 为什么必须共用（真机走查抓到过）：SSE 一连上就发初始 `plugins` 帧，它对账的时机与
+   * `startApplication` 推的 application 批常常叠在一起——两条并行安装器各自取完字节都会
+   * `apply` 一遍，第二次撞「同一个格子已经有人了」，于是 plugins / prompt / sessions 三条
+   * 报失败（界面其实已经装上了）。参考实现也正是把图同步、重试、单条换装排进同一条队列。
+   */
+  let installQueue: Promise<unknown> = Promise.resolve()
+  const enqueue = <T,>(task: () => Promise<T>): Promise<T> => {
+    const run = installQueue.then(task)
+    // 一件失败不拖累后面的：队列自己吞掉 rejection（调用方拿到的 run 照常 reject）。
+    installQueue = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
+  }
   // 每调用一次装载一张新表：插件之间「谁提供、谁消费」全部经它（A1）。
   const services = new ServiceRegistry()
   const reports = new Map<string, UiPluginLoadReport>()
@@ -322,6 +360,9 @@ export async function createBootSession(
 
   /** 装一条插件；成功返回 null，失败返回原因（报告与账本都由它写）。 */
   const install = async (entry: UiPluginEntry, attempt: number, mode: 'batch' | 'single' = 'batch'): Promise<string | null> => {
+    // 幂等闸：同一条同 rev 已经装上就当作成功，不再 apply 一遍。重复请求来自队列里两件任务
+    // （批安装 + 帧对账），参考实现的说法是 "identical targets share pending loads"。
+    if (installed.get(entry.id) === entry.rev && reports.get(entry.id)?.ok === true) return null
     const batch = batchByEntry.get(entry.id)
     const phase = batch?.phase ?? 'application'
     // 这个插件的登记账本：中途抛错时按它回滚，重试才不会撞「id 已被占用」。
@@ -484,9 +525,12 @@ export async function createBootSession(
           pending.push({ batch: batches[index], batchState })
         }
         notify()
-        void (async () => {
+        // 批安装排进安装器队列：与 HMR 对账串行（同一刻只有一个安装器在动同一条插件）。
+        void enqueue(async () => {
           for (const item of pending) await installBatch(item.batch, item.batchState)
-        })()
+        }).catch((error: unknown) => {
+          console.error('[ui-shell] 应用批安装出错', error)
+        })
       }
       // 首帧之后挑一个浏览器空闲时刻；没有 requestIdleCallback 的载体用 setTimeout 0。
       const idle = (globalThis as { requestIdleCallback?: (callback: () => void, opts?: { timeout: number }) => number })
@@ -518,6 +562,11 @@ export async function createBootSession(
       setPlugin(id, { state: 'removed', at: Date.now(), error: undefined })
     },
     installedRev: (id) => installed.get(id),
+    enqueue,
+    awaitingBatch: (id) => {
+      const batchState = batchStateByEntry.get(id)
+      return batchState !== undefined && (batchState.state === 'pending' || batchState.state === 'scheduled')
+    },
     services,
     disposeAll: () => {
       for (const [id, dispose] of [...disposers].reverse()) {

@@ -14,9 +14,9 @@
  * 样式归属的剔除在 `boot.ts` 的物化边界上记（`data-dsc-plugin`），`uninstall` 里连坐清理；
  * 共享模块不需要去重（工厂表是壳的模块表、插件的 require 表只有一份 React 等）。
  *
- * 所有对账走一条 promise 队列（参考实现的 `enqueue`）：换装是有序的，前一条没装完
- * 后一条插队会让「卸载 → 装」的交错出怪状态；队列里总是拿**最新**那一帧做目标，
- * 中间被更新帧作废的旧目标自动跳过。
+ * 所有对账走**会话的安装器队列**（`session.enqueue`，不是本模块自己的队列）：批安装与
+ * 对账共用一条，两条并行的安装器才不会有「同刻 apply 同一条插件」的窗口（参考实现的
+ * `enqueue` 同款）。队列里总是拿**最新**那一帧做目标，中间被更新帧作废的旧目标自动跳过。
  *
  * @module dsc-ui-shell/ui-renderer/hmr
  */
@@ -45,7 +45,6 @@ export function startPluginHmr(options: { channel: HostChannel; session: UiBootS
   const failures = new Map<string, PluginSyncFailure>()
   const listeners = new Set<() => void>()
   let stopped = false
-  let queue: Promise<void> = Promise.resolve()
   /** 队列里要追的目标：总是最新一帧。 */
   let latest: HostPluginsFrame | null = null
 
@@ -67,12 +66,16 @@ export function startPluginHmr(options: { channel: HostChannel; session: UiBootS
       options.session.uninstall(id)
       failures.delete(id)
     }
-    // 再按图顺序装新增/换代的：同 rev 直接跳过。
+    // 再按图顺序装新增/换代的：同 rev 直接跳过；批还没轮到的留给批装。
     for (const entry of frame.graph.entries) {
       if (options.session.installedRev(entry.id) === entry.rev) {
         failures.delete(entry.id)
         continue
       }
+      // application 批在首帧的空闲时刻才装，初始 `plugins` 帧往往比它先到：这时按单资源抢装
+      // 会把一条 combo 拆成 N 条单资源请求（A3 的取数口径），也会和批安装撞着 apply 同一条。
+      // 批没轮到的交给批装；批之外的新条目（重建新加进来的）照旧在这里按单资源装上。
+      if (options.session.awaitingBatch(entry.id)) continue
       const reason = await options.session.reload(entry)
       if (reason === null) {
         failures.delete(entry.id)
@@ -85,8 +88,8 @@ export function startPluginHmr(options: { channel: HostChannel; session: UiBootS
 
   const enqueue = (frame: HostPluginsFrame): void => {
     latest = frame
-    queue = queue
-      .then(async () => {
+    void options.session
+      .enqueue(async () => {
         if (stopped) return
         const target = latest
         if (target === null) return
