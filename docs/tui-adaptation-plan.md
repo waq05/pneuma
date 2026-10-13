@@ -32,7 +32,9 @@
 | 计划评审卡 | 新组件 `PlanReviewCard`：标题 + 落盘文件 + 计划全文（超长折叠，`v` 展开收起）；`y` 批准（`answerPlan('approved')`，自动切执行档）、`n` 拒绝、`e` 带反馈拒绝（Composer 进入反馈模式，提交即 `answerPlan('rejected', feedback)`，Esc 取消反馈回卡片）。语义对齐桌面端 TaskDock.PlanReview（批准 / 带反馈退回） | `src/app/PlanReviewCard.tsx`（新）、`App.tsx` |
 | 提问卡 | 新组件 `AskCard`：渲染整批题目（`questions[]`），逐题作答即时提交（`answerQuestion` 按题序收，`ask.ts:175`）。单选按数字键立即作答并推进；多选数字键勾选、Enter（空输入）提交；自由文本直接在 Composer 输入 Enter 提交；Esc 跳过本题（写「（用户跳过了这一题）」，与桌面端 `TaskDock.tsx:225` 同口径） | `src/app/AskCard.tsx`（新）、`App.tsx`、`Composer.tsx` |
 | 审批四档 | `y`=允许一次、`a`=本会话允许、`p`=永久允许（写 policy.rules）、`n`/Esc=拒绝；只渲染卡上 `scopes` 允许的按键，`hardline=true` 只留拒绝。卡片补 `reason`（为何要问）、`risk` 风险档、`policy/mode` 当前档位、`sessionPath`（后台会话来源标注）、内嵌 diff（`+` 绿 `−` 红 hunk 渲染，超长折叠 `v` 展开） | `ApprovalCard.tsx`、`App.tsx`、`theme.ts`（diff 色） |
-| /policy | 内置命令：无参列出四档与当前档，带参切换（readonly/auto-edit/full-access/ai-review，前缀匹配），走 `runtime.setPolicy` | `commands.ts`、`commands-completion.ts` |
+| /policy | 内置命令：无参列出**三档**与当前档，带参切换（readonly/auto-edit/full-access，前缀匹配），走 `runtime.setPolicy` | `commands.ts`、`commands-completion.ts` |
+| /reviewer | 内置命令：无参列出**两档**与当前审阅者，带参切换（user/auto-review，前缀匹配），走 `runtime.setReviewer`——审阅者是与权限模式正交的一轴（要问的事先给谁看） | 同上 |
+| /permission | 内置命令：无参列出**打包权限预设**（沙箱 + 权限模式 + 审阅者三合一）四选一与当前项（不匹配读作「自定义」），带参切换预设名；把档位名误当预设名会给指路提示（用 `/policy` 切档） | 同上 |
 | /effort | 恢复内置命令：无参显示当前档与可选档，带参切换（default/off/low/high/max），走 `runtime.setEffort`（不支持档位的报错已有通道） | 同上 |
 | /review 撞名 | file-review 的同名命令改名 `/file-review`，内置 `/review`（审查工作区改动）回归 | `file-review.ts:365` |
 

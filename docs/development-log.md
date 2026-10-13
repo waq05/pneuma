@@ -4975,3 +4975,131 @@ JSON 字符串里全是 `\n` 转义，读者要的是「改了哪几行」。
   错的是拍与拍之间最长 90 秒。
 ⑤**自检断言写错的前提要单独验**：A3 第一版按「第二轮有 write 卡」写，实际种子里第二轮
   只有思考 + 正文——断言的前提错了，四条一起红，比功能坏了还像坏了。
+
+## 第十六批：权限收敛为三档 + 审阅者正交轴 + 打包权限预设；升权补范围、沙箱降级可配（2026-10-14 凌晨，`3e58c0a`，未发版）
+
+这一批是权限/沙箱模型的一次成体系改造（35 文件、+1560/−192），四块：
+① 权限模式从四档收成三档、把「谁来判断」拆成一根正交轴；② 把沙箱 + 权限模式 + 审阅者
+三根旋钮捆成**打包权限预设**；③ 给升权补上**授权范围**、让两个目标档真正分家；④ 把
+「后端建不起来就降级」改成**可选姿态**。四块互为依据，合在一起才是「安全边界说得清、
+表达得出、放宽有边界」。
+
+### ① 权限模式：四档 → 三档 + 一根正交轴
+
+**为什么拆。** `ApprovalPolicy` 原来是 `readonly / auto-edit / full-access / ai-review` 四选一。
+四选一的问题不在「多一个名字」，在于它把**两根不同的旋钮**钉成了一条单链：「档位有多松」
+（问不问）与「谁来判」（本人还是模型）被压进同一个枚举，于是「只读 + AI 复核」这类组合
+**根本表达不出来**——你只能选 `readonly`（谁都不给判、直接拒）或 `ai-review`（完全访问 +
+模型判），中间那一段是空的。而参考实现里「审批审阅者」本来就是一轴正交量，与审批档位各管各的。
+
+**落地。** `ApprovalPolicy` 收敛为 `readonly | auto-edit | full-access`（`src/contract.ts`），
+新增 `ApprovalReviewer = 'user' | 'auto-review'`。复核落在审批判定链的**第 5.5 层**
+（`src/plugins/approval.ts`）——**跑在自动放行之前**，所以「完全访问 + AI 复核」里每一次走到
+这一步的事都先给模型判官看一眼，与旧 `ai-review` 档**逐字等价**（谁也不自动放行，全过模型）。
+旧偏好值 `ai-review` 由 `src/core/prefs.ts` 的 `LEGACY_AI_REVIEW` 自动迁移成「`full-access`
+档 + `auto-review` 审阅者」这一组合，行为不变（显式写了 reviewer 时以它为准）。
+命令与设置：`/policy` 只管档位（三档，前缀匹配）；**新增 `/reviewer [user|auto-review]`** 管
+审阅者；设置「通用」分区多两个 select（`permissionPreset` / `reviewer`）。
+
+### ② 打包权限预设：三根旋钮捆成一个具名档
+
+**为什么捆。** 三根旋钮（沙箱档位、权限模式、审阅者）各自独立是**对的**——它们管三件不同
+的事——但用户要的是从「我现在打算让模型干多大的活」**一步落**到一组取值上。分开选会拼出
+「完全访问 + 沙箱仍 `workspace-write`」这种自相矛盾的组合。参考实现里预设本来就是「沙箱 +
+审批」一对，dsc 在这一对之上再加审阅者这一轴。
+
+**落地。** 新插件 `src/plugins/permission-presets.ts`（`provide: 'permissionPresets'`），
+**纯表在 `src/core/permission-presets.ts`**（零依赖，探针直读）。出厂四个：
+`read-only`（只读：`read-only` 沙箱 + `readonly` + `user`）/ `workspace`（工作区可写：
+`workspace-write` + `auto-edit` + `user`，**默认**）/ `full-access`（完全访问：
+`danger-full-access` + `full-access` + `user`）/ `auto-review`（AI 复核：`danger-full-access`
++ `full-access` + `auto-review`）。三根旋钮拼不出任何预设时读作 `custom`——**它是推导状态**：
+能停留在上面（在设置页一格一格改就会落到这里），但不能通过接口选它（`use('custom')` 当场抛错
+并给出指路提示）。
+
+写口只调 `sandbox.setMode` 与 `approval.setPolicy/setReviewer`——**「预设只做组合、放宽不了
+安全」是结构上成立的**：预设表里任何一项都写不出违反守卫链的值，三个 setter 自己仍会过校验、
+记审计；灾难地板看一眼命令就拦，不认得预设这回事。沙箱插件缺席时预设服务会**明说「那一半
+没落地」**，不假装整套生效。
+
+命令与旋钮面：`/permission` **不再是 `/policy` 的别名**，改成预设选择器；把档位名误当预设名
+（如 `/permission full-access` 其实想切档）会给一句指路提示。输入区那颗权限旋钮**改切预设**
+（写口仍在原生桥 `usePermissionPreset`，界面通道持续排除这三个写口；读口 `listPermissionPresets`
+放行）。缺省预设写在新偏好键 `defaultPermissionPreset`（空串 = 不按预设走，尊重三根旋钮各自
+的手动取值）。
+
+### ③ 升权：补授权范围，两个目标档真正分家
+
+**原先的洞在两个目标档是死的。** 升权参数 `sandbox_permissions` 写着 `workspace-write` 或
+`danger-full-access`，守卫却**都只 `defer`**（把决定整个推给审批卡）——「在沙箱内放宽写边界」
+与「整个出沙箱」这两种请求在参数与类型上「都接上了」，到了执行那一步却**没有任何区别**：模型
+说「我只想写这一个文件」，落地的却是「这一下不看围栏」。这是一种「看起来接上了、实际没分家」的
+缺口。
+
+**落地。** `src/core/tools/sandbox-args.ts` 新增 `sandbox_scope`（`once` 默认 / `session`），
+与 `sandbox_permissions` + `justification` **成对校验**（只给 scope → `malformed`，守卫按拒处理）。
+两个目标档真正分家：
+
+- `workspace-write` = 留在沙箱内，把这一次的目标并进可写根后**重判**——网络开关、只读子路径、
+  受保护路径照旧生效，仍可能被拒；
+- `danger-full-access` = 这一次跳过沙箱判定。
+
+审批卡新增 `escalation` 视图字段，单起一段摊开「模型请求放宽沙箱：<效果>」+ 理由（壳
+`ui-shell/src/plugins/prompt/ui.tsx` + `.approval-escalation` 样式；终端 `src/app/ApprovalCard.tsx`）。
+
+**会话档的边界**：卡上答「本会话允许」时，`SandboxService.grantSession(sessionPath, roots)` 把
+目标并进**该会话**的可写根（键是会话路径，互不串），`sessionGrants(sessionPath)` 可读。
+**命令类升权与 `danger-full-access` 升权只给「这次允许」**——没有可静态界定的边界就不给会话档
+（比参考实现更保守，是有意的）。
+
+`/sandbox` 读数多了两行：`后端建不起来时：<姿态>`（当前正处在该状态时标出来）与
+`本会话放宽出来的可写根（N）`。
+
+### ④ 沙箱：后端建不起来时的姿态可配
+
+**原先「降级不拒」是明文记录的、与参考实现的分歧。** docker 起不来 / 受限令牌 setup 失败时，
+沙箱**降级为策略围栏继续干**——这条路在文档里一直写着「降级照常执行 + 审批兜底并如实上报」。
+它作为**默认**是对的（个人机器上「没隔离也先把活干完」比「一上来全拒」更合用），但把默认写成
+唯一，等于替用户把「我要真隔离」的需求判死了。
+
+**落地。** `src/core/sandbox/policy.ts` 新增 `SANDBOX_ON_UNAVAILABLE = ['degrade','fail-closed']`，
+配置项 `onUnavailable`（出厂 `degrade`）。`degrade`（默认，=旧行为）降级为策略围栏继续干；
+`fail-closed` 下写与执行类**一律拒**（读照常），拒因规则名 `backend-unavailable`。
+**只对 `docker` / `windows-token` 生效**——它们是「要真隔离」的后端；`policy` 后端的 `partial`
+是**预期状态**（进程内策略围栏本来就不做真隔离），永远不触发这一项。设置分区多一格 select，
+提示段里会写明当前状态。
+
+### 验证（硬证据）
+
+- 三端 typecheck 绿：根 `npx tsc -p tsconfig.json --noEmit`、`pnpm -C ui-shell typecheck`、
+  `pnpm -C desktop typecheck`。
+- `scripts/` 全量探针绿（含新增 `escalation-scope-test.mjs` **18 条**、`permission-presets-test.mjs`
+  **39 条**）；`scripts/remote-e2e.mjs` **83/85**（两项**预存在失败**，与本次无关）。
+- `shots/` 关键探针：`sandbox-check` **219 PASS / 0 FAIL**；`modes-security-check` 由「1 项失败」
+  转**全部通过**（那条 `ctx.get` 断言原来少列了三个合法软依赖名）；`preset-check` /
+  `modes-runtime-smoke` / `m5-integration-check` / `integration-check` / `kernel-boot` 全绿。
+- `pnpm build` + `pnpm build:ui` 产物核验：composer / prompt 客户端 bundle 里含 `permissionPresets` /
+  `approval-escalation`，`lib/plugins/sandbox.js` 含 `grantSession`。
+- 施工中发现并修掉的真 bug：新插件 `permission-presets.ts` 起初 `inject` 少了 `mode` / `session` /
+  `transcript`，运行期会抛「cannot get property ... without inject」（由探针抓出，已补）。
+
+### 诚实边界（这一批）
+
+① **没跑桌面端打包**（`pnpm -C desktop run dist`）；② **没有推送**；③ **没做 GUI 截图走查**。
+④ **旧桌面渲染层（`desktop/src/renderer/ApprovalCard.tsx`）只跟到「审阅者」那一行，没跟升权
+那一段**——这是**有意**的（旧渲染层已拍板不再投入）。走旧渲染层时能看到当前审阅者是谁，
+但看不到「模型请求放宽沙箱」那段；按「已知边界」记。
+⑤ 版本号未动（根 0.6.67、壳 1.2.0），未提示推送、未发版。
+
+### 教训（这一批）
+
+①**「四选一」逼掉的组合，往往正是用户想表达的那一个**：把两根独立的量压进一个枚举，表面是
+少了一个名字，实际是把「只读 + 模型先判」这类组合从语言里删掉了。拆成正交轴之后，旧档位**字面
+等价**于「新轴的一个取值 + 一个新档」——迁移是等价的，不是近似的。
+②**打包预设的价值不在「少点几下」，在消灭自相矛盾的组合**：三根旋钮各自能取的值合法，拼起来
+却可能荒唐。捆成具名档 + 不匹配读作 `custom`，等于把「你拼出的东西可能不是任何一个预设」摆到
+明面上。
+③**「死代码」多半是「只 defer 不执行」**：升权的两个目标档在类型与参数层都「有」，运行起来却
+都只是把决定推给下一层——这种「看起来接上了、实际没分家」的缺口，探针不专门盯就抓不到。
+④**默认值与可选姿态要分清**：「降级不拒」作为默认是对的，但把默认写成唯一，等于替用户判死。
+做成开关、默认不变，两拨人都照顾到，而且分歧从「文档里的一句话」变成「配置里的一格」。

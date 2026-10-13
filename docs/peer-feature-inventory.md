@@ -272,13 +272,13 @@
 - 差距：无后台任务（bash.ts 自认）；无持久终端工具（终端面板是人用的）；read 不支持图片文件；MCP 无 elicitation/resources/prompts。**深度复核**（T34/T35/T36/T37/T38/T46）：read 无字节上限、行长上限与二进制检测（spill 刻意排除 read，成了全系统唯一无防线输出入口）；edit/write 无 CAS 版本校验（读改写窗口静默覆盖第三方修改；write 有 mtime 检测、edit 全裸）；bash 超时丢全部已收输出且无 SIGTERM 优雅档（直接强杀）；MCP server instructions 被丢弃（initialize 响应不接）；PTC 脚本可并发写调用（无 dsh 的写/执行串行屏障；守卫链重入本身复核通过）；web_search 无域过滤（tavily 原生 include_domains 白白不用，对标 codex 成立）
 
 ### 4. 权限与审批 ——【完整，本仓库最重】
-- 双旋钮：协作模式四档（build/plan/explore/quiet）× 权限模式四档（readonly/auto-edit/full-access/ai-review）
+- 双旋钮：协作模式四档（build/plan/explore/quiet）× 权限模式**三档**（readonly/auto-edit/full-access）+ 审阅者**正交轴**（user/auto-review）；另有打包权限预设（沙箱 + 权限模式 + 审阅者三合一：只读 / 工作区可写（默认）/ 完全访问 / AI 复核）
 - 审批裁决四档（allow-once/session/always/reject），键盘 y/s/a/n/Esc，风险动态限档
 - 审批灾难地板（order 5 硬拒 + 白名单 + deny 黑名单 + 熔断 + 无人值守拒）；命令策略引擎（逐段判定 + 前缀 DSL 规则文件 + 加载期自检）
-- AI 审查档（模型逐次判断，失败退人工卡）；安全钩子（规则 + 脚本，fail-closed，mtime 信任名单）；生命周期钩子（codex 12 事件名，8 个接通）
+- AI 复核轴（模型逐次判断，失败退人工卡，与权限模式正交——复核跑在自动放行之前）；安全钩子（规则 + 脚本，fail-closed，mtime 信任名单）；生命周期钩子（codex 12 事件名，8 个接通）
 - 守卫链固定刻度（5 地板/8 沙箱/10 模式/20 安全钩子/25 预览/30 审批）；审计日志 + 密钥遮红
-- 沙箱（codex 路线）：三档 + 可写根白名单 + 受保护路径 + 命令前缀策略 + 一次性升权（sandbox_permissions+justification 成对）+ docker 容器后端；降级照常执行 + 审批兜底并如实上报（193 条自检）
-- Windows 真隔离（受限令牌）不做；无 dsh 式权限预设捆绑（/mode + /sandbox 分开切）
+- 沙箱：三档 + 可写根白名单 + 受保护路径 + 命令前缀策略 + 升权（`sandbox_permissions` + `sandbox_scope`（once/session）+ `justification` 成对；两个目标档**分家**——workspace-write 留在沙箱内、把这次目标并进可写根后重判，danger-full-access 这一次跳过沙箱判定）+ docker 容器后端 + Windows 受限令牌后端；后端建不起来时的姿态可配（degrade 默认降级为策略围栏继续 / fail-closed 写与执行一律拒、读照常）（219 条自检）
+- Windows 真隔离（受限令牌）不做；权限预设已从「无」补成**有**——打包权限预设（沙箱 + 权限模式 + 审阅者三合一），`/mode` 与 `/sandbox` 仍可分开细调
 
 ### 5. diff 与代码审查 ——【完整，0.6.24–0.6.26 三连批刚补齐】
 - 底层 LCS unified diff（diff-text.ts）
@@ -333,7 +333,7 @@
 
 ### Muse Code 独有/领先项（相对 dsh 与 codex）
 1. **手机遥控**：PWA + Web Push/Webhook + 二维码配对 + 逐台设备管理——三家都没有
-2. **审批安全纵深**：灾难地板 + 熔断 + 命令策略引擎逐段判定 + 安全钩子 fail-closed + AI 审查档 + 无人值守拒——比 dsh（ask/never 两档）细
+2. **审批安全纵深**：灾难地板 + 熔断 + 命令策略引擎逐段判定 + 安全钩子 fail-closed + AI 复核轴 + 无人值守拒——比 dsh（ask/never 两档）细
 3. **中文优先**：会话检索 1+2-gram、界面全中文（codex/dsh 主英文）
 4. 用量统计面板（热力图/趋势/环形）
 5. 技能自修 + 台账回滚（self-improve 三闭环 + 老化）

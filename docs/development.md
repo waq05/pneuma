@@ -410,7 +410,9 @@ exe 当**桌面端**跑的时候才要清掉它。
 
 | 名称 | 取值 | 位置 |
 | --- | --- | --- |
-| 权限模式 `ApprovalPolicy` | `readonly`（只读，写和执行一律拒）/ `auto-edit`（写文件放行，执行命令仍要审批）/ `full-access`（动手都要审批）/ `ai-review`（当前模型逐次判断放行，判断失败退回人工审批） | `src/contract.ts:22`，判读在 `src/plugins/approval.ts:280`，档位文案在 `approval.ts:56` |
+| 权限模式 `ApprovalPolicy` | `readonly`（只读，写和执行一律拒）/ `auto-edit`（写文件放行，执行命令仍要审批）/ `full-access`（动手都要审批）。旧的 `ai-review` 已由偏好迁移展开成「`full-access` + 审阅者 `auto-review`」（见下） | `src/contract.ts:38`，判读在 `src/plugins/approval.ts`（档位在前、审阅者复核在第 5.5 层），档位文案在 `approval.ts` |
+| 审阅者 `ApprovalReviewer` | `user`（本人点卡，默认）/ `auto-review`（先给模型判官，判不出来再落人工卡）——**与权限模式正交**的一根轴，决定「要问的事先给谁看」 | `src/contract.ts:56`，复核在 `src/plugins/approval.ts` 第 5.5 层 |
+| 沙箱后端不可用姿态 `SandboxOnUnavailable` | `degrade`（默认，降级为策略围栏继续）/ `fail-closed`（写与执行一律拒，读照常）；只对 `docker` / `windows-token` 生效 | `src/core/sandbox/policy.ts:58` |
 | 思考强度 `EffortLevel` | `default` / `off` / `low` / `high` / `max` | `src/contract.ts:12` |
 | 思考档位 `ThinkingLevel` | `off` / `low` / `high` / `max`（每个模型可只声明其中几档，`default` 不算模型能力） | `src/contract.ts:15` |
 | 档位字段 `ThinkingParam` | `thinking`（发 `thinking:{type}`，只有开关）/ `reasoning-effort`（发 `reasoning_effort`，线上值见 `EffortMap`）/ `none`（不发思考字段）。缺省 `thinking` | `src/contract.ts:23`，映射在 `src/core/model-caps.ts:201` |
@@ -457,7 +459,9 @@ exe 当**桌面端**跑的时候才要清掉它。
 | 技能市场清单缓存 | 1 小时，落在 `~/.dsc/cache/` | `src/core/market.ts:10` |
 | 截图识别标记 | 工具结果文字里含「屏幕物理分辨率」才认定是自己截的图，不误伤别的插件带的图 | `src/plugins/computer-use.ts:72` |
 | 沙箱默认档 | workspace-write：可写根 = 会话 cwd + 沙箱私有临时目录，附加根默认空、网络默认关 | `src/core/sandbox/policy.ts:54-55` |
-| 沙箱一次性升权 | `sandbox_permissions` + `justification` 必须成对，只对本次调用生效 | `src/core/tools/sandbox-args.ts` |
+| 沙箱后端不可用姿态 | `degrade`（默认，降级为策略围栏继续，=旧行为）/ `fail-closed`（写与执行类一律拒、读照常，拒因规则名 `backend-unavailable`）；只对 `docker` / `windows-token` 生效，`policy` 后端的 `partial` 是预期状态、不触发 | `src/core/sandbox/policy.ts:58` |
+| 沙箱升权 | `sandbox_permissions` + `sandbox_scope`（`once` 默认 / `session`）+ `justification` **成对校验**（只给 scope 或半截 → 按拒处理）；`workspace-write` = 留在沙箱内、把这次目标并进可写根后**重判**，`danger-full-access` = 这一次跳过沙箱判定；「本会话允许」只对「留在沙箱内」这一类给会话档（命令类与出沙箱档只给这一次） | `src/core/tools/sandbox-args.ts`、`src/plugins/sandbox.ts`（`grantSession` / `sessionGrants`） |
+| 出厂权限预设 | `read-only` / `workspace`（默认）/ `full-access` / `auto-review`（沙箱 + 权限模式 + 审阅者三合一）；三根旋钮拼不出预设时读作 `custom`（推导状态，能停留、不能选）；缺省档偏好键 `defaultPermissionPreset`（空串 = 不按预设走） | `src/core/permission-presets.ts`、`src/plugins/permission-presets.ts` |
 | schedule 最小间隔 | `every` 下限 60 秒 | `src/core/schedule/rule.ts:26` |
 | schedule catch-up 窗口 | 一次性 120 秒；循环取半周期夹在 120 秒 ~ 2 小时，超窗只跑一次不补积压 | `src/core/schedule/rule.ts:29-35` |
 | lsp idle 回收 | 600 秒（设置可调，下限 30 秒） | `src/core/lsp/client.ts:22` |
@@ -523,9 +527,12 @@ exe 当**桌面端**跑的时候才要清掉它。
 2. `full-access` → 直接放行；
 3. `auto-edit` → 三个条件同时成立才自动放行：工具名是 `write` 或 `edit`、参数里取得到路径
    （按 `file_path`→`path`→`target`→`file` 顺序找）、路径落在会话工作目录内；否则弹人工卡；
-4. `ai-review` → 用当前模型问一次（`maxTokens: 200`、思考关掉，只要 ALLOW 或 DENY），
-   问不出来退回人工卡；
-5. 未知模式 → 弹人工卡。
+4. 未知模式 → 弹人工卡。
+
+**另有一层（第 5.5 层，与上面的档位正交）——审阅者**：`auto-review` 时，**每一次走到弹卡
+这一步的事都先给模型判官看一眼**（`maxTokens: 200`、思考关掉，只要 ALLOW 或 DENY）：判放行就
+直接过、判高风险或判不出来才落人工卡；`user`（默认）则直接弹卡。复核跑在自动放行**之前**，
+所以「`full-access` + `auto-review`」与旧的 `ai-review` 档**逐字等价**——谁也不自动放行，全过模型。
 
 **审批有超时**：挂起的审批等 `approval.approvalTimeoutMs`（缺省 300 秒，夹在 10 秒~1 小时，
 每次弹卡现读），到点按拒绝结算（`src/plugins/approval.ts:172`）；本轮被中断也按拒绝结算。

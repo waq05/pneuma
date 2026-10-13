@@ -50,7 +50,7 @@
 
 ## 2. dsc 现状（一句话，细节见 development.md）
 
-dsc 已具备：自研 ReAct 循环、OpenAI 兼容流式客户端（reasoning / tool_calls / usage / 重试）、会话 JSONL 落盘与重放恢复、会话库（归档 / 置顶 / 改名 / 分叉 / 回收站）、六件套工具（bash / read / write / edit / glob / grep）、四档权限模式（readonly / auto-edit / full-access / ai-review）、保头折尾摘要压缩（含重放折叠与锚点加固）、todo / plan / ask / goal、九个官方可开关插件（默认开：网页搜索、审批灾难地板、大输出溢出、会话全文检索；默认关：智能体团队、电脑操作、生命周期钩子、MCP 客户端、工具渐进披露）、安全钩子（用户自登记的规则与脚本，四个事件）、技能系统与技能市场、外部单文件插件系统、Electron 桌面端（终端 / 浏览器 / 文件 / git dock）、主题引擎、模型能力字段、AGENTS.md 说明书预算注入。
+dsc 已具备：自研 ReAct 循环、OpenAI 兼容流式客户端（reasoning / tool_calls / usage / 重试）、会话 JSONL 落盘与重放恢复、会话库（归档 / 置顶 / 改名 / 分叉 / 回收站）、六件套工具（bash / read / write / edit / glob / grep）、三档权限模式（readonly / auto-edit / full-access）+ 审阅者正交轴（user / auto-review）+ 打包权限预设（沙箱 + 权限模式 + 审阅者三合一：只读 / 工作区可写 / 完全访问 / AI 复核）、保头折尾摘要压缩（含重放折叠与锚点加固）、todo / plan / ask / goal、九个官方可开关插件（默认开：网页搜索、审批灾难地板、大输出溢出、会话全文检索；默认关：智能体团队、电脑操作、生命周期钩子、MCP 客户端、工具渐进披露）、安全钩子（用户自登记的规则与脚本，四个事件）、技能系统与技能市场、外部单文件插件系统、Electron 桌面端（终端 / 浏览器 / 文件 / git dock）、主题引擎、模型能力字段、AGENTS.md 说明书预算注入。
 
 dsc 的插件扩展点（`src/core/plugin-registry.ts:71`，`KERNEL_API_VERSION = 4`）已经很够用：`tools.register`、`commands.register`、`prompt.register + transformMessages`、`guards.register + registerObserver`、`surfaces.register`、`waiting.register`、`session.appendState / state`、`events.on`、`settings.defineSection`、`skills.source`、`transcript.system`。这份清单决定了「哪些能力不改内核就能挂」。
 
@@ -79,7 +79,7 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:71`，`KERNEL_API_VERSION 
 | PTC（模型写代码调工具） | ● | ● | ● | ● | 已落地；同进程 node:vm，隔离弱于 dsh 的子进程运行时（有意取舍，见 development-log 阶段 33） |
 | 会话 checkpoint / rewind | ⊘ | ● | ● | ● | 有意不做；与 T26（部分行接受）同族，见 §7.2 |
 | 子代理级联派生 | ⊘ | ◐ | ● | ● | 有意限 1 层，见 §6 |
-| 细粒度执行策略 | ● | ● | ● | ● | 已补（T2）：四档之外加了灾难地板、命令白名单与 deny 黑名单 |
+| 细粒度执行策略 | ● | ● | ● | ● | 已补（T2）：权限档位之外加了灾难地板、命令白名单与 deny 黑名单 |
 | 大输出溢出 spill | ● | ◐ | ◐ | ● | 已补（T3） |
 | 可观测性（otel） | ○ | ● | ◐ | ● | 个人版低优先 |
 | diff 审查链（轮尾聚合卡 / 右栏面板 / 悬停预览 / intended diff / 审批内嵌 / git 页签） | ● | ◐ | — | ● | 0.6.24–0.6.26 三连批补齐（development-log 阶段 42–44）；codex 的形态是 apply_patch diff 预览 + `/diff`，无轮尾聚合卡 |
@@ -168,7 +168,7 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:71`，`KERNEL_API_VERSION 
 - **验收**：`/compact` 后立即续用与 `--resume` 后，送入模型的 token 都保持压缩后水平；含 SHA / 路径的关键事实不丢。
 
 #### T2. 审批加固插件（P0，挂 `ctx.guards`，不动内核）
-- **是什么**：在现有四档模式之前叠两层。① **灾难命令地板**：`rm -rf /`、fork bomb、`dd of=/dev/sd*`、引号不可解析等，任何模式（含 full-access / ai-review）都直接拒，fail-closed（参照 `hermes/tools/approval_floors.py:98`、`approval_detection.py:88-128`）。② **用户 deny glob 黑名单**（先于 yolo 生效）。③ **命令白名单**：`git status`、`ls` 等安全前缀自动放行（参照 codex `execpolicy/src/rule.rs` 的命令前缀匹配）。④ 可选：连续被拒 N 次熔断、无人值守（cron / 脚本）场景直接按拒快速失败。
+- **是什么**：在现有权限档位之前叠两层。① **灾难命令地板**：`rm -rf /`、fork bomb、`dd of=/dev/sd*`、引号不可解析等，任何模式（含 full-access）都直接拒，fail-closed（参照 `hermes/tools/approval_floors.py:98`、`approval_detection.py:88-128`）。② **用户 deny glob 黑名单**（先于 yolo 生效）。③ **命令白名单**：`git status`、`ls` 等安全前缀自动放行（参照 codex `execpolicy/src/rule.rs` 的命令前缀匹配）。④ 可选：连续被拒 N 次熔断、无人值守（cron / 脚本）场景直接按拒快速失败。
 - **为什么**：dsc 的 `full-access` 直接放行，没有一层「连满权限也不许」的兜底（`src/plugins/approval.ts:280`）；个人机器误放一条 `rm -rf` 就没了。codex 的白名单与 hermes 的黑名单地板方向互补，dsc 两个都该要。
 - **落点**：`ctx.guards.register({ id, order, decide })`，排在审批（order 30）之前，比如 order 5。白名单 / 黑名单 / 地板都是规则表，走设置分区或独立配置文件。**必须排这么前的原因**是守卫链「第一位给出 deny 或 pass 的赢」：模式闸门（order 10）对只读工具、只读命令与工作区内的写直接返回 pass，它一返回 pass，后面的安全钩子（20）与审批（30）就轮不上；所以「连满权限也不许跑的灾难命令」只能由排在它们前面的一位自己判。
 - **动内核**：否。**难度**：低。
@@ -373,7 +373,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。自检脚本
 以下能力 dsc 领先或独有（出处见 [peer-feature-inventory.md](peer-feature-inventory.md) §三）：
 
 1. **手机遥控全家桶**（PWA + Web Push/Webhook + 二维码配对 + 逐台设备管理）——dsh 只有 `0.0.0.0` 裸暴露 + SSH 隧道，codex 只有 app-server remote；
-2. **审批安全纵深**：灾难地板 + 熔断 + 命令策略引擎逐段判定 + 安全钩子 fail-closed + AI 审查档 + 无人值守拒——dsh 明确只有一次性 allow-once（README 原文），codex 的 granular 档未开放时主要靠沙箱兜底；
+2. **审批安全纵深**：灾难地板 + 熔断 + 命令策略引擎逐段判定 + 安全钩子 fail-closed + AI 复核轴 + 无人值守拒——dsh 明确只有一次性 allow-once（README 原文），codex 的 granular 档未开放时主要靠沙箱兜底；
 3. **中文优先**：会话检索 1+2-gram、界面全中文；
 4. 技能自修 + 台账回滚 + 老化（self-improve 三闭环）；
 5. 会话回收站（30 天可捞回）；
@@ -505,8 +505,8 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。自检脚本
 - **exec_command 统一 exec**（PTY + session 续写 + 交互 stdin）→ 中（T15/T20 的对标）
 - **backtrack**（Esc-Esc 回退到任意 prompt 重编辑）→ 中高（要 turn 级重放语义）
 - **/mention @ 文件提及**（`file-search` crate 弹窗）→ 低（T14）
-- **request_permissions 运行时申请**（文件路径 + 网络，session scope）→ 低-中（dsc 已有 sandbox_permissions 一次性升权，差 session 级授权）
-- **Guardian 自动审查**（隔离审查者复核审批决策，专用模型）→ 中（dsc 的 ai-review 档是简化版）
+- **request_permissions 运行时申请**（文件路径 + 网络，session scope）→ 低-中（dsc 已有 sandbox_permissions 升权：`sandbox_scope` 的 `session` 档把目标并进本会话可写根，其余仍是一次性）
+- **Guardian 自动审查**（隔离审查者复核审批决策，专用模型）→ 中（dsc 的自动复核轴是简化版）
 - app-server 客户端-服务架构（SQ / EQ 队列对 + JSON-RPC v2 + TS 类型生成）→ 架构级
 - code-mode（V8 内嵌，模型写 JS 连续调工具）→ 高，需沙箱
 - 生命周期 hooks 12 事件（`hooks/src/lib.rs:23-36`）→ 低-中
@@ -542,7 +542,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。自检脚本
 dsc（相对路径）：
 - 压缩：`src/core/compact.ts`（`safeCut` 切点 + 摘要拼装）、`src/core/compact-anchors.ts`（锚点索引 / 用户原话 / 找回指针）、重放折叠 `src/core/session.ts` 的 `case 'summary'`；会话列表只读前 8 行 `src/core/session.ts:463-472`
 - 灾难地板 `src/core/approval-floor.ts` + `src/plugins/approval-floor.ts`；溢出 `src/core/spill.ts` + `src/plugins/spill.ts`；MCP `src/core/mcp.ts` + `src/plugins/mcp.ts`；渐进披露 `src/core/tool-search.ts` + `src/plugins/tool-search.ts`；十二事件钩子 `src/core/lifecycle-hooks.ts`；会话检索 `src/core/session-index.ts` + `src/plugins/session-search.ts`
-- 审批四档判定 `src/plugins/approval.ts:280`；守卫链刻度见 development.md §7
+- 审批档位判定与审阅者复核（第 5.5 层）`src/plugins/approval.ts`；守卫链刻度见 development.md §7
 - 扩展点与内核 API 版本 `src/core/plugin-registry.ts:71`；插件配置热生效 `src/core/plugin-registry.ts:165`
 - 防注入围栏（已预留 mcp 来源）`src/core/untrusted.ts:31`
 - 技能只读工具 `src/plugins/skills.ts:345`

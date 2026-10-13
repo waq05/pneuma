@@ -37,6 +37,11 @@
 > （不摊原始 JSON）、git 胶囊补**事件催拍**（回合收工/换工作区）、长会话分页改**按条目数**
 > （≥50 且 ≥2 轮 / ≤500 封顶）并补滚动锚定；顺带修「打开长会话停在最上面」。
 > 这些旧桌面版没有（属「壳补」），与本表「已对齐」不冲突。
+> **第十六批（2026-10-14 凌晨）**：权限模型改口径——权限模式**四档收成三档**、新增**审阅者**正交轴
+> （本人 / AI 复核）、把沙箱 + 权限模式 + 审阅者捆成**打包权限预设**；输入区那颗权限旋钮改切
+> **预设四选一**（不再直接是「权限模式四项菜单」），三根旋钮可在设置 → 通用细调。桥面新增三个
+> 写口（`setReviewer` / `usePermissionPreset` / `setDefaultPermissionPreset`）与一个读口
+> （`listPermissionPresets`），详见「五之四」与 `docs/development-log.md` 第十六批。
 
 ## 一、侧边栏（旧 `Sidebar.tsx` ↔ `plugins/sessions`）
 
@@ -101,7 +106,7 @@
 | --- | --- |
 | 顶栏：会话标题、智能体团队入口、工作区打开组、面板开合钮 | 已对齐 |
 | 输入区：发送/打断、排队条、模型与思考强度、@ 文件提及、贴图、草稿按会话 | 已对齐 |
-| 输入区**权限档位**（旧 `Composer.tsx:475-511` 的 `policyOpen` 菜单 ↔ 壳） | 已修（第八批：壳里原来是一颗 `disabled` 的死按钮；现在四项菜单可切、悬浮给档位说明。写口走原生桥 `NATIVE_OPS.setPolicy`——界面通道按安全闸门理由持续排除，与 `saveProvider` 同一先例。**与 dsh 的有意差异**：dsh 对「完全访问 / AI 复核」加风险确认弹窗，这里按「旧版有的照旧版」不加） |
+| 输入区**权限档位**（旧 `Composer.tsx:475-511` 的 `policyOpen` 菜单 ↔ 壳） | 已修（第八批接回死按钮，**第十六批改口径**：这颗旋钮现在切的是**打包权限预设四选一**——只读 / 工作区可写 / 完全访问 / AI 复核（读 `surfaces.permissionPresets`，不匹配读作「自定义」），不再是「权限模式四项菜单」；权限模式**三档**与审阅者**两档**在设置 → 通用分区各自细调。写口走原生桥 `NATIVE_OPS.usePermissionPreset` / `setPolicy` / `setReviewer`——界面通道按安全闸门理由持续排除，与 `saveProvider` 同一先例。**与参考实现的有意差异**：参考实现对「完全访问 / AI 复核」加风险确认弹窗，这里按「旧版有的照旧版」不加） |
 | 输入区**模式（预设）旋钮** | 已修（第八批：原来把 `listPresets` 的回执当数组用（宿主回的是 `PresetSurface`），点一下 `presets.map` 抛异常、错误边界把整个输入区顶掉——「点预设按钮输入框没了」即此；改为从快照 `surfaces.preset` 读，菜单带「默认 / 有问题」小标） |
 | **状态面板**（正文右上角浮层，对照 ZCode 的「状态」面板） | **壳补**（第八批：胶囊态报「N 个智能体在跑 / 进程 N/M」，面板态分「进程 / 智能体」两节、行是胶囊行（状态点 + 标题 + 时长 + 停止），三档展示策略（自动 / 始终展开 / 始终收起），定位靠哨兵找 `.chat-wrap` 再 portal——不写像素） |
 | 状态栏：轮次·步数、实时耗时、用量与上下文百分比、吞吐读数 | 已对齐 |
@@ -129,6 +134,15 @@
 | --- | --- |
 | 原生桥新增 `setPolicy`（`src/core/native-bridge.ts` + 主进程转发） | 四档枚举校验（`readonly` / `auto-edit` / `full-access` / `ai-review`，`satisfies readonly ApprovalPolicy[]` 保证漏一档编不过）。界面通道的 `UI_EXCLUDED` 条目一并写明「写口去哪了、为什么」——审批策略是安全闸门本身，能改它的仍只有桌面窗口那份文档 |
 | `contentText` / `contentImages` 兜住 `undefined` 与认不出的形状（`src/core/llm.ts:89`） | **自检里撞出的真 bug**：会话文件里一条没有 `content` 的消息（类型上写着非可缺，盘上的老日志却可能没有）会让 `replayHistory` 当场抛异常——用户打开那条会话看到的是一片空白，历史像丢了。这一层的职责是「取文本」，取不到交白卷即可 |
+
+## 五之四、宿主侧配套（第十六批：权限收敛 + 打包权限预设）
+
+| 项 | 说明 |
+| --- | --- |
+| 原生桥 `setPolicy` 的枚举收敛为**三档**（`readonly` / `auto-edit` / `full-access`） | `ApprovalPolicy` 去掉 `ai-review`（`src/contract.ts`）；`satisfies readonly ApprovalPolicy[]` 仍在，漏一档编不过 |
+| 原生桥新增 `setReviewer`（`user` / `auto-review`） | 审阅者是**与权限模式正交**的一根新轴（谁来裁要问的事）；写口与 `setPolicy` 同一条理由住在桥上（安全闸门本身），宿主那侧走 `approval.setReviewer` |
+| 原生桥新增 `usePermissionPreset` / `setDefaultPermissionPreset` | 打包权限预设（沙箱 + 权限模式 + 审阅者三合一）的**选择**与**默认档**；`use('custom')` 被拒——`custom` 是推导状态、不是可选项 |
+| 界面通道新增**读口** `listPermissionPresets`（三个写口继续排除） | 壳画输入区那颗权限旋钮与设置 → 通用那个 select 读它；`UI_EXCLUDED` 里三条写口逐条写明「写口去哪了、为什么」。与 `saveProvider` / `setProviderKey` 同一先例：写口只开在桌面窗口那份文档上 |
 
 ## 六、验证落点（第六批）
 
