@@ -29,10 +29,30 @@
 | 第 5 波 E4 + E6 | `d09a9a6` | 落地（slots / renderer 两个包；转发壳全删；平台种子扩到 10 项，插件产物 −44KB） |
 | 第 6 波 C2 | 既往 | 已在旧轮次落地（第三方 rev = 内容摘要，`ui-third-party-test` 钉住） |
 | 第 6 波 C3 | `2578935` | 落地（没加载的原因分四档：manifest / clash / version / artifact，界面按档给「下一步」） |
-| 第 7 波 G | — | **只做了冻结那半**：`desktop/src/renderer/FROZEN.md` 与 `scripts/legacy-frozen-check.mjs` 早在 2026-10-11 就在位并全绿。删回落档 / 加「经典待弃」标注要用户拍板（FROZEN.md 自己挂着「一份还是两份 UI」这个决定） |
+| 第 7 波 G | — | **冻结那半在位，其余按用户拍板不动**：`desktop/src/renderer/FROZEN.md` 与 `scripts/legacy-frozen-check.mjs` 早在 2026-10-11 就在位并全绿；用户 2026-10-13 明确「旧桌面版不动」——不删回落档、也不加「经典待弃」标注（保持现状） |
 | 阶段 F | — | 不做（浏览器求值用户代码与 dsc 的信任模型冲突） |
+| 补记·热更真机走查 | `3c27bb3` + `f9d5ba4` | 落地：`scripts/ui-hmr-machine.mjs`（真 Electron + 真宿主 + 真源改动 + 真构建，三轮换装断言）。它当场抓到并修掉**初始帧对账与批安装并发装同一条**的双装（会话加安装器队列 + 帧跳过未轮到的批 + install 幂等闸；取数顺带从 8 条回到 2 条） |
+| 补记·安装器实装走查 | `bf2ab4b` | 落地：`desktop/scripts/installer-walkthrough.mjs`（nsis 静默装 / 隔离启动读读数 / 静默卸 / portable 直跑 / 真实档案指纹不变）+ `png-tools.mjs` / `crop-shot.mjs` |
+| 补记·包间环 | `3c52bb1` | 落地：宿主桥与读色下沉 `ui-primitives`（`native.ts` / `css.ts`）、页 / 视图读 hook 归位 `ui-layout`；[5b] 把 `ui-layout → @dsc/ui` 从「过渡期放行」收成**硬禁止** |
+| 补记·插件作者口子 | `2a20439` | 落地：第三方 tsconfig 配方（七条落点表 + `vite/client`，**照它建的工程 tsc 零错**）、`inject` 同名优先级（文档 + [6] 两条断言）、`children` 扩展点边界（§10.8） |
 
 施工方式：五条只读侦察/施工线在 git worktree 里并行（`.worktrees/w2|w3|w5|w6|w7`），主代理逐条审 diff、解 rebase 冲突、并统一跑电池与桌面端到端。
+
+**还剩的欠账（2026-10-13 傍晚，按价值排）**
+
+1. 深层的桌面自检（`desktop/shots/ui-batch8-check.ps1`，37 项）本批**未重跑**：它要窗口可见
+   （原生控件条要整屏抓），会抢前台焦点，而用户当天正在用机器。等价的替代覆盖见「隐藏窗口的
+   桌面形态直跑（16/16 + 桥在场）」与真机热更走查，但断言细度不同——前者覆盖对话流 / 输入区 /
+   状态面板 / 队友页签那些 UI 行为。要重跑：`pwsh -NoProfile -File desktop/shots/ui-batch8-check.ps1`
+   （约 4 分钟，会抢焦点）。
+2. 热更的**样式剔除**只覆盖「物化时插进页面」的 `<style>`（渲染期由 React 自己插的那部分随
+   卸载走；由 effect 手插 `head` 的那类不在剔除范围）——与参考实现同一口径。
+3. `children`（工具卡尾巴）只有示例消费者：**有意保留的扩展点**，不打算在内置里硬塞一行。
+4. E4 的 `AppBootSession` / `AppSyncHandle` 是渲染器会话接口的手抄子集（分叉由入口 tsc 抓）；
+   `createBootSession` 在挂全局后、返回前抛错时的理论行为差（未观测到）。
+5. 第三方作者**没有随 SDK 发布的 `.d.ts`**：有验过的 tsconfig 落点表配方（§10.4.1）。
+6. 手机端（`remote-web`）的壳没有热更——保住「刷新看到新界面」的既有承诺。
+7. 打包态默认不发热更（`DSC_UI_SERVER`/`DSC_UI_HMR` 是开发与自检轨）。
 
 ## 1. 逐条对位
 
