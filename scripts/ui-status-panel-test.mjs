@@ -8,7 +8,8 @@
  *   2. 形态钉——「同一壳收展（morph）」「按宿主宽度裁决而不是 window.innerWidth」
  *      「七个分区的顺序」「Git 本地轮询三档」「预览卡开合延迟」「已结束目录经 teamPanel
  *      服务」这几条只能靠文本钉住（它们是结构约定，不是可单位化的纯函数）；
- *   3. 宿主数据面的文本钉（新 surfaces / stopBackground 白名单 / 计划目录排除待批）。
+ *   3. 宿主数据面的文本钉（新旧 surfaces / stopBackground 白名单 / 计划目录读会话账
+ *      「按会话、不扫盘」/ 后台活按会话筛与归属校验）。
  *
  * 运行：node scripts/ui-status-panel-test.mjs
  *
@@ -221,20 +222,24 @@ console.log('[6] 宿主数据面（文本钉）')
   const uiMethods = read('src/core/ui-methods.ts')
   const hostMethods = read('src/core/host-methods.ts')
   const toolsDefault = read('src/plugins/tools-default.ts')
+  const bashCore = read('src/core/tools/bash.ts')
   const plan = read('src/plugins/plan.ts')
   const schedule = read('src/plugins/schedule.ts')
 
-  check(
-    '契约里有三个新面（scheduled 可缺席）',
+  check('契约里有三个新面（scheduled 可缺席）',
     contract.includes('backgroundWorks: BackgroundWorkView[]') &&
       contract.includes('planDirectory: PlanEntryView[]') &&
       contract.includes('scheduled?: ScheduledTaskView[]'),
   )
   check('stopBackground 三处齐（契约 / 协议白名单 / 界面白名单 + 实参规格）', contract.includes('stopBackground(id: string)') && hostMethods.includes("'stopBackground'") && uiMethods.includes("'stopBackground'") && uiMethods.includes('stopBackground: ['))
   check('backgroundWorks 只出运行中的（作业 + 终端两条都是）', toolsDefault.includes("job.status !== 'running'") && toolsDefault.includes("term.status !== 'running'"))
+  check('backgroundWorks 按当前会话筛（owner 对上才出，切会话互不可见）', toolsDefault.includes('job.owner !== sid') && toolsDefault.includes('term.owner !== sid') && toolsDefault.includes('ctx.session.current().meta.id'))
+  check('停止也按归属校验（不收别家会话的活）', toolsDefault.includes('属于别的会话'))
+  check('归属在起活时写进记录（JobRecord / TerminalRecord 的 owner）', bashCore.includes('owner?: string') && bashCore.includes('table.open(ctx.sessionId)') && bashCore.includes('...(owner === undefined ? {} : { owner })'))
   check('作业完成 / 终端自退都会抖快照', toolsDefault.includes("ctx.emit('dsc/changed')") && toolsDefault.includes('new TerminalTable({ onExit:'))
-  check('计划目录排除待批的那一份', plan.includes('pendingFile') && plan.includes("cardOfCurrent()?.view.file ?? restored?.file"))
-  check('计划目录有 TTL 缓存（快照帧可能很密）', plan.includes('PLAN_DIRECTORY_TTL_MS'))
+  check('计划目录读会话账（不扫盘）', plan.includes("state('plans')?.items") && !plan.includes('readdirSync'))
+  check('终结时入账（批 / 拒 / 中断都写 plans；待批的不在账里）', plan.includes("proposed.appendState('plans'") && plan.includes('PLAN_HISTORY_LIMIT'))
+  check('账按提交时刻倒序（决定隔多久都不乱）', plan.includes('submittedAt') && plan.includes('right.at - left.at'))
   check('工作流区绑的是定点任务（schedule 贡献 scheduled 面）', schedule.includes("ctx.surfaces.register('scheduled'"))
 }
 

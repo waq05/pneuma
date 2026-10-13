@@ -11,7 +11,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { ChatContentPart, ChatMessage, ToolCall } from './llm.js'
-import type { CollaborationMode, PlanView, TodoItemView } from '../contract.js'
+import type { CollaborationMode, PlanHistoryItem, PlanView, TodoItemView } from '../contract.js'
 import type { GoalSnapshot } from './goal.js'
 import { stripBaseline, type FileChangeSummary } from './tools.js'
 import { summarizeChange } from './tools/fs-tools.js'
@@ -114,6 +114,14 @@ export interface SessionStateMap {
   todos: TodoItemView[]
   /** 最近一份计划及其评审结果（plan 插件写）。 */
   plan: PlanView
+  /**
+   * 本会话提交过的计划目录（plan 插件追加，面板「计划」区按会话出条目）。
+   *
+   * 与 `plan` 分开：那条只留最后一份（恢复会话时的挂起卡靠它），这份是**追加式**
+   * 的账——批过拒过都留下，跨重启还在。文件系统里的 `.dsc/plans/` 没有会话归属，
+   * 分不出哪份是谁交的，归属就记在这里。
+   */
+  plans: { items: PlanHistoryItem[] }
   /** 会话目标快照（goal 插件写）。 */
   goal: GoalSnapshot
   /**

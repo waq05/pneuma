@@ -93,23 +93,38 @@ export interface PlanView {
  * 一张「提交过的计划」的目录项（状态面板的「计划」区）。
  *
  * 与 {@link PlanView} 的区别：PlanView 是**正挂着等批**的那一张（含全文），
- * 这份只是目录里的一行读数——dsc 的计划在提交时就落盘（`.dsc/plans/`），
- * 目录因此是「工作区里提交过的计划文件」，跨会话、跨重启都在。
+ * 这份只是目录里的一行读数。dsc 的计划在提交时就落盘（`.dsc/plans/`），
+ * 条目只是「哪份文件、什么标题」的账——这份账按会话记（见 {@link PlanHistoryItem}），
+ * 面板只列本会话提交过的计划（与参考实现「计划目录 = 会话自己的终态计划」同一口径）。
  */
 export interface PlanEntryView {
   /** 计划文件的绝对路径（点一行在右侧栏打开它）。 */
   file: string
-  /** 计划标题（正文首个 # 标题；读不到就回落到文件名）。 */
+  /** 计划标题（提交时从正文首个 # 标题算好）。 */
   title: string
-  /** 文件最后写入时刻（目录按它倒序）。 */
+  /** 提交时刻（目录按它倒序）。 */
   at: number
+}
+
+/**
+ * 会话计划目录里的一条账（plan 插件的 `plans` 状态条目的元素）。
+ *
+ * 为什么要这份账：面板的「计划」区只出**本会话**提交过的计划（对齐参考实现：
+ * 计划目录是会话投影里的终态计划行，切会话互不可见）。文件系统里的 `.dsc/plans/`
+ * 是所有会话共享的回看口、没有归属信息，扫盘分不出谁的——归属只能记在会话自己
+ * 的日志里（appendState 追加进 jsonl，跨重启都在）。
+ */
+export interface PlanHistoryItem extends PlanEntryView {
+  /** 这份计划的评审结果（落账用；面板行不显示——参考实现的面板行同样只有标题）。 */
+  decision: PlanDecision
 }
 
 /**
  * 一项正在跑的后台工作（状态面板的「终端」区）：后台作业或持久终端会话。
  *
- * 只出**运行中**的（与 ZCode 的后台工作列表同口径：收工的由通知与台账负责，
- * 面板不摆历史）。作业表 / 终端表本身是进程级的，这份也就不按会话分。
+ * 只出**运行中**的，且只出**当前查看会话**起的那些（对齐参考实现：后台工作清单
+ * 挂在会话快照上、按会话寻址，切会话互不可见）。收工的由通知与台账负责，
+ * 面板不摆历史。
  */
 export interface BackgroundWorkView {
   /** 作业 id（job-N）/ 终端会话 id（term-N）。 */
@@ -687,9 +702,9 @@ export interface RuntimeSurfaces {
   goal: GoalView | null
   /** 模型发起的提问（ask 贡献）；同一时刻至多一个，它自己可能带一批题目（见 AskUserView.questions）。 */
   pendingQuestion: AskUserView | null
-  /** 正在跑的后台作业与终端会话（tools-default 贡献）；没有就是空数组。 */
+  /** 正在跑的后台作业与终端会话（tools-default 贡献）：只出当前查看会话起的，没有就是空数组。 */
   backgroundWorks: BackgroundWorkView[]
-  /** 提交过的计划目录（plan 贡献）：工作区 `.dsc/plans/` 下的计划文件，最新在前；待批的那份不在其中。 */
+  /** 本会话提交过的计划目录（plan 贡献）：最新在前，上限 12；待批的那份不在其中。 */
   planDirectory: PlanEntryView[]
   /**
    * 定点任务（schedule 贡献）。**可选**：schedule 插件默认关着，

@@ -70,8 +70,10 @@ import {
   ChatStatus,
   IntendedBody,
   IntendedPreview,
+  OpenPathButton,
   TOOLCARD_FACTORY,
   TraceJumpButton,
+  fileTargetOf,
   registerToolCard,
 } from './tool-card/factory'
 
@@ -1191,6 +1193,8 @@ function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matched?: Too
   const summary = toolSummary(call.name, call.argsText)
   const match = matched ?? matchTool(call.name)
   const Icon = match.Icon
+  // 文件类工具这次调用指向的文件（摘要区的可点路径靠它；认不出就是 null）。
+  const targetPath = fileTargetOf(call.name, call.argsText, cwd)
   // 「将做的改动」：write / edit 进行中时从参数 + 盘上现值推演（落地后自动消失）。
   const intended = useIntendedDiff(call, cwd)
   const bodyRef = useRef<HTMLDivElement | null>(null)
@@ -1281,9 +1285,7 @@ function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matched?: Too
         <span className="preview">
           {intended !== null ? (
             <>
-              <span className="tc-path" title={intended.absPath}>
-                {displayPathOf(intended.absPath, cwd)}
-              </span>
+              <OpenPathButton absPath={intended.absPath} cwd={cwd} />
               {intended.file !== null && (
                 <span className="changes-counts">
                   {intended.file.status === 'added' && <span className="diff-badge">新增</span>}
@@ -1294,6 +1296,8 @@ function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matched?: Too
               {intended.mismatch === 'missing' && <span className="tc-warn">old 不在当前文件里</span>}
               {intended.mismatch === 'ambiguous' && <span className="tc-warn">old 匹配多处</span>}
             </>
+          ) : targetPath !== null ? (
+            <OpenPathButton absPath={targetPath} cwd={cwd} />
           ) : (
             summary
           )}

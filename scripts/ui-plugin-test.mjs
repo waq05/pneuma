@@ -1132,6 +1132,12 @@ console.log('\n[5c] 槽位契约表')
     readBundle('transcript').includes('transcript.tool-card') && readBundle('transcript').includes('transcript.toolcard.footer'),
   )
   check('trace 产物含对 transcript.tool-card 的消费点', readBundle('trace').includes('transcript.tool-card'))
+  // 工具卡的「可点路径」（read / write / edit → 右侧文件预览）：类名与落点属性是自检的
+  // 选择器，构建把它们摇掉就没得点了——这里钉产物里这条链还在。
+  check(
+    'transcript 产物含工具卡可点路径（tc-path-btn / data-tc-open）',
+    readBundle('transcript').includes('tc-path-btn') && readBundle('transcript').includes('data-tc-open'),
+  )
 }
 
 // ── 6. A1 服务注入（provide/consume + inject 硬依赖 + 冲突人话）─────────────────

@@ -42,8 +42,11 @@ function readBudgets(passed?: unknown): BashBudgets & { readLineLimit: number } 
 
 export const toolsDefaultPlugin: Plugin.Object = {
   name: 'tools-default',
-  // T15：完成通知走 agent.followup（排队提交一条消息叫模型回来收结果）
-  inject: ['tools', 'settings', 'agent', 'surfaces'],
+  // T15：完成通知走 agent.followup（排队提交一条消息叫模型回来收结果）。
+  // session：后台活清单/停止要按「当前查看会话」筛（0.6.67）；少写进 inject 的话
+  // read 里访问 ctx.session 会静默抛「cannot get property "session" without inject」，
+  // 快照里整个 backgroundWorks 键缺席（surface-registry 把 read 的错吞成「留旧值」）。
+  inject: ['tools', 'settings', 'agent', 'surfaces', 'session'],
   apply(ctx, passed) {
     let budgets = readBudgets(passed)
     /** 当前注册进注册表的清理函数；换预算时先撤旧的再注册新的。 */
@@ -87,17 +90,19 @@ export const toolsDefaultPlugin: Plugin.Object = {
       const line = (text.split('\n', 1)[0] ?? '').trim()
       return line.length > max ? `${line.slice(0, max)}…` : line
     }
-    // 只出**正在跑**的（作业表 / 终端表都是进程级的簿记，面板摆的是现场不是历史；
-    // 收工的由完成通知与台账负责）。作业表不记会话归属，这一份也就不按会话分——
-    // 后台活在界面上只有这一个露出口，按会话过滤反而会有「跑着但谁都看不见」的作业。
+    // 只出**正在跑**的、且**当前查看会话起的**那几条（对齐参考实现：后台工作清单挂在
+    // 会话快照上、按会话寻址，切会话互不可见）。收工的由完成通知与台账负责，面板摆的是
+    // 现场不是历史；不知道归属的调用方（脚本 / 老探针）起的那几条也不出——面板只画会话
+    // 自己的活，归属在 JobRecord / TerminalRecord 的 owner 上（起活时由工具调用身份写入）。
     ctx.surfaces.register('backgroundWorks', (): BackgroundWorkView[] => {
+      const sid = ctx.session.current().meta.id
       const works: BackgroundWorkView[] = []
       for (const job of table.list()) {
-        if (job.status !== 'running') continue
+        if (job.status !== 'running' || job.owner !== sid) continue
         works.push({ id: job.id, kind: 'job', title: workTitle(job.command, 60), startedAt: job.startedAt })
       }
       for (const term of terminals.list()) {
-        if (term.status !== 'running') continue
+        if (term.status !== 'running' || term.owner !== sid) continue
         const sent = workTitle(term.lastSent, 40)
         works.push({
           id: term.id,
@@ -108,18 +113,26 @@ export const toolsDefaultPlugin: Plugin.Object = {
       }
       return works.sort((left, right) => left.startedAt - right.startedAt)
     })
-    // 「收掉一个」的入口（状态面板的停止钮）：开工的路仍在工具面与桌面原生桥，
-    // 这里只有收——与 stopTeammate 同一档（叫停自己起的后台活不新增动作面），
-    // 所以界面通道直接放行；进程收尾原语复用 job_kill 那一套。
+    // 「收掉一个」的入口（状态面板的停止钮）：归属校验按当前查看会话做（参考实现的
+    // 取消也以会话寻址）——面板只列当前会话的活，收也只收它的；开工的路仍在工具面
+    // 与桌面原生桥，这里只有收（与 stopTeammate 同一档，界面通道直接放行）。
     const backgroundWorks: BackgroundWorksService = {
       stop(id: string): string {
+        const sid = ctx.session.current().meta.id
         if (id.startsWith('term-')) {
+          const term = terminals.list().find((item) => item.id === id)
+          if (term !== undefined && term.owner !== undefined && term.owner !== sid) {
+            throw new Error(`终端会话 ${id} 属于别的会话，不收（面板只收当前会话起的活）`)
+          }
           const text = terminals.close(id)
           ctx.emit('dsc/changed')
           return text
         }
         const job = table.get(id)
         if (job === undefined) throw new Error(`没有这个后台作业或终端会话：${id}（列表按面板现取的 id）`)
+        if (job.owner !== undefined && job.owner !== sid) {
+          throw new Error(`后台作业 ${id} 属于别的会话，不收（面板只收当前会话起的活）`)
+        }
         if (job.status !== 'running') return `${id} 已经是 ${job.status}，不用再收`
         table.markKilled(id)
         const stopped = stopBackgroundChild(id)

@@ -401,6 +401,11 @@ export interface JobRecord {
   lastRead: number
   /** 命令会从网上拉内容（输出按不可信内容围栏）。 */
   networkFetch: boolean
+  /**
+   * 发起作业的会话 id（0.6.48 起通知按它归属投递；0.6.67 起面板「终端」区
+   * 按它筛「当前查看会话的活」）。不知道归属的调用方（脚本、老探针）留空。
+   */
+  owner?: string
 }
 
 /** 作业表可选项。 */
@@ -475,6 +480,7 @@ export class JobTable {
       dropped: 0,
       lastRead: 0,
       networkFetch: NETWORK_FETCH_RE.test(command),
+      ...(owner === undefined ? {} : { owner }),
     }
     this.jobs.set(id, job)
     const append = (chunk: string): void => {
@@ -697,6 +703,8 @@ export interface TerminalRecord {
   dropped: number
   /** 上次 read 读到的绝对位置（增量读用）。 */
   lastRead: number
+  /** 开这个会话的会话 id（面板「终端」区按它筛「当前查看会话的活」）。不知道归属的调用方留空。 */
+  owner?: string
 }
 
 /** terminal read 的单次读取结果（形状与 JobOutputView 同族）。 */
@@ -739,8 +747,11 @@ export class TerminalTable {
     return this.sessions.size
   }
 
-  /** 开一个新会话，立即返回会话 id。shell 就地起（它不是一条命令，不经过 planCommand 缝）。 */
-  open(): string {
+  /**
+   * 开一个新会话，立即返回会话 id。shell 就地起（它不是一条命令，不经过 planCommand 缝）。
+   * `owner` = 开会话的会话 id：面板「终端」区按它筛当前查看会话的活（作业的 owner 同义）。
+   */
+  open(owner?: string): string {
     if (this.sessions.size >= TERM_MAX_COUNT) {
       throw new Error(`终端会话已到 ${String(TERM_MAX_COUNT)} 个上限，先用 terminal close 收掉几个，或 list 清点`)
     }
@@ -756,6 +767,7 @@ export class TerminalTable {
       output: '',
       dropped: 0,
       lastRead: 0,
+      ...(owner === undefined ? {} : { owner }),
     }
     this.sessions.set(id, record)
     // 不给模型指定起进程参数的面：会话从宿主进程的目录起，进会话后想在哪工作自己 cd
@@ -895,11 +907,11 @@ export function createTerminalTool(table: TerminalTable): ToolEntry {
       required: ['action'],
     },
     risk: 'exec',
-    async run(args) {
+    async run(args, ctx) {
       const action = String(args.action ?? '')
       switch (action) {
         case 'open': {
-          const id = table.open()
+          const id = table.open(ctx.sessionId)
           return `已开终端会话 ${id}。用 send(data="…\n") 发命令（自带换行才执行），read 读输出（启动需要一两秒，读空了稍等再读）。`
         }
         case 'read': {

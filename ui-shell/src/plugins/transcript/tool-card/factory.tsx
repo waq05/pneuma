@@ -21,6 +21,7 @@ import {
   IconChevronDown,
   IconChevronUp,
   openTrace,
+  setDockPreview,
   type FactoryComponentProps,
   type FactoryLocalProps,
   type ToolCallView,
@@ -68,7 +69,7 @@ declare module '@dsc/ui' {
       }
       slots: {
         /** 头行摘要区：对话页给「将做的改动」预览，轨迹页沿用 summary。 */
-        preview: { props: { intended: IntendedDiff | null; summary: string; cwd: string } }
+        preview: { props: { intended: IntendedDiff | null; summary: string; cwd: string; targetPath: string | null } }
         /** 状态列：父决定耗时口径（中文口径 / 轨迹的 4.2s 口径）。 */
         statusDetail: { props: { call: ToolCallView } }
         /** 展开体里的额外块：对话页给「将做的改动」diff。 */
@@ -135,6 +136,8 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
   const summary = toolSummary(call.name, call.argsText)
   const match = electedMatch ?? matchTool(call.name)
   const Icon = match.Icon
+  // 文件类工具这次调用指向的文件（摘要区的可点路径靠它；认不出就是 null）。
+  const targetPath = fileTargetOf(call.name, call.argsText, cwd)
   // 「将做的改动」：write / edit 进行中时从参数 + 盘上现值推演（轨迹页不做，见 hook 文档）。
   const intended = useIntendedDiff(call, cwd, variant === 'chat')
   const bodyRef = useRef<HTMLDivElement | null>(null)
@@ -224,7 +227,7 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
         <span className="verb">{toolVerb(match.base, call.status)}</span>
         {/* 认不出的工具保留原名：没有它就看不出这是哪家的工具（MCP 那些名字不直观）。 */}
         {match.known ? null : <span className="name">{call.name}</span>}
-        <Preview intended={intended} summary={summary} cwd={cwd} />
+        <Preview intended={intended} summary={summary} cwd={cwd} targetPath={targetPath} />
         <StatusDetail call={call} />
         <Trailing entry={entry} />
         {expandable ? <IconChevronDown size={11} className="tc-chevron" /> : null}
@@ -300,18 +303,68 @@ function NoTrailing(): ReactNode {
 // ── 对话页按 occurrence 选的局部组件 ──────────────────────────────────────────
 
 /**
+ * 文件类工具（read / write / edit）这次调用指向的文件：摘要区那条可点路径的依据。
+ *
+ * 参数名两式都认（dsc 的工具用 `path`；`file_path` 是 MCP 系工具的常见写法）。
+ * 相对路径按会话工作目录拼成绝对路径——预览页签要绝对的（`fs-read` 以工作目录
+ * 为基准做包含校验，本会话的卡都在里面）。认不出（参数没吐全、没有路径字段、
+ * 不是文件类工具）就是 null，摘要照旧纯文本。
+ */
+export function fileTargetOf(name: string, argsText: string, cwd: string): string | null {
+  if (name !== 'read' && name !== 'write' && name !== 'edit') return null
+  try {
+    const args = JSON.parse(argsText) as Record<string, unknown>
+    const raw = [args.file_path, args.path].find(
+      (value): value is string => typeof value === 'string' && value !== '',
+    )
+    if (raw === undefined) return null
+    if (raw.startsWith('/') || /^[A-Za-z]:[\\/]/.test(raw)) return raw
+    if (cwd === '') return raw
+    const sep = cwd.includes('\\') && !cwd.includes('/') ? '\\' : '/'
+    return `${cwd.replace(/[\\/]+$/, '')}${sep}${raw.replace(/^[\\/]+/, '')}`
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 摘要区里的可点路径：点开右侧栏的文件预览页签（页签头上还有「用系统程序打开」，
+ * 要动文件就走那一步）。参考实现的编辑卡文件名同款——点它不折卡（头行整条是
+ * 展开/收起的开关，鼠标与键盘两条路都要挡住冒泡）。
+ */
+export function OpenPathButton({ absPath, cwd }: { absPath: string; cwd: string }): ReactNode {
+  return (
+    <button
+      type="button"
+      className="tc-path tc-path-btn"
+      data-tc-open={absPath}
+      title={`${absPath}（点击在右侧栏预览）`}
+      onClick={(event) => {
+        event.stopPropagation()
+        setDockPreview({ path: absPath, cwd })
+      }}
+      onKeyDown={(event) => {
+        // 只在按键冒泡上挡一层：button 自己的 Enter/Space 激活不受影响。
+        event.stopPropagation()
+      }}
+    >
+      {displayPathOf(absPath, cwd)}
+    </button>
+  )
+}
+
+/**
  * 摘要区：有 intended 就优先摊「将做的改动」预览（路径 + 增删行数 + 参数不匹配提示），
  * 否则回落 summary。这是对话页独有的那张脸（轨迹页不选它，用 fallback 的 summary）。
+ * 路径（intended 的推演目标或文件类工具的调用目标）渲染成可点按钮开预览。
  */
 export function IntendedPreview(props: FactoryLocalProps<typeof TOOLCARD_FACTORY, 'preview'>): ReactNode {
-  const { intended, summary, cwd } = props
+  const { intended, summary, cwd, targetPath } = props
   return (
     <span className="preview">
       {intended !== null ? (
         <>
-          <span className="tc-path" title={intended.absPath}>
-            {displayPathOf(intended.absPath, cwd)}
-          </span>
+          <OpenPathButton absPath={intended.absPath} cwd={cwd} />
           {intended.file !== null && (
             <span className="changes-counts">
               {intended.file.status === 'added' && <span className="diff-badge">新增</span>}
@@ -322,6 +375,8 @@ export function IntendedPreview(props: FactoryLocalProps<typeof TOOLCARD_FACTORY
           {intended.mismatch === 'missing' && <span className="tc-warn">old 不在当前文件里</span>}
           {intended.mismatch === 'ambiguous' && <span className="tc-warn">old 匹配多处</span>}
         </>
+      ) : targetPath !== null ? (
+        <OpenPathButton absPath={targetPath} cwd={cwd} />
       ) : (
         summary
       )}
@@ -364,6 +419,10 @@ export function TraceJumpButton(props: FactoryLocalProps<typeof TOOLCARD_FACTORY
       onClick={(event) => {
         event.stopPropagation()
         openTrace(props.entry.id)
+      }}
+      onKeyDown={(event) => {
+        // 同 OpenPathButton：Enter / Space 的按键冒泡别把卡折了。
+        event.stopPropagation()
       }}
     >
       在轨迹中查看

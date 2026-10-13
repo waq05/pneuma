@@ -4,7 +4,8 @@
  * 功能点自己那四块：
  *   1. 工具 `exit_plan_mode`（把计划写进 `.dsc/plans/` 并弹卡等用户批）；
  *   2. 界面快照里的 `pendingPlan` 投影 + 「正在等人」登记（有卡挂着时别自动往下推）；
- *   3. 会话状态条目 `plan`（恢复会话时那张卡还在）；
+ *   3. 会话状态条目 `plan`（恢复会话时那张卡还在）+ `plans`（本会话的计划目录账，
+ *      状态面板的「计划」区按会话出它，见 apply 里那段注释）；
  *   4. 批准后切回执行档——这是模式服务的事，所以这里声明 `inject: ['mode']` 调它，
  *      而不是反过来让模式偷偷查计划（依赖方向只有一条，依赖图上没有环）。
  *
@@ -15,11 +16,10 @@
  * @module dsc/plugins/plan
  */
 import { mkdir, writeFile } from 'node:fs/promises'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { basename, dirname, join } from 'node:path'
+import { dirname } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
-import { PLAN_SUBDIR, planFilePath } from '../core/modes.js'
+import { planFilePath } from '../core/modes.js'
 import { audit } from '../core/audit.js'
 import type { ToolEntry } from '../core/tools.js'
 import type { PlanDecision, PlanEntryView, PlanView } from '../contract.js'
@@ -31,25 +31,10 @@ interface PlanOutcome {
   feedback?: string
 }
 
-/** 计划目录的条目上限：它是回看口，不是文件管理器；更早的用右侧栏文件树翻 `.dsc/plans/`。 */
+/** 面板「计划」区显示多少条：它是回看口，不是文件管理器；更早的用右侧栏文件树翻 `.dsc/plans/`。 */
 const PLAN_DIRECTORY_LIMIT = 12
-/** 目录扫描的缓存时长（毫秒）：快照帧可能来得很密，读盘按这个节流。 */
-const PLAN_DIRECTORY_TTL_MS = 3_000
-
-/** 计划标题：正文首个 `# 标题`，其次首个非空行，最后回落到文件名（去掉时间戳前缀）。 */
-function planEntryTitle(text: string, file: string): string {
-  for (const raw of text.split('\n')) {
-    const line = raw.trim()
-    if (line === '') continue
-    const heading = /^#\s+(.+)$/.exec(line)
-    const title = (heading?.[1] ?? line).trim()
-    if (title !== '') return title.length > 80 ? `${title.slice(0, 80)}…` : title
-  }
-  const name = basename(file)
-    .replace(/\.md$/i, '')
-    .replace(/^\d{8}-\d{4}-/, '')
-  return name === '' ? basename(file) : name
-}
+/** 会话账里最多存多少条：面板只显示最近 12 条，账多留一些，同时防它无界增长（状态条目整表重写）。 */
+const PLAN_HISTORY_LIMIT = 50
 
 /** 一张活挂起的评审卡。 */
 interface PendingPlanCard {
@@ -96,12 +81,22 @@ export const planPlugin: Plugin.Object = {
           (sessionPath !== undefined ? ctx.get('agent')?.sessionFor(sessionPath) : undefined) ?? ctx.session.current()
         const path = proposed.filePath
         const id = randomUUID()
+        /** 提交时刻：计划目录的账按它排（决定可能隔几分钟才下来，排序得看交的时刻）。 */
+        const submittedAt = Date.now()
         const finish = (decision: PlanDecision, quiet = false): void => {
           const card = pendings.get(id)
           if (card === undefined) return
           pendings.delete(id)
           const settled: PlanView = { ...next, decision }
           proposed.appendState('plan', settled)
+          // 计划目录的账（状态面板「计划」区按会话出它）：终结就入账——批、拒、
+          // 中断清理都算终结（与参考实现「终态计划才进目录」同口径）。待批的不在账里。
+          const history = proposed.state('plans')?.items ?? []
+          proposed.appendState('plans', {
+            items: [...history, { file: next.file, title: next.title, at: submittedAt, decision }].slice(
+              -PLAN_HISTORY_LIMIT,
+            ),
+          })
           ctx.emit('dsc/plan', settled, path)
           // quiet = 退出这类「没人做决定」的清理：卡收掉、状态记成拒绝，不再喊界面。
           if (!quiet) {
@@ -154,58 +149,23 @@ export const planPlugin: Plugin.Object = {
     ctx.surfaces.register('pendingPlan', () => service.pendingPlan())
     ctx.waiting.register('plan', () => pendings.size > 0 || restored !== null)
 
-    // ── 「计划」区（状态面板）：工作区里提交过的计划文件目录 ──────────────────────
+    // ── 「计划」区（状态面板）：本会话提交过的计划目录 ──────────────────────────
     //
-    // 为什么扫盘而不是记内存：计划在提交那一刻就落盘（exit_plan_mode 写 `.dsc/plans/`），
-    // 文件是这件事唯一的持久记录——扫盘因此跨会话、跨重启都在，也不必再维护第二份账。
-    // 审批结果（approved / rejected）只活在会话状态里、一重启就只剩最后一张，所以目录
-    // 不摆状态徽章，只摆条目（ZCode 的计划目录同样只列条目）。
-    // 正在等批的那一张**不进目录**：它挂在输入框上方的评审卡里（pendingPlan），
-    // 目录是「提交过的」的回看口。
-    /** 目录缓存：跨帧复用（帧可能来得很密），TTL 过了或换了工作区才重扫。 */
-    let directoryCache: { dir: string; at: number; entries: PlanEntryView[] } | null = null
-    const directory = (): PlanEntryView[] => {
-      const dir = join(ctx.session.current().meta.cwd, ...PLAN_SUBDIR)
-      const now = Date.now()
-      if (
-        directoryCache !== null &&
-        directoryCache.dir === dir &&
-        now - directoryCache.at < PLAN_DIRECTORY_TTL_MS
-      ) {
-        return directoryCache.entries
-      }
-      let entries: PlanEntryView[] = []
-      try {
-        const pendingFile = cardOfCurrent()?.view.file ?? restored?.file ?? null
-        const files: { file: string; at: number }[] = []
-        for (const item of readdirSync(dir, { withFileTypes: true })) {
-          if (!item.isFile() || !item.name.toLowerCase().endsWith('.md')) continue
-          const file = join(dir, item.name)
-          if (file === pendingFile) continue
-          try {
-            files.push({ file, at: statSync(file).mtimeMs })
-          } catch {
-            // 刚被删掉的文件：这一帧不收它，下一次扫盘自然消失。
-          }
-        }
-        files.sort((left, right) => right.at - left.at)
-        entries = files.slice(0, PLAN_DIRECTORY_LIMIT).map((item) => {
-          let title: string
-          try {
-            title = planEntryTitle(readFileSync(item.file, 'utf8'), item.file)
-          } catch {
-            title = basename(item.file)
-          }
-          return { file: item.file, at: item.at, title }
-        })
-      } catch {
-        // 目录还不存在（这个工作区还没交过计划）或读不动：给空目录，别抛进快照。
-        entries = []
-      }
-      directoryCache = { dir, at: now, entries }
-      return entries
-    }
-    ctx.surfaces.register('planDirectory', directory)
+    // 数据源是会话状态（`plans` 条目，见 finish 里的入账），不扫盘：面板的「计划」区
+    // 与参考实现「计划目录 = 会话自己的终态计划」同一口径——只出本会话的、切会话
+    // 互不可见、跨重启还在（状态条目写在会话 jsonl 里，恢复会话就读回来）。
+    // `.dsc/plans/` 下的文件仍是全工作区共享的回看口（人和 git 看）：它没有会话
+    // 归属，扫盘分不出哪份是谁交的，所以面板不拿它当数据源。
+    // 待批的那张不进目录（只有终结时才入账；挂着的那张在输入框上方的评审卡里）。
+    // 引入这份账之前的老会话没有它——目录空着，不回溯（要翻文件用右侧栏文件树）。
+    ctx.surfaces.register('planDirectory', (): PlanEntryView[] => {
+      const items = ctx.session.current().state('plans')?.items ?? []
+      return items
+        .slice()
+        .sort((left, right) => right.at - left.at)
+        .slice(0, PLAN_DIRECTORY_LIMIT)
+        .map(({ file, title, at }) => ({ file, title, at }))
+    })
 
     const exitPlanTool: ToolEntry = {
       name: 'exit_plan_mode',

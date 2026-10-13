@@ -2056,6 +2056,28 @@
   font-family: var(--dsc-font-mono);
 }
 
+/* 可点的目标路径（read / write / edit 工具卡）：点开右侧栏预览。
+   外形与纯文本一致（字体从 .tc-path 来，字号/行高从父继承），悬停才给可点的提示。 */
+.tc-path-btn {
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  padding: 0;
+}
+
+.tc-path-btn:hover {
+  text-decoration: underline;
+}
+
+.tc-path-btn:focus-visible {
+  outline: 1px solid var(--dsc-accent);
+  outline-offset: 2px;
+}
+
 .tc-warn {
   color: var(--dsc-yellow);
   font-size: var(--dsc-fs-ui);
