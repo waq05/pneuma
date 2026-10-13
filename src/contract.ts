@@ -920,6 +920,19 @@ export interface PluginInfoView {
 }
 
 /**
+ * 第三方界面插件「装不上」的原因分档（`UiTrustView.problem` 的机器可读标签）：
+ *
+ *   - `manifest`：plugin.json 缺失、或没写 api（第三方必须声明区间）；
+ *   - `clash`：id 与内置插件撞名（第三方这份让路）；
+ *   - `version`：api 区间与当前壳不符（含 workspace: 前缀与非法区间）；
+ *   - `artifact`：plugin.json 声明齐了，但 ui/client.js 读不到。
+ *
+ * 为什么要有这一项：`problem` 是给人看的句子，界面按档画「下一步做什么」时**不许去猜
+ * 句子里有没有某个词**——档位在判定现场就知道，由判定的人标出来，两处文案才不互相绑架。
+ */
+export type UiTrustProblemKind = 'manifest' | 'clash' | 'version' | 'artifact'
+
+/**
  * 第三方界面插件的一条状态（插件中心「第三方界面插件」信任卡）。
  *
  * 与宿主插件（`PluginInfoView`）不是一回事：那些住 `~/.dsc/plugins/*.js`，这边是
@@ -941,6 +954,8 @@ export interface UiTrustView {
   enabled: boolean
   /** 现在装不上的原因（缺 plugin.json / 没写 api / 与内置撞名 / api 区间不匹配 / client.js 读不到）；能装时 undefined。 */
   problem?: string
+  /** `problem` 属于哪一档；没有 problem 时 undefined（界面按档给下一步动作）。 */
+  problemKind?: UiTrustProblemKind
 }
 
 /** 一个队友（智能体团队派出去的子智能体）；侧栏「队友」这一档看到的行。 */

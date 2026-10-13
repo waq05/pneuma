@@ -724,6 +724,9 @@ function existsClient(dir: string, name: string): boolean {
  * api 门禁 / 撞名 / 停用 / 信任），差别只在输出形状：那边是「装得上的条目 + 一句句
  * 问题」，这边是**每一条的状态**——插件中心的信任卡要把没信任的那些摊出来给用户确认。
  *
+ * 有 `problem` 的行同时标上 `problemKind`（manifest / clash / version / artifact）：界面
+ * 按档画「下一步做什么」（补声明 / 改名 / 升壳 / 查产物路径），不去猜人话句子里有没有某个词。
+ *
  * 既没有 plugin.json 也没有界面半边的目录（宿主插件的资料目录）不出现。
  *
  * @param shellApiVersion - 当前壳的 `@dsc/ui` 契约版本（内置清单顶层那个）
@@ -765,6 +768,7 @@ export function scanThirdPartyUiTrusts(
     }
     if (doc === null) {
       row.problem = '没有 plugin.json（第三方界面插件必须声明 api 区间）'
+      row.problemKind = 'manifest'
       out.push(row)
       continue
     }
@@ -778,12 +782,19 @@ export function scanThirdPartyUiTrusts(
     }
     if (api === undefined) {
       row.problem = 'plugin.json 没写 api（@dsc/ui 的版本区间，如 "^1.0.0"）——第三方必须声明'
+      row.problemKind = 'manifest'
     } else if (builtinIds.has(name)) {
       row.problem = 'id 与内置插件撞名，这份会被跳过'
+      row.problemKind = 'clash'
     } else {
       const gate = evaluateUiApiGate(api, shellApiVersion)
-      if (gate !== null) row.problem = gate
-      else if (!hasClient) row.problem = 'plugin.json 在，但 ui/client.js 读不到'
+      if (gate !== null) {
+        row.problem = gate
+        row.problemKind = 'version'
+      } else if (!hasClient) {
+        row.problem = 'plugin.json 在，但 ui/client.js 读不到'
+        row.problemKind = 'artifact'
+      }
     }
     out.push(row)
   }

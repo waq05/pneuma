@@ -691,6 +691,14 @@
   display: flex;
   gap: 8px;
 }
+/* 装不上的「下一步」：常驻在原因下面（原因那行是单行省略，动作要完整可读，所以
+   正常换行、不吃 ellipsis），色与 .group-hint 同一档。 */
+.trust-next {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+  line-height: 1.6;
+  margin-top: 2px;
+}
 
 /* ══════════ 窄屏（手机浏览器：含「手机端 remote-web 切壳」后的形态）══════════ */
 

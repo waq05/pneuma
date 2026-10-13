@@ -78,6 +78,8 @@ interface TrustRow {
   trustedAt?: number
   enabled: boolean
   problem?: string
+  /** `problem` 属于哪一档（宿主 `problemKind`）：界面按档说「没加载的原因 + 下一步」。 */
+  problemKind?: 'manifest' | 'clash' | 'version' | 'artifact'
 }
 
 export default defineUiPlugin({
@@ -428,9 +430,50 @@ function PluginCard({
 }
 
 /**
+ * 第三方界面插件「没加载」的档名与下一步：与宿主 `problemKind` 一一对齐。
+ *
+ * 为什么档位由宿主标、动作写在界面：判定（api 区间对不上 / client.js 读不到…）在宿主侧
+ * 现场就知道档位，界面不该去猜那句人话里有没有某个词；而「下一步做什么」是界面文案，
+ * 换宿主版本不该牵动它。三档各有出口：版本→升壳或改区间、产物→查产物路径、
+ * 未信任→卡片上的「查看并信任」（另走 `trusted` 字段，不是 problem 的一种）。
+ */
+const TRUST_PROBLEM_TIERS = {
+  version: {
+    label: '版本不满足',
+    next: '升级宿主（壳）到满足插件声明的 @dsc/ui 区间，或请插件作者把 plugin.json 的 api 改成当前壳支持的区间。',
+  },
+  artifact: {
+    label: '读不到产物',
+    next: '检查 ~/.dsc/plugins/<目录名>/ui/client.js 是否在位、可读（目录名与文件名大小写要一字不差），缺了就重新安装这份插件。',
+  },
+  manifest: {
+    label: '清单缺声明',
+    next: '检查 ~/.dsc/plugins/<目录名>/plugin.json：文件要在，且写 api（如 "^1.0.0" 的 @dsc/ui 区间）。',
+  },
+  clash: {
+    label: '与内置插件撞名',
+    next: '把插件目录改名，不要与内置插件的 id 相同。',
+  },
+} as const satisfies Record<NonNullable<TrustRow['problemKind']>, { label: string; next: string }>
+
+/** 宿主没标档（更老的宿主）时的兜底：不猜，照原文让用户自己去看目录。 */
+const UNKNOWN_TRUST_PROBLEM = {
+  label: '装不上',
+  next: '照上面的原因检查 ~/.dsc/plugins/<目录名>/ 里的 plugin.json 与 ui/client.js。',
+} as const
+
+/** 一行问题的档：有标用标，没标给兜底。 */
+function trustProblemTier(kind: TrustRow['problemKind']): { label: string; next: string } {
+  return kind === undefined ? UNKNOWN_TRUST_PROBLEM : TRUST_PROBLEM_TIERS[kind]
+}
+
+/**
  * 第三方界面插件的一张信任卡：卡体复用行样式，没答过信任的摊开能力披露让用户答一次，
  * 答过的给启停开关。披露文案对着 `/ui-trust` 的能力面口径写（契约区间 / 载体 /
  * 两条通用能力 / 生效时机）——卡片与命令说的是同一件事。
+ *
+ * 装不上的行按宿主标的档分开说：行里是「⚠ 档名：判定依据」，下面一行常驻
+ * 「下一步」（升壳 / 查产物路径 / 补声明 / 改名）——原因与动作得同时看见。
  */
 function TrustCard({
   row,
@@ -449,6 +492,14 @@ function TrustCard({
 }): ReactNode {
   const hello = useHostChannel().getHello()
   const trustedAt = row.trustedAt === undefined ? '' : `（${new Date(row.trustedAt).toLocaleDateString()}）`
+  // 装不上的档（problem 才存在）：行里放档名 + 判定依据，行下常驻下一步。
+  const tier = row.problem === undefined ? null : trustProblemTier(row.problemKind)
+  const desc =
+    row.problem !== undefined && tier !== null
+      ? `⚠ ${tier.label}：${row.problem}`
+      : row.trusted
+        ? '已确认信任，可以启停（停用或启用都在刷新页面后生效）'
+        : '未信任：还没有信任记录——首次安装需要在插件中心确认一次（它将能调用宿主的界面方法）'
   return (
     <div className="trust-card" data-trust={row.name}>
       <div className={`plugin-row${row.enabled ? '' : ' off'}`}>
@@ -462,13 +513,8 @@ function TrustCard({
             <span className="plugin-apiver">{row.platforms.join('/')}</span>
             {row.trusted ? <span className="plugin-apiver">已信任{trustedAt}</span> : null}
           </div>
-          <div className={`plugin-desc${row.problem !== undefined ? ' problem' : ''}`}>
-            {row.problem !== undefined
-              ? `⚠ ${row.problem}`
-              : row.trusted
-                ? '已确认信任，可以启停（停用或启用都在刷新页面后生效）'
-                : '还没有信任记录——首次安装需要在插件中心确认一次（它将能调用宿主的界面方法）'}
-          </div>
+          <div className={`plugin-desc${row.problem !== undefined ? ' problem' : ''}`}>{desc}</div>
+          {tier !== null ? <div className="trust-next">下一步：{tier.next}</div> : null}
         </div>
         {row.problem === undefined && !row.trusted ? (
           <button type="button" className="btn-primary" onClick={onOpen}>

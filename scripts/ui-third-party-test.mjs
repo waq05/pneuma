@@ -1,5 +1,6 @@
 /**
- * 阶段 7c 探针：第三方界面插件——发现、启停、信任门、内容摘要 rev、伺服、TUI 装载。
+ * 阶段 7c/管理面探针：第三方界面插件——发现、启停、信任门、内容摘要 rev、伺服、
+ * TUI 装载，以及信任卡数据源（`scanThirdPartyUiTrusts`）把「没加载」分成三档。
  *
  * 目录形状：`~/.dsc/plugins/<目录名>/`，`ui/client.js` 是界面半边，`plugin.json`
  * 声明 `api`（必填）与可选 `platforms`。启停用 plugins.json 的 entries（键
@@ -19,7 +20,7 @@ process.env.HOME = home
 process.env.USERPROFILE = home
 process.env.DSC_HOME = join(home, '.dsc')
 
-const { discoverThirdPartyUiArtifacts, collectUiArtifactsForPlatform } =
+const { discoverThirdPartyUiArtifacts, collectUiArtifactsForPlatform, scanThirdPartyUiTrusts } =
   await import('../lib/core/ui-bundles.js')
 const { resolveUiBundleRequest } = await import('../lib/core/ui-route.js')
 const { trustUiPlugin, readPluginEntries, writePluginEnabled, readUiPluginTrust } = await import(
@@ -95,6 +96,37 @@ mkThird('both-platforms', '^1.0.0', ['web', 'tui'])
   check('没写 api 的目录被点名拒绝', report.problems.some((line) => line.includes('no-api') && line.includes('api')))
   check('区间不满足的目录被门禁拒绝', report.problems.some((line) => line.includes('greedy') && line.includes('已跳过加载')))
   check('未信任的目录被点名等待确认', report.problems.some((line) => line.includes('还没有信任记录')))
+}
+
+// ── 管理面：信任卡数据源（`scanThirdPartyUiTrusts`）把「没加载」分档 ─────────────
+// 计划 C3：界面上要**分开**说清三档（版本不满足 / 未信任 / 读不到产物），每档一句人话
+// 加下一步动作。界面按 `problemKind` 画档名与动作，所以档位必须在数据里分开、且不许
+// 哪天退化回「一句混话」——这三条断言就是钉这个事实的。
+{
+  // ghost：plugin.json 声明齐了但 ui/client.js 不在 → 「读不到产物」档
+  mkdirSync(join(thirdRoot, 'ghost', 'ui'), { recursive: true })
+  writeFileSync(join(thirdRoot, 'ghost', 'plugin.json'), JSON.stringify({ api: '^1.0.0' }), 'utf8')
+  const views = scanThirdPartyUiTrusts('1.0.0', new Set(['builtin-one']))
+  const byName = (name) => views.find((view) => view.name === name)
+  const greedy = byName('greedy')
+  const noApi = byName('no-api')
+  const ghost = byName('ghost')
+  const good = byName('good-ui')
+  check(
+    '数据层：三档 problemKind 分开（version / manifest / artifact）',
+    greedy?.problemKind === 'version' && noApi?.problemKind === 'manifest' && ghost?.problemKind === 'artifact',
+    JSON.stringify(views.map((view) => [view.name, view.problemKind])),
+  )
+  check(
+    '未信任是独立状态（problem 为空、trusted=false），不是 problem 的一种',
+    good !== undefined && good.problem === undefined && good.problemKind === undefined && good.trusted === false,
+  )
+  check(
+    '分档文案各咬自己的事实：版本档要升壳依据、产物档点名 client.js、清单档点名 api',
+    (greedy?.problem ?? '').includes('@dsc/ui') && (greedy?.problem ?? '').includes('已跳过加载') &&
+      (ghost?.problem ?? '').includes('ui/client.js') && (ghost?.problem ?? '').includes('读不到') &&
+      (noApi?.problem ?? '').includes('api'),
+  )
 }
 
 // 信任 good-ui 与 both-platforms（信任确认动作的落点）
