@@ -111,10 +111,10 @@ ${entries.map(([id, v]) => `  '${id}': { body: ${JSON.stringify(v.body)}${v.widt
 }
 `
 
-// 两份产物：桌面渲染层（旧界面）与界面壳的平台层（新界面）——同一次生成，两个界面同图标。
+// 两份产物：桌面渲染层（旧界面）与界面壳的基元包（新界面）——同一次生成，两个界面同图标。
 const targets = [
   { file: join(desktopRoot, 'src', 'renderer', 'file-icon-map.generated.ts'), where: '旧渲染层的 file-icons.tsx 使用' },
-  { file: join(desktopRoot, '..', 'ui-shell', 'src', 'platform', 'file-icon-map.generated.ts'), where: '界面壳的平台层 FileIcon 使用' },
+  { file: join(desktopRoot, '..', 'ui-shell', 'src', 'ui-primitives', 'file-icon-map.generated.ts'), where: '界面壳的 @dsc/ui-primitives FileIcon 使用' },
 ]
 for (const target of targets) {
   writeFileSync(target.file, `${header(target.where)}\n${body}`)
