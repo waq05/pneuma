@@ -4,7 +4,8 @@
  * 为什么单开一条电池：`ui-status-panel-test.mjs` 钉的是壳侧纯逻辑与文本形态；
  * 「宿主到底算不算得出这些数」只有把真内核起起来才验得了——git 的增删行数、
  * 计划目录的会话账（提交→批/拒→入账→切会话不可见）、后台作业 / 终端会话
- * 按会话进出清单与收掉、定点任务进「工作流」面。
+ * 按会话进出清单与收掉、定点任务进「工作流」面、**空仓库（HEAD 未出生）里的
+ * diff 与未跟踪合成预览**。
  *
  * 隔离：临时 HOME + 临时工作区（真 `git init` 的仓库），不碰真实 ~/.dsc。
  *
@@ -75,6 +76,26 @@ const sessionB = join(sessionDir, 'bbbbbbbb-cccc-dddd-eeee-ffff00001111.jsonl')
 writeFileSync(
   sessionB,
   `${JSON.stringify({ type: 'meta', id: 'bbbbbbbb-cccc-dddd-eeee-ffff00001111', cwd: ws, createdAt: 2 })}\n${JSON.stringify({ type: 'user', text: '另一个会话' })}\n`,
+  'utf8',
+)
+
+// ── 第二个工作区：`git init` 之后一次没提交（HEAD 未出生）。用户报障现场的复刻：
+//    没有 HEAD 时 `git diff HEAD` 直接报「ambiguous argument 'HEAD'」，面板上就是那段
+//    原始 fatal；未跟踪的条目又都没有 diff，于是「一点都看不到改动」。────────────
+const wsNone = join(home, 'ws-none')
+mkdirSync(join(wsNone, 'sub'), { recursive: true })
+const gitNone = (...args) => execFileSync('git', args, { cwd: wsNone, stdio: 'pipe', windowsHide: true })
+gitNone('init', '-q')
+writeFileSync(join(wsNone, '中文 名.txt'), 'one\ntwo\nthree\n', 'utf8')
+writeFileSync(join(wsNone, 'bin.dat'), Buffer.from([0x41, 0x00, 0x42, 0x43]), 'utf8')
+writeFileSync(join(wsNone, 'big.txt'), `${'x'.repeat(600 * 1024)}\n`, 'utf8')
+writeFileSync(join(wsNone, 'empty.txt'), '', 'utf8')
+writeFileSync(join(wsNone, 'sub', 'inner.txt'), 'inner\n', 'utf8')
+// 会话 C：cwd 钉在 ws-none（同样不提交——「没有 HEAD」这半边也一起复刻）
+const sessionC = join(sessionDir, 'cccccccc-dddd-eeee-ffff-000011112222.jsonl')
+writeFileSync(
+  sessionC,
+  `${JSON.stringify({ type: 'meta', id: 'cccccccc-dddd-eeee-ffff-000011112222', cwd: wsNone, createdAt: 3 })}\n${JSON.stringify({ type: 'user', text: '空仓库会话' })}\n`,
   'utf8',
 )
 
@@ -220,6 +241,57 @@ console.log('[4] 定点任务（schedule 贡献 scheduled，「工作流」区�
     Array.isArray(scheduled) && scheduled.length === 1 && scheduled[0].title === '探针任务' && typeof scheduled[0].nextRunAt === 'number' && scheduled[0].enabled === true,
     JSON.stringify(scheduled),
   )
+}
+
+console.log('[5] 空仓库（HEAD 未出生）：diff 不报错 + 未跟踪按内容合成')
+{
+  const session = kernel.get('session')
+  const dock = kernel.get('dock')
+  await session.open(sessionC)
+
+  const status = await dock.handle('git-status', { stats: true })
+  check('空仓库也读得出状态（分支给占位名，不抛）', status.branch === '(无提交)', status.branch)
+  check(
+    '未跟踪条目原样给（非 ASCII 路径不带 C 引号转义）',
+    status.untracked.includes('中文 名.txt'),
+    JSON.stringify(status.untracked),
+  )
+  check('未跟踪的目录整条收录（`sub/`）', status.untracked.includes('sub/'), JSON.stringify(status.untracked))
+  check('脏文件数 = 5（4 个文件 + 1 个目录条目）', status.dirtyFileCount === 5, String(status.dirtyFileCount))
+  check('空仓库的增删行数不炸（没有可比的东西，就是 0）', status.added === 0 && status.removed === 0, JSON.stringify(status))
+
+  // 全量：tracked 段为空，未跟踪的合成段补上；合成不出来的（二进制 / 过大 / 空 / 目录）报条数
+  const all = await dock.handle('git-diff', {})
+  check('「全部改动」不再吐 HEAD 的原始报错', typeof all.diff === 'string' && !all.diff.includes('ambiguous argument'), all.diff.slice(0, 120))
+  check(
+    '未跟踪文件合成出「全是新增行」的段（全 5 条里只有它合成得了）',
+    all.diff.includes('+++ b/中文 名.txt') && all.diff.includes('@@ -0,0 +1,3 @@') && all.diff.includes('+one'),
+    all.diff.slice(0, 200),
+  )
+  check('合成不出来的一条条数报在 note 里', all.note.includes('另有 4 个未跟踪条目'), all.note)
+
+  const one = await dock.handle('git-diff', { file: '中文 名.txt' })
+  check('单点未跟踪文件：合成 patch（`--- /dev/null` + 新文件头）', one.diff.includes('--- /dev/null') && one.diff.includes('+++ b/中文 名.txt'), one.diff.slice(0, 160))
+  check('单点的还是干净的一段（不带 note）', (one.note ?? '') === '')
+  const binary = await dock.handle('git-diff', { file: 'bin.dat' })
+  check('二进制未跟踪：给说明不出 diff', binary.diff === '' && binary.note.includes('二进制'), JSON.stringify(binary))
+  const big = await dock.handle('git-diff', { file: 'big.txt' })
+  check('超过 512KB 的未跟踪：给说明不出 diff', big.diff === '' && big.note.includes('512KB'), big.note)
+  const empty = await dock.handle('git-diff', { file: 'empty.txt' })
+  check('空文件：给说明不出 diff', empty.diff === '' && empty.note.includes('空文件'), empty.note)
+  const dir = await dock.handle('git-diff', { file: 'sub/' })
+  check('未跟踪目录整条：给说明不出 diff', dir.diff === '' && dir.note.includes('未跟踪目录'), dir.note)
+
+  // tracked 那一半：暂存起来（HEAD 依然没有），单文件 diff 就该走 `diff --cached`
+  gitNone('add', '中文 名.txt')
+  const staged = await dock.handle('git-diff', { file: '中文 名.txt' })
+  check('空仓库里暂存后的单文件 diff 也出得来（无 HEAD 走 `diff --cached`）', staged.diff.includes('+two'), staged.diff.slice(0, 200))
+  const after = await dock.handle('git-status', { stats: true })
+  check('暂存后增删行数算得出来（加 3）', after.added === 3 && after.removed === 0, JSON.stringify({ added: after.added, removed: after.removed }))
+  check('已暂存分组里有它（`A` 前缀 + 原样路径）', after.staged.some((line) => line.startsWith('A ') && line.includes('中文 名.txt')), JSON.stringify(after.staged))
+  check('暂存后它不再算未跟踪', !after.untracked.includes('中文 名.txt'), JSON.stringify(after.untracked))
+
+  await session.open(sessionFile)
 }
 
 console.log('')

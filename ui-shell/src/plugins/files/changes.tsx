@@ -47,9 +47,10 @@ export function ChangesPanel(): ReactNode {
   const [error, setError] = useState('')
   /**
    * 底部 diff 视图：点文件行（或「全部改动」）展开，再点一次收起。
-   * `file === null` = 全量未提交改动。
+   * `file === null` = 全部未提交改动。
+   * `note` = 宿主对这一段的一句说明（未跟踪的二进制 / 过大 / 目录条目合成不出 diff）。
    */
-  const [diff, setDiff] = useState<{ file: string | null; loading: boolean; text: string } | null>(null)
+  const [diff, setDiff] = useState<{ file: string | null; loading: boolean; text: string; note: string } | null>(null)
   /** 提交信息的草稿（遵循 feat:/fix:/chore: 规范的占位提示）。 */
   const [message, setMessage] = useState('')
   const [committing, setCommitting] = useState(false)
@@ -86,17 +87,21 @@ export function ChangesPanel(): ReactNode {
     refresh()
   }, [refresh])
 
-  /** 展开/收起一个文件的 diff；null = 全量。untracked 组不可点（untracked 没有 diff）。 */
+  /**
+   * 展开/收起一个文件的 diff；null = 全部改动。
+   * 未跟踪文件也能点：宿主按文件内容合成一段「全是新增行」的 diff（二进制 / 过大
+   * 的合成不出来，回一句 note）；未跟踪的目录整条只有 note。
+   */
   const toggleDiff = (file: string | null): void => {
     if (diff !== null && diff.file === file) {
       setDiff(null)
       return
     }
-    setDiff({ file, loading: true, text: '' })
+    setDiff({ file, loading: true, text: '', note: '' })
     void channel
-      .invoke<{ diff: string }>('dock', ['git-diff', file === null ? {} : { file }])
+      .invoke<{ diff: string; note?: string }>('dock', ['git-diff', file === null ? {} : { file }])
       .then((data) => {
-        setDiff({ file, loading: false, text: String(data?.diff ?? '') })
+        setDiff({ file, loading: false, text: String(data?.diff ?? ''), note: String(data?.note ?? '') })
       })
       .catch((cause: unknown) => {
         setDiff(null)
@@ -192,7 +197,12 @@ export function ChangesPanel(): ReactNode {
         onStage={(files) => stage('git-stage', files, '已暂存')}
         stageTip="暂存"
       />
-      <GitGroup title={`未跟踪（${String(status.untracked.length)}）`} files={status.untracked} />
+      <GitGroup
+        title={`未跟踪（${String(status.untracked.length)}）`}
+        files={status.untracked}
+        expandedFile={diff?.file ?? undefined}
+        onShowDiff={toggleDiff}
+      />
       {/* 提交区：无暂存禁用（旧界面同款）；提交信息走写类 op 的审批。 */}
       <div className="git-commit">
         <textarea
@@ -230,8 +240,8 @@ export function ChangesPanel(): ReactNode {
   )
 }
 
-/** 一组文件行：可点的展开该文件的 diff；不可点的（untracked）给禁用态。
-    给了 onStage 时行尾带一颗暂存/取消暂存钮（写类 op，走宿主审批）。 */
+/** 一组文件行：可点的展开该文件的 diff（未跟踪的也点得开——宿主按内容合成）；
+    没给 onShowDiff 的才禁用。给了 onStage 时行尾带一颗暂存/取消暂存钮（写类 op，走宿主审批）。 */
 function GitGroup(props: {
   title: string
   files: readonly string[]
@@ -290,9 +300,10 @@ function GitGroup(props: {
   )
 }
 
-/** 底部 diff 视图：单文件一段、全量按 `diff --git` 切成多段（照旧渲染层 GitDiffView 的结构）。 */
+/** 底部 diff 视图：单文件一段、全量按 `diff --git` 切成多段（照旧渲染层 GitDiffView 的结构）。
+    宿主回的 `note` 是「这一段合成不出来」的说明，单独一行显示，不和 diff 正文混在一起。 */
 function GitDiffView(props: {
-  diff: { file: string | null; loading: boolean; text: string }
+  diff: { file: string | null; loading: boolean; text: string; note: string }
   onClose: () => void
 }): ReactNode {
   const sections: UnifiedFileDiff[] = props.diff.loading
@@ -322,23 +333,28 @@ function GitDiffView(props: {
       </div>
       {props.diff.loading ? (
         <div className="trace-empty">读取中…</div>
-      ) : sections.length === 0 ? (
-        <div className="trace-empty">没有可显示的改动（未跟踪文件不会出现在 diff 里）。</div>
       ) : (
-        <div className="git-diff-body">
-          {sections.map((section) => (
-            <div key={section.path} className="git-diff-file">
-              <div className="git-diff-file-head">
-                <span className="git-diff-path">{section.path}</span>
-                <span className="changes-counts">
-                  <span className="changes-added">{`+${String(section.added)}`}</span>
-                  <span className="changes-removed">{`-${String(section.removed)}`}</span>
-                </span>
-              </div>
-              <DiffRows hunks={section.hunks} path={section.path} />
+        <>
+          {props.diff.note === '' ? null : <div className="trace-empty">{props.diff.note}</div>}
+          {sections.length === 0 ? (
+            props.diff.note === '' ? <div className="trace-empty">没有可显示的改动。</div> : null
+          ) : (
+            <div className="git-diff-body">
+              {sections.map((section) => (
+                <div key={section.path} className="git-diff-file">
+                  <div className="git-diff-file-head">
+                    <span className="git-diff-path">{section.path}</span>
+                    <span className="changes-counts">
+                      <span className="changes-added">{`+${String(section.added)}`}</span>
+                      <span className="changes-removed">{`-${String(section.removed)}`}</span>
+                    </span>
+                  </div>
+                  <DiffRows hunks={section.hunks} path={section.path} />
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
     </div>
   )

@@ -243,6 +243,38 @@ console.log('[6] 宿主数据面（文本钉）')
   check('工作流区绑的是定点任务（schedule 贡献 scheduled 面）', schedule.includes("ctx.surfaces.register('scheduled'"))
 }
 
+console.log('[7] Git 页签（空仓库不报错 + 未跟踪可预览的形态钉）')
+{
+  const desktopDock = read('src/plugins/desktop-dock.ts')
+  const changes = read('ui-shell/src/plugins/files/changes.tsx')
+
+  check(
+    'diff 不再硬依赖 HEAD（先问 hasHead，问不到走未暂存 + 已暂存两段）',
+    desktopDock.includes('async function hasHead') &&
+      desktopDock.includes('async function trackedDiff') &&
+      desktopDock.includes("git(cwd, ['diff', '--cached', ...guard, ...tail])"),
+  )
+  check('porcelain 用 -z（非 ASCII 路径不被 C 引号转义，才点得动）', desktopDock.includes("['status', '--porcelain=v1', '-z']") && desktopDock.includes('function parsePorcelainZ'))
+  check('rename / copy 记录后面那条「原路径」要跳过', desktopDock.includes("code[0] === 'R' || code[0] === 'C'"))
+  check(
+    '未跟踪文件按内容合成最小 patch（`--- /dev/null` + 全新增行）',
+    desktopDock.includes('function untrackedPreview') &&
+      desktopDock.includes("'new file mode 100644'") &&
+      desktopDock.includes("'--- /dev/null'") &&
+      desktopDock.includes('@@ -0,0 +1,'),
+  )
+  check('合成不出来的给一句说明（二进制 / 512KB / 空文件 / 目录条目）',
+    desktopDock.includes('二进制文件，没有可预览的文本差异') &&
+      desktopDock.includes('UNTRACKED_PREVIEW_MAX_BYTES') &&
+      desktopDock.includes('空文件，没有内容可看') &&
+      desktopDock.includes('未跟踪目录整条收录'),
+  )
+  check('「全部改动」把未跟踪的合成段并进去（条数里有它们，看不到就像坏了）', desktopDock.includes('const untracked = await untrackedPaths(cwd)') && desktopDock.includes('chunks.push(preview.patch)'))
+  check('合成段有上限（40 个文件 / 2MB / 尾斜杠两边都剥）', desktopDock.includes('UNTRACKED_PREVIEW_MAX_FILES') && desktopDock.includes('UNTRACKED_PREVIEW_MAX_TOTAL_BYTES') && desktopDock.includes("replace(/\\/+$/, '')"))
+  check('壳里未跟踪组也可点（onShowDiff 传进去了）', /title=\{`未跟踪[\s\S]{0,220}?onShowDiff=\{toggleDiff\}/.test(changes))
+  check('壳显示宿主给的 note（不自作主张说「没有改动」）', changes.includes("note: String(data?.note ?? '')") && changes.includes('props.diff.note') && !changes.includes('未跟踪文件不会出现在 diff 里'))
+}
+
 if (failures === 0) {
   console.log('\n全部通过')
 } else {

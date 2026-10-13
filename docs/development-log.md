@@ -4618,3 +4618,93 @@ csv/xlsx 表格预览、手动排序拖拽、桌面信任卡、remote-web 切壳
 ⑤**TOPMOST 前台窗口 + 真实鼠标会抢悬停**：折叠桶悬停预览卡偶发红了一次（鼠标恰好停在
   后桶位置，合成的 `mouseover` 前桶后又被真实指针接管）——跑自检前先把鼠标挪到角落
   （`[System.Windows.Forms.Cursor]::Position`）。
+
+## 第十三批：没有提交的仓库里也能看改动了（Git 页签修报障，2026-10-13 深夜）
+
+用户报障（附截图）：打开一个 `git init` 之后一次都没提交过的仓库，右侧栏 Git 页签里点
+「全部改动」直接弹出一整段原始 fatal——
+
+```
+fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree.
+```
+
+而 16 个未跟踪文件一个都点不开（行是禁用的）。用户的原话：「这里无法预览改动，而且有报错」。
+两件事根因不同：**报错**是 `git diff HEAD` 在 HEAD 未出生时的必然结果；**看不到改动**
+是未跟踪文件在 dsc 里从来没有 diff 可看（git 不为它们出 patch，界面也没合成）。
+
+### 先查参考实现（对齐的依据）
+
+- **diff 一律不碰 HEAD**：已暂存走 `git diff --cached`、未暂存走 `git diff`（两段分开算），
+  空仓库天然不报错；
+- **未跟踪文件可预览**：按文件内容**合成**一段 unified diff——`--- /dev/null`、
+  `+++ b/<路径>`、`@@ -0,0 +1,N @@`、全 `+` 行，末行没换行时补 `\ No newline at end of file`；
+  二进制（内容含 NUL）与超限（truncated）分别给一句「不可预览」的说明，不是空白；
+  源码注释里还明写**别用 `git diff --no-index`**——Windows 上会带平台相关的头，
+  前端的 diff 解析对它不宽容，会直接抛；
+- **状态读 `--porcelain=v2 … -z`**：NUL 分隔，路径原样（不做 C 引号转义）。
+
+### 落地
+
+宿主 `src/plugins/desktop-dock.ts`：
+
+1. `hasHead(cwd)`（`git rev-parse --verify --quiet HEAD`）+ `trackedDiff()`：HEAD 在仍是
+   一段 `diff HEAD`（已暂存 + 未暂存合并，行为不变），没出生就 `diff` + `diff --cached`
+   两段拼；`git-status` 的 `stats` 档同一口径（原来那份 try/catch 兜底改成显式判断）。
+2. `untrackedPreview()`：合成最小 patch；**四类合成不出来的各有说明**——二进制、>512KB、
+   空文件、未跟踪的目录整条（git 把整个未跟踪目录折成 `dir/` 一条）。
+3. 「全部改动」把未跟踪的合成段**并进去**（条数里本来就有它们，看不到像坏掉）；
+   护栏：40 个文件 / 合计 2MB / 尾斜杠两边都剥，跳过的条数在 `note` 里说明。
+4. `--porcelain=v1 -z` + `parsePorcelainZ()`（rename / copy 记录后面那条「原路径」要跳过）：
+   非 ASCII 路径不再被 C 引号转义成 `"…\351\262\270…"`——用户那个仓库里正好有一个中文名
+   文件，照旧那串点下去必然对不上号，这是「点不动」的第二层原因。
+
+壳 `ui-shell/src/plugins/files/changes.tsx`：
+
+1. 未跟踪组也传 `onShowDiff`（行可点，不再禁用）；
+2. diff 状态加 `note`：宿主回的说明单独一行显示，不再统一说「未跟踪文件不会出现在 diff 里」。
+
+### 验证（硬证据）
+
+- **宿主数据电池 `scripts/ui-status-data-test.mjs` 新增 [5] 段（28 → 46 条，全绿）**：第二个工作区
+  `git init` 不提交 + 5 个未跟踪条目（中文名文件 / 二进制 / 600KB / 空文件 / 子目录）——
+  分支给占位名、未跟踪路径原样给、目录整条收录、全量 diff 不抛且合成段在、
+  `note` 报「另有 4 个未跟踪条目」、二进制 / 超限 / 空文件 / 目录各自的说明、
+  **暂存后单文件 diff 走 `diff --cached` 且增删算得出（加 3）**；
+- **真机现场复刻**（临时脚本，对着用户那个仓库跑只读命令）：`(无提交)`、16 条脏、
+  未跟踪名原样（`DeepSeek鲸鱼.svg`）、全量 diff 不再有 fatal、`note = 另有 8 个未跟踪条目…`、
+  单点目录条目给「未跟踪目录整条收录」；临时脚本已删；
+- **真界面走查**（本机壳伺服 + 浏览器，隔离 HOME + 临时空仓库）：状态面板 Git 行 →
+  打开 Git 页签 → `(无提交)` / `4 处更改` / 未跟踪 4 条**全部可点**、
+  点「全部改动」出两段合成 diff（`+2-0` / `@@ -0,0 +1,2 @@`）+ 跳过说明，
+  点单行出该文件的 diff，**全屏文本里没有 `fatal:`**；截图留档
+  （Git 面板：未跟踪 4 条 + `hello.txt +2 -0` 的新增行视图）；
+- 形态钉：`ui-status-panel-test` 新增 [7] 组 9 条（76 → 85 条；不依赖 HEAD / `-z` 与 rename 跳过 /
+  合成 patch 形态 / 四类说明 / 并入全量 / 上限与尾斜杠 / 壳侧可点与 note），全绿；
+- 其余相关探针全绿：`ui-plugin-test`、`ui-batches-test`、`ui-api-gate-test`、`ui-serve-test`、
+  `ui-events-test`、`ui-hmr-test`、`turn-changes-test`、`review-approval-test`、`statusbar-test`、
+  `commands-battery`、`legacy-frozen-check`。
+
+### 诚实边界（这一批）
+
+①**未跟踪文件的行数仍不进状态面板的 +N/-N**（那一对只算 tracked 的 numstat）——参考实现会给
+  未跟踪文件算「新增 = 文件行数」，这轮只把「能看」补上，没动那个口径；
+②合成预览是**全文新增**视图，不是相对某个基线的差异（未跟踪本来就没有基线）；
+③**会话工作目录是仓库子目录**时不理想：git 报的是仓库根相对路径，而 dock 一律以会话目录为
+  基准（那是安全边界，`inside()` 拦着），这种仓库里点未跟踪行会得到「读不到这个条目」的说明
+  ——既有行为，本轮没动；
+④用户那个仓库的 `.git/HEAD` 是 `ref: refs/heads/.invalid`（不是 `git init` 的正规形态），
+  **提交会失败**（`git commit` 报 `unable to resolve HEAD after creating commit`）——仓库自身
+  的问题，dsc 不替它修（改对方仓库要用户点头）；面板的读与预览已经不受它影响；
+⑤版本未动（根 0.6.67、壳 1.2.0），未推送、未发版。
+
+### 教训（这一批）
+
+①**「报错」和「看不到」是两个根因，先分开看**：用户一句话里其实有两件事——`diff HEAD` 在
+  空仓库里必炸（一个 `hasHead` 就解），未跟踪文件压根没有 diff 可看（要新写合成）。
+  只修第一件，界面上就会从「一段红字」变成「没有可显示的改动」，用户照样觉得没修；
+②**git 的 porcelain 默认会给非 ASCII 路径加 C 引号**（`"…\351\262\270…"`）：这个串拿去当
+  pathspec 一定对不上（对不上就静默回空 diff）。要路径就得 `-z`，顺带还得处理 rename / copy
+  后面那条「原路径」记录，否则它会被当成一个文件；
+③**「点不开」的写法比报错更安静**：未跟踪行原本是 `disabled` 的按钮（没有 onShowDiff），
+  用户看不出是「设计如此」还是「坏了」。凡是有数据却没有出口的行，要么给出口，要么给一句
+  说明——这轮四类不可预览各有一句话，就是这个道理。
