@@ -1449,6 +1449,135 @@
   white-space: pre-wrap;
 }
 
+/* ── 写前预览通知（宿主 file-review 插件那一段「【文件更改预览·尚未落盘】…」）──
+   宿主发的是一段**多行 unified diff 纯文本**（同一份文本 TUI 也在读，不能改形状），
+   壳按正文前缀认它（`plugins/transcript/review-notice.ts`）后画成下面这张卡：
+   头行（图标 + 路径 + 新建/修改徽章 + 增删计数）+ 左对齐、等宽、限高滚动的 diff。
+   **只有它不居中**：其余 system 通知（「这一轮被中断」这类一行短句）继续走上面
+   .entry-system 的居中一行，观感不变。dsh 的对话内 diff 同样是左对齐 + 限高那一套。 */
+.entry-review {
+  align-self: stretch;
+  background: var(--dsc-neutral-card);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-block);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.entry-review-head {
+  align-items: center;
+  border-bottom: 1px solid var(--dsc-stroke-2);
+  display: flex;
+  flex: none;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 10px;
+}
+
+.entry-review-icon {
+  flex: none;
+}
+
+/* 路径取等宽字：它是一段要逐字符比对的文件名，不是说明文字。 */
+.entry-review-path {
+  color: var(--dsc-text-secondary);
+  flex: 1;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-caption);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 「修改」徽章：与 .diff-badge（「新建」用的那条，绿底，见下方 .changes-* 那一段）
+   同形，颜色走中性档——「修改」不是新增，不该借绿色说话。 */
+.entry-review-badge {
+  background: var(--dsc-fill-quaternary);
+  border-radius: var(--dsc-r-badge);
+  color: var(--dsc-text-tertiary);
+  flex: none;
+  font-size: var(--dsc-fs-micro);
+  line-height: 1;
+  padding: 3px 5px;
+}
+
+/* 算不出逐行 diff 时头行右边的说明（「逐行 diff 未给出」）：中性，不装成增删计数。 */
+.entry-review-counts {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  font-size: var(--dsc-fs-micro);
+}
+
+/* diff 正文：左对齐、等宽、限高滚动（260px 与 .turn-trigger-text 同档——一条预览
+   几十行，全摊开会挤掉半屏对话）。行首的 `+` / `-` / 空 前缀原样保留——那就是 git 的
+   unified diff 写法，不再解析语义。 */
+.entry-review-diff {
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-code);
+  line-height: 1.55;
+  max-height: 260px;
+  overflow: auto;
+  padding: 6px 0;
+}
+
+/* 一行差异：`width: max-content` + `min-width: 100%` 让底色横向铺满（与 .diff-line 同款：
+   长行横向滚动时，带底色的行不会在视口里断掉）。 */
+.entry-review-line {
+  color: var(--dsc-text-secondary);
+  min-width: 100%;
+  padding: 0 10px;
+  white-space: pre;
+  width: max-content;
+}
+
+/* 段头（`@@` 开头）：弱化 + 一条细分隔——它是分段哨兵，不是内容。 */
+.entry-review-line[data-kind='hunk'] {
+  border-top: 1px solid var(--dsc-stroke-4);
+  color: var(--dsc-text-quaternary);
+  margin-top: 6px;
+  padding-bottom: 2px;
+  padding-top: 4px;
+}
+
+.entry-review-line[data-kind='hunk']:first-child {
+  border-top: 0;
+  margin-top: 0;
+}
+
+.entry-review-line[data-kind='add'] {
+  background: var(--dsc-diff-add-bg);
+  color: var(--dsc-diff-add-fg);
+}
+
+.entry-review-line[data-kind='remove'] {
+  background: var(--dsc-diff-remove-bg);
+  color: var(--dsc-diff-remove-fg);
+}
+
+.entry-review-line[data-kind='context'] {
+  color: var(--dsc-text-tertiary);
+}
+
+/* 说明行（「内容与磁盘上现在这份完全一样…」「预览只显示前 N 行…」这类）：普通说明，
+   不染红/绿。 */
+.entry-review-line[data-kind='note'] {
+  color: var(--dsc-text-quaternary);
+  padding-bottom: 2px;
+  padding-top: 2px;
+}
+
+/* 轨迹页里的同一张卡（trace 插件借用同一个组件）：记录表更密，限高再矮一档。 */
+.trace-review {
+  min-width: 0;
+}
+
+.trace-review .entry-review-diff {
+  max-height: 200px;
+}
+
 /* ── 非人发起的唤醒消息（队友干完活的汇报）：一行可展开的通知，不是用户气泡 ──
    对照 dsh 的 TurnTriggerNodeView.module.css：整块是「描边 + 圆角 + 一层极浅底色」的通知，
    头部一行「图标 + 标题 + 时刻 + 箭头」，正文默认收起。dsh 的头部字号是页面正文档

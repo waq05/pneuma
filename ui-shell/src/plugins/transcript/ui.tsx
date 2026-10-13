@@ -63,6 +63,10 @@ import { readFold, writeFold, stepGroupFoldKey, turnFoldKey } from './fold-state
 import { groupSteps, type StepGroup, type StepGrouping } from './process-groups'
 import { RowSeat, StepGroupSeat } from './fold-seats'
 import { JumpRail, previewText } from './jump-rail'
+// 写前预览通知（宿主 file-review 插件发的那段多行 diff 文本）：按正文形状认出来，
+// 画成左对齐的卡片，而不是让它走 `.entry-system` 的居中一行（几十行 diff 居中成一坨）。
+import { parseReviewNotice } from './review-notice'
+import { ReviewNoticeCard } from './review-notice-card'
 // 路径/悬停/完成音/工具摘要口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，
 // 不再内联（E6）——completion-sound 带模块级 AudioContext 单例，重复一份会造出两个。
 import { TOOL_STATUS_TEXT, baseNameOf, displayPathOf, formatTokens, matchTool, oneLine, playCompletionSound, prettyJson, toolSummary, toolVerb, useHoverDelay, type ToolMatch } from '@dsc/ui-primitives'
@@ -467,10 +471,16 @@ function TranscriptFlow({
         </p>
         {seats.leading.map((row) => {
           const text = row.entry.kind === 'system' ? row.entry.text : ''
-          return isSessionMarker(text) ? null : (
+          if (isSessionMarker(text)) return null
+          // 自动跑起来的那一轮（定点任务之类）没有用户消息，它的写前预览会落在开场区；
+          // 这里同样走卡片——同一条通知在哪个位置都不该变成居中的一大坨。
+          const notice = parseReviewNotice(text)
+          return notice === null ? (
             <div className="welcome-note" key={keyOf(row, sessionKey)}>
               {text}
             </div>
+          ) : (
+            <ReviewNoticeCard key={keyOf(row, sessionKey)} notice={notice} cwd={cwd} />
           )
         })}
       </div>
@@ -755,6 +765,7 @@ function RowBody({
   renderSlot: ToolViewRender
 }): ReactNode {
   const sessionId = useContext(ShellSessionContext)
+  const cwd = useContext(ShellCwdContext)
   const entry = row.entry
   switch (entry.kind) {
     case 'user':
@@ -785,8 +796,17 @@ function RowBody({
       const storeKey = `${sessionId ?? ''}:${String(row.at)}`
       return renderSlot?.(TOOLVIEW_SLOT, { entry, storeKey }) ?? <ToolRow entry={entry} storeKey={storeKey} />
     }
-    case 'system':
-      return <div className="entry-system">{entry.text}</div>
+    case 'system': {
+      // 写前预览（宿主 file-review 插件）：这段正文是**多行 unified diff 纯文本**，
+      // 走专用卡片（左对齐、等宽、限高滚动）；其余 system 通知（「这一轮被中断」这类
+      // 一行短句）保持 `.entry-system` 的居中观感不变。
+      const notice = parseReviewNotice(entry.text)
+      return notice === null ? (
+        <div className="entry-system">{entry.text}</div>
+      ) : (
+        <ReviewNoticeCard notice={notice} cwd={cwd} />
+      )
+    }
     case 'turn-max-tokens':
       return (
         <div className="entry-system" data-turn-notice="max-tokens">

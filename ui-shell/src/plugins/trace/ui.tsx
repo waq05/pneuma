@@ -43,6 +43,12 @@ import { TOOL_STATUS_TEXT, formatClock, formatTokens, matchTool, prettyJson, too
 import { buildTraceModel, entryUsage, formatTraceDuration, rangeHits, stepMatches, type TraceRange, type TraceRound, type TraceStepEntry } from './trace-format'
 import { TraceTimeline } from './timeline'
 import { TraceInspector } from './inspector'
+// 写前预览通知（多行 diff 纯文本）的解析与卡片：**故意从 transcript 插件借用**——
+// 这条通知的正文形状是宿主协议的一部分，认法与画法只能有一份（`plugin.json` 里
+// trace 本来就 inject transcript，两家的加载顺序已经绑着）。两个 bundle 在运行期
+// 仍各自自足（rollup 就地内联这份小模块），不产生插件间的运行期依赖。
+import { parseReviewNotice, type ReviewNotice } from '../transcript/review-notice'
+import { ReviewNoticeCard } from '../transcript/review-notice-card'
 
 /** 折叠态里的思考摘要长度：一行放不下就省略号，展开才看全文。 */
 const THINK_PREVIEW_LIMIT = 90
@@ -252,7 +258,9 @@ function TraceView(props: SlotComponentProps): ReactNode {
     const target = event.target
     if (
       target instanceof HTMLElement &&
-      target.closest('button, a, summary, .tool-head, .tool-body, [data-trace-open]') !== null
+      // `.entry-review`（写前预览卡）与 `.tool-body` 同理：里面的 diff 要能划选复制，
+      // 划选松手算一次 click，不该顺手把检查器打开。
+      target.closest('button, a, summary, .tool-head, .tool-body, .entry-review, [data-trace-open]') !== null
     ) {
       return
     }
@@ -642,11 +650,7 @@ function StepRow({
             <div className="body">{step.text}</div>
           </details>
         )}
-        {step.kind === 'system' && (
-          <div className="trace-sys" data-tip={step.text}>
-            {step.text}
-          </div>
-        )}
+        {step.kind === 'system' && <TraceSystemStep text={step.text} />}
         {step.kind === 'plan' && (
           <div className="trace-plan" data-tip={step.plan.text}>
             <span className="th-label">计划</span>
@@ -705,6 +709,29 @@ function StepRow({
           <IconChevronRight size={12} />
         </button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * 一条系统步骤的渲染：写前预览（宿主 file-review 插件那段多行 diff 纯文本）走对话页
+ * 同一张卡片；其余照旧一行灰字（本来就短，放不下才省略、悬浮看全文）。
+ *
+ * 轨迹页不持有会话工作目录（它只看条目流），卡片按通知里的路径原文显示——
+ * 宿主写进正文的已经是相对化过的展示路径，缺 cwd 只是不再二次缩短绝对路径。
+ */
+function TraceSystemStep({ text }: { text: string }): ReactNode {
+  const notice: ReviewNotice | null = parseReviewNotice(text)
+  if (notice === null) {
+    return (
+      <div className="trace-sys" data-tip={text}>
+        {text}
+      </div>
+    )
+  }
+  return (
+    <div className="trace-review">
+      <ReviewNoticeCard notice={notice} cwd="" />
     </div>
   )
 }
