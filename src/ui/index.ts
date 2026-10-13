@@ -8,6 +8,14 @@ export * from './frames.js'
 export * from './manifest.js'
 export * from './plugin.js'
 export * from './slots.js'
+export * from './store.js'
+export * from './scoped-slots.js'
+export * from './services.js'
+/**
+ * 服务表的 React 订阅面（`ServicesProvider` / `useService`）：壳把装载出来的服务表
+ * 经 context 交给条目组件，插件跟着服务的出现/消失换数据源。
+ */
+export * from './services-react.js'
 /**
  * 槽位注册表的 React 订阅面（useSlot / useSlotFaults）：浏览器壳与终端壳共用。
  * 为什么在共享层：两个壳的「组件」都是 React 组件，订阅语义只有一份；

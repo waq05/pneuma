@@ -23,6 +23,8 @@ import {
 import { isUiMethod, validateUiArgs } from '../core/ui-methods.js'
 import type { DscRuntime } from '../contract.js'
 import { SlotRegistry } from './slots.js'
+import { createScopedSlotApi } from './scoped-slots.js'
+import { ServiceRegistry, unmetInjections } from './services.js'
 import type { UiHostInfo, UiPluginLoadReport, UiPluginLoadResult, UiRuntimeApi } from './plugin.js'
 import * as tuiPluginApi from './tui-plugin-api.js'
 import type { UiPluginModule } from './plugin.js'
@@ -55,6 +57,11 @@ export interface TuiPluginLoadOptions {
   pluginsDir?: string
   /** 失败/成功报告的去处（缺省打 stderr——TUI 场景由调用方转 transcript）。 */
   onReport?: (report: UiPluginLoadReport) => void
+  /**
+   * 服务表（A1）。缺省新建一张——测试要在同一进程里装载多轮时各自注入，
+   * 免得上一轮的服务泄漏进下一轮。
+   */
+  services?: ServiceRegistry
 }
 
 /**
@@ -67,6 +74,8 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
   const { registry, runtime, host } = options
   const reportById = new Map<string, UiPluginLoadReport>()
   const disposers = new Map<string, () => void>()
+  // 服务表（A1）：与浏览器壳同一份实现；缺省新建一张，测试可注入隔离的那张。
+  const services = options.services ?? new ServiceRegistry()
 
   const artifacts = collectUiArtifactsForPlatform('tui', {
     // 隔离目录测试：内置清单指向注入的目录；第三方目录不由这里传——
@@ -101,9 +110,10 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
   }
 
   /** 跑工厂拿导出（require 只认白名单——与浏览器壳的 `instantiate` 同形）。 */
-  const install = (id: string, file: string, origin: string | undefined, attempt: number): string | null => {
+  const install = (id: string, file: string, origin: string | undefined, inject: readonly string[] | undefined, attempt: number): string | null => {
     // 这个插件的登记账本：中途抛错时按它回滚，重试才不会撞「id 已被占用」。
     const ledger: (() => void)[] = []
+    const provides: string[] = []
     const rollback = (): void => {
       for (const release of [...ledger].reverse()) {
         try {
@@ -114,6 +124,13 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
       }
       ledger.length = 0
     }
+    // 硬依赖先解析（与浏览器壳逐字同义的「先插件 id、再服务名」）。
+    const unmet = unmetInjections(inject, (name) => reportById.get(name), services)
+    if (unmet.length > 0) {
+      const reason = `等待：${unmet.join('；')}`
+      reportById.set(id, { id, ok: false, error: reason, attempts: attempt })
+      return reason
+    }
     try {
       const exported = instantiate(factoryOf(id, file, origin), require_)
       // vite 的 cjs 产物把 `export default` 放在 `.default` 上（与浏览器壳 boot.ts 同一处理）。
@@ -122,9 +139,18 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
       if (typeof apply !== 'function') throw new Error('插件没有导出 apply(ui)')
       const ui = {
         id,
-        slots: scopedSlots(registry, ledger),
+        slots: createScopedSlotApi(registry, (release) => {
+          ledger.push(release)
+          return release
+        }),
         host,
         runtime: tuiRuntime(runtime),
+        provide: (name: string, value: unknown) => {
+          const release = services.provide(name, value, id)
+          ledger.push(release)
+          provides.push(name)
+        },
+        consume: (name: string) => services.consume(name),
       }
       const dispose = (apply as (api: unknown) => void | (() => void))(ui)
       if (typeof dispose === 'function') ledger.push(dispose)
@@ -135,6 +161,7 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
         ok: true,
         attempts: attempt,
         ...(typeof name === 'string' && name !== '' ? { name } : {}),
+        ...(provides.length === 0 ? {} : { provides: [...provides] }),
       })
       return null
     } catch (error) {
@@ -145,15 +172,16 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
     }
   }
 
-  const failed: Array<{ id: string; file: string; origin: string | undefined }> = []
+  const failed: Array<{ id: string; file: string; origin: string | undefined; inject: readonly string[] | undefined }> = []
   for (const entry of artifacts.entries) {
     const origin = (entry as { origin?: string }).origin
-    if (install(entry.id, entry.file, origin, 1) !== null) failed.push({ id: entry.id, file: entry.file, origin })
+    const inject = (entry as { inject?: readonly string[] }).inject
+    if (install(entry.id, entry.file, origin, inject, 1) !== null) failed.push({ id: entry.id, file: entry.file, origin, inject })
   }
   // 失败重试一轮（语义同浏览器壳）：真的写错了不能靠反复重试掩盖，但一次失败也不能永久缺席。
   for (const entry of failed) {
     if (reportById.get(entry.id)?.ok === true) continue
-    install(entry.id, entry.file, entry.origin, 2)
+    install(entry.id, entry.file, entry.origin, entry.inject, 2)
   }
 
   const reports = artifacts.entries.map(
@@ -163,6 +191,8 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
 
   return {
     reports,
+    services: services.names(),
+    serviceRegistry: services,
     disposeAll(): void {
       for (const [id, dispose] of [...disposers].reverse()) {
         try {
@@ -184,33 +214,6 @@ function instantiate(
   const module_ = { exports: {} as unknown }
   factory(require_, module_, module_.exports)
   return module_.exports
-}
-
-/**
- * 给插件的槽位外壳：登记动作全部记账，卸载或重试时按账本回滚。
- * 与浏览器壳 `boot.ts` 的 `scopedSlots` 同形——装载语义两壳一致是契约的一部分。
- */
-function scopedSlots(slots: SlotRegistry<InkComponent>, ledger: (() => void)[]) {
-  const record = (release: () => void): (() => void) => {
-    ledger.push(release)
-    return release
-  }
-  return {
-    get slots(): string[] {
-      return slots.slots
-    },
-    spec: (slot: string) => slots.spec(slot),
-    declare: (slot: string, kind: Parameters<SlotRegistry<InkComponent>['declare']>[1]) =>
-      record(slots.declare(slot, kind)),
-    register: (
-      slot: string,
-      registerOptions: Parameters<SlotRegistry<InkComponent>['register']>[1],
-      component: InkComponent,
-    ) => record(slots.register(slot, registerOptions, component)),
-    injectSlot: (slot: string, contribute: () => void | (() => void)) => record(slots.injectSlot(slot, contribute)),
-    entriesOf: (slot: string) => slots.entriesOf(slot),
-    winners: (slot: string) => slots.winners(slot),
-  }
 }
 
 /**

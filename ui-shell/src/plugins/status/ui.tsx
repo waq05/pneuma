@@ -48,10 +48,15 @@ import {
   toastOk,
   useHostChannel,
   useHostSelector,
+  useSeat,
+  useService,
   useThreadView,
+  type ActionsDecl,
   type HostSnapshot,
+  type StoreHandle,
   type TeammateView,
   type TodoView,
+  type UiPluginApi,
 } from '@dsc/ui'
 
 /** 轮询间隔（毫秒）：队友名册在快照里没有，只能问通道。 */
@@ -123,12 +128,30 @@ const MATE_TEXT: Readonly<Record<TeammateView['state'], string>> = {
   failed: '过程失败',
 }
 
+/**
+ * 名册席位的读面形状（team 插件 `ui.provide('teammates', handle)` 传出来的那份）。
+ *
+ * 插件之间不 import 彼此的实现（各自的 bundle 独立），只认这个形状：读 `list`，
+ * 不碰写路径（停止队友等动作仍是直调界面通道的动作，不是状态）。
+ */
+interface MateSeatState {
+  list: readonly TeammateView[]
+}
+type MateSeatHandle = StoreHandle<MateSeatState, ActionsDecl<MateSeatState>>
+
+/** 服务名（provider 是 team 插件；缺席时回落到本地轮询）。 */
+const TEAMMATES_SERVICE = 'teammates'
+
 export default defineUiPlugin({
   name: '状态面板',
   apply(ui) {
     // order 5：排在消息流（order 1）之后。它是浮层，排在哪一位都不进文档流，
     // 但排后面一点可以让它在 DOM 里晚于正文出现（自检按选择器取它更省事）。
-    ui.slots.register(SLOT.main, { id: 'status.panel', order: 5 }, StatusPanel)
+    //
+    // 组件是个 apply 期闭包：面板要在**渲染期**经 `ui.slots.seat(handle)` 读共享席位
+    // （`ui` 只在 apply 里拿得到），闭包把槽位面交进去；组件身份每次装载生成一次，
+    // 在插件生命周期里是稳定的。
+    ui.slots.register(SLOT.main, { id: 'status.panel', order: 5 }, () => <StatusPanel slots={ui.slots} />)
   },
 })
 
@@ -170,12 +193,23 @@ function readSessionId(snapshot: HostSnapshot | null): string | null {
   return base.endsWith('.jsonl') ? base.slice(0, -6) : base
 }
 
-function StatusPanel(): ReactNode {
+function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
   const channel = useHostChannel()
   const view = useThreadView()
   const todos = useHostSelector(readTodos, sameTodos)
   const sessionId = useHostSelector(readSessionId)
-  const [mates, setMates] = useState<readonly TeammateView[]>([])
+  // 名册来源（D3）：team 插件把席位 handle 经服务表传出来。
+  //   有席位 → 读同一份共享实例（team 那个 3 秒轮询是唯一的数据源，这边不再自拉）；
+  //   没席位（team 没装/被停用）→ 保留本地轮询（下面那段 effect）。
+  // `useService` 订阅服务表的出现/消失，所以 team 启停后自动切源，不需要刷新页面。
+  const seat = useService<MateSeatHandle>(TEAMMATES_SERVICE)
+  const instance = useMemo(
+    () => (seat === undefined ? undefined : slots.seat(seat)),
+    [slots, seat],
+  )
+  const shared = useSeat(instance, (state) => state.list)
+  const [localMates, setLocalMates] = useState<readonly TeammateView[]>([])
+  const usingShared = shared !== undefined
   const [mode, setMode] = useState<DisplayMode>(readMode)
   const [menuOpen, setMenuOpen] = useState(false)
   const [wide, setWide] = useState(() => window.innerWidth >= AUTO_PANEL_MIN_WIDTH)
@@ -190,18 +224,20 @@ function StatusPanel(): ReactNode {
     setHost(found instanceof HTMLElement ? found : null)
   }, [view])
 
-  // 名册轮询：面板开着才值得问；收起成胶囊时也要问（胶囊上那行读数就是它算出来的）。
+  // 名册本地轮询（回落到「没有共享席位」时才跑）：面板开着才值得问；收起成胶囊时也要问
+  // （胶囊上那行读数就是它算出来的）。共享席位出现时这条 effect 被拆掉，轮询随之停止。
   useEffect(() => {
+    if (usingShared) return undefined
     let alive = true
     const poll = (): void => {
       void channel
         .invoke<TeammateView[]>('listTeammates', [])
         .then((list) => {
-          if (alive) setMates(Array.isArray(list) ? list : [])
+          if (alive) setLocalMates(Array.isArray(list) ? list : [])
         })
         .catch(() => {
           // team 服务缺席（子智能体插件没开）时名册就是空的：给空态而不是报错条。
-          if (alive) setMates((current) => (current.length === 0 ? current : []))
+          if (alive) setLocalMates((current) => (current.length === 0 ? current : []))
         })
     }
     poll()
@@ -210,7 +246,7 @@ function StatusPanel(): ReactNode {
       alive = false
       window.clearInterval(timer)
     }
-  }, [channel])
+  }, [channel, usingShared])
 
   // 窗口宽度决定自动档收不收。
   useEffect(() => {
@@ -220,6 +256,7 @@ function StatusPanel(): ReactNode {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
+  const mates = shared ?? localMates
   const mine = useMemo(
     () => mates.filter((mate) => sessionId !== null && mate.sessionId === sessionId),
     [mates, sessionId],

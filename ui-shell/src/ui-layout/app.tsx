@@ -56,9 +56,11 @@ export interface AppProps {
   slots: UiSlots
   boot: UiBootGraph
   reports: readonly UiPluginLoadReport[]
+  /** 装载结束时的服务名快照（诊断区那一行；服务表本体经 ServicesProvider 给条目）。 */
+  services: readonly string[]
 }
 
-export function App({ slots, boot, reports }: AppProps): ReactNode {
+export function App({ slots, boot, reports, services }: AppProps): ReactNode {
   const failed = reports.filter((report) => !report.ok)
   // 右侧栏布局（每会话一份，状态在 dock-state）；审查目标（并排栏）也住那儿。
   const surface = useDockSurface()
@@ -337,7 +339,7 @@ export function App({ slots, boot, reports }: AppProps): ReactNode {
         </div>
       </div>
 
-      <Diagnostics slots={slots} boot={boot} reports={reports} failed={failed.length} />
+      <Diagnostics slots={slots} boot={boot} reports={reports} services={services} failed={failed.length} />
     </>
   )
 }
@@ -481,11 +483,13 @@ function Diagnostics({
   slots,
   boot,
   reports,
+  services,
   failed,
 }: {
   slots: UiSlots
   boot: UiBootGraph
   reports: readonly UiPluginLoadReport[]
+  services: readonly string[]
   failed: number
 }): ReactNode {
   const faults = useSlotFaults(slots)
@@ -507,6 +511,7 @@ function Diagnostics({
           <li key={report.id} className={report.ok ? 'ok' : 'bad'} data-plugin={report.id}>
             <code>{report.id}</code> {report.ok ? '已装上' : `失败：${report.error ?? '未知原因'}`}
             {report.name === undefined ? '' : `（${report.name}）`}
+            {report.provides === undefined ? '' : `（提供：${report.provides.join('、')}）`}
             {report.ok && (report.attempts ?? 1) > 1 ? `（重试 ${String(report.attempts)} 次才成功）` : ''}
           </li>
         ))}
@@ -528,6 +533,10 @@ function Diagnostics({
         清单 {boot.rev}：{boot.entries.map((entry) => entry.id).join('、') || '空'}
       </p>
       <p className="diag-line">槽：{slots.slots.join('、') || '无'}</p>
+      {/* 服务表（A1）：谁提供了什么——插件之间协作出问题时第一时间看它。 */}
+      <p className="diag-line" data-services={services.join(',')}>
+        服务：{services.join('、') || '无'}
+      </p>
       <p className="diag-line">放行的模块：{ALLOWED_MODULES.join('、')}</p>
       {/* 数据通道在不在、通不通：断了要醒目（凭据失效后重连也回不来），
           所以这一行留在诊断区；排查「界面冻住」时第一时间看它。 */}

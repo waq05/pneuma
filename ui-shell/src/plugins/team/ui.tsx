@@ -20,6 +20,7 @@ import {
   IconClose,
   IconTree,
   confirmAction,
+  defineStore,
   defineUiPlugin,
   registerDockTab,
   setDockSubagent,
@@ -27,8 +28,12 @@ import {
   toastOk,
   useHostChannel,
   useHostSelector,
+  type BakedActions,
   type DockTabBodyProps,
   type HostSnapshot,
+  type SlotComponentProps,
+  type SnapshotSelectorHook,
+  type StoreHandle,
   type TranscriptEntry,
   type TeammateView,
 } from '@dsc/ui'
@@ -93,12 +98,47 @@ function usePanelOpen(): boolean {
   return useSyncExternalStore(subscribePanelOpen, () => panelOpen, () => false)
 }
 
+// ── 名册席位（D3）──────────────────────────────────────────────────────────
+/**
+ * 名册的共享状态形状：**席位放在这里而不是每个组件各自的 useState**——子智能体菜单、
+ * 团队面板与 status 面板读的是同一份，轮询只有 TeamButton 一处（此前同一份名单有 3 份
+ * 独立轮询：team 的菜单与面板各一份、status 面板再一份）。
+ *
+ * handle 在 `apply` 里现建（不许模块级：模块缓存会让它跨插件重载变成伪单例），
+ * 经 `ui.provide('teammates', …)` 传给别的插件（status 面板读它，见 status/ui.tsx）。
+ */
+interface MateState {
+  list: readonly TeammateView[]
+}
+type MateActions = {
+  setList: (draft: MateState, list: readonly TeammateView[]) => void
+}
+/** 席位的 handle 类型（定义函数放在 apply 之外只为拿类型；不许模块级调用它）。 */
+const makeMateSeat = (): StoreHandle<MateState, MateActions> =>
+  defineStore<MateState, MateActions>({
+    init: () => ({ list: [] }),
+    actions: {
+      setList: (draft: MateState, list: readonly TeammateView[]): void => {
+        // 顶层替换（引擎只做浅拷贝；嵌套对象按约定整体换新）。
+        draft.list = list
+      },
+    },
+  })
+type MateSeatHandle = ReturnType<typeof makeMateSeat>
+/** TeamPanel 从 TeamButton 手里接过的读面（同一份 useStore，不重起订阅）。 */
+interface MateSeatRead {
+  useStore: SnapshotSelectorHook<MateState>
+}
+
 export default defineUiPlugin({
   name: '智能体团队',
   apply(ui) {
+    // 席位：本插件两处登记共享同一个 handle；跨插件共享经服务表传 handle（不认字符串键）。
+    const mates = makeMateSeat()
+    ui.provide('teammates', mates)
     // 标题旁的两簇（旧界面同构）：子智能体下拉在前，团队钮在后。
-    ui.slots.register('shell.header.lead', { id: 'team.subagents', order: 10 }, SubagentMenu)
-    ui.slots.register('shell.header.lead', { id: 'team.toggle', order: 20 }, TeamButton)
+    ui.slots.register('shell.header.lead', { id: 'team.subagents', order: 10, store: mates }, SubagentMenu)
+    ui.slots.register('shell.header.lead', { id: 'team.toggle', order: 20, store: mates }, TeamButton)
     // 子智能体的运行记录落**右侧栏**（一种 dock 页签）：点队友那一行不该弹模态框盖住
     // 正在跑的会话——右侧栏是只读的伴读面，可以与主会话并排看（照 dsh 的
     // `sidebarRight.openResource(..., {kind:'subagentchat'})`）。名册与运行记录同属
@@ -112,21 +152,27 @@ export default defineUiPlugin({
   },
 })
 
-/** 名册的拉取（子智能体菜单与团队面板共用一份实现：挂载拉一次 + 每 3 秒轮询）。 */
-function useTeammates(): TeammateView[] | null {
+/**
+ * 「智能体团队」钮（标题旁，文字钮）：打开本会话的队伍模态面板。
+ *
+ * 名册轮询就住在这个常挂载的条目里（团队面板开不开都跑）：3 秒一次写进共享席位。
+ * 之前的 `useTeammates` 每挂一个组件起一条自己的 interval，现在没有第二份了。
+ */
+function TeamButton(props: SlotComponentProps<Record<never, never>, never, never, MateSeatHandle>): ReactNode {
+  const open = usePanelOpen()
   const channel = useHostChannel()
-  const [mates, setMates] = useState<TeammateView[] | null>(null)
+  const { actions } = props
   useEffect(() => {
     let alive = true
     const poll = (): void => {
       void channel
         .invoke<TeammateView[]>('listTeammates', [])
         .then((list) => {
-          if (alive) setMates(Array.isArray(list) ? list : [])
+          if (alive) actions.setList(Array.isArray(list) ? list : [])
         })
         .catch(() => {
-          // 子智能体插件没开（team 服务缺席）时名单就是空的：给空态而不是报错条。
-          if (alive) setMates((current) => current ?? [])
+          // 子智能体能力不在（宿主没开 team 服务）时名册就是空的：保留空态而不是报错条。
+          // 首次拉取失败时 seat 里就是 init 的空表，什么都不用做。
         })
     }
     poll()
@@ -135,13 +181,7 @@ function useTeammates(): TeammateView[] | null {
       alive = false
       window.clearInterval(timer)
     }
-  }, [channel])
-  return mates
-}
-
-/** 「智能体团队」钮（标题旁，文字钮）：打开本会话的队伍模态面板。 */
-function TeamButton(): ReactNode {
-  const open = usePanelOpen()
+  }, [channel, actions])
   return (
     <>
       <button
@@ -155,17 +195,17 @@ function TeamButton(): ReactNode {
       >
         智能体团队
       </button>
-      {open ? <TeamPanel /> : null}
+      {open ? <TeamPanel useStore={props.useStore} /> : null}
     </>
   )
 }
 
 /** 「N 个子智能体」下拉：本会话派出的队友，一行一个；数量为 0 时整颗不渲染。 */
-function SubagentMenu(): ReactNode {
-  const mates = useTeammates()
+function SubagentMenu(props: SlotComponentProps<Record<never, never>, never, never, MateSeatHandle>): ReactNode {
+  const mates = props.useStore((state) => state.list)
   const sessionId = useHostSelector(readSessionId)
   const [open, setOpen] = useState(false)
-  const mine = matesOf(mates ?? [], sessionId)
+  const mine = matesOf(mates, sessionId)
   if (mine.length === 0) return null
   return (
     <div className="sub-open">
@@ -214,8 +254,8 @@ function SubagentMenu(): ReactNode {
 
 /** 「智能体团队」面板：本会话的队伍为主；其它会话派出的收进底部折叠组，只读。
  *  层级照设置面板那一档（.settings-mask + .settings），Esc 与点遮罩都关。 */
-function TeamPanel(): ReactNode {
-  const mates = useTeammates()
+function TeamPanel({ useStore }: MateSeatRead): ReactNode {
+  const mates = useStore((state) => state.list)
   const sessionId = useHostSelector(readSessionId)
   const [othersOpen, setOthersOpen] = useState(false)
   /** 正在看运行记录的队友（file 路径）；null = 名单形态。 */
@@ -223,7 +263,7 @@ function TeamPanel(): ReactNode {
 
   // 子智能体菜单点一行要直接看记录：一次性交接（读完即清）。
   useEffect(() => {
-    if (peekWanted === null || mates === null) return
+    if (peekWanted === null) return
     const wanted = mates.find((mate) => mate.name === peekWanted)
     peekWanted = null
     if (wanted !== undefined) setPeeking({ name: wanted.name, file: wanted.file })
@@ -241,8 +281,8 @@ function TeamPanel(): ReactNode {
     return () => window.removeEventListener('keydown', onKey)
   }, [peeking])
 
-  const mine = matesOf(mates ?? [], sessionId)
-  const others = (mates ?? []).filter((mate) => !mine.includes(mate))
+  const mine = matesOf(mates, sessionId)
+  const others = mates.filter((mate) => !mine.includes(mate))
 
   return (
     <div

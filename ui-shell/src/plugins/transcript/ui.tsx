@@ -51,7 +51,9 @@ import {
   useHostSelector,
   type ChangedFileView,
   type HostSnapshot,
-  type ToolCallView,
+  type SlotComponentProps,
+  type SlotMatchedOf,
+  type SlotOwnerOf,
   type TranscriptEntry,
 } from '@dsc/ui'
 import { buildRoundFolds, processFoldPolicy, TurnFoldRow, useFoldMemory, type ProcessFold } from './round-fold'
@@ -66,9 +68,17 @@ import { useHoverDelay } from '../../platform/hover-delay'
 import { playCompletionSound } from '../../platform/completion-sound'
 import { matchTool, oneLine, prettyJson, TOOL_STATUS_TEXT, toolSummary, toolVerb, type ToolMatch } from '../../platform/tool-summary'
 import { formatTokens } from '../../platform/tokens'
+import {
+  ChatStatus,
+  IntendedBody,
+  IntendedPreview,
+  TOOLCARD_FACTORY,
+  TraceJumpButton,
+  registerToolCard,
+} from './tool-card/factory'
 
 /** 折叠偏好经 context 穿进深处的 ThinkRow / ToolRow / 座位（插件树就在壳的树里，可用）。 */
-interface FoldPrefs {
+export interface FoldPrefs {
   policy: ReturnType<typeof processFoldPolicy>
   /** 定稿的思考行默认展开吗（uiPrefs.reasoningDefaultOpen）。 */
   reasoningOpen: boolean
@@ -103,11 +113,34 @@ const ShellSessionContext = createContext<string | null>(null)
 /** 空的条目表：没拿到快照时共用一份，省得每帧新建数组。 */
 const NO_ENTRIES: readonly TranscriptEntry[] = Object.freeze([])
 
-/** 工具条目（ToolRow 与 toolview 选举的 owner 形状）。 */
-type ToolEntry = Extract<TranscriptEntry, { kind: 'tool' }>
+/** 工具条目（ToolRow 与 toolview 选举的 owner 形状；工具卡的 Factory 输入也用它）。 */
+export type ToolEntry = Extract<TranscriptEntry, { kind: 'tool' }>
 
 /** 工具调用视图的 chain 槽：每一条工具调用由选举出的渲染者负责（见下）。 */
 export const TOOLVIEW_SLOT = 'transcript.toolview'
+
+/**
+ * 内部几层之间传的 renderSlot 形状（= toolview 槽的 owner 份额）。
+ * 公开契约在 {@link SlotMap} 的声明里，这里只是把它拧成一个具名函数类型，免得每层重抄。
+ */
+type ToolViewRender = (name: typeof TOOLVIEW_SLOT, props: { entry: ToolEntry; storeKey?: string }) => ReactNode
+
+/**
+ * 把本插件开出来的子槽并进 `@dsc/ui` 的槽位契约表（D1）——插件就近声明自己认识的位置。
+ *
+ * owner 的形状就是渲染方（RowBody）在 `renderSlot` 调用点真正传的东西：`{ entry, storeKey }`；
+ * matched 是内置选择器的返回值（`matchTool` 的命中结果）。表一旦钉住，`select` 的参数、
+ * 当选组件的 props、他人 `renderSlot` 的实参在编译期互相校验。
+ */
+declare module '@dsc/ui' {
+  interface SlotMap {
+    [TOOLVIEW_SLOT]: {
+      kind: 'chain'
+      owner: { entry: ToolEntry; storeKey?: string }
+      matched: ToolMatch
+    }
+  }
+}
 
 /**
  * 内置渲染器在链里的位置：priority 大（后问）——任何想接管某种工具的插件注册一个
@@ -119,6 +152,9 @@ const BUILTIN_TOOLVIEW_PRIORITY = 100
 export default defineUiPlugin({
   name: '消息流',
   apply(ui) {
+    // 工具卡的装配定义（D2）：定义在这里注册，对话页与轨迹页各自渲染——两个父位置
+    // 选不同的局部组件（对话页选 intended 预览等四件；轨迹页只选轨迹口径的耗时）。
+    registerToolCard(ui)
     // toolview 是本条目声明出来的 chain 子槽：「谁渲染这条工具调用」由选举决定，
     // 不在渲染体里写死 if——内置渲染器也只是链上的一条（见下一条注册）。
     ui.slots.register(
@@ -131,19 +167,14 @@ export default defineUiPlugin({
       {
         id: 'transcript.toolview.builtin',
         priority: BUILTIN_TOOLVIEW_PRIORITY,
-        select: (owner) => matchTool(toolOwnerCall(owner).name),
+        // owner 的类型来自 SlotMap 的声明（D1）：entry 就是渲染方传的那条工具调用，
+        // 不需要再对 unknown 做断言。
+        select: (owner) => matchTool(owner.entry.call.name),
       },
       BuiltinToolView,
     )
   },
 })
-
-/** 从选举 owner 里取工具调用（选择器与当选组件共用这一个读法）。 */
-function toolOwnerCall(owner: unknown): ToolCallView {
-  const call = (owner as { entry?: { call?: ToolCallView } } | null)?.entry?.call
-  if (call === undefined) throw new Error('toolview 的 owner 里没有工具调用（渲染方传的是 { entry }）')
-  return call
-}
 
 /** 座位里的一行：条目 + 它是不是「正在直播的那一条」（直播行多一个光标与展开态）+ 全量下标（折叠区间判据）。 */
 interface Row {
@@ -211,9 +242,7 @@ const PAGE_ROUNDS = 8
 
 function TranscriptFlow({
   renderSlot,
-}: {
-  renderSlot?: (name: string, props?: Record<string, unknown>) => ReactNode
-}): ReactNode {
+}: SlotComponentProps<Record<never, never>, typeof TOOLVIEW_SLOT>): ReactNode {
   const entries = useHostSelector(readEntries)
   const live = useHostSelector(readLive)
   const turnState = useHostSelector(readTurnState)
@@ -584,7 +613,7 @@ function SeatBody({
   foldMemory: ReturnType<typeof useFoldMemory>
   /** 阶段分组（哪些连续条目成一组、组头挂在哪条之前，都从它来；none 档是空表）。 */
   stepGrouping: StepGrouping
-  renderSlot?: (name: string, props?: Record<string, unknown>) => ReactNode
+  renderSlot: ToolViewRender
   /** 页脚「分叉这一轮」；undefined = 分不了（没在会话里 / 第 1 轮）。 */
   onFork?: () => void
 }): ReactNode {
@@ -723,7 +752,7 @@ function RowBody({
   renderSlot,
 }: {
   row: Row
-  renderSlot?: (name: string, props?: Record<string, unknown>) => ReactNode
+  renderSlot: ToolViewRender
 }): ReactNode {
   const sessionId = useContext(ShellSessionContext)
   const entry = row.entry
@@ -1082,9 +1111,39 @@ function ThinkRow({
   )
 }
 
-/** 内置当选者：选举把 matched（图标 + 动词）算好交过来，渲染与兜底共用 ToolRow。 */
-function BuiltinToolView(props: { entry: { call: ToolCallView }; matched: ToolMatch; storeKey?: string }): ReactNode {
-  return <ToolRow entry={props.entry as ToolEntry} matched={props.matched} storeKey={props.storeKey} />
+/**
+ * 内置当选者：选举把 matched（图标 + 动词）算好交过来；渲染的是一个 **Factory occurrence**
+ * （D2）——对话页给四个局部组件（intended 预览 / 中文耗时 / 「将做的改动」/ 「在轨迹中查看」），
+ * 轨迹页渲染同一个定义、只换耗时口径。Factory 没注册时落到旧工具卡（fallback，保险丝）。
+ */
+function BuiltinToolView(
+  props: SlotComponentProps<SlotOwnerOf<typeof TOOLVIEW_SLOT>, never, SlotMatchedOf<typeof TOOLVIEW_SLOT>>,
+): ReactNode {
+  // 折叠偏好与会话工作目录从 context 拿（槽渲染不穿 props 链，见 ShellCwdContext 的注释）；
+  // 以输入 props 交给 Factory，定义组件本身不认识对话页的 context。
+  const prefs = useContext(FoldPrefsContext)
+  const cwd = useContext(ShellCwdContext)
+  return props.renderFactorySlot(
+    TOOLCARD_FACTORY,
+    {
+      entry: props.entry,
+      storeKey: props.storeKey,
+      persistKey: props.storeKey,
+      variant: 'chat',
+      match: props.matched,
+      foldPrefs: prefs,
+      cwd,
+    },
+    {
+      slots: {
+        preview: IntendedPreview,
+        statusDetail: ChatStatus,
+        bodyExtra: IntendedBody,
+        trailing: TraceJumpButton,
+      },
+      fallback: <ToolRow entry={props.entry} matched={props.matched} storeKey={props.storeKey} />,
+    },
+  )
 }
 
 /** 展开内容超过这个高度才给吸附快捷栏——小卡不背这条累赘（旧界面同款阈值）。 */

@@ -97,14 +97,17 @@ export interface IntendedDiff {
  * 工具卡的「将做的改动」hook：write / edit 且还在 running 时推演 diff，
  * 结果落地后（status 离开 running）返回 null，卡片回到「参数 + 结果」的常态。
  * `workdir` 为空（拿不到会话目录）就不推演——相对路径无处落。
+ *
+ * `enabled = false` 用于**轨迹页**复用同一张卡（D2 的 Factory）：那边看的是「已经发生了什么」，
+ * 不做参数推演、也就不发 `dock fs-read`。
  */
-export function useIntendedDiff(call: ToolCallView, workdir: string): IntendedDiff | null {
+export function useIntendedDiff(call: ToolCallView, workdir: string, enabled = true): IntendedDiff | null {
   const channel = useHostChannel()
   const input = useMemo(() => parseIntended(call.name, call.argsText), [call.name, call.argsText])
   const [state, setState] = useState<IntendedDiff | null>(null)
   const absPath = input === null ? null : toAbsPath(input.path, workdir)
   useEffect(() => {
-    if (input === null || absPath === null || call.status !== 'running') {
+    if (!enabled || input === null || absPath === null || call.status !== 'running') {
       setState(null)
       return
     }
@@ -152,6 +155,6 @@ export function useIntendedDiff(call: ToolCallView, workdir: string): IntendedDi
     return () => {
       on = false
     }
-  }, [absPath, call.status, input, channel])
+  }, [absPath, call.status, enabled, input, channel])
   return state
 }

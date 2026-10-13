@@ -24,11 +24,241 @@
  *     内置渲染器与第三方渲染器在**同一条链**里按优先级竞争。chain 没有格子的概念，
  *     同 priority 允许多条并存（按注册序排队），register 也不做占用冲突检查。
  *
+ * 2026-10-13 起加了一层**类型化契约**（D1）：`SlotMap` / `SlotFactoryMap` 两张表由
+ * **插件 import 的那个模块**用 `declare module` 合并（web 面是 `ui-shell/src/plugin-api.ts`，
+ * TUI 面是 `src/ui/tui-plugin-api.ts`——合并只认词法相邻的声明，re-export 不参与），
+ * `register` / `registerFactory` 的槽名、owner props、children、chain select、席位份额
+ * 全部从表里推出来：插件作者写错一处，`tsc` 当场报错（负例钉在
+ * `ui-shell/src/slot-contract.typecheck.tsx`）。表在未收窄时（`SlotMapLike` /
+ * `FactoryMapLike`）键就是 string，等于不做类型检查——探针与 JS 插件走这条路。
+ *
+ * 另外两条机制（D2/D3）：
+ *   - **Factory**（D2）：一份可复用的装配定义，无关的父位置各自渲染一次 occurrence，
+ *     调用方按 occurrence 选局部组件（定义内部用 `useFactorySlot` 取，没选就用 fallback）；
+ *     Factory 的 children 仍是普通槽，走同一条声明/登记/遮蔽的账。
+ *   - **席位**（D3）：登记时给一个 `StoreHandle`，该条目的组件拿到 `useStore` + `actions`
+ *     （draft 已剥掉）；**同一个 handle 对象**的多个登记共享一个实例，最后一个持有者
+ *     卸载时释放。跨插件共享走 A1 的 `provide`/`consume` 传 handle，席位本身不认字符串键。
+ *
  * @module dsc/ui/slots
  */
+import type { PropsStoreOf, SeatInstanceOf, StoreHandle } from './store.js'
 
 /** 槽的四种形态：single/list/keyed 各管「几个格子」，chain 管「谁来渲染这一份」。 */
 export type SlotKind = 'single' | 'list' | 'keyed' | 'chain'
+
+/**
+ * 契约表里一条槽的形状底线：`kind` 必填；`owner` 是父在渲染调用点传的 props；
+ * `matched` 是 chain 选择器的返回值类型（组件 `matched` prop 从它推）。
+ */
+export interface SlotEntryLike {
+  kind: SlotKind
+  owner?: object
+  matched?: unknown
+}
+
+/**
+ * 未收窄的开放表：键是任意 string。装载器、探针、TUI 的默认注册表用它，
+ * 等于「不做类型检查」；插件面用 declare module 把具体键并进自己的那份表。
+ */
+export interface SlotMapLike {
+  [key: string]: SlotEntryLike
+}
+
+/** 表里的槽名（联合类型）。 */
+export type SlotNameOf<M> = keyof M & string
+
+/** 某个槽的形态（表里没有就退回全宽 SlotKind）。 */
+export type SlotKindOf<M, K extends keyof M & string> =
+  M[K] extends { kind: infer Kd extends SlotKind } ? Kd : SlotKind
+
+/** 某个槽的 owner 份额（表里没写 owner 就是空对象）。 */
+export type SlotOwnerOf<M, K extends keyof M & string> =
+  M[K] extends { owner: infer O extends object } ? O : Record<never, never>
+
+/** 某个 chain 槽的 matched 类型（非 chain 给 never）。 */
+export type SlotMatchedOf<M, K extends keyof M & string> =
+  M[K] extends { kind: 'chain'; matched: infer Mm } ? Mm : never
+
+/** 登记位能声明出来的子槽表：键从契约表取，形态必须是表里声明的那个。 */
+export type SlotChildrenOf<M> = { [P in keyof M & string]?: SlotKindOf<M, P> }
+
+/**
+ * Factory 契约表里一条定义的形状底线：入参 props、children（普通槽）、
+ * 局部位置表、可选席位。表由 declare module 合并，键就是 Factory 名。
+ */
+export interface FactoryEntryLike {
+  props?: object
+  children?: Record<string, SlotKind>
+  slots?: Record<string, { props?: object }>
+  store?: StoreHandle<any, any>
+}
+
+/** 未收窄的开放 Factory 表（同 {@link SlotMapLike}）。 */
+export interface FactoryMapLike {
+  [key: string]: FactoryEntryLike
+}
+
+/** Factory 的 occurrence 输入 props（父在 renderFactorySlot 调用点传的）。 */
+export type FactoryInputPropsOf<FM, F extends keyof FM & string> =
+  FM[F] extends { props: infer P extends object } ? P : object
+
+/** Factory 声明的普通子槽表（定义声明、定义渲染、任何插件可注册）。 */
+export type FactoryChildrenOf<FM, F extends keyof FM & string> =
+  FM[F] extends { children: infer D extends Record<string, SlotKind> } ? D : Record<never, never>
+
+/** Factory 声明的局部位置表（父按 occurrence 选组件）。 */
+export type FactoryLocalSlotsOf<FM, F extends keyof FM & string> =
+  FM[F] extends { slots: infer S extends Record<string, { props?: object }> } ? S : Record<never, never>
+
+/** 局部位置名。 */
+export type FactoryLocalNameOf<FM, F extends keyof FM & string> = keyof FactoryLocalSlotsOf<FM, F> & string
+
+/** 某个局部位置的输入 props（局部组件从父那里拿到的）。 */
+export type FactoryLocalInputPropsOf<FM, F extends keyof FM & string, N extends FactoryLocalNameOf<FM, F>> =
+  FactoryLocalSlotsOf<FM, F>[N] extends { props: infer P extends object } ? P : object
+
+/** Factory 声明的席位句柄（没声明就是 undefined）。 */
+export type FactoryStoreOf<FM, F extends keyof FM & string> =
+  FM[F] extends { store: infer H extends StoreHandle<any, any> } ? H : undefined
+
+/**
+ * 注册位组件的形状：裸调用签名（不用 FC）。参数逆变让「props 收窄的组件」天然可赋给
+ * 更宽的约束，FC 的静态成员只会帮倒忙。
+ */
+export type SlotComponentLike<P> = (props: P) => unknown
+
+/**
+ * 渲染能力份额：`renderSlot`（本条目声明过的子槽）+ `childSlots` + `renderFactorySlot`。
+ *
+ * 返回类型写成 `never` 是**故意的**：核心面不 import React，靠逆变（never 可赋给一切）
+ * 让这份约束仍能赋给契约面的 ReactNode 版本。写插件的组件看到的是 `@dsc/ui` 的
+ * `SlotComponentProps`（ReactNode 返回），不是这里。
+ */
+export interface SlotRenderShare<M, D, FM> {
+  renderSlot: <K extends keyof D & keyof M & string>(name: K, props?: SlotOwnerOf<M, K>) => never
+  childSlots: readonly string[]
+  renderFactorySlot: RenderFactorySlotOf<M, FM>
+}
+
+/** 渲染一次 Factory occurrence（父位置用的那个函数）。 */
+export type RenderFactorySlotOf<M, FM> = <F extends keyof FM & string>(
+  name: F,
+  props?: FactoryInputPropsOf<FM, F>,
+  options?: {
+    slots?: Partial<{ [N in FactoryLocalNameOf<FM, F>]: FactoryLocalComponentLike<M, FM, F, N> }>
+    fallback?: unknown
+  },
+) => never
+
+/** Factory 定义与局部组件共享的注册面：子槽渲染 + Factory 渲染 + 席位。 */
+export type FactoryRegistrationShare<M, FM, F extends keyof FM & string> =
+  SlotRenderShare<M, FactoryChildrenOf<FM, F>, FM> & PropsStoreOf<FactoryStoreOf<FM, F>>
+
+/** 父选的局部组件（输入位置：props 形状必须装得下注册面那份）。 */
+export type FactoryLocalComponentLike<M, FM, F extends keyof FM & string, N extends FactoryLocalNameOf<FM, F>> =
+  SlotComponentLike<FactoryLocalInputPropsOf<FM, F, N> & FactoryRegistrationShare<M, FM, F>>
+
+/**
+ * 定义内部选自局部组件的 hook：返回一个稳定组件（父没选就用 fallback）。
+ * 返回组件的返回值取 never（同 {@link SlotRenderShare} 的逆变理由）。
+ */
+export type UseFactorySlotOf<M, FM, F extends keyof FM & string> = <N extends FactoryLocalNameOf<FM, F>>(
+  name: N,
+  fallback: FactoryLocalComponentLike<M, FM, F, N>,
+) => (props: FactoryLocalInputPropsOf<FM, F, N>) => never
+
+/** Factory 定义组件收到的 props（核心面）。 */
+export type FactoryDefinitionPropsOf<M, FM, F extends keyof FM & string> =
+  FactoryInputPropsOf<FM, F>
+  & FactoryRegistrationShare<M, FM, F>
+  & { useFactorySlot: UseFactorySlotOf<M, FM, F> }
+
+/** 注册位组件 props 全集（核心面：owner + matched + 渲染能力 + 席位）。 */
+export type SlotPropsOf<M, K extends keyof M & string, D, H, FM> =
+  SlotOwnerOf<M, K>
+  & (SlotKindOf<M, K> extends 'chain' ? { matched: SlotMatchedOf<M, K> } : object)
+  & SlotRenderShare<M, D, FM>
+  & PropsStoreOf<H>
+
+/** 按形态收窄的登记位字段：keyed 要 key、chain 要 select，其余只有 priority。 */
+type KindFields<M, K extends keyof M & string> =
+  SlotKindOf<M, K> extends 'keyed'
+    ? { key: string; priority?: number }
+    : SlotKindOf<M, K> extends 'chain'
+      ? { select: (owner: SlotOwnerOf<M, K>) => SlotMatchedOf<M, K> | null; priority?: number }
+      : { priority?: number }
+
+/** 注册一条登记时的字段（component 单独传）。 */
+export type SlotRegisterOptions<
+  M = SlotMapLike,
+  K extends keyof M & string = keyof M & string,
+  D extends SlotChildrenOf<M> = Record<never, never>,
+  H extends StoreHandle<any, any> | undefined = undefined,
+> = {
+  id: string
+  /** 缺省 0；list 槽里决定横向次序。 */
+  order?: number
+  /** 这条登记自己开出来的子槽（键从契约表取，形态必须与表一致）。 */
+  children?: D
+  /** 席位：同一个 handle 的多个登记共享一个实例。 */
+  store?: H
+} & KindFields<M, K>
+
+/** Factory 声明表与 SlotMap 的对齐检查：children 的每个键都必须在 SlotMap 里、形态匹配。 */
+type FactoryChildMismatchKeys<M, FM, F extends keyof FM & string> = {
+  [K in keyof FactoryChildrenOf<FM, F>]: K extends keyof M & string
+    ? FactoryChildrenOf<FM, F>[K] extends SlotKindOf<M, K>
+      ? never
+      : K
+    : K
+}[keyof FactoryChildrenOf<FM, F>]
+type FactoryChildrenCheck<M, FM, F extends keyof FM & string> =
+  [FactoryChildMismatchKeys<M, FM, F>] extends [never]
+    ? unknown
+    : { 'Factory 的 children 必须与 SlotMap 对齐（键在表里、形态一致）': FactoryChildMismatchKeys<M, FM, F> }
+
+/** 注册一个 Factory 定义时的字段（component 单独传）。 */
+export type SlotFactoryRegisterOptions<M, FM, F extends keyof FM & string> = {
+  name: F
+  /** 声明的普通子槽必须与 SlotMap 对齐（见 FactoryChildrenCheck）。 */
+  children?: FactoryChildrenOf<FM, F>
+  /** 登记时只声明「有哪几个局部位置」；每个位置的 props 形状在 SlotFactoryMap 里定。 */
+  slots?: Partial<Record<FactoryLocalNameOf<FM, F>, { props?: object }>>
+  /** 可选席位（第一版只支持共享 handle）。 */
+  store?: FactoryStoreOf<FM, F>
+} & FactoryChildrenCheck<M, FM, F>
+
+/** 已定义的 Factory（运行期记录；component 的类型在登记面收窄）。 */
+export interface StoredFactory<C> {
+  name: string
+  component: C
+  /** 声明的普通子槽名（readonly 快照）。 */
+  children: readonly string[]
+  /** 声明的局部位置名。 */
+  slots: readonly string[]
+  /** 席位句柄；没声明是 null。 */
+  store: StoreHandle<any, any> | null
+}
+
+/** register 的实现签名用的擦除形状：类型检查发生在公开重载那一侧。 */
+interface ErasedSlotRegisterOptions {
+  id: string
+  order?: number
+  priority?: number
+  key?: string | undefined
+  select?: ((owner: unknown) => unknown) | undefined
+  children?: Readonly<Record<string, SlotKind | undefined>> | undefined
+  store?: StoreHandle<any, any> | undefined
+}
+
+/** registerFactory 的实现签名用的擦除形状。 */
+interface ErasedFactoryRegisterOptions {
+  name: string
+  children?: Readonly<Record<string, SlotKind | undefined>> | undefined
+  slots?: Readonly<Record<string, { props?: object } | undefined>> | undefined
+  store?: StoreHandle<any, any> | undefined
+}
 
 /** 一条登记：某插件往某槽放了一个组件。 */
 export interface SlotEntry<C> {
@@ -50,34 +280,10 @@ export interface SlotEntry<C> {
   select: ((owner: unknown) => unknown) | null
   /** 组件本身（浏览器壳里是 React 组件，TUI 壳里是 ink 组件）。 */
   component: C
+  /** 登记时声明的席位句柄；没声明是 null。 */
+  store: StoreHandle<any, any> | null
   /** 注册序号：order 与 priority 都持平时的稳定次序。 */
   seq: number
-}
-
-/** 注册一条登记时要给的字段（component 单独传）。 */
-export interface SlotRegisterOptions {
-  id: string
-  /** 缺省 0；list 槽里决定横向次序。 */
-  order?: number
-  /** 缺省 0；同一个格子里小者胜（遮蔽）。chain 槽里小者**先被问**（先试先当选）。 */
-  priority?: number
-  /** keyed 槽必填：这条登记负责哪个 key。 */
-  key?: string
-  /**
-   * chain 槽必填：这条登记的选举选择器。渲染时拿到渲染方给的 owner 值，
-   * 返回非 null 就当选（返回值原样交给组件的 `matched` prop），返回 null 表示
-   * 「这单我不接，问下一位」。必须写成纯函数——只读 owner，不碰外部可变状态。
-   */
-  select?: (owner: unknown) => unknown
-  /**
-   * 这条登记自己开出来的子槽（槽名 → 形态）。
-   *
-   * 子槽是**全局名字**、按引用计数共享：一个 list 槽里的多条登记可以声明同名子槽，
-   * 那个名字就成了「所有实例共用、每个实例各渲染一遍」的扩展点
-   * （典型例子：`chat.message.footer` 由每条消息的渲染者声明，插件往里放一个按钮，
-   * 于是每条消息都长出一个按钮）。同名不同形态照样报错。
-   */
-  children?: Readonly<Record<string, SlotKind>>
 }
 
 /** 一次插件故障（渲染期异常、贡献回调抛错、卸载回调抛错）。 */
@@ -163,8 +369,10 @@ interface Listener {
  * 槽位注册表本体。
  *
  * @typeParam C - 组件类型。浏览器壳传 React 组件类型，TUI 壳传 ink 组件类型。
+ * @typeParam M - 槽位契约表（`SlotMap`）。默认是不收窄的开放表，等于不做类型检查。
+ * @typeParam FM - Factory 契约表（`SlotFactoryMap`）。同上。
  */
-export class SlotRegistry<C = unknown> {
+export class SlotRegistry<C = unknown, M = SlotMapLike, FM = FactoryMapLike> {
   /** 已声明的槽：名字 → 形态 + 引用计数（引用计数让子槽可以被多份登记共享）。 */
   private readonly kinds = new Map<string, { kind: SlotKind; refs: number }>()
   private readonly entries = new Map<string, SlotEntry<C>[]>()
@@ -176,6 +384,18 @@ export class SlotRegistry<C = unknown> {
   private readonly faultListeners = new Set<(fault: SlotFault) => void>()
   /** 等槽声明的贡献者（槽一出现就跑，槽一消失就撤）。 */
   private readonly waiters = new Map<string, Set<Waiter>>()
+  /**
+   * 席位账：handle → 引用计数 + 懒建的共享实例。
+   *
+   * 为什么按 handle 引用计数而不是按名字：席位的身份就是 handle 对象——两个登记给了
+   * 同一个 handle 才共享实例；没有字符串键，也就没有「同名冲突」这回事
+   * （跨插件要共享就走 `ui.provide`/`consume` 传同一个 handle，重名冲突落在服务表上）。
+   */
+  private readonly seats = new Map<StoreHandle<any, any>, { refs: number; instance: unknown }>()
+  /** 已定义的 Factory：名字 → 定义 + 版本（版本变化让渲染出口重订阅）。 */
+  private readonly factories = new Map<string, StoredFactory<C>>()
+  private readonly factoryVersions = new Map<string, number>()
+  private readonly factoryListeners = new Map<string, Set<() => void>>()
   /**
    * `winners()` 的缓存，每个槽各自记下「算的时候那个槽的版本号」。
    *
@@ -199,6 +419,9 @@ export class SlotRegistry<C = unknown> {
    * @param kind - 这个位置能容纳几份
    * @returns 撤回这一次声明的函数（计数归零时，连带清掉槽里的登记与等待者）
    */
+  declare<K extends keyof M & string>(slot: K, kind: SlotKindOf<M, K>): () => void
+  /** 类型擦除重载：壳内部按字符串声明（启动清单/SHELL_SLOTS 循环那种）。 */
+  declare(slot: string, kind: SlotKind): () => void
   declare(slot: string, kind: SlotKind): () => void {
     const existing = this.kinds.get(slot)
     if (existing !== undefined) {
@@ -232,7 +455,7 @@ export class SlotRegistry<C = unknown> {
    * @param contribute - 槽存在时的贡献动作，可返回退订函数
    * @returns 撤回这次等待（连带撤掉已经做出的贡献）
    */
-  injectSlot(slot: string, contribute: () => void | (() => void)): () => void {
+  injectSlot<K extends keyof M & string>(slot: K, contribute: () => void | (() => void)): () => void {
     const waiter: Waiter = { contribute, ran: false, dispose: null }
     const set = this.waiters.get(slot) ?? new Set<Waiter>()
     set.add(waiter)
@@ -247,15 +470,28 @@ export class SlotRegistry<C = unknown> {
 
   /**
    * 往一个已声明的槽里登记组件。
+   *
+   * 类型面：槽名从契约表推，组件 props 约束由 owner/children/chain matched/席位份额
+   * 组装（`SlotPropsOf`）——传错 props 的组件在 `register` 这一行就编不过。
    * @param slot - 槽名
-   * @param options - 登记 id、排序与遮蔽权重
+   * @param options - 登记 id、排序与遮蔽权重、子槽声明、席位
    * @param component - 组件
    * @returns 退订函数；插件卸载时调用，界面下一帧就没有它了
    * @throws {UndeclaredSlotError} 槽没声明（想等它出现就用 `injectSlot`）
    * @throws {KeyedSlotKeyError} keyed 槽没给 key
+   * @throws {ChainSlotSelectError} chain 槽没给 select
    * @throws {DuplicateSlotError} 同格子同 priority 已经被占
    */
-  register(slot: string, options: SlotRegisterOptions, component: C): () => void {
+  register<
+    K extends keyof M & string,
+    const D extends SlotChildrenOf<M> = Record<never, never>,
+    H extends StoreHandle<any, any> | undefined = undefined,
+  >(
+    slot: K,
+    options: SlotRegisterOptions<M, K, D, H>,
+    component: C & SlotComponentLike<SlotPropsOf<M, K, D, H, FM>>,
+  ): () => void
+  register(slot: string, options: ErasedSlotRegisterOptions, component: C): () => void {
     const spec = this.kinds.get(slot)
     if (spec === undefined) throw new UndeclaredSlotError(slot, this.slots)
     const key = spec.kind === 'keyed' ? options.key : null
@@ -269,6 +505,8 @@ export class SlotRegistry<C = unknown> {
     const clash = spec.kind === 'chain' ? undefined : list.find((entry) => entry.cell === cell && entry.priority === priority)
     if (clash !== undefined) throw new DuplicateSlotError(slot, cell, priority, clash.id, options.id)
     const releases = this.declareChildren(options.children)
+    const store = options.store ?? null
+    if (store !== null) this.holdSeat(store)
     const entry: SlotEntry<C> = {
       slot,
       id: options.id,
@@ -279,6 +517,7 @@ export class SlotRegistry<C = unknown> {
       children: Object.keys(options.children ?? {}),
       select: options.select ?? null,
       component,
+      store,
       seq: this.seq,
     }
     this.seq += 1
@@ -294,6 +533,7 @@ export class SlotRegistry<C = unknown> {
           this.bump(slot)
         }
       }
+      if (entry.store !== null) this.releaseSeat(entry.store)
       for (const release of releases) release()
     }
   }
@@ -308,6 +548,9 @@ export class SlotRegistry<C = unknown> {
    * @param owner - 渲染位置的上下文（例如「这一条工具调用」），原样交给选择器
    * @throws {Error} 槽不是 chain 形态时抛装配错误（选举只对 chain 有意义）
    */
+  elect<K extends keyof M & string>(slot: K, owner: SlotOwnerOf<M, K>): SlotElectResult<C> | null
+  /** 类型擦除重载：渲染出口按字符串槽名调用（出口的 owner 保持 Record 擦除面）。 */
+  elect(slot: string, owner: unknown): SlotElectResult<C> | null
   elect(slot: string, owner: unknown): SlotElectResult<C> | null {
     if (this.kinds.get(slot)?.kind !== 'chain') {
       throw new SlotAssemblyError(`槽位 ${slot} 不是 chain 形态（elect 只对 chain 有意义）`)
@@ -361,6 +604,9 @@ export class SlotRegistry<C = unknown> {
   }
 
   /** 某个槽的形态；没声明过给 undefined。 */
+  spec<K extends keyof M & string>(slot: K): SlotKindOf<M, K> | undefined
+  /** 类型擦除重载：壳内部按字符串查询（已声明槽的形态是运行期事实）。 */
+  spec(slot: string): SlotKind | undefined
   spec(slot: string): SlotKind | undefined {
     return this.kinds.get(slot)?.kind
   }
@@ -436,11 +682,137 @@ export class SlotRegistry<C = unknown> {
     return total
   }
 
+  /**
+   * 读一个席位的共享实例（**该 handle 已有登记**才给实例）。
+   *
+   * 懒建时机与 dsh 一致：第一个渲染读（组件经 `useStore`，或持有 handle 的插件经这个方法）
+   * 才 `create()`。没有登记过这个 handle 就返回 undefined——席位不能凭空出现，
+   * 跨插件读之前先经 A1 的服务表拿到 handle（provider 卸载时服务先撤，这里自然读到 undefined）。
+   */
+  seat<H extends StoreHandle<any, any>>(handle: H): SeatInstanceOf<H> | undefined {
+    const record = this.seats.get(handle)
+    if (record === undefined) return undefined
+    if (record.instance === undefined) record.instance = handle.create()
+    return record.instance as SeatInstanceOf<H>
+  }
+
+  /**
+   * 注册一个可复用的 Factory 定义（D2）。
+   *
+   * 运行期规则（照 dsh，逐条可测）：
+   *   - 同名第二次注册抛装配错误（一个名字只许一个定义）；
+   *   - children 与普通槽共用声明表（引用计数语义：同名同形态合法，形态冲突报错）；
+   *   - disposer 清定义 + collapse children（子槽的登记递归清掉，迟到的 disposer 变空操作）。
+   * @param options - 定义名、children、局部位置表、可选席位
+   * @param component - 定义组件（收 occurrence 输入 props + 注册能力 + useFactorySlot）
+   * @returns 退订函数（幂等）
+   */
+  registerFactory<F extends keyof FM & string>(
+    options: SlotFactoryRegisterOptions<M, FM, F>,
+    component: C & SlotComponentLike<FactoryDefinitionPropsOf<M, FM, F>>,
+  ): () => void
+  registerFactory(options: ErasedFactoryRegisterOptions, component: C): () => void {
+    const existing = this.factories.get(options.name)
+    if (existing !== undefined) {
+      throw new SlotAssemblyError(`装配错误：Factory「${options.name}」已经定义（先注册者还在账上），一个名字只许一个定义`)
+    }
+    const releases = this.declareChildren(options.children)
+    const store = options.store ?? null
+    if (store !== null) this.holdSeat(store)
+    const definition: StoredFactory<C> = {
+      name: options.name,
+      component,
+      children: Object.freeze(Object.keys(options.children ?? {})),
+      slots: Object.freeze(Object.keys(options.slots ?? {})),
+      store,
+    }
+    this.factories.set(options.name, definition)
+    this.bumpFactory(options.name)
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      // 迟到的 disposer（定义已经被顶掉）是空操作：不能把后来者的定义误删。
+      if (this.factories.get(options.name) !== definition) return
+      this.factories.delete(options.name)
+      this.bumpFactory(options.name)
+      if (definition.store !== null) this.releaseSeat(definition.store)
+      for (const release of releases) release()
+    }
+  }
+
+  /** 读一个已定义的 Factory；没定义过（或已卸下）给 undefined。 */
+  factory(name: string): StoredFactory<C> | undefined {
+    return this.factories.get(name)
+  }
+
+  /** Factory 定义的单调版本号（渲染出口拿它当 useSyncExternalStore 的快照）。 */
+  factoryVersion(name: string): number {
+    return this.factoryVersions.get(name) ?? 0
+  }
+
+  /** 订阅某个 Factory 定义的增删（同名注册/卸载都会通知）。 */
+  subscribeFactory(name: string, listener: () => void): () => void {
+    const set = this.factoryListeners.get(name) ?? new Set<() => void>()
+    set.add(listener)
+    this.factoryListeners.set(name, set)
+    return () => {
+      set.delete(listener)
+      if (set.size === 0) this.factoryListeners.delete(name)
+    }
+  }
+
+  /**
+   * 报一条 Factory 里的故障（定义组件或局部组件在渲染期抛异常）。
+   *
+   * 与条目的 `reportFault` 取向一致（记进同一本故障账，诊断区看得见），但**不摘除共享定义**：
+   * 定义是多个父位置共用的，一个 occurrence 崩了不能把别人的装配也打掉（dsh 的 reportFactoryError）。
+   * @param name - Factory 名
+   * @param id - 出事的定义/局部位置标识（诊断用）
+   * @param error - 异常
+   */
+  reportFactoryFault(name: string, id: string, error: unknown): void {
+    this.record({ slot: `factory:${name}`, id, phase: 'render', error: toError(error) })
+  }
+
+  /** 席位引用计数 +1（register/registerFactory 声明席位时）。 */
+  private holdSeat(handle: StoreHandle<any, any>): void {
+    const record = this.seats.get(handle)
+    if (record === undefined) this.seats.set(handle, { refs: 1, instance: undefined })
+    else record.refs += 1
+  }
+
+  /** 席位引用计数 −1；最后一个持有者走了，实例随之消失（下次登记重新建）。 */
+  private releaseSeat(handle: StoreHandle<any, any>): void {
+    const record = this.seats.get(handle)
+    if (record === undefined) return
+    record.refs -= 1
+    if (record.refs > 0) return
+    this.seats.delete(handle)
+  }
+
+  /** Factory 版本号 +1 并通知关心这个定义的订阅者。 */
+  private bumpFactory(name: string): void {
+    this.factoryVersions.set(name, (this.factoryVersions.get(name) ?? 0) + 1)
+    const set = this.factoryListeners.get(name)
+    if (set === undefined) return
+    for (const listener of [...set]) {
+      try {
+        listener()
+      } catch (error) {
+        console.error(`Factory ${name} 的订阅者抛异常：`, error)
+      }
+    }
+  }
+
   /** 按 children 声明表把子槽开出来，返回一批退订函数。 */
-  private declareChildren(children: Readonly<Record<string, SlotKind>> | undefined): (() => void)[] {
+  private declareChildren(children: Readonly<Record<string, SlotKind | undefined>> | undefined): (() => void)[] {
     if (children === undefined) return []
     const releases: (() => void)[] = []
-    for (const [name, kind] of Object.entries(children)) releases.push(this.declare(name, kind))
+    for (const [name, kind] of Object.entries(children)) {
+      if (kind === undefined) continue
+      releases.push(this.declare(name, kind))
+    }
     return releases
   }
 

@@ -11,11 +11,20 @@
  *
  * @module dsc-ui-shell/plugin-api
  */
-import { useMemo, useSyncExternalStore, type ComponentType, type ReactNode } from 'react'
+import { useMemo, useSyncExternalStore, type ReactNode } from 'react'
 import type {
+  FactoryChildrenOf as FactoryChildrenOfMap,
+  FactoryInputPropsOf as FactoryInputPropsOfMap,
+  FactoryLocalInputPropsOf as FactoryLocalInputPropsOfMap,
+  FactoryLocalNameOf as FactoryLocalNameOfMap,
+  FactoryStoreOf as FactoryStoreOfMap,
   HostSnapshot,
+  PropsStoreOf,
   SlotEntry,
   SlotKind,
+  SlotKindOf as SlotKindOfMap,
+  SlotMatchedOf as SlotMatchedOfMap,
+  SlotOwnerOf as SlotOwnerOfMap,
   SlotRegistry,
   UiHostInfo,
   UiPluginApi as CoreUiPluginApi,
@@ -39,39 +48,129 @@ export const TUI_SLOTS = {
 } as const
 
 /**
- * 壳交给插件组件的渲染能力（每个条目都有）。
+ * ── 槽位契约表（D1）────────────────────────────────────────────────────────────
+ *
+ * 槽名 → `{ kind; owner?; matched? }`。壳与插件都用 `declare module '@dsc/ui'` 往上并键。
+ * 为什么表声明在这个模块（而不是 @dsc/ui-core 再转出）：`declare module` 的合并只认
+ * **词法相邻**的声明，re-export 不参与——声明必须落在插件 import 的那个模块里。
+ * 壳在 `ui-shell/src/slots.ts` 并进 9 个壳槽，插件就近并自己开出来的子槽
+ * （例：transcript 的 `transcript.toolview`）。
+ */
+export interface SlotMap {}
+
+/** Factory 契约表（D2）：Factory 名 → `{ props; children?; slots?; store? }`。 */
+export interface SlotFactoryMap {}
+
+/** 表里的槽名（联合类型）；写错槽名在调用点就编不过。 */
+export type SlotName = keyof SlotMap & string
+/** 某个槽的形态。 */
+export type SlotKindOf<K extends SlotName> = SlotKindOfMap<SlotMap, K>
+/** 某个槽的 owner 份额（父在渲染调用点传的 props）。 */
+export type SlotOwnerOf<K extends SlotName> = SlotOwnerOfMap<SlotMap, K>
+/** 某个 chain 槽的 matched 类型（选择器返回值，组件 `matched` prop 从它推）。 */
+export type SlotMatchedOf<K extends SlotName> = SlotMatchedOfMap<SlotMap, K>
+
+/** Factory 名（表里的键）。 */
+export type FactoryName = keyof SlotFactoryMap & string
+/** Factory occurrence 的输入 props（父在 renderFactorySlot 调用点传的）。 */
+export type FactoryInputProps<F extends FactoryName> = FactoryInputPropsOfMap<SlotFactoryMap, F>
+/** 局部位置名。 */
+export type FactoryLocalName<F extends FactoryName> = FactoryLocalNameOfMap<SlotFactoryMap, F>
+/** 某个局部位置的输入 props。 */
+export type FactoryLocalInputProps<F extends FactoryName, N extends FactoryLocalName<F>> =
+  FactoryLocalInputPropsOfMap<SlotFactoryMap, F, N>
+/** Factory 声明的普通子槽表。 */
+export type FactoryChildren<F extends FactoryName> = FactoryChildrenOfMap<SlotFactoryMap, F>
+/** Factory 声明的席位句柄（没声明是 undefined）。 */
+export type FactoryStore<F extends FactoryName> = FactoryStoreOfMap<SlotFactoryMap, F>
+
+/**
+ * 壳交给插件组件的渲染能力（每个条目、每个 Factory occurrence 都有）。
  *
  * 为什么要交给组件而不是从 `ui.slots` 里直接渲染：槽是**位置**，位置归渲染它的人管。
  * 一个工具卡要在自己尾巴上留个洞，得由它说明「这个洞叫什么」，别人再往里放东西；
  * 这样 `renderSlot` 只能渲染本条目自己声明过的名字，拼错当场报装配错误。
  */
-export interface SlotRenderApi {
+export interface SlotRenderApi<ChildKeys extends string = never> {
   /** 渲染本条目声明过的子槽（没声明过的名字调用会抛装配错误）。 */
-  renderSlot(name: string, props?: Record<string, unknown>): ReactNode
+  renderSlot: <K extends ChildKeys & SlotName>(name: K, props?: SlotOwnerOf<K>) => ReactNode
   /** 本条目声明出来的子槽名（诊断用）。 */
   childSlots: readonly string[]
+  /** 渲染一次 Factory occurrence（定义缺席画 fallback）——D2 的复用面。 */
+  renderFactorySlot: RenderFactorySlot
 }
 
-/** 槽条目组件收到的 props：渲染位置给的 owner 值（展开在顶层）+ 渲染能力。 */
-export type SlotComponentProps<Owner = Record<string, never>> = Owner & SlotRenderApi
+/**
+ * Factory 定义与局部组件共享的注册面（定义声明的 children 渲染 + Factory 渲染 + 席位）。
+ * 局部组件与定义组件收到的是**同一份**，所以局部位置也能开自己的子槽、读同一个席位。
+ */
+export type FactoryRegistrationShare<F extends FactoryName> = SlotRenderApi<keyof FactoryChildren<F> & string> & PropsStoreOf<FactoryStore<F>>
+
+/** 父按 occurrence 选的局部组件（或定义自己给的 fallback）。 */
+export type FactoryLocalProps<F extends FactoryName, N extends FactoryLocalName<F>> = FactoryLocalInputProps<F, N> & FactoryRegistrationShare<F>
+
+export type FactoryLocalComponent<F extends FactoryName, N extends FactoryLocalName<F>> = (
+  props: FactoryLocalProps<F, N>,
+) => ReactNode
+
+/** 定义内部选局部组件的 hook（返回组件；父没选就用 fallback）。 */
+export type UseFactorySlot<F extends FactoryName> = <N extends FactoryLocalName<F>>(
+  name: N,
+  fallback: FactoryLocalComponent<F, N>,
+) => (props: FactoryLocalInputProps<F, N>) => ReactNode
+
+/** Factory 定义组件收到的完整 props：occurrence 输入 + 注册面 + useFactorySlot。 */
+export type FactoryComponentProps<F extends FactoryName> = FactoryInputProps<F>
+  & FactoryRegistrationShare<F>
+  & { useFactorySlot: UseFactorySlot<F> }
+
+/**
+ * 渲染一次 Factory occurrence：父传 occurrence 输入，`options.slots` 按本次 occurrence
+ * 选局部组件（没选的位置由定义自己的 fallback 顶上）；定义缺席画 `options.fallback`。
+ */
+export type RenderFactorySlot = <F extends FactoryName>(
+  name: F,
+  props?: FactoryInputProps<F>,
+  options?: {
+    slots?: Partial<{ [N in FactoryLocalName<F>]: FactoryLocalComponent<F, N> }>
+    fallback?: ReactNode
+  },
+) => ReactNode
+
+/**
+ * 槽条目组件收到的 props：owner 份额 + （chain 的）matched 份额 + 渲染能力 + 席位份额。
+ *
+ * 写组件时按这个别名声明 props，`register` 的约束就按它校验（拼错槽名、拿错 owner、
+ * 漏声明子槽都会在调用点报错）。三个可选参数的缺省就是「无 owner / 无子槽 / 非 chain」。
+ */
+export type SlotComponentProps<
+  Owner = Record<never, never>,
+  ChildKeys extends string = never,
+  Matched = never,
+  Store = undefined,
+> = Owner
+  & ([Matched] extends [never] ? object : { matched: Matched })
+  & SlotRenderApi<ChildKeys>
+  & PropsStoreOf<Store>
 
 /**
  * 浏览器壳里「组件」就是 React 组件。
  *
- * 这里用 `any` 是刻意的：owner props 的形态由每个槽自己定（消息流的组件要知道
- * 「我在渲染哪条消息」），注册表只把它们当「能渲染的东西」；写 `unknown` 会把
- * 插件作者的类型全部挡掉，注册一个组件都得先做类型断言。
+ * 写成 `(props: never) => ReactNode` 是刻意的（D1）：注册位的约束靠参数逆变做起——
+ * 任何声明了具体 props 的组件都天然满足「props=never」这个宽形状，而真正的 props
+ * 检查发生在 `register` 调用点（约束要求组件装得下组装出来的 props）。写 `any` 会把
+ * 那层检查整个挡掉（这正是收窄前的问题）。
  */
-export type UiComponent = ComponentType<any>
+export type UiComponent = (props: never) => ReactNode
 
 /** 壳内部的槽位注册表：渲染与诊断都要用到壳的那几个能力（订阅、退位、故障表）。 */
-export type UiSlots = SlotRegistry<UiComponent>
+export type UiSlots = SlotRegistry<UiComponent, SlotMap, SlotFactoryMap>
 
 /** 插件 `apply(ui)` 拿到的那一份（核心定义 + 组件类型特化，不再手抄一遍）。 */
-export type UiPluginApi = CoreUiPluginApi<UiComponent>
+export type UiPluginApi = CoreUiPluginApi<UiComponent, SlotMap, SlotFactoryMap>
 
 /** 插件 bundle 要导出的形状。 */
-export type UiPlugin = UiPluginModule<UiComponent>
+export type UiPlugin = UiPluginModule<UiComponent, SlotMap, SlotFactoryMap>
 
 /**
  * 标识函数：`export default defineUiPlugin({ apply })`。
@@ -358,6 +457,18 @@ export function toHexColor(color: string): string | null {
 }
 
 export { useChannelStatus, useHostChannel, useHostError, useHostSelector, useHostSnapshot } from './runtime-context'
+/**
+ * 服务表的 React 订阅面（A1）：插件用它读别的插件提供的服务，并跟着服务的出现/消失
+ * 换数据源（D3 的 status 面板靠它从本地轮询切到 team 的共享席位，无需刷新页面）。
+ */
+export { useService } from '@dsc/ui-core'
+/**
+ * 席位的读 hook（D3）：拿到实例后按 selector 读（实例缺席给 undefined，调用方自行回落）。
+ * 席位契约类型同址转出——插件写 handle 类型、action 表都从这里拿。
+ */
+export { useSeat } from '@dsc/ui-core'
+export { defineStore } from '@dsc/ui-core'
+export type { ActionsDecl, BakedActions, PropsStoreOf, SeatInstance, SnapshotSelectorHook, StoreHandle } from '@dsc/ui-core'
 export type { ChannelStatus, HostHello } from './host-channel'
 export type { SlotEntry, SlotKind, UiHostInfo, UiRuntimeApi, UiSlotApi, HostSnapshot }
 // 图标集原样转出去：插件 bundle 里 `import { IconPin } from '@dsc/ui'` 即可，

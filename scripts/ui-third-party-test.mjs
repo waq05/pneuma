@@ -49,6 +49,12 @@ const SAMPLE_BUNDLE = [
   `  module.exports = defineUiPlugin({`,
   `    name: '第三方样本',`,
   `    apply(ui) {`,
+  `      // D2 扩展点：工具卡尾巴的扩展行，用 injectSlot 等 transcript 的 Factory 声明它。`,
+  `      ui.slots.injectSlot('transcript.toolcard.footer', () =>`,
+  `        ui.slots.register('transcript.toolcard.footer', { id: 'sample.footer', order: 1 }, function () {`,
+  `          return React.createElement(Text, null, '第三方给工具卡加的一行');`,
+  `        }),`,
+  `      );`,
   `      if (ui.host.platform === 'tui') {`,
   `        ui.slots.injectSlot(TUI_SLOTS.noticeExtensions, () =>`,
   `          ui.slots.register(TUI_SLOTS.noticeExtensions, { id: 'sample.line', order: 1 }, function () {`,
@@ -158,9 +164,12 @@ check('信任记录落盘 plugins.json 顶层 uiTrust', Object.keys(readUiPlugin
 
 // ── TUI 装载：第三方 tui 插件进终端注册表 ──────────────────────────────────────
 {
-  // 内置清单指到夹具目录；第三方走 DSC_HOME 的 plugins（发现层读的就是它）
+  // 内置清单指到夹具目录；第三方走 DSC_HOME 的 plugins（发现层读的就是它）。
+  // 工具卡 footer 槽在这里先声明：第三方样本用 injectSlot 等它，声明一到贡献就落进注册表
+  // （TUI 里没有 transcript，这是「等待声明」语义最干净的验证姿势）。
   const registry = new SlotRegistry()
   registry.declare(TUI_SLOTS.noticeExtensions, 'list')
+  registry.declare('transcript.toolcard.footer', 'list')
   const reports = []
   const load = loadTuiPlugins({
     registry,
@@ -172,7 +181,9 @@ check('信任记录落盘 plugins.json 顶层 uiTrust', Object.keys(readUiPlugin
   const both = load.reports.find((report) => report.id === 'both-platforms')
   check('TUI 装载第三方 tui 条目成功', both?.ok === true, JSON.stringify(both))
   check('注册表里真的有了它的登记', registry.winners(TUI_SLOTS.noticeExtensions).length === 1)
+  check('第三方经 injectSlot 往工具卡 footer 槽的贡献落了地', registry.winners('transcript.toolcard.footer').length === 1)
   load.disposeAll()
+  check('卸载后 footer 槽的贡献被撤掉', registry.entriesOf('transcript.toolcard.footer').length === 0)
 }
 
 // 收尾核对：启停记录与信任记录同住 plugins.json（不另起一套开关）

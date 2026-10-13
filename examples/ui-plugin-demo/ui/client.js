@@ -19,6 +19,14 @@
   module.exports = defineUiPlugin({
     name: '示例问候',
     apply(ui) {
+      // 工具卡尾巴的扩展行（D2 的扩展点）：transcript 插件用 Factory 的 children 声明了
+      // 'transcript.toolcard.footer'，这里用 injectSlot 等它出现再注册——不靠加载顺序。
+      // 同一行代码两种载体都跑：web 上槽会被声明、注册生效；TUI 没有工具卡，等待自然挂着。
+      ui.slots.injectSlot('transcript.toolcard.footer', () =>
+        ui.slots.register('transcript.toolcard.footer', { id: 'demo.footer', order: 2 }, function DemoFooter() {
+          return React.createElement(Text, { className: 'hello-badge' }, '来自第三方插件 demo-greeter 的一行')
+        }),
+      )
       // 终端壳：壳声明的通知区扩展槽（tui.notice.extensions）。
       if (ui.host.platform === 'tui') {
         ui.slots.injectSlot(TUI_SLOTS.noticeExtensions, () =>
@@ -26,18 +34,7 @@
             return React.createElement(Text, null, '来自第三方插件 demo-greeter 的问候（同一份 bundle）')
           }),
         )
-        return
       }
-      // 浏览器壳：hello 卡片开出来的子槽（内置示例定的名字，这里只是认得它）。
-      ui.slots.injectSlot('hello.card.footer', () =>
-        ui.slots.register('hello.card.footer', { id: 'demo.footer', order: 2 }, function DemoFooter(props) {
-          return React.createElement(
-            Text,
-            { className: 'hello-badge' },
-            '第三方插件也在这个子槽里（收到计数 ' + String(props.count ?? 0) + '）',
-          )
-        }),
-      )
     },
   })
 }

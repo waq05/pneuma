@@ -28,8 +28,8 @@ import type {
   UiPluginLoadReport,
   UiPluginLoadResult,
   UiRuntimeApi,
-  UiSlotApi,
 } from '@dsc/ui-core'
+import { createScopedSlotApi, ServiceRegistry, unmetInjections } from '@dsc/ui-core'
 import * as pluginApi from './plugin-api'
 import platformModules from './platform-modules.json'
 import type { UiComponent, UiPluginApi, UiSlots } from './plugin-api'
@@ -104,7 +104,7 @@ export async function readBootGraph(): Promise<UiBootGraph> {
  * 按清单顺序加载并安装每个插件。
  * @param graph - 宿主给的启动图（entries 已按依赖排好）
  * @param options - 槽位注册表与宿主身份
- * @returns 每个插件一条报告（成功的也记）与一个总卸载口
+ * @returns 每个插件一条报告（成功的也记）、服务表快照与一个总卸载口
  */
 export async function loadUiPlugins(
   graph: UiBootGraph,
@@ -112,6 +112,8 @@ export async function loadUiPlugins(
 ): Promise<UiPluginLoadResult> {
   const reportById = new Map<string, UiPluginLoadReport>()
   const disposers = new Map<string, () => void>()
+  // 每调用一次装载一张新表：插件之间「谁提供、谁消费」全部经它（A1）。
+  const services = new ServiceRegistry()
 
   // 第一档预取：清单里标了 immediately 的先**并发**把工厂拿回来（只注册工厂，不物化），
   // 首页要用的那几块就不必排在队尾。取字节与物化分开，正是为了让这一步有用。
@@ -132,6 +134,7 @@ export async function loadUiPlugins(
   const install = async (entry: UiPluginEntry, attempt: number): Promise<string | null> => {
     // 这个插件的登记账本：中途抛错时按它回滚，重试才不会撞「id 已被占用」。
     const ledger: (() => void)[] = []
+    const provides: string[] = []
     const rollback = (): void => {
       for (const release of [...ledger].reverse()) {
         try {
@@ -141,6 +144,14 @@ export async function loadUiPlugins(
         }
       }
       ledger.length = 0
+    }
+    // 硬依赖先解析：inject 名单「先插件 id、再服务名」（双关见 manifest.ts），
+    // 未满足就不 apply，并留一行中文原因——第一轮没就绪的，重试轮会再试一次。
+    const unmet = unmetInjections(entry.inject, (id) => reportById.get(id), services)
+    if (unmet.length > 0) {
+      const reason = `等待：${unmet.join('；')}`
+      reportById.set(entry.id, { id: entry.id, ok: false, error: reason, attempts: attempt })
+      return reason
     }
     try {
       const cached = factories.get(entry.id)
@@ -152,9 +163,17 @@ export async function loadUiPlugins(
       if (typeof apply !== 'function') throw new Error('插件没有导出 apply(ui)')
       const ui: UiPluginApi = {
         id: entry.id,
-        slots: scopedSlots(options.slots, ledger),
+        slots: createScopedSlotApi(options.slots, (release) => {
+          ledger.push(release)
+          return release
+        }),
         host: options.host,
         runtime: options.runtime,
+        provide: (name, value) => {
+          record(ledger, services.provide(name, value, entry.id))
+          provides.push(name)
+        },
+        consume: (name) => services.consume(name),
       }
       const dispose = (apply as (api: UiPluginApi) => void | (() => void))(ui)
       if (typeof dispose === 'function') ledger.push(dispose)
@@ -165,6 +184,7 @@ export async function loadUiPlugins(
         ok: true,
         attempts: attempt,
         ...(typeof name === 'string' && name !== '' ? { name } : {}),
+        ...(provides.length === 0 ? {} : { provides: [...provides] }),
       })
       return null
     } catch (error) {
@@ -192,6 +212,8 @@ export async function loadUiPlugins(
     reports: graph.entries.map(
       (entry) => reportById.get(entry.id) ?? { id: entry.id, ok: false, error: '没有尝试加载' },
     ),
+    services: services.names(),
+    serviceRegistry: services,
     disposeAll(): void {
       for (const [id, dispose] of [...disposers].reverse()) {
         try {
@@ -205,29 +227,19 @@ export async function loadUiPlugins(
   }
 }
 
+/** 把一个退订动作挂进插件的账本（provide 与槽位登记共用同一条回滚路径）。 */
+function record(ledger: (() => void)[], release: () => void): () => void {
+  ledger.push(release)
+  return release
+}
+
 /**
  * 给一个插件的槽位外壳：登记动作全部记账，插件卸载（或这次装载失败要重试）时按账本回滚。
  *
  * 为什么不让插件直接拿注册表：`apply` 抛错时它可能已经登记了一半，直接重试会撞
  * 「同一个格子已经有人了」；而且插件不需要知道谁崩了、怎么退位——那是壳的事。
+ * 外壳本体与终端壳共用（`@dsc/ui-core` 的 `createScopedSlotApi`）。
  */
-function scopedSlots(slots: UiSlots, ledger: (() => void)[]): UiSlotApi<UiComponent> {
-  const record = (release: () => void): (() => void) => {
-    ledger.push(release)
-    return release
-  }
-  return {
-    get slots(): string[] {
-      return slots.slots
-    },
-    spec: (slot) => slots.spec(slot),
-    declare: (slot, kind) => record(slots.declare(slot, kind)),
-    register: (slot, registerOptions, component) => record(slots.register(slot, registerOptions, component)),
-    injectSlot: (slot, contribute) => record(slots.injectSlot(slot, contribute)),
-    entriesOf: (slot) => slots.entriesOf(slot),
-    winners: (slot) => slots.winners(slot),
-  }
-}
 
 /** 让浏览器把 bundle 跑起来，并把它注册的工厂取回来。 */
 async function fetchFactory(entry: UiPluginEntry): Promise<Factory> {

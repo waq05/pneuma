@@ -12,12 +12,12 @@
  */
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { SlotRegistry, type UiBootGraph, type UiPluginLoadResult, type UiPrefsView } from '@dsc/ui-core'
-import { onAppearanceRequest } from './plugin-api'
+import { SlotRegistry, ServiceRegistry, ServicesProvider, type UiBootGraph, type UiPluginLoadResult, type UiPrefsView } from '@dsc/ui-core'
+import { onAppearanceRequest, type SlotFactoryMap, type SlotMap } from './plugin-api'
 import { readBootGraph, loadUiPlugins } from './boot'
 import { createHostChannel } from './host-channel'
 import { RuntimeProvider } from './runtime-context'
-import { SHELL_SLOTS } from './slots'
+import { SHELL_SLOTS, type ShellSlot } from './slots'
 import { App } from './app'
 import type { UiComponent, UiSlots } from './plugin-api'
 import {
@@ -40,7 +40,12 @@ import '@xterm/xterm/css/xterm.css'
 import './styles.css'
 
 /** 什么都没装上时的装载结果（清单取不到也要起壳，不能白屏）。 */
-const NOTHING_LOADED: UiPluginLoadResult = { reports: [], disposeAll: () => undefined }
+const NOTHING_LOADED: UiPluginLoadResult = {
+  reports: [],
+  services: [],
+  serviceRegistry: new ServiceRegistry(),
+  disposeAll: () => undefined,
+}
 
 /**
  * 首帧先按上次的外观镜像上色，再向宿主问一次真值。
@@ -86,8 +91,11 @@ async function bootstrap(): Promise<void> {
   if (container === null) throw new Error('页面里没有 #root')
 
   // 1. 槽位注册表：壳认识位置，不认识功能。
-  const slots: UiSlots = new SlotRegistry<UiComponent>()
-  const declared = Object.entries(SHELL_SLOTS).map(([slot, kind]) => slots.declare(slot, kind))
+  const slots: UiSlots = new SlotRegistry<UiComponent, SlotMap, SlotFactoryMap>()
+  // 键的联合类型在 Object.keys 上会退化成 string，这里显式收回来（槽名与形态一一对应）。
+  const declared = (Object.keys(SHELL_SLOTS) as ShellSlot[]).map((slot) =>
+    slots.declare(slot, SHELL_SLOTS[slot]),
+  )
 
   // 2. 宿主数据通道（异步连，失败也会自己重连）+ 外观。
   // 外观**不 await**：函数体在第一个 await 之前就把上次的镜像涂上去了，首帧已经是对的颜色，
@@ -104,16 +112,20 @@ async function bootstrap(): Promise<void> {
   } catch (error) {
     loaded = {
       reports: [{ id: 'boot', ok: false, error: error instanceof Error ? error.message : String(error) }],
+      services: [],
+      serviceRegistry: new ServiceRegistry(),
       disposeAll: () => undefined,
     }
   }
   void declared
 
-  // 4. 渲染。
+  // 4. 渲染。服务表经 context 交给条目组件（插件用 `useService` 读服务、跟着出现/消失换源）。
   createRoot(container).render(
     <StrictMode>
       <RuntimeProvider channel={channel}>
-        <App slots={slots} boot={boot} reports={loaded.reports} />
+        <ServicesProvider services={loaded.serviceRegistry}>
+          <App slots={slots} boot={boot} reports={loaded.reports} services={loaded.services} />
+        </ServicesProvider>
       </RuntimeProvider>
     </StrictMode>,
   )

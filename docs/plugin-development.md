@@ -665,3 +665,113 @@ catch-all（priority 100）。想接管某类工具卡的渲染：往这个槽�
 
 终端壳（TUI 载体）的 `@dsc/ui` 不导出这四件——它们是 DOM 组件；双载体插件里请先判
 `ui.host.platform` 再引用。
+
+### 10.5 类型化槽位契约（1.2.0 起可用）
+
+壳与插件用 **`declare module '@dsc/ui'`** 往一张槽位契约表 `SlotMap` 上并键（表声明在
+`@dsc/ui` 本体里，插件 import 的就是它；`declare module` 的合并只认这个模块本身，别的
+路径 re-export 不算）：
+
+```ts
+declare module '@dsc/ui' {
+  interface SlotMap {
+    // 你自己开出来的子槽：owner 是渲染方在 renderSlot 调用点传的 props，matched 是
+    // chain 选择器的返回值类型。
+    'myplugin.card.footer': { kind: 'list'; owner: { entry: MyEntry } }
+  }
+}
+```
+
+并上之后：
+
+- `ui.slots.register(槽名, options, 组件)` 的槽名、`children` 的键与形态、keyed 的 `key`、
+  chain 的 `select` 参数与返回类型全部从表里推——**写错在调用点就编不过**；
+- 组件 props 用 `SlotComponentProps<Owner, ChildKeys, Matched, Store>` 声明，框架注入的
+  `renderSlot` / `childSlots` / `renderFactorySlot`（以及席位的 `useStore`/`actions`）都在里面，
+  自定义 owner 与 matched 直接并进顶层；
+- 未声明过 `children` 的组件调 `renderSlot('某个槽')` 是编译错误；对子槽传错 owner props
+  也是。运行期行为不变（拼错的名字仍当场抛装配错误）。
+
+升级提示：1.2.0 把 `UiComponent` 从 `ComponentType<any>` 收窄成裸调用签名，**只影响类型面**——
+零参组件与声明了 props 的组件都不需要改代码。
+
+### 10.6 服务面：`provide` / `consume` 与 `inject` 双关（1.2.0 起可用）
+
+插件之间共享对象走 **服务表**：
+
+```ts
+const seat = defineStore({ init: () => ({ list: [] }), actions: { setList(draft, list) { draft.list = list } } })
+ui.provide('teammates', seat)          // 一个名字只能有一个提供者，重名当场抛装配错误（带两个插件 id）
+const got = ui.consume<typeof seat>('teammates')   // 缺席给 undefined（软依赖）
+```
+
+- **硬依赖**写进 `plugin.json` 的 `inject: ["…"]`。这个名单是**双关**：先按「清单里另一个
+  插件的 id」解（拓扑排序用的也是它），再按「服务名」解（服务表里有没有提供者）。两条路都
+  解不到时插件**不 apply**，诊断区/会话流里留一行中文原因（「插件 X 没装上：…」或
+  「服务 X 还没有提供者」）——等提供者装上后装载器会重试一轮。
+- 想在**渲染期**跟着服务的出现/消失换数据源（例如提供者被停用），用 `useService<T>(name)`
+  （React hook，缺席给 `undefined`；服务表出现变化会唤醒组件）。
+
+### 10.7 席位：跨插件共享一份状态（1.2.0 起可用）
+
+```ts
+// 提供方：handle 在 apply 里现建（不许模块级——模块缓存会让它变成跨重载的伪单例）
+const mates = defineStore({ init: () => ({ list: [] }), actions: { setList(draft, list) { draft.list = list } } })
+ui.provide('teammates', mates)
+ui.slots.register(SLOT.header, { id: 'team.toggle', store: mates }, TeamButton)
+
+// 消费方：拿到 handle 后读同一份共享实例
+const seat = useService<typeof mates>('teammates')
+const instance = seat === undefined ? undefined : ui.slots.seat(seat)   // 该 handle 已有登记才给实例
+const list = useSeat(instance, (state) => state.list)                  // 缺席给 undefined，自行回落
+```
+
+- 席位的**身份就是 handle 对象**：同一个 handle 的多个登记共享一个实例；实例在第一次渲染
+  读时懒建，最后一个持有者卸载时释放。没有字符串键，也就没有「同名冲突」——冲突落在
+  `provide` 重名上。
+- 组件面：登记时给了 `store` 的条目，props 多出 `useStore(selector, isEqual?)`（读）与
+  `actions`（写，draft 已烘掉）；`actions` 是唯一的写路径。
+- 引擎口径：action 收到的是**顶层浅拷贝**，写嵌套字段请整体替换
+  （`draft.list = [...draft.list, item]`），不要原地改嵌套对象。
+- TUI：`ui.slots.seat` 与 `defineStore` 两壳一致；浏览器壳与终端壳都支持。
+
+### 10.8 Component Factory：一份装配、多个父位置（1.2.0 起可用）
+
+一份定义、若干**无关的父位置**各自渲染一次 occurrence，父按 occurrence 选局部组件：
+
+```ts
+// 定义方（写在 SlotFactoryMap 里声明形状，registerFactory 时组件 props 全按它校验）
+declare module '@dsc/ui' {
+  interface SlotFactoryMap {
+    'myplugin.card': {
+      props: { entry: MyEntry; variant?: 'main' | 'embedded' }
+      slots: { header: { props: { title: string } } }   // 局部位置：父按 occurrence 选组件
+      children: { 'myplugin.card.footer': 'list' }      // 普通子槽：任何插件可注册
+    }
+  }
+}
+ui.slots.registerFactory(
+  { name: 'myplugin.card', children: { 'myplugin.card.footer': 'list' }, slots: { header: {} } },
+  CardDefinition,
+)
+
+// 定义内部：没被选中的局部位置用 fallback 组件
+function CardDefinition(props: FactoryComponentProps<'myplugin.card'>) {
+  const Header = props.useFactorySlot('header', PlainHeader)
+  return <>{props.renderSlot('myplugin.card.footer', {})}<Header title="…" /></>
+}
+
+// 父（任何有渲染能力的地方：条目组件 props.renderFactorySlot）
+props.renderFactorySlot('myplugin.card', { entry }, {
+  slots: { header: FancyHeader },
+  fallback: null,   // 定义还没注册时画它（保险丝）
+})
+```
+
+- 定义缺席渲染 `fallback`；`slots` 里出现没声明的局部位置、或定义递归渲染自己，都是
+  **装配错误**（当场抛，不静默降级）；Factory 里的组件崩溃只记一条故障（诊断区可见），
+  **不摘除共享定义**。
+- 真实例子：`transcript.tool-card` 由消息流插件注册，对话页与轨迹页各自渲染——对话页选
+  intended 预览 / 中文耗时 / 「将做的改动」/「在轨迹中查看」四件局部组件，轨迹页只选轨迹
+  口径的耗时；两边共用同一份 head/body 骨架，第三方还可以往 `transcript.toolcard.footer`
+  注册一行（`examples/ui-plugin-demo` 就是例子）。

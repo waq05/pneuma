@@ -13,7 +13,28 @@
  *
  * @module dsc-ui-shell/slots
  */
-import type { SlotKind } from '@dsc/ui-core'
+import type { SlotMap } from './plugin-api'
+
+/**
+ * 把壳认识的位置并进**插件 import 的那个模块**的契约表（D1）。
+ *
+ * 为什么写 `declare module './plugin-api'` 而不是 '@dsc/ui'：合并落在被 augment 的
+ * 模块本身（本文件与 plugin-api.ts 同目录，相对写法就是它）；插件侧看到的是同一个
+ * 模块（paths 里 '@dsc/ui' → ./src/plugin-api.ts），两边并进的是同一张表。
+ */
+declare module './plugin-api' {
+  interface SlotMap {
+    'shell.header': { kind: 'list' }
+    'shell.header.lead': { kind: 'list' }
+    'shell.sidebar': { kind: 'list' }
+    'shell.page': { kind: 'list' }
+    'shell.main': { kind: 'list' }
+    'shell.thread': { kind: 'list' }
+    'shell.composer': { kind: 'list' }
+    'shell.statusbar': { kind: 'list' }
+    'shell.notice': { kind: 'single' }
+  }
+}
 
 /** 槽名的常量表。 */
 export const SLOT = {
@@ -57,8 +78,8 @@ export const SLOT = {
   notice: 'shell.notice',
 } as const
 
-/** 界面壳声明的槽：名字 → 形态（键从 `SLOT` 取，值在这里定）。 */
-export const SHELL_SLOTS: Readonly<Record<string, SlotKind>> = {
+/** 界面壳声明的槽：名字 → 形态（形态必须与上面 SlotMap 的声明一致）。 */
+export const SHELL_SLOTS: { readonly [K in ShellSlot]: SlotMap[K]['kind'] } = {
   [SLOT.header]: 'list',
   [SLOT.headerLead]: 'list',
   [SLOT.sidebar]: 'list',

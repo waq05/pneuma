@@ -32,7 +32,10 @@ import {
   defineUiPlugin,
   useHostSelector,
   useTraceFocus,
+  type FactoryLocalProps,
   type HostSnapshot,
+  type SlotComponentProps,
+  type SlotRenderApi,
   type TranscriptEntry,
 } from '@dsc/ui'
 import { formatClock } from '../../platform/time'
@@ -70,7 +73,7 @@ export default defineUiPlugin({
   },
 })
 
-function TraceView(): ReactNode {
+function TraceView(props: SlotComponentProps): ReactNode {
   const entries = useHostSelector(readEntries)
   const live = useHostSelector(readLive)
   const sessionPath = useHostSelector(readSessionPath)
@@ -435,6 +438,7 @@ function TraceView(): ReactNode {
                 flashId={flashId}
                 onOpenInspector={setInspectId}
                 onRowClick={openFromRow}
+                renderFactorySlot={props.renderFactorySlot}
               />
             )
           })}
@@ -474,6 +478,7 @@ function RoundBlock({
   flashId,
   onOpenInspector,
   onRowClick,
+  renderFactorySlot,
 }: {
   round: TraceRound
   open: boolean
@@ -488,6 +493,8 @@ function RoundBlock({
   flashId: number | null
   onOpenInspector: (id: number) => void
   onRowClick: (event: ReactMouseEvent<HTMLDivElement>, step: TraceStepEntry) => void
+  /** 工具行的 Factory 渲染能力（D2；从 TraceView 的槽位 props 传下来）。 */
+  renderFactorySlot: SlotRenderApi['renderFactorySlot']
 }): ReactNode {
   const tools = round.steps.filter((step) => step.kind === 'tool').length
   const user = round.user
@@ -551,6 +558,7 @@ function RoundBlock({
                 usageTotal={roundUsageOwnTotal(step, usage)}
                 onOpenInspector={onOpenInspector}
                 onRowClick={onRowClick}
+                renderFactorySlot={renderFactorySlot}
               />
             ))}
           </div>
@@ -583,6 +591,7 @@ function StepRow({
   usageTotal,
   onOpenInspector,
   onRowClick,
+  renderFactorySlot,
 }: {
   step: TraceStepEntry
   round: number
@@ -594,6 +603,7 @@ function StepRow({
   usageTotal: number | null
   onOpenInspector: (id: number) => void
   onRowClick: (event: ReactMouseEvent<HTMLDivElement>, step: TraceStepEntry) => void
+  renderFactorySlot: SlotRenderApi['renderFactorySlot']
 }): ReactNode {
   // 行内时刻取条目 ts（HH:mm）——工具的**发起**时刻另有 startedAt，两者不是一回事。
   const clock = formatClock(step.ts ?? null)
@@ -611,7 +621,18 @@ function StepRow({
       onClick={(event) => onRowClick(event, step)}
     >
       <div className="trace-step-body">
-        {step.kind === 'tool' && <TraceToolRow entry={step} />}
+        {step.kind === 'tool' &&
+          renderFactorySlot(
+            'transcript.tool-card',
+            { entry: step, variant: 'trace' },
+            {
+              // 轨迹页只选「耗时口径」这一件局部组件；摘要 / 额外块 / 尾部动作都用定义
+              // fallback（summary 一行；没有 intended、没有「在轨迹中查看」）。
+              slots: { statusDetail: TraceStatus },
+              // 定义没注册时（transcript 缺席/正在重载）落回自家工具行——D2 的保险丝。
+              fallback: <TraceToolRow entry={step} />,
+            },
+          )}
         {step.kind === 'thinking' && (
           <details className="trace-think">
             <summary data-tip="展开思考全文">
@@ -686,6 +707,24 @@ function StepRow({
         </button>
       </div>
     </div>
+  )
+}
+
+/**
+ * 轨迹页的状态列（D2 的局部组件，父按 occurrence 选的那一件）：轨迹口径的耗时——
+ * `4.2s` / `1m03s`，定稿只印裸时长（对话页是中文口径、定稿不印）。
+ */
+function TraceStatus(props: FactoryLocalProps<'transcript.tool-card', 'statusDetail'>): ReactNode {
+  const call = props.call
+  const duration = formatTraceDuration(call.durationMs ?? null)
+  const statusText = TOOL_STATUS_TEXT[call.status] ?? call.status
+  return (
+    <span className="status">
+      {call.status === 'running' ? <i className="tc-spin" aria-hidden="true" /> : null}
+      {/* 定稿不说「完成」：状态点已经绿了，再印一遍是噪声。 */}
+      {call.status === 'done' ? '' : statusText}
+      {call.status === 'done' ? (duration ?? '') : duration === null ? '' : ` · 用时 ${duration}`}
+    </span>
   )
 }
 

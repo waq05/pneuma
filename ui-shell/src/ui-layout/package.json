@@ -1,7 +1,7 @@
 {
   "name": "@dsc/ui-layout",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "description": "界面壳的应用骨架与运行时（App / 审查栏 / 正文与页的真源 / 宿主通道 React 面 / 外观落地）：三包里最上层。",
   "types": "index.ts"

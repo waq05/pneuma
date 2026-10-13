@@ -1031,6 +1031,263 @@ console.log('\n[5b] 分包落点')
   )
 }
 
+// ── 5c. 槽位契约表（D1）：壳槽键集在源码声明与产物里对得上（防「表改了一半」）─────
+console.log('\n[5c] 槽位契约表')
+{
+  const shellDir = fileURLToPath(new URL('../ui-shell/', import.meta.url))
+  const slotsSource = readFileSync(join(shellDir, 'src', 'slots.ts'), 'utf8')
+  // SLOT 常量表的值（9 个壳槽名）与 declare module 块里并进 SlotMap 的键集必须一致。
+  // 前者被 `{ [K in ShellSlot]: SlotMap[K]['kind'] }` 钉死（少并一个键是编译错）；
+  // 这里再钉一遍产物层——契约表是插件作者看的东西，不能只活在源码里。
+  const constSlots = [...slotsSource.matchAll(/^\s+\w+: '(shell\.[\w.]+)',/gm)].map((match) => match[1])
+  const declaredSlots = [...slotsSource.matchAll(/'((?:shell\.)[\w.]+)': \{ kind:/g)].map((match) => match[1])
+  check(
+    '壳槽常量表 9 个键、SlotMap 声明 9 个键、两边集合一致',
+    constSlots.length === 9 &&
+      declaredSlots.length === 9 &&
+      constSlots.every((name) => declaredSlots.includes(name)),
+    `const=${constSlots.join(',')} declared=${declaredSlots.join(',')}`,
+  )
+
+  // 产物层：应用 bundle 里必须找得到全部壳槽名（构建没把它们摇掉）。
+  const assets = join(shellDir, '..', 'lib', 'ui', 'assets')
+  const appFile = readdirSync(assets).find((name) => name.startsWith('app-') && name.endsWith('.js'))
+  const appBundle = appFile === undefined ? '' : readFileSync(join(assets, appFile), 'utf8')
+  check('应用产物里含全部 9 个壳槽名', constSlots.length === 9 && constSlots.every((name) => appBundle.includes(name)), appFile ?? '缺 app-*.js')
+
+  // 跨插件复用点（D2）：transcript 注册的 Factory 名 / children 槽名与 trace 的消费点都在产物里。
+  const readBundle = (id) => readFileSync(join(shellDir, '..', 'lib', 'ui', 'plugins', id, 'client.js'), 'utf8')
+  check(
+    'transcript 产物含 tool-card Factory 与 footer 槽名',
+    readBundle('transcript').includes('transcript.tool-card') && readBundle('transcript').includes('transcript.toolcard.footer'),
+  )
+  check('trace 产物含对 transcript.tool-card 的消费点', readBundle('trace').includes('transcript.tool-card'))
+}
+
+// ── 6. A1 服务注入（provide/consume + inject 硬依赖 + 冲突人话）─────────────────
+console.log('\n[6] A1 服务注入')
+{
+  const { loadTuiPlugins } = await import('../lib/ui/tui-plugins.js')
+  const { ServiceRegistry, ServiceConflictError, unmetInjections } = await import('../lib/ui/services.js')
+
+  // 乱序清单：inject 指向提供者的插件 id，拓扑排序必须把提供者排前面。
+  const ordered = orderUiPlugins([
+    { id: 'beta', inject: ['alpha'] },
+    { id: 'alpha' },
+  ])
+  check('乱序清单按 inject 拓扑排好（提供者在前）', ordered.map((row) => row.id).join(',') === 'alpha,beta', ordered.map((row) => row.id).join(','))
+
+  /** 造一个 TUI 插件 bundle（工厂格式与真实产物一致）。 */
+  const bundle = (id, body) =>
+    `(globalThis.__DSC_UI_FACTORIES__ ??= {})[${JSON.stringify(id)}] = function (require, module, exports) {\n${body}\n};\n`
+  const runtime = { getSnapshot: () => ({}), subscribe: () => () => undefined }
+  const host = { name: '探针', version: '0.0.0-probe', platform: 'tui' }
+
+  // 用例一：A provide、B consume，拿到的是同一个对象；装载结果带服务名快照；卸载后释放。
+  const good = makeTree('a1-good', {
+    'manifest.json': JSON.stringify({
+      version: 1,
+      plugins: [
+        { id: 'beta', file: 'client.js', platform: 'tui', inject: ['alpha'] },
+        { id: 'alpha', file: 'client.js', platform: 'tui' },
+      ],
+    }),
+    'alpha/client.js': bundle(
+      'alpha',
+      `module.exports = { name: '甲方', apply(ui) { const seat = { kind: 'shared', n: 1 }; globalThis.__PROBE_PROVIDED = seat; ui.provide('probe.seat', seat) } };`,
+    ),
+    'beta/client.js': bundle(
+      'beta',
+      `module.exports = { name: '乙方', apply(ui) { globalThis.__PROBE_CONSUMED = ui.consume('probe.seat'); globalThis.__PROBE_BETA_APPLIED = true } };`,
+    ),
+  })
+  delete globalThis.__PROBE_PROVIDED
+  delete globalThis.__PROBE_CONSUMED
+  delete globalThis.__PROBE_BETA_APPLIED
+  const services = new ServiceRegistry()
+  const reports = []
+  const registry = new SlotRegistry()
+  const load = loadTuiPlugins({ registry, runtime, host, pluginsDir: good, services, onReport: (report) => reports.push(report) })
+  const alphaReport = load.reports.find((report) => report.id === 'alpha')
+  const betaReport = load.reports.find((report) => report.id === 'beta')
+  check('提供者先装上', alphaReport?.ok === true, JSON.stringify(alphaReport))
+  check('消费者装上（乱序清单由拓扑 + 重试兜底）', betaReport?.ok === true, JSON.stringify(betaReport))
+  check('consume 拿到 provide 的同一个对象', globalThis.__PROBE_CONSUMED === globalThis.__PROBE_PROVIDED && globalThis.__PROBE_PROVIDED !== undefined)
+  check('报告记录 provide 过的服务名', alphaReport?.provides?.join(',') === 'probe.seat', JSON.stringify(alphaReport?.provides))
+  check('装载结果带服务名快照', load.services.join(',') === 'probe.seat', load.services.join(','))
+  check('服务表登记了提供者', services.providerOf('probe.seat') === 'alpha', String(services.providerOf('probe.seat')))
+  load.disposeAll()
+  check('卸载后服务被释放', services.names().length === 0, services.names().join(','))
+
+  // 用例二：提供者缺席 → 消费者不 apply，报告一行中文原因。
+  delete globalThis.__PROBE_BETA_APPLIED
+  const missing = makeTree('a1-missing', {
+    'manifest.json': JSON.stringify({
+      version: 1,
+      plugins: [{ id: 'beta', file: 'client.js', platform: 'tui', inject: ['probe.seat'] }],
+    }),
+    'beta/client.js': bundle(
+      'beta',
+      `module.exports = { apply(ui) { globalThis.__PROBE_BETA_APPLIED = true } };`,
+    ),
+  })
+  const load2 = loadTuiPlugins({ registry, runtime, host, pluginsDir: missing, onReport: () => undefined })
+  const beta2 = load2.reports.find((report) => report.id === 'beta')
+  check('提供者缺席时消费者不 apply', beta2?.ok === false && globalThis.__PROBE_BETA_APPLIED === undefined, JSON.stringify(beta2))
+  check('报告里有一行中文原因（服务还没有提供者）', String(beta2?.error).includes('服务 probe.seat 还没有提供者'), String(beta2?.error))
+  check('缺席的服务不进装载结果快照', load2.services.length === 0, load2.services.join(','))
+  load2.disposeAll()
+
+  // 用例三：提供者 apply 抛错 → 消费者报告「插件 X 没装上」。
+  const broken = makeTree('a1-broken', {
+    'manifest.json': JSON.stringify({
+      version: 1,
+      plugins: [
+        { id: 'beta', file: 'client.js', platform: 'tui', inject: ['alpha'] },
+        { id: 'alpha', file: 'client.js', platform: 'tui' },
+      ],
+    }),
+    'alpha/client.js': bundle('alpha', `module.exports = { apply() { throw new Error('甲方的装配炸了') } };`),
+    'beta/client.js': bundle('beta', `module.exports = { apply() {} };`),
+  })
+  const load3 = loadTuiPlugins({ registry, runtime, host, pluginsDir: broken, onReport: () => undefined })
+  const beta3 = load3.reports.find((report) => report.id === 'beta')
+  check(
+    '提供者没装上时消费者报告「插件 alpha 没装上：…」',
+    beta3?.ok === false && String(beta3?.error).includes('插件 alpha 没装上') && String(beta3?.error).includes('甲方的装配炸了'),
+    String(beta3?.error),
+  )
+  check('两个失败者都重试过一轮（attempts=2）', beta3?.attempts === 2, String(beta3?.attempts))
+  load3.disposeAll()
+
+  // 用例四：重复 provide 抛人话（跨插件重名冲突落在服务表这一处）。
+  const dup = new ServiceRegistry()
+  dup.provide('probe.seat', 1, '甲')
+  let conflict = null
+  try {
+    dup.provide('probe.seat', 2, '乙')
+  } catch (error) {
+    conflict = error
+  }
+  check('重复 provide 抛 ServiceConflictError', conflict instanceof ServiceConflictError, String(conflict))
+  check(
+    '冲突人话里带两个插件 id',
+    conflict !== null && String(conflict.message).includes('甲') && String(conflict.message).includes('乙'),
+    conflict === null ? '' : String(conflict.message),
+  )
+
+  // 用例五：unmetInjections 的两档文案分开（没有提供者 / 提供者没装上）。
+  const empty = new ServiceRegistry()
+  check(
+    '「没有提供者」与「提供者没装上」是两档文案',
+    unmetInjections(['svc.x'], () => undefined, empty).join('；').includes('服务 svc.x 还没有提供者') &&
+      unmetInjections(['plug.a'], () => ({ ok: false, error: '炸了' }), empty).join('；').includes('插件 plug.a 没装上：炸了'),
+  )
+}
+
+// ── 7. D3 席位（共享实例 / 懒建 / 释放 / 浅拷贝口径）─────────────────────────────
+console.log('\n[7] D3 席位')
+{
+  const { defineStore } = await import('../lib/ui/store.js')
+
+  const slots = new SlotRegistry()
+  slots.declare('probe.one', 'list')
+  slots.declare('probe.two', 'list')
+  const seat = defineStore({
+    init: () => ({ list: [], nested: { n: 1 } }),
+    actions: {
+      setList: (draft, list) => {
+        draft.list = list
+      },
+    },
+  })
+
+  // 懒建：register 只记 handle（不建实例），第一次渲染读（seat()）才 create()。
+  let creates = 0
+  const counted = { spec: seat.spec, create: () => (creates += 1, seat.create()) }
+  const offA = slots.register('probe.one', { id: 'a', store: counted }, 'A')
+  check('register 不建实例（懒建）', creates === 0, String(creates))
+
+  // 同一个 handle 的两个登记共享一个实例（身份就是 handle 对象，不认字符串键）。
+  const offB = slots.register('probe.two', { id: 'b', store: counted }, 'B')
+  const instance = slots.seat(counted)
+  check('首次渲染读才建实例', creates === 1, String(creates))
+  check('两个登记共享同一个实例', instance !== undefined && instance === slots.seat(counted))
+
+  // draft 剥掉：组件调用只给业务实参；写入换顶层引用、未触碰的嵌套值按引用保留。
+  const before = instance.getSnapshot()
+  instance.actions.setList(['x'])
+  const after = instance.getSnapshot()
+  check('actions 只收业务实参（draft 已烘掉）', after.list.join(',') === 'x')
+  check('写入换顶层引用（React 快照比较成立）', before !== after)
+  check('浅拷贝口径：未触碰的嵌套值按引用保留', before.nested === after.nested)
+
+  // 订阅与退订。
+  let hits = 0
+  const off = instance.subscribe(() => {
+    hits += 1
+  })
+  instance.set({ ...after, list: ['y'] })
+  check('订阅收到写入', hits === 1, String(hits))
+  off()
+  instance.set({ ...after, list: ['z'] })
+  check('退订后不再通知', hits === 1, String(hits))
+
+  // 释放：最后一个持有者卸载后席位消失（下次登记重建新实例）。
+  offA()
+  check('还有持有者时席位仍在', slots.seat(counted) !== undefined)
+  offB()
+  check('最后一个持有者卸载后席位释放', slots.seat(counted) === undefined)
+  check('未登记过的 handle 读不到席位', slots.seat(seat) === undefined)
+}
+
+// ── 8. D2 Factory（注册表运行期：定义账 / children 进声明表 / 卸载 collapse / 故障记账）──
+console.log('\n[8] D2 Factory')
+{
+  const { SlotAssemblyError } = await import('../lib/ui/slots.js')
+  const slots = new SlotRegistry()
+  slots.declare('probe.main', 'list')
+  const definition = () => slots.registerFactory(
+    { name: 'probe.card', children: { 'probe.card.footer': 'list' }, slots: { a: {}, b: {} } },
+    () => null,
+  )
+
+  let versions = 0
+  const offSub = slots.subscribeFactory('probe.card', () => {
+    versions += 1
+  })
+  const off = definition()
+  check('Factory 注册后 children 进声明表（形态正确）', slots.spec('probe.card.footer') === 'list', String(slots.spec('probe.card.footer')))
+  check('读得到定义与声明的局部位置', slots.factory('probe.card')?.slots.join(',') === 'a,b', String(slots.factory('probe.card')?.slots.join(',')))
+  check('定义注册通知订阅者（版本 +1）', versions === 1 && slots.factoryVersion('probe.card') === 1, `${String(versions)}/${String(slots.factoryVersion('probe.card'))}`)
+
+  let duplicate = null
+  try {
+    definition()
+  } catch (error) {
+    duplicate = error
+  }
+  check('同名第二次注册抛装配错误（人话里带名字）', duplicate instanceof SlotAssemblyError && String(duplicate.message).includes('probe.card'), String(duplicate))
+  check('重复注册失败不留下多余的子槽声明', slots.spec('probe.card.footer') === 'list')
+
+  slots.reportFactoryFault('probe.card', 'a', new Error('局部组件炸了'))
+  const fault = slots.faults.at(-1)
+  check(
+    'Factory 故障进同一本故障账（slot 记 factory:<名>），定义不摘除',
+    fault?.slot === 'factory:probe.card' && fault?.id === 'a' && slots.factory('probe.card') !== undefined,
+    JSON.stringify(fault),
+  )
+
+  off()
+  check('卸载后定义消失、children 递归 collapse', slots.factory('probe.card') === undefined && slots.spec('probe.card.footer') === undefined, String(slots.spec('probe.card.footer')))
+  check('定义卸载也通知订阅者', versions === 2, String(versions))
+
+  const offAgain = definition()
+  check('卸载后同一个名字可以重新注册', slots.factory('probe.card') !== undefined)
+  offAgain()
+  offSub()
+}
+
 rmSync(work, { recursive: true, force: true })
 console.log(failures === 0 ? '\n全部通过' : `\n${String(failures)} 条断言失败`)
 process.exit(failures === 0 ? 0 : 1)
