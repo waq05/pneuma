@@ -775,6 +775,11 @@ const got = ui.consume<typeof seat>('teammates')   // 缺席给 undefined（软�
   这条优先级由 `scripts/ui-plugin-test.mjs` 的 [6] 组钉着（同名两向 + 只有 id 没有服务两条）。
 - 想在**渲染期**跟着服务的出现/消失换数据源（例如提供者被停用），用 `useService<T>(name)`
   （React hook，缺席给 `undefined`；服务表出现变化会唤醒组件）。
+- 服务**不必是席位**：provide 出去的对象可以是**动作面**——例如 team 插件把
+  `{ open(): void }` 作为 `teamPanel` 提供出去，状态面板那条「已结束 · N ›」经它打开团队
+  面板（模态开合仍归 team 自己管）。消费方同样用 `useService` 订阅，缺席按软依赖处理
+  （状态面板的选择是整行不渲染：点了没反应的入口比没有入口更糟）；给动作面起名同样别撞
+  插件 id。
 
 ### 10.7 席位：跨插件共享一份状态（1.2.0 起可用）
 
