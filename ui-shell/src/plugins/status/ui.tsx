@@ -125,6 +125,9 @@ const FOLLOW_BOTTOM_PX = 8
  * 没走快照面是因为宿主的 Git 读数是现算的（`git status` + `diff --numstat`），
  * 自己控制节奏比让宿主替所有会话定时算更省。
  */
+/** 催拍的间隔下限（毫秒）：一拍刚跑过就别立刻再拍一次（换会话那一拍常与挂载那一拍重叠）。 */
+const GIT_NUDGE_FLOOR_MS = 800
+
 const GIT_POLL_DIRTY_MS = 12_000
 const GIT_POLL_CLEAN_MS = 30_000
 const GIT_POLL_IDLE_MS = 60_000
@@ -325,6 +328,35 @@ function sameMateList(left: readonly TeammateView[], right: readonly TeammateVie
   })
 }
 
+/**
+ * 当前会话的 jsonl 路径（只用于判「换工作区了」）。
+ *
+ * 为什么认路径而不是 `status.sessionId`：同一间工作区里换会话，git 读数一模一样，
+ * 不必重拍；换到别的工作区的会话才要。路径是这两件事的最小判据。
+ */
+function readSessionPathKey(snapshot: HostSnapshot | null): string {
+  const status = snapshot?.['status']
+  if (typeof status !== 'object' || status === null) return ''
+  const path = (status as Record<string, unknown>)['sessionPath']
+  return typeof path === 'string' ? path : ''
+}
+
+/** 当前会话的工作目录（git 指针指着谁）。 */
+function readCwdKey(snapshot: HostSnapshot | null): string {
+  const status = snapshot?.['status']
+  if (typeof status !== 'object' || status === null) return ''
+  const cwd = (status as Record<string, unknown>)['cwd']
+  return typeof cwd === 'string' ? cwd : ''
+}
+
+/** 回合状态（`idle` / 跑动…）：`跑动 → idle` 那一拍要重拍一次 git 读数。 */
+function readTurnStateKey(snapshot: HostSnapshot | null): string {
+  const status = snapshot?.['status']
+  if (typeof status !== 'object' || status === null) return 'idle'
+  const value = (status as Record<string, unknown>)['turnState']
+  return typeof value === 'string' ? value : 'idle'
+}
+
 /** Git 读数（本地轮询）：分支 + 增删行数 + 脏文件数（含 untracked）。 */
 interface GitSummary {
   branch: string
@@ -332,7 +364,6 @@ interface GitSummary {
   removed: number
   files: number
 }
-
 /** Git 读数的相等判断（轮询每拍换新对象，读数没变就别重画面板）。 */
 function sameGit(left: GitSummary | null, right: GitSummary | null): boolean {
   if (left === right) return true
@@ -430,6 +461,20 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
   const scheduled = useHostSelector(readScheduled, sameTasks)
   // Git 读数走本地轮询（见文件头「数据」那一节）：不是仓库 / 读失败给 null，干净仓库也给 null。
   const [git, setGit] = useState<GitSummary | null>(null)
+  // 当前会话的路径与工作目录：只用来判「换工作区了」，所以直接取字符串（不进渲染面）。
+  const sessionPathKey = useHostSelector(readSessionPathKey)
+  const cwdKey = useHostSelector(readCwdKey)
+  const turnState = useHostSelector(readTurnStateKey)
+  /**
+   * Git 轮询的「立刻重拍」计数：自增即重挂轮询效果，挂载那一下就是一次 `git status`。
+   * 两次催拍之间至少隔 {@link GIT_NUDGE_FLOOR_MS}——催拍是「立刻再取一次」，不是排队取 N 次。
+   */
+  const [gitNudge, setGitNudge] = useState(0)
+  const lastGitPollRef = useRef(0)
+  const nudgeGit = useCallback((): void => {
+    if (Date.now() - lastGitPollRef.current < GIT_NUDGE_FLOOR_MS) return
+    setGitNudge((value) => value + 1)
+  }, [])
   // 名册来源（D3）：team 插件把席位 handle 经服务表传出来。
   //   有席位 → 读同一份共享实例（team 那个 3 秒轮询是唯一的数据源，这边不再自拉）；
   //   没席位（team 没装/被停用）→ 保留本地轮询（下面那段 effect）。
@@ -521,6 +566,14 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
    * 三档节奏（有改动 12s / 干净 30s / 不是仓库 60s）＋一个慢仓库退让：单拍耗时超过
    * {@link GIT_SLOW_MS} 就按 3 倍间隔走——在大仓里每 12 秒跑一次 `git status` 是拿
    * 用户的 CPU 换一行读数，不值。页面不可见不拍，切回可见立刻补一拍。
+   *
+   * 光靠定时器不够（0.6.67 报障「编辑了文件后 git 胶囊没出现」）：拍与拍之间最长能隔
+   * 60 秒，而**刚写完文件的那几秒正是用户盯着面板看的时候**。所以另有两处**事件催拍**
+   * （见下面的 nudge 效果）：换工作区、以及回合收工。参考实现同样不只看时钟——dsh 在
+   * 回合边界（`turn/start` 与 `turn/end`）拍工作树快照，ZCode 则在工作区变化与显式刷新
+   * （提交/切分支）时重取；两家的定时那一档都不宽于 dsc 这三档。
+   *
+   * `gitNudge` 进依赖清单就是「立刻重拍一次」：自增 → 本效果重挂 → 挂载即 `tick()`。
    */
   useEffect(() => {
     let alive = true
@@ -546,6 +599,7 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
         return
       }
       const startedAt = Date.now()
+      lastGitPollRef.current = startedAt
       void channel
         .invoke<Record<string, unknown>>('dock', ['git-status', { stats: true }])
         .then((data) => {
@@ -575,7 +629,23 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
       stopTimer()
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [channel])
+  }, [channel, gitNudge])
+
+  /** 换工作区（切会话 / 换目录）：指针指着的仓库变了，读数当场重取。 */
+  useEffect(() => {
+    nudgeGit()
+  }, [sessionPathKey, cwdKey, nudgeGit])
+
+  /**
+   * 回合收工：这一轮可能落了文件，而「刚写完」正是用户看面板的那一刻。
+   * 与 dsh 的回合边界口径一致（它在 `turn/end` 拍工作树快照）。
+   */
+  const previousTurnState = useRef(turnState)
+  useEffect(() => {
+    const was = previousTurnState.current
+    previousTurnState.current = turnState
+    if (was !== 'idle' && turnState === 'idle') nudgeGit()
+  }, [turnState, nudgeGit])
 
   const mates = shared ?? localMates
   const mine = useMemo(
