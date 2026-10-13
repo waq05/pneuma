@@ -29,8 +29,9 @@
  *
  * ## 数据（逐区）
  *
- * - **Git 工具**：本地轮询 `dock git-status`（读类 op 直接放行；`stats:true` 多要一对增删
- *   行数）。不是仓库、或干净到没有一行改动时整区不画（ZCode 同款：干净仓库不摆状态卡）。
+ * - **Git 工具**：本地轮询 `dock git-status`（读类 op 直接放行；`stats:true` 多要每文件
+ *   增删行数——tracked 走 numstat、未跟踪按内容数换行符，都计进这一对 +N/−N）。
+ *   不是仓库、或干净到没有一行改动时整区不画（ZCode 同款：干净仓库不摆状态卡）。
  *   点「更改」行开右侧栏的 Git 页签（暂存 / 提交 / 历史 / diff 都在那里）。
  * - **目标 / 进程**：快照的 `surfaces.goal` / `surfaces.todos`（与目标条同源，逐帧推）。
  * - **计划**：快照的 `surfaces.planDirectory`（宿主扫工作区 `.dsc/plans/`，最新在前；

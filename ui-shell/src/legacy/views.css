@@ -3894,6 +3894,114 @@ body.resizing iframe {
   color: var(--dsc-accent);
 }
 
+/* 文件行尾的 +N/−N（与 diff 段同一套增删色）。 */
+.git-file-counts {
+  display: inline-flex;
+  flex: none;
+  gap: 6px;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-caption);
+  white-space: nowrap;
+}
+
+/* 就近展开的 diff：挂在文件行下方，去掉底部视图的上下外边距。 */
+.git-diff-inline {
+  margin: 2px 0 4px 18px;
+}
+
+.git-commit-hint {
+  flex: 1;
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 提交对话框（列出将提交的文件 = 已暂存 + 可选未暂存） ── */
+.git-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--dsc-fill-overlay, rgb(0 0 0 / 40%));
+}
+
+.git-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(520px, 90vw);
+  max-height: 80vh;
+  padding: 12px;
+  background: var(--dsc-bg-elevated, var(--dsc-fill-quaternary));
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-block);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 35%);
+}
+
+.git-dialog-head {
+  color: var(--dsc-text-primary);
+  font-size: var(--dsc-fs-body);
+}
+
+.git-dialog-files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 40vh;
+  overflow-y: auto;
+  border: 1px solid var(--dsc-stroke-4);
+  border-radius: var(--dsc-r-block);
+  padding: 6px;
+}
+
+.git-dialog-include {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+  padding: 2px;
+}
+
+.git-dialog-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px;
+}
+
+.git-dialog-file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsc-text-secondary);
+  font-size: var(--dsc-fs-caption);
+}
+
+.git-dialog-message {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  color: var(--dsc-text-primary);
+  background: var(--dsc-fill-quaternary);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-block);
+  font-family: inherit;
+  font-size: var(--dsc-fs-caption);
+  resize: vertical;
+}
+
+.git-dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 /* ── git 页签底部的 diff 视图（点文件行 / 「全部改动」展开） ── */
 .git-diff-all {
   flex: none;

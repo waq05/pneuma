@@ -243,7 +243,7 @@ console.log('[6] 宿主数据面（文本钉）')
   check('工作流区绑的是定点任务（schedule 贡献 scheduled 面）', schedule.includes("ctx.surfaces.register('scheduled'"))
 }
 
-console.log('[7] Git 页签（空仓库不报错 + 未跟踪可预览的形态钉）')
+console.log('[7] Git 页签（空仓库不报错 + 未跟踪可预览 + 每文件行数 / 就地展开 / 提交对话框的形态钉）')
 {
   const desktopDock = read('src/plugins/desktop-dock.ts')
   const changes = read('ui-shell/src/plugins/files/changes.tsx')
@@ -271,8 +271,80 @@ console.log('[7] Git 页签（空仓库不报错 + 未跟踪可预览的形态�
   )
   check('「全部改动」把未跟踪的合成段并进去（条数里有它们，看不到就像坏了）', desktopDock.includes('const untracked = await untrackedPaths(cwd)') && desktopDock.includes('chunks.push(preview.patch)'))
   check('合成段有上限（40 个文件 / 2MB / 尾斜杠两边都剥）', desktopDock.includes('UNTRACKED_PREVIEW_MAX_FILES') && desktopDock.includes('UNTRACKED_PREVIEW_MAX_TOTAL_BYTES') && desktopDock.includes("replace(/\\/+$/, '')"))
-  check('壳里未跟踪组也可点（onShowDiff 传进去了）', /title=\{`未跟踪[\s\S]{0,220}?onShowDiff=\{toggleDiff\}/.test(changes))
   check('壳显示宿主给的 note（不自作主张说「没有改动」）', changes.includes("note: String(data?.note ?? '')") && changes.includes('props.diff.note') && !changes.includes('未跟踪文件不会出现在 diff 里'))
+
+  // ② 未跟踪行数：逐文件读内容数换行符，与 untrackedPreview 共用一份判定
+  check(
+    '未跟踪行数：预览与统计共用一份读判定（readUntracked），逐文件数换行符',
+    desktopDock.includes('function readUntracked') &&
+      desktopDock.includes('function countUntrackedLines') &&
+      desktopDock.includes("read.text.split('\\n').length - 1") &&
+      desktopDock.includes('GIT_UNTRACKED_STAT_MAX_BYTES') &&
+      desktopDock.includes('GIT_UNTRACKED_STAT_CONCURRENCY'),
+  )
+  check(
+    '未跟踪行数口径：1MiB 上限 / 含 NUL 记 0 / removed 恒 0',
+    desktopDock.includes('const GIT_UNTRACKED_STAT_MAX_BYTES = 1024 * 1024') &&
+      desktopDock.includes("stats.set(path, countUntrackedLines(cwd, path))") &&
+      desktopDock.includes('untrackedStats[path] = { added, removed: 0 }'),
+  )
+  check(
+    '统计口径过滤：0 增 0 删的未跟踪项出列、目录折叠条目保留',
+    desktopDock.includes("if (added === 0 && !path.endsWith('/')) continue"),
+  )
+  check(
+    'git-status 的 stats 档给每文件增删（staged/unstaged/untracked 三张表）',
+    desktopDock.includes('stagedStats') &&
+      desktopDock.includes('unstagedStats') &&
+      desktopDock.includes('untrackedStats') &&
+      desktopDock.includes('workspaceNumstat(prefix, stagedNumstat)'),
+  )
+  check(
+    '② 增删总计分档：tracked 走 numstat、未跟踪逐文件计入',
+    desktopDock.includes("git(cwd, ['diff', '--cached', '--numstat', '-z'])") &&
+      desktopDock.includes("git(cwd, ['diff', '--numstat', '-z'])") &&
+      desktopDock.includes('await untrackedLineStats(cwd, untrackedRepo)'),
+  )
+
+  // ③ 路径基准：show-prefix rebase + 只列 cwd 之内
+  check(
+    '③ 读 show-prefix、把仓库根相对路径 rebase 到 cwd 相对',
+    desktopDock.includes("['rev-parse', '--show-prefix']") && desktopDock.includes('function toWorkspacePath'),
+  )
+  check(
+    '③ 工作目录之外的变更整条过滤（status 与 numstat 都过一遍）',
+    desktopDock.includes('工作目录之外的变更整条不列') && desktopDock.includes('if (path === null) continue'),
+  )
+  check(
+    '③ 「全部改动」的 diff 也限定在 cwd 子树（pathspec 用 `.`）',
+    desktopDock.includes("const tail = ['--', file ?? '.']"),
+  )
+
+  // ⑤ 每文件行数 + 就地展开 + 提交对话框（走既有审批）
+  check(
+    '⑤ 文件行尾带 +N/−N',
+    changes.includes('git-file-counts') && changes.includes('changes-added') && changes.includes('changes-removed'),
+  )
+  check(
+    '⑤ 点文件行就地展开该文件的 diff（GitGroup 内联渲染 GitDiffView）',
+    changes.includes('git-diff-inline') &&
+      /isOpen \? \(\s*<GitDiffView[\s\S]{0,160}?inline/.test(changes) &&
+      changes.includes("toggleDiff('untracked', file)"),
+  )
+  check(
+    '⑤ 已暂存组展开走 staged 段（git-diff 带 staged:true）',
+    changes.includes("group === 'staged' ? { file, staged: true }"),
+  )
+  check(
+    '⑤ 提交对话框：列将提交的文件（staged 恒选 + 可选 unstaged），提交仍走 git-commit 审批',
+    changes.includes('function CommitDialog') &&
+      changes.includes('包含未暂存') &&
+      changes.includes("['git-commit', payload]"),
+  )
+  check(
+    '⑤ 宿主 git-commit 带 paths：先暂存勾选路径再提交（同一张审批卡）',
+    desktopDock.includes("git(cwd, ['add', '--', ...paths])"),
+  )
 }
 
 console.log('[8] 工具卡补丁视图（读 / 写 / 改三类分流）')
