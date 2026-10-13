@@ -1253,6 +1253,20 @@ console.log('\n[6] A1 服务注入')
     unmetInjections(['svc.x'], () => undefined, empty).join('；').includes('服务 svc.x 还没有提供者') &&
       unmetInjections(['plug.a'], () => ({ ok: false, error: '炸了' }), empty).join('；').includes('插件 plug.a 没装上：炸了'),
   )
+
+  // 用例六：同名时的**优先级**——`inject` 先按「清单里另一个插件的 id」解，再按「服务名」解。
+  // 为什么值得钉：两条路的语义不同（id = 「那条插件的工厂注册好了吗」，服务名 = 「有提供者吗」），
+  // 一旦颠倒，按 id 写依赖的插件会开始按服务名判定，报错文案与「谁没装上」都会指错人。
+  const both = new ServiceRegistry()
+  both.provide('plug.b', { ok: 1 }, 'plug.b')
+  check(
+    '名字既是插件 id 又是服务名：以插件那条为准（它没装上就是没满足，哪怕服务在）',
+    unmetInjections(['plug.b'], () => ({ ok: false, error: '炸了' }), both).join('；').includes('插件 plug.b 没装上'),
+  )
+  check(
+    '名字是插件 id 且那条插件装上了：服务表里没有它也算满足（不回落去查服务名）',
+    unmetInjections(['plug.b'], () => ({ ok: true }), empty).length === 0,
+  )
 }
 
 // ── 7. D3 席位（共享实例 / 懒建 / 释放 / 浅拷贝口径）─────────────────────────────

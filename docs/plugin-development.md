@@ -687,7 +687,40 @@ catch-all（priority 100）。想接管某类工具卡的渲染：往这个槽�
 2. **`@dsc/ui-core` 不在种子里**（故意）：它是壳的内部实现，插件当值引用会得到
    「白名单外的模块」那句错；插件要的能力都经 `@dsc/ui` 或上面三个包给。
 3. **类型面**：本仓库内置插件按源码即类型直接用；第三方 TS 作者今天没有随 SDK 发布的
-   `.d.ts`（与 `@dsc/ui` 一样），按 JS 写、类型自备。
+   `.d.ts`（与 `@dsc/ui` 一样），按 JS 写、类型自备。想在编辑器里拿到类型（推荐，写起来
+   差别很大）就把**整张落点表**照抄进你的 `tsconfig.json`：七条一条都不能少——上面那几份
+   源码自己也 import 下面的包（`@dsc/ui-core` / `@dsc/ui-layout`…），少一条类型解析就断在
+   半路。这张表与 `ui-shell/packages.json`（构建期唯一事实源）是同一份，抄的时候以它为准：
+
+   ```jsonc
+   // 你的插件工程的 tsconfig.json（<仓库> 换成 dsc 的检出路径）。这七条只影响类型解析，
+   // 不产生任何运行期依赖——bundle 仍由你自己构建，运行期只能 require
+   // `@dsc/ui` 与三个平台种子（`@dsc/ui-core` 在里面只是「被引到的文件要能解析」，
+   // 不是给你 require 的，白名单里仍然没有它）。
+   {
+     "compilerOptions": {
+       // 基元包里有一处 `pdfjs-dist/...?url` 导入：没有 vite 的类型声明它会报一句
+       // 「找不到模块」。插件工程本来就用 vite 打包，这条顺手就有了。
+       "types": ["vite/client"],
+       "paths": {
+         "@dsc/ui": ["<仓库>/ui-shell/src/plugin-api.ts"],
+         "@dsc/ui-core": ["<仓库>/src/ui/index.ts"],
+         "@dsc/ui-slots": ["<仓库>/ui-shell/src/ui-slots/index.ts"],
+         "@dsc/ui-primitives": ["<仓库>/ui-shell/src/ui-primitives/index.ts"],
+         "@dsc/ui-dockkit": ["<仓库>/ui-shell/src/ui-dockkit/index.ts"],
+         "@dsc/ui-layout": ["<仓库>/ui-shell/src/ui-layout/index.ts"],
+         "@dsc/ui-renderer": ["<仓库>/ui-shell/src/ui-renderer/index.ts"]
+       }
+     }
+   }
+   ```
+
+   这段配方是**验过的**（`docs` 里给的东西不该只是看着对）：照它建一个只有
+   `plugin.tsx` 的工程，四个运行期包名各取几样、`declare module '@dsc/ui'` 并一个子槽，
+   `tsc --noEmit` 零错——合并真的认得出（拼错的槽名编不过，是自己开的子槽才过）。
+
+   加了这张表之后 `declare module '@dsc/ui' { interface SlotMap { … } }` 的槽位合并也认得出
+   （合并跟的是**这个文件**的身份，所以 `@dsc/ui` 那一条必须指 `plugin-api.ts` 本身）。
 
 写法上两者等价、取向不同：`@dsc/ui` 是**聚合面**（少量重依赖与图标经它转出，老插件照旧
 可用），按包名 require 是**按需取整包**（想用 `Select` 就写 `@dsc/ui-primitives`，语义直白）。
@@ -735,6 +768,11 @@ const got = ui.consume<typeof seat>('teammates')   // 缺席给 undefined（软�
   插件的 id」解（拓扑排序用的也是它），再按「服务名」解（服务表里有没有提供者）。两条路都
   解不到时插件**不 apply**，诊断区/会话流里留一行中文原因（「插件 X 没装上：…」或
   「服务 X 还没有提供者」）——等提供者装上后装载器会重试一轮。
+- **同名时以「插件 id」那条为准**（顺序不是随便定的）：名字在清单里就只看那条插件装没装上，
+  不再回落去查服务名；名字不在清单里才按服务名判。后果说白一点：`inject: ["foo"]` 而清单里
+  真有一个叫 `foo` 的插件时，你拿到的是「`foo` 这个插件」的依赖，不是「名叫 `foo` 的服务」
+  ——所以给自己的服务起名时**别撞插件 id**（想按服务名依赖就起个不与任何插件 id 相同的名字）。
+  这条优先级由 `scripts/ui-plugin-test.mjs` 的 [6] 组钉着（同名两向 + 只有 id 没有服务两条）。
 - 想在**渲染期**跟着服务的出现/消失换数据源（例如提供者被停用），用 `useService<T>(name)`
   （React hook，缺席给 `undefined`；服务表出现变化会唤醒组件）。
 
@@ -801,6 +839,14 @@ props.renderFactorySlot('myplugin.card', { entry }, {
   intended 预览 / 中文耗时 / 「将做的改动」/「在轨迹中查看」四件局部组件，轨迹页只选轨迹
   口径的耗时；两边共用同一份 head/body 骨架，第三方还可以往 `transcript.toolcard.footer`
   注册一行（`examples/ui-plugin-demo` 就是例子）。
+- **`children` 是给第三方留的扩展点，内置插件里目前只有示例在用**（有意如此）：内置产品里
+  没有一个「自然的」工具卡尾巴要做（`transcript` 自己要的那几件已经做成了局部位置：耗时、
+  将做的改动、在轨迹中查看），为了把机制跑起来硬塞一行进去只会多一处没人要的 UI。
+  机制本身不是「没人用所以没人测」：声明表 / 注册表 / 卸载递归 collapse / Factory 故障记账
+  由 `scripts/ui-plugin-test.mjs` 的第 [8] 组钉着；**真实浏览器里的渲染**这一层靠示例插件
+  （`examples/ui-plugin-demo/ui/client.js` 往工具卡里注册一行）在真机上走查——自动化探针
+  到不了那里（本仓库的真机走查跑的是空档案，没有工具卡）。要往这里加东西时，先问
+  「第三方会不会要」。
 ### 10.9 启动分批、批取数与本页热更（1.2.0 起可用）
 
 **`plugin.json` 的 `phase`**（内置插件写在目录里的可选 `plugin.json`，第三方写在自己的
