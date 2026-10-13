@@ -768,12 +768,18 @@
   color: var(--dsc-yellow);
 }
 
-/* ══════════ 状态面板（正文右上角的进程 / 智能体总览浮层）══════════
-   形状对照 ZCode 的「状态」浮层：胶囊态是一颗高 34px 的药丸，面板态是一块 320px 宽的
-   浮层，标题栏右缘两颗小钮（展开策略 / 收起为胶囊），分节列表里每行是一颗胶囊行。
+/* ══════════ 状态面板（正文右上角的进程 / 目标 / 智能体总览浮层）══════════
+   形状对照 ZCode 的「会话状态面板」：收起态是一颗高 34px 的药丸胶囊（只报优先级最高
+   的一条摘要），展开态是一块 320px 宽的浮层（标题栏右缘两颗小钮 + 分节列表）。
+
+   两态是**同一棵 DOM**：`.sp` 上挂 `data-expanded`，收起 / 展开过渡最大高度、圆角与
+   阴影；藏起来的那一态用 position: absolute + opacity / visibility 让位（visibility
+   在过渡末尾才翻成 hidden），所以形变是连续的——不像旧版那样胶囊与面板是两个组件
+   来回重挂（重挂没有过渡，还会丢焦点）。
 
    定位：宿主是 `.chat-wrap`（`position: relative`，右缘刻度条也用同一个宿主），
-   所以它天生避开左侧栏与右侧 dock 的宽度变化，不需要知道任何像素。
+   所以它天生避开左侧栏与右侧 dock 的宽度变化；档位的宽度上限（`--sp-avail`）由组件
+   量这个宿主写进来——不是 window.innerWidth（dock 开合改宿主宽不改窗口宽）。
    层级取 `--dsc-z-menu`：它要盖住正文与刻度条，但必须让位给浮层菜单（`.model-pop` 那一档）
    与遮罩（`--dsc-z-backdrop`）——点它上面的按钮时不能再被它自己盖住。 */
 .sp-host {
@@ -789,18 +795,61 @@
   pointer-events: auto;
 }
 
-/* ── 面板 ── 底色不透明（下方是正文，半透明会读出重影），圆角与浮层菜单同一档。 */
+/* ── 壳（两态共用）── 底色不透明（下方是正文，半透明会读出重影）。 */
 .sp {
   background: var(--dsc-bg-raised);
   border: 1px solid var(--dsc-stroke-3);
-  border-radius: var(--dsc-r-overlay);
-  box-shadow: var(--dsc-shadow-float);
   display: flex;
   flex-direction: column;
-  max-height: min(64vh, 512px);
   overflow: hidden;
   position: relative;
-  width: 320px;
+  transition:
+    max-height 300ms var(--dsc-ease),
+    border-radius 300ms var(--dsc-ease),
+    box-shadow 300ms var(--dsc-ease),
+    background-color var(--dsc-dur) var(--dsc-ease);
+}
+
+/* 收起态：药丸。宽度跟着摘要内容走（w-max），上限以宿主宽度为准。 */
+.sp[data-expanded='0'] {
+  border-radius: var(--dsc-r-pill);
+  box-shadow: var(--dsc-shadow-sm);
+  max-height: 34px;
+  max-width: min(240px, calc(var(--sp-avail, 240px) - 24px));
+  width: max-content;
+}
+
+/* 展开态：320px 浮层；高度上限统一 min(64vh, 512px)（与旧面板一致）。 */
+.sp[data-expanded='1'] {
+  border-radius: var(--dsc-r-overlay);
+  box-shadow: var(--dsc-shadow-float);
+  max-height: min(64vh, 512px);
+  width: min(320px, calc(var(--sp-avail, 320px) - 24px));
+}
+
+/* 展开体：展开时在流内；收起时绝对定位让位（内容看不见也不占尺寸），
+   visibility 随 150ms 过渡在末尾才翻，收起来不闪。 */
+.sp-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  transition:
+    opacity 150ms var(--dsc-ease),
+    visibility 150ms var(--dsc-ease);
+}
+
+.sp[data-expanded='1'] .sp-panel {
+  opacity: 1;
+  position: relative;
+  visibility: visible;
+}
+
+.sp[data-expanded='0'] .sp-panel {
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  visibility: hidden;
 }
 
 /* 标题栏：两颗图标钮贴右上角（ZCode 同位置）。 */
@@ -884,11 +933,13 @@
   color: var(--dsc-accent-text);
 }
 
-/* 分节与列表。内容区自己滚（面板整体限高），滚动条贴面板右缘。 */
+/* 分节区：外层兜底滚（多节同时展开超过壳上限时，标题与操作仍可达），
+   每个分节体内再按类型限高——长节只滚自己，不裁掉后面的节。 */
 .sp-scroll {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
-  gap: var(--dsc-sp-3);
+  gap: var(--dsc-sp-2);
   min-height: 0;
   overflow-y: auto;
   padding: var(--dsc-sp-2) var(--dsc-sp-2) var(--dsc-sp-3);
@@ -896,23 +947,58 @@
 
 .sp-section {
   display: flex;
+  flex: none;
   flex-direction: column;
-  gap: var(--dsc-sp-1);
+  min-width: 0;
 }
 
-/* 分节头：左边标题（比正文小一档、加粗），右边读数（等宽 + tabular-nums，竖排数字才不抖）。 */
+/* 第二瓣及以后的分节顶上一条分割线（没有前驱就不画）。 */
+.sp-section[data-separated='1'] {
+  border-top: 1px solid var(--dsc-stroke-3);
+  padding-top: var(--dsc-sp-2);
+}
+
+/* 分节头：整行可点收起 / 展开；左边标题 + 箭头（hover 才显影），右边读数常显。 */
 .sp-section-head {
-  align-items: baseline;
+  align-items: center;
+  background: none;
+  border: none;
+  border-radius: var(--dsc-r-control);
+  cursor: pointer;
   display: flex;
-  gap: var(--dsc-sp-2);
-  justify-content: space-between;
+  gap: var(--dsc-sp-1);
+  min-height: 24px;
   padding: 0 var(--dsc-sp-2);
+  text-align: left;
+  width: 100%;
+}
+
+.sp-section-head:hover {
+  background: var(--dsc-row-hover-bg);
+}
+
+.sp-section-head:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
 }
 
 .sp-section-title {
   color: var(--dsc-text-tertiary);
+  flex: none;
   font-size: var(--dsc-fs-caption);
   font-weight: 600;
+}
+
+.sp-section-caret {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  opacity: 0;
+  transition: opacity var(--dsc-dur) var(--dsc-ease);
+}
+
+.sp-section-head:hover .sp-section-caret,
+.sp-section-head:focus-visible .sp-section-caret {
+  opacity: 1;
 }
 
 .sp-section-trail {
@@ -920,11 +1006,45 @@
   font-family: var(--dsc-font-mono);
   font-size: var(--dsc-fs-tool);
   font-variant-numeric: tabular-nums;
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 已完成全部：读数走成功色（一眼看出「这条线走完了」，对照 ZCode 的 success 色）。 */
-.sp-section[data-sp-section='todo'] .sp-section-trail[data-sp-progress$='/0'] {
-  color: var(--dsc-text-quaternary);
+.sp-section-trail[data-sp-complete='1'] {
+  color: var(--dsc-green);
+}
+
+/* 分节体：0fr↔1fr 的网格行做开合动画（高度自己算，不用知道内容多高）。 */
+.sp-section-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  min-height: 0;
+  transition: grid-template-rows 200ms var(--dsc-ease);
+}
+
+.sp-section[data-sp-open='0'] .sp-section-body {
+  grid-template-rows: 0fr;
+}
+
+.sp-section-scroll {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+/* 每个分节各自的限高：进程最高 ~20rem（6 条双行待办），目标 / 智能体 12rem。 */
+.sp-section[data-sp-section='goal'] .sp-section-scroll,
+.sp-section[data-sp-section='agent'] .sp-section-scroll {
+  max-height: 12rem;
+}
+
+.sp-section[data-sp-section='todo'] .sp-section-scroll {
+  max-height: 20rem;
 }
 
 .sp-list {
@@ -936,24 +1056,28 @@
   padding: 0;
 }
 
-/* 胶囊行：圆角药丸底 + 状态点 + 一格文字 + 尾部读数。 */
+/* 胶囊行：圆角药丸底 + 状态图标 + 正文（最多两行，全文在 title 里）+ 尾部读数。 */
 .sp-row {
-  align-items: center;
+  align-items: flex-start;
   border-radius: var(--dsc-r-pill);
   display: flex;
   gap: var(--dsc-sp-2);
   min-height: 26px;
-  padding: 0 var(--dsc-sp-3);
+  padding: 3px var(--dsc-sp-3);
   position: relative;
+}
+
+.sp-row:hover {
+  background: var(--dsc-row-hover-bg);
 }
 
 .sp-row-agent {
   padding-right: var(--dsc-sp-1);
 }
 
-/* 整行可点的那一层：铺满整个药丸（绝对定位），行内按钮再叠在它上面。 */
+/* 整行可点的那一层：铺满整个药丸，行内按钮再叠在它上面。 */
 .sp-row-open {
-  align-items: center;
+  align-items: flex-start;
   background: none;
   border: none;
   border-radius: var(--dsc-r-pill);
@@ -968,7 +1092,6 @@
   text-align: left;
 }
 
-.sp-row:hover,
 .sp-row-open:hover {
   background: var(--dsc-row-hover-bg);
 }
@@ -978,58 +1101,66 @@
   outline: none;
 }
 
-/* 状态点：与左缘刻度条、工具行同一枚 6px 圆点；颜色由 data-status / data-state 定。 */
-.sp-dot {
-  background: var(--dsc-text-quaternary);
-  border-radius: var(--dsc-r-pill);
+/* 行图标：三态各有各的色（跑着的呼吸、办完的绿、待办的空心圈）。 */
+.sp-icon {
   flex: none;
-  height: 6px;
-  width: 6px;
+  margin-top: 3px;
 }
 
-/* 跑着的状态点呼吸（复用队友点那套 tm-pulse：6px 的圆点上转圈看不出来，呼吸才看得见）。 */
-.sp-row[data-status='running'] .sp-dot,
-.sp-row[data-state='working'] .sp-dot {
-  animation: tm-pulse 1400ms ease-in-out infinite;
-  background: var(--dsc-accent);
+.sp-icon-run {
+  color: var(--dsc-accent);
 }
 
-.sp-row[data-status='done'] .sp-dot {
-  background: var(--dsc-green);
+.sp-icon-done {
+  color: var(--dsc-green);
 }
 
-.sp-row[data-status='cancelled'] .sp-dot {
-  background: var(--dsc-text-quaternary);
+.sp-icon-wait,
+.sp-icon-cancel {
+  color: var(--dsc-text-quaternary);
 }
 
-.sp-row[data-state='failed'] .sp-dot {
-  background: var(--dsc-red);
+.sp-icon-goal {
+  color: var(--dsc-text-tertiary);
 }
 
-.sp-row[data-state='stopped'] .sp-dot {
-  background: var(--dsc-yellow);
+/* 跑着的图标呼吸（6px 圆点上转圈看不出来，呼吸才看得见）。 */
+.sp-row[data-state='working'] .sp-icon-run {
+  animation: sp-pulse 1400ms ease-in-out infinite;
 }
 
-.sp-row[data-state='idle'] .sp-dot {
-  background: var(--dsc-green);
+@keyframes sp-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
 }
 
-/* 行正文：一行截断（这是总览，读的是「有哪几条」而不是全文）。 */
+/* 行正文：最多两行、超出在第二行末尾省略；完整内容留在 title 里，model 数据不截断。 */
 .sp-row-text {
   color: var(--dsc-text-secondary);
+  display: -webkit-box;
   flex: 1 1 auto;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   font-size: var(--dsc-fs-ui);
+  line-height: 1.35;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
-/* 收工的行压一档：跑着的才是要盯的。 */
-.sp-row[data-status='done'] .sp-row-text,
-.sp-row[data-status='cancelled'] .sp-row-text,
-.sp-row[data-state='idle'] .sp-row-text {
-  color: var(--dsc-text-tertiary);
+/* 办完的行划掉并压一档（保留显示，不做状态重排）；取消的只压一档。 */
+.sp-row[data-status='completed'] .sp-row-text {
+  color: var(--dsc-text-quaternary);
+  text-decoration: line-through;
+}
+
+.sp-row[data-status='cancelled'] .sp-row-text {
+  color: var(--dsc-text-quaternary);
 }
 
 .sp-row-note,
@@ -1038,16 +1169,12 @@
   color: var(--dsc-text-quaternary);
   flex: none;
   font-size: var(--dsc-fs-tool);
+  margin-top: 3px;
 }
 
 .sp-row-time {
   font-family: var(--dsc-font-mono);
   font-variant-numeric: tabular-nums;
-}
-
-.sp-row-more {
-  color: var(--dsc-text-quaternary);
-  font-size: var(--dsc-fs-tool);
 }
 
 .sp-row-stop {
@@ -1069,28 +1196,192 @@
   color: var(--dsc-red);
 }
 
-/* ── 胶囊态 ── 一颗药丸：图标 + 一句读数；点它展开成面板。 */
-.sp-mini {
+/* 折叠桶行：「已完成 n 项 / 前面 n 项」——整桶靠 hover 预览卡或触屏点按看。 */
+.sp-fold {
   align-items: center;
+  background: none;
+  border: none;
+  border-radius: var(--dsc-r-pill);
+  color: var(--dsc-text-quaternary);
+  cursor: pointer;
+  display: flex;
+  font-size: var(--dsc-fs-ui);
+  gap: var(--dsc-sp-1);
+  min-height: 22px;
+  padding: 2px var(--dsc-sp-3);
+  text-align: left;
+  width: 100%;
+}
+
+.sp-fold:hover,
+.sp-fold:focus-visible {
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-secondary);
+  outline: none;
+}
+
+.sp-fold-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 已结束目录行：「已结束 · N ›」——一条通往目录的入口（点开团队面板）。 */
+.sp-ended {
+  align-items: center;
+  background: none;
+  border: none;
+  border-radius: var(--dsc-r-pill);
+  color: var(--dsc-text-secondary);
+  cursor: pointer;
+  display: flex;
+  font-size: var(--dsc-fs-ui);
+  gap: var(--dsc-sp-2);
+  min-height: 28px;
+  padding: 0 var(--dsc-sp-3);
+  text-align: left;
+  width: 100%;
+}
+
+.sp-ended:hover {
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.sp-ended:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
+}
+
+.sp-ended-count {
+  color: var(--dsc-text-quaternary);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+.sp-ended-go {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+}
+
+/* 折叠桶的预览卡：浮在面板左侧（定位基准是 .sp-host），只读整桶列表。 */
+.sp-card {
   background: var(--dsc-bg-raised);
   border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-block);
+  box-shadow: var(--dsc-shadow-float);
+  display: flex;
+  flex-direction: column;
+  max-height: min(24rem, 60vh);
+  padding: var(--dsc-sp-2);
+  position: absolute;
+  right: calc(100% + 6px);
+  width: min(320px, calc(var(--sp-avail, 320px) - 24px));
+  z-index: 1;
+}
+
+.sp-card-head {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  font-size: var(--dsc-fs-tool);
+  margin: 0 0 var(--dsc-sp-1);
+  padding: 0 var(--dsc-sp-3);
+}
+
+.sp-card-list {
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+  margin: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0;
+}
+
+/* 目标节：靶心 + 正文（最多两行）+ 暂停 / 继续；相位读数列在下面。 */
+.sp-goal {
+  align-items: flex-start;
+  display: flex;
+  gap: var(--dsc-sp-2);
+  padding: 2px var(--dsc-sp-3);
+}
+
+.sp-goal-text {
+  color: var(--dsc-text-secondary);
+  display: -webkit-box;
+  flex: 1 1 auto;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: var(--dsc-fs-ui);
+  line-height: 1.35;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.sp-goal-btn {
+  background: none;
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-secondary);
+  cursor: pointer;
+  flex: none;
+  font-size: var(--dsc-fs-tool);
+  padding: 1px var(--dsc-sp-2);
+}
+
+.sp-goal-btn:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.sp-goal-btn:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
+}
+
+.sp-goal-state {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+  margin: 2px 0 0;
+  padding: 0 var(--dsc-sp-3);
+}
+
+/* ── 胶囊态 ── 一颗药丸：图标 + 一句读数（+ 可选读数尾巴）；点它展开成面板。
+   收起态在流内、展开态绝对定位让位——同一棵 DOM，藏起来而不是卸载，形变过渡不断。 */
+.sp-mini {
+  align-items: center;
+  background: none;
+  border: none;
   border-radius: var(--dsc-r-pill);
-  box-shadow: var(--dsc-shadow-sm);
   color: var(--dsc-text-secondary);
   cursor: pointer;
   display: inline-flex;
   font-size: var(--dsc-fs-ui);
   gap: var(--dsc-sp-2);
-  height: 34px;
-  max-width: 240px;
+  height: 32px;
+  max-width: 100%;
   padding: 0 var(--dsc-sp-4);
   transition:
-    background var(--dsc-dur) var(--dsc-ease),
-    color var(--dsc-dur) var(--dsc-ease);
+    color var(--dsc-dur) var(--dsc-ease),
+    opacity 150ms var(--dsc-ease),
+    visibility 150ms var(--dsc-ease);
+}
+
+.sp[data-expanded='0'] .sp-mini {
+  position: relative;
+}
+
+.sp[data-expanded='1'] .sp-mini {
+  inset: 0 auto auto 0;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  visibility: hidden;
 }
 
 .sp-mini:hover {
-  background: var(--dsc-control-hover-bg);
   color: var(--dsc-text-primary);
 }
 
@@ -1099,10 +1390,52 @@
   outline: none;
 }
 
+/* 图标在 hover / focus 时换成「展开」（↗↙，对照 ZCode 胶囊那颗 maximize-2）。 */
+.sp-mini-icon {
+  color: var(--dsc-text-tertiary);
+  display: inline-flex;
+  flex: none;
+  height: 14px;
+  position: relative;
+  width: 14px;
+}
+
+.sp-mini-icon > svg {
+  left: 0;
+  position: absolute;
+  top: 0;
+  transition: opacity var(--dsc-dur) var(--dsc-ease);
+}
+
+.sp-mini-expand {
+  opacity: 0;
+}
+
+.sp-mini:hover .sp-mini-icon > svg,
+.sp-mini:focus-visible .sp-mini-icon > svg,
+.sp-mini:hover .sp-mini-icon > .sp-mini-expand,
+.sp-mini:focus-visible .sp-mini-icon > .sp-mini-expand {
+  opacity: 0;
+}
+
+.sp-mini:hover .sp-mini-icon > .sp-mini-expand,
+.sp-mini:focus-visible .sp-mini-icon > .sp-mini-expand {
+  color: var(--dsc-text-primary);
+  opacity: 1;
+}
+
 .sp-mini-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sp-mini-trail {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-tool);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── 右侧栏里的子智能体页签 ── */
@@ -1142,10 +1475,16 @@
   padding: var(--dsc-sp-3) var(--dsc-sp-4);
 }
 
-/* 系统里说「少动」就真不动：呼吸停成一颗静态强调色点（信息一条不少）。 */
+/* 系统里说「少动」就真不动：收展形变、分节开合、图标换形、呼吸全停（信息一条不少）。 */
 @media (prefers-reduced-motion: reduce) {
-  .sp-row[data-status='running'] .sp-dot,
-  .sp-row[data-state='working'] .sp-dot {
+  .sp,
+  .sp-panel,
+  .sp-section-body,
+  .sp-mini,
+  .sp-mini-icon > svg {
+    transition: none;
+  }
+  .sp-row[data-state='working'] .sp-icon-run {
     animation: none;
   }
 }

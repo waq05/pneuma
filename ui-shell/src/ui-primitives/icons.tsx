@@ -87,6 +87,10 @@ export function IconChevronRight(props: IconProps): JSX.Element {
   return base(<path d="m9.5 6 6 6-6 6" />, props)
 }
 
+export function IconChevronLeft(props: IconProps): JSX.Element {
+  return base(<path d="m14.5 6-6 6 6 6" />, props)
+}
+
 /** 收起（∨ 的镜像）：工具卡展开区快捷栏的「收起」按钮用。 */
 export function IconChevronUp(props: IconProps): JSX.Element {
   return base(<path d="m6 14.5 6-6 6 6" />, props)
@@ -97,6 +101,30 @@ export function IconArrowUp(props: IconProps): JSX.Element {
     <>
       <path d="M12 19V5" />
       <path d="m6 11 6-6 6 6" />
+    </>,
+    props,
+  )
+}
+
+/** 进行中（→）：状态面板进程行的「正在做这条」。 */
+export function IconArrowRight(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M4.5 12h14" />
+      <path d="m12.5 6 6 6-6 6" />
+    </>,
+    props,
+  )
+}
+
+/** 展开（↗↙ 双箭头，对照 ZCode 胶囊 hover 时那颗 maximize-2）：可展开的提示。 */
+export function IconExpand(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M15 3.5h5.5V9" />
+      <path d="M20.5 3.5 14 10" />
+      <path d="M9 20.5H3.5V15" />
+      <path d="M3.5 20.5 10 14" />
     </>,
     props,
   )
@@ -187,6 +215,22 @@ export function IconRestart(props: IconProps): JSX.Element {
 
 export function IconCheck(props: IconProps): JSX.Element {
   return base(<path d="m5 12.5 4.5 4.5L19 7.5" />, props)
+}
+
+/** 空心圈（待办）：状态面板进程行的「还没轮到」。 */
+export function IconCircle(props: IconProps): JSX.Element {
+  return base(<circle cx="12" cy="12" r="7.5" />, props)
+}
+
+/** 靶心（目标）：状态面板的目标节与胶囊的目标档。 */
+export function IconTarget(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <circle cx="12" cy="12" r="8.2" />
+      <circle cx="12" cy="12" r="3.2" />
+    </>,
+    props,
+  )
 }
 
 export function IconCoins(props: IconProps): JSX.Element {

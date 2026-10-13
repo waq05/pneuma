@@ -136,6 +136,14 @@ export default defineUiPlugin({
     // 席位：本插件两处登记共享同一个 handle；跨插件共享经服务表传 handle（不认字符串键）。
     const mates = makeMateSeat()
     ui.provide('teammates', mates)
+    // 智能体目录的口子：状态面板那条「已结束 · N ›」经它打开团队面板（模态的开合仍归
+    // 本插件自己管；服务缺席时状态面板那一行整行不渲染——点了没反应的入口比没有更糟）。
+    // 与「页签在这里报名、打开动作由任何一处发起」是同一条思路。
+    ui.provide('teamPanel', {
+      open: (): void => {
+        setPanelOpen(true, null)
+      },
+    })
     // 标题旁的两簇（旧界面同构）：子智能体下拉在前，团队钮在后。
     ui.slots.register('shell.header.lead', { id: 'team.subagents', order: 10, store: mates }, SubagentMenu)
     ui.slots.register('shell.header.lead', { id: 'team.toggle', order: 20, store: mates }, TeamButton)
