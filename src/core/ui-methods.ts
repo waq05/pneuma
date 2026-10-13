@@ -137,8 +137,10 @@ export const UI_METHODS = [
   'stopTeammate',
   'messageTeammate',
   'removeTeammate',
-  // 后台作业与终端会话：只放行「收掉自己起的那个」这一条（起进程的入口仍只有工具与原生桥）
+  // 后台作业与终端会话：只放行「收掉自己起的那个」与「只读看它的输出」两条
+  // （起进程的入口仍只有工具与原生桥）；两条都带同口径的归属校验。
   'stopBackground',
+  'readBackground',
   // 任务与目标
   'clearTodos',
   'goalAction',
@@ -312,6 +314,7 @@ export const UI_ARG_SPECS: Readonly<Record<UiMethod, MethodSpec>> = {
   removeTeammate: [{ shape: { kind: 'string', max: MAX_NAME } }],
   // 后台作业 / 终端会话的 id（job-N / term-N）：短标识，给 MAX_NAME 绰绰有余。
   stopBackground: [{ shape: { kind: 'string', max: MAX_NAME } }],
+  readBackground: [{ shape: { kind: 'string', max: MAX_NAME } }],
   // ── 任务与目标 ────────────────────────────────────────────────────────────
   clearTodos: [],
   goalAction: [{ shape: { kind: 'enum', values: GOAL_ACTIONS } }],

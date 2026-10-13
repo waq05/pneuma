@@ -37,6 +37,7 @@ import type {
   AskQuestionItem,
   AskUserView,
   AskUserViewInput,
+  BackgroundOutputView,
   CollaborationMode,
   DscRuntime,
   EffortLevel,
@@ -879,7 +880,8 @@ export interface DockService {
 
 /**
  * 后台作业与终端会话的收口（tools-default 插件提供）：状态面板「终端」区的停止动作
- * 走它。开工的两条路（bash 的 run_in_background / terminal 工具）仍在工具面，这里只有「收」。
+ * 与只读输出面走它。开工的两条路（bash 的 run_in_background / terminal 工具）仍在工具面，
+ * 这里只有「收」与「读」。
  */
 export interface BackgroundWorksService {
   /**
@@ -889,6 +891,17 @@ export interface BackgroundWorksService {
    * @returns 给用户看的一句话。
    */
   stop(id: string): string
+  /**
+   * 只读读一次输出快照（状态面板「终端」区点开的那一页轮询它）。
+   *
+   * 与 {@link stop} 同口径的归属校验：只读**当前查看会话**起的那条；id 不认识、或属于
+   * 别的会话时抛错。返回形状带 `text / status / totalChars / from / droppedChars / atEnd`
+   * ——`droppedChars > 0` 就是「头部丢字」，界面据此报出来（对照参考实现的 truncated/gap）。
+   *
+   * 读的是**尾部窗口**、且**不动模型的增量读游标**（走表上的 peek 而非 read/output），
+   * 所以界面按秒轮询不会把模型下一次 `job_output` / `terminal read` 该读到的输出吃掉。
+   */
+  read(id: string): BackgroundOutputView
 }
 
 /** 一个 MCP server 的连接状态（给设置页与自检看，不进模型上下文）。 */

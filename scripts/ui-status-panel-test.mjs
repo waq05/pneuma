@@ -8,8 +8,8 @@
  *   2. 形态钉——「同一壳收展（morph）」「按宿主宽度裁决而不是 window.innerWidth」
  *      「七个分区的顺序」「Git 本地轮询三档」「预览卡开合延迟」「已结束目录经 teamPanel
  *      服务」这几条只能靠文本钉住（它们是结构约定，不是可单位化的纯函数）；
- *   3. 宿主数据面的文本钉（新旧 surfaces / stopBackground 白名单 / 计划目录读会话账
- *      「按会话、不扫盘」/ 后台活按会话筛与归属校验）。
+ *   3. 宿主数据面的文本钉（新旧 surfaces / stopBackground 与 readBackground 白名单 /
+ *      计划目录读会话账「按会话、不扫盘」/ 后台活按会话筛与归属校验 / 输出面读口走 peek）。
  *
  * 运行：node scripts/ui-status-panel-test.mjs
  *
@@ -205,6 +205,13 @@ console.log('[5] 形态钉（结构约定）')
   check('Git 区「更改」行点开右侧栏 Git 页签', status.includes("openDockTab('git')"))
   check('计划行点开右侧栏文件预览', status.includes('setDockPreview({ path: plan.file })'))
   check('终端区停止走 stopBackground（界面白名单里的那一条）', status.includes("invoke<string>('stopBackground'"))
+  // 终端区行点击 → 只读输出面（work-output 页签）；打开与停止两个动作分开。
+  check('终端行整行可点开输出面（setDockWorkOutput + work-output 页签）', status.includes('setDockWorkOutput({ id: work.id') && status.includes("kind: 'work-output'"))
+  check('停止钮 stopPropagation（不误触打开）', /data-tip="收掉这个后台活[\s\S]{0,160}?event\.stopPropagation\(\)/.test(status))
+  check('输出面是只读等宽 <pre>（不引 xterm）', status.includes('data-sp-output-text') && status.includes('<pre') && !stripComments(status).includes('@xterm'))
+  check('输出面按 1s 轮询、只在 running 续拉', status.includes('WORK_POLL_MS = 1000') && /status === 'running'[\s\S]{0,80}setTimeout\(poll, WORK_POLL_MS\)/.test(status))
+  check('输出面跟随滚动（滚离线底冻结 + 回底恢复）', status.includes('FOLLOW_BOTTOM_PX') && status.includes('data-sp-output-resume') && status.includes('setFrozen(null)'))
+  check('输出面显式报头部丢字（droppedChars）', status.includes('data-sp-output-dropped') && status.includes('头部已丢弃'))
   check('新区都有限高（计划 / 终端 / 工作流）', css.includes("data-sp-section='plan'") && css.includes("data-sp-section='terminal'") && css.includes("data-sp-section='workflow'"))
   check('只读行不给悬停底（.sp-row-static）', css.includes('.sp-row-static') && css.includes('.sp-row:has(.sp-row-static):hover'))
   check('增删读数用设计令牌上色', css.includes('.sp-add') && css.includes('.sp-del') && /\.sp-add\s*\{[^}]*--dsc-green/.test(css) && /\.sp-del\s*\{[^}]*--dsc-red/.test(css))
@@ -219,6 +226,7 @@ console.log('[5] 形态钉（结构约定）')
 console.log('[6] 宿主数据面（文本钉）')
 {
   const contract = read('src/contract.ts')
+  const services = read('src/services/types.ts')
   const uiMethods = read('src/core/ui-methods.ts')
   const hostMethods = read('src/core/host-methods.ts')
   const toolsDefault = read('src/plugins/tools-default.ts')
@@ -232,6 +240,26 @@ console.log('[6] 宿主数据面（文本钉）')
       contract.includes('scheduled?: ScheduledTaskView[]'),
   )
   check('stopBackground 三处齐（契约 / 协议白名单 / 界面白名单 + 实参规格）', contract.includes('stopBackground(id: string)') && hostMethods.includes("'stopBackground'") && uiMethods.includes("'stopBackground'") && uiMethods.includes('stopBackground: ['))
+  // 输出面读口：契约 + 协议白名单 + 界面白名单 + 实参规格，四处齐。
+  check('readBackground 四处齐（契约 / 协议白名单 / 界面白名单 + 实参规格）',
+    contract.includes('readBackground(id: string)') &&
+      hostMethods.includes("'readBackground'") &&
+      uiMethods.includes("'readBackground'") &&
+      uiMethods.includes('readBackground: ['),
+  )
+  check('读口契约在服务面（BackgroundWorksService.read）+ 返回形状带 atEnd/丢字字段',
+    services.includes('read(id: string): BackgroundOutputView') &&
+      contract.includes('BackgroundOutputView') &&
+      contract.includes('droppedChars: number') &&
+      contract.includes('atEnd: boolean'),
+  )
+  check('读口走表上的 peek（尾部快照，不动模型的增量读游标）',
+    toolsDefault.includes('terminals.peek(id)') && toolsDefault.includes('table.peek(id)') &&
+      bashCore.includes('peek(jobId: string') && bashCore.includes('peek(sessionId: string'),
+  )
+  check('读口归属校验与 stop 同口径（读别家会话的活也拒）',
+    toolsDefault.includes('属于别的会话，读不了') && (toolsDefault.match(/读不了/g) ?? []).length >= 2,
+  )
   check('backgroundWorks 只出运行中的（作业 + 终端两条都是）', toolsDefault.includes("job.status !== 'running'") && toolsDefault.includes("term.status !== 'running'"))
   check('backgroundWorks 按当前会话筛（owner 对上才出，切会话互不可见）', toolsDefault.includes('job.owner !== sid') && toolsDefault.includes('term.owner !== sid') && toolsDefault.includes('ctx.session.current().meta.id'))
   check('停止也按归属校验（不收别家会话的活）', toolsDefault.includes('属于别的会话'))

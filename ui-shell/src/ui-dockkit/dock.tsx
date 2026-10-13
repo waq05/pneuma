@@ -39,6 +39,8 @@ const KIND_META: Record<
   files: { title: '文件', icon: IconFolder },
   git: { title: 'Git', icon: IconBranch },
   subagent: { title: '子智能体', icon: IconTree, titleFromPath: true },
+  // 后台活输出面：标题由打开方带过来（work.title），缺省回落 work id；图标是终端。
+  'work-output': { title: '输出', icon: IconTerminal },
 }
 
 /** 「开始」页的入口卡（旧桌面版同款：最多四张，都带描述与快捷键角标）。 */

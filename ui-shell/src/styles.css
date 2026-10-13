@@ -1573,6 +1573,85 @@
   padding: var(--dsc-sp-3) var(--dsc-sp-4);
 }
 
+/* ── 右侧栏里的后台活输出面（只读 <pre>，不是交互式终端） ── */
+.work-out {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+}
+
+.work-out-head {
+  align-items: center;
+  border-bottom: 1px solid var(--dsc-stroke-3);
+  color: var(--dsc-text-tertiary);
+  display: flex;
+  flex: none;
+  font-size: var(--dsc-fs-ui);
+  gap: var(--dsc-sp-2);
+  padding: var(--dsc-sp-3) var(--dsc-sp-4);
+}
+
+.work-out-title {
+  color: var(--dsc-text-primary);
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-out-status {
+  flex: none;
+  margin-left: auto;
+}
+
+.work-out-status[data-tone='run'] {
+  color: var(--dsc-accent);
+}
+
+.work-out-note {
+  background: var(--dsc-bg-raised);
+  color: var(--dsc-text-secondary);
+  flex: none;
+  font-size: var(--dsc-fs-tool);
+  padding: var(--dsc-sp-2) var(--dsc-sp-4);
+}
+
+.work-out-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--dsc-sp-3) var(--dsc-sp-4);
+}
+
+.work-out-text {
+  color: var(--dsc-text-secondary);
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-tool);
+  line-height: 1.5;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.work-out-resume {
+  align-items: center;
+  background: var(--dsc-bg-card);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: 999px;
+  bottom: var(--dsc-sp-3);
+  color: var(--dsc-text-primary);
+  cursor: pointer;
+  display: flex;
+  gap: var(--dsc-sp-1);
+  left: 50%;
+  padding: var(--dsc-sp-1) var(--dsc-sp-3);
+  position: absolute;
+  transform: translateX(-50%);
+}
+
 /* 系统里说「少动」就真不动：收展形变、分节开合、图标换形、呼吸全停（信息一条不少）。 */
 @media (prefers-reduced-motion: reduce) {
   .sp,

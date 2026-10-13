@@ -269,6 +269,8 @@ export {
   setDockReview,
   /** 把某个子智能体的运行记录开到右侧栏（队友行、状态面板点一行都走它）。 */
   setDockSubagent,
+  /** 把某个后台活（作业 / 终端会话）的只读输出面开到右侧栏（状态面板「终端」区点一行走它）。 */
+  setDockWorkOutput,
   registerDockTab,
   dockActions,
   openDockTab,
@@ -372,6 +374,7 @@ export type {
   ApprovalRequestView,
   AskOptionView,
   AskUserView,
+  BackgroundOutputView,
   BackgroundWorkView,
   ChangedFileView,
   CollaborationMode,

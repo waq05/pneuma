@@ -4,7 +4,8 @@
  * 为什么单开一条电池：`ui-status-panel-test.mjs` 钉的是壳侧纯逻辑与文本形态；
  * 「宿主到底算不算得出这些数」只有把真内核起起来才验得了——git 的增删行数、
  * 计划目录的会话账（提交→批/拒→入账→切会话不可见）、后台作业 / 终端会话
- * 按会话进出清单与收掉、定点任务进「工作流」面、**空仓库（HEAD 未出生）里的
+ * 按会话进出清单与收掉、**只读输出面（readBackground：读作业/终端输出 + 归属校验 +
+ * 读口不抢模型增量游标）**、定点任务进「工作流」面、**空仓库（HEAD 未出生）里的
  * diff 与未跟踪合成预览**。
  *
  * 隔离：临时 HOME + 临时工作区（真 `git init` 的仓库），不碰真实 ~/.dsc。
@@ -40,6 +41,16 @@ const check = (label, condition, extra = '') => {
   }
   failures += 1
   console.log(`FAIL  ${label}${extra === '' ? '' : `  <- ${extra}`}`)
+}
+
+/** 轮询等一个异步条件成立（给后台输出一点落定时间；也允许条件是 async）。 */
+const pollUntil = async (fn, ms = 5000) => {
+  const until = Date.now() + ms
+  while (Date.now() < until) {
+    if (await fn()) return true
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  return false
 }
 
 // ── 工作区：一个真 git 仓库（一次提交 + 一处改动 + 一个未跟踪文件）────────────────
@@ -237,6 +248,19 @@ console.log('[3] 后台活（tools-default 贡献 backgroundWorks + stopBackgrou
   await terminal.run({ action: 'send', session_id: termId, data: 'echo hi\n' }, runCtx)
   works = surfaces().backgroundWorks
   check('终端会话进清单（标题取最近发进去的一条命令）', termId !== '' && works.length === 1 && works[0].kind === 'terminal' && works[0].title.includes('echo hi'), JSON.stringify(works))
+  // 只读输出面：readBackground 读终端会话的输出（归属校验同 stop；返回带 atEnd / 丢字字段）。
+  await pollUntil(async () => (await kernel.ui.readBackground(termId)).text.includes('hi'))
+  const termOut = await kernel.ui.readBackground(termId)
+  check(
+    'readBackground 读终端输出非空（kind/status/atEnd/丢字字段都在）',
+    termOut.kind === 'terminal' &&
+      termOut.text.includes('hi') &&
+      termOut.status === 'running' &&
+      typeof termOut.atEnd === 'boolean' &&
+      typeof termOut.totalChars === 'number' &&
+      termOut.droppedChars === 0,
+    JSON.stringify(termOut),
+  )
   await session.open(sessionB)
   check('切到别的会话：后台活清单为空', surfaces().backgroundWorks.length === 0)
   await session.open(sessionFile)
@@ -380,6 +404,57 @@ console.log('[6] 会话目录是仓库子目录：路径基准 rebase + 只看 c
   check('「全部改动」也限定在 cwd 之内（不带 cwd 外的 root.txt 改动）', all.diff.includes('inner.txt') && !all.diff.includes('root.txt'), all.diff.slice(0, 200))
 
   await session.open(sessionFile)
+}
+
+console.log('[7] 后台活输出面（readBackground：只读快照 + 归属校验 + 不动模型增量游标）')
+{
+  const session = kernel.get('session')
+  const sid = session.current().meta.id
+  const runCtx = { cwd: ws, sessionId: sid, signal: new AbortController().signal }
+  const bash = kernel.tools.list().find((tool) => tool.name === 'bash')
+  const outTool = kernel.tools.list().find((tool) => tool.name === 'job_output')
+
+  const launched = await bash.run({ command: 'node -e "console.log(\'job-hello-output\')"', run_in_background: true }, runCtx)
+  const jobId = /job-\d+/.exec(launched)?.[0] ?? ''
+  check('会吐输出的后台作业起得来', jobId !== '', launched.slice(0, 40))
+
+  // 模拟界面按秒轮询：读几拍，读口不该动模型的增量游标。
+  await pollUntil(async () => (await kernel.ui.readBackground(jobId)).text.includes('job-hello-output'))
+  await kernel.ui.readBackground(jobId)
+  const view = await kernel.ui.readBackground(jobId)
+  check(
+    'readBackground 读作业输出非空（kind = job，带 atEnd / 头部丢字字段）',
+    view.kind === 'job' &&
+      view.text.includes('job-hello-output') &&
+      typeof view.atEnd === 'boolean' &&
+      view.droppedChars === 0 &&
+      typeof view.totalChars === 'number',
+    JSON.stringify(view),
+  )
+  // peek 不动 lastRead：界面读过之后，模型的 job_output 仍能从头上读到全文。
+  const modelRead = await outTool.run({ job_id: jobId }, runCtx)
+  check('读口不抢模型的增量游标（模型 job_output 仍读到输出）', modelRead.includes('job-hello-output'), modelRead.slice(0, 120))
+
+  // 归属校验：别的会话起的活读不了（与 stop 同口径）；陌生 id 也拒（不静默给空）。
+  const foreignText = await bash.run({ command: 'node -e "setTimeout(()=>{}, 60000)"', run_in_background: true }, { ...runCtx, sessionId: 'other-session' })
+  const foreignId = /job-\d+/.exec(foreignText)?.[0] ?? ''
+  let refused = ''
+  try {
+    await kernel.ui.readBackground(foreignId)
+  } catch (error) {
+    refused = String(error)
+  }
+  check('readBackground 读别的会话的活被拒', refused.includes('别的会话'), refused)
+  let unknown = ''
+  try {
+    await kernel.ui.readBackground('job-99999')
+  } catch (error) {
+    unknown = String(error)
+  }
+  check('readBackground 读陌生 id 报错', unknown !== '', unknown)
+
+  await kernel.ui.stopBackground(jobId)
+  await kernel.tools.list().find((tool) => tool.name === 'job_kill').run({ job_id: foreignId }, runCtx)
 }
 
 console.log('')

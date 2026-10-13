@@ -136,6 +136,36 @@ export interface BackgroundWorkView {
 }
 
 /**
+ * 一条后台活输出的**只读快照**（状态面板「终端」区点开的那一页）。
+ *
+ * 形状对准 core/tools/bash.ts 的 `JobOutputView` / `TerminalOutputView`（两者同族），
+ * 只保留界面要画的那几个字段。口径与「模型的读口」分开：这是**尾部窗口快照**，
+ * 不动模型的增量读游标（见 `JobTable.peek` 的说明），所以界面按秒轮询不会把模型
+ * 该读到的输出吃掉。
+ *
+ * 头部丢字要能报出来（对照参考实现的 `truncated` / `outputPath`）：缓冲是环形的，
+ * 超上限时从头部丢；`droppedChars > 0` 就说明现在看到的开头已经不是最初那个开头，
+ * 界面据此显示一条「头部已丢弃 N 字符」的提示。
+ */
+export interface BackgroundOutputView {
+  /** 作业 / 终端会话 id（与 {@link BackgroundWorkView.id} 同口径）。 */
+  id: string
+  kind: 'job' | 'terminal'
+  /** 运行状态：作业 running/completed/failed/killed；终端 running/closed。 */
+  status: string
+  /** 这次快照给到的文本（已遮红）。 */
+  text: string
+  /** 输出绝对总长（含已丢弃头部）。 */
+  totalChars: number
+  /** 这次快照文本的绝对起点。 */
+  from: number
+  /** 头部被环形缓冲丢掉的字符数；0 = 从头都在。 */
+  droppedChars: number
+  /** true = 这次快照已经追上现存输出的末尾（在跑的活会继续长）。 */
+  atEnd: boolean
+}
+
+/**
  * 一条定点任务（状态面板的「工作流」区；schedule 插件贡献）。
  *
  * dsc 没有工作流引擎，这一区绑的是最接近的「按规则自动跑一轮」——定时任务。
@@ -1457,6 +1487,13 @@ export interface DscRuntime {
    * 后台活不是新增动作面，是叫停）。id 不认识时返回的那句话就是明确的错误说明，不抛错。
    */
   stopBackground(id: string): Promise<string>
+  /**
+   * 只读读一次后台作业 / 终端会话的输出快照（状态面板「终端」区点开输出面后按秒轮询它）。
+   * 与 {@link stopBackground} 同一档归属校验：只读当前查看会话起的那条；id 不认识或
+   * 属于别的会话时 reject（消息可直接展示）。它**不动**模型的增量读游标（见
+   * {@link BackgroundOutputView} 的说明）。
+   */
+  readBackground(id: string): Promise<BackgroundOutputView>
   /**
    * 只读重放一个会话文件的对话条目（看队友在干什么用）。
    * 它不改那个文件，也不能归档/删除/分叉——校验在 core/session.ts。

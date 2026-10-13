@@ -33,6 +33,7 @@ import {
   openPatch as modelOpenPatch,
   openSubagent as modelOpenSubagent,
   openTab as modelOpenTab,
+  openWorkOutput as modelOpenWorkOutput,
   placeTab as modelPlaceTab,
   saveSurfaces,
   setExpanded as modelSetExpanded,
@@ -113,6 +114,9 @@ export const dockActions: DockActions = {
   },
   openSubagent: (path, label) => {
     mutate((s) => modelSetExpanded(modelOpenSubagent(s, path, label), true))
+  },
+  openWorkOutput: (id, label) => {
+    mutate((s) => modelSetExpanded(modelOpenWorkOutput(s, id, label), true))
   },
   closeTab: (tabId) => {
     mutate((s) => modelCloseTab(s, tabId))
@@ -263,6 +267,16 @@ export function useDockPatchSource(path: string): ChangedFileView | null {
  */
 export function setDockSubagent(target: { path: string; label?: string }): void {
   dockActions.openSubagent(target.path, target.label)
+}
+
+/**
+ * 打开一张后台活输出页签（状态面板「终端」区点一行走它）。
+ *
+ * 与 {@link setDockSubagent} 同一性质：插件发起的目标式请求（给一个后台活 id、把右侧栏
+ * 开到它的只读输出面上），壳是布局真源，插件只说意图。`id` 是 job-N / term-N。
+ */
+export function setDockWorkOutput(target: { id: string; label?: string }): void {
+  dockActions.openWorkOutput(target.id, target.label)
 }
 
 /**

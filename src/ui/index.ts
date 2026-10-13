@@ -67,6 +67,7 @@ export type {
   ApprovalRequestView,
   AskOptionView,
   AskUserView,
+  BackgroundOutputView,
   BackgroundWorkView,
   ChangedFileView,
   CollaborationMode,

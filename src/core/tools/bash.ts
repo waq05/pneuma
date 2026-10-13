@@ -553,6 +553,36 @@ export class JobTable {
     }
   }
 
+  /**
+   * 只读快照：取**现存输出的尾部窗口**，返回形状与 {@link output} 相同。
+   *
+   * 与 output() 的唯一区别：**不动 `lastRead` 游标**。状态面板的「终端」区点开输出面
+   * 后会按秒轮询这里（只读展示），如果走 output() 就会把模型下一次 `job_output` 的增量
+   * 读位置顶到末尾、让模型读不到后续输出——展示与模型的读口必须是两条互不干扰的游标。
+   */
+  peek(jobId: string, maxChars: number = JOB_VIEW_CHARS): JobOutputView {
+    const job = this.require(jobId)
+    const total = job.dropped + job.output.length
+    let from = total - maxChars
+    if (from < job.dropped) from = job.dropped
+    if (from < 0) from = 0
+    const local = from - job.dropped
+    const slice = job.output.slice(local, local + maxChars)
+    const atEnd = from + slice.length >= total
+    let text = redact(slice)
+    if (job.networkFetch && text.trim() !== '') text = wrapUntrusted('job-output', text)
+    return {
+      id: job.id,
+      status: job.status,
+      exitCode: job.exitCode,
+      text,
+      totalChars: total,
+      from,
+      droppedChars: job.dropped,
+      atEnd,
+    }
+  }
+
   /** 全部作业的清单（job_list 的数据源）。 */
   list(): JobRecord[] {
     return [...this.jobs.values()].sort((a, b) => a.startedAt - b.startedAt)
@@ -828,6 +858,33 @@ export class TerminalTable {
       status: record.status,
       exitCode: record.exitCode,
       text,
+      totalChars: total,
+      from,
+      droppedChars: record.dropped,
+      atEnd,
+    }
+  }
+
+  /**
+   * 只读快照：取**现存输出的尾部窗口**，返回形状与 {@link read} 相同。
+   *
+   * 与 read() 的唯一区别：**不动 `lastRead` 游标**（理由与 {@link JobTable.peek} 同一件事：
+   * 状态面板按秒轮询展示，不能顶掉模型下一次 `terminal read` 的增量读位置）。
+   */
+  peek(sessionId: string, maxChars: number = TERM_VIEW_CHARS): TerminalOutputView {
+    const record = this.require(sessionId)
+    const total = record.dropped + record.output.length
+    let from = total - maxChars
+    if (from < record.dropped) from = record.dropped
+    if (from < 0) from = 0
+    const local = from - record.dropped
+    const slice = record.output.slice(local, local + maxChars)
+    const atEnd = from + slice.length >= total
+    return {
+      id: record.id,
+      status: record.status,
+      exitCode: record.exitCode,
+      text: redact(slice),
       totalChars: total,
       from,
       droppedChars: record.dropped,

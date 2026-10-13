@@ -13,7 +13,7 @@ import { createBashTool, BASH_DEFAULT_BUDGETS, createJobTools, createTerminalToo
 import { createReadTool, editTool, READ_DEFAULT_LINE_LIMIT, writeTool } from '../core/tools/fs-tools.js'
 import { globTool, grepTool } from '../core/tools/search-tools.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import type { BackgroundWorkView, SettingsField, SettingsValues } from '../contract.js'
+import type { BackgroundOutputView, BackgroundWorkView, SettingsField, SettingsValues } from '../contract.js'
 import type { BackgroundWorksService, SettingsSectionSpec } from '../services/types.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
@@ -37,6 +37,26 @@ function readBudgets(passed?: unknown): BashBudgets & { readLineLimit: number } 
     maxTimeoutMs: clamp(raw.bashMaxTimeoutMs, TIMEOUT_RANGE.min, TIMEOUT_RANGE.max, BASH_DEFAULT_BUDGETS.maxTimeoutMs),
     outputChars: clamp(raw.bashOutputChars, OUTPUT_RANGE.min, OUTPUT_RANGE.max, BASH_DEFAULT_BUDGETS.outputChars),
     readLineLimit: clamp(raw.readLineLimit, LINE_RANGE.min, LINE_RANGE.max, READ_DEFAULT_LINE_LIMIT),
+  }
+}
+
+/**
+ * 把表上的输出视图（作业的 JobOutputView / 终端的 TerminalOutputView，两者同族）折成
+ * 界面要的那几个字段。`kind` 由调用点给（前缀已经在那边判过）。
+ */
+function toOutputView(
+  view: { id: string; status: string; text: string; totalChars: number; from: number; droppedChars: number; atEnd: boolean },
+  kind: 'job' | 'terminal',
+): BackgroundOutputView {
+  return {
+    id: view.id,
+    kind,
+    status: view.status,
+    text: view.text,
+    totalChars: view.totalChars,
+    from: view.from,
+    droppedChars: view.droppedChars,
+    atEnd: view.atEnd,
   }
 }
 
@@ -140,6 +160,27 @@ export const toolsDefaultPlugin: Plugin.Object = {
         return stopped
           ? `${id} 正在终止（整树收尾，已收输出保留，还能用 job_output 读到）`
           : `${id} 的进程已经不在了，作业记为被终止`
+      },
+      // 只读读一次输出快照（状态面板「终端」区点开的那一页轮询它）：归属校验与 stop 同口径
+      // ——只读当前查看会话起的活，读别家会话的与收别家的一样拒。走表上的 peek（尾部快照、
+      // 不动模型的增量读游标），界面按秒轮询因此不会把模型下一次该读到的输出吃掉。
+      read(id: string): BackgroundOutputView {
+        const sid = ctx.session.current().meta.id
+        if (id.startsWith('term-')) {
+          const term = terminals.list().find((item) => item.id === id)
+          if (term === undefined) throw new Error(`没有这个终端会话：${id}（列表按面板现取的 id）`)
+          if (term.owner !== undefined && term.owner !== sid) {
+            throw new Error(`终端会话 ${id} 属于别的会话，读不了（面板只读当前会话起的活）`)
+          }
+          const view = terminals.peek(id)
+          return toOutputView(view, 'terminal')
+        }
+        const job = table.get(id)
+        if (job === undefined) throw new Error(`没有这个后台作业或终端会话：${id}（列表按面板现取的 id）`)
+        if (job.owner !== undefined && job.owner !== sid) {
+          throw new Error(`后台作业 ${id} 属于别的会话，读不了（面板只读当前会话起的活）`)
+        }
+        return toOutputView(table.peek(id), 'job')
       },
     }
     ctx.provide('backgroundWorks', backgroundWorks)

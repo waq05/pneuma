@@ -44,12 +44,23 @@ export type DockTabKind =
    * 同一条路（右侧栏是只读的伴读面，不是模态框）。
    */
   | 'subagent'
+  /**
+   * 后台活（作业 / 持久终端会话）的**只读输出面**（一个后台活一张，`path` 是 work id）。
+   *
+   * 与 `subagent` 同一条理由单开一种 kind：状态面板「终端」区点一行要看的是那个后台活
+   * 的输出（走 `readBackground` 的只读快照，**不是**交互式终端 `terminal` 那条可写通道），
+   * 与「用户自己开的 shell」是两套东西。渲染成等宽 `<pre>`（不引 xterm），按秒轮询快照。
+   *
+   * 对照参考实现：后台活详情是一块独立的只读文本侧栏（`BackgroundBashOutputSidePane`），
+   * 不走交互终端的可写通道——右侧栏是只读的伴读面，与 `subagent` 同一落点。
+   */
+  | 'work-output'
 
 /** 一张页签：id 是毫秒 + 随机尾巴，进程内唯一即可（持久化恢复后也不与现存冲突）。 */
 export interface DockTab {
   id: string
   kind: DockTabKind
-  /** preview / patch = 那个文件的绝对路径；subagent = 那个子智能体的会话文件路径。 */
+  /** preview / patch = 那个文件的绝对路径；subagent = 那个子智能体的会话文件路径；work-output = 后台活 id（job-N / term-N）。 */
   path?: string
   /**
    * chip 上显示的标题（可缺）。
@@ -57,6 +68,7 @@ export interface DockTab {
    * 为什么要有它：子智能体的会话文件名是 uuid（`e8888…-….jsonl`），拿文件名当页签标题
    * 等于给用户一列看不懂的哈希；而它的**名字**（`reader-1`）只有开页签的那一方知道
    * （名册在 subagent 插件里）。所以标题由调用方一并交过来，壳只负责显示。
+   * work-output 同样用它显示后台活的标题（作业首行 / 终端最近一条命令）。
    */
   label?: string
   /** 仅 preview 页签：打开时定位到的 1-based 行号（/review findings 的行号跳转用）。 */
@@ -96,6 +108,8 @@ export interface DockActions {
   openPatch(path: string): void
   /** 开一张子智能体页签（同会话文件去重 = 聚焦）；label = chip 上显示的队友名。 */
   openSubagent(path: string, label?: string): void
+  /** 开一张后台活输出页签（同 work id 去重 = 聚焦）；label = chip 上显示的后台活标题。 */
+  openWorkOutput(id: string, label?: string): void
   closeTab(tabId: string): void
   focusTab(tabId: string): void
   focusPane(paneId: string): void
@@ -256,6 +270,30 @@ export function openSubagent(surface: DockSurface, path: string, label?: string)
   return replacePane(surface, pane.id, { ...pane, tabs: [...pane.tabs, tab], activeTabId: tab.id })
 }
 
+/**
+ * 开一张后台活输出页签（照 {@link openSubagent} 的形状）：同一个后台活（按 work id 认）
+ * 只有一张，已开即聚焦；新开的追加到激活窗格末尾，不设上限（同时盯几个后台活是正常用法，
+ * 每个只读、按秒轮询，不吃内存里的大对象）。
+ */
+export function openWorkOutput(surface: DockSurface, id: string, label?: string): DockSurface {
+  const existing = surface.panes.flatMap((pane) => pane.tabs).find((tab) => tab.kind === 'work-output' && tab.path === id)
+  if (existing !== undefined) {
+    const focused = focusTab(surface, existing.id)
+    return label === undefined
+      ? focused
+      : {
+          ...focused,
+          panes: focused.panes.map((pane) => ({
+            ...pane,
+            tabs: pane.tabs.map((tab) => (tab.id === existing.id ? { ...tab, label } : tab)),
+          })),
+        }
+  }
+  const pane = activePane(surface)
+  const tab = { ...makeTab('work-output', id), ...(label === undefined ? {} : { label }) }
+  return replacePane(surface, pane.id, { ...pane, tabs: [...pane.tabs, tab], activeTabId: tab.id })
+}
+
 /** 找到持有某张页签的窗格 id。 */
 function ownerPaneId(surface: DockSurface, tabId: string): string | undefined {
   return surface.panes.find((pane) => pane.tabs.some((tab) => tab.id === tabId))?.id
@@ -408,7 +446,7 @@ function parseSurface(value: unknown): DockSurface | null {
     for (const item of pane.tabs) {
       const entry = item as Partial<DockTab>
       if (typeof entry?.id !== 'string' || typeof entry?.kind !== 'string') return null
-      if (!['guide', 'terminal', 'browser', 'files', 'git', 'preview', 'patch', 'subagent'].includes(entry.kind)) return null
+      if (!['guide', 'terminal', 'browser', 'files', 'git', 'preview', 'patch', 'subagent', 'work-output'].includes(entry.kind)) return null
       // preview / patch 页签落盘要带路径；路径丢了这张页签就没有内容，整格作废重画。
       // patch 只存路径，差异快照（hunks）不落盘——启动后回到该页签会提示补丁已过期。
       if (entry.kind === 'preview') {
@@ -423,6 +461,15 @@ function parseSurface(value: unknown): DockSurface | null {
         tabs.push({
           id: entry.id,
           kind: 'subagent',
+          path: entry.path,
+          ...(typeof entry.label === 'string' && entry.label !== '' ? { label: entry.label } : {}),
+        })
+      } else if (entry.kind === 'work-output') {
+        // 后台活输出页签：path 是 work id（丢了就不知道读谁），label 是标题。
+        if (typeof entry.path !== 'string' || entry.path === '') return null
+        tabs.push({
+          id: entry.id,
+          kind: 'work-output',
           path: entry.path,
           ...(typeof entry.label === 'string' && entry.label !== '' ? { label: entry.label } : {}),
         })

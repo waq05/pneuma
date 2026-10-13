@@ -194,6 +194,13 @@ export const runtimePlugin: Plugin.Object = {
         return works.stop(id)
       },
 
+      async readBackground(id) {
+        // 与 stopBackground 同一条理由与同一档归属校验：只读看自己起的后台活的输出
+        const works = ctx.get('backgroundWorks')
+        if (works === undefined) throw new Error('后台作业表不在（内置工具插件没挂），没有输出可读')
+        return works.read(id)
+      },
+
       peekTranscript(file) {
         const team = ctx.get('team')
         if (team === undefined) return Promise.reject(new Error('子智能体插件没开，看不到队友的运行记录'))

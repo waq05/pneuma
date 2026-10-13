@@ -72,8 +72,10 @@ import {
   SLOT,
   defineUiPlugin,
   openDockTab,
+  registerDockTab,
   setDockPreview,
   setDockSubagent,
+  setDockWorkOutput,
   toastErr,
   toastOk,
   useHostChannel,
@@ -82,7 +84,9 @@ import {
   useService,
   useThreadView,
   type ActionsDecl,
+  type BackgroundOutputView,
   type BackgroundWorkView,
+  type DockTabBodyProps,
   type GoalView,
   type HostSnapshot,
   type PlanEntryView,
@@ -109,6 +113,13 @@ import {
 
 /** 轮询间隔（毫秒）：队友名册在快照里没有，只能问通道。 */
 const POLL_MS = 5000
+/**
+ * 后台活输出面的轮询间隔（毫秒）：只读输出面按秒拉一次快照（对照参考实现的 1s 轮询）。
+ * 只在页签可见、且后台活还在运行时续拉（跑完的活不再变，停手）。
+ */
+const WORK_POLL_MS = 1000
+/** 「跟到底」判定阈值（px）：距底部这个范围内算还在底部（照参考实现的 8px）。 */
+const FOLLOW_BOTTOM_PX = 8
 /**
  * Git 读数的轮询节奏（毫秒）：有改动最勤，干净仓库与「不是仓库」两档放松。
  * 没走快照面是因为宿主的 Git 读数是现算的（`git status` + `diff --numstat`），
@@ -225,6 +236,15 @@ export default defineUiPlugin({
     // （`ui` 只在 apply 里拿得到），闭包把槽位面交进去；组件身份每次装载生成一次，
     // 在插件生命周期里是稳定的。
     ui.slots.register(SLOT.main, { id: 'status.panel', order: 5 }, () => <StatusPanel slots={ui.slots} />)
+    // 报名一种页签界面（kind = 'work-output'）：「终端」区点一行把那个后台活的**只读输出面**
+    // 开到右侧栏（等宽 <pre> + 按秒轮询快照，不是交互式终端那条可写通道）。文本面与
+    // 「用户自己开的 shell」（terminal 页签）是两套东西，别混。
+    registerDockTab({
+      kind: 'work-output',
+      label: '输出',
+      icon: <IconTerminal size={13} />,
+      component: WorkOutputTab,
+    })
   },
 })
 
@@ -685,6 +705,11 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
       })
   }
 
+  /** 点开一个后台活的**只读输出面**（右侧栏的 work-output 页签）。与「停止」两个动作分开。 */
+  const openWork = (work: BackgroundWorkView): void => {
+    setDockWorkOutput({ id: work.id, label: work.title })
+  }
+
   /** 清空任务清单（原任务条上那颗钮——任务条撤了，动作搬进「进程」区）。 */
   const clearTodos = (): void => {
     void channel
@@ -882,6 +907,7 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
                   onToggle={() => {
                     toggleSection('terminal')
                   }}
+                  onOpen={openWork}
                   onStop={stopWork}
                 />
               ) : null}
@@ -1521,9 +1547,10 @@ function PlanSection({
 /**
  * 终端区（ZCode 的「终端」）：正在跑的后台作业与持久终端会话。
  *
- * 折叠态读数是「最长已运行 · N 后台」（ZCode 同款）。行本身不可点：作业 / 终端的输出
- * 在 dsc 里没有可视面（job_output / terminal read 是模型那边的事），点开没去处——
- * 所以只有行尾的停止钮可交互（收自己起的后台活，与 stopTeammate 同一档，不过审批）。
+ * 折叠态读数是「最长已运行 · N 后台」（ZCode 同款）。行**整行可点**：点开在右侧栏看那个
+ * 后台活的**只读输出面**（work-output 页签，等宽 `<pre>` + 按秒轮询快照）——它与状态面板
+ * 的停止钮是两个动作，行尾的停止钮 `stopPropagation` 单独走 stopBackground，不误触打开。
+ * 交互式终端（用户自己开的 shell）与这条是两套：后台这条只读，不复用可写通道。
  */
 function WorkSection({
   works,
@@ -1531,6 +1558,7 @@ function WorkSection({
   open,
   separated,
   onToggle,
+  onOpen,
   onStop,
 }: {
   works: readonly BackgroundWorkView[]
@@ -1538,6 +1566,8 @@ function WorkSection({
   open: boolean
   separated: boolean
   onToggle(): void
+  /** 点开一个后台活的只读输出面（右侧栏 work-output 页签）。 */
+  onOpen(work: BackgroundWorkView): void
   onStop(work: BackgroundWorkView): void
 }): ReactNode {
   const longest = formatDuration(longestWorkElapsedMs(works, now))
@@ -1550,23 +1580,30 @@ function WorkSection({
           const elapsed = formatDuration(Math.max(0, now - work.startedAt))
           return (
             <li className="sp-row" key={work.id} data-work-kind={work.kind}>
-              <span
-                className="sp-row-open sp-row-static"
+              {/* 整行可点：落到右侧栏看这个后台活的只读输出；行尾停止钮各自 stopPropagation。 */}
+              <button
+                type="button"
+                className="sp-row-open"
+                aria-label={`查看 ${work.id} 的输出`}
                 data-sp-work={work.id}
-                data-tip={`${work.kind === 'job' ? '后台作业' : '终端会话'} ${work.id}\n${work.title}`}
+                data-tip={`${work.kind === 'job' ? '后台作业' : '终端会话'} ${work.id}\n${work.title}\n点开在右侧栏看输出（只读）`}
+                onClick={() => {
+                  onOpen(work)
+                }}
               >
                 <IconTerminal size={13} className="sp-icon sp-icon-run" />
                 <span className="sp-row-text" title={work.title}>
                   {work.title}
                 </span>
                 {elapsed === null ? null : <span className="sp-row-time">{elapsed}</span>}
-              </span>
+              </button>
               <button
                 type="button"
                 className="sp-row-stop"
                 aria-label={`停止 ${work.id}`}
                 data-tip="收掉这个后台活（整树收尾）"
-                onClick={() => {
+                onClick={(event) => {
+                  event.stopPropagation()
                   onStop(work)
                 }}
               >
@@ -1578,6 +1615,133 @@ function WorkSection({
       </ul>
     </StatusSectionBlock>
   )
+}
+
+/**
+ * 右侧栏里的后台活输出页签体：头部一行（标题 + 状态）+ 只读等宽文本面。
+ *
+ * 形态照参考实现的后台输出侧栏：纯 `<pre>`（**不引 xterm**——后台这条只读、不接收输入），
+ * 按 {@link WORK_POLL_MS} 轮询 `readBackground` 的**尾部快照**（只在页签可见、且活还在跑时
+ * 续拉；跑完停手），跟随滚动——滚离底部暂停视图（冻结当前帧）、回到底部或点「回到底部」恢复。
+ * 头部丢字（`droppedChars > 0`）显式报一条，对应参考实现的 truncated / gap 提示。
+ */
+function WorkOutputTab({ tab, active, expanded }: DockTabBodyProps): ReactNode {
+  const channel = useHostChannel()
+  const id = tab.path ?? ''
+  const [view, setView] = useState<BackgroundOutputView | null>(null)
+  const [frozen, setFrozen] = useState<BackgroundOutputView | null>(null)
+  const [error, setError] = useState('')
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const prevTop = useRef(0)
+  // 换后台活（同一张页签被复用）就清掉旧读数，别闪上一份的输出。
+  useEffect(() => {
+    setView(null)
+    setFrozen(null)
+    setError('')
+    prevTop.current = 0
+  }, [id])
+  const visible = active && expanded
+  useEffect(() => {
+    if (id === '' || !visible) return undefined
+    let alive = true
+    let timer: number | null = null
+    const poll = (): void => {
+      void channel
+        .invoke<BackgroundOutputView>('readBackground', [id])
+        .then((result) => {
+          if (!alive) return
+          setView(result)
+          setError('')
+          // 只在还在跑时续拉；跑完（completed/failed/killed/closed）这一份不再变，停手。
+          if (result?.status === 'running') timer = window.setTimeout(poll, WORK_POLL_MS)
+        })
+        .catch((reason: unknown) => {
+          if (!alive) return
+          setError(reason instanceof Error ? reason.message : String(reason))
+        })
+    }
+    poll()
+    return () => {
+      alive = false
+      if (timer !== null) window.clearTimeout(timer)
+    }
+  }, [channel, id, visible])
+
+  const display = frozen ?? view
+  const following = frozen === null
+  // 跟随态：新快照进来就贴底。
+  useEffect(() => {
+    if (!visible || !following) return
+    const el = scrollRef.current
+    if (el !== null) el.scrollTop = el.scrollHeight
+  }, [visible, following, display?.text])
+
+  const onScroll = (): void => {
+    const el = scrollRef.current
+    if (el === null) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_BOTTOM_PX
+    // 向上滚且不在底部 → 冻结；冻结态回到底部 → 恢复跟随。
+    if (following && el.scrollTop < prevTop.current && !atBottom) setFrozen(view)
+    else if (!following && atBottom) setFrozen(null)
+    prevTop.current = el.scrollTop
+  }
+
+  return (
+    <div className="work-out" data-sp-output={id} data-status={display?.status ?? 'loading'} data-following={following ? '1' : '0'}>
+      <div className="work-out-head">
+        <IconTerminal size={13} className="sp-icon" />
+        <span className="work-out-title" title={tab.label ?? id}>
+          {tab.label ?? id}
+        </span>
+        <span className="work-out-status" data-tone={display?.status === 'running' ? 'run' : 'plain'}>
+          {outputStatusLabel(display?.status)}
+        </span>
+      </div>
+      {error === '' ? null : <div className="work-out-note">{`读不了输出：${error}`}</div>}
+      {display !== null && display.droppedChars > 0 ? (
+        <div className="work-out-note" data-sp-output-dropped={String(display.droppedChars)}>
+          {`头部已丢弃 ${String(display.droppedChars)} 字符（缓冲超上限，较早的输出不再保留）`}
+        </div>
+      ) : null}
+      <div className="work-out-scroll" ref={scrollRef} onScroll={onScroll}>
+        <pre className="work-out-text" data-sp-output-text>
+          {display === null ? '正在读输出…' : display.text === '' ? '（还没有输出）' : display.text}
+        </pre>
+      </div>
+      {following ? null : (
+        <button
+          type="button"
+          className="work-out-resume"
+          data-sp-output-resume="1"
+          data-tip="恢复跟随（新输出自动滚到底）"
+          onClick={() => {
+            setFrozen(null)
+          }}
+        >
+          <IconChevronDown size={13} />
+          回到底部
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** 后台活状态的显示词（作业与终端两组状态合一份）。 */
+function outputStatusLabel(status: string | undefined): string {
+  switch (status) {
+    case 'running':
+      return '运行中'
+    case 'completed':
+      return '已完成'
+    case 'failed':
+      return '失败'
+    case 'killed':
+      return '已终止'
+    case 'closed':
+      return '已结束'
+    default:
+      return '读取中'
+  }
 }
 
 /** 定点任务一行右侧的读数：异常态报状态，正常报「还有多久」（照 ZCode 行二「在做什么」位）。 */
