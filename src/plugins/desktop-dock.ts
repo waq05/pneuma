@@ -85,12 +85,74 @@ function parsePorcelainZ(text: string): { code: string; file: string }[] {
   return entries
 }
 
-/** 未跟踪条目的路径清单（含被折叠的目录条目，如 `deepseek-harness/`）。 */
+/** 工作目录在仓库里的前缀（`git rev-parse --show-prefix` 的 `sub/` 形式；仓库根处为空串）。 */
+async function repoPrefix(cwd: string): Promise<string> {
+  const out = await git(cwd, ['rev-parse', '--show-prefix']).catch(() => '')
+  return out.trim().replace(/\\/g, '/')
+}
+
+/**
+ * 把 git 报的**仓库根相对**路径 rebase 到**工作目录相对**；落在工作目录之外给 null。
+ *
+ * git 的 status / numstat 不管从哪一层跑，路径都相对仓库根；而 dsc 的文件读取边界
+ * （`inside`）与界面展示都以会话工作目录为基准。两套基准在这里一刀切开：命令仍然按
+ * 仓库根相对的路径给（git 自己按 cwd 解释 pathspec 也没问题），展示一律用这份剥过
+ * 前缀的路径；前缀之外的变更整条不列——既不越出 `inside` 的安全边界，也不会点一行
+ * 得到「读不到这个条目」。
+ */
+function toWorkspacePath(repoPath: string, prefix: string): string | null {
+  if (prefix === '') return repoPath
+  const dir = prefix.replace(/\/+$/, '')
+  if (repoPath === dir || repoPath === dir + '/') return '.'
+  return repoPath.startsWith(prefix) ? repoPath.slice(prefix.length) : null
+}
+
+/** `--numstat -z` 的输出解析：`add\trem\tpath\0`；rename 是 `add\trem\t\0old\0new\0`（取新路径）。 */
+function parseNumstatZ(text: string): Map<string, { added: number; removed: number }> {
+  const stats = new Map<string, { added: number; removed: number }>()
+  const records = text.split('\0')
+  for (let at = 0; at < records.length; at += 1) {
+    const record = records[at] ?? ''
+    if (record === '') continue
+    const fields = record.split('\t')
+    if (fields.length < 3) continue
+    // 二进制文件 numstat 给 `-\t-\tpath`：parseInt 得 NaN，按 0 计（与参考实现同口径）。
+    const addedRaw = Number.parseInt(fields[0] ?? '', 10)
+    const removedRaw = Number.parseInt(fields[1] ?? '', 10)
+    const added = Number.isFinite(addedRaw) ? addedRaw : 0
+    const removed = Number.isFinite(removedRaw) ? removedRaw : 0
+    const path = fields.slice(2).join('\t')
+    if (path !== '') {
+      stats.set(path, { added, removed })
+      continue
+    }
+    // rename：紧跟两条路径记录（旧、新），取新路径
+    const renamed = records[at + 2] ?? ''
+    at += 2
+    if (renamed !== '') stats.set(renamed, { added, removed })
+  }
+  return stats
+}
+
+/** 把一份 numstat -z 读数按工作目录范围过滤并剥前缀，得到「cwd 相对路径 → 增删行数」。 */
+function workspaceNumstat(prefix: string, text: string): Record<string, { added: number; removed: number }> {
+  const out: Record<string, { added: number; removed: number }> = {}
+  for (const [repoPath, stat] of parseNumstatZ(text)) {
+    const path = toWorkspacePath(repoPath, prefix)
+    if (path === null) continue
+    out[path] = stat
+  }
+  return out
+}
+
+/** 未跟踪条目的路径清单（含被折叠的目录条目，如 `deepseek-harness/`），已 rebase 到 cwd 相对。 */
 async function untrackedPaths(cwd: string): Promise<string[]> {
+  const prefix = await repoPrefix(cwd)
   const porcelain = await git(cwd, ['status', '--porcelain=v1', '-z'])
   return parsePorcelainZ(porcelain)
     .filter((entry) => entry.code === '??')
-    .map((entry) => entry.file)
+    .map((entry) => toWorkspacePath(entry.file, prefix))
+    .filter((path): path is string => path !== null)
 }
 
 /** 合成预览的上限：单文件 512KB（与 fs-read 文本同口径）。 */
@@ -98,6 +160,42 @@ const UNTRACKED_PREVIEW_MAX_BYTES = 512 * 1024
 /** 「全部改动」里合成未跟踪段的护栏：最多 40 个文件 / 合计 2MB（防一次点开撑爆 payload）。 */
 const UNTRACKED_PREVIEW_MAX_FILES = 40
 const UNTRACKED_PREVIEW_MAX_TOTAL_BYTES = 2 * 1024 * 1024
+/** 未跟踪行数统计的单文件上限：超过就不数（口径与参考实现一致：1 MiB）。 */
+const GIT_UNTRACKED_STAT_MAX_BYTES = 1024 * 1024
+/** 未跟踪行数统计的并发宽度（一次别把一堆小文件全读进内存）。 */
+const GIT_UNTRACKED_STAT_CONCURRENCY = 4
+
+/**
+ * 读一个未跟踪条目的内容：**预览与行数统计共用这一份判定**，别分裂成两套。
+ *
+ * 判定顺序：越界 → 读不到 → 不是文件（未跟踪目录整条）→ 超过上限 → 含 NUL（二进制）→
+ * 文本（CRLF 归一到 LF）。两个调用方只差一个字节上限（预览 512KB、行数统计 1MiB），
+ * 二进制 / 目录 / 过大 / 缺失这几条判定是同一份——避免「预览说能看、统计说没有」的分叉。
+ */
+type UntrackedRead =
+  | { kind: 'outside' }
+  | { kind: 'missing' }
+  | { kind: 'dir' }
+  | { kind: 'tooLarge'; bytes: number }
+  | { kind: 'binary' }
+  | { kind: 'text'; text: string }
+
+function readUntracked(cwd: string, file: string, maxBytes: number): UntrackedRead {
+  const abs = resolve(cwd, file)
+  if (!inside(abs, cwd)) return { kind: 'outside' }
+  let stat: Stats
+  try {
+    stat = statSync(abs)
+  } catch {
+    return { kind: 'missing' }
+  }
+  if (!stat.isFile()) return { kind: 'dir' }
+  if (stat.size > maxBytes) return { kind: 'tooLarge', bytes: stat.size }
+  const bytes = readFileSync(abs)
+  if (bytes.includes(0)) return { kind: 'binary' }
+  // CRLF 归一：diff 行按 LF 切，行尾的 \r 留着会在行里显示成方块。
+  return { kind: 'text', text: bytes.toString('utf8').replace(/\r\n/g, '\n') }
+}
 
 /**
  * 按内容给未跟踪文件合成一段 unified diff。
@@ -108,27 +206,18 @@ const UNTRACKED_PREVIEW_MAX_TOTAL_BYTES = 2 * 1024 * 1024
  * 读不成文本的（二进制、过大、目录条目、已消失）给一句说明，不假装「没有改动」。
  */
 function untrackedPreview(cwd: string, file: string): { patch: string; note: string } {
-  const abs = resolve(cwd, file)
-  if (!inside(abs, cwd)) return { patch: '', note: `${file}：路径超出工作目录。` }
-  let stat: Stats
-  try {
-    stat = statSync(abs)
-  } catch {
-    return { patch: '', note: `${file}：读不到这个条目（未跟踪目录里的整体条目或文件已不在了）。` }
+  const read = readUntracked(cwd, file, UNTRACKED_PREVIEW_MAX_BYTES)
+  if (read.kind === 'outside') return { patch: '', note: `${file}：路径超出工作目录。` }
+  if (read.kind === 'missing') return { patch: '', note: `${file}：读不到这个条目（未跟踪目录里的整体条目或文件已不在了）。` }
+  if (read.kind === 'dir') return { patch: '', note: `${file}：未跟踪目录整条收录，展开看里面请用文件页签。` }
+  if (read.kind === 'tooLarge') {
+    return { patch: '', note: `${file}：${Math.round(read.bytes / 1024)}KB，超过 ${String(UNTRACKED_PREVIEW_MAX_BYTES / 1024)}KB 不合成预览。` }
   }
-  if (!stat.isFile()) {
-    return { patch: '', note: `${file}：未跟踪目录整条收录，展开看里面请用文件页签。` }
-  }
-  if (stat.size > UNTRACKED_PREVIEW_MAX_BYTES) {
-    return { patch: '', note: `${file}：${Math.round(stat.size / 1024)}KB，超过 512KB 不合成预览。` }
-  }
-  const bytes = readFileSync(abs)
-  if (bytes.includes(0)) return { patch: '', note: `${file}：二进制文件，没有可预览的文本差异。` }
-  // CRLF 归一：diff 行按 LF 切，行尾的 \r 留着会在行里显示成方块。
-  const text = bytes.toString('utf8').replace(/\r\n/g, '\n')
+  if (read.kind === 'binary') return { patch: '', note: `${file}：二进制文件，没有可预览的文本差异。` }
+  const text = read.text
   if (text === '') return { patch: '', note: `${file}：空文件，没有内容可看。` }
   const hasTrailingNewline = text.endsWith('\n')
-  const lines = text === '' ? [] : text.split('\n')
+  const lines = text.split('\n')
   if (hasTrailingNewline) lines.pop()
   const head = [`diff --git a/${file} b/${file}`, 'new file mode 100644', '--- /dev/null', `+++ b/${file}`]
   const body =
@@ -139,11 +228,45 @@ function untrackedPreview(cwd: string, file: string): { patch: string; note: str
 }
 
 /**
+ * 未跟踪文件的行数（口径照参考实现：≤{@link GIT_UNTRACKED_STAT_MAX_BYTES} 才数、
+ * 含 NUL 即二进制记 0、读不到 / 目录 / 过大一律 0；未跟踪只有新增，`removed` 恒 0）。
+ * 数换行符而不是走 `diff --numstat`——未跟踪文件根本不在 diff 里。
+ */
+function countUntrackedLines(cwd: string, file: string): number {
+  const read = readUntracked(cwd, file, GIT_UNTRACKED_STAT_MAX_BYTES)
+  if (read.kind !== 'text' || read.text === '') return 0
+  const newlines = read.text.split('\n').length - 1
+  return read.text.endsWith('\n') ? newlines : newlines + 1
+}
+
+/** 并发给多个未跟踪条目数行数（宽度 {@link GIT_UNTRACKED_STAT_CONCURRENCY}）。 */
+async function untrackedLineStats(cwd: string, paths: readonly string[]): Promise<Map<string, number>> {
+  const stats = new Map<string, number>()
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < paths.length) {
+      const path = paths[next]
+      next += 1
+      if (path === undefined) continue
+      stats.set(path, countUntrackedLines(cwd, path))
+    }
+  }
+  const width = Math.max(1, Math.min(GIT_UNTRACKED_STAT_CONCURRENCY, paths.length))
+  await Promise.all(Array.from({ length: width }, () => worker()))
+  return stats
+}
+
+/**
  * tracked 改动的 diff 文本：HEAD 在就一段 `diff HEAD`（已暂存 + 未暂存合并在一份里），
  * HEAD 没出生就改成未暂存 + 已暂存两段拼——这是唯一能在空仓库里出 diff 的走法。
+ *
+ * `staged` 为真时只取已暂存段（index vs HEAD）；`file` 为空时 pathspec 用 `.`，把范围
+ * 限定在**工作目录子树**内——git 从子目录跑 `diff HEAD` 默认会带上仓库根那侧别的目录的
+ * 改动，而「只列 cwd 之内的变更」这条在 diff 这一层同样要成立。
  */
-async function trackedDiff(cwd: string, guard: readonly string[], file?: string): Promise<string> {
-  const tail = file === undefined ? [] : ['--', file]
+async function trackedDiff(cwd: string, guard: readonly string[], file?: string, staged = false): Promise<string> {
+  const tail = ['--', file ?? '.']
+  if (staged) return git(cwd, ['diff', '--cached', ...guard, ...tail]).catch(() => '')
   if (await hasHead(cwd)) return git(cwd, ['diff', 'HEAD', ...guard, ...tail])
   const parts = await Promise.all([
     git(cwd, ['diff', ...guard, ...tail]).catch(() => ''),
@@ -352,44 +475,55 @@ export const desktopDockPlugin: Plugin.Object = {
           const branch = await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])
             .then((out) => out.trim())
             .catch(() => '(无提交)')
+          // 工作目录在仓库里的前缀：porcelain / numstat 报的都是仓库根相对路径，展示要剥掉
+          // 它、范围要收在它之内（见 toWorkspacePath）。
+          const prefix = await repoPrefix(cwd)
           // `-z`：路径原样给（默认的 C 引号会把非 ASCII 路径写成 `"a\350b"`，界面点不动）
           const porcelain = await git(cwd, ['status', '--porcelain=v1', '-z'])
           const staged: string[] = []
           const unstaged: string[] = []
-          const untracked: string[] = []
+          const untrackedRepo: string[] = []
           let dirtyFileCount = 0
           for (const { code, file } of parsePorcelainZ(porcelain)) {
+            const path = toWorkspacePath(file, prefix)
+            // 工作目录之外的变更整条不列（对齐参考实现，也与 inside() 的安全边界一致）。
+            if (path === null) continue
             dirtyFileCount += 1
-            if (code === '??') untracked.push(file)
+            if (code === '??') untrackedRepo.push(path)
             else {
-              if (code[0] !== ' ' && code[0] !== '?') staged.push(`${code} ${file}`)
-              if (code[1] !== ' ') unstaged.push(`${code} ${file}`)
+              if (code[0] !== ' ' && code[0] !== '?') staged.push(`${code} ${path}`)
+              if (code[1] !== ' ') unstaged.push(`${code} ${path}`)
             }
           }
-          // `stats: true` = 状态面板「Git 工具」区要的那对增删行数（Git 页签不带它，
-          // 免得每次刷新多跑一条 git）。口径：tracked 改动的 numstat 汇总（已暂存 +
-          // 未暂存都在 `diff HEAD` 里），二进制文件 numstat 给 `-`、记 0；
-          // untracked 不进 diff（行数未知），只进 dirtyFileCount。
-          if (payload.stats !== true) return { branch, staged, unstaged, untracked }
-          const numstat = (await hasHead(cwd))
-            ? await git(cwd, ['diff', 'HEAD', '--numstat']).catch(() => '')
-            : (
-                await Promise.all([
-                  git(cwd, ['diff', '--numstat']).catch(() => ''),
-                  git(cwd, ['diff', '--cached', '--numstat']).catch(() => ''),
-                ])
-              ).join('\n')
+          // `stats: true` = 状态面板「Git 工具」区与 Git 页签文件行要的每文件增删行数。
+          // 已暂存 = index vs HEAD；未暂存 = worktree vs index——两段分开拿才给得出每文件
+          // 数字（空仓库里 `--cached` 是「相对空树」，照样算得出）。
+          if (payload.stats !== true) return { branch, staged, unstaged, untracked: untrackedRepo }
+          const [stagedNumstat, unstagedNumstat] = await Promise.all([
+            git(cwd, ['diff', '--cached', '--numstat', '-z']).catch(() => ''),
+            git(cwd, ['diff', '--numstat', '-z']).catch(() => ''),
+          ])
+          const stagedStats = workspaceNumstat(prefix, stagedNumstat)
+          const unstagedStats = workspaceNumstat(prefix, unstagedNumstat)
+          // 未跟踪不在 diff 里：逐文件读内容数换行符（≤1MiB、含 NUL 记 0、removed 恒 0）。
+          const untrackedLineMap = await untrackedLineStats(cwd, untrackedRepo)
+          const untracked: string[] = []
+          const untrackedStats: Record<string, { added: number; removed: number }> = {}
+          for (const path of untrackedRepo) {
+            const added = untrackedLineMap.get(path) ?? 0
+            // 0 增 0 删的未跟踪项不进列表（目录折叠条目 `…/` 结尾的保留）——空文件、构建
+            // 产物、读不动的二进制不该以 +0/−0 占着列表；目录条目仍留作暂存入口。
+            if (added === 0 && !path.endsWith('/')) continue
+            untracked.push(path)
+            untrackedStats[path] = { added, removed: 0 }
+          }
           let added = 0
           let removed = 0
-          for (const line of numstat.split('\n')) {
-            if (line.trim() === '') continue
-            const [addText, removeText] = line.split('\t')
-            const add = Number.parseInt(addText ?? '', 10)
-            const remove = Number.parseInt(removeText ?? '', 10)
-            if (Number.isFinite(add)) added += add
-            if (Number.isFinite(remove)) removed += remove
+          for (const stat of [...Object.values(stagedStats), ...Object.values(unstagedStats), ...Object.values(untrackedStats)]) {
+            added += stat.added
+            removed += stat.removed
           }
-          return { branch, staged, unstaged, untracked, added, removed, dirtyFileCount }
+          return { branch, staged, unstaged, untracked, added, removed, dirtyFileCount, stagedStats, unstagedStats, untrackedStats }
         }
         case 'git-stage': {
           const files = (Array.isArray(payload.files) ? payload.files : []).map((file) => safeArg(file))
@@ -404,6 +538,10 @@ export const desktopDockPlugin: Plugin.Object = {
         case 'git-commit': {
           const text = safeArg(payload.message, true)
           if (text.trim() === '') throw new Error('提交信息为空')
+          // 提交对话框勾了未暂存文件时一次带过来：先暂存这批路径再提交，两步同属这一条
+          // 写类 op（同一张审批卡覆盖），免得「暂存」与「提交」各弹一次。
+          const paths = (Array.isArray(payload.paths) ? payload.paths : []).map((file) => safeArg(file))
+          if (paths.length > 0) await git(cwd, ['add', '--', ...paths])
           return { ok: true, output: (await git(cwd, ['commit', '-m', text])).slice(0, 1200) }
         }
         case 'git-log': {
@@ -413,23 +551,24 @@ export const desktopDockPlugin: Plugin.Object = {
         }
         case 'git-diff': {
           // file 为空 = 全部未提交改动（tracked 段含已暂存 + 未暂存，外加未跟踪的合成段）；
-          // 指定文件 = 单文件。
+          // 指定文件 = 单文件。`staged: true` 时单文件只取已暂存段（index vs HEAD）。
           // --no-textconv --no-ext-diff 是 codex /diff 的 git 安全姿势：文本转换与
           // 外部 diff driver 都可能配置成执行任意程序，看个 diff 不该替用户跑它们。
           const guard = ['--no-textconv', '--no-ext-diff']
           const file = typeof payload.file === 'string' ? safeArg(payload.file) : ''
+          const staged = payload.staged === true
           const untracked = await untrackedPaths(cwd)
           if (file !== '') {
             // 未跟踪的目录条目带尾斜杠（`dsh-TUI/`）：两边都剥掉再比，别让尾斜杠把它
             // 甩进 tracked 那一路（那样只会回一份空 diff，看着像「没改动」）。
             const wanted = file.replace(/\/+$/, '')
-            if (untracked.some((path) => path.replace(/\/+$/, '') === wanted)) {
+            if (!staged && untracked.some((path) => path.replace(/\/+$/, '') === wanted)) {
               const preview = untrackedPreview(cwd, file)
               return preview.patch === ''
                 ? { diff: '', note: preview.note }
                 : { diff: preview.patch.slice(0, 20000) }
             }
-            return { diff: (await trackedDiff(cwd, guard, file)).slice(0, 20000) }
+            return { diff: (await trackedDiff(cwd, guard, file, staged)).slice(0, 20000) }
           }
           // 全量：tracked 段打头，未跟踪的按内容合成段跟上（git 自己不为未跟踪文件出
           // patch，但「全部改动」的条数本来就含它们，看不到会像坏掉）。

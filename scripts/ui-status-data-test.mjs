@@ -111,10 +111,26 @@ const surfaces = () => {
 console.log('[1] Git 读数（dock git-status 的 stats 档）')
 {
   const full = await kernel.get('dock').handle('git-status', { stats: true })
-  check('增删行数：加 3 删 1', full.added === 3 && full.removed === 1, JSON.stringify(full))
+  // 未跟踪的 new.txt（一行）也计入增删：tracked 的 a.txt 加 3 删 1，加上未跟踪的 1 行 = 加 4 删 1。
+  check('增删行数含未跟踪：加 4（a.txt 的 3 + new.txt 的 1）删 1', full.added === 4 && full.removed === 1, JSON.stringify({ added: full.added, removed: full.removed }))
+  check(
+    '每文件行数分档：未暂存 a.txt +3/−1',
+    full.unstagedStats['a.txt']?.added === 3 && full.unstagedStats['a.txt']?.removed === 1,
+    JSON.stringify(full.unstagedStats),
+  )
+  check(
+    '未跟踪逐文件行数：new.txt +1/−0',
+    full.untrackedStats['new.txt']?.added === 1 && full.untrackedStats['new.txt']?.removed === 0,
+    JSON.stringify(full.untrackedStats),
+  )
   // 三条脏：a.txt（改动）、new.txt（未跟踪）、.dsc/（计划文件的目录，porcelain 把整个
   // 未跟踪目录记一条）——计划目录的种子就落在这个仓库里，这条断言顺带钉住这个口径。
   check('脏文件数含未跟踪（a.txt / new.txt / .dsc 各一条）', full.dirtyFileCount === 3, JSON.stringify(full))
+  check(
+    '目录折叠条目保留（`.dsc/` 在未跟踪里、行数 0）',
+    full.untracked.includes('.dsc/') && (full.untrackedStats['.dsc/']?.added ?? 0) === 0,
+    JSON.stringify(full.untracked),
+  )
   check('分支名是真名（不是「(无提交)」）', typeof full.branch === 'string' && full.branch !== '' && full.branch !== '(无提交)', full.branch)
   const lean = await kernel.get('dock').handle('git-status', {})
   check('不传 stats 就不算增删（Git 页签那条路不多跑一条 git）', lean.added === undefined && lean.removed === undefined)
@@ -258,7 +274,19 @@ console.log('[5] 空仓库（HEAD 未出生）：diff 不报错 + 未跟踪按�
   )
   check('未跟踪的目录整条收录（`sub/`）', status.untracked.includes('sub/'), JSON.stringify(status.untracked))
   check('脏文件数 = 5（4 个文件 + 1 个目录条目）', status.dirtyFileCount === 5, String(status.dirtyFileCount))
-  check('空仓库的增删行数不炸（没有可比的东西，就是 0）', status.added === 0 && status.removed === 0, JSON.stringify(status))
+  check(
+    '空仓库的增删行数把未跟踪计入（中文名 3 行 + big.txt 那 1 行）',
+    status.added === 4 && status.removed === 0,
+    JSON.stringify({ added: status.added, removed: status.removed }),
+  )
+  check(
+    '未跟踪逐文件行数（≤1MiB 才数）：中文名 3 行、big.txt 1 行；二进制/空文件 0 行出局',
+    status.untrackedStats['中文 名.txt']?.added === 3 &&
+      status.untrackedStats['big.txt']?.added === 1 &&
+      !status.untracked.includes('bin.dat') &&
+      !status.untracked.includes('empty.txt'),
+    JSON.stringify({ untracked: status.untracked, stats: status.untrackedStats }),
+  )
 
   // 全量：tracked 段为空，未跟踪的合成段补上；合成不出来的（二进制 / 过大 / 空 / 目录）报条数
   const all = await dock.handle('git-diff', {})
@@ -287,9 +315,69 @@ console.log('[5] 空仓库（HEAD 未出生）：diff 不报错 + 未跟踪按�
   const staged = await dock.handle('git-diff', { file: '中文 名.txt' })
   check('空仓库里暂存后的单文件 diff 也出得来（无 HEAD 走 `diff --cached`）', staged.diff.includes('+two'), staged.diff.slice(0, 200))
   const after = await dock.handle('git-status', { stats: true })
-  check('暂存后增删行数算得出来（加 3）', after.added === 3 && after.removed === 0, JSON.stringify({ added: after.added, removed: after.removed }))
+  check(
+    '暂存后增删行数算得出来（已暂存 3 行 + 仍在未跟踪的 big.txt 1 行）',
+    after.added === 4 && after.removed === 0,
+    JSON.stringify({ added: after.added, removed: after.removed }),
+  )
+  check('已暂存段每文件行数（中文名 +3）', after.stagedStats['中文 名.txt']?.added === 3, JSON.stringify(after.stagedStats))
   check('已暂存分组里有它（`A` 前缀 + 原样路径）', after.staged.some((line) => line.startsWith('A ') && line.includes('中文 名.txt')), JSON.stringify(after.staged))
   check('暂存后它不再算未跟踪', !after.untracked.includes('中文 名.txt'), JSON.stringify(after.untracked))
+
+  await session.open(sessionFile)
+}
+
+console.log('[6] 会话目录是仓库子目录：路径基准 rebase + 只看 cwd 之内')
+{
+  const session = kernel.get('session')
+  const dock = kernel.get('dock')
+
+  // 一个仓库，会话 cwd 钉在它的 sub/ 子目录：仓库根那侧的改动在 cwd 之外、必须被过滤，
+  // sub/ 里的改动与未跟踪文件才算数。
+  const wsRepo = join(home, 'ws-sub')
+  mkdirSync(join(wsRepo, 'sub'), { recursive: true })
+  const gitSub = (...args) => execFileSync('git', args, { cwd: wsRepo, stdio: 'pipe', windowsHide: true })
+  gitSub('init', '-q')
+  gitSub('config', 'user.email', 'probe@local')
+  gitSub('config', 'user.name', 'probe')
+  writeFileSync(join(wsRepo, 'root.txt'), 'root\n', 'utf8')
+  writeFileSync(join(wsRepo, 'sub', 'inner.txt'), 'one\ntwo\n', 'utf8')
+  gitSub('add', '-A')
+  gitSub('commit', '-qm', 'init')
+  // 仓库根那侧改一处（cwd 之外）+ 子目录里改一处、加一个未跟踪文件
+  writeFileSync(join(wsRepo, 'root.txt'), 'root\nchanged-outside\n', 'utf8')
+  writeFileSync(join(wsRepo, 'sub', 'inner.txt'), 'one\nTWO\nthree\n', 'utf8')
+  writeFileSync(join(wsRepo, 'sub', 'newfile.txt'), 'fresh\nlines\n', 'utf8')
+
+  const sessionSub = join(sessionDir, 'dddddddd-eeee-ffff-0000-111122223333.jsonl')
+  writeFileSync(
+    sessionSub,
+    `${JSON.stringify({ type: 'meta', id: 'dddddddd-eeee-ffff-0000-111122223333', cwd: join(wsRepo, 'sub'), createdAt: 4 })}\n${JSON.stringify({ type: 'user', text: '子目录会话' })}\n`,
+    'utf8',
+  )
+  await session.open(sessionSub)
+
+  const status = await dock.handle('git-status', { stats: true })
+  check(
+    '展示路径 rebase 到 cwd 相对（是 inner.txt，不是 sub/inner.txt）',
+    status.unstaged.some((line) => line.endsWith('inner.txt')) && !status.unstaged.some((line) => line.includes('sub/')),
+    JSON.stringify(status.unstaged),
+  )
+  check('cwd 之外的仓库改动整条过滤（root.txt 不出现）', !JSON.stringify(status).includes('root.txt'), JSON.stringify(status))
+  check(
+    '每文件行数按 cwd 相对路径给（inner.txt +2/−1）',
+    status.unstagedStats['inner.txt']?.added === 2 && status.unstagedStats['inner.txt']?.removed === 1,
+    JSON.stringify(status.unstagedStats),
+  )
+  check('子目录里的未跟踪文件数得出行数（newfile.txt +2）', status.untrackedStats['newfile.txt']?.added === 2, JSON.stringify(status.untrackedStats))
+
+  // 点未跟踪行：合成预览出得来（以前拿仓库相对路径会撞上 inside 边界、报「读不到这个条目」）
+  const one = await dock.handle('git-diff', { file: 'newfile.txt' })
+  check('点 cwd 里的未跟踪行：合成出全是新增行的段（不再「读不到这个条目」）', one.diff.includes('+++ b/newfile.txt') && one.diff.includes('+fresh'), one.diff.slice(0, 160))
+  const t = await dock.handle('git-diff', { file: 'inner.txt' })
+  check('点 tracked 行：出得来该文件的 diff（cwd 相对路径作 pathspec，git 按 cwd 解释）', t.diff.includes('+TWO') && t.diff.includes('-two'), t.diff.slice(0, 200))
+  const all = await dock.handle('git-diff', {})
+  check('「全部改动」也限定在 cwd 之内（不带 cwd 外的 root.txt 改动）', all.diff.includes('inner.txt') && !all.diff.includes('root.txt'), all.diff.slice(0, 200))
 
   await session.open(sessionFile)
 }
