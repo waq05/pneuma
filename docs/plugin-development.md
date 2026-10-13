@@ -352,6 +352,12 @@ ctx.session.current().state('myPanel')               // 恢复会话时读回来
 2. **可能缺席的面写成可选键**：功能整体可能不存在的投影（例如 schedule 插件默认关着，
    所以 `RuntimeSurfaces.scheduled?: ScheduledTaskView[]`）在契约上就该是可选键，
    界面按「没有这一区」处理——不要给个空壳骗界面画出空列表来。
+3. **按会话出的面，用 `ctx.session.current()` 筛**（第十二批的两处实例：后台活清单只出
+   `owner === 当前查看会话` 的活、计划目录读本会话的 `plans` 账）。因此 `ctx.session` 要
+   写进 `inject`——**少写一个名字的失败方式很静默**：read 里访问 `ctx.session` 会抛
+   「cannot get property "session" without inject」，被快照装配的 try/catch 吞成「留旧值」，
+   没有旧值时整个键从快照缺席。状态账用 `appendState` 存数组负载时记得留上限（内存整表换、
+   磁盘追加一条，账会随会话增长）。
 
 有些服务是可选的（插件关着时整个不存在，或者只在某些入口才登记），读它们只能用 `ctx.get('<服务名>')`，不能写进 `inject` 也不能用 `ctx.<服务名>?.`：`team`（智能体团队）、`mcp`（MCP 客户端）、`sessionSearch`（会话全文检索）、`approvalFloor`（灾难地板的只读视图，插件关着时不存在）、`interactive`（界面可达性，只有 tui 与 host-stdio 入口才登记）、`sandbox`（沙箱）、`lsp`（LSP 代码智能）、`backgroundWorks`（后台作业与终端会话的收口，tools-default 提供）。例如 tool-search 读 MCP 工具目录就是 `const mcp = ctx.get('mcp')`，读到 `undefined` 就当没接 MCP；审批插件读 `ctx.get('interactive')`，读到 `undefined` 且不是终端直连就当「没人能回答审批卡」。
 
