@@ -1,0 +1,25 @@
+{
+  // 第三方界面插件作者的最小 tsconfig：类型从**发行包里的界面 SDK**拿，不再手抄源码落点表。
+  //
+  // 唯一需要写的是这一条 paths：把 `@dsc/*` 指到 SDK 的包目录（本示例在仓库内，所以是
+  // 相对 `lib/ui/sdk`；插件装到本机后，改成 `node_modules/<dsc 包>/lib/ui/sdk/@dsc/*` 即可）。
+  // SDK 每个包目录里是一份真实 `package.json`（types/exports 指向 `.d.ts`），模块解析照常。
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    // 基元包声明里引用 shiki / react-markdown / pdfjs 等重依赖的类型；第三方工程不一定装了
+    // 它们——skipLibCheck 跳过对 .d.ts 本体的检查，本工程自己的代码仍然全量检查。
+    "skipLibCheck": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "paths": {
+      "@dsc/*": ["../../lib/ui/sdk/@dsc/*"]
+    }
+  },
+  "include": ["plugin.tsx"]
+}

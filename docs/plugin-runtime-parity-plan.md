@@ -50,7 +50,10 @@
 3. `children`（工具卡尾巴）只有示例消费者：**有意保留的扩展点**，不打算在内置里硬塞一行。
 4. E4 的 `AppBootSession` / `AppSyncHandle` 是渲染器会话接口的手抄子集（分叉由入口 tsc 抓）；
    `createBootSession` 在挂全局后、返回前抛错时的理论行为差（未观测到）。
-5. 第三方作者**没有随 SDK 发布的 `.d.ts`**：有验过的 tsconfig 落点表配方（§10.4.1）。
+5. ~~第三方作者**没有随 SDK 发布的 `.d.ts`**~~ **已补（本轮）**：界面壳构建用 tsc 出
+   `lib/ui/sdk/@dsc/<包名>/` 类型树随发行包走，作者一条 `@dsc/*` paths 即得完整类型
+   （含 `SlotMap` 合并）；`examples/ui-sdk-types-demo` + `scripts/ui-sdk-types-test.mjs`
+   真跑 tsc 钉住（§10.4.1）。旧的「手抄七条落点表」保留为备选。
 6. 手机端（`remote-web`）的壳没有热更——保住「刷新看到新界面」的既有承诺。
 7. 打包态默认不发热更（`DSC_UI_SERVER`/`DSC_UI_HMR` 是开发与自检轨）。
 

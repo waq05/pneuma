@@ -7,9 +7,10 @@
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "build": "tsc -p tsconfig.json --noEmit && vite build && node build-plugins.mjs",
+    "build": "tsc -p tsconfig.json --noEmit && vite build && node build-plugins.mjs && node build-types.mjs",
     "build:app": "vite build",
-    "build:plugins": "node build-plugins.mjs"
+    "build:plugins": "node build-plugins.mjs",
+    "build:types": "node build-types.mjs"
   },
   "dependencies": {
     "@shikijs/langs": "^4.5.0",

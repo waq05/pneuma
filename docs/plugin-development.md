@@ -703,11 +703,42 @@ catch-all（priority 100）。想接管某类工具卡的渲染：往这个槽�
    先判 `ui.host.platform`；只在类型面引用不会产生 require。
 2. **`@dsc/ui-core` 不在种子里**（故意）：它是壳的内部实现，插件当值引用会得到
    「白名单外的模块」那句错；插件要的能力都经 `@dsc/ui` 或上面三个包给。
-3. **类型面**：本仓库内置插件按源码即类型直接用；第三方 TS 作者今天没有随 SDK 发布的
-   `.d.ts`（与 `@dsc/ui` 一样），按 JS 写、类型自备。想在编辑器里拿到类型（推荐，写起来
-   差别很大）就把**整张落点表**照抄进你的 `tsconfig.json`：七条一条都不能少——上面那几份
-   源码自己也 import 下面的包（`@dsc/ui-core` / `@dsc/ui-layout`…），少一条类型解析就断在
-   半路。这张表与 `ui-shell/packages.json`（构建期唯一事实源）是同一份，抄的时候以它为准：
+3. **类型面（1.2.0 起随 SDK 发布 `.d.ts`）**：第三方 TS 作者按包名就能拿到官方类型——界面壳
+   构建时用 tsc 出一棵类型树，落在发行包的 `lib/ui/sdk/@dsc/<包名>/`（`ui-shell/build-types.mjs`），
+   每个包目录里有真实 `package.json`（`types` / `exports` 指向入口 `.d.ts`）。你的工程只要
+   一条 paths：
+
+   ```jsonc
+   // 你的插件工程的 tsconfig.json。一条 glob 覆盖全部 @dsc/* 包，不必逐个抄源码落点。
+   {
+     "compilerOptions": {
+       "moduleResolution": "bundler",
+       // 基元包声明里引用了 shiki / react-markdown / pdfjs 这些重依赖的类型；第三方工程
+       // 不一定装了它们——skipLibCheck 跳过对 .d.ts 本体的检查，你自己的代码仍全量检查。
+       "skipLibCheck": true,
+       "paths": {
+         // <dsc> = 你装 Muse Code 的包目录（或本仓库检出根）。SDK 随包发布，所以装在
+         // node_modules/<dsc 包>/lib/ui/sdk 下；在本仓库内是 lib/ui/sdk。
+         "@dsc/*": ["<dsc>/lib/ui/sdk/@dsc/*"]
+       }
+     }
+   }
+   ```
+
+   `@dsc/ui` 那一条**不用单独写**：SDK 里 `@dsc/ui/index.d.ts` 就是 `plugin-api.ts` 那份声明
+   本体，所以 `declare module '@dsc/ui' { interface SlotMap { … } }` 的槽位合并照样认得出
+   （合并认的是**模块身份**，SDK 里 `@dsc/ui` 与那份文件是同一个模块）；被引到的
+   `@dsc/ui-core` / `@dsc/ui-layout` 也一并发布，类型解析不会断在半路。
+
+   这份配方是**验过的**，而且**每次构建都在验**：`examples/ui-sdk-types-demo/` 是一个只有
+   `plugin.tsx` 的最小第三方工程，`pnpm -C examples/ui-sdk-types-demo typecheck` 零错
+   （该工程的 `typecheck` 指向本仓库的 tsc，所以不必先装依赖；复制成独立工程后换上你自己
+   的 `typescript` 即可）；`scripts/ui-sdk-types-test.mjs` 会真跑一遍这个工程，并断言合并生效
+   （拼错的槽名编不过、自己开的子槽能过）。
+
+   **备选：照源码落点手抄七条 paths**（不依赖 SDK 类型树、直接吃本仓库源码，需先检出仓库）。
+   七条一条都不能少——上面那几份源码自己也 import 下面的包（`@dsc/ui-core` / `@dsc/ui-layout`…），
+   少一条类型解析就断在半路。这张表与 `ui-shell/packages.json`（构建期唯一事实源）同一份：
 
    ```jsonc
    // 你的插件工程的 tsconfig.json（<仓库> 换成 dsc 的检出路径）。这七条只影响类型解析，
@@ -732,12 +763,9 @@ catch-all（priority 100）。想接管某类工具卡的渲染：往这个槽�
    }
    ```
 
-   这段配方是**验过的**（`docs` 里给的东西不该只是看着对）：照它建一个只有
-   `plugin.tsx` 的工程，四个运行期包名各取几样、`declare module '@dsc/ui'` 并一个子槽，
-   `tsc --noEmit` 零错——合并真的认得出（拼错的槽名编不过，是自己开的子槽才过）。
-
-   加了这张表之后 `declare module '@dsc/ui' { interface SlotMap { … } }` 的槽位合并也认得出
-   （合并跟的是**这个文件**的身份，所以 `@dsc/ui` 那一条必须指 `plugin-api.ts` 本身）。
+   两种方式的差异一句话：**SDK 那份吃的是随发行包发布的 `.d.ts`**（第三方装了 Muse Code
+   就有、路径稳定、不随源码漂移）；**源码那份吃的是本仓库的 `.ts`**（要检出、跟着源码走）。
+   两者写起来都拿到完整类型（含槽位合并），主推前者。
 
 写法上两者等价、取向不同：`@dsc/ui` 是**聚合面**（少量重依赖与图标经它转出，老插件照旧
 可用），按包名 require 是**按需取整包**（想用 `Select` 就写 `@dsc/ui-primitives`，语义直白）。

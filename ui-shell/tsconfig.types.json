@@ -1,0 +1,30 @@
+{
+  // 声明构建专用配置：把「作者可见的界面包」编成一棵 .d.ts 树（产物由 tsc 出，不是打包器）。
+  //
+  // 与 tsconfig.json 的差别只有三点：这里**要产物**（noEmit:false + declaration +
+  // emitDeclarationOnly）；rootDir 抬到仓库根——`@dsc/ui-core` 的源码在 `../src/ui`，
+  // 不在 ui-shell 目录里，只有抬根才能让一棵树同时装下两类落点；outDir 落
+  // `lib/ui/sdk/.emit`（随后由 `build-types.mjs` 分发成 `@dsc/<包名>/` 的 SDK 目录树）。
+  //
+  // 为什么用 include 白名单而不是整个 `src`：整个 src 会连 16 个内置插件、入口与旧壳
+  // 一起编，既慢又要求那些文件也能过声明检查；我们要的是**七个包的入口**，
+  // 它们的 import 图会自己把 `@dsc/ui-core` / `@dsc/ui-layout` 这些依赖拉齐。
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationMap": false,
+    "sourceMap": false,
+    "outDir": "../lib/ui/sdk/.emit",
+    "rootDir": "..",
+    "composite": false,
+    "incremental": false
+  },
+  "include": [
+    "src/plugin-api.ts",
+    "src/ui-*/index.ts",
+    "../src/ui/index.ts",
+    "src/ui-primitives/vite-env.d.ts"
+  ]
+}

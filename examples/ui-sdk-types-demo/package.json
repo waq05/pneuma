@@ -1,0 +1,10 @@
+{
+  "name": "dsc-ui-sdk-types-demo",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "第三方界面插件作者的最小 TS 工程：只验证「按包名从界面 SDK 拿类型」这条路（不构建、不运行）。",
+  "scripts": {
+    "typecheck": "node ../../node_modules/typescript/lib/tsc.js -p tsconfig.json"
+  }
+}

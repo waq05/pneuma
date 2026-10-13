@@ -27,3 +27,8 @@
 旧路径（`src/icons.tsx`、`src/dock-state.ts`、`src/platform/*`、`src/slots.ts`、
 `src/boot.ts` …）上的**迁移期转发壳已全部删除**（E4 收尾）：调用点（`plugin-api.ts` /
 `src/plugins/**` / 各包）都改成按包名 import。新代码见到的旧路径一律是漏改，别再往回加壳。
+
+**类型产物不用额外登记**：`build-types.mjs`（`tsconfig.types.json`）按 `src/ui-*/index.ts`
+的 glob 收集入口、再照 `packages.json` 把声明归位到 `lib/ui/sdk/@dsc/<包名>/`——新包只要按
+上面「源码在 `src/ui-<x>/index.ts`」的约定放，就会自动进 SDK 类型树；落点不合约定时
+`build-types.mjs` 当场报错（不会静默漏一个包）。
