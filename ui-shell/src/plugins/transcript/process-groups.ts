@@ -123,6 +123,48 @@ export interface StepGrouping {
 }
 
 /**
+ * 一轮的渲染计划里的一项：**要么一个阶段组的座位，要么一条单独的行**。
+ *
+ * 组这一项带着它的全部组员（渲染层照 `members` 铺组体），所以「组员又被单独铺一遍」
+ * 这种错在设计上不可能发生——组员只出现在组的 `members` 里。
+ */
+export type SeatPlanItem =
+  | { kind: 'group'; group: StepGroup; members: readonly number[] }
+  | { kind: 'row'; at: number }
+
+/**
+ * 把一轮的行排成渲染计划：组在组头的位置出一次，其余行各出一次，顺序即渲染顺序。
+ *
+ * 为什么要有这个纯函数（0.6.67 报障「一条思考栏出现两次」）：排布规则原来写在渲染体里，
+ * 靠 `headAt` 找组头、组员**没有**被排除，于是「已写入文件 2 项」这种两员的组会在组体里
+ * 铺一遍、又在外面单独铺一遍——用户看到两条一模一样的思考栏。规则一旦离开渲染体，
+ * 「每条行恰好出现一次」就能直接被断言（见 `scripts/ui-transcript-render-test.mjs`）。
+ *
+ * 口径：
+ * - 组头在 `headAt` 里 → 出 `group` 项，成员按 `members` 升序（组内顺序 = 出现顺序）；
+ * - 组员（在 `at` 里但不在 `headAt` 里）→ **什么都不出**（已经在组的 members 里）；
+ * - 其余 → 出 `row` 项。
+ *
+ * @param ats 这一轮里每行的全量下标（升序；含轮首的用户消息，调用方按需切）
+ * @param grouping {@link groupSteps} 的产物
+ */
+export function seatPlan(ats: readonly number[], grouping: StepGrouping): SeatPlanItem[] {
+  const items: SeatPlanItem[] = []
+  for (const at of ats) {
+    const head = grouping.headAt.get(at)
+    if (head !== undefined) {
+      const members: number[] = []
+      for (let index = head.startIndex; index <= head.endIndex; index += 1) members.push(index)
+      items.push({ kind: 'group', group: head, members })
+      continue
+    }
+    if (grouping.at.has(at)) continue
+    items.push({ kind: 'row', at })
+  }
+  return items
+}
+
+/**
  * 不进整轮过程区、也不该被整轮折叠藏起来的条目类型
  * （逐项对照 dsh 的 `TURN_PROCESS_INDEPENDENT_KINDS`，contract/turn-process.ts:20-34）。
  *

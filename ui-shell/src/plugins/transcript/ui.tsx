@@ -63,7 +63,7 @@ import { buildRoundFolds, processFoldPolicy, TurnFoldRow, useFoldMemory, type Pr
 import { formatClock, formatDuration, liveActivity, roundDuration, roundInfos, turnStartedAt, type RoundInfo } from './timing'
 import { useIntendedDiff } from './intended-diff'
 import { readFold, writeFold, stepGroupFoldKey, turnFoldKey } from './fold-state'
-import { groupSteps, type StepGroup, type StepGrouping } from './process-groups'
+import { groupSteps, seatPlan, type StepGroup, type StepGrouping } from './process-groups'
 import { RowSeat, StepGroupSeat } from './fold-seats'
 import { JumpRail, previewText } from './jump-rail'
 // 写前预览通知（宿主 file-review 插件发的那段多行 diff 文本）：按正文形状认出来，
@@ -210,11 +210,21 @@ const EMPTY_STEP_GROUPING: StepGrouping = { groups: [], headAt: new Map(), at: n
  * 出现「回到底部」按钮，点它恢复跟随。阈值 160px 是旧界面的口径。
  * 为什么要传 `dep`：条目数组每帧都是新的，拿引用当依赖会让每次快照都强制滚一次。
  * `pause` 给「加载更早」用（见那里的注释）：那一刻的暂停是用户表态，不该只等滚动事件判。
+ *
+ * `sessionKey` 这一位是**换会话时的重新起算**（0.6.67 走查发现）：打开一条长会话时，
+ * 第一次量「离底多远」量到的是 scrollTop=0（内容还没滚过），于是跟随当场被判成暂停，
+ * 视角永久停在最上面——用户得先点一下「回到底部」才开始读最新那条。参考实现打开会话
+ * 即锚在末尾（dsh 的对话流按末尾对齐），所以换会话这一拍不看滚动位置，直接重新钉住底部。
  */
-function useFollowBottom(dep: number): { setEnd: (node: HTMLDivElement | null) => void; paused: boolean; resume: () => void; pause: () => void } {
+function useFollowBottom(
+  dep: number,
+  sessionKey: string,
+): { setEnd: (node: HTMLDivElement | null) => void; paused: boolean; resume: () => void; pause: () => void } {
   const [end, setEnd] = useState<HTMLDivElement | null>(null)
   const pinned = useRef(true)
   const [paused, setPaused] = useState(false)
+  /** 上一次钉底是按哪条会话起的算；初值给一个空串哨兵，于是首屏也算「换了一条」。 */
+  const pinnedFor = useRef('')
 
   useEffect(() => {
     const scroller = end?.closest('.chat')
@@ -231,11 +241,20 @@ function useFollowBottom(dep: number): { setEnd: (node: HTMLDivElement | null) =
     }
   }, [end])
 
+  // 换会话（含首屏）那一拍先重新钉住底部，再照常跟：这一条声明在上面那个滚动监听
+  // 效果**之后**，顺序有讲究——监听效果刚按当前位置（打开会话时是 scrollTop=0）
+  // 判过「暂停」，这条要盖住它。
   useEffect(() => {
-    if (!pinned.current) return
     const scroller = end?.closest('.chat')
-    if (scroller instanceof HTMLElement) scroller.scrollTop = scroller.scrollHeight
-  }, [end, dep])
+    if (!(scroller instanceof HTMLElement)) return
+    if (pinnedFor.current !== sessionKey) {
+      pinnedFor.current = sessionKey
+      pinned.current = true
+      setPaused(false)
+    }
+    if (!pinned.current) return
+    scroller.scrollTop = scroller.scrollHeight
+  }, [sessionKey, end, dep])
 
   const resume = (): void => {
     pinned.current = true
@@ -275,7 +294,7 @@ function TranscriptFlow({
    */
   const sessionKey = sessionPath ?? sessionId ?? ''
   const seats = useMemo(() => buildSeats(entries, live), [entries, live])
-  const follow = useFollowBottom(entries.length + live.length)
+  const follow = useFollowBottom(entries.length + live.length, sessionKey)
 
   // 折叠偏好：mount 时读一次 uiPrefs，设置页改档位时经自定义事件同步进来。
   // 行为偏好（完成提示音/通知）也在这份里：同会话跑动→空闲的那一下要用。
@@ -785,17 +804,20 @@ function SeatBody({
   // 过程区分块：连续的过程条目收进阶段组（组体是「真盒子」，才有自己的限高与滚动），
   // 其余按「过程 / 之后」两档摆——独立节点（计划卡、system、轮尾标记）永远在「之后」，
   // 收起整轮不把它们一起藏掉。
+  //
+  // 「哪条行归哪儿」是 process-groups.ts 的**纯函数**（seatPlan）：**每条行恰好出一次**
+  // ——组出一次（带着它的全部组员），不在组里的行各出一次。这条不变量曾经靠渲染体自己
+  // 维护，漏掉一次就是「一条思考栏出现两次」（0.6.67 报障）；搬出去之后它由
+  // `scripts/ui-transcript-render-test.mjs` 直接断言。
   const rowByAt = new Map(seat.rows.map((row) => [row.at, row]))
   const processBlocks: ReactNode[] = []
   const afterBlocks: ReactNode[] = []
-  for (const row of seat.rows.slice(1)) {
-    const head = stepGrouping.headAt.get(row.at)
-    if (head !== undefined) {
-      const members: Row[] = []
-      for (let at = head.startIndex; at <= head.endIndex; at += 1) {
-        const member = rowByAt.get(at)
-        if (member !== undefined) members.push(member)
-      }
+  for (const item of seatPlan(seat.rows.slice(1).map((row) => row.at), stepGrouping)) {
+    if (item.kind === 'group') {
+      const head = item.group
+      const members = item.members
+        .map((at) => rowByAt.get(at))
+        .filter((member): member is Row => member !== undefined)
       processBlocks.push(
         <StepGroupSeat
           key={`step-${String(head.roundIndex)}-${String(head.seq)}`}
@@ -811,6 +833,8 @@ function SeatBody({
       )
       continue
     }
+    const row = rowByAt.get(item.at)
+    if (row === undefined) continue
     const inProcess =
       fold !== undefined && fold.foldable && fold.hasContent
       && row.at >= fold.startIndex && row.at <= fold.endIndex
@@ -1115,9 +1139,22 @@ function ThinkRow({
   storeKey?: string
 }): ReactNode {
   const prefs = useContext(FoldPrefsContext)
-  // 直播尾挂载即展开（它是「现在在干什么」的唯一线索）；定稿条目按用户的默认态设置。
-  // 有存档就认存档——重挂（换会话再切回来）时不能让用户的展开白点。
-  const [open, setOpen] = useState(() => readFold(storeKey, live || prefs.reasoningOpen))
+  /**
+   * 展开态：**一律从用户的默认档位起算，跑动中也不替用户展开**。
+   *
+   * 这里原来写的是 `readFold(storeKey, live || prefs.reasoningOpen)`（直播尾挂载即展开，
+   * 当时认为它是「现在在干什么」的唯一线索）。它在**定稿那一瞬间**会制造一次很难受的
+   * 抽动，也就是 0.6.67 的报障「思考完毕闪屏折叠」：直播尾是负 id 的条目，定稿后换成
+   * 正 id 的新条目（`adapter/transcript.ts` 的 pushThinking），React key 跟着换 →
+   * 旧实例卸载、新实例挂载 → 新实例按默认档位算出来是**收起**，于是用户眼前那段摊开的
+   * 思考在定稿那一拍整体收拢（若开着动效还会从 0fr 重播一次高度过渡）。
+   *
+   * 参考实现从不这么做：dsh 的推理行**永远以收起态起步**，`running` 只改「折叠行右边那句
+   * 预览」的取法（进行中取最新写完段落的首行，定稿后取首行，ReasoningRow.tsx:56），
+   * 行的开合只由用户点击决定（use-disclosure.ts:12-13）。直播的「还活着」由扫光 + 摘要 +
+   * 小圈承载（本组件三样都有），不需要把正文摊开。
+   */
+  const [open, setOpen] = useState(() => readFold(storeKey, prefs.reasoningOpen))
   const [barVisible, setBarVisible] = useState(false)
   const bodyRef = useRef<HTMLDivElement | null>(null)
 
