@@ -1,0 +1,4 @@
+{
+  "@dsc/ui": "./src/plugin-api.ts",
+  "@dsc/ui-core": "../src/ui/index.ts"
+}

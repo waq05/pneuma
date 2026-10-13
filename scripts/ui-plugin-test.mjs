@@ -23,8 +23,9 @@
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { request } from 'node:http'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 
 // 隔离 HOME / DSC_HOME：这个探针会读插件的条目树（`~/.dsc/plugins.json`）来验配置解析，
 // 不隔离就会读到使用者真实的那份，断言随环境飘。
@@ -852,6 +853,11 @@ console.log('\n[5] 真实构建产物')
     const collected = collectUiPluginArtifacts()
     check('产物里有界面插件', collected.entries.length > 0, JSON.stringify(collected.entries.map((e) => e.id)))
     check('产物没有缺文件的问题', collected.problems.length === 0, collected.problems.join(' | '))
+    check(
+      '每个内置条目都带 api（来自各自 package.json 的 @dsc/ui 区间）',
+      collected.entries.every((entry) => typeof entry.api === 'string' && entry.api !== ''),
+      JSON.stringify(collected.entries.map((entry) => [entry.id, entry.api])),
+    )
     const bundles = collected.entries.map((entry) => ({
       id: entry.id,
       text: (readUiPluginBundle(entry.id, entry.file) ?? Buffer.alloc(0)).toString('utf8'),
@@ -881,6 +887,64 @@ console.log('\n[5] 真实构建产物')
     const shellPage = readFileSync(join(uiPluginsDir(), '..', 'assets', 'index.html'), 'utf8')
     check('壳页面挂了入口脚本', shellPage.includes('app-'))
   }
+}
+
+// ── 5b. 分包落点（packages.json ↔ tsconfig paths） ─────────────────────────────
+// 逻辑分包没有 workspace 的依赖图兜底：包名 → 源码落点分四处（配方见 ui-shell/packages.md）。
+// 这里钉住最容易静默漂移的一对——packages.json 与 tsconfig 的 paths（tsconfig 读不了 JSON，
+// 只能手抄）：不一致的表现是「编译期按一种类型、构建期解析到另一份实现」，最坏是两份 React。
+console.log('\n[5b] 分包落点')
+{
+  const uiShell = fileURLToPath(new URL('../ui-shell/', import.meta.url))
+  const packages = JSON.parse(readFileSync(join(uiShell, 'packages.json'), 'utf8'))
+  const shellPackage = JSON.parse(readFileSync(join(uiShell, 'package.json'), 'utf8'))
+  const tsconfig = JSON.parse(readFileSync(join(uiShell, 'tsconfig.json'), 'utf8'))
+  const paths = tsconfig.compilerOptions?.paths ?? {}
+  const names = Object.keys(packages)
+
+  check('packages.json 登记了插件 API 与共享核心两个包名', names.includes('@dsc/ui') && names.includes('@dsc/ui-core'), names.join(','))
+  const resolved = Object.fromEntries(names.map((name) => [name, resolve(uiShell, packages[name])]))
+  check(
+    'packages.json 的每个落点都在盘上',
+    names.every((name) => existsSync(resolved[name])),
+    names.filter((name) => !existsSync(resolved[name])).join(','),
+  )
+  const tsNames = Object.keys(paths)
+  const missingInTs = names.filter((name) => !tsNames.includes(name))
+  const extraInTs = tsNames.filter((name) => !names.includes(name))
+  check(
+    'tsconfig paths 与 packages.json 键集一致',
+    missingInTs.length === 0 && extraInTs.length === 0,
+    `tsconfig 缺：${missingInTs.join('、') === '' ? '(无)' : missingInTs.join('、')}；tsconfig 多：${extraInTs.join('、') === '' ? '(无)' : extraInTs.join('、')}`,
+  )
+  const mismatched = names.filter(
+    (name) => paths[name] !== undefined && resolve(uiShell, paths[name][0]) !== resolved[name],
+  )
+  check(
+    '同一包名的落点在两处指向同一个文件',
+    mismatched.length === 0,
+    mismatched.map((name) => `${name}: tsconfig=${JSON.stringify(paths[name])} packages=${packages[name]}`).join(' | '),
+  )
+
+  // @dsc/ui-core 的边界锚：src/ui/package.json 是它的包身份，逻辑落点必须与它声明的入口一致；
+  // 版本与壳同源（契约版本纪律：@dsc/ui 的导出面变了，两处一起动）。
+  const corePackage = JSON.parse(readFileSync(join(uiShell, '..', 'src', 'ui', 'package.json'), 'utf8'))
+  check('src/ui/package.json 就是 @dsc/ui-core 的包身份', corePackage.name === '@dsc/ui-core', String(corePackage.name))
+  check(
+    '@dsc/ui-core 的落点 = 它声明的 types 入口',
+    resolve(uiShell, String(packages['@dsc/ui-core'])) === resolve(uiShell, '..', 'src', 'ui', String(corePackage.types)),
+    `${String(packages['@dsc/ui-core'])} ≠ src/ui/${String(corePackage.types)}`,
+  )
+  check('@dsc/ui-core 的版本与壳 apiVersion 同源', corePackage.version === shellPackage.version, `${String(corePackage.version)} ≠ ${String(shellPackage.version)}`)
+
+  // 两个构建消费方必须真接在 packages.json 上（不是各写一份 alias）——改了这里就该红。
+  check('vite.config.ts 从 packages.json 生成 alias', readFileSync(join(uiShell, 'vite.config.ts'), 'utf8').includes('packages.json'))
+  check('build-plugins.mjs 从 packages.json 生成 alias', readFileSync(join(uiShell, 'build-plugins.mjs'), 'utf8').includes('packages.json'))
+
+  // @dsc/ui-core 故意不下发给插件：平台模块表里没有它（build-plugins 的 EXTERNAL 保它外部化，
+  // 插件当值用时运行期拿到「白名单外的模块」那句错，而不是静默内联一份私有实现）。
+  const platformModules = JSON.parse(readFileSync(join(uiShell, 'src', 'platform-modules.json'), 'utf8'))
+  check('@dsc/ui-core 不在平台模块表里（故意不给插件）', !platformModules.includes('@dsc/ui-core'), platformModules.join(','))
 }
 
 rmSync(work, { recursive: true, force: true })

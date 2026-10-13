@@ -10,8 +10,9 @@
  * 而不是让加载器 `new Function(code)`：后者要求页面放开 `unsafe-eval`，
  * 一旦给页面加 CSP 所有插件会同时失效，而且报错来自浏览器安全策略、不进我们的诊断。
  *
- * 可选：插件目录里放一个 `plugin.json` 可以声明 `inject` / `immediately` / `external`
- * （将来第三方插件用同一份字段）。
+ * 每个插件目录**必须**有 `package.json`：`peerDependencies['@dsc/ui']` 是它面对的契约区间，
+ * 构建时写进清单条目的 `api`（宿主拿它做 semver 门禁，内置条目同样逐条判）。可选：再放一个
+ * `plugin.json` 声明 `inject` / `immediately` / `external` / `platforms`（两种文件并存）。
  *
  * @module dsc-ui-shell/build-plugins
  */
@@ -19,14 +20,29 @@ import { existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSyn
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import react from '@vitejs/plugin-react'
+import { satisfies, validRange } from 'semver'
 import { build } from 'vite'
 
 const root = dirname(fileURLToPath(import.meta.url))
 const srcDir = join(root, 'src', 'plugins')
 const outRoot = resolve(root, '..', 'lib', 'ui', 'plugins')
 const stageRoot = `${outRoot}.staging`
-const uiCore = resolve(root, '..', 'src', 'ui', 'index.ts')
-const pluginApi = join(root, 'src', 'plugin-api.ts')
+
+/**
+ * 壳内包名 → 源码落点，单一事实源是 `packages.json`（vite 侧同读，`tsconfig` 的 paths
+ * 读不了 JSON 只能手抄，漂移由 `scripts/ui-plugin-test.mjs` 钉住）。为什么不再各写一份
+ * alias：多一个包就多一处会漏改的地方，而漏改的表现是运行期解析出两份实现。
+ */
+const PACKAGES = JSON.parse(readFileSync(join(root, 'packages.json'), 'utf8'))
+const alias = Object.fromEntries(
+  Object.entries(PACKAGES).map(([name, rel]) => [name, resolve(root, rel)]),
+)
+
+/**
+ * 插件面对的 `@dsc/ui` 契约版本：本包的 version，也是清单顶层 apiVersion。
+ * 构建期拿它先判一遍每个插件的 peer 区间——内置插件被自己的门禁拦下就是全量失效。
+ */
+const shellVersion = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version
 
 /**
  * 由壳提供的模块：插件 bundle 里对它们的引用保持原样，运行期从白名单表取。
@@ -46,12 +62,51 @@ const EXTERNAL = [...PLATFORM_MODULES, '@dsc/ui-core']
 /** 工厂注册用的全局名（与 `src/boot.ts` 的 `FACTORY_GLOBAL` 同一个）。 */
 const FACTORY_GLOBAL = '__DSC_UI_FACTORIES__'
 
-/** 读可选的 plugin.json（写坏了就报错——清单错一半比没有更糟）。 */
+/**
+ * 读一个插件目录的元数据：`package.json` 的 peer 区间 → 清单 `api`，与可选的
+ * `plugin.json` 并成一份（写坏了就报错——清单错一半比没有更糟）。
+ */
 function readMeta(dir) {
+  const pkgFile = join(dir, 'package.json')
+  if (!existsSync(pkgFile)) {
+    throw new Error(
+      `${pkgFile} 不存在：每个插件目录都必须有 package.json（写 name / version / peerDependencies['@dsc/ui']）`,
+    )
+  }
+  let pkg
+  try {
+    pkg = JSON.parse(readFileSync(pkgFile, 'utf8'))
+  } catch (error) {
+    throw new Error(`${pkgFile} 不是合法 JSON（${error instanceof Error ? error.message : String(error)}）`)
+  }
+  const rawPeer =
+    pkg !== null && typeof pkg === 'object' ? (pkg.peerDependencies ?? {})['@dsc/ui'] : undefined
+  if (typeof rawPeer !== 'string' || rawPeer.trim() === '') {
+    throw new Error(
+      `${pkgFile} 的 peerDependencies['@dsc/ui'] 缺失或不是非空字符串（要写 semver 区间，如「^1.1.0」）——清单的 api 字段从它读`,
+    )
+  }
+  const api = rawPeer.trim()
+  if (validRange(api) === null) {
+    throw new Error(
+      `${pkgFile} 的 peerDependencies['@dsc/ui']「${api}」不是合法的 semver 区间（要像 ^1.1.0 / 1.x 这样）`,
+    )
+  }
+  if (!satisfies(shellVersion, api, { includePrerelease: true })) {
+    throw new Error(
+      `${pkgFile}: 声明的 @dsc/ui 区间「${api}」不满足本壳 ${shellVersion}` +
+        '——内置插件是同一份构建产物，被自己的门禁拦下等于全量失效',
+    )
+  }
+  const meta = { api }
   const file = join(dir, 'plugin.json')
-  if (!existsSync(file)) return {}
+  if (!existsSync(file)) return meta
   const doc = JSON.parse(readFileSync(file, 'utf8'))
-  const meta = {}
+  if (doc.api !== undefined) {
+    throw new Error(
+      `${dir}/plugin.json 声明了 api——内置插件的 @dsc/ui 区间唯一来源是 package.json 的 peerDependencies`,
+    )
+  }
   if (doc.inject !== undefined) {
     if (!Array.isArray(doc.inject) || doc.inject.some((v) => typeof v !== 'string')) {
       throw new Error(`${dir}/plugin.json 的 inject 必须是字符串数组`)
@@ -103,6 +158,18 @@ if (ids.length === 0) {
   process.exit(1)
 }
 
+// 元数据先全部读完再动手构建：缺 package.json / 区间写坏要立刻失败——不能先花一轮
+// vite 构建再报，更不能产出一份「宿主门禁会把自家内置插件拦掉」的清单。
+const metas = new Map()
+for (const id of ids) {
+  try {
+    metas.set(id, readMeta(join(srcDir, id)))
+  } catch (error) {
+    console.error(`[build-plugins] ${error instanceof Error ? error.message : String(error)}`)
+    process.exit(1)
+  }
+}
+
 // 先全部构建到暂存目录，最后一次性换上去：构建到一半失败时，旧产物与旧清单仍然完整，
 // 宿主不会看到「清单说有这个插件、目录里却已经空了」这种半截状态。
 rmSync(stageRoot, { recursive: true, force: true })
@@ -115,7 +182,7 @@ for (const id of ids) {
     root,
     logLevel: 'warn',
     plugins: [react()],
-    resolve: { alias: { '@dsc/ui': pluginApi, '@dsc/ui-core': uiCore } },
+    resolve: { alias },
     build: {
       outDir,
       emptyOutDir: true,
@@ -142,7 +209,7 @@ for (const id of ids) {
     `(globalThis.${FACTORY_GLOBAL} ??= {})[${JSON.stringify(id)}] = function (require, module, exports) {\n${code}};\n`,
     'utf8',
   )
-  const meta = readMeta(join(srcDir, id))
+  const meta = metas.get(id)
   const platforms = meta.platforms ?? ['web']
   delete meta.platforms
   // 载体无关的插件出两条清单行（同一份 client.js）；每行都带 platform，
@@ -155,10 +222,9 @@ for (const id of ids) {
 
 /** 宿主只读这份清单（见 `src/core/ui-bundles.ts`）。 */
 // 顶层 apiVersion = 插件面对的 `@dsc/ui` 契约版本（即本包的 version，1.0.0 起）。
-// 宿主按它做第三方插件的 semver 门禁；清单带着它也标记了「这是构建产物的内置清单」
-// （条目无需逐条声明 api）。升级纪律见 docs/plugin-development.md：删导出、改语义、
-// 改槽位 options 形状 = 主版本 +1；纯增量 = 次版本 +1。
-const shellVersion = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version
+// 宿主拿它对条目逐条做 semver 门禁：内置条目也带 api（各自 package.json 的 peer 区间，
+// 上面已用 satisfies 验过），第三方条目必须自带 api 区间。升级纪律见
+// docs/plugin-development.md：删导出、改语义、改槽位 options 形状 = 主版本 +1；纯增量 = 次版本 +1。
 writeFileSync(
   join(stageRoot, 'manifest.json'),
   `${JSON.stringify({ version: 1, apiVersion: shellVersion, plugins }, null, 2)}\n`,

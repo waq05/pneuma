@@ -1,0 +1,8 @@
+{
+  "name": "@dsc/ui-core",
+  "private": true,
+  "version": "1.1.0",
+  "type": "module",
+  "description": "插件版界面的共用核心（槽位 + 清单 + 原生桥规格）：宿主与界面壳同一份源码，故意不下发给插件。",
+  "types": "index.ts"
+}

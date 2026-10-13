@@ -2,8 +2,9 @@
  * 阶段 7a/7b 探针：`@dsc/ui` 契约版本门禁（宿主侧 semver 判定）。
  *
  * 验收口径：apiVersion 不匹配的插件**不进产物表**（自然不进启动图），problems 里
- * 有「插件要求 @dsc/ui …，当前壳 …，已跳过加载」这样的人话；内置清单（构建产物）
- * 条目与壳同源、无声明也放行；workspace:/非法区间直接拒并要求写具体区间。
+ * 有「插件要求 @dsc/ui …，当前壳 …，已跳过加载」这样的人话；内置清单的条目自 C1 起
+ * 逐条带 api（各自 package.json 的 peer 区间）且必须全部放行（零 problem）；旧清单里
+ * 没声明 api 的内置条目仍按「与壳同源」放行；workspace:/非法区间直接拒并要求写具体区间。
  *
  * 运行：pnpm build && pnpm -C ui-shell build && node scripts/ui-api-gate-test.mjs
  *
@@ -34,7 +35,13 @@ const shellVersion = JSON.parse(readFileSync(new URL('../ui-shell/package.json',
 check('内置清单带 apiVersion 且与壳包版本一致', builtin.apiVersion === shellVersion, `${String(builtin.apiVersion)} ≠ ${shellVersion}`)
 // 数量不钉死（演示插件已按拍板移除，内置清单会变）：零 problem、至少有一个即可。
 check('内置清单的全部插件都进了产物表', builtin.problems.length === 0 && builtin.entries.length > 0, `entries=${String(builtin.entries.length)} problems=${JSON.stringify(builtin.problems)}`)
-check('内置清单的条目不带 api 声明（与壳同源）', builtin.entries.every((entry) => entry.api === undefined))
+// C1 起内置条目也带 api（来自各自 package.json 的 peerDependencies）——「零 problem」已经
+// 意味着它们全被门禁放行；这条单钉「带 api」，别哪天又悄悄回到无声明、门禁形同虚设。
+check(
+  '内置清单的条目逐条带 api（package.json 的 @dsc/ui 区间）',
+  builtin.entries.every((entry) => typeof entry.api === 'string' && entry.api !== ''),
+  JSON.stringify(builtin.entries.map((entry) => [entry.id, entry.api])),
+)
 
 // ── 门禁函数逐条规则 ───────────────────────────────────────────────────────────
 check('区间满足 → 放行', evaluateUiApiGate('^1.0.0', '1.0.0') === null)

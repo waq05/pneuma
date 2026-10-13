@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
@@ -14,8 +16,17 @@ import { defineConfig } from 'vite'
 const rootDir = fileURLToPath(new URL('.', import.meta.url))
 const outDir = fileURLToPath(new URL('../lib/ui/assets', import.meta.url))
 
-/** 共用核心（槽位 + 清单）挂在 @dsc/ui-core 上：宿主与界面壳同一份源码。 */
-const uiCore = fileURLToPath(new URL('../src/ui/index.ts', import.meta.url))
+/**
+ * 包名 → 源码落点：单一事实源是 `packages.json`（`build-plugins.mjs` 同读，`tsconfig` 的
+ * paths 手抄一份、漂移由 `scripts/ui-plugin-test.mjs` 钉住）。为什么不再各写一份 alias：
+ * 多一个包就多一处会漏改的地方，而漏改的表现是运行期解析出两份实现（hooks 直接崩）。
+ */
+const packages: Record<string, string> = JSON.parse(
+  readFileSync(fileURLToPath(new URL('packages.json', import.meta.url)), 'utf8'),
+)
+const alias = Object.fromEntries(
+  Object.entries(packages).map(([name, rel]) => [name, resolve(rootDir, rel)]),
+)
 
 /** 本地 dev 时把 /api 与 /plugins 转发给宿主（默认端口由 webserver 插件分配，可用环境变量指）。 */
 const devOrigin = process.env.DSC_UI_ORIGIN ?? 'http://127.0.0.1:17322'
@@ -27,7 +38,7 @@ export default defineConfig({
   base: './',
   plugins: [react()],
   resolve: {
-    alias: { '@dsc/ui-core': uiCore },
+    alias,
     // pnpm workspace 下 ui-shell 有自己的一份 react 物理副本，而 @dsc/ui-core（../src/ui）
     // 解析到根仓库的那份——两份 React 的 dispatcher 互不相通，渲染期直接白屏
     // （Cannot read properties of null (reading 'useCallback')）。dedupe 把全图钉到根那份。

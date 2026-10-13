@@ -1,0 +1,9 @@
+{
+  "name": "@dsc/ui-preview",
+  "private": true,
+  "version": "1.1.0",
+  "type": "module",
+  "peerDependencies": {
+    "@dsc/ui": "^1.1.0"
+  }
+}

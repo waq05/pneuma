@@ -63,6 +63,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^5.0.0
         version: 5.2.0(vite@7.3.7(@types/node@24.19.2))
+      semver:
+        specifier: ^7.8.5
+        version: 7.8.5
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
@@ -1028,6 +1031,11 @@ packages:
 
   semver@6.3.1:
     resolution: {integrity: sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==}
+    hasBin: true
+
+  semver@7.8.5:
+    resolution: {integrity: sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA==}
+    engines: {node: '>=10'}
     hasBin: true
 
   shiki@4.5.0:
@@ -2276,6 +2284,8 @@ snapshots:
   scheduler@0.28.0: {}
 
   semver@6.3.1: {}
+
+  semver@7.8.5: {}
 
   shiki@4.5.0:
     dependencies:
