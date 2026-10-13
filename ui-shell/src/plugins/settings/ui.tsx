@@ -247,6 +247,9 @@ function SettingsPanel(): ReactNode {
                 <NotYetPanel section={section} />
               )
             ) : (
+              // 权限那几项（permissionPreset / policy / reviewer）在宿主侧就是普通 select 字段
+              // （见 `src/plugins/settings.ts` 的 general 分区），走这套通用渲染即可，
+              // 壳不为它们开特例——所以这一版设置页对新权限契约无改动。
               <GenericFields
                 key={section.id}
                 section={section}

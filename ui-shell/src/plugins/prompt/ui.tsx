@@ -244,12 +244,16 @@ const RISK: Readonly<Record<ApprovalRequestView['risk'], { label: string; tone: 
   critical: { label: '极高风险', tone: 'high' },
 }
 
-/** 档位兜底名：旧界面写死的那一份（宿主档位表查不到时用它）。 */
+/**
+ * 档位兜底名：旧界面写死的那一份（宿主档位表查不到时用它）。
+ *
+ * 只有三档——「AI 复核」上一版是第四档，现在拆成了正交的一根轴（审阅者 `reviewer`），
+ * 不在这张表里；这张表只管「自动放行集」那三档，缺了会编译期报错。
+ */
 const POLICY_TEXT: Readonly<Record<ApprovalPolicy, string>> = {
   readonly: '仅查看',
   'auto-edit': '工作区自动',
   'full-access': '完全访问',
-  'ai-review': 'AI 审查',
 }
 const MODE_TEXT: Readonly<Record<CollaborationMode, string>> = {
   build: '执行',
@@ -302,10 +306,13 @@ function readModeLine(snapshot: HostSnapshot | null): string {
   const mode = modeSurface(snapshot)
   const policyName =
     (policy === null ? null : optionLabel(policy.options, request.policy)) ??
-    fixedText(POLICY_TEXT, request.policy, 'AI 审查')
+    fixedText(POLICY_TEXT, request.policy, '未知档位')
+  // 审阅者与档位同一个口径：取请求里的那一份、名字优先用宿主表里的 label。
+  // 它是本版拆出来的正交轴（谁在裁要问的事），卡上不写会让用户以为「谁问」就等于「谁裁」。
+  const reviewerName = optionLabel(policy?.reviewerOptions ?? [], request.reviewer) ?? (request.reviewer === 'auto-review' ? 'AI 复核' : '本人审阅')
   const modeName =
     (mode === null ? null : optionLabel(mode.options, request.mode)) ?? fixedText(MODE_TEXT, request.mode, '执行')
-  return `权限 ${policyName} · 模式 ${modeName}`
+  return `权限 ${policyName} · 审阅 ${reviewerName} · 模式 ${modeName}`
 }
 
 /**
@@ -441,6 +448,14 @@ const ApprovalCard = memo(function ApprovalCard({ request }: { request: Approval
         <span className="approval-mode">{modeLine}</span>
       </div>
       <div className="approval-args">{request.argsSummary}</div>
+      {request.escalation === undefined ? null : (
+        <div className="approval-escalation" data-approval-escalation="">
+          <div className="approval-escalation-line">
+            {`模型请求放宽沙箱：${request.escalation.effect}${request.escalation.scope === 'session' ? '（它想要本会话一直放宽）' : ''}`}
+          </div>
+          <div className="approval-escalation-why">{`理由：${request.escalation.justification}`}</div>
+        </div>
+      )}
       {owner === null || owner === '' ? null : <div className="approval-owner">来自会话「{owner}」</div>}
       {request.diff === undefined ? null : (
         <div className="approval-diff">

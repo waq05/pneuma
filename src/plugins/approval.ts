@@ -6,7 +6,8 @@
  *   2. 路径护栏 —— 说明书类文件（AGENTS.md、dsc 配置）必须当面确认一次，不许任何自动档代劳；
  *   3. 命令策略 —— 用户前缀规则 + 内置危险模式（`~/.dsc/policy.rules`）；
  *   4. 已给授权 —— 本会话内的同类授权（按会话 id 键控，切会话即失效）；
- *   5. 权限模式 —— readonly / auto-edit / full-access / ai-review 的自动裁决；
+ *   5. 权限模式 —— readonly / auto-edit / full-access 的自动放行集；
+ *   5.5 审阅者   —— user / auto-review：要问的事先给谁看（复核跑在自动放行**之前**）；
  *   6. 人工审批卡 —— 四档决定（这次允许 / 本会话允许 / 永久允许 / 拒绝），超时按拒处理。
  *
  * 两个前置判断插在中间：命中灾难地板白名单的命令免卡放行（地板自己不 return pass，
@@ -31,11 +32,12 @@ import type { Plugin } from '@deepseek-ai/cordis'
 import type { ApprovalDecision, ApprovalRequest } from '../core/approval.js'
 import { argsSummary, callFacts, stripBaseline } from '../core/tools.js'
 import { summarizeChange } from '../core/tools/fs-tools.js'
+import { SANDBOX_PERMISSION_EFFECT, readSandboxRequest } from '../core/tools/sandbox-args.js'
 import { REJECTED_TOOL_TEXT } from '../core/session.js'
 import { resolvePluginConfig } from '../core/plugin-registry.js'
 import { toolApprovalGuard, type ToolObserver } from '../core/tool-guards.js'
 import type { ApprovalPolicy, ApprovalRequestView, ApprovalService } from '../services/types.js'
-import type { ApprovalAnswer, ApprovalDiffView, CollaborationMode, PolicySurface, TierOption } from '../contract.js'
+import type { ApprovalAnswer, ApprovalDiffView, ApprovalEscalationView, ApprovalReviewer, CollaborationMode, PolicySurface, TierOption } from '../contract.js'
 import { activeRules, appendRule, classifyCommand, reloadActiveRules } from '../core/command-policy.js'
 import { isInsideCwd, isProtectedInstruction, writeHardBlockReason } from '../core/path-policy.js'
 import { audit } from '../core/audit.js'
@@ -58,13 +60,37 @@ function readTimeout(passed: unknown): number {
   return Math.min(Math.max(Math.round(num), 10_000), 3_600_000)
 }
 
-/** 权限模式四档的界面文案（界面画档位按钮时读这份，不再自己抄一份）。 */
+/** 权限模式三档的界面文案（界面画档位按钮时读这份，不再自己抄一份）。 */
 const POLICY_OPTIONS: ReadonlyArray<TierOption<ApprovalPolicy>> = [
   { id: 'readonly', label: '仅查看', hint: '只读模式：读类操作放行，写/执行类一律拒绝' },
   { id: 'auto-edit', label: '自动编辑', hint: '工作区内写操作自动放行，其余需审批' },
   { id: 'full-access', label: '完全访问', hint: '全部工具自动放行，谨慎使用' },
-  { id: 'ai-review', label: 'AI 审查', hint: '由模型逐次判断是否放行，失败回退人工审批' },
 ]
+
+/**
+ * 审阅者两档的界面文案。这一轴与权限模式正交（参考实现的 `approvals_reviewer`）：
+ * 档位决定「哪些事要问」，审阅者决定「要问的事先给谁看」。
+ */
+const REVIEWER_OPTIONS: ReadonlyArray<TierOption<ApprovalReviewer>> = [
+  { id: 'user', label: '本人审阅', hint: '要问的事弹审批卡，等你点' },
+  {
+    id: 'auto-review',
+    label: 'AI 复核',
+    hint: '要问的事先给模型判官看：判放行就直接过，判高风险或判不出来再落回你的审批卡',
+  },
+]
+
+/** 权限模式的中文长说法（通知、审计与设置回执共用一份，免得三处各写一套）。 */
+function policyLabel(policy: ApprovalPolicy): string {
+  switch (policy) {
+    case 'readonly':
+      return '仅查看（读类操作放行，写/执行类一律拒绝）'
+    case 'auto-edit':
+      return '工作区自动编辑（工作区内写操作自动放行，其余审批）'
+    default:
+      return '完全访问（全部工具自动放行，灾难性命令仍然拒）'
+  }
+}
 
 /** 写类工具里「目标在工作区内就能自动放行」的那几个。 */
 const PATH_WRITE_TOOLS = new Set(['write', 'edit'])
@@ -146,6 +172,11 @@ export const approvalPlugin: Plugin.Object = {
   provide: 'approval',
   apply(ctx, passed) {
     let policy: ApprovalPolicy = 'auto-edit'
+    /**
+     * 「要问的事先给谁看」——与权限模式正交的一根轴。
+     * `user` = 弹卡等用户点（出厂默认）；`auto-review` = 先给模型判官，判不出来再落人工卡。
+     */
+    let reviewer: ApprovalReviewer = 'user'
     // 每次弹卡现读：改了等待时限不必重启宿主，下一张卡就用新值。
     const timeoutMs = (): number => readTimeout(passed)
     /**
@@ -168,6 +199,8 @@ export const approvalPlugin: Plugin.Object = {
       source?: 'app' | 'web'
       /** 这张卡属于哪个会话：授权记账、审计与侧栏状态点都按它归属。 */
       sessionId: string
+      /** 答「本会话允许」时要并进本会话可写根的路径；null = 这张卡不带沙箱放宽。 */
+      sandboxSessionRoot: string | null
       sessionPath: string
     }
     /** 卡 id → 卡。插入序 = 弹卡序；界面取最老的一张展示。 */
@@ -229,6 +262,14 @@ export const approvalPlugin: Plugin.Object = {
         hardline: boolean
         /** write/edit 的「将做的改动」；算不出来时 null，卡上就不画。 */
         diff: ApprovalDiffView | null
+        /** 模型这次在请求放宽沙箱（走填参数那条路）；没请求就是 null。 */
+        escalation: ApprovalEscalationView | null
+        /**
+         * 「本会话允许」要并进这个会话可写根的绝对路径；null = 这张卡不给 session 档。
+         * 为什么只有写类工具能给：命令类调用的写目标静态界定不出来，
+         * 给它 session 档等于把一个无法界定的边界永久放宽——宁可不给。
+         */
+        sandboxSessionRoot: string | null
       },
     ): Promise<ApprovalDecision> =>
       new Promise<ApprovalDecision>((resolveDone) => {
@@ -249,7 +290,9 @@ export const approvalPlugin: Plugin.Object = {
           suggestedRule: input.suggestedRule,
           hardline: input.hardline,
           scopes: input.scopes,
+          ...(input.escalation === null ? {} : { escalation: input.escalation }),
           policy,
+          reviewer,
           mode: modeForCard,
           // 发起会话归属（0.6.49）：卡片是全局渲染的，后台会话的卡弹出来时界面要标得清是谁家的
           sessionPath: pathOf(request),
@@ -296,7 +339,16 @@ export const approvalPlugin: Plugin.Object = {
           resolveDone(decision)
         }
         const timer = setTimeout(() => done('reject', 'timeout'), timeoutMs())
-        pendings.set(id, { view, grantKey: input.grantKey, suggestedRule: input.suggestedRule, done, timer, sessionId: sid, sessionPath: pathOf(request) })
+        pendings.set(id, {
+          view,
+          grantKey: input.grantKey,
+          suggestedRule: input.suggestedRule,
+          done,
+          timer,
+          sessionId: sid,
+          sessionPath: pathOf(request),
+          sandboxSessionRoot: input.sandboxSessionRoot,
+        })
         ctx.emit('dsc/changed')
         // 后台会话的卡也要让侧栏状态点亮起来（当前查看会话的状态走 turnState，转录层会忽略同路径）
         ctx.emit('dsc/agent-status', { sessionId: sid, path: pathOf(request), state: 'awaiting-approval' })
@@ -387,21 +439,31 @@ export const approvalPlugin: Plugin.Object = {
 
       setPolicy(next) {
         policy = next
-        const label =
-          next === 'readonly'
-            ? '仅查看（读类操作放行，写/执行类一律拒绝）'
-            : next === 'auto-edit'
-              ? '工作区自动编辑（工作区内写操作自动放行，其余审批）'
-              : next === 'full-access'
-                ? '完全访问（全部工具自动放行，灾难性命令仍然拒）'
-                : 'AI 自动审查（由模型逐次判断，判到高风险回退人工审批）'
         // dsc/notice → transcript 写 system 条目（避免与 transcript 的循环依赖）
-        ctx.emit('dsc/notice', `权限模式切换为「${label}」`)
+        ctx.emit('dsc/notice', `权限模式切换为「${policyLabel(next)}」`)
         audit({
           ts: Date.now(),
           kind: 'mode-change',
           reason: `权限模式 → ${next}`,
           policy: next,
+          mode: modeForCard,
+          sessionId: sessionId(),
+        })
+      },
+
+      get reviewer() {
+        return reviewer
+      },
+
+      setReviewer(next) {
+        reviewer = next
+        const label = REVIEWER_OPTIONS.find((item) => item.id === next)?.label ?? next
+        ctx.emit('dsc/notice', `审批审阅者切换为「${label}」${next === 'auto-review' ? '：要问的事先给模型判官，判不出来仍会问你' : ''}`)
+        audit({
+          ts: Date.now(),
+          kind: 'mode-change',
+          reason: `审批审阅者 → ${next}`,
+          policy,
           mode: modeForCard,
           sessionId: sessionId(),
         })
@@ -416,6 +478,23 @@ export const approvalPlugin: Plugin.Object = {
         const command = facts.command ?? null
         const insideCwd = target !== null && isInsideCwd(cwd, target)
         const verdict = command === null ? null : classifyCommand(command, { rules: activeRules() })
+        // 模型这次有没有在请求放宽沙箱（工具参数那条路）。有就摊到卡上，并据此收窄授权档位。
+        const request0 = readSandboxRequest(request.args ?? {})
+        const escalation: ApprovalEscalationView | null =
+          request0.kind === 'ok'
+            ? {
+                permission: request0.permission,
+                scope: request0.scope,
+                justification: request0.justification,
+                effect: SANDBOX_PERMISSION_EFFECT[request0.permission],
+              }
+            : null
+        // 「本会话允许」要并进可写根的那个路径：只有「留在沙箱内放宽写边界 + 写类工具 + 认得出目标」
+        // 三者同时成立才给——命令类没有能静态界定的目标，给它 session 档等于永久放宽一个说不清的边界。
+        const sandboxSessionRoot =
+          escalation !== null && escalation.permission === 'workspace-write' && target !== null && PATH_WRITE_TOOLS.has(request.toolName)
+            ? target
+            : null
 
         // 第 1 层：硬地板。灾难性命令与关键系统路径，任何模式都拒，连卡都不弹。
         if (target !== null) {
@@ -494,27 +573,40 @@ export const approvalPlugin: Plugin.Object = {
               return 'allow-once'
             }
           }
-          if (policy === 'ai-review') {
-            const verdict2 = await aiReview(request, signal)
-            if (verdict2 !== null) {
-              autoLog('auto-allow', request, 'AI 审查放行')
-              return verdict2
-            }
+        }
+
+        // 第 5.5 层：审阅者。`auto-review` 时**每一次走到这里的事**都先给模型判官看一眼
+        // ——这一步排在档位自动放行**之前**（等价于参考实现的 `strict_auto_review`），
+        // 所以「完全访问 + AI 复核」就是旧版的「AI 审查」档：谁也不自动放行，全过模型。
+        // 判 allow 直接过；判高风险或判不出来（含网络/超时/解析失败）落回第 6 层人工卡。
+        if (reviewer === 'auto-review' && protectedWhy === null && forced === '') {
+          const reviewed = await aiReview(request, signal)
+          if (reviewed !== null) {
+            autoLog('auto-allow', request, 'AI 复核放行')
+            return reviewed
           }
         }
 
         // 第 6 层：人工审批卡。钩子要求确认时卡片上的原因就用它，用户才知道这张卡为什么非弹不可。
         const reason =
-          forced !== ''
-            ? forced
-            : protectedWhy !== null
-              ? protectedWhy
-              : (verdict?.reason ?? (insideCwd ? '工作区内的改动需要确认' : '工作区外的改动需要确认'))
+          escalation !== null
+            ? `模型请求放宽沙箱（${escalation.effect}）：${escalation.justification}`
+            : forced !== ''
+              ? forced
+              : protectedWhy !== null
+                ? protectedWhy
+                : (verdict?.reason ?? (insideCwd ? '工作区内的改动需要确认' : '工作区外的改动需要确认'))
         const risk: RiskLevel =
           protectedWhy !== null ? 'high' : forced !== '' ? 'medium' : verdict?.decision === 'ask' ? 'medium' : insideCwd ? 'low' : 'medium'
         const scopes: GrantScope[] = ['once']
-        if (protectedWhy === null) scopes.push('session')
-        if (suggested !== null && protectedWhy === null) scopes.push('always')
+        if (escalation === null) {
+          if (protectedWhy === null) scopes.push('session')
+          if (suggested !== null && protectedWhy === null) scopes.push('always')
+        } else if (sandboxSessionRoot !== null) {
+          // 升权卡只给「这次允许 / 本会话允许」：这里没有可持久化的前缀规则（always 不适用），
+          // 而「出沙箱」那一档连 session 都不给——跨调用的无围栏状态没人能替用户担保。
+          scopes.push('session')
+        }
         // 弹卡前把「将做的改动」算好随视图下发（write/edit 才有；一次读盘 + LCS，
         // 只有真要等人点卡的时刻才付这个成本）。
         const diff = await approvalDiffOf(request)
@@ -526,11 +618,18 @@ export const approvalPlugin: Plugin.Object = {
           grantKey: key,
           hardline: false,
           diff,
+          escalation,
+          sandboxSessionRoot,
         })
       },
 
       surface(): PolicySurface {
-        return { current: policy, options: [...POLICY_OPTIONS] }
+        return {
+          current: policy,
+          options: [...POLICY_OPTIONS],
+          reviewer,
+          reviewerOptions: [...REVIEWER_OPTIONS],
+        }
       },
 
       pendingView() {
@@ -582,6 +681,11 @@ export const approvalPlugin: Plugin.Object = {
           const grants = sessionGrants.get(current.sessionId) ?? new Set<string>()
           grants.add(current.grantKey)
           sessionGrants.set(current.sessionId, grants)
+          // 这张卡带着沙箱放宽（模型走了 sandbox_permissions 那条路）时，把目标路径
+          // 并进**这个会话**的可写根：不然「本会话允许」只免了问，写还是被沙箱当场拦。
+          if (current.sandboxSessionRoot !== null) {
+            ctx.get('sandbox')?.grantSession(current.sessionPath, [current.sandboxSessionRoot])
+          }
           finish('allow-session')
           return
         }

@@ -92,8 +92,11 @@ for (const name of FORBIDDEN) {
 /**
  * 白名单的每一项都必须是"既定动作 + 实参枚举"，所以操作名的**第一个词**只能是
  * 这批动作动词之一；冒出一个没见过的动词（`exec…` / `spawn…` / `write…`）当场红。
+ * 0.6.68 新增 `usePermissionPreset`（应用一个打包权限预设）——`use` 同样是既定动作
+ * （照 codex 的 `use` 口径），补进来；同批的 `setReviewer` / `setDefaultPermissionPreset`
+ * 第一词是既有的 `set`，不用加。
  */
-const ACTION_VERBS = ['set', 'save', 'choose', 'switch', 'recent', 'remove', 'open', 'install', 'session', 'notify', 'restart', 'quit', 'terminal', 'dock', 'browser']
+const ACTION_VERBS = ['set', 'use', 'save', 'choose', 'switch', 'recent', 'remove', 'open', 'install', 'session', 'notify', 'restart', 'quit', 'terminal', 'dock', 'browser']
 const oddVerbs = NATIVE_OPS.filter(
   (op) => !ACTION_VERBS.some((verb) => op.toLowerCase().startsWith(verb)),
 )

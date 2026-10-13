@@ -127,6 +127,9 @@ export const UI_METHODS = [
   'savePreset',
   'removePreset',
   'setDefaultPreset',
+  // 打包权限预设：读口（壳要画那颗旋钮）；写口（usePermissionPreset /
+  // setDefaultPermissionPreset）与 setPolicy 同一条理由排除，见 UI_EXCLUDED。
+  'listPermissionPresets',
   // 设置页
   'getSettingsSections',
   'getSectionValues',
@@ -155,6 +158,12 @@ export type UiMethod = (typeof UI_METHODS)[number]
 export const UI_EXCLUDED = [
   'runCommand',
   'setPolicy',
+  // 审阅者与打包权限预设改的同样是安全闸门本身（审阅者 = 谁来裁；预设 = 一次写
+  // 沙箱 + 权限模式 + 审阅者三个旋钮）。写口照旧开在原生桥
+  // （NATIVE_OPS.setReviewer / usePermissionPreset / setDefaultPermissionPreset）。
+  'setReviewer',
+  'usePermissionPreset',
+  'setDefaultPermissionPreset',
   'purgeSessions',
   'saveProvider',
   'removeProvider',
@@ -298,6 +307,8 @@ export const UI_ARG_SPECS: Readonly<Record<UiMethod, MethodSpec>> = {
   savePreset: [{ shape: { kind: 'json', maxBytes: MAX_PREF_JSON } }],
   removePreset: [{ shape: { kind: 'string', max: MAX_NAME } }],
   setDefaultPreset: [{ shape: { kind: 'string', max: MAX_NAME } }],
+  // ── 打包权限预设（只读口；三个写口在原生桥，见 UI_EXCLUDED）────────────────
+  listPermissionPresets: [],
   // ── 设置页 ────────────────────────────────────────────────────────────────
   getSettingsSections: [],
   getSectionValues: [{ shape: { kind: 'string', max: MAX_NAME } }],

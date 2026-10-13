@@ -34,6 +34,7 @@ import { hooksPlugin } from '../plugins/hooks.js'
 import { promptPlugin } from '../plugins/prompt.js'
 import { modePlugin } from '../plugins/mode.js'
 import { presetsPlugin } from '../plugins/presets.js'
+import { permissionPresetsPlugin } from '../plugins/permission-presets.js'
 import { ptcPlugin } from '../plugins/ptc.js'
 import { runtimeApiPlugin } from '../plugins/runtime-api.js'
 import { todoPlugin } from '../plugins/todo.js'
@@ -328,6 +329,9 @@ export async function createKernel(options: KernelOptions): Promise<Context> {
   // PTC 的 run_code 与创造模式的 runtime_api：两个都只在自己那一档模式下露面
   await root.plugin(ptcPlugin)
   await root.plugin(settingsPlugin, options.config)
+  // 打包权限预设：把沙箱 + 权限模式 + 审阅者捆成一颗按钮。
+  // 排在设置之后（要读偏好里那个默认预设并应用），也排在沙箱之后（要写它的档位）。
+  await root.plugin(permissionPresetsPlugin)
   // 安全钩子排在设置之后：它既要往设置里挂自己的分区，又要把闸门挂到守卫链上。
   await root.plugin(hooksPlugin)
   await root.plugin(compactPlugin)

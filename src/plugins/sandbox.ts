@@ -29,6 +29,7 @@
  * @module dsc/plugins/sandbox
  */
 import { mkdirSync } from 'node:fs'
+import { resolve } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import type { SettingsField, SettingsValues } from '../contract.js'
 import { DSC_HOME } from '../core/path-policy.js'
@@ -117,6 +118,11 @@ export const sandboxPlugin: Plugin.Object = {
     /** 强制执行等级与后端现状：探测/降级都会改它，系统提示与设置页都读它。 */
     let enforcement: SandboxEnforcement = 'partial'
     let backendDetail = '进程内策略围栏（默认后端，不依赖外部进程）'
+    /**
+     * 用户要的是外部隔离（docker / windows-token），但它没建起来、而配置又选了 fail-closed
+     * ——这时写与执行类一律拒（读照常）。`policy` 后端的 partial 是预期状态，不置这一位。
+     */
+    let degradedFailClosed = false
     /** 容器执行器的退订函数（换后端/停插件时要收回）。 */
     let offRunner: (() => void) | null = null
     /** 受限令牌后端的收尾（回收私有临时目录的能力 ACE）。 */
@@ -131,6 +137,7 @@ export const sandboxPlugin: Plugin.Object = {
 
     const currentCwd = (): string => ctx.session.current().meta.cwd
     const currentSessionId = (): string => ctx.session.current().meta.id
+    const currentSessionPath = (): string => ctx.session.current().filePath
 
     /**
      * 组一份当前策略快照：设置与会话状态都现读，所以设置页改完立刻生效，不用重启宿主。
@@ -140,9 +147,22 @@ export const sandboxPlugin: Plugin.Object = {
      *   第二参）。为什么不直接用会话 cwd：可写根随「这次调用」走，同进程里可能同时有
      *   多个工作目录在跑；调用方给哪个目录，就按哪个目录算根。
      */
-    const snapshot = (cwdOverride?: string): { config: SandboxConfig; policy: SandboxPolicy; problems: string[] } => {
+    /**
+     * 本会话被用户逐次点头放宽出来的可写根：会话 jsonl 路径 → 绝对路径数组。
+     *
+     * 只有**审批卡上点「本会话允许」**这一条路能往里写（`grantSession`），
+     * 而卡上给不给这个选项由审批层判（写类工具才有，命令类没有——命令的写目标静态界定不出来）。
+     * 键是会话路径：一个会话放宽了，别的会话照旧被拦。
+     */
+    const sessionRoots = new Map<string, string[]>()
+
+    const snapshot = (
+      cwdOverride?: string,
+      sessionPath?: string,
+    ): { config: SandboxConfig; policy: SandboxPolicy; problems: string[] } => {
       const { config, problems } = readConfig()
       const cwd = cwdOverride ?? currentCwd()
+      const granted = sessionPath === undefined ? [] : (sessionRoots.get(sessionPath) ?? [])
       const tmpDir = sandboxTmpDir(DSC_HOME, cwd, currentSessionId())
       try {
         mkdirSync(tmpDir, { recursive: true })
@@ -153,7 +173,7 @@ export const sandboxPlugin: Plugin.Object = {
         mode: config.mode,
         cwd,
         tmpDir,
-        extraWritableRoots: config.extraWritableRoots,
+        extraWritableRoots: [...config.extraWritableRoots, ...granted],
         readOnlySubpaths: config.readOnlySubpaths,
         dscHome: DSC_HOME,
         networkAccess: config.networkAccess,
@@ -213,11 +233,24 @@ export const sandboxPlugin: Plugin.Object = {
       decide(input) {
         // 按这次调用的工作目录算可写根：input.cwd 就是循环传进来的会话目录，
         // 显式优先于会话状态，同进程多工作目录时才不会拿错根。
-        const { config, policy } = snapshot(input.cwd)
+        const { config, policy } = snapshot(input.cwd, input.sessionPath)
         // 不设围栏的档位：整档交出去（审批与权限模式照常管）
         if (config.mode === 'danger-full-access') return { action: 'defer' }
         // 读限制不在本插件职责内：内核 path-policy 已经管凭据读取，这里再拒一次只会给两条理由
         if (input.risk === 'read') return { action: 'defer' }
+
+        // 要的外部隔离没建起来 + 配置选了 fail-closed：写与执行类直接拒（读在上面已经放行）。
+        // 这一条排在升权解析之前——升权是「放宽沙箱」，而此刻**沙箱本身不在**，
+        // 放宽一个不存在的围栏没有意义，只会让人以为有隔离。（dsh 对 partial 的保守姿态。）
+        if (degradedFailClosed) {
+          const verdict: FenceVerdict = {
+            allowed: false,
+            rule: 'backend-unavailable',
+            why: '你要的隔离后端（docker / Windows 受限令牌）没建起来，配置又选了「建不起来就拒」',
+            how: '两条路：在「设置 → 沙箱」把后端换成策略围栏（进程内那个，接受 partial），或把「后端建不起来时」改回 degrade；也可以先修好后端（docker 起得来 / 提权 setup 成功）',
+          }
+          return refuse(config, policy, input.toolName, verdict)
+        }
 
         const request = readSandboxRequest(input.args)
         // 半截的升权请求一律拒：单独一个 sandbox_permissions（想偷偷放宽）
@@ -239,9 +272,28 @@ export const sandboxPlugin: Plugin.Object = {
               ? execVerdict(config, policy, input.command)
               : PASS
         if (verdict.allowed) return { action: 'defer' }
-        // 请求完整（成对）→ 交给审批卡照常问人：这正是「一次性」语义。
-        // 沙箱在这里不表态，等于把「越界」这件事摊在卡上让用户决定。
-        if (request.kind === 'ok') return { action: 'defer' }
+        // 请求完整（成对）→ 按**它要的那一档**办（两档在这里才真正分家）：
+        //   danger-full-access 这一次跳过沙箱判定（defer 出去，卡上还会让用户点）；
+        //   workspace-write    留在沙箱里，只把这一次的目标并进可写根**重判一遍**——
+        //                      网络开关、只读子路径、受保护路径照旧生效，所以它仍然可能被拒。
+        // 少了这一步，「留在沙箱内」与「整个出沙箱」就是同一件事（以前就是这样，两档是死的）。
+        if (request.kind === 'ok') {
+          if (request.permission === 'danger-full-access') return { action: 'defer' }
+          const widened =
+            input.risk === 'write' && input.target !== undefined
+              ? checkWrite({ ...policy, roots: [...policy.roots, resolve(input.target)] }, input.target)
+              : null
+          // 写目标认不出来（命令类）时没法「按更宽的边界重判」：只能整条 defer 出去，
+          // 由审批卡兜底——这一条在卡片说明里写明了。
+          if (widened === null) return { action: 'defer' }
+          if (widened.allowed) return { action: 'defer' }
+          return refuse(config, policy, input.toolName, {
+            allowed: false,
+            rule: widened.rule,
+            why: `${widened.reason}（模型请求的是「留在沙箱内放宽写边界」，可写根放宽到这一次的目标后**仍然**不合法）`,
+            how: legalWay(widened.rule),
+          })
+        }
         return refuse(config, policy, input.toolName, verdict)
       },
     }
@@ -279,6 +331,9 @@ export const sandboxPlugin: Plugin.Object = {
         lines.push('策略围栏拦得住 dsc 自己发起的工具调用，拦不住命令内部的任意写（脚本里的 fs.writeFile 这类）；要真隔离，请在「设置 → 沙箱」把后端换成 Windows 受限令牌（本机即可，无需 docker）或容器。')
       }
       lines.push('要写到可写根之外（例如另一个盘的项目目录），只能在这一次调用里同时给 sandbox_permissions 与 justification，且照常会弹审批卡让用户点。')
+      if (degradedFailClosed) {
+        lines.push('⚠ 你要的隔离后端没建起来，且配置选了「后端建不起来就拒」：写与执行类工具现在会被沙箱直接拒（读照常）。修法见「设置 → 沙箱」。')
+      }
       if (problems.length > 0) lines.push(`⚠ 沙箱配置有问题（已按默认值兜底）：${problems.join('；')}`)
       return lines.join('\n')
     }
@@ -300,6 +355,7 @@ export const sandboxPlugin: Plugin.Object = {
       offRunner = null
       offWinDispose?.()
       offWinDispose = null
+      degradedFailClosed = false
       const { config } = readConfig()
 
       if (config.mode === 'danger-full-access') {
@@ -319,7 +375,10 @@ export const sandboxPlugin: Plugin.Object = {
         const probe = probeWindowsToken()
         if (!probe.available) {
           enforcement = 'partial'
-          backendDetail = `Windows 受限令牌后端不可用，已降级为策略围栏：${probe.detail}`
+          degradedFailClosed = config.onUnavailable === 'fail-closed'
+          backendDetail = degradedFailClosed
+            ? `Windows 受限令牌后端不可用，且配置选了「后端建不起来就拒」：写与执行类工具一律拒（读照常）。${probe.detail}`
+            : `Windows 受限令牌后端不可用，已降级为策略围栏：${probe.detail}`
           ctx.transcript.system(`沙箱：${backendDetail}`)
           ctx.emit('dsc/changed')
           return backendDetail
@@ -357,8 +416,15 @@ export const sandboxPlugin: Plugin.Object = {
       if (disposed || mine !== generation) return '后端被再次切换，这次探测结果作废'
       if (!probe.available) {
         enforcement = 'partial'
-        backendDetail = `容器后端不可用，已降级为策略围栏：${probe.detail}`
-        ctx.transcript.system(`沙箱：选的容器后端用不了，已降级为策略围栏（强制执行 partial，照常执行 + 审批卡兜底）——${probe.detail}`)
+        degradedFailClosed = config.onUnavailable === 'fail-closed'
+        backendDetail = degradedFailClosed
+          ? `容器后端不可用，且配置选了「后端建不起来就拒」：写与执行类工具一律拒（读照常）——${probe.detail}`
+          : `容器后端不可用，已降级为策略围栏：${probe.detail}`
+        ctx.transcript.system(
+          degradedFailClosed
+            ? `沙箱：选的容器后端用不了，按配置 fail-closed 处理，写与执行类工具一律拒——${probe.detail}`
+            : `沙箱：选的容器后端用不了，已降级为策略围栏（强制执行 partial，照常执行 + 审批卡兜底）——${probe.detail}`,
+        )
         ctx.emit('dsc/changed')
         return backendDetail
       }
@@ -419,6 +485,13 @@ export const sandboxPlugin: Plugin.Object = {
       lines.push(`只读子路径（${String(policy.readOnlySubpaths.length)}）：${policy.readOnlySubpaths.length === 0 ? '无' : ''}`)
       for (const sub of policy.readOnlySubpaths) lines.push(`  ${sub}`)
       lines.push(`网络：${config.networkAccess ? '开' : '关'}｜出网白名单 ${String(config.networkAllowlist.length)} 项｜沙箱私有临时目录：${policy.tmpDir}`)
+      lines.push(`后端建不起来时：${config.onUnavailable}${degradedFailClosed ? '（当前正处在这个状态：写与执行类一律拒）' : ''}`)
+      // 本会话被「本会话允许」放宽出来的可写根：不列出来用户会以为自己的批次没生效（或以为放宽丢了）。
+      const granted = sessionRoots.get(currentSessionPath()) ?? []
+      if (granted.length > 0) {
+        lines.push(`本会话放宽出来的可写根（${String(granted.length)}）：`)
+        for (const root of granted) lines.push(`  ${root}`)
+      }
       if (process.platform === 'win32') lines.push(`网络第二级：${networkTier} —— ${networkTierDetail}`)
       lines.push('最近 3 次拒绝：')
       if (denials.length === 0) lines.push('  （还没有）')
@@ -445,6 +518,16 @@ export const sandboxPlugin: Plugin.Object = {
               { value: 'danger-full-access', label: '不设围栏（等同关掉沙箱）' },
             ],
             help: '默认档不挡正常的工作区读写与命令：只有越界写、受保护名与「网络关时的联网命令」会被拒。',
+          },
+          {
+            type: 'select',
+            key: 'onUnavailable',
+            label: '后端建不起来时',
+            options: [
+              { value: 'degrade', label: '降级为策略围栏（照常干，审批卡兜底）' },
+              { value: 'fail-closed', label: '拒绝：写与执行类一律拒（读照常）' },
+            ],
+            help: '只对 docker / windows-token 这两个「要真隔离」的后端生效：它们建不起来时按哪种姿态收场。策略围栏后端的 partial 是预期状态，不受这一项影响。',
           },
           {
             type: 'switch',
@@ -555,6 +638,7 @@ export const sandboxPlugin: Plugin.Object = {
           readOnlySubpaths: formatPathList(config.readOnlySubpaths),
           backend: config.backend,
           image: config.image,
+          onUnavailable: config.onUnavailable,
         }
       },
       async save(key, value): Promise<string | void> {
@@ -572,6 +656,12 @@ export const sandboxPlugin: Plugin.Object = {
             const { domains, bad } = parseAllowlistText(typeof value === 'string' ? value : String(value))
             if (bad.length > 0) return `白名单里有不像域名的项：${bad.join('；')}`
             writePluginConfig(SANDBOX_CONFIG_KEY, { networkAllowlist: domains })
+            break
+          }
+          case 'onUnavailable': {
+            const mode = String(value)
+            if (mode !== 'degrade' && mode !== 'fail-closed') return '「后端建不起来时」只能是 degrade（降级继续）或 fail-closed（写与执行一律拒）'
+            writePluginConfig(SANDBOX_CONFIG_KEY, { onUnavailable: mode })
             break
           }
           case 'extraWritableRoots':
@@ -658,6 +748,36 @@ export const sandboxPlugin: Plugin.Object = {
       describe(): string {
         const { config, policy } = snapshot()
         return `沙箱 ${config.mode}（强制执行 ${enforcement}）：${describePolicy(policy)}`
+      },
+      /**
+       * 切档位（打包权限预设的写入口；设置页那一格走的也是同一份写盘 + 重算）。
+       * 只写配置值并立刻广播，重算后端在后台跑——档位值当拍就对，强制等级下一拍跟上。
+       * @param next - 三档之一；写错当场抛错（预设表是常量，正常到不了这里）。
+       */
+      /**
+       * 记一条**本会话**的放宽：把几个绝对路径并进这个会话的可写根。
+       * 只有审批卡上「本会话允许」那一按会调它（调用方是 approval 插件）。
+       */
+      grantSession(sessionPath: string, roots: readonly string[]): void {
+        if (sessionPath === '' || roots.length === 0) return
+        const current = sessionRoots.get(sessionPath) ?? []
+        const merged = [...current]
+        for (const root of roots) if (root !== '' && !merged.includes(root)) merged.push(root)
+        sessionRoots.set(sessionPath, merged)
+      },
+      /** 读一个会话已经放宽出来的可写根（诊断与 `/sandbox` 用）。 */
+      sessionGrants(sessionPath: string): readonly string[] {
+        return sessionRoots.get(sessionPath) ?? []
+      },
+      setMode(next: SandboxMode): void {
+        if (!(SANDBOX_MODES as readonly string[]).includes(next)) {
+          throw new Error(`沙箱档位只能是 ${SANDBOX_MODES.join(' / ')}，收到「${next}」`)
+        }
+        writePluginConfig(SANDBOX_CONFIG_KEY, { mode: next })
+        ctx.emit('dsc/changed')
+        void refreshBackend().catch(() => {
+          // 重算失败维持现状：下一次工具调用会在 plan() 里自己降级并如实上报
+        })
       },
     }
     const offService = ctx.provide('sandbox', service)

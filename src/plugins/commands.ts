@@ -273,8 +273,11 @@ export const commandsPlugin: Plugin.Object = {
         }
       },
     )
-    // 权限模式的查看/切换：/policy 是本体，/permission 是 dsh 同名命令的别名
-    // （同一份 handler，前缀匹配与回执完全一致）。
+    // 权限那三根旋钮各有一个入口，分工照着参考实现来：
+    //   /permission  —— 打包预设（沙箱 + 权限模式 + 审阅者三合一的快捷档，dsh 同名命令的口径）；
+    //   /policy      —— 权限模式单档（细调；拼出非预设组合时预设读作「自定义」）；
+    //   /reviewer    —— 审阅者单轴（谁来裁要问的事）。
+    // 三根都写 system 条目告知模型与用户，都记审计（在各自的服务里）。
     const switchPolicy: CommandHandler = ({ args, runtime, ui }) => {
       const surface = runtime.getSnapshot().surfaces.policy
       const query = args[0]?.toLowerCase() ?? ''
@@ -302,18 +305,78 @@ export const commandsPlugin: Plugin.Object = {
     service.register(
       {
         name: 'policy',
-        args: '[readonly|auto-edit|full-access|ai-review]',
-        description: '查看或切换权限模式',
+        args: '[readonly|auto-edit|full-access]',
+        description: '查看或切换权限模式（自动放行集那一轴）',
       },
       switchPolicy,
     )
     service.register(
       {
-        name: 'permission',
-        args: '[readonly|auto-edit|full-access|ai-review]',
-        description: '查看或切换权限模式（/policy 别名）',
+        name: 'reviewer',
+        args: '[user|auto-review]',
+        description: '查看或切换审批审阅者（要问的事先给谁看）',
       },
-      switchPolicy,
+      ({ args, runtime, ui }) => {
+        const surface = runtime.getSnapshot().surfaces.policy
+        const query = args[0]?.toLowerCase() ?? ''
+        if (query === '') {
+          ui.notice(
+            [
+              `当前审阅者：${surface.reviewer}`,
+              ...surface.reviewerOptions.map((option) => `· ${option.id} — ${option.label}：${option.hint}`),
+              '用法：/reviewer <user|auto-review>',
+            ].join('\n'),
+          )
+          return
+        }
+        const matches = surface.reviewerOptions.filter((option) => option.id.startsWith(query))
+        if (matches.length !== 1) {
+          ui.notice(
+            matches.length === 0
+              ? `未知审阅者：${args[0]}（可选：${surface.reviewerOptions.map((option) => option.id).join(' / ')}）`
+              : `「${args[0]}」匹配到 ${matches.length} 个审阅者，请写全`,
+          )
+          return
+        }
+        runtime.setReviewer(matches[0].id)
+      },
+    )
+    service.register(
+      {
+        name: 'permission',
+        args: '[预设名]',
+        description: '查看或切换打包权限预设（沙箱 + 权限模式 + 审阅者三合一）',
+      },
+      ({ args, runtime, ui }) => {
+        const presets = runtime.getSnapshot().surfaces.permissionPresets
+        const query = args[0] ?? ''
+        if (query === '') {
+          ui.notice(
+            [
+              `当前权限预设：${presets.current}${presets.current === 'custom' ? '（三根旋钮的组合不匹配任何预设）' : ''}`,
+              ...presets.options.map((option) => `· ${option.name} — ${option.label}：${option.description}`),
+              '用法：/permission <预设名>（如 /permission full-access）；细调单档用 /policy、/reviewer',
+            ].join('\n'),
+          )
+          return
+        }
+        // 档位名被误当预设名时给一句能照着走的提示，别只说「认不出」
+        if (runtime.getSnapshot().surfaces.policy.options.some((option) => option.id === query.toLowerCase())) {
+          ui.notice(`「${query}」是权限档位不是预设：切档位用 /policy ${query}，切预设的名字见 /permission（不带参数）`)
+          return
+        }
+        const matches = presets.options.filter((option) => option.name.startsWith(query.toLowerCase()))
+        if (matches.length !== 1) {
+          ui.notice(
+            matches.length === 0
+              ? `未知权限预设：${query}（可选：${presets.options.map((option) => option.name).join(' / ')}）`
+              : `「${query}」匹配到 ${matches.length} 个预设，请写全`,
+          )
+          return
+        }
+        const result = runtime.usePermissionPreset(matches[0].name)
+        if (!result.ok) ui.notice(result.error)
+      },
     )
     service.register(
       { name: 'effort', args: '[default|off|low|high|max]', description: '查看或切换思考强度' },

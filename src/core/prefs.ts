@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { DEFAULT_STATUS_BAR_PREFS, normalizeStatusBarPrefs } from '../contract.js'
-import type { ApprovalPolicy, ArchivedFilter, EffortLevel, MarketSource, SessionGroupKey, SessionSortKey, ThemeMode, UiDensity, UiPrefsView, UiProcessFold } from '../contract.js'
+import type { ApprovalPolicy, ApprovalReviewer, ArchivedFilter, EffortLevel, MarketSource, SessionGroupKey, SessionSortKey, ThemeMode, UiDensity, UiPrefsView, UiProcessFold } from '../contract.js'
 import { isHttpUrl } from './remote/notify.js'
 import { dscPath } from './path-policy.js'
 
@@ -29,6 +29,16 @@ export const DEFAULT_MARKET_SOURCES: readonly MarketSource[] = [
 /** 界面层偏好。null = 未设置（保持内核默认，不覆盖）。 */
 export interface DscPrefs {
   defaultPolicy: ApprovalPolicy | null
+  /**
+   * 新会话默认的审阅者（`user` / `auto-review`）。null = 用内核默认（本人点卡）。
+   * 与 defaultPolicy 是两根独立的轴，可以只设其中一根。
+   */
+  defaultReviewer: ApprovalReviewer | null
+  /**
+   * 新会话默认的**打包权限预设**（沙箱 + 权限模式 + 审阅者三合一）。
+   * 空串 = 不按预设走，用上面两根各自的默认。写了不存在的名字时启动回落。
+   */
+  defaultPermissionPreset: string
   defaultEffort: EffortLevel | null
   /**
    * 新会话默认用哪个模式（`~/.dsc/presets/<名字>.md`）。
@@ -71,7 +81,14 @@ export const REMOTE_PORT_MIN = 1024
 export const REMOTE_PORT_MAX = 65535
 export const REMOTE_PORT_DEFAULT = 17321
 
-const POLICIES: readonly ApprovalPolicy[] = ['readonly', 'auto-edit', 'full-access', 'ai-review']
+const POLICIES: readonly ApprovalPolicy[] = ['readonly', 'auto-edit', 'full-access']
+const REVIEWERS: readonly ApprovalReviewer[] = ['user', 'auto-review']
+/**
+ * 旧档名 `ai-review` 的迁移：那一档的真实语义是「每一次调用都先给模型判官」
+ * （它既不自动放行工作区内写，也不跳过只读命令），在新模型里等价于
+ * 「完全访问 + AI 复核」（审阅者跑在自动放行之前）。这样老用户升级后行为不变。
+ */
+const LEGACY_AI_REVIEW = 'ai-review'
 const EFFORTS: readonly EffortLevel[] = ['default', 'off', 'low', 'high', 'max']
 const SESSION_SORTS: readonly SessionSortKey[] = ['manual', 'recent', 'created']
 const SESSION_GROUPS: readonly SessionGroupKey[] = ['workspace', 'tree', 'flat']
@@ -207,6 +224,8 @@ const PRESET_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/
 export function readPrefs(): DscPrefs {
   const prefs: DscPrefs = {
     defaultPolicy: null,
+    defaultReviewer: null,
+    defaultPermissionPreset: '',
     defaultEffort: null,
     defaultPreset: '',
     marketSources: [...DEFAULT_MARKET_SOURCES],
@@ -324,8 +343,20 @@ export function readPrefs(): DscPrefs {
       // 状态栏段显隐（0.6.62）：逐键白名单归一，缺键/坏键回落出厂默认。
       prefs.ui.statusBar = normalizeStatusBarPrefs(ui.statusBar)
     }
-    if (typeof doc.defaultPolicy === 'string' && POLICIES.includes(doc.defaultPolicy as ApprovalPolicy)) {
-      prefs.defaultPolicy = doc.defaultPolicy as ApprovalPolicy
+    // 权限档与审阅者：读两个键，兼容旧档名。旧 `ai-review` 落成
+    // 「完全访问 + AI 复核」（理由见 LEGACY_AI_REVIEW）；显式写了 reviewer 时以它为准。
+    const rawReviewer = typeof doc.defaultReviewer === 'string' ? doc.defaultReviewer : ''
+    if (doc.defaultPolicy === LEGACY_AI_REVIEW) {
+      prefs.defaultPolicy = 'full-access'
+      prefs.defaultReviewer = 'auto-review'
+    } else {
+      if (typeof doc.defaultPolicy === 'string' && POLICIES.includes(doc.defaultPolicy as ApprovalPolicy)) {
+        prefs.defaultPolicy = doc.defaultPolicy as ApprovalPolicy
+      }
+      if (REVIEWERS.includes(rawReviewer as ApprovalReviewer)) prefs.defaultReviewer = rawReviewer as ApprovalReviewer
+    }
+    if (typeof doc.defaultPermissionPreset === 'string' && PRESET_NAME.test(doc.defaultPermissionPreset.trim())) {
+      prefs.defaultPermissionPreset = doc.defaultPermissionPreset.trim()
     }
     if (typeof doc.defaultEffort === 'string' && EFFORTS.includes(doc.defaultEffort as EffortLevel)) {
       prefs.defaultEffort = doc.defaultEffort as EffortLevel

@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import type {
   ApprovalPolicy,
+  ApprovalReviewer,
   EffortLevel,
   ModelConfigView,
   ProviderDraft,
@@ -66,7 +67,11 @@ const POLICY_OPTIONS = [
   { value: 'readonly', label: '只读，编辑与命令都要批准' },
   { value: 'auto-edit', label: '自动编辑，命令仍要批准' },
   { value: 'full-access', label: '完全访问，不再询问' },
-  { value: 'ai-review', label: 'AI 审阅，不确定时再问' },
+]
+
+const REVIEWER_OPTIONS = [
+  { value: 'user', label: '本人审阅，弹卡等你点' },
+  { value: 'auto-review', label: 'AI 复核，不确定时再问你' },
 ]
 
 const EFFORT_OPTIONS = [
@@ -192,11 +197,21 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
     const general: SettingsSectionSpec = {
       id: 'general',
       title: '通用',
-      subtitle: '权限模式、思考强度与采样温度',
+      subtitle: '权限模式、审阅者、思考强度与采样温度',
       order: 0,
       fields(): SettingsField[] {
         return [
+          // 打包预设排在两个单旋钮之前：它是「一次定三个」的快捷方式，
+          // 下面的权限模式 / 审阅者 / 设置→沙箱的档位是逐格的细调（拼出非预设组合时上面读作「自定义」）。
+          {
+            type: 'select',
+            key: 'permissionPreset',
+            label: '权限预设',
+            options: ctx.get('permissionPresets')?.surface().options.map((item) => ({ value: item.name, label: item.label })) ?? [],
+            help: '沙箱 + 权限模式 + 审阅者三合一的快捷档；逐格改下面两项与沙箱档位会落到「自定义」',
+          },
           { type: 'select', key: 'policy', label: '权限模式', options: POLICY_OPTIONS, help: '工具执行前是否需要人工批准；改动同时存为下次启动的默认' },
+          { type: 'select', key: 'reviewer', label: '审阅者', options: REVIEWER_OPTIONS, help: '要问的事先给谁看：本人点卡，或先给模型判官（判不出来仍会问你）' },
           { type: 'select', key: 'effort', label: '思考强度', options: EFFORT_OPTIONS, help: '越高思考越深，耗时与用量也越大' },
           { type: 'select', key: 'temperature', label: '采样温度', options: TEMPERATURE_OPTIONS, help: '越高越发散，越低越稳定' },
           {
@@ -210,19 +225,33 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
       },
       values(): Values {
         return {
+          permissionPreset: ctx.get('permissionPresets')?.name ?? 'custom',
           policy: ctx.approval.policy,
+          reviewer: ctx.approval.reviewer,
           effort: ctx.llm.effort,
           temperature: config.temperature === undefined ? 'follow' : String(config.temperature),
           closeToTray: prefs.closeToTray,
         }
       },
       async save(key, value) {
+        if (key === 'permissionPreset') {
+          const presets = ctx.get('permissionPresets')
+          if (presets === undefined) throw new Error('打包权限预设服务不在（permission-presets 插件没挂）')
+          return { notice: presets.use(String(value)) }
+        }
         if (key === 'policy') {
           const policy = String(value) as ApprovalPolicy
           if (!POLICY_OPTIONS.some((option) => option.value === policy)) throw new Error(`未知的权限模式 ${value}`)
           ctx.approval.setPolicy(policy)
           savePrefs({ defaultPolicy: policy })
           return { notice: `权限模式已设为「${POLICY_OPTIONS.find((option) => option.value === policy)?.label ?? policy}」，下次启动沿用` }
+        }
+        if (key === 'reviewer') {
+          const reviewer = String(value) as ApprovalReviewer
+          if (!REVIEWER_OPTIONS.some((option) => option.value === reviewer)) throw new Error(`未知的审阅者 ${value}`)
+          ctx.approval.setReviewer(reviewer)
+          savePrefs({ defaultReviewer: reviewer })
+          return { notice: `审阅者已设为「${REVIEWER_OPTIONS.find((option) => option.value === reviewer)?.label ?? reviewer}」，下次启动沿用` }
         }
         if (key === 'effort') {
           const effort = String(value) as EffortLevel
@@ -540,6 +569,9 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
         if (patch.defaultPolicy !== undefined && patch.defaultPolicy !== null) {
           ctx.approval.setPolicy(next.defaultPolicy ?? 'readonly')
         }
+        if (patch.defaultReviewer !== undefined && patch.defaultReviewer !== null) {
+          ctx.approval.setReviewer(next.defaultReviewer ?? 'user')
+        }
         if (patch.defaultEffort !== undefined && patch.defaultEffort !== null) {
           ctx.llm.setEffort(next.defaultEffort ?? 'default')
         }
@@ -579,6 +611,13 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
         ctx.approval.setPolicy(prefs.defaultPolicy)
       } catch (error) {
         ctx.transcript.system(`默认权限模式没生效：${err(error)}`)
+      }
+    }
+    if (prefs.defaultReviewer !== null) {
+      try {
+        ctx.approval.setReviewer(prefs.defaultReviewer)
+      } catch (error) {
+        ctx.transcript.system(`默认审阅者没生效：${err(error)}`)
       }
     }
     if (prefs.defaultEffort !== null && prefs.defaultEffort !== 'default') {

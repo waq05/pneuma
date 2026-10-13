@@ -44,21 +44,25 @@ const check = (label, condition, extra = '') => {
 }
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-console.log('── spec 表：八个命令全部可补全 ──')
+console.log('── spec 表：九个命令全部可补全 ──')
 const specNames = new Set(allSpecs().map((spec) => spec.name))
-for (const name of ['fork', 'export', 'preset', 'thinking', 'skills', 'plugins', 'update', 'permission']) {
+for (const name of ['fork', 'export', 'preset', 'thinking', 'skills', 'plugins', 'update', 'policy', 'reviewer', 'permission']) {
   check(`/Command ${name} 在 spec 表里`, specNames.has(name))
 }
 const forkSpec = allSpecs().find((spec) => spec.name === 'fork')
 const updateSpec = allSpecs().find((spec) => spec.name === 'update')
 check('fork 与 update 声明 duringTask=deny', forkSpec?.duringTask === 'deny' && updateSpec?.duringTask === 'deny')
+// 0.6.68 起权限拆成三根旋钮三个入口：/policy（权限模式单档）、/reviewer（审阅者）、
+// /permission（打包预设）。三者各管一根，**permission 不再是 policy 的别名**（旧断言作废）。
+const policySpec = allSpecs().find((spec) => spec.name === 'policy')
+const reviewerSpec = allSpecs().find((spec) => spec.name === 'reviewer')
+const permissionSpec = allSpecs().find((spec) => spec.name === 'permission')
 check(
-  'permission 的 spec 与 policy 同参（别名）',
-  (() => {
-    const permission = allSpecs().find((spec) => spec.name === 'permission')
-    const policy = allSpecs().find((spec) => spec.name === 'policy')
-    return permission !== undefined && policy !== undefined && permission.args === policy.args
-  })(),
+  'policy / reviewer / permission 三个 spec 各管一根旋钮（permission 已不是 policy 别名）',
+  policySpec?.args === '[readonly|auto-edit|full-access]' &&
+    reviewerSpec?.args === '[user|auto-review]' &&
+    permissionSpec?.args === '[预设名]',
+  JSON.stringify([policySpec?.args, reviewerSpec?.args, permissionSpec?.args]),
 )
 
 /** 派发一条命令：收 notice 与回调命中的假 CommandContext。 */
@@ -167,34 +171,111 @@ console.log('── /plugins：清单走多行 notice ──')
   check('头部有总数', text.includes('已挂载插件（2 个）'))
 }
 
-console.log('── /permission：/policy 的别名（同一份 handler）──')
+console.log('── /policy 与 /reviewer：单档两根轴（三档 + 两位审阅者，前缀匹配）──')
+// 假 surface 照新契约形状补全：policy 带 reviewer / reviewerOptions（正交的审阅者轴），
+// 另有恒在场的 permissionPresets（打包预设投影）。缺了会读到 undefined 当场炸。
 const policySurface = {
-  current: 'readonly',
+  current: 'auto-edit',
   options: [
-    { id: 'readonly', label: '只读', hint: '只看不改' },
+    { id: 'readonly', label: '仅查看', hint: '只看不改' },
     { id: 'auto-edit', label: '自动编辑', hint: '文件自动放行' },
-    { id: 'full-access', label: '全权限', hint: '全部自动放行' },
-    { id: 'ai-review', label: 'AI 审查', hint: '改动先过审查' },
+    { id: 'full-access', label: '完全访问', hint: '全部自动放行' },
+  ],
+  reviewer: 'user',
+  reviewerOptions: [
+    { id: 'user', label: '本人审阅', hint: '弹审批卡等你点' },
+    { id: 'auto-review', label: 'AI 复核', hint: '先给模型判官看' },
+  ],
+}
+const presetSurface = {
+  current: 'custom',
+  defaultName: 'workspace',
+  options: [
+    { name: 'read-only', label: '只读', description: '写盘与执行一律拒', sandbox: 'read-only', policy: 'readonly', reviewer: 'user', builtin: true },
+    { name: 'workspace', label: '工作区可写', description: '区内自动放行', sandbox: 'workspace-write', policy: 'auto-edit', reviewer: 'user', builtin: true },
+    { name: 'full-access', label: '完全访问', description: '什么都不问', sandbox: 'danger-full-access', policy: 'full-access', reviewer: 'user', builtin: true },
+    { name: 'auto-review', label: 'AI 复核', description: '每个调用先过判官', sandbox: 'danger-full-access', policy: 'full-access', reviewer: 'auto-review', builtin: true },
   ],
 }
 const policyRuntime = (overrides = {}) => ({
-  getSnapshot: () => ({ status: { turnState: 'idle' }, surfaces: { policy: policySurface } }),
+  getSnapshot: () => ({ status: { turnState: 'idle' }, surfaces: { policy: policySurface, permissionPresets: presetSurface } }),
   setPolicy(policy) {
     policyRuntime.lastPolicy = policy
+  },
+  setReviewer(reviewer) {
+    policyRuntime.lastReviewer = reviewer
+  },
+  usePermissionPreset(name) {
+    policyRuntime.lastPreset = name
+    return { ok: true, notice: `权限预设切到「${name}」` }
   },
   ...overrides,
 })
 policyRuntime.lastPolicy = undefined
+policyRuntime.lastReviewer = undefined
+policyRuntime.lastPreset = undefined
 {
-  const bare = makeUi()
-  const alias = makeUi()
-  runCommand('/policy', policyRuntime(), bare.ui)
-  runCommand('/permission', policyRuntime(), alias.ui)
-  check('裸 /permission 与 /policy 输出逐字一致', bare.calls.notices[0] === alias.calls.notices[0], JSON.stringify(alias.calls.notices))
-  runCommand('/permission full', policyRuntime(), alias.ui)
-  check('/permission full 走前缀匹配切档', policyRuntime.lastPolicy === 'full-access', String(policyRuntime.lastPolicy))
-  runCommand('/permission nope', policyRuntime(), alias.ui)
-  check('未知档位报可选清单', (alias.calls.notices[1] ?? '').includes('未知权限档位'), JSON.stringify(alias.calls.notices))
+  const { ui, calls } = makeUi()
+  runCommand('/policy', policyRuntime(), ui)
+  check(
+    '裸 /policy 列出三档与当前档（四档的 ai-review 已删）',
+    (calls.notices[0] ?? '').includes('当前权限模式：auto-edit') &&
+      (calls.notices[0] ?? '').includes('readonly') &&
+      (calls.notices[0] ?? '').includes('full-access') &&
+      !(calls.notices[0] ?? '').includes('ai-review'),
+    JSON.stringify(calls.notices),
+  )
+  runCommand('/policy full', policyRuntime(), ui)
+  check('/policy full 前缀匹配切档', policyRuntime.lastPolicy === 'full-access', String(policyRuntime.lastPolicy))
+  runCommand('/policy nope', policyRuntime(), ui)
+  check('未知权限档位报可选清单', (calls.notices[1] ?? '').includes('未知权限档位'), JSON.stringify(calls.notices))
+}
+{
+  const { ui, calls } = makeUi()
+  runCommand('/reviewer', policyRuntime(), ui)
+  check(
+    '裸 /reviewer 列出两位审阅者与当前',
+    (calls.notices[0] ?? '').includes('当前审阅者：user') && (calls.notices[0] ?? '').includes('auto-review'),
+    JSON.stringify(calls.notices),
+  )
+  runCommand('/reviewer auto', policyRuntime(), ui)
+  check('/reviewer auto 前缀匹配切审阅者', policyRuntime.lastReviewer === 'auto-review', String(policyRuntime.lastReviewer))
+  runCommand('/reviewer nope', policyRuntime(), ui)
+  check('未知审阅者报可选清单', (calls.notices[1] ?? '').includes('未知审阅者'), JSON.stringify(calls.notices))
+}
+
+console.log('── /permission：打包预设选择器（不再是 /policy 的别名）──')
+{
+  const { ui, calls } = makeUi()
+  runCommand('/permission', policyRuntime(), ui)
+  const bareText = calls.notices[0] ?? ''
+  check(
+    '裸 /permission 列出当前预设（custom 带说明）与四个预设',
+    bareText.includes('当前权限预设：custom') &&
+      bareText.includes('三根旋钮的组合不匹配任何预设') &&
+      ['read-only', 'workspace', 'full-access', 'auto-review'].every((name) => bareText.includes(name)),
+    JSON.stringify(bareText),
+  )
+  runCommand('/permission full', policyRuntime(), ui)
+  check(
+    '/permission full 前缀匹配到 full-access 并调用 usePermissionPreset',
+    policyRuntime.lastPreset === 'full-access',
+    String(policyRuntime.lastPreset),
+  )
+  runCommand('/permission readonly', policyRuntime(), ui)
+  check(
+    '档位名被误当预设名时给出「这是档位不是预设」的指路提示',
+    (calls.notices[1] ?? '').includes('是权限档位不是预设') && (calls.notices[1] ?? '').includes('/policy readonly'),
+    JSON.stringify(calls.notices),
+  )
+  runCommand('/permission nope', policyRuntime(), ui)
+  check('未知预设报可选清单', (calls.notices[2] ?? '').includes('未知权限预设'), JSON.stringify(calls.notices))
+}
+{
+  // usePermissionPreset 失败（例如沙箱插件缺席时那一半没落地）要把错误照原话上屏
+  const failUi = makeUi()
+  runCommand('/permission auto-review', policyRuntime({ usePermissionPreset: () => ({ ok: false, error: '沙箱插件没开，danger-full-access 这一半没落地' }) }), failUi.ui)
+  check('usePermissionPreset 报错时把错误原话上屏', (failUi.calls.notices[0] ?? '').includes('没落地'), JSON.stringify(failUi.calls.notices))
 }
 
 console.log('── /update：假更新源（DSC_UPDATE_CHECK_URL 缝），只查不装 ──')

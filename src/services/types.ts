@@ -32,6 +32,7 @@ import type {
   ApprovalAnswer,
   ApprovalPolicy,
   ApprovalRequestView,
+  ApprovalReviewer,
   ArchivedPage,
   ArchivedSessionView,
   AskQuestionItem,
@@ -50,6 +51,7 @@ import type {
   ModeSurface,
   PlanDecision,
   PlanView,
+  PermissionPresetSurface,
   PolicySurface,
   PresetDraft,
   PresetFileView,
@@ -189,12 +191,16 @@ export interface SessionService {
 
 /** 审批服务：权限模式状态机（沙箱强制层）+ 工具执行的挂起 Promise ↔ UI 审批卡。 */
 export interface ApprovalService extends ApprovalHandler {
-  /** 当前权限模式。 */
+  /** 当前权限模式（决定自动放行集）。 */
   readonly policy: ApprovalPolicy
-  /** 权限模式投影（当前档 + 可切清单），界面画档位按钮的数据源。 */
+  /** 当前审阅者（决定「要问的事」先给谁看）。 */
+  readonly reviewer: ApprovalReviewer
+  /** 权限投影（当前档 + 可切清单 + 当前审阅者 + 可切清单），界面画按钮的数据源。 */
   surface(): PolicySurface
   /** 切换权限模式（写 system 条目告知模型与用户）。 */
   setPolicy(policy: ApprovalPolicy): void
+  /** 切换审阅者（同上；`auto-review` = 先给模型判官，判不出来仍会问人）。 */
+  setReviewer(reviewer: ApprovalReviewer): void
   /** 当前查看会话挂起的审批视图（0.6.50 起只给本会话的卡，后台会话的卡不跨界）；null = 无。 */
   pendingView(): ApprovalRequestView | null
   /** 这个会话现在有没有挂着审批卡（agent 切走时重发侧栏状态点用）。 */
@@ -286,6 +292,25 @@ export interface PresetService {
   /** 删掉一个自定义模式（内置四个删不掉），返回给用户看的一句话。 */
   remove(name: string): string
   /** 设为新会话默认模式，返回给用户看的一句话。 */
+  setDefault(name: string): string
+}
+
+/**
+ * 打包权限预设（把沙箱档位、权限模式、审阅者捆成一颗按钮）。
+ *
+ * 只做组合：写口只调 `sandbox.setMode` 与 `approval.setPolicy/setReviewer`，
+ * 自己不认识任何执行策略——所以「预设放宽不了安全」是结构上成立的。
+ */
+export interface PermissionPresetService {
+  /** 现在生效的预设名；三项拼不出预设时是 `custom`（推导状态，选不了）。 */
+  readonly name: string
+  /** 新会话默认的预设名。 */
+  readonly defaultName: string
+  /** 预设投影（当前 + 默认 + 全部可选），界面画那颗旋钮的数据源。 */
+  surface(): PermissionPresetSurface
+  /** 切到某个预设：只写实际不同的旋钮，返回给用户看的一句话；名字不存在就抛错。 */
+  use(name: string): string
+  /** 设为新会话默认预设（空串 = 清掉），返回给用户看的一句话。 */
   setDefault(name: string): string
 }
 
@@ -1011,8 +1036,11 @@ export interface ApprovalFloorService {
  *   read-only            只读：任何写盘与越界命令都拒；
  *   workspace-write      工作区可写：工作区 + 沙箱私有临时目录可写，越界拒（默认档）；
  *   danger-full-access   不设围栏（等同关掉沙箱）。
+ *
+ * 真源在 `contract.ts`（界面与宿主共用一份词汇），这里只转出去给宿主侧引用。
  */
-export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
+import type { SandboxMode } from '../contract.js'
+export type { SandboxMode }
 
 /**
  * 沙箱的强制执行等级——「说拦得住」和「真拦得住」是两件事，这个字段说的就是后者：
@@ -1058,6 +1086,18 @@ export interface SandboxService {
   canWrite(path: string, cwd?: string): SandboxCheck
   /** 当前策略的一句话摘要（系统提示与诊断用）。 */
   describe(): string
+  /**
+   * 切沙箱档位（写 `~/.dsc/plugins.json` 里沙箱那一项的 `mode`）。
+   * 打包权限预设与设置页的档位格走同一条写盘路径；非法档位当场抛错。
+   */
+  setMode(mode: SandboxMode): void
+  /**
+   * 记一条**本会话**的放宽：把几个绝对路径并进这个会话的可写根
+   * （审批卡上「本会话允许」那一按调它）。键是会话 jsonl 路径——一个会话放宽了不影响别的会话。
+   */
+  grantSession(sessionPath: string, roots: readonly string[]): void
+  /** 读一个会话已经放宽出来的可写根（诊断与 `/sandbox` 用）。 */
+  sessionGrants(sessionPath: string): readonly string[]
 }
 
 /**
@@ -1099,6 +1139,8 @@ declare module '@deepseek-ai/cordis' {
     mode: ModeService
     /** 模式（预设）：人格、工具目录与提示词的那根旋钮。 */
     presets: PresetService
+    /** 打包权限预设：沙箱 + 权限模式 + 审阅者三合一那颗旋钮。 */
+    permissionPresets: PermissionPresetService
     /** 任务清单（todo_write）。 */
     todo: TodoService
     /** 计划交付与评审卡（exit_plan_mode）。 */
@@ -1228,6 +1270,7 @@ export type {
   ApprovalAnswer,
   ApprovalPolicy,
   ApprovalRequestView,
+  ApprovalReviewer,
   ArchivedPage,
   ArchivedSessionView,
   DscRuntime,

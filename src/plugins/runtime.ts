@@ -32,6 +32,8 @@ export const runtimePlugin: Plugin.Object = {
     // 界面上那几块卡片的操作要落到各自的功能点：档位切换、清单、计划卡、提问卡、目标。
     'mode',
     'presets',
+    // 打包权限预设那颗旋钮（沙箱 + 权限模式 + 审阅者三合一）读它、切它。
+    'permissionPresets',
     'todo',
     'plan',
     'ask',
@@ -209,6 +211,23 @@ export const runtimePlugin: Plugin.Object = {
 
       setPolicy(policy) {
         ctx.approval.setPolicy(policy)
+      },
+
+      setReviewer(reviewer) {
+        ctx.approval.setReviewer(reviewer)
+      },
+
+      // ── 打包权限预设（沙箱 + 权限模式 + 审阅者）──
+      listPermissionPresets() {
+        return ctx.permissionPresets.surface()
+      },
+
+      usePermissionPreset(name) {
+        return mutateWith(() => ctx.permissionPresets.use(name))
+      },
+
+      setDefaultPermissionPreset(name) {
+        return mutateWith(() => ctx.permissionPresets.setDefault(name))
       },
 
       setMode(mode) {

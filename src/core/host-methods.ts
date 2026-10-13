@@ -49,6 +49,11 @@ export const INVOKABLE_METHODS = [
   'peekTranscript',
   'runCommand',
   'setPolicy',
+  // 权限的两根新轴与打包预设（0.6.68）：审阅者（谁来裁）+ 沙箱/权限/审阅者三合一的预设
+  'setReviewer',
+  'listPermissionPresets',
+  'usePermissionPreset',
+  'setDefaultPermissionPreset',
   'dock',
   'answerApproval',
   // 协作模式、任务清单、计划评审、目标、模型提问

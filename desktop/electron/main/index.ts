@@ -675,11 +675,28 @@ const NATIVE_HANDLERS: Readonly<Record<NativeOp, (args: readonly unknown[]) => u
    * 切权限模式：转给宿主的 approval 插件（与旧渲染层 `proxy.setPolicy` 同一个方法）。
    * 界面通道里这个方法持续排除（审批策略是安全闸门本身，见 `UI_EXCLUDED`），
    * 但旧桌面版的输入框本来就有这根能切的旋钮，所以写口按同一先例开在桥上。
-   * 四档枚举已过桥校验（`NATIVE_ARG_SPECS.setPolicy`）。
+   * 三档枚举已过桥校验（`NATIVE_ARG_SPECS.setPolicy`）。
    */
   setPolicy: ([policy]) => {
     if (protocol === null) throw new Error('宿主进程未运行')
     return protocol.invoke('setPolicy', [String(policy)])
+  },
+  /**
+   * 审阅者与打包权限预设：与 setPolicy 同一条理由开在桥上——改的都是安全闸门本身
+   * （谁来裁 / 一次写沙箱 + 权限模式 + 审阅者三个旋钮），界面通道持续排除。
+   * 三条都只是转发给宿主对应的写口，语义与校验在宿主那侧。
+   */
+  setReviewer: ([reviewer]) => {
+    if (protocol === null) throw new Error('宿主进程未运行')
+    return protocol.invoke('setReviewer', [String(reviewer)])
+  },
+  usePermissionPreset: ([name]) => {
+    if (protocol === null) throw new Error('宿主进程未运行')
+    return protocol.invoke('usePermissionPreset', [String(name)])
+  },
+  setDefaultPermissionPreset: ([name]) => {
+    if (protocol === null) throw new Error('宿主进程未运行')
+    return protocol.invoke('setDefaultPermissionPreset', [String(name)])
   },
   /**
    * 模型端点三件套：转给宿主的 settings 插件（与旧渲染层的直接 IPC 同一批方法）。

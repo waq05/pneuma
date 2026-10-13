@@ -29,14 +29,42 @@ export type Modality = 'text' | 'image' | 'video'
 export type EffortMap = Partial<Record<ThinkingLevel, string | null>>
 
 /**
- * 权限模式（工具执行的沙箱策略）：
- *   readonly     —— 仅查看：write/exec 类工具一律拒绝，不弹审批；
- *   auto-edit    —— 工作区自动编辑：目标在工作目录内的写工具自动放行，
- *                   其余（工作区外写入、exec 类）走人工审批卡；
- *   full-access  —— 完全访问：全部工具自动放行；
- *   ai-review    —— AI 自动审查：由模型逐次判断是否放行，失败回退人工审批。
+ * 权限模式——「问出来的那些事，怎么裁」。**只决定自动放行集**：
+ *   readonly     —— 仅查看：读类命令放行，write/exec 类一律拒绝（连卡都不弹）；
+ *   auto-edit    —— 工作区自动编辑：工作目录内的 write/edit 与只读命令自动放行，
+ *                   其余（工作区外写入、exec 类）成为「要问的事」；
+ *   full-access  —— 完全访问：全部工具自动放行（灾难地板仍拒）。
+ *
+ * 「要问的事」交给谁答，是**另一根轴**（{@link ApprovalReviewer}），不再混在这一档里：
+ * 上一版把「AI 审查」做成第四档，逼出的是四个互相排斥的选项——「只读 + AI 复核」
+ * 这种用户真实想要的组合根本表达不出来。codex 的 `approvals_reviewer` 与参考实现的
+ * `auto` 都是把「谁来审」抽出来的做法，这里跟齐。
  */
-export type ApprovalPolicy = 'readonly' | 'auto-edit' | 'full-access' | 'ai-review'
+export type ApprovalPolicy = 'readonly' | 'auto-edit' | 'full-access'
+
+/**
+ * 审批审阅者——「要问的事，先给谁看」：
+ *   user         —— 本人：弹审批卡等用户点（出厂默认）；
+ *   auto-review  —— AI 复核：先给模型判官看一眼，判 allow 就放行，判 deny 或判不出来
+ *                   再落回人工卡。复核**发生在自动放行之前**，所以「完全访问 + AI 复核」
+ *                   等价于旧版的「AI 审查」档（每一次调用都过模型，codex 的
+ *                   `strict_auto_review` 同义）。
+ *
+ * 与权限模式正交：任何一档都能配上这两位中的任何一位（只读档下没有事情可问，
+ * 复核者自然不会被问到——这不是特例，是「无可问之事」的正常结果）。
+ */
+export type ApprovalReviewer = 'user' | 'auto-review'
+
+/**
+ * 沙箱档位（「能不能写」这一轴；形制照 codex 的 `sandbox_mode`，与参考实现逐字相同）：
+ *   read-only            只读：任何写盘与越界命令都拒；
+ *   workspace-write      工作区可写：工作区 + 沙箱私有临时目录可写，越界拒（默认档）；
+ *   danger-full-access   不设围栏（等同关掉沙箱）。
+ *
+ * 定义住这里而不是 `services/types.ts`：打包权限预设（{@link PermissionPresetView}）
+ * 要把它和权限模式一起投影给界面，而界面只依赖契约模块——两边各写一份迟早会漂。
+ */
+export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
 
 /**
  * 协作模式（这一轮允许模型把手伸多远）。与权限模式是两根独立的旋钮：
@@ -649,10 +677,49 @@ export interface ModeSurface {
   options: TierOption<CollaborationMode>[]
 }
 
-/** 权限模式投影（同上，清单由 approval 插件给出）。 */
+/**
+ * 权限投影：当前档位 + 可切档位清单 + 当前审阅者 + 可切审阅者清单。
+ * 两根轴各给一份清单，界面因此不必自己抄一份档位表（清单只在 approval 插件里有一份）。
+ */
 export interface PolicySurface {
   current: ApprovalPolicy
   options: TierOption<ApprovalPolicy>[]
+  /** 「要问的事」现在给谁答。 */
+  reviewer: ApprovalReviewer
+  reviewerOptions: TierOption<ApprovalReviewer>[]
+}
+
+/**
+ * 一个打包权限预设：把**沙箱档位**与**权限模式 + 审阅者**捆成一组，
+ * 界面上是「一颗旋钮同时管三件事」——分开选就会出现「完全访问 + 沙箱仍 workspace-write」
+ * 这种自相矛盾的组合（参考实现里预设 = 沙箱 + 审批 一对，此处再加上审阅者这一轴）。
+ */
+export interface PermissionPresetView {
+  /** 预设标识（小写字母数字连字符）。 */
+  name: string
+  /** 界面上的显示名。 */
+  label: string
+  description: string
+  /** 捆进来的沙箱档位。 */
+  sandbox: SandboxMode
+  /** 捆进来的权限模式。 */
+  policy: ApprovalPolicy
+  /** 捆进来的审阅者。 */
+  reviewer: ApprovalReviewer
+  /** 出厂自带（删不掉，改不了）。 */
+  builtin: boolean
+}
+
+/** 打包权限预设投影：当前生效的 + 新会话默认的 + 全部可选。 */
+export interface PermissionPresetSurface {
+  /**
+   * 当前生效的预设名；两个旋钮的组合不匹配任何预设时为 `'custom'`
+   * （推导出来的状态，可以离开它，但不能选它——参考实现同义）。
+   */
+  current: string
+  /** 新会话默认的预设名。 */
+  defaultName: string
+  options: PermissionPresetView[]
 }
 
 /**
@@ -730,6 +797,12 @@ export interface RuntimeSurfaces {
   pendingApproval: ApprovalRequestView | null
   /** 权限模式与可切档位（approval 贡献）。 */
   policy: PolicySurface
+  /**
+   * 打包权限预设（permission-presets 贡献）：沙箱 + 权限模式 + 审阅者 三合一。
+   * 输入框那颗权限旋钮与设置页都读它——分开选会出现「完全访问 + 沙箱仍工作区可写」
+   * 这种自相矛盾的组合，预设把它们锁在一起。
+   */
+  permissionPresets: PermissionPresetSurface
   /** 协作模式与可切档位（mode 贡献）。 */
   mode: ModeSurface
   /** 模式（预设）与可切清单（presets 贡献）。 */
@@ -775,6 +848,21 @@ export interface ApprovalDiffView {
   mismatch?: 'missing' | 'ambiguous'
 }
 
+/**
+ * 模型这次在请求「放宽沙箱」（工具参数里带了成对的 sandbox_permissions + justification）。
+ * 卡片上要摊开说清批的是什么——不然「这次允许」批下去的是一句看不懂的话。
+ */
+export interface ApprovalEscalationView {
+  /** 请求放宽到哪一档。 */
+  permission: 'workspace-write' | 'danger-full-access'
+  /** 模型填的持续意图（once / session）；真正生效的授权档位永远是用户在卡上点的那个。 */
+  scope: 'once' | 'session'
+  /** 为什么必须写到范围之外（模型给的一句话）。 */
+  justification: string
+  /** 这一档的人话说明（「留在沙箱内，只放宽这一次的写边界」这类）。 */
+  effect: string
+}
+
 /** 待用户决定的工具审批请求（视图投影）。 */
 export interface ApprovalRequestView {
   /** adapter 内部关联 id；answerApproval 不需要它（同一时刻至多一个挂起审批）。 */
@@ -792,13 +880,16 @@ export interface ApprovalRequestView {
   hardline: boolean
   /** 这张卡允许哪些授权档位（危险动作会把 always 摘掉）。 */
   scopes: Array<'once' | 'session' | 'always'>
-  /** 当前权限模式与协作模式（卡片上说明现在是哪一档）。 */
+  /** 当前权限模式、审阅者与协作模式（卡片上说明现在是哪一档、谁来审）。 */
   policy: ApprovalPolicy
+  reviewer: ApprovalReviewer
   mode: CollaborationMode
   /** 发起审批的会话 jsonl 路径（0.6.49）：后台会话的卡弹到当前视图时，界面据此标注「来自哪个会话」。 */
   sessionPath?: string
   /** write / edit 的「将做的改动」；其他工具或推演不出时缺省。 */
   diff?: ApprovalDiffView
+  /** 模型这次在请求放宽沙箱；没请求时缺省（卡片上就不画那一段）。 */
+  escalation?: ApprovalEscalationView
 }
 
 /**
@@ -1537,8 +1628,16 @@ export interface DscRuntime {
   setProviderKey(name: string, apiKey: string | null): Promise<SettingsMutation>
   /** 设为默认端点/模型（写 config.yaml 并对当前会话立即生效）。 */
   setDefaultModel(provider: string, model: string): Promise<SettingsMutation>
-  /** 切换权限模式（readonly / auto-edit / full-access / ai-review）。 */
+  /** 切换权限模式（readonly / auto-edit / full-access）。 */
   setPolicy(policy: ApprovalPolicy): void
+  /** 切换审阅者（user = 本人点卡 / auto-review = 先给模型判官看一眼）。 */
+  setReviewer(reviewer: ApprovalReviewer): void
+  /** 打包权限预设投影（沙箱 + 权限模式 + 审阅者三合一）。 */
+  listPermissionPresets(): PermissionPresetSurface
+  /** 切到某个打包预设：一次写三个旋钮（沙箱 / 权限模式 / 审阅者）。 */
+  usePermissionPreset(name: string): SettingsMutation
+  /** 设为新会话默认的打包预设（写 `~/.dsc/settings.json`）。 */
+  setDefaultPermissionPreset(name: string): SettingsMutation
   /** 派发一条 / 命令到宿主命令注册表（内置 + 外部插件命令统一）。 */
   runCommand(input: string): boolean
   /**

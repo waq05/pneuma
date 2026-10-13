@@ -131,8 +131,14 @@ await press(KEY.enter)
 check('/ne + Enter 自动展开为 /new', submitted[submitted.length - 1] === '/new', JSON.stringify(submitted))
 
 // 11. 补全面板窗口（0.6.64）：候选全量入面板（不再截 8 条），视口 10 行越缘滑动
+// 0.6.68 权限拆成三根旋钮后命令表长了（插入 /reviewer、/permission 改语义），
+// 视口仍是 10 行：首屏只见前 10 条（/new … /thinking），/fork 是第 11 条，已滑出首屏。
 frame = await press('/')
-check('首屏候选完整（/fork /thinking 可见，不再截 8 条）', frame.includes('/fork') && frame.includes('/thinking') && frame.includes('/permission'), JSON.stringify(frame.slice(-500)))
+check(
+  '首屏塞满 10 行（/new … /thinking 在、/fork 已滑出）',
+  frame.includes('/new') && frame.includes('/permission') && frame.includes('/thinking') && !frame.includes('/fork'),
+  JSON.stringify(frame.slice(-500)),
+)
 check('footer 带窗口计数（1–10/总数）', /1–10\/\d+ 条/.test(frame), JSON.stringify(frame.split('\n').find((line) => line.includes('↑↓ 选择'))))
 for (let i = 0; i < 11; i += 1) await press(KEY.down)
 frame = output

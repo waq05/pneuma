@@ -258,6 +258,9 @@ export function StatusBar({
   const policyLabel =
     surfaces.policy.options.find((option) => option.id === surfaces.policy.current)?.label ??
     surfaces.policy.current
+  // 审阅者后缀：权限档只说「能不能自动放行」，谁在裁是另一根轴——先给模型判官看的
+  // 时候补一句，一眼看出现在的审批实际落在谁手里（不给后缀 = 本人点卡）。
+  const reviewerSuffix = surfaces.policy.reviewer === 'auto-review' ? '·AI 复核' : ''
   const usage = status.usage
   const cacheHit = usage?.cacheHitTokens ?? 0
   const cacheMiss = usage?.cacheMissTokens ?? 0
@@ -305,7 +308,7 @@ export function StatusBar({
       priority: 2,
     })
   if (config.mode) left.push({ kind: 'text', id: 'mode', text: `模式 ${modeLabel}`, tone: 'secondary', priority: 4 })
-  if (config.policy) left.push({ kind: 'text', id: 'policy', text: `权限 ${policyLabel}`, tone: 'secondary', priority: 7 })
+  if (config.policy) left.push({ kind: 'text', id: 'policy', text: `权限 ${policyLabel}${reviewerSuffix}`, tone: 'secondary', priority: 7 })
 
   const right: FieldSegment[] = []
   if (config.ctx) right.push({ kind: 'text', id: 'ctx', text: `ctx ${ctxPct}`, tone: 'secondary', priority: 6 })

@@ -126,9 +126,19 @@ export function ApprovalCard({
       ) : null}
       <Text {...TEXT.secondary} wrap="truncate-end">{oneLine(request.argsSummary, 200)}</Text>
       <Text {...TEXT.secondary} wrap="truncate-end">
-        权限 {request.policy} · 模式 {request.mode}
+        权限 {request.policy === 'readonly' ? '仅查看' : request.policy === 'auto-edit' ? '工作区自动' : '完全访问'} · 审阅{' '}
+        {request.reviewer === 'user' ? '本人' : 'AI 复核'} · 模式 {request.mode}
         {request.sessionPath !== undefined ? ` · 来自后台会话 ${shortId(request.sessionPath)}` : ''}
       </Text>
+      {request.escalation !== undefined ? (
+        <Text {...TEXT.label} color={STATUS_COLOR.waiting}>
+          模型请求放宽沙箱：{request.escalation.effect}
+          {request.escalation.scope === 'session' ? '（它想本会话一直放宽）' : ''}
+        </Text>
+      ) : null}
+      {request.escalation !== undefined ? (
+        <Text {...TEXT.secondary} wrap="truncate-end">理由：{oneLine(request.escalation.justification, 160)}</Text>
+      ) : null}
       {request.diff !== undefined ? <DiffBlock diff={request.diff} expanded={expanded} /> : null}
       {request.hardline ? (
         <Text>

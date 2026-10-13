@@ -11,11 +11,13 @@
  *
  * 三处与旧界面不同的地方，都是「宿主侧没有这条路」而不是「样式没对上」：
  *
- *   1. **权限模式旋钮的写路径走原生桥**：宿主刻意没把 `setPolicy` 放进界面通道白名单
- *      （见 `src/core/ui-methods.ts` 的 `UI_EXCLUDED`：审批策略是安全闸门本身），但旧界面
- *      的输入框里本来就有这根能切的旋钮，壳不能比旧界面少一样东西——所以写口开在原生桥
- *      （`NATIVE_OPS.setPolicy`，与 `saveProvider` 那三件同一先例：只对装了 preload 的
- *      桌面窗口开放）。桥不在（浏览器页签 / 远程页面）时点选项给一句明确的话，不静默。
+ *   1. **权限预设旋钮的写路径走原生桥**：宿主刻意没把 `usePermissionPreset`（连同
+ *      `setReviewer` / `setDefaultPermissionPreset`）放进界面通道白名单
+ *      （见 `src/core/ui-methods.ts` 的 `UI_EXCLUDED`：沙箱 + 权限模式 + 审阅者是安全闸门
+ *      本身），但旧界面输入框里本来就有这根能切的旋钮，壳不能比旧界面少一样东西——所以写口
+ *      开在原生桥（`NATIVE_OPS.usePermissionPreset`，与 `saveProvider` 那三件同一先例：
+ *      只对装了 preload 的桌面窗口开放）。桥不在（浏览器页签 / 远程页面）时点选项给一句
+ *      明确的话，不静默。
  *   2. **`/` 指令当场拦下**：`runCommand` 同样不在白名单里。旧界面把 `/` 开头的文本
  *      交给命令注册表，壳这边交不了——照旧发出去会变成一条「以斜杠开头」的用户消息
  *      喂给模型，那比明确拒绝更糟。
@@ -23,9 +25,12 @@
  *      （`UI_ARG_SPECS` 的 `MAX_IMAGE`），普通截图压到那个档位已经看不清了；所以贴图与
  *      拖文件都给一句明确的话，而不是静默吞掉。
  *
- * 三根旋钮的清单**一律从快照的 `surfaces` 读**（`surfaces.policy` / `surfaces.preset` /
- * `listModels`），不在壳里抄一份档位表——旧界面 `Composer.tsx` 也是这么接 `props.policy`
- * 与 `props.preset` 的（:74-76）。
+ * 三根旋钮的清单**一律从快照的 `surfaces` 读**（`surfaces.permissionPresets` /
+ * `surfaces.preset` / `listModels`），不在壳里抄一份档位表——旧界面 `Composer.tsx` 也是这么
+ * 接 `props.policy` 与 `props.preset` 的（:74-76）。
+ *
+ * 权限那一颗从「模式」改成了「预设」（`surfaces.permissionPresets`）：沙箱 + 权限模式 +
+ * 审阅者捆成一颗，分开选会出现「完全访问 + 沙箱仍工作区可写」这种自相矛盾的组合。
  *
  * 样式与 class 名照抄旧版（`ui-shell/src/legacy/views.css`，行号同旧 `styles.css`）：
  * `.composer` 2225、`.composer-bar` 2259、`.bar-left/.bar-right` 2266/2301、`.model-anchor`
@@ -45,15 +50,13 @@ import {
   toastOk,
   useHostChannel,
   useHostSelector,
-  type ApprovalPolicy,
   type EffortLevel,
   type HostSnapshot,
   type ModelChoiceView,
-  type PolicySurface,
+  type PermissionPresetSurface,
   type PresetSurface,
   type PresetView,
   type QueuedMessageView,
-  type TierOption,
 } from '@dsc/ui'
 import { useMention } from './mention'
 
@@ -76,19 +79,8 @@ const EFFORT_LABEL: Readonly<Record<EffortLevel, string>> = {
   max: '最高',
 }
 
-/** 权限模式的四档中文名：只在快照里那份清单缺席时兜底（正常一律用 `options[].label`）。 */
-const POLICY_LABEL: Readonly<Record<string, string>> = {
-  readonly: '只读',
-  'auto-edit': '自动编辑',
-  'full-access': '完全放行',
-  'ai-review': 'AI 复核',
-}
-
-/** 四档的机器值（与 `ApprovalPolicy` 同一张表；用来收窄线上来的值）。 */
-const POLICY_IDS: ReadonlySet<string> = new Set(Object.keys(POLICY_LABEL))
-
-/** 权限模式投影缺席时的兜底（空清单：菜单里会说「清单没取到」，不假装有四档）。 */
-const EMPTY_POLICY: PolicySurface = { current: 'readonly', options: [] }
+/** 权限预设投影缺席时的兜底（空清单：菜单里会说「清单没取到」，不假装有几个预设）。 */
+const EMPTY_PERMISSION_PRESETS: PermissionPresetSurface = { current: '', defaultName: '', options: [] }
 /** 模式（预设）投影缺席时的兜底。 */
 const EMPTY_PRESET: PresetSurface = { current: '', defaultName: '', options: [], droppable: [] }
 
@@ -106,7 +98,7 @@ function ComposerBox(): ReactNode {
   const turnState = useHostSelector(readTurnState)
   const blocked = useHostSelector(readHasApproval)
   const queuedCount = useHostSelector(readQueuedCount)
-  const policy = useHostSelector(readPolicySurface, samePolicySurface)
+  const permissionPresets = useHostSelector(readPermissionPresets, samePermissionPresets)
   const preset = useHostSelector(readPresetSurface, samePresetSurface)
   const model = useHostSelector(readModel)
   const effort = useHostSelector(readEffort)
@@ -117,8 +109,8 @@ function ComposerBox(): ReactNode {
   const [sending, setSending] = useState(false)
   const [models, setModels] = useState<readonly ModelChoiceView[]>([])
   const [panelOpen, setPanelOpen] = useState(false)
-  // 权限模式与模式（预设）两根旋钮各自的浮层：三者互斥（开一根把另两根收掉，旧界面同款）。
-  const [policyOpen, setPolicyOpen] = useState(false)
+  // 权限预设与模式（预设）两根旋钮各自的浮层：三者互斥（开一根把另两根收掉，旧界面同款）。
+  const [permOpen, setPermOpen] = useState(false)
   const [presetOpen, setPresetOpen] = useState(false)
   // Esc 关模型浮层（与遮罩点击同效；设置面板、确认框各自也拦 Esc，谁开着归谁）。
   useEffect(() => {
@@ -243,25 +235,26 @@ function ComposerBox(): ReactNode {
   }
 
   /**
-   * 切权限模式：写口在原生桥（界面通道刻意排除 `setPolicy`，见 `UI_EXCLUDED`），
-   * 与 `saveProvider` 那三件同一先例。桥不在时（浏览器页签 / 远程壳）给一句明确的话——
-   * 那颗旋钮照旧画出来，只是点下去会说清为什么这一档改不了。
+   * 切权限预设：写口在原生桥（界面通道刻意排除 `usePermissionPreset`，见 `UI_EXCLUDED`），
+   * 与 `saveProvider` 那三件同一先例——一次换掉沙箱 + 权限模式 + 审阅者三件事，任一件都是
+   * 安全闸门本身。桥不在时（浏览器页签 / 远程壳）给一句明确的话：那颗旋钮照旧画出来，
+   * 只是点下去会说清为什么这一档改不了。
    */
-  const choosePolicy = (next: ApprovalPolicy, label: string): void => {
-    setPolicyOpen(false)
+  const choosePermissionPreset = (name: string, label: string): void => {
+    setPermOpen(false)
     setFault(null)
     const native = getHostNative()
     if (!native.available) {
-      setFault('切权限模式这条口子只在桌面窗口里开（浏览器页签与远程页面够不着），请用桌面端或终端改')
+      setFault('切权限预设这条口子只在桌面窗口里开（浏览器页签与远程页面够不着），请用桌面端或终端改')
       return
     }
     void native
-      .invoke('setPolicy', [next])
+      .invoke('usePermissionPreset', [name])
       .then(() => {
-        toastOk(`权限模式已切到「${label}」`)
+        toastOk(`权限预设已切到「${label}」`)
       })
       .catch((reason: unknown) => {
-        setFault(`切权限模式失败：${reason instanceof Error ? reason.message : String(reason)}`)
+        setFault(`切权限预设失败：${reason instanceof Error ? reason.message : String(reason)}`)
       })
   }
 
@@ -351,8 +344,8 @@ function ComposerBox(): ReactNode {
 
   const sendable = text.trim() !== ''
   const queueing = working && sendable
-  /** 当前档位在清单里的那一项（拿它的 label / hint；清单缺了退回下面那两张兜底表）。 */
-  const policyOption = policy.options.find((item) => item.id === policy.current)
+  /** 当前预设那一项（拿它的 label / description）；`custom`（旋钮拼不出任何预设）或清单缺了时为 undefined。 */
+  const permOption = permissionPresets.options.find((item) => item.name === permissionPresets.current)
   const presetOption = preset.options.find((item) => item.name === preset.current)
   const current = models.find((choice) => choice.model === model || choice.value === model)
   const effortLevels = current === undefined ? EFFORT_FALLBACK : current.thinkingLevels
@@ -445,55 +438,62 @@ function ComposerBox(): ReactNode {
           >
             +
           </button>
-          {/* 权限模式（旧界面同款：一颗能切的旋钮 + 四档菜单）。清单来自快照 surfaces.policy，
-              写口走原生桥（见 choosePolicy 的注释）。 */}
+          {/* 权限预设（旧界面同款：一颗能切的旋钮 + 菜单）。清单来自快照
+              surfaces.permissionPresets，写口走原生桥（见 choosePermissionPreset 的注释）。
+              一颗管三件事（沙箱 + 权限模式 + 审阅者）：分开选会出现「完全访问 + 沙箱仍工作区可写」
+              这种自相矛盾的组合。 */}
           <div className="model-anchor">
             <button
               type="button"
-              className={`model-btn${policyOpen ? ' open' : ''}`}
-              data-tip={policyOption?.hint ?? '权限模式：决定写与执行类操作要不要问你'}
+              className={`model-btn${permOpen ? ' open' : ''}`}
+              data-tip={
+                permOption?.description ?? '当前三项旋钮的组合不匹配任何预设；在设置里逐格改出来的状态'
+              }
               aria-haspopup="menu"
-              aria-expanded={policyOpen}
+              aria-expanded={permOpen}
               onClick={() => {
-                setPolicyOpen((open) => !open)
+                setPermOpen((open) => !open)
                 setPresetOpen(false)
                 setPanelOpen(false)
               }}
             >
               <IconShield size={13} />
-              {policyOption?.label ?? POLICY_LABEL[policy.current] ?? policy.current}
+              {permOption?.label ?? '自定义'}
               <IconChevronDown size={12} />
             </button>
-            {policyOpen ? (
+            {permOpen ? (
               <>
                 <div
                   className="pop-mask"
                   onClick={() => {
-                    setPolicyOpen(false)
+                    setPermOpen(false)
                   }}
                 />
-                <div className="model-pop policy-pop" role="menu" aria-label="权限模式">
-                  <div className="pop-label">权限模式</div>
-                  {policy.options.length === 0 ? (
+                <div className="model-pop policy-pop" role="menu" aria-label="权限预设">
+                  <div className="pop-label">
+                    权限预设
+                    <span className="pop-note">沙箱 + 权限 + 审阅者 三合一</span>
+                  </div>
+                  {permissionPresets.options.length === 0 ? (
                     <div className="pop-item">
                       <span className="name">清单没取到</span>
                     </div>
                   ) : (
-                    policy.options.map((item) => (
+                    permissionPresets.options.map((item) => (
                       <button
                         type="button"
                         role="menuitemradio"
-                        aria-checked={item.id === policy.current}
-                        key={item.id}
-                        className={`pop-item${item.id === policy.current ? ' on' : ''}`}
-                        title={item.hint}
-                        disabled={item.id === policy.current}
+                        aria-checked={item.name === permissionPresets.current}
+                        key={item.name}
+                        className={`pop-item${item.name === permissionPresets.current ? ' on' : ''}`}
+                        title={item.description}
+                        disabled={item.name === permissionPresets.current}
                         onClick={() => {
-                          choosePolicy(item.id, item.label)
+                          choosePermissionPreset(item.name, item.label)
                         }}
                       >
                         <span className="name">{item.label}</span>
-                        {item.id === policy.current ? <IconCheck size={14} className="check" /> : null}
+                        {item.name === permissionPresets.current ? <IconCheck size={14} className="check" /> : null}
                       </button>
                     ))
                   )}
@@ -512,7 +512,7 @@ function ComposerBox(): ReactNode {
               aria-expanded={presetOpen}
               onClick={() => {
                 setPresetOpen((open) => !open)
-                setPolicyOpen(false)
+                setPermOpen(false)
                 setPanelOpen(false)
               }}
             >
@@ -576,7 +576,7 @@ function ComposerBox(): ReactNode {
               aria-expanded={panelOpen}
               onClick={() => {
                 setPanelOpen((open) => !open)
-                setPolicyOpen(false)
+                setPermOpen(false)
                 setPresetOpen(false)
               }}
             >
@@ -989,36 +989,46 @@ function readSessionPath(snapshot: HostSnapshot | null): string {
 }
 
 /**
- * 权限模式投影（当前档 + 四档清单）。清单**从快照读**，不在壳里抄一份：档位表在
- * approval 插件里，抄一份就会漂。
+ * 权限预设投影（当前生效的 + 新会话默认的 + 全部可选）。清单**从快照读**，不在壳里抄一份：
+ * 出厂那几个预设（只读 / 工作区可写 / 完全访问 / AI 复核）由 permission-presets 插件给定，
+ * 抄一份就会漂。`current` 是预设名，三项旋钮拼不出预设时宿主给 `'custom'`（这里不特判它，
+ * 菜单找不到这一项自然显示「自定义」）。
  */
-function readPolicySurface(snapshot: HostSnapshot | null): PolicySurface {
+function readPermissionPresets(snapshot: HostSnapshot | null): PermissionPresetSurface {
   const surfaces = snapshot?.['surfaces']
-  if (typeof surfaces !== 'object' || surfaces === null) return EMPTY_POLICY
-  const policy = (surfaces as Record<string, unknown>)['policy']
-  if (typeof policy !== 'object' || policy === null) return EMPTY_POLICY
-  const record = policy as Record<string, unknown>
+  if (typeof surfaces !== 'object' || surfaces === null) return EMPTY_PERMISSION_PRESETS
+  const presets = (surfaces as Record<string, unknown>)['permissionPresets']
+  if (typeof presets !== 'object' || presets === null) return EMPTY_PERMISSION_PRESETS
+  const record = presets as Record<string, unknown>
   const current = record['current']
   const options = record['options']
-  if (typeof current !== 'string' || !Array.isArray(options)) return EMPTY_POLICY
-  // 线上的值收窄成四档：宿主那侧的真源是 `ApprovalPolicy`，这里只需要「是那四档之一」
-  // 才认；认不出就当清单缺席（旋钮退回兜底表），不把脏值原样透给写口。
-  if (!POLICY_IDS.has(current)) return EMPTY_POLICY
-  return { current: current as ApprovalPolicy, options: options as TierOption<ApprovalPolicy>[] }
+  if (typeof current !== 'string' || !Array.isArray(options)) return EMPTY_PERMISSION_PRESETS
+  return {
+    current,
+    defaultName: typeof record['defaultName'] === 'string' ? record['defaultName'] : '',
+    options: options as PermissionPresetSurface['options'],
+  }
 }
 
 /**
- * 两份投影的相等判断：快照**每帧都换引用**，不给判断就会每帧重画输入区。
+ * 权限预设投影的相等判断：快照**每帧都换引用**，不给判断就会每帧重画输入区。
  *
- * 逐字段比而不是比引用：清单是四档或几个模式，比一遍比让 React 重画便宜得多
+ * 逐字段比而不是比引用：清单是几个预设，比一遍比让 React 重画便宜得多
  * （与 `sameQueued` 同一套写法）。
  */
-function samePolicySurface(left: PolicySurface, right: PolicySurface): boolean {
+function samePermissionPresets(left: PermissionPresetSurface, right: PermissionPresetSurface): boolean {
   if (left === right) return true
-  if (left.current !== right.current || left.options.length !== right.options.length) return false
+  if (left.current !== right.current || left.defaultName !== right.defaultName) return false
+  if (left.options.length !== right.options.length) return false
   return left.options.every((item, index) => {
     const other = right.options[index]
-    return other !== undefined && item.id === other.id && item.label === other.label && item.hint === other.hint
+    return (
+      other !== undefined &&
+      item.name === other.name &&
+      item.label === other.label &&
+      item.description === other.description &&
+      item.builtin === other.builtin
+    )
   })
 }
 

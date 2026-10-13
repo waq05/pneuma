@@ -2311,6 +2311,27 @@
   white-space: nowrap;
 }
 
+/* 模型在请求放宽沙箱（sandbox_permissions + justification）：卡片上单起一段摊开说清，
+   用户才知道自己批的是「放宽沙箱」而不是又一次普通写操作。 */
+.approval-escalation {
+  border-left: 2px solid var(--dsc-yellow);
+  padding-left: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dsc-row-gap);
+}
+
+.approval-escalation-line {
+  color: var(--dsc-text-secondary);
+  font-size: var(--dsc-fs-ui);
+}
+
+.approval-escalation-why {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-ui);
+  white-space: pre-wrap;
+}
+
 /* 后台会话的审批卡弹到当前视图时的归属标注（0.6.49）：一眼看出这张卡是谁家的 */
 .approval-owner {
   color: var(--dsc-text-tertiary);

@@ -47,7 +47,17 @@ const SURFACES = {
   goal: null,
   todos: { total: 0, done: 0, active: null },
   mode: { options: [{ id: 'build', label: '执行' }], current: 'build' },
-  policy: { options: [{ id: 'auto-edit', label: '自动编辑' }], current: 'auto-edit' },
+  // 0.6.68 起权限投影多一根正交轴：reviewer（「要问的事」先给谁看）+ reviewerOptions。
+  // 状态栏读 surfaces.policy.reviewer 决定要不要在权限段后面缀「·AI 复核」，缺了会读到 undefined。
+  policy: {
+    options: [{ id: 'auto-edit', label: '自动编辑' }],
+    current: 'auto-edit',
+    reviewer: 'user',
+    reviewerOptions: [
+      { id: 'user', label: '本人审阅' },
+      { id: 'auto-review', label: 'AI 复核' },
+    ],
+  },
 }
 
 const stdout = new PassThrough()
@@ -63,12 +73,12 @@ const clean = (frame) => frame.replace(/\x1b\[[0-9;?<]*[A-Za-z]/g, '')
 
 let instance = null
 /** 渲一帧 StatusBar：columns 决定丢段预算，config 决定段显隐。 */
-const renderBar = async ({ columns = 110, config = DEFAULT_STATUS_BAR_PREFS, status = STATUS, subagents = [], queued = 0, registerClick, onOpenAgent }) => {
+const renderBar = async ({ columns = 110, config = DEFAULT_STATUS_BAR_PREFS, status = STATUS, surfaces = SURFACES, subagents = [], queued = 0, registerClick, onOpenAgent }) => {
   if (instance !== null) instance.unmount()
   output = ''
   stdout.columns = columns
   instance = render(
-    React.createElement(StatusBar, { status, surfaces: SURFACES, subagents, queued, config, registerClick, onOpenAgent }),
+    React.createElement(StatusBar, { status, surfaces, subagents, queued, config, registerClick, onOpenAgent }),
     // useStdout 读的就是这份 stdout 的 columns——必须传外面这份（列宽在这儿改）
     { stdout, exitOnCtrlC: false, patchConsole: false },
   )
@@ -104,6 +114,16 @@ check('tok 段出厂关', !frame.includes('tok 9.5k'))
 check('模式段出厂关', !frame.includes('模式 执行'))
 check('会话段出厂关', !frame.includes('会话 ab12cd34'))
 check('段间 · 分隔', frame.includes(' · '))
+check('审阅者是本人时权限段不带复核后缀', !frame.includes('AI 复核'))
+
+// 1b. 审阅者那根轴（0.6.68）：reviewer === 'auto-review' 时权限段后面缀「·AI 复核」，
+// 让「这一次的问由模型先看」在状态栏一眼可见；本人审阅则什么都不缀。
+frame = await renderBar({
+  columns: 110,
+  surfaces: { ...SURFACES, policy: { ...SURFACES.policy, reviewer: 'auto-review' } },
+})
+check('auto-review 时权限段缀「·AI 复核」', frame.includes('权限 自动编辑·AI 复核'), JSON.stringify(frame.slice(0, 200)))
+check('auto-review 时其余段照旧', frame.includes('● 空闲') && frame.includes('deepseek-v3.2'))
 
 // 2. 开关全开：四段出厂关的全部出现（全开总宽 ~147，140 列会被优先级正确地丢 tok，给 160）
 frame = await renderBar({ columns: 160, config: { ...DEFAULT_STATUS_BAR_PREFS, effort: true, tokens: true, mode: true, session: true } })

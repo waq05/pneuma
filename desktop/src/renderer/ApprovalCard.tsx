@@ -64,7 +64,8 @@ export function ApprovalCard(props: {
         <span className="tool-name">{request.toolName}</span>
         <span className={`risk-badge tone-${risk.tone}`}>{risk.label}</span>
         <span className="approval-mode">
-          权限 {request.policy === 'readonly' ? '仅查看' : request.policy === 'auto-edit' ? '工作区自动' : request.policy === 'full-access' ? '完全访问' : 'AI 审查'} · 模式{' '}
+          权限 {request.policy === 'readonly' ? '仅查看' : request.policy === 'auto-edit' ? '工作区自动' : '完全访问'} · 审阅{' '}
+          {request.reviewer === 'user' ? '本人' : 'AI 复核'} · 模式{' '}
           {request.mode === 'plan' ? '计划' : request.mode === 'explore' ? '探索' : request.mode === 'quiet' ? '免打扰' : '执行'}
         </span>
       </div>

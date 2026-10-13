@@ -1,7 +1,7 @@
 /**
  * 协作模式：一件事只由这一层管——「这一轮允许模型把手伸多远」。
  *
- * 与权限模式（readonly/auto-edit/full-access/ai-review）是两根独立的旋钮：
+ * 与权限模式（readonly/auto-edit/full-access）是两根独立的旋钮：
  * 模式决定要不要问、能问什么；权限模式决定问出来之后怎么裁。
  * 这个分法照抄两家成熟做法：Codex 的 `ModeKind{Default, Plan}` 只换提示词与工具闸门
  * （`protocol/src/config_types.rs:674`、`core/src/tools/handlers/plan.rs:87`），

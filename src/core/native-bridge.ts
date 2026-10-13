@@ -48,7 +48,7 @@
  */
 
 import { DOCK_TERM_OPS } from './dock-ops.js'
-import type { ApprovalPolicy } from '../contract.js'
+import type { ApprovalPolicy, ApprovalReviewer } from '../contract.js'
 
 /**
  * 桥的协议版本：**加操作不涨**，改某个操作的实参或语义才涨。
@@ -83,16 +83,28 @@ export const NATIVE_OPS = [
   'removeProvider',
   'setProviderKey',
   /**
-   * 权限模式（只读 / 自动编辑 / 完全访问 / AI 复核）。
+   * 权限模式（只读 / 自动编辑 / 完全访问）。
    *
    * 为什么在这里而不在界面通道：`UI_EXCLUDED` 里写明了理由——审批策略是安全闸门本身，
    * 「能让页面改它，前面所有闸门就都成了摆设」。但旧桌面版的输入框里本来就有这根能切的
    * 旋钮（`desktop/src/renderer/Composer.tsx` 的 `policyOpen` → `proxy.setPolicy`），
    * 壳不能比旧版少一样东西，所以按同一先例挪到桥上：**只有装了 preload 的桌面窗口
-   * 那份文档**够得着，浏览器页签 / 远程页面够不着。实参是四档枚举（下面 POLICIES），
+   * 那份文档**够得着，浏览器页签 / 远程页面够不着。实参是三档枚举（下面 POLICIES），
    * 到了宿主那侧仍走 `approval.setPolicy`（它自己会发一条 system 条目并记审计）。
    */
   'setPolicy',
+  /**
+   * 审批审阅者（本人 / AI 复核）。与 setPolicy 同一条理由住在桥上：切换审阅者 =
+   * 决定「谁来裁」，同样是安全闸门本身。宿主那侧走 `approval.setReviewer`。
+   */
+  'setReviewer',
+  /**
+   * 打包权限预设（沙箱 + 权限模式 + 审阅者三合一）。一次写三个旋钮，改的是闸门组合，
+   * 理由同上；宿主的写入口是 `permissionPermits.use()`（它自己记审计与系统条目）。
+   */
+  'usePermissionPreset',
+  /** 设新会话默认的打包预设（只影响之后新建的会话）。 */
+  'setDefaultPermissionPreset',
   'sessionUsage',
   'notify',
   'restartHost',
@@ -176,12 +188,14 @@ const MAX_PROVIDER_KEY = 4096
 const THEME_SOURCES = ['dark', 'light', 'system'] as const
 const WORKSPACE_KINDS = ['terminal', 'explorer', 'vscode'] as const
 /**
- * 权限模式的四档（与 `contract.ts` 的 `ApprovalPolicy` 一字不差）。
+ * 权限模式的三档（与 `contract.ts` 的 `ApprovalPolicy` 一字不差）。
  *
  * 写成字面量数组而不是 import 那个类型：桥的校验住不了类型那侧（实参从网络来），
  * 枚举必须落成运行时的值。宿主那侧`satisfies ApprovalPolicy[]` 会让漏一档编不过。
  */
-const POLICIES = ['readonly', 'auto-edit', 'full-access', 'ai-review'] as const satisfies readonly ApprovalPolicy[]
+const POLICIES = ['readonly', 'auto-edit', 'full-access'] as const satisfies readonly ApprovalPolicy[]
+/** 审阅者两档（同样与 `contract.ts` 的 `ApprovalReviewer` 一字不差）。 */
+const REVIEWERS = ['user', 'auto-review'] as const satisfies readonly ApprovalReviewer[]
 /** 内嵌浏览器的导航动作（与主进程 `navigateDockBrowser` 认的那几个一字不差）。 */
 const NAV_ACTIONS = ['load', 'back', 'forward', 'reload'] as const
 /** 页面报上来的矩形上限（窗口再大也到不了；只是挡住存坏的脏值）。 */
@@ -221,8 +235,14 @@ export const NATIVE_ARG_SPECS: Readonly<Record<NativeOp, readonly ArgSpec[]>> = 
   setMarketSources: [{ shape: { kind: 'marketSources' } }],
   /** 落一条第三方界面插件的信任记录（插件中心信任卡「确认信任」的终点）。 */
   setUiTrust: [{ shape: { kind: 'string', max: MAX_ID } }],
-  /** 切权限模式：四档枚举之一（宿主那侧仍是 `approval.setPolicy`，它自己记审计与系统条目）。 */
+  /** 切权限模式：三档枚举之一（宿主那侧仍是 `approval.setPolicy`，它自己记审计与系统条目）。 */
   setPolicy: [{ shape: { kind: 'enum', values: POLICIES } }],
+  /** 切审阅者：两档枚举之一（宿主那侧是 `approval.setReviewer`）。 */
+  setReviewer: [{ shape: { kind: 'enum', values: REVIEWERS } }],
+  /** 切打包权限预设：预设名（宿主那侧查表，认不出的名字当场报错，不做静默回落）。 */
+  usePermissionPreset: [{ shape: { kind: 'string', max: 64 } }],
+  /** 设新会话默认的打包预设（空串 = 清掉，回到按两个旋钮各自的默认）。 */
+  setDefaultPermissionPreset: [{ shape: { kind: 'string', max: 64 } }],
   /**
    * 新增或编辑一个端点（写 config.yaml）：一整份 `ProviderDraft`。
    * 形状只查「是可序列化的 JSON 且不超过 64KB」——字段级校验（名字形状、模型 id 去重、

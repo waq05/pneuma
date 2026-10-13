@@ -31,6 +31,7 @@ import type {
   MarketBrowseResult,
   ModelChoiceView,
   ModelConfigView,
+  PermissionPresetSurface,
   PluginInfoView,
   PresetDraft,
   PresetFileView,
@@ -164,6 +165,9 @@ export function createRuntimeProxy(): RuntimeProxy {
     removeTeammate: (name) => call<string>('removeTeammate', name),
     runCommand: (input) => call<boolean>('runCommand', input),
     setPolicy: (policy) => callVoid('setPolicy', policy),
+    // 审阅者是权限模式之外的另一根轴（user = 本人点卡 / auto-review = 先给模型判官看一眼），
+    // 与 setPolicy 同为标量写口。
+    setReviewer: (reviewer) => callVoid('setReviewer', reviewer),
     setMode: (mode) => callVoid('setMode', mode),
     // 模式（预设）四个通道 + 只读原文
     listPresets: () => call<PresetSurface>('listPresets'),
@@ -172,6 +176,11 @@ export function createRuntimeProxy(): RuntimeProxy {
     savePreset: (draft) => call<SettingsMutation>('savePreset', draft),
     removePreset: (name) => call<SettingsMutation>('removePreset', name),
     setDefaultPreset: (name) => call<SettingsMutation>('setDefaultPreset', name),
+    // 打包权限预设（沙箱 + 权限模式 + 审阅者三合一）：读口给当前/默认/全部，两个写口切当前、设默认，
+    // 回执都是 SettingsMutation（同上方 usePreset / setDefaultPreset 的写法）。
+    listPermissionPresets: () => call<PermissionPresetSurface>('listPermissionPresets'),
+    usePermissionPreset: (name) => call<SettingsMutation>('usePermissionPreset', name),
+    setDefaultPermissionPreset: (name) => call<SettingsMutation>('setDefaultPermissionPreset', name),
     listTools: () => call<ToolEntryView[]>('listTools'),
     clearTodos: () => callVoid('clearTodos'),
     // 后台活（作业 / 终端会话）：停一个、读只读输出快照（状态面板「终端」区的行）。

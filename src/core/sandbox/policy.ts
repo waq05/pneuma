@@ -43,6 +43,22 @@ export const SANDBOX_BACKENDS = ['policy', 'docker', 'windows-token'] as const
 
 export type SandboxBackend = (typeof SANDBOX_BACKENDS)[number]
 
+/**
+ * 选了要外部隔离的后端、但它建不起来时怎么办：
+ *   degrade     按策略围栏降级继续干（`enforcement` 如实上报 partial，审批卡兜底）——出厂默认；
+ *   fail-closed 写与执行类工具一律拒（读照常），理由是「你要的隔离没建起来」。
+ *
+ * 为什么要有这一档：dsh 要求「拿绝对保证的调用方对 partial 必须拒绝」，dsc 原来是**降级不拒**
+ * （自称与 dsh 最大的分歧点）。两种姿态都合理，取决于这台机器是干什么的，所以做成显式开关：
+ * 默认保持既有行为（不改老用户），要硬保证的人自己打开。
+ *
+ * 只对「用户主动选了 docker / windows-token 却没建成」生效：`policy` 后端的 partial
+ * 是**预期状态**（进程内策略围栏本来就是这个等级），不是降级，所以永远不触发 fail-closed。
+ */
+export const SANDBOX_ON_UNAVAILABLE = ['degrade', 'fail-closed'] as const
+
+export type SandboxOnUnavailable = (typeof SANDBOX_ON_UNAVAILABLE)[number]
+
 /** 容器后端的默认镜像（小、带 sh，够跑构建与测试）。 */
 export const DEFAULT_SANDBOX_IMAGE = 'alpine:3'
 
@@ -63,6 +79,8 @@ export interface SandboxConfig {
   readOnlySubpaths: readonly string[]
   backend: SandboxBackend
   image: string
+  /** 选的后端建不起来时的姿态（见 {@link SandboxOnUnavailable}）。 */
+  onUnavailable: SandboxOnUnavailable
 }
 
 /** 默认档就是 workspace-write：正常的工作区读写/bash 全部照常。 */
@@ -74,6 +92,7 @@ export const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
   readOnlySubpaths: [],
   backend: 'policy',
   image: DEFAULT_SANDBOX_IMAGE,
+  onUnavailable: 'degrade',
 }
 
 /** 读配置的结果：`problems` 非空说明有控件值没通过校验（已回落默认值，不影响挂载）。 */
@@ -103,6 +122,7 @@ export function resolveSandboxConfig(raw: unknown): SandboxConfigResult {
     readOnlySubpaths: readonly string[]
     backend: SandboxBackend
     image: string
+    onUnavailable: SandboxOnUnavailable
   } = { ...DEFAULT_SANDBOX_CONFIG }
 
   if (doc.mode !== undefined) {
@@ -145,6 +165,11 @@ export function resolveSandboxConfig(raw: unknown): SandboxConfigResult {
     const image = String(doc.image).trim()
     if (image === '' || /\s/.test(image)) problems.push(`容器镜像名不能为空也不能带空格，收到「${image}」，已按 ${DEFAULT_SANDBOX_IMAGE} 走`)
     else config.image = image
+  }
+  if (doc.onUnavailable !== undefined) {
+    const value = String(doc.onUnavailable)
+    if ((SANDBOX_ON_UNAVAILABLE as readonly string[]).includes(value)) config.onUnavailable = value as SandboxOnUnavailable
+    else problems.push(`「后端建不起来时」只能是 ${SANDBOX_ON_UNAVAILABLE.join(' / ')}，收到「${value}」，已按 degrade 走`)
   }
   return { config, problems }
 }
