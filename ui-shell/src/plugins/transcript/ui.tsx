@@ -17,6 +17,9 @@
  * 与旧界面已知的差异（都是「功能还没有」而不是「样式对不上」）：
  *   - 吸附快捷栏未搬（工具卡的 tc-bar 吸附已单独实现，长会话的跨轮跳转由右侧
  *     刻度条 JumpRail 负责，见 jump-rail.tsx）；
+ *   - 分页与它的滚动保持比旧壳细一档：口径跟 dsh 对齐成条目数（≥50 条且 ≥2 轮地板、
+ *     ≤500 条封顶，边界仍对齐轮起点，见 paging.ts）；「加载更早」放页时照 dsh 的
+ *     preserve 口径把锚点拉回原视口位置（旧壳按轮分页、没有补偿，点一下会跳）；
  *   - 队友卡旧消息流里没有对应物，这一块是壳自己补的（`.shell-subagent`）。
  *
  * 样式与 class 名照抄旧版（`ui-shell/src/legacy/views.css`，行号同旧 `styles.css`）：
@@ -27,7 +30,7 @@
  *
  * @module dsc-ui-shell/plugins/transcript
  */
-import { Component, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { Component, createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
   DiffRows,
@@ -63,6 +66,7 @@ import { readFold, writeFold, stepGroupFoldKey, turnFoldKey } from './fold-state
 import { groupSteps, type StepGroup, type StepGrouping } from './process-groups'
 import { RowSeat, StepGroupSeat } from './fold-seats'
 import { JumpRail, previewText } from './jump-rail'
+import { pageStartRound } from './paging'
 // 路径/悬停/完成音/工具摘要口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，
 // 不再内联（E6）——completion-sound 带模块级 AudioContext 单例，重复一份会造出两个。
 import { TOOL_STATUS_TEXT, baseNameOf, displayPathOf, formatTokens, matchTool, oneLine, playCompletionSound, prettyJson, toolSummary, toolVerb, useHoverDelay, type ToolMatch } from '@dsc/ui-primitives'
@@ -201,8 +205,9 @@ const EMPTY_STEP_GROUPING: StepGrouping = { groups: [], headAt: new Map(), at: n
  * 用户停在底部时新条目进来就跟着走，自己往上翻过就暂停跟随——暂停时界面上
  * 出现「回到底部」按钮，点它恢复跟随。阈值 160px 是旧界面的口径。
  * 为什么要传 `dep`：条目数组每帧都是新的，拿引用当依赖会让每次快照都强制滚一次。
+ * `pause` 给「加载更早」用（见那里的注释）：那一刻的暂停是用户表态，不该只等滚动事件判。
  */
-function useFollowBottom(dep: number): { setEnd: (node: HTMLDivElement | null) => void; paused: boolean; resume: () => void } {
+function useFollowBottom(dep: number): { setEnd: (node: HTMLDivElement | null) => void; paused: boolean; resume: () => void; pause: () => void } {
   const [end, setEnd] = useState<HTMLDivElement | null>(null)
   const pinned = useRef(true)
   const [paused, setPaused] = useState(false)
@@ -234,11 +239,21 @@ function useFollowBottom(dep: number): { setEnd: (node: HTMLDivElement | null) =
     const scroller = end?.closest('.chat')
     if (scroller instanceof HTMLElement) scroller.scrollTop = scroller.scrollHeight
   }
-  return { setEnd, paused, resume }
-}
 
-/** 一页装几轮（桌面端 PAGE_ROUNDS 同款）：分的是渲染量，不是数据量。 */
-const PAGE_ROUNDS = 8
+  /**
+   * 暂停跟随（「加载更早」在放页时调）。
+   *
+   * 只等滚动事件判有一个缝：放页后的那一下补偿是程序性滚动，它引发的 scroll 事件
+   * 下一帧才到，而流式内容可能先到一步把这口 delta 接上——跟随要是还开着，视角就被
+   * 拽回底部，刚补好的阅读位置全毁。这里直接表态「不跟了」，缝就没了。
+   */
+  const pause = (): void => {
+    pinned.current = false
+    setPaused(true)
+  }
+
+  return { setEnd, paused, resume, pause }
+}
 
 function TranscriptFlow({
   renderSlot,
@@ -317,15 +332,90 @@ function TranscriptFlow({
     }
   }, [turnState, sessionPath, entries])
 
-  // 分页：只渲染最后 PAGE_ROUNDS 轮，更早的点「加载更早」再放出来（换会话重置）。
-  const [firstVisible, setFirstVisible] = useState(0)
+  // 分页（口径见 paging.ts）：默认只画尾部一页，更早的点「加载更早」再放出来；一页按
+  // 条目数算——「至少 50 条且至少 2 轮，最多 500 条封顶」，边界对齐轮起点。按轮分页
+  // 挡不住「单轮极长」，而拖慢长会话的正是那一轮里压着的几十上百个条目。
+  //
+  // state 记的是**绝对轮号**（用户放出来的最早那一轮）而不是「放了几页」：会话还在长，
+  // 按页数记会让窗口整体后移，把用户正看着的那一轮悄悄收走（桌面端 useChatViewport
+  // 在同一条上栽过）；null = 还没点过，窗口跟着尾部默认页走。
+  const [earliest, setEarliest] = useState<number | null>(null)
+  const roundSizes = useMemo(() => seats.rounds.map((seat) => seat.rows.length), [seats.rounds])
+  const tailStart = useMemo(() => pageStartRound(roundSizes, roundSizes.length), [roundSizes])
+  const firstVisible = earliest === null ? tailStart : Math.min(earliest, tailStart)
   const visibleSeats = useMemo(
     () => seats.rounds.filter((seat) => seat.round >= firstVisible),
     [seats.rounds, firstVisible],
   )
+  // 下一次点「加载更早」会放出来的轮数：按钮文案的读数与点击落点用同一份计算。
+  const earlierRounds = useMemo(
+    () => firstVisible - pageStartRound(roundSizes, firstVisible),
+    [roundSizes, firstVisible],
+  )
+  // 换会话（或会话被清空）分页窗口回默认：「已放出到第几轮」是上一条会话的事。
+  const cleared = seats.rounds.length === 0
   useEffect(() => {
-    setFirstVisible(Math.max(0, seats.rounds.length - PAGE_ROUNDS))
-  }, [sessionPath, seats.rounds.length])
+    setEarliest(null)
+  }, [sessionKey, cleared])
+
+  /** 「加载更早」那颗按钮（放页的锚点在它所在的滚动容器里找）。 */
+  const earlierRef = useRef<HTMLButtonElement | null>(null)
+  /** 放页前的锚点：第一个画出来的座位，记它距滚动容器顶端的位置。 */
+  const pageAnchor = useRef<{ node: HTMLElement; top: number; from: number } | null>(null)
+
+  /**
+   * 记锚点（放页前调）：当前画出来的**第一个座位**距滚动容器顶端的位置。
+   *
+   * 为什么锚座位而不是「按钮后第一个有高度的兄弟」（桌面端是后者）：新放出来的早轮
+   * 整段插在第一个座位前面——被往下推的就是它。座位之前可能还挂着开场 system 行
+   * （`seats.leading`），那几行本来就不动，量它们等于白量，阅读位置照跳。
+   * dsh 的 `beginPaging()` 取的就是「DOM 序里第一个可用的 seat」，同一条口径。
+   */
+  const beginPaging = (): void => {
+    const button = earlierRef.current
+    if (button === null) return
+    const scroller = button.closest('.chat')
+    if (!(scroller instanceof HTMLElement)) return
+    const seat = scroller.querySelector<HTMLElement>('[data-round-seat]')
+    pageAnchor.current =
+      seat === null
+        ? null
+        : { node: seat, top: seat.getBoundingClientRect().top - scroller.getBoundingClientRect().top, from: firstVisible }
+  }
+
+  /**
+   * 放页（「加载更早」按钮与刻度条点没画出来的轮共用）：先记锚点，再把窗口往前扩。
+   *
+   * 跟随一并暂停：这两个入口只有用户主动往上看才会碰到，此刻要是还开着跟随，
+   * 下一口流式内容就把视角拽回底部了。
+   */
+  const release = (startRound: number): void => {
+    if (startRound >= firstVisible) return
+    beginPaging()
+    follow.pause()
+    setEarliest(startRound)
+  }
+
+  /**
+   * 放页后的补偿：把锚点拉回它原来的视口位置（距滚动容器顶端同样的距离）。
+   *
+   * 为什么是 useLayoutEffect：它跑在 DOM 更新之后、浏览器绘制之前——补在绘制前，
+   * 用户看不到「跳一下再弹回来」。为什么量「距滚动容器顶端的位置」而不是记 scrollTop
+   * 差值：插入的高度只能这么量（锚点被往下推多少 = 它上方长了多少）。
+   * 只补外层 `.chat`：锚点若是新插入的早轮自己的组内滚动，与本屏阅读位置无关。
+   */
+  useLayoutEffect(() => {
+    const anchor = pageAnchor.current
+    if (anchor === null) return
+    pageAnchor.current = null
+    // 只有窗口真的往前扩了才补：点了已画出来的轮（值没变）、窗口跟着尾部后移都不是放页。
+    // 锚点还挂在文档里同样是前提——换会话会把旧的那一整棵换掉，那一跳该由贴底逻辑接管。
+    if (firstVisible >= anchor.from || !anchor.node.isConnected) return
+    const scroller = anchor.node.closest('.chat')
+    if (!(scroller instanceof HTMLElement)) return
+    const top = anchor.node.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+    scroller.scrollTop += top - anchor.top
+  }, [firstVisible])
 
   // 整轮折叠：四档能力表 + 每轮的折叠预算 + 用户手动开合（双层记忆：当场重画 + 重挂读回）。
   const foldMemory = useFoldMemory()
@@ -452,9 +542,10 @@ function TranscriptFlow({
       }),
     [seats.rounds],
   )
-  const revealRound = useCallback((round: number): void => {
-    setFirstVisible((current) => Math.min(current, round))
-  }, [])
+  /** 刻度条点了还没画出来的轮：把它放出来（走「加载更早」同一套锚点与跟随暂停）。 */
+  const revealRound = (round: number): void => {
+    release(round)
+  }
 
   // 空会话欢迎态（与旧桌面界面同一份文案）：开场 system 提示行作注脚，
   // 「会话 x · 模型 y」那条开场标不画——它在状态栏悬浮卡里，再画一遍是重复。
@@ -485,17 +576,20 @@ function TranscriptFlow({
       {/* 右侧回合刻度条（对照 dsh 的 TurnNavigator）：绝对定位到 .chat-wrap，
           不参与文档流；它自己找滚动容器做当前轮判定与跳转。 */}
       <JumpRail rounds={railRounds} renderedFrom={firstVisible} onReveal={revealRound} />
+      {/* 「加载更早」：上面还有没画出来的轮才有这一行（firstVisible === 0 = 已到顶）。
+          文案里的轮数是**这一页实际会放出来的轮数**（同一次纯函数算出来的，不写死常数）。 */}
       {firstVisible > 0 ? (
         <button
           type="button"
           className="chat-earlier"
+          ref={earlierRef}
           data-earlier-rounds={firstVisible}
-          data-tip="把更早的几轮画出来，你现在看的位置不会动"
+          data-tip="把更早的几轮画出来（一页至少 50 条且 2 轮），你现在看的位置不会动"
           onClick={() => {
-            setFirstVisible((current) => Math.max(0, current - PAGE_ROUNDS))
+            release(firstVisible - earlierRounds)
           }}
         >
-          {`加载更早的 ${String(Math.min(PAGE_ROUNDS, firstVisible))} 轮（上面还有 ${String(firstVisible)} 轮）`}
+          {`加载更早的 ${String(earlierRounds)} 轮（上面还有 ${String(firstVisible)} 轮）`}
         </button>
       ) : null}
       {seats.leading.map((row) => (
