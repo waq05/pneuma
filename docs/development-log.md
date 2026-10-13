@@ -4175,12 +4175,15 @@ csv/xlsx 表格预览、手动排序拖拽、桌面信任卡、remote-web 切壳
   `ui-events-test`(42)、`ui-serve-test`、`ui-batches-test`、`ui-hmr-test`、`tui-features-test`、
   `legacy-frozen-check`；
 - 桌面端到端（真应用 + 假端点 + 真机 `~/.dsc` 零污染）：合流后 **37/37**、E4/E6 后再跑 **37/37**；
-- 打包态（`dist:dir` 的 win-unpacked 实跑）见下节补充。
+- **打包态**：`dist:dir` 重打 win-unpacked（先 taskkill 托盘进程），打包态 manifest = apiVersion 1.2.0 / 16 条全带 api，
+  入口 `app-*.js` 与哈希在位；`DSC_CHECK_EXE` 跑同一套自检 **37/37**——用户双击快捷方式那份 exe 就是这套新架构。
+- **全量电池 28 组零红**：唯一红过的 `remote-host-test` 两条经「旧版 lib（批次 8）对照」确认是**预存在**——
+  探针桩漏了必填依赖 `shellUi`（类型是 `RemoteShellUi | null`，路由按 `!== null` 判空，undefined 接不住 → 500）。
+  补桩（不是改断言）后 **140/140**，产品代码一行未动。
 
 ### 诚实边界
 
-①打包态自检（`DSC_CHECK_EXE`）在本节写作时仍在跑——结果以提交信息/交付说明为准，别把
-  「dev 态 37/37」当「打包态也 37/37」；
+①打包态自检已补跑并全绿（`desktop/shots/ui-pkg.png` 为证）；
 ②热更的实机验收是施工线用 `_ui-shell-serve.mjs` + 浏览器工具做的（读数写进该线报告），
   **没有落成仓库内脚本**；桌面自检里也没有热更断言——这一条是欠账；
 ③`inject` 双关在「服务名恰好等于某个插件 id」时有歧义（dsc 只有一张表，参考实现是两张）；

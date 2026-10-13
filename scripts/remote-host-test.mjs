@@ -388,6 +388,11 @@ function httpCall(port, path, options = {}) {
     assetsDir: join(home, '没有这个目录'),
     pairing,
     tickets,
+    // 壳档依赖：类型上是必填（`RemoteShellUi | null`，只有「有壳」与「没有」两种）。
+    // 显式给 null = 这条桩走「没开壳档」的经典资产路径——路由按 `!== null` 判空，
+    // 漏了这一项会是 undefined 而不是 null，两条静态兜底断言当场 500（本探针
+    // 2026-10-13 之前一直红在这：批次 8 的 lib 对照复现过同样两条）。
+    shellUi: null,
     uploads: new RemoteUploads({ dir: join(home, 'uploads-stub') }),
     invoke: async () => null,
     snapshot: () => ({ sessionId: 's', cwd: 'c', entries: [], liveEntries: [], status: {}, surfaces: {}, sessions: [], sessionsLoading: false }),
