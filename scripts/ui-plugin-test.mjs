@@ -986,20 +986,31 @@ console.log('\n[5b] 分包落点')
   // 从下面往回引等于把插件 API 拖进环里（alias 会解析出第二份实现）。
   // ui-layout 不许引 `@dsc/ui-renderer`：E4 把那条反向边（读白名单与装载账本）剪成
   // props 递值，这条禁止是防回归——`ui-layout → ui-renderer → ui-layout` 一旦复活就是环。
+  // ui-layout 不许引 `@dsc/ui`：E4 收尾把宿主桥与读色沉到 `@dsc/ui-primitives`
+  // （native.ts / css.ts）、把页 / 视图真源连同读 hook 留在 ui-layout 自己家里，
+  // 那条 `ui-layout → @dsc/ui → ui-layout` 的环随之剪断；这条禁止同样是防回归
+  // （之前它只是「过渡期放行」，靠人记得别再加一处）。
   const forbiddenUpward = {
     '@dsc/ui-primitives': ['@dsc/ui-dockkit', '@dsc/ui-slots', '@dsc/ui-layout', '@dsc/ui-renderer', '@dsc/ui'],
     '@dsc/ui-slots': ['@dsc/ui-dockkit', '@dsc/ui-layout', '@dsc/ui-renderer', '@dsc/ui'],
     '@dsc/ui-dockkit': ['@dsc/ui-slots', '@dsc/ui-layout', '@dsc/ui-renderer', '@dsc/ui'],
-    '@dsc/ui-layout': ['@dsc/ui-renderer'],
+    '@dsc/ui-layout': ['@dsc/ui-renderer', '@dsc/ui'],
     '@dsc/ui-renderer': [],
   }
   // 每包**刻意保留**的相对边（白名单之外，任何一处走出包的相对 import 都会红）：
   //   - ui-slots 的 `../plugin-api`：`declare module` 的合并落在**文件身份**上（re-export
   //     与包名 alias 不参与合并），且 SlotMap / UiComponent 等契约类型只能从那个文件取——
   //     纯类型面，擦除后零字节。这是机制要求，不是过渡态。
+  //   - ui-layout 的 `../plugin-api`：同一条机制要求的类型面——`UiSlots` 别名由
+  //     `SlotMap` / `SlotFactoryMap`（同上，只在那一个文件里）与 `UiComponent` 拼成，
+  //     而 app.tsx 的 props 要它。`import type`，零运行期字节。
   //   - ui-layout 的过渡边已随 E4 清零（原 `../boot` / `../slots` / `../slots-react` /
-  //     `../hmr` 四条：两条换包名、两条改成 props 递值）。
-  const packageTransitionEdges = { '@dsc/ui-slots': new Set(['../plugin-api']) }
+  //     `../hmr` 四条：两条换包名、两条改成 props 递值），`@dsc/ui` 那条向上边也清零
+  //     （宿主桥与读色沉到 ui-primitives、页 / 视图真源留在本包）。
+  const packageTransitionEdges = {
+    '@dsc/ui-slots': new Set(['../plugin-api']),
+    '@dsc/ui-layout': new Set(['../plugin-api']),
+  }
   const sourceFilesOf = (dir, out = []) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const file = join(dir, entry.name)
@@ -1059,7 +1070,7 @@ console.log('\n[5b] 分包落点')
     }
   }
   check('包内不出现反向依赖（primitives / slots ← dockkit ← layout ← renderer）', upwardEdges.length === 0, upwardEdges.join('；'))
-  check('相对 import 不出包（ui-slots 的契约类型边与资源文件除外）', outsideEdges.length === 0, outsideEdges.join('；'))
+  check('相对 import 不出包（契约类型边与资源文件除外）', outsideEdges.length === 0, outsideEdges.join('；'))
 
   // ── E6：三个平台种子词三处一致（JSON ↔ boot.ts 的 MODULES ↔ 诊断读数）───────────
   // 这取代了 E4 时那条「三个新包不在平台模块表里」的断言：当时三个包还不该下发给插件

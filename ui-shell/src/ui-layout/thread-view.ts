@@ -15,6 +15,7 @@
  *
  * @module dsc-ui-shell/thread-view
  */
+import { useSyncExternalStore } from 'react'
 
 /** 正文区正在显示哪一张脸。 */
 export type ThreadView = 'chat' | 'trace'
@@ -71,4 +72,19 @@ export function subscribeThreadView(listener: () => void): () => void {
   return () => {
     listeners.delete(listener)
   }
+}
+
+/**
+ * 读正文区当前的脸并跟着变（hook 形态）。
+ *
+ * 与 `page-state.ts` 的 `useShellPage` 同一条理由住这里：壳自己（`app.tsx`）也要用，
+ * 放插件面就得让 `ui-layout` 反过来引 `@dsc/ui`。`@dsc/ui` 只把它转出给插件。
+ */
+export function useThreadView(): ThreadView {
+  return useSyncExternalStore(subscribeThreadView, shellThreadView, () => 'chat')
+}
+
+/** 读「待处理的聚焦步骤」（hook 形态；消费方滚到位后调 `clearTraceFocus`）。 */
+export function useTraceFocus(): number | null {
+  return useSyncExternalStore(subscribeThreadView, traceFocusStep, () => null)
 }

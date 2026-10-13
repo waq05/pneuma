@@ -11,10 +11,16 @@
  * props 递进来；`scripts/ui-plugin-test.mjs` 的 [5b] 把 `@dsc/ui-renderer` 列为本包
  * 的禁止向上边，防回归。
  *
- * 还留着的一条向上边（E4 范围外，[5b] 仍放行，见其注释）：`@dsc/ui`（聚合面）——
- * `appearance.ts` 与 `review-pane.tsx` 要 `getHostNative` / `readCssColor`，`app.tsx`
- * 要 `setShellPage` / `useThreadView` 这些页 / 视图真源；它们现在住在 `plugin-api.ts` 里，
- * 把宿主桥与页状态下沉到下面某层之后才能改成向下取。
+ * 还留着的那一条向上边**已清零**（E4 收尾）：原来 `appearance.ts` / `review-pane.tsx` 要
+ * `getHostNative` / `readCssColor`、`app.tsx` 要 `setShellPage` / `useThreadView` 这些
+ * 页 / 视图真源，它们当时住在 `plugin-api.ts` 里，于是本包只能反向引聚合面 `@dsc/ui`。
+ * 现在：宿主桥与读色下沉到 `@dsc/ui-primitives`（`native.ts` / `css.ts`），页 / 视图真源
+ * 连同它们的读 hook（`useShellPage` / `useThreadView` / `useTraceFocus`）就在本包
+ * （`page-state.ts` / `thread-view.ts`，`@dsc/ui` 只转出）——本包对 `@dsc/ui` 的边为零，
+ * `scripts/ui-plugin-test.mjs` 的 [5b] 已把 `@dsc/ui` 列为本包的禁止向上边，防回归。
+ * 剩下一条**纯类型**相对边 `../plugin-api`（只有 `import type { UiSlots }`：那个别名由
+ * `SlotMap` / `SlotFactoryMap` 拼成，declare 合并只认那个文件身份）——与 ui-slots 同款，
+ * 擦除后零字节，在 [5b] 的相对边白名单里列着。
  *
  * @module dsc-ui-shell/ui-layout
  */

@@ -11,6 +11,7 @@
  *
  * @module dsc-ui-shell/page-state
  */
+import { useSyncExternalStore } from 'react'
 
 let page: string | null = null
 const listeners = new Set<() => void>()
@@ -33,4 +34,15 @@ export function subscribePage(listener: () => void): () => void {
   return () => {
     listeners.delete(listener)
   }
+}
+
+/**
+ * 读当前页并跟着变（`useSyncExternalStore` 的 hook 形态）。
+ *
+ * 为什么住这里（而不是 `@dsc/ui`）：它是这一份模块级状态的 React 读面，壳自己
+ * （`app.tsx`）也要用——放插件面就得让 `ui-layout` 反过来引 `@dsc/ui`，包间成环。
+ * `@dsc/ui` 只是把它转出给插件（与 `useHostSnapshot` 那几个同一个模式）。
+ */
+export function useShellPage(): string | null {
+  return useSyncExternalStore(subscribePage, shellPage, () => null)
 }

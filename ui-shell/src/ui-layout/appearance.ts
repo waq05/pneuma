@@ -19,9 +19,11 @@
  * @module dsc-ui-shell/appearance
  */
 // 这四个类型本来就住在 `@dsc/ui-core`（`@dsc/ui` 只是转出去），这里直接向下取：
-// 少一条通往聚合面的类型依赖（`@dsc/ui` 的边只剩下面那两个值，见 ui-layout/index.ts 的说明）。
+// 少一条通往聚合面的类型依赖。原生桥与读色同理——它们在 `@dsc/ui-primitives`
+// （`native.ts` / `css.ts`）里实现，`@dsc/ui` 只转出；本包对 `@dsc/ui` 的边因此清零
+// （探针 [5b] 已把这条边改成硬禁止，见 ui-layout/index.ts 的说明）。
 import type { ThemeMode, UiDensity, UiFontSize, UiPrefsView } from '@dsc/ui-core'
-import { getHostNative, readCssColor } from '@dsc/ui'
+import { getHostNative, readCssColor } from '@dsc/ui-primitives'
 
 export type { ThemeMode, UiDensity, UiFontSize }
 

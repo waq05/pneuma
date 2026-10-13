@@ -46,7 +46,17 @@ import { Dock, dockActions, openDockTab, setDockSession, useDockReview, useDockS
 // 装载会话与热更句柄**不从这里 import**：它们的份额按结构定义在下面（AppBootSession /
 // AppSyncHandle），由入口以 props 递进来——两包之间因此没有反向边（剪掉成环的那一刀）。
 import { SLOT, SlotOutlet, useSlotFaults } from '@dsc/ui-slots'
-import { getHostNative, setShellPage, setThreadView, useShellPage, useThreadView, type UiSlots } from '@dsc/ui'
+// 宿主桥在 @dsc/ui-primitives（native.ts / css.ts，E4 收尾从 `@dsc/ui` 沉下来的）；
+// 页 / 视图真源就在本包（page-state / thread-view），不再经 `@dsc/ui` 转一道——
+// 那样会让本包反向引聚合面，包间成环（探针 [5b] 已把 `@dsc/ui` 列为本包的禁止向上边）。
+import { getHostNative } from '@dsc/ui-primitives'
+// `UiSlots` 这个别名只能从 plugin-api 取：它由 `SlotMap` / `SlotFactoryMap`（declare 合并
+// 认的是**文件身份**，别的路径 re-export 不算，见 ui-slots/slots.ts 的同款说明）与
+// `UiComponent` 拼出来，那三样都只在那一个文件里。`import type` 编译期擦除、零运行期字节，
+// 与 ui-slots 的 `../plugin-api` 是同一条：机制要求，不是过渡态（探针的包边白名单里列着）。
+import type { UiSlots } from '../plugin-api'
+import { setShellPage, useShellPage } from './page-state'
+import { setThreadView, useThreadView } from './thread-view'
 import { useChannelStatus, useHostError, useHostHello, useHostSelector } from './runtime-context'
 import { ReviewPane } from './review-pane'
 

@@ -184,7 +184,8 @@ function launchUi(exe, { home, label, timeoutMs = 300000 }) {
       ? { DSC_DESKTOP_SHOT_STRIP: join(shots, `installer-walkthrough-${label}-strip.png`) }
       : {}),
   }
-  const result = spawnSync(exe, [], { encoding: 'utf8', env, timeout: timeoutMs, windowsHide: true })
+  const args = (process.env['DSC_WALKTHROUGH_ENTRY'] ?? '') === '' ? [] : [process.env['DSC_WALKTHROUGH_ENTRY']]
+  const result = spawnSync(exe, args, { encoding: 'utf8', env, timeout: timeoutMs, windowsHide: true })
   const stderr = result.stderr ?? ''
   const evalLine = /\[selfcheck\] 预跑脚本完成：(.*)/.exec(stderr)
   let reading = null
@@ -208,6 +209,10 @@ function verifyUi(label, launched, { expectReading = true } = {}) {
   check(`${label}：窗口来自宿主界面服务`, stderr.includes('窗口来自宿主界面服务'), tail(stderr))
   const visible = /控件条[^；]*；窗口可见=(\S+)/.exec(stderr)
   if (visible !== null) console.log(`  ..    ${label} 窗口可见=${visible[1]}（DSC_WALKTHROUGH_STRIP=1 时的读数）`)
+  // 原生桥在场的证据：桌面形态（带 preload）会打出主题来源；裸 Electron / 走查包里也可能有，
+  // 有没有都打印出来——这条读的是「桥这条路上有没有话」。
+  const theme = /原生主题源 (\S+)/.exec(stderr)
+  if (theme !== null) console.log(`  ..    ${label} 原生主题源=${theme[1]}`)
   if (reading === null) {
     check(`${label}：预跑脚本回报了读数`, false, tail(stderr))
     return

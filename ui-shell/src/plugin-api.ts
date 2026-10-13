@@ -11,7 +11,7 @@
  *
  * @module dsc-ui-shell/plugin-api
  */
-import { useMemo, useSyncExternalStore, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import type {
   FactoryChildrenOf as FactoryChildrenOfMap,
   FactoryInputPropsOf as FactoryInputPropsOfMap,
@@ -32,7 +32,6 @@ import type {
   UiRuntimeApi,
   UiSlotApi,
 } from '@dsc/ui-core'
-import { NATIVE_BRIDGE_VERSION, type NativeEvent, type NativeOp } from '@dsc/ui-core'
 import {
   subscribeDock,
   type DockReview,
@@ -216,90 +215,16 @@ export function hostStatus(snapshot: HostSnapshot | null): HostStatusView | null
   }
 }
 
-/**
- * ── 原生桥 ─────────────────────────────────────────────────────────────────────
- *
- * 桌面窗口里，preload 会额外挂一个 `window.dscNative`（一条极窄的原生能力通道：
- * 窗口控件区颜色、原生弹层深浅、系统对话框、通知、退出/重启…，规格见
- * `core/native-bridge.ts`，宿主与壳共用那一份）。浏览器与远程壳里**没有**这个对象——
- * 插件因此必须把"没有原生能力"当常态处理，而不是当异常。
- */
-
-/** 桥缺席时给插件的一句话（浏览器里就是这样：没有 Electron，也就没有原生桥）。 */
-export const NATIVE_UNAVAILABLE = '这条能力来自桌面外壳的原生桥，浏览器里没有它'
-
-/** 原生桥的调用面。 */
-export interface HostNative {
-  /** 桥在不在：桌面窗口里 true，浏览器 / 远程壳里 false。 */
-  readonly available: boolean
-  /** 桥的协议版本；缺席时 null。壳拿它跟自己的规格对一下，不一致可以在诊断区说明白。 */
-  readonly version: number | null
-  /**
-   * 调一个原生操作。
-   *
-   * 桥缺席时返回**拒绝的 Promise**（而不是同步抛）：调用点因此可以统一写一个 try/catch，
-   * 不必先判 available 再包一层。
-   */
-  invoke<T = unknown>(op: NativeOp, args?: readonly unknown[]): Promise<T>
-  /**
-   * 订阅桥推上来的事件（现在只有终端输出流）。
-   *
-   * 与 `invoke` 的取向不同：桥缺席时**返回一个空的退订函数**，不抛也不拒。
-   * 理由是这类订阅都写在组件的 `useEffect` 里——"浏览器里没有终端"不该让插件崩，
-   * 只该让它收不到东西（订阅本身没有"失败"这个语义）。
-   */
-  on(event: NativeEvent, listener: (data: unknown) => void): () => void
-}
-
-/** `window.dscNative` 在页面上的形状（preload 暴露的那个对象）。 */
-interface NativeBridgeGlobal {
-  version?: unknown
-  call?: (op: string, args: unknown[]) => Promise<unknown>
-  on?: (event: string, listener: (data: unknown) => void) => () => void
-}
-
-/** 读一次全局对象；形状不对就当桥不在（宁可降级，也不要调到一个半残的对象）。 */
-function bridgeGlobal(): NativeBridgeGlobal | null {
-  const value = (globalThis as { dscNative?: unknown }).dscNative
-  if (value === null || typeof value !== 'object') return null
-  const record = value as NativeBridgeGlobal
-  return typeof record.call === 'function' ? record : null
-}
 
 /**
- * 取原生桥。插件这样用：
+ * ── 原生桥与读色 ───────────────────────────────────────────────────────────────
  *
- *     const native = useHostNative()
- *     if (!native.available) return <p>这条能力只在桌面版里有</p>
- *     await native.invoke('openPath', ['D:\\dsc'])
- *
- * 每次调用都重新读一遍全局对象：自检会在同一个页面里把桥拿掉再调一次（验证降级那条路），
- * 缓存下来就把结论钉死了。读一个对象引用是常数开销，不值得为它冒这个险。
+ * `getHostNative` / `useHostNative` / `HostNative` / `readCssColor` / `readCssValue` /
+ * `toHexColor` 的实现住 `@dsc/ui-primitives`（`native.ts` / `css.ts`），由文件尾
+ * 那句整包转出交给插件。为什么挪下去：壳自己（`ui-layout` 的 appearance / app）也要用
+ * 它们，实现留在这一层就得让 `ui-layout` 反过来引 `@dsc/ui`——包间成环（E4 收尾剪掉的）。
+ * 两条路（插件与壳）取到的仍是**同一份实现**（同一个模块实例）。
  */
-export function getHostNative(): HostNative {
-  const bridge = bridgeGlobal()
-  const listeners = bridge?.on
-  return {
-    available: bridge !== null,
-    version: bridge === null ? null : typeof bridge.version === 'number' ? bridge.version : NATIVE_BRIDGE_VERSION,
-    invoke<T = unknown>(op: NativeOp, args: readonly unknown[] = []): Promise<T> {
-      if (bridge === null) return Promise.reject(new Error(NATIVE_UNAVAILABLE))
-      return bridge.call!(op, [...args]) as Promise<T>
-    },
-    on(event: NativeEvent, listener: (data: unknown) => void): () => void {
-      if (listeners === undefined) return () => undefined
-      return listeners(event, listener)
-    },
-  }
-}
-
-/**
- * {@link getHostNative} 的 hook 形态（桥在页面生命周期内不会出现/消失，所以取一次就够）。
- * 需要"桥回来了要重画"的场景才用它，否则直接调 `getHostNative()` 更省。
- */
-export function useHostNative(): HostNative {
-  return useMemo(() => getHostNative(), [])
-}
 
 /**
  * ── 外观改动的请求口（插件写、壳落地）────────────────────────────────────────────
@@ -359,13 +284,12 @@ export type { DockReview, DockTabBodyProps, DockTabKindMeta } from '@dsc/ui-dock
  *
  * 页条目注册在 `shell.page` 槽里，自己读 `useShellPage()` 比对自己的 id：
  * 不是自己就返回 null。侧栏入口（或页自己的返回钮）写 `setShellPage`。
+ *
+ * 三个读 hook（页 / 正文脸 / 聚焦步骤）都**实现**在 `@dsc/ui-layout`（那份状态的
+ * 同一个模块里），这里只转出——壳自己也要读它们，实现放这一层就会让 `ui-layout`
+ * 反过来引 `@dsc/ui`（包间成环，E4 收尾时沉下去的）。
  */
-export { setShellPage } from '@dsc/ui-layout'
-
-/** 现在顶在主区的是哪一页（订阅式；`null` = 对话页）。 */
-export function useShellPage(): string | null {
-  return useSyncExternalStore(subscribePage, shellPage, () => null)
-}
+export { setShellPage, useShellPage } from '@dsc/ui-layout'
 
 /** 槽名常量表也从这里转出去：插件写 `SLOT.header` 比手打字符串不容易错。 */
 export { SLOT, type ShellSlot } from '@dsc/ui-slots'
@@ -379,82 +303,9 @@ export { subscribePage, shellPage } from '@dsc/ui-layout'
  */
 import { clearTraceFocus, openTrace, setThreadView, shellThreadView, subscribeThreadView, traceFocusStep } from '@dsc/ui-layout'
 export { clearTraceFocus, openTrace, setThreadView, subscribeThreadView, traceFocusStep, shellThreadView }
+export { useThreadView, useTraceFocus } from '@dsc/ui-layout'
 export type { ThreadView } from '@dsc/ui-layout'
 
-/** 正文区现在显示的是对话还是轨迹（订阅式）。 */
-export function useThreadView(): 'chat' | 'trace' {
-  return useSyncExternalStore(subscribeThreadView, shellThreadView, () => 'chat')
-}
-
-/** 待处理的聚焦目标步骤 id（没设过是 null）。消费方滚到位后调 `clearTraceFocus`。 */
-export function useTraceFocus(): number | null {
-  return useSyncExternalStore(subscribeThreadView, traceFocusStep, () => null)
-}
-
-/**
- * ── 读一个 CSS 变量算出来的颜色 ─────────────────────────────────────────────────
- *
- * 有些地方拿不到"令牌名"，只能拿到**算完的颜色**：xterm 的配色、桌面原生窗口控件区的
- * 两个色（要报给主进程，系统那侧只收 `#rrggbb`）。读法统一成这一处，免得每个调用点
- * 各写一份"挂个隐藏探针读 getComputedStyle 再解析"。
- */
-
-/** 隐藏探针（零尺寸、不可见、不参与布局）；挂在 <html> 上，懒建一次。 */
-let colorProbe: HTMLDivElement | undefined
-
-/**
- * 读一个 CSS 变量在当前主题下算出来的颜色。
- *
- * @param token 变量名（含 `--`），例如 `--dsc-chrome-bar`
- * @returns `#rrggbb`；变量不存在、算出来带 alpha、或不是 sRGB 时给 null
- */
-export function readCssColor(token: string): string | null {
-  if (typeof document === 'undefined') return null
-  if (colorProbe === undefined) {
-    colorProbe = document.createElement('div')
-    colorProbe.style.cssText =
-      'position:absolute;top:0;left:0;width:0;height:0;visibility:hidden;pointer-events:none'
-    document.documentElement.append(colorProbe)
-  }
-  colorProbe.style.backgroundColor = `var(${token})`
-  return toHexColor(getComputedStyle(colorProbe).backgroundColor)
-}
-
-/**
- * 读一个 CSS 变量的原始文本值（要像素数、字号这类不进颜色的场合用）。
- * @param token 变量名（含 `--`）
- * @param fallback 读不出来时的回落值
- */
-export function readCssValue(token: string, fallback: string): string {
-  if (typeof document === 'undefined') return fallback
-  const value = getComputedStyle(document.documentElement).getPropertyValue(token).trim()
-  return value === '' ? fallback : value
-}
-
-/**
- * 把浏览器算出来的颜色转成 `#rrggbb`。
- *
- * 同一个 `color-mix()` 令牌在不同内核版本里可能被写成 `rgb(13, 13, 15)` 或
- * `color(srgb 0.051 0.051 0.059)`，两种都要认。
- *
- * @param color getComputedStyle 读到的 background-color
- * @returns 不透明颜色的十六进制写法；带 alpha 或不是 sRGB 时给 null
- */
-export function toHexColor(color: string): string | null {
-  const parts = /^(rgb|color)\((.+)\)$/i.exec(color.trim())
-  if (!parts) return null
-  const srgb = parts[1].toLowerCase() === 'color'
-  const body = srgb ? parts[2].replace(/^\s*srgb\s+/i, '') : parts[2]
-  const nums = body.split(/[,/\s]+/).filter((piece) => piece !== '').map(Number)
-  if (nums.length < 3 || nums.slice(0, 4).some((n) => !Number.isFinite(n))) return null
-  if (nums.length > 3 && nums[3] < 0.999) return null
-  const scale = srgb ? 255 : 1
-  const hex = (n: number): string =>
-    Math.min(255, Math.max(0, Math.round(n * scale)))
-      .toString(16)
-      .padStart(2, '0')
-  return `#${hex(nums[0])}${hex(nums[1])}${hex(nums[2])}`
-}
 
 export { useChannelStatus, useHostChannel, useHostError, useHostSelector, useHostSnapshot } from '@dsc/ui-layout'
 /**

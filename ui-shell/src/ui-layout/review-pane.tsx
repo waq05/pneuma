@@ -26,7 +26,8 @@ import {
   useWidthDrag,
   writeStoredPx,
 } from '@dsc/ui-primitives'
-import { getHostNative } from '@dsc/ui'
+// 宿主桥从基元包取（E4 收尾从 `@dsc/ui` 沉下去，见 native.ts 的文件头）。
+import { getHostNative } from '@dsc/ui-primitives'
 import { dockActions, setDockReview, useDockReview } from '@dsc/ui-dockkit'
 
 /** 视图 / 换行 / 宽度的键与变量名（与旧界面同一份，两个界面共享用户习惯）。 */
