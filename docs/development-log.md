@@ -4708,3 +4708,100 @@ fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tr
 ③**「点不开」的写法比报错更安静**：未跟踪行原本是 `disabled` 的按钮（没有 onShowDiff），
   用户看不出是「设计如此」还是「坏了」。凡是有数据却没有出口的行，要么给出口，要么给一句
   说明——这轮四类不可预览各有一句话，就是这个道理。
+
+## 第十四批：清掉七笔欠账——SDK 类型、Git 面三件、编辑卡补丁、终端输出面（2026-10-13 深夜续）
+
+用户点单：「轻量欠账的按序做完，还有可选项做完」，并指定派子代理、且**必须参考对应参考实现的实现**。
+四条互相独立的线在 git worktree 里并行（`.worktrees/w-sdk|w-edit|w-git|w-term`，`node_modules`
+用 junction 共享），主代理合流、解冲突、跑全量电池。
+
+### 先查参考实现（四块）
+
+- **Git 未跟踪行数**：参考实现**逐文件读内容数换行符**（不是 `diff --numstat`——未跟踪文件不在
+  diff 里）：单文件上限 1 MiB、含 NUL 判二进制记 0、`removed` 恒 0、并发 4；0 增 0 删的未跟踪项
+  从列表剔除（目录折叠条目保留）。
+- **Git 路径基准**：`git rev-parse --show-prefix` 得工作目录在仓库里的前缀，把仓库根相对路径
+  **rebase 到工作目录相对**；**工作目录之外的仓库变更整条过滤**。
+- **Git 文件级明细 / 提交入口**：文件行带 +N/−N、点行**就地展开**单文件 diff；提交走一个对话框
+  （将提交文件 = 已暂存 + 可选未暂存，按仓库根相对路径去重聚合增删）。
+- **编辑卡补丁全文视图**：工具结果携带结构化 file_diff → 每文件一段 unified diff；文件名 chip 调
+  **单一** `onOpenCodeViewer(source)`，edit/write 传 `{type:'patch', patch}`、read 传 `{type:'file'}`；
+  补丁视图与「文件当前内容」是**两种 source / 两种页签**；卡内展开是轻量 hunk。
+- **终端行输出面**：状态面板终端区点一行 → 独立**只读**侧栏页，**按秒轮询快照**（不是推送），
+  带 `truncated`/`outputPath`，跟随滚动（滚离底部暂停、回底恢复）；交互式终端与后台作业是两套。
+- **插件 SDK 类型**：参考实现**逐包发布** `types`（tsc 生成 `.d.ts` 树、`files` 整棵带上）；
+  契约靠 `declare module` 合并，**锚在已发布的 .d.ts 上**。
+
+### 落地（四条线，各自提交）
+
+1. **SDK 类型（`11ac918`）**：壳构建新增 `ui-shell/build-types.mjs`（tsc 声明构建）+ `tsconfig.types.json`，
+   产出 `lib/ui/sdk/@dsc/<包名>/`（7 个包、各带 `package.json` 的 `types`/`exports`）随 `lib/` 进发行包；
+   `@dsc/ui` 的 `.d.ts` 就是 `plugin-api.ts` 那份（合并锚点）。文档主推「指向 SDK 类型目录」，旧
+   「手抄七条 paths」留作备选；新增 `scripts/ui-sdk-types-test.mjs`（57 条）+ 真实最小第三方工程
+   （`examples/ui-sdk-types-demo`，`tsc` 零错）。
+2. **编辑卡补丁视图（`643e6a1`）**：复用宿主已算好的 `FileChangeSummary`（`src/core/tools/fs-tools.ts:61`），
+   按 `callId` 把 `tool/changes` 缝回对应工具卡（`src/adapter/transcript.ts:504`，重放历史同一条 reduce）；
+   dock 新增 `patch` 页签 kind（内存态、不落盘），preview 插件用既有 `DiffRows` 渲染；工具卡文件名 chip
+   分流：edit/write → 补丁视图、read → 当前内容；补丁页签头保留「用系统程序打开」并加「打开原文件」。
+3. **Git 面三件（`cc7b071` + `5e70c59`）**：宿主 `desktop-dock` 加 `repoPrefix`/`toWorkspacePath`
+   （`git rev-parse --show-prefix` rebase + 只列 cwd 内）、`workspaceNumstat`/`countUntrackedLines`/
+   `untrackedLineStats`（未跟踪逐文件读、上限 1 MiB、二进制 0）、`git-diff` 带 `staged`、`git-commit` 带
+   paths；壳 Git 页签每文件 +N/−N、点行**就地展开**该文件 diff、提交对话框（勾选未暂存 → 随一次提交先
+   暂存再提交，**同一张审批卡**）；状态面板 Git 区 +N/−N 计入未跟踪。
+4. **终端输出面（`5ec15f5`）**：宿主 `TerminalTable.peek`/`JobTable.peek`（尾部快照、**不动模型增量
+   游标**）+ `BackgroundWorksService.read`（归属校验）+ `readBackground` 界面通道；壳 dock 新增
+   `work-output` 页签（只读等宽 `<pre>`、1s 轮询且仅运行中续拉、跟随滚动 + 头部丢字提示）；状态面板
+   终端行改可点按钮、停止钮 `stopPropagation`。
+
+### 合流与收口
+
+- 四条线 rebase 到主干，解 2 处冲突（`dock-model.ts` 的 kind 白名单与 `path` 注释并列；数据探针
+  两线各加一个 `[6]` 段，终端段顺延为 `[7]`）。
+- 顺手补一处**上一批留下的欠账**：`desktop/src/renderer/bridge.ts` 的 `RuntimeProxy` 缺
+  `stopBackground`（第十一批把方法加进契约却漏了旧桥实现，桌面 tsc 一直红），这次把 `stopBackground`
+  与新的 `readBackground` 一起补上（`8d9259f`）——桌面侧 tsc 转绿。
+
+### 验证（硬证据）
+
+- **全量探针 33/33 全绿**（`scripts/*-test.mjs` + `*-check.mjs` + `commands-battery.mjs`）。
+- 增量：数据电池 **46 → 64**（Git 子目录场景 + 后台活输出面）；形态钉 **76 → 122**（补丁视图组、
+  Git 每文件增删/就地展开/提交对话框、终端行只读面）；`ui-sdk-types-test` **57 条**（新增）；
+  `batch3-test` 17 → 19；`ui-plugin-test` +2。
+- **两次构建**：`pnpm build` + `pnpm -C ui-shell build`（末行 `[build-types] SDK 类型树 →
+  lib/ui/sdk/@dsc/（7 个包）`）。
+- **桌面自检 `ui-batch8-check.ps1` 57/57**（跟改 1 条：Git 更改读数 `+1` → `+2`——未跟踪文件现在计入
+  +N/−N，这是本批的**预期行为变更**）。
+- **打包**：`pnpm -C desktop run dist` 出 `win-unpacked` + `muse-code-setup-0.6.67.exe` +
+  `muse-code-portable-0.6.67.exe`；核验包内确有新代码（宿主 `readBackground`、
+  `countUntrackedLines`/`parseNumstatZ`/`repoPrefix`；壳 `status`/`files` 插件含提交对话框与补丁/输出面；
+  `lib/ui/sdk/@dsc/` 61 份 `.d.ts`）。
+
+### 诚实边界（这一批）
+
+①**Git 子目录取「过滤」不取「保留 `../`」**：只列会话 cwd 之内的变更，cwd 之上的仓库改动整条不列
+  ——与 dsc 既有 `inside()` 安全边界一致（保留 `../` 要把 fs-read / diff 的读取边界一起放宽）。代价：
+  大仓的子目录会话看不到仓库其他部分的改动。
+②**补丁视图是内存态**：`patchSources` 不落盘，重启/换会话后补丁页签提示「补丁已过期」并给「打开
+  原文件」出口；进行中打开的是由参数推演的 intended patch，落地后才是实际 change。
+③**补丁视图是单文件**：一个文件一张页签（dsc 的 write/edit 每次只改一个文件，暂无多文件聚合 patch）；
+  超大 hunk 未做虚拟滚动。
+④**未跟踪统计上限 1 MiB**，而**预览**上限 512KB——两档有意不同（统计只需数行、预览要合成全文），
+  判定逻辑共用一份。
+⑤**输出分发仍走 1s 轮询快照**（不是推送流）；头部丢弃报的是**字符数**，且 dsc 输出不落单独文件
+  （没有 `outputPath`）。
+⑥**Git 提交信息生成未接**（参考实现会喂前 8 个文件 diff 用模型生成）；提交对话框是简版（已暂存恒
+  选中、不可逐项取消，「包含未暂存」是整文件暂存，不做到 hunk 级）。
+⑦**SDK 类型是 types-only 包**（`exports` 只有 `types` 条件，运行期不解析）；`@dsc/ui-core` 入口在包内
+  `ui/index.d.ts`。desktop 侧 tsc 这次转绿，但 `remote-web` 侧无 `node_modules` 未验。
+⑧版本未动（根 0.6.67、壳 1.2.0），未推送、未发版。
+
+### 教训（这一批）
+
+①**自检的预跑 eval 有窗口，超了就没读数**：`DSC_DESKTOP_SHOT_EVAL` 在上屏后 `delay − lead` 处开跑，
+  窗口就是 `lead`；本批第一跑 eval 实测 ~82s 被 78s 窗口截断，返回照旧是「没有读数」——先怀疑超时，
+  别怀疑功能。第二次跑就 56/57（唯一失败是断言没跟行为变更）。
+②**桌面自检的窗口被压住会节流**：`TOPMOST` 只让窗口在最前，若被别的窗口遮住，Chromium 会节流
+  `setInterval` 与渲染，界面的轮询（Git 区、直播块）就迟迟不出现——诊断里表现为「状态面板 Git 区
+  缺席」「真跑没发出去」。跑自检时别在旁边压窗口。
+③**契约加了一半**：界面通道加了方法、契约加了成员，旧渲染层的 `RuntimeProxy`（`keyof DscRuntime` 的
+  映射）就编不过——加契约成员时**同时**要顾「谁实现它」（这轮的 legacy 桥就是这么漏的）。
