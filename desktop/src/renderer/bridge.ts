@@ -26,6 +26,7 @@
  */
 import type {
   ArchivedPage,
+  BackgroundOutputView,
   DscRuntime,
   MarketBrowseResult,
   ModelChoiceView,
@@ -173,6 +174,10 @@ export function createRuntimeProxy(): RuntimeProxy {
     setDefaultPreset: (name) => call<SettingsMutation>('setDefaultPreset', name),
     listTools: () => call<ToolEntryView[]>('listTools'),
     clearTodos: () => callVoid('clearTodos'),
+    // 后台活（作业 / 终端会话）：停一个、读只读输出快照（状态面板「终端」区的行）。
+    // 旧渲染层不画那套面板，这里只把契约补齐——与上面 stopTeammate 同一种做法。
+    stopBackground: (id) => call<string>('stopBackground', id),
+    readBackground: (id) => call<BackgroundOutputView>('readBackground', id),
     answerQuestion: (answer) => callVoid('answerQuestion', answer),
     answerPlan: (decision, feedback) => callVoid('answerPlan', decision, feedback),
     goalAction: (action) => call<SettingsMutation>('goalAction', action),
