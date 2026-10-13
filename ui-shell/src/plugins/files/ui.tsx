@@ -41,7 +41,6 @@ import {
   useHostSelector,
   type HostSnapshot,
 } from '@dsc/ui'
-import type { HostChannel } from '../../host-channel'
 import { ChangesPanel } from './changes'
 import {
   getTree,
@@ -53,6 +52,12 @@ import {
   toggleExpanded,
   type TreeEntry,
 } from './tree-store'
+
+/**
+ * 通道类型从 `useHostChannel()` 的返回推出来——插件不直接 import 壳内部模块
+ * （旧写法 `import type { HostChannel } from '../../host-channel'` 已随 E4 清理）。
+ */
+type HostChannel = ReturnType<typeof useHostChannel>
 
 /** `fs-list` 回来的清单（宿主 `desktop-dock` 插件的形状）。 */
 interface Listing {

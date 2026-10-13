@@ -1,6 +1,6 @@
 /**
  * 装载器的「记账外壳」：把插件在 `apply` 期间做的槽位登记全部记账，卸载或重试时按账本
- * 逆序回滚。浏览器壳（`ui-shell/src/boot.ts`）与终端壳（`src/ui/tui-plugins.ts`）共用
+ * 逆序回滚。浏览器壳（`ui-shell/src/ui-renderer/boot.ts`）与终端壳（`src/ui/tui-plugins.ts`）共用
  * 这一份——装载语义两壳一致是契约的一部分。
  *
  * 为什么单独一个文件：类型收窄（D1）后，外壳的方法必须与注册表的公开重载**逐字同形**

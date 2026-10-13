@@ -2,17 +2,17 @@
  * 对话区的时间口径（桌面渲染层 `turn-timing.ts` 的同构移植）：每轮的起止时刻、
  * 进行中状态行的两行文案。
  *
- * 三个底层格式化（`entryTs` / `formatClock` / `formatDuration`）已搬去平台层
- * （`platform/time.ts`）——轨迹页要读同一份，这里只转出去保持调用点不变。
+ * 三个底层格式化（`entryTs` / `formatClock` / `formatDuration`）已搬去平台种子库
+ * （`@dsc/ui-primitives` 的 time）——轨迹页要读同一份，这里只转出去保持调用点不变。
  * 数据缺口的口径见那边的注释：拿不到时间就返回 null，界面不画，绝不显示 NaN。
  *
  * @module dsc-ui-shell/plugins/transcript/timing
  */
 import type { TranscriptEntry } from '@dsc/ui'
-import { entryTs } from '../../platform/time'
+import { entryTs } from '@dsc/ui-primitives'
 
-// 平台层的读数原样转出（消息流内部的 import 不变）。
-export { entryTs, formatClock, formatDuration } from '../../platform/time'
+// 平台种子的读数原样转出（消息流内部的 import 不变）。
+export { entryTs, formatClock, formatDuration } from '@dsc/ui-primitives'
 
 /** 一轮对话：一条用户消息 → 模型回复结束（中间的工具调用也算这一轮）。 */
 export interface RoundInfo {

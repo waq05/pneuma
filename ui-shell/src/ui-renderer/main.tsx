@@ -8,19 +8,18 @@
  * 数据通道（SSE）与启动清单（`__DSC_BOOT__`）是两件事：清单决定装哪些插件，
  * 通道决定界面上显示什么状态。通道先建（它自己异步连），装插件时一并交给它们。
  *
- * @module dsc-ui-shell/main
+ * @module dsc-ui-shell/ui-renderer/main
  */
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { SlotRegistry, ServiceRegistry, ServicesProvider, type UiBootGraph, type UiPrefsView } from '@dsc/ui-core'
-import { onAppearanceRequest, type SlotFactoryMap, type SlotMap } from './plugin-api'
-import { createBootSession, readBootGraph, type UiBootSession } from './boot'
+import { onAppearanceRequest, type SlotFactoryMap, type SlotMap } from '@dsc/ui'
+import { ALLOWED_MODULES, createBootSession, readBootGraph, type UiBootSession } from './boot'
 import { startPluginHmr, type UiPluginHmr } from './hmr'
-import { createHostChannel } from './host-channel'
-import { RuntimeProvider } from './runtime-context'
-import { SHELL_SLOTS, type ShellSlot } from './slots'
-import { App } from './app'
-import type { UiComponent, UiSlots } from './plugin-api'
+// 骨架与运行时（App、宿主通道、外观落地）住 `@dsc/ui-layout`；槽位契约与出口住 `@dsc/ui-slots`。
+import { App, createHostChannel, RuntimeProvider } from '@dsc/ui-layout'
+import { SHELL_SLOTS, type ShellSlot } from '@dsc/ui-slots'
+import type { UiComponent, UiSlots } from '@dsc/ui'
 import {
   applyAppearance,
   appearanceFromPrefs,
@@ -28,17 +27,18 @@ import {
   loadCachedAppearance,
   saveCachedAppearance,
   type Appearance,
-} from './appearance'
+} from '@dsc/ui-layout'
 // 顺序即层叠：令牌 → 全局基线 → 原语 → 各视图（从旧渲染层原样搬来的四份）
 // → 壳自己的补充。反了就会互相覆盖，与旧渲染层 main.tsx:6-9 同一套次序。
-import './legacy/tokens.css'
-import './legacy/base.css'
-import './legacy/primitives.css'
-import './legacy/views.css'
+// E4 起入口住 ui-renderer 包，样式仍在壳根（`legacy/` 与 `styles.css`）——相对路径退一层。
+import '../legacy/tokens.css'
+import '../legacy/base.css'
+import '../legacy/primitives.css'
+import '../legacy/views.css'
 // 终端（xterm）的样式必须由**壳**加载：插件 bundle 是纯 JS，带不了 CSS 文件，
 // 而 xterm 的网格与滚动条要靠它自己的样式表才画得对。放在 legacy 之后、styles.css 之前。
 import '@xterm/xterm/css/xterm.css'
-import './styles.css'
+import '../styles.css'
 
 /** 取不到清单时的启动图（空壳 + 一条诊断，比白屏好查）。 */
 const UNAVAILABLE_BOOT: UiBootGraph = {
@@ -128,7 +128,17 @@ async function bootstrap(): Promise<void> {
     <StrictMode>
       <RuntimeProvider channel={channel}>
         <ServicesProvider services={serviceRegistry}>
-          <App slots={slots} boot={boot} serviceRegistry={serviceRegistry} session={session} hmr={hmr} bootError={bootError} />
+          <App
+            slots={slots}
+            boot={boot}
+            serviceRegistry={serviceRegistry}
+            session={session}
+            hmr={hmr}
+            bootError={bootError}
+            // 平台模块白名单的读数由这里给：白名单住在装载器（本包），诊断区住在骨架 ——
+            // 传值而不是让骨架反向 import 本包，两包之间就没有反向边（E4 的成环剪法）。
+            allowedModules={ALLOWED_MODULES}
+          />
         </ServicesProvider>
       </RuntimeProvider>
     </StrictMode>,

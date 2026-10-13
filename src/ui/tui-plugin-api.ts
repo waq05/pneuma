@@ -16,7 +16,7 @@
 import { Text } from 'ink'
 import { defineUiPlugin } from './plugin.js'
 
-/** 终端壳声明的槽名（对齐浏览器壳的 `ui-shell/src/slots.ts` 的常量做法）。 */
+/** 终端壳声明的槽名（对齐浏览器壳的 `ui-shell/src/ui-slots/slots.ts` 的常量做法）。 */
 export const TUI_SLOTS = {
   /** 通知盒下方的插件扩展行（list）：插件在这里放一行状态说明。 */
   noticeExtensions: 'tui.notice.extensions',

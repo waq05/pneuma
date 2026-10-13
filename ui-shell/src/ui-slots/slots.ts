@@ -11,18 +11,19 @@
  * 命名约定：`区域.位置`。第三方插件只用这些名字，不自己发明（将来要加就加在这）
  * ——插件自己的扩展点由插件在 `register` 的 `children` 里开，不占壳的命名空间。
  *
- * @module dsc-ui-shell/slots
+ * @module dsc-ui-shell/ui-slots/slots
  */
-import type { SlotMap } from './plugin-api'
+import type { SlotMap } from '../plugin-api'
 
 /**
  * 把壳认识的位置并进**插件 import 的那个模块**的契约表（D1）。
  *
- * 为什么写 `declare module './plugin-api'` 而不是 '@dsc/ui'：合并落在被 augment 的
- * 模块本身（本文件与 plugin-api.ts 同目录，相对写法就是它）；插件侧看到的是同一个
- * 模块（paths 里 '@dsc/ui' → ./src/plugin-api.ts），两边并进的是同一张表。
+ * 为什么写 `declare module '../plugin-api'` 而不是 '@dsc/ui'：合并落在被 augment 的
+ * 模块**文件身份**上（re-export 不参与合并），相对写法指向的就是 `src/plugin-api.ts`；
+ * 插件侧看到的是同一个模块（paths 里 '@dsc/ui' → ./src/plugin-api.ts），两边并进的
+ * 是同一张表。E4 把本文件搬进 ui-slots 包后，相对路径跟着退一层。
  */
-declare module './plugin-api' {
+declare module '../plugin-api' {
   interface SlotMap {
     'shell.header': { kind: 'list' }
     'shell.header.lead': { kind: 'list' }

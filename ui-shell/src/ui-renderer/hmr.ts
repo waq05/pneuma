@@ -18,9 +18,10 @@
  * 后一条插队会让「卸载 → 装」的交错出怪状态；队列里总是拿**最新**那一帧做目标，
  * 中间被更新帧作废的旧目标自动跳过。
  *
- * @module dsc-ui-shell/hmr
+ * @module dsc-ui-shell/ui-renderer/hmr
  */
-import type { HostChannel, HostPluginsFrame } from './host-channel'
+// 宿主通道类型住 `@dsc/ui-layout`（通道的 React 面同址）；装载会话同包，相对取。
+import type { HostChannel, HostPluginsFrame } from '@dsc/ui-layout'
 import type { UiBootSession } from './boot'
 
 /** 一条「页内同步失败」（只影响这个页面，不改宿主的启用状态）。 */

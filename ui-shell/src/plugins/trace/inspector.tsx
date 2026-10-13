@@ -15,8 +15,8 @@
  */
 import { useEffect, useState, type ReactNode } from 'react'
 import { IconClose, IconCopy, toastErr, toastOk, type TranscriptEntry } from '@dsc/ui'
-import { formatClock } from '../../platform/time'
-import { formatTokens } from '../../platform/tokens'
+// 时刻/用量口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
+import { formatClock, formatTokens } from '@dsc/ui-primitives'
 import { KIND_LABEL, entryUsage, formatClockSeconds, formatTraceDuration, prettyMaybeJson } from './trace-format'
 
 export function TraceInspector(props: {

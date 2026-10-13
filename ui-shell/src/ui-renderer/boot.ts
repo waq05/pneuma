@@ -25,7 +25,10 @@
  * 宿主的 CSP 已经加上（`core/ui-server.ts`，script-src 'self'）——插件走 `<script src>`
  * 正好在放行面里；eval 一旦进了某段代码，报错来自浏览器安全策略，不会出现在诊断区。
  *
- * @module dsc-ui-shell/boot
+ * E4 起本文件住 `@dsc/ui-renderer`（与 `main.tsx` / `hmr.ts` 同包）：装载内核与入口是
+ * 同一条链，拆开只会多一份跨包接线；取数形状归本包，渲染骨架归 `@dsc/ui-layout`。
+ *
+ * @module dsc-ui-shell/ui-renderer/boot
  */
 import * as React from 'react'
 import * as ReactDOM from 'react-dom'
@@ -33,6 +36,12 @@ import * as ReactDOMClient from 'react-dom/client'
 import * as jsxRuntime from 'react/jsx-runtime'
 import * as xterm from '@xterm/xterm'
 import * as xtermFit from '@xterm/addon-fit'
+// 平台种子里的三个基元/槽位包（E6）：静态 import 进壳的同一个 vite 图，插件 require 到的是
+// 与壳内部**同一份实例**（带模块级状态的模块——toast / confirm / completion-sound /
+// dock-state——重复一份就会出两份状态，这里是正确性要求而不只是体积）。
+import * as uiSlots from '@dsc/ui-slots'
+import * as uiPrimitives from '@dsc/ui-primitives'
+import * as uiDockkit from '@dsc/ui-dockkit'
 import { UiArrivalLedger, type UiArrivalHost } from '@dsc/ui-core'
 import type {
   UiBootBatch,
@@ -44,9 +53,11 @@ import type {
   UiRuntimeApi,
 } from '@dsc/ui-core'
 import { createScopedSlotApi, ServiceRegistry, unmetInjections } from '@dsc/ui-core'
-import * as pluginApi from './plugin-api'
-import platformModules from './platform-modules.json'
-import type { UiComponent, UiPluginApi, UiSlots } from './plugin-api'
+// 插件契约面（`@dsc/ui` 的落点就是 src/plugin-api.ts）与平台模块表数据文件：
+// 前者同时是 MODULES 里 `@dsc/ui` 一格的实现，必须与壳内部用的是同一份模块实例。
+import * as pluginApi from '@dsc/ui'
+import platformModules from '../platform-modules.json'
+import type { UiComponent, UiPluginApi, UiSlots } from '@dsc/ui'
 
 /** 启动图注入页面时用的全局名（宿主 `core/ui-server.ts` 里同一个名字）。 */
 const BOOT_GLOBAL = '__DSC_BOOT__'
@@ -68,6 +79,11 @@ export const BOOT_STATE_GLOBAL = '__DSC_UI_BOOT_STATE__'
  * 故意不在表里的：`@dsc/ui-core`（壳的内部实现，插件只该用 `@dsc/ui`；
  * 它被构建期保留成 require，所以真当值用了会得到一句明确的「白名单外的模块」）。
  *
+ * `@dsc/ui-slots` / `@dsc/ui-primitives` / `@dsc/ui-dockkit` 在表里（E6 起的平台种子）：
+ * 插件按包名 require 到的就是壳内部那一份实现，不必也不能各自内联。三者的值由上面的
+ * 静态 import 提供——与壳的同一个 vite 图，保证实例一致。TUI 壳是**另一张表**
+ * （`src/ui/tui-plugins.ts`），这三条只对 web 值面成立。
+ *
  * `@xterm/xterm` 与 `@xterm/addon-fit` 在表里（2026-10-10 加的）：终端插件要用它们，
  * 而"每个插件自带一份 xterm"会让每个用到终端的插件都拖进 ~400KB。放进平台表之后
  * 只有壳带一份（xterm 的 CSS 也由壳在 `main.tsx` 里静态 import，插件拿不到样式文件）。
@@ -78,6 +94,9 @@ const MODULES: Readonly<Record<string, unknown>> = {
   'react-dom/client': ReactDOMClient,
   'react/jsx-runtime': jsxRuntime,
   '@dsc/ui': pluginApi,
+  '@dsc/ui-slots': uiSlots,
+  '@dsc/ui-primitives': uiPrimitives,
+  '@dsc/ui-dockkit': uiDockkit,
   '@xterm/xterm': xterm,
   '@xterm/addon-fit': xtermFit,
 }

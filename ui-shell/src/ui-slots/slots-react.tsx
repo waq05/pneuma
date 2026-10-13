@@ -7,11 +7,11 @@
  *
  * 装配错误（壳与插件的契约没对上，例如渲染一个没声明过的子槽）不在此列：那种必须炸出来。
  *
- * @module dsc-ui-shell/slots-react
+ * @module dsc-ui-shell/ui-slots/slots-react
  */
 import { Component, createContext, useCallback, useContext, useMemo, useSyncExternalStore, type ComponentType, type ReactNode } from 'react'
 import { SlotAssemblyError, useSeatProps, useSlot, type SlotEntry, type StoredFactory } from '@dsc/ui-core'
-import type { SlotRenderApi, UiComponent, UiSlots } from './plugin-api'
+import type { SlotRenderApi, UiComponent, UiSlots } from '../plugin-api'
 
 /** 渲染位置不关心 owner 值时共用这一个空对象。 */
 const NO_OWNER: Readonly<Record<string, never>> = Object.freeze({})

@@ -13,14 +13,15 @@
  * 例外只有第三方依赖（react / shiki / react-markdown / pdfjs / vscode-icons…）
  * 与更底层的 `@dsc/ui-core`。
  *
- * 每个模块都 `export *` 出来（不是节选）：老路径的转发壳 re-export 整个索引，
- * 漏掉一个模块，该模块的名字就会在运行期变成 undefined——那种错编译期看不见。
+ * 每个模块都 `export *` 出来（不是节选）：`@dsc/ui` 经 `export * from '@dsc/ui-primitives'`
+ * 整包转出，漏掉一个模块，该模块的名字就会在插件 require 面上变成 undefined——那种错
+ * 编译期看不见（E4 起转发壳已删，但 `@dsc/ui` 的导出名集合保持不变）。
  *
  * `package.json` 的 `"sideEffects": false` 是**必须留着**的一行（别当样板删掉）：本包的模块
- * 全是纯声明，而插件 bundle 现在经转发壳整索引进图——没有这个声明，rollup 会把
- * `file-icons` 依赖的 `vscode-icons-js`（CJS、摇不动树）内联进每个用到基元的插件 bundle
- * （实测 5 个插件各 +81KB）。E6 把本包作为平台种子下发、插件改成运行期 require 之后，
- * 这一行仍应保留（谁也不想为了一枚图标再各带一份 81KB 的表）。
+ * 全是纯声明。E2 拆包时的行情是「插件按源码整索引进图」——没有这个声明，rollup 不敢丢
+ * `file-icons` 依赖的 `vscode-icons-js`（CJS、摇不动树），5 个插件各 +81KB。E6 起插件改走
+ * 运行期 require（构建期 external），但这行仍是本包对**任何源码级消费者**（壳的 app bundle 等）
+ * 的承诺：整包进图时，摇不掉的模块不该被无谓地拖进来。
  *
  * @module dsc-ui-shell/ui-primitives
  */

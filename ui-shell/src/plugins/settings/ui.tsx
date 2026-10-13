@@ -58,7 +58,8 @@ import { PresetsGroup } from './presets'
 import { ModelsGroup } from './models'
 import { UsageGroup } from './usage'
 import { ArchiveGroup } from './archive'
-import { Select } from '../../platform/select'
+// 基元从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
+import { Select } from '@dsc/ui-primitives'
 
 /** 拿异常的文字形态（宿主与桥都可能抛 Error，也可能是别的值）。 */
 function text(error: unknown): string {

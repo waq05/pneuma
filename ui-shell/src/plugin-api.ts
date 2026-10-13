@@ -36,12 +36,12 @@ import { NATIVE_BRIDGE_VERSION, type NativeEvent, type NativeOp } from '@dsc/ui-
 import {
   subscribeDock,
   type DockReview,
-} from './dock-state'
-import { shellPage, subscribePage } from './page-state'
+} from '@dsc/ui-dockkit'
+import { shellPage, subscribePage } from '@dsc/ui-layout'
 
 // 载体基元与槽名契约：终端壳的对应物在 `src/ui/tui-plugin-api.ts`。
 // 槽名两边导出同名常量——插件 import 它写注册目标，字符串字面量不散落。
-export { Text } from './plugin-text.js'
+export { Text } from '@dsc/ui-primitives'
 export const TUI_SLOTS = {
   /** 通知盒下方的插件扩展行（list）：插件在这里放一行状态说明。 */
   noticeExtensions: 'tui.notice.extensions',
@@ -53,8 +53,8 @@ export const TUI_SLOTS = {
  * 槽名 → `{ kind; owner?; matched? }`。壳与插件都用 `declare module '@dsc/ui'` 往上并键。
  * 为什么表声明在这个模块（而不是 @dsc/ui-core 再转出）：`declare module` 的合并只认
  * **词法相邻**的声明，re-export 不参与——声明必须落在插件 import 的那个模块里。
- * 壳在 `ui-shell/src/slots.ts` 并进 9 个壳槽，插件就近并自己开出来的子槽
- * （例：transcript 的 `transcript.toolview`）。
+ * 壳在 `@dsc/ui-slots` 的 `slots.ts` 并进 9 个壳槽（E4 起那个包独立，相对路径退一层），
+ * 插件就近并自己开出来的子槽（例：transcript 的 `transcript.toolview`）。
  */
 export interface SlotMap {}
 
@@ -350,9 +350,9 @@ export {
   useActivePreviewPath,
   useDockReview,
   useDockSurface,
-} from './dock-state'
-export { subscribeDock, dockSurface } from './dock-state'
-export type { DockReview, DockTabBodyProps, DockTabKindMeta } from './dock-state'
+} from '@dsc/ui-dockkit'
+export { subscribeDock, dockSurface } from '@dsc/ui-dockkit'
+export type { DockReview, DockTabBodyProps, DockTabKindMeta } from '@dsc/ui-dockkit'
 
 /**
  * ── 主区整页（插件中心这类「顶上来的整页」）────────────────────────────────────
@@ -360,7 +360,7 @@ export type { DockReview, DockTabBodyProps, DockTabKindMeta } from './dock-state
  * 页条目注册在 `shell.page` 槽里，自己读 `useShellPage()` 比对自己的 id：
  * 不是自己就返回 null。侧栏入口（或页自己的返回钮）写 `setShellPage`。
  */
-export { setShellPage } from './page-state'
+export { setShellPage } from '@dsc/ui-layout'
 
 /** 现在顶在主区的是哪一页（订阅式；`null` = 对话页）。 */
 export function useShellPage(): string | null {
@@ -368,8 +368,8 @@ export function useShellPage(): string | null {
 }
 
 /** 槽名常量表也从这里转出去：插件写 `SLOT.header` 比手打字符串不容易错。 */
-export { SLOT, type ShellSlot } from './slots'
-export { subscribePage, shellPage } from './page-state'
+export { SLOT, type ShellSlot } from '@dsc/ui-slots'
+export { subscribePage, shellPage } from '@dsc/ui-layout'
 
 /**
  * ── 正文区的两张脸（对话 / 轨迹）──────────────────────────────────────────────
@@ -377,9 +377,9 @@ export { subscribePage, shellPage } from './page-state'
  * 顶栏页签、会话右键的「查看轨迹」、工具行的「在轨迹中查看」药丸都往这里写；
  * 轨迹插件读 `useThreadView()` 决定画不画、读 `useTraceFocus()` 拿一次性聚焦目标。
  */
-import { clearTraceFocus, openTrace, setThreadView, shellThreadView, subscribeThreadView, traceFocusStep } from './thread-view'
+import { clearTraceFocus, openTrace, setThreadView, shellThreadView, subscribeThreadView, traceFocusStep } from '@dsc/ui-layout'
 export { clearTraceFocus, openTrace, setThreadView, subscribeThreadView, traceFocusStep, shellThreadView }
-export type { ThreadView } from './thread-view'
+export type { ThreadView } from '@dsc/ui-layout'
 
 /** 正文区现在显示的是对话还是轨迹（订阅式）。 */
 export function useThreadView(): 'chat' | 'trace' {
@@ -456,7 +456,7 @@ export function toHexColor(color: string): string | null {
   return `#${hex(nums[0])}${hex(nums[1])}${hex(nums[2])}`
 }
 
-export { useChannelStatus, useHostChannel, useHostError, useHostSelector, useHostSnapshot } from './runtime-context'
+export { useChannelStatus, useHostChannel, useHostError, useHostSelector, useHostSnapshot } from '@dsc/ui-layout'
 /**
  * 服务表的 React 订阅面（A1）：插件用它读别的插件提供的服务，并跟着服务的出现/消失
  * 换数据源（D3 的 status 面板靠它从本地轮询切到 team 的共享席位，无需刷新页面）。
@@ -469,15 +469,16 @@ export { useService } from '@dsc/ui-core'
 export { useSeat } from '@dsc/ui-core'
 export { defineStore } from '@dsc/ui-core'
 export type { ActionsDecl, BakedActions, PropsStoreOf, SeatInstance, SnapshotSelectorHook, StoreHandle } from '@dsc/ui-core'
-export type { ChannelStatus, HostHello } from './host-channel'
+export type { ChannelStatus, HostHello } from '@dsc/ui-layout'
 export type { SlotEntry, SlotKind, UiHostInfo, UiRuntimeApi, UiSlotApi, HostSnapshot }
-// 图标集原样转出去：插件 bundle 里 `import { IconPin } from '@dsc/ui'` 即可，
-// 不必各自内联一份 SVG（同一枚图标在多个插件里内联，改一次要改好几处）。
-export * from './icons'
+// 基元库整包转出（E2 拆包后原来是经 `./icons` 转发壳整包转出的，导出面与那时**逐名相同**）：
+// 插件 bundle 里 `import { IconPin } from '@dsc/ui'` 即可，不必各自内联一份 SVG。
+// E6 起插件也可以直接按包名 `@dsc/ui-primitives` 取（平台种子，同一份实例）。
+export * from '@dsc/ui-primitives'
 // 彩色文件图标（vscode-icons 常用子集 + FileIcon 组件）与正文 token 粗估：
 // 前者轮尾「文件已更改」卡 / 悬停预览 / 审查面板 / 文件树共用一份，
 // 后者与宿主自动压缩同源（见 src/ui/index.ts 的说明）——都在壳里只有一份实现。
-export { FileIcon, fileIconName } from './platform/file-icons'
+export { FileIcon, fileIconName } from '@dsc/ui-primitives'
 export { estimateTextTokens } from '@dsc/ui-core'
 // 文本差异算法也转出去（工具卡的「将做的改动」要用；与宿主算轮尾差异同一份实现）。
 export { diffLines, type DiffResult } from '@dsc/ui-core'
@@ -499,16 +500,16 @@ export {
 // 壳内置平台层转出（web 值面独有；终端壳的 @dsc/ui 不导出 DOM 组件）：
 // shiki / react-markdown / pdfjs 这些重依赖只在壳 vendor 里有一份（平台模块表里
 // 没有它们，插件 bundle 不许自带），插件经这里用壳的实现，实现只有一份。
-export { highlightLines, langForPath, type HighlightedLine } from './platform/highlight'
-export { DiffRows } from './platform/diff-rows'
-export { CodeView } from './platform/code-view'
-export { MarkdownView, type FsRead } from './platform/markdown'
-export { PdfView } from './platform/pdf-view'
-export { CsvView, XlsxView } from './platform/table-view'
+export { highlightLines, langForPath, type HighlightedLine } from '@dsc/ui-primitives'
+export { DiffRows } from '@dsc/ui-primitives'
+export { CodeView } from '@dsc/ui-primitives'
+export { MarkdownView, type FsRead } from '@dsc/ui-primitives'
+export { PdfView } from '@dsc/ui-primitives'
+export { CsvView, XlsxView } from '@dsc/ui-primitives'
 // 一次性反馈与确认框（桌面端 components/toast.ts / confirm.ts 的同构移植）：
 // 插件的失败不能再「静默什么都没发生」，破坏性动作动手前先过确认框。
-export { toastOk, toastErr } from './platform/toast'
-export { confirmAction, type ConfirmSpec } from './platform/confirm'
+export { toastOk, toastErr } from '@dsc/ui-primitives'
+export { confirmAction, type ConfirmSpec } from '@dsc/ui-primitives'
 // 宿主视图类型原样转出去：插件按它们写渲染，宿主改字段时插件这边编不过（而不是线上画空）。
 export type {
   ApprovalAnswer,

@@ -49,7 +49,8 @@ import {
   type SettingsMutation,
   type ThinkingLevel,
 } from '@dsc/ui'
-import { Select } from '../../platform/select'
+// 基元从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
+import { Select } from '@dsc/ui-primitives'
 
 /** 拿异常的文字形态。 */
 function text(error: unknown): string {

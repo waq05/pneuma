@@ -16,10 +16,11 @@
  * @module dsc-ui-shell/plugins/trace/trace-format
  */
 import type { TranscriptEntry } from '@dsc/ui'
-import { entryTs } from '../../platform/time'
+// 时刻/耗时口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
+import { entryTs } from '@dsc/ui-primitives'
 
-// 时刻/耗时的格式化在平台层（对话页共用同一份）；轨迹页从这里取，调用点少一层相对路径。
-export { formatClockSeconds, formatTraceDuration } from '../../platform/time'
+// 时刻/耗时的格式化在平台种子库（对话页共用同一份）；轨迹页从这里取，调用点少一层相对路径。
+export { formatClockSeconds, formatTraceDuration } from '@dsc/ui-primitives'
 
 /**
  * 一条步骤的种类：轨迹页只认这八种（正文 text 不进轨迹，压缩落点另有区段行）。

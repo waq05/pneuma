@@ -63,11 +63,9 @@ import { readFold, writeFold, stepGroupFoldKey, turnFoldKey } from './fold-state
 import { groupSteps, type StepGroup, type StepGrouping } from './process-groups'
 import { RowSeat, StepGroupSeat } from './fold-seats'
 import { JumpRail, previewText } from './jump-rail'
-import { baseNameOf, displayPathOf } from '../../platform/paths'
-import { useHoverDelay } from '../../platform/hover-delay'
-import { playCompletionSound } from '../../platform/completion-sound'
-import { matchTool, oneLine, prettyJson, TOOL_STATUS_TEXT, toolSummary, toolVerb, type ToolMatch } from '../../platform/tool-summary'
-import { formatTokens } from '../../platform/tokens'
+// 路径/悬停/完成音/工具摘要口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，
+// 不再内联（E6）——completion-sound 带模块级 AudioContext 单例，重复一份会造出两个。
+import { TOOL_STATUS_TEXT, baseNameOf, displayPathOf, formatTokens, matchTool, oneLine, playCompletionSound, prettyJson, toolSummary, toolVerb, useHoverDelay, type ToolMatch } from '@dsc/ui-primitives'
 import {
   ChatStatus,
   IntendedBody,

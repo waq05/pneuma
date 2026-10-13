@@ -38,9 +38,8 @@ import {
   type SlotRenderApi,
   type TranscriptEntry,
 } from '@dsc/ui'
-import { formatClock } from '../../platform/time'
-import { formatTokens } from '../../platform/tokens'
-import { matchTool, prettyJson, TOOL_STATUS_TEXT, toolSummary, toolVerb, type ToolMatch } from '../../platform/tool-summary'
+// 时刻/用量/工具摘要口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
+import { TOOL_STATUS_TEXT, formatClock, formatTokens, matchTool, prettyJson, toolSummary, toolVerb, type ToolMatch } from '@dsc/ui-primitives'
 import { buildTraceModel, entryUsage, formatTraceDuration, rangeHits, stepMatches, type TraceRange, type TraceRound, type TraceStepEntry } from './trace-format'
 import { TraceTimeline } from './timeline'
 import { TraceInspector } from './inspector'

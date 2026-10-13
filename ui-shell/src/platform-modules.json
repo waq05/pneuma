@@ -4,6 +4,9 @@
   "react-dom/client",
   "react/jsx-runtime",
   "@dsc/ui",
+  "@dsc/ui-slots",
+  "@dsc/ui-primitives",
+  "@dsc/ui-dockkit",
   "@xterm/xterm",
   "@xterm/addon-fit"
 ]

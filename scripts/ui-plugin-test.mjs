@@ -881,6 +881,30 @@ console.log('\n[5] 真实构建产物')
     )
     check('插件 bundle 引用壳的插件 API', bundles.every((bundle) => bundle.text.includes('require("@dsc/ui")')))
     check('插件 bundle 是工厂形状（导出 apply）', bundles.every((bundle) => bundle.text.includes('apply')))
+    // ── E6：插件从平台种子取基元，产物里不许再内联这些实现 ───────────────────────
+    // marker 是 rollup 未 minify（build-plugins.mjs 的 `minify: false`）时的逐字函数签名：
+    // Select / 图标（base、sized）/ completion-sound 的 AudioContext 单例。改前这五份
+    // （settings / plugins / terminal / trace / transcript）各内联一份，改后一份都不该有；
+    // 反例会把包名打出来（哪份内联了内联的是谁）。
+    const inlined = bundles
+      .filter((bundle) =>
+        bundle.text.includes('function Select(props)') ||
+        bundle.text.includes('function base(path') ||
+        bundle.text.includes('function sized(size)') ||
+        bundle.text.includes('reverbImpulse'),
+      )
+      .map((bundle) => bundle.id)
+    check('没有 bundle 内联基元实现（Select / 图标 / completion-sound）', inlined.length === 0, inlined.join(','))
+    const seedUsers = ['settings', 'plugins', 'terminal', 'trace', 'transcript']
+    const missingSeedRequire = seedUsers.filter((id) => {
+      const bundle = bundles.find((candidate) => candidate.id === id)
+      return bundle === undefined || !bundle.text.includes('require("@dsc/ui-primitives")')
+    })
+    check(
+      '改用种子的五份 bundle 都 require("@dsc/ui-primitives")',
+      missingSeedRequire.length === 0,
+      missingSeedRequire.join(','),
+    )
     // 演示插件（hello/echo/runtime）按拍板从发布面移除（阶段 8）：点名它们的产物断言随之
     // 删除——子槽语义的活体证据由槽位注册表单测（本文件 220-240 行）承担，不靠演示 bundle。
     check('宿主侧能读到界面壳的静态页', existsSync(join(uiPluginsDir(), '..', 'assets', 'index.html')))
@@ -946,26 +970,36 @@ console.log('\n[5b] 分包落点')
   const platformModules = JSON.parse(readFileSync(join(uiShell, 'src', 'platform-modules.json'), 'utf8'))
   check('@dsc/ui-core 不在平台模块表里（故意不给插件）', !platformModules.includes('@dsc/ui-core'), platformModules.join(','))
 
-  // ── 包内分层：三个逻辑包的单向依赖（E2/E3/E5） ─────────────────────────────
+  // ── 包内分层：五个逻辑包的单向依赖（E2/E3/E5/E4） ─────────────────────────────
   // 逻辑分包没有 workspace 的依赖图兜底：反向依赖编译器不拦，症状是运行期解析出两份实现
-  // （hooks 直接崩）或插件 bundle 把整层内联进去。这里对三包逐文件走查 import 说明符
+  // （hooks 直接崩）或插件 bundle 把整层内联进去。这里对各包逐文件走查 import 说明符
   // （先剔注释再取 `from '…'` / `import('…')` / 裸 `import '…'`），把
-  // 「primitives ← dockkit ← layout」这条单向链钉死。
+  // 「primitives / slots ← dockkit ← layout ← renderer」这条单向链钉死。
   const layerDirs = {
     '@dsc/ui-primitives': join(uiShell, 'src', 'ui-primitives'),
+    '@dsc/ui-slots': join(uiShell, 'src', 'ui-slots'),
     '@dsc/ui-dockkit': join(uiShell, 'src', 'ui-dockkit'),
     '@dsc/ui-layout': join(uiShell, 'src', 'ui-layout'),
+    '@dsc/ui-renderer': join(uiShell, 'src', 'ui-renderer'),
   }
-  // 每包**不许**出现的包名：往上走的那些。`@dsc/ui`（聚合面）转出的正是这三层，
+  // 每包**不许**出现的包名：往上走的那些。`@dsc/ui`（聚合面）转出的正是这些包，
   // 从下面往回引等于把插件 API 拖进环里（alias 会解析出第二份实现）。
+  // ui-layout 不许引 `@dsc/ui-renderer`：E4 把那条反向边（读白名单与装载账本）剪成
+  // props 递值，这条禁止是防回归——`ui-layout → ui-renderer → ui-layout` 一旦复活就是环。
   const forbiddenUpward = {
-    '@dsc/ui-primitives': ['@dsc/ui-dockkit', '@dsc/ui-layout', '@dsc/ui'],
-    '@dsc/ui-dockkit': ['@dsc/ui-layout', '@dsc/ui'],
-    '@dsc/ui-layout': [],
+    '@dsc/ui-primitives': ['@dsc/ui-dockkit', '@dsc/ui-slots', '@dsc/ui-layout', '@dsc/ui-renderer', '@dsc/ui'],
+    '@dsc/ui-slots': ['@dsc/ui-dockkit', '@dsc/ui-layout', '@dsc/ui-renderer', '@dsc/ui'],
+    '@dsc/ui-dockkit': ['@dsc/ui-slots', '@dsc/ui-layout', '@dsc/ui-renderer', '@dsc/ui'],
+    '@dsc/ui-layout': ['@dsc/ui-renderer'],
+    '@dsc/ui-renderer': [],
   }
-  // ui-layout 的**过渡期**向上边（E4 拆出槽位包 / 渲染器包、宿主桥与热更句柄下沉之前只能
-  // 这样取）：逐条列出来；白名单之外任何一处走出包或往上的 import 都会红。
-  const layoutTransitionUpward = new Set(['../boot', '../slots', '../slots-react', '../hmr'])
+  // 每包**刻意保留**的相对边（白名单之外，任何一处走出包的相对 import 都会红）：
+  //   - ui-slots 的 `../plugin-api`：`declare module` 的合并落在**文件身份**上（re-export
+  //     与包名 alias 不参与合并），且 SlotMap / UiComponent 等契约类型只能从那个文件取——
+  //     纯类型面，擦除后零字节。这是机制要求，不是过渡态。
+  //   - ui-layout 的过渡边已随 E4 清零（原 `../boot` / `../slots` / `../slots-react` /
+  //     `../hmr` 四条：两条换包名、两条改成 props 递值）。
+  const packageTransitionEdges = { '@dsc/ui-slots': new Set(['../plugin-api']) }
   const sourceFilesOf = (dir, out = []) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const file = join(dir, entry.name)
@@ -985,7 +1019,7 @@ console.log('\n[5b] 分包落点')
 
   const layerNames = Object.keys(layerDirs)
   check(
-    '三个逻辑包的入口都在盘上',
+    '五个逻辑包的入口都在盘上',
     layerNames.every((name) => existsSync(join(layerDirs[name], 'index.ts'))),
     layerNames.filter((name) => !existsSync(join(layerDirs[name], 'index.ts'))).join(','),
   )
@@ -1000,7 +1034,7 @@ console.log('\n[5b] 分包落点')
       pkg.types !== 'index.ts'
     )
   })
-  check('三包的包身份与壳同源（name / private / version / types）', badIdentity.length === 0, badIdentity.join('、'))
+  check('五个逻辑包的包身份与壳同源（name / private / version / types）', badIdentity.length === 0, badIdentity.join('、'))
 
   const upwardEdges = []
   const outsideEdges = []
@@ -1015,19 +1049,43 @@ console.log('\n[5b] 分包落点')
         if (!spec.startsWith('.')) continue
         const target = resolve(dirname(file), spec)
         if (target === dir || target.startsWith(dir + sep)) continue
-        if (name === '@dsc/ui-layout' && layoutTransitionUpward.has(spec)) continue
+        // 样式表与数据 JSON 没有**模块身份**：重复加载顶多是层叠/数据副本的琐事，
+        // 不是这个检查要防的「两份实现」（两份 React 那种）。入口的 legacy/*.css 与
+        // 装载器的 ../platform-modules.json 因此按扩展名放行。
+        if (/\.(css|json)$/.test(spec)) continue
+        if ((packageTransitionEdges[name] ?? new Set()).has(spec)) continue
         outsideEdges.push(`${relative(uiShell, file)} → ${spec}`)
       }
     }
   }
-  check('包内不出现反向依赖（primitives ← dockkit ← layout）', upwardEdges.length === 0, upwardEdges.join('；'))
-  check('相对 import 不出包（ui-layout 的过渡边除外）', outsideEdges.length === 0, outsideEdges.join('；'))
-  // E6 才把这三个包加进平台模块表（下发给插件）——本轮只建包与搬家，提前登记等于给插件
-  // 开了一条没有实现的路（运行期「白名单外的模块」那句子就变成假的）。
+  check('包内不出现反向依赖（primitives / slots ← dockkit ← layout ← renderer）', upwardEdges.length === 0, upwardEdges.join('；'))
+  check('相对 import 不出包（ui-slots 的契约类型边与资源文件除外）', outsideEdges.length === 0, outsideEdges.join('；'))
+
+  // ── E6：三个平台种子词三处一致（JSON ↔ boot.ts 的 MODULES ↔ 诊断读数）───────────
+  // 这取代了 E4 时那条「三个新包不在平台模块表里」的断言：当时三个包还不该下发给插件
+  // （alias 已登记但种子表未扩，插件按包名 require 会撞「白名单外的模块」）；E6 的任务正是
+  // 把这张表扩到它们——所以断言反向。MODULE_DRIFT 只在 console 里报，探针才是闸门。
+  const bootTs = readFileSync(join(uiShell, 'src', 'ui-renderer', 'boot.ts'), 'utf8')
+  const seedPackages = ['@dsc/ui-slots', '@dsc/ui-primitives', '@dsc/ui-dockkit']
+  for (const name of seedPackages) {
+    check(`平台模块表含 ${name}（E6 起下发给插件）`, platformModules.includes(name), platformModules.join(','))
+    check(
+      `${name} 在 boot.ts 的 MODULES 里挂了实现`,
+      new RegExp(`^\\s*'${name}':`, 'm').test(bootTs) && bootTs.includes(`from '${name}'`),
+    )
+  }
+  // JSON 与 MODULES 键集**且顺序**全等：诊断区那行读数按 MODULES 的键顺序显示，
+  // 顺序漂了不致命，但两边同源才撑得起「改一处就齐」的纪律。
+  const modulesBlock = /const MODULES[^{]*\{([\s\S]*?)\n\}/.exec(bootTs)?.[1] ?? ''
+  const modKeys = [...modulesBlock.matchAll(/^\s{2}(?:'([^']+)'|([A-Za-z][^:\s]*)):\s/gm)].map((m) => m[1] ?? m[2])
   check(
-    '三个新包不在平台模块表里（E6 的活，本轮不给插件）',
-    layerNames.every((name) => !platformModules.includes(name)),
-    platformModules.join(','),
+    'platform-modules.json 与 boot.ts MODULES 键集且顺序全等',
+    modKeys.length === platformModules.length && platformModules.every((name, index) => modKeys[index] === name),
+    `MODULES=${modKeys.join(',')} | json=${platformModules.join(',')}`,
+  )
+  check(
+    '跑在种子里的是三个包（不是 @dsc/ui-core——它继续故意不给）',
+    seedPackages.every((name) => platformModules.includes(name)) && !platformModules.includes('@dsc/ui-core'),
   )
 }
 
@@ -1035,7 +1093,8 @@ console.log('\n[5b] 分包落点')
 console.log('\n[5c] 槽位契约表')
 {
   const shellDir = fileURLToPath(new URL('../ui-shell/', import.meta.url))
-  const slotsSource = readFileSync(join(shellDir, 'src', 'slots.ts'), 'utf8')
+  // E4 起槽位契约（含 9 个壳槽的 declare module）住 `@dsc/ui-slots` 包。
+  const slotsSource = readFileSync(join(shellDir, 'src', 'ui-slots', 'slots.ts'), 'utf8')
   // SLOT 常量表的值（9 个壳槽名）与 declare module 块里并进 SlotMap 的键集必须一致。
   // 前者被 `{ [K in ShellSlot]: SlotMap[K]['kind'] }` 钉死（少并一个键是编译错）；
   // 这里再钉一遍产物层——契约表是插件作者看的东西，不能只活在源码里。

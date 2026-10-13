@@ -45,7 +45,8 @@ import {
   type SettingsValue,
   type SettingsValues,
 } from '@dsc/ui'
-import { Select } from '../../platform/select'
+// 基元从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
+import { Select } from '@dsc/ui-primitives'
 
 /** 这一页在 page-state 里的 id（侧栏入口与页条目约定同一个值）。 */
 const PAGE = 'plugins'

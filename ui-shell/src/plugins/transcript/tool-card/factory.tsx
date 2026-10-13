@@ -26,9 +26,8 @@ import {
   type ToolCallView,
   type UiPluginApi,
 } from '@dsc/ui'
-import { displayPathOf } from '../../../platform/paths'
-import { formatDuration } from '../../../platform/time'
-import { matchTool, prettyJson, TOOL_STATUS_TEXT, toolSummary, toolVerb, type ToolMatch } from '../../../platform/tool-summary'
+// 路径/时刻/工具摘要口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
+import { TOOL_STATUS_TEXT, displayPathOf, formatDuration, matchTool, prettyJson, toolSummary, toolVerb, type ToolMatch } from '@dsc/ui-primitives'
 import { readFold, writeFold } from '../fold-state'
 import { useIntendedDiff, type IntendedDiff } from '../intended-diff'
 /**

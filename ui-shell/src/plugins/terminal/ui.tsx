@@ -38,7 +38,8 @@ import {
   type DockTabBodyProps,
   type HostSnapshot,
 } from '@dsc/ui'
-import { Select } from '../../platform/select'
+// 基元从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
+import { Select } from '@dsc/ui-primitives'
 
 /** 终端 shell 候选：与宿主 `spawnShell` 的白名单一致（对不上会被宿主回落成 PowerShell）。 */
 const SHELL_OPTIONS = [

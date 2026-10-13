@@ -42,15 +42,54 @@ import {
   writeStoredPx,
 } from '@dsc/ui-primitives'
 import { Dock, dockActions, openDockTab, setDockSession, useDockReview, useDockSurface } from '@dsc/ui-dockkit'
-// 过渡期的向上边：`boot`（平台模块白名单的读数）、`slots` / `slots-react`（E4 的槽位包）
-// 与 `@dsc/ui`（宿主桥、页 / 视图真源）——E4 拆出渲染器与槽位包后应改成包名，见 ui-layout/index.ts。
-import { ALLOWED_MODULES, bootState, subscribeBootState, type UiBootSession, type UiBootState } from '../boot'
-import { SLOT } from '../slots'
-import { SlotOutlet, useSlotFaults } from '../slots-react'
-import type { PluginSyncFailure, UiPluginHmr } from '../hmr'
+// 槽位契约（SLOT）与渲染出口（SlotOutlet / useSlotFaults）住 @dsc/ui-slots（E4 拆包）。
+// 装载会话与热更句柄**不从这里 import**：它们的份额按结构定义在下面（AppBootSession /
+// AppSyncHandle），由入口以 props 递进来——两包之间因此没有反向边（剪掉成环的那一刀）。
+import { SLOT, SlotOutlet, useSlotFaults } from '@dsc/ui-slots'
 import { getHostNative, setShellPage, setThreadView, useShellPage, useThreadView, type UiSlots } from '@dsc/ui'
 import { useChannelStatus, useHostError, useHostHello, useHostSelector } from './runtime-context'
 import { ReviewPane } from './review-pane'
+
+/**
+ * 骨架消费的装载会话份额（E4 起按结构定义在这里，不再反向 import 渲染器包）。
+ *
+ * 渲染器包的 `UiBootSession` 结构上满足它，装配点（入口的 `<App/>`）做检查；诊断区要的
+ * 数据——装载报告、批状态、每插件 phase——都在这个份额里，语义与之前的
+ * `getReports()` / `subscribe()` / 全局账本同一份（`getState()` 返回的就是那个账本对象）。
+ */
+export interface AppBootSession {
+  getReports(): readonly UiPluginLoadReport[]
+  getState(): AppBootLedger
+  subscribe(listener: () => void): () => void
+}
+
+/** 启动账本里诊断区画的那几项（渲染器包 `UiBootState` 的结构子集）。 */
+export interface AppBootLedger {
+  startedAt: number
+  batches: readonly {
+    phase: string
+    entries: readonly string[]
+    state: string
+    scheduledAt?: number
+    startedAt?: number
+    doneAt?: number
+  }[]
+  plugins: Record<string, { phase: string; state: string }>
+}
+
+/** 一条页内同步失败（热更句柄的读数；与渲染器包的 `PluginSyncFailure` 同形）。 */
+export interface AppSyncFailure {
+  id: string
+  message: string
+  at: number
+}
+
+/** 骨架消费的热更句柄份额（渲染器包 `UiPluginHmr` 的结构子集）。 */
+export interface AppSyncHandle {
+  getFailures(): AppSyncFailure[]
+  retry(): void
+  subscribe(listener: () => void): () => void
+}
 
 /** 应用参数。 */
 export interface AppProps {
@@ -58,19 +97,21 @@ export interface AppProps {
   boot: UiBootGraph
   /** 服务表（A1）：诊断区那行的读数源；本体经 ServicesProvider 交给条目组件。 */
   serviceRegistry: ServiceRegistry
-  /** 装载会话：报告、批状态、HMR 换装都从它读；清单取不到时 null（空壳 + 诊断）。 */
-  session: UiBootSession | null
+  /** 装载会话：报告、批状态、换装都从它读；清单取不到时 null（空壳 + 诊断）。 */
+  session: AppBootSession | null
   /** 壳侧热更句柄（页内同步失败与重试按钮的读数面）。 */
-  hmr: UiPluginHmr | null
+  hmr: AppSyncHandle | null
   /** 清单/装载会话起不来时的原因（诊断区画它）。 */
   bootError: string | null
+  /** 壳当前放行的平台模块（诊断区那一行的读数；本体住装载器，从入口传进来）。 */
+  allowedModules: readonly string[]
 }
 
 /**
  * 装载报告：application 批是首帧之后才装的，报告会分批变，所以要订阅会话；
  * 清单本身取不到时没有会话，用启动失败那一条顶上（诊断区一样能画出来）。
  */
-function useSessionReports(session: UiBootSession | null, bootError: string | null): readonly UiPluginLoadReport[] {
+function useSessionReports(session: AppBootSession | null, bootError: string | null): readonly UiPluginLoadReport[] {
   const fallback = useMemo<readonly UiPluginLoadReport[]>(
     () => (bootError === null ? [] : [{ id: 'boot', ok: false, error: bootError }]),
     [bootError],
@@ -89,16 +130,25 @@ function useSessionReports(session: UiBootSession | null, bootError: string | nu
   return reports
 }
 
-/** 启动账本（批次时刻、每插件 phase/rev/状态）：与探针读的是同一份全局。 */
-function useBootState(): UiBootState | null {
-  const [state, setState] = useState<UiBootState | null>(() => bootState())
-  useEffect(() => subscribeBootState(() => { setState(bootState()) }), [])
-  return state
+/** 启动账本（批次时刻、每插件 phase/rev/状态）：订阅装载会话拿的就是探针读的那一份全局。 */
+function useBootLedger(session: AppBootSession | null): AppBootLedger | null {
+  const [ledger, setLedger] = useState<AppBootLedger | null>(() => session?.getState() ?? null)
+  useEffect(() => {
+    if (session === null) {
+      setLedger(null)
+      return
+    }
+    setLedger(session.getState())
+    return session.subscribe(() => {
+      setLedger(session.getState())
+    })
+  }, [session])
+  return ledger
 }
 
-/** 页内同步失败（HMR 换装失败清单）：订阅句柄。 */
-function usePluginFailures(hmr: UiPluginHmr | null): PluginSyncFailure[] {
-  const [failures, setFailures] = useState<PluginSyncFailure[]>(() => hmr?.getFailures() ?? [])
+/** 页内同步失败（换装失败清单）：订阅句柄。 */
+function usePluginFailures(hmr: AppSyncHandle | null): AppSyncFailure[] {
+  const [failures, setFailures] = useState<AppSyncFailure[]>(() => hmr?.getFailures() ?? [])
   useEffect(() => {
     if (hmr === null) {
       setFailures([])
@@ -112,9 +162,9 @@ function usePluginFailures(hmr: UiPluginHmr | null): PluginSyncFailure[] {
   return failures
 }
 
-export function App({ slots, boot, serviceRegistry, session, hmr, bootError }: AppProps): ReactNode {
+export function App({ slots, boot, serviceRegistry, session, hmr, bootError, allowedModules }: AppProps): ReactNode {
   const reports = useSessionReports(session, bootError)
-  const ledger = useBootState()
+  const ledger = useBootLedger(session)
   const syncFailures = usePluginFailures(hmr)
   // 服务名每帧现读：application 批提供的服务在首帧之后才出现，读快照会漏。
   const services = serviceRegistry.names()
@@ -404,6 +454,7 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError }: A
         failed={failed.length}
         ledger={ledger}
         syncFailures={syncFailures}
+        allowedModules={allowedModules}
         onRetrySync={hmr === null ? null : () => { hmr.retry() }}
       />
     </>
@@ -553,6 +604,7 @@ function Diagnostics({
   failed,
   ledger,
   syncFailures,
+  allowedModules,
   onRetrySync,
 }: {
   slots: UiSlots
@@ -560,8 +612,10 @@ function Diagnostics({
   reports: readonly UiPluginLoadReport[]
   services: readonly string[]
   failed: number
-  ledger: UiBootState | null
-  syncFailures: readonly PluginSyncFailure[]
+  ledger: AppBootLedger | null
+  syncFailures: readonly AppSyncFailure[]
+  /** 壳当前放行的平台模块（装载器按 MODULES 算出来，入口传进来）。 */
+  allowedModules: readonly string[]
   /** 页内同步失败的重试入口；没有热更句柄时 null（没得重试）。 */
   onRetrySync: (() => void) | null
 }): ReactNode {
@@ -658,7 +712,7 @@ function Diagnostics({
       <p className="diag-line" data-services={services.join(',')}>
         服务：{services.join('、') || '无'}
       </p>
-      <p className="diag-line">放行的模块：{ALLOWED_MODULES.join('、')}</p>
+      <p className="diag-line">放行的模块：{allowedModules.join('、')}</p>
       {/* 数据通道在不在、通不通：断了要醒目（凭据失效后重连也回不来），
           所以这一行留在诊断区；排查「界面冻住」时第一时间看它。 */}
       <p className="diag-line diag-channel" data-channel={channel} data-protocol={hello?.protocolVersion ?? ''}>

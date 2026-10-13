@@ -19,7 +19,9 @@
       "@dsc/ui": ["./src/plugin-api.ts"],
       "@dsc/ui-dockkit": ["./src/ui-dockkit/index.ts"],
       "@dsc/ui-layout": ["./src/ui-layout/index.ts"],
-      "@dsc/ui-primitives": ["./src/ui-primitives/index.ts"]
+      "@dsc/ui-primitives": ["./src/ui-primitives/index.ts"],
+      "@dsc/ui-renderer": ["./src/ui-renderer/index.ts"],
+      "@dsc/ui-slots": ["./src/ui-slots/index.ts"]
     }
   },
   "include": ["src", "../src/ui"]

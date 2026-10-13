@@ -1,7 +1,7 @@
 /**
  * TUI 载体的插件装载器（node 侧）：把清单里 `platform: 'tui'` 的 bundle 装进终端壳。
  *
- * 与浏览器壳的装载器（`ui-shell/src/boot.ts`）同一套语义，三处差异都是载体的：
+ * 与浏览器壳的装载器（`ui-shell/src/ui-renderer/boot.ts`）同一套语义，三处差异都是载体的：
  *   - bundle 不走 `<script>`，直接读文件求值——node 里没有 CSP，`new Function` 可用；
  *     求值只是把工厂注册进全局表（构建包装保证），副作用为零；
  *   - require 白名单是**终端壳的表**：react 与 `@dsc/ui` 由壳提供（同进程同一份 React

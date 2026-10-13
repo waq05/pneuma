@@ -667,6 +667,31 @@ catch-all（priority 100）。想接管某类工具卡的渲染：往这个槽�
 终端壳（TUI 载体）的 `@dsc/ui` 不导出这四件——它们是 DOM 组件；双载体插件里请先判
 `ui.host.platform` 再引用。
 
+### 10.4.1 平台种子：可以按包名 require 的基元包（1.2.0 起）
+
+除了 `@dsc/ui`，壳还把三个基元包作为**平台种子**下发（web 载体）。插件 bundle 里对它们的
+引用由壳提供：构建期保留成 `require('@dsc/ui-primitives')` 这样的外部请求，运行期从壳的
+模块表取——拿到的是**与界面壳内部同一份实例**。所以插件**不许也不必**自带这几个包的实现
+（内联一份不只是体积问题：完成音、toast、确认框、右侧栏状态都带模块级状态，两份会各说各话）。
+
+| 包名 | 里面有什么 |
+| --- | --- |
+| `@dsc/ui-primitives` | 图标集、`Select`、`Text`、文件图标、`DiffRows` / `CodeView` / `MarkdownView` / `PdfView` / `CsvView` / `XlsxView`、时间与 token 格式化、工具摘要口径、toast / confirm、面板几何 |
+| `@dsc/ui-slots` | 槽名契约（`SLOT` / `SHELL_SLOTS`）与槽位的 React 渲染出口（`SlotOutlet` / `ChainOutlet`） |
+| `@dsc/ui-dockkit` | 右侧栏的模型与状态（`useDockSurface` / `dockActions` / `registerDockTab` 等所在的那一套） |
+
+边界（三条，别越）：
+
+1. **仅 web 值面**：终端壳（TUI）的模块表里没有这三个包——双载体插件在值面上引用它们之前
+   先判 `ui.host.platform`；只在类型面引用不会产生 require。
+2. **`@dsc/ui-core` 不在种子里**（故意）：它是壳的内部实现，插件当值引用会得到
+   「白名单外的模块」那句错；插件要的能力都经 `@dsc/ui` 或上面三个包给。
+3. **类型面**：本仓库内置插件按源码即类型直接用；第三方 TS 作者今天没有随 SDK 发布的
+   `.d.ts`（与 `@dsc/ui` 一样），按 JS 写、类型自备。
+
+写法上两者等价、取向不同：`@dsc/ui` 是**聚合面**（少量重依赖与图标经它转出，老插件照旧
+可用），按包名 require 是**按需取整包**（想用 `Select` 就写 `@dsc/ui-primitives`，语义直白）。
+
 ### 10.5 类型化槽位契约（1.2.0 起可用）
 
 壳与插件用 **`declare module '@dsc/ui'`** 往一张槽位契约表 `SlotMap` 上并键（表声明在
