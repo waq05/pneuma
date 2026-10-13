@@ -12,9 +12,10 @@
  */
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { SlotRegistry, ServiceRegistry, ServicesProvider, type UiBootGraph, type UiPluginLoadResult, type UiPrefsView } from '@dsc/ui-core'
+import { SlotRegistry, ServiceRegistry, ServicesProvider, type UiBootGraph, type UiPrefsView } from '@dsc/ui-core'
 import { onAppearanceRequest, type SlotFactoryMap, type SlotMap } from './plugin-api'
-import { readBootGraph, loadUiPlugins } from './boot'
+import { createBootSession, readBootGraph, type UiBootSession } from './boot'
+import { startPluginHmr, type UiPluginHmr } from './hmr'
 import { createHostChannel } from './host-channel'
 import { RuntimeProvider } from './runtime-context'
 import { SHELL_SLOTS, type ShellSlot } from './slots'
@@ -39,12 +40,12 @@ import './legacy/views.css'
 import '@xterm/xterm/css/xterm.css'
 import './styles.css'
 
-/** 什么都没装上时的装载结果（清单取不到也要起壳，不能白屏）。 */
-const NOTHING_LOADED: UiPluginLoadResult = {
-  reports: [],
-  services: [],
-  serviceRegistry: new ServiceRegistry(),
-  disposeAll: () => undefined,
+/** 取不到清单时的启动图（空壳 + 一条诊断，比白屏好查）。 */
+const UNAVAILABLE_BOOT: UiBootGraph = {
+  rev: 'unavailable',
+  entries: [],
+  batches: [],
+  host: { name: 'Muse Code', version: '未知版本' },
 }
 
 /**
@@ -103,32 +104,39 @@ async function bootstrap(): Promise<void> {
   const channel = createHostChannel()
   void syncAppearance(channel)
 
-  // 3. 启动清单 + 装插件。清单取不到也要起壳：空壳 + 一条诊断，比白屏好查。
-  let boot: UiBootGraph = { rev: 'unavailable', entries: [], host: { name: 'Muse Code', version: '未知版本' } }
-  let loaded: UiPluginLoadResult = NOTHING_LOADED
+  // 3. 启动清单 + 装**第一批**（early）。清单取不到也要起壳：空壳 + 一条诊断，比白屏好查。
+  // 第二批（application）不在这里装：画完首帧后由 session.startApplication() 推到空闲时刻。
+  let boot: UiBootGraph = UNAVAILABLE_BOOT
+  let session: UiBootSession | null = null
+  let bootError: string | null = null
   try {
     boot = await readBootGraph()
-    loaded = await loadUiPlugins(boot, { slots, host: boot.host, runtime: channel })
+    session = await createBootSession(boot, { slots, host: boot.host, runtime: channel })
   } catch (error) {
-    loaded = {
-      reports: [{ id: 'boot', ok: false, error: error instanceof Error ? error.message : String(error) }],
-      services: [],
-      serviceRegistry: new ServiceRegistry(),
-      disposeAll: () => undefined,
-    }
+    bootError = error instanceof Error ? error.message : String(error)
   }
   void declared
 
-  // 4. 渲染。服务表经 context 交给条目组件（插件用 `useService` 读服务、跟着出现/消失换源）。
+  // 壳侧热更：连接上来之后宿主的 `plugins` 帧都会走对账（失败只记在页内诊断区）。
+  const hmr: UiPluginHmr | null = session === null ? null : startPluginHmr({ channel, session })
+  // 服务表（A1）：会话里那份就是装载期真用的表；清单取不到时给一张空表（壳照样起）。
+  const serviceRegistry = session?.services ?? new ServiceRegistry()
+
+  // 4. 渲染。服务表经 context 交给条目组件（插件用 `useService` 读服务、跟着出现/消失换源）；
+  // 第一批已在注册表里，首帧就能画出它。
   createRoot(container).render(
     <StrictMode>
       <RuntimeProvider channel={channel}>
-        <ServicesProvider services={loaded.serviceRegistry}>
-          <App slots={slots} boot={boot} reports={loaded.reports} services={loaded.services} />
+        <ServicesProvider services={serviceRegistry}>
+          <App slots={slots} boot={boot} serviceRegistry={serviceRegistry} session={session} hmr={hmr} bootError={bootError} />
         </ServicesProvider>
       </RuntimeProvider>
     </StrictMode>,
   )
+  // 首帧打点：A2 的时序证据是「early 装完 ≤ 这一刻 ≤ application 开始」。
+  session?.markFirstFrame()
+  // 首帧之后的空闲时刻继续装第二批——「第二批未物化时第一批已可交互」就是这两行的产品形态。
+  session?.startApplication()
 }
 
 void bootstrap()

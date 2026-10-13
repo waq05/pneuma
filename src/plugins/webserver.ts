@@ -20,9 +20,12 @@
  * @module dsc/plugins/webserver
  */
 import type { Plugin } from '@deepseek-ai/cordis'
+import { join } from 'node:path'
 import { bootNoticeOnce } from '../core/boot-notices.js'
 import { resolvePluginConfig } from '../core/plugin-registry.js'
 import { createUiEvents, type UiEventsHandle } from '../core/ui-events.js'
+import { createUiHmr, type UiHmrFrame, type UiHmrHandle } from '../core/ui-hmr.js'
+import { UI_PLUGIN_MANIFEST, uiPluginsDir } from '../core/ui-bundles.js'
 import { isUiMethod, UI_METHODS, validateUiArgs } from '../core/ui-methods.js'
 import { createUiServer, type UiServerHandle } from '../core/ui-server.js'
 import { DSC_VERSION } from '../core/version.js'
@@ -33,11 +36,12 @@ const CONFIG_KEY = 'webserver'
 
 /**
  * 数据通道的协议版本：加字段不涨，改字段含义/删字段才涨（界面壳按它决定认不认这份宿主）。
- * 1 = SSE 推帧（全量/增量）+ POST invoke。
+ * 1 = SSE 推帧（全量/增量）+ POST invoke，另含 `event: plugins` 启动图热更帧——
+ * 新增事件名不进版本号：旧壳对没监听的事件名直接忽略，向前兼容。
  */
 export const UI_EVENTS_PROTOCOL_VERSION = 1
 
-/** 这个插件最终要用的三样配置。 */
+/** 这个插件最终要用的四样配置。 */
 export interface UiServerConfig {
   /** 挂载时就起来（环境变量或配置里点了头）。 */
   enabled: boolean
@@ -45,6 +49,8 @@ export interface UiServerConfig {
   port: number
   /** 伺服哪份界面；缺省用 `lib/ui/assets`。 */
   assetsDir: string | undefined
+  /** 插件 bundle 热更（轮询产物 + SSE 推帧）。 */
+  hmr: { enabled: boolean; pollIntervalMs: number }
 }
 
 /** 端口取值：环境变量优先，其次配置；非法或越界一律回落到 0（系统分配）。 */
@@ -58,6 +64,29 @@ function pickDir(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined
 }
 
+/** 轮询间隔（毫秒）：环境变量优先于配置；非法值回落到 500。 */
+function pickHmrInterval(value: unknown): number {
+  const ms = Number(value)
+  return Number.isInteger(ms) && ms >= 50 && ms <= 60_000 ? ms : 500
+}
+
+/**
+ * 热更开不开：环境变量 `DSC_UI_HMR` 优先（`1` 强开 / `0` 强关，多探针并行时互不打扰），
+ * 否则跟着**既有开发态语义**走——`DSC_UI_SERVER=1` 就是 `_ui-shell-serve.mjs` 那条
+ * 「本地起宿主伺服界面」的开发/自检轨（`readUiServerConfig` 的 enabled 同源），
+ * 插件配置里写 `hmr: true` 也可显式打开。打包态默认关：`lib/ui/plugins` 是 extraResources
+ * 里的只读产物，常驻 500ms 轮询白烧且不该有「手改安装目录当场换装」这种行为。
+ */
+function pickHmr(raw: Record<string, unknown>): { enabled: boolean; pollIntervalMs: number } {
+  const env = process.env['DSC_UI_HMR']
+  const enabled = env === '1' || env === 'true'
+    ? true
+    : env === '0' || env === 'false'
+      ? false
+      : raw.hmr === true || process.env['DSC_UI_SERVER'] === '1'
+  return { enabled, pollIntervalMs: pickHmrInterval(process.env['DSC_UI_HMR_POLL_MS'] ?? raw.hmrPollIntervalMs) }
+}
+
 /**
  * 读配置：环境变量（自检与桌面调试用，不必改用户配置文件）优先于插件配置。
  * @param passed - 装配时传进来的第二参数（`apply(ctx, passed)`）
@@ -68,6 +97,7 @@ export function readUiServerConfig(passed: unknown): UiServerConfig {
     enabled: raw.enabled === true || process.env['DSC_UI_SERVER'] === '1',
     port: pickPort(process.env['DSC_UI_PORT'] ?? raw.port),
     assetsDir: pickDir(process.env['DSC_UI_ASSETS']) ?? pickDir(raw.assetsDir),
+    hmr: pickHmr(raw),
   }
 }
 
@@ -84,9 +114,34 @@ export const webserverPlugin: Plugin.Object = {
     const runtime = ctx.ui
     let handle: UiServerHandle | null = null
     let events: UiEventsHandle | null = null
+    let hmr: UiHmrHandle | null = null
     let starting: Promise<UiServerHandle> | null = null
 
     const start = async (): Promise<UiServerHandle> => {
+      /**
+       * 启动图帧的当前值 + 订阅者。通道先建、轮询器后建，中间用这个盒子接上：
+       * 连接建立时先发 `current ?? 现取一份图`，之后轮询器推一帧就广播一帧。
+       */
+      const pluginFrames: {
+        current: UiHmrFrame | null
+        listeners: Set<(frame: UiHmrFrame) => void>
+      } = { current: null, listeners: new Set() }
+      const pushPlugins = (frame: UiHmrFrame): void => {
+        pluginFrames.current = frame
+        for (const listener of [...pluginFrames.listeners]) {
+          try {
+            listener(frame)
+          } catch {
+            // 一个订阅者炸了不该拖垮别的（与通道里其他 fan-out 同一条纪律）
+          }
+        }
+      }
+      const currentGraph = (): { rev: string; graph: unknown } => {
+        const graph = handle?.boot()
+        if (graph === undefined) return { rev: '', graph: null }
+        return { rev: graph.rev, graph }
+      }
+
       // 数据通道：帧的产生与缓冲复用遥控端那一套（core/remote/frames.ts）。
       // 白名单**不是**整张 INVOKABLE_METHODS：页面里跑着第三方插件 bundle，与壳同源，
       // 任一插件被投毒就等于拿到 Cookie；所以只放界面真正要用的子集，凭据类 / 破坏性 /
@@ -118,6 +173,19 @@ export const webserverPlugin: Plugin.Object = {
           host: { name: 'Muse Code', version: DSC_VERSION },
         }),
         subscribe: (onChange) => runtime.subscribe(onChange),
+        // 启动图热更帧：`event: plugins`（不进 frame 帧的 seq/补帧语义）。
+        plugins: {
+          initial: () => {
+            const { rev, graph } = currentGraph()
+            return { rev, changed: [], removed: [], graph }
+          },
+          subscribe: (listener) => {
+            pluginFrames.listeners.add(listener)
+            return () => {
+              pluginFrames.listeners.delete(listener)
+            }
+          },
+        },
         // 通道自己的异常（对端不读、造帧失败、连接数超限）走宿主 logger：
         // 不接的话只写 stderr，进不了统一日志，线上排查看不到。
         log: (line) => {
@@ -132,6 +200,28 @@ export const webserverPlugin: Plugin.Object = {
       })
       handle = server
       events = channel
+      // 开发态热更：轮询插件产物 → 换代 → 推 `plugins` 帧。默认只在开发态开（见 pickHmr）。
+      if (config.hmr.enabled) {
+        hmr = createUiHmr({
+          watches: () => [
+            ...server.watchRows().map((row) => ({ id: row.id, path: row.path })),
+            // 清单是一等信号：新增/删掉一个插件时成员文件的 stat 不会变。
+            { id: 'manifest', path: join(uiPluginsDir(), UI_PLUGIN_MANIFEST) },
+          ],
+          graph: () => server.boot(),
+          refresh: () => {
+            server.refresh()
+          },
+          onFrame: pushPlugins,
+          pollIntervalMs: config.hmr.pollIntervalMs,
+          log: (line) => {
+            ctx.logger.warn(line)
+          },
+        })
+        ctx.logger.info(
+          `webserver: 插件 bundle 热更已开（轮询 ${String(config.hmr.pollIntervalMs)}ms；DSC_UI_HMR=0 可关）`,
+        )
+      }
       // 插件装载的问题（第三方没信任、api 不匹配、bundle 缺失…）进会话流：
       // 「插件怎么不见了」不能只写在日志里。bootNoticeOnce 按文本去重——
       // 同一句话（重启后重新发现也一样）只报一次。
@@ -163,9 +253,12 @@ export const webserverPlugin: Plugin.Object = {
     ctx.effect(() => () => {
       const channel = events
       const server = handle
+      const watcher = hmr
       handle = null
       events = null
+      hmr = null
       starting = null
+      if (watcher !== null) watcher.stop()
       if (channel !== null) channel.stop()
       if (server !== null) void server.close()
     }, 'webserver: 关闭界面服务')

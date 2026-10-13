@@ -963,9 +963,9 @@ console.log('\n[5b] 分包落点')
     '@dsc/ui-dockkit': ['@dsc/ui-layout', '@dsc/ui'],
     '@dsc/ui-layout': [],
   }
-  // ui-layout 的**过渡期**向上边（E4 拆出槽位包 / 渲染器包、宿主桥下沉之前只能这样取）：
-  // 逐条列出来；白名单之外任何一处走出包或往上的 import 都会红。
-  const layoutTransitionUpward = new Set(['../boot', '../slots', '../slots-react'])
+  // ui-layout 的**过渡期**向上边（E4 拆出槽位包 / 渲染器包、宿主桥与热更句柄下沉之前只能
+  // 这样取）：逐条列出来；白名单之外任何一处走出包或往上的 import 都会红。
+  const layoutTransitionUpward = new Set(['../boot', '../slots', '../slots-react', '../hmr'])
   const sourceFilesOf = (dir, out = []) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const file = join(dir, entry.name)
@@ -1021,7 +1021,7 @@ console.log('\n[5b] 分包落点')
     }
   }
   check('包内不出现反向依赖（primitives ← dockkit ← layout）', upwardEdges.length === 0, upwardEdges.join('；'))
-  check('相对 import 不出包（ui-layout 的三条过渡边除外）', outsideEdges.length === 0, outsideEdges.join('；'))
+  check('相对 import 不出包（ui-layout 的过渡边除外）', outsideEdges.length === 0, outsideEdges.join('；'))
   // E6 才把这三个包加进平台模块表（下发给插件）——本轮只建包与搬家，提前登记等于给插件
   // 开了一条没有实现的路（运行期「白名单外的模块」那句子就变成假的）。
   check(

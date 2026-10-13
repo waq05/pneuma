@@ -13,7 +13,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { errText } from '../../core/err-text.js'
 import { TICKET_TTL_MS } from '../../core/remote/tickets.js'
 import { UPLOAD_MAX_BYTES } from '../../core/remote/uploads.js'
-import { isUiBundleRequest, resolveUiBundleRequest } from '../../core/ui-route.js'
+import { isUiBundleRequest, resolveUiResourceRequest } from '../../core/ui-route.js'
 import { injectBootScriptTag, UI_CONTENT_SECURITY_POLICY } from '../../core/ui-server.js'
 import { readCookie } from '../../core/web-http.js'
 import { serveStatic as serveAssets } from '../../core/web-static.js'
@@ -356,11 +356,12 @@ export function createRequestHandler(ctx: RouteContext): (req: IncomingMessage, 
     }
     if (req.method === 'GET' || req.method === 'HEAD') {
       // 插件 bundle：与本机界面服务同一份解析（C-真 的桌面与远程看同一份界面，
-      // 插件 bundle 自然也要能从远程这一侧取到）。
+      // 插件 bundle 自然也要能从远程这一侧取到）。combo 批走同一份精确表：
+      // 手机壳的启动图也带 batches，批地址必须能从这一侧伺服，否则每次都要回退单资源。
       if (isUiBundleRequest(url.pathname)) {
-        const resolved = resolveUiBundleRequest(url.pathname, url.searchParams.get('rev'))
+        const resolved = resolveUiResourceRequest(url.pathname, url.search, undefined, req.method, shell?.combos())
         if (resolved.status !== 200 || resolved.body === undefined) {
-          res.writeHead(resolved.status, { 'content-type': 'text/plain; charset=utf-8' })
+          res.writeHead(resolved.status, { 'content-type': 'text/plain; charset=utf-8', ...(resolved.headers ?? {}) })
           res.end(resolved.reason ?? '没有这个插件资源')
           return
         }
@@ -369,7 +370,7 @@ export function createRequestHandler(ctx: RouteContext): (req: IncomingMessage, 
         return
       }
       if (shell !== null) {
-        // 启动图：与本地界面服务同一份 compose（每次请求现算，内容寻址不了，禁缓存）。
+        // 启动图：与本地界面服务同一份当前代快照（清单没变就不重算；内容寻址不了，禁缓存）。
         if (url.pathname === '/boot.js') {
           const body = `globalThis.__DSC_BOOT__=${JSON.stringify(shell.boot()).replace(/</g, '\\u003c')}`
           res.writeHead(200, {

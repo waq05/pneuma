@@ -14,7 +14,7 @@
  * @module dsc-ui-shell/app
  */
 import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
-import type { UiBootGraph, UiPluginLoadReport } from '@dsc/ui-core'
+import type { ServiceRegistry, UiBootGraph, UiPluginLoadReport } from '@dsc/ui-core'
 import { NATIVE_BRIDGE_VERSION, NATIVE_OPS } from '@dsc/ui-core'
 import {
   DOCK_DEFAULT_WIDTH,
@@ -44,9 +44,10 @@ import {
 import { Dock, dockActions, openDockTab, setDockSession, useDockReview, useDockSurface } from '@dsc/ui-dockkit'
 // 过渡期的向上边：`boot`（平台模块白名单的读数）、`slots` / `slots-react`（E4 的槽位包）
 // 与 `@dsc/ui`（宿主桥、页 / 视图真源）——E4 拆出渲染器与槽位包后应改成包名，见 ui-layout/index.ts。
-import { ALLOWED_MODULES } from '../boot'
+import { ALLOWED_MODULES, bootState, subscribeBootState, type UiBootSession, type UiBootState } from '../boot'
 import { SLOT } from '../slots'
 import { SlotOutlet, useSlotFaults } from '../slots-react'
+import type { PluginSyncFailure, UiPluginHmr } from '../hmr'
 import { getHostNative, setShellPage, setThreadView, useShellPage, useThreadView, type UiSlots } from '@dsc/ui'
 import { useChannelStatus, useHostError, useHostHello, useHostSelector } from './runtime-context'
 import { ReviewPane } from './review-pane'
@@ -55,12 +56,68 @@ import { ReviewPane } from './review-pane'
 export interface AppProps {
   slots: UiSlots
   boot: UiBootGraph
-  reports: readonly UiPluginLoadReport[]
-  /** 装载结束时的服务名快照（诊断区那一行；服务表本体经 ServicesProvider 给条目）。 */
-  services: readonly string[]
+  /** 服务表（A1）：诊断区那行的读数源；本体经 ServicesProvider 交给条目组件。 */
+  serviceRegistry: ServiceRegistry
+  /** 装载会话：报告、批状态、HMR 换装都从它读；清单取不到时 null（空壳 + 诊断）。 */
+  session: UiBootSession | null
+  /** 壳侧热更句柄（页内同步失败与重试按钮的读数面）。 */
+  hmr: UiPluginHmr | null
+  /** 清单/装载会话起不来时的原因（诊断区画它）。 */
+  bootError: string | null
 }
 
-export function App({ slots, boot, reports, services }: AppProps): ReactNode {
+/**
+ * 装载报告：application 批是首帧之后才装的，报告会分批变，所以要订阅会话；
+ * 清单本身取不到时没有会话，用启动失败那一条顶上（诊断区一样能画出来）。
+ */
+function useSessionReports(session: UiBootSession | null, bootError: string | null): readonly UiPluginLoadReport[] {
+  const fallback = useMemo<readonly UiPluginLoadReport[]>(
+    () => (bootError === null ? [] : [{ id: 'boot', ok: false, error: bootError }]),
+    [bootError],
+  )
+  const [reports, setReports] = useState<readonly UiPluginLoadReport[]>(() => session?.getReports() ?? fallback)
+  useEffect(() => {
+    if (session === null) {
+      setReports(fallback)
+      return
+    }
+    setReports(session.getReports())
+    return session.subscribe(() => {
+      setReports(session.getReports())
+    })
+  }, [session, fallback])
+  return reports
+}
+
+/** 启动账本（批次时刻、每插件 phase/rev/状态）：与探针读的是同一份全局。 */
+function useBootState(): UiBootState | null {
+  const [state, setState] = useState<UiBootState | null>(() => bootState())
+  useEffect(() => subscribeBootState(() => { setState(bootState()) }), [])
+  return state
+}
+
+/** 页内同步失败（HMR 换装失败清单）：订阅句柄。 */
+function usePluginFailures(hmr: UiPluginHmr | null): PluginSyncFailure[] {
+  const [failures, setFailures] = useState<PluginSyncFailure[]>(() => hmr?.getFailures() ?? [])
+  useEffect(() => {
+    if (hmr === null) {
+      setFailures([])
+      return
+    }
+    setFailures(hmr.getFailures())
+    return hmr.subscribe(() => {
+      setFailures(hmr.getFailures())
+    })
+  }, [hmr])
+  return failures
+}
+
+export function App({ slots, boot, serviceRegistry, session, hmr, bootError }: AppProps): ReactNode {
+  const reports = useSessionReports(session, bootError)
+  const ledger = useBootState()
+  const syncFailures = usePluginFailures(hmr)
+  // 服务名每帧现读：application 批提供的服务在首帧之后才出现，读快照会漏。
+  const services = serviceRegistry.names()
   const failed = reports.filter((report) => !report.ok)
   // 右侧栏布局（每会话一份，状态在 dock-state）；审查目标（并排栏）也住那儿。
   const surface = useDockSurface()
@@ -339,7 +396,16 @@ export function App({ slots, boot, reports, services }: AppProps): ReactNode {
         </div>
       </div>
 
-      <Diagnostics slots={slots} boot={boot} reports={reports} services={services} failed={failed.length} />
+      <Diagnostics
+        slots={slots}
+        boot={boot}
+        reports={reports}
+        services={services}
+        failed={failed.length}
+        ledger={ledger}
+        syncFailures={syncFailures}
+        onRetrySync={hmr === null ? null : () => { hmr.retry() }}
+      />
     </>
   )
 }
@@ -485,12 +551,19 @@ function Diagnostics({
   reports,
   services,
   failed,
+  ledger,
+  syncFailures,
+  onRetrySync,
 }: {
   slots: UiSlots
   boot: UiBootGraph
   reports: readonly UiPluginLoadReport[]
   services: readonly string[]
   failed: number
+  ledger: UiBootState | null
+  syncFailures: readonly PluginSyncFailure[]
+  /** 页内同步失败的重试入口；没有热更句柄时 null（没得重试）。 */
+  onRetrySync: (() => void) | null
 }): ReactNode {
   const faults = useSlotFaults(slots)
   const [forced] = useState(() => new URLSearchParams(location.search).has('diag'))
@@ -499,7 +572,9 @@ function Diagnostics({
   // 数据通道读数住这里（原来挂在侧栏头上写「已连接」占着用户视野；旧界面头上没有它）。
   const channel = useChannelStatus()
   const hello = useHostHello()
-  if (!forced && failed === 0 && faults.length === 0) return null
+  if (!forced && failed === 0 && faults.length === 0 && syncFailures.length === 0) return null
+  const batchRev = (phase: string): string =>
+    boot.batches.find((batch) => batch.phase === phase)?.rev ?? ''
   return (
     <details className="diagnostics">
       <summary>
@@ -513,10 +588,56 @@ function Diagnostics({
             {report.name === undefined ? '' : `（${report.name}）`}
             {report.provides === undefined ? '' : `（提供：${report.provides.join('、')}）`}
             {report.ok && (report.attempts ?? 1) > 1 ? `（重试 ${String(report.attempts)} 次才成功）` : ''}
+            <span data-plugin-phase={ledger?.plugins[report.id]?.phase ?? ''}>
+              {' '}· {ledger?.plugins[report.id]?.phase === 'early' ? '首屏批' : '应用批'}
+            </span>
           </li>
         ))}
         {reports.length === 0 ? <li className="empty">启动清单里没有插件</li> : null}
       </ul>
+      {/* 批次读数（A2）：每批的状态、时刻与 rev。`data-batch*` 属性是探针的读面，
+          桌面自检与浏览器走查都靠 querySelector 读它（隐藏的 DOM 照样命中）。 */}
+      {ledger === null ? null : (
+        <p className="diag-line diag-batches">
+          批次：
+          {ledger.batches.map((batch) => {
+            const loaded = batch.entries.filter((id) => ledger.plugins[id]?.state === 'loaded').length
+            const at = batch.doneAt ?? batch.startedAt ?? batch.scheduledAt
+            return (
+              <span
+                key={batch.phase}
+                data-batch={batch.phase}
+                data-batch-state={batch.state}
+                data-batch-loaded={`${String(loaded)}/${String(batch.entries.length)}`}
+                data-batch-rev={batchRev(batch.phase)}
+                style={{ marginRight: 10 }}
+              >
+                {batch.phase === 'early' ? '首屏' : '应用'} {loaded}/{batch.entries.length}
+                {' '}（{batch.state}
+                {at === undefined ? '' : ` @${String(Math.round(at - ledger.startedAt))}ms`}
+                {batchRev(batch.phase) === '' ? '' : `，rev ${batchRev(batch.phase)}`}）
+              </span>
+            )
+          })}
+        </p>
+      )}
+      {/* 页内同步失败（HMR 换装失败）：只影响这个页面、不动宿主启停；给一个重试入口。 */}
+      {syncFailures.length === 0 ? null : (
+        <ul className="diag-plugins">
+          {syncFailures.map((failure) => (
+            <li key={failure.id} className="bad" data-sync-failure={failure.id}>
+              <code>{failure.id}</code> 页内同步失败：{failure.message}
+            </li>
+          ))}
+        </ul>
+      )}
+      {onRetrySync === null ? null : (
+        <p className="diag-line">
+          <button type="button" data-sync-retry="1" onClick={onRetrySync}>
+            重试页内同步
+          </button>
+        </p>
+      )}
       {faults.length === 0 ? null : (
         <ul className="diag-plugins">
           {faults.map((fault, index) => (

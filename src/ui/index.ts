@@ -6,6 +6,7 @@
  */
 export * from './frames.js'
 export * from './manifest.js'
+export * from './arrival.js'
 export * from './plugin.js'
 export * from './slots.js'
 export * from './store.js'

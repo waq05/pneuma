@@ -76,6 +76,19 @@ export interface UiEventsOptions {
   hello(): Record<string, unknown>
   /** 订阅宿主变化；返回退订函数。 */
   subscribe(onChange: () => void): () => void
+  /**
+   * 启动图热更源（可选）：连接建立即发一帧当前图，之后有变更就推。
+   *
+   * 为什么另开 `event: plugins` 而不塞进 `frame`：`frame` 帧参与帧 hub 的 seq/全量不变量
+   * （跳号要重开连接、首帧必须全量），把插件图混进去会破坏那套判定（`ui-events-test.mjs`
+   * 钉着它）。新事件名对旧壳向前兼容——浏览器对没监听的事件名直接忽略。
+   */
+  plugins?: {
+    /** 握手后立刻发的那一帧（当前图；`changed`/`removed` 为空）。 */
+    initial(): unknown
+    /** 订阅变更帧；返回退订函数。 */
+    subscribe(listener: (frame: unknown) => void): () => void
+  }
   throttleMs?: number
   heartbeatMs?: number
   /** 同时最多几条 SSE，缺省 8。 */
@@ -266,6 +279,32 @@ export function createUiEvents(options: UiEventsOptions): UiEventsHandle {
   }
   const unsubscribe = options.subscribe(scheduleFrame)
 
+  /**
+   * 启动图帧的广播面：与快照帧共用连接集合，但**不进帧 hub**——没有 seq/id、不参与补帧，
+   * 断线期间漏掉的帧靠重连时那一帧 `initial()` 重新对齐（图是幂等的全量）。
+   */
+  const writePlugins = (res: ServerResponse, data: string): void => {
+    if (res.writableEnded || res.destroyed) {
+      forget(res)
+      return
+    }
+    try {
+      writeEvent(res, 'plugins', data)
+    } catch {
+      forget(res)
+    }
+  }
+  const unsubscribePlugins = options.plugins?.subscribe((frame) => {
+    let data: string
+    try {
+      data = JSON.stringify(frame)
+    } catch (error) {
+      log(`[ui-events] 启动图帧序列化失败，丢弃这一帧：${error instanceof Error ? error.message : String(error)}`)
+      return
+    }
+    for (const res of [...clients]) writePlugins(res, data)
+  })
+
   const heartbeat = setInterval(() => {
     for (const res of [...clients]) {
       if (res.writableEnded || res.destroyed) {
@@ -312,6 +351,15 @@ export function createUiEvents(options: UiEventsOptions): UiEventsHandle {
       })
       // 先登记再补帧：接不上缓冲时那一帧全量是广播出去的，新连接也得在那一次广播里。
       clients.add(res)
+
+      // 启动图：紧跟 hello 之后发一帧当前图（重连也一样），壳据此对齐 HMR 的起点。
+      if (options.plugins !== undefined) {
+        try {
+          writePlugins(res, JSON.stringify(options.plugins.initial()))
+        } catch (error) {
+          log(`[ui-events] 启动图初始帧序列化失败：${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
 
       // 重连补帧：浏览器会把上一帧的 id 放进 Last-Event-ID（手工接的客户端可以用 ?lastSeq=）。
       const url = new URL(req.url ?? '/', 'http://127.0.0.1')
@@ -375,6 +423,7 @@ export function createUiEvents(options: UiEventsOptions): UiEventsHandle {
       if (timer !== null) clearTimeout(timer)
       timer = null
       unsubscribe()
+      unsubscribePlugins?.()
       for (const res of [...clients]) {
         try {
           res.end()

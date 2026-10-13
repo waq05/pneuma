@@ -26,12 +26,16 @@
  *    为什么要签 authority：Cookie 的作用域不含端口，签上 authority 之后，"另一个回环端口
  *    反射回来的 Cookie"送到本服务也不成立。密钥本身绝不进日志。
  *
- * 4. **插件 bundle 走内容寻址**：地址里带 `?rev=<文件指纹>`；命中当下这一代或上一代才 200，
+ * 4. **插件 bundle 走内容寻址**：地址里带 `?rev=<字节摘要>`；命中当下这一代或上一代才 200，
  *    其余 404（旧地址不该拿到新代码，新地址也不该拿到旧代码），命中给一年不可变缓存。
- *    HEAD 复用 GET 的头但不给体；非 GET / HEAD 回 405。解析口径在 `core/ui-route.ts`。
+ *    HEAD 复用 GET 的头但不给体；非 GET / HEAD 回 405。解析口径在 `core/ui-route.ts`；
+ *    批 combo（`/plugins/??…&rev=`）与单资源共用那一份，批体在组图快照里登记
+ *    （`core/ui-boot-source.ts`，含上一代保留）。
  *
  * 5. **启动清单注进页面**：送 index.html 之前把启动图塞进 `window.__DSC_BOOT__`
- *    （与 dsh 同一个位置、同一个名字），界面壳一进来就有，不必再发一次请求。
+ *    （与参考实现同一个位置、同一个名字），界面壳一进来就有，不必再发一次请求。
+ *    图、批体、问题记录读的是同一个**当前代快照**：`/api/boot`、`/boot.js`、`/plugins/??…`
+ *    因此天然同一代；HMR 轮询换代也换这一份（见 `core/ui-hmr.ts`）。
  *
  * @module dsc/core/ui-server
  */
@@ -39,11 +43,12 @@ import { randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { dirname } from 'node:path'
-import { composeUiBootGraph, type UiBootGraph, type UiPluginRow } from '../ui/manifest.js'
+import type { UiBootGraph } from '../ui/manifest.js'
+import { createUiBootSource, type UiBootRequestStats, type UiBootSource, type UiBootWatchRow } from './ui-boot-source.js'
 import { dscPath } from './path-policy.js'
 import type { UiEventsHandle } from './ui-events.js'
-import { collectUiArtifactsForPlatform, uiAssetsDir, uiPluginsDir } from './ui-bundles.js'
-import { isUiBundleRequest, resolveUiBundleRequest, type UiBundleResponse } from './ui-route.js'
+import { uiAssetsDir, uiPluginsDir } from './ui-bundles.js'
+import { isUiBundleRequest, isUiComboRequest, resolveUiResourceRequest, type UiBundleResponse } from './ui-route.js'
 import { checkUiRequestTrust, issueUiCookie, requestAuthority, timingSafeEqualText, verifyUiCookie } from './ui-trust.js'
 import { readCookie, sendJson, sendText } from './web-http.js'
 import { serveStatic } from './web-static.js'
@@ -118,12 +123,18 @@ export interface UiServerHandle {
   readonly origin: string
   /** 入口地址：带一次性令牌，给用户或桌面窗口用一次。 */
   readonly url: string
-  /** 当前启动图。 */
+  /** 当前启动图（清单没变就不重算）。 */
   boot(): UiBootGraph
   /** 重新扫插件目录（界面壳重新构建后不必重启宿主）。 */
   refresh(): { entries: number; problems: string[] }
   /** 当前积累的装载问题（第三方没信任、api 不匹配、bundle 缺失…），给调用方转成会话流。 */
   problems(): string[]
+  /** HMR 轮询要的行（id + 磁盘路径 + 当下 rev）。 */
+  watchRows(): UiBootWatchRow[]
+  /** 插件请求计数（探针读数面：一次页面加载的物化请求数就是它）。 */
+  stats(): UiBootRequestStats
+  /** 清零请求计数（探针分段读数用）。 */
+  resetStats(): void
   /** 关服务（幂等）。 */
   close(): Promise<void>
 }
@@ -222,9 +233,12 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
   // 会话 Cookie 的签名密钥：落盘复用，于是同 authority 下宿主重启后旧页面仍然有效。
   const signingKey = loadUiSigningKey(log)
 
-  // 插件清单：启动时收一次，构建完界面壳可以 refresh 重收。
-  let artifacts = collectUiArtifactsForPlatform('web', { builtinDir: pluginsDir })
-  const manifest = artifacts.entries
+  // 启动图快照：清单 → 图 → combo 批体一起换代（HMR 也换这一份）。请求路径上不再现算。
+  const source: UiBootSource = createUiBootSource({
+    host: options.host,
+    builtinDir: pluginsDir,
+  })
+  const manifest = source.artifacts().entries
 
   /**
    * 监听端口：listen 之后才知道（port=0 时由系统分配）。
@@ -233,20 +247,8 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
    */
   let currentPort = 0
 
-  /** 现在这一刻的启动图（强制重算产物表：文件被换掉立刻反映出来）。 */
-  const buildBoot = (): UiBootGraph => {
-    // 内置 + 第三方合成（~/.dsc/plugins/ 的界面半边）；门禁与信任都在 collect 层做过。
-    const fresh = collectUiArtifactsForPlatform('web', { force: true, builtinDir: pluginsDir })
-    artifacts = fresh
-    const rows: (UiPluginRow & { rev: string })[] = fresh.entries.map((entry) => ({
-      id: entry.id,
-      rev: entry.rev,
-      ...(entry.inject === undefined ? {} : { inject: entry.inject }),
-      ...(entry.external === undefined ? {} : { external: entry.external }),
-      ...(entry.immediately === true ? { immediately: true } : {}),
-    }))
-    return composeUiBootGraph(options.host, rows)
-  }
+  /** 现在这一刻的启动图。 */
+  const buildBoot = (): UiBootGraph => source.graph()
 
   /** 启动图求值一次给注入用（页面每次请求都注入当下的那一份）。 */
   const bootJson = (graph: UiBootGraph): string =>
@@ -313,10 +315,20 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
       return
     }
 
-    // 插件 bundle：内容寻址；HEAD 复用 GET 的头，非 GET/HEAD 405。
-    // 解析口径与远程控制共用 core/ui-route.ts 那一份。
+    // 插件 bundle：内容寻址 + 批 combo；HEAD 复用 GET 的头，非 GET/HEAD 405。
+    // 解析口径与远程控制共用 core/ui-route.ts 那一份；combo 只认快照里登记过的精确地址。
     if (isUiBundleRequest(url.pathname)) {
-      sendBundleResponse(res, resolveUiBundleRequest(url.pathname, url.searchParams.get('rev'), pluginsDir, method))
+      const resolved = resolveUiResourceRequest(url.pathname, url.search, pluginsDir, method, source.combos())
+      // 探针的请求计数面：只数 /plugins 请求，命中类别分开记（回退探针按 id 读）。
+      if (resolved.status === 200) {
+        if (isUiComboRequest(url.pathname, url.search)) source.countRequest('combo')
+        else {
+          const rest = url.pathname.slice('/plugins/'.length)
+          const slash = rest.lastIndexOf('/')
+          source.countRequest('single', slash > 0 ? decodeURIComponent(rest.slice(0, slash)) : undefined)
+        }
+      }
+      sendBundleResponse(res, resolved)
       return
     }
     if (url.pathname === '/api/boot') {
@@ -399,12 +411,11 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
       return `http://127.0.0.1:${String(currentPort)}/?token=${token}`
     },
     boot: () => buildBoot(),
-    problems: () => [...artifacts.problems],
-    refresh: () => {
-      const fresh = collectUiArtifactsForPlatform('web', { force: true, builtinDir: pluginsDir })
-      artifacts = fresh
-      return { entries: fresh.entries.length, problems: fresh.problems }
-    },
+    problems: () => source.problems(),
+    refresh: () => source.refresh(),
+    watchRows: () => source.watchRows(),
+    stats: () => source.stats(),
+    resetStats: () => source.resetStats(),
     close: () =>
       new Promise<void>((resolveClose) => {
         server.close(() => resolveClose())
@@ -418,7 +429,7 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
   } else {
     log(`[ui-server] 已登记 ${String(manifest.length)} 个界面插件`)
   }
-  for (const problem of artifacts.problems) log(`[ui-server] ${problem}`)
+  for (const problem of source.problems()) log(`[ui-server] ${problem}`)
 
   return handle
 }

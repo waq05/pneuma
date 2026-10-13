@@ -17,8 +17,15 @@
  *     两代都没有才 404（旧地址不该拿到新代码，新地址也不该拿到旧代码）。
  *   - **方法是 GET / HEAD**：HEAD 复用 GET 的头但不给体；其余方法 405（带 Allow）。
  *
+ * combo（A3）走**精确表**：请求形如 `/plugins/??<id>/client.js,…&rev=<批 rev>`，判据是
+ * pathname 恰为 `/plugins/` 且 search 以 `??` 开头（`new URL()` 会把第一个 `?` 当查询起点，
+ * 所以这里直接拿原始 search 串，绝不 re-parse 资源列表）。表由宿主组图时登记
+ * （`core/ui-boot-source.ts`），未登记的组合一律 404——既与参考实现同口径，也让请求里的
+ * id 列表永远决定不了要读哪些文件。
+ *
  * @module dsc/core/ui-route
  */
+import type { UiComboTable } from './ui-combo.js'
 import { lookupUiPluginBundle, lookupThirdPartyUiBundle, uiPluginsDir } from './ui-bundles.js'
 
 /** 插件资源的路由前缀。 */
@@ -106,4 +113,62 @@ export function resolveUiBundleRequest(
   }
   if (!wantBody || found.body === null) return { status: 200, headers }
   return { status: 200, headers, body: found.body }
+}
+
+/** 这个请求是不是 combo（判据：pathname 恰为前缀，search 以 `??` 开头——不是 pathname 里有 `??`）。 */
+export function isUiComboRequest(pathname: string, search: string): boolean {
+  return pathname === UI_BUNDLE_ROUTE && search.startsWith('??')
+}
+
+/**
+ * 一个 /plugins 请求的**唯一**解析口子：combo 走精确表，单资源走内容寻址。
+ * 本机界面服务与远程控制都调这一份（两处口径分叉是 `ui-route.ts` 头注释里说的老病）。
+ *
+ * @param pathname - 请求路径
+ * @param search - 原始查询串（含前导 `?`；combo 的 `??` 就是它的一部分）
+ * @param dir - 内置插件目录，缺省 `lib/ui/plugins`
+ * @param method - 请求方法，缺省 GET
+ * @param combo - 当前代的 combo 精确表；不给则 combo 一律 404（纯静态探测场景）
+ */
+export function resolveUiResourceRequest(
+  pathname: string,
+  search: string,
+  dir: string = uiPluginsDir(),
+  method: string = 'GET',
+  combo?: UiComboTable,
+): UiBundleResponse {
+  if (isUiComboRequest(pathname, search)) return resolveUiComboRequest(pathname, search, combo, method)
+  return resolveUiBundleRequest(pathname, new URLSearchParams(search).get('rev'), dir, method)
+}
+
+/**
+ * 解析一个 combo 请求：`/plugins/??<id>/client.js,…&rev=<批 rev>`。
+ *
+ * 只查表不解析：未登记的组合（含「批已换代、页面还拿旧地址」过了保留窗口的）一律 404，
+ * 客户端据此按「批 → 单资源」回退（`@dsc/ui-core` 的 arrival 协议）。
+ */
+export function resolveUiComboRequest(
+  pathname: string,
+  search: string,
+  combo: UiComboTable | undefined,
+  method: string = 'GET',
+): UiBundleResponse {
+  if (method !== 'GET' && method !== 'HEAD') {
+    return { status: 405, headers: { allow: 'GET, HEAD' }, reason: '插件资源只认 GET 与 HEAD' }
+  }
+  if (!isUiComboRequest(pathname, search)) return { status: 404, reason: '不是组合资源地址' }
+  const hit = combo?.lookup(`${pathname}${search}`, method !== 'HEAD') ?? null
+  if (hit === null) {
+    return {
+      status: 404,
+      reason: combo === undefined ? '组合资源表还没建立' : '没有这个插件资源组合（地址没通告过，或批已经换代）',
+    }
+  }
+  const headers: Record<string, string> = {
+    'content-type': 'text/javascript; charset=utf-8',
+    'content-length': String(hit.size),
+    'cache-control': IMMUTABLE_CACHE,
+  }
+  if (method === 'HEAD' || hit.body === null) return { status: 200, headers }
+  return { status: 200, headers, body: hit.body }
 }

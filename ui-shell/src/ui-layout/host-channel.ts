@@ -17,7 +17,7 @@
  *
  * @module dsc-ui-shell/host-channel
  */
-import { applyHostFrame, HostFrameGapError, type HostSnapshot } from '@dsc/ui-core'
+import { applyHostFrame, HostFrameGapError, type HostSnapshot, type UiBootGraph } from '@dsc/ui-core'
 
 /**
  * 连接状态。
@@ -46,6 +46,20 @@ export interface HostHello {
 }
 
 /**
+ * 启动图热更帧（`event: plugins`）。
+ *
+ * `changed`/`removed` 是宿主算好的 diff（变/删的 id），`graph` 是新图——壳按 graph 对齐
+ * 目标集合、按 diff 决定装谁卸谁。这条事件**不进**快照帧的 seq/补帧语义；重连时宿主会
+ * 重发一帧当前图（`changed`/`removed` 为空），漏掉的变更由它重新对齐。
+ */
+export interface HostPluginsFrame {
+  rev: string
+  changed: string[]
+  removed: string[]
+  graph: UiBootGraph
+}
+
+/**
  * 调用没走完就被中断（超时，或调用方给的 signal 中止了）。
  *
  * 为什么单独成一个类型：与「宿主方法自己抛错」不是一回事——前者可能值得重试或提示用户，
@@ -69,6 +83,13 @@ export interface HostChannel {
   getStatus(): ChannelStatus
   /** 宿主最近一次报错（造帧失败之类；界面显示"宿主状态异常"用）。没有就是 `null`。 */
   getHostError(): string | null
+  /** 最近一帧启动图热更（没收到过就是 null）。 */
+  getPluginsFrame(): HostPluginsFrame | null
+  /**
+   * 订阅启动图热更帧（HMR 对账入口）。**不要**为它另开 EventSource——同一条流换一个事件名。
+   * @returns 退订函数
+   */
+  onPlugins(listener: (frame: HostPluginsFrame) => void): () => void
   /** 订阅（快照或握手或连接状态变化时叫一次）。 */
   subscribe(listener: () => void): () => void
   /**
@@ -86,12 +107,14 @@ export interface HostChannel {
 export function createHostChannel(): HostChannel {
   let snapshot: HostSnapshot | null = null
   let hello: HostHello | null = null
+  let pluginsFrame: HostPluginsFrame | null = null
   let status: ChannelStatus = 'connecting'
   let hostError: string | null = null
   let source: EventSource | null = null
   /** 已经主动关掉这条通道（页面卸载）：不再重连。 */
   let stopped = false
   const listeners = new Set<() => void>()
+  const pluginListeners = new Set<(frame: HostPluginsFrame) => void>()
 
   const notify = (): void => {
     for (const listener of [...listeners]) {
@@ -158,6 +181,26 @@ export function createHostChannel(): HostChannel {
       }
     })
 
+    // 启动图热更（`event: plugins`）：同一条流上换事件名，宿主在每次连接建立后都会
+    // 先发一帧当前图（重连也重发），所以不需要自己记游标。
+    es.addEventListener('plugins', (event: Event) => {
+      if (es !== source) return
+      try {
+        pluginsFrame = JSON.parse((event as MessageEvent<string>).data) as HostPluginsFrame
+      } catch (error) {
+        console.error('[ui-shell] 启动图热更帧认不出', error)
+        return
+      }
+      notify()
+      for (const listener of [...pluginListeners]) {
+        try {
+          listener(pluginsFrame)
+        } catch {
+          // 一个订阅者炸了不该拖垮别的
+        }
+      }
+    })
+
     es.onopen = () => {
       if (es !== source) return
       setStatus('open')
@@ -193,6 +236,13 @@ export function createHostChannel(): HostChannel {
     getHello: () => hello,
     getStatus: () => status,
     getHostError: () => hostError,
+    getPluginsFrame: () => pluginsFrame,
+    onPlugins(listener) {
+      pluginListeners.add(listener)
+      return () => {
+        pluginListeners.delete(listener)
+      }
+    },
     subscribe(listener) {
       listeners.add(listener)
       return () => {

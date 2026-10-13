@@ -624,7 +624,7 @@ cd ~/.dsc/plugins && npm install <dsh 插件包>
 
 ```
 ~/.dsc/plugins/demo-greeter/
-  plugin.json     ← { "api": "^1.0.0", "platforms": ["web", "tui"] }（api 必填）
+  plugin.json     ← { "api": "^1.0.0", "platforms": ["web", "tui"], "phase": "early" }（api 必填）
   ui/client.js    ← 界面半边（CJS 工厂，注册名必须等于目录 id）
 ```
 
@@ -637,9 +637,10 @@ cd ~/.dsc/plugins && npm install <dsh 插件包>
 不是每次问。停用与宿主插件同格：`plugins.json` 的 `entries` 里写
 `{ "file": "demo-greeter/ui/client.js", "disabled": true }`。
 
-**产物复核（rev 的语义）**：内置插件的 rev 是文件指纹（mtime/ctime/size），只承担「换文件
-就换地址」；第三方插件的 rev 是**内容摘要**（sha256 前 16 位）——目录里换了字节 rev 必变，
-旧页面的旧地址拿旧字节、新地址拿新字节，同一份字节永远同 rev。
+**产物复核（rev 的语义）**：内置与第三方插件的 rev 都是**内容摘要**（内置 sha256 前 12 位、
+第三方前 16 位）：字节没变地址就不变（重新构建、touch 文件都不会换地址），字节一变 rev 必变，
+旧页面的旧地址拿旧字节、新地址拿新字节。宿主换代时只保留**上一代**（单资源与批 combo 各一份），
+更早的地址刷新页面即可。
 
 ### 10.4 chain 槽与壳内置平台层（1.1.0 起可用）
 
@@ -775,3 +776,42 @@ props.renderFactorySlot('myplugin.card', { entry }, {
   intended 预览 / 中文耗时 / 「将做的改动」/「在轨迹中查看」四件局部组件，轨迹页只选轨迹
   口径的耗时；两边共用同一份 head/body 骨架，第三方还可以往 `transcript.toolcard.footer`
   注册一行（`examples/ui-plugin-demo` 就是例子）。
+### 10.9 启动分批、批取数与本页热更（1.2.0 起可用）
+
+**`plugin.json` 的 `phase`**（内置插件写在目录里的可选 `plugin.json`，第三方写在自己的
+`plugin.json`）：
+
+| 取值 | 含义 |
+| --- | --- |
+| `early` | 首屏批：壳**装完这一批才画第一帧**。给输入区、状态栏这类「第一眼就要在」的插件。 |
+| `application`（缺省） | 其余全部：首帧之后的空闲时刻才取字节、才 apply。 |
+
+两条纪律：
+
+1. **早期批要尽量小**——它的取数挡在首帧前面（一个批一次请求，见下），塞进三个以上插件
+   就失去意义了。内置的 `composer` 与 `statusbar` 声明为 early，其余 14 个是 application。
+2. **phase 是页面加载级的**：本页热更（改文件）不会改一条插件的 phase，改 phase 要刷新页面。
+   写坏取值的方向：内置插件 = **构建失败**；第三方 = 记一条问题、按 application 处理（不进
+   `early`，也不整条丢弃）。
+
+**批取数（combo）**：一个批是**一条** `/plugins/??<id>/client.js,…&rev=<批 rev>` 请求
+（不是每插件一个 `<script>`）。组合的成员集合只能来自宿主的产物表，未通告的地址一律 404；
+批取数失败按「批 → 该行单资源」回退，一条缺失的插件最多花三次请求（批×2 重试 + 单资源×1），
+且**绝不重放已经执行过的批**。可观测口径：一次页面加载的插件请求数 =
+`globalThis.__DSC_UI_BOOT_STATE__.requests` 里 `/plugins/` 条目的条数（诊断区「批次」行画出
+每批状态与 rev）。
+
+**本页热更（HMR）**：开发态下宿主轮询插件产物（默认 500ms），字节真的变了才推一帧
+`event: plugins`（`{rev, changed, removed, graph}`）；壳按 rev 只换装变了的那些插件，**不刷
+整页**。口径：
+
+- 插件内的 React 状态随换装丢失（重新 apply、重新挂载）；会话/工作区/连接这些数据层状态保留；
+- 换装失败**不回滚**：旧条目已卸载、新条目没装上，诊断区出现「页内同步失败」+ 一条重试入口
+  （对同一 rev 也可重试）；失败只影响这个页面，不动宿主的启停开关；
+- 插件自己插入的 `<style>` 要在 apply / 首次渲染期间插（物化边界会给它打上归属标记），
+  换装时整份剔除；**不要**依赖别的插件或壳未打标的全局样式，也不要往 `document.head`
+  里挂长期存活、带外部引用的东西（换装不会替你收拾它）。
+
+默认开关：**打包态关**（`lib/ui/plugins` 是只读产物）；开发/自检态（宿主以
+`DSC_UI_SERVER=1` 起来，如 `scripts/_ui-shell-serve.mjs`）默认开；`DSC_UI_HMR=1` 强开、
+`DSC_UI_HMR=0` 强关，间隔用 `DSC_UI_HMR_POLL_MS` 调。

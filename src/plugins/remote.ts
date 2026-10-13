@@ -62,12 +62,13 @@ import { RemotePairing } from '../core/remote/pairing.js'
 import { RemotePush, type PushSendResult } from '../core/remote/push.js'
 import { TicketStore } from '../core/remote/tickets.js'
 import { RemoteUploads } from '../core/remote/uploads.js'
-import { collectUiArtifactsForPlatform, uiAssetsDir } from '../core/ui-bundles.js'
+import { uiAssetsDir, uiPluginsDir } from '../core/ui-bundles.js'
+import { createUiBootSource } from '../core/ui-boot-source.js'
 import { createUiEvents } from '../core/ui-events.js'
 import { validateUiArgs, type UiMethod } from '../core/ui-methods.js'
 import { DSC_VERSION } from '../core/version.js'
 import { readCookie } from '../core/web-http.js'
-import { composeUiBootGraph, type UiBootGraph, type UiPluginRow } from '../ui/manifest.js'
+import type { UiBootGraph } from '../ui/manifest.js'
 import type { RuntimeSnapshot, SettingsField, StatusView } from '../contract.js'
 import type { SettingsSectionSpec } from '../services/types.js'
 import { bearerToken, hostHeaderAllowed, isRecord, readLastSeq, sendJson } from './remote/http.js'
@@ -556,21 +557,24 @@ export const remotePlugin: Plugin.Object = {
         subscribe: (listener) => ctx.transcript.subscribe(listener),
         log: (line) => ctx.logger.warn(line),
       })
-      const boot = (): UiBootGraph => {
-        // 与本地界面服务同一份 compose：内置 + 第三方合成（门禁与信任在 collect 层）。
-        const fresh = collectUiArtifactsForPlatform('web', { force: true })
-        const rows: (UiPluginRow & { rev: string })[] = fresh.entries.map((entry) => ({
-          id: entry.id,
-          rev: entry.rev,
-          ...(entry.inject === undefined ? {} : { inject: entry.inject }),
-          ...(entry.external === undefined ? {} : { external: entry.external }),
-          ...(entry.immediately === true ? { immediately: true } : {}),
-        }))
-        return composeUiBootGraph({ name: 'Muse Code', version: DSC_VERSION }, rows)
+      // 与本地界面服务同一份当前代快照（图 + 批 combo 一起换代）；手机壳取的
+      // `/plugins/??…` 因此与图里的批地址严格同代。
+      //
+      // 远程这一侧**每次取向都强制重收**：手机端没有 HMR 推帧（SSE 只服务本地壳），
+      // 而「宿主重建插件后手机刷新能看到新界面」是壳档的既有承诺；带内容摘要的 rev
+      // 让强制重收也不会误换代（字节没变 combo/上一代都原地不动）。
+      const bootSource = createUiBootSource({
+        host: { name: 'Muse Code', version: DSC_VERSION },
+        builtinDir: uiPluginsDir(),
+      })
+      const freshGraph = (): UiBootGraph => {
+        bootSource.refresh()
+        return bootSource.graph()
       }
       shellUiBuilt = {
         assetsDir,
-        boot,
+        boot: freshGraph,
+        combos: () => bootSource.combos(),
         events,
         authenticated: (req) => {
           const token = bearerToken(req.headers.authorization) ?? readCookie(req.headers.cookie, REMOTE_COOKIE)

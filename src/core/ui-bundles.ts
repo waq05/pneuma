@@ -3,8 +3,9 @@
  *
  * 谁产出这些文件：界面壳的构建（`ui-shell/`）把插件 bundle 写进
  * `lib/ui/plugins/<id>/client.js`，并同时写一份 `manifest.json` 说明有哪些、
- * 依赖谁。宿主只认这份清单——**产物版本由宿主自己 stat 算**，不信构建时写下的值，
- * 这样插件文件被换掉（重新构建、手工替换）时地址跟着变，浏览器缓存不会骗人。
+ * 依赖谁。宿主只认这份清单——**产物版本由宿主自己读字节算内容摘要**，不信构建时写下的值，
+ * 这样插件文件被换掉（重新构建、手工替换）时地址跟着变，浏览器缓存不会骗人；
+ * 而字节没变的重写（构建的增量写盘、touch 文件）不会换地址，HMR 才不会全量换装。
  *
  * 外部插件（第三方的界面半边）走同一份清单：将来它们由插件安装流程写进同一个目录，
  * 这里不用分内置还是第三方，只认文件在不在。第三方插件是真 npm 包，包名是
@@ -27,10 +28,11 @@
  * @module dsc/core/ui-bundles
  */
 import { readFileSync, statSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { satisfies, validRange } from 'semver'
-import { artifactRev, type UiPlatform, type UiPluginRow } from '../ui/manifest.js'
+import type { UiPlatform, UiPluginRow } from '../ui/manifest.js'
 import { inside } from './web-static.js'
 
 /** 清单文件名（界面壳构建时写在插件目录根部）。 */
@@ -58,6 +60,20 @@ const PLUGIN_ID = new RegExp(`^(?:@${ID_SEGMENT}/)?${ID_SEGMENT}(?:/${ID_SEGMENT
 /** 界面壳的静态产物目录（编译产物是 `lib/core/ui-bundles.js`，往上一级就是 `lib/ui`）。 */
 export function uiAssetsDir(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), '..', 'ui', 'assets')
+}
+
+/**
+ * 内置 bundle 的 rev：**内容摘要**（sha256 前 12 位，与短哈希的形状一致）。
+ *
+ * 为什么不是文件指纹（mtime/ctime/size）：构建每轮都会重写产物，mtime 全变 → 只改一个插件
+ * 也会让全部 rev 变 → HMR 会把 16 个插件一起换装（React 状态全丢）。内容摘要让 rev 成为
+ * 真正的「地址即内容」：字节没变地址就不变，换代只剩真实变更。
+ *
+ * 为什么 12 位：地址形状与既有探针（`[0-9a-f]{12}`）从 mtime 指纹时代就定成 12 位；
+ * 第三方条目保持 16 位（既有约定不动）。两者语义相同，只是截断长度不同。
+ */
+function builtinContentRev(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex').slice(0, 12)
 }
 
 /** 插件 bundle 目录。 */
@@ -229,12 +245,20 @@ export function readUiPluginManifestReport(dir: string = uiPluginsDir()): UiPlug
     if (rawApi !== undefined && api === undefined) {
       problems.push(`${id}: api 不是非空字符串（${JSON.stringify(rawApi)}），当没声明处理`)
     }
+    // phase：调度档位。坏值记问题并**当没声明**（按 application），方向与 api 一致——
+    // 一个拼错的 phase 不该让整个插件消失，但也不能静默当 early 发出去。
+    const rawPhase = record['phase']
+    const phase = rawPhase === 'early' || rawPhase === 'application' ? rawPhase : undefined
+    if (rawPhase !== undefined && phase === undefined) {
+      problems.push(`${id}: phase 只能是 'early' / 'application'（${JSON.stringify(rawPhase)}），当没声明处理`)
+    }
     entries.push({
       id,
       file,
       ...(inject === undefined ? {} : { inject }),
       ...(external === undefined ? {} : { external }),
       ...(record['immediately'] === true ? { immediately: true } : {}),
+      ...(phase === undefined ? {} : { phase }),
       ...(api === undefined ? {} : { api }),
       ...(platform === undefined ? {} : { platform: platform as UiPlatform }),
     })
@@ -344,6 +368,8 @@ class UiArtifactCache {
     const report = readUiPluginManifestReport(this.dir)
     const problems = [...report.problems]
     const nextByKey = new Map<string, CachedRow>()
+    /** 建表时读出来的字节：这一代顺手留在缓存里，第一次请求不再读盘。 */
+    const nextBytes = new Map<string, Buffer>()
     for (const entry of report.entries) {
       if ((entry.platform ?? 'web') !== this.platform) continue
       // API 门禁（阶段 7）：插件声明的 @dsc/ui 区间对不上这份清单的契约版本就不进产物表，
@@ -360,15 +386,14 @@ class UiArtifactCache {
         continue
       }
       try {
+        // rev = 内容摘要（读字节算），不是 stat 指纹：构建重写但字节没变时 rev 不变。
         CACHE_COUNTERS.fileStats += 1
-        const stat = statSync(path)
-        if (!stat.isFile()) {
-          problems.push(`${entry.id}: ${entry.file} 不是文件`)
-          continue
-        }
-        nextByKey.set(cacheKey(entry.id, entry.file), { row: { ...entry, rev: artifactRev(stat) }, size: stat.size })
+        const bytes = readFileSync(path)
+        const rev = builtinContentRev(bytes)
+        nextByKey.set(cacheKey(entry.id, entry.file), { row: { ...entry, rev }, size: bytes.length })
+        nextBytes.set(`${cacheKey(entry.id, entry.file)}\u0000${rev}`, bytes)
       } catch {
-        problems.push(`${entry.id}: 找不到 ${entry.file}（界面壳构建过了吗）`)
+        problems.push(`${entry.id}: 读不到 ${entry.file}（界面壳构建过了吗）`)
       }
     }
 
@@ -401,6 +426,10 @@ class UiArtifactCache {
     for (const [key, cached] of nextByKey) this.byKey.set(key, cached)
     this.previous.clear()
     for (const [key, generation] of nextPrevious) this.previous.set(key, generation)
+    // 内容摘要 rev 是建表时读出来的：把这一代的字节留在内存里，第一次请求直接给。
+    for (const [key, bytes] of nextBytes) {
+      if (!this.bytes.has(key)) this.bytes.set(key, bytes)
+    }
   }
 
   /** 现在的产物表（清单没换就不重算）。 */
@@ -522,14 +551,13 @@ export function readUiPluginBundle(
 // 内置插件合成为同一张产物表——「不用分内置还是第三方，只认文件在不在」。
 
 import { readdirSync } from 'node:fs'
-import { createHash } from 'node:crypto'
 import type { UiTrustView } from '../contract.js'
 import { dscPath } from './path-policy.js'
 import { isPluginEnabled, isUiPluginTrusted, readUiPluginTrust, trustUiPlugin } from './plugin-registry.js'
 
-/** 第三方 bundle 的 rev：**内容摘要**（sha256 前 16 位）。内置产物用 mtime 指纹（开发期
- *  频繁重编，快且够）；第三方的字节是「别人放进来的一份代码」，rev 承担内容复核——
- *  同一目录里换了字节，rev 必须变。 */
+/** 第三方 bundle 的 rev：**内容摘要**（sha256 前 16 位）。与内置档同一套语义（见
+ *  `builtinContentRev`），只是长度不同：第三方的字节是「别人放进来的一份代码」，
+ *  rev 一直按 16 位落盘并进了既有断言，不动。 */
 function contentRev(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex').slice(0, 16)
 }
@@ -622,6 +650,12 @@ export function discoverThirdPartyUiArtifacts(
       problems.push(`${where}: platforms 不认识（${JSON.stringify(rawPlatforms)}），只认 web / tui`)
       continue
     }
+    // phase：调度档位（内置与第三方同一张词表）；坏值记问题并按 application，不进图。
+    const rawPhase = doc['phase']
+    const phase = rawPhase === 'early' || rawPhase === 'application' ? rawPhase : undefined
+    if (rawPhase !== undefined && phase === undefined) {
+      problems.push(`${where}: phase 只能是 'early' / 'application'（${JSON.stringify(rawPhase)}），当没声明处理`)
+    }
     const fileKey = `${name}/ui/client.js`
     // 先判「这份代码装不装得上」（撞名、门禁），再问用户要不要信任——
     // 别让人信任一个注定进不了启动图的东西。
@@ -656,6 +690,7 @@ export function discoverThirdPartyUiArtifacts(
       api,
       origin: 'third-party',
       source: name,
+      ...(phase === undefined ? {} : { phase }),
     }
     // 双平台插件进两个平台视图：web 行缺省（无 platform 字段），tui 行显式写。
     // origin 标记第三方：装载器按它去 ui/ 子目录读字节（磁盘布局与内置不同）。
@@ -859,4 +894,51 @@ export function collectUiArtifactsForPlatform(
   ]
   const problems = [...builtin.problems, ...third.problems]
   return { entries, problems, ...(builtin.apiVersion === undefined ? {} : { apiVersion: builtin.apiVersion }) }
+}
+
+/** 取产物字节时要知道的两个根目录（都缺省到标准落点）。 */
+export interface UiArtifactDirs {
+  /** 内置插件目录，缺省 `lib/ui/plugins`。 */
+  builtinDir?: string
+  /** 第三方插件根目录，缺省 `~/.dsc/plugins`。 */
+  thirdPartyDir?: string
+}
+
+/**
+ * 一条产物条目对应的磁盘路径（内置 `<dir>/<id>/<file>`；第三方 `<root>/<id>/ui/client.js`）。
+ *
+ * HMR 轮询要按图行 stat 文件、组 combo 要按图行读字节——两处都要这份「id → 路径」的换算，
+ * 放在这里与发现层同一口径；拼出来的路径同样过 `inside()` 围栏。
+ */
+export function uiArtifactFilePath(entry: UiPluginManifestEntry, dirs: UiArtifactDirs = {}): string | null {
+  if ((entry as { origin?: unknown }).origin === 'third-party') {
+    const root = dirs.thirdPartyDir ?? thirdPartyUiRoot()
+    if (!PLUGIN_ID.test(entry.id)) return null
+    const path = resolve(root, entry.id, 'ui', 'client.js')
+    return inside(root, path) ? path : null
+  }
+  const root = dirs.builtinDir ?? uiPluginsDir()
+  const path = resolve(root, entry.id, entry.file)
+  return inside(root, path) ? path : null
+}
+
+/** 读一条产物条目的字节（路径按 {@link uiArtifactFilePath}；读不到给 null）。 */
+export function readUiArtifactBytes(entry: UiPluginManifestEntry, dirs: UiArtifactDirs = {}): Buffer | null {
+  const path = uiArtifactFilePath(entry, dirs)
+  return path === null ? null : readFileSyncSafe(path)
+}
+
+/**
+ * 产物条目 → 启动图行。宿主两个组图点（本机界面服务与远程壳）共用这一份：
+ * 以前两边手抄字段，加一个字段就要记得改两处——漂移过一次，收敛在这里。
+ */
+export function toUiPluginRows(entries: readonly (UiPluginManifestEntry & { rev: string })[]): (UiPluginRow & { rev: string })[] {
+  return entries.map((entry) => ({
+    id: entry.id,
+    rev: entry.rev,
+    ...(entry.inject === undefined ? {} : { inject: entry.inject }),
+    ...(entry.external === undefined ? {} : { external: entry.external }),
+    ...(entry.immediately === true ? { immediately: true } : {}),
+    ...(entry.phase === undefined ? {} : { phase: entry.phase }),
+  }))
 }

@@ -15,6 +15,34 @@
 /** 插件包能跑在哪种壳里。web = 浏览器壳（桌面与远程共用），tui = 终端壳（同进程）。 */
 export type UiPlatform = 'web' | 'tui'
 
+/**
+ * 一个批的调度档位：`early` 是首屏批（壳装完它才画第一帧），`application` 是其余全部。
+ *
+ * 为什么不用参考实现的 `'bootstrap' | 'application'`：它的 bootstrap 批是**页面里的模块系统
+ * 本身**（parser-blocking、先于壳执行）；dsc 的壳就是普通 ESM app，没有这一层。照抄会得到一个
+ * 永远为空的批或一个误导性的词。只对齐「批描述符 + 每 entry 恰属一批」的不变量，词表用我们自己的。
+ *
+ * 这是**页面加载级**的属性：HMR 重更一条插件不会改它的 phase，改 phase 要刷新页面。
+ */
+export type UiBootPhase = 'early' | 'application'
+
+/**
+ * 一个启动批：一次取数覆盖的一组成员。
+ *
+ * 批 URL 是 combo（`plugins/??<id>/client.js,…&rev=<批 rev>`，A3 起由
+ * {@link uiComboBatchUrl} 生成）；`url`/`rev` 可选是为了向前兼容——旧宿主（或探针手工组图）不给
+ * 这两个字段时，界面壳按 entries 逐条走单资源 URL。
+ */
+export interface UiBootBatch {
+  phase: UiBootPhase
+  /** 批脚本的地址（document-relative，形状同 {@link UiPluginEntry.url}）。 */
+  url?: string
+  /** 批内容的版本锚：任一成员 rev 变则它变（与 url 同生共死）。 */
+  rev?: string
+  /** 本批要注册工厂的 entry id，按执行顺序。 */
+  entries: string[]
+}
+
 /** 宿主发现的一个插件包（还没算地址）。 */
 export interface UiPluginRow {
   /** 稳定 id，也是 /plugins/<id>/client.js 里的那一段。 */
@@ -30,8 +58,10 @@ export interface UiPluginRow {
    * 提供者缺席要软降级（有回落实现）的插件不要写进来，用 `ui.consume` 在渲染期读。
    */
   inject?: string[]
-  /** 第一档预取：需要尽早出现的插件（大小药丸、状态条之类）。 */
+  /** 第一档预取：需要尽早出现的插件（大小药丸、状态条之类）。与 phase 正交。 */
   immediately?: boolean
+  /** 调度档位；缺省 application。只对 web 载体的批有意义（TUI 是同进程顺序装载）。 */
+  phase?: UiBootPhase
   /** 缺省 web。 */
   platform?: UiPlatform
   /**
@@ -48,7 +78,7 @@ export interface UiPluginEntry {
   id: string
   /** 相对页面的地址，形如 `plugins/hello/client.js?rev=abc123`。 */
   url: string
-  /** 产物版本：文件 mtime/ctime/大小算出来的短哈希，换文件就换地址。 */
+  /** 产物版本：文件内容的短哈希，换字节就换地址。 */
   rev: string
   inject?: string[]
   external?: string[]
@@ -57,9 +87,14 @@ export interface UiPluginEntry {
 
 /** 宿主注入页面的启动图。 */
 export interface UiBootGraph {
-  /** 整图的一致性锚：任一条变了它就变。 */
+  /** 整图的一致性锚：任一条（含声明的 phase）变了它就变。 */
   rev: string
   entries: UiPluginEntry[]
+  /**
+   * 启动批，按执行顺序（early 在前）。每个 entry 恰好属于一个批；
+   * 没有 `phase` 声明的条目全部进 application 批——零声明的现状就是单批一行。
+   */
+  batches: UiBootBatch[]
   /** 界面壳要显示的宿主身份（哪台机器、哪个版本）。 */
   host: { name: string; version: string }
 }
@@ -77,6 +112,26 @@ export type HashFn = (...parts: readonly string[]) => string
  */
 export function pluginBundleUrl(id: string, rev: string): string {
   return `plugins/${encodeURIComponent(id)}/client.js?rev=${rev}`
+}
+
+/**
+ * 一个批的 combo 地址：`plugins/??<id>/client.js,<id>/client.js&rev=<批 rev>`。
+ *
+ * 形状对齐参考实现（每个资源带 `/client.js` 后缀、`rev` 用 `&` 分隔）；批的 rev 是
+ * 成员 rev 的派生（{@link uiComboBatchRev}），所以任一成员换字节整个批地址就换。
+ * 这是**路由地址**，不是产物路径——`??` 是宿主路由的判据。
+ *
+ * id 单段编码：第三方 id 可能是 `@scope/name`，`/` 在 query 里合法但编码最省心；
+ * 宿主按精确 URL 查表，浏览器原样转述这里生成的串，两边不会分叉。
+ */
+export function uiComboBatchUrl(ids: readonly string[], rev: string): string {
+  const resources = ids.map((id) => `${encodeURIComponent(id)}/client.js`).join(',')
+  return `plugins/??${resources}&rev=${rev}`
+}
+
+/** 批 rev：成员 rev 的有序派生（任一成员变则变）。 */
+export function uiComboBatchRev(members: readonly { id: string; rev: string }[]): string {
+  return shortHash('uicombo', ...members.flatMap((member) => [member.id, member.rev]))
 }
 
 /** 把若干字段拼成短哈希；字段间加长度前缀，防止内容在字段边界上搬家。 */
@@ -165,11 +220,16 @@ export function orderUiPlugins<T extends UiPluginRow>(rows: readonly T[]): T[] {
 }
 
 /**
- * 由「插件 id + 产物版本」拼出启动图。顺序在这里定，地址在这里算。
+ * 由「插件 id + 产物版本」拼出启动图。顺序与分批在这里定，地址在这里算。
  *
- * 整图 rev 对**整条 entry**（含 inject / external / immediately）做摘要，不是只对
- * id 与产物版本做：只改清单里的声明（不动 bundle）时整图 rev 也必须跟着变，
+ * 整图 rev 对**整条 entry**（含 inject / external / immediately）与**批结构**
+ * （含每条声明的 phase）做摘要：只改清单里的声明（不动 bundle）时整图 rev 也必须跟着变，
  * 否则「靠 rev 判断要不要重载」的那一侧会漏掉声明类变更。
+ *
+ * 分批规则：按 phase 切片（early 在前），批内保持 `orderUiPlugins` 之后的相对顺序；
+ * 没写 phase 的条目全部进 application——零声明的现状等于「单批」，与今天的加载顺序等价。
+ * 空批不发（entries 非空不变量）。
+ *
  * @param host - 宿主身份
  * @param artifacts - 已算出 rev 的插件包（顺序即扫描顺序）
  */
@@ -177,7 +237,8 @@ export function composeUiBootGraph(
   host: { name: string; version: string },
   artifacts: readonly (UiPluginRow & { rev: string })[],
 ): UiBootGraph {
-  const entries: UiPluginEntry[] = orderUiPlugins(artifacts).map((artifact) => ({
+  const ordered = orderUiPlugins(artifacts)
+  const entries: UiPluginEntry[] = ordered.map((artifact) => ({
     id: artifact.id,
     url: pluginBundleUrl(artifact.id, artifact.rev),
     rev: artifact.rev,
@@ -185,6 +246,18 @@ export function composeUiBootGraph(
     ...(artifact.external === undefined ? {} : { external: artifact.external }),
     ...(artifact.immediately === true ? { immediately: true } : {}),
   }))
-  const rev = shortHash('uiboot', JSON.stringify(entries))
-  return { rev, entries, host }
+  const batches: UiBootBatch[] = []
+  for (const phase of ['early', 'application'] as const) {
+    const members = ordered.filter((artifact) => (artifact.phase ?? 'application') === phase)
+    if (members.length === 0) continue
+    const rev = uiComboBatchRev(members.map((member) => ({ id: member.id, rev: member.rev })))
+    batches.push({
+      phase,
+      entries: members.map((member) => member.id),
+      rev,
+      url: uiComboBatchUrl(members.map((member) => member.id), rev),
+    })
+  }
+  const rev = shortHash('uiboot', JSON.stringify(entries), JSON.stringify(batches))
+  return { rev, entries, batches, host }
 }

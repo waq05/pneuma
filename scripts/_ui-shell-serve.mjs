@@ -46,7 +46,9 @@ const child = spawn(process.execPath, [join(root, 'bin', 'headless.cjs')], {
   stdio: ['pipe', 'pipe', 'pipe'],
 })
 
-process.stdout.write(`[ui-serve] 隔离 HOME：${home}\n[ui-serve] 工作目录：${cwd}\n`)
+process.stdout.write(
+  `[ui-serve] 隔离 HOME：${home}\n[ui-serve] 工作目录：${cwd}\n[ui-serve] 宿主 PID：${String(child.pid ?? '?')}\n`,
+)
 child.stdout.setEncoding('utf8')
 child.stderr.setEncoding('utf8')
 child.stdout.on('data', (chunk) => process.stdout.write(chunk))

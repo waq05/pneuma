@@ -12,11 +12,11 @@
  *
  * 每个插件目录**必须**有 `package.json`：`peerDependencies['@dsc/ui']` 是它面对的契约区间，
  * 构建时写进清单条目的 `api`（宿主拿它做 semver 门禁，内置条目同样逐条判）。可选：再放一个
- * `plugin.json` 声明 `inject` / `immediately` / `external` / `platforms`（两种文件并存）。
+ * `plugin.json` 声明 `inject` / `immediately` / `external` / `platforms` / `phase`（两种文件并存）。
  *
  * @module dsc-ui-shell/build-plugins
  */
-import { existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import react from '@vitejs/plugin-react'
@@ -130,6 +130,14 @@ function readMeta(dir) {
     if (doc.immediately !== true) throw new Error(`${dir}/plugin.json 的 immediately 只能是 true`)
     meta.immediately = true
   }
+  // phase：调度档位（`early` = 首屏批，装完壳才画第一帧；缺省 application）。
+  // readMeta 静默忽略未知键——写错一个 `phse` 会毫无反应；这条校验把「拼错」变成构建失败。
+  if (doc.phase !== undefined) {
+    if (doc.phase !== 'early' && doc.phase !== 'application') {
+      throw new Error(`${dir}/plugin.json 的 phase 只能是 'early' / 'application'`)
+    }
+    meta.phase = doc.phase
+  }
   if (doc.platforms !== undefined) {
     // 阶段 6 起，载体无关的插件声明 `platforms: ['web', 'tui']`：产物构建一次，
     // 清单里出两条（platform web + tui，同一个 client.js）——两种壳各自的
@@ -170,8 +178,8 @@ for (const id of ids) {
   }
 }
 
-// 先全部构建到暂存目录，最后一次性换上去：构建到一半失败时，旧产物与旧清单仍然完整，
-// 宿主不会看到「清单说有这个插件、目录里却已经空了」这种半截状态。
+// 先全部构建到暂存目录，再**逐文件比对后落盘**：构建到一半失败时旧产物完整
+// （暂存目录还没动），成功时也只有字节真的变了的文件才被重写。
 rmSync(stageRoot, { recursive: true, force: true })
 
 const plugins = []
@@ -225,12 +233,42 @@ for (const id of ids) {
 // 宿主拿它对条目逐条做 semver 门禁：内置条目也带 api（各自 package.json 的 peer 区间，
 // 上面已用 satisfies 验过），第三方条目必须自带 api 区间。升级纪律见
 // docs/plugin-development.md：删导出、改语义、改槽位 options 形状 = 主版本 +1；纯增量 = 次版本 +1。
-writeFileSync(
-  join(stageRoot, 'manifest.json'),
-  `${JSON.stringify({ version: 1, apiVersion: shellVersion, plugins }, null, 2)}\n`,
-  'utf8',
-)
+const manifestText = `${JSON.stringify({ version: 1, apiVersion: shellVersion, plugins }, null, 2)}\n`
 
-rmSync(outRoot, { recursive: true, force: true })
-renameSync(stageRoot, outRoot)
-console.log(`[build-plugins] manifest.json：${plugins.map((plugin) => plugin.id).join('、')}`)
+// 落盘：**字节没变就不动文件**。
+//
+// 为什么不能像以前那样 rm outRoot + rename staging：那会把 16 个 client.js 全部重写，
+// mtime/ctime 全变。A3 起内置 rev 已是内容摘要（mtime 变了 rev 也不变），
+// 但「写盘也稳定」是第二道保险：开发态热更、编辑器/杀毒的文件监听、
+// 以及将来任何按 mtime 判断变化的工具都因此看到一份安静的文件树。
+let written = 0
+let kept = 0
+if (existsSync(outRoot)) {
+  const known = new Set(ids)
+  for (const entry of readdirSync(outRoot, { withFileTypes: true })) {
+    if (entry.isDirectory() && !known.has(entry.name)) {
+      rmSync(join(outRoot, entry.name), { recursive: true, force: true })
+      console.log(`[build-plugins] 移除已不存在的插件产物：${entry.name}`)
+    }
+  }
+}
+for (const id of ids) {
+  const staged = readFileSync(join(stageRoot, id, 'client.js'))
+  const target = join(outRoot, id, 'client.js')
+  const existing = existsSync(target) ? readFileSync(target) : null
+  if (existing !== null && existing.equals(staged)) {
+    kept += 1
+    continue
+  }
+  mkdirSync(join(outRoot, id), { recursive: true })
+  writeFileSync(target, staged)
+  written += 1
+}
+const manifestPath = join(outRoot, 'manifest.json')
+const existingManifest = existsSync(manifestPath) ? readFileSync(manifestPath, 'utf8') : null
+if (existingManifest !== manifestText) writeFileSync(manifestPath, manifestText, 'utf8')
+rmSync(stageRoot, { recursive: true, force: true })
+console.log(
+  `[build-plugins] manifest.json：${plugins.map((plugin) => plugin.id).join('、')}`
+  + `（重写 ${String(written)} 份，字节未变保留 ${String(kept)} 份）`,
+)

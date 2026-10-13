@@ -9,6 +9,7 @@
  */
 import { INVOKABLE_METHODS } from '../../core/host-methods.js'
 import type { UiMethod } from '../../core/ui-methods.js'
+import type { UiComboTable } from '../../core/ui-combo.js'
 import type { UiEventsHandle } from '../../core/ui-events.js'
 import type { UiBootGraph } from '../../ui/manifest.js'
 import type { IncomingMessage } from 'node:http'
@@ -125,8 +126,10 @@ export const REMOTE_SHELL_SET: ReadonlySet<string> = new Set<string>(REMOTE_SHEL
 export interface RemoteShellUi {
   /** 壳产物的目录（`lib/ui/assets`；静态伺服与 index 注入从这里出）。 */
   assetsDir: string
-  /** 现在这一刻的启动图（每次请求现算，与本地界面服务同一份 compose）。 */
+  /** 现在这一刻的启动图（当前代快照，与本地界面服务同一份 compose）。 */
   boot(): UiBootGraph
+  /** 批 combo 的精确表（与启动图同一代；路由按 URL 命中，见 core/ui-route.ts）。 */
+  combos(): UiComboTable
   /** 数据通道（SSE + POST invoke；方法面是 {@link REMOTE_SHELL_METHODS}）。 */
   events: UiEventsHandle
   /** 这个请求算不算已配对的设备（设备 token 走 Cookie 或 Bearer 都认）。 */
