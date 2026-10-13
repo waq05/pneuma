@@ -4088,3 +4088,119 @@ csv/xlsx 表格预览、手动排序拖拽、桌面信任卡、remote-web 切壳
   1440px 走的是展开档；「始终收起/始终展开」两档也没各自截图；
 ③`updraft`-less：权限切档**没有**风险确认弹窗（见第三节的「有意差异」）；
 ④代码注释里保留 dsh/codex/ZCode 的原文位置（对外文本一律不提，本日志是内部文档）。
+
+## 第九批（2026-10-13）：插件运行时对齐——服务面 / 分批与 combo / 热更 / 槽位加厚 / 壳拆包与平台种子（未发版）
+
+来源：用户要求「把 dsc 完善到 dsh 同等程度」并批了 A–G 全部范围（F 不做）。逐条对位与
+波次计划见 `docs/plugin-runtime-parity-plan.md`（带落地状态表）。
+施工方式：五条线在 git worktree 里并行（槽位框架 / 取数+热更 / 拆包 / 原因分档 / 只读侦察），
+主代理逐条审 diff、解 rebase 冲突、统一跑电池与桌面端到端，**每波一个提交**。
+
+### 一、插件包身份与包名落点（`9fe70e6`）
+
+- 16 个内置界面插件目录各补 `package.json`（`@dsc/ui-<id>` + `peerDependencies['@dsc/ui']`），
+  构建期把 peer 区间写进清单 `api`，并**先用 satisfies 验一遍**——内置插件被自己的门禁拦下
+  等于全量失效；缺文件 / 区间写坏一律构建失败（中文原因）。
+- `ui-shell/packages.json` 成为「包名 → 源码落点」的**单一事实源**：vite 与插件构建同读它，
+  `tsconfig` 的 paths 手抄那份由 `ui-plugin-test` 的 [5b] 漂移检查钉住（一个包名多写一处
+  alias 的表现是运行期解析出两份实现，最坏两份 React）。
+- `@dsc/ui-core` 正式化：`src/ui/package.json` 补包身份。**`type: module` 是必须的**——
+  NodeNext 按最近的 package.json 判模块格式，缺它会把 `src/ui/*.ts` 静默当 CJS 重编。
+
+### 二、槽位框架加厚（`ecec448`）
+
+- **D1 类型化契约**：`SlotMap` 声明在**插件 import 的那个模块**上（`@dsc/ui` / TUI 面；
+  声明合并只认被 augment 的模块，别的路径 re-export 不算）——壳与三类写码者（内置、第三方
+  TS、TUI）都只需 augment 自己 import 的名字。核心注册表改对表泛型；`UiComponent` 从
+  `ComponentType<any>` 收窄。**负例探针**（`ui-shell/src/slot-contract.typecheck.tsx`，
+  7 条 `@ts-expect-error`）钉住「写错在调用点就编不过」；实测 16 个内置插件的 15 条登记
+  零改动，真改形的只有 transcript 的两条（owner/chain 语义）。
+- **A1 客户端服务面**：`provide`/`consume` + 两个装载器共用的未满足诊断。`inject` 是
+  **双关**：先按「另一个插件的 id」解（拓扑排序也在用），再按「服务名」解；两条路都解不到
+  就不 apply，两档原因分开写（「插件 X 没装上」/「服务 X 还没有提供者」）。
+- **D3 store 席位**：自研 React-free 引擎 + `useSeat` 绑定，**席位身份就是 handle 对象**
+  （计划里「带 key」的写法是对参考实现的误读）；真实消费者 = 队友名册三份独立轮询
+  （team 插件两处 3s + status 面板 5s）收敛成一份共享席位。
+- **D2 Component Factory**：`registerFactory`/`useFactorySlot`，真实消费者 = 对话页与轨迹页
+  共用同一套工具卡装配（对话页选四件局部组件、轨迹页只选轨迹口径耗时），旧实现留作 fallback。
+  契约版本 1.1.0 → **1.2.0**（纯增量）。
+
+### 三、取数路径与热更（`f0d6e74`）
+
+- **A2 分批与懒物化**：`UiBootGraph.batches` + `plugin.json` 的 `phase`（`early`/`application`，
+  **与 `immediately` 正交**）；首屏只等 early 批，application 批在首帧之后的空闲时刻装。
+  `__DSC_UI_BOOT_STATE__` 与诊断区「批次」行是探针与自检的读数面。
+- **rev 改内容摘要 + 增量写盘**：原实现每轮 rm+rename 重写 16 份 bundle，mtime 全变 →
+  只改一个插件也会让全部 rev 变、热更把 16 个一起换装。现在字节没变不写盘、不换代、不推帧。
+- **A3 combo 批取数**：一个批是**一条** `/plugins/??<id>/client.js,…&rev=<批 rev>` 请求
+  （不是每插件一个 `<script>`）。宿主侧精确查表（成员集合只能来自产物表）；失败按「批 →
+  单资源」回退，**已执行过的批绝不重放**；请求数是硬读数：16 个插件 = **2 条请求**。
+- **B 开发态热更**：宿主侧 stat 轮询（Windows 上 fs.watch 不可靠）+ SSE `event: plugins`
+  （`{rev, changed, removed, graph}`）；壳按对账只换受影响插件，**不刷整页**。失败留页内
+  「页内同步失败」清单 + 重试入口，不回滚、不动宿主启停。打包态默认关（`DSC_UI_HMR=1` 强开）。
+  实测：改一条文案 → 占位符变化、页内 `startedAt` 不变、宿主 PID 不变；写坏 bundle → 页面
+  不白屏、诊断区出现该插件的一行失败、恢复后自愈。
+
+### 四、壳拆包与平台种子（`14582b4` + `d09a9a6`）
+
+- 五个逻辑包（`packages.json` + tsconfig paths + vite alias）：`@dsc/ui-primitives`
+  （图标/基础控件/平台层）、`@dsc/ui-dockkit`（分栏模型与状态）、`@dsc/ui-layout`
+  （骨架 + 运行时）、`@dsc/ui-slots`（槽位注册表 + React 出口）、`@dsc/ui-renderer`
+  （装载器 + 入口 + 壳侧热更）。
+- **分层钉死**：[5b] 断言包间单向（primitives ← dockkit ← layout）且白名单外任何走出包 /
+  往上的 import 都红。E4 后过渡边白名单 **4 条 → 0 条**（装载器/热更改由入口按 props 递值，
+  layout 不再 import renderer，包级环剪断），另留一条既有的 `ui-layout → @dsc/ui`（宿主桥与
+  页/视图真源要下沉到更低层才能消，超出本轮）——不是假装剪了。
+- **转发壳全删**（32 份，逐个 grep 确认无旧路径调用点）；`index.html` 入口改指
+  `/src/ui-renderer/main.tsx`，**产物路径 `lib/ui/assets`、`lib/ui/plugins` 逐字节不变**。
+- **E6 是拆包真正的收益**：平台种子表 7 → **10 项**（+ slots / primitives / dockkit），
+  运行期 `MODULES` 挂同一份实例、JSON ↔ MODULES 键集与顺序全等由探针钉住；
+  `@dsc/ui-core` 继续**故意不给**插件。五个内置插件改用种子取基元后，插件产物合计
+  **606,961 → 562,754 B（−44KB）**，`Select`/`base(path)`/`sized(size)`/`reverbImpulse`
+  四组特征串**全库归零**，五份产物出现 `require("@dsc/ui-primitives")`。
+
+### 五、第三方插件管理面（`2578935`）
+
+「没加载」的原因由宿主在判定现场标档（`problemKind`：manifest / clash / version / artifact），
+插件中心第四组按档画「下一步」（补声明 / 改名 / 升壳 / 查产物路径 / 去信任）——界面不靠
+匹配中文句子猜档位；数据层与三档文案各有断言（此前该数据源零探针覆盖）。
+
+### 验证（硬证据）
+
+- 三侧 TypeScript 全绿（根 `tsc -p tsconfig.json`、`pnpm -C ui-shell typecheck`、desktop 两个
+  typecheck）；`pnpm -C ui-shell build` 绿（16 个插件 bundle + manifest，`apiVersion 1.2.0`，
+  每轮「重写 N 份，字节未变保留 M 份」）；
+- 11 条探针全绿：`ui-plugin-test`（240 条，含 [5b] 漂移/分层、[5c] 契约表、A1/席位/Factory 各组）、
+  `ui-third-party-test`、`ui-api-gate-test`、`ui-tui-plugin-test`、`ui-native-bridge-test`(96)、
+  `ui-events-test`(42)、`ui-serve-test`、`ui-batches-test`、`ui-hmr-test`、`tui-features-test`、
+  `legacy-frozen-check`；
+- 桌面端到端（真应用 + 假端点 + 真机 `~/.dsc` 零污染）：合流后 **37/37**、E4/E6 后再跑 **37/37**；
+- 打包态（`dist:dir` 的 win-unpacked 实跑）见下节补充。
+
+### 诚实边界
+
+①打包态自检（`DSC_CHECK_EXE`）在本节写作时仍在跑——结果以提交信息/交付说明为准，别把
+  「dev 态 37/37」当「打包态也 37/37」；
+②热更的实机验收是施工线用 `_ui-shell-serve.mjs` + 浏览器工具做的（读数写进该线报告），
+  **没有落成仓库内脚本**；桌面自检里也没有热更断言——这一条是欠账；
+③`inject` 双关在「服务名恰好等于某个插件 id」时有歧义（dsc 只有一张表，参考实现是两张）；
+④E4 的 `AppBootSession`/`AppSyncHandle` 是渲染器会话接口的**手抄子集**，两边分叉由入口装配点
+  tsc 抓，不是导入关系；另有一处理论行为差：`createBootSession` 在挂全局后、返回前抛错时，
+  旧代码还能从全局画账本、新代码画不出（未观测到）；
+⑤平台种子对第三方作者**没有 `.d.ts`**（无 npm 发布面），类型提示只在壳内 TS 工程里有效；
+⑥版本：壳与各包 1.2.0 同源，但**根包仍是 0.6.67**、未发版、未推送（用户的常设规矩）；
+⑦F 扩展运行器按拍板不做；远程壳没有热更（保住「手机刷新看到新界面」的既有承诺）；
+⑧G 只做了冻结那半：`desktop/src/renderer/FROZEN.md` 与冻结探针早在位并全绿；**删回落档 /
+  加「经典待弃」标注要用户拍板**（FROZEN.md 自己挂着「一份还是两份 UI」这个决定）。
+
+### 教训
+
+①**被取消的子代理会在主干留半截残稿**：一次派发被取消后，旧实现的部分编辑留在主工作树里，
+  差点被后续的 ff 合流吞掉——是 `git merge --ff-only` 的 Aborting 把它暴露出来的。规矩：
+  取消派发后立刻确认并清空工作树（`git status` 干净）再往下走。
+②**并行的成本主要在集成**：三条线同时改 `app.tsx`/`host-channel.ts`/`boot.ts`，冲突是设计
+  出来的（文件所有权没在派发时就划清）。这次解冲突的做法记下来：被搬家的一方留转发壳，
+  另一方的增量**端口**到新位置的等价文件（诊断行、批次读数、同步失败清单都这样搬过去的），
+  而不是把两边内容揉在一起。
+③**版本同源要有断言**：拆包线建包时对齐了当时的壳版本，另一条线随后把壳升到 1.2.0——
+  是 [5b] 的「包身份与壳同源」断言当场变红才发现的。

@@ -18,6 +18,22 @@
 
 结构面已同构，差的是**六样**：① 客户端插件没有"服务面"（dsh 的客户端插件是 cordis 插件，dsc 的只能 `require` react + `@dsc/ui`）；② 没有启动分批与懒物化；③ 没有请求批处理（combo）；④ 没有开发态热更（HMR）；⑤ **槽位框架只有运行期字符串槽表，没有 dsh 的类型化契约 / Component Factory / store seats**；⑥ **壳是一个单体 app，基元库不能作为平台种子下发给插件**。
 
+## 0.5 落地状态（2026-10-13 当天完成）
+
+| 波次 | 提交 | 状态 |
+| --- | --- | --- |
+| 第 1 波 C1 + E0/E1 | `9fe70e6` | 落地（16 个插件带包身份与契约区间；`packages.json` 单一事实源；`@dsc/ui-core` 正式化） |
+| 第 2 波 D1 + A1 + D3 + D2 | `ecec448` | 落地（类型化槽位契约 + 负例探针；客户端服务面 + `inject` 双关；store 席位；Component Factory，两个真实消费者） |
+| 第 3+4 波 A2 + A3 + B | `f0d6e74` | 落地（分批与懒物化 + `phase`；combo（16 插件 2 条请求）；宿主轮询 + SSE 热更，壳侧只换受影响插件） |
+| 第 5 波 E2/E3/E5 | `14582b4` | 落地（primitives / dockkit / layout 三个逻辑包） |
+| 第 5 波 E4 + E6 | `d09a9a6` | 落地（slots / renderer 两个包；转发壳全删；平台种子扩到 10 项，插件产物 −44KB） |
+| 第 6 波 C2 | 既往 | 已在旧轮次落地（第三方 rev = 内容摘要，`ui-third-party-test` 钉住） |
+| 第 6 波 C3 | `2578935` | 落地（没加载的原因分四档：manifest / clash / version / artifact，界面按档给「下一步」） |
+| 第 7 波 G | — | **只做了冻结那半**：`desktop/src/renderer/FROZEN.md` 与 `scripts/legacy-frozen-check.mjs` 早在 2026-10-11 就在位并全绿。删回落档 / 加「经典待弃」标注要用户拍板（FROZEN.md 自己挂着「一份还是两份 UI」这个决定） |
+| 阶段 F | — | 不做（浏览器求值用户代码与 dsc 的信任模型冲突） |
+
+施工方式：五条只读侦察/施工线在 git worktree 里并行（`.worktrees/w2|w3|w5|w6|w7`），主代理逐条审 diff、解 rebase 冲突、并统一跑电池与桌面端到端。
+
 ## 1. 逐条对位
 
 | 机制 | dsh 的做法（证据） | dsc 现状（证据） | 差在哪 |
