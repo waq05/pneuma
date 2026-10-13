@@ -275,6 +275,42 @@ console.log('[7] Git 页签（空仓库不报错 + 未跟踪可预览的形态�
   check('壳显示宿主给的 note（不自作主张说「没有改动」）', changes.includes("note: String(data?.note ?? '')") && changes.includes('props.diff.note') && !changes.includes('未跟踪文件不会出现在 diff 里'))
 }
 
+console.log('[8] 工具卡补丁视图（读 / 写 / 改三类分流）')
+{
+  const dockModel = read('ui-shell/src/ui-dockkit/dock-model.ts')
+  const dockState = read('ui-shell/src/ui-dockkit/dock-state.ts')
+  const dock = read('ui-shell/src/ui-dockkit/dock.tsx')
+  const factory = read('ui-shell/src/plugins/transcript/tool-card/factory.tsx')
+  const preview = read('ui-shell/src/plugins/preview/ui.tsx')
+  const contract = read('src/contract.ts')
+  const adapter = read('src/adapter/transcript.ts')
+
+  // ── 契约 / 宿主：逐刀改动按 callId 缝回工具卡（补丁视图的数据源）──
+  check('契约：ToolCallView 带本刀实际改动 change', /ToolCallView[\s\S]{0,2000}?change\?: ChangedFileView/.test(contract))
+  check('宿主：tool/changes 把改动缝回对应工具卡（call.change）', adapter.includes('call: { ...owner.call, change: event.change }'))
+
+  // ── dock：patch 是独立一种页签 kind（与 preview 分开）──
+  check('patch 是独立页签 kind（DockTabKind 里单列 patch）', /DockTabKind =[\s\S]{0,900}?'patch'/.test(dockModel))
+  check('模型：openPatch reducer（同路径去重 = 聚焦）', dockModel.includes('export function openPatch(surface: DockSurface, path: string)'))
+  check('模型：存档解析认得 patch 页签（只存路径）', dockModel.includes("entry.kind === 'patch'") && dockModel.includes("tabs.push({ id: entry.id, kind: 'patch', path: entry.path })"))
+  check('chip：patch 用文件彩色图标（走 preview 同一分支）', dock.includes("props.tab.kind === 'preview' || props.tab.kind === 'patch'"))
+
+  // ── dock-state：setDockPreview 的带 patch 形态 + 补丁源表（内存，不落盘）──
+  check('单一入口：setDockPreview 带 patch 就开补丁页签', dockState.includes('patch?: ChangedFileView') && dockState.includes('dockActions.openPatch(target.path)'))
+  check('补丁源只在内存（hunks 不落盘，重启给「已过期」说明）', dockState.includes('const patchSources = new Map<string, ChangedFileView>()') && dockState.includes('export function useDockPatchSource(path: string)'))
+
+  // ── 工具卡：edit/write 传 patch，read 传 path；挡冒泡不折卡 ──
+  check('chip 分流：edit/write 开补丁视图、read 开文件当前内容', factory.includes('data-tc-source={opensPatch ? \'patch\' : \'file\'}') && factory.includes('setDockPreview(opensPatch ? { path: absPath, cwd, patch } : { path: absPath, cwd })'))
+  check('chip 数据来自工具卡自己的 change（或进行中推演的 intended）', factory.includes('intended?.file ?? change ?? null') && factory.includes('change={call.change ?? null}'))
+  check('chip 挡冒泡（鼠标 + 键盘两路）', /onClick=\{\(event\) => \{\s*event\.stopPropagation\(\)\s*setDockPreview/.test(factory) && factory.includes('event.stopPropagation()'))
+
+  // ── preview 插件：patch 页签渲染 unified diff + 「打开原文件」──
+  check('preview 插件报名 patch 页签', preview.includes("registerDockTab({ kind: 'patch'"))
+  check('patch 页签用既有 DiffRows 渲染（不引新依赖）', preview.includes('<DiffRows hunks={source.hunks} path={path} />'))
+  check('patch 页签不再读盘：走 useDockPatchSource 拿快照', preview.includes('const source = useDockPatchSource(path)') && !/PatchTab[\s\S]{0,800}?fs-read/.test(preview))
+  check('补丁视图另给「打开原文件」出口（开的是当前内容预览）', preview.includes('打开原文件') && preview.includes('onClick={() => setDockPreview({ path })}'))
+}
+
 if (failures === 0) {
   console.log('\n全部通过')
 } else {

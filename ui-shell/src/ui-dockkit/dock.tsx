@@ -24,13 +24,13 @@ import { dockActions, dockTabMeta, useDockSurface } from './dock-state'
 const NARROW_VIEWPORT = 768
 
 /**
- * 页签 chip 上的图标与标题；preview 的 chip 用文件自己的彩色图标，见 Chip。
+ * 页签 chip 上的图标与标题；preview / patch 的 chip 用文件自己的彩色图标，见 Chip。
  *
  * `titleFromPath`：标题取页签自己那个路径的文件名（子智能体页签用它——chip 上要看到
  * 「这是哪个队友」，一堆都写「子智能体」就分不出来了）。图标仍是这一档的类别图标。
  */
 const KIND_META: Record<
-  Exclude<DockTabKind, 'preview'>,
+  Exclude<DockTabKind, 'preview' | 'patch'>,
   { title: string; icon: (props: { size: number }) => JSX.Element; titleFromPath?: boolean }
 > = {
   guide: { title: '开始', icon: IconGlobe },
@@ -326,8 +326,8 @@ function Chip(props: {
   onMenu(tabId: string | null, x: number, y: number): void
   menuOpen: boolean
 }): JSX.Element {
-  // preview 页签：图标是文件自己的彩色图标，标题是文件名（其它的走 KIND_META）
-  const meta = props.tab.kind === 'preview' ? undefined : KIND_META[props.tab.kind]
+  // preview / patch 页签：图标是文件自己的彩色图标，标题是文件名（其它的走 KIND_META）
+  const meta = props.tab.kind === 'preview' || props.tab.kind === 'patch' ? undefined : KIND_META[props.tab.kind]
   // 标题来源三档：页签自带的 label（子智能体那种「文件名不可读」的页签）→ 类别名 → 路径尾段。
   const title =
     props.tab.label !== undefined && props.tab.label !== ''

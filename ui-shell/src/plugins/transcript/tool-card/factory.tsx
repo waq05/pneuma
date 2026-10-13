@@ -22,6 +22,7 @@ import {
   IconChevronUp,
   openTrace,
   setDockPreview,
+  type ChangedFileView,
   type FactoryComponentProps,
   type FactoryLocalProps,
   type ToolCallView,
@@ -69,7 +70,7 @@ declare module '@dsc/ui' {
       }
       slots: {
         /** 头行摘要区：对话页给「将做的改动」预览，轨迹页沿用 summary。 */
-        preview: { props: { intended: IntendedDiff | null; summary: string; cwd: string; targetPath: string | null } }
+        preview: { props: { intended: IntendedDiff | null; summary: string; cwd: string; targetPath: string | null; change: ChangedFileView | null } }
         /** 状态列：父决定耗时口径（中文口径 / 轨迹的 4.2s 口径）。 */
         statusDetail: { props: { call: ToolCallView } }
         /** 展开体里的额外块：对话页给「将做的改动」diff。 */
@@ -227,7 +228,7 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
         <span className="verb">{toolVerb(match.base, call.status)}</span>
         {/* 认不出的工具保留原名：没有它就看不出这是哪家的工具（MCP 那些名字不直观）。 */}
         {match.known ? null : <span className="name">{call.name}</span>}
-        <Preview intended={intended} summary={summary} cwd={cwd} targetPath={targetPath} />
+        <Preview intended={intended} summary={summary} cwd={cwd} targetPath={targetPath} change={call.change ?? null} />
         <StatusDetail call={call} />
         <Trailing entry={entry} />
         {expandable ? <IconChevronDown size={11} className="tc-chevron" /> : null}
@@ -328,20 +329,33 @@ export function fileTargetOf(name: string, argsText: string, cwd: string): strin
 }
 
 /**
- * 摘要区里的可点路径：点开右侧栏的文件预览页签（页签头上还有「用系统程序打开」，
- * 要动文件就走那一步）。参考实现的编辑卡文件名同款——点它不折卡（头行整条是
- * 展开/收起的开关，鼠标与键盘两条路都要挡住冒泡）。
+ * 摘要区里的可点路径：点开右侧栏。
+ *
+ * read 传 path 开**文件当前内容**（预览页签）；edit / write 带上 `patch` 开**补丁视图**
+ * （这次改动改了什么，独立一种页签）——参考实现的编辑卡文件名同款。点它不折卡：
+ * 头行整条是展开/收起的开关，鼠标与键盘两条路都要挡住冒泡。
  */
-export function OpenPathButton({ absPath, cwd }: { absPath: string; cwd: string }): ReactNode {
+export function OpenPathButton({
+  absPath,
+  cwd,
+  patch = null,
+}: {
+  absPath: string
+  cwd: string
+  /** 带上它就开补丁视图（edit / write）；缺省开文件当前内容（read）。 */
+  patch?: ChangedFileView | null
+}): ReactNode {
+  const opensPatch = patch !== null
   return (
     <button
       type="button"
       className="tc-path tc-path-btn"
       data-tc-open={absPath}
-      title={`${absPath}（点击在右侧栏预览）`}
+      data-tc-source={opensPatch ? 'patch' : 'file'}
+      title={opensPatch ? `${absPath}（点击在右侧栏看这次改动）` : `${absPath}（点击在右侧栏预览）`}
       onClick={(event) => {
         event.stopPropagation()
-        setDockPreview({ path: absPath, cwd })
+        setDockPreview(opensPatch ? { path: absPath, cwd, patch } : { path: absPath, cwd })
       }}
       onKeyDown={(event) => {
         // 只在按键冒泡上挡一层：button 自己的 Enter/Space 激活不受影响。
@@ -354,29 +368,31 @@ export function OpenPathButton({ absPath, cwd }: { absPath: string; cwd: string 
 }
 
 /**
- * 摘要区：有 intended 就优先摊「将做的改动」预览（路径 + 增删行数 + 参数不匹配提示），
+ * 摘要区：有补丁就优先摊「将做的改动」预览（路径 + 增删行数 + 参数不匹配提示），
  * 否则回落 summary。这是对话页独有的那张脸（轨迹页不选它，用 fallback 的 summary）。
- * 路径（intended 的推演目标或文件类工具的调用目标）渲染成可点按钮开预览。
+ * 路径渲染成可点按钮：edit / write 开补丁视图，read 开文件当前内容。
  */
 export function IntendedPreview(props: FactoryLocalProps<typeof TOOLCARD_FACTORY, 'preview'>): ReactNode {
-  const { intended, summary, cwd, targetPath } = props
+  const { intended, summary, cwd, targetPath, change } = props
+  // 补丁数据两档：还在跑时按参数 + 盘上现值推演（intended），落地后由工具结果带来实际改动
+  // （change，adapter 按 callId 缝回的工具卡字段）。两者同形，取先有的一方。
+  const patch = intended?.file ?? change ?? null
+  const absPath = intended?.absPath ?? change?.path ?? targetPath
   return (
     <span className="preview">
-      {intended !== null ? (
+      {absPath !== null ? (
         <>
-          <OpenPathButton absPath={intended.absPath} cwd={cwd} />
-          {intended.file !== null && (
+          <OpenPathButton absPath={absPath} cwd={cwd} patch={patch} />
+          {patch !== null && (
             <span className="changes-counts">
-              {intended.file.status === 'added' && <span className="diff-badge">新增</span>}
-              <span className="changes-added">{`+${String(intended.file.added)}`}</span>
-              <span className="changes-removed">{`-${String(intended.file.removed)}`}</span>
+              {patch.status === 'added' && <span className="diff-badge">新增</span>}
+              <span className="changes-added">{`+${String(patch.added)}`}</span>
+              <span className="changes-removed">{`-${String(patch.removed)}`}</span>
             </span>
           )}
-          {intended.mismatch === 'missing' && <span className="tc-warn">old 不在当前文件里</span>}
-          {intended.mismatch === 'ambiguous' && <span className="tc-warn">old 匹配多处</span>}
+          {intended?.mismatch === 'missing' && <span className="tc-warn">old 不在当前文件里</span>}
+          {intended?.mismatch === 'ambiguous' && <span className="tc-warn">old 匹配多处</span>}
         </>
-      ) : targetPath !== null ? (
-        <OpenPathButton absPath={targetPath} cwd={cwd} />
       ) : (
         summary
       )}

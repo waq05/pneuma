@@ -178,5 +178,31 @@ check('subagent 事件同名原位更新（id 稳定、不叠卡）', () => {
   assert.equal(first.sub.tokens, 500)
 })
 
+check('tool/changes 把改动按 callId 缝回工具卡（call.change）且仍留独立条目', () => {
+  const transcript = new Transcript()
+  transcript.reduce({ type: 'tool/call', callId: 'c1', name: 'edit', args: '{"path":"a.ts","old":"x","new":"y"}' })
+  transcript.reduce({ type: 'tool/result', callId: 'c1', text: '已编辑 a.ts' })
+  const change = { path: '/w/a.ts', added: 1, removed: 1, hunks: [], status: 'modified' }
+  transcript.reduce({ type: 'tool/changes', callId: 'c1', change })
+  const tool = transcript.entries.find((entry) => entry.kind === 'tool')
+  assert.equal(tool.call.change.path, '/w/a.ts') // 工具卡读得到这一刀的改动（补丁视图的数据源）
+  assert.equal(transcript.entries.filter((entry) => entry.kind === 'changes').length, 1) // 轮尾卡的独立条目照旧
+})
+
+check('重放历史时同样缝回：fileChanges 旁路 → call.change', () => {
+  const transcript = new Transcript()
+  const fileChanges = new Map([['c2', { path: '/w/b.ts', added: 2, removed: 0, hunks: [], status: 'added' }]])
+  transcript.replayHistory(
+    [
+      { role: 'assistant', content: '', tool_calls: [{ id: 'c2', function: { name: 'write', arguments: '{"path":"b.ts","content":"a\\nb"}' } }], ts: 1 },
+      { role: 'tool', content: '已写入 b.ts', tool_call_id: 'c2', ts: 2 },
+    ],
+    undefined,
+    fileChanges,
+  )
+  const tool = transcript.entries.find((entry) => entry.kind === 'tool')
+  assert.equal(tool.call.change.path, '/w/b.ts')
+})
+
 console.log(`\n${passed} PASS / ${failed} FAIL`)
 process.exit(failed > 0 ? 1 : 0)

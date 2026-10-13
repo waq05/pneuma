@@ -273,6 +273,7 @@ export {
   dockActions,
   openDockTab,
   useActivePreviewPath,
+  useDockPatchSource,
   useDockReview,
   useDockSurface,
 } from '@dsc/ui-dockkit'

@@ -25,6 +25,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import {
   CodeView,
   CsvView,
+  DiffRows,
   FileIcon,
   IconCode,
   MarkdownView,
@@ -33,8 +34,11 @@ import {
   defineUiPlugin,
   getHostNative,
   registerDockTab,
+  setDockPreview,
+  useDockPatchSource,
   useHostChannel,
   useHostSelector,
+  type ChangedFileView,
   type DockTabBodyProps,
   type HostSnapshot,
 } from '@dsc/ui'
@@ -57,6 +61,9 @@ export default defineUiPlugin({
     // 「同文件去重、每格至多 10 张」这些规则在壳的布局模型里（旧桌面版同款）。
     // 不 keepMounted：切走不挂载、切回重读盘（旧桌面版同规则——省一份常驻监听）。
     registerDockTab({ kind: 'preview', label: '预览', icon: <IconCode size={13} />, component: PreviewTab })
+    // 补丁页签（kind = 'patch'）：渲染某个文件某次 write / edit 的差异快照（unified hunks）。
+    // 与 preview 是两条路——那份快照随工具结果来，不读盘；页签自带路径。
+    registerDockTab({ kind: 'patch', label: '补丁', component: PatchTab })
   },
 })
 
@@ -132,6 +139,85 @@ function PreviewBody({ path, cwd }: { path: string; cwd: string }): ReactNode {
           ) : null
         ) : (
           renderBody(read, fsRead)
+        )}
+      </div>
+    </>
+  )
+}
+
+/** 补丁页签体：整块显示这张页签那个文件**某一次改动的差异快照**（不是文件当前内容）。 */
+function PatchTab({ tab }: DockTabBodyProps): ReactNode {
+  const cwd = useHostSelector(readCwd)
+  const path = tab.path ?? ''
+  // 补丁源只在内存（hunks 不落盘）：重启/换会话后这里会是 null，页签体给「已过期」的说明。
+  const source = useDockPatchSource(path)
+  if (path === '') {
+    return <div className="file-preview-empty">这张补丁页签没有文件路径（关掉它，从工具卡重新点一个）。</div>
+  }
+  return <PatchBody path={path} cwd={cwd ?? ''} source={source} />
+}
+
+/**
+ * 补丁本体：头部（相对路径 + 增删计数 + 「打开原文件」/「用系统程序打开」）+ unified diff。
+ *
+ * 差异正文复用审查面板那份 `DiffRows`（hunk 头 + 逐行加色，unified/split 走同一套），
+ * 不引新依赖。「打开原文件」走 {@link setDockPreview} 的**无 patch** 形态，开的是预览页签
+ * （文件当前内容）——与补丁视图是两个视图，正是参考实现里 diff 页签旁边的那个入口。
+ */
+function PatchBody({ path, cwd, source }: { path: string; cwd: string; source: ChangedFileView | null }): ReactNode {
+  const native = getHostNative()
+  const [note, setNote] = useState('')
+  const openWithSystem = (): void => {
+    void native.invoke('openPath', [path]).catch((error: unknown) => {
+      setNote(`打不开：${error instanceof Error ? error.message : String(error)}`)
+    })
+  }
+  return (
+    <>
+      <div className="file-preview-head">
+        {/* 头部 = 彩色文件图标 + 相对路径 + 增删计数（改动卡同款计数样式）。 */}
+        <span className="file-preview-path" title={path}>
+          <FileIcon name={path} size={14} />
+          {shortPath(path, cwd)}
+        </span>
+        {source === null ? null : (
+          <span className="changes-counts">
+            {source.status === 'added' && <span className="diff-badge">新增</span>}
+            <span className="changes-added">{`+${String(source.added)}`}</span>
+            <span className="changes-removed">{`-${String(source.removed)}`}</span>
+          </span>
+        )}
+        <button
+          type="button"
+          className="btn-ghost"
+          data-tip="打开该文件的当前内容（补丁看的是修改当时的快照）"
+          onClick={() => setDockPreview({ path })}
+        >
+          打开原文件
+        </button>
+        <button
+          type="button"
+          className="btn-ghost"
+          disabled={!native.available}
+          title={native.available ? '用系统默认程序打开这个文件' : '这条能力来自桌面外壳的原生桥，浏览器里没有它'}
+          onClick={openWithSystem}
+        >
+          用系统程序打开
+        </button>
+      </div>
+      <div className="file-preview-body">
+        {note === '' ? null : <div className="tree-note">{note}</div>}
+        {source === null ? (
+          <div className="file-preview-empty">
+            这份补丁已经不在了（应用重启或切回会话后差异快照不再保留）。点「打开原文件」看该文件的当前内容。
+          </div>
+        ) : (
+          <>
+            {source.truncated === true && (
+              <p className="diff-note">改动较大，这里只显示了前一部分（完整改动以文件当前内容为准）。</p>
+            )}
+            <DiffRows hunks={source.hunks} path={path} />
+          </>
         )}
       </div>
     </>

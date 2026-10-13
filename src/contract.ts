@@ -254,6 +254,16 @@ export interface ToolCallView {
    * 跨机器拷过）导致结果时刻早于发起时刻时也不写——宁可让界面不显示，也不编一个 0 秒。
    */
   durationMs?: number
+  /**
+   * 这次调用对文件的**实际改动**（write / edit 成功落盘后才有）：与轮尾「文件已更改」
+   * 卡同一份数据（`tool/changes` 事件里那个 `change`，形状就是 {@link ChangedFileView}）。
+   *
+   * 为什么挂到工具卡上：卡上的文件名现在要能点开**这一刀改了什么**的补丁视图
+   * （diff-viewer 那条路），而逐刀改动原本只以独立 `changes` 条目存在、与调用对不上号。
+   * 这里按 callId 缝回去，工具卡读 `call.change` 即可，不必再去猜条目间的对应关系。
+   * 执行失败、或还在跑没有结果时没有这一项。
+   */
+  change?: ChangedFileView
 }
 
 /**

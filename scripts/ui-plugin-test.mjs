@@ -1138,6 +1138,16 @@ console.log('\n[5c] 槽位契约表')
     'transcript 产物含工具卡可点路径（tc-path-btn / data-tc-open）',
     readBundle('transcript').includes('tc-path-btn') && readBundle('transcript').includes('data-tc-open'),
   )
+  // 工具卡的文件名 chip：edit / write 开补丁视图（data-tc-source=patch），read 开当前内容。
+  // 补丁页签的渲染（DiffRows）在 preview 产物里——构建把这两条链摇掉就没得点了。
+  check(
+    'transcript 产物含 chip 的补丁/内容分流（data-tc-source / opensPatch）',
+    readBundle('transcript').includes('data-tc-source') && readBundle('transcript').includes('opensPatch'),
+  )
+  check(
+    'preview 产物含 patch 页签与 DiffRows 渲染',
+    /kind:\s*["']patch["']/.test(readBundle('preview')) && readBundle('preview').includes('DiffRows'),
+  )
 }
 
 // ── 6. A1 服务注入（provide/consume + inject 硬依赖 + 冲突人话）─────────────────

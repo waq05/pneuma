@@ -1285,7 +1285,7 @@ function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matched?: Too
         <span className="preview">
           {intended !== null ? (
             <>
-              <OpenPathButton absPath={intended.absPath} cwd={cwd} />
+              <OpenPathButton absPath={intended.absPath} cwd={cwd} patch={intended.file ?? call.change ?? null} />
               {intended.file !== null && (
                 <span className="changes-counts">
                   {intended.file.status === 'added' && <span className="diff-badge">新增</span>}
@@ -1297,7 +1297,7 @@ function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matched?: Too
               {intended.mismatch === 'ambiguous' && <span className="tc-warn">old 匹配多处</span>}
             </>
           ) : targetPath !== null ? (
-            <OpenPathButton absPath={targetPath} cwd={cwd} />
+            <OpenPathButton absPath={targetPath} cwd={cwd} patch={call.change ?? null} />
           ) : (
             summary
           )}

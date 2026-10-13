@@ -505,6 +505,13 @@ export class Transcript {
         // 一次成功 write / edit 的实际改动：独立条目（渲染层把同一轮的聚合成轮尾一张卡）。
         // 时间戳口径与工具卡一致：条目创建那一刻就是落盘完成那一刻。
         this.list.push(this.stamp({ kind: 'changes', id: this.seq++, file: event.change }))
+        // 同一份改动按 callId 缝回对应的工具卡（`call.change`）：卡上的文件名要点开
+        // 「这一刀改了什么」的补丁视图，工具卡只拿得到自己的 entry，靠这里把数据挂上去。
+        const index = this.toolIndex.get(event.callId)
+        const owner = index === undefined ? undefined : this.list[index]
+        if (index !== undefined && owner !== undefined && owner.kind === 'tool') {
+          this.list[index] = { ...owner, call: { ...owner.call, change: event.change } }
+        }
         return true
       }
       case 'turn/diff': {

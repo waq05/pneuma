@@ -30,6 +30,7 @@ import {
   focusTab as modelFocusTab,
   loadSurfaces,
   openPreview as modelOpenPreview,
+  openPatch as modelOpenPatch,
   openSubagent as modelOpenSubagent,
   openTab as modelOpenTab,
   placeTab as modelPlaceTab,
@@ -106,6 +107,9 @@ export const dockActions: DockActions = {
   },
   openPreview: (path, line) => {
     mutate((s) => modelSetExpanded(modelOpenPreview(s, path, line), true))
+  },
+  openPatch: (path) => {
+    mutate((s) => modelSetExpanded(modelOpenPatch(s, path), true))
   },
   openSubagent: (path, label) => {
     mutate((s) => modelSetExpanded(modelOpenSubagent(s, path, label), true))
@@ -212,9 +216,42 @@ export function dockTabMeta(kind: DockTabKind): DockTabKindMeta | undefined {
  *
  * `cwd` 保留在签名里只是为了调用方少改（旧面板时代的交接结构），打开页签只需要路径——
  * 页面显示用的相对路径由预览组件自己按当前会话 cwd 裁。
+ *
+ * 带上 `patch`（write / edit 工具卡点文件名那条路）就开**补丁页签**、并把这份「改了什么」
+ * 的差异快照存进 {@link patchSources}，与「文件当前内容」（preview）分开成两个视图。
+ * 单一入口（对齐参考实现的 onOpenCodeViewer(source)）：调用方只说「开这个文件的这种源」，
+ * 是内容还是补丁由带没带 patch 决定，页签 kind 由壳挑。
  */
-export function setDockPreview(target: { path: string; cwd?: string }): void {
+export function setDockPreview(target: { path: string; cwd?: string; patch?: ChangedFileView }): void {
+  if (target.patch !== undefined) {
+    patchSources.set(target.path, target.patch)
+    notify()
+    dockActions.openPatch(target.path)
+    return
+  }
   dockActions.openPreview(target.path)
+}
+
+/**
+ * 补丁源表（文件绝对路径 → 那份差异快照）：**只在内存**，不落盘。
+ *
+ * 为什么不挂在页签上：hunks 可能很大，落进 localStorage（`dsc.dock.surfaces`）会把存档
+ * 撑爆。页签只登记路径（可恢复），差异快照过不了重启——重启后回到补丁页签会提示
+ * 「补丁已过期」，并给「打开原文件」的出口（见 preview 插件的 PatchTab）。
+ */
+const patchSources = new Map<string, ChangedFileView>()
+
+/**
+ * 读某个文件的补丁源（补丁页签体用）；没开过补丁、或重启后失效就是 null。
+ *
+ * 与布局订阅同一条通道：setDockPreview 存进来源表后 notify，页签体据此重渲染。
+ */
+export function useDockPatchSource(path: string): ChangedFileView | null {
+  return useSyncExternalStore(
+    subscribeDock,
+    () => patchSources.get(path) ?? null,
+    () => null,
+  )
 }
 
 /**

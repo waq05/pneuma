@@ -27,6 +27,15 @@
 export type DockTabKind =
   | 'guide' | 'terminal' | 'browser' | 'files' | 'git' | 'preview'
   /**
+   * 补丁页签（一个文件一张，`path` 是它的绝对路径）：看某次 write / edit **改了什么**
+   * 的 unified diff，与「文件当前内容」（preview）是**两个不同视图**。
+   *
+   * 为什么单开一种 kind 而不是复用 preview：两者读的是两份数据——preview 读盘上现值
+   * （`fs-read`），patch 读那份已经算好的差异快照（hunks，随工具结果来）。同一份文件
+   * 可以同时开着「补丁」和「当前内容」两张页签，页签条上分得清。
+   */
+  | 'patch'
+  /**
    * 子智能体（一个子智能体一张，`path` 是它的会话文件路径）。
    *
    * 为什么单开一种 kind 而不是复用 preview：它渲染的不是文件内容，而是那个子智能体的
@@ -40,7 +49,7 @@ export type DockTabKind =
 export interface DockTab {
   id: string
   kind: DockTabKind
-  /** preview = 预览文件的绝对路径；subagent = 那个子智能体的会话文件路径。 */
+  /** preview / patch = 那个文件的绝对路径；subagent = 那个子智能体的会话文件路径。 */
   path?: string
   /**
    * chip 上显示的标题（可缺）。
@@ -83,6 +92,8 @@ export interface DockActions {
   openTab(kind: DockTabKind, options?: { replaceGuide?: boolean }): void
   /** 开一张文件预览页签（同路径去重 = 聚焦；对齐 dsh 的 openResource）；line = 定位行号。 */
   openPreview(path: string, line?: number): void
+  /** 开一张补丁页签（同路径去重 = 聚焦）：看那个文件某次 write / edit 改了什么。 */
+  openPatch(path: string): void
   /** 开一张子智能体页签（同会话文件去重 = 聚焦）；label = chip 上显示的队友名。 */
   openSubagent(path: string, label?: string): void
   closeTab(tabId: string): void
@@ -206,6 +217,19 @@ export function openPreview(surface: DockSurface, path: string, line?: number): 
   const tab = { ...makeTab('preview', path), ...patched }
   tabs = [...tabs, tab]
   return replacePane(surface, pane.id, { ...pane, tabs, activeTabId: tab.id })
+}
+
+/**
+ * 开一张补丁页签（照 {@link openPreview} 的形状）：同一个文件（按绝对路径认）只有一张，
+ * 已开即聚焦；新开的追加到激活窗格末尾，不设上限。页签不认识补丁内容——那份差异快照
+ * 存在壳的补丁源表里（见 dock-state 的 setDockPreview），这里只登记「哪个文件」。
+ */
+export function openPatch(surface: DockSurface, path: string): DockSurface {
+  const existing = surface.panes.flatMap((pane) => pane.tabs).find((tab) => tab.kind === 'patch' && tab.path === path)
+  if (existing !== undefined) return focusTab(surface, existing.id)
+  const pane = activePane(surface)
+  const tab = makeTab('patch', path)
+  return replacePane(surface, pane.id, { ...pane, tabs: [...pane.tabs, tab], activeTabId: tab.id })
 }
 
 /**
@@ -384,11 +408,15 @@ function parseSurface(value: unknown): DockSurface | null {
     for (const item of pane.tabs) {
       const entry = item as Partial<DockTab>
       if (typeof entry?.id !== 'string' || typeof entry?.kind !== 'string') return null
-      if (!['guide', 'terminal', 'browser', 'files', 'git', 'preview', 'subagent'].includes(entry.kind)) return null
-      // preview 页签落盘要带路径；路径丢了这张页签就没有内容，整格作废重画
+      if (!['guide', 'terminal', 'browser', 'files', 'git', 'preview', 'patch', 'subagent'].includes(entry.kind)) return null
+      // preview / patch 页签落盘要带路径；路径丢了这张页签就没有内容，整格作废重画。
+      // patch 只存路径，差异快照（hunks）不落盘——启动后回到该页签会提示补丁已过期。
       if (entry.kind === 'preview') {
         if (typeof entry.path !== 'string' || entry.path === '') return null
         tabs.push({ id: entry.id, kind: 'preview', path: entry.path, ...(typeof entry.line === 'number' ? { line: entry.line } : {}) })
+      } else if (entry.kind === 'patch') {
+        if (typeof entry.path !== 'string' || entry.path === '') return null
+        tabs.push({ id: entry.id, kind: 'patch', path: entry.path })
       } else if (entry.kind === 'subagent') {
         // 子智能体页签：路径就是它的全部内容（丢了这张页签没东西可读），label 是标题。
         if (typeof entry.path !== 'string' || entry.path === '') return null
