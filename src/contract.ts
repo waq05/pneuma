@@ -90,6 +90,55 @@ export interface PlanView {
 }
 
 /**
+ * 一张「提交过的计划」的目录项（状态面板的「计划」区）。
+ *
+ * 与 {@link PlanView} 的区别：PlanView 是**正挂着等批**的那一张（含全文），
+ * 这份只是目录里的一行读数——dsc 的计划在提交时就落盘（`.dsc/plans/`），
+ * 目录因此是「工作区里提交过的计划文件」，跨会话、跨重启都在。
+ */
+export interface PlanEntryView {
+  /** 计划文件的绝对路径（点一行在右侧栏打开它）。 */
+  file: string
+  /** 计划标题（正文首个 # 标题；读不到就回落到文件名）。 */
+  title: string
+  /** 文件最后写入时刻（目录按它倒序）。 */
+  at: number
+}
+
+/**
+ * 一项正在跑的后台工作（状态面板的「终端」区）：后台作业或持久终端会话。
+ *
+ * 只出**运行中**的（与 ZCode 的后台工作列表同口径：收工的由通知与台账负责，
+ * 面板不摆历史）。作业表 / 终端表本身是进程级的，这份也就不按会话分。
+ */
+export interface BackgroundWorkView {
+  /** 作业 id（job-N）/ 终端会话 id（term-N）。 */
+  id: string
+  kind: 'job' | 'terminal'
+  /** 行上的标题：作业 = 命令首行；终端 = 最近发进去的一条命令。 */
+  title: string
+  startedAt: number
+}
+
+/**
+ * 一条定点任务（状态面板的「工作流」区；schedule 插件贡献）。
+ *
+ * dsc 没有工作流引擎，这一区绑的是最接近的「按规则自动跑一轮」——定时任务。
+ * 插件默认关着，关着时这份投影整个缺席（界面按空处理，整区不渲染）。
+ */
+export interface ScheduledTaskView {
+  id: string
+  title: string
+  enabled: boolean
+  /** 下一次该跑的绝对时刻；null = 不再跑（一次性任务已跑过 / 还没排期）。 */
+  nextRunAt: number | null
+  /** 最近一次执行结果：never / running / ok / failed / blocked / skipped / done。 */
+  lastStatus: string
+  /** 最近一次失败 / 阻塞的原因原文（行上的提示词用它）。 */
+  lastError: string | null
+}
+
+/**
  * 目标阶段。
  * `core/goal.ts` 直接 import 这个类型（那里只留别名），界面与存储因此共用一份声明。
  */
@@ -638,6 +687,15 @@ export interface RuntimeSurfaces {
   goal: GoalView | null
   /** 模型发起的提问（ask 贡献）；同一时刻至多一个，它自己可能带一批题目（见 AskUserView.questions）。 */
   pendingQuestion: AskUserView | null
+  /** 正在跑的后台作业与终端会话（tools-default 贡献）；没有就是空数组。 */
+  backgroundWorks: BackgroundWorkView[]
+  /** 提交过的计划目录（plan 贡献）：工作区 `.dsc/plans/` 下的计划文件，最新在前；待批的那份不在其中。 */
+  planDirectory: PlanEntryView[]
+  /**
+   * 定点任务（schedule 贡献）。**可选**：schedule 插件默认关着，
+   * 关着时这份投影整个缺席（界面按空处理，与「未登记的键缺席」同一约定）。
+   */
+  scheduled?: ScheduledTaskView[]
 }
 
 /**
@@ -1367,6 +1425,13 @@ export interface DscRuntime {
    * 还在干活的队友会被拒绝（先停止）；名字不存在时返回的那句话就是明确的错误说明，不抛错。
    */
   removeTeammate(name: string): Promise<string>
+  /**
+   * 收掉一个正在跑的后台作业（`job-N`）或持久终端会话（`term-N`）——用户在状态面板
+   * 的「终端」区按停止时走它。等价于 `job_kill` / `terminal close` 的簿记与进程收尾，
+   * 但目标是我们自己的后台表，**不过审批**（与 `stopTeammate` 同一条理由：收自己起的
+   * 后台活不是新增动作面，是叫停）。id 不认识时返回的那句话就是明确的错误说明，不抛错。
+   */
+  stopBackground(id: string): Promise<string>
   /**
    * 只读重放一个会话文件的对话条目（看队友在干什么用）。
    * 它不改那个文件，也不能归档/删除/分叉——校验在 core/session.ts。

@@ -877,6 +877,20 @@ export interface DockService {
   handle(op: string, payload: Record<string, unknown>): Promise<unknown>
 }
 
+/**
+ * 后台作业与终端会话的收口（tools-default 插件提供）：状态面板「终端」区的停止动作
+ * 走它。开工的两条路（bash 的 run_in_background / terminal 工具）仍在工具面，这里只有「收」。
+ */
+export interface BackgroundWorksService {
+  /**
+   * 收掉一个正在跑的后台作业（`job-N`，走 job_kill 那套整树收尾）或持久终端会话
+   * （`term-N`，等价 terminal close）。
+   * @param id - 作业 / 会话 id；两种前缀各自路由，陌生 id 抛错（错误原文就是给用户的说明）。
+   * @returns 给用户看的一句话。
+   */
+  stop(id: string): string
+}
+
 /** 一个 MCP server 的连接状态（给设置页与自检看，不进模型上下文）。 */
 export interface McpServerInfo {
   name: string
@@ -1122,6 +1136,10 @@ declare module '@deepseek-ai/cordis' {
     sandbox?: SandboxService
     /** desktop-dock 服务（桌面端面板的工作区文件系统 + git）。 */
     dock: DockService
+    /**
+     * 后台作业与终端会话的收口（tools-default 提供；它停用时不存在，读它要用 `ctx.get`）。
+     */
+    backgroundWorks?: BackgroundWorksService
     /**
      * DscRuntime 适配器（供 UI 插件消费）。
      * 注意：不能叫 `runtime`——那是 cordis 内置的 fiber.mixin 保留属性名。

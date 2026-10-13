@@ -364,6 +364,19 @@ export function IconBranch(props: IconProps): JSX.Element {
   )
 }
 
+/** 变更（文件 + 加减号）：状态面板「Git 工具」区的「更改」行与胶囊的变更档共用。 */
+export function IconDiff(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M6.4 3.9h7.2l4 4v12.2H6.4z" />
+      <path d="M13.6 3.9v4h4" />
+      <path d="M9.6 11.1h2.8M11 9.7v2.8" />
+      <path d="M9.6 15.2h2.8" />
+    </>,
+    props,
+  )
+}
+
 export function IconKey(props: IconProps): JSX.Element {
   return base(
     <>

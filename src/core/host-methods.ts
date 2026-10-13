@@ -42,6 +42,8 @@ export const INVOKABLE_METHODS = [
   'stopTeammate',
   'messageTeammate',
   'removeTeammate',
+  // 状态面板「终端」区的停止：收掉自己起的后台作业 / 终端会话（等价于 job_kill / terminal close 的簿记）
+  'stopBackground',
   'peekTranscript',
   'runCommand',
   'setPolicy',

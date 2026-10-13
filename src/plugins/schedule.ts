@@ -37,7 +37,7 @@ import {
 } from '../core/schedule/rule.js'
 import { ScheduleRunner, scheduleLimitsNote } from '../core/schedule/runner.js'
 import { errorText, ScheduleStore, type ScheduleTask } from '../core/schedule/store.js'
-import type { SettingsField, SettingsValue, SettingsValues } from '../contract.js'
+import type { ScheduledTaskView, SettingsField, SettingsValue, SettingsValues } from '../contract.js'
 import type { SettingsSectionSpec } from '../services/types.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
@@ -165,7 +165,7 @@ function splitRuleAndTitle(rest: string): { ok: true; ruleText: string; title: s
 
 export const schedulePlugin: Plugin.Object = {
   name: 'schedule',
-  inject: ['tools', 'commands', 'settings', 'transcript', 'agent', 'session', 'waiting', 'llm', 'prompt'],
+  inject: ['tools', 'commands', 'settings', 'transcript', 'agent', 'session', 'waiting', 'llm', 'prompt', 'surfaces'],
   apply(ctx, passed: unknown) {
     let config = readConfig(passed)
     /** 写盘并立刻重读：设置页保存后下一次用值就是新值，不必重启宿主。 */
@@ -220,6 +220,21 @@ export const schedulePlugin: Plugin.Object = {
       },
       notice: (text) => ctx.transcript.system(text),
     })
+
+    // ── 状态面板「工作流」区的数据面 ────────────────────────────────────────────
+    // dsc 没有工作流引擎；这一区绑的是最接近的「按规则自动跑一轮」——定时任务。
+    // 投影只读（暂停 / 恢复 / 立即跑仍走工具与 /schedule 命令那一套）；插件关着时
+    // 整份投影缺席（`RuntimeSurfaces.scheduled` 可选），界面按「没有这一区」处理。
+    ctx.surfaces.register('scheduled', (): ScheduledTaskView[] =>
+      store.list().map((task) => ({
+        id: task.id,
+        title: task.title,
+        enabled: task.enabled,
+        nextRunAt: task.nextRunAt,
+        lastStatus: task.lastStatus,
+        lastError: task.lastError,
+      })),
+    )
 
     // ── 工具：schedule（单工具按 action 分发）──────────────────────────────────
     const toolDisposer = ctx.tools.register({

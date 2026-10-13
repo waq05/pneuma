@@ -9,12 +9,12 @@
  * @module dsc/plugins/tools-default
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { createBashTool, BASH_DEFAULT_BUDGETS, createJobTools, createTerminalTool, JobTable, stopAllBackgroundChildren, TerminalTable, type BashBudgets } from '../core/tools/bash.js'
+import { createBashTool, BASH_DEFAULT_BUDGETS, createJobTools, createTerminalTool, JobTable, stopAllBackgroundChildren, stopBackgroundChild, TerminalTable, type BashBudgets } from '../core/tools/bash.js'
 import { createReadTool, editTool, READ_DEFAULT_LINE_LIMIT, writeTool } from '../core/tools/fs-tools.js'
 import { globTool, grepTool } from '../core/tools/search-tools.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import type { SettingsField, SettingsValues } from '../contract.js'
-import type { SettingsSectionSpec } from '../services/types.js'
+import type { BackgroundWorkView, SettingsField, SettingsValues } from '../contract.js'
+import type { BackgroundWorksService, SettingsSectionSpec } from '../services/types.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'tools-default'
@@ -43,7 +43,7 @@ function readBudgets(passed?: unknown): BashBudgets & { readLineLimit: number } 
 export const toolsDefaultPlugin: Plugin.Object = {
   name: 'tools-default',
   // T15：完成通知走 agent.followup（排队提交一条消息叫模型回来收结果）
-  inject: ['tools', 'settings', 'agent'],
+  inject: ['tools', 'settings', 'agent', 'surfaces'],
   apply(ctx, passed) {
     let budgets = readBudgets(passed)
     /** 当前注册进注册表的清理函数；换预算时先撤旧的再注册新的。 */
@@ -58,6 +58,9 @@ export const toolsDefaultPlugin: Plugin.Object = {
     const noticeTimers = new Map<string, NodeJS.Timeout>()
     const table = new JobTable({
       notify: (text, owner) => {
+        // 作业状态变了（完成 / 失败 / 起不来）：抖一帧快照——状态面板的「终端」区
+        // 立刻把收工那一行撤掉，不等下一次别的变化（快照片段是拉取式，帧才是推）。
+        ctx.emit('dsc/changed')
         const key = owner ?? ''
         const bucket = pendingNotices.get(key) ?? []
         bucket.push(text)
@@ -74,8 +77,59 @@ export const toolsDefaultPlugin: Plugin.Object = {
     })
 
     // ---- T20 终端会话表 ----
-    // 与作业表共用同一张进程登记表（stopAllBackgroundChildren 收摊时一并收掉）
-    const terminals = new TerminalTable()
+    // 与作业表共用同一张进程登记表（stopAllBackgroundChildren 收摊时一并收掉）；
+    // onExit 与作业的完成通知同一条理由：进程自己退出也要把面板那一行撤掉。
+    const terminals = new TerminalTable({ onExit: () => ctx.emit('dsc/changed') })
+
+    // ---- 状态面板「终端」区的数据面与停止动作 ----
+    /** 一行标题：取首行、压到 max 字（面板行只有一行）。 */
+    const workTitle = (text: string, max: number): string => {
+      const line = (text.split('\n', 1)[0] ?? '').trim()
+      return line.length > max ? `${line.slice(0, max)}…` : line
+    }
+    // 只出**正在跑**的（作业表 / 终端表都是进程级的簿记，面板摆的是现场不是历史；
+    // 收工的由完成通知与台账负责）。作业表不记会话归属，这一份也就不按会话分——
+    // 后台活在界面上只有这一个露出口，按会话过滤反而会有「跑着但谁都看不见」的作业。
+    ctx.surfaces.register('backgroundWorks', (): BackgroundWorkView[] => {
+      const works: BackgroundWorkView[] = []
+      for (const job of table.list()) {
+        if (job.status !== 'running') continue
+        works.push({ id: job.id, kind: 'job', title: workTitle(job.command, 60), startedAt: job.startedAt })
+      }
+      for (const term of terminals.list()) {
+        if (term.status !== 'running') continue
+        const sent = workTitle(term.lastSent, 40)
+        works.push({
+          id: term.id,
+          kind: 'terminal',
+          title: sent === '' ? `终端会话 ${term.id}` : `终端 · ${sent}`,
+          startedAt: term.startedAt,
+        })
+      }
+      return works.sort((left, right) => left.startedAt - right.startedAt)
+    })
+    // 「收掉一个」的入口（状态面板的停止钮）：开工的路仍在工具面与桌面原生桥，
+    // 这里只有收——与 stopTeammate 同一档（叫停自己起的后台活不新增动作面），
+    // 所以界面通道直接放行；进程收尾原语复用 job_kill 那一套。
+    const backgroundWorks: BackgroundWorksService = {
+      stop(id: string): string {
+        if (id.startsWith('term-')) {
+          const text = terminals.close(id)
+          ctx.emit('dsc/changed')
+          return text
+        }
+        const job = table.get(id)
+        if (job === undefined) throw new Error(`没有这个后台作业或终端会话：${id}（列表按面板现取的 id）`)
+        if (job.status !== 'running') return `${id} 已经是 ${job.status}，不用再收`
+        table.markKilled(id)
+        const stopped = stopBackgroundChild(id)
+        ctx.emit('dsc/changed')
+        return stopped
+          ? `${id} 正在终止（整树收尾，已收输出保留，还能用 job_output 读到）`
+          : `${id} 的进程已经不在了，作业记为被终止`
+      },
+    }
+    ctx.provide('backgroundWorks', backgroundWorks)
 
     const syncTools = (): void => {
       for (const off of disposers) off()

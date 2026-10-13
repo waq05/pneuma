@@ -686,6 +686,11 @@ export interface TerminalRecord {
   exitCode: number | null
   startedAt: number
   finishedAt?: number
+  /**
+   * 最近一次 send 进去的内容原文（终端会话没有「命令行」，最近发的一条就是
+   * 「这个会话在干什么」最接近的读数——状态面板「终端」区的行标题用它）。
+   */
+  lastSent: string
   /** 缓冲里现在的输出（遮红在读口做，这里存原文）。 */
   output: string
   /** 因超限从头部丢掉的字符数：绝对偏移 = dropped + 本地下标。 */
@@ -723,6 +728,13 @@ export class TerminalTable {
   private readonly sessions = new Map<string, TerminalRecord>()
   private counter = 0
 
+  /**
+   * @param options.onExit - 会话自己退出（进程 close / 起不来）时的回调：宿主拿它
+   *   抖一帧快照（状态面板的「终端」区要立刻把这一行撤掉，不等下一次别的变化）。
+   *   经工具收掉的走工具结果那条路，不重复回调。
+   */
+  constructor(private readonly options: { onExit?: (id: string) => void } = {}) {}
+
   get size(): number {
     return this.sessions.size
   }
@@ -740,6 +752,7 @@ export class TerminalTable {
       status: 'running',
       exitCode: null,
       startedAt: Date.now(),
+      lastSent: '',
       output: '',
       dropped: 0,
       lastRead: 0,
@@ -764,6 +777,7 @@ export class TerminalTable {
       record.finishedAt = Date.now()
       record.output += `\n[启动失败：${error.message}]`
       untrackBackgroundChild(id)
+      this.options.onExit?.(id)
     })
     child.on('close', (code: number | null) => {
       if (record.status !== 'running') return
@@ -771,6 +785,7 @@ export class TerminalTable {
       record.exitCode = code
       record.finishedAt = Date.now()
       untrackBackgroundChild(id)
+      this.options.onExit?.(id)
     })
     return id
   }
@@ -825,6 +840,8 @@ export class TerminalTable {
       throw new Error(`终端会话 ${sessionId} 的输入口已经关了`)
     }
     stdin.write(data)
+    // 写成功了才记（写失败那条不算「这个会话在干什么」）：状态面板的行标题用它。
+    record.lastSent = data
   }
 
   /** 收掉一个会话（整树）；簿记走 close 状态。返回给模型看的一句话。 */

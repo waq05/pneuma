@@ -15,19 +15,40 @@
  * @module dsc/plugins/plan
  */
 import { mkdir, writeFile } from 'node:fs/promises'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { dirname } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
-import { planFilePath } from '../core/modes.js'
+import { PLAN_SUBDIR, planFilePath } from '../core/modes.js'
 import { audit } from '../core/audit.js'
 import type { ToolEntry } from '../core/tools.js'
-import type { PlanDecision, PlanView } from '../contract.js'
+import type { PlanDecision, PlanEntryView, PlanView } from '../contract.js'
 import type { PlanService } from '../services/types.js'
 
 /** propose 的结果：决定本身 + 拒绝时用户附的反馈原话（仅 rejected 且用户填了才有）。 */
 interface PlanOutcome {
   decision: PlanDecision
   feedback?: string
+}
+
+/** 计划目录的条目上限：它是回看口，不是文件管理器；更早的用右侧栏文件树翻 `.dsc/plans/`。 */
+const PLAN_DIRECTORY_LIMIT = 12
+/** 目录扫描的缓存时长（毫秒）：快照帧可能来得很密，读盘按这个节流。 */
+const PLAN_DIRECTORY_TTL_MS = 3_000
+
+/** 计划标题：正文首个 `# 标题`，其次首个非空行，最后回落到文件名（去掉时间戳前缀）。 */
+function planEntryTitle(text: string, file: string): string {
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (line === '') continue
+    const heading = /^#\s+(.+)$/.exec(line)
+    const title = (heading?.[1] ?? line).trim()
+    if (title !== '') return title.length > 80 ? `${title.slice(0, 80)}…` : title
+  }
+  const name = basename(file)
+    .replace(/\.md$/i, '')
+    .replace(/^\d{8}-\d{4}-/, '')
+  return name === '' ? basename(file) : name
 }
 
 /** 一张活挂起的评审卡。 */
@@ -132,6 +153,59 @@ export const planPlugin: Plugin.Object = {
     ctx.provide('plan', service)
     ctx.surfaces.register('pendingPlan', () => service.pendingPlan())
     ctx.waiting.register('plan', () => pendings.size > 0 || restored !== null)
+
+    // ── 「计划」区（状态面板）：工作区里提交过的计划文件目录 ──────────────────────
+    //
+    // 为什么扫盘而不是记内存：计划在提交那一刻就落盘（exit_plan_mode 写 `.dsc/plans/`），
+    // 文件是这件事唯一的持久记录——扫盘因此跨会话、跨重启都在，也不必再维护第二份账。
+    // 审批结果（approved / rejected）只活在会话状态里、一重启就只剩最后一张，所以目录
+    // 不摆状态徽章，只摆条目（ZCode 的计划目录同样只列条目）。
+    // 正在等批的那一张**不进目录**：它挂在输入框上方的评审卡里（pendingPlan），
+    // 目录是「提交过的」的回看口。
+    /** 目录缓存：跨帧复用（帧可能来得很密），TTL 过了或换了工作区才重扫。 */
+    let directoryCache: { dir: string; at: number; entries: PlanEntryView[] } | null = null
+    const directory = (): PlanEntryView[] => {
+      const dir = join(ctx.session.current().meta.cwd, ...PLAN_SUBDIR)
+      const now = Date.now()
+      if (
+        directoryCache !== null &&
+        directoryCache.dir === dir &&
+        now - directoryCache.at < PLAN_DIRECTORY_TTL_MS
+      ) {
+        return directoryCache.entries
+      }
+      let entries: PlanEntryView[] = []
+      try {
+        const pendingFile = cardOfCurrent()?.view.file ?? restored?.file ?? null
+        const files: { file: string; at: number }[] = []
+        for (const item of readdirSync(dir, { withFileTypes: true })) {
+          if (!item.isFile() || !item.name.toLowerCase().endsWith('.md')) continue
+          const file = join(dir, item.name)
+          if (file === pendingFile) continue
+          try {
+            files.push({ file, at: statSync(file).mtimeMs })
+          } catch {
+            // 刚被删掉的文件：这一帧不收它，下一次扫盘自然消失。
+          }
+        }
+        files.sort((left, right) => right.at - left.at)
+        entries = files.slice(0, PLAN_DIRECTORY_LIMIT).map((item) => {
+          let title: string
+          try {
+            title = planEntryTitle(readFileSync(item.file, 'utf8'), item.file)
+          } catch {
+            title = basename(item.file)
+          }
+          return { file: item.file, at: item.at, title }
+        })
+      } catch {
+        // 目录还不存在（这个工作区还没交过计划）或读不动：给空目录，别抛进快照。
+        entries = []
+      }
+      directoryCache = { dir, at: now, entries }
+      return entries
+    }
+    ctx.surfaces.register('planDirectory', directory)
 
     const exitPlanTool: ToolEntry = {
       name: 'exit_plan_mode',

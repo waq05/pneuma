@@ -1,24 +1,23 @@
 /**
- * 内置插件：状态面板（对照 ZCode 的「会话状态面板」：一个可收成胶囊的进程 / 目标 /
- * 智能体总览浮层）。
+ * 内置插件：状态面板（对照 ZCode 的「会话状态面板」：一个可收成胶囊的多分区总览浮层）。
  *
  * ## 为什么要有它
  *
- * 长会话里「现在到底有几件事在跑」原本散在三处：输入框上方的任务条（`plugins/tasks`）、
- * 标题旁的「N 个子智能体」下拉（`plugins/team`）、状态栏的读数。三处都要先把视线移开正在读
- * 的正文；而且它们各答一半——任务条不报队友，队友下拉不报任务进度。这个面板把这几条
- * **合成一块钉在正文右上角**的浮层：一眼看到「正在做哪条」「几条在跑」，点开看逐条。
+ * 长会话里「现在到底有几件事在跑」原本散在多处：输入框上方的任务条（`plugins/tasks`）、
+ * 标题旁的「N 个子智能体」下拉（`plugins/team`）、状态栏的读数，各答一半——任务条不报队友，
+ * 队友下拉不报任务进度。这个面板把这几条**合成一块钉在正文右上角**的浮层。
+ * （第一版之后任务条与「智能体团队」钮已从壳里撤掉：它们报的东西这里都有，留着是两份。）
  *
  * ## 形状（照 ZCode 的状态面板）
  *
  * - **同一壳收展（morph）**：收起态是胶囊（一颗药丸，只报优先级最高的那一条摘要），
  *   展开态是一块 320px 浮层。两态是**同一棵 DOM**（`[data-expanded]` 切换），收起/展开
- *   过渡最大高度、圆角、背景与阴影——不像旧版那样把胶囊和面板做成两个组件来回重挂，
- *   展开/收起因此有连续的形变动画。ZCode 的 shell 也是这么做的。
+ *   过渡最大高度、圆角、背景与阴影。ZCode 的 shell 也是这么做的。
  * - **自动档按宿主宽度裁决**：量的是定位父级 `.chat-wrap` 的宽度（ResizeObserver），
  *   不读 `window.innerWidth`——右侧 dock 开合会改宿主宽度但不改窗口宽度。
- * - **分区**：目标 / 进程 / 智能体，各自可折叠、各自限高滚动；进程区超过 6 条启用
- *   聚焦窗口（当前项 ±1 连续 3 条，前后折成折叠桶，hover 出预览卡）。
+ * - **分区七个**（顺序照 ZCode 的 Git 工具 / 目标 / 计划 / 进程 / 终端 / 工作流 / 智能体），
+ *   各自可折叠、各自限高滚动；进程区超过 6 条启用聚焦窗口（当前项 ±1 连续 3 条，
+ *   前后折成折叠桶，hover 出预览卡）。
  * - **智能体区只列在跑的**；收工的折成一条「已结束 · N ›」目录行，经 team 插件的
  *   `teamPanel` 服务打开团队面板（缺这个服务时整行不渲染——点了没反应的入口比没有更糟）。
  *
@@ -28,14 +27,21 @@
  * 用的是右缘刻度条（`plugins/transcript/jump-rail.tsx`）那一套：**一个 hidden 哨兵**在文档流里
  * 占位，组件从它往上找 `.chat-wrap`（`position: relative` 的定位父级），再把浮层 portal 进去。
  *
- * ## 数据
+ * ## 数据（逐区）
  *
- * - 任务 / 目标：**快照的 `surfaces.todos` / `surfaces.goal`**（与任务条、目标条同源，逐帧推）。
- * - 智能体：`listTeammates`（界面通道，放行面上）；team 插件开着时经 `teammates` 席位读同一份
- *   3 秒轮询，席位缺席才回落到这里的 5 秒本地轮询（页面不可见时两处都不问）。
- * - 目标的暂停 / 继续走 `goalAction`（与目标条同一个方法）。
+ * - **Git 工具**：本地轮询 `dock git-status`（读类 op 直接放行；`stats:true` 多要一对增删
+ *   行数）。不是仓库、或干净到没有一行改动时整区不画（ZCode 同款：干净仓库不摆状态卡）。
+ *   点「更改」行开右侧栏的 Git 页签（暂存 / 提交 / 历史 / diff 都在那里）。
+ * - **目标 / 进程**：快照的 `surfaces.goal` / `surfaces.todos`（与目标条同源，逐帧推）。
+ * - **计划**：快照的 `surfaces.planDirectory`（宿主扫工作区 `.dsc/plans/`，最新在前；
+ *   正在等批的那一份不进目录——它在输入框上方的评审卡里）。点一行在右侧栏打开它。
+ * - **终端**：快照的 `surfaces.backgroundWorks`（正在跑的后台作业 / 持久终端会话）；
+ *   停止走 `stopBackground`（等价 job_kill / terminal close 的簿记，放行面上）。
+ * - **工作流**：快照的 `surfaces.scheduled`。dsc 没有工作流引擎，这一区绑的是最接近的
+ *   「按规则自动跑一轮」——定点任务；schedule 插件默认关着，关着时整区不渲染。
+ * - **智能体**：`listTeammates`（team 插件开着时经共享席位读，缺席才回落到 5 秒轮询）。
  *
- * 纯派生规则（聚焦窗口 / 折叠桶 / 胶囊优先级链 / 时长）在 `./status-model.ts`，
+ * 纯派生规则（聚焦窗口 / 折叠桶 / 胶囊优先级链 / 时长与倒计时）在 `./status-model.ts`，
  * 由 `scripts/ui-status-panel-test.mjs` 逐条钉住。
  *
  * @module dsc-ui-shell/plugins/status
@@ -43,7 +49,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
+  IconActivity,
   IconArrowRight,
+  IconBranch,
+  IconCalendar,
   IconCheck,
   IconChevronDown,
   IconChevronLeft,
@@ -51,14 +60,18 @@ import {
   IconChevronUp,
   IconCircle,
   IconClose,
+  IconDiff,
   IconExpand,
   IconFlatList,
   IconMore,
   IconStop,
   IconTarget,
+  IconTerminal,
   IconTree,
   SLOT,
   defineUiPlugin,
+  openDockTab,
+  setDockPreview,
   setDockSubagent,
   toastErr,
   toastOk,
@@ -68,8 +81,11 @@ import {
   useService,
   useThreadView,
   type ActionsDecl,
+  type BackgroundWorkView,
   type GoalView,
   type HostSnapshot,
+  type PlanEntryView,
+  type ScheduledTaskView,
   type StoreHandle,
   type TeammateView,
   type TodoItemView,
@@ -79,8 +95,11 @@ import {
 import {
   capsuleSummary,
   foldBucketKind,
+  formatAgo,
+  formatCountdown,
   formatDuration,
   longestElapsedMs,
+  longestWorkElapsedMs,
   mateElapsedMs,
   todoFocusWindow,
   type CapsuleSummary,
@@ -89,6 +108,19 @@ import {
 
 /** 轮询间隔（毫秒）：队友名册在快照里没有，只能问通道。 */
 const POLL_MS = 5000
+/**
+ * Git 读数的轮询节奏（毫秒）：有改动最勤，干净仓库与「不是仓库」两档放松。
+ * 没走快照面是因为宿主的 Git 读数是现算的（`git status` + `diff --numstat`），
+ * 自己控制节奏比让宿主替所有会话定时算更省。
+ */
+const GIT_POLL_DIRTY_MS = 12_000
+const GIT_POLL_CLEAN_MS = 30_000
+const GIT_POLL_IDLE_MS = 60_000
+/** 单次读超过这个毫秒数就当仓库很大：下一拍按 3 倍退让（别在大仓上空转）。 */
+const GIT_SLOW_MS = 2500
+/** 时间读数的两档刷新：在跑的后台活要秒级；只有「多久前 / 还有多久」的读数秒级没用。 */
+const CLOCK_FAST_MS = 1000
+const CLOCK_SLOW_MS = 10_000
 /** 自动档展开面板的最小宿主宽度（照 ZCode：1280px 以下收成胶囊）。 */
 const AUTO_PANEL_MIN_WIDTH = 1280
 /** 展示档位的存档键（本机，跟人走而不跟会话走）。 */
@@ -128,9 +160,22 @@ function writeMode(mode: DisplayMode): void {
   }
 }
 
-/** 三个分区各自的开合（默认：目标 / 进程展开；智能体折叠——照 ZCode 只把活动列表默认收起）。 */
-type SectionId = 'goal' | 'todo' | 'agent'
-const DEFAULT_SECTION_OPEN: Readonly<Record<SectionId, boolean>> = { goal: true, todo: true, agent: false }
+/**
+ * 七个分区各自的开合（顺序照 ZCode：Git 工具 / 目标 / 计划 / 进程 / 终端 / 工作流 / 智能体）。
+ *
+ * 默认：Git 工具 / 目标 / 进程展开；计划、终端、工作流、智能体收起——照 ZCode
+ * 「活动列表默认收起」，回看性的目录（计划）也收起。
+ */
+type SectionId = 'git' | 'goal' | 'plan' | 'todo' | 'terminal' | 'workflow' | 'agent'
+const DEFAULT_SECTION_OPEN: Readonly<Record<SectionId, boolean>> = {
+  git: true,
+  goal: true,
+  plan: false,
+  todo: true,
+  terminal: false,
+  workflow: false,
+  agent: false,
+}
 
 /** 队友状态 → 数据属性（样式里靠它上色，与团队面板同一套词）。 */
 const MATE_TONE: Readonly<Record<TeammateView['state'], string>> = {
@@ -259,6 +304,94 @@ function sameMateList(left: readonly TeammateView[], right: readonly TeammateVie
   })
 }
 
+/** Git 读数（本地轮询）：分支 + 增删行数 + 脏文件数（含 untracked）。 */
+interface GitSummary {
+  branch: string
+  added: number
+  removed: number
+  files: number
+}
+
+/** Git 读数的相等判断（轮询每拍换新对象，读数没变就别重画面板）。 */
+function sameGit(left: GitSummary | null, right: GitSummary | null): boolean {
+  if (left === right) return true
+  if (left === null || right === null) return false
+  return left.branch === right.branch && left.added === right.added && left.removed === right.removed && left.files === right.files
+}
+
+/** 空表常量：选择器要返回**稳定引用**（每帧新建数组会被判成变化，逐帧重画）。 */
+const NO_WORKS: readonly BackgroundWorkView[] = []
+const NO_PLANS: readonly PlanEntryView[] = []
+const NO_TASKS: readonly ScheduledTaskView[] = []
+
+/** 从快照里取后台活清单（tools-default 贡献）；缺面 / 形状不对给空表。 */
+function readBackgroundWorks(snapshot: HostSnapshot | null): readonly BackgroundWorkView[] {
+  const surfaces = snapshot?.['surfaces']
+  if (typeof surfaces !== 'object' || surfaces === null) return NO_WORKS
+  const works = (surfaces as Record<string, unknown>)['backgroundWorks']
+  return Array.isArray(works) ? (works as BackgroundWorkView[]) : NO_WORKS
+}
+
+/** 后台活清单的相等判断（快照每帧换引用，不给判断会逐帧重画）。 */
+function sameWorks(left: readonly BackgroundWorkView[], right: readonly BackgroundWorkView[]): boolean {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  return left.every((work, index) => {
+    const other = right[index]
+    return (
+      other !== undefined &&
+      work.id === other.id &&
+      work.kind === other.kind &&
+      work.title === other.title &&
+      work.startedAt === other.startedAt
+    )
+  })
+}
+
+/** 从快照里取计划目录（plan 贡献）；缺面给空表。 */
+function readPlanDirectory(snapshot: HostSnapshot | null): readonly PlanEntryView[] {
+  const surfaces = snapshot?.['surfaces']
+  if (typeof surfaces !== 'object' || surfaces === null) return NO_PLANS
+  const plans = (surfaces as Record<string, unknown>)['planDirectory']
+  return Array.isArray(plans) ? (plans as PlanEntryView[]) : NO_PLANS
+}
+
+/** 计划目录的相等判断：目录最多十几行，逐项比也便宜。 */
+function samePlans(left: readonly PlanEntryView[], right: readonly PlanEntryView[]): boolean {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  return left.every((plan, index) => {
+    const other = right[index]
+    return other !== undefined && plan.file === other.file && plan.title === other.title && plan.at === other.at
+  })
+}
+
+/** 从快照里取定点任务（schedule 贡献）；插件关着时这一面整个缺席，给空表。 */
+function readScheduled(snapshot: HostSnapshot | null): readonly ScheduledTaskView[] {
+  const surfaces = snapshot?.['surfaces']
+  if (typeof surfaces !== 'object' || surfaces === null) return NO_TASKS
+  const tasks = (surfaces as Record<string, unknown>)['scheduled']
+  return Array.isArray(tasks) ? (tasks as ScheduledTaskView[]) : NO_TASKS
+}
+
+/** 定点任务清单的相等判断。 */
+function sameTasks(left: readonly ScheduledTaskView[], right: readonly ScheduledTaskView[]): boolean {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  return left.every((task, index) => {
+    const other = right[index]
+    return (
+      other !== undefined &&
+      task.id === other.id &&
+      task.title === other.title &&
+      task.enabled === other.enabled &&
+      task.nextRunAt === other.nextRunAt &&
+      task.lastStatus === other.lastStatus &&
+      task.lastError === other.lastError
+    )
+  })
+}
+
 /** 有没有悬停输入（精细指针）。没有（触屏）时折叠桶的预览卡改为点按开合。 */
 function hasHoverInput(): boolean {
   return typeof window.matchMedia === 'function' ? !window.matchMedia('(hover: none)').matches : true
@@ -270,6 +403,12 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
   const todos = useHostSelector(readTodos, sameTodos)
   const goal = useHostSelector(readGoal, sameGoal)
   const sessionId = useHostSelector(readSessionId)
+  // 后台活 / 计划目录 / 定点任务：三份都是快照面（逐帧推），相等判断各自一份。
+  const works = useHostSelector(readBackgroundWorks, sameWorks)
+  const plans = useHostSelector(readPlanDirectory, samePlans)
+  const scheduled = useHostSelector(readScheduled, sameTasks)
+  // Git 读数走本地轮询（见文件头「数据」那一节）：不是仓库 / 读失败给 null，干净仓库也给 null。
+  const [git, setGit] = useState<GitSummary | null>(null)
   // 名册来源（D3）：team 插件把席位 handle 经服务表传出来。
   //   有席位 → 读同一份共享实例（team 那个 3 秒轮询是唯一的数据源，这边不再自拉）；
   //   没席位（team 没装/被停用）→ 保留本地轮询（下面那段 effect）。
@@ -355,6 +494,68 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
     }
   }, [channel, usingShared])
 
+  /**
+   * Git 读数：本地轮询（`dock git-status` 是读类 op，界面通道直接放行）。
+   *
+   * 三档节奏（有改动 12s / 干净 30s / 不是仓库 60s）＋一个慢仓库退让：单拍耗时超过
+   * {@link GIT_SLOW_MS} 就按 3 倍间隔走——在大仓里每 12 秒跑一次 `git status` 是拿
+   * 用户的 CPU 换一行读数，不值。页面不可见不拍，切回可见立刻补一拍。
+   */
+  useEffect(() => {
+    let alive = true
+    let timer: number | null = null
+    function stopTimer(): void {
+      if (timer !== null) {
+        window.clearTimeout(timer)
+        timer = null
+      }
+    }
+    function schedule(ms: number): void {
+      if (!alive) return
+      timer = window.setTimeout(tick, ms)
+    }
+    function settle(base: number, startedAt: number): void {
+      const took = Date.now() - startedAt
+      schedule(took > GIT_SLOW_MS ? base * 3 : base)
+    }
+    function tick(): void {
+      stopTimer()
+      if (document.visibilityState === 'hidden') {
+        schedule(GIT_POLL_DIRTY_MS)
+        return
+      }
+      const startedAt = Date.now()
+      void channel
+        .invoke<Record<string, unknown>>('dock', ['git-status', { stats: true }])
+        .then((data) => {
+          if (!alive) return
+          const added = typeof data?.['added'] === 'number' ? data['added'] : 0
+          const removed = typeof data?.['removed'] === 'number' ? data['removed'] : 0
+          const files = typeof data?.['dirtyFileCount'] === 'number' ? data['dirtyFileCount'] : 0
+          const branch = typeof data?.['branch'] === 'string' ? data['branch'] : ''
+          const next: GitSummary | null = files > 0 || added + removed > 0 ? { branch, added, removed, files } : null
+          setGit((current) => (sameGit(current, next) ? current : next))
+          settle(next === null ? GIT_POLL_CLEAN_MS : GIT_POLL_DIRTY_MS, startedAt)
+        })
+        .catch(() => {
+          if (!alive) return
+          // 不是仓库 / 读不动：整区与胶囊那一档一起消失，节奏放松到最慢一档。
+          setGit((current) => (current === null ? current : null))
+          settle(GIT_POLL_IDLE_MS, startedAt)
+        })
+    }
+    const onVisible = (): void => {
+      if (document.visibilityState === 'visible') tick()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    tick()
+    return () => {
+      alive = false
+      stopTimer()
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [channel])
+
   const mates = shared ?? localMates
   const mine = useMemo(
     () => (sessionId === null ? [] : mates.filter((mate) => mate.sessionId === sessionId)),
@@ -365,17 +566,41 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
   /** 现在展开成面板没有：显式档直接定，自动档看宿主够不够宽（见 AUTO_PANEL_MIN_WIDTH）。 */
   const expanded = mode === 'panel' || (mode === 'auto' && avail >= AUTO_PANEL_MIN_WIDTH)
 
-  // 自己播一秒一次的时钟：只在**面板展开且有在跑的队友**时跑——胶囊上没有秒级读数，
-  // 收工行的时长是冻结值，不需要逐秒重画（旧版只要有面板就常驻一条 1s 定时器）。
+  // 时间读数分两档（面板收起时两档都不跑：胶囊上没有秒级 / 分钟级读数）：
+  //   快档：有在跑的后台活（队友 / 作业 / 终端）才要秒级时长；
+  //   慢档：只有「多久前 / 还有多久」这类读数（计划目录的 mtime、定点任务的下次时间），
+  //   10 秒一拍足够——旧版只要有面板就常驻一条 1s 定时器，这里按需起。
+  const fastClock = expanded && (running.length > 0 || works.length > 0)
+  const slowClock = expanded && (scheduled.length > 0 || plans.length > 0)
   useEffect(() => {
-    if (!expanded || running.length === 0) return undefined
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    if (!fastClock) return undefined
+    const timer = window.setInterval(() => setNow(Date.now()), CLOCK_FAST_MS)
     return () => window.clearInterval(timer)
-  }, [expanded, running.length])
+  }, [fastClock])
+  useEffect(() => {
+    if (fastClock || !slowClock) return undefined
+    const timer = window.setInterval(() => setNow(Date.now()), CLOCK_SLOW_MS)
+    return () => window.clearInterval(timer)
+  }, [fastClock, slowClock])
 
+  /** 在跑的定点任务（「工作流」区第一档 + 胶囊第一档；任务表里至多一条在跑）。 */
+  const runningTask = useMemo(
+    () => scheduled.find((task) => task.lastStatus === 'running')?.title ?? null,
+    [scheduled],
+  )
   const summary = useMemo(
-    () => capsuleSummary({ todos, goal, runningMates: running.length }),
-    [todos, goal, running.length],
+    () =>
+      capsuleSummary({
+        todos,
+        goal,
+        runningMates: running.length,
+        git,
+        plans,
+        runningWorks: works,
+        runningTask,
+        endedMates: ended.length,
+      }),
+    [todos, goal, running.length, git, plans, works, runningTask, ended.length],
   )
   /** 折叠桶的窗口（卡片与分区行共用同一份划分，避免两处算法漂移）。 */
   const foldWindow = useMemo(() => todoFocusWindow(todos?.items ?? []), [todos])
@@ -447,6 +672,30 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
       .catch((reason: unknown) => toastErr(`叫停失败：${reason instanceof Error ? reason.message : String(reason)}`))
   }
 
+  /** 收掉一个正在跑的后台作业 / 终端会话（「终端」区行尾的停止钮）。 */
+  const stopWork = (work: BackgroundWorkView): void => {
+    void channel
+      .invoke<string>('stopBackground', [work.id])
+      .then((text) => {
+        toastOk(typeof text === 'string' && text.trim() !== '' ? text : `已收掉 ${work.id}`)
+      })
+      .catch((reason: unknown) => {
+        toastErr(`收不掉：${reason instanceof Error ? reason.message : String(reason)}`)
+      })
+  }
+
+  /** 清空任务清单（原任务条上那颗钮——任务条撤了，动作搬进「进程」区）。 */
+  const clearTodos = (): void => {
+    void channel
+      .invoke('clearTodos', [])
+      .then(() => {
+        toastOk('任务清单已清空')
+      })
+      .catch((reason: unknown) => {
+        toastErr(`清空失败：${reason instanceof Error ? reason.message : String(reason)}`)
+      })
+  }
+
   const goalAction = (name: 'pause' | 'resume', tip: string): void => {
     void channel
       .invoke('goalAction', [name])
@@ -464,11 +713,32 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
     setSectionOpen((current) => ({ ...current, [id]: !current[id] }))
   }
 
-  // 三处都空（没有任务、没有目标、没有在跑的队友）时整块不画：浮层不该在无事可报时
-  // 占着右上角。收工的队友不算「有事」——终态不撑起胶囊，也不单独撑起面板
-  // （ZCode 同款裁定）；要翻已结束的名单，标题旁那颗「智能体团队」钮一直在。
-  // 但**哨兵一定要在**——它被卸载再挂载时 host 会重新解析一次，多一次查询而已。
-  const hasData = todos !== null || goal !== null || running.length > 0
+  // 七处都空时整块不画：浮层不该在无事可报时占着右上角。
+  // 与 ZCode 的一处**有意偏离**：已结束的队友也算「有事」——标题栏那颗「智能体团队」
+  // 钮撤掉之后，本会话的队伍只剩这一区的「已结束 · N ›」目录行一个入口，全空就真进不去了
+  // （胶囊链最后那一档 mates-ended 也是为它留的）。
+  const hasData =
+    todos !== null ||
+    goal !== null ||
+    mine.length > 0 ||
+    git !== null ||
+    plans.length > 0 ||
+    works.length > 0 ||
+    scheduled.length > 0
+  // 分区可见性（渲染顺序照 ZCode：Git 工具 / 目标 / 计划 / 进程 / 终端 / 工作流 / 智能体）。
+  const showGit = git !== null
+  const showGoal = goal !== null
+  const showPlan = plans.length > 0
+  const showTodo = todos !== null
+  const showTerminal = works.length > 0
+  const showWorkflow = scheduled.length > 0
+  // 分割线依据：按渲染顺序算「这个分区之上有没有可显示的分区」（纯算式，不引入状态）。
+  const sepGoal = showGit
+  const sepPlan = showGit || showGoal
+  const sepTodo = showGit || showGoal || showPlan
+  const sepTerminal = sepTodo || showTodo
+  const sepWorkflow = sepTerminal || showTerminal
+  const sepAgent = sepWorkflow || showWorkflow
   const panel =
     hasData && view === 'chat' ? (
       <div
@@ -492,7 +762,7 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
             aria-hidden={expanded}
             tabIndex={expanded ? -1 : 0}
             inert={expanded}
-            data-tip="展开状态面板（进程、目标与智能体）"
+            data-tip="展开状态面板（Git、目标、计划、进程、终端、工作流与智能体）"
             onClick={() => {
               chooseMode('panel')
             }}
@@ -554,24 +824,46 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
               ) : null}
             </div>
             <div className="sp-scroll">
-              {goal !== null ? (
+              {showGit && git !== null ? (
+                <GitSection
+                  git={git}
+                  open={sectionOpen.git}
+                  separated={false}
+                  onToggle={() => {
+                    toggleSection('git')
+                  }}
+                />
+              ) : null}
+              {showGoal && goal !== null ? (
                 <GoalSection
                   goal={goal}
                   open={sectionOpen.goal}
-                  separated={false}
+                  separated={sepGoal}
                   onToggle={() => {
                     toggleSection('goal')
                   }}
                   onAction={goalAction}
                 />
               ) : null}
+              {showPlan ? (
+                <PlanSection
+                  plans={plans}
+                  now={now}
+                  open={sectionOpen.plan}
+                  separated={sepPlan}
+                  onToggle={() => {
+                    toggleSection('plan')
+                  }}
+                />
+              ) : null}
               <TodoSection
                 todos={todos}
                 open={sectionOpen.todo}
-                separated={goal !== null}
+                separated={sepTodo}
                 onToggle={() => {
                   toggleSection('todo')
                 }}
+                onClear={clearTodos}
                 previewOpen={preview === null ? null : preview.group}
                 onPreviewOpen={(group, element) => {
                   scheduleOpen(group, element)
@@ -580,12 +872,35 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
                 onPreviewTouch={openPreviewNow}
                 onPreviewKeep={keepPreviewOpen}
               />
+              {showTerminal ? (
+                <WorkSection
+                  works={works}
+                  now={now}
+                  open={sectionOpen.terminal}
+                  separated={sepTerminal}
+                  onToggle={() => {
+                    toggleSection('terminal')
+                  }}
+                  onStop={stopWork}
+                />
+              ) : null}
+              {showWorkflow ? (
+                <WorkflowSection
+                  tasks={scheduled}
+                  now={now}
+                  open={sectionOpen.workflow}
+                  separated={sepWorkflow}
+                  onToggle={() => {
+                    toggleSection('workflow')
+                  }}
+                />
+              ) : null}
               <AgentSection
                 running={running}
                 endedCount={ended.length}
                 now={now}
                 open={sectionOpen.agent}
-                separated={goal !== null || todos !== null}
+                separated={sepAgent}
                 onToggle={() => {
                   toggleSection('agent')
                 }}
@@ -629,11 +944,26 @@ function MiniSummary({ summary }: { summary: CapsuleSummary | null }): ReactNode
   let icon: ReactNode
   let text: ReactNode
   let trail: ReactNode = null
-  if (summary.kind === 'todo-current') {
+  if (summary.kind === 'workflow') {
+    icon = <IconCalendar size={13} className="sp-icon-run" />
+    text = summary.text
+  } else if (summary.kind === 'todo-current') {
     icon = <IconArrowRight size={13} />
     text = summary.text
   } else if (summary.kind === 'goal') {
     icon = <IconTarget size={13} />
+    text = summary.text
+  } else if (summary.kind === 'git') {
+    icon = <IconDiff size={13} />
+    text = '更改'
+    trail = (
+      <span className="sp-git-delta">
+        <span className="sp-add">{`+${String(summary.added)}`}</span>
+        <span className="sp-del">{`−${String(summary.removed)}`}</span>
+      </span>
+    )
+  } else if (summary.kind === 'goal-done') {
+    icon = <IconTarget size={13} className="sp-icon-done" />
     text = summary.text
   } else if (summary.kind === 'todo-done') {
     icon = <IconCheck size={13} className="sp-icon-done" />
@@ -642,9 +972,24 @@ function MiniSummary({ summary }: { summary: CapsuleSummary | null }): ReactNode
     icon = <IconFlatList size={13} />
     text = '进程'
     trail = `${String(summary.done)}/${String(summary.total)}`
+  } else if (summary.kind === 'plan') {
+    icon = <IconFlatList size={13} />
+    text = summary.text
+  } else if (summary.kind === 'running') {
+    // 混合（队友 + 后台活）给「都算上」的总数，单一种类给各自的说法（照 ZCode 的兜底档）。
+    if (summary.mates > 0 && summary.works > 0) {
+      icon = <IconActivity size={13} />
+      text = `${String(summary.mates + summary.works)} 项在跑`
+    } else if (summary.works > 0) {
+      icon = <IconTerminal size={13} />
+      text = `${String(summary.works)} 个后台任务`
+    } else {
+      icon = <IconTree size={13} />
+      text = `${String(summary.mates)} 个智能体在跑`
+    }
   } else {
     icon = <IconTree size={13} />
-    text = `${String(summary.count)} 个智能体在跑`
+    text = `已结束 ${String(summary.count)} 个智能体`
   }
   return (
     <>
@@ -808,6 +1153,7 @@ function TodoSection({
   open,
   separated,
   onToggle,
+  onClear,
   previewOpen,
   onPreviewOpen,
   onPreviewClose,
@@ -818,6 +1164,8 @@ function TodoSection({
   open: boolean
   separated: boolean
   onToggle(): void
+  /** 清空清单（原任务条上那颗钮，随任务条撤掉搬进这里）。 */
+  onClear(): void
   previewOpen: 'preceding' | 'following' | null
   onPreviewOpen(group: 'preceding' | 'following', element: HTMLElement): void
   onPreviewClose(): void
@@ -872,6 +1220,19 @@ function TodoSection({
           </li>
         ) : null}
       </ul>
+      {todos.total > 0 ? (
+        <div className="sp-row-foot">
+          <button
+            type="button"
+            className="sp-clear"
+            data-sp-clear="1"
+            data-tip="清空任务清单（模型下一次更新清单会重建它）"
+            onClick={onClear}
+          >
+            清空清单
+          </button>
+        </div>
+      ) : null}
     </StatusSectionBlock>
   )
 }
@@ -1035,6 +1396,251 @@ function AgentSection({
           <IconChevronRight size={12} className="sp-ended-go" />
         </button>
       ) : null}
+    </StatusSectionBlock>
+  )
+}
+
+/**
+ * Git 工具区（ZCode 同名分区的瘦身版）：一行「更改」（点开右侧栏 Git 页签）+ 一行分支。
+ *
+ * 与 ZCode 的三行（更改 / 分支 / 提交推送）差一行：dsc 没有 git 动作工具，提交与推送
+ * 都是 Git 页签里的事（那里暂存 / 提交的写类 op 照过审批），所以这一区只做读数与入口。
+ * 干净仓库整区不画（ZCode 同款：干净仓库不摆状态卡）——判在 StatusPanel 那一层。
+ */
+function GitSection({
+  git,
+  open,
+  separated,
+  onToggle,
+}: {
+  git: GitSummary
+  open: boolean
+  separated: boolean
+  onToggle(): void
+}): ReactNode {
+  return (
+    <StatusSectionBlock
+      id="git"
+      title="Git 工具"
+      open={open}
+      separated={separated}
+      onToggle={onToggle}
+      trail={
+        <span className="sp-git-delta" data-sp-git-delta={`${String(git.added)}/${String(git.removed)}`}>
+          <span className="sp-add">{`+${String(git.added)}`}</span>
+          <span className="sp-del">{`−${String(git.removed)}`}</span>
+        </span>
+      }
+    >
+      <ul className="sp-list">
+        <li className="sp-row">
+          <button
+            type="button"
+            className="sp-row-open"
+            data-sp-git-changes={String(git.files)}
+            aria-label="打开 Git 页签"
+            data-tip="在右侧栏打开 Git 页签（暂存 / 提交 / 历史 / diff）"
+            onClick={() => {
+              openDockTab('git')
+            }}
+          >
+            <IconDiff size={13} className="sp-icon sp-icon-run" />
+            <span className="sp-row-text">更改</span>
+            <span className="sp-row-time">{`${String(git.files)} 个文件`}</span>
+          </button>
+        </li>
+        <li className="sp-row">
+          <span className="sp-row-open sp-row-static" data-sp-git-branch={git.branch} data-tip="当前分支">
+            <IconBranch size={13} className="sp-icon" />
+            <span className="sp-row-text" title={git.branch}>
+              {git.branch}
+            </span>
+          </span>
+        </li>
+      </ul>
+    </StatusSectionBlock>
+  )
+}
+
+/**
+ * 计划区（ZCode 的「计划」= 终态计划目录）：工作区里**提交过**的计划文件，最新在前；
+ * 正在等批的那一份不在目录里（它挂在输入框上方的评审卡上）。点一行在右侧栏打开它。
+ */
+function PlanSection({
+  plans,
+  now,
+  open,
+  separated,
+  onToggle,
+}: {
+  plans: readonly PlanEntryView[]
+  now: number
+  open: boolean
+  separated: boolean
+  onToggle(): void
+}): ReactNode {
+  return (
+    <StatusSectionBlock
+      id="plan"
+      title="计划"
+      open={open}
+      separated={separated}
+      onToggle={onToggle}
+      trail={`${String(plans.length)} 份`}
+    >
+      <ul className="sp-list">
+        {plans.map((plan) => {
+          const ago = formatAgo(plan.at, now)
+          return (
+            <li className="sp-row" key={plan.file}>
+              <button
+                type="button"
+                className="sp-row-open"
+                data-sp-plan={plan.file}
+                aria-label={`打开计划：${plan.title}`}
+                data-tip={`${plan.title}\n${plan.file}`}
+                onClick={() => {
+                  setDockPreview({ path: plan.file })
+                }}
+              >
+                <IconFlatList size={13} className="sp-icon" />
+                <span className="sp-row-text" title={plan.title}>
+                  {plan.title}
+                </span>
+                {ago === null ? null : <span className="sp-row-time">{ago}</span>}
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+    </StatusSectionBlock>
+  )
+}
+
+/**
+ * 终端区（ZCode 的「终端」）：正在跑的后台作业与持久终端会话。
+ *
+ * 折叠态读数是「最长已运行 · N 后台」（ZCode 同款）。行本身不可点：作业 / 终端的输出
+ * 在 dsc 里没有可视面（job_output / terminal read 是模型那边的事），点开没去处——
+ * 所以只有行尾的停止钮可交互（收自己起的后台活，与 stopTeammate 同一档，不过审批）。
+ */
+function WorkSection({
+  works,
+  now,
+  open,
+  separated,
+  onToggle,
+  onStop,
+}: {
+  works: readonly BackgroundWorkView[]
+  now: number
+  open: boolean
+  separated: boolean
+  onToggle(): void
+  onStop(work: BackgroundWorkView): void
+}): ReactNode {
+  const longest = formatDuration(longestWorkElapsedMs(works, now))
+  const trail =
+    open ? `${String(works.length)} 个后台运行` : `${longest ?? ''} · ${String(works.length)} 后台`
+  return (
+    <StatusSectionBlock id="terminal" title="终端" open={open} separated={separated} onToggle={onToggle} trail={trail}>
+      <ul className="sp-list">
+        {works.map((work) => {
+          const elapsed = formatDuration(Math.max(0, now - work.startedAt))
+          return (
+            <li className="sp-row" key={work.id} data-work-kind={work.kind}>
+              <span
+                className="sp-row-open sp-row-static"
+                data-sp-work={work.id}
+                data-tip={`${work.kind === 'job' ? '后台作业' : '终端会话'} ${work.id}\n${work.title}`}
+              >
+                <IconTerminal size={13} className="sp-icon sp-icon-run" />
+                <span className="sp-row-text" title={work.title}>
+                  {work.title}
+                </span>
+                {elapsed === null ? null : <span className="sp-row-time">{elapsed}</span>}
+              </span>
+              <button
+                type="button"
+                className="sp-row-stop"
+                aria-label={`停止 ${work.id}`}
+                data-tip="收掉这个后台活（整树收尾）"
+                onClick={() => {
+                  onStop(work)
+                }}
+              >
+                <IconStop size={12} />
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+    </StatusSectionBlock>
+  )
+}
+
+/** 定点任务一行右侧的读数：异常态报状态，正常报「还有多久」（照 ZCode 行二「在做什么」位）。 */
+function taskState(task: ScheduledTaskView, now: number): { text: string; tone: string } {
+  if (!task.enabled) return { text: task.nextRunAt === null ? '已停用' : '已暂停', tone: 'muted' }
+  if (task.lastStatus === 'running') return { text: '运行中', tone: 'run' }
+  if (task.lastStatus === 'failed') return { text: '上次失败', tone: 'danger' }
+  if (task.lastStatus === 'blocked') return { text: '已阻塞', tone: 'danger' }
+  const countdown = formatCountdown(task.nextRunAt, now)
+  return countdown === null ? { text: '未排期', tone: 'muted' } : { text: countdown, tone: 'plain' }
+}
+
+/**
+ * 工作流区：dsc 没有工作流引擎，这一区绑的是最接近的「按规则自动跑一轮」——**定点任务**
+ * （schedule 插件，默认关；关着时这一份快照面整个缺席、整区不渲染）。行是只读的：
+ * 暂停 / 恢复 / 立跑仍走 `/schedule` 与 schedule 工具那一套，界面这里不立第二个动作面。
+ */
+function WorkflowSection({
+  tasks,
+  now,
+  open,
+  separated,
+  onToggle,
+}: {
+  tasks: readonly ScheduledTaskView[]
+  now: number
+  open: boolean
+  separated: boolean
+  onToggle(): void
+}): ReactNode {
+  const running = tasks.filter((task) => task.lastStatus === 'running').length
+  const trail = running > 0 ? `${String(running)} 个运行中` : `${String(tasks.length)} 条`
+  return (
+    <StatusSectionBlock id="workflow" title="工作流" open={open} separated={separated} onToggle={onToggle} trail={trail}>
+      <ul className="sp-list">
+        {tasks.map((task) => {
+          const state = taskState(task, now)
+          return (
+            <li
+              className="sp-row"
+              key={task.id}
+              data-sched-state={task.lastStatus}
+              data-sched-enabled={task.enabled ? '1' : '0'}
+            >
+              <span
+                className="sp-row-open sp-row-static"
+                data-sp-task={task.id}
+                data-tip={task.lastError === null ? task.title : `${task.title}\n上次失败：${task.lastError}`}
+              >
+                <IconCalendar
+                  size={13}
+                  className={task.lastStatus === 'running' ? 'sp-icon sp-icon-run' : 'sp-icon'}
+                />
+                <span className="sp-row-text" title={task.title}>
+                  {task.title}
+                </span>
+                <span className="sp-row-time" data-tone={state.tone}>
+                  {state.text}
+                </span>
+              </span>
+            </li>
+          )
+        })}
+      </ul>
     </StatusSectionBlock>
   )
 }

@@ -251,7 +251,9 @@ export const desktopDockPlugin: Plugin.Object = {
           const staged: string[] = []
           const unstaged: string[] = []
           const untracked: string[] = []
+          let dirtyFileCount = 0
           for (const line of porcelain.split('\n').filter((line) => line !== '')) {
+            dirtyFileCount += 1
             const code = line.slice(0, 2)
             const file = line.slice(3)
             if (code === '??') untracked.push(file)
@@ -260,7 +262,33 @@ export const desktopDockPlugin: Plugin.Object = {
               if (code[1] !== ' ') unstaged.push(`${code} ${file}`)
             }
           }
-          return { branch, staged, unstaged, untracked }
+          // `stats: true` = 状态面板「Git 工具」区要的那对增删行数（Git 页签不带它，
+          // 免得每次刷新多跑一条 git）。口径：tracked 改动的 numstat 汇总（已暂存 +
+          // 未暂存都在 `diff HEAD` 里），二进制文件 numstat 给 `-`、记 0；
+          // untracked 不进 diff（行数未知），只进 dirtyFileCount。
+          if (payload.stats !== true) return { branch, staged, unstaged, untracked }
+          let numstat = ''
+          try {
+            numstat = await git(cwd, ['diff', 'HEAD', '--numstat'])
+          } catch {
+            // 空仓库（还没有 HEAD）没有「相对 HEAD」的 diff：分未暂存 + 已暂存两段算。
+            const parts = await Promise.all([
+              git(cwd, ['diff', '--numstat']).catch(() => ''),
+              git(cwd, ['diff', '--cached', '--numstat']).catch(() => ''),
+            ])
+            numstat = parts.join('\n')
+          }
+          let added = 0
+          let removed = 0
+          for (const line of numstat.split('\n')) {
+            if (line.trim() === '') continue
+            const [addText, removeText] = line.split('\t')
+            const add = Number.parseInt(addText ?? '', 10)
+            const remove = Number.parseInt(removeText ?? '', 10)
+            if (Number.isFinite(add)) added += add
+            if (Number.isFinite(remove)) removed += remove
+          }
+          return { branch, staged, unstaged, untracked, added, removed, dirtyFileCount }
         }
         case 'git-stage': {
           const files = (Array.isArray(payload.files) ? payload.files : []).map((file) => safeArg(file))

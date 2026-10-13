@@ -1,16 +1,20 @@
 /**
- * 内置插件：智能体团队（对照旧桌面界面 TeamPanel.tsx 的两颗入口：标题旁的
- * 「N 个子智能体」下拉 + 「智能体团队」面板，共用一份名册行）。
+ * 内置插件：智能体团队（对照旧桌面界面 TeamPanel.tsx 的两种面：标题旁的
+ * 「N 个子智能体」下拉 + 团队面板，共用一份名册行）。
  *
- * 数据走界面通道的 `listTeammates`（面板开着时每 3 秒轮询一次；收起不问），
- * 动作走 `stopTeammate` / `messageTeammate` / `removeTeammate`——四个方法
- * 都在放行面上（白名单见 `src/core/ui-methods.ts`）。点一行看运行记录走
- * `peekTranscript`（队友会话的只读条目流，简版渲染）。
+ * 数据走界面通道的 `listTeammates`（常挂载的那条轮询每 3 秒写进共享席位；
+ * 页面不可见时轮询停了不发），动作走 `stopTeammate` / `messageTeammate` /
+ * `removeTeammate`——四个方法都在放行面上（白名单见 `src/core/ui-methods.ts`）。
+ * 点一行看运行记录走 `peekTranscript`（队友会话的只读条目流，简版渲染）。
  *
  * 本会话的队伍按 `mate.sessionId === 当前会话` 过滤（老名册行没有 sessionId，
  * 不归任何会话）；其它会话的收进底部折叠组，只读列出（对照旧界面 matesOf）。
  *
  * 与桌面端的差异（精简边界）：没有运行记录里的完整座位/折叠体系——只读流按行直排。
+ *
+ * **标题栏那颗「智能体团队」文字钮已撤**（与状态面板的「智能体」区重复）：名册轮询、
+ * 面板开合与面板本体都搬进下面常挂载的 {@link SubagentMenu}；团队面板现在的入口是
+ * 状态面板的「已结束 · N ›」目录行（经 `teamPanel` 服务）与这里的下拉。
  *
  * @module dsc-ui-shell/plugins/team
  */
@@ -144,9 +148,9 @@ export default defineUiPlugin({
         setPanelOpen(true, null)
       },
     })
-    // 标题旁的两簇（旧界面同构）：子智能体下拉在前，团队钮在后。
+    // 标题旁的一簇：子智能体下拉（名册轮询、团队面板开合与面板本体都住在这个常挂载的
+    // 条目里——原来在「智能体团队」钮里，那颗钮撤掉后并到这里）。
     ui.slots.register('shell.header.lead', { id: 'team.subagents', order: 10, store: mates }, SubagentMenu)
-    ui.slots.register('shell.header.lead', { id: 'team.toggle', order: 20, store: mates }, TeamButton)
     // 子智能体的运行记录落**右侧栏**（一种 dock 页签）：点队友那一行不该弹模态框盖住
     // 正在跑的会话——右侧栏是只读的伴读面，可以与主会话并排看（照 dsh 的
     // `sidebarRight.openResource(..., {kind:'subagentchat'})`）。名册与运行记录同属
@@ -161,13 +165,13 @@ export default defineUiPlugin({
 })
 
 /**
- * 「智能体团队」钮（标题旁，文字钮）：打开本会话的队伍模态面板。
- *
- * 名册轮询就住在这个常挂载的条目里（团队面板开不开都跑）：3 秒一次写进共享席位。
- * 之前的 `useTeammates` 每挂一个组件起一条自己的 interval，现在没有第二份了。
+ * 「N 个子智能体」下拉（标题旁唯一的一簇）：本会话派出的队友，一行一个；数量为 0 时
+ * 整颗不渲染——但**组件本身常挂载**：名册轮询、团队面板的开合与面板本体都住在这里
+ * （原来是「智能体团队」文字钮的活，那颗钮撤掉之后并了过来；轮询 3 秒一次写进共享席位，
+ * 状态面板与这个下拉读的是同一份，全壳只有这一条 interval）。
  */
-function TeamButton(props: SlotComponentProps<Record<never, never>, never, never, MateSeatHandle>): ReactNode {
-  const open = usePanelOpen()
+function SubagentMenu(props: SlotComponentProps<Record<never, never>, never, never, MateSeatHandle>): ReactNode {
+  const teamOpen = usePanelOpen()
   const channel = useHostChannel()
   const { actions } = props
   useEffect(() => {
@@ -190,73 +194,69 @@ function TeamButton(props: SlotComponentProps<Record<never, never>, never, never
       window.clearInterval(timer)
     }
   }, [channel, actions])
-  return (
-    <>
-      <button
-        type="button"
-        className={`team-btn${open ? ' on' : ''}`}
-        aria-expanded={open}
-        data-tip="智能体团队：本会话派出的队伍；其它会话的队友在面板底部列出"
-        onClick={() => {
-          setPanelOpen(!open)
-        }}
-      >
-        智能体团队
-      </button>
-      {open ? <TeamPanel useStore={props.useStore} /> : null}
-    </>
-  )
-}
-
-/** 「N 个子智能体」下拉：本会话派出的队友，一行一个；数量为 0 时整颗不渲染。 */
-function SubagentMenu(props: SlotComponentProps<Record<never, never>, never, never, MateSeatHandle>): ReactNode {
   const mates = props.useStore((state) => state.list)
   const sessionId = useHostSelector(readSessionId)
-  const [open, setOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const mine = matesOf(mates, sessionId)
-  if (mine.length === 0) return null
   return (
-    <div className="sub-open">
-      <button
-        type="button"
-        className={`sub-btn${open ? ' on' : ''}`}
-        aria-expanded={open}
-        data-tip="本会话派出的子智能体：状态、耗时，点一行看运行记录"
-        onClick={() => {
-          setOpen((current) => !current)
-        }}
-      >
-        {mine.length} 个子智能体
-        <IconChevronDown size={13} />
-      </button>
-      {open ? (
-        <>
-          <div
-            className="menu-backdrop"
+    <>
+      {mine.length === 0 ? null : (
+        <div className="sub-open">
+          <button
+            type="button"
+            className={`sub-btn${menuOpen ? ' on' : ''}`}
+            aria-expanded={menuOpen}
+            data-tip="本会话派出的子智能体：状态、耗时，点一行看运行记录"
             onClick={() => {
-              setOpen(false)
+              setMenuOpen((current) => !current)
             }}
-          />
-          <div className="row-menu sub-menu" role="menu" aria-label="本会话的子智能体">
-            {mine.map((mate) => (
-              <TeamRow
-                key={mate.file}
-                mate={mate}
-                compact
-                onOpen={() => {
-                  setOpen(false)
-                  // 名字一并交过去：页签标题要显示「哪个队友」，而会话文件名是 uuid。
-                  setDockSubagent({ path: mate.file, label: mate.name })
+          >
+            {mine.length} 个子智能体
+            <IconChevronDown size={13} />
+          </button>
+          {menuOpen ? (
+            <>
+              <div
+                className="menu-backdrop"
+                onClick={() => {
+                  setMenuOpen(false)
                 }}
               />
-            ))}
-            <p className="team-hint">
-              点一行看它的运行记录（只读）；「停止」是尽力而为，「发话」由宿主转交，收工的可以移除。
-            </p>
-          </div>
-        </>
-      ) : null}
-    </div>
+              <div className="row-menu sub-menu" role="menu" aria-label="本会话的子智能体">
+                {mine.map((mate) => (
+                  <TeamRow
+                    key={mate.file}
+                    mate={mate}
+                    compact
+                    onOpen={() => {
+                      setMenuOpen(false)
+                      // 名字一并交过去：页签标题要显示「哪个队友」，而会话文件名是 uuid。
+                      setDockSubagent({ path: mate.file, label: mate.name })
+                    }}
+                  />
+                ))}
+                {/* 团队面板的入口（「智能体团队」钮撤掉之后的常驻入口；另一个入口是
+                    状态面板的「已结束 · N ›」目录行——只在有队友时才有）。 */}
+                <button
+                  type="button"
+                  className="sub-panel-link"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    setPanelOpen(true, null)
+                  }}
+                >
+                  打开团队面板（发话 / 移除 / 其它会话的队友）
+                </button>
+                <p className="team-hint">
+                  点一行看它的运行记录（只读）；「停止」是尽力而为，「发话」由宿主转交，收工的可以移除。
+                </p>
+              </div>
+            </>
+          ) : null}
+        </div>
+      )}
+      {teamOpen ? <TeamPanel useStore={props.useStore} /> : null}
+    </>
   )
 }
 

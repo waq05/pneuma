@@ -187,6 +187,13 @@ export const runtimePlugin: Plugin.Object = {
         return team.remove(name)
       },
 
+      async stopBackground(id) {
+        // 与 stopTeammate 同一条理由：这是可选服务，只能 ctx.get（探针的迷你内核里没有它）
+        const works = ctx.get('backgroundWorks')
+        if (works === undefined) throw new Error('后台作业表不在（内置工具插件没挂），没有后台活可以收')
+        return works.stop(id)
+      },
+
       peekTranscript(file) {
         const team = ctx.get('team')
         if (team === undefined) return Promise.reject(new Error('子智能体插件没开，看不到队友的运行记录'))
