@@ -2188,14 +2188,10 @@ function SubagentFlow(props: {
 
 /** 只读用户消息：UserRow 的同款气泡，去掉 hover 浮出的「编辑并重发」。 */
 function ReadonlyUserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'user' }> }): ReactNode {
-  // 运行时投递进来的消息（队友汇报）与主会话同款压成一行。
-  if (entry.internal === true) {
-    return (
-      <div className="entry-system" data-internal="1" title={entry.text}>
-        子任务状态更新
-      </div>
-    )
-  }
+  // 运行时投递进来的消息（队友汇报）整条交给 UserRow：它对这个 kind 提前 return「触发行」，
+  // 本来就不带编辑钮，所以只读出口可以原样复用——文案只有一处（rounds.ts 的
+  // teammateReportLabel），不会出现主会话与右栏对同一件事说两句话。
+  if (entry.internal === true) return <UserRow entry={entry} />
   return (
     <div className="user-turn">
       <div className="entry-user">
