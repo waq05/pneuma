@@ -4,14 +4,15 @@
  * ## 为什么要分档
  *
  * `dock` 原来是**整条**被界面通道排除的，理由是它里面混着 `term-spawn`（起 pwsh/cmd/bash/node）——
- * 那与「在用户机器上执行任意命令」同级，不该交给页面。但这条通道里另外九个 op 是界面真正要用的：
- * 工作区文件树、文件内容、git 状态与差异（读），以及暂存 / 取消暂存 / 提交（写）。
+ * 那与「在用户机器上执行任意命令」同级，不该交给页面。但这条通道里另外十一个 op 是界面真正要用的：
+ * 工作区文件树、文件内容、git 状态与分支清单、差异（读），以及暂存 / 取消暂存 / 提交 /
+ * 切分支 / 建分支（写）。
  * 一锅端掉等于「文件面板」永远搬不进壳；整条放行又等于把 spawn 交出去。所以按**动作落在谁手里**拆三档：
  *
  * | 档 | op | 走哪条路 | 为什么 |
  * | --- | --- | --- | --- |
- * | 读 | `fs-list` `fs-read` `git-status` `git-log` `git-diff` | 界面 HTTP 通道**直接放行** | 只读，且宿主侧已经限定在 cwd 内 |
- * | 写 | `git-stage` `git-unstage` `git-commit` | 界面 HTTP 通道，但**过审批** | 会改仓库状态，交给权限模式那套裁决（与工具调用同一口径） |
+ * | 读 | `fs-list` `fs-read` `git-status` `git-branches` `git-log` `git-diff` | 界面 HTTP 通道**直接放行** | 只读，且宿主侧已经限定在 cwd 内 |
+ * | 写 | `git-stage` `git-unstage` `git-commit` `git-checkout` `git-branch-create` | 界面 HTTP 通道，但**过审批** | 会改仓库状态，交给权限模式那套裁决（与工具调用同一口径） |
  * | 终端 | `term-spawn` `term-input` `term-kill` | **只走桌面窗口的原生桥**，不进 HTTP 面 | 起进程 = 任意命令执行；浏览器里拿到 Cookie 的页面不该有这个能力 |
  *
  * 「只走原生桥」是**真的**只走那条路：`DOCK_UI_OPS` 里没有 term op，所以 HTTP 的
@@ -26,10 +27,16 @@
  */
 
 /** 读类：只读取工作区现状，宿主侧限定在 cwd 内。 */
-export const DOCK_READ_OPS = ['fs-list', 'fs-read', 'git-status', 'git-log', 'git-diff'] as const
+export const DOCK_READ_OPS = ['fs-list', 'fs-read', 'git-status', 'git-branches', 'git-log', 'git-diff'] as const
 
 /** 写类：会改 git 状态，走审批。 */
-export const DOCK_WRITE_OPS = ['git-stage', 'git-unstage', 'git-commit'] as const
+export const DOCK_WRITE_OPS = [
+  'git-stage',
+  'git-unstage',
+  'git-commit',
+  'git-checkout',
+  'git-branch-create',
+] as const
 
 /** 终端：起进程，只走桌面窗口的原生桥。 */
 export const DOCK_TERM_OPS = ['term-spawn', 'term-input', 'term-kill'] as const
@@ -79,6 +86,22 @@ export const DOCK_WRITE_LABEL: Readonly<Record<DockWriteOp, { toolName: string; 
     toolName: 'git: 提交',
     summary: (payload) => `提交：${firstLine(String(payload['message'] ?? ''))}`,
   },
+  // 切分支与建分支都动**工作树**（切过去会把当前分支上未提交、且两边不一致的改动带过去
+  // 或被 git 拒掉），所以与提交同档：过审批，卡片上直接写清切到哪个分支。
+  'git-checkout': {
+    toolName: 'git: 切换分支',
+    summary: (payload) => `切到 ${branchName(payload)}`,
+  },
+  'git-branch-create': {
+    toolName: 'git: 新建并切换分支',
+    summary: (payload) => `新建并切到 ${branchName(payload)}`,
+  },
+}
+
+/** 分支名的短文案（两个新写类 op 共用；缺失时说清「没给名字」而不是留空）。 */
+function branchName(payload: Record<string, unknown>): string {
+  const name = String(payload['branch'] ?? payload['name'] ?? '').trim()
+  return name === '' ? '（没有指定分支名）' : name
 }
 
 /** 文件清单的短文案：最多三个名字，其余收成「等 N 个」。 */

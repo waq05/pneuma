@@ -386,6 +386,7 @@ export type {
   DiffLineView,
   EffortLevel,
   EffortMap,
+  GitSurface,
   GoalView,
   ModeSurface,
   ModelChoiceView,

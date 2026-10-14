@@ -786,6 +786,24 @@ export interface PresetDraft {
 }
 
 /**
+ * 当前工作区的 git 读数（git 插件贡献）：在哪个分支、脏不脏。
+ *
+ * 输入框上那颗分支钮（壳 `plugins/composer`）与状态面板的分支行都读它。宿主**轻读**
+ * （一条分支名 + 一条 `git status --porcelain -z` 数条数）；状态面板那条重读（每文件
+ * 增删行数、未跟踪文件按内容数行）留在壳里自己按更松的节奏走。
+ */
+export interface GitSurface {
+  /** 当前会话工作目录是不是 git 仓库。false 时其余字段按空处理，界面整块不画。 */
+  repo: boolean
+  /** 分支名；HEAD 分离时给短 hash；仓库里一次提交都还没有时给 `(无提交)`。 */
+  branch: string
+  /** true = HEAD 分离（`branch` 那一栏是 hash，不是分支名）。 */
+  detached: boolean
+  /** 工作目录内有改动的文件数（含未跟踪；口径与「变更」页签一致）。 */
+  dirtyFileCount: number
+}
+
+/**
  * 快照里由各功能点贡献的界面片段。
  *
  * 内置那几项由对应插件自己登记（`ctx.surfaces.register`），组装快照的那一层不认识任何具体功能。
@@ -793,6 +811,8 @@ export interface PresetDraft {
  * `declare module '@dsc/runtime/contract.js' { interface RuntimeSurfaces { memory: MyView } }`。
  */
 export interface RuntimeSurfaces {
+  /** 当前分支与改动计数（git 贡献）；输入框那颗分支钮与状态面板的分支行读它。 */
+  git: GitSurface
   /** 挂起的审批卡（approval 贡献）；同一时刻至多一张。 */
   pendingApproval: ApprovalRequestView | null
   /** 权限模式与可切档位（approval 贡献）。 */

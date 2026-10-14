@@ -24,6 +24,7 @@ import { getPluginConfig, isPluginEnabled, migrateTeamSplit, registerPluginMeta,
 import { mountAllExternalPlugins, registerBuiltinMount } from '../core/plugin-loader.js'
 import { pluginManagerPlugin } from '../plugins/plugin-manager.js'
 import { desktopDockPlugin } from '../plugins/desktop-dock.js'
+import { gitPlugin } from '../plugins/git.js'
 import { llmPlugin } from '../plugins/llm.js'
 import { sessionPlugin } from '../plugins/session.js'
 import { guardsPlugin } from '../plugins/guards.js'
@@ -348,6 +349,9 @@ export async function createKernel(options: KernelOptions): Promise<Context> {
   // 本机界面服务：挂载本身零成本（不监听），有人要（桌面主进程 / DSC_UI_SERVER=1）才占端口。
   await root.plugin(webserverPlugin, getPluginConfig('webserver'))
   await root.plugin(desktopDockPlugin, { cwd: process.cwd() })
+  // git 观测：当前工作区的分支与改动读数（快照面 `surfaces.git`，输入框那颗分支钮读它）。
+  // 排在 desktop-dock 之后——写类 op 落盘后要经 `ctx.get('git')` 催它一拍。
+  await root.plugin(gitPlugin)
   await root.plugin(pluginManagerPlugin)
   // 运行时查询要等工具、插件表、模式都就位，所以排在最后
   await root.plugin(runtimeApiPlugin)

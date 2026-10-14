@@ -407,6 +407,10 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
                   审查开着时正文让位，右缘的拖拽条一并让位）。 */}
               <div className="thread-zone" {...(review !== null ? { 'data-review': '1' } : {})}>
                 <div
+                  // 正文区（消息流 + 输入区）的定位锚：绝对定位的浮层（状态面板 / 胶囊）
+                  // 认的是**这一格**的右上角，不是 `.chat-wrap`——空会话态里 `.chat-wrap`
+                  // 只有内容高、还被上下 auto 边距推着居中，认它会飘到版心（见 styles.css）。
+                  data-thread-area=""
                   className={
                     // 空会话的垂直居中态只给对话页（旧界面 `tab !== 'trace' && empty` 同款）：
                     // 轨迹页有自己的空态文案，不该跟着输入框居中。

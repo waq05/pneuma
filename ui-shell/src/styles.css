@@ -676,6 +676,16 @@
   overflow-y: auto;
 }
 
+/* 正文区的定位锚（`data-thread-area` 由壳打在 `.thread-main` / `.thread-main-empty` 上）：
+   绝对定位的浮层——状态面板与它的胶囊（`plugins/status`）——认的是这一格的右上角。
+   为什么不认 `.chat-wrap`（右缘刻度条至今认它）：空会话态里 `.chat-wrap` 只有内容高、
+   还被「上下 auto 边距夹一夹」推着居中（见上一条），挂在它右上角的胶囊于是落在版心，
+   而不是正文右上角。`.thread-main*` 两态都是 `flex: 1`（整格高度），说的才是「正文区」。
+   非空态两格同宽同顶边，所以这次改动对已有布局是逐像素等价的。 */
+[data-thread-area] {
+  position: relative;
+}
+
 /* ── 浮层豁免窗口拖拽区（header 槽浮层的公共坑）───────────────────────────
    topbar 整条是 -webkit-app-region: drag（拖窗口的把手），而设置面板、智能体团队
    面板都从 header 槽渲染，DOM 上是 topbar 的子孙：position:fixed 只改视觉位置，不改
@@ -791,6 +801,147 @@
 .model-pop .pop-badge.warn {
   background: color-mix(in srgb, var(--dsc-yellow) 18%, transparent);
   color: var(--dsc-yellow);
+}
+
+/* ══════════ 输入框上的分支钮（`plugins/composer` 的 `.composer-git`）══════════
+   形状照参考实现：输入框**上面**一行，左边一颗钮（分支图标 + 分支名 + 小箭头），
+   点开是分支菜单（搜索 + 清单 + 「新建分支…」）。不是 git 仓库时整行不渲染，
+   所以非仓库的工作区里输入区与以前逐像素一样。
+
+   菜单为什么改左对齐：`.model-pop` 默认右缘对齐（`right: 0`），而这颗钮在输入框
+   **左端**——按右缘铺开会往左探出 200 多像素，跑到窗口外面去（`.policy-pop` 同一
+   处境同一处理）。向上的方向沿用 `.model-pop` 的 `bottom: calc(100% + 10px)`：
+   菜单往上翻，不盖住下面正在打字的输入框（参考实现也是锁上方的）。 */
+.composer-git {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px 0;
+}
+
+.model-btn.git-btn {
+  max-width: 220px;
+}
+
+.model-btn .git-branch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-pop.git-pop {
+  left: 0;
+  right: auto;
+  width: 320px;
+}
+
+/* 分支清单：比模型清单矮一档（分支多时那一列滚，菜单别长成一整屏）。 */
+.model-pop.git-pop .git-branch-list {
+  max-height: 240px;
+}
+
+/* 搜索框：与侧栏那个 `.side-search` 同款（同一套底色与聚焦环），只是不带外边距——
+   菜单自己已经有 12px 内边距。 */
+.git-search {
+  align-items: center;
+  background: var(--dsc-fill-quinary);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-quaternary);
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding: 0 6px 0 8px;
+}
+
+.git-search:focus-within {
+  border-color: var(--dsc-accent);
+}
+
+.git-search input {
+  background: none;
+  border: none;
+  color: var(--dsc-text-primary);
+  flex: 1;
+  font-size: var(--dsc-fs-ui);
+  height: var(--dsc-ctl);
+  min-width: 0;
+  outline: none;
+}
+
+/* 行首的分支图标：不参与压缩（名字可以用省略号，图标不能）。 */
+.model-pop.git-pop .git-item-icon {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+}
+
+/* 菜单底部那一条：与清单之间一根分割线，「新建分支…」在它下面。 */
+.git-foot {
+  border-top: 1px solid var(--dsc-stroke-4);
+  margin-top: 6px;
+  padding-top: 6px;
+}
+
+.git-foot-btn {
+  align-items: center;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-secondary);
+  display: flex;
+  font-size: var(--dsc-fs-ui);
+  gap: 6px;
+  padding: 5px 8px;
+  text-align: left;
+  transition: background var(--dsc-dur) var(--dsc-ease);
+  width: 100%;
+}
+
+.git-foot-btn:hover:not(:disabled) {
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.git-foot-btn:disabled {
+  opacity: 0.5;
+}
+
+/* 就地展开的「新分支名 + 创建并切换」那一行（参考实现用弹框，壳这边就地一格）。 */
+.git-create {
+  display: flex;
+  gap: 6px;
+}
+
+.git-create input {
+  background: var(--dsc-fill-quinary);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-primary);
+  flex: 1;
+  font-size: var(--dsc-fs-ui);
+  min-width: 0;
+  outline: none;
+  padding: 4px 8px;
+}
+
+.git-create input:focus {
+  border-color: var(--dsc-accent);
+}
+
+.git-create button {
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-accent-text);
+  flex: none;
+  font-size: var(--dsc-fs-ui);
+  padding: 4px 10px;
+  transition: background var(--dsc-dur) var(--dsc-ease);
+}
+
+.git-create button:hover:not(:disabled) {
+  background: var(--dsc-row-hover-bg);
+}
+
+.git-create button:disabled {
+  color: var(--dsc-text-quaternary);
+  opacity: 0.6;
 }
 
 /* ══════════ 状态面板（正文右上角的进程 / 目标 / 智能体总览浮层）══════════

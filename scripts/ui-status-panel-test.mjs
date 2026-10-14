@@ -274,6 +274,9 @@ console.log('[6] 宿主数据面（文本钉）')
 console.log('[7] Git 页签（空仓库不报错 + 未跟踪可预览 + 每文件行数 / 就地展开 / 提交对话框的形态钉）')
 {
   const desktopDock = read('src/plugins/desktop-dock.ts')
+  // 执行姿势与 porcelain 解析在 core/git-exec.ts（desktop-dock 与 git 插件共用一份：
+  // 两处都在读同一个工作区，解析规则不能有两份）。
+  const gitExec = read('src/core/git-exec.ts')
   const changes = read('ui-shell/src/plugins/files/changes.tsx')
 
   check(
@@ -282,8 +285,8 @@ console.log('[7] Git 页签（空仓库不报错 + 未跟踪可预览 + 每文�
       desktopDock.includes('async function trackedDiff') &&
       desktopDock.includes("git(cwd, ['diff', '--cached', ...guard, ...tail])"),
   )
-  check('porcelain 用 -z（非 ASCII 路径不被 C 引号转义，才点得动）', desktopDock.includes("['status', '--porcelain=v1', '-z']") && desktopDock.includes('function parsePorcelainZ'))
-  check('rename / copy 记录后面那条「原路径」要跳过', desktopDock.includes("code[0] === 'R' || code[0] === 'C'"))
+  check('porcelain 用 -z（非 ASCII 路径不被 C 引号转义，才点得动）', desktopDock.includes("['status', '--porcelain=v1', '-z']") && gitExec.includes('export function parsePorcelainZ'))
+  check('rename / copy 记录后面那条「原路径」要跳过', gitExec.includes("code[0] === 'R' || code[0] === 'C'"))
   check(
     '未跟踪文件按内容合成最小 patch（`--- /dev/null` + 全新增行）',
     desktopDock.includes('function untrackedPreview') &&
@@ -337,7 +340,7 @@ console.log('[7] Git 页签（空仓库不报错 + 未跟踪可预览 + 每文�
   // ③ 路径基准：show-prefix rebase + 只列 cwd 之内
   check(
     '③ 读 show-prefix、把仓库根相对路径 rebase 到 cwd 相对',
-    desktopDock.includes("['rev-parse', '--show-prefix']") && desktopDock.includes('function toWorkspacePath'),
+    gitExec.includes("['rev-parse', '--show-prefix']") && gitExec.includes('export function toWorkspacePath'),
   )
   check(
     '③ 工作目录之外的变更整条过滤（status 与 numstat 都过一遍）',
@@ -409,6 +412,27 @@ console.log('[8] 工具卡补丁视图（读 / 写 / 改三类分流）')
   check('patch 页签用既有 DiffRows 渲染（不引新依赖）', preview.includes('<DiffRows hunks={source.hunks} path={path} />'))
   check('patch 页签不再读盘：走 useDockPatchSource 拿快照', preview.includes('const source = useDockPatchSource(path)') && !/PatchTab[\s\S]{0,800}?fs-read/.test(preview))
   check('补丁视图另给「打开原文件」出口（开的是当前内容预览）', preview.includes('打开原文件') && preview.includes('onClick={() => setDockPreview({ path })}'))
+}
+
+console.log('[9] 面板的定位锚是正文区（不是 .chat-wrap）')
+{
+  const statusPanel = read('ui-shell/src/plugins/status/ui.tsx')
+  const app = read('ui-shell/src/ui-layout/app.tsx')
+  const shellCss = read('ui-shell/src/styles.css')
+
+  // 空会话态里 `.chat-wrap` 只有内容高、还被上下 auto 边距推着居中：把面板锚在它上面的话，
+  // 收起态的胶囊与展开态的面板会落在**版心**而不是正文右上角（0.6.67 用户报障的位置）。
+  check(
+    '面板定位认 data-thread-area（哨兵往上找正文区那一格）',
+    statusPanel.includes("const THREAD_AREA_SELECTOR = '[data-thread-area]'") && statusPanel.includes('node?.closest(THREAD_AREA_SELECTOR)'),
+  )
+  check(
+    '宽度裁决也认同一个宿主（dock 开合改它不改窗口宽）',
+    statusPanel.includes('const measure = (): void => setAvail(element.clientWidth)') && statusPanel.includes('observer.observe(element)'),
+  )
+  check('面板不再把 .chat-wrap 当定位父级', !statusPanel.includes("closest('.chat-wrap')") && !statusPanel.includes("querySelector('.chat-wrap')"))
+  check('壳把锚点打在正文区那两态上（thread-main / thread-main-empty 是同一元素）', app.includes('data-thread-area=""'))
+  check('锚点自带 position: relative（绝对定位浮层要的定位父级）', /\[data-thread-area\] \{[^}]*position: relative/.test(shellCss))
 }
 
 if (failures === 0) {

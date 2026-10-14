@@ -42,6 +42,7 @@ import type {
   CollaborationMode,
   DscRuntime,
   EffortLevel,
+  GitSurface,
   GoalView,
   MarketBrowseResult,
   MarketSkillView,
@@ -895,11 +896,30 @@ export interface SettingsService {
   about(): { version: string; apiVersion: number; home: string; skillsDir: string; pluginsDir: string }
 }
 
+// ── git ──────────────────────────────────────────────────────────────────────
+
+/**
+ * git 观测服务（git 插件提供）：当前工作区的分支与改动读数。
+ *
+ * 读面是给快照用的那一片（`surfaces.git`）；{@link refresh} 是给写类 op 的催拍口——
+ * 切了分支 / 建了分支之后，桌面 dock 的写类 handler 调它一次，界面那颗钮当场跟上，
+ * 不必等下一个 12 秒。
+ */
+export interface GitService {
+  /** 最近一次的读数（同步：快照片段在装配时读，不能等 I/O）。 */
+  snapshot(): GitSurface
+  /** 催一拍：立刻重取一次（写类 git op 落盘后调）。 */
+  refresh(): void
+}
+
 // ── desktop-dock ─────────────────────────────────────────────────────────────
 
 /** dock 服务：桌面端面板的工作区文件系统 + git 能力（op/payload 透传协议）。 */
 export interface DockService {
-  /** 处理一次 dock 请求（fs-list / fs-read / git-status / git-stage / git-unstage / git-commit / git-log / git-diff）。 */
+  /**
+   * 处理一次 dock 请求（fs-list / fs-read / git-status / git-branches / git-stage /
+   * git-unstage / git-commit / git-checkout / git-branch-create / git-log / git-diff）。
+   */
   handle(op: string, payload: Record<string, unknown>): Promise<unknown>
 }
 
@@ -1191,6 +1211,8 @@ declare module '@deepseek-ai/cordis' {
     sandbox?: SandboxService
     /** desktop-dock 服务（桌面端面板的工作区文件系统 + git）。 */
     dock: DockService
+    /** git 观测（当前工作区分支与改动读数；写类 op 落盘后调它催一拍）。 */
+    git: GitService
     /**
      * 后台作业与终端会话的收口（tools-default 提供；它停用时不存在，读它要用 `ctx.get`）。
      */

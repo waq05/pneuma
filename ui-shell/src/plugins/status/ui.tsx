@@ -13,7 +13,8 @@
  * - **同一壳收展（morph）**：收起态是胶囊（一颗药丸，只报优先级最高的那一条摘要），
  *   展开态是一块 320px 浮层。两态是**同一棵 DOM**（`[data-expanded]` 切换），收起/展开
  *   过渡最大高度、圆角、背景与阴影。ZCode 的 shell 也是这么做的。
- * - **自动档按宿主宽度裁决**：量的是定位父级 `.chat-wrap` 的宽度（ResizeObserver），
+ * - **自动档按宿主宽度裁决**：量的是定位父级（正文区，`.thread-main` 上的 `data-thread-area`）
+ *   的宽度（ResizeObserver），
  *   不读 `window.innerWidth`——右侧 dock 开合会改宿主宽度但不改窗口宽度。
  * - **分区七个**（顺序照 ZCode 的 Git 工具 / 目标 / 计划 / 进程 / 终端 / 工作流 / 智能体），
  *   各自可折叠、各自限高滚动；进程区超过 6 条启用聚焦窗口（当前项 ±1 连续 3 条，
@@ -25,7 +26,7 @@
  *
  * `shell.main` 的条目渲染在滚动容器里（`.chat-inner`），静态排布会随正文滚走。所以这里
  * 用的是右缘刻度条（`plugins/transcript/jump-rail.tsx`）那一套：**一个 hidden 哨兵**在文档流里
- * 占位，组件从它往上找 `.chat-wrap`（`position: relative` 的定位父级），再把浮层 portal 进去。
+ * 占位，组件从它往上找正文区这一格（定位父级，见 {@link THREAD_AREA_SELECTOR}），再把浮层 portal 进去。
  *
  * ## 数据（逐区）
  *
@@ -138,6 +139,12 @@ const CLOCK_FAST_MS = 1000
 const CLOCK_SLOW_MS = 10_000
 /** 自动档展开面板的最小宿主宽度（照 ZCode：1280px 以下收成胶囊）。 */
 const AUTO_PANEL_MIN_WIDTH = 1280
+/**
+ * 定位锚选择器：正文区（壳打在 `.thread-main` / `.thread-main-empty` 上的 `data-thread-area`）。
+ * 定位与宽度裁决都认它——**不认 `.chat-wrap`**（那个在空会话态只有内容高，认它这面板
+ * 会锚到版心；见壳 `styles.css` 的 `[data-thread-area]` 规则）。
+ */
+const THREAD_AREA_SELECTOR = '[data-thread-area]'
 /** 展示档位的存档键（本机，跟人走而不跟会话走）。 */
 const MODE_KEY = 'dsc.statusPanel.mode'
 /** 折叠桶预览卡的开 / 关延迟（ZCode 的 120ms / 80ms）：滑过不停留不弹卡。 */
@@ -501,18 +508,20 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
   // 下面的 ResizeObserver 会立刻纠正。**不读 window.innerWidth**——dock 开合改宿主宽
   // 不改窗口宽，按窗口判会在这两种情况里判错。
   const [avail, setAvail] = useState(() => {
-    const wrap = typeof document === 'undefined' ? null : document.querySelector('.chat-wrap')
-    return wrap instanceof HTMLElement && wrap.clientWidth > 0 ? wrap.clientWidth : AUTO_PANEL_MIN_WIDTH
+    const area = typeof document === 'undefined' ? null : document.querySelector(THREAD_AREA_SELECTOR)
+    return area instanceof HTMLElement && area.clientWidth > 0 ? area.clientWidth : AUTO_PANEL_MIN_WIDTH
   })
 
-  // 定位父级：从哨兵往上找 `.chat-wrap`（与右缘刻度条同一套做法）。
+  // 定位父级：从哨兵往上找正文区（`data-thread-area`，见壳 styles.css）。
+  // **不认 `.chat-wrap`**（右缘刻度条至今认它）：空会话态里它只有内容高、还被居中边距
+  // 推着走，认它会把这面板锚到版心——0.6.67 用户报的「更改面板位置不对」就是这一条。
   useEffect(() => {
     const node = sentinel.current
-    const found = node?.closest('.chat-wrap')
+    const found = node?.closest(THREAD_AREA_SELECTOR)
     setHost(found instanceof HTMLElement ? found : null)
   }, [view])
 
-  // 可用宽度：量**宿主**（.chat-wrap）而不是 window——右边 dock 开合、左栏折叠都会
+  // 可用宽度：量**宿主**（正文区）而不是 window——右边 dock 开合、左栏折叠都会
   // 改宿主的宽度而窗口宽度不动；旧版读 window.innerWidth，自动档在这两种情况下判错。
   useEffect(() => {
     if (host === null) return undefined
@@ -1028,7 +1037,7 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
 
   return (
     <>
-      {/* 哨兵：只负责给出定位父级（.chat-wrap），自己永远不可见也不占位。 */}
+      {/* 哨兵：只负责给出定位父级（正文区那一格），自己永远不可见也不占位。 */}
       <div ref={sentinel} hidden />
       {host === null ? null : createPortal(panel, host)}
     </>

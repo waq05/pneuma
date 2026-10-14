@@ -110,6 +110,17 @@ writeFileSync(
   'utf8',
 )
 
+// ── 普通目录（不是 git 仓库）：git 面该给 `repo: false`，界面据此整行不画分支钮 ─────
+const wsPlain = join(home, 'plain')
+mkdirSync(wsPlain, { recursive: true })
+writeFileSync(join(wsPlain, 'notes.txt'), 'plain\n', 'utf8')
+const sessionPlain = join(sessionDir, 'eeeeeeee-ffff-0000-1111-222233334444.jsonl')
+writeFileSync(
+  sessionPlain,
+  `${JSON.stringify({ type: 'meta', id: 'eeeeeeee-ffff-0000-1111-222233334444', cwd: wsPlain, createdAt: 5 })}\n${JSON.stringify({ type: 'user', text: '普通目录会话' })}\n`,
+  'utf8',
+)
+
 const { createKernel } = await import('../lib/host/kernel.js')
 const kernel = await createKernel({ config: {}, resumeSessionPath: sessionFile })
 
@@ -455,6 +466,98 @@ console.log('[7] 后台活输出面（readBackground：只读快照 + 归属校�
 
   await kernel.ui.stopBackground(jobId)
   await kernel.tools.list().find((tool) => tool.name === 'job_kill').run({ job_id: foreignId }, runCtx)
+}
+
+console.log('[8] git 快照面（surfaces.git）+ 分支清单 / 切分支 / 建分支')
+{
+  const session = kernel.get('session')
+  const dock = kernel.get('dock')
+  const approval = kernel.get('approval')
+  const gitWs = (...args) => execFileSync('git', args, { cwd: ws, stdio: 'pipe', windowsHide: true })
+  const gitHead = () => gitWs('rev-parse', '--abbrev-ref', 'HEAD').toString().trim()
+
+  await session.open(sessionFile)
+  const policy0 = approval.policy
+  const branch0 = gitHead()
+
+  // 「有界面才拍」那条链：第一次读这一片只顺手催一拍（界面刚连上的那一拍），
+  // 所以首读拿到的是空读数，几拍之后才是真读数——这条断言钉的就是这个行为。
+  const first = surfaces()
+  check(
+    'git 面在场（键在 surfaces 里，不是缺席）',
+    typeof first.git === 'object' && first.git !== null && typeof first.git.repo === 'boolean',
+    JSON.stringify(first.git),
+  )
+  const arrived = await pollUntil(() => surfaces().git.repo === true, 8000)
+  check('界面一读就催一拍：读数几拍内到位（不需要等 12 秒那一档）', arrived, JSON.stringify(surfaces().git))
+
+  const mine = surfaces().git
+  // 与「状态面板那条读」对齐要带上 `stats: true`：改动条数只在那一档里给（轻读那档
+  // 只回 staged/unstaged/untracked 三段）。
+  const status = await dock.handle('git-status', { stats: true })
+  check('分支名与 git-status 一致', mine.branch === status.branch, `${mine.branch} vs ${status.branch}`)
+  check(
+    '改动计数与 git-status 同一口径（含未跟踪，且只看 cwd 之内）',
+    mine.dirtyFileCount === status.dirtyFileCount,
+    `${String(mine.dirtyFileCount)} vs ${String(status.dirtyFileCount)}`,
+  )
+  check('detached = false（HEAD 挂在分支上）', mine.detached === false, JSON.stringify(mine))
+
+  // 分支清单：多造一条，清单该有两条、当前那条排第一
+  gitWs('branch', 'probe-side')
+  const list = await dock.handle('git-branches', {})
+  check(
+    '清单回 current / detached / branches 三件',
+    typeof list.current === 'string' && list.detached === false && Array.isArray(list.branches),
+    JSON.stringify(list),
+  )
+  check('本地两条分支都在清单里', list.branches.length === 2, JSON.stringify(list.branches))
+  check(
+    '当前分支排第一且标 current（菜单展开就在眼前）',
+    list.branches[0].current === true && list.branches[0].name === list.current && list.branches[0].name === branch0,
+    JSON.stringify(list.branches),
+  )
+  check('另一条 current = false', list.branches[1].current === false && list.branches[1].name === 'probe-side', JSON.stringify(list.branches))
+
+  // 只读档：切分支是写类 op，**当场拒**（不是挂一张卡等人答）——安全闸门在这条路上同样成立
+  approval.setPolicy('readonly')
+  let denied = ''
+  try {
+    await dock.handle('git-checkout', { branch: 'probe-side' })
+  } catch (error) {
+    denied = String(error)
+  }
+  check('只读档下切分支被拒（写类 op 过审批闸）', denied.includes('已拒绝'), denied)
+  check('被拒之后工作区没动', gitHead() === branch0, gitHead())
+
+  // 完全访问：真切成立，且快照面自己跟上（写类 op 落盘后那一次催拍）
+  approval.setPolicy('full-access')
+  const switched = await dock.handle('git-checkout', { branch: 'probe-side' })
+  check('切分支回 ok + 分支名', switched.ok === true && switched.branch === 'probe-side', JSON.stringify(switched))
+  check('工作区真的切过去了', gitHead() === 'probe-side', gitHead())
+  const followed = await pollUntil(() => surfaces().git.branch === 'probe-side', 8000)
+  check('切完快照面自己跟上（催拍那条路，不必等下一个 12 秒）', followed, JSON.stringify(surfaces().git))
+
+  // 建分支并切过去
+  const created = await dock.handle('git-branch-create', { branch: 'probe-fresh' })
+  check('建分支回 ok + 名字', created.ok === true && created.branch === 'probe-fresh', JSON.stringify(created))
+  check('工作区在新建的那条上', gitHead() === 'probe-fresh', gitHead())
+  const created2 = await pollUntil(() => surfaces().git.branch === 'probe-fresh', 8000)
+  check('新建的分支也上了快照面', created2, JSON.stringify(surfaces().git))
+  check('新分支进了清单（三条）', (await dock.handle('git-branches', {})).branches.length === 3)
+
+  // 收拾：切回原分支（顺带断言切回来这条路），策略还原
+  await dock.handle('git-checkout', { branch: branch0 })
+  check('切回原分支也成', gitHead() === branch0, gitHead())
+  approval.setPolicy(policy0)
+
+  // 不是仓库的工作目录：面回 repo:false（界面据此整行不画），清单给空表而不是抛错
+  await session.open(sessionPlain)
+  await pollUntil(() => surfaces().git.repo === false, 8000)
+  check('非仓库：面里 repo = false（界面整行不画）', surfaces().git.repo === false, JSON.stringify(surfaces().git))
+  const plainList = await dock.handle('git-branches', {})
+  check('非仓库里读分支清单：空表 + 不抛', plainList.branches.length === 0 && plainList.current === '', JSON.stringify(plainList))
+  await session.open(sessionFile)
 }
 
 console.log('')

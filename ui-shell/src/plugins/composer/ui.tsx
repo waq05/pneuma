@@ -42,7 +42,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 /** DOM 原生键盘事件（`window.addEventListener` 用；React 的 KeyboardEvent 是另一个类型）。 */
 type WindowKeyboardEvent = globalThis.KeyboardEvent
-import { IconArrowUp, IconCheck, IconChevronDown, IconClose, IconEdit, IconLayers, IconQueue, IconShield, IconStop, IconTrash } from '@dsc/ui'
+import { IconArrowUp, IconBranch, IconCheck, IconChevronDown, IconClose, IconEdit, IconLayers, IconPlus, IconQueue, IconSearch, IconShield, IconStop, IconTrash } from '@dsc/ui'
 import {
   defineUiPlugin,
   getHostNative,
@@ -51,6 +51,7 @@ import {
   useHostChannel,
   useHostSelector,
   type EffortLevel,
+  type GitSurface,
   type HostSnapshot,
   type ModelChoiceView,
   type PermissionPresetSurface,
@@ -59,6 +60,7 @@ import {
   type QueuedMessageView,
 } from '@dsc/ui'
 import { useMention } from './mention'
+import { filteredBranches, wouldOverwrite, type GitBranchRow } from './git-branch'
 
 /** 输入框自动增高的上限（旧界面同一个值：200px）。 */
 const MAX_INPUT_HEIGHT = 200
@@ -83,6 +85,15 @@ const EFFORT_LABEL: Readonly<Record<EffortLevel, string>> = {
 const EMPTY_PERMISSION_PRESETS: PermissionPresetSurface = { current: '', defaultName: '', options: [] }
 /** 模式（预设）投影缺席时的兜底。 */
 const EMPTY_PRESET: PresetSurface = { current: '', defaultName: '', options: [], droppable: [] }
+/** git 读数缺席（宿主那片没登记 / 不是仓库）时的兜底：`repo: false` = 整行不画。 */
+const EMPTY_GIT: GitSurface = { repo: false, branch: '', detached: false, dirtyFileCount: 0 }
+
+/** `dock git-branches` 的回包（宿主 desktop-dock 的形状）。 */
+interface GitBranchList {
+  current: string
+  detached: boolean
+  branches: GitBranchRow[]
+}
 
 export default defineUiPlugin({
   name: '输入区',
@@ -100,6 +111,7 @@ function ComposerBox(): ReactNode {
   const queuedCount = useHostSelector(readQueuedCount)
   const permissionPresets = useHostSelector(readPermissionPresets, samePermissionPresets)
   const preset = useHostSelector(readPresetSurface, samePresetSurface)
+  const git = useHostSelector(readGit, sameGit)
   const model = useHostSelector(readModel)
   const effort = useHostSelector(readEffort)
   const draftKey = useHostSelector(readSessionPath)
@@ -112,6 +124,17 @@ function ComposerBox(): ReactNode {
   // 权限预设与模式（预设）两根旋钮各自的浮层：三者互斥（开一根把另两根收掉，旧界面同款）。
   const [permOpen, setPermOpen] = useState(false)
   const [presetOpen, setPresetOpen] = useState(false)
+  // 分支菜单（输入框上方那一行那颗钮）：与上面三根旋钮的浮层互斥，同一时刻只开一个。
+  const [branchOpen, setBranchOpen] = useState(false)
+  /** 分支清单：null = 还没读到（菜单里显示「正在读取分支…」）。每次展开都重读一次。 */
+  const [branchList, setBranchList] = useState<GitBranchList | null>(null)
+  const [branchQuery, setBranchQuery] = useState('')
+  /** 有分支动作在跑（切换 / 新建）：期间整个菜单禁用，免得连点两下切两次。 */
+  const [branchBusy, setBranchBusy] = useState(false)
+  /** 「新建分支…」那一格展开没有（ZCode 用弹框，壳这边就地展开一格输入框）。 */
+  const [branchCreateOpen, setBranchCreateOpen] = useState(false)
+  const [newBranchName, setNewBranchName] = useState('')
+  const branchRows = useRef<HTMLDivElement | null>(null)
   // Esc 关模型浮层（与遮罩点击同效；设置面板、确认框各自也拦 Esc，谁开着归谁）。
   useEffect(() => {
     if (!panelOpen) return undefined
@@ -123,6 +146,41 @@ function ComposerBox(): ReactNode {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [panelOpen])
+
+  /**
+   * 分支菜单展开时读一次本地分支清单（`dock git-branches`，读类 op 直接放行）。
+   *
+   * 每次展开都重读（对照参考实现：切完再展开必须是新的那一份，不能复用上次的快照）。
+   * 关掉菜单不清清单——下一次展开会立刻重读，清空只会闪一下「正在读取」。
+   */
+  useEffect(() => {
+    if (!branchOpen) return undefined
+    let alive = true
+    setBranchQuery('')
+    setBranchCreateOpen(false)
+    setNewBranchName('')
+    void channel
+      .invoke<GitBranchList>('dock', ['git-branches', {}])
+      .then((list) => {
+        if (alive) setBranchList(list)
+      })
+      .catch((reason: unknown) => {
+        if (!alive) return
+        setBranchList(null)
+        setFault(`读分支清单失败：${reason instanceof Error ? reason.message : String(reason)}`)
+      })
+    return () => {
+      alive = false
+    }
+  }, [branchOpen, channel, git.branch])
+
+  // 清单到手后把「当前分支」那一条滚进视野（参考实现同款）：分支多的仓库里，
+  // 展开就看到自己在哪，不必自己找。`block: 'nearest'` 已在视野里就不动。
+  useEffect(() => {
+    if (!branchOpen || branchList === null) return
+    const node = branchRows.current?.querySelector<HTMLElement>('[data-branch-current="true"]')
+    node?.scrollIntoView({ block: 'nearest' })
+  }, [branchOpen, branchList])
   const area = useRef<HTMLTextAreaElement | null>(null)
   const history = useRef<string[]>([])
   const [historyAt, setHistoryAt] = useState<number | null>(null)
@@ -275,6 +333,55 @@ function ComposerBox(): ReactNode {
       })
   }
 
+  /**
+   * 切分支：`dock git-checkout`（**写类 op，过审批**——切分支会把改动带过去或让 git 拒掉，
+   * 所以与暂存 / 提交同一档，卡片上写着切到哪个分支）。
+   *
+   * 失败分两种，都往输入的 fault 行上写（那颗钮就在输入框上方，用户的眼睛在那儿）：
+   *   - 审批被拒 / git 自己拒（工作树里有会被覆盖的改动）：git 的原文已经说清了是哪些文件，
+   *     原样给出去，再补一句「往哪儿走」（先提交或暂存）。
+   *   - 通道 / 参数层面的错：原文照给。
+   */
+  const switchBranch = (name: string): void => {
+    setBranchBusy(true)
+    setFault(null)
+    void channel
+      .invoke('dock', ['git-checkout', { branch: name }])
+      .then(() => {
+        setBranchOpen(false)
+        toastOk(`已切到分支「${name}」`)
+      })
+      .catch((reason: unknown) => {
+        const text = reason instanceof Error ? reason.message : String(reason)
+        setFault(wouldOverwrite(text) ? `${text}（先提交或暂存这些改动再切：右侧栏「变更」页签可以提交）` : text)
+      })
+      .finally(() => {
+        setBranchBusy(false)
+      })
+  }
+
+  /** 新建分支并切过去：`dock git-branch-create`（同样是写类 op，过审批）。 */
+  const createBranch = (): void => {
+    const name = newBranchName.trim()
+    if (name === '') return
+    setBranchBusy(true)
+    setFault(null)
+    void channel
+      .invoke('dock', ['git-branch-create', { branch: name }])
+      .then(() => {
+        setBranchOpen(false)
+        setBranchCreateOpen(false)
+        setNewBranchName('')
+        toastOk(`已新建并切到分支「${name}」`)
+      })
+      .catch((reason: unknown) => {
+        setFault(reason instanceof Error ? reason.message : String(reason))
+      })
+      .finally(() => {
+        setBranchBusy(false)
+      })
+  }
+
   /** 上下键翻本机历史；翻到底回到草稿。 */
   /** @ 文件提及补全：track 跟输入走，pick 把候选替换进文本并落光标。 */
   const mention = useMention({
@@ -372,6 +479,141 @@ function ComposerBox(): ReactNode {
         if (event.dataTransfer.types.includes('Files')) event.preventDefault()
       }}
     >
+      {/* 分支控制（对照参考实现输入框上方那一行）：一颗钮显示当前分支，点开是分支菜单
+          （搜 / 切 / 新建）。读数来自宿主快照面 `surfaces.git`（宿主自己按节奏拍，
+          壳只渲染），**不是仓库时整行不画**。写口（切 / 新建）走 `dock` 的写类 op，
+          与暂存 / 提交同一档：过审批。 */}
+      {git.repo ? (
+        <div className="composer-git">
+          <div className="model-anchor">
+            <button
+              type="button"
+              className={`model-btn git-btn${branchOpen ? ' open' : ''}`}
+              data-tip={git.detached ? 'HEAD 已分离（不在任何分支上）；点开可以切回一个分支' : `当前分支：${git.branch}`}
+              aria-haspopup="menu"
+              aria-expanded={branchOpen}
+              onClick={() => {
+                setBranchOpen((open) => !open)
+                setPermOpen(false)
+                setPresetOpen(false)
+                setPanelOpen(false)
+              }}
+            >
+              <IconBranch size={13} />
+              <span className="git-branch-name">{git.branch}</span>
+              <IconChevronDown size={12} />
+            </button>
+            {branchOpen ? (
+              <>
+                <div
+                  className="pop-mask"
+                  onClick={() => {
+                    setBranchOpen(false)
+                  }}
+                />
+                <div className="model-pop git-pop" role="menu" aria-label="切换分支">
+                  <div className="pop-label">
+                    切换分支
+                    <span className="pop-note">
+                      {branchList?.detached === true ? 'HEAD 已分离' : `当前 ${branchList?.current ?? git.branch}`}
+                      {git.dirtyFileCount > 0 ? ` · ${String(git.dirtyFileCount)} 个文件已更改` : ''}
+                    </span>
+                  </div>
+                  <div className="git-search">
+                    <IconSearch size={13} />
+                    <input
+                      type="text"
+                      value={branchQuery}
+                      placeholder="搜索分支…"
+                      aria-label="搜索分支"
+                      autoFocus
+                      onChange={(event) => {
+                        setBranchQuery(event.target.value)
+                      }}
+                    />
+                  </div>
+                  <div className="model-list git-branch-list" ref={branchRows}>
+                    {branchList === null ? (
+                      <div className="pop-item">
+                        <span className="name">正在读取分支…</span>
+                      </div>
+                    ) : filteredBranches(branchList.branches, branchQuery).length === 0 ? (
+                      <div className="pop-item">
+                        <span className="name">{branchQuery.trim() === '' ? '这个仓库还没有分支' : '没有匹配的分支'}</span>
+                      </div>
+                    ) : (
+                      filteredBranches(branchList.branches, branchQuery).map((row) => (
+                        <button
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={row.current}
+                          key={row.name}
+                          className={`pop-item${row.current ? ' on' : ''}`}
+                          title={row.current ? `${row.name}（当前分支）` : `切到 ${row.name}`}
+                          disabled={row.current || branchBusy}
+                          {...(row.current ? { 'data-branch-current': 'true' } : {})}
+                          onClick={() => {
+                            switchBranch(row.name)
+                          }}
+                        >
+                          <IconBranch size={13} className="git-item-icon" />
+                          <span className="name">{row.name}</span>
+                          {row.current ? <IconCheck size={14} className="check" /> : null}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                  <div className="git-foot">
+                    {branchCreateOpen ? (
+                      <form
+                        className="git-create"
+                        onSubmit={(event) => {
+                          event.preventDefault()
+                          createBranch()
+                        }}
+                      >
+                        <input
+                          type="text"
+                          value={newBranchName}
+                          placeholder="新分支名，如 feat/xxx"
+                          aria-label="新分支名"
+                          autoFocus
+                          disabled={branchBusy}
+                          onChange={(event) => {
+                            setNewBranchName(event.target.value)
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Escape') {
+                              event.preventDefault()
+                              setBranchCreateOpen(false)
+                            }
+                          }}
+                        />
+                        <button type="submit" disabled={branchBusy || newBranchName.trim() === ''}>
+                          创建并切换
+                        </button>
+                      </form>
+                    ) : (
+                      <button
+                        type="button"
+                        className="git-foot-btn"
+                        disabled={branchBusy}
+                        onClick={() => {
+                          setBranchCreateOpen(true)
+                        }}
+                      >
+                        <IconPlus size={13} />
+                        新建分支…
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       <textarea
         ref={area}
         rows={1}
@@ -455,6 +697,7 @@ function ComposerBox(): ReactNode {
                 setPermOpen((open) => !open)
                 setPresetOpen(false)
                 setPanelOpen(false)
+                setBranchOpen(false)
               }}
             >
               <IconShield size={13} />
@@ -514,6 +757,7 @@ function ComposerBox(): ReactNode {
                 setPresetOpen((open) => !open)
                 setPermOpen(false)
                 setPanelOpen(false)
+                setBranchOpen(false)
               }}
             >
               <IconLayers size={13} />
@@ -578,6 +822,7 @@ function ComposerBox(): ReactNode {
                 setPanelOpen((open) => !open)
                 setPermOpen(false)
                 setPresetOpen(false)
+                setBranchOpen(false)
               }}
             >
               <span className="model-name">{model === '' ? '未知模型' : model}</span>
@@ -703,8 +948,7 @@ function groupByProvider(models: readonly ModelChoiceView[]): Array<[string, Mod
 }
 
 /** 排队消息摘要：压成一行、截到 200 字（全文挂在悬浮说明上）。 */
-function previewOf(text: string): string {
-  const flat = text.replace(/\s+/g, ' ').trim()
+function previewOf(text: string): string {  const flat = text.replace(/\s+/g, ' ').trim()
   const chars = Array.from(flat)
   return chars.length > PREVIEW_CHARS ? `${chars.slice(0, PREVIEW_CHARS).join('')}…` : flat
 }
@@ -1079,3 +1323,31 @@ function readQueued(snapshot: HostSnapshot | null): readonly QueuedMessageView[]
 
 /** 空队列常量：引用稳定，选择器（默认比较）才拦得住重渲染。 */
 const EMPTY_QUEUE: readonly QueuedMessageView[] = Object.freeze([])
+
+/**
+ * git 读数投影（当前分支 + 改动计数）。宿主那片是**轻读**（一条分支名 + 数一数
+ * `git status` 的条数），壳只渲染，不自己拍——两处各拍一遍在大仓里就是拿 CPU 换同一行字。
+ */
+function readGit(snapshot: HostSnapshot | null): GitSurface {
+  const surfaces = snapshot?.['surfaces']
+  if (typeof surfaces !== 'object' || surfaces === null) return EMPTY_GIT
+  const raw = (surfaces as Record<string, unknown>)['git']
+  if (typeof raw !== 'object' || raw === null) return EMPTY_GIT
+  const record = raw as Record<string, unknown>
+  return {
+    repo: record['repo'] === true,
+    branch: typeof record['branch'] === 'string' ? record['branch'] : '',
+    detached: record['detached'] === true,
+    dirtyFileCount: typeof record['dirtyFileCount'] === 'number' ? record['dirtyFileCount'] : 0,
+  }
+}
+
+/** git 读数的相等判断（四个字段比一遍，比让输入区每帧重画便宜）。 */
+function sameGit(left: GitSurface, right: GitSurface): boolean {
+  return (
+    left.repo === right.repo &&
+    left.branch === right.branch &&
+    left.detached === right.detached &&
+    left.dirtyFileCount === right.dirtyFileCount
+  )
+}

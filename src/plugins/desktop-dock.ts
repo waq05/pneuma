@@ -12,32 +12,15 @@
  *
  * @module dsc/plugins/desktop-dock
  */
-import { execFile, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { readFileSync, readdirSync, statSync, type Stats } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import type { ChildProcess } from 'node:child_process'
 import { DOCK_WRITE_LABEL, isDockWriteOp, type DockWriteOp } from '../core/dock-ops.js'
-
-/** 受控执行 git（固定首参字面量 + 参数数组；无 shell）。超时由 execFile 自己收进程。 */
-function git(cwd: string, args: string[], timeoutMs = 15000): Promise<string> {
-  return new Promise((resolveDone, rejectDone) => {
-    execFile(
-      'git',
-      args,
-      // timeout 原来只在自己这层 reject，git 进程继续跑（2026-09-29 审查）：
-      // 交给 execFile 的 timeout + killSignal，超时连进程一起收掉。
-      { cwd, maxBuffer: 8 * 1024 * 1024, windowsHide: true, timeout: timeoutMs, killSignal: 'SIGKILL' },
-      (error, stdout, stderr) => {
-        if (error !== undefined && error !== null) {
-          rejectDone(new Error(String(stderr || error.message).slice(0, 800)))
-        } else {
-          resolveDone(String(stdout))
-        }
-      },
-    )
-  })
-}
+// 执行姿势与 porcelains 解析住在 core：git 插件（分支/改动读数那条快照面）读的是同一个
+// 工作区，两处必须共用一份（尤其是 `-z` 的 rename 双记录），见 core/git-exec.ts。
+import { git, parsePorcelainZ, repoPrefix, toWorkspacePath } from '../core/git-exec.js'
 
 /** 参数净化：拒绝空字节/换行与选项注入位。 */
 function safeArg(value: unknown, allowNewline = false): string {
@@ -62,49 +45,6 @@ async function hasHead(cwd: string): Promise<boolean> {
   } catch {
     return false
   }
-}
-
-/**
- * `--porcelain=v1 -z` 的输出解析。
- *
- * 为什么必须带 `-z`：默认（不带 -z）的 porcelain 会对非 ASCII 路径做 C 引号转义
- * （`?? "DeepSeek\351\262\270\351\261\274.svg"`），界面照着这个串去 diff / 暂存
- * 都对不上号；-z 用 NUL 分隔、路径原样给。
- * rename / copy 记录后面还跟一条「原路径」记录（R  c.txt\0a.txt\0），要连同跳过。
- */
-function parsePorcelainZ(text: string): { code: string; file: string }[] {
-  const records = text.split('\0')
-  const entries: { code: string; file: string }[] = []
-  for (let at = 0; at < records.length; at += 1) {
-    const record = records[at] ?? ''
-    if (record === '') continue
-    const code = record.slice(0, 2)
-    entries.push({ code, file: record.slice(3) })
-    if (code[0] === 'R' || code[0] === 'C') at += 1
-  }
-  return entries
-}
-
-/** 工作目录在仓库里的前缀（`git rev-parse --show-prefix` 的 `sub/` 形式；仓库根处为空串）。 */
-async function repoPrefix(cwd: string): Promise<string> {
-  const out = await git(cwd, ['rev-parse', '--show-prefix']).catch(() => '')
-  return out.trim().replace(/\\/g, '/')
-}
-
-/**
- * 把 git 报的**仓库根相对**路径 rebase 到**工作目录相对**；落在工作目录之外给 null。
- *
- * git 的 status / numstat 不管从哪一层跑，路径都相对仓库根；而 dsc 的文件读取边界
- * （`inside`）与界面展示都以会话工作目录为基准。两套基准在这里一刀切开：命令仍然按
- * 仓库根相对的路径给（git 自己按 cwd 解释 pathspec 也没问题），展示一律用这份剥过
- * 前缀的路径；前缀之外的变更整条不列——既不越出 `inside` 的安全边界，也不会点一行
- * 得到「读不到这个条目」。
- */
-function toWorkspacePath(repoPath: string, prefix: string): string | null {
-  if (prefix === '') return repoPath
-  const dir = prefix.replace(/\/+$/, '')
-  if (repoPath === dir || repoPath === dir + '/') return '.'
-  return repoPath.startsWith(prefix) ? repoPath.slice(prefix.length) : null
 }
 
 /** `--numstat -z` 的输出解析：`add\trem\tpath\0`；rename 是 `add\trem\t\0old\0new\0`（取新路径）。 */
@@ -384,11 +324,7 @@ export const desktopDockPlugin: Plugin.Object = {
       if (decision === 'reject') throw new Error(`已拒绝：${label.toolName}`)
     }
 
-    const handle = async (op: string, payload: Record<string, unknown>): Promise<unknown> => {
-      // 基准目录按「当前会话」现取：切会话后下一次读取就落到新工作区（终端/git 同理）。
-      const cwd = baseCwd()
-      // 写类先过闸，再进 switch（闸门只挡写类，读类与终端不受影响）。
-      if (isDockWriteOp(op)) await requireWriteApproval(op, payload, cwd)
+    const runOp = async (op: string, payload: Record<string, unknown>, cwd: string): Promise<unknown> => {
       switch (op) {
         // ---- 终端（管道模式；无 tty，交互式全屏程序不可用） ----
         case 'term-spawn': {
@@ -525,6 +461,50 @@ export const desktopDockPlugin: Plugin.Object = {
           }
           return { branch, staged, unstaged, untracked, added, removed, dirtyFileCount, stagedStats, unstagedStats, untrackedStats }
         }
+        case 'git-branches': {
+          // 本地分支清单（输入框上那颗分支钮的菜单读它）。排序照参考实现：当前分支永远
+          // 第一，其余按「最后一次提交时间」从新到旧——刚动过的分支最可能是要切的那个。
+          // 空仓库（还没提交过）时 `refs/heads` 是空的，但 HEAD 那个分支名仍然有意义，
+          // 所以把 `rev-parse --abbrev-ref HEAD` 的结果补进清单里（它不在 refs 里）。
+          const head = await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])
+            .then((out) => out.trim())
+            .catch(() => '')
+          const detached = head === 'HEAD'
+          const current = detached ? '' : head
+          const records = await git(cwd, [
+            'for-each-ref',
+            'refs/heads',
+            // 名字 + 最后一次提交的 unix 秒（排序用）。%00 是 NUL：分支名里可能有空格，
+            // 拿 \t 或空格切都会切坏。参考实现这一条还带 upstream 与 objectname，
+            // dsc 的菜单不显示它们，就不多取。
+            '--format=%(refname:short)%00%(committerdate:unix)',
+          ])
+            .then((out) => out.split('\n').map((line) => line.trimEnd()).filter((line) => line !== ''))
+            .catch(() => [] as string[])
+          interface BranchRow {
+            name: string
+            current: boolean
+            at: number
+          }
+          const rows: BranchRow[] = []
+          for (const line of records) {
+            const [name = '', at = ''] = line.split('\0')
+            if (name === '') continue
+            const seconds = Number.parseInt(at, 10)
+            rows.push({ name, current: name === current, at: Number.isFinite(seconds) ? seconds : 0 })
+          }
+          if (current !== '' && !rows.some((row) => row.name === current)) {
+            rows.push({ name: current, current: true, at: Number.POSITIVE_INFINITY })
+          }
+          rows.sort((left, right) => (left.current !== right.current ? (left.current ? -1 : 1) : right.at - left.at))
+          return {
+            current,
+            detached,
+            // 空仓库时 current 是 git 给的那个默认分支名（如 master），但它还不在清单里
+            // 也算「当前」——前端拿 current 判重，所以这里不重复上报。
+            branches: rows.map((row) => ({ name: row.name, current: row.current })),
+          }
+        }
         case 'git-stage': {
           const files = (Array.isArray(payload.files) ? payload.files : []).map((file) => safeArg(file))
           await git(cwd, ['add', '--', ...files])
@@ -543,6 +523,21 @@ export const desktopDockPlugin: Plugin.Object = {
           const paths = (Array.isArray(payload.paths) ? payload.paths : []).map((file) => safeArg(file))
           if (paths.length > 0) await git(cwd, ['add', '--', ...paths])
           return { ok: true, output: (await git(cwd, ['commit', '-m', text])).slice(0, 1200) }
+        }
+        case 'git-checkout': {
+          // `switch --no-guess`（git ≥ 2.23）：`checkout <名字>` 在同名文件存在时会有
+          // 「是分支还是路径」的歧义，`--no-guess` 也不会顺手替用户从远端建分支。
+          // 工作树有冲突性的改动时 git 自己会拒（stderr 里说得清清楚楚），原样抛给界面。
+          const branch = safeArg(payload.branch)
+          if (branch === '') throw new Error('没有指定要切到哪个分支')
+          await git(cwd, ['switch', '--no-guess', branch])
+          return { ok: true, branch }
+        }
+        case 'git-branch-create': {
+          const name = safeArg(payload.branch)
+          if (name.trim() === '') throw new Error('没有指定新分支名')
+          await git(cwd, ['switch', '--no-guess', '-c', name])
+          return { ok: true, branch: name }
         }
         case 'git-log': {
           return {
@@ -598,6 +593,24 @@ export const desktopDockPlugin: Plugin.Object = {
         default:
           throw new Error(`dock 未知操作：${op}`)
       }
+    }
+
+    /**
+     * 一次 dock 请求：取当前会话的工作目录 → 写类先过审批闸 → 执行 → 写类落盘后催一拍
+     * git 读数。
+     *
+     * 催拍那一步是给界面那颗分支钮（宿主快照面 `surfaces.git`）的：提交 / 暂存 / 切分支 /
+     * 建分支都改了「当前分支 + 改动计数」，界面正盯着这一步的结果，不该等下一个 12 秒。
+     */
+    const handle = async (op: string, payload: Record<string, unknown>): Promise<unknown> => {
+      // 基准目录按「当前会话」现取：切会话后下一次读取就落到新工作区（终端/git 同理）。
+      const cwd = baseCwd()
+      // 写类先过闸，再进 switch（闸门只挡写类，读类与终端不受影响）。
+      const write = isDockWriteOp(op)
+      if (write) await requireWriteApproval(op, payload, cwd)
+      const out = await runOp(op, payload, cwd)
+      if (write) ctx.get('git')?.refresh()
+      return out
     }
 
     ctx.provide('dock', { handle })
