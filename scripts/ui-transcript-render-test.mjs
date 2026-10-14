@@ -13,11 +13,12 @@
  *      缩在 JSON 字符串里全是 `\n` 转义。参考实现（dsh 的 FileMutationRow）对这两个工具
  *      只画 diff；壳照同一口径分流——正文走 diff 块，其余字段走参数表。
  *
- * 四段：
+ * 五段：
  *   [1] 纯逻辑：`seatPlan`（每条行恰好一次 / 组员不单独出 / 组内顺序 / 空表 / 组头位置）
  *   [2] 纯逻辑：`toolArgFields`（会改文件的工具分流 + 正文字段剔除 + 半截参数的降级）
  *   [3] 形态钉：ui.tsx 的 seatPlan 消费点、ThinkRow 不再强制展开、factory 的 diff/参数表
  *   [4] 漂移钉：参数表的字段名与宿主工具真定义对得上（`src/core/tools/fs-tools.ts`）
+ *   [5] 开合动画（0.6.69）：过程区包一层 + grid-template-rows 0fr↔1fr + 收起延迟挂 hidden
  *
  * 运行：node scripts/ui-transcript-render-test.mjs
  *
@@ -146,6 +147,41 @@ console.log('[4] 漂移钉：参数表的字段名与宿主工具真定义对得
   check('宿主 edit 的两个参数确实叫 old / new', /name: 'edit'[\s\S]{0,600}?old: \{ type: 'string'/.test(fsTools) && /name: 'edit'[\s\S]{0,900}?new: \{ type: 'string'/.test(fsTools))
   check('壳的表与宿主口径一致（write→content、edit→old+new）', MUTATION_CONTENT_FIELDS['write'].join(',') === 'content' && MUTATION_CONTENT_FIELDS['edit'].join(',') === 'old,new')
   check('两张表都覆盖 write / edit', ['write', 'edit'].every((name) => name in MUTATION_CONTENT_FIELDS))
+}
+
+console.log('[5] 整轮过程区的开合动画（0.6.69 第四轮报障）')
+{
+  const ui = read('ui-shell/src/plugins/transcript/ui.tsx')
+  const seats = read('ui-shell/src/plugins/transcript/fold-seats.tsx')
+  const css = read('ui-shell/src/legacy/views.css')
+  const tokens = read('ui-shell/src/legacy/tokens.css')
+
+  // 结构：过程区必须**包一层**才能整片一起动（平铺时收起的行不占位，flex gap 会留下一堆空档）
+  check('过程区包进 .turn-process + .turn-process-body 两层', /<div className="turn-process" data-fold=\{collapsed \? 'closed' : 'open'\}>/.test(ui) && ui.includes('<div className="turn-process-body">{processBlocks}</div>'))
+  check('没有过程行时不画这一层（不可折的档位连开关行都没有）', ui.includes('{processBlocks.length === 0 ? null : ('))
+
+  // CSS：高度动画走 grid-template-rows 0fr↔1fr（不预先量高度），内层 min-height:0 + overflow:hidden
+  check('高度动画是 grid-template-rows 的两头（0fr ↔ 1fr）', /\.turn-process \{[\s\S]{0,200}grid-template-rows: 1fr/.test(css) && /\.turn-process\[data-fold='closed'\] \{[\s\S]{0,120}grid-template-rows: 0fr/.test(css))
+  check('内层给了 min-height: 0 + overflow: hidden（否则 0fr 会被内容顶开）', /\.turn-process-body \{[\s\S]{0,200}min-height: 0;[\s\S]{0,120}overflow: hidden;/.test(css))
+  check('收起态留的是 0 高盒子而不是 display:none（收起方向才有内容撑住高度）', !/\.turn-process\[data-fold='closed'\] \{[\s\S]{0,160}display: none/.test(css))
+  check('留一格 0 高 flex 项会多算座位 gap，用负 margin 抵掉', /\.turn-process\[data-fold='closed'\] \{[\s\S]{0,200}margin-top: calc\(-1 \* var\(--dsc-stack-gap\)\)/.test(css))
+  check('内容随高度一起淡入淡出（zcode 的「高度关键帧 + fade」那一对）', /\.turn-process-body \{[\s\S]{0,320}transition: opacity/.test(css) && /\.turn-process\[data-fold='closed'\] \.turn-process-body \{\s*\n\s*opacity: 0/.test(css))
+  check('时长取令牌 --dsc-dur-slow（不写死毫秒）', /\.turn-process \{[\s\S]{0,260}grid-template-rows var\(--dsc-dur-slow\) var\(--dsc-ease\)/.test(css))
+
+  // 收起方向要「内容还在、格子先收」：挂 hidden 得晚于动画跑完
+  check('收起时延迟挂 hidden（挂早了内容当场没，两边都是 0 高，动画等于没有）', seats.includes('const timer = globalThis.setTimeout(() => {') && seats.includes("element.setAttribute('hidden', 'until-found')\n    }, delay)"))
+  check('展开方向不延迟（放行要立刻看得见）', /if \(!hidden\) \{\s*\n\s*element\.removeAttribute\('hidden'\)/.test(seats))
+  check('延迟时长与 CSS 同源（现读 --dsc-dur-slow，不各写一份）', seats.includes("getPropertyValue('--dsc-dur-slow')") && tokens.includes('--dsc-dur-slow: 180ms'))
+  check('延迟只给「display:none 那一层」：过程行与阶段组的座位', (seats.match(/delayMs: foldHideDelayMs\(\)/g) ?? []).length === 2)
+  check('组体（max-height 那一层）不延迟：内容留在文档里，本来就平滑', /const bodyRef = useSearchableHidden\(!props\.open, revealGroup\)/.test(seats))
+  check('焦点在里层、或被查找命中时的放行照旧（Ctrl+F 与键盘都不受影响）', seats.includes('element.contains(element.ownerDocument.activeElement)') && seats.includes("element.addEventListener('beforematch', reveal)"))
+
+  // 阶段组那一级：收起态本来就是 max-height: 0（内容留文档里），补一条过渡即可
+  check('组体的一级开合也走过渡（两头都是 max-height 的确定值）', /\.step-body \{[\s\S]{0,400}transition: max-height var\(--dsc-dur-slow\) var\(--dsc-ease\);/.test(css))
+
+  // 降级：base.css 那条全局 reduced-motion 把过渡压成瞬时
+  check('系统说「少动」时全站过渡归零（base.css 兜底，不用逐组件再写）', /@media \(prefers-reduced-motion: reduce\) \{[\s\S]{0,300}transition-duration: 0\.01ms !important/.test(read('ui-shell/src/legacy/base.css')))
+  check('参考实现的做法在注释里留了档（dsh 只转箭头 / zcode 高度关键帧）', css.includes('dsh') && css.includes('zcode'))
 }
 
 console.log('')

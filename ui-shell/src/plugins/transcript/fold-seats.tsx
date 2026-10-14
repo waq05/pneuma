@@ -44,6 +44,24 @@ function useStableCallback<T extends (...args: never[]) => void>(callback: T): T
 }
 
 /**
+ * 收起时**延迟**挂 `hidden` 的那段时间：与 `tokens.css` 的 `--dsc-dur-slow`（0.18s）同源，
+ * 从 CSS 变量现读——动画时长和延迟必须是同一个数，各写一份迟早会漂。
+ *
+ * 为什么要延迟（0.6.69 补，zcode 的「收起后延迟 300ms 才卸载内容」是同一件事）：
+ * 整轮过程区的高度动画是 `grid-template-rows: 1fr → 0fr`，而轨道高度是**按内容算**的。
+ * 收起的那一帧如果同时把这些行打成 `display: none`（`hidden` 的 UA/作者规则就是它），
+ * 内容当场没了 → `1fr` 的用量也算成 0 → 高度从 0 到 0，动画等于没有（实测：收起方向
+ * 第一帧就已经是 0，只有格子空转 180ms 才 display:none）。延迟到动画跑完再挂，
+ * 收起方向才是「内容在原处被上缘一点点收掉」。
+ */
+function foldHideDelayMs(): number {
+  const raw = globalThis.getComputedStyle(document.documentElement).getPropertyValue('--dsc-dur-slow').trim()
+  const value = Number.parseFloat(raw)
+  if (!Number.isFinite(value) || value <= 0) return 180
+  return raw.endsWith('ms') ? value : value * 1000
+}
+
+/**
  * 用 `hidden="until-found"` 隐藏一棵子树，而不是把它卸载。
  *
  * 两个好处（对照 dsh 的 useSearchableHidden，chat/searchable-hidden.ts:9-31）：
@@ -57,24 +75,40 @@ function useStableCallback<T extends (...args: never[]) => void>(callback: T): T
  *
  * @param hidden 这一层现在要不要藏起来
  * @param reveal 焦点在里面、或被查找命中时的放行动作（通常是把它展开）
+ * @param options.delayMs 挂 `hidden` 前等多少毫秒（给高度动画留出跑完的时间；展开方向不等）
  * @returns 挂在被隐藏元素上的 ref
  */
 export function useSearchableHidden(
   hidden: boolean,
   reveal: () => void,
+  options?: { delayMs?: number },
 ): RefObject<HTMLDivElement | null> {
   const ref = useRef<HTMLDivElement | null>(null)
+  const delay = options?.delayMs ?? 0
   useLayoutEffect(() => {
     const element = ref.current
     if (element === null) return
+    // 放行永远不等：展开要立刻看得见（高度动画由 CSS 那边跑）。
+    if (!hidden) {
+      element.removeAttribute('hidden')
+      return
+    }
     // 焦点在这棵子树里：这次不藏（调用方会把这一层展开），否则 Tab 到一半位置就没了
-    if (hidden && element.contains(element.ownerDocument.activeElement)) {
+    if (element.contains(element.ownerDocument.activeElement)) {
       reveal()
       return
     }
-    if (hidden) element.setAttribute('hidden', 'until-found')
-    else element.removeAttribute('hidden')
-  }, [hidden, reveal])
+    if (delay <= 0) {
+      element.setAttribute('hidden', 'until-found')
+      return
+    }
+    const timer = globalThis.setTimeout(() => {
+      element.setAttribute('hidden', 'until-found')
+    }, delay)
+    return () => {
+      globalThis.clearTimeout(timer)
+    }
+  }, [hidden, reveal, delay])
   useLayoutEffect(() => {
     const element = ref.current
     if (element === null) return
@@ -191,7 +225,8 @@ export function RowSeat(props: {
   children: ReactNode
 }): JSX.Element {
   const reveal = useStableCallback(props.onReveal)
-  const ref = useSearchableHidden(props.hidden, reveal)
+  // 收起时延迟挂 hidden：这一条在过程区里，整轮收起的高度动画要靠它的内容撑着（见 foldHideDelayMs）
+  const ref = useSearchableHidden(props.hidden, reveal, { delayMs: foldHideDelayMs() })
   return (
     <div
       ref={ref}
@@ -229,7 +264,10 @@ export function StepGroupSeat(props: {
   children: ReactNode
 }): JSX.Element {
   const revealTurn = useStableCallback(props.onRevealTurn)
-  const seatRef = useSearchableHidden(props.turnCollapsed, revealTurn)
+  // 外层（组头 + 组体一起藏）同样要延迟：它是 `display: none`，早挂一帧就把
+  // 整轮高度动画的内容抽走了。里层（组体自己）**不延迟**——组体收起走的是
+  // `max-height: 0`，内容留在文档里，动画本来就是平滑的（见 views.css 的 .step-body）。
+  const seatRef = useSearchableHidden(props.turnCollapsed, revealTurn, { delayMs: foldHideDelayMs() })
   // 组体被查找命中（或焦点正在组里）时，把这一组展开
   const revealGroup = useStableCallback(() => {
     if (!props.open) props.onToggle()

@@ -51,6 +51,7 @@ import {
 } from '@dsc/ui'
 // 基元从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
 import { Select } from '@dsc/ui-primitives'
+import { buildKnownIndex, inferModelCaps, type InferredCaps, type KnownModel } from './model-infer'
 
 /** 拿异常的文字形态。 */
 function text(error: unknown): string {
@@ -88,17 +89,20 @@ function blankDraft(): ProviderDraft {
   return { oldName: null, name: '', displayName: '', baseUrl: '', models: [blankModel()] }
 }
 
-/** 拉取清单里挑中的一个模型：按缺省能力装进端点（旧版 `defaultDiscoveredModel` 同款）。 */
-function discoveredModel(id: string): ProviderModelView {
+/**
+ * 拉取清单里挑中的一个模型：能力按 {@link inferModelCaps} 推断的填（不再是「一律按缺省」——
+ * 一个 1M 上下文、能收图的模型拉进来都变成 128k / 只吃文本，是 0.6.69 报障的第三条）。
+ */
+function discoveredModel(id: string, caps: InferredCaps): ProviderModelView {
   return {
     id,
     name: id,
-    contextWindow: 128_000,
-    maxTokens: 8_192,
-    thinkingLevels: [...DEFAULT_CAPS.thinkingLevels],
-    thinkingParam: DEFAULT_CAPS.thinkingParam,
-    effortMap: {},
-    modalities: [...DEFAULT_CAPS.modalities],
+    contextWindow: caps.contextWindow,
+    maxTokens: caps.maxTokens,
+    thinkingLevels: [...caps.thinkingLevels],
+    thinkingParam: caps.thinkingParam,
+    effortMap: { ...caps.effortMap },
+    modalities: [...caps.modalities],
   }
 }
 
@@ -150,7 +154,16 @@ export function ModelsGroup(): ReactNode {
   const [keyValue, setKeyValue] = useState('')
   /** 拉取清单弹窗：哪一张卡、拉到了什么。 */
   const [discovered, setDiscovered] = useState<{ provider: string; models: string[] } | null>(null)
-  const [discovering, setDiscovering] = useState(false)
+  /**
+   * 正在拉取的端点（按端点记，不是全局一个布尔）。
+   *
+   * 这里踩过一次：原来是一个 `discovering: boolean` 传给每张卡，于是点一张卡的「拉取清单」，
+   * 四张卡的按钮**同时**变成「拉取中…」（0.6.69 报障第二条）。用集合按端点分开之后，
+   * 拉取中也允许同时拉另一张卡——两张卡各转各的，谁先回来谁的清单先开。
+   */
+  const [discovering, setDiscovering] = useState<ReadonlySet<string>>(() => new Set())
+  /** 已经配过的模型（别的端点里同 id 的那份能力），拉清单时优先照抄它。 */
+  const known = useMemo<Map<string, KnownModel>>(() => buildKnownIndex(config?.providers ?? []), [config])
 
   const reload = (): void => {
     void channel
@@ -214,7 +227,7 @@ export function ModelsGroup(): ReactNode {
   }
 
   const discover = (provider: string): void => {
-    setDiscovering(true)
+    setDiscovering((current) => new Set(current).add(provider))
     void channel
       .invoke<string[]>('discoverModels', [provider])
       .then((models) => {
@@ -224,9 +237,16 @@ export function ModelsGroup(): ReactNode {
         toastErr(`拉取失败：${text(error)}`)
       })
       .finally(() => {
-        setDiscovering(false)
+        setDiscovering((current) => {
+          const next = new Set(current)
+          next.delete(provider)
+          return next
+        })
       })
   }
+
+  /** 一个 id 的能力：先看别的端点配过没有，再按 id 里写的 / 家族表推断（见 model-infer.ts）。 */
+  const infer = (id: string): InferredCaps => inferModelCaps(id, known)
 
   if (config === null) return <div className="settings-empty">正在读取模型配置…</div>
 
@@ -351,7 +371,7 @@ export function ModelsGroup(): ReactNode {
           isDefault={config.defaultProvider === provider.name}
           defaultModel={config.defaultModel}
           editable={editable}
-          discovering={discovering}
+          discovering={discovering.has(provider.name)}
           keyOpen={keyFor === provider.name}
           keyValue={keyValue}
           draft={editingProvider === provider.name ? draft : null}
@@ -444,6 +464,7 @@ export function ModelsGroup(): ReactNode {
         <DiscoverDialog
           provider={providers.find((entry) => entry.name === discovered.provider) ?? null}
           models={discovered.models}
+          infer={infer}
           onClose={() => {
             setDiscovered(null)
           }}
@@ -453,7 +474,7 @@ export function ModelsGroup(): ReactNode {
               setDiscovered(null)
               return
             }
-            const models = [...provider.models, ...ids.map((id) => discoveredModel(id))]
+            const models = [...provider.models, ...ids.map((id) => discoveredModel(id, infer(id)))]
             void bridgeWrite(
               'saveProvider',
               [
@@ -1068,10 +1089,14 @@ function ModelRow(props: {
  *
  * 默认勾上「尚未加进端点」的那些——拉清单的意图通常就是把新模型补进来；已经在端点里的
  * 不可勾（重复 id 会被宿主的保存校验拒掉）。
+ *
+ * 每一行右边写着**推断出来的能力**（窗口 / 图 / 视频 / 无思考），鼠标停上去还有一句
+ * 「这份能力是从哪来的」——推断不是查表保真，得让用户看得见自己在采纳什么。
  */
 function DiscoverDialog(props: {
   provider: ProviderView | null
   models: string[]
+  infer(id: string): InferredCaps
   onClose(): void
   onAdopt(ids: string[]): void
 }): ReactNode {
@@ -1170,21 +1195,33 @@ function DiscoverDialog(props: {
           {filtered.map((id) => {
             const has = existing.has(id)
             const on = chosen.has(id)
+            const caps = props.infer(id)
             return (
               <li key={id}>
                 <button
                   type="button"
                   className={`models-discover-item${on ? ' on' : ''}${has ? ' exists' : ''}`}
                   data-discover-item={id}
+                  data-discover-source={caps.source}
                   disabled={has}
                   aria-pressed={on}
-                  data-tip={has ? '已经在端点里了（重复 id 保存会被拒）' : on ? '点一下取消' : '点一下勾上'}
+                  data-tip={
+                    has
+                      ? '已经在端点里了（重复 id 保存会被拒）'
+                      : `${caps.note}${on ? ' · 点一下取消' : ' · 点一下勾上'}`
+                  }
                   onClick={() => {
                     toggle(id)
                   }}
                 >
                   <span className="models-discover-check">{on ? <IconCheck size={11} /> : null}</span>
                   <span className="mono">{id}</span>
+                  <span className="models-discover-caps">
+                    <span className="ctx">{Math.round(caps.contextWindow / 1000)}k</span>
+                    {caps.modalities.includes('image') ? <span className="cap-badge">图</span> : null}
+                    {caps.modalities.includes('video') ? <span className="cap-badge">视频</span> : null}
+                    {caps.thinkingLevels.length === 0 ? <span className="cap-badge dim">无思考</span> : null}
+                  </span>
                   {has ? <span className="models-discover-tag">已有</span> : null}
                 </button>
               </li>
@@ -1205,7 +1242,7 @@ function DiscoverDialog(props: {
             采用选中的 {chosen.size} 个
           </button>
           <span className="provider-form-hint">
-            按缺省能力加入（128k 窗口 / 四档思考 / 只吃文本），加完可在「编辑」里改。
+            每行的窗口 / 图片 / 视频都是推断出来的（停上去看依据），加完可在「编辑」里逐项改。
           </span>
         </div>
       </div>

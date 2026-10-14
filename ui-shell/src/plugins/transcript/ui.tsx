@@ -859,7 +859,15 @@ function SeatBody({
           />
         </div>
       ) : null}
-      {processBlocks}
+      {processBlocks.length === 0 ? null : (
+        // 过程区**包一层**再折：整轮收起是「这一片高度从 0 长回来 / 缩回 0」，一片一起动才行。
+        // 平铺在座位上折不了——收起的行是 `hidden`（不产生盒子），夹在它们之间的 6px flex gap
+        // 会留下来，几十行的轮收起来就是一片空白的间隙堆。包进一格之后，座位的 gap 只算这一格。
+        // 高度动画本身在 CSS：`.turn-process` 的 grid-template-rows 0fr↔1fr（不需要 JS 量高度）。
+        <div className="turn-process" data-fold={collapsed ? 'closed' : 'open'}>
+          <div className="turn-process-body">{processBlocks}</div>
+        </div>
+      )}
       {afterBlocks}
       <ChangesCard rows={seat.rows} cwd={cwd} />
       <RoundFoot

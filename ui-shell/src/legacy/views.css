@@ -5443,6 +5443,21 @@ body.resizing iframe {
   padding: 0 6px;
 }
 
+/* 每行右边那串「推断出来的能力」（窗口 / 图 / 视频）：靠右贴齐，`已有` 标章排在它后面。
+   靠 `margin-left: auto` 推右而不是给 `已有` 让位——没有 `已有` 的行也要贴右，两行才对得上。 */
+.models-discover-caps {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* 与 `.model-chip .ctx` 同一档（quaternary + 小一号字）：都是端点上那颗模型钮里的尺寸读数。 */
+.models-discover-caps .ctx {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+}
+
 .models-discover-none {
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-caption);
@@ -5953,6 +5968,14 @@ body.resizing iframe {
   font-size: var(--dsc-fs-tool);
 }
 
+/* 模型行里的两个 token 数输入住的是窄格（上下文 / 最大输出各 110px），而 `.setting-input`
+   的通用下限是 220px（见上面那组规则）——不在窄格里把下限收回 0，输入框就会溢出自己的格子
+   压到邻居身上：实测 1280px 宽下两个框互相盖住 102px（0.6.68 报障「模型配置框重叠」的根因）。
+   收回下限只作用于模型行的这几个输入框，别处的 220px 下限照旧。 */
+.model-row-field .setting-input {
+  min-width: 0;
+}
+
 .model-row-caps {
   display: flex;
   flex-wrap: wrap;
@@ -6013,6 +6036,9 @@ body.resizing iframe {
 
 .cap-wire-input {
   width: 84px;
+  /* 同 `.model-row-field .setting-input`：这里是 84px 的窄格，「线上值」那几个输入框
+     也不能吃 `.setting-input` 的 220px 下限（否则四档并排时互相盖住）。 */
+  min-width: 0;
   height: 24px;
   padding: 0 6px;
   font-size: var(--dsc-fs-tool);
@@ -9232,12 +9258,57 @@ body.resizing iframe {
   margin-top: calc(var(--dsc-block-gap) - var(--dsc-stack-gap));
 }
 
+/* ── 整轮过程区的开合动画（0.6.69）──
+   报障是「点『用时 56秒』展开，下面的内容是硬切出来的，没有动画」。
+
+   高度动画三条路（dsh 的 Radix 高度关键帧、zcode 的 grid 行插值、JS 量高度的 max-height）里
+   取的是**第二条**：`grid-template-rows: 0fr ↔ 1fr` 是纯 CSS、不用 JS 量内容高，也不用
+   像 max-height 那样要么猜上限要么量一次再写回。内层必须 `min-height: 0` + `overflow: hidden`，
+   否则 0fr 那一行会被内容顶开（grid 轨道的最小尺寸默认是 auto）。
+
+   **收起态是一个 0 高的盒子，不是 `display: none`**——两条实测换来的：
+   - `1fr` / `0fr` 的用量是**按内容算**的。收起那一帧若把这些行打成 `display: none`
+     （`hidden` 的规则就是它），内容当场没了，两边都是 0 高，动画等于没有；
+   - 所以「挂 hidden」被推迟到动画跑完（见 fold-seats.tsx 的 foldHideDelayMs），
+     而这一格自己也必须一直渲染着——写成 `display: none` 时，实测收起方向会先僵在
+     原位 180ms、再整块消失（比不动画还难看）。留着 0 高盒子，收起就是「内容在原处
+     被上缘一点点收掉」，方向与展开对称。
+
+   留着一个 0 高的 flex 项会多算一格座位 gap（6px），用负的 margin-top 抵掉：
+   收起时「开关行 → 下一行」的距离必须与加动画之前一模一样（12px = gap 6 + 答案行外边距 6）。 */
+.turn-process {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows var(--dsc-dur-slow) var(--dsc-ease),
+    margin-top var(--dsc-dur-slow) var(--dsc-ease);
+}
+
+.turn-process[data-fold='closed'] {
+  grid-template-rows: 0fr;
+  margin-top: calc(-1 * var(--dsc-stack-gap));
+}
+
+.turn-process-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dsc-stack-gap);
+  min-height: 0;
+  overflow: hidden;
+  /* 拉开帘子的同时内容淡进来（zcode 的折叠层就是「高度关键帧 + fade-in-0」这一对）。
+     两头都写在类上，所以收起方向也淡出，不用 @starting-style。 */
+  transition: opacity var(--dsc-dur-slow) var(--dsc-ease);
+}
+
+.turn-process[data-fold='closed'] .turn-process-body {
+  opacity: 0;
+}
+
 /* ── 阶段组的座位：组头 + 组体 ── */
 .step-seat {
   display: flex;
   flex-direction: column;
 }
-
 /* 整轮收起时组头与组体一起藏（三层显隐从外向内）。同样要显式压过上面的 display。 */
 .step-seat[hidden] {
   display: none;
@@ -9252,6 +9323,11 @@ body.resizing iframe {
   overflow-y: auto;
   overscroll-behavior-y: auto;
   scrollbar-gutter: stable;
+  /* 组体的一级开合也走动画（0.6.69 补）：收起态是 `max-height: 0`，展开态就是这个上限，
+     两头都是 `max-height` 的确定值，所以这里能直接过渡——不像整轮那一格要面对「内容多高」。
+     组体收起时内容**留在 DOM 里且仍被画**（见下面 `[hidden]` 那条：作者规则压过了
+     display:none），所以收起方向也看得见内容被上缘一点点收掉，两个方向的观感一致。 */
+  transition: max-height var(--dsc-dur-slow) var(--dsc-ease);
 }
 
 /* 两条方向渐隐：用 mask 让内容在边缘淡出（对照 dsh 的 .fadeTop / .fadeBottom）。
