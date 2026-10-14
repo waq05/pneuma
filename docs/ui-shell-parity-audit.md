@@ -154,6 +154,7 @@
 | `dock` 新增 `git-branches`（**读类**，界面 HTTP 通道直接放行） | 本地分支清单，排序照参考实现：当前分支第一、其余按最后一次提交时间从新到旧；空仓库（HEAD 未出生）时把 `rev-parse --abbrev-ref HEAD` 那个还没进 refs 的分支名补进清单 |
 | `dock` 新增 `git-checkout` / `git-branch-create`（**写类**，与暂存/提交同一档：过审批） | 卡片文案进 `DOCK_WRITE_LABEL`（「git: 切换分支 → 切到 X」）。执行用 `git switch --no-guess`（避开 `checkout <名字>` 的分支/路径歧义，也不顺手从远端建分支）；工作树有会被覆盖的改动时 git 自己拒，stderr 原样回给界面 |
 | git 执行与 porcelain 解析抽到 `src/core/git-exec.ts`（`git` / `parsePorcelainZ` / `repoPrefix` / `toWorkspacePath`） | desktop-dock 与 git 插件**共用一份**：`-z` 的 rename 双记录这种细节抄一遍就等着某处先漂；改动计数因此与「变更」页签、状态面板同口径（含未跟踪、只看 cwd 之内） |
+| 界面通道的 `invoke` 支持按调用给超时（`InvokeOptions.timeoutMs`）+ `HUMAN_WAIT_TIMEOUT_MS = 330_000` | 写类 dock op 在宿主侧**挂着审批卡**执行（卡能等 5 分钟），默认那 30 秒会把「等你点卡」报成「调用宿主方法超时（30000 毫秒）」，而且点完卡那次调用已被页面放弃。四个过审批的 git 写口（暂存 / 提交 / 切 / 建）都带上长窗口。**实机走查抓到的** |
 
 ## 六、验证落点（第六批）
 
@@ -210,10 +211,10 @@
 
 ## 六之四、验证落点（第十七批：面板锚点 + 分支钮）
 
-- 新探针 `scripts/ui-git-branch-test.mjs` **35 条**：纯逻辑（`plugins/composer/git-branch.ts`
+- 新探针 `scripts/ui-git-branch-test.mjs` **41 条**：纯逻辑（`plugins/composer/git-branch.ts`
   的 `filteredBranches` / `wouldOverwrite`）、壳侧接线（读数取 `surfaces.git`、不是仓库整行
-  不画、两个写口走 `dock` 写类 op、四颗旋钮浮层互斥）、`desktop-dock` 三个 op 的实现与催拍、
-  **CSS 幽灵令牌差集扫描**。
+  不画、两个写口走 `dock` 写类 op、四颗旋钮浮层互斥、等人的调用带长超时）、`desktop-dock`
+  三个 op 的实现与催拍、**CSS 幽灵令牌差集扫描**。
 - `scripts/ui-status-data-test.mjs` 增 **[8] 21 条**（真内核 + 真 git 仓库）：快照面首读催拍、
   分支名与改动计数同口径、清单当前分支第一、**只读档下切分支被拒**、完全访问下真切 + 快照面
   跟上、建分支、非仓库 `repo: false`。
