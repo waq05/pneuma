@@ -339,15 +339,11 @@
   min-height: 38px;
 }
 
-/* ── composer 工具行：图标之间 12px（dsh InputBar 的动作行），窄于 560px 收到 8px
-   （legacy 是 6px，两颗 chip 贴在一起看不出是两组）。 */
+/* ── composer 工具行：图标之间 12px（dsh InputBar 的动作行）。
+   窄于 560px 收到 8px（legacy 是 6px，两颗 chip 贴在一起看不出是两组）——
+   那一条与输入行的两行化同住「窄屏」那一节，改一行字要一起看。 */
 .composer-bar {
   gap: 12px;
-}
-@media (max-width: 560px) {
-  .composer-bar {
-    gap: 8px;
-  }
 }
 
 /* ── 对话区那几处跟 button 倍率绑定的尺寸，一并固定（去岁那条轴）。 */
@@ -760,7 +756,13 @@
   .app {
     position: relative;
   }
-  .dock-slot {
+  /* 停靠区整块不给（上面那条口径的**落地**）。这里原先打的是 `.dock-slot`，而壳里
+     没有这个类名——规则是死的，手机上照样点得开一个全屏面板，里面四件事
+     （文件 / 终端 / 浏览器 / Git）在远程方法面上一条都调不动，只剩「开始」页那排
+     按不动的入口（2026-10-14 手机报障时就撞在这个死规则上）。开合钮一并藏掉，
+     免得留一颗点了没反应的按钮。桌面窗口 minWidth 是 960，碰不到这一档。 */
+  .dock,
+  .dock-toggle {
     display: none;
   }
   .caption-bar {
@@ -777,6 +779,71 @@
   }
   .sidebar-resizer {
     display: none;
+  }
+}
+
+/* ── 手机那一档（≤560px）：输入区与状态栏 ─────────────────────────────────────
+   为什么另起一档：上面 860 那档管的是「侧栏/停靠区怎么让位」，这一档管的是
+   **一行里塞不下的东西怎么办**——它只对手机成立（桌面窗口最窄 960，碰不到）。 */
+
+/* 输入行改成两行。390px 实测：`+ 权限档 模式档` + 模型 + 发送五颗挤在 286px 里，
+   左组被压到 154px 宽、chip 里的字竖着排（「自定义」一个字一行），整行还溢出 10px。
+   现在左组一行、右组换行贴右，两侧都 min-width:0，挤到极限时裁字而不是换行。 */
+@media (max-width: 560px) {
+  .composer-zone {
+    padding: 0 12px 8px;
+  }
+  .composer-bar {
+    /* gap 从 12 收到 8（原本单列在「composer 工具行」那一节，挪进来一起看）。 */
+    gap: 8px;
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .composer-bar .bar-left,
+  .composer-bar .bar-right {
+    min-width: 0;
+  }
+  /* chip 里的名字是**裸文字节点**（权限档/模式档的名字没包 span），
+     所以不换行这条要写在钮上，靠继承管住它们。 */
+  .model-btn {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  /* 只有鼠标才有意义的两个东西：状态栏那几张悬浮卡（悬停才亮，272px 宽）与正文列
+     两侧的拖宽把手（摆在列缘外 24px）。手机上点不到，却照样参与横向溢出——
+     390px 实测文档被撑到 431px，页面能左右拖 41px，整个界面跟着错位。藏掉之后
+     横向溢出一起消失（这条属于「老内核也有」的真 bug：任何窄屏都会撞上）。 */
+  .statusbar .ctx-card,
+  .thread-handle {
+    display: none;
+  }
+}
+
+/* ══════════ 老内核兜底（认不得某个新函数/新写法的浏览器）══════════
+
+   远程页是给手机看的，对面的内核可能比桌面 Chromium 旧好几年。2026-10-14 手机报障
+   （侧栏与浮层「透明」、文字全一个白度）查下来就是这一档：那个内核不认 `color-mix()`，
+   而整套令牌都由它算出。三条兜底各自落在最能兜住的地方：
+
+   - **`color-mix()`** → `src/legacy-color-fallback.css`（生成物，见
+     `scripts/build-color-fallback.mjs`）。那是「整套调色板」的量级，所以单独成文件、
+     由生成器按 tokens.css 的公式算实色，不手抄。
+   - **`AbortSignal.timeout` / `AbortSignal.any`** → 手写在 `ui-layout/host-channel.ts`
+     里（那句 `is not a function` 会废掉整条界面通道）。
+   - **`inset` 简写**（Chromium 87）→ 下面这几条。写的是「盖住整屏的遮罩」，落不下来
+     就不是难看而是**点得到底下的东西**：遮罩失灵时弹层形同虚设。 */
+
+@supports not (inset: 0) {
+  .dsc-overlay,
+  .menu-backdrop,
+  .pop-mask,
+  .git-dialog-backdrop,
+  .overlay {
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
   }
 }
 

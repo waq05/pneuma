@@ -1,0 +1,113 @@
+/*
+ * 老内核的调色板兜底（**生成物，别手改**）。
+ *
+ * 由 `ui-shell/scripts/build-color-fallback.mjs` 从 `src/legacy/tokens.css` 算出：
+ * 把里面每个 `color-mix()` 令牌按 CSS 规范（预乘 alpha）求成实色，包在
+ * `@supports not (color: color-mix(...))` 里。认不得 `color-mix()` 的内核
+ * （Chromium < 111，手机上的老 WebView 常见）靠这一块拿到整套底色/文字色/描边；
+ * 认得的内核**整块不生效**，主题永远以 tokens.css 为唯一真源。
+ *
+ * 改了 tokens.css 就重跑一次：node ui-shell/scripts/build-color-fallback.mjs
+ * 漂移由 `scripts/ui-color-fallback-test.mjs` 逐字节比对把关。
+ */
+
+@supports not (color: color-mix(in srgb, red, blue)) {
+  :root {
+    --dsc-accent-hover: rgb(106 149 254);
+    --dsc-accent-text: rgb(135 169 253);
+    --dsc-bg-card: rgb(35 35 36);
+    --dsc-bg-page: rgb(21 21 23);
+    --dsc-bg-popover: rgb(44 44 46 / 0.96);
+    --dsc-bg-side: rgb(27 27 28);
+    --dsc-chrome-bar: rgb(21 21 23);
+    --dsc-chrome-symbol: rgb(190 190 192);
+    --dsc-control-active-bg: rgb(249 250 251 / 0.14);
+    --dsc-control-hover-bg: rgb(249 250 251 / 0.08);
+    --dsc-diff-add-bg: rgb(34 197 94 / 0.12);
+    --dsc-diff-remove-bg: rgb(242 90 90 / 0.12);
+    --dsc-fill-primary: rgb(249 250 251 / 0.12);
+    --dsc-fill-quaternary: rgb(249 250 251 / 0.05);
+    --dsc-fill-quinary: rgb(249 250 251 / 0.03);
+    --dsc-fill-secondary: rgb(249 250 251 / 0.09);
+    --dsc-fill-tertiary: rgb(249 250 251 / 0.07);
+    --dsc-row-active-bg: rgb(249 250 251 / 0.14);
+    --dsc-row-hover-bg: rgb(249 250 251 / 0.08);
+    --dsc-scrim: rgb(0 0 0 / 0.4);
+    --dsc-selection-bg: rgb(59 130 246 / 0.4);
+    --dsc-shadow-composer: 0 1px 2px rgb(0 0 0 / 0.05);
+    --dsc-shadow-float: 0 2px 4px -2px rgb(0 0 0 / 0.4),
+    0 8px 12px -6px rgb(0 0 0 / 0.34),
+    0 20px 28px -14px rgb(0 0 0 / 0.3),
+    0 36px 48px -28px transparent;
+    --dsc-shadow-md: 0 0 0 1px rgb(249 250 251 / 0.08),
+    0 4px 16px rgb(0 0 0 / 0.3),
+    0 16px 32px -24px rgb(0 0 0 / 0.5);
+    --dsc-shadow-sm: 0 0 0 1px rgb(249 250 251 / 0.06),
+    0 2px 8px rgb(0 0 0 / 0.24);
+    --dsc-shadow-xs: 0 1px 2px rgb(0 0 0 / 0.05);
+    --dsc-stroke-1: rgb(249 250 251 / 0.2);
+    --dsc-stroke-2: rgb(249 250 251 / 0.16);
+    --dsc-stroke-3: rgb(249 250 251 / 0.12);
+    --dsc-stroke-4: rgb(249 250 251 / 0.06);
+    --dsc-stroke-float: rgb(249 250 251 / 0.03);
+    --dsc-text-primary: rgb(249 250 251);
+    --dsc-text-quaternary: rgb(249 250 251 / 0.47);
+    --dsc-text-scaffold-meta: rgb(249 250 251 / 0.56);
+    --dsc-text-scaffold: rgb(249 250 251 / 0.74);
+    --dsc-text-secondary: rgb(249 250 251 / 0.82);
+    --dsc-text-tertiary: rgb(249 250 251 / 0.66);
+  }
+
+  :root[data-theme='light'] {
+    --dsc-accent-hover: rgb(31 104 253);
+    --dsc-accent-text: rgb(7 65 185);
+    --dsc-bg-card: rgb(253 253 253);
+    --dsc-bg-page: rgb(248 249 254);
+    --dsc-bg-popover: rgb(255 255 255 / 0.96);
+    --dsc-bg-side: rgb(243 247 255);
+    --dsc-chrome-bar: rgb(248 249 254);
+    --dsc-chrome-symbol: rgb(82 82 85);
+    --dsc-composer-fill: rgb(253 253 253 / 0.88);
+    --dsc-control-active-bg: rgb(8 61 170 / 0.126);
+    --dsc-control-hover-bg: rgb(9 60 166 / 0.098);
+    --dsc-diff-add-bg: rgb(31 138 101 / 0.12);
+    --dsc-diff-add-fg: rgb(22 97 71);
+    --dsc-diff-remove-bg: rgb(207 45 86 / 0.12);
+    --dsc-diff-remove-fg: rgb(145 31 60);
+    --dsc-fill-primary: rgb(8 62 175 / 0.244);
+    --dsc-fill-quaternary: rgb(10 57 155 / 0.088);
+    --dsc-fill-quinary: rgb(11 53 141 / 0.059);
+    --dsc-fill-secondary: rgb(8 61 171 / 0.172);
+    --dsc-fill-tertiary: rgb(8 61 170 / 0.126);
+    --dsc-inline-code-bg: rgb(20 20 20 / 0.05);
+    --dsc-inline-code-fg: rgb(20 20 20 / 0.88);
+    --dsc-row-active-bg: rgb(8 61 170 / 0.126);
+    --dsc-row-hover-bg: rgb(10 58 158 / 0.069);
+    --dsc-scrim: rgb(0 0 0 / 0.4);
+    --dsc-scrollbar-thumb-hover: rgb(23 23 26 / 0.2);
+    --dsc-scrollbar-thumb: rgb(23 23 26 / 0.12);
+    --dsc-selection-bg: rgb(255 210 74 / 0.55);
+    --dsc-shadow-composer: 0 1px 2px rgb(0 0 0 / 0.05);
+    --dsc-shadow-float: 0 2px 4px -2px rgb(0 0 0 / 0.07),
+    0 8px 12px -6px rgb(0 0 0 / 0.06),
+    0 20px 28px -14px rgb(0 0 0 / 0.06),
+    0 36px 48px -28px transparent;
+    --dsc-shadow-md: 0 0 0 1px rgb(23 23 26 / 0.08),
+    0 4px 16px rgb(0 0 0 / 0.08),
+    0 16px 32px -24px rgb(0 0 0 / 0.18);
+    --dsc-shadow-sm: 0 0 0 1px rgb(23 23 26 / 0.06),
+    0 2px 8px rgb(0 0 0 / 0.04);
+    --dsc-shadow-xs: 0 1px 2px rgb(0 0 0 / 0.05);
+    --dsc-stroke-1: rgb(6 69 198 / 0.316);
+    --dsc-stroke-2: rgb(6 67 192 / 0.219);
+    --dsc-stroke-3: rgb(7 64 183 / 0.145);
+    --dsc-stroke-4: rgb(7 64 180 / 0.088);
+    --dsc-stroke-float: rgb(23 23 26 / 0.028);
+    --dsc-text-primary: rgb(23 23 26 / 0.94);
+    --dsc-text-quaternary: rgb(23 23 26 / 0.36);
+    --dsc-text-scaffold-meta: rgb(23 23 26 / 0.44);
+    --dsc-text-scaffold: rgb(23 23 26 / 0.64);
+    --dsc-text-secondary: rgb(23 23 26 / 0.74);
+    --dsc-text-tertiary: rgb(23 23 26 / 0.54);
+  }
+}

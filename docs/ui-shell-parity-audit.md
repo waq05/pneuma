@@ -70,6 +70,13 @@
 > 指令式，同物多名收敛；旧渲染层不动）；③ 新增**检查更新**：设置「关于」加三档「自动检查」，
 > 有新版时**品牌行 `Pneuma` 右边出现「更新」按钮**，点它就地下载安装器 → 起安装程序 → 退出
 > 应用（下载与安装归桌面主进程，宿主那侧只管问版本号）。
+> **第二十八批（2026-10-14）**：**手机上的远程页**两处——① 侧栏/浮层点开是**透明的**（老内核不认
+> `color-mix()`，整套令牌失效）：新增生成物 `legacy-color-fallback.css`（由
+> `ui-shell/scripts/build-color-fallback.mjs` 从 `tokens.css` 算实色，包在
+> `@supports not (color: color-mix(...))` 里），同批把 `AbortSignal.timeout/any` 换成手写超时闸、
+> `findLast` 换成基元库替身；② 窄屏（≤560px）**输入行两行化**（chip 不再竖排）、藏掉状态栏悬浮卡
+> 与正文列把手（390px 下文档被它们撑到 431px、页面能左右拖 41px）；顺带把 ≤860px 那条**死规则**
+> （`.dock-slot`，壳里没这个类名）落到 `.dock` + `.dock-toggle` 上——手机上不再给停靠区。
 
 ## 一、侧边栏（旧 `Sidebar.tsx` ↔ `plugins/sessions`）
 

@@ -30,6 +30,7 @@ export * from './icons'
 export * from './plugin-text'
 // 平台层（原 `src/platform/*`，全部与 React/DOM 打交道、不碰槽位与插件 API）。
 export * from './code-view'
+export * from './compat'
 export * from './completion-sound'
 export * from './confirm'
 export * from './css'

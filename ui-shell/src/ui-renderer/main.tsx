@@ -39,6 +39,10 @@ import '../legacy/views.css'
 // 而 xterm 的网格与滚动条要靠它自己的样式表才画得对。放在 legacy 之后、styles.css 之前。
 import '@xterm/xterm/css/xterm.css'
 import '../styles.css'
+// 老内核的调色板兜底（**生成物**，见 ui-shell/scripts/build-color-fallback.mjs）。
+// 必须排在最后：它整块包在 `@supports not (color: color-mix(...))` 里，靠**源码序**压过
+// tokens.css 那批 color-mix 令牌（同特异性，后写的赢）；认得 color-mix 的内核整块不生效。
+import '../legacy-color-fallback.css'
 
 /** 取不到清单时的启动图（空壳 + 一条诊断，比白屏好查）。 */
 const UNAVAILABLE_BOOT: UiBootGraph = {

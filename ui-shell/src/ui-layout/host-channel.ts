@@ -269,35 +269,56 @@ export function createHostChannel(): HostChannel {
     },
     async invoke<T = unknown>(method: string, args: unknown[] = [], options?: InvokeOptions): Promise<T> {
       // 超时与调用方的取消信号合成一个：两件事都要能中断这次 fetch。
+      //
+      // 为什么手写而不是 `AbortSignal.timeout` + `AbortSignal.any`：那两个要 Chromium 103 / 116
+      // （2022-2023）才有，手机上的老 WebView 直接报「AbortSignal.timeout is not a function」——
+      // 一句不认得的函数名会把**整条界面通道**废掉（手机截图里那条报错就是它）。手写的这版在
+      // 任何有 AbortController（Chromium 66+）的内核上都成立。
       const budget = options?.timeoutMs ?? DEFAULT_INVOKE_TIMEOUT_MS
-      const timeout = AbortSignal.timeout(budget)
-      const gate = options?.signal === undefined ? timeout : AbortSignal.any([options.signal, timeout])
-      let response: Response
+      const gate = new AbortController()
+      let timedOut = false
+      const timer = setTimeout(() => {
+        timedOut = true
+        gate.abort()
+      }, budget)
+      const outside = options?.signal
+      const forwardAbort = (): void => {
+        gate.abort()
+      }
+      outside?.addEventListener('abort', forwardAbort)
+      if (outside?.aborted === true) gate.abort()
       try {
-        response = await fetch('/api/invoke', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ method, args }),
-          signal: gate,
-        })
-      } catch (error) {
-        // fetch 被中断时抛的是 AbortError/TimeoutError：换成可识别的类型，调用方不必猜名字。
-        if (gate.aborted) {
-          throw new HostInvokeAbortedError(timeout.aborted ? 'timeout' : 'aborted', budget)
+        let response: Response
+        try {
+          response = await fetch('/api/invoke', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ method, args }),
+            signal: gate.signal,
+          })
+        } catch (error) {
+          // fetch 被中断时抛的是 AbortError：换成可识别的类型，调用方不必猜名字。
+          if (gate.signal.aborted) {
+            throw new HostInvokeAbortedError(timedOut ? 'timeout' : 'aborted', budget)
+          }
+          throw error
         }
-        throw error
+        // 体也要读：读的途中同样受这个闸管（超过预算就中断），所以计时器到这一行之后才收。
+        const payload = (await response.json().catch(() => null)) as
+          | { ok?: boolean; value?: unknown; error?: string }
+          | null
+        if (response.status === 401) {
+          // 凭据已经过期：SSE 那边同样会走到 closed（重连也是 401），这里同步把状态说出来。
+          hostError = payload?.error ?? '界面凭据已失效，请用宿主新打印的地址重开'
+          setStatus('closed')
+        }
+        if (!response.ok) throw new Error(payload?.error ?? `HTTP ${String(response.status)}`)
+        if (payload?.ok !== true) throw new Error(payload?.error ?? '调用失败')
+        return payload.value as T
+      } finally {
+        clearTimeout(timer)
+        outside?.removeEventListener('abort', forwardAbort)
       }
-      const payload = (await response.json().catch(() => null)) as
-        | { ok?: boolean; value?: unknown; error?: string }
-        | null
-      if (response.status === 401) {
-        // 凭据已经过期：SSE 那边同样会走到 closed（重连也是 401），这里同步把状态说出来。
-        hostError = payload?.error ?? '界面凭据已失效，请用宿主新打印的地址重开'
-        setStatus('closed')
-      }
-      if (!response.ok) throw new Error(payload?.error ?? `HTTP ${String(response.status)}`)
-      if (payload?.ok !== true) throw new Error(payload?.error ?? '调用失败')
-      return payload.value as T
     },
     close() {
       stopped = true

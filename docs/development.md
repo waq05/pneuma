@@ -685,6 +685,35 @@ Windows 的最小化/最大化/关闭三个按钮由系统画，样式表够不�
 和它的白字、彩底上的白色图标、开关的白滑块、两处深色遮罩）。要更重或更轻的语义色就用
 `color-mix(in srgb, var(--dsc-*) N%, transparent)` 现调，不要再抄一份十六进制。
 
+### 浏览器底线（界面壳要跑在别人的内核上）
+
+桌面窗口那侧永远是新的 Electron，但**同一份壳产物还要伺服给手机**（远程页 `remote-web`），
+对面的内核可能比桌面旧好几年。2026-10-14 的手机报障就是撞在这条线上：侧栏与浮层点开是
+透明的、跟会话叠在一起、文字全一个白度——根因是那个内核**不认 `color-mix()`**
+（页面里留下的另一条报错 `AbortSignal.timeout is not a function` 把版本钉在 2022 年前后，
+而 `color-mix()` 要 Chromium 111）。
+
+三条规矩，新代码照这个走：
+
+1. **别用「太新」的标准方法**。禁用清单（要就加进 `ui-shell/src/ui-primitives/compat.ts`）：
+   `AbortSignal.timeout` / `AbortSignal.any`、`Array.prototype.findLast` / `findLastIndex`、
+   `toSorted` / `toReversed` / `with`、`structuredClone`、`Object.groupBy`、
+   `Promise.withResolvers`。`?.`/`??`、`String.replaceAll`、`Array.prototype.at`、
+   `Intl.Segmenter`（在用的地方自带 `typeof` 兜底）算在底线之内。
+   `scripts/ui-legacy-compat-test.mjs` 扫源码把这条钉住（带负向验证）。
+2. **`color-mix()` 的兜底是生成物**：`ui-shell/src/legacy-color-fallback.css`，由
+   `node ui-shell/scripts/build-color-fallback.mjs` 从 `tokens.css` 算出实色（预乘 alpha，
+   与浏览器同算法），包在 `@supports not (color: color-mix(...))` 里，入口在 `styles.css`
+   **之后**引入（同特异性靠源码序压过令牌）。**改了 `tokens.css` 就要重跑生成器**——
+   `scripts/ui-color-fallback-test.mjs` 逐字节比对，忘了重跑会红。
+3. **`inset` 简写**（Chromium 87）在整屏遮罩上要有四方向的兜底：`styles.css` 里那条
+   `@supports not (inset: 0)` 点了五张遮罩（`.dsc-overlay` / `.menu-backdrop` / `.pop-mask` /
+   `.git-dialog-backdrop` / `.overlay`）。遮罩失灵不是难看，是**点得到底下的东西**。
+
+窄屏（手机）另有三条已落地的口径，写在 `ui-shell/src/styles.css` 的「窄屏」一节：
+≤860px 侧栏变浮层、停靠区整块不给（含开合钮）；≤560px 输入行改两行、状态栏的悬浮卡与
+正文列把手藏掉（它们参与横向溢出，390px 下会把文档撑到 431px）。
+
 ### 命令与补全（`src/core/commands-completion.ts` + `src/plugins/commands.ts`）
 
 命令表、补全与唯一前缀展开的**单一真源是 `src/core/commands-completion.ts`**——它是顶层

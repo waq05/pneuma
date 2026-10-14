@@ -73,7 +73,7 @@ import { ReviewNoticeCard } from './review-notice-card'
 import { pageStartRound } from './paging'
 // 路径/悬停/完成音/工具摘要口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，
 // 不再内联（E6）——completion-sound 带模块级 AudioContext 单例，重复一份会造出两个。
-import { TOOL_STATUS_TEXT, baseNameOf, displayPathOf, formatTokens, matchTool, oneLine, playCompletionSound, prettyJson, toolSummary, toolVerb, useHoverDelay, type ToolMatch } from '@dsc/ui-primitives'
+import { TOOL_STATUS_TEXT, baseNameOf, displayPathOf, findLast, formatTokens, matchTool, oneLine, playCompletionSound, prettyJson, toolSummary, toolVerb, useHoverDelay, type ToolMatch } from '@dsc/ui-primitives'
 import {
   ChatStatus,
   IntendedBody,
@@ -774,7 +774,8 @@ function SeatBody({
     (sum, row) => (row.entry.kind === 'text' && row.entry.id >= 0 ? sum + estimateTextTokens(row.entry.text) : sum),
     0,
   )
-  const usage = seat.rows.findLast(
+  const usage = findLast(
+    seat.rows,
     (row): row is Row & { entry: Extract<TranscriptEntry, { kind: 'text' | 'tool' }> } =>
       (row.entry.kind === 'text' || row.entry.kind === 'tool') && row.entry.usage !== undefined,
   )?.entry.usage
@@ -1572,7 +1573,7 @@ function SubagentRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'subag
  * `changes` 按路径合并（同文件多刀把增删行数相加、差异段顺次拼起来）。
  */
 function mergeChanges(rows: readonly Row[]): ChangedFileView[] {
-  const turnDiff = rows.findLast((row) => row.entry.kind === 'turnDiff')
+  const turnDiff = findLast(rows, (row) => row.entry.kind === 'turnDiff')
   if (turnDiff !== undefined && turnDiff.entry.kind === 'turnDiff') return turnDiff.entry.files
   const byPath = new Map<string, ChangedFileView>()
   for (const row of rows) {
