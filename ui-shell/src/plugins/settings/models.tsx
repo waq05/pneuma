@@ -60,6 +60,32 @@ function text(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** 连接测试的键：一个「端点 + 模型」一对（同一张卡上多个模型各测各的）。 */
+function probeKeyOf(provider: string, model: string): string {
+  return `${provider}/${model}`
+}
+
+/** 把 `端点/模型` 记的键集按端点切出这张卡那一份（键里只剩模型 id）。 */
+function scopedSet(source: ReadonlySet<string>, provider: string): ReadonlySet<string> {
+  const prefix = `${provider}/`
+  return new Set([...source].filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length)))
+}
+
+/** 同上，给结论表用。 */
+function scopedMap<T>(source: ReadonlyMap<string, T>, provider: string): ReadonlyMap<string, T> {
+  const prefix = `${provider}/`
+  return new Map(
+    [...source].filter(([key]) => key.startsWith(prefix)).map(([key, value]) => [key.slice(prefix.length), value]),
+  )
+}
+
+/** 一次连接测试结论的悬浮说明（图标钮与结论点共用一句话）。 */
+function probeTip(result: ConnectionTestView): string {
+  if (!result.ok) return `没通：${result.error ?? '未知原因'}`
+  const said = result.reply === '' ? '没回正文但流正常收尾' : `回了「${result.reply}」`
+  return `通了 · ${result.model} · ${String(result.ms)} ms · ${said}`
+}
+
 /** token 数输入：认 `128k` / `1m` / 裸数字；认不出给 NaN（调用点按「没填」处理）。 */
 function parseTokenCount(raw: string): number {
   const trimmed = raw.trim().toLowerCase()
@@ -165,14 +191,17 @@ export function ModelsGroup(): ReactNode {
    */
   const [discovering, setDiscovering] = useState<ReadonlySet<string>>(() => new Set())
   /**
-   * 正在测连接的端点（同样按端点记，理由与 discovering 一样：一张卡的按钮不许让别人跟着转）。
+   * 正在测连接的那几个（键是 `端点/模型`）。
+   *
+   * 测试是**按模型**做的：同一张卡上两个模型各测各的，谁也不许让谁的按钮跟着转
+   * （沿用第十八批「忙碌态按对象记」那条教训）。
    */
   const [testing, setTesting] = useState<ReadonlySet<string>>(() => new Set())
   /**
-   * 每个端点最近一次连接测试的结论（就地留在卡上）。
+   * 每个「端点/模型」最近一次连接测试的结论（就地留在那个模型后面）。
    *
-   * 为什么留着而不是只闪一条提示：「312ms 通了 / 没通：HTTP 401…」是配置页最该看见的
-   * 一行字，一闪而过的 Toast 看完就没了；同一次测试里失败也要留（失败原因比成功更需要回头看）。
+   * 为什么留着而不是只闪一条提示：「21ms 通了 / 没通：HTTP 401…」是配置页最该看见的一行字，
+   * 一闪而过的 Toast 看完就没了；失败也要留（失败原因比成功更需要回头看）。
    */
   const [probed, setProbed] = useState<ReadonlyMap<string, ConnectionTestView>>(() => new Map())
   /** 已经配过的模型（别的端点里同 id 的那份能力），拉清单时优先照抄它。 */
@@ -259,36 +288,34 @@ export function ModelsGroup(): ReactNode {
   }
 
   /**
-   * 测一次端点连接：宿主拿这个端点**真发一次**最小对话请求（走与正常对话同一条链路：
-   * 同协议适配器、同一份端点要的请求头），所以结论就是「现在发一条消息会不会失败」。
+   * 测一次「这个端点 + 这个模型」的连接：宿主拿它**真发一次**最小对话请求（走与正常对话
+   * 同一条链路：同协议适配器、同一份端点要的请求头），所以结论就是「用它发一条消息会不会失败」。
    *
-   * 测哪个模型不在这里挑：宿主按「默认端点用它配置的默认模型，其余取清单第一个」自己定，
-   * 结果里会把实际测的那个带回来（界面写出来，用户才知道刚才测的是什么）。
+   * 测试按模型做（用户点的是某个模型后面那颗钮），结论也留在这个模型后面。
    */
-  const probe = (provider: string): void => {
-    setTesting((current) => new Set(current).add(provider))
+  const probe = (provider: string, model: string): void => {
+    const key = probeKeyOf(provider, model)
+    setTesting((current) => new Set(current).add(key))
     void channel
-      .invoke<ConnectionTestView>('testConnection', [provider])
+      .invoke<ConnectionTestView>('testConnection', [provider, model])
       .then((result) => {
-        setProbed((current) => new Map(current).set(provider, result))
+        setProbed((current) => new Map(current).set(key, result))
         if (result.ok) {
           const said = result.reply === '' ? '没回正文但流正常收尾' : `回了「${result.reply}」`
-          toastOk(`${provider} 通了：${result.model} ${said}（${String(result.ms)} ms）`)
+          toastOk(`${provider}/${model} 通了：${said}（${String(result.ms)} ms）`)
         } else {
-          toastErr(`${provider} 没通：${result.error ?? '未知原因'}`)
+          toastErr(`${provider}/${model} 没通：${result.error ?? '未知原因'}`)
         }
       })
       .catch((error: unknown) => {
-        // reject = 连请求都没发出去（端点没了 / 没模型 / 没 key）：也留在卡上，别只闪一条提示
-        setProbed((current) =>
-          new Map(current).set(provider, { ok: false, model: '', ms: 0, reply: '', error: text(error) }),
-        )
+        // reject = 连请求都没发出去（端点没了 / 没模型 / 没 key）：也留在那个模型后面，别只闪一条提示
+        setProbed((current) => new Map(current).set(key, { ok: false, model, ms: 0, reply: '', error: text(error) }))
         toastErr(`测试失败：${text(error)}`)
       })
       .finally(() => {
         setTesting((current) => {
           const next = new Set(current)
-          next.delete(provider)
+          next.delete(key)
           return next
         })
       })
@@ -421,8 +448,8 @@ export function ModelsGroup(): ReactNode {
           defaultModel={config.defaultModel}
           editable={editable}
           discovering={discovering.has(provider.name)}
-          testing={testing.has(provider.name)}
-          probed={probed.get(provider.name)}
+          testing={scopedSet(testing, provider.name)}
+          probed={scopedMap(probed, provider.name)}
           keyOpen={keyFor === provider.name}
           keyValue={keyValue}
           draft={editingProvider === provider.name ? draft : null}
@@ -457,8 +484,8 @@ export function ModelsGroup(): ReactNode {
           onDiscover={() => {
             discover(provider.name)
           }}
-          onProbe={() => {
-            probe(provider.name)
+          onProbe={(model) => {
+            probe(provider.name, model)
           }}
           onEdit={() => {
             setDraft({
@@ -552,8 +579,11 @@ export function ModelsGroup(): ReactNode {
 }
 
 /**
- * 一张端点卡片：只读信息（名字 / 地址 / 密钥状态）+ 动作（密钥 / 拉取清单 / 测试连接 / 编辑 / 删除）
- * + 就地长出的编辑表单、快捷密钥行、最近一次连接测试的结论。
+ * 一张端点卡片：只读信息（名字 / 地址 / 密钥状态）+ 动作（密钥 / 拉取清单 / 编辑 / 删除，
+ * **只画图标**，名字在悬浮说明里）+ 就地长出的编辑表单、快捷密钥行。
+ *
+ * 「测试连接」不在这排动作里：它挨个挂在**具体模型**后面（用户要知道的是「这一条路能不能
+ * 通」），结论也留在这个模型后面。
  *
  * 只读档（浏览器里没有桥）里改配置的按钮**不画**（不是画成灰的）——页首已经有一条说明
  * 讲清为什么，摆四个点不动的按钮只会让人一个个去试。「测试连接」不在此列：它走界面通道
@@ -565,10 +595,10 @@ function ProviderCard(props: {
   defaultModel: string
   editable: boolean
   discovering: boolean
-  /** 这个端点正在测连接（按钮显示「测试中…」）。 */
-  testing: boolean
-  /** 这个端点最近一次连接测试的结论；undefined = 还没测过。 */
-  probed: ConnectionTestView | undefined
+  /** 这张卡上正被测的模型 id（那些模型后面的钮显示「测试中」）。 */
+  testing: ReadonlySet<string>
+  /** 这张卡上各模型的最近一次测试结论，键是模型 id；缺 = 那个模型还没测过。 */
+  probed: ReadonlyMap<string, ConnectionTestView>
   keyOpen: boolean
   keyValue: string
   draft: ProviderDraft | null
@@ -582,7 +612,7 @@ function ProviderCard(props: {
   onClearKey(): void
   onSetDefault(model: string): void
   onDiscover(): void
-  onProbe(): void
+  onProbe(model: string): void
   onEdit(): void
   onRemove(): void
 }): ReactNode {
@@ -602,70 +632,40 @@ function ProviderCard(props: {
           <div className="provider-sub mono" title={provider.baseUrl}>
             {provider.baseUrl}
           </div>
-          {/* 最近一次连接测试的结论：就地留着（成功也留——「312ms 通了」比一闪而过的提示有用）。 */}
-          {props.probed !== undefined ? (
-            <div
-              className={`provider-probe${props.probed.ok ? ' ok' : ' bad'}`}
-              data-probe={props.probed.ok ? 'ok' : 'fail'}
-              data-tip={
-                props.probed.ok
-                  ? `刚测过：${props.probed.model} 这条路走通了`
-                  : '换个端点/模型/密钥都可能好；改完记得先保存再测（测的是已保存的配置）'
-              }
-            >
-              {props.probed.ok ? '✓ 通了' : '✗ 没通'}
-              {props.probed.model === '' ? '' : ` · ${props.probed.model}`}
-              {props.probed.ok ? ` · ${String(props.probed.ms)} ms` : ''}
-              {props.probed.ok ? '' : ` · ${props.probed.error ?? '未知原因'}`}
-            </div>
-          ) : null}
         </div>
         <div className="provider-actions">
+          {/* 这一排**只画图标**（名字在悬浮说明里）：卡片本来就窄，五颗带字的钮挤在右边
+              会把端点地址压成一截省略号。 */}
           {props.editable ? (
             <button
               type="button"
-              className={`text-btn${provider.keyConfigured ? ' ok' : ' warn'}`}
-              data-tip={keyStatusTip}
+              className={`icon-btn${provider.keyConfigured ? ' ok' : ' warn'}`}
+              data-tip={`${provider.keyConfigured ? '密钥已配置' : '填写密钥'} · ${keyStatusTip}`}
               onClick={props.onOpenKey}
             >
-              <IconKey size={13} /> {provider.keyConfigured ? '密钥已配置' : '填写密钥'}
+              <IconKey size={14} />
             </button>
           ) : (
-            <span className={`text-btn${provider.keyConfigured ? ' ok' : ' warn'}`} data-tip={keyStatusTip}>
-              <IconKey size={13} /> {provider.keyConfigured ? '密钥已配置' : '密钥未配置'}
+            <span className={`icon-btn${provider.keyConfigured ? ' ok' : ' warn'}`} data-tip={keyStatusTip}>
+              <IconKey size={14} />
             </span>
           )}
           <button
             type="button"
-            className="text-btn"
-            data-tip="从端点拉取线上可用模型清单"
+            className="icon-btn"
+            data-tip={props.discovering ? '正在拉取线上模型清单…' : '拉取清单 · 从端点拉取线上可用模型清单'}
             disabled={props.discovering}
             onClick={props.onDiscover}
           >
-            {props.discovering ? '拉取中…' : '拉取清单'}
-          </button>
-          {/* 与「拉取清单」的分工：那个只证明地址可达，这个证明 key / 模型 / 协议 / 端点要的头
-              这一整套现在能用（走的是与正常对话同一条链路）。测完的结论留在卡上。 */}
-          <button
-            type="button"
-            className="text-btn"
-            data-tip={
-              props.draft === null
-                ? '拿这个端点真发一次最小请求（与正常对话同一条链路），看现在能不能通'
-                : '测的是**已保存**的配置：表单里的改动要先保存，再测'
-            }
-            disabled={props.testing}
-            onClick={props.onProbe}
-          >
-            <IconBolt size={13} /> {props.testing ? '测试中…' : '测试连接'}
+            <IconRefresh size={14} />
           </button>
           {props.editable ? (
             <>
-              <button type="button" className="text-btn" data-tip="编辑这个端点" onClick={props.onEdit}>
-                <IconEdit size={13} /> 编辑
+              <button type="button" className="icon-btn" data-tip="编辑这个端点" onClick={props.onEdit}>
+                <IconEdit size={14} />
               </button>
-              <button type="button" className="text-btn danger" data-tip="删除这个端点" onClick={props.onRemove}>
-                <IconTrash size={13} /> 删除
+              <button type="button" className="icon-btn danger" data-tip="删除这个端点" onClick={props.onRemove}>
+                <IconTrash size={14} />
               </button>
             </>
           ) : null}
@@ -713,28 +713,63 @@ function ProviderCard(props: {
           // 没配密钥的端点不会注册进运行期配置，宿主会拒收「设为默认」——这一类不给可点的钮，
           // 免得用户点了才吃一句奇怪的报错；如实画成不可用，悬浮说明里讲清为什么。
           const usable = provider.keyConfigured
+          const busy = props.testing.has(model.id)
+          const result = props.probed.get(model.id)
           return (
-            <button
-              key={model.id}
-              type="button"
-              className={`model-chip${isDefault ? ' on' : ''}`}
-              disabled={!usable}
-              data-model-chip={model.id}
-              data-tip={
-                usable
-                  ? `${model.id} · ${modelCapsSummary(model)}${isDefault ? ' · 当前默认模型' : ' · 点一下设为默认模型'}`
-                  : `${model.id} · ${modelCapsSummary(model)} · 该端点没配密钥（${provider.keyRef}），暂不能设为默认`
-              }
-              onClick={() => {
-                props.onSetDefault(model.id)
-              }}
-            >
-              {model.name === '' ? model.id : model.name}
-              {model.contextWindow > 0 ? <span className="ctx">{Math.round(model.contextWindow / 1000)}k</span> : null}
-              {model.modalities.includes('image') ? <span className="cap-badge">图</span> : null}
-              {model.modalities.includes('video') ? <span className="cap-badge">视频</span> : null}
-              {model.thinkingLevels.length === 0 ? <span className="cap-badge dim">无思考</span> : null}
-            </button>
+            <span className="model-slot" key={model.id}>
+              <button
+                type="button"
+                className={`model-chip${isDefault ? ' on' : ''}`}
+                disabled={!usable}
+                data-model-chip={model.id}
+                data-tip={
+                  usable
+                    ? `${model.id} · ${modelCapsSummary(model)}${isDefault ? ' · 当前默认模型' : ' · 点一下设为默认模型'}`
+                    : `${model.id} · ${modelCapsSummary(model)} · 该端点没配密钥（${provider.keyRef}），暂不能设为默认`
+                }
+                onClick={() => {
+                  props.onSetDefault(model.id)
+                }}
+              >
+                {model.name === '' ? model.id : model.name}
+                {model.contextWindow > 0 ? <span className="ctx">{Math.round(model.contextWindow / 1000)}k</span> : null}
+                {model.modalities.includes('image') ? <span className="cap-badge">图</span> : null}
+                {model.modalities.includes('video') ? <span className="cap-badge">视频</span> : null}
+                {model.thinkingLevels.length === 0 ? <span className="cap-badge dim">无思考</span> : null}
+              </button>
+              {/* 测试连接挂在**这个模型**后面（不是卡片那排动作里）：用户要知道的是「这一条路
+                  能不能通」。与「拉取清单」的分工：那个只证明地址可达，这个证明 key / 模型 /
+                  协议 / 端点要的头这一整套（走的是与正常对话同一条链路）。结论留在它后面。 */}
+              <button
+                type="button"
+                className={`icon-btn model-probe${busy ? ' busy' : ''}`}
+                data-probe-model={model.id}
+                disabled={!usable || busy}
+                data-tip={
+                  !usable
+                    ? `该端点没配密钥（${provider.keyRef}），测不了`
+                    : busy
+                      ? `正在测 ${model.id}…`
+                      : `测试连接 · 拿 ${model.id} 真发一次最小请求（与正常对话同一条链路）` +
+                        (props.draft === null ? '' : '。测的是已保存的配置：表单里的改动要先保存')
+                }
+                onClick={() => {
+                  props.onProbe(model.id)
+                }}
+              >
+                <IconBolt size={12} />
+              </button>
+              {result === undefined ? null : (
+                <span
+                  className={`probe-badge${result.ok ? ' ok' : ' bad'}`}
+                  data-probe={result.ok ? 'ok' : 'fail'}
+                  data-probe-model={model.id}
+                  data-tip={probeTip(result)}
+                >
+                  {result.ok ? '✓' : '✗'}
+                </span>
+              )}
+            </span>
           )
         })}
         {provider.models.length === 0 ? (

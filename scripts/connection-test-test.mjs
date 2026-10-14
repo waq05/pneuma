@@ -179,17 +179,36 @@ console.log('\n[5] 接线钉（源码）')
   check('宿主实现：结果里带上是哪个模型', settings.includes('return { ...outcome, model: pick }'))
   check('运行时透传到设置服务', /async testConnection\(provider, model\) \{\s*return ctx\.settings\.testConnection\(provider, model\)/.test(runtime))
   check('旧桌面版的桥也有这一站（RuntimeProxy 是 keyof DscRuntime 的映射）', bridge.includes("testConnection: (provider, model) => call<ConnectionTestView>('testConnection', provider, model)"))
-  check('界面：卡片上的按钮（图标 + 测中态）', models.includes("props.testing ? '测试中…' : '测试连接'") && models.includes('<IconBolt size={13} />'))
-  check('界面：按钮说的是「已保存的配置」（表单改了要先存）', models.includes('测的是**已保存**的配置'))
-  check('界面：走的是界面通道（不是原生桥——浏览器里也能点）', models.includes(".invoke<ConnectionTestView>('testConnection', [provider])"))
-  check('界面：挨个端点记「正在测」（一张卡的按钮不许让别人跟着转）', models.includes('new Set(current).add(provider)'))
-  check('界面：结论就地留在卡上（成功与失败都留）', models.includes('setProbed((current) => new Map(current).set(provider, result))'))
-  check('界面：reject 也算结论留下来（连请求都没发出去的那种）', models.includes("{ ok: false, model: '', ms: 0, reply: '', error: text(error) }"))
-  check('界面：结果行画在卡片上且带成功/失败标记', models.includes('provider-probe${props.probed.ok ? \' ok\' : \' bad\'}') && models.includes("data-probe={props.probed.ok ? 'ok' : 'fail'}"))
+  check('界面：测试钮挂在**具体模型**后面（不是卡片那排动作里）', models.includes('data-probe-model={model.id}') && models.includes('props.onProbe(model.id)'))
+  check('界面：模型那一格把芯片、测试钮、结论点收在一起', models.includes('<span className="model-slot" key={model.id}>'))
+  check('界面：一次只转一个模型（按「端点/模型」记忙碌态）', models.includes('new Set(current).add(key)') && models.includes("next.delete(key)"))
+  check('界面：走的是界面通道（不是原生桥——浏览器里也能点）', models.includes(".invoke<ConnectionTestView>('testConnection', [provider, model])"))
+  check('界面：结论就地留在那个模型后面（成功与失败都留）', models.includes('new Map(current).set(key, result)'))
+  check('界面：reject 也算结论留下来（连请求都没发出去的那种）', models.includes("{ ok: false, model, ms: 0, reply: '', error: text(error) }"))
+  check('界面：结论点带成功/失败标记 + 读数进悬浮说明', models.includes("probe-badge${result.ok ? ' ok' : ' bad'}") && models.includes("data-probe={result.ok ? 'ok' : 'fail'}") && models.includes('data-tip={probeTip(result)}'))
+  // 用户 2026-10-14 追加的两条：按钮挪到模型后面 + 只留图标（名字进悬浮说明）
+  check('界面：动作排**只画图标**（名字在悬浮说明里）',
+    /<IconKey size=\{14\} \/>\s*<\/button>/.test(models) &&
+      /<IconRefresh size=\{14\} \/>\s*<\/button>/.test(models) &&
+      /<IconEdit size=\{14\} \/>\s*<\/button>/.test(models) &&
+      /<IconTrash size=\{14\} \/>\s*<\/button>/.test(models))
+  check('界面：那四颗钮的名字都进了 data-tip（悬停才出）',
+    models.includes('拉取清单 · 从端点拉取线上可用模型清单') &&
+      models.includes('data-tip="编辑这个端点"') &&
+      models.includes('data-tip="删除这个端点"') &&
+      models.includes("'密钥已配置' : '填写密钥'"))
+  check('界面：旧的带字动作按钮已经不画了（拉取中… / 编辑 / 删除 这些字不再出现在按钮里）',
+    !models.includes("'拉取中…' : '拉取清单'") && !models.includes('<IconEdit size={13} /> 编辑') && !models.includes('<IconTrash size={13} /> 删除'))
+  check('界面：模型后面那颗钮没密钥/正在测时按不动', models.includes('disabled={!usable || busy}'))
+  check('界面：卡片级那条结论行已经撤了（结论跟着模型走）', !models.includes('provider-probe') && !views.includes('.provider-probe'))
+  check('样式：图标钮 24px 见方（只留图标时命中区不能跟着变小）+ 悬停换底色用令牌',
+    /\.icon-btn\s*\{[^}]*width: 24px;[^}]*height: 24px;/.test(views) && /\.icon-btn:hover:not\(:disabled\)\s*\{[^}]*var\(--dsc-control-hover-bg\)/.test(views))
+  check('样式：模型后面那颗测试钮更小更淡（一排芯片挂一串亮 Bolt 会很吵）',
+    /\.model-probe\s*\{[^}]*width: 20px;/.test(views) && /\.model-probe\s*\{[^}]*var\(--dsc-text-quaternary\)/.test(views))
   check('样式：成功绿、失败红都用令牌（没有硬编码色值）',
-    /\.provider-probe\.ok\s*\{[^}]*var\(--dsc-green\)/.test(views) &&
-      /\.provider-probe\.bad\s*\{[^}]*var\(--dsc-red\)/.test(views) &&
-      !/\.provider-probe[^{]*\{[^}]*#[0-9a-fA-F]{3,8}/.test(views))
+    /\.probe-badge\.ok\s*\{[^}]*var\(--dsc-green\)/.test(views) &&
+      /\.probe-badge\.bad\s*\{[^}]*var\(--dsc-red\)/.test(views) &&
+      !/\.(icon-btn|model-probe|probe-badge|model-slot)[^{]*\{[^}]*#[0-9a-fA-F]{3,8}/.test(views))
 }
 
 // ── 6. 真端到端：真内核 + 本地假端点 ──────────────────────────────────────────

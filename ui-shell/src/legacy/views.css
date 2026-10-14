@@ -5520,27 +5520,89 @@ body.resizing iframe {
   white-space: nowrap;
 }
 
-/* 连接测试的结论：就地留在卡片上。成功绿、失败红；失败那行常带端点回的原文，
-   允许换行（上面那行地址是 nowrap + 省略号，这行不能跟着截）。 */
-.provider-probe {
-  margin-top: 4px;
-  font-size: var(--dsc-fs-tool);
-  line-height: 1.5;
-  word-break: break-word;
+/* 只画图标的动作钮：名字进悬浮说明（卡片就这点宽度，五颗带字的钮会把端点地址挤成一截省略号）。
+   尺寸给足 24px 见方——只有图标时命中区不能跟着字一起变小。 */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dsc-r-control);
+  background: transparent;
+  color: var(--dsc-text-tertiary);
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
 }
 
-.provider-probe.ok {
+.icon-btn:hover:not(:disabled) {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-accent);
+}
+
+.icon-btn:disabled {
+  color: var(--dsc-text-quaternary);
+  cursor: default;
+}
+
+.icon-btn.ok {
   color: var(--dsc-green);
 }
 
-.provider-probe.bad {
+.icon-btn.warn {
+  color: var(--dsc-yellow);
+}
+
+.icon-btn.danger:hover:not(:disabled) {
+  color: var(--dsc-red);
+}
+
+/* 模型那一格：芯片 + 它自己的「测试连接」钮 + 结论点（结论跟着芯片走，不另起一行）。 */
+.model-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 挂在模型后面的测试钮：平时淡，悬停才亮（一排芯片后面挂着一串 Bolt 会很吵）。 */
+.model-probe {
+  width: 20px;
+  height: 20px;
+  color: var(--dsc-text-quaternary);
+}
+
+.model-probe:hover:not(:disabled) {
+  color: var(--dsc-accent);
+}
+
+/* 测试结论：一个点（✓/✗），读数在悬浮说明里。 */
+.probe-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--dsc-r-pill);
+  font-size: var(--dsc-fs-micro);
+  cursor: default;
+}
+
+.probe-badge.ok {
+  color: var(--dsc-green);
+}
+
+.probe-badge.bad {
   color: var(--dsc-red);
 }
 
 .provider-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  /* 一排图标钮，间距收到 4px（原来 10px 是给带字的钮留的） */
+  gap: 4px;
   flex: none;
 }
 
