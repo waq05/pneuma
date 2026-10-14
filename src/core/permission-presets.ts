@@ -94,6 +94,19 @@ export function findPermissionPreset(name: string): PermissionPreset | null {
 }
 
 /**
+ * 派生状态（三项拼不成任何预设）在界面上读作什么。
+ *
+ * 为什么不是一句通用的「自定义」：审阅者是 AI 复核时，这个组合的实际含义就是
+ * 「先过 AI 审查」——那是用户此刻真正关心的那件事，说「自定义」等于什么都没说。
+ * 其余组合（只改了沙箱档位或权限模式）没有这样一个更具体的名字，才回落「自定义」。
+ *
+ * 名字只用于**显示**：`custom` 仍然不是可选项，写口 `use('custom')` 照旧拒。
+ */
+export function derivedPresetLabel(reviewer: ApprovalReviewer): string {
+  return reviewer === 'auto-review' ? 'AI 审查' : '自定义'
+}
+
+/**
  * 把一组实际取值映射回预设名；没有任何预设匹配就返回 {@link CUSTOM_PERMISSION_PRESET}。
  *
  * 判据是三项全等：用户可以在设置页把三根旋钮拼成任意组合，只有恰好落在某个预设上

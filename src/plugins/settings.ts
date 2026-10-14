@@ -44,6 +44,7 @@ import {
 } from '../core/config-store.js'
 import { DSC_SKILLS_DIR } from '../core/skills.js'
 import { checkForUpdate, UPDATE_CHECK_URL } from '../core/update-check.js'
+import { derivedPresetLabel } from '../core/permission-presets.js'
 import { DEFAULT_MARKET_SOURCES, readPrefs, writePrefs, type DscPrefs } from '../core/prefs.js'
 import { KERNEL_API_VERSION } from '../core/plugin-registry.js'
 import { DSC_PLUGINS_DIR } from '../core/plugin-loader.js'
@@ -66,9 +67,9 @@ const TEMPERATURE_OPTIONS = [
 ]
 
 const POLICY_OPTIONS = [
-  { value: 'readonly', label: '只读，编辑与命令都要批准' },
-  { value: 'auto-edit', label: '自动编辑，命令仍要批准' },
-  { value: 'full-access', label: '完全访问，不再询问' },
+  { value: 'readonly', label: '只读（都要批准）' },
+  { value: 'auto-edit', label: '自动编辑（命令要批准）' },
+  { value: 'full-access', label: '完全访问（不再询问）' },
 ]
 
 const REVIEWER_OPTIONS = [
@@ -204,16 +205,19 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
       fields(): SettingsField[] {
         return [
           // 打包预设排在两个单旋钮之前：它是「一次定三个」的快捷方式，
-          // 下面的权限模式 / 审阅者 / 设置→沙箱的档位是逐格的细调（拼出非预设组合时上面读作「自定义」）。
+          // 下面的权限模式 / 审阅者 / 设置→沙箱的档位是逐格的细调（拼出非预设组合时上面读作派生值）。
           {
             type: 'select',
             key: 'permissionPreset',
             label: '权限预设',
             options: ctx.get('permissionPresets')?.surface().options.map((item) => ({ value: item.name, label: item.label })) ?? [],
-            help: '沙箱 + 权限模式 + 审阅者三合一的快捷档；逐格改下面两项与沙箱档位会落到「自定义」',
+            // 三项拼不成任何预设时是派生值 `custom`：它不是可选项，这一行会置灰只读，
+            // 显示名由 values 的 permissionPresetName 给（AI 复核 → 「AI 审查」，其余 → 「自定义」）。
+            derivedLabelKey: 'permissionPresetName',
+            help: '三项捆成一个快捷档；改动下面任一项就离开预设档（这一行会置灰只读）',
           },
-          { type: 'select', key: 'policy', label: '权限模式', options: POLICY_OPTIONS, help: '工具执行前是否需要人工批准；改动同时存为下次启动的默认' },
-          { type: 'select', key: 'reviewer', label: '审阅者', options: REVIEWER_OPTIONS, help: '要问的事先给谁看：本人点卡，或先给模型判官（判不出来仍会问你）' },
+          { type: 'select', key: 'policy', label: '权限模式', options: POLICY_OPTIONS, help: '要不要问：哪些操作必须先经你同意' },
+          { type: 'select', key: 'reviewer', label: '审阅者', options: REVIEWER_OPTIONS, help: '谁来裁：要问的事先给本人，还是先给模型判官（判不出来仍会问你）' },
           { type: 'select', key: 'effort', label: '思考强度', options: EFFORT_OPTIONS, help: '越高思考越深，耗时与用量也越大' },
           { type: 'select', key: 'temperature', label: '采样温度', options: TEMPERATURE_OPTIONS, help: '越高越发散，越低越稳定' },
           {
@@ -226,8 +230,12 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
         ]
       },
       values(): Values {
+        const presetName = ctx.get('permissionPresets')?.name ?? 'custom'
         return {
-          permissionPreset: ctx.get('permissionPresets')?.name ?? 'custom',
+          permissionPreset: presetName,
+          // 派生状态的显示名：命中出厂预设时留空（下拉照常显示预设名）；没命中时给个人话名字
+          // （审阅者是 AI 复核 → 「AI 审查」，其余 → 「自定义」；规则住在预设表那边）。
+          permissionPresetName: presetName === 'custom' ? derivedPresetLabel(ctx.approval.reviewer) : '',
           policy: ctx.approval.policy,
           reviewer: ctx.approval.reviewer,
           effort: ctx.llm.effort,

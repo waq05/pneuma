@@ -481,11 +481,33 @@ function GenericFields({ section, extra }: { section: SettingsSectionView; extra
     }
     if (field.type === 'select') {
       const current = String(values[field.key] ?? '')
+      const listed = current === '' || field.options.some((option) => option.value === current)
+      // 派生值（如权限预设的 `custom`）：宿主给了显示名，说明它是「拼出来的状态」而不是
+      // 认不出的脏值——这种值选不了，所以这一行置灰只读，别画成能点开的下拉。
+      const derivedLabel = field.derivedLabelKey === undefined ? '' : String(values[field.derivedLabelKey] ?? '')
+      if (!listed && derivedLabel !== '') {
+        return (
+          <div className="setting-row" key={field.key}>
+            <div className="setting-text">
+              <div className="setting-label">{field.label}</div>
+              {field.help === undefined ? null : <div className="setting-help">{field.help}</div>}
+            </div>
+            <div className="setting-control">
+              <Select
+                className="setting-select"
+                ariaLabel={field.label}
+                value={current}
+                displayLabel={derivedLabel}
+                disabled
+                options={field.options}
+                onPick={() => undefined}
+              />
+            </div>
+          </div>
+        )
+      }
       // 宿主返回了选项外的值也要看得见，不能悄悄显示成第一项。
-      const options =
-        current === '' || field.options.some((option) => option.value === current)
-          ? field.options
-          : [...field.options, { value: current, label: `${current} · 未识别` }]
+      const options = listed ? field.options : [...field.options, { value: current, label: `${current} · 未识别` }]
       return (
         <div className="setting-row" key={field.key}>
           <div className="setting-text">
@@ -499,6 +521,9 @@ function GenericFields({ section, extra }: { section: SettingsSectionView; extra
               value={current}
               options={options}
               onPick={(next) => {
+                // 选到当前值不提交：下拉里可能混着「派生值」那一条（选它会被宿主拒），
+                // 重复选当前项本来也无事可做。
+                if (next === current) return
                 commit(field.key, next)
               }}
             />

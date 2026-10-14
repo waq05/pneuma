@@ -813,11 +813,32 @@ function ConfigFields({ section, onAction }: { section: SettingsSectionView; onA
     }
     if (field.type === 'select') {
       const current = String(values[field.key] ?? '')
+      const listed = current === '' || field.options.some((option) => option.value === current)
+      // 派生值（宿主给了显示名）选不了，这一行置灰只读——与设置面板那份同构渲染同款。
+      const derivedLabel = field.derivedLabelKey === undefined ? '' : String(values[field.derivedLabelKey] ?? '')
+      if (!listed && derivedLabel !== '') {
+        return (
+          <div className="setting-row" key={field.key}>
+            <div className="setting-text">
+              <div className="setting-label">{field.label}</div>
+              {field.help === undefined ? null : <div className="setting-help">{field.help}</div>}
+            </div>
+            <div className="setting-control">
+              <Select
+                className="setting-select"
+                ariaLabel={field.label}
+                value={current}
+                displayLabel={derivedLabel}
+                disabled
+                options={field.options}
+                onPick={() => undefined}
+              />
+            </div>
+          </div>
+        )
+      }
       // 宿主返回了选项外的值也要看得见，不能悄悄显示成第一项。
-      const options =
-        current === '' || field.options.some((option) => option.value === current)
-          ? field.options
-          : [...field.options, { value: current, label: `${current} · 未识别` }]
+      const options = listed ? field.options : [...field.options, { value: current, label: `${current} · 未识别` }]
       return (
         <div className="setting-row" key={field.key}>
           <div className="setting-text">
@@ -831,6 +852,7 @@ function ConfigFields({ section, onAction }: { section: SettingsSectionView; onA
               value={current}
               options={options}
               onPick={(next) => {
+                if (next === current) return
                 commit(field.key, next)
               }}
             />

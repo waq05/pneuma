@@ -1310,7 +1310,21 @@ export interface SettingsOption {
 export type SettingsField =
   | { type: 'text'; key: string; label: string; placeholder?: string; help?: string; mono?: boolean; group?: string }
   | { type: 'number'; key: string; label: string; min?: number; max?: number; step?: number; help?: string; group?: string }
-  | { type: 'select'; key: string; label: string; options: SettingsOption[]; help?: string; group?: string }
+  /**
+   * 下拉。`derivedLabelKey` 是给**派生值**用的：当前值不在 `options` 里时（如权限预设的
+   * `custom`——它是三根旋钮拼出来的状态，不是可选项），壳去 `values[derivedLabelKey]` 读
+   * 显示名，并把这一行渲染成**置灰只读**。派生值本来就选不了（宿主 `use('custom')` 会当场拒），
+   * 画成能点的下拉只会让人以为能选、点了还报错。
+   */
+  | {
+      type: 'select'
+      key: string
+      label: string
+      options: SettingsOption[]
+      derivedLabelKey?: string
+      help?: string
+      group?: string
+    }
   | { type: 'switch'; key: string; label: string; help?: string; group?: string }
   | { type: 'info'; label?: string; text: string; mono?: boolean; copyable?: boolean; help?: string; group?: string }
   | { type: 'button'; action: string; label: string; style?: 'primary' | 'ghost'; help?: string; group?: string }

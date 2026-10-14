@@ -14,6 +14,8 @@
  *   [3] 纯逻辑：findPermissionPreset 认不出返回 null（custom 是推导状态、不是可选项）
  *   [4] 形态钉：写口只调 setMode / setPolicy / setReviewer；不认识的预设名当场抛错；
  *       沙箱插件缺席时明说那一半没落地
+ *   [5] 派生状态的显示名：derivedPresetLabel 的两位取值 + 契约/宿主/壳三处的接线
+ *       （壳那两份同构渲染跨了层，但钉的是同一条显示规则，放一起才看得见漂移）
  *
  * 运行：node scripts/permission-presets-test.mjs
  *
@@ -29,6 +31,7 @@ const {
   CUSTOM_PERMISSION_PRESET,
   findPermissionPreset,
   matchPermissionPreset,
+  derivedPresetLabel,
 } = presets
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -124,6 +127,39 @@ console.log('[4] 形态钉：插件那半只做组合，不放宽安全（src/pl
   check('provide 的是 permissionPresets', code.includes("provide: 'permissionPresets'"))
   // 表来自纯表模块，不在插件里另抄一份（两边各写一份迟早会漂）。
   check('预设表来自 core/permission-presets（不另抄一份）', code.includes('BUILTIN_PERMISSION_PRESETS') && code.includes("from '../core/permission-presets.js'"))
+}
+
+console.log('[5] 派生状态的显示名：命中预设留空，拼出来的组合读作「AI 审查」/「自定义」')
+{
+  // 规则本身是纯的：只按审阅者一位决定。审阅者是 AI 复核时，这个组合的实际含义就是
+  // 「先过 AI 审查」——说「自定义」等于什么都没说（用户报的正是这个）。
+  check('审阅者是 auto-review → 「AI 审查」', derivedPresetLabel('auto-review') === 'AI 审查', derivedPresetLabel('auto-review'))
+  check('审阅者是 user → 「自定义」', derivedPresetLabel('user') === '自定义', derivedPresetLabel('user'))
+  // 名字只用于显示：它不改变「custom 不是可选项」这条（[3] 已钉 findPermissionPreset）。
+  check('派生名不进预设表（表里查不到它）', BUILTIN_PERMISSION_PRESETS.every((preset) => preset.label !== 'AI 审查' && preset.label !== '自定义'))
+
+  const contract = read('src/contract.ts')
+  check('契约给 select 字段开了 derivedLabelKey', contract.includes('derivedLabelKey?: string'))
+
+  const host = read('src/plugins/settings.ts')
+  check('宿主把派生显示名挂在 permissionPresetName 上', host.includes("derivedLabelKey: 'permissionPresetName'"))
+  check('宿主用 derivedPresetLabel 算这个名字（不另写一份规则）', host.includes('derivedPresetLabel(ctx.approval.reviewer)'))
+
+  // 壳那两份同构渲染都要有这条出口：值不在选项表里 + 宿主给了名字 → 置灰只读 + 显示那个名字。
+  // 跨行匹配前先把 CRLF 压平（本仓工作区是 CRLF，直接 includes 多行文本永远匹配不上）。
+  const flat = (text) => text.replace(/\r\n/g, '\n')
+  /** 派生那一支的形状：置灰的 Select + 直接给显示名 + 选项表原样传（不塞假选项）。 */
+  const derivedOutlet = /displayLabel=\{derivedLabel\}\s+disabled\s+options=\{field\.options\}/
+  const shell = flat(read('ui-shell/src/plugins/settings/ui.tsx'))
+  const shellPlugins = flat(read('ui-shell/src/plugins/plugins/ui.tsx'))
+  check('设置面板读 field.derivedLabelKey（判据 + 取值两处都在）', count(shell, 'field.derivedLabelKey') === 2, String(count(shell, 'field.derivedLabelKey')))
+  check('设置面板派生时置灰只读并给显示名', derivedOutlet.test(shell))
+  check('插件中心那份同构渲染也读 field.derivedLabelKey', count(shellPlugins, 'field.derivedLabelKey') === 2, String(count(shellPlugins, 'field.derivedLabelKey')))
+  check('插件中心那份也置灰只读并给显示名', derivedOutlet.test(shellPlugins))
+  check('两处都靠「不在选项表里 + 宿主给了名字」这一条判据', count(shell, "!listed && derivedLabel !== ''") === 1 && count(shellPlugins, "!listed && derivedLabel !== ''") === 1)
+  // 负向：真正的脏值仍然要照实显示（别把「认不出」这条路一并删掉）。
+  check('认不出的值仍走「· 未识别」那条（两条路都在）', shell.includes('· 未识别') && shellPlugins.includes('· 未识别'))
+  check('两处渲染各只有一条派生出口', count(shell, 'displayLabel={derivedLabel}') === 1 && count(shellPlugins, 'displayLabel={derivedLabel}') === 1)
 }
 
 console.log('')

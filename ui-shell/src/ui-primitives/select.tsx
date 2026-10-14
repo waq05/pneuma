@@ -32,8 +32,15 @@ export function Select<T extends string>(props: {
   className?: string
   disabled?: boolean
   ariaLabel?: string
+  /**
+   * 覆盖触发钮上显示的文案。
+   *
+   * 给**派生值**用：值不在 `options` 里时查不到 label，而这类值（如权限预设的 `custom`）
+   * 恰恰是只读的——那时由调用方直接给一个显示名，不必为了能显示而往选项表里塞假选项。
+   */
+  displayLabel?: string
 }): ReactNode {
-  const { value, options, onPick, className, disabled = false, ariaLabel } = props
+  const { value, options, onPick, className, disabled = false, ariaLabel, displayLabel } = props
   const [open, setOpen] = useState(false)
   /** 键盘高亮的候选项；打开时落在当前选中值上。 */
   const [active, setActive] = useState(0)
@@ -44,7 +51,7 @@ export function Select<T extends string>(props: {
   const listId = useId()
 
   const current = options.find((option) => option.value === value)
-  const label = current?.label ?? ''
+  const label = displayLabel ?? current?.label ?? ''
 
   const close = (refocus = true): void => {
     setOpen(false)
