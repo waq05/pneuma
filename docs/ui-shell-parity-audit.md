@@ -42,6 +42,11 @@
 > **预设四选一**（不再直接是「权限模式四项菜单」），三根旋钮可在设置 → 通用细调。桥面新增三个
 > 写口（`setReviewer` / `usePermissionPreset` / `setDefaultPermissionPreset`）与一个读口
 > （`listPermissionPresets`），详见「五之四」与 `docs/development-log.md` 第十六批。
+> **第十七批**：状态面板锚回正文右上角（`data-thread-area`）、输入区上方那颗**分支钮**。
+> **第十八批（2026-10-14）**：模型行的**输入框重叠**（`.setting-input` 的 220px 下限在 110px
+> 窄格里没被收回）、**拉取清单的忙碌态按端点隔离**、**拉来的模型按能力推断**（四档来源：
+> 别的端点配过的同 id > id 里写的尺寸/视觉词 > 家族表 > 缺省）、**整轮过程折叠补开合动画**
+> （`grid-template-rows` 0fr↔1fr，选型记录见 `docs/ui-motion-options.md`）。
 
 ## 一、侧边栏（旧 `Sidebar.tsx` ↔ `plugins/sessions`）
 
@@ -114,6 +119,9 @@
 | 技能页 / 插件页 / 设置各分区 | 已对齐（前三/四批实现） |
 | **设置 → 模型：可编辑形态**（旧 `SettingsModal` 的 `ModelsPanel`/`ProviderForm`/`ModelRow` ↔ `plugins/settings/models.tsx`） | **已搬**（第七批：端点卡片（密钥快捷行 / 拉取清单 / 编辑 / 删除）、**端点表单**（名字 / 显示名 / Base URL / **API key** 一次改完 + **批量文本**模式）、**模型行**（id / 显示名 / 上下文 / 最大输出 + **思考档位四档 chip + 思考参数下拉 + reasoning_effort 逐档线上值 + 输入模态三档**——与宿主 `core/model-caps.ts` 同一份枚举）、默认模型两个自绘下拉。dsh 式增量：列表尾「＋添加端点」虚线卡、**拉取清单弹窗**（搜索 + 全选 + 复选 + 一次采用）。**写入口走原生桥**（`saveProvider`/`removeProvider`/`setProviderKey` 被界面通道有意排除，见第五节）；浏览器无桥时整页降级只读并说明 |
 | 审批卡 / 计划卡 / 提问卡 / 目标条 / 任务条 / 队友面板 | 已对齐 |
+| **拉取清单：忙碌态按端点 + 拉来的模型按能力推断**（第十八批） | 忙碌态从「一个全局布尔」改成按端点记的集合 —— 原来点一张卡四张一起写「拉取中…」。能力也不再一律按缺省装：新模块 `plugins/settings/model-infer.ts` **四档来源**从强到弱推断（`known` 别的端点配过的同 id 照抄 / `marker` id 里写着 `-1m`、`-vl` / `family` 家族白名单表（明说「猜的」）/ `default` 与宿主缺省一致并明说「没查到」），每行右边画推断结果、提示里给依据（`data-discover-source`）。**只推断填错也不致命的字段**：`thinkingParam` 填错会在非缺省档位发一个端点不认的字段，所以家族表里只在有公开惯例时才给 |
+| **模型行输入框重叠**（第十八批） | `.setting-input` 的共用下限 `min-width: 220px` 只在设置页「一行一个输入框」的场景正确；模型行的「上下文 / 最大输出」两列只有 110px，实机在 1280px 宽下两个框**互相压住 102px**、右格还探出整行。修法只在这几处窄格收回下限（`.model-row-field .setting-input`、同样 84px 的 `.cap-wire-input`），别处照旧 |
+| **整轮过程折叠的开合动画**（第十八批） | 之前点「用时 X」是硬切。过程区包一层（`.turn-process` > `.turn-process-body`）后走 `grid-template-rows` 0fr↔1fr + 内容淡入淡出（180ms，令牌 `--dsc-dur-slow` / `--dsc-ease`）；阶段组那一级补 `max-height` 过渡。收起方向必须**延迟挂 `hidden`**（高度按内容算，挂早了动画归零），收起态留 0 高盒子并以负 `margin-top` 抵掉多算的座位 gap。**三个参考实现的做法与另外四种选型记录在 `docs/ui-motion-options.md`**（dsh 不做高度动画、codex 是 TUI 无补间、zcode 是 300ms 关键帧 + 延迟 300ms 卸载） |
 
 ## 五、宿主侧配套修复（第六批，`src/plugins/desktop-dock.ts`）
 
@@ -226,3 +234,20 @@
   `legacy-frozen-check` / `commands-battery` / `ui-native-bridge-test` 96 条 / 内核那几条）。
 - 三侧 TypeScript 全绿；宿主 `lib/`、壳 `lib/ui/`（composer bundle 含 `composer-git`、
   `assets/*.css` 含 `.composer-git`）重建。
+
+## 六之五、验证落点（第十八批：模型行 / 拉取清单 / 折叠动画）
+
+- 新探针 `scripts/ui-model-caps-test.mjs` **48 条**：`model-infer.ts` 的纯逻辑（归一化 / 尺寸
+  标记 / 视觉词 / 四档来源的优先级 / 家族表顺序 / 已知索引的两条边界）、**缺省值与宿主同源**
+  （对着 `lib/core/model-caps.js` 与 `src/core/config.ts` 的原文断言）、`models.tsx` 的接线
+  （忙碌态是集合、每卡只认自己那位、采用时按推断填、弹窗每行给来源）、**窄格 CSS**
+  （220px 下限在模型行里被收回、`.cap-wire-input` 同样收回）。
+- `scripts/ui-transcript-render-test.mjs` 增 **[5] 17 条**：过程区包两层、`grid-template-rows`
+  两头、内层 `min-height: 0` + `overflow: hidden`、收起态是 0 高盒子（不是 `display: none`）
+  与负 `margin-top`、内容淡入淡出、时长走令牌、**收起延迟挂 `hidden` 且只给两层 `display:none`**、
+  组体那级走 `max-height` 过渡、`base.css` 的全局 reduced-motion 兜底。
+- 实机（隔离 HOME + 假端点 + 浏览器）：重叠 102px → 0px（1280px 与 900px 两档都量）；
+  「拉取中…」只出现在被点的那张卡；拉取弹窗 7 行四档来源齐全，采用后写进 `saveProvider`
+  的能力逐条核对；**展开方向逐帧采样到 0 → 24px / 180ms 的平滑曲线**。
+- 全量无头电池 **39 个探针全绿**；三侧 TypeScript 全绿；`lib/ui/plugins/settings/client.js`
+  含 `data-discover-source`，`lib/ui/assets/*.css` 含 `.turn-process` 与两条窄格规则。
