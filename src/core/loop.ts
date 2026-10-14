@@ -393,6 +393,11 @@ export class MiniAgent {
             baseUrl: route.baseUrl,
             apiKey: route.apiKey,
             model: route.model,
+            // 这次请求属于**这个 agent 自己的会话**，不是「当前查看的会话」：
+            // 常驻多 agent 下后台会话照样在跑，端点要的会话归因头得认对归属
+            // （路由与 prompt 缓存都按它算）。别的调用方（压缩/标题/审批）没有
+            // 会话在手上，由 llm 服务的派发口兜底填当前会话。
+            sessionId: this.session.meta.id,
             messages,
             maxTokens: route.maxTokens,
             temperature: route.temperature,

@@ -391,6 +391,8 @@ export const approvalPlugin: Plugin.Object = {
             baseUrl: route.baseUrl,
             apiKey: route.apiKey,
             model: route.model,
+            // 这次审查是**发起调用的那条会话**的请求（审批卡按它归属，归因头跟着走）
+            ...(request.sessionId === undefined ? {} : { sessionId: request.sessionId }),
             maxTokens: 300,
             thinking: 'disabled',
             signal,

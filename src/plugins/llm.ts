@@ -18,6 +18,18 @@ import type { LlmRoute, LlmService } from '../services/types.js'
 /** 请求侧清洗提醒的账：会话 id → 上次报过的报告形状（同形状不重复报，形状变了再报一次）。 */
 const sanitizeNotices = new Map<string, string>()
 
+/**
+ * 当前会话 id；读不到（没有会话、最小假 ctx）就当没有。
+ * 请求归因头靠它兜底：拿不到会话 id 时省略那个头，比编一个稳。
+ */
+function currentSessionId(ctx: Context): string | undefined {
+  try {
+    return ctx.session.current().meta.id
+  } catch {
+    return undefined
+  }
+}
+
 /** 历史有协议残留、请求侧兜底清洗过：给用户说一声（同一个会话同一种残留只报一次）。 */
 function noticeSanitize(ctx: Context, report: ToolOrphanReport): void {
   const sid = ctx.session.current().meta.id
@@ -143,7 +155,14 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
               '检查 config.yaml 里这个端点的 api 字段，或启用提供该协议的插件。',
           )
         }
-        return adapter.stream(request, { ...handlers, onSanitize: (report) => noticeSanitize(ctx, report) })
+        // 会话归因（opencode Go 要求每条会话带一个稳定 id）：这里是所有模型请求的
+        // **唯一汇聚点**——回合轮次、压缩、标题、审批、子智能体都从这条缝过，
+        // 默认值在这里补一次全体受益。调用方手里有更准的会话（后台 agent 跑的
+        // 不是「当前查看的会话」，见 core/loop）会自己填，填了就听它的。
+        return adapter.stream(
+          { ...request, sessionId: request.sessionId ?? currentSessionId(ctx) },
+          { ...handlers, onSanitize: (report) => noticeSanitize(ctx, report) },
+        )
       },
       setEffort(effort) {
         const caps = capsFor(currentProvider, currentModel)

@@ -5593,3 +5593,51 @@ kind、不说开哪个目录（`ui-shell/src/plugins/sessions/ui.tsx:1777` 修�
 **不落 click**（`mousedown`/`click` 全无）——要点真实的点击得改用页面内 `el.click()`；
 Playwright 的 locator（`getByRole` / `locator().click()`）在这个页面里超时到不可用，能用的只有
 `playwright.evaluate`。量时序别用外层调用的耗时（单次 `cua.move` 能慢到 5 秒），要**在页面里打时戳**。
+
+## 第二十一批：opencode Go 端点缺会话归因头 → 400（2026-10-14，未发版）
+
+上一批对「opencode Go 调用报错」只给了结论（是 msc 侧缺能力，不是端点脾气），这一批落地。
+分析原文与落地记录都在 [opencode-go-session-header.md](opencode-go-session-header.md)。
+
+### 为什么参考实现都不踩这个坑（读源码核过）
+
+| | 机制 |
+| --- | --- |
+| ZCode（`apps/zcode-cli/packages/adapters/src/model/runner-attribution.ts` + `opencode-session.ts`） | 所有模型请求过**一个**归因头构造器：`x-opencode-session` 只在 host 是 `opencode.ai`/其子域、path 规范化后正好 `/zen/go/v1` 时发（`/zen/v1` 的普通 Zen 不算），值取会话 id（剥内部前缀），没有就省略。同一处还发 `x-session-id` / `x-zcode-session-type` 等观测头 |
+| dsh（`packages/llm/llm-pi-ai/src/adapter.ts` + `packages/llm/llm/src/attribution.ts`） | `options.sessionId` 交给底层 SDK，由 SDK 按 provider 目录的 `sessionAffinityFormat` 决定发什么；另有 `attributionHeaders()` 给每个请求带自标识 `user-agent` |
+
+共同点：**会话 id 一定铺到请求层**（msc 缺的就是这半）、**发不发由端点形状决定**（不认 provider id）。
+
+### 改了什么
+
+| 面 | 改动 |
+| --- | --- |
+| `src/core/request-attribution.ts`（新，纯模块） | 门控 `isOpenCodeGoBaseUrl`（host + path 一起判，大小写/尾斜杠宽容）；会话 id 合法性只放行 `[A-Za-z0-9._:-]{1,128}`，非法/超长/空一律**省略这个头**；`sessionAttributionHeaders` 出「自标识 UA + 命中才加会话头」 |
+| `src/core/llm.ts` | `StreamRequest` 加可选 `sessionId`；`streamOnce` 的 fetch 头展开归因头——不命中就是空表 |
+| `src/plugins/llm.ts` | 派发口兜底 `request.sessionId ?? currentSessionId(ctx)`（所有 LLM 流量都从这条缝过） |
+| `src/core/loop.ts`、`core/compact.ts`、`plugins/session-title.ts`、`plugins/approval.ts` | 各带**自己那条会话**的 id（后台会话也在跑，不能填「当前查看的会话」） |
+
+**与上一批那份建议的一处偏离**：原提议「端点配置开个可选字段，让用户写 `config.yaml`」。
+最后改走 URL 门控——两份参考实现都这么判，而且「配置写不出来」正是这个报障的前提；
+门控挑的是端点事实（host+path），不是用户随手起的 provider id。
+
+### 验证
+
+- 新探针 `scripts/llm-session-header-test.mjs`（**51 条**）：门控纯逻辑 22、真 wire 10（桩 `globalThis.fetch`
+  跑真 `streamChat`；含「deepseek 端点头仍只有 content-type + authorization」这条反证——这是
+  「不能无条件加头」的守门员）、重试稳定 3（5xx 重试两次物理请求，会话 id 不变）、内核端到端 9
+  （真 kernel + Go baseUrl 跑真回合：头 = 该会话 `meta.id`；两轮不变；标题支线也带同一个）、铺线钉 8。
+- 全量无头电池 **43 个探针**绿。
+- **诚实边界**：没有真打一次 opencode Go（要花用户的 key，且官方文档明写「补齐头不等于一定放行」）；
+  `/models` 拉取清单那条路（`src/core/model-discovery.ts`）没带这个头——它没有会话可归因，若那边
+  也被要求再补一条。
+
+### 教训
+
+①**「为什么别人不踩这个坑」要去读别人的源码**，别停在猜：两家的共同点是「会话 id 铺到请求层 +
+发不发看端点形状」，照这个抄出来的实现比「让用户加个配置字段」省用户一件事（他什么都不用配）。
+②**门控条件挑不会变的东西**：provider id 是用户随手起的名字，baseUrl 的 host + path 才是端点事实。
+③**观测字段不许弄坏请求**：非法会话 id 的处置是「省略这个头」，不是「照发」——一个值里的换行就能让
+`fetch` 直接抛异常，比 400 更难查。
+④**桩 `globalThis.fetch` 是这类改动的理想探针位**：就在 wire 上，能看到真实发出去的头，还不用网、
+不用 key（Node 里 `fetch` 可写可配置）。

@@ -13,6 +13,7 @@
  *
  * @module dsc/core/llm
  */
+import { sessionAttributionHeaders } from './request-attribution.js'
 
 export interface ToolCall {
   id: string
@@ -82,6 +83,14 @@ export interface StreamRequest {
   thinking?: 'enabled' | 'disabled'
   /** OpenAI 系 `reasoning_effort` 的线上值；undefined = 不注入。与 thinking 二选一，由模型声明决定。 */
   reasoningEffort?: string
+  /**
+   * 这次请求属于哪条会话（宿主填会话 meta.id）。
+   *
+   * 只给**点名要会话归因的端点**用（当前：opencode Go 的 `x-opencode-session`，
+   * 网关按会话做路由与 prompt 缓存），别家端点一个字节都看不到——发不发由
+   * core/request-attribution 按 baseUrl 判，不看这个字段有没有值。
+   */
+  sessionId?: string
   signal?: AbortSignal
 }
 
@@ -436,6 +445,9 @@ async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Pro
       headers: {
         'content-type': 'application/json',
         authorization: `Bearer ${request.apiKey}`,
+        // 端点点名要的归因头（当前只有 opencode Go：自标识 UA + 会话头）。
+        // 不命中门控就是空表，别家端点发出去的头和以前逐字节一样。
+        ...sessionAttributionHeaders(request.baseUrl, request.sessionId),
       },
       body: JSON.stringify(body),
       signal: controller.signal,

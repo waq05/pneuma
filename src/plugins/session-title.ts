@@ -91,6 +91,8 @@ export const sessionTitlePlugin: Plugin.Object = {
             baseUrl: route.baseUrl,
             apiKey: route.apiKey,
             model: route.model,
+            // 起标题算被起名那条会话的请求（`id` 就是它）
+            sessionId: id,
             maxTokens: 300,
             temperature: 0.3,
             signal: controller.signal,

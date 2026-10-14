@@ -246,6 +246,9 @@ export async function compactSession(
       baseUrl: route.baseUrl,
       apiKey: route.apiKey,
       model: route.model,
+      // 摘要是**这条会话**的请求：端点按会话归因时得算在被压的会话头上，
+      // 不能算成「当前查看的会话」（后台会话照样会压缩）
+      sessionId: session.meta.id,
       maxTokens: route.maxTokens,
       temperature: route.temperature,
       signal,
