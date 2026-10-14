@@ -176,7 +176,7 @@ function BrowserTab({ tab, active, expanded }: DockTabBodyProps): ReactNode {
   if (!native.available) {
     return (
       <p className="shell-term-empty">
-        内置浏览器来自桌面外壳的原生视图，浏览器里没有它。要用请打开桌面版（或者用「用系统程序打开」跳出去看）。
+        内置浏览器来自桌面外壳的原生视图，浏览器里没有它。要用请打开桌面版（或者用「系统打开」跳出去看）。
       </p>
     )
   }

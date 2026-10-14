@@ -207,7 +207,9 @@ console.log('[5] 形态钉（结构约定）')
   check('终端区停止走 stopBackground（界面白名单里的那一条）', status.includes("invoke<string>('stopBackground'"))
   // 终端区行点击 → 只读输出面（work-output 页签）；打开与停止两个动作分开。
   check('终端行整行可点开输出面（setDockWorkOutput + work-output 页签）', status.includes('setDockWorkOutput({ id: work.id') && status.includes("kind: 'work-output'"))
-  check('停止钮 stopPropagation（不误触打开）', /data-tip="收掉这个后台活[\s\S]{0,160}?event\.stopPropagation\(\)/.test(status))
+  // 锚点用 class 而不是 data-tip：文案会随版本改写（这颗钮从「收掉这个后台活」改成过「停止任务」），
+  // 钉 class 才钉得住「停止钮自己吃掉点击、不误触打开输出面」这条行为。
+  check('停止钮 stopPropagation（不误触打开）', /className="sp-row-stop"[\s\S]{0,200}?event\.stopPropagation\(\)/.test(status))
   check('输出面是只读等宽 <pre>（不引 xterm）', status.includes('data-sp-output-text') && status.includes('<pre') && !stripComments(status).includes('@xterm'))
   check('输出面按 1s 轮询、只在 running 续拉', status.includes('WORK_POLL_MS = 1000') && /status === 'running'[\s\S]{0,80}setTimeout\(poll, WORK_POLL_MS\)/.test(status))
   check('输出面跟随滚动（滚离线底冻结 + 回底恢复）', status.includes('FOLLOW_BOTTOM_PX') && status.includes('data-sp-output-resume') && status.includes('setFrozen(null)'))

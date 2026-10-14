@@ -182,7 +182,7 @@ export function PresetsGroup(): ReactNode {
         <span className="count">{custom.length}</span>
         <button
           className="btn-primary models-add"
-          data-tip="新建一个模式文件（内容与手写 ~/.dsc/presets/*.md 完全等价）"
+          data-tip="新建模式文件"
           onClick={() => {
             setDraft(blankDraft())
           }}
@@ -293,7 +293,7 @@ function PresetCard(props: {
               <button
                 type="button"
                 className="text-btn danger"
-                data-tip={`删掉 ~/.dsc/presets/${item.name}.md（找不回来）`}
+                data-tip="删除模式文件"
                 onClick={props.onRemoveConfirm}
               >
                 确认删除

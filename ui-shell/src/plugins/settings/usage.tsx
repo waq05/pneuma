@@ -326,7 +326,7 @@ export function UsageGroup(): ReactNode {
       <div className="settings-empty usage-empty">
         <IconChart size={22} />
         还没有任何用量记录。
-        <p>自此版本起，每次模型请求都会记录输入与输出 token、模型和时间，使用一段时间后此处将显示统计。</p>
+        <p>使用后将显示统计。</p>
       </div>
     )
   }

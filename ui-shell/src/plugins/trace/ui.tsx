@@ -780,7 +780,7 @@ function TraceToolRow({ entry }: { entry: Extract<TraceStepEntry, { kind: 'tool'
         role="button"
         tabIndex={expandable ? 0 : -1}
         {...(expandable ? { 'aria-expanded': bodyOpen } : {})}
-        data-tip={expandable ? (bodyOpen ? '点击收起参数与结果' : '点击展开参数与结果') : '正在准备参数'}
+        data-tip={expandable ? (bodyOpen ? '收起参数与结果' : '展开参数与结果') : '正在准备参数'}
         onClick={() => {
           if (expandable) setOpen(!open)
         }}

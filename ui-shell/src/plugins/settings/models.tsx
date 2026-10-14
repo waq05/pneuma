@@ -897,12 +897,12 @@ function ProviderForm(props: {
         </label>
         <div className="field wide">
           <div className="model-rows-head">
-            <span>模型与能力（不勾的思考档位界面上就不出现；不写的字段按默认：thinking 开关 + 四档 + 只吃文本）</span>
+            <span>勾选后该能力才会出现；未设置的字段用默认值</span>
             <div className="model-rows-tools">
               <button
                 type="button"
                 className="text-btn"
-                data-tip="用一行一个的文本快改 id / 显示名 / 上下文窗口 / 最大输出"
+                data-tip="批量编辑：一行一个模型"
                 onClick={switchBulk}
               >
                 <IconSwap size={13} /> {bulk ? '回到表格' : '批量文本'}
@@ -1134,7 +1134,7 @@ function ModelRow(props: {
         ) : null}
       </div>
       <div className="model-row-caps">
-        <span className="cap-label" data-tip="这个模型支持哪几档思考：思考面板只列勾上的这些">
+        <span className="cap-label" data-tip="支持的思考档位；未勾选的档位不会显示">
           思考档位
         </span>
         <span className="cap-group">
@@ -1144,7 +1144,7 @@ function ModelRow(props: {
               type="button"
               className={`cap-chip${model.thinkingLevels.includes(level) ? ' on' : ''}`}
               data-cap-level={level}
-              data-tip={`思考档位「${THINKING_LEVEL_LABELS[level]}」${model.thinkingLevels.includes(level) ? '，点一下取消' : '，点一下勾上'}`}
+              data-tip={`思考档位「${THINKING_LEVEL_LABELS[level]}」${model.thinkingLevels.includes(level) ? '，已勾选' : '，未勾选'}`}
               onClick={() => {
                 props.onToggleLevel(level)
               }}
@@ -1182,7 +1182,7 @@ function ModelRow(props: {
             ))}
           </span>
         ) : null}
-        <span className="cap-label" data-tip="这个模型能收什么输入：没勾照片，对话里就发不出图">
+        <span className="cap-label" data-tip="模型可接收的输入类型；未勾选图片则无法发送图片">
           输入
         </span>
         <span className="cap-group">

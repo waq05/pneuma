@@ -125,10 +125,10 @@ function PreviewBody({ path, cwd }: { path: string; cwd: string }): ReactNode {
           type="button"
           className="btn-ghost"
           disabled={!native.available}
-          title={native.available ? '用系统默认程序打开这个文件' : '这条能力来自桌面外壳的原生桥，浏览器里没有它'}
+          title={native.available ? '用系统默认程序打开。' : '这条能力来自桌面外壳的原生桥，浏览器里没有它。'}
           onClick={openWithSystem}
         >
-          用系统程序打开
+          系统打开
         </button>
       </div>
       <div className="file-preview-body">
@@ -190,26 +190,26 @@ function PatchBody({ path, cwd, source }: { path: string; cwd: string; source: C
         <button
           type="button"
           className="btn-ghost"
-          data-tip="打开该文件的当前内容（补丁看的是修改当时的快照）"
+          data-tip="在预览中打开当前文件（内容是修改时的快照）。"
           onClick={() => setDockPreview({ path })}
         >
-          打开原文件
+          打开
         </button>
         <button
           type="button"
           className="btn-ghost"
           disabled={!native.available}
-          title={native.available ? '用系统默认程序打开这个文件' : '这条能力来自桌面外壳的原生桥，浏览器里没有它'}
+          title={native.available ? '用系统默认程序打开。' : '这条能力来自桌面外壳的原生桥，浏览器里没有它。'}
           onClick={openWithSystem}
         >
-          用系统程序打开
+          系统打开
         </button>
       </div>
       <div className="file-preview-body">
         {note === '' ? null : <div className="tree-note">{note}</div>}
         {source === null ? (
           <div className="file-preview-empty">
-            这份补丁已经不在了（应用重启或切回会话后差异快照不再保留）。点「打开原文件」看该文件的当前内容。
+            这份补丁已经不在了（应用重启或切回会话后差异快照不再保留）。点「打开」看该文件的当前内容。
           </div>
         ) : (
           <>
@@ -252,7 +252,7 @@ function renderBody(read: ReadResult, fsRead: (file: string) => Promise<unknown>
     if (read.base64 !== undefined) return <XlsxView base64={read.base64} />
     return (
       <div className="file-preview-empty">
-        这类文件（{read.mime ?? '未知类型'}，{formatSize(read.size ?? 0)}）要看内容请用「用系统程序打开」。
+        这类文件（{read.mime ?? '未知类型'}，{formatSize(read.size ?? 0)}）要看内容请用「系统打开」。
       </div>
     )
   }

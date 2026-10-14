@@ -86,7 +86,7 @@ console.log('[2] 输入框那颗钮的接线')
   check('切分支走 dock 的写类 op（过审批那一档）', composer.includes("invoke('dock', ['git-checkout', { branch: name }], { timeoutMs: HUMAN_WAIT_TIMEOUT_MS })"))
   check('新建分支走 dock 的写类 op', composer.includes("invoke('dock', ['git-branch-create', { branch: name }], { timeoutMs: HUMAN_WAIT_TIMEOUT_MS })"))
   check('菜单在等审批之前先收起（卡才是这一刻该看的东西，别被菜单盖住）', /setFault\(null\)\s*\n\s*\/\/ 菜单先收起来[\s\S]{0,200}?setBranchOpen\(false\)/.test(composer))
-  check('失败写进输入区下面那行 fault（不是静默）', composer.includes('setFault(wouldOverwrite(text) ?') && composer.includes('右侧栏「变更」页签可以提交'))
+  check('失败写进输入区下面那行 fault（不是静默）', composer.includes('setFault(wouldOverwrite(text) ?') && composer.includes('右侧边栏「变更」页签可以提交'))
   check('四颗旋钮的浮层互斥（开一颗收掉另外三颗）', (composer.match(/setBranchOpen\(false\)/g) ?? []).length >= 4)
 
   // 等人的宿主方法要更长的超时：审批卡自己能等 5 分钟，默认那 30 秒会把「等你点卡」

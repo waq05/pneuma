@@ -355,7 +355,7 @@ function ComposerBox(): ReactNode {
       })
       .catch((reason: unknown) => {
         const text = reason instanceof Error ? reason.message : String(reason)
-        setFault(wouldOverwrite(text) ? `${text}（先提交或暂存这些改动再切：右侧栏「变更」页签可以提交）` : text)
+        setFault(wouldOverwrite(text) ? `${text}（先提交或暂存这些改动再切：右侧边栏「变更」页签可以提交）` : text)
       })
       .finally(() => {
         setBranchBusy(false)
@@ -912,8 +912,8 @@ function ComposerBox(): ReactNode {
               <button
                 type="button"
                 className={`send-btn stop${queueing ? ' dim' : ''}`}
-                aria-label="打断当前回合"
-                data-tip="打断当前回合"
+                aria-label="停止生成"
+                data-tip="停止生成"
                 onClick={interrupt}
               >
                 <IconStop size={16} />

@@ -199,7 +199,7 @@ export function ChangesPanel(): ReactNode {
         <button
           type="button"
           className="icon-btn git-diff-all"
-          data-tip="看全部未提交改动的 diff"
+          data-tip="查看全部改动"
           onClick={() => {
             toggleDiff('all', null)
           }}

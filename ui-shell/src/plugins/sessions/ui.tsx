@@ -81,7 +81,7 @@ const PREVIEW_COUNT = 5
 
 /** 归档确认框的说明文案（旧界面同款：把去向说清楚，不写「确定吗」）。 */
 const ARCHIVE_DETAIL_ONE =
-  '会话会离开侧栏，移进「设置 → 归档」的归档区；消息一个字不删，想回来去归档里点「恢复」。'
+  '会话会离开侧边栏，移进「设置 → 归档」的归档区；消息一个字不删，想回来去归档里点「恢复会话」。'
 
 export default defineUiPlugin({
   name: '会话列表',
@@ -341,9 +341,9 @@ function SessionList() {
       const count = sessionsOfGroup.length
       const detail =
         count > 0
-          ? `其下 ${String(count)} 个会话会全部归档（移进「设置 → 归档」，消息一个字不删，可恢复），工作区从侧栏移除。`
-          : '该工作区还没有会话，将从侧栏移除。'
-      const current = target === (cwd ?? '') ? '它仍是当前目录，新建会话后会重新出现在侧栏。' : ''
+          ? `其下 ${String(count)} 个会话会全部归档（移进「设置 → 归档」，消息一个字不删，可恢复），工作区从侧边栏移除。`
+          : '该工作区还没有会话，将从侧边栏移除。'
+      const current = target === (cwd ?? '') ? '它仍是当前目录，新建会话后会重新出现在侧边栏。' : ''
       const ok = await confirmAction({
         title: `删除工作区「${displayName(target, prefs.aliases)}」？`,
         detail: detail + current,
@@ -356,7 +356,7 @@ function SessionList() {
         void native.invoke('removeRecentCwd', [target]).catch(() => undefined)
       }
       if (count === 0) {
-        toastOk('已从侧栏移除该工作区')
+        toastOk('已从侧边栏移除该工作区')
         return
       }
       try {
@@ -364,7 +364,7 @@ function SessionList() {
         await run('refreshSessions', [])
         toastOk(`工作区已删除，${String(count)} 个会话已归档`)
       } catch {
-        toastErr('会话归档失败，工作区随会话保留在侧栏')
+        toastErr('会话归档失败，工作区随会话保留在侧边栏')
       }
     })()
   }
@@ -825,7 +825,7 @@ function SessionList() {
                   role="button"
                   tabIndex={0}
                   aria-expanded={expanded}
-                  data-tip={`${group.cwd} · ${group.sessions.length} 个会话，点击展开/收起${sortable ? '，拖动排序' : ''}`}
+                  data-tip={`${group.cwd} · ${group.sessions.length} 个会话，展开/收起${sortable ? '，拖动排序' : ''}`}
                   draggable={sortable}
                   onClick={() => clickGroup(key)}
                   onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
@@ -1342,7 +1342,7 @@ function SidebarFooter(): ReactNode {
     <div className="sidebar-footer">
       <div
         className="row"
-        data-tip={cwdOf === null ? '还没有工作目录' : `${cwdOf}，点一下在别的目录开新会话`}
+        data-tip={cwdOf === null ? '还没有工作目录' : `${cwdOf} · 在别的目录开新会话`}
         title={cwdOf === null ? undefined : '在别的目录开新会话'}
         onClick={browse}
       >
@@ -1648,7 +1648,7 @@ function SessionRow({
           <button
             type="button"
             className="icon-btn"
-            data-tip="恢复这个会话，移回活动区"
+            data-tip="恢复会话（移回活动区）"
             aria-label="恢复会话"
             onClick={() => onRestore()}
           >
@@ -1658,8 +1658,8 @@ function SessionRow({
           <button
             type="button"
             className="icon-btn"
-            data-tip="归档这个会话"
-            aria-label="归档这个会话"
+            data-tip="归档会话"
+            aria-label="归档会话"
             onClick={onArchive}
           >
             <IconArchive size={14} />
@@ -1811,8 +1811,8 @@ function WorkspaceOpenGroup(): ReactNode {
       <button
         type="button"
         className="ws-open-main"
-        data-tip="在文件资源管理器中打开工作区"
-        aria-label="在文件资源管理器中打开工作区"
+        data-tip="在文件管理器中打开"
+        aria-label="在文件管理器中打开"
         onClick={() => {
           open('explorer')
         }}
@@ -1856,7 +1856,7 @@ function WorkspaceOpenGroup(): ReactNode {
                 open('explorer')
               }}
             >
-              <IconFolderOpen size={14} /> 在文件资源管理器中打开
+              <IconFolderOpen size={14} /> 在文件管理器中打开
             </button>
             <button
               type="button"

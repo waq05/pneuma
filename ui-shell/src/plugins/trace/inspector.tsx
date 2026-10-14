@@ -74,7 +74,7 @@ export function TraceInspector(props: {
           type="button"
           className="ti-close"
           data-trace-inspector-close="1"
-          data-tip="关闭检查器（Esc 也行）"
+          data-tip="关闭检查器（Esc）"
           aria-label="关闭检查器"
           onClick={props.onClose}
         >
@@ -179,7 +179,7 @@ export function TraceInspector(props: {
                   ? (formatTraceDuration(entry.call.durationMs ?? null) ?? '未记录')
                   : '未记录'
               }
-              title="结果到达时刻 − 发起时刻；只有工具调用记这个数，缺就写未记录，不编数"
+              title="工具调用耗时（结果到达 − 发起）；未记录时显示「未记录」"
             />
             {entry.kind === 'tool' && (
               <Fact
@@ -318,7 +318,7 @@ function ArgsSection({ argsText }: { argsText: string }): ReactNode {
             type="button"
             className="ti-btn"
             data-trace-copy-args="1"
-            data-tip="复制参数原文（不带缩进）"
+            data-tip="复制参数"
             onClick={copy}
           >
             <IconCopy size={12} />

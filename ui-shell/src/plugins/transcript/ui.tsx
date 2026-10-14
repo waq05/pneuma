@@ -1215,7 +1215,7 @@ function ThinkRow({
         role="button"
         tabIndex={0}
         aria-expanded={open}
-        data-tip={open ? '点击收起这段思考过程' : '点击展开这段思考过程'}
+        data-tip={open ? '收起这段思考过程' : '展开这段思考过程'}
         onClick={toggle}
         onKeyDown={(event) => {
           if (event.key !== 'Enter' && event.key !== ' ') return
@@ -1427,7 +1427,7 @@ function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matched?: Too
         role="button"
         tabIndex={expandable ? 0 : -1}
         {...(expandable ? { 'aria-expanded': bodyOpen } : {})}
-        data-tip={expandable ? (bodyOpen ? '点击收起参数与结果' : '点击展开参数与结果') : '正在准备参数'}
+        data-tip={expandable ? (bodyOpen ? '收起参数与结果' : '展开参数与结果') : '正在准备参数'}
         onClick={toggle}
         onKeyDown={(event) => {
           if (event.key !== 'Enter' && event.key !== ' ') return
@@ -1925,7 +1925,7 @@ function RoundFoot(props: {
       {estimated !== null ? (
         <span
           className="round-tokens"
-          title="这一轮助手正文的 token 估算（中文约 0.65 token/字、其余约 0.33）；老会话没有宿主上报的用量，这是估算值"
+          title="助手正文的 token 估算值（老会话无宿主上报用量）"
         >
           ~{formatTokens(estimated)} tok
         </span>

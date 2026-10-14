@@ -224,7 +224,7 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
         role="button"
         tabIndex={expandable ? 0 : -1}
         {...(expandable ? { 'aria-expanded': bodyOpen } : {})}
-        data-tip={expandable ? (bodyOpen ? '点击收起参数与结果' : '点击展开参数与结果') : '正在准备参数'}
+        data-tip={expandable ? (bodyOpen ? '收起参数与结果' : '展开参数与结果') : '正在准备参数'}
         onClick={toggle}
         onKeyDown={(event) => {
           if (event.key !== 'Enter' && event.key !== ' ') return
@@ -372,7 +372,7 @@ export function OpenPathButton({
       className="tc-path tc-path-btn"
       data-tc-open={absPath}
       data-tc-source={opensPatch ? 'patch' : 'file'}
-      title={opensPatch ? `${absPath}（点击在右侧栏看这次改动）` : `${absPath}（点击在右侧栏预览）`}
+      title={opensPatch ? `${absPath}（在右侧边栏看这次改动）` : `${absPath}（在右侧边栏预览）`}
       onClick={(event) => {
         event.stopPropagation()
         setDockPreview(opensPatch ? { path: absPath, cwd, patch } : { path: absPath, cwd })

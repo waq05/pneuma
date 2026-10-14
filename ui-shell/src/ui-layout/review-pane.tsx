@@ -150,7 +150,7 @@ export function ReviewPane(): ReactNode {
                 <button
                   type="button"
                   className="diff-tool"
-                  data-tip="用系统默认程序打开"
+                  data-tip="用系统默认程序打开。"
                   onClick={() => {
                     void native.invoke('openPath', [file.path]).catch((reason: unknown) => {
                       toastErr(`系统打开失败：${reason instanceof Error ? reason.message : String(reason)}`)
@@ -163,7 +163,7 @@ export function ReviewPane(): ReactNode {
               <button
                 type="button"
                 className="diff-tool"
-                data-tip="在预览页签里打开当前文件（审查内容是修改当时的快照）"
+                data-tip="在预览中打开当前文件（内容是修改时的快照）。"
                 onClick={() => {
                   dockActions.openPreview(file.path)
                 }}

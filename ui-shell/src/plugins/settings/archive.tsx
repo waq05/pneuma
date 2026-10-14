@@ -97,7 +97,7 @@ export function ArchiveGroup(): ReactNode {
     void getHostNative()
       .invoke<string>('openPath', [trashDir])
       .then((problem) => {
-        if (problem === '') setNote({ tone: 'ok', text: '已在文件管理器里打开回收站' })
+        if (problem === '') setNote({ tone: 'ok', text: '已在文件管理器中打开回收站' })
         else setNote({ tone: 'error', text: `打开失败：${problem}` })
       })
       .catch((error: unknown) =>
@@ -127,7 +127,7 @@ export function ArchiveGroup(): ReactNode {
 
           {page.items.length === 0 && (
             <div className="settings-empty">
-              归档区是空的。在侧栏会话行点击归档按钮可归档单个会话，或在工作区行点击归档按钮归档整组会话。
+              归档区是空的。在侧边栏会话行点击归档按钮可归档单个会话，或在工作区行点击归档按钮归档整组会话。
             </div>
           )}
 
@@ -174,12 +174,10 @@ export function ArchiveGroup(): ReactNode {
 
           <div className="arch-foot">
             <span>
-              回收站 <span className="mono">{page.trashDir}</span> 保留 30 天后自动清空，现在里面有{' '}
-              {String(page.trashCount)} 个文件。
-              「永久删除」是有意不放进这个界面的操作（不可逆），旧界面里仍有入口。
+              回收站保留 30 天后自动清空，现有 {String(page.trashCount)} 个文件。
             </span>
-            <button className="text-btn" data-tip="在文件管理器里打开回收站" onClick={() => openTrash(page.trashDir)}>
-              打开回收站目录
+            <button className="text-btn" data-tip="打开回收站" onClick={() => openTrash(page.trashDir)}>
+              打开回收站
             </button>
           </div>
         </>

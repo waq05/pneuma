@@ -224,7 +224,7 @@ function SettingsPanel(): ReactNode {
           {sections !== null && sections.length === 0 ? (
             <div className="settings-nav-empty">{loadError === '' ? '宿主没有给出设置分区' : `读分区失败：${loadError}`}</div>
           ) : null}
-          <div className="settings-nav-foot">Pneuma 设置 · 改动即时写入 ~/.dsc</div>
+          <div className="settings-nav-foot">设置</div>
         </nav>
         <div className="settings-main">
           <div className="settings-head">
@@ -436,7 +436,7 @@ function GenericFields({ section, extra }: { section: SettingsSectionView; extra
                 <button
                   type="button"
                   className="text-btn"
-                  data-tip="在文件管理器里打开"
+                  data-tip="在文件管理器中打开"
                   onClick={() => {
                     const native = getHostNative()
                     if (!native.available) {

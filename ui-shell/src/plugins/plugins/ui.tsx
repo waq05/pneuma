@@ -276,7 +276,7 @@ function PluginsView(): ReactNode {
             <button
               type="button"
               className="btn-primary plugins-add"
-              data-tip="选择 .js 插件文件装进 ~/.dsc/plugins（桌面版）"
+              data-tip="安装本地插件"
               onClick={installPlugin}
             >
               + 添加插件
@@ -403,7 +403,7 @@ function PluginCard({
         <button
           type="button"
           className="icon-btn"
-          data-tip="这个插件有配置项：打开详情"
+          data-tip="打开配置"
           aria-label={`配置 ${row.name}`}
           onClick={(event) => {
             event.stopPropagation()
@@ -419,7 +419,7 @@ function PluginCard({
         role="switch"
         aria-checked={row.enabled}
         aria-label={`${row.name} 开关`}
-        data-tip={row.toggleable ? (row.enabled ? '停用，即时生效' : '启用，即时生效') : '运行内核的一部分，不可停用'}
+        data-tip={row.toggleable ? (row.enabled ? '停用（即时生效）' : '启用（即时生效）') : '运行内核的一部分，不可停用'}
         disabled={!row.toggleable}
         onClick={(event) => {
           event.stopPropagation()
@@ -529,7 +529,7 @@ function TrustCard({
             role="switch"
             aria-checked={row.enabled}
             aria-label={`${row.name} 开关`}
-            data-tip={row.enabled ? '停用，刷新页面后生效' : '启用，刷新页面后生效'}
+            data-tip={row.enabled ? '停用（刷新页面后生效）' : '启用（刷新页面后生效）'}
             onClick={() => {
               onToggle(!row.enabled)
             }}
@@ -632,7 +632,7 @@ function PluginDetail({
             role="switch"
             aria-checked={plugin.enabled}
             aria-label={`${plugin.name} 开关`}
-            data-tip={plugin.enabled ? '停用，即时生效' : '启用，即时生效'}
+            data-tip={plugin.enabled ? '停用（即时生效）' : '启用（即时生效）'}
             onClick={() => {
               onToggle(plugin, !plugin.enabled)
             }}
@@ -768,7 +768,7 @@ function ConfigFields({ section, onAction }: { section: SettingsSectionView; onA
                 <button
                   type="button"
                   className="text-btn"
-                  data-tip="在文件管理器里打开"
+                  data-tip="在文件管理器中打开"
                   onClick={() => {
                     const native = getHostNative()
                     if (!native.available) {

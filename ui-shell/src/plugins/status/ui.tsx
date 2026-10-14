@@ -867,7 +867,7 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
             aria-hidden={expanded}
             tabIndex={expanded ? -1 : 0}
             inert={expanded}
-            data-tip="展开状态面板（Git、目标、计划、进程、终端、工作流与智能体）"
+            data-tip="展开状态面板"
             onClick={() => {
               chooseMode('panel')
             }}
@@ -1467,7 +1467,7 @@ function AgentSection({
                 className="sp-row-open"
                 aria-label={`打开 ${mate.name} 的运行记录`}
                 data-sp-agent={mate.name}
-                data-tip={`${mate.role} · ${mate.task}\n点开在右侧栏看它的运行记录（只读）`}
+                data-tip={`${mate.role} · ${mate.task}\n点开在右侧边栏看它的运行记录（只读）`}
                 onClick={() => {
                   onOpen(mate)
                 }}
@@ -1482,7 +1482,7 @@ function AgentSection({
                 type="button"
                 className="sp-row-stop"
                 aria-label={`停掉 ${mate.name}`}
-                data-tip="停掉这个队友（尽力而为）"
+                data-tip="停掉这个队友（尽力而为，已跑完的改不了结果）"
                 onClick={(event) => {
                   event.stopPropagation()
                   onStop(mate)
@@ -1545,7 +1545,7 @@ function GitSection({
             className="sp-row-open"
             data-sp-git-changes={String(git.files)}
             aria-label="打开 Git 页签"
-            data-tip="在右侧栏打开 Git 页签（暂存 / 提交 / 历史 / diff）"
+            data-tip="在右侧边栏打开 Git"
             onClick={() => {
               openDockTab('git')
             }}
@@ -1665,7 +1665,7 @@ function WorkSection({
                 className="sp-row-open"
                 aria-label={`查看 ${work.id} 的输出`}
                 data-sp-work={work.id}
-                data-tip={`${work.kind === 'job' ? '后台作业' : '终端会话'} ${work.id}\n${work.title}\n点开在右侧栏看输出（只读）`}
+                data-tip={`${work.kind === 'job' ? '后台作业' : '终端会话'} ${work.id}\n${work.title}\n点开在右侧边栏看输出（只读）`}
                 onClick={() => {
                   onOpen(work)
                 }}
@@ -1680,7 +1680,7 @@ function WorkSection({
                 type="button"
                 className="sp-row-stop"
                 aria-label={`停止 ${work.id}`}
-                data-tip="收掉这个后台活（整树收尾）"
+                data-tip="停止任务"
                 onClick={(event) => {
                   event.stopPropagation()
                   onStop(work)

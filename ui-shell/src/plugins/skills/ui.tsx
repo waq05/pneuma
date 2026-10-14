@@ -360,7 +360,7 @@ function SkillsView(): ReactNode {
           <button
             type="button"
             className="btn-primary"
-            data-tip="从磁盘导入：选含 SKILL.md 的目录或 .md 文件"
+            data-tip="导入技能（选含 SKILL.md 的目录或 .md 文件）"
             onClick={importSkill}
           >
             <IconPlus size={14} /> 导入技能
@@ -577,7 +577,7 @@ function SkillsView(): ReactNode {
               <button
                 type="button"
                 className={`btn-primary market-install${item.installed ? ' done' : ''}`}
-                data-tip={item.installed ? '本地已有同名技能' : '安装到 ~/.dsc/skills（桌面版）'}
+                data-tip={item.installed ? '本地已有同名技能' : '安装技能'}
                 disabled={installing === `${item.source}/${item.name}`}
                 onClick={() => {
                   if (!item.installed) install(item)

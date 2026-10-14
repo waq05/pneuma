@@ -325,8 +325,8 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
               type="button"
               className="icon-btn rail-toggle"
               data-tip="收起侧边栏，快捷键 Ctrl+B"
-              title="收起侧栏（Ctrl+B）"
-              aria-label="收起侧栏"
+              title="收起侧边栏（Ctrl+B）"
+              aria-label="收起侧边栏"
               onClick={toggleSidebar}
             >
               <IconSidebar size={15} />
@@ -342,7 +342,7 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
           {sidebarCollapsed ? null : (
             <div
               className="sidebar-resizer"
-              data-tip="拖拽调整侧栏宽度，双击复位"
+              data-tip="拖拽调整侧边栏宽度，双击复位"
               onPointerDown={sidebarDrag.onPointerDown}
               onPointerMove={sidebarDrag.onPointerMove}
               onPointerUp={sidebarDrag.onPointerUp}
@@ -532,7 +532,7 @@ function SidebarRail({ onExpand }: { onExpand: () => void }): ReactNode {
   return (
     <>
       {/* 窄栏里 logo 就代表「点开侧栏」，不再另摆一颗开关（旧界面同款）。 */}
-      <button type="button" className="rail-logo" data-tip="展开侧边栏，快捷键 Ctrl+B" title="展开侧栏（Ctrl+B）" aria-label="展开侧栏" onClick={onExpand}>
+      <button type="button" className="rail-logo" data-tip="展开侧边栏，快捷键 Ctrl+B" title="展开侧边栏（Ctrl+B）" aria-label="展开侧边栏" onClick={onExpand}>
         <img src="icon.png" alt="Pneuma" draggable={false} />
       </button>
       <button
@@ -576,8 +576,8 @@ function SidebarRail({ onExpand }: { onExpand: () => void }): ReactNode {
         <button
           type="button"
           className="rail-btn"
-          data-tip={cwd === null ? '展开侧栏后可选择会话' : `工作目录 ${cwd}，展开侧栏后可选择会话`}
-          aria-label="展开侧栏（查看工作目录）"
+          data-tip={cwd === null ? '展开侧边栏后可选择会话' : `工作目录 ${cwd}，展开侧边栏后可选择会话`}
+          aria-label="展开侧边栏（查看工作目录）"
           onClick={onExpand}
         >
           <IconFolder size={18} />

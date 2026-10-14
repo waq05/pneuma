@@ -275,7 +275,7 @@ export function TraceTimeline(props: {
             type="button"
             className="ttl-chip"
             data-trace-selection-chip="1"
-            data-tip="点这里清除区间（也可以在轨道上点一下、或右键单击清除）"
+            data-tip="清除选中的区间。轨道上单击或右键也可以清除。"
             onClick={() => props.onSelect(null)}
           >
             已选 {rangeLabel} · 清除
