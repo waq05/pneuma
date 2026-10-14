@@ -3,7 +3,7 @@
  *
  * 四件事：**谁伺服**、**谁能进来**、**进来之后能干什么**、**不看屏幕也能知道有事发生**。
  *
- * 1. 谁伺服：同一台机器上可能有不止一个 Muse Code 进程（桌面端一个、终端一个），
+ * 1. 谁伺服：同一台机器上可能有不止一个 Pneuma 进程（桌面端一个、终端一个），
  *    而一个端口只能被一个进程听，所以先抢 `~/.dsc/remote/.owner.json` 主控位（pid + 启动
  *    指纹，写法与调度锁同款）。抢不到的进程**完全休眠**：不监听、不起服务，每 30 秒回头
  *    看一眼主控位空出来没有。
@@ -288,7 +288,7 @@ export function createRemoteServer(deps: RemoteServerDeps): RemoteServerHandle {
     send({
       type: 'hello',
       protocolVersion: REMOTE_PROTOCOL_VERSION,
-      app: 'muse-code',
+      app: 'pneuma',
       version: DSC_VERSION,
       port: deps.port,
       lan: deps.lan,
@@ -552,7 +552,7 @@ export const remotePlugin: Plugin.Object = {
         hello: () => ({
           protocolVersion: UI_EVENTS_PROTOCOL_VERSION,
           methods: [...REMOTE_SHELL_METHODS],
-          host: { name: 'Muse Code', version: DSC_VERSION },
+          host: { name: 'Pneuma', version: DSC_VERSION },
         }),
         subscribe: (listener) => ctx.transcript.subscribe(listener),
         log: (line) => ctx.logger.warn(line),
@@ -564,7 +564,7 @@ export const remotePlugin: Plugin.Object = {
       // 而「宿主重建插件后手机刷新能看到新界面」是壳档的既有承诺；带内容摘要的 rev
       // 让强制重收也不会误换代（字节没变 combo/上一代都原地不动）。
       const bootSource = createUiBootSource({
-        host: { name: 'Muse Code', version: DSC_VERSION },
+        host: { name: 'Pneuma', version: DSC_VERSION },
         builtinDir: uiPluginsDir(),
       })
       const freshGraph = (): UiBootGraph => {
@@ -658,12 +658,12 @@ export const remotePlugin: Plugin.Object = {
     /** 当前快照里「等人的卡」（审批 → 计划评审 → 模型提问，同一时刻至多一张在前面挡着）。 */
     function waitingCardOf(current: RuntimeSnapshot): { key: string; title: string; headline: string } | null {
       const approval = current.surfaces.pendingApproval
-      if (approval !== null) return { key: `approval:${approval.id}`, title: 'Muse Code 等待审批', headline: approvalHeadline(approval) }
+      if (approval !== null) return { key: `approval:${approval.id}`, title: 'Pneuma 等待审批', headline: approvalHeadline(approval) }
       const plan = current.surfaces.pendingPlan
-      if (plan !== null) return { key: `plan:${plan.file}`, title: 'Muse Code 等待计划评审', headline: plan.title }
+      if (plan !== null) return { key: `plan:${plan.file}`, title: 'Pneuma 等待计划评审', headline: plan.title }
       const question = current.surfaces.pendingQuestion
       if (question !== null) {
-        return { key: `ask:${question.id}`, title: 'Muse Code 在向你提问', headline: question.header ?? question.question }
+        return { key: `ask:${question.id}`, title: 'Pneuma 在向你提问', headline: question.header ?? question.question }
       }
       return null
     }
@@ -683,7 +683,7 @@ export const remotePlugin: Plugin.Object = {
         if (still === null || still.key !== key || escalateCount > ESCALATE_MAX) return
         void notify(
           `escalate:${key}`,
-          { title: 'Muse Code 还在等人', body: `已等 ${String(Math.round((ESCALATE_WAIT_MS * escalateCount) / 1000))} 秒：${headline}`, url: addressText() },
+          { title: 'Pneuma 还在等人', body: `已等 ${String(Math.round((ESCALATE_WAIT_MS * escalateCount) / 1000))} 秒：${headline}`, url: addressText() },
           false,
         )
         armEscalation(key, headline)
@@ -722,7 +722,7 @@ export const remotePlugin: Plugin.Object = {
       turnHadWaitingCard = false
       if (elapsedMs < TURN_NOTIFY_MIN_MS && !hadWaitingCard) return
       const seconds = Math.max(0, Math.round(elapsedMs / 1000))
-      void notify('turn-end', { title: 'Muse Code 轮完成', body: `用时 ${String(seconds)}s`, url: addressText() }, true)
+      void notify('turn-end', { title: 'Pneuma 轮完成', body: `用时 ${String(seconds)}s`, url: addressText() }, true)
     }
     ctx.on('dsc/turn-end', onTurnEnd)
 
@@ -738,7 +738,7 @@ export const remotePlugin: Plugin.Object = {
         // 启动提示只展示一次（0.6.64）：接管方 pid 没变就不重复说（重试周期里
         // reportProblem 自己的 lastProblem 节流也只覆盖本进程）。
         const standby =
-          `远程控制由另一个 Muse Code 进程（pid ${String(info?.pid ?? 0)}）接管，本进程待命`
+          `远程控制由另一个 Pneuma 进程（pid ${String(info?.pid ?? 0)}）接管，本进程待命`
         if (bootNoticeOnce('remote.standby', standby)) reportProblem(standby)
         armRetry()
         return
@@ -813,7 +813,7 @@ export const remotePlugin: Plugin.Object = {
       }
       const info = owner.peek()
       if (info !== null && info.pid !== process.pid) {
-        return `由另一个 Muse Code 进程（pid ${String(info.pid)}）接管`
+        return `由另一个 Pneuma 进程（pid ${String(info.pid)}）接管`
       }
       return yielded ? '已让出主控位，重新开关「开启远程控制」拿回' : '等待主控位空出（每 30 秒重试）'
     }
@@ -923,7 +923,7 @@ export const remotePlugin: Plugin.Object = {
             action: 'release-owner',
             label: '退出主控',
             style: 'ghost',
-            help: '多开时把监听让给别的 Muse Code 进程，重新开关远程控制可拿回来',
+            help: '多开时把监听让给别的 Pneuma 进程，重新开关远程控制可拿回来',
           },
         )
         return rows
@@ -1011,7 +1011,7 @@ export const remotePlugin: Plugin.Object = {
         if (name === 'test-push') {
           const prefs = ctx.settings.prefs().remote
           const message: WebhookMessage = {
-            title: 'Muse Code 测试推送',
+            title: 'Pneuma 测试推送',
             body: '这条消息来自电脑上「设置 → 远程控制」的测试按钮',
             url: addressText(),
           }

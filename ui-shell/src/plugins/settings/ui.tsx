@@ -52,6 +52,7 @@ import {
   requestAppearance,
   useHostChannel,
   type AppearancePatch,
+  type PairShareData,
   type SettingsField,
   type SettingsMutation,
   type SettingsSectionView,
@@ -63,6 +64,7 @@ import { PresetsGroup } from './presets'
 import { ModelsGroup } from './models'
 import { UsageGroup } from './usage'
 import { ArchiveGroup } from './archive'
+import { PairModal, type PairRegenerateResult } from './pair-modal'
 // 基元从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
 import { Select } from '@dsc/ui-primitives'
 
@@ -202,7 +204,7 @@ function SettingsPanel(): ReactNode {
         if (event.target === event.currentTarget) setSettingsOpen(false)
       }}
     >
-      <div className="settings" role="dialog" aria-modal="true" aria-label="Muse Code 设置">
+      <div className="settings" role="dialog" aria-modal="true" aria-label="Pneuma 设置">
         <nav className="settings-nav">
           <div className="settings-nav-head">设置</div>
           {nav.map((item) => (
@@ -222,7 +224,7 @@ function SettingsPanel(): ReactNode {
           {sections !== null && sections.length === 0 ? (
             <div className="settings-nav-empty">{loadError === '' ? '宿主没有给出设置分区' : `读分区失败：${loadError}`}</div>
           ) : null}
-          <div className="settings-nav-foot">Muse Code 设置 · 改动即时写入 ~/.dsc</div>
+          <div className="settings-nav-foot">Pneuma 设置 · 改动即时写入 ~/.dsc</div>
         </nav>
         <div className="settings-main">
           <div className="settings-head">
@@ -290,6 +292,11 @@ function GenericFields({ section, extra }: { section: SettingsSectionView; extra
   const [values, setValues] = useState<SettingsValues>({})
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [note, setNote] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
+  /**
+   * 挂着的「手机连接」弹窗：宿主动作带回配对数据时打开，关掉置空。
+   * 连触发它的动作名一起记下来——弹窗里的「重新生成」要再调一次同一个动作。
+   */
+  const [pair, setPair] = useState<{ action: string; data: PairShareData } | null>(null)
 
   useEffect(() => {
     setDraft({})
@@ -333,6 +340,21 @@ function GenericFields({ section, extra }: { section: SettingsSectionView; extra
       })
   }
 
+  /**
+   * 把一条链接交给系统浏览器。壳里没有原生桥（浏览器页签 / 远程页）时如实说明去哪做，
+   * 不要静默什么都不发生。
+   */
+  const openExternal = (url: string): void => {
+    const native = getHostNative()
+    if (!native.available) {
+      setNote({ tone: 'error', text: '打开链接要用系统浏览器，只在桌面版里有（浏览器页签里没有这条桥）' })
+      return
+    }
+    void native.invoke('openExternal', [url]).catch((error: unknown) => {
+      setNote({ tone: 'error', text: `打开链接失败：${text(error)}` })
+    })
+  }
+
   const act = (action: string): void => {
     setNote(null)
     void channel
@@ -342,12 +364,45 @@ function GenericFields({ section, extra }: { section: SettingsSectionView; extra
           setNote({ tone: 'error', text: `操作失败：${result.error}` })
           return
         }
-        if (result.notice !== undefined) setNote({ tone: 'ok', text: result.notice })
+        // 回执除了 `notice` 还可能带一份结构化载荷，两种各走各的出口：
+        //   - 配对码：它是「要一直看得见」的东西，开弹窗画码（一行说明一闪就没了，
+        //     用户错过就得重新生成，而重新生成又会作废上一张）；
+        //   - 链接（检查更新发现新版）：说明照走行内提示，发布页交给系统浏览器。
+        const data = result.data
+        if (data?.kind === 'pair-code') {
+          setPair({ action, data })
+        } else {
+          if (result.notice !== undefined) setNote({ tone: 'ok', text: result.notice })
+          if (data?.kind === 'url') openExternal(data.url)
+        }
         reload()
       })
       .catch((error: unknown) => {
         setNote({ tone: 'error', text: `操作失败：${text(error)}` })
       })
+  }
+
+  /**
+   * 弹窗里再点一次「重新生成」：调同一个宿主动作，把新码交给弹窗原地换上去。
+   *
+   * 失败只有一种：宿主这一版不返回结构化配对数据（老回执只有一句 notice，或者宿主
+   * 明确说不）。这时把原因**写在弹窗里**（弹窗留在原地不关，用户还能再试），不写行内
+   * 说明——那份说明长在设置面板底部，此刻正被弹窗盖着，等关掉弹窗才冒出来的旧话只会
+   * 让人以为刚刚成功过。
+   */
+  const regeneratePair = async (action: string): Promise<PairRegenerateResult> => {
+    try {
+      const result = await channel.invoke<SettingsMutation>('runSettingAction', [section.id, action])
+      if (!result.ok) return { ok: false, error: result.error }
+      const data = result.data
+      if (data?.kind !== 'pair-code') {
+        return { ok: false, error: '这一版宿主没有返回配对码内容，请升级后再试' }
+      }
+      reload()
+      return { ok: true, data }
+    } catch (error: unknown) {
+      return { ok: false, error: `操作失败：${text(error)}` }
+    }
   }
 
   const render = (field: SettingsField, index: number): ReactNode => {
@@ -529,6 +584,17 @@ function GenericFields({ section, extra }: { section: SettingsSectionView; extra
         )
       })}
       {note === null ? null : <div className={`settings-note${note.tone === 'error' ? ' error' : ''}`}>{note.text}</div>}
+      {/* 配对码弹窗：自己 createPortal 挂到 body（面板祖先有 overflow/backdrop-filter），
+          所以摆在这儿只借用状态，位置不受这层容器影响。 */}
+      {pair === null ? null : (
+        <PairModal
+          data={pair.data}
+          onRegenerate={() => regeneratePair(pair.action)}
+          onClose={() => {
+            setPair(null)
+          }}
+        />
+      )}
       {extra}
     </div>
   )

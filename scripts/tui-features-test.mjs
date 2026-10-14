@@ -200,7 +200,7 @@ await sleep(160)
 let frame = lastFrame()
 
 // 1. 欢迎页：短会话时挂在流顶
-check('欢迎页出现（Muse Code + 版本）', frame.includes('Muse Code') && /v0\.6\./.test(frame), JSON.stringify(contentLines(frame).slice(0, 6)))
+check('欢迎页出现（Pneuma + 版本）', frame.includes('Pneuma') && /v0\.6\./.test(frame), JSON.stringify(contentLines(frame).slice(0, 6)))
 check('欢迎页含模型与目录', frame.includes('模型 test-model') && frame.includes('/w'))
 check('欢迎页提示双击 Esc 撤回', frame.includes('双击 Esc 撤回上一轮'))
 
@@ -282,7 +282,7 @@ check('Esc 关闭子代理转录', !lastFrame().includes('writer-1（writer）')
 // 11. 长会话不再画欢迎页
 runtime.setSnapshot(makeSnapshot({ entries: Array.from({ length: 120 }, (_, i) => ({ id: i, kind: 'system', text: `条目-${i}` })) }))
 await sleep(160)
-check('长会话不画欢迎页', !lastFrame().includes('Muse Code'))
+check('长会话不画欢迎页', !lastFrame().includes('Pneuma'))
 check('长会话最新条目仍底对齐', lastFrame().includes('条目-119'))
 
 process.exit(failures === 0 ? 0 : 1)

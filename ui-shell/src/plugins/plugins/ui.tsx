@@ -340,7 +340,7 @@ function PluginsView(): ReactNode {
 
             <div className="plugin-group-label">
               运行内核 <span className="count">{kernel.length}</span>
-              <span className="group-hint">构成 Muse Code 本身，不可停用</span>
+              <span className="group-hint">构成 Pneuma 本身，不可停用</span>
             </div>
             {kernelShown.map((row) => (
               <PluginCard key={row.file} row={row} onToggle={toggle} onOpen={setDetailFile} />

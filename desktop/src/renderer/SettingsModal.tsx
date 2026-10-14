@@ -158,7 +158,7 @@ export function SettingsModal(props: {
         if (event.target === event.currentTarget) props.onClose()
       }}
     >
-      <div className="settings" role="dialog" aria-modal="true" aria-label="Muse Code 设置">
+      <div className="settings" role="dialog" aria-modal="true" aria-label="Pneuma 设置">
         <nav className="settings-nav">
           <div className="settings-nav-head">设置</div>
           {sections.map((item) => (
@@ -175,7 +175,7 @@ export function SettingsModal(props: {
           {sections.length === 0 && (
             <div className="settings-nav-empty">{loadError === '' ? '正在读取分区…' : loadError}</div>
           )}
-          <div className="settings-nav-foot">Muse Code 设置 · 改动即时写入 ~/.dsc</div>
+          <div className="settings-nav-foot">Pneuma 设置 · 改动即时写入 ~/.dsc</div>
         </nav>
 
         <div className="settings-main">

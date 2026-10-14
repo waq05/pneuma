@@ -70,16 +70,16 @@
 
 ## 3. 三条启动链路
 
-**TUI**（`msc`）
+**TUI**（`numa`）
 
-1. `bin/dsc.js`（bin 键 `msc`）解析 `--resume` / `config` 子命令，spawn `node lib/boot.js`；
+1. `bin/dsc.js`（bin 键 `numa`）解析 `--resume` / `config` 子命令，spawn `node lib/boot.js`；
 2. `src/boot.ts` 只做装配，按顺序：`migrateFromDsh()`（幂等，只读 dsh）→ `readConfig()` →
    `readUiConfig()` → `createKernel()` → 装 TUI 插件 → `loadExternalPlugins()` →
    `emitStartupNotes()`。`readUiConfig()` 读 `config.yaml` 的 `ui` 段与 `plugins` 段，
    但 boot 是**无条件**挂 TUI 的（`src/boot.ts:27`）——真正起作用的只有 `plugins` 段；
 3. `--resume` 走 `DSC_RESUME_SESSION` 环境变量传给子进程（`auto` = 看 `.last-session` 指针）。
 
-**桌面**（`dist/win-unpacked/Muse Code.exe` 或 `pnpm run dev`）
+**桌面**（`dist/win-unpacked/Pneuma.exe` 或 `pnpm run dev`）
 
 1. 主进程 `readState()` 读 `~/.dsc/desktop.json`（最近工作目录最多记 12 个、托盘提示是否
    弹过），写侧 `writeState()` 做合并（`desktop/electron/main/dsc-core.ts:42-60`）；
@@ -183,6 +183,11 @@ export const myPlugin: Plugin.Object = {
 3. `src/plugins/host-stdio.ts` 的 `INVOKABLE_METHODS` 加名字，renderer 侧 `bridge.ts` 加一行转发。
    两份清单现在都由 `DscRuntime` 推出来：第 3 步漏了会编译报错（白名单那份 `satisfies`
    一份类型兜底，`bridge.ts` 那份是映射类型，少写一个实现就补不上），不再靠人记。
+4. **要让浏览器里的插件壳也够得着**，还得进 `src/core/ui-methods.ts`：`UI_METHODS` 放行，
+   `UI_ARG_SPECS` 给实参规格（个数 / 类型 / 长度 / 枚举，`validateUiArgs` 是那道闸）。
+   注意这条通道的规矩：**省略只能从尾部开始**——`null`/`undefined` 占位会被拒，所以
+   「第二个参数可选」这种排布在这一面根本表达不出来（`newSessionIn` 因此是独立方法，
+   而不是 `openSession(id?, cwd?)`）。
 
 版本号一览：
 
@@ -497,7 +502,7 @@ exe 当**桌面端**跑的时候才要清掉它。
 | `config-store.ts` | 设置界面写 `config.yaml` / `credentials.yaml` 的**唯一**入口。端点名要匹配 `/^[a-z0-9][a-z0-9_-]{0,40}$/`（`:137`）；不写 `apiKeyEnv` 时按端点名推导成 `<名字大写>_API_KEY`；草稿的能力字段在 `validateDraft()`（`:156`）过枚举，缺省字段由 `capsOf()` 补，能力字段只在偏离缺省时写进 YAML（`:186`）；覆盖前会先存一份 `config.yaml.bak`，**YAML 注释会在这一步丢掉**（`:44`） |
 | `migrate.ts` | 一次性搬 dsh 的配置，只读 dsh。目标已存在且没给 `force` 就直接返回（`:107`）。只收 `api: openai-completions` 的端点（`:78`） |
 | `llm.ts` | 手写 SSE 解析：只认 `data:` 行，单行 JSON 解析失败就跳过。思考增量字段是 `delta.reasoning_content`，重放给模型时原样回传（空串不回传）。工具调用按 `delta.tool_calls[].index` 拼，`arguments` 用 `+=` 续接，最后按 index 排序。最多 3 次尝试，退避 500ms、1000ms。**协议适配器**：这份实现就是内置 `openai-completions` 适配器（`LlmAdapter`），别的协议由插件经 `ctx.llm.registerAdapter` 注册，端点配置 `api` 字段选择。请求头**不无条件加**：只有归因头命中门控的端点才多带两行（见下一行） |
-| `request-attribution.ts` | 请求归因头（自标识 + 端点点名要的会话头）的纯逻辑。门控 `isOpenCodeGoBaseUrl()` 认的是**端点事实**——host 是 `opencode.ai` 或其子域、path 规范化后正好 `/zen/go/v1`（不认 provider id，那是用户随手起的名字）；命中才补 `user-agent`（`muse-code/<版本>`）与 `x-opencode-session`（值 = 会话 id；非法/超长/空一律**省略这个头**而不是照发——一个换行就能让 `fetch` 抛异常）。会话 id 由 `src/plugins/llm.ts` 的派发口兜底、四个调用方各自填自己那条会话 |
+| `request-attribution.ts` | 请求归因头（自标识 + 端点点名要的会话头）的纯逻辑。门控 `isOpenCodeGoBaseUrl()` 认的是**端点事实**——host 是 `opencode.ai` 或其子域、path 规范化后正好 `/zen/go/v1`（不认 provider id，那是用户随手起的名字）；命中才补 `user-agent`（`pneuma/<版本>`）与 `x-opencode-session`（值 = 会话 id；非法/超长/空一律**省略这个头**而不是照发——一个换行就能让 `fetch` 抛异常）。会话 id 由 `src/plugins/llm.ts` 的派发口兜底、四个调用方各自填自己那条会话 |
 | `connection-test.ts` | 端点连接测试（设置 → 模型「测试连接」）：固定两条探针消息（system + user `hi`）、无历史无工具、输出预算 16、走与正常对话**同一条**链路（同协议适配器、同一份归因头），**流正常收尾即算通**（正文为空也算）。超时（20 秒）与「端点回了错」分开说；失败折成 `{ ok:false, error }` 不往外抛（点一次按钮不该弹两次错）。`pickProbeModel()` 定测哪个模型：显式给的 > 默认端点那份默认模型 > 清单第一个 |
 | `session.ts` | 列表只读每个文件前 8 行 + mtime（`:463-472`），所以列表页别指望读到深处的内容。目录名把 `\\`、`/`、`:` 换成 `-`（`:34-36`） |
 | `session-meta.ts` | `sessions/meta.json` 用 uuid 当键，所以归档挪文件不会丢状态（`:7`）。`version` 不是 1 就整表当空（`:53`） |
@@ -522,7 +527,27 @@ exe 当**桌面端**跑的时候才要清掉它。
 | `skills.ts` | 只认顶层 `<目录>/SKILL.md` 与顶层 `<名字>.md`，不递归（`:165-178`）。`name` 要 kebab-case，非法就退回文件名并记一条问题 |
 | `market.ts` | 缓存 1 小时、拉取超时 15 秒、浏览并发 6、附属文件最多 40 个。GitHub 匿名限额低，403/422 会提示设 `GITHUB_TOKEN` |
 | `prefs.ts` | 偏好文件读坏了按默认返回，不崩（`:89-91`）。`closeToTray` 默认 true |
-| `version.ts` | 版本号从包名 `muse-code`（兼容旧名 `dsc-tui`）的 `package.json` 往上找（`:12-13`、`:23`）。**改包名要同步 `PACKAGE_NAMES`**，否则「关于」分区显示 `0.0.0` |
+| `version.ts` | 版本号从包名 `pneuma`（兼容旧名 `dsc-tui`）的 `package.json` 往上找（`:12-13`、`:23`）。**改包名要同步 `PACKAGE_NAMES`**，否则「关于」分区显示 `0.0.0` |
+
+### 工作目录（cwd）是谁的
+
+**目录是会话自己的数据**（`Session.meta.cwd`，落进 jsonl 的 meta 行），不是宿主进程的状态。
+这条线决定了「换目录要不要重启宿主」：
+
+| 谁 | 读的是哪个目录 |
+| --- | --- |
+| 会话出生目录 | `SessionService.open(filePath?, cwd?)` 的 `cwd` → 没给时退到**当前会话的目录**，再退宿主启动目录（`src/plugins/session.ts`）。界面那侧是 `newSessionIn(cwd)`：在指定目录里开一条会话，**不重启宿主、不重载窗口** |
+| 工具 / 沙箱围栏 / git 面 / 轮尾 diff | `core/loop.ts` 的 `get cwd()` = `session.meta.cwd`（每次调用传进 `ToolContext`） |
+| 指令文件（AGENTS.md）、记忆 / learnings、项目技能、hooks 执行目录 | 会话目录（`prompt.instructionFiles(cwd)` / `memory.workspaceKey(cwd)` / `skills.skillRoots(cwd)` …），调用方传的是会话 cwd |
+| dock 文件树 / 终端 / 预览 / git 页签 | 会话目录（`plugins/desktop-dock.ts` 的 `baseCwd()`） |
+| 模型常驻终端（`terminal` 工具） | 会话目录（`core/tools/bash.ts` 的 `table.open(ctx.sessionId, ctx.cwd)`） |
+| MCP stdio server 起进程 | 配置里的 `cwd` → 否则当前会话目录（`core/mcp.ts` 的 `spawnStdio(server, fallbackCwd)`） |
+| 审批卡的路径基准 | 请求自带的 `cwd` → 否则当前会话目录（`plugins/approval.ts` 的 `baseCwd()`），**不再 `process.cwd()`** |
+| LSP 命令解析 / 外部插件源相对路径 | 会话目录 / config.yaml 所在目录（`core/lsp/manager.ts` 的 `baseCwd()`、`host/kernel.ts`） |
+| 宿主进程自己的 cwd（`process.cwd()`） | **只剩兜底**：没有会话时的 MCP/LSP/终端、以及「上次用的工作区」这一个记忆点（`desktop.json` 的 `lastCwd`，由界面经原生 op `rememberCwd` 记账） |
+
+原生桥那条「切工作目录」（`switchCwd` / `chooseDirectory` → 宿主重启 + 整页重载）**留着但插件壳
+不再调用**：它的能力等价于「在那个目录里开一条会话」，却要付一次重载的代价（旧渲染层仍走它）。
 
 ### 审批判定顺序（`src/plugins/approval.ts:126-152`）
 

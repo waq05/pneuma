@@ -94,7 +94,7 @@ console.log('\n[1] 头构造：只认 Go 入口')
 {
   const go = sessionAttributionHeaders('https://opencode.ai/zen/go/v1', 'sid-1')
   check('Go + 会话 id：自标识 UA + 会话头', go['user-agent'] === APP_USER_AGENT && go[OPENCODE_SESSION_HEADER] === 'sid-1', JSON.stringify(go))
-  check('UA 是自标识的产品名/版本（不是 node/undici）', /^muse-code\/\S+$/.test(APP_USER_AGENT) && !/node|undici/i.test(APP_USER_AGENT), APP_USER_AGENT)
+  check('UA 是自标识的产品名/版本（不是 node/undici）', /^pneuma\/\S+$/.test(APP_USER_AGENT) && !/node|undici/i.test(APP_USER_AGENT), APP_USER_AGENT)
   const noId = sessionAttributionHeaders('https://opencode.ai/zen/go/v1', undefined)
   check('Go 但没有会话 id：只留 UA（网关照旧会报 MissingSessionID，报错原文比编的 id 好查）',
     noId[OPENCODE_SESSION_HEADER] === undefined && noId['user-agent'] === APP_USER_AGENT, JSON.stringify(noId))

@@ -83,7 +83,9 @@ export const pluginManagerPlugin: Plugin.Object = {
           case 'install': {
             const source = String(args.file ?? '')
             if (source === '') return '错误：缺少 file 参数（.js 文件绝对路径）'
-            const src = isAbsolute(source) ? source : resolve(process.cwd(), source)
+            // 相对路径基于 DSC_HOME（插件目录的根，也是 config.yaml 所在处）：早先按
+            // 进程 cwd 解析，多工作区并用之后那只是「上一次切过的工作区」，等于随机。
+            const src = isAbsolute(source) ? source : resolve(dscPath(), source)
             if (!src.endsWith('.js')) return '错误：仅支持 .js 插件文件'
             try {
               const dest = join(pluginsDir(), basename(src))

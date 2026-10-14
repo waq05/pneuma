@@ -29,7 +29,7 @@ import type { UiPlatform } from './manifest.js'
 
 /** 界面要显示的宿主身份。 */
 export interface UiHostInfo {
-  /** 产品的显示名，例如 `Muse Code`。 */
+  /** 产品的显示名，例如 `Pneuma`。 */
   name: string
   /** 宿主版本，例如 `0.6.67`。 */
   version: string

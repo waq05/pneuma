@@ -22,7 +22,7 @@ import webpush from 'web-push'
 import { readJsonFile, remoteFiles, writeJsonFile, type RemoteFiles } from './store.js'
 
 /** VAPID 的 subject：推送服务只要求它是一个 mailto 或 https 地址，不校验可达性。 */
-export const PUSH_SUBJECT = 'mailto:muse-code@localhost'
+export const PUSH_SUBJECT = 'mailto:pneuma@localhost'
 
 /** 一次推送的超时（推送服务不响应时别把这一轮卡住）。 */
 export const PUSH_SEND_TIMEOUT_MS = 5_000

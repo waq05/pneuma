@@ -1,6 +1,6 @@
 # dsh 插件适配指南
 
-面向**想把 dsh（DeepSeek Harness）的插件跑到 dsc（Muse Code）上的人**。讲清楚：哪些能直接挂、
+面向**想把 dsh（DeepSeek Harness）的插件跑到 dsc（Pneuma）上的人**。讲清楚：哪些能直接挂、
 哪些要改代码、改的时候 API 怎么对应、实测踩过哪些坑、交付前怎么验证。
 
 前置阅读：[plugin-development.md](plugin-development.md)（dsc 插件的基本形态与服务 API）。

@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Muse Code 远程操控的手机 Web 界面：构建产物落到 ../lib/remote/assets，由宿主 remote 插件静态伺服。",
+  "description": "Pneuma 远程操控的手机 Web 界面：构建产物落到 ../lib/remote/assets，由宿主 remote 插件静态伺服。",
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",

@@ -126,7 +126,7 @@ const FALLBACK_PATHEXT: readonly string[] = ['.COM', '.EXE', '.BAT', '.CMD']
  *
  * @param command - 配置里的命令（文件名或路径）。
  * @param env - 已筛过的子进程环境（从这里读 `PATH` / `PATHEXT`）。
- * @param cwd - 解析相对路径的基准目录；空串按当前目录。
+ * @param cwd - 解析相对路径的基准目录（调用方给**会话目录**）；空串才退到进程目录。
  * @returns 找到就返回目标；一个都找不到返回 `undefined`（调用方据此跳过这个服务器）。
  */
 export function resolveExecutable(

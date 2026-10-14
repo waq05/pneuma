@@ -111,8 +111,11 @@ export async function approvalDiffOf(request: ApprovalRequest): Promise<Approval
   const args = request.args ?? {}
   const rawPath = typeof args.path === 'string' ? args.path : ''
   if (rawPath === '') return null
-  const cwd = request.cwd ?? process.cwd()
-  const abs = isAbsolute(rawPath) ? rawPath : resolve(cwd, rawPath)
+  // 绝对路径不需要基准；相对路径必须有 cwd 才算得出在看哪一份文件。都没有就不给
+  // 差异预览（卡片退回参数摘要那条常态），**不**拿 process.cwd() 猜——猜出来的
+  // 差异是另一个目录里的同名文件，比没有更糟。
+  if (!isAbsolute(rawPath) && (request.cwd === undefined || request.cwd === '')) return null
+  const abs = isAbsolute(rawPath) ? rawPath : resolve(request.cwd ?? '', rawPath)
   const content = typeof args.content === 'string' ? args.content : null
   const oldText = typeof args.old === 'string' ? args.old : null
   const newText = typeof args.new === 'string' ? args.new : null
@@ -220,6 +223,23 @@ export const approvalPlugin: Plugin.Object = {
 
     /** 这次判定的会话 jsonl 路径（侧栏状态点的键口径）。 */
     const pathOf = (request: ApprovalRequest): string => request.sessionPath ?? ctx.session.current().filePath
+
+    /**
+     * 这次判定的路径基准：请求自带 `cwd` 优先（工具那条路都带着会话目录），
+     * 没带就退到**当前会话的目录**。
+     *
+     * 为什么不再用 `process.cwd()`：目录是会话自己的数据（多工作区并用之后，进程目录
+     * 已经没有用户意义）——拿它当基准既会把别的会话的合法目标判成越界，也会让卡片上
+     * 那句「工作目录」说谎。
+     */
+    const baseCwd = (request: ApprovalRequest): string => {
+      if (request.cwd !== undefined && request.cwd !== '') return request.cwd
+      try {
+        return ctx.session.current().meta.cwd
+      } catch {
+        return ''
+      }
+    }
 
     /** 当前查看会话的最老一张挂起卡；没有就 undefined（pendingView/answer 同用它定口径）。 */
     const currentForHere = (): PendingCard | undefined => {
@@ -413,7 +433,7 @@ export const approvalPlugin: Plugin.Object = {
               {
                 role: 'user',
                 content: redact(
-                  `工具：${request.toolName}\n参数：${JSON.stringify(request.args ?? request.argsSummary)}\n工作目录：${request.cwd ?? process.cwd()}`,
+                  `工具：${request.toolName}\n参数：${JSON.stringify(request.args ?? request.argsSummary)}\n工作目录：${baseCwd(request)}`,
                 ),
               },
             ],
@@ -472,7 +492,7 @@ export const approvalPlugin: Plugin.Object = {
       },
 
       async decide(request: ApprovalRequest, signal, options): Promise<ApprovalDecision> {
-        const cwd = request.cwd ?? process.cwd()
+        const cwd = baseCwd(request)
         // 安全钩子可以要求「这一次必须问人」：非空时下面所有自动放行档一律跳过。
         const forced = options?.forceAskReason?.trim() ?? ''
         const facts = callFacts(request.args ?? {}, cwd)

@@ -1,5 +1,5 @@
 appId: io.dsc.desktop
-productName: Muse Code
+productName: Pneuma
 directories:
   output: dist
   buildResources: build
@@ -33,6 +33,6 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-  artifactName: muse-code-setup-${version}.${ext}
+  artifactName: pneuma-setup-${version}.${ext}
 portable:
-  artifactName: muse-code-portable-${version}.${ext}
+  artifactName: pneuma-portable-${version}.${ext}

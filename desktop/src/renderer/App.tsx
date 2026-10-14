@@ -446,7 +446,7 @@ export function App(): JSX.Element {
       // 通知标题用会话标题（照顶栏的解析口径，同款 `?? '#'`——sessionId 还没落盘时
       // 不能拿空串去 endsWith('.jsonl')，那会错配到列表里第一个会话的标题）
       const session = snapshot.sessions.find((s) => s.id.endsWith(`${snapshot.status.sessionId ?? '#'}.jsonl`))
-      const title = session?.title?.trim() || 'Muse Code'
+      const title = session?.title?.trim() || 'Pneuma'
       void dsc
         .notify({ title: `${title} · 任务完成`, body: completionNotifyBody(snapshot.entries) })
         .catch(() => {})
@@ -582,7 +582,7 @@ export function App(): JSX.Element {
   if (hostDown !== null) {
     return (
       <div className="loading" style={{ flexDirection: 'column', gap: 14 }}>
-        <div>Muse Code 宿主已退出，退出码 {String(hostDown.code)}</div>
+        <div>Pneuma 宿主已退出，退出码 {String(hostDown.code)}</div>
         <button
           className="btn-primary"
           onClick={() => {
@@ -596,7 +596,7 @@ export function App(): JSX.Element {
   }
 
   if (snapshot === null) {
-    return <div className="loading">正在启动 Muse Code 宿主…</div>
+    return <div className="loading">正在启动 Pneuma 宿主…</div>
   }
 
   // 顶栏标题：活动会话的标题（首条用户消息），否则最近一条用户消息，否则「新会话」

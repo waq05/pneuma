@@ -1,6 +1,6 @@
-# muse-code-desktop
+# pneuma-desktop
 
-Muse Code（dsc 仓库）的桌面端：Electron 壳 + headless 宿主子进程（utilityProcess + MessagePort 协议）。
+Pneuma（dsc 仓库）的桌面端：Electron 壳 + headless 宿主子进程（utilityProcess + MessagePort 协议）。
 
 ## 架构
 
@@ -32,7 +32,7 @@ DSC_DESKTOP_SHOT=<png 路径> ./node_modules/.bin/electron out/main/index.js
 ## 打包
 
 ```bash
-pnpm dist:dir     # 未压缩目录（冒烟）：dist/win-unpacked/Muse Code.exe
+pnpm dist:dir     # 未压缩目录（冒烟）：dist/win-unpacked/Pneuma.exe
 pnpm dist         # NSIS 安装包 + portable exe
 ```
 

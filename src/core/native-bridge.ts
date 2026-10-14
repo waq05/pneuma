@@ -36,10 +36,16 @@
  * 以及 `setPolicy`（审批策略是安全闸门本身，界面通道同样持续排除；旧渲染层的输入框
  * 里本来就有这根能切的旋钮，桥替它把写口留住）。
  *
- * 内嵌浏览器三件套（`dockBrowser` / `browserNav` + `browser-state` 事件）2026-10
- * 搬进壳：它们操作的是原生 `WebContentsView` 覆盖层（旧渲染层直连 IPC 的那个），
- * 桥只转发「显示/隐藏 + 摆到哪 + 导航到哪」，页面管不到那个视图的内容。终端
- * （`terminal`）同款——能力留在主进程，界面只说意图。
+ * 内嵌浏览器那一套（`dockBrowser` / `browserNav` / `browserClose` + `browser-state`、
+ * `browser-open-requested` 两个事件）2026-10 搬进壳：它们操作的是原生 `WebContentsView`
+ * 覆盖层（旧渲染层直连 IPC 的那个），桥只转发「显示/隐藏 + 摆到哪 + 导航到哪 +
+ * 关掉哪一台」，页面管不到那个视图的内容。终端（`terminal`）同款——能力留在主进程，
+ * 界面只说意图。
+ *
+ * 2026-10 起浏览器页签可以多开：**一台视图一个 id**（壳拿页签自己的 id 当这个 id），
+ * 上面三个操作都带它。id 缺省回落 `'main'`，旧渲染层那条直连 IPC 因此一字不用改。
+ * 视图的创建/销毁、会话策略、导航闸门全在主进程（`desktop/electron/main/dock.ts`），
+ * 页面报上来的只有「哪一台、摆哪里」。
  *
  * 除了 `call` 之外，桥还有**一个订阅口**：`on(event, listener)`，事件名由 {@link NATIVE_EVENTS}
  * 白名单（现在只有终端输出流）。事件不做实参校验——它是主进程往外推的，不是页面往里送的。
@@ -53,14 +59,22 @@ import type { ApprovalPolicy, ApprovalReviewer } from '../contract.js'
 /**
  * 桥的协议版本：**加操作不涨**，改某个操作的实参或语义才涨。
  * 桌面主进程与壳握手时对一下，不一致就在诊断区说明白（不静默降级）。
+ *
+ * 2 → 3（2026-10）：浏览器页签改可多开，`dockBrowser` / `browserNav` 各多一个
+ * 视图 id 实参，`browser-state` 的载荷从一个 `url` 扩成带 id / 标题 / 前后退 /
+ * 加载中的整份状态。**这一次必须两头同批重建**：旧外壳收到多出来的实参会按
+ * 「最多收 N 个实参」拒掉（不会静默忽略），壳与外壳各自出一份产物时对不上，
+ * 诊断区那条版本告警就是给这个场景写的。
  */
-export const NATIVE_BRIDGE_VERSION = 2
+export const NATIVE_BRIDGE_VERSION = 3
 
 /** 桥放行的操作，一字不差就是分派表的键。 */
 export const NATIVE_OPS = [
   'setWindowChrome',
   'setThemeSource',
   'chooseDirectory',
+  'pickDirectory',
+  'rememberCwd',
   'switchCwd',
   'recentCwds',
   'removeRecentCwd',
@@ -117,20 +131,45 @@ export const NATIVE_OPS = [
    */
   'terminal',
   /**
-   * 内嵌浏览器（dock 的浏览器页签）：`[visible, rect?]`——显示/隐藏那个原生
+   * 内嵌浏览器（dock 的浏览器页签，可多开）：`[id, visible, rect?]`——显示/隐藏那一台
    * `WebContentsView` 覆盖层，并把它摆到页面报上来的矩形处（页面坐标 = 窗口内容坐标）。
+   *
+   * 为什么 id 排在最前：实参省略**只能从尾部开始**（见 {@link validateNativeCall}），
+   * 而「隐藏某一台」时后面那个 rect 要空着——id 放尾部就没法既给 id、又空着 rect
+   * （中间空一个会被当成错位的脏形状拒掉）。
    */
   'dockBrowser',
-  /** 内嵌浏览器导航：`[url, action]`（load / back / forward / reload；协议在主进程再校验一次）。 */
+  /**
+   * 内嵌浏览器导航：`[url, action, id?]`（load / back / forward / reload；协议在主进程
+   * 再校验一次）。url 只在 load 时用；id 缺省 `'main'`（旧渲染层的单例视图走这条）。
+   * 这条三个实参从不省略，所以 id 放尾部——与上一条顺序不同，理由见上。
+   */
   'browserNav',
+  /**
+   * 关掉一台内嵌浏览器视图（页签关掉 / 切会话时调）：`[id]`。
+   *
+   * 为什么要这一条而不是靠 `dockBrowser(false)`：隐藏只是从窗口上摘下来，视图与它
+   * 的渲染进程都还活着。页签没了就得真的销毁，否则开开关关一路攒下去。
+   */
+  'browserClose',
 ] as const
 
 /** 桥能推给页面的事件（订阅入口按它白名单，别的名字直接拒）。 */
 export const NATIVE_EVENTS = [
   /** dock 终端输出流：`{ id, data }`（id 是 term-spawn 给的会话 id）。 */
   'dock-data',
-  /** 内嵌浏览器的地址变化：`{ url }`（前进/后退/页面内跳转都推）。 */
+  /**
+   * 内嵌浏览器那一台的状态：`{ id, url, title, canGoBack, canGoForward, loading }`
+   * （id 是页签给的视图 id；前进/后退/页面内跳转/标题变化/加载起止都推）。
+   */
   'browser-state',
+  /**
+   * 页面自己要开新窗口（`window.open` / `target="_blank"`）：`{ id, url }`。
+   *
+   * 主进程一律 deny 掉原生弹窗，把请求转成这条事件，由壳开一张新浏览器页签——
+   * 旧做法是就地 `loadURL` 到同一台视图，那等于把用户正在看的页面顶掉。
+   */
+  'browser-open-requested',
 ] as const
 
 /** 桥认得的一个事件名。 */
@@ -213,6 +252,21 @@ export const NATIVE_ARG_SPECS: Readonly<Record<NativeOp, readonly ArgSpec[]>> = 
   setThemeSource: [{ shape: { kind: 'enum', values: THEME_SOURCES } }],
   /** 弹系统目录选择框，选中就切工作目录并重启宿主；取消给 null。 */
   chooseDirectory: [],
+  /**
+   * 弹系统目录选择框，**只返回路径、不碰宿主**（取消给空串）。
+   *
+   * 与 chooseDirectory 的分工：那个的语义是「切工作目录」（含重启宿主与整页重载），
+   * 旧渲染层还在用它；壳的「添加工作区」要的是「挑一个目录、在那儿开一条会话」——
+   * 目录是会话自己的数据，不必重启宿主，所以需要这个没有副作用的取路径口。
+   */
+  pickDirectory: [],
+  /**
+   * 记一笔「最近用过的工作区」（写 desktop.json 的 recentCwds / lastCwd）。
+   *
+   * 谁调它：界面在某个目录里开了会话时（含「添加工作区」选的目录）。宿主管会话、
+   * 桌面主进程管这份记忆——所以这一笔记账得由界面显式报一声，别让两边各存一份。
+   */
+  rememberCwd: [{ shape: { kind: 'string', max: MAX_PATH } }],
   /** 切到指定工作目录（不弹框）；失败给一句原因。 */
   switchCwd: [{ shape: { kind: 'string', max: MAX_PATH } }],
   /** 最近用过的工作目录，最新的排最前。 */
@@ -284,13 +338,24 @@ export const NATIVE_ARG_SPECS: Readonly<Record<NativeOp, readonly ArgSpec[]>> = 
     { shape: { kind: 'enum', values: DOCK_TERM_OPS } },
     { shape: { kind: 'json', maxBytes: MAX_TERM_PAYLOAD }, optional: true },
   ],
-  /** 内嵌浏览器：`[visible, rect?]`。visible 为假（隐藏）时 rect 可省。 */
-  dockBrowser: [{ shape: { kind: 'bool' } }, { shape: { kind: 'rect' }, optional: true }],
-  /** 内嵌浏览器导航：`[url, action]`（url 只在 load 时用，协议在主进程校验）。 */
+  /**
+   * 内嵌浏览器：`[id, visible, rect?]`。visible 为真时 rect 必给（摆哪儿）；
+   * 为假时 rect 省略（这一台先不显示，视图留着，切回来页面还在）。id 是壳给那一台
+   * 起的名字（现在就是页签 id）——旧渲染层走的是直连 IPC，不经过这里。
+   */
+  dockBrowser: [
+    { shape: { kind: 'string', max: MAX_ID } },
+    { shape: { kind: 'bool' } },
+    { shape: { kind: 'rect' }, optional: true },
+  ],
+  /** 内嵌浏览器导航：`[url, action, id?]`（url 只在 load 时用，协议在主进程校验）。 */
   browserNav: [
     { shape: { kind: 'string', max: MAX_PATH } },
     { shape: { kind: 'enum', values: NAV_ACTIONS } },
+    { shape: { kind: 'string', max: MAX_ID }, optional: true },
   ],
+  /** 关掉一台内嵌浏览器视图：`[id]`（页签关了 / 切会话了就真的销毁，别只藏起来）。 */
+  browserClose: [{ shape: { kind: 'string', max: MAX_ID } }],
 }
 
 /** 一次桥调用的校验结果：过了就带收窄后的操作名与实参，没过给一句能读的错。 */

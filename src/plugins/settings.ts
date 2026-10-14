@@ -421,7 +421,7 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
       order: 900,
       fields(): SettingsField[] {
         return [
-          { type: 'info', label: 'Muse Code 版本', text: packageVersion() },
+          { type: 'info', label: 'Pneuma 版本', text: packageVersion() },
           {
             type: 'button',
             label: '检查更新',

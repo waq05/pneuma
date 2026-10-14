@@ -717,7 +717,7 @@ catch-all（priority 100）。想接管某类工具卡的渲染：往这个槽�
        // 不一定装了它们——skipLibCheck 跳过对 .d.ts 本体的检查，你自己的代码仍全量检查。
        "skipLibCheck": true,
        "paths": {
-         // <dsc> = 你装 Muse Code 的包目录（或本仓库检出根）。SDK 随包发布，所以装在
+         // <dsc> = 你装 Pneuma 的包目录（或本仓库检出根）。SDK 随包发布，所以装在
          // node_modules/<dsc 包>/lib/ui/sdk 下；在本仓库内是 lib/ui/sdk。
          "@dsc/*": ["<dsc>/lib/ui/sdk/@dsc/*"]
        }
@@ -763,7 +763,7 @@ catch-all（priority 100）。想接管某类工具卡的渲染：往这个槽�
    }
    ```
 
-   两种方式的差异一句话：**SDK 那份吃的是随发行包发布的 `.d.ts`**（第三方装了 Muse Code
+   两种方式的差异一句话：**SDK 那份吃的是随发行包发布的 `.d.ts`**（第三方装了 Pneuma
    就有、路径稳定、不随源码漂移）；**源码那份吃的是本仓库的 `.ts`**（要检出、跟着源码走）。
    两者写起来都拿到完整类型（含槽位合并），主推前者。
 

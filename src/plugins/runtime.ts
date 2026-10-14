@@ -87,6 +87,10 @@ export const runtimePlugin: Plugin.Object = {
         return ctx.session.open(filePath)
       },
 
+      newSessionIn(cwd: string) {
+        return ctx.session.open(undefined, cwd)
+      },
+
       async compact() {
         await ctx.compact.run()
       },

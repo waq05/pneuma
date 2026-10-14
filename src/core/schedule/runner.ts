@@ -361,7 +361,7 @@ export class ScheduleRunner {
   /** 立刻检查一遍（设置分区那个按钮），返回一句结果文案。 */
   async checkNow(): Promise<string> {
     this.refreshLock()
-    if (this.lock === null) return '另一个 Muse Code 进程正握着调度锁，本进程只读：等它退出后再试'
+    if (this.lock === null) return '另一个 Pneuma 进程正握着调度锁，本进程只读：等它退出后再试'
     const config = this.deps.config()
     if (!config.enabled) return '定时任务总开关是关着的：先在设置里打开'
     await this.tick()
@@ -372,7 +372,7 @@ export class ScheduleRunner {
   /** 立即跑一次某条任务（不占它的排期）。 */
   async fireNow(id: string): Promise<string> {
     this.refreshLock()
-    if (this.lock === null) return '另一个 Muse Code 进程正握着调度锁，本进程只读，不能手动跑'
+    if (this.lock === null) return '另一个 Pneuma 进程正握着调度锁，本进程只读，不能手动跑'
     const config = this.deps.config()
     if (!config.enabled) return '定时任务总开关是关着的：先在设置里打开'
     this.deps.store.reload()
@@ -729,7 +729,7 @@ export class ScheduleRunner {
       this.lock = null
       if (!this.lockNoticed) {
         this.lockNoticed = true
-        this.note(`另一个 Muse Code 进程（pid ${info.pid}）正握着调度锁：本进程只读，不推进也不投递`)
+        this.note(`另一个 Pneuma 进程（pid ${info.pid}）正握着调度锁：本进程只读，不推进也不投递`)
       }
       return
     }

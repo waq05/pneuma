@@ -1,7 +1,7 @@
 /**
  * dsc 版本号：从包根 package.json 读一次（设置「关于」分区展示）。
  * 宿主可能跑在 `lib/` 或打包后的任意深度，因此逐级上溯找本包的清单
- * （包名 `muse-code`，兼容旧名 `dsc-tui`；两个都不认就会一直上溯到盘根）。
+ * （包名 `pneuma`，兼容旧名 `muse-code`、`dsc-tui`；都不认就会一直上溯到盘根）。
  *
  * @module dsc/core/version
  */
@@ -9,8 +9,11 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-/** 本包的包名：改名时要同步这里，否则「关于」分区会退回 `0.0.0`。 */
-const PACKAGE_NAMES: readonly string[] = ['muse-code', 'dsc-tui']
+/**
+ * 本包的包名：改名时要同步这里，否则「关于」分区会退回 `0.0.0`。
+ * 旧名留着是给已发布过的包名与旧构建物兜底的，别删。
+ */
+const PACKAGE_NAMES: readonly string[] = ['pneuma', 'muse-code', 'dsc-tui']
 
 export const DSC_VERSION: string = (() => {
   let dir = dirname(fileURLToPath(import.meta.url))
@@ -20,7 +23,7 @@ export const DSC_VERSION: string = (() => {
         name?: unknown
         version?: unknown
       }
-      // scoped 名（@waq666/muse-code）按最后一段比，发布改名不再踩同一个坑
+      // scoped 名（@waq666/pneuma）按最后一段比，发布改名不再踩同一个坑
       const shortName = typeof doc.name === 'string' ? doc.name.split('/').pop() : undefined
       if (
         shortName !== undefined &&

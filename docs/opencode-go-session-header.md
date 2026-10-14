@@ -33,9 +33,9 @@ opencode Go 网关按**会话**做路由和 prompt 缓存，官方文档（`http
 2. **用自己的 user agent 标识自己**（如 `my-coding-agent/1.0`），不能用通用 SDK / HTTP 库的名字；
 3. **每条会话在 `x-opencode-session` 头里带一个稳定的 session ID**。
 
-msc 第 2、3 条都不满足，网关因此拒绝路由，直接 400。
+numa 第 2、3 条都不满足，网关因此拒绝路由，直接 400。
 
-## msc 侧现状
+## numa 侧现状
 
 发请求的地方：`src/core/llm.ts:434-441`（`streamOnce` 里的 `fetch`）。请求头只有两个：
 
@@ -96,14 +96,14 @@ headers: {
 - 文档写明「Traffic is monitored for abuse that degrades the experience for other users」，
   **补齐头不等于一定放行**，改完要实测确认。
 - 文档的「Known problematic clients」名单里第一条就是 **DeepSeek Harness**，理由是
-  「session information arrives on some model paths, but is missing on others」。msc 首次运行
+  「session information arrives on some model paths, but is missing on others」。numa 首次运行
   从 dsh 的 `settings.yaml` 迁移而来（`src/core/config.ts:2-3`），排查时值得顺带看一眼
   辅助请求（标题生成、压缩、子智能体）是不是各自走了不同路径——这类「部分路径带、部分不带」
   的毛病往往不是单点。
 
 ## 验证
 
-改完在 msc 里切到 opencode 的模型发一条消息，看 400 是否消失即可。
+改完在 numa 里切到 opencode 的模型发一条消息，看 400 是否消失即可。
 
 ## 已实施（2026-10-14）
 
@@ -114,10 +114,10 @@ headers: {
 | ZCode（`apps/zcode-cli/packages/adapters/src/model/runner-attribution.ts`、`opencode-session.ts`） | 所有模型请求过**一个**归因头构造器：`x-opencode-session` 只在 `isOpenCodeGoBaseUrl(baseURL)` 为真时发——host 是 `opencode.ai` 或其子域、path 规范化后正好 `/zen/go/v1`（大小写与尾斜杠都宽容，`/zen/v1` 的普通 Zen 不算）；值取会话 id 并剥掉内部前缀（`sess_` / `subagent_agent_`），没有会话 id 就省略这个头。同一构造器还发 `x-session-id`、`x-zcode-session-type`、`x-request-id` 等观测头（设计稿 `docs/superpowers/specs/2026-06-09-agent-model-request-session-header-design.md`） |
 | dsh（`packages/llm/llm-pi-ai/src/adapter.ts`、`packages/llm/llm/src/attribution.ts`） | 把 `options.sessionId` 传给底层 SDK，由 SDK 按 provider 目录里的 `sessionAffinityFormat`（`packages/llm/llm-pi-ai/src/catalog.ts`）决定发什么；另有 `attributionHeaders()` 给**每个**请求带自标识 `user-agent` |
 
-共同点两条：**会话 id 一定铺到请求层**（这是 msc 缺的那半）、**发不发这个头由端点形状决定**
+共同点两条：**会话 id 一定铺到请求层**（这是 numa 缺的那半）、**发不发这个头由端点形状决定**
 （不认 provider id——那是用户随手起的名字，会变）。
 
-### msc 落地
+### numa 落地
 
 | 面 | 改动 |
 | --- | --- |

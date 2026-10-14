@@ -8,7 +8,7 @@
 | 代码怎么分层、扩展点清单、契约层 | [development.md](development.md) |
 | 为什么长成这样、踩过哪些坑 | [development-log.md](development-log.md) |
 | **对标三家的差距、可移植项、落地顺序** | **本文档** |
-| 三家（dsh / codex / Muse Code）功能清单全文（差距的证据底料） | [peer-feature-inventory.md](peer-feature-inventory.md) |
+| 三家（dsh / codex / Pneuma）功能清单全文（差距的证据底料） | [peer-feature-inventory.md](peer-feature-inventory.md) |
 | dsh / codex 的请求组装细节（源码级拆解） | [dsh-request-assembly.md](dsh-request-assembly.md) · [codex-request-assembly.md](codex-request-assembly.md) |
 
 本文档只读三家源码得出，未改动任何一家代码。引用一律给到 `文件:行号`；三家是外部项目，用完整路径，dsc 自己用仓库相对路径。
@@ -21,7 +21,7 @@
 
 | 项目 | 语言/架构 | 立身之本 | 规模 |
 | --- | --- | --- | --- |
-| **dsc（Muse Code）** | TS + cordis 插件 + ink TUI + Electron | 个人终端 harness，复用 dsh 的设计而非实现 | 内核约 1.26 万行 + 插件约 0.94 万行 |
+| **dsc（Pneuma）** | TS + cordis 插件 + ink TUI + Electron | 个人终端 harness，复用 dsh 的设计而非实现 | 内核约 1.26 万行 + 插件约 0.94 万行 |
 | **codex** | Rust（codex-rs，200+ crate）+ bazel | OS 级安全沙箱 + 客户端-服务架构 + 多前端 | 工业级 |
 | **hermes** | Python 为主 + TS 前端 + 一个 C 分词器 | 自我改进学习闭环 + 随处可用（消息网关 / 多后端） | 工业级 |
 | **dsh** | TS + cordis，200+ 包 | 全插件化 + 会话 / 沙箱 / 持久化的契约严谨度 | 工业级 |
@@ -296,7 +296,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。自检脚本
 
 ## 7. 2026-10-02 全面修订：差距登记（T14–T28）
 
-方法：三路并行源码梳理（dsh、codex、Muse Code 各出一份按能力域分组的功能清单），清单全文与逐条出处见 [peer-feature-inventory.md](peer-feature-inventory.md)；hermes 未重读。编号延续 §4/§5.1 的 T13 之后。每条给出对标出处、dsc 现状、落点与动不动内核；优先级按「天天用得上 → 锦上添花」排。
+方法：三路并行源码梳理（dsh、codex、Pneuma 各出一份按能力域分组的功能清单），清单全文与逐条出处见 [peer-feature-inventory.md](peer-feature-inventory.md)；hermes 未重读。编号延续 §4/§5.1 的 T13 之后。每条给出对标出处、dsc 现状、落点与动不动内核；优先级按「天天用得上 → 锦上添花」排。
 
 ### 7.1 高价值差距（P1，建议下一批按序做）
 

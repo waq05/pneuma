@@ -1,5 +1,5 @@
 /*
- * Muse Code 遥控端的 service worker —— 只做一件事：把宿主推来的通知显示出来，
+ * Pneuma 遥控端的 service worker —— 只做一件事：把宿主推来的通知显示出来，
  * 点通知时聚焦/打开页面。
  *
  * 故意不写 fetch 处理器：这个产物由宿主按目录伺服、文件名带内容哈希，
@@ -9,7 +9,7 @@
  * 宿主的推送体是 JSON：{ title, body, url }。字段缺了就退回默认值，不让通知显示成空白。
  */
 
-const DEFAULT_TITLE = 'Muse Code'
+const DEFAULT_TITLE = 'Pneuma'
 const DEFAULT_URL = '/'
 
 /** 推来的数据尽量解析成 { title, body, url }；解析不出就把原文当正文。 */
@@ -39,7 +39,7 @@ self.addEventListener('push', (event) => {
       icon: 'icon-192.png',
       badge: 'icon-192.png',
       // 通知带同一 tag：连着推两条时后一条替换前一条，不在通知中心堆一列。
-      tag: 'muse-code',
+      tag: 'pneuma',
       data: { url },
     }),
   )

@@ -45,7 +45,7 @@ const UNAVAILABLE_BOOT: UiBootGraph = {
   rev: 'unavailable',
   entries: [],
   batches: [],
-  host: { name: 'Muse Code', version: '未知版本' },
+  host: { name: 'Pneuma', version: '未知版本' },
 }
 
 /**

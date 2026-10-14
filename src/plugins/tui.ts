@@ -28,7 +28,7 @@ import type { InkComponent } from '../ui/tui-plugins.js'
 
 const ENTER_ALT = '\x1b[?1049h\x1b[2J\x1b[H'
 const LEAVE_ALT = '\x1b[?1049l'
-const GOODBYE = 'Muse Code 已退出，会话已保存（/resume 可继续）。'
+const GOODBYE = 'Pneuma 已退出，会话已保存（/resume 可继续）。'
 
 export const tuiPlugin: Plugin.Object = {
   name: 'tui',
@@ -49,7 +49,7 @@ export const tuiPlugin: Plugin.Object = {
     const load = loadTuiPlugins({
       registry,
       runtime,
-      host: { name: 'Muse Code', version: DSC_VERSION, platform: 'tui' },
+      host: { name: 'Pneuma', version: DSC_VERSION, platform: 'tui' },
       // 终端没有诊断区：装没装上、为什么没装上，进会话流让用户看得见。
       onReport: (report) => {
         if (report.ok) return

@@ -160,8 +160,18 @@ export interface LlmService {
 /** 会话服务：当前会话持有者 + 列表缓存（快照的 sessions 字段来源）。 */
 export interface SessionService {
   current(): Session
-  /** 新建（undefined）或恢复指定 jsonl；成功后发出 dsc/session-open。 */
-  open(filePath?: string): Promise<void>
+  /**
+   * 新建（undefined）或恢复指定 jsonl；成功后发出 dsc/session-open。
+   *
+   * @param filePath - 要恢复的会话 jsonl；省略 = 新建（此时才看 `cwd`）。
+   * @param cwd - 新会话的工作目录（绝对路径，必须存在且是目录）。省略时按
+   *              「当前会话的目录 → 宿主启动目录」兜底。目录是**会话自己的数据**
+   *              （写进 jsonl 的 meta 行），不是进程状态——所以在这里指定目录
+   *              不需要重启宿主。给了 `filePath` 时这一项无意义（会话的目录
+   *              是它出生时写下的），忽略。
+   * @throws 目录不可用（不是绝对路径 / 不存在 / 不是目录）时抛错，界面据此提示。
+   */
+  open(filePath?: string, cwd?: string): Promise<void>
   /** refresh() 填充的会话列表缓存。 */
   readonly sessions: SessionSummary[]
   readonly loading: boolean
@@ -1141,7 +1151,7 @@ export interface InteractiveService {
  * 本机界面服务：宿主把一个回环 HTTP 服务开起来，把插件版界面伺服给浏览器（桌面窗口看的
  * 就是它伺服的那份文档，与远程设备共用同一份）。
  *
- * 默认**不起**（挂载只是登记服务）：终端里跑 `msc` 的人不该平白多出一个监听端口。
+ * 默认**不起**（挂载只是登记服务）：终端里跑 `numa` 的人不该平白多出一个监听端口。
  * 谁来要：桌面主进程经宿主协议拿地址，或者 `DSC_UI_SERVER=1` / 插件配置 `enabled: true`。
  */
 export interface WebServerService {

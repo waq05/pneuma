@@ -142,7 +142,8 @@ function connectionKey(server: McpServerConfig): string {
 export const mcpPlugin: Plugin.Object = {
   name: 'mcp',
   // approval：T24 elicitation——server 反向要确认时走审批卡
-  inject: ['tools', 'transcript', 'settings', 'prompt', 'approval'],
+  // session：stdio server 的起进程目录与 elicitation 卡的目录都取自当前会话
+  inject: ['tools', 'transcript', 'settings', 'prompt', 'approval', 'session'],
   apply(ctx, passed: unknown) {
     let deferred = false
     const states = new Map<string, ServerState>()
@@ -159,7 +160,7 @@ export const mcpPlugin: Plugin.Object = {
     const offService = ctx.provide('mcp', buildService())
     const offSection = ctx.settings.registerSection(buildSection())
     // 宿主退出时只发事件就退进程，不走 cordis 卸载：子进程得在这一步收掉，
-    // 否则每退一次 Muse Code 就留一群 MCP server 在后台
+    // 否则每退一次 Pneuma 就留一群 MCP server 在后台
     const offExit = ctx.on('dsc/exit', () => {
       for (const name of [...states.keys()]) stopServer(name)
     })
@@ -441,6 +442,15 @@ export const mcpPlugin: Plugin.Object = {
       syncCapabilityTools()
     }
 
+    /** 当前会话的工作目录：stdio server 起进程、elicitation 卡都用它。取不到给空串（= 不指定）。 */
+    function sessionCwd(): string {
+      try {
+        return ctx.session.current().meta.cwd
+      } catch {
+        return ''
+      }
+    }
+
     async function connect(state: ServerState): Promise<void> {
       if (state.closed) return
       const hadFailed = state.info.state === 'failed'
@@ -453,6 +463,9 @@ export const mcpPlugin: Plugin.Object = {
         const connection = await openConnection(state.config, {
           connectTimeoutMs: current.connectTimeoutMs,
           callTimeoutMs: current.callTimeoutMs,
+          // stdio server 的起进程目录：配置里写了 `cwd` 就用它，没写落在**当前会话的**
+          // 目录里（多工作区并用之后，进程目录已经没有用户意义了）。
+          cwd: sessionCwd(),
           onClose: () => {
             onConnectionClosed(state, box.value)
           },
@@ -466,7 +479,9 @@ export const mcpPlugin: Plugin.Object = {
                 toolName: `MCP elicitation · ${state.config.name}`,
                 argsSummary: `${state.config.name} 请求确认：${request.message}${schemaText}`,
                 args: { message: request.message, requestedSchema: request.requestedSchema },
-                cwd: '',
+                // 卡上的路径/围栏判定要有基准：会话的目录（拿进程目录判会把
+                // 别的会话的合法目标当成越界）。
+                cwd: sessionCwd(),
               },
               AbortSignal.timeout(ELICITATION_TIMEOUT_MS),
             )
@@ -558,7 +573,7 @@ export const mcpPlugin: Plugin.Object = {
       if (state.failures > current.reconnectMaxAttempts) {
         ctx.transcript.system(
           `MCP server ${state.config.name} 连续 ${current.reconnectMaxAttempts} 次没连上，先不重试了。` +
-            '改完配置到设置里点「重连全部服务器」，或者重启 Muse Code。',
+            '改完配置到设置里点「重连全部服务器」，或者重启 Pneuma。',
         )
         return
       }

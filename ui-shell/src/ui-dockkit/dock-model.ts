@@ -7,7 +7,8 @@
  * 也是同一个：两个界面共享用户摆好的页签组（与文件预览的 `dsc.diffView` 同款思路）。
  *
  * 能力面（收窄自 dsh 的 ui-sidebar-right + ui-dockkit）：
- *   - 页签多开：终端可无限多开；浏览器 / 文件 / Git 每个布局单例（已开则聚焦）；
+ *   - 页签多开：终端与浏览器可无限多开（浏览器一张页签一台原生视图，一台视图一个 id）；
+ *     文件 / Git 每个布局单例（已开则聚焦）；
  *     文件预览页签（preview）按路径去重、每窗格至多 10 张（文件树单击文件的路径）；
  *   - 「开始」引导页（guide）：每个窗格至多一张，是「新标签页」的门面——
  *     入口卡选中后就地替换成那个页面（dsh 的 replaceTab: true）；
@@ -60,7 +61,7 @@ export type DockTabKind =
 export interface DockTab {
   id: string
   kind: DockTabKind
-  /** preview / patch = 那个文件的绝对路径；subagent = 那个子智能体的会话文件路径；work-output = 后台活 id（job-N / term-N）。 */
+  /** preview / patch = 那个文件的绝对路径；subagent = 那个子智能体的会话文件路径；work-output = 后台活 id（job-N / term-N）；browser = 这一页正在看的地址（重开这张页签回到它）。 */
   path?: string
   /**
    * chip 上显示的标题（可缺）。
@@ -104,6 +105,13 @@ export interface DockActions {
   openTab(kind: DockTabKind, options?: { replaceGuide?: boolean }): void
   /** 开一张文件预览页签（同路径去重 = 聚焦；对齐 dsh 的 openResource）；line = 定位行号。 */
   openPreview(path: string, line?: number): void
+  /**
+   * 开一张浏览器页签（**可多开**：2026-10 起浏览器不再是单例）。
+   * `url` = 开的时候直接进的地址，不给就是空态；`label` = chip 上的标题。
+   */
+  openBrowserTab(url?: string, label?: string): void
+  /** 回填一张页签的标题 / 地址（浏览器页签用：网页标题进 chip、当前地址存回页签）。 */
+  setTabInfo(tabId: string, patch: { label?: string; path?: string }): void
   /** 开一张补丁页签（同路径去重 = 聚焦）：看那个文件某次 write / edit 改了什么。 */
   openPatch(path: string): void
   /** 开一张子智能体页签（同会话文件去重 = 聚焦）；label = chip 上显示的队友名。 */
@@ -123,8 +131,13 @@ export interface DockActions {
   setFraction(fraction: number): void
 }
 
-/** 单例页签：一个布局里至多一张（已开再 openTab = 聚焦现成的）。 */
-const SINGLETON_KINDS: readonly DockTabKind[] = ['browser', 'files', 'git']
+/**
+ * 单例页签：一个布局里至多一张（已开再 openTab = 聚焦现成的）。
+ *
+ * 浏览器 2026-10 起**不在这一档**：它的页签条就是右侧栏的页签条（对齐 dsh），
+ * 一张页签一台原生视图，用户想开几个开几个。
+ */
+const SINGLETON_KINDS: readonly DockTabKind[] = ['files', 'git']
 
 /** 每窗格的预览页签上限：再开时自动关掉最旧的那张（页签条没有虚拟化，放不下无限多）。 */
 const PREVIEW_MAX = 10
@@ -292,6 +305,55 @@ export function openWorkOutput(surface: DockSurface, id: string, label?: string)
   const pane = activePane(surface)
   const tab = { ...makeTab('work-output', id), ...(label === undefined ? {} : { label }) }
   return replacePane(surface, pane.id, { ...pane, tabs: [...pane.tabs, tab], activeTabId: tab.id })
+}
+
+/**
+ * 开一张浏览器页签（**可多开**，对齐 dsh：浏览器的页签条就是右侧栏的页签条）。
+ *
+ * 为什么解除单例：dsh 那张截图里的「浏览器 × / ＋」就是右侧栏的页签条本身，一张页签
+ * 一台原生视图；dsc 的页签条 / 分栏 / 拖拽 / 右键菜单已经现成，跟着解除单例即可，
+ * 不必在面板内部再造一条 Chrome 式页签条。同一个地址开两张**不去重**——对照两个版本的
+ * 同一份文档是正常用法。
+ *
+ * @param url 开的时候直接进的地址；不给就是空态（新页签不自动加载任何页面）
+ * @param label chip 上的标题；通常留空，由页面标题回填（见 {@link setTabInfo}）
+ */
+export function openBrowserTab(surface: DockSurface, url?: string, label?: string): DockSurface {
+  const pane = activePane(surface)
+  const tab: DockTab = {
+    ...makeTab('browser', url === undefined || url === '' ? undefined : url),
+    ...(label === undefined || label === '' ? {} : { label }),
+  }
+  return replacePane(surface, pane.id, { ...pane, tabs: [...pane.tabs, tab], activeTabId: tab.id })
+}
+
+/**
+ * 回填一张页签的标题与地址（浏览器页签用）。
+ *
+ * 为什么要有它：多开之后 chip 上全写「浏览器」就分不清谁是谁；「重开那张页签回到那个
+ * 页面」也只能靠把地址存回页签（布局是每会话落盘的）。同值不产生新对象——否则网页
+ * 每报一次标题 / 地址就会写一遍 localStorage。
+ */
+export function setTabInfo(
+  surface: DockSurface,
+  tabId: string,
+  patch: { label?: string; path?: string },
+): DockSurface {
+  const owner = surface.panes.find((pane) => pane.tabs.some((tab) => tab.id === tabId))
+  if (owner === undefined) return surface
+  const current = owner.tabs.find((tab) => tab.id === tabId)!
+  const label = patch.label === undefined || patch.label === '' ? current.label : patch.label
+  const path = patch.path === undefined || patch.path === '' ? current.path : patch.path
+  if (label === current.label && path === current.path) return surface
+  const next: DockTab = {
+    ...current,
+    ...(label === undefined ? {} : { label }),
+    ...(path === undefined ? {} : { path }),
+  }
+  return replacePane(surface, owner.id, {
+    ...owner,
+    tabs: owner.tabs.map((tab) => (tab.id === tabId ? next : tab)),
+  })
 }
 
 /** 找到持有某张页签的窗格 id。 */
@@ -471,6 +533,15 @@ function parseSurface(value: unknown): DockSurface | null {
           id: entry.id,
           kind: 'work-output',
           path: entry.path,
+          ...(typeof entry.label === 'string' && entry.label !== '' ? { label: entry.label } : {}),
+        })
+      } else if (entry.kind === 'browser') {
+        // 浏览器页签：path 是那次浏览的地址、label 是网页标题。两者都可以缺——
+        // 新页签本来就是空态，标题要等页面加载完才有；缺了只是回空态，不该作废整格。
+        tabs.push({
+          id: entry.id,
+          kind: 'browser',
+          ...(typeof entry.path === 'string' && entry.path !== '' ? { path: entry.path } : {}),
           ...(typeof entry.label === 'string' && entry.label !== '' ? { label: entry.label } : {}),
         })
       } else {

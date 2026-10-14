@@ -91,6 +91,7 @@ export const UI_METHODS = [
   'compact',
   // 会话库
   'openSession',
+  'newSessionIn',
   'refreshSessions',
   'archiveSessions',
   'restoreSessions',
@@ -268,6 +269,11 @@ export const UI_ARG_SPECS: Readonly<Record<UiMethod, MethodSpec>> = {
   compact: [],
   // ── 会话库 ────────────────────────────────────────────────────────────────
   openSession: [{ shape: { kind: 'string', max: MAX_PATH }, optional: true }],
+  // 在指定目录里新建会话：实参只是一个**目录名**（能否用由宿主校验：绝对 + 存在 +
+  // 是目录），不写配置、不改策略、不执行命令——与 `openSession(path)` / `discoverModels`
+  // 同一把尺。目录是会话自己的数据（jsonl 的 meta 行），所以换目录新建**不需要重启
+  // 宿主**，也就不会再顺带把整个窗口重载一遍（工作区行那颗 ⊕ 走的就是这条路）。
+  newSessionIn: [{ shape: { kind: 'string', max: MAX_PATH } }],
   refreshSessions: [],
   archiveSessions: [{ shape: { kind: 'strings', maxItems: MAX_PATHS, max: MAX_PATH } }],
   restoreSessions: [{ shape: { kind: 'strings', maxItems: MAX_PATHS, max: MAX_PATH } }],

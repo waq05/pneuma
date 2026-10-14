@@ -25,7 +25,7 @@ import { DSC_VERSION } from './version.js'
  * 自标识的 user agent。文档要求「用自己的名字」，通用的 `node`（undici 缺省）不算。
  * 形状跟常见客户端一致：`<产品名>/<版本>`（HTTP 头里不能有空格）。
  */
-export const APP_USER_AGENT = `muse-code/${DSC_VERSION}`
+export const APP_USER_AGENT = `pneuma/${DSC_VERSION}`
 
 /** Go 网关的根域；子域也算（`www.opencode.ai` 之类）。 */
 const OPENCODE_HOST = 'opencode.ai'

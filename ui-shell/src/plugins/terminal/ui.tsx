@@ -94,7 +94,7 @@ function TerminalTab({ active }: DockTabBodyProps): ReactNode {
     return (
       <p className="shell-term-empty">
         终端来自桌面外壳的原生桥，浏览器里没有它。要用终端请打开桌面版（或者在终端里跑
-        <code> msc</code>）。
+        <code> numa</code>）。
       </p>
     )
   }

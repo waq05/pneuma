@@ -1,28 +1,28 @@
-# Muse Code — 独立终端 AI harness
+# Pneuma — 独立终端 AI harness
 
 **全自研**的终端 AI 编程助手：自写 ReAct loop + 会话落盘 + 工具栈 + 审批，UI 用 ink（React for CLI），另有 Electron 桌面端；插件装配基于开源 cordis 上下文内核。
 
 ## 安装
 
-**桌面端**（自带运行时，无需装 Node）：到 [Releases](https://github.com/waq05/muse-code/releases) 下载
-安装版 `muse-code-setup-x.y.z.exe`（可选安装目录）或免安装单文件 `muse-code-portable-x.y.z.exe`。
+**桌面端**（自带运行时，无需装 Node）：到 [Releases](https://github.com/waq05/pneuma/releases) 下载
+安装版 `pneuma-setup-x.y.z.exe`（可选安装目录）或免安装单文件 `pneuma-portable-x.y.z.exe`。
 
-**CLI**（`msc` 命令，需要 Node.js ≥ 22.19）：
+**CLI**（`numa` 命令，需要 Node.js ≥ 22.19）：
 
 ```sh
-npm i -g @waq666/muse-code    # 或免安装：npx @waq666/muse-code
-msc                           # 独立启动（新会话）
+npm i -g @waq666/pneuma    # 或免安装：npx @waq666/pneuma
+numa                           # 独立启动（新会话）
 ```
 
 **从源码跑**：
 
 ```sh
-git clone https://github.com/waq05/muse-code
-cd muse-code && pnpm install && pnpm build
-npm i -g file:.       # 全局 msc 命令指向本地构建
+git clone https://github.com/waq05/pneuma
+cd pneuma && pnpm install && pnpm build
+npm i -g file:.       # 全局 numa 命令指向本地构建
 ```
 
-`msc --resume` 恢复上次会话；`msc --resume <会话jsonl路径>` 恢复指定会话。
+`numa --resume` 恢复上次会话；`numa --resume <会话jsonl路径>` 恢复指定会话。
 
 ## 交互
 
@@ -52,7 +52,7 @@ npm i -g file:.       # 全局 msc 命令指向本地构建
 
 ## 配置
 
-Muse Code 只读**自己的**配置文件（`~/.dsc/`）：
+Pneuma 只读**自己的**配置文件（`~/.dsc/`）：
 
 - **`~/.dsc/config.yaml`**（主配置）：`default`（默认 provider/model）+ `providers`
   （`displayName` / `baseURL` / `apiKeyEnv` / `models` 列表；可选 `api` 选线上协议适配器，
@@ -77,7 +77,7 @@ Muse Code 只读**自己的**配置文件（`~/.dsc/`）：
 - **`~/.dsc/config.json`**（可选轻量覆盖）：`{ "provider": "...", "model": "...", "temperature": 0.7 }`。
 
 ```sh
-msc config show              # 查看当前生效的端点/模型/key 来源（不打印 key）
+numa config show              # 查看当前生效的端点/模型/key 来源（不打印 key）
 ```
 
 - **会话落盘**：`~/.dsc/sessions/<cwd 压缩名>/<uuid>.jsonl`（append-only，重放恢复）；
@@ -88,7 +88,7 @@ msc config show              # 查看当前生效的端点/模型/key 来源（�
 ```
 bin/dsc.js          启动器（零依赖）：--resume / config 子命令 → spawn node lib/boot.js
 src/boot.ts         进程入口：读配置 → createKernel()（cordis 装配）→ 装 UI 插件
-src/tools/config-cli.ts  msc config 命令行工具
+src/tools/config-cli.ts  numa config 命令行工具
 src/core/           自研引擎（零 UI 依赖）
   config.ts         读 ~/.dsc/config.yaml + key 来源链（env → 凭据文件）
   llm.ts            OpenAI chat-completions 流式客户端（SSE/reasoning/tool_calls/usage/重试）
@@ -112,7 +112,7 @@ scripts/composer-test.mjs  候选面板/输入行的确定性测试（node scrip
 
 ## 已知限制
 
-- 沙箱是策略围栏（默认开的 sandbox 插件：可写根白名单、受保护路径、命令前缀策略、一次性升权），拦得住 msc 自己发起的工具调用，**拦不住命令内部的任意写**——那要选容器后端；最终兜底仍是审批卡。
+- 沙箱是策略围栏（默认开的 sandbox 插件：可写根白名单、受保护路径、命令前缀策略、一次性升权），拦得住 Pneuma 自己发起的工具调用，**拦不住命令内部的任意写**——那要选容器后端；最终兜底仍是审批卡。
 - 插件能加工具、命令、事件监听、设置分区和技能来源，但拿不到 DOM：界面扩展只接受可 JSON 序列化的控件声明。
 - Windows 中文输入法可能拦截审批卡的 y/n 键（输入法切英文即可）。
 - 跨进程的路由状态（当前模型/思考强度）不落盘，重启宿主后回到配置默认值。

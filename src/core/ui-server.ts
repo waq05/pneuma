@@ -74,7 +74,7 @@ export const BOOT_GLOBAL = '__DSC_BOOT__'
 /** 产物目录不存在时的占位页。 */
 const PLACEHOLDER_HTML = `<!doctype html>
 <html lang="zh-CN">
-  <head><meta charset="utf-8" /><title>Muse Code 界面</title></head>
+  <head><meta charset="utf-8" /><title>Pneuma 界面</title></head>
   <body style="font-family: system-ui, sans-serif; margin: 0; padding: 24px; line-height: 1.7">
     <h1 style="font-size: 20px">界面服务已就绪，但界面资产未构建</h1>
     <p>宿主这一半（HTTP + 插件下发）已经起来了，缺的是界面壳的页面文件。</p>

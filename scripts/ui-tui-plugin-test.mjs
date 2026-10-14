@@ -223,7 +223,7 @@ async function renderFrame(registry, slot) {
   const load = loadTuiPlugins({
     registry,
     runtime,
-    host: { name: 'Muse Code', version: '0.0.0-probe', platform: 'tui' },
+    host: { name: 'Pneuma', version: '0.0.0-probe', platform: 'tui' },
     pluginsDir,
     onReport: (report) => reports.push(report),
   })
@@ -266,7 +266,7 @@ async function renderFrame(registry, slot) {
   const load = loadTuiPlugins({
     registry,
     runtime,
-    host: { name: 'Muse Code', version: '0.0.0-probe', platform: 'tui' },
+    host: { name: 'Pneuma', version: '0.0.0-probe', platform: 'tui' },
     pluginsDir: lateDir,
     onReport: (report) => reports.push(report),
   })

@@ -12,7 +12,7 @@
  *  - 高峰时段为北京时间周一至周五 9:00-12:00、14:00-18:00，其余为空闲时段
  *    （空闲价为高峰价的一半）。
  *
- * 只对 DeepSeek 官方端点生效：msc 的 provider 名是用户在 config.yaml 里自己起的，
+ * 只对 DeepSeek 官方端点生效：Pneuma 的 provider 名是用户在 config.yaml 里自己起的，
  * 这里用「名字含 deepseek」判定（官方 API 的唯一事实来源就是它的域名单词）。
  * 其它 provider / 价目表外的模型一律返回 undefined，界面不显示金额——宁可不显示，
  * 也不给错误数字。
@@ -112,7 +112,7 @@ export function emptyCostBuckets(): CostBuckets {
 
 /**
  * 把一笔用量按发生时刻累加进分桶（不取整不设防，负数调用方自己不传）。
- * msc 的用量口径：`inputTokens` 是 prompt_tokens 总量（缓存命中**包含在内**），
+ * Pneuma 的用量口径：`inputTokens` 是 prompt_tokens 总量（缓存命中**包含在内**），
  * 与 dsh 的「互斥分项」不同——所以这里先拆命中/未命中，端点没报明细时全部输入
  * 按未命中价计（保守上限，估算只会偏高不会漏）。
  */

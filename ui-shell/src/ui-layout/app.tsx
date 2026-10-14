@@ -41,7 +41,7 @@ import {
   writeStoredFlag,
   writeStoredPx,
 } from '@dsc/ui-primitives'
-import { Dock, dockActions, openDockTab, setDockSession, useDockReview, useDockSurface } from '@dsc/ui-dockkit'
+import { Dock, dockActions, openDockBrowserTab, openDockTab, setDockSession, useDockReview, useDockSurface } from '@dsc/ui-dockkit'
 // 槽位契约（SLOT）与渲染出口（SlotOutlet / useSlotFaults）住 @dsc/ui-slots（E4 拆包）。
 // 装载会话与热更句柄**不从这里 import**：它们的份额按结构定义在下面（AppBootSession /
 // AppSyncHandle），由入口以 props 递进来——两包之间因此没有反向边（剪掉成环的那一刀）。
@@ -283,7 +283,9 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
         openDockTab('terminal')
       } else if (event.key === 't' || event.key === 'T') {
         event.preventDefault()
-        openDockTab('browser')
+        // 浏览器页签可多开（2026-10）：Ctrl+T 是「再开一张」——空态那张不自动加载页面。
+        // 文件页签仍是单例（openDockTab 走的就是「已开则聚焦」）。
+        openDockBrowserTab()
       }
     }
     const onToggle = (): void => toggleSidebar()
@@ -317,7 +319,7 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
             data-rail-hidden={sidebarCollapsed ? '1' : undefined}
             aria-hidden={sidebarCollapsed || undefined}
           >
-            <img src="icon.png" alt="Muse Code" draggable={false} />
+            <img src="icon.png" alt="Pneuma" draggable={false} />
             <span className="brand">{boot.host.name}</span>
             <button
               type="button"
@@ -531,7 +533,7 @@ function SidebarRail({ onExpand }: { onExpand: () => void }): ReactNode {
     <>
       {/* 窄栏里 logo 就代表「点开侧栏」，不再另摆一颗开关（旧界面同款）。 */}
       <button type="button" className="rail-logo" data-tip="展开侧边栏，快捷键 Ctrl+B" title="展开侧栏（Ctrl+B）" aria-label="展开侧栏" onClick={onExpand}>
-        <img src="icon.png" alt="Muse Code" draggable={false} />
+        <img src="icon.png" alt="Pneuma" draggable={false} />
       </button>
       <button
         type="button"

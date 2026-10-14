@@ -81,8 +81,8 @@ export function LoginPage({ onPaired, notice }: LoginPageProps): ReactNode {
   return (
     <div className="login">
       <form className="login-card" onSubmit={(event) => void handleSubmit(event)}>
-        <h1 className="login-title">Muse Code 远程</h1>
-        <p className="login-sub">在电脑端 Muse Code 的设置里生成配对码（半小时内有效），然后在这里填上。</p>
+        <h1 className="login-title">Pneuma 远程</h1>
+        <p className="login-sub">在电脑端 Pneuma 的设置里生成配对码（半小时内有效），然后在这里填上。</p>
         {notice !== undefined && notice !== null && notice !== '' ? (
           <p className="login-notice">{notice}</p>
         ) : null}

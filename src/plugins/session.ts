@@ -8,8 +8,8 @@
  *
  * @module dsc/plugins/session
  */
-import { existsSync } from 'node:fs'
-import { basename } from 'node:path'
+import { existsSync, statSync } from 'node:fs'
+import { basename, isAbsolute, resolve } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import {
   Session,
@@ -48,7 +48,8 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
   name: 'session',
   provide: 'session',
   apply(ctx, options) {
-    const cwd = options.cwd ?? process.cwd()
+    // 宿主启动目录：只是**兜底**（会话自己带 cwd，见 `open` 的说明与 core/session 的 meta.cwd）。
+    const startupCwd = options.cwd ?? process.cwd()
 
     // ---- 初始会话（同步确定；resume 失败回退新会话并记 startupNote） ----
     let session: Session
@@ -58,9 +59,9 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
     // 指针可能指向一个从没发过消息、因此没在磁盘上留过文件的会话：这种情况安静地开新会话
     const resumePath = pointer !== null && existsSync(pointer) ? pointer : null
     try {
-      session = resumePath !== null ? Session.load(resumePath) : Session.create(cwd)
+      session = resumePath !== null ? Session.load(resumePath) : Session.create(startupCwd)
     } catch (error) {
-      session = Session.create(cwd)
+      session = Session.create(startupCwd)
       startupNote = `恢复会话失败（${errText(error)}），已开新会话`
     }
     saveLastSession(session)
@@ -86,23 +87,36 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
       get startupNote() {
         return startupNote
       },
-      async open(filePath?: string) {
+      async open(filePath?: string, cwd?: string) {
         // 已经在看这条会话：no-op（对齐 dsh 的会话实例常驻 + openState 短路）。
         // 重开一遍不是无害的刷新——它会重建 Session（加载时的中断修复给还在跑的回合
         // 补「结果未知」合成件），紧接着把正在跑的 agent 的会话顶掉，日志里同一 callId
         // 就可能留下两条结果。点击自己正在看的会话要老老实实什么都不做。
         if (filePath !== undefined && filePath === session.filePath) return
+        // 目录是会话自己的数据（写进 jsonl 的 meta 行），所以在这里挑一个新目录
+        // **不需要**重启宿主——与 dsh 同一形状：目录跟着会话走，进程目录只是兜底。
+        // 只有新建会话（没给 filePath）时才看它；给了 filePath 时忽略（那条会话
+        // 的目录是它出生时写下的，改不了也不该改）。
+        let dir: string | null = null
+        if (filePath === undefined) {
+          // 界面指了目录就必须先过「可用」这一关（不合法当场抛，界面拿得到原因）；
+          // 没指 = 落在你正在看的这条会话的目录里（dsh 的「当前工作区」口径），
+          // 而不是宿主进程碰巧启动时的那个目录。
+          dir =
+            cwd !== undefined && cwd !== ''
+              ? usableDir(cwd)
+              : session.meta.cwd !== ''
+                ? session.meta.cwd
+                : startupCwd
+        }
         try {
-          let next: Session
-          if (filePath === undefined) {
-            next = Session.create(cwd)
-          } else {
-            // 常驻 agent 还攥着这条会话（后台回合在跑/刚切走没多久）：直接复用那个
-            // 实例——再 Session.load 一遍既拿不到写租约（agent 正攥着），又会造出
-            // 同一文件的两个内存副本。0.6.48 常驻多 agent 的关键接缝。
-            const resident = ctx.get('agent')?.sessionFor(filePath)
-            next = resident ?? Session.load(filePath)
-          }
+          // 常驻 agent 还攥着这条会话（后台回合在跑/刚切走没多久）：直接复用那个
+          // 实例——再 Session.load 一遍既拿不到写租约（agent 正攥着），又会造出
+          // 同一文件的两个内存副本。0.6.48 常驻多 agent 的关键接缝。
+          const next =
+            filePath === undefined
+              ? Session.create(dir ?? startupCwd)
+              : (ctx.get('agent')?.sessionFor(filePath) ?? Session.load(filePath))
           session = next
           saveLastSession(session)
           ctx.emit('dsc/session-open', { session: next, filePath } satisfies SessionOpenPayload)
@@ -117,10 +131,15 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
         try {
           // 归档区的会话也进这份缓存：侧栏的「筛选会话」要能原地在活动区与归档区之间切，
           // 由面板按 archivedAt 决定显示哪些。归档相关的写操作仍只认活动区路径。
-          sessions = [
+          const listed = [
             ...listSessions().map((item) => toSummary(item)),
             ...listArchivedSessions().map((item) => toSummary(item, item.archivedAt ?? item.updatedAt)),
           ]
+          // 还没落盘的当前会话（刚新建、一个字都还没发）：磁盘上没有它，但界面必须看得见
+          // ——侧栏要给它一个高亮行（dsh 同款：新会话立刻以空行出现，点它就是打开）。
+          // 这也是「新建会话只刷新中间区」那条路上唯一的可见回执：少了它，用户点完
+          // 那颗钮在列表里找不到任何变化，会以为没生效。
+          sessions = existsSync(session.filePath) ? listed : [pendingSummary(session), ...listed]
         } catch (error) {
           ctx.emit('dsc/notice', `会话列表读取失败：${errText(error)}`)
         }
@@ -252,6 +271,28 @@ function uuidOf(filePath: string): string {
   return basename(filePath, '.jsonl')
 }
 
+/**
+ * 界面指名的目录必须真的能用：绝对路径 + 存在 + 是目录。
+ *
+ * 为什么要当场抛而不是回落启动目录：这颗钮的语义是「在**这个**目录里开会话」
+ * （界面上的悬浮说明就这么写的）。悄悄落到别处，用户只会以为界面坏了。
+ * 一句话能直接看的原因，界面转成一条 toast 就够了。
+ *
+ * @returns 规范化后的绝对路径（尾部斜杠、分隔符统一），交给 `Session.create`。
+ */
+function usableDir(dir: string): string {
+  let isDir = false
+  if (isAbsolute(dir)) {
+    try {
+      isDir = statSync(dir).isDirectory()
+    } catch {
+      isDir = false
+    }
+  }
+  if (!isDir) throw new Error(`工作目录不可用：${dir}（要一个存在的绝对路径）`)
+  return resolve(dir)
+}
+
 /** 会话库扫描结果 → 侧栏与选择器用的一行；传 archivedAt 表示它来自归档区。 */
 function toSummary(item: SessionListItem, archivedAt?: number): SessionSummary {
   return {
@@ -262,5 +303,21 @@ function toSummary(item: SessionListItem, archivedAt?: number): SessionSummary {
     ...(item.title !== undefined ? { title: item.title } : {}),
     ...(item.pinnedAt !== undefined ? { pinnedAt: item.pinnedAt } : {}),
     ...(archivedAt !== undefined ? { archivedAt } : {}),
+  }
+}
+
+/**
+ * 还没落盘的当前会话在侧栏里的一行。
+ *
+ * id 用 jsonl 路径（与 `status.sessionPath` 同一口径，侧栏就是按它判「当前」的）；
+ * updatedAt 取 createdAt 而不是 Date.now()——每次 refresh 都变的话，那一行会跟着
+ * 抖动，也会无谓地把整列表重排。
+ */
+function pendingSummary(session: Session): SessionSummary {
+  return {
+    id: session.filePath,
+    cwd: session.meta.cwd,
+    createdAt: session.meta.createdAt,
+    updatedAt: session.meta.createdAt,
   }
 }

@@ -152,6 +152,12 @@ export interface LspManagerOptions {
   servers(): readonly LspServerDef[]
   /** idle 回收时长（毫秒）。 */
   idleTimeoutMs(): number
+  /**
+   * 解析「相对路径写的服务器命令」用哪个目录当基准（`resolveExecutable` 的第三参）。
+   * 缺省 `process.cwd()`；但调用方（插件层）应当给**会话目录**——多工作区并用之后，
+   * 进程目录只是「上一次切过的工作区」，拿它解析等于随机。
+   */
+  baseCwd?(): string
   /** 覆盖几个时间预算（自检里把等待压到毫秒级）。 */
   values?(): Partial<LspRuntimeValues>
   /** 覆盖子进程环境（自检注入用；缺省走白名单）。 */

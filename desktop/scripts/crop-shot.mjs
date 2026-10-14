@@ -8,7 +8,7 @@
  *   比例都写 0–1。例：左下角那一块放大 3 倍——
  *   node desktop/scripts/crop-shot.mjs desktop/shots/a.png desktop/shots/a-crop.png 0.10 0.42 0.90 1.0 3
  *
- * @module muse-code-desktop/crop-shot
+ * @module pneuma-desktop/crop-shot
  */
 import { cropAndScale } from './png-tools.mjs'
 

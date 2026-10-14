@@ -917,7 +917,7 @@ try {
   const hookDoc = JSON.parse(hookHit.body)
   check(
     '审批卡从无到有 → 假 Webhook 服务收到 POST JSON（ntfy 风格）',
-    hookHit.method === 'POST' && hookDoc.title === 'Muse Code 等待审批' && typeof hookDoc.body === 'string' && hookDoc.body !== '',
+    hookHit.method === 'POST' && hookDoc.title === 'Pneuma 等待审批' && typeof hookDoc.body === 'string' && hookDoc.body !== '',
     hookHit.body,
   )
   check(
@@ -970,8 +970,8 @@ try {
   )
   const turnDoc = JSON.parse(turnHit.body)
   check(
-    '一轮跑完（≥15 秒或本轮出现过审批卡）→ 第二条 Webhook：标题「Muse Code 轮完成」、正文「用时 Xs」',
-    turnDoc.title === 'Muse Code 轮完成' && /^用时 \d+s$/.test(String(turnDoc.body)),
+    '一轮跑完（≥15 秒或本轮出现过审批卡）→ 第二条 Webhook：标题「Pneuma 轮完成」、正文「用时 Xs」',
+    turnDoc.title === 'Pneuma 轮完成' && /^用时 \d+s$/.test(String(turnDoc.body)),
     turnHit.body,
   )
 

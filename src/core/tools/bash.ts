@@ -780,8 +780,10 @@ export class TerminalTable {
   /**
    * 开一个新会话，立即返回会话 id。shell 就地起（它不是一条命令，不经过 planCommand 缝）。
    * `owner` = 开会话的会话 id：面板「终端」区按它筛当前查看会话的活（作业的 owner 同义）。
+   * `cwd` = 起进程的目录：给会话自己的目录（会话的 cwd 是它的数据，见 `Session.meta.cwd`）——
+   * 多工作区并用之后，「进程目录」已经没有用户意义了，落到那儿等于落到一个随机的工作区。
    */
-  open(owner?: string): string {
+  open(owner?: string, cwd?: string): string {
     if (this.sessions.size >= TERM_MAX_COUNT) {
       throw new Error(`终端会话已到 ${String(TERM_MAX_COUNT)} 个上限，先用 terminal close 收掉几个，或 list 清点`)
     }
@@ -789,7 +791,7 @@ export class TerminalTable {
     const id = `term-${String(this.counter)}`
     const record: TerminalRecord = {
       id,
-      cwd: '',
+      cwd: cwd ?? '',
       status: 'running',
       exitCode: null,
       startedAt: Date.now(),
@@ -800,8 +802,9 @@ export class TerminalTable {
       ...(owner === undefined ? {} : { owner }),
     }
     this.sessions.set(id, record)
-    // 不给模型指定起进程参数的面：会话从宿主进程的目录起，进会话后想在哪工作自己 cd
-    const child = spawnTerminalShell('')
+    // 不给模型指定起进程参数的面（开了会话想换目录自己 cd）：起进程的目录由调用方给
+    // ——工具那条路给的是**会话自己的** cwd。
+    const child = spawnTerminalShell(cwd ?? '')
     trackBackgroundChild(id, child)
     const append = (chunk: Buffer | string): void => {
       if (record.status !== 'running') return
@@ -968,7 +971,7 @@ export function createTerminalTool(table: TerminalTable): ToolEntry {
       const action = String(args.action ?? '')
       switch (action) {
         case 'open': {
-          const id = table.open(ctx.sessionId)
+          const id = table.open(ctx.sessionId, ctx.cwd)
           return `已开终端会话 ${id}。用 send(data="…\n") 发命令（自带换行才执行），read 读输出（启动需要一两秒，读空了稍等再读）。`
         }
         case 'read': {

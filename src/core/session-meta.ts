@@ -87,7 +87,7 @@ export function readSessionMeta(): Record<string, SessionMetaRecord> {
  * @param patch 要改的字段；值为 null 的字段被删除
  */
 export function patchSessionMeta(id: string, patch: Partial<Record<keyof SessionMetaRecord, string | number | null>>): Record<string, SessionMetaRecord> {
-  return withExclusiveLock(sessionMetaPath(), '会话属性正被另一个 Muse Code 进程修改，稍后再试', () => {
+  return withExclusiveLock(sessionMetaPath(), '会话属性正被另一个 Pneuma 进程修改，稍后再试', () => {
     const all = readSessionMeta()
     const record: SessionMetaRecord = { ...(all[id] ?? {}) }
     for (const [key, value] of Object.entries(patch)) {

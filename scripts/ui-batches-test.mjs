@@ -96,7 +96,7 @@ const files = {
 for (const id of ids) files[`${id}/client.js`] = content(id)
 const pluginsDir = makeTree('batches-plugins', files)
 const assetsDir = makeTree('batches-assets', { 'index.html': '<!doctype html><html><body>壳</body></html>' })
-const server = await createUiServer({ host: { name: 'Muse Code', version: 'test' }, assetsDir, pluginsDir, log: () => {} })
+const server = await createUiServer({ host: { name: 'Pneuma', version: 'test' }, assetsDir, pluginsDir, log: () => {} })
 const port = server.port
 const token = new URL(server.url).searchParams.get('token') ?? ''
 const handshake = await http('GET', port, `/?token=${token}`)

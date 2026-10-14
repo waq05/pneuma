@@ -26,7 +26,7 @@ export function resolveHeadlessEntry(): string {
   for (const candidate of candidates) {
     if (existsSync(candidate)) return candidate
   }
-  throw new Error(`未找到 Muse Code 宿主入口（${candidates.join(' 或 ')}）；先在项目根目录运行 pnpm build`)
+  throw new Error(`未找到 Pneuma 宿主入口（${candidates.join(' 或 ')}）；先在项目根目录运行 pnpm build`)
 }
 
 /** 工作目录记忆文件（~/.dsc/desktop.json）。 */

@@ -92,6 +92,16 @@ export class LspManager {
   }
 
   /**
+   * 解析服务器命令时当基准的目录：调用方给的（会话目录）优先，没给才退进程目录。
+   *
+   * 只影响「相对路径写的命令」怎么解析，以及 `available` 那颗读数——但基准错了
+   * 会报出「PATH 里找不到」这种看着像环境问题的假故障，所以宁可现问会话。
+   */
+  private baseCwd(): string {
+    return this.options.baseCwd?.() ?? process.cwd()
+  }
+
+  /**
    * 排下一次 idle 清扫。每次重算间隔（idle 一半，夹在 5 秒到 60 秒之间），
    * 所以用户在设置里把 idle 从 600 秒改成 30 秒之后，下一次清扫的节奏就跟着变了。
    */
@@ -111,7 +121,7 @@ export class LspManager {
 
   /** 现在生效的服务器表（连「PATH 里有没有」一起给）。 */
   servers(): LspServerInfo[] {
-    return describeServers(this.options.servers(), this.env, process.cwd())
+    return describeServers(this.options.servers(), this.env, this.baseCwd())
   }
 
   /** 每个服务器此刻的状态与实例数。 */
@@ -126,7 +136,7 @@ export class LspManager {
     return this.options.servers().map((server) => {
       const mark = this.brokenIn(server.id, now)
       const roots = instancesByServer.get(server.id) ?? []
-      const target = resolveExecutable(server.command, this.env, process.cwd())
+      const target = resolveExecutable(server.command, this.env, this.baseCwd())
       return {
         id: server.id,
         command: server.command,
@@ -282,7 +292,7 @@ export class LspManager {
         reason: `没有认领 ${extensionHint(path)} 的语言服务器（内置表里没有这种扩展名，可以在设置里用一行 JSON 追加）`,
       }
     }
-    const target = resolveExecutable(server.command, this.env, process.cwd())
+    const target = resolveExecutable(server.command, this.env, this.baseCwd())
     if (target === undefined) {
       const hint = installHint(server.id)
       return {

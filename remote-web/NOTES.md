@@ -1,6 +1,6 @@
 # remote-web —— 遥控端界面（批 B）
 
-手机浏览器优先的 Muse Code 遥控界面：会话列表、聊天直播、审批/计划/提问卡、打断。
+手机浏览器优先的 Pneuma 遥控界面：会话列表、聊天直播、审批/计划/提问卡、打断。
 构建产物由宿主插件 `src/plugins/remote.ts`（批 A）从 `lib/remote/assets` 静态伺服。
 
 ## 目录结构
@@ -16,7 +16,7 @@ remote-web/
 ├── NOTES.md              # 本文件
 ├── tools/make-icons.py   # 占位 PWA 图标的生成脚本（产物落 public/，不参与构建）
 ├── public/               # 原样拷进产物根（vite publicDir）
-│   ├── manifest.json     # PWA manifest（name「Muse Code」、standalone、深色主题色）
+│   ├── manifest.json     # PWA manifest（name「Pneuma」、standalone、深色主题色）
 │   ├── icon-192.png      # 占位图标（TODO：换正式图标）
 │   └── icon-512.png
 └── src/

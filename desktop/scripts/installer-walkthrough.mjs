@@ -23,12 +23,12 @@
  *     「portable 到底起的是哪套界面」这个没法用日志回答的问题。
  *
  * 用法：
- *   pnpm -C desktop dist           # 先造出 dist/muse-code-setup-<v>.exe 与 -portable-<v>.exe
+ *   pnpm -C desktop dist           # 先造出 dist/pneuma-setup-<v>.exe 与 -portable-<v>.exe
  *   node desktop/scripts/installer-walkthrough.mjs
  *   DSC_WALKTHROUGH_EXE=<exe> 跳过装/卸只走「启动 + 读数」（迭代断言用）；
  *   DSC_SKIP_INSTALL=1 / DSC_SKIP_PORTABLE=1 各跳一段。
  *
- * @module muse-code-desktop/installer-walkthrough
+ * @module pneuma-desktop/installer-walkthrough
  */
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -43,8 +43,8 @@ const desktop = join(root, 'desktop')
 const shots = join(desktop, 'shots')
 const version = JSON.parse(readFileSync(join(desktop, 'package.json'), 'utf8')).version
 const dist = join(desktop, 'dist')
-const setup = join(dist, `muse-code-setup-${version}.exe`)
-const portable = join(dist, `muse-code-portable-${version}.exe`)
+const setup = join(dist, `pneuma-setup-${version}.exe`)
+const portable = join(dist, `pneuma-portable-${version}.exe`)
 
 let failures = 0
 const check = (name, ok, detail = '') => {
@@ -97,7 +97,7 @@ function uninstallEntries() {
     'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
     '/s',
     '/f',
-    'Muse Code',
+    'Pneuma',
     '/d',
   ])
   if (found.status !== 0) return []
@@ -244,12 +244,12 @@ function verifyUi(label, launched, { expectReading = true } = {}) {
 }
 
 // ── 0. 前置 ─────────────────────────────────────────────────────────────────
-console.log(`[installer-walkthrough] Muse Code ${version}：nsis 装/卸 + portable 直跑`)
+console.log(`[installer-walkthrough] Pneuma ${version}：nsis 装/卸 + portable 直跑`)
 const realDsc = join(process.env['USERPROFILE'] ?? '', '.dsc')
 const shortcutDir = join(process.env['APPDATA'] ?? '', 'Microsoft', 'Windows', 'Start Menu', 'Programs')
-const shortcuts = () => (existsSync(shortcutDir) ? readdirSync(shortcutDir).filter((name) => name.includes('Muse Code')) : [])
+const shortcuts = () => (existsSync(shortcutDir) ? readdirSync(shortcutDir).filter((name) => name.includes('Pneuma')) : [])
 const before = fingerprint(realDsc)
-console.log(`\n[0] 前置（真实 ~/.dsc：${String(before.count)} 个文件；开始菜单现有 ${String(shortcuts().length)} 条 Muse Code 快捷方式）`)
+console.log(`\n[0] 前置（真实 ~/.dsc：${String(before.count)} 个文件；开始菜单现有 ${String(shortcuts().length)} 条 Pneuma 快捷方式）`)
 check('nsis 安装器在（先跑 pnpm -C desktop dist）', existsSync(setup), setup)
 check('portable 在（先跑 pnpm -C desktop dist）', existsSync(portable), portable)
 if (existsSync(setup)) {
@@ -262,7 +262,7 @@ const installDir = join(work, 'installed')
 const shotFinal = join(shots, 'installer-walkthrough-nsis.png')
 let installed = false
 try {
-  // `DSC_WALKTHROUGH_EXE` 指到一份现成的 exe（例如 dist/win-unpacked/Muse Code.exe）时，
+  // `DSC_WALKTHROUGH_EXE` 指到一份现成的 exe（例如 dist/win-unpacked/Pneuma.exe）时，
   // 跳过装/卸只走「启动 + 读数」那一段——迭代断言时不必每次都真装一遍。
   if ((process.env['DSC_WALKTHROUGH_EXE'] ?? '') !== '') {
     console.log(`\n[1] 跳过装/卸，直接走查 ${process.env['DSC_WALKTHROUGH_EXE']}`)
@@ -272,7 +272,7 @@ try {
     console.log('\n[1] nsis 静默安装')
     const install = shell(setup, ['/S', `/D=${installDir}`], { timeout: 300000 })
     check('安装器退出码 0', install.status === 0, `code=${String(install.status)} ${tail(install.stderr ?? '')}`)
-    const exe = join(installDir, 'Muse Code.exe')
+    const exe = join(installDir, 'Pneuma.exe')
     installed = existsSync(exe)
     check(`装到指定目录（${installDir}）`, installed, installDir)
     check('卸载器在（Uninstall …exe）', installed && readdirSync(installDir).some((name) => name.startsWith('Uninstall')))

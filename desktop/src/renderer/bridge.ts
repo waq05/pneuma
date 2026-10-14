@@ -137,6 +137,7 @@ export function createRuntimeProxy(): RuntimeProxy {
     removeQueued: (index) => call<boolean>('removeQueued', index),
     steerQueued: (index) => call<boolean>('steerQueued', index),
     openSession: (id) => callVoid('openSession', id),
+    newSessionIn: (cwd) => callVoid('newSessionIn', cwd),
     compact: () => callVoid('compact'),
     setModel: (model) => callVoid('setModel', model),
     setEffort: (effort) => callVoid('setEffort', effort),

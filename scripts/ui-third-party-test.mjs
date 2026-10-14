@@ -206,7 +206,7 @@ check('信任记录落盘 plugins.json 顶层 uiTrust', Object.keys(readUiPlugin
   const load = loadTuiPlugins({
     registry,
     runtime: { subscribe: () => () => {}, getSnapshot: () => null },
-    host: { name: 'Muse Code', version: '0.0.0-probe', platform: 'tui' },
+    host: { name: 'Pneuma', version: '0.0.0-probe', platform: 'tui' },
     pluginsDir: builtinDir,
     onReport: (report) => reports.push(report),
   })

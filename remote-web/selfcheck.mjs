@@ -868,7 +868,7 @@ check(
 console.log('PWA 产物（manifest / service worker）')
 
 const manifest = JSON.parse(readFileSync(fileURLToPath(new URL('./public/manifest.json', import.meta.url)), 'utf8'))
-check('manifest：name 是 Muse Code', manifest.name === 'Muse Code')
+check('manifest：name 是 Pneuma', manifest.name === 'Pneuma')
 check('manifest：standalone 启动', manifest.display === 'standalone')
 check('manifest：主题色/底色取深色档的值', manifest.theme_color === '#0f1013' && manifest.background_color === '#0f1013')
 check(

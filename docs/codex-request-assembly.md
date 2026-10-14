@@ -82,7 +82,7 @@
 - **顺序**：注册表是**插入序** IndexMap（`tools/registry.rs:294-299`；`entries()` 按插入序 :429-431；重复注册报错 :348-357）；核心工具是固定代码序列（`spec_plan.rs:1015+`：exec_command/write_stdin → list_mcp_resources… → plan → …）；**namespace 内按名字排序**（:942-991）；顶层 function 列表**没有**整体排序。
 - 序列化保留顺序（`tools/src/tool_spec.rs:82-93/145-149`）；Responses-Lite 把默认命名空间的函数合并进一个 `namespace`，插入位置用 `functions_index` 固定（:95-142）。扩展/MCP 工具在 core 之后注册（`spec_plan.rs:302-327`）。
 
-## 8. 与 Muse Code 的对照（0.6.46 实测）
+## 8. 与 Pneuma 的对照（0.6.46 实测）
 
 - **抄了的**：AGENTS.md 的发现链（root→cwd、override 优先、上限截断）与「变化才注入」的思路（dsc 每轮随 system prompt 重发，字节稳定时同样命中缓存）；压缩摘要接在真实对话之后（dsc 的 `compactSession(…, context)` 前缀复用）；环境/易变信息不进稳定前缀（dsc 的 env-facts 快照）。
 - **没抄的**：per-model 21KB 模板（dsc 单身份段 + 「当前模型」行）；Responses API 的 `instructions` 字段与 Responses-Lite 前缀（OpenAI 自家 API 特性，兼容网关不通用）；namespace 排序（dsc 工具集小且注册序稳定）。

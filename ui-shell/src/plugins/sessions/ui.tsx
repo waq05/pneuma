@@ -300,30 +300,28 @@ function SessionList() {
   /**
    * 在指定工作区里新建会话（工作区行那颗「新建会话」钮，旧界面 newSessionIn 同款）。
    *
-   * 新会话的 cwd 是宿主进程启动时的目录，换工作区要先切目录（原生桥 switchCwd
-   * 返回值就等在那里）；切不过去（目录被删、宿主起不来）把原因摊出来，不冒出一句假成功。
+   * 目录是**会话自己的数据**（宿主把它写进 jsonl 的 meta 行），所以这就是一次普通的
+   * 「在那个目录开一条新会话」：不切宿主的工作目录、不重启宿主、不重载页面。
+   * （旧做法走 `switchCwd` → 宿主重启 → 整页 loadURL：整个界面会闪一下。那条路留给
+   * 「切换工作区」本身，新建会话不再用它。）
    */
   const newSessionIn = (target: string): void => {
-    if (target === (cwd ?? '')) {
-      open()
-      return
+    // 目标组收着的话先展开：新会话在列表里是一个空行，不展开等于没有可见回执
+    // （与参考实现同款：点完那颗钮，那一组自己展到脸上）。
+    if (prefs.expansion[target] === false) {
+      patchPrefs({ expansion: { ...prefs.expansion, [target]: true } })
     }
-    const native = getHostNative()
-    if (!native.available) {
-      toastErr('在别的工作区新建会话要用桌面版（浏览器里没有切目录的原生桥）')
-      return
-    }
+    setShellPage(null)
     void (async () => {
       setFault(null)
       try {
-        const result = await native.invoke<{ ok: boolean; cwd?: string; error?: string }>('switchCwd', [target])
-        if (result !== null && typeof result === 'object' && result.ok === false) {
-          setFault(result.error ?? '切换工作目录失败')
-          return
-        }
-        open()
+        await channel.invoke('newSessionIn', [target])
+        // 记一笔「最近工作区」：侧栏的空工作区占位与下次冷启动的落点都读它
+        // （宿主管会话、桌面主进程管这份记忆，所以由界面显式报一声）。
+        void getHostNative().invoke('rememberCwd', [target]).catch(() => undefined)
+        await run('refreshSessions', [])
       } catch (reason) {
-        setFault(reason instanceof Error ? reason.message : String(reason))
+        toastErr(`新建会话失败：${reason instanceof Error ? reason.message : String(reason)}`)
       }
     })()
   }
@@ -372,11 +370,17 @@ function SessionList() {
   }
 
   /** 窄栏（壳画的 rail）上的「新会话」经事件请这里开：监听器常驻，读最新的 open。 */
-  const openRef = useRef(open)
-  openRef.current = open
+  const newRef = useRef<(dir?: string) => void>(() => undefined)
+  newRef.current = (dir) => {
+    if (dir === undefined || dir === '') open()
+    else newSessionIn(dir)
+  }
+  /** 窄栏（壳画的 rail）上的「新会话」与侧栏底部的「浏览其他目录」都经这条事件请这里开：
+   *  监听器常驻，读最新的处理器。事件可以带 `detail.cwd`（在那个目录里开）。 */
   useEffect(() => {
-    const onNew = (): void => {
-      openRef.current()
+    const onNew = (event: Event): void => {
+      const dir = (event as CustomEvent<{ cwd?: unknown }>).detail?.cwd
+      newRef.current(typeof dir === 'string' && dir !== '' ? dir : undefined)
     }
     window.addEventListener('shell.session.new', onNew)
     return () => window.removeEventListener('shell.session.new', onNew)
@@ -726,7 +730,7 @@ function SessionList() {
             >
               <IconSort size={15} />
             </button>
-            <AddWorkspaceButton />
+            <AddWorkspaceButton onCreated={newSessionIn} />
           </span>
         </div>
 
@@ -1313,8 +1317,9 @@ function SidebarFooter(): ReactNode {
   const cwdOf = useHostSelector(readCwd)
   const usage = useHostSelector(readUsageTokens)
   /**
-   * 点目录行 = 浏览其他目录（旧界面「点击浏览其他目录」同款）：弹系统选择框，
-   * 选中就切过去（原生桥 switchCwd 会重启宿主换 cwd）。
+   * 点目录行 = 选另一个目录并在那儿开一条新会话（旧界面「点击浏览其他目录」的同一个
+   * 用户意图）。**不再**切宿主的工作目录：目录是会话自己的数据，切目录那条路要重启
+   * 宿主 + 整页重载，整个界面会闪一下——那是这轮报障的形状，界面里不该再有它。
    */
   const browse = (): void => {
     const native = getHostNative()
@@ -1324,14 +1329,12 @@ function SidebarFooter(): ReactNode {
     }
     void (async () => {
       try {
-        const dir = await native.invoke<string | null>('chooseDirectory')
+        const dir = await native.invoke<string>('pickDirectory')
         if (typeof dir !== 'string' || dir === '') return
-        const result = await native.invoke<{ ok: boolean; error?: string }>('switchCwd', [dir])
-        if (result !== null && typeof result === 'object' && result.ok === false) {
-          toastErr(`切换失败：${result.error ?? '未知原因'}`)
-        }
+        // 开新会话这件事由侧栏列表那侧统一做（它还要展开目标组、记忆最近目录）。
+        window.dispatchEvent(new CustomEvent('shell.session.new', { detail: { cwd: dir } }))
       } catch (reason) {
-        toastErr(`切换工作目录失败：${reason instanceof Error ? reason.message : String(reason)}`)
+        toastErr(`选目录失败：${reason instanceof Error ? reason.message : String(reason)}`)
       }
     })()
   }
@@ -1339,8 +1342,8 @@ function SidebarFooter(): ReactNode {
     <div className="sidebar-footer">
       <div
         className="row"
-        data-tip={cwdOf === null ? '还没有工作目录' : `${cwdOf}，点击浏览其他目录`}
-        title={cwdOf === null ? undefined : '点击浏览其他目录'}
+        data-tip={cwdOf === null ? '还没有工作目录' : `${cwdOf}，点一下在别的目录开新会话`}
+        title={cwdOf === null ? undefined : '在别的目录开新会话'}
         onClick={browse}
       >
         <IconFolder size={14} />
@@ -1718,9 +1721,14 @@ function readUsageTokens(snapshot: HostSnapshot | null): number | null {
   return input + output
 }
 
-/** 「添加工作区」钮（旧界面工作区标题行的 ➕）：选目录 → 原生桥 switchCwd 切过去。
-    浏览器里没有原生桥，给一句说明而不是无声无息。 */
-function AddWorkspaceButton(): ReactNode {
+/**
+ * 「添加工作区」钮（旧界面工作区标题行的 ➕）：选目录 → **在那个目录里开一条会话**。
+ *
+ * 为什么不切目录（`switchCwd`）：切目录意味着重启宿主 + 整页重载（整个界面闪一下），
+ * 而目录本来就只是会话的数据——选一个目录，等于「在这个目录开一条新会话」。
+ * 浏览器里没有原生桥，给一句说明而不是无声无息。
+ */
+function AddWorkspaceButton({ onCreated }: { onCreated: (dir: string) => void }): ReactNode {
   const native = getHostNative()
   const pick = (): void => {
     if (!native.available) {
@@ -1729,11 +1737,11 @@ function AddWorkspaceButton(): ReactNode {
     }
     void (async () => {
       try {
-        const dir = await native.invoke<string>('chooseDirectory')
+        const dir = await native.invoke<string>('pickDirectory')
         if (typeof dir !== 'string' || dir === '') return
-        await native.invoke('switchCwd', [dir])
+        onCreated(dir)
       } catch (reason) {
-        toastErr(`切换工作区失败：${reason instanceof Error ? reason.message : String(reason)}`)
+        toastErr(`打开工作区失败：${reason instanceof Error ? reason.message : String(reason)}`)
       }
     })()
   }

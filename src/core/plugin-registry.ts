@@ -288,7 +288,7 @@ export function checkApiVersion(apiVersion: number | undefined): string | null {
     return `apiVersion 非法（${String(apiVersion)}），应为整数`
   }
   if (apiVersion > KERNEL_API_VERSION) {
-    return `插件要求内核 API v${apiVersion}，当前内核 v${KERNEL_API_VERSION}（请升级 Muse Code）`
+    return `插件要求内核 API v${apiVersion}，当前内核 v${KERNEL_API_VERSION}（请升级 Pneuma）`
   }
   if (apiVersion < 1) {
     return `apiVersion 必须为正整数，收到 ${apiVersion}`

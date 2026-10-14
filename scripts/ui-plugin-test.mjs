@@ -405,8 +405,8 @@ console.log('\n[2] 启动清单')
   }
   check('清单里两个 id 相同报错（不能静默少装一个）', dupId !== null, dupId === null ? '' : String(dupId.message))
 
-  const graph = composeUiBootGraph({ name: 'Muse Code', version: '9.9.9' }, rows)
-  check('启动图带宿主身份', graph.host.name === 'Muse Code' && graph.host.version === '9.9.9')
+  const graph = composeUiBootGraph({ name: 'Pneuma', version: '9.9.9' }, rows)
+  check('启动图带宿主身份', graph.host.name === 'Pneuma' && graph.host.version === '9.9.9')
   check('启动图条目按依赖排序', graph.entries.map((entry) => entry.id).join(',') === 'a,b,c')
   check('启动图条目带地址', graph.entries[0].url.startsWith('plugins/a/client.js?rev=r1'))
   check('启动图 rev 稳定', composeUiBootGraph({ name: 'x', version: 'y' }, rows).rev === graph.rev)
@@ -514,7 +514,7 @@ console.log('\n[4] 界面服务')
     'demo/client.js': 'module.exports={apply(){}}',
   })
   const server = await createUiServer({
-    host: { name: 'Muse Code', version: 'test-1.2.3' },
+    host: { name: 'Pneuma', version: 'test-1.2.3' },
     assetsDir,
     pluginsDir,
     log: () => {},
@@ -562,7 +562,7 @@ console.log('\n[4] 界面服务')
     bootScript.status === 200 && bootScript.body.includes('__DSC_BOOT__'),
     `${String(bootScript.status)} ${bootScript.body.slice(0, 120)}`,
   )
-  check('/boot.js 注入的是宿主身份', bootScript.body.includes('Muse Code') && bootScript.body.includes('test-1.2.3'))
+  check('/boot.js 注入的是宿主身份', bootScript.body.includes('Pneuma') && bootScript.body.includes('test-1.2.3'))
   const anonymousBootScript = await http('GET', port, '/boot.js')
   check('没凭据取 /boot.js 401', anonymousBootScript.status === 401, String(anonymousBootScript.status))
 
@@ -649,7 +649,7 @@ console.log('\n[4b] 服务配置')
     'index.html': '<!doctype html><html><body>桌面渲染层产物</body></html>',
   })
   const custom = await createUiServer({
-    host: { name: 'Muse Code', version: 'test' },
+    host: { name: 'Pneuma', version: 'test' },
     assetsDir: customAssets,
     pluginsDir: join(work, 'no-plugins'),
     log: () => {},
@@ -688,7 +688,7 @@ console.log('\n[4c] 数据通道')
       return { method, args, tick }
     },
     methods: ['ok', 'boom'],
-    hello: () => ({ protocolVersion: 1, methods: ['ok', 'boom'], host: { name: 'Muse Code', version: 'test' } }),
+    hello: () => ({ protocolVersion: 1, methods: ['ok', 'boom'], host: { name: 'Pneuma', version: 'test' } }),
     subscribe: (onChange) => {
       subscribers.push(onChange)
       return () => {
@@ -699,7 +699,7 @@ console.log('\n[4c] 数据通道')
     throttleMs: 20,
   })
   const server = await createUiServer({
-    host: { name: 'Muse Code', version: 'test' },
+    host: { name: 'Pneuma', version: 'test' },
     assetsDir,
     pluginsDir,
     events,
@@ -1386,6 +1386,101 @@ console.log('\n[8] D2 Factory')
   check('卸载后同一个名字可以重新注册', slots.factory('probe.card') !== undefined)
   offAgain()
   offSub()
+}
+
+// ── 9. 设置回执的结构化载荷（宿主发了，壳不能丢）─────────────────────────────────
+// 这一批的教训：`runSettingAction` 的回执除了 `notice` 还带 `data`（配对码 / 发布页链接），
+// 旧界面据此弹「手机连接」弹窗、打开浏览器；壳第一版只读了 `notice`，于是点「连接手机」
+// 只出一行说明、二维码根本不出现——用户看到的就是「点了没反应」（配对码其实已经签发，
+// 而且每次点都会作废上一张，人却永远看不见）。
+//
+// 所以这里钉一条**对着契约**的断言：`SettingsMutationOk.data` 联合里出现的每一种 `kind`，
+// 壳的设置插件源码里都必须有出口。契约将来加一种载荷而壳没跟上，这条当场红——比下次靠
+// 用户截图报障强。最后再查一遍**产物**：源码修了但没重建，跑在用户机器上的还是旧界面。
+console.log('\n[9] 设置回执的结构化载荷')
+{
+  const repoRoot = fileURLToPath(new URL('../', import.meta.url))
+  const contractText = readFileSync(join(repoRoot, 'src', 'contract.ts'), 'utf8')
+  const interfaceBody = (name) =>
+    new RegExp(`interface ${name} \\{[\\s\\S]*?\\n\\}`).exec(contractText)?.[0] ?? ''
+  const okBlock = interfaceBody('SettingsMutationOk')
+  const payloadNames = [...okBlock.matchAll(/data\?:\s*([A-Za-z| ]+)/g)]
+    .flatMap((match) => match[1].split('|').map((piece) => piece.trim()))
+    .filter((piece) => piece !== '')
+  check('从契约读到了 SettingsMutationOk.data 的载荷类型', payloadNames.length > 0, okBlock)
+  const kinds = payloadNames.map((name) => ({
+    name,
+    kind: /kind:\s*'([a-z-]+)'/.exec(interfaceBody(name))?.[1] ?? '',
+  }))
+  check(
+    '每种载荷都带一个 kind 判别位（壳按它对出口）',
+    kinds.length > 0 && kinds.every((item) => item.kind !== ''),
+    JSON.stringify(kinds),
+  )
+
+  const settingsDir = join(repoRoot, 'ui-shell', 'src', 'plugins', 'settings')
+  const sources = readdirSync(settingsDir)
+    .filter((file) => file.endsWith('.tsx'))
+    .map((file) => readFileSync(join(settingsDir, file), 'utf8'))
+    .join('\n')
+  /**
+   * 一种载荷的「出口」长什么样：对该 `kind` 的**正向**分派。
+   *
+   * 为什么不能只查字符串在不在：`!== '<kind>'`（「宿主没给这份数据」的兜底分支）或
+   * 一个同名 CSS 类（`pair-code-row`）都能满足「出现过」这种松断言，而它们都不是出口——
+   * 收紧成「比较时不带否定」「或 case 标签」两种正向写法。
+   */
+  const outletFor = (kind) =>
+    new RegExp(`kind\\s*={2,3}\\s*['"]${kind}['"]`).test(sources) ||
+    new RegExp(`case\\s*['"]${kind}['"]\\s*:`).test(sources)
+  const unhandled = kinds.filter((item) => !outletFor(item.kind))
+  check(
+    '壳的设置插件对每一种载荷都有正向出口',
+    unhandled.length === 0,
+    unhandled.map((item) => item.kind).join(','),
+  )
+  // 配对码是「要一直看得见」的那种载荷：出口必须是弹窗（码 + 二维码 + 倒计时），
+  // 不能退化成一句一闪就没的行内说明。
+  check('配对码载荷交给弹窗（不是一行说明）', sources.includes('<PairModal') && outletFor('pair-code'))
+
+  // 弹窗里那两行读数的版式契约：配对码行与可扫地址行都**整行居中**（用户点名的）。
+  // 地址行原来借的是设置页 info 行的版式（「值靠右、动作贴行尾」），且它那句
+  // `white-space: normal` 挂在 `.pair-url .mono` 上——类数比 `.setting-info > span:first-child`
+  // 少一档、一直没生效，长地址会被省略号截掉（地址里带着配对码，截了就没法照着输）。
+  const viewsCss = readFileSync(join(repoRoot, 'ui-shell', 'src', 'legacy', 'views.css'), 'utf8')
+  const cssBlock = (pattern) => new RegExp(`\\n${pattern} \\{[\\s\\S]*?\\n\\}`).exec(viewsCss)?.[0] ?? ''
+  const urlBlock = cssBlock('\\.pair-url')
+  const urlTextBlock = cssBlock('\\.pair-url-text')
+  check(
+    '可扫地址行整行居中（不再走 info 行的「值靠右」）',
+    urlBlock.includes('justify-content: center') && urlBlock.includes('text-align: center'),
+    urlBlock,
+  )
+  check(
+    '可扫地址能折行、不截断（长地址要照着输进手机）',
+    sources.includes('pair-url-text') && urlTextBlock.includes('white-space: normal'),
+    urlTextBlock,
+  )
+
+  const bundleFile = join(uiPluginsDir(), 'settings', 'client.js')
+  if (!existsSync(bundleFile)) {
+    console.log('  SKIP  设置插件产物不在——先跑 pnpm -C ui-shell build')
+  } else {
+    const bundle = readFileSync(bundleFile, 'utf8')
+    const outletInBundle = (kind) =>
+      new RegExp(`kind\\s*={2,3}\\s*['"]${kind}['"]`).test(bundle) ||
+      new RegExp(`case\\s*['"]${kind}['"]\\s*:`).test(bundle)
+    const missing = kinds.filter((item) => !outletInBundle(item.kind))
+    check(
+      '设置插件产物里带着每一种载荷的出口（改完壳要重建）',
+      missing.length === 0,
+      missing.map((item) => item.kind).join(','),
+    )
+    check(
+      '设置插件产物里带着配对弹窗（画得出二维码的那张）',
+      bundle.includes('pair-card') && bundle.includes('pair-qr-img') && outletInBundle('pair-code'),
+    )
+  }
 }
 
 rmSync(work, { recursive: true, force: true })

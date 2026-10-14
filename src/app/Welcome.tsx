@@ -1,6 +1,6 @@
 /**
  * 启动欢迎块（0.6.58 对齐 dsh-TUI LogoV2 的规格）：「MUSE CODE」两行 5 行点阵大字
- * （行色按 品牌蓝→冰蓝→浅冰 渐变）+ `✦ Muse Code vX` 词标 + model/cwd/tips 信息行 +
+ * （行色按 品牌蓝→冰蓝→浅冰 渐变）+ `✦ Pneuma vX` 词标 + model/cwd/tips 信息行 +
  * tagline，**挂在会话流最顶上、随内容从顶上自然滚走**（codex session header /
  * dsh LogoHeader 同构），不是独立路由。
  *
@@ -98,7 +98,7 @@ export function Welcome({
       <Box flexDirection="column" gap={GAP.none} marginBottom={GAP.tight}>
         <Text>
           <Text color={PALETTE.accent}>✦ </Text>
-          <Text bold>Muse Code</Text>
+          <Text bold>Pneuma</Text>
           <Text {...TEXT.secondary}> v{DSC_VERSION}</Text>
         </Text>
         <BigWord rows={wordRows('MUSE')} from={PALETTE.brand} to={PALETTE.ice} />
@@ -113,7 +113,7 @@ export function Welcome({
     <Box flexDirection="column" gap={GAP.none} marginBottom={GAP.tight}>
       <Text>
         <Text color={PALETTE.accent}>✦ </Text>
-        <Text bold>Muse Code</Text>
+        <Text bold>Pneuma</Text>
         <Text {...TEXT.secondary}> v{DSC_VERSION}</Text>
       </Text>
       {info}

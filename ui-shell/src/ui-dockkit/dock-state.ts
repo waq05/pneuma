@@ -29,6 +29,7 @@ import {
   focusPane as modelFocusPane,
   focusTab as modelFocusTab,
   loadSurfaces,
+  openBrowserTab as modelOpenBrowserTab,
   openPreview as modelOpenPreview,
   openPatch as modelOpenPatch,
   openSubagent as modelOpenSubagent,
@@ -38,6 +39,7 @@ import {
   saveSurfaces,
   setExpanded as modelSetExpanded,
   setFraction as modelSetFraction,
+  setTabInfo as modelSetTabInfo,
   splitPane as modelSplitPane,
   toggleMode as modelToggleMode,
   unsplitPane as modelUnsplitPane,
@@ -109,6 +111,13 @@ export const dockActions: DockActions = {
   openPreview: (path, line) => {
     mutate((s) => modelSetExpanded(modelOpenPreview(s, path, line), true))
   },
+  openBrowserTab: (url, label) => {
+    mutate((s) => modelSetExpanded(modelOpenBrowserTab(s, url, label), true))
+  },
+  setTabInfo: (tabId, patch) => {
+    // 不展开：这是网页自己在回填标题 / 地址，不是用户点了一下（不该把侧栏顶出来）
+    mutate((s) => modelSetTabInfo(s, tabId, patch))
+  },
   openPatch: (path) => {
     mutate((s) => modelSetExpanded(modelOpenPatch(s, path), true))
   },
@@ -150,6 +159,20 @@ export const dockActions: DockActions = {
 /** 展开右侧栏并就地替换「开始」页（开始页入口卡与快捷键的路径，旧界面同款）。 */
 export function openDockTab(kind: DockTabKind): void {
   mutate((s) => modelSetExpanded(modelOpenTab(s, kind, { replaceGuide: true }), true))
+}
+
+/**
+ * 展开右侧栏并**开一张新的浏览器页签**（Ctrl+T、页面自己 `window.open` 都走它）。
+ *
+ * 为什么要单独一个入口而不是让调用方拼 `openTab('browser')`：浏览器可多开之后，
+ * 「新开一张」与「就地替换开始页」是两种语义（后者是门面入口卡的路径）。插件只说
+ * 「开一张浏览器页签」，页签类型与「顺手展开」这两条策略归布局这一层——
+ * 与 {@link setDockPreview} 同一性质。
+ *
+ * @param url 直接进的地址；不给就是空态页签
+ */
+export function openDockBrowserTab(url?: string): void {
+  dockActions.openBrowserTab(url)
 }
 
 // ── 页签内容注册表（kind → 渲染组件） ────────────────────────────────────────

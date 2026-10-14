@@ -95,7 +95,7 @@ const events = createUiEvents({
   snapshot: () => ({ sessionId: 's1', tick: snapshotTick, entries: [], liveEntries: [] }),
   invoke: async () => null,
   methods: [],
-  hello: () => ({ protocolVersion: 1, methods: [], host: { name: 'Muse Code', version: 'test' } }),
+  hello: () => ({ protocolVersion: 1, methods: [], host: { name: 'Pneuma', version: 'test' } }),
   subscribe: (onChange) => {
     subscribers.push(onChange)
     return () => {
@@ -117,7 +117,7 @@ const events = createUiEvents({
   log: () => {},
 })
 const server = await createUiServer({
-  host: { name: 'Muse Code', version: 'test' },
+  host: { name: 'Pneuma', version: 'test' },
   assetsDir,
   pluginsDir,
   events,

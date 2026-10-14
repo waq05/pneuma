@@ -3676,6 +3676,31 @@ body.resizing iframe {
   position: relative;
 }
 
+/* 空态：新页签不自动加载任何页面（对齐 dsh），就等这一行字被地址栏取代 */
+.browser-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-caption);
+}
+
+/* 地址整不出来 / 导航失败：贴在工具条下面一行就地说明（用户正盯着地址栏，不必弹 toast） */
+.browser-error {
+  padding: 5px 10px;
+  background: color-mix(in srgb, var(--dsc-red) 12%, transparent);
+  color: var(--dsc-red);
+  font-size: var(--dsc-fs-caption);
+}
+
+/* 加载中：刷新钮转起来（复用轮次那条转圈关键帧） */
+.browser-bar .icon-btn[data-loading='1'] svg {
+  animation: dsc-turn-spin 900ms linear infinite;
+}
+
 /* 文件树（内联树，对齐 dsh FilesBody：目录单击展开/收起，子层逐级缩进） */
 .files-pane {
   flex: 1;
@@ -10310,15 +10335,32 @@ body.resizing iframe {
   opacity: 0.4;
 }
 
+/* 可扫地址行：自己一套版式，不再借设置页 info 行的长相——那一行是「值靠右、动作贴行尾」，
+ * 而这里要与二维码 / 配对码 / 倒计时连成一列，所以整行居中，`复制` 跟着地址走。
+ * 地址还要能折行：它里面带着配对码，被省略号截掉就没法照着输进手机了。
+ * （原来那句 `white-space: normal` 挂在 `.pair-url .mono` 上，类数比
+ * `.setting-info > span:first-child` 少一档、一直没生效——这轮顺手改正。） */
 .pair-url {
+  align-items: center;
+  color: var(--dsc-text-secondary);
+  display: flex;
+  font-size: var(--dsc-fs-caption);
+  gap: var(--dsc-sp-2);
+  justify-content: center;
   margin: 0;
-  /* 地址是弹窗的正文之一（里面带着配对码）：占满整行，不吃 info 行那档 60% 宽 */
   max-width: 100%;
+  text-align: center;
 }
 
-.pair-url .mono {
+.pair-url-text {
+  min-width: 0;
   overflow-wrap: anywhere;
   white-space: normal;
+}
+
+/* `复制` 不许被长地址挤扁 */
+.pair-url .text-btn {
+  flex: none;
 }
 
 .pair-count {

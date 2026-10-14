@@ -705,10 +705,10 @@ console.log('浏览器推送（Web Push）')
       subsDoc[0].createdAt === 1_700_000_000_000,
     JSON.stringify(subsDoc),
   )
-  const okSend = await push.send({ title: 'Muse Code 等待审批', body: 'write', url: 'http://127.0.0.1:17321/' })
+  const okSend = await push.send({ title: 'Pneuma 等待审批', body: 'write', url: 'http://127.0.0.1:17321/' })
   check(
     '发送走 sendNotification 那条路（这里注入假发送器）：两台各收一条',
-    okSend.attempted === 2 && okSend.sent === 2 && okSend.dropped === 0 && sent.length === 2 && JSON.parse(sent[0].payload).title === 'Muse Code 等待审批',
+    okSend.attempted === 2 && okSend.sent === 2 && okSend.dropped === 0 && sent.length === 2 && JSON.parse(sent[0].payload).title === 'Pneuma 等待审批',
     JSON.stringify(okSend),
   )
   failing.add('https://push.example/2')
@@ -742,7 +742,7 @@ console.log('通知 Webhook（Bark 占位符 GET / ntfy JSON POST）')
   })
   const fakePort = await new Promise((resolvePort) => fake.listen(0, '127.0.0.1', () => resolvePort(fake.address().port)))
   const base = `http://127.0.0.1:${String(fakePort)}`
-  const message = { title: 'Muse Code 等待审批', body: 'write AGENTS.md', url: 'http://192.168.1.5:17321/' }
+  const message = { title: 'Pneuma 等待审批', body: 'write AGENTS.md', url: 'http://192.168.1.5:17321/' }
 
   const posted = await sendWebhook(`${base}/ntfy-topic`, message)
   const lastPost = received[received.length - 1]

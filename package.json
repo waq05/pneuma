@@ -1,7 +1,7 @@
 {
-  "name": "@waq666/muse-code",
+  "name": "@waq666/pneuma",
   "version": "0.6.67",
-  "description": "Muse Code（msc）— 独立的终端 AI harness（自研 ReAct loop + ink TUI）",
+  "description": "Pneuma（numa）— 独立的终端 AI harness（自研 ReAct loop + ink TUI）",
   "type": "module",
   "license": "MIT",
   "publishConfig": {
@@ -10,13 +10,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/waq05/muse-code.git"
+    "url": "git+https://github.com/waq05/pneuma.git"
   },
   "engines": {
     "node": ">=22.19"
   },
   "bin": {
-    "msc": "./bin/dsc.js"
+    "numa": "./bin/dsc.js"
   },
   "files": [
     "bin",

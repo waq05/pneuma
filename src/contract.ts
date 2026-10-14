@@ -1522,6 +1522,7 @@ export interface QueuedMessageView {
  *   - 所有方法不得抛出未捕获异常到 UI；失败经 entries 追加 kind:'system'
  *     条目报告；
  *   - openSession(undefined) 新建会话并切换；openSession(id) 恢复之；
+ *     newSessionIn(cwd) 在指定目录新建（目录是会话自己的数据，与宿主进程目录无关）；
  *     切换时清空 entries。
  *   - 0.6.48 起：切换会话**不打断**原来那个会话正在跑的回合（它转入后台
  *     继续跑完，侧栏亮状态点与「已完成」徽标）；打断只发生在显式 interrupt()。
@@ -1554,7 +1555,20 @@ export interface DscRuntime {
    * @returns 是否真的插上了；agent 没在跑（队列马上会自己出账）时返回 false。
    */
   steerQueued(index?: number): boolean
+  /**
+   * 打开一条会话；不给 id = 新建（落在**当前会话的目录**里）。
+   * @param id - 要恢复的会话 jsonl 路径；省略 = 新建。
+   */
   openSession(id?: string): Promise<void>
+  /**
+   * 在指定目录里新建一条会话并切过去。
+   *
+   * 目录是**会话自己的数据**（宿主把它写进 jsonl 的 meta 行），所以这只是「在那个
+   * 目录开一条会话」——不切宿主的工作目录、不重启宿主、不重载页面。工作区行上那颗
+   * 「在此新建会话」钮走的就是这条路（早先它走切目录 + 重启宿主，整个界面会闪一下）。
+   * @param cwd - 绝对路径，必须存在且是目录；不合法时**抛错**（调用方提示用户）。
+   */
+  newSessionIn(cwd: string): Promise<void>
   compact(): Promise<void>
   setModel(model: string): Promise<void>
   setEffort(effort: EffortLevel): Promise<void>

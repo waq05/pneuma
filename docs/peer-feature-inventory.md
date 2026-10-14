@@ -1,4 +1,4 @@
-# 三家对标产品功能清单（dsh / codex / Muse Code）
+# 三家对标产品功能清单（dsh / codex / Pneuma）
 
 [对标计划书](harness-benchmark-roadmap.md)的证据底料：三家产品的**全面功能清单**，2026-10-02 分别从源码逐包梳理得出。计划书只引用本清单的结论（§7 差距登记），想核对某条差距的出处就回到这里。
 
@@ -12,7 +12,7 @@
 
 - **dsh**：`D:\deepseek-harness\deepseek-harness`，约 60 个功能包组、60+ client UI 插件包、4 个 app。工具权威目录 `docs/tool-catalog.md`、配置权威目录 `docs/config-catalog.md`（由脚本从运行时生成）。
 - **codex**：`D:\codex\codex`，Rust 主体 `codex-rs`（150+ crate）+ `sdk/`（TS/Python）+ `docs/`。
-- **Muse Code**：本仓库，基于代码取证 + [development-log.md](development-log.md) 全部 44 个阶段。
+- **Pneuma**：本仓库，基于代码取证 + [development-log.md](development-log.md) 全部 44 个阶段。
 - 全部为只读源码梳理，未运行任何一家；「未见」指在该仓库活动代码中未找到，不排除文档口径或仓库外实现。
 - dsc 清单经两轮：第一轮按能力域盘点（本节主体），第二轮对已具备能力做**实现深度复核**（与 dsh/codex 同层细比，确认的疏漏编号 T29–T47，登记在 [harness-benchmark-roadmap.md](harness-benchmark-roadmap.md) §7.5）——本节各「差距」行已并入第二轮结论。
 
@@ -241,7 +241,7 @@
 
 ---
 
-## 三、Muse Code（本仓库，dsc）
+## 三、Pneuma（本仓库，dsc）
 
 定位：个人终端 harness，TS + cordis 插件 + Electron 桌面端 + ink TUI + 手机 PWA 遥控端。装配约 45 个内置/官方插件（`src/host/kernel.ts`）。
 
@@ -331,7 +331,7 @@
 - 扩展点 15+（tools/commands/prompt/guards/surfaces/waiting/session.appendState/events/settings/skills/provide…），KERNEL_API_VERSION=6
 - 差距：外部插件无 npm/GitHub 远程安装（只收本地 .js）；无 doctor 式体检命令；无插件管理器 HMR
 
-### Muse Code 独有/领先项（相对 dsh 与 codex）
+### Pneuma 独有/领先项（相对 dsh 与 codex）
 1. **手机遥控**：PWA + Web Push/Webhook + 二维码配对 + 逐台设备管理——三家都没有
 2. **审批安全纵深**：灾难地板 + 熔断 + 命令策略引擎逐段判定 + 安全钩子 fail-closed + AI 复核轴 + 无人值守拒——比 dsh（ask/never 两档）细
 3. **中文优先**：会话检索 1+2-gram、界面全中文（codex/dsh 主英文）

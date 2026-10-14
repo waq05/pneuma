@@ -8,7 +8,7 @@
  *   node desktop/scripts/crop-shot.mjs <源.png> <出.png> <x0> <x1> <y0> <y1> [放大倍数]
  *   比例都写 0–1（例如 0.10 0.42 0.90 1.0 就是左下角那一块）。
  *
- * @module muse-code-desktop/png-tools
+ * @module pneuma-desktop/png-tools
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { crc32, deflateSync, inflateSync } from 'node:zlib'

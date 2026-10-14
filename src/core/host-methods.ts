@@ -30,6 +30,7 @@ export const INVOKABLE_METHODS = [
   'removeQueued',
   'steerQueued',
   'openSession',
+  'newSessionIn',
   'compact',
   'setModel',
   'setEffort',

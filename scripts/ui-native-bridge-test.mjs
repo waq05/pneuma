@@ -81,7 +81,8 @@ console.log('\n── 白名单里不许有的东西 ──')
  * 落信任（setUiTrust）**在桥里**——它们是供应链写入口，只对主窗口开放式；
  * 界面通道那边的排除在下一节钉住（浏览器与远程页够得着的那条面不能有它们）。
  *
- * 内嵌浏览器三件套（dockBrowser / browserNav / browser-state）2026-10 已搬进桥——
+ * 内嵌浏览器那一套（dockBrowser / browserNav / browserClose + browser-state /
+ * browser-open-requested）2026-10 已搬进桥，同月改可多开（一台视图一个 id）——
  * 正向断言在下面一节；`onBrowserState` 这种"具名回调式"的名字仍然不许出现，
  * 桥只有一个订阅口 `on(event, listener)`。
  */
@@ -95,23 +96,35 @@ for (const name of FORBIDDEN) {
  * 0.6.68 新增 `usePermissionPreset`（应用一个打包权限预设）——`use` 同样是既定动作
  * （照 codex 的 `use` 口径），补进来；同批的 `setReviewer` / `setDefaultPermissionPreset`
  * 第一词是既有的 `set`，不用加。
+ * 同日「添加工作区」那批新增 `pickDirectory`（弹系统框挑一个目录，不切工作目录）与
+ * `rememberCwd`（记一笔最近用过的工作区）——`pick` / `remember` 都是既定动作
+ * （一个弹框取路径、一个写一行记忆），补进来。**注意：加 op 忘了补这里会红**，
+ * 探针拦的正是"冒出一个没见过的动词"。
  */
-const ACTION_VERBS = ['set', 'use', 'save', 'choose', 'switch', 'recent', 'remove', 'open', 'install', 'session', 'notify', 'restart', 'quit', 'terminal', 'dock', 'browser']
+const ACTION_VERBS = ['set', 'use', 'save', 'choose', 'pick', 'remember', 'switch', 'recent', 'remove', 'open', 'install', 'session', 'notify', 'restart', 'quit', 'terminal', 'dock', 'browser']
 const oddVerbs = NATIVE_OPS.filter(
   (op) => !ACTION_VERBS.some((verb) => op.toLowerCase().startsWith(verb)),
 )
 check('每个操作名都由既定动作动词开头', oddVerbs.length === 0, `可疑项：${oddVerbs.join('、')}`)
 
-console.log('\n── 内嵌浏览器三件套（2026-10 搬进桥：旧渲染层直连的那两个 + 一个事件）──')
+console.log('\n── 内嵌浏览器五件套（2026-10：页签可多开，一台视图一个 id）──')
 check('桥里有 dockBrowser（带实参规格）', NATIVE_OP_SET.has('dockBrowser') && Object.hasOwn(NATIVE_ARG_SPECS, 'dockBrowser'))
 check('桥里有 browserNav（带实参规格）', NATIVE_OP_SET.has('browserNav') && Object.hasOwn(NATIVE_ARG_SPECS, 'browserNav'))
+check('桥里有 browserClose（关页签要能真的销毁那一台）', NATIVE_OP_SET.has('browserClose') && Object.hasOwn(NATIVE_ARG_SPECS, 'browserClose'))
 check('事件白名单里有 browser-state', NATIVE_EVENT_SET.has('browser-state'))
-check('dockBrowser 正常一次通过', validateNativeCall('dockBrowser', [true, { x: 0, y: 0, width: 100, height: 100 }]).ok === true)
-check('dockBrowser 可以只传 visible（隐藏路径）', validateNativeCall('dockBrowser', [false]).ok === true)
-check('dockBrowser 的 visible 必须是布尔（字符串被拒）', rejects('dockBrowser', ['yes']))
-check('dockBrowser 的 rect 四边都必须是数（少字段被拒）', rejects('dockBrowser', [true, { x: 0, y: 0, width: 10 }]))
+check('事件白名单里有 browser-open-requested（网页开新窗口转新页签）', NATIVE_EVENT_SET.has('browser-open-requested'))
+check('dockBrowser 正常一次通过', validateNativeCall('dockBrowser', ['t1', true, { x: 0, y: 0, width: 100, height: 100 }]).ok === true)
+check('dockBrowser 隐藏某一台（给了 id、不带 rect）通过', validateNativeCall('dockBrowser', ['t1', false]).ok === true)
+check('dockBrowser 的 id 必传（旧的 [visible, rect] 形状被拒）', rejects('dockBrowser', [true, { x: 0, y: 0, width: 10, height: 10 }]))
+check('dockBrowser 的 visible 必须是布尔（字符串被拒）', rejects('dockBrowser', ['t1', 'yes']))
+check('dockBrowser 的 rect 四边都必须是数（少字段被拒）', rejects('dockBrowser', ['t1', true, { x: 0, y: 0, width: 10 }]))
+check('dockBrowser 的 id 超长被拒', rejects('dockBrowser', ['x'.repeat(300), false]))
+check('dockBrowser 多传实参被拒（省略只能从尾部开始）', rejects('dockBrowser', ['t1', false, null, 'x']))
 check('browserNav 的动作是枚举（未知动作被拒）', rejects('browserNav', ['https://a.example', 'print']))
-check('browserNav 正常一次通过', validateNativeCall('browserNav', ['https://a.example', 'load']).ok === true)
+check('browserNav 正常一次通过（带 id）', validateNativeCall('browserNav', ['https://a.example', 'load', 't1']).ok === true)
+check('browserNav 不带 id 也通过（缺省那一台）', validateNativeCall('browserNav', ['https://a.example', 'load']).ok === true)
+check('browserNav 的 id 类型不对被拒', rejects('browserNav', ['https://a.example', 'load', 7]))
+check('browserClose 要一个 id', validateNativeCall('browserClose', ['t1']).ok === true && rejects('browserClose', []) && rejects('browserClose', [7]))
 
 console.log('\n── 供应链写入口：桥有、界面通道没有 ──')
 for (const name of ['installSkill', 'installPlugin', 'installMarketSkill', 'setMarketSources', 'setUiTrust']) {
@@ -246,6 +259,26 @@ check(
   '主进程分派把第二个实参透传',
   mainSource.includes('openWorkspace: ([kind, dir]) => openWorkspace(String(kind), typeof dir === \'string\' ? dir : undefined)'),
 )
+
+console.log('\n── 浏览器可多开：壳与原生两侧都按 id 走（2026-10 对齐 dsh 的浏览器侧边栏）──')
+const shellBrowser = readFileSync(join(root, 'ui-shell', 'src', 'plugins', 'browser', 'ui.tsx'), 'utf8')
+const nativeDock = readFileSync(join(root, 'desktop', 'electron', 'main', 'dock.ts'), 'utf8')
+check('壳拿页签 id 当视图 id', shellBrowser.includes('const viewId = tab.id'))
+check('壳藏起来时只摘下来（不带 rect 的那条）', shellBrowser.includes("('dockBrowser', [viewId, false])"))
+check('壳卸载页签时销毁那一台', shellBrowser.includes("('browserClose', [viewId])"))
+check('壳把网页开的窗口转成新页签', shellBrowser.includes('openDockBrowserTab(url)'))
+check('壳订阅了 browser-open-requested', shellBrowser.includes("native.on('browser-open-requested'"))
+check('原生层是一台视图一个 id（Map，不是单例变量）', nativeDock.includes('const guests = new Map<string, BrowserGuest>()'))
+check('原生层开了 sandbox', nativeDock.includes('sandbox: true'))
+check('原生层拦页面自己发起的非 http(s) 跳转', nativeDock.includes("contents.on('will-navigate'") && nativeDock.includes("contents.on('will-redirect'"))
+check('原生层把网页弹窗 deny 成事件（不顶掉当前页）', nativeDock.includes('return { action: \'deny\' }'))
+check('原生层关一台会真的销毁渲染进程', nativeDock.includes('view.webContents.close()'))
+check('关窗时把全部视图收掉', mainSource.includes('disposeDockBrowsers()'))
+// 工作区是 CRLF：跨行的文本钉必须容忍 \r\n（这仓里踩过一次，写记在这里）
+check('主进程分派按 id 传话', /setDockBrowser\(\r?\n\s+String\(id\),/.test(mainSource))
+check('主进程实现了 browserClose', /browserClose: \(\[id\]\)/.test(mainSource))
+check('旧渲染层那条直连 IPC 原样保留（缺省 id 回落 main）', nativeDock.includes("'dsc:dock-browser'") && nativeDock.includes('DEFAULT_BROWSER_ID'))
+check('旧渲染层的首页仍由主进程带进去（它自己不发起首次导航）', nativeDock.includes('LEGACY_HOME'))
 
 console.log(
   failures === 0 ? `\n${String(passed)} 条断言全部通过` : `\n${String(failures)}/${String(passed + failures)} 条断言失败`,

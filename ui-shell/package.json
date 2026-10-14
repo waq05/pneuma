@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.2.0",
   "type": "module",
-  "description": "Muse Code 插件化界面壳：槽位宿主 + 插件加载器。壳产物落 ../lib/ui/assets，插件 bundle 落 ../lib/ui/plugins，由宿主 webserver 插件伺服。",
+  "description": "Pneuma 插件化界面壳：槽位宿主 + 插件加载器。壳产物落 ../lib/ui/assets，插件 bundle 落 ../lib/ui/plugins，由宿主 webserver 插件伺服。",
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -19,6 +19,7 @@
     "@xterm/xterm": "^6.0.0",
     "papaparse": "^5.7.0",
     "pdfjs-dist": "^6.3.289",
+    "qrcode": "^1.5.4",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
@@ -30,6 +31,7 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/papaparse": "^5.3.16",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.0.0",

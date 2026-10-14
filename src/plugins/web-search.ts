@@ -269,7 +269,7 @@ export const webSearchPlugin: Plugin.Object = {
         help: '便捷方式；环境变量有值时优先使用环境变量。key 仅存本机。',
       },
       { type: 'number', key: 'maxResults', label: '每次返回条数', min: 1, max: 20, step: 1, help: '条数越多占用上下文越多，5 条通常够用。' },
-      { type: 'button', action: 'test', label: '测试搜索「Muse Code」', style: 'ghost', help: '用当前提供方与 key 发一次真实搜索，回执会显示结果条数或失败原因。' },
+      { type: 'button', action: 'test', label: '测试搜索「Pneuma」', style: 'ghost', help: '用当前提供方与 key 发一次真实搜索，回执会显示结果条数或失败原因。' },
     ]
 
     const section: SettingsSectionSpec = {
@@ -313,7 +313,7 @@ export const webSearchPlugin: Plugin.Object = {
         if (name === 'test') {
           const key = resolveKey(config)
           if (key === '') throw new Error('还没有可用的 key：先填 apiKeyEnv 或直接填 key')
-          const hits = await search(config.provider, 'Muse Code', 3, new AbortController().signal)
+          const hits = await search(config.provider, 'Pneuma', 3, new AbortController().signal)
           return hits.length === 0
             ? '搜索发出去了，但 0 条结果（key 可能无效或额度用完）。'
             : `通了：${config.provider} 返回 ${String(hits.length)} 条结果，第一条「${hits[0]!.title}」。`

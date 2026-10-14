@@ -57,7 +57,7 @@ export function writeConfigDoc(doc: FileConfig): void {
     }
   }
   const header =
-    '# Muse Code 模型配置（设置界面「模型」分区可直接编辑，也可手改本文件）\n' +
+    '# Pneuma 模型配置（设置界面「模型」分区可直接编辑，也可手改本文件）\n' +
     '# key 来源顺序：apiKeyEnv 环境变量 → ~/.dsc/credentials.yaml → ~/.dsh/.credentials.yaml\n' +
     '# 模型可选字段：thinkingLevels（支持哪些思考档位）、thinkingParam（档位发 thinking 还是 reasoning_effort）、\n' +
     '#   effortMap（reasoning_effort 下各档的线上值）、modalities（text/image/video）；不写 = 四档 + thinking 开关 + 只吃文本\n'

@@ -26,7 +26,7 @@ const PLACEHOLDER_HTML = `<!doctype html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Muse Code 远程控制</title>
+    <title>Pneuma 远程控制</title>
   </head>
   <body style="font-family: system-ui, sans-serif; margin: 0; padding: 24px; line-height: 1.7">
     <h1 style="font-size: 20px">远程控制已就绪，但界面资产未构建</h1>
@@ -56,7 +56,7 @@ const PAIRING_HTML = `<!doctype html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Muse Code 远程配对</title>
+    <title>Pneuma 远程配对</title>
     <style>
       :root { color-scheme: dark }
       body { font-family: system-ui, sans-serif; margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #1c1c1e; color: #f2f2f7 }
@@ -71,7 +71,7 @@ const PAIRING_HTML = `<!doctype html>
   </head>
   <body>
     <main>
-      <h1>Muse Code</h1>
+      <h1>Pneuma</h1>
       <p>在电脑上打开「设置 → 远程控制」，生成配对码；把它输在下面就能进入界面。</p>
       <input id="code" autocomplete="off" autocapitalize="characters" placeholder="8 位配对码" />
       <input id="name" autocomplete="off" placeholder="这台设备的名字（可留空）" />

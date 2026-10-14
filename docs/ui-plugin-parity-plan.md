@@ -268,7 +268,7 @@ codex 的证据都在 `D:\codex\codex\codex-rs\tui\src\`（`exec_cell/render.rs`
 > 其余四条仍按原文保留。
 
 1. **打包态全流程**：✅ **已验过**（2026-10-11，阶段 8d）。`pnpm -C desktop run dist:dir` 产出
-   `dist/win-unpacked/Muse Code.exe`，隔离 HOME 实跑：①壳产物路径解析对（stderr
+   `dist/win-unpacked/Pneuma.exe`，隔离 HOME 实跑：①壳产物路径解析对（stderr
    `界面形态=shell，宿主伺服 …\resources\dsc-core\lib\ui\assets（产物存在=true）`）；
    ②宿主从打包内 manifest 组图（渲染进程预跑读数 bootEntries=9、槽 10、原生桥 on）；
    ③④认证握手成功、窗口来自宿主界面服务。打包配置修了一处：`electronDist` 指向

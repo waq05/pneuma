@@ -14,7 +14,7 @@ import { BrowserWindow, Menu, Notification, Tray, WebContentsView, app, desktopC
 import type { NativeImage } from 'electron'
 import { validateNativeCall, type NativeOp } from '@dsc/runtime/core/native-bridge.js'
 import { HostProtocol } from './protocol.js'
-import { navigateDockBrowser, registerDockIpc, setDockBrowser } from './dock.js'
+import { closeDockBrowser, disposeDockBrowsers, navigateDockBrowser, registerDockIpc, setDockBrowser } from './dock.js'
 import { readState, resolveHeadlessEntry, writeState } from './dsc-core.js'
 import { readSessionUsage } from './session-usage.js'
 
@@ -289,7 +289,7 @@ function trayIcon(): NativeImage {
 function ensureTray(): Tray {
   if (tray !== null) return tray
   const created = new Tray(trayIcon())
-  created.setToolTip('Muse Code — 点我回到窗口')
+  created.setToolTip('Pneuma — 点我回到窗口')
   created.setContextMenu(
     Menu.buildFromTemplate([
       { label: '显示主窗口', click: () => showMainWindow() },
@@ -401,8 +401,8 @@ function openWorkspace(kind: string, requested?: string): WorkspaceOpenResult | 
 async function installPluginsByDialog(): Promise<string[]> {
   if (mainWindow === null) return []
   const outcome = await dialog.showOpenDialog(mainWindow, {
-    title: '选择 Muse Code 插件文件',
-    filters: [{ name: 'Muse Code 插件', extensions: ['js'] }],
+    title: '选择 Pneuma 插件文件',
+    filters: [{ name: 'Pneuma 插件', extensions: ['js'] }],
     properties: ['openFile', 'multiSelections'],
   })
   if (outcome.canceled || outcome.filePaths.length === 0) return []
@@ -547,7 +547,7 @@ function registerIpc(): void {
 async function chooseDirectory(): Promise<string | null> {
   if (mainWindow === null) return null
   const outcome = await dialog.showOpenDialog(mainWindow, {
-    title: '选择 Muse Code 工作目录',
+    title: '选择 Pneuma 工作目录',
     properties: ['openDirectory'],
     defaultPath: hostCwd || undefined,
   })
@@ -555,6 +555,34 @@ async function chooseDirectory(): Promise<string | null> {
   const next = resolve(outcome.filePaths[0] ?? '')
   if (next !== hostCwd) await restartHost(next)
   return next
+}
+
+/**
+ * 只弹目录框、**不动宿主**（取消给空串）：壳用它挑「在哪个目录里开一条新会话」。
+ *
+ * 与 {@link chooseDirectory} 的分工：那个的语义是「切工作目录」（宿主重启 + 整页重载），
+ * 旧渲染层还在用它；而目录是会话自己的数据，壳那条路不该付重启的代价。
+ */
+async function pickDirectory(): Promise<string> {
+  if (mainWindow === null) return ''
+  const outcome = await dialog.showOpenDialog(mainWindow, {
+    title: '选择工作目录',
+    properties: ['openDirectory'],
+    defaultPath: hostCwd || undefined,
+  })
+  if (outcome.canceled || outcome.filePaths.length === 0) return ''
+  return resolve(outcome.filePaths[0] ?? '')
+}
+
+/**
+ * 记一笔「最近用过的工作区」：`recentCwds`（侧栏的空工作区占位）与 `lastCwd`
+ * （下次冷启动落点）。与 `restartHost` 里那段同一份写法，但**不重启宿主**。
+ */
+function rememberCwdEntry(path: string): void {
+  if (path === '') return
+  const next = resolve(path)
+  const recent = [next, ...(readState().recentCwds ?? []).filter((entry) => entry !== next)].slice(0, 12)
+  writeState({ lastCwd: next, recentCwds: recent })
 }
 
 /** 切到指定工作目录（无对话框）；失败给一句能直接看的原因。 */
@@ -646,6 +674,10 @@ const NATIVE_HANDLERS: Readonly<Record<NativeOp, (args: readonly unknown[]) => u
     applyThemeSource(mode)
   },
   chooseDirectory: () => chooseDirectory(),
+  pickDirectory: () => pickDirectory(),
+  rememberCwd: ([path]) => {
+    rememberCwdEntry(String(path))
+  },
   switchCwd: ([path]) => switchCwdTo(String(path)),
   recentCwds: (): string[] => readState().recentCwds ?? [],
   removeRecentCwd: ([path]) => {
@@ -736,16 +768,28 @@ const NATIVE_HANDLERS: Readonly<Record<NativeOp, (args: readonly unknown[]) => u
     if (protocol === null) throw new Error('宿主进程未运行')
     return protocol.invoke('dock', [String(op), (payload ?? {}) as Record<string, unknown>])
   },
-  /** 内嵌浏览器：显示/隐藏原生覆盖层并摆位置（rect 已过桥的规格校验）。 */
-  dockBrowser: ([visible, rect]) => {
+  /**
+   * 内嵌浏览器：显示/隐藏某一台原生覆盖层并摆位置（实参已过桥的规格校验：
+   * id + visible + 可选 rect）。视图的建立与销毁都在 dock.ts，这里只传话。
+   */
+  dockBrowser: ([id, visible, rect]) => {
     return setDockBrowser(
+      String(id),
       visible === true,
       rect as { x: number; y: number; width: number; height: number } | undefined,
     )
   },
-  /** 内嵌浏览器导航（实参已过桥的规格校验：动作枚举 + url 长度）。 */
-  browserNav: ([url, action]) => {
-    return navigateDockBrowser(String(url), action as 'load' | 'back' | 'forward' | 'reload')
+  /** 内嵌浏览器导航（实参已过桥的规格校验：动作枚举 + url 长度 + 可选 id）。 */
+  browserNav: ([url, action, id]) => {
+    return navigateDockBrowser(
+      String(url),
+      action as 'load' | 'back' | 'forward' | 'reload',
+      id === undefined ? undefined : String(id),
+    )
+  },
+  /** 关掉一台内嵌浏览器视图（页签关了 / 切会话时壳会调）。 */
+  browserClose: ([id]) => {
+    closeDockBrowser(String(id))
   },
 }
 
@@ -828,7 +872,7 @@ function createWindow(): void {
     // 窗口底色与控件区按深色主题起步；选浅色主题时 renderer 在外观生效那一刻
     // 把压平后的两个颜色报过来（IPC 频道 dsc:set-window-chrome）。
     backgroundColor: DARK_CHROME.bar,
-    title: 'Muse Code',
+    title: 'Pneuma',
     titleBarStyle: 'hidden',
     titleBarOverlay: {
       color: DARK_CHROME.bar,
@@ -951,13 +995,16 @@ function createWindow(): void {
     if (state.trayHintShown !== true && process.platform === 'win32') {
       writeState({ ...state, trayHintShown: true })
       tray?.displayBalloon({
-        title: 'Muse Code 还在后台运行',
+        title: 'Pneuma 还在后台运行',
         content: '点击托盘图标回到窗口，右键图标可完全退出；此提示仅出现一次，关窗行为可在设置 → 通用中修改',
       })
     }
   })
 
   mainWindow.on('closed', () => {
+    // 窗口没了，内嵌浏览器的原生视图跟着收掉：它们挂在窗口的 contentView 上，
+    // 不显式销毁会一直吊到进程退出（每台都带一个渲染进程）。
+    disposeDockBrowsers()
     mainWindow = null
   })
 }

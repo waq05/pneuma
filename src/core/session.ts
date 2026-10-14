@@ -174,7 +174,7 @@ const REJECTED_TOOL_ERROR = 'rejected'
  * 才能决定是先核查还是重试；只读调用可直接重试，有副作用的必须先核实。
  */
 const INTERRUPTED_TOOL_TEXT =
-  '[回合被打断] 这个工具调用已经发起，但 Muse Code 没来得及记录它的结果——它可能已经产生了' +
+  '[回合被打断] 这个工具调用已经发起，但 Pneuma 没来得及记录它的结果——它可能已经产生了' +
   '副作用（写文件、跑命令、发请求）。先核查实际状态（读文件、查进程、看输出），再决定下一步：' +
   '只读调用可以直接重试；有副作用的调用在核实之前不要盲目重跑。'
 
@@ -192,7 +192,7 @@ function takeWriteLease(file: string): FileLock {
   const lease = acquireLock(file)
   if (lease === null) {
     throw new Error(
-      `这份会话已在另一个 Muse Code 窗口打开：${basename(file)}（同一份会话日志同时只允许一处写入，先关掉那边再试）`,
+      `这份会话已在另一个 Pneuma 窗口打开：${basename(file)}（同一份会话日志同时只允许一处写入，先关掉那边再试）`,
     )
   }
   return lease
@@ -1153,7 +1153,7 @@ function uuidOf(filePath: string): string {
 
 /** T30：会话库操作撞上「另一个窗口开着它」时的统一说法。 */
 function busyLeaseMessage(filePath: string): string {
-  return `会话正在另一个 Muse Code 窗口使用，先关掉那边再操作：${basename(filePath)}`
+  return `会话正在另一个 Pneuma 窗口使用，先关掉那边再操作：${basename(filePath)}`
 }
 
 

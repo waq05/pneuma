@@ -15,7 +15,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { Context, type Plugin } from '@deepseek-ai/cordis'
 import type { DscCoreConfig } from '../core/config.js'
 import { bootNoticeOnce } from '../core/boot-notices.js'
@@ -369,13 +369,16 @@ export async function createKernel(options: KernelOptions): Promise<Context> {
 
 /**
  * 外部插件发现与挂载：`~/.dsc/plugins/*.js` 自动发现（按文件名排序）
- * + config.yaml `plugins` 段显式声明（相对路径基于 cwd 解析）。
+ * + config.yaml `plugins` 段显式声明（相对路径基于**这份 config.yaml 所在的目录**
+ * 解析——它就在 DSC_HOME 下。早先按进程 cwd 解析，多工作区并用之后那个目录只是
+ * 「上一次切过的工作区」，拿它当基准等于随机）。
  * 走 core/plugin-loader 的热挂载：启停即时生效；条目树
  * （~/.dsc/plugins.json）驱动 disabled/config；apiVersion 不兼容自动停用回滚。
  * 单个插件失败不影响其余插件，失败原因写 system 条目。
  */
 export async function loadExternalPlugins(root: Context, configured: string[]): Promise<void> {
-  const extraPaths = configured.map((entry) => (isAbsolute(entry) ? entry : resolve(process.cwd(), entry)))
+  const configDir = dirname(DSC_CONFIG_YAML)
+  const extraPaths = configured.map((entry) => (isAbsolute(entry) ? entry : resolve(configDir, entry)))
   const failures = await mountAllExternalPlugins(root, extraPaths)
   for (const failure of failures) {
     root.transcript.system(`外部插件 ${failure.name}（${failure.file}）未能加载：${failure.problem}，已自动停用`)
@@ -414,10 +417,10 @@ export function emitStartupNotes(
 ): void {
   if (Object.keys(config.providers).length === 0) {
     root.transcript.system(
-      'Muse Code：没有可用的模型端点。\n' +
+      'Pneuma：没有可用的模型端点。\n' +
         '请编辑 ~/.dsc/config.yaml 配置 providers（api: openai-completions 风格），\n' +
         'key 放到 apiKeyEnv 指向的环境变量或 ~/.dsc/credentials.yaml。\n' +
-        '若本机有 dsh 配置，可运行 `msc config migrate --force` 迁移。',
+        '若本机有 dsh 配置，可运行 `numa config migrate --force` 迁移。',
     )
   }
   if (migration !== null) {

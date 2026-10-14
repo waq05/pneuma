@@ -260,7 +260,7 @@ export function PluginsView(props: {
 
         <div className="plugin-group-label">
           运行内核 <span className="count">{kernel.length}</span>
-          <span className="group-hint">构成 Muse Code 本身，不可停用</span>
+          <span className="group-hint">构成 Pneuma 本身，不可停用</span>
         </div>
         {kernelShown.map((plugin) => (
           <PluginRow key={plugin.file} plugin={plugin} onToggle={props.onToggle} onOpen={setDetailFile} />

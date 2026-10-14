@@ -166,6 +166,9 @@ export const lspPlugin: Plugin.Object = {
     const manager: LspManager = new LspManager({
       servers: () => currentServers().defs,
       idleTimeoutMs: () => readConfig(passed).idleSeconds * 1000,
+      // 解析「相对路径写的服务器命令」的基准：会话目录（拿进程目录既会把别的会话的
+      // 合法命令解析错，还会报出「PATH 里找不到」这种看着像环境问题的假故障）。
+      baseCwd: () => sessionCwd(),
     })
 
     /** 最近一次写操作留的底（观察者只能从这里知道写的是哪个文件）。 */

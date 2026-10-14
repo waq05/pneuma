@@ -90,7 +90,7 @@
 - 观测：usage 的 `cacheReadTokens/cacheWriteTokens`（`llm/src/types.ts:186-187`）；DeepSeek 映射 `prompt_cache_hit_tokens`（`llm-deepseek/src/translate.ts:36`）；e2e 断言「第二轮起命中 > 0」（`packages/core/agent-loop/tests/request-cache.e2e.ts:73-105`）。
 - **无显式 cache key**（跟 codex 不同）：命中靠「请求字节前缀 + 路由不变」自然获得。
 
-## 9. 与 Muse Code 的对照（0.6.46 实测）
+## 9. 与 Pneuma 的对照（0.6.46 实测）
 
 - **抄了的**：环境/时间快照「变化才注入 + user 角色」→ dsc 的 env-facts 投影（每次请求附当前值，变了才写状态留痕）；压缩调用复用主对话前缀 → dsc 的 `compactSession(…, context)`；瞬态注入不改写头部（dsc 的 LSP 诊断/钩子产出改 user 角色）；「模型可见⟺logged」双轨达成（dsh 运行时不变量强校验 / dsc 命名投影链 + appendNote + 状态条目留痕）。
 - **没抄的**：`systemPromptUpdate:'in-history'`（要 mid-history system 消息，dsc 的 fold-system 为兼容网关只认头部 system；dsc 用「易变段搬出提示词」达到同类缓存效果）；`toolUpdate` addition-only 与 request header 系列（多 provider 长驻场景，dsc 单路由 + DeepSeek 自动缓存，收益≈0）；scoped/global 两层提示词。

@@ -139,7 +139,7 @@ export const DIFF_COLOR = {
 /**
  * context 条按内容类型的分段色（0.6.60 批三）：沿用 dsh StatusMetrics 的蓝色系
  * 谱系（system → tools 由深到亮，语义就是「越新越亮」），但整体提亮一档——
- * dsh 的深海军蓝系按它自家的浅灰空闲段设计，压在 msc 的深色空闲段上会沉底看不见。
+ * dsh 的深海军蓝系按它自家的浅灰空闲段设计，压在 Pneuma 的深色空闲段上会沉底看不见。
  * 顺序与 core/estimateRequestSegments 的五段一一对应。
  */
 export const CONTEXT_SEGMENTS = [

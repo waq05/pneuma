@@ -830,7 +830,7 @@ export function Sidebar(props: {
     return (
       <aside className="sidebar rail">
         <button className="rail-logo" data-tip="展开侧边栏，快捷键 Ctrl+B" onClick={props.onToggleRail}>
-          <img src={iconUrl} alt="Muse Code" draggable={false} />
+          <img src={iconUrl} alt="Pneuma" draggable={false} />
         </button>
         <button className="rail-btn" data-tip="新会话" onClick={props.onNew}>
           <IconPlus size={18} />
@@ -871,8 +871,8 @@ export function Sidebar(props: {
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
-        <img src={iconUrl} alt="Muse Code" draggable={false} />
-        <span className="brand">Muse Code</span>
+        <img src={iconUrl} alt="Pneuma" draggable={false} />
+        <span className="brand">Pneuma</span>
         <button className="icon-btn rail-toggle" data-tip="收起侧边栏，快捷键 Ctrl+B" onClick={props.onToggleRail}>
           <IconSidebar size={15} />
         </button>

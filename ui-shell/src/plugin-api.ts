@@ -271,6 +271,8 @@ export {
   setDockSubagent,
   /** 把某个后台活（作业 / 终端会话）的只读输出面开到右侧栏（状态面板「终端」区点一行走它）。 */
   setDockWorkOutput,
+  /** 展开右侧栏并开一张新的浏览器页签（Ctrl+T、网页自己 `window.open` 都走它）。 */
+  openDockBrowserTab,
   registerDockTab,
   dockActions,
   openDockTab,
@@ -392,10 +394,12 @@ export type {
   EffortMap,
   GitSurface,
   GoalView,
+  LinkShareData,
   ModeSurface,
   ModelChoiceView,
   ModelConfigView,
   Modality,
+  PairShareData,
   PlanDecision,
   PlanEntryView,
   PlanView,

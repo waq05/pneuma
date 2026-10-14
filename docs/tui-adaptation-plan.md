@@ -1,6 +1,6 @@
 # TUI 功能适配与体验完善方案（2026-10-04 定稿）
 
-> 对象：`msc` 终端界面（`src/app/`，ink 6 + React 19，约 700 行 MVP）。
+> 对象：`numa` 终端界面（`src/app/`，ink 6 + React 19，约 700 行 MVP）。
 > 基线：`DscRuntime` 契约（`src/contract.ts:1011`）+ 快照 surfaces——**宿主侧能力几乎全在，缺口集中在「数据已下发但 TUI 不渲染、不接按键」**。
 > 参照：codex TUI（`D:\codex\codex\codex-rs\tui`）、dsh-TUI（`D:\deepseek-harness\dsh-TUI`）四路侦察结论（2026-10-04）。
 > 原则：不改宿主、不加协议（个别只加可选字段），业务逻辑零复制；键盘优先、单屏可读；所有新键位进 `/help`。

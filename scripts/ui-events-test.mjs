@@ -137,13 +137,13 @@ async function startServer({ host, ...eventsOptions }) {
     snapshot: host.snapshot,
     invoke: async (method, args) => ({ method, args }),
     methods: ['ping'],
-    hello: () => ({ protocolVersion: 1, methods: ['ping'], host: { name: 'Muse Code', version: 'test' } }),
+    hello: () => ({ protocolVersion: 1, methods: ['ping'], host: { name: 'Pneuma', version: 'test' } }),
     subscribe: host.subscribe,
     log: () => {},
     ...eventsOptions,
   })
   const server = await createUiServer({
-    host: { name: 'Muse Code', version: 'test' },
+    host: { name: 'Pneuma', version: 'test' },
     assetsDir,
     pluginsDir,
     events,

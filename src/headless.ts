@@ -31,6 +31,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  console.error('[msc] headless 启动失败：', error)
+  console.error('[numa] headless 启动失败：', error)
   process.exit(1)
 })

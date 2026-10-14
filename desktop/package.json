@@ -1,8 +1,8 @@
 {
-  "name": "muse-code-desktop",
+  "name": "pneuma-desktop",
   "version": "0.6.67",
   "private": true,
-  "description": "Muse Code 桌面端：Electron 壳 + headless 宿主子进程（stdio JSONL 协议）",
+  "description": "Pneuma 桌面端：Electron 壳 + headless 宿主子进程（stdio JSONL 协议）",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",

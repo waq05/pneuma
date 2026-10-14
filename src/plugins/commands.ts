@@ -177,7 +177,7 @@ export const commandsPlugin: Plugin.Object = {
         const target =
           args[0] ?? join(
             session.meta.cwd || process.cwd(),
-            `msc-export-${session.meta.id.slice(0, 8)}-${stamp.getFullYear()}${pad(stamp.getMonth() + 1)}${pad(stamp.getDate())}-${pad(stamp.getHours())}${pad(stamp.getMinutes())}.md`,
+            `pneuma-export-${session.meta.id.slice(0, 8)}-${stamp.getFullYear()}${pad(stamp.getMonth() + 1)}${pad(stamp.getDate())}-${pad(stamp.getHours())}${pad(stamp.getMinutes())}.md`,
           )
         const markdown = exportSessionMarkdown({
           id: session.meta.id,

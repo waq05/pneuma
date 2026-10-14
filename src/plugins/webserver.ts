@@ -5,7 +5,7 @@
  *
  * 1. **默认不占端口**。挂载本身是零成本的（只是 provide 一个服务），
  *    真正监听要有人要：桌面主进程经宿主协议拿地址、`DSC_UI_SERVER=1` 自检、
- *    或者插件配置里写 `enabled: true`。终端里跑 `msc` 的人不该平白多出一个监听端口。
+ *    或者插件配置里写 `enabled: true`。终端里跑 `numa` 的人不该平白多出一个监听端口。
  *
  * 2. **地址只打印一次，且是带一次性令牌的那条**。用户复制到浏览器换 Cookie；
  *    桌面主进程从服务上拿同一个地址（不解析 stdout）。
@@ -170,7 +170,7 @@ export const webserverPlugin: Plugin.Object = {
         hello: () => ({
           protocolVersion: UI_EVENTS_PROTOCOL_VERSION,
           methods: [...UI_METHODS],
-          host: { name: 'Muse Code', version: DSC_VERSION },
+          host: { name: 'Pneuma', version: DSC_VERSION },
         }),
         subscribe: (onChange) => runtime.subscribe(onChange),
         // 启动图热更帧：`event: plugins`（不进 frame 帧的 seq/补帧语义）。
@@ -193,7 +193,7 @@ export const webserverPlugin: Plugin.Object = {
         },
       })
       const server = await createUiServer({
-        host: { name: 'Muse Code', version: DSC_VERSION },
+        host: { name: 'Pneuma', version: DSC_VERSION },
         port: config.port,
         events: channel,
         ...(config.assetsDir === undefined ? {} : { assetsDir: config.assetsDir }),
@@ -230,7 +230,7 @@ export const webserverPlugin: Plugin.Object = {
       }
       // 这条打印是「界面可以访问了」的就绪信号：用户拿它进浏览器。
       // 桌面主进程不走这条（它从服务上取地址），这样 stdout 是否被 TUI 接管都无所谓。
-      console.log(`Muse Code 界面： ${server.url}`)
+      console.log(`Pneuma 界面： ${server.url}`)
       return server
     }
 

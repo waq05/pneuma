@@ -287,7 +287,7 @@ const pluginsDir = makeTree('serve-plugins', {
   'demo/client.js': 'module.exports={apply(){return "old"}}',
   '@scope/name/client.js': 'module.exports={apply(){return "scoped"}}',
 })
-const server = await createUiServer({ host: { name: 'Muse Code', version: 'test' }, assetsDir, pluginsDir, log: () => {} })
+const server = await createUiServer({ host: { name: 'Pneuma', version: 'test' }, assetsDir, pluginsDir, log: () => {} })
 const port = server.port
 const token = new URL(server.url).searchParams.get('token') ?? ''
 let cookie = ''
@@ -401,7 +401,7 @@ console.log('\n[6] 宿主重启后的 Cookie')
 {
   check('重启前拿到的 Cookie 能用', (await http('GET', port, '/', { cookie })).status === 200)
   await server.close()
-  const restarted = await createUiServer({ host: { name: 'Muse Code', version: 'test' }, assetsDir, pluginsDir, port, log: () => {} })
+  const restarted = await createUiServer({ host: { name: 'Pneuma', version: 'test' }, assetsDir, pluginsDir, port, log: () => {} })
   const afterRestart = await http('GET', restarted.port, '/', { cookie })
   check('宿主重启后同一个 authority 的旧 Cookie 仍然有效', afterRestart.status === 200, String(afterRestart.status))
   const newToken = new URL(restarted.url).searchParams.get('token') ?? ''

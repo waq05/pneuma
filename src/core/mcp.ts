@@ -19,7 +19,7 @@ import { isAbsolute, join, resolve } from 'node:path'
 const MCP_PROTOCOL_VERSION = '2025-06-18'
 
 /** initialize 里自报的客户端身份。 */
-const CLIENT_INFO = { name: 'muse-code', version: '0.1.0' }
+const CLIENT_INFO = { name: 'pneuma', version: '0.1.0' }
 
 /** 工具名长度上限（照 codex / dsh：超长的截断后用哈希尾巴防撞）。 */
 const TOOL_NAME_MAX = 64
@@ -179,6 +179,12 @@ export interface McpOpenOptions {
   connectTimeoutMs: number
   /** 单次请求超时。 */
   callTimeoutMs: number
+  /**
+   * 配置里没写 `cwd` 时，stdio server 用哪个目录起进程（调用方给**当前会话的目录**）。
+   * 省略 / 空串 = 交给系统继承宿主进程目录（多工作区并用之后那已经没有用户意义，
+   * 所以只有取不到会话时才该走到这里）。
+   */
+  cwd?: string
   /**
    * 连接自己断了时回调一次（stdout 结束、子进程退出）。
    * http 没有常驻连接，一问一答，所以这条不会触发——那边断了就是某次 tools/call 直接抛错。
@@ -797,7 +803,7 @@ export async function openConnection(server: McpServerConfig, options: McpOpenOp
   const isStdio = server.transport !== 'http'
   const channel: Channel =
     isStdio
-      ? new StdioChannel(spawnStdio(server), options.callTimeoutMs, options.onClose)
+      ? new StdioChannel(spawnStdio(server, options.cwd ?? ''), options.callTimeoutMs, options.onClose)
       : new HttpChannel(server.url, server.headers, options.callTimeoutMs)
   let instructions = ''
   let capabilities: McpCapabilities = { resources: false, prompts: false }
@@ -859,13 +865,19 @@ export async function openConnection(server: McpServerConfig, options: McpOpenOp
   }
 }
 
-/** 按配置起子进程：环境是筛过的，命令是按 PATH + PATHEXT 解析过的。 */
-function spawnStdio(server: McpServerConfig): ChildProcess {
+/**
+ * 按配置起子进程：环境是筛过的，命令是按 PATH + PATHEXT 解析过的。
+ *
+ * @param fallbackCwd - 配置没写 `cwd` 时用哪个目录起进程（调用方给当前会话的目录）。
+ *   两边都为空的极少数情形才交给系统（继承宿主进程目录）——那是兜底，不是常态。
+ */
+function spawnStdio(server: McpServerConfig, fallbackCwd: string): ChildProcess {
   const env = buildChildEnv(Object.keys(server.env), server.env, process.env)
-  const plan = resolveCommand(server.command, env, server.cwd)
+  const dir = server.cwd !== '' ? server.cwd : fallbackCwd
+  const plan = resolveCommand(server.command, env, dir)
   return spawn(plan.file, plan.shell ? server.args.map(quoteForCmd) : server.args, {
     env,
-    cwd: server.cwd === '' ? undefined : server.cwd,
+    cwd: dir === '' ? undefined : dir,
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
     shell: plan.shell,

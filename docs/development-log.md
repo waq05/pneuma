@@ -5741,4 +5741,269 @@ Playwright 的 locator（`getByRole` / `locator().click()`）在这个页面里�
 ②**图标钮的命中区要单独给**：文字没了，按钮不能跟着缩成图标那么大——`24px` 见方是这个尺寸下
 的最小舒适值（小芯片后面那颗用 20px，因为它的邻居本身就是小芯片）。
 ③**状态点也要能读**：只留一个 `✓` 时，读数（多久、回了什么、错在哪）必须进悬浮说明，
-否则「通了」之外什么都问不出来。
+   否则「通了」之外什么都问不出来。
+
+## 第二十四批：界面壳补上「连接手机」弹窗（2026-10-14，未发版）
+
+用户报：设置 → 远程控制，点「连接手机」**没有反应**（截图里只有面板底部一行「配对码已生成
+（半小时内有效）」）。
+
+### 根因
+
+**不是宿主坏了**：`regenerate-code` 照常签发配对码——截图那行说明就是它的 `notice`。
+坏在**壳只读了回执的一半**：`runSettingAction` 的回执除 `notice` 还带结构化载荷 `data`
+（`src/contract.ts` 的 `PairShareData` / `LinkShareData`）。旧的冻结渲染层据此弹「手机连接」
+弹窗（`desktop/src/renderer/PairModal.tsx`）、开浏览器；而 `ui-shell/src/plugins/settings/ui.tsx`
+的 `act()` 只看了 `ok` / `notice`，`data` 一个字段没读。阶段 5.6 把默认界面翻到壳之后，
+点「连接手机」就只剩一行说明：**码签发了、每点一次作废上一张，人却永远看不见**。
+
+`.pair-*` 那一族样式当初跟着 `legacy/views.css` 抄过来了，**组件没跟过来**——所以在壳里
+搜不到 `pair-code` 任何一处逻辑，只有 `pair-code-row` 这种类名残留。
+
+### 改了什么
+
+| 面 | 改动 |
+| --- | --- |
+| 新组件 | `ui-shell/src/plugins/settings/pair-modal.tsx`：旧 `PairModal` 的同构移植（二维码 + 8 位码 + 可扫地址 + 倒计时 + 重新生成；`createPortal` 挂 body，Esc / Tab 在捕获段拦） |
+| 回执分派 | 壳的 `act()` 按 `data.kind` 分出口：`pair-code` → 开弹窗（不再只出说明）；`url`（检查更新发现新版）→ 说明照走行内提示，发布页交 `openExternal` |
+| 重新生成 | 弹窗那颗钮调同一个宿主动作原地换码；失败原因写在**弹窗里**，不写行内说明——那份说明此刻正被弹窗盖着，关窗后才冒出来的旧话只会让人以为刚刚成功过 |
+| 类型面 | `PairShareData` / `LinkShareData` 进 `src/ui/index.ts` 与 `ui-shell/src/plugin-api.ts` 的转出表（壳要按 `kind` 收窄，编不过比画空好） |
+| 二维码深色块 | 收进基元层 `readCssSolidColor(fg, bg, fallback)`（`ui-primitives/css.ts`）：`--dsc-text-primary` 带 4% 透明，二维码库只吃纯色，所以压在卡片底色上合成一次；旧界面那份手抄的解析不再抄第二遍。`readCssColor` / `toHexColor` 语义不变（内部改用同一个 `parseRgba`） |
+| 依赖 | `ui-shell` 加 `qrcode`（+ `@types/qrcode`）：非 external 依赖由插件打包内联，只进 settings 那一份 bundle（本次 195KB） |
+| 可扫地址行居中 | 用户点名「把二维码下的网址居中」：那一行原来借设置页 info 行的版式（`值靠右、动作贴行尾`），现在自己一套（整行居中，`复制` 跟着地址走）。**顺手改掉一个瞎的规则**：`white-space: normal` 原挂在 `.pair-url .mono` 上，类数比 `.setting-info > span:first-child` 少一档、一直没生效——长地址（局域网 IP 那种）会被省略号截掉，而它是要照着输进手机的。改成 `.pair-url-text` 后真正生效（`.tsx` 里换类名，`views.css` 里重写那块） |
+
+### 验证
+
+- `scripts/ui-plugin-test.mjs` 新增 **[9] 设置回执的结构化载荷**（6 条）：从 `src/contract.ts`
+  真读 `SettingsMutationOk.data` 的载荷类型与各自的 `kind`，断言壳源码对**每一种**都有**正向**
+  分派（`kind === 'x'` / `case 'x':`；`!==` 不算——那是「宿主没给」的兜底分支），再对着
+  **产物**验一遍（源码改了没重建 = 红）。
+- **负向验证**：把 `pair-code` 那个比较字面量改名 → [9] 两条源码级断言当场红、两条产物级仍绿
+  （两极独立）；**顺带抓出探针自身的正则写错**（`==?` 匹配不了 `===`，改 `={2,3}`）——
+  正向跑时我误以为红是负向生效，负向跑才暴露它一直没在工作。
+- `ui-sdk-types-test.mjs` 全绿（新增的类型转出真跑第三方 tsc 零错）；根 `typecheck` 与壳
+  `typecheck` 0 错；`ui-api-gate-test`、`ui-native-bridge-test`（106 条）、`ui-settings-nav-test`、
+  `legacy-frozen-check` 全绿（冻结渲染层一个字节没动）。
+- **真机走查**（`scripts/_ui-shell-serve.mjs` 隔离 HOME + 真壳页面）：`shell.settings.open{section:'remote'}`
+  开门 → 点「连接手机」→ 弹窗在场：`手机连接`、码 8 位、`data:image/png;base64,…` 且**实测
+  220×220**、`剩余有效时间 29:59`、地址 `http://127.0.0.1:17321/?code=…`；点「重新生成」→
+  码换新、倒计时归零重计、二维码重画、无错误行；按 Esc → 弹窗关、设置面板仍在「远程控制」
+  （捕获段拦住了面板那条冒泡监听）。
+- 截图：卡片 **416×455**、`z-index 130`（压在设置遮罩之上），深色主题下码块是近白——证明
+  合成走的就是带 alpha 那条路。
+- 地址行居中另有一次实测（同一条走查链路，对着最终构建）：`justify-content: center` /
+  `text-align: center`，地址（260px）+ `复制` 这一组的中心 = 行中心 = 卡片中心（都是 640）；
+  把地址换成 `http://192.168.100.123:17321/?code=ABCD2345&from=qr` 那种长度，实测**折成两行**
+  （高 18→36px）且 `scrollWidth <= clientWidth`（不截断、不出省略号）。探针 [9] 补两条钉住
+  这两个样式契约（含 `.tsx` 里的类名与 CSS 块同源）。
+
+### 诚实边界
+
+① 走查跑在**浏览器**里的壳（无原生桥）：`pair-code` 这条路不需要桥，证据有效；`url`
+   （`openExternal`）那条只在真桌面窗口里能验，本次没验——无桥时它给一句「打开链接要用系统
+   浏览器，只在桌面版里有」，这条降级是代码级判断，没有走查读数。
+② 二维码颜色在**弹窗打开那一刻**读一次：开着弹窗换主题不会重画（与旧界面同款，未改）。
+③ 旧冻结渲染层那份 `PairModal.tsx` 保持原样（`legacy-frozen-check` 钉着），壳与它各有一份
+   实现——刻意不抽公因子，冻结层不动。
+
+### 教训
+
+① **「宿主发了、界面丢了」是一类看不见的坏**：回执带结构化载荷时，只读 `notice` 的界面不会
+   报错、只会少画一半。这类漏接得靠**对着契约**的断言钉住（载荷联合里每一种 `kind` 都要有
+   出口），不能靠「字符串出现过」——`!==` 兜底分支和同名 CSS 类都会让松断言误绿。
+② **探针自己也要负向验证**：第一次那条正则根本匹配不了 `===`，只跑正向会把它读成「负向生效」。
+③ **写不出来的反馈不如不写**：弹窗盖着时往面板底部写行内说明，用户此刻看不见、关窗后读到的是
+   过时结论——反馈要落在用户正看着的那一层。
+
+## 第二十五批：浏览器侧边栏对齐 dsh（多页签 + 完整工具条 + guest 硬化）（2026-10-14，未发版）
+
+用户给一张 dsh 的截图（右侧「浏览器 × / ＋」+ 地址栏 + 「输入 HTTP(S) 地址开始浏览」）说
+「参考 dsh 的浏览器侧边栏实现」。dsc 其实**已经有**浏览器页签（`ui-shell/src/plugins/browser/ui.tsx`
++ 主进程 `WebContentsView`），但只是雏形：**单例单页**、chip 上永远写「浏览器」、前进后退
+永远是启用的（点了没反应）、地址栏草稿与页面地址共用一份 state（页面一跳转就把打了一半的字冲掉）、
+`⌘/Ctrl+T` 等于「聚焦已开的那一张」。
+
+### 根因 / 差距（改前逐条）
+
+| 面 | 改前 | dsh 的做法 |
+| --- | --- | --- |
+| 页签 | `SINGLETON_KINDS` 里有 `browser`——一个布局至多一张 | 浏览器的页签条**就是右侧栏的页签条**，一张页签一台视图 |
+| 原生层 | 模块级单例 `dockView` | 一台视图一个 lease / id，可多开 |
+| 标题 | 没有（chip 固定写「浏览器」） | 网页标题进页签标题槽 |
+| 状态 | 只推 `did-navigate` 的 url | 地址 + 标题 + 前后退 + 加载中 |
+| 弹窗 | `setWindowOpenHandler` 里就地 `loadURL` ——**把用户正在看的页顶掉** | deny 原生窗，转成新页签 |
+| 导航闸门 | 只在**壳发起**的 `load` 上校验协议；页面自己发起的跳转（`will-navigate`）没闸门，可以走到 `file://` | 主框架导航与重定向都过白名单 |
+| guest 策略 | `contextIsolation` / `nodeIntegration` 之外没别的；权限弹窗、下载、登录框全放行；默认 session | sandbox + 权限/下载/登录全拒 + 每个工作区独立分区 |
+| 空态 | 开视图时主进程硬加载 bing | 空态等地址栏 |
+
+### 两个我自己定的岔路（理由写在这里备查）
+
+① **多页签 = 右侧栏的页签条本身**，不在浏览器面板内部再造一条 Chrome 式页签条。dsh 就是这条
+（那张截图里的「浏览器 × / ＋」就是 dock strip），而 dsc 的页签条 / 分栏 / 拖拽 / 右键菜单已经
+现成，解除单例即可；再造一条会跟已有的并排出现两条，用户分不清。
+② **存储用一份持久分区** `persist:dsc-browser`（登录记住）。dsh 是「每个工作区一份**非持久**
+分区」，那是多用户机器的隔离取向；单用户桌面下每次重登更烦。原生层留了一个
+`browserPartition()` 单点，要改成按工作区隔离只动那一处。
+
+### 改了什么
+
+| 面 | 改动 |
+| --- | --- |
+| 布局模型 | `ui-dockkit/dock-model.ts`：`SINGLETON_KINDS` 去掉 `browser`；`parseSurface` 给 `browser` 加显式分支（**保留** `path`=那次浏览的地址、`label`=网页标题，原来落 else 分支会被丢掉）；新增 `openBrowserTab(surface, url?, label?)` 与 `setTabInfo(surface, tabId, {label, path})`（同值不产生新对象——网页每报一次标题/地址不该都写一遍 localStorage） |
+| 布局接线 | `ui-dockkit/dock-state.ts`：`dockActions.openBrowserTab` / `dockActions.setTabInfo`，新导出 `openDockBrowserTab(url?)`（展开侧栏 + 开新页签）；`plugin-api.ts` 转出去 |
+| 插件主体 | `plugins/browser/ui.tsx` 重写：`keepMounted: true`（切页签只藏不卸）+ **视图 id = 页签 id**；工具条补 `↗ 用系统浏览器打开`（走桥的 `openExternal`）、前后退按 `canGoBack/canGoForward` 禁用、刷新钮加载中转圈；地址草稿与页面地址分开（编辑中不被跳转覆盖）；标题/地址回填页签；`browser-open-requested` → 新页签；**隐藏不加载**（`loaded` ref）——否则开一个会话就把一堆网页拉起来 |
+| 地址闸门 | 新纯函数 `plugins/browser/address.ts`（零依赖，探针可 Node 类型擦除直读）：没写协议补 `https://`（本机 `localhost` / `127.0.0.1` / `[::1]` 补 `http://`），只放行 http/https，带凭据的地址拒掉 |
+| 原生桥 | `src/core/native-bridge.ts`：`NATIVE_BRIDGE_VERSION` **2 → 3**（实参与语义都变了）；`NATIVE_OPS` 加 `browserClose`；`dockBrowser` 改成 `[id, visible, rect?]`、`browserNav` 加可选 id；事件加 `browser-open-requested`，`browser-state` 载荷扩成 `{id,url,title,canGoBack,canGoForward,loading}` |
+| 主进程 | `desktop/electron/main/dock.ts` 重写成**多视图管理器**（`Map<id, BrowserGuest>`）：建视图时装 `sandbox: true` + `webSecurity` + 打包后关 devtools + `partition: persist:dsc-browser`；会话策略权限全拒 / 拦下载 / `login` 拒；`will-navigate` / `will-redirect` 只放行 http(s)；弹窗 deny 并推事件；状态四路（`did-navigate` / `did-navigate-in-page` / `did-start|stop-loading` / `page-title-updated`）都推；`closeDockBrowser(id)` 真销毁（`webContents.close()`），关窗 `disposeDockBrowsers()` |
+| 主进程接线 | `index.ts` 的 `NATIVE_HANDLERS` 透传 id + 新增 `browserClose`；`mainWindow.on('closed')` 调 `disposeDockBrowsers()`；旧渲染层那条直连 IPC **原样保留**（缺省 id 回落 `main`，首次导航的 bing 首页由 `LEGACY_HOME` 带进去——它自己不发起首次导航） |
+| 快捷键 | `ui-layout/app.tsx`：Ctrl+T 走 `openDockBrowserTab()`（每次一张新页签，空态不自动加载） |
+| 样式 | `legacy/views.css`：`.browser-empty` 空态、`.browser-error` 行内说明、加载中的刷新钮转圈（复用轮次那条 `dsc-turn-spin`）。旧冻结渲染层那份 `styles.css` 一个字节没动 |
+
+**一个位置上的坑值得记**：桥的实参校验规定「省略只能从尾部开始」，所以「隐藏某一台视图」没法写成
+`[visible, rect?, id?]`（id 在尾部就必须给 rect）。最后排成 **`[id, visible, rect?]`**：隐藏 = `[id, false]`，
+显示 = `[id, true, rect]`。这不是风格问题，是校验器形状决定的。
+
+### 验证
+
+- `scripts/ui-native-bridge-test.mjs` **114 → 129 条**：五件套各有规格、`dockBrowser` 的
+  id 必传（旧的 `[visible, rect]` 形状被拒）/ 隐藏路径不带 rect 通过 / 中间空一个又给后面被拒、
+  `browserClose` 要一个 id、事件白名单两条；另加一节**两侧接线钉**（壳拿 `tab.id` 当视图 id、
+  隐藏只摘不销毁、卸载调 `browserClose`、原生层是 `Map` 不是单例、`sandbox: true`、
+  `will-navigate` / `will-redirect` 在、deny 成事件、`webContents.close()`、关窗 dispose）。
+- **负向验证**：把主进程的 `browserClose:` 改名 → 探针当场 **2 条红**（分派表、实现存在），
+  桌面 `tsc` 也红（`Record<NativeOp, …>` 的编译期闸门）→ 证实「白名单与实现绑死」这条真的在拦。
+- 新探针 `scripts/ui-browser-address-test.mjs`（**25 条**）：补协议便利 8 + 闸门 11（`javascript:` /
+  `data:` / `file:` 两种写法 / `mailto:` / 自造协议 / 带凭据 / 只有协议没主机 / 超长）+ 形态钉 6。
+- 全量无头电池 **45 个探针全绿**（`remote-host-test.mjs` 首跑撞了一次 Windows rename EPERM，
+  单跑 140/140——是文件系统抖动，不是回归）。
+- **实机自检** `desktop/shots/ui-browser-check.ps1`（新，25 项全过，本机页面服务器 + 隔离 HOME）：
+  空态不建视图 → 输 `127.0.0.1:38173/` 真加载（chip 变网页标题、`data-browser-bound=1`）→
+  再进一页后**后退转可用** → 再 Ctrl+T 出第二张（视图 id 不同）→ 切走再切回**标题 token 不变**
+  （页面没重新加载）→ 网页自己 `window.open` **转成新页签**（页签数 2→3）→
+  `javascript:` 就地报「只支持 http/https 地址」且页签数不变 → 关页签后数量减少、主进程 stderr
+  出 `[dock] browser view disposed`。
+- `desktop/shots/ui-batch6-check.ps1`（本地实机自检）**G 段改到新口径**后 39/39：旧的两条
+  （`browserBound`、`浏览器是单例`）已经说的是旧行为，改成「空态不建视图」「再 Ctrl+T 又多一张」，
+  收尾那段从「关一张」改成「关完所有浏览器页签」。
+
+### 诚实边界
+
+① **原生覆盖层拍不到**：`capturePage` 只拍壳文档的合成帧，`WebContentsView` 是另一层。所以这一批
+   的证据是三层的——DOM 读数（页签数 / chip 标题 / 前后退可用态 / 地址栏）+ 主进程 stderr 的
+   `[dock] browser view created|disposed` 账本 + 本机页面的**标题 token**（切走切回不变 = 没重加载）。
+   不是「截图看着对」。
+② **页面自己发起的非 http(s) 跳转**只做到代码级：`will-navigate` / `will-redirect` 两条闸门在
+   （探针钉了文本），但没有端到端反证——原生层里点不到一个 `file://` 链接（DOM 里的 eval 伸不进 guest）。
+③ **会话切换会重建视图**（旧会话的页签卸载 → 销毁；切回来按 `tab.path` 重新加载）。持久分区下登录还在，
+   但页面状态（表单、滚动）不保留。这是「一页签一视图 + 会话级布局」的必然，没做 dsh 那种跨会话保活。
+④ **每工作区独立分区没做**（见上「岔路②」），只留了 `browserPartition()` 一处。
+⑤ 旧冻结渲染层的浏览器面板一字未动（`legacy-frozen-check` 钉着）：它仍走 `dsc:dock-browser` 直连 IPC、
+   仍是单例、仍硬开 bing——这是**有意**的（G 已拍板旧桌面版不动），不是漏改。
+
+### 教训
+
+① **桥的实参顺序不是风格问题**：`validateNativeCall` 的「省略只能从尾部开始」直接决定了哪个参数能
+   排最后。设计新 op 时先想「哪一档可以不传」，再排位置。
+② **原生覆盖层类功能（浏览器、终端）只有三层证据才算验过**：DOM 里能看到的东西 + 主进程的建/销日志 +
+   页面自身可观测的状态（这里用**标题 token** 当"有没有重新加载"的探针）。截图那一张不算证据。
+③ **本地实机自检里的旧口径断言要跟着行为一起改**：batch6 那段「浏览器是单例」在解除单例之后会红成
+   一个**假故障**；这仓的自检脚本是 gitignored 但仍在跑，留着不动的代价是下次改动踩到一片红。
+④ **空态别顺手加载首页**：原来开视图就 load bing，看着"有内容"，实际上一次 Ctrl+T 就联网、还让
+   「想开个空白页查点东西」变得不可能。对齐 dsh 的空态之后，首次联网发生在用户敲地址那一刻。
+
+## 第二十六批：工作目录成为「会话自己的数据」——新建会话不再重启宿主（2026-10-14，未发版）
+
+### 报障
+
+点侧栏工作区行尾的 ⊕（「在 dsc 新建会话」）：**卡一下 + 闪一下屏**。用户的期待写得很准：
+「正常应该只刷新中间的会话区，左右侧边栏不应该闪」。
+
+### 根因（三条独立证据）
+
+① 代码：`ui-shell/src/plugins/sessions/ui.tsx` 的 `newSessionIn` 对**非当前**工作区先走原生桥
+`switchCwd` → 桌面主进程 `restartHost`（宿主换端口重启）→ 新 origin → `adoptUiServer` 里
+`window.loadURL()`——**整页重载**；就算点的是当前工作区，那也是「换目录」语义，只是恰好被短路。
+② 落盘证据（只读看的用户真实 `~/.dsc`）：报障那一刻 `desktop.json` 被写过（运行中只有
+`restartHost` 会写它）、`boot-notices.json` 里有一条 `boot.session-model: 会话 56deafa8`（宿主刚
+启动过）、新会话的 `.lock` 落在目标工作区的 slug 目录下；而 Electron profile 的
+`Preferences`/`Local State` 停在更早的时刻（**App 进程没重启**，重启的只有宿主）。
+③ 反证（隔离环境实测）：点**当前**工作区的 ⊕ 或顶部「新会话」，只有中间区变（两帧逐像素比对：
+左侧栏 0.03% 且只落在与正文交界的像素上，中间区 24.8%）；点**别的**工作区的 ⊕，stderr 出现
+「宿主重启，窗口重新加载」。整页重载期间窗口内容消失 = 闪，宿主重启那几秒 = 卡。
+
+### 与参考实现的差距（对齐那一刀）
+
+参考实现里**目录是会话的数据**（`SessionHeader.cwd`，创建时给 `cwd`/`workspaceId`；沙箱范围按
+会话取），工作区是「目录键的注册表记录」，多个并存——所以「在别的工作区新建会话」只是一次普通
+RPC，不重启任何进程。dsc 的运行时其实早就按会话取目录（`core/loop.ts` 的 `get cwd()` 读
+`session.meta.cwd`；git / 记忆 / 指令文件 / 沙箱围栏 / dock 文件树都跟着会话走），**只有「新会话
+在哪个目录出生」这一处还钉在宿主进程的启动目录上**（`plugins/session.ts` 的 `Session.create(cwd)`）。
+所以这一刀不是大重构，而是把那一处改成「目录由调用方给」。
+
+### 改了什么
+
+宿主侧（目录成为参数 + 那一处的兜底链）：
+- `SessionService.open(filePath?, cwd?)`：给了路径就开那条（忽略 cwd）；没给路径才用 `cwd`
+  （`usableDir()` 校验：绝对 + 存在 + 是目录，不合法**抛错**）。**没给 cwd 时退到「当前会话的
+  目录」**——参考实现的「当前工作区」口径，不再滑回进程目录。
+- 运行时/通道：新增 `newSessionIn(cwd)`（`DscRuntime` / `runtime` 透传 / 界面通道白名单 +
+  实参规格 / 旧桌面版桥的 `RuntimeProxy` / `INVOKABLE_METHODS`）。为什么单开一个方法而不是
+  `openSession(id, cwd)`：界面通道的实参校验明确拒绝「跳过中间的实参」，第二个可选参数在这条
+  通道上根本表达不出来。
+- **五处「拿进程 cwd 当数据」的收口**（不改，跨目录会话会把东西跑到错地方）：模型常驻终端的起
+  进程目录（`core/tools/bash.ts` 现在收 `ctx.cwd`）、MCP stdio 起进程目录（`McpOpenOptions.cwd`
+  + `spawnStdio(server, fallbackCwd)`，插件层给会话目录；elicitation 卡也不再传空目录）、审批的
+  路径基准（`baseCwd(request)`：请求自带 → 否则当前会话目录，**不再 `process.cwd()`**）、外部插件
+  源相对路径（基于 config.yaml 所在目录 / `DSC_HOME`）、LSP 命令解析基准（`LspManagerOptions.baseCwd`，
+  插件层给会话目录）。
+- **对齐参考实现的可见回执**：`refresh()` 在文件还没落盘时补一行当前会话（侧栏因此能高亮它；
+  落盘后让位给扫盘结果，不重复）。
+
+壳侧（三处入口统一成「在那个目录开会话」）：
+- 工作区行 ⊕ → `newSessionIn(group.cwd)`（顺手把目标组展开、记一笔「最近工作区」）。
+- 表头「添加工作区」→ 新的原生 op `pickDirectory`（**只弹框、不碰宿主**）+ 上面那条；
+  `chooseDirectory`（会重启宿主）留给旧渲染层，语义不动。
+- 底部「工作目录」行 → 同样是 `pickDirectory` + 经 `shell.session.new` 事件带 `detail.cwd`
+  请侧栏去开（事件原来只表示「新会话」，现在可以带目录）。**壳里再无 `switchCwd` 调用点。**
+
+### 验证
+
+- 新探针 `scripts/session-open-in-test.mjs`（**49 条全绿**，真内核 + 两个真目录）：会话目录落进
+  `meta.cwd` 与 jsonl 的 slug 路径、`status.cwd`/`sessionPath` 跟着走、**`process.cwd()` 全程不动**、
+  不带目录的新建落在当前会话目录、坏目录（不存在/相对路径）当场抛且不换会话、未落盘的当前会话
+  在列表里且落盘后不重复、界面通道实参规格、以及上面五处收口 + 壳侧/桥/桌面的源码钉（含反证：
+  会话列表插件里不再出现 `switchCwd` 调用）。
+- 三侧 TypeScript 全绿（根 + `ui-shell` + `desktop`；后者是 `RuntimeProxy` 那一站）。
+- 全量无头电池重跑（见下）；真机自检：见「诚实边界」。
+
+### 真机验收（隔离 HOME + 两个工作区 + 开发态入口走仓库产物）
+
+CDP 驱动真窗口里的真界面：当前工作区是 A，点**B 组**那颗 ⊕ →
+- 页面 `performance.timeOrigin` **不变**（没重载）；
+- 底部目录行读数变成 B（`status.cwd` 跟着会话走了）；
+- 侧栏给那条还没落盘的新会话留了**高亮行**，且目标组被自动展开（2 条种子 + 1 条新会话）；
+- 启动器 stderr 里「宿主报来界面地址」/「窗口来自宿主界面服务」**各只有一次**（启动那次），
+  没有第二句「（宿主重启，窗口重新加载）」——对照：这正是报障现场的那一句。
+
+### 诚实边界
+
+① 五处收口里，模型终端 / MCP / LSP 三条的**行为**只做了源码钉（真跑要起 shell / MCP server /
+   语言服务器，那是别的电池的事）——「按会话取」这件事读代码是确定的，端到端留待后续补。
+② `switchCwd` / `chooseDirectory` / `restartHost` 全部保留：旧渲染层仍走它们（G 已拍板旧版不动），
+   所以「换目录重启宿主」这条能力没有被删，只是插件壳不再用它。
+③ 真机验收用的是**开发态入口**（`desktop/out/main` + 仓库 `lib/`），不是打包 exe：打包产物里那份
+   `lib/` 是打包当时快照的，要等下次 `dist` 时才会带上这一刀。三份产物（根 lib / ui-shell 资源 /
+   desktop out）本轮都已重建，桌面包本身没重打。
+④ 界面通道那条闸只认「目录名」这一个实参、校验在宿主侧；但**目录存在性**是调用那一刻判的，
+   选完之后目录被删掉的极端情形不在覆盖里（那种情况下建会话会当场抛错，不会静默落到别处）。
+
+### 教训
+
+① **「目录」这种字段，从第一天起就该问「它是谁的」**：它一旦被当进程状态用，换目录就必然要重启
+   一个进程，而重启进程在桌面壳里等于整页重载——闪与卡的形状就锁死了。dsc 的运行时其实早就按会话
+   取目录，只有「出生目录」这一处漏着；这类「一处漏」要用「谁在数据里、谁在进程里」的表扫一遍。
+② **界面通道的实参校验会反过来决定契约形状**：「省略只能从尾部开始」直接否掉了
+   `openSession(id?, cwd?)` 这种排布——第二个可选参数在这条通道上无法表达（`null` 占位会被拒）。
+   与原生桥那条教训同源（见第二十五批教训①）。
+③ **`process.cwd()` 是伪装的默认值**：它读起来像「当前目录」，实际是「进程启动时的目录」，多工作区
+   并用之后没有任何用户含义；出现它的地方都该问一句「这里想要的到底是哪个目录」。
