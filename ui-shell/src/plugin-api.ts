@@ -384,6 +384,7 @@ export type {
   BackgroundWorkView,
   ChangedFileView,
   CollaborationMode,
+  ConnectionTestView,
   ContextSegmentsView,
   DiffHunkView,
   DiffLineView,

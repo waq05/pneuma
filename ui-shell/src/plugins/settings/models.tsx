@@ -21,6 +21,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   DEFAULT_CAPS,
   EFFORT_WIRE_HINT,
+  IconBolt,
   IconCheck,
   IconEdit,
   IconKey,
@@ -40,6 +41,7 @@ import {
   toastErr,
   toastOk,
   useHostChannel,
+  type ConnectionTestView,
   type EffortMap,
   type Modality,
   type ModelConfigView,
@@ -162,6 +164,17 @@ export function ModelsGroup(): ReactNode {
    * 拉取中也允许同时拉另一张卡——两张卡各转各的，谁先回来谁的清单先开。
    */
   const [discovering, setDiscovering] = useState<ReadonlySet<string>>(() => new Set())
+  /**
+   * 正在测连接的端点（同样按端点记，理由与 discovering 一样：一张卡的按钮不许让别人跟着转）。
+   */
+  const [testing, setTesting] = useState<ReadonlySet<string>>(() => new Set())
+  /**
+   * 每个端点最近一次连接测试的结论（就地留在卡上）。
+   *
+   * 为什么留着而不是只闪一条提示：「312ms 通了 / 没通：HTTP 401…」是配置页最该看见的
+   * 一行字，一闪而过的 Toast 看完就没了；同一次测试里失败也要留（失败原因比成功更需要回头看）。
+   */
+  const [probed, setProbed] = useState<ReadonlyMap<string, ConnectionTestView>>(() => new Map())
   /** 已经配过的模型（别的端点里同 id 的那份能力），拉清单时优先照抄它。 */
   const known = useMemo<Map<string, KnownModel>>(() => buildKnownIndex(config?.providers ?? []), [config])
 
@@ -238,6 +251,42 @@ export function ModelsGroup(): ReactNode {
       })
       .finally(() => {
         setDiscovering((current) => {
+          const next = new Set(current)
+          next.delete(provider)
+          return next
+        })
+      })
+  }
+
+  /**
+   * 测一次端点连接：宿主拿这个端点**真发一次**最小对话请求（走与正常对话同一条链路：
+   * 同协议适配器、同一份端点要的请求头），所以结论就是「现在发一条消息会不会失败」。
+   *
+   * 测哪个模型不在这里挑：宿主按「默认端点用它配置的默认模型，其余取清单第一个」自己定，
+   * 结果里会把实际测的那个带回来（界面写出来，用户才知道刚才测的是什么）。
+   */
+  const probe = (provider: string): void => {
+    setTesting((current) => new Set(current).add(provider))
+    void channel
+      .invoke<ConnectionTestView>('testConnection', [provider])
+      .then((result) => {
+        setProbed((current) => new Map(current).set(provider, result))
+        if (result.ok) {
+          const said = result.reply === '' ? '没回正文但流正常收尾' : `回了「${result.reply}」`
+          toastOk(`${provider} 通了：${result.model} ${said}（${String(result.ms)} ms）`)
+        } else {
+          toastErr(`${provider} 没通：${result.error ?? '未知原因'}`)
+        }
+      })
+      .catch((error: unknown) => {
+        // reject = 连请求都没发出去（端点没了 / 没模型 / 没 key）：也留在卡上，别只闪一条提示
+        setProbed((current) =>
+          new Map(current).set(provider, { ok: false, model: '', ms: 0, reply: '', error: text(error) }),
+        )
+        toastErr(`测试失败：${text(error)}`)
+      })
+      .finally(() => {
+        setTesting((current) => {
           const next = new Set(current)
           next.delete(provider)
           return next
@@ -372,6 +421,8 @@ export function ModelsGroup(): ReactNode {
           defaultModel={config.defaultModel}
           editable={editable}
           discovering={discovering.has(provider.name)}
+          testing={testing.has(provider.name)}
+          probed={probed.get(provider.name)}
           keyOpen={keyFor === provider.name}
           keyValue={keyValue}
           draft={editingProvider === provider.name ? draft : null}
@@ -405,6 +456,9 @@ export function ModelsGroup(): ReactNode {
           }}
           onDiscover={() => {
             discover(provider.name)
+          }}
+          onProbe={() => {
+            probe(provider.name)
           }}
           onEdit={() => {
             setDraft({
@@ -498,11 +552,12 @@ export function ModelsGroup(): ReactNode {
 }
 
 /**
- * 一张端点卡片：只读信息（名字 / 地址 / 密钥状态）+ 动作（密钥 / 拉取清单 / 编辑 / 删除）
- * + 就地长出的编辑表单、快捷密钥行。
+ * 一张端点卡片：只读信息（名字 / 地址 / 密钥状态）+ 动作（密钥 / 拉取清单 / 测试连接 / 编辑 / 删除）
+ * + 就地长出的编辑表单、快捷密钥行、最近一次连接测试的结论。
  *
  * 只读档（浏览器里没有桥）里改配置的按钮**不画**（不是画成灰的）——页首已经有一条说明
- * 讲清为什么，摆四个点不动的按钮只会让人一个个去试。
+ * 讲清为什么，摆四个点不动的按钮只会让人一个个去试。「测试连接」不在此列：它走界面通道
+ * （与「拉取清单」同一条路），浏览器里照样能点。
  */
 function ProviderCard(props: {
   provider: ProviderView
@@ -510,6 +565,10 @@ function ProviderCard(props: {
   defaultModel: string
   editable: boolean
   discovering: boolean
+  /** 这个端点正在测连接（按钮显示「测试中…」）。 */
+  testing: boolean
+  /** 这个端点最近一次连接测试的结论；undefined = 还没测过。 */
+  probed: ConnectionTestView | undefined
   keyOpen: boolean
   keyValue: string
   draft: ProviderDraft | null
@@ -523,6 +582,7 @@ function ProviderCard(props: {
   onClearKey(): void
   onSetDefault(model: string): void
   onDiscover(): void
+  onProbe(): void
   onEdit(): void
   onRemove(): void
 }): ReactNode {
@@ -542,6 +602,23 @@ function ProviderCard(props: {
           <div className="provider-sub mono" title={provider.baseUrl}>
             {provider.baseUrl}
           </div>
+          {/* 最近一次连接测试的结论：就地留着（成功也留——「312ms 通了」比一闪而过的提示有用）。 */}
+          {props.probed !== undefined ? (
+            <div
+              className={`provider-probe${props.probed.ok ? ' ok' : ' bad'}`}
+              data-probe={props.probed.ok ? 'ok' : 'fail'}
+              data-tip={
+                props.probed.ok
+                  ? `刚测过：${props.probed.model} 这条路走通了`
+                  : '换个端点/模型/密钥都可能好；改完记得先保存再测（测的是已保存的配置）'
+              }
+            >
+              {props.probed.ok ? '✓ 通了' : '✗ 没通'}
+              {props.probed.model === '' ? '' : ` · ${props.probed.model}`}
+              {props.probed.ok ? ` · ${String(props.probed.ms)} ms` : ''}
+              {props.probed.ok ? '' : ` · ${props.probed.error ?? '未知原因'}`}
+            </div>
+          ) : null}
         </div>
         <div className="provider-actions">
           {props.editable ? (
@@ -566,6 +643,21 @@ function ProviderCard(props: {
             onClick={props.onDiscover}
           >
             {props.discovering ? '拉取中…' : '拉取清单'}
+          </button>
+          {/* 与「拉取清单」的分工：那个只证明地址可达，这个证明 key / 模型 / 协议 / 端点要的头
+              这一整套现在能用（走的是与正常对话同一条链路）。测完的结论留在卡上。 */}
+          <button
+            type="button"
+            className="text-btn"
+            data-tip={
+              props.draft === null
+                ? '拿这个端点真发一次最小请求（与正常对话同一条链路），看现在能不能通'
+                : '测的是**已保存**的配置：表单里的改动要先保存，再测'
+            }
+            disabled={props.testing}
+            onClick={props.onProbe}
+          >
+            <IconBolt size={13} /> {props.testing ? '测试中…' : '测试连接'}
           </button>
           {props.editable ? (
             <>

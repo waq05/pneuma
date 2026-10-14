@@ -100,6 +100,7 @@ export const INVOKABLE_METHODS = [
   'getModelConfig',
   'saveProvider',
   'discoverModels',
+  'testConnection',
   'removeProvider',
   'setProviderKey',
   'setDefaultModel',

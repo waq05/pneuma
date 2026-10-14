@@ -27,6 +27,7 @@
 import type {
   ArchivedPage,
   BackgroundOutputView,
+  ConnectionTestView,
   DscRuntime,
   MarketBrowseResult,
   ModelChoiceView,
@@ -218,6 +219,7 @@ export function createRuntimeProxy(): RuntimeProxy {
     getModelConfig: () => call<ModelConfigView>('getModelConfig'),
     saveProvider: (draft: ProviderDraft) => call<SettingsMutation>('saveProvider', draft),
     discoverModels: (provider: string) => call<string[]>('discoverModels', provider),
+    testConnection: (provider, model) => call<ConnectionTestView>('testConnection', provider, model),
     removeProvider: (name) => call<SettingsMutation>('removeProvider', name),
     setProviderKey: (name, apiKey) => call<SettingsMutation>('setProviderKey', name, apiKey),
     setDefaultModel: (provider, model) => call<SettingsMutation>('setDefaultModel', provider, model),

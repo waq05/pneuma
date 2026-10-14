@@ -17,7 +17,7 @@
  *     / `renameSession` / `setSessionPinned` / `listUserMessages` / `forkSession`
  *     / `listArchivedSessions` / `usageStats` / `peekTranscript`
  *   - 模型与档位：`setModel` / `listModels` / `setEffort` / `setMode` / `getModelConfig`
- *     / `discoverModels` / `setDefaultModel`
+ *     / `discoverModels` / `testConnection` / `setDefaultModel`
  *   - 审批与提问：`answerApproval` / `answerQuestion` / `answerPlan`
  *   - 界面偏好：`getUiPrefs` / `setUiPrefs`
  *   - 插件开关：`listPlugins` / `setPluginEnabled`
@@ -45,6 +45,14 @@
  *   - 落信任记录 `setUiTrust`：信任一个第三方界面插件等于放它进启动图（它从此能调界面
  *     通道方法与桌面窗口的原生桥），这声「我信任」必须是人在桌面窗口里答的——
  *     写走原生桥；列状态（`listUiTrust`）是读，放行。
+ *
+ * **`testConnection` 为什么可以放行（与 `discoverModels` 同一把尺）**：它拿**端点名**去测
+ * ——实参只是一个名字（`MAX_NAME` 的字符串），端点地址与 key 都取自宿主那份配置，页面
+ * 指不了别处。于是它是「让宿主按已配好的端点发一次最小对话请求」，与 `discoverModels`
+ * （同样拿宿主那份 baseUrl + key 去 GET /models）是同一个权力级别：都能让宿主拿着用户的
+ * 凭据敲一次那个端点，都改不了端点本身——想变成「把 key 发到任意地址」得先改端点，
+ * 而那是 `saveProvider` 那三件被排除的事。代价是页面能反复点它烧 token（与能反复点
+ * `discoverModels` 一样），记在这里，不另开闸。
  *
  * **`dock` 为什么从排除名单挪到放行面（2026-10-10，阶段 5.2）**：原来整条排除的理由是
  * 它里面混着 `term-spawn`（起 pwsh/cmd/bash/node）。现在按动作分三档（规格在
@@ -100,6 +108,7 @@ export const UI_METHODS = [
   'setMode',
   'getModelConfig',
   'discoverModels',
+  'testConnection',
   'setDefaultModel',
   // 审批与提问
   'answerApproval',
@@ -276,6 +285,10 @@ export const UI_ARG_SPECS: Readonly<Record<UiMethod, MethodSpec>> = {
   setMode: [{ shape: { kind: 'enum', values: MODES } }],
   getModelConfig: [],
   discoverModels: [{ shape: { kind: 'string', max: MAX_NAME } }],
+  testConnection: [
+    { shape: { kind: 'string', max: MAX_NAME } },
+    { shape: { kind: 'string', max: MAX_NAME }, optional: true },
+  ],
   setDefaultModel: [{ shape: { kind: 'string', max: MAX_NAME } }, { shape: { kind: 'string', max: MAX_NAME } }],
   // ── 审批与提问 ────────────────────────────────────────────────────────────
   answerApproval: [

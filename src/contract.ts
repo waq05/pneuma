@@ -1432,6 +1432,27 @@ export interface ModelConfigView {
   credentialsFile: string
 }
 
+/**
+ * 一次端点连接测试的结果（设置 → 模型每张卡上的「测试连接」）。
+ *
+ * 判定口径在 core/connection-test：**流正常收尾即通**；失败一律带一句可直接展示的
+ * 说明（永不包含 key）。
+ */
+export interface ConnectionTestOutcome {
+  ok: boolean
+  /** 从发出到收尾花了多久（毫秒）。失败时也报——「等 20 秒才断」本身有诊断价值。 */
+  ms: number
+  /** 模型回的话（单行、截断到 80 字；可能为空：输出被预算截断时就是这样）。 */
+  reply: string
+  /** 失败原因（可直接展示）。 */
+  error?: string
+}
+
+/** 连接测试结果 + 测的是哪个模型（界面要把它写在那张卡上）。 */
+export interface ConnectionTestView extends ConnectionTestOutcome {
+  model: string
+}
+
 /** 新增或编辑一个端点的入参（apiKey 单独走 setProviderKey）。 */
 export interface ProviderDraft {
   /** null = 新增；否则为被编辑端点的原名字（支持改名）。 */
@@ -1640,6 +1661,18 @@ export interface DscRuntime {
    * 连不上或应答认不得时 reject（消息可直接展示）。
    */
   discoverModels(provider: string): Promise<string[]>
+  /**
+   * 测一次端点连接（设置 → 模型里「测试连接」用）：拿这个端点**真发一次**最小的
+   * 对话请求，走与正常对话同一条链路（同协议适配器、同一份归因头）。
+   *
+   * 与 `discoverModels` 的分工：那个只证明地址可达（GET /models），这个证明
+   * 「key / 模型 id / 协议 / 端点要的头」这一整套现在能用。
+   *
+   * 端点不存在、这个端点还没有模型时 reject；请求本身失败**不** reject——
+   * 折成 `{ ok: false, error }` 返回，界面就近展示（点一次按钮不该弹两次错）。
+   * `model` 缺省用「这个端点平时会用到的那个模型」。
+   */
+  testConnection(provider: string, model?: string): Promise<ConnectionTestView>
   /** 新增或编辑端点（写 config.yaml；当前会话正在用的端点同步热更新）。 */
   saveProvider(draft: ProviderDraft): Promise<SettingsMutation>
   /** 删除端点（写 config.yaml；默认端点被删时自动改指第一个可用端点）。 */

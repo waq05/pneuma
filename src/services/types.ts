@@ -40,6 +40,7 @@ import type {
   AskUserViewInput,
   BackgroundOutputView,
   CollaborationMode,
+  ConnectionTestView,
   DscRuntime,
   EffortLevel,
   GitSurface,
@@ -877,6 +878,11 @@ export interface SettingsService {
    * 端点不存在、连不上或应答认不得时抛错（消息可直接展示）。
    */
   discoverModels(provider: string): Promise<string[]>
+  /**
+   * 测一次端点连接：拿这个端点真发一次最小对话请求（走与正常对话同一条链路）。
+   * 端点不存在 / 这个端点还没有模型时抛错；请求本身失败折成 `{ ok: false, error }` 返回。
+   */
+  testConnection(provider: string, model?: string): Promise<ConnectionTestView>
   removeProvider(name: string): SettingsMutation
   setProviderKey(name: string, apiKey: string | null): SettingsMutation
   /** 写默认端点/模型，并对当前会话立即生效。 */

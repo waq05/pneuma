@@ -498,6 +498,7 @@ exe 当**桌面端**跑的时候才要清掉它。
 | `migrate.ts` | 一次性搬 dsh 的配置，只读 dsh。目标已存在且没给 `force` 就直接返回（`:107`）。只收 `api: openai-completions` 的端点（`:78`） |
 | `llm.ts` | 手写 SSE 解析：只认 `data:` 行，单行 JSON 解析失败就跳过。思考增量字段是 `delta.reasoning_content`，重放给模型时原样回传（空串不回传）。工具调用按 `delta.tool_calls[].index` 拼，`arguments` 用 `+=` 续接，最后按 index 排序。最多 3 次尝试，退避 500ms、1000ms。**协议适配器**：这份实现就是内置 `openai-completions` 适配器（`LlmAdapter`），别的协议由插件经 `ctx.llm.registerAdapter` 注册，端点配置 `api` 字段选择。请求头**不无条件加**：只有归因头命中门控的端点才多带两行（见下一行） |
 | `request-attribution.ts` | 请求归因头（自标识 + 端点点名要的会话头）的纯逻辑。门控 `isOpenCodeGoBaseUrl()` 认的是**端点事实**——host 是 `opencode.ai` 或其子域、path 规范化后正好 `/zen/go/v1`（不认 provider id，那是用户随手起的名字）；命中才补 `user-agent`（`muse-code/<版本>`）与 `x-opencode-session`（值 = 会话 id；非法/超长/空一律**省略这个头**而不是照发——一个换行就能让 `fetch` 抛异常）。会话 id 由 `src/plugins/llm.ts` 的派发口兜底、四个调用方各自填自己那条会话 |
+| `connection-test.ts` | 端点连接测试（设置 → 模型「测试连接」）：固定两条探针消息（system + user `hi`）、无历史无工具、输出预算 16、走与正常对话**同一条**链路（同协议适配器、同一份归因头），**流正常收尾即算通**（正文为空也算）。超时（20 秒）与「端点回了错」分开说；失败折成 `{ ok:false, error }` 不往外抛（点一次按钮不该弹两次错）。`pickProbeModel()` 定测哪个模型：显式给的 > 默认端点那份默认模型 > 清单第一个 |
 | `session.ts` | 列表只读每个文件前 8 行 + mtime（`:463-472`），所以列表页别指望读到深处的内容。目录名把 `\\`、`/`、`:` 换成 `-`（`:34-36`） |
 | `session-meta.ts` | `sessions/meta.json` 用 uuid 当键，所以归档挪文件不会丢状态（`:7`）。`version` 不是 1 就整表当空（`:53`） |
 | `events.ts` | `CoreEvent` 九个变体，是 core 唯一对外通道（`:10-22`） |

@@ -17,6 +17,7 @@ import type { Plugin } from '@deepseek-ai/cordis'
 import type {
   ApprovalPolicy,
   ApprovalReviewer,
+  ConnectionTestView,
   EffortLevel,
   ModelConfigView,
   ProviderDraft,
@@ -29,6 +30,7 @@ import type {
 } from '../contract.js'
 import type { DscCoreConfig } from '../core/config.js'
 import { readConfig } from '../core/config.js'
+import { pickProbeModel, testConnection } from '../core/connection-test.js'
 import { discoverModels } from '../core/model-discovery.js'
 import {
   CONFIG_FILE,
@@ -525,6 +527,27 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
         const entry = config.providers[provider]
         if (entry === undefined) throw new Error(`没有这个端点：${provider}`)
         return discoverModels(entry.baseUrl, entry.apiKey)
+      },
+      async testConnection(provider: string, model?: string): Promise<ConnectionTestView> {
+        const entry = config.providers[provider]
+        if (entry === undefined) throw new Error(`没有这个端点：${provider}`)
+        if (entry.apiKey === '') {
+          throw new Error(`端点 ${provider} 还没有可用的 API key（config.yaml 里那个 apiKeyEnv 没取到值）：先填上再测`)
+        }
+        const pick = pickProbeModel(provider, entry.models, model, {
+          provider: config.defaultProvider,
+          model: config.defaultModel,
+        })
+        if (pick === '') throw new Error(`端点 ${provider} 还没有模型：先用「拉取清单」或编辑表单加一个，再测`)
+        // 路由按这个端点平时那份组（档位取「默认」）：测试要回答的是「现在能不能通」，
+        // 不是「某个思考档位能不能通」——档位另有一套失败理由，那属于另一个问题。
+        const route = ctx.llm.routeTo(provider, pick, 'default')
+        // 走 llm 服务派发：与正常对话同一个适配器、同一份归因头（端点要什么头就带什么头），
+        // 所以这次测试的结论就是「发一条消息会不会失败」的结论。
+        const outcome = await testConnection(route, (api, request, handlers) =>
+          ctx.llm.stream(api, request, handlers),
+        )
+        return { ...outcome, model: pick }
       },
 
       saveProvider(draft: ProviderDraft): SettingsMutation {

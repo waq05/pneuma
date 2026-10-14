@@ -361,6 +361,10 @@ export const runtimePlugin: Plugin.Object = {
         return ctx.settings.discoverModels(provider)
       },
 
+      async testConnection(provider, model) {
+        return ctx.settings.testConnection(provider, model)
+      },
+
       async removeProvider(name) {
         return ctx.settings.removeProvider(name)
       },
