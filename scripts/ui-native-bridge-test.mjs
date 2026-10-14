@@ -223,6 +223,30 @@ check('preload 的订阅口按事件白名单拒生名字', preloadSource.includ
 const missing = NATIVE_OPS.filter((op) => !new RegExp(`\\b${op}:`).test(mainSource))
 check('每个操作都在主进程的分派表里出现过', missing.length === 0, `缺：${missing.join('、')}`)
 
+console.log('\n── 打开工作区带着目录走（2026-10-14 用户报障：打开的不是当前工作区）──')
+const shellSessions = readFileSync(join(root, 'ui-shell', 'src', 'plugins', 'sessions', 'ui.tsx'), 'utf8')
+check(
+  'openWorkspace 的第二个实参是可选的路径（要打开哪个目录）',
+  NATIVE_ARG_SPECS.openWorkspace.length === 2 &&
+    NATIVE_ARG_SPECS.openWorkspace[1].optional === true &&
+    NATIVE_ARG_SPECS.openWorkspace[1].shape.kind === 'string',
+)
+check('三个档 + 目录都能过', ['terminal', 'explorer', 'vscode'].every((kind) => validateNativeCall('openWorkspace', [kind, 'D:\\dsc']).ok === true))
+check('只传 kind 照旧通过（旧渲染层不传目录，行为不变）', validateNativeCall('openWorkspace', ['explorer']).ok === true)
+check('未知的档被拒', rejects('openWorkspace', ['nope', 'D:\\dsc']))
+check('目录类型不对被拒', rejects('openWorkspace', ['explorer', 7]))
+check('目录超长被拒', rejects('openWorkspace', ['explorer', `D:\\${'x'.repeat(5000)}`]))
+check('多传第三个实参被拒', rejects('openWorkspace', ['explorer', 'D:\\dsc', 'x']))
+check('壳把当前工作区（会话 cwd）传下去', shellSessions.includes("('openWorkspace', [kind, cwd])"))
+check(
+  '主进程按实参取目录、缺省才回落 hostCwd',
+  /const dir = requested === undefined \|\| requested === '' \? hostCwd : requested/.test(mainSource),
+)
+check(
+  '主进程分派把第二个实参透传',
+  mainSource.includes('openWorkspace: ([kind, dir]) => openWorkspace(String(kind), typeof dir === \'string\' ? dir : undefined)'),
+)
+
 console.log(
   failures === 0 ? `\n${String(passed)} 条断言全部通过` : `\n${String(failures)}/${String(passed + failures)} 条断言失败`,
 )

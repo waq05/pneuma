@@ -50,6 +50,9 @@
 > **第十九批（2026-10-14）**：空会话态**正文列宽收缩到内容宽**（拖动条因此卡在版心、压进输入框）、
 > **分支钮移出输入框外框**（原来住在 `.composer` 里面，看着就是输入框的一部分）、设置页
 > **不列技能分区**（壳侧滤掉，宿主那份留给 TUI 与旧桌面版）。
+> **第二十批（2026-10-14）**：顶栏**「在文件资源管理器中打开」/ 终端 / VS Code 打开的不是当前工作区**
+> （按钮原来说不清开哪个目录，主进程只好用宿主进程的**启动目录**）、**悬停预览卡的收卡口径**
+> （100ms → 1s，并补上卡片自己的 `mouseleave`——原来进过一次卡就永远粘住）。
 
 ## 一、侧边栏（旧 `Sidebar.tsx` ↔ `plugins/sessions`）
 
@@ -128,6 +131,8 @@
 | **空会话态正文列宽**（第十九批） | 空态给 `.chat` / `.chat-inner` 换成 flex 列后，legacy 的 `margin: 0 auto` 在交叉轴上压过 `align-items: stretch`——欢迎语比 76ch 窄时这一格收缩到内容宽（实机 370px）。两个后果：拖动改的 `--dsc-thread-max` 不再决定宽度（**把手卡住不动**），`ThreadResizer.measure()` 量到的是内容边而不是列缘（**把手落在版心、高亮条压进输入框**）。补 `.thread-main-empty .chat-inner { width: 100% }`：宽度交还 max-width，余量仍由 auto 外边距居中，观感不变 |
 | **分支钮移出输入框**（第十九批） | `.composer-git` 原来是 `.composer`（带描边与圆角的输入框本体）的子节点，被同一个外框圈住 → 看着就是输入框的一部分。改成框外一列两行（`.composer-stack` > `.composer-git` + `.composer`），贴图 / 拖文件三个事件与故障便条留在/挪到框外那层；`.git-btn` 自己加一圈 `--dsc-stroke-3` 描边（hover / 展开换 `--dsc-stroke-2`） |
 | **设置页不列技能分区**（第十九批） | 技能中心已是侧栏的独立整页（`plugins/skills`），设置里那份开关是第二个入口。壳侧 `HIDDEN_SECTIONS = new Set(['skills'])`，**导航列表 / 选中分区查找 / 侧栏跳转 target 三处都过它**（漏一处就是「未知分区」）；壳里那份实现（`SkillsGroup` / `listSkills` / `setSkillEnabled`）整块撤掉。**宿主那份故意留着**——TUI 的设置浮层与冻结的旧桌面版消费同一张分区表 |
+| **顶栏「在资源管理器 / 终端 / VS Code 中打开」**（第二十批） | 壳按**当前会话的 cwd** 显示「当前工作区」（`status.cwd`，侧栏底部那一行的读数），但按钮原先只报一个 kind 不说开哪个目录 → 主进程只好用 `hostCwd`（**宿主进程的启动目录**，`startHost(cwd)` 时定的）。常驻多会话模型下两者经常不是同一个目录（用户机器：宿主起在 `C:\Users\waq`，看的会话在 `D:\dsc`）。修法：壳把**自己显示的那个值**当第二个实参传下去（`invoke('openWorkspace', [kind, cwd])`），原生桥规格里那条路径实参**可选**（省略 = 旧行为，旧桌面版照旧），主进程 `openWorkspace(kind, requested?)` 给了就用、没有才回落 `hostCwd` |
+| **悬停预览卡的收卡口径**（第二十批） | 两处毛病：收卡延迟照参考实现是 **100ms**（能读的 diff 卡，手从行上往卡里挪都来不及）；卡片只挂 `onMouseEnter`（keep）**没挂 `onMouseLeave`**，而行上的 `mouseleave` 早在指针进卡那一刻就烧掉了 → **进过一次卡就再也不会自己收**（只能 Esc）。修法：壳侧 `HOVER_CLOSE_MS` 100 → **1000**（有意与参考实现分道，旧渲染层那份不动），`DiffHoverCard` 补 `onMouseLeave` 接同一条倒计时。实机量到离卡 **1007ms** 收、行上移开 **1015ms** 收 |
 
 ## 五、宿主侧配套修复（第六批，`src/plugins/desktop-dock.ts`）
 
@@ -279,3 +284,26 @@
   逐个点开照常渲染。
 - 全量无头电池 **42 个探针全绿**（含 `legacy-frozen-check`）；三侧 TypeScript 全绿；
   `lib/ui/assets/*.css` 含 `.composer-stack` 与空态那条 `width: 100%`。
+
+## 六之七、验证落点（第二十批：打开按钮认当前工作区 / 悬停预览收卡 1s）
+
+- `scripts/ui-native-bridge-test.mjs` 扩到 **106 条**：新增「`openWorkspace` 的第二个实参是可选路径」
+  与四条实参校验（三个档 + 目录能过、只传 kind 照旧能过、未知档 / 类型不对 / 超长 / 多传第三个都被拒），
+  以及**两侧接线**（壳的调用点带 `cwd`、主进程按实参取目录且缺省回落 `hostCwd`、分派把第二个实参透传）。
+- `scripts/ui-transcript-render-test.mjs` 扩到 **61 条**：新增 [6] 组钉收卡口径——出卡仍是 500ms、
+  收卡是 **1000**、**旧渲染层那份仍 100ms**（改的只在壳侧）、为什么分道写在注释里、预览卡
+  `onMouseEnter`（keep）+ `onMouseLeave`（disarm）成对、`onLeave` 这个 prop 与调用点、`disarm`
+  就是那条倒计时、「卡会粘住」在注释里留了档。
+- 实机（`_ui-shell-serve.mjs`，宿主进程 cwd 故意设成 `C:\Windows\System32`、种子会话 cwd 是
+  `D:\dsc`）：页面里装假原生桥后点壳里那颗钮，三个档的实参都是 `['explorer'/'terminal'/'vscode', 'D:\dsc']`
+  （与侧栏底部读数同源，**不是** System32）。
+- 实机（真 Electron，隔离 home + `DSC_DESKTOP_SHOT_EVAL`）：种子会话的 cwd 指向不存在的
+  `D:\zz-not-here-92`（宿主启动目录是 `C:\Users\waq`）→ 点壳里那颗钮 → 便条
+  `打开失败：工作目录不存在：D:\zz-not-here-92`；再直连桥换一个目录 → `{ok:false,error:'工作目录不存在：D:\zz-not-here-93'}`。
+  用不存在的目录当靶子：既证明实参被认，又不真弹资源管理器窗口。
+- 悬停预览（同一份壳，页面内时戳）：行上停 500ms 出卡 → 指针进卡（keep 取消倒计时）→ 出卡
+  **1007ms** 后收；另一路从行上直接移开 **1015ms** 后收（MutationObserver 全程只有一次 ADD / 一次 REMOVE，
+  修前这两条都会在 100ms 收，且「进过卡」那条根本不收）。
+- 三侧 TypeScript 全绿；全量无头电池（`scripts/*-test.mjs` 39 个 + `commands-battery` +
+  `legacy-frozen-check` + `settings-sections-check`，排除 `ui-hmr-machine`）**42 个全绿**；
+  `docs/development-log.md` 第二十批记了同一批读数与诚实边界。

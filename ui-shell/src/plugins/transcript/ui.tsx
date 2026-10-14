@@ -1614,6 +1614,8 @@ function Counts({ added, removed }: { added: number; removed: number }): ReactNo
  * maxHeight 420。挂在 body 下，不被聊天区的滚动/裁剪框住。
  *
  * Escape 关闭走 capture：审批卡在冒泡阶段监听 Esc=拒绝，预览开着时按 Esc 只该收预览。
+ * 鼠标进卡 keep()、出卡 onLeave() 起同一条收卡倒计时——只挂 onKeep 会让卡**永远粘住**
+ * （行上的 mouseleave 早在鼠标进卡那一刻就烧掉了），这是 2026-10-14 用户报的毛病之一。
  */
 function DiffHoverCard({
   file,
@@ -1621,14 +1623,17 @@ function DiffHoverCard({
   cardWidth,
   cwd,
   onKeep,
+  onLeave,
   onClose,
 }: {
   file: ChangedFileView
   anchor: DOMRect
   cardWidth: number
   cwd: string
-  /** 鼠标移进卡里：取消「移开 100ms 后收卡」的倒计时，用户能与卡内容交互。 */
+  /** 鼠标移进卡里：取消「移开后收卡」的倒计时，用户能与卡内容交互。 */
   onKeep: () => void
+  /** 鼠标离开卡：起收卡倒计时（与「从行上移开」同一条，1s 后收）。 */
+  onLeave: () => void
   onClose: () => void
 }): ReactNode {
   useEffect(() => {
@@ -1649,7 +1654,7 @@ function DiffHoverCard({
       ? { left: `${String(left)}px`, bottom: `${String(window.innerHeight - anchor.top + 6)}px`, width: `${String(width)}px`, maxHeight: `${String(maxHeight)}px` }
       : { left: `${String(left)}px`, top: `${String(anchor.bottom + 6)}px`, width: `${String(width)}px`, maxHeight: `${String(maxHeight)}px` }
   return createPortal(
-    <div className="hover-preview" style={style} onMouseEnter={onKeep}>
+    <div className="hover-preview" style={style} onMouseEnter={onKeep} onMouseLeave={onLeave}>
       <div className="hover-preview-head">
         <FileIcon name={file.path} size={14} />
         <span className="hover-preview-name" title={file.path}>
@@ -1682,7 +1687,8 @@ function DiffHoverCard({
 function ChangesCard({ rows, cwd }: { rows: readonly Row[]; cwd: string }): ReactNode {
   const files = useMemo(() => mergeChanges(rows), [rows])
   const [expanded, setExpanded] = useState(true)
-  // 悬停预览：行上停够 500ms 才出卡（避免划过一路闪卡）；移开 100ms 后收，移进卡里续命。
+  // 悬停预览：行上停够 500ms 才出卡（避免划过一路闪卡）；移开 1s 后收（行上移开、
+  // 鼠标离开卡各自起同一条倒计时），移进卡里续命。
   const cardRef = useRef<HTMLDivElement | null>(null)
   const hoverDelay = useHoverDelay<ChangedFileView>()
   const { hover } = hoverDelay
@@ -1815,6 +1821,7 @@ function ChangesCard({ rows, cwd }: { rows: readonly Row[]; cwd: string }): Reac
             cardWidth={hover.cardWidth}
             cwd={cwd}
             onKeep={hoverDelay.keep}
+            onLeave={hoverDelay.disarm}
             onClose={hoverDelay.close}
           />
         ) : null}

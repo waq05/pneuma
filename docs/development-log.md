@@ -5489,3 +5489,107 @@ Radix Collapsible 的**高度关键帧 300ms + 内容 fade**，且**收起后延
 对照实验的输入要**照着报障现场**摆，不是照着「差不多」摆。
 ④**视觉问题的根因可能在 DOM 层级，不在颜色**：「跟输入框区分开」的解法是让它别住在那个框里面，
 不是给它换个颜色——住在外框里，怎么做都是框的一部分。
+
+## 第二十批：顶栏打开按钮认的是宿主启动目录 + 悬停预览卡的收卡口径（2026-10-14，未发版）
+
+**报障（用户两条 + 一问）**：① 右上角「在文件资源管理器中打开」打开的**不是当前工作区目录**；
+② 悬停预览要改成「鼠标移到预览以外 1 秒时，关闭预览」；③ `docs/opencode-go-session-header.md`
+那份 opencode Go 400 的分析「为什么？是有缺陷吗」——这一条**只回答、本批没改代码**（结论见本节末）。
+
+### ① 打开的是宿主进程的启动目录，不是当前会话的工作区
+
+**根因（两侧各一半，谁都没错，接起来就错）**：壳按**当前会话的 cwd** 显示「当前工作区」
+（`src/plugins/transcript.ts:242` 的 `status.cwd`，也就是侧栏底部那一行的读数）；按钮原先只报一个
+kind、不说开哪个目录（`ui-shell/src/plugins/sessions/ui.tsx:1777` 修前是 `invoke('openWorkspace', [kind])`），
+桌面主进程只好用 `hostCwd`——那是**宿主进程的启动目录**（`desktop/electron/main/index.ts:202`
+在 `startHost(cwd)` 里赋值）。0.6.48 起常驻多会话模型下「一个宿主进程里不同会话各有各的 cwd」，
+两者经常不是同一个目录。
+
+用户机器上的实据：`~/.dsc/desktop.json` 的 `lastCwd` = `C:\Users\waq`（宿主就从这儿起），
+当时看的会话 cwd 是 `D:\dsc`——按旧实现点下去开的是 `C:\Users\waq`。
+
+**修法（走实参，不让主进程猜）**：
+- 壳把**自己显示给用户的那个值**当第二个实参传下去：`invoke('openWorkspace', [kind, cwd])`（三个档都带）；
+- `src/core/native-bridge.ts:233-236` 的规格加第二个**可选**路径实参（省略 = 旧行为，旧渲染层不传）；
+- 主进程 `openWorkspace(kind, requested?)`（`desktop/electron/main/index.ts:356-360`）：给了就用它、
+  不存在就报「工作目录不存在：<它>」，没给才回落 `hostCwd`；分派点 `:658` 透传第二个实参。
+
+**验证（硬证据）**：
+
+| 环节 | 怎么验的 | 读数 |
+| --- | --- | --- |
+| 壳传的是「它显示的那个工作区」 | 隔离宿主（宿主进程 cwd 故意设成 `C:\Windows\System32`）+ 种子会话 cwd `D:\dsc`；页面里装假原生桥抓实参 | 三个档都是 `['explorer'/'terminal'/'vscode', 'D:\dsc']`，与侧栏底部读数同源，**不是** System32 |
+| 主进程按实参取目录 | 真 Electron（隔离 home + `DSC_DESKTOP_SHOT_EVAL`）：种子会话 cwd 故意指向不存在的 `D:\zz-not-here-92`，点壳里那颗钮 | 便条 `打开失败：工作目录不存在：D:\zz-not-here-92`（宿主启动目录是 `C:\Users\waq`——旧实现开的就是它）；再换个目录直连桥 → `{ok:false, error:'工作目录不存在：D:\zz-not-here-93'}` |
+
+用**不存在的目录**当靶子：既证明实参被认（那句错误里的目录名只有主进程说得出来），又不真弹资源管理器窗口。
+
+### ② 悬停预览：出卡照旧 500ms，收卡 100ms → 1s，并补上卡片自己的 mouseleave
+
+**根因两个**：(a) 收卡延迟照参考实现是 **100ms**——一张能读的 diff 卡，手从行上往卡里挪都来不及；
+(b) 卡片只挂 `onMouseEnter`（keep）**没挂** `onMouseLeave`，而**行上的 `mouseleave` 早在指针进卡
+那一刻就烧掉了**，于是「进过一次卡」之后那张卡**再也不会自己收**（只能按 Esc）。
+
+**修法**：`ui-shell/src/ui-primitives/hover-delay.ts:18` 的 `HOVER_CLOSE_MS` 100 → **1000**（注释写明
+这是壳侧有意与参考实现分道：出卡 500ms 照旧，收卡 1s 是用户口径；**旧渲染层那份不动**）；
+`DiffHoverCard`（`ui-shell/src/plugins/transcript/ui.tsx:1657`）补 `onMouseLeave={onLeave}`，在调用点
+（`:1824`）接 `hoverDelay.disarm`——与「从行上移开」同一条倒计时。
+
+**验证（页面内时戳，真指针移动）**：
+
+```
+4094ms  ADD 卡          ← 行上停够 500ms 出卡
+4610ms  行 mouseleave    ← 指针离开行进卡
+4610ms  卡 mouseenter    ← keep 取消收卡倒计时
+5037ms  卡 mouseleave    ← 出卡（onMouseLeave 起 1s 倒计时）
+6044ms  REMOVE 卡        ← 离卡 1007ms 收掉
+```
+
+另一路（行上直接移开）：`mouseleave` 之后 **1015ms** 收。修前这两条都会在 100ms 收，且「进过卡」
+那条根本不收（MutationObserver 全程没有 REMOVE）。
+
+### 附录：opencode Go 端点 400 —— 是缺陷，且配置层面绕不过去（本批只回答，未改代码）
+
+结论：**那份分析成立，是 msc 侧缺能力，不是端点的脾气**。逐条核过：
+- 代码事实对得上：`src/core/llm.ts:436-439` 的 `fetch` 只带 `content-type` + `authorization`；
+  `StreamRequest` / `LlmRoute` / `FileProvider` / `ProviderConfig` 都没有会话或自定义头字段——
+  也就是「改 `config.yaml` 配不出来」这句成立；
+- 官方文档那三条要求**核对无误**（`https://opencode.ai/v2/docs/console/go/` 的 “Where can I use it?”
+  一节：流量像 coding agent、**用自己的 user agent**、每条会话在 `x-opencode-session` 里带稳定
+  session ID；「Known problematic clients」第一条就是 DeepSeek Harness，理由是「session 信息在部分
+  模型路径上带、部分不带」）；
+- 建议改法也对：会话 id 在插件层拿得到（`src/plugins/llm.ts:23`），但要先给 `StreamRequest` 加字段；
+  而**所有** LLM 流量（主循环 `src/core/loop.ts:390`、标题生成 `src/plugins/session-title.ts:88`、
+  审批判官 `src/plugins/approval.ts:388`、子智能体）都从 `src/plugins/llm.ts:137` 那个 `stream()`
+  汇聚点过，所以「在派发前把会话 id 塞进 request」这一处改动的覆盖面是对的（辅助请求不会漏——
+  正好避开 dsh 那个「部分路径带、部分路径没带」的坑）；
+- 两条提醒（**不能无条件加头**、补齐头不等于一定放行）与 `src/core/llm.ts:44-46` 记的同类教训一致。
+  真要落地就走「端点配置开一个可选字段 → route 透传 → 条件补头」，别硬编码供应商名。
+
+本批**没有动代码**；那份文档仍是未提交文件（别人写的分析，按用户的话「别跟原有改动混一起提交」）。
+
+### 诚实边界（这一批）
+
+① 改了三处源码面（壳一条 CSS 之外的三处接口 + 悬停卡）与桌面主进程，**重打了包**（见下），
+   **没有推送、没有升版本号**（根 0.6.67、壳 1.2.0）；
+② **旧桌面版（冻结渲染层）行为不变**：它调 `openWorkspace` 不传第二个实参，仍是宿主启动目录；
+   悬停那份也仍是 100ms + 进卡即粘住——这是「旧界面不动」的既定边界，要一起改得另开一刀；
+③ 走查用的临时目录在仓库外：`D:\tmp\dsc-ui-verify20`（隔离宿主 home）、`D:\tmp\dsc-desktop20`
+   （隔离桌面 home + 自检脚本），可随手删；实机自检那次**没有写用户真实的 `~/.dsc/desktop.json`**
+   （跑前跑后逐字节比对一致）；
+④ opencode 那条只给结论，未改代码；也没有替用户去花 API key 真打一次端点（「补齐头是否放行」
+   需要实测，留到真做那次）。
+
+### 教训（这一批）
+
+①**两个读数指向不同对象时，先问「谁在替谁猜」**：壳显示 A、按钮去开 B，根因不是按钮坏了，
+是它**没被告知**要开哪儿。传实参比让下层去推（或记住一个进程级全局）都稳。
+②**传下去的值要跟界面上显示的同源**：壳传的就是 `status.cwd`——用户看到的那一行。两边各记一份
+（会话 cwd / 进程启动目录）是这类「打开错地方」毛病的通用病根。
+③**验证一个「打开外部东西」的动作，用不存在的靶子**：不弹窗、不留窗口，而且错误文案里的目录名
+本身就把「主进程认了哪个实参」交代清楚了。
+④**悬停卡「移开就收」有两个离开口**：行上离开、卡上离开是两条路，只挂一条会出现「进过卡就永远粘着」；
+参考实现那份也漏了同一条，照抄不会自动带来它。
+⑤**走查环境的两条坑（IAB）**：`cua.move` 能落 hover（mouseover/mouseout 都到），但 `cua.click`
+**不落 click**（`mousedown`/`click` 全无）——要点真实的点击得改用页面内 `el.click()`；
+Playwright 的 locator（`getByRole` / `locator().click()`）在这个页面里超时到不可用，能用的只有
+`playwright.evaluate`。量时序别用外层调用的耗时（单次 `cua.move` 能慢到 5 秒），要**在页面里打时戳**。

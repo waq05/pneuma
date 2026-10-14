@@ -1771,7 +1771,10 @@ function WorkspaceOpenGroup(): ReactNode {
       return
     }
     void native
-      .invoke<{ ok: boolean; error?: string }>('openWorkspace', [kind])
+      // 第二个实参是**当前工作区**（= 当前会话的 cwd，与侧栏底部那一行同源）。不传的话
+      // 桥那边只能拿「宿主进程的启动目录」——常驻多会话模型下两者经常不是同一个目录
+      // （会话各有各的 cwd，见 desktop-dock 里那条注释），打开的就是别人家的目录。
+      .invoke<{ ok: boolean; error?: string }>('openWorkspace', [kind, cwd])
       .then((result) => {
         if (result !== null && typeof result === 'object' && result.ok === false) {
           toastErr(`打开失败：${result.error ?? '宿主没说什么原因'}`)

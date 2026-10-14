@@ -223,8 +223,17 @@ export const NATIVE_ARG_SPECS: Readonly<Record<NativeOp, readonly ArgSpec[]>> = 
   openPath: [{ shape: { kind: 'string', max: MAX_PATH } }],
   /** 用系统浏览器打开一个 http/https 链接（协议在主机侧再判一次）。 */
   openExternal: [{ shape: { kind: 'string', max: MAX_PATH } }],
-  /** 用终端 / 资源管理器 / VS Code 打开当前工作区。 */
-  openWorkspace: [{ shape: { kind: 'enum', values: WORKSPACE_KINDS } }],
+  /**
+   * 用终端 / 资源管理器 / VS Code 打开一个工作区。
+   *
+   * 第二个实参是**要打开哪个目录**：壳传的是它自己显示的那个当前工作区（当前会话的 cwd）。
+   * 可省略——省略就回到宿主进程的启动目录（旧桌面版走的就是这条，行为不变）。壳必须传：
+   * 常驻多会话模型下会话各有各的 cwd，进程启动目录不是用户眼里的「当前工作区」。
+   */
+  openWorkspace: [
+    { shape: { kind: 'enum', values: WORKSPACE_KINDS } },
+    { shape: { kind: 'string', max: MAX_PATH }, optional: true },
+  ],
   /** 弹系统文件选择器，把选中的技能（含 SKILL.md 的目录或 .md 文件）复制进 ~/.dsc/skills/；返回装好的名字（取消给空表）。 */
   installSkill: [],
   /** 弹系统文件选择器，把选中的 .js 插件复制进 ~/.dsc/plugins/；返回装好的文件名（取消给空表）。 */

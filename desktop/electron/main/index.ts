@@ -345,12 +345,16 @@ function restartHost(cwd: string): Promise<void> {
 type WorkspaceOpenResult = { ok: boolean; error?: string }
 
 /**
- * 用多种方式打开当前工作区。terminal：优先 Windows Terminal，没装退回经
+ * 用多种方式打开一个工作区。terminal：优先 Windows Terminal，没装退回经
  * PowerShell 指定工作目录的 cmd；vscode：借 cmd.exe 调 code 垫片（Node 直接
  * spawn .cmd 会被拦）；explorer：shell.openPath。
+ *
+ * **打开哪个目录**：`requested` 给了就用它（插件壳传的是它显示的那个当前工作区 =
+ * 当前会话的 cwd），没给才回到 `hostCwd`（宿主进程的启动目录）——旧渲染层不传，
+ * 行为不变。常驻多会话模型下会话各有各的 cwd，启动目录往往不是用户眼里的当前工作区。
  */
-function openWorkspace(kind: string): WorkspaceOpenResult | Promise<WorkspaceOpenResult> {
-  const dir = hostCwd
+function openWorkspace(kind: string, requested?: string): WorkspaceOpenResult | Promise<WorkspaceOpenResult> {
+  const dir = requested === undefined || requested === '' ? hostCwd : requested
   if (dir === '' || !existsSync(dir)) {
     return { ok: false, error: `工作目录不存在：${dir}` }
   }
@@ -651,7 +655,7 @@ const NATIVE_HANDLERS: Readonly<Record<NativeOp, (args: readonly unknown[]) => u
   openExternal: ([url]) => {
     openExternalUrl(url)
   },
-  openWorkspace: ([kind]) => openWorkspace(String(kind)),
+  openWorkspace: ([kind, dir]) => openWorkspace(String(kind), typeof dir === 'string' ? dir : undefined),
   installSkill: () => installSkillsByDialog(),
   installPlugin: () => installPluginsByDialog(),
   /**
