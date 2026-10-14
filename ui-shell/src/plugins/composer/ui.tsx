@@ -465,22 +465,12 @@ function ComposerBox(): ReactNode {
       : '发消息，@ 引用文件，回车发送，Ctrl+Enter 插话'
 
   return (
-    <div
-      className="composer"
-      style={{ marginTop: 10 }}
-      onPaste={(event) => {
-        if (event.clipboardData.files.length === 0) return
-        setFault('贴图这一版还不支持：界面通道的单图上限只有 32KB，普通截图压到那个档位已经看不清了')
-      }}
-      onDrop={(event) => {
-        if (event.dataTransfer.files.length === 0) return
-        event.preventDefault()
-        setFault('拖文件进来这一版还不支持：界面通道目前只能发文本')
-      }}
-      onDragOver={(event) => {
-        if (event.dataTransfer.types.includes('Files')) event.preventDefault()
-      }}
-    >
+    // 这一层是「输入框外面那一列」：分支行在上、输入框在下，各占一行、各带自己的边。
+    // 为什么不让分支行长在 `.composer` 里（原来就是）：`.composer` 是带描边和圆角的
+    // 输入框本体，住在里面的东西会被同一个外框一起圈住，分支钮看着就成了输入框的一部分
+    // （用户报「git 管理按钮，需要与输入框作出区分」）。参考实现里这一行也在输入框上方的
+    // 框外。`.composer-zone` 的「与正文列同宽」打在插件根节点上，所以这一层要接住它。
+    <div className="composer-stack" style={{ marginTop: 10 }}>
       {/* 分支控制（对照参考实现输入框上方那一行）：一颗钮显示当前分支，点开是分支菜单
           （搜 / 切 / 新建）。读数来自宿主快照面 `surfaces.git`（宿主自己按节奏拍，
           壳只渲染），**不是仓库时整行不画**。写口（切 / 新建）走 `dock` 的写类 op，
@@ -616,320 +606,338 @@ function ComposerBox(): ReactNode {
         </div>
       ) : null}
 
-      <textarea
-        ref={area}
-        rows={1}
-        value={text}
-        placeholder={placeholder}
-        disabled={blocked}
-        aria-label="消息输入框"
-        onChange={(event) => {
-          onTextChange(event.target.value, event.target.selectionStart ?? event.target.value.length)
+      {/* 输入框本体：这一层的描边 + 圆角说的才是「这里可以打字」。贴图 / 拖文件那三个
+          事件挂在它上面（不在外层那一列上）：命中面就是看得见的那个框。 */}
+      <div
+        className="composer"
+        onPaste={(event) => {
+          if (event.clipboardData.files.length === 0) return
+          setFault('贴图这一版还不支持：界面通道的单图上限只有 32KB，普通截图压到那个档位已经看不清了')
         }}
-        onKeyDown={onKeyDown}
-      />
+        onDrop={(event) => {
+          if (event.dataTransfer.files.length === 0) return
+          event.preventDefault()
+          setFault('拖文件进来这一版还不支持：界面通道目前只能发文本')
+        }}
+        onDragOver={(event) => {
+          if (event.dataTransfer.types.includes('Files')) event.preventDefault()
+        }}
+      >
+        <textarea
+          ref={area}
+          rows={1}
+          value={text}
+          placeholder={placeholder}
+          disabled={blocked}
+          aria-label="消息输入框"
+          onChange={(event) => {
+            onTextChange(event.target.value, event.target.selectionStart ?? event.target.value.length)
+          }}
+          onKeyDown={onKeyDown}
+        />
 
-      {/* @ 文件提及的候选面板：贴在输入框上方（textarea 是 relative 容器的兄弟）。 */}
-      {mention.open ? (
-        <div className="mention-pop" role="listbox" aria-label="文件提及候选">
-          {mention.loading ? (
-            <div className="mention-item" data-loading="1">
-              正在读取工作区文件…
-            </div>
-          ) : mention.items.length === 0 ? (
-            <div className="mention-item" data-empty="1">
-              没有匹配的文件
-            </div>
-          ) : (
-            mention.items.map((path, index) => (
+        {/* @ 文件提及的候选面板：贴在输入框上方（textarea 是 relative 容器的兄弟）。 */}
+        {mention.open ? (
+          <div className="mention-pop" role="listbox" aria-label="文件提及候选">
+            {mention.loading ? (
+              <div className="mention-item" data-loading="1">
+                正在读取工作区文件…
+              </div>
+            ) : mention.items.length === 0 ? (
+              <div className="mention-item" data-empty="1">
+                没有匹配的文件
+              </div>
+            ) : (
+              mention.items.map((path, index) => (
+                <button
+                  type="button"
+                  key={path}
+                  role="option"
+                  aria-selected={index === mention.at}
+                  className={`mention-item${index === mention.at ? ' on' : ''}`}
+                  title={path}
+                  onMouseDown={(event) => {
+                    // mousedown 而不是 click：抢在 textarea 失焦之前把候选插进去。
+                    event.preventDefault()
+                    mention.pick()
+                  }}
+                >
+                  {path}
+                </button>
+              ))
+            )}
+            <div className="mention-hint">↑↓ 选 · Tab/Enter 补全 · Esc 关闭</div>
+          </div>
+        ) : null}
+
+        <div className="composer-bar">
+          <div className="bar-left">
+            {/* 「+」钮（旧界面同款）：正文为空时点击插入 "/"，把用户带到指令清单的门口。 */}
+            <button
+              type="button"
+              className="icon-btn"
+              data-tip="插入指令（/）"
+              aria-label="插入指令"
+              onClick={() => {
+                if (text.trim() !== '') return
+                setText('/')
+                window.requestAnimationFrame(() => {
+                  area.current?.focus()
+                  area.current?.setSelectionRange(1, 1)
+                })
+              }}
+            >
+              +
+            </button>
+            {/* 权限预设（旧界面同款：一颗能切的旋钮 + 菜单）。清单来自快照
+                surfaces.permissionPresets，写口走原生桥（见 choosePermissionPreset 的注释）。
+                一颗管三件事（沙箱 + 权限模式 + 审阅者）：分开选会出现「完全访问 + 沙箱仍工作区可写」
+                这种自相矛盾的组合。 */}
+            <div className="model-anchor">
               <button
                 type="button"
-                key={path}
-                role="option"
-                aria-selected={index === mention.at}
-                className={`mention-item${index === mention.at ? ' on' : ''}`}
-                title={path}
-                onMouseDown={(event) => {
-                  // mousedown 而不是 click：抢在 textarea 失焦之前把候选插进去。
-                  event.preventDefault()
-                  mention.pick()
+                className={`model-btn${permOpen ? ' open' : ''}`}
+                data-tip={
+                  permOption?.description ?? '当前三项旋钮的组合不匹配任何预设；在设置里逐格改出来的状态'
+                }
+                aria-haspopup="menu"
+                aria-expanded={permOpen}
+                onClick={() => {
+                  setPermOpen((open) => !open)
+                  setPresetOpen(false)
+                  setPanelOpen(false)
+                  setBranchOpen(false)
                 }}
               >
-                {path}
+                <IconShield size={13} />
+                {permOption?.label ?? '自定义'}
+                <IconChevronDown size={12} />
               </button>
-            ))
-          )}
-          <div className="mention-hint">↑↓ 选 · Tab/Enter 补全 · Esc 关闭</div>
-        </div>
-      ) : null}
-
-      <div className="composer-bar">
-        <div className="bar-left">
-          {/* 「+」钮（旧界面同款）：正文为空时点击插入 "/"，把用户带到指令清单的门口。 */}
-          <button
-            type="button"
-            className="icon-btn"
-            data-tip="插入指令（/）"
-            aria-label="插入指令"
-            onClick={() => {
-              if (text.trim() !== '') return
-              setText('/')
-              window.requestAnimationFrame(() => {
-                area.current?.focus()
-                area.current?.setSelectionRange(1, 1)
-              })
-            }}
-          >
-            +
-          </button>
-          {/* 权限预设（旧界面同款：一颗能切的旋钮 + 菜单）。清单来自快照
-              surfaces.permissionPresets，写口走原生桥（见 choosePermissionPreset 的注释）。
-              一颗管三件事（沙箱 + 权限模式 + 审阅者）：分开选会出现「完全访问 + 沙箱仍工作区可写」
-              这种自相矛盾的组合。 */}
-          <div className="model-anchor">
-            <button
-              type="button"
-              className={`model-btn${permOpen ? ' open' : ''}`}
-              data-tip={
-                permOption?.description ?? '当前三项旋钮的组合不匹配任何预设；在设置里逐格改出来的状态'
-              }
-              aria-haspopup="menu"
-              aria-expanded={permOpen}
-              onClick={() => {
-                setPermOpen((open) => !open)
-                setPresetOpen(false)
-                setPanelOpen(false)
-                setBranchOpen(false)
-              }}
-            >
-              <IconShield size={13} />
-              {permOption?.label ?? '自定义'}
-              <IconChevronDown size={12} />
-            </button>
-            {permOpen ? (
-              <>
-                <div
-                  className="pop-mask"
-                  onClick={() => {
-                    setPermOpen(false)
-                  }}
-                />
-                <div className="model-pop policy-pop" role="menu" aria-label="权限预设">
-                  <div className="pop-label">
-                    权限预设
-                    <span className="pop-note">沙箱 + 权限 + 审阅者 三合一</span>
-                  </div>
-                  {permissionPresets.options.length === 0 ? (
-                    <div className="pop-item">
-                      <span className="name">清单没取到</span>
+              {permOpen ? (
+                <>
+                  <div
+                    className="pop-mask"
+                    onClick={() => {
+                      setPermOpen(false)
+                    }}
+                  />
+                  <div className="model-pop policy-pop" role="menu" aria-label="权限预设">
+                    <div className="pop-label">
+                      权限预设
+                      <span className="pop-note">沙箱 + 权限 + 审阅者 三合一</span>
                     </div>
-                  ) : (
-                    permissionPresets.options.map((item) => (
-                      <button
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={item.name === permissionPresets.current}
-                        key={item.name}
-                        className={`pop-item${item.name === permissionPresets.current ? ' on' : ''}`}
-                        title={item.description}
-                        disabled={item.name === permissionPresets.current}
-                        onClick={() => {
-                          choosePermissionPreset(item.name, item.label)
-                        }}
-                      >
-                        <span className="name">{item.label}</span>
-                        {item.name === permissionPresets.current ? <IconCheck size={14} className="check" /> : null}
-                      </button>
-                    ))
-                  )}
-                </div>
-              </>
-            ) : null}
-          </div>
-          {/* 模式（预设）旋钮：与权限旋钮并排。清单同样来自快照（surfaces.preset.options），
-              点选即 usePreset；「默认」标跟随 preset.defaultName（新会话用的那一档）。 */}
-          <div className="model-anchor">
-            <button
-              type="button"
-              className={`model-btn${presetOpen ? ' open' : ''}`}
-              data-tip={presetOption?.problem ?? presetOption?.description ?? '模式：模型是谁、手上有什么、被叮嘱了什么'}
-              aria-haspopup="menu"
-              aria-expanded={presetOpen}
-              onClick={() => {
-                setPresetOpen((open) => !open)
-                setPermOpen(false)
-                setPanelOpen(false)
-                setBranchOpen(false)
-              }}
-            >
-              <IconLayers size={13} />
-              {presetOption?.label ?? preset.current}
-              <IconChevronDown size={12} />
-            </button>
-            {presetOpen ? (
-              <>
-                <div
-                  className="pop-mask"
-                  onClick={() => {
-                    setPresetOpen(false)
-                  }}
-                />
-                <div className="model-pop preset-pop" role="menu" aria-label="模式">
-                  <div className="pop-label">
-                    模式
-                    <span className="pop-note">新建/编辑：设置 → 模式</span>
-                  </div>
-                  {preset.options.length === 0 ? (
-                    <div className="pop-item">
-                      <span className="name">清单没取到</span>
-                    </div>
-                  ) : (
-                    preset.options.map((item) => (
-                      <button
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={item.name === preset.current}
-                        key={item.name}
-                        className={`pop-item${item.name === preset.current ? ' on' : ''}`}
-                        title={item.problem ?? item.description}
-                        disabled={item.name === preset.current}
-                        onClick={() => {
-                          choosePreset(item.name, item.label)
-                        }}
-                      >
-                        <span className="name">
-                          {item.label}
-                          {item.name === preset.defaultName && <span className="pop-badge">默认</span>}
-                          {item.problem !== undefined && <span className="pop-badge warn">有问题</span>}
-                        </span>
-                        {item.name === preset.current ? <IconCheck size={14} className="check" /> : null}
-                      </button>
-                    ))
-                  )}
-                </div>
-              </>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="bar-right">
-          <div className="model-anchor">
-            <button
-              type="button"
-              className={`model-btn${panelOpen ? ' open' : ''}`}
-              data-tip="模型与思考强度"
-              aria-haspopup="menu"
-              aria-expanded={panelOpen}
-              onClick={() => {
-                setPanelOpen((open) => !open)
-                setPermOpen(false)
-                setPresetOpen(false)
-                setBranchOpen(false)
-              }}
-            >
-              <span className="model-name">{model === '' ? '未知模型' : model}</span>
-              <IconChevronDown size={13} />
-            </button>
-            {panelOpen ? (
-              <>
-                <div
-                  className="pop-mask"
-                  onClick={() => {
-                    setPanelOpen(false)
-                  }}
-                />
-                <div className="model-pop">
-                  <div className="pop-label">
-                    思考强度
-                    {current === undefined || current.thinkingLevels.length === 0 ? (
-                      <span className="pop-note">这个模型只声明了这些档位</span>
-                    ) : null}
-                  </div>
-                  <div className="effort-row">
-                    {effortLevels.map((level) => (
-                      <button
-                        type="button"
-                        className={`effort-btn${level === effort ? ' on' : ''}`}
-                        key={level}
-                        onClick={() => {
-                          setFault(null)
-                          void channel.invoke('setEffort', [level]).catch((reason: unknown) => {
-                            setFault(reason instanceof Error ? reason.message : String(reason))
-                          })
-                        }}
-                      >
-                        {EFFORT_LABEL[level] ?? level}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="pop-label">模型</div>
-                  <div className="model-list">
-                    {models.length === 0 ? (
+                    {permissionPresets.options.length === 0 ? (
                       <div className="pop-item">
-                        <span className="name">{model === '' ? '清单没取到' : model}</span>
+                        <span className="name">清单没取到</span>
                       </div>
                     ) : (
-                      groupByProvider(models).map(([provider, list]) => (
-                        <div key={provider}>
-                          <div className="pop-group">{provider}</div>
-                          {list.map((choice) => (
-                            <button
-                              type="button"
-                              className={`pop-item${choice.value === model ? ' on' : ''}`}
-                              key={choice.value}
-                              data-tip={choice.description}
-                              onClick={() => {
-                                setFault(null)
-                                void channel.invoke('setModel', [choice.value]).catch((reason: unknown) => {
-                                  setFault(reason instanceof Error ? reason.message : String(reason))
-                                })
-                              }}
-                            >
-                              <span className="name">{choice.model}</span>
-                              {choice.modalities.includes('image') ? <span className="pop-badge">图</span> : null}
-                              {choice.modalities.includes('video') ? <span className="pop-badge">视频</span> : null}
-                              <span className="ctx">{Math.round(choice.contextWindow / 1000)}k</span>
-                              {choice.value === model ? <IconCheck size={14} className="check" /> : null}
-                            </button>
-                          ))}
-                        </div>
+                      permissionPresets.options.map((item) => (
+                        <button
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={item.name === permissionPresets.current}
+                          key={item.name}
+                          className={`pop-item${item.name === permissionPresets.current ? ' on' : ''}`}
+                          title={item.description}
+                          disabled={item.name === permissionPresets.current}
+                          onClick={() => {
+                            choosePermissionPreset(item.name, item.label)
+                          }}
+                        >
+                          <span className="name">{item.label}</span>
+                          {item.name === permissionPresets.current ? <IconCheck size={14} className="check" /> : null}
+                        </button>
                       ))
                     )}
                   </div>
-                </div>
-              </>
-            ) : null}
+                </>
+              ) : null}
+            </div>
+            {/* 模式（预设）旋钮：与权限旋钮并排。清单同样来自快照（surfaces.preset.options），
+                点选即 usePreset；「默认」标跟随 preset.defaultName（新会话用的那一档）。 */}
+            <div className="model-anchor">
+              <button
+                type="button"
+                className={`model-btn${presetOpen ? ' open' : ''}`}
+                data-tip={presetOption?.problem ?? presetOption?.description ?? '模式：模型是谁、手上有什么、被叮嘱了什么'}
+                aria-haspopup="menu"
+                aria-expanded={presetOpen}
+                onClick={() => {
+                  setPresetOpen((open) => !open)
+                  setPermOpen(false)
+                  setPanelOpen(false)
+                  setBranchOpen(false)
+                }}
+              >
+                <IconLayers size={13} />
+                {presetOption?.label ?? preset.current}
+                <IconChevronDown size={12} />
+              </button>
+              {presetOpen ? (
+                <>
+                  <div
+                    className="pop-mask"
+                    onClick={() => {
+                      setPresetOpen(false)
+                    }}
+                  />
+                  <div className="model-pop preset-pop" role="menu" aria-label="模式">
+                    <div className="pop-label">
+                      模式
+                      <span className="pop-note">新建/编辑：设置 → 模式</span>
+                    </div>
+                    {preset.options.length === 0 ? (
+                      <div className="pop-item">
+                        <span className="name">清单没取到</span>
+                      </div>
+                    ) : (
+                      preset.options.map((item) => (
+                        <button
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={item.name === preset.current}
+                          key={item.name}
+                          className={`pop-item${item.name === preset.current ? ' on' : ''}`}
+                          title={item.problem ?? item.description}
+                          disabled={item.name === preset.current}
+                          onClick={() => {
+                            choosePreset(item.name, item.label)
+                          }}
+                        >
+                          <span className="name">
+                            {item.label}
+                            {item.name === preset.defaultName && <span className="pop-badge">默认</span>}
+                            {item.problem !== undefined && <span className="pop-badge warn">有问题</span>}
+                          </span>
+                          {item.name === preset.current ? <IconCheck size={14} className="check" /> : null}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </>
+              ) : null}
+            </div>
           </div>
 
-          {working ? (
-            <button
-              type="button"
-              className={`send-btn stop${queueing ? ' dim' : ''}`}
-              aria-label="打断当前回合"
-              data-tip="打断当前回合"
-              onClick={interrupt}
-            >
-              <IconStop size={16} />
-            </button>
-          ) : null}
-          {!working || queueing ? (
-            <button
-              type="button"
-              className="send-btn"
-              aria-label={working ? '排队发送' : '发送'}
-              disabled={!sendable || blocked || sending}
-              data-tip={
-                working
-                  ? '排队发送：这一轮跑完立刻发出（Ctrl+Enter 插话：打断当前输出先发这条）'
-                  : '发送，快捷键 Enter'
-              }
-              onClick={() => {
-                send(false)
-              }}
-            >
-              <IconArrowUp size={16} />
-            </button>
-          ) : null}
+          <div className="bar-right">
+            <div className="model-anchor">
+              <button
+                type="button"
+                className={`model-btn${panelOpen ? ' open' : ''}`}
+                data-tip="模型与思考强度"
+                aria-haspopup="menu"
+                aria-expanded={panelOpen}
+                onClick={() => {
+                  setPanelOpen((open) => !open)
+                  setPermOpen(false)
+                  setPresetOpen(false)
+                  setBranchOpen(false)
+                }}
+              >
+                <span className="model-name">{model === '' ? '未知模型' : model}</span>
+                <IconChevronDown size={13} />
+              </button>
+              {panelOpen ? (
+                <>
+                  <div
+                    className="pop-mask"
+                    onClick={() => {
+                      setPanelOpen(false)
+                    }}
+                  />
+                  <div className="model-pop">
+                    <div className="pop-label">
+                      思考强度
+                      {current === undefined || current.thinkingLevels.length === 0 ? (
+                        <span className="pop-note">这个模型只声明了这些档位</span>
+                      ) : null}
+                    </div>
+                    <div className="effort-row">
+                      {effortLevels.map((level) => (
+                        <button
+                          type="button"
+                          className={`effort-btn${level === effort ? ' on' : ''}`}
+                          key={level}
+                          onClick={() => {
+                            setFault(null)
+                            void channel.invoke('setEffort', [level]).catch((reason: unknown) => {
+                              setFault(reason instanceof Error ? reason.message : String(reason))
+                            })
+                          }}
+                        >
+                          {EFFORT_LABEL[level] ?? level}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="pop-label">模型</div>
+                    <div className="model-list">
+                      {models.length === 0 ? (
+                        <div className="pop-item">
+                          <span className="name">{model === '' ? '清单没取到' : model}</span>
+                        </div>
+                      ) : (
+                        groupByProvider(models).map(([provider, list]) => (
+                          <div key={provider}>
+                            <div className="pop-group">{provider}</div>
+                            {list.map((choice) => (
+                              <button
+                                type="button"
+                                className={`pop-item${choice.value === model ? ' on' : ''}`}
+                                key={choice.value}
+                                data-tip={choice.description}
+                                onClick={() => {
+                                  setFault(null)
+                                  void channel.invoke('setModel', [choice.value]).catch((reason: unknown) => {
+                                    setFault(reason instanceof Error ? reason.message : String(reason))
+                                  })
+                                }}
+                              >
+                                <span className="name">{choice.model}</span>
+                                {choice.modalities.includes('image') ? <span className="pop-badge">图</span> : null}
+                                {choice.modalities.includes('video') ? <span className="pop-badge">视频</span> : null}
+                                <span className="ctx">{Math.round(choice.contextWindow / 1000)}k</span>
+                                {choice.value === model ? <IconCheck size={14} className="check" /> : null}
+                              </button>
+                            ))}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </>
+              ) : null}
+            </div>
+
+            {working ? (
+              <button
+                type="button"
+                className={`send-btn stop${queueing ? ' dim' : ''}`}
+                aria-label="打断当前回合"
+                data-tip="打断当前回合"
+                onClick={interrupt}
+              >
+                <IconStop size={16} />
+              </button>
+            ) : null}
+            {!working || queueing ? (
+              <button
+                type="button"
+                className="send-btn"
+                aria-label={working ? '排队发送' : '发送'}
+                disabled={!sendable || blocked || sending}
+                data-tip={
+                  working
+                    ? '排队发送：这一轮跑完立刻发出（Ctrl+Enter 插话：打断当前输出先发这条）'
+                    : '发送，快捷键 Enter'
+                }
+                onClick={() => {
+                  send(false)
+                }}
+              >
+                <IconArrowUp size={16} />
+              </button>
+            ) : null}
+          </div>
         </div>
       </div>
 

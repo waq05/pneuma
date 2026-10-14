@@ -47,6 +47,9 @@
 > 窄格里没被收回）、**拉取清单的忙碌态按端点隔离**、**拉来的模型按能力推断**（四档来源：
 > 别的端点配过的同 id > id 里写的尺寸/视觉词 > 家族表 > 缺省）、**整轮过程折叠补开合动画**
 > （`grid-template-rows` 0fr↔1fr，选型记录见 `docs/ui-motion-options.md`）。
+> **第十九批（2026-10-14）**：空会话态**正文列宽收缩到内容宽**（拖动条因此卡在版心、压进输入框）、
+> **分支钮移出输入框外框**（原来住在 `.composer` 里面，看着就是输入框的一部分）、设置页
+> **不列技能分区**（壳侧滤掉，宿主那份留给 TUI 与旧桌面版）。
 
 ## 一、侧边栏（旧 `Sidebar.tsx` ↔ `plugins/sessions`）
 
@@ -122,6 +125,9 @@
 | **拉取清单：忙碌态按端点 + 拉来的模型按能力推断**（第十八批） | 忙碌态从「一个全局布尔」改成按端点记的集合 —— 原来点一张卡四张一起写「拉取中…」。能力也不再一律按缺省装：新模块 `plugins/settings/model-infer.ts` **四档来源**从强到弱推断（`known` 别的端点配过的同 id 照抄 / `marker` id 里写着 `-1m`、`-vl` / `family` 家族白名单表（明说「猜的」）/ `default` 与宿主缺省一致并明说「没查到」），每行右边画推断结果、提示里给依据（`data-discover-source`）。**只推断填错也不致命的字段**：`thinkingParam` 填错会在非缺省档位发一个端点不认的字段，所以家族表里只在有公开惯例时才给 |
 | **模型行输入框重叠**（第十八批） | `.setting-input` 的共用下限 `min-width: 220px` 只在设置页「一行一个输入框」的场景正确；模型行的「上下文 / 最大输出」两列只有 110px，实机在 1280px 宽下两个框**互相压住 102px**、右格还探出整行。修法只在这几处窄格收回下限（`.model-row-field .setting-input`、同样 84px 的 `.cap-wire-input`），别处照旧 |
 | **整轮过程折叠的开合动画**（第十八批） | 之前点「用时 X」是硬切。过程区包一层（`.turn-process` > `.turn-process-body`）后走 `grid-template-rows` 0fr↔1fr + 内容淡入淡出（180ms，令牌 `--dsc-dur-slow` / `--dsc-ease`）；阶段组那一级补 `max-height` 过渡。收起方向必须**延迟挂 `hidden`**（高度按内容算，挂早了动画归零），收起态留 0 高盒子并以负 `margin-top` 抵掉多算的座位 gap。**三个参考实现的做法与另外四种选型记录在 `docs/ui-motion-options.md`**（dsh 不做高度动画、codex 是 TUI 无补间、zcode 是 300ms 关键帧 + 延迟 300ms 卸载） |
+| **空会话态正文列宽**（第十九批） | 空态给 `.chat` / `.chat-inner` 换成 flex 列后，legacy 的 `margin: 0 auto` 在交叉轴上压过 `align-items: stretch`——欢迎语比 76ch 窄时这一格收缩到内容宽（实机 370px）。两个后果：拖动改的 `--dsc-thread-max` 不再决定宽度（**把手卡住不动**），`ThreadResizer.measure()` 量到的是内容边而不是列缘（**把手落在版心、高亮条压进输入框**）。补 `.thread-main-empty .chat-inner { width: 100% }`：宽度交还 max-width，余量仍由 auto 外边距居中，观感不变 |
+| **分支钮移出输入框**（第十九批） | `.composer-git` 原来是 `.composer`（带描边与圆角的输入框本体）的子节点，被同一个外框圈住 → 看着就是输入框的一部分。改成框外一列两行（`.composer-stack` > `.composer-git` + `.composer`），贴图 / 拖文件三个事件与故障便条留在/挪到框外那层；`.git-btn` 自己加一圈 `--dsc-stroke-3` 描边（hover / 展开换 `--dsc-stroke-2`） |
+| **设置页不列技能分区**（第十九批） | 技能中心已是侧栏的独立整页（`plugins/skills`），设置里那份开关是第二个入口。壳侧 `HIDDEN_SECTIONS = new Set(['skills'])`，**导航列表 / 选中分区查找 / 侧栏跳转 target 三处都过它**（漏一处就是「未知分区」）；壳里那份实现（`SkillsGroup` / `listSkills` / `setSkillEnabled`）整块撤掉。**宿主那份故意留着**——TUI 的设置浮层与冻结的旧桌面版消费同一张分区表 |
 
 ## 五、宿主侧配套修复（第六批，`src/plugins/desktop-dock.ts`）
 
@@ -251,3 +257,25 @@
   的能力逐条核对；**展开方向逐帧采样到 0 → 24px / 180ms 的平滑曲线**。
 - 全量无头电池 **39 个探针全绿**；三侧 TypeScript 全绿；`lib/ui/plugins/settings/client.js`
   含 `data-discover-source`，`lib/ui/assets/*.css` 含 `.turn-process` 与两条窄格规则。
+
+## 六之六、验证落点（第十九批：空态列宽 / 分支钮出框 / 设置不列技能）
+
+- 新探针 `scripts/ui-thread-resizer-test.mjs` **49 条**：`panels.ts` 的纯逻辑（夹取区间、右缘轨道宽
+  从样式表现读 + 缺省回退、存档读写与「传 null = 复位」、开关、根变量；三个 DOM 面用桩顶上）、
+  **空态列宽这条 CSS 契约**（`.thread-main-empty .chat-inner` 的 `width: 100%`、与它配对的 legacy
+  `margin: 0 auto` + `max-width`、触发条件仍在、幽灵令牌差集）、**把手几何**（24px 让位、12px 热区、
+  `min()` 兜底、2px 高亮条只在 hover / 拖动亮）、**量算契约**（量 `.chat-inner` 的矩形、三路重量、
+  左右 sign −2 / +2、松手才落盘、启动铺存档）。
+- 新探针 `scripts/ui-settings-nav-test.mjs` **28 条**：三处都过 `HIDDEN_SECTIONS`（含出现次数 = 3）、
+  技能那份实现整块撤掉（`SkillsGroup` / `SkillRow` / `listSkills` / `setSkillEnabled` / `IconBolt`）、
+  其余四个手画分区照旧在链上、边界（宿主仍发技能分区且 order 还是 20、侧栏技能整页入口与它的写口照旧）。
+- `scripts/ui-git-branch-test.mjs` 扩到 **46 条**：新增「分支行与输入框是兄弟（列 → 分支行 → 输入框
+  的顺序）」「三个贴图事件仍挂在输入框本体上」「故障便条在框外」，以及 `.composer-stack` 列布局、
+  `.composer-git` 的间距从框内上内距改成与下方框的间隔、`.git-btn` 的描边与 hover 档。
+- 实机（`_ui-shell-serve.mjs`，浏览器 1440×900）：列宽 533px = 76ch、`colStart` 315、左把手 x 516
+  （离输入框左缘 44px）；真实指针拖左把手 90px → 列宽 713 且落盘 `dsc.threadWidth = 713`；
+  **复现对照**：把开场便条改短成用户那样后，修前列宽 370 / colStart 396 / 把手 x 597（**落在输入框
+  x 572..1105 里**），修后 533 / 315 / 516。设置导航 8 项无技能，模型 / 模式 / 归档 / 用量四个面板
+  逐个点开照常渲染。
+- 全量无头电池 **42 个探针全绿**（含 `legacy-frozen-check`）；三侧 TypeScript 全绿；
+  `lib/ui/assets/*.css` 含 `.composer-stack` 与空态那条 `width: 100%`。

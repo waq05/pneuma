@@ -14,9 +14,15 @@
  * - **声明式**（`fields` 非空）：走 {@link GenericFields}，text / number / select / switch /
  *   info / button 六种控件 + `group` 组头，逐条对位旧桌面端的同名组件；
  * - **结构化**（`custom: true`）：模型 / 模式 / 技能 / 归档 / 用量这五个由桌面端手画。这一版
- *   搬了**技能**、**模式（预设）**与**模型**（模型只做只读端点 + 选默认模型，增删端点与写 key 被
+ *   搬了**模式（预设）**与**模型**（模型只做只读端点 + 选默认模型，增删端点与写 key 被
  *   有意排除），其余给一条**诚实的说明**（说清去哪做、为什么壳里没有），不假装有界面；
  * - **外观**：宿主没有这个分区（那几项只有渲染层消费），照旧桌面端的做法**追加在「通用」分区末尾**。
+ *
+ * ## 不列的分区（{@link HIDDEN_SECTIONS}）
+ *
+ * 宿主照旧发着**技能**分区，壳这里不列：技能中心已经是侧栏的独立整页（`plugins/skills`，
+ * 与旧桌面端的 `SkillsView` 同构），设置里再摆一份开关是同一个功能的第二个入口（用户要求去掉）。
+ * 宿主那份分区留着有据——TUI 的设置浮层与冻结的旧桌面版还在消费同一张分区表。
  *
  * ## 壳自己加的一项：插件
  *
@@ -32,7 +38,6 @@
 import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import {
   IconArchive,
-  IconBolt,
   IconChart,
   IconClose,
   IconGear,
@@ -74,6 +79,15 @@ interface NavItem {
 }
 
 /**
+ * 壳不列的分区（宿主发着、这里按 id 滤掉）。技能中心已经是侧栏的独立整页
+ * （`plugins/skills`），设置里再来一份开关是同一个功能的第二个入口。
+ *
+ * 只滤这一处（导航与选中项查找都过它），**不动宿主的分区表**：TUI 的设置浮层与冻结的
+ * 旧桌面版消费的是同一张表，宿主少一个分区等于悄悄改了另外两个界面。
+ */
+const HIDDEN_SECTIONS: ReadonlySet<string> = new Set(['skills'])
+
+/**
  * 导航图标：照旧桌面端 `SettingsModal.sectionIcon` 的映射，没列的落回齿轮。
  *
  * 只按分区 id 认，不按标题——标题可改，改标题不该换图标。
@@ -82,7 +96,6 @@ function sectionIcon(id: string): ReactNode {
   const size = 15
   if (id === 'models') return <IconSpark size={size} />
   if (id === 'presets') return <IconLayers size={size} />
-  if (id === 'skills') return <IconBolt size={size} />
   if (id === 'archive') return <IconArchive size={size} />
   if (id === 'usage') return <IconChart size={size} />
   if (id === 'remote') return <IconPhone size={size} />
@@ -121,7 +134,7 @@ function SettingsPanel(): ReactNode {
     const onOpen = (event: Event): void => {
       setSettingsOpen(true)
       const section = (event as CustomEvent<{ section?: string }>).detail?.section
-      if (typeof section === 'string' && section !== '') setActive(section)
+      if (typeof section === 'string' && section !== '' && !HIDDEN_SECTIONS.has(section)) setActive(section)
     }
     window.addEventListener('shell.settings.open', onOpen)
     return () => window.removeEventListener('shell.settings.open', onOpen)
@@ -169,14 +182,16 @@ function SettingsPanel(): ReactNode {
 
   if (!open) return null
 
-  // 导航 = 宿主内置分区（按 order 排好序，宿主已排）。插件启停不在这里：它是
-  // 主区的独立整页（侧栏「插件」入口），旧界面同款——设置里不再有合成的插件分区。
-  const nav: NavItem[] = (sections ?? []).map((section) => ({
-    id: section.id,
-    title: section.title,
-    subtitle: section.subtitle,
-  }))
-  const section = (sections ?? []).find((item) => item.id === active)
+  // 导航 = 宿主内置分区（按 order 排好序，宿主已排）**减去 HIDDEN_SECTIONS**。
+  // 插件启停不在这里：它是主区的独立整页（侧栏「插件」入口），旧界面同款——设置里不再有合成的插件分区。
+  const nav: NavItem[] = (sections ?? [])
+    .filter((section) => !HIDDEN_SECTIONS.has(section.id))
+    .map((section) => ({
+      id: section.id,
+      title: section.title,
+      subtitle: section.subtitle,
+    }))
+  const section = (sections ?? []).find((item) => item.id === active && !HIDDEN_SECTIONS.has(item.id))
   const head = nav.find((item) => item.id === active)
 
   return (
@@ -233,9 +248,7 @@ function SettingsPanel(): ReactNode {
             ) : section === undefined ? (
               <div className="settings-empty">分区加载失败：{loadError === '' ? '未知分区' : loadError}</div>
             ) : section.custom ? (
-              section.id === 'skills' ? (
-                <SkillsGroup />
-              ) : section.id === 'presets' ? (
+              section.id === 'presets' ? (
                 <PresetsGroup />
               ) : section.id === 'models' ? (
                 <ModelsGroup />
@@ -751,83 +764,6 @@ function normalizePrefs(prefs: Partial<UiPrefsView> | null | undefined): Appeara
     reasoningOpen: prefs?.reasoningDefaultOpen === true,
     toolOpen: prefs?.toolDefaultOpen === true,
   }
-}
-
-/** 技能条目（宿主 `listSkills` 的形状，只取这一版用得上的字段）。 */
-interface SkillRow {
-  name: string
-  description: string
-  source: string
-  enabled: boolean
-  /** false = 由插件注册、不可启停。 */
-  toggleable?: boolean
-}
-
-/** 技能：列出来 + 拨开关（`setSkillEnabled` 真的生效，重启宿主后仍是那个状态）。 */
-function SkillsGroup(): ReactNode {
-  const channel = useHostChannel()
-  const [rows, setRows] = useState<SkillRow[] | null>(null)
-  const [note, setNote] = useState('')
-
-  useEffect(() => {
-    let alive = true
-    void channel
-      .invoke<SkillRow[]>('listSkills')
-      .then((list) => {
-        if (alive) setRows(list)
-      })
-      .catch((error: unknown) => {
-        if (alive) setNote(`读技能失败：${text(error)}`)
-      })
-    return () => {
-      alive = false
-    }
-  }, [channel])
-
-  const toggle = (row: SkillRow): void => {
-    setRows((current) => current?.map((item) => (item.name === row.name ? { ...item, enabled: !item.enabled } : item)) ?? null)
-    void channel.invoke('setSkillEnabled', [row.name, !row.enabled]).catch((error: unknown) => {
-      setRows((current) => current?.map((item) => (item.name === row.name ? { ...item, enabled: row.enabled } : item)) ?? null)
-      setNote(`没改成功：${text(error)}`)
-    })
-  }
-
-  if (rows === null) return <div className="settings-empty">{note === '' ? '正在读技能…' : note}</div>
-  return (
-    <div>
-      {rows.length === 0 ? <div className="settings-empty">还没有技能。</div> : null}
-      {rows.map((row) => (
-        <div className="setting-row" key={row.name}>
-          <div className="setting-text">
-            <div className="setting-label">{row.name}</div>
-            <div className="setting-help">{row.description === '' ? row.source : row.description}</div>
-          </div>
-          <div className="setting-control">
-            {row.toggleable === false ? (
-              <span className="settings-note">由插件提供，不可单独启停</span>
-            ) : (
-              <button
-                type="button"
-                className={`switch${row.enabled ? ' on' : ''}`}
-                role="switch"
-                aria-checked={row.enabled}
-                aria-label={`${row.name} 开关`}
-                onClick={() => {
-                  toggle(row)
-                }}
-              />
-            )}
-          </div>
-        </div>
-      ))}
-      <div className="settings-note">
-        装技能不在界面里做：它是系统文件选择器 + 复制进 <code>~/.dsc/skills/</code> 的写入口，
-        界面通道与原生桥都（有意地）没有放行。要在桌面端装，请用旧界面或设置里的那条入口；
-        命令行可以用 <code>msc</code> 的相关指令。
-      </div>
-      {note === '' ? null : <div className="settings-note error">{note}</div>}
-    </div>
-  )
 }
 
 /** 插件启停不住设置里：主区有独立整页（`plugins` 插件复制旧界面 PluginsView）。 */

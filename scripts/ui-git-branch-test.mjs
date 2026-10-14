@@ -63,6 +63,23 @@ console.log('[2] 输入框那颗钮的接线')
   check('读数取宿主快照面 surfaces.git（壳不自己拍 git）', composer.includes("(surfaces as Record<string, unknown>)['git']") && !composer.includes('git-status'))
   check('投影缺席 / 不是仓库时回落空读数（repo: false）', composer.includes('const EMPTY_GIT: GitSurface') && composer.includes('repo: false'))
   check('不是仓库时整行不画', /\{git\.repo \? \(\s*<div className="composer-git">/.test(composer))
+  // 分支行在输入框**外面**（用户报「git 管理按钮，需要与输入框作出区分」）：插件根节点是
+  // `.composer-stack`（一列两行），`.composer-git` 与带描边的 `.composer`（输入框本体）是兄弟。
+  const iStack = composer.indexOf('"composer-stack"')
+  const iGitRow = composer.indexOf('"composer-git"')
+  const iBox = composer.indexOf('"composer"')
+  const iBar = composer.indexOf('"composer-bar"')
+  check('插件根节点是外面那一列（.composer-stack）', iStack > 0)
+  check(
+    '分支行与输入框是兄弟：列 → 分支行 → 输入框，顺序不能反',
+    iStack > 0 && iGitRow > iStack && iBox > iGitRow && iBar > iBox,
+    `${String(iStack)} / ${String(iGitRow)} / ${String(iBox)} / ${String(iBar)}`,
+  )
+  for (const handler of ['onPaste', 'onDrop', 'onDragOver']) {
+    const at = composer.indexOf(handler)
+    check(`${handler} 仍挂在输入框本体上（命中面 = 看得见的那个框）`, at > iBox && at < iBar)
+  }
+  check('故障便条也在框外那层（不再被外框圈住）', composer.indexOf('shell-composer-fault') > iBar)
   check('钮上显示分支名 + 箭头（无菜单时也读得出在哪条分支）', composer.includes('className="git-branch-name">{git.branch}') && composer.includes('<IconBranch size={13} />'))
   check('菜单展开即重读清单（不复用上次的快照）', /channel\s+\.invoke<GitBranchList>\('dock', \['git-branches', \{\}\]\)/.test(composer))
   check('当前分支滚进视野（分支多的仓库里不必自己找）', composer.includes("querySelector<HTMLElement>('[data-branch-current=\"true\"]')") && composer.includes("scrollIntoView({ block: 'nearest' })"))
@@ -92,6 +109,20 @@ console.log('[2] 输入框那颗钮的接线')
     .filter((token, index, all) => all.indexOf(token) === index)
     .filter((token) => !allCss.includes(`${token}:`))
   check('样式里没有幽灵令牌（每个 var 都在令牌表里定义过）', ghost.length === 0, ghost.join('、'))
+  // 框外那一行的样子：一列两行 + 间距改成「与下面那个框的间隔」+ 钮自己带描边
+  check('外面那一列在样式表里（.composer-stack 是列布局）', /\.composer-stack \{[^}]*display: flex;[^}]*flex-direction: column;/.test(shellCss))
+  check(
+    '分支行的间距改成了「与下面那个框的间隔」（不再是框内的上内距 6px 8px 0）',
+    /\.composer-git \{[^}]*padding: 0 0 6px;/.test(shellCss) && !/\.composer-git \{[^}]*padding: 6px 8px 0;/.test(shellCss),
+  )
+  check(
+    '分支钮自己有描边（与同样有描边的输入框区分开）',
+    /\.model-btn\.git-btn \{[^}]*border: 1px solid var\(--dsc-stroke-3\);/.test(shellCss),
+  )
+  check(
+    'hover / 展开时描边加一档（看得出可点）',
+    /\.model-btn\.git-btn:hover,\s*\n\.model-btn\.git-btn\.open \{[^}]*border-color: var\(--dsc-stroke-2\);/.test(shellCss),
+  )
   check('菜单在输入框**左端**展开（右缘对齐会探出窗口）', /\.model-pop\.git-pop \{[^}]*left: 0[^}]*right: auto/.test(shellCss))
 }
 

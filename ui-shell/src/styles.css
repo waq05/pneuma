@@ -666,6 +666,19 @@
   flex-direction: column;
   min-height: 0;
 }
+/* 空态正文列必须**撑满列宽**，不能收缩到内容宽。
+   原委：这一态给 .chat / .chat-inner 换成了 flex 列，而 legacy 的 `.chat-inner { margin: 0 auto }`
+   在 flex 交叉轴上会**压过 `align-items: stretch`**——auto 外边距要吃掉全部余量，条目于是
+   按内容（欢迎语那两行）收缩到四百多像素。两个后果，用户一次全撞上：
+   1. `--dsc-thread-max` 不再是决定宽度的东西（内容比它窄，max-width 根本不起作用），
+      所以拖两侧的正文宽度条时列宽纹丝不动——把手**卡住不动**；
+   2. ThreadResizer 量的正是 `.chat-inner` 的真实矩形，量到的是「内容边」而不是列缘，
+      两条把手于是落在版心（离输入框左缘只有几十像素），高亮条横穿整格高度压进输入框。
+   `width: 100%` 把宽度交还给 max-width：100% 被 76ch 一夹 = 列宽，剩下那点余量再交给
+   auto 外边距去分，列照旧居中；welcome 里的字自己 `align-items: center`，观感不变。 */
+.thread-main-empty .chat-inner {
+  width: 100%;
+}
 /* 别双推：welcome 自己那条 margin-top:auto（legacy 现成的）在这层没有富余空间可用，
    留着只会和 chat-wrap 上的配对边距打架。下边距 28px 是 welcome 与 composer 的间距，保留。 */
 .thread-main-empty .chat-inner .welcome {
@@ -808,18 +821,39 @@
    点开是分支菜单（搜索 + 清单 + 「新建分支…」）。不是 git 仓库时整行不渲染，
    所以非仓库的工作区里输入区与以前逐像素一样。
 
+   为什么另起一层 `.composer-stack`：这一行原先住在 `.composer` 里面，而 `.composer`
+   是**带描边和圆角的输入框本体**——同一圈外框把分支钮也圈了进去，它看着就成了输入框的
+   一部分（用户报「git 管理按钮，需要与输入框作出区分」）。现在分支行与输入框是框外
+   的兄弟行，各带各的边。
+
    菜单为什么改左对齐：`.model-pop` 默认右缘对齐（`right: 0`），而这颗钮在输入框
    **左端**——按右缘铺开会往左探出 200 多像素，跑到窗口外面去（`.policy-pop` 同一
    处境同一处理）。向上的方向沿用 `.model-pop` 的 `bottom: calc(100% + 10px)`：
    菜单往上翻，不盖住下面正在打字的输入框（参考实现也是锁上方的）。 */
+.composer-stack {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 .composer-git {
   display: flex;
   align-items: center;
-  padding: 6px 8px 0;
+  /* 行搬到框外之后，这里要的是「与下面那个框的间隔」（往下留 6px），
+     不再是原来框内的上内距。左边不缩进：钮的左缘与输入框左缘同一条起跑线。 */
+  padding: 0 0 6px;
 }
 
 .model-btn.git-btn {
+  /* 描边把这一颗读成「一颗钮」：输入框也是同样的描边色，但它是整块方底 + 圆角 8px，
+     这一颗是透明底的小胶囊，加上它在框外单独一行，两者一眼分得开。 */
+  border: 1px solid var(--dsc-stroke-3);
   max-width: 220px;
+}
+
+.model-btn.git-btn:hover,
+.model-btn.git-btn.open {
+  border-color: var(--dsc-stroke-2);
 }
 
 .model-btn .git-branch-name {
