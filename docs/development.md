@@ -195,9 +195,25 @@ export const myPlugin: Plugin.Object = {
 | --- | --- | --- | --- |
 | `KERNEL_API_VERSION` | `src/core/plugin-registry.ts:88` | 6 | 插件能用的扩展点有增减 |
 | `HOST_PROTOCOL_VERSION` | `src/plugins/host-stdio.ts:25` + `desktop/electron/main/protocol.ts` | 2 | 协议消息种类或白名单语义变了 |
+| `NATIVE_BRIDGE_VERSION` | `src/core/native-bridge.ts:69` | 3 | **加操作不涨**；改某个操作的实参或语义才涨 |
 
 两个版本都是「加载时对不上就报错」，不做静默兼容。插件可以声明 `apiVersion`，内核只拒绝
 **高于**自己的版本。
+
+**加一个原生操作 / 事件**（`NATIVE_OPS` / `NATIVE_EVENTS`）要走四处，漏一处编译期就拦：
+
+1. `src/core/native-bridge.ts`：`NATIVE_OPS`（或 `NATIVE_EVENTS`）加名字；
+2. 同文件 `NATIVE_ARG_SPECS` 给实参规格——它是 `Record<NativeOp, …>`，漏写一个编不过；
+3. `desktop/electron/main/index.ts` 的 `NATIVE_HANDLERS` 加实现——同样是 `Record<NativeOp, …>`，
+   漏实现编不过（「白名单」与「真有实现」被绑在一起）；
+4. 要推事件的话主进程 `mainWindow?.webContents.send('dsc:<事件名>', payload)`——preload 的
+   `on()` 是通用转发（按 `NATIVE_EVENT_SET` 拒生名字），不用改。
+
+**加一个设置项**：宿主侧 `src/plugins/settings.ts` 的某个分区 `fields()` 加控件声明、`values()`
+回读、`save()` 加键分派（写进 `core/prefs.ts` 的偏好键）；壳侧不用动（通用表单渲染器按声明画）。
+若这项的值可能「不在选项表里」（派生值，如权限预设的 `custom`），在 select 字段上声明
+`derivedLabelKey`：壳读 `values[该键]` 当显示名，并把这一行渲染成**置灰只读**——派生值本来
+就选不了，画成能点的下拉只会让人以为能选、点了还报错。
 
 ## 6. 数据与文件面
 
@@ -548,6 +564,28 @@ exe 当**桌面端**跑的时候才要清掉它。
 
 原生桥那条「切工作目录」（`switchCwd` / `chooseDirectory` → 宿主重启 + 整页重载）**留着但插件壳
 不再调用**：它的能力等价于「在那个目录里开一条会话」，却要付一次重载的代价（旧渲染层仍走它）。
+
+### 检查更新与就地更新（谁在哪一半）
+
+同一件事分两半，**分界线是「够不够得着 Electron」**：
+
+| 那一半 | 住哪 | 负责 |
+| --- | --- | --- |
+| 问 + 比 + 挑 | `src/core/update-check.ts` | 拉更新源（GitHub Releases API）、比版本、从发布资产里挑安装器（`pickInstaller`）。零副作用，宿主与主进程共用同一份 |
+| 排期 + 下载 + 装 | `desktop/electron/main/update.ts` | 现读 `settings.json` 的 `updateCheck` 排期；下载安装器（进度推 `update-progress`）→ `shell.openPath` 起安装程序 → 退出应用 |
+
+为什么这么切：下载要落文件、装要起进程、装完要退出应用，三件都只有主进程做得来；把「检查」
+留一半在宿主、一半在主进程，两边各存一份状态迟早对不上。所以**宿主侧只剩两个消费者**：
+设置「关于」那颗按钮（回执 `kind:'update'` 时界面给「立即更新」）与 `/update` 命令（只打印）。
+
+界面那侧：品牌行（`Pneuma` 右边）的更新按钮 `ui-shell/src/ui-layout/update-button.tsx` **只在
+`status === 'available'` 时渲染**；挂载时 `checkUpdate` 问一次当前值、再订阅 `update-status`
+（**两件都要**——事件是「之后的变化」，错过开机那一次就再也没有了）。浏览器页签与远程页里没有
+原生桥，整块不渲染。
+
+`desktop.json` 里记 `lastUpdateCheckAt` / `lastUpdateVersion`：前者给 `daily` 档算间隔，后者让
+开窗瞬间就把按钮画出来（不必等网络）。安装器落在 `userData/updates/`，**不自动清理**（安装程序
+可能正在跑），同版本文件名固定，下次下载直接覆盖。
 
 ### 审批判定顺序（`src/plugins/approval.ts:126-152`）
 

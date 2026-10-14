@@ -38,6 +38,10 @@ export interface DesktopState {
   trayHintShown?: boolean
   /** 窗口大小/位置记忆：关窗与退出时由主进程落盘，下次开窗恢复。 */
   windowBounds?: { width: number; height: number; x: number; y: number; maximized: boolean }
+  /** 上次检查更新的时刻（epoch 毫秒）；`daily` 档靠它算「距上次满 24 小时没」。 */
+  lastUpdateCheckAt?: number
+  /** 上次查到的最新版本号；开窗时先用它把更新按钮画出来，不必等网络回来。 */
+  lastUpdateVersion?: string
   /**
    * 界面形态档案：宿主伺服哪份界面资产。
    * `'shell'` = 插件壳产物（`lib/ui/assets`），`'legacy'` 或缺省 = 旧渲染层产物

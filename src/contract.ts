@@ -1395,10 +1395,23 @@ export interface LinkShareData {
   url: string
 }
 
+/**
+ * 「有一个能就地装的新版」的载荷：检查更新发现新版、且发布资产里挑得出安装器时随回执带给界面，
+ * 界面据此在行内给一颗「立即更新」。
+ *
+ * 与 {@link LinkShareData} 的分工：挑得出安装器就就地更新（下载与启动安装程序由桌面主进程做，
+ * 见原生桥的 `installUpdate`）；挑不出安装器才退回打开发布页。
+ */
+export interface UpdateShareData {
+  kind: 'update'
+  /** 更新源上的新版本号（原样，可能带 `v` 前缀）。 */
+  version: string
+}
+
 /** 写入或动作成功时的载荷：提示条文案之外，还可以带一份结构化数据给界面画弹窗。 */
 export interface SettingsMutationOk {
   notice?: string
-  data?: PairShareData | LinkShareData
+  data?: PairShareData | LinkShareData | UpdateShareData
 }
 
 /** 写入或动作的结果：失败原因直接显示在控件下方。 */

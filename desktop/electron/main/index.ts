@@ -17,6 +17,7 @@ import { HostProtocol } from './protocol.js'
 import { closeDockBrowser, disposeDockBrowsers, navigateDockBrowser, registerDockIpc, setDockBrowser } from './dock.js'
 import { readState, resolveHeadlessEntry, writeState } from './dsc-core.js'
 import { readSessionUsage } from './session-usage.js'
+import { ensureChecked, installNow, startUpdateChecks, stopUpdateChecks } from './update.js'
 
 let mainWindow: BrowserWindow | null = null
 let protocol: HostProtocol | null = null
@@ -316,6 +317,7 @@ function showMainWindow(): void {
 /** 退出：先让宿主收尾（超时 2 秒强杀），再 app.quit。关窗与托盘菜单共用这条路径。 */
 function quitApp(): void {
   quitting = true
+  stopUpdateChecks()
   stopHost(() => {
     tray?.destroy()
     tray = null
@@ -791,6 +793,10 @@ const NATIVE_HANDLERS: Readonly<Record<NativeOp, (args: readonly unknown[]) => u
   browserClose: ([id]) => {
     closeDockBrowser(String(id))
   },
+  /** 问一次更新状态（本次运行还没问过就顺手补一次，见 update.ts 的 ensureChecked）。 */
+  checkUpdate: () => ensureChecked(),
+  /** 就地更新：下载安装器 → 起安装程序 → 退出应用。返回 { ok } 或 { ok:false, error }。 */
+  installUpdate: () => installNow(),
 }
 
 /**
@@ -1097,6 +1103,9 @@ if (!gotLock) {
     registerIpc()
     registerDockIpc()
     createWindow()
+    // 检查更新排期：时机现读 settings.json，所以改设置不用重启就生效（见 update.ts）。
+    // 退出动作复用托盘那条「完全退出」——装完要真的把应用关掉，安装器才换得动文件。
+    startUpdateChecks({ window: () => mainWindow, quit: quitApp })
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()

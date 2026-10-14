@@ -101,7 +101,7 @@ for (const name of FORBIDDEN) {
  * （一个弹框取路径、一个写一行记忆），补进来。**注意：加 op 忘了补这里会红**，
  * 探针拦的正是"冒出一个没见过的动词"。
  */
-const ACTION_VERBS = ['set', 'use', 'save', 'choose', 'pick', 'remember', 'switch', 'recent', 'remove', 'open', 'install', 'session', 'notify', 'restart', 'quit', 'terminal', 'dock', 'browser']
+const ACTION_VERBS = ['set', 'use', 'save', 'choose', 'pick', 'remember', 'switch', 'recent', 'remove', 'open', 'install', 'session', 'notify', 'restart', 'quit', 'terminal', 'dock', 'browser', 'check']
 const oddVerbs = NATIVE_OPS.filter(
   (op) => !ACTION_VERBS.some((verb) => op.toLowerCase().startsWith(verb)),
 )
@@ -125,6 +125,14 @@ check('browserNav 正常一次通过（带 id）', validateNativeCall('browserNa
 check('browserNav 不带 id 也通过（缺省那一台）', validateNativeCall('browserNav', ['https://a.example', 'load']).ok === true)
 check('browserNav 的 id 类型不对被拒', rejects('browserNav', ['https://a.example', 'load', 7]))
 check('browserClose 要一个 id', validateNativeCall('browserClose', ['t1']).ok === true && rejects('browserClose', []) && rejects('browserClose', [7]))
+
+console.log('\n── 检查更新两件套（2026-10：检查与安装都归主进程）──')
+check('桥里有 checkUpdate（无实参）', NATIVE_OP_SET.has('checkUpdate') && Array.isArray(NATIVE_ARG_SPECS.checkUpdate) && NATIVE_ARG_SPECS.checkUpdate.length === 0)
+check('桥里有 installUpdate（无实参：地址由主进程定，页面递不进 URL）', NATIVE_OP_SET.has('installUpdate') && NATIVE_ARG_SPECS.installUpdate.length === 0)
+check('checkUpdate 不接受任何实参', validateNativeCall('checkUpdate', []).ok === true && rejects('checkUpdate', ['https://evil.test/x.exe']))
+check('installUpdate 不接受任何实参', validateNativeCall('installUpdate', []).ok === true && rejects('installUpdate', ['https://evil.test/x.exe']))
+check('事件白名单里有 update-status', NATIVE_EVENT_SET.has('update-status'))
+check('事件白名单里有 update-progress', NATIVE_EVENT_SET.has('update-progress'))
 
 console.log('\n── 供应链写入口：桥有、界面通道没有 ──')
 for (const name of ['installSkill', 'installPlugin', 'installMarketSkill', 'setMarketSources', 'setUiTrust']) {

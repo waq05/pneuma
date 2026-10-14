@@ -293,6 +293,11 @@ function GenericFields({ section, extra }: { section: SettingsSectionView; extra
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [note, setNote] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
   /**
+   * 刚查到的那一版（非空 = 能就地装）：在说明旁边给一颗「立即更新」。
+   * 只在这一屏有效——关掉设置面板再打开，那颗按钮就没了（那时看品牌行那颗）。
+   */
+  const [updateReady, setUpdateReady] = useState('')
+  /**
    * 挂着的「手机连接」弹窗：宿主动作带回配对数据时打开，关掉置空。
    * 连触发它的动作名一起记下来——弹窗里的「重新生成」要再调一次同一个动作。
    */
@@ -357,6 +362,7 @@ function GenericFields({ section, extra }: { section: SettingsSectionView; extra
 
   const act = (action: string): void => {
     setNote(null)
+    setUpdateReady('')
     void channel
       .invoke<SettingsMutation>('runSettingAction', [section.id, action])
       .then((result) => {
@@ -364,16 +370,19 @@ function GenericFields({ section, extra }: { section: SettingsSectionView; extra
           setNote({ tone: 'error', text: `操作失败：${result.error}` })
           return
         }
-        // 回执除了 `notice` 还可能带一份结构化载荷，两种各走各的出口：
+        // 回执除了 `notice` 还可能带一份结构化载荷，三种各走各的出口：
         //   - 配对码：它是「要一直看得见」的东西，开弹窗画码（一行说明一闪就没了，
         //     用户错过就得重新生成，而重新生成又会作废上一张）；
-        //   - 链接（检查更新发现新版）：说明照走行内提示，发布页交给系统浏览器。
+        //   - 新版可装：说明走行内提示，旁边就地给一颗「立即更新」（下载与安装由桌面
+        //     主进程做，见 ui-layout/update-button.tsx 与 desktop/electron/main/update.ts）；
+        //   - 只有发布页（挑不出安装器）：说明照走，页面交给系统浏览器。
         const data = result.data
         if (data?.kind === 'pair-code') {
           setPair({ action, data })
         } else {
           if (result.notice !== undefined) setNote({ tone: 'ok', text: result.notice })
           if (data?.kind === 'url') openExternal(data.url)
+          if (data?.kind === 'update') setUpdateReady(data.version)
         }
         reload()
       })
@@ -609,6 +618,30 @@ function GenericFields({ section, extra }: { section: SettingsSectionView; extra
         )
       })}
       {note === null ? null : <div className={`settings-note${note.tone === 'error' ? ' error' : ''}`}>{note.text}</div>}
+      {/* 查到能就地装的新版：说明旁边就地给一颗「立即更新」。点下去是桌面主进程去下载、
+          起安装程序、退出应用——壳这边只报「装」这个意图（见 update-button.tsx 的说明）。 */}
+      {updateReady === '' ? null : (
+        <div className="settings-note">
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => {
+              setUpdateReady('')
+              const native = getHostNative()
+              if (!native.available) {
+                setNote({ tone: 'error', text: '就地更新要用桌面外壳的原生桥，浏览器页签里没有它' })
+                return
+              }
+              setNote({ tone: 'ok', text: `正在下载 ${updateReady} 的安装包…下载完会启动安装程序并退出本应用` })
+              void native.invoke<{ ok: boolean; error?: string }>('installUpdate').then((result) => {
+                if (!result.ok) setNote({ tone: 'error', text: `更新失败：${result.error ?? '未知原因'}` })
+              })
+            }}
+          >
+            立即更新
+          </button>
+        </div>
+      )}
       {/* 配对码弹窗：自己 createPortal 挂到 body（面板祖先有 overflow/backdrop-filter），
           所以摆在这儿只借用状态，位置不受这层容器影响。 */}
       {pair === null ? null : (

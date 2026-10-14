@@ -152,6 +152,23 @@ export const NATIVE_OPS = [
    * 的渲染进程都还活着。页签没了就得真的销毁，否则开开关关一路攒下去。
    */
   'browserClose',
+  /**
+   * 检查更新：问一次更新源，返回当前状态（形状见 {@link NATIVE_EVENTS} 里的 `update-status`）。
+   *
+   * 为什么整套更新住在桥而不是界面通道：**检查**宿主做得来（`core/update-check`），
+   * **装**做不了——下载要落文件、装要起安装程序、装完要退出应用，三件都是 Electron
+   * 主进程的事。把「检查」放一边、「安装」放另一边，两边各存一份状态迟早对不上；
+   * 索性整套交给主进程：它自己排期（现读 `~/.dsc/settings.json` 的 `updateCheck`）、
+   * 自己下载、自己起安装程序。宿主那侧只有设置页那颗按钮与 `/update` 命令在问版本号。
+   */
+  'checkUpdate',
+  /**
+   * 就地更新：下载安装器（进度经 `update-progress` 推）→ 启动安装程序 → 退出本应用。
+   *
+   * 下载地址由主进程从**它自己拉到的发布资产**里挑，页面只说「装」、递不进任何 URL——
+   * 与 `installPlugin` 那几条同一取向：能执行外部代码的入口只认既定动作，不收任意地址。
+   */
+  'installUpdate',
 ] as const
 
 /** 桥能推给页面的事件（订阅入口按它白名单，别的名字直接拒）。 */
@@ -170,6 +187,21 @@ export const NATIVE_EVENTS = [
    * 旧做法是就地 `loadURL` 到同一台视图，那等于把用户正在看的页面顶掉。
    */
   'browser-open-requested',
+  /**
+   * 更新状态：`{ status, version?, pageUrl?, assetName?, size?, error? }`。
+   *
+   * `status` 五档：`idle`（这一档不自动查）/ `checking` / `latest` / `available` / `error`。
+   * 排期检查与手动 `checkUpdate` 的结果都从这里推；壳挂载时先 `checkUpdate` 取一次当前值
+   * （事件是「之后的变化」，错过开机那一次就再也没有了），再订阅这条。
+   */
+  'update-status',
+  /**
+   * 下载进度：`{ received, total, percent }`（`total` 未知时 `percent` 为 null）。
+   *
+   * 为什么不复用 `update-status`：进度是高频小包，状态是低频事实，混在一条事件里会让
+   * 订阅方每次进度回调都要重判一遍状态。
+   */
+  'update-progress',
 ] as const
 
 /** 桥认得的一个事件名。 */
@@ -356,6 +388,10 @@ export const NATIVE_ARG_SPECS: Readonly<Record<NativeOp, readonly ArgSpec[]>> = 
   ],
   /** 关掉一台内嵌浏览器视图：`[id]`（页签关了 / 切会话了就真的销毁，别只藏起来）。 */
   browserClose: [{ shape: { kind: 'string', max: MAX_ID } }],
+  /** 检查更新：无实参。更新源与本地版本都由主进程定，页面无从指定。 */
+  checkUpdate: [],
+  /** 就地更新：无实参（地址由主进程从自己拉到的发布资产里挑）。 */
+  installUpdate: [],
 }
 
 /** 一次桥调用的校验结果：过了就带收窄后的操作名与实参，没过给一句能读的错。 */

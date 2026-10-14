@@ -43,9 +43,9 @@ import {
   writeTemperature,
 } from '../core/config-store.js'
 import { DSC_SKILLS_DIR } from '../core/skills.js'
-import { checkForUpdate, UPDATE_CHECK_URL } from '../core/update-check.js'
+import { fetchLatestRelease, pickInstaller, UPDATE_CHECK_URL } from '../core/update-check.js'
 import { derivedPresetLabel } from '../core/permission-presets.js'
-import { DEFAULT_MARKET_SOURCES, readPrefs, writePrefs, type DscPrefs } from '../core/prefs.js'
+import { DEFAULT_MARKET_SOURCES, readPrefs, writePrefs, UPDATE_CHECK_MODES, type DscPrefs, type UpdateCheckMode } from '../core/prefs.js'
 import { KERNEL_API_VERSION } from '../core/plugin-registry.js'
 import { DSC_PLUGINS_DIR } from '../core/plugin-loader.js'
 import { DSC_VERSION } from '../core/version.js'
@@ -75,6 +75,13 @@ const POLICY_OPTIONS = [
 const REVIEWER_OPTIONS = [
   { value: 'user', label: '本人审阅，弹卡等你点' },
   { value: 'auto-review', label: 'AI 复核，不确定时再问你' },
+]
+
+/** 检查更新时机的三档文案（值表与读档归一在 core/prefs 的 UPDATE_CHECK_MODES）。 */
+const UPDATE_CHECK_OPTIONS = [
+  { value: 'launch', label: '每次启动' },
+  { value: 'daily', label: '每天一次' },
+  { value: 'off', label: '不检查' },
 ]
 
 const EFFORT_OPTIONS = [
@@ -433,8 +440,15 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
           {
             type: 'button',
             label: '检查更新',
-            help: '对比更新源上的最新版本；发现新版会打开发布页',
+            help: '对比更新源上的最新版本；能就地装就给「立即更新」，否则打开发布页',
             action: 'check-update',
+          },
+          {
+            type: 'select',
+            key: 'updateCheck',
+            label: '自动检查',
+            options: UPDATE_CHECK_OPTIONS,
+            help: '什么时候自动去问更新源；桌面端在启动后按这一档排期',
           },
           {
             type: 'info',
@@ -452,13 +466,29 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
           { type: 'info', label: '插件目录', text: DSC_PLUGINS_DIR, mono: true, copyable: true },
         ]
       },
-      values: () => ({}),
+      values: () => ({ updateCheck: prefs.updateCheck }),
+      async save(key, value) {
+        if (key !== 'updateCheck') throw new Error(`未知的设置项 ${key}`)
+        const mode = String(value) as UpdateCheckMode
+        if (!UPDATE_CHECK_MODES.includes(mode)) throw new Error(`未知的检查时机 ${value}`)
+        savePrefs({ updateCheck: mode })
+        // 桌面主进程每次排期都现读这个文件，所以这里不用通知它——改完下一拍就生效。
+        return { notice: mode === 'off' ? '已停止自动检查更新' : `已设为${UPDATE_CHECK_OPTIONS.find((option) => option.value === mode)?.label ?? mode}检查` }
+      },
       async action(name) {
         // 口径照其它分区：失败抛错（mutate 接住变成 { ok:false, error }），成功返回文案 + 可选载荷。
         if (name !== 'check-update') throw new Error(`关于分区没有动作 ${name}`)
-        const result = await checkForUpdate()
+        const result = await fetchLatestRelease()
         if (!result.ok) throw new Error(result.error)
-        return { notice: result.notice, data: result.data }
+        if (!result.update) return { notice: `已是最新（${DSC_VERSION}）` }
+        const notice = `发现新版 ${result.info.version}（当前 ${DSC_VERSION}）`
+        // 挑得出安装器就让界面给「立即更新」；挑不出（自托管源没有 assets、或资产名不合规）
+        // 才退回打开发布页——别给一颗按下去没反应的按钮。
+        const installer = pickInstaller(result.info.assets, result.info.version)
+        if (installer === null) {
+          return { notice, data: result.info.pageUrl === '' ? undefined : { kind: 'url', url: result.info.pageUrl } }
+        }
+        return { notice, data: { kind: 'update', version: result.info.version } }
       },
     }
 

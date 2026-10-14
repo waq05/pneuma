@@ -48,11 +48,24 @@ export interface DscPrefs {
   marketSources: MarketSource[]
   /** 点窗口右上角 X 时缩到系统托盘而不是退出（桌面端主进程读这个值）。 */
   closeToTray: boolean
+  /** 检查更新的时机（桌面端主进程读这个值：它才够得着网络与安装程序）。 */
+  updateCheck: UpdateCheckMode
   /** 侧栏界面偏好（会话排序、工作区顺序与显示名别名）。 */
   ui: UiPrefsView
   /** 远程控制偏好（手机浏览器接入；见 plugins/remote.ts）。 */
   remote: RemotePrefs
 }
+
+/**
+ * 检查更新的时机。
+ *
+ * 为什么是「时机」而不是「开关」：检查要联网，用户对「什么时候花这个流量」比
+ * 「要不要这个功能」更敏感。三档覆盖了常见诉求，不设「每 N 小时」那种需要用户算的档。
+ */
+export type UpdateCheckMode = 'launch' | 'daily' | 'off'
+
+/** 三档的可选值（读档归一与设置页选项共用同一张表）。 */
+export const UPDATE_CHECK_MODES: readonly UpdateCheckMode[] = ['launch', 'daily', 'off']
 
 /** 远程控制的开关（设置 → 远程控制）。 */
 export interface RemotePrefs {
@@ -230,6 +243,9 @@ export function readPrefs(): DscPrefs {
     defaultPreset: '',
     marketSources: [...DEFAULT_MARKET_SOURCES],
     closeToTray: true,
+    // 出厂每次启动查一次：更新源是一次只读的 GitHub API 调用，代价很小；
+    // 不想让它联网的用户在设置里改「不检查」。
+    updateCheck: 'launch',
     ui: {
       sessionSort: 'manual',
       sessionGroup: 'workspace',
@@ -261,6 +277,10 @@ export function readPrefs(): DscPrefs {
     const doc = JSON.parse(readFileSync(DSC_SETTINGS_JSON, 'utf8')) as Record<string, unknown>
     if (typeof doc.closeToTray === 'boolean') {
       prefs.closeToTray = doc.closeToTray
+    }
+    // 检查更新时机：认不出的值回落「每次启动」（缺键也一样——老 settings.json 里没有它）。
+    if (typeof doc.updateCheck === 'string' && UPDATE_CHECK_MODES.includes(doc.updateCheck as UpdateCheckMode)) {
+      prefs.updateCheck = doc.updateCheck as UpdateCheckMode
     }
     if (typeof doc.ui === 'object' && doc.ui !== null) {
       const ui = doc.ui as Record<string, unknown>

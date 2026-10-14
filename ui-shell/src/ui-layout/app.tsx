@@ -57,6 +57,7 @@ import { getHostNative } from '@dsc/ui-primitives'
 import type { UiSlots } from '../plugin-api'
 import { setShellPage, useShellPage } from './page-state'
 import { setThreadView, useThreadView } from './thread-view'
+import { UpdateButton } from './update-button'
 import { useChannelStatus, useHostError, useHostHello, useHostSelector } from './runtime-context'
 import { ReviewPane } from './review-pane'
 
@@ -311,8 +312,8 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
     <>
       <div className="app" data-rail={sidebarCollapsed ? '1' : '0'}>
         <aside className={`sidebar${sidebarCollapsed ? ' rail' : ''}`}>
-          {/* 品牌行（旧界面同款）：logo + 名字 + 行尾的收起钮。整行是窗口拖拽区
-              （legacy `.sidebar-header`），按钮靠 `.rail-toggle` 自带 no-drag——没有
+          {/* 品牌行（旧界面同款）：logo + 名字 + 更新钮 + 行尾的收起钮。整行是窗口拖拽区
+              （legacy `.sidebar-header`），按钮靠各自的类自带 no-drag——没有
               这个类名点击会被当拖窗口吞掉（「点了没反应」的根因）。 */}
           <div
             className="sidebar-header"
@@ -321,6 +322,8 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
           >
             <img src="icon.png" alt="Pneuma" draggable={false} />
             <span className="brand">{boot.host.name}</span>
+            {/* 有新版时才出现（自己判空：没新版时它渲染 null）。名字右边、收起钮左边。 */}
+            <UpdateButton />
             <button
               type="button"
               className="icon-btn rail-toggle"

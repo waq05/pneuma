@@ -1850,3 +1850,31 @@
     animation: none;
   }
 }
+
+/* 品牌行右缘的更新按钮（`ui-layout/update-button.tsx`）：只在真有新版时出现，
+   贴在 `Pneuma` 右边。为什么用强调色底：它是这一行里唯一的可点实体，也是
+   「有件事等你做」的信号——与旁边那颗无色的收起钮分开，别让用户以为是一类东西。
+   整行是窗口拖拽区，所以必须 no-drag（同 `.rail-toggle`，否则点击被当拖窗口吞掉）。 */
+.update-btn {
+  -webkit-app-region: no-drag;
+  padding: 2px var(--dsc-sp-2);
+  border: none;
+  border-radius: var(--dsc-r-pill);
+  background: var(--dsc-accent);
+  color: var(--dsc-text-on-accent);
+  font-family: inherit;
+  font-size: var(--dsc-fs-label);
+  font-weight: 600;
+  line-height: 1.6;
+  cursor: pointer;
+}
+
+.update-btn:hover {
+  background: var(--dsc-fill-secondary);
+  color: var(--dsc-text-primary);
+}
+
+.update-btn:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
