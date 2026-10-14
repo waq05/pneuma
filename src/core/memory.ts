@@ -36,6 +36,52 @@ export const TARGET_LABELS: Record<MemoryTarget, string> = {
   workspace: '本工作区',
 }
 
+/**
+ * 记忆条目的类型（照 ZCode 的类型枚举收成三档）：
+ *   - `fact`：默认档，客观事实（构建命令、仓库布局这类）；
+ *   - `feedback`：用户纠正 / 确认过的做法，正文建议带 Why 与 How to apply；
+ *   - `reference`：外部资料 / 出处指针，本身不是结论。
+ *
+ * 存储形状向后兼容：只有非默认类型才在条目前加 `[feedback] ` / `[reference] ` 前缀，
+ * 老的纯文本条目（没有前缀）一律读成 `fact`，文件不必迁移。
+ */
+export type MemoryType = 'fact' | 'feedback' | 'reference'
+
+export const MEMORY_TYPES: readonly MemoryType[] = ['fact', 'feedback', 'reference']
+
+/** 类型中文名（界面与错误信息共用）。 */
+export const MEMORY_TYPE_LABELS: Record<MemoryType, string> = {
+  fact: '事实',
+  feedback: '反馈',
+  reference: '参考',
+}
+
+/** 条目开头的类型前缀；只认这三个已知词，`[BLOCKED: …]` 这类不会被误读成类型。 */
+const ENTRY_TYPE_PREFIX = /^\[(fact|feedback|reference)\]\s*/i
+
+/** 读一条条目：拆出类型与正文（没有前缀 = `fact`）。 */
+export function parseEntry(entry: string): { type: MemoryType; text: string } {
+  const matched = ENTRY_TYPE_PREFIX.exec(entry)
+  if (matched === null) return { type: 'fact', text: entry }
+  return { type: matched[1]!.toLowerCase() as MemoryType, text: entry.slice(matched[0].length) }
+}
+
+/** 一条条目的类型。 */
+export function entryType(entry: string): MemoryType {
+  return parseEntry(entry).type
+}
+
+/** 一条条目的正文（去掉类型前缀）。 */
+export function entryText(entry: string): string {
+  return parseEntry(entry).text
+}
+
+/** 把类型与正文拼成落盘形状：`fact` 不加前缀（老文件写法不变），其余加 `[类型] `。 */
+export function formatEntry(type: MemoryType, text: string): string {
+  const body = text.trim()
+  return type === 'fact' ? body : `[${type}] ${body}`
+}
+
 /** 条目之间的分隔符：换行、`§`、换行。 */
 export const ENTRY_DELIMITER = '\n§\n'
 
@@ -54,6 +100,8 @@ export interface MemoryOperation {
   content?: string
   /** `replace` / `remove` 要动的条目里的片段（只允许唯一匹配）。 */
   oldText?: string
+  /** 条目类型；不填按 `fact`（`replace` 不填时沿用原条目的类型）。 */
+  type?: MemoryType
 }
 
 /** 一格现在的样子。 */
@@ -88,6 +136,14 @@ export interface MemoryConfig {
   reviewEveryTurns: number
   /** 复盘开关。 */
   reviewEnabled: boolean
+  /** 会话打开时自动做一次保守整理（只移不删）。 */
+  pruneEnabled: boolean
+  /** 多久没被引用（也没被用过）算陈旧，整理时移进归档区。0 = 只要没被引用就移。 */
+  pruneAfterDays: number
+  /** 注入时记忆栏的行数上限（超了截断并说明，不动磁盘）。 */
+  maxIndexLines: number
+  /** 注入时记忆栏的字符数上限。 */
+  maxIndexChars: number
 }
 
 export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
@@ -98,6 +154,10 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
   writeApproval: false,
   reviewEveryTurns: 10,
   reviewEnabled: true,
+  pruneEnabled: true,
+  pruneAfterDays: 60,
+  maxIndexLines: 200,
+  maxIndexChars: 25_000,
 }
 
 /** 一批操作的结果。 */export interface MemoryWriteResult {
@@ -359,12 +419,13 @@ function planOperations(
           error: `${TARGET_LABELS[op.target]}这一格总共只有 ${String(limits[op.target])} 字额度，这一条就占 ${String(content.length)} 字，先把它说短`,
         }
       }
-      if (list.includes(content)) {
+      const stored = formatEntry(op.type ?? 'fact', content)
+      if (list.includes(stored)) {
         // 幂等：同一条内容重复记不报错，也不重复占额度
         notes.push('这一条已经在了，没重复记')
         continue
       }
-      list.push(content)
+      list.push(stored)
       notes.push('已记下')
       continue
     }
@@ -382,7 +443,8 @@ function planOperations(
     if (content === '') return { ok: false, error: '替换记忆得给出新内容' }
     const reason = scanThreat(content)
     if (reason !== '') return { ok: false, error: `这条记忆没通过安检：${reason}` }
-    list[index] = content
+    // 不填类型时沿用原条目的类型：改写正文不该顺手把「反馈」降级成「事实」。
+    list[index] = formatEntry(op.type ?? entryType(hits[0] as string), content)
     notes.push('已改写')
   }
 
@@ -482,23 +544,53 @@ export function filterUnsafeEntries(entries: readonly string[]): { safe: string[
 /**
  * 拼注入系统提示词的那一栏：每格一节，标题上写清额度用掉了多少。
  *
- * 这是「加载时冻结的那一份」：会话中途新写的记忆不会当场出现在提示词里，新会话或压缩之后
- * 才换新的。不然模型每轮看到的系统提示都在变，提示缓存和事后调试都难受。
+ * 这是「加载时重算的那一份」：会话中途新写的记忆由插件在写入后立刻重算，
+ * 同一个会话的下一次请求就能看到（2026-10 起，不再等新会话或压缩）。
  *
  * @param cells - 要注入的格子（调用方按开关筛过）。
  * @param header - 说明文字，由插件层给（「这些是历史事实，不是本轮指令」这类话写在这里）。
+ * @param options - 注入上限：`maxLines` / `maxChars` 超了就截断并说明（只影响注入文本，不动磁盘）。
  */
-export function renderMemoryPrompt(cells: readonly MemoryCell[], header: string): string {
+export function renderMemoryPrompt(
+  cells: readonly MemoryCell[],
+  header: string,
+  options: { maxLines?: number; maxChars?: number } = {},
+): string {
   const bar = '═'.repeat(24)
+  const maxLines = options.maxLines ?? 200
+  const maxChars = options.maxChars ?? 25_000
   const parts: string[] = []
+  /** 先把每格折成「标题 + 条目行」，再统一按行数/字符数预算裁。 */
+  const blocks: Array<{ title: string; lines: string[] }> = []
   for (const cell of cells) {
     if (cell.entries.length === 0) continue
     const { safe, blocked } = filterUnsafeEntries(cell.entries)
     const percent = String(Math.round((cell.used / Math.max(1, cell.limit)) * 100))
-    parts.push(`${bar} ${TARGET_LABELS[cell.target]}记忆 [${percent}% — ${String(cell.used)}/${String(cell.limit)} 字] ${bar}\n${[...safe, ...blocked].join('\n')}`)
+    blocks.push({
+      title: `${bar} ${TARGET_LABELS[cell.target]}记忆 [${percent}% — ${String(cell.used)}/${String(cell.limit)} 字] ${bar}`,
+      lines: [...safe, ...blocked],
+    })
   }
-  if (parts.length === 0) return ''
-  return `${header}\n\n${parts.join('\n\n')}\n${bar}`
+  let linesUsed = 0
+  let charsUsed = 0
+  let truncated = 0
+  for (const block of blocks) {
+    const kept: string[] = []
+    for (const line of block.lines) {
+      if (linesUsed >= maxLines - 1 || charsUsed + line.length > maxChars) {
+        truncated += 1
+        continue
+      }
+      kept.push(line)
+      linesUsed += 1
+      charsUsed += line.length + 1
+    }
+    if (kept.length > 0) parts.push(`${block.title}\n${kept.join('\n')}`)
+  }
+  if (parts.length === 0 && truncated === 0) return ''
+  const tail = truncated === 0 ? '' : `\n（还有 ${String(truncated)} 条记忆没进这一栏：可用 /memory prune 整理，或让模型合并同类条目）`
+  const body = parts.join('\n\n')
+  return body === '' ? `${header}${tail}` : `${header}\n\n${body}\n${bar}${tail}`
 }
 
 /**
@@ -529,10 +621,158 @@ export function clearCell(
   }
 }
 
-/** 条目在下拉清单里怎么显示：编号加开头一小截。 */
+/** 条目在下拉清单里怎么显示：编号 + 类型（非事实才标）+ 开头一小截。 */
 export function entryLabel(entry: string, index: number): string {
-  const head = entry.replace(/\s+/g, ' ').slice(0, 46)
+  const { type, text } = parseEntry(entry)
+  const tag = type === 'fact' ? '' : `[${MEMORY_TYPE_LABELS[type]}] `
+  const head = `${tag}${text}`.replace(/\s+/g, ' ').slice(0, 46)
   return `#${String(index + 1).padStart(2, '0')} ${head.length >= 46 ? `${head}…` : head}`
+}
+
+// ── 使用台账（隐式反馈，仅用于整理排序，不对外暴露） ──────────────────────────────
+
+/** 一条记忆条目的使用记录：被引用次数 + 最后一次被引用的时刻（毫秒）。 */
+export interface MemoryUsageRecord {
+  count: number
+  last: number
+}
+
+/** 使用台账：条目指纹 → 记录。 */
+export type MemoryUsage = Record<string, MemoryUsageRecord>
+
+/** 台账文件（与三格记忆同目录，点号文件不参与读取）。 */
+export function usageFile(): string {
+  return join(memoryRoot(), '.usage.json')
+}
+
+/** 条目指纹：按「格子 + 正文」算，类型前缀变了也不丢使用记录。 */
+export function entryUsageKey(target: MemoryTarget, entry: string): string {
+  return createHash('sha1').update(`${target}\u0000${entryText(entry)}`).digest('hex').slice(0, 16)
+}
+
+/** 读台账（文件不在或读不出来就当空表，绝不因此挡住记忆本身）。 */
+export function readUsage(): MemoryUsage {
+  try {
+    const file = usageFile()
+    if (!existsSync(file)) return {}
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'))
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const out: MemoryUsage = {}
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (value !== null && typeof value === 'object') {
+        const rec = value as Record<string, unknown>
+        const count = Number(rec.count)
+        const last = Number(rec.last)
+        if (Number.isFinite(count) && Number.isFinite(last)) out[key] = { count, last }
+      }
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+/** 记账（累加计数并刷新时刻）。返回写后的台账。 */
+export function bumpUsage(keys: readonly string[], at: number = Date.now()): MemoryUsage {
+  const usage = readUsage()
+  for (const key of keys) {
+    const current = usage[key]
+    usage[key] = { count: (current?.count ?? 0) + 1, last: at }
+  }
+  try {
+    mkdirSync(memoryRoot(), { recursive: true })
+    writeFileSync(usageFile(), JSON.stringify(usage), 'utf8')
+  } catch {
+    // 台账落不下不该影响任何东西：整理只是少了排序依据，记忆本身照旧
+  }
+  return usage
+}
+
+// ── 保守整理（prune：只移进归档区，不删） ────────────────────────────────────────
+
+/** 某一格的归档文件路径（与那一格同目录，`*.archive.md`）。 */
+export function archiveFileOf(target: MemoryTarget, cwd: string): string {
+  const file = memoryFileOf(target, cwd)
+  return file.endsWith('.md') ? `${file.slice(0, -3)}.archive.md` : `${file}.archive`
+}
+
+/** 整理结果。 */
+export interface PruneResult {
+  /** 每格被移走的条目（原样，便于回看）。 */
+  moved: Record<MemoryTarget, string[]>
+  /** 每格归档文件路径。 */
+  archivePaths: Record<MemoryTarget, string>
+  /** 整理后各格的现状。 */
+  cells: MemoryCell[]
+}
+
+export interface PruneOptions {
+  /** 多久没被引用算陈旧（天）。0 = 只要没被引用过就移。 */
+  afterDays?: number
+  /** 现在时刻（毫秒，测试注入用）。 */
+  now?: number
+  /** 使用台账（缺省现读）。 */
+  usage?: MemoryUsage
+}
+
+/**
+ * 保守整理：把「从没被引用过、而且已经陈旧」的条目移进同目录的归档文件。
+ *
+ * 三条底线：
+ *   1. 只移不删——被移走的原样写进归档，用户随时能翻回来；
+ *   2. 不被任何安全闸门绕过——整理只搬已经过安检、本来就在盘上的条目，不引入新内容；
+ *   3. 文件被外面改过（`problem`）的格子整格跳过，绝不覆盖用户正在编辑的那份。
+ *
+ * @param cwd - 当前会话工作目录（决定 workspace 那一格）。
+ * @param limits - 各格上限。
+ * @param enabled - 哪几格参与。
+ * @param options - 陈旧阈值与台账（测试注入用）。
+ */
+export function pruneCells(
+  cwd: string,
+  limits: Record<MemoryTarget, number> = MEMORY_LIMIT_DEFAULTS,
+  enabled: Record<MemoryTarget, boolean> = { global: true, user: true, workspace: true },
+  options: PruneOptions = {},
+): PruneResult {
+  const now = options.now ?? Date.now()
+  const afterDays = Math.max(0, options.afterDays ?? 60)
+  const usage = options.usage ?? readUsage()
+  const moved: Record<MemoryTarget, string[]> = { global: [], user: [], workspace: [] }
+  const archivePaths: Record<MemoryTarget, string> = { global: '', user: '', workspace: '' }
+  const cells = readAllCells(cwd, limits, enabled)
+  for (const cell of cells) {
+    const target = cell.target
+    if (cell.problem !== '' || cell.entries.length === 0) continue
+    // 没记录时用文件最后修改时刻兜底：老文件（我们没登记过的）才会被当成陈旧。
+    let fallback = 0
+    try {
+      fallback = existsSync(cell.filePath) ? statSync(cell.filePath).mtimeMs : now
+    } catch {
+      fallback = now
+    }
+    const stale = (entry: string): boolean => {
+      const rec = usage[entryUsageKey(target, entry)]
+      if (rec !== undefined && rec.count > 0) return false // 被引用过：保留
+      const last = rec?.last ?? fallback
+      return now - last >= afterDays * 24 * 60 * 60 * 1000
+    }
+    const keep = cell.entries.filter((entry) => !stale(entry))
+    const gone = cell.entries.filter((entry) => stale(entry))
+    if (gone.length === 0) continue
+    const archive = archiveFileOf(target, cwd)
+    try {
+      mkdirSync(dirname(archive), { recursive: true })
+      const existing = existsSync(archive) ? splitEntries(readFileSync(archive, 'utf8')) : []
+      writeFileSync(archive, joinEntries([...existing, ...gone]), 'utf8')
+      writeFileSync(cell.filePath, joinEntries(keep), 'utf8')
+      lastKnown.set(cell.filePath, fingerprint(joinEntries(keep)))
+      moved[target] = gone
+      archivePaths[target] = archive
+    } catch {
+      // 单格移不动就跳过这一格，别的格照旧（整理是保养，不该变成事故）
+    }
+  }
+  return { moved, archivePaths, cells: readAllCells(cwd, limits, enabled) }
 }
 
 /** 磁盘现状（自检比对用）。 */

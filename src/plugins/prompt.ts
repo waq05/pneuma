@@ -55,8 +55,8 @@ export const promptPlugin: Plugin.Object = {
   provide: 'prompt',
   apply(ctx, passed) {
     let budget = readBudget(passed)
-    /** 附加提示段：id → {顺序, 取文本}。同名后注册者顶掉先注册的，退订只撤自己那一份。 */
-    const sections = new Map<string, { order: number; text: () => string }>()
+    /** 附加提示段：id → {顺序, 取文本, 归并目标}。同名后注册者顶掉先注册的，退订只撤自己那一份。 */
+    const sections = new Map<string, { order: number; text: () => string; block?: 'agents-md' }>()
     /**
      * 骨架过滤器表：id → 取舍函数。按登记顺序串起来应用（前一个的输出是后一个的输入）。
      * 模式（presets 插件）登记的那一位把「做事方式」「工具规范」这类段摘掉，
@@ -111,7 +111,7 @@ export const promptPlugin: Plugin.Object = {
 
     const service: PromptService = {
       register(id, text, options) {
-        sections.set(id, { order: options?.order ?? 60, text })
+        sections.set(id, { order: options?.order ?? 60, text, block: options?.block })
         return () => {
           if (sections.get(id)?.text === text) sections.delete(id)
         }
@@ -129,7 +129,7 @@ export const promptPlugin: Plugin.Object = {
         const out: PromptContribution[] = []
         for (const [id, entry] of sections) {
           try {
-            out.push({ id, order: entry.order, text: entry.text() })
+            out.push({ id, order: entry.order, text: entry.text(), ...(entry.block === undefined ? {} : { block: entry.block }) })
           } catch {
             // 一个插件把提示词生成崩了，不该让这一轮请求整个失败：这段本轮跳过。
             void id

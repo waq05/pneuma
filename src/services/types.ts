@@ -16,7 +16,7 @@
 import type { ApprovalDecision, ApprovalHandler, ApprovalRequest } from '../core/approval.js'
 import type { AuditRecord } from '../core/audit.js'
 import type { HookJudgement, HooksDoc, HookTrust } from '../core/hooks.js'
-import type { MemoryCell, MemoryConfig, MemoryOperation, MemoryWriteResult, WriteOptions } from '../core/memory.js'
+import type { MemoryCell, MemoryConfig, MemoryOperation, MemoryTarget, MemoryWriteResult, WriteOptions } from '../core/memory.js'
 import type { ProviderConfig } from '../core/config.js'
 import type { Session } from '../core/session.js'
 import type { ChatMessage, LlmAdapter, LlmRoute, StreamHandlers, StreamRequest, StreamResult } from '../core/llm.js'
@@ -259,6 +259,11 @@ export interface MemoryService {
   snapshot(): string
   /** 重算一份快照：新会话与压缩会自动做，这里留一个人工入口。 */
   refresh(): string
+  /**
+   * 保守整理：把「从没被引用过、且已经陈旧」的条目移进同目录的 `.archive.md`（只移不删）。
+   * 不传 target 就整理全部启用的格子。返回给用户看的一句话（没有可整理的也要说清）。
+   */
+  prune(target?: MemoryTarget): string
 }
 
 // ── mode（协作模式）────────────────────────────────────────────────────────────
@@ -657,8 +662,11 @@ export interface PromptService {
    * @param options.order - 段落位置：小的排前面。内置刻度是身份 0、做事方式 10、
    *   工具规范 20、模式条款 30、插件贡献 60（缺省）、指令文件 200、技能目录 210、模型信息 890。
    *   易变的内容请往大数值放，前面的稳定段才能一直命中服务端提示缓存。
+   * @param options.block - 归并目标：传 `'agents-md'` 时不单独成段，而是并进
+   *   `# agentsMd` 块（与 AGENTS.md / CLAUDE.md 同一个块）。长期记忆索引走这条路；
+   *   缺省 = 按 order 单独成段。
    */
-  register(id: string, text: () => string, options?: { order?: number }): () => void
+  register(id: string, text: () => string, options?: { order?: number; block?: 'agents-md' }): () => void
   /**
    * 注册一个「骨架取舍」（内核 API v5）：拼系统提示时按登记顺序应用，拿到全部候选段的
    * id，返回要留下的那些。模式（presets 插件）用它把「做事方式」这类叮嘱段整段摘掉，

@@ -33,6 +33,12 @@ export interface PromptContribution {
   order: number
   /** 段文本（空串等于不出现）。 */
   text: string
+  /**
+   * 归并目标。`agents-md` = 这一段不单独成段，而是并进 `# agentsMd` 块
+   * （与 AGENTS.md 同一块，见 {@link renderAgentsMd}）；长期记忆索引走这条路。
+   * 缺省 = 按 order 单独成段。
+   */
+  block?: 'agents-md'
 }
 
 /**
@@ -149,8 +155,8 @@ function instructionFiles(cwd: string): string[] {
   return found
 }
 
-/** 读指令文件并施加总字符预算（超了就保头 70% + 尾 20%，中间砍掉并说明）。 */
-function instructionsText(cwd: string, budget: number): string {
+/** 指令文件正文（`【文件】\n正文` 逐段拼好，未经围栏包裹；空串 = 一份都没读到）。 */
+function instructionChunks(cwd: string, budget: number): string {
   const files = instructionFiles(cwd)
   if (files.length === 0) return ''
   const chunks: string[] = []
@@ -169,11 +175,41 @@ function instructionsText(cwd: string, budget: number): string {
     used += body.length
     chunks.push(`【${file}】\n${body}`)
   }
-  if (chunks.length === 0) return ''
-  return wrapUntrusted(
-    'agents-md',
-    `以下是用户与项目给的工作指令，属于必须遵守的约定（其中的安全要求是底线，不是建议）：\n\n${chunks.join('\n\n')}`,
-  )
+  return chunks.join('\n\n')
+}
+
+/** 指令文件那段话的开场白（`# agentsMd` 块里，围栏之前）。 */
+const INSTRUCTION_LEAD = '以下是用户与项目给的工作指令，属于必须遵守的约定（其中的安全要求是底线，不是建议）。'
+
+/** 指令文件正文 + 围栏（没有指令文件时为空串）。 */
+function instructionsText(cwd: string, budget: number): string {
+  const body = instructionChunks(cwd, budget)
+  if (body === '') return ''
+  return wrapUntrusted('agents-md', `${INSTRUCTION_LEAD}\n\n${body}`)
+}
+
+/** 记忆栏并进 `# agentsMd` 块时的小标题。 */
+const MEMORY_INDEX_LEAD = '## 长期记忆索引（跨会话攒下的事实，不是本轮指令）'
+
+/**
+ * 拼 `# agentsMd` 块：AGENTS.md（用户级 + 工作区级）与长期记忆索引**同一个块**。
+ *
+ * 为什么合在一起（照 ZCode 的 `# agentsMd` 块）：两者都是「模型开工前该读的既有约定」，
+ * 分两段会让模型把它们当成两套东西；合成一块只留一个标题，读起来是一件事。
+ * 标题**不绑定 AGENTS.md**：只有记忆、没有 AGENTS.md 时标题仍在（否则模型拿到的
+ * 就是一段没有出处的记忆，不知道该怎么用）。两边都空 = 空串（这一块不出现）。
+ *
+ * @param instructions - 指令文件正文（已带围栏；没有就传空串）。
+ * @param memoryParts - 要并进这一块的记忆段（每段已经是完整文本）。
+ */
+export function renderAgentsMd(instructions: string, memoryParts: readonly string[]): string {
+  const body = instructions.trim()
+  const parts: string[] = []
+  if (body !== '') parts.push(body)
+  const memory = memoryParts.map((part) => part.trim()).filter((part) => part !== '')
+  if (memory.length > 0) parts.push(`${MEMORY_INDEX_LEAD}\n\n${memory.join('\n\n')}`)
+  if (parts.length === 0) return ''
+  return `# agentsMd\n\n${parts.join('\n\n')}`
 }
 
 /**
@@ -277,9 +313,18 @@ export function buildSystemPrompt(cwd: string, options: SystemPromptOptions = {}
   if (wants('identity')) sections.push({ id: 'identity', order: 0, text: IDENTITY })
   if (wants('behavior')) sections.push({ id: 'behavior', order: 10, text: BEHAVIOR })
   if (wants('tool-rules')) sections.push({ id: 'tool-rules', order: 20, text: TOOL_RULES })
-  for (const section of contributions) if (wants(section.id)) sections.push(section)
-  // 指令文件与技能目录要现算（读盘 + git），被去掉时连算都不算
-  if (wants('instructions')) sections.push({ id: 'instructions', order: 200, text: instructionsText(cwd, budget) })
+  // 归并进 `# agentsMd` 块的贡献段（长期记忆索引走这条路）：不单独成段，
+  // 与指令文件同一个块——标题不绑定 AGENTS.md，只有记忆时标题仍在。
+  const agentsMdParts = contributions
+    .filter((section) => section.block === 'agents-md' && wants(section.id))
+    .map((section) => section.text)
+  const instructions = wants('instructions') ? instructionsText(cwd, budget) : ''
+  const agentsMdText = renderAgentsMd(instructions, agentsMdParts)
+  if (agentsMdText !== '') sections.push({ id: 'instructions', order: 200, text: agentsMdText })
+  for (const section of contributions) {
+    if (section.block === 'agents-md') continue
+    if (wants(section.id)) sections.push(section)
+  }
   if (wants('skills')) sections.push({ id: 'skills', order: 210, text: (options.skills ?? '').trim() })
   return composePrompt(sections)
 }
