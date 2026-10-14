@@ -771,7 +771,7 @@ export const memoryPlugin: Plugin.Object = {
       if (userTurns % config.reviewEveryTurns !== 0) return
       reviewing = true
       try {
-        ctx.agent.followup(reviewPrompt(cells()))
+        ctx.agent.followup(reviewPrompt(cells()), undefined, undefined, 'notice')
       } catch (error) {
         reviewing = false
         ctx.emit('dsc/notice', `记忆复盘没能启动：${errText(error)}`)

@@ -527,7 +527,7 @@ export const selfImprovePlugin: Plugin.Object = {
       writeState({ pluginInitiated: true })
       pending = what
       try {
-        ctx.agent.followup(prompt)
+        ctx.agent.followup(prompt, undefined, undefined, 'notice')
       } catch (error) {
         pending = null
         writeState({ pluginInitiated: false })

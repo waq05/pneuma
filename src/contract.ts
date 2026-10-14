@@ -1520,10 +1520,23 @@ export interface RuntimeSnapshot {
    */
   subagents: Array<{ sessionPath: string; state: SessionRunState }>
   /**
-   * 排队中的用户输入（0.6.67）：回合跑动中提交、还没被这一轮认领的那些。
-   * 输入框下方的队列条照它画；空数组 = 不画那条。
+   * 排队中的**用户**输入（0.6.67）：回合跑动中提交、还没被这一轮认领的那些。
+   * 输入框下方的队列条照它画（可以编辑 / 撤掉 / 插话）；空数组 = 不画那条。
+   *
+   * 只含用户来源（`InboxOrigin` 的 `'user'`）——机器发起的唤醒不进这里，见 `notices`。
    */
   queued: QueuedMessageView[]
+  /**
+   * 待投递的**非用户**通知：回合跑动中到达、还没落到对话历史的机器唤醒
+   * （队友汇报、后台作业完成、目标续跑、定时补投……）。输入框**上方**的只读
+   * 「待投递通知」条照它画——这些不是人打的字，不给人编辑 / 撤掉 / 插话，
+   * 也不把原始标记（`<teammate-report …>` 之类）直接上屏，压成一句含来源的人话。
+   * 空数组 = 不画那条。
+   *
+   * 与 `queued` 同源（会话的 `async-inbox` 状态条目）：出账（drainInbox）后两者
+   * 都清掉、落成对话里的一条 user 消息，模型侧对来源无感知。
+   */
+  notices: NoticeMessageView[]
 }
 
 /**
@@ -1533,11 +1546,27 @@ export interface RuntimeSnapshot {
  * 所以界面不画气泡，画队列条。
  */
 export interface QueuedMessageView {
-  /** 在队列里的位置（0 在最前）：编辑 / 删除 / 插话都按它定位。 */
+  /** 在收件箱里的位置（0 在最前）：编辑 / 删除 / 插话都按它定位。 */
   index: number
   text: string
   /** 随消息一起排队的图片（data URL 清单）。 */
   images?: string[]
+}
+
+/**
+ * 一条待投递的非用户通知（对照 dsh 带来源的持久消息，落进对话流前的样子）。
+ *
+ * 与 {@link QueuedMessageView} 同源同生命周期，差别只在**只读**：机器唤醒没有
+ * 「编辑 / 撤掉 / 插话」这三件事（它不代表人的意图），界面只显示一句摘要。
+ * 刻意单开一个面而不是给 `QueuedMessageView` 加 `origin` 字段：两条带的组件、
+ * 动作、样式完全不同（一条可交互、一条只读），分面后壳的两处渲染各自只读自己
+ * 那一份，不会在「这条到底能不能编辑」上再判一次来源。
+ */
+export interface NoticeMessageView {
+  /** 在收件箱里的位置（渲染层当 key 用；不用于动作定位）。 */
+  index: number
+  /** 通知原文（含宿主投递的标记文本）；界面负责压成一行摘要，不直接上屏原文。 */
+  text: string
 }
 
 /**

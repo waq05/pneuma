@@ -198,7 +198,8 @@ export const schedulePlugin: Plugin.Object = {
         return { baseUrl: route.baseUrl, apiKey: route.apiKey, model: route.model }
       },
       deliver: (text) => {
-        ctx.agent.followup(text)
+        // 定点任务是机器发起的投递：跑动中入箱时标 notice，画在输入框上方的只读通知条。
+        ctx.agent.followup(text, undefined, undefined, 'notice')
       },
       waiting: () => ctx.waiting.any,
       sessionId: () => ctx.session.current().meta.id,

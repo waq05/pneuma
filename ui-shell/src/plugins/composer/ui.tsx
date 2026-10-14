@@ -42,7 +42,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 /** DOM 原生键盘事件（`window.addEventListener` 用；React 的 KeyboardEvent 是另一个类型）。 */
 type WindowKeyboardEvent = globalThis.KeyboardEvent
-import { IconArrowUp, IconBranch, IconCheck, IconChevronDown, IconClose, IconEdit, IconLayers, IconPlus, IconQueue, IconSearch, IconShield, IconStop, IconTrash } from '@dsc/ui'
+import { IconArrowUp, IconBranch, IconCheck, IconChevronDown, IconClose, IconEdit, IconLayers, IconPlus, IconQueue, IconSearch, IconShield, IconSpark, IconStop, IconTrash } from '@dsc/ui'
 import {
   HUMAN_WAIT_TIMEOUT_MS,
   defineUiPlugin,
@@ -58,9 +58,11 @@ import {
   type PermissionPresetSurface,
   type PresetSurface,
   type PresetView,
+  type NoticeMessageView,
   type QueuedMessageView,
 } from '@dsc/ui'
 import { useMention } from './mention'
+import { summarizeNotice } from './notice-summary'
 import { filteredBranches, wouldOverwrite, type GitBranchRow } from './git-branch'
 
 /** 输入框自动增高的上限（旧界面同一个值：200px）。 */
@@ -100,6 +102,9 @@ export default defineUiPlugin({
   name: '输入区',
   apply(ui) {
     // order 50 = 排在各种卡（审批/提问/计划，order 10-40）下面、排队条（60）上面。
+    // order 40 = 待投递通知条，与三张卡同一条带（输入框上方）；order 60 = 用户排队条，
+    // 在输入框**下面**。
+    ui.slots.register('shell.composer', { id: 'composer.notices', order: 40 }, NoticeStrip)
     ui.slots.register('shell.composer', { id: 'composer.box', order: 50 }, ComposerBox)
     ui.slots.register('shell.composer', { id: 'composer.queue', order: 60 }, QueueDock)
   },
@@ -109,7 +114,7 @@ function ComposerBox(): ReactNode {
   const channel = useHostChannel()
   const turnState = useHostSelector(readTurnState)
   const blocked = useHostSelector(readHasApproval)
-  const queuedCount = useHostSelector(readQueuedCount)
+  const queuedCount = useHostSelector(readInboxCount)
   const permissionPresets = useHostSelector(readPermissionPresets, samePermissionPresets)
   const preset = useHostSelector(readPresetSurface, samePresetSurface)
   const git = useHostSelector(readGit, sameGit)
@@ -967,6 +972,38 @@ function previewOf(text: string): string {  const flat = text.replace(/\s+/g, ' 
 type ActOutcome = 'ok' | 'rejected' | 'failed'
 
 /**
+ * 待投递通知条（对照 dsh 的 turn-trigger 行）：回合跑动中到达的**机器**唤醒
+ * （队友汇报、审查 findings、传话、后台作业完成、定时补投……）还没交给模型时，
+ * 在输入框**上方**露一行。与下面的排队条（用户输入）分开：这一条**只读**——
+ * 没有编辑 / 撤掉 / 插话三颗钮（机器消息不代表人的意图），也不把 `<teammate-report …>`
+ * 这类原始标记上屏，由 {@link summarizeNotice} 压成一句含来源的人话。
+ *
+ * 队列空了整块不渲染（与排队条一致，不留空壳把输入框顶出一条间距）。
+ */
+function NoticeStrip(): ReactNode {
+  const notices = useHostSelector(readNotices, sameNotices)
+  if (notices.length === 0) return null
+  return (
+    <div className="notice-strip" data-notice-strip="">
+      {notices.map((item) => {
+        const summary = summarizeNotice(item.text)
+        return (
+          <div className="notice-row" key={item.index}>
+            <span className="notice-lead" aria-hidden="true">
+              <IconSpark size={13} />
+            </span>
+            <span className="notice-label" data-tip={summary.detail === '' ? summary.label : summary.detail}>
+              {summary.label}
+            </span>
+            {summary.detail === '' ? null : <span className="notice-detail">{summary.detail}</span>}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
  * 排队消息条（对照旧界面 `queue-dock.tsx`）。
  *
  * 折叠语义照抄：1 条时没有头行、那一行自带队列图标；多条默认折叠、点头行展开；
@@ -1321,9 +1358,18 @@ function samePresetSurface(left: PresetSurface, right: PresetSurface): boolean {
   })
 }
 
-function readQueuedCount(snapshot: HostSnapshot | null): number {
-  const value = snapshot?.['queued']
-  return Array.isArray(value) ? value.length : 0
+/**
+ * 收件箱里还排着几条（用户队列 + 机器通知，**两个面之和**）。
+ *
+ * 用途只有一个：提交时按它算「这条新消息会排到收件箱第几位」，好让紧随的
+ * `steerQueued(index)` 提到队首。必须数**整条收件箱**而不是只数 `queued`——
+ * 队列条的面拆开后，用户消息在收件箱里的下标仍要跨过排在前面的机器通知，
+ * 只数用户队列会把插话打到别的条目上。
+ */
+function readInboxCount(snapshot: HostSnapshot | null): number {
+  const queued = snapshot?.['queued']
+  const notices = snapshot?.['notices']
+  return (Array.isArray(queued) ? queued.length : 0) + (Array.isArray(notices) ? notices.length : 0)
 }
 
 function readQueued(snapshot: HostSnapshot | null): readonly QueuedMessageView[] {
@@ -1333,6 +1379,24 @@ function readQueued(snapshot: HostSnapshot | null): readonly QueuedMessageView[]
 
 /** 空队列常量：引用稳定，选择器（默认比较）才拦得住重渲染。 */
 const EMPTY_QUEUE: readonly QueuedMessageView[] = Object.freeze([])
+
+/** 待投递通知的相等判断：内容没变就不重渲染（宿主每帧都可能给新数组）。 */
+function sameNotices(left: readonly NoticeMessageView[], right: readonly NoticeMessageView[]): boolean {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  return left.every((item, index) => {
+    const other = right[index]
+    return other !== undefined && item.index === other.index && item.text === other.text
+  })
+}
+
+function readNotices(snapshot: HostSnapshot | null): readonly NoticeMessageView[] {
+  const value = snapshot?.['notices']
+  return Array.isArray(value) ? (value as NoticeMessageView[]) : EMPTY_NOTICES
+}
+
+/** 空通知常量：同 EMPTY_QUEUE 的理由。 */
+const EMPTY_NOTICES: readonly NoticeMessageView[] = Object.freeze([])
 
 /**
  * git 读数投影（当前分支 + 改动计数）。宿主那片是**轻读**（一条分支名 + 数一数

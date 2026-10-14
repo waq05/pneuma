@@ -36,6 +36,27 @@ export interface SessionNote {
   ts?: number
 }
 
+/**
+ * 收件箱条目的来源（对照 dsh 的「用户消息 vs 带来源的持久消息」）。
+ *
+ *   - `'user'`：用户亲手打的字（含界面提交、老调用点缺省）——出账前画输入框下方的
+ *     「排队消息」条，可以编辑 / 撤掉 / 插话；
+ *   - `'notice'`：机器发起的唤醒（队友汇报、后台作业完成、目标续跑、定时补投……）——
+ *     出账前画输入框上方的只读「待投递通知」条，不给人编辑 / 撤掉 / 插话。
+ *
+ * 两条路落库后都是同一条 `user` 消息（模型侧无差别）；这个来源只在**出账前**用于
+ * 界面分流，不落进消息、不参与重放（见 {@link SessionStateMap} 的 `async-inbox`）。
+ */
+export type InboxOrigin = 'user' | 'notice'
+
+/** 收件箱里的一条：正文 + 可选图 + 可选来源（缺省按 `'user'` 算，老状态条目兼容）。 */
+export interface AsyncInboxItem {
+  text: string
+  images?: string[]
+  /** 来源；老状态条目没有这个字段，读时按 `'user'` 兜底。 */
+  origin?: InboxOrigin
+}
+
 type SessionRecord =
   | ({ type: 'meta' } & SessionMeta)
   /**
@@ -148,13 +169,17 @@ export interface SessionStateMap {
    */
   'env-facts': { hash: string; text: string }
   /**
-   * 异步输入收件箱（loop 写）：回合跑动中到达、还没落到对话历史的 user 消息
-   * （轮中途插话、后台作业完成通知、定时补投……）。它们不能直接 appendUser——
+   * 异步输入收件箱（loop 写）：回合跑动中到达、还没落到对话历史的输入
+   * （轮中途插话、后台作业完成通知、队友汇报、定时补投……）。它们不能直接 appendUser——
    * 若此刻还有没落结果的 tool 调用，就会插在 tool_calls 和结果中间，网关按
    * 「结果必须紧跟 tool_calls」判 400（0.6.47 修的夹层）。对照 dsh 的
    * next-step inbox：到达与入史拆成两段，步骤边界才出账。
+   *
+   * `origin` 记这条是用户来源还是机器来源：出账前界面据此分两条带画（用户输入画
+   * 输入框下方的队列条、机器通知画输入框上方的只读通知条，见 {@link InboxOrigin}）；
+   * 出账后两者都落成同一条 `user` 消息，来源不再有用。
    */
-  'async-inbox': { items: Array<{ text: string; images?: string[] }> }
+  'async-inbox': { items: AsyncInboxItem[] }
 }
 
 /**
@@ -702,27 +727,36 @@ export class Session {
   }
 
   /**
-   * 异步输入入箱：回合跑动中到达的 user 消息先在这里排队（state 条目持久化，
-   * 重启不丢），等 loop 在步骤边界/回合收尾时出账落库。见 {@link SessionStateMap} 的
+   * 异步输入入箱：回合跑动中到达的输入先在这里排队（state 条目持久化，重启不丢），
+   * 等 loop 在步骤边界/回合收尾时出账落库。见 {@link SessionStateMap} 的
    * `async-inbox` 注释。
+   * @param origin - 这条是用户来源还是机器来源（缺省 `'user'`，老调用点行为不变）。
+   *   只有 `'notice'` 会被记进条目（`'user'` 保持条目形状与老状态一致，读时兜底）。
    */
-  enqueueAsync(text: string, images?: string[]): void {
+  enqueueAsync(text: string, images?: string[], origin: InboxOrigin = 'user'): void {
     const current = this.state('async-inbox')?.items ?? []
     this.appendState('async-inbox', {
-      items: [...current, images !== undefined && images.length > 0 ? { text, images } : { text }],
+      items: [
+        ...current,
+        {
+          text,
+          ...(images !== undefined && images.length > 0 ? { images } : {}),
+          ...(origin === 'notice' ? { origin } : {}),
+        },
+      ],
     })
   }
 
   /**
-   * 收件箱只读快照：界面照它画输入框下方的「排队消息」条（0.6.67）。只偷看，
-   * 不取货也不动日志——取货是 {@link takeAsyncInbox}。
+   * 收件箱只读快照：界面照它画输入框下方的「排队消息」条（用户来源）与输入框上方的
+   * 「待投递通知」条（机器来源）。只偷看，不取货也不动日志——取货是 {@link takeAsyncInbox}。
    */
-  asyncInbox(): ReadonlyArray<{ text: string; images?: string[] }> {
+  asyncInbox(): ReadonlyArray<AsyncInboxItem> {
     return this.state('async-inbox')?.items ?? []
   }
 
   /**
-   * 改一条排队中的异步输入（正文换掉，图片不动）。越界或改成空白当空操作。
+   * 改一条排队中的异步输入（正文换掉，图片与来源不动）。越界或改成空白当空操作。
    * @returns 是否真的改了（调用方据此决定要不要让界面刷新）。
    */
   editAsync(index: number, text: string): boolean {
@@ -730,7 +764,11 @@ export class Session {
     const current = items[index]
     if (current === undefined || text.trim() === '') return false
     const keptImages = current.images !== undefined && current.images.length > 0 ? current.images : undefined
-    items[index] = keptImages === undefined ? { text } : { text, images: keptImages }
+    items[index] = {
+      text,
+      ...(keptImages === undefined ? {} : { images: keptImages }),
+      ...(current.origin === undefined ? {} : { origin: current.origin }),
+    }
     this.appendState('async-inbox', { items })
     return true
   }
@@ -763,7 +801,7 @@ export class Session {
    * 收件箱出账：取走全部排队中的异步输入并清空条目。空箱是常见路径，不动日志。
    * 取走后由调用方负责 appendUser 落库（顺序上保证 tool 结果已闭合）。
    */
-  takeAsyncInbox(): Array<{ text: string; images?: string[] }> {
+  takeAsyncInbox(): AsyncInboxItem[] {
     const items = this.state('async-inbox')?.items ?? []
     if (items.length > 0) this.appendState('async-inbox', { items: [] })
     return items

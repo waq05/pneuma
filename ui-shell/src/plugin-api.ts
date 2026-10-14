@@ -399,6 +399,7 @@ export type {
   ModelChoiceView,
   ModelConfigView,
   Modality,
+  NoticeMessageView,
   PairShareData,
   PlanDecision,
   PlanEntryView,

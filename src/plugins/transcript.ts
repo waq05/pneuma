@@ -15,8 +15,31 @@ import type { Plugin } from '@deepseek-ai/cordis'
 import { Transcript } from '../adapter/transcript.js'
 import { estimateSessionCostCny, isDeepseekProvider, isPeakHour } from '../core/pricing.js'
 import { emptySegments } from '../core/token-estimate.js'
-import type { PlanView, RuntimeSnapshot, StatusView, TranscriptEntry } from '../contract.js'
+import type { NoticeMessageView, PlanView, QueuedMessageView, RuntimeSnapshot, StatusView, TranscriptEntry } from '../contract.js'
+import type { AsyncInboxItem } from '../core/session.js'
 import type { TranscriptService } from '../services/types.js'
+
+/**
+ * 收件箱按来源拆两个面：用户来源 → `queued`（输入框下方队列条），机器来源 →
+ * `notices`（输入框上方只读通知条）。`index` 一律保留它在收件箱里的原始位置
+ * （不重新发号）——队列条的动作（编辑 / 撤掉 / 插话）就是按这个下标打到收件箱上的。
+ */
+function splitInbox(items: readonly AsyncInboxItem[]): { queued: QueuedMessageView[]; notices: NoticeMessageView[] } {
+  const queued: QueuedMessageView[] = []
+  const notices: NoticeMessageView[] = []
+  items.forEach((item, index) => {
+    if (item.origin === 'notice') {
+      notices.push({ index, text: item.text })
+      return
+    }
+    queued.push({
+      index,
+      text: item.text,
+      ...(item.images !== undefined && item.images.length > 0 ? { images: item.images } : {}),
+    })
+  })
+  return { queued, notices }
+}
 
 export const transcriptPlugin: Plugin.Object = {
   name: 'transcript',
@@ -248,14 +271,11 @@ export const transcriptPlugin: Plugin.Object = {
           sessionsLoading: ctx.session.loading,
           sessionStates,
           subagents,
-          // 排队中的输入（0.6.67）：收件箱是当前会话 state 里的一条，界面照它画
-          // 输入框下方的队列条。index 就是它在队伍里的位置（0 = 队首）：编辑 / 删除 /
-          // 插话都按它定位，渲染层也拿它当 key。
-          queued: ctx.session.current().asyncInbox().map((item, index) => ({
-            index,
-            text: item.text,
-            ...(item.images !== undefined && item.images.length > 0 ? { images: item.images } : {}),
-          })),
+          // 收件箱按来源拆两个面（0.6.67）：用户来源画输入框下方的队列条（可编辑 /
+          // 撤掉 / 插话），机器来源画输入框上方的只读通知条。两面的 `index` 都是它在
+          // 收件箱里的**原始位置**（0 = 队首）——队列条的动作按它定位、渲染层拿它当 key；
+          // 拆面时不能重新发号，否则编辑 / 撤掉会打到别的条目上。
+          ...splitInbox(ctx.session.current().asyncInbox()),
         }
         snapshot = built
         return built

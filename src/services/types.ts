@@ -18,7 +18,7 @@ import type { AuditRecord } from '../core/audit.js'
 import type { HookJudgement, HooksDoc, HookTrust } from '../core/hooks.js'
 import type { MemoryCell, MemoryConfig, MemoryOperation, MemoryTarget, MemoryWriteResult, WriteOptions } from '../core/memory.js'
 import type { ProviderConfig } from '../core/config.js'
-import type { Session } from '../core/session.js'
+import type { Session, InboxOrigin } from '../core/session.js'
 import type { ChatMessage, LlmAdapter, LlmRoute, StreamHandlers, StreamRequest, StreamResult } from '../core/llm.js'
 import type { FileChangeSummary, ToolEntry } from '../core/tools.js'
 import type { CoreEvent } from '../core/events.js'
@@ -607,13 +607,15 @@ export interface CompactService {
 /** Agent 服务：ReAct 循环的对外操作面（0.6.48 起按会话常驻多 agent）。 */
 export interface AgentService {
   /**
-   * 提交一条用户消息（排队执行）。
+   * 提交一条消息（排队执行）。
    * @param images - 随消息发送的图片（data URL 清单）。
    * @param sessionId - 目标会话（meta.id）。缺省投给当前查看的会话；指定时投给那个
    *   会话的常驻 agent（跑动中进收件箱、闲置的唤醒一轮后台回合），没有常驻 agent
    *   就写进会话文件等用户回去再说（不打断也不抢跑）。
+   * @param origin - 这条是用户来源还是机器来源（缺省 `'user'`）。只影响回合跑动中入箱
+   *   时界面把它画在输入框上方（机器通知）还是下方（用户排队）——见 `InboxOrigin`。
    */
-  followup(text: string, images?: string[], sessionId?: string): void
+  followup(text: string, images?: string[], sessionId?: string, origin?: InboxOrigin): void
   /**
    * 取消在跑的回合。缺省停当前查看的会话；指定 jsonl 路径时停那个**后台**会话
    * （路径语义与 sessionFor/isRunning/stop 一致，侧栏的行标识就是路径）——

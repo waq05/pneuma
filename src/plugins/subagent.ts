@@ -39,7 +39,7 @@ import { REJECTED_TOOL_TEXT, Session, teammateRoot } from '../core/session.js'
 import { redact } from '../core/secrets.js'
 import { argsSummary, type ToolContext, type ToolEntry } from '../core/tools.js'
 import { ToolGuardRegistry, toolApprovalGuard } from '../core/tool-guards.js'
-import { inboxAppend, TEAMMATE_REPORT_OPEN } from '../core/team-board.js'
+import { inboxAppend, REVIEW_FINDINGS_OPEN, TEAMMATE_REPORT_OPEN } from '../core/team-board.js'
 import type { EffortLevel, SettingsField, SettingsValue, TeammateView, TranscriptEntry } from '../contract.js'
 import type { ReviewService, ReviewSpawnRequest, ReviewSpawnResult, SettingsSectionSpec, TeamService } from '../services/types.js'
 import { reviewMessage } from '../core/git-info.js'
@@ -524,7 +524,7 @@ ${body}
         const parent = teammates.get(teammate.parent)
         if (parent !== undefined) {
           inboxAppend(parent.name, notice)
-          parent.agent.followup(notice)
+          parent.agent.followup(notice, undefined, 'notice')
           return
         }
       }
@@ -535,7 +535,9 @@ ${body}
       // 才写文件等用户回去看到——不打断也不抢跑。
       const parentResident = ctx.agent.hasAgent(teammate.parentSession.meta.id)
       if (config.notify === 'auto' && (live || parentResident)) {
-        ctx.agent.followup(notice, undefined, teammate.parentSession.meta.id)
+        // 队友汇报是机器发起的唤醒：跑动中入箱时标 notice，界面画在输入框上方的
+        // 只读通知条（不是输入框下方的用户队列条），不给人编辑 / 撤掉 / 插话。
+        ctx.agent.followup(notice, undefined, teammate.parentSession.meta.id, 'notice')
         ctx.transcript.system(`${line}，汇报已${live ? '并入下一轮' : '投进后台会话'}`)
       } else {
         // 静默，或者父会话的 agent 已收摊：话写进它所属的那个会话文件，
@@ -677,7 +679,7 @@ ${body}
             : teammate.lastText === ''
               ? '审查没有留下文字结论。'
               : teammate.lastText
-      const notice = `<review-findings teammate="${teammate.name}" state="${state}">\n${body}\n</review-findings>`
+      const notice = `${REVIEW_FINDINGS_OPEN}teammate="${teammate.name}" state="${state}">\n${body}\n</review-findings>`
       const line = `审查队友 ${teammate.name}，${state}`
       teammate.parentSession.appendUser(notice)
       const live = ctx.session.current() === teammate.parentSession

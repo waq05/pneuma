@@ -228,7 +228,7 @@ export const goalPlugin: Plugin.Object = {
         const reminder = service.takeGoalRound()
         if (reminder === null) return
         ctx.transcript.system(`目标自动续跑：继续推进「${service.goalView()?.objective ?? ''}」`)
-        ctx.agent.followup(reminder)
+        ctx.agent.followup(reminder, undefined, undefined, 'notice')
       }, 0)
     })
 

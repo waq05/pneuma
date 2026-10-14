@@ -36,6 +36,15 @@ export const INBOX_DIR = join(TEAM_ROOT, 'inbox')
  */
 export const TEAMMATE_REPORT_OPEN = '<teammate-report '
 
+/**
+ * 审查队友收工投给发起会话的那条 findings，正文固定以这个开头。
+ *
+ * 与 {@link TEAMMATE_REPORT_OPEN} 同一个套路、同一份理由：adapter 靠前缀认出它、
+ * 给条目打 `internal` 标记，界面就不把整段 `<review-findings …>` 当「人打的字」
+ * 原样渲染（那是审查队友的机器汇报，不是用户发言）。插件与 adapter 共用这一份字面量。
+ */
+export const REVIEW_FINDINGS_OPEN = '<review-findings '
+
 /** 任务状态机：pending → in_progress → completed，只有三态，没有中间态。 */
 export type TaskStatus = 'pending' | 'in_progress' | 'completed'
 

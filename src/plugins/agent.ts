@@ -19,7 +19,7 @@
  */
 import { createHash } from 'node:crypto'
 import type { Plugin } from '@deepseek-ai/cordis'
-import { Session } from '../core/session.js'
+import { Session, type InboxOrigin } from '../core/session.js'
 import { MiniAgent } from '../core/loop.js'
 import { appendToolRecord, appendUsageRecord } from '../core/usage-log.js'
 import { clearReadLedger } from '../core/path-policy.js'
@@ -199,14 +199,14 @@ export const agentPlugin: Plugin.Object = {
     }
 
     const service: AgentService = {
-      followup(text: string, images?: string[], sessionId?: string) {
+      followup(text: string, images?: string[], sessionId?: string, origin?: InboxOrigin) {
         if (sessionId === undefined) {
-          if (active !== null) active.followup(text, images)
+          if (active !== null) active.followup(text, images, origin)
           return
         }
         const agent = agents.get(sessionId)
         if (agent !== undefined) {
-          agent.followup(text, images)
+          agent.followup(text, images, origin)
           return
         }
         deliverToDormant(sessionId, text, images)

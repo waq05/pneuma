@@ -2987,6 +2987,51 @@
   border-color: var(--dsc-stroke-1);
 }
 
+/* ── 待投递通知条（机器唤醒，输入框上方、只读）：队友汇报 / 审查 findings / 作业完成 ──
+   与输入框下方的排队条（.queue-dock）分开：这一条不可编辑、不可撤、不可插话，
+   只把宿主投递的标记文本压成一句人话。样式沿用卡片的底色与描边，观感与三张等待卡
+   同一条带。 */
+.notice-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.notice-row {
+  align-items: center;
+  background: var(--dsc-bg-card);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-block);
+  color: var(--dsc-text-secondary);
+  display: flex;
+  font-size: var(--dsc-fs-caption);
+  gap: 8px;
+  min-height: var(--dsc-row-h);
+  padding: 3px 10px;
+}
+
+.notice-lead {
+  color: var(--dsc-text-quaternary);
+  display: flex;
+  flex-shrink: 0;
+}
+
+.notice-label {
+  color: var(--dsc-text-secondary);
+  flex-shrink: 0;
+}
+
+.notice-detail {
+  color: var(--dsc-text-quaternary);
+  flex: 1;
+  font-size: var(--dsc-fs-label);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ══════════ 插件管理页 ══════════ */
 
 .plugins {

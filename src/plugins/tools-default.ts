@@ -92,7 +92,7 @@ export const toolsDefaultPlugin: Plugin.Object = {
         const timer = setTimeout(() => {
           noticeTimers.delete(key)
           const merged = (pendingNotices.get(key) ?? []).splice(0)
-          if (merged.length > 0) ctx.agent.followup(merged.join('\n'), undefined, owner)
+          if (merged.length > 0) ctx.agent.followup(merged.join('\n'), undefined, owner, 'notice')
         }, 800)
         timer.unref?.()
         noticeTimers.set(key, timer)
