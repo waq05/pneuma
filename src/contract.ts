@@ -1780,3 +1780,71 @@ export interface DscRuntime {
   /** 释放全部资源（dispose agent、退订）；集成层在 ink unmount 后调用。 */
   dispose(): void
 }
+
+// ── 电脑操作（Computer Use）的跨层契约（0.6.68 补 parity 时追加；只追加、不重排上文） ──
+//
+// 这些类型原先只在 `src/core/desktop-control.ts` 里，模型可见的工具 schema、
+// 无障碍观察结果、审计行都要用到同一份形状，故提升到这里做单一真源。
+// 桌面端界面（若将来展示这些）与内核工具层都按这份形状对齐。
+
+/**
+ * 一个动作的目标。两种二选一（判别字段 `type`，与 ZCode 的 target 语义一致）：
+ *   - `coordinate`：最近一张返回栅格上的整数像素（`frame_id` 用于对账是哪张图）；
+ *   - `element`：该窗口最近一次无障碍观察里的控件索引（`state_id` 用于对账是哪次观察）。
+ * 元素索引在该窗口的**最近一次观察**作用域内有效；元素消失必须 fail-closed（报错，绝不退化到坐标）。
+ */
+export type DesktopTarget =
+  | { type: 'coordinate'; x: number; y: number; frame_id?: string }
+  | { type: 'element'; index: number; state_id?: string }
+
+/** 一次无障碍（UIA）观察里的一个控件。 */
+export interface DesktopElement {
+  /** 该次观察内的下标；元素作用域 = 该窗口最近一次观察。 */
+  index: number
+  /** 控件类型（UIA ControlType，去掉 `ControlType.` 前缀，例如 Button / Edit）。 */
+  controlType: string
+  /** 无障碍名称（按钮文案、输入框标签这类）。 */
+  title: string
+  /** UIA AutomationId（开发者给的稳定标识，可能为空）。 */
+  automaid: string
+  /** 控件的值（ValuePattern 可读时；否则空串）。 */
+  value: string
+  /** 屏幕物理像素矩形；读不到时为 null。 */
+  bounds: { x: number; y: number; width: number; height: number } | null
+  /** 支持的 UIA 模式名（Invoke / Toggle / SelectionItem / ExpandCollapse / Value / Scroll / RangeValue / Text）。 */
+  patterns: string[]
+  /** 是否可用（灰掉的控件为 false）。 */
+  enabled: boolean
+  /** 是否在屏外（最小化/滚动出视口）。 */
+  offscreen: boolean
+}
+
+/** 观察绑定的窗口。 */
+export interface DesktopWindowRef {
+  /** 顶层窗口句柄（list_windows 里的 window_id 就是它）。 */
+  id: number
+  title: string
+  bounds: { x: number; y: number; width: number; height: number } | null
+}
+
+/** 一次无障碍观察的完整结果。 */
+export interface DesktopFrame {
+  /** 这次观察的编号（element 目标的 state_id 对账用）。 */
+  state_id: string
+  /** 窗口归属进程名。 */
+  app: string
+  window: DesktopWindowRef
+  /** 观察到的控件（按遍历顺序，index 与数组下标一致）。 */
+  elements: DesktopElement[]
+  /** 文本树（缩进的 `[index] ControlType "title" = "value"` 行）。 */
+  text: string
+  /** full = 全树；diff = 相对 base_state_id 的增量。 */
+  snapshot_mode: 'full' | 'diff'
+  /** diff 模式下的基线观察编号。 */
+  base_state_id?: string
+  /** diff 模式的增量结论（索引仍按基线有效）。 */
+  diff?: { removed: number[]; added: number[]; changed: number[] }
+}
+
+/** 电脑操作的危险分级：只读观察 / 输入动作 / 系统级动作。 */
+export type DesktopRiskTier = 'read' | 'input' | 'system'
