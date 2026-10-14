@@ -66,10 +66,19 @@ console.log('[2] 输入框那颗钮的接线')
   check('钮上显示分支名 + 箭头（无菜单时也读得出在哪条分支）', composer.includes('className="git-branch-name">{git.branch}') && composer.includes('<IconBranch size={13} />'))
   check('菜单展开即重读清单（不复用上次的快照）', /channel\s+\.invoke<GitBranchList>\('dock', \['git-branches', \{\}\]\)/.test(composer))
   check('当前分支滚进视野（分支多的仓库里不必自己找）', composer.includes("querySelector<HTMLElement>('[data-branch-current=\"true\"]')") && composer.includes("scrollIntoView({ block: 'nearest' })"))
-  check('切分支走 dock 的写类 op（过审批那一档）', composer.includes("invoke('dock', ['git-checkout', { branch: name }])"))
-  check('新建分支走 dock 的写类 op', composer.includes("invoke('dock', ['git-branch-create', { branch: name }])"))
+  check('切分支走 dock 的写类 op（过审批那一档）', composer.includes("invoke('dock', ['git-checkout', { branch: name }], { timeoutMs: HUMAN_WAIT_TIMEOUT_MS })"))
+  check('新建分支走 dock 的写类 op', composer.includes("invoke('dock', ['git-branch-create', { branch: name }], { timeoutMs: HUMAN_WAIT_TIMEOUT_MS })"))
+  check('菜单在等审批之前先收起（卡才是这一刻该看的东西，别被菜单盖住）', /setFault\(null\)\s*\n\s*\/\/ 菜单先收起来[\s\S]{0,200}?setBranchOpen\(false\)/.test(composer))
   check('失败写进输入区下面那行 fault（不是静默）', composer.includes('setFault(wouldOverwrite(text) ?') && composer.includes('右侧栏「变更」页签可以提交'))
   check('四颗旋钮的浮层互斥（开一颗收掉另外三颗）', (composer.match(/setBranchOpen\(false\)/g) ?? []).length >= 4)
+
+  // 等人的宿主方法要更长的超时：审批卡自己能等 5 分钟，默认那 30 秒会把「等你点卡」
+  // 报成「宿主超时」，而且点完卡那次切换已经被页面放弃了（实机走查抓到的）。
+  const channel = read('ui-shell/src/ui-layout/host-channel.ts')
+  const changes = read('ui-shell/src/plugins/files/changes.tsx')
+  check('通道支持按调用给超时（默认 30 秒不变）', channel.includes('const budget = options?.timeoutMs ?? DEFAULT_INVOKE_TIMEOUT_MS') && channel.includes('AbortSignal.timeout(budget)'))
+  check('长窗口常量盖得住审批卡（5 分半 > 卡的 5 分钟）', channel.includes('export const HUMAN_WAIT_TIMEOUT_MS = 330_000') && read('src/plugins/approval.ts').includes('DEFAULT_APPROVAL_TIMEOUT_MS = 300_000'))
+  check('四个过审批的 git 写口都带上了它（暂存 / 提交 / 切 / 建）', (changes.match(/timeoutMs: HUMAN_WAIT_TIMEOUT_MS/g) ?? []).length === 2 && (composer.match(/timeoutMs: HUMAN_WAIT_TIMEOUT_MS/g) ?? []).length === 2)
 
   // CSS：新加的规则只用 --dsc-* 令牌（拼错的幽灵令牌会静默透明）
   const gitCss = shellCss.slice(shellCss.indexOf('.composer-git'), shellCss.indexOf('.git-create button:disabled'))
@@ -109,6 +118,11 @@ console.log('[4] 宿主 desktop-dock 的三个 op')
   const gitPlugin = read('src/plugins/git.ts')
   check('快照面登记为 surfaces.git（一片轻读：分支 + 改动条数）', gitPlugin.includes("ctx.surfaces.register('git'") && gitPlugin.includes("['status', '--porcelain=v1', '-z']"))
   check('「没人看就不拍」：只在这片最近被读过时才跑 git', gitPlugin.includes('const INTEREST_MS') && gitPlugin.includes('if (Date.now() - lastReadAt > INTEREST_MS)'))
+  check(
+    '首次被读就当场补一拍（打开窗口后那颗钮不等 5 秒巡检；实机走查抓到的坑）',
+    gitPlugin.includes('const first = lastReadAt === 0') && gitPlugin.includes('if (first || now - fetchedAt > POLL_CLEAN_MS) schedule(0)'),
+  )
+  check('读过之后记下取数时刻（过期判断才有依据）', gitPlugin.includes('fetchedAt = Date.now()'))
   check('事件催拍：回合收工 + 换会话', gitPlugin.includes("ctx.on('dsc/turn-end', refresh)") && gitPlugin.includes("ctx.on('dsc/session-open', refresh)"))
 }
 

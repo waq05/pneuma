@@ -13,7 +13,7 @@
  * @module dsc-ui-shell/plugins/files/changes
  */
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { DiffRows, IconChevronDown, IconChevronRight, toastErr, toastOk, useHostChannel } from '@dsc/ui'
+import { DiffRows, HUMAN_WAIT_TIMEOUT_MS, IconChevronDown, IconChevronRight, toastErr, toastOk, useHostChannel } from '@dsc/ui'
 import {
   parseUnifiedDiff,
   splitUnifiedDiffByFile,
@@ -141,7 +141,9 @@ export function ChangesPanel(): ReactNode {
   /** 暂存 / 取消暂存一批文件（写类 op：宿主侧过审批，界面等回执）。 */
   const stage = (op: 'git-stage' | 'git-unstage', files: string[], tip: string): void => {
     void channel
-      .invoke('dock', [op, { files }])
+      // 写类 op 在宿主侧挂着审批卡，卡能等 5 分钟：默认那 30 秒会在用户还在读卡时
+      // 先把这次调用报成「宿主超时」（见 HUMAN_WAIT_TIMEOUT_MS）。
+      .invoke('dock', [op, { files }], { timeoutMs: HUMAN_WAIT_TIMEOUT_MS })
       .then(() => {
         toastOk(tip)
         refresh()
@@ -162,7 +164,7 @@ export function ChangesPanel(): ReactNode {
     const payload: Record<string, unknown> = { message: text }
     if (paths.length > 0) payload['paths'] = [...paths]
     return channel
-      .invoke<{ output: string }>('dock', ['git-commit', payload])
+      .invoke<{ output: string }>('dock', ['git-commit', payload], { timeoutMs: HUMAN_WAIT_TIMEOUT_MS })
       .then(() => {
         toastOk('已提交')
         setCommitOpen(false)

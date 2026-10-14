@@ -44,6 +44,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 
 type WindowKeyboardEvent = globalThis.KeyboardEvent
 import { IconArrowUp, IconBranch, IconCheck, IconChevronDown, IconClose, IconEdit, IconLayers, IconPlus, IconQueue, IconSearch, IconShield, IconStop, IconTrash } from '@dsc/ui'
 import {
+  HUMAN_WAIT_TIMEOUT_MS,
   defineUiPlugin,
   getHostNative,
   toastErr,
@@ -345,10 +346,11 @@ function ComposerBox(): ReactNode {
   const switchBranch = (name: string): void => {
     setBranchBusy(true)
     setFault(null)
+    // 菜单先收起来：接下来可能弹审批卡，卡才是这一刻该看的东西（菜单盖在卡上面会让人点不到）。
+    setBranchOpen(false)
     void channel
-      .invoke('dock', ['git-checkout', { branch: name }])
+      .invoke('dock', ['git-checkout', { branch: name }], { timeoutMs: HUMAN_WAIT_TIMEOUT_MS })
       .then(() => {
-        setBranchOpen(false)
         toastOk(`已切到分支「${name}」`)
       })
       .catch((reason: unknown) => {
@@ -366,10 +368,10 @@ function ComposerBox(): ReactNode {
     if (name === '') return
     setBranchBusy(true)
     setFault(null)
+    setBranchOpen(false)
     void channel
-      .invoke('dock', ['git-branch-create', { branch: name }])
+      .invoke('dock', ['git-branch-create', { branch: name }], { timeoutMs: HUMAN_WAIT_TIMEOUT_MS })
       .then(() => {
-        setBranchOpen(false)
         setBranchCreateOpen(false)
         setNewBranchName('')
         toastOk(`已新建并切到分支「${name}」`)

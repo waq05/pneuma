@@ -311,6 +311,9 @@ export type { ThreadView } from '@dsc/ui-layout'
 
 
 export { useChannelStatus, useHostChannel, useHostError, useHostSelector, useHostSnapshot } from '@dsc/ui-layout'
+// 等人的宿主方法（写类 dock op = 过审批卡）要用的长超时：30 秒的默认档会把「等你点卡」
+// 报成「宿主超时」。插件里凡是会弹审批卡的调用都该带上它。
+export { HUMAN_WAIT_TIMEOUT_MS, type InvokeOptions } from '@dsc/ui-layout'
 /**
  * 服务表的 React 订阅面（A1）：插件用它读别的插件提供的服务，并跟着服务的出现/消失
  * 换数据源（D3 的 status 面板靠它从本地轮询切到 team 的共享席位，无需刷新页面）。

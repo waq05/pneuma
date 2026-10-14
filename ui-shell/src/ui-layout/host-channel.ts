@@ -35,6 +35,24 @@ export type ChannelStatus = 'connecting' | 'open' | 'closed'
 /** 一次 invoke 的默认超时：宿主方法卡住时不能让页面永远等。 */
 const DEFAULT_INVOKE_TIMEOUT_MS = 30_000
 
+/**
+ * 「要等人」的那些宿主方法给多长的窗口。
+ *
+ * 写类 dock op（暂存 / 提交 / 切分支 / 建分支）在宿主侧**挂着审批卡**执行——卡自己等
+ * 5 分钟（`src/plugins/approval.ts` 的默认审批超时）。用默认那 30 秒的话，用户还在读卡
+ * 的时候页面先报「调用宿主方法超时（30000 毫秒）」：把「等你点卡」说成「宿主卡住了」，
+ * 而且他点完卡之后那次切换已经被页面放弃了。这里给 5 分半，把卡的窗口盖住。
+ */
+export const HUMAN_WAIT_TIMEOUT_MS = 330_000
+
+/** 一次 invoke 的可选项：取消信号与超时。 */
+export interface InvokeOptions {
+  /** 调用方自己的取消信号（与超时合并：谁先到都中断这次 fetch）。 */
+  signal?: AbortSignal
+  /** 覆盖默认超时（毫秒）。等人的调用给 {@link HUMAN_WAIT_TIMEOUT_MS}。 */
+  timeoutMs?: number
+}
+
 /** 宿主握手帧的内容。 */
 export interface HostHello {
   /** 数据通道协议版本。 */
@@ -96,9 +114,9 @@ export interface HostChannel {
    * 调一个宿主方法。
    * @param method - 宿主放行的方法名
    * @param args - 实参表
-   * @param signal - 可选：调用方自己的取消信号（与默认超时一起起作用）
+   * @param options - 可选：取消信号与超时（等人的调用要传更长的超时，见 {@link HUMAN_WAIT_TIMEOUT_MS}）
    */
-  invoke<T = unknown>(method: string, args?: unknown[], signal?: AbortSignal): Promise<T>
+  invoke<T = unknown>(method: string, args?: unknown[], options?: InvokeOptions): Promise<T>
   /** 主动断开（页面卸载时；正常不需要——EventSource 会自动重连）。 */
   close(): void
 }
@@ -249,10 +267,11 @@ export function createHostChannel(): HostChannel {
         listeners.delete(listener)
       }
     },
-    async invoke<T = unknown>(method: string, args: unknown[] = [], signal?: AbortSignal): Promise<T> {
-      // 默认超时与调用方的取消信号合成一个：两件事都要能中断这次 fetch。
-      const timeout = AbortSignal.timeout(DEFAULT_INVOKE_TIMEOUT_MS)
-      const gate = signal === undefined ? timeout : AbortSignal.any([signal, timeout])
+    async invoke<T = unknown>(method: string, args: unknown[] = [], options?: InvokeOptions): Promise<T> {
+      // 超时与调用方的取消信号合成一个：两件事都要能中断这次 fetch。
+      const budget = options?.timeoutMs ?? DEFAULT_INVOKE_TIMEOUT_MS
+      const timeout = AbortSignal.timeout(budget)
+      const gate = options?.signal === undefined ? timeout : AbortSignal.any([options.signal, timeout])
       let response: Response
       try {
         response = await fetch('/api/invoke', {
@@ -264,7 +283,7 @@ export function createHostChannel(): HostChannel {
       } catch (error) {
         // fetch 被中断时抛的是 AbortError/TimeoutError：换成可识别的类型，调用方不必猜名字。
         if (gate.aborted) {
-          throw new HostInvokeAbortedError(timeout.aborted ? 'timeout' : 'aborted', DEFAULT_INVOKE_TIMEOUT_MS)
+          throw new HostInvokeAbortedError(timeout.aborted ? 'timeout' : 'aborted', budget)
         }
         throw error
       }
