@@ -10,70 +10,14 @@
  */
 import type { TranscriptEntry } from '@dsc/ui'
 import { entryTs } from '@dsc/ui-primitives'
+import type { RoundInfo } from './rounds'
 
 // 平台种子的读数原样转出（消息流内部的 import 不变）。
 export { entryTs, formatClock, formatDuration } from '@dsc/ui-primitives'
 
-/** 一轮对话：一条用户消息 → 模型回复结束（中间的工具调用也算这一轮）。 */
-export interface RoundInfo {
-  /** 轮次编号（0 基，与右缘刻度一一对应）。 */
-  index: number
-  /** 用户消息在 entries 里的下标（跳转锚点就是它）。 */
-  startIndex: number
-  /** 这一轮最后一条条目在 entries 里的下标（还没回复时等于 startIndex）。 */
-  endIndex: number
-  /** 用户消息那一刻；缺 ts → null。 */
-  startTs: number | null
-  /**
-   * 这一轮的结束时刻：从末条目往前走，取最后一条带 ts 的条目（中间缺 ts 的跳过）。
-   * 一条都没带 ts → null，界面降级成「只显示开始时间」。
-   */
-  endTs: number | null
-  /** 这一轮有没有助手侧的内容（回复、思考、工具卡都算）。 */
-  answered: boolean
-}
-
-/**
- * 把 entries 切成一轮一轮：遇到一条用户消息就开一轮，其后属于模型的条目都归它，
- * 直到下一条用户消息。
- *
- * 两类条目不参与「这一轮有几条、到哪结束」：开场那条 system 提示、轮次之后冒出来的
- * system 条目（错误、宿主通知）。**轮中途插话**（steering）不另起一轮，留在原轮里。
- */
-export function roundInfos(entries: readonly TranscriptEntry[]): RoundInfo[] {
-  const rounds: RoundInfo[] = []
-  let current: RoundInfo | null = null
-  entries.forEach((entry, index) => {
-    if (entry.kind === 'user') {
-      if (entry.steering === true && current !== null) {
-        current.endIndex = index
-        const steeringTs = entryTs(entry)
-        if (steeringTs !== null) current.endTs = steeringTs
-        return
-      }
-      current = {
-        index: rounds.length,
-        startIndex: index,
-        endIndex: index,
-        startTs: entryTs(entry),
-        endTs: null,
-        answered: false,
-      }
-      rounds.push(current)
-      return
-    }
-    if (current === null || entry.kind === 'system') return
-    current.endIndex = index
-    current.answered = true
-    const ts = entryTs(entry)
-    if (ts !== null) current.endTs = ts
-  })
-  for (const round of rounds) {
-    // 结束时刻早于开始时刻说明日志时间乱序：按「拿不到」处理，界面只显示开始时间。
-    if (round.endTs !== null && round.startTs !== null && round.endTs < round.startTs) round.endTs = null
-  }
-  return rounds
-}
+// 分轮口径搬去 rounds.ts（一份真值：轮元信息与座位切分同源出来）。这里转出，
+// 保持 `RoundInfo` 类型与 `roundInfos` 的导出、签名不变——别处调用点一律不动。
+export { roundInfos, type RoundInfo } from './rounds'
 
 /** 这一轮的用时（毫秒）；两头只要有一头没有 ts 就是 null。 */
 export function roundDuration(round: RoundInfo): number | null {

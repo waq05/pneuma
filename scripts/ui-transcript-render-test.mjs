@@ -21,6 +21,9 @@
  *   [5] 开合动画（0.6.69）：过程区包一层 + grid-template-rows 0fr↔1fr + 收起延迟挂 hidden
  *   [6] 悬停预览的收卡口径（0.6.69 第五轮）：出卡 500ms 照参考实现，**收卡 1s 是壳侧有意分道**，
  *       且卡片自己挂着 mouseleave（只挂 keep 会让卡粘住不走）
+ *   [7] 分轮口径单点 + internal 条目对齐 dsh（右侧刻度条 `.jump-rail` 错位 / 多刻度报障）：
+ *       座位切分与轮元信息同源（rounds.ts 的 `splitRounds`）、steering 不另起一轮、
+ *       回合中途并进的 internal 不增刻度而回合收尾的增一枚、internal 题面预览不出现原文
  *
  * 运行：node scripts/ui-transcript-render-test.mjs
  *
@@ -35,6 +38,10 @@ const groups = await import(
 const args = await import(new URL('../ui-shell/src/ui-primitives/tool-args.ts', import.meta.url).href)
 const { seatPlan, groupSteps } = groups
 const { toolArgFields, MUTATION_CONTENT_FIELDS } = args
+const roundsMod = await import(
+  new URL('../ui-shell/src/plugins/transcript/rounds.ts', import.meta.url).href
+)
+const { splitRounds, roundInfos, teammateReportLabel } = roundsMod
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const read = (rel) => readFileSync(`${root}${rel}`, 'utf8')
@@ -171,7 +178,8 @@ console.log('[5] 整轮过程区的开合动画（0.6.69 第四轮报障）')
   check('时长取令牌 --dsc-dur-slow（不写死毫秒）', /\.turn-process \{[\s\S]{0,260}grid-template-rows var\(--dsc-dur-slow\) var\(--dsc-ease\)/.test(css))
 
   // 收起方向要「内容还在、格子先收」：挂 hidden 得晚于动画跑完
-  check('收起时延迟挂 hidden（挂早了内容当场没，两边都是 0 高，动画等于没有）', seats.includes('const timer = globalThis.setTimeout(() => {') && seats.includes("element.setAttribute('hidden', 'until-found')\n    }, delay)"))
+  // 工作区是 CRLF：跨行匹配一律 `\s*\n\s*`（写成字面 `\n` 会在 CRLF 工作区上假红）。
+  check('收起时延迟挂 hidden（挂早了内容当场没，两边都是 0 高，动画等于没有）', seats.includes('const timer = globalThis.setTimeout(() => {') && /element\.setAttribute\('hidden', 'until-found'\)\s*\n\s*\}, delay\)/.test(seats))
   check('展开方向不延迟（放行要立刻看得见）', /if \(!hidden\) \{\s*\n\s*element\.removeAttribute\('hidden'\)/.test(seats))
   check('延迟时长与 CSS 同源（现读 --dsc-dur-slow，不各写一份）', seats.includes("getPropertyValue('--dsc-dur-slow')") && tokens.includes('--dsc-dur-slow: 180ms'))
   check('延迟只给「display:none 那一层」：过程行与阶段组的座位', (seats.match(/delayMs: foldHideDelayMs\(\)/g) ?? []).length === 2)
@@ -203,6 +211,134 @@ console.log('[6] 悬停预览的收卡口径（0.6.69 第五轮报障：鼠标�
   check('卡片收 onLeave 这个 prop', /onLeave: \(\) => void/.test(ui) && ui.includes('onLeave={hoverDelay.disarm}'))
   check('disarm 就是「起收卡倒计时」那一条（行上移开与出卡共用同一条）', hook.includes('closeRef.current = window.setTimeout(() => setHover(null), HOVER_CLOSE_MS)'))
   check('卡会粘住这件事在注释里留了档', ui.includes('永远粘住'))
+}
+
+console.log('[7] 分轮口径单点 + internal 条目对齐 dsh（0.6.67 右侧刻度条错位 / 多刻度）')
+{
+  const ui = read('ui-shell/src/plugins/transcript/ui.tsx')
+  const timing = read('ui-shell/src/plugins/transcript/timing.ts')
+  const css = read('ui-shell/src/legacy/views.css')
+  // 「不该出现」的断言先剥注释：修法的注释里就引着旧写法 / roundInfos，不剥会自己打脸。
+  const uiCode = ui.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
+
+  let seq = 0
+  const e = (kind, extra = {}) => ({ kind, id: (seq += 1), ...extra })
+  // 宿主 subagent 插件（src/plugins/subagent.ts:517）造出来的队友汇报正文形状。
+  const teammateBody =
+    '<teammate-report from="mate-1" role="coder" state="已完成">\n派给它的任务：改个 bug\n它的汇报：\n搞定了\n</teammate-report>'
+
+  // ── ① 座位切分与轮元信息同源：steering 归入当前轮、不另起座位，两边下标一一对应 ──
+  const steer = [
+    e('user', { text: 'A', ts: 1 }),
+    e('text', { text: 'r1', ts: 2 }),
+    e('user', { text: '插一句话', steering: true, ts: 3 }),
+    e('text', { text: 'r2', ts: 4 }),
+    e('user', { text: 'B', ts: 5 }),
+    e('text', { text: 'r3', ts: 6 }),
+  ]
+  const split = splitRounds(steer)
+  const infos = roundInfos(steer)
+  check(
+    '① steering 不另起一轮（插话那条并进当前轮：2 轮，round0 覆盖 0..3）',
+    split.rounds.length === 2 && split.rounds[0].startIndex === 0 && split.rounds[0].endIndex === 3,
+    JSON.stringify(split.rounds),
+  )
+  check(
+    '① 座位数 = 轮数，且 round 序号 / 开轮下标逐项一一对应',
+    split.seats.length === infos.length &&
+      split.seats.every((seat, i) => seat.round === infos[i].index && seat.round === i && seat.indices[0] === infos[i].startIndex),
+    JSON.stringify(split.seats),
+  )
+  check(
+    '① 对同一 entries 两边（splitRounds 的轮 / roundInfos）逐项相同（一份真值）',
+    JSON.stringify(infos) === JSON.stringify(split.rounds),
+  )
+  const covered = [...split.leading, ...split.seats.flatMap((seat) => seat.indices)]
+  check(
+    '① 前导 + 座位恰好覆盖每条一次且升序（座位是连续切片）',
+    covered.length === steer.length && covered.every((at, i) => at === i),
+    JSON.stringify(covered),
+  )
+  check(
+    '① 座位末下标 = 下一轮开轮条目之前（不越界、不留缝）',
+    split.seats.every((seat, i) => {
+      const next = split.seats[i + 1]
+      const stop = next === undefined ? steer.length - 1 : next.indices[0] - 1
+      return seat.indices.at(-1) === stop
+    }),
+  )
+  check(
+    "① buildSeats 走 splitRounds（不再自己按 kind==='user' 切座位）",
+    uiCode.includes('const split = splitRounds(all)') && uiCode.includes('split.seats.map((seat) => ({ round: seat.round') && !uiCode.includes('roundInfos('),
+  )
+  check(
+    "① timing.ts 转出 rounds.ts 的 roundInfos（旧的分轮循环已撤，不留第二份判据）",
+    timing.includes("from './rounds'") && timing.includes('export { roundInfos, type RoundInfo }') && !timing.includes('current = {'),
+  )
+
+  // ── ② 两种 internal：回合中途并进本轮（steering）不增刻度；回合收尾出账（非 steering）增一枚 ──
+  const midSteer = [
+    e('user', { text: 'A', ts: 1 }),
+    e('text', { text: 'r1', ts: 2 }),
+    e('user', { text: teammateBody, steering: true, internal: true, ts: 3 }),
+    e('text', { text: 'r2', ts: 4 }),
+  ]
+  const endInternal = [
+    e('user', { text: 'A', ts: 1 }),
+    e('text', { text: 'r1', ts: 2 }),
+    e('user', { text: teammateBody, internal: true, ts: 3 }),
+    e('text', { text: 'r2', ts: 4 }),
+  ]
+  const mid = splitRounds(midSteer)
+  const end = splitRounds(endInternal)
+  check(
+    '② 回合中途并进本轮的 internal（steering+internal）不增刻度：仍 1 轮 1 座位',
+    mid.rounds.length === 1 && mid.seats.length === 1 && mid.seats[0].indices.length === 4,
+    JSON.stringify(mid.seats),
+  )
+  check(
+    '② 回合收尾出账的 internal（非 steering，宿主置了 pendingTurn）增一枚刻度：2 轮 2 座位',
+    end.rounds.length === 2 && end.seats.length === 2 && end.rounds[1].startIndex === 2,
+    JSON.stringify(end.rounds),
+  )
+
+  // ── ③ internal 的题面预览不出现原文：给一句人话（队友名 / 状态从 body 头解出来） ──
+  check(
+    '③ 队友汇报的人话标签带队友名、不含原文',
+    teammateReportLabel(teammateBody) === '队友 mate-1 汇报了运行结果' && !teammateReportLabel(teammateBody).includes('<teammate-report'),
+    teammateReportLabel(teammateBody),
+  )
+  check(
+    '③ 头里认不出队友名时也绝不回原文（兜底一句通用话）',
+    teammateReportLabel('<teammate-report role="x">乱</teammate-report>').includes('队友') &&
+      !teammateReportLabel('<teammate-report role="x">乱</teammate-report>').includes('<teammate-report'),
+  )
+  check('③ 状态进文案（state="已失败" → 失败了）', teammateReportLabel('<teammate-report from="mate-2" state="已失败">x').includes('失败了'))
+  check(
+    '③ 刻度题面预览：internal 走人话标签，不取原文（悬停卡不会出现 <teammate-report）',
+    /user\.internal === true\s*\?\s*teammateReportLabel\(user\.text\)/.test(ui),
+  )
+  check(
+    '③ 对话里的触发行带队友名、保留 data-internal="1"（不再写死「子任务状态更新」）',
+    /data-internal="1"[\s\S]{0,200}teammateReportLabel\(entry\.text\)/.test(ui) && !ui.includes('子任务状态更新'),
+  )
+  check('③ 触发行样式落在 legacy/views.css（.entry-system[data-internal=\'1\']）', css.includes(".entry-system[data-internal='1']"))
+
+  // ── ④ 老回归闸（段 [1]「每条行恰好出现一次」）对新的分轮产物仍然成立 ──
+  {
+    const ats = mid.seats[0].indices.slice(1)
+    const grouping = groupSteps(midSteer, mid.rounds, () => false)
+    const seen = []
+    for (const item of seatPlan(ats, grouping)) {
+      if (item.kind === 'group') seen.push(...item.members)
+      else seen.push(item.at)
+    }
+    check(
+      '④ 新分轮产物喂进 seatPlan 后每条行仍恰好一次（段 [1] 回归闸不放水）',
+      seen.length === ats.length && new Set(seen).size === ats.length,
+      JSON.stringify(seen),
+    )
+  }
 }
 
 console.log('')

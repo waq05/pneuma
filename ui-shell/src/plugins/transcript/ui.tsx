@@ -60,7 +60,9 @@ import {
   type TranscriptEntry,
 } from '@dsc/ui'
 import { buildRoundFolds, processFoldPolicy, TurnFoldRow, useFoldMemory, type ProcessFold } from './round-fold'
-import { formatClock, formatDuration, liveActivity, roundDuration, roundInfos, turnStartedAt, type RoundInfo } from './timing'
+import { formatClock, formatDuration, liveActivity, roundDuration, turnStartedAt, type RoundInfo } from './timing'
+// 分轮口径的唯一真值：座位切分与轮元信息从同一次 splitRounds 出来，下标恒一致（见 rounds.ts）。
+import { splitRounds, teammateReportLabel } from './rounds'
 import { useIntendedDiff } from './intended-diff'
 import { readFold, writeFold, stepGroupFoldKey, turnFoldKey } from './fold-state'
 import { groupSteps, seatPlan, type StepGroup, type StepGrouping } from './process-groups'
@@ -442,10 +444,9 @@ function TranscriptFlow({
 
   // 整轮折叠：四档能力表 + 每轮的折叠预算 + 用户手动开合（双层记忆：当场重画 + 重挂读回）。
   const foldMemory = useFoldMemory()
-  const rounds = useMemo(
-    () => roundInfos([...entries, ...live]),
-    [entries, live],
-  )
+  // 轮元信息与座位切分是同一次 splitRounds 的两半（buildSeats 里跑的），所以座位序号
+  // 与这里的下标恒一致——别再单独调一次 roundInfos，那会重新引入两处真值。
+  const rounds = seats.infos
   const liveRoundIndex = rounds.length - 1
   const roundFolds = useMemo(
     () => buildRoundFolds([...entries, ...live], rounds, { foldTurns: prefs.policy.foldTurns, live: turnState !== 'idle', lastRoundIndex: liveRoundIndex }),
@@ -516,11 +517,12 @@ function TranscriptFlow({
    * 分叉会话本身是「复制到第 index 条用户消息之前」，所以编辑第 N 条就分叉到 N-1。
    */
   const editRefork = (entry: Extract<TranscriptEntry, { kind: 'user' }>, text: string): void => {
-    let index = 0
-    for (const item of [...entries, ...live]) {
-      if (item.id === entry.id) break
-      if (item.kind === 'user' && item.steering !== true) index += 1
-    }
+    // 分叉序号 = 这条消息**之前**有多少条开轮的用户消息。旧写法手数「非插话的 user」，
+    // 与分轮口径是两处真值（插话 / internal 一变就错开）；现在直接数轮——每一条开轮的
+    // 用户消息恰好对应一轮（rounds.ts 规则 1），所以「startIndex 落在本条目之前的轮」数量就是它。
+    const all = [...entries, ...live]
+    const at = all.findIndex((item) => item.id === entry.id)
+    const index = rounds.filter((round) => round.startIndex < at).length
     void (async () => {
       try {
         if (sessionPath === null || index === 0) {
@@ -559,7 +561,15 @@ function TranscriptFlow({
           .at(-1)
         return {
           round: seat.round,
-          prompt: user?.kind === 'user' ? previewText(user.text, 'prompt') : '',
+          // 题面预览只在来源是**人**时才填（对照 dsh 的 turnOutline：非 user 来源不留题面）。
+          // internal 汇报（队友干完活）有刻度但不给原文，改给一句人话——绝不把
+          // `<teammate-report …>` 当题面塞进悬停卡。
+          prompt:
+            user?.kind !== 'user'
+              ? ''
+              : user.internal === true
+                ? teammateReportLabel(user.text)
+                : previewText(user.text, 'prompt'),
           response: answer === undefined ? '' : previewText(answer.text, 'response'),
         }
       }),
@@ -987,11 +997,14 @@ function UserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'user' }> 
   const actions = useContext(FlowActionsContext)
   // 编辑中的草稿（null = 没在编辑）。Enter 提交 / Shift+Enter 换行 / Esc 取消。
   const [draft, setDraft] = useState<string | null>(null)
-  // 运行时投递进来的消息（队友汇报）不拿它当人打的字渲染，与旧界面一致地压成一行。
+  // 运行时投递进来的消息（队友汇报）不拿它当人打的字渲染，也不压成居中的 system 断句：
+  // 按 dsh 的 turn-trigger 画成一行「触发行」——一句话说清是谁的汇报（队友名 / 状态都从
+  // body 头里解出来，见 rounds.ts 的 teammateReportLabel）。`data-internal="1"` 属性留着
+  // （样式与探针认它）。完整汇报仍挂在 title 上，需要时悬停可看。
   if (entry.internal === true) {
     return (
       <div className="entry-system" data-internal="1" title={entry.text}>
-        子任务状态更新
+        {teammateReportLabel(entry.text)}
       </div>
     )
   }
@@ -2047,30 +2060,28 @@ function isSessionMarker(text: string): boolean {
   return SESSION_MARKER.test(text.trim())
 }
 
-/** 把条目按「遇到 user 就开新座位」切分，直播条目挂在最后一个座位上。每行记下它在全量条目里的下标（折叠区间用）。 */
+/**
+ * 把条目切成座位与轮（口径见 rounds.ts 的 `splitRounds`）：直播条目按序接在定稿之后，
+ * 分轮规则与轮元信息共用同一份，于是 `rounds[i].round === infos[i].index` 恒成立——
+ * 座位序号与 `RoundInfo` 下标**结构上不可能错开**（旧版这里只看 `kind === 'user'`，
+ * 插话（steering）会多切一个座位，把 `rounds[seat.round]` 整体顶偏，就是右侧刻度条
+ * 错位、多刻度的根因）。每行记下它在**全量条目**（定稿 + 直播）里的下标（折叠区间用）。
+ *
+ * @returns leading 前导行；rounds 座位；infos 对应的轮元信息（TranscriptFlow 直接拿去用，
+ *   不再单独调一次 `roundInfos`——那正是「两处分轮互相打架」的来源）。
+ */
 function buildSeats(
   entries: readonly TranscriptEntry[],
   live: readonly TranscriptEntry[],
-): { leading: Row[]; rounds: Seat[] } {
-  const leading: Row[] = []
-  const rounds: Seat[] = []
-  entries.forEach((entry, at) => {
-    const row: Row = { entry, live: false, at }
-    if (entry.kind === 'user') {
-      rounds.push({ round: rounds.length, rows: [row] })
-      return
-    }
-    const current = rounds[rounds.length - 1]
-    if (current === undefined) leading.push(row)
-    else current.rows.push(row)
-  })
-  live.forEach((entry, offset) => {
-    const row: Row = { entry, live: true, at: entries.length + offset }
-    const current = rounds[rounds.length - 1]
-    if (current === undefined) leading.push(row)
-    else current.rows.push(row)
-  })
-  return { leading, rounds }
+): { leading: Row[]; rounds: Seat[]; infos: RoundInfo[] } {
+  const all: readonly TranscriptEntry[] = [...entries, ...live]
+  const split = splitRounds(all)
+  const rowOf = (at: number): Row => ({ entry: all[at], live: at >= entries.length, at })
+  return {
+    leading: split.leading.map(rowOf),
+    rounds: split.seats.map((seat) => ({ round: seat.round, rows: seat.indices.map(rowOf) })),
+    infos: split.rounds,
+  }
 }
 
 /** 帧里的条目只保证有 `id`，视图字段的收窄在插件这一侧完成（共用核心不认识具体种类）。 */

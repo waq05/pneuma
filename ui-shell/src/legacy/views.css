@@ -1449,6 +1449,21 @@
   white-space: pre-wrap;
 }
 
+/* 非人发起的唤醒消息（队友汇报的触发行，对照 dsh 的 turn-trigger）：它**不居中**——
+   它是一条事件触发线，不是用户气泡、也不该跟 system 通知混成同一个居中断句。左对齐 +
+   一条竖线做「这不是你说的话」的提示；文案是一句人话（队友名 / 状态从 body 头解出来，
+   见 plugins/transcript/rounds.ts），原文（`<teammate-report …>`）绝不铺上来。
+   data-internal 属性留着（探针 / 别的选择器认它）。 */
+.entry-system[data-internal='1'] {
+  align-self: stretch;
+  border-left: 2px solid var(--dsc-stroke-2);
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+  padding: 2px 0 2px 10px;
+  text-align: left;
+  white-space: normal;
+}
+
 /* ── 写前预览通知（宿主 file-review 插件那一段「【文件更改预览·尚未落盘】…」）──
    宿主发的是一段**多行 unified diff 纯文本**（同一份文本 TUI 也在读，不能改形状），
    壳按正文前缀认它（`plugins/transcript/review-notice.ts`）后画成下面这张卡：
