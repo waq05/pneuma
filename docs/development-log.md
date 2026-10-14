@@ -5103,3 +5103,100 @@ JSON 字符串里全是 `\n` 转义，读者要的是「改了哪几行」。
 都只是把决定推给下一层——这种「看起来接上了、实际没分家」的缺口，探针不专门盯就抓不到。
 ④**默认值与可选姿态要分清**：「降级不拒」作为默认是对的，但把默认写成唯一，等于替用户判死。
 做成开关、默认不变，两拨人都照顾到，而且分歧从「文档里的一句话」变成「配置里的一格」。
+
+## 第十七批：更改面板锚回正文右上角 + 输入框上那颗分支钮（宿主 git 快照面 + 三个 dock op）（2026-10-14，未发版）
+
+用户给了两张截图：一张是 dsc 空会话态里「Git 工具」那张面板**落在版心**（他画了个框，说
+「更改面板位置不对，应该在右上角」），另一张是参考实现的输入框：**上方一行左侧**有一颗
+分支钮（`⑂ main ▾`），说「添加如图二所示，输入框上 git 分支控制按钮。参考 zcode 实现」。
+
+### ① 面板为什么落在版心：锚错了那一格
+
+面板与它的胶囊是 portal 到 `.chat-wrap` 的绝对定位浮层（`top: 16px; right: …`），而
+`.chat-wrap` 在**空会话态**里不是整格高：壳给它 `flex: 0 1 auto` + `margin-top: auto`
+（与 `.composer-zone` 的 `margin-bottom: auto` 配对，把「欢迎块 + 输入区」整组夹成垂直居中，
+见 `ui-shell/src/styles.css` 的说明）。于是它的盒子只有内容那么高、还被推到版心中部——
+挂在它右上角的浮层自然落在版心，而不是正文右上角。对话态看不出问题：那时 `.chat-wrap`
+`flex: 1` 撑满整格，两种宿主等价。
+
+**修法**：浮层认的应该是「正文区那一格」而不是「消息滚动容器」。壳在 `.thread-main` /
+`.thread-main-empty`（同一元素，两态只差一个类名）上打了 `data-thread-area`，`styles.css`
+给它 `position: relative`；status 插件的定位父级与宽度裁决（`--sp-avail`）**都改认它**
+（`THREAD_AREA_SELECTOR`），不再认 `.chat-wrap`。两态里这两格同宽、同顶边，所以这次改动对
+非空态是**逐像素等价**的；右缘刻度条（jump-rail）仍认 `.chat-wrap`——它的语义是「消息区的
+band」，那才是它要的盒子。
+
+### ② 输入框上那颗分支钮：读数住宿主，写口过审批
+
+**形状**（`ui-shell/src/plugins/composer/ui.tsx`）：输入框**上方**一行、左侧一颗钮
+（分支图标 + 分支名 + 小箭头，长了截断）→ 点开菜单：搜索框（本地筛，大小写不敏感）、
+分支清单（当前那条排第一、带勾、展开即滚进视野）、底部「新建分支…」（就地展开一格输入框 +
+创建并切换）。**不是 git 仓库时整行不渲染**，非仓库工作区的输入区与以前逐像素一样。
+菜单向上翻（`.model-pop` 的老姿势），且**改左对齐**——钮在输入框左端，按右缘铺开会往左探出
+窗口（与权限预设那颗同一处境、同一处理）。
+
+**读数为什么住宿主**：这颗钮要**一直**显示当前分支。界面自己拉 `dock git-status` 的话，同一份
+读数就成了「状态面板一拍、输入区再一拍」；而新插件 `src/plugins/git.ts` 给的是**一片轻读**
+（一条分支名 + 数一数 `git status --porcelain -z` 的条数），登记成快照面 `surfaces.git`
+（`repo / branch / detached / dirtyFileCount`），壳只渲染。状态面板那条重读（`stats: true`：
+每文件增删行数、未跟踪按内容数行）**留在壳里**按它自己更松的节奏走——两处要的东西本就不同。
+
+**节奏**：三档（有改动 12s / 干净 30s / 不是仓库 60s）＋三处催拍（回合收工、换会话、写类 git op
+落盘后由 desktop-dock 调 `ctx.get('git')?.refresh()`）。**没人看就不拍**：快照的 `read()` 只在
+有人连着界面时发生（`core/ui-events.ts`：没有连接就不造帧），所以「这一片最近被读过」就是
+「界面活着」的代理；CLI / TUI 会话里没人看这颗钮，每 12 秒跑一次 `git status` 是纯浪费。
+
+**写口**：`dock` 通道新增三个 op——`git-branches`（**读类**，界面 HTTP 通道直接放行）、
+`git-checkout` / `git-branch-create`（**写类**，与暂存/提交同一档：过审批，卡片文案在
+`DOCK_WRITE_LABEL`）。切分支用 `git switch --no-guess`（避开 `checkout <名字>` 在同名文件
+存在时的「分支还是路径」歧义，也不替用户从远端顺手建分支）。**共用执行层**：`git()`、
+`parsePorcelainZ`、`repoPrefix`、`toWorkspacePath` 从 `desktop-dock.ts` 抽到
+`src/core/git-exec.ts`，两处共用一份——尤其是 `-z` 的 rename 双记录，漏跳过会把一次重命名
+数成两个改动；计数口径也因此与「变更」页签、状态面板一致。
+
+**有意的差异**：参考实现在「改动会被覆盖」时会开一个「提交后再切」的弹框；dsc 这边把 git 的
+原文（它自己已经列了会被覆盖的文件）照给，后面补一句「先提交或暂存这些改动再切：右侧栏
+『变更』页签可以提交」——dsc 的提交面本来就在那里，不再另造一个弹框。
+
+### 验证（硬证据）
+
+- 三端 typecheck 绿：根 `npx tsc -p tsconfig.json --noEmit`、`pnpm -C ui-shell typecheck`、
+  `pnpm -C desktop typecheck`（node + web 两个 tsconfig）。
+- 新探针 `scripts/ui-git-branch-test.mjs` **35 条**全绿：纯逻辑（`filteredBranches` /
+  `wouldOverwrite`，Node 类型擦除直读零依赖 `.ts`）、壳侧接线、op 分档与卡片文案、宿主三个 op
+  的实现与催拍。
+- `scripts/ui-status-data-test.mjs` 增一节 **[8] 21 条**（真内核 + 真 git 仓库）：快照面「第一次
+  被读就催拍」、分支名/改动计数与 `git-status` 同口径、清单当前分支排第一、**只读档下切分支
+  被拒**（写类 op 真过闸）、完全访问下真切成立且**快照面自己跟上**、建分支、切回、非仓库给
+  `repo: false` 与空清单。
+- `scripts/ui-status-panel-test.mjs` 增 **[9] 5 条**（面板定位锚：认 `data-thread-area`、
+  不再认 `.chat-wrap`、锚点自带 `position: relative`）。
+- 全量电池复跑绿（含 `ui-plugin-test` / `ui-sdk-types-test` / `ui-api-gate-test` / `ui-batches-test`
+  / `ui-hmr-test` / `ui-third-party-test` / `remote-host-test` 140/140 / `legacy-frozen-check`
+  / `commands-battery` / `ui-native-bridge-test` 96 条）。
+- 产物核验：`pnpm -C ui-shell build` 后 `lib/ui/plugins/composer/client.js` 含 `composer-git` /
+  `git-branch-create`，`lib/ui/assets/*.css` 含 `.composer-git`，`lib/plugins/desktop-dock.js`
+  含 `git-branches`，`lib/plugins/git.js` + `lib/core/git-exec.js` 在位。
+- 施工中同步改掉的两处**探针指针**：`ui-status-panel-test` 里三条读 `desktop-dock.ts` 原文的
+  断言（porcelain `-z` / rename 跳过 / show-prefix）随这次抽取改指 `core/git-exec.ts`——它们是
+  「实现住在哪」的钉子，实现搬家就得跟着搬。
+
+### 诚实边界（这一批）
+
+① **没跑桌面端打包**（`pnpm -C desktop run dist`）；② **没有推送**；③ **没做 GUI 截图走查**
+（面板位置这条修的是布局，只有真窗口截图能最终确认观感——本次只到「锚点与定位父级」的结构级
+证据）；④ 版本号未动（根 0.6.67、壳 1.2.0）；⑤ 参考实现输入框那一行里**还有一颗工作区/目录
+钮**（`▢ dsc ▾`），dsc 没做——工作区在 dsc 里是「会话的 cwd」这一件事，换工作区等于换会话，
+侧栏本来就有那个入口，在输入框上再放一颗会是第二份入口；本次只做用户点名的**分支钮**。
+
+### 教训（这一批）
+
+①**「看着像样式问题」的往往是锚点选错了对象**：`top/right` 没写错、`z-index` 没写错，错的是
+绝对定位的**定位父级**——它在另一种状态下根本不是同一个盒子。诊断这类问题的正确顺序是先问
+「这一格在两种状态下一样高吗」，再去看偏移量。
+②**界面要的「一直显示」的数据，该由宿主供一次**：同一份 git 读数让两个组件各拍一次，不只是
+浪费 CPU，还会出现两处读数**短暂不一致**（一拍快一拍慢）。一片轻读快照面 + 写口催拍，两处同源
+同帧。
+③**「同名同义的解析规则」不该有两份**：porcelain 的 `-z` rename 双记录这种细节，抄一遍就等着
+某一处先漂。这次顺手把 git 执行与解析抽成 `core/git-exec.ts`，搬家时探针指针跟着搬——**探针钉
+的是「实现住在哪」，这本身就是一份契约**。

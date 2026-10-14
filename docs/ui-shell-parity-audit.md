@@ -108,7 +108,8 @@
 | 输入区：发送/打断、排队条、模型与思考强度、@ 文件提及、贴图、草稿按会话 | 已对齐 |
 | 输入区**权限档位**（旧 `Composer.tsx:475-511` 的 `policyOpen` 菜单 ↔ 壳） | 已修（第八批接回死按钮，**第十六批改口径**：这颗旋钮现在切的是**打包权限预设四选一**——只读 / 工作区可写 / 完全访问 / AI 复核（读 `surfaces.permissionPresets`，不匹配读作「自定义」），不再是「权限模式四项菜单」；权限模式**三档**与审阅者**两档**在设置 → 通用分区各自细调。写口走原生桥 `NATIVE_OPS.usePermissionPreset` / `setPolicy` / `setReviewer`——界面通道按安全闸门理由持续排除，与 `saveProvider` 同一先例。**与参考实现的有意差异**：参考实现对「完全访问 / AI 复核」加风险确认弹窗，这里按「旧版有的照旧版」不加） |
 | 输入区**模式（预设）旋钮** | 已修（第八批：原来把 `listPresets` 的回执当数组用（宿主回的是 `PresetSurface`），点一下 `presets.map` 抛异常、错误边界把整个输入区顶掉——「点预设按钮输入框没了」即此；改为从快照 `surfaces.preset` 读，菜单带「默认 / 有问题」小标） |
-| **状态面板**（正文右上角浮层，对照 ZCode 的「状态」面板） | **壳补**（第八批：胶囊态报「N 个智能体在跑 / 进程 N/M」，面板态分「进程 / 智能体」两节、行是胶囊行（状态点 + 标题 + 时长 + 停止），三档展示策略（自动 / 始终展开 / 始终收起），定位靠哨兵找 `.chat-wrap` 再 portal——不写像素） |
+| **状态面板**（正文右上角浮层，对照 ZCode 的「状态」面板） | **壳补**（第八批：胶囊态报「N 个智能体在跑 / 进程 N/M」，面板态分「进程 / 智能体」两节、行是胶囊行（状态点 + 标题 + 时长 + 停止），三档展示策略（自动 / 始终展开 / 始终收起），定位靠哨兵找定位父级再 portal——不写像素。**第十七批改锚点**：认正文区那一格（`.thread-main` 上的 `data-thread-area`）而不再认 `.chat-wrap`——空会话态里后者只有内容高、还被居中边距推着走，面板会落在版心（用户报障「更改面板位置不对，应该在右上角」）） |
+| 输入区**分支钮**（照片参考实现的输入框上方那一行：`⑂ main ▾`） | **壳补**（第十七批：输入框上方一行左侧一颗钮 → 菜单（搜索 / 分支清单（当前排第一、展开滚进视野）/ 新建分支…）。读数读宿主快照面 `surfaces.git`（**不是仓库整行不画**）；切与建走 `dock` 的写类 op（`git-checkout` / `git-branch-create`，**过审批**），清单走读类 op `git-branches`（直接放行）。**与参考实现的有意差异**：① 参考实现那一行左侧还有一颗工作区/目录钮，dsc 没做（换工作区 = 换会话，侧栏已有入口，不在输入框上放第二份）；② 参考实现在「改动会被覆盖」时另开「提交后再切」弹框，dsc 把 git 原文照给 + 补一句往哪儿走（提交面本来就在右侧栏「变更」页签） |
 | 状态栏：轮次·步数、实时耗时、用量与上下文百分比、吞吐读数 | 已对齐 |
 | 技能页 / 插件页 / 设置各分区 | 已对齐（前三/四批实现） |
 | **设置 → 模型：可编辑形态**（旧 `SettingsModal` 的 `ModelsPanel`/`ProviderForm`/`ModelRow` ↔ `plugins/settings/models.tsx`） | **已搬**（第七批：端点卡片（密钥快捷行 / 拉取清单 / 编辑 / 删除）、**端点表单**（名字 / 显示名 / Base URL / **API key** 一次改完 + **批量文本**模式）、**模型行**（id / 显示名 / 上下文 / 最大输出 + **思考档位四档 chip + 思考参数下拉 + reasoning_effort 逐档线上值 + 输入模态三档**——与宿主 `core/model-caps.ts` 同一份枚举）、默认模型两个自绘下拉。dsh 式增量：列表尾「＋添加端点」虚线卡、**拉取清单弹窗**（搜索 + 全选 + 复选 + 一次采用）。**写入口走原生桥**（`saveProvider`/`removeProvider`/`setProviderKey` 被界面通道有意排除，见第五节）；浏览器无桥时整页降级只读并说明 |
@@ -143,6 +144,16 @@
 | 原生桥新增 `setReviewer`（`user` / `auto-review`） | 审阅者是**与权限模式正交**的一根新轴（谁来裁要问的事）；写口与 `setPolicy` 同一条理由住在桥上（安全闸门本身），宿主那侧走 `approval.setReviewer` |
 | 原生桥新增 `usePermissionPreset` / `setDefaultPermissionPreset` | 打包权限预设（沙箱 + 权限模式 + 审阅者三合一）的**选择**与**默认档**；`use('custom')` 被拒——`custom` 是推导状态、不是可选项 |
 | 界面通道新增**读口** `listPermissionPresets`（三个写口继续排除） | 壳画输入区那颗权限旋钮与设置 → 通用那个 select 读它；`UI_EXCLUDED` 里三条写口逐条写明「写口去哪了、为什么」。与 `saveProvider` / `setProviderKey` 同一先例：写口只开在桌面窗口那份文档上 |
+
+## 五之五、宿主侧配套（第十七批：git 快照面 + 三个 dock op）
+
+| 项 | 说明 |
+| --- | --- |
+| 新插件 `src/plugins/git.ts` → 快照面 `surfaces.git`（`repo` / `branch` / `detached` / `dirtyFileCount`） | 输入框上那颗分支钮与状态面板的分支行读同一份。为什么住宿主：这颗钮要**一直**显示分支，界面自己拉 `dock git-status` 会跟状态面板各拍一次（大仓里是拿 CPU 换同一行字），两处还会短暂不一致 |
+| 节奏：三档（12s / 30s / 60s）＋ 事件催拍（`dsc/turn-end` / `dsc/session-open` / 写类 op 落盘后 `ctx.get('git')?.refresh()`）；**没人看就不拍** | 快照的 `read()` 只在有人连着界面时发生（`core/ui-events.ts`：没有连接就不造帧），所以「这片最近被读过」＝「界面活着」；CLI / TUI 会话里一次 git 都不跑 |
+| `dock` 新增 `git-branches`（**读类**，界面 HTTP 通道直接放行） | 本地分支清单，排序照参考实现：当前分支第一、其余按最后一次提交时间从新到旧；空仓库（HEAD 未出生）时把 `rev-parse --abbrev-ref HEAD` 那个还没进 refs 的分支名补进清单 |
+| `dock` 新增 `git-checkout` / `git-branch-create`（**写类**，与暂存/提交同一档：过审批） | 卡片文案进 `DOCK_WRITE_LABEL`（「git: 切换分支 → 切到 X」）。执行用 `git switch --no-guess`（避开 `checkout <名字>` 的分支/路径歧义，也不顺手从远端建分支）；工作树有会被覆盖的改动时 git 自己拒，stderr 原样回给界面 |
+| git 执行与 porcelain 解析抽到 `src/core/git-exec.ts`（`git` / `parsePorcelainZ` / `repoPrefix` / `toWorkspacePath`） | desktop-dock 与 git 插件**共用一份**：`-z` 的 rename 双记录这种细节抄一遍就等着某处先漂；改动计数因此与「变更」页签、状态面板同口径（含未跟踪、只看 cwd 之内） |
 
 ## 六、验证落点（第六批）
 
@@ -196,3 +207,21 @@
   `ui-tui-plugin-test` / `ui-native-bridge-test` / `legacy-frozen-check`。
 - 三侧 TypeScript 全绿；宿主 `lib/`、壳 `lib/ui/`（16 个插件，新增 `status`）、
   desktop `out/` 重建。
+
+## 六之四、验证落点（第十七批：面板锚点 + 分支钮）
+
+- 新探针 `scripts/ui-git-branch-test.mjs` **35 条**：纯逻辑（`plugins/composer/git-branch.ts`
+  的 `filteredBranches` / `wouldOverwrite`）、壳侧接线（读数取 `surfaces.git`、不是仓库整行
+  不画、两个写口走 `dock` 写类 op、四颗旋钮浮层互斥）、`desktop-dock` 三个 op 的实现与催拍、
+  **CSS 幽灵令牌差集扫描**。
+- `scripts/ui-status-data-test.mjs` 增 **[8] 21 条**（真内核 + 真 git 仓库）：快照面首读催拍、
+  分支名与改动计数同口径、清单当前分支第一、**只读档下切分支被拒**、完全访问下真切 + 快照面
+  跟上、建分支、非仓库 `repo: false`。
+- `scripts/ui-status-panel-test.mjs` 增 **[9] 5 条**：面板定位锚（认 `data-thread-area`、
+  不再认 `.chat-wrap`、锚点自带 `position: relative`）；其中三条读 `desktop-dock.ts` 原文的
+  断言随 git 助手抽取改指 `core/git-exec.ts`。
+- 全量电池复跑绿（`ui-plugin-test` / `ui-sdk-types-test` / `ui-api-gate-test` / `ui-batches-test`
+  / `ui-hmr-test` / `ui-third-party-test` / `ui-serve-test` / `remote-host-test` 140/140 /
+  `legacy-frozen-check` / `commands-battery` / `ui-native-bridge-test` 96 条 / 内核那几条）。
+- 三侧 TypeScript 全绿；宿主 `lib/`、壳 `lib/ui/`（composer bundle 含 `composer-git`、
+  `assets/*.css` 含 `.composer-git`）重建。

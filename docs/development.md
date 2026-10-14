@@ -462,6 +462,8 @@ exe 当**桌面端**跑的时候才要清掉它。
 | 沙箱后端不可用姿态 | `degrade`（默认，降级为策略围栏继续，=旧行为）/ `fail-closed`（写与执行类一律拒、读照常，拒因规则名 `backend-unavailable`）；只对 `docker` / `windows-token` 生效，`policy` 后端的 `partial` 是预期状态、不触发 | `src/core/sandbox/policy.ts:58` |
 | 沙箱升权 | `sandbox_permissions` + `sandbox_scope`（`once` 默认 / `session`）+ `justification` **成对校验**（只给 scope 或半截 → 按拒处理）；`workspace-write` = 留在沙箱内、把这次目标并进可写根后**重判**，`danger-full-access` = 这一次跳过沙箱判定；「本会话允许」只对「留在沙箱内」这一类给会话档（命令类与出沙箱档只给这一次） | `src/core/tools/sandbox-args.ts`、`src/plugins/sandbox.ts`（`grantSession` / `sessionGrants`） |
 | 出厂权限预设 | `read-only` / `workspace`（默认）/ `full-access` / `auto-review`（沙箱 + 权限模式 + 审阅者三合一）；三根旋钮拼不出预设时读作 `custom`（推导状态，能停留、不能选）；缺省档偏好键 `defaultPermissionPreset`（空串 = 不按预设走） | `src/core/permission-presets.ts`、`src/plugins/permission-presets.ts` |
+| 分支钮读数（输入框上方） | 快照面 `surfaces.git` = `repo` / `branch` / `detached` / `dirtyFileCount`（计数含未跟踪、只看会话 cwd 之内）；节奏 12s / 30s / 60s 三档 + 事件催拍（回合收工、换会话、写类 git op 落盘）；**没人读快照就不跑 git**（CLI / TUI 会话零开销） | `src/plugins/git.ts`、`src/core/git-exec.ts` |
+| git 切 / 建分支 | `dock` 的写类 op（`git-checkout` / `git-branch-create`，**过审批**，卡片文案在 `DOCK_WRITE_LABEL`），执行用 `git switch --no-guess`（避开 `checkout <名字>` 的分支/路径歧义）；分支清单是读类 op `git-branches`（界面通道直接放行，当前分支排第一） | `src/core/dock-ops.ts`、`src/plugins/desktop-dock.ts` |
 | schedule 最小间隔 | `every` 下限 60 秒 | `src/core/schedule/rule.ts:26` |
 | schedule catch-up 窗口 | 一次性 120 秒；循环取半周期夹在 120 秒 ~ 2 小时，超窗只跑一次不补积压 | `src/core/schedule/rule.ts:29-35` |
 | lsp idle 回收 | 600 秒（设置可调，下限 30 秒） | `src/core/lsp/client.ts:22` |
@@ -563,8 +565,13 @@ exe 当**桌面端**跑的时候才要清掉它。
 | `desktop/electron/main/dock.ts` | 内置浏览器视图 | `contextIsolation: true`、`nodeIntegration: false`；弹窗一律 deny 并把新窗口 URL 就地加载；只允许 `http`/`https` |
 
 dock 的操作名：`term-spawn` / `term-input` / `term-kill` / `fs-list` / `fs-read` /
-`git-status` / `git-stage` / `git-unstage` / `git-commit` / `git-log` / `git-diff`，未知的
-直接抛「dock 未知操作：xxx」。终端是管道模式（没有 tty），所以全屏程序跑不了。
+`git-status` / `git-branches` / `git-stage` / `git-unstage` / `git-commit` / `git-checkout` /
+`git-branch-create` / `git-log` / `git-diff`，未知的直接抛「dock 未知操作：xxx」。分档与
+审批口径见 `src/core/dock-ops.ts`（读类直接放行；`git-stage` / `git-unstage` / `git-commit` /
+`git-checkout` / `git-branch-create` 五个写类**过审批**）。终端是管道模式（没有 tty），
+所以全屏程序跑不了。git 的执行与 porcelain 解析在 `src/core/git-exec.ts`（desktop-dock 与
+`git` 插件共用一份）；当前分支与改动计数由 `src/plugins/git.ts` 登记成快照面 `surfaces.git`
+（输入框上那颗分支钮读它）。
 
 `Dock.tsx` 四个 tab（terminal / browser / files / git），宽度夹在 300~820，双击复位 420；
 shell 候选 5 个，选中的存 renderer 的 `localStorage['dsc.dockShell']`。
