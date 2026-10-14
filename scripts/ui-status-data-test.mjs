@@ -488,8 +488,8 @@ console.log('[8] git 快照面（surfaces.git）+ 分支清单 / 切分支 / 建
     typeof first.git === 'object' && first.git !== null && typeof first.git.repo === 'boolean',
     JSON.stringify(first.git),
   )
-  const arrived = await pollUntil(() => surfaces().git.repo === true, 8000)
-  check('界面一读就催一拍：读数几拍内到位（不需要等 12 秒那一档）', arrived, JSON.stringify(surfaces().git))
+  const arrived = await pollUntil(() => surfaces().git.repo === true, 2500)
+  check('界面一读就催一拍：读数立刻到位（不是等 5 秒的巡检那一档）', arrived, JSON.stringify(surfaces().git))
 
   const mine = surfaces().git
   // 与「状态面板那条读」对齐要带上 `stats: true`：改动条数只在那一档里给（轻读那档

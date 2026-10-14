@@ -51,6 +51,8 @@ export const gitPlugin: Plugin.Object = {
     let cache: GitSurface = EMPTY_GIT
     /** 这一片最后一次被快照读走的时刻（0 = 从没有人读过 = 没有界面连着）。 */
     let lastReadAt = 0
+    /** 最后一次真跑过 git 的时刻（0 = 还没跑过）：用来判断手上的读数过没过期。 */
+    let fetchedAt = 0
     let timer: NodeJS.Timeout | null = null
     /** 定时器已排到哪个时刻：催拍与定时器相遇时只跑一次，不重排到更晚。 */
     let dueAt = 0
@@ -98,6 +100,7 @@ export const gitPlugin: Plugin.Object = {
       }
       const changed = !sameGit(cache, next)
       cache = next
+      fetchedAt = Date.now()
       // 读数变了就推一帧：界面读的是快照（不是推事件），不广播的话这颗钮要等到
       // 下一次别的原因引起的推帧才更新。
       if (changed) ctx.emit('dsc/changed')
@@ -132,9 +135,17 @@ export const gitPlugin: Plugin.Object = {
     }
     ctx.provide('git', service)
 
-    // 界面要的那一片：**读的时候顺便记一笔「有人要」**，这就是上面 INTEREST_MS 的判据。
+    // 界面要的那一片：读的时候**顺便记一笔「有人要」**（这就是上面 INTEREST_MS 的判据），
+    // 并且按需补一拍——两种情况必须当场拍，不能等下一个巡检：
+    //   1. 这一片第一次被读（界面刚连上）：这一拍决定那颗钮**出不出现**，等 5 秒的巡检
+    //      就是「打开窗口后半天没有这颗钮」（实机走查抓到的正是这一条）；
+    //   2. 读数已经过期（停过一阵又有人来读）：慢档那一档（30s）之后回来的一帧说明
+    //      「界面又来要了」，此刻手上的值已经过时。
     ctx.surfaces.register('git', (): GitSurface => {
-      lastReadAt = Date.now()
+      const now = Date.now()
+      const first = lastReadAt === 0
+      lastReadAt = now
+      if (first || now - fetchedAt > POLL_CLEAN_MS) schedule(0)
       return cache
     })
 
