@@ -149,6 +149,10 @@ declare module '@dsc/ui' {
       owner: { entry: ToolEntry; storeKey?: string }
       matched: ToolMatch
     }
+    // 只读「子智能体条目流」的落点：团队插件把队友会话条目交给它渲染（与主会话同一套行）。
+    // 组件经 `ui.provide('transcriptFlow', …)` 交出去，团队页签直接渲染它；这一条声明是为了
+    // 让那条条目具备 toolview 选举链（工具卡不只是内置兜底）。
+    'shell.subagent.flow': { kind: 'list' }
   }
 }
 
@@ -183,6 +187,17 @@ export default defineUiPlugin({
       },
       BuiltinToolView,
     )
+    // 只读「子智能体条目流」：与主会话同一套行渲染（RowBody：markdown / 思考 / 工具卡 /
+    // 子代理卡 / 计划卡 / system 行），只读——编辑重发不给。声明成一条独立槽位（带 toolview
+    // 选举链），组件本身经 `transcriptFlow` 服务交出去：团队右栏页签直接渲染它；服务缺席时
+    // 团队那边退回简版 PeekView（兜底仍留着，见 team/ui.tsx）。
+    ui.slots.declare(SUBAGENT_FLOW_SLOT, 'list')
+    ui.slots.register(
+      SUBAGENT_FLOW_SLOT,
+      { id: 'transcript.subagent.flow', order: 1, children: { [TOOLVIEW_SLOT]: 'chain' } },
+      SubagentFlow,
+    )
+    ui.provide<TranscriptFlowService>('transcriptFlow', { Component: SubagentFlow, slot: SUBAGENT_FLOW_SLOT })
   },
 })
 
@@ -2093,4 +2108,108 @@ function readEntries(snapshot: HostSnapshot | null): readonly TranscriptEntry[] 
 function readLive(snapshot: HostSnapshot | null): readonly TranscriptEntry[] {
   const value = snapshot?.liveEntries
   return Array.isArray(value) ? (value as unknown as TranscriptEntry[]) : NO_ENTRIES
+}
+
+// ── 只读「子智能体条目流」（右栏页签用）────────────────────────────────────────
+/**
+ * 槽位名：只读条目流的落点（团队右栏页签经 `transcriptFlow` 服务拿到的组件）。
+ *
+ * 团队插件是把**组件当值**直接渲染的（没有槽渲染上下文），所以这条登记在运行时由壳渲染
+ * 只是「将来宿主愿意的话」的出口；声明它的意义在于让那条条目具备 toolview 选举链——
+ * 见 apply 里的注册与 {@link SubagentFlow} 的 `renderSlot` 说明。
+ */
+export const SUBAGENT_FLOW_SLOT = 'shell.subagent.flow'
+
+/** 只读条目流的输入（团队页签把 `peekTranscript` 回的条目原样喂进来）。 */
+export interface TranscriptFlowProps {
+  entries: readonly TranscriptEntry[]
+  /** 会话工作目录：相对路径展示与「将做的改动」推演的基准；拿不到给空串。 */
+  cwd?: string
+  /**
+   * 折叠存档键的会话那一半（思考/工具卡的展开态）：拿不到时给队友会话文件路径，
+   * 免得不同队友的条目 id（都从 1 起）撞在同一把键上。
+   */
+  sessionKey?: string
+}
+
+/** `transcriptFlow` 服务的形状：组件本身 + 它的槽位名（槽名给诊断与将来的宿主渲染用）。 */
+export interface TranscriptFlowService {
+  Component: (props: TranscriptFlowProps) => ReactNode
+  slot: string
+}
+
+/**
+ * 只读条目流：把一份 `TranscriptEntry[]` 用**主会话同一套行渲染**铺出来
+ * （markdown 正文 / 思考折叠 / 工具卡 / 子代理卡 / 计划卡 / system 行）。
+ *
+ * 与主会话 {@link TranscriptFlow} 的差别只有三处，都是「只读」这件事本身要求的：
+ *  - 动作 context 给 {@link NO_ACTIONS}（没有「编辑重发」这条出口）；
+ *  - 用户消息走 {@link ReadonlyUserRow}（气泡照画，不画 hover 浮出的编辑钮）；
+ *  - 不画轮尾 / 改动卡 / 刻度条 / 分页 / 整轮折叠——右栏是伴读面，不是操作面。
+ *
+ * 工具行走 `renderSlot(TOOLVIEW_SLOT, …)`：本条目在 SlotMap 里声明了这条 chain 子槽，
+ * 被壳当槽条目渲染时由选举链决定谁画。团队插件是直接把组件当值渲染（没有槽渲染上下文），
+ * 那时 `renderSlot` 缺席，落到内置工具卡 {@link ToolRow}——与 `RowBody` 自己的兜底
+ * （`renderSlot?.(…) ?? <ToolRow …/>`）是同一条路，工具卡照常出得来。
+ */
+function SubagentFlow(props: {
+  entries?: readonly TranscriptEntry[]
+  cwd?: string
+  sessionKey?: string
+  /** 槽渲染上下文（壳把本条目当槽条目渲染时才有）；缺席时用内置工具卡兜底。 */
+  renderSlot?: ToolViewRender
+  childSlots?: readonly string[]
+}): ReactNode {
+  const entries = props.entries ?? NO_ENTRIES
+  const cwd = props.cwd ?? ''
+  const toolRender: ToolViewRender =
+    props.renderSlot ?? ((_name, owner) => <ToolRow entry={owner.entry} storeKey={owner.storeKey} />)
+  const rows = useMemo<Row[]>(() => entries.map((entry, at) => ({ entry, live: false, at })), [entries])
+  return (
+    <ShellSessionContext.Provider value={props.sessionKey ?? null}>
+    <ShellCwdContext.Provider value={cwd}>
+    <FoldPrefsContext.Provider value={FOLD_PREFS}>
+    <FlowActionsContext.Provider value={NO_ACTIONS}>
+      <div className="chat-inner subagent-flow">
+        {rows.map((row) => (
+          <div className="entry-row" key={`sub|${row.entry.kind}|${String(row.entry.id)}`}>
+            <RowBoundary entry={row.entry}>
+              {row.entry.kind === 'user' ? <ReadonlyUserRow entry={row.entry} /> : <RowBody row={row} renderSlot={toolRender} />}
+            </RowBoundary>
+          </div>
+        ))}
+      </div>
+    </FlowActionsContext.Provider>
+    </FoldPrefsContext.Provider>
+    </ShellCwdContext.Provider>
+    </ShellSessionContext.Provider>
+  )
+}
+
+/** 只读用户消息：UserRow 的同款气泡，去掉 hover 浮出的「编辑并重发」。 */
+function ReadonlyUserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'user' }> }): ReactNode {
+  // 运行时投递进来的消息（队友汇报）与主会话同款压成一行。
+  if (entry.internal === true) {
+    return (
+      <div className="entry-system" data-internal="1" title={entry.text}>
+        子任务状态更新
+      </div>
+    )
+  }
+  return (
+    <div className="user-turn">
+      <div className="entry-user">
+        {entry.images === undefined || entry.images.length === 0 ? null : (
+          <div className="entry-user-images">
+            {entry.images.map((url, index) => (
+              <a key={index} href={url} target="_blank" rel="noreferrer" data-tip="点开看原图">
+                <img src={url} alt={`第 ${String(index + 1)} 张贴图`} />
+              </a>
+            ))}
+          </div>
+        )}
+        {entry.text}
+      </div>
+    </div>
+  )
 }

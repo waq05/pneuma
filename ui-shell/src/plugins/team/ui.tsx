@@ -18,7 +18,7 @@
  *
  * @module dsc-ui-shell/plugins/team
  */
-import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import {
   IconChevronDown,
   IconClose,
@@ -32,6 +32,8 @@ import {
   toastOk,
   useHostChannel,
   useHostSelector,
+  useSeat,
+  useService,
   type BakedActions,
   type DockTabBodyProps,
   type HostSnapshot,
@@ -40,6 +42,7 @@ import {
   type StoreHandle,
   type TranscriptEntry,
   type TeammateView,
+  type UiPluginApi,
 } from '@dsc/ui'
 
 /** 毫秒 → 「2分41秒」/「8秒」；拿不到（负数 / NaN）给 null（与消息流的时间口径同款，
@@ -159,7 +162,10 @@ export default defineUiPlugin({
       kind: 'subagent',
       label: '子智能体',
       icon: <IconTree size={13} />,
-      component: SubagentTabBody,
+      // 页签体额外拿到「本插件的名册席位面」：头部要按 `tab.path` 匹配出队友元信息（角色 /
+      // 状态 / 轮数 / 时长），并且要据此判断「还在 working → 轮询刷新运行记录」。席位的读法
+      // 与 status 面板同一条（`ui.slots.seat(handle)`——`ui` 只在 apply 里拿得到，用闭包交进去）。
+      component: (props) => <SubagentTabBody {...props} slots={ui.slots} handle={mates} />,
     })
   },
 })
@@ -536,25 +542,64 @@ function UsedTime({ mate }: { mate: TeammateView }): ReactNode {
   )
 }
 
-/** 队友运行记录的只读流（peekTranscript 回的条目数组，简版渲染：正文/工具/思考/系统直排）。 */
-function PeekView({ file }: { file: string }): ReactNode {
+/** 队友运行记录的轮询间隔：只在队友还在 working 时按这个节奏重读（收工即停）。 */
+const PEEK_POLL_MS = 2500
+
+/** 消息流插件经服务表交出来的只读条目流（组件 + 槽位名）。插件之间不 import 实现，
+ *  只认这个形状——provider 是 transcript 插件（`ui.provide('transcriptFlow', …)`）。 */
+const TRANSCRIPT_FLOW_SERVICE = 'transcriptFlow'
+
+/**
+ * 读一份队友运行记录（`peekTranscript`）；队友还在 working 时按 {@link PEEK_POLL_MS}
+ * 轮询刷新，收工就只留最后一次快照、不起定时器。
+ *
+ * 三条纪律照壳里名册那条轮询（status 面板同款）：`document.hidden` 时不发请求；
+ * 卸载 / 依赖变化时清定时器（`alive` 闸门挡掉迟到的响应）；空态与错误态交给调用方。
+ */
+function usePeekTranscript(file: string, working: boolean): { entries: TranscriptEntry[] | null; error: string } {
   const channel = useHostChannel()
   const [entries, setEntries] = useState<TranscriptEntry[] | null>(null)
   const [error, setError] = useState('')
   useEffect(() => {
+    if (file === '') return undefined
     let alive = true
-    void channel
-      .invoke<TranscriptEntry[]>('peekTranscript', [file])
-      .then((list) => {
-        if (alive) setEntries(Array.isArray(list) ? list : [])
-      })
-      .catch((reason: unknown) => {
-        if (alive) setError(reason instanceof Error ? reason.message : String(reason))
-      })
+    const read = (): void => {
+      void channel
+        .invoke<TranscriptEntry[]>('peekTranscript', [file])
+        .then((list) => {
+          if (!alive) return
+          setEntries(Array.isArray(list) ? list : [])
+          setError('')
+        })
+        .catch((reason: unknown) => {
+          if (alive) setError(reason instanceof Error ? reason.message : String(reason))
+        })
+    }
+    // 先拉一次快照：收工的队友也看得到最后那份内容。
+    read()
+    // 只有队友还在干活才轮询；收工/失败/被打断都停（页面停在最后一份上）。
+    if (!working) {
+      return () => {
+        alive = false
+      }
+    }
+    const timer = window.setInterval(() => {
+      // 页面不可见时不发请求（壳里的惯例：后台省心跳）。
+      if (document.hidden) return
+      read()
+    }, PEEK_POLL_MS)
     return () => {
       alive = false
+      window.clearInterval(timer)
     }
-  }, [channel, file])
+  }, [channel, file, working])
+  return { entries, error }
+}
+
+/** 队友运行记录的只读流（peekTranscript 回的条目数组，简版渲染：正文/工具/思考/系统直排）。
+ *  这是 `transcriptFlow` 服务缺席时的兜底出口，别整块删。 */
+function PeekView({ file, working = false }: { file: string; working?: boolean }): ReactNode {
+  const { entries, error } = usePeekTranscript(file, working)
 
   if (error !== '') return <div className="settings-empty">读不了运行记录：{error}</div>
   if (entries === null) return <div className="settings-empty">正在读运行记录…</div>
@@ -598,25 +643,82 @@ function PeekView({ file }: { file: string }): ReactNode {
 }
 
 /**
- * 右侧栏里的子智能体页签体：头部一行（名字 / 角色 / 状态）+ 只读运行记录。
- *
- * 数据完全复用 {@link PeekView}（同一个 `peekTranscript`），所以这里没有第二条读取路径——
- * 模态面板里看到的与右栏里看到的永远是同一份。
+ * `transcriptFlow` 服务的托管：拉数据（与 {@link PeekView} 同一份 peek + 同一档轮询），
+ * 条目就绪后交给消息流插件那套**主会话同款行渲染**。加载 / 空 / 错误三种人话与 PeekView
+ * 一致（两条出口看到的空态一样），服务缺席时由调用方退回 PeekView。
  */
-function SubagentTabBody({ tab }: DockTabBodyProps): ReactNode {
+function FlowHost({ flow, file, working }: { flow: TranscriptFlowService; file: string; working: boolean }): ReactNode {
+  const { entries, error } = usePeekTranscript(file, working)
+  if (error !== '') return <div className="settings-empty">读不了运行记录：{error}</div>
+  if (entries === null) return <div className="settings-empty">正在读运行记录…</div>
+  if (entries.length === 0) return <div className="settings-empty">它还没开始干活。</div>
+  return <flow.Component entries={entries} sessionKey={file} />
+}
+
+/** `transcriptFlow` 服务在团队这一侧的读面（结构同 transcript 的 `TranscriptFlowService`）。 */
+interface TranscriptFlowService {
+  Component: (props: { entries: readonly TranscriptEntry[]; cwd?: string; sessionKey?: string }) => ReactNode
+}
+
+/**
+ * 右侧栏里的子智能体页签体：头部一行（名字 / 角色 / 状态 / 轮数 / 时长）+ 只读运行记录。
+ *
+ * 运行记录有两条出口：优先用消息流插件经 `transcriptFlow` 服务交出来的**主会话同款行渲染**
+ * （markdown / 思考 / 工具卡 / 子代理卡 / 计划卡）；服务缺席（消息流插件没开）时退回
+ * {@link PeekView} 那套简版直排——不许白屏（兜底不删）。
+ *
+ * 队友元信息从本插件的名册席位（`listTeammates` 那条 3 秒轮询写进去的共享实例）按
+ * `tab.path` 匹配；匹配不到就只显示文件名，不编造角色与状态。
+ */
+function SubagentTabBody({
+  tab,
+  slots,
+  handle,
+}: DockTabBodyProps & { slots: UiPluginApi['slots']; handle: MateSeatHandle }): ReactNode {
   const file = tab.path ?? ''
+  // 名册席位（D3）：与子智能体菜单 / 团队面板 / status 面板读的是同一份，不另起一条读取。
+  const instance = useMemo(() => slots.seat(handle), [slots, handle])
+  const list = useSeat(instance, (state) => state.list)
+  const mate = useMemo(
+    () =>
+      (Array.isArray(list) ? list : []).find(
+        (row) => sameFile(row.file, file) || (tab.label !== undefined && row.name === tab.label),
+      ),
+    [list, file, tab.label],
+  )
+  const flow = useService<TranscriptFlowService>(TRANSCRIPT_FLOW_SERVICE)
+  const working = mate?.state === 'working'
+  // 名字优先取页签上的队友名（打开时带过来的），其次名册里的 name，最后才回落文件名。
+  const title = tab.label ?? mate?.name ?? basename(file)
   return (
     <div className="sub-tab">
-      <div className="sub-tab-head" data-subagent-file={file}>
+      <div className="sub-tab-head" data-subagent-file={file} data-subagent-state={mate?.state ?? ''}>
         <IconTree size={13} />
-        <span className="sub-tab-name">{basename(file)}</span>
+        <span className="sub-tab-name">{title}</span>
+        {mate === undefined ? null : (
+          <>
+            <span className="sub-tab-role">{mate.role}</span>
+            <span className={`sub-tab-state ${mate.state}`}>{STATE_LABEL[mate.state] ?? mate.state}</span>
+            <span className="sub-tab-round" data-tip="它已经发起的模型请求轮数">
+              第 {mate.rounds} 轮
+            </span>
+            <UsedTime mate={mate} />
+          </>
+        )}
         <span className="sub-tab-note">只读运行记录</span>
       </div>
       <div className="sub-tab-body">
-        <PeekView file={file} />
+        {flow === undefined ? <PeekView file={file} working={working} /> : <FlowHost flow={flow} file={file} working={working} />}
       </div>
     </div>
   )
+}
+
+/** 两条路径是不是同一个文件（名册与页签传的可能分隔符不同）。 */
+function sameFile(a: string, b: string): boolean {
+  if (a === b) return true
+  if (a === '' || b === '') return false
+  return a.replace(/\\/g, '/') === b.replace(/\\/g, '/')
 }
 
 /** 路径尾段（子智能体页签的标题用它——队友的会话文件名就是它的名字）。 */

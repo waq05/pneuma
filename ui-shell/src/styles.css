@@ -1825,6 +1825,48 @@
   padding: var(--dsc-sp-3) var(--dsc-sp-4);
 }
 
+/* 头部补齐的队友元信息（角色 / 状态 / 轮数 / 时长）：名册行匹配不到时这几件一个都不画。
+   右栏是窄列，元信息一多就换行，别把名字挤没。 */
+.sub-tab-head {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+
+.sub-tab-role {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-tool);
+}
+
+.sub-tab-state {
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: 999px;
+  font-size: var(--dsc-fs-tool);
+  padding: 0 6px;
+}
+
+.sub-tab-state.working {
+  border-color: var(--dsc-accent);
+  color: var(--dsc-accent);
+}
+
+.sub-tab-state.failed,
+.sub-tab-state.stopped {
+  color: var(--dsc-text-quaternary);
+}
+
+.sub-tab-round,
+.sub-tab-head .tm-time {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+}
+
+/* 只读条目流复用主会话的 `.chat-inner`（同一套行样式）：右栏是窄列，去掉它的版心内距与限宽。 */
+.subagent-flow {
+  margin: 0;
+  max-width: none;
+  padding: 0;
+}
+
 /* ── 右侧栏里的后台活输出面（只读 <pre>，不是交互式终端） ── */
 .work-out {
   display: flex;
