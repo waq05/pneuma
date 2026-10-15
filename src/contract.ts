@@ -1244,6 +1244,23 @@ export interface ModelChoiceView {
   modalities: Modality[]
 }
 
+// ── 壳的 `/` 命令菜单 ─────────────────────────────────────────────────────────
+
+/**
+ * 壳 `/` 菜单的一行。
+ *
+ * 只带元数据（名字 / 参数占位 / 说明 / 回合中能否用），handler 留在宿主注册表里——
+ * 壳不需要、也拿不到执行的实现，它只把名字回给 {@link DscRuntime.runUiCommand}。
+ */
+export interface UiCommandView {
+  name: string
+  /** 参数占位提示（空串 = 无参数）。 */
+  args: string
+  description: string
+  /** 回合跑着时能不能用（`deny` 的行在菜单里标出来，派发那一步也由宿主再挡一次）。 */
+  duringTask: 'allow' | 'deny'
+}
+
 // ── 技能中心 ──────────────────────────────────────────────────────────────────
 
 /** 技能来源标签（rank 小者赢得重名）。 */
@@ -1817,6 +1834,18 @@ export interface DscRuntime {
   setDefaultPermissionPreset(name: string): SettingsMutation
   /** 派发一条 / 命令到宿主命令注册表（内置 + 外部插件命令统一）。 */
   runCommand(input: string): boolean
+  /**
+   * 壳 `/` 菜单的数据源：标了 `shell: true` 那批命令的元数据
+   * （清单单一真源在 `core/commands-completion.ts`，理由也写在那里）。
+   */
+  listUiCommands(): UiCommandView[]
+  /**
+   * 壳的 `/` 命令派发：同一条注册表（内置 + 外部插件），但只放行
+   * {@link DscRuntime.listUiCommands} 里那批，其余名字明确报错——界面通道与页面里的
+   * 第三方插件都够不着权限旋钮、写文件、落信任、退出这些动作（`runCommand` 仍不进
+   * 界面白名单，见 core/ui-methods.ts 的 UI_EXCLUDED）。
+   */
+  runUiCommand(input: string): boolean
   /**
    * 桌面端 dock 面板的工作区能力（desktop-dock 服务透传）：
    * fs-list / fs-read / git-status / git-stage / git-unstage / git-commit / git-log / git-diff。

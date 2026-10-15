@@ -6860,3 +6860,95 @@ Tailwind 的 `h-8 rounded-lg`；dsh 的模型行是 grid 不是 flex。只看截
 ③ 本批提交时主工作树有并发会话的半成品（壳的 `/` 命令菜单 / 侧栏页脚，落在 `contract.ts` /
 `composer/ui.tsx` / `styles.css` / `development-log.md` 同一批文件里）——本批只提交自己的 hunk，
 对方那些留着未暂存。
+
+## 第三十六批：壳输入框接上 `/` 命令菜单——受限通道 + 只取七条（2026-10-15，未发版）
+
+用户原话：「当前项目输入框输入 `/` 后没有命令，可以直接复用 tui 版本的 `/` 命令，只选取有必要的。」
+旧壳把 `/` 开头的原文当场拦下（只给 `/compact` 开了特例），提示「这条路还没接到界面通道」——
+那是安全设计没错，但菜单本身缺着，命令等于不存在。
+
+### ① 只取七条：两条尺子
+
+标了 `shell: true` 的才进壳：`/new` `/compact` `/status` `/usage` `/diff` `/review` `/help`。
+挑选尺子写在 `src/core/commands-completion.ts` 的命令表旁边，两条缺一不可：
+
+1. **动作不出界面通道已有的权力面**：`/new` ≈ `openSession`、`/compact` ≈ `compact`、
+   `/review` ≈ `submit`、`/diff` ≈ `dock` 读类，其余三条（`/status` `/usage` `/help`）只往
+   会话里写一条系统通知；
+2. **壳里没有更顺手的替身**：权限三旋钮（`/policy` `/reviewer` `/permission`）、`/model`
+   `/effort` 的旋钮就长在输入框底栏，`/resume` `/settings` `/agents` `/plugins` 各有常驻入口
+   ——在壳里再列一遍只会多出第二条真源。
+
+硬理由不放的：`/export`（往任意路径写文件）、`/ui-trust`（落第三方界面插件的信任记录）、
+`/exit`（宿主生命周期）写完面一律留在原生桥（只对装了 preload 的桌面窗口开放）；
+`/copy` 动的是**宿主**机器的剪贴板，手机端看着像复制到自己手机上，语义错位。
+
+### ② 通道：新增受限派发 `runUiCommand`，`runCommand` 仍排除
+
+**没有**把 `runCommand`（任意命令执行）放进界面白名单——那一条连 `UI_EXCLUDED` 里的理由都不用
+改。新开的是只管一类的方法对：
+
+- `listUiCommands()`：只读，返回 `shellCommands()` 那份元数据（名字 / 参数占位 / 说明 /
+  `duringTask`）——菜单与派发读同一份，所以「列出来的」与「能跑的」不可能各说各话；
+- `runUiCommand(input)`：先过纯函数 `shellCommandRejection`（在 `core/commands-completion.ts`，
+  探针直测）——非 `/` 输入拦下、名字按全表唯一前缀展开后必须在 `shell: true` 清单里，否则抛一句
+  能照着走的话；过了就走 `ctx.commands.run`，与 TUI 完全同一条注册表与 `duringTask` 闸。
+  空名（单独一个 `/`）放行落到 `/help`，与 TUI 一致。
+
+八落点一次补齐（加界面方法的闸门清单）：`contract.ts`（`UiCommandView` + 两方法）→
+`src/ui/index.ts` 类型导出（壳按它写渲染）→ `services/types.ts` 的 `CommandSpec.shell` →
+`host-methods` → `ui-methods`（`UI_ARG_SPECS` + 文件头放行/排除两处的说明）→
+`runtime.ts`（`commandUi()` 把 notice/picker 两条回调抽出来，`runCommand` 与 `runUiCommand`
+共用）→ `remote/types.ts`（`REMOTE_SHELL_METHODS`：手机与电脑同一份壳产物，菜单不该一到手机上
+就消失）→ `desktop/src/renderer/bridge.ts`（`RuntimeProxy` 是 `keyof DscRuntime` 映射，漏一条
+桌面 tsc 就红）。外部插件命令默认进不来（spec 不标 `shell` 就不进，失败关闭）；宿主侧插件给
+自己标一位即可，口径写进 `docs/plugin-development.md` §4.2。
+
+### ③ 壳侧：纯逻辑 / hook / 接线三层
+
+- `composer/commands.ts`（零依赖纯模块，探针直读）：`commandQuery`（整条以 `/` 开头且光标在
+  名字里才算命令位，参数阶段返回 null——面板收起）、`filterCommands`（前缀匹配、保持表序）、
+  `insertCommand`（`/名字` + 有参数时带一个空格，与宿主补全面板的 `insert` 同口径）、
+  `blockedNow`（回合中标灰）；
+- `composer/command-menu.ts`：hook，清单**一次取、模块级缓存**（打字每一拍不问宿主），取不到
+  就整会话记住不可用并给一句话，不弹空面板；
+- `ui.tsx`：按键归属（菜单开着时 ↑↓/Tab/Esc 归它）、`onTextChange` 双问（命令位里让位 @ 提及）、
+  `send()` 里 `/` 开头走 `runUiCommand`（旧的特例与旧提示一并拆掉）、`.slash-*` 面板画在
+  输入框上方（与 `@` 提及同一块位置）。
+
+### ④ 与 TUI 的两处有意差异
+
+- **只打一个 `/` 时 Enter 不采纳高亮项**：TUI 的面板打开时 Enter 采用当前候选，`/`+Enter 会
+  变成「跑第一条」= `/new`，凭空多一个会话。壳里这样会吓人，改成原文直接落到 `/help`
+  （清单照旧在面板里给）。
+- **`/rev` 这类前缀不展开**：展开仍与 TUI 共用全表 `expandCommand`，`/rev` 撞 `/reviewer`、
+  `/REVIEW` 大小写不匹配都展开不出唯一名字（TUI 那边同样认不出）。壳的出口是另一个机制：
+  菜单按**壳清单**过滤后只剩一条，Enter 采纳高亮项就走它——`send()` 里那条
+  `command.open && typed !== '/'` 的分支。
+
+### ⑤ 探针与证据
+
+- **新探针** `scripts/ui-command-menu-test.mjs`（**93 条**）：①`shell: true` 清单就是那七条 +
+  十六条禁入逐条点名；②`shellCommandRejection` 真行为（裸 `/` 放行、带参数放行、`/po` 展开后
+  拦、多空格归一、非 `/` 拦、前缀撞名不展开）；③四条白名单 + 契约 + 共享类型 + 旧桥接线；
+  ④壳纯逻辑真跑（命令位 / 前缀过滤 / 补全文本 / 标灰，含「只认前缀不认子串」的负向）；⑤壳侧
+  接线钉（旧文案已拆、`/compact` 特例已并、Enter 采纳分支、缓存策略、纯模块零依赖）。
+- **两次外部负向验证**：摘掉 `help` 的 `shell` 标记 → 4 条红；摘掉界面通道的 `runUiCommand`
+  → 1 条红（都在 `lib/` 产物上改、跑完即还原）。
+- **实机走查**（`_ui-shell-serve.mjs` 隔离 HOME 起真宿主）：页面内直打 `/api/invoke`——
+  `listUiCommands` 回七条元数据、`runUiCommand('/status')` 回 true、`runUiCommand('/policy readonly')`
+  被宿主拒并带原因；GUI 里 `/` 出菜单、`/re` 过滤剩一条、Tab 补成 `/review `、Esc 关闭、
+  `/status`+Enter 执行后提示落进会话、`/policy readonly`+Enter 出红字、句中的 `/` 不弹菜单、
+  `/review @` 的参数阶段 @ 提及照常。
+- 三处 typecheck（根 / desktop / ui-shell）绿；`pnpm build` + `build:ui` 后 SDK 类型树里
+  `UiCommandView` 与两条方法都在；**全量无头电池 72 绿 / 0 红**（含本批新探针与并发会话刚落地的两条）。
+
+### 边界
+
+① 未发版未提交：版本仍 0.6.67（壳契约 1.2.0，本批没动壳契约版本——加的是宿主 `DscRuntime`
+   方法，`@dsc/ui` 只多了个类型导出）。
+② 手机远程页（`REMOTE_SHELL_METHODS`）放行了这两条，机制与电脑一致，**未上真机走查**。
+③ IAB 里 `press()` 与 `cua.keypress()` 这次都没把键盘事件送进页面（外层窗口焦点问题），
+   GUI 交互验证降级为**机制级证据**：页面内 `new KeyboardEvent('keydown', { bubbles: true,
+   cancelable: true })` + `dispatchEvent`，返回 false 即证明 React 那边 `preventDefault` 跑了。
+   菜单渲染、过滤、执行结果、拒绝提示都是真读数。

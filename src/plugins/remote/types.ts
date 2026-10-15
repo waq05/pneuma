@@ -93,7 +93,11 @@ void REMOTE_COVERAGE
  * 宿主生命周期一律不开）；这里只多两条**壳的基本交互**绕不开的：
  *   - `setUiPrefs`：侧栏的排序/展开/别名这些界面偏好，壳每次交互都会写；只读不写
  *     会让手机上每点一下就弹一条失败；
- *   - `restoreSessions`：归档区里的「恢复」，可逆动作（归档的反面，打开归档视图就点得到）。
+ *   - `restoreSessions`：归档区里的「恢复」，可逆动作（归档的反面，打开归档视图就点得到）；
+ *   - `listUiCommands` / `runUiCommand`：输入框的 `/` 命令菜单。手机上的壳与电脑上
+ *     同一份产物，菜单不该一到手机上就消失；而代价与 `submit` / `compact` / `setModel`
+ *     同一档——能跑的那批名字钉死在宿主那份 `shell: true` 清单上（见
+ *     `core/commands-completion.ts`），凭据写入、装东西、宿主生命周期一个都不在里面。
  *
  * 每条都必须是界面通道白名单（`core/ui-methods.ts`）的成员：实参校验直接复用
  * `validateUiArgs`，不另立一份规格——多出来的口子也必须过同一道形校验。
@@ -102,6 +106,8 @@ export const REMOTE_SHELL_METHODS = [
   ...REMOTE_METHODS,
   'setUiPrefs',
   'restoreSessions',
+  'listUiCommands',
+  'runUiCommand',
 ] as const satisfies readonly (typeof INVOKABLE_METHODS)[number][]
 
 /** 壳方法表里有没有界面白名单不认识的方法（拼错/被删）：有就编不过。 */

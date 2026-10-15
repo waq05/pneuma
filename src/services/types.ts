@@ -476,6 +476,14 @@ export interface CommandSpec {
    * 派发时统一查这一位——桌面 / TUI / 远端从同一个闸过，不再各防各的。
    */
   duringTask?: 'allow' | 'deny'
+  /**
+   * 壳（桌面 / 手机那份插件化界面）的 `/` 菜单里列不列、能不能执行。
+   *
+   * 缺省 false 是**失败关闭**：外部插件注册的命令默认不进界面菜单，内置表里逐条标过才
+   * 放行（清单与理由在 `core/commands-completion.ts`）。界面通道（`core/ui-methods.ts`）
+   * 要的正是这一位：`runUiCommand` 只派发标了它的命令。
+   */
+  shell?: boolean
 }
 
 /** 补全面板的一项（命令候选与模型候选共用）。 */

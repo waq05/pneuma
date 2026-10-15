@@ -50,6 +50,7 @@ import type {
   TeammateView,
   ToolEntryView,
   TranscriptEntry,
+  UiCommandView,
   UiPrefsView,
   UiTrustView,
   UsageStatsView,
@@ -166,6 +167,10 @@ export function createRuntimeProxy(): RuntimeProxy {
     messageTeammate: (name, text) => call<string>('messageTeammate', name, text),
     removeTeammate: (name) => call<string>('removeTeammate', name),
     runCommand: (input) => call<boolean>('runCommand', input),
+    // 壳（插件化界面）的 `/` 命令菜单两条：旧渲染层自己就有一份补全面板用不上它们，
+    // 但契约成员必须逐条给实现——执行面仍是宿主那侧同一份 `shell: true` 清单。
+    listUiCommands: () => call<UiCommandView[]>('listUiCommands'),
+    runUiCommand: (input) => call<boolean>('runUiCommand', input),
     setPolicy: (policy) => callVoid('setPolicy', policy),
     // 审阅者是权限模式之外的另一根轴（user = 本人点卡 / auto-review = 先给模型判官看一眼），
     // 与 setPolicy 同为标量写口。

@@ -189,6 +189,12 @@ export const myPlugin: Plugin.Object = {
    「第二个参数可选」这种排布在这一面根本表达不出来（`newSessionIn` 因此是独立方法，
    而不是 `openSession(id?, cwd?)`）。
 
+**开新口子时的一条尺子**：要给壳开一条「能触发某类动作」的路，别把底层的通用执行口整条
+放行——加一个只管这一类的方法，名字面在宿主侧钉死。现成的一对例子：`runCommand`（能跑任意
+命令）持续留在 `UI_EXCLUDED`，壳的 `/` 菜单走新增的 `runUiCommand`：它只派发
+`src/core/commands-completion.ts` 里标了 `shell: true` 的命令，闸是纯函数
+`shellCommandRejection`（探针直测）；命令表以后加一条新命令不会自动变成可达。
+
 版本号一览：
 
 | 常量 | 位置 | 当前值 | 什么时候动 |

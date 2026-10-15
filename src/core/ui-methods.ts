@@ -27,13 +27,18 @@
  *   - 设置页：`getSettingsSections` / `getSectionValues` / `setSettingValue` / `runSettingAction`
  *   - 队友：`listTeammates` / `stopTeammate` / `messageTeammate` / `removeTeammate`
  *   - 任务与目标：`clearTodos` / `goalAction`
+ *   - 壳的 `/` 命令菜单：`listUiCommands`（只读元数据）+ `runUiCommand`——**只认
+ *     `shell: true` 那批命令**（清单与挑选尺子在 `core/commands-completion.ts`：
+ *     动作不出本清单已有的权力面，且壳里没有更顺手的替身）。它与被排除的 `runCommand`
+ *     是两条路：那条能跑任意命令（含权限旋钮、写文件、落信任、退出），这条的名字面
+ *     钉死在宿主那份表上，加一条新命令不会自动变可达。
  *   - 工作区文件与 git：`dock`——但**只放读与写两档**，终端那档不在放行面（见下）
  *
  * **排除**（`UI_EXCLUDED`，逐条有理由）：
  *   - 凭据类 `setProviderKey` / `saveProvider` / `removeProvider`：写 API key 与端点，
  *     是"用户要在终端或设置页亲手做一次"的动作；页面（尤其第三方插件）不该有能力改端点，
  *     否则一次 XSS 就顺手把流量指到攻击者的服务器。
- *   - 任意命令执行 `runCommand`。
+ *   - 任意命令执行 `runCommand`（受限的那条叫 `runUiCommand`，见上面「放行」一节）。
  *   - 破坏性 `purgeSessions`：永久删除会话（移进回收站再 30 天清），不可逆；删除必须由人亲手点。
  *   - 策略 `setPolicy`：审批策略（要不要弹卡、沙箱档位）是安全闸门本身，
  *     能让页面改它，前面所有闸门就都成了摆设。**写口开在原生桥**（`NATIVE_OPS.setPolicy`）：
@@ -157,6 +162,10 @@ export const UI_METHODS = [
   // 任务与目标
   'clearTodos',
   'goalAction',
+  // 壳的 `/` 命令菜单：元数据是只读的；派发那条的名字面钉在宿主那份
+  // `shell: true` 清单上（挑不出来的命令在宿主那侧直接报错，见 core/commands-completion.ts）。
+  'listUiCommands',
+  'runUiCommand',
   // 工作区文件与 git（dock 通道的读 + 写两档；终端那档留在原生桥，见 core/dock-ops.ts）
   'dock',
 ] as const satisfies readonly InvokableMethod[]
@@ -351,6 +360,11 @@ export const UI_ARG_SPECS: Readonly<Record<UiMethod, MethodSpec>> = {
   // ── 任务与目标 ────────────────────────────────────────────────────────────
   clearTodos: [],
   goalAction: [{ shape: { kind: 'enum', values: GOAL_ACTIONS } }],
+  // ── 壳的 `/` 命令菜单 ─────────────────────────────────────────────────────
+  listUiCommands: [],
+  // 一条命令行（`/review 关注点` 这样的原文，长度按输入框上限收）：具体名字准不准
+  // 由宿主那侧按 `shell: true` 清单判，这一层只管形状。
+  runUiCommand: [{ shape: { kind: 'string', max: MAX_TEXT } }],
   // ── 工作区文件与 git ──────────────────────────────────────────────────────
   // 第一个实参是 op，钉死在 `DOCK_UI_OPS`（读 + 写）；**终端那档不在枚举里**，
   // 于是走 HTTP 的 term-spawn 会被这一层的枚举校验当场拒，而不是进到宿主才算。

@@ -438,6 +438,7 @@ export type {
   ToolStatus,
   TranscriptEntry,
   TurnEndReason,
+  UiCommandView,
   UiDensity,
   UiFontSize,
   UiPrefsView,

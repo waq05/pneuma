@@ -71,6 +71,8 @@ import {
   type QueuedMessageView,
 } from '@dsc/ui'
 import { useMention } from './mention'
+import { useCommandMenu } from './command-menu'
+import { blockedNow, commandQuery } from './commands'
 import { carryDraft, draftScopeOf, type ComposerDraft } from './draft'
 import { summarizeNotice } from './notice-summary'
 import {
@@ -306,26 +308,35 @@ function ComposerBox(): ReactNode {
    * 新的一条必然排在队尾，而队伍只会从尾巴长出来，所以这个下标在两步之间不会漂。
    */
   const send = (steer: boolean): void => {
-    const value = text.trim()
+    // 菜单开着、而且已经在打名字：Enter 采纳高亮项再执行（与 TUI 的 panelOpen 分支同口径，
+    // `↑↓` 换一条再回车就是跑那条）。只打了一个 `/` 时不采纳——那会把「看一眼清单」
+    // 变成「跑第一条」（第一条是 /new，凭空多一个会话），原文交给宿主落到 /help，
+    // 与 TUI 的裸 `/` 行为也一致。
+    const typed = text.trim()
+    const picked = command.open && typed !== '/' ? (command.insertText()?.trim() ?? null) : null
+    const value = picked ?? typed
     if (value === '' || blocked || sending) return
     if (value.startsWith('/')) {
-      // 斜杠指令里只有 /compact 有专门的通道方法（compress 整个会话历史），就地执行；
-      // 其余指令（runCommand 不在白名单）保持拦截说明——那是安全设计不是缺口。
-      if (value === '/compact') {
-        setSending(true)
-        setFault(null)
-        setText('')
-        void channel
-          .invoke('compact', [])
-          .then(() => toastOk('已开始压缩会话历史'))
-          .catch((reason: unknown) => {
-            setFault(`压缩失败：${reason instanceof Error ? reason.message : String(reason)}`)
-            setText(value)
-          })
-          .finally(() => setSending(false))
-        return
-      }
-      setFault('“/” 开头的指令这条路还没接到界面通道，请用桌面端或终端执行（/compact 除外）')
+      // 命令走界面通道的受限派发 `runUiCommand`：能跑的名字钉在宿主那份 `shell: true`
+      // 清单上（见宿主 core/commands-completion.ts），清单外的名字由宿主明确报错。
+      // 输出（/status、/diff、/usage…）是宿主写进会话的系统条目，与 TUI 同一份。
+      const target = value
+      setFault(null)
+      void channel
+        .invoke<boolean>('runUiCommand', [target])
+        .then(() => {
+          history.current = [...history.current.filter((item) => item !== target), target].slice(-HISTORY_LIMIT)
+          setHistoryAt(null)
+          setText('')
+        })
+        .catch((reason: unknown) => {
+          const message = reason instanceof Error ? reason.message : String(reason)
+          setFault(
+            message.includes('协议不允许调用的方法')
+              ? '“/” 命令要宿主支持：当前宿主没把这条路接到界面通道，请在桌面端或终端里执行'
+              : message,
+          )
+        })
       return
     }
     const steerIndex = steer && working ? queuedCount : null
@@ -463,7 +474,43 @@ function ComposerBox(): ReactNode {
     },
   })
 
+  /** `/` 命令菜单：候选表来自宿主的 `listUiCommands`（标了 `shell: true` 那批命令）。 */
+  const command = useCommandMenu({
+    channel,
+    apply: (next, caret) => {
+      setText(next)
+      window.requestAnimationFrame(() => {
+        area.current?.setSelectionRange(caret, caret)
+      })
+    },
+    onUnavailable: () => {
+      // 宿主没接这条路（老版本 / 远程档没放行）：说一句，别让「打了 / 什么都没发生」。
+      setFault('当前宿主没接“/”命令通道：菜单不可用，请用桌面端或终端执行（升级宿主后自动可用）')
+    },
+  })
+
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    // `/` 命令菜单开着时，↑↓/Tab/Esc 先归它（Enter 不截：那是「执行」，见 send）。
+    // 命令位（行首一个 /）里 @ 提及不会亮，两者同时开的情况只有 `/review @x` 这种
+    // 参数阶段的提及——那时菜单自己已经关了。
+    if (command.open) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        command.move(event.key === 'ArrowDown' ? 1 : -1)
+        return
+      }
+      if (event.key === 'Tab') {
+        event.preventDefault()
+        event.stopPropagation()
+        command.pick()
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        command.close()
+        return
+      }
+    }
     // @ 文件补全面板开着时，↑↓/Tab/Enter/Esc 先归它（不进历史、不发送）。
     if (mention.open) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -509,11 +556,16 @@ function ComposerBox(): ReactNode {
     }
   }
 
-  /** 输入框每次变化都问一句：光标前面是不是一个 @ 文件提及（是就把面板亮出来）。 */
+  /**
+   * 输入框每次变化都问两句：光标处是 `/` 命令名（菜单亮出来）还是 `@` 文件提及。
+   * 命令位里不提文件：`/review 关注点` 的参数阶段才有 @，那时菜单自己已经关了。
+   */
   const onTextChange = (value: string, caret: number): void => {
     setText(value)
     setHistoryAt(null)
-    mention.track(value, caret)
+    command.track(value, caret)
+    if (commandQuery(value, caret) === null) mention.track(value, caret)
+    else mention.close()
   }
 
   const sendable = text.trim() !== ''
@@ -775,6 +827,46 @@ function ComposerBox(): ReactNode {
           }}
           onKeyDown={onKeyDown}
         />
+
+        {/* `/` 命令候选面板：与 @ 提及同一块位置（输入框上方），两者不会同时开。 */}
+        {command.open ? (
+          <div className="slash-pop" role="listbox" aria-label="命令候选">
+            {command.loading ? (
+              <div className="slash-item" data-loading="1">
+                正在读取命令清单…
+              </div>
+            ) : command.rows.length === 0 ? (
+              <div className="slash-item" data-empty="1">
+                没有匹配的命令
+              </div>
+            ) : (
+              command.rows.map((row, index) => {
+                const off = blockedNow(row, working)
+                return (
+                  <button
+                    type="button"
+                    key={row.name}
+                    role="option"
+                    aria-selected={index === command.at}
+                    className={`slash-item${index === command.at ? ' on' : ''}${off ? ' off' : ''}`}
+                    title={row.description}
+                    onMouseDown={(event) => {
+                      // mousedown 而不是 click：抢在 textarea 失焦之前把候选插进去。
+                      event.preventDefault()
+                      command.pick()
+                    }}
+                  >
+                    <span className="slash-name">/{row.name}</span>
+                    {row.args === '' ? null : <span className="slash-args">{row.args}</span>}
+                    <span className="slash-desc">{row.description}</span>
+                    {off ? <span className="slash-flag">回合中不可用</span> : null}
+                  </button>
+                )
+              })
+            )}
+            <div className="slash-hint">↑↓ 选 · Tab 补全 · Enter 执行 · Esc 关闭</div>
+          </div>
+        ) : null}
 
         {/* @ 文件提及的候选面板：贴在输入框上方（textarea 是 relative 容器的兄弟）。 */}
         {mention.open ? (

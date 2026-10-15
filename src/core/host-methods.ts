@@ -49,6 +49,10 @@ export const INVOKABLE_METHODS = [
   'readBackground',
   'peekTranscript',
   'runCommand',
+  // 壳的 `/` 命令菜单：只读那份 `shell: true` 的元数据 + 只派发同一批（清单与挑选
+  // 尺子在 core/commands-completion.ts；界面通道（core/ui-methods.ts）再按同一批放行）
+  'listUiCommands',
+  'runUiCommand',
   'setPolicy',
   // 权限的两根新轴与打包预设（0.6.68）：审阅者（谁来裁）+ 沙箱/权限/审阅者三合一的预设
   'setReviewer',
