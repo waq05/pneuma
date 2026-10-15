@@ -199,8 +199,8 @@ console.log('0.6.57 特性测试')
 await sleep(160)
 let frame = lastFrame()
 
-// 1. 欢迎页：短会话时挂在流顶
-check('欢迎页出现（Pneuma + 版本）', frame.includes('Pneuma') && /v0\.6\./.test(frame), JSON.stringify(contentLines(frame).slice(0, 6)))
+// 1. 欢迎页：短会话时挂在流顶（版本号别写死档位——0.7.0 时 `/v0\.6\./` 这条曾把电池打红）
+check('欢迎页出现（Pneuma + 版本）', frame.includes('Pneuma') && /v\d+\.\d+\.\d+/.test(frame), JSON.stringify(contentLines(frame).slice(0, 6)))
 check('欢迎页含模型与目录', frame.includes('模型 test-model') && frame.includes('/w'))
 check('欢迎页提示双击 Esc 撤回', frame.includes('双击 Esc 撤回上一轮'))
 

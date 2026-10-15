@@ -17,15 +17,13 @@ import { DSC_VERSION } from './version.js'
 /**
  * 更新源地址：GitHub Releases API（0.6.50 首次对外发布时回填，「检查更新」自此启用）。
  *
- * 为什么写 `muse-code` 而不是新名 `pneuma`：**仓还没改名**——`waq05/pneuma` 现在返 404
- * （2026-10-14 实查：`/repos/waq05/pneuma` 与 `/releases/latest` 都是 404，而
- * `waq05/muse-code` 是 200，最新发布 v0.6.67 挂在那里）。写一个不存在的仓等于「检查更新」
- * 一上线就报 404。**仓库真改名之后把这一行同步改掉**（GitHub 对改过名的仓会 301 重定向，
- * 所以就算漏改也还能用一阵，但不是可以一直不管的理由）。
+ * 0.7.0 起写新名 `pneuma`：仓库 2026-10-15 已从 `waq05/muse-code` 改名为 `waq05/pneuma`。
+ * 旧名不会立刻失效（GitHub 对改过名的仓 301 重定向，老版本客户端仍可用一阵），
+ * 但新版本一律走这一行。
  *
  * 换自托管时给任意返回 `{version, url}` 的 JSON 地址即可。
  */
-export const UPDATE_CHECK_URL = 'https://api.github.com/repos/waq05/muse-code/releases/latest'
+export const UPDATE_CHECK_URL = 'https://api.github.com/repos/waq05/pneuma/releases/latest'
 
 /** fetch 的超时：更新源卡住也不能把设置动作挂死。 */
 const TIMEOUT_MS = 10_000
