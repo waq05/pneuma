@@ -108,8 +108,10 @@ export interface DockActions {
   /**
    * 开一张浏览器页签（**可多开**：2026-10 起浏览器不再是单例）。
    * `url` = 开的时候直接进的地址，不给就是空态；`label` = chip 上的标题。
+   * `id` = 指定页签 id（= 原生视图 id）；给了就用它，同 id 已存在只聚焦不新建。
+   * 只有「桌面侧指名一台视图」那条路会传（agent 开页签），用户自己点开的一律不给。
    */
-  openBrowserTab(url?: string, label?: string): void
+  openBrowserTab(url?: string, label?: string, id?: string): void
   /** 回填一张页签的标题 / 地址（浏览器页签用：网页标题进 chip、当前地址存回页签）。 */
   setTabInfo(tabId: string, patch: { label?: string; path?: string }): void
   /** 开一张补丁页签（同路径去重 = 聚焦）：看那个文件某次 write / edit 改了什么。 */
@@ -158,9 +160,16 @@ function freshPaneId(): string {
   return `p${freshId()}`
 }
 
-/** 造一张指定种类的页签（preview 页签带文件路径）。 */
-export function makeTab(kind: DockTabKind, path?: string): DockTab {
-  return path === undefined ? { id: freshId(), kind } : { id: freshId(), kind, path }
+/**
+ * 造一张指定种类的页签（preview 页签带文件路径）。
+ *
+ * `id` 只在**调用方要指名这张页签**时给——现在只有浏览器页签走这条路（见
+ * {@link openBrowserTab}）：桌面主进程按 id 指认它要驱动的那台原生视图。
+ * 不给就自己发号（绝大多数调用点都是这样）。
+ */
+export function makeTab(kind: DockTabKind, path?: string, id?: string): DockTab {
+  const tabId = id === undefined || id === '' ? freshId() : id
+  return path === undefined ? { id: tabId, kind } : { id: tabId, kind, path }
 }
 
 /** 默认布局：一格、只有一张「开始」。新会话第一次打开右侧栏就是它。 */
@@ -317,11 +326,23 @@ export function openWorkOutput(surface: DockSurface, id: string, label?: string)
  *
  * @param url 开的时候直接进的地址；不给就是空态（新页签不自动加载任何页面）
  * @param label chip 上的标题；通常留空，由页面标题回填（见 {@link setTabInfo}）
+ * @param id 指定页签 id；不给就自己发号。见下面「为什么 id 要能由调用方指定」
  */
-export function openBrowserTab(surface: DockSurface, url?: string, label?: string): DockSurface {
+export function openBrowserTab(surface: DockSurface, url?: string, label?: string, id?: string): DockSurface {
+  // 为什么 id 要能由调用方指定：浏览器页签的**原生视图 id 就是 `tab.id`**
+  // （`ui-shell/src/plugins/browser/ui.tsx` 里 `const viewId = tab.id`，原生桥的
+  // `dockBrowser` / `browserNav` / `browser-state` 全按这个 id 认台）。桌面主进程要驱动
+  // 「agent 自己开的」那台视图时，只能按一个**双方说好**的 id 指认——所以这个 id 由桌面侧
+  // 发号（`agent-N`）、壳照用，不能由壳自造，否则宿主的视图台账对不上号。
+  if (id !== undefined && id !== '') {
+    // 同 id 已存在就只聚焦、不新建：agent 反复 open 同一台（"打开/导航"分开调用）
+    // 不该在页签条上堆出 N 张一模一样的页签。
+    const existing = surface.panes.flatMap((pane) => pane.tabs).find((tab) => tab.id === id)
+    if (existing !== undefined) return focusTab(surface, existing.id)
+  }
   const pane = activePane(surface)
   const tab: DockTab = {
-    ...makeTab('browser', url === undefined || url === '' ? undefined : url),
+    ...makeTab('browser', url === undefined || url === '' ? undefined : url, id),
     ...(label === undefined || label === '' ? {} : { label }),
   }
   return replacePane(surface, pane.id, { ...pane, tabs: [...pane.tabs, tab], activeTabId: tab.id })

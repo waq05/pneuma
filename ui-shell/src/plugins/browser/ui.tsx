@@ -58,6 +58,38 @@ export default defineUiPlugin({
       // 切页签只藏不卸：视图留着，切回来页面还在（与终端同一条）
       keepMounted: true,
     })
+    // 桌面主进程 → 壳的两条**全局**事件（agent 那条链路的开户通路）：
+    //   - `browser-tab-open-request`  `{ id, url? }`：请壳开一张页签并聚焦，
+    //     id 由桌面侧发号（`agent-N`），壳必须照用——宿主的视图台账按这个 id 认台；
+    //   - `browser-tab-close-request` `{ id }`：请壳关掉那张页签（免得留下一个点不开的空页签）。
+    //
+    // 为什么订阅挂在**插件注册处**而不是 BrowserTab 那个 React 组件里：这两条事件是全局的
+    // （载荷里的 id 指名要动哪一张），而组件是**每张页签一份**——写在组件里的话，N 张页签
+    // 会各收到一次、同一张页签被开/关 N 次（既有的 `browser-open-requested` 是 per-tab 的，
+    // 它按 `payload.id !== viewId` 过滤，语义不同，别混）。
+    const native = getHostNative()
+    const offOpen = native.on('browser-tab-open-request', (request) => {
+      if (request === null || typeof request !== 'object') return
+      const payload = request as Record<string, unknown>
+      const id = payload['id']
+      if (typeof id !== 'string' || id === '') return
+      // 地址可能是空串 / 非字符串（新页签可以是空态，也可以随后由 browser-call 导航过去）：
+      // 与既有 `browser-open-requested` 同一条校验口径，整不出地址就当空态开出来。
+      const url = payload['url']
+      openDockBrowserTab(typeof url === 'string' && url !== '' ? url : undefined, id)
+    })
+    const offClose = native.on('browser-tab-close-request', (request) => {
+      if (request === null || typeof request !== 'object') return
+      const payload = request as Record<string, unknown>
+      const id = payload['id']
+      if (typeof id !== 'string' || id === '') return
+      dockActions.closeTab(id)
+    })
+    // 退订交回装载器（`apply` 的返回值就是「卸载这个插件时调」的清理函数，见 UiPluginModule）。
+    return () => {
+      offOpen()
+      offClose()
+    }
   },
 })
 
