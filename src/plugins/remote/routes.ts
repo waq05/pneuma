@@ -72,7 +72,7 @@ const PAIRING_HTML = `<!doctype html>
   <body>
     <main>
       <h1>Pneuma</h1>
-      <p>在电脑上打开「设置 → 远程控制」，生成配对码；把它输在下面就能进入界面。</p>
+      <p>在电脑上打开「设置 → 远程控制」，生成配对码：<b>用手机相机扫那张二维码</b>即可直接进来（地址里带着码）；也可以把 8 位码填在下边。</p>
       <input id="code" autocomplete="off" autocapitalize="characters" placeholder="8 位配对码" />
       <input id="name" autocomplete="off" placeholder="这台设备的名字（可留空）" />
       <button id="go">配对</button>
@@ -83,20 +83,23 @@ const PAIRING_HTML = `<!doctype html>
 </html>
 `
 
-/** 配对页的脚本（外链；配对成功服务器已经下好 HttpOnly Cookie，整页跳进壳）。 */
+/** 配对页的脚本（外链；配对成功服务器已经下好 HttpOnly Cookie，整页跳进壳）。
+ *
+ * 带 `?code=` 进来就是**扫码路径**——桌面「连接手机」那张弹窗的二维码内容就是
+ * `地址?code=<8 位码>`（见 remote 插件 `regenerate-code` 的回执）：这一页读到它就直接配对，
+ * 不再让人手抄一遍码。码过期 / 没带码时仍是原来那张手输表单（两条路共用一个 pair()）。 */
 const PAIRING_JS = `(() => {
   var code = document.getElementById('code')
   var name = document.getElementById('name')
   var go = document.getElementById('go')
   var msg = document.getElementById('msg')
-  go.addEventListener('click', function () {
-    if (code.value.trim() === '') { msg.textContent = '先填配对码'; return }
+  function pair(value) {
     go.disabled = true
     msg.textContent = '配对中…'
     fetch('/api/pair', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ code: code.value.trim(), deviceName: name.value.trim() }),
+      body: JSON.stringify({ code: value, deviceName: name.value.trim() }),
     })
       .then(function (res) { return res.json() })
       .then(function (doc) {
@@ -104,7 +107,17 @@ const PAIRING_JS = `(() => {
         location.href = '/'
       })
       .catch(function (error) { msg.textContent = '配对失败：' + error; go.disabled = false })
+  }
+  go.addEventListener('click', function () {
+    if (code.value.trim() === '') { msg.textContent = '先填配对码'; return }
+    pair(code.value.trim())
   })
+  var scanned = new URLSearchParams(location.search).get('code')
+  if (scanned !== null && scanned.trim() !== '') {
+    code.value = scanned.trim()
+    msg.textContent = '扫到的码在地址里，正在配对…'
+    pair(code.value)
+  }
 })()
 `
 

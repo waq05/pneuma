@@ -11,14 +11,31 @@
 import type { CommandSpec, CompletionItem } from '../services/types.js'
 import type { ModelChoiceView } from '../contract.js'
 
-/** 内置命令表（spec 单一真源；handler 在插件 apply 时注册）。 */
+/**
+ * 内置命令表（spec 单一真源；handler 在插件 apply 时注册）。
+ *
+ * `shell: true` 那批是**桌面壳输入框里列得出来、也执行得了**的命令（界面通道的
+ * `listUiCommands` / `runUiCommand` 只认它们，见 core/ui-methods.ts）。挑的尺子两条，
+ * 缺一不可：
+ *
+ *   1. 动作不出界面通道已有的权力面：`/new` ≈ `openSession`、`/compact` ≈ `compact`、
+ *      `/review` ≈ `submit`、`/diff` ≈ `dock` 读类，其余四条只往会话里写一条系统通知；
+ *   2. 壳里没有更顺手的替身：权限三根旋钮（`/policy` `/reviewer` `/permission`）与
+ *      `/model` `/effort` 的旋钮就长在输入框底栏，`/resume` `/settings` `/agents`
+ *      `/plugins` 各有常驻入口——在壳里再列一遍只会多出第二条真源。
+ *
+ * 硬理由不放的那几条：`/export`（往任意路径写文件）、`/ui-trust`（落第三方界面插件的
+ * 信任记录）、`/exit`（宿主生命周期）写完面一律留在原生桥（core/native-bridge.ts），
+ * 那是只对装了 preload 的桌面窗口开放的一条路；`/copy` 动的是**宿主**机器的剪贴板，
+ * 手机端看着像复制到自己手机上，语义错位。
+ */
 export const BUILT_IN_COMMANDS: CommandSpec[] = [
   // T44：duringTask = 回合跑着的时候还能不能用。new/resume 会打断挂着审批的回合、
   // compact 会和进行中的落库交错，运行中一律挡下；其余随时可用。
-  { name: 'new', args: '', description: '新建会话', duringTask: 'deny' },
+  { name: 'new', args: '', description: '新建会话', duringTask: 'deny', shell: true },
   { name: 'resume', args: '', description: '恢复历史会话（先选工作区再选会话）', duringTask: 'deny' },
   { name: 'agents', args: '', description: '查看子代理与后台会话（转录只读）' },
-  { name: 'compact', args: '', description: '压缩上下文', duringTask: 'deny' },
+  { name: 'compact', args: '', description: '压缩上下文', duringTask: 'deny', shell: true },
   {
     name: 'model',
     args: '<[端点/]模型名>',
@@ -33,14 +50,14 @@ export const BUILT_IN_COMMANDS: CommandSpec[] = [
   { name: 'plugins', args: '', description: '查看已挂载插件清单（启停与详情在桌面端插件中心）' },
   { name: 'ui-trust', args: '<插件目录名>', description: '信任一个第三方界面插件（首次安装的确认动作）' },
   { name: 'update', args: '', description: '检查有没有新版（只查不装）', duringTask: 'deny' },
-  { name: 'status', args: '', description: '查看上下文占用与压缩余量' },
-  { name: 'usage', args: '', description: '查看累计用量统计（含缓存命中率）' },
-  { name: 'diff', args: '[文件]', description: '查看工作区未提交改动的 diff' },
+  { name: 'status', args: '', description: '查看上下文占用与压缩余量', shell: true },
+  { name: 'usage', args: '', description: '查看累计用量统计（含缓存命中率）', shell: true },
+  { name: 'diff', args: '[文件]', description: '查看工作区未提交改动的 diff', shell: true },
   { name: 'copy', args: '', description: '复制上一条回复到剪贴板' },
   { name: 'export', args: '[文件路径]', description: '导出当前会话为 markdown' },
-  { name: 'review', args: '[关注点]', description: '审查工作区未提交改动' },
+  { name: 'review', args: '[关注点]', description: '审查工作区未提交改动', shell: true },
   { name: 'settings', args: '', description: '打开设置页' },
-  { name: 'help', args: '', description: '查看帮助' },
+  { name: 'help', args: '', description: '查看帮助', shell: true },
   { name: 'exit', args: '', description: '退出' },
 ]
 
@@ -59,6 +76,40 @@ export function addExtraSpec(spec: CommandSpec): void {
 export function removeExtraSpec(spec: CommandSpec): void {
   const at = extraSpecs.findIndex((entry) => entry.name === spec.name)
   if (at >= 0) extraSpecs.splice(at, 1)
+}
+
+/**
+ * 壳（桌面 / 手机那份插件化界面）可见也可执行的命令：`shell: true` 那批。
+ *
+ * 界面通道的 `listUiCommands`（菜单数据源）与 `runUiCommand`（派发闸）都读这一份，
+ * 所以「菜单里列出来的」与「真能执行的」不可能各说各话。外部插件默认不在里面
+ * （spec 不标 `shell` 就不进）——失败关闭；宿主侧插件本就有完整宿主权力，标了也只是
+ * 把它自己的命令摆到菜单里，不多给任何东西。
+ */
+export const shellCommands = (): CommandSpec[] => allSpecs().filter((spec) => spec.shell === true)
+
+/** 这个名字能不能从壳里执行（`runUiCommand` 的闸；大小写与展开后的名字比）。 */
+export function isShellCommand(name: string): boolean {
+  return allSpecs().some((spec) => spec.name === name && spec.shell === true)
+}
+
+/**
+ * 界面通道派发前的那道闸（`runUiCommand` 只做两件事：问它、照原样派发）。
+ *
+ * 独立成纯函数是为了能直测：它是「壳能跑什么」这句话的可执行版本，而 `runCommand`
+ * 那条路（终端与旧桌面渲染层用）**不过这道闸**——两边的差别只在这里。
+ *
+ * @returns null = 放行；字符串 = 给用户看的原因（调用方原样抛出去）。
+ */
+export function shellCommandRejection(input: string): string | null {
+  if (!input.startsWith('/')) return '界面通道的命令派发只接 `/` 开头的输入'
+  // 名字按「唯一前缀展开」算（`/rev` → `/review`），与 TUI 敲一半按回车的口径一致。
+  const expanded = expandCommand(input)
+  const name = expanded.slice(1).trim().split(/\s+/)[0] ?? ''
+  // 裸 `/`（没有名字）落到 /help，与 TUI 同一条出口，不算越界。
+  if (name === '') return null
+  if (isShellCommand(name)) return null
+  return `/${name} 不在桌面壳的命令清单里（输入框打 / 看能用的那几条；权限、模型、退出这些在界面上有旋钮或按钮）`
 }
 
 /** /help 文本（命令表驱动）。 */

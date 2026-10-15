@@ -557,6 +557,19 @@ try {
     pairJs.status === 200 && String(pairJs.headers['content-type']).includes('javascript'),
     `${String(pairJs.status)} ${String(pairJs.headers['content-type'])}`,
   )
+  // 扫码路径：桌面弹窗那张二维码的内容是 `地址?code=<码>`，配对页读到它要**自动配对**，
+  // 不再让人手抄一遍码（2026-10-15 报障：「扫码连接不用再输 8 位配对码了」）。
+  check('配对页会读地址里带的码（扫码进来不必手输）', pairJs.body.includes("URLSearchParams(location.search).get('code')"))
+  check('读到的码直接进配对（与手输同一个 pair()）', /if \(scanned !== null[\s\S]{0,160}pair\(code\.value\)/.test(pairJs.body))
+  check('两条路共用一个配对函数（手输那条也走它）', (pairJs.body.match(/function pair\(value\)/g) ?? []).length === 1 && pairJs.body.includes('pair(code.value.trim())'))
+  check('配对页文案写明扫二维码就行', page.body.includes('扫那张二维码'))
+  // 带码的地址走 GET / 仍是配对页（码在地址里，服务器不下发任何凭据——换 Cookie 那步还得 POST /api/pair）
+  const withCode = await httpCall(`/?code=${encodeURIComponent(pairData?.code ?? '')}`)
+  check(
+    '带 ?code= 的 GET / 仍是配对页（码在地址里，凭据仍由 POST /api/pair 换）',
+    withCode.status === 200 && withCode.body.includes('/pair.js') && !withCode.body.includes('__DSC_BOOT__'),
+    String(withCode.status),
+  )
   const trailer = await httpCall('/%2e%2e/package.json')
   check(
     '未配对时目录穿越也只见配对页（静态资产整面在凭据闸后面）',

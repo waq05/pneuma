@@ -216,6 +216,9 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
             choices.push({
               value: `${provider.name}/${model.id}`,
               provider: provider.name,
+              // 一级菜单按显示名画（用户填了 `displayName` 就用它，没填等于端点名）；
+              // 二级列表里仍按模型「自己的」id 画，不替它加前缀。
+              providerDisplayName: provider.displayName === '' ? provider.name : provider.displayName,
               model: model.id,
               description: [
                 provider.displayName,

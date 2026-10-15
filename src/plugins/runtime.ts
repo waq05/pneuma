@@ -12,6 +12,7 @@ import { listPluginInfos, writePluginEnabled } from '../core/plugin-registry.js'
 import { setPluginEnabledHot } from '../core/plugin-loader.js'
 import { readUiPluginManifestReport, isThirdPartyUiEntry, scanThirdPartyUiTrusts, trustThirdPartyUiPlugin } from '../core/ui-bundles.js'
 import { buildUsageStats } from '../core/usage-log.js'
+import { shellCommandRejection, shellCommands } from '../core/commands-completion.js'
 import type { DscRuntime, SettingsMutation } from '../contract.js'
 
 export const runtimePlugin: Plugin.Object = {
@@ -50,6 +51,21 @@ export const runtimePlugin: Plugin.Object = {
         return { ok: true, notice: work() }
       } catch (error) {
         return { ok: false, error: errText(error) }
+      }
+    }
+
+    /**
+     * / 命令执行期的界面回调（`runCommand` 与 `runUiCommand` 共用一份）。
+     *
+     * notice 写 transcript 条目（TUI 与壳都直接读它，所以命令输出在哪一端都看得见）；
+     * openPicker / openModels 只是事件——终端壳与旧桌面渲染层各有一条转发链
+     * （host-stdio / remote → 各自界面）。壳自己的那批命令不依赖这两个回调。
+     */
+    function commandUi(): import('../services/types.js').CommandContext {
+      return {
+        notice: (text) => ctx.transcript.system(text),
+        openPicker: () => ctx.emit('dsc/open-picker'),
+        openModels: () => ctx.emit('dsc/open-models'),
       }
     }
 
@@ -299,11 +315,26 @@ export const runtimePlugin: Plugin.Object = {
       runCommand(input) {
         // / 命令统一在宿主命令注册表派发（内置 + 外部插件命令）；
         // notice 反馈写 transcript 条目，openPicker 经事件转发给宿主壳。
-        return ctx.commands.run(input, this, {
-          notice: (text) => ctx.transcript.system(text),
-          openPicker: () => ctx.emit('dsc/open-picker'),
-          openModels: () => ctx.emit('dsc/open-models'),
-        })
+        return ctx.commands.run(input, runtime, commandUi())
+      },
+
+      listUiCommands() {
+        // 菜单与派发读同一份 `shellCommands()`，所以「列出来的」与「能跑的」不会漂。
+        return shellCommands().map((spec) => ({
+          name: spec.name,
+          args: spec.args,
+          description: spec.description,
+          duringTask: spec.duringTask ?? 'allow',
+        }))
+      },
+
+      runUiCommand(input) {
+        // 界面通道的命令面：只有标了 `shell: true` 的才派发（失败关闭，尺子写在
+        // core/commands-completion.ts）。判据是纯函数 `shellCommandRejection`——
+        // 壳能跑什么，探针直测那一份；这里只负责「不放行就抛、放行走同一条注册表」。
+        const rejection = shellCommandRejection(input)
+        if (rejection !== null) throw new Error(rejection)
+        return ctx.commands.run(input, runtime, commandUi())
       },
 
       listModels() {

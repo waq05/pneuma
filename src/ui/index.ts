@@ -130,6 +130,7 @@ export type {
   TurnEndReason,
   UiDensity,
   UiFontSize,
+  UiCommandView,
   UiPrefsView,
   UsageDayView,
   UsageModelView,

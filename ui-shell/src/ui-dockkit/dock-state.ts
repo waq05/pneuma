@@ -111,8 +111,8 @@ export const dockActions: DockActions = {
   openPreview: (path, line) => {
     mutate((s) => modelSetExpanded(modelOpenPreview(s, path, line), true))
   },
-  openBrowserTab: (url, label) => {
-    mutate((s) => modelSetExpanded(modelOpenBrowserTab(s, url, label), true))
+  openBrowserTab: (url, label, id) => {
+    mutate((s) => modelSetExpanded(modelOpenBrowserTab(s, url, label, id), true))
   },
   setTabInfo: (tabId, patch) => {
     // 不展开：这是网页自己在回填标题 / 地址，不是用户点了一下（不该把侧栏顶出来）
@@ -170,9 +170,13 @@ export function openDockTab(kind: DockTabKind): void {
  * 与 {@link setDockPreview} 同一性质。
  *
  * @param url 直接进的地址；不给就是空态页签
+ * @param viewId 指定页签 id（= 原生视图 id）；只有「桌面侧指名一台视图」那条路会传。
+ *   为什么要能指定：浏览器页签的原生视图 id 就是 `tab.id`，而 agent 那条链路上，
+ *   桌面主进程是按宿主台账里的 viewId 指认它要开/要驱动的那台视图的——这个 id 得由
+ *   **桌面侧发号、壳照用**，不能由壳自己发号（那样两边对不上号）。不给就照旧自己发。
  */
-export function openDockBrowserTab(url?: string): void {
-  dockActions.openBrowserTab(url)
+export function openDockBrowserTab(url?: string, viewId?: string): void {
+  dockActions.openBrowserTab(url, undefined, viewId)
 }
 
 // ── 页签内容注册表（kind → 渲染组件） ────────────────────────────────────────

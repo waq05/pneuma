@@ -16,6 +16,7 @@
 import type { ApprovalDecision, ApprovalHandler, ApprovalRequest } from '../core/approval.js'
 import type { AuditRecord } from '../core/audit.js'
 import type { HookJudgement, HooksDoc, HookTrust } from '../core/hooks.js'
+import type { HostBrowserLink } from '../core/host-browser-link.js'
 import type { MemoryCell, MemoryConfig, MemoryOperation, MemoryTarget, MemoryWriteResult, WriteOptions } from '../core/memory.js'
 import type { ProviderConfig } from '../core/config.js'
 import type { Session, InboxOrigin } from '../core/session.js'
@@ -475,6 +476,14 @@ export interface CommandSpec {
    * 派发时统一查这一位——桌面 / TUI / 远端从同一个闸过，不再各防各的。
    */
   duringTask?: 'allow' | 'deny'
+  /**
+   * 壳（桌面 / 手机那份插件化界面）的 `/` 菜单里列不列、能不能执行。
+   *
+   * 缺省 false 是**失败关闭**：外部插件注册的命令默认不进界面菜单，内置表里逐条标过才
+   * 放行（清单与理由在 `core/commands-completion.ts`）。界面通道（`core/ui-methods.ts`）
+   * 要的正是这一位：`runUiCommand` 只派发标了它的命令。
+   */
+  shell?: boolean
 }
 
 /** 补全面板的一项（命令候选与模型候选共用）。 */
@@ -1233,6 +1242,14 @@ declare module '@deepseek-ai/cordis' {
     approvalFloor?: ApprovalFloorService
     /** 界面可达性（tui / host-stdio 入口登记；脚本环境里不存在，读它要用 `ctx.get('interactive')`）。 */
     interactive?: InteractiveService
+    /**
+     * 桌面壳那条浏览器控制链路（host-stdio 插件登记）。
+     *
+     * 管道宿主（`node lib/headless.js`）与远程壳里**服务在、但 `available()` 为假**——
+     * 「宿主里没有桌面壳」与「桌面壳没响应」是两回事，取到之后必须看这一位再决定怎么说。
+     * 读它要用 `ctx.get('hostBrowser')`。
+     */
+    hostBrowser?: HostBrowserLink
     /**
      * 本机界面服务（webserver 插件提供；挂载即存在，真正监听要调 `ensure()`）。
      * 桌面主进程拿它取窗口地址，`DSC_UI_SERVER=1` 时插件自己起来。

@@ -366,8 +366,24 @@ export class CdpTransport {
   }
 }
 
+/**
+ * 「能执行 CDP 命令的那点东西」——快照层与动作层真正依赖的形状。
+ *
+ * 为什么单独抽这一层：`CdpSessionView` 是一条 WebSocket 连接上的一个 session，
+ * 而 dock 视图（侧栏里那台浏览器）没有 WebSocket——命令经宿主协议转给桌面主进程，
+ * 由那边的 `webContents.debugger` 执行。抽成结构类型之后，`src/core/cdp/` 里那套
+ * 快照与动作两条后端共用一份，不必各写一遍，也不必为了「长得像」去伪造一个连接对象。
+ */
+export interface CdpCommandTarget {
+  readonly sessionId: string
+  /** 发一条命令。 */
+  send<T = unknown>(method: string, params?: Record<string, unknown>, options?: Omit<CdpCommandOptions, 'sessionId'>): Promise<T>
+  /** 订事件（没有 session 概念的实现自己按视图过滤）。 */
+  on(method: string, handler: (params: Record<string, unknown>) => void): () => void
+}
+
 /** 一个 session 上的便利视图：省得每次发命令都手写 sessionId。 */
-export class CdpSessionView {
+export class CdpSessionView implements CdpCommandTarget {
   readonly sessionId: string
   private readonly transport: CdpTransport
 

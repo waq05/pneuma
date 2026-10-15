@@ -170,6 +170,23 @@ ctx.commands.run(input, runtime, ui): boolean // 派发一条 "/..." 输入（�
 
 命令名小写、无 `/` 前缀；与内置命令同名会覆盖内置项（避免这样做）。
 
+**要不要出现在界面壳的 `/` 菜单里，由 spec 上的一位决定**：外部命令默认**不**进菜单
+（失败关闭）。想让它在桌面 / 手机壳的输入框里列出来、也执行得了，注册时多标一位：
+
+```ts
+ctx.commands.register(
+  { name: 'greet', args: '<名字>', description: '向某人问好', shell: true },
+  handler,
+)
+```
+
+壳那条路是**受限派发** `runUiCommand`（界面通道白名单里的方法）：名字面钉在宿主这份命令表上，
+壳只能把名字读出来、再发回来，拿不到 handler，也够不着没标这一位的命令。标之前先量一件事：
+**这条命令的动作别超出界面通道已有的权力面**——写文件、改权限旋钮、落信任、退出这类写完面
+一律在原生桥单开（与第三方界面插件的信任同一先例，见 §10.3），壳的菜单里只该出现
+「列出来也不多给任何东西」的命令。挑选尺子与内置那七条的清单写在
+`src/core/commands-completion.ts`。
+
 ### 4.3 transcript —— 会话流（反馈用户的正道）
 
 ```ts
@@ -229,6 +246,11 @@ getSectionValues / setSettingValue / runSettingAction / getModelConfig /
 saveProvider / removeProvider / setProviderKey / setDefaultModel`。
 插件里通常用不到它（优先用 `agent` / `transcript`，改配置优先用 `settings` 服务）；
 `exit()` 会结束宿主进程，务必只用于用户显式退出。
+
+壳（插件化界面）的两条只给界面用的：`listUiCommands()`（`/` 菜单的数据源）与
+`runUiCommand(input)`（受限派发，只认标了 `shell: true` 的命令，见 §4.2）。它们同时也在
+界面通道白名单里，所以页面里的第三方界面插件够得着；`runCommand`（任意命令）不在那条
+白名单上，只有宿主进程内部协议与 TUI 能调。
 
 ### 4.7 settings —— 往桌面端设置面板加一个分区
 
