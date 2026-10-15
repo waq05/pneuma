@@ -62,6 +62,7 @@ import {
   type QueuedMessageView,
 } from '@dsc/ui'
 import { useMention } from './mention'
+import { carryDraft, draftScopeOf, type ComposerDraft } from './draft'
 import { summarizeNotice } from './notice-summary'
 import { filteredBranches, wouldOverwrite, type GitBranchRow } from './git-branch'
 
@@ -190,9 +191,18 @@ function ComposerBox(): ReactNode {
   const area = useRef<HTMLTextAreaElement | null>(null)
   const history = useRef<string[]>([])
   const [historyAt, setHistoryAt] = useState<number | null>(null)
-  /** 每会话一份草稿（正文 + 本机历史），切会话时整份换入换出。 */
-  const drafts = useRef(new Map<string, { value: string; history: string[] }>())
-  const draftKeyRef = useRef(draftKey)
+  /** 每会话一份草稿（正文 + 本机历史），切会话时整份换入换出；归属规则见 draft.ts。 */
+  const drafts = useRef(new Map<string, ComposerDraft>())
+  const draftSessionId = useHostSelector(readSessionId)
+  const draftCwd = useHostSelector(readDraftCwd)
+  const draftUnsaved = useHostSelector(readSessionUnsaved)
+  const draftScope = draftScopeOf({
+    sessionPath: draftKey,
+    sessionId: draftSessionId,
+    cwd: draftCwd,
+    unsaved: draftUnsaved,
+  })
+  const draftScopeRef = useRef(draftScope)
 
   const working = turnState !== 'idle'
 
@@ -202,17 +212,23 @@ function ComposerBox(): ReactNode {
    * 为什么必须有：组件不随会话重挂，`text` 是单个 state。不换的话，在会话 A 里打了一半的
    * 话会跟着你进会话 B，回车就发错了会话——这是会真丢事的错，不只是显示问题。
    *
+   * 归属按 {@link draftScopeOf} 算：**还没发过消息的会话草稿记在工作区名下**，所以
+   * 「新会话里写了半截话 → 切走 → 再点新会话」能把话捡回来（0.6.70 报障）。搬运规则
+   * （含「同一条会话刚落盘就把工作区那一格清掉」）在 `carryDraft` 里，由探针逐条钉住。
+   *
    * 游标一律归零：换了一份历史，上下键从头开始。
    */
   useEffect(() => {
-    if (draftKeyRef.current === draftKey) return
-    drafts.current.set(draftKeyRef.current, { value: text, history: history.current })
-    draftKeyRef.current = draftKey
-    const next = drafts.current.get(draftKey) ?? { value: '', history: [] }
+    if (draftScopeRef.current.key === draftScope.key) return
+    const next = carryDraft(drafts.current, draftScopeRef.current, draftScope, {
+      value: text,
+      history: history.current,
+    })
+    draftScopeRef.current = draftScope
     setText(next.value)
-    history.current = next.history
+    history.current = [...next.history]
     setHistoryAt(null)
-  }, [draftKey, text])
+  }, [draftScope.key, draftScope.sessionId, draftScope.unsaved, text])
 
   // 输入框跟着内容长高，封顶 200px（超出在框内滚）。
   useEffect(() => {
@@ -1271,12 +1287,37 @@ function readHasApproval(snapshot: HostSnapshot | null): boolean {
 }
 
 /** 会话身份（草稿按它分槽）。用 `sessionPath` 而不是 `sessionId`：路径是壳里其它地方
- *  统一的会话标识，同一条会话重开还是同一把钥匙，草稿不会因为换了进程就丢。 */
+ *  统一的会话标识，同一条会话重开还是同一把钥匙，草稿不会因为换了进程就丢。
+ *  **还没落盘的会话**（`sessionUnsaved`）路径会变，那种会话的草稿改按工作区分槽——
+ *  见 plugins/composer/draft.ts 的 `draftScopeOf`。 */
 function readSessionPath(snapshot: HostSnapshot | null): string {
   const status = snapshot?.['status']
   if (typeof status !== 'object' || status === null) return ''
   const path = (status as Record<string, unknown>)['sessionPath']
   return typeof path === 'string' ? path : ''
+}
+
+/** 会话 uuid（分槽时用来分辨「换了会话」与「同一条会话刚落盘」）。 */
+function readSessionId(snapshot: HostSnapshot | null): string {
+  const status = snapshot?.['status']
+  if (typeof status !== 'object' || status === null) return ''
+  const value = (status as Record<string, unknown>)['sessionId']
+  return typeof value === 'string' ? value : ''
+}
+
+/** 会话工作目录（未落盘的新会话按它分槽）。 */
+function readDraftCwd(snapshot: HostSnapshot | null): string {
+  const status = snapshot?.['status']
+  if (typeof status !== 'object' || status === null) return ''
+  const value = (status as Record<string, unknown>)['cwd']
+  return typeof value === 'string' ? value : ''
+}
+
+/** 这条会话一条消息都还没发过吗（草稿分槽的第二个依据）。 */
+function readSessionUnsaved(snapshot: HostSnapshot | null): boolean {
+  const status = snapshot?.['status']
+  if (typeof status !== 'object' || status === null) return false
+  return (status as Record<string, unknown>)['sessionUnsaved'] === true
 }
 
 /**
