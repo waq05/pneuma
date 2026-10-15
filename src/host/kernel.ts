@@ -208,9 +208,9 @@ export const OFFICIAL_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
     description: '让模型驱动桌面端侧栏那台浏览器（用户持久会话）：快照 + ref 定位，动手动作每次审批',
     toggleable: true,
     defaultDisabled: true,
-    // 复用 browser 的设置分区：壳是「按 id 在已注册分区里查」（停用时不查、启用时才查），
-    // 不要求分区预先存在；这里复用既不新造一张配置表，也让插件卡的齿轮指到浏览器控制那一档口径。
-    settingsSection: 'browser',
+    // 指向插件自建的分区（`dock-browser` 插件里 ctx.settings.registerSection 注册的那张，
+    // 带「看侧栏浏览器免审批」开关）。壳是「按 id 在已注册分区里查」，启用后就能查到。
+    settingsSection: 'dock-browser',
   },
   {
     file: 'self-improve',

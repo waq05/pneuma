@@ -32,11 +32,14 @@
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import type { ToolEntry, ToolContext, ToolOutput } from '../core/tools.js'
-import { resolvePluginConfig } from '../core/plugin-registry.js'
+import type { SettingsField, SettingsValue } from '../contract.js'
+import type { SettingsSectionSpec } from '../services/types.js'
+import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
 import { neutralizeInline, wrapUntrusted } from '../core/untrusted.js'
 import { redact } from '../core/secrets.js'
 import { DOCK_ACTIONS, DOCK_LOOK_ACTIONS, isAgentView } from '../core/dock-browser.js'
 import { HOST_BROWSER_SERVICE, type HostBrowserLink } from '../core/host-browser-link.js'
+import { CLOUD_METADATA_HOSTS } from './browser.js'
 import type { CdpCommandTarget, CdpSessionView } from '../core/cdp/transport.js'
 import * as actions from '../core/cdp/actions.js'
 import {
@@ -48,6 +51,8 @@ import {
 } from '../core/cdp/snapshot.js'
 
 const CONFIG_KEY = 'dock-browser'
+/** 设置分区 id：与配置键同名，元数据 `settingsSection` 指向它。 */
+const SECTION_ID = 'dock-browser'
 const TOOL_ACT = 'browser_dock'
 const TOOL_LOOK = 'browser_dock_look'
 
@@ -143,7 +148,23 @@ function clamp(value: unknown, min: number, max: number, fallback: number): numb
 }
 
 /**
- * 拒明显非 http(s) 的地址。
+ * 云元数据地址无条件拒。
+ *
+ * 理由与 `evaluate` 那条敏感原语黑名单完全相同——换了后端也不许少一道：
+ * 这些地址给虚拟机发临时凭据，被网页内容牵着走的模型绝不该 GET 它们。
+ * 只复用 `browser.ts` 导出的 `CLOUD_METADATA_HOSTS`（那是现成的判定数据），
+ * **不搬**它整套域名 allow/deny 与私网判定：那是给自管那台一次性 Chrome 定的口径，
+ * 这台是用户自己的浏览器（localhost 之类可能是他正常的开发目标）。
+ */
+function assertNotCloudMetadata(hostname: string): void {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  if (CLOUD_METADATA_HOSTS.includes(host)) {
+    throw new Error(`云元数据地址（${host}）无条件拒绝：它给虚拟机发临时凭据，浏览器自动化绝不该碰`)
+  }
+}
+
+/**
+ * 拒明显非 http(s) 的地址、以及云元数据地址。
  *
  * 桌面侧收到 `Page.navigate` 会再用 `dockNavigateTarget` + `isHttpUrl` 复检一遍——
  * 这里这道是**第一道**：把 `file://` / `javascript:` / `data:` 这类在进审批之前就挡掉，
@@ -161,6 +182,7 @@ function assertHttpUrl(raw: string): string {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error(`只允许 http/https；${parsed.protocol} 这类协议（file:、javascript:、data:、chrome: 等）不通过`)
   }
+  assertNotCloudMetadata(parsed.hostname)
   return text
 }
 
@@ -211,7 +233,7 @@ interface SnapshotOutcome {
 
 export const dockBrowserPlugin: Plugin.Object = {
   name: 'dock-browser',
-  inject: ['tools'],
+  inject: ['tools', 'settings'],
   apply(ctx, passed: unknown) {
     const readConfig = (): DockBrowserConfig => {
       const raw = resolvePluginConfig(CONFIG_KEY, passed)
@@ -223,10 +245,9 @@ export const dockBrowserPlugin: Plugin.Object = {
         waitTimeoutMs: clamp(raw.waitTimeoutMs, 100, 120_000, DEFAULTS.waitTimeoutMs),
       }
     }
-    // lookWithoutApproval 决定「只读工具注册与否」，那是挂载时的一次性判断；
-    // 其余字段每次用值时现读，改配置不必重启宿主（与 browser.ts 同口径）。
-    const bootConfig = readConfig()
-    let config = bootConfig
+    // lookWithoutApproval 决定「只读工具注册与否」，每次改设置都会 syncTools 重挂一次
+    // （照 computer-use.ts 的先例）；其余字段每次用值时现读，不必重启宿主。
+    let config = readConfig()
 
     /** 每台视图的状态（会话 + ref 代际）。 */
     const states = new Map<string, ViewState>()
@@ -827,16 +848,59 @@ export const dockBrowserPlugin: Plugin.Object = {
       run: (args) => runLook(args),
     }
 
-    const offAct = ctx.tools.register(actTool)
-    // 只读工具默认不注册：dock 视图是用户自己的持久登录态，
-    // 只有显式打开 lookWithoutApproval 才以 read 档放行（照 computer-use.ts 的先例）。
-    const offLook = config.lookWithoutApproval ? ctx.tools.register(lookTool) : null
+    // ── 工具注册（开关一翻就重挂一次）──────────────────────────────────────
+
+    let toolOffs: Array<() => void> = []
+    const syncTools = (): void => {
+      for (const off of toolOffs) off()
+      toolOffs = []
+      toolOffs.push(ctx.tools.register(actTool))
+      // 只读工具默认不注册：dock 视图跑在用户自己的持久分区里（带登录态），
+      // 只有显式打开 lookWithoutApproval 才以 read 档放行（照 computer-use.ts 的先例）。
+      if (config.lookWithoutApproval) toolOffs.push(ctx.tools.register(lookTool))
+    }
+    syncTools()
+
+    // ── 设置分区 ────────────────────────────────────────────────────────────
+
+    const section: SettingsSectionSpec = {
+      id: SECTION_ID,
+      title: '侧栏浏览器',
+      subtitle: '让模型驱动桌面端侧栏那台浏览器（用户自己的持久会话，不是自管那台一次性 Chrome）',
+      order: 35,
+      fields: (): SettingsField[] => [
+        {
+          type: 'switch',
+          key: 'lookWithoutApproval',
+          label: '看侧栏浏览器免审批',
+          help:
+            '打开后 browser_dock_look（views / snapshot / screenshot / console / network / wait_for）以只读档注册、不再逐次弹审批卡。' +
+            '注意它看的是**你自己登录着的那台浏览器**（持久分区 persist:dsc-browser），页面上可能有你的登录态与隐私内容，按需打开。' +
+            '点击、输入、求值这些动手动作（browser_dock）仍每次要确认。',
+        },
+        {
+          type: 'info',
+          label: '说明',
+          text: '这一档只决定「看」的工具是否注册（browser_dock_look）；动手工具 browser_dock 恒为每次审批。',
+        },
+      ],
+      values: (): Record<string, SettingsValue> => ({ lookWithoutApproval: config.lookWithoutApproval }),
+      // 契约：返回字符串 = 失败原因；void = 成功
+      save: (key, value): string | void => {
+        if (key !== 'lookWithoutApproval') return `这个分区没有这项：${key}`
+        writePluginConfig(CONFIG_KEY, { lookWithoutApproval: value === true || value === 'true' })
+        config = readConfig()
+        syncTools()
+      },
+    }
+    const offSection = ctx.settings.registerSection(section)
 
     // ── 收尾 ────────────────────────────────────────────────────────────────
 
     return () => {
-      offAct()
-      offLook?.()
+      offSection()
+      for (const off of toolOffs) off()
+      toolOffs = []
       if (offEvents !== null) {
         try {
           offEvents()
