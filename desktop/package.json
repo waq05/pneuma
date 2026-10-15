@@ -1,6 +1,6 @@
 {
   "name": "pneuma-desktop",
-  "version": "0.6.67",
+  "version": "0.7.0",
   "private": true,
   "description": "Pneuma 桌面端：Electron 壳 + headless 宿主子进程（stdio JSONL 协议）",
   "main": "out/main/index.js",
