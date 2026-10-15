@@ -1,9 +1,9 @@
 /**
  * 压缩摘要的机械加固件：锚点索引（正则从原文抽，不经模型改写）、
- * 真实用户原话逐字引用、细节找回指针。
+ * 真实用户原话逐字引用、压前读过的文件状态（read-state）、细节找回指针。
  *
- * 为什么单独成模块：这三样是「摘要里不许走样」的最后一道保险，全是纯函数，
- * 可以脱离模型单独断言（见 shots/compact-check.mjs）。
+ * 为什么单独成模块：这几样是「摘要里不许走样」的最后一道保险，全是纯函数，
+ * 可以脱离模型单独断言（见 scripts/compact-readstate-test.mjs）。
  *
  * @module dsc/core/compact-anchors
  */
@@ -28,11 +28,22 @@ const ELISION_MARKER = '……（后文省略）'
 /** 单条用户原话最多引这么多字符，免得一次长粘贴吃掉整个预算。 */
 const USER_MESSAGE_MAX_CHARS = 4000
 
+/** read-state 段的标题。文案本身带上「可能已过时」，因为它是提示不是真相。 */
+const READ_STATE_HEADING = '## 读过的文件（可能已过时，需要时重读）'
+/** read-state 段的脚注。 */
+const READ_STATE_NOTE = '（压缩前最后读过这些文件与行范围，供接手时不重读；它们可能已被改，要确切内容就重读。）'
+
 /** 锚点索引的字符预算缺省值（可配 `compact.anchorBudgetChars`）。 */
 export const DEFAULT_ANCHOR_BUDGET_CHARS = 6000
 
 /** 用户原话引用的字符预算缺省值（可配 `compact.userQuoteBudgetChars`）。 */
 export const DEFAULT_USER_QUOTE_BUDGET_CHARS = 8000
+
+/** read-state 段最多列几个文件（可配 `compact.readStateFiles`）。 */
+export const DEFAULT_READ_STATE_FILES = 5
+
+/** read-state 段的字符预算缺省值（可配 `compact.readStateChars`）。 */
+export const DEFAULT_READ_STATE_BUDGET_CHARS = 1500
 
 /** 认得出的源码/配置扩展名：文件锚点按它认文件，分支过滤按它排除网址里的路径。 */
 const SOURCE_EXTENSIONS = [
@@ -208,6 +219,101 @@ export function collectVerbatimUserMessages(messages: readonly ChatMessage[], bu
     used += quoted.length + gap
   }
   return quotes.length === 0 ? '' : `${head}${quotes.join('\n\n')}${note}`
+}
+
+/** 一次 read 调用的可读状态：路径 + 当时读的行范围。 */
+interface ReadStateEntry {
+  path: string
+  /** 人读行范围的描述，如「第 1–100 行」「第 40 行起」。 */
+  range: string
+}
+
+/**
+ * 从一条 tool 调用的参数里认出「read 了哪个文件、读了哪一段」。
+ * 本工具的字段名是 `path`（不是 Codex 的 `file_path`）；参数是模型给的 JSON 串，
+ * 可能不是合法 JSON（被截断），认不出就整条跳过——read-state 只放确定认下的。
+ * @param args - assistant 消息里那次 tool 调用的 `function.arguments` 原文。
+ * @returns 认出返回 { path, range }；不是文件读取或参数认不出返回 null。
+ */
+function readStateOf(args: string): ReadStateEntry | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(args)
+  } catch {
+    return null
+  }
+  if (parsed === null || typeof parsed !== 'object') return null
+  const record = parsed as { path?: unknown; offset?: unknown; limit?: unknown }
+  if (typeof record.path !== 'string' || record.path.trim() === '') return null
+  // offset 是 1-based；缺省（或给了非法值）当从第 1 行读起。
+  const rawOffset = typeof record.offset === 'number' && Number.isFinite(record.offset) ? Math.floor(record.offset) : 1
+  const start = rawOffset > 1 ? rawOffset : 1
+  // limit 缺省时不知道读了多少行（缺省行数由 tools 插件配，这一层拿不到），只写「起」。
+  const limit = typeof record.limit === 'number' && Number.isFinite(record.limit) ? Math.floor(record.limit) : undefined
+  const range = limit !== undefined && limit > 0 ? `第 ${start}–${start + limit - 1} 行` : `第 ${start} 行起`
+  return { path: record.path.trim(), range }
+}
+
+/**
+ * 从被压缩的区间里机械抽出「压前最后读过哪些文件、读到哪」。
+ *
+ * 为什么要有它：锚点索引抽的是「原文出现过哪些路径」，接手的模型看不出「这些文件我刚读到哪」，
+ * 只能重读一遍。这里按最后一次 read 的位置去重（同一文件读多次只留最后一次），
+ * 只带路径与行范围——**不带文件内容**，省 token 且不会把已被改的旧内容当真相。
+ *
+ * @param messages - 被折区间的消息（真实消息，不是转写）。
+ * @param budgetChars - 整段（含标题与脚注）的字符预算；装不下的文件丢掉并补省略标记。
+ * @param maxFiles - 最多列几个文件（按最后一次读的先后，最近的在前）；缺省 5。
+ * @returns 形如 `\n\n## 读过的文件……\n- D:\a\b.ts：第 1–100 行\n……` 的文本；
+ *   一个文件都没读过、`maxFiles <= 0` 或预算装不下标题时返回空串（**不产生空段**）。
+ */
+export function buildReadState(
+  messages: readonly ChatMessage[],
+  budgetChars: number,
+  maxFiles: number = DEFAULT_READ_STATE_FILES,
+): string {
+  if (maxFiles <= 0) return ''
+  const head = `\n\n${READ_STATE_HEADING}\n`
+  const note = `\n${READ_STATE_NOTE}`
+  // 省略标记也占一行，先把它从预算里扣出来，保证真截断时它放得下（结果绝不超过 budgetChars）。
+  const room = budgetChars - head.length - note.length - ELISION_MARKER.length - 1
+  if (room <= 0) return ''
+
+  // 同文件按最后一次 read 认状态：记录最后一次出现的位置与那时的行范围。
+  const lastAt = new Map<string, number>()
+  const lastEntry = new Map<string, ReadStateEntry>()
+  messages.forEach((message, index) => {
+    for (const call of message.tool_calls ?? []) {
+      if (call.function.name !== 'read') continue
+      const entry = readStateOf(call.function.arguments)
+      if (entry === null) continue
+      lastAt.set(entry.path, index)
+      lastEntry.set(entry.path, entry)
+    }
+  })
+  if (lastEntry.size === 0) return ''
+
+  // 最近读的排前面（最后一次出现的位置越大越近），多余的直接丢。
+  const picked = [...lastEntry.keys()]
+    .sort((a, b) => (lastAt.get(b) ?? 0) - (lastAt.get(a) ?? 0))
+    .slice(0, maxFiles)
+
+  const lines: string[] = []
+  let used = 0
+  let truncated = false
+  for (const path of picked) {
+    const line = `- ${path}：${lastEntry.get(path)?.range ?? ''}`
+    const gap = lines.length === 0 ? 0 : 1
+    if (used + gap + line.length > room) {
+      truncated = true
+      break
+    }
+    lines.push(line)
+    used += gap + line.length
+  }
+  if (lines.length === 0) return ''
+  const marker = truncated ? `\n${ELISION_MARKER}` : ''
+  return `${head}${lines.join('\n')}${marker}${note}`
 }
 
 /** 细节找回指针要填的内容。 */

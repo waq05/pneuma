@@ -7,8 +7,9 @@
  * 辅助调用因此成为上一次真实请求的前缀扩展，命中服务端 KV 缓存；摘要模型看到的也是
  * 对话原貌，而不是截过参数、抹平角色的转写。
  *
- * 摘要之外还附三样机械产物（见 ./compact-anchors.js）：正则抽的锚点索引、
- * 真实用户原话逐字引用、细节找回指针。模型写的叙述会漏掉 SHA 与报错原文，这三样不走模型。
+ * 摘要之外还附几样机械产物（见 ./compact-anchors.js）：正则抽的锚点索引、
+ * 真实用户原话逐字引用、压前读过的文件状态（read-state）、细节找回指针。模型写的叙述会漏掉
+ * SHA 与报错原文，前几样不走模型；read-state 则是「刚读到哪」的可读提示。
  *
  * 触发：/compact 手动，或 loop 每轮开始前的自动阈值检查
  * （估算 tokens > 80% × 模型 contextWindow）。磁盘上写 summary 记录，
@@ -23,9 +24,12 @@ import type { Session } from './session.js'
 import { readSpillConfig, spillText, type SpillConfig } from './spill.js'
 import {
   buildAnchorIndex,
+  buildReadState,
   buildRecoveryFooter,
   collectVerbatimUserMessages,
   DEFAULT_ANCHOR_BUDGET_CHARS,
+  DEFAULT_READ_STATE_BUDGET_CHARS,
+  DEFAULT_READ_STATE_FILES,
   DEFAULT_USER_QUOTE_BUDGET_CHARS,
   SUMMARY_BANNER,
 } from './compact-anchors.js'
@@ -124,13 +128,19 @@ export interface CompactLimits {
   anchorChars: number
   /** 摘要里逐字引用的用户原话的字符预算。 */
   userQuoteChars: number
+  /** 摘要里 read-state（压前读过的文件与行范围）最多列几个文件。 */
+  readStateFiles: number
+  /** read-state 段的字符预算。 */
+  readStateChars: number
 }
 
-/** 三个上限的缺省值（compact 插件配置没给时用它）。 */
+/** 各上限的缺省值（compact 插件配置没给时用它）。 */
 export const DEFAULT_COMPACT_LIMITS: CompactLimits = {
   keepRecent: DEFAULT_KEEP_RECENT,
   anchorChars: DEFAULT_ANCHOR_BUDGET_CHARS,
   userQuoteChars: DEFAULT_USER_QUOTE_BUDGET_CHARS,
+  readStateFiles: DEFAULT_READ_STATE_FILES,
+  readStateChars: DEFAULT_READ_STATE_BUDGET_CHARS,
 }
 
 /**
@@ -263,9 +273,13 @@ export async function compactSession(
   // 锚点索引是模型找回它们的最后一根线，必须全量保真
   const anchors = buildAnchorIndex(renderRegion(raw), caps.anchorChars)
   const quotes = collectVerbatimUserMessages(raw, caps.userQuoteChars)
+  // read-state 与锚点一样取自**原文**：它要的是「模型最后读了哪一段」这个事实，
+  // 与送摘要模型前的裁剪无关
+  const readState = buildReadState(raw, caps.readStateChars, caps.readStateFiles)
   const recovery = buildRecoveryFooter({ regionMessages: region.length, sessionFile: session.filePath })
   const carry = extra === undefined || extra.trim() === '' ? '' : `\n\n${extra.trim()}`
-  const summary = `${SUMMARY_BANNER}\n${result.text.trim()}${carry}${quotes}${anchors}${recovery}`
+  // 顺序固定：摘要正文 → 原样带过去的状态 → 用户原话 → 锚点 → read-state → 细节找回
+  const summary = `${SUMMARY_BANNER}\n${result.text.trim()}${carry}${quotes}${anchors}${readState}${recovery}`
   const kept: ChatMessage[] = [{ role: 'user', content: summary }, ...messages.slice(cut)]
   session.replaceWithSummary(summary, kept)
   return 'compacted'

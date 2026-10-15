@@ -11,7 +11,8 @@
  * 摘要调用复用主对话前缀（2026-10-03）：系统提示词取自 prompt 服务、工具目录取自 tools 服务，
  * 摘要请求因此是上一次真实请求的前缀扩展，命中服务端 KV 缓存（见 core/compact.ts 的 context 参数）。
  *
- * 四个可调值（保留条数、自动压缩触发线、锚点索引字符预算、用户原话字符预算）读自己的插件配置，
+ * 六个可调值（保留条数、自动压缩触发线、锚点索引字符预算、用户原话字符预算、
+ * read-state 文件数、read-state 字符预算）读自己的插件配置，
  * 并以设置分区的面目交给界面；保存后本插件立刻重读，下一次压缩就用新值。
  *
  * @module dsc/plugins/compact
@@ -21,7 +22,7 @@ import { compactSession, DEFAULT_KEEP_RECENT, DEFAULT_PRUNE_OPTIONS, estimateTok
 import type { CompactLimits, PruneOptions } from '../core/compact.js'
 import type { ToolSchema } from '../core/llm.js'
 import { readSpillConfig } from '../core/spill.js'
-import { DEFAULT_ANCHOR_BUDGET_CHARS, DEFAULT_USER_QUOTE_BUDGET_CHARS } from '../core/compact-anchors.js'
+import { DEFAULT_ANCHOR_BUDGET_CHARS, DEFAULT_READ_STATE_BUDGET_CHARS, DEFAULT_READ_STATE_FILES, DEFAULT_USER_QUOTE_BUDGET_CHARS } from '../core/compact-anchors.js'
 import { errText } from '../adapter/transcript.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
 import type { Session } from '../core/session.js'
@@ -41,6 +42,10 @@ interface CompactConfig {
   anchorBudgetChars: number
   /** 摘要里逐字引用的用户原话占多少字符。 */
   userQuoteBudgetChars: number
+  /** 摘要里 read-state（压前读过的文件与行范围）最多列几个文件。 */
+  readStateFiles: number
+  /** read-state 段的字符预算。 */
+  readStateChars: number
 }
 
 const DEFAULTS: CompactConfig = {
@@ -48,11 +53,17 @@ const DEFAULTS: CompactConfig = {
   autoCompactPercent: 80,
   anchorBudgetChars: DEFAULT_ANCHOR_BUDGET_CHARS,
   userQuoteBudgetChars: DEFAULT_USER_QUOTE_BUDGET_CHARS,
+  readStateFiles: DEFAULT_READ_STATE_FILES,
+  readStateChars: DEFAULT_READ_STATE_BUDGET_CHARS,
 }
 
 /** 两个字符预算的取值区间：低于下限抽不出几条，高于上限摘要本身就没地方放了。 */
 const ANCHOR_BUDGET_RANGE = { min: 1000, max: 20000 }
 const USER_QUOTE_BUDGET_RANGE = { min: 1000, max: 40000 }
+/** read-state 文件数上限的区间：0 = 不产出 read-state（想纯省 token 的用户可以关掉）。 */
+const READ_STATE_FILES_RANGE = { min: 0, max: 20 }
+/** read-state 字符预算的区间（默认 1500，压得很紧）。 */
+const READ_STATE_BUDGET_RANGE = { min: 200, max: 10000 }
 
 /**
  * 从插件配置取这些可调值，并把区间外的值夹回来。
@@ -81,6 +92,18 @@ function readConfig(passed?: unknown): CompactConfig {
       USER_QUOTE_BUDGET_RANGE.max,
       DEFAULTS.userQuoteBudgetChars,
     ),
+    readStateFiles: clamp(
+      raw.readStateFiles,
+      READ_STATE_FILES_RANGE.min,
+      READ_STATE_FILES_RANGE.max,
+      DEFAULTS.readStateFiles,
+    ),
+    readStateChars: clamp(
+      raw.readStateChars,
+      READ_STATE_BUDGET_RANGE.min,
+      READ_STATE_BUDGET_RANGE.max,
+      DEFAULTS.readStateChars,
+    ),
   }
 }
 
@@ -97,11 +120,13 @@ export const compactPlugin: Plugin.Object = {
       writePluginConfig(CONFIG_KEY, patch)
       config = readConfig()
     }
-    /** 当前配置里的三个压缩上限，现读 config，保存后下一压就用新值。 */
+    /** 当前配置里的压缩上限，现读 config，保存后下一压就用新值。 */
     const limits = (): CompactLimits => ({
       keepRecent: config.keepRecent,
       anchorChars: config.anchorBudgetChars,
       userQuoteChars: config.userQuoteBudgetChars,
+      readStateFiles: config.readStateFiles,
+      readStateChars: config.readStateChars,
     })
     /** T19 前置裁剪口径：spill 配置复用 spill 插件的那份（目录与上限一致，模型可照常 read）。 */
     const prune = (): PruneOptions => ({
@@ -291,6 +316,24 @@ export const compactPlugin: Plugin.Object = {
         step: 500,
         help: '压缩会把最近若干条真实用户消息逐字抄进摘要，模型改写过的转述可能与原话走样。数值越大抄得越多，摘要占的上下文越多。',
       },
+      {
+        type: 'number',
+        key: 'readStateFiles',
+        label: 'read-state 文件数',
+        min: READ_STATE_FILES_RANGE.min,
+        max: READ_STATE_FILES_RANGE.max,
+        step: 1,
+        help: '摘要里附一份「压缩前最后读过哪些文件、读到哪一段」的清单，接手时不用重读。这里是最多列几个文件（0 = 不产出这段）。',
+      },
+      {
+        type: 'number',
+        key: 'readStateChars',
+        label: 'read-state 字符预算',
+        min: READ_STATE_BUDGET_RANGE.min,
+        max: READ_STATE_BUDGET_RANGE.max,
+        step: 100,
+        help: 'read-state 清单整段的字符上限；装不下的文件丢掉并补省略标记。清单只带路径与行范围，不带文件内容。',
+      },
     ]
 
     const section: SettingsSectionSpec = {
@@ -307,6 +350,8 @@ export const compactPlugin: Plugin.Object = {
           autoCompactPercent: config.autoCompactPercent,
           anchorBudgetChars: config.anchorBudgetChars,
           userQuoteBudgetChars: config.userQuoteBudgetChars,
+          readStateFiles: config.readStateFiles,
+          readStateChars: config.readStateChars,
         }
       },
       // 契约：save 返回字符串 = 失败原因。
@@ -317,6 +362,8 @@ export const compactPlugin: Plugin.Object = {
         else if (key === 'autoCompactPercent') applyConfig({ autoCompactPercent: num })
         else if (key === 'anchorBudgetChars') applyConfig({ anchorBudgetChars: num })
         else if (key === 'userQuoteBudgetChars') applyConfig({ userQuoteBudgetChars: num })
+        else if (key === 'readStateFiles') applyConfig({ readStateFiles: num })
+        else if (key === 'readStateChars') applyConfig({ readStateChars: num })
         else return `这个分区没有这项：${key}`
       },
     }
