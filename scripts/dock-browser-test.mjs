@@ -15,6 +15,10 @@
  *      `browser_dock_look` **不许注册**）。
  *   4. **壳侧不许手抄漂移**（第 7、8 节）：事件名字面量逐字等于契约常量、页签 id 只能从
  *      实参尾部加、`openBrowserTab` 同 id 只聚焦不新建（用类型擦除直读真源码跑）。
+ *   5. **走查抓出来的四处真缺陷**（第 9 节）：动作层读 CDP 应答的层数、壳侧过渡期的几何、
+ *      `open` 等不等落地、以及第 7 节锚点在壳改结构后是否仍唯一。这一节是补的欠账——
+ *      `clickRef` / `waitForClickPoint` / `getBoxModel` 在全仓 `.mjs` / `.js` / `.ps1` 里
+ *      零命中，所以那条「能活到今天」的缺陷（应答按一层读）以前没有任何探针覆盖。
  *
  * 每一节的失败说明都写清「这条断言绿了代表什么、红了会出什么事」，不做空转断言。
  *
@@ -22,7 +26,8 @@
  *
  * 设 `DSC_DOCK_PROBE_OVERLAY=<目录>` 时，`read()` / `modUrl()` 先从该目录下取同名相对路径
  * 的文件，取不到才回落真实工作树。**只影响这份探针的读取，不改工作树任何文件**——用来做
- * 「把源码改坏 → 探针必须红 → 还原」的变异核实（见第 3、7 节里引用它的那条断言）。
+ * 「把源码改坏 → 探针必须红 → 还原」的变异核实（第 3、7、9 节里的断言就靠它验非空转）。
+ * 第 9 节第 1 条另有一条**探针内的**负向对照（桩按一层回），不依赖这个入口。
  *
  * 运行：pnpm run build && node scripts/dock-browser-test.mjs
  * 探针只读 `lib/`、`src/`、`ui-shell/src`、`desktop/electron/main`，并把 HOME 换到临时目录，
@@ -77,6 +82,70 @@ const check = (name, condition, detail = '') => {
 }
 /** 断言一段代码里某个标识符在场且该段本身不是空的（扫源码用；空字符串会让匹配永远为假）。 */
 const has = (text, needle) => text !== '' && text.includes(needle)
+/** 某个片段在文本里出现几次（钉「锚点在唯一处」用）。 */
+const countOf = (text, needle) => text.split(needle).length - 1
+
+/**
+ * 取一个具名函数 / 箭头的函数体（花括号配对；找不到返回 null）。
+ *
+ * 扫源码时**必须**先切出函数体再找标志片段：同名标识符在文件别处也出现（`dock-model.ts`
+ * 里就有六处 `existing !== undefined`，`dock.ts` 里 `guests.get` 也不止一处），整文件
+ * `indexOf` 会锚到第一处、把断言钉在别的函数上——这是本探针吃过一次的亏。
+ */
+function functionBody(source, signature) {
+  const start = source.indexOf(signature)
+  if (start < 0) return null
+  const open = source.indexOf('{', start)
+  if (open < 0) return null
+  let depth = 0
+  for (let index = open; index < source.length; index += 1) {
+    const character = source[index]
+    if (character === '{') depth += 1
+    else if (character === '}') {
+      depth -= 1
+      if (depth === 0) return source.slice(open, index + 1)
+    }
+  }
+  return null
+}
+
+/**
+ * 用桩 ctx 挂一次**真编译产物**里的 dock-browser 插件，抓注册进来的工具条目。
+ * `link` 就是 `ctx.get(HOST_BROWSER_SERVICE)` 会拿到的东西（undefined = 没有桌面壳）。
+ */
+function mountDock(withLook, link) {
+  const tools = []
+  const sections = []
+  const ctx = {
+    tools: {
+      register: (entry) => {
+        tools.push(entry)
+        return () => {}
+      },
+    },
+    settings: {
+      registerSection: (section) => {
+        sections.push(section)
+        return () => {}
+      },
+    },
+    get: (name) => (name === HOST_BROWSER_SERVICE ? link : undefined),
+  }
+  const off = dockBrowserPlugin.apply(ctx, withLook ? { lookWithoutApproval: true } : {})
+  return { tools, sections, off }
+}
+
+/** 造一条「可用但什么也不做」的桩链路（第 6、9 节共用；需要什么行为就 overrides 覆盖）。 */
+const stubLink = (overrides = {}) => ({
+  available: () => true,
+  views: async () => [],
+  open: async (url, viewId) => ({ viewId: viewId ?? 'agent-7', attached: true, url }),
+  close: async () => {},
+  call: async () => ({}),
+  onEvent: () => () => {},
+  session: (viewId) => ({ sessionId: viewId, send: async () => ({}), on: () => () => {} }),
+  ...overrides,
+})
 
 // ── 契约（编译产物：线上跑的就是这一份）─────────────────────────────────────
 // 这几条动态 import 也走 `resolvePath`（覆盖层），所以负向验证既能改源码文本，
@@ -101,6 +170,8 @@ const { createDockSession } = await import(modUrl('lib/core/dock-session.js'))
 const { HOST_BROWSER_SERVICE, DockBrowserUnavailableError } = await import(modUrl('lib/core/host-browser-link.js'))
 const { hostStdioPlugin } = await import(modUrl('lib/plugins/host-stdio.js'))
 const { dockBrowserPlugin } = await import(modUrl('lib/plugins/dock-browser.js'))
+// 动作层（第 9 节）：CDP 应答是两层这件事就发生在这一份里，且 browser 插件与 dock 插件共用它。
+const actions = await import(modUrl('lib/core/cdp/actions.js'))
 const { NATIVE_EVENTS, NATIVE_EVENT_SET, NATIVE_BRIDGE_VERSION } = await import(modUrl('lib/core/native-bridge.js'))
 
 console.log('[1] 契约单一真源：协议版本只有一处定义')
@@ -240,24 +311,6 @@ console.log('\n[3] 桌面执行端：五道闸门在场且有序')
 {
   const dockSrc = read('desktop/electron/main/dock.ts')
   const code = uncomment(dockSrc)
-
-  /** 取一个具名函数的函数体（花括号配对；找不到返回 null）。 */
-  function functionBody(source, signature) {
-    const start = source.indexOf(signature)
-    if (start < 0) return null
-    const open = source.indexOf('{', start)
-    if (open < 0) return null
-    let depth = 0
-    for (let index = open; index < source.length; index += 1) {
-      const character = source[index]
-      if (character === '{') depth += 1
-      else if (character === '}') {
-        depth -= 1
-        if (depth === 0) return source.slice(open, index + 1)
-      }
-    }
-    return null
-  }
 
   /** 五道闸门各自的标志片段（顺序即要求的顺序）。 */
   const GATES = [
@@ -509,29 +562,6 @@ console.log('\n[5] 没有桌面壳时的语义：立刻抛人话，不等超时'
 
 console.log('\n[6] 工具面：注册、风险档与「没有桌面壳」时的报错')
 {
-  /** 桩 ctx 挂一次真插件（与 computer-use-test 同法：抓注册进来的工具条目）。 */
-  function mountDock(withLook, link) {
-    const tools = []
-    const sections = []
-    const ctx = {
-      tools: {
-        register: (entry) => {
-          tools.push(entry)
-          return () => {}
-        },
-      },
-      settings: {
-        registerSection: (section) => {
-          sections.push(section)
-          return () => {}
-        },
-      },
-      get: (name) => (name === HOST_BROWSER_SERVICE ? link : undefined),
-    }
-    const off = dockBrowserPlugin.apply(ctx, withLook ? { lookWithoutApproval: true } : {})
-    return { tools, sections, off }
-  }
-
   const plain = mountDock(false, undefined)
   const act = plain.tools.find((tool) => tool.name === 'browser_dock')
   check(
@@ -599,16 +629,10 @@ console.log('\n[6] 工具面：注册、风险档与「没有桌面壳」时的�
   )
 
   // ── 桩链路在场：地址闸门真的在拒 ─────────────────────────────────────────
-  const stubLink = {
-    available: () => true,
-    views: async () => [{ id: 'agent-1', url: 'https://example.com/', title: '示例', loading: false, visible: true }],
-    open: async (url, viewId) => ({ viewId: viewId ?? 'agent-2', attached: true, url }),
-    close: async () => {},
-    call: async () => ({}),
-    onEvent: () => () => {},
-    session: (viewId) => ({ sessionId: viewId, send: async () => ({}), on: () => () => {} }),
-  }
-  const linked = mountDock(true, stubLink)
+  const linked = mountDock(
+    true,
+    stubLink({ views: async () => [{ id: 'agent-1', url: 'https://example.com/', title: '示例', loading: false, visible: true }] }),
+  )
   const linkedAct = linked.tools.find((tool) => tool.name === 'browser_dock')
   const linkedLook = linked.tools.find((tool) => tool.name === 'browser_dock_look')
 
@@ -649,7 +673,8 @@ console.log('\n[6] 工具面：注册、风险档与「没有桌面壳」时的�
 console.log('\n[7] 壳侧不许手抄漂移：事件名、实参位置、页签去重')
 {
   const uiSrc = read('ui-shell/src/plugins/browser/ui.tsx')
-  const subscribed = [...uncomment(uiSrc).matchAll(/native\.on\(\s*'([^']+)'/g)].map((match) => match[1])
+  const uiCode = uncomment(uiSrc)
+  const subscribed = [...uiCode.matchAll(/native\.on\(\s*'([^']+)'/g)].map((match) => match[1])
   check(
     'ui.tsx 订阅的两个全局事件名 === 契约常量（逐字相等）',
     subscribed.includes(DOCK_TAB_OPEN_EVENT) && subscribed.includes(DOCK_TAB_CLOSE_EVENT),
@@ -661,10 +686,32 @@ console.log('\n[7] 壳侧不许手抄漂移：事件名、实参位置、页签�
     tabish.length === 2 && tabish.every((name) => name === DOCK_TAB_OPEN_EVENT || name === DOCK_TAB_CLOSE_EVENT),
     `扫到 ${JSON.stringify(tabish)}：除契约那两条之外还有别的 browser-tab-* 名字，说明壳侧出现了各自命名的第二份事件面`,
   )
+  // 壳这一份后来加过 settle 分支（第 9 节第 2 条），订阅与调用都搬过位置：所以下面不只
+  // 断言「有」，还断言**每处订几个、每个调用点各一处**——锚点漂了要当场报出来，
+  // 而不是让断言悄悄落到别的同名调用上（本探针吃过一次这个亏）。
+  const openHandler = functionBody(uiCode, `native.on('${DOCK_TAB_OPEN_EVENT}'`)
+  const closeHandler = functionBody(uiCode, `native.on('${DOCK_TAB_CLOSE_EVENT}'`)
+  const idPassing = uiCode.match(/openDockBrowserTab\([^)]*,\s*id\s*\)/g) ?? []
+  // 订阅锚点先落成变量：模板串里再嵌一层带 `` `${…}` `` 的模板会挂（宁可直接数出来）。
+  const openAnchor = `native.on('${DOCK_TAB_OPEN_EVENT}'`
+  const closeAnchor = `native.on('${DOCK_TAB_CLOSE_EVENT}'`
+  const openSubs = countOf(uiCode, openAnchor)
+  const closeSubs = countOf(uiCode, closeAnchor)
+  const tabCalls = countOf(uiCode, 'openDockBrowserTab(')
   check(
-    '开户事件把桌面发的号原样交给页签（不自己另起名字）',
-    /openDockBrowserTab\([\s\S]{0,80}?,\s*id\s*\)/.test(uncomment(uiSrc)),
+    '锚点唯一：两条事件各订一次、openDockBrowserTab 两个调用点（一参 + 带 id 各一处）',
+    openSubs === 1 && closeSubs === 1 && tabCalls === 2 && idPassing.length === 1,
+    `订阅数 ${String(openSubs)}/${String(closeSubs)}，openDockBrowserTab 调用点 ${String(tabCalls)} 个（带 id 的 ${String(idPassing.length)} 个）：锚点不唯一时下面两条断言可能钉在别的同名调用上，绿得没有意义`,
+  )
+  check(
+    '开户事件把桌面发的号原样交给页签（在开户 handler 体内，不是别处的同名调用）',
+    openHandler !== null && /openDockBrowserTab\([\s\S]*?,\s*id\s*\)/.test(openHandler) && idPassing.length === 1,
     'ui.tsx 收到 browser-tab-open-request 后没有把载荷里的 id 当第二个实参传给 openDockBrowserTab：壳自造 id 的话宿主台账与页签 id 对不上号，后续每条 browser-call 都指不到这一台',
+  )
+  check(
+    '关户事件用载荷 id 去关那张页签（与开户同一条 id 口径）',
+    closeHandler !== null && /dockActions\.closeTab\(\s*id\s*\)/.test(closeHandler),
+    'browser-tab-close-request 的 handler 里没有 `dockActions.closeTab(id)`：桌面侧关掉视图后壳会留下一张点不开的空页签（正是这条事件存在的理由）',
   )
 
   const stateSrc = read('ui-shell/src/ui-dockkit/dock-state.ts')
@@ -743,6 +790,252 @@ console.log('\n[8] 原生桥事件面：两条新事件进白名单（用常量�
     'NATIVE_BRIDGE_VERSION 仍是 3（本次只加事件，按「加操作不涨」，没抬版）',
     NATIVE_BRIDGE_VERSION === 3,
     `桥版本是 ${String(NATIVE_BRIDGE_VERSION)}：它自己那条注释写着「加操作不涨，改实参/语义才涨」，而这次两条页签事件是纯新增（旧壳不认识就收不到，不会误判）——若这里被抬成 4，说明有人顺手改了别的东西，得单独核`,
+  )
+}
+
+console.log('\n[9] 走查抓出来的四个缺陷（回归）')
+{
+  // ── ① CDP 应答是两层，不许按一层读 ──────────────────────────────────────
+  // 这一条是「能活到今天」的那个：`clickRef` / `waitForClickPoint` / `getBoxModel` 在全仓
+  // `.mjs` / `.js` / `.ps1` 里零命中——动作层从来没有探针喂过**真实形状**的应答，
+  // 于是 `{model:{content}}` 被当成 `{content}` 读，content 永远是 undefined。
+  const CLICK_REF = { ref: 'e1', backendNodeId: 7, role: 'button', name: '点我', generation: 1 }
+  const BOX = [8, 75, 192, 75, 192, 129, 8, 129]
+
+  /**
+   * 造一个只认实机那套 CDP 应答形状的桩 page（方法名逐条记录）。
+   *
+   * `layered=false` 时按**一层**回（`{content}` / `{objectId}`）——那正是修之前代码读的形状，
+   * 拿来当探针内的负向对照：如果一层也能过，说明「两层」这条断言在空转。
+   */
+  function makeCdpPage(layered) {
+    const calls = []
+    const params = []
+    return {
+      calls,
+      params,
+      page: {
+        sessionId: 'agent-7',
+        on: () => () => {},
+        send: async (method, argument) => {
+          calls.push(method)
+          params.push(argument)
+          switch (method) {
+            case 'DOM.describeNode':
+              return { node: { backendNodeId: 7 } }
+            case 'Accessibility.getPartialAXTree':
+              return { nodes: [{ backendDOMNodeId: 7, role: { value: 'button' }, name: { value: '点我' } }] }
+            case 'DOM.getBoxModel':
+              return layered ? { model: { content: [...BOX] } } : { content: [...BOX] }
+            case 'Page.getLayoutMetrics':
+              return { cssLayoutViewport: { clientWidth: 1280, clientHeight: 800 } }
+            case 'DOM.resolveNode':
+              return layered ? { object: { objectId: 'obj-1' } } : { objectId: 'obj-1' }
+            case 'Runtime.callFunctionOn':
+              return { result: { value: ['甲', '乙'] } }
+            default:
+              return {}
+          }
+        },
+      },
+    }
+  }
+
+  const two = makeCdpPage(true)
+  let clicked = null
+  let clickError = ''
+  try {
+    clicked = await actions.clickRef(two.page, CLICK_REF, { timeoutMs: 500 })
+  } catch (error) {
+    clickError = error instanceof Error ? error.message : String(error)
+  }
+  check(
+    '① 两层应答（实机形状）时 clickRef 算得出点、不等到超时',
+    clicked !== null && clicked.x === 100 && clicked.y === 102 && clicked.clicks === 1,
+    `clickRef ${clickError === '' ? `返回 ${JSON.stringify(clicked)}（期望 (100, 102)）` : `抛了「${clickError}」`}：DOM.getBoxModel 的应答是 {model:{content:[…8 个数…]}}，按一层读 .content 永远是 undefined，于是 click/hover/scroll 一律等到 waitTimeoutMs 超时——用户看到的是「点了没反应」，实机走查正是在这里卡住`,
+  )
+  const moved = two.calls
+    .map((method, index) => ({ method, argument: two.params[index] }))
+    .find((item) => item.method === 'Input.dispatchMouseEvent' && item.argument?.type === 'mouseMoved')
+  check(
+    '① 鼠标事件落在两层里读出来的那个中心点（不是 0,0 / 不退化）',
+    moved?.argument?.x === 100 && moved?.argument?.y === 102,
+    `mouseMoved 参数是 ${JSON.stringify(moved?.argument)}：读不到 content 时坐标要么退化要么这轮等待直接超时，点击永远落在空处`,
+  )
+
+  const verifyTwo = makeCdpPage(true)
+  let verifyError = ''
+  try {
+    await actions.verifyRef(verifyTwo.page, CLICK_REF)
+  } catch (error) {
+    verifyError = error instanceof Error ? error.message : String(error)
+  }
+  check(
+    '① verifyRef 通过（describeNode 的 node 与无障碍节点的 role/name 都读对）',
+    verifyError === '',
+    `verifyRef 抛了「${verifyError}」：它读 DOM.describeNode 的 node.backendNodeId 与 Accessibility.getPartialAXTree 的节点，读错层等于「每个 ref 都算过期」，动作层一步都走不动`,
+  )
+
+  const selecting = makeCdpPage(true)
+  let selected = null
+  let selectError = ''
+  try {
+    selected = await actions.selectRef(selecting.page, CLICK_REF, ['甲'])
+  } catch (error) {
+    selectError = error instanceof Error ? error.message : String(error)
+  }
+  const resolveAt = selecting.calls.indexOf('DOM.resolveNode')
+  const callFnAt = selecting.calls.lastIndexOf('Runtime.callFunctionOn')
+  check(
+    '① selectRef 先拿到 objectId 再发 Runtime.callFunctionOn（且句柄真的递进去了）',
+    selected !== null &&
+      JSON.stringify(selected.selected) === JSON.stringify(['甲', '乙']) &&
+      resolveAt >= 0 &&
+      callFnAt > resolveAt &&
+      selecting.params[callFnAt]?.objectId === 'obj-1',
+    `selectRef 结果 ${JSON.stringify(selected)}，错误「${selectError}」，调用序列 ${JSON.stringify(selecting.calls)}，callFunctionOn 的 objectId=${String(selecting.params[callFnAt]?.objectId)}：DOM.resolveNode 的应答是 {object:{objectId}}，按一层读拿不到句柄，整条下拉选择报「拿不到页面里的对象句柄」`,
+  )
+
+  // 探针内负向对照：一层桩 = 修之前代码看到的形状，动作层必须失败。
+  const one = makeCdpPage(false)
+  let oneClickError = ''
+  try {
+    await actions.clickRef(one.page, CLICK_REF, { timeoutMs: 120 })
+  } catch (error) {
+    oneClickError = error instanceof Error ? error.message : String(error)
+  }
+  check(
+    '①负向 桩只回一层时 clickRef 必然失败（证明上面那条不是空转）',
+    oneClickError.includes('可点击超时'),
+    `一层桩下 clickRef ${oneClickError === '' ? '居然成功了' : `抛「${oneClickError}」`}：一层也能过就说明「两层」这条断言在空转`,
+  )
+  const oneSelect = makeCdpPage(false)
+  let oneSelectError = ''
+  try {
+    await actions.selectRef(oneSelect.page, CLICK_REF, ['甲'])
+  } catch (error) {
+    oneSelectError = error instanceof Error ? error.message : String(error)
+  }
+  check(
+    '①负向 桩只回一层时 selectRef 报「拿不到页面里的对象句柄」',
+    oneSelectError.includes('对象句柄'),
+    `一层桩下 selectRef 抛「${oneSelectError}」：它按 {objectId} 一层读，只该在这一种桩失败`,
+  )
+  console.log(
+    `  --  ①实测 两层桩：clickRef → (${String(clicked?.x)},${String(clicked?.y)})，DOM.getBoxModel 调 ${String(two.calls.filter((method) => method === 'DOM.getBoxModel').length)} 次，Input.dispatchMouseEvent 发 ${String(two.calls.filter((method) => method === 'Input.dispatchMouseEvent').length)} 条；一层桩：clickRef → ${oneClickError === '' ? '成功' : `「${oneClickError}」`}`,
+  )
+
+  // ── ② 侧栏几何没落定不许上报 ────────────────────────────────────────────
+  const uiCode9 = uncomment(read('ui-shell/src/plugins/browser/ui.tsx'))
+  const reportBody = functionBody(uiCode9, 'const report = (): void =>')
+  check(
+    '② report() 有「几何不可用就下一帧再看、到上限才照报」这条分支',
+    reportBody !== null &&
+      /const usable =[\s\S]*?window\.innerWidth[\s\S]*?window\.innerHeight/.test(reportBody) &&
+      reportBody.includes('if (!usable && settleFrames < RECT_SETTLE_FRAMES)') &&
+      reportBody.includes('requestAnimationFrame(() => {') &&
+      reportBody.includes('reportNow(rect)'),
+    `report 函数体 ${reportBody === null ? '没找到（`const report = (): void =>` 不在原处）' : JSON.stringify(reportBody.slice(0, 160))}：侧栏是从右缘滑进来的（transform 过渡），过渡那一拍 getBoundingClientRect() 带着变换、报出去的矩形整块在窗口外；原生视图被摆到窗口外后 Chromium 把它的视口塌成 0×0（document.hidden 变 true、elementFromPoint 恒 null），点击落空、截图空白——而 transform 变化既不触发 ResizeObserver 也不触发 window resize，不在这里重试就一错到底`,
+  )
+  const settleFrames = Number(uiCode9.match(/const RECT_SETTLE_FRAMES = (\d+)/)?.[1] ?? '0')
+  check(
+    '② settle 帧数上限存在、有限、恰好两处（不会永远挂着不办）',
+    settleFrames > 0 && settleFrames <= 600 && countOf(uiCode9, 'RECT_SETTLE_FRAMES') === 2,
+    `RECT_SETTLE_FRAMES=${String(settleFrames)}，出现 ${String(countOf(uiCode9, 'RECT_SETTLE_FRAMES'))} 次：上限缺失或没有封顶时，要么永远不报（摆位这件事挂着不办），要么一个坏矩形被无限重报`,
+  )
+  check(
+    '② 卸载时取消挂起的那一帧（不留野回调）',
+    countOf(uiCode9, 'cancelAnimationFrame(settleRaf)') === 1 &&
+      /return \(\) => \{[\s\S]*?cancelAnimationFrame\(settleRaf\)/.test(uiCode9),
+    '清理路径里没有恰好一处 `cancelAnimationFrame(settleRaf)`：页签切走/关掉之后那一帧还会跑，reportNow 会对已经卸载的 element 量矩形并照发一次原生桥 invoke',
+  )
+
+  const dockCode9 = uncomment(read('desktop/electron/main/dock.ts'))
+  const setDockBody = functionBody(dockCode9, 'export function setDockBrowser(')
+  check(
+    '② 桌面侧对「视图被摆到窗口之外」留了一行账（诊断在 setDockBrowser 里）',
+    countOf(dockCode9, '被摆到窗口之外') === 1 &&
+      (setDockBody ?? '').includes('被摆到窗口之外') &&
+      (setDockBody ?? '').includes('win.getContentBounds()') &&
+      (setDockBody ?? '').includes('rect.x >= content.width') &&
+      (setDockBody ?? '').includes('rect.x + rect.width <= 0') &&
+      /process\.stderr\.write\([\s\S]{0,400}?被摆到窗口之外/.test(dockCode9),
+    `诊断行不完整（「被摆到窗口之外」出现 ${String(countOf(dockCode9, '被摆到窗口之外'))} 次，在 setDockBrowser 内=${String((setDockBody ?? '').includes('被摆到窗口之外'))}）：现象是「点了没反应」，成因在几何；不留这行账，下次还得从零倒着查一遍（实机走查踩过一次，窗口 1440 宽、壳报 1861）`,
+  )
+
+  // ── ③ open 要等页面真的落到目标地址 ─────────────────────────────────────
+  const TARGET = 'https://example.com/landed'
+  let docReads = 0
+  const settleMount = mountDock(
+    true,
+    stubLink({
+      // open 返回时页面还没开始加载——正是走查里「紧接着 snapshot 读到空树」的那一刻
+      open: async (url, viewId) => ({ viewId: viewId ?? 'agent-7', attached: true, url: 'about:blank' }),
+      session: (viewId) => ({
+        sessionId: viewId,
+        on: () => () => {},
+        send: async (method) => {
+          if (method !== 'Runtime.evaluate') return {}
+          docReads += 1
+          const url = docReads <= 3 ? 'about:blank' : TARGET
+          return { result: { value: { url, title: '靶页', readyState: 'complete' } } }
+        },
+      }),
+    }),
+  )
+  const settleAct = settleMount.tools.find((tool) => tool.name === 'browser_dock')
+  const openStarted = Date.now()
+  const openText = await settleAct.run({ action: 'open', url: TARGET }, { signal: new AbortController().signal })
+  const openMs = Date.now() - openStarted
+  check(
+    '③ open 等到页面真的落到目标地址（输出里是落地地址，不是 about:blank）',
+    typeof openText === 'string' &&
+      openText.includes(TARGET) &&
+      openText.includes('页面落在') &&
+      !openText.includes('（页面还没开始加载）'),
+    `open 输出 ${JSON.stringify(typeof openText === 'string' ? openText.slice(0, 200) : openText)}：不等的话 link.open() 返回时壳还没发起 load，紧接着的 snapshot 读到一棵空树（实测可交互元素 0 个），模型会以为页面是空的、白白重试`,
+  )
+  check(
+    '③ 真的在轮询（读文档状态不止一次，不是读一次就返回）',
+    docReads > 1,
+    `readDocumentState 被调了 ${String(docReads)} 次：只读一次说明等待被去掉了——探针外那条负向正是这么改红的`,
+  )
+  check(
+    '③ 轮询之间真有间隔，且整次 open 没被拖死（有界）',
+    openMs >= 250 && openMs < 5_000,
+    `本次 open 用了 ${String(openMs)}ms：< 250ms 说明没真的等（150ms 一拍的轮询至少两拍），过大说明上限（OPEN_SETTLE_MS）没生效`,
+  )
+  const pluginCode = uncomment(read('src/plugins/dock-browser.ts'))
+  const settleBody = functionBody(pluginCode, 'const waitForDockPage = async (')
+  const openSettleMs = Number((pluginCode.match(/const OPEN_SETTLE_MS = ([\d_]+)/)?.[1] ?? '').replace(/_/g, ''))
+  check(
+    '③ 等待有上限：OPEN_SETTLE_MS 存在、有限、被调用点用上、循环里有 deadline 判定',
+    openSettleMs > 0 &&
+      openSettleMs <= 15_000 &&
+      pluginCode.includes('waitForDockPage(fresh.page, url, OPEN_SETTLE_MS)') &&
+      (settleBody ?? '').includes('Date.now() >= deadline'),
+    `OPEN_SETTLE_MS=${String(openSettleMs)}，调用点在场=${String(pluginCode.includes('waitForDockPage(fresh.page, url, OPEN_SETTLE_MS)'))}，deadline 判定在场=${String((settleBody ?? '').includes('Date.now() >= deadline'))}：有界是硬要求——一次工具调用不许被「页面永远不落地」拖死（ZCode 那条 goto 后等 domcontentloaded 同样有界）`,
+  )
+  console.log(`  --  ③实测 桩前 3 次报 about:blank：docReads=${String(docReads)}，open 用了 ${String(openMs)}ms，落地地址 ${TARGET}`)
+
+  // ── ④ [7] 的锚点：ui.tsx 加了 settle 分支之后仍然唯一 ────────────────────
+  const openHandler9 = functionBody(uiCode9, `native.on('${DOCK_TAB_OPEN_EVENT}'`)
+  const closeHandler9 = functionBody(uiCode9, `native.on('${DOCK_TAB_CLOSE_EVENT}'`)
+  const idCalls = uiCode9.match(/openDockBrowserTab\([^)]*,\s*id\s*\)/g) ?? []
+  const openSubs9 = countOf(uiCode9, `native.on('${DOCK_TAB_OPEN_EVENT}'`)
+  const closeSubs9 = countOf(uiCode9, `native.on('${DOCK_TAB_CLOSE_EVENT}'`)
+  const tabCalls9 = countOf(uiCode9, 'openDockBrowserTab(')
+  check(
+    '④ [7] 的锚点在 settle 分支加入后仍唯一（事件各一处、带 id 的调用只一处）',
+    openSubs9 === 1 &&
+      closeSubs9 === 1 &&
+      tabCalls9 === 2 &&
+      idCalls.length === 1 &&
+      openHandler9 !== null &&
+      closeHandler9 !== null &&
+      /openDockBrowserTab\([\s\S]*?,\s*id\s*\)/.test(openHandler9) &&
+      /dockActions\.closeTab\(\s*id\s*\)/.test(closeHandler9),
+    `开户订阅 ${String(openSubs9)} 处、关户订阅 ${String(closeSubs9)} 处、openDockBrowserTab ${String(tabCalls9)} 个调用点（带 id 的 ${String(idCalls.length)} 个）：壳这一份改了结构之后，[7] 的字面量/实参断言必须仍钉在唯一处，否则它们会悄悄落到别的同名调用上、绿得没有意义`,
   )
 }
 
