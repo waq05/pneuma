@@ -70,6 +70,7 @@ import { sandboxPlugin } from '../plugins/sandbox.js'
 import { schedulePlugin } from '../plugins/schedule.js'
 import { lspPlugin } from '../plugins/lsp.js'
 import { browserPlugin } from '../plugins/browser.js'
+import { dockBrowserPlugin } from '../plugins/dock-browser.js'
 import { selfImprovePlugin } from '../plugins/self-improve.js'
 import { dshCompatPlugin } from '../plugins/dsh-compat.js'
 import { fileReviewPlugin } from '../plugins/file-review.js'
@@ -202,6 +203,16 @@ export const OFFICIAL_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
     settingsSection: 'browser',
   },
   {
+    file: 'dock-browser',
+    name: '侧栏浏览器控制',
+    description: '让模型驱动桌面端侧栏那台浏览器（用户持久会话）：快照 + ref 定位，动手动作每次审批',
+    toggleable: true,
+    defaultDisabled: true,
+    // 指向插件自建的分区（`dock-browser` 插件里 ctx.settings.registerSection 注册的那张，
+    // 带「看侧栏浏览器免审批」开关）。壳是「按 id 在已注册分区里查」，启用后就能查到。
+    settingsSection: 'dock-browser',
+  },
+  {
     file: 'self-improve',
     name: '自我改进',
     description: '从纠正与复盘里沉淀经验：候选清单、技能草稿、技能自修与审计回滚',
@@ -235,6 +246,7 @@ const OFFICIAL_OBJECTS: Readonly<Record<string, Plugin.Object>> = {
   schedule: schedulePlugin,
   lsp: lspPlugin,
   browser: browserPlugin,
+  'dock-browser': dockBrowserPlugin,
   'self-improve': selfImprovePlugin,
   'dsh-compat': dshCompatPlugin,
 }
