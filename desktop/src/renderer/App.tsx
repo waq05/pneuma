@@ -560,11 +560,16 @@ export function App(): JSX.Element {
       return
     }
     // 插话（Ctrl+Enter）：先按普通路径提交，提交完再让宿主把新那条提到队首、打断当前
-    // 回合。下标按「提交那一刻队列有多长」算——新的一条必然排在队尾，而队伍只会从尾
-    // 巴长出来（提示、作业通知也排在后面），所以这个下标在两步之间不会漂。回合要是在
+    // 回合。下标按「提交那一刻**收件箱**有多长」算——新的一条必然排在队尾，而队伍只会从
+    // 尾巴长出来（提示、作业通知也排在后面），所以这个下标在两步之间不会漂。回合要是在
     // 这两步的空档里刚好跑完，宿主那边队列已空、不会动手（见 core/loop.ts 的 steerQueued），
     // 消息那时已经作为新一轮发出去了，这里只提示一句。
-    const steerIndex = options?.steer === true ? (snapshot === null ? 0 : snapshot.queued.length) : null
+    //
+    // 回落路径修复（0.6.67）：`steerQueued` 收的是**收件箱里的位置**（`QueuedMessageView.index`
+    // 就是它），所以必须数整条收件箱——只数 `queued`（0.6.67 起只含用户来源）会漏掉排在前面的
+    // 机器通知（`<teammate-report …>` 那类），下标偏小就会把错的那一条提到队首。
+    const steerIndex =
+      options?.steer === true ? (snapshot === null ? 0 : snapshot.queued.length + (snapshot.notices ?? []).length) : null
     // 新会话在首条消息落盘之前不留文件，侧栏看不见它：submit 的宿主处理器里同步
     // appendUser，RPC 回来时文件已存在，这时刷一次列表才有效（分叉路径同款坑，见 ChatView）
     proxy

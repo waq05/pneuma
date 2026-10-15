@@ -8,11 +8,17 @@
  * 快照拆两个面——用户来源 → `queued`（输入框下方、可交互），机器来源 → `notices`
  * （输入框上方、只读）。出账（drainInbox）后两者都落成同一条 user 消息，模型侧无差别。
  *
- * 断言四层（真内核 + 假端点驱动真回合，取数走 `kernel.transcript.getSnapshot()`）：
+ * 断言六层（真内核 + 假端点驱动真回合，取数走 `kernel.transcript.getSnapshot()`）：
  *   ① 用户来源入箱 → `queued` 有、`notices` 没有；
  *   ② 机器来源入箱 → `notices` 有、`queued` 没有；
  *   ③ 出账后两个面都清掉，且对话里出现那两条 user 条目；
- *   ④ 老调用点（不传来源）默认按用户算（进 `queued`）。
+ *   ④ 老调用点（不传来源）默认按用户算（进 `queued`）；
+ *   ⑤ 插话下标 = **整条收件箱**的位置（拆面之后的账）：收件箱里排着机器通知时，只数
+ *      `queued` 算出的下标会把错的那条提到队首——而且宿主照样回 `true`（静默插错）。
+ *      这里用一个真回合把两种算法各跑一次，把「修好的提到用户那条 / 旧的插错还报成功」
+ *      钉成行为；
+ *   ⑥ 三处消费者都按收件箱原始位置算（源码钉）：壳的 `readInboxCount`、回落层
+ *      `desktop/src/renderer/App.tsx` 的插话下标、终端状态栏的条数。
  *
  * 隔离：临时 HOME + 假模型端点，真实 ~/.dsc 一个字节都不动。
  * 用法：pnpm build && node scripts/teammate-notice-test.mjs
@@ -20,9 +26,10 @@
  * @module dsc/scripts/teammate-notice-test
  */
 import { createServer } from 'node:http'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 
 const home = mkdtempSync(join(tmpdir(), 'dsc-notice-strip-'))
 process.env.HOME = home
@@ -68,6 +75,9 @@ const sseToolCall = (id, name, args) =>
   `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 100, completion_tokens: 20 } })}\n\n` +
   'data: [DONE]\n\n'
 
+/** 插话场景的一次性闸门：置真之后，下一个含「插话场景」的请求才回工具调用（防重复触发）。 */
+let scenarioArmed = false
+
 async function serve() {
   const server = createServer((req, res) => {
     let body = ''
@@ -98,6 +108,9 @@ async function serve() {
       )
       let reply
       if (isTitleRequest) reply = sseText('通知条探针的会话标题')
+      // 插话场景：靠一个一次性闸门认这一轮（`插话场景：开跑` 里也含 `开跑`，而历史里
+      // 从第 1 段起就带着 tool 结果，`hasToolResult` 到后面已分不出「哪一轮的」）。
+      else if (scenarioArmed && lastText.includes('插话场景')) reply = sseToolCall('t2', 'slow_steer', '{}')
       else if (hasToolResult) reply = sseText('收尾：都收到了')
       else if (lastText.includes('开跑')) reply = sseToolCall('t1', 'slow_thing', '{}')
       else reply = sseText('收到')
@@ -231,7 +244,144 @@ console.log('[2] 出账后：两个面都清掉，对话里出现那两条 user 
   )
 }
 
+// ── ⑤ 插话下标 = 整条收件箱的位置（拆面之后的账）───────────────────────────────
+/**
+ * 用户插话（Ctrl+Enter）那条消息走两步：界面先算「提交那一刻队列有多长」当下标，
+ * 提交之后再让宿主按这个下标把新那条提到队首。收件箱里排着机器通知时，**只数 `queued`**
+ * 算出的下标会偏小 → `steerQueued` 提到的是别人那条，而宿主照样回 `true`（静默插错）。
+ * 这里用一个真回合把两种算法各跑一次，把行为钉住。
+ */
+const USER_STEER = '用户插话：这条要排到最前面'
+const NOTICE_STEER = `<teammate-report from="mate-2" role="builder" state="已完成">
+派给它的任务：跑一遍自检
+它的汇报：
+自检通过
+</teammate-report>`
+
+/** 这一跑用哪种算法算下标：`'fixed'` = queued + notices，`'legacy'` = 只数 queued。 */
+let steerMode = 'fixed'
+let steerObservation = null
+const offSteerTool = ctx.tools.register({
+  name: 'slow_steer',
+  description: '测试用慢工具（插话下标场景）',
+  parameters: { type: 'object', properties: {} },
+  risk: 'read',
+  run: async () => {
+    scenarioArmed = false
+    // 机器通知先入箱：它占着收件箱第 0 位，正是老公式漏掉的那一条。
+    ctx.agent.followup(NOTICE_STEER, undefined, undefined, 'notice')
+    const before = snapshot()
+    const indexFixed = before.queued.length + before.notices.length
+    const indexLegacy = before.queued.length
+    const index = steerMode === 'fixed' ? indexFixed : indexLegacy
+    // 界面第二步：提交用户那条（必然落在收件箱队尾 = 上面算出的下标），再按它插话。
+    ctx.agent.followup(USER_STEER)
+    const done = ctx.agent.steerQueued(index)
+    const inbox = ctx.session.current().asyncInbox()
+    steerObservation = {
+      indexFixed,
+      indexLegacy,
+      index,
+      done,
+      front: inbox[0]?.text ?? null,
+      order: inbox.map((item) => (item.text === USER_STEER ? 'user' : item.origin === 'notice' ? 'notice' : 'other')),
+    }
+    return 'steer ok'
+  },
+})
+
+/** 跑一次插话场景（真回合），返回那一刻的收件箱观察。 */
+async function runSteerScenario(mode) {
+  steerMode = mode
+  steerObservation = null
+  scenarioArmed = true
+  const ended = new Promise((resolve) => {
+    const off = ctx.on('dsc/turn-end', () => {
+      off()
+      resolve()
+    })
+  })
+  ctx.agent.followup('插话场景：开跑')
+  const got = await until(() => steerObservation !== null, 15000)
+  await ended
+  await until(() => !ctx.agent.isRunning, 30000)
+  await sleep(80)
+  return { got, observation: steerObservation }
+}
+
+console.log('[3] 插话下标：只数 queued 会插错（旧回落层的老公式）')
+{
+  const fixed = await runSteerScenario('fixed')
+  check('插话场景跑起来了（慢工具进入回合）', fixed.got, JSON.stringify(fixed.observation))
+  check(
+    '入箱观察：机器通知在前、两种算法差一条',
+    fixed.observation?.indexFixed === 1 && fixed.observation?.indexLegacy === 0,
+    JSON.stringify(fixed.observation),
+  )
+  check(
+    '修好的算法把**用户那条**提到队首（queued + notices）',
+    fixed.observation?.done === true && fixed.observation?.front === USER_STEER,
+    JSON.stringify(fixed.observation),
+  )
+  check(
+    '提到的确实是新提交那条（收件箱首条 = user，机器通知退到后面）',
+    fixed.observation?.order[0] === 'user' && fixed.observation?.order[1] === 'notice',
+    JSON.stringify(fixed.observation?.order),
+  )
+
+  const legacy = await runSteerScenario('legacy')
+  check('老算法那一跑也跑起来了', legacy.got && legacy.observation?.done === true, JSON.stringify(legacy.observation))
+  check(
+    '老算法：宿主照样报成功，但队首还是机器通知（用户的插话没插上）',
+    legacy.observation?.front !== USER_STEER && legacy.observation?.order[0] === 'notice',
+    JSON.stringify(legacy.observation),
+  )
+  check(
+    '两种算法的下标差刚好是通知条数（这条就是漏掉的那一位）',
+    legacy.observation?.indexFixed === 1 && legacy.observation?.indexLegacy === 0,
+    JSON.stringify(legacy.observation),
+  )
+}
+
+console.log('[4] 三处消费者都按「整条收件箱」算（源码钉）')
+{
+  const root = fileURLToPath(new URL('..', import.meta.url))
+  const read = (rel) => readFileSync(join(root, rel), 'utf8')
+  const legacyApp = read('desktop/src/renderer/App.tsx')
+  const tuiApp = read('src/app/App.tsx')
+  const shellComposer = read('ui-shell/src/plugins/composer/ui.tsx')
+  const statusBar = read('src/app/StatusBar.tsx')
+
+  check(
+    '回落层插话下标 = queued + notices（两行写法都认）',
+    /snapshot\.queued\.length\s*\+\s*\(?snapshot\.notices \?\? \[\]\)?\.length/.test(legacyApp),
+    legacyApp.split('\n').find((line) => line.includes('steerIndex')) ?? '',
+  )
+  check(
+    '壳的 readInboxCount 也是两面相加',
+    (() => {
+      const at = shellComposer.indexOf('function readInboxCount')
+      if (at === -1) return false
+      const body = shellComposer.slice(at, at + 400)
+      return body.includes("snapshot?.['queued']") && body.includes("snapshot?.['notices']") && body.includes('+')
+    })(),
+    'readInboxCount',
+  )
+  check(
+    '终端状态栏的条数 = queued + notices（整条收件箱）',
+    /\(snapshot\.queued \?\? \[\]\)\.length\s*\+\s*\(snapshot\.notices \?\? \[\]\)\.length/.test(tuiApp),
+    tuiApp.split('\n').find((line) => line.includes('queued={')) ?? '',
+  )
+  check(
+    '状态栏那段的说明也说清数的是整条收件箱',
+    statusBar.includes('整条收件箱') && statusBar.includes('`notices`'),
+    'StatusBar 的 queued 注释',
+  )
+  check('回落层那条改动带「回落路径修复」标注（FROZEN 规矩 3）', legacyApp.includes('回落路径修复'), '注释锚点')
+}
+
 offTool()
+offSteerTool()
 await ctx.dispose?.()
 await site.close()
 console.log('')

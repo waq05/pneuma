@@ -1676,7 +1676,7 @@ export function App({
           status={snapshot.status}
           surfaces={snapshot.surfaces}
           subagents={snapshot.subagents ?? []}
-          queued={(snapshot.queued ?? []).length}
+          queued={(snapshot.queued ?? []).length + (snapshot.notices ?? []).length}
           config={statusBarPrefs}
           onOpenAgent={(sessionPath) => openAgentTranscript(sessionPath, shortId(sessionPath))}
           registerClick={registerClick}

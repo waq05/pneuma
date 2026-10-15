@@ -241,8 +241,10 @@ export function StatusBar({
   surfaces: RuntimeSurfaces
   subagents: RuntimeSnapshot['subagents']
   /**
-   * 排队中的输入条数（0.6.67）：回合跑动中提交的消息先在内核收件箱里排队，
-   * 界面这边没有队列条可点，至少要看得见「我刚才那一句排上了」。0 就不画这一段。
+   * 待投递条数（0.6.67）：回合跑动中提交的消息先在内核收件箱里排队，界面这边没有
+   * 队列条可点，至少要看得见「我刚才那一句排上了」。数的是**整条收件箱**——用户输入
+   * （`queued`）与机器通知（`notices`，队友汇报那类）都在等出账，只数前者会把通知漏掉。
+   * 0 就不画这一段。
    */
   queued: number
   /** 段显隐（prefs.ui.statusBar；设置 → 终端界面 → 状态栏 子页可改）。 */
