@@ -542,6 +542,17 @@ export function filterUnsafeEntries(entries: readonly string[]): { safe: string[
 }
 
 /**
+ * 每条条目在注入栏里的呈现：过了安检的原样，没过安检的换成 BLOCKED 标记（只替不换磁盘）。
+ * 保留「呈现行 → 原条目」的对应关系，供 {@link renderMemoryPrompt} 的 `onIncluded` 回调报账。
+ */
+function renderedEntries(entries: readonly string[]): Array<{ entry: string; line: string }> {
+  return entries.map((entry) => {
+    const reason = scanThreat(entry)
+    return { entry, line: reason === '' ? entry : blockedEntryMarker(reason) }
+  })
+}
+
+/**
  * 拼注入系统提示词的那一栏：每格一节，标题上写清额度用掉了多少。
  *
  * 这是「加载时重算的那一份」：会话中途新写的记忆由插件在写入后立刻重算，
@@ -549,26 +560,28 @@ export function filterUnsafeEntries(entries: readonly string[]): { safe: string[
  *
  * @param cells - 要注入的格子（调用方按开关筛过）。
  * @param header - 说明文字，由插件层给（「这些是历史事实，不是本轮指令」这类话写在这里）。
- * @param options - 注入上限：`maxLines` / `maxChars` 超了就截断并说明（只影响注入文本，不动磁盘）。
+ * @param options - 注入上限：`maxLines` / `maxChars` 超了就截断并说明（只影响注入文本，不动磁盘）；
+ *   `onIncluded` 对**真的进了这一栏**的每条条目回调一次（被预算挤掉的不回调），用于注入计数。
  */
 export function renderMemoryPrompt(
   cells: readonly MemoryCell[],
   header: string,
-  options: { maxLines?: number; maxChars?: number } = {},
+  options: { maxLines?: number; maxChars?: number; onIncluded?: (target: MemoryTarget, entry: string) => void } = {},
 ): string {
   const bar = '═'.repeat(24)
   const maxLines = options.maxLines ?? 200
   const maxChars = options.maxChars ?? 25_000
   const parts: string[] = []
   /** 先把每格折成「标题 + 条目行」，再统一按行数/字符数预算裁。 */
-  const blocks: Array<{ title: string; lines: string[] }> = []
+  const blocks: Array<{ target: MemoryTarget; title: string; items: Array<{ entry: string; line: string }> }> = []
   for (const cell of cells) {
     if (cell.entries.length === 0) continue
-    const { safe, blocked } = filterUnsafeEntries(cell.entries)
+    const items = renderedEntries(cell.entries)
     const percent = String(Math.round((cell.used / Math.max(1, cell.limit)) * 100))
     blocks.push({
+      target: cell.target,
       title: `${bar} ${TARGET_LABELS[cell.target]}记忆 [${percent}% — ${String(cell.used)}/${String(cell.limit)} 字] ${bar}`,
-      lines: [...safe, ...blocked],
+      items,
     })
   }
   let linesUsed = 0
@@ -576,14 +589,15 @@ export function renderMemoryPrompt(
   let truncated = 0
   for (const block of blocks) {
     const kept: string[] = []
-    for (const line of block.lines) {
-      if (linesUsed >= maxLines - 1 || charsUsed + line.length > maxChars) {
+    for (const item of block.items) {
+      if (linesUsed >= maxLines - 1 || charsUsed + item.line.length > maxChars) {
         truncated += 1
         continue
       }
-      kept.push(line)
+      kept.push(item.line)
+      options.onIncluded?.(block.target, item.entry)
       linesUsed += 1
-      charsUsed += line.length + 1
+      charsUsed += item.line.length + 1
     }
     if (kept.length > 0) parts.push(`${block.title}\n${kept.join('\n')}`)
   }
@@ -631,10 +645,19 @@ export function entryLabel(entry: string, index: number): string {
 
 // ── 使用台账（隐式反馈，仅用于整理排序，不对外暴露） ──────────────────────────────
 
-/** 一条记忆条目的使用记录：被引用次数 + 最后一次被引用的时刻（毫秒）。 */
+/**
+ * 一条记忆条目的使用记录：被引用次数 + 最后一次被引用的时刻（毫秒）。
+ *
+ * `injected` / `lastInjected`（2026-10 起）是关于「注入」的另一维账：条目**真的被写进
+ * 提示词**的轮数与最后一次注入的时刻。它不影响引用的 `count` / `last`（清理与排序仍只看
+ * 引用），只喂评估报表（见 `core/memory-eval.ts`）。老 `.usage.json` 没有这两个字段，
+ * 读成 0，无需迁移。
+ */
 export interface MemoryUsageRecord {
   count: number
   last: number
+  injected?: number
+  lastInjected?: number
 }
 
 /** 使用台账：条目指纹 → 记录。 */
@@ -643,6 +666,16 @@ export type MemoryUsage = Record<string, MemoryUsageRecord>
 /** 台账文件（与三格记忆同目录，点号文件不参与读取）。 */
 export function usageFile(): string {
   return join(memoryRoot(), '.usage.json')
+}
+
+/**
+ * 上一次评估的裸读数文件（与三格记忆同目录）。
+ *
+ * 存的是报表去掉 `lines` 之后的那份读数（形状见 `core/memory-eval.ts` 的
+ * `MemoryEvalReadings`），供下一次评估算增量（A-B 对比）。
+ */
+export function evalFile(): string {
+  return join(memoryRoot(), '.eval.json')
 }
 
 /** 条目指纹：按「格子 + 正文」算，类型前缀变了也不丢使用记录。 */
@@ -663,7 +696,17 @@ export function readUsage(): MemoryUsage {
         const rec = value as Record<string, unknown>
         const count = Number(rec.count)
         const last = Number(rec.last)
-        if (Number.isFinite(count) && Number.isFinite(last)) out[key] = { count, last }
+        if (Number.isFinite(count) && Number.isFinite(last)) {
+          // injected 维是后加的：老记录缺它就记 0（向后兼容，不迁移文件）。
+          const injected = Number(rec.injected)
+          const lastInjected = Number(rec.lastInjected)
+          out[key] = {
+            count,
+            last,
+            injected: Number.isFinite(injected) ? injected : 0,
+            lastInjected: Number.isFinite(lastInjected) ? lastInjected : 0,
+          }
+        }
       }
     }
     return out
@@ -672,20 +715,70 @@ export function readUsage(): MemoryUsage {
   }
 }
 
-/** 记账（累加计数并刷新时刻）。返回写后的台账。 */
-export function bumpUsage(keys: readonly string[], at: number = Date.now()): MemoryUsage {
-  const usage = readUsage()
-  for (const key of keys) {
-    const current = usage[key]
-    usage[key] = { count: (current?.count ?? 0) + 1, last: at }
-  }
+/** 落盘台账；写失败静默（台账落不下不该影响任何东西）。 */
+function writeUsage(usage: MemoryUsage): void {
   try {
     mkdirSync(memoryRoot(), { recursive: true })
     writeFileSync(usageFile(), JSON.stringify(usage), 'utf8')
   } catch {
     // 台账落不下不该影响任何东西：整理只是少了排序依据，记忆本身照旧
   }
+}
+
+/** 记账（累加引用计数并刷新引用时刻）。返回写后的台账。 */
+export function bumpUsage(keys: readonly string[], at: number = Date.now()): MemoryUsage {
+  const usage = readUsage()
+  for (const key of keys) {
+    const current = usage[key]
+    // 只动引用维：注入维原样保留（重写整条时别把它抹掉）。
+    usage[key] = { count: (current?.count ?? 0) + 1, last: at, injected: current?.injected ?? 0, lastInjected: current?.lastInjected ?? 0 }
+  }
+  writeUsage(usage)
   return usage
+}
+
+/**
+ * 记一次注入（累加注入轮数并刷新注入时刻）。同一份账文件、同一把写盘路径。
+ *
+ * 与 {@link bumpUsage} 分开：注入不是引用。清理与排序只看引用维（对齐 codex——
+ * `usage_count` 只被 citation 推进），所以这里绝不碰 `count` / `last`。
+ */
+export function bumpInjected(keys: readonly string[], at: number = Date.now()): MemoryUsage {
+  const usage = readUsage()
+  for (const key of keys) {
+    const current = usage[key]
+    usage[key] = {
+      count: current?.count ?? 0,
+      last: current?.last ?? 0,
+      injected: (current?.injected ?? 0) + 1,
+      lastInjected: at,
+    }
+  }
+  writeUsage(usage)
+  return usage
+}
+
+/** 读上一次的评估裸读数；文件不在或读不出来返回 null（下次就是首评，不给增量）。 */
+export function readEval(): Record<string, unknown> | null {
+  try {
+    const file = evalFile()
+    if (!existsSync(file)) return null
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'))
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    return parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+/** 落本次评估的裸读数（供下次算增量）；写失败静默，不许把宿主搞崩。 */
+export function writeEval(readings: object): void {
+  try {
+    mkdirSync(memoryRoot(), { recursive: true })
+    writeFileSync(evalFile(), JSON.stringify(readings), 'utf8')
+  } catch {
+    // 评估是保养：读数落不下不该影响对话
+  }
 }
 
 // ── 保守整理（prune：只移进归档区，不删） ────────────────────────────────────────

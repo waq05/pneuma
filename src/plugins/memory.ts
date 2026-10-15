@@ -29,12 +29,18 @@ import {
   memoryFileOf,
   pruneCells,
   readAllCells,
+  bumpInjected,
   bumpUsage,
+  readEval,
+  readUsage,
   renderMemoryPrompt,
   TARGET_LABELS,
   usedChars,
+  writeEval,
 } from '../core/memory.js'
 import type { MemoryCell, MemoryConfig, MemoryOperation, MemoryTarget, MemoryType } from '../core/memory.js'
+import { evaluateMemory, formatMemoryReport, readingsOf } from '../core/memory-eval.js'
+import type { MemoryEvalEntry, MemoryEvalInput, MemoryEvalReadings, MemoryEvalReport } from '../core/memory-eval.js'
 import type { ToolEntry } from '../core/tools.js'
 import { argsSummary } from '../core/tools.js'
 import type { SettingsField, SettingsOption, SettingsValues } from '../contract.js'
@@ -129,10 +135,38 @@ export const memoryPlugin: Plugin.Object = {
 
     /** 加载时重算的那一份提示词：写入后立刻换新，同一个会话的下一次请求就带它。 */
     let snapshot = ''
+    /** 当前快照里**真的进了提示词**的条目指纹（被预算挤掉的不在其中）。 */
+    let snapshotKeys: string[] = []
+    /** 本回合已经计过注入的条目指纹：多请求/重试/压缩重放只记一次（按条目去重）。 */
+    const injectedThisTurn = new Set<string>()
+
+    /**
+     * 按回合记一次注入：把当前快照里的条目记进 `.usage.json` 的 injected 维（同一回合不重复）。
+     * 与 `wroteThisTurn` 同一套节奏——`dsc/session-open` / `dsc/turn-end` 复位。
+     */
+    const countInjected = (): void => {
+      if (!config.enabled || snapshotKeys.length === 0) return
+      const fresh = snapshotKeys.filter((key) => !injectedThisTurn.has(key))
+      if (fresh.length === 0) return
+      for (const key of fresh) injectedThisTurn.add(key)
+      bumpInjected(fresh)
+    }
+
     const rebuild = (): string => {
-      snapshot = config.enabled
-        ? renderMemoryPrompt(cells(), PROMPT_HEADER, { maxLines: config.maxIndexLines, maxChars: config.maxIndexChars })
-        : ''
+      snapshotKeys = []
+      if (!config.enabled) {
+        snapshot = ''
+        return snapshot
+      }
+      // onIncluded 只对**真的进了提示词**的条目回调（被行数/字符预算挤掉的不回调），
+      // 这样注入计数与最终注入文本一致。
+      const included: string[] = []
+      snapshot = renderMemoryPrompt(cells(), PROMPT_HEADER, {
+        maxLines: config.maxIndexLines,
+        maxChars: config.maxIndexChars,
+        onIncluded: (target, entry) => included.push(entryUsageKey(target, entry)),
+      })
+      snapshotKeys = [...new Set(included)]
       return snapshot
     }
     rebuild()
@@ -142,8 +176,9 @@ export const memoryPlugin: Plugin.Object = {
      * 写入/整理后置上，下一次组装请求时拼在记忆栏末尾，随即清掉，绝不常驻。
      */
     let staleNote = ''
-    /** 拼给模型的那一段：快照 + （有的话）一次性过期提醒。 */
+    /** 拼给模型的那一段：快照 + （有的话）一次性过期提醒。每次请求组装都走这里，注入计数也挂在这。 */
     const promptText = (): string => {
+      countInjected()
       if (staleNote === '') return snapshot
       const note = staleNote
       staleNote = ''
@@ -158,6 +193,8 @@ export const memoryPlugin: Plugin.Object = {
     let failedWrites = 0
     /** 用户发言的轮数（自动复盘的节拍器，工具调用引起的小轮次不算）。 */
     let userTurns = 0
+    /** 本会话已经走完的回合数（评估报表的「轮数」口径，`dsc/session-open` 复位）。 */
+    let evalTurns = 0
     /** 自动复盘那一轮：只准新增。 */
     let reviewing = false
     /** 本段（本轮用户发言之后）已经直写过记忆：复盘跳过，免得同一个事实写两遍。 */
@@ -355,9 +392,15 @@ export const memoryPlugin: Plugin.Object = {
     // ── /memory ────────────────────────────────────────────────────────────
 
     ctx.commands.register(
-      { name: 'memory', args: '[show | refresh | prune [global|user|workspace] | clear <global|user|workspace>]', description: '看长期记忆：额度、条目、文件位置' },
+      { name: 'memory', args: '[show | eval | refresh | prune [global|user|workspace] | clear <global|user|workspace>]', description: '看长期记忆：额度、条目、文件位置、使用评估' },
       ({ args, ui }) => {
         const sub = (args[0] ?? 'show').toLowerCase()
+        if (sub === 'eval') {
+          // 先取上次读数再评（评会写本次读数；顺序反了就会拿本次跟本次比，增量全 0）。
+          const previous = previousEval()
+          ui.notice(formatMemoryReport(runEval(), previous))
+          return
+        }
         if (sub === 'refresh') {
           rebuild()
           ui.notice('记忆栏已重新算了一份，下一轮请求就带新的进去')
@@ -511,6 +554,13 @@ export const memoryPlugin: Plugin.Object = {
           help: '0 = 只要从没被引用过就移；填很大等于不按时间整理。',
         },
         { type: 'button', action: 'pruneNow', label: '现在整理一次（只移不删）', style: 'ghost' },
+        {
+          type: 'info',
+          label: '使用评估（注入 / 引用 / 死重）',
+          text: evalSummary(),
+          help: '对齐 codex 的记忆使用账：注入 = 条目真的进过提示词的轮数，引用 = 回话里复述到条目的次数。死重 = 注入过 ≥3 轮却一次没被引用的条目（清理首选）。',
+        },
+        { type: 'button', action: 'evalReport', label: '看评估报告', style: 'ghost' },
         {
           type: 'info',
           label: '三格文件',
@@ -670,6 +720,11 @@ export const memoryPlugin: Plugin.Object = {
           }
           case 'pruneNow':
             return pruneAndReport(form.cell)
+          case 'evalReport': {
+            // 与 /memory eval 同一条出口：先取上次读数，再评并落盘，最后出对比文本。
+            const previous = previousEval()
+            return formatMemoryReport(runEval(), previous)
+          }
           case 'refresh':
             rebuild()
             return `注入用的那一栏已重算（${String(snapshot.length)} 字，额度合计 ${String(usedChars(cells().flatMap((cell) => cell.entries)))} 字）`
@@ -732,11 +787,73 @@ export const memoryPlugin: Plugin.Object = {
       if (keys.length > 0) bumpUsage(keys)
     }
 
+    // ── 评估（对齐 codex 的记忆使用账，只读）──────────────────────────────────
+
+    /**
+     * 把当前条目的账折成评估输入：`injected`（注入轮数）与 `count/last`（引用次数与时刻）
+     * 都取自 `.usage.json`，`text` 取条目正文（去类型前缀）。只读，不改任何东西。
+     */
+    function evalEntries(): MemoryEvalEntry[] {
+      const usage = readUsage()
+      const out: MemoryEvalEntry[] = []
+      for (const cell of cells()) {
+        for (const entry of cell.entries) {
+          const key = entryUsageKey(cell.target, entry)
+          const rec = usage[key]
+          const cited = rec?.count ?? 0
+          out.push({
+            key,
+            target: cell.target,
+            text: entryText(entry),
+            injectedTurns: rec?.injected ?? 0,
+            citedCount: cited,
+            lastCitedAt: cited > 0 ? (rec?.last ?? null) : null,
+          })
+        }
+      }
+      return out
+    }
+
+    /** 本次评估的完整输入（额度按各格之和算）。 */
+    function evalInput(): MemoryEvalInput {
+      const cellList = cells()
+      return {
+        entries: evalEntries(),
+        turns: evalTurns,
+        usedChars: cellList.reduce((sum, cell) => sum + cell.used, 0),
+        limitChars: cellList.reduce((sum, cell) => sum + cell.limit, 0),
+        pruneAfterDays: config.pruneAfterDays,
+        now: Date.now(),
+      }
+    }
+
+    /** 评一次并落裸读数（供下次算增量）；返回报表。 */
+    function runEval(): MemoryEvalReport {
+      const report = evaluateMemory(evalInput())
+      writeEval(readingsOf(report))
+      return report
+    }
+
+    /** 上次的裸读数；读不出来 = 首评，不给增量。 */
+    function previousEval(): MemoryEvalReadings | undefined {
+      const raw = readEval()
+      return raw === null ? undefined : (raw as unknown as MemoryEvalReadings)
+    }
+
+    /** 设置页那一行只读统计：一句话读数。 */
+    function evalSummary(): string {
+      const report = evaluateMemory(evalInput())
+      const grade = report.grade === 'healthy' ? '健康' : report.grade === 'watch' ? '留意' : '偏差'
+      return `条目 ${String(report.entries)} · 注入 ${String(report.injectedEntries)} · 引用 ${String(report.citedEntries)} · 引用率 ${String(Math.round(report.citationRate * 100))}% · 死重 ${String(report.deadWeight.length)} · ${grade}`
+    }
+
     // 新会话：重算快照；开了自动整理就先做一次保守整理（只移不删）。
     ctx.on('dsc/session-open', () => {
       failedWrites = 0
       reviewing = false
       wroteThisTurn = false
+      evalTurns = 0
+      injectedThisTurn.clear()
       if (config.enabled && config.pruneEnabled) {
         const message = pruneAndReport()
         if (message !== '没有需要整理的条目') ctx.emit('dsc/notice', `长期记忆${message}`)
@@ -754,6 +871,9 @@ export const memoryPlugin: Plugin.Object = {
       // 载荷缺省（老式直接 emit）按当前会话算。
       if (signal !== undefined && signal.sessionId !== ctx.session.current().meta.id) return
       failedWrites = 0
+      // 回合边界：注入去重复位；这一回合算进评估的轮数（评估下一回合才有「轮数」可看）。
+      injectedThisTurn.clear()
+      if (config.enabled) evalTurns += 1
       const wrote = wroteThisTurn
       wroteThisTurn = false
       if (reviewing) {
