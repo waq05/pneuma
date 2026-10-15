@@ -113,6 +113,9 @@ export const agentPlugin: Plugin.Object = {
             // 的显示面——旧模型里中止轮的残留事件污染新会话视图，这里从源头掐掉。
             if (active !== null && active.sessionId === session.meta.id) ctx.transcript.emit(event)
           },
+          // 不阻断的运行时提醒（当前：请求 invariant 失配）。接成 dsc/notice，
+          // 由 transcript 折成一条 system 条目；不打断请求，只让用户知道有这回事。
+          notice: (text) => ctx.emit('dsc/notice', text),
           // 压缩的取消信号跟着回合走（T41）：用户打断时压到一半的模型调用跟着停；
           // 压缩目标永远是这个 agent 自己的会话（0.6.48 起显式传入）。
           beforeRequest: (signal) => ctx.compact.check(signal, session),

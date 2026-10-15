@@ -28,6 +28,7 @@ import { callFacts, stripBaseline, type FileChangeSummary, type ToolEntry } from
 import { collectGitTurnChanges, snapshotGitStatus } from './git-info.js'
 import { errText } from './err-text.js'
 import { estimateRequestSegments } from './token-estimate.js'
+import { checkReconstructable, snapshotMessages } from './request-invariant.js'
 
 export interface AgentDeps {
   /** 每次请求时动态读取（支持 /model 热切换）。 */
@@ -45,6 +46,11 @@ export interface AgentDeps {
    * 循环不认识具体协议——OpenAI 兼容也好、别的插件注册的也好，都从这条缝过。
    */
   stream(api: string, request: StreamRequest, handlers: StreamHandlers): Promise<StreamResult>
+  /**
+   * 报一条不阻断的运行时提醒（宿主接成 `dsc/notice`）。缺省不报。
+   * 运行时请求 invariant 用它——校验只报不杀，见 core/request-invariant。
+   */
+  notice?(text: string): void
   /**
    * 每轮请求前的一次维护动作（上下文压缩检查挂在这里）；缺省不启用。
    * T41：传入这一轮的取消信号——压缩若真在跑模型调用，用户打断要能停得掉它。
@@ -132,6 +138,11 @@ export class MiniAgent {
    * 打断时给没开始的调用补的合成结果没有起点，就不报耗时。
    */
   private readonly callStartedAt = new Map<string, number>()
+  /**
+   * 上次报过的 invariant 失配形状。同一形状只报一次——误报会刷屏且吓人，
+   * 而这个 agent 从生到死只认一个会话，一个字段就是「按会话去重」。
+   */
+  private lastInvariantDigest: string | null = null
 
   constructor(
     private readonly deps: AgentDeps,
@@ -380,12 +391,18 @@ export class MiniAgent {
     for (let attempt = 1; ; attempt += 1) {
       const route = this.deps.route()
       const tools = this.deps.tools()
-      const assembled: ChatMessage[] = [
-        { role: 'system', content: this.deps.systemPrompt() },
-        ...this.session.messages,
-      ]
+      // 系统提示只拼一次：真请求与 invariant 重建侧用同一份文本（重建比的是投影链，
+      // 不是提示词生成本身）。
+      const systemText = this.deps.systemPrompt()
+      const assembled: ChatMessage[] = [{ role: 'system', content: systemText }, ...this.session.messages]
+      // 投影链跑之前拍一份输入快照：之后比对「投影有没有就地改它拿到的输入」
+      //（就地改会污染与会话日志共享的消息对象，比结果不一致更隐蔽）。没有 rewrite 就不必拍。
+      const pristine = this.deps.rewrite === undefined ? undefined : snapshotMessages(assembled)
       const messages =
         this.deps.rewrite === undefined ? assembled : this.deps.rewrite(assembled, this.session)
+      // 组装与发送之间：校验「发出去的这份」能不能从日志 + 投影链重建。
+      // 只报不杀——不一致也照发，理由见 core/request-invariant。
+      if (pristine !== undefined) this.checkRequestInvariant(messages, pristine, assembled, systemText)
       // context 条的分段在请求组装完、流还没开的时候画出来：模型还没吐字，
       // 界面就能显示这次的上下文由什么组成（每次重算，压缩/滚出自动重置）。
       this.deps.emit({ type: 'context', segments: estimateRequestSegments(messages) })
@@ -477,6 +494,47 @@ export class MiniAgent {
       reasoning: partial.reasoning,
       finishReason: 'interrupted',
     })
+  }
+
+  /**
+   * 运行时请求 invariant：把「日志 + 投影链」再跑一遍，比对这次真发出去的消息。
+   *
+   * 只报不杀：dsh 在这里 fail（杀请求），dsc 选择报出但不打断——报出来人还能去查是哪条
+   * 投影坏了，杀掉只会让用户丢一轮对话。校验本身崩了也绝不连累请求。
+   *
+   * 重建侧从「日志现状」再快照一份喂进投影链：用独立副本，校验自己绝不动会话日志。
+   */
+  private checkRequestInvariant(
+    sent: readonly ChatMessage[],
+    pristine: readonly ChatMessage[],
+    assembled: readonly ChatMessage[],
+    systemText: string,
+  ): void {
+    const rewrite = this.deps.rewrite
+    if (rewrite === undefined) return
+    try {
+      const derived = rewrite(
+        snapshotMessages([{ role: 'system', content: systemText }, ...this.session.messages]),
+        this.session,
+      )
+      const report = checkReconstructable(sent, derived, { before: pristine, after: assembled })
+      if (report.ok) return
+      this.reportInvariant(
+        `请求 invariant：模型这次看到的消息与日志可重建的对不上 —— ${report.reason ?? '（无详情）'}。请求照常发出，这只影响本次告警。`,
+        report.digest ?? 'unknown',
+      )
+    } catch (error) {
+      this.reportInvariant(`请求 invariant 这轮没跑成，已跳过：${errText(error)}`, 'error')
+    }
+  }
+
+  /** 报一次 invariant 提醒：同一形状只报一次（不刷屏），经 deps.notice 接成 dsc/notice。 */
+  private reportInvariant(text: string, digest: string): void {
+    if (this.lastInvariantDigest === digest) return
+    this.lastInvariantDigest = digest
+    // 终端日志留一份（排查时看得到），用户可见的那份走 dsc/notice。
+    console.warn(`[dsc] ${text}`)
+    this.deps.notice?.(text)
   }
 
   /**
