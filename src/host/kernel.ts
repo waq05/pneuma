@@ -58,6 +58,7 @@ import { webserverPlugin } from '../plugins/webserver.js'
 import { subagentPlugin } from '../plugins/subagent.js'
 import { teamPlugin } from '../plugins/team.js'
 import { computerUsePlugin } from '../plugins/computer-use.js'
+import { imageDietPlugin } from '../plugins/image-diet.js'
 import { webSearchPlugin } from '../plugins/web-search.js'
 import { approvalFloorPlugin } from '../plugins/approval-floor.js'
 import { spillPlugin } from '../plugins/spill.js'
@@ -293,6 +294,12 @@ export const BUILTIN_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
     description: '每轮请求把较旧的工具结果正文换成占位符，只改请求体、不动会话日志',
     settingsSection: 'microcompact',
   },
+  {
+    file: 'image-diet',
+    name: '图片卸载',
+    description: '历史里太久/太多的图不再随每轮请求重发：用户图与工具图各按预算保留，更早回合的图全卸载',
+    settingsSection: 'image-diet',
+  },
   { file: 'session-title', name: '会话标题', description: '首回合结束后自动生成会话标题（用户改名优先）' },
   { file: 'todo', name: '任务清单', description: '模型自己维护的清单与实时进度条' },
   { file: 'plan', name: '计划交付', description: '写计划文件并弹评审卡等用户批' },
@@ -337,6 +344,9 @@ export async function createKernel(options: KernelOptions): Promise<Context> {
   // PTC 的 run_code 与创造模式的 runtime_api：两个都只在自己那一档模式下露面
   await root.plugin(ptcPlugin)
   await root.plugin(settingsPlugin, options.config)
+  // 图片卸载的配置界面：它只往设置里挂一个分区（卸载本体是 prompt 插件里的 image-diet 投影），
+  // 排在设置之后才拿得到 settings 服务。
+  await root.plugin(imageDietPlugin)
   // 打包权限预设：把沙箱 + 权限模式 + 审阅者捆成一颗按钮。
   // 排在设置之后（要读偏好里那个默认预设并应用），也排在沙箱之后（要写它的档位）。
   await root.plugin(permissionPresetsPlugin)

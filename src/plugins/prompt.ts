@@ -5,7 +5,7 @@
  *   - 各功能点往这里登记自己那一段话（模式条款、外部插件的附加说明……），
  *     段落顺序由各段自己声明，稳定内容往前放、易变内容往后放（服务端提示缓存只认前缀）；
  *   - 要改写发给模型那份消息的功能点登记**命名纯投影**（registerProjection），
- *     内核的 fold-system / env-facts / drop-images 三条护栏与插件投影走同一条按次序的管道；
+ *     内核的 fold-system / env-facts / image-diet / drop-images 四条护栏与插件投影走同一条按次序的管道；
  *   - 环境事实（env-facts 投影，order 600）：日期/分支/脏标不再进系统提示词，作为
  *     请求末尾的 user 快照附上——缓存只认字节前缀，易变内容不能放头部（2026-10-03）；
  *   - 本插件自己兜底一件事：指令文件的字符预算（`prompt.instructionBudget`）。
@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto'
 import type { Plugin } from '@deepseek-ai/cordis'
 import { errText } from '../adapter/transcript.js'
 import { dropImageParts, foldSystemMessages, type ChatMessage } from '../core/llm.js'
+import { pruneImages, readImageDietConfig } from '../core/image-diet.js'
 import { buildSystemPrompt, DEFAULT_INSTRUCTION_BUDGET, environmentText, type PromptContribution } from '../core/prompt.js'
 import { resolvePluginConfig } from '../core/plugin-registry.js'
 import type { Session } from '../core/session.js'
@@ -28,6 +29,9 @@ import type { PromptService } from '../services/types.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'prompt'
+
+/** 图片卸载投影的配置键：投影登记在本文件，配置界面在 plugins/image-diet（同一个键）。 */
+const IMAGE_DIET_CONFIG_KEY = 'image-diet'
 
 /** 图像没能随请求发送时留在正文里的那句话：模型看得见它，才知道自己手上没图。 */
 const NO_IMAGE_NOTE = '（当前模型没有声明照片输入能力，图像没有随请求发送）'
@@ -102,7 +106,21 @@ export const promptPlugin: Plugin.Object = {
         return [...messages, { role: 'user', content: snapshot }]
       },
     })
-    // 内置投影三（永远最后）：模型没勾照片输入时把图像换成一句说明。留着图像会让
+    // 内置投影三：每轮按龄/按预算卸载图片（0.6.68 WS2，口径见 core/image-diet）。
+    // 用户贴的图、工具结果里的图、电脑控制的历史截图在长会话里每轮重发，一张 JPEG 截图
+    // 100~300KB——旧图既烧 token 又早已过期（界面被后面的操作改掉了）。这一层只留「最近的」：
+    // 用户图与工具图各按预算保留，更早回合的图全卸载；卸载只把 image_url 部件换成一句占位，
+    // **不删消息、不改 role 序列**（删一条工具结果就会留下孤儿调用，端点直接 400）。
+    // 与 drop-images（900，能力门：模型根本不收图时全剥）职责分开，所以排在它前面。
+    projections.set('image-diet', {
+      order: 700,
+      fn: (messages) => {
+        // 现读配置：设置分区保存后下一轮就生效，不必重启宿主（照 readBudget 的做法）。
+        const config = readImageDietConfig(resolvePluginConfig(IMAGE_DIET_CONFIG_KEY))
+        return config.enabled ? pruneImages(messages, config) : messages
+      },
+    })
+    // 内置投影四（永远最后）：模型没勾照片输入时把图像换成一句说明。留着图像会让
     // 端点整条请求报错，而电脑操作插件的截图、用户贴进来的图都可能落在这里。
     projections.set('drop-images', {
       order: 900,
