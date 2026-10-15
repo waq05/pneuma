@@ -24,13 +24,17 @@ agent 侧 CDP 自动化有（`src/plugins/browser.ts` + `src/core/cdp/`）、宿
 | `Page.captureScreenshot` | 视图挂着窗口上时通过 |
 | 视图从窗口摘下后 `document.hidden` | **变 true（页面被节流）** |
 | 视图摘下后 `Page.captureScreenshot` | **卡死超时（8s 无应答）** |
+| 视图被摆到**窗口之外**（rect 整块落在内容区外） | **视口塌成 `0×0`**：`document.hidden` 变 true、`elementFromPoint` 恒 null、点击落在空处 |
+| 窗口截图 `capturePage` | **拍不到原生子视图**：侧栏那一块永远是空的（看侧栏画面只能用 CDP 截图） |
 
-最后两行是这条链路唯一必须绕的坑，直接决定了两条设计：
+这几行是这条链路必须绕的坑，直接决定了三条设计：
 
-1. **截图前必须先确认这一台是露出来的**（`guest.attached`），没露出来就报一句人话，
-   不能让它挂住——挂着的那条命令会把整次工具调用拖到超时，用户看到的是「卡住了」。
-2. **agent 要能自己把页签开出来并聚焦**（截图/渲染类操作在被节流的页面上不成立）。
+1. **agent 要能自己把页签开出来并聚焦**（截图/渲染类操作在被节流的页面上不成立）。
    `browser-open` 因此不是「顺便提供」的便利，而是这条链路的前置条件。
+2. **几何必须等落定再上报**（侧栏展开是从右缘滑入的，过渡那一拍量到的矩形带着 transform）。
+   详见第八节第 2 条——这一条是把「点得动」从「偶尔点得动」拉到确定性的那道修。
+3. **视觉证据只能来自 CDP 截图**：桌面端 `capturePage` 拍不到原生子视图，走查里那张
+   「侧栏页签里的画面」是从工具返回的 base64 里抠出来存盘的（见第九节）。
 
 ## 二、分层
 
@@ -116,19 +120,22 @@ host → runtime：
 - `browser_dock`（risk `exec`，每次审批）：`open` / `navigate` / `click` / `hover` / `type` /
   `press` / `scroll` / `evaluate` / `close`。
 - `browser_dock_look`：`views` / `snapshot` / `screenshot` / `console` / `network` / `wait_for`。
-  按 `computer-use` 那条既有先例（`lookWithoutApproval` 设置项）决定注册与风险档——
-  默认**不注册**，用户打开设置后才以 `read` 注册。理由：dock 视图是用户自己的持久登录态，
-  和 `browser.ts` 那台一次性的 Chrome 不是一回事。
+  按 `computer-use` 那条既有先例决定注册与风险档——默认**不注册**，用户在「设置 → 侧栏浏览器」
+  打开 `lookWithoutApproval` 之后才以 `read` 注册（那张分区由插件自己注册，开关热生效）。
+  理由：dock 视图是用户自己的持久登录态，和 `browser.ts` 那台一次性的 Chrome 不是一回事。
 - 审批卡上要带视图 id 与目标地址（`isAgentView` 区分出「agent 自己开的」）。
+- `open` 会**等页面真的落到目标地址**（有界 8s，见第八节第 4 条）：壳那条路是「先建视图、
+  再由壳去 load」，不等的话模型紧接着 snapshot 会读到一棵空树。
 
 ## 六、验收
 
-1. `pnpm run typecheck` + `pnpm run build` + `desktop` 侧 `pnpm run typecheck` 全绿；
-2. 新增探针绿，且**全量无头电池不回归**；
-3. 实机走查：桌面端起来后，agent 能 `open` 出侧栏页签 → `snapshot` 读出角色树 →
-   `click` 一个按钮 → 页面状态真的变了 → `screenshot` 拿到图。
-4. 负向验证：把 `browser-call` 的 method 换成不在白名单里的（如 `Runtime.compileScript`），
-   桌面侧必须拒；把 `Page.navigate` 指向 `file://`，必须拒。
+1. `pnpm run typecheck` + `pnpm run build` + `ui-shell` + `desktop` 各自 typecheck/构建全绿；
+2. 新增探针绿（`scripts/dock-browser-test.mjs`），既有电池不回归
+   （`ui-native-bridge-test` / `ui-plugin-test` / `ui-batches-test` / `computer-use-test` /
+   `ui-legacy-compat-test` / `settings-sections-check` / `ui-settings-nav-test` / `ui-events-test`）；
+3. 实机走查 `desktop/shots/_dock-walkthrough.ps1` 全绿（见第九节）；
+4. 负向验证：白名单外的 method（如 `Runtime.compileScript`）必须拒；`Page.navigate` 指向
+   `file://` 必须拒；云元数据地址必须拒。
 
 ## 七、有意不做
 
@@ -138,3 +145,55 @@ host → runtime：
 - **不给 `browser.ts` 那台自管 Chrome 换后端**：它是另一条既有能力，这次不动它。
 - **不把 CDP 端口暴露到进程外**（不开 `--remote-debugging-port`）：命令走已有的 parentPort
   协议，不新开一个谁都能连的调试口。
+
+## 八、实机走查抓出来的四个缺陷（都在既有代码里）
+
+走查是「假端点驱动真回合 + 真桌面端 + 真靶页」，一路把下面四条逼了出来。它们**都不是**
+这次新写的代码的问题，而是这次新链路第一次把既有代码用到位才暴露出来的：
+
+1. **CDP 应答读少了一层**（`src/core/cdp/actions.ts`）。`DOM.getBoxModel` 的应答是
+   `{ model: { content: [...] } }`、`DOM.resolveNode` 是 `{ object: { objectId } }`，而代码按
+   `{ content }` / `{ objectId }` 读 → 永远是 `undefined` → `click`/`hover`/`scroll` 一路等到
+   5 秒超时。**既有的 `browser` 插件走的是同一个函数，同样受影响**——只是那条链路从来没有
+   真点过一次，而动作层当时**没有任何探针覆盖**（全仓 `.mjs`/`.js`/`.ps1` 里
+   `clickRef`/`getBoxModel` 零命中），所以它一直活着。
+2. **过渡期量到的几何被当成真几何**（`ui-shell/src/plugins/browser/ui.tsx`）。侧栏展开是从
+   右缘**滑入**的（transform），过渡那一拍 `getBoundingClientRect()` 把变换算进去：实测窗口
+   1440 宽、报出去 `x=1861`（= 落定位置 1021 + 一个侧栏宽度的位移）。原生视图被摆到窗口外
+   之后视口塌成 `0×0`（第一节实测），于是**点击落在空处、截图一片空白**；而 transform 变化
+   既不触发 `ResizeObserver` 也不触发 `window resize`，所以这一错会一直错到底。
+   修法：几何没落定（整块在视口外）就下一帧再看，超上限照报。桌面侧另外留一行账
+   （`[dock] 视图 … 被摆到窗口之外`），下次一眼就能看见。
+3. **视图被摆到窗口外时没有任何账**：现象是「点了没反应」，成因在几何上——不留一行 stderr，
+   下次还得从「点不动」倒着查回布局。见第 2 条的修法末尾。
+4. **`open` 不等页面加载**：`browser-open` 的语义是「视图出现了」，而页面是壳随后才去
+   `load` 的，模型紧接着 `snapshot` 会读到「可交互元素 0 个」并以为页面是空的。修法：
+   `open` 之后有界地等这一页落到请求的地址（与 ZCode「`goto` 之后显式等 domcontentloaded」
+   是同一件事，只是替模型做了）。
+
+## 九、怎么再跑一遍（实机走查配方）
+
+资产都在 `desktop/shots/`（整目录 gitignored，不入库）：
+
+| 文件 | 作用 |
+| --- | --- |
+| `_dock-seed.mjs` | 造隔离 HOME：假端点配置 + `full-access` 审批档 + 显式打开 `dock-browser` 插件 |
+| `_dock-page.mjs` | 靶页：一颗按钮，点一下改文档标题并给计数 `+1`（「点到了」因此是可观测的） |
+| `_dock-fake-llm.mjs` | 假端点：按上一轮工具调用分派 open → snapshot → 布局诊断 → click → 读标题 → 截图 |
+| `_dock-extract-shot.mjs` | 从会话落盘里把工具返回的截图抠出来存盘（`capturePage` 拍不到原生子视图） |
+| `_dock-walkthrough.ps1` | 串起全部并给判定 |
+
+```powershell
+# 前置：三份产物都构建过
+pnpm build ; pnpm build:ui ; cd desktop ; pnpm build ; cd ..
+pwsh -NoProfile -File desktop/shots/_dock-walkthrough.ps1
+```
+
+判定 15 条：假端点六步走完（含「ref 是从真快照读出来的」）、点击落在按钮中心
+（`(118, 157)`）、标题变 `clicked-1`、页面计数涨到 1、原生视图真的建了、几何没被摆到窗口外
+（回归闸）、壳体在、eval 拿到读数、窗口截图写出、对话正文里有点回来的标题、侧栏页签的原生
+视图回执、侧栏页签标题也跟着变了、侧栏视图自己截出了图。
+
+**注意两件事**：① 走查会**弹出真窗口并置顶**（`DSC_DESKTOP_SHOT_TOPMOST=1`），别在人用电脑时跑；
+② 它用的隔离 HOME 是四件套（`HOME`/`USERPROFILE`/`DSC_HOME`/`DSC_DESKTOP_STATE`），
+不碰真实 `~/.dsc`。
