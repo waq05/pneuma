@@ -275,6 +275,29 @@ export function environmentText(cwd: string): string {
   return text
 }
 
+/**
+ * 子代理自己的环境/模型事实（对照 {@link environmentText}，但按子代理的 cwd 与工牌模型算）。
+ *
+ * 为什么要单独一份：子代理的 MiniAgent deps 里没有 `rewrite`，主会话那条 env-facts 投影
+ * 对它不生效；而它又不该拿主会话的环境快照——子代理有自己的会话目录与冻结的模型，把主会话
+ * 的 cwd/模型塞给它正好是「瞎猜路径」的根因。这段文本直接进它自己的系统提示词（子代理没有
+ * 尾部快照那条路）。
+ *
+ * 刻意不查 git 分支：子代理每轮都要现算这段文本，跑同步 git 子进程不值当；它瞎猜路径的
+ * 痛点在 cwd 与平台，不在分支。所以这个函数是纯的（除当天的日期），便于探针直读。
+ */
+export function subagentEnvironmentText(cwd: string, model: string): string {
+  const now = new Date()
+  const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  return [
+    '环境事实：',
+    `- 今天：${date}`,
+    `- 平台：${process.platform === 'win32' ? 'Windows（bash 工具跑的是 PowerShell）' : process.platform}`,
+    `- 工作目录：${cwd}`,
+    `- 你用的模型：${model}`,
+  ].join('\n')
+}
+
 /** buildSystemPrompt 的可选输入。 */
 export interface SystemPromptOptions {
   /** 技能服务的 `<available_skills>` 文本（空串 = 没有可用技能）。 */

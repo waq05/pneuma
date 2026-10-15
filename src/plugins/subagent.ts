@@ -35,6 +35,7 @@ import {
 } from '../core/agent-roles.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
 import { MiniAgent } from '../core/loop.js'
+import { subagentEnvironmentText } from '../core/prompt.js'
 import { REJECTED_TOOL_TEXT, Session, teammateRoot } from '../core/session.js'
 import { redact } from '../core/secrets.js'
 import { argsSummary, type ToolContext, type ToolEntry } from '../core/tools.js'
@@ -398,8 +399,13 @@ export const subagentPlugin: Plugin.Object = {
             const modelId = at > 0 ? teammate.badge.model.slice(at + 1) : ''
             return ctx.llm.routeTo(provider, modelId, teammate.badge.effort ?? 'default')
           },
+          // 子代理的 deps 没有 rewrite（主会话的 env-facts 投影对子代理不生效），
+          // 又没有尾部快照那条路，所以环境/模型事实直接写进它自己的系统提示词。
+          // cwd 取派它的那个会话（子代理在父会话的 cwd 下干活），模型取冻结的工牌。
           systemPrompt: () =>
             `${input.role.prompt}
+
+${subagentEnvironmentText(input.parentSession.meta.cwd, teammate.badge.model ?? ctx.llm.model)}
 
 # 你在团队里的位置
 你是队友「${teammate.name}」（角色 ${teammate.role}），派你活的是「${teammate.parent}」。
