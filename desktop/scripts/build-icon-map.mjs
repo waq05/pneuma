@@ -11,6 +11,12 @@
  *
  * 用法：node desktop/scripts/build-icon-map.mjs
  * 产物已入库；改了清单或升级 @iconify-json/vscode-icons 后重跑一次。
+ *
+ * 2026-10-15 起只产**一份**（旧渲染层）：界面壳的文件图标已换成同构移植的
+ * `ui-shell/src/ui-primitives/file-type-icon.tsx`（分类字形 + 全彩语言字形），
+ * 壳里那张 533KB 的生成映射已删。两个界面的图标从此各走各的——这张表只剩
+ * `desktop/src/renderer/file-icons.tsx`（冻结的回落路径）一个消费者，
+ * 别把壳目录那份写回来。
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -97,7 +103,7 @@ const header = (where) => `/**
  * 未知图标回落 default-file）。key 是 fileIconName() 的产物（iconify 图标 id，下划线转连字符）。
  * 生成时间：${new Date().toISOString()}；图标 ${entries.length} 个，body 合计 ≈ ${Math.round(totalBytes / 1024)} KB。
  *
- * 这一份供${where}；另一份是同一生成器产出的同源拷贝（改清单重跑即两份同刷）。
+ * 这一份只供${where}。
  */`
 const body = `/** 图标 body（path/gradient 等 svg 内联内容）与原始 viewBox 尺寸。 */
 export interface GeneratedIconBody {
@@ -111,10 +117,10 @@ ${entries.map(([id, v]) => `  '${id}': { body: ${JSON.stringify(v.body)}${v.widt
 }
 `
 
-// 两份产物：桌面渲染层（旧界面）与界面壳的基元包（新界面）——同一次生成，两个界面同图标。
+// 只剩一份产物：旧渲染层（冻结的回落路径）。界面壳已换了字形实现，
+// 这里若仍写壳目录，下一次重跑会悄悄复活已删除的映射，谁也不会报错。
 const targets = [
   { file: join(desktopRoot, 'src', 'renderer', 'file-icon-map.generated.ts'), where: '旧渲染层的 file-icons.tsx 使用' },
-  { file: join(desktopRoot, '..', 'ui-shell', 'src', 'ui-primitives', 'file-icon-map.generated.ts'), where: '界面壳的 @dsc/ui-primitives FileIcon 使用' },
 ]
 for (const target of targets) {
   writeFileSync(target.file, `${header(target.where)}\n${body}`)

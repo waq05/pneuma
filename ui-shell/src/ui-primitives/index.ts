@@ -35,7 +35,11 @@ export * from './completion-sound'
 export * from './confirm'
 export * from './css'
 export * from './diff-rows'
-export * from './file-icon-map.generated'
+// 文件类型字形三件套：全彩语言字形数据 / 分类表（纯逻辑）/ 字形组件。
+// `file-icons`（FileIcon）是它们上面的兼容入口；生成映射 file-icon-map.generated 已退役。
+export * from './code-file-icon-artwork'
+export * from './file-type-classify'
+export * from './file-type-icon'
 export * from './file-icons'
 export * from './highlight'
 export * from './hover-delay'

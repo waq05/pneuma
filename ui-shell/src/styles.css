@@ -1987,3 +1987,61 @@
   cursor: default;
   opacity: 0.75;
 }
+
+/* ── 文件类型字形（FileTypeIcon）的按档配色 ─────────────────────────────────
+ *
+ * 字形本体在 `ui-primitives/file-type-icon.tsx`：文档体与 mark 全用 `currentColor`，
+ * 颜色由这里的分类类给。**只走令牌**（换主题跟着变）；唯一写死的本地量是
+ * `--dsc-fti-violet`（图片 / 视频 / 压缩包共用）——token 表里没有这个色相，
+ * dsh 的 FileTypeIcon.module.css 也是这么就地补的（同名 --dsh-file-type-violet）。
+ * `folder` 类在这里是显式传档的那一枚（树行的目录行走 legacy 的 .tree-folder）。
+ *
+ * 档位表：code/html/markdown/word→cyan，excel→green，pdf→red，ppt→orange，
+ * folder→yellow，image/video/archive→violet，other→quaternary。 */
+.dsc-fti {
+  color: var(--dsc-text-quaternary);
+}
+
+.dsc-fti--archive,
+.dsc-fti--image,
+.dsc-fti--video {
+  color: var(--dsc-fti-violet);
+}
+
+.dsc-fti--code,
+.dsc-fti--html,
+.dsc-fti--markdown,
+.dsc-fti--word {
+  color: var(--dsc-cyan);
+}
+
+.dsc-fti--excel {
+  color: var(--dsc-green);
+}
+
+.dsc-fti--folder {
+  color: var(--dsc-yellow);
+}
+
+.dsc-fti--other {
+  color: var(--dsc-text-quaternary);
+}
+
+.dsc-fti--pdf {
+  color: var(--dsc-red);
+}
+
+.dsc-fti--ppt {
+  color: var(--dsc-orange);
+}
+
+/* 本地补色：token 表没有 violet 这一档（见段首说明），浅色带饱和、深色压亮一点
+ * 都好看的那种紫。开关与 tokens.css 同一具柄（`data-theme`，appearance.ts 把
+ * system 解成 dark|light 再落到根元素上），随主题切换自动变。 */
+:root {
+  --dsc-fti-violet: #b39dfa;
+}
+
+:root[data-theme='light'] {
+  --dsc-fti-violet: #a78bfa;
+}

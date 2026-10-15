@@ -3806,8 +3806,10 @@ body.resizing iframe {
   min-width: 0;
 }
 
-/* 目录行的文件夹图标：琥珀色（dsh 的 folder 档），随展开/收起换开合图形 */
-.tree-folder {
+/* 目录行的文件夹图标：琥珀色（dsh 的 folder 档），随展开/收起换开合图形。
+   特异性必须压过下面的 `.file-icon`——它也给了这一档 color，同等级选择器谁排在
+   后谁赢，而这一档排在前，改动前一直被盖成灰（2026-10-15 第三十一批补追）。 */
+.file-row .tree-folder {
   color: var(--dsc-yellow);
 }
 
