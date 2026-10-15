@@ -7198,3 +7198,13 @@ tag / 根 / desktop 三方对账）。版本号由用户拍板——v0.6.67 之�
 （教训与探针「断言当下事实」同源：版本号、发布物名字这类东西，断言只钉形状不钉具体值）。
 桌面打包含 `pneuma-setup/portable-0.7.0.exe`；npm 上 `@waq666/pneuma@0.7.0` 已发；GitHub Release
 两名资产 + 手写中文说明。
+
+**首次推 tag 时 CI 挂了（记一笔）**：`Release #6` 在「打包安装器（nsis + portable）」那步报
+`The specified electronDist does not exist: …\desktop\node_modules\electron\dist`。根因＝
+`electron-builder.yml` 的 `electronDist: node_modules/electron/dist` 是 2026-10-11（`962e172`）加的
+本地份优化（开发机直连 GitHub 不稳），而**此后第一次推 tag** 才暴露：CI 上没有那份 dist——
+`electron` 的 postinstall 只负责下载二进制，pnpm 默认拦构建脚本（根 `package.json` 的
+`onlyBuiltDependencies` 只放了 `koffi`），所以 `pnpm install --frozen-lockfile` 装完不会自己下。
+修法＝CI 的打包步骤在 electron-builder 之前显式 `node node_modules/electron/install.js`
+（GitHub 托管的 runner 直连自家发布页没问题；本机已有 dist 时该脚本 `isInstalled()` 命中、秒退）。
+tag `v0.7.0` 随之移到修复后的提交——发布还没被消费（Release 没建成），移动无影响。

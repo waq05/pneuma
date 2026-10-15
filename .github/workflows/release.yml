@@ -83,6 +83,11 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm exec electron-vite build
           node scripts/prepare-runtime.mjs
+          # electron-builder.yml 的 electronDist 指着 node_modules/electron/dist（本地份：开发机直连
+          # GitHub 不稳，见那份配置的注释）；CI 上这份 dist 不会自己出现——pnpm 默认拦 electron 的
+          # postinstall（它只负责下载二进制，被拦掉不影响跑），所以这里显式补一次。
+          # 本机已有 dist 时 install.js 会立刻退出（isInstalled 命中），跑一次无副作用。
+          node node_modules/electron/install.js
           pnpm exec electron-builder --publish never
       - name: 发布 GitHub Release（tag 触发才执行）
         if: startsWith(github.ref, 'refs/tags/v')
