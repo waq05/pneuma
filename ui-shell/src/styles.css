@@ -71,6 +71,32 @@
   display: contents;
 }
 
+/* 页签行里带图标的那颗（手机档的「← 对话」返回钮，legacy 那两颗是纯文字、不吃这条）：
+   图标与文字之间给一点气口，否则 14px 的箭头会贴着第一个字。 */
+.topbar .tabs button {
+  gap: 6px;
+}
+
+/* 手机档整页模式的**页头带**（只在 `narrow` 下渲染，见 app.tsx 的整页分支）：顶栏被整页
+   换掉之后，它是「返程入口」的落点——左边回对话、右边开会话抽屉，中间报当前页名。
+   几何对着顶栏标题行来（同一个高度变量、同一套左右内距与下缘那条线），免得整页态和
+   对话态顶上看着不是一套。 */
+.page-strip {
+  align-items: center;
+  border-bottom: 1px solid var(--dsc-stroke-3);
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+  height: var(--dsc-titlebar-h);
+  padding: 0 12px 0 16px;
+}
+
+/* 带子里那个页名：跟顶栏标题同一档字（.topbar .title 选择器吃不到这里，另写一条）。 */
+.page-strip .title {
+  font-size: var(--dsc-fs-ui-lg);
+  font-weight: 600;
+}
+
 /* ── 诊断面板（壳自己的工具，旧界面没有对应物）────────────────────────────────
  *
  * 为什么固定在**左下角（错开侧栏）**：它是开发期工具，不该占用正文的布局位置。
@@ -248,6 +274,10 @@
   --dsc-send: 34px;
   /* 输入框最小高 36（dsh InputBar 停靠态）。legacy 是 26，太薄，光标行都贴着边。 */
   --dsc-input-min-h: 36px;
+  /* 输入**文字区**最小高 40（ZCode 的可编辑区 `min-h-10`）：旧值只有一行行高 18 +
+     上下内距 = 30px，一行字贴着边，点内边距那圈等于没点到（2026-10-15 报障：
+     手机上点输入框老是点空、顺手摸到旁边的按钮）。手机上再放宽到 44（见 560 档）。 */
+  --dsc-input-box-h: 40px;
 }
 
 /* ── 图标按钮：静息 28×28、圆角 8（dsh 的 sm 档；legacy 是 26 与 4px 圆角）。 */
@@ -356,11 +386,18 @@
   min-width: 0;
 }
 
-/* ── 模型菜单：两级（左栏端点、右栏该端点的模型）。旧版是一层平铺、按端点加组标题，
-   模型一多就不知道当前选的是哪一条（0.6.71 报障）。宽度按内容给（比 320px 那张宽），
-   手机上收在视口里——浮层右缘对齐那颗 chip，所以宽度上限取 `100vw - 32px` 就够。 */
+/* ── 模型菜单：窄面板只列端点，悬浮才飞出该端点的模型（对照 ZCode 的两级菜单）。
+   上一版是「左栏端点 + 右栏模型」并排、宽 520px：模型清单一直占着位，整张面板又宽又高
+   （用户报的「太大了」）。这一版一级只占 192px（ZCode 一级是 `min-w-48`），二级是一张
+   飞出的卡，尺寸与位置由壳量出来写进三个变量（见 `composer/ui.tsx` 的 `openFlyout`）。 */
 .model-pop.model-picker {
-  width: min(520px, calc(100vw - 32px));
+  width: 192px;
+}
+
+/* 只有一个端点时不摆一级，面板直接列模型——这时宽度按模型行给
+   （名字 + 图/视频徽标 + 上下文读数 + 勾）。 */
+.model-pop.model-picker.flat {
+  width: min(264px, calc(100vw - 24px));
 }
 
 /* 档位菜单：一列档位（恒含「默认」），比模型菜单窄得多。 */
@@ -371,51 +408,120 @@
 .model-picker-body {
   display: flex;
   flex: 1;
-  gap: 8px;
+  flex-direction: column;
   min-height: 0;
 }
 
-/* 左栏：端点。右栏与它之间那条竖线只在两级都出现时画（单端点时右栏就是唯一的一栏）。 */
-.pop-rail {
+/* 一级：端点。行一多自己滚；滚过之后飞出卡会按新的行位置重量一次（见 onScroll）。 */
+.model-providers {
   display: flex;
-  flex: none;
   flex-direction: column;
   gap: 2px;
-  overflow-y: auto;
-  width: 136px;
-}
-
-.model-picker-body.two-level .pop-models {
-  border-left: 1px solid var(--dsc-stroke-4);
-  padding-left: 8px;
-}
-
-.pop-models {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
+  max-height: 336px;
   overflow-y: auto;
 }
 
-.rail-item .name {
+.provider-row .name {
   flex: 1;
   min-width: 0;
 }
 
-.rail-item .rail-arrow {
+.provider-row .provider-arrow {
   color: var(--dsc-text-quaternary);
   flex: none;
 }
 
-/* 左栏当前选中的端点：底色（右栏那一条才是「当前模型」，用勾 + 强调色区分两者）。 */
-.rail-item.on {
+/* 停在（或焦点落着）的那一行：底色。右栏那一条才是「当前模型」，用勾 + 强调色区分两者。 */
+.provider-row.on {
   background: var(--dsc-row-hover-bg);
 }
 
-.rail-item.on .name {
+.provider-row.on .name {
   color: var(--dsc-text-primary);
+}
+
+/* 飞出卡：**面板的子节点**、绝对定位。左侧那 6px 是「缝」，它算在卡片的盒子里——
+   鼠标从端点行横穿到卡片上必须一路都在面板的 DOM 里（`mouseleave` 认层级不认几何），
+   否则踩到缝里就触发面板的 mouseleave，卡片会闪一下。 */
+.model-flyout {
+  padding-left: 6px;
+  position: absolute;
+  top: var(--flyout-top, 12px);
+}
+
+.model-flyout[data-side='right'] {
+  left: 100%;
+}
+
+.model-flyout[data-side='left'] {
+  padding-left: 0;
+  padding-right: 6px;
+  right: 100%;
+}
+
+/* 两边都塞不下（窄窗、或正文列本来就不够宽）：**盖住一级**——点端点等于翻开它那一页，
+   点模型即选中。为什么不硬飞：飞出卡越出裁剪容器（`.thread-main`）就被裁掉一条，模型名读不全
+   （620px 实机走查抓到的形态）。这一档不进绝对定位，就地占位当面板内容——面板自己按它长高，
+   不需要任何量出来的位置。 */
+.model-flyout-inline {
+  padding: 0;
+  position: static;
+}
+
+.model-flyout-inline .model-flyout-card {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  max-height: none;
+  padding: 0;
+  width: 100%;
+}
+
+/* 盖住那一档必须把端点列藏掉：卡片是透明的（看着就是面板本来的样子），不藏的话底下
+   端点行会透上来，两列字叠在一起（620px 实机走查抓到的形态）。
+   用挂在面板上的属性而不是 `:has()`：手机上可能碰得到 Chromium 103，`：has` 那时还没有。 */
+.model-picker[data-flyout-side='overlay'] .model-providers {
+  display: none;
+}
+
+/* 卡片本身：与面板同一套浮层令牌（底色/描边/圆角/投影），上限取「面板给的空间」与
+   ZCode 二级菜单那个 `max-h-72`（288px）的小者——夹在面板里是为了不越过它的底边去盖输入框。 */
+.model-flyout-card {
+  background: var(--dsc-bg-popover);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-overlay);
+  box-shadow: var(--dsc-shadow-float);
+  max-height: var(--flyout-max, 288px);
+  overflow-y: auto;
+  padding: 6px;
+  width: var(--flyout-w, 264px);
+}
+
+/* 二级模型列的容器。**名字前面必须带 `model-picker-`**：`.model-row` / `.model-row-*`
+   是设置页模型卡那一套（`legacy/views.css:6622` 起，`flex-direction: column` 的竖排卡片），
+   裸叫 `.model-row` 会被它接走——实机走查第一版就是这么竖排起来的。 */
+.model-picker-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 勾那一格**始终占着**（不是当前行才长出来）：读数是 `margin-left: auto` 顶到右边的，
+   右边界由勾这一格撑着——只有当前行有勾时，那一行的读数会被挤左一格，上下就对不齐
+   （用户报的形态：「对勾不要把 1000k 挤走，放在空白处」）。端点行同理（勾与 `›` 之间）。 */
+.model-picker-check {
+  align-items: center;
+  display: flex;
+  flex: none;
+  justify-content: center;
+  width: 14px;
+}
+
+/* 二级模型行本身。这条 `flex-direction: row` 不是废话：`.model-row` 这个名字原先属于设置页
+   那张竖排卡片（`legacy/views.css:6622` 起），第一版撞名时行内元素静默竖排成四行——静态
+   扫描全绿，实机走查一截图就看出来了。名字已改成带前缀的，这条守着「它必须是一行」。 */
+.model-picker-row {
+  flex-direction: row;
 }
 
 /* 当前模型不在清单里那条说明：一句话，要能折行（模型名可能很长）。 */
@@ -938,7 +1044,9 @@
    - 停靠区（文件 / 预览 / 终端 / 变更）整块不给——它们是桌面形态（要鼠标与宽屏），
      远程方法面上也没有这些能力；
    - 侧栏展开态变成浮层（盖在正文上）：390px 宽的屏幕上，行内的 300px 侧栏会把
-     对话挤到不可读；收起态仍是行内的 56px 窄栏（壳画的导航还在）；
+     对话挤到不可读；**收起态整条侧栏也不给**（2026-10-15 起）——原来那 56px 窄栏上的
+     六颗导航（展开 / 新会话 / 技能 / 插件 / 工作目录 / 设置）改成顶栏右上角两颗
+     （会话 = 拉出这条浮层、插件），窄栏与它的按钮在手机上一起退役；
    - 顶部那条窗口控件占位（caption-bar）是桌面窗口的，浏览器里只是一条空带。 */
 @media (max-width: 860px) {
   .app {
@@ -956,6 +1064,23 @@
   .caption-bar {
     display: none;
   }
+  /* 手机上收起态整条侧栏不占位：正文直接拿全宽，顶上也没有那条 56px 竖栏。
+     用 display 而不是不渲染——插件画的会话列表留在 DOM 里，拉出抽屉时状态（搜索词、
+     分组展开）不丢；窄栏按钮那边则由壳复用同一份 narrow 判定不渲染（见 app.tsx）。 */
+  .app[data-rail='1'] > .sidebar {
+    display: none;
+  }
+  /* 拉出抽屉时垫在正文上的一层：点它收回。定位用 `inset: 0`（与另外五张遮罩同一形），
+     老内核那条兜底在文件末尾的 `@supports not (inset: 0)` 块里点了它。
+     底色与模糊走设置面板那层遮罩同一套令牌（`--dsc-scrim` / `--dsc-scrim-blur`）：
+     光有「点得到」不够，还要**看得见**「这一层盖着、点一下就回去」。 */
+  .sidebar-scrim {
+    position: absolute;
+    inset: 0;
+    z-index: 39;
+    background: var(--dsc-scrim);
+    backdrop-filter: blur(var(--dsc-scrim-blur));
+  }
   .sidebar:not(.rail) {
     position: absolute;
     top: 0;
@@ -968,24 +1093,58 @@
   .sidebar-resizer {
     display: none;
   }
+  /* 这个组调的是宿主原生桥（openWorkspace）：在文件管理器 / 终端 / VS Code 里打开、
+     复制工作区路径。手机浏览器里没有原生桥，点了只会弹一句「这条能力来自桌面外壳的原生桥」——
+     顶栏右上角的位置要留给会话与插件两颗，这一组整块收掉（2026-10-15 报障）。 */
+  .ws-open {
+    display: none;
+  }
+  /* 抽屉页脚那颗「设置」也不给：手机上的设置页版式是崩的（两栏挤成一栏、正文竖排一个字
+     一行，2026-10-15 截图），既然不给入口就别留这一颗。上面那行「今日总用量」是只读读数，
+     留着。 */
+  .sidebar-footer .row-btn {
+    display: none;
+  }
 }
 
 /* ── 手机那一档（≤560px）：输入区与状态栏 ─────────────────────────────────────
    为什么另起一档：上面 860 那档管的是「侧栏/停靠区怎么让位」，这一档管的是
    **一行里塞不下的东西怎么办**——它只对手机成立（桌面窗口最窄 960，碰不到）。 */
 
-/* 输入行改成两行。390px 实测：`+ 权限档 模式档` + 模型 + 发送五颗挤在 286px 里，
+/* 输入行落成**两行**。390px 实测：`+ 权限档 模式档` + 模型 + 发送五颗挤在 286px 里，
    左组被压到 154px 宽、chip 里的字竖着排（「自定义」一个字一行），整行还溢出 10px。
-   现在左组一行、右组换行贴右，两侧都 min-width:0，挤到极限时裁字而不是换行。 */
+   第一版靠 `flex-wrap` 自己撞出两行（右组一整个被顶到第二行、还被 `margin-left: auto`
+   推到右缘，跟第一行对不齐）；2026-10-15 报障后改成**显式两行**：
+   第一行 = `+ 权限 模式`，第二行 = `模型 档位 … 发送`（发送贴本行右缘，拇指位）。
+   两行都收矮：底栏内距 2/8 → 2/6、行距 6 → 4、发送键 34 → 32（`--dsc-send`），
+   合计 ≈78px → ≈70px。文字区同时放宽到 44px（`--dsc-input-box-h`）。 */
 @media (max-width: 560px) {
   .composer-zone {
     padding: 0 12px 8px;
+  }
+  /* 手机上这张卡片里两个高度值各动一点：文字区 40 → 44（点得中）、发送键 34 → 32
+     （跟第一行那排 28 高的 chip 挨得更近，两行看着一样高）。 */
+  .composer {
+    --dsc-input-box-h: 44px;
+    --dsc-send: 32px;
   }
   .composer-bar {
     /* gap 从 12 收到 8（原本单列在「composer 工具行」那一节，挪进来一起看）。 */
     gap: 8px;
     flex-wrap: wrap;
-    row-gap: 6px;
+    padding: 2px 8px 6px;
+    row-gap: 4px;
+  }
+  /* 右组整行占第二行（`flex-basis: 100%` 把它钉在下一行，不再靠「挤不挤得下」撞运气），
+     组内 `margin-left: auto` 一并去掉——贴左对齐第一行那颗 `+`。 */
+  .composer-bar .bar-right {
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+  /* 发送键推到第二行右缘：它原来在组尾、跟两颗 chip 挨着，换行后落在两行之间的缝里
+     （截图里那颗钮看着比两行都高半头就是这么来的）。 */
+  .composer-bar .send-btn {
+    margin-left: auto;
   }
   .composer-bar .bar-left,
   .composer-bar .bar-right {
@@ -1003,9 +1162,31 @@
   .composer-model-provider {
     display: none;
   }
-  /* 两颗 chip 的那张两级菜单在手机上把宽度吃满视口，左栏再窄一点。 */
-  .pop-rail {
-    width: 112px;
+  /* 手机上模型菜单的一级放宽一点：390px 里 192px 装不下模型名（二级盖住一级那条走
+     `[data-side='overlay']`，由壳量出来决定，不再靠这一档）。 */
+  .model-pop.model-picker {
+    width: min(320px, calc(100vw - 24px));
+  }
+  /* 输入区那三颗旋钮（权限 / 模式 / 档位）的浮层在手机上改成**贴住输入卡片**的一块：
+     它们原本锚在自己那颗 chip 上（右缘对齐），手机上 chip 排在行中间，300/320px 的面板
+     直接探出屏幕左缘——430px 实测模式面板左缘 x=-65、行文字被裁成只剩尾字（2026-10-15 报障，
+     手机上那张截图里三行标签只剩「式」）。锚点交回输入卡片（`.composer` 自己有
+     `position: relative`，`bottom: 100%+10px` 于是变成「卡片上方 10px」），面板左右各留 8px、
+     宽度跟着卡片走。
+
+     为什么多写一层 `.composer`：legacy 里那条 `.composer-bar .bar-left .model-pop.policy-pop`
+     （4 个类，视图层 9445 行写的「权限面板左对齐」）比三个类的选择器高一级，光靠 `width: auto`
+     只能赢一半——权限那张会变成「左缘贴卡片、宽度按内容缩」，与旁边两颗不一致。多这一层凑到
+     同为 4 个类，靠 **styles.css 在 views.css 之后**取胜（与 `[data-rail-hidden]` 那条同一套
+     办法，见本文件 709 行的提醒）。
+     模型菜单不吃这一条：它是窄面板 + 悬浮飞出（`--flyout-*`），手机上另有自己一套量法。 */
+  .composer-bar .model-anchor-sheet {
+    position: static;
+  }
+  .composer .composer-bar .model-anchor-sheet > .model-pop {
+    left: 8px;
+    right: 8px;
+    width: auto;
   }
   /* 只有鼠标才有意义的两个东西：状态栏那几张悬浮卡（悬停才亮，272px 宽）与正文列
      两侧的拖宽把手（摆在列缘外 24px）。手机上点不到，却照样参与横向溢出——
@@ -1031,16 +1212,22 @@
    - **`inset` 简写**（Chromium 87）→ 下面这几条。写的是「盖住整屏的遮罩」，落不下来
      就不是难看而是**点得到底下的东西**：遮罩失灵时弹层形同虚设。 */
 
+/* 为什么写成「两对」而不是四个方向：**压缩器会把四个零方向合成 `inset: 0`**——那正是这段
+   兜底要躲开的那条声明。产物里这一块会变成 `@supports not (inset: 0){…{inset:0}}`，等于
+   没写（2026-10-15 加 `.sidebar-scrim` 时在产物里撞见，顺手把这一块一起改掉）；`width` /
+   `height` 这一对压不成缩写形。`scripts/ui-legacy-compat-test.mjs` 有一条对着**产物**
+   钉住这件事。 */
 @supports not (inset: 0) {
   .dsc-overlay,
   .menu-backdrop,
   .pop-mask,
   .git-dialog-backdrop,
-  .overlay {
-    top: 0;
-    right: 0;
-    bottom: 0;
+  .overlay,
+  .sidebar-scrim {
+    height: 100%;
     left: 0;
+    top: 0;
+    width: 100%;
   }
 }
 

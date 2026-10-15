@@ -16,6 +16,10 @@
  * 3. **一级只在多端点时出现**。只有一个端点时前缀与一级列表都是噪音，直接扁铺
  *    （ZCode 的 `showProviderLevel` 同款开关）。
  *
+ * 二级模型列表是**悬浮飞出**的一张卡（`.model-flyout`，不是并排的右栏）：它的挑边
+ * （`chooseFlyoutSide`）与夹高度（`placeFlyout`）两个判定也在本模块，因为「右边还剩多少」
+ * 只能量出来，吃不了 CSS 断点——理由见这两条自己的注释。
+ *
  * @module dsc-ui-shell/plugins/composer/model-picker
  */
 import type { EffortLevel, ModelChoiceView, ThinkingLevel } from '@dsc/ui'
@@ -197,4 +201,110 @@ export function filterModels(
   return models.filter(
     (item) => item.model.toLowerCase().includes(wanted) || item.value.toLowerCase().includes(wanted),
   )
+}
+
+// ── 飞出卡（一级厂商 → 二级模型）的定位：两个纯判定，量到的数由调用方给 ──────────────
+// 为什么不做成 CSS 断点：面板宽度随 chip 宽度（模型名长短）变、窗口宽度可拖，右缘对齐那颗
+// chip 之后「右边还剩多少」是量出来的，不是断点能算的。ZCode 那边同样不吃断点——Radix 的
+// `avoidCollisions` 就是拿实测 rect 挑边（窄窗下二级菜单自己翻到左边）。
+// 两个判定都收在这里，界面只负责把 rect 量出来喂进来。
+
+/** 飞出卡的目标宽度（px）。**唯一的数**：CSS 通过 `--flyout-w` 读它，别在样式里再写一份。 */
+export const FLYOUT_WIDTH = 264
+
+/** 飞出卡的高度上限（px），对照 ZCode 二级菜单的 `max-h-72`（288px）超出即滚动。 */
+export const FLYOUT_MAX_HEIGHT = 288
+
+/** 视口（或裁剪容器）里的一个横向区间。 */
+export interface Box {
+  left: number
+  right: number
+}
+
+/** 飞出卡摆在哪一边；两边都放不下时**盖住一级**（overlay）。 */
+export type FlyoutSide = 'right' | 'left' | 'overlay'
+
+/**
+ * 飞出卡摆在哪一边：右边放得下就走右边（与 ZCode 一致），否则翻到左边；两边都放不下就
+ * **盖住一级面板**。
+ *
+ * @param panel 一级面板的横向区间
+ * @param bounds **裁剪容器**的横向区间（不是视口）。这条是被实机走查逼出来的：飞出卡一旦
+ *   越出 `.thread-main`（`overflow: auto`）的左边界就被裁掉一条，模型名前缀直接看不见——
+ *   看着「飞出去了」，其实是半张卡没了。所以判据要用真会裁它的那个盒子。
+ * @param cardWidth 卡片宽
+ * @param gap 面板与卡片之间的缝
+ * @param margin 与容器边缘留的最小余量
+ */
+export function chooseFlyoutSide(
+  panel: Box,
+  bounds: Box,
+  cardWidth: number,
+  gap = 6,
+  margin = 8,
+): FlyoutSide {
+  const roomRight = bounds.right - margin - panel.right
+  const roomLeft = panel.left - bounds.left - margin
+  if (roomRight >= cardWidth + gap) return 'right'
+  if (roomLeft >= cardWidth + gap) return 'left'
+  // 两边都塞不下（窄窗/窄列）：盖住一级。硬飞出去只会被容器裁掉半张卡，那样连模型名都读不全。
+  return 'overlay'
+}
+
+/**
+ * 面板要不要整体横移：贴边时把它推回裁剪容器里。
+ *
+ * 为什么需要：面板右缘对齐模型 chip（`.model-anchor` 里那个钮），而窄屏上输入行会换行、chip
+ * 可能落在很靠左的位置——实机 390px 量到面板左缘 -78px，整块探到视口外，模型名只剩右边那列
+ * 读数（走查截图抓到的）。推的是 `translateX`，只动视觉不动布局，所以面板自己的量法
+ * （飞出卡的挑边/夹高度）仍然拿得到真位置。
+ *
+ * @param panel 面板当前（或将要）占的横向区间
+ * @param bounds 裁剪容器的横向区间
+ * @param margin 与容器边缘留的最小余量
+ * @returns 需要平移的像素（0 = 不用动）
+ */
+export function clampShift(panel: Box, bounds: Box, margin = 4): number {
+  const overLeft = bounds.left + margin - panel.left
+  if (overLeft > 0) return overLeft
+  const overRight = panel.right - (bounds.right - margin)
+  if (overRight > 0) return -overRight
+  return 0
+}
+
+/** 飞出卡的摆放结果：`top` 相对一级面板，`maxHeight` 直接写进 `--flyout-max`。 */
+export interface FlyoutPlacement {
+  top: number
+  maxHeight: number
+}
+
+/**
+ * 飞出卡摆多高、摆在哪一行的高度上。
+ *
+ * 口径：卡片顶端对齐**悬浮的那一行**；整张卡夹在一级面板的上下边之间——放不下就整体上移，
+ * 再放不下就压高度让它自己滚。为什么必须夹：面板底边只离输入行 10px（`bottom: 100% + 10px`），
+ * 模型一多、卡片顺着一行往下铺就会盖住输入框，而它盖住的正是用户马上要接着打字的地方。
+ *
+ * @param rowTop 悬浮那一行相对面板的顶边
+ * @param rowBottom 悬浮那一行相对面板的底边
+ * @param panelHeight 一级面板高（含内距）
+ * @param cardHeight 卡片内容的自然高（量出来的，不是估的）
+ * @param pad 面板上下内距（夹取范围要让它）
+ */
+export function placeFlyout(
+  rowTop: number,
+  rowBottom: number,
+  panelHeight: number,
+  cardHeight: number,
+  pad = 12,
+): FlyoutPlacement {
+  const room = Math.max(0, panelHeight - pad * 2)
+  const height = Math.min(cardHeight, FLYOUT_MAX_HEIGHT, room)
+  // 下方放得下就对齐那一行的顶边；放不下就把卡片的底边对齐那一行的底边（整体上移），
+  // 最多退到面板顶边——退到底了就压高度滚动，绝不越过面板底边去盖输入框。
+  const wanted = rowTop + height <= panelHeight - pad ? rowTop : rowBottom - height
+  const top = Math.max(pad, Math.min(wanted, panelHeight - pad - height))
+  // 上限取**有效高**（而不是面板内高）：`top + maxHeight` 必须自洽，
+  // 否则「卡片一定在面板里」这条只有拿卡片内容高一起算才成立，读代码的人验不了。
+  return { top, maxHeight: height }
 }

@@ -21,6 +21,7 @@ import {
   DOCK_MAX_WIDTH,
   DOCK_MIN_WIDTH,
   IconBolt,
+  IconChevronLeft,
   IconChevronRight,
   IconFolder,
   IconGear,
@@ -119,6 +120,28 @@ export interface AppProps {
 }
 
 /**
+ * 窄屏（手机档）的断点——与 `styles.css` 窄屏段那个数**必须是同一个**。
+ *
+ * 桌面窗口最小宽 960（`desktop/electron/main/index.ts` 的 `minWidth`），永远碰不到这一档；
+ * 手机远程页伺服的是同一份壳产物，靠视口宽区分，没有 UA、没有宿主标志。
+ */
+const NARROW_QUERY = '(max-width: 860px)'
+
+/**
+ * 当下是不是窄屏。
+ *
+ * 为什么不进 hook：`narrow` 的 state **首帧**就要有值（手机上收起态整条侧栏不画，
+ * 晚一帧会先闪出一条 56px 窄栏再收掉），所以初始化时直接量一次。
+ */
+function isNarrowViewport(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia(NARROW_QUERY).matches
+  )
+}
+
+/**
  * 装载报告：application 批是首帧之后才装的，报告会分批变，所以要订阅会话；
  * 清单本身取不到时没有会话，用启动失败那一条顶上（诊断区一样能画出来）。
  */
@@ -209,8 +232,13 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
   const [sidebarWidth, setSidebarWidth] = useState<number | null>(() =>
     readStoredPx(PANEL_KEYS.sidebarWidth, SIDEBAR_MIN, SIDEBAR_MAX),
   )
-  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() =>
-    readStoredFlag(PANEL_KEYS.sidebarCollapsed),
+  // 窄屏（手机档）**首帧**就要知道：收起态在手机上整条侧栏都不画（导航改挂顶栏右上角），
+  // 晚一帧会先闪出一条 56px 窄栏再收掉。所以初值就地量一次，不进 effect。
+  const [narrow, setNarrow] = useState<boolean>(() => isNarrowViewport())
+  // 手机上「侧栏收起」是常态（浏览器里没有 Ctrl+B，也没有桌面那种可拖宽的行内侧栏）：
+  // 存档里那份多半是桌面留下的 false，这里按窄屏兜一下，免得首帧先画一层抽屉再收。
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(
+    () => readStoredFlag(PANEL_KEYS.sidebarCollapsed) || isNarrowViewport(),
   )
   const [threadWidth, setThreadWidth] = useState<number | null>(() =>
     readStoredPx(PANEL_KEYS.threadWidth, THREAD_MIN, STORED_MAX),
@@ -231,15 +259,25 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
   // 窄屏（手机浏览器，含「手机端 remote-web 切壳」后的形态）：侧栏默认收起成 56px
   // 窄栏——展开态在窄屏下是浮层（styles.css 的窄屏段），正文拿全宽。
   // 只在**跨进窄屏**那一刻收一次：收不收的决定权随后仍在用户手里（Ctrl+B / 窄栏 logo）。
+  //
+  // 这一档同时喂给 `narrow`：手机上收起态整条侧栏不画、导航（会话/插件）改挂顶栏右上角、
+  // 正文页签行也换一副（render 里三处 `narrow` 分支都读它）。
   useEffect(() => {
-    const query = window.matchMedia('(max-width: 860px)')
+    const query = window.matchMedia(NARROW_QUERY)
     const apply = (): void => {
+      setNarrow(query.matches)
       if (query.matches) setSidebarCollapsed(true)
     }
     apply()
     query.addEventListener('change', apply)
     return () => query.removeEventListener('change', apply)
   }, [])
+
+  // 手机档：进了整页就把抽屉收起来。抽屉里那两颗「技能 / 插件」是整页入口，点完抽屉还开着，
+  // 整页就开在抽屉（与压在它上面那层遮罩）后面——看着像「点了没反应」，还得多点一下才看得见。
+  useEffect(() => {
+    if (narrow && page !== null) setSidebarCollapsed(true)
+  }, [narrow, page])
 
   const commitSidebarWidth = (px: number | null): void => {
     setSidebarWidth(px)
@@ -335,8 +373,10 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
               <IconSidebar size={15} />
             </button>
           </div>
-          {/* 收起态：56px 图标窄栏（旧界面的 rail 分支），壳替插件画导航。 */}
-          {sidebarCollapsed ? <SidebarRail onExpand={toggleSidebar} /> : null}
+          {/* 收起态：56px 图标窄栏（旧界面的 rail 分支），壳替插件画导航。
+              手机档整条侧栏都不给（CSS 那条 `.app[data-rail='1'] > .sidebar`），窄栏也就不必
+              画；导航的两颗（会话 / 插件）这时挂在顶栏右上角（见下面的 topbar-nav 那组）。 */}
+          {sidebarCollapsed && !narrow ? <SidebarRail onExpand={toggleSidebar} /> : null}
           {/* 插件的侧栏内容：收起时整块藏起来但不卸载（见 styles.css 的说明）；
               展开态经 display:contents 包装层直排进 .sidebar（与别处槽包装同一招）。 */}
           <div className="sidebar-slot" data-rail-hidden={sidebarCollapsed ? '1' : undefined}>
@@ -355,6 +395,13 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
           )}
         </aside>
 
+        {/* 手机档拉出抽屉时垫在下面的一层：点它收回。桌面档不渲染（侧栏是行内的，点哪儿
+            都不该把它收掉）。z-index 由 CSS 给（39，侧栏是 40）——所以它压得住正文，
+            压不住侧栏本身。 */}
+        {narrow && !sidebarCollapsed ? (
+          <div className="sidebar-scrim" onClick={toggleSidebar} aria-hidden="true" />
+        ) : null}
+
         <div className="main">
           {/* 窗口控件条占位（旧界面同一行）：最小化/最大化/关闭画在窗口右上，
               顶栏的内容从这行**下面**开始，不会被原生控件盖住。整页模式也保留。 */}
@@ -363,6 +410,22 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
             <>
               <div className="topbar">
                 <div className="topbar-title-row">
+                  {/* 手机档的「会话」钮挂**左上角**（当天第二条反馈）：它拉出来的抽屉从左边
+                      出来，钮摆在右上角会出现「点右边、左边冒出东西」，位置与结果对不上。
+                      其余四颗（新会话/技能/工作目录/设置）手机上都不给——抽屉一拉就有，
+                      设置入口则按同一条反馈整去掉；「插件」那颗仍在右上（它是整页跳转，
+                      与抽屉不是一类，没必要挤到标题左边）。 */}
+                  {narrow ? (
+                    <button
+                      type="button"
+                      className="icon-btn topbar-nav-btn"
+                      data-tip="会话"
+                      aria-label="会话"
+                      onClick={toggleSidebar}
+                    >
+                      <IconSidebar size={16} />
+                    </button>
+                  ) : null}
                   {/* 侧栏收起时不在这里放展开钮（旧界面顶栏没有它）：窄栏顶上那颗
                       logo 就是展开入口，Ctrl+B 也照旧。 */}
                   <span className="title">
@@ -373,37 +436,72 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
                     <SlotOutlet slots={slots} slot={SLOT.headerLead} />
                   </div>
                   <div className="drag-fill" />
-                  {/* 右簇：工作区打开组（在资源管理器打开 + 更多打开方式） */}
+                  {/* 右簇：工作区打开组（在资源管理器打开 + 更多打开方式）。手机档由 CSS 藏掉
+                      （没有原生桥，点了只会报「这条能力来自桌面外壳」）。 */}
                   <SlotOutlet slots={slots} slot={SLOT.header} />
+                  {/* 手机档的「插件」钮：插件中心整页（再点回正文）。 */}
+                  {narrow ? (
+                    <button
+                      type="button"
+                      className={`icon-btn topbar-nav-btn${page === 'plugins' ? ' on' : ''}`}
+                      data-tip="插件"
+                      aria-label="插件"
+                      aria-pressed={page === 'plugins'}
+                      onClick={() => {
+                        setShellPage(page === 'plugins' ? null : 'plugins')
+                      }}
+                    >
+                      <IconPuzzle size={16} />
+                    </button>
+                  ) : null}
                   {/* 工作区面板开合钮：只在收起时出现（展开时由面板头条尾的收起钮管） */}
                   <DockToggle />
                 </div>
                 {/* 对话 / 轨迹页签（旧界面顶栏第二行同款）：两张脸共用正文位，
-                    页签是显式入口——另一个入口是会话右键菜单的「查看轨迹」。 */}
-                <nav className="tabs" role="tablist" aria-label="正文区视图">
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={threadView === 'chat'}
-                    className={threadView === 'chat' ? 'on' : ''}
-                    onClick={() => {
-                      setThreadView('chat')
-                    }}
-                  >
-                    对话
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={threadView === 'trace'}
-                    className={threadView === 'trace' ? 'on' : ''}
-                    onClick={() => {
-                      setThreadView('trace')
-                    }}
-                  >
-                    轨迹
-                  </button>
-                </nav>
+                    页签是显式入口——另一个入口是会话右键菜单的「查看轨迹」。
+                    手机档不给这两颗页签（那 36px 让给正文），但轨迹页还有三个入口
+                    （会话右键菜单、工具卡的「在轨迹中查看」药丸两处），切过去得有回头路：
+                    这时那一行只画一颗「← 对话」。 */}
+                {narrow ? (
+                  threadView === 'trace' ? (
+                    <nav className="tabs" aria-label="正文区视图">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setThreadView('chat')
+                        }}
+                      >
+                        <IconChevronLeft size={14} />
+                        对话
+                      </button>
+                    </nav>
+                  ) : null
+                ) : (
+                  <nav className="tabs" role="tablist" aria-label="正文区视图">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={threadView === 'chat'}
+                      className={threadView === 'chat' ? 'on' : ''}
+                      onClick={() => {
+                        setThreadView('chat')
+                      }}
+                    >
+                      对话
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={threadView === 'trace'}
+                      className={threadView === 'trace' ? 'on' : ''}
+                      onClick={() => {
+                        setThreadView('trace')
+                      }}
+                    >
+                      轨迹
+                    </button>
+                  </nav>
+                )}
               </div>
 
               <HostErrorStrip />
@@ -446,8 +544,41 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
               </div>
             </>
           ) : (
-            // 整页模式（插件中心这类）：顶栏与正文整块换成页自己的，状态栏照旧占底部。
-            <SlotOutlet slots={slots} slot={SLOT.page} />
+            <>
+              {/* 手机档的**页头带**（2026-10-15 当天第三条反馈）：桌面侧栏常驻，页里那颗「插件」
+                  钮一直看得见，再点一次就回对话；手机档顶栏被整页换掉了——进页之后回对话的入口
+                  没了，连开会话抽屉的入口（也在顶栏里）都没了，用户被困在页里。这条带子就是
+                  「桌面那条常驻侧栏」的手机替身：左边回对话、右边开会话抽屉，中间说清在哪一页。
+                  桌面档不渲染它（那边侧栏还在，页头带只会多占一行）。 */}
+              {narrow ? (
+                <div className="page-strip">
+                  <button
+                    type="button"
+                    className="icon-btn topbar-nav-btn"
+                    data-tip="返回对话"
+                    aria-label="返回对话"
+                    onClick={() => {
+                      setShellPage(null)
+                    }}
+                  >
+                    <IconChevronLeft size={16} />
+                  </button>
+                  <span className="title">{page === 'plugins' ? '插件' : '技能'}</span>
+                  <div className="drag-fill" />
+                  <button
+                    type="button"
+                    className="icon-btn topbar-nav-btn"
+                    data-tip="会话"
+                    aria-label="会话"
+                    onClick={toggleSidebar}
+                  >
+                    <IconSidebar size={16} />
+                  </button>
+                </div>
+              ) : null}
+              {/* 整页模式（插件中心这类）：顶栏与正文整块换成页自己的，状态栏照旧占底部。 */}
+              <SlotOutlet slots={slots} slot={SLOT.page} />
+            </>
           )}
 
           <div className="statusbar">

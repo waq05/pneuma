@@ -43,13 +43,13 @@
  * `.composer` 2225、`.composer-bar` 2259、`.bar-left/.bar-right` 2266/2301、`.model-anchor`
  * 2309、`.model-btn` 2314、`.model-pop` 2347、`.model-list/.pop-item` 2410-2464、
  * `.send-btn` 2468、`.queue-dock` 2519 起。两颗 chip 与两级菜单的新样式在壳的 `styles.css`
- * 里（`styles.css` 打的是 `.composer-model-chip` / `.model-picker` / `.pop-rail` … 那几个
- * 新类名；**别复用已经退役的 `.model-chip`**——那是模型设置页上一版端点卡里的东西，
- * `scripts/ui-models-page-test.mjs` 有一条闸不许它回来）。
+ * 里（`styles.css` 打的是 `.composer-model-chip` / `.model-picker` / `.model-providers` /
+ * `.model-flyout` … 那几个新类名；**别复用已经退役的 `.model-chip`**——那是模型设置页上一版
+ * 端点卡里的东西，`scripts/ui-models-page-test.mjs` 有一条闸不许它回来）。
  *
  * @module dsc-ui-shell/plugins/composer
  */
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
 /** DOM 原生键盘事件（`window.addEventListener` 用；React 的 KeyboardEvent 是另一个类型）。 */
 type WindowKeyboardEvent = globalThis.KeyboardEvent
 import { IconArrowUp, IconBrain, IconBranch, IconCheck, IconChevronDown, IconChevronRight, IconClose, IconEdit, IconLayers, IconPackage, IconPlus, IconQueue, IconSearch, IconShield, IconSpark, IconStop, IconTrash } from '@dsc/ui'
@@ -76,16 +76,21 @@ import { blockedNow, commandQuery } from './commands'
 import { carryDraft, draftScopeOf, type ComposerDraft } from './draft'
 import { summarizeNotice } from './notice-summary'
 import {
+  chooseFlyoutSide,
+  clampShift,
   contextLabel,
   effortChoices,
   effortLabel,
   effortSwitchable,
   findCurrent,
+  FLYOUT_WIDTH,
   groupModels,
   modelBadges,
   modelChipText,
+  placeFlyout,
   providerHint,
   shouldShowProviderLevel,
+  type FlyoutSide,
 } from './model-picker'
 import { filteredBranches, wouldOverwrite, type GitBranchRow } from './git-branch'
 
@@ -138,14 +143,23 @@ function ComposerBox(): ReactNode {
   const [fault, setFault] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [models, setModels] = useState<readonly ModelChoiceView[]>([])
-  /** 模型菜单（两级：端点 → 模型）开没开。 */
+  /** 模型菜单（两级：端点 → 悬浮飞出的模型列表）开没开。 */
   const [modelOpen, setModelOpen] = useState(false)
   /** 思考档位菜单开没开（与模型菜单是**两颗** chip、两张浮层，见 bar-right 的注释）。 */
   const [effortOpen, setEffortOpen] = useState(false)
-  /** 模型菜单左栏选中的端点（hover / 点一下切右栏；展开时先落在当前模型所属那个）。 */
-  const [pickedProvider, setPickedProvider] = useState('')
+  /**
+   * 一级列表上**鼠标停着（或键盘焦点落着、或手指点过）的那个端点**：它决定飞出卡画谁家的
+   * 模型。`null` = 没有飞出卡（刚展开时就是这样，对照 ZCode：不悬浮就只有一级那一列）。
+   */
+  const [hoverProvider, setHoverProvider] = useState<string | null>(null)
+  /** 飞出卡相对面板的顶边与高度上限（量出来的，见 `placeFlyout`；写进 CSS 变量）。 */
+  const [flyout, setFlyout] = useState<{ top: number; maxHeight: number } | null>(null)
+  /** 飞出卡摆面板左边还是右边（量出来的，见 `chooseFlyoutSide`；两边都放不下就盖住面板）。 */
+  const [flyoutSide, setFlyoutSide] = useState<FlyoutSide>('right')
   /** 模型 chip 上的端点前缀收没收掉（放不下就收，见下面那段量法）。 */
   const [dropPrefix, setDropPrefix] = useState(false)
+  /** 面板整体横移多少（窄屏上 chip 落得太靠左时把面板推回正文列里，见 `clampShift`）。 */
+  const [panelShift, setPanelShift] = useState(0)
   // 权限预设与模式（预设）两根旋钮各自的浮层：三者互斥（开一根把另两根收掉，旧界面同款）。
   const [permOpen, setPermOpen] = useState(false)
   const [presetOpen, setPresetOpen] = useState(false)
@@ -160,9 +174,12 @@ function ComposerBox(): ReactNode {
   const [branchCreateOpen, setBranchCreateOpen] = useState(false)
   const [newBranchName, setNewBranchName] = useState('')
   const branchRows = useRef<HTMLDivElement | null>(null)
-  /** 模型菜单展开时把当前项滚进视野用的两个锚点（端点行 / 模型行）。 */
-  const providerRows = useRef<HTMLDivElement | null>(null)
+  /** 模型面板本体（量飞出卡的挑边与夹高度都拿它当参照）。 */
+  const modelPanelRef = useRef<HTMLDivElement | null>(null)
+  /** 飞出卡里当前模型那一行的滚动锚点（模型一多，勾可能落在滚动区外面）。 */
   const modelRows = useRef<HTMLDivElement | null>(null)
+  /** 飞出卡本体（量它内容的自然高，定了才夹得准）。 */
+  const flyoutCardRef = useRef<HTMLDivElement | null>(null)
   /** 输入行（量栏宽用：栏宽一变就要重新掂一次端点前缀放不放得下）。 */
   const barRef = useRef<HTMLDivElement | null>(null)
   const [barWidth, setBarWidth] = useState(0)
@@ -582,19 +599,111 @@ function ComposerBox(): ReactNode {
   const current = findCurrent(groups, provider, model)
   const chip = modelChipText(groups, provider, model)
   const twoLevel = shouldShowProviderLevel(groups)
-  /** 左栏选中的端点：没手选过（或它没在了）就落在当前模型所属那个，再退回第一个。 */
-  const activeProvider =
-    groups.find((item) => item.provider === pickedProvider)?.provider ??
-    current.group?.provider ??
-    groups[0]?.provider ??
-    ''
+  /** 飞出卡画谁家的模型：鼠标停着的那一家；没停（或它没在了）就只有一级那一列。 */
+  const hoveredGroup = groups.find((item) => item.provider === hoverProvider)
   const visibleModels = twoLevel
-    ? (groups.find((item) => item.provider === activeProvider)?.models ?? [])
+    ? (hoveredGroup?.models ?? [])
     : (groups[0]?.models ?? [])
+  /**
+   * 飞出卡渲染不渲染（也是「面板现在展示的是哪一级」的唯一真值）。
+   *
+   * `side === 'overlay'` 时它**盖住一级**，所以样式要据此把端点那一列藏起来——不藏的话
+   * 卡片（它是透明的，为的是看着就是面板本来的样子）会让底下的端点行透上来，两列字叠在一起。
+   */
+  const flyoutShown = twoLevel && flyout !== null && hoveredGroup !== undefined
   // 档位清单：模型查得到就用它声明的（含「默认」），查不到给兜底五档——不锁死用户。
   const levelOptions = effortChoices(current.entry)
   const switchEffort = effortSwitchable(levelOptions)
   const effortText = effortLabel(effort)
+
+  /**
+   * 会裁掉浮层的那个祖先盒子的横向区间：往上找第一个 `overflow-x` 不是 `visible` 的（实测是
+   * `.thread-main`）。为什么不用视口当判据：飞出卡越出它就被裁成半张，模型名前缀直接看不见。
+   */
+  const clipBoxOf = (el: HTMLElement): { left: number; right: number } => {
+    let node: HTMLElement | null = el.parentElement
+    while (node !== null) {
+      if (getComputedStyle(node).overflowX !== 'visible') {
+        const box = node.getBoundingClientRect()
+        return { left: box.left, right: box.right }
+      }
+      node = node.parentElement
+    }
+    return { left: 0, right: window.innerWidth }
+  }
+
+  /**
+   * 悬浮（或 Tab 到、或点）一级某一行时：量一次面板与那一行的位置，决定飞出卡摆哪、多高。
+   *
+   * 为什么是量而不是 CSS：面板右缘对齐模型 chip，chip 宽度随模型名长短变、窗口宽度可拖，
+   * 「两边各还剩多少」只有拿到 rect 才知道（ZCode 那边同样是 Radix 拿实测 rect 挑边）。
+   * 量到的两个数写进 CSS 变量（`--flyout-top` / `--flyout-max`），样式只做展示。
+   */
+  const openFlyout = (providerName: string, row: HTMLElement | null): void => {
+    setHoverProvider(providerName)
+    const panel = modelPanelRef.current
+    if (panel === null || row === null) return
+    const panelBox = panel.getBoundingClientRect()
+    const rowBox = row.getBoundingClientRect()
+    setFlyoutSide(
+      chooseFlyoutSide(
+        { left: panelBox.left, right: panelBox.right },
+        clipBoxOf(panel),
+        FLYOUT_WIDTH,
+      ),
+    )
+    // 高度上限先按面板本身给（卡片内容的自然高下一步在同一帧里量出来再修正）。
+    setFlyout(
+      placeFlyout(
+        rowBox.top - panelBox.top,
+        rowBox.bottom - panelBox.top,
+        panelBox.height,
+        Number.POSITIVE_INFINITY,
+      ),
+    )
+  }
+
+  /**
+   * 飞出卡渲染出来之后，拿它内容的**自然高**把位置与上限修正一遍。
+   *
+   * 为什么必须修：`openFlyout` 那一步卡片还没进 DOM，只能用「无穷高」先占位，于是夹取退化成
+   * 「对齐那一行」；卡片真高出来之后，靠近面板底部的那几行会把卡片推出面板底边——面板底边
+   * 只离输入行 10px，推出去就盖住输入框。`useLayoutEffect` 在绘制前跑完，所以这一修不带闪烁。
+   */
+  useLayoutEffect(() => {
+    if (hoverProvider === null) return
+    const panel = modelPanelRef.current
+    const card = flyoutCardRef.current
+    if (panel === null || card === null) return
+    const row = panel.querySelector<HTMLElement>(`[data-model-provider="${CSS.escape(hoverProvider)}"]`)
+    if (row === null) return
+    const panelBox = panel.getBoundingClientRect()
+    const rowBox = row.getBoundingClientRect()
+    const next = placeFlyout(
+      rowBox.top - panelBox.top,
+      rowBox.bottom - panelBox.top,
+      panelBox.height,
+      card.scrollHeight,
+    )
+    setFlyout((prev) =>
+      prev !== null && prev.top === next.top && prev.maxHeight === next.maxHeight ? prev : next,
+    )
+  }, [hoverProvider, models.length, flyoutSide])
+
+  /**
+   * 面板开着的期间随时把它推回正文列里（窄屏输入行换行时 chip 可能贴在很左边）。
+   *
+   * `useLayoutEffect` 而不是 `useEffect`：推之前在绘制前算完，不然会先闪一帧「半张面板在视口外」。
+   */
+  useLayoutEffect(() => {
+    if (!modelOpen) return
+    const panel = modelPanelRef.current
+    if (panel === null) return
+    const box = panel.getBoundingClientRect()
+    const shift = clampShift({ left: box.left, right: box.right }, clipBoxOf(panel))
+    setPanelShift((prev) => (prev === shift ? prev : shift))
+  }, [modelOpen, models.length, twoLevel])
+
   /**
    * 展开模型菜单时把当前项滚进视野（照分支菜单同款）。
    *
@@ -603,9 +712,56 @@ function ComposerBox(): ReactNode {
    */
   useEffect(() => {
     if (!modelOpen) return
-    providerRows.current?.querySelector<HTMLElement>('[data-provider-current="true"]')?.scrollIntoView({ block: 'nearest' })
+    if (hoverProvider === null) return
     modelRows.current?.querySelector<HTMLElement>('[data-model-current="true"]')?.scrollIntoView({ block: 'nearest' })
-  }, [modelOpen, activeProvider, models.length])
+  }, [modelOpen, hoverProvider, models.length])
+
+  /**
+   * 模型行（飞出卡与「只有一个端点」的扁铺面板**共用同一份渲染**，不写两遍）。
+   *
+   * 行里四样东西都有用：模型名（身份）、能力徽标（图/视频）、上下文（256k）、当前那条的勾。
+   */
+  const modelRowList = (choices: readonly ModelChoiceView[]): ReactNode => {
+    if (choices.length === 0) {
+      return (
+        <div className="pop-item">
+          <span className="name">{models.length === 0 ? '清单没取到' : '这个端点还没有模型'}</span>
+        </div>
+      )
+    }
+    return choices.map((choice) => {
+      const on = current.entry?.value === choice.value
+      return (
+        <button
+          type="button"
+          role="menuitemradio"
+          aria-checked={on}
+          key={choice.value}
+          className={`pop-item model-picker-row${on ? ' on' : ''}`}
+          title={choice.description}
+          data-model-current={on ? 'true' : undefined}
+          onClick={() => {
+            setModelOpen(false)
+            setFault(null)
+            void channel.invoke('setModel', [choice.value]).catch((reason: unknown) => {
+              setFault(reason instanceof Error ? reason.message : String(reason))
+            })
+          }}
+        >
+          <span className="name">{choice.model}</span>
+          {modelBadges(choice).map((badge) => (
+            <span className="pop-badge" key={badge}>
+              {badge}
+            </span>
+          ))}
+          <span className="ctx">{contextLabel(choice.contextWindow)}</span>
+          {/* 勾**始终占着那一格**（不是当前行才长出来）：读数这一列的右边界由它撑着，
+              上下一对齐才不会因为「多了一个勾」整体错开一格。 */}
+          <span className="model-picker-check">{on ? <IconCheck size={14} className="check" /> : null}</span>
+        </button>
+      )
+    })
+  }
 
   /** 完整形态的签名：换模型 / 清单变了 / 栏宽变了，都要重新掂一次端点前缀放不放得下。 */
   const chipMeasureKey = `${chip.full}|${String(models.length)}|${String(barWidth)}`
@@ -802,6 +958,15 @@ function ComposerBox(): ReactNode {
           事件挂在它上面（不在外层那一列上）：命中面就是看得见的那个框。 */}
       <div
         className="composer"
+        // 点框内那圈内边距、或输入区与底栏之间的缝，也算「点输入框」：文字区上面那条
+        // 10px 内边距原来点了什么都不发生，手指会再往旁边那颗钮上摸一次——手机上这就是
+        // 误触的来源（2026-10-15 报障）。命中按钮与浮层时不动：它们自己管自己，
+        // 抢焦点会把刚点开的菜单收掉。文字区本身不用管（原生就聚焦）。
+        onClick={(event) => {
+          const target = event.target as HTMLElement | null
+          if (target !== null && target.closest('button, textarea, input, .model-pop, .pop-mask') !== null) return
+          area.current?.focus()
+        }}
         onPaste={(event) => {
           if (event.clipboardData.files.length === 0) return
           setFault('贴图这一版还不支持：界面通道的单图上限只有 32KB，普通截图压到那个档位已经看不清了')
@@ -925,7 +1090,11 @@ function ComposerBox(): ReactNode {
                 surfaces.permissionPresets，写口走原生桥（见 choosePermissionPreset 的注释）。
                 一颗管三件事（沙箱 + 权限模式 + 审阅者）：分开选会出现「完全访问 + 沙箱仍工作区可写」
                 这种自相矛盾的组合。 */}
-            <div className="model-anchor">
+            {/* 权限 / 模式 / 档位三颗的浮层在手机上是一块**贴住输入卡片**的面板（`model-anchor-sheet`，
+                见 styles.css 的窄屏段）：它们原来锚在自己那颗 chip 上（右缘对齐），手机上 chip 排在
+                行中间，300/320px 的面板会探出屏幕左缘、行文字被裁成只剩尾字。模型那颗不挂这个类——
+                它有自己一套窄面板 + 悬浮飞出。 */}
+            <div className="model-anchor model-anchor-sheet">
               <button
                 type="button"
                 className={`model-btn${permOpen ? ' open' : ''}`}
@@ -988,7 +1157,7 @@ function ComposerBox(): ReactNode {
             </div>
             {/* 模式（预设）旋钮：与权限旋钮并排。清单同样来自快照（surfaces.preset.options），
                 点选即 usePreset；「默认」标跟随 preset.defaultName（新会话用的那一档）。 */}
-            <div className="model-anchor">
+            <div className="model-anchor model-anchor-sheet">
               <button
                 type="button"
                 className={`model-btn${presetOpen ? ' open' : ''}`}
@@ -1071,6 +1240,9 @@ function ComposerBox(): ReactNode {
                 data-composer-model={current.entry?.value ?? chip.full}
                 onClick={() => {
                   setModelOpen((open) => !open)
+                  // 每次开都是「只有一级那一列」的干净态（上次悬浮停在哪家不该带过来）。
+                  setHoverProvider(null)
+                  setFlyout(null)
                   setEffortOpen(false)
                   setPermOpen(false)
                   setPresetOpen(false)
@@ -1092,13 +1264,22 @@ function ComposerBox(): ReactNode {
                       setModelOpen(false)
                     }}
                   />
-                  <div className="model-pop model-picker" role="menu" aria-label="选择模型">
-                    <div className="pop-label">
-                      模型
-                      <span className="pop-note">
-                        {models.length === 0 ? '清单没取到' : twoLevel ? `${String(groups.length)} 个端点` : chip.full}
-                      </span>
-                    </div>
+                  <div
+                    className={`model-pop model-picker${twoLevel ? '' : ' flat'}`}
+                    role="menu"
+                    aria-label="选择模型"
+                    ref={modelPanelRef}
+                    data-flyout-side={flyoutShown ? flyoutSide : undefined}
+                    style={
+                      panelShift === 0 ? undefined : ({ transform: `translateX(${String(panelShift)}px)` } as CSSProperties)
+                    }
+                    onMouseLeave={() => {
+                      // 指针离开整张面板（飞出卡也是它的子节点，所以移进卡片不算离开）：
+                      // 收起飞出卡，回到「只有一级那一列」——对照 ZCode 不悬浮就没二级。
+                      setHoverProvider(null)
+                      setFlyout(null)
+                    }}
+                  >
                     {/* 当前模型不在清单里时先说清楚（端点配置改过、或这条会话记住的模型下线了）：
                         否则用户只看到一片「一条都不打勾」的清单，不知道是谁不对。 */}
                     {current.entry === undefined && model !== '' ? (
@@ -1106,83 +1287,100 @@ function ComposerBox(): ReactNode {
                         <span className="name">当前：{model} —— 清单里没有这个模型</span>
                       </div>
                     ) : null}
-                    <div className={`model-picker-body${twoLevel ? ' two-level' : ''}`}>
+                    <div className="model-picker-body">
                       {twoLevel ? (
-                        <div className="pop-rail" data-model-rail="" ref={providerRows}>
-                          {groups.map((group) => {
-                            const owns = current.group?.provider === group.provider
-                            const hint = providerHint(group, current)
-                            return (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                aria-current={owns}
-                                key={group.provider}
-                                className={`pop-item rail-item${group.provider === activeProvider ? ' on' : ''}`}
-                                data-model-provider={group.provider}
-                                data-provider-current={owns ? 'true' : undefined}
-                                title={
-                                  hint === ''
-                                    ? `${group.displayName} · ${String(group.models.length)} 个模型`
-                                    : `${group.displayName} · 当前 ${hint}`
-                                }
-                                onMouseEnter={() => {
-                                  setPickedProvider(group.provider)
-                                }}
-                                onFocus={() => {
-                                  setPickedProvider(group.provider)
-                                }}
-                                onClick={() => {
-                                  setPickedProvider(group.provider)
-                                }}
-                              >
-                                <span className="name">{group.displayName}</span>
-                                {owns ? <IconCheck size={13} className="check" /> : null}
-                                <IconChevronRight size={12} className="rail-arrow" />
-                              </button>
-                            )
-                          })}
+                        <div
+                          className="model-providers"
+                          data-model-providers=""
+                          /* 滚过之后那一行的位置变了，重量一次卡片才还贴着它。 */
+                          onScroll={() => {
+                            if (hoverProvider === null) return
+                            const row =
+                              modelPanelRef.current?.querySelector<HTMLElement>(
+                                `[data-model-provider="${CSS.escape(hoverProvider)}"]`,
+                              ) ?? null
+                            openFlyout(hoverProvider, row)
+                          }}
+                        >
+                          {groups.length === 0 ? (
+                            <div className="pop-item">
+                              <span className="name">清单没取到</span>
+                            </div>
+                          ) : (
+                            groups.map((group) => {
+                              const owns = current.group?.provider === group.provider
+                              const hint = providerHint(group, current)
+                              return (
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  aria-current={owns}
+                                  key={group.provider}
+                                  className={`pop-item provider-row${group.provider === hoverProvider ? ' on' : ''}`}
+                                  data-model-provider={group.provider}
+                                  data-provider-current={owns ? 'true' : undefined}
+                                  title={
+                                    hint === ''
+                                      ? `${group.displayName} · ${String(group.models.length)} 个模型`
+                                      : `${group.displayName} · 当前 ${hint}`
+                                  }
+                                  /* 悬浮即飞出（不延迟：一级就几个端点，抖动风险不值得一个计时器）；
+                                     键盘 Tab 到与手指点一下都走同一条路——触摸屏没有悬浮，
+                                     只认悬浮就等于手机上一级点不开二级。 */
+                                  onMouseEnter={(event) => {
+                                    openFlyout(group.provider, event.currentTarget)
+                                  }}
+                                  onFocus={(event) => {
+                                    openFlyout(group.provider, event.currentTarget)
+                                  }}
+                                  onClick={(event) => {
+                                    openFlyout(group.provider, event.currentTarget)
+                                  }}
+                                >
+                                  <span className="name">{group.displayName}</span>
+                                  <span className="model-picker-check">{owns ? <IconCheck size={13} className="check" /> : null}</span>
+                                  <IconChevronRight size={12} className="provider-arrow" />
+                                </button>
+                              )
+                            })
+                          )}
                         </div>
-                      ) : null}
-                      <div className="pop-models" data-model-models="" ref={modelRows}>
-                        {visibleModels.length === 0 ? (
-                          <div className="pop-item">
-                            <span className="name">{models.length === 0 ? '清单没取到' : '这个端点还没有模型'}</span>
-                          </div>
-                        ) : (
-                          visibleModels.map((choice) => {
-                            const on = current.entry?.value === choice.value
-                            return (
-                              <button
-                                type="button"
-                                role="menuitemradio"
-                                aria-checked={on}
-                                key={choice.value}
-                                className={`pop-item${on ? ' on' : ''}`}
-                                title={choice.description}
-                                data-model-current={on ? 'true' : undefined}
-                                onClick={() => {
-                                  setModelOpen(false)
-                                  setFault(null)
-                                  void channel.invoke('setModel', [choice.value]).catch((reason: unknown) => {
-                                    setFault(reason instanceof Error ? reason.message : String(reason))
-                                  })
-                                }}
-                              >
-                                <span className="name">{choice.model}</span>
-                                {modelBadges(choice).map((badge) => (
-                                  <span className="pop-badge" key={badge}>
-                                    {badge}
-                                  </span>
-                                ))}
-                                <span className="ctx">{contextLabel(choice.contextWindow)}</span>
-                                {on ? <IconCheck size={14} className="check" /> : null}
-                              </button>
-                            )
-                          })
-                        )}
-                      </div>
+                      ) : (
+                        modelRowList(visibleModels)
+                      )}
                     </div>
+                    {/* 飞出卡：**面板的子节点**而不是另挂一份浮层——`mouseleave` 认 DOM 层级，
+                        所以鼠标从厂商行横穿到卡片上不会把卡片关掉，不需要任何延迟计时器。
+                        「盖住」那一档（`overlay`）不进绝对定位，而是**就地占位**：端点列已经藏了，
+                        卡片就是面板此刻的内容——面板自己会按它长高，`管理模型` 仍留在下面，
+                        也不需要任何量出来的位置。 */}
+                    {flyoutShown ? (
+                      <div
+                        className={`model-flyout${flyoutSide === 'overlay' ? ' model-flyout-inline' : ''}`}
+                        data-model-flyout=""
+                        data-side={flyoutSide}
+                        style={
+                          flyoutSide === 'overlay'
+                            ? undefined
+                            : ({
+                                '--flyout-top': `${String(flyout.top)}px`,
+                                '--flyout-max': `${String(flyout.maxHeight)}px`,
+                                '--flyout-w': `${String(FLYOUT_WIDTH)}px`,
+                              } as CSSProperties)
+                        }
+                      >
+                        <div
+                          className="model-flyout-card"
+                          role="menu"
+                          aria-label={`${hoveredGroup.displayName} 的模型`}
+                          ref={flyoutCardRef}
+                        >
+                          <div className="model-picker-rows" data-model-rows="" ref={modelRows}>
+                            {modelRowList(visibleModels)}
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
                     <button
                       type="button"
                       className="pop-item model-manage"
@@ -1203,7 +1401,7 @@ function ComposerBox(): ReactNode {
                 也不会显示错。档位清单里恒有「默认」——宿主把它当恒可选的档位，旧版漏了它，
                 于是默认档时四个按钮一个都不亮。单档模型不给浮层、也不给箭头。 */}
             {switchEffort ? (
-              <div className="model-anchor">
+              <div className="model-anchor model-anchor-sheet">
                 <button
                   type="button"
                   className={`model-btn composer-effort-chip${effortOpen ? ' open' : ''}`}

@@ -2570,6 +2570,10 @@
   font-size: var(--dsc-fs-body);
   line-height: var(--dsc-lh-body);
   max-height: var(--dsc-input-max-h);
+  /* 文字区最小高（壳里 `--dsc-input-box-h`：桌面 40、手机 44，ZCode 的 min-h-10 同款）。
+     只有一行字时它把框撑到点得中的高度——自动增高那条（ui.tsx 里量 scrollHeight 写
+     行内 height）不受影响：内容矮时行内高度更小，min-height 兜住；内容长过它才长个儿。 */
+  min-height: var(--dsc-input-box-h, 40px);
   outline: none;
   padding: 10px 12px 2px;
   resize: none;

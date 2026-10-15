@@ -125,15 +125,38 @@ console.log('[3] inset 兜底：整屏遮罩')
   const styles = flat(read('ui-shell/src/styles.css'))
   const block = /@supports not \(inset: 0\) \{([\s\S]*?)\n\}/.exec(styles)
   check('styles.css 里有 @supports not (inset: 0) 兜底块', block !== null)
-  const masks = ['dsc-overlay', 'menu-backdrop', 'pop-mask', 'git-dialog-backdrop', 'overlay']
+  const masks = ['dsc-overlay', 'menu-backdrop', 'pop-mask', 'git-dialog-backdrop', 'overlay', 'sidebar-scrim']
   const inner = block === null ? '' : block[1]
-  check('五张整屏遮罩都点名了', masks.every((name) => inner.includes(`.${name}`)), masks.filter((n) => !inner.includes(`.${n}`)).join(','))
-  check('兜底写的是四个方向（不是又写一遍 inset）', inner.includes('top: 0') && inner.includes('left: 0') && !inner.includes('inset:'))
+  check('六张整屏遮罩都点名了', masks.every((name) => inner.includes(`.${name}`)), masks.filter((n) => !inner.includes(`.${n}`)).join(','))
+  // 兜底**不许**写成 `top/right/bottom/left: 0`：压缩器会把四个零方向合成 `inset: 0`，
+  // 那正是这段要躲开的声明，产物里就成了 `@supports not (inset: 0){…{inset:0}}`（等于没写）。
+  check('兜底用的是压不成缩写的形（height/left/top/width 两对）', inner.includes('height: 100%') && inner.includes('width: 100%') && inner.includes('top: 0') && inner.includes('left: 0'))
+  check('兜底里没有 `right`/`bottom`（没给压缩器凑齐四个方向的机会）', !inner.includes('right:') && !inner.includes('bottom:'))
+  check('兜底不是又写一遍 inset', !inner.includes('inset:'))
   // 与 legacy 那侧对账：兜底点的名字必须在 legacy 里真的是 `inset: 0` 的规则，
-  // 否则这条兜底会变成僵尸（名字改了没人发现）。
+  // 否则这条兜底会变成僵尸（名字改了没人发现）。`.sidebar-scrim` 是后加的那张，
+  // 它住在 styles.css 的窄屏段（只在手机上渲染的那张浮层），单独对账。
   const legacy = flat(read('ui-shell/src/legacy/views.css')) + flat(read('ui-shell/src/legacy/primitives.css'))
-  const stale = masks.filter((name) => !new RegExp(`\\.${name}\\s*\\{[^}]*inset:\\s*0`).test(legacy))
-  check('这些名字在 legacy 里确实还是 inset: 0（兜底没变僵尸）', stale.length === 0, stale.join(','))
+  const stale = masks.filter((name) => name !== 'sidebar-scrim').filter((name) => !new RegExp(`\\.${name}\\s*\\{[^}]*inset:\\s*0`).test(legacy))
+  check('这五个名字在 legacy 里确实还是 inset: 0（兜底没变僵尸）', stale.length === 0, stale.join(','))
+  check('`.sidebar-scrim` 自己也确实是 `inset: 0` 的一张遮罩（在壳的窄屏段里）', /\.sidebar-scrim \{[\s\S]*?inset: 0;/.test(styles))
+  // 产物门（上面那条「压缩器会合成 inset」的落地）：跑过壳构建之后，产物里这一块必须是
+  // 那个躲开的形，不许被压成 `{inset:0}`。
+  const assetsDir = join(root, 'lib/ui/assets')
+  const builtCss = (() => {
+    try {
+      return readdirSync(assetsDir)
+        .filter((f) => f.endsWith('.css'))
+        .map((f) => readFileSync(join(assetsDir, f), 'utf8'))
+        .join('\n')
+    } catch {
+      return ''
+    }
+  })()
+  const builtBlock = builtCss === '' ? null : /@supports not \(inset: ?0\)\{([^@]*?)\}/.exec(builtCss)
+  check('产物里有这条兜底块（跑过壳构建时）', builtCss === '' || builtBlock !== null)
+  check('产物里那条兜底没被压成 inset:0（跑过壳构建时）', builtCss === '' || (builtBlock !== null && !builtBlock[1].includes('inset:0')))
+  check('产物里那条兜底还带着六张遮罩（跑过壳构建时）', builtCss === '' || (builtBlock !== null && masks.every((name) => builtBlock[1].includes(`.${name}`))))
 }
 
 console.log('[4] 窄屏规则：输入行、状态栏、停靠区')
