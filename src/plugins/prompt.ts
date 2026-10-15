@@ -7,7 +7,9 @@
  *   - 要改写发给模型那份消息的功能点登记**命名纯投影**（registerProjection），
  *     内核的 fold-system / env-facts / drop-images 三条护栏与插件投影走同一条按次序的管道；
  *   - 环境事实（env-facts 投影，order 600）：日期/分支/脏标不再进系统提示词，作为
- *     请求末尾的 user 快照附上——缓存只认字节前缀，易变内容不能放头部（2026-10-03）；
+ *     请求末尾的 user 快照附上。平台（Windows→PowerShell）只有这一个载体，所以缺省
+ *     每轮都发；想要「同一份环境不重复烧 token」的人把 `envRefreshMs` 设成非 0 即可
+ *     ——缓存只认字节前缀，易变内容不能放头部（2026-10-03 / 2026-10-15）；
  *   - 本插件自己兜底一件事：指令文件的字符预算（`prompt.instructionBudget`）。
  *
  * 「模型看见什么」可以从会话日志完整重建：日志存原文，投影链是命名且可复算的
@@ -39,7 +41,8 @@ type Projection = { order: number; fn: (messages: ChatMessage[]) => ChatMessage[
 const RESERVED_PROJECTIONS = new Set(['fold-system', 'drop-images'])
 
 /**
- * 取指令文件的字符预算：夹在 4k 到 200k 之间。
+ * 取指令文件的预算：夹在 4k 到 200k 之间。单位是**字符**（不是字节；与 codex/dsh/ZCode
+ * 的字节口径怎么换算，见 core/prompt.ts 的 DEFAULT_INSTRUCTION_BUDGET 注释）。
  * @param passed - 装配时直接传进来的配置（内核挂载时的第二参数）。
  */
 function readBudget(passed: unknown): number {
@@ -47,6 +50,31 @@ function readBudget(passed: unknown): number {
   const num = Number(raw.instructionBudget)
   if (!Number.isFinite(num)) return DEFAULT_INSTRUCTION_BUDGET
   return Math.min(Math.max(Math.round(num), 4_000), 200_000)
+}
+
+/**
+ * 环境快照刷新下限的缺省值（毫秒）：**0 = 每轮都发**（缺省）。见 {@link readEnvRefreshMs}。
+ */
+const DEFAULT_ENV_FACTS_REFRESH_MS = 0
+
+/**
+ * 取环境快照的刷新下限（毫秒，可配 `prompt.envRefreshMs`，0 = 每轮都发）。
+ *
+ * **缺省是 0（每轮都发）**，不是 dsh 那个 10 分钟——理由比「省几十个 token」硬：
+ * 「平台：Windows（bash 工具跑的是 PowerShell）」这条事实**只有 env 快照一个载体**
+ * （core/prompt.ts 的 IDENTITY/BEHAVIOR/TOOL_RULES 里没有它，dsh 那边也没有平台注入）。
+ * 一旦按「没变就不发」跳过，被跳过的那几轮请求里模型既没有环境、又很可能写出 bash-ism
+ * （dsc 主力平台就是 Windows）。省下的那点 token 明显不划算，所以缺省保持每轮都发；
+ * 这条闸门留给想要「同一份环境不重复烧 token」的人自己打开（设一个非 0 的毫秒数）。
+ * 语义：`now - last.at < refreshMs` 为真才跳过；refreshMs=0 时右边是 0，而 `now - last.at`
+ * 单调不小于 0，所以恒不跳过 = 每轮都发。
+ * @param passed - 装配时直接传进来的配置（内核挂载时的第二参数）。
+ */
+function readEnvRefreshMs(passed: unknown): number {
+  const raw = resolvePluginConfig(CONFIG_KEY, passed)
+  const num = Number(raw.envRefreshMs)
+  if (!Number.isFinite(num) || num < 0) return DEFAULT_ENV_FACTS_REFRESH_MS
+  return Math.round(num)
 }
 
 export const promptPlugin: Plugin.Object = {
@@ -92,13 +120,37 @@ export const promptPlugin: Plugin.Object = {
     // （dsh 的 agent-loop README 把这条规律写得很直白）。改成追加在请求末尾的 user
     // 快照：前缀原样命中，变化只落在尾巴这一点；每次请求都带当前值，模型手里
     // 不会有过期环境。它补的是 user 消息，与 fold-system（只动 system）互不干扰。
+    //
+    // 「变了才发」的闸门默认是**关**的（`envRefreshMs` 缺省 0 = 每轮都发），原因是
+    // 「平台：Windows（bash 工具跑的是 PowerShell）」只有 env 快照这一个载体——跳过一轮
+    // 就等于那一轮模型没有平台事实，容易写出 bash-ism。开关留给愿意拿这点风险换 token 的人。
+    // 打开后（设一个非 0 毫秒数）的语义（照 dsh time-context 的刷新下限）：
+    // 上一次发过的快照文本与这次相同、又没到下限，就整条不发——它落在缓存前缀之外，
+    // 但每轮重发就是每轮白烧几十个 token（长会话里是稳定开销）；**首次（含会话刚恢复）
+    // 必发、文本变了必发**，到点也重注一次。
+    //
+    // 打开后的取舍写明（别被 dsh 的字面骗了）：dsh 的快照是 durable 的 user 消息，跳过的
+    // 那些轮请求里仍带着上一条；dsc 的快照是**投影注入、不落会话历史**（落盘的只有 hash
+    // 去重的 `env-facts` 状态条目），所以「不发」的那一轮请求里确实没有环境快照。要 dsh
+    // 那种「模型一直持有最近一次快照」，得把快照落成 durable 消息（改会话日志形状，不在本线）。
+    // 上次发过什么按会话记（常驻多 agent 各看各的 cwd），只留内存：进程重启后
+    // 一律当「首次」，宁可多发一条，不可让模型拿着过期环境而不自知。
+    const envSent = new Map<string, { text: string; at: number }>()
     projections.set('env-facts', {
       order: 600,
       fn: (messages) => {
-        const snapshot = environmentSnapshot(requestSession.meta.cwd)
+        const session = requestSession
+        const snapshot = environmentSnapshot(session.meta.cwd)
+        const now = Date.now()
+        const last = envSent.get(session.meta.id)
+        if (last !== undefined && last.text === snapshot && now - last.at < readEnvRefreshMs(passed)) {
+          return messages
+        }
+        if (envSent.size > 64) envSent.clear() // 会话多了别让这张表无界长
+        envSent.set(session.meta.id, { text: snapshot, at: now })
         // 落一条状态（hash 去重，变了才写）：重放会话时最后一条就是模型当时看到的环境
         //（Model-visible ⟺ logged 的环境半边，与 agent 插件的 system-prompt 条目同套做法）。
-        noteEnvFacts(requestSession, snapshot)
+        noteEnvFacts(session, snapshot)
         return [...messages, { role: 'user', content: snapshot }]
       },
     })

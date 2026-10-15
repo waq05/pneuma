@@ -69,6 +69,13 @@ export interface LlmRoute {
   thinking?: 'enabled' | 'disabled'
   /** `reasoning_effort` 的线上值；undefined = 不发。与 thinking 二选一，看模型怎么声明。 */
   reasoningEffort?: string
+  /**
+   * 端点是否声明支持**显式前缀缓存**（Anthropic 风格的内容块 `cache_control`）。
+   * 缺省 undefined = 不支持 = 请求体一个字节都不变（DeepSeek 系靠网关自动缓存，
+   * 显式标记对它是多余的、还可能被挑剔的网关判 400）。只有 config.yaml 那个端点
+   * 写了 `cacheControl: true` 才会是 true（见 core/config.ts）。
+   */
+  cacheControl?: boolean
 }
 
 export interface StreamRequest {
@@ -83,6 +90,12 @@ export interface StreamRequest {
   thinking?: 'enabled' | 'disabled'
   /** OpenAI 系 `reasoning_effort` 的线上值；undefined = 不注入。与 thinking 二选一，由模型声明决定。 */
   reasoningEffort?: string
+  /**
+   * 端点声明支持显式前缀缓存时为 true：{@link serializeMessages} 之后由
+   * {@link applyExplicitCache} 在稳定前缀与对话末尾各打一个 `cache_control` 断点。
+   * 缺省/ false = 走与以前逐字节相同的路径（DeepSeek 零漂移靠这一条保证）。
+   */
+  cacheControl?: boolean
   /**
    * 这次请求属于哪条会话（宿主填会话 meta.id）。
    *
@@ -409,11 +422,14 @@ async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Pro
   if (sanitized.report.droppedResults + sanitized.report.droppedCalls + sanitized.report.droppedMessages > 0) {
     handlers.onSanitize?.(sanitized.report)
   }
+  const serialized = serializeMessages(sanitized.messages)
   const body: Record<string, unknown> = {
     model: request.model,
     // 消息按调用方给的原样发：历史里混进多条 system 的合并是 prompt 层的
     // 命名投影（fold-system）该做的事，协议适配器只认一条流水线形状。
-    messages: serializeMessages(sanitized.messages),
+    // 显式缓存断点只在端点声明支持时才打（缺省 false）：不开的端点走原路，
+    // 请求体与以前逐字节相同——DeepSeek 系靠网关自动缓存，别动它。
+    messages: request.cacheControl === true ? applyExplicitCache(serialized) : serialized,
     stream: true,
     stream_options: { include_usage: true },
   }
@@ -585,7 +601,7 @@ async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Pro
 }
 
 /** assistant 消息重放：reasoning_content 回传保持模型思路连贯（dsh 同款）。 */
-function serializeMessages(messages: ChatMessage[]): unknown[] {
+export function serializeMessages(messages: ChatMessage[]): unknown[] {
   return messages.map((message) => {
     // ts 是 dsc 自己记的时间戳（见 ChatMessage.ts）：协议里没这一项，
     // 整条透传会把它发给端点，挑字段的网关会判 400。其余字段照旧原样过，
@@ -601,6 +617,55 @@ function serializeMessages(messages: ChatMessage[]): unknown[] {
         : {}),
       ...(wire.tool_calls !== undefined ? { tool_calls: wire.tool_calls } : {}),
     }
+  })
+}
+
+/** 显式缓存断点的线上形状（Anthropic 系惯例）。 */
+const EPHEMERAL = { type: 'ephemeral' } as const
+
+/**
+ * 给已经序列化的消息打**显式前缀缓存**断点：Anthropic 系把缓存范围记在内容块的
+ * `cache_control: {type:'ephemeral'}` 上，命中到哪个块为止由它决定（ZCode 的做法：
+ * 稳定 system 一个 + 对话末尾一个，正好两处）。dsc 的系统提示词是一整条（fold-system
+ * 之后的形状），所以「稳定 / 动态」两个断点合并成头部这一个。
+ *
+ * 为什么单独一个函数而不是塞进 {@link serializeMessages}：只有**端点声明支持**时才该
+ * 打点。不开显式缓存的端点（当前唯一的 DeepSeek 系路由）走的是原路，请求体逐字节不变；
+ * 这条纪律由 `Request.cacheControl`（缺省 false）与探针钉死。
+ *
+ * 纯函数：不改输入数组与其中的消息对象，返回新数组。
+ *
+ * @param messages - {@link serializeMessages} 的输出（尚未 stringify）。
+ * @returns 打了断点的新数组；没有可打点的消息（空数组 / 全是角色不支持的消息）时原样返回。
+ */
+export function applyExplicitCache(messages: unknown[]): unknown[] {
+  if (messages.length === 0) return messages
+  // 断点位置：头部第一条 system（稳定前缀）与最后一条（对话末尾，缓存到本轮为止）。
+  const marks = new Set<number>([messages.length - 1])
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index] as { role?: unknown }
+    if (message?.role === 'system') {
+      marks.add(index)
+      break
+    }
+  }
+  return messages.map((message, index) => {
+    if (!marks.has(index)) return message
+    const wire = message as { content?: unknown }
+    const content = wire.content
+    if (typeof content === 'string' && content !== '') {
+      // 字符串正文包成一个 text 块再挂断点：OpenAI 兼容网关认的是块形状。
+      return { ...(message as object), content: [{ type: 'text', text: content, cache_control: EPHEMERAL }] }
+    }
+    if (Array.isArray(content) && content.length > 0) {
+      // 已经是块数组（多模态）：断点挂在最后一块上，前面的块原样不动。
+      const blocks = [...content]
+      const lastBlock = blocks[blocks.length - 1] as { type?: unknown }
+      blocks[blocks.length - 1] = { ...(lastBlock as object), cache_control: EPHEMERAL }
+      return { ...(message as object), content: blocks }
+    }
+    // 没有正文（例如只有 tool_calls 的 assistant 条）就没处挂断点：这条不打，原样过。
+    return message
   })
 }
 

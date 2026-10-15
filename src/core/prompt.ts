@@ -42,9 +42,26 @@ export interface PromptContribution {
 }
 
 /**
- * 指令文件总字符预算的缺省值（照 Hermes 的 20k 上限：再多就是在烧上下文）。
- * 实际用的是 {@link buildSystemPrompt} 的 `instructionBudget` 参数，由 prompt 插件
- * 从自己的插件配置里取（见 plugins/prompt.ts）；这个常量只是没配时的缺省。
+ * 指令文件总预算的缺省值——单位是**字符**（UTF-16 code unit，即 `String.length`），
+ * 不是字节。整条链（本常量、`instructionBudget` 参数、`prompt.instructionBudget`
+ * 插件配置）都按这个口径算，截断判据见 {@link instructionChunks} 里的 `body.length > room`。
+ *
+ * 为什么保留字符口径而不是改成字节：口径本身不省 token，改口径要同步重算缺省值，
+ * 否则中文项目会被悄悄砍半。三家参考实现的预算都是**字节**口径，换算关系如下
+ * （`1 字符 = 1 字节` 只在纯 ASCII 下成立；UTF-8 下中文一字 3 字节、emoji 一字 4 字节）：
+ *   - codex：AGENTS.md diff 投影约 32 KiB → 32768 字节；纯 ASCII 下 ≈ 32768 字符，
+ *     纯中文下 ≈ 10922 字符（dsc 的 20000 字符在纯中文下 ≈ 60000 字节，比它宽）；
+ *   - dsh：`maxBytes` 默认 65536 字节（`packages/bundle/base/cordis.patch.yml`）；
+ *     纯 ASCII ≈ 65536 字符、纯中文 ≈ 21845 字符——dsc 的 20000 字符在纯中文下
+ *     与它相当（≈60000 字节），纯 ASCII 下比它窄；
+ *   - ZCode：`# agentsMd` 块预算 100 KB → 约 102400 字节；纯 ASCII ≈ 102400 字符，
+ *     纯中文 ≈ 34133 字符——dsc 的 20000 字符是三家最保守的。
+ * 一句话：dsc 的这个数是「字符」，与三家的字节数不能直接比大小；要换算按内容语言
+ * 乘 1（ASCII）到 3（中文）倍。用户想对齐某一家，把自己那份 AGENTS.md 按上面的
+ * 字节数 / 语言系数折算成字符填 `prompt.instructionBudget` 就行。
+ *
+ * 这个常量只是没配时的缺省；实际用的是 {@link buildSystemPrompt} 的 `instructionBudget`
+ * 参数，由 prompt 插件从自己的插件配置里取（见 plugins/prompt.ts）。
  */
 export const DEFAULT_INSTRUCTION_BUDGET = 20_000
 /** 超预算时保留头部比例，尾部再留 20%，中间砍掉。 */
@@ -279,7 +296,10 @@ export function environmentText(cwd: string): string {
 export interface SystemPromptOptions {
   /** 技能服务的 `<available_skills>` 文本（空串 = 没有可用技能）。 */
   skills?: string
-  /** 指令文件总字符预算；缺省 {@link DEFAULT_INSTRUCTION_BUDGET}（真实缺省值在 prompt 插件配置里）。 */
+  /**
+   * 指令文件总预算，**以字符计**（UTF-16 code unit，不是字节；换算见
+   * {@link DEFAULT_INSTRUCTION_BUDGET} 的注释）；缺省 {@link DEFAULT_INSTRUCTION_BUDGET}。
+   */
   instructionBudget?: number
   /** 插件贡献段（模式条款、模型信息等）；顺序由各段自己声明。 */
   contributions?: readonly PromptContribution[]

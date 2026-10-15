@@ -40,6 +40,11 @@ export interface ProviderConfig {
   apiKey: string
   /** 协议适配器 id；缺省 openai-completions。 */
   api?: string
+  /**
+   * 端点声明支持显式前缀缓存标记（内容块上的 `cache_control`）。
+   * 缺省 undefined = 不支持 = 请求体逐字节不变；见 core/llm.ts 的 `applyExplicitCache`。
+   */
+  cacheControl?: boolean
   models: ModelInfo[]
 }
 
@@ -88,6 +93,8 @@ function toProvider(name: string, raw: FileProvider): ProviderConfig | null {
     baseUrl: raw.baseURL.replace(/\/+$/, ''),
     apiKey,
     ...(raw.api !== undefined ? { api: raw.api.trim() } : {}),
+    // 只有显式写了 true 才算支持（宽容读：写错的值一律按不支持，绝不误伤默认路由）
+    ...(raw.cacheControl === true ? { cacheControl: true } : {}),
     models: raw.models.map((model) => ({
       id: model.id,
       name: model.name ?? model.id,
