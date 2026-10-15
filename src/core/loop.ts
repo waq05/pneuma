@@ -406,6 +406,8 @@ export class MiniAgent {
             temperature: route.temperature,
             thinking: route.thinking,
             reasoningEffort: route.reasoningEffort,
+            // 显式缓存断点跟着路由走：端点没声明就是 undefined，请求体一个字节不变
+            cacheControl: route.cacheControl,
             signal,
             ...(tools.length > 0
               ? {

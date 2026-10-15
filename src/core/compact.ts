@@ -251,6 +251,9 @@ export async function compactSession(
       sessionId: session.meta.id,
       maxTokens: route.maxTokens,
       temperature: route.temperature,
+      // 压缩请求是上一次真实请求的前缀扩展：端点支持显式缓存时，断点也照打，
+      // 不然这条「暖缓存」路径反而比正常请求少一层命中（缺省 false = 完全不变）
+      ...(route.cacheControl === true ? { cacheControl: true } : {}),
       signal,
       ...(context.tools === undefined || context.tools.length === 0 ? {} : { tools: [...context.tools] }),
       messages: [{ role: 'system', content: context.system }, ...region, { role: 'user', content: COMPACT_PROMPT }],

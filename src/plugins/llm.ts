@@ -112,6 +112,8 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
         temperature: config.temperature,
         thinking: wire.thinking,
         reasoningEffort: wire.reasoningEffort,
+        // 显式缓存断点：只有端点自己声明了才带（缺省不带 = DeepSeek 请求体逐字节不变）
+        ...(provider.cacheControl === true ? { cacheControl: true } : {}),
       }
     }
 

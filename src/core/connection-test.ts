@@ -55,6 +55,8 @@ export function connectionProbeRequest(route: LlmRoute): StreamRequest {
     maxTokens: CONNECTION_PROBE_MAX_TOKENS,
     ...(route.thinking === undefined ? {} : { thinking: route.thinking }),
     ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort }),
+    // 端点声明了显式缓存就照原样带（测试的必须是与正常请求同形状的那条路）
+    ...(route.cacheControl === true ? { cacheControl: true } : {}),
   }
 }
 

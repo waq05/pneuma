@@ -37,6 +37,11 @@ export interface FileProvider {
   apiKeyEnv?: string
   /** 线上协议适配器 id；缺省 openai-completions。装了提供别的协议的插件后在这里选。 */
   api?: string
+  /**
+   * 这个端点是否支持**显式前缀缓存标记**（内容块上的 `cache_control`，Anthropic 系惯例）。
+   * 缺省不写 = false：请求体一个字节都不会变（DeepSeek 系靠网关自动缓存）。
+   */
+  cacheControl?: boolean
   models: FileModel[]
 }
 
