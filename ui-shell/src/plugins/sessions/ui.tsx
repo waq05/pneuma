@@ -16,7 +16,7 @@
  * 双击标题改名、行级快捷键（Ctrl+Alt+R / Ctrl+Alt+F / Ctrl+Shift+A）、
  * **手动排序拖拽**（工作区行拖动排序写 `workspaceOrder`；manual 档会话行在
  * 同一置顶块内互拖写 `sessionOrder`；指示线与「放到最后」落点同款）、
- * 底部工作目录与用量行。
+ * 底部今日用量行（目录行 2026-10-15 下岗：选别的目录开会话由组头 ➕「添加工作区」承担）。
  *
  * @module dsc-ui-shell/plugins/sessions
  */
@@ -70,7 +70,9 @@ import {
   type HostSnapshot,
   type SessionRunState,
   type SessionSummary,
+  type UsageStatsView,
 } from '@dsc/ui'
+import { formatTokens } from '@dsc/ui-primitives'
 import { buildWorkGroups, displayName, lastSegment, moveToEnd, moveWithin, orderedSessions, type ArchivedFilter, type GroupKey, type SortKey } from './grouping'
 
 /** 空的会话列表常量：没拿到快照时共用一份，省得每帧新建数组。 */
@@ -1312,49 +1314,50 @@ function MenuItem({
   )
 }
 
-/** 侧栏底部（旧界面同位）：当前工作目录（点一下换目录）+ 当前会话用量 + 设置入口。 */
+/** 用量行的悬浮说明：壳不渲染 data-tip（悬浮可达的那份走原生 title），两处用同一句防漂。 */
+const FOOTER_USAGE_TIP = '今天所有会话累计用量（输入 + 输出），每分钟自动刷新'
+
+/**
+ * 侧栏底部（旧界面同位）：今天所有会话的累计用量 + 设置入口。
+ *
+ * 目录行 2026-10-15 下岗：它点一下选目录开新会话，这个意图由组头的 ➕「添加工作区」
+ * 承担；工作区路径在状态栏一直有显示，页脚不再重复一条可点的目录行。
+ */
 function SidebarFooter(): ReactNode {
-  const cwdOf = useHostSelector(readCwd)
+  const channel = useHostChannel()
   const usage = useHostSelector(readUsageTokens)
-  /**
-   * 点目录行 = 选另一个目录并在那儿开一条新会话（旧界面「点击浏览其他目录」的同一个
-   * 用户意图）。**不再**切宿主的工作目录：目录是会话自己的数据，切目录那条路要重启
-   * 宿主 + 整页重载，整个界面会闪一下——那是这轮报障的形状，界面里不该再有它。
-   */
-  const browse = (): void => {
-    const native = getHostNative()
-    if (!native.available) {
-      toastErr('换工作目录要用桌面版（浏览器里没有选目录的原生桥）')
-      return
+  const [today, setToday] = useState(0)
+  // 「今日总用量」问宿主的 usageStats：聚合层逐日补零到本地今天（core/usage-log.ts），
+  // days 末位就是今天那格——「今天」的口径留在宿主，壳只挑末位，不给自己做日期换算。
+  // 还没有任何记录时 days 为空，读 0；读取失败维持上一次读数（页脚是块小面板，不打断）。
+  useEffect(() => {
+    let active = true
+    const load = (): void => {
+      void channel
+        .invoke<UsageStatsView>('usageStats')
+        .then((stats) => {
+          if (!active) return
+          const day = stats.days[stats.days.length - 1]
+          setToday(day === undefined ? 0 : day.inputTokens + day.outputTokens)
+        })
+        .catch(() => {})
     }
-    void (async () => {
-      try {
-        const dir = await native.invoke<string>('pickDirectory')
-        if (typeof dir !== 'string' || dir === '') return
-        // 开新会话这件事由侧栏列表那侧统一做（它还要展开目标组、记忆最近目录）。
-        window.dispatchEvent(new CustomEvent('shell.session.new', { detail: { cwd: dir } }))
-      } catch (reason) {
-        toastErr(`选目录失败：${reason instanceof Error ? reason.message : String(reason)}`)
-      }
-    })()
-  }
+    load()
+    // 60 秒兜底轮询：别的窗口 / 后台宿主的请求不会往本窗口推快照，靠它跟上。
+    const timer = window.setInterval(load, 60_000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [channel, usage])
   return (
     <div className="sidebar-footer">
-      <div
-        className="row"
-        data-tip={cwdOf === null ? '还没有工作目录' : `${cwdOf} · 在别的目录开新会话`}
-        title={cwdOf === null ? undefined : '在别的目录开新会话'}
-        onClick={browse}
-      >
-        <IconFolder size={14} />
-        <span className="dir">{cwdOf === null ? '没有工作目录' : cwdOf}</span>
-      </div>
-      {/* 用量行常显（旧界面同款）：还没有请求时读作 0 tok，「不知道」与「真是 0」在这里
-          本来就是一回事——这是本会话的账。 */}
-      <div className="row" data-tip="当前会话累计用量（输入 + 输出）">
+      {/* 用量行常显（旧界面同位，2026-10-15 起改今日口径）：今天没用过就是 0 tok，
+          「不知道」与「真是 0」在这里是一回事——这是今天的账，包含其他窗口里跑的会话。 */}
+      <div className="row" data-tip={FOOTER_USAGE_TIP} title={FOOTER_USAGE_TIP}>
         <IconCoins size={14} />
-        <span>会话用量</span>
-        <span className="num">{formatTokens(usage ?? 0)} tok</span>
+        <span>今日总用量</span>
+        <span className="num">{formatTokens(today)} tok</span>
       </div>
       {/* 设置行（旧界面左下角同位）：事件请设置面板开门。 */}
       <button
@@ -1370,22 +1373,8 @@ function SidebarFooter(): ReactNode {
   )
 }
 
-// ─────────── 数量格式化：与状态栏插件里的那一份同口径，原件在旧渲染层 token-estimate.ts ───────────
-// 「状态栏/侧栏上的数字怎么缩写」只有这一个口径（K/M 两级、小数末尾的 0 去掉）。
-
-/** 去掉小数末尾多余的 0：46.0K → 46K，1.00M → 1M。 */
-function trimZero(value: number): string {
-  const text = value >= 100 ? value.toFixed(0) : value.toFixed(1)
-  return text.endsWith('.0') ? text.slice(0, -2) : text
-}
-
-/** 数量按 K / M 压短：1000 以下给原值，128000 读成 128K。 */
-function formatTokens(count: number): string {
-  if (!Number.isFinite(count) || count <= 0) return '0'
-  if (count < 1_000) return String(Math.round(count))
-  if (count < 1_000_000) return `${trimZero(count / 1_000)}K`
-  return `${trimZero(count / 1_000_000)}M`
-}
+/** 数量格式化用共享份（`@dsc/ui-primitives/tokens` 的 `formatTokens`，顶部已 import）：
+ *  K/M 两级、小数末尾的 0 去掉——状态栏 / 轮尾 / 轨迹页同一口径。 */
 
 /** 从枚举字段读一个已知取值；线上来的值对不上就回落默认（旧值/新值混跑时的兜底）。 */
 function readEnum<T extends string>(value: unknown, values: readonly T[], fallback: T): T {
@@ -1709,7 +1698,9 @@ function readCwd(snapshot: HostSnapshot | null): string | null {
   return typeof value === 'string' && value !== '' ? value : null
 }
 
-/** 当前会话的累计 token 用量（输入 + 输出；宿主没回过用量时 null）。 */
+/** 当前会话的累计 token 用量（输入 + 输出；宿主没回过用量时 null）。
+ *  页脚只把它当**触发器**用：本会话每笔请求后它都会变，靠它驱动「今日总用量」重读，
+ *  读数本身不再显示在页脚（页脚已是今日口径，见 SidebarFooter）。 */
 function readUsageTokens(snapshot: HostSnapshot | null): number | null {
   const status = snapshot?.['status']
   if (typeof status !== 'object' || status === null) return null

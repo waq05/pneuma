@@ -9779,7 +9779,7 @@ body.resizing iframe {
    / `− Show less`，transcript_view/layout.rs:24-58）是**把开合这件事写在明面上**的——
    我们取后者：隐式箭头在长会话里太容易被当成装饰。 */
 .step-fold-leading {
-  display: inline-flex;
+  display: inline-grid;
   flex: none;
   place-items: center;
 }
