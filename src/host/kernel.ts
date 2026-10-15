@@ -5,7 +5,7 @@
  * 装配顺序即依赖顺序（cordis 也会按 inject 声明等待服务就绪）：
  *   llm → session → 三个扩展点（guards / surfaces / waiting）→ approval → tools
  *   → tools-default → transcript → commands → skills → prompt → mode → settings → hooks
- *   → compact → todo → plan → ask → agent → goal → runtime → [UI] → 外部插件
+ *   → compact → microcompact → todo → plan → ask → agent → goal → runtime → [UI] → 外部插件
  *
  * 两处顺序是有原因的，不只是好看：
  *   - approval 早于 mode：模式换档广播 `dsc/mode-changed`，审批要听（审批卡上写当前档位）；
@@ -50,6 +50,7 @@ import { commandsPlugin } from '../plugins/commands.js'
 import { skillsPlugin } from '../plugins/skills.js'
 import { settingsPlugin } from '../plugins/settings.js'
 import { compactPlugin } from '../plugins/compact.js'
+import { microcompactPlugin } from '../plugins/microcompact.js'
 import { sessionTitlePlugin } from '../plugins/session-title.js'
 import { agentPlugin } from '../plugins/agent.js'
 import { runtimePlugin } from '../plugins/runtime.js'
@@ -286,6 +287,12 @@ export const BUILTIN_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
   },
   { file: 'settings', name: '设置', description: '设置分区注册表、模型配置与偏好' },
   { file: 'compact', name: '压缩', description: '上下文超阈值自动压缩', settingsSection: 'compact' },
+  {
+    file: 'microcompact',
+    name: '旧工具结果清理',
+    description: '每轮请求把较旧的工具结果正文换成占位符，只改请求体、不动会话日志',
+    settingsSection: 'microcompact',
+  },
   { file: 'session-title', name: '会话标题', description: '首回合结束后自动生成会话标题（用户改名优先）' },
   { file: 'todo', name: '任务清单', description: '模型自己维护的清单与实时进度条' },
   { file: 'plan', name: '计划交付', description: '写计划文件并弹评审卡等用户批' },
@@ -336,6 +343,9 @@ export async function createKernel(options: KernelOptions): Promise<Context> {
   // 安全钩子排在设置之后：它既要往设置里挂自己的分区，又要把闸门挂到守卫链上。
   await root.plugin(hooksPlugin)
   await root.plugin(compactPlugin)
+  // 旧工具结果微压缩：排在 prompt 与 settings 之后（它要往投影链与设置分区各挂一块），
+  // 也排在 compact 之后——两者都是省上下文的手段，压缩管「整段折成摘要」，它管「旧的逐条换占位符」。
+  await root.plugin(microcompactPlugin, getPluginConfig('microcompact'))
   // 会话标题跟着压缩走：两者都监听回合结束，都只做会话级的轻量收尾
   await root.plugin(sessionTitlePlugin)
   await root.plugin(todoPlugin)
