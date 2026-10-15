@@ -21,6 +21,7 @@ import {
   type FileConfig,
   type FileProvider,
 } from './migrate.js'
+import { activeConfigFile } from './config-store.js'
 import { readModelCaps, type ModelCaps } from './model-caps.js'
 import { dscPath } from './path-policy.js'
 
@@ -111,7 +112,9 @@ function toProvider(name: string, raw: FileProvider): ProviderConfig | null {
  * （boot 会把"没有可用端点"报给 UI，而不是崩溃）。
  */
 export function readConfig(): DscCoreConfig {
-  if (!existsSync(DSC_CONFIG_YAML)) migrateFromDsh()
+  const file = activeConfigFile()
+  // 从 dsh 迁移只往**出厂那份**里写：换过配置文件的人自己选了一份，不该被迁移结果盖掉。
+  if (file === DSC_CONFIG_YAML && !existsSync(DSC_CONFIG_YAML)) migrateFromDsh()
   loadCredentials()
 
   const providers: Record<string, ProviderConfig> = {}
@@ -119,8 +122,8 @@ export function readConfig(): DscCoreConfig {
   let defaultModel = ''
   let temperature: number | undefined
 
-  if (existsSync(DSC_CONFIG_YAML)) {
-    const doc = parseTolerantYaml(readFileSync(DSC_CONFIG_YAML, 'utf8')) as unknown as FileConfig
+  if (existsSync(file)) {
+    const doc = parseTolerantYaml(readFileSync(file, 'utf8')) as unknown as FileConfig
     if (typeof doc.default?.provider === 'string') defaultProvider = doc.default.provider
     if (typeof doc.default?.model === 'string') defaultModel = doc.default.model
     if (typeof doc.temperature === 'number') temperature = doc.temperature

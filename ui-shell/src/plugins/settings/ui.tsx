@@ -35,7 +35,7 @@
  *
  * @module dsc-ui-shell/plugins/settings
  */
-import { Fragment, useEffect, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
   IconArchive,
   IconChart,
@@ -157,30 +157,34 @@ function SettingsPanel(): ReactNode {
     return () => window.removeEventListener('keydown', onKey)
   }, [open])
 
-  // 每次打开重取分区清单（读者会改插件启停，分区会变）。
-  // 插件贡献的分区不进设置：它们的配置就地画在插件中心的详情页里（对照 dsh），
-  // 所以这里只取 builtin——与旧桌面端同一条过滤。
-  useEffect(() => {
-    if (!open) return
-    let alive = true
+  /**
+   * 取一次分区清单（含各分区的字段）。
+   *
+   * 什么时候取：打开设置面板时（读者会改插件启停，分区会变），以及**换过配置文件之后**
+   * ——那一行的路径与「恢复默认」按钮都随活动配置变，不重取的话用户会看到换完还是老路径。
+   */
+  const loadSections = useCallback((): void => {
     setLoadError('')
     void channel
       .invoke<SettingsSectionView[]>('getSettingsSections')
       .then((all) => {
-        if (!alive) return
         const list = all.filter((section) => section.builtin)
         setSections(list)
         setActive((current) => (list.some((item) => item.id === current) ? current : (list[0]?.id ?? '')))
       })
       .catch((error: unknown) => {
-        if (!alive) return
         setSections([])
         setLoadError(text(error))
       })
-    return () => {
-      alive = false
-    }
-  }, [open, channel])
+  }, [channel])
+
+  // 每次打开重取分区清单（读者会改插件启停，分区会变）。
+  // 插件贡献的分区不进设置：它们的配置就地画在插件中心的详情页里（对照 dsh），
+  // 所以这里只取 builtin——与旧桌面端同一条过滤。
+  useEffect(() => {
+    if (!open) return
+    loadSections()
+  }, [open, loadSections])
 
   if (!open) return null
 
@@ -244,7 +248,10 @@ function SettingsPanel(): ReactNode {
               <IconClose size={16} />
             </button>
           </div>
-          <div className="settings-body">
+          {/* 模型分区要的是「两栏各自滚」（左端点列表 + 右详情，见 legacy/views.css 的
+              模型分区那一段）：给正文加一个 fill 类，取消整页滚动、让子元素吃满高度。
+              其余分区照旧从上往下堆、整页滚。 */}
+          <div className={`settings-body${active === 'models' ? ' settings-body-fill' : ''}`}>
             {active === '' ? (
               <div className="settings-empty">{loadError === '' ? '正在读取分区…' : `分区加载失败：${loadError}`}</div>
             ) : section === undefined ? (
@@ -268,6 +275,7 @@ function SettingsPanel(): ReactNode {
               <GenericFields
                 key={section.id}
                 section={section}
+                onConfigFileChanged={loadSections}
                 // 外观只有渲染层消费，宿主没有这个分区——照旧桌面端追加在「通用」分区末尾。
                 extra={section.id === 'general' ? <AppearanceRows /> : undefined}
               />
@@ -287,7 +295,16 @@ function SettingsPanel(): ReactNode {
  * 都记在 development-log：控件的成功/失败回执走分区底部的行内说明（旧界面走全局 Toast），
  * 下拉用原生 `<select>`（旧界面是自绘的 `Select` 组件）。
  */
-function GenericFields({ section, extra }: { section: SettingsSectionView; extra?: ReactNode }): ReactNode {
+function GenericFields({
+  section,
+  extra,
+  onConfigFileChanged,
+}: {
+  section: SettingsSectionView
+  extra?: ReactNode
+  /** 换过配置文件之后调一次：那一行的路径与「恢复默认」按钮都随活动配置变，得重取分区清单。 */
+  onConfigFileChanged?(): void
+}): ReactNode {
   const channel = useHostChannel()
   const [values, setValues] = useState<SettingsValues>({})
   const [draft, setDraft] = useState<Record<string, string>>({})
@@ -392,6 +409,41 @@ function GenericFields({ section, extra }: { section: SettingsSectionView; extra
   }
 
   /**
+   * 换一份配置文件用（设置 → 通用「配置文件」那一行的「更换」/「恢复默认」）。
+   *
+   * 两步都是原生桥上的活：先弹系统文件对话框拿路径（用户取消就什么都不做），再让宿主
+   * 把这条路径设为活动配置（宿主会校验：绝对路径 / 读得了 / 是能解析的 YAML / 有 providers，
+   * 不过就拒绝并给出原因）。成功之后**重取分区清单**——那一行显示的路径与「恢复默认」
+   * 按钮都随活动配置变，不重取的话用户会看到换完还是老路径。
+   *
+   * @param reset true = 回出厂那份（不弹对话框，直接送空串）
+   */
+  const switchConfigFile = async (reset: boolean): Promise<void> => {
+    const native = getHostNative()
+    if (!native.available) {
+      setNote({ tone: 'error', text: '换配置文件要在桌面版里做（浏览器里没有这条桥）' })
+      return
+    }
+    setNote(null)
+    try {
+      let path = ''
+      if (!reset) {
+        path = await native.invoke<string>('pickConfigFile', [])
+        if (path === '') return
+      }
+      const result = await native.invoke<SettingsMutation>('setConfigFile', [path])
+      if (!result.ok) {
+        setNote({ tone: 'error', text: `换配置文件失败：${result.error ?? '未知原因'}` })
+        return
+      }
+      setNote({ tone: 'ok', text: result.notice ?? '已换配置文件' })
+      onConfigFileChanged?.()
+    } catch (error: unknown) {
+      setNote({ tone: 'error', text: `换配置文件失败：${text(error)}` })
+    }
+  }
+
+  /**
    * 弹窗里再点一次「重新生成」：调同一个宿主动作，把新码交给弹窗原地换上去。
    *
    * 失败只有一种：宿主这一版不返回结构化配对数据（老回执只有一句 notice，或者宿主
@@ -464,6 +516,27 @@ function GenericFields({ section, extra }: { section: SettingsSectionView; extra
                 >
                   打开
                 </button>
+                {/*
+                  宿主在信息行上声明的行内动作（现在只有「更换配置文件」与它的「恢复默认」）。
+                  只画壳认得的 id：认不出的整条跳过——旧壳遇到新宿主多声明的动作时不会画出
+                  一颗点不动的按钮。动作要开系统文件对话框，所以就地处理，不走宿主动作表。
+                */}
+                {field.actions?.map((action) => {
+                  if (action.id !== 'switch-config-file' && action.id !== 'reset-config-file') return null
+                  return (
+                    <button
+                      key={action.id}
+                      type="button"
+                      className="text-btn"
+                      data-tip={action.tip}
+                      onClick={() => {
+                        void switchConfigFile(action.id === 'reset-config-file')
+                      }}
+                    >
+                      {action.label}
+                    </button>
+                  )
+                })}
               </span>
             ) : null}
           </div>
@@ -783,7 +856,7 @@ function AppearanceRows(): ReactNode {
         <div className="setting-text">
           <div className="setting-label">过程折叠程度</div>
           <div className="setting-help">
-            定稿的回合把思考与工具调用收得多紧：紧凑=全折；标准=折+实时详情；详细=只折历史回合；完全展开=不折。
+            定稿的回合收得多紧：紧凑＝只剩「用时」一行；标准＝思考行带首行摘要、跑动中报实时详情；详细＝跑动中的那一轮也摊开不分组（定稿的仍收）；完全展开＝定稿的回合也不收。
           </div>
         </div>
         <div className="setting-control">

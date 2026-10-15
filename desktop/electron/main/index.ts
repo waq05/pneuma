@@ -577,6 +577,28 @@ async function pickDirectory(): Promise<string> {
 }
 
 /**
+ * 弹系统文件选择框挑一份配置文件（模型端点那一份 YAML）。取消给空串。
+ *
+ * 过滤后缀写死在这里：页面递不进来任何过滤条件，所以它只能挑「像配置文件的文件」，
+ * 挑完是不是合法配置仍由宿主的 settings 插件校验（那边才是规矩的真源）。
+ */
+async function pickConfigFile(): Promise<string> {
+  if (mainWindow === null) return ''
+  const outcome = await dialog.showOpenDialog(mainWindow, {
+    title: '选择配置文件',
+    properties: ['openFile'],
+    filters: [
+      { name: '配置文件', extensions: ['yaml', 'yml', 'json'] },
+      { name: '全部文件', extensions: ['*'] },
+    ],
+    // 落点给用户主目录：配置文件默认就在 ~/.dsc 下，多数人从这里挑
+    defaultPath: app.getPath('home'),
+  })
+  if (outcome.canceled || outcome.filePaths.length === 0) return ''
+  return resolve(outcome.filePaths[0] ?? '')
+}
+
+/**
  * 记一笔「最近用过的工作区」：`recentCwds`（侧栏的空工作区占位）与 `lastCwd`
  * （下次冷启动落点）。与 `restartHost` 里那段同一份写法，但**不重启宿主**。
  */
@@ -753,6 +775,16 @@ const NATIVE_HANDLERS: Readonly<Record<NativeOp, (args: readonly unknown[]) => u
     if (protocol === null) throw new Error('宿主进程未运行')
     return protocol.invoke('setProviderKey', [String(name), apiKey === null ? null : String(apiKey)])
   },
+  /**
+   * 换一份配置文件用：转给宿主的 settings 插件（校验与落偏好都在那边）。空串 = 回出厂那份。
+   * 与上面三件同一先例：写类入口只对主窗口那份文档开放。
+   */
+  setConfigFile: ([path]) => {
+    if (protocol === null) throw new Error('宿主进程未运行')
+    return protocol.invoke('setConfigFile', [String(path ?? '')])
+  },
+  /** 弹系统文件选择框挑配置文件：只回路径，改配置是上一条的事。 */
+  pickConfigFile: () => pickConfigFile(),
   sessionUsage: ([id]) => readSessionUsage(String(id ?? '')),
   notify: ([payload]) => notifyUser(payload),
   restartHost: async () => {

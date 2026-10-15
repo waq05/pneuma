@@ -19,7 +19,8 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { Context, type Plugin } from '@deepseek-ai/cordis'
 import type { DscCoreConfig } from '../core/config.js'
 import { bootNoticeOnce } from '../core/boot-notices.js'
-import { DSC_CONFIG_YAML, parseTolerantYaml, type MigrationReport } from '../core/migrate.js'
+import { activeConfigFile } from '../core/config-store.js'
+import { parseTolerantYaml, type MigrationReport } from '../core/migrate.js'
 import { getPluginConfig, isPluginEnabled, migrateTeamSplit, registerPluginMeta, type PluginMeta } from '../core/plugin-registry.js'
 import { mountAllExternalPlugins, registerBuiltinMount } from '../core/plugin-loader.js'
 import { pluginManagerPlugin } from '../plugins/plugin-manager.js'
@@ -397,7 +398,8 @@ export async function createKernel(options: KernelOptions): Promise<Context> {
  * 单个插件失败不影响其余插件，失败原因写 system 条目。
  */
 export async function loadExternalPlugins(root: Context, configured: string[]): Promise<void> {
-  const configDir = dirname(DSC_CONFIG_YAML)
+  // 外部插件清单里的相对路径按**活动配置文件**所在目录解析（换过配置文件就跟着它走）
+  const configDir = dirname(activeConfigFile())
   const extraPaths = configured.map((entry) => (isAbsolute(entry) ? entry : resolve(configDir, entry)))
   const failures = await mountAllExternalPlugins(root, extraPaths)
   for (const failure of failures) {
@@ -413,8 +415,9 @@ export interface UiConfig {
 
 export function readUiConfig(): UiConfig {
   try {
-    if (!existsSync(DSC_CONFIG_YAML)) return { plugins: [] }
-    const doc = parseTolerantYaml(readFileSync(DSC_CONFIG_YAML, 'utf8')) as {
+    const file = activeConfigFile()
+    if (!existsSync(file)) return { plugins: [] }
+    const doc = parseTolerantYaml(readFileSync(file, 'utf8')) as {
       ui?: unknown
       plugins?: unknown
     }

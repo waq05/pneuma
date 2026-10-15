@@ -181,7 +181,12 @@ console.log('\n[7] 源码钉：进程 cwd 不再当数据用的那几处')
   check('审批：路径基准退到当前会话（不是进程目录）', approval.includes('const baseCwd = (request: ApprovalRequest): string =>') && approval.includes('const cwd = baseCwd(request)'))
   check('审批：源码里不再拿进程目录当兜底', !approval.includes('?? process.cwd()'))
   // 插件源
-  check('外部插件源：相对路径基于 config.yaml 所在目录', kernel.includes('const configDir = dirname(DSC_CONFIG_YAML)') && !kernel.includes('resolve(process.cwd(), entry)'))
+  // 0.6.70：基准从「出厂 config.yaml 的目录」改成「**活动配置文件**的目录」——换过配置文件的人，
+  // 相对插件路径该跟着他那一份走（同一处口径，见 core/config-store 的 activeConfigFile）
+  check(
+    '外部插件源：相对路径基于活动配置文件所在目录',
+    kernel.includes('const configDir = dirname(activeConfigFile())') && !kernel.includes('resolve(process.cwd(), entry)'),
+  )
   check('插件安装：相对路径基于 DSC_HOME', manager.includes('resolve(dscPath(), source)'))
   // LSP
   check('LSP：解析基准可注入（baseCwd）', lspClient.includes('baseCwd?(): string') && (lspManager.match(/this\.baseCwd\(\)/g) ?? []).length === 3)

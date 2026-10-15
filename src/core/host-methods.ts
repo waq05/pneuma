@@ -105,6 +105,7 @@ export const INVOKABLE_METHODS = [
   'removeProvider',
   'setProviderKey',
   'setDefaultModel',
+  'setConfigFile',
 ] as const satisfies readonly InvokableMethod[]
 
 /** 这份清单漏了哪个方法（本地那几样之外）：漏一个就报下面那个元组类型，编不过。 */

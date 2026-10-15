@@ -12,6 +12,7 @@
  */
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { readPrefs } from './prefs.js'
 import YAML from 'yaml'
 import type { ModelConfigView, Modality, ProviderDraft, ProviderModelView, ProviderView, ThinkingLevel, ThinkingParam } from '../contract.js'
 import {
@@ -33,25 +34,50 @@ import {
   type FileProvider,
 } from './migrate.js'
 
-/** config.yaml 的绝对路径（关于分区与提示文案共用）。 */
-export const CONFIG_FILE = DSC_CONFIG_YAML
+/** 出厂那份 config.yaml 的绝对路径（没换过配置文件的就用它）。 */
+export const DEFAULT_CONFIG_FILE = DSC_CONFIG_YAML
 /** dsc 凭据库路径。 */
 export const CREDENTIALS_FILE = DSC_CREDENTIALS
 
-/** 读 config.yaml 的原始文档（保留未知字段，缺 key 的端点也留着）。 */
+/**
+ * 当前生效的配置文件路径：设置里换过就用那一份，没换过（或那一份已经不在了）用出厂的。
+ *
+ * 为什么「不在了就回落」而不是报错：配置是启动的必需品，指向一份被删掉的文件时宁可
+ * 用出厂的把应用开起来，也别让端点全空。设置页那一行显示的就是这个函数的返回值，
+ * 所以回落是看得见的（路径会变回 ~/.dsc/config.yaml）。
+ *
+ * 读 settings.json 每次调用一次太重（配置读取散在各处），所以记一层进程内缓存；
+ * 换文件（{@link setActiveConfigFile}）时由写入方清掉。
+ */
+let activeCache: string | null = null
+export function activeConfigFile(): string {
+  if (activeCache !== null) return activeCache
+  const custom = readPrefs().configFile
+  activeCache = custom !== '' && existsSync(custom) ? custom : DSC_CONFIG_YAML
+  return activeCache
+}
+
+/** 清掉 {@link activeConfigFile} 的缓存（换过配置文件、或外部改过 settings.json 之后调）。 */
+export function invalidateActiveConfigFile(): void {
+  activeCache = null
+}
+
+/** 读配置文件的原始文档（保留未知字段，缺 key 的端点也留着）。 */
 export function readConfigDoc(): FileConfig {
-  if (!existsSync(DSC_CONFIG_YAML)) return { providers: {} }
-  const doc = parseTolerantYaml(readFileSync(DSC_CONFIG_YAML, 'utf8')) as unknown as FileConfig
+  const file = activeConfigFile()
+  if (!existsSync(file)) return { providers: {} }
+  const doc = parseTolerantYaml(readFileSync(file, 'utf8')) as unknown as FileConfig
   if (doc.providers === null || typeof doc.providers !== 'object') doc.providers = {}
   return doc
 }
 
-/** 写 config.yaml（覆盖前备份 .bak）。 */
+/** 写配置文件（覆盖前备份 .bak）。 */
 export function writeConfigDoc(doc: FileConfig): void {
-  mkdirSync(dirname(DSC_CONFIG_YAML), { recursive: true })
-  if (existsSync(DSC_CONFIG_YAML)) {
+  const file = activeConfigFile()
+  mkdirSync(dirname(file), { recursive: true })
+  if (existsSync(file)) {
     try {
-      copyFileSync(DSC_CONFIG_YAML, `${DSC_CONFIG_YAML}.bak`)
+      copyFileSync(file, `${file}.bak`)
     } catch {
       // 备份失败不阻塞写入：内容仍由调用方校验过
     }
@@ -61,7 +87,7 @@ export function writeConfigDoc(doc: FileConfig): void {
     '# key 来源顺序：apiKeyEnv 环境变量 → ~/.dsc/credentials.yaml → ~/.dsh/.credentials.yaml\n' +
     '# 模型可选字段：thinkingLevels（支持哪些思考档位）、thinkingParam（档位发 thinking 还是 reasoning_effort）、\n' +
     '#   effortMap（reasoning_effort 下各档的线上值）、modalities（text/image/video）；不写 = 四档 + thinking 开关 + 只吃文本\n'
-  writeFileSync(DSC_CONFIG_YAML, `${header}${YAML.stringify(doc)}`, 'utf8')
+  writeFileSync(file, `${header}${YAML.stringify(doc)}`, 'utf8')
 }
 
 /** 凭据库的 refs 段（key 名 → 值）。 */
@@ -129,7 +155,7 @@ export function readModelConfig(): ModelConfigView {
     defaultProvider: doc.default?.provider ?? '',
     defaultModel: doc.default?.model ?? '',
     temperature: typeof doc.temperature === 'number' ? doc.temperature : null,
-    configFile: CONFIG_FILE,
+    configFile: activeConfigFile(),
     credentialsFile: CREDENTIALS_FILE,
   }
 }

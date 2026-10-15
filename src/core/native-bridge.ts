@@ -97,6 +97,20 @@ export const NATIVE_OPS = [
   'removeProvider',
   'setProviderKey',
   /**
+   * 换一份配置文件用（写 settings.json 的 configFile 字段）。与上面三件同一先例：
+   * 换掉的是「以后读哪一份配置」，等于整份端点与密钥引用都换掉，所以只对主窗口那份文档开放。
+   * 空串 = 回出厂那份（设置页的「恢复默认」）。文件本身不动，也不覆盖。
+   */
+  'setConfigFile',
+  /**
+   * 弹系统文件选择框挑一份配置文件，**只返回路径、不碰配置**（取消给空串）。
+   *
+   * 与 setConfigFile 的分工照 pickDirectory / chooseDirectory 那一对：取路径与改状态
+   * 分成两件事，用户取消时什么都不会发生。过滤后缀（yaml/yml/json）由主进程定死，
+   * 页面递不进来任何过滤条件。
+   */
+  'pickConfigFile',
+  /**
    * 权限模式（只读 / 自动编辑 / 完全访问）。
    *
    * 为什么在这里而不在界面通道：`UI_EXCLUDED` 里写明了理由——审批策略是安全闸门本身，
@@ -354,6 +368,10 @@ export const NATIVE_ARG_SPECS: Readonly<Record<NativeOp, readonly ArgSpec[]>> = 
     { shape: { kind: 'string', max: MAX_PROVIDER_NAME } },
     { shape: { kind: 'stringOrNull', max: MAX_PROVIDER_KEY } },
   ],
+  /** 换一份配置文件用：一条绝对路径，空串 = 回出厂那份。 */
+  setConfigFile: [{ shape: { kind: 'string', max: MAX_PATH } }],
+  /** 弹系统文件选择框挑配置文件：不收任何实参（过滤条件由主进程定死）。 */
+  pickConfigFile: [],
   /** 当前会话在宿主用量日志里的累计（只读；没有记录时 null）。 */
   sessionUsage: [{ shape: { kind: 'string', max: MAX_ID } }],
   /** 弹一条系统通知；字段只有标题与正文两项。 */
