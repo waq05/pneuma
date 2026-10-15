@@ -307,18 +307,9 @@
   padding: 0 10px;
 }
 
-/* ── 模型 / 档位 chip：28 高、圆角 8、内距 `0 4px 0 8px`、字号 13 / 行高 20
-   （dsh 的模型选择器）。legacy 是胶囊（radius 999）与 3px/10px 内距。 */
-.model-chip {
-  border-radius: 8px;
-  font-size: var(--dsc-fs-body);
-  gap: 4px;
-  line-height: 20px;
-  min-height: 28px;
-  padding: 0 4px 0 8px;
-}
-
-/* 档位按钮（浮层里的三档）：28 高、圆角 8，跟 chip 同一档。 */
+/* ── 模型那一格：2026-10-15 模型页改成「左端点 + 右详情」两栏之后，模型不再是 chip
+   而是一行（`.model-item`，几何写在 `legacy/views.css` 的模型分区里）。这里原来那条
+   「28 高、圆角 8 的 `.model-chip`」覆盖没有对象了，删掉；档位按钮照旧。 */
 .effort-btn {
   border-radius: 8px;
   min-height: 28px;
