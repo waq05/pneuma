@@ -53,8 +53,16 @@ export class Transcript {
    * 顺序会变成「工具 → 思考 → 正文」，而且升级是就地替换，这个位置会一直错下去）。
    * 交给 {@link liveEntries} 合成在最后，等 `tool/call` 到达时再正式落进 list——
    * 那时直播尾已经被清掉了，顺序自然对。
+   *
+   * 这里**不给它发正 id**（0.6.70 修）：正 id 是「定稿条目」的身份证——宿主组帧时按 id
+   * 正负把条目分成 `entries` / `liveEntries` 两份（`plugins/webserver.ts`），而壳把
+   * `entries` **按 id 升序**归并（`ui/frames.ts` 的 applyHostFrame，前提是「id 序 = 时间序」）。
+   * 准备中的工具若在此时就领一个正 id，它必然比同一步稍后才定稿的思考行（`message`
+   * 那一刻才发号）小，壳那边就一路把它排到思考行前面——正是用户报的「思考内容行在工具
+   * 调用行下面」。**发号只许在条目真正进 list 的那一刻做**（见 `tool/call`），这条不变量
+   * 由 `scripts/transcript-order-test.mjs` 逐条钉住。
    */
-  private prepared: { id: number; name: string; ts: number | null }[] = []
+  private prepared: { name: string; ts: number | null }[] = []
   private seq = 1
   /** 直播尾段（`message`/`turn/end`/清空时重置）。 */
   private segments: LiveSegment[] = []
@@ -126,11 +134,13 @@ export class Transcript {
           : {}),
       }),
     )
-    // 准备中的工具用**正 id**：负 id 是「这段内容还在长」的标记（整轮折叠与轮次划分都拿它
-    // 当直播证据），而准备中的调用是一个已经确定的调用，只是参数还没到齐。
-    const prepared = this.prepared.map((item): TranscriptEntry => ({
+    // 准备中的工具接在直播尾后面，同样发**负 id**：它也是一段「还没定稿、还在长」的内容
+    // （参数还在流里），宿主组帧时因此落进 `liveEntries`（按出现顺序原样传给壳，不参与
+    // 按 id 归并）。0.6.70 之前这里用正 id，壳按 id 升序归并时就把工具卡排到了思考行前面。
+    // 编号从直播尾之后接着排，免得与上面那几段的负 id 撞上（负 id 也是壳的行 key）。
+    const prepared = this.prepared.map((item, offset): TranscriptEntry => ({
       kind: 'tool',
-      id: item.id,
+      id: -(live.length + offset + 1),
       call: {
         callId: '',
         name: item.name,
@@ -320,7 +330,7 @@ export class Transcript {
    * 一个都没对上就返回 undefined，调用方用新 id 落一条——那条准备中的留给
    * {@link dropPrepared} 在轮末收掉。
    */
-  private takePrepared(name: string): { id: number; ts: number | null } | undefined {
+  private takePrepared(name: string): { ts: number | null } | undefined {
     const at = this.prepared.findIndex((item) => item.name === name)
     if (at < 0) return undefined
     return this.prepared.splice(at, 1)[0]
@@ -428,9 +438,10 @@ export class Transcript {
         return true
       case 'tool/prepare': {
         // 模型开始吐这个工具的名字、参数还没到齐：记一笔，好让用户看得见「接下来要干这件事」
-        // （对照 dsh 的 preparing 节点）。这条不往 list 里 push，理由见 `prepared` 的注释——
-        // 它由 liveEntries() 合成在最后，`tool/call` 到达时才正式落进 list。
-        this.prepared.push({ id: this.seq++, name: event.name, ts: this.eventTs })
+        // （对照 dsh 的 preparing 节点）。这条不往 list 里 push、也不在这里发号，理由见
+        // `prepared` 的注释——它由 liveEntries() 合成在最后（负 id），`tool/call` 到达时
+        // 才正式落进 list 并领一个当刻的正 id。
+        this.prepared.push({ name: event.name, ts: this.eventTs })
         return true
       }
       case 'model/retry': {
@@ -460,18 +471,21 @@ export class Transcript {
           // 重放老会话（eventTs 为 null）时拿不到发起时刻，干脆不写，界面据此降级
           ...(startedAt === null ? {} : { startedAt }),
         }
-        // 流式期间为它报过「准备中」就接着用那一条的身份：id 与 ts 都保留，
-        // 用户看到的是同一张卡从「准备读取文件」变成「正在读取文件」。
-        // dsh 的口径是「准备中的调用使用首个具名 delta 的时间」，所以 ts 用准备那一刻的。
+        // 流式期间为它报过「准备中」就接着用那一条的**时刻**：用户看到的是同一张卡从
+        // 「准备读取文件」变成「正在读取文件」。dsh 的口径是「准备中的调用使用首个具名
+        // delta 的时间」，所以 ts 用准备那一刻的。**id 不接**——准备中那条是直播尾（负 id），
+        // 这里的正 id 必须当刻发，才能保证「id 序 = list 序 = 时间序」（见 `prepared` 的注释）。
         const prepared = this.takePrepared(event.name)
-        this.list.push(prepared === undefined
-          ? this.stamp({ kind: 'tool', id: this.seq++, call })
-          : {
-              kind: 'tool',
-              id: prepared.id,
-              call,
-              ...(prepared.ts === null ? {} : { ts: prepared.ts }),
-            })
+        this.list.push(
+          prepared === undefined
+            ? this.stamp({ kind: 'tool', id: this.seq++, call })
+            : {
+                kind: 'tool',
+                id: this.seq++,
+                call,
+                ...(prepared.ts === null ? {} : { ts: prepared.ts }),
+              },
+        )
         this.toolIndex.set(event.callId, this.list.length - 1)
         return true
       }
