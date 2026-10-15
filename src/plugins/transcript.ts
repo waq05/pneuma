@@ -265,6 +265,8 @@ export const transcriptPlugin: Plugin.Object = {
             cwd: ctx.session.current().meta.cwd,
             // jsonl 绝对路径：sessionId 是 uuid，落盘类命令（/fork）得用这个
             sessionPath: ctx.session.current().filePath,
+            // 一条消息都没发过 = 还没落盘：界面据此把输入框草稿记在工作区名下（见 contract 的说明）
+            sessionUnsaved: ctx.session.current().messages.length === 0,
           },
           surfaces,
           sessions: ctx.session.sessions,
