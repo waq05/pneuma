@@ -693,7 +693,7 @@ export interface PromptService {
    * @param id - 投影名（诊断与文档用）。`fold-system`、`drop-images` 是内核保留名。
    * @param options.order - 应用次序，小的先做。内置刻度：插件投影 60（缺省）、
    *   fold-system 500（多条 system 并进头部一条）、env-facts 600（环境事实快照附在请求末尾）、
-   *   drop-images 900（模型没勾照片时兜底）。
+   *   image-diet 700（历史里太久/太多的图换成占位）、drop-images 900（模型没勾照片时兜底）。
    */
   registerProjection(id: string, fn: (messages: ChatMessage[]) => ChatMessage[], options?: { order?: number }): () => void
   /** 已注册段（带顺序），拼提示词时与内核自己的段合并；外部插件一般不必直接调。 */
