@@ -40,7 +40,7 @@ import { redact } from '../core/secrets.js'
 import { DOCK_ACTIONS, DOCK_LOOK_ACTIONS, isAgentView } from '../core/dock-browser.js'
 import { HOST_BROWSER_SERVICE, type HostBrowserLink } from '../core/host-browser-link.js'
 import { CLOUD_METADATA_HOSTS } from './browser.js'
-import type { CdpCommandTarget, CdpSessionView } from '../core/cdp/transport.js'
+import type { CdpCommandTarget } from '../core/cdp/transport.js'
 import * as actions from '../core/cdp/actions.js'
 import {
   lookupSnapshotRef,
@@ -368,7 +368,7 @@ export const dockBrowserPlugin: Plugin.Object = {
     }
 
     /** 拿（或建）一台视图的会话状态。 */
-    const session = (link: HostBrowserLink, viewId: string): { state: ViewState; page: CdpSessionView } => {
+    const session = (link: HostBrowserLink, viewId: string): { state: ViewState; page: CdpCommandTarget } => {
       let state = states.get(viewId)
       if (state === undefined || state.link !== link) {
         state = {
@@ -383,16 +383,12 @@ export const dockBrowserPlugin: Plugin.Object = {
         }
         states.set(viewId, state)
       }
-      // 动作层（src/core/cdp/actions.ts）目前的形参类型仍收在 CdpSessionView 上，
-      // 而 link.session() 按契约给的是结构类型 CdpCommandTarget。两者运行时形状一致
-      // （动作层只用 send/on，从不碰 CdpSessionView 的 connection），所以这里做一次
-      // 明确的下行断言。线 2 会把动作层的形参放宽成 CdpCommandTarget，届时可删掉它。
-      const page = state.target as CdpSessionView
+      const page = state.target
       return { state, page }
     }
 
     /** 开域：Page/DOM/Accessibility/Runtime 总是要，Network 只在要看网络时开。 */
-    const ensureDomains = async (state: ViewState, page: CdpSessionView, needNetwork: boolean): Promise<void> => {
+    const ensureDomains = async (state: ViewState, page: CdpCommandTarget, needNetwork: boolean): Promise<void> => {
       if (!state.domainsReady) {
         await page.send('Page.enable')
         await page.send('Runtime.enable')
@@ -417,7 +413,7 @@ export const dockBrowserPlugin: Plugin.Object = {
 
     // ── 快照（复用 serializeAxTree，代际写进 ref）────────────────────────────
 
-    async function takeSnapshot(state: ViewState, page: CdpSessionView, options: { full: boolean; maxChars: number }): Promise<SnapshotOutcome> {
+    async function takeSnapshot(state: ViewState, page: CdpCommandTarget, options: { full: boolean; maxChars: number }): Promise<SnapshotOutcome> {
       const tree = await page.send<AxTree>('Accessibility.getFullAXTree', { depth: -1 })
       state.generation += 1
       const serialized = serializeAxTree(tree, { full: options.full, generation: state.generation })
