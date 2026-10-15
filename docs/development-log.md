@@ -6354,3 +6354,119 @@ UI 读到的 `+2 −0 / 脏 2` 正是**写之前**的那一版（种子注释自
    看上去完全像回归（本批 p1 就是这么误判的）。
 ⑤ **改契约里既有字段的语义前，先清点冻结消费方**：`legacy-frozen-check` 钉住的目录改不了，
    所以这类改动要么保持兼容、要么留账写清楚（见边界 ②）。
+
+## 第三十批：插话下标的老账 + 记忆评估（对齐 codex）+ 走查脚本的 Git 读数时序（2026-10-15，未发版）
+
+用户点名的是上一批「诚实边界」里的三条：② 回落层那笔插话下标、④ 记忆的评估机制、⑥ batch8
+剩的两条 Git 断言（「有就修复」）。三条都做完并各自补了证据。
+
+### ① 修②：插话下标按整条收件箱算（回落路径修复 + 终端状态栏）
+
+**病根**：上一批把收件箱按来源拆成 `queued`（只含用户）与 `notices`（机器）两面，而
+`steerQueued(index)` / `editQueued` / `removeQueued` 收的一直是**收件箱里的位置**
+（`QueuedMessageView.index` 就是它）。壳那边跟着改了（`readInboxCount` = 两面之和、队列条按
+`item.index` 动作），**回落层没改**：`desktop/src/renderer/App.tsx:567` 的 Ctrl+Enter 插话
+下标只数 `snapshot.queued.length`。收件箱里排着机器通知时这个下标偏小 → 宿主把**别人那条**
+提到队首，而且照样回 `true`（界面提示「插上了」，实际插错）。终端状态栏的「⌛ 排队 N 条」
+同理只数用户队列。
+
+**改法**：回落层按 `queued.length + notices.length` 算（提交信息里按 `FROZEN.md` 规矩 3 写明
+「回落路径修复」）；终端状态栏 `src/app/App.tsx:1679` 与 `src/app/StatusBar.tsx` 的说明同款。
+
+**一条被我上一批说错的账**：上一批边界 ② 写「`desktop/src/renderer/**` 是冻结层、
+`legacy-frozen-check.mjs` 按哈希钉住它逐字节不许动」——**说过头了**。那条探针只钉**四对样式**
+（`tokens` / `base` / `primitives` / `views.css`），TS 源码不在它的哈希里；而 `FROZEN.md`
+规矩 3 明确留了口子：本目录唯一的合法改动就是「回落路径必需的修复（认证、IPC 桥、加载器）」。
+所以这处是**能修的**，不是只能留账。
+
+**证据（真回合行为钉）**：`scripts/teammate-notice-test.mjs` 15 → **29 条**，新增第 3 段让两种
+算法各跑一次真回合——收件箱里先放一条机器通知，再提交用户那条：
+- 修好的算法：`steerQueued(1)` → 队首变成用户那条 ✓；
+- 老公式：`steerQueued(0)` → **宿主返回 `true`，队首还是机器通知**（用户那条没插上）——这正是
+  「静默插错」的样子，也说明这处修的是真问题。
+
+第 4 段是三处消费者（壳 `readInboxCount` / 回落层 / 终端状态栏）的源码钉。负向验证：换回老公式，
+两条钉变红（正则的判别力我实测过）。
+
+### ② 做④：长期记忆的评估机制（口径对齐 codex）
+
+上一批边界 ④ 承认「记忆的评估机制没做」。这一批按用户要求**对齐 codex**（不是 ZCode：ZCode 的
+`memoryDiagnostics` 是**进程内存**诊断，agent 记忆那边没有评估面）。
+
+codex 的记忆评估就是它的**使用账**（`codex-rs/state/src/runtime/memories.rs:56-90, 395-490`）：
+每条被引用（citation）的记录 `usage_count + 1`、`last_usage = now`；清理按
+`COALESCE(last_usage, source_updated_at) < max_unused_days`；选择排序按
+`usage_count DESC → COALESCE(last_usage, source_updated_at) DESC → source_updated_at DESC`；
+再配 `codex.memories.usage`（按记忆产物种类分类的读用遥测，`memories/read/src/usage.rs`）与
+`codex.memory.storage_bytes`（`memories/write/src/metrics.rs`）。
+
+dsc 的落点（一一对得上）：
+
+| codex | dsc |
+|---|---|
+| `usage_count` / `last_usage` | `.usage.json` 的 `count` / `last`（上一批已有，这一批补**注入维**） |
+| 读用分类 `MemoriesUsageKind` | 三格 `target` 的分类读数（`byTarget`） |
+| `codex.memory.storage_bytes` | `storageBytes`（条目正文 UTF-8 字节） |
+| phase-2 选择排序 | `ranking`（`citedCount → lastCitedAt → injectedTurns → key`） |
+| citation 是「被用上」的唯一证据 | `recordTurnUsage`（条目前 12 字片段出现在回话里） |
+| `usage_count = 0` 那批是清理首选 | `deadWeight`（注入过 ≥3 轮、一次没被引用） |
+
+新增：`src/core/memory-eval.ts`（零依赖纯读数，探针按 Node 类型擦除直读）、注入维
+（`injected` / `lastInjected` + `renderMemoryPrompt` 的 `onIncluded` 回调——它是唯一知道
+「哪条被预算挤掉」的地方）、`/memory eval` 子命令与设置页只读统计行、`~/.dsc/memory/.eval.json`
+存上次读数以便**逐项给增量**（「A-B」口径）。**明确不做语义召回**：codex 也没有，ZCode 的
+Selector 在 dsc 未接线。
+
+顺带修出一个真 bug：`formatMemoryReport(runEval(), previousEval())` 的求值顺序让「上次读数」变成
+「本次读数」（评会写盘），增量全是 0——改成先取上次再评。
+
+### ③ 查⑥：batch8 那两条 Git 断言红**不是产品 bug**，是走查脚本自己的时序账
+
+先把宿主语义核对清楚（`src/plugins/desktop-dock.ts:408-462`）：`added` / `removed` = 已暂存
+numstat + 未暂存 numstat + **未跟踪文件按内容行数**（`untrackedLineStats`）；`dirtyFileCount`
+含未跟踪。所以种子态（readme 追加 1 行 + 一个 1 行的未跟踪文件）的正确读数就是
+**`+2 −0` / 脏 2**——脚本里那两处注释写的 `+1 −0` 是错的。
+
+再看时序：脚本的 `waitFor(q('.sp [data-sp-git-changes]'))` 在**行已经在位**时立刻满足，而那一行
+是上一拍画的；于是它读到的是**写之前的**那一版。两次实测：
+- 第一次：第一眼 `2/0 · 2`（种子态）→ 一个轮询档后 `5/0 · 3`（写后的正确值）；
+- 第二次：第一眼就是 `5/0 · 3`，`settledAfterMs = 405`。
+
+**结论**：数据链没问题（收敛值精确等于「种子两处 + `自检写入.md` 3 行」，而且文件确实落在 ws-c），
+红的是脚本「读完就断言」+ 注释里的错数。修法（脚本是本地工具，可改）：读两次（第一眼 / 收敛）、
+断言**收敛值**、加一条「文件真落在 ws-c」、修掉注释里的种子读数。`ui-batch8-check.ps1` 从
+**65/67 → 69/69**（两次独立跑都是 69/69）。
+
+### 验证（主控自己跑的）
+
+| 验证 | 读数 |
+|---|---|
+| `memory-eval-test`（新：纯模块 + 真回合注入计数 + 负向锚点） | **67/67** |
+| `memory-parity-test` | **33/33**（口径没变，没为了绿放宽） |
+| `teammate-notice-test` | **29/29**（15 → 29） |
+| 三侧构建与类型检查 | `pnpm build` / `pnpm -C ui-shell build` / `pnpm -C desktop typecheck` 全 0 错 |
+| 实机走查 `ui-batch8-check.ps1` | **69/69**（两次独立跑） |
+| 负向验证（主控抽查两条） | 记忆排序钉：`count 优先` 改成时间优先 → 恰好 2 条红；插话下标钉：换回老公式 → 2 条红 |
+
+### 诚实边界
+
+① 记忆评估只有**机制级证据**：注入计数挂在提示词段回调上，若那一段被 `registerSkeletonFilter`
+的 `keep` 砍掉，插件照样记了账（会误计）——这个场景没构造。账仍是 JSON 文件同步读写，没有 codex
+那种 DB 事务 / 并发保护；`turns` 是进程内会话级计数，跨会话不累计；`ranking` 只是**读数**，不驱动
+实际注入顺序（codex 那边它驱动 phase-2 选择）。
+② 旧界面仍**不显示**机器通知（新能力不落在回落层），这次只是下标不再插错。
+③ 走查第一眼读数可能晚一个轮询档（两次实测：一次第一眼就新、一次要等一拍）——收敛已纳入断言，
+但「那一次为什么没在回合收工那一拍刷新」没单独取证（催拍是 best-effort）。
+④ 上一批的两条老边界仍在：电脑控制没真机验证、新做的三样界面没有专门实机走查（这一批没碰）。
+
+### 教训
+
+① **「说过头的边界」也是债**：上一批把「`legacy-frozen-check` 钉住 `desktop/src/renderer/**`」
+当成了不可动，实际它只钉四对样式、而 `FROZEN.md` 给回落路径留了修复口子。查边界要看**探针到底
+钉了什么**，不是看目录名字。
+② **拆面的账要一次收干净**：`queued` 收窄之后，凡是「按队列长度算下标」的地方都得跟着改——壳改
+对了、回落层与终端漏了；漏的那两处不报错，只会**悄悄插错**。
+③ **走查脚本的 `waitFor(元素在位)` 不等于「数据是新的」**：轮询画出来的行会在位很久，断言前要么
+等**值**、要么读两次。同理，脚本注释里的期望值也要跟着实现口径核（`+1 −0` 那处错了很久）。
+④ **对标要抄对方的账，不是抄对方的界面**：codex 的记忆评估核心是 `usage_count` 这套账与
+`storage_bytes` 这类读数，不是某个面板。

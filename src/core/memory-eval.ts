@@ -29,7 +29,7 @@
  *
  * `injectedTurns` 是 dsc 多出来的一维：条目**真的写进过提示词**的轮数（被行数/字符预算
  * 挤掉的不算）。codex 那边 MEMORY.md 是常量注入，没有这一维；dsc 有预算上限，需要它才能
- * 分清「模型见过但没引用」（死重）与「压根没进去过」（被预算挤掉）。
+ * 分清「模型见过但没引用」（死重）与「压根没进去过」（被预算挤掉，或刚写进来还没轮到注入）。
  *
  * ## 取舍：不做语义召回
  *
@@ -116,7 +116,7 @@ export interface MemoryEvalReport {
   citationRate: number
   /** 注入过 >= 3 轮、一次也没被引用的条目 key（清理首选）。 */
   deadWeight: string[]
-  /** `turns > 0` 但从没进过提示词的条目 key（被预算挤掉）。 */
+  /** `turns > 0` 但从没进过提示词的条目 key（被预算挤掉，或刚写进来还没轮到注入）。 */
   uninjected: string[]
   /** `usedChars / limitChars`（夹在 0..1）。 */
   budgetRatio: number
