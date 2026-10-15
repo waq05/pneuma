@@ -15,9 +15,21 @@
  *     `browser-open-requested` 让壳开一张新页签——旧做法是就地 `loadURL` 到同一台视图，
  *     那等于把用户正在看的页面顶掉。
  *
+ * 2026-10 又补了一层**CDP 执行端**（{@link sendDockCommand}）：agent 侧的宿主进程经协议
+ * 请桌面主进程在某一台上执行一条 CDP 命令。住在这里而不是另起一份台账，是因为「谁可以被
+ * 指名」必须与「谁真的存在」是同一个事实来源。五道闸门的顺序与理由见那个函数的注释。
+ *
  * @module desktop/main/dock
  */
 import { BrowserWindow, WebContentsView, app, ipcMain, type Session, type WebContents } from 'electron'
+import {
+  DOCK_CALL_TIMEOUT_MS,
+  dockNavigateTarget,
+  isAllowedDockCommand,
+  shouldForwardDockEvent,
+  type DockBrowserEventPush,
+  type DockViewInfo,
+} from '@dsc/runtime/core/dock-browser.js'
 
 /** 壳不给 id 时回落它（旧渲染层的单例视图）。 */
 const DEFAULT_BROWSER_ID = 'main'
@@ -183,6 +195,20 @@ export function setDockBrowser(
     if (guest !== undefined) detach(guest, win)
     return true
   }
+  // 摆到窗口之外要留一行账：Chromium 会把窗口外那台视图的视口**塌成 0×0**
+  // （页面 `document.hidden` 变 true、`elementFromPoint` 恒 null），于是点击落在空处、
+  // 截图一片空白，而壳那边只看得到自己的 DOM 占位区——现象是「点了没反应」，成因在几何。
+  // 实测踩过一次：侧栏从右缘滑入的过渡里 `getBoundingClientRect()` 带着 transform，
+  // 报出来的矩形整块在窗口外（窗口 1440 宽、报 1861）。壳那边已经改成「等落定再报」，
+  // 这行是它没兜住时的现场证据。
+  const content = win.getContentBounds()
+  if (rect.x >= content.width || rect.y >= content.height || rect.x + rect.width <= 0 || rect.y + rect.height <= 0) {
+    process.stderr.write(
+      `[dock] 视图 ${id} 被摆到窗口之外（rect ${String(Math.round(rect.x))},${String(Math.round(rect.y))} ` +
+        `${String(Math.round(rect.width))}x${String(Math.round(rect.height))}，窗口内容区 ${String(content.width)}x${String(content.height)}）：` +
+        '它的视口会塌成 0，点击与截图都会失效\n',
+    )
+  }
   const target = guest ?? guestFor(id, initialUrl)
   if (!target.attached) {
     // 新挂上去的排在最上：分栏时两台北视图各占各的矩形，不重叠
@@ -230,6 +256,9 @@ export function closeDockBrowser(id: string): void {
   const guest = guests.get(id)
   if (guest === undefined) return
   guests.delete(id)
+  // 视图销毁前先摘调试器：挂着的 CDP 会话会盯着一个正在消失的 webContents
+  // （disposeDockBrowsers 走的就是这条路，所以关窗时也顺手摘了）
+  detachDebugger(id, guest)
   const win = mainWindowRef()
   if (win !== null && !win.isDestroyed() && guest.attached) win.contentView.removeChildView(guest.view)
   guest.view.webContents.close()
@@ -250,4 +279,209 @@ export function registerDockIpc(): void {
   ipcMain.handle('dsc:browser-nav', (_event, url: string, action: NavAction) => {
     return navigateDockBrowser(url, action, DEFAULT_BROWSER_ID)
   })
+}
+
+// ── CDP 执行端：agent 驱动侧栏那台浏览器 ──────────────────────────────────────
+//
+// 为什么这一层住在这一份里（而不是像 ZCode 那样单开一条通道）：只有这里握着 `guests`
+// 台账，「谁可以被指名执行命令」与「谁真的存在」必须是同一个事实来源；另起一份台账迟早
+// 会在「页签关了但那张表还记着」上分叉。也**不新开远程调试端口**：命令走已有的宿主协议
+// （`desktop/electron/main/protocol.ts`），不立一个谁都能连的入口。
+
+/** 挂 debugger 用的 CDP 版本号（`1.3` 是 Electron 44 上实测可用的那一档）。 */
+const CDP_VERSION = '1.3'
+
+/**
+ * `debugger.on('message')` 的监听函数。
+ *
+ * 事件对象本身用不上（Electron 那两个参数是 Event 与 sessionId），第三参 `params`
+ * 在 Electron 的类型里是 `any`——这里按契约收窄成对象，免得把 `any` 漏进这一层。
+ */
+type DebuggerMessageHandler = (event: unknown, method: string, params: Record<string, unknown>) => void
+
+/**
+ * 我们自己挂上调试器的视图：id → 那条监听函数。
+ *
+ * 为什么要记下监听函数的引用：`webContents.debugger` 是跟着 webContents 活的**同一个对象**，
+ * 摘了再挂不会清掉旧监听——不留引用的话重挂一次就多一份转发。
+ */
+const debugged = new Map<string, DebuggerMessageHandler>()
+
+/** 订了 CDP 事件推送的监听者（宿主侧的推口接在这里）。 */
+const dockEventListeners = new Set<(event: DockBrowserEventPush) => void>()
+
+/** 把 catch 到的东西说成人话（`error` 收窄成 `unknown` 之后取不出 `message`）。 */
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * 现在活着的视图（`views` 动作与 `browser-views` 的回执）。
+ *
+ * `visible` 直接用台账里的 `attached`，不另造一份「看得见」的状态：摘下来的视图截不了图，
+ * 这件事只能有一个判据，两个判据迟早会各说各话。
+ */
+export function dockViewList(): DockViewInfo[] {
+  const list: DockViewInfo[] = []
+  for (const [id, guest] of guests) {
+    const contents = guest.view.webContents
+    list.push({
+      id,
+      url: contents.getURL(),
+      title: contents.getTitle(),
+      loading: contents.isLoading(),
+      visible: guest.attached,
+    })
+  }
+  return list
+}
+
+/** 这一台在不在台账里（`browser-open` 等壳把页签建出来时轮询它）。 */
+export function hasDockView(id: string): boolean {
+  return guests.has(id)
+}
+
+/** 订 CDP 事件推送（视图上的 CDP 事件 → 宿主）；返回退订函数。 */
+export function onDockEvent(listener: (event: DockBrowserEventPush) => void): () => void {
+  dockEventListeners.add(listener)
+  return () => {
+    dockEventListeners.delete(listener)
+  }
+}
+
+/**
+ * 惰性挂调试器，挂上之后这台的事件才有转发。
+ *
+ * 为什么惰性：一条命令都没发过的视图一条事件都不该推（事件是跨进程推的，按条算成本），
+ * 所以「挂了 debugger」= 「agent 碰过这一台」就是转发范围本身。
+ *
+ * @returns 挂不上时一句人话；挂上了（或本来就能用）给 null
+ */
+function attachDebugger(viewId: string, guest: BrowserGuest): string | null {
+  const target = guest.view.webContents.debugger
+  if (!target.isAttached()) {
+    try {
+      target.attach(CDP_VERSION)
+    } catch (error) {
+      // 最常见的一档是「别人正占着」——开发态开着 DevTools 就是这种情况，
+      // 原文是英文的 Electron 报错，翻译成用户能看懂的一句。
+      return `调试器挂不上（多半是 DevTools 正开着这一台）：${errorText(error)}`
+    }
+  }
+  if (debugged.has(viewId)) return null
+  const handler: DebuggerMessageHandler = (_event, method, params) => {
+    // 白名单与转发范围两道都过：只推契约里列的事件，且只在真有人订的时候推
+    if (!shouldForwardDockEvent(method)) return
+    if (dockEventListeners.size === 0) return
+    const event: DockBrowserEventPush = {
+      type: 'browser-event',
+      viewId,
+      method,
+      // CDP 事件的 params 按协议一定是对象；真拿到别的形状也只当空对象，不让推送崩掉
+      params: params !== null && typeof params === 'object' ? params : {},
+    }
+    for (const listener of dockEventListeners) listener(event)
+  }
+  target.on('message', handler)
+  debugged.set(viewId, handler)
+  return null
+}
+
+/**
+ * 摘掉调试器（视图销毁前调）。
+ *
+ * 只摘**我们自己挂的**那一份：DevTools 也可能正占着同一台，把人家的会话一并摘掉是越权——
+ * `debugged` 里没有记录就说明这台不是我们挂的，什么都不做。
+ */
+function detachDebugger(viewId: string, guest: BrowserGuest): void {
+  const handler = debugged.get(viewId)
+  if (handler === undefined) return
+  debugged.delete(viewId)
+  const target = guest.view.webContents.debugger
+  target.removeListener('message', handler)
+  if (!target.isAttached()) return
+  try {
+    target.detach()
+  } catch (error) {
+    // 视图正要销毁，会话已经断了：这一句失败没有后果，记一行就够
+    process.stderr.write(`[dock] 调试器摘除失败（${viewId}）：${errorText(error)}\n`)
+  }
+}
+
+/**
+ * 发一条命令并给它一个到期时刻。
+ *
+ * 为什么不能只等原 promise：视图没露出来那种必然挂住的情况已经在第 4 道闸门挡住了，但
+ * 别的挂住（页面自己卡住）同样不该把整次工具调用拖死——到期就回一句带方法名的错。
+ * Electron 没有「取消单条命令」的接口，所以那条挂着的 promise 由它自己去结束；
+ * 这里只负责让调用方**现在**就能往下走。
+ */
+async function sendWithTimeout(
+  guest: BrowserGuest,
+  method: string,
+  params: Record<string, unknown> | undefined,
+  timeoutMs: number,
+): Promise<DockCommandResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const expired = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`调试命令超时：${method}（${String(timeoutMs)}ms 没有应答）`))
+    }, timeoutMs)
+  })
+  try {
+    const value: unknown = await Promise.race([
+      guest.view.webContents.debugger.sendCommand(method, params),
+      expired,
+    ])
+    return { ok: true, value }
+  } catch (error) {
+    return { ok: false, error: errorText(error) }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** 一条 CDP 命令的结果：与协议里的 `DockBrowserReply` 两个分支同形，调用侧不再翻译一遍。 */
+export type DockCommandResult = { ok: true; value: unknown } | { ok: false; error: string }
+
+/**
+ * 在某一台上执行一条 CDP 命令（agent 侧的宿主进程经宿主协议请过来）。
+ *
+ * 五道闸门，**全部 fail-closed**（任一道不过就当场回错，不做「尽量执行」）：
+ *   1. 视图必须在这份台账里。台账里只可能有 dock 视图——主窗口自己的 webContents 从来
+ *      没进过这张表，所以「指名一台视图」不可能指到界面那份文档上。这是本层的安全边界。
+ *   2. 方法必须过契约的白名单（`isAllowedDockCommand`）。
+ *   3. `Page.navigate` 要复检地址：它是**绕开 `navigateDockBrowser` 那道闸门的直通车**，
+ *      不在这儿补一刀，agent 就能把带登录态的视图导到 `file://` 上去。
+ *   4. `Page.captureScreenshot` 要求这一台此刻真的露出来：实测摘下来的视图被 Chromium
+ *      节流，截图会挂到超时，而挂住的那条命令会把整次工具调用拖死。
+ *   5. 惰性挂调试器，然后带超时地发命令（超时同样回一句带方法名的人话）。
+ *
+ * @param viewId 哪一台（必须来自 {@link dockViewList}）
+ * @param method CDP 方法名（白名单见 `src/core/dock-browser.ts`）
+ * @param params CDP 参数
+ * @param timeoutMs 等应答的上限
+ */
+export async function sendDockCommand(
+  viewId: string,
+  method: string,
+  params?: Record<string, unknown>,
+  timeoutMs: number = DOCK_CALL_TIMEOUT_MS,
+): Promise<DockCommandResult> {
+  const guest = guests.get(viewId)
+  if (guest === undefined) return { ok: false, error: `没有这一台浏览器视图：${viewId}` }
+  if (!isAllowedDockCommand(method)) return { ok: false, error: `不允许的调试命令：${method}` }
+  const navTarget = dockNavigateTarget(method, params)
+  if (navTarget !== null && !isHttpUrl(navTarget)) {
+    return { ok: false, error: `只允许导航到 http/https：${navTarget}` }
+  }
+  if (method === 'Page.captureScreenshot' && !guest.attached) {
+    return {
+      ok: false,
+      error: '这一台现在没露出来（侧栏收着或这张页签没激活），截图会挂住；先用 open 把它开出来并聚焦',
+    }
+  }
+  const attachProblem = attachDebugger(viewId, guest)
+  if (attachProblem !== null) return { ok: false, error: attachProblem }
+  return await sendWithTimeout(guest, method, params, timeoutMs)
 }

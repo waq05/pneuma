@@ -13,8 +13,27 @@ import { basename, isAbsolute, join, resolve } from 'node:path'
 import { BrowserWindow, Menu, Notification, Tray, WebContentsView, app, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, screen, session, shell, utilityProcess, type UtilityProcess } from 'electron'
 import type { NativeImage } from 'electron'
 import { validateNativeCall, type NativeOp } from '@dsc/runtime/core/native-bridge.js'
+import {
+  DOCK_AGENT_VIEW_PREFIX,
+  DOCK_OPEN_TIMEOUT_MS,
+  DOCK_TAB_CLOSE_EVENT,
+  DOCK_TAB_OPEN_EVENT,
+  type DockBrowserRequest,
+  type DockViewInfo,
+} from '@dsc/runtime/core/dock-browser.js'
 import { HostProtocol } from './protocol.js'
-import { closeDockBrowser, disposeDockBrowsers, navigateDockBrowser, registerDockIpc, setDockBrowser } from './dock.js'
+import {
+  closeDockBrowser,
+  disposeDockBrowsers,
+  dockViewList,
+  hasDockView,
+  navigateDockBrowser,
+  onDockEvent,
+  registerDockIpc,
+  sendDockCommand,
+  setDockBrowser,
+  type DockCommandResult,
+} from './dock.js'
 import { readState, resolveHeadlessEntry, writeState } from './dsc-core.js'
 import { readSessionUsage } from './session-usage.js'
 import { ensureChecked, installNow, startUpdateChecks, stopUpdateChecks } from './update.js'
@@ -219,6 +238,11 @@ function startHost(cwd: string): void {
   protocol.onDockData((data) => {
     mainWindow?.webContents.send('dsc:dock-data', data)
   })
+  // 宿主那四条浏览器请求（反方向：它请桌面办事）。应答由 answerBrowserRequest 按
+  // 请求里的 id 回带，桌面这一侧不记表（记账在宿主那侧，见 protocol.ts 的注释）。
+  protocol.onBrowserRequest((request) => {
+    answerBrowserRequest(request)
+  })
   protocol.onUiUrl((info) => {
     process.stderr.write(`[dsc-desktop] 宿主报来界面地址 ${info.origin}（窗口${mainWindow === null ? '未就绪' : '在'}）\n`)
     void adoptUiServer(info)
@@ -246,6 +270,144 @@ function stopHost(onDone?: () => void, { silent = false } = {}): void {
     protocol = null
     onDone?.()
   })
+}
+
+// ── 宿主请桌面办的浏览器请求 ──────────────────────────────────────────────────
+// 四条：call（在某台上跑一条 CDP 命令）、open（开一张页签并聚焦）、close（关一台）、
+// views（列现在活着的视图）。应答一律回 `browser-result`，id 照抄宿主发来的那个。
+
+/** 开页签之后轮询台账的间隔：壳那边是渲染层量完矩形才建视图，几十毫秒起步。 */
+const VIEW_POLL_MS = 50
+
+/** 本进程给 agent 页签发号的序号（宿主不给 id 时用它，形如 `agent-1`）。 */
+let agentViewSeq = 0
+
+/**
+ * 页签事件在渲染层里的**频道名**。
+ *
+ * 为什么要拼这个前缀：壳的订阅口是原生桥的 `dscNative.on`，而 preload 那边按
+ * `dsc:${事件名}` 组频道名（见 `desktop/electron/preload/index.ts`）。白名单名与频道名
+ * 差着这个前缀，省掉它壳就一条事件都收不到。
+ */
+function tabEventChannel(eventName: string): string {
+  return `dsc:${eventName}`
+}
+
+/** 发一个新号；跳过台账里已经占着的（撞上了会把别人那张页签的视图顶掉）。 */
+function nextAgentViewId(): string {
+  let candidate = ''
+  do {
+    agentViewSeq += 1
+    candidate = `${DOCK_AGENT_VIEW_PREFIX}${String(agentViewSeq)}`
+  } while (hasDockView(candidate))
+  return candidate
+}
+
+/**
+ * 答一条宿主请求。
+ *
+ * 为什么要 catch 兜底：请求的处理里有一条 promise 链（等页签挂上来），任何一处没接住的
+ * 异常都该翻成一句人话回过去——宿主那侧有超时，别让它为我们的 bug 干等一场。
+ */
+function answerBrowserRequest(request: DockBrowserRequest): void {
+  handleBrowserRequest(request)
+    .then((result) => {
+      protocol?.browserResult(request.id, result)
+    })
+    .catch((error: unknown) => {
+      protocol?.browserResult(request.id, { ok: false, error: `桌面侧处理出错：${String(error)}` })
+    })
+}
+
+/** 把一条请求派到具体实现上（四条各一个分支）。 */
+async function handleBrowserRequest(request: DockBrowserRequest): Promise<DockCommandResult> {
+  if (request.type === 'browser-call') {
+    return await sendDockCommand(request.viewId, request.method, request.params)
+  }
+  if (request.type === 'browser-views') {
+    return { ok: true, value: dockViewList() }
+  }
+  if (request.type === 'browser-close') {
+    return closeBrowserTab(request.viewId)
+  }
+  return await openBrowserTab(request)
+}
+
+/**
+ * 关一台：**优先让壳去关**（它那张页签也要跟着消失，否则侧栏会留一个点不开的空页签）。
+ *
+ * 发出事件之后**这里不再销毁视图**：销毁是壳里那张页签卸载时发 `browserClose`（原生桥）
+ * 的事。两边都动手会重复销毁——同一台会在日志里出现两条 `browser view disposed`，
+ * 而第二次拿到的是已经关掉的 webContents。
+ *
+ * 壳不在（窗口已关）才直接销毁：那时没有人会替我们发 `browserClose`，
+ * 视图留着只会吊到进程退出。
+ */
+function closeBrowserTab(viewId: string): DockCommandResult {
+  const window = mainWindow
+  if (window === null || window.isDestroyed()) {
+    closeDockBrowser(viewId)
+  } else {
+    window.webContents.send(tabEventChannel(DOCK_TAB_CLOSE_EVENT), { id: viewId })
+  }
+  return { ok: true, value: { closed: true } }
+}
+
+/**
+ * 开一张页签并**等它真的挂上**。
+ *
+ * 为什么必须等（不是「通知发出去就算开好了」）：调用方紧接着就要点击或截图，而摘下来的
+ * 视图被 Chromium 节流、截图会挂到超时（实测），所以回执要带「这一刻露出来了」这个事实。
+ * 页签只能由壳建（原生视图的矩形只有渲染层量得出来），所以这里发号 + 等台账变真。
+ *
+ * 桌面窗口不在就报错：没有壳，页签没人建，等下去只会等到超时。超时这条**不只一种原因**，
+ * 文案里两种都说清楚——桌面侧分不清「旧渲染层不认这条通路」与「界面收着没量出矩形」，
+ * 从台账看它们一模一样（见 {@link waitForDockView} 的超时分支）。
+ */
+async function openBrowserTab(request: { url: string; viewId?: string }): Promise<DockCommandResult> {
+  const window = mainWindow
+  if (window === null || window.isDestroyed()) return { ok: false, error: '桌面窗口不在，开不了页签' }
+  const viewId = request.viewId ?? nextAgentViewId()
+  window.webContents.send(tabEventChannel(DOCK_TAB_OPEN_EVENT), { id: viewId, url: request.url })
+  const view = await waitForDockView(viewId, DOCK_OPEN_TIMEOUT_MS)
+  if (view === null) {
+    return {
+      ok: false,
+      // 只有插件壳会订阅这条事件：旧渲染层（档案 `ui: 'legacy'` / `DSC_UI_SHELL=0`）根本不认，
+      // 所以超时最常见的原因是界面形态而不是「壳卡了」；第二种是壳收到了但视图没量出矩形
+      // （侧栏收着或窗口隐藏着，渲染层报零矩形）。两种情况在台账上分不出来，只能一起说。
+      error:
+        `壳没接住开页签的请求（${String(DOCK_OPEN_TIMEOUT_MS)}ms 内没等到视图 ${viewId}）：` +
+        '当前界面是旧渲染层时不支持这条通路（插件壳才有）；也可能界面被隐藏了',
+    }
+  }
+  return {
+    ok: true,
+    // attached 取这一刻的视图状态：台帐里的 `visible` 就是 dock.ts 的 `guest.attached`，
+    // 两边是同一个事实。url 取视图上的真实地址，页面还没开始加载时回落到请求里那个。
+    value: { viewId, attached: view.visible, url: view.url === '' ? request.url : view.url },
+  }
+}
+
+/**
+ * 等一台视图进台账（壳收到事件之后才会建它）。
+ *
+ * 为什么用轮询而不是等一条回执：壳那条路是渲染层的状态 + 重排（量完矩形才调
+ * `setDockBrowser`），桌面主进程没有它那边的 promise 可等；台账变真这件事本身就是
+ * 「原生视图真的挂上了」的信号。
+ */
+async function waitForDockView(viewId: string, timeoutMs: number): Promise<DockViewInfo | null> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (hasDockView(viewId)) {
+      const found = dockViewList().find((view) => view.id === viewId)
+      if (found !== undefined) return found
+    }
+    if (Date.now() >= deadline) return null
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, VIEW_POLL_MS)
+    })
+  }
 }
 
 // ── 系统托盘与退出 ────────────────────────────────────────────────────────────
@@ -1134,6 +1296,12 @@ if (!gotLock) {
     startHost(state.lastCwd ?? app.getPath('home'))
     registerIpc()
     registerDockIpc()
+    // dock 视图上的 CDP 事件 → 宿主（只有被 agent 碰过、挂了 debugger 的视图会推）。
+    // 订阅登记在这里而不是 startHost 里：宿主重启会重跑 startHost，写在那边就会叠出
+    // N 份推送。这里只登记一次，推的时候现读 `protocol`（它是当前那一个宿主会话）。
+    onDockEvent((event) => {
+      protocol?.browserEvent(event)
+    })
     createWindow()
     // 检查更新排期：时机现读 settings.json，所以改设置不用重启就生效（见 update.ts）。
     // 退出动作复用托盘那条「完全退出」——装完要真的把应用关掉，安装器才换得动文件。

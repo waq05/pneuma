@@ -58,6 +58,38 @@ export default defineUiPlugin({
       // 切页签只藏不卸：视图留着，切回来页面还在（与终端同一条）
       keepMounted: true,
     })
+    // 桌面主进程 → 壳的两条**全局**事件（agent 那条链路的开户通路）：
+    //   - `browser-tab-open-request`  `{ id, url? }`：请壳开一张页签并聚焦，
+    //     id 由桌面侧发号（`agent-N`），壳必须照用——宿主的视图台账按这个 id 认台；
+    //   - `browser-tab-close-request` `{ id }`：请壳关掉那张页签（免得留下一个点不开的空页签）。
+    //
+    // 为什么订阅挂在**插件注册处**而不是 BrowserTab 那个 React 组件里：这两条事件是全局的
+    // （载荷里的 id 指名要动哪一张），而组件是**每张页签一份**——写在组件里的话，N 张页签
+    // 会各收到一次、同一张页签被开/关 N 次（既有的 `browser-open-requested` 是 per-tab 的，
+    // 它按 `payload.id !== viewId` 过滤，语义不同，别混）。
+    const native = getHostNative()
+    const offOpen = native.on('browser-tab-open-request', (request) => {
+      if (request === null || typeof request !== 'object') return
+      const payload = request as Record<string, unknown>
+      const id = payload['id']
+      if (typeof id !== 'string' || id === '') return
+      // 地址可能是空串 / 非字符串（新页签可以是空态，也可以随后由 browser-call 导航过去）：
+      // 与既有 `browser-open-requested` 同一条校验口径，整不出地址就当空态开出来。
+      const url = payload['url']
+      openDockBrowserTab(typeof url === 'string' && url !== '' ? url : undefined, id)
+    })
+    const offClose = native.on('browser-tab-close-request', (request) => {
+      if (request === null || typeof request !== 'object') return
+      const payload = request as Record<string, unknown>
+      const id = payload['id']
+      if (typeof id !== 'string' || id === '') return
+      dockActions.closeTab(id)
+    })
+    // 退订交回装载器（`apply` 的返回值就是「卸载这个插件时调」的清理函数，见 UiPluginModule）。
+    return () => {
+      offOpen()
+      offClose()
+    }
   },
 })
 
@@ -135,8 +167,24 @@ function BrowserTab({ tab, active, expanded }: DockTabBodyProps): ReactNode {
       void native.invoke('dockBrowser', [viewId, false]).catch(() => undefined)
       return undefined
     }
-    const report = (): void => {
-      const rect = element.getBoundingClientRect()
+    /**
+     * 这一块的几何还没落定之前不许上报。
+     *
+     * 为什么：侧栏展开是从右缘**滑进来**的（靠 transform 做过渡），而
+     * `getBoundingClientRect()` 会把变换算进去——实测在过渡那一拍量到的是窗口外的
+     * 矩形（窗口 1440 宽、报出去 x=1861）。原生视图一旦被摆到窗口外，Chromium 会把
+     * 它的视口塌成 0×0（页面 `document.hidden` 变 true、`elementFromPoint` 恒 null），
+     * 于是**点击落在空处、截图一片空白**。而 transform 变化既不触发 ResizeObserver
+     * 也不触发 window resize——不在这里重试，这一错会一直错到底（实测：整轮走查都停在
+     * 那次错的摆位上，侧栏里那块是空的）。
+     *
+     * 到帧数上限就照报：宁可让主进程拿到一个坏矩形（它那边有诊断行），也不能把
+     * 「摆位」这件事永远挂着不办。
+     */
+    const RECT_SETTLE_FRAMES = 120
+    let settleFrames = 0
+    let settleRaf: number | null = null
+    const reportNow = (rect: DOMRect): void => {
       void native
         .invoke<boolean>('dockBrowser', [
           viewId,
@@ -160,6 +208,28 @@ function BrowserTab({ tab, active, expanded }: DockTabBodyProps): ReactNode {
           bound.current = false
         })
     }
+    const report = (): void => {
+      const rect = element.getBoundingClientRect()
+      // 「至少有一块落在视口里」才算可用：完全落在外面的矩形会让原生视图的视口塌成 0。
+      const usable =
+        rect.width > 0 &&
+        rect.height > 0 &&
+        rect.right > 0 &&
+        rect.bottom > 0 &&
+        rect.x < window.innerWidth &&
+        rect.y < window.innerHeight
+      if (!usable && settleFrames < RECT_SETTLE_FRAMES) {
+        settleFrames += 1
+        if (settleRaf === null) {
+          settleRaf = requestAnimationFrame(() => {
+            settleRaf = null
+            report()
+          })
+        }
+        return
+      }
+      reportNow(rect)
+    }
     report()
     const observer = new ResizeObserver(report)
     observer.observe(element)
@@ -167,6 +237,7 @@ function BrowserTab({ tab, active, expanded }: DockTabBodyProps): ReactNode {
     return () => {
       observer.disconnect()
       window.removeEventListener('resize', report)
+      if (settleRaf !== null) cancelAnimationFrame(settleRaf)
     }
     // tab.path 只在「切到可见」这一刻读一次：之后地址由页面自己推回来（browser-state），
     // 把它放进依赖会让每次导航都重跑一遍挂卸。

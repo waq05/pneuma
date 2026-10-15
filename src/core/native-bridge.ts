@@ -53,6 +53,7 @@
  * @module dsc/core/native-bridge
  */
 
+import { DOCK_TAB_CLOSE_EVENT, DOCK_TAB_OPEN_EVENT } from './dock-browser.js'
 import { DOCK_TERM_OPS } from './dock-ops.js'
 import type { ApprovalPolicy, ApprovalReviewer } from '../contract.js'
 
@@ -216,6 +217,23 @@ export const NATIVE_EVENTS = [
    * 订阅方每次进度回调都要重判一遍状态。
    */
   'update-progress',
+  /**
+   * 宿主请壳开一张浏览器页签并聚焦：`{ id, url }`。
+   *
+   * 方向与别的条目相反：这条是**桌面主进程发起**的（agent 那侧要一台露出来的视图，
+   * 而页签与原生视图的矩形只有壳量得出来）。壳收到就按「用户点了新建浏览器页签」建一张，
+   * 并**照用这个 id**——id 由桌面侧发号（`agent-N`），壳自己再起一个名字，宿主下一次
+   * `browser-call` 就对不上号了。
+   */
+  DOCK_TAB_OPEN_EVENT,
+  /**
+   * 宿主请壳关掉某张浏览器页签：`{ id }`。
+   *
+   * 为什么关页签要绕壳：只销毁原生视图的话，侧栏会留下一个点不开的空页签。
+   * 壳那边把页签一并收掉，这一台才算真的下线了（视图本身的销毁仍在主进程，见
+   * `browserClose`）。
+   */
+  DOCK_TAB_CLOSE_EVENT,
 ] as const
 
 /** 桥认得的一个事件名。 */
