@@ -50,6 +50,14 @@ export interface DscPrefs {
   closeToTray: boolean
   /** 检查更新的时机（桌面端主进程读这个值：它才够得着网络与安装程序）。 */
   updateCheck: UpdateCheckMode
+  /**
+   * 活动配置文件：空串 = 默认的 `~/.dsc/config.yaml`，否则用这条绝对路径
+   * （设置 → 通用「配置文件」那一行的「更换」写它，见 core/config-store 的 activeConfigFile）。
+   *
+   * 为什么记在这里：它是「下次启动时希望用哪一份配置」，与 settings.json 里其它字段同一性质；
+   * 而且桌面端与终端界面共用这一份，两边看到的端点是同一份配置。
+   */
+  configFile: string
   /** 侧栏界面偏好（会话排序、工作区顺序与显示名别名）。 */
   ui: UiPrefsView
   /** 远程控制偏好（手机浏览器接入；见 plugins/remote.ts）。 */
@@ -246,6 +254,8 @@ export function readPrefs(): DscPrefs {
     // 出厂每次启动查一次：更新源是一次只读的 GitHub API 调用，代价很小；
     // 不想让它联网的用户在设置里改「不检查」。
     updateCheck: 'launch',
+    // 出厂用默认那份 ~/.dsc/config.yaml（换过才非空，见字段注释）。
+    configFile: '',
     ui: {
       sessionSort: 'manual',
       sessionGroup: 'workspace',
@@ -281,6 +291,10 @@ export function readPrefs(): DscPrefs {
     // 检查更新时机：认不出的值回落「每次启动」（缺键也一样——老 settings.json 里没有它）。
     if (typeof doc.updateCheck === 'string' && UPDATE_CHECK_MODES.includes(doc.updateCheck as UpdateCheckMode)) {
       prefs.updateCheck = doc.updateCheck as UpdateCheckMode
+    }
+    // 活动配置文件：只认非空字符串（空串与缺键都表示「用默认那份」）。
+    if (typeof doc.configFile === 'string' && doc.configFile.trim() !== '') {
+      prefs.configFile = doc.configFile
     }
     if (typeof doc.ui === 'object' && doc.ui !== null) {
       const ui = doc.ui as Record<string, unknown>

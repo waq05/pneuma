@@ -659,6 +659,14 @@ export interface StatusView {
    * 解析出 ENOENT（/fork 0.6.65 实锤）——需要落盘路径的命令一律用这个。
    */
   sessionPath?: string
+  /**
+   * 当前会话一条消息都还没发过（日志还没落盘）。
+   *
+   * 为什么界面要知道：这种会话没有稳定身份——它一旦不是当前会话就既不进侧栏、路径也换新的，
+   * 输入框的草稿按路径分坑就会跟着丢（0.6.70 报障）。壳据此把这类会话的草稿记在工作区名下
+   * （见 ui-shell 的 plugins/composer/draft.ts）。
+   */
+  sessionUnsaved?: boolean
 }
 
 /** 档位按钮的一项：档位 id + 按钮文字 + 悬浮说明。 */
@@ -1326,8 +1334,35 @@ export type SettingsField =
       group?: string
     }
   | { type: 'switch'; key: string; label: string; help?: string; group?: string }
-  | { type: 'info'; label?: string; text: string; mono?: boolean; copyable?: boolean; help?: string; group?: string }
+  | {
+      type: 'info'
+      label?: string
+      text: string
+      mono?: boolean
+      copyable?: boolean
+      /**
+       * 行内动作（画在「复制 / 打开」右边）。**壳认得 id 才画**，认不出的整条跳过——
+       * 这样宿主多声明一条不会让旧壳画出点不动的按钮。
+       *
+       * 现有的两个：`switch-config-file`（选一份配置文件当活动配置）、
+       * `reset-config-file`（改回出厂那份）。它们要在桌面端开系统文件对话框，
+       * 所以由壳就地处理（不经宿主动作表）。
+       */
+      actions?: readonly SettingsInfoAction[]
+      help?: string
+      group?: string
+    }
   | { type: 'button'; action: string; label: string; style?: 'primary' | 'ghost'; help?: string; group?: string }
+
+/** 信息行上的一个动作按钮（见 `SettingsField` 的 info 分支）。 */
+export interface SettingsInfoAction {
+  /** 壳认得的动作 id；认不出的不画。 */
+  id: string
+  /** 按钮文字（2–4 字动词，无标点）。 */
+  label: string
+  /** 悬浮说明。 */
+  tip?: string
+}
 
 /**
  * 分区内的一个分组（dsh 同款机制）：`fields` 里带 `group: id` 的字段收进这组，
@@ -1751,6 +1786,14 @@ export interface DscRuntime {
   setProviderKey(name: string, apiKey: string | null): Promise<SettingsMutation>
   /** 设为默认端点/模型（写 config.yaml 并对当前会话立即生效）。 */
   setDefaultModel(provider: string, model: string): Promise<SettingsMutation>
+  /**
+   * 换一份配置文件用（写 settings.json 的 configFile 字段，空串 = 回到出厂那份 ~/.dsc/config.yaml）。
+   *
+   * 只在原生桥开放（与 saveProvider 那三件同一先例：写类入口不进界面通道）。文件本身不动，
+   * 端点清单、模型编辑与后续写入全部改到这一份上；传进来的路径由设置页经系统文件对话框选，
+   * 宿主这边仍按「存在 + 是文件 + 能解析出 providers」三道校验把关。
+   */
+  setConfigFile(path: string): Promise<SettingsMutation>
   /** 切换权限模式（readonly / auto-edit / full-access）。 */
   setPolicy(policy: ApprovalPolicy): void
   /** 切换审阅者（user = 本人点卡 / auto-review = 先给模型判官看一眼）。 */

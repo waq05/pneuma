@@ -11,8 +11,9 @@
  *
  * @module dsc/plugins/settings
  */
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import type {
   ApprovalPolicy,
@@ -30,11 +31,14 @@ import type {
 } from '../contract.js'
 import type { DscCoreConfig } from '../core/config.js'
 import { readConfig } from '../core/config.js'
+import { parseTolerantYaml } from '../core/migrate.js'
 import { pickProbeModel, testConnection } from '../core/connection-test.js'
 import { discoverModels } from '../core/model-discovery.js'
 import {
-  CONFIG_FILE,
+  activeConfigFile,
   CREDENTIALS_FILE,
+  DEFAULT_CONFIG_FILE,
+  invalidateActiveConfigFile,
   deleteProvider,
   readModelConfig,
   upsertProvider,
@@ -233,7 +237,19 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
             label: '关窗缩到托盘',
             help: '点关闭按钮只隐藏窗口，应用留在托盘；关闭后点关闭即退出',
           },
-          { type: 'info', label: '配置文件', text: CONFIG_FILE, mono: true, copyable: true },
+          {
+            type: 'info',
+            label: '配置文件',
+            text: activeConfigFile(),
+            mono: true,
+            copyable: true,
+            help: '端点与默认模型都写在这一份里；「更换」可以换成你自己那份（原文件不动）',
+            actions: [
+              { id: 'switch-config-file', label: '更换', tip: '选一份 YAML 当活动配置，端点清单会立刻按它重读' },
+              // 只有换过之后才给「恢复默认」：没换过时那条路等于原地不动，画出来只会让人多点一下
+              ...(readPrefs().configFile === '' ? [] : [{ id: 'reset-config-file', label: '恢复默认', tip: `改回出厂的 ${DEFAULT_CONFIG_FILE}` }]),
+            ],
+          },
         ]
       },
       values(): Values {
@@ -460,7 +476,7 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
           },
           { type: 'info', label: '内核 API 版本', text: String(KERNEL_API_VERSION), help: '外部插件声明的 apiVersion 高于此值时会被自动停用' },
           { type: 'info', label: '配置目录', text: DSC_HOME, mono: true, copyable: true },
-          { type: 'info', label: '模型配置', text: CONFIG_FILE, mono: true, copyable: true },
+          { type: 'info', label: '模型配置', text: activeConfigFile(), mono: true, copyable: true },
           { type: 'info', label: '凭据库', text: CREDENTIALS_FILE, mono: true, copyable: true, help: 'API key 仅存储于此，界面不回显' },
           { type: 'info', label: '技能目录', text: DSC_SKILLS_DIR, mono: true, copyable: true },
           { type: 'info', label: '插件目录', text: DSC_PLUGINS_DIR, mono: true, copyable: true },
@@ -609,6 +625,35 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
           const notice = writeProviderKey(doc.keyRef, apiKey)
           reloadLive()
           return notice
+        })
+      },
+      setConfigFile(path: string): SettingsMutation {
+        return mutateWith(() => {
+          // 空串 = 回出厂那份（设置页那条「恢复默认」走这里）
+          if (path.trim() === '') {
+            savePrefs({ configFile: '' })
+            invalidateActiveConfigFile()
+            reloadLive()
+            return `已改回出厂配置 ${DEFAULT_CONFIG_FILE}`
+          }
+          if (!isAbsolute(path)) throw new Error('要一条绝对路径（文件对话框给的就是绝对路径）')
+          if (!existsSync(path) || !statSync(path).isFile()) throw new Error(`读不了这个文件：${path}`)
+          // 用与读配置同一支容错解析（`!!` 之类的标签它会剥掉再试）：能解析但没 providers 与
+          // 压根解析不出内容，是两种毛病，分别给一句能对症的话。
+          const doc = parseTolerantYaml(readFileSync(path, 'utf8'))
+          const providers = (doc as { providers?: unknown }).providers
+          if (typeof providers !== 'object' || providers === null || Object.keys(providers).length === 0) {
+            throw new Error(
+              Object.keys(doc).length === 0
+                ? '这份文件解析不出任何内容：它不是 YAML，或者是个空文件'
+                : '这份文件里没有 providers 段：它看起来不是模型配置文件',
+            )
+          }
+          // 校验全过才落偏好：写失败/写坏的文件不许换上去（换了会让端点整份空掉）
+          savePrefs({ configFile: path })
+          invalidateActiveConfigFile()
+          reloadLive()
+          return `已换成 ${path}`
         })
       },
       setDefaultModel(provider: string, model: string): SettingsMutation {

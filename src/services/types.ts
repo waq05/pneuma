@@ -907,6 +907,11 @@ export interface SettingsService {
   setProviderKey(name: string, apiKey: string | null): SettingsMutation
   /** 写默认端点/模型，并对当前会话立即生效。 */
   setDefaultModel(provider: string, model: string): SettingsMutation
+  /**
+   * 换一份配置文件用（写 settings.json 的 configFile；空串 = 回出厂那份）。
+   * 校验不过（不是绝对路径 / 读不了 / 不是能解析的 YAML / 没有 providers）就抛错，不落偏好。
+   */
+  setConfigFile(path: string): SettingsMutation
   /** 界面层偏好。 */
   prefs(): DscPrefs
   /** 合并写偏好并应用（权限模式/思考强度立即生效，市场源即时生效）。 */

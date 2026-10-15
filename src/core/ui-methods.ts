@@ -176,6 +176,9 @@ export const UI_EXCLUDED = [
   'setDefaultPermissionPreset',
   'purgeSessions',
   'saveProvider',
+  // 换配置文件：改的是「以后读哪一份配置」——等于换掉整份端点与密钥引用，比改单个端点更大，
+  // 所以与它同一先例：只对主窗口那份文档开放（NATIVE_OPS.setConfigFile）。
+  'setConfigFile',
   'removeProvider',
   'setProviderKey',
   'installMarketSkill',

@@ -381,6 +381,10 @@ export const runtimePlugin: Plugin.Object = {
         return ctx.settings.setDefaultModel(provider, model)
       },
 
+      async setConfigFile(path) {
+        return ctx.settings.setConfigFile(path)
+      },
+
       refreshSessions() {
         return ctx.session.refresh()
       },
