@@ -301,7 +301,7 @@ export const BUILTIN_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
     settingsSection: 'image-diet',
   },
   { file: 'session-title', name: '会话标题', description: '首回合结束后自动生成会话标题（用户改名优先）' },
-  { file: 'todo', name: '任务清单', description: '模型自己维护的清单与实时进度条' },
+  { file: 'todo', name: '任务清单', description: '模型自己维护的清单与实时进度条', settingsSection: 'todo' },
   { file: 'plan', name: '计划交付', description: '写计划文件并弹评审卡等用户批' },
   { file: 'ask', name: '模型提问', description: 'ask_user 工具与它的选项卡' },
   { file: 'agent', name: 'Agent 循环', description: 'ReAct 推理与工具调用循环' },
