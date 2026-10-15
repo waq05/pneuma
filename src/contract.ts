@@ -632,8 +632,17 @@ export interface SessionUsageView {
  */
 export interface StatusView {
   sessionId: string | null
-  /** 当前模型名；未知时 'unknown'。 */
+  /** 当前模型名；未知时 'unknown'。**裸名**（不带端点前缀）——它属于哪个端点看 {@link provider}。 */
   model: string
+  /**
+   * 当前模型属于哪个端点（config.yaml 里那一节的 `name`）。
+   *
+   * 为什么界面需要它：`model` 是裸名，而同一个模型 id 可以挂在两个端点下（`value` 才是
+   * `端点/模型`）。光有裸名，界面既画不出「这个模型是从哪来的」，也分不清清单里哪一条
+   * 才该打勾——0.6.71 输入区模型菜单的勾选基本不出现，根子就在这儿。
+   * 端点信息拿不到时是 undefined：这类值一律原样显示，不猜。
+   */
+  provider?: string
   effort: EffortLevel
   turnState: 'idle' | 'thinking' | 'working' | 'awaiting-approval'
   usage: TokenUsageView | null
@@ -1222,6 +1231,8 @@ export interface ModelChoiceView {
   /** 可直接传给 /model 的完整值：`[端点/]模型名`。 */
   value: string
   provider: string
+  /** 端点的显示名（`displayName`；用户没填时等于 `provider`）——选择器的一级行画它。 */
+  providerDisplayName: string
   model: string
   /** 面板展示用说明（端点显示名 · 上下文窗口）。 */
   description: string

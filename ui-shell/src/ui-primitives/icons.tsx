@@ -286,6 +286,31 @@ export function IconLayers(props: IconProps): JSX.Element {
   )
 }
 
+/** 模型（输入区那颗模型 chip，对照 ZCode 触发器上的 PackageIcon）：一个封好的包裹 ——
+ *  顶面 + 前缝，比「叠片」更具体，也不会和旁边的模式 chip 撞形。 */
+export function IconPackage(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M12 3.2 3.4 8v7.6l8.6 4.8 8.6-4.8V8Z" />
+      <path d="M3.4 8 12 12.8 20.6 8" />
+      <path d="M12 12.8v7.6" />
+    </>,
+    props,
+  )
+}
+
+/** 思考档位（输入区那颗档位 chip）：两瓣脑 + 中缝。档位是「想多久」，所以用脑子而不是
+ *  进度条 —— 旁边已经有模型 chip，两颗图标得一眼分得开。 */
+export function IconBrain(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M12 4.9a3.3 3.3 0 0 0-5.3 2.6A3.1 3.1 0 0 0 5.3 12a3.2 3.2 0 0 0 1.4 5.3A3 3 0 0 0 12 19.1Z" />
+      <path d="M12 4.9a3.3 3.3 0 0 1 5.3 2.6 3.1 3.1 0 0 1 1.4 4.5 3.2 3.2 0 0 1-1.4 5.3A3 3 0 0 1 12 19.1Z" />
+    </>,
+    props,
+  )
+}
+
 export function IconInfo(props: IconProps): JSX.Element {
   return base(
     <>

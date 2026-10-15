@@ -253,6 +253,9 @@ export const transcriptPlugin: Plugin.Object = {
           status: {
             sessionId: ctx.session.current().meta.id,
             model: ctx.llm.model,
+            // 裸名 + 端点名分开给：同一个模型 id 可能挂在两个端点下，界面要能分辨
+            // （输入区那颗模型 chip 画 `端点/模型`、清单里给哪一条打勾都靠它）。
+            provider: ctx.llm.provider,
             effort: ctx.llm.effort,
             turnState,
             usage: transcript.usage,

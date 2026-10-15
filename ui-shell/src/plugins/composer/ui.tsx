@@ -32,17 +32,27 @@
  * 权限那一颗从「模式」改成了「预设」（`surfaces.permissionPresets`）：沙箱 + 权限模式 +
  * 审阅者捆成一颗，分开选会出现「完全访问 + 沙箱仍工作区可写」这种自相矛盾的组合。
  *
+ * **模型与思考强度是两颗 chip、两张浮层**（0.6.71 起，对照 ZCode composer 的
+ * `V4ComposerToolbar`：模型一颗、档位一颗）。旧版是一颗 + 一张浮层，上半排档位按钮、
+ * 下半是模型平铺清单——用户报「看不出来当前选的是哪个模型、哪一档」，底下压着三处真错
+ * （档位漏了「默认」那档、打勾拿 `value === 裸模型名` 判、清单只在挂载时取一次），逐条
+ * 记在 `./model-picker.ts` 的模块注释里。**所有判定都在那个纯模块里**，这里只画：
+ * 探针读不了 `.tsx`，读得了那份零依赖的 `.ts`。
+ *
  * 样式与 class 名照抄旧版（`ui-shell/src/legacy/views.css`，行号同旧 `styles.css`）：
  * `.composer` 2225、`.composer-bar` 2259、`.bar-left/.bar-right` 2266/2301、`.model-anchor`
- * 2309、`.model-btn` 2314、`.model-pop` 2347、`.effort-row/.effort-btn` 2376-2408、
- * `.model-list/.pop-group/.pop-item` 2410-2464、`.send-btn` 2468、`.queue-dock` 2519 起。
+ * 2309、`.model-btn` 2314、`.model-pop` 2347、`.model-list/.pop-item` 2410-2464、
+ * `.send-btn` 2468、`.queue-dock` 2519 起。两颗 chip 与两级菜单的新样式在壳的 `styles.css`
+ * 里（`styles.css` 打的是 `.composer-model-chip` / `.model-picker` / `.pop-rail` … 那几个
+ * 新类名；**别复用已经退役的 `.model-chip`**——那是模型设置页上一版端点卡里的东西，
+ * `scripts/ui-models-page-test.mjs` 有一条闸不许它回来）。
  *
  * @module dsc-ui-shell/plugins/composer
  */
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 /** DOM 原生键盘事件（`window.addEventListener` 用；React 的 KeyboardEvent 是另一个类型）。 */
 type WindowKeyboardEvent = globalThis.KeyboardEvent
-import { IconArrowUp, IconBranch, IconCheck, IconChevronDown, IconClose, IconEdit, IconLayers, IconPlus, IconQueue, IconSearch, IconShield, IconSpark, IconStop, IconTrash } from '@dsc/ui'
+import { IconArrowUp, IconBrain, IconBranch, IconCheck, IconChevronDown, IconChevronRight, IconClose, IconEdit, IconLayers, IconPackage, IconPlus, IconQueue, IconSearch, IconShield, IconSpark, IconStop, IconTrash } from '@dsc/ui'
 import {
   HUMAN_WAIT_TIMEOUT_MS,
   defineUiPlugin,
@@ -51,7 +61,6 @@ import {
   toastOk,
   useHostChannel,
   useHostSelector,
-  type EffortLevel,
   type GitSurface,
   type HostSnapshot,
   type ModelChoiceView,
@@ -64,6 +73,18 @@ import {
 import { useMention } from './mention'
 import { carryDraft, draftScopeOf, type ComposerDraft } from './draft'
 import { summarizeNotice } from './notice-summary'
+import {
+  contextLabel,
+  effortChoices,
+  effortLabel,
+  effortSwitchable,
+  findCurrent,
+  groupModels,
+  modelBadges,
+  modelChipText,
+  providerHint,
+  shouldShowProviderLevel,
+} from './model-picker'
 import { filteredBranches, wouldOverwrite, type GitBranchRow } from './git-branch'
 
 /** 输入框自动增高的上限（旧界面同一个值：200px）。 */
@@ -72,18 +93,6 @@ const MAX_INPUT_HEIGHT = 200
 const PREVIEW_CHARS = 200
 /** 本机历史输入留多少条（旧界面用会话历史；壳这边先本地记一份）。 */
 const HISTORY_LIMIT = 50
-
-/** 档位按钮的兜底清单：模型的思考档位拿不到时用它。 */
-const EFFORT_FALLBACK: readonly EffortLevel[] = ['default', 'off', 'low', 'high', 'max']
-
-/** 档位按钮文案（与宿主 `EffortLevel` 一一对应）。 */
-const EFFORT_LABEL: Readonly<Record<EffortLevel, string>> = {
-  default: '默认',
-  off: '关闭',
-  low: '低',
-  high: '高',
-  max: '最高',
-}
 
 /** 权限预设投影缺席时的兜底（空清单：菜单里会说「清单没取到」，不假装有几个预设）。 */
 const EMPTY_PERMISSION_PRESETS: PermissionPresetSurface = { current: '', defaultName: '', options: [] }
@@ -127,7 +136,14 @@ function ComposerBox(): ReactNode {
   const [fault, setFault] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [models, setModels] = useState<readonly ModelChoiceView[]>([])
-  const [panelOpen, setPanelOpen] = useState(false)
+  /** 模型菜单（两级：端点 → 模型）开没开。 */
+  const [modelOpen, setModelOpen] = useState(false)
+  /** 思考档位菜单开没开（与模型菜单是**两颗** chip、两张浮层，见 bar-right 的注释）。 */
+  const [effortOpen, setEffortOpen] = useState(false)
+  /** 模型菜单左栏选中的端点（hover / 点一下切右栏；展开时先落在当前模型所属那个）。 */
+  const [pickedProvider, setPickedProvider] = useState('')
+  /** 模型 chip 上的端点前缀收没收掉（放不下就收，见下面那段量法）。 */
+  const [dropPrefix, setDropPrefix] = useState(false)
   // 权限预设与模式（预设）两根旋钮各自的浮层：三者互斥（开一根把另两根收掉，旧界面同款）。
   const [permOpen, setPermOpen] = useState(false)
   const [presetOpen, setPresetOpen] = useState(false)
@@ -142,17 +158,38 @@ function ComposerBox(): ReactNode {
   const [branchCreateOpen, setBranchCreateOpen] = useState(false)
   const [newBranchName, setNewBranchName] = useState('')
   const branchRows = useRef<HTMLDivElement | null>(null)
-  // Esc 关模型浮层（与遮罩点击同效；设置面板、确认框各自也拦 Esc，谁开着归谁）。
+  /** 模型菜单展开时把当前项滚进视野用的两个锚点（端点行 / 模型行）。 */
+  const providerRows = useRef<HTMLDivElement | null>(null)
+  const modelRows = useRef<HTMLDivElement | null>(null)
+  /** 输入行（量栏宽用：栏宽一变就要重新掂一次端点前缀放不放得下）。 */
+  const barRef = useRef<HTMLDivElement | null>(null)
+  const [barWidth, setBarWidth] = useState(0)
   useEffect(() => {
-    if (!panelOpen) return undefined
+    const node = barRef.current
+    if (node === null || typeof ResizeObserver === 'undefined') return undefined
+    setBarWidth(node.clientWidth)
+    const observer = new ResizeObserver(() => {
+      setBarWidth(node.clientWidth)
+    })
+    observer.observe(node)
+    return () => {
+      observer.disconnect()
+    }
+  }, [])
+  /** 模型 chip 本体（量端点前缀放不放得下用）。 */
+  const modelChipRef = useRef<HTMLButtonElement | null>(null)
+  // Esc 关这两张浮层（与遮罩点击同效；设置面板、确认框各自也拦 Esc，谁开着归谁）。
+  useEffect(() => {
+    if (!modelOpen && !effortOpen) return undefined
     const onKey = (event: WindowKeyboardEvent): void => {
       if (event.key !== 'Escape' || event.defaultPrevented) return
       event.preventDefault()
-      setPanelOpen(false)
+      setModelOpen(false)
+      setEffortOpen(false)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [panelOpen])
+  }, [modelOpen, effortOpen])
 
   /**
    * 分支菜单展开时读一次本地分支清单（`dock git-branches`，读类 op 直接放行）。
@@ -238,7 +275,14 @@ function ComposerBox(): ReactNode {
     node.style.height = `${String(Math.min(node.scrollHeight, MAX_INPUT_HEIGHT))}px`
   }, [text])
 
-  // 模型清单是进程内静态数据，挂载时取一次就够。
+  /**
+   * 模型清单：挂载时取一次，**每次展开菜单再取一次**。
+   *
+   * 为什么不能只在挂载时取（旧版就是这么写的，注释还写着「静态数据」）：设置里加过端点、
+   * 改过模型之后，这张清单就是旧的了——点开菜单看到的还是上一轮配置，当前模型甚至可能
+   * 根本不在里面（0.6.71 报障）。这条读一次就回来的路上没有成本，重取的收益是「菜单里
+   * 看到的永远是当下这份配置」。
+   */
   useEffect(() => {
     let alive = true
     void channel
@@ -247,12 +291,12 @@ function ComposerBox(): ReactNode {
         if (alive) setModels(Array.isArray(list) ? list : [])
       })
       .catch(() => {
-        // 取不到就不画模型菜单（旋钮退化成只显示当前模型名），不影响发消息。
+        // 取不到就沿用上一次那一份（首次即空）：菜单会如实说「清单没取到」，不影响发消息。
       })
     return () => {
       alive = false
     }
-  }, [channel])
+  }, [channel, modelOpen])
 
   /**
    * 提交一条消息。
@@ -477,8 +521,82 @@ function ComposerBox(): ReactNode {
   /** 当前预设那一项（拿它的 label / description）；`custom`（旋钮拼不出任何预设）或清单缺了时为 undefined。 */
   const permOption = permissionPresets.options.find((item) => item.name === permissionPresets.current)
   const presetOption = preset.options.find((item) => item.name === preset.current)
-  const current = models.find((choice) => choice.model === model || choice.value === model)
-  const effortLevels = current === undefined ? EFFORT_FALLBACK : current.thinkingLevels
+
+  // ── 模型 / 思考档位（两颗 chip + 两张浮层）───────────────────────────────────
+  // 一切判定都走 `./model-picker` 那份纯逻辑：端点分组、当前模型的精确定位、档位清单
+  // （恒含「默认」）都在那里，探针逐条钉着；这里只把结果画出来。
+  const groups = groupModels(models)
+  const provider = useHostSelector(readProvider)
+  const current = findCurrent(groups, provider, model)
+  const chip = modelChipText(groups, provider, model)
+  const twoLevel = shouldShowProviderLevel(groups)
+  /** 左栏选中的端点：没手选过（或它没在了）就落在当前模型所属那个，再退回第一个。 */
+  const activeProvider =
+    groups.find((item) => item.provider === pickedProvider)?.provider ??
+    current.group?.provider ??
+    groups[0]?.provider ??
+    ''
+  const visibleModels = twoLevel
+    ? (groups.find((item) => item.provider === activeProvider)?.models ?? [])
+    : (groups[0]?.models ?? [])
+  // 档位清单：模型查得到就用它声明的（含「默认」），查不到给兜底五档——不锁死用户。
+  const levelOptions = effortChoices(current.entry)
+  const switchEffort = effortSwitchable(levelOptions)
+  const effortText = effortLabel(effort)
+  /**
+   * 展开模型菜单时把当前项滚进视野（照分支菜单同款）。
+   *
+   * 为什么必须有：模型一多，当前那一条可能落在滚动区外面——「打开菜单看得见自己选的是谁」
+   * 正是这次要修的东西，光打勾不够（勾在屏幕外等于没打）。
+   */
+  useEffect(() => {
+    if (!modelOpen) return
+    providerRows.current?.querySelector<HTMLElement>('[data-provider-current="true"]')?.scrollIntoView({ block: 'nearest' })
+    modelRows.current?.querySelector<HTMLElement>('[data-model-current="true"]')?.scrollIntoView({ block: 'nearest' })
+  }, [modelOpen, activeProvider, models.length])
+
+  /** 完整形态的签名：换模型 / 清单变了 / 栏宽变了，都要重新掂一次端点前缀放不放得下。 */
+  const chipMeasureKey = `${chip.full}|${String(models.length)}|${String(barWidth)}`
+
+  /**
+   * 端点前缀放不下就**整段收掉**（对照 ZCode 的 `composer-provider-compact`）。
+   *
+   * 为什么必须有：`.composer-zone` 封顶 `--dsc-thread-max`（76ch ≈ 531px），左组三颗 +
+   * 档位 chip + 发送键之后，留给模型 chip 的只有一百多像素；而 `端点/模型` 两段字按这个
+   * 种子要 224px。硬塞的结果是**两段都被截**——实机走查截出来是 `Dee… deepseek…`，
+   * 等于什么都没说（这恰恰是用户报的那件事）。
+   *
+   * 口径：**模型名是身份，端点是出处**。放不下就只留名字（端点在菜单里带勾、在悬浮说明
+   * 与 `aria-label` 里也有全称）。量的是**完整形态**（前缀还在场时量一次），收掉之后不再
+   * 重量，所以不会来回抖；换模型、清单变了、栏宽变了再给完整形态一次机会。
+   *
+   * 为什么用 `useLayoutEffect` 而不是 `useEffect`：这两条要在**同一帧内**跑完（先归位成
+   * 完整形态、再量一次决定收不收），否则会先画出一帧「两段都截半」的丑样子。
+   * 顺序也重要：**归位那条必须排在测量那条前面**——反过来的话两者会在同一拍里互相覆盖
+   * （先设 true 再被设回 false），实机走查第一版就是这么失效的。
+   */
+  useLayoutEffect(() => {
+    setDropPrefix(false)
+  }, [chipMeasureKey])
+
+  useLayoutEffect(() => {
+    if (dropPrefix) return
+    const node = modelChipRef.current
+    const bar = barRef.current
+    if (node === null || bar === null) return
+    const cut = (selector: string): boolean => {
+      const el = node.querySelector<HTMLElement>(selector)
+      return el !== null && el.scrollWidth > el.clientWidth + 1
+    }
+    // 栏本身溢出了也算「这一行装不下」：那时收掉前缀能实打实腾出几十像素。
+    const tight = cut('.model-name') || cut('.composer-model-provider') || bar.scrollWidth > bar.clientWidth + 1
+    if (tight) setDropPrefix(true)
+  }, [dropPrefix, chipMeasureKey])
+
+  /** 打开设置面板的「模型」分区（菜单底部那一行的落点）。 */
+  const openModelsSettings = (): void => {
+    window.dispatchEvent(new CustomEvent('shell.settings.open', { detail: { section: 'models' } }))
+  }
   const placeholder = blocked
     ? '等待审批…'
     : working
@@ -509,7 +627,8 @@ function ComposerBox(): ReactNode {
                 setBranchOpen((open) => !open)
                 setPermOpen(false)
                 setPresetOpen(false)
-                setPanelOpen(false)
+                setModelOpen(false)
+                setEffortOpen(false)
               }}
             >
               <IconBranch size={13} />
@@ -691,7 +810,7 @@ function ComposerBox(): ReactNode {
           </div>
         ) : null}
 
-        <div className="composer-bar">
+        <div className="composer-bar" ref={barRef}>
           <div className="bar-left">
             {/* 「+」钮（旧界面同款）：正文为空时点击插入 "/"，把用户带到指令清单的门口。 */}
             <button
@@ -726,7 +845,8 @@ function ComposerBox(): ReactNode {
                 onClick={() => {
                   setPermOpen((open) => !open)
                   setPresetOpen(false)
-                  setPanelOpen(false)
+                  setModelOpen(false)
+                  setEffortOpen(false)
                   setBranchOpen(false)
                 }}
               >
@@ -786,7 +906,8 @@ function ComposerBox(): ReactNode {
                 onClick={() => {
                   setPresetOpen((open) => !open)
                   setPermOpen(false)
-                  setPanelOpen(false)
+                  setModelOpen(false)
+                  setEffortOpen(false)
                   setBranchOpen(false)
                 }}
               >
@@ -841,72 +962,115 @@ function ComposerBox(): ReactNode {
           </div>
 
           <div className="bar-right">
+            {/* 模型 chip（对照 ZCode 的模型选择器）：只回答「用哪个模型」，点开是**两级**菜单
+                （一级端点、二级该端点的模型，两级各自给当前项打勾）。思考强度是它右边
+                **另一颗** chip——旧版把两件事塞进同一张浮层，于是「当前选的是哪个模型、
+                哪一档」都得点开才知道（0.6.71 报障）。两颗各带自己的浮层，与另三根旋钮
+                同一套互斥口径（开一根把其余全收掉）。 */}
             <div className="model-anchor">
               <button
                 type="button"
-                className={`model-btn${panelOpen ? ' open' : ''}`}
-                data-tip="模型与思考强度"
+                ref={modelChipRef}
+                className={`model-btn composer-model-chip${modelOpen ? ' open' : ''}`}
+                title={`模型：${chip.full}（点开换）`}
                 aria-haspopup="menu"
-                aria-expanded={panelOpen}
+                aria-expanded={modelOpen}
+                aria-label={`当前模型 ${chip.full}`}
+                data-composer-model={current.entry?.value ?? chip.full}
                 onClick={() => {
-                  setPanelOpen((open) => !open)
+                  setModelOpen((open) => !open)
+                  setEffortOpen(false)
                   setPermOpen(false)
                   setPresetOpen(false)
                   setBranchOpen(false)
                 }}
               >
-                <span className="model-name">{model === '' ? '未知模型' : model}</span>
-                <IconChevronDown size={13} />
+                <IconPackage size={13} />
+                {chip.prefix === '' || dropPrefix ? null : (
+                  <span className="composer-model-provider">{chip.prefix}</span>
+                )}
+                <span className="model-name">{chip.name}</span>
+                <IconChevronDown size={12} />
               </button>
-              {panelOpen ? (
+              {modelOpen ? (
                 <>
                   <div
                     className="pop-mask"
                     onClick={() => {
-                      setPanelOpen(false)
+                      setModelOpen(false)
                     }}
                   />
-                  <div className="model-pop">
+                  <div className="model-pop model-picker" role="menu" aria-label="选择模型">
                     <div className="pop-label">
-                      思考强度
-                      {current === undefined || current.thinkingLevels.length === 0 ? (
-                        <span className="pop-note">这个模型只声明了这些档位</span>
-                      ) : null}
+                      模型
+                      <span className="pop-note">
+                        {models.length === 0 ? '清单没取到' : twoLevel ? `${String(groups.length)} 个端点` : chip.full}
+                      </span>
                     </div>
-                    <div className="effort-row">
-                      {effortLevels.map((level) => (
-                        <button
-                          type="button"
-                          className={`effort-btn${level === effort ? ' on' : ''}`}
-                          key={level}
-                          onClick={() => {
-                            setFault(null)
-                            void channel.invoke('setEffort', [level]).catch((reason: unknown) => {
-                              setFault(reason instanceof Error ? reason.message : String(reason))
-                            })
-                          }}
-                        >
-                          {EFFORT_LABEL[level] ?? level}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="pop-label">模型</div>
-                    <div className="model-list">
-                      {models.length === 0 ? (
-                        <div className="pop-item">
-                          <span className="name">{model === '' ? '清单没取到' : model}</span>
-                        </div>
-                      ) : (
-                        groupByProvider(models).map(([provider, list]) => (
-                          <div key={provider}>
-                            <div className="pop-group">{provider}</div>
-                            {list.map((choice) => (
+                    {/* 当前模型不在清单里时先说清楚（端点配置改过、或这条会话记住的模型下线了）：
+                        否则用户只看到一片「一条都不打勾」的清单，不知道是谁不对。 */}
+                    {current.entry === undefined && model !== '' ? (
+                      <div className="pop-item model-unknown" data-model-unknown="true">
+                        <span className="name">当前：{model} —— 清单里没有这个模型</span>
+                      </div>
+                    ) : null}
+                    <div className={`model-picker-body${twoLevel ? ' two-level' : ''}`}>
+                      {twoLevel ? (
+                        <div className="pop-rail" data-model-rail="" ref={providerRows}>
+                          {groups.map((group) => {
+                            const owns = current.group?.provider === group.provider
+                            const hint = providerHint(group, current)
+                            return (
                               <button
                                 type="button"
-                                className={`pop-item${choice.value === model ? ' on' : ''}`}
-                                key={choice.value}
-                                data-tip={choice.description}
+                                role="menuitem"
+                                aria-current={owns}
+                                key={group.provider}
+                                className={`pop-item rail-item${group.provider === activeProvider ? ' on' : ''}`}
+                                data-model-provider={group.provider}
+                                data-provider-current={owns ? 'true' : undefined}
+                                title={
+                                  hint === ''
+                                    ? `${group.displayName} · ${String(group.models.length)} 个模型`
+                                    : `${group.displayName} · 当前 ${hint}`
+                                }
+                                onMouseEnter={() => {
+                                  setPickedProvider(group.provider)
+                                }}
+                                onFocus={() => {
+                                  setPickedProvider(group.provider)
+                                }}
                                 onClick={() => {
+                                  setPickedProvider(group.provider)
+                                }}
+                              >
+                                <span className="name">{group.displayName}</span>
+                                {owns ? <IconCheck size={13} className="check" /> : null}
+                                <IconChevronRight size={12} className="rail-arrow" />
+                              </button>
+                            )
+                          })}
+                        </div>
+                      ) : null}
+                      <div className="pop-models" data-model-models="" ref={modelRows}>
+                        {visibleModels.length === 0 ? (
+                          <div className="pop-item">
+                            <span className="name">{models.length === 0 ? '清单没取到' : '这个端点还没有模型'}</span>
+                          </div>
+                        ) : (
+                          visibleModels.map((choice) => {
+                            const on = current.entry?.value === choice.value
+                            return (
+                              <button
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={on}
+                                key={choice.value}
+                                className={`pop-item${on ? ' on' : ''}`}
+                                title={choice.description}
+                                data-model-current={on ? 'true' : undefined}
+                                onClick={() => {
+                                  setModelOpen(false)
                                   setFault(null)
                                   void channel.invoke('setModel', [choice.value]).catch((reason: unknown) => {
                                     setFault(reason instanceof Error ? reason.message : String(reason))
@@ -914,20 +1078,109 @@ function ComposerBox(): ReactNode {
                                 }}
                               >
                                 <span className="name">{choice.model}</span>
-                                {choice.modalities.includes('image') ? <span className="pop-badge">图</span> : null}
-                                {choice.modalities.includes('video') ? <span className="pop-badge">视频</span> : null}
-                                <span className="ctx">{Math.round(choice.contextWindow / 1000)}k</span>
-                                {choice.value === model ? <IconCheck size={14} className="check" /> : null}
+                                {modelBadges(choice).map((badge) => (
+                                  <span className="pop-badge" key={badge}>
+                                    {badge}
+                                  </span>
+                                ))}
+                                <span className="ctx">{contextLabel(choice.contextWindow)}</span>
+                                {on ? <IconCheck size={14} className="check" /> : null}
                               </button>
-                            ))}
-                          </div>
-                        ))
-                      )}
+                            )
+                          })
+                        )}
+                      </div>
                     </div>
+                    <button
+                      type="button"
+                      className="pop-item model-manage"
+                      data-model-manage=""
+                      onClick={() => {
+                        setModelOpen(false)
+                        openModelsSettings()
+                      }}
+                    >
+                      <span className="name">管理模型</span>
+                    </button>
                   </div>
                 </>
               ) : null}
             </div>
+
+            {/* 思考档位 chip：读数直接取 `status.effort`（**不依赖模型清单**），所以清单过期
+                也不会显示错。档位清单里恒有「默认」——宿主把它当恒可选的档位，旧版漏了它，
+                于是默认档时四个按钮一个都不亮。单档模型不给浮层、也不给箭头。 */}
+            {switchEffort ? (
+              <div className="model-anchor">
+                <button
+                  type="button"
+                  className={`model-btn composer-effort-chip${effortOpen ? ' open' : ''}`}
+                  title={`思考强度：${effortText}（点开换档）`}
+                  aria-haspopup="menu"
+                  aria-expanded={effortOpen}
+                  aria-label={`当前思考强度 ${effortText}`}
+                  data-composer-effort={effort}
+                  onClick={() => {
+                    setEffortOpen((open) => !open)
+                    setModelOpen(false)
+                    setPermOpen(false)
+                    setPresetOpen(false)
+                    setBranchOpen(false)
+                  }}
+                >
+                  <IconBrain size={13} />
+                  <span className="model-name">{effortText}</span>
+                  <IconChevronDown size={12} />
+                </button>
+                {effortOpen ? (
+                  <>
+                    <div
+                      className="pop-mask"
+                      onClick={() => {
+                        setEffortOpen(false)
+                      }}
+                    />
+                    <div className="model-pop effort-pop" role="menu" aria-label="思考强度">
+                      <div className="pop-label">
+                        思考强度
+                        {current.entry === undefined && model !== '' ? (
+                          <span className="pop-note">模型不在清单里，列的是全部档位</span>
+                        ) : null}
+                      </div>
+                      {levelOptions.map((level) => (
+                        <button
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={level === effort}
+                          key={level}
+                          className={`pop-item${level === effort ? ' on' : ''}`}
+                          data-effort-option={level}
+                          onClick={() => {
+                            setEffortOpen(false)
+                            setFault(null)
+                            void channel.invoke('setEffort', [level]).catch((reason: unknown) => {
+                              setFault(reason instanceof Error ? reason.message : String(reason))
+                            })
+                          }}
+                        >
+                          <span className="name">{effortLabel(level)}</span>
+                          {level === effort ? <IconCheck size={14} className="check" /> : null}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : (
+              <span
+                className="model-btn composer-effort-chip fixed"
+                title={`思考强度：${effortText}（这个模型没有可切换的档位）`}
+                data-composer-effort={effort}
+              >
+                <IconBrain size={13} />
+                <span className="model-name">{effortText}</span>
+              </span>
+            )}
 
             {working ? (
               <button
@@ -965,17 +1218,6 @@ function ComposerBox(): ReactNode {
       {fault === null ? null : <div className="shell-composer-fault">{fault}</div>}
     </div>
   )
-}
-
-/** 模型清单按端点分组（面板里同厂商排在一起，与旧界面一致）。 */
-function groupByProvider(models: readonly ModelChoiceView[]): Array<[string, ModelChoiceView[]]> {
-  const groups = new Map<string, ModelChoiceView[]>()
-  for (const choice of models) {
-    const list = groups.get(choice.provider)
-    if (list === undefined) groups.set(choice.provider, [choice])
-    else list.push(choice)
-  }
-  return [...groups.entries()]
 }
 
 /** 排队消息摘要：压成一行、截到 200 字（全文挂在悬浮说明上）。 */
@@ -1268,6 +1510,17 @@ function readModel(snapshot: HostSnapshot | null): string {
   const status = snapshot?.['status']
   if (typeof status !== 'object' || status === null) return ''
   const value = (status as Record<string, unknown>)['model']
+  return typeof value === 'string' ? value : ''
+}
+
+/**
+ * 当前模型所属端点：`status.model` 是**裸名**，光有它分不清同名模型挂在哪个端点下
+ * （清单里 `value` 才是 `端点/模型`）。老快照没有这一项时给空串，界面按「端点未知」处理。
+ */
+function readProvider(snapshot: HostSnapshot | null): string {
+  const status = snapshot?.['status']
+  if (typeof status !== 'object' || status === null) return ''
+  const value = (status as Record<string, unknown>)['provider']
   return typeof value === 'string' ? value : ''
 }
 

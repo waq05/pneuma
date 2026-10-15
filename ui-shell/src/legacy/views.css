@@ -2701,39 +2701,9 @@
   user-select: none;
 }
 
-.effort-row {
-  display: flex;
-  gap: 6px;
-  padding-bottom: 10px;
-  margin-bottom: 8px;
-  border-bottom: 1px solid var(--dsc-stroke-4);
-}
-
-.effort-btn {
-  flex: 1;
-  padding: 6px 0;
-  border-radius: var(--dsc-r-control);
-  border: 1px solid var(--dsc-stroke-2);
-  color: var(--dsc-text-secondary);
-  font-size: var(--dsc-fs-caption);
-  /* 指名要过渡的属性，不用 transition: all：全量过渡会把 border-color 之外的
-     布局属性也拖进动画，浮层里连点几档时会看到文字跟着抖。 */
-  transition:
-    background var(--dsc-dur) var(--dsc-ease),
-    border-color var(--dsc-dur) var(--dsc-ease),
-    color var(--dsc-dur) var(--dsc-ease);
-}
-
-.effort-btn:hover {
-  background: var(--dsc-row-hover-bg);
-  color: var(--dsc-text-primary);
-}
-
-.effort-btn.on {
-  border-color: var(--dsc-accent);
-  background: var(--dsc-fill-secondary);
-  color: var(--dsc-accent-text);
-}
+/* `.effort-row` / `.effort-btn`（一排档位按钮）随 0.6.71 的模型菜单改版一起删了：
+   档位现在是输入区**另一颗 chip** + 一张菜单（`.effort-chip` / `.model-pop.effort-pop`
+   在壳的 `styles.css` 里），不再挤在模型浮层顶上那一排。留着的规则没有对象，是死选择器。 */
 
 .model-list {
   overflow-y: auto;
@@ -9811,7 +9781,6 @@ body.resizing iframe {
 .step-fold-leading {
   display: inline-flex;
   flex: none;
-}
   place-items: center;
 }
 

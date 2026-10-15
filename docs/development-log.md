@@ -6739,3 +6739,70 @@ Tailwind 的 `h-8 rounded-lg`；dsh 的模型行是 grid 不是 flex。只看截
 ③ **状态色是贵重的**（绿/黄/红在这一页表示密钥与删除），给装饰用的头像配名色时要先把状态色排除，
 否则"绿头像 + 绿点"会被读成同一句话。
 ④ **CRLF 仓里的跨行文本钉必须容忍 `\r\n`**：新探针第一版三条断言假红全是因为这个（`{\n  …` 写死了 `\n`）。裁一次 `flat(text)` 就完了。
+
+## 第三十五批：输入区模型 / 思考档位拆两颗 chip + 模型菜单改两级（2026-10-15，未发版）
+
+用户原话：「当前项目的模型选择框把思考等级和模型放到一起了，同时看不出来当前选的是哪个模型和
+思考强度。可以参考图二 zcode 的展示逻辑」，给了两张截图（当时的合并浮层 + ZCode 输入区那两颗钮）。
+详细版在 `docs/ui-model-picker.md`（含三处缺陷的根因行号、宽度账、走查配方）。
+
+### ① 底下的三处真缺陷（这才是「看不出」的原因）
+
+- **档位清单漏了「默认」**：宿主把 `default` 当恒可选档位（`core/model-caps.ts:179` 的
+  `hasEffortLevel`、`ui-methods.ts:252` 的 `setEffort` 枚举），旧版模型查得到时只列
+  `thinkingLevels` 四档 → 出厂态 `effort === 'default'` 时**四个按钮一个都不亮**，选完也回不去。
+- **打勾基本不出现**：判据 `choice.value === model`，而 `status.model` 是**裸名**、`value` 才是
+  `端点/模型`（`transcript.ts:255` ↔ `llm.ts` 的 listModels）→ 一条勾都不会有；同一个 id 挂两个
+  端点时更分不清是哪一条。
+- **清单只在挂载时取一次**（旧注释还写着「静态数据」）：设置里改过端点后面板还是旧的，当前模型
+  不在清单里时界面一个字都不交代。
+
+### ② 形态（照 ZCode 的展示逻辑）
+
+底栏两颗 chip：模型 chip 画 `端点显示名/模型名`、档位 chip 画当前档位（读数取 `status.effort`，
+不依赖清单）。模型菜单两级：左栏端点（当前那个带勾 + 尾注）、右栏该端点的模型（名字 + 图/视频徽标 +
+`1000k` + 当前项勾），打开时滚进视野，底部「管理模型」→ `shell.settings.open{section:'models'}`；
+单端点不摆左栏。档位菜单 = `默认` + 该模型声明的档位，**单档/无档位模型退化成不可点的 `<span>`**。
+当前模型不在清单里时给一条说明行，且每次展开重取 `listModels`。
+
+### ③ 判定抽成零依赖纯模块
+
+新 `ui-shell/src/plugins/composer/model-picker.ts`（只 `import type`）：`groupModels` / `findCurrent`
+（端点+裸名 → value 全等 → 裸名，带 `exact`）/ `modelChipText` / `effortChoices`（恒含 default）/
+`effortSwitchable` / `modelBadges` / `contextLabel` / `providerHint` / `filterModels`。
+抽出来的理由写在文件头：①② 能在代码里活这么久，就是因为它们原地长在 `.tsx` 里、探针够不着。
+
+### ④ 宽度账（本批真正的难点）
+
+`.composer-zone` 封顶 `--dsc-thread-max`（76ch，与窗口宽无关），实测 `.composer-bar` 只有
+**531px**：左组三颗 214 + 档位 chip 77 + 发送 34 + 四个 gap 之后，**模型 chip 只剩约 174px**，
+而 `DeepSeek/deepseek-v4.1-flash` 要 224px。第一版 `max-width: 150px` 让 flex 把两段各截一半
+（实机截图 `Dee… deepseek…`，反例图留在 `desktop/shots/mp-0-*.png`）。定稿：**放不下就把端点前缀
+整段收掉**（ZCode 的 provider-compact 同款），前缀 `flex: none` 绝不半截；量法用两条
+`useLayoutEffect` + 一个 `ResizeObserver`（**归位那条必须排在测量那条前面**，否则同一拍互相覆盖——
+第一版就这么静默失效）。另给 `.bar-left/.bar-right` 补 `min-width: 0`、`.model-btn` 补
+`nowrap + overflow: hidden`：挤不下时截字而不是横向溢出。
+
+### ⑤ 宿主三处加法（不动口径、不加方法）
+
+`StatusView.provider?`（裸名 vs 端点的分工写在契约注释里）、`ModelChoiceView.providerDisplayName`，
+产地分别在 `transcript.ts`（`ctx.llm.provider`）与 `llm.ts`（空串回落端点名）。界面通道白名单没动。
+
+### ⑥ 探针与证据
+
+新探针 `scripts/ui-model-picker-test.mjs`（**84 条**：纯逻辑六段 + 接线钉 + 宿主产地 + 样式门 +
+负向自证；档位文案与宿主 `THINKING_LEVEL_LABELS` **真读对账**）。**两次外部负向验证**：
+`effortChoices` 去掉 default → 恰好 4 条红；`findCurrent` 端点分支改坏 → 恰好 2 条红。
+**全量无头电池 70/70**。实机走查（隔离 HOME 三端点：同名模型挂两端点 / 两档模型 / 无档位模型）
+逐条读回执：`data-composer-model` 带端点、档位菜单 `默认(on)/关/低/高/最大`、切到 command 后同名
+模型 `data-model-current = null`、两档模型菜单只有 `默认/关/高`、无档位模型 `effortTag = SPAN`、
+390px 下 `scrollWidth === clientWidth`。截图 `desktop/shots/mp-*.png`（gitignored）。
+
+### 边界
+
+① 未发版未提交（版本仍 0.6.67、壳契约 1.2.0）；**冻结的旧渲染层 `desktop/src/renderer/Composer.tsx`
+那份同款合并浮层没动**（「旧桌面版不动」是既有拍板），桌面旧界面仍是老样子。
+② ZCode 的档位进度小条与 `Ctrl+M`/`Ctrl+T` 热键不做。
+③ 本批提交时主工作树有并发会话的半成品（壳的 `/` 命令菜单 / 侧栏页脚，落在 `contract.ts` /
+`composer/ui.tsx` / `styles.css` / `development-log.md` 同一批文件里）——本批只提交自己的 hunk，
+对方那些留着未暂存。

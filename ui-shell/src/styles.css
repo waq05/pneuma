@@ -307,13 +307,133 @@
   padding: 0 10px;
 }
 
-/* ── 模型那一格：2026-10-15 模型页改成「左端点 + 右详情」两栏之后，模型不再是 chip
-   而是一行（`.model-item`，几何写在 `legacy/views.css` 的模型分区里）。这里原来那条
-   「28 高、圆角 8 的 `.model-chip`」覆盖没有对象了，删掉；档位按钮照旧。 */
-.effort-btn {
-  border-radius: 8px;
-  min-height: 28px;
-  padding: 0;
+/* ── 输入区的模型 / 思考档位两颗 chip（0.6.71 起，对照 ZCode composer 的一颗模型 +
+   一颗档位）。旧版是一颗 chip 带一张合并浮层，这一版拆成两颗各管一件事：
+   模型 chip 画 `端点显示名/模型名`，档位 chip 画当前档位（读数取 `status.effort`）。
+
+   宽度是硬约束（不是审美）：`.composer-zone` 子节点封顶 `--dsc-thread-max`（76ch），
+   左组三颗 + 档位 chip + 发送键之后，留给模型 chip 的只有一百多像素；`flex-wrap` 那条
+   （≤560px）在这一档够不着，挤不下就是**横向溢出**，把整行顶出正文列。所以：
+   两颗 chip 都可收（`.bar-right` 给了 `min-width: 0`），端点前缀**要么整段在、要么整段收**
+   ——实机走查截出来 `Dee… deepseek…` 那种两段都截半的形态等于什么都没说，
+   收不收由壳量一次决定（见 `composer/ui.tsx` 的 dropPrefix）。 */
+.model-btn {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.model-btn.composer-model-chip {
+  /* 上限按「端点 + 模型名」放得下的量给（两端都完整约 224px）。 */
+  max-width: 224px;
+  min-width: 0;
+}
+
+/* 两颗 chip 上的读数（模型名 / 档位名）比 chip 整体亮一档：它们是「现在是什么」，
+   而 chip 的底色文字级别（tertiary）是给「可点的东西」用的。悬停时整体升到 primary。 */
+.composer-model-chip .model-name,
+.composer-effort-chip .model-name {
+  color: var(--dsc-text-secondary);
+}
+
+/* 端点前缀：弱一档的颜色，**不参与收缩**（要收就整段收掉，不留半截「Dee…」）。 */
+.composer-model-provider {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+}
+
+/* 档位 chip 不收缩：它只有两个字 + 一颗图标，收了就什么都看不见了。 */
+.composer-effort-chip {
+  flex: none;
+}
+
+/* 单档 / 无档位模型：这是个 `<span>` 不是钮（没有可点的东西就别长成能点的样子）。 */
+.composer-effort-chip.fixed {
+  cursor: default;
+}
+
+.bar-left,
+.bar-right {
+  min-width: 0;
+}
+
+/* ── 模型菜单：两级（左栏端点、右栏该端点的模型）。旧版是一层平铺、按端点加组标题，
+   模型一多就不知道当前选的是哪一条（0.6.71 报障）。宽度按内容给（比 320px 那张宽），
+   手机上收在视口里——浮层右缘对齐那颗 chip，所以宽度上限取 `100vw - 32px` 就够。 */
+.model-pop.model-picker {
+  width: min(520px, calc(100vw - 32px));
+}
+
+/* 档位菜单：一列档位（恒含「默认」），比模型菜单窄得多。 */
+.model-pop.effort-pop {
+  width: 200px;
+}
+
+.model-picker-body {
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  min-height: 0;
+}
+
+/* 左栏：端点。右栏与它之间那条竖线只在两级都出现时画（单端点时右栏就是唯一的一栏）。 */
+.pop-rail {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  width: 136px;
+}
+
+.model-picker-body.two-level .pop-models {
+  border-left: 1px solid var(--dsc-stroke-4);
+  padding-left: 8px;
+}
+
+.pop-models {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.rail-item .name {
+  flex: 1;
+  min-width: 0;
+}
+
+.rail-item .rail-arrow {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+}
+
+/* 左栏当前选中的端点：底色（右栏那一条才是「当前模型」，用勾 + 强调色区分两者）。 */
+.rail-item.on {
+  background: var(--dsc-row-hover-bg);
+}
+
+.rail-item.on .name {
+  color: var(--dsc-text-primary);
+}
+
+/* 当前模型不在清单里那条说明：一句话，要能折行（模型名可能很长）。 */
+.model-unknown {
+  color: var(--dsc-text-tertiary);
+  white-space: normal;
+}
+
+/* 底部固定的「管理模型」：与上面那张清单分开，点它去设置 → 模型。 */
+.model-manage {
+  border-top: 1px solid var(--dsc-stroke-4);
+  color: var(--dsc-text-tertiary);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.model-manage:hover .name {
+  color: var(--dsc-text-primary);
 }
 
 /* ── 发送键：34 正圆（legacy 的 `.send-btn` 已经在读 `--dsc-send`，令牌改了就够，
@@ -800,6 +920,15 @@
     min-width: 0;
     overflow: hidden;
     white-space: nowrap;
+  }
+  /* 手机上收掉端点前缀：390px 里「端点/模型」两段字轮流被截，结果两段都读不全；
+     模型名是主信息，前缀悬停（`title`）看得到——与 ZCode 在窄容器里藏 provider 前缀同款。 */
+  .composer-model-provider {
+    display: none;
+  }
+  /* 两颗 chip 的那张两级菜单在手机上把宽度吃满视口，左栏再窄一点。 */
+  .pop-rail {
+    width: 112px;
   }
   /* 只有鼠标才有意义的两个东西：状态栏那几张悬浮卡（悬停才亮，272px 宽）与正文列
      两侧的拖宽把手（摆在列缘外 24px）。手机上点不到，却照样参与横向溢出——
