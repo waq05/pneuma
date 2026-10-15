@@ -486,7 +486,7 @@ export const computerUsePlugin: Plugin.Object = {
       disposers.push(ctx.prompt.register('computer-use', promptText))
     }
     syncTools()
-    // 旧截图的图像卸载交给内核通用的 image-diet 投影（plugins/prompt.ts，order 700）：
+    // 旧截图的图像卸载交给内核通用的 image-diet 投影（plugins/prompt.ts，order 550）：
     // 它按 toolImageBudget 保留最近 N 张工具结果图，电脑控制的截图与别的工具结果同一口径。
     // 这里原有一条 `prune-stale-screenshots`（只留最新一张截图），与通用规则重叠——两条一起
     // 跑会把「最近 2 张」削成「只剩 1 张」，所以不再登记（2026-10-15，WS2）。

@@ -164,8 +164,12 @@ export const promptPlugin: Plugin.Object = {
     // 用户图与工具图各按预算保留，更早回合的图全卸载；卸载只把 image_url 部件换成一句占位，
     // **不删消息、不改 role 序列**（删一条工具结果就会留下孤儿调用，端点直接 400）。
     // 与 drop-images（900，能力门：模型根本不收图时全剥）职责分开，所以排在它前面。
+    //
+    // 排在 env-facts（600）**之前**：env-facts 会往末尾追加一条 user 环境快照，而本投影
+    // 按「最近几个用户回合」决定哪些图还留着——若落在它之后，那条合成快照会白占一格，
+    // keepRounds 的口径就比字面保守一格（更早的图被多卸一轮）。先卸图、再补快照，口径才对得上。
     projections.set('image-diet', {
-      order: 700,
+      order: 550,
       fn: (messages) => {
         // 现读配置：设置分区保存后下一轮就生效，不必重启宿主（照 readBudget 的做法）。
         const config = readImageDietConfig(resolvePluginConfig(IMAGE_DIET_CONFIG_KEY))

@@ -80,9 +80,12 @@ export const microcompactPlugin: Plugin.Object = {
       'microcompact',
       (messages: ChatMessage[]): ChatMessage[] => {
         if (!config.enabled) return messages
-        // 失败/被拒的 tool_call_id 记在会话旁路（Session.toolErrors）、不在协议消息里；
-        // 投影拿不到「本次请求所属会话」，按当前查看的会话取——工具调用 id 全局唯一，
-        // 取错会话顶多漏保护一条失败结果，不会误清。
+        // 失败/被拒的 tool_call_id 记在会话旁路（Session.toolErrors）、不在协议消息里。
+        // ⚠ 已知限制：投影函数拿不到「本次请求所属会话」，只能用当前查看的会话——常驻多
+        // agent 下后台会话在跑、用户正看着另一个会话时会取错，那条失败结果就拿不到保护、
+        // 可能被当普通旧结果清掉（是「会误清」，只是限于失败结果这一条证据）。同一模式在
+        // hooks / lsp 的投影里也有。根治要把会话线程进投影签名 `fn(messages, session)`，
+        // 属内核 API 变更，留给后续单独做，本批不动。
         return microcompact(messages, {
           keepRecent: config.keepRecent,
           minSaveTokens: config.minSaveTokens,

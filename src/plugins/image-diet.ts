@@ -1,7 +1,7 @@
 /**
  * image-diet 插件：把「每轮图片按龄卸载」的三个预算 + 总开关交给设置界面。
  *
- * 卸载本体是一条内置投影（`image-diet`，order 700，登记在 plugins/prompt.ts 的投影链里，
+ * 卸载本体是一条内置投影（`image-diet`，order 550，登记在 plugins/prompt.ts 的投影链里，
  * 与 `fold-system` / `env-facts` / `drop-images` 同一条管道）；这里只负责它的配置界面：
  * 用户图留几张、工具结果图留几张、保留最近几个回合、以及总开关。
  * 配置落在 `~/.dsc/plugins.json` 里 `file: 'image-diet'` 这一项的 `config` 下，
