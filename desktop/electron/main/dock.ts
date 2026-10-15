@@ -195,6 +195,20 @@ export function setDockBrowser(
     if (guest !== undefined) detach(guest, win)
     return true
   }
+  // 摆到窗口之外要留一行账：Chromium 会把窗口外那台视图的视口**塌成 0×0**
+  // （页面 `document.hidden` 变 true、`elementFromPoint` 恒 null），于是点击落在空处、
+  // 截图一片空白，而壳那边只看得到自己的 DOM 占位区——现象是「点了没反应」，成因在几何。
+  // 实测踩过一次：侧栏从右缘滑入的过渡里 `getBoundingClientRect()` 带着 transform，
+  // 报出来的矩形整块在窗口外（窗口 1440 宽、报 1861）。壳那边已经改成「等落定再报」，
+  // 这行是它没兜住时的现场证据。
+  const content = win.getContentBounds()
+  if (rect.x >= content.width || rect.y >= content.height || rect.x + rect.width <= 0 || rect.y + rect.height <= 0) {
+    process.stderr.write(
+      `[dock] 视图 ${id} 被摆到窗口之外（rect ${String(Math.round(rect.x))},${String(Math.round(rect.y))} ` +
+        `${String(Math.round(rect.width))}x${String(Math.round(rect.height))}，窗口内容区 ${String(content.width)}x${String(content.height)}）：` +
+        '它的视口会塌成 0，点击与截图都会失效\n',
+    )
+  }
   const target = guest ?? guestFor(id, initialUrl)
   if (!target.attached) {
     // 新挂上去的排在最上：分栏时两台北视图各占各的矩形，不重叠

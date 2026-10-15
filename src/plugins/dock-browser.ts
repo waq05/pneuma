@@ -83,6 +83,15 @@ const DEFAULTS: DockBrowserConfig = {
   waitTimeoutMs: 5000,
 }
 
+/**
+ * `open` 等这一页进到目标地址的上限。
+ *
+ * 为什么单独一个常量、而不是复用 `DOCK_CALL_TIMEOUT_MS`：那一条是**单条 CDP 命令**的预算
+ * （桌面侧按条掐），这里等的是「壳把页签建出来 → 壳自己发起 load → 文档就绪」这一段
+ * 跨进程的过程，比一条命令长得多，但也不能长到把一次工具调用拖死。
+ */
+const OPEN_SETTLE_MS = 8_000
+
 /** 没有桌面壳时给模型看的那句话（不抛栈，也不静默什么都不做）。 */
 const NO_SHELL_MESSAGE =
   '宿主里没有桌面壳，这条能力要在桌面端窗口里用：侧栏浏览器由桌面主进程提供（TUI / 无头 / 远程壳里拿不到它）。'
@@ -402,6 +411,28 @@ export const dockBrowserPlugin: Plugin.Object = {
       }
     }
 
+    /**
+     * 等这一页真的进到要打开的地址（有界，等不到也返回）。
+     *
+     * 为什么 `open` 必须等：壳那条路是「先建视图、再由壳自己去 load」——`link.open()` 返回时
+     * 页面往往还没开始加载，模型紧接着 snapshot 会读到一棵空树（实测：可交互元素 0 个），
+     * 于是以为页面是空的。这与 ZCode「goto 之后显式等 domcontentloaded」是同一件事，
+     * 只是替模型做了。等不到就不算错误：把当下地址照实报回去。
+     */
+    const waitForDockPage = async (page: CdpCommandTarget, wanted: string, timeoutMs: number): Promise<string> => {
+      const deadline = Date.now() + timeoutMs
+      const same = (left: string, right: string): boolean =>
+        left.replace(/\/+$/, '') === right.replace(/\/+$/, '') || left.startsWith(right)
+      let seen = ''
+      for (;;) {
+        const state = await actions.readDocumentState(page).catch(() => null)
+        seen = state === null ? seen : state.url
+        if (seen !== '' && seen !== 'about:blank' && same(seen, wanted)) return seen
+        if (Date.now() >= deadline) return seen
+        await new Promise((resolve) => setTimeout(resolve, 150))
+      }
+    }
+
     /** 要一个 viewId 参数（动作层用它指名一台视图）。 */
     const requireViewId = (args: Record<string, unknown>): string => {
       const viewId = String(args.viewId ?? '').trim()
@@ -633,11 +664,15 @@ export const dockBrowserPlugin: Plugin.Object = {
         }
         const opened = await link.open(url)
         // 用桌面侧发号的 viewId 建状态：后续动作都指名这一台。
-        session(link, opened.viewId)
+        const fresh = session(link, opened.viewId)
+        await ensureDomains(fresh.state, fresh.page, false)
+        // 等这一页真的进到请求的地址（见 waitForDockPage）：不等的话紧接着的 snapshot 会读到空树。
+        const landed = await waitForDockPage(fresh.page, url, OPEN_SETTLE_MS)
+        const where = landed === '' || landed === 'about:blank' ? '（页面还没开始加载）' : `页面落在 ${neutralizeInline(landed, 300)}`
         return report(
-          `已让桌面壳开出一张页签${opened.attached ? '并聚焦' : '（但还没挂到窗口上：侧栏可能收着）'}，` +
+          `已让桌面壳开出一张页签${opened.attached ? '并聚焦' : '（但还没挂到窗口上：侧栏可能收着）'}，${where}。` +
             `这是 agent 自己开的视图（id 前缀 agent-）。下面用 viewId=${opened.viewId} 指它。`,
-          { action: 'open', viewId: opened.viewId, url: neutralizeInline(opened.url, 300), attached: opened.attached, agentView: isAgentView(opened.viewId), reused: false },
+          { action: 'open', viewId: opened.viewId, url: neutralizeInline(landed === '' ? opened.url : landed, 300), attached: opened.attached, agentView: isAgentView(opened.viewId), reused: false },
         )
       }
 

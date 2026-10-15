@@ -262,13 +262,15 @@ export async function waitForClickPoint(page: CdpCommandTarget, ref: SnapshotRef
   let lastProblem = '还没等到元素出现'
   for (;;) {
     signal?.throwIfAborted()
-    let model: { content?: number[] } | null = null
+    let model: { model?: { content?: number[] } } | null = null
     try {
-      model = await page.send<{ content?: number[] }>('DOM.getBoxModel', { backendNodeId: ref.backendNodeId })
+      // 注意 `DOM.getBoxModel` 的应答是**两层**：`{ model: { content: [...] } }`。写成
+      // `send<{content?}>` 再读 `.content` 会永远拿到 undefined，然后安静地等到超时。
+      model = await page.send<{ model?: { content?: number[] } }>('DOM.getBoxModel', { backendNodeId: ref.backendNodeId })
     } catch (error) {
       lastProblem = error instanceof Error ? error.message : String(error)
     }
-    const content = model?.content
+    const content = model?.model?.content
     if (content !== undefined && content.length >= 8) {
       const points = quadToPoints(content)
       if (quadArea(points) > 0) {
@@ -395,12 +397,14 @@ export async function pressKey(page: CdpCommandTarget, key: string, ref?: Snapsh
 /** 选择下拉项（按 value 或可见文本匹配，大小写与首尾空白都忽略）。 */
 export async function selectRef(page: CdpCommandTarget, ref: SnapshotRef, values: readonly string[]): Promise<{ selected: string[] }> {
   await verifyRef(page, ref)
-  const resolved = await page.send<{ objectId?: string }>('DOM.resolveNode', { backendNodeId: ref.backendNodeId })
-  if (typeof resolved.objectId !== 'string') throw new Error(`ref「${ref.ref}」拿不到页面里的对象句柄，可能已经不是元素了`)
+  // 同 `getBoxModel`：`DOM.resolveNode` 的应答也是两层——`{ object: { objectId } }`。
+  const resolved = await page.send<{ object?: { objectId?: string } }>('DOM.resolveNode', { backendNodeId: ref.backendNodeId })
+  const objectId = resolved.object?.objectId
+  if (typeof objectId !== 'string') throw new Error(`ref「${ref.ref}」拿不到页面里的对象句柄，可能已经不是元素了`)
   const response = await page.send<{ result?: { value?: unknown }; exceptionDetails?: { text?: string } }>(
     'Runtime.callFunctionOn',
     {
-      objectId: resolved.objectId,
+      objectId,
       functionDeclaration: `function (wanted) {
         if (typeof this.options === 'undefined') return null;
         const wantedList = wanted.map((v) => String(v).trim().toLowerCase());
@@ -705,8 +709,8 @@ async function ensureInViewport(page: CdpCommandTarget, backendNodeId: number, p
 /** 直接取 box model 的中心（不滚动、不等待）。 */
 async function boxCenter(page: CdpCommandTarget, backendNodeId: number): Promise<PointResult | null> {
   try {
-    const model = await page.send<{ content?: number[] }>('DOM.getBoxModel', { backendNodeId })
-    const content = model.content
+    const model = await page.send<{ model?: { content?: number[] } }>('DOM.getBoxModel', { backendNodeId })
+    const content = model.model?.content
     if (content === undefined || content.length < 8) return null
     const center = quadCenter(quadToPoints(content))
     return { x: Math.round(center.x), y: Math.round(center.y) }
