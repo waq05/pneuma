@@ -16,13 +16,18 @@
  *      只留 `Page.handleJavaScriptDialog` 能过——所以对话框必须在超时后自动放掉，
  *      否则一次 `alert()` 就能把整条自动化卡死（策略与计时在插件层）。
  *
+ * 形参一律收 {@link CdpCommandTarget} 而不是 `CdpSessionView`：后者是 WebSocket 连接上的
+ * 一个 session，而 dock 视图（侧栏那台浏览器）没有 WebSocket——它由 `createDockSession`
+ * 包成同样形状。放宽成结构类型后，两条后端共用这一份动作逻辑，`CdpSessionView` 仍然满足它，
+ * 调用方一行不用改。
+ *
  * @module dsc/core/cdp/actions
  */
 import { existsSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import type { AxNode, SnapshotRef } from './snapshot.js'
 import { refRecordMatches } from './snapshot.js'
-import type { CdpSessionView, CdpTransport } from './transport.js'
+import type { CdpCommandTarget, CdpTransport } from './transport.js'
 
 /** 页面上一次动作的战果（插件拿它拼给人看的摘要与结构化 JSON）。 */
 export interface PointResult {
@@ -215,7 +220,7 @@ const TRIM_TAIL = /["'`<>)\],;]+$/
  *
  * 抛错信息统一成「页面已变，请重新 snapshot」，模型照做即可自愈。
  */
-export async function verifyRef(page: CdpSessionView, ref: SnapshotRef): Promise<void> {
+export async function verifyRef(page: CdpCommandTarget, ref: SnapshotRef): Promise<void> {
   const stale = (): Error =>
     new Error(
       `ref「${ref.ref}」对应的元素已经变了（${ref.role}${ref.name === '' ? '' : ` "${ref.name}"`} 不在原处或已换名）：` +
@@ -252,7 +257,7 @@ export async function verifyRef(page: CdpSessionView, ref: SnapshotRef): Promise
  * 没做 Playwright 那套（元素在两次测量之间是否稳定、中心点命中测试是否落在自己身上、
  * 上方有没有别的东西挡住）。所以点完必须再看一眼页面，别假设一定生效。
  */
-export async function waitForClickPoint(page: CdpSessionView, ref: SnapshotRef, timeoutMs: number, signal?: AbortSignal): Promise<PointResult> {
+export async function waitForClickPoint(page: CdpCommandTarget, ref: SnapshotRef, timeoutMs: number, signal?: AbortSignal): Promise<PointResult> {
   const deadline = Date.now() + Math.max(0, timeoutMs)
   let lastProblem = '还没等到元素出现'
   for (;;) {
@@ -296,7 +301,7 @@ export interface ClickOutcome extends PointResult {
 
 /** 点击（moved → pressed → released；双击发两轮，第二轮 clickCount=2）。 */
 export async function clickRef(
-  page: CdpSessionView,
+  page: CdpCommandTarget,
   ref: SnapshotRef,
   options: ClickOptions = {},
   signal?: AbortSignal,
@@ -332,7 +337,7 @@ export async function clickRef(
 }
 
 /** 悬停（只发 mouseMoved，不按）。 */
-export async function hoverRef(page: CdpSessionView, ref: SnapshotRef, timeoutMs = 5000, signal?: AbortSignal): Promise<PointResult> {
+export async function hoverRef(page: CdpCommandTarget, ref: SnapshotRef, timeoutMs = 5000, signal?: AbortSignal): Promise<PointResult> {
   await verifyRef(page, ref)
   const point = await waitForClickPoint(page, ref, timeoutMs, signal)
   await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y, button: 'none', buttons: 0 })
@@ -341,7 +346,7 @@ export async function hoverRef(page: CdpSessionView, ref: SnapshotRef, timeoutMs
 
 /** 往元素里输入文本（`DOM.focus` + `Input.insertText`，中文与特殊字符都过）。 */
 export async function typeIntoRef(
-  page: CdpSessionView,
+  page: CdpCommandTarget,
   ref: SnapshotRef,
   text: string,
   options: TypeOptions = {},
@@ -366,7 +371,7 @@ export async function typeIntoRef(
 }
 
 /** 按键（可先聚焦某个 ref）。 */
-export async function pressKey(page: CdpSessionView, key: string, ref?: SnapshotRef): Promise<KeyStroke> {
+export async function pressKey(page: CdpCommandTarget, key: string, ref?: SnapshotRef): Promise<KeyStroke> {
   const stroke = resolveKey(key)
   if (ref !== undefined) await page.send('DOM.focus', { backendNodeId: ref.backendNodeId })
   const base: Record<string, unknown> = {
@@ -388,7 +393,7 @@ export async function pressKey(page: CdpSessionView, key: string, ref?: Snapshot
 }
 
 /** 选择下拉项（按 value 或可见文本匹配，大小写与首尾空白都忽略）。 */
-export async function selectRef(page: CdpSessionView, ref: SnapshotRef, values: readonly string[]): Promise<{ selected: string[] }> {
+export async function selectRef(page: CdpCommandTarget, ref: SnapshotRef, values: readonly string[]): Promise<{ selected: string[] }> {
   await verifyRef(page, ref)
   const resolved = await page.send<{ objectId?: string }>('DOM.resolveNode', { backendNodeId: ref.backendNodeId })
   if (typeof resolved.objectId !== 'string') throw new Error(`ref「${ref.ref}」拿不到页面里的对象句柄，可能已经不是元素了`)
@@ -436,7 +441,7 @@ export interface ScrollOptions {
 }
 
 /** 滚动：方向上用鼠标滚轮事件（跟真人一样会触发 scroll 与懒加载），top/bottom 直接用 scrollTo。 */
-export async function scrollPage(page: CdpSessionView, options: ScrollOptions = {}, signal?: AbortSignal): Promise<PointResult & { deltaX: number; deltaY: number }> {
+export async function scrollPage(page: CdpCommandTarget, options: ScrollOptions = {}, signal?: AbortSignal): Promise<PointResult & { deltaX: number; deltaY: number }> {
   const direction = options.direction ?? 'down'
   if (direction === 'top' || direction === 'bottom') {
     const target = direction === 'top' ? '0' : 'Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)'
@@ -472,7 +477,7 @@ export async function scrollPage(page: CdpSessionView, options: ScrollOptions = 
 
 /** 一次填多个字段（先把所有 ref 复核完再动手，避免填一半才发现有个 ref 过期）。 */
 export async function fillForm(
-  page: CdpSessionView,
+  page: CdpCommandTarget,
   entries: ReadonlyArray<{ ref: SnapshotRef; value: string }>,
   options: { clear?: boolean } = {},
 ): Promise<{ filled: number; fields: string[] }> {
@@ -501,7 +506,7 @@ export interface EvaluateOutcome {
  * `returnByValue: true` 让普通值直接回来；对象拿不到值就用 `description` 兜底（形如 `Object`）。
  * 结果一律 JSON 化再截断：页面可能返回整个 DOM，全文塞回模型就是白烧上下文。
  */
-export async function evaluateInPage(page: CdpSessionView, expression: string, timeoutMs = 15_000): Promise<EvaluateOutcome> {
+export async function evaluateInPage(page: CdpCommandTarget, expression: string, timeoutMs = 15_000): Promise<EvaluateOutcome> {
   const response = await page.send<{
     result?: { value?: unknown; description?: string; type?: string }
     exceptionDetails?: { text?: string; exception?: { description?: string } }
@@ -526,7 +531,7 @@ export async function evaluateInPage(page: CdpSessionView, expression: string, t
 }
 
 /** 给文件输入框塞本机文件。 */
-export async function uploadFiles(page: CdpSessionView, ref: SnapshotRef, paths: readonly string[], baseDir: string): Promise<{ files: string[] }> {
+export async function uploadFiles(page: CdpCommandTarget, ref: SnapshotRef, paths: readonly string[], baseDir: string): Promise<{ files: string[] }> {
   if (paths.length === 0) throw new Error('没有给要上传的文件路径')
   const files = paths.map((entry) => {
     const full = isAbsolute(entry) ? entry : resolve(baseDir, entry)
@@ -539,7 +544,7 @@ export async function uploadFiles(page: CdpSessionView, ref: SnapshotRef, paths:
 }
 
 /** 应答（或关掉）JS 对话框。 */
-export async function handleDialog(page: CdpSessionView, options: { accept: boolean; promptText?: string }): Promise<void> {
+export async function handleDialog(page: CdpCommandTarget, options: { accept: boolean; promptText?: string }): Promise<void> {
   await page.send('Page.handleJavaScriptDialog', {
     accept: options.accept,
     ...(options.promptText === undefined ? {} : { promptText: options.promptText }),
@@ -547,7 +552,7 @@ export async function handleDialog(page: CdpSessionView, options: { accept: bool
 }
 
 /** 截图。 */
-export async function captureScreenshot(page: CdpSessionView, fullPage: boolean): Promise<{ base64: string; fullPage: boolean }> {
+export async function captureScreenshot(page: CdpCommandTarget, fullPage: boolean): Promise<{ base64: string; fullPage: boolean }> {
   const shot = await page.send<{ data?: string }>('Page.captureScreenshot', {
     format: 'png',
     ...(fullPage ? { captureBeyondViewport: true } : {}),
@@ -557,7 +562,7 @@ export async function captureScreenshot(page: CdpSessionView, fullPage: boolean)
 }
 
 /** 读页面地址、标题与加载状态。 */
-export async function readDocumentState(page: CdpSessionView): Promise<DocumentState> {
+export async function readDocumentState(page: CdpCommandTarget): Promise<DocumentState> {
   const response = await page.send<{ result?: { value?: unknown } }>('Runtime.evaluate', {
     expression: '({ url: location.href, title: document.title, readyState: document.readyState })',
     returnByValue: true,
@@ -571,7 +576,7 @@ export async function readDocumentState(page: CdpSessionView): Promise<DocumentS
 }
 
 /** 等页面加载完（readyState 到 interactive/complete 就算，别为了一两个慢图片卡死）。 */
-export async function waitForPageLoad(page: CdpSessionView, timeoutMs = 15_000, signal?: AbortSignal): Promise<DocumentState> {
+export async function waitForPageLoad(page: CdpCommandTarget, timeoutMs = 15_000, signal?: AbortSignal): Promise<DocumentState> {
   const deadline = Date.now() + timeoutMs
   let state = await readDocumentState(page)
   while (state.readyState !== 'complete' && state.readyState !== 'interactive') {
@@ -588,7 +593,7 @@ export async function waitForPageLoad(page: CdpSessionView, timeoutMs = 15_000, 
 
 /** 等文本出现或选择器命中（wait_for 用）。 */
 export async function waitForCondition(
-  page: CdpSessionView,
+  page: CdpCommandTarget,
   condition: { text?: string; selector?: string },
   timeoutMs: number,
   signal?: AbortSignal,
@@ -658,14 +663,14 @@ export async function activateTarget(browser: CdpTransport, targetId: string): P
 }
 
 /** 取页面主框架的 frameId（frame 路由要用）。 */
-export async function mainFrameId(page: CdpSessionView): Promise<string> {
+export async function mainFrameId(page: CdpCommandTarget): Promise<string> {
   const tree = await page.send<{ frameTree?: { frame?: { id?: string } } }>('Page.getFrameTree')
   const id = tree.frameTree?.frame?.id
   return typeof id === 'string' ? id : ''
 }
 
 /** 元素是不是禁用了（禁用就别点，点了也不会生效，白白让模型以为成功）。 */
-async function assertEnabled(page: CdpSessionView, ref: SnapshotRef): Promise<void> {
+async function assertEnabled(page: CdpCommandTarget, ref: SnapshotRef): Promise<void> {
   try {
     const partial = await page.send<{ nodes?: AxNode[] }>('Accessibility.getPartialAXTree', {
       backendNodeId: ref.backendNodeId,
@@ -683,7 +688,7 @@ async function assertEnabled(page: CdpSessionView, ref: SnapshotRef): Promise<vo
 }
 
 /** 元素不在视口里就滚进来。返回 false = 滚了还是不在（多半被固定定位挡住或页面不滚）。 */
-async function ensureInViewport(page: CdpSessionView, backendNodeId: number, point: PointResult): Promise<boolean> {
+async function ensureInViewport(page: CdpCommandTarget, backendNodeId: number, point: PointResult): Promise<boolean> {
   const metrics = await page.send<{ cssLayoutViewport?: { clientWidth?: number; clientHeight?: number } }>('Page.getLayoutMetrics')
   const width = metrics.cssLayoutViewport?.clientWidth ?? 0
   const height = metrics.cssLayoutViewport?.clientHeight ?? 0
@@ -698,7 +703,7 @@ async function ensureInViewport(page: CdpSessionView, backendNodeId: number, poi
 }
 
 /** 直接取 box model 的中心（不滚动、不等待）。 */
-async function boxCenter(page: CdpSessionView, backendNodeId: number): Promise<PointResult | null> {
+async function boxCenter(page: CdpCommandTarget, backendNodeId: number): Promise<PointResult | null> {
   try {
     const model = await page.send<{ content?: number[] }>('DOM.getBoxModel', { backendNodeId })
     const content = model.content

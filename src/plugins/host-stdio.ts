@@ -9,13 +9,31 @@
  *   - **parentPort**：Electron utilityProcess 拉起时进程带 `process.parentPort`，
  *     消息经结构化克隆直传（无序列化）。
  *
- * 消息（runtime→host）：hello（握手）、result（应答）、snapshot（80ms 节流全量）。
- * 消息（host→runtime）：invoke（调用 DscRuntime 方法）、exit（收尾并退进程）。
+ * 消息（runtime→host）：hello（握手）、result（应答）、snapshot（80ms 节流全量），
+ *   以及 dock 浏览器链路那四条请求 browser-call / browser-open / browser-close / browser-views。
+ * 消息（host→runtime）：invoke（调用 DscRuntime 方法）、exit（收尾并退进程），
+ *   以及那四条请求的应答 browser-result 与 CDP 事件推送 browser-event。
+ *
+ * dock 浏览器链路（协议 3）：本文件既是那四条请求的**发送方**，也是
+ * {@link HostBrowserLink} 的实现方（经 `ctx.provide(HOST_BROWSER_SERVICE, link)` 给工具面用）。
+ * 与上面的 invoke/result 是**反方向**（runtime 请求、host 应答），所以用独立的自增号与
+ * 自己的 pending 表记账，两个方向的 id 互不干扰。
  *
  * @module dsc/plugins/host-stdio
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import { errText } from '../adapter/transcript.js'
+import type { CdpCommandTarget } from '../core/cdp/transport.js'
+import type { DockBrowserReply } from '../core/dock-browser.js'
+import {
+  DOCK_CALL_TIMEOUT_MS,
+  DOCK_OPEN_TIMEOUT_MS,
+  HOST_PROTOCOL_VERSION,
+} from '../core/dock-browser.js'
+import type { DockBrowserEventPush, DockBrowserRequest, DockViewInfo } from '../core/dock-browser.js'
+import { createDockSession } from '../core/dock-session.js'
+import { DockBrowserUnavailableError, HOST_BROWSER_SERVICE } from '../core/host-browser-link.js'
+import type { DockOpenResult, HostBrowserLink } from '../core/host-browser-link.js'
 import { isInvokableMethod } from '../core/host-methods.js'
 import { resolvePluginConfig } from '../core/plugin-registry.js'
 import type { RuntimeSnapshot } from '../contract.js'
@@ -38,14 +56,24 @@ function readThrottle(passed: unknown): number {
   return Math.min(Math.max(Math.round(num), 16), 1_000)
 }
 
-/** 协议版本（破坏性变更时递增，宿主据此拒绝）。 */
-export const HOST_PROTOCOL_VERSION = 2
+/**
+ * 协议版本（破坏性变更时递增，宿主据此拒绝）。
+ *
+ * 权威定义在 `src/core/dock-browser.ts`（本文件与桌面壳两侧 import 同一份，值 3 起）。
+ * 这里**保留同名导出**：别处（握手、测试）一直从本模块 import 它，改成从 core 取值的
+ * 同时不能把旧入口弄断。
+ */
+export { HOST_PROTOCOL_VERSION }
 
 // ── 消息类型 ──────────────────────────────────────────────────────────────────
 
 export type HostToRuntimeMessage =
   | { type: 'invoke'; id: number; method: string; args?: unknown[] }
   | { type: 'exit' }
+  /** dock 浏览器链路那四条请求的应答（形态见契约 `DockBrowserReply`）。 */
+  | DockBrowserReply
+  /** dock 浏览器的 CDP 事件推送（形态见契约 `DockBrowserEventPush`）。 */
+  | DockBrowserEventPush
 
 export type RuntimeToHostMessage =
   | { type: 'hello'; protocolVersion: number }
@@ -61,10 +89,19 @@ export type RuntimeToHostMessage =
    * `url` 带一次性令牌（换 Cookie 用一次就作废），`origin` 是换完 Cookie 之后的根地址。
    */
   | { type: 'ui-url'; url: string; origin: string }
+  /** dock 浏览器链路那四条请求（形态见契约 `DockBrowserRequest`，一字不差复用）。 */
+  | DockBrowserRequest
 
 // ── 传输抽象 ──────────────────────────────────────────────────────────────────
 
 interface Transport {
+  /**
+   * 传输形态。`parentPort` 才可能接到桌面主进程——这是 `HostBrowserLink.available()` 的
+   * **唯一**判据：Electron utilityProcess 拉起时进程带 `process.parentPort`，另一头就是
+   * 桌面壳；stdio 传输（`node lib/headless.js` 手测 / TUI / 远程壳）那头是管道或远端，
+   * 永远不会有桌面主进程来答 browser-* 请求。不靠 window/electron 猜：宿主进程里没有那些东西。
+   */
+  readonly kind: 'parentPort' | 'stdio'
   /** 发送一条 runtime→host 消息。 */
   send(message: RuntimeToHostMessage): void
   /** 收到 host→runtime 消息。 */
@@ -88,6 +125,7 @@ function pickTransport(): Transport {
   const port = (process as typeof process & { parentPort?: ParentPortLike }).parentPort
   if (port !== undefined) {
     return {
+      kind: 'parentPort',
       send: (message) => port.postMessage(message),
       onMessage: (handler) => {
         port.on('message', (event) => {
@@ -142,6 +180,7 @@ function stdioTransport(): Transport {
   process.stdin.on('end', onEnd)
   process.stdin.on('close', onEnd)
   return {
+    kind: 'stdio',
     send: (message) => writeRef.write(message),
     onMessage: (next) => {
       handler = next
@@ -202,16 +241,155 @@ export const hostStdioPlugin: Plugin.Object = {
       }
     }
 
+    // ---- dock 浏览器链路（协议 3）----
+    // 本侧是那四条请求的**发送方**：桌面壳在协议另一头，把每条命令交给侧栏视图上挂着的
+    // `webContents.debugger` 执行。与上面的 invoke/result 反方向，所以这里另立一份待办表
+    // （自己的自增号），两条 id 空间互不干扰——同一个 nextId 记两个方向，排查时说清哪条是谁的会很费劲。
+    let nextBrowserId = 1
+    interface BrowserPending {
+      what: string
+      timer: ReturnType<typeof setTimeout>
+      /** 结账：从待办表摘掉、清掉超时，再兑现或拒绝。 */
+      settle: (error: Error | null, value?: unknown) => void
+    }
+    const browserPending = new Map<number, BrowserPending>()
+
+    // 本侧的事件订阅者（`HostBrowserLink.onEvent`）：桌面壳推来的 CDP 事件在这里分发给它们。
+    const browserEventHandlers = new Set<(event: DockBrowserEventPush) => void>()
+
+    /**
+     * 发一条 browser-* 请求并等桌面壳的应答。
+     *
+     * **每条都带超时**：宿主不答（窗口关了、视图没了、桌面侧卡住）就 reject 一句人话，
+     * 绝不静默挂着——挂着的 Promise 会把整次工具调用拖到用户看到「卡住了」。
+     */
+    const requestBrowser = <T>(build: (id: number) => RuntimeToHostMessage, what: string, timeoutMs: number): Promise<T> => {
+      const id = nextBrowserId
+      nextBrowserId += 1
+      return new Promise<T>((resolve, reject) => {
+        const settle = (error: Error | null, value?: unknown): void => {
+          const entry = browserPending.get(id)
+          if (entry === undefined) return // 已经结过账（超时后迟到的应答）：丢掉
+          browserPending.delete(id)
+          clearTimeout(entry.timer)
+          if (error === null) resolve(value as T)
+          else reject(error)
+        }
+        const timer = setTimeout(() => {
+          settle(new Error(`${what} 超时（${timeoutMs}ms）：桌面壳没有应答。侧栏窗口可能已关闭，或这一台视图已经不在了。`))
+        }, timeoutMs)
+        browserPending.set(id, { what, timer, settle })
+        try {
+          transport.send(build(id))
+        } catch (error) {
+          settle(new Error(`${what} 发不出去：${errText(error)}`))
+        }
+      })
+    }
+
+    /**
+     * 这条链现在通不通——判据只认传输形态（见 {@link Transport.kind}）。
+     *
+     * 无法从宿主进程知道窗口有没有被关；「没有桌面壳」与「桌面壳没响应」是两回事：
+     * 前者立刻抛 {@link DockBrowserUnavailableError}，后者才走超时。
+     */
+    const dockAvailable = (): boolean => transport.kind === 'parentPort'
+
+    /** 不可用时的统一拒绝：立刻抛，不等超时（等超时会把「没有桌面壳」报成「没响应」）。 */
+    const requireHost = (): void => {
+      if (!dockAvailable()) {
+        throw new DockBrowserUnavailableError('宿主里没有桌面壳：当前进程不是桌面端拉起的 utilityProcess，浏览器控制链没有接上')
+      }
+    }
+
+    const browserViews = async (): Promise<DockViewInfo[]> => {
+      requireHost()
+      return requestBrowser<DockViewInfo[]>((id) => ({ type: 'browser-views', id }), 'browser-views', DOCK_CALL_TIMEOUT_MS)
+    }
+
+    const browserOpen = async (url: string, viewId?: string): Promise<DockOpenResult> => {
+      requireHost()
+      // 开页签要等壳把页签建出来、把原生视图挂上，用契约里为它单列的超时（比通用预算短）。
+      return requestBrowser<DockOpenResult>(
+        (id) => ({ type: 'browser-open', id, url, ...(viewId === undefined ? {} : { viewId }) }),
+        'browser-open',
+        DOCK_OPEN_TIMEOUT_MS,
+      )
+    }
+
+    const browserClose = async (viewId: string): Promise<void> => {
+      requireHost()
+      await requestBrowser<unknown>((id) => ({ type: 'browser-close', id, viewId }), 'browser-close', DOCK_CALL_TIMEOUT_MS)
+    }
+
+    const browserCall = async <T = unknown>(viewId: string, method: string, params?: Record<string, unknown>): Promise<T> => {
+      requireHost()
+      return requestBrowser<T>(
+        (id) => ({ type: 'browser-call', id, viewId, method, ...(params === undefined ? {} : { params }) }),
+        `browser-call（${method}）`,
+        DOCK_CALL_TIMEOUT_MS,
+      )
+    }
+
+    const onBrowserEvent = (handler: (event: DockBrowserEventPush) => void): (() => void) => {
+      browserEventHandlers.add(handler)
+      return () => {
+        browserEventHandlers.delete(handler)
+      }
+    }
+
+    // 门面：工具插件经 `ctx.get(HOST_BROWSER_SERVICE)` 取它。方法都写成闭包（不用 `this`），
+    // 这样消费方解构出来单独调用也不会散架。
+    const link: HostBrowserLink = {
+      available: dockAvailable,
+      views: browserViews,
+      open: browserOpen,
+      close: browserClose,
+      call: browserCall,
+      onEvent: onBrowserEvent,
+      // 把视图包成 CDP 会话：纯工厂，让 `src/core/cdp/` 那套快照/动作直接吃 CdpCommandTarget。
+      session: (viewId: string): CdpCommandTarget => createDockSession(link, viewId),
+    }
+    // 服务先挂上：晚一步工具面就可能读到 undefined。
+    const offBrowser = ctx.provide(HOST_BROWSER_SERVICE, link)
+
     transport.onMessage((message) => {
       if (message.type === 'exit') {
         runtime.exit()
         return
       }
-      if (message.type === 'invoke') void invoke(message.id, message.method, message.args ?? [])
+      if (message.type === 'invoke') {
+        void invoke(message.id, message.method, message.args ?? [])
+        return
+      }
+      if (message.type === 'browser-result') {
+        // 按 id 兑现本侧挂着的请求；ok 为假时 error 是桌面侧给的一句人话。
+        const pending = browserPending.get(message.id)
+        if (pending === undefined) return // 超时后迟到的应答：丢掉
+        if (message.ok) pending.settle(null, message.value)
+        else pending.settle(new Error(message.error))
+        return
+      }
+      if (message.type === 'browser-event') {
+        // 转给本侧订阅者；单个订阅者出错不掀翻别的订阅者。
+        for (const handler of [...browserEventHandlers]) {
+          try {
+            handler(message)
+          } catch {
+            // 订阅者自己炸了只丢这一条
+          }
+        }
+      }
     })
 
     ctx.on('dsc/exit', () => {
+      // 进程要退了：把还挂着等桌面壳应答的请求全部拒掉，别留下悬着的 Promise。
+      // 桌面壳不会再有机会回这些 id（它那边也在收尾），照「正在退出」说明白。
+      for (const pending of [...browserPending.values()]) {
+        pending.settle(new Error(`宿主正在退出，${pending.what} 没有拿到应答`))
+      }
       unsubscribe()
+      offBrowser()
       offInteractive()
       if (timer !== null) clearTimeout(timer)
       transport.dispose()
