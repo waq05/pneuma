@@ -1,0 +1,79 @@
+<!doctype html>
+<!--
+  README 顶部横幅的源文件。改完重新渲染（不要手改 PNG）：
+
+    "/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" --headless=new \
+      --disable-gpu --hide-scrollbars --user-data-dir=<临时目录> \
+      --window-size=1120,560 --force-device-scale-factor=2 \
+      --screenshot=<出图.png> file:///D:/dsc/docs/assets/readme/banner.src.html
+
+  出来的是一张 2240×1120 的图：上半浅色、下半深色两版。用
+  desktop/scripts/crop-shot.mjs 上下对半分裁，挑一版改名 banner.png，另一版删掉。
+  「浅色 + multiply」「深色 + invert&screen」是为了让图标那张白底水墨不被画成白方块。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Pneuma 横幅</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    width: 960px;
+    font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .band {
+    width: 960px;
+    height: 240px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 40px;
+  }
+  .band.light { background: #fbfaf8; }
+  .band.dark { background: #0f1013; }
+
+  .art { width: 140px; height: 140px; flex: none; }
+  .art img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    /* 图标自己就在下巴那儿切断了，给个底部淡出，别看着像裁歪了 */
+    mask-image: linear-gradient(to bottom, #000 66%, transparent 100%);
+  }
+  /* 图标是白底无透明通道：浅色档用 multiply 把白底吃掉，深色档反相后 screen */
+  .light .art img { mix-blend-mode: multiply; }
+  .dark .art img { filter: invert(1) contrast(1.08); mix-blend-mode: screen; }
+
+  .word { font-family: Georgia, "Times New Roman", serif; font-size: 64px; font-weight: 700; letter-spacing: 1px; line-height: 1; }
+  .sub { margin-top: 13px; font-size: 20px; letter-spacing: 0.5px; }
+  .note { margin-top: 8px; font-size: 15px; letter-spacing: 1.6px; }
+  .light .word { color: #16161a; }
+  .light .sub { color: #4b4b55; }
+  .light .note { color: #8a8a94; }
+  .dark .word { color: #f4f4f6; }
+  .dark .sub { color: #a8a8b2; }
+  .dark .note { color: #6c6c78; }
+</style>
+</head>
+<body>
+  <div class="band light">
+    <div class="art"><img src="../../../desktop/build/icon.png" alt=""></div>
+    <div>
+      <div class="word">Pneuma</div>
+      <div class="sub">独立终端 AI harness</div>
+      <div class="note">终端 TUI · 桌面端 · 手机遥控</div>
+    </div>
+  </div>
+  <div class="band dark">
+    <div class="art"><img src="../../../desktop/build/icon.png" alt=""></div>
+    <div>
+      <div class="word">Pneuma</div>
+      <div class="sub">独立终端 AI harness</div>
+      <div class="note">终端 TUI · 桌面端 · 手机遥控</div>
+    </div>
+  </div>
+</body>
+</html>
