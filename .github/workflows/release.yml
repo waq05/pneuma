@@ -71,11 +71,19 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - name: 构建内核（prepare-runtime 要吃根包 lib）
+      - name: 构建内核与前端产物（prepare-runtime 吃根 lib；缺壳产物 app 会回落旧渲染层）
         shell: bash
         run: |
           pnpm install --frozen-lockfile
           pnpm build
+          # 三个前端产物各在自己的 pnpm 项目里（本仓没有 workspace 定义，三份独立锁文件）：
+          # 壳 → lib/ui/assets + lib/ui/plugins（桌面与手机页都是它）；经典远程页 → lib/remote/assets。
+          # 2026-10-15 第一次发 0.7.0 时这两条漏了——包里没有壳产物，app 静默回落到旧渲染层
+          # （冒烟截图里是「会话用量」的旧界面才发现）。
+          pnpm -C ui-shell install --frozen-lockfile
+          pnpm build:ui
+          pnpm -C remote-web install --frozen-lockfile
+          pnpm -C remote-web build
       - name: 打包安装器（nsis + portable）
         working-directory: desktop
         shell: bash
