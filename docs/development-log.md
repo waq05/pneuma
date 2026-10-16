@@ -7208,3 +7208,14 @@ tag / 根 / desktop 三方对账）。版本号由用户拍板——v0.6.67 之�
 修法＝CI 的打包步骤在 electron-builder 之前显式 `node node_modules/electron/install.js`
 （GitHub 托管的 runner 直连自家发布页没问题；本机已有 dist 时该脚本 `isInstalled()` 命中、秒退）。
 tag `v0.7.0` 随之移到修复后的提交——发布还没被消费（Release 没建成），移动无影响。
+
+**冒烟测试又抓出一个更隐蔽的（同日）**：把 GitHub 上的便携版拉下来在隔离环境跑，
+自检截图里出现的却是**旧渲染层**的界面（页脚「会话用量」——`desktop/src/renderer/Sidebar.tsx` 才有这句），
+不是这轮做的插件壳。根因＝**release.yml 从来没编过前端产物**：CI 只跑根 `pnpm build`（tsc → `lib/`），
+`lib/ui/assets` 与 `lib/ui/plugins` 从没在 CI 上生成过，`prepare-runtime` 拷进包的 `lib/` 里没有壳产物，
+`uiProfile()` 就按设计**静默回落** legacy（`DEFAULT_UI_PROFILE = 'shell'` 只在产物存在时生效）。
+所以 0.7.0 首批安装器里装的其实是旧界面（npm 包不受影响——它是本机带 `build:ui` 的产物、壳在包里）。
+修法＝CI 的构建步骤按仓里口径补齐：`pnpm -C ui-shell install` + `pnpm build:ui` +
+`pnpm -C remote-web install` + `pnpm -C remote-web build`（三个前端各是独立 pnpm 项目）。
+教训：**「回落」类设计要有一条「产物在场」的验收断言**——电池里那些壳探针跑的是源码/本机产物，
+CI 的打包面上没人问过「壳在不在包里」。tag `v0.7.0` 第二次移动，CI 重建并覆盖 Release 资产。
