@@ -180,26 +180,6 @@ cd desktop && pnpm dev           # 桌面端（先把上面两条 build 跑过�
 
 桌面端的进程分层、宿主 ⇄ 壳协议与打包流程见 [desktop/README.md](desktop/README.md)。
 
-## 文档
-
-| 文档 | 讲什么 |
-| --- | --- |
-| [docs/development.md](docs/development.md) | 开发手册：运行时结构、三条启动链路、进程间协议、`~/.dsc` 数据面、扩展点清单、自检与打包、代码约定、排错与关键数值 |
-| [docs/development-log.md](docs/development-log.md) | 开发记录：各阶段引入了什么、决策台账、真 bug 台账、还欠什么 |
-| [docs/plugin-development.md](docs/plugin-development.md) | 插件 API 与开发规范（规格书：全表签名、dsh 兼容层、界面插件契约） |
-| [docs/writing-plugins.md](docs/writing-plugins.md) | 写一个插件：选形态、跑通最小链路、扩展点速查、交付自检 |
-| [docs/presets.md](docs/presets.md) | **模式（Agent 预设）**：模式文件怎么写、出厂四个各是什么、可去掉哪些提示段、四条硬规矩 |
-| [docs/ui-design.md](docs/ui-design.md) | 界面开发规范：设计原则、令牌体系、原语层、布局与反馈、键盘与动效、主题引擎对照 |
-
-其余文档按用途分三类：
-
-**活参考与现状说明**：[docs/harness-benchmark-roadmap.md](docs/harness-benchmark-roadmap.md)（对标差距与路线图）、[docs/peer-feature-inventory.md](docs/peer-feature-inventory.md)（三家功能面清单）、[docs/remote-tunnel.md](docs/remote-tunnel.md)（遥控端口走隧道）、[docs/ui-shell-parity-audit.md](docs/ui-shell-parity-audit.md)（界面壳 vs 旧桌面版逐项对照）、[docs/ui-model-picker.md](docs/ui-model-picker.md)（输入区模型与档位选择）
-
-**已完成的历史计划与施工书**：[docs/context-token-plan.md](docs/context-token-plan.md)（上下文与 token 优化）、[docs/dock-browser-control.md](docs/dock-browser-control.md)（侧栏浏览器控制）、[docs/plugin-runtime-parity-plan.md](docs/plugin-runtime-parity-plan.md)（插件运行时分批与懒物化）、[docs/ui-plugin-parity-plan.md](docs/ui-plugin-parity-plan.md)（桌面界面插件化）、[docs/ui-motion-options.md](docs/ui-motion-options.md)（整轮折叠动效选型）
-
-**外部实现拆解与调查存档**：[docs/codex-request-assembly.md](docs/codex-request-assembly.md)、[docs/dsh-request-assembly.md](docs/dsh-request-assembly.md)、[docs/dsh-plugin-porting.md](docs/dsh-plugin-porting.md)、[docs/opencode-go-session-header.md](docs/opencode-go-session-header.md)
-
-已归档的旧计划在 [docs/archive/](docs/archive/)（会话折叠清单、TUI 适配计划、TUI 视觉对齐计划）。
 
 ## 许可
 
