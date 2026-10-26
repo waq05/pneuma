@@ -119,14 +119,16 @@ Pneuma 有自己的界面插件契约（`plugin.json` + `@dsc/ui` + 槽位 + 平
 > 标记与 dsh 客户端能力在 `2c58a48`；**真第三方包验收**（`dsh-cost-meter` 1.9.41）在 `bdf93ca`，
 > 顺带补了入口解析、两个宿主库垫片、`DSH_HOME` 归一与缺服务诊断。
 >
-> **还欠的四件**（都在日志最后两条里有细节）：
-> 1. **服务适配器**：判定表里 16 条 `adapted` 只有判定、没有实现，所以挂得上的 dsh 插件
->    一调服务就露馅——`dsh-cost-meter` 的成本条就是这么没数的（缺 `sessionPersistence`
->    与会话历史）。这是让「装得上」变成「真能用」的唯一一条路。
-> 2. **桌面端端到端**：卡片、成本条这类界面效果只在合成断言与代码路径上验过，没有一次
->    真插件在桌面应用里的截图。
-> 3. **组合包的独立一档**：现在只有徽标，卸载要回命令行。
-> 4. **三个自检脚本还在 `shots/`**（gitignore），换台机器就没了。
+> **当时还欠的四件，2026-10-26 已清三件**：
+> 1. **服务适配器**——仍未做。判定表里 `adapted` 那些只有判定、没有实现，所以挂得上的 dsh
+>    插件一调服务就露馅（`dsh-cost-meter` 的成本条就是这么没数的：缺 `sessionPersistence`
+>    与会话历史）。**卡点与做法单独写了一份**：[dsh-service-bridge-plan.md](dsh-service-bridge-plan.md)
+>    （为什么不是一批能做完、只读子集怎么切、拿真包怎么验收）。
+> 2. **桌面端端到端**——已做：`examples/plugins/dsh-style-clock.js` 的 `dsh_write_note` 真的
+>    画出 diff 卡，`scripts/ui-dsh-card-e2e.mjs` 真机跑一轮并留
+>    `desktop/shots/dsh-diff-card.png`。
+> 3. **组合包的独立一档**——已做：那一组行上有包版本、来源 profile、停用状态。
+> 4. **三个自检脚本在 `shots/`（gitignore）**——已做：搬进 `scripts/`，加 `pnpm run check:dsh`。
 
 ### 阶段 A：工具值契约（建议先做，1 批）
 

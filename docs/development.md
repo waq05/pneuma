@@ -309,7 +309,9 @@ lib/ui/plugins/
 
 **已知边界**：包能挂上、能在插件中心认出来源，但 `dsh-cost-meter` 的成本条不会真有数——
 它靠 `sessionPersistence` + `sessions` 读会话历史算成本，这两个服务 Pneuma 没有（见
-`service-map.ts`）。那是下一步「服务适配器」的活，不是安装链路的问题。
+`service-map.ts`）。这属于「服务适配器」的活，不是安装链路的问题：**形状差异、只读子集
+怎么切、拿真包怎么验收，写在 [dsh-service-bridge-plan.md](dsh-service-bridge-plan.md)** 里
+（2026-10-26 记，仍未开工）。想先看用量，走设置里的「用量统计」或状态栏读数。
 
 ## 5. 契约层与进程间协议
 

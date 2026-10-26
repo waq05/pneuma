@@ -8655,3 +8655,19 @@ Electron 开到 390×844 加载带令牌的地址，读页内账本并截图。�
 删掉——两份同名脚本早晚会漂。
 
 验证：`pnpm run check:dsh` 34/0、15/0、10/0。
+**服务桥的卡点写清楚了（2026-10-26）**：
+
+`dsh-cost-meter` 的成本条没数，根因是缺 `sessionPersistence` + `sessions` 两个服务。
+这一条今天**没有做**，但把「为什么不是一批能做完」查清了，单独写成
+[dsh-service-bridge-plan.md](dsh-service-bridge-plan.md)：
+
+- dsh 那边是事件溯源（header + 带 seq 的事件 + 读/写句柄 + revision + 迁移状态），
+  Pneuma 是「一行一个 user/assistant/tool」的扁平 jsonl，且 token 用量另落
+  `~/.dsc/usage/usage.jsonl`——算账要的数据有，但是散在两处、形状不同；
+- 写侧**无法诚实实现**：dsh 的 `create`/`append` 要写所有权，Pneuma 的会话写入由内核独占，
+  给插件开写口等于两套写者改同一份会话记录；
+- 没有真包就没有验收对象（包是 200+ 文件、不在仓库里），只做合成探针只能证明「我们自洽」。
+
+做法分三步写在文档里：读侧最小面（list/stat/open/read，行号当 seq，usage 由 usage.jsonl
+合成）、sessions 注册表、最后必须用真包验收。计划文档里那一行也从「还欠四件」改成
+「四件清了三件，服务适配器仍未做」。
