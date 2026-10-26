@@ -1430,8 +1430,10 @@ export function discoverPackageUiArtifacts(
       disabled.push(name) // 停用不是问题，是用户的开关；但要能报「它被停用了」
       continue
     }
-    const api = judged.api ?? ''
-    const path = judged.path ?? ''
+    // 判定通过时这两项必有值（judgePackageClient 的契约）；这里只是把类型收窄。
+    if (judged.api === undefined || judged.path === null) continue
+    const api = judged.api
+    const path = judged.path
     const rev = contentRev(bytes)
     const row: PackageUiEntry = {
       id: name,
