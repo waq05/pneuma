@@ -8200,3 +8200,60 @@ fiber 状态映射成诊断行，要么维持现状。其余 18 条切过去的�
 这样这段目前还没有真实使用者的代码，至少假设是被钉住的（现有 19 条插件里没有服务名 inject）。
 
 **验证**：`DSC_CORDIS_DIAG=1 node scripts/ui-cordis-test.mjs` 共 31 条断言全 PASS，界面与上一批一致。
+
+**对齐 dsh 的四批（2026-10-26，A/B/C 已做，D1 与插件中心留后）**：
+
+用户说「全都要做」，于是把差距表里剩下的能力按四批推进。每批都带自检、每批单独提交。
+
+**批 A：工具值契约与卡片数据**（`63accf6`）。dsh 的 ToolDefinition 有三样东西我们原先丢掉：
+`output.schema`（规范值契约）、`presentCall`/`presentResult`（卡片视图）、`exec` 的执行身份。
+现在：
+
+- 声明了 `output.schema` 就校验返回值，不合 schema 抛中文错（dsh 抛 ToolArgsError）。校验器
+  手写，只实现 dsh 用到的关键字；不引 zod/schema 库。
+- 卡片按六种 `card` 标签原样落盘：新增 `tool/presentation` 事件 + `Session.presentations`
+  旁路（与 `fileChanges` 同一条路），界面认 diff 卡并用 `diffLines` 折成 hunks，接进现有的
+  「这次改动」那一块；其余四种回落通用卡。
+- `presentationMeta` 也落盘（dsh 靠它重放时重建卡片）。
+- `exec`：`agent` 从 dsc 的 `caller` 折出来（主会话是 lead），`token` 合成（不是授权凭据），
+  `deferContext`/`concludeTurn` 降级成空操作并告警一次——dsc 没有这两条通道，装作有更糟。
+- `isConcurrencySafe` 透传（只认明确 true，抛错当独占），`timeoutMs` 记到 `ToolEntry`。
+
+自检从 15 条扩到 29 条（值契约、卡片三视图、exec 面、并发标记、schema 违例报错）。
+
+**批 B：组合包安装**（`48fa86b`）。dsh 的安装单位是 bundle + profile + pnpm，落成三个新模块：
+
+- `plugin-patch.ts`：照 dsh 的 `applyEntryPatches` 逐条实现（id 定位、insert 进 group、name
+  核对、逐键覆盖且 `config` 整块替换）。**`!!js` 一律拒绝**——dsh 会求值，那等于让插件包在
+  宿主进程里执行任意表达式，我们抛错并说明理由，不静默跳过。
+- `plugin-bundle.ts`：读 `dsh.bundle.patch`、读 profile 的 `dsh.profile.bundles` 与自己的
+  `cordis.patch.yml`、`engines.dsh` 版本闸。闸比的是 **dsh 契约版本 0.2.1** 而不是 Pneuma 的
+  0.7.x——两条版本线本来就不是一回事。豁免登记在 `compatibility.json`。
+- `plugin-loader.ts`：`activeProfileDir()` + `mountBundlePlugins()`；没配 profile 的启动路径
+  一个字节都不变（这条专门写了断言）。
+- `numa plugin add/remove/list`：转 pnpm，先把要跑的命令与 profile 路径打给用户看；失败给人话
+  （没装 pnpm / 包名错 / 网络）。装完重读 pnpm 改过的 package.json 再合并，不覆盖它的写入。
+
+自检 `shots/dsh-bundle-check.mjs` 9 条：insert 的行真的加载、后层能改到前层 insert 的行、
+版本不符的包被拦下、`!!js` 被拒、没配 profile 时不加载。
+
+**批 C：服务判定表**（`3704a63`）。原先拒绝 dsh 插件只有一句「超出兼容层支持范围」。现在按
+dsh 源码逐条核对出 29 行判定表：同名同义（tools/commands/approval/skills）、有对应但语义不同
+（sessions→session、agents→agent、systemPrompt→prompt、sandbox、goals…）、Pneuma 没有
+（sessionProjections、jobs、storage、fs、shell、terminal…）。拒绝文案因此变成「
+sessionProjections（Pneuma 没有事件投影系统）；sessions（dsh 是多会话注册表，Pneuma 只有
+当前会话）」这种能照着改的话。
+
+**没做的，以及为什么**：
+
+1. **D1（dsh 客户端插件）**：只做了「装配层对齐」（前面的 cordis 三批），dsh 的 `dsh.client`
+   契约没接。真要接是在页面里跑一份 dsh 客户端运行时，与 Pneuma 更严的信任模型冲突，
+   不是技术做不到，是要先改信任模型。
+2. **插件中心的「组合包」一档**：数据齐了（`plugin list` 能读），但界面那一档要改插件中心
+   页面 + 截图自检，属于独立一批。
+3. **C4 真实第三方插件验收**：现在用 5 个合成插件覆盖（能挂、缺服务、卡片、schema 违例、
+   !!js），真从 npm 装一个第三方 dsh 插件还没试过——这条要联网装包，且要挑一个已知能用
+   dsh 0.2.x 契约的包。
+
+**门禁**：根与壳 typecheck 通过；`pnpm run build` 通过；`shots/dsh-compat-check.mjs` 29/0；
+`shots/dsh-bundle-check.mjs` 9/0；`scripts/ui-transcript-render-test.mjs` 93/93。

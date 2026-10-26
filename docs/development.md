@@ -207,6 +207,39 @@ export const myPlugin: Plugin.Object = {
 验证：`node scripts/ui-cordis-test.mjs`（真 Electron + 真宿主 + 一轮换装，31 条断言）。
 要连诊断区一起量：`DSC_CORDIS_DIAG=1 node scripts/ui-cordis-test.mjs`。
 
+### dsh 组合包怎么装（2026-10-26 起）
+
+dsh 的安装单位不是文件，是「bundle + profile + pnpm」：
+
+```
+~/.dsc/profiles/<名字>/
+  package.json        # { "dsh": { "profile": { "bundles": ["包名", ...] } } }
+  cordis.patch.yml    # 这一层自己的 patch（可选）
+  compatibility.json  # 版本闸豁免（可选）
+  node_modules/       # pnpm 装的包
+```
+
+一个包的 `package.json` 用 `dsh.bundle.patch` 指向自己的 patch 文件。patch 是 YAML 数组，
+**按行 id 定位**：`{ id, config }` 改某一行的配置（整块替换，不深合并），`{ insert: [...] }`
+往某个 group 里插行，`{ id, name }` 顺带核对名字防改错行。层序是 profile 里 `bundles` 的顺序，
+后面的层盖前面的（同一层内部也是后盖前）。
+
+装卸只有一条入口：
+
+```sh
+numa plugin add <包名|tarball|本地路径> [--profile 名字]
+numa plugin remove <包名> [--profile 名字]
+numa plugin list [--profile 名字]
+```
+
+版本闸比的是 **dsh 的插件契约版本**（`DSH_CONTRACT_VERSION = 0.2.1`），不是 Pneuma 自己的
+0.7.x：包的 `engines.dsh` 或 `@deepseek-ai/dsh*` 的 peer 范围不满足就不装，除非在
+`compatibility.json` 里登记豁免。
+
+编码上的落点：`src/core/plugin-patch.ts`（层算法）、`src/core/plugin-bundle.ts`（读包与版本闸）、
+`src/core/plugin-loader.ts` 的 `mountBundlePlugins`、`src/tools/plugin-cli.ts`（CLI）。
+没配 profile 的用户启动路径完全不变（`activeProfileDir()` 返回 null 就整条路径不碰）。
+
 ## 5. 契约层与进程间协议
 
 `src/contract.ts` 定义 `DscRuntime`：TUI 与桌面端消费同一接口，桌面端经协议转接。
