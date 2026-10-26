@@ -1,4 +1,5 @@
 # 上下文与 token 优化技术书（0.6.68 批）
+> 状态：已完成（0.6.68 批，六条线全部落地：microcompact / image-diet / env 缓存位 / request-invariant / 压缩后回插 read-state / 子代理 env + todo 提醒）。§5 验收清单里的复选框是写作时留下的，未回勾。
 
 2026-10-15。对标 codex / dsh(deepseek-harness) / ZCode 三家 agent loop 的请求组装，补 dsc
 （Pneuma）在 **省 token** 与 **能力** 两块上的缺口。本文是施工契约：六条并行线各自的
@@ -337,14 +338,14 @@ dsc 目前只有 `sanitizeToolOrphans`（孤儿那半边，且已接 notice）�
 
 ## 5. 验收清单（Definition of Done）
 
-- [ ] WS1 微压缩：投影接线、配置可调、探针 ≥15 绿、幂等、负向验证
-- [ ] WS2 图片按龄卸载：通用覆盖、role 序列不变、探针 ≥12 绿、负向验证
-- [ ] WS3 env 变化才发 + cache 能力位（**DeepSeek 零漂移**）+ 预算口径，探针 ≥12 绿
-- [ ] WS4 invariant：零误报、抓住非纯/篡改、探针 ≥12 绿、不阻断
-- [ ] WS5 压缩 read-state：探针 ≥12 绿、幂等
-- [ ] WS6 子代理 env/model + todo 节流提醒（默认关），探针 ≥18 绿
-- [ ] 全量电池绿；`pnpm typecheck` 绿
-- [ ] 每条线的负向验证记录（主控抽查一条）
+- [x] WS1 微压缩：投影接线、配置可调、探针 ≥15 绿、幂等、负向验证
+- [x] WS2 图片按龄卸载：通用覆盖、role 序列不变、探针 ≥12 绿、负向验证
+- [x] WS3 env 变化才发 + cache 能力位（**DeepSeek 零漂移**）+ 预算口径，探针 ≥12 绿
+- [x] WS4 invariant：零误报、抓住非纯/篡改、探针 ≥12 绿、不阻断
+- [x] WS5 压缩 read-state：探针 ≥12 绿、幂等
+- [x] WS6 子代理 env/model + todo 节流提醒（默认关），探针 ≥18 绿
+- [x] 全量电池绿；`pnpm typecheck` 绿
+- [x] 每条线的负向验证记录（主控抽查一条）
 
 ---
 

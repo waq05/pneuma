@@ -450,9 +450,10 @@ async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Pro
   const onOuterAbort = (): void => controller.abort()
   if (request.signal?.aborted === true) controller.abort()
   request.signal?.addEventListener('abort', onOuterAbort, { once: true })
+  const connectTimeoutMs = readTimeoutMs('DSC_LLM_CONNECT_TIMEOUT_MS', CONNECT_TIMEOUT_MS)
   const connectTimer = setTimeout(
-    () => controller.abort(new LlmError(`连接超时（${Math.round(CONNECT_TIMEOUT_MS / 1000)} 秒无响应）`, undefined, true)),
-    CONNECT_TIMEOUT_MS,
+    () => controller.abort(new LlmError(`连接超时（${Math.round(connectTimeoutMs / 1000)} 秒无响应）`, undefined, true)),
+    connectTimeoutMs,
   )
   let response: Response
   try {
@@ -502,7 +503,7 @@ async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Pro
   // 打断时保留已收到的部分内容（半截回复对"取消后接着看"有价值）；
   // 一字节未得的中途取消则照常抛错。
   try {
-    for await (const data of sseData(response.body, STREAM_IDLE_TIMEOUT_MS)) {
+    for await (const data of sseData(response.body, readTimeoutMs('DSC_LLM_STREAM_IDLE_MS', STREAM_IDLE_TIMEOUT_MS))) {
       if (data === '[DONE]') break
       let chunk: {
         choices?: {
@@ -673,6 +674,22 @@ export function applyExplicitCache(messages: unknown[]): unknown[] {
 const CONNECT_TIMEOUT_MS = 30_000
 /** 流空闲超时：这么久一个字节都没到就判服务端挂起（SSE 心跳也是字节，会重置计时）。 */
 const STREAM_IDLE_TIMEOUT_MS = 180_000
+
+/**
+ * 超时可覆盖：`DSC_LLM_CONNECT_TIMEOUT_MS` / `DSC_LLM_STREAM_IDLE_MS`（毫秒）。
+ *
+ * 为什么可配（「子代理很慢」查出来的那笔账）：端点连不上时，默认要等 30 秒 × 3 次重试
+ * ≈ 90 秒，失败才浮到界面上——慢的不是界面，是这个等待。网络差的把他调小（例如 8 秒），
+ * 失败与重试都来得快；内网慢端点可以调大。
+ *
+ * 每次调用现读（不在模块加载时读死）：读一次 `process.env` 是纳秒级，换来「改完环境变量
+ * 不用重启内核」。一律夹在 1 秒 ~ 10 分钟之间——写出离谱的数也不会把端点等死或瞬间全失败。
+ */
+export function readTimeoutMs(name: string, fallback: number): number {
+  const raw = Number(process.env[name] ?? '')
+  if (!Number.isFinite(raw) || raw <= 0) return fallback
+  return Math.min(Math.max(Math.round(raw), 1_000), 600_000)
+}
 
 /** Retry-After 头：秒数或 HTTP 日期；认不出返回 undefined（封顶 2 分钟，防服务端给个大数）。 */
 function retryAfterMs(value: string | null): number | undefined {

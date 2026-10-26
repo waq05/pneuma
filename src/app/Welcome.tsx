@@ -1,18 +1,20 @@
 /**
- * 启动欢迎块（0.6.58 对齐 dsh-TUI LogoV2 的规格）：「MUSE CODE」两行 5 行点阵大字
- * （行色按 品牌蓝→冰蓝→浅冰 渐变）+ `✦ Pneuma vX` 词标 + model/cwd/tips 信息行 +
+ * 启动欢迎块（0.6.58 对齐 dsh-TUI LogoV2 的规格）：「PNEUMA」5 行点阵大字
+ * （行色按 品牌蓝→浅冰 渐变）+ `✦ Pneuma vX` 词标 + model/cwd/tips 信息行 +
  * tagline，**挂在会话流最顶上、随内容从顶上自然滚走**（codex session header /
  * dsh LogoHeader 同构），不是独立路由。
  *
- * 阶梯降级（对齐 dsh splashLayout）：终端行数 ≥ 30 且列数 ≥ 40 → 全块；行数 ≥ 12 →
- * 只留词标+信息行；其余一行式。resume 长会话（条目 ≥ 30）直接不画——再画只是把
- * 历史往下顶。纯展示，信息行的暗淡档让位给正文。
+ * 阶梯降级（对齐 dsh splashLayout）：终端行数 ≥ 30 且列数 ≥ 40 → 全块（大字
+ * 35 列宽，故列数门槛 40）；行数 ≥ 12 → 只留词标+信息行；其余一行式。resume
+ * 长会话（条目 ≥ 30）直接不画——再画只是把历史往下顶。纯展示，信息行的暗淡档
+ * 让位给正文。
  *
  * @module dsc-tui/app/Welcome
  */
 import { Box, Text, useStdout } from 'ink'
 import type { JSX } from 'react'
 import { DSC_VERSION } from '../core/version.js'
+import { KEYS } from './keymap.js'
 import { GAP, PALETTE, TEXT } from './theme.js'
 
 /** 5 行 × 5 列点阵字形（方块字，参照 dsh splashFonts 的 bold 款）。 */
@@ -24,6 +26,9 @@ const GLYPHS: Record<string, string[]> = {
   C: ['█████', '█    ', '█    ', '█    ', '█████'],
   O: ['█████', '█   █', '█   █', '█   █', '█████'],
   D: ['████ ', '█   █', '█   █', '█   █', '████ '],
+  P: ['█████', '█   █', '█████', '█    ', '█    '],
+  N: ['█   █', '██  █', '█ █ █', '█  ██', '█   █'],
+  A: ['█████', '█   █', '█████', '█   █', '█   █'],
   ' ': ['   ', '   ', '   ', '   ', '   '],
 }
 
@@ -85,14 +90,14 @@ export function Welcome({
         {cwd !== undefined && cwd !== '' ? `${shortCwd(cwd)} · ` : ''}模型 {model} · effort {effort}
       </Text>
       <Text {...TEXT.secondary} wrap="truncate-end">
-        /help 看命令 · 双击 Esc 撤回上一轮 · Ctrl+O 回看全文 · Ctrl+T 展开思考 · Ctrl+V 贴图
+        {`/help 看命令 · 双击 ${KEYS.escape} 撤回上一轮 · ${KEYS.transcript} 回看全文 · ${KEYS.thinking} 展开思考 · ${KEYS.paste} 贴图`}
       </Text>
       <Text {...TEXT.secondary} wrap="truncate-end">
         有活直接说；@ 提文件，/ 或 @ 唤出补全，Shift+Enter 换行。
       </Text>
     </>
   )
-  // 阶梯降级：矮终端/窄终端退到词标版（块体 ~17 行要 ≥30 行才放得下）
+  // 阶梯降级：矮终端/窄终端退到词标版（大字体 35 列宽，故列数门槛 40）
   if (rows >= 30 && columns >= 40) {
     return (
       <Box flexDirection="column" gap={GAP.none} marginBottom={GAP.tight}>
@@ -101,9 +106,7 @@ export function Welcome({
           <Text bold>Pneuma</Text>
           <Text {...TEXT.secondary}> v{DSC_VERSION}</Text>
         </Text>
-        <BigWord rows={wordRows('MUSE')} from={PALETTE.brand} to={PALETTE.ice} />
-        <Text> </Text>
-        <BigWord rows={wordRows('CODE')} from={PALETTE.ice} to={PALETTE.pale} />
+        <BigWord rows={wordRows('PNEUMA')} from={PALETTE.brand} to={PALETTE.pale} />
         <Text color={PALETTE.accent}>✦ 把想法变成代码</Text>
         {info}
       </Box>

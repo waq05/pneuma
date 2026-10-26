@@ -42,9 +42,41 @@ export const PALETTE = {
   pillText: '#22262E',
   /** 静止描边（输入框、提示条的灰框）。 */
   border: '#55606F',
-  /** 阴影面（工具卡表面，预留）。 */
+  /** 可交互但未激活（对齐 dsh 的 `inactive`）：刻度栏箭头这一档。 */
+  inactive: '#8D95A6',
+  /** 再暗一档（对齐 dsh 的 `subtle`）：未选中的刻度，只做位置提示。 */
+  subtle: '#5E6673',
+  /** 阴影面（工具卡表面）——也是刻度列悬浮读数条的底色（对齐 dsh 的 chip）。 */
   surface: '#242B3A',
+  /** 悬浮读数条上的字。 */
+  surfaceText: '#C8CDD8',
 } as const satisfies Record<string, string>
+
+/**
+ * 两色线性插值（hex → rgb → lerp → hex）。
+ *
+ * 用途只有一个：流式 spinner 的**呼吸色**（对齐 dsh：品牌蓝 ↔ 冰蓝按正弦来回，约 0.5 秒
+ * 一个来回）。终端里没有字号/透明度，颜色是唯一还能动的维度。
+ *
+ * 两端必须是 6 位 hex；拿不到就原样返回 `a`——降级终端（16 色名）宁可不动也不出错。
+ */
+export function mixHex(a: string, b: string, t: number): string {
+  const parse = (hex: string): [number, number, number] | null => {
+    const match = /^#([0-9a-f]{6})$/i.exec(hex)
+    if (match === null) return null
+    const value = Number.parseInt(match[1]!, 16)
+    return [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff]
+  }
+  const from = parse(a)
+  const to = parse(b)
+  if (from === null || to === null) return a
+  const ratio = Math.max(0, Math.min(1, t))
+  const channel = (index: 0 | 1 | 2): string =>
+    Math.round(from[index] + (to[index] - from[index]) * ratio)
+      .toString(16)
+      .padStart(2, '0')
+  return `#${channel(0)}${channel(1)}${channel(2)}`
+}
 
 /** 可直接展开进 `<Text>` 的文字样式，用法：`<Text {...TEXT.body}>…</Text>`。 */
 export interface TextStyle {
@@ -152,6 +184,20 @@ export const CONTEXT_SEGMENTS = [
 
 /** 强调色：输入行提示符、光标、活动块的描边，对应渲染层的 `--dsc-accent`。 */
 export const ACCENT = PALETTE.accent
+
+/**
+ * 右侧轮数刻度栏的配色（对齐 dsh-TUI）：当前视口所在的那一轮用**与正文同色**的亮线，
+ * 其余刻度退到 `subtle`，可点的箭头是 `inactive`、没有目标的暗一档。
+ *
+ * 为什么不给活动刻度上强调蓝：刻度是导航辅助，蓝色是「进行中/焦点」的语义色，
+ * 一条蓝线挂在正文右侧最抢眼的位置，读起来像状态而不是位置。
+ */
+export const RAIL_COLOR = {
+  active: PALETTE.text,
+  idle: PALETTE.subtle,
+  arrow: PALETTE.inactive,
+  arrowOff: PALETTE.subtle,
+} as const
 
 /** 描边色：默认灰描边，活动块用强调色，告警用琥珀。 */
 export const BORDER = {

@@ -53,13 +53,19 @@ import { readClipboardImage, type ClipboardResult } from './clipboard-image.js'
 import { ChatView } from './ChatView.js'
 import { Composer, type ComposerAttachment, type DirLister } from './Composer.js'
 import { renderImageBlock, type ImageSource } from './image-blocks.js'
+import { HINT } from './keymap.js'
 import { ModelPicker } from './ModelPicker.js'
+import { parseMouse } from './mouse.js'
 import { PlanReviewCard, type PlanAction } from './PlanReviewCard.js'
+import { clearPointer, publishPointer } from './pointer.js'
 import { PresetPicker } from './PresetPicker.js'
 import { PreviewOverlay } from './PreviewOverlay.js'
 import { SessionPicker } from './SessionPicker.js'
 import { SETTINGS_CHROME, SETTINGS_LIST_TOP, SettingsOverlay } from './SettingsOverlay.js'
 import { SkillsPicker } from './SkillsPicker.js'
+import { TRANSCRIPT_CHROME, TranscriptOverlay } from './TranscriptOverlay.js'
+import { WHEEL_LINES, type TranscriptViewportApi } from './TranscriptViewport.js'
+import { useCoalescedSnapshot } from './snapshot-subscribe.js'
 import {
   buildSettingsRows,
   focusableRows,
@@ -69,8 +75,8 @@ import {
   type SettingsRow,
 } from './settings-model.js'
 import { shortId, StatusBar } from './StatusBar.js'
+import { RAIL_WIDTH } from './scroll-model.js'
 import { TaskStrips } from './TaskStrips.js'
-import { TranscriptOverlay } from './TranscriptOverlay.js'
 import { Welcome } from './Welcome.js'
 import { extractImages, readImageAsDataUrl } from './attach.js'
 import { BORDER, GAP, PAD, PALETTE, STATUS_COLOR, TEXT } from './theme.js'
@@ -79,10 +85,10 @@ import { BORDER, GAP, PAD, PALETTE, STATUS_COLOR, TEXT } from './theme.js'
 const EXIT_WINDOW_MS = 2000
 /** 双击 Esc 撤回上一轮的判定窗口（对齐 dsh 的 3 秒）。 */
 const REWIND_WINDOW_MS = 3000
-/** 聊天视口一次渲染的条目窗口（帧内放不下会被裁掉，窗口只约束 reconcile 量）。 */
-const CHAT_WINDOW = 80
-/** 回看浮层的条目窗口（全量 transcript，窗口随滚动偏移滑动）。 */
-const OVERLAY_WINDOW = 200
+/** 子代理转录跟活的节流：队友在写的时候最多每 400ms 重放一次它的运行记录。 */
+const PEEK_REFRESH_MS = 400
+/** 子代理只读转录的提示行（比主回看多一句「只读」）。 */
+const PEEK_HINT = HINT.peek
 /** 欢迎页只挂在短会话顶上（resume 长会话再画只是把历史往下顶，dsh skipIntro 同款）。 */
 const WELCOME_MAX_ENTRIES = 30
 /** 选择器框的固定行数：上下边框 2 + 标题 1 + 筛选行 1 + 提示行 1（改名行与提示行 1:1 互换）。 */
@@ -95,7 +101,17 @@ const workspaceLabel = (cwd: string): string => {
   return base === '' ? cwd : base
 }
 
-/** 「已离开最新」提示条（0.6.59 对齐 dsh 的 pill）：蓝底深字，整枚可点回底。 */
+/**
+ * 「已离开最新」提示条（0.6.59 对齐 dsh 的 pill）：蓝底深字，整枚可点回底。
+ *
+ * **浮在转录区最后一行上、不占净高度**（`marginTop={-1}` 把它从页脚里"借"的那一行还回去）：
+ * 占一行会让聊天区高度随它出现/消失变化——刻度栏每滚一下就上下挪一行、滚回底部还差一行
+ * 到不了（两处都是用户报障）。负 margin 让页脚总高与没有胶囊时**完全相同**，而胶囊照旧
+ * 画在输入框上方那一行（ink 6.8 的 Box 没有 `bottom`/`top`，absolute 定位放不到底部）。
+ *
+ * **靠右**（本批改的）：原先贴左，它盖住的正是每一行的**行首**——回看时最要紧的那一列。
+ * 右缘留出 `RAIL_WIDTH` 列，正好把刻度列让开（胶囊出现时人正在回看，刻度列正是要看的东西）。
+ */
 function TailIndicator({
   hidden,
   onJump,
@@ -112,9 +128,9 @@ function TailIndicator({
     return true
   })
   return (
-    <Box ref={ref} marginTop={GAP.tight}>
+    <Box ref={ref} marginTop={-1} paddingRight={RAIL_WIDTH} justifyContent="flex-end">
       <Text backgroundColor={PALETTE.pillBg} color={PALETTE.pillText} bold>
-        {' ↓ 回到底部（Enter/End）'}
+        {HINT.backToBottom}
         {hidden > 99 ? ` · ${hidden} 条新` : ''}
         {' '}
       </Text>
@@ -127,6 +143,7 @@ export function App({
   clipboardReader,
   imageRenderer,
   tuiNoticeExtras,
+  snapshotMs,
 }: {
   runtime: DscRuntime
   /** 剪贴板读取（测试注入口；省略用 PowerShell 真实现）。 */
@@ -135,8 +152,13 @@ export function App({
   imageRenderer?: typeof renderImageBlock
   /** 界面插件贡献的通知区扩展块（阶段 6；终端插件装载后传入，测试不传就没有这一块）。 */
   tuiNoticeExtras?: ReactNode
+  /** 快照合并窗口（测试注入口：0 = 直通，用来在同一场里量「不合并会怎样」）。 */
+  snapshotMs?: number
 }): JSX.Element {
-  const snapshot = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot)
+  // 快照通知合并（见 snapshot-subscribe 的头注）：上游是同步的「每个 delta 一次」，
+  // 直接喂给 useSyncExternalStore 就是每个 delta 一次全树 reconcile——开队友就卡在那。
+  const store = useCoalescedSnapshot(runtime, snapshotMs)
+  const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot)
   const approval = snapshot.surfaces.pendingApproval
   const question = snapshot.surfaces.pendingQuestion
   const plan = snapshot.surfaces.pendingPlan
@@ -144,6 +166,25 @@ export function App({
   const [picker, setPicker] = useState(false)
   const [pickerIndex, setPickerIndex] = useState(0)
   const [expandThinking, setExpandThinking] = useState(false)
+  /**
+   * 已展开的工具卡（点一行工具卡切换）。持有在 App 而不是卡片自己：卡片滚出窗口切片会
+   * 卸载重挂，状态在 App 里才「展开过的还是展开着」；聊天区与回看浮层也共用同一份。
+   */
+  const [expandedTools, setExpandedTools] = useState<ReadonlySet<number>>(new Set())
+  const toggleTool = useCallback((id: number) => {
+    setExpandedTools((previous) => {
+      const next = new Set(previous)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+  // 换会话：条目 id 的作用域跟着换（新会话从头编号、id 会撞），展开集合清掉。
+  // 空集合时原样返回同一个引用，挂载那一次不触发多余渲染。
+  const sessionKey = snapshot.status.sessionId
+  useEffect(() => {
+    setExpandedTools((previous) => (previous.size === 0 ? previous : new Set()))
+  }, [sessionKey])
   const [notice, setNotice] = useState<string | null>(null)
   /** 审批卡内嵌 diff 的展开态（v 切换；换卡即复位）。 */
   const [approvalExpanded, setApprovalExpanded] = useState(false)
@@ -156,11 +197,16 @@ export function App({
   const [askChecked, setAskChecked] = useState<number[]>([])
   const [askHighlight, setAskHighlight] = useState(0)
   const [askText, setAskText] = useState('')
-  /** 回看浮层（Ctrl+O）：offset 是「从尾部往回滚的条数」。 */
+  /** 回看浮层（Ctrl+O）与子代理转录：滚动状态在 TranscriptViewport 里（按行），这里只持有手柄。 */
   const [transcriptOpen, setTranscriptOpen] = useState(false)
-  const [scrollOffset, setScrollOffset] = useState(0)
-  /** 聊天滚动锚点：窗口末端的条目下标；null = 跟随最新（直播态）。 */
-  const [chatAnchor, setChatAnchor] = useState<number | null>(null)
+  const overlayRef = useRef<TranscriptViewportApi | null>(null)
+  const peekRef = useRef<TranscriptViewportApi | null>(null)
+  /** 上一次 peek 的时刻（跟活节流用）。 */
+  const lastPeek = useRef(0)
+  /** 聊天视口手柄（滚动状态在 TranscriptViewport 里，按行）。 */
+  const chatRef = useRef<TranscriptViewportApi | null>(null)
+  /** 滚离最新时记下当时的条数（回到底部那颗胶囊的「N 条新」）；null = 贴着最新。 */
+  const [chatAwayFrom, setChatAwayFrom] = useState<number | null>(null)
   /** Composer 补全面板开合（Esc 打断与「关面板」的分流依据）。 */
   const [panelOpen, setPanelOpen] = useState(false)
   /** ---- 0.6.57：双击 Esc 撤回 / 剪贴板贴图 / 子代理浮层 / 图片预览 ---- */
@@ -240,6 +286,8 @@ export function App({
       clickRegions.current.delete(region)
     }
   }, [])
+  /** 拖动会话开在哪个区上（按下时命中、且它认拖动）；没在拖 = null（见 `dispatchMouseDrag`）。 */
+  const dragTarget = useRef<ClickEntry | null>(null)
 
   const askQuestions = question?.questions ?? (question !== null ? [question] : [])
   const currentQuestion = askQuestions[askIndex]
@@ -314,12 +362,18 @@ export function App({
     setStatusBarPrefs(normalizeStatusBarPrefs(prefs.statusBar))
   }, [runtime])
 
-  // 鼠标跟踪全时开启（SGR 点击/滚轮；不启用 1002/1003——拖拽选区留给终端原生行为）。
+  // 鼠标跟踪全时开启：1000 点击/滚轮、1002 按住拖动、1003 纯移动（悬停）。
+  //
+  // 1002/1003 是本批为「刻度列悬停读数 + 拖动 scrub」新开的（对齐 dsh）。**代价写清楚**：
+  // 应用一开鼠标上报，终端就不再自己处理拖拽选区（Windows Terminal 等本来就要按 Shift
+  // 才选——1000 已经如此，这里只是把运动事件也接过来）。偏移量没有别的用处：指针位置只
+  // 喂给 `pointer` 那个小 store，且只在指针位于右侧刻度列时才通知（见 pointer.ts）。
   useEffect(() => {
-    stdout?.write('\x1b[?1000;1006h')
+    stdout?.write('\x1b[?1000;1002;1003;1006h')
     return () => {
       try {
-        stdout?.write('\x1b[?1000;1006l')
+        stdout?.write('\x1b[?1000;1002;1003;1006l')
+        clearPointer()
       } catch {
         // 卸载收尾时写不进就放弃，别让退出路径再抛错
       }
@@ -484,8 +538,12 @@ export function App({
   const termRows = stdout?.rows ?? 24
   /** 帧内容行数：终端行数 − 1（ink 帧自带尾随换行，末行留给光标落点）。 */
   const frameRows = Math.max(1, termRows - 1)
-  /** 状态栏行数（0.6.57 去掉描边框后固定两行）。 */
-  const statusbarLines = 2
+  /** 终端列数（浮层宽度、刻度栏门槛、标题截断都按它算）。 */
+  const columns = stdout?.columns ?? 100
+  /** 状态栏行数（去掉 context 进度条后固定一行）：正文、浮层视口、刻度居中高度都按它算。 */
+  const statusbarLines = 1
+  /** 回看 / 子代理转录浮层的视口行数（帧内扣掉状态栏与浮层框架）。翻页步长问视口要。 */
+  const overlayViewportLines = Math.max(1, frameRows - statusbarLines - TRANSCRIPT_CHROME)
   /** 当前层的行数（工作区层 = 工作区数，会话层 = 会话数）；窗口切片与点击映射都按它算。 */
   const pickerRowCount = isWorkspaceLevel ? workspaceList.length : pickerList.length
   /** 选择器列表窗口：框内除固定框架外全部让给列表（点击行号映射按它 1:1 对齐）。 */
@@ -509,10 +567,6 @@ export function App({
       current: entry.cwd !== '' && entry.cwd === snapshot.status.cwd,
     }))
 
-  /** 聊天窗口：末端锚在 chatAnchor（null = 跟最新），窗口向历史方向展开。 */
-  const chatEnd = Math.min(chatAnchor ?? snapshot.entries.length, snapshot.entries.length)
-  const chatWindow = snapshot.entries.slice(Math.max(0, chatEnd - CHAT_WINDOW), chatEnd)
-
   // ---- 设置页（/settings）的行模型与窗口切片（几何与 SettingsOverlay 共表）----
   const settingsRows = useMemo(
     () => buildSettingsRows(settingsSections, settingsSection, settingsGroup),
@@ -529,21 +583,13 @@ export function App({
   const settingsViewport = Math.max(1, frameRows - statusbarLines - SETTINGS_CHROME)
   const settingsWindow = settingsWindowStart(settingsFocusRow, settingsViewport, settingsRows.length)
 
-  /** 回看浮层的窗口（offset 是从尾部往回的条数）。 */
-  const overlayTotal = snapshot.entries.length
-  const overlayEnd = Math.max(1, overlayTotal - Math.min(scrollOffset, Math.max(0, overlayTotal - 1)))
-  const overlayStart = Math.max(0, overlayEnd - OVERLAY_WINDOW)
-  const overlayWindow = snapshot.entries.slice(overlayStart, overlayEnd)
-
-  /** 聊天回看滚动：delta 负数往历史翻，翻到最底（end=len）就回到直播态。 */
-  const scrollChat = (delta: number): void => {
-    setChatAnchor((current) => {
-      const length = snapshot.entries.length
-      const end = Math.min(current ?? length, length)
-      const next = end + delta
-      return next >= length ? null : Math.max(0, next)
-    })
-  }
+  /** 条数的实时镜像（「离开最新」回调里要用当次的条数，回调引用要稳定）。 */
+  const entriesLenRef = useRef(0)
+  entriesLenRef.current = snapshot.entries.length
+  /** 聊天区贴着最新 / 离开最新的切换（回到底部胶囊的数据源）。 */
+  const handleChatAtTail = useCallback((atTail: boolean) => {
+    setChatAwayFrom(atTail ? null : entriesLenRef.current)
+  }, [])
 
   /** 归档页的数据加载（Tab 切页时拉一次；动作之后刷新也走这里）。 */
   const reloadArchived = useCallback((): void => {
@@ -587,7 +633,7 @@ export function App({
     const selected = pickerList[pickerIndex]
     if (selected === undefined) return
     setPicker(false)
-    setChatAnchor(null)
+    chatRef.current?.toTail()
     if (pickerPage === 'archived') {
       pickerAction(() => runtime.restoreSessions([selected.id]))
       void runtime.openSession(selected.id)
@@ -806,7 +852,7 @@ export function App({
         if (!fork.ok) return fork.error === '' ? '撤回失败' : fork.error
         await runtime.openSession(fork.path)
         setComposerPreset((current) => ({ text: last, token: current.token + 1 }))
-        setChatAnchor(null)
+        chatRef.current?.toTail()
         setAttachments([])
         return '已撤回上一轮，原话已放回输入框（原会话保留在 /resume）'
       })
@@ -875,13 +921,48 @@ export function App({
     (file: string, title: string) => {
       setAgentView({ mode: 'transcript', file, title })
       setAgentEntries(null)
-      setScrollOffset(0)
+      lastPeek.current = Date.now()
       void runtime
         .peekTranscript(file)
         .then((entries) => setAgentEntries(entries))
         .catch(() => setAgentEntries([]))
     },
     [runtime],
+  )
+
+  /**
+   * 子代理转录「跟活」（旧账修正）：原先只在打开那一刻 peek 一次，之后永远冻着——队友
+   * 干到哪都看不见（用户报的「点进子代看不到工作过程」）。现在打开期间跟着父转录的每次
+   * 快照更新重新取一次，节流到 ≥400ms（每次都是一次 `Session.load` + 全量重放，文件大
+   * 时是重活）；关闭即停，过期回包按 cancelled 丢掉。
+   */
+  useEffect(() => {
+    if (agentView === null || agentView.mode !== 'transcript') return
+    const file = agentView.file
+    let cancelled = false
+    const wait = Math.max(0, PEEK_REFRESH_MS - (Date.now() - lastPeek.current))
+    const timer = setTimeout(() => {
+      if (cancelled) return
+      lastPeek.current = Date.now()
+      void runtime
+        .peekTranscript(file)
+        .then((entries) => {
+          if (!cancelled) setAgentEntries(entries)
+        })
+        .catch(() => {
+          if (!cancelled) setAgentEntries([])
+        })
+    }, wait)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [agentView, snapshot, runtime])
+
+  /** 子代理卡点击：打开它的只读转录。引用要稳定——`Entry` 是 memo 的，内联箭头会让它每帧重渲染。 */
+  const handleOpenAgent = useCallback(
+    (file: string) => openAgentTranscript(file, shortId(file)),
+    [openAgentTranscript],
   )
 
   /** /agents 打开名单浮层（命令 ui 回调）。 */
@@ -975,101 +1056,167 @@ export function App({
     advanceAsk()
   }
 
+  /**
+   * 把一次「左键按下」派发给命中区：选择器/浮层优先，其余交给登记过的命中区（卡片页脚按钮、
+   * 提问选项、回底提示条、附件与后台芯片、图片行、刻度列…）。
+   *
+   * 几何**点击时才现量**（`absoluteTop` / `measuredHeight` 读的是上一帧的 yoga 结果）：
+   * 注册时量到的是更早的尺寸，而点击离上一次绘制总有一段人手时差——现量才跟得上节流渲染。
+   *
+   * 返回**这次按下的去向**：认拖动的区（刻度列）被按下时要把拖动会话开在它
+   * 身上（见 `dragTarget`）——按住划 = 一连串跳到那一行，且只有从那个区上按下去的才认。
+   */
+  function dispatchMouseClick(col: number, row: number): ClickEntry | null {
+    if (picker) {
+      if (pickerBuffer !== null) return null // 改名输入态不响应鼠标
+      // 列表行从「顶边框+标题+筛选行」之后起排（改名行再往下顺延一行）。
+      const listTop = 3 + (pickerBuffer !== null ? 1 : 0)
+      const row0 = row - 1 - listTop
+      if (row0 < 0 || row0 >= pickerListRows) return null
+      const hit = pickerStart + row0
+      // 两级行结构相同（listTop/切片一致）：工作区层再点 = 钻入，会话层再点 = 打开。
+      if (hit !== pickerIndex) {
+        setPickerIndex(hit)
+        return null
+      }
+      if (isWorkspaceLevel) enterWorkspace(hit)
+      else openSelectedSession()
+      return null
+    }
+    if (modelPicker) {
+      const row0 = row - 1 - 3
+      if (row0 < 0 || row0 >= modelList.length) return null
+      if (row0 === modelIndex) applyModel()
+      else setModelIndex(row0)
+      return null
+    }
+    if (presetPicker) {
+      const row0 = row - 1 - 3
+      if (row0 < 0 || row0 >= presetList.length) return null
+      if (row0 === presetIndex) applyPreset()
+      else setPresetIndex(row0)
+      return null
+    }
+    if (skillsPicker) {
+      const row0 = row - 1 - 3
+      if (row0 < 0 || row0 >= skillsList.length) return null
+      if (row0 === skillsIndex) applySkill()
+      else setSkillsIndex(row0)
+      return null
+    }
+    if (settingsOpen) {
+      if (settingsEdit !== null) return null // 草稿由键盘独占（对齐 dsh 的编辑态）
+      // 列表行从「外框顶边 + 标题行」之后起排，滚动窗口与组件共用同一份行模型
+      const slice = row - 1 - SETTINGS_LIST_TOP
+      if (slice < 0 || slice >= settingsViewport) return null
+      const target = settingsRows[settingsWindow + slice]
+      if (target === undefined || (target.kind !== 'field' && target.kind !== 'hint' && target.kind !== 'group' && target.kind !== 'section')) return null
+      const fields = settingsSections.find((section) => section.id === target.sectionId)?.fields ?? []
+      if (!isFocusableRow(target, fields)) return null
+      activateSettingsRow(target, 1)
+      return null
+    }
+    // 卡片页脚按钮 / 提问选项 / 回底提示条 / 附件与后台芯片 / 图片行：点击时现量
+    // 几何（避免节流渲染导致的滞后），再询问判定函数；谁命中谁消费。
+    for (const entry of clickRegions.current) {
+      const top = absoluteTop(entry.node.current)
+      const height = measuredHeight(entry.node.current)
+      if (top === null || height === null) continue
+      if (entry.hit(col - 1, row - 1, top, height)) return entry
+    }
+    return null
+  }
+
+  /**
+   * 把一次「按住划」（SGR 1002 的 32 号事件）派发给**按下时开在这上面的那个拖动区**
+   * （刻度列）。
+   *
+   * 为什么要有会话：没有它，终端报的每一个「按住移动」都要拿去问所有认拖动的区——
+   * 只要行落在刻度块那一段、列碰巧对上，正文里按住划一下就把视图跳走（用户报障：
+   * 「左键点任意位置都被当成点滚动条」）。会话只从**按下**开（`dispatchMouseClick` 的
+   * 返回值），松手即关；命中判定里的列判定也照旧生效——手划出刻度列就停，划回来接着跟手。
+   */
+  function dispatchMouseDrag(col: number, row: number): void {
+    const entry = dragTarget.current
+    if (entry === null) return
+    // 区已注销（换会话/开浮层把聊天区卸了）：会话作废
+    if (!clickRegions.current.has(entry)) {
+      dragTarget.current = null
+      return
+    }
+    const top = absoluteTop(entry.node.current)
+    const height = measuredHeight(entry.node.current)
+    if (top === null || height === null) return
+    entry.hit(col - 1, row - 1, top, height)
+  }
+
   useInput((input, key) => {
-    // SGR 鼠标事件最顶层拦截：滚轮按状态路由，左键点击派发给命中区。
-    const mouse = /^\[<(\d+);(\d+);(\d+)([Mm])$/.exec(input)
+    // SGR 鼠标事件最顶层拦截：滚轮按状态路由，左键点击派发给命中区，纯移动喂刻度列的悬停。
+    // `parseMouse` 收**一包多条**（终端会把连着发生的事件攒一包发；旧锚定正则碰上就整包掉进
+    // 键盘路径，最坏被读成 Esc）。
+    const mouse = parseMouse(input)
     if (mouse !== null) {
-      const [, button, colText, rowText, phase] = mouse
-      const col = Number(colText)
-      const row = Number(rowText)
-      if (button === '64' || button === '65') {
-        // 滚轮：64 上 / 65 下，一步一条（浮层/聊天同款颗粒度）。
-        const step = button === '64' ? -1 : 1
-        if (picker) {
-          setPickerIndex((current) => Math.max(0, Math.min(current + step, pickerRowCount - 1)))
-        } else if (modelPicker) {
-          setModelIndex((current) => Math.max(0, Math.min(current + step, modelList.length - 1)))
-        } else if (presetPicker) {
-          setPresetIndex((current) => Math.max(0, Math.min(current + step, presetList.length - 1)))
-        } else if (skillsPicker) {
-          setSkillsIndex((current) => Math.max(0, Math.min(current + step, skillsList.length - 1)))
-        } else if (agentView !== null) {
-          if (agentView.mode === 'list') {
-            setAgentIndex((current) => Math.max(0, Math.min(current + step, agentRows.length - 1)))
+      for (const event of mouse) {
+        const col = event.col
+        const row = event.row
+        // 按钮号拆位：低两位 0 左 / 1 中 / 2 右 / 3 无按钮；32 位 = 移动；64 位 = 滚轮。
+        const kind = event.button & 3
+        const moving = (event.button & 32) !== 0
+        if ((event.button & 64) !== 0) {
+          // 滚轮：64 上 / 65 下，一步一条（浮层/聊天同款颗粒度）。
+          const step = kind === 0 ? -1 : 1
+          if (picker) {
+            setPickerIndex((current) => Math.max(0, Math.min(current + step, pickerRowCount - 1)))
+          } else if (modelPicker) {
+            setModelIndex((current) => Math.max(0, Math.min(current + step, modelList.length - 1)))
+          } else if (presetPicker) {
+            setPresetIndex((current) => Math.max(0, Math.min(current + step, presetList.length - 1)))
+          } else if (skillsPicker) {
+            setSkillsIndex((current) => Math.max(0, Math.min(current + step, skillsList.length - 1)))
+          } else if (agentView !== null) {
+            if (agentView.mode === 'list') {
+              setAgentIndex((current) => Math.max(0, Math.min(current + step, agentRows.length - 1)))
+            } else {
+              peekRef.current?.scrollLines(-step * WHEEL_LINES)
+            }
+          } else if (transcriptOpen) {
+            overlayRef.current?.scrollLines(-step * WHEEL_LINES)
+          } else if (settingsOpen) {
+            // 设置页滚轮 = 移动焦点（dsh 同语义），窗口随焦点跟随
+            setSettingsIndex((current) =>
+              Math.max(0, Math.min(current + step, Math.max(0, settingsFocusables.length - 1))),
+            )
           } else {
-            const maxOffset = Math.max(0, (agentEntries?.length ?? 0) - 1)
-            setScrollOffset((current) => Math.max(0, Math.min(current - step, maxOffset)))
+            chatRef.current?.scrollLines(-step * WHEEL_LINES)
           }
-        } else if (transcriptOpen) {
-          const maxOffset = Math.max(0, snapshot.entries.length - 1)
-          setScrollOffset((current) => Math.max(0, Math.min(current - step, maxOffset)))
-        } else if (settingsOpen) {
-          // 设置页滚轮 = 移动焦点（dsh 同语义），窗口随焦点跟随
-          setSettingsIndex((current) =>
-            Math.max(0, Math.min(current + step, Math.max(0, settingsFocusables.length - 1))),
-          )
-        } else {
-          scrollChat(step)
+          continue
         }
-        return
-      }
-      if (button !== '0' || phase !== 'M') return // 只认左键按下；释放与右/中键忽略
-      if (picker) {
-        if (pickerBuffer !== null) return // 改名输入态不响应鼠标
-        // 列表行从「顶边框+标题+筛选行」之后起排（改名行再往下顺延一行）。
-        const listTop = 3 + (pickerBuffer !== null ? 1 : 0)
-        const row0 = row - 1 - listTop
-        if (row0 < 0 || row0 >= pickerListRows) return
-        const hit = pickerStart + row0
-        // 两级行结构相同（listTop/切片一致）：工作区层再点 = 钻入，会话层再点 = 打开。
-        if (hit !== pickerIndex) {
-          setPickerIndex(hit)
-          return
+        if (moving && kind === 3) {
+          // 纯移动（1003）：只发布给刻度列的悬停用；指针在别处时 store 连通知都不发。
+          // 「没有按键的移动」顺带说明没人按着——陈旧的拖动会话到此为止。
+          dragTarget.current = null
+          publishPointer(col, row, columns)
+          continue
         }
-        if (isWorkspaceLevel) enterWorkspace(hit)
-        else openSelectedSession()
-        return
-      }
-      if (modelPicker) {
-        const row0 = row - 1 - 3
-        if (row0 < 0 || row0 >= modelList.length) return
-        if (row0 === modelIndex) applyModel()
-        else setModelIndex(row0)
-        return
-      }
-      if (presetPicker) {
-        const row0 = row - 1 - 3
-        if (row0 < 0 || row0 >= presetList.length) return
-        if (row0 === presetIndex) applyPreset()
-        else setPresetIndex(row0)
-        return
-      }
-      if (skillsPicker) {
-        const row0 = row - 1 - 3
-        if (row0 < 0 || row0 >= skillsList.length) return
-        if (row0 === skillsIndex) applySkill()
-        else setSkillsIndex(row0)
-        return
-      }
-      if (settingsOpen) {
-        if (settingsEdit !== null) return // 草稿由键盘独占（对齐 dsh 的编辑态）
-        // 列表行从「外框顶边 + 标题行」之后起排，滚动窗口与组件共用同一份行模型
-        const slice = row - 1 - SETTINGS_LIST_TOP
-        if (slice < 0 || slice >= settingsViewport) return
-        const target = settingsRows[settingsWindow + slice]
-        if (target === undefined || (target.kind !== 'field' && target.kind !== 'hint' && target.kind !== 'group' && target.kind !== 'section')) return
-        const fields = settingsSections.find((section) => section.id === target.sectionId)?.fields ?? []
-        if (!isFocusableRow(target, fields)) return
-        activateSettingsRow(target, 1)
-        return
-      }
-      // 卡片页脚按钮 / 提问选项 / 回底提示条 / 附件与后台芯片 / 图片行：点击时现量
-      // 几何（避免节流渲染导致的滞后），再询问判定函数；谁命中谁消费。
-      for (const entry of clickRegions.current) {
-        const top = absoluteTop(entry.node.current)
-        const height = measuredHeight(entry.node.current)
-        if (top === null || height === null) continue
-        if (entry.hit(col - 1, row - 1, top, height)) return
+        // 按住左键划过（1002）：只喂「按下时开在刻度列上的那个会话」，正文里划过
+        // 不再误触任何滚动（用户报障：左键点/拖任意位置都像在点滚动条）。指针位置照发，
+        // 读数条因此跟着手走（dsh 同观感）。
+        const dragging = moving && kind === 0
+        if (kind !== 0) continue
+        if (dragging) {
+          publishPointer(col, row, columns)
+          dispatchMouseDrag(col, row)
+          continue
+        }
+        if (!event.press) {
+          // 松手（0;x;ym）：拖动会话结束
+          dragTarget.current = null
+          continue
+        }
+        clearPointer()
+        // 按下：派发点击，并「就手」把拖动会话开给认拖动的区（按住划 = 一连串跳到那一行）
+        const consumed = dispatchMouseClick(col, row)
+        dragTarget.current = consumed !== null && consumed.drag === true ? consumed : null
       }
       return
     }
@@ -1175,26 +1322,23 @@ export function App({
           setAgentIndex((current) => Math.min(agentRows.length - 1, current + 1))
         return
       }
-      const agentTotal = agentEntries?.length ?? 0
-      const maxOffset = Math.max(0, agentTotal - 1)
-      if (key.escape || input === 'q') setAgentView(null)
-      else if (key.upArrow || input === 'k')
-        setScrollOffset((current) => Math.min(maxOffset, current + 1))
-      else if (key.downArrow || input === 'j')
-        setScrollOffset((current) => Math.max(0, current - 1))
-      else if (key.pageUp) setScrollOffset((current) => Math.min(maxOffset, current + 10))
-      else if (key.pageDown) setScrollOffset((current) => Math.max(0, current - 10))
+      if (key.escape || input === 'q' || (key.ctrl && input === 'o')) setAgentView(null)
+      else if (key.upArrow || input === 'k') peekRef.current?.scrollLines(1)
+      else if (key.downArrow || input === 'j') peekRef.current?.scrollLines(-1)
+      else if (key.pageUp) peekRef.current?.scrollLines(peekRef.current.page())
+      else if (key.pageDown) peekRef.current?.scrollLines(-peekRef.current.page())
+      else if (input === '[') peekRef.current?.jumpTurn('up')
+      else if (input === ']') peekRef.current?.jumpTurn('down')
       return
     }
     if (transcriptOpen) {
-      const maxOffset = Math.max(0, snapshot.entries.length - 1)
       if (key.escape || input === 'q' || (key.ctrl && input === 'o')) setTranscriptOpen(false)
-      else if (key.upArrow || input === 'k')
-        setScrollOffset((current) => Math.min(maxOffset, current + 1))
-      else if (key.downArrow || input === 'j')
-        setScrollOffset((current) => Math.max(0, current - 1))
-      else if (key.pageUp) setScrollOffset((current) => Math.min(maxOffset, current + 10))
-      else if (key.pageDown) setScrollOffset((current) => Math.max(0, current - 10))
+      else if (key.upArrow || input === 'k') overlayRef.current?.scrollLines(1)
+      else if (key.downArrow || input === 'j') overlayRef.current?.scrollLines(-1)
+      else if (key.pageUp) overlayRef.current?.scrollLines(overlayRef.current.page())
+      else if (key.pageDown) overlayRef.current?.scrollLines(-overlayRef.current.page())
+      else if (input === '[') overlayRef.current?.jumpTurn('up')
+      else if (input === ']') overlayRef.current?.jumpTurn('down')
       return
     }
     if (picker) {
@@ -1396,9 +1540,9 @@ export function App({
     }
     // 回到底部 pill 可见且输入为空时：Enter/End 跳回最新（codex/dsh 同语义；
     // 输入非空时 End 仍归 Composer 的光标移动）。
-    if (chatAnchor !== null && !modal && !panelOpen && draftRef.current === '') {
+    if (chatAwayFrom !== null && !modal && !panelOpen && draftRef.current === '') {
       if (key.end || key.return) {
-        setChatAnchor(null)
+        chatRef.current?.toTail()
         return
       }
     }
@@ -1424,11 +1568,11 @@ export function App({
     }
     // 聊天回看（对齐 codex 的 PgUp/PgDn；滚轮同义，↑↓ 留给输入框历史）。
     if (key.pageUp) {
-      scrollChat(-10)
+      chatRef.current?.scrollLines(chatRef.current.page())
       return
     }
     if (key.pageDown) {
-      scrollChat(10)
+      chatRef.current?.scrollLines(-chatRef.current.page())
       return
     }
     if (key.ctrl && input === 't') {
@@ -1436,7 +1580,6 @@ export function App({
       return
     }
     if (key.ctrl && input === 'o') {
-      setScrollOffset(0)
       setTranscriptOpen(true)
       return
     }
@@ -1444,7 +1587,7 @@ export function App({
 
   const handleSubmit = (text: string): void => {
     setNotice(null)
-    setChatAnchor(null)
+    chatRef.current?.toTail()
     if (planFeedback) {
       setPlanFeedback(false)
       if (text !== '') runtime.answerPlan('rejected', text)
@@ -1513,10 +1656,8 @@ export function App({
     agentView !== null ||
     (plan !== null && !planFeedback)
 
-  /** 子代理转录的窗口切片（与回看浮层同一套「条」滚动）。 */
+  /** 子代理转录的条数（标题用；切片与滚动都在 TranscriptViewport 里按行算）。 */
   const agentTotal = agentEntries?.length ?? 0
-  const agentEnd = Math.max(1, agentTotal - Math.min(scrollOffset, Math.max(0, agentTotal - 1)))
-  const agentWindow = (agentEntries ?? []).slice(Math.max(0, agentEnd - OVERLAY_WINDOW), agentEnd)
 
   return (
     <Box height={frameRows} width="100%" flexDirection="column" overflow="hidden" paddingX={PAD.page}>
@@ -1535,10 +1676,16 @@ export function App({
         <AgentsOverlay rows={agentRows} index={agentIndex} />
       ) : agentView !== null && agentView.mode === 'transcript' ? (
         <TranscriptOverlay
-          entries={agentWindow}
-          start={Math.max(0, agentEnd - agentWindow.length)}
+          ref={peekRef}
+          entries={agentEntries ?? []}
           total={agentTotal}
           title={agentView.title}
+          columns={columns}
+          viewportLines={overlayViewportLines}
+          hint={PEEK_HINT}
+          registerClick={registerClick}
+          expandedTools={expandedTools}
+          onToggleTool={toggleTool}
         />
       ) : picker ? (
         <SessionPicker
@@ -1557,7 +1704,16 @@ export function App({
           sessionStates={snapshot.sessionStates}
         />
       ) : transcriptOpen ? (
-        <TranscriptOverlay entries={overlayWindow} start={overlayStart} total={overlayTotal} />
+        <TranscriptOverlay
+          ref={overlayRef}
+          entries={snapshot.entries}
+          total={snapshot.entries.length}
+          columns={columns}
+          viewportLines={overlayViewportLines}
+          registerClick={registerClick}
+          expandedTools={expandedTools}
+          onToggleTool={toggleTool}
+        />
       ) : modelPicker ? (
         <ModelPicker models={modelList} index={modelIndex} query={modelQuery} />
       ) : presetPicker && presetSurface !== null ? (
@@ -1585,13 +1741,13 @@ export function App({
         />
       ) : (
         <>
-          <Box flexDirection="column" flexGrow={1} overflowY="hidden" justifyContent="flex-end">
+          <Box flexDirection="column" flexGrow={1} minHeight={0}>
             <ChatView
-              entries={chatWindow}
+              entries={snapshot.entries}
               turnState={snapshot.status.turnState}
               expandThinking={expandThinking}
               empty={snapshot.entries.length === 0}
-              header={
+              welcome={
                 snapshot.entries.length < WELCOME_MAX_ENTRIES ? (
                   <Welcome
                     model={snapshot.status.model}
@@ -1600,8 +1756,18 @@ export function App({
                   />
                 ) : undefined
               }
+              maxWidth={Math.max(20, columns - PAD.page * 2)}
+              columns={columns}
+              // 刻度栏居中按「帧高 − 状态栏」（只在终端改尺寸时才变）：聊天区可用高度会随
+              // 「回到底部」胶囊、草稿行数变化，按它居中会让整块刻度每滚一下上下挪一行
+              railCenterLines={Math.max(1, frameRows - statusbarLines)}
+              viewportRef={chatRef}
+              onAtTailChange={handleChatAtTail}
+              expandedTools={expandedTools}
+              onToggleTool={toggleTool}
               onPreviewImages={handlePreviewImages}
-              onOpenAgent={(file) => openAgentTranscript(file, shortId(file))}
+              onOpenAgent={handleOpenAgent}
+              onPickTurn={(turn) => chatRef.current?.jumpToTurn(turn)}
               registerClick={registerClick}
             />
           </Box>
@@ -1644,10 +1810,10 @@ export function App({
             ) : null}
             {/* 界面插件贡献的块（阶段 6）：与 notice 同一区的动态行，出现才占行，不动固定帧的行数数学。 */}
             {tuiNoticeExtras}
-            {chatAnchor !== null ? (
+            {chatAwayFrom !== null ? (
               <TailIndicator
-                hidden={snapshot.entries.length - chatEnd}
-                onJump={() => setChatAnchor(null)}
+                hidden={Math.max(0, snapshot.entries.length - chatAwayFrom)}
+                onJump={() => chatRef.current?.toTail()}
                 registerClick={registerClick}
               />
             ) : null}
@@ -1678,7 +1844,7 @@ export function App({
           subagents={snapshot.subagents ?? []}
           queued={(snapshot.queued ?? []).length + (snapshot.notices ?? []).length}
           config={statusBarPrefs}
-          onOpenAgent={(sessionPath) => openAgentTranscript(sessionPath, shortId(sessionPath))}
+          onOpenAgent={handleOpenAgent}
           registerClick={registerClick}
         />
       </Box>

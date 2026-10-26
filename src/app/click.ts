@@ -16,7 +16,7 @@
  *
  * @module dsc-tui/app/click
  */
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import type { RefObject } from 'react'
 import type { DOMElement } from 'ink'
 
@@ -99,19 +99,39 @@ export interface ClickEntry {
   node: RefObject<DOMElement | null>
   /** (col, row, top, height) 均为 0 基帧内坐标。 */
   hit: (col: number, row: number, top: number, height: number) => boolean
+  /**
+   * 够不够格当**拖动目标**（按住左键划过，SGR 1002）：只有刻度列认拖动
+   * （拖 = 一连串跳到该行），其余区一律不派发拖动——划过去误触比「拖不动」讨厌。
+   */
+  drag?: boolean
 }
 
 /** App 侧的注册表：组件渲染后登记，卸载/重渲染时自动注销。 */
 export type RegisterClick = (entry: ClickEntry) => () => void
 
-/** 组件登记命中判定（每帧重登记；hit 闭包拿着当次渲染的 props）。 */
+/**
+ * 组件登记命中判定。
+ *
+ * `hit` 走 ref、**只在挂载/卸载时登记一次**：原先没有依赖数组，每次重渲染都要把
+ * 帧内 80+ 个命中区退订再登记一遍（Set 的增删落在渲染提交路径上）。判定闭包拿的
+ * 仍是最新 props——ref 每次渲染都刷新，判定时刻读到的是当次渲染的闭包。
+ */
 export function useClickRegion(
   ref: RefObject<DOMElement | null>,
   register: RegisterClick | undefined,
   hit: ClickEntry['hit'] | undefined,
+  options?: { drag?: boolean },
 ): void {
+  const hitRef = useRef(hit)
+  hitRef.current = hit
+  const drag = options?.drag === true
+  const active = register !== undefined && hit !== undefined
   useEffect(() => {
-    if (register === undefined || hit === undefined) return
-    return register({ node: ref, hit })
-  })
+    if (!active) return
+    return register!({
+      node: ref,
+      hit: (col, row, top, height) => hitRef.current?.(col, row, top, height) ?? false,
+      ...(drag ? { drag: true } : {}),
+    })
+  }, [active, register, ref, drag])
 }

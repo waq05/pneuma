@@ -221,7 +221,9 @@ export const toolSearchPlugin: Plugin.Object = {
       description:
         '在「已从台面上撤下」的工具里检索：按关键词返回工具真名、一句话说明与匹配分数。' +
         '中文与英文都能搜（中文按相邻两字切词）。搜到之后先用 tool_describe 看参数，' +
-        '再用 tool_call 按真名调用；台面上已有的工具直接用，不必搜。',
+        '再用 tool_call 按真名调用；台面上已有的工具直接用，不必搜。' +
+        '注意本工具不是全局工具目录：台面上的工具不会出现在结果里，' +
+        '这里搜不到**不等于**这台机器没有这个工具（实测有模型这么误读过）。',
       parameters: {
         type: 'object',
         properties: {
@@ -246,7 +248,16 @@ export const toolSearchPlugin: Plugin.Object = {
         }
         const hits = index.search(query, limit)
         if (hits.length === 0) {
-          return `「${query}」没搜到匹配的工具（现在撤下的目录共 ${String(catalog.length)} 条）。换个关键词，或直接用工具真名。`
+          // 空手而归时把「这里是什么目录」与「台面上有什么」一并说清：实测模型会把这句
+          // 「没搜到」读成「这台机器上没有这个工具」（会话里据此回答用户「没有网页搜索工具」），
+          // 其实它只是没在**撤下的**目录里。台面清单取 visible()——模型面前那份（预设投影过）。
+          const table = ctx.tools.visible().map((entry) => entry.name).sort()
+          const shown = table.length > 80 ? `${table.slice(0, 80).join('、')}…` : table.join('、')
+          return (
+            `「${query}」没搜到匹配的工具：撤下的目录${catalog.length === 0 ? '是空的' : `里有 ${String(catalog.length)} 条`}。` +
+            '这个目录只装**被撤下**的工具（MCP 的动手类工具 + 命中渐进披露规则的注册表工具），' +
+            `台面上的工具不在里面，搜不到不等于这台机器没有这个工具。台面上现有 ${String(table.length)} 条，直接按真名调用：${shown}`
+          )
         }
         const lines = hits.map(
           (hit, position) => `${String(position + 1)}. ${hit.name}　分数 ${hit.score.toFixed(3)}\n   ${hit.summary}`,

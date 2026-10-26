@@ -18,7 +18,7 @@
  * @module dsc/plugins/subagent
  */
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import { Transcript } from '../adapter/transcript.js'
@@ -222,13 +222,42 @@ export const subagentPlugin: Plugin.Object = {
 
     // ── 名册持久化 ──────────────────────────────────────────────────────────
     const rosterFile = join(ctx.settings.about().home, 'team', 'roster.json')
-    const readRoster = (): RosterRecord[] => {
+    /**
+     * 名册读缓存。
+     *
+     * 为什么要有：界面快照每次重建都会问一次名册（`transcript.ts:231` → `team.list()`
+     * → 这里），而快照重建跟着流式增量走——原先这里是**每次重建一次同步
+     * readFileSync + JSON.parse**，直接落在渲染路径上。
+     *
+     * 为什么按 mtime 而不是 TTL：名册是「远程待命的双进程共享」的一只文件（见 `list()`
+     * 那段僵尸读作 stopped 的注释），别的进程随时可能往里写一条。TTL 会让这类写入有
+     * 一段看不见的窗口（`resident-agents-test` 的僵尸用例就是这么抓到的）；而 stat 一次
+     * 比读全文 + 解析便宜得多，换来的是**从不同步**——文件没动就不重读，动了立刻重读。
+     */
+    let rosterCache: RosterRecord[] | null = null
+    /** 缓存对应的文件 mtime（null = 当时文件不在/读不到）。 */
+    let rosterStamp: number | null = null
+    const rosterMtime = (): number | null => {
+      try {
+        return statSync(rosterFile).mtimeMs
+      } catch {
+        return null
+      }
+    }
+    const readRosterFromDisk = (): RosterRecord[] => {
       try {
         const doc = JSON.parse(readFileSync(rosterFile, 'utf8')) as { teammates?: unknown }
         return Array.isArray(doc.teammates) ? (doc.teammates as RosterRecord[]) : []
       } catch {
         return []
       }
+    }
+    const readRoster = (): RosterRecord[] => {
+      const stamp = rosterMtime()
+      if (rosterCache !== null && stamp === rosterStamp) return rosterCache
+      rosterCache = readRosterFromDisk()
+      rosterStamp = stamp
+      return rosterCache
     }
     const writeRoster = (records: RosterRecord[]): void => {
       try {
@@ -237,6 +266,9 @@ export const subagentPlugin: Plugin.Object = {
       } catch {
         // 名册写不下去只影响重启后侧栏看不到收工的队友，不该让派活失败
       }
+      // 写失败也照此记缓存：下次读 mtime 对不上会强制回读
+      rosterCache = [...records]
+      rosterStamp = rosterMtime()
     }
     const remember = (teammate: Teammate): void => {
       const record: RosterRecord = {

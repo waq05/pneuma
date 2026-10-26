@@ -156,14 +156,17 @@ export class Transcript {
   /**
    * 追加一条系统提示（错误/状态说明）。
    * @param compaction - 这条提示是「历史刚被压缩」的落点：带标记，轨迹页据此切区段。
+   * @param level - `'error'` 表示要人处理的问题：界面会弹一次提示而不再铺在首屏；缺省只进日志。
    */
-  system(text: string, compaction = false): void {
+  system(text: string, compaction = false, level: 'info' | 'error' = 'info'): void {
     // 这条不走 reduce，时间戳在这里自己取
     this.list.push({
       kind: 'system',
       id: this.seq++,
       text,
       ts: Date.now(),
+      // 只有错误才写这个字段：信息类条目保持原来的形状，落盘体积不变。
+      ...(level === 'error' ? { level } : {}),
       ...(compaction ? { compaction: this.compactionMark() } : {}),
     })
   }
@@ -578,7 +581,7 @@ export class Transcript {
         return true
       }
       case 'error':
-        this.system(`错误：${event.message}`)
+        this.system(`错误：${event.message}`, false, 'error')
         return true
       case 'turn/start':
         // 快照的 turnState 完全由事件驱动（inTurn），事件发出即通知重算。

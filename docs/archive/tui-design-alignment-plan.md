@@ -1,4 +1,5 @@
 # TUI 视觉对齐 dsh-TUI 计划书（2026-10-06）
+> 状态：已归档（计划已全部完成，留作决策记录）：正文里的条目均已落地，日期与版本号是写作时锚点。
 
 > 目标：把 numa 终端界面的**视觉与信息架构**对齐 dsh-TUI v0.13.0（用户实机截图为准），补齐后两边的「观感差」收敛到品牌差异。
 > 证据：dsh 侧 = 用户两张实机截图 + 源码级规格取证（`theme.ts` / `LogoV2.tsx` / `Whale.tsx` / `splashFonts.ts` / `StatusLine.tsx` / `StatusMetrics.ts` / `markdown.ts` / `MarkdownTable.tsx` / `SubagentMessage.tsx` / `UserPromptMessage.tsx` / `AssistantThinkingMessage.tsx` / `Chat.tsx` pill / `PageMargin.tsx`）；numa 侧 = 0.6.57 实机截图三张（boot / 对话 / 滚动，隔离 HOME + 假端点驱动真 UI，走查脚本 `scripts/_tui-visual-run.mjs` 已就位可复跑）。

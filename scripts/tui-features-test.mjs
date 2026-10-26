@@ -204,18 +204,58 @@ check('欢迎页出现（Pneuma + 版本）', frame.includes('Pneuma') && /v\d+\
 check('欢迎页含模型与目录', frame.includes('模型 test-model') && frame.includes('/w'))
 check('欢迎页提示双击 Esc 撤回', frame.includes('双击 Esc 撤回上一轮'))
 
+// 1b. 大字点阵：本电池的 stdout 是 110×40，够画整块（≥30 行 × ≥40 列）。
+// 逐行钉死字形——改名 Pneuma 后这里曾漏改（还在拼 MUSE CODE），只查「含 Pneuma」
+// 的断言看不见，故把 5 行大字逐字钉住。
+const ART_PNEUMA = [
+  '█████ █   █ █████ █   █ █   █ █████',
+  '█   █ ██  █ █     █   █ ██ ██ █   █',
+  '█████ █ █ █ ████  █   █ █ █ █ █████',
+  '█     █  ██ █     █   █ █   █ █   █',
+  '█     █   █ █████ ▀▀▀▀▀ █   █ █   █',
+]
+const artLines = contentLines(frame).filter((line) => /^[█▀ ]+$/.test(line) && line.includes('█'))
+check('大字恰好 5 行（阶梯门槛内的终端才画）', artLines.length === 5, JSON.stringify(artLines))
+// 流内缩进由会话流的 padding 决定，只比字面（去掉首尾空白）
+check('大字逐行拼出 PNEUMA', ART_PNEUMA.every((row, i) => artLines[i]?.trim() === row), JSON.stringify(artLines))
+check(
+  '大字不再拼旧名（MUSE CODE 的两行首行都不在）',
+  !frame.includes('█   █ █   █ ▀▀▀▀█ █████') && !frame.includes('█████ █████ █████ █████'),
+)
+
 // 2. 思考分行：⚓ 斜体标签行不含内容，内容在下一行（0.6.59 对齐 dsh）
 const thinkLine = lineOf(frame, '⚓ 思考')
 check('思考标签行存在', thinkLine >= 0)
 check('思考标签与内容分行', thinkLine >= 0 && !contentLines(frame)[thinkLine].includes('纯问答') && contentLines(frame)[thinkLine + 1].includes('纯问答'), JSON.stringify(contentLines(frame).slice(thinkLine, thinkLine + 2)))
+// 2b. 思考**正文**不斜体（对齐 dsh 的 `StreamingMarkdown dimColor`：那边只有标签行斜体）。
+// 判据读原始帧那一行里的 SGR——`\x1b[3m` 就是斜体开关；标签行仍允许斜体。
+const rawThinkBody = output
+  .split('\n')
+  .filter((line) => line.includes('纯问答'))
+  .pop()
+check('思考正文不斜体（那一行没有 \\x1b[3m）', rawThinkBody !== undefined && !rawThinkBody.includes('\x1b[3m'), JSON.stringify(rawThinkBody?.slice(0, 120)))
+// 斜体开关的判据要在**开着色彩**的进程里读（本电池的 stdout 非 TTY，chalk 不输出 SGR，
+// 在这里查 `\x1b[3m` 永远是空转）——「标签斜体、正文不斜体」那两条在
+// `tui-transcript-style-test.mjs` 里用 `FORCE_COLOR=3` 钉住了。
 
-// 3. 状态栏：第一行 context 进度条 + 第二行左右两组字段，整帧仍 39 行
+// 2c. 用户消息与上一轮之间留一行空（dsh 的 marginTopOnTurn 同款；曾经紧贴在工具输出下面）
+{
+  const lines = contentLines(frame)
+  const userRow = lines.findIndex((line) => line.includes('❯ 你好'))
+  check('用户行找到了', userRow > 0, String(userRow))
+  check('用户行上面那一行是空的', lines[userRow - 1]?.trim() === '', JSON.stringify(lines.slice(Math.max(0, userRow - 2), userRow + 1)))
+}
+
+// 3. 状态栏：**一行**、左右两组字段（0.7.x 去掉了那条横跨整幅的 context 进度条）
 const allLines = contentLines(frame)
 const statusLine = allLines.find((line) => line.includes('空闲'))
 check('字段行合并状态与模型（左组）', statusLine !== undefined && statusLine.includes('test-model') && statusLine.includes('标准'), JSON.stringify(statusLine))
-const barLine = allLines[allLines.length - 2]
-check('context 进度条在倒数第二行（读数 0/1.0M）', barLine.includes('--%') === false && barLine.includes('0/1.0M'), JSON.stringify(barLine))
-check('字段行在最后一行（右组 ctx/cwd；会话段 0.6.62 出厂关）', allLines[allLines.length - 1] === statusLine && statusLine.includes('ctx') && statusLine.includes('/w') && !statusLine.includes('会话'))
+check(
+  '那条蓝色 context 进度条没了（整帧里没有它的读数 `0/1.0M`）',
+  !frame.includes('/1.0M'),
+  JSON.stringify(allLines.slice(-3)),
+)
+check('字段行就是最后一行（右组 ctx/cwd；会话段 0.6.62 出厂关）', allLines[allLines.length - 1] === statusLine && statusLine.includes('ctx') && statusLine.includes('/w') && !statusLine.includes('会话'))
 
 // 4. 恒定帧仍是 39 行
 check('恒定帧仍为 39 行', allLines.length === 39, String(allLines.length))

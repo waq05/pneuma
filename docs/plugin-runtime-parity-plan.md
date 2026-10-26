@@ -1,4 +1,5 @@
 # 插件运行时对齐 dsh：第二轮计划（2026-10-13）
+> 状态：已完成（A–E 全部落地；E4 拆包后壳的入口从 `ui-shell/src/boot.ts` 迁到 `ui-shell/src/ui-renderer/boot.ts`，本文档正文里的旧路径按此理解）。
 
 > 承接 `docs/ui-plugin-parity-plan.md`（2026-10-10，阶段 5–8）。那份计划的**结构面**已经落地：
 > 桌面默认 `uiProfile = 'shell'`（`desktop/electron/main/index.ts:75`）、原生桥、

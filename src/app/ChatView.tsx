@@ -12,28 +12,49 @@
  *
  * @module dsc-tui/app/ChatView
  */
-import { useEffect, useRef, useState } from 'react'
+import { memo, useRef } from 'react'
 import { Box, Text, useStdout } from 'ink'
 import type { DOMElement } from 'ink'
-import type { JSX, ReactNode } from 'react'
+import type { JSX, ReactNode, Ref } from 'react'
 import type { SubagentCardView, TranscriptEntry } from '../contract.js'
 import { MarkdownView } from './MarkdownView.js'
 import { ToolCard } from './ToolCard.js'
 import { displayWidth } from './markdown.js'
-import { useClickRegion, type RegisterClick } from './click.js'
-import { ACCENT, DIFF_COLOR, GAP, INDENT, PAD, PALETTE, STATUS_COLOR, TEXT } from './theme.js'
+import { measuredSpan, useClickRegion, type RegisterClick } from './click.js'
+import { HINT } from './keymap.js'
+import { useTick } from './ticker.js'
+import { TranscriptViewport, type TranscriptViewportApi } from './TranscriptViewport.js'
+import { ACCENT, DIFF_COLOR, GAP, INDENT, PAD, PALETTE, STATUS_COLOR, TEXT, mixHex } from './theme.js'
 
 /** 流式思考的盲文 spinner 帧（dsh 同款字符，80-120ms 一拍）。 */
 const BRAILLE = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
-/** 盲文 spinner：本地帧状态只重渲染自己，不动会话流的 reconcile。 */
-function BrailleSpinner(): JSX.Element {
-  const [frame, setFrame] = useState(0)
-  useEffect(() => {
-    const timer = setInterval(() => setFrame((current) => (current + 1) % BRAILLE.length), 120)
-    return () => clearInterval(timer)
-  }, [])
-  return <Text color={PALETTE.accent}>{BRAILLE[frame]}</Text>
+/**
+ * 用户消息之前留一行空：一句话（尤其金色的 `❯` 行）紧贴在上一轮的工具输出下面是糊的
+ * ——看不出「这一轮从哪开始」。dsh 的做法是「一轮的第一条消息 marginTop=1」（
+ * MessageList 的 `marginTopOnTurn`），这里同款。列表第一条也留：它上面要么是欢迎块、
+ * 要么是开场提示，留一行反而把题面从引导文字里分出来。
+ */
+const USER_TOP_GAP = 1
+
+/** spinner 节拍：所有 spinner 共用这一个周期（见 ticker.ts）。 */
+const BRAILLE_MS = 120
+
+/** 耗时读数节拍：同上，1 秒一格。 */
+const SECONDS_MS = 1000
+
+/**
+ * 盲文 spinner：走共享节拍（同周期全局一个计时器），帧状态只重渲染自己。
+ *
+ * `pulse` = **呼吸色**（照 dsh 的 Kimi Code 蓝脉冲）：字形颜色沿「品牌蓝 → 冰蓝」按正弦
+ * 来回，一个来回约 0.55 秒（`sin(frame * 0.9)`，与 dsh 同一个系数）。只给「思考中」用——
+ * 画面上同时呼吸的东西一多就是噪音，工具卡/队友卡上的 spinner 保持恒定强调色。
+ */
+function BrailleSpinner({ pulse = false }: { pulse?: boolean }): JSX.Element {
+  const frame = useTick(BRAILLE_MS)
+  const color =
+    pulse === true ? mixHex(PALETTE.brand, PALETTE.ice, (Math.sin(frame * 0.9) + 1) / 2) : PALETTE.accent
+  return <Text color={color}>{BRAILLE[frame % BRAILLE.length]}</Text>
 }
 
 const oneLine = (text: string, limit: number): string => {
@@ -54,6 +75,10 @@ const fmtTokens = (value: number): string => {
   if (value >= 1000) return `${(value / 1000).toFixed(1)}k`
   return String(value)
 }
+
+/** 瀑布窗口恒定 3 行（Kimi Code 视觉语言，dsh 同款）：高度不随输出抖动。子代理卡与
+ *  思考块共用（`scroll-model.estimateLines` 里同口径）。 */
+const WATERFALL_ROWS = 3
 
 /**
  * 按显示宽度硬截单行：折行会破坏瀑布的恒定 3 行窗口（dsh clipLine 同款）。
@@ -76,6 +101,71 @@ const clipLine = (text: string, maxWidth: number): string => {
 /** 文件路径的末段（显示用）。 */
 const baseName = (path: string): string => path.split(/[\\/]/).pop() ?? path
 
+/**
+ * 从**尾部**硬截单行（`clipLine` 的镜像）：`…` + 尽量多的后缀。
+ *
+ * 为什么要留尾：瀑布的末行是「刚吐出来的那几个字」长在行尾，留头截尾的话永远看不见
+ * 最新内容（dsh 的 `truncate-start` 同义）。
+ */
+const clipLineStart = (text: string, maxWidth: number): string => {
+  if (maxWidth <= 1) return ''
+  const chars = [...text]
+  let width = 0
+  let index = chars.length
+  while (index > 0) {
+    const charWidth = displayWidth(chars[index - 1]!)
+    if (width + charWidth > maxWidth - 1) break
+    width += charWidth
+    index -= 1
+  }
+  return index === 0 ? text : `…${chars.slice(index).join('')}`
+}
+
+/**
+ * 思考块的**恒定 3 行瀑布窗口**（照 dsh 的 preview ticker）：取正文最后 3 行——流式时
+ * 最新的话就在底部——每行硬截到框宽、**不折行**，所以块高与「流到哪一句 / 框多宽」都无关，
+ * 加字不会让整块跳一下。上面还有内容时首行前缀 `…`；末行从尾部截（新词长在行尾）。
+ *
+ * @param text - 思考正文。
+ * @param width - 正文可用列数（不含 `│ ` 引导）。
+ */
+const thinkingRows = (text: string, width: number): string[] => {
+  const lines = text.split('\n')
+  const visible = lines.slice(-WATERFALL_ROWS)
+  const clipped = lines.length > visible.length
+  return Array.from({ length: WATERFALL_ROWS }, (_, index) => {
+    const raw = visible[index] ?? ''
+    const moreAbove = index === 0 && clipped
+    const room = moreAbove ? Math.max(1, width - 1) : width
+    const body =
+      raw === '' ? '' : index === WATERFALL_ROWS - 1 ? clipLineStart(raw, room) : clipLine(raw, room)
+    // 引导符永远在：空行也画 `│ `，否则空字符串的 Text 高度是 0，瀑布会缺行
+    return `│ ${moreAbove ? '…' : ''}${body}`
+  })
+}
+
+/** 瀑布正文的可用列数（页边距与缩进之外再扣掉 `│ ` 两列）。 */
+const thinkingWidth = (columns: number): number =>
+  Math.max(8, columns - PAD.page * 2 - INDENT.detail - 2)
+
+/**
+ * 思考正文：展开态给全文，折叠态给恒定 3 行瀑布（宽度自己量，`Entry` 不必为此接 props）。
+ */
+function ThinkingBody({ text, expanded }: { text: string; expanded: boolean }): JSX.Element | null {
+  const { stdout } = useStdout()
+  if (expanded) return <Text {...TEXT.secondary}>{text}</Text>
+  if (text === '') return null
+  return (
+    <>
+      {thinkingRows(text, thinkingWidth(stdout?.columns ?? 100)).map((row, index) => (
+        <Text key={index} {...TEXT.secondary} wrap="truncate-end">
+          {row}
+        </Text>
+      ))}
+    </>
+  )
+}
+
 /** 子代理卡的运行状态词与颜色（对照 dsh SubagentMessage 的 status()）。 */
 const SUBAGENT_STATUS: Record<SubagentCardView['state'], { glyph: string; label: string; color: string | undefined }> = {
   working: { glyph: '◐', label: '运行中', color: STATUS_COLOR.pending },
@@ -84,11 +174,7 @@ const SUBAGENT_STATUS: Record<SubagentCardView['state'], { glyph: string; label:
   stopped: { glyph: '×', label: '已停止', color: STATUS_COLOR.failed },
 }
 
-/** 瀑布窗口恒定 3 行（Kimi Code 视觉语言，dsh 同款）：高度不随输出抖动。 */
-const WATERFALL_ROWS = 3
-
-/**
- * 子代理内联卡：跑动时 = 头行（状态点 + bold 任务 + 模型/轮数/工具数/耗时/token）
+/** 子代理卡：跑动时 = 头行（状态点 + bold 任务 + 模型/轮数/工具数/耗时/token）
  * + 当前工具行 + 恒定 3 行输出瀑布（dim、`│` 引导）；收工折成头行一行（失败保留
  * 一条错误行）。整卡可点，点了开队友的只读转录浮层。
  */
@@ -104,13 +190,8 @@ function SubagentCard({
   const { stdout } = useStdout()
   const ref = useRef<DOMElement | null>(null)
   const settled = sub.state !== 'working'
-  // 跑动时头部耗时每秒跳一格（本地 setState 只重渲染这张卡）；收工停表
-  const [, setTick] = useState(0)
-  useEffect(() => {
-    if (settled || sub.startedAt === undefined) return
-    const timer = setInterval(() => setTick((current) => current + 1), 1000)
-    return () => clearInterval(timer)
-  }, [settled, sub.startedAt])
+  // 跑动时头部耗时每秒跳一格（共享 1s 节拍；收工停表，不停着一张卡一个计时器）
+  useTick(SECONDS_MS, !settled && sub.startedAt !== undefined)
   const info = SUBAGENT_STATUS[sub.state]
   const clickable = onOpen !== undefined && sub.file !== undefined
   useClickRegion(
@@ -119,6 +200,10 @@ function SubagentCard({
     clickable
       ? (col, row, top, height) => {
           if (row < top || row >= top + height) return false
+          // 行对列也要对：卡片右边与刻度栏同屏时，点在刻度栏上应归刻度栏（跳轮），
+          // 点卡片正文才开队友转录
+          const span = measuredSpan(ref.current)
+          if (span === null || col < span.left || col >= span.left + span.width) return false
           onOpen!(sub.file!)
           return true
         }
@@ -185,6 +270,50 @@ function CompactionRule({ count }: { count: number }): JSX.Element {
   )
 }
 
+/**
+ * 滚离尾部时**浮在视口第一行**上的那一行（照 dsh 的 `PinnedTurnHeader`）：**当前轮的题面**。
+ *
+ * 往上读的时候，屏幕上永远有一行告诉你「现在读的是哪一轮」——长会话里最贵的认知负担
+ * 就是这个；点它跳回本轮题面（dsh 同语义）。
+ *
+ * 硬性只占一行、**且不挤掉内容行**（它由 TranscriptViewport 用零高容器 + 负 margin 浮上去，
+ * 见那边 `pinned` 的注释）：挤掉一行会改内容坐标（同样格数滚回来差一行到不了底）与刻度栏
+ * 位置。所以这里把文本**补齐到满宽**——浮层要盖住下面那一行，只画 `❯ …` 几个字符的话
+ * 后半行会露出底下的正文。
+ */
+function PinnedTurn({
+  text,
+  turn,
+  width,
+  onPick,
+  registerClick,
+}: {
+  text: string
+  turn: number
+  /** 要盖满的列数（浮层的宽度；正文列宽减掉刻度栏那两列）。 */
+  width: number
+  onPick: (turn: number) => void
+  registerClick?: RegisterClick
+}): JSX.Element {
+  const ref = useRef<DOMElement | null>(null)
+  useClickRegion(ref, registerClick, (col, row, top, height) => {
+    if (row < top || row >= top + height) return false
+    // 行对列也要对（钉住行只占正文那几列）：点在右侧刻度栏上不该被它吃掉
+    const span = measuredSpan(ref.current)
+    if (span === null || col < span.left || col >= span.left + span.width) return false
+    onPick(turn)
+    return true
+  })
+  const label = clipLine(`❯ ${text}`, width)
+  return (
+    <Box ref={ref} height={1} flexShrink={0} overflow="hidden">
+      <Text color={PALETTE.userPrompt} bold wrap="truncate-end">
+        {label.padEnd(Math.max(0, width), ' ')}
+      </Text>
+    </Box>
+  )
+}
+
 /** 用户消息的图片行：整行可点，点了开半块真彩预览（没有回调时退化为纯说明）。 */
 function ImageLine({
   count,
@@ -216,11 +345,19 @@ function ImageLine({
   )
 }
 
-/** 单条条目的渲染（回看浮层复用同一份，直播光标由 streaming 控制）。 */
-export function Entry({
+/**
+ * 单条条目的渲染（回看浮层复用同一份，直播光标由 streaming 控制）。
+ *
+ * `memo` 是救命的：定稿条目在 `transcript.entries` 里是**同一个对象引用**，而快照
+ * 每次重建都会换掉直播尾——没有 memo 时每个增量都要把窗口里 80 条全部重渲染一遍。
+ * 前提是 props 里没有每帧新建的值（回调在 App 侧已 `useCallback`，见 handleOpenAgent）。
+ */
+export const Entry = memo(function Entry({
   entry,
   streaming,
   expandThinking,
+  expandedTools,
+  onToggleTool,
   onPreviewImages,
   onOpenAgent,
   registerClick,
@@ -228,6 +365,10 @@ export function Entry({
   entry: TranscriptEntry
   streaming: boolean
   expandThinking: boolean
+  /** 已经展开的工具卡（点一行工具卡切换；状态由 App 持有）。 */
+  expandedTools?: ReadonlySet<number>
+  /** 点工具卡的回调（省略 = 工具卡不可点）。 */
+  onToggleTool?: (id: number) => void
   /** 用户消息图片行的点击回调（省略 = 图片行不可点）。 */
   onPreviewImages?: (images: string[]) => void
   /** 子代理卡的点击回调（省略 = 卡片不可点）：打开队友的只读转录浮层。 */
@@ -243,7 +384,7 @@ export function Entry({
         return <Text {...TEXT.secondary}>⌸ 子任务状态更新</Text>
       }
       return (
-        <Box flexDirection="column" gap={GAP.none}>
+        <Box flexDirection="column" gap={GAP.none} marginTop={USER_TOP_GAP}>
           {entry.compaction !== undefined ? <CompactionRule count={entry.compaction.count} /> : null}
           {/* 用户行金色粗体（dsh userPromptLabel），自然折行续行对齐文字列 */}
           <Box>
@@ -266,21 +407,24 @@ export function Entry({
         </Box>
       )
     case 'thinking': {
-      // 标签与内容分行（0.6.57）；0.6.59 对齐 dsh：⚓ + 整行斜体，流式时盲文 spinner；
-      // 0.6.60 补时长（≥1s 才显示 · Ns，重放老日志没有这一项就自然不显示）。
+      // 标签与内容分行（0.6.57）；0.6.59 对齐 dsh：⚓ + 斜体标签，流式时盲文 spinner；
+      // 0.6.60 补时长（≥1s 才显示 · Ns，重放老日志没有这一项就自然不显示）；
+      // 本批把折叠态从「压成一行的 100 字预览」换成 dsh 的**恒定 3 行瀑布**（见 thinkingRows）。
       const seconds = entry.durationMs === undefined ? '' : fmtSeconds(entry.durationMs)
       return (
         <Box flexDirection="column" gap={GAP.none}>
           <Text italic {...TEXT.secondary}>
-            {streaming ? <BrailleSpinner /> : <Text color={STATUS_COLOR.pending}>⚓</Text>}{' '}
+            {streaming ? <BrailleSpinner pulse /> : <Text color={STATUS_COLOR.pending}>⚓</Text>}{' '}
             {streaming ? '思考中' : '思考'}
             {seconds === '' ? '' : ` · ${seconds}`}
-            {expandThinking ? '' : '（ctrl+t 展开）'}
+            {expandThinking ? '' : HINT.thinkingExpand}
           </Text>
-          <Box marginLeft={INDENT.detail}>
-            <Text {...TEXT.secondary} italic>
-              {expandThinking ? entry.text : oneLine(entry.text, 100)}
-            </Text>
+          <Box marginLeft={INDENT.detail} flexDirection="column">
+            {/* 思考正文：暗淡、**不斜体**（对齐 dsh 的 `StreamingMarkdown dimColor`——
+                那边只有标签行是斜体，正文是纯暗淡）。终端没有字号这一维，「小一号」在
+                这里就是暗淡色 + 不斜体：斜体让长中文段落挤在一起更难读，也把思考与
+                标答的视觉重量拉平了。 */}
+            <ThinkingBody text={entry.text} expanded={expandThinking} />
           </Box>
         </Box>
       )
@@ -292,7 +436,14 @@ export function Entry({
         </Box>
       )
     case 'tool':
-      return <ToolCard call={entry.call} />
+      return (
+        <ToolCard
+          call={entry.call}
+          expanded={expandedTools?.has(entry.id) === true}
+          {...(onToggleTool === undefined ? {} : { onToggle: () => onToggleTool(entry.id) })}
+          registerClick={registerClick}
+        />
+      )
     case 'subagent':
       return <SubagentCard sub={entry.sub} onOpen={onOpenAgent} registerClick={registerClick} />
     case 'plan': {
@@ -368,61 +519,117 @@ export function Entry({
     default:
       return null
   }
-}
+})
 
 export function ChatView({
   entries,
   turnState,
   expandThinking,
   empty,
-  header,
+  welcome,
+  maxWidth,
+  columns,
+  railCenterLines,
+  expandedTools,
+  onToggleTool,
   onPreviewImages,
   onOpenAgent,
+  onPickTurn,
   registerClick,
+  viewportRef,
+  onAtTailChange,
 }: {
-  /** 可见窗口切片（App 按「帧底对齐 + 顶部裁剪」算好传入）。 */
+  /** 全量条目（窗口切片、行偏移、刻度几何都在 TranscriptViewport 里按行算）。 */
   entries: TranscriptEntry[]
   turnState: 'idle' | 'thinking' | 'working' | 'awaiting-approval'
   expandThinking: boolean
   /** 全会话一条都没有（和「窗口恰好翻空」区分开，只有前者画开场提示）。 */
   empty: boolean
   /**
-   * 挂在会话流最顶上的头部（启动欢迎页）：随内容一起从顶上滚走（对齐 codex 的
-   * session header / dsh 的 LogoHeader——不独占屏幕，也不永久占位）。
+   * 挂在会话流最顶上的头部（启动欢迎页）：**随内容一起从顶上滚走**（对齐 codex 的
+   * session header / dsh 的 LogoHeader——不独占屏幕，也不永久占位），所以它是流里的
+   * 第一个「条目」，不是固定表头。
    */
-  header?: ReactNode
+  welcome?: ReactNode
+  /** 没画刻度栏时可用的内容宽度（列）。 */
+  maxWidth: number
+  /** 终端总列数（刻度栏门槛）。 */
+  columns: number
+  /**
+   * 刻度栏**居中**用的高度（省略 = 视口行数）。聊天区可用高度会随「回到底部」胶囊、
+   * 草稿行数变化，按它居中会让整块刻度每滚一下上下挪一行，所以调用方传「帧高 − 状态栏」。
+   */
+  railCenterLines?: number
+  /** 已展开的工具卡（点一行工具卡切换）。 */
+  expandedTools?: ReadonlySet<number>
+  /** 点工具卡的回调（省略 = 工具卡不可点）。 */
+  onToggleTool?: (id: number) => void
   /** 用户消息图片行的点击预览回调（省略 = 图片行不可点）。 */
   onPreviewImages?: (images: string[]) => void
   /** 子代理卡点击回调（省略 = 卡片不可点）：打开队友的只读转录浮层。 */
   onOpenAgent?: (file: string) => void
+  /** 顶部钉住的轮头被点击（参数是轮下标）：跳回那一轮的题面。 */
+  onPickTurn?: (turn: number) => void
   registerClick?: RegisterClick
+  /** 视口手柄（App 的键位与鼠标打这里）。 */
+  viewportRef?: Ref<TranscriptViewportApi>
+  /** 「是不是贴着最新」变化时回调（回到底部的那颗胶囊用）。 */
+  onAtTailChange?: (atTail: boolean) => void
 }): JSX.Element {
-  const tail = entries
   // 直播尾（负 id）与最后定稿 text 条目才带光标闪烁位。
-  const lastId = tail[tail.length - 1]?.id
+  const lastId = entries[entries.length - 1]?.id
+  // 流头部（欢迎页 + 一句开场提示）当流里的第一块，跟着内容一起滚
+  const leading =
+    welcome === undefined && !empty ? undefined : (
+      <>
+        {welcome}
+        {empty ? (
+          <Box marginLeft={INDENT.detail}>
+            <Text {...TEXT.secondary}>{HINT.empty}</Text>
+          </Box>
+        ) : null}
+      </>
+    )
   return (
-    <Box flexDirection="column" flexShrink={0} gap={GAP.tight}>
-      {header}
-      {tail.map((entry) => (
+    <TranscriptViewport
+      ref={viewportRef}
+      entries={entries}
+      maxWidth={maxWidth}
+      columns={columns}
+      {...(railCenterLines === undefined ? {} : { railCenterLines })}
+      showRail
+      expandThinking={expandThinking}
+      registerClick={registerClick}
+      onAtTailChange={onAtTailChange}
+      emptyHint={HINT.empty}
+      // 滚离尾部时浮住当前轮的题面（视口把「当前轮」与正文列宽算好给进来，见 TranscriptViewport 的 `pinned`）
+      pinned={(active, _layout, width) => {
+        if (onPickTurn === undefined) return null
+        const source = entries.find((item) => item.id === active.id)
+        if (source === undefined || source.kind !== 'user') return null
+        return (
+          <PinnedTurn
+            text={oneLine(source.text, 240)}
+            turn={active.index}
+            width={width}
+            onPick={onPickTurn}
+            registerClick={registerClick}
+          />
+        )
+      }}
+      renderEntry={(entry) => (
         <Entry
-          key={entry.id}
           entry={entry}
-          streaming={
-            entry.id === lastId &&
-            entry.id < 0 &&
-            (turnState === 'thinking' || turnState === 'working')
-          }
+          streaming={entry.id === lastId && entry.id < 0 && (turnState === 'thinking' || turnState === 'working')}
           expandThinking={expandThinking}
+          expandedTools={expandedTools}
+          onToggleTool={onToggleTool}
           onPreviewImages={onPreviewImages}
           onOpenAgent={onOpenAgent}
           registerClick={registerClick}
         />
-      ))}
-      {empty ? (
-        <Box marginLeft={INDENT.detail}>
-          <Text {...TEXT.secondary}>输入消息开始对话；/help 查看命令，Esc 打断回合，Ctrl+O 回看全文。</Text>
-        </Box>
-      ) : null}
-    </Box>
+      )}
+      {...(leading === undefined ? {} : { leading })}
+    />
   )
 }

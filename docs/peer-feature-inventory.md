@@ -12,7 +12,7 @@
 
 - **dsh**：`D:\deepseek-harness\deepseek-harness`，约 60 个功能包组、60+ client UI 插件包、4 个 app。工具权威目录 `docs/tool-catalog.md`、配置权威目录 `docs/config-catalog.md`（由脚本从运行时生成）。
 - **codex**：`D:\codex\codex`，Rust 主体 `codex-rs`（150+ crate）+ `sdk/`（TS/Python）+ `docs/`。
-- **Pneuma**：本仓库，基于代码取证 + [development-log.md](development-log.md) 全部 44 个阶段。
+- **Pneuma**：本仓库，基于代码取证 + [development-log.md](development-log.md) 各阶段（已记到 0.7.0）。
 - 全部为只读源码梳理，未运行任何一家；「未见」指在该仓库活动代码中未找到，不排除文档口径或仓库外实现。
 - dsc 清单经两轮：第一轮按能力域盘点（本节主体），第二轮对已具备能力做**实现深度复核**（与 dsh/codex 同层细比，确认的疏漏编号 T29–T47，登记在 [harness-benchmark-roadmap.md](harness-benchmark-roadmap.md) §7.5）——本节各「差距」行已并入第二轮结论。
 
@@ -326,7 +326,7 @@
 - 差距：无对外 SDK/协议面（host-stdio 是内部协议）；ACP 无
 
 ### 11. 插件系统与杂项 ——【完整】
-- 三档插件（内核不可停 / 官方可开关 17 / 外部单文件）+ 热挂载 + plugin_manager 工具 + dsh 插件兼容层（logger 桥/模块解析钩子/双形状 ctx.tools）
+- 三档插件（内核不可停 / 官方可开关 18 / 外部单文件）+ 热挂载 + plugin_manager 工具 + dsh 插件兼容层（logger 桥/模块解析钩子/双形状 ctx.tools）
 - 技能市场（GitHub 目录/索引 JSON 两类源，缓存 1h）
 - 扩展点 15+（tools/commands/prompt/guards/surfaces/waiting/session.appendState/events/settings/skills/provide…），KERNEL_API_VERSION=6
 - 差距：外部插件无 npm/GitHub 远程安装（只收本地 .js）；无 doctor 式体检命令；无插件管理器 HMR

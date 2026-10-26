@@ -50,9 +50,9 @@
 
 ## 2. dsc 现状（一句话，细节见 development.md）
 
-dsc 已具备：自研 ReAct 循环、OpenAI 兼容流式客户端（reasoning / tool_calls / usage / 重试）、会话 JSONL 落盘与重放恢复、会话库（归档 / 置顶 / 改名 / 分叉 / 回收站）、六件套工具（bash / read / write / edit / glob / grep）、三档权限模式（readonly / auto-edit / full-access）+ 审阅者正交轴（user / auto-review）+ 打包权限预设（沙箱 + 权限模式 + 审阅者三合一：只读 / 工作区可写 / 完全访问 / AI 复核）、保头折尾摘要压缩（含重放折叠与锚点加固）、todo / plan / ask / goal、九个官方可开关插件（默认开：网页搜索、审批灾难地板、大输出溢出、会话全文检索；默认关：智能体团队、电脑操作、生命周期钩子、MCP 客户端、工具渐进披露）、安全钩子（用户自登记的规则与脚本，四个事件）、技能系统与技能市场、外部单文件插件系统、Electron 桌面端（终端 / 浏览器 / 文件 / git dock）、主题引擎、模型能力字段、AGENTS.md 说明书预算注入。
+dsc 已具备：自研 ReAct 循环、OpenAI 兼容流式客户端（reasoning / tool_calls / usage / 重试）、会话 JSONL 落盘与重放恢复、会话库（归档 / 置顶 / 改名 / 分叉 / 回收站）、工具面（核心六件套 bash / read / write / edit / glob / grep，另有后台作业三件套与交互终端）、三档权限模式（readonly / auto-edit / full-access）+ 审阅者正交轴（user / auto-review）+ 打包权限预设（沙箱 + 权限模式 + 审阅者三合一：只读 / 工作区可写 / 完全访问 / AI 复核）、保头折尾摘要压缩（含重放折叠与锚点加固）、todo / plan / ask / goal、十八个官方可开关插件（默认开：网页搜索、审批灾难地板、大输出溢出、会话全文检索、沙箱、文件更改预览）、安全钩子（用户自登记的规则与脚本，四个事件）、技能系统与技能市场、外部单文件插件系统、Electron 桌面端（终端 / 浏览器 / 文件 / git dock）、主题引擎、模型能力字段、AGENTS.md 说明书预算注入。
 
-dsc 的插件扩展点（`src/core/plugin-registry.ts:71`，`KERNEL_API_VERSION = 4`）已经很够用：`tools.register`、`commands.register`、`prompt.register + transformMessages`、`guards.register + registerObserver`、`surfaces.register`、`waiting.register`、`session.appendState / state`、`events.on`、`settings.defineSection`、`skills.source`、`transcript.system`。这份清单决定了「哪些能力不改内核就能挂」。
+dsc 的插件扩展点（`src/core/plugin-registry.ts:79`，`KERNEL_API_VERSION = 6`）已经很够用：`tools.register`、`commands.register`、`prompt.register + transformMessages`、`guards.register + registerObserver`、`surfaces.register`、`waiting.register`、`session.appendState / state`、`events.on`、`settings.defineSection`、`skills.source`、`transcript.system`。这份清单决定了「哪些能力不改内核就能挂」。
 
 ---
 
@@ -543,7 +543,7 @@ dsc（相对路径）：
 - 压缩：`src/core/compact.ts`（`safeCut` 切点 + 摘要拼装）、`src/core/compact-anchors.ts`（锚点索引 / 用户原话 / 找回指针）、重放折叠 `src/core/session.ts` 的 `case 'summary'`；会话列表只读前 8 行 `src/core/session.ts:463-472`
 - 灾难地板 `src/core/approval-floor.ts` + `src/plugins/approval-floor.ts`；溢出 `src/core/spill.ts` + `src/plugins/spill.ts`；MCP `src/core/mcp.ts` + `src/plugins/mcp.ts`；渐进披露 `src/core/tool-search.ts` + `src/plugins/tool-search.ts`；十二事件钩子 `src/core/lifecycle-hooks.ts`；会话检索 `src/core/session-index.ts` + `src/plugins/session-search.ts`
 - 审批档位判定与审阅者复核（第 5.5 层）`src/plugins/approval.ts`；守卫链刻度见 development.md §7
-- 扩展点与内核 API 版本 `src/core/plugin-registry.ts:71`；插件配置热生效 `src/core/plugin-registry.ts:165`
+- 扩展点与内核 API 版本 `src/core/plugin-registry.ts:79`；插件配置热生效 `src/core/plugin-registry.ts:165`
 - 防注入围栏（已预留 mcp 来源）`src/core/untrusted.ts:31`
 - 技能只读工具 `src/plugins/skills.ts:345`
 

@@ -415,7 +415,10 @@ export async function loadExternalPlugins(root: Context, configured: string[]): 
   const extraPaths = configured.map((entry) => (isAbsolute(entry) ? entry : resolve(configDir, entry)))
   const failures = await mountAllExternalPlugins(root, extraPaths)
   for (const failure of failures) {
-    root.transcript.system(`外部插件 ${failure.name}（${failure.file}）未能加载：${failure.problem}，已自动停用`)
+    root.transcript.system(
+      `外部插件 ${failure.name}（${failure.file}）未能加载：${failure.problem}，已自动停用`,
+      'error',
+    )
   }
 }
 
@@ -456,6 +459,8 @@ export function emitStartupNotes(
         '请编辑 ~/.dsc/config.yaml 配置 providers（api: openai-completions 风格），\n' +
         'key 放到 apiKeyEnv 指向的环境变量或 ~/.dsc/credentials.yaml。\n' +
         '若本机有 dsh 配置，可运行 `numa config migrate --force` 迁移。',
+      // 没有端点等于什么都干不了：标成错误，界面弹一次提示，不铺在首屏。
+      'error',
     )
   }
   if (migration !== null) {

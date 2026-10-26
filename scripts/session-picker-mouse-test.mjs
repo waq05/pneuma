@@ -189,12 +189,20 @@ let frame = lastFrame()
 check('初始帧内容行数 = 39（终端行数 − 1，恒定帧）', contentLines(frame).length === 39, String(contentLines(frame).length))
 check('最新条目可见（底对齐）', frame.includes('条目-119'))
 check('最老条目被顶上裁掉', !frame.includes('条目-0'))
-check('鼠标跟踪全时开启', output.includes('\x1b[?1000;1006h'))
+// 1002（按住拖动）与 1003（纯移动）是「刻度列悬停读数 + 拖动 scrub」的前提，一并钉住
+check('鼠标跟踪全时开启（含 1002/1003 悬停与拖动）', output.includes('\x1b[?1000;1002;1003;1006h'))
 
-// 1. 滚轮回看：上 ×3 → 锚在 117，提示条出现，帧仍恒定
+// 1. 滚轮回看：滚轮一格 = 3 行（按行滚动），上 ×3 = 退 9 行，提示条出现，帧仍恒定。
+// 判据看**可见区顶条**（0.7.x 起滚动状态钉在「哪一条的第几行」上，顶行是精确的）：
+// 贴尾时顶条 = 119 − 35 + 1 = 85，退 9 行 → 76。不看末条——「回到底部」胶囊浮在
+// 转录区最后一行上，会把末条开头那几列盖掉，按末条判会差一条。
 await press('\x1b[<64;10;5M\x1b[<64;10;5M\x1b[<64;10;5M')
 frame = lastFrame()
-check('滚轮上×3 停在条目-117', frame.includes('条目-116') && !frame.includes('条目-119'), JSON.stringify(frame.includes('条目-116')))
+check(
+  '滚轮上×3 退 9 行（可见区顶条 = 76）',
+  frame.includes('条目-76') && !frame.includes('条目-75'),
+  JSON.stringify(contentLines(frame).filter((l) => l.includes('条目-')).slice(0, 1)),
+)
 check('回底提示条出现（pill 样式）', frame.includes('回到底部') && frame.includes('Enter/End'))
 check('滚轮回看帧仍 39 行', contentLines(frame).length === 39, String(contentLines(frame).length))
 
@@ -204,18 +212,31 @@ await press(`\x1b[<0;10;${indicatorRow}M`)
 frame = lastFrame()
 check('点击提示条回到底部（条目-119 回来）', !frame.includes('回到底部') && frame.includes('条目-119'))
 
-// 3. PgUp/PgDn 回看
+// 3. PgUp/PgDn 回看（按行：一屏 = 视口行数 − 1。视口行数会随「回到底部」胶囊的出现少一行，
+//    所以一上一下未必正好落回原处——断言「往回了一屏」而不是「精确回到底」）
 await press('\x1b[5~')
-check('PgUp 回看 10 条出现提示条', lastFrame().includes('回到底部') && lastFrame().includes('Enter/End'))
+check('PgUp 回看一屏出现提示条', lastFrame().includes('回到底部') && lastFrame().includes('Enter/End'))
+const pgUpTop = Number(
+  contentLines(lastFrame())
+    .filter((l) => l.includes('条目-'))
+    .map((l) => l.replace(/[^0-9]/g, ''))[0],
+)
 await press('\x1b[6~')
-check('PgDn 回到底部提示条消失', !lastFrame().includes('回到底部') && lastFrame().includes('条目-119'))
+const pgDownTop = Number(
+  contentLines(lastFrame())
+    .filter((l) => l.includes('条目-'))
+    .map((l) => l.replace(/[^0-9]/g, ''))[0],
+)
+check(`PgDn 往回一屏（${pgUpTop} → ${pgDownTop}）`, pgDownTop > pgUpTop + 20, `${pgUpTop} → ${pgDownTop}`)
 
 // 4. 会话选择器：打开 → 窗口指示 → 点击选中 → 再点打开
 await press('/resume')
 await press('\r')
 frame = lastFrame()
 check('选择器打开且带全量条数', frame.includes('恢复会话') && frame.includes('（60 条）'))
-check('窗口指示显示 1–32（状态栏压缩后列表多两行）', frame.includes('显示 1–32'), JSON.stringify(contentLines(frame).slice(0, 5)))
+// 33 = 帧 39 行 − 状态栏 1 行 − 选择器框架 5 行（0.7.x 去掉 context 进度条后状态栏少一行，
+// 列表因此多一行）
+check('窗口指示显示 1–33（状态栏压缩后列表多两行）', frame.includes('显示 1–33'), JSON.stringify(contentLines(frame).slice(0, 5)))
 check('选中第一项 sess-00', (selectedLine(frame) ?? '').includes('sess-00'), JSON.stringify(selectedLine(frame)))
 check('选择器帧仍 39 行', contentLines(frame).length === 39, String(contentLines(frame).length))
 await press('\x1b[B\x1b[B')
