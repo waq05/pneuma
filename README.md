@@ -116,6 +116,10 @@ numa config show              # 查看当前生效的端点/模型/key 来源（
 
 每个服务一个 cordis 插件。官方可开关插件共 **18 个**（默认开：网页搜索、审批灾难地板、大输出溢出、会话全文检索、沙箱、文件更改预览；默认关：子智能体、智能体团队、电脑操作、生命周期钩子、MCP 客户端、工具渐进披露、定时任务、LSP 代码智能、浏览器自动化、侧栏浏览器控制、自我改进、dsh 兼容层等），在插件中心里手动开关；长期记忆是默认开的内核插件。完整清单与各自干什么见 [docs/development.md](docs/development.md) 第 4 节。
 
+界面那一半（含 dsh 组合包自带的界面半）也在插件中心里管：手工放进 `~/.dsc/plugins/<目录>/` 的
+要先点一次「确认信任」，用 `numa plugin add` 装进 profile 的组合包装了就算同意，直接在
+「组合包界面」那一组里开关。
+
 外部插件 = 单个 ESM `.js` 文件放进 `~/.dsc/plugins/`，可注册工具、命令、监听事件，
 桌面端「插件」页可视化管理。完整 API 与开发规范见 **[docs/plugin-development.md](docs/plugin-development.md)**，上手路径与扩展点速查见 **[docs/writing-plugins.md](docs/writing-plugins.md)**；可运行示例见 `examples/plugins/ping.js`。
 

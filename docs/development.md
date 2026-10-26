@@ -275,6 +275,21 @@ numa plugin list [--profile 名字]
 **内置插件的界面半也读同一处**：`ui-shell/src/plugins/<id>/package.json` 的 `dsh.client`
 （19 个已全部迁完，旧 `plugin.json` 已删；两处并存构建会失败）。
 
+**构建产物布局（2.0 起：一个插件一处声明）**：
+
+```
+lib/ui/plugins/
+  manifest.json      # 只写 { version, apiVersion }：壳契约版本，**不再列插件**
+  <id>/
+    client.js        # 工厂注册形状的 bundle
+    bundle.json      # 这份产物的自述：apiVersion / file / platforms / api / phase / inject / services
+```
+
+宿主**扫目录、读各自述**，不再按中央清单列插件：加一个插件 = 多一个目录，删一个 = 少一个目录，
+开发态热更也按产物目录的 mtime 发现这件事（新增/删掉时成员文件的 stat 不会变）。旧产物（只有
+中央 `plugins` 数组、没有自述）仍能装——那是给「拿着旧产物升级宿主」留的兜底，同时会被点名
+「没有 `bundle.json`」，看到这句就重建界面壳。
+
 **界面半**（2.0 起）：同一个包若在 `dsh.client` 里声明 `platform: "pneuma"` 与 `api`，
 它的 `exports["./client"]` 会被收进界面启动图（发现、门禁、取字节、组图在
 `src/core/ui-bundles.ts` 的 `discoverPackageUiArtifacts`，路由在 `src/core/ui-route.ts`）。

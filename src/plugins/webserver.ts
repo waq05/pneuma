@@ -230,7 +230,10 @@ export const webserverPlugin: Plugin.Object = {
         hmr = createUiHmr({
           watches: () => [
             ...server.watchRows().map((row) => ({ id: row.id, path: row.path })),
-            // 清单是一等信号：新增/删掉一个插件时成员文件的 stat 不会变。
+            // 「谁是插件」2.0 起由目录自己说：新增/删掉一个插件只体现在**产物目录**上
+            // （成员文件的 stat 不会变，根清单也不列插件了）。目录的 mtime 在增删条目时变。
+            { id: 'plugins-dir', path: uiPluginsDir() },
+            // 根清单仍是一等信号：壳契约版本（apiVersion）变了要重判门禁。
             { id: 'manifest', path: join(uiPluginsDir(), UI_PLUGIN_MANIFEST) },
           ],
           graph: () => server.boot(),

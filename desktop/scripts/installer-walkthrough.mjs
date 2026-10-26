@@ -282,13 +282,27 @@ try {
     const core = join(installDir, 'resources', 'dsc-core')
     check('界面壳产物随 extraResources 落位（resources/dsc-core/lib/ui/assets）', existsSync(join(core, 'lib', 'ui', 'assets', 'index.html')))
     const manifestPath = join(core, 'lib', 'ui', 'plugins', 'manifest.json')
-    check('插件清单随 extraResources 落位', existsSync(manifestPath), manifestPath)
+    check('壳契约版本随 extraResources 落位', existsSync(manifestPath), manifestPath)
+    // 2.0 起「谁是插件」由每个产物目录的 bundle.json 说；根清单只写 apiVersion。
+    const pluginRoot = join(core, 'lib', 'ui', 'plugins')
+    const bundleFiles = existsSync(pluginRoot)
+      ? readdirSync(pluginRoot, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => join(pluginRoot, entry.name, 'bundle.json'))
+          .filter((file) => existsSync(file))
+      : []
+    check(
+      `每个插件产物都带自述 bundle.json（装出来这份实测 ${String(bundleFiles.length)} 份）`,
+      bundleFiles.length > 0
+        && bundleFiles.every((file) => typeof JSON.parse(readFileSync(file, 'utf8')).apiVersion === 'string'),
+      bundleFiles.join('、'),
+    )
     if (existsSync(manifestPath)) {
       const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
       check(
-        `清单 apiVersion = 1.2.0 且 16 条都带 api（装出来这份实测 ${String(manifest.plugins?.length ?? 0)} 条）`,
-        manifest.apiVersion === '1.2.0' && manifest.plugins.length === 16 && manifest.plugins.every((row) => typeof row.api === 'string'),
-        `apiVersion=${String(manifest.apiVersion)}`,
+        `根清单 apiVersion = ${String(manifest.apiVersion)} 且不再列 plugins（2.0 起）`,
+        typeof manifest.apiVersion === 'string' && manifest.plugins === undefined,
+        `apiVersion=${String(manifest.apiVersion)} plugins=${manifest.plugins === undefined ? '（没有）' : String(manifest.plugins.length)}`,
       )
     }
     const entries = uninstallEntries()

@@ -24,7 +24,7 @@
  *
  * @module dsc/scripts/ui-serve-test
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { request } from 'node:http'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -402,7 +402,11 @@ let cookie = ''
   const afterSecond = uiArtifactCacheCounters()
   check('两次请求内容一致', warm.status === 200 && again.body === warm.body, `${String(warm.status)} ${String(again.status)}`)
   check('第一次请求之后不再逐文件 stat', afterFirst.fileStats === 0, JSON.stringify(afterFirst))
-  check('第二次请求只多一次清单 stat，不重算产物表', afterSecond.manifestStats === afterFirst.manifestStats + 1
+  // 2.0 起「谁是插件」看目录：每次指纹要 stat 一次根清单 + 每个产物目录一次自述
+  //（目录数含 @scope 这一层壳目录），但**不读字节、不重建产物表**。
+  const pluginDirs = readdirSync(pluginsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).length
+  check('第二次请求只多「根清单 + 每目录一次」的 stat，不重算产物表',
+    afterSecond.manifestStats === afterFirst.manifestStats + 1 + pluginDirs
     && afterSecond.fileStats === afterFirst.fileStats
     && afterSecond.tableBuilds === afterFirst.tableBuilds, `${JSON.stringify(afterFirst)} → ${JSON.stringify(afterSecond)}`)
 }
@@ -421,42 +425,47 @@ console.log('\n[6] 宿主重启后的 Cookie')
   await restarted.close()
 }
 
-// ── 7. 清单的失败方向（纯文件系统） ───────────────────────────────────────────
-console.log('\n[7] 清单失败方向')
+// ── 7. 产物自述的失败方向（纯文件系统） ────────────────────────────────────────
+// 2.0 起「谁是插件」由每个目录自己的 bundle.json 说，中央清单只写壳契约版本；
+// 这里逐条钉住「坏掉的那一份要被点名丢掉」，而不是静默少一个插件。
+console.log('\n[7] 产物自述的失败方向')
 {
+  const bundle = (platforms) => JSON.stringify({ apiVersion: '2.0.0', file: 'client.js', platforms })
   const dir = makeTree('manifest-guard', {
-    'manifest.json': JSON.stringify({
-      version: 1,
-      apiVersion: '2.0.0',
-      plugins: [
-        { id: 'ok', file: 'client.js', platform: 'web' },
-        { id: 'tui-only', file: 'client.js', platform: 'tui' },
-        { id: 'future', file: 'client.js', platform: 'electron' },
-        { id: 'bad-ext', file: 'client.js', platform: 'web', external: 'react' },
-        { id: 'bad-inject', file: 'client.js', platform: 'web', inject: ['a', 5] },
-        { id: '../evil', file: 'client.js', platform: 'web' },
-        { id: 'badfile', file: '../up.js', platform: 'web' },
-        'nope',
-      ],
-    }),
+    'manifest.json': JSON.stringify({ version: 1, apiVersion: '2.0.0' }),
+    'ok/bundle.json': bundle(['web']),
     'ok/client.js': 'ok',
+    'tui-only/bundle.json': bundle(['tui']),
     'tui-only/client.js': 'tui',
+    'both/bundle.json': bundle(['web', 'tui']),
+    'both/client.js': 'both',
+    'future/bundle.json': bundle(['electron']),
+    'future/client.js': 'future',
+    'bad-ext/bundle.json': JSON.stringify({ apiVersion: '2.0.0', file: 'client.js', platforms: ['web'], external: 'react' }),
     'bad-ext/client.js': 'ext',
+    'bad-inject/bundle.json': JSON.stringify({ apiVersion: '2.0.0', file: 'client.js', platforms: ['web'], inject: ['a', 5] }),
     'bad-inject/client.js': 'inject',
+    'badfile/bundle.json': JSON.stringify({ apiVersion: '2.0.0', file: '../up.js', platforms: ['web'] }),
+    'badfile/client.js': 'badfile',
+    'bad-json/bundle.json': '{oops',
+    'bad-json/client.js': 'bad-json',
+    // 旧产物：有 client.js、没有自述——要说话（否则升级宿主后它静默消失）
+    'old-build/client.js': 'old',
   })
   const collected = collectUiPluginArtifacts(dir, 'web')
   const ids = collected.entries.map((entry) => entry.id)
   const problems = collected.problems.join(' | ')
-  check('认得的 web 插件进清单', ids.includes('ok') && ids.length === 3, ids.join(','))
+  check('认得的 web 插件进清单', ids.includes('ok') && ids.length === 4, ids.join(','))
   check('未知 platform 被丢弃（失败关闭）', !ids.includes('future'), ids.join(','))
-  check('未知 platform 写进 problems', problems.includes('future') && problems.includes('platform'), problems)
+  check('未知 platform 写进 problems', problems.includes('future') && problems.includes('platforms'), problems)
   check('tui 是认得的取值：被 web 过滤掉且不算问题', !ids.includes('tui-only') && !problems.includes('tui-only'), problems)
+  check('一份产物声明两个载体：web 视图里只有它一条', ids.filter((id) => id === 'both').length === 1, ids.join(','))
   check('字段不是数组记进 problems', problems.includes('bad-ext') && problems.includes('external'), problems)
   check('数组里混非字符串记进 problems 且保留合法项', problems.includes('bad-inject') && problems.includes('inject')
     && collected.entries.find((entry) => entry.id === 'bad-inject')?.inject?.join(',') === 'a', problems)
-  check('非法 id 记进 problems', problems.includes('evil'), problems)
   check('非法文件名记进 problems', problems.includes('badfile'), problems)
-  check('非对象的行记进 problems', problems.includes('第 8 条'), problems)
+  check('坏掉的 JSON 记进 problems 并跳过这一份', problems.includes('bad-json') && !ids.includes('bad-json'), problems)
+  check('旧产物（有 client.js 没自述）被点名，不静默少一个', problems.includes('old-build') && problems.includes('bundle.json'), problems)
 }
 
 rmSync(work, { recursive: true, force: true })

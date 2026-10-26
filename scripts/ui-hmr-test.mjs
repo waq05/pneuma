@@ -72,15 +72,11 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const assetsDir = makeTree('hmr-assets', { 'index.html': '<!doctype html><html><body>壳</body></html>' })
 const pluginsDir = makeTree('hmr-plugins', {
-  'manifest.json': JSON.stringify({
-    version: 1,
-    apiVersion: '2.0.0',
-    plugins: [
-      { id: 'demo-a', file: 'client.js', platform: 'web', phase: 'early' },
-      { id: 'demo-b', file: 'client.js', platform: 'web' },
-    ],
-  }),
+  // 2.0：根清单只写壳契约版本，插件由各自目录的 bundle.json 自述。
+  'manifest.json': JSON.stringify({ version: 1, apiVersion: '2.0.0' }),
+  'demo-a/bundle.json': JSON.stringify({ apiVersion: '2.0.0', file: 'client.js', platforms: ['web'], phase: 'early' }),
   'demo-a/client.js': 'module.exports={apply(){return "A-old"}}\n',
+  'demo-b/bundle.json': JSON.stringify({ apiVersion: '2.0.0', file: 'client.js', platforms: ['web'] }),
   'demo-b/client.js': 'module.exports={apply(){return "B-old"}}\n',
 })
 
@@ -127,6 +123,8 @@ const server = await createUiServer({
 const hmr = createUiHmr({
   watches: () => [
     ...server.watchRows().map((row) => ({ id: row.id, path: row.path })),
+    // 2.0：新增/删插件体现在产物目录上（根清单不再列插件）。
+    { id: 'plugins-dir', path: pluginsDir },
     { id: 'manifest', path: join(pluginsDir, UI_PLUGIN_MANIFEST) },
   ],
   graph: () => server.boot(),
@@ -238,22 +236,22 @@ const framesAfter = readEvents(sse.state.text, 'plugins').length
 check('同字节改写不产生新帧（内容摘要门槛）', framesAfter === framesBefore, `${String(framesBefore)} → ${String(framesAfter)}`)
 check('同字节改写不换代：rev 不动', server.boot().entries.find((entry) => entry.id === 'demo-a').rev === demoA2.rev)
 
-// ── 4. 新增/删除插件（清单信号） ──────────────────────────────────────────────
-console.log('\n[4] 清单信号')
+// ── 4. 新增/删除插件（目录信号） ──────────────────────────────────────────────
+// 2.0 起中央清单不再列插件：加一个插件 = 多一个目录（带 client.js 与 bundle.json），
+// 删一个插件 = 少一个目录。轮询靠产物目录的 mtime 发现这件事。
+console.log('\n[4] 目录信号')
 {
-  const manifest = JSON.parse(readFileSync(join(pluginsDir, 'manifest.json'), 'utf8'))
-  manifest.plugins.push({ id: 'demo-c', file: 'client.js', platform: 'web' })
   mkdirSync(join(pluginsDir, 'demo-c'), { recursive: true })
   writeFileSync(join(pluginsDir, 'demo-c', 'client.js'), 'module.exports={apply(){return "C"}}\n')
-  writeFileSync(join(pluginsDir, 'manifest.json'), JSON.stringify(manifest))
+  writeFileSync(
+    join(pluginsDir, 'demo-c', 'bundle.json'),
+    JSON.stringify({ apiVersion: '2.0.0', file: 'client.js', platforms: ['web'] }),
+  )
   hmr.pollNow()
   const added = await waitFor('changed 含 demo-c 的帧', () =>
     readEvents(sse.state.text, 'plugins').some((frame) => frame.changed.includes('demo-c')))
   check('新插件进图并推 changed:[demo-c]', added)
-  // 删掉 demo-b：同时从清单与磁盘移除。
-  const manifest2 = JSON.parse(readFileSync(join(pluginsDir, 'manifest.json'), 'utf8'))
-  manifest2.plugins = manifest2.plugins.filter((plugin) => plugin.id !== 'demo-b')
-  writeFileSync(join(pluginsDir, 'manifest.json'), JSON.stringify(manifest2))
+  // 删掉 demo-b：整个目录移除。
   rmSync(join(pluginsDir, 'demo-b'), { recursive: true, force: true })
   hmr.pollNow()
   const removed = await waitFor('removed 含 demo-b 的帧', () =>

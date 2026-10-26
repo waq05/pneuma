@@ -36,8 +36,17 @@ import type { UiPlatform, UiPluginRow } from '../ui/manifest.js'
 import { inside } from './web-static.js'
 import { activeProfileDir } from './profile-dir.js'
 
-/** 清单文件名（界面壳构建时写在插件目录根部）。 */
+/** 根清单文件名（界面壳构建时写在插件目录根部；2.0 起只写壳契约版本）。 */
 export const UI_PLUGIN_MANIFEST = 'manifest.json'
+
+/**
+ * 每个插件产物目录里的自述文件名（2.0 起一个插件一处声明）。
+ *
+ * 为什么不是 package.json：产物目录里没有包（是构建出来的四件东西），拿 package.json 的
+ * 名字会让人以为那是 npm 包；也不是 plugin.json——1.x 的 plugin.json 是「源码目录里的声明」，
+ * 2.0 已经并进各插件自己的 package.json 的 dsh.client 了，同名会混淆两件事。
+ */
+export const UI_PLUGIN_BUNDLE = 'bundle.json'
 
 /**
  * 认得的载体取值：`UiPlatform` 的那两个，一字不差。
@@ -193,94 +202,236 @@ export interface UiBundleLookup {
 }
 
 /**
- * 读插件清单，并把所有被丢掉的行/字段记成问题。
+ * 读插件产物清单，并把所有被丢掉的行/字段记成问题。
+ *
+ * **2.0 起「谁是插件」由每个产物目录自己说**：`<dir>/<id>/bundle.json` 是这一份产物的
+ * 自述（契约版本、载体、依赖、调度档位）。宿主扫目录，不再按中央清单列插件——加一个插件
+ * 不用改任何汇总文件，删一个插件也只是目录没了。
+ *
+ * 中央 `manifest.json` 仍会读，但只剩两件事：
+ *   1. 顶层 `apiVersion`（壳契约版本；产物目录里那份也带着，根文件缺了就从目录里取）；
+ *   2. 旧构建的 `plugins` 数组——**只在一个 `bundle.json` 都找不到时**当兜底，
+ *      免得拿着一份旧产物升级宿主后界面全空。构建脚本不再写这个数组。
  *
  * 文件缺失/整个 JSON 坏掉一律按空处理（界面壳还没构建就是这样，与 remote 的
- * "资产未构建"占位页同一套待遇：能起来，但没有插件）；但**坏掉的清单要说话**，
+ * "资产未构建"占位页同一套待遇：能起来，但没有插件）；但**坏掉的自述要说话**，
  * 不然"插件怎么不见了"只能靠猜。
  */
 export function readUiPluginManifestReport(dir: string = uiPluginsDir()): UiPluginManifestReport {
-  const entries: UiPluginManifestEntry[] = []
   const problems: string[] = []
+  const root = readRootManifest(dir, problems)
+  const bundled = readBundleDeclarations(dir, problems)
+  if (bundled.found) {
+    // 壳契约版本：根文件优先，其次取产物自述里那个（同一轮构建写的，值应当一样）。
+    const apiVersion = root.apiVersion ?? singleApiVersion(bundled.apiVersions, problems)
+    return { entries: bundled.entries, problems, ...(apiVersion === undefined ? {} : { apiVersion }) }
+  }
+  const entries: UiPluginManifestEntry[] = []
+  if (root.plugins !== undefined) {
+    for (let index = 0; index < root.plugins.length; index += 1) {
+      const raw = root.plugins[index]
+      const where = `${UI_PLUGIN_MANIFEST} 第 ${String(index + 1)} 条`
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+        problems.push(`${where}: 不是对象，丢弃`)
+        continue
+      }
+      const record = raw as Record<string, unknown>
+      const id = typeof record['id'] === 'string' ? record['id'] : ''
+      const parsed = parseUiPluginEntry(record, id, where, problems)
+      if (parsed !== null) entries.push(parsed)
+    }
+  }
+  return { entries, problems, ...(root.apiVersion === undefined ? {} : { apiVersion: root.apiVersion }) }
+}
+
+/** 根清单里读到的东西（少了哪一项都可能：产物还没构建、或 2.0 的新构建只写 apiVersion）。 */
+interface RootManifest {
+  apiVersion?: string
+  /** 旧构建的中央插件数组；2.0 起不存在。 */
+  plugins?: unknown[]
+}
+
+/** 读根 manifest.json；坏掉记问题并当没写。文件不在不记问题（等于还没构建）。 */
+function readRootManifest(dir: string, problems: string[]): RootManifest {
   let text: string
   try {
     text = readFileSync(resolve(dir, UI_PLUGIN_MANIFEST), 'utf8')
   } catch {
-    return { entries, problems }
+    return {}
   }
   let doc: unknown
   try {
     doc = JSON.parse(text)
   } catch (error) {
-    problems.push(`${UI_PLUGIN_MANIFEST}: 不是合法 JSON（${error instanceof Error ? error.message : String(error)}），整份清单作废`)
-    return { entries, problems }
+    problems.push(`${UI_PLUGIN_MANIFEST}: 不是合法 JSON（${error instanceof Error ? error.message : String(error)}），当没写处理`)
+    return {}
   }
-  const plugins = (doc as { plugins?: unknown }).plugins
-  if (!Array.isArray(plugins)) {
-    problems.push(`${UI_PLUGIN_MANIFEST}: 顶层没有 plugins 数组，整份清单作废`)
-    return { entries, problems }
+  if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) {
+    problems.push(`${UI_PLUGIN_MANIFEST}: 顶层不是对象，当没写处理`)
+    return {}
   }
-  // 顶层 apiVersion：构建产物写下「这份清单对着哪个 @dsc/ui 版本」。有它 = 内置清单，
-  // 条目无需逐条声明 api；没有（第三方清单）则条目必须逐条带 api（门禁见 evaluateUiApiGate）。
-  const rawApiVersion = (doc as { apiVersion?: unknown }).apiVersion
-  const apiVersion = typeof rawApiVersion === 'string' && rawApiVersion.trim() !== '' ? rawApiVersion.trim() : undefined
-  if (rawApiVersion !== undefined && apiVersion === undefined) {
+  const record = doc as Record<string, unknown>
+  const out: RootManifest = {}
+  const rawApiVersion = record['apiVersion']
+  if (typeof rawApiVersion === 'string' && rawApiVersion.trim() !== '') out.apiVersion = rawApiVersion.trim()
+  else if (rawApiVersion !== undefined) {
     problems.push(`${UI_PLUGIN_MANIFEST}: 顶层 apiVersion 不是非空字符串（${JSON.stringify(rawApiVersion)}），当没写处理`)
   }
-  for (let index = 0; index < plugins.length; index += 1) {
-    const raw = plugins[index]
-    const where = `${UI_PLUGIN_MANIFEST} 第 ${String(index + 1)} 条`
-    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-      problems.push(`${where}: 不是对象，丢弃`)
-      continue
-    }
-    const record = raw as Record<string, unknown>
-    const id = typeof record['id'] === 'string' ? record['id'] : ''
-    const file = typeof record['file'] === 'string' ? record['file'] : ''
-    if (!PLUGIN_ID.test(id)) {
-      problems.push(`${where}: id 不成形（${JSON.stringify(record['id'])}），丢弃`)
-      continue
-    }
-    if (file === '' || file.includes('/') || file.includes('\\')) {
-      problems.push(`${id}: 文件名不成形（${JSON.stringify(record['file'])}），丢弃`)
-      continue
-    }
-    // 载体：认识的只有 web / tui 两个取值；别的（写错、或别的壳的取值）不当客户端行。
-    const platform = record['platform']
-    if (platform !== undefined && (typeof platform !== 'string' || !KNOWN_PLATFORMS.has(platform))) {
-      problems.push(`${id}: 载体（platform）不认识（${JSON.stringify(platform)}），丢弃`)
-      continue
-    }
-    // inject = 依赖的插件 id；services = 依赖的服务名（2.0 起分开，见 UiPluginRow）。
-    const inject = readNameList(record['inject'], id, 'inject', problems)
-    const services = readNameList(record['services'], id, 'services', problems)
-    const external = readNameList(record['external'], id, 'external', problems)
-    // api：插件声明的 @dsc/ui 区间（第三方必需；形状校验放门禁判定，这里只管类型）。
-    const rawApi = record['api']
-    const api = typeof rawApi === 'string' && rawApi.trim() !== '' ? rawApi.trim() : undefined
-    if (rawApi !== undefined && api === undefined) {
-      problems.push(`${id}: api 不是非空字符串（${JSON.stringify(rawApi)}），当没声明处理`)
-    }
-    // phase：调度档位。坏值记问题并**当没声明**（按 application），方向与 api 一致——
-    // 一个拼错的 phase 不该让整个插件消失，但也不能静默当 early 发出去。
-    const rawPhase = record['phase']
-    const phase = rawPhase === 'early' || rawPhase === 'application' ? rawPhase : undefined
-    if (rawPhase !== undefined && phase === undefined) {
-      problems.push(`${id}: phase 只能是 'early' / 'application'（${JSON.stringify(rawPhase)}），当没声明处理`)
-    }
-    entries.push({
-      id,
-      file,
-      ...(inject === undefined ? {} : { inject }),
-      ...(services === undefined ? {} : { services }),
-      ...(external === undefined ? {} : { external }),
-      ...(record['immediately'] === true ? { immediately: true } : {}),
-      ...(phase === undefined ? {} : { phase }),
-      ...(api === undefined ? {} : { api }),
-      ...(platform === undefined ? {} : { platform: platform as UiPlatform }),
-    })
+  if (Array.isArray(record['plugins'])) out.plugins = record['plugins']
+  return out
+}
+
+/** 目录里的一份份自述（`<id>/bundle.json`）读出来的结果。 */
+interface BundleDeclarations {
+  entries: UiPluginManifestEntry[]
+  /** 各份自述声明的契约版本（同一轮构建应当只有一个值）。 */
+  apiVersions: Set<string>
+  /** 有没有找到至少一份自述（没有 = 这是旧产物，去读中央数组）。 */
+  found: boolean
+}
+
+/**
+ * 扫产物目录，读每个插件自己的 `bundle.json`。
+ *
+ * 目录名就是 id（与第三方、组合包同一口径）；目录里有 `client.js` 却没有自述要**点名报出来**
+ * ——那是旧构建的产物（2.0 起每份产物必须自述），静默跳过会变成「插件怎么不见了」。
+ */
+function readBundleDeclarations(dir: string, problems: string[]): BundleDeclarations {
+  const entries: UiPluginManifestEntry[] = []
+  const apiVersions = new Set<string>()
+  let names: string[]
+  try {
+    names = readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+      .map((entry) => entry.name)
+      .sort()
+  } catch {
+    return { entries, apiVersions, found: false }
   }
-  return { entries, problems, ...(apiVersion === undefined ? {} : { apiVersion }) }
+  let found = false
+  for (const name of names) {
+    let text: string
+    try {
+      text = readFileSync(resolve(dir, name, UI_PLUGIN_BUNDLE), 'utf8')
+    } catch {
+      // 没有自述：有 client.js 就是旧产物（要说话），没有就当这不是插件目录。
+      try {
+        statSync(resolve(dir, name, 'client.js'))
+        problems.push(`${name}: 没有 ${UI_PLUGIN_BUNDLE}——这份产物不是 2.0 的构建写的，重新构建界面壳`)
+      } catch {
+        // 无关目录，静默跳过
+      }
+      continue
+    }
+    found = true
+    let doc: unknown
+    try {
+      doc = JSON.parse(text)
+    } catch (error) {
+      problems.push(`${name}/${UI_PLUGIN_BUNDLE}: 不是合法 JSON（${error instanceof Error ? error.message : String(error)}），这份插件跳过`)
+      continue
+    }
+    if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) {
+      problems.push(`${name}/${UI_PLUGIN_BUNDLE}: 不是对象，这份插件跳过`)
+      continue
+    }
+    const record = doc as Record<string, unknown>
+    const declared = record['apiVersion']
+    if (typeof declared === 'string' && declared.trim() !== '') apiVersions.add(declared.trim())
+    const where = `${name}/${UI_PLUGIN_BUNDLE}`
+    // 载体：自述里写 platforms 数组（一份产物出几行），缺省 ['web']——与组合包的
+    // dsh.client.platforms 同一套词表与默认值，只是这里是构建产物、那边是包。
+    const rawPlatforms = record['platforms']
+    let platforms: UiPlatform[] = ['web']
+    if (rawPlatforms !== undefined) {
+      if (!Array.isArray(rawPlatforms) || rawPlatforms.length === 0
+        || rawPlatforms.some((value) => value !== 'web' && value !== 'tui')) {
+        problems.push(`${where}: platforms 只能是 'web' / 'tui' 的非空数组（收到 ${JSON.stringify(rawPlatforms)}），这份插件跳过`)
+        continue
+      }
+      platforms = rawPlatforms as UiPlatform[]
+    }
+    for (const platform of platforms) {
+      const parsed = parseUiPluginEntry({ ...record, platform }, name, where, problems)
+      if (parsed !== null) entries.push(parsed)
+    }
+  }
+  return { entries, apiVersions, found }
+}
+
+/** 各份自述的契约版本必须一致；不一致就没法判门禁，记一条问题并当没写。 */
+function singleApiVersion(versions: Set<string>, problems: string[]): string | undefined {
+  if (versions.size === 0) return undefined
+  if (versions.size === 1) return [...versions][0]
+  problems.push(`产物自述里的 apiVersion 不一致（${[...versions].join('、')}）——这份产物是混着几个壳版本构建的，重新构建界面壳`)
+  return undefined
+}
+
+/**
+ * 解析一条插件声明（中央清单的一行，或某个目录的 bundle.json）。
+ *
+ * id 由调用方给（目录名 / 数组那一行的 id）：目录路径上的身份不许由文件内容改写，
+ * 否则一个包里写别的 id 就能顶掉别人的位置。
+ * @param record - 声明对象
+ * @param id - 这条的 id（已由调用方定下来源）
+ * @param where - 报错里写的位置
+ * @param problems - 问题收集
+ * @returns 条目；不合法给 null（原因已进 problems）
+ */
+function parseUiPluginEntry(
+  record: Record<string, unknown>,
+  id: string,
+  where: string,
+  problems: string[],
+): UiPluginManifestEntry | null {
+  const declaredId = record['id']
+  if (typeof declaredId === 'string' && declaredId !== id) {
+    problems.push(`${where}: 写着自己的 id 是 ${JSON.stringify(declaredId)}，与目录名/位置上那个不一致——id 由位置决定，丢弃`)
+    return null
+  }
+  if (!PLUGIN_ID.test(id)) {
+    problems.push(`${where}: id 不成形（${JSON.stringify(id)}），丢弃`)
+    return null
+  }
+  const file = typeof record['file'] === 'string' ? record['file'] : ''
+  if (file === '' || file.includes('/') || file.includes('\\')) {
+    problems.push(`${id}: 文件名不成形（${JSON.stringify(record['file'])}），丢弃`)
+    return null
+  }
+  // 载体：认识的只有 web / tui 两个取值；别的（写错、或别的壳的取值）不当客户端行。
+  const platform = record['platform']
+  if (platform !== undefined && (typeof platform !== 'string' || !KNOWN_PLATFORMS.has(platform))) {
+    problems.push(`${id}: 载体（platform）不认识（${JSON.stringify(platform)}），丢弃`)
+    return null
+  }
+  // inject = 依赖的插件 id；services = 依赖的服务名（2.0 起分开，见 UiPluginRow）。
+  const inject = readNameList(record['inject'], id, 'inject', problems)
+  const services = readNameList(record['services'], id, 'services', problems)
+  const external = readNameList(record['external'], id, 'external', problems)
+  // api：插件声明的 @dsc/ui 区间（第三方必需；形状校验放门禁判定，这里只管类型）。
+  const rawApi = record['api']
+  const api = typeof rawApi === 'string' && rawApi.trim() !== '' ? rawApi.trim() : undefined
+  if (rawApi !== undefined && api === undefined) {
+    problems.push(`${id}: api 不是非空字符串（${JSON.stringify(rawApi)}），当没声明处理`)
+  }
+  // phase：调度档位。坏值记问题并**当没声明**（按 application），方向与 api 一致——
+  // 一个拼错的 phase 不该让整个插件消失，但也不能静默当 early 发出去。
+  const rawPhase = record['phase']
+  const phase = rawPhase === 'early' || rawPhase === 'application' ? rawPhase : undefined
+  if (rawPhase !== undefined && phase === undefined) {
+    problems.push(`${id}: phase 只能是 'early' / 'application'（${JSON.stringify(rawPhase)}），当没声明处理`)
+  }
+  return {
+    id,
+    file,
+    ...(inject === undefined ? {} : { inject }),
+    ...(services === undefined ? {} : { services }),
+    ...(external === undefined ? {} : { external }),
+    ...(record['immediately'] === true ? { immediately: true } : {}),
+    ...(phase === undefined ? {} : { phase }),
+    ...(api === undefined ? {} : { api }),
+    ...(platform === undefined ? {} : { platform: platform as UiPlatform }),
+  }
 }
 
 /**
@@ -319,6 +470,16 @@ interface CachedRow {
 interface PreviousGeneration {
   rev: string
   size: number
+}
+
+/** 一个文件的「mtime:size」戳；读不到给 null（指纹里当没有）。 */
+function stampOf(path: string): string | null {
+  try {
+    const stat = statSync(path)
+    return `${String(Math.trunc(stat.mtimeMs))}:${String(stat.size)}`
+  } catch {
+    return null
+  }
 }
 
 /** 定位一条缓存用的键（id 与文件名都可能含 `.` `-`，用不会出现的 NUL 分隔）。 */
@@ -365,15 +526,28 @@ class UiArtifactCache {
     private readonly platform: 'web' | 'tui',
   ) {}
 
-  /** 现在的清单指纹；清单还没有（没构建）也是指纹的一种取值。 */
+  /**
+   * 现在的产物指纹：根清单 + 目录列表 + 每份自述的 mtime/size。
+   *
+   * 为什么要连目录一起 stat：2.0 起「谁是插件」由目录自己说，新增/删掉一个插件只体现在
+   * 目录列表上（根清单只写壳契约版本）。目录的 mtime 在 NTFS/ext4 上增删条目都会变。
+   * 没构建（目录不在、根清单也不在）给一个固定值，仍然算一种指纹。
+   */
   private fingerprint(): string {
-    CACHE_COUNTERS.manifestStats += 1
+    const parts: string[] = [stampOf(resolve(this.dir, UI_PLUGIN_MANIFEST)) ?? 'no-manifest']
+    let names: string[]
     try {
-      const stat = statSync(resolve(this.dir, UI_PLUGIN_MANIFEST))
-      return `${String(Math.trunc(stat.mtimeMs))}:${String(stat.size)}`
+      names = readdirSync(this.dir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+        .map((entry) => entry.name)
+        .sort()
     } catch {
-      return 'missing'
+      return parts.join('|')
     }
+    parts.push(`dirs:${String(names.length)}`)
+    for (const name of names) parts.push(`${name}=${stampOf(resolve(this.dir, name, UI_PLUGIN_BUNDLE)) ?? 'none'}`)
+    CACHE_COUNTERS.manifestStats += 1 + names.length
+    return parts.join('|')
   }
 
   /** 建表（读清单 + 逐文件算版本）。清单没换且没要求强制，就直接返回。 */

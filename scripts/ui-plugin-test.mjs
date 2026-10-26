@@ -470,6 +470,42 @@ console.log('\n[3] bundle 发现')
   check('清单文件坏了按空处理', readUiPluginManifest(makeTree('bad', { 'manifest.json': '{oops' })).length === 0)
   check('清单不存在按空处理', readUiPluginManifest(join(work, 'nope')).length === 0)
 
+  // ── 2.0：谁是插件由目录自己说（中央清单不再列插件）─────────────────────────
+  const byDirs = makeTree('bundle-dirs', {
+    // 根清单只写壳契约版本；即使它还留着旧的 plugins 数组，也**不再当清单用**
+    'manifest.json': JSON.stringify({ version: 1, apiVersion: '2.0.0', plugins: [{ id: 'ghost', file: 'client.js', platform: 'web' }] }),
+    'alpha/bundle.json': JSON.stringify({ apiVersion: '2.0.0', file: 'client.js', platforms: ['web'], api: '^2.0.0' }),
+    'alpha/client.js': 'module.exports={apply(){}}',
+    'beta/bundle.json': JSON.stringify({ apiVersion: '2.0.0', file: 'client.js', platforms: ['web', 'tui'], inject: ['alpha'] }),
+    'beta/client.js': 'module.exports={apply(){}}',
+    'ghost/client.js': 'module.exports={apply(){}}',
+  })
+  const fromDirs = collectUiPluginArtifacts(byDirs, 'web')
+  check(
+    '每个目录自己的 bundle.json 就是清单（不读中央数组）',
+    fromDirs.entries.map((entry) => entry.id).sort().join(',') === 'alpha,beta',
+    fromDirs.entries.map((entry) => entry.id).join(',') + ' | ' + fromDirs.problems.join(' | '),
+  )
+  check('中央数组里那条不会再被装载（构建已不写它）', !fromDirs.entries.some((entry) => entry.id === 'ghost'))
+  check('声明了两个载体的产物在 web 视图里有一条', fromDirs.entries.filter((entry) => entry.id === 'beta').length === 1)
+  check(
+    '同一个目录在 tui 视图里也有一条（同一份 code 两行）',
+    collectUiPluginArtifacts(byDirs, 'tui').entries.some((entry) => entry.id === 'beta'),
+  )
+  check('根清单的 apiVersion 仍是门禁依据', fromDirs.apiVersion === '2.0.0', String(fromDirs.apiVersion))
+  // 旧产物（只有中央数组）仍认：升级宿主后界面不会全空，但这是兜底、不是主路。
+  const legacy = makeTree('legacy-manifest', {
+    'manifest.json': JSON.stringify({ version: 1, apiVersion: '2.0.0', plugins: [{ id: 'old', file: 'client.js', platform: 'web' }] }),
+    'old/client.js': 'module.exports={apply(){}}',
+  })
+  const fromLegacy = collectUiPluginArtifacts(legacy, 'web')
+  check(
+    '旧产物（只有中央数组）仍能装，但会被点名「没有 bundle.json」',
+    fromLegacy.entries.some((entry) => entry.id === 'old')
+      && fromLegacy.problems.some((line) => line.includes('old') && line.includes('bundle.json')),
+    fromLegacy.problems.join(' | '),
+  )
+
   // 路由解析（本机界面服务与远程控制共用这一份）
   check('路由前缀识别', isUiBundleRequest('/plugins/demo/client.js') && !isUiBundleRequest('/api/boot'))
   const hit = resolveUiBundleRequest('/plugins/demo/client.js', demo.rev, dir)

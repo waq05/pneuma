@@ -8525,6 +8525,34 @@ transcript 93/93）。剩下面向用户的第 2、3 条（启停入口、TUI �
 确实进了 `disabled`）；`ui-tui-plugin-test` 新增两条（依赖被停用的插件报「pkg-off 被停用了」、
 被停用的那份自己不进报告）。
 
+**中央 manifest.json 退役：谁是插件由目录自己说（2026-10-26）**：
+
+最后一批，也是风险最高的一批。以前 `lib/ui/plugins/manifest.json` 里那串 `plugins` 数组是
+唯一的一份「有哪些插件」，加一个插件要改一个汇总文件，删一个也要改——而且它是**能被人手写**的，
+手写一份就能绕过产物层的检查。
+
+现在每个产物目录自带一份自述：
+
+```
+lib/ui/plugins/manifest.json   # 只剩 { version, apiVersion }
+lib/ui/plugins/<id>/bundle.json  # apiVersion / file / platforms / api / phase / inject / services
+```
+
+- 宿主 `readUiPluginManifestReport` 改成「读根清单拿壳契约版本 + 扫目录读各自述」，公开形状
+  没变（entries / problems / apiVersion），所以上层（门禁、第三方、组合包、插件中心、HMR）
+  都不用改调用方式；
+- 缓存指纹跟着变：根清单 + 产物目录 + 每份自述的 mtime/size（新增/删插件只体现在目录上）；
+- 构建脚本 `build-plugins.mjs` 只写 `{version, apiVersion}` 与每份 `bundle.json`，两者都走
+  「字节没变就不动文件」，文件树保持安静（HMR 不会假换代）；
+- 旧产物兜底：一个 `bundle.json` 都找不到时才读中央 `plugins` 数组，同时点名「没有 bundle.json」
+  ——既不让人升级后界面全空，也不让旧形状悄悄继续用；
+- HMR 的「清单信号」换成产物目录（新增/删掉时成员文件 stat 不变，目录 mtime 会变）。
+
+验证：`ui-plugin-test` 新增六条（各自述即清单、中央数组不再被读、两载体各一行、根清单
+apiVersion 仍是门禁依据、旧产物兜底 + 点名）；`ui-serve-test` 的失败方向那组改成逐份自述
+（十项检查）；`ui-hmr-test` 的新增/删除改成写/删目录；九条 UI 自检全绿；`installer-walkthrough`
+的断言改成「每份产物都有自述、根清单不再列 plugins」。
+
 
 
 

@@ -226,7 +226,7 @@ for (const id of ids) {
 // （暂存目录还没动），成功时也只有字节真的变了的文件才被重写。
 rmSync(stageRoot, { recursive: true, force: true })
 
-const plugins = []
+const bundles = []
 for (const id of ids) {
   const outDir = join(stageRoot, id)
   await build({
@@ -264,20 +264,21 @@ for (const id of ids) {
   const meta = metas.get(id)
   const platforms = meta.platforms ?? ['web']
   delete meta.platforms
-  // 载体无关的插件出两条清单行（同一份 client.js）；每行都带 platform，
-  // 宿主与终端壳各自按自己的载体取（collectUiPluginArtifacts 按 platform 过滤）。
-  for (const platform of platforms) {
-    plugins.push({ id, file: 'client.js', platform, ...meta })
-  }
-  console.log(`[build-plugins] ${id} → lib/ui/plugins/${id}/client.js（${platforms.join(' + ')}）`)
+  // 每个插件目录一份自述（2.0 起一个插件一处声明）：载体写成数组，一份产物出几行由
+  // 自述决定，宿主扫目录时按它铺开（`src/core/ui-bundles.ts` 的 readBundleDeclarations）。
+  bundles.push({ id, text: `${JSON.stringify({ apiVersion: shellVersion, file: 'client.js', platforms, ...meta }, null, 2)}\n` })
+  console.log(`[build-plugins] ${id} → lib/ui/plugins/${id}/{client.js,bundle.json}（${platforms.join(' + ')}）`)
 }
 
-/** 宿主只读这份清单（见 `src/core/ui-bundles.ts`）。 */
-// 顶层 apiVersion = 插件面对的 `@dsc/ui` 契约版本（即本包的 version，1.0.0 起）。
-// 宿主拿它对条目逐条做 semver 门禁：内置条目也带 api（各自 package.json 的 peer 区间，
-// 上面已用 satisfies 验过），第三方条目必须自带 api 区间。升级纪律见
-// docs/plugin-development.md：删导出、改语义、改槽位 options 形状 = 主版本 +1；纯增量 = 次版本 +1。
-const manifestText = `${JSON.stringify({ version: 1, apiVersion: shellVersion, plugins }, null, 2)}\n`
+/**
+ * 根清单元数据（2.0 起**只写壳契约版本**，不再列插件）。
+ *
+ * 顶层 apiVersion = 插件面对的 `@dsc/ui` 契约版本（即本包的 version）。宿主拿它给第三方与
+ * 组合包的声明做 semver 门禁；内置产物自己那份自述里也带着同一个值（根文件缺了就从那里取）。
+ * 升级纪律见 docs/plugin-development.md：删导出、改语义、改槽位 options 形状 = 主版本 +1；
+ * 纯增量 = 次版本 +1。
+ */
+const manifestText = `${JSON.stringify({ version: 1, apiVersion: shellVersion }, null, 2)}\n`
 
 // 落盘：**字节没变就不动文件**。
 //
@@ -300,19 +301,27 @@ for (const id of ids) {
   const staged = readFileSync(join(stageRoot, id, 'client.js'))
   const target = join(outRoot, id, 'client.js')
   const existing = existsSync(target) ? readFileSync(target) : null
+  mkdirSync(join(outRoot, id), { recursive: true })
   if (existing !== null && existing.equals(staged)) {
     kept += 1
-    continue
+  } else {
+    writeFileSync(target, staged)
+    written += 1
   }
-  mkdirSync(join(outRoot, id), { recursive: true })
-  writeFileSync(target, staged)
-  written += 1
+  // 自述也走同一道「字节没变就不动」：一份安静的文件树，HMR 才不会假换代。
+  const bundle = bundles.find((item) => item.id === id)
+  const bundlePath = join(outRoot, id, 'bundle.json')
+  const existingBundle = existsSync(bundlePath) ? readFileSync(bundlePath, 'utf8') : null
+  if (bundle !== undefined && existingBundle !== bundle.text) {
+    writeFileSync(bundlePath, bundle.text, 'utf8')
+    written += 1
+  }
 }
 const manifestPath = join(outRoot, 'manifest.json')
 const existingManifest = existsSync(manifestPath) ? readFileSync(manifestPath, 'utf8') : null
 if (existingManifest !== manifestText) writeFileSync(manifestPath, manifestText, 'utf8')
 rmSync(stageRoot, { recursive: true, force: true })
 console.log(
-  `[build-plugins] manifest.json：${plugins.map((plugin) => plugin.id).join('、')}`
+  `[build-plugins] 每份产物自述 bundle.json（${String(bundles.length)} 份）；manifest.json 只写壳契约版本 ${shellVersion}`
   + `（重写 ${String(written)} 份，字节未变保留 ${String(kept)} 份）`,
 )
