@@ -5,7 +5,7 @@
  *
  * @module dsc/core/events
  */
-import type { FileChangeSummary } from './tools.js'
+import type { FileChangeSummary, ToolPresentation } from './tools.js'
 import type { RequestSegments } from './token-estimate.js'
 import type { SubagentCardView } from '../contract.js'
 
@@ -52,6 +52,12 @@ export type CoreEvent =
    * adapter 折成 `kind: 'changes'` 条目，界面聚合成轮尾「文件已更改」卡。
    */
   | { type: 'tool/changes'; callId: string; change: FileChangeSummary }
+  /**
+   * 这次调用带给界面的卡片数据（dsh 插件的 presentCall / presentResult /
+   * presentationMeta 产物）。紧跟同 callId 的 `tool/result`；adapter 缝到工具卡上
+   * （`ToolCallView.presentation`），界面按 `card` 标签挑形态。
+   */
+  | { type: 'tool/presentation'; callId: string; presentation: ToolPresentation }
   /**
    * 回合收尾的聚合改动（codex TurnDiffUpdatedNotification 的同位事件）：本回合动过的
    * 每个文件出一份「回合基线 vs 盘上终态」的差异，同文件多刀合并成一条。紧跟在

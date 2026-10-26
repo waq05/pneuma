@@ -108,7 +108,7 @@ export const transcriptPlugin: Plugin.Object = {
       const current = ctx.session.current()
       if (current.messages.length === 0) return false
       const probe = new Transcript()
-      probe.replayHistory(current.messages, current.toolErrors, current.fileChanges)
+      probe.replayHistory(current.messages, current.toolErrors, current.fileChanges, current.presentations)
       return sameEntries(
         probe.entries.filter((entry) => entry.kind !== 'system' && entry.kind !== 'subagent'),
         transcript.entries.filter((entry) => entry.kind !== 'system' && entry.kind !== 'subagent'),
@@ -163,6 +163,7 @@ export const transcriptPlugin: Plugin.Object = {
           current.messages,
           current.toolErrors,
           current.fileChanges,
+          current.presentations,
         )
         transcript.system(`已恢复会话 ${current.meta.id.slice(0, 8)}`)
       } else {
@@ -187,8 +188,8 @@ export const transcriptPlugin: Plugin.Object = {
         transcript.plan(view)
         invalidate()
       },
-      replayHistory(messages, toolErrors, fileChanges) {
-        const changed = transcript.replayHistory(messages, toolErrors, fileChanges)
+      replayHistory(messages, toolErrors, fileChanges, presentations) {
+        const changed = transcript.replayHistory(messages, toolErrors, fileChanges, presentations)
         if (changed) invalidate()
         return changed
       },

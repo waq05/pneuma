@@ -628,7 +628,7 @@ ${body}
         // 只读：载入内存重放，不往那个文件写任何东西（也不拿写租约——队友可能正活着写它）
         const session = Session.load(resolved, true, { lease: false })
         const replay = new Transcript()
-        replay.replayHistory(session.messages, session.toolErrors, session.fileChanges)
+        replay.replayHistory(session.messages, session.toolErrors, session.fileChanges, session.presentations)
         return [...replay.entries, ...replay.liveEntries()]
       },
       // 用户从界面上管理队友的两条通道：与模型用的 subagent 工具走同一段逻辑，

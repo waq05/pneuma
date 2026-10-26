@@ -11,7 +11,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { ChatContentPart, ChatMessage, ToolCall } from './llm.js'
-import type { CollaborationMode, PlanHistoryItem, PlanView, TodoItemView } from '../contract.js'
+import type { CollaborationMode, PlanHistoryItem, PlanView, TodoItemView, ToolPresentationView } from '../contract.js'
 import type { GoalSnapshot } from './goal.js'
 import { stripBaseline, type FileChangeSummary } from './tools.js'
 import { summarizeChange } from './tools/fs-tools.js'
@@ -80,6 +80,11 @@ type SessionRecord =
        * 恢复会话时经 {@link Session.fileChanges} 旁路还原成条目。老日志没有这个字段。
        */
       changes?: FileChangeSummary
+      /**
+       * dsh 插件给的卡片数据（presentCall / presentResult / presentationMeta 的产物）。
+       * 与 changes 同一条旁路：只活在日志里，恢复会话时经 Session.presentations 还原。
+       */
+      presentation?: ToolPresentationView
       error?: string
       ts?: number
     }
@@ -327,6 +332,11 @@ export class Session {
    */
   readonly fileChanges = new Map<string, FileChangeSummary>()
   /**
+   * dsh 插件给的卡片数据（callId → 卡片视图），与 fileChanges 同一条旁路：
+   * 只活在日志里，重放历史时交给 transcript 折成 tool/presentation 事件。
+   */
+  readonly presentations = new Map<string, ToolPresentationView>()
+  /**
    * 回合内文件基线（codex `TurnDiffTracker` 的同款思路）：本回合第一次动某个文件时
    * 记下「动之前的全文」，回合收尾用它和盘上现值重算一份聚合 diff——同一文件改
    * 多刀时，界面只出一份「回合开始 vs 终态」的准确差异，而不是各刀差异的拼盘。
@@ -396,6 +406,7 @@ export class Session {
     const messages: ChatMessage[] = []
     const toolErrors = new Map<string, string>()
     const fileChanges = new Map<string, FileChangeSummary>()
+    const presentations = new Map<string, ToolPresentationView>()
     /** 已应答过的 callId（首条为准）。 */
     const repliedCalls = new Set<string>()
     const state = new Map<string, unknown>()
@@ -466,6 +477,7 @@ export class Session {
           const error = record.error ?? (record.text === REJECTED_TOOL_TEXT ? REJECTED_TOOL_ERROR : undefined)
           if (error !== undefined) toolErrors.set(record.callId, error)
           if (record.changes !== undefined) fileChanges.set(record.callId, record.changes)
+          if (record.presentation !== undefined) presentations.set(record.callId, record.presentation)
           break
         }
         case 'summary': {
@@ -519,6 +531,7 @@ export class Session {
     )
     for (const [callId, error] of toolErrors) session.toolErrors.set(callId, error)
     for (const [callId, change] of fileChanges) session.fileChanges.set(callId, change)
+    for (const [callId, presentation] of presentations) session.presentations.set(callId, presentation)
     // T32：修复只在「我们是写租约持有人」时做——修复要落盘，只读重放（队友记录 peek）不动它。
     if (lease !== null) {
       session.repairInterruptedTurns()
@@ -587,7 +600,7 @@ export class Session {
   appendTool(
     callId: string,
     name: string,
-    output: string | { text: string; images?: string[]; changes?: FileChangeSummary },
+    output: string | { text: string; images?: string[]; changes?: FileChangeSummary; presentation?: ToolPresentationView },
     error?: string,
   ): void {
     // 同一个 callId 已经有结果就不落第二条：中断修复补过「结果未知」合成件之后，
@@ -598,6 +611,7 @@ export class Session {
     const text = typeof output === 'string' ? output : output.text
     const images = typeof output === 'string' ? undefined : output.images
     const changes = typeof output === 'string' ? undefined : output.changes
+    const presentation = typeof output === 'string' ? undefined : output.presentation
     const content: string | ChatContentPart[] =
       images !== undefined && images.length > 0
         ? [
@@ -611,6 +625,7 @@ export class Session {
     // 两处都在入口剥掉，上游忘了剥也漏不出去。
     const clean = changes !== undefined ? stripBaseline(changes) : undefined
     if (clean !== undefined) this.fileChanges.set(callId, clean)
+    if (presentation !== undefined) this.presentations.set(callId, presentation)
     this.write({
       type: 'tool',
       callId,
@@ -620,6 +635,7 @@ export class Session {
       // 内存消息不带 changes（协议消息透传给端点，多字段可能被挑剔的网关判 400）；
       // 它只活在日志里，恢复会话时经 fileChanges 旁路还原成轮尾卡。
       ...(clean !== undefined ? { changes: clean } : {}),
+      ...(presentation !== undefined ? { presentation } : {}),
       ...(error !== undefined ? { error } : {}),
       ts,
     })

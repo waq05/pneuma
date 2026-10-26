@@ -24,7 +24,7 @@ import { LlmError, StreamInterruptedError } from './llm.js'
 import type { CoreEvent } from './events.js'
 import type { Session, InboxOrigin } from './session.js'
 import type { ToolGuardChain } from './tool-guards.js'
-import { callFacts, stripBaseline, type FileChangeSummary, type ToolEntry } from './tools.js'
+import { callFacts, stripBaseline, type FileChangeSummary, type ToolEntry, type ToolPresentation } from './tools.js'
 import { collectGitTurnChanges, snapshotGitStatus } from './git-info.js'
 import { errText } from './err-text.js'
 import { estimateRequestSegments } from './token-estimate.js'
@@ -638,21 +638,29 @@ export class MiniAgent {
       const text = this.deps.guards.observe(call.name, rawText)
       const images = typeof output === 'string' ? undefined : output.images
       const changes = typeof output === 'string' ? undefined : output.changes
+      // dsh 插件给的卡片数据（presentCall / presentResult / presentationMeta）：原样带走，
+      // 让它随工具记录落盘、重放时还能重建卡片。
+      const presentation = typeof output === 'string' ? undefined : output.presentation
       // baseline 是回合基线记账的内存字段：单独摘到 outcome 上，事件与落盘形状里不留它。
       const baseline = changes?.baseline
       const clean = changes !== undefined ? stripBaseline(changes) : undefined
-      const stored: string | { text: string; images?: string[]; changes?: FileChangeSummary } =
-        text === rawText && clean === undefined
+      const untouched = text === rawText && clean === undefined && presentation === undefined
+      const stored: string | { text: string; images?: string[]; changes?: FileChangeSummary; presentation?: ToolPresentation } =
+        untouched
           ? output
-          : images !== undefined && images.length > 0
-            ? { text, images, ...(clean === undefined ? {} : { changes: clean }) }
-            : { text, ...(clean === undefined ? {} : { changes: clean }) }
+          : {
+              text,
+              ...(images !== undefined && images.length > 0 ? { images } : {}),
+              ...(clean === undefined ? {} : { changes: clean }),
+              ...(presentation === undefined ? {} : { presentation }),
+            }
       const imageNote = images !== undefined && images.length > 0 ? `\n[附 ${images.length} 张截图]` : ''
       return {
         text: text + imageNote,
         stored,
         ...(baseline !== undefined ? { baseline } : {}),
         ...(clean === undefined ? {} : { changes: clean }),
+        ...(presentation === undefined ? {} : { presentation }),
       }
     } catch (error) {
       const message = errText(error)
@@ -680,6 +688,10 @@ export class MiniAgent {
       if (outcome.baseline !== undefined) this.session.recordTurnChange(outcome.changes.path, outcome.baseline)
       this.deps.emit({ type: 'tool/changes', callId: call.id, change: outcome.changes })
     }
+    // dsh 插件的卡片数据（没失败才发）：界面按 card 标签挑形态，没认出来的回落通用卡
+    if (outcome.error === undefined && outcome.presentation !== undefined) {
+      this.deps.emit({ type: 'tool/presentation', callId: call.id, presentation: outcome.presentation })
+    }
   }
 }
 
@@ -695,6 +707,8 @@ type ToolOutcome = {
   error?: 'tool-error' | 'rejected'
   /** 成功的 write / edit 附带的真实改动（发 `tool/changes` 事件用，不带 baseline）。 */
   changes?: FileChangeSummary
+  /** 工具给的卡片数据（dsh 插件才有；发 `tool/presentation` 事件、随记录落盘）。 */
+  presentation?: ToolPresentation
   /** 这次落盘前的文件全文（回合基线记账用，纯内存；不进事件与日志）。 */
   baseline?: string
 }

@@ -55,10 +55,32 @@ export interface ToolContext {
   caller?: { name: string; depth: number; background: boolean }
 }
 
+/**
+ * 一次工具调用的呈现数据（可选）。
+ *
+ * 谁写：dsh 兼容层——它把 dsh 工具的 presentCall / presentResult / presentationMeta
+ * 的产物塞进来（形状见 `core/dsh-compat/presentation.ts`）。
+ * 谁读：适配层把它缝到工具卡上（`ToolCallView.presentation`），界面按 `card` 标签
+ * 挑渲染形态；没认出来的卡片不至于丢数据，界面回落通用工具卡。
+ *
+ * 为什么放在核心契约而不是兼容层：它是「工具能对界面说什么」的一个槽，Pneuma 自己
+ * 的工具将来也可能往里写；词汇（六种卡片）属于 dsh 兼容层，槽本身不属于。
+ */
+export interface ToolPresentation {
+  /** 调用阶段的卡片（还没跑完时长什么样）。 */
+  call?: unknown
+  /** 完成阶段的卡片（跑完长什么样）。 */
+  result?: unknown
+  /** 可重放的展示投影（dsh 用它重建卡片，故必须是与值无关的纯数据）。 */
+  meta?: unknown
+}
+
 /** 工具输出：纯文本，或文本 + 附带图像（data URL；需端点支持视觉）。 */
 export interface ToolOutput {
   text: string
   images?: string[]
+  /** 给界面的卡片数据（dsh 插件才有；见 {@link ToolPresentation}）。 */
+  presentation?: ToolPresentation
   /**
    * 落盘类工具（write / edit）附带的真实改动：循环会把它发成 `tool/changes` 事件、
    * 随工具记录落盘（会话恢复时轮尾「文件已更改」卡据此还原）。执行失败时没有这一项。
@@ -80,6 +102,18 @@ export interface ToolEntry {
    * 也能看见它；真正的安全边界在守卫链与审批卡，跟这个字段无关。
    */
   presets?: readonly string[]
+  /**
+   * 这次调用的超时预算（毫秒）。dsh 插件声明了 `timeoutMs` 时由兼容层填进来；
+   * 真正的到点放弃在兼容层的 `run` 里做（协作式：工具自己看 signal 才是真取消）。
+   */
+  timeoutMs?: number
+  /**
+   * 这次调用能不能与同轮别的工具并行（dsh 的 `isConcurrencySafe(args)`）。
+   *
+   * 只认明确的 `true`：缺省、抛错、返回非 true 一律当独占（与 dsh 同一口径）。
+   * 现在只是把这个事实记下来，循环还没有并行调度器。
+   */
+  isConcurrencySafe?(args: Record<string, unknown>): boolean
   /** 执行并返回给模型的结果；失败时抛错（loop 转成 error 结果）。 */
   run(args: Record<string, unknown>, ctx: ToolContext): Promise<string | ToolOutput>
 }

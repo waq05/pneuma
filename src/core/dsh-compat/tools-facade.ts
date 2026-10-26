@@ -10,7 +10,8 @@
  *
  * @module dsc/core/dsh-compat/tools-facade
  */
-import type { ToolEntry, ToolOutput } from '../tools.js'
+import type { ToolContext, ToolEntry, ToolOutput, ToolPresentation } from '../tools.js'
+import { asCardView, validateOutput, type JsonSchemaNode } from './presentation.js'
 
 /** dsh ToolDefinition 里兼容层认得的字段（其余字段照原样被忽略）。 */
 export interface DshToolDefinitionLike {
@@ -18,8 +19,20 @@ export interface DshToolDefinitionLike {
   description: unknown
   parameters: unknown
   execute?: unknown
-  /** dsh 规定必填；兼容层对缺了它的定义容错（跳过投影直接字符串化）。 */
-  output?: { render?: unknown } | unknown
+  /**
+   * dsh 规定必填；兼容层对缺了它的定义容错（跳过投影直接字符串化）。
+   *
+   * - `schema`：规范值的 JSON Schema，**声明了就校验**（dsh 会拒收不合 schema 的返回值）；
+   * - `render`：规范值 → 内容块（模型可见文本）；
+   * - `presentationMeta`：可重放的展示投影（卡片数据，与值无关的纯数据）。
+   */
+  output?: { render?: unknown; schema?: unknown; presentationMeta?: unknown } | unknown
+  /** 调用阶段怎么画（dsh 的 ToolCallView）。 */
+  presentCall?: unknown
+  /** 完成阶段怎么画（dsh 的 ToolResultView）。 */
+  presentResult?: unknown
+  /** 这条调用能不能与同轮别的工具并行（只认明确的 true）。 */
+  isConcurrencySafe?: unknown
   timeoutMs?: unknown
 }
 
@@ -81,6 +94,43 @@ function valueToText(value: unknown): string {
   return typeof value === 'string' ? value : JSON.stringify(value, null, 2)
 }
 
+/** 把卡片数据挂到工具输出上（输出可能是字符串，那就升成对象）。 */
+function withPresentation(output: string | ToolOutput, presentation: ToolPresentation | undefined): string | ToolOutput {
+  if (presentation === undefined) return output
+  return typeof output === 'string' ? { text: output, presentation } : { ...output, presentation }
+}
+
+/** 一次调用能拿到的卡片：presentCall / presentResult / presentationMeta 三者有其一。 */
+function cardsOf(
+  definition: DshToolDefinitionLike,
+  args: unknown,
+  value: unknown,
+  rendered: string | ToolOutput,
+): ToolPresentation | undefined {
+  const call = typeof definition.presentCall === 'function'
+    ? asCardView((definition.presentCall as (a: unknown) => unknown)(args))
+    : undefined
+  const result = typeof definition.presentResult === 'function'
+    ? asCardView(
+        (definition.presentResult as (a: unknown, r: unknown) => unknown)(args, {
+          // dsh 的 ToolResult：这里能给的只有渲染后的内容，够画卡了
+          content: typeof rendered === 'string' ? [{ type: 'text', text: rendered }] : [{ type: 'text', text: rendered.text }],
+          text: typeof rendered === 'string' ? rendered : rendered.text,
+        }),
+      )
+    : undefined
+  const output = (definition.output ?? {}) as { presentationMeta?: unknown }
+  const meta = typeof output.presentationMeta === 'function'
+    ? (output.presentationMeta as (a: unknown, v: unknown) => unknown)(args, value)
+    : undefined
+  if (call === undefined && result === undefined && meta === undefined) return undefined
+  return {
+    ...(call === undefined ? {} : { call }),
+    ...(result === undefined ? {} : { result }),
+    ...(meta === undefined ? {} : { meta }),
+  }
+}
+
 /**
  * 把一个 dsh ToolDefinition 包成 dsc ToolEntry。转出来的工具：
  *   - 参数 schema 原样透传（两边同是 JSON Schema，llm 层怎么发就怎么发）；
@@ -96,12 +146,27 @@ export function dshToolToEntry(definition: DshToolDefinitionLike, config: DshRis
       : undefined
   const renderFn = typeof render === 'function' ? (render as (args: unknown, value: unknown) => unknown) : undefined
   const timeoutMs = typeof definition.timeoutMs === 'number' && definition.timeoutMs > 0 ? definition.timeoutMs : undefined
+  const outputDef = (definition.output ?? {}) as { schema?: unknown }
+  const schema = outputDef.schema === undefined ? undefined : (outputDef.schema as JsonSchemaNode)
+  // 并发分类：只有明确返回 true 才算可并行（dsh 同一口径），抛错也当独占。
+  const concurrency = definition.isConcurrencySafe
 
-  const run = async (args: Record<string, unknown>, ctx: { cwd: string; signal: AbortSignal }): Promise<string | ToolOutput> => {
+  const run = async (args: Record<string, unknown>, ctx: ToolContext): Promise<string | ToolOutput> => {
     if (execute === undefined) throw new Error(`工具 ${name} 没有 execute 实现`)
-    const exec = { signal: ctx.signal, cwd: ctx.cwd }
+    const exec = dshExec(name, args, ctx)
     const value = timeoutMs === undefined ? await execute(args, exec) : await withTimeout(execute(args, exec), name, timeoutMs)
-    return renderFn !== undefined ? blocksToOutput(renderFn(args, value), name) : valueToText(value)
+    // 规范值契约：声明了 output.schema 就校验；不合 schema 的返回值**不当成功**。
+    // 这条是 dsh 的硬规矩（违例抛 ToolArgsError），这里是同一处把关，只是文案说人话。
+    if (schema !== undefined) {
+      const violations = validateOutput(schema, value)
+      if (violations.length > 0) {
+        const head = violations.slice(0, 3).join('；')
+        const more = violations.length > 3 ? `（另有 ${String(violations.length - 3)} 处）` : ''
+        throw new Error(`工具 ${name} 的返回值不符合它自己声明的 output.schema：${head}${more}`)
+      }
+    }
+    const rendered = renderFn !== undefined ? blocksToOutput(renderFn(args, value), name) : valueToText(value)
+    return withPresentation(rendered, cardsOf(definition, args, value, rendered))
   }
 
   return {
@@ -112,7 +177,63 @@ export function dshToolToEntry(definition: DshToolDefinitionLike, config: DshRis
         ? (definition.parameters as Record<string, unknown>)
         : { type: 'object', properties: {} },
     risk: riskFor(definition, config),
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    ...(typeof concurrency === 'function'
+      ? {
+          isConcurrencySafe: (args: Record<string, unknown>): boolean => {
+            try {
+              return (concurrency as (a: unknown) => unknown)(args) === true
+            } catch {
+              // 分类器抛错当独占（与 dsh 同一口径：出错就不并行）。
+              return false
+            }
+          },
+        }
+      : {}),
     run,
+  }
+}
+
+/**
+ * 造 dsh 的执行上下文（`exec`）。
+ *
+ * 能给的真给，给不了的**明确降级**而不是假装有：
+ *   - `signal` / `cwd`：真值；
+ *   - `arguments`：真值（dsh 声明它是解析后的参数）；
+ *   - `agent`：从 dsc 的 `caller` 折出来（队友名/层级；主会话是 lead）；
+ *   - `token`：合成的对象（dsc 没有传输级执行令牌，这里只有身份信息，不要当授权凭据用）；
+ *   - `callId`：合成（dsc 的 callId 在循环那边，工具层拿不到）；
+ *   - `deferContext`：**收下但不投递**——dsc 的循环没有「延迟上下文」这条通道，
+ *     照 dsh 的说法这会把内容推迟进下一轮请求，我们没有对应落点，只能记一条告警；
+ *   - `concludeTurn`：**空操作**（dsc 的收尾由循环自己判，工具说不了话）。
+ *
+ * 这两条降级在开发日志里有记录：用到它们的 dsh 插件行为会不完整，但不会崩。
+ */
+function dshExec(name: string, args: Record<string, unknown>, ctx: ToolContext): Record<string, unknown> {
+  let warned = false
+  const warnOnce = (what: string): void => {
+    if (warned) return
+    warned = true
+    console.warn(`[dsh-compat] 工具 ${name} 用了 ${what}，dsc 没有对应通道，已按空操作处理`)
+  }
+  return {
+    signal: ctx.signal,
+    cwd: ctx.cwd,
+    arguments: args,
+    callId: `${name}@${String(Date.now())}`,
+    token: { name, sessionId: ctx.sessionId, synthetic: true },
+    agent: {
+      name: ctx.caller?.name ?? 'lead',
+      depth: ctx.caller?.depth ?? 0,
+      background: ctx.caller?.background ?? false,
+    },
+    deferContext: (message: unknown): void => {
+      warnOnce('deferContext（延迟上下文）')
+      void message
+    },
+    concludeTurn: (): void => {
+      warnOnce('concludeTurn（工具收尾本轮）')
+    },
   }
 }
 

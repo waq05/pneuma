@@ -17,6 +17,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
+  diffLines,
   DiffRows,
   IconChevronDown,
   IconChevronUp,
@@ -104,6 +105,39 @@ function expandedContentHeight(body: HTMLElement): number {
   return total
 }
 
+
+/**
+ * dsh 插件给的 diff 卡片（`presentation.result.card === 'diff'`）→ 卡片用的变更视图。
+ *
+ * 为什么能这么接：dsh 的 `FileDiff` 是「改前全文 + 改后全文」，与 Pneuma 自己 write/edit
+ * 工具落在会话日志里的 `changes`（path / added / removed / hunks）只差一步逐行 diff——
+ * 而逐行 diff 正是壳里已有的一份实现（`diffLines`）。于是 dsh 插件的 diff 卡能直接落进
+ * 现有的「将做的改动 / 这次改动」那一块，不必再养第二种画法。
+ *
+ * 只取第一份：Pneuma 的工具卡一张卡对一份 `change`（多文件时轮尾另有聚合卡）。dsh 的
+ * diff 卡可以带多份，这里取第一份并在文档里标明这一处损失——比把多份压成一份假 diff 好。
+ * @param presentation - 工具卡上的卡片数据
+ * @returns 可渲染的变更视图；不是 diff 卡、或缺字段时给 null（回落通用卡）
+ */
+function dshPatchOf(presentation: ToolCallView['presentation']): ChangedFileView | null {
+  const card = presentation?.result
+  if (card === undefined || card['card'] !== 'diff') return null
+  const diffs = card['diffs']
+  if (!Array.isArray(diffs) || diffs.length === 0) return null
+  const first = diffs[0] as { path?: unknown; oldText?: unknown; newText?: unknown }
+  if (typeof first.path !== 'string' || typeof first.newText !== 'string') return null
+  const before = typeof first.oldText === 'string' ? first.oldText : ''
+  const diff = diffLines(before, first.newText, 3)
+  if (!diff.ok || diff.identical) return null
+  return {
+    path: first.path,
+    added: diff.added,
+    removed: diff.removed,
+    hunks: diff.hunks,
+    status: first.oldText === null ? 'added' : 'modified',
+  }
+}
+
 /** 在 apply 里登记定义（ui.tsx 调；disposer 由装载账本持有）。 */
 export function registerToolCard(ui: UiPluginApi): void {
   ui.slots.registerFactory(
@@ -156,7 +190,9 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
    * （call.change，adapter 按 callId 缝回）接手。有 diff 时**不再摊原始参数 JSON**——
    * 参数里那一大坨正文换成 diff，其余字段走参数表（见 {@link toolArgFields}）。
    */
-  const patch = intended?.file ?? call.change ?? null
+  // 三种来源依次接手：进行中按参数推演 → 落地后的真实改动 → dsh 插件给的 diff 卡片
+  // （最后一项是 2026-10-26 加的：dsh 的 presentResult 带 card: 'diff' 时落到同一块渲染）。
+  const patch = intended?.file ?? call.change ?? dshPatchOf(call.presentation)
   const argView = toolArgFields(call.name, call.argsText)
   const paramsAsFields = patch !== null && argView.mutating
   /**

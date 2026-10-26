@@ -16,6 +16,7 @@
 import type { CoreEvent } from '../core/events.js'
 import { contentImages, contentText, type ChatMessage } from '../core/llm.js'
 import type { FileChangeSummary } from '../core/tools.js'
+import type { ToolPresentationView } from '../contract.js'
 import { SUMMARY_BANNER } from '../core/compact-anchors.js'
 import { REVIEW_FINDINGS_OPEN, TEAMMATE_REPORT_OPEN } from '../core/team-board.js'
 import { addUsageToBuckets, emptyCostBuckets, isPeakHour, type CostBuckets } from '../core/pricing.js'
@@ -219,7 +220,12 @@ export class Transcript {
    * 时间戳跟着消息走（`ChatMessage.ts`，由会话日志重放时填回）：有就盖在条目上，
    * 没有（2026-09 之前的老日志）就传 null，条目干脆不带 ts，界面降级不显示时间。
    */
-  replayHistory(messages: readonly ChatMessage[], toolErrors?: ReadonlyMap<string, string>, fileChanges?: ReadonlyMap<string, FileChangeSummary>): boolean {
+  replayHistory(
+    messages: readonly ChatMessage[],
+    toolErrors?: ReadonlyMap<string, string>,
+    fileChanges?: ReadonlyMap<string, FileChangeSummary>,
+    presentations?: ReadonlyMap<string, ToolPresentationView>,
+  ): boolean {
     let changed = false
     for (const message of messages) {
       const ts = message.ts ?? null
@@ -277,6 +283,11 @@ export class Transcript {
           const change = fileChanges?.get(callId)
           if (change !== undefined) {
             changed = this.reduce({ type: 'tool/changes', callId, change }, ts) || changed
+          }
+          // dsh 插件的卡片数据也一并重放（日志 tool 记录里存着）
+          const presentation = presentations?.get(callId)
+          if (presentation !== undefined) {
+            changed = this.reduce({ type: 'tool/presentation', callId, presentation }, ts) || changed
           }
           break
         }
@@ -529,6 +540,19 @@ export class Transcript {
         const owner = index === undefined ? undefined : this.list[index]
         if (index !== undefined && owner !== undefined && owner.kind === 'tool') {
           this.list[index] = { ...owner, call: { ...owner.call, change: event.change } }
+        }
+        return true
+      }
+      case 'tool/presentation': {
+        // dsh 插件的卡片数据：按 callId 缝回工具卡（界面按 card 标签挑形态）。
+        // 不产生独立条目——它是这张卡的一种画法，不是又一条消息。
+        const index = this.toolIndex.get(event.callId)
+        const owner = index === undefined ? undefined : this.list[index]
+        if (index !== undefined && owner !== undefined && owner.kind === 'tool') {
+          this.list[index] = {
+            ...owner,
+            call: { ...owner.call, presentation: event.presentation as ToolPresentationView },
+          }
         }
         return true
       }

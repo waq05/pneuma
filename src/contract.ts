@@ -322,6 +322,25 @@ export interface ToolCallView {
    * 执行失败、或还在跑没有结果时没有这一项。
    */
   change?: ChangedFileView
+  /**
+   * 这次调用带给界面的**卡片数据**（dsh 插件才有）。
+   *
+   * dsh 的工具用 presentCall / presentResult 声明怎么画自己的卡（六种：generic /
+   * terminal / diff / search / read / web，字段见 `core/dsh-compat/presentation.ts`），
+   * 兼容层把产物原样带进来。界面按 `card` 标签挑形态，**认不出来的回落通用工具卡**
+   * （数据不丢，只是没画成专用形态）。Pneuma 自己的工具没有这一项。
+   */
+  presentation?: ToolPresentationView
+}
+
+/** 一张卡片视图的界面镜像（字段宽收：认得 `card` 就够挑形态了）。 */
+export interface ToolPresentationView {
+  /** 调用阶段的卡片。 */
+  call?: { card: string } & Record<string, unknown>
+  /** 完成阶段的卡片。 */
+  result?: { card: string } & Record<string, unknown>
+  /** 可重放的展示投影（与值无关的纯数据）。 */
+  meta?: unknown
 }
 
 /**

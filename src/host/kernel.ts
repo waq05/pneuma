@@ -476,6 +476,7 @@ export function emitStartupNotes(
       root.session.current().messages,
       root.session.current().toolErrors,
       root.session.current().fileChanges,
+      root.session.current().presentations,
     )
   }
   // 启动提示只展示一次（0.6.64）：同一会话同一模型的开机横幅只在首次见到时写，

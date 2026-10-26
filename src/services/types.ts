@@ -76,6 +76,7 @@ import type {
   SettingsValues,
   SkillInfoView,
   SkillLoadResult,
+  ToolPresentationView,
 } from '../contract.js'
 
 /** 服务方法允许同步或异步返回（插件提供方常要联网）。 */
@@ -577,6 +578,8 @@ export interface TranscriptService {
     messages: readonly ChatMessage[],
     toolErrors?: ReadonlyMap<string, string>,
     fileChanges?: ReadonlyMap<string, FileChangeSummary>,
+    /** dsh 插件的卡片数据（Session.presentations），重放时缝回工具卡。 */
+    presentations?: ReadonlyMap<string, ToolPresentationView>,
   ): boolean
   subscribe(listener: () => void): () => void
   getSnapshot(): RuntimeSnapshot
