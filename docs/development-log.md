@@ -8693,3 +8693,17 @@ ctx.get 现取」的真挂载路径，以及写侧四条拒绝断言、分页游
 
 **没做完的那一步**：拿真包跑一轮，确认成本条出现非零数字。在那之前「形状对」只等于
 「我们的探针自洽」——这一点写进了 docs/dsh-service-bridge-plan.md 的第 6 节。
+**自检门禁收口：48 条内核探针也有总闸了（2026-10-26）**：
+
+上一轮把界面壳那 35 条（+4 条真机）收进了 `check:ui`，但库里还有 84 条 `*-test.mjs`
+散着——改内核的人仍然靠「我记得要跑哪几条」。这一批把非界面的那批也收进来：
+
+- 抽 `scripts/_check-runner.mjs`：发现、逐条跑、失败贴尾部、汇总口径只此一份。
+  `check-ui.mjs` 改用它（行为不变，35/35、4/4 照旧）；
+- 新 `scripts/check-core.mjs`：`scripts/*-test.mjs` 里 `ui-` 之外的 48 条，约 8 分钟。
+  收口时全跑过一遍——**48/48 全绿**，最慢的是 `request-invariant-test`（122 秒）、
+  `todo-reminder-test`（77 秒）、`teammate-notice-test`（72 秒）；
+- `pnpm run check:all` 把 ui + dsh + core 串起来（不含 e2e，那 61 秒留给人按需跑）。
+
+分工写进脚本注释：`ui-*` 归 `check:ui`（眨眼级，改壳随时跑），其余归 `check:core`
+（提交前跑）；`ui-hmr-machine.mjs` 与 `desktop/shots/*.ps1` 要真桌面窗口，仍走人工。

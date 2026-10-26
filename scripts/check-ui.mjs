@@ -7,7 +7,7 @@
  * 命名成 `ui-<话题>-test.mjs` 就自动进门禁，不必再改 package.json。
  *
  * 两档，按「要不要真 Chromium」切：
- *   - 默认（`check:ui`）：纯 Node 探针，起隔离宿主 / 读源码 / 纯函数，秒级到十几秒；
+ *   - 默认（`check:ui`）：纯 Node 探针，起隔离宿主 / 读源码 / 纯函数，秒级到几十秒；
  *   - `--e2e`（`check:ui:e2e`）：要真 Electron + 真 Chromium，慢且依赖 `desktop/node_modules/electron`。
  *
  * 分工不是按「重要程度」分，而是按「跑得动跑不动」分：机器上没有 Electron 的解包产物，
@@ -20,13 +20,7 @@
  *   node scripts/check-ui.mjs --list     # 只列会跑哪些，不跑
  *   node scripts/check-ui.mjs ui-serve-test.mjs ...   # 只跑点名的（调试用）
  */
-import { spawn } from 'node:child_process'
-import { readdirSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-const here = dirname(fileURLToPath(import.meta.url))
-const scriptsDir = resolve(here)
+import { discover, runSequential } from './_check-runner.mjs'
 
 /**
  * 要真 Chromium 的那几条：默认档不跑。
@@ -41,80 +35,20 @@ const isE2e = (file) => file.endsWith('-e2e.mjs') || E2E_EXTRA.has(file)
 const args = process.argv.slice(2)
 const wantE2e = args.includes('--e2e')
 const listOnly = args.includes('--list')
-const named = args.filter((a) => !a.startsWith('--'))
+const named = args.filter((arg) => !arg.startsWith('--'))
 
-const all = readdirSync(scriptsDir)
-  .filter((f) => f.startsWith('ui-') && (f.endsWith('-test.mjs') || f.endsWith('-e2e.mjs')))
-  .sort()
-
+const all = discover(['-test.mjs', '-e2e.mjs']).filter((file) => file.startsWith('ui-'))
 const picked = named.length
-  ? named.map((n) => (n.endsWith('.mjs') ? n : n + '.mjs'))
-  : all.filter((f) => (wantE2e ? isE2e(f) : !isE2e(f)))
+  ? named.map((name) => (name.endsWith('.mjs') ? name : name + '.mjs'))
+  : all.filter((file) => (wantE2e ? isE2e(file) : !isE2e(file)))
 
 if (picked.length === 0) {
   console.error(wantE2e ? '没有匹配的 e2e 探针' : '没找到任何 ui-*-test.mjs')
   process.exit(2)
 }
-
 if (listOnly) {
-  for (const f of picked) console.log(f)
+  for (const file of picked) console.log(file)
   process.exit(0)
 }
 
-/** 一条探针的结论：只认它自己打印的 PASS/FAIL 计数，以及退出码。 */
-function runOne(file) {
-  return new Promise((done) => {
-    const startedAt = Date.now()
-    const child = spawn(process.execPath, [join(scriptsDir, file)], {
-      cwd: resolve(scriptsDir, '..'),
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
-    })
-    let out = ''
-    let err = ''
-    child.stdout.on('data', (c) => (out += c))
-    child.stderr.on('data', (c) => (err += c))
-    child.on('close', (code) => {
-      const text = out + err
-      // 探针之间的汇总写法不统一（「N 项通过」「N PASS」「N/M 通过」都有），所以只取
-      // **最后一行**含「通过」或 PASS 的当作它自己的结论，纯粹给人看；判定一律以退出码为准。
-      const line = text
-        .split('\n')
-        .map((l) => l.trim())
-        .filter((l) => /通过|\bPASS\b/.test(l))
-        .pop()
-      done({
-        file,
-        code,
-        ms: Date.now() - startedAt,
-        text,
-        summary: line ? line.slice(0, 46) : '',
-      })
-    })
-  })
-}
-
-const results = []
-for (const file of picked) {
-  process.stdout.write(`  ${file.padEnd(34)} `)
-  const r = await runOne(file)
-  results.push(r)
-  if (r.code === 0) {
-    console.log(`ok  ${String(r.ms).padStart(6)}ms  ${r.summary}`)
-  } else {
-    console.log(`FAIL (exit ${r.code})  ${String(r.ms).padStart(6)}ms`)
-  }
-}
-
-const failed = results.filter((r) => r.code !== 0)
-console.log('')
-if (failed.length) {
-  for (const r of failed) {
-    console.log(`── ${r.file} ───────────────────────────────────`)
-    console.log(r.text.trimEnd().split('\n').slice(-40).join('\n'))
-    console.log('')
-  }
-}
-const totalMs = results.reduce((n, r) => n + r.ms, 0)
-console.log(`${results.length - failed.length}/${results.length} 通过${failed.length ? `，${failed.length} 条失败` : ''}（合计 ${(totalMs / 1000).toFixed(1)}s）`)
-process.exit(failed.length ? 1 : 0)
+process.exit((await runSequential(picked)) === 0 ? 0 : 1)

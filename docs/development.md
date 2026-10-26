@@ -493,11 +493,13 @@ cd D:\dsc && pnpm run build        # tsc → lib/，自检脚本跑的就是 lib
 cd D:\dsc\desktop && pnpm run typecheck
 
 # 自检脚本：全部在临时 HOME 上跑，不碰真实 ~/.dsc
-# 界面壳那一摊有汇总入口（按文件名自动发现，新探针不用回来登记）：
+# 三条汇总入口都按文件名自动发现，新探针不用回来登记：
 pnpm run check:ui                  # 35 条纯 Node 探针，31 秒
 pnpm run check:ui:e2e              # 4 条要真 Chromium，61 秒（含 diff 卡、手机尺寸远程壳）
-pnpm run check:dsh                 # dsh 兼容层 + 组合包 + 真包挂载，60 条
-node shots/team-check.mjs          # 插件与团队，98 条
+pnpm run check:dsh                 # dsh 兼容层 + 组合包 + 真包挂载 + 会话桥，94 条
+pnpm run check:core                # 48 条内核探针（协议 / TUI / 会话库 / LLM 适配），约 8 分钟
+pnpm run check:all                 # 上面三条串起来（不含 e2e）
+node shots/team-check.mjs          # 插件与团队，98 条（shots/ 里的，不在库里）
 node shots/storage-check.mjs       # 会话存储与会话库
 node shots/llm-retry-check.mjs     # LLM 重试（连接失败 / 429 重试，400 与取消不重试）+ 版本号（10 条）
 node shots/llm-adapter-check.mjs   # 协议适配器接缝：注册/派发/卸载、重复拒绝、未注册报错、api 字段校验（11 条）
