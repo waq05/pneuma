@@ -15,7 +15,7 @@
 | 交付前跑什么 | **§5 验证清单** |
 | dsh 的请求组装/上下文管理内部机制（源码级） | [dsh-request-assembly.md](dsh-request-assembly.md) |
 
-## 1. 判定流程：三种结局
+## 1. 判定流程：先看结局，再决定要不要改代码
 
 兼容层（官方可开关插件 `dsh-compat`）解决的是"运行形态"差异；**业务语义**的差异没人能替你
 适配。拿到一个 dsh 插件，先按这张表判定：
@@ -27,7 +27,13 @@
 | `inject` 里有 **两边同名但 API 不同**的服务：`session` / `settings` / `commands` / `approval` / `agent` / `compact` | **能挂，但要改代码**：这些名字在 dsc 里解析到的是 dsc 自己的服务，dsh 的调用方式会运行时炸。按 §3 映射表改写，改完再挂 | 兼容层不垫同名异 API 的服务——垫了等于猜 |
 | `inject` 里有 `sessionProjections` / `agents` / `goals` / `systemPrompt` 等 dsh 会话侧服务 | **不支持**：挂载即被拒，宿主会列出缺的服务名 | 这些要整个 dsh 会话语义（事件溯源、agent 注册表），个人版不背；部分场景可按 §3 映射表重写后去掉这些 inject |
 | 工具 `execute` 里用了 `exec.agent` / `exec.deferContext` / `exec.requestContext` 等 dsh 执行上下文字段 | **能挂，但要改代码**：dsc 给的 `exec` 只有 `{ signal, cwd }`，其余字段是 `undefined`，用到就炸 | 改成只依赖 `signal`；真需要会话身份的插件属于不支持类 |
+| 工具 `output.render` 返回结构化值（对象、数组，不是一段字符串） | **卡片能显示**：返回值按 dsc 工具卡的通用渲染落到对话里，与原生插件同一套 | 卡片是 dsc 自己的渲染器画的，不执行插件的界面代码；dsh 塞进 `render` 的 ConversationNode 之类会被忽略 |
 | 工具 `output.render` 返回图像块 | 能挂，图像块降级为占位说明文字 | dsc 工具图像走 data URL，dsh 的 attachment 引用没有直接映射 |
+| 整个 npm 包带 `dsh.bundle.patch`（就是 `dsh plugin add` 装的那种组合包） | **bundle 能装**：`numa plugin add <包名 / tarball / 本地路径>` 装进 profile，patch 里的插件条目被逐条读出来挂载，插件中心在名字后挂一枚「组合包 <包名>」 | 安装单位照 dsh 同一套（profile + pnpm + patch 层算法），不是把包塞进 `~/.dsc/plugins/` 里手写入口（§2.6） |
+| 包同时带 `dsh.client` 声明（客户端半） | **界面半能进来**，但只有当 `platform` 是 `pneuma` 时；`platform: 'web'` 这类 dsh 客户端插件**只列出、不加载** | 两半是两份不同的东西：宿主半是 cordis 插件，客户端半是给 dsh 自己的 Web 壳写的界面代码，我们没有那份运行时（§2.6） |
+
+结局一共五种，按上表从上往下取第一条命中的：**直接挂** / **改码后挂** / **不支持** /
+**bundle 能装**（整个 npm 包，走 profile + pnpm）/ **只列出不加载**（dsh 客户端半）。
 
 一句话：**纯工具插件（配 logger 与配置校验）是兼容层的主战场；会话侧语义是禁区**。
 
@@ -110,6 +116,35 @@ dsc 对工具分级：`read` 自动放行、`write`/`exec` 走权限模式与审
 改完停用→启用（或重启挂载）即生效。**判定标准与 dsc 原生插件一致**：只读数据 `read`；
 写文件 `write`；执行命令 `exec`。
 
+### 2.6 整个 npm 包（组合包）：一条命令装，别手抄入口
+
+dsh 的安装单位是「bundle + profile + pnpm」：包在 `package.json` 里用 `dsh.bundle.patch`
+指向一份 patch，patch 按行 id 改配置、按 group 插行。这条路径我们是**照原样实现**的，
+所以装法就是 dsh 那条命令，不必把包解压进 `~/.dsc/plugins/` 再手写入口：
+
+```sh
+numa plugin add <包名 / tarball / 本地路径> [--profile 名字]
+numa plugin remove <包名> [--profile 名字]
+numa plugin list [--profile 名字]
+```
+
+装之前有一道版本闸：比的是**dsh 的插件契约版本**（不是 Pneuma 的 0.7.x）。包的
+`engines.dsh` 或 `@deepseek-ai/dsh*` 的 peer 范围不满足就拒绝安装，除非在 profile 的
+`compatibility.json` 里登记豁免。机制细节见 [development.md](development.md) 的
+「dsh 组合包怎么装」。
+
+**两半要分开看**。同一个包可以同时带宿主半与客户端半：
+
+- 宿主半（code 插件，走 `dsh.bundle.patch` 那一层）**照常挂载**，与 §2.2 / §2.3 的单文件、
+  npm 包没有区别；
+- 客户端半（`package.json` 的 `dsh.client`，入口 `exports["./client"]`）只有在
+  `platform` 写成 `pneuma` 时才会被当成界面插件加载；写成 `web` 这类 dsh 自己的壳时
+  **只列出、不加载**——那要一份 dsh 的客户端运行时，与我们更严的信任模型冲突；
+- 界面半默认只服务浏览器壳，要它同时进终端壳，在 `dsh.client.platforms` 里显式写
+  `["web", "tui"]`；未知取值整条声明被拒（不是忽略）。
+- 信任：`numa plugin add` 装进 profile 的那一步就算用户同意，界面半直接可用，没有第二张
+  「确认信任」卡。这与手动丢进 `~/.dsc/plugins/` 的第三方界面插件不同，那种需要点一次。
+
 ## 3. 映射表：要改代码时的 API 对照
 
 dsh 与 dsc 是同名生态（都叫 cordis 插件），但服务面不同。改写的总原则：**会话侧语义找
@@ -149,7 +184,8 @@ dsc 的等价扩展点重挂，找不到就砍掉那个功能**——个人版�
 
 ## 5. 验证清单（交付前逐项执行）
 
-1. **判定复核**：§1 表格走一遍，确认插件落在"直接挂"或"改码后挂"，没有禁区特征。
+1. **判定复核**：§1 表格走一遍，确认插件落在「直接挂」「改码后挂」「bundle 能装」三者之一，
+   没有禁区特征。
 2. **兼容层开着**：插件中心确认 `dsh-compat` 已启用。
 3. **挂载**：启用插件；挂载失败时宿主会写 system 条目说明原因（缺服务 / 配置校验失败 /
    版本不兼容），修好再继续。
@@ -159,16 +195,21 @@ dsc 的等价扩展点重挂，找不到就砍掉那个功能**——个人版�
    确认走审批而不是静默落盘。
 6. **卸载干净**：停用插件后确认工具从注册表消失、logger 桥停止输出（disposer 返回的清理
    函数全部被调用）。
-7. **回归自检**：`node shots/dsh-compat-check.mjs`——14+ 条断言覆盖解析钩子、工具兼容面、
-   logger 桥、配置校验、不支持项拒绝；给兼容层改代码时必须全绿再交付。
+7. **组合包**：走 `numa plugin add` 装，`numa plugin list` 能看到包与它的插件；包装了界面半
+   就再去插件中心确认「组合包界面」那一组有它、开关能停。
+8. **回归自检**：`node shots/dsh-compat-check.mjs`——14+ 条断言覆盖解析钩子、工具兼容面、
+   logger 桥、配置校验、不支持项拒绝；给兼容层改代码时必须全绿再交付。界面半的回归
+   另跑 `pnpm run check:ui`（组合包那几组在里面，38 条断言），`pnpm run check:ui:e2e` 跑真机那两条。
 
 ## 6. 边界（当前明确不支持的，别绕）
 
 - **dsh 会话侧语义**：`sessionProjections`（事件溯源投影）、`agents`（agent 注册表与 fork）、
   `goals`（agent 绑定目标）、`systemPrompt`（waterfall 装配）——挂载被拒；等价功能按 §3
   映射表重写后去掉对应 inject。
-- **dsh 的 UI / client 类插件**：dsc 的界面走自己的 contract 体系（快照 + 白名单方法），
-  dsh 的 ConversationNode 之类的渲染扩展没有对应物。
+- **dsh 客户端插件的界面代码本身**：`dsh.client` 声明成 `platform: 'web'`（或任何不是
+  `pneuma` 的取值）时只列出、不加载。dsc 的界面走自己的 contract 体系（快照 + 白名单方法），
+  dsh 的 ConversationNode 之类渲染扩展没有对应物，装进来也没有运行时去执行它。
+  写成 `platform: 'pneuma'` 的那一半是我们自己的界面插件协议，不是 dsh 的——两套别混。
 - **`ctx.tools` 兼容面只实现了 `register`**：调其余成员（`schemas` / dispatch 类）会响亮
   报错，不会静默 undefined——这是刻意的，别依赖。
 - **`config.yaml plugins` 段的 extraPaths 不享受解析重定向**：重定向按 `~/.dsc/plugins/`
