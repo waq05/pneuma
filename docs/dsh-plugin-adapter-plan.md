@@ -245,7 +245,7 @@ sed -n '9,140p' docs/user/develop/basic/publish.zh.md
 | 7 | **门禁既有漏洞**：构建产物缺失时清单顶层 `apiVersion` 为 `undefined`，`evaluateUiApiGate` 直接放行——「无据可依就放行」，与失败关闭相反；包路径复用了它 | **已修**：两边都无依据改成拒（理由写进 problems）；五个测试夹具补上 `apiVersion` | — |
 | 8 | `build-plugins.mjs` 还留着 legacy `plugin.json` 读取分支，19 个插件都迁完了，这条分支已死 | **已修**：改成「见到 plugin.json 就报错」，删掉分支 | — |
 | 9 | 六条 UI 自检**没有汇总入口**，靠人记着跑 | **已修**：`pnpm run check:ui`（四条快的）、`pnpm run check:ui:e2e`（两条真机） | — |
-| 10 | 示例包的 `client.bundle.js` 是手写工厂，壳的工厂协议一变它会静默失效（只有 e2e 能发现） | 未做 | 给示例加一条「工厂注册形状」的断言，或让它走构建 |
+| 10 | 示例包的 `client.bundle.js` 是手写工厂，壳的工厂协议一变它会静默失效（只有 e2e 能发现） | **已修**：`ui-two-halves-test` 当场跑它一遍，钉住注册名、产出形状、require 白名单、注册进哪个槽、组件标记与文字（16/0） | — |
 | 11 | `unmetDependencies` 对「依赖的插件被停用」也说「不在清单里」，文案不够准 | 未做 | 把「停用」与「不存在」分开 |
 | 12 | 计划文档 §4 的进程注记没跟上 2.0 与两半 | **已修**：本节 + 上面的注记 | — |
 

@@ -8499,6 +8499,16 @@ transcript 93/93）。剩下面向用户的第 2、3 条（启停入口、TUI �
 验证：`ui-api-gate-test` 全通过（原来那条「双方都无版本依据 → 放行」改成「→ 拒」并检查理由有
 `apiVersion` 与「已跳过」）；上面五个脚本回跑全通过。
 
+**§8 第 10 条：示例包的工厂形状有断言了（2026-10-26）**：
+
+`examples/plugin-two-halves/client.bundle.js` 是手写的——壳的工厂协议（`globalThis.__DSC_UI_FACTORIES__`
+里注册一个收 `(require, module, exports)` 的函数）一变，它就静默失效，只有真机 e2e 能发现。
+现在 `ui-two-halves-test` 当场把它跑一遍，钉六件事：注册名与包名一致、工厂产出有 `name` 与
+`apply`、只 require 白名单里的模块（`react` 与 `@dsc/ui`）、`apply` 把一段注册进 `shell.statusbar`、
+组件带 `data-two-halves="1"`、组件文字是「两半示例」（e2e 也是靠这个标记认人的）。
+
+验证：`ui-two-halves-test` 16/0。
+
 
 
 

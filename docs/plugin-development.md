@@ -903,7 +903,8 @@ dsh 的构造单位是**一个 npm 包两半**，Pneuma 2.0 起照同一份声�
 
 验证：`node scripts/ui-package-plugin-test.mjs`（28 条：发现、门禁、字节、组图、地址形状、
 插件中心那张卡与启停键、停用后从产物表消失但卡片还在）；
-`node scripts/ui-two-halves-test.mjs`（9 条，装进 profile 后两半都到位）；
+`node scripts/ui-two-halves-test.mjs`（16 条，装进 profile 后两半都到位，另含示例 bundle 的
+工厂形状：注册名、产出形状、require 白名单、注册进哪个槽、组件带什么标记）；
 `node scripts/ui-two-halves-e2e.mjs`（真 Electron + 真宿主，断言状态栏里真的画出了那一段，
 截图落 `desktop/shots/two-halves.png`）。
 

@@ -78,6 +78,53 @@ check('路由按 rev 伺服装载到这份 bundle', route.status === 200 && Stri
 const wrong = resolveUiBundleRequest('/plugins/dsc-demo-two-halves/client.js', '0'.repeat(16))
 check('rev 对不上给 404（内容寻址）', wrong.status === 404, String(wrong.status) + ' ' + (wrong.reason ?? ''))
 
+console.log('示例包的工厂形状')
+// 这份 bundle 是手写的（不走构建），壳的工厂协议一变它就静默失效——只有 e2e 能发现。
+// 这里当场把它跑一遍：注册名、工厂产出、require 白名单、apply 注册到哪个槽、组件带什么标记。
+{
+  const source = readFileSync(join(example, 'client.bundle.js'), 'utf8')
+  const previous = globalThis.__DSC_UI_FACTORIES__
+  const table = {}
+  globalThis.__DSC_UI_FACTORIES__ = table
+  new Function(source)()
+  const factory = table['dsc-demo-two-halves']
+  check('bundle 注册的工厂名与包名一致', typeof factory === 'function', Object.keys(table).join(','))
+  const asked = []
+  const require_ = (spec) => {
+    asked.push(spec)
+    if (spec === 'react') {
+      return {
+        createElement: (type, props, ...children) => ({
+          type,
+          props: { ...props, ...(children.length === 0 ? {} : { children: children.length === 1 ? children[0] : children }) },
+        }),
+      }
+    }
+    if (spec === '@dsc/ui') return { defineUiPlugin: (definition) => definition }
+    throw new Error('白名单外的模块：' + spec)
+  }
+  const mod = { exports: {} }
+  if (typeof factory === 'function') factory(require_, mod, mod.exports)
+  const exported = mod.exports.default
+  check('工厂产出的模块有 name 与 apply', typeof exported?.name === 'string' && typeof exported?.apply === 'function', JSON.stringify(Object.keys(exported ?? {})))
+  check('只 require 白名单里的模块（react 与 @dsc/ui）', asked.every((spec) => spec === 'react' || spec === '@dsc/ui'), asked.join(','))
+  const registered = []
+  exported?.apply?.({
+    slots: {
+      register: (slot, meta, component) => { registered.push({ slot, id: meta.id, component }) },
+      injectSlot: () => undefined,
+      declare: () => undefined,
+    },
+    host: { name: 'Pneuma', version: 'test', platform: 'web' },
+  })
+  check('apply 把一段注册进 shell.statusbar', registered.length === 1 && registered[0].slot === 'shell.statusbar', JSON.stringify(registered.map((item) => item.slot)))
+  const element = registered[0] === undefined ? null : registered[0].component()
+  check('注册的组件带 data-two-halves 标记（e2e 靠它认这条）', element?.props?.['data-two-halves'] === '1', JSON.stringify(element?.props ?? null))
+  check('组件文字是「两半示例」', element?.props?.children === '两半示例', String(element?.props?.children))
+  if (previous === undefined) delete globalThis.__DSC_UI_FACTORIES__
+  else globalThis.__DSC_UI_FACTORIES__ = previous
+}
+
 ctx.emit('dsc/exit')
 if (ctx.fiber !== null && ctx.fiber !== undefined) await ctx.fiber.dispose()
 
