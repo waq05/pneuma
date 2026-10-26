@@ -178,6 +178,58 @@ export function apply(ctx) {
   'utf8',
 )
 
+// 7) 内容钩子：projectContent 在 render 之后、finalizeContent 之前；失败结果也过 finalize
+writeFileSync(
+  join(home, '.dsc', 'plugins', 'dsh-tool-hooks.js'),
+  `export const name = 'dsh-hooks'
+export const inject = ['tools']
+
+export function apply(ctx) {
+  const off = ctx.tools.register({
+    name: 'dsh_hooked',
+    description: 'Content goes through projectContent then finalizeContent.',
+    parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
+    output: {
+      schema: { type: 'object', properties: { body: { type: 'string' } }, required: ['body'] },
+      render: (args, value) => [{ type: 'text', text: 'render:' + String(value.body) }],
+    },
+    projectContent: (exec, result) => {
+      globalThis.__dshHookProbe = {
+        // 钩子拿到的应当是 execute 的规范值，不是 render 的文本
+        projectValue: result.value && result.value.body,
+        projectContentArrays: Array.isArray(result.content),
+        isError: result.isError,
+        execArgument: exec && exec.arguments && exec.arguments.text,
+      }
+      return [{ type: 'text', text: 'project:' + String(result.value.body) }]
+    },
+    finalizeContent: (exec, result) => {
+      globalThis.__dshHookProbe = globalThis.__dshHookProbe || {}
+      globalThis.__dshHookProbe.finalizeInput = result.isError ? 'error' : 'success'
+      const first = Array.isArray(result.content) ? result.content[0] : undefined
+      const text = first && typeof first.text === 'string' ? first.text : ''
+      return [{ type: 'text', text: text + '|final' }]
+    },
+    execute: async (args) => {
+      if (args.text === 'boom') throw new Error('原始错误文案')
+      return { body: String(args.text) }
+    },
+  })
+  // 钩子自己写坏了：不许让工具结果变成错误，保留 render 的文本
+  const offBad = ctx.tools.register({
+    name: 'dsh_hooked_bad',
+    description: 'A broken projectContent must not break the call.',
+    parameters: { type: 'object', properties: {} },
+    output: { schema: { type: 'string' }, render: (args, value) => [{ type: 'text', text: String(value) }] },
+    projectContent: () => { throw new Error('钩子自己炸了') },
+    execute: async () => 'safe',
+  })
+  return () => { off(); offBad() }
+}
+`,
+  'utf8',
+)
+
 /** 起一个内核（dsh-compat 开关由调用方先行写盘）。 */
 async function boot() {
   return createKernel({
@@ -208,7 +260,7 @@ console.log('兼容层没开：dsh 插件挂载被拦下且提示明确')
 {
   const ctx = await boot()
   const failures = await mountAllExternalPlugins(ctx, [])
-  check('六个 dsh 插件都没挂上', failures.length === 6, `实得 ${JSON.stringify(failures.map((f) => f.file))}`)
+  check('七个 dsh 插件都没挂上', failures.length === 7, `实得 ${JSON.stringify(failures.map((f) => f.file))}`)
   const problems = failures.map((f) => f.problem).join('；')
   check('提示里点名 dsh-compat', problems.includes('dsh-compat'), `实得 ${problems}`)
   check('不支持的服务被点名', problems.includes('sessionProjections'), `实得 ${problems}`)
@@ -315,6 +367,38 @@ console.log('值契约 + 卡片：schema 校验、presentationMeta、present 视
   }
   check('返回值不合 output.schema 时报错而不是当成功', badError !== null && badError.includes('output.schema'), String(badError))
   check('报错文案点出类型不符', badError !== null && badError.includes('string'), String(badError))
+  await stop(ctx)
+}
+
+console.log('内容钩子：projectContent 在前、finalizeContent 在后，失败结果也过 finalize')
+{
+  writePluginEnabled('dsh-tool-hooks.js', true)
+  const ctx = await boot()
+  const failures = await mountAllExternalPlugins(ctx, [])
+  const hookFail = failures.find((f) => f.file === 'dsh-tool-hooks.js')
+  check('带内容钩子的插件挂上了', hookFail === undefined, hookFail === undefined ? '' : hookFail.problem)
+  const hooked = ctx.tools.list().find((tool) => tool.name === 'dsh_hooked')
+  check('两个钩子的工具都进了注册表', hooked !== undefined && ctx.tools.list().some((t) => t.name === 'dsh_hooked_bad'), JSON.stringify(ctx.tools.list().map((t) => t.name)))
+
+  const out = await hooked.run({ text: 'hi' }, { cwd: home, signal: new AbortController().signal })
+  check('projectContent 的替换结果又过了 finalizeContent', out === 'project:hi|final', JSON.stringify(out))
+  const probe = globalThis.__dshHookProbe
+  check('钩子拿到的是 execute 的规范值，不是 render 的文本', probe?.projectValue === 'hi', JSON.stringify(probe))
+  check('钩子拿到的 content 已经是内容块数组', probe?.projectContentArrays === true && probe?.isError === false, JSON.stringify(probe))
+  check('finalizeContent 这次看到的是成功结果', probe?.finalizeInput === 'success', JSON.stringify(probe))
+
+  let boomError = null
+  try {
+    await hooked.run({ text: 'boom' }, { cwd: home, signal: new AbortController().signal })
+  } catch (error) {
+    boomError = error instanceof Error ? error.message : String(error)
+  }
+  check('失败结果的最终文案也过 finalizeContent', boomError === '原始错误文案|final', String(boomError))
+  check('失败路径下钩子看到的是 isError', globalThis.__dshHookProbe?.finalizeInput === 'error', JSON.stringify(globalThis.__dshHookProbe))
+
+  const bad = ctx.tools.list().find((tool) => tool.name === 'dsh_hooked_bad')
+  const safe = await bad.run({}, { cwd: home, signal: new AbortController().signal })
+  check('钩子自己抛错时保留 render 的内容，不把工具变成错误', safe === 'safe', JSON.stringify(safe))
   await stop(ctx)
 }
 
