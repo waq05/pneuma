@@ -8178,3 +8178,25 @@ fiber 状态映射成诊断行，要么维持现状。其余 18 条切过去的�
 全部 `via=cordis`、`fiber=2`；诊断区 19 行都写着 `cordis（已生效）`；状态栏 DOM 里 1 份、有内容；
 一轮换装后新代码真的执行、仍是 1 份、仍是 `fiber=2`；无槽位故障、无同步失败、页面无 error/warning。
 截图 `shots/cordis-probe.png`。
+
+**第三批：inject 的服务名那一半交给 cordis（同日）**：
+
+上一批把 19 条切过去时留了一句「inject 还没交给 cordis」，理由是清单里的 `inject` 是**双关**
+（既可能是插件 id，也可能是服务名）。把插件 id 当服务名交给 cordis，那条纤维会永远等不到东西——
+`trace` 声明的 `inject: ['transcript']` 就是插件 id。
+
+所以这一批做的是**拆开**，不是整包交出去：
+
+- 装配前按清单的 id 表分开：名字是插件 id 的仍走 `unmetInjections`（缺了报「等待：插件 X 没装上」，
+  失败重试一轮，行为不变）；剩下的是服务名，交给 cordis 的 `inject`；
+- 依赖没就绪时 `await fiber` 会**直接放行**（我原以为会抛或会卡，用一条 node 自检钉死）——纤维停在
+  状态 0、`apply` 不跑。所以装配器加了一条：`fiber.state !== 2` 就记「等待服务：X、Y」进诊断区、
+  返回成功（不触发重试重装），并发起 `internal/status` 订阅；
+- 服务后来补上（更晚的批、或 HMR 装进来的提供者）→ 纤维自己从 0 变 2，事件回调把账本与报告翻成
+  「已生效」，不用重装。这是这次换 cordis 唯一一个「纯收益」的行为变化。
+
+三条 cordis 行为写成了自检（`scripts/ui-cordis-test.mjs` 的 [0] 一节，6 条断言）：依赖缺席时
+`await fiber` 放行、纤维 state=0、apply 不跑、服务补上后 apply 跑、state=2、状态事件发得出来。
+这样这段目前还没有真实使用者的代码，至少假设是被钉住的（现有 19 条插件里没有服务名 inject）。
+
+**验证**：`DSC_CORDIS_DIAG=1 node scripts/ui-cordis-test.mjs` 共 31 条断言全 PASS，界面与上一批一致。

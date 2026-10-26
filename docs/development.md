@@ -185,11 +185,26 @@ export const myPlugin: Plugin.Object = {
    访问器，第一次 `provide` 就抛 `property "runtime" is already declared as accessor`，症状是
    整个壳起不来、诊断区只有一行 `boot 失败`。壳里那个通道服务因此叫 `uiRuntime`。
 2. **壳提供的服务是三个**：`slots` / `host` / `uiRuntime`。插件 `ui.provide()` 出来的服务同时写
-   界面侧服务表（`useService` 读它）与 cordis（将来 `inject` 得到），两边同一个值、同一次释放。
+   界面侧服务表（`useService` 读它）与 cordis（`inject` 声明服务名时才等得到），两边同一个值、
+   同一次释放。
 3. **cordis 卸载是异步的**。HMR 换装必须 `await cordis.unmount(id)` 再装新的，否则新旧两条纤维
    同时占着同一个槽格子（症状是状态栏叠成两份）。
 
-验证：`node scripts/ui-cordis-test.mjs`（真 Electron + 真宿主 + 一轮换装，25 条断言）。
+### inject 怎么拆（插件 id 与 服务名各走一边）
+
+界面清单里的 `inject` 是**双关**：既可能是另一个插件的 id，也可能是服务名（见
+`src/ui/manifest.ts`）。这两类依赖的等待方式不同，所以装配时按 id 表拆开：
+
+- **插件 id**（例：`trace` 的 `inject: ['transcript']`）→ 仍由装载器的 `unmetInjections` 在装之前
+  检查，缺了就报「等待：插件 transcript 没装上」，重试轮再试一次；
+- **服务名** → 交给 cordis 的 `inject`，由框架等它就绪；服务在更晚的批里、或者 HMR 时才补上，
+  那条纤维会**自己启动**，不必重装。
+
+依赖没就绪时 `await fiber` 会直接放行（纤维停在状态 0），所以装配器要单独看 `fiber.state`：
+不是 2 就记一条「等待服务：X、Y」进诊断区，并订阅 `internal/status`——服务补上来、纤维变 2 时，
+账本自己翻成「已生效」。这三条 cordis 行为有自检钉着（`scripts/ui-cordis-test.mjs` 的 [0] 一节）。
+
+验证：`node scripts/ui-cordis-test.mjs`（真 Electron + 真宿主 + 一轮换装，31 条断言）。
 要连诊断区一起量：`DSC_CORDIS_DIAG=1 node scripts/ui-cordis-test.mjs`。
 
 ## 5. 契约层与进程间协议
