@@ -687,9 +687,15 @@ export function discoverThirdPartyUiArtifacts(
     const rev = contentRev(bytes)
     const cached = cache.get(fileKey)
     const fingerprint = `${rev}`
-    const services = Array.isArray(doc['services'])
-      ? doc['services'].filter((value): value is string => typeof value === 'string' && value !== '')
-      : undefined
+    // services：与内置清单同一口径——坏值记一条问题，不静默丢（丢一个依赖等于让插件少等一件事）。
+    let services: string[] | undefined
+    if (doc['services'] !== undefined) {
+      if (Array.isArray(doc['services']) && doc['services'].every((value) => typeof value === 'string' && value !== '')) {
+        services = doc['services']
+      } else {
+        problems.push(`${where}: services 必须是非空字符串数组（依赖的服务名），当没声明处理`)
+      }
+    }
     const row: ThirdPartyUiEntry = {
       id: name,
       file: 'client.js',
@@ -977,6 +983,37 @@ function clientEntryOf(exports: unknown): string | null {
   return null
 }
 
+/** 目录列表缓存：`node_modules` 的 mtime + 条目数是钥匙（装/删包会变，读盘不会）。 */
+const packageListCache = new Map<string, { stamp: string; dirs: Array<{ name: string; dir: string }> }>()
+
+/** 单包声明的解析缓存：`package.json` 的 mtime+size 是钥匙。 */
+const packageDeclCache = new Map<string, { stamp: string; decl: ReturnType<typeof readClientDeclaration> }>()
+
+function statStamp(path: string): string | null {
+  try {
+    const stat = statSync(path)
+    return `${String(stat.mtimeMs)}:${String(stat.size)}`
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 读一个包声明的缓存版（`package.json` 没换就不重解析）。
+ *
+ * 为什么要缓存：`collectUiArtifactsForPlatform` 每次组图都会被调（`/boot.js`、HMR 轮询），
+ * profile 里几十个包时，每个包一次 stat + readFile 是白花的。
+ */
+function readClientDeclarationCached(dir: string): ReturnType<typeof readClientDeclaration> {
+  const stamp = statStamp(resolve(dir, 'package.json'))
+  if (stamp === null) return null
+  const cached = packageDeclCache.get(dir)
+  if (cached !== undefined && cached.stamp === stamp) return cached.decl
+  const decl = readClientDeclaration(dir)
+  packageDeclCache.set(dir, { stamp, decl })
+  return decl
+}
+
 /** `node_modules` 下的包目录（含 `@scope/*` 一层）。 */
 function packageDirs(nodeModules: string): Array<{ name: string; dir: string }> {
   let names: string[]
@@ -985,6 +1022,9 @@ function packageDirs(nodeModules: string): Array<{ name: string; dir: string }> 
   } catch {
     return []
   }
+  const stamp = `${String(existsStamp(nodeModules))}:${String(names.length)}`
+  const cachedList = packageListCache.get(nodeModules)
+  if (cachedList !== undefined && cachedList.stamp === stamp) return cachedList.dirs
   const found: Array<{ name: string; dir: string }> = []
   for (const name of names) {
     if (name.startsWith('.')) continue
@@ -1001,7 +1041,16 @@ function packageDirs(nodeModules: string): Array<{ name: string; dir: string }> 
     }
     found.push({ name, dir })
   }
+  packageListCache.set(nodeModules, { stamp, dirs: found })
   return found
+}
+
+function existsStamp(path: string): number {
+  try {
+    return statSync(path).mtimeMs
+  } catch {
+    return 0
+  }
 }
 
 /**
@@ -1026,7 +1075,7 @@ export function discoverPackageUiArtifacts(
   }
   const seen = new Set<string>()
   for (const { name, dir } of packageDirs(nodeModules)) {
-    const decl = readClientDeclaration(dir)
+    const decl = readClientDeclarationCached(dir)
     if (decl === null) continue
     if (decl.platform !== 'pneuma') {
       if (decl.platform === 'web') {
