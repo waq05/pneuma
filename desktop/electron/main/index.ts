@@ -8,7 +8,7 @@
  * @module desktop/main
  */
 import { spawn } from 'node:child_process'
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { BrowserWindow, Menu, Notification, Tray, WebContentsView, app, desktopCapturer, dialog, ipcMain, nativeImage, nativeTheme, screen, session, shell, utilityProcess, type UtilityProcess } from 'electron'
 import type { NativeImage } from 'electron'
@@ -198,7 +198,7 @@ async function adoptUiServer(info: { url: string; origin: string }): Promise<voi
   const restarted = servedPageLoaded && previous !== info.origin
   if (servedPageLoaded && !(restarted && uiProfile() === 'shell')) return
   servedPageLoaded = true
-  process.stderr.write(
+  selfcheckNote(
     `[dsc-desktop] 窗口来自宿主界面服务 ${info.origin}${restarted ? '（宿主重启，窗口重新加载）' : ''}\n`,
   )
   void window.loadURL(desktopPageUrl())
@@ -222,9 +222,10 @@ function startHost(cwd: string): void {
   hostCwd = cwd
   const entry = resolveHeadlessEntry()
   const assetsDir = uiAssetsDir()
-  // 这一行是「界面形态」的唯一可观测信号：切换期验收看 stderr，不看绿不绿
+  // 这一行是「界面形态」的唯一可观测信号：切换期验收看读数（stderr，打包态看
+  // DSC_DESKTOP_SELFCHECK_LOG 那份文件），不看绿不绿
   // （阶段 93 的教训——认证回落会把「没切过去」藏在一路绿灯里）。
-  process.stderr.write(
+  selfcheckNote(
     `[dsc-desktop] 界面形态=${uiProfile()}，宿主伺服 ${assetsDir}（产物存在=${existsSync(assetsDir)}）\n`,
   )
   protocol = new HostProtocol(entry, cwd, hostEnv(assetsDir))
@@ -802,7 +803,7 @@ function openExternalUrl(url: unknown): void {
 /** 原生窗口控件区上色：只收 #rrggbb（带 alpha 的颜色到了系统那侧会被丢掉）。 */
 function applyWindowChrome(bar: unknown, symbol: unknown): void {
   if (isSelfCheck()) {
-    process.stderr.write(`[selfcheck] 控件条颜色 ${String(bar)} ${String(symbol)}\n`)
+    selfcheckNote(`[selfcheck] 控件条颜色 ${String(bar)} ${String(symbol)}\n`)
   }
   if (!isChromeColor(bar) || !isChromeColor(symbol) || !mainWindow) return
   mainWindow.setTitleBarOverlay({ color: bar, symbolColor: symbol, height: CAPTION_HEIGHT })
@@ -812,7 +813,7 @@ function applyWindowChrome(bar: unknown, symbol: unknown): void {
 /** 原生弹层（下拉、右键菜单）的深浅。 */
 function applyThemeSource(mode: unknown): void {
   if (mode !== 'dark' && mode !== 'light' && mode !== 'system') return
-  if (isSelfCheck()) process.stderr.write(`[selfcheck] 原生主题源 ${mode}\n`)
+  if (isSelfCheck()) selfcheckNote(`[selfcheck] 原生主题源 ${mode}\n`)
   nativeTheme.themeSource = mode
 }
 
@@ -836,6 +837,26 @@ function notifyUser(payload: unknown): boolean {
   notification.on('click', () => showMainWindow())
   notification.show()
   return true
+}
+
+/**
+ * 自检读数：同时写 stderr 与一个可选的文件。
+ *
+ * 为什么要有文件这条路：打包成 GUI 子系统之后（Windows），spawn 出来的进程**拿不到**
+ * 它的 stderr——实测 installer-walkthrough 里 stderr 是空串，于是「界面形态=shell」
+ * 「窗口来自宿主界面服务」「预跑脚本完成」三行读数全部丢失，红得像功能坏了。
+ * 截图那条路不受影响（图是文件），所以读数也走文件：DSC_DESKTOP_SELFCHECK_LOG=<path>。
+ * @param line - 要写的一行（自带换行）
+ */
+function selfcheckNote(line: string): void {
+  process.stderr.write(line)
+  const file = process.env['DSC_DESKTOP_SELFCHECK_LOG']
+  if (file === undefined || file === '') return
+  try {
+    appendFileSync(file, line)
+  } catch {
+    // 落不下不影响自检本身：stderr 那条还在（开发态能看见）。
+  }
 }
 
 /** 是不是自检跑（`DSC_DESKTOP_SHOT` 有值）；自检时把原生动作写进 stderr 当证据。 */
@@ -1110,9 +1131,9 @@ function createWindow(): void {
     const delay = Number.isNaN(wait) ? 4000 : wait
     // capturePage 在 GPU 合成不正常时可能永远不返回，因此挂个看门狗：自动化不能挂在这里
     mainWindow.webContents.once('did-finish-load', () => {
-      process.stderr.write(`[selfcheck] 页面加载完成，${delay}ms 后截图 ${shotPath}\n`)
+      selfcheckNote(`[selfcheck] 页面加载完成，${delay}ms 后截图 ${shotPath}\n`)
       const watchdog = setTimeout(() => {
-        process.stderr.write('[selfcheck] 截图超时，强制退出\n')
+        selfcheckNote('[selfcheck] 截图超时，强制退出\n')
         app.exit(1)
       }, delay + 25000)
       // 截图前先在渲染层跑一段脚本（DSC_DESKTOP_SHOT_EVAL）：用来点开一个有内容的
@@ -1126,9 +1147,9 @@ function createWindow(): void {
           void mainWindow?.webContents
             .executeJavaScript(preScript)
             .then((value: unknown) =>
-              process.stderr.write(`[selfcheck] 预跑脚本完成：${JSON.stringify(value) ?? '无返回值'}\n`)
+              selfcheckNote(`[selfcheck] 预跑脚本完成：${JSON.stringify(value) ?? '无返回值'}\n`)
             )
-            .catch((error: unknown) => process.stderr.write(`[selfcheck] 预跑脚本失败：${String(error)}\n`))
+            .catch((error: unknown) => selfcheckNote(`[selfcheck] 预跑脚本失败：${String(error)}\n`))
         }, Math.max(0, delay - (Number.isNaN(lead) ? 2000 : lead)))
       }
       // 原生窗口控件条（最小化/最大化/关闭）由系统画，capturePage 拍不到，只能整屏抓
@@ -1146,9 +1167,9 @@ function createWindow(): void {
           .then((image) => {
             mkdirSync(resolve(shotPath, '..'), { recursive: true })
             writeFileSync(shotPath, image.toPNG())
-            process.stderr.write(`[selfcheck] 已写出 ${shotPath}\n`)
+            selfcheckNote(`[selfcheck] 已写出 ${shotPath}\n`)
           })
-          .catch((error: unknown) => process.stderr.write(`[selfcheck] 截图失败：${String(error)}\n`))
+          .catch((error: unknown) => selfcheckNote(`[selfcheck] 截图失败：${String(error)}\n`))
           .finally(() => {
             clearTimeout(watchdog)
             app.exit(0)
@@ -1156,7 +1177,7 @@ function createWindow(): void {
       }, delay)
     })
     mainWindow.webContents.on('did-fail-load', (_event, code, description) => {
-      process.stderr.write(`[selfcheck] 页面加载失败：${code} ${description}\n`)
+      selfcheckNote(`[selfcheck] 页面加载失败：${code} ${description}\n`)
     })
   }
 
@@ -1175,7 +1196,7 @@ function createWindow(): void {
   } else if (uiServerOrigin !== null) {
     // 宿主比窗口先起来（内核快时走这条）：直接加载伺服的那份文档，不必先落文件再切。
     servedPageLoaded = true
-    process.stderr.write(`[dsc-desktop] 窗口来自宿主界面服务 ${uiServerOrigin}\n`)
+    selfcheckNote(`[dsc-desktop] 窗口来自宿主界面服务 ${uiServerOrigin}\n`)
     void mainWindow.loadURL(desktopPageUrl())
   } else {
     // 先用本机文件把窗口开起来（渲染层自己会显示「连接中」），宿主报来界面地址后再切过去。

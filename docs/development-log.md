@@ -8608,3 +8608,39 @@ apiVersion 仍是门禁依据、旧产物兜底 + 点名）；`ui-serve-test` �
 
 验证：`ui-transcript-render-test` 94/94（新增一条钉「dsh 的 diff 卡并进展开体」）、
 `ui-dsh-card-e2e` 12/12、`ui-package-plugin-test` 42/0、`check:ui` 35/35。
+**安装器走查跑通了，红的三条是三个真问题（2026-10-26）**：
+
+这条走查改了断言之后一直没跑过（要 `pnpm -C desktop dist` 造安装器）。第一次跑 3 红，
+逐条查下来都不是断言写错了：
+
+1. **打包态拿不到 stderr**。Windows 上 GUI 子系统的进程，`spawnSync` 收到的 stderr 是空串，
+   于是「界面形态=shell」「窗口来自宿主界面服务」「预跑脚本完成」三行读数全丢。
+   修法：桌面端加 `selfcheckNote()`——照旧写 stderr，同时可写 `DSC_DESKTOP_SELFCHECK_LOG`
+   指定的一份文件；走查读两份拼起来。
+2. **应用根本没起来**。`Pneuma.exe --version` 打印的是 `v24.21.0`（node 版本）：从 Electron 里
+   起的脚本会带着 `ELECTRON_RUN_AS_NODE=1`，打包出来的应用于是退回成普通 node，启动 136ms、
+   退出码 9、什么都不写。症状极像「应用坏了」。修法：走查拉起前先把这个变量从环境里摘掉。
+3. **假绿的截图断言**。旧截图留在 `desktop/shots/` 里，「截图落盘」在应用没起来时也通过——
+   正是因为这一条绿着，前两轮才显得「只红三条不像大事」。修法：拉起前先删掉上一次的图。
+
+顺带把两处写死的条数改成对账：内置插件条数改成数装出来那份的 `bundle.json`（这次是 19），
+application 批的次数改成 `总数 - 2`。写死 16 的那条在加了三条插件之后就假红了。
+
+验证：`node desktop/scripts/installer-walkthrough.mjs` 全绿（nsis 装/卸 9 条、启动读数 11 条、
+portable 4 条、真实档案 2 条）；真实 `~/.dsc` 文件数与内容指纹前后不变。
+
+**手机尺寸的远程壳：从单测走到真机（2026-10-26）**：
+
+移动端一直只有 `ui-mobile-shell-test.mjs`（128 条断言，跑的是纯逻辑）。窄屏真浏览器会不会
+横向溢出、19 条插件装不装得上、槽位有没有故障，此前没有人量过——「打包态/真机没验」这笔账
+就卡在这里。
+
+新增 `scripts/ui-remote-web-e2e.mjs` + 驱动 `_ui-mobile-main.cjs`：隔离 HOME 起真宿主，
+Electron 开到 390×844 加载带令牌的地址，读页内账本并截图。判据四条：19 条全装上、没有失败的、
+槽位零故障、横向溢出 ≤2px。截图 `desktop/shots/remote-web-mobile.png` 里能看到侧栏收起、
+建议卡两列、输入框与底部状态行都还在。
+
+一个量出来的细节：innerWidth 是 376 而不是 390（少一条滚动条），所以宽度断言按区间判，
+死等 390 会假红。
+
+验证：`node scripts/ui-remote-web-e2e.mjs` 9/9。

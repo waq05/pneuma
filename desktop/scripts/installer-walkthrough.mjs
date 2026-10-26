@@ -15,8 +15,10 @@
  * 界面读数分两条路：
  *
  *   - **nsis 那份**：桌面自检那套 `DSC_DESKTOP_SHOT` + `DSC_DESKTOP_SHOT_EVAL`（内联一段
- *     eval：等启动落定后回报 `__DSC_UI_BOOT_STATE__` 读数），再核 stderr 上的
- *     「界面形态=shell」「窗口来自宿主界面服务」「已写出 …png」；
+ *     eval：等启动落定后回报 `__DSC_UI_BOOT_STATE__` 读数），再核「界面形态=shell」
+ *     「窗口来自宿主界面服务」「预跑脚本完成」三行。这三行走 `DSC_DESKTOP_SELFCHECK_LOG`
+ *     那份文件：打包成 GUI 子系统之后 Windows 上拿不到子进程的 stderr（实测是空串），
+ *     开发态两条都读；
  *   - **portable 那份**：NSIS 启动器（ExecWait）不把 stdio 交给子进程，stderr 拿不到——
  *     于是改用**截图指纹**：把 portable 的截图与 nsis 的截图在同一区域做粗采样比对，
  *     同一套壳渲染出来的两张图差得很小，退到旧界面就会差一大截。这条断言就是为了堵住
@@ -32,7 +34,7 @@
  */
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -160,8 +162,20 @@ const tail = (text, lines = 6) => text.split('\n').filter((line) => line.trim() 
 /** 拉起一份界面（装好的那份或 portable），收 stderr、解析预跑脚本的读数。 */
 function launchUi(exe, { home, label, timeoutMs = 300000 }) {
   const shot = join(shots, `installer-walkthrough-${label}.png`)
+  // 先删掉上一次的图：留着的话「截图落盘」这条会在应用根本没起来时也通过（踩过一次，
+  // 那次红的三条正是「应用没起来」的信号，绿的那条是上一轮的旧图）。
+  rmSync(shot, { force: true })
+  // 读数另走一份文件：打包成 GUI 子系统后，子进程的 stderr 在 Windows 上拿不到
+  // （实测 spawnSync 里是空串），而「界面形态」「窗口来自宿主界面服务」「预跑脚本完成」
+  // 这三行是这条走查的主要证据。桌面端把同样几行走 DSC_DESKTOP_SELFCHECK_LOG。
+  const selfcheckLog = join(home, `selfcheck-${label}.log`)
+  // 先摘掉 ELECTRON_RUN_AS_NODE：从 Electron 里起的脚本（CI、agent、或本仓自己的
+  // `pnpm -C desktop ...`）会带着它，打包出来的 Pneuma.exe 于是**退回成普通 node**
+  // ——启动 136 毫秒、退出码 9、什么都不写，截图与读数全无。症状很像「应用坏了」。
+  const inherited = { ...process.env }
+  delete inherited['ELECTRON_RUN_AS_NODE']
   const env = {
-    ...process.env,
+    ...inherited,
     HOME: home,
     USERPROFILE: home,
     DSC_HOME: join(home, '.dsc'),
@@ -172,6 +186,7 @@ function launchUi(exe, { home, label, timeoutMs = 300000 }) {
     DSC_UI_SHELL: '1',
     DSC_UI_QUERY: 'diag=1',
     DSC_DESKTOP_SHOT: shot,
+    DSC_DESKTOP_SELFCHECK_LOG: selfcheckLog,
     // 自检时序：加载完 15 秒后跑预跑脚本（够内核与宿主起来），再有 30 秒窗口；到 45 秒截图并退出。
     DSC_DESKTOP_SHOT_DELAY: '45000',
     DSC_DESKTOP_SHOT_EVAL_LEAD: '30000',
@@ -186,7 +201,9 @@ function launchUi(exe, { home, label, timeoutMs = 300000 }) {
   }
   const args = (process.env['DSC_WALKTHROUGH_ENTRY'] ?? '') === '' ? [] : [process.env['DSC_WALKTHROUGH_ENTRY']]
   const result = spawnSync(exe, args, { encoding: 'utf8', env, timeout: timeoutMs, windowsHide: true })
-  const stderr = result.stderr ?? ''
+  // 两条来源拼一份：开发态 / 未打包时 stderr 有货，打包态走文件。谁有就用谁，都在也不重。
+  const fromFile = existsSync(selfcheckLog) ? readFileSync(selfcheckLog, 'utf8') : ''
+  const stderr = `${result.stderr ?? ''}${fromFile}`
   const evalLine = /\[selfcheck\] 预跑脚本完成：(.*)/.exec(stderr)
   let reading = null
   if (evalLine !== null) {
@@ -196,7 +213,12 @@ function launchUi(exe, { home, label, timeoutMs = 300000 }) {
       reading = null
     }
   }
-  return { status: result.status, stderr, shot, reading, spawnError: result.error }
+  // 装出来那份的界面产物有几份插件：用来对账「界面该装几条」，别在断言里写死条数。
+  const pluginsDir = join(dirname(exe), 'resources', 'dsc-core', 'lib', 'ui', 'plugins')
+  const expectedPlugins = existsSync(pluginsDir)
+    ? readdirSync(pluginsDir).filter((name) => existsSync(join(pluginsDir, name, 'bundle.json'))).length
+    : 0
+  return { status: result.status, stderr, shot, reading, spawnError: result.error, expectedPlugins }
 }
 
 /** 一份界面启动之后的共同断言（两条路都做得了的那半）。 */
@@ -223,8 +245,23 @@ function verifyUi(label, launched, { expectReading = true } = {}) {
   if (boot === null) return
   console.log(`  ..    ${label} 读数：${JSON.stringify({ host: boot.host, batches: boot.batches, loaded: boot.loaded, failed: boot.failed, requests: boot.requests, waitedMs: reading.waitedMs })}`)
   check(`${label}：宿主版本 = ${version}`, boot.host?.version === version, String(boot.host?.version))
-  check(`${label}：16 条内置插件全部装上`, boot.loaded === 16 && boot.failed.length === 0, JSON.stringify(boot.failed))
-  check(`${label}：两批都 done（early 2 + application 14）`, boot.batches.join('、') === 'early:done:2、application:done:14', boot.batches.join('、'))
+  // 插件条数不写死：写死过一次（16），加三条内置插件之后这条就假红了。改成与**装出来那份
+  // 产物**对账——`resources/dsc-core/lib/ui/plugins/*/bundle.json` 有几份，界面就该装几条。
+  const expected = launched.expectedPlugins ?? 0
+  check(
+    `${label}：内置插件全部装上（产物 ${String(expected)} 份）`,
+    expected > 0 && boot.loaded === expected && boot.failed.length === 0,
+    `loaded=${String(boot.loaded)} failed=${JSON.stringify(boot.failed)}`,
+  )
+  // 两批的合计也要对账：early 那批是固定的 2 条，其余都该落在 application。
+  const [early, application] = boot.batches.map((row) => row.split(':'))
+  check(
+    `${label}：两批都 done（early 2 + application ${String(Math.max(0, expected - 2))}）`,
+    early?.[0] === 'early' && early?.[1] === 'done' && early?.[2] === '2' &&
+      application?.[0] === 'application' && application?.[1] === 'done' &&
+      application?.[2] === String(expected - 2),
+    boot.batches.join('、'),
+  )
   check(`${label}：数据通道已连上`, reading.channel === 'open', String(reading.channel))
   check(
     `${label}：取数走 combo（≤3 条请求、全是批）`,
