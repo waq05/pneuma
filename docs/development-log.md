@@ -8257,3 +8257,20 @@ sessionProjections（Pneuma 没有事件投影系统）；sessions（dsh 是多�
 
 **门禁**：根与壳 typecheck 通过；`pnpm run build` 通过；`shots/dsh-compat-check.mjs` 29/0；
 `shots/dsh-bundle-check.mjs` 9/0；`scripts/ui-transcript-render-test.mjs` 93/93。
+
+**对齐收尾：插件中心显示组合包来源与 dsh 客户端能力（2026-10-26，批 D1/B6）**：
+
+差距表里最后两项的可见部分。两处都只做「读」，不执行 dsh 的界面代码：
+
+1. **组合包来源**：`mountBundlePlugins` 记下每个插件来自哪个包（patch 的 insert 行属于哪一层），
+   插件中心在名字后挂一枚「组合包 demo-bundle」。为什么不在那里给停用开关：组合包是一个目录，
+   停一个插件等于改它的 patch，得回命令行（`numa plugin remove`），界面只负责告诉你该去哪。
+2. **dsh 客户端能力**：插件导出的 `client` / `dshClient` 折成能力名清单（对象取键名，
+   platform 与 inject 的值也列出来），插件中心显示一行「界面能力（dsh 客户端插件）：…· 只列不加载」。
+   不加载的理由写在 `PluginMeta.clientCapabilities` 上：dsh 的界面插件要一份 dsh 自己的客户端
+   运行时，Pneuma 的壳是另一套契约，硬跑等于在页面里塞第二个框架。
+
+**验证**：`shots/dsh-compat-check.mjs` 34/0（新增 4 条：声明 client 的插件照常挂上、能力清单读得到、
+清单里有 platform/card/服务、客户端部分没有多出工具）；`shots/dsh-bundle-check.mjs` 10/0
+（新增 1 条：插件中心能看出它来自哪个组合包）；真机截图 `shots/plugin-center.png`——页面从
+21 行变 22 行，组合包那行带徽标与能力行，版式没有被撑坏。

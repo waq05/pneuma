@@ -240,6 +240,12 @@ numa plugin list [--profile 名字]
 `src/core/plugin-loader.ts` 的 `mountBundlePlugins`、`src/tools/plugin-cli.ts`（CLI）。
 没配 profile 的用户启动路径完全不变（`activeProfileDir()` 返回 null 就整条路径不碰）。
 
+**插件中心怎么看**：来自组合包的插件，名字后面挂一枚「组合包 <包名>」标记（卸载要回命令行，
+不是在这里停用）。dsh 客户端插件声明的界面能力（`dsh.client`）也会列一行
+「界面能力（dsh 客户端插件）：platform:web、card · 只列不加载」——**只读展示，不执行它的界面代码**，
+理由见 `PluginInfoView.clientCapabilities` 的注释：那要一份 dsh 自己的客户端运行时，与 Pneuma
+更严的信任模型冲突。
+
 ## 5. 契约层与进程间协议
 
 `src/contract.ts` 定义 `DscRuntime`：TUI 与桌面端消费同一接口，桌面端经协议转接。

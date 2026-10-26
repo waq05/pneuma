@@ -1199,6 +1199,15 @@ export interface PluginInfoView {
   apiVersion?: number
   /** 加载失败/被自动停用的原因（回滚说明），正常时 undefined。 */
   problem?: string
+  /** 这个插件来自哪个组合包（bundle）；单文件插件没有这一项。 */
+  bundle?: string
+  /**
+   * 插件声明的 dsh 客户端（界面）能力名，**只列不加载**。
+   *
+   * dsh 的界面插件要一份 dsh 自己的客户端运行时，Pneuma 的壳是另一套契约，
+   * 真加载等于在页面里跑第二个框架。所以插件中心只把「它想让界面做什么」列出来。
+   */
+  clientCapabilities?: string[]
 }
 
 /**

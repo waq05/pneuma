@@ -42,6 +42,20 @@ export interface PluginMeta {
    * 危险一点的官方插件（电脑操作）用它，装完不主动拿到桌面控制权。
    */
   defaultDisabled?: boolean
+  /**
+   * 这个插件来自哪个组合包（bundle）。单文件插件没有这一项。
+   * 插件中心据此显示「来自组合包 X」，方便用户知道该去哪卸载。
+   */
+  bundle?: string
+  /**
+   * 这个插件声明的 **dsh 客户端（界面）能力**，只列不加载。
+   *
+   * 为什么只列：dsh 的 `dsh.client` 插件要一份 dsh 自己的客户端运行时（cordis 客户端
+   * 服务 + 平台模块表），Pneuma 的界面壳是另一套契约。真加载等于在页面里跑第二个框架，
+   * 与更严的信任模型冲突。所以这里如实告诉用户「这个插件想让界面做什么」，
+   * 但不执行它的界面代码。
+   */
+  clientCapabilities?: string[]
 }
 
 const catalog = new Map<string, PluginMeta>()
@@ -313,6 +327,8 @@ export function listPluginInfos(): PluginInfoView[] {
       settingsSection: meta.settingsSection,
       apiVersion: meta.apiVersion,
       problem: meta.problem,
+      ...(meta.bundle === undefined ? {} : { bundle: meta.bundle }),
+      ...(meta.clientCapabilities === undefined ? {} : { clientCapabilities: [...meta.clientCapabilities] }),
     }
   })
 }

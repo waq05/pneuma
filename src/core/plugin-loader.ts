@@ -51,6 +51,32 @@ const DSC_SERVICE_NAMES = new Set([
   'sandbox', 'logger',
 ])
 
+/**
+ * 读插件声明的 dsh 客户端能力名（只读，不加载）。
+ *
+ * dsh 的 `dsh.client` 是个对象（platform / inject / modules…），我们把**键名**当能力列出来；
+ * 数组就给里面的字符串；字符串原样。认不出给空数组（不猜）。
+ * @param raw - 插件模块上的 client / dshClient 导出
+ * @returns 能力名清单（去重、按出现顺序）
+ */
+function clientCapabilitiesOf(raw: unknown): string[] {
+  const names: string[] = []
+  const push = (value: unknown): void => {
+    if (typeof value === 'string' && value !== '' && !names.includes(value)) names.push(value)
+  }
+  if (typeof raw === 'string') push(raw)
+  else if (Array.isArray(raw)) for (const item of raw) push(item)
+  else if (raw !== null && typeof raw === 'object') {
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+      // platform / inject 这类字段的值本身就是能力线索，也一并列出（去重靠 push）。
+      if (key === 'platform') push(`platform:${String(value)}`)
+      else if (key === 'inject' && Array.isArray(value)) for (const item of value) push(`服务:${String(item)}`)
+      else push(key)
+    }
+  }
+  return names
+}
+
 /** 兼容层开着的判定与说明文案在挂载路径里；这里只留服务名清单。 */
 
 /** 已挂载的外部插件：文件名 → cordis Fiber（dispose 即卸载）。 */
@@ -85,6 +111,12 @@ interface PluginModule {
   apply?: unknown
   /** dsh 插件的 schemastery 配置 schema（可调用：传入原始 config，返回校验后的值）。 */
   Config?: unknown
+  /**
+   * dsh 客户端（界面）能力声明。只读进来列给用户看，**不加载**——见 PluginMeta 的说明。
+   * 形状宽松：对象取键名，数组取字符串，字符串原样。
+   */
+  client?: unknown
+  dshClient?: unknown
 }
 
 /**
@@ -148,6 +180,8 @@ export async function mountExternalPlugin(file: string): Promise<boolean> {
   if (typeof mod.name === 'string' && mod.name !== '') meta.name = mod.name
   if (typeof mod.description === 'string' && mod.description !== '') meta.description = mod.description
   if (typeof mod.apiVersion === 'number') meta.apiVersion = mod.apiVersion
+  const capabilities = clientCapabilitiesOf(mod.client ?? mod.dshClient)
+  if (capabilities.length > 0) meta.clientCapabilities = capabilities
 
   // ---- 版本管理：不兼容自动回滚（停用并写盘） ----
   const problem = checkApiVersion(meta.apiVersion)
@@ -414,6 +448,20 @@ export async function mountBundlePlugins(
   }
   if (profile.patch !== null) layers.push(profile.patch)
 
+  // 行 id → 是哪个包的行（插件中心显示「来自组合包 X」用）
+  const ownerOf = new Map<string, string>()
+  for (let index = 0; index < layers.length; index += 1) {
+    const layer = layers[index]
+    const owner = layerOwner.get(layer.label)
+    if (owner === undefined) continue
+    const name = basename(owner)
+    for (const patch of layer.patches) {
+      for (const row of patch.insert ?? []) {
+        if (typeof row.id === 'string' && row.id !== '') ownerOf.set(row.id, name)
+      }
+    }
+  }
+
   const base: PluginRow[] = []
   const applied = applyPatchLayers(base, layers)
   warnings.push(...applied.warnings)
@@ -432,9 +480,11 @@ export async function mountBundlePlugins(
     }
     if (row.disabled === true) continue
     const ok = await mountExternalPlugin(file)
-    if (!ok) {
-      const meta = getPluginMeta(basename(file))
-      if (meta?.problem !== undefined) failures.push({ file: basename(file), name: meta.name, problem: meta.problem })
+    const meta = getPluginMeta(basename(file))
+    const owner = typeof row.id === 'string' ? ownerOf.get(row.id) : undefined
+    if (ok && meta !== undefined && owner !== undefined) meta.bundle = owner
+    if (!ok && meta?.problem !== undefined) {
+      failures.push({ file: basename(file), name: meta.name, problem: meta.problem })
     }
   }
   return { failures, warnings }

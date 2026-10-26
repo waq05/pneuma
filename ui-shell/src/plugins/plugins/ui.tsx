@@ -66,6 +66,10 @@ interface PluginRow {
   settingsSection?: string
   /** 插件声明的内核 API 版本；未声明时 undefined。 */
   apiVersion?: number
+  /** 来自哪个组合包（dsh 的 bundle）；单文件插件没有。 */
+  bundle?: string
+  /** 插件声明的 dsh 客户端（界面）能力名，只列不加载。 */
+  clientCapabilities?: string[]
   /** 加载失败/被自动停用的原因（回滚说明），正常时 undefined。 */
   problem?: string
 }
@@ -396,6 +400,8 @@ function PluginCard({
         <div className="plugin-name">
           {row.name}
           {row.apiVersion !== undefined && <span className="plugin-apiver">API v{String(row.apiVersion)}</span>}
+          {/* 组合包来源：让用户知道该去哪卸载（组合包不是单个文件，不能在这里停用）。 */}
+          {row.bundle !== undefined && <span className="plugin-apiver" data-bundle={row.bundle}>组合包 {row.bundle}</span>}
         </div>
         <div className={`plugin-desc${row.problem !== undefined ? ' problem' : ''}`}>
           {row.problem !== undefined
@@ -403,6 +409,12 @@ function PluginCard({
             : row.description === ''
               ? `${row.file} · 无描述`
               : row.description}
+          {/* dsh 客户端能力：只列不加载（见 PluginInfoView.clientCapabilities 的说明）。 */}
+          {row.clientCapabilities !== undefined && row.clientCapabilities.length > 0 ? (
+            <div className="plugin-desc" data-client-capabilities={row.clientCapabilities.join(',')}>
+              界面能力（dsh 客户端插件）：{row.clientCapabilities.join('、')} · 只列不加载
+            </div>
+          ) : null}
         </div>
       </div>
       {configurable ? (
