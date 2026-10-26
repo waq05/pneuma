@@ -1,0 +1,28 @@
+{
+  "name": "dsc-demo-two-halves",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "示例：一个包两半（宿主半注册工具，界面半在状态栏加一段）",
+  "exports": {
+    ".": "./host/index.js",
+    "./client": "./client.bundle.js"
+  },
+  "files": [
+    "host",
+    "client.bundle.js",
+    "cordis.patch.yml"
+  ],
+  "engines": {
+    "dsh": ">=0.2.0-0 <0.3.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "pneuma",
+      "api": "^2.0.0"
+    }
+  }
+}

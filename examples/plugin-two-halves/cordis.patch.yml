@@ -1,0 +1,4 @@
+# 这一层只往宿主里插一行：它的 name 是包名，loader 自己按 exports["."] 找入口。
+- insert:
+    - id: dsc-demo-two-halves
+      name: dsc-demo-two-halves

@@ -97,6 +97,9 @@ const PROBE = `(() => {
     fiberAttrs: [...document.querySelectorAll('[data-plugin-fiber]')].map((el) => el.getAttribute('data-plugin-fiber')),
     diagText: document.querySelector('details.diagnostics') === null ? null : String(document.querySelector('details.diagnostics').textContent).replace(/\s+/g, ' ').trim().slice(0, 1500),
     entryCount: document.querySelectorAll('[data-entry]').length,
+    // 组合包示例（examples/plugin-two-halves）的界面半会带这个标记：不在内置清单里，
+    // 用它的个数证明「一个包两半」那条通路真的把界面画出来了（见 ui-two-halves-e2e.mjs）。
+    twoHalves: document.querySelectorAll('[data-two-halves]').length,
   }
 })()`
 

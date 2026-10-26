@@ -274,7 +274,11 @@ numa plugin list [--profile 名字]
 它的 `exports["./client"]` 会被收进界面启动图（发现、门禁、取字节、组图在
 `src/core/ui-bundles.ts` 的 `discoverPackageUiArtifacts`，路由在 `src/core/ui-route.ts`）。
 写 `platform: "web"` 的是 dsh 自己的界面半，仍然只列不加载——理由见
-[plugin-development.md §10.6.1](plugin-development.md)。自检 `scripts/ui-package-plugin-test.mjs`。
+[plugin-development.md §10.6.1](plugin-development.md)。完整示例是
+`examples/plugin-two-halves/`（宿主半一个工具、界面半状态栏一段）；自检三条：
+`scripts/ui-package-plugin-test.mjs`（发现/门禁/组图 11 条）、`scripts/ui-two-halves-test.mjs`
+（装进 profile 后两半都到位，9 条）、`scripts/ui-two-halves-e2e.mjs`（真 Electron，11 条，
+截图 `desktop/shots/two-halves.png`）。
 
 **已知边界**：包能挂上、能在插件中心认出来源，但 `dsh-cost-meter` 的成本条不会真有数——
 它靠 `sessionPersistence` + `sessions` 读会话历史算成本，这两个服务 Pneuma 没有（见

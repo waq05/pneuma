@@ -885,7 +885,13 @@ dsh 的构造单位是**一个 npm 包两半**，Pneuma 2.0 起照同一份声�
 - **启停**：条目树里的键是 `<包名>/client`（`~/.dsc/plugins.json`），停用即不进启动图。
 - **取字节**：走 `exports["./client"]`，必须落在包目录内；入口读不到就拒绝并说明。
 
-验证：`node scripts/ui-package-plugin-test.mjs`（11 条：发现、门禁、字节、组图、地址形状）。
+**完整示例**：[`examples/plugin-two-halves/`](../examples/plugin-two-halves/)——宿主半注册一个工具，
+界面半在状态栏加一段。装法 `numa plugin add ./examples/plugin-two-halves --profile demo`。
+
+验证：`node scripts/ui-package-plugin-test.mjs`（11 条：发现、门禁、字节、组图、地址形状）；
+`node scripts/ui-two-halves-test.mjs`（9 条，装进 profile 后两半都到位）；
+`node scripts/ui-two-halves-e2e.mjs`（真 Electron + 真宿主，断言状态栏里真的画出了那一段，
+截图落 `desktop/shots/two-halves.png`）。
 
 ### 10.7 席位：跨插件共享一份状态（1.2.0 起可用）
 

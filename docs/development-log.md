@@ -8346,4 +8346,30 @@ dsh 插件，请先在插件中心启用 dsh 兼容层」——否则用户只�
 `scripts/ui-plugin-test.mjs` 254/0；`scripts/ui-cordis-test.mjs` 全绿（19 条仍全走 cordis、
 换装干净）；`scripts/ui-transcript-render-test.mjs` 93/93；根与壳 typecheck、两侧 build 通过。
 
+**批 2：一个真示例包走通两半（2026-10-26）**：
+
+机制通了不等于能用。批 1 只证明「收得进来」，批 2 做了一件小事：把「一个包两半」写成一个能照着
+抄的包——`examples/plugin-two-halves/`。宿主半是最普通的 cordis 插件（注册工具
+`two_halves_hi`），界面半是一份工厂形状的 bundle（状态栏加一段「两半示例」），`package.json`
+用 `exports["."]` + `exports["./client"]` + `dsh.client` 把两半接起来。
+
+写示例时确认了两件此前只在文档里的事：
+
+1. **包名那一行真的落到 `exports["."]`**：patch 里只写包名，loader 从 node_modules 目录按
+   exports → main → index.js 找入口，工具因此进得了注册表。
+2. **手写的界面半不用过我们的构建器**：壳给工厂的是受控的 require/module/exports，照构建产物的
+   形状写就能跑（`globalThis.__DSC_UI_FACTORIES__[id] = function (require, module, exports) {...}`）。
+
+**验证**（三层，都跑过）：
+- `scripts/ui-two-halves-test.mjs`（9/0）：装进 profile → 宿主半挂上、工具能执行、插件中心认得
+  组合包来源；界面半进产物表（origin=package）、进启动图、路由按 rev 伺服 200、错 rev 给 404。
+- `scripts/ui-two-halves-e2e.mjs`（11/0）：真 Electron + 真宿主 + 真 Chromium，断言界面半的纤维
+  `via=cordis`、`fiber=2`，且页面上那一段真的画出来。第一版断言按状态栏容器的 innerText 判，
+  结果读不到——示例渲染在兄弟容器里；改成按示例自己的 `data-two-halves` 标记数判，并通过。
+  截图 `desktop/shots/two-halves.png`：底部状态栏「0 轮 0 步 · 0% 两半示例」。
+- 探针驱动加了 `twoHalves` 读数（`scripts/_ui-cordis-main.cjs`），以后「界面半画没画出来」能读一个数。
+
+**还差**：批 3（19 个内置插件逐个搬成包形态，搬完构建期 manifest.json 退役）没做。
+
+
 
