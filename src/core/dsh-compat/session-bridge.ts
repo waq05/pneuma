@@ -92,11 +92,30 @@ function linesOf(path: string): string[] {
   }
 }
 
-/** 用量日志按会话归档（只读请求行；工具行没有 token，算账用不上）。 */
+/**
+ * 用量日志按会话归档（只读请求行；工具行没有 token，算账用不上）。
+ *
+ * 结果按文件的 mtime+size 缓存：一份用了几周的 usage.jsonl 能有几万行，而插件会按秒
+ * 轮询 `stat()`——每次都整文件重解析是白烧 CPU。追加一行就会改 mtime，所以缓存不会旧。
+ */
+let usageCache: { stamp: string; rows: Map<string, UsageRecord[]> } | null = null
+
 function usageBySession(): Map<string, UsageRecord[]> {
-  const out = new Map<string, UsageRecord[]>()
   const file = usageLogFile()
-  if (!existsSync(file)) return out
+  const stamp = (() => {
+    try {
+      const info = statSync(file)
+      return `${String(info.mtimeMs)}:${String(info.size)}`
+    } catch {
+      return ''
+    }
+  })()
+  if (stamp !== '' && usageCache !== null && usageCache.stamp === stamp) return usageCache.rows
+  const out = new Map<string, UsageRecord[]>()
+  if (!existsSync(file)) {
+    usageCache = { stamp: '', rows: out }
+    return out
+  }
   for (const line of linesOf(file)) {
     if (line.trim() === '') continue
     let row: unknown
@@ -114,6 +133,7 @@ function usageBySession(): Map<string, UsageRecord[]> {
     list.push(record as UsageRecord)
     out.set(record.sid, list)
   }
+  usageCache = { stamp, rows: out }
   return out
 }
 
