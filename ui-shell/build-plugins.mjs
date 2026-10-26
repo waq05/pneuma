@@ -99,6 +99,30 @@ function readMeta(dir) {
     )
   }
   const meta = { api }
+  // 2.0 起，插件可以在**自己的 package.json** 里用 `dsh.client` 声明界面半——与组合包
+  // （profile 里装的第三方包）同一套字段。声明了它就不再读 plugin.json：一个插件只有
+  // 一处声明，两处并存迟早会分叉。
+  const declaredClient = pkg !== null && typeof pkg === 'object' ? pkg.dsh?.client : undefined
+  if (declaredClient !== undefined) {
+    if (declaredClient === null || typeof declaredClient !== 'object') {
+      throw new Error(`${pkgFile} 的 dsh.client 必须是对象（platform / api / phase / inject / services）`)
+    }
+    const client = declaredClient
+    if (client.platform !== 'pneuma') {
+      throw new Error(
+        `${pkgFile} 的 dsh.client.platform 必须是 'pneuma'（内置插件就是我们的界面半；` +
+          `收到 ${JSON.stringify(client.platform)}）`,
+      )
+    }
+    if (client.api !== undefined && client.api !== api) {
+      throw new Error(`${pkgFile}: dsh.client.api 与 peerDependencies['@dsc/ui'] 不一致（一处声明就够，两处会分叉）`)
+    }
+    const legacy = join(dir, 'plugin.json')
+    if (existsSync(legacy)) {
+      throw new Error(`${dir}: 同时有 dsh.client 与 plugin.json——2.0 起只认 package.json 里那一处声明`)
+    }
+    return applyExtraFields(meta, client, pkgFile)
+  }
   const file = join(dir, 'plugin.json')
   if (!existsSync(file)) return meta
   const doc = JSON.parse(readFileSync(file, 'utf8'))
@@ -107,41 +131,54 @@ function readMeta(dir) {
       `${dir}/plugin.json 声明了 api——内置插件的 @dsc/ui 区间唯一来源是 package.json 的 peerDependencies`,
     )
   }
+  return applyExtraFields(meta, doc, `${dir}/plugin.json`)
+}
+
+/**
+ * 把界面半的附加声明并进清单条目。
+ *
+ * 两个来源共用这一份校验：2.0 起是 `package.json` 的 `dsh.client`（与组合包同一套字段），
+ * 旧的是 `plugin.json`。字段名一样，报错里指的位置不同——`where` 就是那个位置。
+ * @param meta - 已经带 api 的条目
+ * @param doc - 声明来源
+ * @param where - 报错里写的位置（文件路径）
+ */
+function applyExtraFields(meta, doc, where) {
   // inject = 依赖的**插件 id**；services = 依赖的**服务名**（2.0 起分开，不再双关）。
   if (doc.inject !== undefined) {
     if (!Array.isArray(doc.inject) || doc.inject.some((v) => typeof v !== 'string')) {
-      throw new Error(`${dir}/plugin.json 的 inject 必须是字符串数组（依赖的插件 id）`)
+      throw new Error(`${where} 的 inject 必须是字符串数组（依赖的插件 id）`)
     }
     meta.inject = doc.inject
   }
   if (doc.services !== undefined) {
     if (!Array.isArray(doc.services) || doc.services.some((v) => typeof v !== 'string')) {
-      throw new Error(`${dir}/plugin.json 的 services 必须是字符串数组（依赖的服务名）`)
+      throw new Error(`${where} 的 services 必须是字符串数组（依赖的服务名）`)
     }
     meta.services = doc.services
   }
   if (doc.external !== undefined) {
     if (!Array.isArray(doc.external) || doc.external.some((v) => typeof v !== 'string')) {
-      throw new Error(`${dir}/plugin.json 的 external 必须是字符串数组`)
+      throw new Error(`${where} 的 external 必须是字符串数组`)
     }
     const unknown = doc.external.filter((name) => !PLATFORM_MODULES.includes(name))
     if (unknown.length > 0) {
       throw new Error(
-        `${dir}/plugin.json 声明了壳不提供的模块：${unknown.join('、')}` +
+        `${where} 声明了壳不提供的模块：${unknown.join('、')}` +
           `（壳提供的只有：${PLATFORM_MODULES.join('、')}）`,
       )
     }
     meta.external = doc.external
   }
   if (doc.immediately !== undefined) {
-    if (doc.immediately !== true) throw new Error(`${dir}/plugin.json 的 immediately 只能是 true`)
+    if (doc.immediately !== true) throw new Error(`${where} 的 immediately 只能是 true`)
     meta.immediately = true
   }
   // phase：调度档位（`early` = 首屏批，装完壳才画第一帧；缺省 application）。
   // readMeta 静默忽略未知键——写错一个 `phse` 会毫无反应；这条校验把「拼错」变成构建失败。
   if (doc.phase !== undefined) {
     if (doc.phase !== 'early' && doc.phase !== 'application') {
-      throw new Error(`${dir}/plugin.json 的 phase 只能是 'early' / 'application'`)
+      throw new Error(`${where} 的 phase 只能是 'early' / 'application'`)
     }
     meta.phase = doc.phase
   }
@@ -150,7 +187,7 @@ function readMeta(dir) {
     // 清单里出两条（platform web + tui，同一个 client.js）——两种壳各自的
     // collect 按 platform 过滤，互不干扰；require('@dsc/ui') 由各自的表解析。
     if (!Array.isArray(doc.platforms) || doc.platforms.some((v) => v !== 'web' && v !== 'tui')) {
-      throw new Error(`${dir}/plugin.json 的 platforms 只能是 'web' / 'tui' 的数组`)
+      throw new Error(`${where} 的 platforms 只能是 'web' / 'tui' 的数组`)
     }
     meta.platforms = doc.platforms
   }

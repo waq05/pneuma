@@ -885,6 +885,12 @@ dsh 的构造单位是**一个 npm 包两半**，Pneuma 2.0 起照同一份声�
 - **启停**：条目树里的键是 `<包名>/client`（`~/.dsc/plugins.json`），停用即不进启动图。
 - **取字节**：走 `exports["./client"]`，必须落在包目录内；入口读不到就拒绝并说明。
 
+**内置插件也走这一处声明**（2026-10-26 起分批迁）：`ui-shell/src/plugins/<id>/package.json` 里
+写 `dsh.client`，构建脚本（`build-plugins.mjs`）从它读 `phase` / `inject` / `services` /
+`external` / `immediately` / `platforms`。已迁：`statusbar`、`sessions`、`transcript`；
+其余 16 个还在用旧的 `plugin.json`——两处声明并存会构建失败（一个插件只许一处）。
+内置插件不必写 `exports`：它们的界面半由构建产物（`lib/ui/plugins/<id>/client.js`）决定。
+
 **完整示例**：[`examples/plugin-two-halves/`](../examples/plugin-two-halves/)——宿主半注册一个工具，
 界面半在状态栏加一段。装法 `numa plugin add ./examples/plugin-two-halves --profile demo`。
 

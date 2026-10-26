@@ -5,5 +5,11 @@
   "type": "module",
   "peerDependencies": {
     "@dsc/ui": "^2.0.0"
+  },
+  "dsh": {
+    "client": {
+      "platform": "pneuma",
+      "phase": "early"
+    }
   }
 }

@@ -8371,5 +8371,26 @@ dsh 插件，请先在插件中心启用 dsh 兼容层」——否则用户只�
 
 **还差**：批 3（19 个内置插件逐个搬成包形态，搬完构建期 manifest.json 退役）没做。
 
+**批 3 试点：三个内置插件改成「自己的 package.json 声明界面半」（2026-10-26）**：
+
+批 2 证明了组合包能走两半，但内置插件还停在旧写法：`plugin.json` 写附加声明、构建脚本另出
+一份清单。批 3 把这套收成一件事——**一个插件只有一处声明**，字段名与组合包完全一样
+（`dsh.client`）。先迁三个覆盖三种情况：`statusbar`（`phase: early` 的首屏批）、`sessions`
+（普通应用批）、`transcript`（大插件，169 行入口）。
+
+`build-plugins.mjs` 的 `readMeta` 改成：`package.json` 有 `dsh.client` 就用它，否则回落到旧的
+`plugin.json`；两处同时存在直接构建失败（并存迟早分叉）。校验也搬进一份共用函数：
+`platform` 必须是 `pneuma`（内置插件就是我们的界面半）、`dsh.client.api` 若写了必须与
+`peerDependencies["@dsc/ui"]` 一致、其余字段（`phase`/`inject`/`services`/`external`/
+`immediately`/`platforms`）照旧逐条校验。
+
+**结果**：清单字节没变（`statusbar` 仍是 `phase: early`，19 条、apiVersion 2.0.0），
+`ui-cordis-test` 29 条全绿（19 条仍全装上、换装干净），`ui-plugin-test` 全通过，
+`ui-package-plugin-test` 11/0，`ui-two-halves-test` 9/0，`ui-transcript-render-test` 93/93。
+
+**还差**：剩下 16 个内置插件照同一套路迁移（每个就是把 `plugin.json` 的字段搬进
+`package.json` 的 `dsh.client` 再删旧文件）；全部迁完后，构建期的中央 `manifest.json` 才能考虑退役。
+
+
 
 
