@@ -42,6 +42,7 @@ import type {
   SessionForkResult,
   SessionUsageView,
   SettingsMutation,
+  SideAskView,
   SettingsSectionView,
   SettingsValue,
   SettingsValues,
@@ -161,6 +162,11 @@ export function createRuntimeProxy(): RuntimeProxy {
     listPlugins: () => call<PluginInfoView[]>('listPlugins'),
     setPluginEnabled: (file, enabled) => callVoid('setPluginEnabled', file, enabled),
     listTeammates: () => call<TeammateView[]>('listTeammates'),
+    // 旁问：只读的一次性问答（选区提问）。旧渲染层不画这套面板，只把契约补齐；
+    // 两条都在宿主 host-methods 白名单里，转发即得。
+    sideAsk: (question, quote, requestId, provider, model) =>
+      call<SideAskView>('sideAsk', question, quote, requestId, provider, model),
+    sideAskCancel: (requestId) => call<boolean>('sideAskCancel', requestId),
     peekTranscript: (file) => call<TranscriptEntry[]>('peekTranscript', file),
     // 队友管理通道：停一个队友、给队友发一句话、把收工的从名册移除，回执都是「给用户看的一句话」
     stopTeammate: (name) => call<string>('stopTeammate', name),
