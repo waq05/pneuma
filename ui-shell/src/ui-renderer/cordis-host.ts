@@ -55,10 +55,23 @@ declare module '@deepseek-ai/cordis' {
 /** 插件 `apply` 的形状（与 `UiPluginModule.apply` 一致，这里不引整包）。 */
 export type UiApply = (ui: UiPluginApi) => void | (() => void)
 
-/** 装一条时的可选钩子（报告需要知道它 provide 了哪些名字）。 */
+/** 装一条时的可选项。 */
 export interface UiMountHooks {
-  /** 每成功 provide 一个服务调一次。 */
+  /** 每成功 provide 一个服务调一次（报告要用）。 */
   onProvide?: (name: string) => void
+  /**
+   * 这条插件依赖的**服务名**（不是插件 id）。
+   *
+   * 声明进来之后 cordis 会等它们就绪再跑 `apply`，服务后补上来（别的插件在更晚的批里
+   * 装上、或 HMR 时装上）也会自动启动——这是 dsh 侧 `inject` 的语义。
+   *
+   * 为什么由调用方筛：界面清单里的 `inject` 是**双关**（既可能是另一个插件的 id，
+   * 也可能是服务名，见 `core/manifest.ts`）。把插件 id 当服务名交给 cordis，那条纤维
+   * 会永远等不到东西。
+   */
+  inject?: readonly string[]
+  /** 纤维状态变化（0 待装 / 1 装载中 / 2 生效 / 3 失败 / 4 已卸），带上还缺哪些服务。 */
+  onState?: (state: number, missing: readonly string[]) => void
 }
 
 /** fiber 状态码 → 人话（诊断区与日志用）。 */
@@ -93,6 +106,8 @@ export interface UiCordisRoot {
   unmount(id: string): Promise<void>
   /** 这个插件现在的 fiber 状态码（没装过给 undefined）。 */
   stateOf(id: string): number | undefined
+  /** 这条纤维还在等哪些服务（不在等待就给空数组）。 */
+  missingOf(id: string): readonly string[]
   /** 卸掉全部。 */
   disposeAll(): Promise<void>
 }
@@ -123,6 +138,28 @@ export function createCordisRoot(options: UiCordisRootOptions): UiCordisRoot {
   const fibers = new Map<string, Fiber>()
   /** 卸载进行中的承诺：cordis 的卸载是异步的，重复调用要等同一次。 */
   const unmounting = new Map<string, Promise<void>>()
+
+  /** 一条纤维还差哪些服务（服务名来自它声明的 inject；没就绪的读不到实现）。 */
+  const missingOfFiber = (fiber: Fiber): string[] =>
+    Object.keys(fiber.inject ?? {}).filter((name) => fiber.store?.[name] === undefined)
+
+  const unmountNow = (id: string): Promise<void> => {
+    const running = unmounting.get(id)
+    if (running !== undefined) return running
+    const fiber = fibers.get(id)
+    if (fiber === undefined) return Promise.resolve()
+    fibers.delete(id)
+    const task = fiber
+      .dispose()
+      .catch((error: unknown) => {
+        console.warn(`[ui-shell] 插件 ${id} 卸载时出错：`, error)
+      })
+      .finally(() => {
+        unmounting.delete(id)
+      })
+    unmounting.set(id, task)
+    return task
+  }
 
   /**
    * 造插件看到的那六项。
@@ -162,11 +199,15 @@ export function createCordisRoot(options: UiCordisRootOptions): UiCordisRoot {
   return {
     ctx,
     mount: async (id, apply, hooks) => {
-      // 对象形状与 dsh 的插件一致：名字给纤维用，apply 收 ctx。
-      // `apply` 返回的退订函数由 cordis 直接收下（`Fiber._execute` 认函数返回值），
-      // 所以插件里那句 `return () => …` 不必改。
+      // 同一个 id 上不能有两条纤维：重试轮与 HMR 都会走到这里（先前那条等依赖的、
+      // 或者上一次失败的）。先撤干净再挂。
+      await unmountNow(id)
+      // 对象形状与 dsh 的插件一致：名字给纤维用，inject 是服务名（由调用方筛过），
+      // apply 收 ctx。`apply` 返回的退订函数由 cordis 直接收下（`Fiber._execute`
+      // 认函数返回值），所以插件里那句 `return () => …` 不必改。
       const fiber = ctx.plugin({
         name: id,
+        ...(hooks?.inject === undefined || hooks.inject.length === 0 ? {} : { inject: [...hooks.inject] }),
         apply: (inner: Context) => apply(apiOf(inner, id, hooks)),
       })
       try {
@@ -177,26 +218,29 @@ export function createCordisRoot(options: UiCordisRootOptions): UiCordisRoot {
         throw error
       }
       fibers.set(id, fiber)
+      // 纤维状态变化要能传回壳：依赖后补上来时它会从「待装」自己变成「生效」，
+      // 账本不跟上就会一直显示旧的失败行（cordis 每次状态切换都发这条事件）。
+      if (hooks?.onState !== undefined) {
+        const onState = hooks.onState
+        const watch = (changed: Fiber): void => {
+          if (fiber.uid === null || changed.uid !== fiber.uid) return
+          onState(changed.state, missingOfFiber(changed))
+        }
+        // cordis 的 on 返回退订函数（没有 off 这个名字），交给 effect 管：壳卸根时一起撤。
+        const off = (ctx.on as unknown as (name: string, listener: (changed: Fiber) => void) => () => void)(
+          'internal/status',
+          watch,
+        )
+        ctx.effect(() => (typeof off === 'function' ? off : () => undefined))
+      }
       return fiber
     },
-    unmount: (id) => {
-      const running = unmounting.get(id)
-      if (running !== undefined) return running
-      const fiber = fibers.get(id)
-      if (fiber === undefined) return Promise.resolve()
-      fibers.delete(id)
-      const task = fiber
-        .dispose()
-        .catch((error: unknown) => {
-          console.warn(`[ui-shell] 插件 ${id} 卸载时出错：`, error)
-        })
-        .finally(() => {
-          unmounting.delete(id)
-        })
-      unmounting.set(id, task)
-      return task
-    },
+    unmount: (id) => unmountNow(id),
     stateOf: (id) => fibers.get(id)?.state,
+    missingOf: (id) => {
+      const fiber = fibers.get(id)
+      return fiber === undefined ? [] : missingOfFiber(fiber)
+    },
     disposeAll: async () => {
       await Promise.all([...fibers.keys()].map(async (id) => {
         const fiber = fibers.get(id)

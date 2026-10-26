@@ -360,6 +360,16 @@ export async function createBootSession(
   })
   /** 这一条是否走 cordis（灰度开关；同一次装载里答案固定）。 */
   const viaCordis = cordisSelector()
+  /**
+   * 清单里出现过的插件 id（用来拆 `inject` 的双关）。
+   *
+   * 界面清单的 `inject` 既可能是另一个插件的 id，也可能是服务名（见 `core/manifest.ts`）。
+   * 交给 cordis 的只能是对应的**服务名**——把插件 id 当服务名，那条纤维会永远等不到东西。
+   */
+  const pluginIds = new Set(graph.entries.map((graphEntry) => graphEntry.id))
+  /** 这条插件声明里属于「服务名」的那部分依赖。 */
+  const serviceDepsOf = (item: UiPluginEntry): string[] =>
+    (item.inject ?? []).filter((name) => !pluginIds.has(name))
   const reports = new Map<string, UiPluginLoadReport>()
   const installed = new Map<string, string>()
   /**
@@ -456,7 +466,45 @@ export async function createBootSession(
       if (viaCordis(entry.id)) {
         const fiber = await cordis.mount(entry.id, apply as UiApply, {
           onProvide: (provided) => provides.push(provided),
+          inject: serviceDepsOf(entry),
+          // 纤维自己会变状态：依赖后补上来时从「待装」变成「生效」，这里把账本跟上。
+          onState: (state, missing) => {
+            if (state === 2) {
+              setPlugin(entry.id, { fiber: 2, state: 'loaded', error: undefined, at: Date.now() })
+              const settledReport = reports.get(entry.id)
+              if (settledReport !== undefined && settledReport.ok !== true) {
+                reports.set(entry.id, { ...settledReport, ok: true, error: undefined })
+              }
+              return
+            }
+            if (state === 3) {
+              const reason = 'cordis 纤维装载失败（细节见控制台）'
+              reports.set(entry.id, { id: entry.id, ok: false, error: reason, attempts: attempt })
+              setPlugin(entry.id, { fiber: 3, state: 'failed', error: reason, at: Date.now() })
+              return
+            }
+            // 0 待装 / 1 装载中 / 4 已卸：账本只记状态码，别把「还差哪个服务」吞掉。
+            setPlugin(entry.id, {
+              fiber: state,
+              ...(missing.length === 0 ? {} : { error: `等待服务：${missing.join('、')}` }),
+            })
+          },
         })
+        // 依赖没就绪时 `await fiber` 会直接放行（纤维停在「待装」）：这不算装好，
+        // 但也不能当失败回滚——服务后补上来 cordis 会自己启动它。所以记一条
+        // 中文原因、挂进账本，等 onState 把状态翻成「生效」。
+        const waiting = cordis.missingOf(entry.id)
+        if (fiber.state !== 2) {
+          const reason = waiting.length === 0 ? '等待依赖就绪' : `等待服务：${waiting.join('、')}`
+          reports.set(entry.id, { id: entry.id, ok: false, error: reason, attempts: attempt })
+          setPlugin(entry.id, { via: 'cordis', fiber: fiber.state, state: 'loading', error: reason })
+          disposers.set(entry.id, rollback)
+          installed.set(entry.id, entry.rev)
+          ledgerOfPlugin.push(() => {
+            void cordis.unmount(entry.id)
+          })
+          return null
+        }
         setPlugin(entry.id, { via: 'cordis', fiber: fiber.state })
         // 清理归纤维自己（apply 交回来的退订函数由 cordis 收下）；这里只把「卸这条」
         // 挂进账本，供 uninstall / disposeAll / 失败回滚调用。

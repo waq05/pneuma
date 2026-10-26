@@ -101,8 +101,49 @@ function startHost({ port, home }) {
   return { child, waitUrl }
 }
 
+/**
+ * cordis 的 `inject` 语义自检（不开浏览器，先钉住我们依赖的那三条假设）。
+ *
+ * 拆 `inject` 双关之后，服务名那一半交给 cordis 等；这条自检证明等待的形状真是我们以为的那样：
+ *   1. 依赖没就绪时 `await fiber` **直接放行**（不抛、不卡），纤维停在状态 0；
+ *   2. apply **不跑**（不能拿半份服务就开工）；
+ *   3. 服务后来补上 → apply 跑起来、状态到 2，且 `internal/status` 事件确实发得出来
+ *      （壳的账本靠它从「等待」翻成「已生效」）。
+ */
+async function checkInjectSemantics() {
+  console.log('\n[0] cordis inject 语义自检')
+  const { Context } = await import('@deepseek-ai/cordis')
+  const ctx = new Context()
+  const events = []
+  const off = ctx.on('internal/status', (fiber, old) => {
+    events.push(`${String(old)}->${String(fiber.state)}`)
+  })
+  let started = 0
+  const fiber = ctx.plugin({
+    name: 'needs-service',
+    inject: ['notYetProvided'],
+    apply: () => {
+      started += 1
+    },
+  })
+  const settled = await Promise.race([
+    fiber.then(() => 'resolved'),
+    sleep(1500).then(() => 'timeout'),
+  ])
+  check('依赖缺席时 await fiber 直接放行（不卡住）', settled === 'resolved', String(settled))
+  check('依赖缺席时纤维停在待装（state=0）', fiber.state === 0, String(fiber.state))
+  check('依赖缺席时 apply 不跑', started === 0, String(started))
+  ctx.provide('notYetProvided', {})
+  await sleep(200)
+  check('服务补上后 apply 跑了', started === 1, String(started))
+  check('服务补上后纤维生效（state=2）', fiber.state === 2, String(fiber.state))
+  check('状态变化有事件（壳的账本靠它刷新）', events.length >= 2, JSON.stringify(events))
+  off()
+}
+
 async function main() {
   console.log('[cordis-probe] 真机走查：界面插件装配走 cordis')
+  await checkInjectSemantics()
   check('Electron 在', existsSync(ELECTRON), ELECTRON)
   check('界面壳产物在', existsSync(join(root, 'lib', 'ui', 'assets', 'index.html')))
   check('statusbar 产物在', existsSync(BUNDLE), BUNDLE)
