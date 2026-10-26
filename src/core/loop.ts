@@ -462,6 +462,9 @@ export class MiniAgent {
           text: result.text,
           reasoning: result.reasoning,
           finishReason: result.finishReason,
+          // 工具调用跟消息一起给：dsh 的 assistant/message 是「正文 + 工具调用」一条，
+          // 只听 tool/call 重建不出这条消息（兼容层派发 session/event 时要用）。
+          toolCalls: result.toolCalls.map((call) => ({ id: call.id, name: call.name, arguments: call.arguments })),
         })
         if (result.usage !== null) {
           this.deps.emit({

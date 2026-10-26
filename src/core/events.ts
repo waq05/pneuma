@@ -31,7 +31,20 @@ export type CoreEvent =
    * `finishReason` 是协议给的收尾原因；`'length'` 表示这次输出撞上了长度上限
    * （对照 dsh 的 `turn-max-tokens` 节点）。拿不到时传 null。
    */
-  | { type: 'message'; text: string; reasoning: string; finishReason?: string | null }
+  | {
+      type: 'message'
+      text: string
+      reasoning: string
+      finishReason?: string | null
+      /**
+       * 这一步模型吐出的工具调用（原样，参数是未解析的 JSON 字符串）。
+       *
+       * 为什么要带出来：dsh 的 `assistant/message` 把「说了什么」和「要调什么」放在同一条
+       * 消息里（工具调用是消息的内容块），只听 `tool/call` 事件重建不出那条消息。
+       * 我们的转录不用它（它按 `tool/call` 画卡），所以是可选的旁路字段。
+       */
+      toolCalls?: { id: string; name: string; arguments: string }[]
+    }
   /** 流式增量（直播尾）。 */
   | { type: 'delta'; kind: 'text' | 'reasoning'; text: string }
   | { type: 'tool/call'; callId: string; name: string; args: string }
