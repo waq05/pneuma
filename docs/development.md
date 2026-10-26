@@ -499,6 +499,7 @@ pnpm run check:ui:e2e              # 4 条要真 Chromium，61 秒（含 diff �
 pnpm run check:dsh                 # dsh 兼容层 + 组合包 + 真包挂载 + 会话桥，94 条
 pnpm run check:core                # 48 条内核探针（协议 / TUI / 会话库 / LLM 适配），约 8 分钟
 pnpm run check:all                 # 上面三条串起来（不含 e2e）
+node scripts/dsh-real-package-e2e.mjs  # 真包验收（要联网：numa plugin add dsh-cost-meter）
 node shots/team-check.mjs          # 插件与团队，98 条（shots/ 里的，不在库里）
 node shots/storage-check.mjs       # 会话存储与会话库
 node shots/llm-retry-check.mjs     # LLM 重试（连接失败 / 429 重试，400 与取消不重试）+ 版本号（10 条）
