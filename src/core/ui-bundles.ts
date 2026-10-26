@@ -1156,6 +1156,8 @@ function readClientDeclaration(dir: string): {
   platforms?: unknown
   api?: unknown
   inject?: unknown
+  services?: unknown
+  phase?: unknown
   immediately?: unknown
   clientPath: string | null
 } | null {
@@ -1174,6 +1176,8 @@ function readClientDeclaration(dir: string): {
     platforms: decl['platforms'],
     api: decl['api'],
     inject: decl['inject'],
+    services: decl['services'],
+    phase: decl['phase'],
     immediately: decl['immediately'],
     clientPath: clientEntryOf(manifest['exports']),
   }
@@ -1414,6 +1418,14 @@ export function discoverPackageUiArtifacts(
       problems.push(`${where}: exports["./client"] 指向的 ${judged.clientPath ?? '(没写)'} 读不到`)
       continue
     }
+    // services / phase / inject 与内置产物、第三方同一套词表与校验口径：坏值记一条问题、
+    // 当没声明处理（丢一个依赖等于让插件少等一件事；拼错的 phase 会静默落进 application）。
+    const services = readNameList(decl.services, name, 'dsh.client.services', problems)
+    const rawPhase = decl.phase
+    const phase = rawPhase === 'early' || rawPhase === 'application' ? rawPhase : undefined
+    if (rawPhase !== undefined && phase === undefined) {
+      problems.push(`${name}: dsh.client.phase 只能是 'early' / 'application'（${JSON.stringify(rawPhase)}），当没声明处理`)
+    }
     if (!isPluginEnabled(where)) {
       disabled.push(name) // 停用不是问题，是用户的开关；但要能报「它被停用了」
       continue
@@ -1432,6 +1444,8 @@ export function discoverPackageUiArtifacts(
       ...(Array.isArray(decl.inject)
         ? { inject: decl.inject.filter((value): value is string => typeof value === 'string') }
         : {}),
+      ...(services === undefined ? {} : { services }),
+      ...(phase === undefined ? {} : { phase }),
       ...(decl.immediately === true ? { immediately: true } : {}),
     }
     // 载体：缺省只服务浏览器壳；声明了 platforms 的每个载体各出一行（同一个 client.js，

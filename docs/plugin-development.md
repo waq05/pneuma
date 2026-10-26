@@ -872,6 +872,8 @@ dsh 的构造单位是**一个 npm 包两半**，Pneuma 2.0 起照同一份声�
       "api": "^2.0.0",                 // @dsc/ui 的版本区间（必填）
       "platforms": ["web", "tui"],     // 服务哪些载体（可选，缺省 ["web"]）
       "inject": ["trace"],             // 依赖的插件 id（可选）
+      "services": ["teammates"],       // 依赖的服务名（可选）
+      "phase": "early",                // 调度档位 early / application（可选）
       "immediately": false             // 首屏预取（可选）
     }
   }
@@ -893,6 +895,9 @@ dsh 的构造单位是**一个 npm 包两半**，Pneuma 2.0 起照同一份声�
   插件中心的「组合包界面」那一组会把这个包列出来带开关（键由宿主给，界面不自己拼）；
   装了就算同意，所以那一组没有「确认信任」这一步——停用后卡片还在，开着才进启动图。
 - **取字节**：走 `exports["./client"]`，必须落在包目录内；入口读不到就拒绝并说明。
+- **可选字段与内置产物同一套词表**：`inject`（插件 id）、`services`（服务名）、`phase`
+  （`early` / `application`）、`immediately`。写坏了记一条问题并当没声明处理，不静默丢——
+  丢一个依赖等于让插件少等一件事，拼错的 `phase` 会悄悄落进 `application` 批。
 
 **内置插件也走这一处声明**（2026-10-26 起分批迁）：`ui-shell/src/plugins/<id>/package.json` 里
 写 `dsh.client`，构建脚本（`build-plugins.mjs`）从它读 `phase` / `inject` / `services` /

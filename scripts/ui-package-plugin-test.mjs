@@ -86,6 +86,16 @@ writePackage('both-shells', {
   exports: { './client': { default: './lib/client.js' } },
 }, { 'lib/client.js': bundle })
 
+// services / phase：与内置产物、第三方同一套字段（坏值要记问题，不能静默丢）
+writePackage('declared-deps', {
+  dsh: { client: { platform: 'pneuma', api: '^2.0.0', services: ['probe.seat'], phase: 'early' } },
+  exports: { './client': { default: './lib/client.js' } },
+}, { 'lib/client.js': bundle })
+writePackage('bad-deps', {
+  dsh: { client: { platform: 'pneuma', api: '^2.0.0', services: 'probe.seat', phase: 'soon' } },
+  exports: { './client': { default: './lib/client.js' } },
+}, { 'lib/client.js': bundle })
+
 const artifacts = collectUiArtifactsForPlatform('web', { packageDir: profile, thirdPartyDir: third, force: true })
 const entry = artifacts.entries.find((item) => item.id === 'dsh-cost-meter')
 const problems = artifacts.problems.join('；')
@@ -99,6 +109,17 @@ check('缺 api 的被拒并说清原因', problems.includes('no-api') && problem
 check('api 对不上被门禁拒掉', problems.includes('old-api'), problems)
 check('没有 exports["./client"] 的被拒并说清', problems.includes('no-entry'), problems)
 check('platforms 里有不认识的值整条拒掉', problems.includes('bad-platforms') && problems.includes('platforms'), problems)
+const depsEntry = artifacts.entries.find((item) => item.id === 'declared-deps')
+check(
+  'services 与 phase 收进条目（与内置产物同一套字段）',
+  depsEntry?.services?.join(',') === 'probe.seat' && depsEntry?.phase === 'early',
+  JSON.stringify({ services: depsEntry?.services, phase: depsEntry?.phase }),
+)
+check(
+  'services / phase 坏值记 problems，不当没看见',
+  problems.includes('bad-deps') && problems.includes('dsh.client.services') && problems.includes('dsh.client.phase'),
+  problems,
+)
 const tuiArtifacts = collectUiArtifactsForPlatform('tui', { packageDir: profile, thirdPartyDir: third, force: true })
 check(
   '缺省只服务 web：终端壳的产物表里没有它',

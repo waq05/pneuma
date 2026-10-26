@@ -8553,6 +8553,14 @@ apiVersion 仍是门禁依据、旧产物兜底 + 点名）；`ui-serve-test` �
 （十项检查）；`ui-hmr-test` 的新增/删除改成写/删目录；九条 UI 自检全绿；`installer-walkthrough`
 的断言改成「每份产物都有自述、根清单不再列 plugins」。
 
+**补一刀：组合包的 `dsh.client` 也认 `services` 与 `phase`（2026-10-26）**：
+
+退役这批顺手发现的口子：组合包只读了 `inject` 与 `immediately`，`services`（服务依赖）与
+`phase`（调度档位）写了没人看——**静默丢**。现在与内置产物、第三方同一套词表与校验：
+坏值记一条问题并当没声明处理（`dsh.client.services` / `dsh.client.phase` 在问题里点名）。
+
+验证：`ui-package-plugin-test` 38/0（新增两条：声明收进条目、坏值记问题）。
+
 
 
 
