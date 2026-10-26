@@ -149,8 +149,10 @@ console.log('[4] 接线与产物')
   if (existsSync(built)) {
     const client = readFileSync(built, 'utf8')
     check('产物含引用 chip 与发送', client.includes('ask-quote-chip') && client.includes('ask-send'))
-    const manifest = JSON.parse(read('lib/ui/plugins/manifest.json'))
-    check('manifest 收录 ask', JSON.stringify(manifest).includes('ask'))
+    // 2.0 起「谁是插件」由产物目录自己的 bundle.json 说，中央清单只写壳契约版本。
+    const bundle = JSON.parse(read('lib/ui/plugins/ask/bundle.json'))
+    check('ask 的产物自述在位（apiVersion + 载体）', typeof bundle.apiVersion === 'string'
+      && Array.isArray(bundle.platforms) && bundle.platforms.includes('web'), JSON.stringify(bundle))
   }
 }
 
