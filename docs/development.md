@@ -159,7 +159,7 @@ export const myPlugin: Plugin.Object = {
 ### 界面壳那侧也走 cordis（2026-10-26 起）
 
 界面壳（`ui-shell/`）原先自己写了一份小一号的装载器：`boot.ts` 用一支退订账本管回收、用
-`unmetInjections` 管依赖、用 `UiBootPluginState.state` 管状态。那份与宿主内核的 cordis 语义各说
+`unmetDependencies` 管依赖、用 `UiBootPluginState.state` 管状态。那份与宿主内核的 cordis 语义各说
 各话——同一件事（装、等依赖、卸）在两边两套实现。
 
 现在壳里也有一个 cordis 根（`ui-shell/src/ui-renderer/cordis-host.ts`），装插件走 fiber：
@@ -190,15 +190,15 @@ export const myPlugin: Plugin.Object = {
 3. **cordis 卸载是异步的**。HMR 换装必须 `await cordis.unmount(id)` 再装新的，否则新旧两条纤维
    同时占着同一个槽格子（症状是状态栏叠成两份）。
 
-### inject 怎么拆（插件 id 与 服务名各走一边）
+### 两种依赖，两个字段（2.0 起）
 
-界面清单里的 `inject` 是**双关**：既可能是另一个插件的 id，也可能是服务名（见
-`src/ui/manifest.ts`）。这两类依赖的等待方式不同，所以装配时按 id 表拆开：
+界面清单里曾经只有一个 `inject` 字段，既当「插件 id」又当「服务名」，靠「这个名字在不在清单里」
+猜。2.0 把它拆成两个字段（`src/ui/manifest.ts`），两类依赖各走各的：
 
-- **插件 id**（例：`trace` 的 `inject: ['transcript']`）→ 仍由装载器的 `unmetInjections` 在装之前
-  检查，缺了就报「等待：插件 transcript 没装上」，重试轮再试一次；
-- **服务名** → 交给 cordis 的 `inject`，由框架等它就绪；服务在更晚的批里、或者 HMR 时才补上，
-  那条纤维会**自己启动**，不必重装。
+- **`inject`（插件 id）**（例：`trace` 的 `inject: ['transcript']`）→ 由装载器的
+  `unmetDependencies` 在装之前检查，缺了就报「插件 transcript 没装上」，重试轮再试一次；
+- **`services`（服务名）** → 交给 cordis 的 `inject`，由框架等它就绪；服务在更晚的批里、
+  或者 HMR 时才补上，那条纤维会**自己启动**，不必重装。
 
 依赖没就绪时 `await fiber` 会直接放行（纤维停在状态 0），所以装配器要单独看 `fiber.state`：
 不是 2 就记一条「等待服务：X、Y」进诊断区，并订阅 `internal/status`——服务补上来、纤维变 2 时，

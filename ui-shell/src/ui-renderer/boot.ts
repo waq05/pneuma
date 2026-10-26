@@ -52,7 +52,7 @@ import type {
   UiPluginLoadReport,
   UiRuntimeApi,
 } from '@dsc/ui-core'
-import { createScopedSlotApi, ServiceRegistry, unmetInjections } from '@dsc/ui-core'
+import { createScopedSlotApi, ServiceRegistry, unmetDependencies } from '@dsc/ui-core'
 // 装配交给 cordis（与宿主内核同一套）。这一层不改插件写法，只换「谁管生命周期」：
 // 详见 cordis-host.ts 的文件头表格。
 import { createCordisRoot, type UiApply } from './cordis-host'
@@ -361,15 +361,13 @@ export async function createBootSession(
   /** 这一条是否走 cordis（灰度开关；同一次装载里答案固定）。 */
   const viaCordis = cordisSelector()
   /**
-   * 清单里出现过的插件 id（用来拆 `inject` 的双关）。
+   * 这条插件要交给 cordis 的那部分依赖：`services`。
    *
-   * 界面清单的 `inject` 既可能是另一个插件的 id，也可能是服务名（见 `core/manifest.ts`）。
-   * 交给 cordis 的只能是对应的**服务名**——把插件 id 当服务名，那条纤维会永远等不到东西。
+   * 2.0 起清单把两种依赖拆成两个字段：`inject` 是插件 id（由装载器排序与检查），
+   * `services` 是服务名（交给 cordis 的 `inject`）。以前一个字段双关，靠「这个 id
+   * 在不在清单里」猜——插件改个名就猜错。
    */
-  const pluginIds = new Set(graph.entries.map((graphEntry) => graphEntry.id))
-  /** 这条插件声明里属于「服务名」的那部分依赖。 */
-  const serviceDepsOf = (item: UiPluginEntry): string[] =>
-    (item.inject ?? []).filter((name) => !pluginIds.has(name))
+  const serviceDepsOf = (item: UiPluginEntry): string[] => [...(item.services ?? [])]
   const reports = new Map<string, UiPluginLoadReport>()
   const installed = new Map<string, string>()
   /**
@@ -430,9 +428,13 @@ export async function createBootSession(
       }
       ledgerOfPlugin.length = 0
     }
-    // 硬依赖先解析：inject 名单「先插件 id、再服务名」（双关见 manifest.ts），
+    // 硬依赖先解析：插件 id 与服务名分开查（manifest.ts 的两个字段），
     // 未满足就不 apply，并留一行中文原因——第一轮没就绪的，重试轮会再试一次。
-    const unmet = unmetInjections(entry.inject, (id) => reports.get(id), services)
+    const unmet = unmetDependencies(
+      { ...(entry.inject === undefined ? {} : { plugins: entry.inject }), ...(entry.services === undefined ? {} : { services: entry.services }) },
+      (id) => reports.get(id),
+      services,
+    )
     if (unmet.length > 0) {
       const reason = `等待：${unmet.join('；')}`
       reports.set(entry.id, { id: entry.id, ok: false, error: reason, attempts: attempt })

@@ -50,14 +50,21 @@ export interface UiPluginRow {
   /** 允许它 import 的额外模块名；其余一律拒绝（白名单，见界面壳的加载器）。 */
   external?: string[]
   /**
-   * 依赖名单。**双关**：先按「清单里另一个插件的 id」解（拓扑排序用的就是它），
-   * 再按「服务名」解（A1 的服务表里有没有提供者）。
+   * 依赖的**插件 id**（拓扑排序用的就是它）。
    *
-   * 顺序上的意义只是优化（被依赖的排前面）；硬语义在装载器：两条路都解不到时这个插件
-   * **不 apply**，报告里留一行中文原因（「插件 X 没装上：…」或「服务 X 还没有提供者」）。
-   * 提供者缺席要软降级（有回落实现）的插件不要写进来，用 `ui.consume` 在渲染期读。
+   * 2.0 起不再兼职服务名：服务依赖写 {@link services}。2.0 之前这一个字段两种含义
+   * 混着用，装错时只能靠「这个 id 不在清单里」猜——那种猜法在插件改名后必然出错。
+   *
+   * 硬语义在装载器：依赖的插件没装成时这个插件**不 apply**，报告里留一行中文原因。
    */
   inject?: string[]
+  /**
+   * 依赖的**服务名**（`ui.provide` 登记的那些）。
+   *
+   * 提供者缺席就等待，报告里写「服务 X 还没有提供者」。要软降级的（有回落实现）
+   * 不要写进来，用 `ui.consume` 在渲染期读。
+   */
+  services?: string[]
   /** 第一档预取：需要尽早出现的插件（大小药丸、状态条之类）。与 phase 正交。 */
   immediately?: boolean
   /** 调度档位；缺省 application。只对 web 载体的批有意义（TUI 是同进程顺序装载）。 */
@@ -80,7 +87,10 @@ export interface UiPluginEntry {
   url: string
   /** 产物版本：文件内容的短哈希，换字节就换地址。 */
   rev: string
+  /** 依赖的插件 id（见 {@link UiPluginRow.inject}）。 */
   inject?: string[]
+  /** 依赖的服务名（见 {@link UiPluginRow.services}）。 */
+  services?: string[]
   external?: string[]
   immediately?: boolean
 }

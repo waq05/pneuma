@@ -3,7 +3,7 @@
  *
  * 与参考实现的语义差，如实写清：dsh 的客户端服务是 cordis 的 `Service`（挂 fiber 生命周期、
  * `ctx.inject` 动态等待）；dsc 这份是**装载期的值表**——没有 fiber，等待语义在装载循环里
- * 实现（`inject` 名单解析 + 失败重试一轮，两个装载器共用 {@link unmetInjections}）。
+ * 实现（依赖解析 {@link unmetDependencies} + 失败重试一轮，两个装载器共用）。
  * 表本身只负责三件事：提供、读取、订阅（服务出现/消失时让界面换数据源）。
  *
  * 一个名字只能有一个提供者：第二次 `provide` 抛 {@link ServiceConflictError}（人话里带
@@ -109,28 +109,36 @@ export class ServiceRegistry {
   }
 }
 
+/** 一条插件声明里的依赖，两种各走各的路（2.0 起不再双关）。 */
+export interface PluginDeps {
+  /** 依赖的插件 id。 */
+  plugins?: readonly string[]
+  /** 依赖的服务名。 */
+  services?: readonly string[]
+}
+
 /**
- * 解析一条 `inject` 名单，返回未满足的原因（空数组 = 可以装）。
+ * 解析一条插件的依赖，返回未满足的原因（空数组 = 可以装）。
  *
- * `inject` 是**双关**：先按「清单里另一个插件的 id」解（既有拓扑排序用的就是它），
- * 再按「服务名」解（提供者还没装上/被停用）。两档失败文案分开——没有提供者 vs
- * 提供者没装上；插件 id 在清单里时以它为准（见 `manifest.ts` 的注释）。
- * @param names - 插件声明的 inject 名单
+ * 插件 id 与服务名分开查：以前一个 `inject` 字段先按插件 id 解、解不到再当服务名，
+ * 于是「插件改名」与「服务没提供」在报告里长得一样。现在两档文案各说各的：
+ * 「插件 X 没装上：…」与「服务 Y 还没有提供者」。
+ * @param deps - 插件声明的两类依赖
  * @param reportOf - 查另一个插件的装载报告（按插件 id）
  * @param services - 当前的服务表
  */
-export function unmetInjections(
-  names: readonly string[] | undefined,
+export function unmetDependencies(
+  deps: PluginDeps,
   reportOf: (id: string) => { ok: boolean; error?: string } | undefined,
   services: ServiceRegistry,
 ): string[] {
   const unmet: string[] = []
-  for (const name of names ?? []) {
+  for (const name of deps.plugins ?? []) {
     const dependency = reportOf(name)
-    if (dependency !== undefined) {
-      if (dependency.ok !== true) unmet.push(`插件 ${name} 没装上：${dependency.error ?? '未知原因'}`)
-      continue
-    }
+    if (dependency === undefined) unmet.push(`插件 ${name} 不在清单里`)
+    else if (dependency.ok !== true) unmet.push(`插件 ${name} 没装上：${dependency.error ?? '未知原因'}`)
+  }
+  for (const name of deps.services ?? []) {
     if (!services.has(name)) unmet.push(`服务 ${name} 还没有提供者`)
   }
   return unmet

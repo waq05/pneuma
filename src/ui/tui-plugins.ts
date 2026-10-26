@@ -24,7 +24,7 @@ import { isUiMethod, validateUiArgs } from '../core/ui-methods.js'
 import type { DscRuntime } from '../contract.js'
 import { SlotRegistry } from './slots.js'
 import { createScopedSlotApi } from './scoped-slots.js'
-import { ServiceRegistry, unmetInjections } from './services.js'
+import { ServiceRegistry, unmetDependencies, type PluginDeps } from './services.js'
 import type { UiHostInfo, UiPluginLoadReport, UiPluginLoadResult, UiRuntimeApi } from './plugin.js'
 import * as tuiPluginApi from './tui-plugin-api.js'
 import type { UiPluginModule } from './plugin.js'
@@ -110,7 +110,7 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
   }
 
   /** 跑工厂拿导出（require 只认白名单——与浏览器壳的 `instantiate` 同形）。 */
-  const install = (id: string, file: string, origin: string | undefined, inject: readonly string[] | undefined, attempt: number): string | null => {
+  const install = (id: string, file: string, origin: string | undefined, deps: PluginDeps, attempt: number): string | null => {
     // 这个插件的登记账本：中途抛错时按它回滚，重试才不会撞「id 已被占用」。
     const ledger: (() => void)[] = []
     const provides: string[] = []
@@ -124,8 +124,8 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
       }
       ledger.length = 0
     }
-    // 硬依赖先解析（与浏览器壳逐字同义的「先插件 id、再服务名」）。
-    const unmet = unmetInjections(inject, (name) => reportById.get(name), services)
+    // 硬依赖先解析：插件 id 与服务名各查各的（2.0 起不再双关）。
+    const unmet = unmetDependencies(deps, (name) => reportById.get(name), services)
     if (unmet.length > 0) {
       const reason = `等待：${unmet.join('；')}`
       reportById.set(id, { id, ok: false, error: reason, attempts: attempt })
@@ -172,16 +172,21 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
     }
   }
 
-  const failed: Array<{ id: string; file: string; origin: string | undefined; inject: readonly string[] | undefined }> = []
+  const failed: Array<{ id: string; file: string; origin: string | undefined; deps: PluginDeps }> = []
   for (const entry of artifacts.entries) {
     const origin = (entry as { origin?: string }).origin
-    const inject = (entry as { inject?: readonly string[] }).inject
-    if (install(entry.id, entry.file, origin, inject, 1) !== null) failed.push({ id: entry.id, file: entry.file, origin, inject })
+    const deps: PluginDeps = {
+      ...(entry.inject === undefined ? {} : { plugins: entry.inject }),
+      ...((entry as { services?: readonly string[] }).services === undefined
+        ? {}
+        : { services: (entry as { services?: readonly string[] }).services }),
+    }
+    if (install(entry.id, entry.file, origin, deps, 1) !== null) failed.push({ id: entry.id, file: entry.file, origin, deps })
   }
   // 失败重试一轮（语义同浏览器壳）：真的写错了不能靠反复重试掩盖，但一次失败也不能永久缺席。
   for (const entry of failed) {
     if (reportById.get(entry.id)?.ok === true) continue
-    install(entry.id, entry.file, entry.origin, entry.inject, 2)
+    install(entry.id, entry.file, entry.origin, entry.deps, 2)
   }
 
   const reports = artifacts.entries.map(

@@ -1154,7 +1154,7 @@ console.log('\n[5c] 槽位契约表')
 console.log('\n[6] A1 服务注入')
 {
   const { loadTuiPlugins } = await import('../lib/ui/tui-plugins.js')
-  const { ServiceRegistry, ServiceConflictError, unmetInjections } = await import('../lib/ui/services.js')
+  const { ServiceRegistry, ServiceConflictError, unmetDependencies } = await import('../lib/ui/services.js')
 
   // 乱序清单：inject 指向提供者的插件 id，拓扑排序必须把提供者排前面。
   const ordered = orderUiPlugins([
@@ -1210,7 +1210,7 @@ console.log('\n[6] A1 服务注入')
   const missing = makeTree('a1-missing', {
     'manifest.json': JSON.stringify({
       version: 1,
-      plugins: [{ id: 'beta', file: 'client.js', platform: 'tui', inject: ['probe.seat'] }],
+      plugins: [{ id: 'beta', file: 'client.js', platform: 'tui', services: ['probe.seat'] }],
     }),
     'beta/client.js': bundle(
       'beta',
@@ -1262,26 +1262,33 @@ console.log('\n[6] A1 服务注入')
     conflict === null ? '' : String(conflict.message),
   )
 
-  // 用例五：unmetInjections 的两档文案分开（没有提供者 / 提供者没装上）。
+  // 用例五：依赖分两档，文案各说各的（2.0 起 inject 只表示插件 id，服务写 services）。
   const empty = new ServiceRegistry()
   check(
     '「没有提供者」与「提供者没装上」是两档文案',
-    unmetInjections(['svc.x'], () => undefined, empty).join('；').includes('服务 svc.x 还没有提供者') &&
-      unmetInjections(['plug.a'], () => ({ ok: false, error: '炸了' }), empty).join('；').includes('插件 plug.a 没装上：炸了'),
+    unmetDependencies({ services: ['svc.x'] }, () => undefined, empty).join('；').includes('服务 svc.x 还没有提供者') &&
+      unmetDependencies({ plugins: ['plug.a'] }, () => ({ ok: false, error: '炸了' }), empty)
+        .join('；')
+        .includes('插件 plug.a 没装上：炸了'),
   )
 
-  // 用例六：同名时的**优先级**——`inject` 先按「清单里另一个插件的 id」解，再按「服务名」解。
-  // 为什么值得钉：两条路的语义不同（id = 「那条插件的工厂注册好了吗」，服务名 = 「有提供者吗」），
-  // 一旦颠倒，按 id 写依赖的插件会开始按服务名判定，报错文案与「谁没装上」都会指错人。
+  // 用例六：拆开之后不再有「同名优先」的猜法——同一个名字写在 inject 与 services 两个字段里，
+  // 各按各的查：插件装上了、服务没提供，仍然是缺（这正是拆双关要的）。
   const both = new ServiceRegistry()
   both.provide('plug.b', { ok: 1 }, 'plug.b')
   check(
-    '名字既是插件 id 又是服务名：以插件那条为准（它没装上就是没满足，哪怕服务在）',
-    unmetInjections(['plug.b'], () => ({ ok: false, error: '炸了' }), both).join('；').includes('插件 plug.b 没装上'),
+    '同一个名字两边都写：插件那条满足、服务那条也满足才算齐',
+    unmetDependencies({ plugins: ['plug.b'], services: ['plug.b'] }, () => ({ ok: true }), both).length === 0,
   )
   check(
-    '名字是插件 id 且那条插件装上了：服务表里没有它也算满足（不回落去查服务名）',
-    unmetInjections(['plug.b'], () => ({ ok: true }), empty).length === 0,
+    '同一个名字两边都写、但服务没提供：仍然报缺服务',
+    unmetDependencies({ plugins: ['plug.b'], services: ['plug.b'] }, () => ({ ok: true }), empty)
+      .join('；')
+      .includes('服务 plug.b 还没有提供者'),
+  )
+  check(
+    'inject 里的名字不再回落当服务名查（不在清单里就说不在清单里）',
+    unmetDependencies({ plugins: ['plug.b'] }, () => undefined, both).join('；').includes('插件 plug.b 不在清单里'),
   )
 }
 

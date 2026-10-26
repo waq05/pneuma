@@ -107,11 +107,18 @@ function readMeta(dir) {
       `${dir}/plugin.json 声明了 api——内置插件的 @dsc/ui 区间唯一来源是 package.json 的 peerDependencies`,
     )
   }
+  // inject = 依赖的**插件 id**；services = 依赖的**服务名**（2.0 起分开，不再双关）。
   if (doc.inject !== undefined) {
     if (!Array.isArray(doc.inject) || doc.inject.some((v) => typeof v !== 'string')) {
-      throw new Error(`${dir}/plugin.json 的 inject 必须是字符串数组`)
+      throw new Error(`${dir}/plugin.json 的 inject 必须是字符串数组（依赖的插件 id）`)
     }
     meta.inject = doc.inject
+  }
+  if (doc.services !== undefined) {
+    if (!Array.isArray(doc.services) || doc.services.some((v) => typeof v !== 'string')) {
+      throw new Error(`${dir}/plugin.json 的 services 必须是字符串数组（依赖的服务名）`)
+    }
+    meta.services = doc.services
   }
   if (doc.external !== undefined) {
     if (!Array.isArray(doc.external) || doc.external.some((v) => typeof v !== 'string')) {

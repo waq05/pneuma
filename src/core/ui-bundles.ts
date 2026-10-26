@@ -237,7 +237,9 @@ export function readUiPluginManifestReport(dir: string = uiPluginsDir()): UiPlug
       problems.push(`${id}: 载体（platform）不认识（${JSON.stringify(platform)}），丢弃`)
       continue
     }
+    // inject = 依赖的插件 id；services = 依赖的服务名（2.0 起分开，见 UiPluginRow）。
     const inject = readNameList(record['inject'], id, 'inject', problems)
+    const services = readNameList(record['services'], id, 'services', problems)
     const external = readNameList(record['external'], id, 'external', problems)
     // api：插件声明的 @dsc/ui 区间（第三方必需；形状校验放门禁判定，这里只管类型）。
     const rawApi = record['api']
@@ -256,6 +258,7 @@ export function readUiPluginManifestReport(dir: string = uiPluginsDir()): UiPlug
       id,
       file,
       ...(inject === undefined ? {} : { inject }),
+      ...(services === undefined ? {} : { services }),
       ...(external === undefined ? {} : { external }),
       ...(record['immediately'] === true ? { immediately: true } : {}),
       ...(phase === undefined ? {} : { phase }),
@@ -683,6 +686,9 @@ export function discoverThirdPartyUiArtifacts(
     const rev = contentRev(bytes)
     const cached = cache.get(fileKey)
     const fingerprint = `${rev}`
+    const services = Array.isArray(doc['services'])
+      ? doc['services'].filter((value): value is string => typeof value === 'string' && value !== '')
+      : undefined
     const row: ThirdPartyUiEntry = {
       id: name,
       file: 'client.js',
@@ -690,6 +696,7 @@ export function discoverThirdPartyUiArtifacts(
       api,
       origin: 'third-party',
       source: name,
+      ...(services === undefined ? {} : { services }),
       ...(phase === undefined ? {} : { phase }),
     }
     // 双平台插件进两个平台视图：web 行缺省（无 platform 字段），tui 行显式写。
@@ -948,6 +955,7 @@ export function toUiPluginRows(entries: readonly (UiPluginManifestEntry & { rev:
     id: entry.id,
     rev: entry.rev,
     ...(entry.inject === undefined ? {} : { inject: entry.inject }),
+    ...(entry.services === undefined ? {} : { services: entry.services }),
     ...(entry.external === undefined ? {} : { external: entry.external }),
     ...(entry.immediately === true ? { immediately: true } : {}),
     ...(entry.phase === undefined ? {} : { phase: entry.phase }),
