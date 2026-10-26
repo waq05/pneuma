@@ -8427,6 +8427,25 @@ node_modules**（包发现没有指纹短路）。剩余见计划文档 §8 的�
 验证：`pnpm run check:ui` 四条全绿（ui-plugin-test 全通过、package 11/0、two-halves 10/0、
 transcript 93/93）。剩下面向用户的第 2、3 条（启停入口、TUI 收不到包界面半）留到下一批。
 
+**§8 第 2 条：组合包的界面半有开关了（2026-10-26）**：
+
+以前 `discoverPackageUiArtifacts` 会按 `<包名>/client` 读启停，但插件中心**没有这一行**——装完包，
+界面半要么一直在，要么只能手改 `~/.dsc/plugins.json`。「装得上但管不了」是这一条的全部内容。
+
+1. `UiTrustView` 加了两项：`key`（启停键）与 `origin`（`third-party` / `package`）。**键由宿主给，
+   界面不自己拼**——第三方是 `<目录名>/ui/client.js`，组合包是 `<包名>/client`，两种形状不同，
+   拼错就写进一条没人读的开关。
+2. 新增 `scanPackageUiTrusts`，与发现层共用同一个 `judgePackageClient`（api 声明 → 门禁 → 撞名 →
+   入口在包内），一处判定两处用，免得卡片说能装、启动图里却没有。
+3. 插件中心按 `origin` 分成「第三方界面插件」与「组合包界面」两组。组合包恒为已同意
+   （`numa plugin add` 装进 profile 那一步就是同意），所以那一组没有「确认信任」；
+   装不上的行按档说下一步，文案指向 `package.json` 的 `dsh.client` 与 `exports["./client"]`，
+   不是第三方那种 `plugin.json`。
+4. `isPackageUiEntry`：这类键没有宿主半边可热挂，启停写盘即完事，提示「刷新页面（或重启宿主）后生效」。
+
+验证：`node scripts/ui-package-plugin-test.mjs` 28/0（新增 17 条：卡片上看得见、键的形状、
+恒为已同意、四档 problem、与第三方那组同形、停用后从产物表消失但卡片还在、再打开又回来）。
+
 
 
 

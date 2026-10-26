@@ -555,7 +555,7 @@ export function readUiPluginBundle(
 // 内置插件合成为同一张产物表——「不用分内置还是第三方，只认文件在不在」。
 
 import { readdirSync } from 'node:fs'
-import type { UiTrustView } from '../contract.js'
+import type { UiTrustProblemKind, UiTrustView } from '../contract.js'
 import { dscPath } from './path-policy.js'
 import { isPluginEnabled, isUiPluginTrusted, readUiPluginTrust, trustUiPlugin } from './plugin-registry.js'
 
@@ -775,6 +775,8 @@ export function scanThirdPartyUiTrusts(
     const trust = trusted[fileKey]
     const row: UiTrustView = {
       name,
+      key: fileKey,
+      origin: 'third-party',
       platforms: ['web'],
       trusted: trust !== undefined,
       enabled: isPluginEnabled(fileKey),
@@ -1054,6 +1056,80 @@ function existsStamp(path: string): number {
 }
 
 /**
+ * 一条组合包界面半边的判定（发现与插件中心两张卡共用，免得两处各判一套）。
+ */
+interface PackageClientJudgement {
+  /** 声明的 `@dsc/ui` 区间；没写时 undefined（同时 problem 已写）。 */
+  api?: string
+  /** 入口的相对路径（`exports["./client"]`）；没有时 null。 */
+  clientPath: string | null
+  /** 入口的绝对路径（已过包目录围栏）；越界或没有时 null。 */
+  path: string | null
+  /** 装不上的原因；能装时 undefined。 */
+  problem?: string
+  /** `problem` 属于哪一档（界面按档给下一步）。 */
+  problemKind?: UiTrustProblemKind
+}
+
+/**
+ * 判一个组合包的界面半边装不装得上：`api` 声明 → 门禁 → 撞名 → 入口存在且在包内。
+ *
+ * 顺序为什么是这一条：先判「这份代码能不能进启动图」，再去看它在不在——撞名与版本
+ * 不满足是**声明**的问题，入口缺失是**文件**的问题，两档的下一步动作不一样。
+ */
+function judgePackageClient(
+  name: string,
+  dir: string,
+  decl: NonNullable<ReturnType<typeof readClientDeclaration>>,
+  shellApiVersion: string | undefined,
+  takenIds: ReadonlySet<string>,
+): PackageClientJudgement {
+  const where = `${name}/client`
+  const api = typeof decl.api === 'string' && decl.api.trim() !== '' ? decl.api.trim() : undefined
+  if (api === undefined) {
+    return {
+      clientPath: decl.clientPath,
+      path: null,
+      problem: `${where}: dsh.client.api 没写（@dsc/ui 的版本区间，如 "^2.0.0"）——组合包的界面半必须声明`,
+      problemKind: 'manifest',
+    }
+  }
+  const gate = evaluateUiApiGate(api, shellApiVersion)
+  if (gate !== null) {
+    return { api, clientPath: decl.clientPath, path: null, problem: `${name}: ${gate}`, problemKind: 'version' }
+  }
+  if (takenIds.has(name)) {
+    return {
+      api,
+      clientPath: decl.clientPath,
+      path: null,
+      problem: `${name}: 界面半的 id 与已有插件撞名，这一份跳过`,
+      problemKind: 'clash',
+    }
+  }
+  if (decl.clientPath === null) {
+    return {
+      api,
+      clientPath: null,
+      path: null,
+      problem: `${where}: package.json 没有 exports["./client"]，找不到界面半的入口`,
+      problemKind: 'artifact',
+    }
+  }
+  const path = resolve(dir, decl.clientPath)
+  if (!inside(dir, path)) {
+    return {
+      api,
+      clientPath: decl.clientPath,
+      path: null,
+      problem: `${where}: exports["./client"] 指到了包外（${decl.clientPath}），拒绝`,
+      problemKind: 'artifact',
+    }
+  }
+  return { api, clientPath: decl.clientPath, path }
+}
+
+/**
  * 扫 profile 里装好的组合包，收它们的界面半边。
  * @param profileDir - profile 目录（没有就返回空）
  * @param shellApiVersion - 当前壳的 `@dsc/ui` 契约版本
@@ -1086,35 +1162,19 @@ export function discoverPackageUiArtifacts(
       continue
     }
     const where = `${name}/client`
-    const api = typeof decl.api === 'string' && decl.api.trim() !== '' ? decl.api.trim() : undefined
-    if (api === undefined) {
-      problems.push(`${where}: dsh.client.api 没写（@dsc/ui 的版本区间，如 "^2.0.0"）——组合包的界面半必须声明`)
+    const judged = judgePackageClient(name, dir, decl, shellApiVersion, new Set([...takenIds, ...seen]))
+    if (judged.problem !== undefined) {
+      problems.push(judged.problem)
       continue
     }
-    const gate = evaluateUiApiGate(api, shellApiVersion)
-    if (gate !== null) {
-      problems.push(`${name}: ${gate}`)
-      continue
-    }
-    if (takenIds.has(name) || seen.has(name)) {
-      problems.push(`${name}: 界面半的 id 与已有插件撞名，这一份跳过`)
-      continue
-    }
-    if (decl.clientPath === null) {
-      problems.push(`${where}: package.json 没有 exports["./client"]，找不到界面半的入口`)
-      continue
-    }
-    const path = resolve(dir, decl.clientPath)
-    if (!inside(dir, path)) {
-      problems.push(`${where}: exports["./client"] 指到了包外（${decl.clientPath}），拒绝`)
-      continue
-    }
-    const bytes = readFileSyncSafe(path)
+    const bytes = judged.path === null ? null : readFileSyncSafe(judged.path)
     if (bytes === null) {
-      problems.push(`${where}: exports["./client"] 指向的 ${decl.clientPath} 读不到`)
+      problems.push(`${where}: exports["./client"] 指向的 ${judged.clientPath ?? '(没写)'} 读不到`)
       continue
     }
     if (!isPluginEnabled(where)) continue // 停用不是问题，是用户的开关
+    const api = judged.api ?? ''
+    const path = judged.path ?? ''
     const rev = contentRev(bytes)
     const row: PackageUiEntry = {
       id: name,
@@ -1143,6 +1203,76 @@ export function discoverPackageUiArtifacts(
     }
   }
   return { entries, problems }
+}
+
+/**
+ * 组合包界面半边的卡片视图（插件中心「组合包界面」那一组）。
+ *
+ * 与 {@link discoverPackageUiArtifacts} 共用 {@link judgePackageClient} 同一套判定，
+ * 差别只在输出形状：那边只给「能进启动图的条目」，这边给**每一条的状态**——被停用的、
+ * 装不上的也要看得见，不然用户只知道「界面里没有」，不知道该去哪儿拧。
+ *
+ * 信任恒为 true：`numa plugin add` 把包装进 profile 那一步就是同意（见上面的注释）。
+ */
+export function scanPackageUiTrusts(
+  shellApiVersion: string | undefined,
+  takenIds: ReadonlySet<string>,
+  profileDir: string | null = activeProfileDir(),
+): UiTrustView[] {
+  const out: UiTrustView[] = []
+  if (profileDir === null) return out
+  const nodeModules = resolve(profileDir, 'node_modules')
+  for (const { name, dir } of packageDirs(nodeModules)) {
+    const decl = readClientDeclarationCached(dir)
+    if (decl === null) continue
+    const key = `${name}/client`
+    if (decl.platform !== 'pneuma') {
+      if (decl.platform === 'web') continue // dsh 自己的界面半：另一条体系，不在这张卡上
+      out.push({
+        name,
+        key,
+        origin: 'package',
+        platforms: [],
+        trusted: true,
+        enabled: isPluginEnabled(key),
+        problem: `dsh.client.platform 只能是 'pneuma'（收到 ${JSON.stringify(decl.platform)}），界面半不会装载`,
+        problemKind: 'manifest',
+      })
+      continue
+    }
+    const judged = judgePackageClient(name, dir, decl, shellApiVersion, takenIds)
+    out.push({
+      name,
+      key,
+      origin: 'package',
+      platforms: ['web'],
+      trusted: true,
+      enabled: isPluginEnabled(key),
+      ...(judged.api === undefined ? {} : { api: judged.api }),
+      ...(judged.problem === undefined
+        ? {}
+        : {
+            problem: judged.problem,
+            ...(judged.problemKind === undefined ? {} : { problemKind: judged.problemKind }),
+          }),
+    })
+  }
+  return out
+}
+
+/**
+ * 这个启停键是不是组合包的界面半边（`<包名>/client`）。
+ *
+ * 与 {@link isThirdPartyUiEntry} 同一个用途：这类键没有宿主半边可热挂，启停写盘即完事，
+ * 生效在页面下一次加载（启动图按 plugins.json 的启停现场合成）。
+ */
+export function isPackageUiEntry(file: string, profileDir: string | null = activeProfileDir()): boolean {
+  const suffix = '/client'
+  if (!file.endsWith(suffix)) return false
+  const name = file.slice(0, -suffix.length)
+  if (!PLUGIN_ID.test(name) || profileDir === null) return false
+  const decl = readClientDeclarationCached(resolve(profileDir, 'node_modules', name))
+  return decl !== null && decl.platform === 'pneuma'
 }
 
 /**

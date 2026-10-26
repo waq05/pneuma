@@ -10,7 +10,16 @@ process.env.USERPROFILE = home
 process.env.DSC_HOME = join(home, '.dsc')
 mkdirSync(join(home, '.dsc'), { recursive: true })
 
-const { collectUiArtifactsForPlatform, lookupPackageUiBundle, readUiArtifactBytes } = await import('../lib/core/ui-bundles.js')
+const {
+  collectUiArtifactsForPlatform,
+  isPackageUiEntry,
+  isThirdPartyUiEntry,
+  lookupPackageUiBundle,
+  readUiArtifactBytes,
+  scanPackageUiTrusts,
+  scanThirdPartyUiTrusts,
+} = await import('../lib/core/ui-bundles.js')
+const { writePluginEnabled } = await import('../lib/core/plugin-registry.js')
 const { composeUiBootGraph } = await import('../lib/ui/manifest.js')
 const { toUiPluginRows } = await import('../lib/core/ui-bundles.js')
 
@@ -86,6 +95,44 @@ const graph = composeUiBootGraph({ name: 'Pneuma', version: 'test' }, toUiPlugin
 const row = graph.entries.find((item) => item.id === 'dsh-cost-meter')
 check('进得了启动图（壳按图装）', row !== undefined, JSON.stringify(graph.entries.map((e) => e.id)))
 check('地址是内容寻址的 /plugins/<包名>/client.js?rev=', row !== undefined && row.url.includes('dsh-cost-meter/client.js?rev='), String(row && row.url))
+
+console.log('组合包界面半边：插件中心那张卡与启停入口')
+const trusts = scanPackageUiTrusts(artifacts.apiVersion, new Set(), profile)
+const costRow = trusts.find((item) => item.name === 'dsh-cost-meter')
+check('卡上看得见这条包界面半', costRow !== undefined, JSON.stringify(trusts.map((item) => item.name)))
+check('来源标成 package', costRow !== undefined && costRow.origin === 'package', String(costRow && costRow.origin))
+check('启停键是 <包名>/client（不是第三方那种 /ui/client.js）', costRow !== undefined && costRow.key === 'dsh-cost-meter/client', String(costRow && costRow.key))
+check('组合包恒为已同意（装进 profile 就是同意）', costRow !== undefined && costRow.trusted === true && costRow.trustedAt === undefined)
+check('卡上不带 dsh 自己的载体（platform = web）', !trusts.some((item) => item.name === 'dsh-other'))
+check('缺声明的行带 manifest 档', trusts.find((item) => item.name === 'no-api')?.problemKind === 'manifest')
+check('版本不满足的行带 version 档', trusts.find((item) => item.name === 'old-api')?.problemKind === 'version')
+check('没有入口的行带 artifact 档', trusts.find((item) => item.name === 'no-entry')?.problemKind === 'artifact')
+// 第三方那组（对照组）：每行也要带 key 与 origin，形状与组合包那一组一致。
+mkdirSync(join(third, 'demo-third', 'ui'), { recursive: true })
+writeFileSync(join(third, 'demo-third', 'plugin.json'), JSON.stringify({ api: '^2.0.0' }), 'utf8')
+writeFileSync(join(third, 'demo-third', 'ui', 'client.js'), bundle, 'utf8')
+const thirdRows = scanThirdPartyUiTrusts(artifacts.apiVersion, new Set(), third)
+check(
+  '第三方那组每行也带 key 与 origin（两处同形）',
+  thirdRows.length === 1 && thirdRows[0].key === 'demo-third/ui/client.js' && thirdRows[0].origin === 'third-party',
+  JSON.stringify(thirdRows),
+)
+
+check('isPackageUiEntry 认 <包名>/client', isPackageUiEntry('dsh-cost-meter/client', profile) === true)
+check('isPackageUiEntry 不认宿主插件名', isPackageUiEntry('goal', profile) === false)
+check('isPackageUiEntry 不认 dsh 自己的载体（platform = web）', isPackageUiEntry('dsh-other/client', profile) === false)
+check('isPackageUiEntry 对声明了但坏掉的包仍认（它确实是我们的界面半）', isPackageUiEntry('no-entry/client', profile) === true)
+check('isThirdPartyUiEntry 不认组合包的键（两条路不混）', isThirdPartyUiEntry('dsh-cost-meter/client') === false)
+
+// 停用走 plugins.json 的条目树：产物表里消失，卡片上还在（带 enabled=false）。
+writePluginEnabled('dsh-cost-meter/client', false)
+const afterOff = collectUiArtifactsForPlatform('web', { packageDir: profile, thirdPartyDir: third, force: true })
+check('停用后不进启动图', !afterOff.entries.some((item) => item.id === 'dsh-cost-meter'))
+const offRow = scanPackageUiTrusts(afterOff.apiVersion, new Set(), profile).find((item) => item.name === 'dsh-cost-meter')
+check('停用后卡片上还在，且 enabled=false', offRow !== undefined && offRow.enabled === false)
+writePluginEnabled('dsh-cost-meter/client', true)
+const afterOn = collectUiArtifactsForPlatform('web', { packageDir: profile, thirdPartyDir: third, force: true })
+check('再打开又回到启动图', afterOn.entries.some((item) => item.id === 'dsh-cost-meter'))
 
 console.log(String.fromCharCode(10) + pass + ' PASS / ' + fail + ' FAIL')
 process.exit(fail === 0 ? 0 : 1)

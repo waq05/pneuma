@@ -74,9 +74,13 @@ interface PluginRow {
   problem?: string
 }
 
-/** `listUiTrust` 回来的形状（宿主契约 `UiTrustView`；第三方界面插件的信任卡行）。 */
+/** `listUiTrust` 回来的形状（宿主契约 `UiTrustView`；界面插件的两张卡）。 */
 interface TrustRow {
   name: string
+  /** 启停键（宿主给）：第三方 `<目录名>/ui/client.js`，组合包 `<包名>/client`。 */
+  key?: string
+  /** 来源：手工放进 `~/.dsc/plugins` 的界面插件，还是 profile 里装的组合包。 */
+  origin?: 'third-party' | 'package'
   api?: string
   platforms: string[]
   trusted: boolean
@@ -85,6 +89,16 @@ interface TrustRow {
   problem?: string
   /** `problem` 属于哪一档（宿主 `problemKind`）：界面按档说「没加载的原因 + 下一步」。 */
   problemKind?: 'manifest' | 'clash' | 'version' | 'artifact'
+}
+
+/** 一行是不是组合包带来的界面半边（宿主老版本没有 `origin` 字段，一律当第三方）。 */
+function isPackageRow(row: TrustRow): boolean {
+  return row.origin === 'package'
+}
+
+/** 启停键：宿主给了就用，没给按第三方的形状拼（老宿主只发这一类）。 */
+function keyOf(row: TrustRow): string {
+  return row.key ?? `${row.name}/ui/client.js`
 }
 
 export default defineUiPlugin({
@@ -178,13 +192,16 @@ function PluginsView(): ReactNode {
       })
   }
 
-  /** 启停一个第三方界面插件（键 `<目录名>/ui/client.js`；写盘后刷新页面生效）。 */
+  /**
+   * 启停一个界面插件（第三方或组合包）：键由宿主给（`keyOf`），写盘后刷新页面生效。
+   * 两种来源的键形状不同，界面不自己拼——拼错会写进一条没人读的开关。
+   */
   const toggleTrust = (row: TrustRow, next: boolean): void => {
     setTrusts((current) => current.map((item) => (item.name === row.name ? { ...item, enabled: next } : item)))
     void channel
-      .invoke('setPluginEnabled', [`${row.name}/ui/client.js`, next])
+      .invoke('setPluginEnabled', [keyOf(row), next])
       .then(() => {
-        toastOk(`已${next ? '启用' : '停用'}第三方界面插件「${row.name}」，刷新页面（或重启宿主）后生效`)
+        toastOk(`已${next ? '启用' : '停用'}界面插件「${row.name}」，刷新页面（或重启宿主）后生效`)
         setTimeout(loadTrusts, 600)
       })
       .catch((error: unknown) => {
@@ -241,6 +258,9 @@ function PluginsView(): ReactNode {
 
   const detail = detailFile === null ? null : ((rows ?? []).find((row) => row.file === detailFile) ?? null)
   const custom = (rows ?? []).filter((row) => row.source === 'external')
+  // 界面插件两张卡分开画：第三方的要点一次信任，组合包的不用（装进 profile 就是同意）。
+  const thirdParty = trusts.filter((row) => !isPackageRow(row))
+  const packages = trusts.filter(isPackageRow)
   const official = (rows ?? []).filter((row) => row.source === 'builtin' && row.toggleable)
   const kernel = (rows ?? []).filter((row) => row.source === 'builtin' && !row.toggleable)
   const kernelShown = kernelOpen ? kernel : kernel.slice(0, KERNEL_PREVIEW)
@@ -312,13 +332,13 @@ function PluginsView(): ReactNode {
               </div>
             )}
 
-            {trusts.length > 0 ? (
+            {thirdParty.length > 0 ? (
               <>
                 <div className="plugin-group-label">
-                  <IconPuzzle size={13} /> 第三方界面插件 <span className="count">{trusts.length}</span>
+                  <IconPuzzle size={13} /> 第三方界面插件 <span className="count">{thirdParty.length}</span>
                   <span className="group-hint">~/.dsc/plugins/&lt;目录名&gt;/ui/client.js（信任一次后才装载）</span>
                 </div>
-                {trusts.map((row) => (
+                {thirdParty.map((row) => (
                   <TrustCard
                     key={row.name}
                     row={row}
@@ -330,6 +350,30 @@ function PluginsView(): ReactNode {
                     onConfirm={() => {
                       confirmTrust(row)
                     }}
+                    onToggle={(next) => {
+                      toggleTrust(row, next)
+                    }}
+                  />
+                ))}
+              </>
+            ) : null}
+
+            {packages.length > 0 ? (
+              <>
+                <div className="plugin-group-label">
+                  <IconPuzzle size={13} /> 组合包界面 <span className="count">{packages.length}</span>
+                  <span className="group-hint">
+                    profile 里装的包（package.json 的 dsh.client.platform = pneuma）；装了就算同意，这里只开关
+                  </span>
+                </div>
+                {packages.map((row) => (
+                  <TrustCard
+                    key={row.name}
+                    row={row}
+                    open={false}
+                    busy={false}
+                    onOpen={() => undefined}
+                    onConfirm={() => undefined}
                     onToggle={(next) => {
                       toggleTrust(row, next)
                     }}
@@ -475,14 +519,43 @@ const TRUST_PROBLEM_TIERS = {
   },
 } as const satisfies Record<NonNullable<TrustRow['problemKind']>, { label: string; next: string }>
 
+/**
+ * 组合包同一批档位的「下一步」：位置不同——它不在 `~/.dsc/plugins/`，而在 profile 的
+ * `node_modules/<包名>/`，声明也不是 plugin.json 而是 package.json 的 `dsh.client`。
+ */
+const PACKAGE_PROBLEM_TIERS = {
+  version: {
+    label: '版本不满足',
+    next: '升级宿主（壳）到满足这个包声明的 @dsc/ui 区间，或把这个包装成支持当前壳的版本。',
+  },
+  artifact: {
+    label: '读不到入口',
+    next: '检查这个包的 package.json：exports["./client"] 要指向包内真实存在的文件（装坏了就重装这个包）。',
+  },
+  manifest: {
+    label: '清单缺声明',
+    next: '检查这个包的 package.json：dsh.client.platform 要是 "pneuma"，dsh.client.api 要写（如 "^2.0.0"）。',
+  },
+  clash: {
+    label: '与已有插件撞名',
+    next: '这个包名与内置插件（或另一个界面插件）的 id 相同，装不进启动图；换个包名，或先停用撞名的那个。',
+  },
+} as const satisfies Record<NonNullable<TrustRow['problemKind']>, { label: string; next: string }>
+
 /** 宿主没标档（更老的宿主）时的兜底：不猜，照原文让用户自己去看目录。 */
 const UNKNOWN_TRUST_PROBLEM = {
   label: '装不上',
   next: '照上面的原因检查 ~/.dsc/plugins/<目录名>/ 里的 plugin.json 与 ui/client.js。',
 } as const
 
-/** 一行问题的档：有标用标，没标给兜底。 */
-function trustProblemTier(kind: TrustRow['problemKind']): { label: string; next: string } {
+const UNKNOWN_PACKAGE_PROBLEM = {
+  label: '装不上',
+  next: '照上面的原因检查这个包的 package.json（`dsh.client` 段）与 exports["./client"]。',
+} as const
+
+/** 一行问题的档：有标用标，没标给兜底；「下一步去哪儿看」按来源分。 */
+function trustProblemTier(kind: TrustRow['problemKind'], origin: TrustRow['origin']): { label: string; next: string } {
+  if (origin === 'package') return kind === undefined ? UNKNOWN_PACKAGE_PROBLEM : PACKAGE_PROBLEM_TIERS[kind]
   return kind === undefined ? UNKNOWN_TRUST_PROBLEM : TRUST_PROBLEM_TIERS[kind]
 }
 
@@ -510,14 +583,17 @@ function TrustCard({
   onToggle: (next: boolean) => void
 }): ReactNode {
   const hello = useHostChannel().getHello()
+  const fromPackage = isPackageRow(row)
   const trustedAt = row.trustedAt === undefined ? '' : `（${new Date(row.trustedAt).toLocaleDateString()}）`
   // 装不上的档（problem 才存在）：行里放档名 + 判定依据，行下常驻下一步。
-  const tier = row.problem === undefined ? null : trustProblemTier(row.problemKind)
+  const tier = row.problem === undefined ? null : trustProblemTier(row.problemKind, row.origin)
   const desc =
     row.problem !== undefined && tier !== null
       ? `⚠ ${tier.label}：${row.problem}`
       : row.trusted
-        ? '已确认信任，可以启停（停用或启用都在刷新页面后生效）'
+        ? fromPackage
+          ? '组合包自带界面半，装进 profile 就算同意——这里只开关，刷新页面后生效'
+          : '已确认信任，可以启停（停用或启用都在刷新页面后生效）'
         : '未信任：还没有信任记录——首次安装需要在插件中心确认一次（它将能调用宿主的界面方法）'
   return (
     <div className="trust-card" data-trust={row.name}>
@@ -535,7 +611,8 @@ function TrustCard({
           <div className={`plugin-desc${row.problem !== undefined ? ' problem' : ''}`}>{desc}</div>
           {tier !== null ? <div className="trust-next">下一步：{tier.next}</div> : null}
         </div>
-        {row.problem === undefined && !row.trusted ? (
+        {/* 「查看并信任」只对第三方：组合包没有要答的问题，装上就是同意。 */}
+        {!fromPackage && row.problem === undefined && !row.trusted ? (
           <button type="button" className="btn-primary" onClick={onOpen}>
             {open ? '收起' : '查看并信任'}
           </button>

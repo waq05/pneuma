@@ -1224,26 +1224,39 @@ export interface PluginInfoView {
 export type UiTrustProblemKind = 'manifest' | 'clash' | 'version' | 'artifact'
 
 /**
- * 第三方界面插件的一条状态（插件中心「第三方界面插件」信任卡）。
+ * 界面插件的一条状态（插件中心「第三方界面插件」与「组合包界面」两张卡的数据源）。
  *
- * 与宿主插件（`PluginInfoView`）不是一回事：那些住 `~/.dsc/plugins/*.js`，这边是
- * `<目录名>/{plugin.json, ui/client.js}` 的界面半边——首次发现要答一次信任才装载
- *（`UiTrustView` 就是那张卡的数据源）。
+ * 两类来源，判定与装载的路是同一套，只有「凭什么算同意」不同：
+ *
+ *   - `third-party`：`~/.dsc/plugins/<目录名>/{plugin.json, ui/client.js}`，手工放进去的，
+ *     首次发现要用户在插件中心答一次信任（写 plugins.json 的 `uiTrust`）；
+ *   - `package`：profile 里用 `numa plugin add` 装的组合包，`package.json` 的
+ *     `dsh.client.platform = 'pneuma'` 声明界面半边——**装它那一步就是同意**，不再问。
+ *     启停键是 `<包名>/client`。
+ *
+ * 与宿主插件（`PluginInfoView`）不是一回事：那些住 `~/.dsc/plugins/*.js`，这份是界面半边。
  */
 export interface UiTrustView {
-  /** 目录名（`~/.dsc/plugins/<name>`；信任记录与启停键的前半段）。 */
+  /** 目录名（第三方）或包名（组合包，可能带 `@scope/`）；启停键的前半段。 */
   name: string
-  /** plugin.json 声明的 `@dsc/ui` 版本区间；没写/读不到时 undefined。 */
+  /**
+   * 启停键（plugins.json 条目树的 `file`）：第三方 `<目录名>/ui/client.js`、
+   * 组合包 `<包名>/client`。界面别自己拼——两种形状不同，拼错就写成一条没人读的开关。
+   */
+  key: string
+  /** 这一行的来源（决定卡片怎么讲「凭什么算同意」）。 */
+  origin: 'third-party' | 'package'
+  /** plugin.json / `dsh.client` 声明的 `@dsc/ui` 版本区间；没写/读不到时 undefined。 */
   api?: string
   /** 声明的载体（web/tui）；缺省 `['web']`。 */
   platforms: string[]
-  /** 有没有信任记录（plugins.json 顶层 `uiTrust`）。 */
+  /** 有没有信任记录。组合包恒为 true（装进 profile 就是同意）；第三方看 `uiTrust`。 */
   trusted: boolean
-  /** 答应的时刻（毫秒）；未信任时 undefined。 */
+  /** 答应的时刻（毫秒）；组合包与未信任的第三方都没有这一项。 */
   trustedAt?: number
-  /** 启停开关（plugins.json entries，键 `<name>/ui/client.js`）。 */
+  /** 启停开关（plugins.json entries，键见 `key`）。 */
   enabled: boolean
-  /** 现在装不上的原因（缺 plugin.json / 没写 api / 与内置撞名 / api 区间不匹配 / client.js 读不到）；能装时 undefined。 */
+  /** 现在装不上的原因（缺声明 / 没写 api / 与内置撞名 / api 区间不匹配 / 入口读不到）；能装时 undefined。 */
   problem?: string
   /** `problem` 属于哪一档；没有 problem 时 undefined（界面按档给下一步动作）。 */
   problemKind?: UiTrustProblemKind

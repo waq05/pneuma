@@ -883,6 +883,8 @@ dsh 的构造单位是**一个 npm 包两半**，Pneuma 2.0 起照同一份声�
 - **信任**：组合包是用户自己在终端跑 `numa plugin add` 装进 profile 的，那一步就是同意；
   `~/.dsc/plugins/` 下手放的界面插件仍要单独点一次。
 - **启停**：条目树里的键是 `<包名>/client`（`~/.dsc/plugins.json`），停用即不进启动图。
+  插件中心的「组合包界面」那一组会把这个包列出来带开关（键由宿主给，界面不自己拼）；
+  装了就算同意，所以那一组没有「确认信任」这一步——停用后卡片还在，开着才进启动图。
 - **取字节**：走 `exports["./client"]`，必须落在包目录内；入口读不到就拒绝并说明。
 
 **内置插件也走这一处声明**（2026-10-26 起分批迁）：`ui-shell/src/plugins/<id>/package.json` 里
@@ -894,7 +896,8 @@ dsh 的构造单位是**一个 npm 包两半**，Pneuma 2.0 起照同一份声�
 **完整示例**：[`examples/plugin-two-halves/`](../examples/plugin-two-halves/)——宿主半注册一个工具，
 界面半在状态栏加一段。装法 `numa plugin add ./examples/plugin-two-halves --profile demo`。
 
-验证：`node scripts/ui-package-plugin-test.mjs`（11 条：发现、门禁、字节、组图、地址形状）；
+验证：`node scripts/ui-package-plugin-test.mjs`（28 条：发现、门禁、字节、组图、地址形状、
+插件中心那张卡与启停键、停用后从产物表消失但卡片还在）；
 `node scripts/ui-two-halves-test.mjs`（9 条，装进 profile 后两半都到位）；
 `node scripts/ui-two-halves-e2e.mjs`（真 Electron + 真宿主，断言状态栏里真的画出了那一段，
 截图落 `desktop/shots/two-halves.png`）。

@@ -10,7 +10,15 @@ import type { Plugin } from '@deepseek-ai/cordis'
 import { errText } from '../adapter/transcript.js'
 import { listPluginInfos, writePluginEnabled } from '../core/plugin-registry.js'
 import { setPluginEnabledHot } from '../core/plugin-loader.js'
-import { readUiPluginManifestReport, isThirdPartyUiEntry, scanThirdPartyUiTrusts, trustThirdPartyUiPlugin } from '../core/ui-bundles.js'
+import {
+  discoverThirdPartyUiArtifacts,
+  isPackageUiEntry,
+  isThirdPartyUiEntry,
+  readUiPluginManifestReport,
+  scanPackageUiTrusts,
+  scanThirdPartyUiTrusts,
+  trustThirdPartyUiPlugin,
+} from '../core/ui-bundles.js'
 import { buildUsageStats } from '../core/usage-log.js'
 import { sideAskOnce } from '../core/side-ask.js'
 import { shellCommandRejection, shellCommands } from '../core/commands-completion.js'
@@ -176,6 +184,13 @@ export const runtimePlugin: Plugin.Object = {
           ctx.transcript.touch()
           return
         }
+        // 组合包的界面半边（<包名>/client）同一条理由：没有宿主半边可热挂。
+        if (isPackageUiEntry(file)) {
+          const name = file.slice(0, -'/client'.length)
+          ctx.transcript.system(`已${enabled ? '启用' : '停用'}组合包的界面半「${name}」，刷新页面（或重启宿主）后生效`)
+          ctx.transcript.touch()
+          return
+        }
         const shown = listPluginInfos().find((item) => item.file === file)?.name ?? file
         // 热启停：即时挂载/卸载，写盘持久化；失败回滚（挂载失败自动停用）
         const outcome = await setPluginEnabledHot(file, enabled)
@@ -189,7 +204,13 @@ export const runtimePlugin: Plugin.Object = {
 
       listUiTrust() {
         const report = readUiPluginManifestReport()
-        return scanThirdPartyUiTrusts(report.apiVersion, new Set(report.entries.map((entry) => entry.id)))
+        const builtinIds = new Set(report.entries.map((entry) => entry.id))
+        const third = scanThirdPartyUiTrusts(report.apiVersion, builtinIds)
+        // 组合包的撞名要和发现层一个口径：内置 + 第三方里**真进了启动图**的那些
+        //（被停用或没信任的第三方不占 id，不能拿来判别人撞名）。
+        const accepted = discoverThirdPartyUiArtifacts(report.apiVersion, builtinIds)
+        const taken = new Set([...builtinIds, ...accepted.entries.map((entry) => entry.id)])
+        return [...third, ...scanPackageUiTrusts(report.apiVersion, taken)]
       },
 
       setUiTrust(name) {
