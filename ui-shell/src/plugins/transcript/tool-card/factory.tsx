@@ -192,7 +192,8 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
    */
   // 三种来源依次接手：进行中按参数推演 → 落地后的真实改动 → dsh 插件给的 diff 卡片
   // （最后一项是 2026-10-26 加的：dsh 的 presentResult 带 card: 'diff' 时落到同一块渲染）。
-  const patch = intended?.file ?? call.change ?? dshPatchOf(call.presentation)
+  const dshPatch = dshPatchOf(call.presentation)
+  const patch = intended?.file ?? call.change ?? dshPatch
   const argView = toolArgFields(call.name, call.argsText)
   const paramsAsFields = patch !== null && argView.mutating
   /**
@@ -331,7 +332,10 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
               )}
             </div>
           ) : null}
-          <BodyExtra intended={intended} change={call.change ?? null} />
+          {/* dsh 的 diff 卡片也走这一块：展开体原来只认 `call.change`（宿主按 callId 缝回的
+              真实改动），于是一张只有 `presentation` 的卡在展开后是空的——数据到了卡上，
+              却没接到渲染位置。这里把它并进同一个入口，两种来源同形（都是 ChangedFileView）。 */}
+          <BodyExtra intended={intended} change={call.change ?? dshPatch} />
           <div className="label">参数</div>
           {paramsAsFields ? (
             /* 会改文件的工具：正文已经在上面那块 diff 里，这里只列剩下的字段。

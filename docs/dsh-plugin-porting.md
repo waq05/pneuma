@@ -180,6 +180,7 @@ dsc 的等价扩展点重挂，找不到就砍掉那个功能**——个人版�
 | schemastery 双实例 | 同上，且时而好时而坏 | CJS/ESM 双构建包被解析成两份模块副本，原型不等、instanceof 分裂 | 插件里**只** `import z from '@deepseek-ai/schemastery'`（解析钩子按 ESM 条件命中与 dsh-tools 内部相同的文件）；不要自己 `require` 它的 CJS 入口 |
 | printf 占位符原样透传 | `warn('failed: %s', err)` 显示出字面 `%s` | 桥若直接 join 参数不会替换占位符 | 兼容桥已用 `Logger.format` 还原；自建桥时记得调它 |
 | 解析钩子不生效 | 插件 import `@deepseek-ai/*` 报 `ERR_MODULE_NOT_FOUND` | 插件文件不在 `~/.dsc/plugins/` 之下（前缀匹配失败），或 dsh-compat 没开（钩子未注册） | 插件放对目录并开兼容层；npm 包装进 `~/.dsc/plugins/node_modules/` 即命中前缀 |
+| `presentResult(args, result)` 里拿不到工具的规范值 | 卡片上 `path` / `diffs` 全是 `undefined`，界面画出来一片空白（或直接回落通用卡） | 兼容层传给第二个参数的是**渲染后的结果**（dsh 的 ToolResult：content 块 + 一段文本），不是 `execute` 返回的那个 JSON 值 | 画「改前 / 改后」这类对比，得在 `execute` 里自己把旧内容记下来（文件那时已被覆盖）；只依赖 `args` 的卡片直接把参数当下标用 |
 | dsh 工具定义直接塞给 dsc 注册表 | 挂载失败：`是 dsh 风格的定义（有 execute 没有 run）` | 兼容层没开时 `ctx.tools.register` 只认 dsc 的 ToolEntry（`run` 函数） | 按提示开 dsh-compat 后重新挂载；这是形状关的预期行为，不是 bug |
 
 ## 5. 验证清单（交付前逐项执行）

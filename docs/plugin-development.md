@@ -599,6 +599,7 @@ cordis 版本一致，所以**一部分 dsh 插件可以直接挂到 dsc 上跑*
 | `inject: ['tools']`，`ctx.tools.register(defineTool({...}))` | 直接支持：ToolDefinition 转成 dsc 工具条目——参数 schema（defineTool 编译出的 JSON Schema）原样透传、`execute(args, exec)` 的 `exec.signal` 对应 dsc 取消信号、模型可见内容由 `output.render` 折成文本、`timeoutMs` 到点放弃等待 |
 | `inject: ['logger']`，`ctx.logger.warn/error(...)` | 直接支持：cordis 内置 logger 管道 + 桥，warn/error 镜像进对话流（`[dsh 插件·名字]` 前缀），info/debug 不落地 |
 | `export const Config = z.object({...})`（schemastery） | 挂载时调用一次做配置校验，失败响亮回滚（提示检查 plugins.json 的 config） |
+| `output.presentCall` / `presentResult`（卡片视图） | 直接支持：卡片数据随工具结果落到 `presentation`，界面认得 `diff` / `terminal` 两种形态，其余回落通用工具卡（数据不丢）。注意 `presentResult` 的**第二个参数是渲染后的结果**，不是工具的规范值——要画改前改后得自己在 `execute` 里记 |
 | `inject` 里出现 `sessionProjections` / `agents` / `goals` / `systemPrompt` 等 | **不支持**：这些要整个 dsh 会话语义，挂载被拒绝并列出缺的服务名 |
 
 `defineTool`、`z`、`@deepseek-ai/cordis` 这些 `@deepseek-ai/*` 导入不用装——兼容层把插件
@@ -624,8 +625,11 @@ cd ~/.dsc/plugins && npm install <dsh 插件包>
 # 然后在 config.yaml 的 plugins 段声明入口（包的 lib/index.js），或复制成单文件
 ```
 
-自包含的 dsh 风格插件见 [examples/plugins/dsh-style-clock.js](../examples/plugins/dsh-style-clock.js)；
-兼容层的自检（解析钩子、工具兼容面、logger 桥、不支持项拒绝）跑 `node shots/dsh-compat-check.mjs`。
+自包含的 dsh 风格插件见 [examples/plugins/dsh-style-clock.js](../examples/plugins/dsh-style-clock.js)
+（`dsh_clock` 演示工具与 logger，`dsh_write_note` 演示 `presentResult` 的 diff 卡）；
+兼容层的自检（解析钩子、工具兼容面、logger 桥、不支持项拒绝）跑 `node shots/dsh-compat-check.mjs`；
+卡片这条链路的真机走查跑 `node scripts/ui-dsh-card-e2e.mjs`（真宿主 + 假端点 + 真 Chromium，
+断言卡展开后 `.diff-body` 在、文件真被写了，并留一张 `desktop/shots/dsh-diff-card.png`）。
 
 ---
 

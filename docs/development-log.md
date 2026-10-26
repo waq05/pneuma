@@ -8582,3 +8582,29 @@ apiVersion 仍是门禁依据、旧产物兜底 + 点名）；`ui-serve-test` �
 
 验证：`ui-package-plugin-test` 42/0（新增四条：卡上带版本、带 profile 名、其余字段不受影响、
 第三方行没有这两项不许冒充）；`pnpm run check:ui` 35/35。
+**阶段 A 收尾：diff 卡片真的画出来了（2026-10-26）**：
+
+验收欠账是「示例插件有结构化值 + `output.render`，但没有卡片，也没有截图证据」。查下来
+这不是「少写一个示例」，而是**第三跳断了**：
+
+1. `ui-shell/.../tool-card/factory.tsx` 里 `dshPatchOf(call.presentation)` 早就写了，
+   但只拿去判断「参数要不要摊成字段表」；展开体拿到的是 `call.change`（宿主按 callId 缝回的
+   真实改动），dsh 的卡片**根本没接进渲染位置**。表现是「卡上有数据、画出来是空的」。
+   修法：把补丁解析成 `dshPatch` 并进展开体同一个入口，两种来源同形（都是 ChangedFileView）。
+2. 示例插件不知道自己踩了第二个坑：兼容层传给 `presentResult` 的第二个参数是**渲染后的结果**
+   （dsh 的 ToolResult），不是规范值，照抄 dsh 文档写的 `(args, value) => value.path` 只会拿到
+   `undefined`。示例改为在 `execute` 里记下改前内容，卡片按 args 取下标。
+
+顺带补了两样东西：
+
+- 示例插件新增 `dsh_write_note`：真的写一个文件，返回规范值 + generic 调用卡 + diff 结果卡；
+- 新的真机走查 `scripts/ui-dsh-card-e2e.mjs`（+ 驱动 `_ui-dsh-card-main.cjs`）：隔离 HOME、
+  假模型端点（`_fake-llm.mjs` 新增 `DSC_FAKE_LLM_TOOL`，可点名任意工具）、真宿主、真 Chromium，
+  提交一句话 → 工具真跑 → 点开三层折叠（整轮 → 阶段组 → 工具卡）→ 断言 `.diff-body` 在、
+  绿行 ≥2、文件真被写，并落一张 `desktop/shots/dsh-diff-card.png`。
+
+截图这条路上还踩了一个 Windows 上的坑：隐藏窗口 `capturePage` 拿到空白帧，而且隐藏态下
+布局不完整（量到的 rect 高 0），所以展开与截图都必须放在 `win.show()` 之后。
+
+验证：`ui-transcript-render-test` 94/94（新增一条钉「dsh 的 diff 卡并进展开体」）、
+`ui-dsh-card-e2e` 12/12、`ui-package-plugin-test` 42/0、`check:ui` 35/35。

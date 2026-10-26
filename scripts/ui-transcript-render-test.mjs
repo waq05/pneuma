@@ -143,6 +143,9 @@ console.log('[3] 形态钉（ui.tsx / factory.tsx / status 的催拍）')
   check('④ 会改文件的工具渲染字段表（.arg-fields）', factory.includes('className="args arg-fields"') && factory.includes('argView.fields.map('))
   check('④ 没有 diff 时仍摊原始 JSON（不丢信息）', factory.includes('<div className="args">{prettyJson(call.argsText)}</div>'))
   check('④ 落地后的 diff 由 bodyExtra 的 fallback 接手（轨迹页也看得到）', factory.includes("useFactorySlot('bodyExtra', IntendedBody)") && factory.includes("data-tc-change=\"\""))
+  // dsh 插件的 diff 卡片：数据早就在 `presentation.result` 上，但展开体只认 `call.change`，
+  // 于是「卡上有数据、画不出来」。两条一起钉：解析出补丁，并且并进展开体的同一个入口。
+  check('④ dsh 的 diff 卡片并进展开体（不只用来分流参数表）', factory.includes('const dshPatch = dshPatchOf(call.presentation)') && factory.includes('change={call.change ?? dshPatch}'))
 
   check('⑤ git 轮询效果吃 gitNudge（自增即重拍）', status.includes('}, [channel, gitNudge])') && status.includes('lastGitPollRef.current = startedAt'))
   check('⑤ 换工作区催拍（会话路径 / 工作目录）', status.includes('}, [sessionPathKey, cwdKey, nudgeGit])'))

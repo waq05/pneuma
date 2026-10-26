@@ -15,6 +15,10 @@
  *   DSC_FAKE_LLM_PORT   监听端口（默认 17399）
  *   DSC_FAKE_LLM_DELAY  正文开吐前的等待毫秒（默认 8000，设 0 可以快跑）
  *   DSC_FAKE_LLM_LOG    每次请求追加一行的日志文件（可选）
+ *   DSC_FAKE_LLM_TOOL   改成「第一次请求发起哪个工具调用」，JSON：
+ *                       `{"name":"dsh_write_note","arguments":{...}}`。不设时仍回 bash 探针。
+ *                       为什么要有它：验一张工具卡长什么样，不需要真模型，但需要它
+ *                       点名某一个工具——写死 bash 的话，别的工具的卡片永远走不到。
  *
  * @module dsc/scripts/fake-llm
  */
@@ -74,8 +78,32 @@ function usage(promptTokens, completionTokens) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+/**
+ * 这一次要发起的工具调用。
+ *
+ * 默认仍是那条 bash 审批探针（既有用例依赖它），设了 `DSC_FAKE_LLM_TOOL` 就按它走。
+ * 解析失败退回默认——假端点本身不该成为报障点。
+ */
+function probeCall() {
+  const raw = process.env['DSC_FAKE_LLM_TOOL']
+  if (raw === undefined || raw.trim() === '') return { name: 'bash', arguments: JSON.stringify({ command: PROBE_COMMAND }) }
+  try {
+    const parsed = JSON.parse(raw)
+    if (parsed !== null && typeof parsed === 'object' && typeof parsed.name === 'string') {
+      return {
+        name: parsed.name,
+        arguments: JSON.stringify(parsed.arguments ?? {}),
+      }
+    }
+  } catch {
+    // 落到默认
+  }
+  return { name: 'bash', arguments: JSON.stringify({ command: PROBE_COMMAND }) }
+}
+
 /** 回一个工具调用（一口气吐完，不急）。 */
 function streamToolCall(res, body) {
+  const probe = probeCall()
   send(res, frame({ role: 'assistant', content: '' }))
   send(
     res,
@@ -85,7 +113,7 @@ function streamToolCall(res, body) {
           index: 0,
           id: 'call_fake_1',
           type: 'function',
-          function: { name: 'bash', arguments: JSON.stringify({ command: PROBE_COMMAND }) },
+          function: probe,
         },
       ],
     }),
