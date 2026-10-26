@@ -496,7 +496,7 @@ cd D:\dsc\desktop && pnpm run typecheck
 # 三条汇总入口都按文件名自动发现，新探针不用回来登记：
 pnpm run check:ui                  # 35 条纯 Node 探针，31 秒
 pnpm run check:ui:e2e              # 4 条要真 Chromium，61 秒（含 diff 卡、手机尺寸远程壳）
-pnpm run check:dsh                 # dsh 兼容层 + 组合包 + 真包挂载 + 会话桥，94 条
+pnpm run check:dsh                 # dsh 兼容层 + 组合包 + 真包挂载 + 会话桥 + 流/事件旁路 + 合成验收，171 条
 pnpm run check:core                # 48 条内核探针（协议 / TUI / 会话库 / LLM 适配），约 8 分钟
 pnpm run check:all                 # 上面三条串起来（不含 e2e）
 node scripts/dsh-real-package-e2e.mjs  # 真包验收（要联网：numa plugin add dsh-cost-meter）
@@ -506,6 +506,10 @@ node shots/llm-retry-check.mjs     # LLM 重试（连接失败 / 429 重试，40
 node shots/llm-adapter-check.mjs   # 协议适配器接缝：注册/派发/卸载、重复拒绝、未注册报错、api 字段校验（11 条）
 node shots/prompt-projection-check.mjs # 命名投影链 + system-prompt 落盘 + note 记录与重放（17 条）
 node scripts/dsh-compat-check.mjs  # dsh 兼容层：解析钩子、工具兼容面、logger 桥、不支持项响亮拒绝（34 条）
+node scripts/dsh-session-bridge-check.mjs # 会话历史只读桥：形状照真实消费方、事件翻成 dsh 类型、写侧响亮拒绝（42 条）
+node scripts/dsh-llm-event-check.mjs # llm/stream 旁路：事件名/参数/chunk 形状/不伤人（12 条）
+node scripts/dsh-session-events-check.mjs # session/event 旁路：顺序、seq、surfaceOp、重试不另开步、真挂载（36 条）
+node scripts/dsh-compat-live-check.mjs # 合成验收：真内核跑真回合，一个探针插件同时吃三条面（19 条）
 node shots/model-caps-check.mjs    # 模型能力字段读写往返 + 档位 → 请求字段映射（23 条）
 node shots/order-check.mjs         # 侧栏工作区排序落点 + 按工作区树的层级（跑前先编 workspace-order.ts）
 node shots/sandbox-check.mjs       # 沙箱：路径围栏、命令策略、一次性升权、降级可见（193 条）

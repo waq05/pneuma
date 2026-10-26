@@ -26,6 +26,7 @@
 | 同上，但 import 了 `@deepseek-ai/dsh-tools`、`@deepseek-ai/schemastery` 等包 | **直接挂**，零改动 | 解析钩子把这类导入重定向到 dsc 自带副本（§2.3） |
 | `inject` 里有 **两边同名但 API 不同**的服务：`session` / `settings` / `commands` / `approval` / `agent` / `compact` | **能挂，但要改代码**：这些名字在 dsc 里解析到的是 dsc 自己的服务，dsh 的调用方式会运行时炸。按 §3 映射表改写，改完再挂 | 兼容层不垫同名异 API 的服务——垫了等于猜 |
 | `inject` 里有 `sessionProjections` / `agents` / `goals` / `systemPrompt` 等 dsh 会话侧服务 | **不支持**：挂载即被拒，宿主会列出缺的服务名 | 这些要整个 dsh 会话语义（事件溯源、agent 注册表），个人版不背；部分场景可按 §3 映射表重写后去掉这些 inject |
+| 插件**不 inject**，而是在 apply 里 `ctx.get('sessionPersistence')` / `ctx.get('sessions')` 读历史，用 `ctx.on('llm/stream')` 收实时用量、`ctx.on('session/event')` 收回合过程 | **能挂，能用**（2026-10-26 起） | 兼容层把会话历史按 dsh 的事件类型交出去（只读），并把回合过程与用量按 dsh 的事件/流形状播出来；范围见 §2.7 |
 | 工具 `execute` 里用了 `exec.agent` / `exec.deferContext` / `exec.requestContext` 等 dsh 执行上下文字段 | **能挂，但要改代码**：dsc 给的 `exec` 只有 `{ signal, cwd }`，其余字段是 `undefined`，用到就炸 | 改成只依赖 `signal`；真需要会话身份的插件属于不支持类 |
 | 工具 `output.render` 返回结构化值（对象、数组，不是一段字符串） | **卡片能显示**：返回值按 dsc 工具卡的通用渲染落到对话里，与原生插件同一套 | 卡片是 dsc 自己的渲染器画的，不执行插件的界面代码；dsh 塞进 `render` 的 ConversationNode 之类会被忽略 |
 | 工具 `output.render` 返回图像块 | 能挂，图像块降级为占位说明文字 | dsc 工具图像走 data URL，dsh 的 attachment 引用没有直接映射 |
@@ -145,6 +146,37 @@ numa plugin list [--profile 名字]
 - 信任：`numa plugin add` 装进 profile 的那一步就算用户同意，界面半直接可用，没有第二张
   「确认信任」卡。这与手动丢进 `~/.dsc/plugins/` 的第三方界面插件不同，那种需要点一次。
 
+
+### 2.7 会话过程与历史：订阅事件、读历史（2026-10-26 起可用）
+
+dsh 的计费、统计、审计类插件普遍**不听磁盘、听广播**：实时用量走 `llm/stream`（waterfall，
+管道里流的是 chunk），回合过程走 `session/event`（一条一条广播），历史与补账走
+`sessionPersistence` / `sessions`（只读服务）。这三条面我们都能给：
+
+| 面 | 给什么 | 怎么用 |
+| --- | --- | --- |
+| `llm/stream` | 每次模型调用一个 `{ type: 'usage', usage }` chunk（真实 token 数），插件包住下游流读它即可 | `ctx.on('llm/stream', (options, next) => { … })` |
+| `session/event` | `turn/start`、`step/start`、`assistant/message`（带 `usage` 与正文/推理/工具调用的内容块）、`tool/call`、`tool/result`、`step/end`、`turn/end`、`user/message` | `ctx.on('session/event', (session, event) => { … })`，会话 id 在 `session.header.id` |
+| `sessionPersistence`（只读） | `list()`、`stat(id)`、`open(id, 'read')`；句柄上 `read(seq数字)` 或 `read({ maxMessages })`；事件已是 dsh 类型（`user/message` / `assistant/message` / `tool/result`，用量挂在助手消息的 `usage` 上） | `const p = ctx.get('sessionPersistence')`（**别写进 inject**，它不是 cordis 服务） |
+| `sessions`（只读） | `list()` / `get(id)` / `has(id)`：会话 id、cwd、createdAt、title | 同上，`ctx.get('sessions')` |
+
+四条要知道的边界：
+
+1. **只读**。`create` / `append` / `open(id, 'write')` 一律抛中文错误：会话由内核独占写入，
+   两套写者改同一份历史坏的是用户的数据。错误里写明「为什么不行、只读能做什么」，
+   不做静默 no-op。
+2. **不是 dsh 的每一次事件都发**。`request/header`、`compaction/summary`、
+   `assistant/chunk`（逐帧）、`system/message` 这些我们给不出真的，就**不发**——不编。
+   靠这些做功能的插件（上下文成本面板一类）会在第一步空转。
+3. **用量口径按 dsh 换算过**：我们的 `inputTokens` 是 `prompt_tokens` 总量（缓存命中含在内），
+   dsh 的分项互斥（命中单列在 `cacheReadTokens`）。直接抄会把命中算两遍钱，兼容层已经换算。
+4. **图片不进事件**：dsh 的 `ImageBlock` 要附件引用，我们给不出真的，所以用户消息只带正文块。
+   要看图片走 `sessionPersistence` 读历史（那边的 `content` 也是正文）。
+
+验证：`pnpm run check:dsh` 里 `dsh-llm-event-check`（12 条）、`dsh-session-events-check`
+（36 条）、`dsh-session-bridge-check`（42 条）、`dsh-compat-live-check`（19 条）四条钉着；
+最后一条是真内核跑一个两步骤回合、一个探针插件同时吃三条面。
+
 ## 3. 映射表：要改代码时的 API 对照
 
 dsh 与 dsc 是同名生态（都叫 cordis 插件），但服务面不同。改写的总原则：**会话侧语义找
@@ -198,8 +230,9 @@ dsc 的等价扩展点重挂，找不到就砍掉那个功能**——个人版�
    函数全部被调用）。
 7. **组合包**：走 `numa plugin add` 装，`numa plugin list` 能看到包与它的插件；包装了界面半
    就再去插件中心确认「组合包界面」那一组有它、开关能停。
-8. **回归自检**：`pnpm run check:dsh`（`scripts/dsh-compat-check.mjs` 等三条）——34 条断言覆盖解析钩子、工具兼容面、
-   logger 桥、配置校验、不支持项拒绝；给兼容层改代码时必须全绿再交付。界面半的回归
+8. **回归自检**：`pnpm run check:dsh`（七条脚本，171 条断言）——覆盖解析钩子、工具兼容面、
+   logger 桥、配置校验、不支持项拒绝、会话桥、流与事件旁路、以及一条真内核跑真回合的
+   合成验收；给兼容层改代码时必须全绿再交付。界面半的回归
    另跑 `pnpm run check:ui`（35 条纯 Node 探针，组合包那几组在里面）与 `pnpm run check:ui:e2e`
    （4 条要真 Chromium 的，含 diff 卡与手机尺寸远程壳）。
 
@@ -214,6 +247,11 @@ dsc 的等价扩展点重挂，找不到就砍掉那个功能**——个人版�
   写成 `platform: 'pneuma'` 的那一半是我们自己的界面插件协议，不是 dsh 的——两套别混。
 - **`ctx.tools` 兼容面只实现了 `register`**：调其余成员（`schemas` / dispatch 类）会响亮
   报错，不会静默 undefined——这是刻意的，别依赖。
+- **`session/event` 是合成流，不是 dsh 的会话日志**：`seq` 是我们自己从 0 起的连续计数，
+  不是磁盘上的事件号；只发已知的那八种（见 §2.7），`request/header`、`compaction/summary`、
+  `assistant/chunk` 逐帧、`system/message` 不发。第一个参数是**只读会话视图**（`id` /
+  `header` / `cwd` / 最近 64 条事件的尾巴），不是 dsh 的 `Session` 实例——插件去 `append`
+  会在它自己的代码里炸，而不是我们假装支持。
 - **`config.yaml plugins` 段的 extraPaths 不享受解析重定向**：重定向按 `~/.dsc/plugins/`
   前缀匹配；放外头的插件要么搬进来，要么自带依赖（把 `@deepseek-ai/*` 装在它自己的
   node_modules 里，Node 自然解析，但 cordis 双实例风险自担）。

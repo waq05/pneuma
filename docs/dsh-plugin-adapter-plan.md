@@ -119,11 +119,11 @@ Pneuma 有自己的界面插件契约（`plugin.json` + `@dsc/ui` + 槽位 + 平
 > 标记与 dsh 客户端能力在 `2c58a48`；**真第三方包验收**（`dsh-cost-meter` 1.9.41）在 `bdf93ca`，
 > 顺带补了入口解析、两个宿主库垫片、`DSH_HOME` 归一与缺服务诊断。
 >
-> **当时还欠的四件，2026-10-26 已清三件**：
-> 1. **服务适配器**——仍未做。判定表里 `adapted` 那些只有判定、没有实现，所以挂得上的 dsh
->    插件一调服务就露馅（`dsh-cost-meter` 的成本条就是这么没数的：缺 `sessionPersistence`
->    与会话历史）。**卡点与做法单独写了一份**：[dsh-service-bridge-plan.md](dsh-service-bridge-plan.md)
->    （为什么不是一批能做完、只读子集怎么切、拿真包怎么验收）。
+> **当时还欠的四件，2026-10-26 当天全部清完**：
+> 1. **服务适配器**——已做（当天两轮）。只读的 `sessionPersistence` / `sessions` 桥；
+>    随后补上 `llm/stream`（实时用量）与 `session/event`（回合过程）两条旁路广播，并把
+>    历史事件翻成 dsh 的类型、用量口径按 dsh 的互斥分项换算。`dsh-cost-meter` 的账本现在
+>    记的是真数。过程与边界：[dsh-service-bridge-plan.md](dsh-service-bridge-plan.md) §6–§7.2。
 > 2. **桌面端端到端**——已做：`examples/plugins/dsh-style-clock.js` 的 `dsh_write_note` 真的
 >    画出 diff 卡，`scripts/ui-dsh-card-e2e.mjs` 真机跑一轮并留
 >    `desktop/shots/dsh-diff-card.png`。

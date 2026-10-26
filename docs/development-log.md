@@ -8747,3 +8747,36 @@ ctx.get 现取」的真挂载路径，以及写侧四条拒绝断言、分页游
 
 剩下的小口子写进文档：没发 `session/event`；我们一次调用发一个 usage chunk（dsh 是流式
 逐步吐），插件只认最后一个有效 usage 所以等价，但若有插件按增量累加要改。
+
+**第二轮：回合过程也广播了，历史改成 dsh 的形状，用量口径对齐（2026-10-26 晚）**：
+
+上一批补了 `llm/stream`（一次调用的用量），三处「安静地不做声」还在：插件看不见**正在跑的
+这一轮**（没有 `session/event`）、历史读回来的是**我们自己的行**（`user`/`assistant`/`tool`
+而不是 dsh 的 `user/message`/`assistant/message`/`tool/result`）、用量分项的**口径**与 dsh
+相反。前两处是功能空转，第三处是会**多算钱**。
+
+1. `session/event` 广播（新文件 `src/core/dsh-compat/session-events.ts`，一个会话一座桥）：
+   把内核 `CoreEvent` 翻成 dsh 的会话事件。三处顺序是硬对齐的——内核先发 `user` 再发
+   `turn/start`（dsh 相反，所以回合没开时先收着）；内核先发 `message` 再发 `usage`
+   （dsh 把用量放在同一条助手消息里，所以助手消息先压着等用量，没用量就在下一条事件前
+   定稿）；`context` 就是「一步开始」，重试再来一条不算新的一步。调用点在
+   `src/plugins/agent.ts` 的 `emit` 第一行，整体吞错。
+2. 历史桥改成 dsh 的类型与消息形状，用量并进前面最近的 `assistant/message`；`meta` 不再
+   当事件，`state` 这类自有记录标 `ignorable` 透传。这就是 cost-meter 的 backfill /
+   context-costs / trajectory 认的东西——原来它们空转，因为只认 `assistant/message`。
+3. 用量口径（`toDshUsage()`，两个出口共用）：我们的 `inputTokens` 含缓存命中，dsh 的分项
+   互斥。原来把总量塞进 `inputTokens`、又把命中塞进 `cacheReadTokens`，插件按互斥一算，
+   命中被按未命中价再收一遍。现在 `input` 只算未命中，命中单列，`cacheWrite` 恒 0（我们没有
+   这个概念，不编），`totalTokens` 四项相加。
+4. 离线合成验收（`scripts/dsh-compat-live-check.mjs`）：真内核 + 本地假端点跑一个两步骤的
+   真回合，一个探针插件同时吃三条面，断言「事件里的用量 === 流里的用量 === 历史里的用量」。
+   真包验收（要联网那条）在改动后重跑仍 6/6——新事件没把 cost-meter 的监听器带崩。
+
+自检：`dsh-session-events-check` 36 条、`dsh-session-bridge-check` 42 条（原 36）、
+`dsh-compat-live-check` 19 条、`dsh-llm-event-check` 12 条；`pnpm run check:dsh` 合计
+**171 条全绿**。顺带跑过四条回合相关的内核探针（transcript-order / transcript-usage /
+turn-changes / throughput），四个全绿。
+
+仍然不发、也不打算发（给不出真的就不编）：`request/header`、`compaction/summary`、
+`assistant/chunk` 逐帧、`system/message`。用户消息里的图片也不进事件（dsh 的 `ImageBlock`
+要附件引用），要看图片走历史。

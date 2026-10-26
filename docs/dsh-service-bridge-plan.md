@@ -96,11 +96,15 @@ Pneuma 这边是另一套：
 `inject` 仍会被拒（cordis 服务表里没有这两个名字，等不到），要改成 `ctx.get`；
 dsh 的 cost-meter 本来就是这么写的。
 
-事件怎么来：会话 jsonl 的一行算一个事件（按时间排序后编 `seq`），`~/.dsc/usage/usage.jsonl`
-里的请求行按 `sid` 归到会话上、类型标成 `llm/usage`（带 inputTokens / outputTokens /
-cacheReadTokens / cacheWriteTokens）；工具行不带 token，不当事件。
+事件怎么来（2026-10-26 晚改过一轮，见 §7.2）：会话 jsonl 的一行翻译成 **dsh 的事件类型**
+（`user/message` / `assistant/message` / `tool/result`），正文包成 dsh 的消息形状
+（`{ id, role, content: 内容块[], source }`），按时间排序后编 `seq` 与 `time`。
+`~/.dsc/usage/usage.jsonl` 里的请求行按 `sid` 归到会话上，**并进它前面最近的那条
+`assistant/message` 的 `usage` 字段**（dsh 的用量就长在助手消息上）；前面没有助手消息可挂
+时才单列一条 `llm/usage`，并标 `ignorable`（不认识的插件可以跳过）。工具行不带 token，
+不当事件；`meta` 行不是事件（会话头走 `header`）。
 
-自检：`node scripts/dsh-session-bridge-check.mjs`（32 条，含「不声明 inject 的插件在 apply 里
+自检：`node scripts/dsh-session-bridge-check.mjs`（42 条，含「不声明 inject 的插件在 apply 里
 ctx.get 现取」这条真挂载路径），进 `pnpm run check:dsh`。
 
 ## 7. 真包验收（2026-10-26）：先负后正
@@ -153,12 +157,87 @@ PASS 账本里有这一轮的花费
 
 剩下的小口子（不挡用）：
 
-- 我们只发 `llm/stream`，没发 `session/event`。费用条有数了；如果哪天插件依赖
-  `session/event` 做别的事（它是会话内事件流），再补。
-- 我们发的是「一次调用一个 usage chunk」，dsh 是流式过程中逐步吐。插件只认最后一个有效
-  usage，等价；但若将来有插件按增量累加，这里要改成按帧发。
+- ~~只发 `llm/stream`，没发 `session/event`~~ —— 当晚补上了，见 §7.2。
+- 我们发的是「一次调用一个 usage chunk」，dsh 是流式过程中逐步吐。真 dsh 的
+  `StreamChunk` 里 `usage` 本来就是**一条**（在 `finish` 之前结算，见
+  `packages/llm/llm/src/types.ts` 的 `StreamChunk` 注释「Adapters emit usage before the
+  terminal finish and nothing afterward」），所以这不是缩水；差别只在「我们整段文本不回放
+  逐 delta 的节奏」。
 
 > 「桥的形状对」不等于「功能对」——只做读侧时成本条仍然是空的，这一条是这轮最大的提醒。
+
+## 7.2 第二轮（当晚）：`session/event` 广播 + 历史改成 dsh 形状 + 用量口径对齐
+
+§7.1 之后还剩三处「安静地不做声」，这一轮全补上。每处都先说清原来错在哪，再说现在怎么给。
+
+### 7.2.1 `session/event`：正在跑的这一轮，插件终于看得见
+
+原来只发 `llm/stream`（一次调用的用量），会话**过程**没人播：`turn/start`、`step/start`、
+`assistant/message`、`tool/call`、`tool/result`、`step/end`、`turn/end` 一条都没有。
+`dsh-cost-meter` 的统计预热等 `turn/end`、按事件对账的那部分等 `assistant/message` 里的
+`usage`——它们不报错，只是永远不触发。
+
+新文件 `src/core/dsh-compat/session-events.ts`：一个会话一座桥，把内核 `CoreEvent` 翻译成
+dsh 的 `session/event`（第二个参数是会话载体，第三个是事件）。调用点在
+`src/plugins/agent.ts` 的 `emit` 第一行，`publish` 内部整体吞错——广播始终是旁路。
+
+翻译规则里有几处是**按 dsh 的顺序**硬对齐的，值得记住：
+
+- 内核先发 `user` 再发 `turn/start`；dsh 是 `turn/start` 在前。所以回合没开时的用户消息先
+  收着，等 `turn/start` 到了再补发（轮中途插话则立刻发，它属于当前回合）。
+- 内核先发 `message` 再发 `usage`；dsh 把用量放在 `assistant/message` **同一条**里。所以
+  助手消息先压在手里，等紧随其后的 `usage` 到了再一起发；没有用量（端点没报）就在下一条
+  事件之前定稿，不吞消息。
+- `context`（请求组装完成、流还没开）就是「一步开始」；重试会再来一条 `context`，那时这一步
+  的助手消息还没定稿，所以**不另开一步**。
+
+不发什么也写清楚了：dsh 那些我们给不出的（`request/header`、`compaction/summary`、
+`assistant/chunk` 逐帧、`system/message`）一律不发，不编。
+
+自检 `node scripts/dsh-session-events-check.mjs`（36 条）：顺序、`seq` 连续、`surfaceOp`
+只加在 `user/message` / `assistant/message` / `tool/result` 三类上、重试不另开步、
+中止与失败各有 reason、监听器抛错不带崩回合，外加一条**真挂载**（dsh 风格插件
+`ctx.on('session/event')` 真的接住，会话 id 经 `session.header.id` 到手）。
+
+### 7.2.2 历史桥原来给的是「我们的行」，不是「dsh 的事件」
+
+`sessionPersistence.open().read()` 原来把 jsonl 原样交出：`user` / `assistant` / `tool`。
+看起来「一样有数据」，但 dsh 的插件按**类型**认：`dsh-cost-meter` 的 backfill、
+context-costs、trajectory 只认 `assistant/message`（还要 `data.usage` 与
+`data.message.source`）。所以它的「历史补账 / 上下文成本」那一半是空转的——和 §7 里成本条
+为空是同一类错：**形状差不多**不等于**消费方认**。
+
+现在逐行翻译：`user` → `user/message`（`{id, role, content:[{type:'text'}], source}`），
+`assistant` → `assistant/message`（正文 + 推理 + `tool-call` 内容块），
+`tool` → `tool/result`（`toolCallId` 与 `source.callId` 成对），`meta` 不再是事件，
+`state` 这类自有记录原样透传并标 `ignorable`。用量按时间并进前面最近的
+`assistant/message`；并进去了就不再单列。
+
+副作用（是修正，不是退化）：`stat().eventCount` 少了——那是**事件**数，`meta` 本来就不是事件。
+
+### 7.2.3 用量口径：原来的数会把缓存命中算两遍钱
+
+我们这边 `inputTokens` 是 `prompt_tokens` **总量**（缓存命中含在内）；dsh 的分项是**互斥**的：
+`inputTokens` 只算未命中，`cacheReadTokens` 单列，计费时三项相加
+（`packages/llm/llm/src/types.ts` 的 `TokenUsage` 注释写得很直白）。原来把我们的总量直接
+塞进 `inputTokens`，同时又把命中数塞进 `cacheReadTokens`——插件按互斥口径一算，命中那部分
+被按未命中价再收了一遍。
+
+现在换算收在 `toDshUsage()`（`llm-usage-event.ts`）一处，两个出口共用：
+`inputTokens = 未命中`、`cacheReadTokens = 命中`、`cacheWriteTokens = 0`（我们没有「缓存写入」
+这个概念，不编）、`totalTokens = 四项之和`。历史桥也用它，所以「实时」与「补账」两处
+对同一个回合报同一个数。
+
+### 7.2.4 一条链路合起来走得通（离线验收）
+
+三条面各自有自检还不够：真插件是**三条一起用**的，接缝上的顺序错照样能全绿。所以加了
+`scripts/dsh-compat-live-check.mjs`（19 条）：真内核 + 本地假端点跑一个两步骤的真回合，
+一个探针插件同时听 `llm/stream`、`session/event`，并在 `turn/end` 时用
+`sessionPersistence` 读回这一轮。断言三件事对得上：事件里的用量 === 流里的用量 ===
+历史里的用量，且历史里读得到 `user/message` 与 `assistant/message`。
+
+真包验收（`DSC_REAL_PKG_EXPECT_COSTS=1 node scripts/dsh-real-package-e2e.mjs`）在同一批改动
+之后仍然 6/6 全绿——说明新发的 `session/event` 没有把 cost-meter 的监听器带崩。
 
 ## 8. 参考
 
