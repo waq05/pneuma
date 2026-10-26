@@ -1,7 +1,8 @@
 # dsh 服务桥：为什么它还没做，以及做的时候怎么做
 
-> 状态：**未开工**（2026-10-26 记录）。这是 dsh 插件适配剩下的最后一项，也是唯一一项
-> 「装得上但用不起来」的根因。本文只写清楚边界与做法，不写「已完成」。
+> 状态：**第一步（读侧最小面）已做**（2026-10-26）。第四节的第 1、2 步落地在
+> `src/core/dsh-compat/session-bridge.ts`，第 3 步（真包验收）**还没做**——所以在
+> 「dsh-cost-meter 的成本条有没有数」这个问题上，本文不给保证。
 
 ## 1. 症状
 
@@ -36,7 +37,7 @@ Pneuma 这边是另一套：
 也就是说：dsh 的读侧语义（事件流 + seq）Pneuma 没有，但**算账要的那点数据 Pneuma 有**，
 只是散在两个地方。适配器的真正工作是把这两份拼成 dsh 期望的事件形状。
 
-## 3. 为什么不在一批里做完
+## 3. 为什么不能一口气做完（读侧做了，整体仍不算完）
 
 1. **API 面比看起来大**：不是两个方法，是 `stat / open / list / read(page) / create` 加句柄与
    revision 语义。只实现「刚好够某个插件调的那两个」等于给下一个插件埋新的坑。
@@ -49,9 +50,9 @@ Pneuma 这边是另一套：
 4. **收益 vs 成本**：这条链路服务的是「界面上的费用显示」这一类需求。Pneuma 自己已经有
    `usageStats()`（设置里的用量统计）与状态栏用量，成本条属于锦上添花。
 
-## 4. 要做的时候怎么做（三步，可按需切）
+## 4. 怎么做（三步；第 1、2 步已做，第 3 步没做）
 
-**第一步：读侧最小面（1 批）**
+**第一步：读侧最小面（1 批）——已做**
 
 - 新 `src/core/dsh-compat/session-bridge.ts`：把 Pneuma 的会话列表映射成 dsh 的
   `list()` / `stat(id)`；`open(id)` 返回只读句柄，`read({throughSeq, beforeSeq, maxMessages})`
@@ -62,12 +63,12 @@ Pneuma 这边是另一套：
   会话由内核独占写入」。
 - 注册进兼容层 ctx（`get` 能取到），仍走 `service-map.ts` 的口径。
 
-**第二步：`sessions` 注册表（同一批）**
+**第二步：`sessions` 注册表（同一批）——已做**
 
 - `get(id)` 返回 `SessionRecord`；`list()` 给当前工作区的会话（Pneuma 已有这一份数据）。
 - 不要实现 fork / prompt / 迁移那些——它们属于写侧。
 
-**第三步：用真包验收（必须做，否则不算完成）**
+**第三步：用真包验收（没做，所以这条还不算完成）**
 
 - 装 `dsh-cost-meter` 到隔离 profile，跑一轮带工具的真实对话（`scripts/_fake-llm.mjs` 可以
   点名工具），断言成本条出现非零数字。
@@ -79,7 +80,32 @@ Pneuma 这边是另一套：
 - 想看在用多少 token：设置里的「用量统计」（`usageStats()`）与状态栏用量已经有数；
 - 想看单个会话的花费：`~/.dsc/usage/usage.jsonl` 里有逐次调用的 `i`/`o`，可按 `sid` 汇总。
 
-## 6. 参考
+## 6. 已做的部分（2026-10-26）
+
+`src/core/dsh-compat/session-bridge.ts`，两个只读桥：
+
+| 名字 | 给了什么 | 没给什么 |
+| --- | --- | --- |
+| `sessionPersistence` | `list()`、`stat(id)`（header / revision / eventCount / sizeBytes / formatStatus）、`open(id, 'read')` 拿只读句柄，句柄上 `read({throughSeq, beforeSeq, maxMessages})` | `create` / `append` / `open(id,'write')`——一律抛一句中文错误，说明「会话由内核独占写入、只读能用什么」 |
+| `sessions` | `list()`、`get(id)`、`has(id)`（会话 id、cwd、createdAt、title、live=false、persisted=true） | fork / prompt / 迁移这些写口 |
+
+怎么进到插件手里：兼容层的 ctx 代理在 `get` 时先问 cordis，真没有就交给
+`compatServiceOf(name)`（见 `src/core/plugin-loader.ts`）。**没有走 `ctx.provide`**——
+桥是按插件现造的读口，provide 出去会变成所有插件共享一个可变对象。副作用是：写进
+`inject` 仍会被拒（cordis 服务表里没有这两个名字，等不到），要改成 `ctx.get`；
+dsh 的 cost-meter 本来就是这么写的。
+
+事件怎么来：会话 jsonl 的一行算一个事件（按时间排序后编 `seq`），`~/.dsc/usage/usage.jsonl`
+里的请求行按 `sid` 归到会话上、类型标成 `llm/usage`（带 inputTokens / outputTokens /
+cacheReadTokens / cacheWriteTokens）；工具行不带 token，不当事件。
+
+自检：`node scripts/dsh-session-bridge-check.mjs`（32 条，含「不声明 inject 的插件在 apply 里
+ctx.get 现取」这条真挂载路径），进 `pnpm run check:dsh`。
+
+**还没做的一步很关键**：拿真包（`dsh-cost-meter`）跑一轮，确认成本条出现非零数字。
+在那之前，「桥的形状对」只等于「我们的探针自洽」。
+
+## 7. 参考
 
 - 判定表：`src/core/dsh-compat/service-map.ts`（`sessions` / `sessionPersistence` 两条）
 - 真包验收记录：[development-log.md](development-log.md) 里「真装一个 dsh 组合包」那一节

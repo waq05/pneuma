@@ -8671,3 +8671,25 @@ Electron 开到 390×844 加载带令牌的地址，读页内账本并截图。�
 做法分三步写在文档里：读侧最小面（list/stat/open/read，行号当 seq，usage 由 usage.jsonl
 合成）、sessions 注册表、最后必须用真包验收。计划文档里那一行也从「还欠四件」改成
 「四件清了三件，服务适配器仍未做」。
+**服务桥第一步：会话历史与用量按 dsh 的只读面交出去（2026-10-26）**：
+
+`dsh-cost-meter` 的成本条没数，根因是 `ctx.get('sessionPersistence')` 取到 `undefined`。
+这一批把**读**这一半做了，写那一半明确拒绝：
+
+- 新 `src/core/dsh-compat/session-bridge.ts`：`sessionPersistence` 给 `list` / `stat` /
+  `open(id,'read')` + `read({throughSeq, beforeSeq, maxMessages})`；`sessions` 给
+  `list` / `get` / `has`。`create` / `append` / `open(…,'write')` 抛一句中文错误，
+  说清「会话由内核独占写入、只读能用什么」——不静默 no-op，否则插件以为写成功了。
+- 事件口径：会话 jsonl 一行 = 一个事件（按时间排序后编 `seq`），`~/.dsc/usage/usage.jsonl`
+  的请求行按 `sid` 归到会话上、标成 `llm/usage`（带 input/output 与缓存命中）。
+  工具行没有 token，不算事件。这样「算账要的数据」就齐了，虽然它们在磁盘上是两处。
+- 进插件手里走兼容层 ctx 的 `get` 兜底（先问 cordis，没有再交给 `compatServiceOf`），
+  **不走 `ctx.provide`**：桥是按插件现造的读口，provide 出去会变成所有插件共享一个可变对象。
+- `stat` 的 revision 用「事件数:字节数」，够插件判断「这份有没有变」，不假装是内容哈希；
+  `live` 一律 false——没有「正在跑」的判据就别编。
+
+验证：`scripts/dsh-session-bridge-check.mjs` 32/0（含「不声明 inject 的插件在 apply 里
+ctx.get 现取」的真挂载路径，以及写侧四条拒绝断言、分页游标三条、用量合并位置）。
+
+**没做完的那一步**：拿真包跑一轮，确认成本条出现非零数字。在那之前「形状对」只等于
+「我们的探针自洽」——这一点写进了 docs/dsh-service-bridge-plan.md 的第 6 节。

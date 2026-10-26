@@ -25,6 +25,11 @@ export type DshServiceVerdict =
  * 判定表。键是 dsh 的服务名。
  *
  * 只收「插件真会 inject 的」那些；dsh 的客户端（界面）服务不在此列——那是阶段 D 的事。
+ *
+ * `sessionPersistence` 与 `sessions` 走的是「兼容层 `ctx.get` 兜底」：真挂载时它们由
+ * core/dsh-compat/session-bridge 现造一个只读桥交出去。写进 `inject` 仍会被拒（cordis
+ * 的服务表里没有这两个名字，等不到）——插件改成 `ctx.get` 即可，dsh 自己的 cost-meter
+ * 就是这种写法。
  */
 export const DSH_SERVICE_MAP: Readonly<Record<string, DshServiceVerdict>> = {
   // ── 同名同义（Pneuma 有同名服务，本来就不算 foreign） ──────────────────────
@@ -37,7 +42,8 @@ export const DSH_SERVICE_MAP: Readonly<Record<string, DshServiceVerdict>> = {
 
   // ── 有对应但语义不同 ──────────────────────────────────────────────────────
   llm: { tier: 'adapted', pneuma: 'llm', note: 'dsh 的 llm 不存当前模型，Pneuma 的 llm 是选路单例；读 provider 会拿到不同东西' },
-  sessions: { tier: 'adapted', pneuma: 'session', note: 'dsh 是多会话注册表，Pneuma 只有当前会话' },
+  sessions: { tier: 'adapted', pneuma: 'sessions（只读桥）', note: 'dsh 是多会话注册表；Pneuma 给一份只读的会话清单（list / get / has），没有 fork、prompt 这些写口' },
+  sessionPersistence: { tier: 'adapted', pneuma: 'sessions（只读桥）', note: 'dsh 是事件溯源的持久化（create / open / stat + 读写句柄）；Pneuma 只给 list / stat / open(read) / read，写方法响亮拒绝——会话由内核独占写入' },
   agents: { tier: 'adapted', pneuma: 'agent', note: 'dsh 是 agent 注册表，Pneuma 只有当前回合循环；子智能体走 team' },
   settings: { tier: 'adapted', pneuma: 'settings', note: '同名不同物：dsh 是插件 Config 表单，Pneuma 是应用设置' },
   systemPrompt: { tier: 'adapted', pneuma: 'prompt', note: 'dsh 是结构化 section，Pneuma 是 register(id, text, order)' },

@@ -33,6 +33,7 @@ import { errText as err } from './err-text.js'
 import { activeConfigFile } from './config-store.js'
 import { parseTolerantYaml } from './migrate.js'
 import { describeForeignServices } from './dsh-compat/service-map.js'
+import { compatServiceOf } from './dsh-compat/session-bridge.js'
 import { applyPatchLayers, type PatchLayer, type PluginRow } from './plugin-patch.js'
 import { bundleDirOf, enginesProblem, readBundle, readProfile, type BundleInfo } from './plugin-bundle.js'
 import { dscPath } from './path-policy.js'
@@ -294,10 +295,14 @@ function compatCtx(innerCtx: Context, file: string, asked: string[]): Context {
         return dshToolsFacade((entry) => target.tools.register(entry), () => resolveRiskConfig(file))
       }
       if (prop === 'get') {
-        // 原样转发（缺服务仍然给 undefined，与 cordis 一致），只顺手记一笔名字。
+        // 先问 cordis（原样转发）；真没有就看服务桥有没有**只读**的对应物。
+        // 为什么在这里兜底而不是 ctx.provide：桥是按插件现造的视图（每次 get 拿到的是
+        // 同一份磁盘状态的读口，不是全局单例），provide 出去会变成所有插件共享一个可变对象。
         return (name: unknown): unknown => {
           if (typeof name === 'string') asked.push(name)
-          return (target.get as (key: string) => unknown)(String(name))
+          const direct = (target.get as (key: string) => unknown)(String(name))
+          if (direct !== undefined) return direct
+          return compatServiceOf(String(name))
         }
       }
       return Reflect.get(target, prop, receiver)
