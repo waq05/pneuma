@@ -26,7 +26,8 @@
  * @module dsc/core/ui-route
  */
 import type { UiComboTable } from './ui-combo.js'
-import { lookupUiPluginBundle, lookupThirdPartyUiBundle, uiPluginsDir } from './ui-bundles.js'
+import { lookupPackageUiBundle, lookupUiPluginBundle, lookupThirdPartyUiBundle, uiPluginsDir } from './ui-bundles.js'
+import { activeProfileDir } from './profile-dir.js'
 
 /** 插件资源的路由前缀。 */
 export const UI_BUNDLE_ROUTE = '/plugins/'
@@ -85,18 +86,21 @@ export function resolveUiBundleRequest(
   const wantBody = method !== 'HEAD'
   const found = lookupUiPluginBundle(id, file, rev, dir, wantBody)
   if (!found.known) {
-    // 内置清单里没有 → 查第三方（~/.dsc/plugins/ 的界面半边）。两边同一份回话口径。
+    // 内置清单里没有 → 查第三方（~/.dsc/plugins/ 的界面半边），再查组合包（profile 里装的包）。
+    // 三处同一份回话口径。
     const third = lookupThirdPartyUiBundle(id, file, rev, undefined, wantBody)
-    if (third.known && (third.current || third.previous)) {
+    const fromPackage = third.known ? third : lookupPackageUiBundle(id, file, rev, activeProfileDir(), wantBody)
+    const resolved = fromPackage
+    if (resolved.known && (resolved.current || resolved.previous)) {
       const headers: Record<string, string> = {
         'content-type': 'text/javascript; charset=utf-8',
-        'content-length': String(third.size ?? 0),
+        'content-length': String(resolved.size ?? 0),
         'cache-control': IMMUTABLE_CACHE,
       }
-      if (!wantBody || third.body === null) return { status: 200, headers }
-      return { status: 200, headers, body: third.body }
+      if (!wantBody || resolved.body === null) return { status: 200, headers }
+      return { status: 200, headers, body: resolved.body }
     }
-    return { status: 404, reason: third.known ? '插件版本对不上' : '没有这个插件' }
+    return { status: 404, reason: resolved.known ? '插件版本对不上' : '没有这个插件' }
   }
   if (!found.current && !found.previous) return { status: 404, reason: '插件版本对不上' }
   if (found.size === null || (wantBody && found.body === null)) {

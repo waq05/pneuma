@@ -851,6 +851,42 @@ const got = ui.consume<typeof seat>('teammates')   // 缺席给 undefined（软�
   （状态面板的选择是整行不渲染：点了没反应的入口比没有入口更糟）；给动作面起名同样别撞
   插件 id。
 
+### 10.6.1 一个包两半：宿主半 + 界面半（2.0 起）
+
+dsh 的构造单位是**一个 npm 包两半**，Pneuma 2.0 起照同一份声明收界面半：
+
+```jsonc
+// package.json
+{
+  "name": "dsh-cost-meter",
+  "exports": {
+    ".":        "./lib/index.js",      // 宿主半：apply(ctx)
+    "./client": "./lib/client.js"      // 界面半：apply(ui)
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },   // 宿主行（可选）
+    "client": {
+      "platform": "pneuma",            // 我们的壳只认这个值
+      "api": "^2.0.0",                 // @dsc/ui 的版本区间（必填）
+      "inject": ["trace"],             // 依赖的插件 id（可选）
+      "immediately": false             // 首屏预取（可选）
+    }
+  }
+}
+```
+
+几条规矩：
+
+- **`platform` 写 `web` 的不加载**：那是给 dsh 客户端运行时写的代码，跑在我们的壳里等于白屏。
+  插件中心仍会列一行「界面能力（dsh 客户端插件）：platform:web · 只列不加载」。
+- **id 就是包名**（`@scope/name` 照用），地址形如 `/plugins/%40scope%2Fname/client.js?rev=…`。
+- **信任**：组合包是用户自己在终端跑 `numa plugin add` 装进 profile 的，那一步就是同意；
+  `~/.dsc/plugins/` 下手放的界面插件仍要单独点一次。
+- **启停**：条目树里的键是 `<包名>/client`（`~/.dsc/plugins.json`），停用即不进启动图。
+- **取字节**：走 `exports["./client"]`，必须落在包目录内；入口读不到就拒绝并说明。
+
+验证：`node scripts/ui-package-plugin-test.mjs`（11 条：发现、门禁、字节、组图、地址形状）。
+
 ### 10.7 席位：跨插件共享一份状态（1.2.0 起可用）
 
 ```ts

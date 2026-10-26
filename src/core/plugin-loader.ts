@@ -36,6 +36,7 @@ import { describeForeignServices } from './dsh-compat/service-map.js'
 import { applyPatchLayers, type PatchLayer, type PluginRow } from './plugin-patch.js'
 import { bundleDirOf, enginesProblem, readBundle, readProfile, type BundleInfo } from './plugin-bundle.js'
 import { dscPath } from './path-policy.js'
+import { activeProfileDir } from './profile-dir.js'
 
 /** 内核插件 API 版本（重导出，供宿主/文档引用）。 */
 export { KERNEL_API_VERSION }
@@ -426,27 +427,10 @@ export async function mountAllExternalPlugins(
 /**
  * 当前生效的 profile 目录（没配就是 null = 不加载组合包）。
  *
- * 从哪来：环境变量 `DSC_PROFILE` 优先（自检与多环境用它），否则看 `~/.dsc/config.yaml`
- * 的 `profile:` 字段。没配就完全不碰这条路径——现有用户的启动行为一个字节都不变。
- * @returns profile 目录的绝对路径，或 null
+ * 实现在 `core/profile-dir`：界面产物表也要用它，放这里会把整个宿主装载器拖进界面壳的
+ * 编译单元。这里转出保持既有 import 不变。
  */
-export function activeProfileDir(): string | null {
-  const fromEnv = process.env['DSC_PROFILE']
-  const name = typeof fromEnv === 'string' && fromEnv.trim() !== '' ? fromEnv.trim() : readProfileNameFromConfig()
-  if (name === null) return null
-  return dscPath('profiles', name)
-}
-
-function readProfileNameFromConfig(): string | null {
-  try {
-    const file = activeConfigFile()
-    if (!existsSync(file)) return null
-    const doc = parseTolerantYaml(readFileSync(file, 'utf8')) as { profile?: unknown }
-    return typeof doc.profile === 'string' && doc.profile.trim() !== '' ? doc.profile.trim() : null
-  } catch {
-    return null
-  }
-}
+export { activeProfileDir }
 
 /**
  * 装一个 profile 里的组合包插件（dsh 的安装形态）。

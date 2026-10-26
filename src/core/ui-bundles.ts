@@ -34,6 +34,7 @@ import { fileURLToPath } from 'node:url'
 import { satisfies, validRange } from 'semver'
 import type { UiPlatform, UiPluginRow } from '../ui/manifest.js'
 import { inside } from './web-static.js'
+import { activeProfileDir } from './profile-dir.js'
 
 /** 清单文件名（界面壳构建时写在插件目录根部）。 */
 export const UI_PLUGIN_MANIFEST = 'manifest.json'
@@ -895,22 +896,258 @@ export function lookupThirdPartyUiBundle(
   return { known: true, current: false, previous: false, size: null, body: null }
 }
 
+
+// ── 组合包里的界面半边（2.0 起）──────────────────────────────────────────────────
+//
+// dsh 的构造是「一个包两半」：`package.json` 的 `dsh.client` 声明界面半，`exports["./client"]`
+// 是它的入口。这里按同一份声明把 **Pneuma 自己的**界面半收进启动图：
+//
+//   - `dsh.client.platform === 'pneuma'` 才收；写 `web`（dsh 自己的载体）一律不收，
+//     那些是给 dsh 客户端运行时写的代码，跑在我们的壳里等于白屏（插件中心只列不加载）。
+//   - `dsh.client.api` 必填（`@dsc/ui` 的区间），按同一套 API 门禁判——与第三方目录同一口径。
+//   - 信任：组合包是用户自己在终端跑 `numa plugin add` 装进 profile 的，那一步就是同意；
+//     `~/.dsc/plugins/` 下手工放进去的界面插件仍要单独点一次（见 discoverThirdPartyUiArtifacts）。
+//     启停仍走 plugins.json，键 `<包名>/client`。
+//   - id 就是包名（`@scope/name` 也照用）：地址层已经按最后一段 `/` 切分并 URI 解码，
+//     多段 id 是既有约定（见 ui-route.ts）。
+
+/** 组合包里一条界面半边的发现结果。 */
+export interface PackageUiEntry extends UiPluginRow {
+  origin: 'package'
+  /** 包名（= id）。 */
+  source: string
+  /** 客户端入口的绝对路径。 */
+  path: string
+  file: string
+  rev: string
+}
+
+/** 组合包界面半边的发现结果。 */
+export interface PackageUiReport {
+  entries: PackageUiEntry[]
+  problems: string[]
+}
+
+interface PackageCached {
+  row: PackageUiEntry
+  bytes: Buffer
+  fingerprint: string
+  previous: { rev: string; bytes: Buffer } | null
+}
+
+/** profile 目录 → (包名 → 缓存)。进程内只有宿主这一个写者。 */
+const packageCaches = new Map<string, Map<string, PackageCached>>()
+
+/**
+ * 在一个已装包的 `package.json` 里读 `dsh.client`。
+ * @param dir - 包的目录
+ * @returns 声明；没写或形状不对给 null（形状问题由调用方记 problems）
+ */
+function readClientDeclaration(dir: string): { platform?: unknown; api?: unknown; inject?: unknown; immediately?: unknown; clientPath: string | null } | null {
+  let manifest: Record<string, unknown>
+  try {
+    manifest = JSON.parse(readFileSync(resolve(dir, 'package.json'), 'utf8')) as Record<string, unknown>
+  } catch {
+    return null
+  }
+  const dsh = manifest['dsh']
+  const client = dsh !== null && typeof dsh === 'object' ? (dsh as { client?: unknown }).client : undefined
+  if (client === null || typeof client !== 'object') return null
+  const decl = client as Record<string, unknown>
+  return {
+    platform: decl['platform'],
+    api: decl['api'],
+    inject: decl['inject'],
+    immediately: decl['immediately'],
+    clientPath: clientEntryOf(manifest['exports']),
+  }
+}
+
+/** `exports["./client"]` 的入口（字符串或条件对象）。 */
+function clientEntryOf(exports: unknown): string | null {
+  if (exports === null || typeof exports !== 'object') return null
+  const entry = (exports as Record<string, unknown>)['./client']
+  if (typeof entry === 'string') return entry
+  if (entry === null || typeof entry !== 'object') return null
+  const conditions = entry as Record<string, unknown>
+  for (const key of ['default', 'import', 'node', 'require']) {
+    const value = conditions[key]
+    if (typeof value === 'string') return value
+  }
+  return null
+}
+
+/** `node_modules` 下的包目录（含 `@scope/*` 一层）。 */
+function packageDirs(nodeModules: string): Array<{ name: string; dir: string }> {
+  let names: string[]
+  try {
+    names = readdirSync(nodeModules)
+  } catch {
+    return []
+  }
+  const found: Array<{ name: string; dir: string }> = []
+  for (const name of names) {
+    if (name.startsWith('.')) continue
+    const dir = resolve(nodeModules, name)
+    if (name.startsWith('@')) {
+      let scoped: string[]
+      try {
+        scoped = readdirSync(dir)
+      } catch {
+        continue
+      }
+      for (const child of scoped) found.push({ name: `${name}/${child}`, dir: resolve(dir, child) })
+      continue
+    }
+    found.push({ name, dir })
+  }
+  return found
+}
+
+/**
+ * 扫 profile 里装好的组合包，收它们的界面半边。
+ * @param profileDir - profile 目录（没有就返回空）
+ * @param shellApiVersion - 当前壳的 `@dsc/ui` 契约版本
+ * @param takenIds - 已经占用的 id（内置与第三方目录），撞名时让路
+ */
+export function discoverPackageUiArtifacts(
+  profileDir: string | null,
+  shellApiVersion: string | undefined,
+  takenIds: ReadonlySet<string>,
+): PackageUiReport {
+  const entries: PackageUiEntry[] = []
+  const problems: string[] = []
+  if (profileDir === null) return { entries, problems }
+  const nodeModules = resolve(profileDir, 'node_modules')
+  let cache = packageCaches.get(profileDir)
+  if (cache === undefined) {
+    cache = new Map<string, PackageCached>()
+    packageCaches.set(profileDir, cache)
+  }
+  const seen = new Set<string>()
+  for (const { name, dir } of packageDirs(nodeModules)) {
+    const decl = readClientDeclaration(dir)
+    if (decl === null) continue
+    if (decl.platform !== 'pneuma') {
+      if (decl.platform === 'web') {
+        // dsh 自己的界面半：只列不加载（插件中心会显示它的能力），这里静默跳过。
+        continue
+      }
+      problems.push(`${name}: dsh.client.platform 只能是 'pneuma'（收到 ${JSON.stringify(decl.platform)}），界面半跳过`)
+      continue
+    }
+    const where = `${name}/client`
+    const api = typeof decl.api === 'string' && decl.api.trim() !== '' ? decl.api.trim() : undefined
+    if (api === undefined) {
+      problems.push(`${where}: dsh.client.api 没写（@dsc/ui 的版本区间，如 "^2.0.0"）——组合包的界面半必须声明`)
+      continue
+    }
+    const gate = evaluateUiApiGate(api, shellApiVersion)
+    if (gate !== null) {
+      problems.push(`${name}: ${gate}`)
+      continue
+    }
+    if (takenIds.has(name) || seen.has(name)) {
+      problems.push(`${name}: 界面半的 id 与已有插件撞名，这一份跳过`)
+      continue
+    }
+    if (decl.clientPath === null) {
+      problems.push(`${where}: package.json 没有 exports["./client"]，找不到界面半的入口`)
+      continue
+    }
+    const path = resolve(dir, decl.clientPath)
+    if (!inside(dir, path)) {
+      problems.push(`${where}: exports["./client"] 指到了包外（${decl.clientPath}），拒绝`)
+      continue
+    }
+    const bytes = readFileSyncSafe(path)
+    if (bytes === null) {
+      problems.push(`${where}: exports["./client"] 指向的 ${decl.clientPath} 读不到`)
+      continue
+    }
+    if (!isPluginEnabled(where)) continue // 停用不是问题，是用户的开关
+    const rev = contentRev(bytes)
+    const row: PackageUiEntry = {
+      id: name,
+      file: 'client.js',
+      rev,
+      api,
+      origin: 'package',
+      source: name,
+      path,
+      ...(Array.isArray(decl.inject)
+        ? { inject: decl.inject.filter((value): value is string => typeof value === 'string') }
+        : {}),
+      ...(decl.immediately === true ? { immediately: true } : {}),
+    }
+    entries.push(row)
+    seen.add(name)
+    const cached = cache.get(name)
+    const fingerprint = `${rev}`
+    if (cached === undefined || cached.fingerprint !== fingerprint) {
+      cache.set(name, {
+        row,
+        bytes,
+        fingerprint,
+        previous: cached === undefined ? null : { rev: cached.row.rev, bytes: cached.bytes },
+      })
+    }
+  }
+  return { entries, problems }
+}
+
+/**
+ * 组合包界面半边的内容寻址查询（与内置/第三方同形，路由按 rev 对字节）。
+ */
+export function lookupPackageUiBundle(
+  id: string,
+  file: string,
+  rev: string,
+  profileDir: string | null,
+  wantBody = true,
+): UiBundleLookup {
+  void file
+  const empty: UiBundleLookup = { known: false, current: false, previous: false, size: null, body: null }
+  if (profileDir === null || !PLUGIN_ID.test(id)) return empty
+  const cached = packageCaches.get(profileDir)?.get(id)
+  if (cached === undefined) return empty
+  if (cached.row.rev === rev) {
+    return { known: true, current: true, previous: false, size: cached.bytes.length, body: wantBody ? cached.bytes : null }
+  }
+  if (cached.previous !== null && cached.previous.rev === rev) {
+    return {
+      known: true,
+      current: false,
+      previous: true,
+      size: cached.previous.bytes.length,
+      body: wantBody ? cached.previous.bytes : null,
+    }
+  }
+  return { known: true, current: false, previous: false, size: null, body: null }
+}
+
 /**
  * 一个平台视图下的**全部**界面插件：内置（构建产物清单）+ 第三方（`~/.dsc/plugins/`
- * 里带界面半边的目录）。启动图（web）与终端装载器（tui）都从这一个口子取，
- * 谁也不许自己再拼一份——口径分叉就是从这里开始的。
+ * 里带界面半边的目录）+ 组合包（profile 里装的、`dsh.client.platform = 'pneuma'` 的包）。
+ * 启动图（web）与终端装载器（tui）都从这一个口子取，谁也不许自己再拼一份——口径分叉
+ * 就是从这里开始的。
  */
 export function collectUiArtifactsForPlatform(
   platform: 'web' | 'tui',
-  options: { force?: boolean; builtinDir?: string; thirdPartyDir?: string } = {},
+  options: { force?: boolean; builtinDir?: string; thirdPartyDir?: string; packageDir?: string | null } = {},
 ): UiPluginArtifacts {
   const builtin = collectUiPluginArtifacts(options.builtinDir, platform, { force: options.force })
   const third = discoverThirdPartyUiArtifacts(builtin.apiVersion, new Set(builtin.entries.map((entry) => entry.id)), options.thirdPartyDir)
+  // 组合包的界面半边：只在指定了 profile（或环境里配了）时收。
+  const packageDir = options.packageDir === undefined ? activeProfileDir() : options.packageDir
+  const taken = new Set([...builtin.entries.map((entry) => entry.id), ...third.entries.map((entry) => entry.id)])
+  const fromPackages = discoverPackageUiArtifacts(packageDir, builtin.apiVersion, taken)
   const entries = [
     ...builtin.entries,
     ...third.entries.filter((entry) => (entry.platform ?? 'web') === platform),
+    ...fromPackages.entries.filter((entry) => (entry.platform ?? 'web') === platform),
   ]
-  const problems = [...builtin.problems, ...third.problems]
+  const problems = [...builtin.problems, ...third.problems, ...fromPackages.problems]
   return { entries, problems, ...(builtin.apiVersion === undefined ? {} : { apiVersion: builtin.apiVersion }) }
 }
 
@@ -920,6 +1157,8 @@ export interface UiArtifactDirs {
   builtinDir?: string
   /** 第三方插件根目录，缺省 `~/.dsc/plugins`。 */
   thirdPartyDir?: string
+  /** 组合包所在的 profile 目录，缺省按 `DSC_PROFILE` / 配置里的 `profile` 解析。 */
+  packageDir?: string | null
 }
 
 /**
@@ -929,6 +1168,11 @@ export interface UiArtifactDirs {
  * 放在这里与发现层同一口径；拼出来的路径同样过 `inside()` 围栏。
  */
 export function uiArtifactFilePath(entry: UiPluginManifestEntry, dirs: UiArtifactDirs = {}): string | null {
+  if ((entry as { origin?: unknown }).origin === 'package') {
+    // 组合包的界面半边：发现时已经把绝对路径算好（入口由包的 exports 决定，不在固定位置）。
+    const path = (entry as { path?: unknown }).path
+    return typeof path === 'string' && path !== '' ? path : null
+  }
   if ((entry as { origin?: unknown }).origin === 'third-party') {
     const root = dirs.thirdPartyDir ?? thirdPartyUiRoot()
     if (!PLUGIN_ID.test(entry.id)) return null

@@ -270,6 +270,12 @@ numa plugin list [--profile 名字]
 「账本落在 `~/.dsc` 而不是 `~/.dsh`」；脚本读 `DSC_REAL_HOME` 下预装好的 profile，
 不入库）。合成包那一路是 `node shots/dsh-bundle-check.mjs`（15 条）。
 
+**界面半**（2.0 起）：同一个包若在 `dsh.client` 里声明 `platform: "pneuma"` 与 `api`，
+它的 `exports["./client"]` 会被收进界面启动图（发现、门禁、取字节、组图在
+`src/core/ui-bundles.ts` 的 `discoverPackageUiArtifacts`，路由在 `src/core/ui-route.ts`）。
+写 `platform: "web"` 的是 dsh 自己的界面半，仍然只列不加载——理由见
+[plugin-development.md §10.6.1](plugin-development.md)。自检 `scripts/ui-package-plugin-test.mjs`。
+
 **已知边界**：包能挂上、能在插件中心认出来源，但 `dsh-cost-meter` 的成本条不会真有数——
 它靠 `sessionPersistence` + `sessions` 读会话历史算成本，这两个服务 Pneuma 没有（见
 `service-map.ts`）。那是下一步「服务适配器」的活，不是安装链路的问题。

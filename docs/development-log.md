@@ -8321,3 +8321,29 @@ dsh 插件，请先在插件中心启用 dsh 兼容层」——否则用户只�
 `~/.dsh/storages/cost-meter/ledger.json` 读写了两次。事后校验：909KB、25 天数据仍可正常解析，
 插件自己另存了 `ledger.json.config-bak`。之后的探针全部跑在 `D:/tmp/dsc-real-home` 下。
 
+**界面契约 2.0：inject 拆成两个字段，组合包的界面半能进来了（2026-10-26，批 1）**：
+
+**为什么拆**：清单里只有一个 `inject`，既当「插件 id」又当「服务名」，靠「这个名字在不在清单里」
+猜。于是两件事分不清：插件改名后原来的依赖悄悄变成「查服务」；服务恰好与某个插件同名时依赖的
+意义翻转。报错也跟着指错人。2.0 把依赖拆成两个字段：`inject` 只表示插件 id（拓扑排序与装载前
+检查），`services` 表示服务名（交给 cordis 的 `inject`，由框架等它就绪）。判定函数
+`unmetInjections` 换成 `unmetDependencies`，两档文案各说各的，浏览器壳与 TUI 装载器共用一份。
+破坏性改动按规矩用大版本号挡：壳 1.2.0 → 2.0.0，19 个内置插件的 `@dsc/ui` peer 区间与五个
+逻辑包、`@dsc/ui-core` 的包身份一起升到 2.0.0；声明 `^1.x` 的第三方插件会被 API 门禁拒掉，
+提示就是「把 inject 里的服务名挪到 services」。
+
+**为什么加「一个包两半」**：dsh 的构造单位是一个 npm 包——`package.json` 的 `dsh.client` 声明
+界面半、`exports["./client"]` 是入口，宿主扫已启用的包现组启动图。我们此前宿主半是
+`~/.dsc/plugins/` 里的文件、界面半是仓库构建产物或手放的目录，两半不是一个东西。2.0 起按同一份
+声明收界面半：`dsh.client.platform = 'pneuma'`（写 `web` 的是 dsh 自己的，只列不加载）、
+`api` 必填并过同一套门禁、id 就是包名、取字节走 `exports["./client"]` 且必须落在包目录内。
+发现结果以 `origin: 'package'` 并进那张唯一的产物表，于是组图、combo、内容寻址、HMR 轮询全部
+照旧，没有第二套加载器。信任口径：组合包是用户在终端 `numa plugin add` 装进 profile 的，那一步
+就是同意；手放进 `~/.dsc/plugins/` 的仍要单独确认。
+
+**验证**：`scripts/ui-package-plugin-test.mjs`（新写，11/0：platform 门禁、缺 api 被拒、api 对不上
+被拒、没有 `exports["./client"]` 被拒、字节可读、按 rev 查到、进启动图、地址形状）；
+`scripts/ui-plugin-test.mjs` 254/0；`scripts/ui-cordis-test.mjs` 全绿（19 条仍全走 cordis、
+换装干净）；`scripts/ui-transcript-render-test.mjs` 93/93；根与壳 typecheck、两侧 build 通过。
+
+
