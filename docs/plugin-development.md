@@ -600,14 +600,18 @@ cordis 版本一致，所以**一部分 dsh 插件可以直接挂到 dsc 上跑*
 | `inject: ['logger']`，`ctx.logger.warn/error(...)` | 直接支持：cordis 内置 logger 管道 + 桥，warn/error 镜像进对话流（`[dsh 插件·名字]` 前缀），info/debug 不落地 |
 | `export const Config = z.object({...})`（schemastery） | 挂载时调用一次做配置校验，失败响亮回滚（提示检查 plugins.json 的 config） |
 | `output.presentCall` / `presentResult`（卡片视图） | 直接支持：卡片数据随工具结果落到 `presentation`，界面认得 `diff` / `terminal` 两种形态，其余回落通用工具卡（数据不丢）。注意 `presentResult` 的**第二个参数是渲染后的结果**，不是工具的规范值——要画改前改后得自己在 `execute` 里记 |
+| `projectContent` / `finalizeContent`（改写模型可见内容） | 直接支持：顺序是 `execute` → schema 校验 → `render` → `projectContent` → `finalizeContent`。两个钩子都只认「返回内容块数组」这一种替换信号（返回 `undefined` 或抛错都保留原内容，抛错另留一行 stderr）。失败结果也会过一道 `finalizeContent`（`projectContent` 不跑），所以「把长输出截断」这类钩子能连错误文案一起裁 |
 | `inject` 里出现 `sessionProjections` / `agents` / `goals` / `systemPrompt` 等 | **不支持**：这些要整个 dsh 会话语义，挂载被拒绝并列出缺的服务名 |
 | `ctx.on('llm/stream')`（waterfall，包住下游流读 usage chunk） | 直接支持：每次模型调用派发一次，chunk 里的 token 数就是这次调用的真实值；插件抛错只留一行 stderr，不影响回合 |
 | `ctx.on('session/event')`（回合过程） | 支持一部分：`turn/start`、`step/start`、`assistant/message`（带 `usage`）、`tool/call`、`tool/result`、`step/end`、`turn/end`、`user/message`；`request/header` / `compaction/summary` / 逐帧 `assistant/chunk` 不发（给不出真的就不编） |
 | `ctx.get('sessionPersistence')` / `ctx.get('sessions')`（读历史） | 只读桥：`list` / `stat` / `open(id,'read')` 与 `list` / `get` / `has`；事件已是 dsh 类型（`user/message` / `assistant/message` / `tool/result`），用量挂在助手消息的 `usage` 上。写方法一律抛中文错误。**这两个名字别写进 `inject`**（不是 cordis 服务） |
 
 `defineTool`、`z`、`@deepseek-ai/cordis` 这些 `@deepseek-ai/*` 导入不用装——兼容层把插件
-目录里的这类导入重定向到 dsc 自带的 `@deepseek-ai/dsh-tools`（精确 pin 的 0.2.0-rc.2）与
-cordis（保证单实例）。**cordis 版本必须两边一致**，升级 dsc 依赖时留意。
+目录里的这类导入重定向到 dsc 自带的 `@deepseek-ai/dsh-tools`（精确 pin 的 0.2.1-rc.3，与
+基准源码同一个发布标签）与 cordis（保证单实例）。**cordis 版本必须两边一致**，升级 dsc 依赖时留意：
+`dsh-tools` 的 peer 声明写的是 `cordis ~4.0.5`，而 dsc 现在是 4.0.4——实测 `dsh-tools` 只用到
+`Service` 与 `symbols.original`，4.0.4 两者都有，所以运行时不受影响；真要跟它一起升，得连界面壳的
+装配层一起验证，那是另一批。
 
 用量口径的坑（2026-10-26 修）：dsc 的 `inputTokens` 是 `prompt_tokens` 总量、缓存命中**含在
 内**；dsh 的 `TokenUsage` 分项互斥（命中单列在 `cacheReadTokens`，计费三项相加）。兼容层在

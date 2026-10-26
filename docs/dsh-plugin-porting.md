@@ -27,7 +27,8 @@
 | `inject` 里有 **两边同名但 API 不同**的服务：`session` / `settings` / `commands` / `approval` / `agent` / `compact` | **能挂，但要改代码**：这些名字在 dsc 里解析到的是 dsc 自己的服务，dsh 的调用方式会运行时炸。按 §3 映射表改写，改完再挂 | 兼容层不垫同名异 API 的服务——垫了等于猜 |
 | `inject` 里有 `sessionProjections` / `agents` / `goals` / `systemPrompt` 等 dsh 会话侧服务 | **不支持**：挂载即被拒，宿主会列出缺的服务名 | 这些要整个 dsh 会话语义（事件溯源、agent 注册表），个人版不背；部分场景可按 §3 映射表重写后去掉这些 inject |
 | 插件**不 inject**，而是在 apply 里 `ctx.get('sessionPersistence')` / `ctx.get('sessions')` 读历史，用 `ctx.on('llm/stream')` 收实时用量、`ctx.on('session/event')` 收回合过程 | **能挂，能用**（2026-10-26 起） | 兼容层把会话历史按 dsh 的事件类型交出去（只读），并把回合过程与用量按 dsh 的事件/流形状播出来；范围见 §2.7 |
-| 工具 `execute` 里用了 `exec.agent` / `exec.deferContext` / `exec.requestContext` 等 dsh 执行上下文字段 | **能挂，但要改代码**：dsc 给的 `exec` 只有 `{ signal, cwd }`，其余字段是 `undefined`，用到就炸 | 改成只依赖 `signal`；真需要会话身份的插件属于不支持类 |
+| 工具声明了 `projectContent` / `finalizeContent`（自己改写模型可见内容） | **直接挂**：两个钩子都生效，顺序是 `execute` → schema 校验 → `render` → `projectContent` → `finalizeContent`；失败结果也过一道 `finalizeContent`（`projectContent` 不跑） | 只认「返回内容块数组」这一种替换信号，返回 `undefined` 或抛错都保留原内容（抛错留一行 stderr） |
+| 工具 `execute` 里用了 `exec.agent` / `exec.callId` / `exec.deferContext` / `exec.concludeTurn` 等 dsh 执行上下文字段 | **能挂，但语义是降级过的**：`signal` / `cwd` / `arguments` 是真值；`agent` 与 `token` 是合成身份；`deferContext` 收下但不投递、`concludeTurn` 是空操作（各留一行 stderr 告警）；`requestContext` 没有 | 只依赖 `signal` 的插件最稳；要用延迟上下文或收尾语义的插件，行为会不完整但不会崩 |
 | 工具 `output.render` 返回结构化值（对象、数组，不是一段字符串） | **卡片能显示**：返回值按 dsc 工具卡的通用渲染落到对话里，与原生插件同一套 | 卡片是 dsc 自己的渲染器画的，不执行插件的界面代码；dsh 塞进 `render` 的 ConversationNode 之类会被忽略 |
 | 工具 `output.render` 返回图像块 | 能挂，图像块降级为占位说明文字 | dsc 工具图像走 data URL，dsh 的 attachment 引用没有直接映射 |
 | 整个 npm 包带 `dsh.bundle.patch`（就是 `dsh plugin add` 装的那种组合包） | **bundle 能装**：`numa plugin add <包名 / tarball / 本地路径>` 装进 profile，patch 里的插件条目被逐条读出来挂载，插件中心在名字后挂一枚「组合包 <包名>」 | 安装单位照 dsh 同一套（profile + pnpm + patch 层算法），不是把包塞进 `~/.dsc/plugins/` 里手写入口（§2.6） |
@@ -230,10 +231,10 @@ dsc 的等价扩展点重挂，找不到就砍掉那个功能**——个人版�
    函数全部被调用）。
 7. **组合包**：走 `numa plugin add` 装，`numa plugin list` 能看到包与它的插件；包装了界面半
    就再去插件中心确认「组合包界面」那一组有它、开关能停。
-8. **回归自检**：`pnpm run check:dsh`（七条脚本，171 条断言）——覆盖解析钩子、工具兼容面、
+8. **回归自检**：`pnpm run check:dsh`（七条脚本，180 条断言）——覆盖解析钩子、工具兼容面、内容钩子、
    logger 桥、配置校验、不支持项拒绝、会话桥、流与事件旁路、以及一条真内核跑真回合的
    合成验收；给兼容层改代码时必须全绿再交付。界面半的回归
-   另跑 `pnpm run check:ui`（35 条纯 Node 探针，组合包那几组在里面）与 `pnpm run check:ui:e2e`
+   另跑 `pnpm run check:ui`（36 条纯 Node 探针，组合包与「重开会话卡片还在」在里面）与 `pnpm run check:ui:e2e`
    （4 条要真 Chromium 的，含 diff 卡与手机尺寸远程壳）。
 
 ## 6. 边界（当前明确不支持的，别绕）

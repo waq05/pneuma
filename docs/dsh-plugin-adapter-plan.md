@@ -1,7 +1,7 @@
 # dsh 插件适配计划
 
 > 2026-10-24 起草。基准：dsh 上游 master `22ddee3`（发布标签 `dsh-v0.2.1-rc.3`，2026-10-23）。
-> 本地 `D:\deepseek-harness\deepseek-harness` 已于当日 21:30 更新到该提交（浅克隆，历史在后台补齐）。
+> 本地 `D:\deepseek-harness\deepseek-harness` 已于当日 21:30 更新到该提交；当时是浅克隆，随后把历史拉全了（2026-10-26 复核：分支 `master`，HEAD `22ddee3792`，23934 个提交，与上游 `commits/master` 的头一致）。
 > 本文回答"Pneuma（numa）还要补哪几块，才接得住 dsh 生态里的插件"。
 > 用户视角的操作步骤看 [dsh-plugin-porting.md](dsh-plugin-porting.md)；本文是施工计划。
 
@@ -165,9 +165,11 @@ Pneuma 有自己的界面插件契约（`plugin.json` + `@dsc/ui` + 槽位 + 平
 **目标**：常见服务有一张明确的对照表，其余响亮拒绝。
 
 改动落点：
-1. 新 `src/core/dsh-compat/service-map.ts`：三档——**同名同义直传**（`tools`、`llm`、`commands`、`settings`、`plan`）、**同名异义拒绝**（`session`、`agent`、`compact`、`approval`）、**无对应拒绝**（`agents`、`goals`、`sessionProjections`、`systemPrompt`）。
+1. 新 `src/core/dsh-compat/service-map.ts`：三档——**同名同义直传**（`tools`、`commands`、`approval`、`skills`）、**有对应但语义不同**（`llm`、`sessions`、`sessionPersistence`、`agents`、`settings`、`compaction`、`goals`、`planMode` 等，逐条写清 Pneuma 的对应物与差在哪）、**没有对应**（`sessionProjections`、`storage`、`fs`、`web` 等）。共 33 条判定，见 `service-map.ts:34`。
+   原计划写的是“同名异义一律拒绝”，实际实现改成了“能说清对应关系的写成 `adapted` 加一句人话说明，只有真的对不上的才拒绝”——对插件作者来说，告诉他该换成什么，比一句拒绝有用。
 2. 拒绝时写清一句话原因与替代写法，进启动诊断（现在已有这类 system 条目的通道）。
-3. `resolve-hook.ts:43` 的匹配范围从"只有 `@deepseek-ai/*`"扩到 dsh 常用包名前缀，命中不了的给 `ERR_MODULE_NOT_FOUND` 加一条提示。
+3. 解析钩子只接管 `@deepseek-ai/*` 前缀（`resolve-hook.ts:78`），不扩到别的包名前缀；另有两条**宿主库**换成了我们自己的实现（`resolve-hook.ts:39` 的 `SHIMS`：`@deepseek-ai/dsh-home-paths` 与 `@deepseek-ai/dsh-credentials`），因为这两个库回答的是“插件数据放哪个目录”“凭据引用怎么建”，照 dsh 的默认值会把数据写到 `~/.dsh` 去。
+   原计划写的是“把匹配范围扩到 dsh 常用包名前缀，并给 `ERR_MODULE_NOT_FOUND` 加提示”。实测真包 `dsh-cost-meter` 1.9.41 的 17 条外部 import 全部落在这两个库上，扩前缀没有实际收益，所以按实测收窄；没命中时默认解析本来就会响亮报 `ERR_MODULE_NOT_FOUND`，不缺提示。
 
 验收：三个真实插件（一个能挂、一个同名异义、一个缺服务）分别拿到预期结果与可读诊断。
 
@@ -260,3 +262,20 @@ sed -n '9,140p' docs/user/develop/basic/publish.zh.md
 **一句话**：这一批把 §8 的十三条全部收口——用户手里的开关（2、3）、性能与口径的一致（5、6、7）、
 远程与 TUI 的边界（3、4）、示例与门禁（7、10、11），以及最后一刀中央清单（13）。机制这层现在
 是「一个包两半、一处声明、目录即清单」：加一个插件不用改任何汇总文件，删一个就是目录没了。
+
+## 9. 对最初目标的复审（2026-10-26 深夜）
+
+回头看「把 dsh 源码更到最新 + 让 Pneuma 接得住 dsh 插件」这两条，四条「说头与做头不一致」
+已逐条核过源码并收口。核对方式与结论留在这里，免得下次再翻一遍。
+
+| # | 发现 | 处置 |
+| --- | --- | --- |
+| 1 | §4-C.1 写「同名异义一律拒绝」，实际是 `adapted` 加人话说明；C.3 写「解析钩子扩到 dsh 常用包名前缀」，实际只接管 `@deepseek-ai/*` | **已改**：两处按实际做法重写并写明偏差；开头「浅克隆」也改成「历史已拉全」 |
+| 2 | `projectContent` / `finalizeContent` 被静默忽略（两版 dsh 都有这两个成员） | **已补**：两个钩子接进 `src/core/dsh-compat/tools-facade.ts`，失败结果也过 `finalizeContent`；`dsh-compat-check` 34 → 43 条 |
+| 3 | `@deepseek-ai/dsh-tools` pin 在 0.2.0-rc.2，基准是 0.2.1-rc.3，且没有记录理由 | **已升**：到 0.2.1-rc.3，`check:dsh` 180 条与真包 e2e 6/6 全绿；cordis 仍 4.0.4（界面壳装配层是独立一批），理由写进 `plugin-development.md` §9.1 |
+| 4 | 「刷新会话后卡片仍在」只有代码路径，没有断言 | **已补**：`scripts/ui-dsh-card-replay-test.mjs` 9 条，走「读日志 → 折 transcript」两段并带反向对照 |
+
+顺带修的一处：`dsh-plugin-porting.md` 判定表说 `exec` 只有 `{ signal, cwd }`、其余字段
+`undefined`——实际兼容层给了 `agent` / `token`（合成身份）与 `deferContext` / `concludeTurn`
+（空操作 + 一行告警），已按实际改写。
+

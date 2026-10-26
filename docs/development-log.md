@@ -8780,3 +8780,34 @@ turn-changes / throughput），四个全绿。
 仍然不发、也不打算发（给不出真的就不编）：`request/header`、`compaction/summary`、
 `assistant/chunk` 逐帧、`system/message`。用户消息里的图片也不进事件（dsh 的 `ImageBlock`
 要附件引用），要看图片走历史。
+
+**复审四条收口（2026-10-26 深夜）**：
+
+对最初那个目标（把 dsh 源码更到最新 + 让 Pneuma 接得住 dsh 插件）做了一次回看，挑出四件
+「说头与做头不一致」，逐条核过源码后收口：
+
+1. **计划文档 §4 有两句过时话**：C.1 写「同名异义一律拒绝」，实际做成了 `adapted` 加人话说明；
+   C.3 写「解析钩子扩到 dsh 常用包名前缀」，实际只接管 `@deepseek-ai/*`，真正需要的是给
+   `dsh-home-paths` / `dsh-credentials` 做垫片（实测真包的 17 条外部 import 全落在这两个库上）。
+   两处都改成实际做法并写明原计划的偏差，顺带把开头的「浅克隆」改成「历史已拉全」。
+2. **`projectContent` / `finalizeContent` 之前是静默忽略**：插件声明了也没人调，模型看到的是
+   render 的原始内容。现在两个钩子都接上了（`src/core/dsh-compat/tools-facade.ts`）：顺序是
+   `execute` → schema 校验 → `render` → `projectContent` → `finalizeContent`，两边都只认
+   「返回内容块数组」这一种替换信号（返回 `undefined` 或抛错都保留原内容，抛错留一行 stderr）。
+   失败结果也过一道 `finalizeContent`（与 dsh 同一口径，`projectContent` 不跑），改的是错误
+   文案、错误类型与堆栈不动。兼容层没有 dsh 的 post-execute 阶段，所以 projectContent 直接排在
+   render 之后——这是唯一的时序差异，写进了 `plugin-development.md` §9.1 与 `dsh-plugin-porting.md`。
+3. **`@deepseek-ai/dsh-tools` 从 0.2.0-rc.2 升到 0.2.1-rc.3**（与基准源码同一个发布标签）。
+   升之前核过两件事：新包只 import `Service` 与 `symbols.original`，cordis 4.0.4 两样都有；
+   `ToolDefinition` 成员与 0.2.0-rc.2 逐项一致。升完 pnpm 提示 peer 不满（它要 cordis `~4.0.5`，
+   部分传递 peer 仍是 0.2.0-rc.2）——实测不影响插件路径：`check:dsh` 180 条、真包 e2e 6/6、
+   `check:ui` 36 条全绿。cordis 没跟着升：它是界面壳装配层的基准，升它要连 19 个界面插件的
+   探测一起重验，属独立一批；理由写进了 `plugin-development.md` §9.1。
+4. **「刷新会话后卡片还在」补了自动化断言**（`scripts/ui-dsh-card-replay-test.mjs`，9 条）：
+   不跑真回合，直接造一份会话日志走「`Session.load` 读回 → `replayHistory` 折成
+   `tool/presentation`」这两段，断言 result / call / meta 三份数据都回到工具卡上、再读一次
+   完全一致，并加一条反向对照（日志里没有卡片数据时，工具卡不该凭空长出来）。落盘那一段
+   （真回合写盘）仍由 `dsh-compat-check` 与真机截图覆盖。
+
+自检：`dsh-compat-check` 34 → **43** 条、`check:dsh` 171 → **180** 条、`check:ui` 35 → **36** 条、
+`check:core` 48 条；根 `typecheck` 与 `build` 0 错。
