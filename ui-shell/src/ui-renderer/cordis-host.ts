@@ -41,8 +41,14 @@ declare module '@deepseek-ai/cordis' {
     slots: UiSlots
     /** 宿主身份（名字与版本）。 */
     host: UiHostInfo
-    /** 宿主数据通道（快照订阅 + 方法调用）。 */
-    runtime: UiRuntimeApi
+    /**
+     * 宿主数据通道（快照订阅 + 方法调用）。
+     *
+     * 为什么叫 uiRuntime 而不是 runtime：cordis 的 Context 自带一个 runtime 访问器
+     * （fiber 的插件运行时），重名会在第一次 provide 时抛
+     * 「property "runtime" is already declared as accessor」——真机走查踩过。
+     */
+    uiRuntime: UiRuntimeApi
   }
 }
 
@@ -110,7 +116,9 @@ export function createCordisRoot(options: UiCordisRootOptions): UiCordisRoot {
   const ctx = new Context()
   ctx.provide('slots', options.slots)
   ctx.provide('host', options.host)
-  ctx.provide('runtime', options.runtime)
+  // 服务名要避开 cordis 自带的 Context 成员（runtime / effect / fiber 都是它的），
+  // 重名会当场抛「already declared as accessor」。
+  ctx.provide('uiRuntime', options.runtime)
 
   const fibers = new Map<string, Fiber>()
   /** 卸载进行中的承诺：cordis 的卸载是异步的，重复调用要等同一次。 */
@@ -129,7 +137,7 @@ export function createCordisRoot(options: UiCordisRootOptions): UiCordisRoot {
       return release
     }),
     host: inner.host,
-    runtime: inner.runtime,
+    runtime: inner.uiRuntime,
     provide: (name, value) => {
       // 界面侧的服务表是插件真正读的那一份（useService 订阅它的出现与消失）。
       const release = options.services.provide(name, value, id)

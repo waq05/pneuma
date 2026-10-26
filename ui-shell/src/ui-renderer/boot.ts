@@ -256,26 +256,28 @@ export interface UiBootSession {
 }
 
 /**
- * 默认走 cordis 的那批插件（灰度开关）。
+ * 装配路径的灰度开关。
  *
- * 为什么先只放一条：装配路径换了，界面**画出来的东西**不该变——先拿 `statusbar`（它
- * 只往 `shell.statusbar` 登记一段读数，没有 inject、没有自己的子槽）验证链路，比对
- * 截图一致再逐条放开，出问题时一行改回来。
+ * 默认**全部走 cordis**：2026-10-26 先用 `statusbar` 一条验证过（首帧、换装、卸载顺序都过），
+ * 再把 19 条一起切过来。旧账本那条路留着，因为它是回滚面：出问题时一个字符串就能退回。
  *
- * 探针可以写 `globalThis.__DSC_CORDIS_PROBE__ = ['sessions', 'trace']` 换样本，
- * 或者写 `'*'` 一次全切——不必重新构建，也不影响别人。
+ * 覆盖方式（不必重新构建）：
+ *   - `globalThis.__DSC_CORDIS_PROBE__ = 'none'`   → 全部退回旧账本；
+ *   - `globalThis.__DSC_CORDIS_PROBE__ = ['sessions']` → 只有名单里的走 cordis，其余走账本；
+ *   - `'*'` / 不设 → 全部走 cordis。
  */
-const CORDIS_DEFAULT_ENTRIES: ReadonlySet<string> = new Set(['statusbar'])
+const CORDIS_DEFAULT_ALL = true
 
 /** 按上面的开关决定某条插件走哪条装配路径。 */
 function cordisSelector(): (id: string) => boolean {
   const override = (globalThis as Record<string, unknown>)['__DSC_CORDIS_PROBE__']
+  if (override === 'none') return () => false
   if (override === '*') return () => true
   if (Array.isArray(override)) {
     const picked = new Set(override.filter((id): id is string => typeof id === 'string'))
     return (id) => picked.has(id)
   }
-  return (id) => CORDIS_DEFAULT_ENTRIES.has(id)
+  return () => CORDIS_DEFAULT_ALL
 }
 
 /**

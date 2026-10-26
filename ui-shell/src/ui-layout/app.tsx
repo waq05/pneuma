@@ -87,7 +87,14 @@ export interface AppBootLedger {
     startedAt?: number
     doneAt?: number
   }[]
-  plugins: Record<string, { phase: string; state: string }>
+  plugins: Record<string, {
+    phase: string
+    state: string
+    /** 装配路径（2026-10-26 起：cordis 是默认，旧退订账本是回滚面）。 */
+    via?: 'cordis' | 'ledger'
+    /** 走 cordis 时那条纤维的状态码（0 待装 / 1 装载中 / 2 生效 / 3 失败 / 4 已卸）。 */
+    fiber?: number
+  }>
 }
 
 /** 一条页内同步失败（热更句柄的读数；与渲染器包的 `PluginSyncFailure` 同形）。 */
@@ -811,6 +818,24 @@ function readRailCwd(snapshot: Record<string, unknown> | null): string | null {
   return typeof cwd === 'string' && cwd !== '' ? cwd : null
 }
 
+/** 纤维状态码 → 人话（与 `ui-renderer/cordis-host.ts` 的 FIBER_STATE_TEXT 同口径）。
+ *
+ * 为什么在这里再写一份：诊断区住 `ui-layout`，装载器住 `ui-renderer`，后者 import 前者，
+ * 反过来引就成环（E4 收尾时剪掉的那条边）。六行字，重复比成环便宜。 */
+const FIBER_TEXT: Readonly<Record<number, string>> = {
+  0: '待装',
+  1: '装载中',
+  2: '已生效',
+  3: '装载失败',
+  4: '已卸载',
+  5: '已卸载',
+}
+
+function fiberStateText(state: number | undefined): string {
+  if (state === undefined) return '状态未知'
+  return FIBER_TEXT[state] ?? `状态 ${String(state)}`
+}
+
 /** 诊断区：清单里有什么、谁装上了、谁没起来、哪一块崩了、壳放行的模块有哪些。
  *
  * 默认**不渲染**（旧界面没有这个东西，用户视野里不该有一行开发者读数）；
@@ -864,6 +889,16 @@ function Diagnostics({
             {report.ok && (report.attempts ?? 1) > 1 ? `（重试 ${String(report.attempts)} 次才成功）` : ''}
             <span data-plugin-phase={ledger?.plugins[report.id]?.phase ?? ''}>
               {' '}· {ledger?.plugins[report.id]?.phase === 'early' ? '首屏批' : '应用批'}
+            </span>
+            {/* 装配路径与纤维状态（2026-10-26 起：装插件走 cordis，旧账本是回滚面）。
+                两个 data 属性是探针的读面：隐藏的 DOM 照样命中。 */}
+            <span
+              data-plugin-via={ledger?.plugins[report.id]?.via ?? ''}
+              data-plugin-fiber={ledger?.plugins[report.id]?.fiber ?? ''}
+            >
+              {' '}· {ledger?.plugins[report.id]?.via === 'cordis'
+                ? `cordis（${fiberStateText(ledger?.plugins[report.id]?.fiber)}）`
+                : '退订账本'}
             </span>
           </li>
         ))}
