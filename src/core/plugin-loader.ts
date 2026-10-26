@@ -11,8 +11,8 @@
  *
  * @module dsc/core/plugin-loader
  */
-import { readdirSync, statSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { basename, isAbsolute, join } from 'node:path'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import type { Context, Fiber, Plugin } from '@deepseek-ai/cordis'
@@ -30,6 +30,10 @@ import {
   type PluginMeta,
 } from './plugin-registry.js'
 import { errText as err } from './err-text.js'
+import { activeConfigFile } from './config-store.js'
+import { parseTolerantYaml } from './migrate.js'
+import { applyPatchLayers, type PatchLayer, type PluginRow } from './plugin-patch.js'
+import { bundleDirOf, enginesProblem, readBundle, readProfile } from './plugin-bundle.js'
 import { dscPath } from './path-policy.js'
 
 /** 内核插件 API 版本（重导出，供宿主/文档引用）。 */
@@ -313,7 +317,141 @@ export async function mountAllExternalPlugins(
       if (meta?.problem !== undefined) failures.push({ file: base, name: meta.name, problem: meta.problem })
     }
   }
+
+  // 组合包（dsh 的安装形态）：只在这一份配置指定了 profile 时才走。
+  // 没配 profile 的用户启动路径与以前一个字节都不差。
+  const profileDir = activeProfileDir()
+  if (profileDir !== null && existsSync(profileDir)) {
+    const bundles = await mountBundlePlugins(root, profileDir)
+    failures.push(...bundles.failures)
+    for (const warning of bundles.warnings) {
+      root.transcript.system(`组合包：${warning}`, 'error')
+    }
+  }
   return failures
+}
+
+/**
+ * 当前生效的 profile 目录（没配就是 null = 不加载组合包）。
+ *
+ * 从哪来：环境变量 `DSC_PROFILE` 优先（自检与多环境用它），否则看 `~/.dsc/config.yaml`
+ * 的 `profile:` 字段。没配就完全不碰这条路径——现有用户的启动行为一个字节都不变。
+ * @returns profile 目录的绝对路径，或 null
+ */
+export function activeProfileDir(): string | null {
+  const fromEnv = process.env['DSC_PROFILE']
+  const name = typeof fromEnv === 'string' && fromEnv.trim() !== '' ? fromEnv.trim() : readProfileNameFromConfig()
+  if (name === null) return null
+  return dscPath('profiles', name)
+}
+
+function readProfileNameFromConfig(): string | null {
+  try {
+    const file = activeConfigFile()
+    if (!existsSync(file)) return null
+    const doc = parseTolerantYaml(readFileSync(file, 'utf8')) as { profile?: unknown }
+    return typeof doc.profile === 'string' && doc.profile.trim() !== '' ? doc.profile.trim() : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 装一个 profile 里的组合包插件（dsh 的安装形态）。
+ *
+ * 流程与 dsh 同形：profile 的 `dsh.profile.bundles` 给出层序 → 每个包读自己的
+ * `dsh.bundle.patch` 成一层 → 所有层按顺序套到「行」上（patch 里 insert 的行就是
+ * 要加载的插件）→ 每一行解析成文件路径后走与外置插件同一条挂载路径。
+ *
+ * 版本闸：包的 `engines.dsh` 不满足就先跳过并记一条告警（除非 profile 的
+ * compatibility.json 里登记了豁免）。
+ * @param root - 内核 root（组合包也走同一条热挂载路径）
+ * @param profileDir - profile 目录
+ * @returns 挂载失败清单（与 mountAllExternalPlugins 同形）+ 告警
+ */
+export async function mountBundlePlugins(
+  root: Context,
+  profileDir: string,
+): Promise<{ failures: PluginMountFailure[]; warnings: string[] }> {
+  initPluginRuntime(root)
+  const profile = readProfile(profileDir)
+  const layers: PatchLayer[] = []
+  const warnings: string[] = []
+  /** 每一层是哪个包的（解析相对路径时按它来）。 */
+  const layerOwner = new Map<string, string>()
+
+  for (const name of profile.bundles) {
+    const dir = bundleDirOf(profileDir, name)
+    if (!existsSync(dir)) {
+      warnings.push(`profile 里列了包「${name}」，但 ${dir} 不存在（先 pnpm install？），已跳过`)
+      continue
+    }
+    let info
+    try {
+      info = readBundle(dir)
+    } catch (error) {
+      warnings.push(err(error))
+      continue
+    }
+    if (info === null) {
+      warnings.push(`${dir} 里没有 package.json，不是插件包，已跳过`)
+      continue
+    }
+    const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as Record<string, unknown>
+    const engineProblem = enginesProblem(manifest)
+    if (engineProblem !== null && !profile.exemptions.includes(info.name)) {
+      warnings.push(`${info.name}：${engineProblem}`)
+      continue
+    }
+    if (info.patch !== null) {
+      layers.push(info.patch)
+      layerOwner.set(info.patch.label, dir)
+    }
+  }
+  if (profile.patch !== null) layers.push(profile.patch)
+
+  const base: PluginRow[] = []
+  const applied = applyPatchLayers(base, layers)
+  warnings.push(...applied.warnings)
+
+  const failures: PluginMountFailure[] = []
+  for (const row of applied.rows) {
+    const target = typeof row.name === 'string' ? row.name : undefined
+    if (target === undefined) {
+      warnings.push(`组合包里有一行没有 name（不知道加载什么），已跳过`)
+      continue
+    }
+    const file = resolveBundleTarget(profileDir, target, layerOwner)
+    if (file === null) {
+      warnings.push(`组合包里的「${target}」找不到对应文件，已跳过`)
+      continue
+    }
+    if (row.disabled === true) continue
+    const ok = await mountExternalPlugin(file)
+    if (!ok) {
+      const meta = getPluginMeta(basename(file))
+      if (meta?.problem !== undefined) failures.push({ file: basename(file), name: meta.name, problem: meta.problem })
+    }
+  }
+  return { failures, warnings }
+}
+
+/**
+ * 把行里的 `name` 解析成文件路径。
+ *
+ * 三种写法：绝对路径、以 `./` `../` 开头（相对 profile 目录）、或包名（从 profile 的
+ * node_modules 解析）。解析不出来给 null（调用方记告警）。
+ */
+function resolveBundleTarget(profileDir: string, target: string, layerOwner: ReadonlyMap<string, string>): string | null {
+  if (isAbsolute(target)) return existsSync(target) ? target : null
+  if (target.startsWith('./') || target.startsWith('../')) {
+    // 相对路径按「哪一层的 patch 写的」算：bundle 的 patch 相对它自己的包目录。
+    const owner = [...layerOwner.values()].find((dir) => existsSync(join(dir, target)))
+    const candidate = owner === undefined ? join(profileDir, target) : join(owner, target)
+    return existsSync(candidate) ? candidate : null
+  }
+  const candidate = join(profileDir, 'node_modules', ...target.split('/'))
+  return existsSync(candidate) ? candidate : null
 }
 
 function isDisabledByEntry(file: string): boolean {

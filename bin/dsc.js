@@ -44,14 +44,20 @@ if (first === '--help' || first === '-h') {
       '\n' +
       '配置：\n' +
       '  numa config migrate [--force]   从 dsh 迁移模型配置到 ~/.dsc/config.yaml\n' +
-      '  numa config show                显示当前生效的端点/模型/key 来源\n',
+      '  numa config show                显示当前生效的端点/模型/key 来源\n' +
+      '\n' +
+      '插件（dsh 生态的组合包）：\n' +
+      '  numa plugin add <包名|tarball|路径> [--profile 名字]   装一个组合包并登记到 profile\n' +
+      '  numa plugin remove <包名> [--profile 名字]            卸掉\n' +
+      '  numa plugin list [--profile 名字]                     列出已装组合包与版本闸状态\n',
   )
   process.exit(0)
 }
 
 // ── 子命令：config（交给 lib/tools/config-cli.js） ───────────────────────────
-if (first === 'config') {
-  const child = spawn(process.execPath, [join(PKG_ROOT, 'lib', 'tools', 'config-cli.js'), ...process.argv.slice(3)], {
+if (first === 'config' || first === 'plugin') {
+  const tool = first === 'config' ? 'config-cli.js' : 'plugin-cli.js'
+  const child = spawn(process.execPath, [join(PKG_ROOT, 'lib', 'tools', tool), ...process.argv.slice(3)], {
     stdio: 'inherit',
     env: process.env,
   })
