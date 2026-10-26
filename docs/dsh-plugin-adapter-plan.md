@@ -250,7 +250,7 @@ sed -n '9,140p' docs/user/develop/basic/publish.zh.md
 | 6 | 第三方 `plugin.json` 的 `services` 坏值被**静默丢弃**（`Array.isArray ? filter : undefined`），与内置清单 `readNameList` 记 problem 的口径不一致 | **已修**：坏值记一条 problem 并当没声明处理 | 其余字段也可以收进同一个读函数（下一步） |
 | 7 | **门禁既有漏洞**：构建产物缺失时清单顶层 `apiVersion` 为 `undefined`，`evaluateUiApiGate` 直接放行——「无据可依就放行」，与失败关闭相反；包路径复用了它 | **已修**：两边都无依据改成拒（理由写进 problems）；五个测试夹具补上 `apiVersion` | — |
 | 8 | `build-plugins.mjs` 还留着 legacy `plugin.json` 读取分支，19 个插件都迁完了，这条分支已死 | **已修**：改成「见到 plugin.json 就报错」，删掉分支 | — |
-| 9 | 六条 UI 自检**没有汇总入口**，靠人记着跑 | **已修**：`pnpm run check:ui`（四条快的）、`pnpm run check:ui:e2e`（两条真机） | — |
+| 9 | UI 自检**没有汇总入口**，靠人记着跑 | **已修**：`scripts/check-ui.mjs` 按文件名自动发现——`pnpm run check:ui` 跑纯 Node 那 35 条（31 秒），`pnpm run check:ui:e2e` 跑要真 Chromium 的 4 条（61 秒）；新探针命名 `ui-<话题>-test.mjs` / `-e2e.mjs` 即自动入库 | — |
 | 10 | 示例包的 `client.bundle.js` 是手写工厂，壳的工厂协议一变它会静默失效（只有 e2e 能发现） | **已修**：`ui-two-halves-test` 当场跑它一遍，钉住注册名、产出形状、require 白名单、注册进哪个槽、组件标记与文字（16/0） | — |
 | 11 | `unmetDependencies` 对「依赖的插件被停用」也说「不在清单里」，文案不够准 | **已修**：产物表多一项 `disabled`（第三方与组合包），启动图带出去，两壳装载器都传进 `unmetDependencies`，文案改成「被停用了（在插件中心或 plugins.json 里打开）」 | — |
 | 12 | 计划文档 §4 的进程注记没跟上 2.0 与两半 | **已修**：本节 + 上面的注记 | — |

@@ -200,7 +200,8 @@ dsc 的等价扩展点重挂，找不到就砍掉那个功能**——个人版�
    就再去插件中心确认「组合包界面」那一组有它、开关能停。
 8. **回归自检**：`pnpm run check:dsh`（`scripts/dsh-compat-check.mjs` 等三条）——34 条断言覆盖解析钩子、工具兼容面、
    logger 桥、配置校验、不支持项拒绝；给兼容层改代码时必须全绿再交付。界面半的回归
-   另跑 `pnpm run check:ui`（组合包那几组在里面，38 条断言），`pnpm run check:ui:e2e` 跑真机那两条。
+   另跑 `pnpm run check:ui`（35 条纯 Node 探针，组合包那几组在里面）与 `pnpm run check:ui:e2e`
+   （4 条要真 Chromium 的，含 diff 卡与手机尺寸远程壳）。
 
 ## 6. 边界（当前明确不支持的，别绕）
 
