@@ -28,8 +28,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsc -p tsconfig.json --watch",
     "build:ui": "pnpm -C ui-shell build",
-    "check:ui": "node scripts/ui-plugin-test.mjs && node scripts/ui-package-plugin-test.mjs && node scripts/ui-tui-plugin-test.mjs && node scripts/ui-two-halves-test.mjs && node scripts/ui-transcript-render-test.mjs",
-    "check:ui:e2e": "node scripts/ui-cordis-test.mjs && node scripts/ui-two-halves-e2e.mjs",
+    "check:ui": "node scripts/check-ui.mjs",
+    "check:ui:e2e": "node scripts/check-ui.mjs --e2e",
+    "check:ui:list": "node scripts/check-ui.mjs --list && node scripts/check-ui.mjs --e2e --list",
     "ui:serve": "node scripts/_ui-shell-serve.mjs"
   },
   "dependencies": {
