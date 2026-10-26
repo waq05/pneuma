@@ -22,23 +22,65 @@ export interface LlmUsageInfo {
   readonly sessionId: string
   readonly provider: string
   readonly model: string
+  /** prompt_tokens 总量（命中**包含在内**，与内核 `usage` 事件同口径）。 */
   readonly inputTokens: number
   readonly outputTokens: number
-  readonly cacheReadTokens?: number
-  readonly cacheWriteTokens?: number
+  /** 输入里的缓存命中 token 数。 */
+  readonly cacheHitTokens?: number
+  /** 输入里的未命中 token 数（不报时按总量减命中算）。 */
+  readonly cacheMissTokens?: number
   readonly reasoningTokens?: number
+}
+
+/** dsh 的用量形状：各分项**互斥**（见下面的换算）。 */
+export interface DshTokenUsage {
+  readonly inputTokens: number
+  readonly outputTokens: number
+  readonly cacheReadTokens: number
+  readonly cacheWriteTokens: number
+  readonly reasoningTokens: number
+  readonly totalTokens: number
+}
+
+/** 我们这边的用量读数（内核 `usage` 事件 + 用量日志的字段）。 */
+export interface KernelUsageLike {
+  readonly inputTokens: number
+  readonly outputTokens: number
+  readonly cacheHitTokens?: number
+  readonly cacheMissTokens?: number
+  readonly reasoningTokens?: number
+}
+
+/**
+ * 把我们的用量换算成 dsh 的分项。
+ *
+ * 两边的口径不一样，直接抄会**多算钱**：我们的 `inputTokens` 是 prompt_tokens 总量，
+ * 缓存命中**包含在内**；dsh 的 `inputTokens` 只算未命中的部分，命中另记
+ * `cacheReadTokens`，计费时三项相加。照搬就把命中那部分按未命中价又收了一遍。
+ *
+ * `cacheWriteTokens` 一律 0：我们这边没有「缓存写入」这个概念（命中的补集是未命中，
+ * 不是写入）。dsh 的 `totalTokens` 是四项相加，这里按同一口径给出。
+ *
+ * @param usage - 内核读数
+ * @returns dsh 口径的分项
+ */
+export function toDshUsage(usage: KernelUsageLike): DshTokenUsage {
+  const hit = usage.cacheHitTokens ?? 0
+  const miss = usage.cacheMissTokens ?? Math.max(usage.inputTokens - hit, 0)
+  return {
+    inputTokens: Math.max(miss, 0),
+    outputTokens: usage.outputTokens,
+    cacheReadTokens: Math.max(hit, 0),
+    cacheWriteTokens: 0,
+    reasoningTokens: usage.reasoningTokens ?? 0,
+    totalTokens: Math.max(miss, 0) + usage.outputTokens + Math.max(hit, 0),
+  }
 }
 
 /** dsh 的 chunk 形状（只用到 `usage` 这一种；其余字段我们不发）。 */
 export interface DshStreamChunk {
   readonly type: 'usage'
-  readonly usage: {
-    readonly inputTokens: number
-    readonly outputTokens: number
-    readonly cacheReadTokens: number
-    readonly cacheWriteTokens: number
-    readonly reasoningTokens: number
-  }
+  readonly usage: DshTokenUsage
 }
 
 /** 事件名。抽成常量：发布侧与自检都引它，拼错一个字符就两边同时红。 */
@@ -54,13 +96,15 @@ export const LLM_STREAM_EVENT = 'llm/stream'
 export async function publishDshUsage(ctx: unknown, info: LlmUsageInfo): Promise<void> {
   const chunk: DshStreamChunk = {
     type: 'usage',
-    usage: {
+    // 分项换算在一处：两个出口（流旁路与事件旁路）必须同一口径，不然同一个回合
+    // 在两处会报出两个不同的数。
+    usage: toDshUsage({
       inputTokens: info.inputTokens,
       outputTokens: info.outputTokens,
-      cacheReadTokens: info.cacheReadTokens ?? 0,
-      cacheWriteTokens: info.cacheWriteTokens ?? 0,
-      reasoningTokens: info.reasoningTokens ?? 0,
-    },
+      ...(info.cacheHitTokens === undefined ? {} : { cacheHitTokens: info.cacheHitTokens }),
+      ...(info.cacheMissTokens === undefined ? {} : { cacheMissTokens: info.cacheMissTokens }),
+      ...(info.reasoningTokens === undefined ? {} : { reasoningTokens: info.reasoningTokens }),
+    }),
   }
   const next = async function* (): AsyncGenerator<DshStreamChunk> {
     yield chunk

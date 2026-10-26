@@ -23,6 +23,7 @@ import { Session, type InboxOrigin } from '../core/session.js'
 import { MiniAgent } from '../core/loop.js'
 import { appendToolRecord, appendUsageRecord } from '../core/usage-log.js'
 import { publishDshUsage } from '../core/dsh-compat/llm-usage-event.js'
+import { createDshSessionEventBridge } from '../core/dsh-compat/session-events.js'
 import { clearReadLedger } from '../core/path-policy.js'
 import { errText } from '../adapter/transcript.js'
 import type { AgentService, TurnSignal } from '../services/types.js'
@@ -60,6 +61,15 @@ export const agentPlugin: Plugin.Object = {
     const makeAgent = (session: Session): MiniAgent => {
       /** 工具名按 callId 记着：`tool/result` 事件只带 callId，工具行要写工具名。 */
       const toolNames = new Map<string, string>()
+      // dsh 插件的广播面：一个会话一座桥，把回合过程按 dsh 的 session/event 形状播出去
+      // （为什么要有它、以及哪些不发，见 core/dsh-compat/session-events 的头注释）。
+      const dshEvents = createDshSessionEventBridge({
+        ctx,
+        sessionId: session.meta.id,
+        cwd: session.meta.cwd,
+        createdAt: session.meta.createdAt,
+        route: () => ({ provider: ctx.llm.provider ?? '', model: ctx.llm.model ?? '' }),
+      })
       return new MiniAgent(
         {
           route: () => ctx.llm.route(),
@@ -75,6 +85,9 @@ export const agentPlugin: Plugin.Object = {
           tools: () => ctx.tools.visible(),
           guards: ctx.guards,
           emit: (event) => {
+            // 先把这条内核事件翻译成 dsh 的 session/event 广播出去（旁路，内部吞错）：
+            // 订阅它的插件才能看见「正在跑的这一轮」，而不是只有磁盘上的历史。
+            dshEvents.publish(event)
             // 用量按发起回合的会话记账落一条到 ~/.dsc/usage/usage.jsonl；落盘失败
             // 已被 appendUsageRecord 自己吞掉，不能影响对话轮次。这一步的墙钟读数
             // （lm/ft/d）同一条出账：界面按整个会话累计算输出速度与首字延迟。
@@ -100,8 +113,8 @@ export const agentPlugin: Plugin.Object = {
                 model: ctx.llm.model,
                 inputTokens: event.inputTokens,
                 outputTokens: event.outputTokens,
-                ...(event.cacheHitTokens === undefined ? {} : { cacheReadTokens: event.cacheHitTokens }),
-                ...(event.cacheMissTokens === undefined ? {} : { cacheWriteTokens: event.cacheMissTokens }),
+                ...(event.cacheHitTokens === undefined ? {} : { cacheHitTokens: event.cacheHitTokens }),
+                ...(event.cacheMissTokens === undefined ? {} : { cacheMissTokens: event.cacheMissTokens }),
               })
             }
             // 工具调用也记一条（第二种行）：界面读同一个文件算「工具耗时」。

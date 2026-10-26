@@ -65,7 +65,9 @@ console.log('会话桥：list / stat / open(read) 的形状')
   const list = persistence.list()
   check('list() 看得见这个会话', list.length === 1 && list[0].header.id === sessionId, JSON.stringify(list))
   const stat = persistence.stat(sessionId)
-  check('stat() 给 header / revision / eventCount / sizeBytes', stat !== undefined && typeof stat.revision === 'string' && stat.eventCount === 5, JSON.stringify(stat))
+  // 3 条：user/message、没处挂的 llm/usage、assistant/message（挂上了第二条用量）。
+  // meta 不算事件（dsh 的会话头走 header，不是一条事件）；挂上助手消息的用量也不单列。
+  check('stat() 给 header / revision / eventCount / sizeBytes', stat !== undefined && typeof stat.revision === 'string' && stat.eventCount === 3, JSON.stringify(stat))
   check('formatStatus 是 current（不做迁移戏法）', stat?.formatStatus === 'current', String(stat?.formatStatus))
   check('stat 不存在的会话给 undefined', persistence.stat('nope') === undefined)
 
@@ -74,19 +76,30 @@ console.log('会话桥：list / stat / open(read) 的形状')
   check('句柄带 header（消费方从它取会话头）', handle.header.id === sessionId, JSON.stringify(handle.header))
   check('句柄带 inheritedEventCount（没有 fork 就是 0）', handle.inheritedEventCount === 0, String(handle.inheritedEventCount))
   const fromOffset = handle.read(3)
-  check('read(数字) 按 seq 偏移取（3 → 第 3 条起）', fromOffset.events.length === 3 && fromOffset.events[0].seq === 3, JSON.stringify(fromOffset.events.map((e) => e.seq)))
-  check('read(0) 从头取', handle.read(0).events.length === 5)
+  check('read(数字) 按 seq 偏移取（3 → 第 3 条起）', fromOffset.events.length === 1 && fromOffset.events[0].seq === 3, JSON.stringify(fromOffset.events.map((e) => e.seq)))
+  check('read(0) 从头取', handle.read(0).events.length === 3)
   const all = handle.read()
-  check('open(read) 读出全部事件', all.events.length === 5 && all.hasMore === false, JSON.stringify(all.events.length))
-  check('事件按时间合并（用量插在 user 与 assistant 之间）',
-    all.events[0].type === 'meta' && all.events[1].type === 'user' && all.events[2].type === 'llm/usage',
+  check('open(read) 读出全部事件', all.events.length === 3 && all.hasMore === false, JSON.stringify(all.events.length))
+  check('事件翻成 dsh 的类型（user/message、assistant/message）',
+    all.events[0].type === 'user/message' && all.events[2].type === 'assistant/message',
     all.events.map((e) => e.type).join(','))
+  check('消息包成 dsh 的形状（id / role / content 块 / source）', (() => {
+    const first = all.events[0].data
+    return typeof first['id'] === 'string' && first['role'] === 'user' && Array.isArray(first['content']) && first['content'][0]?.type === 'text' && first['source']?.kind === 'user'
+  })(), JSON.stringify(all.events[0].data))
   const usage = all.events.find((e) => e.type === 'llm/usage')
-  check('用量事件带 inputTokens / outputTokens', usage?.data.inputTokens === 120 && usage?.data.outputTokens === 30, JSON.stringify(usage?.data))
+  check('没处挂的用量仍单列，带分项数字', usage?.data.inputTokens === 120 && usage?.data.outputTokens === 30, JSON.stringify(usage?.data))
+  check('自造事件标了 ignorable（不认识的插件可以跳过）', usage?.ignorable === true)
   check('工具行不算事件（没有 token，算账用不上）', !all.events.some((e) => e.data['k'] === 'tool'))
   check('别的会话的用量不会串进来', !all.events.some((e) => e.data['model'] === 'x'))
-  const cacheHit = all.events.filter((e) => e.type === 'llm/usage')[1]
-  check('缓存命中字段也被带出来', cacheHit?.data.cacheReadTokens === 100 && cacheHit?.data.cacheWriteTokens === 20, JSON.stringify(cacheHit?.data))
+  // 第二条用量（带缓存明细的那些数字）挂在助手消息上：这才是 dsh 的读法，
+  // cost-meter 的 backfill / context-costs 只认 assistant/message 上的 usage。
+  const assistant = all.events.find((e) => e.type === 'assistant/message')
+  check('用量并进前面那条 assistant/message', assistant?.data.usage !== undefined, JSON.stringify(assistant?.data.usage))
+  check('缓存分项按 dsh 口径互斥（命中单列，不算进输入）', assistant?.data.usage?.inputTokens === 20 && assistant?.data.usage?.cacheReadTokens === 100 && assistant?.data.usage?.cacheWriteTokens === 0 && assistant?.data.usage?.totalTokens === 210, JSON.stringify(assistant?.data.usage))
+  check('助手消息的来源用挂着的那条用量补上 provider / model', assistant?.data.message?.source?.provider === 'deepseek' && assistant?.data.message?.source?.model === 'deepseek-chat', JSON.stringify(assistant?.data.message?.source))
+  check('助手消息带正文块', assistant?.data.message?.content?.[0]?.type === 'text' && assistant?.data.message?.content?.[0]?.text === '先读历史再说。', JSON.stringify(assistant?.data.message?.content))
+  check('每条事件都带毫秒时间', all.events.every((e) => typeof e.time === 'number' && e.time > 0))
 
   const page = handle.read({ maxMessages: 2 })
   check('maxMessages 分页', page.events.length === 2 && page.hasMore === true, JSON.stringify({ n: page.events.length, more: page.hasMore }))
@@ -194,8 +207,8 @@ export function apply(ctx) {
   check('插件真的取到了 sessionPersistence', probe?.hasPersistence === true, JSON.stringify(probe))
   check('插件真的取到了 sessions', probe?.hasSessions === true, JSON.stringify(probe))
   check('读到的会话数与磁盘一致', probe?.sessionCount === 1, String(probe?.sessionCount))
-  check('stat 的 eventCount 对（3 行 + 2 条用量）', probe?.eventCount === 5, String(probe?.eventCount))
-  check('分页读回 3 条，其中有 1 条用量', probe?.pageSize === 3 && probe?.usage === 1, JSON.stringify(probe))
+  check('stat 的 eventCount 对（2 条消息 + 1 条没处挂的用量）', probe?.eventCount === 3, String(probe?.eventCount))
+  check('分页读回 3 条，其中有 1 条独立用量', probe?.pageSize === 3 && probe?.usage === 1, JSON.stringify(probe))
 
   ctx.emit('dsc/exit')
   const fiber = ctx?.fiber
