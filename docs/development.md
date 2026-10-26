@@ -156,6 +156,42 @@ export const myPlugin: Plugin.Object = {
 
 内核清单在 `src/host/kernel.ts` 的 `BUILTIN_PLUGINS`。新增一档官方可开关插件的三步写在 [plugin-development.md §3.4](plugin-development.md)。
 
+### 界面壳那侧也走 cordis（2026-10-26 起）
+
+界面壳（`ui-shell/`）原先自己写了一份小一号的装载器：`boot.ts` 用一支退订账本管回收、用
+`unmetInjections` 管依赖、用 `UiBootPluginState.state` 管状态。那份与宿主内核的 cordis 语义各说
+各话——同一件事（装、等依赖、卸）在两边两套实现。
+
+现在壳里也有一个 cordis 根（`ui-shell/src/ui-renderer/cordis-host.ts`），装插件走 fiber：
+
+| 旧账本 | 现在 |
+| --- | --- |
+| `ledgerOfPlugin` 手工倒序调用 | `ctx.effect()` + fiber，依赖顺序由框架保证 |
+| `disposers` 表 + `uninstall` | `fiber.dispose()` |
+| `UiBootPluginState.state` 自己维护 | `fiber.state`（0 待装 / 1 装载中 / 2 生效 / 3 失败 / 4 已卸），账本的 `fiber` 字段就是它 |
+
+**插件写法不变**：还是 `export default defineUiPlugin({ apply(ui) })`，拿到的 `ui` 还是那六项
+（`id` / `slots` / `host` / `runtime` / `provide` / `consume`）。壳把 cordis 的 `ctx` 包成 `ui`
+交过去，所以 19 个内置插件一行没改。
+
+两条路并存是**回滚面**：默认 19 条全走 cordis（`boot.ts` 的 `CORDIS_DEFAULT_ALL`），旧退订账本
+留着——出问题时在页面里写 `globalThis.__DSC_CORDIS_PROBE__ = 'none'` 就整体退回，不必重新构建；
+写数组（例如 `['sessions']`）则只有名单里的走 cordis。账本里每条的 `via` 字段（`cordis` /
+`ledger`）就是它走的哪条，诊断区每行末尾也写着（`?diag=1` 打开，或装载失败时自动出现）。
+
+三个坑：
+
+1. **服务名不能撞 cordis 自带的 Context 成员**。`runtime` / `effect` / `fiber` 都是 Context 上的
+   访问器，第一次 `provide` 就抛 `property "runtime" is already declared as accessor`，症状是
+   整个壳起不来、诊断区只有一行 `boot 失败`。壳里那个通道服务因此叫 `uiRuntime`。
+2. **壳提供的服务是三个**：`slots` / `host` / `uiRuntime`。插件 `ui.provide()` 出来的服务同时写
+   界面侧服务表（`useService` 读它）与 cordis（将来 `inject` 得到），两边同一个值、同一次释放。
+3. **cordis 卸载是异步的**。HMR 换装必须 `await cordis.unmount(id)` 再装新的，否则新旧两条纤维
+   同时占着同一个槽格子（症状是状态栏叠成两份）。
+
+验证：`node scripts/ui-cordis-test.mjs`（真 Electron + 真宿主 + 一轮换装，25 条断言）。
+要连诊断区一起量：`DSC_CORDIS_DIAG=1 node scripts/ui-cordis-test.mjs`。
+
 ## 5. 契约层与进程间协议
 
 `src/contract.ts` 定义 `DscRuntime`：TUI 与桌面端消费同一接口，桌面端经协议转接。

@@ -8113,3 +8113,68 @@ background:
 
 **测试**：`scripts/ui-interaction-base-test.mjs` 新增 [7] 一节 11 条（滚动区 3、滚轮折算 3、键盘 5）。
 
+
+**界面插件装配交给 cordis（2026-10-26，对齐 dsh 的第一步）**：
+
+用户的要求是「对齐 dsh 的 cordis 插件实现方式」。先看现场，结论是**宿主侧早就对齐了**：
+`src/host/kernel.ts` 就是 `new Context()` 加一串 `root.plugin(...)`，每个 `src/plugins/*.ts` 都是
+cordis object plugin，cordis 与 cordis-plugin-loader 早就在根 `package.json` 里。没对齐的是
+**界面壳**——`ui-shell/src/ui-renderer/boot.ts` 自己写了一份装载器（账本、unmet 检查、状态机）。
+
+这次只做一件事：给壳里加一个 cordis 根，把「装一条插件」的生命周期交给它，**不动插件写法**。
+理由是不动界面：19 个内置插件 22,560 行、34 处 `ui.*` 调用，改写法就是拿界面冒险；而
+`defineUiPlugin` 本来就是恒等函数，是个现成的适配点。
+
+做了什么：
+
+1. 新增 `ui-shell/src/ui-renderer/cordis-host.ts`（约 200 行）：`new Context()`，提供 `slots` / `host` /
+   `uiRuntime` 三个服务；`mount(id, apply)` 把插件的 `apply(ui)` 包成 cordis 插件（`apply` 返回的
+   退订函数 cordis 直接收下），`unmount` 走 `fiber.dispose()`，`stateOf` 读 fiber 状态。
+2. `boot.ts` 的 `install()` 分成两条路（灰度）：`CORDIS_DEFAULT_ENTRIES` 里的走 cordis，其余照旧；
+   账本里每条多记 `via`（哪条路）与 `fiber`（状态码）。换装 `reload` 等卸载落地再装新的。
+3. `ui-shell/package.json` 加 `@deepseek-ai/cordis@^4.0.4`（装到 4.0.5）。
+
+踩的坑，按发现顺序：
+
+1. **`runtime` 是 cordis Context 的保留名字**。第一次真机跑，19 条全停在 pending、诊断区只有一行
+   「boot 失败：property "runtime" is already declared as accessor」——建 cordis 根时抛了，
+   `main.tsx` 捕获后 `session` 为 null，页面照常画出空壳。改名 `uiRuntime` 即好。这类错最费时间的
+   地方是症状（空壳）离原因（保留名）太远，所以把这条写进了 development.md 的坑清单。
+2. **两条换装路径要串行**：cordis 的 `fiber.dispose()` 是异步的。HMR 只调同步的 `uninstall` 会让
+   新旧纤维并存，状态栏叠成两份。`reload` 里补 `await cordis.unmount(id)`（重复调用返回同一次卸载）。
+3. **探针环境自己有两个坑**（与产品无关，写下来省下一个人两小时）：`ELECTRON_RUN_AS_NODE=1` 会让
+   electron.exe 退回普通 node，`require('electron')` 拿到路径字符串、主进程一上来就崩；electron.exe
+   的命令行**只能带入口地址一个位置参数**，多带一个（哪怕是空串）直接退出、退出码 127。
+
+**验证**（`node desktop/shots/_cordis-probe.mjs`，真 Electron 加真宿主，跑首帧加一轮换装，22 条断言全 PASS）：
+19 条插件全装上；`statusbar` 的 `via=cordis`、`fiber=2`，其余 18 条 `via=ledger`；状态栏在 DOM 里
+只有 1 份、文本「0 轮 0 步 / 0%」；改产物 bundle 触发一次换装后新代码真的执行（标记出现）、状态栏
+仍是 1 份、仍是 `via=cordis`、`fiber=2`；全程无槽位故障、无同步失败、页面无 error/warning。
+截图 `shots/cordis-probe.png` 与改动前的界面逐块一致（侧栏、顶栏、首屏四张能力卡、输入框、状态栏）。
+
+**没做的（下一批）**：`inject` 还没交给 cordis（仍是 `manifest.ts` 的双关加装载期检查），因为
+cordis 的等待是静默的——缺服务只会让 fiber 停在「待装」，用户在界面上看不到一句人话。要么先把
+fiber 状态映射成诊断行，要么维持现状。其余 18 条切过去的开关是现成的（`__DSC_CORDIS_PROBE__`）。
+
+**第二批：19 条全切（同日，用户点头后）**：
+
+上一批只放了 `statusbar`，这一批把剩下 18 条一起切过来，开关改成「默认全走 cordis，
+`__DSC_CORDIS_PROBE__ = 'none'` 整体退回账本」。切换本身没改一行插件代码。
+
+顺带补了一件上一批欠着的事：**诊断区逐行显示装配路径与纤维状态**（`ui-layout/app.tsx` 的
+`data-plugin-via` / `data-plugin-fiber`）。理由是把「谁走哪条路、纤维是不是还卡在待装」
+变成看得见的读数——下一步要把 `inject` 交给 cordis，缺服务时 cordis 只会让纤维静默停在待装，
+不先把这条读数摆出来，用户看到的就是「界面上少了一块，还没人解释」。
+
+两个细节记下来：
+
+1. `?diag=1` **不能挂在带令牌的入口地址上**：令牌换 Cookie 那一跳是 303 到 `/`，查询参数被丢掉。
+   要看诊断区得两步走——先带令牌打开（种 Cookie），再跳 `/?diag=1`。探针里就是这么做的
+   （`DSC_CORDIS_DIAG=1`）。
+2. 探针从 `desktop/shots/`（不入库）搬进了 `scripts/`：`scripts/ui-cordis-test.mjs` 加驱动
+   `scripts/_ui-cordis-main.cjs`，换台机器也能跑。
+
+**验证**（`DSC_CORDIS_DIAG=1 node scripts/ui-cordis-test.mjs`，25 条断言全 PASS）：19 条全装上且
+全部 `via=cordis`、`fiber=2`；诊断区 19 行都写着 `cordis（已生效）`；状态栏 DOM 里 1 份、有内容；
+一轮换装后新代码真的执行、仍是 1 份、仍是 `fiber=2`；无槽位故障、无同步失败、页面无 error/warning。
+截图 `shots/cordis-probe.png`。
