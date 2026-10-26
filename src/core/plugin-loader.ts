@@ -34,7 +34,7 @@ import { activeConfigFile } from './config-store.js'
 import { parseTolerantYaml } from './migrate.js'
 import { describeForeignServices } from './dsh-compat/service-map.js'
 import { applyPatchLayers, type PatchLayer, type PluginRow } from './plugin-patch.js'
-import { bundleDirOf, enginesProblem, readBundle, readProfile } from './plugin-bundle.js'
+import { bundleDirOf, enginesProblem, readBundle, readProfile, type BundleInfo } from './plugin-bundle.js'
 import { dscPath } from './path-policy.js'
 
 /** 内核插件 API 版本（重导出，供宿主/文档引用）。 */
@@ -135,7 +135,14 @@ async function importPluginModule(file: string, meta: PluginMeta): Promise<Plugi
   try {
     return (await import(url)) as PluginModule
   } catch (error) {
-    meta.problem = `模块导入失败：${err(error)}`
+    const message = err(error)
+    // dsh 插件在模块顶层就 import @deepseek-ai/*，兼容层没开时导入钩子不在，
+    // 于是第一句报错是「找不到包」——不说清楚用户只会以为包坏了。
+    const hint =
+      message.includes('@deepseek-ai/') && !isPluginEnabled('dsh-compat')
+        ? '（这像是 dsh 插件：它 import 的 @deepseek-ai/* 由「dsh 兼容层」提供，请先在插件中心启用 dsh-compat 再试）'
+        : ''
+    meta.problem = `模块导入失败：${message}${hint}`
     return null
   }
 }
@@ -171,6 +178,14 @@ export async function mountExternalPlugin(file: string): Promise<boolean> {
 
   const meta: PluginMeta = { file: base, name: base.replace(/\.js$/, ''), description: '', source: 'external' }
   registerPluginMeta(meta)
+
+  // 解析钩子必须在**导入之前**就位：dsh 插件在模块顶层就 import @deepseek-ai/* 的东西，
+  // 等 apply 时再注册已经太晚（import 早就抛 ERR_MODULE_NOT_FOUND 了）。
+  const needsCompat = isPluginEnabled('dsh-compat')
+  if (needsCompat) {
+    ensureResolveHook([DSC_PLUGINS_DIR])
+    normalizeDshHome()
+  }
 
   const mod = await importPluginModule(file, meta)
   if (mod === null) {
@@ -236,15 +251,15 @@ export async function mountExternalPlugin(file: string): Promise<boolean> {
   // 兼容层开着：外部插件的 ctx.tools 换成双形状兼容面（dsc ToolEntry 与 dsh
   // ToolDefinition 都收），dsh 插件 inject ['tools'] 时不再需要任何特判。
   // 解析钩子同步注册（registerHooks），这里先确保它在，插件导入 @deepseek-ai/* 才走得通。
-  const needsCompat = isPluginEnabled('dsh-compat')
-  if (needsCompat) ensureResolveHook([DSC_PLUGINS_DIR])
+  /** 插件运行时直接 `ctx.get` 过的服务名（诊断用：它可能不声明 inject）。 */
+  const asked: string[] = []
   try {
     const pluginObject = {
       name: meta.name,
       inject: mod.inject as string[] | undefined,
       apply: (innerCtx: Context, config: Record<string, unknown>): unknown =>
         (mod.apply as (ctx: Context, config: Record<string, unknown>) => unknown)(
-          needsCompat ? compatCtx(innerCtx, base) : innerCtx,
+          needsCompat ? compatCtx(innerCtx, base, asked) : innerCtx,
           config,
         ),
     }
@@ -254,7 +269,14 @@ export async function mountExternalPlugin(file: string): Promise<boolean> {
     meta.problem = undefined
     return true
   } catch (error) {
-    meta.problem = `挂载失败：${err(error)}`
+    // 很多 dsh 插件不声明 inject，而是在 apply 里 ctx.get('sessions') 现取。取到
+    // undefined 再调方法就只剩一句 "Cannot read properties of undefined"，等于没说话。
+    // 这里把「它取过、但我们没有或对不上」的服务名一并写进诊断。
+    const missing = missingServicesOf(asked)
+    meta.problem =
+      missing === null
+        ? `挂载失败：${err(error)}`
+        : `挂载失败：${err(error)}。它在运行时直接取这些服务，Pneuma 没有或对不上：${missing}`
     await disableSilently(base)
     return false
   }
@@ -264,15 +286,47 @@ export async function mountExternalPlugin(file: string): Promise<boolean> {
  * dsh 兼容的 ctx 视图：`ctx.tools` 换成双形状的兼容面（risk 的映射每次 register
  * 时现读插件条目配置），其余服务原样透传。logger 是 cordis 内置服务，不用垫。
  */
-function compatCtx(innerCtx: Context, file: string): Context {
+function compatCtx(innerCtx: Context, file: string, asked: string[]): Context {
   return new Proxy(innerCtx, {
     get(target, prop, receiver) {
       if (prop === 'tools') {
         return dshToolsFacade((entry) => target.tools.register(entry), () => resolveRiskConfig(file))
       }
+      if (prop === 'get') {
+        // 原样转发（缺服务仍然给 undefined，与 cordis 一致），只顺手记一笔名字。
+        return (name: unknown): unknown => {
+          if (typeof name === 'string') asked.push(name)
+          return (target.get as (key: string) => unknown)(String(name))
+        }
+      }
       return Reflect.get(target, prop, receiver)
     },
   })
+}
+
+/**
+ * 把 `$DSH_HOME` 定到 Pneuma 的家（用户设过就不动）。
+ *
+ * 为什么要在**导入之前**做：dsh 插件里有一半的路径不走 home-paths 包，而是在模块
+ * 顶层直接算 `process.env.DSH_HOME || join(homedir(), '.dsh')`（cost-meter 的
+ * store.js 就是），算完存成常量。等 apply 时再设已经晚了，账本照样写进 dsh 的家目录。
+ */
+function normalizeDshHome(): void {
+  // 一律覆盖，包括继承来的值：`DSH_HOME` 是 dsh 的内部开关，不是 Pneuma 用户的设置项。
+  // 从 dsh 终端里启动 Pneuma 时会继承到 `~/.dsh`，照抄就等于让插件写进 dsh 的家目录；
+  // 想换 Pneuma 的家请设 `DSC_HOME`，那条路我们本来就认。
+  process.env['DSH_HOME'] = dscPath()
+}
+
+/**
+ * 把「插件取过、Pneuma 没有或对不上」的服务名折成一句人话。
+ * @param asked - 插件运行时 `ctx.get` 过的名字（按调用顺序，可能重复）
+ * @returns 说明；没有缺失给 null
+ */
+function missingServicesOf(asked: readonly string[]): string | null {
+  const foreign = [...new Set(asked)].filter((name) => !DSC_SERVICE_NAMES.has(name))
+  if (foreign.length === 0) return null
+  return describeForeignServices(foreign)
 }
 
 /** 从条目树现读 risk 映射：`risk` 是这份插件全部工具的缺省，`risks` 按工具名覆盖。 */
@@ -412,11 +466,17 @@ export async function mountBundlePlugins(
   profileDir: string,
 ): Promise<{ failures: PluginMountFailure[]; warnings: string[] }> {
   initPluginRuntime(root)
+  // 组合包的插件代码在 profile 自己的 node_modules 里，它们 import @deepseek-ai/* 时
+  // 要把这个目录也当成「允许重定向的插件根」——只认 ~/.dsc/plugins/ 的话，真装一个
+  // dsh 组合包会在 import 阶段就 ERR_MODULE_NOT_FOUND。
+  if (isPluginEnabled('dsh-compat')) ensureResolveHook([join(profileDir, 'node_modules')])
   const profile = readProfile(profileDir)
   const layers: PatchLayer[] = []
   const warnings: string[] = []
   /** 每一层是哪个包的（解析相对路径时按它来）。 */
   const layerOwner = new Map<string, string>()
+  /** 包名 → 读盘结果（挂上之后要拿它的 `dsh.client` 给插件中心看）。 */
+  const bundleInfoOf = new Map<string, BundleInfo>()
 
   for (const name of profile.bundles) {
     const dir = bundleDirOf(profileDir, name)
@@ -435,6 +495,7 @@ export async function mountBundlePlugins(
       warnings.push(`${dir} 里没有 package.json，不是插件包，已跳过`)
       continue
     }
+    bundleInfoOf.set(info.name, info)
     const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as Record<string, unknown>
     const engineProblem = enginesProblem(manifest)
     if (engineProblem !== null && !profile.exemptions.includes(info.name)) {
@@ -482,7 +543,15 @@ export async function mountBundlePlugins(
     const ok = await mountExternalPlugin(file)
     const meta = getPluginMeta(basename(file))
     const owner = typeof row.id === 'string' ? ownerOf.get(row.id) : undefined
-    if (ok && meta !== undefined && owner !== undefined) meta.bundle = owner
+    if (ok && meta !== undefined) {
+      if (owner !== undefined) meta.bundle = owner
+      // 有的包把界面能力写在 package.json 的 dsh.client（不在模块导出里）。
+      // 只列不加载，但要列得出来，否则用户在插件中心看不到「它还想改界面」。
+      const declared = owner === undefined ? undefined : bundleInfoOf.get(owner)?.client
+      if (meta.clientCapabilities === undefined && declared !== undefined) {
+        meta.clientCapabilities = clientCapabilitiesOf(declared)
+      }
+    }
     if (!ok && meta?.problem !== undefined) {
       failures.push({ file: basename(file), name: meta.name, problem: meta.problem })
     }
@@ -497,15 +566,73 @@ export async function mountBundlePlugins(
  * node_modules 解析）。解析不出来给 null（调用方记告警）。
  */
 function resolveBundleTarget(profileDir: string, target: string, layerOwner: ReadonlyMap<string, string>): string | null {
-  if (isAbsolute(target)) return existsSync(target) ? target : null
+  if (isAbsolute(target)) return entryFileOf(target)
   if (target.startsWith('./') || target.startsWith('../')) {
     // 相对路径按「哪一层的 patch 写的」算：bundle 的 patch 相对它自己的包目录。
     const owner = [...layerOwner.values()].find((dir) => existsSync(join(dir, target)))
     const candidate = owner === undefined ? join(profileDir, target) : join(owner, target)
-    return existsSync(candidate) ? candidate : null
+    return entryFileOf(candidate)
   }
-  const candidate = join(profileDir, 'node_modules', ...target.split('/'))
-  return existsSync(candidate) ? candidate : null
+  return entryFileOf(join(profileDir, 'node_modules', ...target.split('/')))
+}
+
+/**
+ * 把一个「可能是包目录」的路径落成真正的入口文件。
+ *
+ * dsh 的 patch 行写的是**包名**，pnpm 装上来的 `node_modules/<包名>` 是目录，
+ * 而 ESM 的 `import()` 不吃目录（`ERR_UNSUPPORTED_DIR_IMPORT`）。dsh 那边由 Node
+ * 的包解析负责找入口，我们这一层自己补：先看 `exports["."]`，再看 `main`，
+ * 最后退回 `index.js`。
+ * @param candidate - 绝对路径（文件或包目录）
+ * @returns 入口文件的绝对路径；路径不存在或目录里找不到入口给 null
+ */
+function entryFileOf(candidate: string): string | null {
+  if (!existsSync(candidate)) return null
+  let stats
+  try {
+    stats = statSync(candidate)
+  } catch {
+    return null
+  }
+  if (!stats.isDirectory()) return candidate
+
+  const manifest = readJsonObject(join(candidate, 'package.json'))
+  const fromExports = exportsEntry(manifest?.exports)
+  for (const relative of [fromExports, typeof manifest?.main === 'string' ? manifest.main : null, 'index.js']) {
+    if (relative === null || relative === '') continue
+    const file = join(candidate, relative)
+    if (existsSync(file)) return file
+  }
+  return null
+}
+
+/** `exports` 字段里 `"."` 那一路的入口（字符串或条件对象）。 */
+function exportsEntry(exports: unknown): string | null {
+  const root =
+    typeof exports === 'string'
+      ? exports
+      : exports !== null && typeof exports === 'object' && '.' in (exports as Record<string, unknown>)
+        ? (exports as Record<string, unknown>)['.']
+        : exports
+  if (typeof root === 'string') return root
+  if (root === null || typeof root !== 'object') return null
+  const conditions = root as Record<string, unknown>
+  for (const key of ['default', 'import', 'node', 'require']) {
+    const value = conditions[key]
+    if (typeof value === 'string') return value
+  }
+  return null
+}
+
+/** 松读一个 JSON 文件：不存在/坏掉给 null（入口解析按「没有」处理）。 */
+function readJsonObject(file: string): Record<string, unknown> | null {
+  if (!existsSync(file)) return null
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'))
+    return parsed !== null && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null
+  } catch {
+    return null
+  }
 }
 
 function isDisabledByEntry(file: string): boolean {

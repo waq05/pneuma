@@ -246,6 +246,34 @@ numa plugin list [--profile 名字]
 理由见 `PluginInfoView.clientCapabilities` 的注释：那要一份 dsh 自己的客户端运行时，与 Pneuma
 更严的信任模型冲突。
 
+### 真装一个 dsh 组合包：四道必须过的关（2026-10-26 用 dsh-cost-meter 1.9.41 验的）
+
+线上真包（`dsh-cost-meter`）与自造的合成包有四处分歧，逐条补齐后它才挂得上：
+
+1. **包名那一行要解析到入口文件**。patch 里写的是包名，pnpm 装上来的是目录，而 ESM 的
+   `import()` 不吃目录（`ERR_UNSUPPORTED_DIR_IMPORT`）。`mountBundlePlugins` 现在按
+   `exports["."]` → `main` → `index.js` 的顺序落成文件（`plugin-loader.ts` 的 `entryFileOf`）。
+2. **两个 dsh 宿主库换成我们自己的实现**。真包 import `@deepseek-ai/dsh-home-paths`
+   （`resolveDshHome`）与 `@deepseek-ai/dsh-credentials`（`credentialRef`）；照原样装，
+   它们的默认根是 `~/.dsh`，插件的账本会写进 dsh 的家目录。现在由解析钩子把它们映射到
+   `src/core/dsh-compat/shims/`：前者返回 `~/.dsc`（受 `DSC_HOME` 覆盖），后者只复刻
+   名字的语法与校验。
+3. **`DSH_HOME` 要在导入之前翻掉**。有一半 dsh 插件不走 home-paths，而在模块顶层直接算
+   `process.env.DSH_HOME || join(homedir(), '.dsh')` 并存成常量。所以兼容层开着时，
+   loader 在 `import()` 之前就把 `DSH_HOME` 设成 Pneuma 的家；从 dsh 终端里启动 Pneuma
+   会继承到 `DSH_HOME=~/.dsh`，照抄就等于让插件写进别人的目录。
+4. **缺服务要说清缺什么**。真包不声明 `inject`，而是在 apply 里 `ctx.get('sessions')` 现取；
+   取到 undefined 再调方法，原本只剩一句 `Cannot read properties of undefined`。现在
+   loader 记下它取过的服务名，挂载失败时按判定表（`service-map.ts`）逐条说明差在哪。
+
+验证：`node shots/dsh-real-plugin-check.mjs`（10 条断言，含「兼容层关着时指路」与
+「账本落在 `~/.dsc` 而不是 `~/.dsh`」；脚本读 `DSC_REAL_HOME` 下预装好的 profile，
+不入库）。合成包那一路是 `node shots/dsh-bundle-check.mjs`（15 条）。
+
+**已知边界**：包能挂上、能在插件中心认出来源，但 `dsh-cost-meter` 的成本条不会真有数——
+它靠 `sessionPersistence` + `sessions` 读会话历史算成本，这两个服务 Pneuma 没有（见
+`service-map.ts`）。那是下一步「服务适配器」的活，不是安装链路的问题。
+
 ## 5. 契约层与进程间协议
 
 `src/contract.ts` 定义 `DscRuntime`：TUI 与桌面端消费同一接口，桌面端经协议转接。

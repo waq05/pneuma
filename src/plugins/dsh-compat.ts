@@ -25,6 +25,7 @@ import type { Plugin } from '@deepseek-ai/cordis'
 import { Logger, defaultFormatters } from '@deepseek-ai/cordis'
 import { ensureResolveHook } from '../core/dsh-compat/resolve-hook.js'
 import { DSC_PLUGINS_DIR } from '../core/plugin-loader.js'
+import { dscPath } from '../core/path-policy.js'
 
 export const dshCompatPlugin: Plugin.Object = {
   name: 'dsh-compat',
@@ -33,6 +34,13 @@ export const dshCompatPlugin: Plugin.Object = {
   apply(ctx) {
     // 钩子注册同步生效；loader 在挂载外部插件前还会调一次（幂等），这里兜底
     void ensureResolveHook([DSC_PLUGINS_DIR])
+
+    // 路径归一：dsh 插件有一部分代码不走 home-paths 包，而是直接读 `$DSH_HOME`、
+    // 没有就拼 `~/.dsh`（cost-meter 的 store.js 就是）。兼容层开着就把 DSH_HOME
+    // 定到 Pneuma 的家，两种写法才落到同一个地方——否则插件的账本写进用户的 dsh 目录。
+    // 一律覆盖：从 dsh 终端里启动 Pneuma 会继承到 `DSH_HOME=~/.dsh`，照抄就等于
+    // 让插件写进 dsh 的家目录。想换 Pneuma 的家请设 `DSC_HOME`。
+    process.env['DSH_HOME'] = dscPath()
 
     // 内置 logger 管道上的桥：warn/error 镜像进 transcript（info/debug 不转，防刷屏）。
     // levels 显式放到 debug(3)：exporter 缺省阈值是 info(1)，warn/error 会被默认滤掉。

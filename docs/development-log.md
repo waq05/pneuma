@@ -8274,3 +8274,50 @@ sessionProjections（Pneuma 没有事件投影系统）；sessions（dsh 是多�
 清单里有 platform/card/服务、客户端部分没有多出工具）；`shots/dsh-bundle-check.mjs` 10/0
 （新增 1 条：插件中心能看出它来自哪个组合包）；真机截图 `shots/plugin-center.png`——页面从
 21 行变 22 行，组合包那行带徽标与能力行，版式没有被撑坏。
+
+**真装一个 dsh 插件：四道关与它们的修法（2026-10-26，C4）**：
+
+合成包骗了自己很久——它们都是「文件路径 + 完整 apply」，而线上真包完全不是这个形状。拿
+`dsh-cost-meter` 1.9.41（npm 实测包，声明 `engines.dsh >=0.2.0-rc.1 <0.3.0-0`、
+`dsh.client.platform = web`）当靶子，一路撞出四个问题，逐个修掉：
+
+1. **目录不是模块**。patch 行写包名，我们把它解析成 `node_modules/<包名>` 这个**目录**，
+   ESM 的 `import()` 直接拒收（`ERR_UNSUPPORTED_DIR_IMPORT`，报错里还贴心地说「Did you mean
+   .../lib/bootstrap.js」）。修法：`entryFileOf` 按 `exports["."]` → `main` → `index.js`
+   落成文件。dsh 那边这活是 Node 的包解析干的，我们这条自建小路得自己补。
+2. **它 import 两个 dsh 宿主库**。`@deepseek-ai/dsh-home-paths`（`resolveDshHome`，19 个文件里
+   11 处）与 `@deepseek-ai/dsh-credentials`（`credentialRef`，5 处）。npm 上都有（0.0.1-rc.x），
+   但**装不得**：home-paths 的默认根是 `~/.dsh`，装进来插件的账本就写进 dsh 的家目录。
+   修法：解析钩子把这两个说明符映射到 `src/core/dsh-compat/shims/`——前者返回 `~/.dsc`
+   （受 `DSC_HOME` 覆盖），后者只复刻名字的语法与校验（`credentialRef` 就是个带品牌的正则校验）。
+   顺带把「允许重定向的插件根」从只认 `~/.dsc/plugins/` 扩展到 profile 的 `node_modules`，
+   否则组合包里的插件根本走不進钩子。
+3. **`DSH_HOME` 在模块顶层就被算进常量**。`store.js` 里是
+   `process.env.DSH_HOME || join(homedir(), '.dsh')`，等 apply 时再设已经晚了。更阴的是：
+   从 dsh 终端里启动 Pneuma 会**继承** `DSH_HOME=~/.dsh`（我这台机器上就是），照抄等于让
+   插件写别人的账本。修法：兼容层开着时，loader 在 `import()` **之前**把 `DSH_HOME` 定成
+   `dscPath()`，一律覆盖（想换 Pneuma 的家请设 `DSC_HOME`，那条路本来就认）。
+4. **它不声明 `inject`，运行时 `ctx.get` 现取 8 个服务**（loader、sessionPersistence、
+   sessionQuery、sessions、locale、settings、deepseekAccount、pluginManager）。于是我们那把
+   「按 inject 判外来服务」的闸门对它完全失效，挂载失败只剩一句
+   `Cannot read properties of undefined`。修法：兼容层的 ctx 代理记下 `get` 过的名字，
+   失败时按 `service-map.ts` 逐条说明「缺什么、有没有对应物」。
+
+另外补了一条产品口径：导入失败而错误里带 `@deepseek-ai/`、且兼容层没开时，明确写「这像是
+dsh 插件，请先在插件中心启用 dsh 兼容层」——否则用户只看得到「找不到包」，会以为包坏了。
+
+**结果**：`dsh-cost-meter` 现在**挂得上**，插件中心认得它是 `cost-meter`、来自组合包
+`dsh-cost-meter`、界面能力 `platform:web`（只列不加载），账本落在
+`~/.dsc/storages/cost-meter/ledger.json`。**但成本条不会有数**：它靠
+`sessionPersistence` + `sessions` 读会话历史来算账，这两个服务 Pneuma 没有。这是下一步
+「服务适配器」的活——安装链路到此为止是干净的。
+
+**验证**：`shots/dsh-real-plugin-check.mjs`（新写，10/0；含「兼容层关着时指路」「账本落在
+`.dsc` 不是 `.dsh`」「界面能力列得出来」；兼容层关着那一轮放子进程跑，因为同进程里 ESM 会
+缓存导入失败、之后注册钩子也没用）；`shots/dsh-bundle-check.mjs` 15/0（新增 5 条：
+`exports["."]` 入口解析、导入前翻 `DSH_HOME`、`ctx.get` 缺服务的判定文案）。
+
+**一处坦白**：最早的两次探针没设临时 `HOME`，插件把用户真实
+`~/.dsh/storages/cost-meter/ledger.json` 读写了两次。事后校验：909KB、25 天数据仍可正常解析，
+插件自己另存了 `ledger.json.config-bak`。之后的探针全部跑在 `D:/tmp/dsc-real-home` 下。
+

@@ -43,6 +43,11 @@ export interface BundleInfo {
   version: string
   /** patch 层；包里没声明 patch 就是 null。 */
   patch: PatchLayer | null
+  /**
+   * 包里 `dsh.client` 的原文（界面能力声明）。只读进来列给用户看，不加载——
+   * dsh 的界面插件要 dsh 自己的客户端运行时，Pneuma 的界面壳是另一套契约。
+   */
+  client?: unknown
 }
 
 /** 读包遇到的、不影响继续的问题（版本不满足、patch 文件缺失、含 !!js 被拒）。 */
@@ -115,8 +120,8 @@ export function readBundle(dir: string): BundleInfo | null {
   if (manifest === null || typeof manifest !== 'object') return null
   const name = typeof manifest.name === 'string' && manifest.name !== '' ? manifest.name : dir.split(/[\\/]/).pop() ?? dir
   const version = typeof manifest.version === 'string' ? manifest.version : '0.0.0'
-  // dsh 的字段形状是 dsh.bundle.patch = '相对路径'
-  const bundle = manifest.dsh as { bundle?: { patch?: unknown } } | undefined
+  // dsh 的字段形状是 dsh.bundle.patch = '相对路径'，界面声明在 dsh.client
+  const bundle = manifest.dsh as { bundle?: { patch?: unknown }; client?: unknown } | undefined
   const patchPath = bundle?.bundle?.patch
   const patchFile = typeof patchPath === 'string' && patchPath !== '' ? resolve(dir, patchPath) : null
   let patch: PatchLayer | null = null
@@ -131,7 +136,7 @@ export function readBundle(dir: string): BundleInfo | null {
       throw new Error(`${name} 声明了 dsh.bundle.patch = ${patchPath}，但文件不存在`)
     }
   }
-  return { dir, name, version, patch }
+  return { dir, name, version, patch, client: bundle?.client }
 }
 
 /** profile 的读盘结果。 */
