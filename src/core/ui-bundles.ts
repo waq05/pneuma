@@ -951,7 +951,14 @@ const packageCaches = new Map<string, Map<string, PackageCached>>()
  * @param dir - 包的目录
  * @returns 声明；没写或形状不对给 null（形状问题由调用方记 problems）
  */
-function readClientDeclaration(dir: string): { platform?: unknown; api?: unknown; inject?: unknown; immediately?: unknown; clientPath: string | null } | null {
+function readClientDeclaration(dir: string): {
+  platform?: unknown
+  platforms?: unknown
+  api?: unknown
+  inject?: unknown
+  immediately?: unknown
+  clientPath: string | null
+} | null {
   let manifest: Record<string, unknown>
   try {
     manifest = JSON.parse(readFileSync(resolve(dir, 'package.json'), 'utf8')) as Record<string, unknown>
@@ -964,6 +971,7 @@ function readClientDeclaration(dir: string): { platform?: unknown; api?: unknown
   const decl = client as Record<string, unknown>
   return {
     platform: decl['platform'],
+    platforms: decl['platforms'],
     api: decl['api'],
     inject: decl['inject'],
     immediately: decl['immediately'],
@@ -1061,6 +1069,8 @@ function existsStamp(path: string): number {
 interface PackageClientJudgement {
   /** 声明的 `@dsc/ui` 区间；没写时 undefined（同时 problem 已写）。 */
   api?: string
+  /** 声明的载体（`dsh.client.platforms`；缺省 `['web']`）。 */
+  platforms: UiPlatform[]
   /** 入口的相对路径（`exports["./client"]`）；没有时 null。 */
   clientPath: string | null
   /** 入口的绝对路径（已过包目录围栏）；越界或没有时 null。 */
@@ -1069,6 +1079,23 @@ interface PackageClientJudgement {
   problem?: string
   /** `problem` 属于哪一档（界面按档给下一步）。 */
   problemKind?: UiTrustProblemKind
+}
+
+/**
+ * 读 `dsh.client.platforms`（载体声明）：不写就是 `['web']`——组合包的界面半默认只服务
+ * 浏览器壳。终端壳的插件是 ink 组件，与浏览器那份 `@dsc/ui` 不是同一套值面，所以**要服务
+ * 终端得显式声明**，不能靠猜。
+ * @param raw - `dsh.client.platforms` 的原始值
+ * @returns 载体清单；声明坏了给 null（调用方记一条 problem，当装不上处理）
+ */
+function packagePlatformsOf(raw: unknown): UiPlatform[] | null {
+  if (raw === undefined) return ['web']
+  if (!Array.isArray(raw)) return null
+  const platforms = raw.filter((value): value is UiPlatform => value === 'web' || value === 'tui')
+  // 有一个不认识的值就整条拒掉：`['web', 'term']` 里的 term 是多打的字，静默按 web
+  // 处理会让人以为终端也装上了。
+  if (platforms.length !== raw.length || platforms.length === 0) return null
+  return platforms
 }
 
 /**
@@ -1085,9 +1112,20 @@ function judgePackageClient(
   takenIds: ReadonlySet<string>,
 ): PackageClientJudgement {
   const where = `${name}/client`
+  const platforms = packagePlatformsOf(decl.platforms)
+  if (platforms === null) {
+    return {
+      platforms: [],
+      clientPath: decl.clientPath,
+      path: null,
+      problem: `${where}: dsh.client.platforms 只能是 'web' / 'tui' 的非空数组（收到 ${JSON.stringify(decl.platforms)}）`,
+      problemKind: 'manifest',
+    }
+  }
   const api = typeof decl.api === 'string' && decl.api.trim() !== '' ? decl.api.trim() : undefined
   if (api === undefined) {
     return {
+      platforms,
       clientPath: decl.clientPath,
       path: null,
       problem: `${where}: dsh.client.api 没写（@dsc/ui 的版本区间，如 "^2.0.0"）——组合包的界面半必须声明`,
@@ -1096,11 +1134,12 @@ function judgePackageClient(
   }
   const gate = evaluateUiApiGate(api, shellApiVersion)
   if (gate !== null) {
-    return { api, clientPath: decl.clientPath, path: null, problem: `${name}: ${gate}`, problemKind: 'version' }
+    return { api, platforms, clientPath: decl.clientPath, path: null, problem: `${name}: ${gate}`, problemKind: 'version' }
   }
   if (takenIds.has(name)) {
     return {
       api,
+      platforms,
       clientPath: decl.clientPath,
       path: null,
       problem: `${name}: 界面半的 id 与已有插件撞名，这一份跳过`,
@@ -1110,6 +1149,7 @@ function judgePackageClient(
   if (decl.clientPath === null) {
     return {
       api,
+      platforms,
       clientPath: null,
       path: null,
       problem: `${where}: package.json 没有 exports["./client"]，找不到界面半的入口`,
@@ -1120,13 +1160,14 @@ function judgePackageClient(
   if (!inside(dir, path)) {
     return {
       api,
+      platforms,
       clientPath: decl.clientPath,
       path: null,
       problem: `${where}: exports["./client"] 指到了包外（${decl.clientPath}），拒绝`,
       problemKind: 'artifact',
     }
   }
-  return { api, clientPath: decl.clientPath, path }
+  return { api, platforms, clientPath: decl.clientPath, path }
 }
 
 /**
@@ -1189,7 +1230,11 @@ export function discoverPackageUiArtifacts(
         : {}),
       ...(decl.immediately === true ? { immediately: true } : {}),
     }
-    entries.push(row)
+    // 载体：缺省只服务浏览器壳；声明了 platforms 的每个载体各出一行（同一个 client.js，
+    // 与内置清单「一份产物两条清单行」同一口径，两种壳的 collect 各取各的）。
+    for (const platform of judged.platforms) {
+      entries.push(platform === 'web' ? row : { ...row, platform })
+    }
     seen.add(name)
     const cached = cache.get(name)
     const fingerprint = `${rev}`
@@ -1245,7 +1290,7 @@ export function scanPackageUiTrusts(
       name,
       key,
       origin: 'package',
-      platforms: ['web'],
+      platforms: judged.platforms,
       trusted: true,
       enabled: isPluginEnabled(key),
       ...(judged.api === undefined ? {} : { api: judged.api }),

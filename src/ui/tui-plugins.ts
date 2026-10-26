@@ -18,7 +18,9 @@ import * as jsxRuntime from 'react/jsx-runtime'
 import {
   collectUiArtifactsForPlatform,
   readThirdPartyUiPluginBundle,
+  readUiArtifactBytes,
   readUiPluginBundle,
+  type UiPluginManifestEntry,
 } from '../core/ui-bundles.js'
 import { isUiMethod, validateUiArgs } from '../core/ui-methods.js'
 import type { DscRuntime } from '../contract.js'
@@ -93,10 +95,22 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
     return MODULES[spec]
   }
 
+  /** 按条目的来源去读它的字节（内置在产物目录、第三方在 ~/.dsc/plugins、组合包在包自己的路径）。 */
+  const bytesOf = (entry: UiPluginManifestEntry): Buffer | null => {
+    const origin = (entry as { origin?: unknown }).origin
+    if (origin === 'package') {
+      // 组合包的入口由包的 exports 决定，不在固定位置：发现时已把绝对路径算好。
+      return readUiArtifactBytes(entry, options.pluginsDir === undefined ? {} : { builtinDir: options.pluginsDir })
+    }
+    if (origin === 'third-party') return readThirdPartyUiPluginBundle(entry.id)
+    return readUiPluginBundle(entry.id, entry.file, options.pluginsDir)
+  }
+
   /** 把 bundle 字节求值成工厂（求值只注册工厂，不物化）。 */
-  const factoryOf = (id: string, file: string, origin: string | undefined): (() => unknown) => {
-    const code = origin === 'third-party' ? readThirdPartyUiPluginBundle(id) : readUiPluginBundle(id, file, options.pluginsDir)
-    if (code === null) throw new Error(`读不到插件 bundle：${id}/${file}`)
+  const factoryOf = (entry: UiPluginManifestEntry): (() => unknown) => {
+    const id = entry.id
+    const code = bytesOf(entry)
+    if (code === null) throw new Error(`读不到插件 bundle：${id}/${entry.file}`)
     const table = globalThis as unknown as Record<string, Record<string, unknown>>
     const existing = table[FACTORY_GLOBAL]
     const scope = existing !== undefined && typeof existing === 'object' ? existing : ((table[FACTORY_GLOBAL] = {}) as Record<string, unknown>)
@@ -110,7 +124,8 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
   }
 
   /** 跑工厂拿导出（require 只认白名单——与浏览器壳的 `instantiate` 同形）。 */
-  const install = (id: string, file: string, origin: string | undefined, deps: PluginDeps, attempt: number): string | null => {
+  const install = (entry: UiPluginManifestEntry, deps: PluginDeps, attempt: number): string | null => {
+    const id = entry.id
     // 这个插件的登记账本：中途抛错时按它回滚，重试才不会撞「id 已被占用」。
     const ledger: (() => void)[] = []
     const provides: string[] = []
@@ -132,7 +147,7 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
       return reason
     }
     try {
-      const exported = instantiate(factoryOf(id, file, origin), require_)
+      const exported = instantiate(factoryOf(entry), require_)
       // vite 的 cjs 产物把 `export default` 放在 `.default` 上（与浏览器壳 boot.ts 同一处理）。
       const module_ = (exported as { default?: unknown } | null)?.default ?? exported
       const apply = (module_ as { apply?: unknown } | null)?.apply
@@ -172,21 +187,22 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
     }
   }
 
-  const failed: Array<{ id: string; file: string; origin: string | undefined; deps: PluginDeps }> = []
+  // 两轮装载的键都是「产物条目」本身：组合包的入口在包的绝对路径上（由 exports 决定），
+  // 只传 id/file 会读错地方。
+  const failed: Array<{ entry: UiPluginManifestEntry; deps: PluginDeps }> = []
   for (const entry of artifacts.entries) {
-    const origin = (entry as { origin?: string }).origin
     const deps: PluginDeps = {
       ...(entry.inject === undefined ? {} : { plugins: entry.inject }),
       ...((entry as { services?: readonly string[] }).services === undefined
         ? {}
         : { services: (entry as { services?: readonly string[] }).services }),
     }
-    if (install(entry.id, entry.file, origin, deps, 1) !== null) failed.push({ id: entry.id, file: entry.file, origin, deps })
+    if (install(entry, deps, 1) !== null) failed.push({ entry, deps })
   }
   // 失败重试一轮（语义同浏览器壳）：真的写错了不能靠反复重试掩盖，但一次失败也不能永久缺席。
-  for (const entry of failed) {
-    if (reportById.get(entry.id)?.ok === true) continue
-    install(entry.id, entry.file, entry.origin, entry.deps, 2)
+  for (const item of failed) {
+    if (reportById.get(item.entry.id)?.ok === true) continue
+    install(item.entry, item.deps, 2)
   }
 
   const reports = artifacts.entries.map(

@@ -868,6 +868,7 @@ dsh 的构造单位是**一个 npm 包两半**，Pneuma 2.0 起照同一份声�
     "client": {
       "platform": "pneuma",            // 我们的壳只认这个值
       "api": "^2.0.0",                 // @dsc/ui 的版本区间（必填）
+      "platforms": ["web", "tui"],     // 服务哪些载体（可选，缺省 ["web"]）
       "inject": ["trace"],             // 依赖的插件 id（可选）
       "immediately": false             // 首屏预取（可选）
     }
@@ -880,6 +881,10 @@ dsh 的构造单位是**一个 npm 包两半**，Pneuma 2.0 起照同一份声�
 - **`platform` 写 `web` 的不加载**：那是给 dsh 客户端运行时写的代码，跑在我们的壳里等于白屏。
   插件中心仍会列一行「界面能力（dsh 客户端插件）：platform:web · 只列不加载」。
 - **id 就是包名**（`@scope/name` 照用），地址形如 `/plugins/%40scope%2Fname/client.js?rev=…`。
+- **载体**：`dsh.client.platforms` 缺省是 `["web"]`——组合包的界面半默认只服务浏览器壳。
+  终端壳的插件是 ink 组件，与浏览器那份 `@dsc/ui` 不是同一套值面，所以要服务终端**必须显式写**
+  `["web", "tui"]`（一份 client.js 出两行，两个载体各取各的）。写错值（如 `["web", "term"]`）
+  整条拒掉并记一条问题，不静默按 web 处理——那会让人以为终端也装上了。
 - **信任**：组合包是用户自己在终端跑 `numa plugin add` 装进 profile 的，那一步就是同意；
   `~/.dsc/plugins/` 下手放的界面插件仍要单独点一次。
 - **启停**：条目树里的键是 `<包名>/client`（`~/.dsc/plugins.json`），停用即不进启动图。

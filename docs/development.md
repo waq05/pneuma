@@ -242,7 +242,8 @@ numa plugin list [--profile 名字]
 
 **插件中心怎么看**：来自组合包的插件，名字后面挂一枚「组合包 <包名>」标记（卸载要回命令行，
 不是在这里停用）。包如果自带界面半（`dsh.client.platform = "pneuma"`），会单独出现在
-「组合包界面」那一组，带开关——装了就算同意，没有「确认信任」这一步；键是 `<包名>/client`。dsh 客户端插件声明的界面能力（`dsh.client`）也会列一行
+「组合包界面」那一组，带开关——装了就算同意，没有「确认信任」这一步；键是 `<包名>/client`。
+界面半默认只服务浏览器壳；要让它也进终端壳，在 `dsh.client.platforms` 里写 `["web", "tui"]`。dsh 客户端插件声明的界面能力（`dsh.client`）也会列一行
 「界面能力（dsh 客户端插件）：platform:web、card · 只列不加载」——**只读展示，不执行它的界面代码**，
 理由见 `PluginInfoView.clientCapabilities` 的注释：那要一份 dsh 自己的客户端运行时，与 Pneuma
 更严的信任模型冲突。

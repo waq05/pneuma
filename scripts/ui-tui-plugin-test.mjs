@@ -277,6 +277,69 @@ async function renderFrame(registry, slot) {
   load.disposeAll()
 }
 
+// ── 用例三：组合包的界面半进终端壳（声明 platforms 才有，缺省只服务浏览器壳）──────
+// 2.0 起组合包的界面半默认只给 web；要服务终端必须在 dsh.client.platforms 里写 tui。
+// 这条用例同时钉住「终端也不用去内置目录里瞎找包」——入口由包的 exports 决定。
+{
+  const pkgDir = join(work, 'pkg-builtin')
+  mkdirSync(pkgDir, { recursive: true })
+  writeFileSync(
+    join(pkgDir, 'manifest.json'),
+    JSON.stringify({ version: 1, apiVersion: '2.0.0', plugins: [] }),
+    'utf8',
+  )
+  const profileDir = join(process.env.DSC_HOME, 'profiles', 'probe')
+  const pkgBundle = (id, text) =>
+    [
+      `(globalThis.__DSC_UI_FACTORIES__ ??= {})['${id}'] = function (require, module, exports) {`,
+      `  const React = require('react');`,
+      `  const { defineUiPlugin, TUI_SLOTS, Text } = require('@dsc/ui');`,
+      `  module.exports = defineUiPlugin({`,
+      `    name: '${id}',`,
+      `    apply(ui) {`,
+      `      ui.slots.register(TUI_SLOTS.noticeExtensions, { id: '${id}.line' }, function () {`,
+      `        return React.createElement(Text, null, '${text}');`,
+      `      });`,
+      `    },`,
+      `  });`,
+      `};`,
+      '',
+    ].join('\n')
+  const writePkg = (name, client, bundleText) => {
+    const dir = join(profileDir, 'node_modules', name)
+    mkdirSync(join(dir, 'lib'), { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({
+      name,
+      version: '1.0.0',
+      exports: { './client': { default: './lib/client.js' } },
+      dsh: { client },
+    }), 'utf8')
+    writeFileSync(join(dir, 'lib', 'client.js'), pkgBundle(name, bundleText), 'utf8')
+  }
+  writePkg('pkg-both', { platform: 'pneuma', api: '^2.0.0', platforms: ['web', 'tui'] }, '组合包的界面半也在终端壳里')
+  writePkg('pkg-web-only', { platform: 'pneuma', api: '^2.0.0' }, '这一份不该出现在终端壳里')
+
+  const earlier = process.env.DSC_PROFILE
+  process.env.DSC_PROFILE = 'probe'
+  const registry = new SlotRegistry()
+  registry.declare(TUI_SLOTS.noticeExtensions, 'list')
+  const load = loadTuiPlugins({
+    registry,
+    runtime,
+    host: { name: 'Pneuma', version: '0.0.0-probe', platform: 'tui' },
+    pluginsDir: pkgDir,
+  })
+  const both = load.reports.find((r) => r.id === 'pkg-both')
+  check('声明了 platforms: [web, tui] 的包界面半装进终端壳', both?.ok === true, JSON.stringify(load.reports))
+  check('没声明 platforms 的包界面半不进终端壳（缺省只服务 web）', !load.reports.some((r) => r.id === 'pkg-web-only'), JSON.stringify(load.reports.map((r) => r.id)))
+  const frame = await renderFrame(registry, TUI_SLOTS.noticeExtensions)
+  check('帧里出现组合包界面半贡献的那一行', frame.text.includes('组合包的界面半也在终端壳里'))
+  frame.unmount()
+  load.disposeAll()
+  if (earlier === undefined) delete process.env.DSC_PROFILE
+  else process.env.DSC_PROFILE = earlier
+}
+
 rmSync(work, { recursive: true, force: true })
 if (failures > 0) {
   console.log(`\n${String(failures)} 条断言未过`)

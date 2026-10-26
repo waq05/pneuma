@@ -73,6 +73,18 @@ writePackage('old-api', {
 // 没有 exports["./client"]
 writePackage('no-entry', { dsh: { client: { platform: 'pneuma', api: '^2.0.0' } } })
 
+// 载体声明写坏（'term' 不是认得的载体）：整条拒掉，不静默按 web 处理
+writePackage('bad-platforms', {
+  dsh: { client: { platform: 'pneuma', api: '^2.0.0', platforms: ['web', 'term'] } },
+  exports: { './client': { default: './lib/client.js' } },
+}, { 'lib/client.js': bundle })
+
+// 声明同时服务终端壳（platforms: [web, tui]）：一份代码出两行，两个载体各取各的
+writePackage('both-shells', {
+  dsh: { client: { platform: 'pneuma', api: '^2.0.0', platforms: ['web', 'tui'] } },
+  exports: { './client': { default: './lib/client.js' } },
+}, { 'lib/client.js': bundle })
+
 const artifacts = collectUiArtifactsForPlatform('web', { packageDir: profile, thirdPartyDir: third, force: true })
 const entry = artifacts.entries.find((item) => item.id === 'dsh-cost-meter')
 const problems = artifacts.problems.join('；')
@@ -85,6 +97,23 @@ check('platform = web 的包不进启动图（只列不加载）', !artifacts.en
 check('缺 api 的被拒并说清原因', problems.includes('no-api') && problems.includes('api'), problems)
 check('api 对不上被门禁拒掉', problems.includes('old-api'), problems)
 check('没有 exports["./client"] 的被拒并说清', problems.includes('no-entry'), problems)
+check('platforms 里有不认识的值整条拒掉', problems.includes('bad-platforms') && problems.includes('platforms'), problems)
+const tuiArtifacts = collectUiArtifactsForPlatform('tui', { packageDir: profile, thirdPartyDir: third, force: true })
+check(
+  '缺省只服务 web：终端壳的产物表里没有它',
+  !tuiArtifacts.entries.some((item) => item.id === 'dsh-cost-meter'),
+  JSON.stringify(tuiArtifacts.entries.map((e) => e.id)),
+)
+check(
+  '声明 platforms: [web, tui] 后终端壳也收（一份代码两行）',
+  tuiArtifacts.entries.some((item) => item.id === 'both-shells' && item.platform === 'tui'),
+  JSON.stringify(tuiArtifacts.entries.map((e) => e.id)),
+)
+check(
+  'web 视图里同一份包也在（platform 缺省即 web）',
+  artifacts.entries.some((item) => item.id === 'both-shells' && item.platform === undefined),
+  JSON.stringify(artifacts.entries.map((e) => e.id)),
+)
 
 console.log('组合包界面半边：取字节与组图')
 const bytes = entry === undefined ? null : readUiArtifactBytes(entry, { packageDir: profile })

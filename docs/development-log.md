@@ -8446,6 +8446,25 @@ transcript 93/93）。剩下面向用户的第 2、3 条（启停入口、TUI �
 验证：`node scripts/ui-package-plugin-test.mjs` 28/0（新增 17 条：卡片上看得见、键的形状、
 恒为已同意、四档 problem、与第三方那组同形、停用后从产物表消失但卡片还在、再打开又回来）。
 
+**§8 第 3 条：组合包的界面半服务哪个壳，写在声明里（2026-10-26）**：
+
+此前 `collectUiArtifactsForPlatform` 按 `platform ?? 'web'` 过滤，而包条目从来没有 `platform`
+字段，于是终端壳**永远收不到**组合包的界面半。这是「行为如此但没人写、也没人钉」的那一类。
+
+现在把载体写进声明：`dsh.client.platforms`（缺省 `["web"]`），与内置插件同一套字段、同一套
+校验口径（不认识的取值整条拒掉，不静默按 web 处理——那会让人以为终端也装上了）。
+
+- 发现层：`packagePlatformsOf` → `judgePackageClient` 一并判，每个载体出一行（一份 client.js
+  两行，两个壳各取各的）；
+- 终端装载器：`factoryOf` 改成按**产物条目**读字节。以前只处理 third-party 与内置两种来源，
+  组合包的入口由包的 `exports` 决定、不在内置目录的固定位置上，按 id 去 `lib/ui/plugins` 里找
+  必然找不到；
+- `ui-tui-plugin-test` 进了 `check:ui`，新增用例三：声明 `[web, tui]` 的包装进终端壳、帧里
+  真的画出它那一行；没声明的包不进。
+
+验证：`ui-package-plugin-test` 32/0（新增 4 条：坏载体被拒、缺省不进终端壳、声明后进两壳）；
+`ui-tui-plugin-test` 13/0。
+
 
 
 
