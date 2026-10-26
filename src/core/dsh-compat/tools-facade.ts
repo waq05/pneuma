@@ -31,6 +31,22 @@ export interface DshToolDefinitionLike {
   presentCall?: unknown
   /** 完成阶段怎么画（dsh 的 ToolResultView）。 */
   presentResult?: unknown
+  /**
+   * 执行体返回之后、任何策略之前，用它准备好的内容顶替模型可见内容
+   * （dsh 的 projectContent；返回 undefined 表示保持原样）。
+   *
+   * dsh 里这一步跑在 `tools/post-execute` 之前，好让策略看见真实图片块；
+   * 兼容层没有 post-execute 阶段，所以它直接排在 render 之后。
+   */
+  projectContent?: unknown
+  /**
+   * 最后一公里改写模型可见内容（dsh 的 finalizeContent；返回 undefined 表示保持原样）。
+   *
+   * dsh 对**每一个**结果都调用它，失败结果也在内——那正是「把长输出截断」类
+   * 钩子能连错误文案一起裁的原因；兼容层照这个口径，成功路径在 render 之后调，
+   * 失败路径在错误抛出前调。
+   */
+  finalizeContent?: unknown
   /** 这条调用能不能与同轮别的工具并行（只认明确的 true）。 */
   isConcurrencySafe?: unknown
   timeoutMs?: unknown
@@ -94,6 +110,99 @@ function valueToText(value: unknown): string {
   return typeof value === 'string' ? value : JSON.stringify(value, null, 2)
 }
 
+/**
+ * 任意 render 产物 → 内容块数组。
+ *
+ * dsh 的 render 按契约返回 ContentBlock[]，但兼容层对写歪的定义容错（返回字符串
+ * 或对象也收）：先归一成数组，两个内容钩子才有一致的入参。
+ */
+function asBlocks(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw
+  if (typeof raw === 'string') return [{ type: 'text', text: raw }]
+  return [{ type: 'text', text: JSON.stringify(raw, null, 2) ?? String(raw) }]
+}
+
+/** 内容块 → 纯文本（失败路径要把钩子改过的内容折回错误文案）。 */
+function blocksToText(blocks: readonly unknown[], name: string): string {
+  const out = blocksToOutput(blocks, name)
+  return typeof out === 'string' ? out : out.text
+}
+
+/**
+ * 跑 dsh 的两个内容钩子：先 projectContent，再 finalizeContent。
+ *
+ * 顺序与 dsh 一致（投影在策略前、定稿在策略后）；两边都只认「返回数组」这一种
+ * 替换信号，返回 undefined 或抛错都保持原内容——与 dsh 的容错口径相同，
+ * 钩子写坏了不该让工具结果变成错误。
+ */
+function applyContentHooks(
+  definition: DshToolDefinitionLike,
+  exec: Record<string, unknown>,
+  value: unknown,
+  blocks: unknown[],
+  name: string,
+): unknown[] {
+  const project = definition.projectContent
+  const finalize = definition.finalizeContent
+  if (typeof project !== 'function' && typeof finalize !== 'function') return blocks
+  let content = blocks
+  // 冻结一份结果视图给钩子：dsh 传的是只读对象，插件不该能改我们的内部状态。
+  const result = Object.freeze({ isError: false as const, value, content })
+  if (typeof project === 'function') {
+    try {
+      const next = (project as (e: unknown, r: unknown) => unknown)(exec, result)
+      if (Array.isArray(next)) content = next
+    } catch (error) {
+      console.warn(`[dsh-compat] 工具 ${name} 的 projectContent 抛错，保留 render 的原始内容：${String(error)}`)
+    }
+  }
+  if (typeof finalize === 'function') {
+    try {
+      const next = (finalize as (e: unknown, r: unknown) => unknown)(exec, Object.freeze({ ...result, content }))
+      if (Array.isArray(next)) content = next
+    } catch (error) {
+      console.warn(`[dsh-compat] 工具 ${name} 的 finalizeContent 抛错，保留前一步的内容：${String(error)}`)
+    }
+  }
+  return content
+}
+
+/**
+ * 失败路径的 finalizeContent：dsh 对这个钩子的承诺是「每个结果都调一次」，
+ * 错误结果也不例外（长输出工具靠它把错误文案一起截断）。
+ *
+ * 只在插件确实声明了钩子时才介入：没声明的插件抛什么就还是什么，错误类型与
+ * 堆栈一律不动；钩子自己抛错时退回原错误，绝不把错误换成「钩子失败」。
+ */
+function finalizeFailure(
+  definition: DshToolDefinitionLike,
+  exec: Record<string, unknown>,
+  name: string,
+  error: unknown,
+): unknown {
+  const finalize = definition.finalizeContent
+  if (typeof finalize !== 'function') return error
+  try {
+    const message = error instanceof Error ? error.message : String(error)
+    const content = [{ type: 'text', text: message }]
+    const result = Object.freeze({ isError: true as const, error: Object.freeze({ message }), content })
+    const next = (finalize as (e: unknown, r: unknown) => unknown)(exec, result)
+    if (!Array.isArray(next)) return error
+    const text = blocksToText(next, name)
+    if (!(error instanceof Error)) return new Error(text)
+    try {
+      // 改 message 而不是新建错误：工具错误的类型（审批分类看得见）与堆栈都留住。
+      error.message = text
+      return error
+    } catch {
+      // 冻结/只读的错误对象改不动，那就退回原错误——文案不完美好过类型丢失。
+      return error
+    }
+  } catch {
+    return error
+  }
+}
+
 /** 把卡片数据挂到工具输出上（输出可能是字符串，那就升成对象）。 */
 function withPresentation(output: string | ToolOutput, presentation: ToolPresentation | undefined): string | ToolOutput {
   if (presentation === undefined) return output
@@ -154,7 +263,13 @@ export function dshToolToEntry(definition: DshToolDefinitionLike, config: DshRis
   const run = async (args: Record<string, unknown>, ctx: ToolContext): Promise<string | ToolOutput> => {
     if (execute === undefined) throw new Error(`工具 ${name} 没有 execute 实现`)
     const exec = dshExec(name, args, ctx)
-    const value = timeoutMs === undefined ? await execute(args, exec) : await withTimeout(execute(args, exec), name, timeoutMs)
+    let value: unknown
+    try {
+      value = timeoutMs === undefined ? await execute(args, exec) : await withTimeout(execute(args, exec), name, timeoutMs)
+    } catch (error) {
+      // 失败结果也过一道 finalizeContent（声明了才走），见 finalizeFailure。
+      throw finalizeFailure(definition, exec, name, error)
+    }
     // 规范值契约：声明了 output.schema 就校验；不合 schema 的返回值**不当成功**。
     // 这条是 dsh 的硬规矩（违例抛 ToolArgsError），这里是同一处把关，只是文案说人话。
     if (schema !== undefined) {
@@ -165,7 +280,11 @@ export function dshToolToEntry(definition: DshToolDefinitionLike, config: DshRis
         throw new Error(`工具 ${name} 的返回值不符合它自己声明的 output.schema：${head}${more}`)
       }
     }
-    const rendered = renderFn !== undefined ? blocksToOutput(renderFn(args, value), name) : valueToText(value)
+    const raw = renderFn !== undefined ? renderFn(args, value) : valueToText(value)
+    // 内容钩子排在 render 之后：compat 层没有 dsh 的 post-execute 阶段，
+    // projectContent 与 finalizeContent 在这里一前一后跑完，都只认「返回数组」。
+    const content = applyContentHooks(definition, exec, value, asBlocks(raw), name)
+    const rendered = blocksToOutput(content, name)
     return withPresentation(rendered, cardsOf(definition, args, value, rendered))
   }
 
