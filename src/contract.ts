@@ -1246,6 +1246,13 @@ export interface UiTrustView {
   key: string
   /** 这一行的来源（决定卡片怎么讲「凭什么算同意」）。 */
   origin: 'third-party' | 'package'
+  /**
+   * 包的版本号（`package.json` 的 `version`）。只有组合包行有：第三方目录是用户手工放的，
+   * 没有版本这个概念，一律 undefined——界面别拿空串占位，那会让「没版本」和「版本是空」混起来。
+   */
+  version?: string
+  /** 装在哪个 profile（profile 目录名，如 `work`）。只有组合包行有；界面用它说清「来源」。 */
+  profile?: string
   /** plugin.json / `dsh.client` 声明的 `@dsc/ui` 版本区间；没写/读不到时 undefined。 */
   api?: string
   /** 声明的载体（web/tui）；缺省 `['web']`。 */

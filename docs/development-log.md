@@ -8566,3 +8566,19 @@ apiVersion 仍是门禁依据、旧产物兜底 + 点名）；`ui-serve-test` �
 
 
 
+**§8 第 6 条：组合包那一组看得出版本、来源与停用状态（2026-10-26）**：
+
+装完包，插件中心的「组合包界面」只给了一个包名。三件事看不见：装的是哪个版本、
+装在哪一层 profile、以及一行是开着还是被停掉了（后者只能看开关的位置猜）。
+装了多个 profile 或同一个包升了版时，用户只能回终端敲 `numa plugin list`。
+
+1. `UiTrustView` 加两项：`version`（包的 `package.json` 的 `version`）与 `profile`
+   （profile 目录名）。都是可选，**只有组合包行有**——第三方目录里没有版本这个概念，
+   拿空串占位会让「没版本」和「版本是空」混成一件事；
+2. `scanPackageUiTrusts` 把它们随行下发（`readClientDeclaration` 顺带读 `version`，
+   `profileNameOf` 取目录名，不读 profile 的 `package.json.name`——那个字段用户可以不写）；
+3. 卡片上三枚徽标：`v1.9.41`、`profile work`、以及停用时的「已停用」；组标题先说一句
+   这一组属于哪个 profile。
+
+验证：`ui-package-plugin-test` 42/0（新增四条：卡上带版本、带 profile 名、其余字段不受影响、
+第三方行没有这两项不许冒充）；`pnpm run check:ui` 35/35。

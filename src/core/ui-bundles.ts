@@ -29,7 +29,7 @@
  */
 import { readFileSync, statSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { dirname, resolve } from 'node:path'
+import { basename, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { satisfies, validRange } from 'semver'
 import type { UiPlatform, UiPluginRow } from '../ui/manifest.js'
@@ -1159,6 +1159,8 @@ function readClientDeclaration(dir: string): {
   services?: unknown
   phase?: unknown
   immediately?: unknown
+  /** 包的版本号（`package.json` 的 `version`）；没写或不是字符串时 undefined。 */
+  version?: string
   clientPath: string | null
 } | null {
   let manifest: Record<string, unknown>
@@ -1179,6 +1181,7 @@ function readClientDeclaration(dir: string): {
     services: decl['services'],
     phase: decl['phase'],
     immediately: decl['immediately'],
+    version: typeof manifest['version'] === 'string' ? manifest['version'] : undefined,
     clientPath: clientEntryOf(manifest['exports']),
   }
 }
@@ -1479,6 +1482,18 @@ export function discoverPackageUiArtifacts(
  *
  * 信任恒为 true：`numa plugin add` 把包装进 profile 那一步就是同意（见上面的注释）。
  */
+/**
+ * profile 目录 → 给界面看的名字。
+ *
+ * 直接取目录名：`~/.dsc/profiles/work` → `work`。为什么不读 profile 的 package.json 里的
+ * `name`：那个字段用户可以不写，而且写了的也不保证唯一；目录名是 `numa plugin add --profile`
+ * 真正用的那一把钥匙，用户在同一条命令里见过的就是它。
+ */
+function profileNameOf(profileDir: string): string | undefined {
+  const name = basename(profileDir)
+  return name === '' ? undefined : name
+}
+
 export function scanPackageUiTrusts(
   shellApiVersion: string | undefined,
   takenIds: ReadonlySet<string>,
@@ -1486,11 +1501,17 @@ export function scanPackageUiTrusts(
 ): UiTrustView[] {
   const out: UiTrustView[] = []
   if (profileDir === null) return out
+  // profile 的名字给界面看「这个包装在哪一层」：装了多个 profile 时，光有包名分不清来源。
+  const profile = profileNameOf(profileDir)
   const nodeModules = resolve(profileDir, 'node_modules')
   for (const { name, dir } of packageDirs(nodeModules)) {
     const decl = readClientDeclarationCached(dir)
-    if (decl === null) continue
     const key = `${name}/client`
+    const provenance = {
+      ...(decl?.version === undefined ? {} : { version: decl.version }),
+      ...(profile === undefined ? {} : { profile }),
+    }
+    if (decl === null) continue
     if (decl.platform !== 'pneuma') {
       if (decl.platform === 'web') continue // dsh 自己的界面半：另一条体系，不在这张卡上
       out.push({
@@ -1500,6 +1521,7 @@ export function scanPackageUiTrusts(
         platforms: [],
         trusted: true,
         enabled: isPluginEnabled(key),
+        ...provenance,
         problem: `dsh.client.platform 只能是 'pneuma'（收到 ${JSON.stringify(decl.platform)}），界面半不会装载`,
         problemKind: 'manifest',
       })
@@ -1513,6 +1535,7 @@ export function scanPackageUiTrusts(
       platforms: judged.platforms,
       trusted: true,
       enabled: isPluginEnabled(key),
+      ...provenance,
       ...(judged.api === undefined ? {} : { api: judged.api }),
       ...(judged.problem === undefined
         ? {}

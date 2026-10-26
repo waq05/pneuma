@@ -185,6 +185,11 @@ check('卡上看得见这条包界面半', costRow !== undefined, JSON.stringify
 check('来源标成 package', costRow !== undefined && costRow.origin === 'package', String(costRow && costRow.origin))
 check('启停键是 <包名>/client（不是第三方那种 /ui/client.js）', costRow !== undefined && costRow.key === 'dsh-cost-meter/client', String(costRow && costRow.key))
 check('组合包恒为已同意（装进 profile 就是同意）', costRow !== undefined && costRow.trusted === true && costRow.trustedAt === undefined)
+// 卡片上要能看出「装的是哪个版本、来自哪一层」——没有这两项时，装了多个 profile
+// 或同一个包升了版，用户只能回命令行敲 numa plugin list 才知道。
+check('卡上带包版本', costRow !== undefined && costRow.version === '1.0.0', String(costRow && costRow.version))
+check('卡上带 profile 名（来源）', costRow !== undefined && costRow.profile === 'profile', String(costRow && costRow.profile))
+check('http 取字节不受这两个字段影响', costRow !== undefined && typeof costRow.api === 'string')
 check('卡上不带 dsh 自己的载体（platform = web）', !trusts.some((item) => item.name === 'dsh-other'))
 check('缺声明的行带 manifest 档', trusts.find((item) => item.name === 'no-api')?.problemKind === 'manifest')
 check('版本不满足的行带 version 档', trusts.find((item) => item.name === 'old-api')?.problemKind === 'version')
@@ -198,6 +203,11 @@ check(
   '第三方那组每行也带 key 与 origin（两处同形）',
   thirdRows.length === 1 && thirdRows[0].key === 'demo-third/ui/client.js' && thirdRows[0].origin === 'third-party',
   JSON.stringify(thirdRows),
+)
+check(
+  '第三方行没有版本与 profile（不许冒充组合包）',
+  thirdRows[0].version === undefined && thirdRows[0].profile === undefined,
+  JSON.stringify({ v: thirdRows[0].version, p: thirdRows[0].profile }),
 )
 
 check('isPackageUiEntry 认 <包名>/client', isPackageUiEntry('dsh-cost-meter/client', profile) === true)

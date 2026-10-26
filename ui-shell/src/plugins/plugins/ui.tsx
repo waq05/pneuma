@@ -81,6 +81,10 @@ interface TrustRow {
   key?: string
   /** 来源：手工放进 `~/.dsc/plugins` 的界面插件，还是 profile 里装的组合包。 */
   origin?: 'third-party' | 'package'
+  /** 包的版本号（只有组合包行有；第三方目录没有版本这个概念）。 */
+  version?: string
+  /** 装在哪个 profile（只有组合包行有）。 */
+  profile?: string
   api?: string
   platforms: string[]
   trusted: boolean
@@ -261,6 +265,9 @@ function PluginsView(): ReactNode {
   // 界面插件两张卡分开画：第三方的要点一次信任，组合包的不用（装进 profile 就是同意）。
   const thirdParty = trusts.filter((row) => !isPackageRow(row))
   const packages = trusts.filter(isPackageRow)
+  // 组合包装在哪个 profile：一行里已经有徽标，但组的标题上先说一句更有用——
+  // 装了多个 profile 时，用户第一眼要确认的是「这一组属于哪一层」。
+  const packageProfiles = [...new Set(packages.map((row) => row.profile).filter((v): v is string => v !== undefined))]
   const official = (rows ?? []).filter((row) => row.source === 'builtin' && row.toggleable)
   const kernel = (rows ?? []).filter((row) => row.source === 'builtin' && !row.toggleable)
   const kernelShown = kernelOpen ? kernel : kernel.slice(0, KERNEL_PREVIEW)
@@ -363,6 +370,7 @@ function PluginsView(): ReactNode {
                 <div className="plugin-group-label">
                   <IconPuzzle size={13} /> 组合包界面 <span className="count">{packages.length}</span>
                   <span className="group-hint">
+                    {packageProfiles.length === 0 ? '' : `profile ${packageProfiles.join('、')} · `}
                     profile 里装的包（package.json 的 dsh.client.platform = pneuma）；装了就算同意，这里只开关
                   </span>
                 </div>
@@ -606,7 +614,19 @@ function TrustCard({
             {row.name}
             {row.api !== undefined ? <span className="plugin-apiver">@dsc/ui {row.api}</span> : null}
             <span className="plugin-apiver">{row.platforms.join('/')}</span>
+            {/* 组合包多两枚：版本与来源。第三方目录没有版本，也不该冒充 —— 见契约注释。 */}
+            {row.version !== undefined ? (
+              <span className="plugin-apiver" data-version={row.version}>
+                v{row.version}
+              </span>
+            ) : null}
+            {row.profile !== undefined ? (
+              <span className="plugin-apiver" data-profile={row.profile}>
+                profile {row.profile}
+              </span>
+            ) : null}
             {row.trusted ? <span className="plugin-apiver">已信任{trustedAt}</span> : null}
+            {row.trusted && !row.enabled ? <span className="plugin-apiver">已停用</span> : null}
           </div>
           <div className={`plugin-desc${row.problem !== undefined ? ' problem' : ''}`}>{desc}</div>
           {tier !== null ? <div className="trust-next">下一步：{tier.next}</div> : null}
