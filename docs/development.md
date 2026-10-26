@@ -278,6 +278,8 @@ numa plugin list [--profile 名字]
 **界面半**（2.0 起）：同一个包若在 `dsh.client` 里声明 `platform: "pneuma"` 与 `api`，
 它的 `exports["./client"]` 会被收进界面启动图（发现、门禁、取字节、组图在
 `src/core/ui-bundles.ts` 的 `discoverPackageUiArtifacts`，路由在 `src/core/ui-route.ts`）。
+版本门禁是**失败关闭**的：清单没写 `apiVersion`（不是当前构建写的）时，连没声明 `api` 的
+条目也一并拒掉——两边都没有依据就是无从判断，放行等于给手写清单开一条绕过门禁的路。
 写 `platform: "web"` 的是 dsh 自己的界面半，仍然只列不加载——理由见
 [plugin-development.md §10.6.1](plugin-development.md)。完整示例是
 `examples/plugin-two-halves/`（宿主半一个工具、界面半状态栏一段）；自检三条：

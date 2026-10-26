@@ -8481,6 +8481,24 @@ transcript 93/93）。剩下面向用户的第 2、3 条（启停入口、TUI �
 
 验证：`ui-package-plugin-test` 35/0（新增 3 条）。
 
+**§8 第 7 条：门禁失败关闭（2026-10-26）**：
+
+原来 `evaluateUiApiGate(undefined, undefined)` 返回 null（放行）——清单没写 apiVersion、条目
+也没声明 api 时，两边都没有依据，却给了「可以装」。这份放行是给旧构建产物留的退路，代价是：
+任何人往 `lib/ui/plugins/` 放一份手写清单，往里加一条 id 就能绕过门禁。
+
+现在改成拒绝，并把理由说清（「清单没写 apiVersion（不是当前构建写的），条目也没声明 api 区间
+——无从判断兼容性，已跳过」）。当前构建一定写 apiVersion（`build-plugins.mjs` 从
+`ui-shell/package.json` 的 version 取），落到这一档只可能是旧产物或手写清单，两种都该让人看见
+并重建。
+
+顺带把测试夹具补齐：`ui-plugin-test` / `ui-batches-test` / `ui-hmr-test` / `ui-serve-test` /
+`ui-tui-plugin-test` 里那些不带 apiVersion 的清单都补上 `apiVersion: '2.0.0'`——它们本来就是
+「当前构建会产出的形状」，旧的夹具是顺手省了一个字段。
+
+验证：`ui-api-gate-test` 全通过（原来那条「双方都无版本依据 → 放行」改成「→ 拒」并检查理由有
+`apiVersion` 与「已跳过」）；上面五个脚本回跑全通过。
+
 
 
 
