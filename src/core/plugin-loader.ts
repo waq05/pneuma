@@ -32,6 +32,7 @@ import {
 import { errText as err } from './err-text.js'
 import { activeConfigFile } from './config-store.js'
 import { parseTolerantYaml } from './migrate.js'
+import { describeForeignServices } from './dsh-compat/service-map.js'
 import { applyPatchLayers, type PatchLayer, type PluginRow } from './plugin-patch.js'
 import { bundleDirOf, enginesProblem, readBundle, readProfile } from './plugin-bundle.js'
 import { dscPath } from './path-policy.js'
@@ -167,14 +168,17 @@ export async function mountExternalPlugin(file: string): Promise<boolean> {
   const injectNames = Array.isArray(mod.inject) ? mod.inject.filter((n): n is string => typeof n === 'string') : []
   const foreign = injectNames.filter((n) => !DSC_SERVICE_NAMES.has(n))
   if (foreign.length > 0) {
+    // 一句「超出范围」帮不到插件作者：这张表给每个常见 dsh 服务名一句判定
+    // （有对应但语义不同 / 根本没有），见 core/dsh-compat/service-map.ts。
+    const detail = describeForeignServices(foreign)
     if (!isPluginEnabled('dsh-compat')) {
       meta.problem =
-        `插件需要 dsc 不认识的服务：${foreign.join('、')}。若这是 dsh（DeepSeek Harness）风格的插件，` +
+        `插件需要 dsc 不认识的服务：${detail}。若这是 dsh（DeepSeek Harness）风格的插件，` +
         '请先在插件中心启用「dsh 兼容层」（dsh-compat）再打开本插件'
     } else {
       meta.problem =
-        `这个 dsh 插件需要 ${foreign.join('、')} 服务，超出 dsc 兼容层的支持范围。` +
-        '依赖 dsh 会话语义（投影、agent、目标）的插件个人版不兼容'
+        `这个 dsh 插件要的服务 Pneuma 没有或对不上：${detail}。` +
+        '依赖这些语义的插件在 Pneuma 上跑不起来，需要改写（或等对应服务做出来）'
     }
     await disableSilently(base)
     return false
