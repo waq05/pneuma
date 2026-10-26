@@ -8384,6 +8384,21 @@ dsh 插件，请先在插件中心启用 dsh 兼容层」——否则用户只�
 `peerDependencies["@dsc/ui"]` 一致、其余字段（`phase`/`inject`/`services`/`external`/
 `immediately`/`platforms`）照旧逐条校验。
 
+**批 3 收尾：19 个内置插件全部改到自己的 package.json 声明（2026-10-26）**：
+
+试点三个验完套路后，剩下 16 个一次迁完：14 个只补 `dsh.client: { platform: "pneuma" }`，
+`composer` 带 `phase: early`，`trace` 带 `inject: ["transcript"]`。旧 `plugin.json` 全部删除。
+
+清单字节与迁移前一致：19 条、apiVersion 2.0.0、`composer` 与 `statusbar` 仍是 `phase: early`、
+`trace` 仍带 `inject: ["transcript"]`。门禁全绿：`ui-cordis-test` 29 条（19 条全装上、换装干净）、
+`ui-plugin-test` 全通过、`ui-package-plugin-test` 11/0、`ui-two-halves-test` 9/0、
+`ui-transcript-render-test` 93/93。
+
+**下一步（未做）**：构建期的中央 `manifest.json` 还没退役——现在每个插件都有了自述，但宿主仍按
+中央清单收内置插件。要退役得让 `collectUiPluginArtifacts` 改扫 `lib/ui/plugins/<id>` 的清单副本
+（构建时逐个写出），并补一条「清单缺失/多余」的一致性断言。这是另一批，别和这次混。
+
+
 **结果**：清单字节没变（`statusbar` 仍是 `phase: early`，19 条、apiVersion 2.0.0），
 `ui-cordis-test` 29 条全绿（19 条仍全装上、换装干净），`ui-plugin-test` 全通过，
 `ui-package-plugin-test` 11/0，`ui-two-halves-test` 9/0，`ui-transcript-render-test` 93/93。

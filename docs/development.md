@@ -271,7 +271,7 @@ numa plugin list [--profile 名字]
 不入库）。合成包那一路是 `node shots/dsh-bundle-check.mjs`（15 条）。
 
 **内置插件的界面半也读同一处**：`ui-shell/src/plugins/<id>/package.json` 的 `dsh.client`
-（已迁 statusbar / sessions / transcript，其余 16 个仍读旧的 `plugin.json`；两处并存构建会失败）。
+（19 个已全部迁完，旧 `plugin.json` 已删；两处并存构建会失败）。
 
 **界面半**（2.0 起）：同一个包若在 `dsh.client` 里声明 `platform: "pneuma"` 与 `api`，
 它的 `exports["./client"]` 会被收进界面启动图（发现、门禁、取字节、组图在
