@@ -627,7 +627,7 @@ cd ~/.dsc/plugins && npm install <dsh 插件包>
 
 自包含的 dsh 风格插件见 [examples/plugins/dsh-style-clock.js](../examples/plugins/dsh-style-clock.js)
 （`dsh_clock` 演示工具与 logger，`dsh_write_note` 演示 `presentResult` 的 diff 卡）；
-兼容层的自检（解析钩子、工具兼容面、logger 桥、不支持项拒绝）跑 `node shots/dsh-compat-check.mjs`；
+兼容层的自检（解析钩子、工具兼容面、logger 桥、不支持项拒绝）跑 `pnpm run check:dsh`；
 卡片这条链路的真机走查跑 `node scripts/ui-dsh-card-e2e.mjs`（真宿主 + 假端点 + 真 Chromium，
 断言卡展开后 `.diff-body` 在、文件真被写了，并留一张 `desktop/shots/dsh-diff-card.png`）。
 

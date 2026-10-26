@@ -31,6 +31,7 @@
     "check:ui": "node scripts/check-ui.mjs",
     "check:ui:e2e": "node scripts/check-ui.mjs --e2e",
     "check:ui:list": "node scripts/check-ui.mjs --list && node scripts/check-ui.mjs --e2e --list",
+    "check:dsh": "node scripts/dsh-compat-check.mjs && node scripts/dsh-bundle-check.mjs && node scripts/dsh-real-plugin-check.mjs",
     "ui:serve": "node scripts/_ui-shell-serve.mjs"
   },
   "dependencies": {

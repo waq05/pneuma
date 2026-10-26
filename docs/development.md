@@ -272,9 +272,10 @@ profile 目录）、停用状态（停掉的会多一枚「已停用」，不必
    取到 undefined 再调方法，原本只剩一句 `Cannot read properties of undefined`。现在
    loader 记下它取过的服务名，挂载失败时按判定表（`service-map.ts`）逐条说明差在哪。
 
-验证：`node shots/dsh-real-plugin-check.mjs`（10 条断言，含「兼容层关着时指路」与
+验证：`node scripts/dsh-real-plugin-check.mjs`（10 条断言，含「兼容层关着时指路」与
 「账本落在 `~/.dsc` 而不是 `~/.dsh`」；脚本读 `DSC_REAL_HOME` 下预装好的 profile，
-不入库）。合成包那一路是 `node shots/dsh-bundle-check.mjs`（15 条）。
+入库）。合成包那一路是 `node scripts/dsh-bundle-check.mjs`（15 条）；三条一起跑用
+`pnpm run check:dsh`。
 
 **内置插件的界面半也读同一处**：`ui-shell/src/plugins/<id>/package.json` 的 `dsh.client`
 （19 个已全部迁完，旧 `plugin.json` 已删；两处并存构建会失败）。
@@ -495,7 +496,7 @@ node shots/storage-check.mjs       # 会话存储与会话库
 node shots/llm-retry-check.mjs     # LLM 重试（连接失败 / 429 重试，400 与取消不重试）+ 版本号（10 条）
 node shots/llm-adapter-check.mjs   # 协议适配器接缝：注册/派发/卸载、重复拒绝、未注册报错、api 字段校验（11 条）
 node shots/prompt-projection-check.mjs # 命名投影链 + system-prompt 落盘 + note 记录与重放（17 条）
-node shots/dsh-compat-check.mjs    # dsh 兼容层：解析钩子、工具兼容面、logger 桥、不支持项响亮拒绝（14 条）
+node scripts/dsh-compat-check.mjs  # dsh 兼容层：解析钩子、工具兼容面、logger 桥、不支持项响亮拒绝（34 条）
 node shots/model-caps-check.mjs    # 模型能力字段读写往返 + 档位 → 请求字段映射（23 条）
 node shots/order-check.mjs         # 侧栏工作区排序落点 + 按工作区树的层级（跑前先编 workspace-order.ts）
 node shots/sandbox-check.mjs       # 沙箱：路径围栏、命令策略、一次性升权、降级可见（193 条）

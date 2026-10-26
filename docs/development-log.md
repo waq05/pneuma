@@ -8644,3 +8644,14 @@ Electron 开到 390×844 加载带令牌的地址，读页内账本并截图。�
 死等 390 会假红。
 
 验证：`node scripts/ui-remote-web-e2e.mjs` 9/9。
+**三条 dsh 自检从 `shots/` 搬进 `scripts/`（2026-10-26）**：
+
+`shots/` 整个目录在 .gitignore 里，于是 `dsh-compat-check`、`dsh-bundle-check`、
+`dsh-real-plugin-check` 这三条回归门禁**根本不在仓库里**——文档让人跑，换台机器就没有，
+等于没有门禁。这正是计划文档「还欠的四件」最后一条。
+
+搬进 `scripts/`（已跟踪）并加一条聚合命令 `pnpm run check:dsh`，文档引用一并改成新路径
+（`development.md`、`dsh-plugin-porting.md`、`plugin-development.md`）。`shots/` 里的旧副本
+删掉——两份同名脚本早晚会漂。
+
+验证：`pnpm run check:dsh` 34/0、15/0、10/0。

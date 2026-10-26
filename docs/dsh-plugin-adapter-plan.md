@@ -136,7 +136,7 @@ Pneuma 有自己的界面插件契约（`plugin.json` + `@dsc/ui` + 槽位 + 平
 1. `src/core/tools.ts:69`：`ToolEntry` 增可选 `output?: { presentationMeta?(args, value): unknown }` 与 `timeoutMs?`、`isConcurrencySafe?`。
 2. `src/core/dsh-compat/tools-facade.ts:90`：`dshToolToEntry` 透传上面三项；`run` 返回时把 `presentationMeta` 算好带出去（需要给 `ToolOutput` 加一个 `meta` 字段）。
 3. `src/app/ToolCard.tsx`：工具结果若带 `meta.kind`（`diff`/`terminal`/`read`/`search`），按对应形态渲染，缺字段回落通用卡。
-4. `shots/dsh-compat-check.mjs`：断言从 15 条扩到 20 条，新增"presentationMeta 透传""timeoutMs 生效""并发标记透传"。
+4. `scripts/dsh-compat-check.mjs`：断言从 15 条扩到 20 条，新增"presentationMeta 透传""timeoutMs 生效""并发标记透传"。
 
 验收：`examples/plugins/dsh-style-clock.js` 扩成返回结构化值 + diff 卡；对话里跑一次，刷新会话后卡片仍在。
 
@@ -198,7 +198,7 @@ Pneuma 有自己的界面插件契约（`plugin.json` + `@dsc/ui` + 槽位 + 平
 ### 阶段 E：验证与金丝雀（贯穿每阶段）
 
 1. 三个金丝雀：官方单文件工具插件、带 Config 的插件、带 bundle patch 的组合包。
-2. `shots/dsh-compat-check.mjs` 从 15 条扩到 30 条。
+2. `scripts/dsh-compat-check.mjs` 从 15 条扩到 30 条。
 3. `docs/dsh-plugin-porting.md` 更新判定表：新增"bundle 能装""卡片能显示"两行。
 
 ## 5. 风险
