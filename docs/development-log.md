@@ -8398,13 +8398,22 @@ dsh 插件，请先在插件中心启用 dsh 兼容层」——否则用户只�
 中央清单收内置插件。要退役得让 `collectUiPluginArtifacts` 改扫 `lib/ui/plugins/<id>` 的清单副本
 （构建时逐个写出），并补一条「清单缺失/多余」的一致性断言。这是另一批，别和这次混。
 
+**2.0 之后的复查：修了两处，记下十条（2026-10-26）**：
 
-**结果**：清单字节没变（`statusbar` 仍是 `phase: early`，19 条、apiVersion 2.0.0），
-`ui-cordis-test` 29 条全绿（19 条仍全装上、换装干净），`ui-plugin-test` 全通过，
-`ui-package-plugin-test` 11/0，`ui-two-halves-test` 9/0，`ui-transcript-render-test` 93/93。
+四批（契约 2.0 / 包两半 / 示例包 / 19 个内置插件迁声明）做完后逐条复查，结论写进
+[计划文档 §8](dsh-plugin-adapter-plan.md)，这里只记当场修掉的两处：
 
-**还差**：剩下 16 个内置插件照同一套路迁移（每个就是把 `plugin.json` 的字段搬进
-`package.json` 的 `dsh.client` 再删旧文件）；全部迁完后，构建期的中央 `manifest.json` 才能考虑退役。
+1. **插件中心对 pneuma 界面半说假话**：`clientCapabilitiesOf` 把 `dsh.client` 的键名一律列成
+   「dsh 客户端插件 · 只列不加载」，而 `platform: "pneuma"` 的界面半我们**会加载**。现在跳过
+   pneuma，并给 `ui-two-halves-test` 加了一条断言（10/0）。
+2. **死分支与汇总入口**：`build-plugins.mjs` 的 legacy `plugin.json` 读取分支删了，改成
+   「见到 plugin.json 就报错」；`package.json` 加 `check:ui`（四条快的）与 `check:ui:e2e`
+   （两条真机），六条自检不再靠人记。
+
+**没修的十条**里，值得先做的是：profile 包的界面半**没有启停入口**（用户只能改
+`~/.dsc/plugins.json`）、**TUI 壳收不到包界面半**（没写进文档也没断言）、**每次组图都重扫
+node_modules**（包发现没有指纹短路）。剩余见计划文档 §8 的表。
+
 
 
 

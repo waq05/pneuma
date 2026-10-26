@@ -123,15 +123,15 @@ function readMeta(dir) {
     }
     return applyExtraFields(meta, client, pkgFile)
   }
-  const file = join(dir, 'plugin.json')
-  if (!existsSync(file)) return meta
-  const doc = JSON.parse(readFileSync(file, 'utf8'))
-  if (doc.api !== undefined) {
+  // 2.0 起一个插件只许有一处声明。19 个内置插件已全部迁进 package.json 的 dsh.client，
+  // 再见到 plugin.json 就是没迁干净（或者有人照着旧文档加回来的）。
+  if (existsSync(join(dir, 'plugin.json'))) {
     throw new Error(
-      `${dir}/plugin.json 声明了 api——内置插件的 @dsc/ui 区间唯一来源是 package.json 的 peerDependencies`,
+      `${dir}: 2.0 起不再支持 plugin.json——把 phase / inject / services / external / platforms 搬进 ` +
+        'package.json 的 dsh.client（一个插件一处声明）',
     )
   }
-  return applyExtraFields(meta, doc, `${dir}/plugin.json`)
+  return meta
 }
 
 /**

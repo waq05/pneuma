@@ -228,3 +228,25 @@ sed -n '9,140p' docs/user/develop/basic/publish.zh.md
 1. **阶段 B 的安装形态**：接受"profile + pnpm"这套 dsh 原生布局（能装 npm 生态，但引入 pnpm 依赖），还是只支持 tarball / 本地目录（简单，但生态入口窄）？
 2. **阶段 D 客户端插件**：确认彻底不做，只保留宿主侧只读查看？
 3. **`!!js` 配置表达式**：确认一律拒绝（安全），还是给一个开关（兼容性更好，风险自负）？
+
+## 8. 2.0 这批的审查记录（2026-10-26）
+
+四批提交（`0d6e22e` 契约 2.0、`4c519b4` 包两半、`99e8cb1` 示例包、`d8e057f`+`8f1dfa6` 十九个内置插件迁声明）
+之后的逐条复查。**已修的写清怎么修的，没修的写清卡在哪。**
+
+| # | 问题 | 现状 | 下一步 |
+| --- | --- | --- | --- |
+| 1 | 插件中心把 `platform: "pneuma"` 的界面半列成「dsh 客户端插件 · 只列不加载」——假话，那是我们会加载的 | **已修**：`plugin-loader.ts` 里 pneuma 跳过能力清单；`ui-two-halves-test` 加了一条断言 | — |
+| 2 | profile 包的界面半**没有启停入口**。发现时按 `<包名>/client` 读 `isPluginEnabled`，但插件中心没有这一行，用户只能改 `~/.dsc/plugins.json` | 未做 | 插件中心把包界面半列进「界面插件」分组，带开关与信任状态 |
+| 3 | **TUI 壳不加载包界面半**：`collectUiArtifactsForPlatform` 按 `platform ?? 'web'` 过滤，包条目没有 platform 字段，于是 `tui` 视图收不到 | 行为如此，但没写进文档、没有断言 | 要么给包声明加 `platforms`，要么明确写「包界面半只服务 web」 |
+| 4 | **远程壳（手机）会一起加载本机 profile 的界面半**——它走同一张产物表 | 未验证 | 真机走一遍；如果不对，给远程加 source 过滤 |
+| 5 | **每次组图都重扫 `node_modules`**：`graph()` 每次（`/boot.js`、HMR 轮询）都调 `collectUiArtifactsForPlatform`，包发现没有指纹短路（内置清单有 mtime 缓存） | 未做 | 给包发现加一层「profile 目录指纹」缓存 |
+| 6 | 第三方 `plugin.json` 的 `services` 坏值被**静默丢弃**（`Array.isArray ? filter : undefined`），与内置清单 `readNameList` 记 problem 的口径不一致 | 未做 | 统一走一个读字符串数组的函数，坏值进 problems |
+| 7 | **门禁既有漏洞**：构建产物缺失时清单顶层 `apiVersion` 为 `undefined`，`evaluateUiApiGate` 直接放行——「无据可依就放行」，与失败关闭相反；包路径复用了它 | 未做（既有行为） | 把「清单没有 apiVersion」当成拒绝，或要求第三方必须有 api（现在已有） |
+| 8 | `build-plugins.mjs` 还留着 legacy `plugin.json` 读取分支，19 个插件都迁完了，这条分支已死 | **已修**：改成「见到 plugin.json 就报错」，删掉分支 | — |
+| 9 | 六条 UI 自检**没有汇总入口**，靠人记着跑 | **已修**：`pnpm run check:ui`（四条快的）、`pnpm run check:ui:e2e`（两条真机） | — |
+| 10 | 示例包的 `client.bundle.js` 是手写工厂，壳的工厂协议一变它会静默失效（只有 e2e 能发现） | 未做 | 给示例加一条「工厂注册形状」的断言，或让它走构建 |
+| 11 | `unmetDependencies` 对「依赖的插件被停用」也说「不在清单里」，文案不够准 | 未做 | 把「停用」与「不存在」分开 |
+| 12 | 计划文档 §4 的进程注记没跟上 2.0 与两半 | **已修**：本节 + 上面的注记 | — |
+
+**一句话**：机制这层已经自洽（一个包两半、一处声明、门禁与内容寻址都在），欠的是**用户手里的开关**（2、3）与**性能与口径的一致**（5、6、7）。

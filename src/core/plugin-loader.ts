@@ -531,8 +531,12 @@ export async function mountBundlePlugins(
       if (owner !== undefined) meta.bundle = owner
       // 有的包把界面能力写在 package.json 的 dsh.client（不在模块导出里）。
       // 只列不加载，但要列得出来，否则用户在插件中心看不到「它还想改界面」。
+      //
+      // 例外：platform = 'pneuma' 的是**我们自己会加载**的界面半（见 core/ui-bundles 的
+      // discoverPackageUiArtifacts）。把它列成「dsh 客户端插件 · 只列不加载」是假话。
       const declared = owner === undefined ? undefined : bundleInfoOf.get(owner)?.client
-      if (meta.clientCapabilities === undefined && declared !== undefined) {
+      const platform = (declared as { platform?: unknown } | undefined)?.platform
+      if (meta.clientCapabilities === undefined && declared !== undefined && platform !== 'pneuma') {
         meta.clientCapabilities = clientCapabilitiesOf(declared)
       }
     }

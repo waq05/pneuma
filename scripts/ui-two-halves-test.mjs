@@ -58,6 +58,12 @@ const output = tool === undefined ? null : await tool.run({}, { cwd: home, signa
 check('工具能执行', output === '两半都在', String(output))
 const info = listPluginInfos().find((item) => item.name === 'dsc-demo-two-halves')
 check('插件中心认得出它来自组合包', info?.bundle === 'dsc-demo-two-halves', JSON.stringify(info?.bundle))
+// 界面半是我们自己会加载的（platform: pneuma），不能标成「dsh 客户端插件 · 只列不加载」。
+check(
+  '不把会加载的 pneuma 界面半标成「只列不加载」',
+  !(info?.clientCapabilities ?? []).includes('platform:pneuma'),
+  JSON.stringify(info?.clientCapabilities),
+)
 
 console.log('界面半')
 const artifacts = collectUiArtifactsForPlatform('web', { force: true })
