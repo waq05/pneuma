@@ -908,8 +908,8 @@ dsh 的构造单位是**一个 npm 包两半**，Pneuma 2.0 起照同一份声�
 **完整示例**：[`examples/plugin-two-halves/`](../examples/plugin-two-halves/)——宿主半注册一个工具，
 界面半在状态栏加一段。装法 `numa plugin add ./examples/plugin-two-halves --profile demo`。
 
-验证：`node scripts/ui-package-plugin-test.mjs`（28 条：发现、门禁、字节、组图、地址形状、
-插件中心那张卡与启停键、停用后从产物表消失但卡片还在）；
+验证：`node scripts/ui-package-plugin-test.mjs`（38 条：发现、门禁、载体、services/phase、
+字节、组图、地址形状、插件中心那张卡与启停键、远程壳那张图、停用后从产物表消失但卡片还在）；
 `node scripts/ui-two-halves-test.mjs`（16 条，装进 profile 后两半都到位，另含示例 bundle 的
 工厂形状：注册名、产出形状、require 白名单、注册进哪个槽、组件带什么标记）；
 `node scripts/ui-two-halves-e2e.mjs`（真 Electron + 真宿主，断言状态栏里真的画出了那一段，

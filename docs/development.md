@@ -298,7 +298,7 @@ lib/ui/plugins/
 写 `platform: "web"` 的是 dsh 自己的界面半，仍然只列不加载——理由见
 [plugin-development.md §10.6.1](plugin-development.md)。完整示例是
 `examples/plugin-two-halves/`（宿主半一个工具、界面半状态栏一段）；自检三条：
-`scripts/ui-package-plugin-test.mjs`（发现/门禁/组图/卡片/远程 35 条）、`scripts/ui-two-halves-test.mjs`
+`scripts/ui-package-plugin-test.mjs`（发现/门禁/组图/卡片/远程 38 条）、`scripts/ui-two-halves-test.mjs`
 （装进 profile 后两半都到位 + 示例 bundle 的工厂形状，16 条）、`scripts/ui-two-halves-e2e.mjs`（真 Electron，11 条，
 截图 `desktop/shots/two-halves.png`）。
 
