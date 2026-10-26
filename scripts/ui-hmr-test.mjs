@@ -74,6 +74,7 @@ const assetsDir = makeTree('hmr-assets', { 'index.html': '<!doctype html><html><
 const pluginsDir = makeTree('hmr-plugins', {
   'manifest.json': JSON.stringify({
     version: 1,
+    apiVersion: '2.0.0',
     plugins: [
       { id: 'demo-a', file: 'client.js', platform: 'web', phase: 'early' },
       { id: 'demo-b', file: 'client.js', platform: 'web' },

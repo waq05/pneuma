@@ -135,6 +135,8 @@ export interface UiPluginManifestReport {
  *
  * 规则（对齐 ui-plugin-parity-plan §5.1 拍板的六条）：
  *   - 内置清单（顶层带 `apiVersion`，即构建产物）的条目没写 `api` 视为与壳同源，放行；
+ *   - 清单没有 `apiVersion`（不是当前构建写的）时**连没有 `api` 的条目也拒**——两边都没有
+ *     依据就是无从判断，放行等于给手写清单开一条绕过门禁的路（失败关闭）；
  *   - 第三方清单（没有 `apiVersion`）的条目**必须**声明区间，缺失即拒（失败关闭）；
  *   - `workspace:` 前缀与解析不了的区间直接拒——请写具体版本区间，不做「等于当前」的猜法；
  *   - `satisfies(壳版本, 区间)` 不满足（含预发布版）即拒。
@@ -142,7 +144,11 @@ export interface UiPluginManifestReport {
 export function evaluateUiApiGate(api: string | undefined, apiVersion: string | undefined): string | null {
   if (apiVersion === undefined) {
     if (api === undefined) {
-      return null // 兼容旧清单（尚无 apiVersion 的构建产物）：没有声明依据，不拦
+      // 失败关闭（2026-10-26 改）：清单没写 apiVersion，条目也没声明 api——两边都没有依据，
+      // 以前是「不拦」。那种放行等于给一份手写清单开了后门：往里加一条 id 就能绕过门禁。
+      // 现在的构建一定写 apiVersion（`build-plugins.mjs`），落到这一档只有两种可能：
+      // 产物是旧版构建写的，或清单是人手写的。两种都该让人看见并重建，不该静默装载。
+      return '清单没写 apiVersion（不是当前构建写的），条目也没声明 api 区间——无从判断兼容性，已跳过（重新构建界面壳，或给条目补 api）'
     }
     return matchGate(api, '(清单未声明 apiVersion)')
   }

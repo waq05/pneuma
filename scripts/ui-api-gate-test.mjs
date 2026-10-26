@@ -3,8 +3,9 @@
  *
  * 验收口径：apiVersion 不匹配的插件**不进产物表**（自然不进启动图），problems 里
  * 有「插件要求 @dsc/ui …，当前壳 …，已跳过加载」这样的人话；内置清单的条目自 C1 起
- * 逐条带 api（各自 package.json 的 peer 区间）且必须全部放行（零 problem）；旧清单里
- * 没声明 api 的内置条目仍按「与壳同源」放行；workspace:/非法区间直接拒并要求写具体区间。
+ * 逐条带 api（各自 package.json 的 peer 区间）且必须全部放行（零 problem）；清单带
+ * apiVersion 时，没声明 api 的内置条目按「与壳同源」放行；清单连 apiVersion 都没有则
+ * 一律拒（失败关闭，见 evaluateUiApiGate 的注释）；workspace:/非法区间直接拒并要求写具体区间。
  *
  * 运行：pnpm build && pnpm -C ui-shell build && node scripts/ui-api-gate-test.mjs
  *
@@ -57,7 +58,10 @@ check('workspace: 前缀 → 拒并要求写具体区间', (() => {
 })())
 check('非法区间 → 拒', evaluateUiApiGate('最新版', '1.0.0') !== null)
 check('内置条目无声明 + 清单带 apiVersion → 放行（与壳同源）', evaluateUiApiGate(undefined, '1.0.0') === null)
-check('双方都无版本依据 → 放行（兼容旧构建产物）', evaluateUiApiGate(undefined, undefined) === null)
+check('双方都无版本依据 → 拒（失败关闭：手写清单不能绕过门禁）', (() => {
+  const reason = evaluateUiApiGate(undefined, undefined)
+  return reason !== null && reason.includes('apiVersion') && reason.includes('已跳过')
+})(), evaluateUiApiGate(undefined, undefined) ?? '')
 
 // ── 端到端：临时清单里混一个 api 不满足的条目，collect 时被剔除 ────────────────
 const work = mkdtempSync(join(tmpdir(), 'dsc-ui-api-gate-'))

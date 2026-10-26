@@ -21,6 +21,7 @@ const {
 } = await import('../lib/core/ui-bundles.js')
 const { writePluginEnabled } = await import('../lib/core/plugin-registry.js')
 const { composeUiBootGraph } = await import('../lib/ui/manifest.js')
+const { createUiBootSource } = await import('../lib/core/ui-boot-source.js')
 const { toUiPluginRows } = await import('../lib/core/ui-bundles.js')
 
 let pass = 0
@@ -124,6 +125,37 @@ const graph = composeUiBootGraph({ name: 'Pneuma', version: 'test' }, toUiPlugin
 const row = graph.entries.find((item) => item.id === 'dsh-cost-meter')
 check('进得了启动图（壳按图装）', row !== undefined, JSON.stringify(graph.entries.map((e) => e.id)))
 check('地址是内容寻址的 /plugins/<包名>/client.js?rev=', row !== undefined && row.url.includes('dsh-cost-meter/client.js?rev='), String(row && row.url))
+
+console.log('组合包界面半边：远程壳（手机）那张图里也要有')
+// 远程壳与本机界面服务共用 createUiBootSource，缺省按 DSC_PROFILE 解析 profile；
+// 这里显式传 packageDir，钉住「手机端看的是同一张图」。
+{
+  const emptyBuiltin = join(home, 'empty-builtin')
+  mkdirSync(emptyBuiltin, { recursive: true })
+  // 空的内置目录也要带 apiVersion：门禁按它判包的 @dsc/ui 区间（没有这份清单就无从判，
+  // 组合包会被当成「不知道对着哪个壳写的」拒掉——这是失败关闭，不是 bug）。
+  writeFileSync(join(emptyBuiltin, 'manifest.json'), JSON.stringify({ version: 1, apiVersion: '2.0.0', plugins: [] }), 'utf8')
+  const remote = createUiBootSource({
+    host: { name: 'Pneuma', version: 'test' },
+    builtinDir: emptyBuiltin,
+    thirdPartyDir: third,
+    packageDir: profile,
+  })
+  const remoteGraph = remote.graph()
+  check(
+    '远程壳的启动图里有这条包界面半',
+    remoteGraph.entries.some((item) => item.id === 'dsh-cost-meter'),
+    JSON.stringify(remoteGraph.entries.map((e) => e.id)),
+  )
+  const watched = remote.watchRows().find((item) => item.id === 'dsh-cost-meter')
+  check(
+    '远程壳 stat 的是包自己的入口（不是内置目录里的同名文件）',
+    watched !== undefined && watched.path === join(profile, 'node_modules', 'dsh-cost-meter', 'lib', 'client.js'),
+    String(watched && watched.path),
+  )
+  const served = lookupPackageUiBundle('dsh-cost-meter', 'client.js', String(entry && entry.rev), profile)
+  check('远程壳取字节走同一条内容寻址查询', served.known && served.current && served.body !== null)
+}
 
 console.log('组合包界面半边：插件中心那张卡与启停入口')
 const trusts = scanPackageUiTrusts(artifacts.apiVersion, new Set(), profile)

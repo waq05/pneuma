@@ -239,7 +239,7 @@ sed -n '9,140p' docs/user/develop/basic/publish.zh.md
 | 1 | 插件中心把 `platform: "pneuma"` 的界面半列成「dsh 客户端插件 · 只列不加载」——假话，那是我们会加载的 | **已修**：`plugin-loader.ts` 里 pneuma 跳过能力清单；`ui-two-halves-test` 加了一条断言 | — |
 | 2 | profile 包的界面半**没有启停入口**。发现时按 `<包名>/client` 读 `isPluginEnabled`，但插件中心没有这一行，用户只能改 `~/.dsc/plugins.json` | 未做 | 插件中心把包界面半列进「界面插件」分组，带开关与信任状态 |
 | 3 | **TUI 壳不加载包界面半**：`collectUiArtifactsForPlatform` 按 `platform ?? 'web'` 过滤，包条目没有 platform 字段，于是 `tui` 视图收不到 | **已修**：加了 `dsh.client.platforms`（缺省 `["web"]`），与内置插件同一套校验；终端装载器改成按产物条目读字节（组合包入口由 `exports` 决定）；`ui-tui-plugin-test` 进 `check:ui` 并加了一条真装载用例 | — |
-| 4 | **远程壳（手机）会一起加载本机 profile 的界面半**——它走同一张产物表 | 未验证 | 真机走一遍；如果不对，给远程加 source 过滤 |
+| 4 | **远程壳（手机）会一起加载本机 profile 的界面半**——它走同一张产物表 | **已验**：确实会，且是对的（手机跑同一份壳产物，伺服链本来就查 `lookupPackageUiBundle`）。`createUiBootSource` 加 `packageDir` 选项，本机与远程都显式传，不再靠缺省；加了 3 条断言 | — |
 | 5 | **每次组图都重扫 `node_modules`**：`graph()` 每次（`/boot.js`、HMR 轮询）都调 `collectUiArtifactsForPlatform`，包发现没有指纹短路（内置清单有 mtime 缓存） | **已修**：目录列表按 `node_modules` 的 mtime+条目数缓存，单包声明按 `package.json` 的 mtime+size 缓存；客户端字节仍每次读（rev 要准） | — |
 | 6 | 第三方 `plugin.json` 的 `services` 坏值被**静默丢弃**（`Array.isArray ? filter : undefined`），与内置清单 `readNameList` 记 problem 的口径不一致 | **已修**：坏值记一条 problem 并当没声明处理 | 其余字段也可以收进同一个读函数（下一步） |
 | 7 | **门禁既有漏洞**：构建产物缺失时清单顶层 `apiVersion` 为 `undefined`，`evaluateUiApiGate` 直接放行——「无据可依就放行」，与失败关闭相反；包路径复用了它 | 未做（既有行为） | 把「清单没有 apiVersion」当成拒绝，或要求第三方必须有 api（现在已有） |

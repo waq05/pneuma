@@ -47,6 +47,7 @@ import type { UiBootGraph } from '../ui/manifest.js'
 import { createUiBootSource, type UiBootRequestStats, type UiBootSource, type UiBootWatchRow } from './ui-boot-source.js'
 import { dscPath } from './path-policy.js'
 import type { UiEventsHandle } from './ui-events.js'
+import { activeProfileDir } from './profile-dir.js'
 import { uiAssetsDir, uiPluginsDir } from './ui-bundles.js'
 import { isUiBundleRequest, isUiComboRequest, resolveUiResourceRequest, type UiBundleResponse } from './ui-route.js'
 import { checkUiRequestTrust, issueUiCookie, requestAuthority, timingSafeEqualText, verifyUiCookie } from './ui-trust.js'
@@ -237,6 +238,8 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
   const source: UiBootSource = createUiBootSource({
     host: options.host,
     builtinDir: pluginsDir,
+    // 组合包的界面半也进启动图（profile 没配就是 null，什么也不多收）。
+    packageDir: activeProfileDir(),
   })
   const manifest = source.artifacts().entries
 

@@ -288,6 +288,7 @@ const assetsDir = makeTree('serve-assets', {
 const pluginsDir = makeTree('serve-plugins', {
   'manifest.json': JSON.stringify({
     version: 1,
+    apiVersion: '2.0.0',
     plugins: [
       { id: 'demo', file: 'client.js', platform: 'web' },
       { id: '@scope/name', file: 'client.js', platform: 'web' },
@@ -373,6 +374,7 @@ let cookie = ''
     join(pluginsDir, 'manifest.json'),
     JSON.stringify({
       version: 1,
+      apiVersion: '2.0.0',
       note: 'v2',
       plugins: [
         { id: 'demo', file: 'client.js', platform: 'web' },
@@ -425,6 +427,7 @@ console.log('\n[7] 清单失败方向')
   const dir = makeTree('manifest-guard', {
     'manifest.json': JSON.stringify({
       version: 1,
+      apiVersion: '2.0.0',
       plugins: [
         { id: 'ok', file: 'client.js', platform: 'web' },
         { id: 'tui-only', file: 'client.js', platform: 'tui' },

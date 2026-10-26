@@ -51,6 +51,11 @@ export interface UiBootSourceOptions {
   builtinDir: string
   /** 第三方插件根目录；不给用标准落点。 */
   thirdPartyDir?: string
+  /**
+   * 组合包所在的 profile 目录；不给按 `DSC_PROFILE` / 配置里的 `profile` 现场解析。
+   * 本机界面服务与远程壳都走这里——手机端与本机看的是同一张图，包界面半自然也该一致。
+   */
+  packageDir?: string | null
 }
 
 /** 宿主侧共用的启动图快照口子。 */
@@ -78,8 +83,14 @@ export function createUiBootSource(options: UiBootSourceOptions): UiBootSource {
   const dirs: UiArtifactDirs = {
     builtinDir: options.builtinDir,
     ...(options.thirdPartyDir === undefined ? {} : { thirdPartyDir: options.thirdPartyDir }),
+    ...(options.packageDir === undefined ? {} : { packageDir: options.packageDir }),
   }
-  let artifacts = collectUiArtifactsForPlatform('web', { force: true, builtinDir: dirs.builtinDir, ...(dirs.thirdPartyDir === undefined ? {} : { thirdPartyDir: dirs.thirdPartyDir }) })
+  let artifacts = collectUiArtifactsForPlatform('web', {
+    force: true,
+    builtinDir: dirs.builtinDir,
+    ...(dirs.thirdPartyDir === undefined ? {} : { thirdPartyDir: dirs.thirdPartyDir }),
+    ...(dirs.packageDir === undefined ? {} : { packageDir: dirs.packageDir }),
+  })
   let graph = composeUiBootGraph(options.host, toUiPluginRows(artifacts.entries))
   const combo = new UiComboTable()
   combo.replace(buildComboBodies(graph, artifacts, dirs))
@@ -96,6 +107,7 @@ export function createUiBootSource(options: UiBootSourceOptions): UiBootSource {
       force,
       builtinDir: dirs.builtinDir,
       ...(dirs.thirdPartyDir === undefined ? {} : { thirdPartyDir: dirs.thirdPartyDir }),
+      ...(dirs.packageDir === undefined ? {} : { packageDir: dirs.packageDir }),
     })
     const freshGraph = composeUiBootGraph(options.host, toUiPluginRows(fresh.entries))
     artifacts = fresh

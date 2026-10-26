@@ -85,6 +85,7 @@ const content = (id) => `module.exports={apply(){return ${JSON.stringify(id)}}}\
 const files = {
   'manifest.json': JSON.stringify({
     version: 1,
+    apiVersion: '2.0.0',
     plugins: ids.map((id, index) => ({
       id,
       file: 'client.js',
@@ -265,6 +266,7 @@ console.log('\n[6] phase 声明')
 {
   const manifestOf = (patch) => JSON.stringify({
     version: 1,
+    apiVersion: '2.0.0',
     plugins: ids.map((id, index) => ({
       id,
       file: 'client.js',

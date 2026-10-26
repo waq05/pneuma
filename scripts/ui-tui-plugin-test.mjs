@@ -132,6 +132,7 @@ writeFileSync(
   join(lateDir, 'manifest.json'),
   JSON.stringify({
     version: 1,
+    apiVersion: '2.0.0',
     plugins: [
       { id: 'early', file: 'client.js', platform: 'tui' },
       { id: 'late', file: 'client.js', platform: 'tui' },

@@ -433,6 +433,7 @@ console.log('\n[3] bundle 发现')
   const dir = makeTree('plugins', {
     'manifest.json': JSON.stringify({
       version: 1,
+      apiVersion: '2.0.0',
       plugins: [
         { id: 'demo', file: 'client.js', platform: 'web' },
         { id: '@scope/name', file: 'client.js', platform: 'web' },
@@ -510,7 +511,7 @@ console.log('\n[4] 界面服务')
     'app-x.js': 'console.log("shell")',
   })
   const pluginsDir = makeTree('serve-plugins', {
-    'manifest.json': JSON.stringify({ version: 1, plugins: [{ id: 'demo', file: 'client.js', platform: 'web' }] }),
+    'manifest.json': JSON.stringify({ version: 1, apiVersion: '2.0.0', plugins: [{ id: 'demo', file: 'client.js', platform: 'web' }] }),
     'demo/client.js': 'module.exports={apply(){}}',
   })
   const server = await createUiServer({
@@ -669,7 +670,7 @@ console.log('\n[4c] 数据通道')
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
   const assetsDir = makeTree('events-assets', { 'index.html': '<!doctype html><html><body>x</body></html>' })
   const pluginsDir = makeTree('events-plugins', {
-    'manifest.json': JSON.stringify({ version: 1, plugins: [] }),
+    'manifest.json': JSON.stringify({ version: 1, apiVersion: '2.0.0', plugins: [] }),
   })
 
   // 假宿主：一份会变的快照 + 两个方法（一个正常、一个抛错）
@@ -1173,6 +1174,7 @@ console.log('\n[6] A1 服务注入')
   const good = makeTree('a1-good', {
     'manifest.json': JSON.stringify({
       version: 1,
+      apiVersion: '2.0.0',
       plugins: [
         { id: 'beta', file: 'client.js', platform: 'tui', inject: ['alpha'] },
         { id: 'alpha', file: 'client.js', platform: 'tui' },
@@ -1210,6 +1212,7 @@ console.log('\n[6] A1 服务注入')
   const missing = makeTree('a1-missing', {
     'manifest.json': JSON.stringify({
       version: 1,
+      apiVersion: '2.0.0',
       plugins: [{ id: 'beta', file: 'client.js', platform: 'tui', services: ['probe.seat'] }],
     }),
     'beta/client.js': bundle(
@@ -1228,6 +1231,7 @@ console.log('\n[6] A1 服务注入')
   const broken = makeTree('a1-broken', {
     'manifest.json': JSON.stringify({
       version: 1,
+      apiVersion: '2.0.0',
       plugins: [
         { id: 'beta', file: 'client.js', platform: 'tui', inject: ['alpha'] },
         { id: 'alpha', file: 'client.js', platform: 'tui' },

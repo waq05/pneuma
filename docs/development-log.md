@@ -8465,6 +8465,22 @@ transcript 93/93）。剩下面向用户的第 2、3 条（启停入口、TUI �
 验证：`ui-package-plugin-test` 32/0（新增 4 条：坏载体被拒、缺省不进终端壳、声明后进两壳）；
 `ui-tui-plugin-test` 13/0。
 
+**§8 第 4 条：远程壳（手机）也加载本机 profile 的界面半——验过，是有意的（2026-10-26）**：
+
+之前没人验过手机端那张图带不带本机的包界面半。答案是带，而且是对的：手机跑的是同一份壳
+产物，宿主这一侧 `/plugins/…` 的伺服链本来就查 `lookupPackageUiBundle`（`ui-route.ts:92`），
+两处都按 `activeProfileDir()` 解析同一个 profile。
+
+这次只做三件事，把「碰巧对」变成「写着对」：
+
+1. `createUiBootSource` 新增 `packageDir` 选项，本机界面服务与远程壳**都显式传**
+   `activeProfileDir()`——以前靠 `collect` 的缺省值，读代码的人看不出远程也有这一路；
+2. 断言：远程那张图里有这条包界面半、`watchRows()` stat 的是包自己的入口（不是内置目录里
+   的同名文件）、取字节走同一条内容寻址查询；
+3. 文档：`development.md` 的组合包那一段写明手机端与本机看同一张图。
+
+验证：`ui-package-plugin-test` 35/0（新增 3 条）。
+
 
 
 

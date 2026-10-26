@@ -62,6 +62,7 @@ import { RemotePairing } from '../core/remote/pairing.js'
 import { RemotePush, type PushSendResult } from '../core/remote/push.js'
 import { TicketStore } from '../core/remote/tickets.js'
 import { RemoteUploads } from '../core/remote/uploads.js'
+import { activeProfileDir } from '../core/profile-dir.js'
 import { uiAssetsDir, uiPluginsDir } from '../core/ui-bundles.js'
 import { createUiBootSource } from '../core/ui-boot-source.js'
 import { createUiEvents } from '../core/ui-events.js'
@@ -566,6 +567,9 @@ export const remotePlugin: Plugin.Object = {
       const bootSource = createUiBootSource({
         host: { name: 'Pneuma', version: DSC_VERSION },
         builtinDir: uiPluginsDir(),
+        // profile 里装的组合包界面半也进手机端那张图：手机跑的是同一份壳产物，本机与手机
+        // 看同一张图才不会「桌面有、手机没有」。写出来而不是靠缺省，是为了这行能被人看见。
+        packageDir: activeProfileDir(),
       })
       const freshGraph = (): UiBootGraph => {
         bootSource.refresh()
