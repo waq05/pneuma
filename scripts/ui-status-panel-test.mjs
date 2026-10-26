@@ -438,6 +438,49 @@ console.log('[9] 面板的定位锚是正文区（不是 .chat-wrap）')
   check('锚点自带 position: relative（绝对定位浮层要的定位父级）', /\[data-thread-area\] \{[^}]*position: relative/.test(shellCss))
 }
 
+console.log('[10] 右上角的层序与「更多打开方式」的收起时机')
+{
+  const shellCss = read('ui-shell/src/styles.css')
+  const sessions = read('ui-shell/src/plugins/sessions/ui.tsx')
+  const primitives = read('ui-shell/src/ui-primitives/icons-workspace.tsx')
+  const barrel = read('ui-shell/src/ui-primitives/index.ts')
+
+  // 胶囊（.sp-host）与菜单（.row-menu / .menu-backdrop）原先同为 40：同层时谁赢看 DOM 顺序，
+  // 而胶囊挂在正文区、在 DOM 里比顶栏更靠后——于是顶栏「更多打开方式」的下拉被它压住两行
+  // （2026-10-25 用户截图）。胶囊低一档之后，菜单与遮罩都稳稳在它上面。
+  check(
+    '胶囊低菜单一档（calc(--dsc-z-menu - 1)）',
+    /\.sp-host \{[^}]*z-index: calc\(var\(--dsc-z-menu\) - 1\)/.test(shellCss),
+  )
+  check('负向：胶囊不再与菜单同层（同层就回到按 DOM 顺序压）', !/\.sp-host \{[^}]*z-index: var\(--dsc-z-menu\);/.test(shellCss))
+
+  // 收起时机：原来只挂一张 .menu-backdrop。它跟胶囊同层，点胶囊不收起；而且它会把顶栏
+  // 其他按钮的点击一起吞掉（点插件钮只收菜单、页面不动）。改成组外 pointerdown + Esc。
+  const groupStart = sessions.indexOf('function WorkspaceOpenGroup')
+  const groupSrc = sessions.slice(groupStart, groupStart + 6000)
+  check('这一组在源码里定位到了', groupStart > 0 && groupSrc.includes('ws-open-menu'))
+  check('按下别处就收起（捕获阶段 pointerdown）', groupSrc.includes("document.addEventListener('pointerdown', onPointerDown, true)"))
+  check('Esc 也收起', groupSrc.includes("onKeyDown") && groupSrc.includes("event.key === 'Escape'"))
+  check('只在点到组外时收起（组内点击不误关）', groupSrc.includes('groupRef.current?.contains(event.target) === true'))
+  check('不再用遮罩接点击（遮罩会吞掉顶栏其他按钮）', !groupSrc.includes('className="menu-backdrop"'))
+
+  // 彩色图标：顶栏主钮 + 菜单四条 + 侧栏工作区行，同一套（icons-workspace.tsx）。
+  for (const name of ['IconTerminalColor', 'IconFolderOpenColor', 'IconVSCodeColor', 'IconCopyColor']) {
+    check(`菜单项用彩色图标 ${name}`, groupSrc.includes(`<${name} size={15} />`))
+  }
+  check('主钮换成彩色文件夹（16px）', groupSrc.includes('<IconFolderOpenColor size={16} />'))
+  check('负向：主钮不再用线性文件夹', !groupSrc.includes('<IconFolderOpen size={16} />'))
+  check(
+    '侧栏工作区行同一套（开 / 合两态）',
+    sessions.includes('{expanded ? <IconFolderOpenColor size={15} /> : <IconFolderColor size={15} />}'),
+  )
+  check('彩色图标自成一模块并从基元库转出（@dsc/ui 经 export * 拿得到）', barrel.includes("export * from './icons-workspace'") && primitives.includes('export function IconFolderColor'))
+  check(
+    '颜色写死 #RRGGBB（读对象本身的颜色，不跟主题跳色）',
+    primitives.includes("const FOLDER_FRONT = '#F3B44C'") && primitives.includes("const VSCODE = '#2C9CE6'"),
+  )
+  check('尺寸经 iconSizeStyle 挂 --dsc-icon-size（按钮倍率认它）', primitives.includes('iconSizeStyle(size)') && read('ui-shell/src/ui-primitives/icons.tsx').includes('export function iconSizeStyle'))
+}
 if (failures === 0) {
   console.log('\n全部通过')
 } else {

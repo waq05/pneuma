@@ -16,6 +16,7 @@
  */
 import { useEffect, useState, type ReactNode } from 'react'
 import { IconPlus, IconRefresh } from '@dsc/ui'
+import { humanErrorText } from '@dsc/ui-primitives'
 import {
   useHostChannel,
   type PresetDraft,
@@ -105,13 +106,13 @@ export function PresetsGroup(): ReactNode {
       .invoke<PresetFileView>('readPreset', [name])
       .then((result) => {
         if (!result.ok) {
-          setNote({ tone: 'error', text: `读取失败：${result.error}` })
+          setNote({ tone: 'error', text: `读取失败：${humanErrorText(result.error).text}` })
           return
         }
         setPeek({ name, text: result.text })
       })
       .catch((error: unknown) => {
-        setNote({ tone: 'error', text: `读取失败：${text(error)}` })
+        setNote({ tone: 'error', text: `读取失败：${humanErrorText(error).text}` })
       })
   }
 

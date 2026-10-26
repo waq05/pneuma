@@ -53,6 +53,9 @@ import type {
   UiRuntimeApi,
 } from '@dsc/ui-core'
 import { createScopedSlotApi, ServiceRegistry, unmetInjections } from '@dsc/ui-core'
+// 装配交给 cordis（与宿主内核同一套）。这一层不改插件写法，只换「谁管生命周期」：
+// 详见 cordis-host.ts 的文件头表格。
+import { createCordisRoot, type UiApply } from './cordis-host'
 // 插件契约面（`@dsc/ui` 的落点就是 src/plugin-api.ts）与平台模块表数据文件：
 // 前者同时是 MODULES 里 `@dsc/ui` 一格的实现，必须与壳内部用的是同一份模块实例。
 import * as pluginApi from '@dsc/ui'
@@ -140,6 +143,10 @@ export interface UiBootPluginState {
   error?: string
   /** 装好（或失败）的时刻。 */
   at?: number
+  /** 装配方式：`cordis` = 走 cordis 纤维；`ledger` = 旧的退订账本（灰度期两种并存）。 */
+  via?: 'cordis' | 'ledger'
+  /** 走 cordis 时那条纤维的状态码（0 待装 / 1 装载中 / 2 生效 / 3 失败 / 4 已卸）。 */
+  fiber?: number
 }
 
 /** 一个批的现况（`at` 们是探针断言时序的读面）。 */
@@ -249,6 +256,29 @@ export interface UiBootSession {
 }
 
 /**
+ * 默认走 cordis 的那批插件（灰度开关）。
+ *
+ * 为什么先只放一条：装配路径换了，界面**画出来的东西**不该变——先拿 `statusbar`（它
+ * 只往 `shell.statusbar` 登记一段读数，没有 inject、没有自己的子槽）验证链路，比对
+ * 截图一致再逐条放开，出问题时一行改回来。
+ *
+ * 探针可以写 `globalThis.__DSC_CORDIS_PROBE__ = ['sessions', 'trace']` 换样本，
+ * 或者写 `'*'` 一次全切——不必重新构建，也不影响别人。
+ */
+const CORDIS_DEFAULT_ENTRIES: ReadonlySet<string> = new Set(['statusbar'])
+
+/** 按上面的开关决定某条插件走哪条装配路径。 */
+function cordisSelector(): (id: string) => boolean {
+  const override = (globalThis as Record<string, unknown>)['__DSC_CORDIS_PROBE__']
+  if (override === '*') return () => true
+  if (Array.isArray(override)) {
+    const picked = new Set(override.filter((id): id is string => typeof id === 'string'))
+    return (id) => picked.has(id)
+  }
+  return (id) => CORDIS_DEFAULT_ENTRIES.has(id)
+}
+
+/**
  * 建一次装载会话：装 early 批（**await 完**再返回，调用方随后画首帧）。
  *
  * application 批不在这里装——调用方画完首帧调 {@link UiBootSession.startApplication}。
@@ -318,6 +348,16 @@ export async function createBootSession(
   }
   // 每调用一次装载一张新表：插件之间「谁提供、谁消费」全部经它（A1）。
   const services = new ServiceRegistry()
+  // cordis 根：与宿主内核同一套装配语义（plugin / inject / effect / fiber 状态）。
+  // 它与旧账本共用**同一份**槽位注册表与服务表，所以两条路径装出来的界面没有差别。
+  const cordis = createCordisRoot({
+    slots: options.slots,
+    host: options.host,
+    runtime: options.runtime,
+    services,
+  })
+  /** 这一条是否走 cordis（灰度开关；同一次装载里答案固定）。 */
+  const viaCordis = cordisSelector()
   const reports = new Map<string, UiPluginLoadReport>()
   const installed = new Map<string, string>()
   /**
@@ -387,7 +427,13 @@ export async function createBootSession(
       setPlugin(entry.id, { state: 'failed', at: Date.now(), attempts: attempt, error: reason })
       return reason
     }
-    setPlugin(entry.id, { state: 'loading', phase, rev: entry.rev, attempts: attempt })
+    setPlugin(entry.id, {
+      state: 'loading',
+      phase,
+      rev: entry.rev,
+      attempts: attempt,
+      via: viaCordis(entry.id) ? 'cordis' : 'ledger',
+    })
     try {
       // 批 URL 是首选；它不是单资源时带单资源回退（arrival 协议管三态与请求数）。
       // HMR 换装（mode='single'）只走单资源：批地址带的是旧 rev，重放没有任何意义。
@@ -400,20 +446,39 @@ export async function createBootSession(
       const module_ = (exported as { default?: unknown } | null)?.default ?? exported
       const apply = (module_ as { apply?: unknown } | null)?.apply
       if (typeof apply !== 'function') throw new Error('插件没有导出 apply(ui)')
-      const ui: UiPluginApi = {
-        id: entry.id,
-        // 槽位登记与 provide 共用同一条回滚账（外壳在 @dsc/ui-core，与终端壳共用）：
-        // apply 抛错时可能只登记了一半，直接重试会撞「同一个格子已经有人了」。
-        slots: createScopedSlotApi(options.slots, (release) => record(ledgerOfPlugin, release)),
-        host: options.host,
-        runtime: options.runtime,
-        provide: (name, value) => {
-          record(ledgerOfPlugin, services.provide(name, value, entry.id))
-          provides.push(name)
-        },
-        consume: (name) => services.consume(name),
+      // ── 两条装配路径（灰度）────────────────────────────────────────────────
+      // 插件代码一个字都不变：交出去的仍是那六项 `ui`，`apply(ui)` 的签名也照旧。
+      // 差别只在「谁管生命周期」：cordis 走 fiber（`ctx.effect()` 按依赖顺序回收、
+      // 状态可读），账本走退订函数倒序调用。
+      let dispose: (() => void) | undefined
+      if (viaCordis(entry.id)) {
+        const fiber = await cordis.mount(entry.id, apply as UiApply, {
+          onProvide: (provided) => provides.push(provided),
+        })
+        setPlugin(entry.id, { via: 'cordis', fiber: fiber.state })
+        // 清理归纤维自己（apply 交回来的退订函数由 cordis 收下）；这里只把「卸这条」
+        // 挂进账本，供 uninstall / disposeAll / 失败回滚调用。
+        dispose = () => {
+          void cordis.unmount(entry.id)
+        }
+      } else {
+        const ui: UiPluginApi = {
+          id: entry.id,
+          // 槽位登记与 provide 共用同一条回滚账（外壳在 @dsc/ui-core，与终端壳共用）：
+          // apply 抛错时可能只登记了一半，直接重试会撞「同一个格子已经有人了」。
+          slots: createScopedSlotApi(options.slots, (release) => record(ledgerOfPlugin, release)),
+          host: options.host,
+          runtime: options.runtime,
+          provide: (name, value) => {
+            record(ledgerOfPlugin, services.provide(name, value, entry.id))
+            provides.push(name)
+          },
+          consume: (name) => services.consume(name),
+        }
+        const returned = (apply as (api: UiPluginApi) => void | (() => void))(ui)
+        // 插件可以什么都不返回：只有真给了退订函数才进账本。
+        dispose = typeof returned === 'function' ? returned : undefined
       }
-      const dispose = (apply as (api: UiPluginApi) => void | (() => void))(ui)
       if (typeof dispose === 'function') ledgerOfPlugin.push(dispose)
       disposers.set(entry.id, rollback)
       installed.set(entry.id, entry.rev)
@@ -542,6 +607,9 @@ export async function createBootSession(
       // HMR 新加的插件不在原图的条目表里：补进报告顺序（换装的则原位不动）。
       if (!entryOrder.some((candidate) => candidate.id === entry.id)) entryOrder.push(entry)
       session.uninstall(entry.id)
+      // cordis 的卸载是异步的（fibers 要等清理跑完）：换装前等它落地，否则新旧两条
+      // 纤维会同时占着同一个槽格子，报「已经有人了」。
+      await cordis.unmount(entry.id)
       return install(entry, 1, 'single')
     },
     uninstall: (id) => {
@@ -578,6 +646,8 @@ export async function createBootSession(
       }
       disposers.clear()
       installed.clear()
+      // cordis 那条路不经过 disposers 的账本（纤维自己持有清理）：单独收一次。
+      void cordis.disposeAll()
     },
   }
   return session

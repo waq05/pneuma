@@ -22,6 +22,16 @@ function sized(size: number): CSSProperties {
   return { '--dsc-icon-size': `${size}px` } as CSSProperties
 }
 
+/**
+ * {@link sized} 的对外版本：彩色图标那一套（`icons-workspace.tsx`）也要把尺寸挂成
+ * 同一个 CSS 变量，按钮尺寸倍率（`.row-menu .menu-item svg` 那条规则）才认得它。
+ *
+ * @param size 图标边长（px）
+ */
+export function iconSizeStyle(size: number): CSSProperties {
+  return sized(size)
+}
+
 function base(path: JSX.Element, { size = 16, className }: IconProps, viewBox = '0 0 24 24'): JSX.Element {
   return (
     <svg

@@ -173,6 +173,9 @@ console.log('\n[2] 界面通道（真装配）')
   }
   const provided = {}
   const effects = []
+  // 事件面：webserver 2026-10-25 起订阅 `dsc/side-ask-chunk`（旁问流式增量）转发成 SSE，
+  // 所以这个假 ctx 也要有 on。返回值是退订函数（cordis 的同一形状）。
+  const listeners = new Map()
   const ctx = {
     ui: fakeRuntime,
     provide: (name, service) => {
@@ -180,6 +183,12 @@ console.log('\n[2] 界面通道（真装配）')
     },
     effect: (fn) => {
       effects.push(fn)
+    },
+    on: (name, handler) => {
+      listeners.set(name, handler)
+      return () => {
+        listeners.delete(name)
+      }
     },
     logger: { warn: () => {} },
   }

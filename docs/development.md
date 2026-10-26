@@ -32,7 +32,7 @@
              │  运行时子进程（node utilityProcess）              │
              │  lib/headless.js → host-stdio 插件               │
              │    └ createKernel() → cordis 上下文              │
-             │        内核插件 25 + 官方可开关 16 + 外部插件 N                     │
+             │        内核插件 34 + 官方可开关 18 + 外部插件 N                     │
              │  src/core/* 是纯能力，被插件包装后对外提供服务      │
              └──────────────────────────────────────────────────┘
 ```
@@ -49,24 +49,25 @@
 
 ## 2. 仓库地图
 
-规模现量于 2026-10-02（0.6.28 时点，结构收敛批之后），只数源文件行数，当量尺用。
+规模现量于 2026-10-16（0.7.0 时点），只数源文件行数，当量尺用。
 
 | 路径 | 规模 | 职责 |
 | --- | --- | --- |
-| `src/core/` | 101 个文件 ≈31900 行 | 纯能力：模型客户端与协议适配器、会话（含写租约）、循环、审批、压缩、溢出落盘、会话检索、MCP 客户端、工具、技能、设置、任务板；token 粗估（`token-estimate.ts`）与错误文案（`err-text.ts`）是全仓库唯一一份 |
-| `src/core/tools/` | 6 个文件 ≈810 行 | 内置六件套 `bash`/`read`/`write`/`edit`/`glob`/`grep`（预算由 tools-default 配置下发）+ 沙箱的一次性升权参数与命令执行器缝 |
+| `src/core/` | 131 个文件 ≈42400 行 | 纯能力：模型客户端与协议适配器、会话（含写租约）、循环、审批、压缩、溢出落盘、会话检索、MCP 客户端、工具、技能、设置、任务板；token 粗估（`token-estimate.ts`）与错误文案（`err-text.ts`）是全仓库唯一一份 |
+| `src/core/tools/` | 5 个文件 ≈1600 行 | 内置六件套 `bash`/`read`/`write`/`edit`/`glob`/`grep`（预算由 tools-default 配置下发）+ 沙箱的一次性升权参数与命令执行器缝 |
 | `src/core/lsp/` | 7 个文件 ≈2400 行 | LSP 代码智能：`client`（连接/实例）、`manager`（池化调度）、`normalize`（应答归并）、`line-shift`（诊断行号对齐）、`framing`/`servers`/`uri` |
 | `src/core/dsh-compat/` | 2 个文件 ≈210 行 | dsh 插件兼容层的模块解析钩子与工具形状适配 |
-| `src/plugins/` | 51 个文件 ≈17700 行 | 每个服务一个 cordis 插件 + 十六个官方可开关插件；`remote/` 拆成 `types`/`http`/`routes`（HTTP 路由）+ `remote.ts`（传输与装配） |
-| `src/host/kernel.ts` | 424 行 | 内核装配顺序与三档插件元数据 |
-| `src/contract.ts` | 1118 行 | UI ⇄ 运行时的中性契约（`DscRuntime` + 视图类型） |
-| `src/services/types.ts` | 1050 行 | 服务面声明（`ctx.llm`、`ctx.mcp` 这些是什么类型） |
-| `src/adapter/transcript.ts` | 551 行 | 内核事件 → UI 快照的折叠投影 |
-| `src/app/` | 7 个组件 ≈700 行 | ink 终端界面（与桌面端共用契约） |
-| `desktop/electron/` | 6 个文件 ≈1150 行 | main + preload：窗口、托盘、运行时子进程、终端与浏览器 dock |
-| `desktop/src/renderer/` | 64 个文件 ≈18900 行 | 桌面界面：会话、侧栏、插件、技能、设置、队友；`chat/`（markdown 渲染 / 评价存档 / 折叠预算 / 座位计划 / 视口 hook）与 `sidebar-groups.ts` 从两个巨型组件里拆出来 |
+| `src/plugins/` | 55 个文件 ≈23100 行 | 每个服务一个 cordis 插件 + 十八个官方可开关插件；`remote/` 拆成 `types`/`http`/`routes`（HTTP 路由）+ `remote.ts`（传输与装配） |
+| `src/host/kernel.ts` | 481 行 | 内核装配顺序与三档插件元数据 |
+| `src/contract.ts` | 1962 行 | UI ⇄ 运行时的中性契约（`DscRuntime` + 视图类型） |
+| `src/services/types.ts` | 1381 行 | 服务面声明（`ctx.llm`、`ctx.mcp` 这些是什么类型） |
+| `src/adapter/transcript.ts` | 668 行 | 内核事件 → UI 快照的折叠投影 |
+| `src/app/` | 29 个文件 ≈5900 行 | ink 终端界面（与桌面端共用契约） |
+| `desktop/electron/` | 7 个文件 ≈2643 行 | main + preload：窗口、托盘、运行时子进程、终端与浏览器 dock |
+| `desktop/src/renderer/` | 90 个文件 ≈21000 行 | 桌面界面：会话、侧栏、插件、技能、设置、队友；`chat/`（markdown 渲染 / 评价存档 / 折叠预算 / 座位计划 / 视口 hook）与 `sidebar-groups.ts` 从两个巨型组件里拆出来 |
+| `ui-shell/` | 103 个文件 ≈35000 行 | 桌面与手机共用的界面壳（插件化：布局 + 基元 + 官方界面插件；产物落 `lib/ui/assets`）。桌面端默认加载壳产物，`desktop/src/renderer/` 是旧渲染层，可回退 |
 | `shots/` | 脚本 + 实拍产物 | 自检与实拍（全部跑在临时 HOME 上）。**这个目录被 `.gitignore` 忽略**：它只在本机存在，不随版本库分发 |
-| `examples/plugins/` | 4 个示例 | 手写插件的参照 |
+| `examples/plugins/` | 5 个示例 | 手写插件的参照（上手路径见 [writing-plugins.md](writing-plugins.md)） |
 
 ## 3. 三条启动链路
 
@@ -125,8 +126,8 @@ export const myPlugin: Plugin.Object = {
 | 档 | 判定 | 开关 | 现在有谁 |
 | --- | --- | --- | --- |
 | 自定义 | `source: 'external'`，文件在 `~/.dsc/plugins/*.js` | 可拨，默认开 | 用户自己的（dsh 风格的插件走兼容层，见 [plugin-development.md](plugin-development.md) 的「dsh 兼容层」章） |
-| 官方可开关 | `source: 'builtin'` + `toggleable: true` | 可拨，默认由 `defaultDisabled` 定 | 见下面那张表，共 17 个 |
-| 运行内核 | `source: 'builtin'` 且没标 `toggleable` | 不给开关 | `llm`/`session`/`guards`/`surfaces`/`waiting`/`approval`/`hooks`/`tools`/`tools-default`/`transcript`/`commands`/`skills`/`prompt`/`mode`/`settings`/`compact`/`todo`/`plan`/`ask`/`agent`/`goal`/`memory`/`runtime` 共 23 个 |
+| 官方可开关 | `source: 'builtin'` + `toggleable: true` | 可拨，默认由 `defaultDisabled` 定 | 见下面那张表，共 18 个 |
+| 运行内核 | `source: 'builtin'` 且没标 `toggleable` | 不给开关 | `llm`/`session`/`guards`/`surfaces`/`waiting`/`approval`/`hooks`/`tools`/`tools-default`/`transcript`/`commands`/`skills`/`prompt`/`mode`/`presets`/`ptc`/`runtime-api`/`settings`/`compact`/`microcompact`/`image-diet`/`session-title`/`todo`/`plan`/`ask`/`agent`/`goal`/`memory`/`runtime`/`webserver` 共 30 个 |
 
 官方可开关插件（`src/host/kernel.ts` 的 `OFFICIAL_PLUGINS` + `OFFICIAL_OBJECTS`）：
 
@@ -146,6 +147,8 @@ export const myPlugin: Plugin.Object = {
 | `schedule` 定时任务 | 关 | `schedule` | `after`/`at`/`every`/`daily`/`weekly`/`cron` 六种选择器，到点把提醒投回原会话；至多一次、catch-up 补投、pre-dispatch 校验 |
 | `lsp` LSP 代码智能 | 关 | `lsp` | 连语言服务器查定义/引用/实现/悬停，并把本次编辑新引入的报错附在 write/edit 结果里 |
 | `browser` 浏览器自动化 | 关 | `browser` | DOM 级控制浏览器：无障碍快照 + ref 定位点击输入（`browser_look` 只读 / `browser` 动手），不是截图比坐标 |
+| `file-review` 文件更改预览 | 开 | `file-review` | edit / write 落盘前把 unified diff 摆进对话流，改哪几行看得见，超长按行截断 |
+| `dock-browser` 侧栏浏览器控制 | 关 | `dock-browser` | 让模型驱动桌面端侧栏那台浏览器（用户持久会话）：无障碍快照 + ref 定位，动手动作每次审批 |
 | `self-improve` 自我改进 | 关 | `self-improve` | 三条闭环：纠正捕获候选、复盘产技能草稿（默认停用待人启用）、技能自修 + 台账回滚 |
 | `dsh-compat` dsh 兼容层 | 关 | — | 挂载 dsh（DeepSeek Harness）外部插件：`logger` 服务、模块解析钩子、dsh 风格工具注册的形状适配 |
 
@@ -199,9 +202,9 @@ export const myPlugin: Plugin.Object = {
 
 | 常量 | 位置 | 当前值 | 什么时候动 |
 | --- | --- | --- | --- |
-| `KERNEL_API_VERSION` | `src/core/plugin-registry.ts:88` | 6 | 插件能用的扩展点有增减 |
-| `HOST_PROTOCOL_VERSION` | `src/plugins/host-stdio.ts:25` + `desktop/electron/main/protocol.ts` | 2 | 协议消息种类或白名单语义变了 |
-| `NATIVE_BRIDGE_VERSION` | `src/core/native-bridge.ts:69` | 3 | **加操作不涨**；改某个操作的实参或语义才涨 |
+| `KERNEL_API_VERSION` | `src/core/plugin-registry.ts:79` | 6 | 插件能用的扩展点有增减 |
+| `HOST_PROTOCOL_VERSION` | `src/core/dock-browser.ts:20`（`src/plugins/host-stdio.ts` 只做再导出） | 3 | 协议消息种类或白名单语义变了 |
+| `NATIVE_BRIDGE_VERSION` | `src/core/native-bridge.ts:70` | 3 | **加操作不涨**；改某个操作的实参或语义才涨 |
 
 两个版本都是「加载时对不上就报错」，不做静默兼容。插件可以声明 `apiVersion`，内核只拒绝
 **高于**自己的版本。
@@ -231,7 +234,7 @@ export const myPlugin: Plugin.Object = {
 | `credentials.yaml` | 用户 / 设置界面 | key 的第二来源（第一是 `apiKeyEnv` 指向的环境变量，第三是回退读 `~/.dsh`） |
 | `config.json` | 用户（可选） | 轻量覆盖：provider / model / temperature |
 | `settings.json` | 设置界面与 `ctx.settings`（`src/core/prefs.ts:15`） | 审批与思考强度默认值、市场源清单、关窗是否缩托盘、侧栏界面偏好（排序、工作区顺序与别名） |
-| `plugins.json` | 插件中心、`plugin_manager` 工具 | 条目树：`entries[{file, disabled, config}]` + `history` 版本记录（自动回滚靠它）。十六个官方可开关插件各占一条，`config` 里存它们的可调值（dsh 插件的 `risk` / `risks` 也存这里） |
+| `plugins.json` | 插件中心、`plugin_manager` 工具 | 条目树：`entries[{file, disabled, config}]` + `history` 版本记录（自动回滚靠它）。十八个官方可开关插件各占一条，`config` 里存它们的可调值（dsh 插件的 `risk` / `risks` 也存这里） |
 | `skills.json` | 技能中心 | 每个技能的开关 |
 | `desktop.json` | 桌面主进程（`desktop/electron/main/dsc-core.ts:42-60`） | 最近工作目录（最多记 12 个）、托盘提示是否弹过 |
 | `.last-session` | 会话插件 | `--resume` 无参时指向上次的会话文件 |
@@ -353,7 +356,7 @@ node shots/seed-model-home.mjs     # 造三个带能力字段的端点 + 一条�
 node scripts/composer-test.mjs     # TUI 输入候选面板
 
 # 打包版实拍
-cd D:\dsc\desktop && pnpm run dist:dir     # → dist/win-unpacked/dsc.exe
+cd D:\dsc\desktop && pnpm run dist:dir     # → dist/win-unpacked/Pneuma.exe
 ```
 
 实拍的环境变量钩子（`desktop/electron/main/index.ts`，截图块从 `:433` 起，
@@ -459,6 +462,7 @@ exe 当**桌面端**跑的时候才要清掉它。
 | 会话目标缺省轮次上限 / 一次放宽几轮 | 缺省 24 轮 / 8 轮，夹在 1~256 / 1~64；可配 `goal.defaultMaxRounds` / `goal.extendRoundsBy`，设置「会话目标」分区就能改；256 这个硬顶不可配 | `src/plugins/goal.ts:44`、`src/core/goal.ts:30` |
 | 说明书（AGENTS.md）字符预算 | 缺省 20000，夹在 4000~200000；可配 `prompt.instructionBudget` | `src/plugins/prompt.ts`、`src/core/prompt.ts:37` |
 | 快照推送节流 | 缺省 80 ms，夹在 16 ms~1 秒；可配 `host-stdio.snapshotThrottleMs` | `src/plugins/host-stdio.ts` |
+| LLM 连接超时 / 流空闲超时 | 缺省 30 s / 180 s（流空闲：这么久一个字节都没到就判服务端挂起）；可用 `DSC_LLM_CONNECT_TIMEOUT_MS` / `DSC_LLM_STREAM_IDLE_MS` 覆盖（毫秒，夹在 1 秒~10 分钟，每次调用现读）。端点连不上时默认要等 30 s × 3 次重试 ≈ 90 s 才把失败浮上来，网络差的把它调小（如 8000） | `src/core/llm.ts` 的 `readTimeoutMs` |
 | 自动压缩触发线 | 缺省为模型上下文窗口的 80%，夹在 50%~95%；可配 `compact.autoCompactPercent`，设置「上下文压缩」分区就能改 | `src/plugins/compact.ts:40`、`:63` |
 | 压缩摘要的锚点索引预算 | 缺省 6000 字符，夹在 1000~20000；可配 `compact.anchorBudgetChars` | `src/core/compact-anchors.ts:32`、`src/plugins/compact.ts:46` |
 | 压缩摘要的用户原话预算 | 缺省 8000 字符，夹在 1000~40000；可配 `compact.userQuoteBudgetChars` | `src/core/compact-anchors.ts:35`、`src/plugins/compact.ts:47` |
@@ -507,7 +511,7 @@ exe 当**桌面端**跑的时候才要清掉它。
 
 ### 内核装配顺序
 
-`createKernel()` 依次挂 25 个内核插件：`llm` → `session` → 三个扩展点（`guards` / `surfaces` / `waiting`）→ `approval` → `tools` → `tools-default` → `transcript` → `commands` → `skills` → `prompt` → `mode` → `settings` → `hooks` → `compact` → `todo` → `plan` → `ask` → `agent` → `goal` → `memory` → `runtime` → `desktop-dock` → `plugin-manager`；末尾把十六个官方可开关插件登记进热挂载表（`registerBuiltinMount`），再按 `plugins.json` 的条目决定本次挂不挂（`src/host/kernel.ts`）。
+`createKernel()` 依次挂 34 个内核插件：`llm` → `session` → `guards` → `surfaces` → `waiting` → `approval` → `tools` → `tools-default` → `transcript` → `commands` → `skills` → `prompt` → `mode` → `presets` → `ptc` → `settings` → `image-diet` → `permission-presets` → `hooks` → `compact` → `microcompact` → `session-title` → `todo` → `plan` → `ask` → `agent` → `goal` → `memory` → `runtime` → `webserver` → `desktop-dock` → `git` → `plugin-manager` → `runtime-api`；末尾把十八个官方可开关插件登记进热挂载表（`registerBuiltinMount`），再按 `plugins.json` 的条目决定本次挂不挂（`src/host/kernel.ts`）。
 这个顺序里有两处是必须的，不只是好看：`approval` 早于 `mode`，因为换档广播 `dsc/mode-changed` 而审批要听（审批卡上得写当前档位）；`transcript` 早于 `plan`，因为恢复会话时要先把会话流清空，计划卡那条条目才不会被清掉。
 官方可开关插件之间还有一条硬约束：`tool-search` 必须排在 `mcp` 之后，否则它 apply 时 `ctx.get('mcp')` 是 `undefined`，MCP 工具的 schema 永远不会被撤下。
 
@@ -754,8 +758,8 @@ Windows 的最小化/最大化/关闭三个按钮由系统画，样式表够不�
 零 node 依赖的纯模块，渲染层（经 `@dsc/runtime/core/commands-completion.js` alias）、TUI
 与插件三方共用。渲染层 import 链上任何一个模块顶层碰 node 内置模块，vite externalize
 代理一求值就把整个渲染进程炸成白屏（0.6.26 踩的，见 development-log 阶段 44 与 memory）。
-内置命令 7 条：`new` / `resume` / `compact` / `model` / `review` / `help` / `exit`
-（`commands-completion.ts:16-22`）；`/review` 的 handler 在 `src/plugins/commands.ts`
+内置命令 23 条（`src/core/commands-completion.ts`，从 :35 起）
+（`src/core/commands-completion.ts:35-61`）；`/review` 的 handler 在 `src/plugins/commands.ts`
 （收集工作区未提交改动组装审查轮，git 收集在 `src/core/git-info.ts`）。插件注册的命令进
 `extraSpecs`。输入 `/ne` 按 Enter 会展开成 `/new`（唯一前缀）。`/effort` 保留着但只回
 一句「已移除」（`src/plugins/commands.ts:118`）。

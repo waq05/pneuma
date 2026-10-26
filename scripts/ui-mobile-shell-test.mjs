@@ -26,7 +26,7 @@
  *   [6] 轨迹页签：桌面两颗；手机只在轨迹页上给一颗「← 对话」返回钮（三个入口都要有回头路）
  *   [7] 手机上收掉的两个桌面入口：`.ws-open`（原生桥）与页脚那颗「设置」（设置页手机版是崩的）
  *   [8] 输入框高度：`--dsc-input-box-h` 两处取值（桌面 40 / 手机 44）、只此一家
- *   [9] 手机底栏两行：右组整行占第二行、发送贴本行右缘、两行都收矮；点框内空白聚焦
+ *   [9] 手机底栏一层的图标条：四颗 chip 只留图标、不换行、发送留在组尾；点框内空白聚焦
  *   [10] 手机上那三颗旋钮（权限/模式/档位）的浮层贴住输入卡片、不探出屏幕
  *   [11] 样式门：新类名有规则 / 标记类不进 CSS / 撞名门 / 硬编码色 / 幽灵令牌
  *   [12] 负向自证：上面每台扫描器喂一段坏输入必须报红，真源码上不许恒真或恒假
@@ -223,8 +223,25 @@ console.log('[6] 轨迹页签：桌面两颗，手机只留回头路')
 console.log('[7] 手机上收掉的：在资源管理器中打开 / 设置')
 {
   check('`.ws-open` 在 860 档藏掉（手机没有原生桥，点了只弹错）', block860 !== null && /\.ws-open \{\s*\n\s*display: none/.test(block860))
-  check('页脚那颗「设置」也在 860 档藏掉（手机上的设置页版式是崩的）', block860 !== null && /\.sidebar-footer \.row-btn \{\s*\n\s*display: none/.test(block860))
-  check('这两条不在 860 档以外（桌面照旧看得见）', !hasRule(outside860, '.ws-open') && !hasRule(outside860, '.sidebar-footer .row-btn'))
+  // 2026-10-25 反转：设置页改成一页式（全屏 + 横向标签条 + 每条设置上下两段），入口一并放回来。
+  // 这条断言从「藏掉」改成「不许再藏」——留着旧断言会把已经修好的入口当成回归。
+  check('页脚「设置 / 搜索」在 860 档不再藏（设置已是一页式，能看了）', block860 !== null && !/\.sidebar-footer \.row-btn/.test(block860))
+  check('整份样式表里没有「页脚按钮藏掉」这条了（不是挪到别处）', !hasRule(styles, '.sidebar-footer .row-btn'))
+  check('手机档换成藏键位提示（没有 Ctrl，写着占半行）', block560 !== null && /\.row-kbd \{\s*\n\s*display: none/.test(block560))
+  // 2026-10-26 第二轮：旁问的鼠标入口搬到右侧栏「开始」页，左侧栏不再有这颗——
+  // 那条 `@media (max-width: 860px)` 里的藏匿规则随之删掉（右侧栏在手机档整块不给，
+  // 入口跟着右侧栏一起消失，不需要额外规则）。
+  check('`@media 860` 里不再有旁问的藏匿规则（入口跟着右侧栏一起消失）', block860 !== null && !/\.ask-entry/.test(block860))
+  check('整份样式表里也没有挂着这颗的死规则', !hasRule(styles, '.ask-entry'))
+  check('`.ws-open` 仍只在 860 档里藏（桌面照旧看得见）', !hasRule(outside860, '.ws-open'))
+
+  // ── 设置面板的一页式那一档（≤640）──
+  const block640 = mediaBlock(styles, 640, '.settings-nav {')
+  check('≤640 有设置面板的一页式档（弹窗铺满 + 导航横过来）',
+    block640 !== null && /\.settings \{[\s\S]*?width: 100%;/.test(block640) && /\.settings-nav \{[\s\S]*?flex-direction: row;/.test(block640))
+  check('设置行在手机上改成上下两段（桌面那条 220 下限归零）',
+    block640 !== null && /\.setting-row \{[\s\S]*?flex-direction: column;/.test(block640) && /\.setting-input,[\s\S]{0,60}?min-width: 0;/.test(block640))
+  check('正文列在手机上不再收 720（否则窄屏左右各贴一条空白）', block640 !== null && /\.settings-body:not\(\.settings-body-fill\) > \* \{[\s\S]*?max-width: none;/.test(block640))
   // 对账（防「藏了个不存在的东西」的僵尸规则）：两个选择器在 legacy 里真的还挂着规则。
   check('对账：`.ws-open` 在 legacy 里确实有规则', hasRule(views, '.ws-open'))
   check('对账：`.sidebar-footer .row-btn` 在 legacy 里确实有规则', hasRule(views, '.sidebar-footer .row-btn'))
@@ -242,16 +259,20 @@ console.log('[8] 输入框高度：桌面 40、手机 44，只此一家')
   check('自动增高的上限没动（长文仍在框内滚）', /\.composer textarea \{[\s\S]*?max-height: var\(--dsc-input-max-h\)/.test(views))
 }
 
-// ── [8] 手机底栏两行 + 点框内空白聚焦 ────────────────────────────────────────
-console.log('[9] 手机底栏两行：右组整行、发送贴右缘、两行都收矮')
+// ── [8] 手机底栏一层图标条 + 点框内空白聚焦 ──────────────────────────────────
+console.log('[9] 手机底栏一层：四颗 chip 只留图标、不换行、发送留在组尾')
 {
   check('≤560 那一档在（输入行那条）', block560 !== null)
-  check('底栏仍允许换行（两行的前提）', block560 !== null && /\.composer-bar \{[\s\S]*?flex-wrap: wrap/.test(block560))
-  check('行距收到 4（原 6）', block560 !== null && /\.composer-bar \{[\s\S]*?row-gap: 4px/.test(block560))
+  check('底栏不换行（一层的唯一前提）', block560 !== null && /\.composer-bar \{[\s\S]*?flex-wrap: nowrap/.test(block560))
+  check('不再有 row-gap（那两行已经没了）', block560 !== null && !/row-gap:/.test(block560))
   check('底栏内距收到 2/8/6（原 2/8/8）', block560 !== null && /\.composer-bar \{[\s\S]*?padding: 2px 8px 6px/.test(block560))
-  check('右组整行占第二行（flex-basis 100%，不再靠挤不挤得下撞运气）', block560 !== null && /\.composer-bar \.bar-right \{\s*\n\s*flex: 1 1 100%;\s*\n\s*margin-left: 0;/.test(block560))
-  check('发送键贴第二行右缘（不再浮在两行之间）', block560 !== null && /\.composer-bar \.send-btn \{\s*\n\s*margin-left: auto;/.test(block560))
-  check('发送键收矮到 32（跟第一行那排 28 的 chip 看着一样高）', block560 !== null && /--dsc-send: 32px;/.test(block560))
+  check('右组按内容宽度、靠 auto 外边距贴右（不再占满整行）', block560 !== null && /\.composer-bar \.bar-right \{\s*\n\s*flex: 0 0 auto;\s*\n\s*gap: 6px;\s*\n\s*margin-left: auto;/.test(block560))
+  check('发送键留在组尾（margin-left: auto 已撤）', block560 !== null && /\.composer-bar \.send-btn \{\s*\n\s*margin-left: 0;/.test(block560))
+  check('发送键收矮到 32（跟旁边 28 的 chip 看着一样高）', block560 !== null && /--dsc-send: 32px;/.test(block560))
+  check('chip 的文字在手机档藏掉（DOM 里还在，读屏读得到）', block560 !== null && /\.composer-bar \.chip-label,\s*\n\s*\.composer-bar \.model-name \{\s*\n\s*display: none;/.test(block560))
+  check('图标态 chip 内距收到 6px（四颗 + 发送在 320 也排得下）', block560 !== null && /\.composer-bar \.model-btn \{\s*\n\s*padding: 0 6px;/.test(block560))
+  check('两颗原本没包 span 的文字各有一个 chip-label（不然 CSS 藏不掉裸文本）', (composer.match(/className="chip-label"/g) ?? []).length === 2)
+  check('文字藏掉之后 aria-label 顶上来（权限 / 模式各一条）', composer.includes('aria-label={`权限预设：') && composer.includes('aria-label={`模式：'))
   check('这两条只在 560 档（桌面底栏仍是一行、发送仍在组尾）', !hasRule(outside560, '.composer-bar .send-btn'))
   check('既有两条不回归：两组仍可收缩、chip 里名字不竖排', block560 !== null && /\.composer-bar \.bar-left,\s*\n\s*\.composer-bar \.bar-right \{\s*\n\s*min-width: 0;/.test(block560) && /\.model-btn \{[\s\S]*?white-space: nowrap/.test(block560))
   check('输入区左右内距那条还在（窄屏收窄）', block560 !== null && /\.composer-zone \{\s*\n\s*padding: 0 12px 8px;/.test(block560))

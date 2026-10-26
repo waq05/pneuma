@@ -82,6 +82,16 @@ export interface StepGroup {
   /** 这一组的工具调用按类别计数，按次数降序、同数按首次出现顺序。 */
   counts: ActivityCount[]
   /**
+   * 这一组里失败的调用有几条（对照 codex 的「· N failed」挂在活动组头上，
+   * exec_cell/render.rs:244-259）。
+   *
+   * 为什么要单独给一个字：组体默认收起，组头是唯一看得见的一行。只报「N 项」，用户
+   * 得逐组点开才知道这一段有没有踩过坑；把失败数提上来之后，长会话里扫一眼组头就能
+   * 定位到出错的那一段。口径只算 status === 'failed'：'rejected' 是用户自己拒绝了
+   * 审批，不是这一组跑挂了，不该混进同一个读数。
+   */
+  failures: number
+  /**
    * 组里最后一个还在跑的工具属于哪一类；没有运行中的工具就是 undefined。
    *
    * 未结束的组头只报它，不报 counts（对照 dsh 的 ProcessActivitySummary.running，
@@ -593,6 +603,24 @@ function countActivities(
 }
 
 /**
+ * 数一数这一组里失败的调用有几条（口径见 {@link StepGroup.failures}）。
+ *
+ * @param entries 当前 transcript
+ * @param indexes 这一组占的条目下标
+ */
+function countFailures(
+  entries: readonly TranscriptEntry[],
+  indexes: readonly number[],
+): number {
+  let failures = 0
+  for (const index of indexes) {
+    const entry = entries[index]
+    if (entry !== undefined && entry.kind === 'tool' && entry.call.status === 'failed') failures += 1
+  }
+  return failures
+}
+
+/**
  * 把一轮一轮的条目切成阶段组。
  *
  * @param entries 当前 transcript（含直播尾，负 id）
@@ -628,6 +656,7 @@ export function groupSteps(
         endIndex: last,
         size: pending.length,
         counts: countActivities(entries, pending),
+        failures: countFailures(entries, pending),
         closed,
       }
       // 已结束的组不带实时类别与详情：dsh 的组收口时会把 running 与 detail 一起清空

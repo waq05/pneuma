@@ -8,6 +8,28 @@
  * 不写死色值：换主题时这里必须跟着一起变。
  */
 
+/* ── 布局变量的接线（2026-10-26）─────────────────────────────────────────────
+ *
+ * 正文列宽的真源是「用户拖过的那一档」（拖拽条写给根节点 --dsc-thread-user-max）。
+ * 为什么多一层：空会话态在 legacy 里给 .thread-main-empty 挂了一个元素级的
+ * --dsc-thread-max: 720px（空态列要宽一档，见本文件后面那条注释）。元素级变量
+ * 压过根上的同名变量——用户拖把手时根变了、列纹丝不动，看起来像「拖不动」。
+ * 所以根上那份改成引用，空态那条也引用同一个用户变量：拖过之后两种状态同宽，
+ * 没拖过时各自用默认（76ch / 720px）。
+ *
+ * 另一条 .app 的横向裁剪：右侧栏收起时靠 translateX(100%) 滑出窗外，那块位置
+ * 仍算在文档里，于是整页多出 840px 的横向可滚范围。一点旁问，浏览器的滚动锚定会把
+ * 页面甩到最右再滑回来（实测 scrollX 一帧跳到 840，正文被推到 x=-603）——用户看到
+ * 的就是「点一下，页面抽了一下」。overflow-x: clip 把它裁掉，且不建立滚动容器
+ * （不影响纵向 sticky 与滚动条），开会话栏就只剩宽度平滑变化。 */
+:root {
+  --dsc-thread-max: var(--dsc-thread-user-max, 76ch);
+}
+
+.app {
+  overflow-x: clip;
+}
+
 /* ── 槽位外壳 ─────────────────────────────────────────────────────────────────
  *
  * 条目容器必须是「透明的」：旧界面的布局规则大部分按**直接子节点**写（侧栏是 flex 列、
@@ -63,6 +85,52 @@
   font-size: var(--dsc-fs-caption);
   margin: 0;
   padding: 6px 16px;
+}
+
+/* 数据通道断开时的顶条（P1-6）：用警示黄而不是红——红留给「已经出错了」，
+   断线是「正在自愈」，而且 3 秒没连上才出，重修的概率高。
+   一行装得下：状态字 + 一句原因 + 一颗重试钮；窄窗口折行，不挤成三个省略号。 */
+.conn-banner {
+  align-items: center;
+  background: color-mix(in srgb, var(--dsc-yellow) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--dsc-yellow) 55%, transparent);
+  color: var(--dsc-text-primary);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: var(--dsc-fs-caption);
+  gap: 8px;
+  padding: 6px 16px;
+}
+
+.conn-dot {
+  background: var(--dsc-yellow);
+  border-radius: 50%;
+  flex-shrink: 0;
+  height: 6px;
+  width: 6px;
+}
+
+.conn-text {
+  font-weight: 600;
+}
+
+.conn-hint {
+  color: var(--dsc-text-tertiary);
+}
+
+.conn-retry {
+  background: var(--dsc-fill-quinary);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-primary);
+  font: inherit;
+  margin-left: auto;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.conn-retry:hover {
+  background: var(--dsc-control-hover-bg);
 }
 
 /* 顶栏左簇（子智能体 / 智能体团队）：`display: contents` 让槽包装层不生成盒子，
@@ -400,9 +468,226 @@
   width: min(264px, calc(100vw - 24px));
 }
 
-/* 档位菜单：一列档位（恒含「默认」），比模型菜单窄得多。 */
+/* 档位卡：一条滑杆（2026-10-26 换掉原来那一列按钮）。宽 248 是为了四格刻度字
+   （关 / 低 / 高 / 最大）各自还剩得下，同时不把输入区底栏顶宽。 */
 .model-pop.effort-pop {
-  width: 200px;
+  width: 248px;
+}
+
+/* ── 思考强度滑杆 ────────────────────────────────────────────────────────────
+   轨道是一条绿→蓝的渐变（照用户给的参考图）：点亮到当前档，后面那截留暗色。
+   为什么用 clip-path 而不是改宽度：渐变要**贴着轨道全长**画，再裁出点亮的那段；
+   按宽度缩放会把渐变也一起压扁，停点与底色就对不上了。
+
+   四档四套动效（data-level）：
+     关  —— 灰掉，不动（关着的东西还在闪，等于没说清它关了）；
+     低  —— 慢呼吸 3.2s；
+     高  —— 一道白色扫光流过，2.6s；
+     最大 —— 扫光提到 1.2s，轨道外发光，滑钮外圈一圈呼吸光环。
+   只动 transform / opacity / background-position，不碰布局；prefers-reduced-motion
+   下四套全停。颜色全走令牌（--dsc-green / --dsc-cyan / --dsc-purple），浅色主题
+   那三档更深，同一条渐变两个主题都读得清。 */
+.effort-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 2px 0;
+}
+
+.effort-slider-head {
+  align-items: baseline;
+  display: flex;
+  justify-content: space-between;
+}
+
+.effort-slider-title {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+  letter-spacing: 0.04em;
+  user-select: none;
+}
+
+.effort-now {
+  color: var(--dsc-accent-text);
+  font-size: var(--dsc-fs-body);
+  font-weight: 600;
+  transition: color 140ms var(--dsc-ease);
+}
+
+.effort-now.unset {
+  color: var(--dsc-text-quaternary);
+  font-weight: 400;
+}
+
+.effort-note {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.effort-track {
+  --effort-ramp: linear-gradient(90deg, var(--dsc-green), var(--dsc-cyan) 55%, var(--dsc-purple));
+  cursor: pointer;
+  outline: none;
+  /* 上下留白给滑钮的投影与光环；左右留 9px 让两端的停点不被切边。 */
+  padding: 11px 9px;
+  touch-action: none;
+}
+
+.effort-track:focus-visible .effort-rail {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsc-accent) 45%, transparent);
+}
+
+/* 轨道底：一条**淡的**同款渐变，表示「后面还能推到哪」。
+   为什么用 ::before 而不给轨道本体 opacity：opacity 会连子元素一起变淡，点亮段和滑钮
+   也跟着灰掉（第一版就是这个错：滑钮明明 #fff，看上去却是灰的）。 */
+/* 轨道 12px（2026-10-26 第二轮：用户说太细，条要粗一点）。
+   停点 6px、滑钮 18px，三者尺寸一起抬，不然细条配大钮像贴错。 */
+.effort-rail {
+  border-radius: var(--dsc-r-pill);
+  height: 12px;
+  position: relative;
+  transition: box-shadow var(--dsc-dur) var(--dsc-ease);
+}
+
+.effort-rail::before {
+  background-image: var(--effort-ramp);
+  border-radius: inherit;
+  content: '';
+  inset: 0;
+  opacity: 0.22;
+  position: absolute;
+}
+
+/* 点亮段：与轨道同一条渐变（同一根坐标），用 clip-path 裁出左边那段。 */
+.effort-rail-fill {
+  background-image: var(--effort-ramp);
+  border-radius: inherit;
+  clip-path: inset(0 calc(100% - var(--effort-fill, 0%)) 0 0);
+  inset: 0;
+  overflow: hidden;
+  position: absolute;
+  transition: clip-path var(--dsc-dur) var(--dsc-ease);
+}
+
+/* 停点：轨道上一个 6px 小圆，压过的那几颗点亮。 */
+.effort-dot {
+  /* 没压过的停点也得看得见：弹层底色太接近轨道，压过去的那几颗才是纯白。 */
+  background: color-mix(in srgb, var(--dsc-text-quaternary) 55%, var(--dsc-bg-popover));
+  border-radius: 50%;
+  height: 6px;
+  margin-left: -3px;
+  margin-top: -3px;
+  position: absolute;
+  top: 50%;
+  width: 6px;
+}
+
+.effort-dot[data-lit] {
+  background: #fff;
+}
+
+/* 滑钮：白钮压彩条，深浅两个主题都读得清（彩条本身是饱和色，钮不能再用令牌灰）。 */
+.effort-knob {
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 35%);
+  height: 18px;
+  margin-left: -9px;
+  margin-top: -9px;
+  position: absolute;
+  top: 50%;
+  width: 18px;
+  /* 档位之间滑过去，不是跳过去（2026-10-26 第二轮：用户说换档"卡顿"）。 */
+  transition: left 140ms var(--dsc-ease);
+}
+
+/* 拖动中跟手：带过渡会落在指针后面，反而更顿。 */
+.effort-track[data-dragging='1'] .effort-knob {
+  transition: none;
+}
+
+/* 「未设置」（宿主停在默认档）：滑钮不出现——没有落点就不假装有。
+   轨道只比常态淡一点点（0.18）：淡到看不见，用户会以为这个控件坏了。 */
+.effort-track[data-unset='1'] .effort-rail::before {
+  opacity: 0.18;
+}
+
+/* 关：渐变还在（形状不变），但整条灰掉且完全静止。 */
+.effort-track[data-level='off'] .effort-rail-fill {
+  filter: grayscale(1) brightness(0.85);
+}
+
+/* 低：慢呼吸。 */
+.effort-track[data-level='low'] .effort-rail-fill {
+  animation: effort-breathe 3.2s ease-in-out infinite;
+}
+
+/* 高 / 最大：一道扫光从左边流过去；最大更快。 */
+.effort-track[data-level='high'] .effort-rail-fill::after,
+.effort-track[data-level='max'] .effort-rail-fill::after {
+  animation: effort-sheen 2.6s linear infinite;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 55%), transparent);
+  border-radius: inherit;
+  content: '';
+  inset: 0;
+  position: absolute;
+}
+
+.effort-track[data-level='max'] .effort-rail-fill::after {
+  animation-duration: 1.2s;
+}
+
+.effort-track[data-level='max'] .effort-rail {
+  box-shadow: 0 0 10px color-mix(in srgb, var(--dsc-cyan) 55%, transparent);
+}
+
+.effort-track[data-level='max'] .effort-knob::after {
+  animation: effort-halo 1.6s ease-out infinite;
+  border: 1px solid #fff;
+  border-radius: 50%;
+  content: '';
+  inset: -1px;
+  position: absolute;
+}
+
+@keyframes effort-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.62;
+  }
+}
+
+@keyframes effort-sheen {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(320%);
+  }
+}
+
+@keyframes effort-halo {
+  from {
+    opacity: 0.7;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 0;
+    transform: scale(2);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .effort-track .effort-rail-fill,
+  .effort-track .effort-rail-fill::after,
+  .effort-track .effort-knob::after {
+    animation: none;
+  }
 }
 
 .model-picker-body {
@@ -936,6 +1221,380 @@
 
 /* ── 布局对齐第二轮（对照旧界面截图逐项修）────────────────────────────── */
 
+/* ══════════ 旁问（右侧栏页签，2026-10-25）══════════
+   形状对着 dsh-btw 的气泡来：引用块压暗、问题一行加粗、答案用正文 markdown、页脚放模型与耗时。
+   颜色全走令牌；唯一写死的尺寸是气泡里的圆角与间距，取既有档位。 */
+.ask {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.ask-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 12px 4px;
+}
+
+/* 空态：图标 + 一句标题 + 一段说明（与技能页空卡同一套语气）。 */
+.ask-empty {
+  align-items: center;
+  color: var(--dsc-text-tertiary);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: auto 0;
+  padding: 24px 18px;
+  text-align: center;
+}
+
+.ask-empty-icon {
+  color: var(--dsc-text-quaternary);
+}
+
+.ask-empty-title {
+  color: var(--dsc-text-primary);
+  font-size: var(--dsc-fs-body);
+  font-weight: 600;
+  margin: 0;
+}
+
+.ask-empty-desc {
+  font-size: var(--dsc-fs-caption);
+  line-height: 1.6;
+  margin: 0;
+  max-width: 34em;
+}
+
+.ask-bubble {
+  background: var(--dsc-bg-card);
+  border: 1px solid var(--dsc-stroke-4);
+  border-radius: var(--dsc-r-card);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+/* 引用块：最多三行，超出省略——引用常常是整段代码，全铺开会把答案挤到屏幕外。 */
+.ask-quote {
+  background: var(--dsc-fill-quinary);
+  border-left: 2px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-badge);
+  color: var(--dsc-text-tertiary);
+  display: -webkit-box;
+  font-size: var(--dsc-fs-caption);
+  line-height: 1.5;
+  margin: 0;
+  overflow: hidden;
+  padding: 6px 8px;
+  /* 引用常是代码：保留换行，只折行不压平。 */
+  white-space: pre-wrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.ask-q {
+  color: var(--dsc-text-primary);
+  font-size: var(--dsc-fs-body);
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ask-a {
+  color: var(--dsc-text-secondary);
+  font-size: var(--dsc-fs-body);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+/* 正在回答：三点呼吸 + 一颗停止（旁问可能跑十几秒，必须能停）。 */
+.ask-typing {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+  min-height: 20px;
+}
+
+.ask-typing span {
+  animation: ask-dot 1.1s var(--dsc-ease) infinite;
+  background: var(--dsc-text-quaternary);
+  border-radius: 50%;
+  height: 5px;
+  width: 5px;
+}
+
+.ask-typing span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.ask-typing span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes ask-dot {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.ask-stop {
+  background: none;
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--dsc-fs-micro);
+  padding: 1px 8px;
+}
+
+.ask-stop:hover {
+  color: var(--dsc-text-primary);
+}
+
+.ask-error {
+  color: var(--dsc-red);
+  font-size: var(--dsc-fs-caption);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.ask-foot {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  min-height: 20px;
+}
+
+.ask-meta {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-micro);
+  font-variant-numeric: tabular-nums;
+  margin-right: auto;
+}
+
+.ask-icon-btn {
+  align-items: center;
+  background: none;
+  border: 0;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-quaternary);
+  cursor: pointer;
+  display: inline-flex;
+  height: 20px;
+  justify-content: center;
+  width: 20px;
+}
+
+.ask-icon-btn:hover:not(:disabled) {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.ask-icon-btn:disabled {
+  opacity: 0.4;
+}
+
+/* 输入区：引用 chip 在上、文本域 + 发送键在下。 */
+.ask-composer {
+  border-top: 1px solid var(--dsc-stroke-4);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 10px;
+  position: relative;
+}
+
+.ask-quote-chip {
+  align-items: center;
+  background: var(--dsc-fill-quinary);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  display: flex;
+  font-size: var(--dsc-fs-micro);
+  gap: 6px;
+  padding: 3px 4px 3px 8px;
+}
+
+.ask-quote-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ask-quote-drop {
+  align-items: center;
+  background: none;
+  border: 0;
+  border-radius: var(--dsc-r-badge);
+  color: var(--dsc-text-quaternary);
+  cursor: pointer;
+  display: inline-flex;
+  height: 18px;
+  justify-content: center;
+  width: 18px;
+}
+
+.ask-quote-drop:hover {
+  color: var(--dsc-text-primary);
+}
+
+.ask-input {
+  background: var(--dsc-fill-quinary);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-primary);
+  font: inherit;
+  font-size: var(--dsc-fs-body);
+  line-height: 1.5;
+  max-height: 140px;
+  min-height: 48px;
+  padding: 7px 34px 7px 9px;
+  resize: none;
+  width: 100%;
+}
+
+.ask-input:focus {
+  border-color: var(--dsc-accent);
+  outline: none;
+}
+
+.ask-send {
+  align-items: center;
+  background: var(--dsc-accent);
+  border: 0;
+  border-radius: 50%;
+  bottom: 16px;
+  color: var(--dsc-text-on-accent);
+  cursor: pointer;
+  display: inline-flex;
+  height: 24px;
+  justify-content: center;
+  position: absolute;
+  right: 17px;
+  width: 24px;
+}
+
+.ask-send:disabled {
+  background: var(--dsc-fill-primary);
+  color: var(--dsc-text-quaternary);
+  cursor: default;
+}
+
+/* 模型选择行（旁问）：小一号的 Select，跟在引用 chip 上面。 */
+.ask-model {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.ask-model-label {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-micro);
+}
+
+.ask-model-select {
+  max-width: 240px;
+}
+
+/* 流式光标：一个 2px 的方块，跟着正文走。 */
+.ask-caret {
+  animation: ask-caret-blink 1s steps(2, start) infinite;
+  background: var(--dsc-accent);
+  border-radius: 1px;
+  display: inline-block;
+  height: 13px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  width: 2px;
+}
+
+@keyframes ask-caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ask-caret {
+    animation: none;
+  }
+}
+/* 选区浮钮：fixed 贴选区右下角（坐标由 select.ts 夹取）。 */
+.ask-sel-btn {
+  align-items: center;
+  background: var(--dsc-bg-popover);
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-pill);
+  box-shadow: var(--dsc-shadow-md);
+  color: var(--dsc-text-primary);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: var(--dsc-fs-caption);
+  gap: 4px;
+  padding: 4px 10px;
+  position: fixed;
+  z-index: var(--dsc-z-menu);
+}
+
+.ask-sel-btn:hover {
+  /* 悬停只在弹层底色上叠一层 8% 提亮，不能直接把 --dsc-control-hover-bg 当背景：
+     那是个半透明叠加色（白 8% / 蓝 9.8%），替掉底色以后下层正文会从按钮里透出来，
+     看着像按钮变透明、字叠在一起。 */
+  background:
+    linear-gradient(var(--dsc-control-hover-bg), var(--dsc-control-hover-bg)),
+    var(--dsc-bg-popover);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ask-typing span {
+    animation: none;
+  }
+}
+
+/* ══════════ 品牌档位（P1-4，2026-10-25）══════════
+   三档，够用就好：侧栏行内 20、窄栏 22、空态 28。以前 20/22 散在 legacy 两条规则里写死，
+   空态没有 logo——同一个 logo 在三处三种尺寸、还缺一处，是因为没有档位表。
+   主色（--dsc-accent）的用法另外立规矩，见 docs/ui-design.md §2.1：只管可交互 / 选中 / 焦点，
+   不当装饰色用（装饰走 --dsc-* 的填充与描边）。 */
+:root {
+  --dsc-logo-sm: 20px;
+  --dsc-logo-md: 22px;
+  --dsc-logo-xl: 28px;
+}
+
+.sidebar-header img {
+  width: var(--dsc-logo-sm);
+  height: var(--dsc-logo-sm);
+}
+
+.rail-logo img {
+  width: var(--dsc-logo-md);
+  height: var(--dsc-logo-md);
+}
+
+/* 空态那颗：图纸上它比标题轻一档——先看见字，再看见是谁。 */
+.welcome .welcome-logo {
+  width: var(--dsc-logo-xl);
+  height: var(--dsc-logo-xl);
+  border-radius: 8px;
+  margin-bottom: 14px;
+  opacity: 0.92;
+}
+
 /* 空会话整组垂直居中（对照 legacy 的 .thread-main-empty 三条规则）：旧界面 welcome 与
    composer 是 .thread-main-empty 的直接子项，「上边距 auto + 下边距 auto」一夹就整组居中；
    壳的 welcome 在 chat-wrap>chat>chat-inner 三层深处，上推边距被埋在一层没有富余空间的
@@ -1099,25 +1758,29 @@
   .ws-open {
     display: none;
   }
-  /* 抽屉页脚那颗「设置」也不给：手机上的设置页版式是崩的（两栏挤成一栏、正文竖排一个字
-     一行，2026-10-15 截图），既然不给入口就别留这一颗。上面那行「今日总用量」是只读读数，
-     留着。 */
-  .sidebar-footer .row-btn {
-    display: none;
-  }
+  /* 旁问的鼠标入口现在只在右侧栏的「开始」页上（2026-10-26 第二轮搬过去的），
+     而右侧栏在手机档整块隐藏——所以这里不再需要单独藏一颗钮。手机上还有选区浮钮
+     与 Ctrl+Shift+K 之外的两个入口（命令面板里的两行动作）。 */
+  /* 抽屉页脚的按钮（现在只剩设置）在手机上原来整排藏掉：那时设置页是 1080 宽的弹窗
+     硬塞进 390px，两栏挤成一栏、正文竖排一个字一行（2026-10-15 截图），干脆不给入口。
+     现在设置改成一页式（见下面 ≤640 那一档），入口一并放回来——藏着一个已经修好的入口
+     等于没修。搜索那颗 2026-10-26 搬到了顶栏右上角，仍然留着：没有键盘，点开就是一份
+     可点的跳转清单。 */
 }
 
 /* ── 手机那一档（≤560px）：输入区与状态栏 ─────────────────────────────────────
    为什么另起一档：上面 860 那档管的是「侧栏/停靠区怎么让位」，这一档管的是
    **一行里塞不下的东西怎么办**——它只对手机成立（桌面窗口最窄 960，碰不到）。 */
 
-/* 输入行落成**两行**。390px 实测：`+ 权限档 模式档` + 模型 + 发送五颗挤在 286px 里，
-   左组被压到 154px 宽、chip 里的字竖着排（「自定义」一个字一行），整行还溢出 10px。
-   第一版靠 `flex-wrap` 自己撞出两行（右组一整个被顶到第二行、还被 `margin-left: auto`
-   推到右缘，跟第一行对不齐）；2026-10-15 报障后改成**显式两行**：
-   第一行 = `+ 权限 模式`，第二行 = `模型 档位 … 发送`（发送贴本行右缘，拇指位）。
-   两行都收矮：底栏内距 2/8 → 2/6、行距 6 → 4、发送键 34 → 32（`--dsc-send`），
-   合计 ≈78px → ≈70px。文字区同时放宽到 44px（`--dsc-input-box-h`）。 */
+/* 输入行**保持一行**，条上四颗 chip 只画图标。
+ *
+ * 上一版是显式两行（第一行 `+ 权限 模式`、第二行 `模型 档位 发送`）：390px 里五颗带字的 chip
+ * 挤不下，文字竖排、整行还溢出。两行能放下，但底栏高 70px、手机上两排按钮看着散。
+ *
+ * 现在改成一层：**文字全藏掉，只留图标**（`.chip-label` / `.model-name` 在 CSS 里藏，
+ * DOM 里还在——读屏与 `aria-label` 读得到当前档位），箭头保留，它是「点开有东西」的唯一提示。
+ * 390 实测：`+ | 权限 | 模式 | 模型 | 档位 | 发送` 全部落在 350px 内，一层 28px 高。
+ * 四颗 chip 的内距在手机上收到 6px（每颗 ≈29px 宽），320px 也排得下。 */
 @media (max-width: 560px) {
   .composer-zone {
     padding: 0 12px 8px;
@@ -1129,26 +1792,33 @@
     --dsc-send: 32px;
   }
   .composer-bar {
-    /* gap 从 12 收到 8（原本单列在「composer 工具行」那一节，挪进来一起看）。 */
-    gap: 8px;
-    flex-wrap: wrap;
+    /* 不换行：这一档的目标就是一层。gap 从 12 收到 4，省下的是 chip 之间的空气。 */
+    gap: 4px;
+    flex-wrap: nowrap;
     padding: 2px 8px 6px;
-    row-gap: 4px;
   }
-  /* 右组整行占第二行（`flex-basis: 100%` 把它钉在下一行，不再靠「挤不挤得下」撞运气），
-     组内 `margin-left: auto` 一并去掉——贴左对齐第一行那颗 `+`。 */
+  /* 右组按内容宽度、靠 auto 外边距贴右：一层里它与左组共用同一根基线。 */
   .composer-bar .bar-right {
-    flex: 1 1 100%;
-    margin-left: 0;
-  }
-  /* 发送键推到第二行右缘：它原来在组尾、跟两颗 chip 挨着，换行后落在两行之间的缝里
-     （截图里那颗钮看着比两行都高半头就是这么来的）。 */
-  .composer-bar .send-btn {
+    flex: 0 0 auto;
+    gap: 6px;
     margin-left: auto;
+  }
+  /* 发送键回到组尾：原来「推到第二行右缘」的 margin 在单行里只会把发送顶开。 */
+  .composer-bar .send-btn {
+    margin-left: 0;
   }
   .composer-bar .bar-left,
   .composer-bar .bar-right {
     min-width: 0;
+  }
+  /* 只留图标：四颗 chip 的文字全藏掉。DOM 里保留（读屏读得到，aria-label 也在）。 */
+  .composer-bar .chip-label,
+  .composer-bar .model-name {
+    display: none;
+  }
+  /* 图标态每颗 chip 收到 6px 内距（≈29px 宽），四颗 + 发送在 320px 上也排得下。 */
+  .composer-bar .model-btn {
+    padding: 0 6px;
   }
   /* chip 里的名字是**裸文字节点**（权限档/模式档的名字没包 span），
      所以不换行这条要写在钮上，靠继承管住它们。 */
@@ -1196,6 +1866,127 @@
   .thread-handle {
     display: none;
   }
+  /* 页脚那两颗按钮在手机上不写键位：手机没有 Ctrl，写着只会占掉半个宽度。 */
+  .row-kbd {
+    display: none;
+  }
+}
+
+/* 「开始」页第五张卡（旁问）的图标色：蓝一档，与 Git 那档的强调色相邻但可分，
+   不另开一种新颜色——五张卡五种色会花。 */
+/* 顶栏搜索钮（2026-10-26 从页脚搬上来）：topbar 整条是窗口拖拽区（legacy .topbar 的
+   -webkit-app-region: drag），按钮不自己声明 no-drag 的话，点下去被当成「拖窗口」吞掉——
+   用户报的「搜索按钮点不动」就是这个（同一坑：.dock-toggle / .ws-open 都有这条豁免）。 */
+.topbar-search {
+  -webkit-app-region: no-drag;
+}
+
+.dock-guide-icon.tone-ask {
+  background: color-mix(in srgb, var(--dsc-cyan) 16%, transparent);
+  color: var(--dsc-cyan);
+}
+
+/* ── 手机上的设置面板（≤640）：改成一页式 ────────────────────────────────────
+ *
+ * 以前是 1080 宽的弹窗硬塞进 390px：左导航 200 + 右栏控件最小 220 之后，说明文字只剩几十
+ * 像素，于是「两栏挤成一栏、正文一个字一行」（2026-10-15 报障，当时干脆把页脚入口藏了）。
+ * 现在入口放回来了（见上面 860 那档），版式必须撑得住：
+ *
+ *   ① 弹窗铺满整屏（不留 80px 边距，那是给桌面弹窗的）；
+ *   ② 左导航横过来成一条可横滑的标签条——竖着 8 项在手机上会占掉半屏；
+ *   ③ 每条设置改成**上下两段**（说明在上、控件在下）。这是关键：`.setting-input/select`
+ *      的 `min-width: 220px` 是给桌面两栏定的，390px 里它会把控件顶出面板。
+ * 模型页不用管：legacy 在 ≤900 已经把它叠成一列（views.css:6194）。 */
+@media (max-width: 640px) {
+  .settings-mask {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .settings {
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    flex-direction: column;
+  }
+
+  .settings-nav {
+    flex: none;
+    flex-direction: row;
+    align-items: center;
+    width: auto;
+    padding: 6px 8px;
+    gap: 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: 0;
+    border-bottom: 1px solid var(--dsc-stroke-4);
+    scrollbar-width: none;
+  }
+
+  .settings-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .settings-nav-head,
+  .settings-nav-foot {
+    display: none;
+  }
+
+  .settings-nav-item {
+    flex: none;
+    width: auto;
+    padding: 5px 10px;
+    white-space: nowrap;
+  }
+
+  .settings-main {
+    min-height: 0;
+  }
+
+  /* 页头右侧留出关闭钮的位子（它绝对定位在右上角），正文列不再收 720。 */
+  .settings:not(.team-panel) .settings-head,
+  .settings:has(.settings-body-fill) .settings-head {
+    max-width: none;
+    margin-inline: 0;
+    padding: 12px 52px 10px 14px;
+  }
+
+  .settings-body {
+    padding: 12px 14px 22px;
+  }
+
+  .settings-body:not(.settings-body-fill) > * {
+    max-width: none;
+  }
+
+  .setting-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 12px 0;
+  }
+
+  .setting-control {
+    flex: 1 1 auto;
+    align-items: stretch;
+    max-width: none;
+  }
+
+  .setting-input,
+  .setting-select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .setting-info {
+    justify-content: flex-start;
+    max-width: none;
+    text-align: left;
+  }
 }
 
 /* ══════════ 老内核兜底（认不得某个新函数/新写法的浏览器）══════════
@@ -1231,6 +2022,82 @@
   }
 }
 
+/* ══════════ 加载骨架（P0-2，2026-10-25）══════════
+   占位块不画边框、不用阴影：它是「内容还没到」，不是一张卡。底色走 --dsc-fill-quinary
+   （比发丝边还淡一档），扫光只在中间过一道，1.4s 一轮。
+   `.dsc-loading-status` 是读屏文本：视觉藏起来但保留在可达树里（不进 aria-hidden）。 */
+.dsc-skeleton {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  background: var(--dsc-fill-quinary);
+  border-radius: 6px;
+}
+
+.dsc-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--dsc-text-primary) 7%, transparent),
+    transparent
+  );
+  animation: dsc-skeleton-sweep 1.4s var(--dsc-ease) infinite;
+}
+
+@keyframes dsc-skeleton-sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.dsc-skeleton-text {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+/* 视觉藏起来、读屏读得到（不用 display:none / visibility:hidden——那两样会把内容从可达树摘掉）。 */
+.dsc-loading-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* 骨架的几种常见排布：设置页正文 / 用量卡 / 插件配置行。放在一处，好统一改间距。 */
+.settings-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 4px 0;
+}
+
+.settings-loading-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-loading-cards {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dsc-skeleton::after {
+    animation: none;
+  }
+}
+
 /* ══════════ 输入区两根旋钮的浮层（权限模式 / 模式）══════════
    这两块样式在旧桌面渲染层的 styles.css 里（`.model-pop.policy-pop` 2272、
    `.model-pop.preset-pop` 2277 与 2281、`.composer-bar .bar-left .model-pop.policy-pop`
@@ -1238,7 +2105,9 @@
    也没有菜单，所以这两条规则没有落点。现在两根旋钮都成了能切的菜单（照旧界面
    `Composer.tsx:475-556` 的写法），把缺的补上。
 
-   宽度：权限四项都是短标签，240px 够；模式名带「默认 / 有问题」小标，宽一档到 300px。
+   宽度：权限四项都是短标签，240px 够；模式名带「默认 / 有问题」小标，但那几个名字都短，
+   定宽 300px 会在右边留一条十几毫米的空白（2026-10-26 用户报的）。改成按内容宽：
+   最短 180px（一行两个字时不至于缩成一条），最长 280px（名字再加两枚小标也放得下）。
    对齐：面板挂在 `.model-anchor` 上（右缘对齐），而权限旋钮是底栏左组的第一颗——
    按右缘铺开会向左探出输入框浮到正文上（旧版实测探出 100px），所以它是唯一一颗
    改成左对齐、向右铺开的浮层。 */
@@ -1249,7 +2118,9 @@
 }
 
 .model-pop.preset-pop {
-  width: 300px;
+  max-width: min(280px, calc(100vw - 24px));
+  min-width: 180px;
+  width: max-content;
 }
 
 /* 模式名 + 两枚小标排成一行：名字长度不一，标签跟着文字走而不是拉满整行。 */
@@ -1441,15 +2312,17 @@
    定位：宿主是 `.chat-wrap`（`position: relative`，右缘刻度条也用同一个宿主），
    所以它天生避开左侧栏与右侧 dock 的宽度变化；档位的宽度上限（`--sp-avail`）由组件
    量这个宿主写进来——不是 window.innerWidth（dock 开合改宿主宽不改窗口宽）。
-   层级取 `--dsc-z-menu`：它要盖住正文与刻度条，但必须让位给浮层菜单（`.model-pop` 那一档）
-   与遮罩（`--dsc-z-backdrop`）——点它上面的按钮时不能再被它自己盖住。 */
+   层级比浮层菜单低一档（`--dsc-z-menu` − 1，即 39）：它要盖住正文与刻度条，但必须让位给
+   菜单（`.row-menu` / `.menu-backdrop` 那一档 40）与遮罩（`--dsc-z-backdrop`）。
+   以前这里跟菜单同为 40，而它挂在 `.chat-wrap` 里、在 DOM 里比顶栏更靠后，同层按顺序叠压
+   ——于是顶栏「更多打开方式」的下拉被这颗胶囊压住两行（2026-10-25 用户截图）。 */
 .sp-host {
   position: absolute;
   top: var(--dsc-sp-4);
   right: calc(var(--dsc-jump-lane) + var(--dsc-sp-3));
   /* 浮层默认不吃鼠标：正文里的选区、链接照常可点；只有它自己的盒子接事件。 */
   pointer-events: none;
-  z-index: var(--dsc-z-menu);
+  z-index: calc(var(--dsc-z-menu) - 1);
 }
 
 .sp-host > * {
@@ -2428,4 +3301,873 @@
 
 :root[data-theme='light'] {
   --dsc-fti-violet: #a78bfa;
+}
+
+/* ══════════ 外观档：整体放大一档（对照 Codex UI 的取值）══════════
+ *
+ * 起因：把侧栏、会话区与 Codex UI 摆在一起看，最直接的差别是**尺寸档位**——
+ * 那边控件行 36px、正文 14/20、卡片圆角 20px、缓动是一条前快后收的曲线；
+ * 本壳是 26px、13/18、2.5-10px、100ms 的标准 ease。同样的信息，用小一号的字、
+ * 窄 10px 的行、近乎方角的框装起来，观感就偏「工具软件」而不是「产品」。
+ *
+ * 这一节只动**取值**，不动结构与槽位：所有数字背后仍是旧界面那套令牌，
+ * 插件一行都不用改，也仍然只从 var(--dsc-*) 读尺寸。想退回旧观感，删掉本节即可。
+ *
+ * 取值口径（左边是本壳旧值，右边是现在）：
+ *   控件行 26 → 32（不照抄 36：侧栏一屏要放十几个会话，36 会逼出频繁滚动）
+ *   过程行 24 → 28（仍比控件行矮 4px，不会被读成可点的行）
+ *   正文 13/18 → 14/20（与 --dsc-fs-prose 齐平，长回答不再比侧栏字还小）
+ *   首屏 H1 21 → 28（首屏需要一个能接住视线的重心）
+ *   卡片 10 → 14、输入区 8 → 12、行 6 → 8、控制件 2.5 → 6（整档上调，仍不做胶囊）
+ *   动效 100ms ease → 140/200ms cubic-bezier(0.16, 1, 0.3, 1)
+ */
+:root {
+  /* 控件行：侧栏会话行、分组合头、选择器行共用。 */
+  --dsc-row-h: calc(32px * var(--dsc-density));
+  /* 对话「过程」行：思考行、工具行、阶段组头。 */
+  --dsc-process-row-h: calc(28px * var(--dsc-density));
+
+  /* 正文与标题。 */
+  --dsc-fs-body: calc(14px * var(--dsc-font-scale));
+  --dsc-lh-body: calc(20px * var(--dsc-font-scale));
+  --dsc-fs-hero: calc(28px * var(--dsc-font-scale));
+
+  /* 圆角：整档上调，档位关系不变（控制件 < 块 < 行 < 卡 < 输入区 < 胶囊）。 */
+  --dsc-r-control: 6px;
+  --dsc-r-block: 7px;
+  --dsc-r-row: 8px;
+  --dsc-r-card: 14px;
+  --dsc-r-composer: 12px;
+
+  /* 动效：前段快、尾段收，收起的侧栏与弹层会有「到位」的手感，不是滑到位就停。 */
+  --dsc-dur: 140ms;
+  --dsc-dur-slow: 200ms;
+  --dsc-ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 浅色侧栏换成灰绿。旧值 #f3f7ff 带蓝调，和品牌蓝挨在一起分不出来；
+ * 灰绿靠色相把侧栏与正文白分开，不用再画一条分隔线。深色不动——那边靠明度分栏已经够。 */
+:root[data-theme='light'] {
+  --dsc-neutral-side: #eef5f2;
+  --dsc-seed-side: #eef5f2;
+}
+
+/* 空会话首屏放宽正文列。76ch 是给读长文用的（一屏 38 个汉字），但首屏只有一行标题
+ * 和一条提示时，在 1600px 窗口里会缩成一条手机宽度的窄柱，两侧各空出 400 多像素。
+ * 只放宽空态，有消息之后仍按 76ch 收窄——首屏和长文本来就该是两种列宽。
+ * 变量设在外层：欢迎区与输入区都从 --dsc-thread-max 取值，改一处两边一起跟着走。
+ *
+ * 2026-10-26：默认值改成读 --dsc-thread-user-max。元素级声明会压过根上的同名变量，
+ * 写死 720px 就等于「空会话里拖两侧的宽度条不起作用」（用户报的「新界面不能调整
+ * 会话区大小」）。现在拖过之后两种状态同宽，没拖过还是 720。 */
+.thread-main-empty {
+  --dsc-thread-max: var(--dsc-thread-user-max, 720px);
+}
+
+/* 首屏的三段（标题、说明、提示）原来只隔 2px，读起来像三行同级的字。
+ * 拉开一档，让「标题 → 说明 → 提示」的层次看得出来。 */
+.welcome p {
+  margin-top: 6px;
+}
+
+.welcome-note {
+  margin-top: 10px;
+}
+
+/* 首屏能力卡（对照 Codex UI 的 home cards）：四张等宽，边框极淡，悬停才给底色。
+   列宽 720 时每张约 170px；窄窗口折两列（壳没有 container query 的载体，这条跟视口走）。 */
+.welcome-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  width: 100%;
+  margin-top: 18px;
+}
+
+.welcome-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 104px;
+  padding: 14px;
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-card);
+  background: transparent;
+  color: var(--dsc-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    border-color var(--dsc-dur) var(--dsc-ease);
+}
+
+.welcome-card:hover:not(:disabled) {
+  border-color: var(--dsc-stroke-2);
+  background: var(--dsc-fill-quinary);
+}
+
+.welcome-card:focus-visible {
+  border-color: var(--dsc-accent);
+  outline: 2px solid color-mix(in srgb, var(--dsc-accent) 30%, transparent);
+  outline-offset: 2px;
+}
+
+.welcome-card:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.welcome-card svg {
+  color: var(--dsc-text-tertiary);
+}
+
+.welcome-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.welcome-card-title {
+  font-size: var(--dsc-fs-body);
+}
+
+.welcome-card-hint {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+}
+
+/* 「接着上次」一行：能力卡下面的一条链接式按钮（图标 + 标题 + 相对时间）。
+ * 不再开一张卡——它是「回到昨天」的快捷方式，不是第五种能力，重量要轻一档。 */
+.welcome-resume {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  margin-top: 14px;
+  padding: 5px 9px;
+  border: 0;
+  border-radius: var(--dsc-r-row);
+  background: transparent;
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--dsc-fs-caption);
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+}
+
+.welcome-resume:hover {
+  background: var(--dsc-fill-quinary);
+  color: var(--dsc-text-secondary);
+}
+
+.welcome-resume:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--dsc-accent) 30%, transparent);
+  outline-offset: 1px;
+}
+
+.welcome-resume svg {
+  flex: none;
+  color: var(--dsc-text-quaternary);
+}
+
+.welcome-resume-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.welcome-resume-time {
+  flex: none;
+  color: var(--dsc-text-quaternary);
+}
+
+/* 能力卡按**容器**折列，不按视口：侧栏收起/展开时对话列宽会差 200 多像素，
+   同一个 1600px 窗口既能放下四列也能只放两列。 `.welcome` 只装标题、说明与卡片，
+   没有 fixed 后代，所以在这个节点上开 `container-type` 是安全的。 */
+.welcome {
+  container-type: inline-size;
+  width: 100%;
+}
+
+@container (max-width: 640px) {
+  .welcome-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 设置页：字段区收成一张卡（对照 Codex UI 的分组卡）。行间仍是发丝线，
+   卡只负责把「一组设置」圈出来；模型页是左右两栏，不套卡（.models 排除在外）。 */
+.settings-body:not(.settings-body-fill) > .settings-fields:not(.models),
+.settings-body:not(.settings-body-fill) > .settings-appearance {
+  border: 1px solid var(--dsc-stroke-4);
+  border-radius: var(--dsc-r-card);
+  padding: 2px 14px;
+}
+
+/* 外观那块自带「外观」小标题，卡片里再顶一个内距会双倍留白。 */
+.settings-body:not(.settings-body-fill) > .settings-appearance {
+  padding-top: 0;
+}
+
+.settings-appearance > .settings-group-title {
+  padding-bottom: 6px;
+}
+
+/* 主题三块磁贴（对照 Codex UI 的 Light / Dark / System）：比下拉多一次「一眼看见有几个选项」。 */
+.theme-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(84px, 104px));
+  gap: 8px;
+}
+
+.theme-tile {
+  height: 38px;
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-row);
+  background: transparent;
+  color: var(--dsc-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--dsc-fs-caption);
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    border-color var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+}
+
+.theme-tile:hover {
+  background: var(--dsc-fill-quinary);
+  color: var(--dsc-text-primary);
+}
+
+.theme-tile[aria-checked='true'] {
+  border-color: var(--dsc-accent);
+  background: var(--dsc-fill-quaternary);
+  color: var(--dsc-text-primary);
+}
+
+.theme-tile:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--dsc-accent) 30%, transparent);
+  outline-offset: 2px;
+}
+
+/* 空状态卡（技能页等）：图标 + 一句人话 + 两个动作，替代原来那一行灰字。 */
+.empty-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 44px 24px;
+  border: 1px dashed var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-card);
+  text-align: center;
+}
+
+.empty-card-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 4px;
+  border-radius: 50%;
+  background: var(--dsc-fill-tertiary);
+  color: var(--dsc-text-tertiary);
+}
+
+.empty-card-title {
+  font-size: var(--dsc-fs-body);
+  font-weight: 600;
+}
+
+.empty-card-desc {
+  max-width: 46ch;
+  margin: 0;
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+  line-height: 1.6;
+}
+
+.empty-card-desc code {
+  padding: 1px 5px;
+  border-radius: var(--dsc-r-block);
+  background: var(--dsc-inline-code-bg);
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-tool);
+}
+
+.empty-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* 空状态卡的紧凑档：嵌在列表或设置页里时用，上下留白从 44 收到 28。 */
+.empty-card.compact {
+  padding: 28px 24px;
+  margin: 8px 0;
+}
+
+/* ── 命令面板（Ctrl+K）────────────────────────────────────────────────────
+ *
+ * 遮罩与弹层沿用设置面板那一档（同一个 --dsc-scrim），面板本身用浮层色 + float 阴影。
+ * 列表行 34px、选中态走行 hover 底色——与侧栏的列表行同一套几何，切过去眼睛不用重新适应。 */
+.palette-mask {
+  position: fixed;
+  inset: 0;
+  z-index: var(--dsc-z-picker);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh 20px 20px;
+  background: var(--dsc-scrim);
+  backdrop-filter: blur(var(--dsc-scrim-blur));
+}
+
+.palette {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: min(72vh, 520px);
+  overflow: hidden;
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-card);
+  background: var(--dsc-bg-popover);
+  box-shadow: var(--dsc-shadow-float);
+  animation: dsc-pop-in var(--dsc-dur) var(--dsc-ease);
+}
+
+.palette-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--dsc-stroke-4);
+  color: var(--dsc-text-tertiary);
+}
+
+.palette-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--dsc-text-primary);
+  font: inherit;
+  font-size: var(--dsc-fs-body);
+}
+
+.palette-key {
+  flex: none;
+  padding: 1px 5px;
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-badge);
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-micro);
+}
+
+.palette-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  /* flex: 1 1 auto + min-height: 0 是「这块真的能滚」的前提：flex 项默认
+     min-height: auto（=内容高），内容一高它就把 .palette 撑破、再被面板的
+     overflow: hidden 裁掉——看着像列表断了，滚轮和翻页都动不了。
+     overscroll-behavior: contain 让滚到底之后不再把滚动传给外层。 */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* 键盘把高亮滚进来时留一点余量：贴边停住看着像被裁掉半行。 */
+  scroll-padding-block: 6px;
+  overscroll-behavior: contain;
+  padding: 6px;
+}
+
+.palette-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--dsc-r-row);
+  background: transparent;
+  color: var(--dsc-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--dsc-fs-body);
+  text-align: left;
+}
+
+.palette-row[data-active='1'] {
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.palette-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-hint {
+  flex: none;
+  max-width: 46%;
+  overflow: hidden;
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-empty {
+  padding: 24px;
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+  text-align: center;
+}
+
+/* 组小标题（会话 / 页面 / 设置 / 提示词 / 最近会话）：动作表按组登记，面板按组分段。
+ * 不参与上下键——焦点只在行上，标题只是分隔。 */
+.palette-group {
+  padding: 8px 10px 3px;
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-micro);
+  letter-spacing: 0.02em;
+}
+
+/* 面板底栏：三句操作提示 + 一个跳去键位表的入口。提示用等宽以外的常规字重，
+ * 免得整条读起来像键盘说明书的表头。 */
+.palette-foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--dsc-stroke-4);
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-micro);
+}
+
+.palette-foot-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--dsc-r-badge);
+  background: transparent;
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--dsc-fs-micro);
+}
+
+.palette-foot-link:hover {
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-secondary);
+}
+
+/* 侧栏页脚里的键位提示（「搜索」行右侧那颗）。 */
+.row-kbd {
+  margin-left: auto;
+  padding: 0 4px;
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-badge);
+  color: var(--dsc-text-quaternary);
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-micro);
+  line-height: 16px;
+}
+
+/* 键位表（`?`）：与命令面板同一个浮层壳，内容是一张两列清单。 */
+.shortcut-sheet {
+  width: 520px;
+  max-width: 100%;
+}
+
+.shortcut-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--dsc-stroke-4);
+  color: var(--dsc-text-primary);
+  font-size: var(--dsc-fs-body);
+}
+
+.shortcut-head .palette-key {
+  margin-left: auto;
+}
+
+.shortcut-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* 与 .palette-list 同一条：不加 flex: 1 1 auto / min-height: 0 就会被面板裁掉。 */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 10px;
+  border-radius: var(--dsc-r-row);
+}
+
+.shortcut-row:hover {
+  background: var(--dsc-row-hover-bg);
+}
+
+.shortcut-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  color: var(--dsc-text-secondary);
+  font-size: var(--dsc-fs-body);
+}
+
+.shortcut-note {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shortcut-keys {
+  flex: none;
+  padding: 2px 7px;
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-badge);
+  background: var(--dsc-fill-quinary);
+  color: var(--dsc-text-tertiary);
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-micro);
+}
+
+.shortcut-foot {
+  padding: 9px 14px;
+  border-top: 1px solid var(--dsc-stroke-4);
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-micro);
+}
+
+/* 主题磁贴也按容器折列：设置正文列 720px 时三块一行，窄到 560 以下折两行。 */
+.settings-appearance {
+  container-type: inline-size;
+}
+
+@container (max-width: 560px) {
+  .theme-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+
+
+
+
+/* ── 页面级收列（设置 / 技能 / 插件）────────────────────────────────────────
+ *
+ * 会话区的列宽由 76ch 管，这几页原来铺满整个窗口：设置页「标签在左、控件在右」
+ * 中间隔了近千像素，技能页的刷新/导入跑到离标题一千多像素的地方。收一列之后
+ * 视线不用横跳，页头与正文也落在同一条竖轴上。
+ *
+ * 设置页的正文列**居中**（`margin-inline: auto`）：弹窗宽 1080 是模型页两栏要的，
+ * 其余分区只有 720 内容，左对齐会在右边留一条 130px 的空条，看着像没铺满。
+ * 收窄弹窗会连带把模型页右栏也压窄（那正是 980→1080 要修的问题），所以只挪内容。
+ * 技能页不收窄也不居中：它是整页列表，左对齐与对话区同一条竖轴。 */
+.settings-body:not(.settings-body-fill) > * {
+  max-width: 720px;
+  margin-inline: auto;
+}
+
+/* 页头跟着正文列走：正文列居中到 720 之后，页头若还贴着左缘，标题会与卡片错开 77px。
+ * 764 = 720 内容 + 左右各 22 内距，与 `.settings-body` 那边同一套算法，两边左缘因此严丝合缝。
+ * 关闭钮不跟着窄：它按习惯留在面板右上角，所以改成绝对定位锚在 `.settings-main` 上——
+ * 留在流里会把页头文字挤偏半个按钮宽。**只管设置弹窗**：`.team-panel` 复用同一套页头，
+ * 它只有 720 宽、文字本来就顶到右缘，绝对定位的叉会让长标题钻到按钮底下。 */
+.settings-main {
+  position: relative;
+}
+
+.settings:not(.team-panel) .settings-head {
+  max-width: 764px;
+  margin-inline: auto;
+  width: 100%;
+}
+
+.settings:not(.team-panel) .settings-head > .icon-btn {
+  position: absolute;
+  top: 18px;
+  right: 22px;
+}
+
+/* 模型页例外：它填满高度（左端点 + 右详情），正文没有 720 收列，页头再收 764 就会
+ * 比端点栏多缩进 57px。`:has` 不可用时退化成居中——位置差一点，功能不受影响。 */
+.settings:has(.settings-body-fill) .settings-head {
+  max-width: none;
+  margin-inline: 0;
+}
+
+.skills > * {
+  max-width: 880px;
+}
+
+/* 插件列表的彩色字母块换成中性底（颜色由组件侧 iconColor 给），
+ * 让开关成为行里唯一的色点。 */
+.plugin-icon {
+  color: var(--dsc-text-secondary);
+}
+
+/* ══════════ 交互打磨：悬停不抖 + 三处入场动效 ══════════
+ *
+ * 对照 Codex UI 的两处差距：① 行尾按钮是 display:none ↔ inline-flex 互换，悬停时
+ * 标题宽度变一次、长标题当场重截；② 弹层、消息条目、拖拽影子都是瞬间出现，没有到位感。
+ *
+ * 只做纯 CSS 能做完的：本壳没有自定义 tooltip 层（data-tip 只是属性，气泡早已按需求
+ * 下线），侧栏收起态靠 display:none（[data-rail-hidden]），这两处要加过渡得改结构。
+ */
+
+/* 1. 会话行：时间留在文档流里占位（宽度不变），按钮绝对定位压在它上面，只切透明度。
+   时间淡出、按钮淡入，标题一个像素都不动。 */
+.sess-item {
+  position: relative;
+}
+
+.sidebar .sess-item > .row-actions {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  justify-content: flex-end;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dsc-dur) var(--dsc-ease);
+}
+
+.sidebar .sess-item > .when {
+  transition: opacity var(--dsc-dur) var(--dsc-ease);
+}
+
+.sidebar .sess-item:hover > .when,
+.sidebar .sess-item:focus-within > .when,
+.sidebar .sess-item:has(.row-actions .icon-btn.on) > .when {
+  display: block;
+  opacity: 0;
+}
+
+.sidebar .sess-item:hover > .row-actions,
+.sidebar .sess-item:focus-within > .row-actions,
+.sidebar .sess-item:has(.row-actions .icon-btn.on) > .row-actions,
+.shot-reveal .sess-item > .row-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* 截图钩子会把时间藏起来（legacy 那条），藏了就没有占位，按钮会压到标题上。 */
+.shot-reveal .sess-item {
+  padding-right: 36px;
+}
+
+/* 2. 弹层：菜单与设置面板从上方 4px 落到位，带一点缩放。 */
+@keyframes dsc-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.row-menu,
+.settings {
+  animation: dsc-pop-in var(--dsc-dur) var(--dsc-ease);
+}
+
+.settings {
+  animation-duration: var(--dsc-dur-slow);
+}
+
+/* 3. 消息流新条目：淡入 + 上浮 3px。只在元素挂载时跑一次，已有条目不会重播
+   （React 复用 DOM，key 不变就不重新挂载）。 */
+@keyframes dsc-entry-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 注意不能写「.chat-inner > .turn-seat」：条目外面还套着一层 .slot-entry（display:contents），
+   直接子选择器打不到；display:contents 的盒子也不接动画，所以动的是座位本身。 */
+.chat-inner .turn-seat,
+.chat-inner > .slot-entry > .entry-row {
+  animation: dsc-entry-in var(--dsc-dur-slow) var(--dsc-ease) both;
+}
+
+/* 4. 拖拽影子：setDragImage 用的临时节点，放在视口外，只负责被浏览器截一张图。 */
+.dsc-drag-ghost {
+  position: fixed;
+  top: -200px;
+  left: -200px;
+  z-index: -1;
+  max-width: 220px;
+  overflow: hidden;
+  padding: 6px 10px;
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-row);
+  background: var(--dsc-bg-popover);
+  color: var(--dsc-text-primary);
+  font-size: var(--dsc-fs-body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-shadow: var(--dsc-shadow-md);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row-menu,
+  .settings,
+  .chat-inner > .turn-seat,
+  .chat-inner > .entry-row {
+    animation: none;
+  }
+
+  .sidebar .sess-item > .row-actions,
+  .sidebar .sess-item > .when {
+    transition: none;
+  }
+}
+
+
+
+/* ══════════ 会话区：层级与结果预览 ══════════
+ *
+ * 三处一起改，因为它们解决的是同一个问题：**收起态读不出「这一组是什么、成没成」**。
+ *
+ * 1. 组体缩进 + 一条竖线。之前组头与组体左缘对齐，展开后组头下面接一串同级行，
+ *    「谁属于谁」只能靠回忆我是从哪一行点开的。缩进 13px（3 + 1 + 9）是竖直方向最少
+ *    但看得见的一档，与 codex 的 `└` 缩进同一种语言（exec_cell/render.rs:442-446）。
+ *    竖线用 72% 的 stroke-3：它是分隔，不该比组内卡片的左边条更抢眼。
+ * 2. 组头补失败数（对照 codex 的「· N failed」，exec_cell/render.rs:244-259）。
+ *    .step-fold-text 是 flex: 1，会把行尾的读数一起推到右边，所以这里不必再来一个
+ *    margin-left: auto——那个写法在有 flex:1 兄弟时本来就不生效。
+ * 3. 工具卡收起态摊 3 行结果尾巴（对照 codex 的 DETAIL_PREVIEW_LINES=3）。
+ *    行高 1.55、等宽小字、quaternary：预览是「顺带看一眼」的信息，不许比工具名更响。
+ */
+.step-body {
+  border-left: 1px solid var(--dsc-stroke-2);
+  margin-left: 3px;
+  padding-left: 9px;
+}
+
+.step-fold-fail {
+  color: color-mix(in srgb, var(--dsc-red) 72%, var(--dsc-base));
+  flex: none;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-tool);
+  font-variant-numeric: tabular-nums;
+  /* 与行尾「N 项」之间留 8px：两个都是读数，靠太近会读成一串数字。 */
+  margin-right: 8px;
+}
+
+/* ── 头行的两格读数不再被那颗隐身药丸挤走 ──
+ * 行尾那颗「在轨迹中查看」静息是 opacity: 0，却一直占着约 76px 的宽度，于是状态
+ * 与「+N 行」离右缘总差这么一截，看着像悬在半空。这里照侧栏会话行同一个做法
+ * （见本文件「交互打磨」第 1 条）：操作钮绝对定位压在读数上，读数淡出、按钮淡入，
+ * 行内其他格子一个像素都不动。
+ * hover 时淡出的是「读数」而不是「结果」：失败那条的红色左边条、动词「跑了」和
+ * 展开体都还在，红色状态字样只是让位给「在轨迹中查看」这颗钮。 */
+.tool-card .tool-head {
+  position: relative;
+}
+
+.tool-card .tool-head .tc-trace {
+  position: absolute;
+  right: 27px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.tool-card .tool-head .status,
+.tool-card .tool-head .tc-more {
+  transition: opacity var(--dsc-dur) var(--dsc-ease);
+}
+
+.tool-card .tool-head:hover .status,
+.tool-card .tool-head:hover .tc-more,
+.tool-card .tool-head:focus-within .status,
+.tool-card .tool-head:focus-within .tc-more {
+  opacity: 0;
+}
+
+/* 「+N 行」：结果被截断的明示（codex 的「+ N lines」）。放在状态位左边，
+   它是一个读数不是一个按钮——点整行照旧是展开。 */
+.tool-card .tc-more {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  font-size: var(--dsc-fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 结果尾巴：与头行同一张卡，左边那条状态色竖条照旧连着，所以不加边框与底色。 */
+.tool-tail {
+  color: var(--dsc-text-quaternary);
+  display: flex;
+  flex-direction: column;
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-tool);
+  gap: 1px;
+  line-height: 1.55;
+  padding: 0 8px 7px;
+}
+
+.tool-tail-line {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 行首的 `└` / 空格占一格固定宽度：第二行起与第一行的正文对齐，不会缩进去。 */
+.tool-tail-gutter {
+  flex: none;
+  width: 8px;
+}
+
+/* 单行截断而不折行：日志的换行位置是工具给的，按容器折会把一条命令的输出折成十几行。 */
+.tool-tail-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+/* 窄屏：缩进退到 6px（组体本来就只有一列宽，再缩就压到卡片内文），竖线保留。 */
+@media (max-width: 640px) {
+  .step-body {
+    margin-left: 0;
+    padding-left: 6px;
+  }
 }

@@ -83,6 +83,7 @@
  */
 import type { ApprovalAnswer, CollaborationMode, EffortLevel, PlanDecision } from '../contract.js'
 import { DOCK_UI_OPS } from './dock-ops.js'
+import { SIDE_ASK_MAX_QUESTION, SIDE_ASK_MAX_QUOTE } from './side-ask.js'
 import { INVOKABLE_METHODS, type InvokableMethod } from './host-methods.js'
 
 /** 界面通道放行的方法。 */
@@ -106,6 +107,9 @@ export const UI_METHODS = [
   'forkSession',
   'listArchivedSessions',
   'usageStats',
+  // 旁问（只读一次性问答）：不建会话、不落盘、不带工具，见 core/side-ask.ts。
+  'sideAsk',
+  'sideAskCancel',
   'peekTranscript',
   // 模型与档位
   'setModel',
@@ -256,6 +260,8 @@ const MAX_IMAGES = 8
 const MAX_PATHS = 500
 /** 偏好 / 设置值 / 预设草稿这类 JSON 实参的上限（按序列化后的文本长度算）。 */
 const MAX_PREF_JSON = 32000
+/** 取消票据（旁问 requestId）的长度上限：它是壳自己发的 uuid，不需要更长。 */
+const MAX_TICKET = 64
 
 /** 枚举取值直接绑到契约的类型上：契约改了而这里没跟上，编译期就报错。 */
 const EFFORT_LEVELS = ['default', 'off', 'low', 'high', 'max'] as const satisfies readonly EffortLevel[]
@@ -295,11 +301,26 @@ export const UI_ARG_SPECS: Readonly<Record<UiMethod, MethodSpec>> = {
   forkSession: [{ shape: { kind: 'string', max: MAX_PATH } }, { shape: { kind: 'number' } }],
   listArchivedSessions: [],
   usageStats: [],
+  // 旁问：问题 + 可选引用 + 取消票据。上限与 core/side-ask.ts 的常量对齐（那边截断引用、
+  // 这边拒超长问题）——两处都写死数字会漂，所以这边直接引用同一组常量。
+  sideAsk: [
+    { shape: { kind: 'string', max: SIDE_ASK_MAX_QUESTION } },
+    { shape: { kind: 'string', max: SIDE_ASK_MAX_QUOTE } },
+    { shape: { kind: 'string', max: MAX_TICKET } },
+    // 空串 = 跟随主会话当前路由；都填了才用指定模型（见 runtime 的路由挑选）。
+    { shape: { kind: 'string', max: MAX_NAME } },
+    { shape: { kind: 'string', max: MAX_NAME } },
+  ],
+  sideAskCancel: [{ shape: { kind: 'string', max: MAX_TICKET } }],
   peekTranscript: [{ shape: { kind: 'string', max: MAX_PATH } }],
   // ── 模型与档位 ────────────────────────────────────────────────────────────
   setModel: [{ shape: { kind: 'string', max: MAX_NAME } }],
   listModels: [],
-  setEffort: [{ shape: { kind: 'enum', values: EFFORT_LEVELS } }],
+  // 第二个实参 quiet：输入区滑杆调档时不往对话里写那一行（见 services/types.ts 的说明）。
+  setEffort: [
+    { shape: { kind: 'enum', values: EFFORT_LEVELS } },
+    { shape: { kind: 'boolean' }, optional: true },
+  ],
   setMode: [{ shape: { kind: 'enum', values: MODES } }],
   getModelConfig: [],
   discoverModels: [{ shape: { kind: 'string', max: MAX_NAME } }],

@@ -22,7 +22,7 @@
  *
  * @module dsc/scripts/ui-sidebar-footer-test
  */
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -76,8 +76,12 @@ check('[1] tokens 从共享出口（ui-primitives/index.ts）',
 // ── [2] 页脚契约（sessions/ui.tsx 文本钉） ────────────────────────────────────────
 
 const src = read('ui-shell/src/plugins/sessions/ui.tsx')
+// 2026-10-25：取数口径搬到共享 hook（ui-layout/usage-today.ts），页脚只消费它。
+// 判定因此拆两处：页脚「用没用共享 hook」、hook「怎么取、取哪一格、多久刷」。
+const hookSrc = read('ui-shell/src/ui-layout/usage-today.ts')
 const labelOnce = (s) => s.split('<span>今日总用量</span>').length === 2
-const channelCall = (s) => s.includes(".invoke<UsageStatsView>('usageStats')")
+const usesSharedHook = (s) => s.includes('useTodayUsage(usage)')
+const channelCall = (s) => s.includes(".invoke<UsageStatsShape>('usageStats')")
 const lastDayCell = (s) => s.includes('stats.days[stats.days.length - 1]')
 const pollTimer = (s) => s.includes('window.setInterval(load, 60_000)')
 const noLegacyLabel = (s) => !s.includes('会话用量')
@@ -86,9 +90,10 @@ const noFooterDispatch = (s) => !s.includes("dispatchEvent(new CustomEvent('shel
 const tipReachable = (s) => s.includes('data-tip={FOOTER_USAGE_TIP} title={FOOTER_USAGE_TIP}')
 
 check('[2] 页脚文案改为今日总用量（恰好一处）', labelOnce(src))
-check('[2] 今日口径走宿主 usageStats 通道', channelCall(src))
-check('[2] days 末位取今天那格', lastDayCell(src))
-check('[2] 60 秒兜底轮询在（其他窗口的量靠它跟上）', pollTimer(src))
+check('[2] 页脚走共享的今日用量 hook', usesSharedHook(src))
+check('[2] 今日口径走宿主 usageStats 通道', channelCall(hookSrc))
+check('[2] days 末位取今天那格', lastDayCell(hookSrc))
+check('[2] 60 秒兜底轮询在（其他窗口的量靠它跟上）', pollTimer(hookSrc))
 check('[2] 本文件不再有会话口径文案', noLegacyLabel(src))
 check('[2] 目录行的 tip 字样已从本文件绝迹', noLegacyBrowse(src))
 check('[2] 页脚只订不派 shell.session.new（选目录开会话归组头 ➕）', noFooterDispatch(src))
@@ -96,9 +101,10 @@ check('[2] 悬浮说明走原生 title（壳不渲染 data-tip）', tipReachable
 
 // 弄脏副本各红（每条正判据一个专属脏法）
 check('[2] 文案判据对脏副本必须红', !labelOnce(dirtyAll(src, '今日总用量', '会话用量')))
-check('[2] 通道判据对脏副本必须红', !channelCall(dirtyAll(src, "'usageStats'", "'usageStats2'")))
-check('[2] days 末位判据对脏副本必须红', !lastDayCell(dirtyAll(src, 'stats.days.length - 1', '0')))
-check('[2] 轮询判据对脏副本必须红', !pollTimer(dirtyAll(src, '60_000', '86400000')))
+check('[2] 共享 hook 判据对脏副本必须红', !usesSharedHook(dirtyAll(src, 'useTodayUsage(usage)', 'useTodayUsage()')))
+check('[2] 通道判据对脏副本必须红', !channelCall(dirtyAll(hookSrc, "'usageStats'", "'usageStats2'")))
+check('[2] days 末位判据对脏副本必须红', !lastDayCell(dirtyAll(hookSrc, 'stats.days.length - 1', '0')))
+check('[2] 轮询判据对脏副本必须红', !pollTimer(dirtyAll(hookSrc, '60_000', '86400000')))
 check('[2] 旧口径缺席判据对脏副本必须红', !noLegacyLabel(src + '会话用量'))
 check('[2] 目录行缺席判据对脏副本必须红', !noLegacyBrowse(src + '在别的目录开新会话'))
 check('[2] 派发缺席判据对脏副本必须红',
@@ -124,8 +130,16 @@ if (!existsSync(join(root, clientPath))) {
   failures += 1
 } else {
   const client = read(clientPath)
+  // 2026-10-25 起插件里只剩 `useTodayUsage` 这个调用：usageStats 的接线落在壳的 app bundle
+  // （hook 在 ui-layout），插件 bundle 里不再出现方法名——产物判据跟着拆成两处。
+  const assetDir = join(root, 'lib/ui/assets')
+  const assets = existsSync(assetDir) ? readdirSync(assetDir).filter((name) => name.endsWith('.js')) : []
+  const appBundle = assets
+    .map((name) => readFileSync(join(assetDir, name), 'utf8'))
+    .find((text) => text.includes('usageStats')) ?? ''
   check('[4] 产物含今日总用量文案', client.includes('今日总用量'))
-  check('[4] 产物含 usageStats 接线', client.includes('usageStats'))
+  check('[4] 插件产物走共享 hook', client.includes('useTodayUsage'))
+  check('[4] 壳产物里仍有 usageStats 接线', appBundle.includes('usageStats'))
   check('[4] 产物不再含旧口径两条', !client.includes('会话用量') && !client.includes('在别的目录开新会话'))
   check('[4] 「在」判据可红（自证）', !client.includes('侧栏页脚探针自证哨兵'))
 }

@@ -31,4 +31,6 @@ export * from './page-state'
 export * from './review-pane'
 export * from './runtime-context'
 export * from './thread-view'
+// 今日用量（页脚与状态栏共用一份取数口径）。
+export * from './usage-today'
 export * from './update-button'

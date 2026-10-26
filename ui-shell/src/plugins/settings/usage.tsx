@@ -14,6 +14,7 @@
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { IconChart, IconRefresh, useHostChannel, type UsageDayView, type UsageModelView, type UsageStatsView } from '@dsc/ui'
+import { Skeleton, SkeletonText, humanErrorText } from '@dsc/ui-primitives'
 
 /** 拿异常的文字形态。 */
 function text(error: unknown): string {
@@ -313,14 +314,27 @@ export function UsageGroup(): ReactNode {
   if (error !== '') {
     return (
       <div className="settings-empty">
-        用量统计读取失败：{error}
+        用量统计读取失败：{humanErrorText(error).text}
         <button className="text-btn" onClick={reload} style={{ marginLeft: 8 }}>
           重试
         </button>
       </div>
     )
   }
-  if (stats === null) return <div className="settings-empty">正在读取用量记录…</div>
+  if (stats === null) {
+    // 用量是几张汇总卡 + 一条趋势：先把这两块的形状画出来，比一行灰字更像"马上就来"。
+    return (
+      <div className="settings-loading" role="status" aria-label="正在读取用量记录">
+        <div className="settings-loading-cards">
+          {Array.from({ length: 4 }, (_, index) => (
+            <Skeleton key={index} height={62} radius={12} />
+          ))}
+        </div>
+        <Skeleton height={148} radius={12} />
+        <SkeletonText lines={3} />
+      </div>
+    )
+  }
   if (stats.sinceTs === null) {
     return (
       <div className="settings-empty usage-empty">

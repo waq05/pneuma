@@ -94,6 +94,16 @@ export class HostInvokeAbortedError extends Error {
   }
 }
 
+/** 旁问的一条增量（与宿主 `dsc/side-ask-chunk` 的形状一致）。 */
+export interface AskChunk {
+  /** 这次旁问的票据（= sideAsk 的 requestId）。 */
+  id: string
+  /** 本次新增的正文（可能为空，done 时就是空串）。 */
+  delta: string
+  /** 收尾标记：为真表示这条流结束，后续只等 invoke 的最终返回值。 */
+  done?: boolean
+}
+
 /** 壳看到的宿主通道。 */
 export interface HostChannel {
   getSnapshot(): HostSnapshot | null
@@ -108,6 +118,11 @@ export interface HostChannel {
    * @returns 退订函数
    */
   onPlugins(listener: (frame: HostPluginsFrame) => void): () => void
+  /**
+   * 订阅旁问增量（`event: ask`）。同一条流换事件名，不为它另开 EventSource。
+   * @returns 退订函数
+   */
+  onAsk(listener: (chunk: AskChunk) => void): () => void
   /** 订阅（快照或握手或连接状态变化时叫一次）。 */
   subscribe(listener: () => void): () => void
   /**
@@ -117,6 +132,13 @@ export interface HostChannel {
    * @param options - 可选：取消信号与超时（等人的调用要传更长的超时，见 {@link HUMAN_WAIT_TIMEOUT_MS}）
    */
   invoke<T = unknown>(method: string, args?: unknown[], options?: InvokeOptions): Promise<T>
+  /**
+   * 立刻重开一条流（手动重连）。
+   *
+   * 用在 401 这类「浏览器已经放弃重连」的情形：`close()` 之后不会再自愈，只能换实例。
+   * 与帧号跳号那条路径同一套做法（新实例没有 Last-Event-ID，宿主回一帧全量）。
+   */
+  reconnect(): void
   /** 主动断开（页面卸载时；正常不需要——EventSource 会自动重连）。 */
   close(): void
 }
@@ -133,6 +155,7 @@ export function createHostChannel(): HostChannel {
   let stopped = false
   const listeners = new Set<() => void>()
   const pluginListeners = new Set<(frame: HostPluginsFrame) => void>()
+  const askListeners = new Set<(chunk: AskChunk) => void>()
 
   const notify = (): void => {
     for (const listener of [...listeners]) {
@@ -219,6 +242,25 @@ export function createHostChannel(): HostChannel {
       }
     })
 
+    // 旁问增量（`event: ask`）：瞬时数据，断了就断了——最终答案由 invoke 的返回值补齐。
+    es.addEventListener('ask', (event: Event) => {
+      if (es !== source) return
+      let chunk: AskChunk
+      try {
+        chunk = JSON.parse((event as MessageEvent<string>).data) as AskChunk
+      } catch {
+        return
+      }
+      if (typeof chunk.id !== 'string' || typeof chunk.delta !== 'string') return
+      for (const listener of [...askListeners]) {
+        try {
+          listener(chunk)
+        } catch {
+          // 一个订阅者炸了不该拖垮别的
+        }
+      }
+    })
+
     es.onopen = () => {
       if (es !== source) return
       setStatus('open')
@@ -251,6 +293,15 @@ export function createHostChannel(): HostChannel {
 
   return {
     getSnapshot: () => snapshot,
+    reconnect() {
+      if (stopped) return
+      const es = source
+      // 先把 source 摘掉：旧实例上迟到的 hello/frame 不该再回写状态。
+      source = null
+      es?.close()
+      setStatus('connecting')
+      connect()
+    },
     getHello: () => hello,
     getStatus: () => status,
     getHostError: () => hostError,
@@ -259,6 +310,12 @@ export function createHostChannel(): HostChannel {
       pluginListeners.add(listener)
       return () => {
         pluginListeners.delete(listener)
+      }
+    },
+    onAsk(listener) {
+      askListeners.add(listener)
+      return () => {
+        askListeners.delete(listener)
       }
     },
     subscribe(listener) {

@@ -24,3 +24,16 @@ export function formatTokens(value: number): string {
   if (value < 1_000_000) return `${trimZero(value / 1_000)}K`
   return `${trimZero(value / 1_000_000)}M`
 }
+
+/**
+ * 金额的显示口径（元，两位小数）：侧栏页脚与状态栏「今日」共用一份。
+ *
+ * 为什么不足一分钱显示成「<¥0.01」而不是「¥0.00」：后者会被读成"没花钱"。
+ * 这不是账单——单价来自公开价目表，实际扣费以平台为准。
+ */
+export function formatCostCny(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '¥0.00'
+  if (value < 0.005) return '<¥0.01'
+  return `¥${value.toFixed(2)}`
+}
+

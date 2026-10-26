@@ -79,6 +79,9 @@ export const INVOKABLE_METHODS = [
   'archiveSessions',
   'listArchivedSessions',
   'usageStats',
+  // 旁问：只读一次性问答（不建会话、不落盘、不带工具），见 core/side-ask.ts
+  'sideAsk',
+  'sideAskCancel',
   'restoreSessions',
   'purgeSessions',
   'renameSession',

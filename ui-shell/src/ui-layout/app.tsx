@@ -27,6 +27,7 @@ import {
   IconGear,
   IconPlus,
   IconPuzzle,
+  IconSearch,
   IconSidebar,
   PANEL_KEYS,
   SIDEBAR_MAX,
@@ -59,7 +60,7 @@ import type { UiSlots } from '../plugin-api'
 import { setShellPage, useShellPage } from './page-state'
 import { setThreadView, useThreadView } from './thread-view'
 import { UpdateButton } from './update-button'
-import { useChannelStatus, useHostError, useHostHello, useHostSelector } from './runtime-context'
+import { useChannelStatus, useHostChannel, useHostError, useHostHello, useHostSelector } from './runtime-context'
 import { ReviewPane } from './review-pane'
 
 /**
@@ -252,8 +253,11 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
   }, [sidebarWidth])
   useEffect(() => {
     // 正文列宽只有 ThreadResizer 的拖动路径会每帧写变量；这里负责把存档在启动时铺上。
-    if (threadWidth !== null) setRootVar('--dsc-thread-max', `${String(threadWidth)}px`)
-    return () => setRootVar('--dsc-thread-max', null)
+    // 写的是 --dsc-thread-user-max（不是 --dsc-thread-max）：空会话态在样式表里给
+    // .thread-main-empty 挂了元素级的 --dsc-thread-max，根上的同名变量压不过它
+    // （见 styles.css 开头的接线注释）。
+    if (threadWidth !== null) setRootVar('--dsc-thread-user-max', `${String(threadWidth)}px`)
+    return () => setRootVar('--dsc-thread-user-max', null)
   }, [threadWidth])
 
   // 窄屏（手机浏览器，含「手机端 remote-web 切壳」后的形态）：侧栏默认收起成 56px
@@ -436,6 +440,21 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
                     <SlotOutlet slots={slots} slot={SLOT.headerLead} />
                   </div>
                   <div className="drag-fill" />
+                  {/* 搜索（命令面板）的可见入口（2026-10-26 从左下角页脚搬上来，压在
+                      「在资源管理器打开」那组左边）：Ctrl+K 之外得有个点得到的东西，
+                      不然这个功能只有知道键的人能用。手机上照旧留着——它是个点得到的钮，
+                      不靠键。 */}
+                  <button
+                    type="button"
+                    className="icon-btn topbar-search"
+                    data-tip="搜索动作、会话与设置（Ctrl K）"
+                    aria-label="搜索"
+                    onClick={() => {
+                      window.dispatchEvent(new CustomEvent('shell.palette.open'))
+                    }}
+                  >
+                    <IconSearch size={15} />
+                  </button>
                   {/* 右簇：工作区打开组（在资源管理器打开 + 更多打开方式）。手机档由 CSS 藏掉
                       （没有原生桥，点了只会报「这条能力来自桌面外壳」）。 */}
                   <SlotOutlet slots={slots} slot={SLOT.header} />
@@ -504,6 +523,7 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
                 )}
               </div>
 
+              <ConnectionBanner />
               <HostErrorStrip />
 
               {/* 正文轨道 + 并排审查栏（旧界面 `.thread-zone[data-review]` 同构：
@@ -643,6 +663,56 @@ function DockToggle(): ReactNode {
  * 为什么单独占一行：帧流一旦停住，界面会「静静地冻在最后一帧」，看不出是宿主的问题；
  * 把原因摊出来，用户才知道该刷新还是该重启宿主。正常时不占位置。
  */
+/**
+ * 数据通道断开时的顶条（2026-10-25，P1-6）。
+ *
+ * 与 `HostErrorStrip` 分工：那一条报的是**宿主造帧出错**（帧还在流，但内容是错的），
+ * 这一条报的是**流本身断了**（一帧都收不到）。两者都出现时两条并排，因为处理方式不同：
+ * 前者要重启宿主，后者先重连。
+ *
+ * 为什么延迟 3 秒才出：EventSource 自己每 3 秒重连一次，宿主重启、页面刚加载时
+ * 都会短暂 `connecting`——立刻弹条会天天闪。3 秒还没连上，才值得说话。
+ */
+function ConnectionBanner(): ReactNode {
+  const channel = useHostChannel()
+  const status = useChannelStatus()
+  const [shown, setShown] = useState(false)
+  useEffect(() => {
+    if (status === 'open') {
+      setShown(false)
+      return undefined
+    }
+    const timer = window.setTimeout(() => {
+      setShown(true)
+    }, 3000)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [status])
+  if (!shown) return null
+  const closed = status === 'closed'
+  return (
+    <div className="conn-banner" data-conn={status} role="status">
+      <span className="conn-dot" aria-hidden="true" />
+      <span className="conn-text">{closed ? '连接已断开' : '连不上宿主'}</span>
+      <span className="conn-hint">
+        {closed
+          ? '这个窗口的重连已经被浏览器放弃（凭据失效或宿主换了端口）。'
+          : '宿主可能正在重启，浏览器每 3 秒重试一次。'}
+      </span>
+      <button
+        type="button"
+        className="conn-retry"
+        onClick={() => {
+          channel.reconnect()
+        }}
+      >
+        立即重连
+      </button>
+    </div>
+  )
+}
+
 function HostErrorStrip(): ReactNode {
   const error = useHostError()
   if (error === null) return null
@@ -949,8 +1019,8 @@ function readSessionTitle(snapshot: Record<string, unknown> | null): string {
 }
 
 /** 消息流里有没有**对话内容**（含直播尾）：空会话的居中欢迎态靠它切换。
-    开场 system 条目（会话标、「没有可用的模型端点」这类提示）不算——欢迎态自己把它们
-    画成注脚；口径与消息流的欢迎态判定一致，两边不能各说各话。 */
+    开场 system 条目（会话标、启动期的配置/沙箱提示）不算——它们只进日志与轨迹，
+    首屏不铺；口径与消息流的欢迎态判定一致，两边不能各说各话。 */
 function readHasEntries(snapshot: Record<string, unknown> | null): boolean {
   const entries = snapshot?.['entries']
   if (Array.isArray(entries) && entries.some((entry) => (entry as { kind?: unknown })['kind'] !== 'system')) {

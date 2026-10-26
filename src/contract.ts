@@ -396,8 +396,13 @@ export type TranscriptEntry =
   | { kind: 'tool'; id: number; call: ToolCallView; ts?: number; usage?: { inputTokens: number; outputTokens: number } }
   /** 计划卡：exit_plan_mode 交上来的计划，带用户批没批。 */
   | { kind: 'plan'; id: number; plan: PlanView; ts?: number }
-  /** `compaction` 只出现在压缩插件写下的那条通知上（见 {@link CompactionMark}）。 */
-  | { kind: 'system'; id: number; text: string; ts?: number; compaction?: CompactionMark }
+  /**
+   * `compaction` 只出现在压缩插件写下的那条通知上（见 {@link CompactionMark}）。
+   *
+   * `level: 'error'` 表示这条是**要人处理**的启动/运行问题（没有可用的模型端点、插件加载失败），
+   * 界面把它从首屏的注脚里摘出来、改成一次弹窗；缺省（连同 `'info'`）只进日志与轨迹，不占首屏。
+   */
+  | { kind: 'system'; id: number; text: string; ts?: number; compaction?: CompactionMark; level?: 'info' | 'error' }
   /** 轮尾标记：这一轮为什么结束，见 {@link TurnEndReason}。 */
   | { kind: 'turn-end'; id: number; reason: TurnEndReason; ts?: number }
   /** 这一轮的输出撞上了长度上限（对照 dsh 的 `turn-max-tokens` 节点）。 */
@@ -536,6 +541,13 @@ export interface UsageDayView {
   turns: number
   /** 按 `provider/model` 拆分的 token 总量（输入+输出）。 */
   byModel: Record<string, number>
+  /**
+   * 这一天的估算花费（人民币元，按 DeepSeek 官方单价换算）。
+   *
+   * 只有至少一笔记录能计价（provider 是 DeepSeek、模型在价目表里）时才有值；
+   * 零日、以及用别家端点的日子都没有这一项——缺省表示「算不出来」，不是「花了 0 元」。
+   */
+  costCny?: number
 }
 
 /** 一个模型的用量汇总。 */
@@ -555,6 +567,14 @@ export interface UsageModelView {
  * 宿主从 `~/.dsc/usage/usage.jsonl`（每次模型请求追加一条）聚合而来；
  * 这份日志从该功能上线那刻开始积累，更早的会话没有记录。
  */
+export interface SideAskView {
+  text: string
+  model: string
+  ms: number
+  /** true = 用户按了停止（text 是半截）。 */
+  stopped: boolean
+}
+
 export interface UsageStatsView {
   /** 最早一条记录的时间戳；一条都没有时 null。 */
   sinceTs: number | null
@@ -578,6 +598,8 @@ export interface UsageStatsView {
   days: UsageDayView[]
   /** 按模型汇总，总量降序。 */
   models: UsageModelView[]
+  /** 全部记录的估算花费合计（人民币元）；一笔都算不出来时缺省。 */
+  totalCostCny?: number
 }
 
 /**
@@ -1699,6 +1721,22 @@ export interface DscRuntime {
   listArchivedSessions(): Promise<ArchivedPage>
   /** 用量统计（设置「用量统计」分区数据源；聚合 ~/.dsc/usage/usage.jsonl）。 */
   usageStats(): Promise<UsageStatsView>
+  /**
+   * 旁问：只读的一次性问答（不建会话、不落盘、不带工具），实现见 core/side-ask.ts。
+   *
+   * @param question 问题（≤ core/side-ask 的 SIDE_ASK_MAX_QUESTION）
+   * @param quote 会话里选中的原文（可省；超长由宿主截断）
+   * @param requestId 取消用的票据；同一张票据只能取消这一次
+   */
+  sideAsk(
+    question: string,
+    quote: string,
+    requestId: string,
+    provider: string,
+    model: string,
+  ): Promise<SideAskView>
+  /** 取消一次正在进行中的旁问（票据不认识就什么都不做）。 */
+  sideAskCancel(requestId: string): Promise<boolean>
   /** 从归档区恢复一批会话。 */
   restoreSessions(paths: string[]): Promise<SettingsMutation>
   /** 永久删除一批会话：移进 `~/.dsc/.trash/`，30 天后自动清。 */

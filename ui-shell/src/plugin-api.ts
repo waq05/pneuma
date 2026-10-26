@@ -11,6 +11,7 @@
  *
  * @module dsc-ui-shell/plugin-api
  */
+import { useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import type {
   FactoryChildrenOf as FactoryChildrenOfMap,
@@ -313,6 +314,10 @@ export type { ThreadView } from '@dsc/ui-layout'
 
 
 export { useChannelStatus, useHostChannel, useHostError, useHostSelector, useHostSnapshot } from '@dsc/ui-layout'
+export { useTodayUsage, type TodayUsage } from '@dsc/ui-layout'
+// 旁问的流式增量（`event: ask`）：插件只要一个回调，不必认识 SSE。
+export { useAskStream } from '@dsc/ui-layout'
+export type { AskChunk } from '@dsc/ui-layout'
 // 等人的宿主方法（写类 dock op = 过审批卡）要用的长超时：30 秒的默认档会把「等你点卡」
 // 报成「宿主超时」。插件里凡是会弹审批卡的调用都该带上它。
 export { HUMAN_WAIT_TIMEOUT_MS, type InvokeOptions } from '@dsc/ui-layout'
@@ -320,7 +325,67 @@ export { HUMAN_WAIT_TIMEOUT_MS, type InvokeOptions } from '@dsc/ui-layout'
  * 服务表的 React 订阅面（A1）：插件用它读别的插件提供的服务，并跟着服务的出现/消失
  * 换数据源（D3 的 status 面板靠它从本地轮询切到 team 的共享席位，无需刷新页面）。
  */
-export { useService } from '@dsc/ui-core'
+import { useService } from '@dsc/ui-core'
+export { useService }
+
+/**
+ * ── 动作表（A1）────────────────────────────────────────────────────────────────
+ *
+ * 全局、无参的动作只有一份登记处：命令面板、首屏能力卡、设置导航都从这里读。
+ * 为什么要这张表：同一件事（打开设置某页、往输入框写一段提示词）原先在命令面板、
+ * 首屏卡片、侧栏三处各写一份，加一条要改三处，改漏了就会出现「面板里有、卡片里没有」。
+ *
+ * 边界：只放**不需要参数**的动作。针对某一条会话的（归档这一条、分叉这一条）参数各不
+ * 相同，留在会话自己的右键菜单里——硬塞进来会让每个调用点都得先造一份假参数。
+ *
+ * 表归 `actions` 插件实现（`ui.provide('actions', …)`）；这里只有契约与读 hook，
+ * 所以插件即使没装动作表也编得过，只是读到空表。
+ */
+export interface UiAction {
+  /** 稳定 id：去重与排序都按它，同一个 id 重复登记时后一条被忽略并告警。 */
+  id: string
+  /** 动词短语（面板一行、菜单一行都用这一条文案）。 */
+  label: string
+  /** 一行说明：命令面板右侧的灰字、能力卡的副标题。 */
+  hint?: string
+  /** 分组标题（「会话」「页面」「设置」「提示词」…）；命令面板按它分段。 */
+  group?: string
+  /** 额外的搜索词：标签里没出现、但用户可能打出来的字（例如「归档 archive」）。 */
+  keywords?: readonly string[]
+  /** 键位显示串（例如 `Ctrl+K`）。只用于展示，真实按键归各处监听。 */
+  shortcut?: string
+  /** 是否进命令面板，默认进。只给首屏用、不适合全局搜的可以关掉。 */
+  palette?: boolean
+  run(): void
+}
+
+/** 动作表的读写面（`actions` 插件 provide 的那份）。 */
+export interface ActionsHandle {
+  /** 登记一组动作（同一个 owner 再登记就是整组替换）；返回注销函数。 */
+  register(owner: string, actions: readonly UiAction[]): () => void
+  /** 当前全部动作（引用稳定：没变过就是同一个数组）。 */
+  list(): readonly UiAction[]
+  /** 订阅变化（命令面板用它与 `useActions` 跟上后登记进来的条目）。 */
+  subscribe(listener: () => void): () => void
+}
+
+/** 动作表在服务表里的名字。 */
+export const ACTIONS_SERVICE = 'actions'
+
+const NO_ACTIONS: readonly UiAction[] = Object.freeze([])
+const noSubscribe = (): (() => void) => () => undefined
+const noActions = (): readonly UiAction[] => NO_ACTIONS
+
+/**
+ * 读动作表。动作表插件没装时返回空表（调用方不必写防御分支）。
+ *
+ * @returns 当前全部动作，按登记顺序；变了会重渲染
+ */
+export function useActions(): readonly UiAction[] {
+  const handle = useService<ActionsHandle>(ACTIONS_SERVICE)
+  return useSyncExternalStore(handle?.subscribe ?? noSubscribe, handle?.list ?? noActions, noActions)
+}
+
 /**
  * 席位的读 hook（D3）：拿到实例后按 selector 读（实例缺席给 undefined，调用方自行回落）。
  * 席位契约类型同址转出——插件写 handle 类型、action 表都从这里拿。

@@ -1,7 +1,8 @@
 # dsc 插件开发说明书
 
 > **本文档的读者是 AI 编程助手**。当用户要求「给 dsc 写一个插件」时，先通读本文，
-> 再按文末模板产出代码，并执行「交付前验证清单」。人类读者可直接跳到示例部分。
+> 再按文末模板产出代码，并执行「交付前验证清单」。人类读者可直接跳到示例部分；
+> 想先跑通一条最小链路，见 [writing-plugins.md](writing-plugins.md)（上手路径与扩展点速查）。
 
 ---
 
@@ -70,7 +71,7 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 - `config`：**透传给 `apply(ctx, config)` 第二参**——插件用它读自己的配置，不必再自建
   配置文件。取值统一走 `resolvePluginConfig('<file>', passed)`（`src/core/plugin-registry.ts:168`）：
   装配时那份作底，磁盘上这份覆盖它，所以设置分区保存后正在跑的插件下一次用值就是新值，不用重启宿主。
-  读它的内置插件有 `compact`、`approval`、`ask`、`goal`、`prompt`、`host-stdio`，取值范围都带上下限夹取；十六个官方可开关插件（`subagent`、`computer-use`、`web-search`、`approval-floor`、`spill`、`session-search`、`lifecycle-hooks`、`mcp`、`tool-search`、`sandbox`、`file-review`、`schedule`、`lsp`、`browser`、`self-improve`、`dsh-compat`）也各读这一份，并把可调值挂进自己的设置分区。
+  读它的内置插件有 `compact`、`approval`、`ask`、`goal`、`prompt`、`host-stdio`，取值范围都带上下限夹取；十八个官方可开关插件（`subagent`、`team`、`computer-use`、`web-search`、`approval-floor`、`spill`、`session-search`、`lifecycle-hooks`、`mcp`、`tool-search`、`sandbox`、`file-review`、`schedule`、`lsp`、`browser`、`dock-browser`、`self-improve`、`dsh-compat`）也各读这一份，并把可调值挂进自己的设置分区。
 - **启停热生效**：切换开关 → 内核卸载（调用 disposer）或重新挂载插件，无需重启宿主；
   文件内容变更后重新启用也会加载新代码（按 mtime 破坏模块缓存）。
 
@@ -112,7 +113,7 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 | 官方可开关 | `source: 'builtin'` 且 `toggleable: true` | 可拨，`defaultDisabled: true` 时默认关 |
 | 运行内核 | `source: 'builtin'` 且没标 `toggleable` | 不给开关，页面只露 3 行，其余折叠 |
 
-现有的十四个官方可开关插件：默认开的五个是 `web-search`（网页搜索）、`approval-floor`（审批灾难地板）、`spill`（大输出溢出）、`session-search`（会话全文检索）、`sandbox`（沙箱——不配就没有外部进程与外部服务器，且默认档 workspace-write 不挡正常的工作区读写）；默认关的九个是 `subagent`（智能体团队）、`computer-use`（电脑操作）、`lifecycle-hooks`（生命周期钩子）、`mcp`（MCP 客户端）、`tool-search`（工具渐进披露）、`schedule`（定时任务，到点会自己跑模型）、`lsp`（按需拉起语言服务器子进程）、`browser`（拉起浏览器进程并连调试端口）、`self-improve`（会写技能文件与提示词面）。各自干什么、默认开关按什么规矩定，见 development.md §4 那张表。
+现有的十八个官方可开关插件：默认开的六个是 `web-search`（网页搜索）、`approval-floor`（审批灾难地板）、`spill`（大输出溢出）、`session-search`（会话全文检索）、`sandbox`（沙箱——不配就没有外部进程与外部服务器，且默认档 workspace-write 不挡正常的工作区读写）、`file-review`（文件更改预览——edit / write 前把 diff 摆进对话流）；默认关的十二个是 `subagent`（子智能体）、`team`（智能体团队）、`computer-use`（电脑操作）、`lifecycle-hooks`（生命周期钩子）、`mcp`（MCP 客户端）、`tool-search`（工具渐进披露）、`schedule`（定时任务，到点会自己跑模型）、`lsp`（按需拉起语言服务器子进程）、`browser`（拉起浏览器进程并连调试端口）、`dock-browser`（驱动桌面端侧栏浏览器）、`self-improve`（会写技能文件与提示词面）、`dsh-compat`（挂 dsh 外部插件）。各自干什么、默认开关按什么规矩定，见 development.md §4 那张表。
 
 新增一档官方可开关插件要做的三件事：
 
@@ -184,8 +185,8 @@ ctx.commands.register(
 壳只能把名字读出来、再发回来，拿不到 handler，也够不着没标这一位的命令。标之前先量一件事：
 **这条命令的动作别超出界面通道已有的权力面**——写文件、改权限旋钮、落信任、退出这类写完面
 一律在原生桥单开（与第三方界面插件的信任同一先例，见 §10.3），壳的菜单里只该出现
-「列出来也不多给任何东西」的命令。挑选尺子与内置那七条的清单写在
-`src/core/commands-completion.ts`。
+「列出来也不多给任何东西」的命令。挑选尺子与内置那二十三条的清单写在
+`src/core/commands-completion.ts:35`。
 
 ### 4.3 transcript —— 会话流（反馈用户的正道）
 
@@ -577,7 +578,7 @@ export function apply(ctx, config) {
 | 模型从不调用你的工具 | description 太弱或 parameters 不是合法 JSON Schema；name 要让模型望文生义 |
 | 设置分区/技能来源没出现 | `inject` 里忘了声明 `settings` 或 `skills`；或分区 id 撞了内置的 `general/models/skills/about`（该分区被忽略，会话里有一行提示） |
 | 设置分区里控件点不动、值不回填 | `values()` 返回的 key 和 `fields()` 里的 `key` 对不上；或 `values()` 返回了不能 JSON 序列化的对象（函数、Date） |
-| 技能中心有条目但 `/名字` 调不动 | 条目 `userInvocable` 为 false，或名字撞了内置命令（new/resume/compact/model/help/exit/effort/plugins/skills） |
+| 技能中心有条目但 `/名字` 调不动 | 条目 `userInvocable` 为 false，或名字撞了内置命令（内置命令二十三条，例如 new/resume/compact/model/help/exit/review/diff/policy/status/usage） |
 | 写入类工具绕过审批直接执行 | risk 误标为 `'read'`——写文件/执行命令必须是 `'write'`/`'exec'`（权限模式 readonly 下一律拒绝） |
 | 插件被启用但行为还是旧的 | 文件变更后需重新停用→启用（或重启宿主）以触发重载 |
 
@@ -919,7 +920,36 @@ props.renderFactorySlot('myplugin.card', { entry }, {
   （`examples/ui-plugin-demo/ui/client.js` 往工具卡里注册一行）在真机上走查——自动化探针
   到不了那里（本仓库的真机走查跑的是空档案，没有工具卡）。要往这里加东西时，先问
   「第三方会不会要」。
-### 10.9 启动分批、批取数与本页热更（1.2.0 起可用）
+### 10.9 动作表：全局动作登记到一处（1.2.0 起可用）
+
+命令面板、首屏能力卡这些「入口」不该各自硬编码一份动作清单。全局、**无参**的动作登记到
+动作表（`actions` 插件提供的服务 `actions`，契约类型 `UiAction` 在 `@dsc/ui`）：
+
+```tsx
+import { ACTIONS_SERVICE, useActions, useService, type ActionsHandle } from '@dsc/ui'
+
+// 提供方（登记）：一个 owner 一组，再登记就是整组替换；返回值是注销函数
+const actions = useService<ActionsHandle>(ACTIONS_SERVICE)
+useEffect(() => {
+  if (actions === undefined) return undefined
+  return actions.register('myplugin', [
+    { id: 'myplugin.doit', label: '做一件事', hint: '一行说明', group: '页面', keywords: ['doit'], run: () => { /* … */ } },
+  ])
+}, [actions])
+
+// 消费方（展示）：动作表缺席时给空数组，不必写防御分支
+const list = useActions()
+```
+
+- **只放不需要参数的动作**。针对某一条会话的（归档这一条、分叉这一条）参数各不相同，
+  留在会话自己的右键菜单里——硬塞进来会让每个调用点都得先造一份假参数。
+- `group` 只影响命令面板怎么分段（按组首次出现的顺序），`shortcut` 只用于**展示**，
+  真实按键仍归各处自己监听。
+- 同一个 `id` 被两个 owner 登记时，**后一条被忽略并在控制台告警**（不抛错：一条动作
+  登记错不该让整页崩掉）。
+- `run` 里不用自己关面板：命令面板选中后统一收起。
+
+### 10.10 启动分批、批取数与本页热更（1.2.0 起可用）
 
 **`plugin.json` 的 `phase`**（内置插件写在目录里的可选 `plugin.json`，第三方写在自己的
 `plugin.json`）：

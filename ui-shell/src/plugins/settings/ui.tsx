@@ -35,7 +35,7 @@
  *
  * @module dsc-ui-shell/plugins/settings
  */
-import { Fragment, useCallback, useEffect, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   IconArchive,
   IconChart,
@@ -47,10 +47,13 @@ import {
   IconSpark,
 } from '@dsc/ui'
 import {
+  ACTIONS_SERVICE,
   defineUiPlugin,
   getHostNative,
   requestAppearance,
   useHostChannel,
+  useService,
+  type ActionsHandle,
   type AppearancePatch,
   type PairShareData,
   type SettingsField,
@@ -66,7 +69,7 @@ import { UsageGroup } from './usage'
 import { ArchiveGroup } from './archive'
 import { PairModal, type PairRegenerateResult } from './pair-modal'
 // 基元从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
-import { Select } from '@dsc/ui-primitives'
+import { Select, Skeleton, SkeletonText, humanErrorText, useDialogFocus } from '@dsc/ui-primitives'
 
 /** 拿异常的文字形态（宿主与桥都可能抛 Error，也可能是别的值）。 */
 function text(error: unknown): string {
@@ -130,6 +133,10 @@ function SettingsPanel(): ReactNode {
   const [sections, setSections] = useState<SettingsSectionView[] | null>(null)
   const [active, setActive] = useState('')
   const [loadError, setLoadError] = useState('')
+  // 弹层焦点：打开移进来、Tab 在面板内循环、Esc 关、关掉还回来源（原来只有 Esc）。
+  const dialog = useDialogFocus(open, () => {
+    setSettingsOpen(false)
+  })
 
   // 侧栏的「技能 / 插件 / 设置」入口经事件请它开门：打开面板并跳到指定分区（缺省留在原地）。
   useEffect(() => {
@@ -141,21 +148,6 @@ function SettingsPanel(): ReactNode {
     window.addEventListener('shell.settings.open', onOpen)
     return () => window.removeEventListener('shell.settings.open', onOpen)
   }, [])
-
-  // Esc 关面板（关闭钮的 title 一直这么承诺）。捕获阶段拦下会跟确认框抢键——
-  // 确认框自己也在捕获段拦（components 那套移植在 platform/confirm.ts），它先挂先停，
-  // 这里用冒泡段就正好排在它后面：确认框开着时 Esc 归它，面板不跟着关。
-  useEffect(() => {
-    if (!open) return undefined
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
-      if (event.defaultPrevented) return
-      event.preventDefault()
-      setSettingsOpen(false)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open])
 
   /**
    * 取一次分区清单（含各分区的字段）。
@@ -174,7 +166,7 @@ function SettingsPanel(): ReactNode {
       })
       .catch((error: unknown) => {
         setSections([])
-        setLoadError(text(error))
+        setLoadError(humanErrorText(error).text)
       })
   }, [channel])
 
@@ -186,17 +178,46 @@ function SettingsPanel(): ReactNode {
     loadSections()
   }, [open, loadSections])
 
-  if (!open) return null
+  // 分区清单常驻取一次：命令面板要列「设置 · 通用」这些跳转，用户还没开过设置也得有。
+  // 只补第一次（sections === null），之后的刷新仍归上面那条「每次打开重取」。
+  useEffect(() => {
+    if (sections === null) loadSections()
+  }, [sections, loadSections])
 
   // 导航 = 宿主内置分区（按 order 排好序，宿主已排）**减去 HIDDEN_SECTIONS**。
   // 插件启停不在这里：它是主区的独立整页（侧栏「插件」入口），旧界面同款——设置里不再有合成的插件分区。
-  const nav: NavItem[] = (sections ?? [])
-    .filter((section) => !HIDDEN_SECTIONS.has(section.id))
-    .map((section) => ({
-      id: section.id,
-      title: section.title,
-      subtitle: section.subtitle,
-    }))
+  // 提到提前 return 之前：命令面板的动作登记也用这份清单，两处共用一个口径。
+  const nav = useMemo<NavItem[]>(
+    () =>
+      (sections ?? [])
+        .filter((section) => !HIDDEN_SECTIONS.has(section.id))
+        .map((section) => ({ id: section.id, title: section.title, subtitle: section.subtitle })),
+    [sections],
+  )
+
+  // 每个分区登记一条动作（动作表见 @dsc/ui 的 UiAction）：设置页的跳转目标由设置自己
+  // 声明，命令面板不再手抄一份分区表——宿主多一个分区，面板自动多一行。
+  const actions = useService<ActionsHandle>(ACTIONS_SERVICE)
+  useEffect(() => {
+    if (actions === undefined || sections === null) return undefined
+    return actions.register(
+      'settings',
+      nav.map((item) => ({
+        id: `settings.${item.id}`,
+        label: `设置 · ${item.title}`,
+        ...(item.subtitle === undefined ? {} : { hint: item.subtitle }),
+        group: '设置',
+        keywords: ['设置', 'settings', item.id],
+        run: () => {
+          setActive(item.id)
+          setSettingsOpen(true)
+        },
+      })),
+    )
+  }, [actions, nav, sections])
+
+  if (!open) return null
+
   const section = (sections ?? []).find((item) => item.id === active && !HIDDEN_SECTIONS.has(item.id))
   const head = nav.find((item) => item.id === active)
 
@@ -208,7 +229,7 @@ function SettingsPanel(): ReactNode {
         if (event.target === event.currentTarget) setSettingsOpen(false)
       }}
     >
-      <div className="settings" role="dialog" aria-modal="true" aria-label="Pneuma 设置">
+      <div className="settings" role="dialog" aria-modal="true" aria-label="Pneuma 设置" ref={dialog.ref}>
         <nav className="settings-nav">
           <div className="settings-nav-head">设置</div>
           {nav.map((item) => (
@@ -253,7 +274,20 @@ function SettingsPanel(): ReactNode {
               其余分区照旧从上往下堆、整页滚。 */}
           <div className={`settings-body${active === 'models' ? ' settings-body-fill' : ''}`}>
             {active === '' ? (
-              <div className="settings-empty">{loadError === '' ? '正在读取分区…' : `分区加载失败：${loadError}`}</div>
+              loadError === '' ? (
+                // 数据还没回来：画骨架而不是一行灰字（P0-2）。高度按真实分区估：
+                // 标题 + 一句副标题 + 两组字段，读完不会"先缩后弹"。
+                <div className="settings-loading" role="status" aria-label="正在读取设置分区">
+                  <div className="settings-loading-head">
+                    <Skeleton width={168} height={17} radius={5} />
+                    <Skeleton width={300} height={11} />
+                  </div>
+                  <SkeletonText lines={4} />
+                  <SkeletonText lines={2} widths={['100%', '48%']} />
+                </div>
+              ) : (
+                <div className="settings-empty">{`分区加载失败：${loadError}`}</div>
+              )
             ) : section === undefined ? (
               <div className="settings-empty">分区加载失败：{loadError === '' ? '未知分区' : loadError}</div>
             ) : section.custom ? (
@@ -731,6 +765,13 @@ function GenericFields({
   )
 }
 
+/** 主题三档（顺序按「由浅到深再跟随」，与 Codex UI 的三磁贴一致）。 */
+const THEME_TILES = [
+  { value: 'light', label: '浅色' },
+  { value: 'dark', label: '深色' },
+  { value: 'system', label: '跟随系统' },
+] as const
+
 /**
  * 外观：主题 / 字号 / 密度三行（改完即时落到 `<html>` 上，与旧界面同一套）。
  *
@@ -793,20 +834,21 @@ function AppearanceRows(): ReactNode {
           <div className="setting-label">主题</div>
           <div className="setting-help">「跟随系统」随系统的深浅自动切换。</div>
         </div>
-        <div className="setting-control">
-          <Select
-            className="setting-select"
-            ariaLabel="主题"
-            value={appearance.themeMode}
-            options={[
-              { value: 'dark', label: '深色' },
-              { value: 'light', label: '浅色' },
-              { value: 'system', label: '跟随系统' },
-            ]}
-            onPick={(next) => {
-              change({ themeMode: next })
-            }}
-          />
+        <div className="setting-control theme-tiles" role="radiogroup" aria-label="主题">
+          {THEME_TILES.map((tile) => (
+            <button
+              key={tile.value}
+              type="button"
+              role="radio"
+              aria-checked={appearance.themeMode === tile.value}
+              className="theme-tile"
+              onClick={() => {
+                change({ themeMode: tile.value })
+              }}
+            >
+              {tile.label}
+            </button>
+          ))}
         </div>
       </div>
       <div className="setting-row">

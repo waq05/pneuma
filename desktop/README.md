@@ -8,13 +8,15 @@ Pneuma（dsc 仓库）的桌面端：Electron 壳 + headless 宿主子进程（u
 ┌ Electron 壳（本包）
 │  ├ main：窗口、utilityProcess 拉起宿主、IPC、目录选择/记忆（~/.dsc/desktop.json）
 │  ├ preload：contextBridge 暴露 window.dsc（invoke/onSnapshot/…）
-│  └ renderer：React 暗色聊天 UI（组件对照 TUI 移植，复用 dsc 的命令补全）
+│  └ renderer：默认加载**插件化界面壳**（`ui-shell/` 的产物，落 `lib/ui/assets`），旧渲染层 `desktop/src/renderer/` 退居可回退档（`uiProfile()` 返回 `legacy` 时）
 └ 宿主 = utilityProcess 跑 dsc 的 bin/headless.cjs
    （CJS shim 保活 + 动态 import lib/headless.js；base 插件集 + host-stdio 协议桥）
 ```
 
 宿主复用 dsc 的插件内核：工具、命令、LLM 路由、会话、审批全部是 cordis 插件，
 外部插件（`~/.dsc/plugins/*.js` 与 config.yaml `plugins` 段）对桌面端同样生效。
+
+界面形态由 `desktop/electron/main/index.ts` 的 `uiProfile()` 决定，默认 `'shell'`。
 
 ## 开发
 

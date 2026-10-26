@@ -201,12 +201,18 @@ console.log('[3] 量算契约（thread-resizer.tsx 与 app.tsx 的接线）')
       resizer.includes("window.addEventListener('resize', measure)"),
   )
   check('挂载当帧先量一次（useLayoutEffect）', /useLayoutEffect\(\(\) => \{\s*\n\s*measure\(\)/.test(resizer))
-  check('拖动中每帧改变量 + 重量（把手与列缘同帧对齐）', /setRootVar\('--dsc-thread-max'[\s\S]{0,80}?measure\(\)/.test(resizer))
+  // 2026-10-26 改名：写 --dsc-thread-user-max（空态的元素级 --dsc-thread-max 会压过根变量）。
+  check('拖动中每帧改变量 + 重量（把手与列缘同帧对齐）', /setRootVar\('--dsc-thread-user-max'[\s\S]{0,140}?measure\(\)/.test(resizer))
   check('左把手 sign = -2、右把手 sign = 2（一次位移换两倍宽度）', resizer.includes('{ ...shared, sign: -2, onCommit: props.onCommit }') && resizer.includes('{ ...shared, sign: 2, onCommit: props.onCommit }'))
   check('高亮条跟着鼠标竖向位置走', resizer.includes('trackPointerY: true'))
   check('松手才落盘（onCommit 传给 useWidthDrag）', (resizer.match(/onCommit: props\.onCommit/g) ?? []).length === 2)
   check('侧栏那条的 sign = 1（与正文两侧不同口径）', /sidebarDrag = useWidthDrag\(\{\s*\n\s*sign: 1,/.test(app))
-  check('存档在启动时铺上 --dsc-thread-max（拖动路径之外的那一半）', app.includes("setRootVar('--dsc-thread-max'"))
+  check('存档在启动时铺上 --dsc-thread-user-max（拖动路径之外的那一半）', app.includes("setRootVar('--dsc-thread-user-max'"))
+  // 空态那条元素级声明必须引用同一个用户变量，否则空会话里拖不动（2026-10-26 用户报的）。
+  check(
+    '空态列宽引用用户变量（元素级声明不再写死 720）',
+    /\.thread-main-empty \{\s*--dsc-thread-max: var\(--dsc-thread-user-max, 720px\)/.test(read('ui-shell/src/styles.css')),
+  )
   check('两条把手挂在 .thread-zone 里（正文列之外那一层）', app.includes('<ThreadResizer width={threadWidth} onCommit={commitThreadWidth} onReset={resetThreadWidth} />'))
   check('双击复位 = 删存档（回 76ch）', resizer.includes('onDoubleClick={props.onReset}') && app.includes('writeStoredPx(PANEL_KEYS.threadWidth, null)'))
 }

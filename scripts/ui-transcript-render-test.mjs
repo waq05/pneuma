@@ -21,6 +21,8 @@
  *   [5] 开合动画（0.6.69）：过程区包一层 + grid-template-rows 0fr↔1fr + 收起延迟挂 hidden
  *   [6] 悬停预览的收卡口径（0.6.69 第五轮）：出卡 500ms 照参考实现，**收卡 1s 是壳侧有意分道**，
  *       且卡片自己挂着 mouseleave（只挂 keep 会让卡粘住不走）
+ *   [8] 收起态的结果与失败数（对照 codex 的活动流）：工具卡摊 3 行结果尾巴、
+ *       组头报失败条数——两条都是「不点开也能读到结果」的同一件事
  *   [7] 分轮口径单点 + internal 条目对齐 dsh（右侧刻度条 `.jump-rail` 错位 / 多刻度报障）：
  *       座位切分与轮元信息同源（rounds.ts 的 `splitRounds`）、steering 不另起一轮、
  *       回合中途并进的 internal 不增刻度而回合收尾的增一枚、internal 题面预览不出现原文
@@ -339,6 +341,53 @@ console.log('[7] 分轮口径单点 + internal 条目对齐 dsh（0.6.67 右侧�
       JSON.stringify(seen),
     )
   }
+}
+
+
+console.log('[8] 收起态的结果与失败数（对照 codex 的活动流）')
+{
+  const tailMod = await import(
+    new URL('../ui-shell/src/plugins/transcript/tool-card/result-tail.ts', import.meta.url).href
+  )
+  const { resultTail, RESULT_TAIL_LINES } = tailMod
+  const factory = read('ui-shell/src/plugins/transcript/tool-card/factory.tsx')
+  const row = read('ui-shell/src/plugins/transcript/step-group-row.tsx')
+  const css = read('ui-shell/src/styles.css')
+
+  // ── 纯逻辑：取尾巴、丢空行、算隐藏行数 ──
+  const six = ['1', '2', '3', '4', '5', '6'].join('\n')
+  const tail = resultTail(six)
+  check('结果尾巴取最后 3 行', RESULT_TAIL_LINES === 3 && tail.lines.join(',') === '4,5,6', JSON.stringify(tail))
+  check('隐藏行数 = 总行数 - 摊出来的行数', tail.hidden === 3, String(tail.hidden))
+  check('末尾空行不占预览位', resultTail('a\nb\n\n\n')?.lines.join(',') === 'a,b')
+  check('中间的空白行不进预览（3 行都留给真内容）', resultTail('a\n\n\nb\n\nc')?.lines.join(',') === 'a,b,c')
+  check('结果为空 / 没回来时不给预览', resultTail('') === null && resultTail('   \n') === null && resultTail(undefined) === null)
+  const clipped = resultTail('x'.repeat(400))?.lines[0] ?? ''
+  check('单行超长截到 300 字并补省略号', Array.from(clipped).length === 300 && clipped.endsWith('…'), String(Array.from(clipped).length))
+  check('不到 3 行时 hidden 为 0', resultTail('只有一行')?.hidden === 0)
+
+  // ── 分组器：失败数只算 failed，不把「用户拒绝审批」算进来 ──
+  const entries = [
+    { kind: 'user', id: 1, text: '题面', ts: 1 },
+    { kind: 'thinking', id: 2, text: '想' },
+    { kind: 'tool', id: 3, call: { callId: 'a', name: 'bash', argsText: '{}', status: 'failed' } },
+    { kind: 'tool', id: 4, call: { callId: 'b', name: 'read', argsText: '{}', status: 'done' } },
+    { kind: 'tool', id: 5, call: { callId: 'c', name: 'bash', argsText: '{}', status: 'rejected' } },
+    { kind: 'text', id: 6, text: '答完', ts: 9 },
+  ]
+  const rounds = [{ index: 0, startIndex: 0, endIndex: 5, startTs: 1, endTs: 9, answered: true }]
+  const grouping = groupSteps(entries, rounds, () => false)
+  check('组头失败数只算 failed（rejected 是用户拒绝，不是跑挂）', grouping.groups[0].failures === 1, JSON.stringify(grouping.groups[0].failures))
+
+  // ── 渲染与样式的接线 ──
+  check('组头把失败数画出来（data-step-failures）', row.includes('step-fold-fail') && row.includes('data-step-failures={props.group.failures}'))
+  check('失败数也进开合提示（不点开就知道里面有没有坑）', row.includes('其中 ${String(props.group.failures)} 项失败'))
+  check('工具卡收起态摊结果尾巴（resultTail + tool-tail）', factory.includes('resultTail(call.resultText)') && factory.includes('className="tool-tail"'))
+  check('展开态 / 轨迹页不重复摊同一份结果', factory.includes("bodyOpen || variant !== 'chat' || running ? null : resultTail"))
+  check('被截断的行数写在头行（tc-more）', factory.includes('tc-more') && factory.includes('tail.hidden > 0'))
+  check('结果尾巴样式落在壳的覆盖层（不碰 legacy）', css.includes('.tool-tail {') && css.includes('.tool-tail-text {') && /white-space: pre;/.test(css))
+  check('组体缩进 + 竖线（层级在版面上看得见）', /\.step-body \{[\s\S]{0,160}border-left: 1px solid[\s\S]{0,120}padding-left: 9px/.test(css))
+  check('失败数在窄屏也不隐藏（它是读数，不是装饰）', !/\.step-fold-fail[^{}]*\{[^}]*display: none/.test(css))
 }
 
 console.log('')

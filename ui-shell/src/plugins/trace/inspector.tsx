@@ -16,7 +16,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { IconClose, IconCopy, toastErr, toastOk, type TranscriptEntry } from '@dsc/ui'
 // 时刻/用量口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
-import { formatClock, formatTokens } from '@dsc/ui-primitives'
+import { formatClock, formatTokens, useDialogFocus } from '@dsc/ui-primitives'
 import { KIND_LABEL, entryUsage, formatClockSeconds, formatTraceDuration, prettyMaybeJson } from './trace-format'
 
 export function TraceInspector(props: {
@@ -33,18 +33,12 @@ export function TraceInspector(props: {
   const { entry } = props
   const [zoom, setZoom] = useState<string | null>(null)
 
-  // Esc 与 × 同一条退路：键盘用户不该被迫去点右上角。
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
-      setZoom(null)
-      props.onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [props])
+  // Esc 与 × 同一条退路：键盘用户不该被迫去点右上角。焦点交给基元管：
+  // 打开移进检查器、Tab 在里面循环、关掉还给刚才点的那条记录。
+  const dialog = useDialogFocus(true, () => {
+    setZoom(null)
+    props.onClose()
+  })
 
   const usage = entryUsage(entry)
   const usageTotal = usage === null ? null : usage.inputTokens + usage.outputTokens
@@ -66,6 +60,7 @@ export function TraceInspector(props: {
       role="dialog"
       aria-modal="true"
       aria-label="这一条记录的检查器"
+      ref={dialog.ref}
     >
       <div className="ti-head">
         <span className="ti-kind">{entry.kind === 'text' ? '正文' : KIND_LABEL[entry.kind]}</span>

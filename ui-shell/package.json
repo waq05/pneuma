@@ -13,6 +13,7 @@
     "build:types": "node build-types.mjs"
   },
   "dependencies": {
+    "@deepseek-ai/cordis": "^4.0.4",
     "@shikijs/langs": "^4.5.0",
     "@shikijs/themes": "^4.5.0",
     "@xterm/addon-fit": "^0.11.0",

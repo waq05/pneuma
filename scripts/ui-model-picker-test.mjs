@@ -246,7 +246,11 @@ console.log('[8] 界面接线（ui.tsx）')
       ui.includes('new ResizeObserver'),
   )
   check('用 useLayoutEffect（同一帧内先归位再量，不然会先画一帧「两段都截半」）', ui.includes('useLayoutEffect(') && ui.includes('import { useEffect, useLayoutEffect'))
-  check('档位 chip 的读数取宿主快照（不靠模型清单，清单过期也不会显示错）', ui.includes('readEffort)') && ui.includes('const effortText = effortLabel(effort)'))
+  // 2026-10-26：读数改成「乐观值优先、宿主快照兜底」（pendingEffort），判定仍不看模型清单。
+  check(
+    '档位 chip 的读数取宿主快照（不靠模型清单，清单过期也不会显示错）',
+    ui.includes('readEffort)') && ui.includes('const shownEffort = pendingEffort ?? effort') && ui.includes('const effortText = effortLabel(shownEffort)'),
+  )
   check('档位 chip 分成「可切」与「单档」两条路（单档不给浮层、不给箭头）', ui.includes('{switchEffort ? (') && ui.includes('className="model-btn composer-effort-chip fixed"'))
   check('当前模型与档位都走纯模块判定（不是就地拍脑袋）', ui.includes('findCurrent(groups, provider, model)') && ui.includes('effortChoices(current.entry)'))
   check('旧口径不许回来：`value === model` 判勾 / 直接用 thinkingLevels / 壳里再抄一份档位表', !ui.includes('=== model') && !ui.includes('.thinkingLevels') && !ui.includes('EFFORT_FALLBACK') && !ui.includes('EFFORT_LABEL'))

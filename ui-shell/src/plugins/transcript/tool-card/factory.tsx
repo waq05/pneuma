@@ -15,7 +15,7 @@
  *
  * @module dsc-ui-shell/plugins/transcript/tool-card
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   DiffRows,
   IconChevronDown,
@@ -31,6 +31,7 @@ import {
 // 路径/时刻/工具摘要口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
 import { TOOL_STATUS_TEXT, displayPathOf, formatDuration, matchTool, prettyJson, toolArgFields, toolSummary, toolVerb, type ToolMatch } from '@dsc/ui-primitives'
 import { readFold, writeFold } from '../fold-state'
+import { resultTail } from './result-tail'
 import { useIntendedDiff, type IntendedDiff } from '../intended-diff'
 /**
  * 类型只从 ui.tsx 借（`import type` 编译期擦掉，不形成运行期循环：ui.tsx 会 import 本文件）。
@@ -158,6 +159,17 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
   const patch = intended?.file ?? call.change ?? null
   const argView = toolArgFields(call.name, call.argsText)
   const paramsAsFields = patch !== null && argView.mutating
+  /**
+   * 收起态的结果尾巴（见 result-tail.ts）：只给对话页、只给没展开的卡。
+   *
+   * 为什么展开态不给：那一份结果本来就在展开体里，再摊一遍是同一段文字出现两次。
+   * 跑动中的卡也不给——结果还没定，摊出来的半截输出会一跳一跳。
+   * trace 页不给：那一页的卡是「一行一条」的紧凑清单，多三行会把整页的密度打散。
+   */
+  const tail = useMemo(
+    () => (bodyOpen || variant !== 'chat' || running ? null : resultTail(call.resultText)),
+    [bodyOpen, variant, running, call.resultText],
+  )
 
   /** 展开态一变就写回存档（不持久化的调用点 writeFold 自己空操作）。 */
   const setOpenPersisted = (next: boolean): void => {
@@ -239,10 +251,29 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
         {/* 认不出的工具保留原名：没有它就看不出这是哪家的工具（MCP 那些名字不直观）。 */}
         {match.known ? null : <span className="name">{call.name}</span>}
         <Preview intended={intended} summary={summary} cwd={cwd} targetPath={targetPath} change={call.change ?? null} />
+        {/* 还有几行没摊出来：把「点开能看到更多」写在明面上（codex 的「+ N lines」）。
+            只在收起态、且确实有截断时出现；不占焦点，点整行照旧是展开。 */}
+        {tail !== null && tail.hidden > 0 ? (
+          <span className="tc-more" title={`结果还有 ${String(tail.hidden)} 行，点开看全部`}>
+            {`+${String(tail.hidden)} 行`}
+          </span>
+        ) : null}
         <StatusDetail call={call} />
         <Trailing entry={entry} />
         {expandable ? <IconChevronDown size={11} className="tc-chevron" /> : null}
       </div>
+      {/* 结果尾巴：收起态下把最后几行结果摊在头行下面，卡不用点开就先给一句交代。
+          与头行同一张卡（左边那条状态色竖条照旧连着），不是第二个盒子。 */}
+      {tail === null ? null : (
+        <div className="tool-tail" data-tool-tail={tail.lines.length} data-tool-tail-hidden={tail.hidden}>
+          {tail.lines.map((line, index) => (
+            <div className="tool-tail-line" key={`${String(index)}:${line.slice(0, 32)}`}>
+              <span className="tool-tail-gutter" aria-hidden="true">{index === 0 ? '└' : ' '}</span>
+              <span className="tool-tail-text">{line}</span>
+            </div>
+          ))}
+        </div>
+      )}
       {bodyOpen ? (
         <div className="tool-body" ref={bodyRef}>
           {barVisible && variant === 'chat' ? (

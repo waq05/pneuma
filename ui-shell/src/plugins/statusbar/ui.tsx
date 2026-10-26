@@ -30,12 +30,15 @@ import {
   defineUiPlugin,
   getHostNative,
   IconActivity,
+  IconCoins,
   IconDatabase,
   useHostSelector,
   type ContextSegmentsView,
   type HostSnapshot,
   type StatusView,
+  useTodayUsage,
 } from '@dsc/ui'
+import { formatCostCny } from '@dsc/ui-primitives'
 
 export default defineUiPlugin({
   name: '状态栏',
@@ -82,6 +85,29 @@ interface SessionUsageView {
 /** status 缺席时读字段用的空壳：下面每个 reader 对空壳都回「没有」。 */
 const EMPTY_STATUS: Readonly<Record<string, unknown>> = Object.freeze({})
 
+/**
+ * 末段：今日总量与估算金额（全局口径，与侧栏页脚同源）。
+ *
+ * 为什么状态栏要有它：侧栏一收起，页脚那行就看不见了；金额恰恰是"要不要继续跑"的判断依据。
+ * 这一段只在今天有记录时才出——「今日 0 tok」不是读数，是噪音。
+ */
+function TodaySegment({ tokens, cost }: { tokens: number; cost: number | null }): ReactNode {
+  const text = `${formatTokens(tokens)} tok${cost === null ? '' : ` · ${formatCostCny(cost)}`}`
+  return (
+    <span className="segment seg-today">
+      <span
+        className="ctx-trigger"
+        title={`今天所有会话累计 ${text}（输入 + 输出，含其他窗口的会话；金额为估算，每分钟刷新）`}
+      >
+        <span className="seg-icon">
+          <IconCoins size={12} />
+        </span>
+        今日 {text}
+      </span>
+    </span>
+  )
+}
+
 /** 装配三段。 */
 function StatusSegments(): ReactNode {
   // 一个字段一个订阅，值没变就不重渲染——为什么这么切见 useStatusField。
@@ -108,6 +134,8 @@ function StatusSegments(): ReactNode {
 
   // 快照口径的本会话累计 token；它一变就说明有一次请求刚落进日志（useSessionUsage 的重读键）。
   const settledTokens = (inputTokens ?? 0) + (outputTokens ?? 0)
+  // 今日总量与金额：与侧栏页脚同一份取数（useTodayUsage），会话 token 一变就跟着重读。
+  const today = useTodayUsage(settledTokens)
   const logged = useSessionUsage(sessionId, turnState, settledTokens)
   const clock = useSessionClock(sessionId, activity, hasContent)
   // 输出速度 = 已定稿请求的输出 token ÷ 纯解码时间（整会话累计，口径见 core/throughput.ts）；
@@ -159,6 +187,12 @@ function StatusSegments(): ReactNode {
         }}
       />,
     )
+  }
+
+  // 今日读数是**全局**的（所有会话），与前面三段的本会话口径不同：放在一行的最后，
+  // 前缀写明"今日"，悬浮说明再点明范围，免得被读成"这个会话用了这么多"。
+  if (today.tokens > 0) {
+    parts.push(<TodaySegment key="today" tokens={today.tokens} cost={today.cost} />)
   }
 
   // 一段都画不出来（宿主一帧没推、或这一版快照没有 status）就整条不占位置。

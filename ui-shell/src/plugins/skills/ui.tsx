@@ -32,6 +32,7 @@ import {
   useHostChannel,
   useShellPage,
 } from '@dsc/ui'
+import { SkeletonText, humanErrorText } from '@dsc/ui-primitives'
 
 /** 这一页在 page-state 里的 id（侧栏入口与页条目约定同一个值）。 */
 const PAGE = 'skills'
@@ -401,12 +402,37 @@ function SkillsView(): ReactNode {
 
       {tab === 'installed' ? (
         <div className="skills-list">
-          {skillsError !== '' && <div className="settings-note error">扫描失败：{skillsError}</div>}
-          {skills === null && skillsError === '' && <div className="settings-empty">正在扫描技能目录…</div>}
+          {skillsError !== '' && <div className="settings-note error">扫描失败：{humanErrorText(skillsError).text}</div>}
+          {skills === null && skillsError === '' && (
+            <div className="settings-loading" role="status" aria-label="正在扫描技能目录">
+              <SkeletonText lines={4} />
+              <SkeletonText lines={3} widths={['100%', '100%', '54%']} />
+            </div>
+          )}
           {skills !== null && skills.length === 0 && skillsError === '' && (
-            <div className="plugins-empty">
-              还没有技能。将 <code>&lt;名字&gt;/SKILL.md</code> 放入 <code>~/.dsc/skills/</code> 或项目的{' '}
-              <code>.dsc/skills</code>，或点击右上角「导入技能」，也可在「市场」页安装。
+            <div className="empty-card">
+              <span className="empty-card-icon">
+                <IconBolt size={18} />
+              </span>
+              <div className="empty-card-title">还没有技能</div>
+              <p className="empty-card-desc">
+                把 <code>&lt;名字&gt;/SKILL.md</code> 放进 <code>~/.dsc/skills/</code> 或项目的{' '}
+                <code>.dsc/skills</code>，也可以直接导入一个目录。
+              </p>
+              <div className="empty-card-actions">
+                <button type="button" className="btn-primary" onClick={importSkill}>
+                  导入技能
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => {
+                    setTab('market')
+                  }}
+                >
+                  去市场看看
+                </button>
+              </div>
             </div>
           )}
           {filtered.map((skill) => (

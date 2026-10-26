@@ -23,6 +23,7 @@ import {
   type ArchivedSessionView,
   type SettingsMutation,
 } from '@dsc/ui'
+import { humanErrorText } from '@dsc/ui-primitives'
 
 /** 拿异常的文字形态。 */
 function text(error: unknown): string {
@@ -67,7 +68,7 @@ export function ArchiveGroup(): ReactNode {
     void channel
       .invoke<ArchivedPage>('listArchivedSessions')
       .then(setPage)
-      .catch((error: unknown) => setNote({ tone: 'error', text: `读取归档失败：${text(error)}` }))
+      .catch((error: unknown) => setNote({ tone: 'error', text: `读取归档失败：${humanErrorText(error).text}` }))
   }
   const reload = (): void => {
     setNote(null)
@@ -88,7 +89,7 @@ export function ArchiveGroup(): ReactNode {
         setNote({ tone: 'ok', text: result.notice ?? fallbackNotice })
         load()
       })
-      .catch((error: unknown) => setNote({ tone: 'error', text: `操作失败：${text(error)}` }))
+      .catch((error: unknown) => setNote({ tone: 'error', text: `操作失败：${humanErrorText(error).text}` }))
   }
 
   /** 用原生桥在文件管理器里打开回收站；桥缺席（浏览器）时说清而不是崩。 */
@@ -126,8 +127,14 @@ export function ArchiveGroup(): ReactNode {
           </div>
 
           {page.items.length === 0 && (
-            <div className="settings-empty">
-              归档区是空的。在侧边栏会话行点击归档按钮可归档单个会话，或在工作区行点击归档按钮归档整组会话。
+            <div className="empty-card compact">
+              <span className="empty-card-icon">
+                <IconArchive size={18} />
+              </span>
+              <div className="empty-card-title">归档区是空的</div>
+              <p className="empty-card-desc">
+                侧栏会话行的归档按钮收单个会话，工作区行的归档按钮收整组。放这儿的东西 30 天后自动清理。
+              </p>
             </div>
           )}
 

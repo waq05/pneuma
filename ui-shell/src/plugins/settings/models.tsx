@@ -65,7 +65,7 @@ import {
   type ThinkingLevel,
 } from '@dsc/ui'
 // 基元从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
-import { Select } from '@dsc/ui-primitives'
+import { Select, useDialogFocus } from '@dsc/ui-primitives'
 import { buildKnownIndex, inferModelCaps, type InferredCaps, type KnownModel } from './model-infer'
 
 /** 左栏那条「新增端点」伪条目的键（表单占着右栏时，左栏也得有它的位置）。 */
@@ -1775,18 +1775,8 @@ function DiscoverDialog(props: {
   const selectable = filtered.filter((id) => !existing.has(id))
   const chosenVisible = selectable.filter((id) => chosen.has(id)).length
 
-  // Esc 关弹窗：与检查器同一套退路。依赖写成 props.onClose 的「快照」会每次重挂，
-  // 这里干脆依赖整个 props（弹窗生命周期很短，多挂几次监听不是问题）。
-  const onClose = props.onClose
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [onClose])
+  // 焦点与 Esc 走基元：打开移进弹窗、Tab 在卡内循环、Esc 关、关掉还回「拉取模型」那颗钮。
+  const dialog = useDialogFocus(provider !== null, props.onClose)
 
   if (provider === null) return null
 
@@ -1821,7 +1811,7 @@ function DiscoverDialog(props: {
         if (event.target === event.currentTarget) props.onClose()
       }}
     >
-      <div className="dsc-overlay__card models-discover-card">
+      <div className="dsc-overlay__card models-discover-card" ref={dialog.ref}>
         <div className="models-discover-head">
           <span className="models-discover-title">
             线上模型清单 · {provider.displayName === '' ? provider.name : provider.displayName}

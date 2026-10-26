@@ -496,10 +496,14 @@ console.log('[8] git 快照面（surfaces.git）+ 分支清单 / 切分支 / 建
   // 只回 staged/unstaged/untracked 三段）。
   const status = await dock.handle('git-status', { stats: true })
   check('分支名与 git-status 一致', mine.branch === status.branch, `${mine.branch} vs ${status.branch}`)
+  // 快照面是**按拍缓存的读数**（git 插件每隔一两秒读一次），工作区刚变过的那一下它会落后
+  // 一拍；这一步之前刚切过会话、写计划文件，所以不能拿「同一瞬间的两次读」硬比。
+  // 等两拍再比：等不到才是真口径不一致（慢不算错，错才算错）。
+  const sameCount = await pollUntil(() => surfaces().git.dirtyFileCount === status.dirtyFileCount, 4000)
   check(
     '改动计数与 git-status 同一口径（含未跟踪，且只看 cwd 之内）',
-    mine.dirtyFileCount === status.dirtyFileCount,
-    `${String(mine.dirtyFileCount)} vs ${String(status.dirtyFileCount)}`,
+    sameCount,
+    `${String(surfaces().git.dirtyFileCount)} vs ${String(status.dirtyFileCount)}`,
   )
   check('detached = false（HEAD 挂在分支上）', mine.detached === false, JSON.stringify(mine))
 

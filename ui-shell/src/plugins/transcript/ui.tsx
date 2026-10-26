@@ -37,10 +37,14 @@ import {
   FileIcon,
   IconBranch,
   IconChevronDown,
+  IconClock,
   IconChevronUp,
+  IconCode,
   IconCopy,
+  IconDiff,
   IconEdit,
   IconSpark,
+  IconTarget,
   MarkdownView,
   defineUiPlugin,
   estimateTextTokens,
@@ -50,12 +54,17 @@ import {
   setDockReview,
   toastErr,
   toastOk,
+  useActions,
   useHostChannel,
   useHostSelector,
+  useService,
+  ACTIONS_SERVICE,
+  type ActionsHandle,
   type ChangedFileView,
   type HostSnapshot,
   type SlotComponentProps,
   type SlotMatchedOf,
+  type SessionSummary,
   type SlotOwnerOf,
   type TranscriptEntry,
 } from '@dsc/ui'
@@ -294,6 +303,40 @@ function useFollowBottom(
 
   return { setEnd, paused, resume, pause }
 }
+
+/**
+ * 首屏四张能力卡（对照 Codex UI 的 home cards）：点一下把提示词写进输入框，不直接发送——
+ * 提示词里带冒号的留了下一句的位置，用户可以接着补。
+ *
+ * 图标只用壳里已有的（IconCode / IconSpark / IconDiff / IconTarget），不新画一套。
+ */
+interface ComposerDraftService {
+  insert(text: string): void
+}
+
+const WELCOME_CARDS: ReadonlyArray<{
+  id: string
+  Icon: (props: { size?: number }) => ReactNode
+  title: string
+  hint: string
+  prompt: string
+}> = [
+  { id: 'read', Icon: IconCode, title: '看懂代码', hint: '解释一处实现的来龙去脉', prompt: '帮我讲清楚这段代码在做什么：\n' },
+  { id: 'build', Icon: IconSpark, title: '做点东西', hint: '从需求一路写到能跑', prompt: '帮我实现：' },
+  {
+    id: 'review',
+    Icon: IconDiff,
+    title: '审查改动',
+    hint: '看未提交的改动有没有坑',
+    prompt: '审查当前未提交的改动，指出风险、遗漏和可以简化的地方。',
+  },
+  { id: 'fix', Icon: IconTarget, title: '排查问题', hint: '从一个报错查到根因', prompt: '帮我排查一下这个问题：\n' },
+]
+
+/** 动作 id → 图标：动作表里只存文案与动作，图标是转录插件自己的资产（见下面的登记）。 */
+const WELCOME_ICON_BY_ID: ReadonlyMap<string, (props: { size?: number }) => ReactNode> = new Map(
+  WELCOME_CARDS.map((card) => [`welcome.${card.id}`, card.Icon] as const),
+)
 
 function TranscriptFlow({
   renderSlot,
@@ -595,28 +638,141 @@ function TranscriptFlow({
     release(round)
   }
 
-  // 空会话欢迎态（与旧桌面界面同一份文案）：开场 system 提示行作注脚，
-  // 「会话 x · 模型 y」那条开场标不画——它在状态栏悬浮卡里，再画一遍是重复。
+  // 开场 system 条目不铺在首屏：启动期的沙箱档位、迁移报告、模型配置提示这些属于
+  // **日志与轨迹**（会话 jsonl 里一条不少，轨迹页也照常看得到）。首屏只留一句人话。
+  // 真出问题（带 level: 'error' 的条目，例如没有可用的模型端点）改成一次 Toast：
+  // 弹窗负责「告诉你现在干不了活、去哪儿修」，正文里的那几行命令交给设置页。
+  // 能力卡点击后往输入框写字（provider 是 composer 插件；缺席时卡片置灰，点了没反应比没有更糟）。
+  const composerDraft = useService<ComposerDraftService>('composerDraft')
+
+  // 四张卡片同时登记成动作表里的四条：命令面板搜「看懂代码」也能直接落到输入框。
+  // 文案只在这一处声明（WELCOME_CARDS），卡片与面板读同一份。
+  const actionsHandle = useService<ActionsHandle>(ACTIONS_SERVICE)
+  useEffect(() => {
+    if (actionsHandle === undefined) return undefined
+    return actionsHandle.register(
+      'transcript',
+      WELCOME_CARDS.map((card) => ({
+        id: `welcome.${card.id}`,
+        label: card.title,
+        hint: card.hint,
+        group: '提示词',
+        keywords: ['提示词', 'prompt'],
+        run: () => {
+          composerDraft?.insert(card.prompt)
+        },
+      })),
+    )
+  }, [actionsHandle, composerDraft])
+
+  // 首屏的「接着上次做」：最近七天内改过、且有标题的那条会话（排除当前这条）。
+  // 为什么按七天截断：再久的东西不该在空会话首屏上抢位置——侧栏里还找得到。
+  const sessions = useHostSelector(readSessions)
+  const resume = useMemo(() => {
+    const now = Date.now()
+    return (
+      [...sessions]
+        .filter(
+          (session) =>
+            session.archivedAt === undefined &&
+            session.id !== sessionPath &&
+            (session.title ?? '') !== '' &&
+            now - session.updatedAt < 7 * 24 * 60 * 60 * 1000,
+        )
+        .sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null
+    )
+  }, [sessions, sessionPath])
+
+  // 首屏卡片的两种来源：动作表（常驻，含命令面板里的那几条），或动作表缺席时的内置清单。
+  const registeredActions = useActions()
+  const promptActions = useMemo(
+    () => registeredActions.filter((action) => action.group === '提示词'),
+    [registeredActions],
+  )
+  const welcomeCards = useMemo(() => {
+    if (promptActions.length > 0) {
+      return promptActions.map((action) => ({
+        id: action.id,
+        Icon: WELCOME_ICON_BY_ID.get(action.id) ?? IconSpark,
+        title: action.label,
+        hint: action.hint ?? '',
+        run: action.run,
+      }))
+    }
+    return WELCOME_CARDS.map((card) => ({
+      id: card.id,
+      Icon: card.Icon,
+      title: card.title,
+      hint: card.hint,
+      run: () => {
+        composerDraft?.insert(card.prompt)
+      },
+    }))
+  }, [promptActions, composerDraft])
+
+  const bootError = useMemo(() => {
+    const row = seats.leading.find((item) => item.entry.kind === 'system' && item.entry.level === 'error')
+    return row !== undefined && row.entry.kind === 'system' ? row.entry : null
+  }, [seats.leading])
+
+  useEffect(() => {
+    if (bootError === null) return
+    // 只弹第一行：后面几行是命令示例，弹窗里放不下，也不该抢视线。
+    toastErr(bootError.text.split('\n')[0] ?? '启动时有问题需要处理')
+  }, [bootError?.id, sessionKey])
+
+  // 空会话欢迎态（与旧桌面界面同一份文案）。
   if (seats.rounds.length === 0 && seats.leading.every((row) => row.entry.kind === 'system')) {
     return (
       <div className="welcome">
+        {/* 品牌声部（P1-4）：空态是唯一"整屏都是我们"的地方，这里给 logo 一个位置。
+            尺寸走 --dsc-logo-xl，与侧栏 20px / 窄栏 22px 同一套档位（见 styles.css 的
+            "品牌档位"段），不在这里写死像素。 */}
+        <img className="welcome-logo" src="icon.png" alt="" aria-hidden="true" draggable={false} />
         <h1>有什么可以帮忙的？</h1>
         <p>
           输入 <code>/</code> 查看可用指令 · 消息会携带当前工作目录上下文
         </p>
+        <div className="welcome-cards">
+          {welcomeCards.map((card) => (
+            <button
+              key={card.id}
+              type="button"
+              className="welcome-card"
+              disabled={composerDraft === undefined}
+              onClick={card.run}
+            >
+              <card.Icon size={16} />
+              <span className="welcome-card-text">
+                <span className="welcome-card-title">{card.title}</span>
+                <span className="welcome-card-hint">{card.hint}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+        {resume === null ? null : (
+          <button
+            type="button"
+            className="welcome-resume"
+            onClick={() => {
+              void (async () => {
+                await channel.invoke('openSession', [resume.id])
+                await channel.invoke('refreshSessions', [])
+              })()
+            }}
+          >
+            <IconClock size={13} />
+            <span className="welcome-resume-title">接着上次：{resume.title}</span>
+            <span className="welcome-resume-time">{elapsedLabel(resume.updatedAt)}</span>
+          </button>
+        )}
         {seats.leading.map((row) => {
-          const text = row.entry.kind === 'system' ? row.entry.text : ''
-          if (isSessionMarker(text)) return null
+          if (row.entry.kind !== 'system') return null
           // 自动跑起来的那一轮（定点任务之类）没有用户消息，它的写前预览会落在开场区；
           // 这里同样走卡片——同一条通知在哪个位置都不该变成居中的一大坨。
-          const notice = parseReviewNotice(text)
-          return notice === null ? (
-            <div className="welcome-note" key={keyOf(row, sessionKey)}>
-              {text}
-            </div>
-          ) : (
-            <ReviewNoticeCard key={keyOf(row, sessionKey)} notice={notice} cwd={cwd} />
-          )
+          const notice = parseReviewNotice(row.entry.text)
+          if (notice === null) return null
+          return <ReviewNoticeCard key={keyOf(row, sessionKey)} notice={notice} cwd={cwd} />
         })}
       </div>
     )
@@ -694,6 +850,24 @@ function TranscriptFlow({
 /** processFold 的取值收窄（线上来的值对不上就回落 standard）。 */
 function readFoldValue(value: unknown): ProcessFold {
   return value === 'compact' || value === 'detailed' || value === 'verbose' ? value : 'standard'
+}
+
+/** 会话清单（首屏「接着上次」用；快照里没有时给空表）。 */
+const NO_SESSIONS: readonly SessionSummary[] = Object.freeze([])
+
+function readSessions(snapshot: HostSnapshot | null): readonly SessionSummary[] {
+  const value = snapshot?.['sessions']
+  return Array.isArray(value) ? (value as SessionSummary[]) : NO_SESSIONS
+}
+
+/** 相对时间（分钟 / 小时 / 天）：首屏那一行只需要「多久以前」，精确到秒没有意义。 */
+function elapsedLabel(at: number): string {
+  const minutes = Math.max(Math.round((Date.now() - at) / 60_000), 0)
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${String(minutes)} 分钟前`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${String(hours)} 小时前`
+  return `${String(Math.round(hours / 24))} 天前`
 }
 
 /** 读当前会话的 jsonl 路径（换会话时分页重置用）。 */
@@ -2061,18 +2235,6 @@ class RowBoundary extends Component<{ entry: TranscriptEntry; children: ReactNod
  */
 function keyOf(row: Row, sessionKey: string): string {
   return `${sessionKey}|${String(row.entry.id)}`
-}
-
-/**
- * 识别宿主开场写进消息流的那条「会话 xxx · 模型 yyy」（桌面端 session-marker.ts 同款）。
- * 状态栏悬浮卡已经带着会话 id 与模型，欢迎态里再画一遍是重复。
- * 为什么按正文形状认而不是按 kind 认：system 这一个 kind 混着十几种通知，
- * 只有这一条的正文长得出来这个形状；认不出就不动它。
- */
-const SESSION_MARKER = /^会话 \S+ · 模型 \S+$/
-
-function isSessionMarker(text: string): boolean {
-  return SESSION_MARKER.test(text.trim())
 }
 
 /**

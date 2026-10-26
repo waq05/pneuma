@@ -12,6 +12,7 @@ import { listPluginInfos, writePluginEnabled } from '../core/plugin-registry.js'
 import { setPluginEnabledHot } from '../core/plugin-loader.js'
 import { readUiPluginManifestReport, isThirdPartyUiEntry, scanThirdPartyUiTrusts, trustThirdPartyUiPlugin } from '../core/ui-bundles.js'
 import { buildUsageStats } from '../core/usage-log.js'
+import { sideAskOnce } from '../core/side-ask.js'
 import { shellCommandRejection, shellCommands } from '../core/commands-completion.js'
 import type { DscRuntime, SettingsMutation } from '../contract.js'
 
@@ -69,6 +70,15 @@ export const runtimePlugin: Plugin.Object = {
       }
     }
 
+    /**
+     * 进行中的旁问：票据 → 取消信号。
+     *
+     * 为什么要一张表：
+     * - 界面要能「停止」（一张票据换一个 AbortController）；
+     * - 同一张票据重复发（双击）时先掐掉旧的，不留两条同时烧 token。
+     */
+    const sideAsks = new Map<string, AbortController>()
+
     const runtime: DscRuntime = {
       subscribe(listener) {
         return ctx.transcript.subscribe(listener)
@@ -125,7 +135,7 @@ export const runtimePlugin: Plugin.Object = {
         ctx.transcript.touch()
       },
 
-      async setEffort(effort) {
+      async setEffort(effort, quiet = false) {
         try {
           ctx.llm.setEffort(effort)
         } catch (error) {
@@ -133,13 +143,18 @@ export const runtimePlugin: Plugin.Object = {
           ctx.transcript.touch()
           return
         }
-        const label =
-          effort === 'default'
-            ? '默认（不声明思考）'
-            : effort === 'off'
-              ? '关闭'
-              : { low: '低', high: '高', max: '最大' }[effort]
-        ctx.transcript.system(`思考强度设为「${label}」（下一次请求生效）`)
+        // quiet：输入区滑杆调档不写这一行（2026-10-26）。写的话每换一档就往正文里塞一行，
+        // 还要跟着多推一帧；档位在 chip 上读得到，不需要回执。快照仍要 touch 一次：
+        // status.effort 变了，界面得靠它把乐观值换成真实值。
+        if (!quiet) {
+          const label =
+            effort === 'default'
+              ? '默认（不声明思考）'
+              : effort === 'off'
+                ? '关闭'
+                : { low: '低', high: '高', max: '最大' }[effort]
+          ctx.transcript.system(`思考强度设为「${label}」（下一次请求生效）`)
+        }
         ctx.transcript.touch()
       },
 
@@ -431,6 +446,41 @@ export const runtimePlugin: Plugin.Object = {
 
       usageStats() {
         return Promise.resolve(buildUsageStats())
+      },
+
+      // ── 旁问（只读一次性问答，支持流式与指定模型） ──
+      async sideAsk(question, quote, requestId, provider, model) {
+        sideAsks.get(requestId)?.abort()
+        const controller = new AbortController()
+        sideAsks.set(requestId, controller)
+        // 空串 = 跟随主会话当前路由；两个都给了才切到指定模型（界面传的就是一对）。
+        const route = provider !== '' && model !== '' ? ctx.llm.routeTo(provider, model, 'default') : ctx.llm.route()
+        try {
+          const outcome = await sideAskOnce({
+            route,
+            stream: (api, request, handlers) => ctx.llm.stream(api, request, handlers),
+            question,
+            quote,
+            signal: controller.signal,
+            // 增量经 cordis 事件转给界面通道（webserver 订阅后广播 `event: ask`）。
+            onText: (delta) => {
+              ctx.emit('dsc/side-ask-chunk', { id: requestId, delta })
+            },
+          })
+          return outcome
+        } finally {
+          // 收尾信号：界面据此把「正在回答」收掉（结果本身由 invoke 的返回值补齐）。
+          ctx.emit('dsc/side-ask-chunk', { id: requestId, delta: '', done: true })
+          // 只清自己的那张：同一票据被后一次覆盖时，别把新的那条删了。
+          if (sideAsks.get(requestId) === controller) sideAsks.delete(requestId)
+        }
+      },
+
+      sideAskCancel(requestId) {
+        const controller = sideAsks.get(requestId)
+        if (controller === undefined) return Promise.resolve(false)
+        controller.abort()
+        return Promise.resolve(true)
       },
 
       async restoreSessions(paths) {

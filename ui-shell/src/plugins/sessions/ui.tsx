@@ -32,12 +32,15 @@ import {
   IconChevronDown,
   IconClock,
   IconClose,
-  IconCode,
   IconCoins,
   IconCopy,
+  IconCopyColor,
   IconEdit,
   IconFolder,
-  IconFolderOpen,
+  IconFolderColor,
+  IconFolderOpenColor,
+  IconTerminalColor,
+  IconVSCodeColor,
   IconGear,
   IconFlatList,
   IconMore,
@@ -51,12 +54,12 @@ import {
   IconSort,
   IconStop,
   IconSwap,
-  IconTerminal,
   IconTrash,
   IconTriangleRightFill,
   IconTree,
 } from '@dsc/ui'
 import {
+  ACTIONS_SERVICE,
   confirmAction,
   defineUiPlugin,
   getHostNative,
@@ -66,13 +69,15 @@ import {
   toastOk,
   useHostChannel,
   useHostSelector,
+  useService,
   useShellPage,
+  type ActionsHandle,
   type HostSnapshot,
   type SessionRunState,
   type SessionSummary,
-  type UsageStatsView,
+  useTodayUsage,
 } from '@dsc/ui'
-import { formatTokens } from '@dsc/ui-primitives'
+import { formatCostCny, formatTokens, humanErrorLine } from '@dsc/ui-primitives'
 import { buildWorkGroups, displayName, lastSegment, moveToEnd, moveWithin, orderedSessions, type ArchivedFilter, type GroupKey, type SortKey } from './grouping'
 
 /** 空的会话列表常量：没拿到快照时共用一份，省得每帧新建数组。 */
@@ -388,6 +393,26 @@ function SessionList() {
     return () => window.removeEventListener('shell.session.new', onNew)
   }, [])
 
+  // 命令面板的「新会话」由本插件登记（动作表见 @dsc/ui 的 UiAction）：这个能力归会话，
+  // 面板只管展示。run 调上面那个 ref 里的处理器（与窄栏按钮同一个入口），ref 每次渲染
+  // 都指向最新闭包，所以这条动作不必随渲染重新登记。
+  const actions = useService<ActionsHandle>(ACTIONS_SERVICE)
+  useEffect(() => {
+    if (actions === undefined) return undefined
+    return actions.register('sessions', [
+      {
+        id: 'session.new',
+        label: '新会话',
+        hint: '在当前工作区开一条空会话',
+        group: '会话',
+        keywords: ['新建', 'new', 'chat'],
+        run: () => {
+          newRef.current()
+        },
+      },
+    ])
+  }, [actions])
+
   /**
    * 分叉：先问宿主「这条会话里有哪些用户消息」，弹一个小选择列表，选哪条就从那里分叉。
    *
@@ -641,6 +666,16 @@ function SessionList() {
       onStart: (event: DragEvent<HTMLDivElement>) => {
         event.dataTransfer.effectAllowed = 'move'
         event.dataTransfer.setData('text/plain', session.id)
+        // 拖拽影子换成一张小卡：浏览器默认拿整行当影子，拖到列表下半截会盖住落点线。
+        // 节点必须真在文档里才能被 setDragImage 截图，截完立刻摘掉。
+        const ghost = document.createElement('div')
+        ghost.className = 'dsc-drag-ghost'
+        ghost.textContent = session.title ?? '新会话'
+        document.body.appendChild(ghost)
+        event.dataTransfer.setDragImage(ghost, 12, 16)
+        window.setTimeout(() => {
+          ghost.remove()
+        }, 0)
         setSessDrag({ cwd: groupCwd, id: session.id, pinned: session.pinnedAt !== undefined, over: null })
       },
       onOver: compatible
@@ -695,6 +730,9 @@ function SessionList() {
         >
           <IconPuzzle size={15} /> 插件
         </button>
+        {/* 旁问不在这儿（2026-10-26 第二轮）：它开的是右侧栏的页签，入口放在右侧栏
+            自己的「开始」页上（ui-dockkit/dock.tsx 的 GUIDE_ENTRIES）。摆在这一列里，
+            它跟「技能 / 插件」两个整页入口长得一样，点了却只在右边开一张页签。 */}
       </nav>
 
       <div className="sidebar-scroll">
@@ -868,7 +906,7 @@ function SessionList() {
                   onDragEnd={endDrag}
                 >
                   <span className="folder-icon">
-                    {expanded ? <IconFolderOpen size={15} /> : <IconFolder size={15} />}
+                    {expanded ? <IconFolderOpenColor size={15} /> : <IconFolderColor size={15} />}
                   </span>
                   <span className="folder-chevron">
                     <IconTriangleRightFill size={14} className={expanded ? 'arrow-open' : undefined} />
@@ -1175,7 +1213,7 @@ function SessionList() {
                     onClick={(event) => event.stopPropagation()}
                   >
                     <MenuItem
-                      icon={<IconFolderOpen size={15} />}
+                      icon={<IconFolderOpenColor size={15} />}
                       text="在资源管理器中打开"
                       onClick={() => {
                         setMenu(null)
@@ -1185,7 +1223,7 @@ function SessionList() {
                           return
                         }
                         void native.invoke('openPath', [cwdOf]).catch((reason: unknown) => {
-                          toastErr(`打开失败：${reason instanceof Error ? reason.message : String(reason)}`)
+                          toastErr(`打开失败：${humanErrorLine(reason)}`)
                         })
                       }}
                     />
@@ -1315,7 +1353,7 @@ function MenuItem({
 }
 
 /** 用量行的悬浮说明：壳不渲染 data-tip（悬浮可达的那份走原生 title），两处用同一句防漂。 */
-const FOOTER_USAGE_TIP = '今天所有会话累计用量（输入 + 输出），每分钟自动刷新'
+const FOOTER_USAGE_TIP = '今天所有会话累计用量（输入 + 输出）与估算花费，每分钟自动刷新'
 
 /**
  * 侧栏底部（旧界面同位）：今天所有会话的累计用量 + 设置入口。
@@ -1324,32 +1362,10 @@ const FOOTER_USAGE_TIP = '今天所有会话累计用量（输入 + 输出），
  * 承担；工作区路径在状态栏一直有显示，页脚不再重复一条可点的目录行。
  */
 function SidebarFooter(): ReactNode {
-  const channel = useHostChannel()
   const usage = useHostSelector(readUsageTokens)
-  const [today, setToday] = useState(0)
-  // 「今日总用量」问宿主的 usageStats：聚合层逐日补零到本地今天（core/usage-log.ts），
-  // days 末位就是今天那格——「今天」的口径留在宿主，壳只挑末位，不给自己做日期换算。
-  // 还没有任何记录时 days 为空，读 0；读取失败维持上一次读数（页脚是块小面板，不打断）。
-  useEffect(() => {
-    let active = true
-    const load = (): void => {
-      void channel
-        .invoke<UsageStatsView>('usageStats')
-        .then((stats) => {
-          if (!active) return
-          const day = stats.days[stats.days.length - 1]
-          setToday(day === undefined ? 0 : day.inputTokens + day.outputTokens)
-        })
-        .catch(() => {})
-    }
-    load()
-    // 60 秒兜底轮询：别的窗口 / 后台宿主的请求不会往本窗口推快照，靠它跟上。
-    const timer = window.setInterval(load, 60_000)
-    return () => {
-      active = false
-      window.clearInterval(timer)
-    }
-  }, [channel, usage])
+  // 今日总量与金额走共享 hook（状态栏也在读同一份）：取数口径与刷新时机只写一遍，
+  // 两处不会出现"页脚 12.3K / 状态栏 11.9K"这种自相矛盾。
+  const today = useTodayUsage(usage)
   return (
     <div className="sidebar-footer">
       {/* 用量行常显（旧界面同位，2026-10-15 起改今日口径）：今天没用过就是 0 tok，
@@ -1357,7 +1373,10 @@ function SidebarFooter(): ReactNode {
       <div className="row" data-tip={FOOTER_USAGE_TIP} title={FOOTER_USAGE_TIP}>
         <IconCoins size={14} />
         <span>今日总用量</span>
-        <span className="num">{formatTokens(today)} tok</span>
+        <span className="num">
+          {formatTokens(today.tokens)} tok
+          {today.cost === null ? null : ` · ${formatCostCny(today.cost)}`}
+        </span>
       </div>
       {/* 设置行（旧界面左下角同位）：事件请设置面板开门。 */}
       <button
@@ -1758,6 +1777,35 @@ function WorkspaceOpenGroup(): ReactNode {
   const cwd = useHostSelector(readCwd)
   const native = getHostNative()
   const [menuOpen, setMenuOpen] = useState(false)
+  /** 分组钮这一块：点外面判断「在不在里面」靠它。 */
+  const groupRef = useRef<HTMLDivElement>(null)
+
+  /*
+   * 收起时机（2026-10-25 用户截图报障）：原来只靠一张 .menu-backdrop 接点击。
+   * 那张遮罩是 fixed + z-index 40，与正文右上角的胶囊（.sp-host，也是 40）同层，
+   * 而胶囊在 DOM 里更靠后——于是胶囊盖在遮罩上面，点它不收起菜单，反而把状态面板
+   * 展开压在菜单上。遮罩还顺手吞掉了顶栏里其他按钮的点击（点插件钮 = 只收菜单，
+   * 页面没动）。
+   *
+   * 改成两条事件：指针按下时，点到分组钮以外就收起（不拦事件，所以被点的那颗按钮
+   * 照常干活）；Esc 也收起。用捕获阶段，别处 stopPropagation 也漏不掉。
+   */
+  useEffect(() => {
+    if (!menuOpen) return undefined
+    const onPointerDown = (event: PointerEvent): void => {
+      if (event.target instanceof Node && groupRef.current?.contains(event.target) === true) return
+      setMenuOpen(false)
+    }
+    const onKeyDown = (event: globalThis.KeyboardEvent): void => {
+      if (event.key === 'Escape') setMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      document.removeEventListener('keydown', onKeyDown, true)
+    }
+  }, [menuOpen])
 
   const open = (kind: 'terminal' | 'explorer' | 'vscode'): void => {
     setMenuOpen(false)
@@ -1776,11 +1824,11 @@ function WorkspaceOpenGroup(): ReactNode {
       .invoke<{ ok: boolean; error?: string }>('openWorkspace', [kind, cwd])
       .then((result) => {
         if (result !== null && typeof result === 'object' && result.ok === false) {
-          toastErr(`打开失败：${result.error ?? '宿主没说什么原因'}`)
+          toastErr(`打开失败：${humanErrorLine(result.error ?? '宿主没说什么原因')}`)
         }
       })
       .catch((reason: unknown) => {
-        toastErr(`打开失败：${reason instanceof Error ? reason.message : String(reason)}`)
+        toastErr(`打开失败：${humanErrorLine(reason)}`)
       })
   }
 
@@ -1798,7 +1846,7 @@ function WorkspaceOpenGroup(): ReactNode {
   }
 
   return (
-    <div className="ws-open">
+    <div className="ws-open" ref={groupRef}>
       <button
         type="button"
         className="ws-open-main"
@@ -1808,7 +1856,7 @@ function WorkspaceOpenGroup(): ReactNode {
           open('explorer')
         }}
       >
-        <IconFolderOpen size={15} />
+        <IconFolderOpenColor size={16} />
       </button>
       <button
         type="button"
@@ -1823,47 +1871,39 @@ function WorkspaceOpenGroup(): ReactNode {
         <IconChevronDown size={13} />
       </button>
       {menuOpen ? (
-        <>
-          <div
-            className="menu-backdrop"
+        <div className="row-menu ws-open-menu" role="menu">
+          <button
+            type="button"
+            className="menu-item"
             onClick={() => {
-              setMenuOpen(false)
+              open('terminal')
             }}
-          />
-          <div className="row-menu ws-open-menu" role="menu">
-            <button
-              type="button"
-              className="menu-item"
-              onClick={() => {
-                open('terminal')
-              }}
-            >
-              <IconTerminal size={14} /> 在终端中打开
-            </button>
-            <button
-              type="button"
-              className="menu-item"
-              onClick={() => {
-                open('explorer')
-              }}
-            >
-              <IconFolderOpen size={14} /> 在文件管理器中打开
-            </button>
-            <button
-              type="button"
-              className="menu-item"
-              onClick={() => {
-                open('vscode')
-              }}
-            >
-              <IconCode size={14} /> 在 VS Code 中打开
-            </button>
-            <div className="menu-sep" />
-            <button type="button" className="menu-item" onClick={copyPath}>
-              <IconCopy size={14} /> 复制工作区路径
-            </button>
-          </div>
-        </>
+          >
+            <IconTerminalColor size={15} /> 在终端中打开
+          </button>
+          <button
+            type="button"
+            className="menu-item"
+            onClick={() => {
+              open('explorer')
+            }}
+          >
+            <IconFolderOpenColor size={15} /> 在文件管理器中打开
+          </button>
+          <button
+            type="button"
+            className="menu-item"
+            onClick={() => {
+              open('vscode')
+            }}
+          >
+            <IconVSCodeColor size={15} /> 在 VS Code 中打开
+          </button>
+          <div className="menu-sep" />
+          <button type="button" className="menu-item" onClick={copyPath}>
+            <IconCopyColor size={15} /> 复制工作区路径
+          </button>
+        </div>
       ) : null}
     </div>
   )

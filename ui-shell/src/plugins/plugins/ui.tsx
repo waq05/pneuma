@@ -46,7 +46,7 @@ import {
   type SettingsValues,
 } from '@dsc/ui'
 // 基元从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
-import { Select } from '@dsc/ui-primitives'
+import { Select, Skeleton, SkeletonText, humanErrorLine, humanErrorText } from '@dsc/ui-primitives'
 
 /** 这一页在 page-state 里的 id（侧栏入口与页条目约定同一个值）。 */
 const PAGE = 'plugins'
@@ -121,7 +121,8 @@ function PluginsView(): ReactNode {
         setNote('')
       })
       .catch((error: unknown) => {
-        setNote(`读插件失败：${error instanceof Error ? error.message : String(error)}`)
+        // 说人话 + 给下一步（P0-3）：原文里是 ECONNREFUSED 还是 ENOENT，用户不关心。
+        setNote(`读插件失败：${humanErrorText(error).text}`)
       })
   }
 
@@ -140,7 +141,7 @@ function PluginsView(): ReactNode {
         setTrustNote('')
       })
       .catch((error: unknown) => {
-        setTrustNote(`读第三方界面插件状态失败：${text(error)}`)
+        setTrustNote(`读第三方界面插件状态失败：${humanErrorText(error).text}`)
       })
   }
 
@@ -158,7 +159,7 @@ function PluginsView(): ReactNode {
       .invoke<{ ok: boolean; notice?: string; error?: string }>('setUiTrust', [row.name])
       .then((result) => {
         if (!result.ok) {
-          toastErr(`确认失败：${result.error ?? '未知原因'}`)
+          toastErr(`确认失败：${humanErrorLine(result.error ?? '未知原因')}`)
           return
         }
         toastOk(result.notice ?? `已信任「${row.name}」`)
@@ -166,7 +167,7 @@ function PluginsView(): ReactNode {
         loadTrusts()
       })
       .catch((error: unknown) => {
-        toastErr(`确认失败：${text(error)}`)
+        toastErr(`确认失败：${humanErrorLine(error)}`)
       })
       .finally(() => {
         setTrustBusy(false)
@@ -209,7 +210,7 @@ function PluginsView(): ReactNode {
       return
     }
     void native.invoke('restartHost').catch((reason: unknown) => {
-      toastErr(`重启失败：${reason instanceof Error ? reason.message : String(reason)}`)
+      toastErr(`重启失败：${humanErrorLine(reason)}`)
     })
   }
 
@@ -230,7 +231,7 @@ function PluginsView(): ReactNode {
         setTimeout(refresh, 600)
       })
       .catch((reason: unknown) => {
-        toastErr(`安装失败：${reason instanceof Error ? reason.message : String(reason)}`)
+        toastErr(`安装失败：${humanErrorLine(reason)}`)
       })
   }
 
@@ -296,9 +297,14 @@ function PluginsView(): ReactNode {
               <PluginCard key={row.file} row={row} onToggle={toggle} onOpen={setDetailFile} />
             ))}
             {custom.length === 0 && (
-              <div className="plugins-empty">
-                尚未安装外部插件。点击「+ 添加插件」选择 .js 文件，或将文件放入 <code>~/.dsc/plugins/</code>{' '}
-                后重启宿主。
+              <div className="empty-card compact">
+                <span className="empty-card-icon">
+                  <IconPuzzle size={18} />
+                </span>
+                <div className="empty-card-title">还没有外部插件</div>
+                <p className="empty-card-desc">
+                  点右上角「+ 添加插件」选一个 .js 文件，或把它放进 <code>~/.dsc/plugins/</code> 后重启宿主。
+                </p>
               </div>
             )}
 
@@ -646,7 +652,10 @@ function PluginDetail({
       <div className="plugin-detail-config">
         <div className="settings-group-title">配置</div>
         {section === undefined ? (
-          <div className="settings-empty">正在读取配置…</div>
+          <div className="settings-loading" role="status" aria-label="正在读取插件配置">
+            <SkeletonText lines={3} />
+            <Skeleton width={132} height={30} radius={8} />
+          </div>
         ) : section === null ? (
           plugin.enabled ? (
             <div className="settings-empty">该插件没有可配置项。</div>
@@ -686,7 +695,7 @@ function ConfigFields({ section, onAction }: { section: SettingsSectionView; onA
         if (alive) setValues(next)
       })
       .catch((error: unknown) => {
-        if (alive) setNote({ tone: 'error', text: `读取设置失败：${text(error)}` })
+        if (alive) setNote({ tone: 'error', text: `读取设置失败：${humanErrorText(error).text}` })
       })
     return () => {
       alive = false
@@ -707,14 +716,14 @@ function ConfigFields({ section, onAction }: { section: SettingsSectionView; onA
       .invoke<SettingsMutation>('setSettingValue', [section.id, key, value])
       .then((result) => {
         if (!result.ok) {
-          setNote({ tone: 'error', text: `保存失败：${result.error}` })
+          setNote({ tone: 'error', text: `保存失败：${humanErrorText(result.error).text}` })
           return
         }
         if (result.notice !== undefined) setNote({ tone: 'ok', text: result.notice })
         reload()
       })
       .catch((error: unknown) => {
-        setNote({ tone: 'error', text: `保存失败：${text(error)}` })
+        setNote({ tone: 'error', text: `保存失败：${humanErrorText(error).text}` })
       })
   }
 
@@ -724,7 +733,7 @@ function ConfigFields({ section, onAction }: { section: SettingsSectionView; onA
       .invoke<SettingsMutation>('runSettingAction', [section.id, action])
       .then((result) => {
         if (!result.ok) {
-          setNote({ tone: 'error', text: `操作失败：${result.error}` })
+          setNote({ tone: 'error', text: `操作失败：${humanErrorText(result.error).text}` })
           return
         }
         if (result.notice !== undefined) setNote({ tone: 'ok', text: result.notice })
@@ -733,7 +742,7 @@ function ConfigFields({ section, onAction }: { section: SettingsSectionView; onA
         onAction()
       })
       .catch((error: unknown) => {
-        setNote({ tone: 'error', text: `操作失败：${text(error)}` })
+        setNote({ tone: 'error', text: `操作失败：${humanErrorText(error).text}` })
       })
   }
 
@@ -944,12 +953,15 @@ function ConfigFields({ section, onAction }: { section: SettingsSectionView; onA
   )
 }
 
-/** 名称 → 稳定的图标底色（旧界面同款小把戏：同一个插件每次都是同一个色）。 */
-function iconColor(name: string): string {
-  const palette = ['#4c8dff', '#a06bff', '#2fb27c', '#e0a13a', '#e05a5a', '#3ab6c9']
-  let hash = 0
-  for (const ch of name) hash = (hash * 31 + (ch.codePointAt(0) ?? 0)) % 997
-  return palette[hash % palette.length] ?? palette[0]!
+/**
+ * 图标底色：统一中性底。
+ *
+ * 旧界面按名称哈希从六种彩色里挑一个——同一个插件每次颜色稳定，但**颜色本身没有含义**：
+ * 十八个插件铺开像一盒彩色积木，反而把「开关是开是关」这个唯一有信息量的色点压过去了。
+ * 现在底色走填充三档、文字走二级色，开关保留唯一的饱和色。
+ */
+function iconColor(_name: string): string {
+  return 'var(--dsc-fill-tertiary)'
 }
 
 /** 拿异常的文字形态（宿主与桥都可能抛 Error，也可能是别的值）。 */

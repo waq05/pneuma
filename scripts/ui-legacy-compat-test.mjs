@@ -174,7 +174,7 @@ console.log('[4] 窄屏规则：输入行、状态栏、停靠区')
   const small = block560 ?? ''
   const wide = block860 ?? ''
 
-  check('输入行允许换行（左组一行、右组换行贴右）', /\.composer-bar \{[\s\S]*?flex-wrap: wrap/.test(small))
+  check('输入行不换行（手机上只画一层图标条）', /\.composer-bar \{[\s\S]*?flex-wrap: nowrap/.test(small))
   check('两组都允许收缩（min-width: 0）', /\.composer-bar \.bar-left,\s*\n\s*\.composer-bar \.bar-right \{[\s\S]*?min-width: 0/.test(small))
   check('chip 里的名字不竖着排（white-space: nowrap 写在钮上）', /\.model-btn \{[\s\S]*?white-space: nowrap/.test(small))
   check('输入区左右内距在窄屏收窄', /\.composer-zone \{[\s\S]*?padding: 0 12px 8px/.test(small))

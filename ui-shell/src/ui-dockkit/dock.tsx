@@ -16,7 +16,7 @@
  * @module dsc-ui-shell/dock
  */
 import { useCallback, useEffect, useRef, useState, type JSX, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
-import { IconBranch, IconFolder, IconGlobe, IconSidebar, IconTerminal, IconTree, FileIcon } from '@dsc/ui-primitives'
+import { IconBranch, IconFolder, IconGlobe, IconSidebar, IconSpark, IconTerminal, IconTree, FileIcon } from '@dsc/ui-primitives'
 import { canAddTab, type DockPane, type DockSurface, type DockTab, type DockTabKind } from './dock-model'
 import { dockActions, dockTabMeta, useDockSurface } from './dock-state'
 
@@ -41,14 +41,20 @@ const KIND_META: Record<
   subagent: { title: '子智能体', icon: IconTree, titleFromPath: true },
   // 后台活输出面：标题由打开方带过来（work.title），缺省回落 work id；图标是终端。
   'work-output': { title: '输出', icon: IconTerminal },
+  // 旁问：只读一次性问答（插件 ask 渲染）。
+  ask: { title: '旁问', icon: IconSpark },
 }
 
-/** 「开始」页的入口卡（旧桌面版同款：最多四张，都带描述与快捷键角标）。 */
+/** 「开始」页的入口卡（旧桌面版同款，带描述与快捷键角标）。
+ *
+ * 旁问（2026-10-26 从左侧栏搬来）：它开的就是右侧栏的一个页签，摆在右侧栏自己的
+ * 开始页上是它的本家——左侧栏那颗导航钮反而像另一个整页入口。 */
 const GUIDE_ENTRIES: { kind: DockTabKind; title: string; description: string; tone: string; shortcut?: string }[] = [
   { kind: 'files', title: '工作区文件', description: '浏览会话工作区的文件', tone: 'tone-folder', shortcut: 'Ctrl + P' },
   { kind: 'terminal', title: '新建终端', description: '在会话工作区运行命令', tone: 'tone-terminal', shortcut: 'Ctrl + `' },
   { kind: 'browser', title: '浏览器', description: '浏览网页', tone: 'tone-browser', shortcut: 'Ctrl + T' },
   { kind: 'git', title: 'Git 管理', description: '分支、暂存与提交', tone: 'tone-git' },
+  { kind: 'ask', title: '旁问', description: '只读问答，不写主会话', tone: 'tone-ask', shortcut: 'Ctrl + Shift + K' },
 ]
 
 /** 右侧栏组件：贴边/全屏两种展示，收起时整块滑出右缘（内容不卸载）。 */
@@ -391,6 +397,7 @@ function GuideBody(props: { actions: typeof dockActions }): JSX.Element {
               {entry.kind === 'terminal' && <IconTerminal size={17} />}
               {entry.kind === 'browser' && <IconGlobe size={17} />}
               {entry.kind === 'git' && <IconBranch size={17} />}
+              {entry.kind === 'ask' && <IconSpark size={17} />}
             </span>
             <span className="dock-guide-text">
               <span className="dock-guide-title">{entry.title}</span>

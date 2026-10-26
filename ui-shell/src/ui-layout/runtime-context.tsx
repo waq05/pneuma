@@ -10,7 +10,7 @@
  */
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { HostSnapshot } from '@dsc/ui-core'
-import type { ChannelStatus, HostChannel, HostHello } from './host-channel'
+import type { AskChunk, ChannelStatus, HostChannel, HostHello } from './host-channel'
 
 const RuntimeContext = createContext<HostChannel | null>(null)
 
@@ -103,5 +103,25 @@ export function useHostError(): string | null {
     (onChange) => channel.subscribe(onChange),
     () => channel.getHostError(),
     () => channel.getHostError(),
+  )
+}
+/**
+ * 订阅旁问增量（流式答案）。
+ *
+ * 为什么给 hook 而不是让插件自己 `addEventListener`：插件拿不到 EventSource 那条流
+ * （它在壳里），只拿得到 `@dsc/ui` 的导出面。回调走 ref，内联箭头不会让订阅每次渲染重挂。
+ *
+ * @param handler 每来一条增量调一次（含 done 标记）
+ */
+export function useAskStream(handler: (chunk: AskChunk) => void): void {
+  const channel = useHostChannel()
+  const latest = useRef(handler)
+  latest.current = handler
+  useEffect(
+    () =>
+      channel.onAsk((chunk) => {
+        latest.current(chunk)
+      }),
+    [channel],
   )
 }

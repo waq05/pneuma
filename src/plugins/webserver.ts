@@ -126,6 +126,22 @@ export const webserverPlugin: Plugin.Object = {
         current: UiHmrFrame | null
         listeners: Set<(frame: UiHmrFrame) => void>
       } = { current: null, listeners: new Set() }
+      /**
+       * 旁问增量帧的扇出（2026-10-25）。
+       *
+       * 为什么经 cordis 事件转一道而不是让 runtime 直接拿通道：runtime 是界面方法层，
+       * 它不该认识 SSE；谁转发（webserver / 将来的遥控端）谁订阅。
+       */
+      const askChunks: { listeners: Set<(chunk: unknown) => void> } = { listeners: new Set() }
+      const offAskChunk = ctx.on('dsc/side-ask-chunk', (payload) => {
+        for (const listener of [...askChunks.listeners]) {
+          try {
+            listener(payload)
+          } catch {
+            // 一个订阅者炸了不该拖垮别的（与其他 fan-out 同一条纪律）
+          }
+        }
+      })
       const pushPlugins = (frame: UiHmrFrame): void => {
         pluginFrames.current = frame
         for (const listener of [...pluginFrames.listeners]) {
@@ -183,6 +199,15 @@ export const webserverPlugin: Plugin.Object = {
             pluginFrames.listeners.add(listener)
             return () => {
               pluginFrames.listeners.delete(listener)
+            }
+          },
+        },
+        // 旁问增量：`event: ask`（同样不进帧 hub——丢一段没关系，最终答案由 invoke 补齐）。
+        ask: {
+          subscribe: (listener) => {
+            askChunks.listeners.add(listener)
+            return () => {
+              askChunks.listeners.delete(listener)
             }
           },
         },

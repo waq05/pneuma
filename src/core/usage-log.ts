@@ -20,6 +20,9 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { SessionUsageView, UsageDayView, UsageModelView, UsageStatsView } from '../contract.js'
+// 计价口径与 TUI 的「本会话花费」同一份（core/pricing.ts）：逐笔按发生时刻分峰谷、
+// 缓存命中与未命中分开算，不在这里另写一套乘法。
+import { addUsageToBuckets, emptyCostBuckets, estimateSessionCostCny, isDeepseekProvider, isPeakHour, type CostBuckets } from './pricing.js'
 import { dscPath } from './path-policy.js'
 
 /** usage.jsonl 里的一行。字段名压短：这文件每轮请求都要追加一行。 */
@@ -143,6 +146,8 @@ const MAX_SPAN_DAYS = 370
 export function aggregateUsage(records: UsageRecord[]): UsageStatsView {
   const days = new Map<string, UsageDayView>()
   const models = new Map<string, UsageModelView>()
+  // 逐日逐模型的峰谷分桶：只装能计价的记录（DeepSeek 端点），零日与别家端点不进表。
+  const dayBuckets = new Map<string, Map<string, CostBuckets>>()
   let totalInput = 0
   let totalOutput = 0
   let totalTurns = 0
@@ -169,6 +174,30 @@ export function aggregateUsage(records: UsageRecord[]): UsageStatsView {
     totalCacheHit += record.ch ?? 0
     totalCacheMiss += record.cm ?? 0
     if (sinceTs === null || record.t < sinceTs) sinceTs = record.t
+    if (isDeepseekProvider(record.provider)) {
+      let byModel = dayBuckets.get(key)
+      if (byModel === undefined) {
+        byModel = new Map()
+        dayBuckets.set(key, byModel)
+      }
+      let bucket = byModel.get(record.model)
+      if (bucket === undefined) {
+        bucket = emptyCostBuckets()
+        byModel.set(record.model, bucket)
+      }
+      // 峰谷按**那一笔发生时刻**判（北京时间工作日 9-12 / 14-18 为峰），与 TUI 花费同口径。
+      // 字段名从压短的那套（i/o/ch/cm）换成计价函数要的长名，不在这里重排内存布局。
+      addUsageToBuckets(
+        bucket,
+        {
+          inputTokens: record.i,
+          outputTokens: record.o,
+          ...(record.ch === undefined ? {} : { cacheHitTokens: record.ch }),
+          ...(record.cm === undefined ? {} : { cacheMissTokens: record.cm }),
+        },
+        isPeakHour(new Date(record.t)),
+      )
+    }
     let model = models.get(modelKey)
     if (model === undefined) {
       model = { key: modelKey, inputTokens: 0, outputTokens: 0, turns: 0, cacheHitTokens: 0, cacheMissTokens: 0 }
@@ -225,7 +254,20 @@ export function aggregateUsage(records: UsageRecord[]): UsageStatsView {
     if (tokens > peakTokens) peakDay = day
   }
 
+  // 逐日花费：把当天的峰谷分桶交给 pricing 的估算函数（元，未取整），算不出来的日子不写字段。
+  // 合计用「逐日相加」而不是重算一份：两者口径一致，且避免给零日编出一个 0 元。
+  let totalCostCny: number | undefined
+  for (const day of filled) {
+    const byModel = dayBuckets.get(day.date)
+    if (byModel === undefined) continue
+    const priced = estimateSessionCostCny([...byModel.entries()].map(([model, buckets]) => ({ model, buckets })))
+    if (priced === undefined) continue
+    day.costCny = priced.total
+    totalCostCny = (totalCostCny ?? 0) + priced.total
+  }
+
   return {
+    ...(totalCostCny === undefined ? {} : { totalCostCny }),
     sinceTs,
     totalInputTokens: totalInput,
     totalOutputTokens: totalOutput,

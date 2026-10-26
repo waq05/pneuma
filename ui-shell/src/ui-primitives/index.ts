@@ -26,6 +26,14 @@
  * @module dsc-ui-shell/ui-primitives
  */
 export * from './icons'
+// 工作区那一组的彩色图标（文件夹 / 终端 / VS Code / 复制）。
+export * from './icons-workspace'
+// 弹层焦点管理（打开移入、Tab 循环、Esc 关、关闭归还）。
+export * from './dialog-focus'
+// 加载占位（骨架块 / 多行文本占位 / 读屏状态行）。
+export * from './skeleton'
+// 错误文案的人话层（发生了什么 / 下一步 / 原文）。
+export * from './humanize-error'
 // 载体基元：终端壳的同名基元在 `src/ui/tui-plugin-api.ts`（那里 Text 是 ink 的 <Text>）。
 export * from './plugin-text'
 // 平台层（原 `src/platform/*`，全部与 React/DOM 打交道、不碰槽位与插件 API）。

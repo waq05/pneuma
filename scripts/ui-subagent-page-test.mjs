@@ -73,8 +73,12 @@ console.log('[2] 兜底仍在：服务缺席退回 PeekView（不白屏、不删
 {
   check('PeekView 组件还在', team.includes('function PeekView('))
   check(
-    'PeekView 的三条 settings-empty 人话没被删',
-    team.includes('读不了运行记录：') && team.includes('正在读运行记录…') && team.includes('它还没开始干活。'),
+    'PeekView 的错误与空态人话没被删',
+    team.includes('读不了运行记录：') && team.includes('它还没开始干活。'),
+  )
+  check(
+    'PeekView 的加载态改画骨架（2026-10-25，不再是一行「正在读运行记录…」）',
+    team.includes('aria-label="正在读运行记录"') && !team.includes('正在读运行记录…'),
   )
   check(
     '服务缺席时确实是 PeekView 出口（flow === undefined ? PeekView : FlowHost）',

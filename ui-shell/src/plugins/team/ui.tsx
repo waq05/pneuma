@@ -19,6 +19,7 @@
  * @module dsc-ui-shell/plugins/team
  */
 import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { SkeletonText, useDialogFocus } from '@dsc/ui-primitives'
 import {
   IconChevronDown,
   IconClose,
@@ -283,17 +284,11 @@ function TeamPanel({ useStore }: MateSeatRead): ReactNode {
     if (wanted !== undefined) setPeeking({ name: wanted.name, file: wanted.file })
   }, [mates])
 
-  // Esc 关面板（与设置面板同款；确认框开着时它先拦）。
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return
-      event.preventDefault()
-      if (peeking !== null) setPeeking(null)
-      else setPanelOpen(false)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [peeking])
+  // Esc 与焦点走基元：先退出「看运行记录」那一层，再关面板；关掉把焦点还给来源。
+  const dialog = useDialogFocus(true, () => {
+    if (peeking !== null) setPeeking(null)
+    else setPanelOpen(false)
+  })
 
   const mine = matesOf(mates, sessionId)
   const others = mates.filter((mate) => !mine.includes(mate))
@@ -305,7 +300,7 @@ function TeamPanel({ useStore }: MateSeatRead): ReactNode {
         if (event.target === event.currentTarget) setPanelOpen(false)
       }}
     >
-      <div className="settings team-panel" role="dialog" aria-modal="true" aria-label="智能体团队">
+      <div className="settings team-panel" role="dialog" aria-modal="true" aria-label="智能体团队" ref={dialog.ref}>
         <div className="settings-main">
           <div className="settings-head">
             <div className="settings-head-text">
@@ -602,7 +597,13 @@ function PeekView({ file, working = false }: { file: string; working?: boolean }
   const { entries, error } = usePeekTranscript(file, working)
 
   if (error !== '') return <div className="settings-empty">读不了运行记录：{error}</div>
-  if (entries === null) return <div className="settings-empty">正在读运行记录…</div>
+  if (entries === null) {
+    return (
+      <div className="settings-loading" role="status" aria-label="正在读运行记录">
+        <SkeletonText lines={5} />
+      </div>
+    )
+  }
   if (entries.length === 0) return <div className="settings-empty">它还没开始干活。</div>
   return (
     <div className="peek-flow">
@@ -650,7 +651,13 @@ function PeekView({ file, working = false }: { file: string; working?: boolean }
 function FlowHost({ flow, file, working }: { flow: TranscriptFlowService; file: string; working: boolean }): ReactNode {
   const { entries, error } = usePeekTranscript(file, working)
   if (error !== '') return <div className="settings-empty">读不了运行记录：{error}</div>
-  if (entries === null) return <div className="settings-empty">正在读运行记录…</div>
+  if (entries === null) {
+    return (
+      <div className="settings-loading" role="status" aria-label="正在读运行记录">
+        <SkeletonText lines={5} />
+      </div>
+    )
+  }
   if (entries.length === 0) return <div className="settings-empty">它还没开始干活。</div>
   return <flow.Component entries={entries} sessionKey={file} />
 }

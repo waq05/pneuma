@@ -78,9 +78,11 @@ export function ThreadResizer(props: {
   const getBase = useCallback((): number => resolve(props.width), [props.width])
   const clamp = useCallback((px: number): number => resolve(px), [props.width])
   // 拖动中列宽每帧都在变，顺手重量一次，把手与列缘同帧对齐。
+  // 变量名是 --dsc-thread-user-max：.thread-main-empty 那条元素级 --dsc-thread-max
+  // 会压过根上的同名变量（空会话里拖动失效的根因），两层都引用这个用户变量。
   const onDrag = useCallback(
     (px: number): void => {
-      setRootVar('--dsc-thread-max', `${px}px`)
+      setRootVar('--dsc-thread-user-max', `${px}px`)
       measure()
     },
     [measure],

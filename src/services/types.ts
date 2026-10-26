@@ -150,8 +150,12 @@ export interface LlmService {
   /**
    * 设置思考强度档位（off=关闭思考，low/high/max=开启思考）。
    * 当前模型没声明这一档时抛错（消息可直接展示），越界的旧档位会随模型切换退回「默认」。
+   *
+   * @param quiet - 不往对话里写「思考强度设为…」那一行。输入区底栏的滑杆传 true：
+   *   每调一次档就写一行 system 记录，既占正文、又要多推一帧快照（调档发顿的来源之一）；
+   *   档位本来就在 chip 上显示，读得见。/effort 命令仍走默认值，它要那行回执。
    */
-  setEffort(effort: EffortLevel): void
+  setEffort(effort: EffortLevel, quiet?: boolean): void
   /** 可切换模型列表（/model 补全与校验数据源）。 */
   listModels(): ModelChoiceView[]
 }
@@ -555,8 +559,11 @@ export interface CommandService {
 export interface TranscriptService {
   /** 折叠一条 core 事件（可见变化时自动失效快照）。 */
   emit(event: CoreEvent): void
-  /** 追加一条 system 条目。 */
-  system(text: string): void
+  /**
+   * 追加一条 system 条目。
+   * @param level - `'error'` 表示要人处理的问题：界面弹一次提示，不铺在首屏；缺省只进日志。
+   */
+  system(text: string, level?: 'info' | 'error'): void
   /** 追加一条计划卡条目（提交评审与批完各更新一次）。 */
   plan(view: PlanView): void
   /**
@@ -1327,6 +1334,11 @@ declare module '@deepseek-ai/cordis' {
      * 历史刚被压缩掉（compact 插件发出）。
      * 加载时冻结的东西要重算：记忆栏就是靠这个换新的一份，不然压缩后模型还在读旧事实。
      */
+    /**
+     * 旁问的增量（runtime 插件发出，2026-10-25）：id 是这次旁问的票据，delta 是本次新增的正文。
+     * done 为真表示这条旁问的流已经收尾（界面据此收起「正在回答」）。
+     */
+    'dsc/side-ask-chunk'(payload: { id: string; delta: string; done?: boolean }): void
     'dsc/compacted'(): void
   }
 }

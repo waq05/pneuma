@@ -1,0 +1,9 @@
+{
+  "name": "@dsc/ui-ask",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "peerDependencies": {
+    "@dsc/ui": "^1.1.0"
+  }
+}

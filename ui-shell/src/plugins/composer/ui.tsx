@@ -61,6 +61,7 @@ import {
   toastOk,
   useHostChannel,
   useHostSelector,
+  type EffortLevel,
   type GitSurface,
   type HostSnapshot,
   type ModelChoiceView,
@@ -75,13 +76,13 @@ import { useCommandMenu } from './command-menu'
 import { blockedNow, commandQuery } from './commands'
 import { carryDraft, draftScopeOf, type ComposerDraft } from './draft'
 import { summarizeNotice } from './notice-summary'
+import { EffortSlider } from './effort-slider'
 import {
   chooseFlyoutSide,
   clampShift,
   contextLabel,
   effortChoices,
   effortLabel,
-  effortSwitchable,
   findCurrent,
   FLYOUT_WIDTH,
   groupModels,
@@ -115,9 +116,24 @@ interface GitBranchList {
   branches: GitBranchRow[]
 }
 
+/**
+ * 「往输入框写一段话」的对外口子：首屏四张能力卡（transcript 插件）经服务表调它。
+ *
+ * 为什么用模块级变量转一道：服务必须在 apply 阶段 `provide`，而 `setText` 住在
+ * `ComposerBox` 里。组件挂载时把真正会写字的函数挂上来，卸载时摘掉——服务在、函数
+ * 可能在（首屏渲染时组件已在），服务缺席时能力卡自己置灰。
+ */
+let insertDraft: ((text: string) => void) | null = null
+
 export default defineUiPlugin({
   name: '输入区',
   apply(ui) {
+    // 首屏能力卡的落点：只做「写字 + 聚焦」，不发送——发不发送仍由用户按回车决定。
+    ui.provide('composerDraft', {
+      insert: (text: string): void => {
+        insertDraft?.(text)
+      },
+    })
     // order 50 = 排在各种卡（审批/提问/计划，order 10-40）下面、排队条（60）上面。
     // order 40 = 待投递通知条，与三张卡同一条带（输入框上方）；order 60 = 用户排队条，
     // 在输入框**下面**。
@@ -138,6 +154,25 @@ function ComposerBox(): ReactNode {
   const model = useHostSelector(readModel)
   const effort = useHostSelector(readEffort)
   const draftKey = useHostSelector(readSessionPath)
+  /**
+   * 刚点下去、宿主还没确认的档位（乐观值）。
+   *
+   * 为什么要它：档位 chip 的读数取宿主快照，一次 setEffort 要走「界面 → 宿主 → 快照 → 回推」，
+   * 几十到几百毫秒。这期间不垫一个乐观值，滑钮和文字会先弹回旧档、再跳到新档——用户说的
+   * 「调档卡顿、不丝滑」多半就是这一下。快照回来对上就自动撤掉；没对上（掉线 / 宿主不认
+   * 这一档）由下面的超时兜底，不让界面一直骗人。
+   */
+  const [pendingEffort, setPendingEffort] = useState<string | null>(null)
+  // 乐观值对上宿主读数就撤（正常路径：一次往返，几十毫秒）。
+  useEffect(() => {
+    if (pendingEffort !== null && effort === pendingEffort) setPendingEffort(null)
+  }, [effort, pendingEffort])
+  // 兜底：宿主 1.5 秒没确认（掉线、旧宿主不认这个档位）就退回宿主读数，别让界面停在假状态。
+  useEffect(() => {
+    if (pendingEffort === null) return undefined
+    const timer = setTimeout(() => setPendingEffort(null), 1500)
+    return () => clearTimeout(timer)
+  }, [pendingEffort])
 
   const [text, setText] = useState('')
   const [fault, setFault] = useState<string | null>(null)
@@ -245,6 +280,19 @@ function ComposerBox(): ReactNode {
     node?.scrollIntoView({ block: 'nearest' })
   }, [branchOpen, branchList])
   const area = useRef<HTMLTextAreaElement | null>(null)
+  // 把「写字 + 聚焦」挂到模块级口子上（服务表在 apply 阶段已经提供出去，见文件头）。
+  useEffect(() => {
+    insertDraft = (value: string): void => {
+      setText(value)
+      const node = area.current
+      if (node === null) return
+      node.focus()
+      node.setSelectionRange(value.length, value.length)
+    }
+    return () => {
+      insertDraft = null
+    }
+  }, [])
   const history = useRef<string[]>([])
   const [historyAt, setHistoryAt] = useState<number | null>(null)
   /** 每会话一份草稿（正文 + 本机历史），切会话时整份换入换出；归属规则见 draft.ts。 */
@@ -611,10 +659,28 @@ function ComposerBox(): ReactNode {
    * 卡片（它是透明的，为的是看着就是面板本来的样子）会让底下的端点行透上来，两列字叠在一起。
    */
   const flyoutShown = twoLevel && flyout !== null && hoveredGroup !== undefined
-  // 档位清单：模型查得到就用它声明的（含「默认」），查不到给兜底五档——不锁死用户。
+  // 档位清单：模型查得到就用它声明的，查不到给兜底——不锁死用户。
+  // 「默认」不画进滑杆（2026-10-26 用户定的：它不是刻度上的位置，摆进去会被当成真实档位），
+  // 所以这里先把它滤掉；滤完一档都不剩（模型没有思考开关）就退回单档 chip，不给浮层。
   const levelOptions = effortChoices(current.entry)
-  const switchEffort = effortSwitchable(levelOptions)
-  const effortText = effortLabel(effort)
+  const sliderLevels = levelOptions.filter((level): level is EffortLevel => level !== 'default')
+  const switchEffort = sliderLevels.length > 0
+  /** 界面显示哪个档位：乐观值优先（见 pendingEffort 的注释），宿主确认后回到宿主读数。 */
+  const shownEffort = pendingEffort ?? effort
+  const effortText = effortLabel(shownEffort)
+  /**
+   * 选档：只有这一处发请求（拖动中不发）。先落乐观值再发，界面不用等一个来回；
+   * 宿主拒绝时把乐观值撤掉并把原因写进 chip 下面那行 fault。
+   */
+  const commitEffort = (level: EffortLevel): void => {
+    setPendingEffort(level)
+    setFault(null)
+    // 第二个实参 quiet=true：滑杆调档不往对话里写「思考强度设为…」，也就少推一帧。
+    void channel.invoke('setEffort', [level, true]).catch((reason: unknown) => {
+      setPendingEffort(null)
+      setFault(reason instanceof Error ? reason.message : String(reason))
+    })
+  }
 
   /**
    * 会裁掉浮层的那个祖先盒子的横向区间：往上找第一个 `overflow-x` 不是 `visible` 的（实测是
@@ -1103,6 +1169,9 @@ function ComposerBox(): ReactNode {
                 }
                 aria-haspopup="menu"
                 aria-expanded={permOpen}
+                /* 手机档只画图标（styles.css ≤560 把文字藏掉），所以当前档位读什么要靠这条：
+                   文字被 CSS 藏起来之后，读屏与 aria-label 是仅剩的两条解释。 */
+                aria-label={`权限预设：${permOption?.label ?? '自定义'}`}
                 onClick={() => {
                   setPermOpen((open) => !open)
                   setPresetOpen(false)
@@ -1112,7 +1181,7 @@ function ComposerBox(): ReactNode {
                 }}
               >
                 <IconShield size={13} />
-                {permOption?.label ?? '自定义'}
+                <span className="chip-label">{permOption?.label ?? '自定义'}</span>
                 <IconChevronDown size={12} />
               </button>
               {permOpen ? (
@@ -1164,6 +1233,7 @@ function ComposerBox(): ReactNode {
                 data-tip={presetOption?.problem ?? presetOption?.description ?? '模式：模型是谁、手上有什么、被叮嘱了什么'}
                 aria-haspopup="menu"
                 aria-expanded={presetOpen}
+                aria-label={`模式：${presetOption?.label ?? preset.current}`}
                 onClick={() => {
                   setPresetOpen((open) => !open)
                   setPermOpen(false)
@@ -1173,7 +1243,7 @@ function ComposerBox(): ReactNode {
                 }}
               >
                 <IconLayers size={13} />
-                {presetOption?.label ?? preset.current}
+                <span className="chip-label">{presetOption?.label ?? preset.current}</span>
                 <IconChevronDown size={12} />
               </button>
               {presetOpen ? (
@@ -1185,10 +1255,10 @@ function ComposerBox(): ReactNode {
                     }}
                   />
                   <div className="model-pop preset-pop" role="menu" aria-label="模式">
-                    <div className="pop-label">
-                      模式
-                      <span className="pop-note">新建/编辑：设置 → 模式</span>
-                    </div>
+                    {/* 这里原来挂着「新建/编辑：设置 → 模式」——一句话把菜单顶行撑满，又
+                        让读者以为要跳去设置页才改得动。删掉：新建/编辑模式本来就是设置页的事，
+                        菜单只回答「现在用哪一档」。 */}
+                    <div className="pop-label">模式</div>
                     {preset.options.length === 0 ? (
                       <div className="pop-item">
                         <span className="name">清单没取到</span>
@@ -1397,9 +1467,10 @@ function ComposerBox(): ReactNode {
               ) : null}
             </div>
 
-            {/* 思考档位 chip：读数直接取 `status.effort`（**不依赖模型清单**），所以清单过期
-                也不会显示错。档位清单里恒有「默认」——宿主把它当恒可选的档位，旧版漏了它，
-                于是默认档时四个按钮一个都不亮。单档模型不给浮层、也不给箭头。 */}
+            {/* 思考档位 chip：读数取 status.effort（**不依赖模型清单**），所以清单过期也不会
+                显示错；刚点下去那一小段用乐观值顶（见 pendingEffort），免得数字先弹回去再跳过来。
+                档位清单里不再摆「默认」（它不是刻度上的位置，见 ./effort-slider 的文件头）。
+                单档模型不给浮层、也不给箭头。 */}
             {switchEffort ? (
               <div className="model-anchor model-anchor-sheet">
                 <button
@@ -1409,7 +1480,7 @@ function ComposerBox(): ReactNode {
                   aria-haspopup="menu"
                   aria-expanded={effortOpen}
                   aria-label={`当前思考强度 ${effortText}`}
-                  data-composer-effort={effort}
+                  data-composer-effort={shownEffort}
                   onClick={() => {
                     setEffortOpen((open) => !open)
                     setModelOpen(false)
@@ -1430,33 +1501,19 @@ function ComposerBox(): ReactNode {
                         setEffortOpen(false)
                       }}
                     />
-                    <div className="model-pop effort-pop" role="menu" aria-label="思考强度">
-                      <div className="pop-label">
-                        思考强度
-                        {current.entry === undefined && model !== '' ? (
-                          <span className="pop-note">模型不在清单里，列的是全部档位</span>
-                        ) : null}
-                      </div>
-                      {levelOptions.map((level) => (
-                        <button
-                          type="button"
-                          role="menuitemradio"
-                          aria-checked={level === effort}
-                          key={level}
-                          className={`pop-item${level === effort ? ' on' : ''}`}
-                          data-effort-option={level}
-                          onClick={() => {
-                            setEffortOpen(false)
-                            setFault(null)
-                            void channel.invoke('setEffort', [level]).catch((reason: unknown) => {
-                              setFault(reason instanceof Error ? reason.message : String(reason))
-                            })
-                          }}
-                        >
-                          <span className="name">{effortLabel(level)}</span>
-                          {level === effort ? <IconCheck size={14} className="check" /> : null}
-                        </button>
-                      ))}
+                    {/* 滑杆卡（2026-10-26 换掉原来那一列按钮）：档位有顺序，滑杆把顺序画出来。
+                        选完不关卡片：拖着扫档时关掉，等于每试一档都要重开一次。 */}
+                    <div className="model-pop effort-pop" role="group" aria-label="思考强度">
+                      <EffortSlider
+                        levels={sliderLevels}
+                        value={shownEffort}
+                        note={
+                          current.entry === undefined && model !== ''
+                            ? '模型不在清单里，列的是它声明的全部档位'
+                            : null
+                        }
+                        onCommit={commitEffort}
+                      />
                     </div>
                   </>
                 ) : null}

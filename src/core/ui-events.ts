@@ -89,6 +89,16 @@ export interface UiEventsOptions {
     /** 订阅变更帧；返回退订函数。 */
     subscribe(listener: (frame: unknown) => void): () => void
   }
+  /**
+   * 旁问的增量帧（2026-10-25）。
+   *
+   * 与 plugins 同一套做法（新事件名、不进帧 hub、无 seq）：旁问的增量是**瞬时**的，
+   * 断线时丢一段就丢一段，最终答案仍由 `sideAsk` 的返回值补齐——界面会用它覆盖整个答案。
+   */
+  ask?: {
+    /** 订阅增量；返回退订函数。 */
+    subscribe(listener: (chunk: unknown) => void): () => void
+  }
   throttleMs?: number
   heartbeatMs?: number
   /** 同时最多几条 SSE，缺省 8。 */
@@ -294,6 +304,28 @@ export function createUiEvents(options: UiEventsOptions): UiEventsHandle {
       forget(res)
     }
   }
+  /** 旁问增量帧：与启动图同一套「不补帧」口径。 */
+  const writeAsk = (res: ServerResponse, data: string): void => {
+    if (res.writableEnded || res.destroyed) {
+      forget(res)
+      return
+    }
+    try {
+      writeEvent(res, 'ask', data)
+    } catch {
+      forget(res)
+    }
+  }
+  const unsubscribeAsk = options.ask?.subscribe((chunk) => {
+    let data: string
+    try {
+      data = JSON.stringify(chunk)
+    } catch {
+      return
+    }
+    for (const res of [...clients]) writeAsk(res, data)
+  })
+
   const unsubscribePlugins = options.plugins?.subscribe((frame) => {
     let data: string
     try {
@@ -424,6 +456,7 @@ export function createUiEvents(options: UiEventsOptions): UiEventsHandle {
       timer = null
       unsubscribe()
       unsubscribePlugins?.()
+      unsubscribeAsk?.()
       for (const res of [...clients]) {
         try {
           res.end()

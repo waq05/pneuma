@@ -143,6 +143,11 @@ export function StepGroupRow(props: {
   const detail = closed || !props.showDetail ? '' : live.detail
   // 次数与实时详情不上面面，但要留在 DOM 上：截图用例与探针靠它断言「这一组收进去几条什么类别的调用」
   const counts = props.group.counts.map((item) => `${item.kind}=${String(item.count)}`).join(',')
+  // 提示语带上条数与失败数：点一下会发生什么、里面有没有坑，读提示就能答（不必先点一次试）。
+  const failNote = props.group.failures > 0 ? `，其中 ${String(props.group.failures)} 项失败` : ''
+  const tip = props.open
+    ? `收起这一阶段（${String(props.group.size)} 项思考与工具调用${failNote}）`
+    : `展开这一阶段，放出 ${String(props.group.size)} 项思考与工具调用${failNote}`
   return (
     <button
       type="button"
@@ -155,12 +160,7 @@ export function StepGroupRow(props: {
       data-step-counts={counts}
       data-step-detail={detail === '' ? undefined : detail}
       aria-expanded={props.open}
-      // 提示语带上条数：点一下到底会发生什么，读提示就能答（不必先点一次试）。
-      data-tip={
-        props.open
-          ? `收起这一阶段（${String(props.group.size)} 项思考与工具调用）`
-          : `展开这一阶段，放出 ${String(props.group.size)} 项思考与工具调用`
-      }
+      data-tip={tip}
       onClick={(event) => {
         // 先把焦点落到组头自己身上再开合（对照 ChatGroupSeat.tsx:116 的
         // `event.currentTarget.focus(); toggle()`）：收起组体时，焦点如果正落在组里某个
@@ -195,6 +195,14 @@ export function StepGroupRow(props: {
           </span>
         )}
       </span>
+      {/* 失败数（对照 codex 的「· N failed」）：组体默认收起，组头是唯一看得见的一行，
+          失败的调用要在这里就露出来，用户才不用逐组点开去找出错的那一段。
+          颜色走语义红，但只染这一个读数，标题照旧是过程区的灰——它是告警，不是新的层级。 */}
+      {props.group.failures > 0 ? (
+        <span className="step-fold-fail" data-step-failures={props.group.failures}>
+          {props.group.failures === 1 ? '1 失败' : `${String(props.group.failures)} 失败`}
+        </span>
+      ) : null}
       {/* 「点开会得到什么」写在明面上：这一组收着几条（思考段 + 工具调用合起来数）。
           用户在长会话里看到的是一列组头，光看标题猜不出里面有多少东西。 */}
       <span className="step-fold-count" data-step-size={props.group.size}>
