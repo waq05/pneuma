@@ -50,7 +50,7 @@ Pneuma 这边是另一套：
 4. **收益 vs 成本**：这条链路服务的是「界面上的费用显示」这一类需求。Pneuma 自己已经有
    `usageStats()`（设置里的用量统计）与状态栏用量，成本条属于锦上添花。
 
-## 4. 怎么做（三步；第 1、2 步已做，第 3 步没做）
+## 4. 怎么做（三步；第 1、2 步已做，第 3 步跑了、结论见 §7）
 
 **第一步：读侧最小面（1 批）——已做**
 
@@ -68,7 +68,7 @@ Pneuma 这边是另一套：
 - `get(id)` 返回 `SessionRecord`；`list()` 给当前工作区的会话（Pneuma 已有这一份数据）。
 - 不要实现 fork / prompt / 迁移那些——它们属于写侧。
 
-**第三步：用真包验收（没做，所以这条还不算完成）**
+**第三步：用真包验收（已跑，结论是「历史通了、实时记账还没通」，见 §7）**
 
 - 装 `dsh-cost-meter` 到隔离 profile，跑一轮带工具的真实对话（`scripts/_fake-llm.mjs` 可以
   点名工具），断言成本条出现非零数字。
@@ -102,10 +102,39 @@ cacheReadTokens / cacheWriteTokens）；工具行不带 token，不当事件。
 自检：`node scripts/dsh-session-bridge-check.mjs`（32 条，含「不声明 inject 的插件在 apply 里
 ctx.get 现取」这条真挂载路径），进 `pnpm run check:dsh`。
 
-**还没做的一步很关键**：拿真包（`dsh-cost-meter`）跑一轮，确认成本条出现非零数字。
-在那之前，「桥的形状对」只等于「我们的探针自洽」。
+## 7. 真包验收结果（2026-10-26，跑了，结论是负的）
 
-## 7. 参考
+按第三步真装了一次：隔离 HOME、`numa plugin add dsh-cost-meter`（1.9.41，走 npm）、
+假端点跑一轮带工具的对话。结果：
+
+| 看什么 | 结果 |
+| --- | --- |
+| 包挂得上 | ✅ 插件中心里 `cost-meter` 在，enabled，没有 problem |
+| 账本落盘 | ✅ `~/.dsc/storages/cost-meter/ledger.json`（325 KB，配置与价目表都在） |
+| 成本条有数 | ❌ `ledger.days` 是空的——这一轮的花费一条没记 |
+
+**为什么**：读它的源码才看清，它记**实时花费**走的是 dsh 的事件流
+（`ctx.on('llm/stream')` 与 `ctx.on('session/event')`），不是读历史。
+`sessionPersistence` 那条只服务它的「历史 / 补账 / 会话列表」功能。我们没有发这两类事件，
+所以它一条也收不到。
+
+**顺带按真消费方把桥的形状改对了**（这轮最有价值的产出）：它的
+`recordsFromPersistence()` 要求——
+
+- `stat()` / `list()` 的 `header.id`（我们原来写 `sessionId`，会被当成「没这个会话」跳过）；
+- `handle.header` 与 `handle.inheritedEventCount`（原来没有）；
+- `handle.read(offset)` 里 **offset 是一个 seq 数字**（原来只吃对象）。
+
+这三处都按真实调用点改了，自检也从 32 条加到 36 条（新增句柄 header / 继承计数 /
+数字偏移三条）。
+
+**下一步（要做就做这个）**：在回合循环里把 usage 发成 dsh 事件名
+（`llm/stream` 的 usage 帧与 `session/event`），让实时记账这条路走得通；
+历史那条已经通了。到那时再跑一次这个验收，看 `ledger.days` 有没有数。
+
+> 「桥的形状对」不等于「功能对」——这一条是这轮最大的提醒。
+
+## 8. 参考
 
 - 判定表：`src/core/dsh-compat/service-map.ts`（`sessions` / `sessionPersistence` 两条）
 - 真包验收记录：[development-log.md](development-log.md) 里「真装一个 dsh 组合包」那一节

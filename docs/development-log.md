@@ -8707,3 +8707,23 @@ ctx.get 现取」的真挂载路径，以及写侧四条拒绝断言、分页游
 
 分工写进脚本注释：`ui-*` 归 `check:ui`（眨眼级，改壳随时跑），其余归 `check:core`
 （提交前跑）；`ui-hmr-machine.mjs` 与 `desktop/shots/*.ps1` 要真桌面窗口，仍走人工。
+**真包验收跑了，结论是负的——但捞回了三处形状错（2026-10-26）**：
+
+装了真的 `dsh-cost-meter` 1.9.41（隔离 HOME + `numa plugin add` + 假端点跑一轮带工具的
+对话），三件事分开看：包挂得上 ✅、账本落盘 325 KB ✅、**成本条有数 ❌**（`ledger.days` 空）。
+
+读它的源码才看清为什么：实时花费走 dsh 的**事件流**（`ctx.on('llm/stream')`、
+`ctx.on('session/event')`），`sessionPersistence` 只服务历史/补账/会话列表。我们不发这两类
+事件，所以它一条也收不到。这条下一步写进了 docs/dsh-service-bridge-plan.md。
+
+不过这一趟把桥的形状按**真消费方**改对了三处（原来的写法会被它静默跳过）：
+
+1. `stat()` / `list()` 的 header 字段是 `id`，不是 `sessionId`——它的 `sessionRowOf()`
+   只认 `header.id`，写错等于「没有这个会话」；
+2. 句柄要带 `header` 与 `inheritedEventCount`（原来都没有）；
+3. `handle.read(offset)` 的 offset 是 **seq 数字**，不是对象（现在两种都吃：数字给 dsh，
+   对象留给本仓库的探针）。
+
+自检从 32 条加到 36 条（新增句柄 header / 继承计数 / 数字偏移各一条）。
+
+教训一句话：**「桥的形状对」不等于「功能对」**——不拿真包跑一遍，前两处错永远发现不了。

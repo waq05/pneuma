@@ -39,9 +39,14 @@ export interface BridgeEvent {
   readonly data: Record<string, unknown>
 }
 
-/** `stat()` 的返回（照 dsh 的 `SessionPersistenceSnapshot` 取最小集）。 */
+/**
+ * `stat()` 的返回（照 dsh 的 `SessionPersistenceSnapshot` 取最小集）。
+ *
+ * `header.id` 这个字段名是**照着真实消费方核过的**：`dsh-cost-meter` 的
+ * `sessionRowOf()` 只认 `header.id`，写 `sessionId` 会被当成「没有这个会话」直接跳过。
+ */
 export interface BridgeSnapshot {
-  readonly header: { readonly sessionId: string; readonly cwd?: string; readonly createdAt?: number }
+  readonly header: { readonly id: string; readonly cwd?: string; readonly createdAt?: number }
   readonly formatStatus: 'current'
   readonly revision: string
   readonly eventCount: number
@@ -55,10 +60,24 @@ export interface BridgePage {
   readonly hasMore: boolean
 }
 
-/** 只读句柄：dsh 的 `open(id, 'read')` 拿到的那个东西。 */
+/**
+ * 只读句柄：dsh 的 `open(id, 'read')` 拿到的那个东西。
+ *
+ * 三个成员都是按真实消费方（`dsh-cost-meter` 的 `recordsFromPersistence`）核出来的：
+ * 它读 `handle.header` 取会话头、读 `handle.inheritedEventCount` 算继承计数、然后
+ * `await handle.read(offset)`——**offset 是一个 seq 数字**，不是我们原先那种对象。
+ */
 export interface BridgeHandle {
   readonly sessionId: string
-  read(range?: { readonly throughSeq?: number; readonly beforeSeq?: number; readonly maxMessages?: number }): BridgePage
+  readonly header: { readonly id: string; readonly cwd?: string; readonly createdAt?: number }
+  readonly inheritedEventCount: number
+  /**
+   * 读一页事件。
+   * @param range - 起点：数字 = dsh 的 seq 偏移（从这一号开始取）；对象 = 本仓库自用的游标
+   */
+  read(
+    range?: number | { readonly throughSeq?: number; readonly beforeSeq?: number; readonly maxMessages?: number },
+  ): BridgePage
   close(): void
 }
 
@@ -182,7 +201,7 @@ function eventsOf(path: string, usage: readonly UsageRecord[]): BridgeEvent[] {
 /** 一个会话文件的快照（stat 与句柄共用，免得两处口径不一）。 */
 function snapshotOf(item: ReturnType<typeof listSessions>[number], eventCount: number, sizeBytes: number): BridgeSnapshot {
   return {
-    header: { sessionId: item.id, cwd: item.cwd, createdAt: item.createdAt },
+    header: { id: item.id, cwd: item.cwd, createdAt: item.createdAt },
     formatStatus: 'current',
     // revision 用「事件数 + 字节数」：够插件判断「读到的这一份有没有变」，不假装是内容哈希。
     revision: `${String(eventCount)}:${String(sizeBytes)}`,
@@ -209,7 +228,17 @@ export function createSessionPersistenceBridge(): SessionPersistenceBridge {
     const events = eventsOf(item.path, usageBySession().get(sessionId) ?? [])
     return {
       sessionId,
+      header: { id: item.id, cwd: item.cwd, createdAt: item.createdAt },
+      // dsh 的「继承事件数」是 fork 时带过来的前缀条数；Pneuma 没有 fork 概念，恒 0。
+      inheritedEventCount: 0,
       read(range) {
+        // 两种调用形态都要吃：dsh 那条传的是**数字偏移**（从这一号 seq 开始取），
+        // 本仓库的探针传对象（three cursors）。分成两条路各自都好读，不合并成一个万能参数。
+        if (typeof range === 'number') {
+          const start = Math.max(0, range)
+          const slice = events.filter((event) => event.seq >= start)
+          return { events: slice, hasMore: false }
+        }
         const through = range?.throughSeq
         const before = range?.beforeSeq
         const max = range?.maxMessages

@@ -63,13 +63,19 @@ console.log('会话桥：list / stat / open(read) 的形状')
 {
   const persistence = createSessionPersistenceBridge()
   const list = persistence.list()
-  check('list() 看得见这个会话', list.length === 1 && list[0].header.sessionId === sessionId, JSON.stringify(list))
+  check('list() 看得见这个会话', list.length === 1 && list[0].header.id === sessionId, JSON.stringify(list))
   const stat = persistence.stat(sessionId)
   check('stat() 给 header / revision / eventCount / sizeBytes', stat !== undefined && typeof stat.revision === 'string' && stat.eventCount === 5, JSON.stringify(stat))
   check('formatStatus 是 current（不做迁移戏法）', stat?.formatStatus === 'current', String(stat?.formatStatus))
   check('stat 不存在的会话给 undefined', persistence.stat('nope') === undefined)
 
   const handle = persistence.open(sessionId, 'read')
+  // 真消费方（dsh-cost-meter）的形状：header 在句柄上、inheritedEventCount 是数字、read 吃 seq 偏移
+  check('句柄带 header（消费方从它取会话头）', handle.header.id === sessionId, JSON.stringify(handle.header))
+  check('句柄带 inheritedEventCount（没有 fork 就是 0）', handle.inheritedEventCount === 0, String(handle.inheritedEventCount))
+  const fromOffset = handle.read(3)
+  check('read(数字) 按 seq 偏移取（3 → 第 3 条起）', fromOffset.events.length === 3 && fromOffset.events[0].seq === 3, JSON.stringify(fromOffset.events.map((e) => e.seq)))
+  check('read(0) 从头取', handle.read(0).events.length === 5)
   const all = handle.read()
   check('open(read) 读出全部事件', all.events.length === 5 && all.hasMore === false, JSON.stringify(all.events.length))
   check('事件按时间合并（用量插在 user 与 assistant 之间）',
