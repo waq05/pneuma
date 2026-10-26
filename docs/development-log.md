@@ -8727,3 +8727,23 @@ ctx.get 现取」的真挂载路径，以及写侧四条拒绝断言、分页游
 自检从 32 条加到 36 条（新增句柄 header / 继承计数 / 数字偏移各一条）。
 
 教训一句话：**「桥的形状对」不等于「功能对」**——不拿真包跑一遍，前两处错永远发现不了。
+**事件流补上了：成本条真的有数了（2026-10-26）**：
+
+上一轮真包验收的结论是负的——包挂得上、账本落盘，但 `ledger.days` 是空的。读它的源码
+才看清：实时花费走 `ctx.on('llm/stream')` 这个 **waterfall 事件**，插件在事件里包一层流，
+见到 `{ type:'usage', usage }` 的 chunk 才记账；`sessionPersistence` 只服务历史与补账。
+
+补法（`src/core/dsh-compat/llm-usage-event.ts`）：回合里每记一条用量，就按 waterfall 约定
+派发一次 `llm/stream`，把这次调用**真实的** token 数包成唯一一个 usage chunk 交出去，然后
+把被插件包过的迭代器消费完（插件的 `finally` 与记账都在里面）。调用点在
+`src/plugins/agent.ts` 的用量分支，`void` 发出、内部吞错——记账失败不能带崩回合。
+
+再跑真包验收，四条全过，账本里是真数：`calls: 2、input: 80、output: 35`，按
+`fake:fake-chat` 分渠道、按会话分账（花费 0 是因为假端点没有价目表，数字对、钱对不上正常）。
+
+新增 `scripts/dsh-llm-event-check.mjs` 12 条：事件名与 options、chunk 形状（缓存/思考字段
+缺省补 0 而不是 undefined）、以及三条「旁路不伤人」（没 waterfall / 监听者抛错 / 监听者
+给空流）。它进 `check:dsh`（现在 110 条），不依赖网络；真包那条要联网，仍走手动。
+
+剩下的小口子写进文档：没发 `session/event`；我们一次调用发一个 usage chunk（dsh 是流式
+逐步吐），插件只认最后一个有效 usage 所以等价，但若有插件按增量累加要改。

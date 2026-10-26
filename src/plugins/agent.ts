@@ -22,6 +22,7 @@ import type { Plugin } from '@deepseek-ai/cordis'
 import { Session, type InboxOrigin } from '../core/session.js'
 import { MiniAgent } from '../core/loop.js'
 import { appendToolRecord, appendUsageRecord } from '../core/usage-log.js'
+import { publishDshUsage } from '../core/dsh-compat/llm-usage-event.js'
 import { clearReadLedger } from '../core/path-policy.js'
 import { errText } from '../adapter/transcript.js'
 import type { AgentService, TurnSignal } from '../services/types.js'
@@ -89,6 +90,18 @@ export const agentPlugin: Plugin.Object = {
                 ...(event.llmMs === undefined ? {} : { lm: event.llmMs }),
                 ...(event.ttftMs === undefined ? {} : { ft: event.ttftMs }),
                 ...(event.decodeMs === undefined ? {} : { d: event.decodeMs }),
+              })
+              // dsh 的计费插件（cost-meter 这类）不听用量日志，而是在 `llm/stream`
+              // 这个 waterfall 事件上包一层流读 usage chunk。这里把同一次调用的用量
+              // 作为旁路事件发出去——发不发得出去都不影响回合（内部吞错）。
+              void publishDshUsage(ctx, {
+                sessionId: session.meta.id,
+                provider: ctx.llm.provider,
+                model: ctx.llm.model,
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+                ...(event.cacheHitTokens === undefined ? {} : { cacheReadTokens: event.cacheHitTokens }),
+                ...(event.cacheMissTokens === undefined ? {} : { cacheWriteTokens: event.cacheMissTokens }),
               })
             }
             // 工具调用也记一条（第二种行）：界面读同一个文件算「工具耗时」。

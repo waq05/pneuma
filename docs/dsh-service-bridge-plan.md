@@ -1,8 +1,9 @@
-# dsh 服务桥：为什么它还没做，以及做的时候怎么做
+# dsh 服务桥：把会话历史与用量接到 dsh 的插件上
 
-> 状态：**第一步（读侧最小面）已做**（2026-10-26）。第四节的第 1、2 步落地在
-> `src/core/dsh-compat/session-bridge.ts`，第 3 步（真包验收）**还没做**——所以在
-> 「dsh-cost-meter 的成本条有没有数」这个问题上，本文不给保证。
+> 状态：**通了**（2026-10-26）。读侧落在 `src/core/dsh-compat/session-bridge.ts`，
+> 实时记账靠 `src/core/dsh-compat/llm-usage-event.ts` 派发 `llm/stream`；
+> 真包验收（`dsh-cost-meter` 1.9.41）账本里能读到 `calls / input / output`。
+> 细节与剩下的小口子见 §7。
 
 ## 1. 症状
 
@@ -37,7 +38,7 @@ Pneuma 这边是另一套：
 也就是说：dsh 的读侧语义（事件流 + seq）Pneuma 没有，但**算账要的那点数据 Pneuma 有**，
 只是散在两个地方。适配器的真正工作是把这两份拼成 dsh 期望的事件形状。
 
-## 3. 为什么不能一口气做完（读侧做了，整体仍不算完）
+## 3. 为什么它不是「写个适配器」就完了
 
 1. **API 面比看起来大**：不是两个方法，是 `stat / open / list / read(page) / create` 加句柄与
    revision 语义。只实现「刚好够某个插件调的那两个」等于给下一个插件埋新的坑。
@@ -50,7 +51,7 @@ Pneuma 这边是另一套：
 4. **收益 vs 成本**：这条链路服务的是「界面上的费用显示」这一类需求。Pneuma 自己已经有
    `usageStats()`（设置里的用量统计）与状态栏用量，成本条属于锦上添花。
 
-## 4. 怎么做（三步；第 1、2 步已做，第 3 步跑了、结论见 §7）
+## 4. 怎么做（三步都做了；第 3 步先负后正，见 §7）
 
 **第一步：读侧最小面（1 批）——已做**
 
@@ -102,7 +103,7 @@ cacheReadTokens / cacheWriteTokens）；工具行不带 token，不当事件。
 自检：`node scripts/dsh-session-bridge-check.mjs`（32 条，含「不声明 inject 的插件在 apply 里
 ctx.get 现取」这条真挂载路径），进 `pnpm run check:dsh`。
 
-## 7. 真包验收结果（2026-10-26，跑了，结论是负的）
+## 7. 真包验收（2026-10-26）：先负后正
 
 按第三步真装了一次：隔离 HOME、`numa plugin add dsh-cost-meter`（1.9.41，走 npm）、
 假端点跑一轮带工具的对话。结果：
@@ -128,11 +129,36 @@ ctx.get 现取」这条真挂载路径），进 `pnpm run check:dsh`。
 这三处都按真实调用点改了，自检也从 32 条加到 36 条（新增句柄 header / 继承计数 /
 数字偏移三条）。
 
-**下一步（要做就做这个）**：在回合循环里把 usage 发成 dsh 事件名
-（`llm/stream` 的 usage 帧与 `session/event`），让实时记账这条路走得通；
-历史那条已经通了。到那时再跑一次这个验收，看 `ledger.days` 有没有数。
+### 7.1 补上事件流之后：通了（同一天补的）
 
-> 「桥的形状对」不等于「功能对」——这一条是这轮最大的提醒。
+做完读侧之后补了**旁路事件**：回合里每记一条用量，就按 dsh 的 waterfall 约定派发一次
+`llm/stream`——把这一次调用的真实 token 数包成**唯一一个** `{ type:'usage', usage }` chunk，
+交给监听者链（插件会包住它、读到 usage、记账、再往下吐），然后把这个被包过的迭代器消费完。
+落在 `src/core/dsh-compat/llm-usage-event.ts`，调用点在 `src/plugins/agent.ts` 的用量分支。
+
+再跑真包验收：
+
+```
+PASS 组合包里的 cost-meter 挂上了
+PASS 挂载没有报问题
+PASS 账本落在 ~/.dsc/storages/cost-meter
+PASS 账本里有这一轮的花费
+```
+
+账本里读到的是真的数：`calls: 2、input: 80、output: 35`，按 `fake:fake-chat` 分渠道、
+按会话分账（花费是 0，因为假端点没有价目表——数字对、钱数对不上是正常的）。
+
+**没有骗人的地方**：chunk 里的数字就是这次请求真实的 token 数，不是编的；我们只是把
+「回调式流」翻译成「迭代器式流」让插件读得到。插件抛错一律吞掉，记账失败不影响回合。
+
+剩下的小口子（不挡用）：
+
+- 我们只发 `llm/stream`，没发 `session/event`。费用条有数了；如果哪天插件依赖
+  `session/event` 做别的事（它是会话内事件流），再补。
+- 我们发的是「一次调用一个 usage chunk」，dsh 是流式过程中逐步吐。插件只认最后一个有效
+  usage，等价；但若将来有插件按增量累加，这里要改成按帧发。
+
+> 「桥的形状对」不等于「功能对」——只做读侧时成本条仍然是空的，这一条是这轮最大的提醒。
 
 ## 8. 参考
 
