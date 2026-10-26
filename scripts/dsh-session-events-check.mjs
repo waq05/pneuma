@@ -156,7 +156,7 @@ console.log('边界')
   errBridge.publish({ type: 'error', message: '端点 500' })
   errBridge.publish({ type: 'turn/end', reason: 'error' })
   const errored = errCtx.seen.map((row) => row.event).find((event) => event.type === 'turn/end')
-  check('失败的 reason 是 error 且带说明', errored?.data?.reason?.kind === 'error' && typeof errored?.data?.reason?.error?.message === 'string', JSON.stringify(errored?.data?.reason))
+  check('失败的 reason 是 error 且带真实错误文案', errored?.data?.reason?.kind === 'error' && errored?.data?.reason?.error?.message === '端点 500', JSON.stringify(errored?.data?.reason))
 
   // 失败的工具结果要标 isError 与 error 身份（dsh 只在 isError 时允许带 error）。
   const toolCtx = recordingCtx()

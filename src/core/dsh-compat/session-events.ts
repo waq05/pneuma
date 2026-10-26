@@ -138,6 +138,8 @@ export function createDshSessionEventBridge(options: DshSessionEventBridgeOption
   const bufferedUsers: string[] = []
   /** 等用量的助手消息。 */
   let pending: PendingAssistant | null = null
+  /** 最近一条错误事件的文案：回合以 error 收尾时它是 reason 里唯一有信息量的东西。 */
+  let lastError = ''
 
   /** 派发一条事件；失败只留一行 stderr（广播是旁路）。 */
   function dispatch(event: DshSessionEvent): void {
@@ -340,12 +342,19 @@ export function createDshSessionEventBridge(options: DshSessionEventBridgeOption
                 ? { kind: 'completed' }
                 : event.reason === 'aborted'
                   ? { kind: 'aborted', reason: { kind: 'user' } }
-                  : { kind: 'error', error: { message: '这一轮失败了', code: 'UNKNOWN' } }
+                  : {
+                      kind: 'error',
+                      // 内核先发 error 再发 turn/end，把它记住：只写「这一轮失败了」
+                      // 等于把唯一的诊断信息丢掉。
+                      error: { message: lastError === '' ? '这一轮失败了（没有更多信息）' : lastError, code: 'UNKNOWN' },
+                    }
+            lastError = ''
             dispatch(make('turn/end', { turn, reason }))
             return
           }
           case 'error': {
-            // dsh 没有通用的「出错了」事件：失败是 turn/end 的 reason。这里不发。
+            // dsh 没有通用的「出错了」事件：失败是 turn/end 的 reason。记下来，随它一起发。
+            lastError = event.message
             return
           }
           default:
