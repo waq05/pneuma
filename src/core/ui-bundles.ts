@@ -114,6 +114,13 @@ export interface UiPluginArtifacts {
   /** 声明了但文件不在（或文件/字段不合法）的，逐条说清楚——不静默跳过。 */
   problems: string[]
   /**
+   * 声明了、也装得上，但被用户停用的 id（不进 entries，也不算问题）。
+   *
+   * 为什么单独列出来：装载器报「依赖没满足」时要区分「这个插件被停用了」与「没有这个插件」——
+   * 前者用户翻一下开关就好，后者要去装。两句话混成一句会把下一步指错。
+   */
+  disabled: string[]
+  /**
    * 这份清单对应的 `@dsc/ui` 契约版本（构建产物写下的壳版本，1.0.0 起）。
    * 第三方目录合成的清单没有这一项——它们的条目必须逐条带 `api` 区间，
    * 门禁按 entry 侧的声明判（`evaluateUiApiGate`）。
@@ -445,13 +452,20 @@ class UiArtifactCache {
   /** 现在的产物表（清单没换就不重算）。 */
   table(): UiPluginArtifacts {
     this.rebuild(false)
-    return { entries: [...this.entries], problems: [...this.problems], ...(this.apiVersion === undefined ? {} : { apiVersion: this.apiVersion }) }
+    // 内置清单没有逐条启停（它们随壳一起发布），被停用的只有第三方与组合包——
+    // 那两个来源在 collect 那层合并进来，这里给空。
+    return {
+      entries: [...this.entries],
+      problems: [...this.problems],
+      disabled: [],
+      ...(this.apiVersion === undefined ? {} : { apiVersion: this.apiVersion }),
+    }
   }
 
   /** 强制重算（页面每次加载、`refresh()` 用：文件被手工换掉也立刻反映）。 */
   refresh(): UiPluginArtifacts {
     this.rebuild(true)
-    return { entries: [...this.entries], problems: [...this.problems], ...(this.apiVersion === undefined ? {} : { apiVersion: this.apiVersion }) }
+    return this.table()
   }
 
   /**
@@ -587,6 +601,8 @@ export interface ThirdPartyUiEntry extends UiPluginRow, ThirdPartyOrigin {
 export interface ThirdPartyUiReport {
   entries: ThirdPartyUiEntry[]
   problems: string[]
+  /** 声明齐了但被用户停用的 id（不进 entries，也不算问题）。 */
+  disabled: string[]
 }
 
 /** 第三方缓存：一条发现的字节与指纹。 */
@@ -627,11 +643,12 @@ export function discoverThirdPartyUiArtifacts(
 ): ThirdPartyUiReport {
   const entries: ThirdPartyUiEntry[] = []
   const problems: string[] = []
+  const disabled: string[] = []
   let names: string[]
   try {
     names = readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith('.')).map((e) => e.name)
   } catch {
-    return { entries, problems } // 目录还没有 = 还没装过第三方，正常态
+    return { entries, problems, disabled } // 目录还没有 = 还没装过第三方，正常态
   }
   const cache = thirdPartyCache(dir)
   const trusted = readUiPluginTrust()
@@ -679,7 +696,8 @@ export function discoverThirdPartyUiArtifacts(
       continue
     }
     if (!isPluginEnabled(fileKey)) {
-      continue // 停用不是问题：启停是用户的开关，不进 problems
+      disabled.push(name) // 停用不是问题（启停是用户的开关），但要能报「它被停用了」
+      continue
     }
     if (trusted[fileKey] === undefined) {
       problems.push(`${where}: 还没有信任记录——首次安装需要在插件中心确认一次（它将能调用宿主的界面方法）`)
@@ -726,7 +744,7 @@ export function discoverThirdPartyUiArtifacts(
       })
     }
   }
-  return { entries, problems }
+  return { entries, problems, disabled }
 }
 
 function existsClient(dir: string, name: string): boolean {
@@ -940,6 +958,8 @@ export interface PackageUiEntry extends UiPluginRow {
 export interface PackageUiReport {
   entries: PackageUiEntry[]
   problems: string[]
+  /** 声明齐了但被用户停用的 id（不进 entries，也不算问题）。 */
+  disabled: string[]
 }
 
 interface PackageCached {
@@ -1189,7 +1209,8 @@ export function discoverPackageUiArtifacts(
 ): PackageUiReport {
   const entries: PackageUiEntry[] = []
   const problems: string[] = []
-  if (profileDir === null) return { entries, problems }
+  const disabled: string[] = []
+  if (profileDir === null) return { entries, problems, disabled }
   const nodeModules = resolve(profileDir, 'node_modules')
   let cache = packageCaches.get(profileDir)
   if (cache === undefined) {
@@ -1219,7 +1240,10 @@ export function discoverPackageUiArtifacts(
       problems.push(`${where}: exports["./client"] 指向的 ${judged.clientPath ?? '(没写)'} 读不到`)
       continue
     }
-    if (!isPluginEnabled(where)) continue // 停用不是问题，是用户的开关
+    if (!isPluginEnabled(where)) {
+      disabled.push(name) // 停用不是问题，是用户的开关；但要能报「它被停用了」
+      continue
+    }
     const api = judged.api ?? ''
     const path = judged.path ?? ''
     const rev = contentRev(bytes)
@@ -1253,7 +1277,7 @@ export function discoverPackageUiArtifacts(
       })
     }
   }
-  return { entries, problems }
+  return { entries, problems, disabled }
 }
 
 /**
@@ -1378,7 +1402,14 @@ export function collectUiArtifactsForPlatform(
     ...fromPackages.entries.filter((entry) => (entry.platform ?? 'web') === platform),
   ]
   const problems = [...builtin.problems, ...third.problems, ...fromPackages.problems]
-  return { entries, problems, ...(builtin.apiVersion === undefined ? {} : { apiVersion: builtin.apiVersion }) }
+  // 被停用的 id 并成一份（同一份清单给装载器报「被停用」用；重复的去一次）。
+  const disabled = [...new Set([...third.disabled, ...fromPackages.disabled])]
+  return {
+    entries,
+    problems,
+    disabled,
+    ...(builtin.apiVersion === undefined ? {} : { apiVersion: builtin.apiVersion }),
+  }
 }
 
 /** 取产物字节时要知道的两个根目录（都缺省到标准落点）。 */

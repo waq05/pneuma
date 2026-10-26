@@ -91,7 +91,7 @@ export function createUiBootSource(options: UiBootSourceOptions): UiBootSource {
     ...(dirs.thirdPartyDir === undefined ? {} : { thirdPartyDir: dirs.thirdPartyDir }),
     ...(dirs.packageDir === undefined ? {} : { packageDir: dirs.packageDir }),
   })
-  let graph = composeUiBootGraph(options.host, toUiPluginRows(artifacts.entries))
+  let graph = composeUiBootGraph(options.host, toUiPluginRows(artifacts.entries), artifacts.disabled)
   const combo = new UiComboTable()
   combo.replace(buildComboBodies(graph, artifacts, dirs))
   const stats: UiBootRequestStats = { combo: 0, single: 0, byId: {} }
@@ -109,7 +109,7 @@ export function createUiBootSource(options: UiBootSourceOptions): UiBootSource {
       ...(dirs.thirdPartyDir === undefined ? {} : { thirdPartyDir: dirs.thirdPartyDir }),
       ...(dirs.packageDir === undefined ? {} : { packageDir: dirs.packageDir }),
     })
-    const freshGraph = composeUiBootGraph(options.host, toUiPluginRows(fresh.entries))
+    const freshGraph = composeUiBootGraph(options.host, toUiPluginRows(fresh.entries), fresh.disabled)
     artifacts = fresh
     if (freshGraph.rev !== graph.rev) {
       graph = freshGraph

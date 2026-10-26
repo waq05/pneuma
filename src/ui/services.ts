@@ -121,22 +121,32 @@ export interface PluginDeps {
  * 解析一条插件的依赖，返回未满足的原因（空数组 = 可以装）。
  *
  * 插件 id 与服务名分开查：以前一个 `inject` 字段先按插件 id 解、解不到再当服务名，
- * 于是「插件改名」与「服务没提供」在报告里长得一样。现在两档文案各说各的：
- * 「插件 X 没装上：…」与「服务 Y 还没有提供者」。
+ * 于是「插件改名」与「服务没提供」在报告里长得一样。现在三档文案各说各的：
+ * 「插件 X 没装上：…」「插件 X 被停用了」「服务 Y 还没有提供者」。
+ *
+ * 第三档为什么单列：被停用的插件不在装载清单里，若混进「不在清单里」，用户会去装一个
+ * 已经装好的插件——下一步被指错了。停用是开关，翻回来就好。
  * @param deps - 插件声明的两类依赖
  * @param reportOf - 查另一个插件的装载报告（按插件 id）
  * @param services - 当前的服务表
+ * @param disabled - 声明了但被用户停用的插件 id（不传就当没有停用的）
  */
 export function unmetDependencies(
   deps: PluginDeps,
   reportOf: (id: string) => { ok: boolean; error?: string } | undefined,
   services: ServiceRegistry,
+  disabled?: ReadonlySet<string>,
 ): string[] {
   const unmet: string[] = []
   for (const name of deps.plugins ?? []) {
     const dependency = reportOf(name)
-    if (dependency === undefined) unmet.push(`插件 ${name} 不在清单里`)
-    else if (dependency.ok !== true) unmet.push(`插件 ${name} 没装上：${dependency.error ?? '未知原因'}`)
+    if (dependency === undefined) {
+      unmet.push(
+        disabled?.has(name) === true
+          ? `插件 ${name} 被停用了（在插件中心或 ~/.dsc/plugins.json 里打开）`
+          : `插件 ${name} 不在清单里`,
+      )
+    } else if (dependency.ok !== true) unmet.push(`插件 ${name} 没装上：${dependency.error ?? '未知原因'}`)
   }
   for (const name of deps.services ?? []) {
     if (!services.has(name)) unmet.push(`服务 ${name} 还没有提供者`)

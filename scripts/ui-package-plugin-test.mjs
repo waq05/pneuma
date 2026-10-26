@@ -189,6 +189,7 @@ check('isThirdPartyUiEntry 不认组合包的键（两条路不混）', isThirdP
 writePluginEnabled('dsh-cost-meter/client', false)
 const afterOff = collectUiArtifactsForPlatform('web', { packageDir: profile, thirdPartyDir: third, force: true })
 check('停用后不进启动图', !afterOff.entries.some((item) => item.id === 'dsh-cost-meter'))
+check('停用的 id 单独列出来（装载器要能说「被停用了」）', afterOff.disabled.includes('dsh-cost-meter'), JSON.stringify(afterOff.disabled))
 const offRow = scanPackageUiTrusts(afterOff.apiVersion, new Set(), profile).find((item) => item.name === 'dsh-cost-meter')
 check('停用后卡片上还在，且 enabled=false', offRow !== undefined && offRow.enabled === false)
 writePluginEnabled('dsh-cost-meter/client', true)

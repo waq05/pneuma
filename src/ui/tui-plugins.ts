@@ -139,8 +139,9 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
       }
       ledger.length = 0
     }
-    // 硬依赖先解析：插件 id 与服务名各查各的（2.0 起不再双关）。
-    const unmet = unmetDependencies(deps, (name) => reportById.get(name), services)
+    // 硬依赖先解析：插件 id 与服务名各查各的（2.0 起不再双关）；
+    // 被停用的依赖要说「被停用了」，不能说「不在清单里」——后者会把人指去重装。
+    const unmet = unmetDependencies(deps, (name) => reportById.get(name), services, new Set(artifacts.disabled))
     if (unmet.length > 0) {
       const reason = `等待：${unmet.join('；')}`
       reportById.set(id, { id, ok: false, error: reason, attempts: attempt })

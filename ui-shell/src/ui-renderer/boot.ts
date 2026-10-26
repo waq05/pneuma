@@ -434,6 +434,8 @@ export async function createBootSession(
       { ...(entry.inject === undefined ? {} : { plugins: entry.inject }), ...(entry.services === undefined ? {} : { services: entry.services }) },
       (id) => reports.get(id),
       services,
+      // 图里带着「被停用的 id」：那种依赖要报「被停用了」，不能说「不在清单里」。
+      new Set(graph.disabled ?? []),
     )
     if (unmet.length > 0) {
       const reason = `等待：${unmet.join('；')}`

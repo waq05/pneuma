@@ -1294,6 +1294,15 @@ console.log('\n[6] A1 服务注入')
     'inject 里的名字不再回落当服务名查（不在清单里就说不在清单里）',
     unmetDependencies({ plugins: ['plug.b'] }, () => undefined, both).join('；').includes('插件 plug.b 不在清单里'),
   )
+  // 用例七：被停用的依赖要说「被停用了」——说成「不在清单里」会把人指去重装一个已装好的插件。
+  check(
+    '被停用的依赖单列一档（不混成「不在清单里」）',
+    (() => {
+      const reason = unmetDependencies({ plugins: ['plug.c'] }, () => undefined, empty, new Set(['plug.c'])).join('；')
+      return reason.includes('插件 plug.c 被停用了') && !reason.includes('不在清单里')
+    })(),
+    unmetDependencies({ plugins: ['plug.c'] }, () => undefined, empty, new Set(['plug.c'])).join('；'),
+  )
 }
 
 // ── 7. D3 席位（共享实例 / 懒建 / 释放 / 浅拷贝口径）─────────────────────────────

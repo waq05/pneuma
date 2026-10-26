@@ -107,6 +107,13 @@ export interface UiBootGraph {
   batches: UiBootBatch[]
   /** 界面壳要显示的宿主身份（哪台机器、哪个版本）。 */
   host: { name: string; version: string }
+  /**
+   * 声明了、装得上、但被用户停用的插件 id（不在这张图里）。
+   *
+   * 为什么图里要带这一项：装载器报「依赖没满足」时要区分「被停用」与「没有这个插件」，
+   * 前者翻一下开关就好，后者要去装。不进 rev——它不影响要装什么，只是解释口径。
+   */
+  disabled?: string[]
 }
 
 /** 短哈希长度（与 dsh 的 12 位一致：够短不撞，也够眼睛扫）。 */
@@ -242,10 +249,12 @@ export function orderUiPlugins<T extends UiPluginRow>(rows: readonly T[]): T[] {
  *
  * @param host - 宿主身份
  * @param artifacts - 已算出 rev 的插件包（顺序即扫描顺序）
+ * @param disabled - 声明了但被停用的 id（只随图带出去，不参与组图与 rev）
  */
 export function composeUiBootGraph(
   host: { name: string; version: string },
   artifacts: readonly (UiPluginRow & { rev: string })[],
+  disabled: readonly string[] = [],
 ): UiBootGraph {
   const ordered = orderUiPlugins(artifacts)
   const entries: UiPluginEntry[] = ordered.map((artifact) => ({
@@ -269,5 +278,5 @@ export function composeUiBootGraph(
     })
   }
   const rev = shortHash('uiboot', JSON.stringify(entries), JSON.stringify(batches))
-  return { rev, entries, batches, host }
+  return { rev, entries, batches, host, ...(disabled.length === 0 ? {} : { disabled: [...disabled] }) }
 }

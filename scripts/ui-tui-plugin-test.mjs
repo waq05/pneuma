@@ -319,6 +319,14 @@ async function renderFrame(registry, slot) {
   }
   writePkg('pkg-both', { platform: 'pneuma', api: '^2.0.0', platforms: ['web', 'tui'] }, '组合包的界面半也在终端壳里')
   writePkg('pkg-web-only', { platform: 'pneuma', api: '^2.0.0' }, '这一份不该出现在终端壳里')
+  // 被停用的依赖：报告要说「被停用了」，不能说「不在清单里」（后者会把人指去重装）。
+  writePkg('pkg-off', { platform: 'pneuma', api: '^2.0.0', platforms: ['web', 'tui'] }, '被停用的那份')
+  writePkg('pkg-needs-off', { platform: 'pneuma', api: '^2.0.0', platforms: ['web', 'tui'], inject: ['pkg-off'] }, '依赖被停用')
+  writeFileSync(
+    join(process.env.DSC_HOME, 'plugins.json'),
+    JSON.stringify({ version: 1, entries: [{ file: 'pkg-off/client', disabled: true, config: {} }] }),
+    'utf8',
+  )
 
   const earlier = process.env.DSC_PROFILE
   process.env.DSC_PROFILE = 'probe'
@@ -333,6 +341,13 @@ async function renderFrame(registry, slot) {
   const both = load.reports.find((r) => r.id === 'pkg-both')
   check('声明了 platforms: [web, tui] 的包界面半装进终端壳', both?.ok === true, JSON.stringify(load.reports))
   check('没声明 platforms 的包界面半不进终端壳（缺省只服务 web）', !load.reports.some((r) => r.id === 'pkg-web-only'), JSON.stringify(load.reports.map((r) => r.id)))
+  const needsOff = load.reports.find((r) => r.id === 'pkg-needs-off')
+  check(
+    '依赖被停用时报告说「被停用了」，不是「不在清单里」',
+    needsOff?.ok === false && String(needsOff.error).includes('pkg-off 被停用了') && !String(needsOff.error).includes('不在清单里'),
+    String(needsOff?.error),
+  )
+  check('被停用的那份本身不进装载报告（它不在启动图里）', !load.reports.some((r) => r.id === 'pkg-off'))
   const frame = await renderFrame(registry, TUI_SLOTS.noticeExtensions)
   check('帧里出现组合包界面半贡献的那一行', frame.text.includes('组合包的界面半也在终端壳里'))
   frame.unmount()
