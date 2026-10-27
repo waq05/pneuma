@@ -182,7 +182,9 @@ console.log('[6] 壳侧接线钉（文本钉：结构约定）')
   const css = read('ui-shell/src/legacy/views.css')
 
   check('对话流的 system 分支先问 parseReviewNotice，认出就走卡片', /case 'system': \{[\s\S]{0,600}?parseReviewNotice\(entry\.text\)[\s\S]{0,400}?<ReviewNoticeCard/.test(chat))
-  check('认不出仍走 .entry-system（一行短通知的观感不变）', /notice === null \? \(\s*<div className="entry-system">\{entry\.text\}<\/div>/.test(chat))
+  // 2026-10-27：命令输出（entry.command）单独走左对齐块，其余短通知仍走居中的 .entry-system
+  check('认不出仍走 .entry-system（一行短通知的观感不变）', /notice !== null\) return <ReviewNoticeCard[\s\S]{0,400}?<div className="entry-system">\{entry\.text\}<\/div>/.test(chat))
+  check('命令输出走左对齐块（不再挤进居中的一行）', chat.includes('entry.command === true') && chat.includes('entry-system-command'))
   check('轨迹页同样认这条通知（system 步骤走同一张卡）', trace.includes('parseReviewNotice(text)') && trace.includes('<ReviewNoticeCard notice={notice} cwd="" />'))
   check('轨迹页划选 diff 不误开检查器（.entry-review 进了忽略表）', trace.includes('.tool-body, .entry-review, [data-trace-open]'))
   check('卡片渲染复用既有计数样式（.changes-counts / changes-added / changes-removed / .diff-badge）', card.includes('className="changes-counts"') && card.includes('className="changes-added"') && card.includes('className="changes-removed"') && card.includes("'diff-badge'"))

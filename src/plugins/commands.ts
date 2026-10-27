@@ -35,6 +35,7 @@ import {
   expandCommand,
   helpText,
   removeExtraSpec,
+  shellHelpText,
 } from '../core/commands-completion.js'
 
 /** 当前壳的 `@dsc/ui` 契约版本（内置清单顶层那个）；读不到就不设门（发现层会给出问题清单）。 */
@@ -49,6 +50,13 @@ export const commandsPlugin: Plugin.Object = {
   provide: 'commands',
   apply(ctx) {
     const registry = new Map<string, { spec: CommandSpec; handler: CommandHandler }>()
+
+    /**
+     * `/help` 的文本按通道给：壳只列 `shell: true` 那批，终端列全量。
+     * 两处共用一个注册表，但能跑的范围不同——文本必须跟着范围走（2026-10-27 查账）。
+     */
+    const helpFor = (ui: import('../services/types.js').CommandContext): string =>
+      ui.shell === true ? shellHelpText() : helpText(service.specs())
 
     const service: CommandService = {
       register(spec, handler) {
@@ -74,12 +82,12 @@ export const commandsPlugin: Plugin.Object = {
         const command = parts[0] ?? ''
         const args = parts.slice(1)
         if (command === '') {
-          ui.notice(helpText(service.specs()))
+          ui.notice(helpFor(ui))
           return true
         }
         const entry = registry.get(command)
         if (entry === undefined) {
-          ui.notice(`未知命令：/${command}（/help 查看全部）`)
+          ui.notice(`未知命令：/${command}（/help 查看命令清单）`)
           return true
         }
         // T44：可用性矩阵统一在派发这一闸——回合跑着的时候 deny 的命令挡下，
@@ -99,7 +107,7 @@ export const commandsPlugin: Plugin.Object = {
     // ---- 内置命令注册 ----
     service.register(
       { name: 'help', args: '', description: '查看帮助' },
-      ({ ui }) => ui.notice(helpText(service.specs())),
+      ({ ui }) => ui.notice(helpFor(ui)),
     )
     service.register(
       { name: 'new', args: '', description: '新建会话' },

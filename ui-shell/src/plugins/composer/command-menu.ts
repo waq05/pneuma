@@ -33,6 +33,14 @@ export interface CommandMenuApi {
   /** Esc：关上，并且同一个前缀在这轮里不再自己弹出来。 */
   close(): void
   /**
+   * 程序性收面板（跑完一条命令之后）：只关，不记「这个前缀别再弹」。
+   *
+   * 与 {@link close} 分开的原因：Esc 是用户明确说「别烦我」，那要记住；回车执行是
+   * 「我选了这一条」，文本随即被清空——两件事混用一个口子的话，未成而留在框里的
+   * 那半行命令会再也弹不出候选。
+   */
+  hide(): void
+  /**
    * 高亮那一项补全进输入框要填的文本（`/名字` + 有参数时一个空格），没有就不给。
    * 「Enter 采纳选中项」那条路取它来当要执行的原文——与 TUI 的 panelOpen 分支同口径。
    */
@@ -113,6 +121,12 @@ export function useCommandMenu(options: {
     setOpen(false)
   }
 
+  const hide = (): void => {
+    latest.current = null
+    dismissed.current = null
+    setOpen(false)
+  }
+
   const pick = (): void => {
     const inserted = insertText()
     if (inserted === null) return
@@ -128,5 +142,5 @@ export function useCommandMenu(options: {
     return command === undefined ? null : insertCommand(command)
   }
 
-  return { open, rows, loading, at, track, move, pick, close, insertText }
+  return { open, rows, loading, at, track, move, pick, close, hide, insertText }
 }

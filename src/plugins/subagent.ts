@@ -114,6 +114,16 @@ interface Teammate {
   error?: string
   /** 等下一次 turn/end 的 waiter 队列。 */
   waiters: Array<() => void>
+  /**
+   * 传话之后还欠一次汇报：等「模型又说了至少一句」（rounds 长过 minRound）再回。
+   *
+   * 为什么要有：`reportHome` 原先只挂在 spawn 那一次等待上，给闲下来的队友传话后
+   * 它再干完就没人接汇报了（2026-10-27 查账）。等待条件不能只看「回合结束了几次」：
+   * 传话可能被并进当前这一轮（那一轮结束就该回），也可能排在下一轮（要等下一轮真产出）。
+   */
+  awaitReport?: { minRound: number }
+  /** 上一次真正回报时的 rounds（防同一轮回两遍：spawn 的首报与传话的补报会落在同一拍）。 */
+  lastReportedRound: number
   /** 输出瀑布的行池（最新在后，只留 8 行；正文行与工具结果首行都进）。 */
   outputLines: string[]
   /** 当前（或最后一把）工具，画内联卡的「当前工具行」。 */
@@ -318,6 +328,16 @@ export const subagentPlugin: Plugin.Object = {
       ctx.transcript.touch()
       const waiters = teammate.waiters.splice(0)
       for (const resolve of waiters) resolve()
+      // 传话之后欠的那次汇报：等到模型又说过话（或直接失败）才回，且同一轮不重复回
+      const pending = teammate.awaitReport
+      if (
+        pending !== undefined &&
+        (teammate.state === 'failed' ||
+          (teammate.rounds >= pending.minRound && teammate.rounds > teammate.lastReportedRound))
+      ) {
+        teammate.awaitReport = undefined
+        reportHome(teammate)
+      }
     }
 
     /** 队友的工具表：按工牌白名单筛。subagent 换成它自己的署名；team_task（智能体团队
@@ -409,6 +429,7 @@ export const subagentPlugin: Plugin.Object = {
         state: 'working',
         rounds: 0,
         toolCalls: 0,
+        lastReportedRound: 0,
         depth: input.caller.depth + 1,
         parent: input.caller.name,
         background: input.background,
@@ -449,7 +470,12 @@ ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需�
           guards: guardsFor(teammate),
           stream: (api, request, handlers) => ctx.llm.stream(api, request, handlers),
           emit: (event) => {
-            if (event.type === 'message') {
+            if (event.type === 'turn/start') {
+              // 被传话叫醒的队友从「已停止」回到干活中：状态不翻，界面会一直挂着停着的字样
+              teammate.state = 'working'
+              delete teammate.finishedAt
+              ctx.transcript.touch()
+            } else if (event.type === 'message') {
               teammate.rounds += 1
               // 轮次预算到点就收手：这就是「子智能体不许无限自转」的闸门
               if (teammate.rounds >= teammate.badge.maxTurns) teammate.agent.cancel()
@@ -545,6 +571,7 @@ ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需�
 
     /** 后台队友干完，把汇报交给派它的那一方。 */
     const reportHome = (teammate: Teammate): void => {
+      teammate.lastReportedRound = teammate.rounds
       const state = teammate.state === 'idle' ? '已完成' : teammate.state === 'stopped' ? '已停止' : '已失败'
       const body =
         teammate.state === 'failed'
@@ -644,6 +671,8 @@ ${body}
         }
         const record = readRoster().find((entry) => entry.name === name)
         if (live === undefined && record === undefined) return `名册里没有叫「${name}」的队友。`
+        // 真正收掉这一位：会话文件要关（释放写租约），再从名单里摘
+        live?.agent.dispose()
         teammates.delete(name)
         writeRoster(readRoster().filter((entry) => entry.name !== name))
         // 运行记录文件一并删：它只在名册里可达，留着就是孤儿。只认 teammateRoot 下的路径，
@@ -747,8 +776,11 @@ ${body}
       const teammate = teammates.get(name)
       if (teammate === undefined) return `没有叫 ${name} 的队友（subagent list 看现役名单）`
       teammate.agent.cancel()
-      if (mode === 'stop') teammates.delete(name)
-      return `${name} ${mode === 'interrupt' ? '这一轮被打断了（信箱里的话还在，可以再传话叫醒它）' : '被收掉了'}`
+      // 两种叫停都**保留**这个队友：dsh 的 interrupt_agent 就是这个口径——停当前这一轮，
+      // 之后还能用 send_message 接着聊。以前 stop 直接把它从名单里删掉，于是「中断之后
+      // 还能不能继续」的答案是「不能」，信箱里的话也没人读（2026-10-27 查账）。
+      // 真要清掉走名册里的「移除」（TeamService.remove），那里才删文件、释放名字。
+      return `${name} ${mode === 'interrupt' ? '这一轮被打断了（信箱里的话还在，传话就能接着用）' : '已叫停（保留在名册里，可以传话接着用；要彻底清掉用名册里的移除）'}`
     }
 
     /**
@@ -762,8 +794,10 @@ ${body}
       const wrapped = `<message from="${from}"> ${trimmed} </message>`
       inboxAppend(name === '' ? 'unknown' : name, wrapped)
       if (teammate === undefined) return `没有叫 ${name} 的队友，话写进了它的信箱（${join(ctx.settings.about().home, 'team', 'inbox')}）但没人会读`
+      // 传话之后欠一次汇报：它这一轮（或下一轮）说完了，主会话要接得到
+      teammate.awaitReport = { minRound: teammate.rounds + 1 }
       teammate.agent.followup(wrapped)
-      return `话已投给 ${name}${teammate.state === 'working' ? '（它正在干，会在这轮结束后看到）' : '（已把它叫醒）'}`
+      return `话已投给 ${name}${teammate.state === 'working' ? '（它正在干，会在这轮结束后看到）' : '（已把它叫醒）'}，它说完会把结果报回来`
     }
 
     async function runSubagent(
@@ -871,7 +905,8 @@ ${body}
       name: 'subagent',
       description:
         '把一件可以独立完成的活派给一个有明确授权的队友（角色见 ~/.dsc/agents），或者给在队队友传话、打断它。' +
-        'background=true 时立刻返回，它干完后汇报会自己接进你的下一轮；background=false 时你这一轮会等它的结果。',
+        'background=true 时立刻返回，它干完后汇报会自己接进你的下一轮；background=false 时你这一轮会等它的结果。' +
+        'interrupt / stop 都只是叫停当前这一轮：队友留在名册里，传话（message）就能接着用，别把它当成已经没了。',
       parameters: {
         type: 'object',
         properties: {

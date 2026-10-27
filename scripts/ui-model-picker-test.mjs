@@ -305,9 +305,28 @@ console.log('[8] 界面接线（ui.tsx）')
   )
   check(
     '面板开着的期间会把自己推回正文列里（窄屏 chip 贴左边时面板整块探出视口）',
-    ui.includes('clampShift({ left: box.left, right: box.right }, clipBoxOf(panel))') &&
+    ui.includes('clampShift(raw, clipBoxOf(panel))') &&
       ui.includes('translateX(${String(panelShift)}px)') &&
       ui.includes('const [panelShift, setPanelShift] = useState(0)'),
+  )
+  // 2026-10-27 报障第二条：360px 视口下面板 left=-67、平移量却是 0——量完一次就不重量。
+  check(
+    '平移量是拿「没平移过的」几何算的（不然重量时会被自己抵消，两帧之间来回跳）',
+    ui.includes('left: box.left - shiftRef.current') && ui.includes('right: box.right - shiftRef.current'),
+  )
+  check(
+    '窗口缩放与面板自身尺寸变化都会重量一次（量一次就不再管是这次报障的成因）',
+    ui.includes('setMeasureTick') &&
+      ui.includes('new ResizeObserver(bump)') &&
+      /\}, \[modelOpen, models.length, twoLevel, measureTick\]\)/.test(ui),
+  )
+  check(
+    '裁剪区间与视口取交集（真会裁它的那个祖先再宽，也不能宽过屏幕）',
+    ui.includes('Math.max(0, box.left)') && ui.includes('Math.min(window.innerWidth, box.right)'),
+  )
+  check(
+    '宽度兜底：面板不许比视口还宽（位置量得再准，盒子本身出界救不了）',
+    /max-width: calc\(100vw - 8px\)/.test(read('ui-shell/src/styles.css')),
   )
   check('飞出高度是量出来的（夹取纯函数 + 卡片自然高）', /placeFlyout\(\s*rowBox\.top - panelBox\.top/.test(ui) && ui.includes('card.scrollHeight'))
   check('指针离开面板就收起飞出卡（卡片是面板的子节点，所以移进卡片不算离开）', /onMouseLeave=\{\(\) => \{[\s\S]{0,200}?setHoverProvider\(null\)[\s\S]{0,80}?setFlyout\(null\)/.test(ui))

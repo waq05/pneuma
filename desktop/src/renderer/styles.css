@@ -3541,7 +3541,9 @@ body.resizing iframe {
 }
 
 :root[data-theme='light'] .file-code .shiki span,
-:root[data-theme='light'] .file-code-body .shiki span {
+:root[data-theme='claude'] .file-code .shiki span,
+:root[data-theme='light'] .file-code-body .shiki span,
+:root[data-theme='claude'] .file-code-body .shiki span {
   color: var(--shiki-light);
 }
 
@@ -10157,4 +10159,53 @@ body.resizing iframe {
   width: calc(100% - 8px);
 }
 
+
+/* ══════════ 用量统计：窄窗口下的两条硬伤（2026-10-27 与壳里同一轮修） ══════════
+ *
+ * 桌面回退渲染层也有同一份环形图与热力图：内容比卡片宽、且没有任何一层能滚。
+ * 桌面窗口通常够宽，但把它拖窄就一样撞上，所以与 ui-shell/src/styles.css 同步。
+ */
+
+/* 热力图自己横向滚（一年 53 列 × 13px = 689px，窄卡片一定溢出） */
+.hm-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+}
+
+/* 画布跟着网格走：月份标签是绝对定位，定位基准必须是整张网格的宽度 */
+.hm-canvas {
+  padding-bottom: 2px;
+  width: max-content;
+}
+
+.hm-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.hm-scroll::-webkit-scrollbar-thumb {
+  background: var(--dsc-fill-tertiary);
+  border-radius: 3px;
+}
+
+/* 环形图窄窗口换行：180 + 28 + 240 = 448px，装不下时改成「环在上、图例在下」 */
+.donut-row {
+  flex-wrap: wrap;
+}
+
+.donut-legend {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .donut-row {
+    gap: 14px;
+  }
+
+  .donut-svg {
+    height: 150px;
+    width: 150px;
+  }
+}
 /* 追加区：新样式段一律加在这行之下，加完把这行挪到文件末尾（trace-check 的末尾纪律断言认这行） */

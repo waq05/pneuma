@@ -195,6 +195,15 @@ function ComposerBox(): ReactNode {
   const [dropPrefix, setDropPrefix] = useState(false)
   /** 面板整体横移多少（窄屏上 chip 落得太靠左时把面板推回正文列里，见 `clampShift`）。 */
   const [panelShift, setPanelShift] = useState(0)
+  /**
+   * 「该重量一次了」的计数器：窗口缩放、面板自身尺寸变化（`.flat` 264 与两级 320 两套宽度）
+   * 都会撞它，那两个 `useLayoutEffect` 把它列进依赖，于是位置与挑边跟着重算。
+   *
+   * 为什么必须有：原来只在 `[modelOpen, models.length, twoLevel]` 变时量一次，量完就
+   * 不再管——2026-10-27 实测 360px 视口下面板 left=-67（整块探到屏幕左侧外），而 320/430
+   * 两个宽度都正常，说明就是「量过一次之后再也没重量」这一类时序问题。
+   */
+  const [measureTick, setMeasureTick] = useState(0)
   // 权限预设与模式（预设）两根旋钮各自的浮层：三者互斥（开一根把另两根收掉，旧界面同款）。
   const [permOpen, setPermOpen] = useState(false)
   const [presetOpen, setPresetOpen] = useState(false)
@@ -211,6 +220,8 @@ function ComposerBox(): ReactNode {
   const branchRows = useRef<HTMLDivElement | null>(null)
   /** 模型面板本体（量飞出卡的挑边与夹高度都拿它当参照）。 */
   const modelPanelRef = useRef<HTMLDivElement | null>(null)
+  /** 已经施加在面板上的横移量（量位置时要先把它减掉，见下面那个 `useLayoutEffect`）。 */
+  const shiftRef = useRef(0)
   /** 飞出卡里当前模型那一行的滚动锚点（模型一多，勾可能落在滚动区外面）。 */
   const modelRows = useRef<HTMLDivElement | null>(null)
   /** 飞出卡本体（量它内容的自然高，定了才夹得准）。 */
@@ -382,6 +393,9 @@ function ComposerBox(): ReactNode {
     const value = picked ?? typed
     if (value === '' || blocked || sending) return
     if (value.startsWith('/')) {
+      // 回车就是「我要跑这一条」：候选面板当场收起。以前只清文本、不收面板，于是
+      // 命令已经执行了、面板还挂在输入框上方等下一句（2026-10-27 报障第一条）。
+      command.hide()
       // 命令走界面通道的受限派发 `runUiCommand`：能跑的名字钉在宿主那份 `shell: true`
       // 清单上（见宿主 core/commands-completion.ts），清单外的名字由宿主明确报错。
       // 输出（/status、/diff、/usage…）是宿主写进会话的系统条目，与 TUI 同一份。
@@ -691,7 +705,7 @@ function ComposerBox(): ReactNode {
     while (node !== null) {
       if (getComputedStyle(node).overflowX !== 'visible') {
         const box = node.getBoundingClientRect()
-        return { left: box.left, right: box.right }
+        return { left: Math.max(0, box.left), right: Math.min(window.innerWidth, box.right) }
       }
       node = node.parentElement
     }
@@ -754,7 +768,29 @@ function ComposerBox(): ReactNode {
     setFlyout((prev) =>
       prev !== null && prev.top === next.top && prev.maxHeight === next.maxHeight ? prev : next,
     )
-  }, [hoverProvider, models.length, flyoutSide])
+  }, [hoverProvider, models.length, flyoutSide, measureTick])
+
+  /**
+   * 面板开着时盯着「会改变它位置的东西」：窗口缩放、面板自身宽高变化（两套宽度就在这儿切）。
+   *
+   * `ResizeObserver` 而不是只听 `resize`：面板从 `flat`（264）换成两级（320）时窗口没动，
+   * 只有盒子变了，只听窗口事件接不到这一拍。
+   */
+  useLayoutEffect(() => {
+    if (!modelOpen) return undefined
+    const panel = modelPanelRef.current
+    if (panel === null) return undefined
+    const bump = (): void => {
+      setMeasureTick((tick) => tick + 1)
+    }
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(bump)
+    observer?.observe(panel)
+    window.addEventListener('resize', bump)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', bump)
+    }
+  }, [modelOpen])
 
   /**
    * 面板开着的期间随时把它推回正文列里（窄屏输入行换行时 chip 可能贴在很左边）。
@@ -766,9 +802,13 @@ function ComposerBox(): ReactNode {
     const panel = modelPanelRef.current
     if (panel === null) return
     const box = panel.getBoundingClientRect()
-    const shift = clampShift({ left: box.left, right: box.right }, clipBoxOf(panel))
+    // 量到的是**已经平移过**的位置：先减掉已施加的量再夹，否则每一拍都会把上一拍的平移
+    // 当成「现在放得下」，平移被自己抵消、面板在两帧之间来回跳（重量一开必现）。
+    const raw = { left: box.left - shiftRef.current, right: box.right - shiftRef.current }
+    const shift = clampShift(raw, clipBoxOf(panel))
+    shiftRef.current = shift
     setPanelShift((prev) => (prev === shift ? prev : shift))
-  }, [modelOpen, models.length, twoLevel])
+  }, [modelOpen, models.length, twoLevel, measureTick])
 
   /**
    * 展开模型菜单时把当前项滚进视野（照分支菜单同款）。
@@ -1313,6 +1353,8 @@ function ComposerBox(): ReactNode {
                   // 每次开都是「只有一级那一列」的干净态（上次悬浮停在哪家不该带过来）。
                   setHoverProvider(null)
                   setFlyout(null)
+                  shiftRef.current = 0
+                  setPanelShift(0)
                   setEffortOpen(false)
                   setPermOpen(false)
                   setPresetOpen(false)

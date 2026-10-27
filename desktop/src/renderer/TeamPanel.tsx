@@ -98,7 +98,7 @@ export function TeamMateRow(props: {
     void confirmAction({
       title: `停掉队友「${mate.name}」？`,
       detail:
-        '它会停在这一步：已经写进运行记录的内容一个字不删，但它不再往下干。要是它已经自己收工，这次停止不会改变结果（尽力而为）。',
+        '它会停在这一步：已经写进运行记录的内容一个字不删，但它不再往下干。它会留在名册里，之后传话就能接着用；要彻底清掉用「移除」。要是它已经自己收工，这次停止不会改变结果（尽力而为）。',
       confirmLabel: '停止',
     }).then((yes) => {
       if (!yes) return

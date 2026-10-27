@@ -467,7 +467,7 @@ function TeamRow({
           <button
             type="button"
             className="text-btn danger"
-            data-tip="停掉这个队友（尽力而为，已跑完的改不了结果）"
+            data-tip="叫停这个队友（停当前这一轮，保留可续：传话就能接着干；要清掉用「移除」）"
             onClick={() => {
               void act('stopTeammate', [mate.name], `已叫停 ${mate.name}`)
             }}

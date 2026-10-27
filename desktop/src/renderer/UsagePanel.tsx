@@ -46,7 +46,10 @@ const GAP = 3
 type Cell = { day: UsageDayView; level: number } | null
 
 /** 热力图格子：0 = 空档，1..4 = 由少到多。颜色档位见 styles.css 的 .hm-l*。 */
-function buildCells(days: UsageDayView[]): { columns: Cell[][]; months: { column: number; label: string }[] } {
+function buildCells(
+  days: UsageDayView[],
+  windowDays: number,
+): { columns: Cell[][]; months: { column: number; label: string }[] } {
   const max = Math.max(1, ...days.map((day) => day.inputTokens + day.outputTokens))
   const level = (day: UsageDayView): number => {
     const tokens = day.inputTokens + day.outputTokens
@@ -64,8 +67,12 @@ function buildCells(days: UsageDayView[]): { columns: Cell[][]; months: { column
   /** 一天进列（真实数据与前置空档都走这条），满了就整列收进 columns。 */
   const pushDay = (cell: Cell, date: Date): void => {
     if (date.getMonth() !== lastMonth) {
-      // 月份切换处记一列（列里只要还有一格就能挂标签）
-      if (current.length < 7) months.push({ column: columns.length, label: `${date.getMonth() + 1}月` })
+      // 月份切换处记一列（列里只要还有一格就能挂标签）。
+      // 同一列只挂一个：窗口从周日起时，第一列里可能同时有上个月尾巴和下一个月的 1 号，
+      // 两首都 push 会让 left 完全相同、标签叠字（2026-10-27 报障「10和11月重叠」）。
+      if (current.length < 7 && !months.some((month) => month.column === columns.length)) {
+        months.push({ column: columns.length, label: `${date.getMonth() + 1}月` })
+      }
       lastMonth = date.getMonth()
     }
     current.push(cell)
@@ -80,7 +87,8 @@ function buildCells(days: UsageDayView[]): { columns: Cell[][]; months: { column
   const today = new Date()
   today.setHours(12, 0, 0, 0)
   const firstDate = new Date(`${days[0]!.date}T12:00:00`)
-  const windowStart = new Date(today.getTime() - 52 * 7 * 86400000)
+  // 窗口长度由用户选的那一档给（今天 / 7 天 / 30 天 / 一年）；以前钉死一年。
+  const windowStart = new Date(today.getTime() - Math.max(0, windowDays - 1) * 86400000)
   const alignedStart = new Date(Math.min(firstDate.getTime(), windowStart.getTime()))
   alignedStart.setDate(alignedStart.getDate() - alignedStart.getDay())
   for (let at = new Date(alignedStart); at < firstDate; at.setDate(at.getDate() + 1)) {
@@ -93,37 +101,44 @@ function buildCells(days: UsageDayView[]): { columns: Cell[][]; months: { column
   return { columns, months }
 }
 
-function Heatmap(props: { days: UsageDayView[] }): JSX.Element {
-  const { columns, months } = useMemo(() => buildCells(props.days), [props.days])
+function Heatmap(props: { days: UsageDayView[]; windowDays: number }): JSX.Element {
+  const { columns, months } = useMemo(() => buildCells(props.days, props.windowDays), [props.days, props.windowDays])
   return (
     <div className="hm">
-      <div className="hm-months" style={{ marginLeft: 26 }}>
-        {months.map((month) => (
-          <span key={`${month.column}-${month.label}`} style={{ left: month.column * (CELL + GAP) }}>
-            {month.label}
-          </span>
-        ))}
-      </div>
-      <div className="hm-body">
-        <div className="hm-weekdays">
-          <span style={{ gridRow: 2 }}>一</span>
-          <span style={{ gridRow: 4 }}>三</span>
-          <span style={{ gridRow: 6 }}>五</span>
-        </div>
-        <div className="hm-grid" role="img" aria-label="Token 活动热力图">
-          {columns.map((column, columnIndex) =>
-            column.map((cell, rowIndex) => {
-              if (cell === null) return <span key={`${columnIndex}-${rowIndex}`} className="hm-cell hm-l0" />
-              const tokens = cell.day.inputTokens + cell.day.outputTokens
-              return (
-                <span
-                  key={`${columnIndex}-${rowIndex}`}
-                  className={`hm-cell hm-l${String(cell.level)}`}
-                  title={`${cell.day.date} · ${fmtTokens(tokens)} tokens · ${String(cell.day.turns)} 轮`}
-                />
-              )
-            }),
-          )}
+      {/* 只有这一块自己横向滚：一年 53 列在窄卡片里一定溢出，以前没有容器会把整页撑宽。 */}
+      <div className="hm-scroll">
+        <div className="hm-canvas">
+          <div className="hm-months" style={{ marginLeft: 26 }}>
+            {months.map((month) => (
+              <span key={`${month.column}-${month.label}`} style={{ left: month.column * (CELL + GAP) }}>
+                {month.label}
+              </span>
+            ))}
+          </div>
+          <div className="hm-body">
+            <div className="hm-weekdays">
+              <span style={{ gridRow: 2 }}>一</span>
+              <span style={{ gridRow: 4 }}>三</span>
+              <span style={{ gridRow: 6 }}>五</span>
+            </div>
+            <div className="hm-grid" role="img" aria-label="Token 活动热力图">
+              {columns.map((column, columnIndex) =>
+                column.map((cell, rowIndex) => {
+                  if (cell === null) {
+                    return <span key={`${columnIndex}-${rowIndex}`} className="hm-cell hm-l0" />
+                  }
+                  const tokens = cell.day.inputTokens + cell.day.outputTokens
+                  return (
+                    <span
+                      key={`${columnIndex}-${rowIndex}`}
+                      className={`hm-cell hm-l${String(cell.level)}`}
+                      title={`${cell.day.date} · ${fmtTokens(tokens)} tokens · ${String(cell.day.turns)} 轮`}
+                    />
+                  )
+                }),
+              )}
+            </div>
+          </div>
         </div>
       </div>
       <div className="hm-legend">
@@ -284,12 +299,17 @@ function Donut(props: { models: UsageModelView[] }): JSX.Element {
 
 // ── 页面本体 ──────────────────────────────────────────────────────────────────
 
+/** 趋势折线的窗口。 */
 type Range = 7 | 30
+
+/** 热力图的窗口（天数）：与壳里那一页同一套四档。 */
+type HeatRange = 1 | 7 | 30 | 364
 
 export function UsagePanel(props: { proxy: RuntimeProxy }): JSX.Element {
   const [stats, setStats] = useState<UsageStatsView | null>(null)
   const [error, setError] = useState('')
   const [range, setRange] = useState<Range>(7)
+  const [heatRange, setHeatRange] = useState<HeatRange>(364)
 
   const reload = (): void => {
     props.proxy
@@ -322,6 +342,7 @@ export function UsagePanel(props: { proxy: RuntimeProxy }): JSX.Element {
 
   const total = stats.totalInputTokens + stats.totalOutputTokens
   const trendDays = stats.days.slice(-range)
+  const heatDays = stats.days.slice(-heatRange)
   const cards: { label: string; value: string }[] = [
     { label: '累计 Token', value: fmtTokens(total) },
     { label: '单日峰值 Token', value: stats.peakDay === null ? '—' : fmtTokens(stats.peakDay.inputTokens + stats.peakDay.outputTokens) },
@@ -352,11 +373,24 @@ export function UsagePanel(props: { proxy: RuntimeProxy }): JSX.Element {
       <section className="usage-block">
         <div className="usage-block-head">
           <h3>Token 活动</h3>
-          <span className="usage-block-hint" title={`${fmtDate(stats.days[0]!.date)} 至今 · 累计 ${fmtTokens(total)} tokens`}>
-            最近一年
-          </span>
+          <div className="dsc-segmented" role="group" aria-label="热力图时间范围">
+            {([1, 7, 30, 364] as HeatRange[]).map((value) => (
+              <button
+                key={value}
+                type="button"
+                className="dsc-segmented__btn"
+                aria-selected={heatRange === value}
+                title={`${fmtDate(stats.days[0]!.date)} 至今 · 累计 ${fmtTokens(total)} tokens`}
+                onClick={() => {
+                  setHeatRange(value)
+                }}
+              >
+                {value === 1 ? '今天' : value === 364 ? '近一年' : `近 ${String(value)} 天`}
+              </button>
+            ))}
+          </div>
         </div>
-        <Heatmap days={stats.days} />
+        <Heatmap days={heatDays} windowDays={heatRange} />
       </section>
 
       <section className="usage-block">

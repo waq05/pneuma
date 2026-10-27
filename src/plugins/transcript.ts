@@ -180,8 +180,8 @@ export const transcriptPlugin: Plugin.Object = {
       emit(event) {
         if (transcript.reduce(event)) invalidate()
       },
-      system(text, level) {
-        transcript.system(text, false, level)
+      system(text, level, command) {
+        transcript.system(text, false, level, command === true)
         invalidate()
       },
       plan(view: PlanView) {

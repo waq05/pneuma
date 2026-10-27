@@ -861,6 +861,15 @@ function TranscriptFlow({
         )}
         {seats.leading.map((row) => {
           if (row.entry.kind !== 'system') return null
+          // 命令输出（/help、/status…）是用户主动要的东西，空会话首屏也要画出来：
+          // 这一支原先只画写前预览卡，于是新会话里打第一条命令什么都看不到（2026-10-27 查账）。
+          if (row.entry.command === true) {
+            return (
+              <div key={keyOf(row, sessionKey)} className="entry-system-command">
+                {row.entry.text}
+              </div>
+            )
+          }
           // 自动跑起来的那一轮（定点任务之类）没有用户消息，它的写前预览会落在开场区；
           // 这里同样走卡片——同一条通知在哪个位置都不该变成居中的一大坨。
           const notice = parseReviewNotice(row.entry.text)
@@ -1220,10 +1229,12 @@ function RowBody({
       // 走专用卡片（左对齐、等宽、限高滚动）；其余 system 通知（「这一轮被中断」这类
       // 一行短句）保持 `.entry-system` 的居中观感不变。
       const notice = parseReviewNotice(entry.text)
-      return notice === null ? (
-        <div className="entry-system">{entry.text}</div>
+      if (notice !== null) return <ReviewNoticeCard notice={notice} cwd={cwd} />
+      // 命令输出是多行清单（/help 十几行、/status 六行），居中的灰字排不下：走左对齐等宽块
+      return entry.command === true ? (
+        <div className="entry-system-command">{entry.text}</div>
       ) : (
-        <ReviewNoticeCard notice={notice} cwd={cwd} />
+        <div className="entry-system">{entry.text}</div>
       )
     }
     case 'turn-max-tokens':

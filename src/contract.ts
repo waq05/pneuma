@@ -421,7 +421,22 @@ export type TranscriptEntry =
    * `level: 'error'` 表示这条是**要人处理**的启动/运行问题（没有可用的模型端点、插件加载失败），
    * 界面把它从首屏的注脚里摘出来、改成一次弹窗；缺省（连同 `'info'`）只进日志与轨迹，不占首屏。
    */
-  | { kind: 'system'; id: number; text: string; ts?: number; compaction?: CompactionMark; level?: 'info' | 'error' }
+  | {
+      kind: 'system'
+      id: number
+      text: string
+      ts?: number
+      compaction?: CompactionMark
+      level?: 'info' | 'error'
+      /**
+       * 来自输入框 `/` 命令的输出（`/help`、`/status`…）。
+       *
+       * 为什么要这个位：壳的「空会话欢迎态」会把首屏的 system 条目整批不画
+       * （只留写前预览卡），于是新会话里打第一条命令什么也看不到（2026-10-27 查账）。
+       * 命令输出属于用户主动要的东西，必须上屏；启动机位那种通知仍保持安静。
+       */
+      command?: boolean
+    }
   /** 轮尾标记：这一轮为什么结束，见 {@link TurnEndReason}。 */
   | { kind: 'turn-end'; id: number; reason: TurnEndReason; ts?: number }
   /** 这一轮的输出撞上了长度上限（对照 dsh 的 `turn-max-tokens` 节点）。 */

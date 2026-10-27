@@ -108,6 +108,17 @@ export const REMOTE_SHELL_METHODS = [
   'restoreSessions',
   'listUiCommands',
   'runUiCommand',
+  // 设置页的两块**读**：模型（端点、模型清单、key 在不在）与模式（预设清单与正文）。
+  // 它们是只读投影，不含 key 值（见 ModelConfigView：只有 keyConfigured 布尔），
+  // 与 getSettingsSections / getSectionValues 同一档；不放开的话手机上点开这两页
+  // 只会看到「协议不允许调用的方法」（2026-10-27 报障第 5 条）。写入那批
+  // （saveProvider / setProviderKey / setDefaultModel / setSettingValue）继续挡着。
+  'getModelConfig',
+  'listPresets',
+  'readPreset',
+  // 切模式（预设）：换的是这一条会话的提示词与工具白名单，不碰凭据与安全闸门本身，
+  // 与输入区那颗「模式」chip 同一件事——不开的话手机上那颗 chip 点下去必报错。
+  'usePreset',
 ] as const satisfies readonly (typeof INVOKABLE_METHODS)[number][]
 
 /** 壳方法表里有没有界面白名单不认识的方法（拼错/被删）：有就编不过。 */

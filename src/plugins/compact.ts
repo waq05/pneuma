@@ -275,7 +275,14 @@ export const compactPlugin: Plugin.Object = {
 
     ctx.commands.register(
       { name: 'compact', args: '', description: '压缩上下文' },
-      ({ runtime }) => void runtime.compact(),
+      ({ args, runtime, ui }) => {
+        // 与 dsh 同一条口径：这条命令不吃参数，多打的字是被截断的误操作，直说用法
+        if (args.length > 0) {
+          ui.notice('用法：/compact（不带参数）')
+          return
+        }
+        void runtime.compact()
+      },
     )
     ctx.provide('compact', service)
 

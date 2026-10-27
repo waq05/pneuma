@@ -468,6 +468,13 @@
   width: min(264px, calc(100vw - 24px));
 }
 
+/* 宽度兜底：横向位置由壳量出来（composer/ui.tsx 那两个 useLayoutEffect 会把它推回正文列），
+ * 但「盒子本身比屏幕还宽」这件事量位置救不了——两者同时出界时只能靠这一行。
+ * 2026-10-27 实测 360px 视口下两级的 320px 面板左缘 -67px。 */
+.model-pop.model-picker {
+  max-width: calc(100vw - 8px);
+}
+
 /* 档位卡：一条滑杆（2026-10-26 换掉原来那一列按钮）。宽 248 是为了四格刻度字
    （关 / 低 / 高 / 最大）各自还剩得下，同时不把输入区底栏顶宽。 */
 .model-pop.effort-pop {
@@ -3298,12 +3305,14 @@
 
 /* 本地补色：token 表没有 violet 这一档（见段首说明），浅色带饱和、深色压亮一点
  * 都好看的那种紫。开关与 tokens.css 同一具柄（`data-theme`，appearance.ts 把
- * system 解成 dark|light 再落到根元素上），随主题切换自动变。 */
+ * system 解成 dark|light 再落到根元素上），随主题切换自动变。
+ * Claude 那档也是浅底，跟浅色共用一支（暖底上偏冷一点更分得开文件类型）。 */
 :root {
   --dsc-fti-violet: #b39dfa;
 }
 
-:root[data-theme='light'] {
+:root[data-theme='light'],
+:root[data-theme='claude'] {
   --dsc-fti-violet: #a78bfa;
 }
 
@@ -3526,10 +3535,12 @@
   padding-bottom: 6px;
 }
 
-/* 主题三块磁贴（对照 Codex UI 的 Light / Dark / System）：比下拉多一次「一眼看见有几个选项」。 */
+/* 主题四块磁贴（浅色 / Claude / 深色 / 跟随系统）：比下拉多一次「一眼看见有几个选项」。
+ * 四块挤进原来三块那一行的宽度（3×104 + 2×8 = 328）：每块最宽 76 = (328 − 3×8) / 4。
+ * 当初按三块写的 104px 宽会让「跟随系统」折到第二行——加档那一次就是踩了这个。 */
 .theme-tiles {
   display: grid;
-  grid-template-columns: repeat(3, minmax(84px, 104px));
+  grid-template-columns: repeat(4, minmax(56px, 76px));
   gap: 8px;
 }
 
@@ -4241,4 +4252,173 @@
     margin-left: 0;
     padding-left: 6px;
   }
+}
+
+/* ── 技能页：作用域筛选 + 按发现根分组（2026-10-27）────────────────────────────
+ *
+ * 起因：全局技能来自四个地方（公共 Agent `~/.agents/skills`、`~/.dsc/skills`、
+ * DSH 的 `~/.dsh/skills`、config.yaml 的自定义目录），加上项目里的两根，平铺一列之后
+ * 「这条哪来的、同名谁赢」看不出来。dsh 的设置页是按目录分组的，这里照它：
+ * 上面一行「全部 / 全局 / 项目」，下面每根一个组头（名字 + 条数 + 目录）。
+ * 分组的先后就是 core/skills.ts 里发现根的优先级（项目 → 自定义 → 公共 Agent → 用户 → DSH）。 */
+.skills-scope {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+
+.skills-scope button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--dsc-r-pill);
+  background: none;
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  font-size: var(--dsc-fs-caption);
+}
+
+.skills-scope button:hover {
+  color: var(--dsc-text-primary);
+}
+
+.skills-scope button.on {
+  border-color: var(--dsc-stroke-2);
+  background: var(--dsc-fill-quaternary);
+  color: var(--dsc-text-primary);
+}
+
+.skills-scope .count {
+  color: var(--dsc-text-quaternary);
+  font-variant-numeric: tabular-nums;
+}
+
+.skills-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skills-group + .skills-group {
+  margin-top: 6px;
+}
+
+.skills-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 2px 0;
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+}
+
+.skills-group-title {
+  color: var(--dsc-text-secondary);
+  font-weight: 500;
+}
+
+.skills-group-count {
+  color: var(--dsc-text-quaternary);
+}
+
+.skills-group-path {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ══════════ 用量统计：窄屏下的两条硬伤（2026-10-27 报障 3、4） ══════════
+ *
+ * 两处都是「内容比卡片宽，且没有任何一层能滚」：环形图被推到卡片外，
+ * 热力图把整个设置页撑宽。修法一律是「谁溢出谁自己滚」，不靠外部宽度兜。
+ */
+
+/* ── 热力图自己横向滚 ──
+ *
+ * 为什么必须给它一个容器：一年 53 列 ×（10px + 3px）= 689px，手机上卡片正文只有 323px。
+ * 以前没有容器，横向溢出的宽度算在祖先链上——实测 .settings-body 的 scrollWidth 被撑到
+ * 731px（clientWidth 385），于是整页能左右拖、热力图被卡片右缘切掉。
+ *
+ * 为什么画布要 width: max-content：月份标签是绝对定位的，它的定位基准是 .hm-months 的
+ * 盒子；不给一个跟着网格走的宽度，标签会挤在容器左端、和格子对不上。 */
+.hm-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* 手机上从格子一路横滑到最左/最右时，别把页面手势也带走 */
+  overscroll-behavior-x: contain;
+}
+
+.hm-canvas {
+  width: max-content;
+  padding-bottom: 2px;
+}
+
+/* 触屏上给一条细滚动条：热力图这块是可以滑的，得让人看出来（桌面端也一起生效，
+   默认的粗滚动条会把卡片底边压出一道横杠）。 */
+.hm-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.hm-scroll::-webkit-scrollbar-thumb {
+  background: var(--dsc-fill-tertiary);
+  border-radius: 3px;
+}
+
+/* ── 环形图窄屏换行 ──
+ *
+ * 180（环）+ 28（缝）+ 240（图例 min-width）= 448px 塞进 323px 的卡片：.donut-row 是
+ * 居中的 flex，溢出平均分到两边，环的左边三分之一被卡片切掉（实测 .donut-svg 左缘 -31px）。
+ * 允许换行之后，窄屏变成「环在上、图例在下」，一列竖排。 */
+.donut-row {
+  flex-wrap: wrap;
+}
+
+/* 图例不许再拿 min-width 撑住那一行：那是给桌面并排两栏定的 */
+.donut-legend {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .donut-row {
+    gap: 14px;
+  }
+
+  .donut-svg {
+    height: 150px;
+    width: 150px;
+  }
+}
+
+/* ── 输入框 / 命令的输出块 ──
+ *
+ * 命令输出是多行清单（/help 十几行、/status 六行）：.entry-system 那条样式是
+ * 「一行居中的灰字」，整段塞进去既排不下也读不出结构。这里换成左对齐、等宽、
+ * 保留换行的块；空会话首屏（欢迎态）与普通对话里共用这一份形状。
+ * 为什么要单独一个类：空会话会把首屏 system 条目整批不画，命令输出必须点名放行
+ * （2026-10-27 报障：新会话里打 /help 什么也看不到）。 */
+.entry-system-command {
+  border: 1px solid var(--dsc-stroke-4);
+  border-radius: var(--dsc-r-block);
+  color: var(--dsc-text-secondary);
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-caption);
+  line-height: 1.65;
+  margin: 10px 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 8px 10px;
+  text-align: left;
+  white-space: pre-wrap;
+}
+
+.welcome .entry-system-command {
+  align-self: stretch;
 }

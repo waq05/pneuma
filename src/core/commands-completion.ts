@@ -172,12 +172,33 @@ export function completionsFor(input: string, models: readonly ModelChoiceView[]
 /**
  * 命令名唯一前缀自动展开（`/ne` → `/new`）；多候选或已精确匹配时原样返回。
  * 供 Enter 提交前调用，避免"输了一半按回车报未知命令"。
+ *
+ * 带参数时只展开**名字那一段**，参数原样接回去：`/di HEAD` → `/diff HEAD`。
+ * 以前见空格就整条返回，于是「/di 能跑、/di HEAD 却被拒」，同一个前缀两种命（2026-10-27 查账）。
  */
 export function expandCommand(input: string): string {
   if (!input.startsWith('/')) return input
   const body = input.slice(1)
-  if (body.includes(' ')) return input
-  if (allSpecs().some((command) => command.name === body)) return input
-  const matches = allSpecs().filter((command) => command.name.startsWith(body.toLowerCase()))
-  return matches.length === 1 ? `/${matches[0].name}` : input
+  const split = body.search(/\s/)
+  const name = split < 0 ? body : body.slice(0, split)
+  const rest = split < 0 ? '' : body.slice(split)
+  if (allSpecs().some((command) => command.name === name)) return input
+  const matches = allSpecs().filter((command) => command.name.startsWith(name.toLowerCase()))
+  return matches.length === 1 ? `/${matches[0].name}${rest}` : input
+}
+
+/**
+ * 壳里 `/help` 的文本：只列**这个通道真跑得了**的那批（`shell: true`）。
+ *
+ * 为什么不能沿用全量表：壳输入框打 `/help` 会把 23 条全列出来，其中 16 条经
+ * `runUiCommand` 会被当场拒绝（`/export`、`/exit`、`/model`…），用户照着敲却跑不了；
+ * 而输入框打 `/` 弹出的菜单只列 7 条，两处说法对不上（2026-10-27 查账）。
+ */
+export function shellHelpText(): string {
+  return [
+    `桌面壳里能用的命令（${String(shellCommands().length)} 条）：`,
+    helpText(shellCommands()),
+    '',
+    '其余命令（权限、模型、思考强度、导出、退出…）在终端里用，或点输入框底栏的旋钮。',
+  ].join('\n')
 }

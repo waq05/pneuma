@@ -38,7 +38,7 @@ const { RemotePairing, CODE_ALPHABET, CODE_LENGTH, CODE_TTL_MS, CODE_LOCK_MS, MA
 )
 const { TicketStore, TICKET_TTL_MS } = await import('../lib/core/remote/tickets.js')
 const { RemoteOwnerLock } = await import('../lib/core/remote/owner.js')
-const { REMOTE_METHODS } = await import('../lib/plugins/remote/types.js')
+const { REMOTE_METHODS, REMOTE_SHELL_METHODS: REMOTE_SHELL } = await import('../lib/plugins/remote/types.js')
 const { hostHeaderAllowed } = await import('../lib/plugins/remote/http.js')
 
 let total = 0
@@ -440,6 +440,18 @@ check(
   '凭据 / 设置 / 宿主生命周期操作一概不在远程白名单里',
   blocked.every((method) => !REMOTE_METHODS.includes(method)),
   blocked.filter((method) => REMOTE_METHODS.includes(method)).join('、'),
+)
+// 2026-10-27 报障第五条：手机上设置 → 模型 / 模式整页打不开（getModelConfig / listPresets
+// 不在白名单里）。补的是**只读**那两条与切模式，写入类继续挡着（下面那条挡单断言覆盖）。
+check(
+  '壳放行设置页的只读投影与切模式（模型页 / 模式页 / 输入区那颗模式 chip）',
+  ['getModelConfig', 'listPresets', 'readPreset', 'usePreset'].every((method) => REMOTE_SHELL.includes(method)),
+  ['getModelConfig', 'listPresets', 'readPreset', 'usePreset'].filter((method) => !REMOTE_SHELL.includes(method)).join('、'),
+)
+check(
+  '移动端白名单本身没被顺手放宽（这两条只在壳那一档）',
+  !['getModelConfig', 'listPresets', 'readPreset', 'usePreset'].some((method) => REMOTE_METHODS.includes(method)),
+  ['getModelConfig', 'listPresets', 'readPreset', 'usePreset'].filter((method) => REMOTE_METHODS.includes(method)).join('、'),
 )
 check(
   '浏览端要用的那几个都在（提交 / 打断 / 切会话 / 答卡 / 看历史）',

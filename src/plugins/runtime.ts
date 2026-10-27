@@ -70,9 +70,13 @@ export const runtimePlugin: Plugin.Object = {
      * openPicker / openModels 只是事件——终端壳与旧桌面渲染层各有一条转发链
      * （host-stdio / remote → 各自界面）。壳自己的那批命令不依赖这两个回调。
      */
-    function commandUi(): import('../services/types.js').CommandContext {
+    function commandUi(shell = false): import('../services/types.js').CommandContext {
       return {
-        notice: (text) => ctx.transcript.system(text),
+        // 壳那条通道只放行 `shell: true` 的命令，/help 据此只列能跑的那批
+        ...(shell ? { shell: true } : {}),
+        // 命令输出标一条 command：壳的空会话欢迎态会把首屏 system 条目整批不画，
+        // 不标的话新会话里打第一条命令什么也看不到（2026-10-27 查账）
+        notice: (text) => ctx.transcript.system(text, undefined, true),
         openPicker: () => ctx.emit('dsc/open-picker'),
         openModels: () => ctx.emit('dsc/open-models'),
       }
@@ -370,7 +374,7 @@ export const runtimePlugin: Plugin.Object = {
         // 壳能跑什么，探针直测那一份；这里只负责「不放行就抛、放行走同一条注册表」。
         const rejection = shellCommandRejection(input)
         if (rejection !== null) throw new Error(rejection)
-        return ctx.commands.run(input, runtime, commandUi())
+        return ctx.commands.run(input, runtime, commandUi(true))
       },
 
       listModels() {

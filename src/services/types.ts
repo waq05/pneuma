@@ -529,6 +529,13 @@ export interface CommandContext {
    * 可选：会话内没有思考块可折的端忽略（此时命令报「当前界面不支持」）。
    */
   toggleThinking?(visible?: boolean): void
+  /**
+   * 这条回调来自壳（`runUiCommand` 那条受限通道），不是终端。
+   *
+   * 为什么命令要看得到它：注册表两边共用，而壳只放行 `shell: true` 那批。
+   * `/help` 得按通道给清单，否则壳里会把 16 条跑不了的命令也列出来（2026-10-27 查账）。
+   */
+  shell?: boolean
   notice(text: string): void
 }
 
@@ -563,8 +570,9 @@ export interface TranscriptService {
   /**
    * 追加一条 system 条目。
    * @param level - `'error'` 表示要人处理的问题：界面弹一次提示，不铺在首屏；缺省只进日志。
+   * @param command - 这条是输入框 `/` 命令的输出：空会话欢迎态也要画在首屏。
    */
-  system(text: string, level?: 'info' | 'error'): void
+  system(text: string, level?: 'info' | 'error', command?: boolean): void
   /** 追加一条计划卡条目（提交评审与批完各更新一次）。 */
   plan(view: PlanView): void
   /**
