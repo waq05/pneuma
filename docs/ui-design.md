@@ -422,6 +422,43 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
 **加一层主题要做什么**：只换 `tokens.css` 里那三组（中性底、种子色、混比）就够，
 其它文件不该认识主题；派生色一律写在末尾 `:root` 块，让它跟着重算。
 
+### 10.1 第三档：Claude（暖米白）
+
+2026-10-27 加的第四档主题 `claude`（浅色系皮肤，`ThemeMode` 多一个值，`data-theme='claude'`）。
+配色取自 Anthropic 设计团队的官方色板，不靠肉眼估：
+
+| 角色 | 取值 | 令牌 |
+| --- | --- | --- |
+| 页面底（Ivory） | `#faf9f5` | `--dsc-neutral-page` / `--dsc-seed-page` |
+| 侧栏 | `#f0eee6` | `--dsc-neutral-side` / `--dsc-seed-side` |
+| 卡片与输入 | `#ffffff` | `--dsc-neutral-card`、`--dsc-bg-raised`、`--dsc-composer-fill` |
+| 正文墨色（Slate） | `#141413` | `--dsc-base` |
+| 唯一强调色（Clay） | `#d97757` | `--dsc-accent` |
+| 分隔线 | Slate 14/10/7/4% | `--dsc-stroke-1..4` |
+| 语义色 | 绿 `#558a42` / 黄 `#c9a82d` / 红 `#dc2626` | `--dsc-green` / `-yellow` / `-red` |
+
+三条口径（换皮肤时照抄这套判断）：
+
+1. **品牌色不进填充与描边**。五档 `--dsc-mix-*` 全 0，层级只靠墨色不透明度——暖灰底上
+   再掺砖红会发脏。强调色只出现在该被注意的地方（选中态、按钮、链接）。
+2. **强调面上的字取深色**。白字在 `#d97757` 上只有 3.1:1，Slate 是 6:1，所以
+   `--dsc-text-on-accent: #141413`（和深色主题里那条判断同一个道理）。
+3. **分隔线跟墨色走，不跟品牌色走**。官方默认描边就是 `rgba(31,30,29,0.15)`，
+   结构线一律无彩，避免暖底上出现彩色细线。
+
+落地要同步的六处（漏一处就有一套界面停在上一个主题里）：
+
+- `src/contract.ts` 的 `ThemeMode`、`src/core/prefs.ts` 的 `THEME_MODES`
+- 壳（`ui-shell/src/ui-layout/appearance.ts`）与旧渲染层（`desktop/src/renderer/appearance.ts`）的归一化
+- 设置里的磁贴（`plugins/settings/ui.tsx` 的 `THEME_TILES`，四块一行：每块 76px，行宽 328px）
+- `desktop/electron/main/index.ts` 的 `applyThemeSource`：`claude` 报成 `light`，
+  因为系统画的原生弹层只认深浅，透传会被 `nativeTheme` 拒掉
+- 两份令牌文件（`ui-shell/src/legacy/tokens.css` 与 `desktop/src/renderer/styles/tokens.css`，内容必须逐字一致）
+- 兜底生成器 `ui-shell/scripts/build-color-fallback.mjs` 的 `THEMES`（加一行，再重跑生成）
+
+浅色专属的那些选择器（代码高亮、文件类型图标补色）要一起扩到 `[data-theme='claude']`，
+否则新皮肤下代码块会按深色语法上色。
+
 ## 11. hermes 的主题引擎，以及要不要搬
 
 这一节是**参考资料**，给以后想扩主题系统的人看。dsc 现在是「一份纯 CSS 变量表 + 深/浅两套」，
@@ -479,7 +516,7 @@ dsc 现在这套（`tokens.css` 一份、深色默认、浅色用 `[data-theme='
 | --- | --- | --- |
 | `--ui-*` / `--theme-*` | `--dsc-*` | 令牌前缀，全部集中在 `tokens.css` |
 | `--theme-fill-*` / `--theme-stroke-*` 比例旋钮 | `--dsc-mix-*` / `--dsc-stroke-*` 百分比 | 同一套思路：调比例而不是调颜色 |
-| `DesktopTheme.darkColors`（主题自带两套盘） | `[data-theme='light']` 覆盖块 | hermes 一个「皮肤」可带深浅两套；dsc 只有一份主题的深浅两份，不引入第三层身份 |
+| `DesktopTheme.darkColors`（主题自带两套盘） | `[data-theme='dark'/'light'/'claude']` 覆盖块 | hermes 一个「皮肤」可带深浅两套；dsc 的皮肤与明暗是同一个 `data-theme` 枚举，不引入第三层身份（Claude 那档是浅色皮肤，见 §10.1） |
 | `shadow-nous` + `--stroke-nous` | `--dsc-shadow-float` + `--dsc-stroke-float` | 浮层抬升组合 |
 | `<Button variant size>` | `.dsc-btn[data-variant][data-size]` | 同一套变体名，dsc 多了 `chip` / `floating` / `grip` |
 | `SearchField` | `.dsc-ctl` | dsc 没有独立搜索框原语 |

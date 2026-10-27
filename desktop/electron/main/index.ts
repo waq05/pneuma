@@ -812,9 +812,12 @@ function applyWindowChrome(bar: unknown, symbol: unknown): void {
 
 /** 原生弹层（下拉、右键菜单）的深浅。 */
 function applyThemeSource(mode: unknown): void {
-  if (mode !== 'dark' && mode !== 'light' && mode !== 'system') return
-  if (isSelfCheck()) selfcheckNote(`[selfcheck] 原生主题源 ${mode}\n`)
-  nativeTheme.themeSource = mode
+  // claude 是浅色的暖米白主题：系统画的那层（原生下拉、右键菜单）只有深浅两种，
+  // 报 light 才是对的——直接透传 'claude' 会被 nativeTheme 拒掉，弹层会留在上一档。
+  const resolved = mode === 'claude' ? 'light' : mode
+  if (resolved !== 'dark' && resolved !== 'light' && resolved !== 'system') return
+  if (isSelfCheck()) selfcheckNote(`[selfcheck] 原生主题源 ${String(resolved)}\n`)
+  nativeTheme.themeSource = resolved
 }
 
 /** 系统通知：点通知 = 回到主窗口（缩托盘/最小化时尤其实用）。返回是否真的弹了。 */

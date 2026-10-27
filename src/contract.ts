@@ -1026,7 +1026,7 @@ export type SessionGroupKey = 'workspace' | 'tree' | 'flat'
 export type ArchivedFilter = 'hide' | 'show' | 'only'
 
 /** 主题模式：固定深色、固定浅色，或跟着系统的浅色偏好走。 */
-export type ThemeMode = 'dark' | 'light' | 'system'
+export type ThemeMode = 'dark' | 'light' | 'claude' | 'system'
 
 /**
  * 全局字号缩放倍数（1 = 正文 13px 基准）。桌面端把它直接写成 `--dsc-font-scale`。

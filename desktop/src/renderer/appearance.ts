@@ -172,7 +172,7 @@ export function applyAppearance(appearance: Appearance): void {
   current = appearance
   const root = document.documentElement
   const requested = appearance.themeMode
-  const mode: 'dark' | 'light' = requested === 'system' ? (media?.matches ? 'light' : 'dark') : requested
+  const mode: 'dark' | 'light' | 'claude' = requested === 'system' ? (media?.matches ? 'light' : 'dark') : requested
 
   // data-theme 是 tokens.css 里浅色主题的开关；这里永远不会写出 'system'，
   // 免得样式表去猜系统偏好、和 JS 的判断各说一套。
@@ -271,7 +271,10 @@ export function loadCachedAppearance(): Appearance {
     if (!raw) return DEFAULT_APPEARANCE
     const parsed = JSON.parse(raw) as Partial<Appearance>
     return {
-      themeMode: parsed.themeMode === 'light' || parsed.themeMode === 'system' ? parsed.themeMode : 'dark',
+      themeMode:
+        parsed.themeMode === 'light' || parsed.themeMode === 'claude' || parsed.themeMode === 'system'
+          ? parsed.themeMode
+          : 'dark',
       // 镜像里既可能是倍率（现版本），也可能是旧的 'sm' / 'md' / 'lg'。
       fontSize: normalizeFontScale(parsed.fontSize),
       density: parsed.density === 'compact' || parsed.density === 'roomy' ? parsed.density : 'standard',

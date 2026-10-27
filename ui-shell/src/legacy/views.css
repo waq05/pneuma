@@ -3915,7 +3915,9 @@ body.resizing iframe {
 }
 
 :root[data-theme='light'] .file-code .shiki span,
-:root[data-theme='light'] .file-code-body .shiki span {
+:root[data-theme='claude'] .file-code .shiki span,
+:root[data-theme='light'] .file-code-body .shiki span,
+:root[data-theme='claude'] .file-code-body .shiki span {
   color: var(--shiki-light);
 }
 

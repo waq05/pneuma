@@ -238,7 +238,7 @@ export function hostStatus(snapshot: HostSnapshot | null): HostStatusView | null
  * 再 `setUiPrefs(patch)` 落盘；写失败就再 `requestAppearance(原值)` 回滚。
  */
 export type AppearancePatch = {
-  themeMode?: 'dark' | 'light' | 'system'
+  themeMode?: 'dark' | 'light' | 'claude' | 'system'
   fontSize?: number
   density?: 'compact' | 'standard' | 'roomy'
 }

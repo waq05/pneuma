@@ -14,7 +14,7 @@
  * 而 `color-mix()` 要 111——同一个内核，同一个原因（见 `docs/development-log.md` 本批的记录）。
  *
  * 做法：**不手抄色板**，而是把 tokens.css 自己那套公式算一遍。
- *   1. 按层叠顺序重放 `:root` / `:root[data-theme='light']` 上的自定义属性（后写的赢）；
+ *   1. 按层叠顺序重放 `:root` / `:root[data-theme='…']` 上的自定义属性（后写的赢）；
  *   2. 递归求值：`var()` 取重放结果，`color-mix()` 按 CSS 规范算（**预乘 alpha**，与浏览器同算法）；
  *   3. 只输出**真正依赖 color-mix 的那些**令牌，包在 `@supports not (color: color-mix(...))` 里
  *      ——支持 color-mix 的内核整块不生效，主题色永远以 tokens.css 为唯一真源，这里不会漂。
@@ -385,10 +385,11 @@ export function fallbackDecls(tokens) {
 
 /* ── 五、拼产物 ────────────────────────────────────────────────────────────────── */
 
-/** 深色/浅色两套主题要重放的状态。 */
+/** 三套主题要重放的状态（深色 / 浅色 / Claude 暖米白）。加主题档就在这里加一行。 */
 const THEMES = [
   { attrs: { 'data-theme': 'dark', 'data-density': 'standard' }, systemLight: false },
   { attrs: { 'data-theme': 'light', 'data-density': 'standard' }, systemLight: false },
+  { attrs: { 'data-theme': 'claude', 'data-density': 'standard' }, systemLight: false },
 ]
 
 /**
@@ -422,6 +423,10 @@ export function buildFallbackCss(tokensCss) {
     "  :root[data-theme='light'] {",
     ...indent(fallbackDecls(themes[1])),
     '  }',
+    '',
+    "  :root[data-theme='claude'] {",
+    ...indent(fallbackDecls(themes[2])),
+    '  }',
     '}',
     '',
   ].join('\n')
@@ -434,6 +439,6 @@ if (isMain) {
   // 入库的文件跟仓库其它文本一样是 CRLF（见 docs：工作区是 CRLF，别用脚本把它整篇变 LF）。
   writeFileSync(OUT_PATH, css.replace(/\n/g, '\r\n'), 'utf8')
   process.stdout.write(
-    `[color-fallback] 深色 ${String(counts[0])} 条 / 浅色 ${String(counts[1])} 条 → ${OUT_PATH}\n`,
+    `[color-fallback] 深色 ${String(counts[0])} 条 / 浅色 ${String(counts[1])} 条 / Claude ${String(counts[2])} 条 → ${OUT_PATH}\n`,
   )
 }

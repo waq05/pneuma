@@ -110,7 +110,7 @@ const api = {
   },
 
   /** 主题切换时把模式报给主进程设 nativeTheme.themeSource（原生弹出层的深浅跟它走）。 */
-  setThemeSource(mode: 'dark' | 'light' | 'system'): void {
+  setThemeSource(mode: 'dark' | 'light' | 'claude' | 'system'): void {
     ipcRenderer.send('dsc:theme-source', mode)
   },
 

@@ -114,7 +114,7 @@ const EFFORTS: readonly EffortLevel[] = ['default', 'off', 'low', 'high', 'max']
 const SESSION_SORTS: readonly SessionSortKey[] = ['manual', 'recent', 'created']
 const SESSION_GROUPS: readonly SessionGroupKey[] = ['workspace', 'tree', 'flat']
 const ARCHIVED_FILTERS: readonly ArchivedFilter[] = ['hide', 'show', 'only']
-const THEME_MODES: readonly ThemeMode[] = ['dark', 'light', 'system']
+const THEME_MODES: readonly ThemeMode[] = ['dark', 'light', 'claude', 'system']
 const DENSITIES: readonly UiDensity[] = ['compact', 'standard', 'roomy']
 /**
  * 过程折叠程度四档（桌面端「通用 → 过程折叠程度」）。

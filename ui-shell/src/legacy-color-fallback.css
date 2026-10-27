@@ -110,4 +110,54 @@
     --dsc-text-secondary: rgb(23 23 26 / 0.74);
     --dsc-text-tertiary: rgb(23 23 26 / 0.54);
   }
+
+  :root[data-theme='claude'] {
+    --dsc-accent-hover: rgb(222 135 107);
+    --dsc-accent-text: rgb(158 89 67);
+    --dsc-bg-card: rgb(255 255 255);
+    --dsc-bg-page: rgb(250 249 245);
+    --dsc-bg-popover: rgb(255 255 255 / 0.96);
+    --dsc-bg-side: rgb(240 238 230);
+    --dsc-chrome-bar: rgb(250 249 245);
+    --dsc-chrome-symbol: rgb(80 80 78);
+    --dsc-control-active-bg: rgb(20 20 19 / 0.05);
+    --dsc-control-hover-bg: rgb(20 20 19 / 0.04);
+    --dsc-diff-add-bg: rgb(85 138 66 / 0.12);
+    --dsc-diff-add-fg: rgb(59 97 46);
+    --dsc-diff-remove-bg: rgb(220 38 38 / 0.12);
+    --dsc-diff-remove-fg: rgb(154 27 27);
+    --dsc-fill-primary: rgb(20 20 19 / 0.1);
+    --dsc-fill-quaternary: rgb(20 20 19 / 0.04);
+    --dsc-fill-quinary: rgb(20 20 19 / 0.03);
+    --dsc-fill-secondary: rgb(20 20 19 / 0.07);
+    --dsc-fill-tertiary: rgb(20 20 19 / 0.05);
+    --dsc-row-active-bg: rgb(20 20 19 / 0.05);
+    --dsc-row-hover-bg: rgb(20 20 19 / 0.03);
+    --dsc-scrim: rgb(0 0 0 / 0.4);
+    --dsc-scrollbar-thumb-hover: rgb(20 20 19 / 0.22);
+    --dsc-scrollbar-thumb: rgb(20 20 19 / 0.14);
+    --dsc-selection-bg: rgb(217 119 87 / 0.22);
+    --dsc-shadow-composer: 0 1px 2px rgb(0 0 0 / 0.05);
+    --dsc-shadow-float: 0 2px 4px -2px rgb(0 0 0 / 0.07),
+    0 8px 12px -6px rgb(0 0 0 / 0.06),
+    0 20px 28px -14px rgb(0 0 0 / 0.06),
+    0 36px 48px -28px transparent;
+    --dsc-shadow-md: 0 0 0 1px rgb(20 20 19 / 0.08),
+    0 4px 16px rgb(0 0 0 / 0.08),
+    0 16px 32px -24px rgb(0 0 0 / 0.18);
+    --dsc-shadow-sm: 0 0 0 1px rgb(20 20 19 / 0.06),
+    0 2px 8px rgb(0 0 0 / 0.04);
+    --dsc-shadow-xs: 0 1px 2px rgb(0 0 0 / 0.05);
+    --dsc-stroke-1: rgb(20 20 19 / 0.14);
+    --dsc-stroke-2: rgb(20 20 19 / 0.1);
+    --dsc-stroke-3: rgb(20 20 19 / 0.07);
+    --dsc-stroke-4: rgb(20 20 19 / 0.04);
+    --dsc-stroke-float: rgb(20 20 19 / 0.028);
+    --dsc-text-primary: rgb(20 20 19 / 0.94);
+    --dsc-text-quaternary: rgb(20 20 19 / 0.36);
+    --dsc-text-scaffold-meta: rgb(20 20 19 / 0.44);
+    --dsc-text-scaffold: rgb(20 20 19 / 0.64);
+    --dsc-text-secondary: rgb(20 20 19 / 0.74);
+    --dsc-text-tertiary: rgb(20 20 19 / 0.54);
+  }
 }

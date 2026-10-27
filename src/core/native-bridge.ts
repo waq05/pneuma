@@ -288,7 +288,7 @@ const MAX_PROVIDER_DRAFT = 65536
 /** API key 的长度上限（真实 key 几十字符，4KB 富余得多）。 */
 const MAX_PROVIDER_KEY = 4096
 
-const THEME_SOURCES = ['dark', 'light', 'system'] as const
+const THEME_SOURCES = ['dark', 'light', 'claude', 'system'] as const
 const WORKSPACE_KINDS = ['terminal', 'explorer', 'vscode'] as const
 /**
  * 权限模式的三档（与 `contract.ts` 的 `ApprovalPolicy` 一字不差）。

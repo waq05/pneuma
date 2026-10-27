@@ -13,6 +13,7 @@
  *   [4] 混色算法：已知值对表 + **预乘**那条（与透明混合不许压暗）
  *   [5] 主题门：浅色块与深色块必须不同（浅色重放要是静默回落到深色，两段会长得一样）
  *   [6] 接线：入口在 styles.css 之后引入它（同特异性靠源码序压过令牌）+ 产物里带这块
+ *   [7] 档门：Claude 档在内核枚举、两个渲染层的归一化、设置磁贴三处都接上，
  *
  * 运行：node scripts/ui-color-fallback-test.mjs
  *
@@ -61,8 +62,17 @@ console.log('[1] 漂移门：生成器与入库文件一致')
 {
   check('入库文件与刚算出来的逐字节一致（改了 tokens.css 要重跑生成器）', flat(committed) === flat(built.css), '重跑：node ui-shell/scripts/build-color-fallback.mjs')
   check('产物带 @supports 外壳（认得 color-mix 的内核整块不生效）', flat(committed).includes('@supports not (color: color-mix(in srgb, red, blue))'))
-  check('深色块与浅色块都在', flat(committed).includes('  :root {') && flat(committed).includes("  :root[data-theme='light'] {"))
-  check('声明数非零（深色/浅色各一批）', built.counts[0] > 20 && built.counts[1] > 20, JSON.stringify(built.counts))
+  check(
+    '深色块、浅色块与 Claude 块都在',
+    flat(committed).includes('  :root {') &&
+      flat(committed).includes("  :root[data-theme='light'] {") &&
+      flat(committed).includes("  :root[data-theme='claude'] {"),
+  )
+  check(
+    '声明数非零（三档各一批）',
+    built.counts[0] > 20 && built.counts[1] > 20 && built.counts[2] > 20,
+    JSON.stringify(built.counts),
+  )
 }
 
 console.log('[2] 覆盖门：依赖 color-mix 的令牌一个不漏')
@@ -70,7 +80,8 @@ console.log('[2] 覆盖门：依赖 color-mix 的令牌一个不漏')
   const rules = parseRules(tokensCss.replace(/\/\*[\s\S]*?\*\//g, ''))
   const dark = collectTokens(rules, { 'data-theme': 'dark', 'data-density': 'standard' }, false)
   const light = collectTokens(rules, { 'data-theme': 'light', 'data-density': 'standard' }, false)
-  for (const [label, tokens] of [['深色', dark], ['浅色', light]]) {
+  const claude = collectTokens(rules, { 'data-theme': 'claude', 'data-density': 'standard' }, false)
+  for (const [label, tokens] of [['深色', dark], ['浅色', light], ['Claude', claude]]) {
     const dependent = pickDependent(tokens)
     const decls = fallbackDecls(tokens)
     check(`${label}：每个依赖 color-mix 的令牌都兜住了（${String(dependent.size)} 个）`, decls.length === dependent.size, `${String(decls.length)}/${String(dependent.size)}`)
@@ -125,7 +136,14 @@ console.log('[5] 主题门：浅色块必须与深色块不同')
   const body = flat(committed)
   const darkBlock = /:root \{([\s\S]*?)\n  \}/.exec(body)[1]
   const lightBlock = /:root\[data-theme='light'\] \{([\s\S]*?)\n  \}/.exec(body)[1]
+  const claudeBlock = /:root\[data-theme='claude'\] \{([\s\S]*?)\n  \}/.exec(body)[1]
+  check('三段的块头都解析出来了（Claude 段没被吞进浅色段）', claudeBlock !== undefined && claudeBlock.length > 200)
   check('两段不是同一份（浅色重放没静默回落成深色）', darkBlock !== lightBlock)
+  check('Claude 段也不与浅色段相同（不是换了个选择器的复制）', claudeBlock !== lightBlock)
+  check('Claude 侧栏是暖米白 rgb(240 238 230)', claudeBlock.includes('--dsc-bg-side: rgb(240 238 230);'))
+  check('Claude 正文是 Slate 0.94（不是冷黑）', claudeBlock.includes('--dsc-text-primary: rgb(20 20 19 / 0.94);'))
+  check('Claude 默认分隔线是 Slate 7%（官方那档发丝线）', claudeBlock.includes('--dsc-stroke-3: rgb(20 20 19 / 0.07);'))
+  check('Claude 选中底是陶土色 22%', claudeBlock.includes('--dsc-selection-bg: rgb(217 119 87 / 0.22);'))
   check('深色侧栏底色 rgb(27 27 28)', darkBlock.includes('--dsc-bg-side: rgb(27 27 28);'))
   check('浅色侧栏底色 rgb(243 247 255)', lightBlock.includes('--dsc-bg-side: rgb(243 247 255);'))
   check('浅色文字主色带 0.94 alpha（不是深色那支的纯白）', lightBlock.includes('--dsc-text-primary: rgb(23 23 26 / 0.94);'))
@@ -151,6 +169,28 @@ console.log('[6] 接线：引入次序 + 产物')
   }
 }
 
+console.log('[7] 档门：Claude 档在四处开关与两份令牌里都接上')
+{
+  const contract = flat(read('/src/contract.ts'))
+  const prefs = flat(read('/src/core/prefs.ts'))
+  const shellAppearance = flat(read('/ui-shell/src/ui-layout/appearance.ts'))
+  const settingsUi = flat(read('/ui-shell/src/plugins/settings/ui.tsx'))
+  const desktopAppearance = flat(read('/desktop/src/renderer/appearance.ts'))
+  const desktopSettings = flat(read('/desktop/src/renderer/SettingsModal.tsx'))
+  const electronMain = flat(read('/desktop/electron/main/index.ts'))
+  check('内核类型里有 claude', contract.includes("export type ThemeMode = 'dark' | 'light' | 'claude' | 'system'"))
+  check('偏好白名单放行 claude（不然存了也会被读回 dark）', prefs.includes("['dark', 'light', 'claude', 'system']"))
+  check('壳的归一化认 claude', shellAppearance.includes("value === 'claude'"))
+  check('设置里四个磁贴（浅色 / Claude / 深色 / 跟随系统）', settingsUi.includes("{ value: 'claude', label: 'Claude' }"))
+  check('旧渲染层同样放行 claude', desktopAppearance.includes("parsed.themeMode === 'claude'"))
+  check('旧渲染层的主题下拉里有 Claude', desktopSettings.includes("{ value: 'claude', label: 'Claude' }"))
+  check('原生弹层把 claude 报成 light（nativeTheme 只认深浅）', electronMain.includes("mode === 'claude' ? 'light' : mode"))
+  const shellTokens = flat(read('/ui-shell/src/legacy/tokens.css'))
+  const desktopTokens = flat(read('/desktop/src/renderer/styles/tokens.css'))
+  const grab = (css) => (/:root\[data-theme='claude'\] \{([\s\S]*?)\n\}/.exec(css) ?? [])[1]
+  check('两份 tokens.css 的 Claude 块逐字一致（镜像是抄的，会漂）', grab(shellTokens) === grab(desktopTokens) && grab(shellTokens) !== undefined)
+  check('两份 fallback 与 Claude 块都认 color-scheme: light', /:root\[data-theme='claude'\] \{\s*color-scheme: light;/.test(shellTokens))
+}
 console.log('')
 console.log(`通过 ${String(passed)}/${String(passed + failures)}`)
 process.exit(failures === 0 ? 0 : 1)

@@ -525,6 +525,7 @@ function AppearanceRows(props: {
             options={[
               { value: 'dark', label: '深色' },
               { value: 'light', label: '浅色' },
+              { value: 'claude', label: 'Claude' },
               { value: 'system', label: '跟随系统' },
             ]}
             onPick={(value) => props.onUiPrefs({ themeMode: value })}

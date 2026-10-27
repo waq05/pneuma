@@ -73,7 +73,7 @@ function normalizeDensity(value: unknown): UiDensity {
 
 /** 主题只有三档；认不出的值回落 dark。 */
 function normalizeTheme(value: unknown): ThemeMode {
-  return value === 'light' || value === 'system' ? value : 'dark'
+  return value === 'light' || value === 'claude' || value === 'system' ? value : 'dark'
 }
 
 /**
@@ -108,7 +108,9 @@ export function applyAppearance(appearance: Appearance): void {
   current = appearance
   const root = document.documentElement
   const requested = appearance.themeMode
-  const mode: 'dark' | 'light' = requested === 'system' ? (media?.matches ? 'light' : 'dark') : requested
+  // claude 是「浅色的暖米白」那一档，自己就是一个 data-theme 值——
+  // 它不参与 system 的解析：跟随系统只在 dark / light 之间翻。
+  const mode: 'dark' | 'light' | 'claude' = requested === 'system' ? (media?.matches ? 'light' : 'dark') : requested
 
   // data-theme 是 tokens.css 里浅色主题的开关；这里永远不会写出 'system'，
   // 免得样式表去猜系统偏好、和 JS 的判断各说一套。

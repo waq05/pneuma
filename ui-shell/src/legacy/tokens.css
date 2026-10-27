@@ -458,6 +458,107 @@
     0 36px 48px -28px color-mix(in srgb, #000 0%, transparent);
 }
 
+/* ══════════════════ Claude（暖米白）══════════════════
+ *
+ * 第三档主题。配色取自 Anthropic 设计团队的官方色板（他们 colors.css 里的暖灰 21 级
+ * 与 Claude 徽标色），不是照着截图估的：页面底是 Ivory `#faf9f5`，侧栏 `#f0eee6`，
+ * 卡片与输入 `#ffffff`——官方明确说整页底不用纯白，纯白只留给叠在上面的卡；
+ * 正文是 Slate `#141413`；唯一的强调色是 Clay `#d97757`。
+ *
+ * 两条是照着色板定的：
+ *   1. 分隔线是 Slate 的低透明度（官方默认 0.15、强描边 0.3），不是彩色线；
+ *   2. 品牌色在填充与描边里占比一律 0——暖灰底上再掺砖红会发脏，层次只靠墨色深浅。
+ * 结构和浅色主题一模一样（两个种子 + 百分比旋钮），所以换观感不用动任何组件。
+ */
+:root[data-theme='claude'] {
+  color-scheme: light;
+
+  --dsc-base: #141413;
+  --dsc-accent: #d97757;
+
+  --dsc-neutral-page: #faf9f5;
+  --dsc-neutral-side: #f0eee6;
+  --dsc-neutral-card: #ffffff;
+  --dsc-seed-page: #faf9f5;
+  --dsc-seed-side: #f0eee6;
+  --dsc-seed-card: #ffffff;
+  --dsc-mix-page: 100%;
+  --dsc-mix-side: 100%;
+  --dsc-mix-card: 100%;
+  --dsc-bg-raised: #ffffff;
+  --dsc-composer-fill: #ffffff;
+
+  /* 品牌色不进填充与描边（见文件头第 2 条），所以五档混比全是 0；
+     刻度沿用浅色那一套（填充 10/7/5/4/3%、描边 14/10/7/4%），层次手感一致。 */
+  --dsc-mix-primary: 0%;
+  --dsc-mix-secondary: 0%;
+  --dsc-mix-tertiary: 0%;
+  --dsc-mix-quaternary: 0%;
+  --dsc-mix-quinary: 0%;
+  --dsc-fill-primary-a: 10%;
+  --dsc-fill-secondary-a: 7%;
+  --dsc-fill-tertiary-a: 5%;
+  --dsc-fill-quaternary-a: 4%;
+  --dsc-fill-quinary-a: 3%;
+  --dsc-stroke-primary: 0%;
+  --dsc-stroke-secondary: 0%;
+  --dsc-stroke-tertiary: 0%;
+  --dsc-stroke-quaternary: 0%;
+  --dsc-stroke-primary-a: 14%;
+  --dsc-stroke-secondary-a: 10%;
+  --dsc-stroke-tertiary-a: 7%;
+  --dsc-stroke-quaternary-a: 4%;
+  --dsc-text-primary-a: 94%;
+  --dsc-text-secondary-a: 74%;
+  --dsc-text-tertiary-a: 54%;
+  --dsc-text-quaternary-a: 36%;
+  --dsc-text-scaffold-a: 64%;
+  --dsc-text-scaffold-meta-a: 44%;
+  --dsc-row-hover: 0%;
+  --dsc-row-active: 0%;
+  --dsc-control-hover: 0%;
+  --dsc-control-active: 0%;
+  --dsc-row-hover-a: 3%;
+  --dsc-row-active-a: 5%;
+  --dsc-control-hover-a: 4%;
+  --dsc-control-active-a: 5%;
+
+  /* 陶土色上的字取深色：白字在 `#d97757` 上只有 3.1:1，Slate 是 6:1。 */
+  --dsc-text-on-accent: #141413;
+
+  /* 语义色取官方语法色阶（绿 `#558a42` / 黄 `#c9a82d` / 红 `#dc2626`）。
+     青与紫官方没有对应档，用同族低饱和顶上，整屏仍落在暖色系里。 */
+  --dsc-red: #dc2626;
+  --dsc-orange: #c9683f;
+  --dsc-yellow: #c9a82d;
+  --dsc-green: #558a42;
+  --dsc-cyan: #6a9b91;
+  --dsc-purple: #9588a8;
+  --dsc-diff-add-fg: color-mix(in srgb, var(--dsc-green) 70%, #000);
+  --dsc-diff-remove-fg: color-mix(in srgb, var(--dsc-red) 70%, #000);
+
+  --dsc-inline-code-bg: #f0eee6;
+  --dsc-inline-code-fg: #3d3d3a;
+  /* 选中用品牌色 22%：官方 Oat `#e3dacc` 压在 Ivory 上几乎看不出选中范围。 */
+  --dsc-selection-bg: color-mix(in srgb, var(--dsc-accent) 22%, transparent);
+  --dsc-scrollbar-thumb: color-mix(in srgb, var(--dsc-base) 14%, transparent);
+  --dsc-scrollbar-thumb-hover: color-mix(in srgb, var(--dsc-base) 22%, transparent);
+
+  /* 暖底上黑阴影更要收着，否则分隔感会变成脏感（与浅色主题同值）。 */
+  --dsc-shadow-sm:
+    0 0 0 1px color-mix(in srgb, var(--dsc-base) 6%, transparent),
+    0 2px 8px color-mix(in srgb, #000 4%, transparent);
+  --dsc-shadow-md:
+    0 0 0 1px color-mix(in srgb, var(--dsc-base) 8%, transparent),
+    0 4px 16px color-mix(in srgb, #000 8%, transparent),
+    0 16px 32px -24px color-mix(in srgb, #000 18%, transparent);
+  --dsc-shadow-float:
+    0 2px 4px -2px color-mix(in srgb, #000 7%, transparent),
+    0 8px 12px -6px color-mix(in srgb, #000 6%, transparent),
+    0 20px 28px -14px color-mix(in srgb, #000 6%, transparent),
+    0 36px 48px -28px color-mix(in srgb, #000 0%, transparent);
+}
+
 /* 跟随系统：由 appearance.ts 把 system 解成 dark|light 再落到 data-theme，
    这里只兜住它还没跑起来的第一帧。 */
 @media (prefers-color-scheme: light) {
