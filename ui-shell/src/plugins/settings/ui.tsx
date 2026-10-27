@@ -765,9 +765,13 @@ function GenericFields({
   )
 }
 
-/** 主题三档（顺序按「由浅到深再跟随」，与 Codex UI 的三磁贴一致）。 */
+/**
+ * 主题四档（顺序按「由浅到深再跟随」）：浅色、Claude（暖米白，见 tokens.css 那一块）、
+ * 深色、跟随系统。
+ */
 const THEME_TILES = [
   { value: 'light', label: '浅色' },
+  { value: 'claude', label: 'Claude' },
   { value: 'dark', label: '深色' },
   { value: 'system', label: '跟随系统' },
 ] as const
@@ -832,7 +836,7 @@ function AppearanceRows(): ReactNode {
       <div className="setting-row">
         <div className="setting-text">
           <div className="setting-label">主题</div>
-          <div className="setting-help">「跟随系统」随系统的深浅自动切换。</div>
+          <div className="setting-help">「Claude」是暖米白配色（Ivory + 陶土色），「跟随系统」随系统深浅自动切换。</div>
         </div>
         <div className="setting-control theme-tiles" role="radiogroup" aria-label="主题">
           {THEME_TILES.map((tile) => (
@@ -968,7 +972,7 @@ function AppearanceRows(): ReactNode {
 
 /** 面板里那几项的本地形态（归一化的权威在壳的 appearance.ts，这里只为自己画控件）。 */
 interface Appearance {
-  themeMode: 'dark' | 'light' | 'system'
+  themeMode: 'dark' | 'light' | 'claude' | 'system'
   fontSize: number
   density: 'compact' | 'standard' | 'roomy'
   /** 过程折叠程度（紧凑/标准/详细/完全展开）——消息流整轮折叠的能力表。 */
@@ -993,7 +997,10 @@ function normalizePrefs(prefs: Partial<UiPrefsView> | null | undefined): Appeara
   const fromLegacy = typeof raw === 'string' ? legacy[raw] : undefined
   const second = fromLegacy ?? size
   return {
-    themeMode: prefs?.themeMode === 'light' || prefs?.themeMode === 'system' ? prefs.themeMode : 'dark',
+    themeMode:
+      prefs?.themeMode === 'light' || prefs?.themeMode === 'claude' || prefs?.themeMode === 'system'
+        ? prefs.themeMode
+        : 'dark',
     fontSize: Math.min(1.35, Math.max(0.85, Math.round(second * 100) / 100)),
     density: prefs?.density === 'compact' || prefs?.density === 'roomy' ? prefs.density : 'standard',
     processFold:
