@@ -41,6 +41,7 @@ function toView(preset: Preset): PresetView {
     description: preset.description,
     tools: preset.tools,
     drop: preset.drop,
+    replace: preset.replace,
     prompt: preset.prompt,
     builtin: preset.builtin,
     ...(preset.problem !== undefined ? { problem: preset.problem } : {}),
@@ -148,6 +149,10 @@ export const presetsPlugin: Plugin.Object = {
     // 2. 骨架取舍：drop 里那几段整段不进提示词。
     // 只碰提示词文本——审批硬地板、命令策略、路径策略都在代码里，少几段叮嘱不等于放宽安全。
     ctx.prompt.registerSkeletonFilter('preset', (ids) => {
+      // 替换式模式（极简档）：只留模式自己的正文与 AGENTS.md 注入。插件贡献段
+      // （沙箱说明、协作模式条款、技能目录…）全部不进——参考实现的 minimal 就是这样，
+      // 它的 persona 是 complete + 不给运行时上下文。
+      if (spec().replace) return ids.filter((id) => id === 'preset:persona' || id === 'instructions')
       const drop = spec().drop
       return drop.length === 0 ? ids : ids.filter((id) => !drop.includes(id))
     })

@@ -60,7 +60,9 @@ console.log('[1] 出厂四个预设：名字 / 顺序 / 三项取值')
   check('custom 常量就是字符串 custom', CUSTOM_PERMISSION_PRESET === 'custom', CUSTOM_PERMISSION_PRESET)
 
   const byName = Object.fromEntries(BUILTIN_PERMISSION_PRESETS.map((preset) => [preset.name, preset]))
-  check('read-only = read-only 沙箱 + readonly + 本人审', byName['read-only'].sandbox === 'read-only' && byName['read-only'].policy === 'readonly' && byName['read-only'].reviewer === 'user', JSON.stringify(byName['read-only']))
+  // 对齐 dsh 的 read-only：沙箱只读 + ask（这里由 auto-edit 承担 ask 的角色，
+  // 沙箱边界由审批第 4 层判定，用户点一次允许才越界）。
+  check('read-only = read-only 沙箱 + auto-edit + 本人审（对齐 dsh 的只读档）', byName['read-only'].sandbox === 'read-only' && byName['read-only'].policy === 'auto-edit' && byName['read-only'].reviewer === 'user', JSON.stringify(byName['read-only']))
   check('workspace = workspace-write 沙箱 + auto-edit + 本人审', byName.workspace.sandbox === 'workspace-write' && byName.workspace.policy === 'auto-edit' && byName.workspace.reviewer === 'user', JSON.stringify(byName.workspace))
   check('full-access = danger-full-access + full-access + 本人审', byName['full-access'].sandbox === 'danger-full-access' && byName['full-access'].policy === 'full-access' && byName['full-access'].reviewer === 'user', JSON.stringify(byName['full-access']))
   // 参考实现的 Auto：沙箱钉死在不设围栏，每一次调用先过模型判官（评审者 = auto-review）。
@@ -81,7 +83,7 @@ console.log('[2] matchPermissionPreset：三项全等才命中，任一不同 �
 {
   check('三项全等 → 命中 workspace', matchPermissionPreset('workspace-write', 'auto-edit', 'user') === 'workspace', matchPermissionPreset('workspace-write', 'auto-edit', 'user'))
   // 逐个改一项验证：任意一根不同就落回 custom（用户可以在设置页拼出任意组合）。
-  check('只改沙箱一项 → custom', matchPermissionPreset('read-only', 'auto-edit', 'user') === CUSTOM_PERMISSION_PRESET, matchPermissionPreset('read-only', 'auto-edit', 'user'))
+  check('只改沙箱一项 → custom', matchPermissionPreset('read-only', 'readonly', 'user') === CUSTOM_PERMISSION_PRESET, matchPermissionPreset('read-only', 'readonly', 'user'))
   check('只改权限模式一项 → custom', matchPermissionPreset('workspace-write', 'readonly', 'user') === CUSTOM_PERMISSION_PRESET, matchPermissionPreset('workspace-write', 'readonly', 'user'))
   check('只改审阅者一项 → custom', matchPermissionPreset('workspace-write', 'auto-edit', 'auto-review') === CUSTOM_PERMISSION_PRESET, matchPermissionPreset('workspace-write', 'auto-edit', 'auto-review'))
   check('另一档的组合命中它自己（auto-review）', matchPermissionPreset('danger-full-access', 'full-access', 'auto-review') === 'auto-review', matchPermissionPreset('danger-full-access', 'full-access', 'auto-review'))

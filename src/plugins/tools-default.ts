@@ -11,6 +11,7 @@
 import type { Plugin } from '@deepseek-ai/cordis'
 import { createBashTool, BASH_DEFAULT_BUDGETS, createJobTools, createTerminalTool, JobTable, stopAllBackgroundChildren, stopBackgroundChild, TerminalTable, type BashBudgets } from '../core/tools/bash.js'
 import { createReadTool, editTool, READ_DEFAULT_LINE_LIMIT, writeTool } from '../core/tools/fs-tools.js'
+import { readImageTool } from '../core/tools/image-tool.js'
 import { globTool, grepTool } from '../core/tools/search-tools.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
 import type { BackgroundOutputView, BackgroundWorkView, SettingsField, SettingsValues } from '../contract.js'
@@ -192,6 +193,7 @@ export const toolsDefaultPlugin: Plugin.Object = {
         ...createJobTools(table).map((entry) => ctx.tools.register(entry)),
         ctx.tools.register(createTerminalTool(terminals)),
         ctx.tools.register(createReadTool(budgets.readLineLimit)),
+        ctx.tools.register(readImageTool),
         ctx.tools.register(writeTool),
         ctx.tools.register(editTool),
         ctx.tools.register(globTool),

@@ -7,6 +7,7 @@
  *     中立类型，通过 DscRuntime 与宿主世界交互；
  *   - 本文件自身不得 import 任何 @deepseek-ai/*。
  */
+import type { UserFileAttachment } from './core/attachments.js'
 
 /** deepseek adapter 的思考强度档位。default = 不声明思考字段（跟随端点默认）。 */
 export type EffortLevel = 'default' | 'off' | 'low' | 'high' | 'max'
@@ -389,7 +390,8 @@ export interface CompactionMark {
  */
 export type TranscriptEntry =
   /**
-   * images 是 data URL 清单（用户贴进来的图）；界面渲染成缩略图。
+   * images 是图片引用（`/api/attachments/<sha>`，老会话是 data URL）；界面渲染成缩略图。
+   * files 是视频 / 通用文件的落盘元数据；界面画文件卡，模型侧看到的是拼进正文的路径句柄。
    * `compaction` 只出现在重放出来的压缩摘要上（见 {@link CompactionMark}）。
    * `steering` = 这条消息是在助手回合**还没跑完**时插进来的（对照 dsh 的 steering 节点）。
    * `internal` = 这条消息不是人打的字，是运行时投递进来的（目前只有队友干完活的
@@ -397,7 +399,7 @@ export type TranscriptEntry =
    * 对话页把它画成一行「子任务状态更新」（对照 dsh 的 turn-trigger 节点：
    * TurnTriggerNodeView 默认收起，展开才看得到通知正文）。
    */
-  | { kind: 'user'; id: number; text: string; images?: string[]; ts?: number; compaction?: CompactionMark; steering?: boolean; internal?: boolean }
+  | { kind: 'user'; id: number; text: string; images?: string[]; files?: UserFileAttachment[]; ts?: number; compaction?: CompactionMark; steering?: boolean; internal?: boolean }
   /**
    * durationMs 是这段思考从第一口 reasoning delta 到定稿的耗时（≥1s 界面才显示）。
    * 为什么可选：重放历史日志造不出它（日志只存定稿文本），老会话回看就降级不显示。
@@ -713,6 +715,13 @@ export interface StatusView {
   /** 最近一次请求组装的内容类型分段（估算；没有请求记录时全 0 = 条上只有空闲段）。 */
   contextSegments: ContextSegmentsView
   /**
+   * 会话进度：轮数 = 用户消息数（压缩摘要不算），步数 = 助手消息数（每次模型调用一步）。
+   *
+   * 口径对齐 dsh 的 `sessionStats`（turns：有回复的轮；steps：助手节点数），由宿主数
+   * 会话消息得出——界面不再自己按条目猜。还没有任何消息时是 `{0,0}`。
+   */
+  progress: { turns: number; steps: number }
+  /**
    * 会话费用估算（人民币）：只有当 provider 是 DeepSeek 官方且模型在价目表里、
    * 且至少回过一笔用量时才有。峰谷按北京时段分桶计价（见 core/pricing）。
    */
@@ -809,6 +818,8 @@ export interface PresetView {
   tools: string[] | null
   /** 要去掉的骨架提示段 id。 */
   drop: string[]
+  /** true = 正文替换整个系统提示（只留正文与 AGENTS.md 注入）。 */
+  replace: boolean
   /** 正文 = 这个模式追加给模型的提示词（编辑表单要拿它当初始值）。 */
   prompt: string
   /** 出厂自带的四个之一（界面标「内置」，删不掉）。 */
@@ -854,6 +865,8 @@ export interface PresetDraft {
   /** 工具白名单；null = 全量。 */
   tools: string[] | null
   drop: string[]
+  /** 省略 = 沿用旧文件里的值（表单还没暴露这一项）。 */
+  replace?: boolean
   /** 正文 = 这个模式追加给模型的提示词。 */
   prompt: string
 }
@@ -1708,8 +1721,10 @@ export interface QueuedMessageView {
   /** 在收件箱里的位置（0 在最前）：编辑 / 删除 / 插话都按它定位。 */
   index: number
   text: string
-  /** 随消息一起排队的图片（data URL 清单）。 */
+  /** 随消息一起排队的图片（引用或老式 data URL）。 */
   images?: string[]
+  /** 随消息一起排队的视频 / 通用文件。 */
+  files?: UserFileAttachment[]
 }
 
 /**
@@ -1747,9 +1762,11 @@ export interface DscRuntime {
   getSnapshot(): RuntimeSnapshot
   /**
    * 提交一条用户消息（走 agent.followup）。
-   * @param images - 随消息发送的图片（data URL 清单）；当前模型没勾「照片」时发送方要先拦住。
+   * @param images - 随消息发送的图片引用（`/api/attachments/<sha>`；老调用点给 data URL）；
+   *   当前模型没勾「照片」时发送方要先拦住。
+   * @param files - 视频 / 通用文件的落盘元数据（模型侧只看到路径句柄；界面画文件卡）。
    */
-  submit(text: string, images?: string[]): void
+  submit(text: string, images?: string[], files?: UserFileAttachment[]): void
   /**
    * 取消在跑的回合。缺省停当前查看的会话；指定会话 jsonl 路径时停那个**后台**
    * 会话（0.6.49：侧栏行右键「停止」）——回合以 aborted 收尾，挂着的审批卡

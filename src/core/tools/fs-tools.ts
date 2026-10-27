@@ -158,6 +158,7 @@ export function createReadTool(lineLimit = READ_DEFAULT_LINE_LIMIT): ToolEntry {
 /** 缺省预算的 read 工具（自检脚本直接复用；插件里走 {@link createReadTool} 收配置值）。 */
 export const readTool: ToolEntry = createReadTool()
 
+
 export const writeTool: ToolEntry = {
   name: 'write',
   description:

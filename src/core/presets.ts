@@ -76,6 +76,15 @@ export interface Preset {
   tools: string[] | null
   /** 要去掉的骨架提示段 id（只认 {@link DROPPABLE_SECTIONS} 里的）。 */
   drop: string[]
+  /**
+   * 正文**替换**整个系统提示（只留正文与 AGENTS.md 注入），而不是追加。
+   *
+   * 对齐 dsh 的 `minimal` 预设（它的 persona 是 `complete: true` +
+   * `includeRuntimeContext: false`）：极简档要测「模型只有一条 shell 时的基础表现」，
+   * 内置人格、做事方式、沙箱说明、技能目录这些段都不该进提示词。
+   * `drop` 只能去掉白名单里的几段，够不到插件贡献段，所以单列一个开关。
+   */
+  replace: boolean
   /** 正文 = 这个模式追加给模型的提示词。 */
   prompt: string
   /** 是不是 dsc 出厂自带的那四个。 */
@@ -98,22 +107,15 @@ description: 处理代码、文件和资料，适合大多数任务；工具按�
   [MINIMAL_PRESET]: `---
 name: ${MINIMAL_PRESET}
 label: 极简模式
-description: 只给一条 shell（PowerShell）与固定提示词，用来对照模型的基础表现
-tools: bash
-drop: behavior, tool-rules, instructions, skills
+description: 只给一条 shell（PowerShell）与读图，提示词只有这一句；用来对照模型的基础表现
+tools: bash, read_image
+replace: true
 ---
 
-你手上只有一条 shell 工具（bash），在这台机器上它跑的是 PowerShell，工作目录就是当前项目。
-别的工具一个都没有：读文件、找文件、改文件、跑测试，全部用 shell 命令完成。
-
-怎么干：
-- 看文件用 Get-Content（要行号自己数）；找内容用 Select-String；找文件用 Get-ChildItem -Recurse。
-- 改文件没有定点替换工具：先整篇读出来，再整篇写回去（Set-Content），改一处也一样。
-- 跑测试、构建、git 都用 shell。
-- 一条命令只做一件事；输出会被原样收进上下文，所以用 Select-Object -First 之类的办法先收窄，
-  别把几万行拉进来。
-- 每条命令都要过审批。危险动作（递归删除、强推、重置）先停下来说清，不要硬试。
-- 最后用一小段话交回：做了什么、结果是什么、哪里还没查清。
+你是一个乐于助人的软件工程师助手。手上的工具只有一条 shell（这台机器上是 PowerShell）与 read_image。
+读文件、找文件、改文件、跑测试、构建、git 全部用 shell 命令完成；只看图片时用 read_image。
+一条命令只做一件事；输出会被原样收进上下文，先用 Select-Object -First 之类的办法收窄。
+最后用一小段话交回：做了什么、结果是什么、哪里还没查清。
 `,
   [MAKER_PRESET]: `---
 name: ${MAKER_PRESET}
@@ -139,11 +141,14 @@ plugin_manager 装进 ~/.dsc/plugins/。插件能拿到哪些服务、扩展点�
   [PTC_PRESET]: `---
 name: ${PTC_PRESET}
 label: PTC 模式
-description: 模型用代码组织工具调用：一次写一段脚本批量调工具，在代码里筛选汇总再把结论交回来
-tools: run_code
+description: 在标准能力之上加 run_code：批量任务写一段脚本调工具，在代码里筛选汇总
 ---
 
-这一轮你用代码组织工具调用：手上只有 run_code 一个工具，别的工具都在它的 SDK 里。
+这一轮你多了 run_code：写一段 JavaScript，在程序里批量调工具（sdk.grep / sdk.read / sdk.bash…），
+在代码里筛选、去重、统计、汇总，只把结论 return 回上下文。原生工具照旧可用，适合单件小事。
+
+什么时候用：一次要看好几个文件、要跨多个结果做统计/去重、或者输出会很长时，用 run_code
+收窄；只读一两个文件、改一处代码，直接用原生工具更快。
 
 怎么写：run_code 的 code 参数是一段 JavaScript（顶层可以直接 await），
 里面用 sdk 调工具——每个工具是一个函数，参数就是它原来的参数，返回它原来的输出文本：
@@ -223,6 +228,7 @@ const FALLBACK_PRESET: Preset = {
   description: '',
   tools: null,
   drop: [],
+  replace: false,
   prompt: '',
   builtin: true,
   file: join(DSC_PRESETS_DIR, `${STANDARD_PRESET}.md`),
@@ -249,6 +255,7 @@ function parsePreset(text: string, base: string, file: string, builtin: boolean)
       description: '',
       tools: null,
       drop: [],
+      replace: false,
       prompt: '',
       builtin,
       file,
@@ -279,6 +286,7 @@ function parsePreset(text: string, base: string, file: string, builtin: boolean)
     description: typeof doc.description === 'string' ? doc.description.trim() : '',
     tools,
     drop,
+    replace: doc.replace === true,
     prompt: body.trim(),
     builtin,
     file,
@@ -304,6 +312,7 @@ export function listPresets(): Preset[] {
         label: `${preset.label}（未生效）`,
         tools: [],
         drop: [],
+        replace: false,
         prompt: '',
         problem: `这个文件声明的 name 是「${preset.name}」，已经有一个同名模式生效了，所以这一份不生效`,
       })
@@ -312,8 +321,17 @@ export function listPresets(): Preset[] {
     seen.add(preset.name)
     out.push(preset)
   }
-  return out.sort((a, b) => a.name.localeCompare(b.name))
+  // 出厂档按 dsh 的顺序（standard → ptc → minimal → cordis），自定义档排在后面按名字。
+  // 以前是纯字典序，菜单里第一个变成「创造模式」，与参考实现的默认档位置对不上。
+  const rank = (name: string): number => {
+    const index = BUILTIN_ORDER.indexOf(name)
+    return index < 0 ? BUILTIN_ORDER.length : index
+  }
+  return out.sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name))
 }
+
+/** 出厂档的展示顺序（对齐 dsh 的 preset order：standard 1 / ptc 2 / minimal 3 / cordis 4）。 */
+const BUILTIN_ORDER: readonly string[] = [STANDARD_PRESET, PTC_PRESET, MINIMAL_PRESET, MAKER_PRESET]
 
 /** 按名字取模式；不存在返回 null（调用方决定是报错还是回落到标准档）。 */
 export function findPreset(name: string): Preset | null {
@@ -329,11 +347,13 @@ function presetFileText(draft: {
   description: string
   tools: string[] | null
   drop: string[]
+  replace?: boolean
   prompt: string
 }): string {
   const front: Record<string, unknown> = { name: draft.name, label: draft.label, description: draft.description }
   if (draft.tools !== null) front.tools = draft.tools.length === 0 ? 'none' : draft.tools.join(', ')
   if (draft.drop.length > 0) front.drop = draft.drop.join(', ')
+  if (draft.replace === true) front.replace = true
   return `---\n${YAML.stringify(front).trimEnd()}\n---\n\n${draft.prompt.trim()}\n`
 }
 
@@ -350,21 +370,24 @@ export function writePreset(draft: {
   description: string
   tools: string[] | null
   drop: string[]
+  /** 省略 = 沿用旧文件里的值（界面表单还没有这一项，保存不该把它抹掉）。 */
+  replace?: boolean
   prompt: string
 }): Preset {
   const name = draft.name.trim()
   if (!PRESET_NAME.test(name)) {
     throw new Error(`模式名「${name}」不合法：只能用小写字母、数字、连字符，且不能以连字符开头`)
   }
+  const oldFile = draft.oldName === null ? join(DSC_PRESETS_DIR, `${name}.md`) : join(DSC_PRESETS_DIR, `${draft.oldName}.md`)
+  const replace = draft.replace ?? (existsSync(oldFile) ? readPreset(oldFile)?.replace === true : false)
   const drop = draft.drop.filter((id) => DROPPABLE_SECTIONS.includes(id))
   const label = draft.label.trim() === '' ? name : draft.label.trim()
   mkdirSync(DSC_PRESETS_DIR, { recursive: true })
   const file = join(DSC_PRESETS_DIR, `${name}.md`)
   if (draft.oldName !== null && draft.oldName !== name) {
-    const oldFile = join(DSC_PRESETS_DIR, `${draft.oldName}.md`)
     if (existsSync(oldFile) && !existsSync(file)) rmSync(oldFile, { force: true })
   }
-  writeFileSync(file, presetFileText({ ...draft, name, label, drop }), 'utf8')
+  writeFileSync(file, presetFileText({ ...draft, name, label, drop, replace }), 'utf8')
   const written = readPreset(file)
   if (written === null) throw new Error(`模式 ${name} 写下去了却读不回来，检查一下 ${file}`)
   return written

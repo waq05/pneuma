@@ -86,6 +86,10 @@ export const permissionPresetsPlugin: Plugin.Object = {
         ctx.approval.setReviewer(preset.reviewer)
         wrote += `${wrote === '' ? '' : '、'}审阅→${preset.reviewer}`
       }
+      // 三根旋钮一起持久：沙箱那根在 apply 里已写进 plugins.json，权限模式与审阅者
+      // 只改内存的话，重启后「只读」会变成「只读沙箱 + 上次的权限模式」，界面读作自定义。
+      // 写 prefs 而不是只写运行期值，才能让三根同寿。
+      ctx.settings.setPrefs({ defaultPolicy: preset.policy, defaultReviewer: preset.reviewer })
       // 参考实现的同一条规则：取值没变也要留一条选择记录——「用户想要的是哪个预设」
       // 是意图，光看旋钮值区分不出来（两个预设可能共享一部分取值）。
       audit({

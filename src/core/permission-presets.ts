@@ -40,19 +40,26 @@ export interface PermissionPreset {
 export const CUSTOM_PERMISSION_PRESET = 'custom'
 
 /**
- * 出厂四个。取值刻意与参考实现对齐：
- *   read-only    —— codex 的 Read Only（read-only 沙箱 + 本人审）；
- *   workspace    —— codex 的 Default / 参考实现的 workspace-write（工作区可写 + 本人审），默认档；
- *   full-access  —— codex 的 Full Access / 参考实现的 danger-full-access（不设围栏 + 不再问）；
- *   auto-review  —— 参考实现的 Auto（沙箱钉死在不设围栏 + 每个调用先过模型判官）。
+ * 出厂四个。取值对齐 dsh（`packages/bundle/base/cordis.patch.yml:265-277` 与
+ * `packages/experimental/auto-review`）：
+ *   read-only    —— read-only 沙箱 + ask（沙箱拦下、问一次才放行）；
+ *   workspace    —— workspace-write 沙箱 + ask（默认档）；
+ *   full-access  —— danger-full-access 沙箱 + never（不问）；
+ *   auto-review  —— danger-full-access 沙箱 + ask + 每次调用先过模型判官。
+ *
+ * Pneuma 的 `ApprovalPolicy` 只有三档，没有单独的 `ask`：`auto-edit` 就是那根
+ * 「该问就问」的旋钮（工作区内写免卡、其余问），所以只读档与工作区档都读它。
  */
 export const BUILTIN_PERMISSION_PRESETS: readonly PermissionPreset[] = [
   {
     name: 'read-only',
     label: '只读',
-    description: '读文件、查状态可以；写盘与执行命令一律拒（不弹卡，直接拒）',
+    description: '读文件、查状态直接过；写盘、执行命令、改机器先问你，允许这一次才动手',
     sandbox: 'read-only',
-    policy: 'readonly',
+    // 参考实现的只读档是「只读沙箱 + ask」：沙箱拦下，用户仍可点一次放行。
+    // 这里用 `auto-edit` 承担 ask 的角色（Pneuma 没有单独的 ask 档）——
+    // 沙箱边界由审批的第 4 层判定，不会因为这一档自动放行而消失。
+    policy: 'auto-edit',
     reviewer: 'user',
     builtin: true,
   },
