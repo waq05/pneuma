@@ -8983,3 +8983,301 @@ turn-changes / throughput），四个全绿。
 **实测**（隔离 HOME + 真会话，headless Edge `:9342`，真滚轮）：底部 `top=1088 floor=1088`，
 上滚 100 → `top=988`、按钮出现；此时追加 400px 内容 → `top` 仍 988（`floor` 1504）；
 滚回底部 → 按钮消失、`top=1504=floor`；再追加 400px → `top=1920=floor`（跟随生效）。
+
+**第四档主题 Claude（暖米白）（2026-10-27，用户：「claude code 桌面端的主题色，淡黄色很好看，能否加进来」）**：
+
+颜色没有凭印象调。Anthropic 设计团队的官方色板（`colors.css`：Ivory `#faf9f5`、Slate `#141413`、
+Clay `#d97757`、暖灰 21 级 `#f0eee6` / `#e8e6dc` / `#b0aea5` …）是这套配色的真源，社区那份
+「Claude Theme」（VS Code / Zed / Ghostty）数值与之一致。这台机器上没装 Claude 桌面端，
+所以没能从安装包里读 CSS——色值来自官方色板，不是截图取样。
+
+落地选型：加一个 `ThemeMode` 值（`claude`），而不是再引一条 `data-skin` 轴。理由是壳里
+「皮肤 = 调色板身份、明暗 = 模式」本来就挤在同一个 `data-theme` 上，加轴要动 `system` 的解析
+与四处白名单，收益只是「Claude 也有深色版」——那一套真要做时再按 §10.1 的口径补。
+
+三条口径（写进 `docs/ui-design.md` §10.1）：
+
+1. 品牌色不进填充与描边（五档 `--dsc-mix-*` 全 0）：暖灰底上掺砖红会发脏；
+2. 强调面上的字取深色（`--dsc-text-on-accent: #141413`）：白字在 `#d97757` 上只有 3.1:1，Slate 是 6:1；
+3. 结构线跟墨色走、不跟品牌色走：官方默认描边就是 `rgba(31,30,29,.15)`。
+
+改到的文件：`src/contract.ts`（`ThemeMode`）、`src/core/prefs.ts`（`THEME_MODES`）、
+`src/core/native-bridge.ts`（桥的枚举）、`ui-shell/src/plugin-api.ts`（`AppearancePatch`）、
+`ui-shell/src/ui-layout/appearance.ts`（归一化 + 不把 `claude` 卷进 `system` 解析）、
+`ui-shell/src/plugins/settings/ui.tsx`（四块磁贴 + 归一化 + 说明文案）、
+`ui-shell/src/legacy/tokens.css` 与 `desktop/src/renderer/styles/tokens.css`（两套令牌块，逐字一致）、
+`desktop/src/renderer/{appearance,SettingsModal,bridge}.tsx`、`desktop/electron/{preload/index,main/index}.ts`、
+`ui-shell/scripts/build-color-fallback.mjs`（第三套重放）→ 重生成 `ui-shell/src/legacy-color-fallback.css`、
+浅色专属选择器扩到 claude（`styles.css` 的紫补色、两份 `views.css` 的 shiki 浅色语法）。
+
+两个必须一起处理的细节：
+
+- **原生弹层**：Electron 的 `nativeTheme` 只认 `dark|light|system`，`claude` 直接透传会被拒、
+  弹层留在上一档。`applyThemeSource` 里把它报成 `light`。
+- **四块磁贴挤不下**：`.theme-tiles` 原是按三块写的 `repeat(3, minmax(84px, 104px))`（行宽 328px），
+  加第四块后「跟随系统」折到第二行。改成 `repeat(4, minmax(56px, 76px))`：每块 76 = (328 − 3×8) / 4，
+  实测四块一行、右缘 1161px 不越界。
+
+**测试**：`ui-color-fallback-test` 从 30 条加到 45 条——兜底产物必须有三块（深 37 / 浅 44 / Claude 41 条），
+Claude 块的值逐条对表（侧栏 `rgb(240 238 230)`、正文 `rgb(20 20 19 / 0.94)`、默认描边 7%、选中陶土 22%），
+并新增 [7] 档门 9 条：内核枚举、偏好白名单、两个渲染层的归一化、四块磁贴、原生弹层映射、
+两份 `tokens.css` 的 Claude 块逐字一致。
+
+**实测**（隔离 HOME + 真会话，headless Edge，`settings.json` 写 `ui.themeMode=claude`）：
+
+- 端到端生效：`data-theme=claude`，页面底 `color(srgb .9804 .9765 .9608)`（= `#faf9f5`）、
+  侧栏 `#f0eee6`、正文 `#141413 / .94`、强调 `#d97757`、默认描边 Slate 7%；
+  切到 `light` / `dark` 走的是各自原来那套（对照组见截图）。
+- 设置页四块磁贴一行放下（各 76px），选中态是 Claude，落盘回读仍是 Claude。
+- 截图：`shots/claude-01-landing.png`、`shots/claude-02-chat.png`、`shots/claude-03-light.png`、
+  `shots/claude-03-dark.png`、`shots/claude-04-settings.png`（截图目录 gitignore）。
+
+门禁：`pnpm run build` 0、`pnpm --dir desktop run typecheck` 0、`pnpm run build:ui` 0、
+`node scripts/ui-color-fallback-test.mjs` 45/45。
+
+**技能发现补上全局目录 + 技能页按作用域分组（2026-10-27，用户：「技能这里需要能读取全局技能」「要和 dsh 那个技能页一样区分全局、项目技能」）**：
+
+对比现场：dsh 的设置页「技能」有四组读数（22 个 / 19 启用 / 2 停用 / 1 异常），并按目录分组——
+`DSH 8 个技能` 指向 `C:\Users\waq\.dsh\skills`，`公共 Agent 14 个技能` 指向 `C:\Users\waq\.agents\skills`。
+我们这边只认四条根：项目 `.dsc/skills`、项目 `.agents/skills`、config.yaml 自定义、`~/.dsc/skills`。
+于是 dsh 里攒的全局技能与公共 Agent 目录**一个都没读到**（本机 8 + 15，去重后 22 个）。
+
+改法：
+
+1. `src/core/skills.ts` 的 `skillRoots` 加两条全局根：`~/.agents/skills`（公共 Agent，rank 350）与
+   `$DSH_HOME/skills`（缺省 `~/.dsh/skills`，rank 450）。`DSH_HOME` 指到 `~/.dsc` 时与 `user-dsc`
+   是同一个目录，用 `dedupeRoots` 按路径去重，不会把同一批技能扫两遍。
+2. `SkillRoot` / `SkillSummary` 加 `scope`（project / global）与 `root`（发现根目录），
+   `scanSkillRoot` 扫完统一盖章——技能文件自己说了不算。契约 `SkillInfoView` 透出这两个字段。
+3. 技能页（`ui-shell/src/plugins/skills/ui.tsx`）：顶部一行「全部 N / 全局 N / 项目 N」，
+   列表按发现根分组，组头写「来源 + 条数 + 目录」（与 dsh 的设置页同一形态）；行内不再逐个打来源徽章，
+   否则一行两个徽章比组头还吵。
+
+两条口径：
+
+- **优先级别改**：项目技能压过全局同名技能（rank 小者赢），公共 Agent 压过 `~/.dsc`，`~/.dsh` 最后。
+  这样用户在项目里放的同名技能照旧生效，不会被 dsh 的老版本顶掉。
+- **只读、不搬**：dsh 目录里的技能不复制进来，也不进 `~/.dsc/skills`。启停仍按名字记在
+  `~/.dsc/skills.json`，正文照旧按需读原路径——两边共用一份文件，改一处两边都变。
+
+**测试**：新增 `scripts/skills-roots-test.mjs`（20 条，`check:core` 自动带上）：`DSH_HOME` 的算法、
+六条根的集合 / rank 次序 / 作用域、同目录去重、`scanSkillRoot` 盖章、视图透出、契约与界面静态断言。
+
+**实测**（隔离 HOME + 真 dsh 目录，headless Edge）：
+
+- 隔离 HOME 下 `USERPROFILE` 被改写，真实 `~/.agents` 读不到——补两份进去后：
+  `全部 11 / 全局 11 / 项目 0`，三组组头依次是 `公共 Agent 2 个技能 D:\tmp\…\.agents\skills`、
+  `用户技能 ~/.dsc/skills 1 个技能 …`、`DSH 全局技能 8 个技能 C:\Users\waq\.dsh\skills`。
+- 截图：`shots/skills-scope-all.png`、`shots/skills-scope-global.png`。
+
+## 2026-10-27 五条手机/窄屏报障：命令面板不收、模型菜单出界、环形图被切、热力图撑页面、手机设置打不开（未发版）
+
+用户一次报了五条，全部落在「手机上「现在」这个宽度」上。五条各自有独立成因，逐条记。
+
+### 1 敲回车后 `/` 命令面板不收
+
+`send()` 跑完命令只 `setText('')`，而候选面板的开关只在 `track()`（输入事件）里改——程序改文本不触发它，
+于是命令已经执行了、面板还挂在输入框上方。`command.close()` 不能用：它会记下「这个前缀别再弹」，
+下一次在同一位置打同样的字就再也不弹了。
+
+- `ui-shell/src/plugins/composer/command-menu.ts`：新增 `hide()`（只清 `latest` 与 `open`，不动 `dismissed`）。
+- `ui-shell/src/plugins/composer/ui.tsx`：`send()` 的命令分支一进来就 `hide()`。
+
+**实测**（headless Edge，390px）：输 `/comp` 后 `.slash-pop` 1 个、候选 1 条；回车后 `.slash-pop` 0 个、
+输入框清空、无 fault。
+
+### 2 手机上模型菜单跑到屏幕外（概率性）
+
+面板位置只在 `modelOpen` / `models.length` / `twoLevel` 变时量一次。三个宽度实测：
+
+| 视口 | 面板 left / right | 平移量 |
+| --- | --- | --- |
+| 320 | 4 / 300 | `translateX(87px)` |
+| **360** | **-67 / 253** | **空（量过之后再没量）** |
+| 430 | 4 / 324 | `translateX(1px)` |
+
+360px 那档就是用户截图里的形态：`DeepSeek 官方` 只剩右半截。
+
+- `ui.tsx`：`measureTick` 计数器 + `ResizeObserver`（盯面板自身尺寸，`.flat` 264 ↔ 两级 320 就是这一档）
+  + `window resize`，两个 `useLayoutEffect` 都把它列进依赖。
+- `ui.tsx`：`clipBoxOf` 与视口取交集（真会裁它的祖先再宽，也不能宽过屏幕）。
+- `ui.tsx`：平移量改成拿「没平移过的」几何算（`raw = box - shiftRef`）——不改的话每重量一次就把上一拍的
+  平移当成「现在放得下」，面板会在两帧之间来回跳。展开时 `shiftRef` 归零，上一轮的量不带过来。
+- `ui-shell/src/styles.css`：`.model-pop.model-picker { max-width: calc(100vw - 8px) }` 兜底（盒子比屏幕宽
+  这件事量位置救不了）。
+
+**实测**：360px 下面板 `left 4 / right 324`、`translateX(71px)`，四家端点全读得全。
+
+### 3 模型用量环形图左边被切
+
+`.donut-row` 是居中 flex：180（环）+ 28（缝）+ 240（图例 `min-width`）= 448px 塞进 323px 卡片，溢出平均摊到
+两边，`.donut-svg` 左缘量到 **-31px**。改为窄屏换行：环在上、图例在下；图例 `flex: 1 1 200px; min-width: 0`，
+≤640px 环缩到 150px。
+
+**实测**：390px 下 `.donut-svg` 左缘 118、右缘 268（卡片 14–371），图例整宽 323 排到下一行。
+
+### 4 热力图不自己滚 + 没有时间窗
+
+一年 53 列 × 13px = 689px，`.hm-grid` 横向溢出却没有容器，宽度算在祖先链上：`.settings-body` 被撑到
+`scrollWidth 731 / clientWidth 385`，整页能左右拖、热力图被卡片右缘切掉。
+
+- 结构：`.hm-scroll > .hm-canvas` 两层。`.hm-scroll { overflow-x: auto; overscroll-behavior-x: contain }`
+  只滚热力图；`.hm-canvas { width: max-content }` 让绝对定位的月份标签有正确的定位基准。
+- 时间窗：`HeatRange = 1 | 7 | 30 | 364`，分段控件 `今天 / 近 7 天 / 近 30 天 / 近一年`；`buildCells` 收
+  `windowDays`（原来钉死 `52 * 7`）。
+
+**实测**（390px，点一遍四档）：
+
+| 选择 | 格子数 | 网格宽 | 滚动容器 sw / cw |
+| --- | --- | --- | --- |
+| 近一年 | 367 | 686 | 712 / 323 |
+| 近 30 天 | 31 | 62 | 323 / 323 |
+| 近 7 天 | 10 | 23 | 323 / 323 |
+| 今天 | 3 | 10 | 323 / 323 |
+
+页面本身不再横向溢出：`documentElement.scrollWidth = 390`、`.settings-body scrollWidth 385`（修前 731）。
+
+### 5 手机上设置 → 模型 / 模式整页打不开
+
+报错是 `协议不允许调用的方法：getModelConfig`。手机走的是远程壳白名单（`src/plugins/remote/types.ts`），
+里面只有 25 条，模型页要的 `getModelConfig` 与模式页要的 `listPresets` 都不在——注释里原来把
+「端点读视图」和「端点写入」混成一类挡掉了。
+
+补进 `REMOTE_SHELL_METHODS`：`getModelConfig` / `listPresets` / `readPreset`（只读投影，`ModelConfigView`
+里只有 `keyConfigured` 布尔，没有 key 值）、`usePreset`（输入区那颗「模式」chip 在手机上点得到，换的是
+会话内的提示词与工具白名单）。写入类继续挡着：`saveProvider` / `removeProvider` / `setProviderKey` /
+`setDefaultModel` / `setSettingValue` / `runSettingAction`。
+
+### 6 桌面回退渲染层同款
+
+`desktop/src/renderer/UsagePanel.tsx` 与 `desktop/src/renderer/styles.css` 是同一份图的老家（桌面窗口宽，
+不容易撞上，但拖窄一样撞）：同步了 `windowDays` / 四档窗口 / `.hm-scroll` `.hm-canvas` / 环形换行。
+
+### 测试与门禁
+
+- 新增 `scripts/ui-usage-layout-test.mjs`（23 条）：热力图滚动容器与画布、四档窗口、环形换行、图例可伸缩、
+  桌面那侧的镜像、外加四条负向自证（没有 `overflow-x` / 不换行 / 不收 `windowDays` / 注释里的类名不算规则）。
+- `scripts/ui-model-picker-test.mjs`：更新两条旧断言（`clampShift` 的实参换成 `raw`），新增五条
+  （减掉已施加平移、`measureTick` 依赖、视口交集、`max-width` 兜底）。
+- `scripts/ui-command-menu-test.mjs`：新增四条（`send()` 里调 `hide()`、`hide` 与 Esc 的 `close` 分开）。
+- `scripts/remote-host-test.mjs`：新增两条（四条只读/切模式在壳白名单里、移动端白名单没被顺手放宽）。
+- 截图：`shots/fix-command-menu.png`、`shots/fix-model-360.png`、`shots/fix-usage-year.png`、
+  `shots/fix-usage-today.png`、`shots/fix-usage-30d.png`。
+
+**没改的**：浮层底色仍是 `--dsc-bg-popover`（96% 不透明，底下的字会淡淡透上来）。问过用户，
+这一条不动——那 4% 是刻意的观感，改它要动所有弹出菜单。
+
+
+## 2026-10-27 三件老账：右栏 ✕ 点不动、壳里 /help 列了跑不了的命令、队友叫停后接不回来（未发版）
+
+用户报了三件事：右侧栏「开始」旁边的 ✕ 点了没反应（期望是关侧栏）、逐个核对 `/` 命令与 dsh 的
+逻辑、以及主会话与队友之间的互通（特别是「中断之后还能不能接着用」）。
+
+### 1 右栏最后一个页签的 ✕ 像没反应
+
+**成因**：`ui-shell/src/ui-dockkit/dock-model.ts` 的 `closeTab` 在格被清空时只补一张新 guide
+（id 换了、画出来一模一样），所以每次点都等于「又开一张开始页」，栏也不收。
+
+**修法**：判断口径从「这一格空了」换成「整块栏只剩 guide 门面」——空了就 `setExpanded(false)`；
+guide 留着当下次展开的落地页。分栏里只清空一格、另一格还有内容时，照旧只补门面、不收栏。
+程序性关闭（桌面端 `browser-tab-close-request`）走同一函数，栏里真没内容了也一起收起。
+learn 探针：`scripts/ui-dock-close-test.mjs`（11 条，含分栏两种与负向自证）。
+
+| 现场 | 修前 | 修后 |
+| --- | --- | --- |
+| 只开「开始」点 ✕ | 栏不收，页签换了一张新的（看起来没变） | `expanded=false`，栏收起 |
+| 终端 + 浏览器的格，关浏览器 | 栏留下（正常） | 不变 |
+| 分栏左 guide / 右终端，关终端 | 栏留下（只剩两张门面） | 栏收起 |
+
+### 2 `/` 命令：帮助文本与闸两套口径
+
+拿编译产物实测出三处不一致：
+
+1. **`/help` 列 23 条，16 条跑不了**。`commands.ts` 的 `specs()` 返回全量，壳的
+   `runUiCommand` 只放行 `shell: true` 的 7 条；裸 `/` 也走同一份。于是用户照着 help 敲
+   `/export`、`/model`，得到的是「不在桌面壳的命令清单里」。
+   **修法**：`CommandContext` 加 `shell` 一位，`runUiCommand` 传真；`/help` 在壳里只用
+   `shellHelpText()`（7 条 + 一句「其余在终端 / 底栏旋钮」），终端仍是全量。
+2. **带参数时前缀展开失效**。`expandCommand` 见空格就整条返回：`/di` 能跑，`/di HEAD` 被拒。
+   **修法**：拆出名字那一段再展开，参数原样接回（`/di HEAD` → `/diff HEAD`）。
+3. **`/compact` 收参数不吭声**。对齐 dsh 的 `Usage: /compact (no arguments)`：带参数只回用法。
+4. **空会话里命令输出根本不显示**（实测追出来的）。壳体 `transcript/ui.tsx` 的欢迎态分支把首屏
+   system 条目整批不画（只放行写前预览卡），而 `/` 命令的输出正是 system 条目——新开的会话里
+   打 `/help`，面板收了、文本清了、屏幕上什么都没有。**修法**：system 条目加 `command` 位
+   （`contract.ts` / `adapter/transcript.ts` / `TranscriptService.system` 第三个参数），
+   `runUiCommand` 的 notice 打上它；欢迎态与普通对话都画成左对齐等宽块
+   `.entry-system-command`（多行清单用居中的 `.entry-system` 排不下）。
+
+其余 7 条的链路复核过：`/new` → `openSession`；`/status` 的估算与自动压缩同源；
+`/usage` 读 `usage.jsonl`；`/diff` 走 `dock('git-diff')`；`/review` 有审查队友就派、没有就
+回落到主会话一轮。**没动白名单**：`/model` `/policy` `/permission` `/effort` `/thinking`
+继续挡在壳外——其中 `/policy` `/permission` 改的是审批闸门，桌面端刻意只从原生桥走
+（`composer/ui.tsx` 那段注释），从界面通道放行等于绕开那道边界，等用户单独拍板再开。
+
+### 3 队友叫停之后接不回来
+
+三条断点都在 `src/plugins/subagent.ts`：
+
+- `stop` 直接把队友从 `teammates` 里删掉（`stopTeammate`），之后传话只写信箱没人读——
+  「中断之后主会话能不能继续这个子代理」的答案是「不能」；
+- `reportHome` 只挂在 spawn 与审查队友那一次等待上，`messageTeammate` 没挂——追问之后
+  它又干完，主会话收不到任何汇报；
+- 被叫醒时状态不回到 `working`，界面一直显示「已停止」。
+
+**修法**（对齐 dsh 的 `interrupt_agent`：停这一轮、保留可续）：
+
+| 改动 | 落点 |
+| --- | --- |
+| `interrupt` / `stop` 都保留队友；真正收掉走「移除」（并 `dispose` 会话） | `subagent.ts:746`、`TeamService.remove` |
+| 传话后记 `awaitReport.minRound = rounds + 1`，`settle` 等模型又说过一句才回报 | `subagent.ts:758`、`settle` |
+| `lastReportedRound` 防同一轮回两遍（spawn 首报与传话补报会落同一拍） | `reportHome` / `settle` |
+| `turn/start` 把状态翻回 `working`、清掉 `finishedAt` | `Teammate` 事件回调 |
+
+探针 `scripts/subagent-resume-test.mjs`（真内核 + 假端点 + 真队友）：派活 → 等收工 → 叫停
+（仍在名册）→ 传话（状态回 working）→ 第二轮跑完 → 第二次 `<teammate-report>` 真的写回主会话
+→ 移除才从名册消失，14/14 通过。
+
+### 测试与门禁
+
+- 新增 `scripts/ui-dock-close-test.mjs`（11 条）、`scripts/subagent-resume-test.mjs`（14 条）。
+- `scripts/ui-command-menu-test.mjs`：加 [2b] 段（help 只列 7 条、终端仍全量）与 14 条
+  （带参数展开、`/compact` 用法、`shell` 标记接线、命令输出在空会话也要上屏），共 116/116。
+- 真机走查（隔离 HOME + 无头 Edge，1280px）：点「开始」的 ✕ → `.dock.collapsed` 变 true、
+  顶栏出现「工作区面板」钮；从它展开 → 回到「开始」；新会话打 `/help` → 首屏出现
+  「桌面壳里能用的命令（7 条）」，名单里没有 `/export`。
+- 截图：`shots/fix-dock-close.png`、`shots/fix-help-shell.png`。
+- 门禁：根 `typecheck` / `build` / `build:ui`、桌面 `typecheck`、`check:ui`、`check:core` 全绿
+  （数字见提交前的最后一条记录）。
+
+**没改的**：`/model` 那 5 条白名单（见上，等拍板）；名册里被叫停的队友仍显示「已停止」直到
+下一次传话叫醒——这是状态，不是故障。
+
+
+
+## 2026-10-27（补）热力图左上角「10月 / 11月」标签叠字（未发版）
+
+用户报：「这里的 10 和 11 月重叠了」——近一年热力图左侧，两个月份标签钉在同一个位置上。
+
+**成因**：月份标签的 `left` 按列算（`column × 13px`）。窗口从今天回溯 364 天再对齐到周日，
+起点可能落在**上个月的尾巴**上：2025-10-26（周日）那一列里同时有 10 月 26–31 日和 11 月 1 日。
+`buildCells` 在月份切换时 push 标签，于是 10 月与 11 月都记在「第 0 列」，两个标签的
+`left` 一模一样，直接叠成一团。
+
+**修法**：同一列只挂一个标签（占这列天数更多的那个月先到，后来者跳过）。顺带把
+`buildCells` 从 `usage.tsx` 拆成纯模块 `ui-shell/src/plugins/settings/heatmap.ts`——
+这个错只有真算一遍才抓得到，拆出来之后 Node 探针能直接跑它，不必把 React 文件拖进测试。
+桌面回退层 `desktop/src/renderer/UsagePanel.tsx` 是同一份逻辑，同一条规则补上。
+
+**实测**（真机 1280px，近一年）：
+
+| | 标签序列 |
+| --- | --- |
+| 修前 | `10月`/`11月` 同一 left，重叠 |
+| 修后 | `10月 12月 1月 2月 3月 4月 5月 6月 7月 8月 9月 10月`，left 严格递增，两两不相交 |
+
+11 月那个标签被跳过（它的 1 号与 10 月尾巴同列，挪一列会与 10 月标签压上）——与 GitHub
+在「月初挤进上一列」时的处理一致。截图 `shots/fix-heatmap-months.png`。
+
+**测试**：`scripts/ui-usage-layout-test.mjs` 从 23 条加到 32 条，新增 [1b] 段真跑 `buildCells`：
+同列去重、首列只留 9 月、列严格递增、格子数守恒、一年窗口至少 11 个标签；桌面那份也钉了这条规则。
+

@@ -348,12 +348,26 @@ lib/ui/plugins/
    注意这条通道的规矩：**省略只能从尾部开始**——`null`/`undefined` 占位会被拒，所以
    「第二个参数可选」这种排布在这一面根本表达不出来（`newSessionIn` 因此是独立方法，
    而不是 `openSession(id?, cwd?)`）。
+5. **手机（远程页）是第三份清单**：`src/plugins/remote/types.ts` 的 `REMOTE_SHELL_METHODS`
+   = `REMOTE_METHODS` + 几条壳的必要交互。壳与电脑是同一份产物，所以每加一条要问
+   「手机上点得到吗、点到了是读还是写」：**只读投影一律放行**（`getModelConfig` /
+   `listPresets` / `readPreset`，2026-10-27 补的），写入类（`saveProvider` /
+   `setProviderKey` / `setDefaultModel` / `setSettingValue`）留在外面——看得到配置就够了，
+   改端点与 key 请回电脑上改。`scripts/remote-host-test.mjs` 两头都有断言：放行的在、
+   挡的还得挡。
 
 **开新口子时的一条尺子**：要给壳开一条「能触发某类动作」的路，别把底层的通用执行口整条
 放行——加一个只管这一类的方法，名字面在宿主侧钉死。现成的一对例子：`runCommand`（能跑任意
 命令）持续留在 `UI_EXCLUDED`，壳的 `/` 菜单走新增的 `runUiCommand`：它只派发
 `src/core/commands-completion.ts` 里标了 `shell: true` 的命令，闸是纯函数
 `shellCommandRejection`（探针直测）；命令表以后加一条新命令不会自动变成可达。
+
+同一条通道与终端**共用注册表、不共用能跑的范围**：壳只放行 `shell: true` 那批，所以
+`/help` 在壳里只列这七条（`shellHelpText`，2026-10-27 修），终端里仍是全量；命令看得见
+自己在哪一端，靠 `CommandContext.shell`（`runUiCommand` 置真）。命令名前缀展开也带参数生效
+（`/di HEAD` → `/diff HEAD`），不再只在裸命令时成立。命令输出（`/` 命令写进会话的那条
+system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 system 条目整批不画，新会话里
+打第一条命令什么也看不到；命令输出因此单独放行，画成左对齐等宽的 `.entry-system-command`。
 
 版本号一览：
 
@@ -416,8 +430,19 @@ lib/ui/plugins/
 | `learnings/<工作区哈希>/candidates.jsonl` | self-improve 插件 | 纠正/失败候选（`dsc/turn-end` 落一条），**不进系统提示**，`/learnings promote` 才生效 |
 | `skills/.ledger.jsonl`、`skills/.usage.json`、`skills/.archive/` | self-improve 插件 | 技能变更台账（前后 hash，`/skills-ledger rollback <id>` 可回滚；patch 前另有 `SKILL.md.bak.<秒级时间戳>` 漂移备份）、命中计数与老化（active → stale 14 天 → archived 30 天，pin 挡自动改写）、归档区（只搬不删） |
 
-技能发现的优先级（rank 小的赢，`src/core/skills.ts:64-71`）：当前目录 `.dsc/skills` →
-当前目录 `.agents/skills` → `config.yaml` 的 `skills` 段自定义目录 → `~/.dsc/skills`。
+技能发现的优先级（rank 小的赢，`src/core/skills.ts` 的 `skillRoots`）：
+
+| rank | 目录 | 作用域 |
+| --- | --- | --- |
+| 100 | `<cwd>/.dsc/skills` | 项目 |
+| 200 | `<cwd>/.agents/skills` | 项目 |
+| 300 | `config.yaml` 的 `skills` 段自定义目录 | 全局 |
+| 350 | `~/.agents/skills`（公共 Agent 目录，与 dsh 同一个位置） | 全局 |
+| 400 | `~/.dsc/skills` | 全局 |
+| 450 | `$DSH_HOME/skills`（缺省 `~/.dsh/skills`，dsh 自己的全局技能） | 全局 |
+
+同一个目录被两条根指向时按目录去重（`DSH_HOME` 指到 `~/.dsc` 时就是这样），不会扫两遍。
+作用域写在 `SkillInfoView.scope` 上，技能页据此分成「全局 / 项目」两组。
 **插件自己的可调值统一存 `plugins.json` 条目里那份 `config`**：设置分区点「保存」走
 `writePluginConfig` 写它，插件取值走 `resolvePluginConfig(file, passed)`
 （`src/core/plugin-registry.ts:168`）——装配时传进来的那份作底，磁盘上那份覆盖它，
@@ -674,6 +699,12 @@ exe 当**桌面端**跑的时候才要清掉它。
 | self-improve 复盘触发 | 本轮工具迭代数 ≥ 12（对齐 hermes 用迭代数不用轮数） | `src/plugins/self-improve.ts:115` |
 | self-improve 技能草稿 | description ≤60 字符（超了拒收不截断）；老化 14 天 stale / 30 天归档 | `src/core/learnings/skill-write.ts:61,866` |
 
+**队友的叫停与续跑**：`subagent` 的 `interrupt` 与 `stop` 都只停当前这一轮，队友**留在名册里**
+（对齐 dsh 的 `interrupt_agent`：之后能用 `send_message` 接着聊）；真正清掉走界面的「移除」
+（`TeamService.remove`，删记录与运行记录并 `dispose` 会话）。传话之后会重新挂一次汇报：
+把 `awaitReport.minRound` 记成「当前轮数 + 1」，`settle` 里等模型又说过一句（或直接失败）才回，
+`lastReportedRound` 防同一轮重复回（2026-10-27 修；探针 `scripts/subagent-resume-test.mjs`）。
+
 **写/执行类不留持久授权**：一次审批只管这一次，`approval` 服务不跨回合记住「上次同意过」。
 
 ## 13. 模块速查
@@ -820,6 +851,12 @@ dock 的操作名：`term-spawn` / `term-input` / `term-kill` / `fs-list` / `fs-
 
 `Dock.tsx` 四个 tab（terminal / browser / files / git），宽度夹在 300~820，双击复位 420；
 shell 候选 5 个，选中的存 renderer 的 `localStorage['dsc.dockShell']`。
+
+**关掉最后一个页签就是收起侧栏**（`ui-shell/src/ui-dockkit/dock-model.ts` 的 `closeTab`）：
+以前格被清空只补一张新 guide，画出来一模一样，用户点「开始」旁边的 ✕ 就像没反应。
+现在判断口径是「整块栏只剩 guide 门面」——单格清空、或分栏两格都只剩门面都收起；
+分栏里清空一格而另一格还有内容时，只补门面、栏不动。程序性关闭（桌面端
+`browser-tab-close-request` 那条）走同一个函数，栏里真没内容了也一起收起。
 
 ### 面板尺寸与收起状态存哪
 
