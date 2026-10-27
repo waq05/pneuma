@@ -8811,3 +8811,41 @@ turn-changes / throughput），四个全绿。
 
 自检：`dsh-compat-check` 34 → **43** 条、`check:dsh` 171 → **180** 条、`check:ui` 35 → **36** 条、
 `check:core` 48 条；根 `typecheck` 与 `build` 0 错。
+
+**命令面板「还是不能滚动」+ 没关闭按钮（2026-10-27，用户第二次报）**：
+
+上一轮修了三处（列表撑成真滚动区、滚轮折算、PgUp/PgDn），自检 84/84，用户装了新包仍然滚不动。
+这次换验证手段才找到真原因：**CDP 合成的鼠标事件绕过了操作系统那层命中判定**。
+改用 `PostMessage` 把真正的 `WM_MOUSEWHEEL`（带屏幕坐标）发给窗口，同一实例上做 A/B：
+
+1. 新包（遮罩 `-webkit-app-region: no-drag`）：三格滚轮 → `scrollTop` 0 → **233**；
+2. 运行期把 `.palette-mask` 改回 `drag`：同样三格 → `scrollTop` 停在 **0**；
+3. 再把样式撤掉：仍不滚——Chromium 的拖拽区命中表是缓存的，改样式不即时刷新（所以 A/B 只有「干净启动」那一侧可信）。
+
+结论：命令面板从 `shell.header` 槽渲染，DOM 上是 `.topbar` 的子孙。遮罩自己没声明 `no-drag` 时，
+整块矩形仍在窗口拖拽区里，Windows 把滚轮当成「在标题栏上滚」直接丢掉——同行的点击、✕ 按钮也一起吞。
+修法：`.palette-mask { -webkit-app-region: no-drag }`（与 `.settings-mask` 同一条）。这类问题自检抓不到，
+只能靠样式断言兜住，坑写进 `ui-design.md`。
+
+顺带补用户提的另一点：**面板没有关闭按钮**，只知道 Ctrl+K 打开的人会卡在里。命令面板与键位表
+右上角都加 `✕`（22px 点击区、悬停上底色、Esc 角标仍在），`aria-label` 分别是「关闭命令面板 / 关闭键位表」。
+
+**测试**：`ui-interaction-base-test` [7] 加 4 条（遮罩 no-drag、两个 ✕、✕ 的尺寸与悬停）。
+**实测**：新包里 `getComputedStyle(.palette-mask)` 是 `no-drag`，✕ 点一下面板关掉；
+真窗口滚轮三格滚 233px，改回 `drag` 后为 0。截图 `shots/palette-close.png`。
+
+**首屏中间那颗 logo 撤掉（2026-10-27，用户：「中间这个图标去了，有点突兀」）**：
+
+空会话首屏原来是「logo → 标题 → 副标题 → 四张卡」的竖排，logo 走品牌第三档 `--dsc-logo-xl` 28px。
+用户嫌它挡在第一眼的位置上。改法：`transcript/ui.tsx` 删掉那颗 `<img className="welcome-logo">`，
+`styles.css` 删掉 `.welcome .welcome-logo` 规则与 `--dsc-logo-xl` 这一档（品牌档位回到两档：侧栏 20 / 窄栏 22），
+空态现在直接从标题开始。理由记进 `ui-design.md`：正文里不再出现 logo，品牌只留在侧栏与窄栏。
+
+**测试**：`ui-interaction-base-test` 的 [4] 段把「空态有 logo 且用 xl 档」反过来钉成
+「三段都删干净」（DOM 里没有 `welcome-logo`、样式里没有这条规则、`--dsc-logo-xl` 不再存在）。
+**实测**：空态 DOM 的子节点是 `H1 / P / DIV.welcome-cards`，没有 `img`；截图 `shots/welcome-no-logo.png`。
+
+**顺手把四张能力卡对齐（同批）**：卡片的提示语一句还是两句，会把标题顶得高低不一
+（第 2 张「从需求一路写到能跑」只有一行，标题比第 1 张低一行）。给 `.welcome-card-hint` 加
+`min-height: 2lh`：文字块等高，标题落在同一条线上；真写满三行照样往下长，不裁字。
+实测四张卡标题 `top` 全是 425，提示语高度全是 40px。

@@ -19,6 +19,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode, type WheelEvent } from 'react'
 import {
+  IconClose,
   IconSearch,
   defineUiPlugin,
   useActions,
@@ -272,6 +273,19 @@ function PalettePanel(): ReactNode {
             }}
           />
           <kbd className="palette-key">Esc</kbd>
+          {/* 看得见的关法：只知道 Ctrl+K 打开、不知道 Esc 关的人会卡在这儿。
+              真机上遮罩以前还在窗口拖拽区里，这颗按钮曾经也是「按了没反应」。 */}
+          <button
+            type="button"
+            className="palette-close"
+            title="关闭，快捷键 Esc"
+            aria-label="关闭命令面板"
+            onClick={() => {
+              setOpen(false)
+            }}
+          >
+            <IconClose size={15} />
+          </button>
         </div>
         <div className="palette-list" ref={list} role="listbox" aria-label="匹配项">
           {shown.length === 0 ? <div className="palette-empty">没有匹配项</div> : null}
@@ -355,6 +369,15 @@ function ShortcutSheet({ onClose }: { onClose: () => void }): ReactNode {
         <div className="shortcut-head">
           <span>键盘快捷键</span>
           <kbd className="palette-key">Esc</kbd>
+          <button
+            type="button"
+            className="palette-close"
+            title="关闭，快捷键 Esc"
+            aria-label="关闭键位表"
+            onClick={onClose}
+          >
+            <IconClose size={15} />
+          </button>
         </div>
         <div className="shortcut-list" ref={list}>
           {SHORTCUTS.map((row) => (

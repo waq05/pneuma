@@ -725,10 +725,9 @@ function TranscriptFlow({
   if (seats.rounds.length === 0 && seats.leading.every((row) => row.entry.kind === 'system')) {
     return (
       <div className="welcome">
-        {/* 品牌声部（P1-4）：空态是唯一"整屏都是我们"的地方，这里给 logo 一个位置。
-            尺寸走 --dsc-logo-xl，与侧栏 20px / 窄栏 22px 同一套档位（见 styles.css 的
-            "品牌档位"段），不在这里写死像素。 */}
-        <img className="welcome-logo" src="icon.png" alt="" aria-hidden="true" draggable={false} />
+        {/* 首屏不放 logo（2026-10-27 用户：中间这个图标有点突兀）。
+            空态的第一眼该落在「有什么可以帮忙的？」这句话上，图标在标题上方只是挡视线；
+            品牌声部留给侧栏与收起的窄栏（.sidebar-header / .rail-logo 那两档）。 */}
         <h1>有什么可以帮忙的？</h1>
         <p>
           输入 <code>/</code> 查看可用指令 · 消息会携带当前工作目录上下文

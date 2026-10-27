@@ -155,11 +155,13 @@ console.log('[4] P1 三项')
   const transcript = read('ui-shell/src/plugins/transcript/ui.tsx')
   const channel = read('ui-shell/src/ui-layout/host-channel.ts')
 
-  // 品牌三档：侧栏 20 / 窄栏 22 / 空态 28，全部走变量。
-  check('品牌档位表存在（三档变量）', ['--dsc-logo-sm: 20px', '--dsc-logo-md: 22px', '--dsc-logo-xl: 28px'].every((line) => css.includes(line)))
+  // 品牌两档：侧栏 20 / 窄栏 22，全部走变量。空态那档 2026-10-27 撤掉（用户说图标突兀）。
+  check('品牌档位表存在（两档变量）', ['--dsc-logo-sm: 20px', '--dsc-logo-md: 22px'].every((line) => css.includes(line)))
   check('侧栏 logo 用 sm 档', /\.sidebar-header img \{[^}]*var\(--dsc-logo-sm\)/.test(css))
   check('窄栏 logo 用 md 档', /\.rail-logo img \{[^}]*var\(--dsc-logo-md\)/.test(css))
-  check('空态有 logo 且用 xl 档', transcript.includes('className="welcome-logo"') && /\.welcome \.welcome-logo \{[^}]*var\(--dsc-logo-xl\)/.test(css))
+  check('空态不再有 logo（连同 xl 档与样式一起删干净）', !transcript.includes('welcome-logo') && !css.includes('welcome-logo') && !css.includes('--dsc-logo-xl'))
+  // 四张能力卡并排：提示语一句还是两句会把标题顶得高低不一，留满两行高才对得齐。
+  check('能力卡提示语留满两行（标题对得齐）', /\.welcome-card-hint \{[^}]*min-height: 2lh/.test(css))
 
   // 今日读数：状态栏与页脚同一份取数（useTodayUsage），金额口径只留一份。
   check('共享 hook：ui-layout/usage-today 存在', existsSync(join(root, 'ui-shell/src/ui-layout/usage-today.ts')))
@@ -283,6 +285,15 @@ console.log('[7] 命令面板的滚动与翻页')
   check('一页几行按可视高算（窗口高低都合适）', /const pageRows = \(\): number => \{[\s\S]{0,420}?node\.clientHeight - rowHeight/.test(palette))
   check('高亮挪到框外时列表跟着滚', /querySelector<HTMLElement>\('\[data-active="1"\]'\)\?\.scrollIntoView\(\{ block: 'nearest' \}\)/.test(palette))
   check('底栏把翻页键写给人看', palette.includes('PgUp / PgDn 翻页'))
+
+  // ④ 2026-10-27 第二轮报障的真原因：遮罩还留在窗口拖拽区里。
+  //    Electron 的拖拽区按矩形做命中判定，面板 DOM 是 topbar 的子孙 → 真实鼠标的滚轮
+  //    被当成「在标题栏上滚」直接丢掉；CDP 合成的输入绕过了操作系统那层，所以自检全绿。
+  //    这条只能靠样式断言兜住（自动化探针在真机上复现不了）。
+  check('遮罩自己豁免窗口拖拽区（否则真机滚轮/点击全被吞）', /\.palette-mask \{\s*-webkit-app-region: no-drag;/.test(css))
+  check('面板有看得见的关闭按钮（不只靠 Esc）', palette.includes('className="palette-close"') && palette.includes('关闭命令面板'))
+  check('✕ 有 22px 点击区与悬停反馈', /\.palette-close \{[^}]*width: 22px;[^}]*height: 22px;/.test(css) && /\.palette-close:hover \{[^}]*background: var\(--dsc-row-hover-bg\)/.test(css))
+  check('键盘表那张也有 ✕', palette.includes('关闭键位表'))
 }
 
 if (failures === 0) console.log('\n全部通过')

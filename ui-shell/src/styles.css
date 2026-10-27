@@ -1566,14 +1566,14 @@
 }
 
 /* ══════════ 品牌档位（P1-4，2026-10-25）══════════
-   三档，够用就好：侧栏行内 20、窄栏 22、空态 28。以前 20/22 散在 legacy 两条规则里写死，
-   空态没有 logo——同一个 logo 在三处三种尺寸、还缺一处，是因为没有档位表。
+   两档，够用就好：侧栏行内 20、窄栏 22。以前这两个数字散在 legacy 两条规则里写死，
+   是因为没有档位表。第三档（空态 28）在 2026-10-27 撤掉——首屏那颗图标被用户说「突兀」，
+   空态不再出现 logo，品牌只留在侧栏与窄栏。
    主色（--dsc-accent）的用法另外立规矩，见 docs/ui-design.md §2.1：只管可交互 / 选中 / 焦点，
    不当装饰色用（装饰走 --dsc-* 的填充与描边）。 */
 :root {
   --dsc-logo-sm: 20px;
   --dsc-logo-md: 22px;
-  --dsc-logo-xl: 28px;
 }
 
 .sidebar-header img {
@@ -1584,15 +1584,6 @@
 .rail-logo img {
   width: var(--dsc-logo-md);
   height: var(--dsc-logo-md);
-}
-
-/* 空态那颗：图纸上它比标题轻一档——先看见字，再看见是谁。 */
-.welcome .welcome-logo {
-  width: var(--dsc-logo-xl);
-  height: var(--dsc-logo-xl);
-  border-radius: 8px;
-  margin-bottom: 14px;
-  opacity: 0.92;
 }
 
 /* 空会话整组垂直居中（对照 legacy 的 .thread-main-empty 三条规则）：旧界面 welcome 与
@@ -1656,6 +1647,15 @@
    不在任何 drag 区里）。浮层容器必须自己声明 no-drag，把这块矩形从拖拽区里挖出来
    （标题旁那几颗按钮的豁免在 legacy 里现成：.sub-open / .team-btn / .ws-open）。 */
 .settings-mask {
+  -webkit-app-region: no-drag;
+}
+
+/* 命令面板与键位表也是从 header 槽渲染的浮层，同一个坑——而且更隐蔽：
+   遮罩不声明 no-drag，整块矩形就还在窗口拖拽区里，真机上表现为「滚轮滚不动、
+   行点不着、连 ✕ 也按不下去」。自检里用 CDP 合成的鼠标事件**绕过了操作系统
+   那层命中判定**，所以探针全绿、用户却还是滚不动（2026-10-27 用户第二次报
+   「这个搜索怎么还是不能滚动」，第二次修才对上这一条）。 */
+.palette-mask {
   -webkit-app-region: no-drag;
 }
 
@@ -3434,9 +3434,13 @@
   font-size: var(--dsc-fs-body);
 }
 
+/* 四张卡并排时，提示语一句还是两句会把标题顶得高低不一（第 2 张「从需求一路写到能跑」
+   只有一行，标题就比第 1 张低一行）。给提示语留满两行高：文字块等高，标题在四张卡里
+   落在同一条线上；真出现第三行时照样按内容往下长，不裁字。 */
 .welcome-card-hint {
   color: var(--dsc-text-tertiary);
   font-size: var(--dsc-fs-caption);
+  min-height: 2lh;
 }
 
 /* 「接着上次」一行：能力卡下面的一条链接式按钮（图标 + 标题 + 相对时间）。
@@ -3668,6 +3672,33 @@
   border-radius: var(--dsc-r-badge);
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-micro);
+}
+
+/* 面板右上角的 ✕（命令面板与键位表共用）：与 Esc 角标并排，悬停才上底色，
+   平时只当一条退路——面板的主退出键仍是 Esc。 */
+.palette-close {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dsc-r-badge);
+  background: transparent;
+  color: var(--dsc-text-quaternary);
+  cursor: pointer;
+}
+
+.palette-close:hover {
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.palette-close:focus-visible {
+  outline: 2px solid var(--dsc-accent);
+  outline-offset: 1px;
 }
 
 .palette-list {
