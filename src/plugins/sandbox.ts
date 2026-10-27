@@ -379,7 +379,12 @@ export const sandboxPlugin: Plugin.Object = {
 
       if (config.mode === 'danger-full-access') {
         enforcement = 'none'
-        backendDetail = '档位 danger-full-access：不设围栏'
+        // 这一档不设围栏，后端与「建不起来就拒」都不参与判定。说清楚，
+        // 免得用户以为选了 fail-closed 就一定拒——那和「完全访问」的语义相抵。
+        backendDetail =
+          config.backend !== 'policy' && config.onUnavailable === 'fail-closed'
+            ? '档位 danger-full-access：不设围栏；后端与「建不起来就拒」在这一档不生效'
+            : '档位 danger-full-access：不设围栏'
         ctx.emit('dsc/changed')
         return backendDetail
       }
