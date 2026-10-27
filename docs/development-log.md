@@ -9281,3 +9281,92 @@ learn 探针：`scripts/ui-dock-close-test.mjs`（11 条，含分栏两种与负
 **测试**：`scripts/ui-usage-layout-test.mjs` 从 23 条加到 32 条，新增 [1b] 段真跑 `buildCells`：
 同列去重、首列只留 9 月、列严格递增、格子数守恒、一年窗口至少 11 个标签；桌面那份也钉了这条规则。
 
+
+
+## 2026-10-28 权限四档与模式四档对齐 dsh；沙箱边界改成「拦下后问一次」（未发版）
+
+用户拿两张截图（输入框的权限预设菜单、模式菜单）问：「对照 dsh，有什么差异，预设需要完全对齐
+dsh。检查有没有逻辑错误或者越界风险。检查沙箱机制有没有缺陷或逻辑错误。」随后拍板：
+**只读档改**（要 dsh 的「问一次」语义）、**极简档保留 AGENTS.md 注入，其余完全对齐**。
+
+这一批没有只写差异清单，全部落到代码与测试里。
+
+### 一、对齐 dsh 的四处取值
+
+| | 改前 | 改后（= dsh） |
+|---|---|---|
+| 只读预设 | read-only 沙箱 + `readonly`（直接拒）+ 本人审 | read-only 沙箱 + `auto-edit`（该问就问）+ 本人审；越界由审批卡问一次 |
+| PTC 模式 | 工具只有 `run_code` | 全量工具 + `run_code`（dsh `ptc.patch.yml` 的样子） |
+| 极简模式 | 工具只有 `bash`；正文追加在骨架上 | `bash` + `read_image`；`replace: true` 用正文替换整个系统提示，只留 AGENTS.md 注入 |
+| 模式顺序 | 按名字字典序（创造排第一） | dsh 的 preset order：standard → ptc → minimal → maker |
+
+极简档的 `replace` 是这一批新加的字段（`core/presets.ts`）：`drop` 只够得到四段白名单，
+够不到插件贡献段（沙箱说明、协作模式条款、技能目录…），所以单开一个开关。界面表单没有这项，
+保存时沿用文件里原来的值（`writePreset` 读旧文件），不会一保存就把内置档改回追加式。
+
+### 二、AI 复核根本没有跑（最严重的一条）
+
+`src/plugins/approval.ts` 的第 5 层里 `full-access` 直接 `return 'allow-once'`，而审阅者的判官
+在第 5.5 层。预设「AI 复核」恰好是 `full-access + auto-review`，所以判官永远轮不到——
+这一档实际就是「完全访问」。`src/contract.ts` 却写着「复核发生在自动放行之前」。
+
+修法：把审阅者分支挪进第 5 层内、排在自动放行**之前**，并且 `auto-review` 时跳过整套自动放行；
+`readonly` 档仍在它前面直接拒（只读不该被判官放宽）。第 5.5 层的旧位置删掉。
+
+### 三、只读档能被破坏性 git 绕过
+
+`core/command-policy.ts` 的只读判定只看 `tokens[1]` 判子命令。`git -c core.pager=calc log` 与
+`git -c x=y reset --hard` 的 `tokens[1]` 都是 `-c`，于是整条被判成只读；只读档会直接放行，
+把未提交改动丢掉（实测 `classifyCommand('git -c x=y reset --hard')` 修前返回 `allow`）。
+新增 `gitSubcommand()`：跳过 `-c key=value`、`-C dir`、`--git-dir=…` 这类带值全局开关。
+
+### 四、沙箱的两处漏判
+
+1. **网络开关被带值开关绕过**：`isNetworkSegment` 取「第一个非开关词元」当子命令，
+   `pnpm --dir . install` 的 `.` 被当成子命令 → 判非网络。新增 `subcommandOf()`，跳过开关与
+   开关的值（`--dir`、`--registry`、`-c` 等）。实测修前 `network=false`，修后 `forbidden`。
+2. **嵌套 shell 只拆两层**：`depth < 2` 改成 `depth < 4`，三层
+   `bash -c "bash -c 'rm -rf …'"` 里的越界写目标现在认得出。
+
+命令替换（`echo $(rm …)`）没有改：那是静态分析共同的天花板，dsh 也靠执行体隔离
+（容器 / 受限令牌）而不是靠字符串分析，Pneuma 对应的是设置里的沙箱后端。
+
+### 五、沙箱越界从「硬拒」改成「拦下后问一次」
+
+dsh 的 read-only 预设是 `read-only 沙箱 + ask`：沙箱拦下，用户仍可点一次放行。
+Pneuma 原来沙箱在守卫链 order 8 直接 `deny`，审批（order 30）拿不到发言权。
+
+改法分两半：
+
+- **沙箱**：新增 `ASKABLE_RULES`（`outside-writable-roots`、`mode-read-only`）。命中这两条时
+  守卫返回 `defer`，交给审批；**审批插件不在场时不 defer**（那等于无人把关地放行），仍然硬拒。
+  受保护名、只读子路径、网络开关、形状类与后端 fail-closed 一律保持硬拒。
+- **审批**：新增第 4 层，调 `sandbox.check(target, command, cwd)`。越界时跳过权限模式与审阅者
+  的全部自动放行，直接弹卡，且只给「这一次允许」（不写会话放宽、不给 always）。
+  `auto-edit` 的「工作区内免卡」也加了沙箱同意这一半——否则只读档会先被审批放行、再被沙箱拒。
+
+### 六、预设三根旋钮寿命不一致
+
+切预设时沙箱走 `writePluginConfig` 落盘，权限模式与审阅者只改内存。重启后「只读」变成
+「只读沙箱 + 上次的权限模式」，界面读作自定义。修法：`apply()` 里同时 `setPrefs` 写
+`defaultPolicy` / `defaultReviewer`，三根同寿。
+
+### 七、测试
+
+- 新增 `scripts/sandbox-parity-test.mjs`（38 条）：git 全局开关、网络带值开关、三层嵌套、
+  可申请/不可申请规则、审批顺序、四档模式取值、预设持久化。
+- `scripts/escalation-scope-test.mjs` 新增第 4 节：只读档下工作区内写被判越界且可申请、
+  受保护名不可申请、守卫链不再由沙箱硬拒。
+- `scripts/permission-presets-test.mjs` 两条断言跟着新取值改（52/52）。
+- `scripts/readme-test.mjs`：`read_image` 拆到 `core/tools/image-tool.ts`，README 的
+  「工具集 10 件」口径不变（极简档专用的那一件不算进标准工具集）。
+
+### 八、诚实边界
+
+- `onUnavailable: fail-closed` 在「完全访问」档不生效：那一档根本不设围栏，后端建不起来
+  也无所谓。这是有意的，不是漏判；设置页的说明已经写清「只对 docker / windows-token 生效」。
+- 只读档现在可以「点一次允许」越界写——这是 dsh 的语义，也是这次用户拍板要的。想回到硬拒，
+  把权限模式单独切到 `readonly`（预设只读不再用它）。
+- 命令内部的任意写（脚本里的 `fs.writeFile`）仍拦不住，那是 `enforcement: partial` 的定义，
+  要真隔离得换 Windows 受限令牌或容器后端。
+
