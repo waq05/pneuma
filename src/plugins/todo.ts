@@ -6,7 +6,7 @@
  *   2. 命令 `/todo [clear]`；
  *   3. 界面快照里的 `todos` 那片投影（注册进 surfaces 注册表）；
  *   4. 会话状态条目 `todos`（恢复历史会话时清单跟着回来）与压缩后要原样带过去的清单文本；
- *   5. 「todo-reminder」节流提醒投影（order 800，默认关）：距上次写清单过了 N 个用户回合、
+ *   5. 「todo-reminder」节流提醒投影（order 800，默认开）：距上次写清单过了 N 轮、
  *      且还有未完成项时，往请求末尾补一条 user 提醒。逻辑在 `core/todo-reminder.ts`（纯函数，
  *      可被探针直读），配置走本插件的设置分区。
  *
@@ -26,18 +26,24 @@ import type { SettingsSectionSpec, TodoService } from '../services/types.js'
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'todo'
 
-/** 节流提醒的默认值：默认关（不给所有会话凭空加 token），每 10 个用户回合提醒一次。 */
-const REMINDER_DEFAULTS = { enabled: false, everyTurns: 10 }
+/** 节流提醒的默认值：默认开，每 8 轮提醒一次（口径与理由见 `core/todo-reminder.ts` 的文件头）。 */
+const REMINDER_DEFAULTS = { enabled: true, everyRounds: 8 }
 
-/** 从插件配置读节流提醒的开关与间隔，并把间隔夹回 1..100。 */
-function readReminderConfig(): { enabled: boolean; everyTurns: number } {
+/**
+ * 从插件配置读节流提醒的开关与间隔，并把间隔夹回 1..100。
+ *
+ * 2026-10-27 起按「轮」数（一轮 = 一次模型请求），默认开、8 轮一次。
+ * 老配置里可能还留着 `everyTurns`，读一次当回退——不迁移、不写盘，等用户下次保存时自然换成新键。
+ * `enabled` 只有显式写了 false 才算关：默认开，缺省不该被读成"用户关掉了"。
+ */
+function readReminderConfig(): { enabled: boolean; everyRounds: number } {
   const raw = resolvePluginConfig(CONFIG_KEY)
-  const num = Number(raw.everyTurns)
+  const num = Number(raw.everyRounds ?? raw.everyTurns)
   return {
-    enabled: raw.enabled === true || raw.enabled === 'true',
-    everyTurns: Number.isFinite(num)
+    enabled: raw.enabled !== false && raw.enabled !== 'false',
+    everyRounds: Number.isFinite(num)
       ? Math.min(Math.max(Math.round(num), 1), 100)
-      : REMINDER_DEFAULTS.everyTurns,
+      : REMINDER_DEFAULTS.everyRounds,
   }
 }
 
@@ -132,10 +138,10 @@ export const todoPlugin: Plugin.Object = {
     // 压缩摘要会把清单改写走样，所以整表要原样带过去（压缩插件只问注册表要文本）。
     ctx.compact.registerCarry(() => service.todoPrompt())
 
-    // ── 节流提醒投影（默认关）──────────────────────────────────────────────
+    // ── 节流提醒投影（默认开）──────────────────────────────────────────────
     // 长会话里模型会把「做完一步就改状态」忘掉，光靠工具说明里的静态叮嘱拉不回来。
-    // 这条投影每 N 个用户回合往请求末尾补一条 user 提醒（ZCode 的节流注入思路），
-    // 代价是多一条 user 消息的 token，所以默认关、用户自己开。
+    // 这条投影每 N 轮往请求末尾补一条 user 提醒（ZCode 的节流注入思路），
+    // 代价是每轮多一条 user 消息的 token，所以只在清单确实有未完成项时才发（默认 8 轮一次）。
     let reminder = readReminderConfig()
     const applyReminder = (patch: Record<string, unknown | null>): void => {
       writePluginConfig(CONFIG_KEY, patch)
@@ -146,7 +152,7 @@ export const todoPlugin: Plugin.Object = {
       (messages) =>
         appendTodoReminder(messages, {
           enabled: reminder.enabled,
-          everyTurns: reminder.everyTurns,
+          everyRounds: reminder.everyRounds,
           hasOpenTodos: todos.read().some((item) => item.status === 'pending' || item.status === 'in_progress'),
         }),
       // order 800：排在 env-facts(600) 之后（提醒要落在环境快照之后，也在 drop-images(900) 之前）
@@ -157,17 +163,17 @@ export const todoPlugin: Plugin.Object = {
       {
         type: 'switch',
         key: 'enabled',
-        label: '每过若干回合提醒一次未完成任务',
-        help: '开启后，距上次更新任务清单超过设定回合数且清单里还有未完成项时，往下一轮请求末尾补一条提醒。默认关（省 token）。',
+        label: '每过若干轮提醒一次未完成任务',
+        help: '开启后，距上次更新任务清单超过设定轮数、且清单里还有未完成项时，往请求末尾补一条提醒。默认开（长任务里模型最容易忘掉这一步）。',
       },
       {
         type: 'number',
-        key: 'everyTurns',
-        label: '每隔几个用户回合提醒一次',
+        key: 'everyRounds',
+        label: '每隔几轮提醒一次',
         min: 1,
         max: 100,
         step: 1,
-        help: '数值越小提醒越勤、token 花得越多；只在上面那条开着时生效。',
+        help: '一轮 = 一次模型请求。数值越小提醒越勤、token 花得越多；只在上面那条开着时生效。',
       },
     ]
     const reminderSection: SettingsSectionSpec = {
@@ -179,18 +185,18 @@ export const todoPlugin: Plugin.Object = {
       // 每次打开都现读磁盘：手改 plugins.json 也能看到真值。
       values: (): SettingsValues => {
         reminder = readReminderConfig()
-        return { enabled: reminder.enabled, everyTurns: reminder.everyTurns }
+        return { enabled: reminder.enabled, everyRounds: reminder.everyRounds }
       },
       save: (key, value): string | void => {
         if (key === 'enabled') {
           applyReminder({ enabled: value === true || value === 'true' })
           return
         }
-        if (key === 'everyTurns') {
+        if (key === 'everyRounds') {
           const num = Number(value)
           if (!Number.isFinite(num)) return '这里要填一个数字'
           if (num < 1 || num > 100) return '间隔要在 1 到 100 之间'
-          applyReminder({ everyTurns: Math.round(num) })
+          applyReminder({ everyRounds: Math.round(num) })
           return
         }
         return `这个分区没有这项：${key}`

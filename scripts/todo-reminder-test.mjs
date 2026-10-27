@@ -1,13 +1,17 @@
 /**
- * WS6(b) todo 节流提醒：距上次写清单过了 N 个用户回合、且还有未完成项时，往请求末尾补一条
- * user 提醒。**默认关**（不给所有会话凭空加 token），投影名为 `todo-reminder`（order 800）。
+ * todo 节流提醒：距上次写清单过了 N 轮、且还有未完成项时，往请求末尾补一条 user 提醒。
+ * **2026-10-27 起默认开、按「轮」算（一轮 = 一次模型请求），默认 8 轮一次。**
+ * 投影名为 `todo-reminder`（order 800）。
+ *
+ * 为什么改口径：原来按「用户回合」数，而一轮里模型会发几十次请求——用户那条会话跑了 40 多轮、
+ * 清单还停在 0/4，提醒一次都没触发过（复查会话日志：整个会话只调过一次 todo_write）。
  *
  * 断言分两层：
- *  ① 纯函数 `countUserTurnsSinceLastTodoWrite` / `appendTodoReminder`：
- *     回合计数（尾部 env 快照与当前这轮不算回合）、默认不注入、到 N 注入、未到 N 不注入、
- *     无未完成项不注入、幂等、不改输入、everyTurns 夹到 ≥1；
+ *  ① 纯函数 `countRoundsSinceLastTodoWrite` / `appendTodoReminder`：
+ *     轮计数（只数 todo_write 之后的 assistant、env 快照不算）、关闭时不注入、到 N 注入、
+ *     未到 N 不注入、无未完成项不注入、幂等、不改输入、everyRounds 夹到 ≥1；
  *  ② 端到端（真内核 + 假 SSE）：真跑 todo_write 立清单 → 多轮对话 → 抓每次请求体：
- *     默认关时即便过了 N 回合也不注入；打开后下一轮注入、是 user、落在末尾；
+ *     默认 8 轮时前几轮不注入；把间隔调成 2 后下一次请求注入、是 user、落在末尾；
  *     会话日志（内存 + jsonl 文件）里没有这条提醒；清空清单后不再注入。
  *
  * 隔离：临时 HOME + 假模型端点，真实 ~/.dsc 一个字节都不动。
@@ -32,7 +36,7 @@ writeFileSync(
   'utf8',
 )
 
-const { TODO_REMINDER_TEXT, countUserTurnsSinceLastTodoWrite, appendTodoReminder } = await import(
+const { TODO_REMINDER_TEXT, countRoundsSinceLastTodoWrite, appendTodoReminder } = await import(
   '../lib/core/todo-reminder.js'
 )
 
@@ -70,80 +74,79 @@ const envSnapshotMsg = () => ({
   content: '环境事实：\n- 今天：2026-10-15\n（本条是程序在每次请求时自动附上的当前环境快照，不是用户发言）',
 })
 
-/** 历史：开场就写了 todo_write，其后接 n 个「用户问 + 模型答」的完整回合。 */
-function historyWithTurns(n) {
-  const messages = [userMsg('第一步'), todoWriteMsg(), toolResultMsg(), assistantMsg('收到')]
-  for (let i = 0; i < n; i += 1) {
-    messages.push(userMsg(`第 ${i + 2} 步`))
-    messages.push(assistantMsg('收到'))
-  }
+/** 历史：开场写了 todo_write，其后接 n 轮（每轮一条 assistant 消息）。 */
+function historyWithRounds(n) {
+  const messages = [userMsg('第一步'), todoWriteMsg(), toolResultMsg()]
+  for (let i = 0; i < n; i += 1) messages.push(assistantMsg(`第 ${i + 1} 轮`))
   return messages
 }
 
-console.log('[1] 纯函数：回合计数')
+console.log('[1] 纯函数：轮计数')
 {
   check('提醒原文一字不差', TODO_REMINDER_TEXT === '（提醒：任务清单有未完成项，做完一步就把状态改掉）', TODO_REMINDER_TEXT)
   const noWrite = [userMsg('a'), assistantMsg('ok'), userMsg('b'), assistantMsg('ok'), userMsg('c'), assistantMsg('ok')]
-  check('没有 todo_write 时从第 0 条起数（3 个完整回合）', countUserTurnsSinceLastTodoWrite(noWrite) === 3, String(countUserTurnsSinceLastTodoWrite(noWrite)))
-  check('todo_write 之后数出 2 个完整回合', countUserTurnsSinceLastTodoWrite(historyWithTurns(2)) === 2, String(countUserTurnsSinceLastTodoWrite(historyWithTurns(2))))
-  const withTail = [...historyWithTurns(2), userMsg('当前这轮'), envSnapshotMsg()]
+  check('没有 todo_write 时从第 0 条起数（3 轮）', countRoundsSinceLastTodoWrite(noWrite) === 3, String(countRoundsSinceLastTodoWrite(noWrite)))
+  check('todo_write 之后数出 2 轮', countRoundsSinceLastTodoWrite(historyWithRounds(2)) === 2, String(countRoundsSinceLastTodoWrite(historyWithRounds(2))))
+  const withTail = [...historyWithRounds(2), userMsg('当前这轮'), envSnapshotMsg()]
   check(
-    '尾部 env 快照与当前这轮（后面没有 assistant）不算回合',
-    countUserTurnsSinceLastTodoWrite(withTail) === 2,
-    String(countUserTurnsSinceLastTodoWrite(withTail)),
+    '尾部 env 快照与当前这轮（还没答）不算轮',
+    countRoundsSinceLastTodoWrite(withTail) === 2,
+    String(countRoundsSinceLastTodoWrite(withTail)),
   )
+  check('工具结果消息（role: tool）不算轮', countRoundsSinceLastTodoWrite([userMsg('x'), todoWriteMsg(), toolResultMsg()]) === 0)
 }
 
 console.log('[2] 纯函数：注入判定')
 {
-  const opts = { enabled: true, everyTurns: 10, hasOpenTodos: true }
-  const before = historyWithTurns(9)
-  const at = historyWithTurns(10)
+  const opts = { enabled: true, everyRounds: 8, hasOpenTodos: true }
+  const before = historyWithRounds(7)
+  const at = historyWithRounds(8)
   const beforeTail = [...before, envSnapshotMsg()]
 
-  const off = appendTodoReminder(historyWithTurns(20), { ...opts, enabled: false })
-  check(
-    '默认关（enabled:false）不注入',
-    off.length === historyWithTurns(20).length && !off.some((m) => m.content === TODO_REMINDER_TEXT),
-    JSON.stringify(off.length),
-  )
+  const off = appendTodoReminder(historyWithRounds(20), { ...opts, enabled: false })
+  check('开关关掉时不注入', off.length === historyWithRounds(20).length && !off.some((m) => m.content === TODO_REMINDER_TEXT), JSON.stringify(off.length))
 
   const injected = appendTodoReminder(at, opts)
-  check('到 N 回合注入一条', injected.length === at.length + 1, `${injected.length}/${at.length}`)
+  check('到 N 轮注入一条', injected.length === at.length + 1, `${injected.length}/${at.length}`)
   check('注入的是 user 角色', injected.at(-1)?.role === 'user', injected.at(-1)?.role)
   check('注入的正文就是提醒原文', injected.at(-1)?.content === TODO_REMINDER_TEXT, String(injected.at(-1)?.content))
 
   const notYet = appendTodoReminder(before, opts)
-  check('未到 N（9 < 10）不注入', notYet.length === before.length, String(notYet.length))
+  check('未到 N（7 < 8）不注入', notYet.length === before.length, String(notYet.length))
   check(
-    '边界：9 个完整回合 + 尾部 env 快照仍不注入（env 快照没被当成第 10 个回合）',
+    '边界：7 轮 + 尾部 env 快照仍不注入（env 快照没被当成第 8 轮）',
     appendTodoReminder(beforeTail, opts).length === beforeTail.length,
     String(appendTodoReminder(beforeTail, opts).length),
   )
 
-  const noOpen = appendTodoReminder(historyWithTurns(20), { ...opts, hasOpenTodos: false })
-  check('没有未完成 todo 不注入', noOpen.length === historyWithTurns(20).length, String(noOpen.length))
+  const noOpen = appendTodoReminder(historyWithRounds(20), { ...opts, hasOpenTodos: false })
+  check('没有未完成 todo 不注入', noOpen.length === historyWithRounds(20).length, String(noOpen.length))
 
   const once = appendTodoReminder(at, opts)
   const twice = appendTodoReminder(once, opts)
   check('幂等：同一历史重复投影长度不变', twice.length === once.length, `${twice.length}/${once.length}`)
   check('幂等：重复投影逐字节相等', JSON.stringify(twice) === JSON.stringify(once), '两次不等')
 
-  const input = historyWithTurns(10)
+  const input = historyWithRounds(8)
   const inputLengthBefore = input.length
   const out = appendTodoReminder(input, opts)
   check('不改输入（原数组长度不变）', input.length === inputLengthBefore, String(input.length))
   check('注入返回的是新数组，不是原数组', out !== input, 'same ref')
 
   check(
-    'everyTurns 夹到至少 1：配 0 且 0 个完整回合时不注入',
-    appendTodoReminder(historyWithTurns(0), { ...opts, everyTurns: 0 }).length === historyWithTurns(0).length,
-    'everyTurns=0 被当成每轮都发',
+    'everyRounds 夹到至少 1：配 0 且 0 轮时不注入',
+    appendTodoReminder(historyWithRounds(0), { ...opts, everyRounds: 0 }).length === historyWithRounds(0).length,
+    'everyRounds=0 被当成每轮都发',
   )
   check(
-    'everyTurns 为负数同样夹到 1（0 回合不发）',
-    appendTodoReminder(historyWithTurns(0), { ...opts, everyTurns: -5 }).length === historyWithTurns(0).length,
-    'everyTurns=-5',
+    'everyRounds=0 被夹到 1（1 轮就发）',
+    appendTodoReminder(historyWithRounds(1), { ...opts, everyRounds: 0 }).length === historyWithRounds(1).length + 1,
+    'everyRounds=0',
+  )
+  check(
+    'everyRounds 为负数同样夹到 1',
+    appendTodoReminder(historyWithRounds(1), { ...opts, everyRounds: -5 }).length === historyWithRounds(1).length + 1,
+    'everyRounds=-5',
   )
 }
 
@@ -246,33 +249,27 @@ async function runTurn(text) {
   await sleep(80)
 }
 
-console.log('[3] 端到端：默认关不注入、开启后到点注入、清空后不注入')
+console.log('[3] 端到端：默认 8 轮不早发、调小间隔后到点注入、清空后不注入')
 {
-  // 间隔临时设成 1，好让「开启后」很快到点；enabled 保持默认 false。
-  await ctx.settings.save('todo', 'everyTurns', 1)
+  const initial = await ctx.settings.values('todo')
+  check('默认开、默认 8 轮', initial.enabled === true && initial.everyRounds === 8, JSON.stringify(initial))
 
   await runTurn('第一步：先立清单再动手')
   const open = ctx.todo.todoView().items.some((item) => item.status === 'in_progress')
   check('端到端立起了含未完成项的清单', open, JSON.stringify(ctx.todo.todoView().items))
   check('第一轮请求体内没有提醒', reminderAt(convoBodies[1]) === -1, JSON.stringify(convoBodies[1]?.slice(-2)))
+  check('第二轮（1 轮）不注入（默认 8）', reminderAt(convoBodies[2]) === -1, String(reminderAt(convoBodies[2])))
 
   await runTurn('第二步')
-  check('第二轮（0 个完整回合）不注入', reminderAt(convoBodies[3]) === -1, String(reminderAt(convoBodies[3])))
+  check('默认间隔下 2 轮仍不注入', reminderAt(convoBodies[3]) === -1, String(reminderAt(convoBodies[3])))
 
+  // 调小间隔：下一轮（此刻已有 2 轮）就该带提醒
+  await ctx.settings.save('todo', 'everyRounds', 2)
   await runTurn('第三步')
-  check(
-    '默认关：已过 1 个完整回合仍不注入',
-    reminderAt(convoBodies[4]) === -1,
-    `reminderAt=${reminderAt(convoBodies[4])}`,
-  )
-
-  // 打开开关：下一条请求就该带提醒了
-  await ctx.settings.save('todo', 'enabled', true)
-  await runTurn('第四步')
-  const body5 = convoBodies[5]
-  check('开启后：下一轮注入一条', body5.filter((m) => m.role === 'user' && m.content === TODO_REMINDER_TEXT).length === 1, JSON.stringify(body5.slice(-3)))
-  check('注入的是 user 角色', body5.at(-1)?.role === 'user' && body5.at(-1)?.content === TODO_REMINDER_TEXT, JSON.stringify(body5.at(-1)))
-  check('提醒落在请求末尾（env 快照之后）', reminderAt(body5) === body5.length - 1, `at=${reminderAt(body5)}/len=${body5.length}`)
+  const body4 = convoBodies[4]
+  check('调成 2 轮后下一次请求注入一条', body4.filter((m) => m.role === 'user' && m.content === TODO_REMINDER_TEXT).length === 1, JSON.stringify(body4.slice(-3)))
+  check('注入的是 user 角色', body4.at(-1)?.role === 'user' && body4.at(-1)?.content === TODO_REMINDER_TEXT, JSON.stringify(body4.at(-1)))
+  check('提醒落在请求末尾（env 快照之后）', reminderAt(body4) === body4.length - 1, `at=${reminderAt(body4)}/len=${body4.length}`)
 
   // 不改日志：内存里的会话消息与磁盘 jsonl 都不该有这条提醒
   const inMemory = ctx.session.current().messages.some((m) => m.content === TODO_REMINDER_TEXT)
@@ -283,11 +280,7 @@ console.log('[3] 端到端：默认关不注入、开启后到点注入、清空
   // 清空清单：没有未完成项就不该再提醒
   ctx.todo.clearTodos()
   await runTurn('第五步')
-  check(
-    '清空清单后不再注入（无未完成项）',
-    reminderAt(convoBodies[6]) === -1,
-    `reminderAt=${reminderAt(convoBodies[6])}`,
-  )
+  check('清空清单后不再注入（无未完成项）', reminderAt(convoBodies[5]) === -1, `reminderAt=${reminderAt(convoBodies[5])}`)
 }
 
 await ctx.dispose?.()
