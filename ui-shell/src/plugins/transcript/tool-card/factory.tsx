@@ -285,8 +285,9 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
         <span className="tool-dot" aria-hidden="true" />
         <Icon size={14} className="tool-icon" />
         <span className="verb">{toolVerb(match.base, call.status)}</span>
-        {/* 认不出的工具保留原名：没有它就看不出这是哪家的工具（MCP 那些名字不直观）。 */}
-        {match.known ? null : <span className="name">{call.name}</span>}
+        {/* 认不出的工具保留原名：没有它就看不出这是哪家的工具（MCP 那些名字不直观）。
+            分隔点照 dsh 的「工具调用 · <工具名>」：名字是补充说明，不跟标题糊成一串。 */}
+        {match.known ? null : <span className="name">{`· ${call.name}`}</span>}
         <Preview intended={intended} summary={summary} cwd={cwd} targetPath={targetPath} change={call.change ?? null} />
         {/* 还有几行没摊出来：把「点开能看到更多」写在明面上（codex 的「+ N lines」）。
             只在收起态、且确实有截断时出现；不占焦点，点整行照旧是展开。 */}
@@ -299,18 +300,8 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
         <Trailing entry={entry} />
         {expandable ? <IconChevronDown size={11} className="tc-chevron" /> : null}
       </div>
-      {/* 结果尾巴：收起态下把最后几行结果摊在头行下面，卡不用点开就先给一句交代。
-          与头行同一张卡（左边那条状态色竖条照旧连着），不是第二个盒子。 */}
-      {tail === null ? null : (
-        <div className="tool-tail" data-tool-tail={tail.lines.length} data-tool-tail-hidden={tail.hidden}>
-          {tail.lines.map((line, index) => (
-            <div className="tool-tail-line" key={`${String(index)}:${line.slice(0, 32)}`}>
-              <span className="tool-tail-gutter" aria-hidden="true">{index === 0 ? '└' : ' '}</span>
-              <span className="tool-tail-text">{line}</span>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* 收起态不再摊结果行（2026-10-27 用户：卡太高，折叠只占一行）。需要看结果就点开；
+          头行右侧的「+N 行」仍然说明「点开还能看到多少」，只是不再预铺内容。 */}
       {bodyOpen ? (
         <div className="tool-body" ref={bodyRef}>
           {barVisible && variant === 'chat' ? (

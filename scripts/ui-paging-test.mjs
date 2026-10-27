@@ -194,7 +194,8 @@ console.log('[7] 形态钉（ui.tsx 里的结构约定）')
   check('刻度条仍拿 renderedFrom，点未画出的轮走同一个放页入口', ui.includes('renderedFrom={firstVisible}') && ui.includes('release(round)'))
   check('放页有滚动补偿：useLayoutEffect 里量锚点位移再补 scrollTop', /useLayoutEffect\([\s\S]{0,700}?scroller\.scrollTop \+= top - anchor\.top/.test(ui))
   check('锚点取第一个画出来的座位（不是按钮后的兄弟）', ui.includes("scroller.querySelector<HTMLElement>('[data-round-seat]')"))
-  check('放页顺带暂停跟随（别让流式内容把视角拽回底部）', ui.includes('follow.pause()') && ui.includes('pause = (): void =>') && ui.includes('return { setEnd, paused, resume, pause }'))
+  // 返回值还带着末尾锚点（end，滚轮接力要用），所以这里按形状认，不钉死整行字面量。
+  check('放页顺带暂停跟随（别让流式内容把视角拽回底部）', ui.includes('follow.pause()') && ui.includes('pause = (): void =>') && /return \{ setEnd,[^}]*paused, resume, pause \}/.test(ui))
 }
 
 console.log('')

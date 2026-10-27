@@ -20,7 +20,7 @@
  *
  * @module dsc-ui-shell/plugins/sessions
  */
-import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import {
   IconActivity,
   IconArchive,
@@ -1509,6 +1509,27 @@ function SessionRow({
   const title = session.title ?? '新会话'
   const dot = state === undefined ? undefined : DOT_CLASS[state]
   const dotLabel = state === undefined ? '' : DOT_LABEL[state]
+  /**
+   * 标题被截掉多少像素（0 = 放得下，不滚）。
+   *
+   * 为什么在「指针进来 / 轮到焦点」这一刻量：侧栏宽度、字号、标题本身都会变（拖宽、
+   * 缩放、改名），常驻测量要给每一行挂 ResizeObserver；悬停量一次只花一次 reflow，
+   * 量的还是那一刻的真实宽度。本壳没有 tooltip 层（`data-tip` 只是属性，气泡早已下线），
+   * 截断的标题没有第二条路能读全，所以这件事只能在这里做。
+   */
+  const titleRef = useRef<HTMLSpanElement | null>(null)
+  const [titleShift, setTitleShift] = useState(0)
+  const measureTitle = (): void => {
+    const box = titleRef.current
+    if (box === null) return
+    const text = box.firstElementChild
+    if (!(text instanceof HTMLElement)) return
+    // 内层盒子静息是 max-width: 100% + 自己裁：scrollWidth 仍是整段文字的宽度，
+    // 减去外层给的那一格，就是「还差多少才看得完」。
+    setTitleShift(Math.max(0, Math.ceil(text.scrollWidth - box.clientWidth)))
+  }
+  /** 滚动一遍的总时长：按距离给（长标题滚久一点），两头都夹住，别慢到像坏了。 */
+  const titleDur = Math.min(6000, 1400 + titleShift * 22)
   /** 打开一条会话；归档行先拦下（旧界面同款回执：先恢复再打开）。 */
   const openRow = (): void => {
     if (archived) {
@@ -1577,6 +1598,9 @@ function SessionRow({
       onDrop={drag?.enabled === true && draft === null ? drag.onDrop : undefined}
       onDragEnd={drag?.enabled === true && draft === null ? drag.onEnd : undefined}
       onClick={openRow}
+      // 指针进来、或轮到这一行（键盘 Tab）时量一次标题能滚多远。
+      onPointerEnter={measureTitle}
+      onFocus={measureTitle}
       onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
         rowKeys(event)
       }}
@@ -1611,13 +1635,22 @@ function SessionRow({
       {draft === null ? (
         <span
           className="title"
+          ref={titleRef}
+          // 量到溢出才让 CSS 动手（`data-overflow` 是动画的开关，见 styles.css 那一段）。
+          data-overflow={titleShift > 0 ? '1' : undefined}
+          style={
+            titleShift > 0
+              ? ({ '--title-shift': `${String(-titleShift)}px`, '--title-dur': `${String(titleDur)}ms` } as CSSProperties)
+              : undefined
+          }
           onDoubleClick={(event) => {
             // 双击标题改名（旧界面行为）；归档行不给改（宿主只认活动区路径）。
             event.stopPropagation()
             if (!archived) setDraft(session.title ?? '')
           }}
         >
-          {title}
+          {/* 会动的是这一层：外层负责裁，内层负责位移，静息时它自己出省略号。 */}
+          <span className="title-text">{title}</span>
         </span>
       ) : (
         <input

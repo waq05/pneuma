@@ -2631,7 +2631,9 @@
 }
 
 .sp-row-open:hover {
-  background: var(--dsc-row-hover-bg);
+  /* 不让行内按钮再铺一层：整行已经由 .sp-row:hover 上底，两层叠起来按钮那块更亮、
+     边缘看得出接缝（用户报「悬浮的底色没覆盖全按钮，像分层」）。 */
+  background: none;
 }
 
 .sp-row-open:focus-visible {
@@ -2773,7 +2775,9 @@
 }
 
 .sp-row-stop:hover {
-  background: var(--dsc-control-hover-bg);
+  /* 同样不铺第二层：--dsc-control-hover-bg 是叠加色，落在已被行底色盖住的按钮上
+     会变成一小块更亮的方片。这里只改颜色，位置由行底色统一交代。 */
+  background: none;
   color: var(--dsc-red);
 }
 
@@ -4091,6 +4095,65 @@
     transition: none;
   }
 }
+/* ── 会话行标题：放不下时悬停滚一遍（2026-10-27，用户：鼠标放到会话上，标题显示不全要能滚）──
+ *
+ * 侧栏宽度有限，长标题被截成「当前项目最近对dsh插…」；而本壳没有 tooltip 层（上面那段
+ * 「交互打磨」记过：`data-tip` 只是属性、气泡早已按需求下线），所以截断的标题**没有第二条
+ * 路能读全**。这里补一条：指针停在行上（或键盘 Tab 到这一行）时，让标题自己滚一遍，
+ * 把后半句带进可视区，松开就回原位。
+ *
+ * 两层结构，各管一件事：
+ *   .title      外层，flex 的那一格（宽度由行决定）+ overflow: hidden 负责裁；
+ *   .title-text 内层，真正会动的盒子。静息时 `max-width: 100%` + 自己的 text-overflow，
+ *               截断照样出省略号（与改动前一个样）；悬停且量到溢出才放开 max-width 并位移。
+ *
+ * 位移与时长由组件在「指针进来／轮到焦点」那一刻量（scrollWidth − clientWidth）：
+ * 没溢出的行不加 `data-overflow`，一像素都不动——不能因为加了这条就让所有行都抖一下。
+ * 一条循环走三段：停 12% 让人看清开头 → 滑到尾 → 停一下 → 滑回来，隔着看比单向冲过去舒服。 */
+
+.sess-item .title {
+  /* flex 项默认 min-width: auto，长标题会把这一格撑到不肯缩；显式给 0 才裁得动。 */
+  min-width: 0;
+}
+
+.sess-item .title-text {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.sess-item:hover .title[data-overflow='1'] .title-text,
+.sess-item:focus-visible .title[data-overflow='1'] .title-text {
+  animation: sess-title-marquee var(--title-dur, 3s) ease-in-out infinite;
+  max-width: none;
+}
+
+/* 位移是负的溢出像素（组件写进 --title-shift）：滑到最右时，标题的末尾正好贴住行尾。 */
+@keyframes sess-title-marquee {
+  0%,
+  12% {
+    transform: translateX(0);
+  }
+  50%,
+  62% {
+    transform: translateX(var(--title-shift, 0));
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sess-item:hover .title[data-overflow='1'] .title-text,
+  .sess-item:focus-visible .title[data-overflow='1'] .title-text {
+    animation: none;
+    /* 不滚就回到省略号那一态：放开 max-width 会变成硬切，反而更读不出「还有」。 */
+    max-width: 100%;
+  }
+}
 
 
 
@@ -4140,6 +4203,12 @@
   right: 27px;
   top: 50%;
   transform: translateY(-50%);
+  /* 底色必须**不透明**：这颗钮压在摘要尾巴上（摘要不给它让位，见上面那条注释），
+     而原来用的 --dsc-fill-quaternary 是 4% 白，悬停时那半句路径会从药丸里透出来，
+     读成「按钮和文字重叠」（2026-10-27 用户报障）。改用提升面底色，药丸就是一整块。
+     为什么不是 --dsc-bg-page：悬停时整行有一层行高亮（.tool-head:hover），
+     页面底色压上去会像从行里挖掉一块。 */
+  background: var(--dsc-bg-raised);
 }
 
 .tool-card .tool-head .status,
@@ -4163,37 +4232,8 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 结果尾巴：与头行同一张卡，左边那条状态色竖条照旧连着，所以不加边框与底色。 */
-.tool-tail {
-  color: var(--dsc-text-quaternary);
-  display: flex;
-  flex-direction: column;
-  font-family: var(--dsc-font-mono);
-  font-size: var(--dsc-fs-tool);
-  gap: 1px;
-  line-height: 1.55;
-  padding: 0 8px 7px;
-}
-
-.tool-tail-line {
-  display: flex;
-  gap: 6px;
-  min-width: 0;
-}
-
-/* 行首的 `└` / 空格占一格固定宽度：第二行起与第一行的正文对齐，不会缩进去。 */
-.tool-tail-gutter {
-  flex: none;
-  width: 8px;
-}
-
-/* 单行截断而不折行：日志的换行位置是工具给的，按容器折会把一条命令的输出折成十几行。 */
-.tool-tail-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: pre;
-}
+/* 收起态的结果预览在 2026-10-27 撤掉（用户：折叠只占一行）。原来这里是 .tool-tail /
+   .tool-tail-line / .tool-tail-gutter / .tool-tail-text 四条规则，随渲染一起删了。 */
 
 /* 窄屏：缩进退到 6px（组体本来就只有一列宽，再缩就压到卡片内文），竖线保留。 */
 @media (max-width: 640px) {

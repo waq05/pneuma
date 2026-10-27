@@ -357,17 +357,17 @@ console.log('[8] 收起态的结果与失败数（对照 codex 的活动流）')
   const row = read('ui-shell/src/plugins/transcript/step-group-row.tsx')
   const css = read('ui-shell/src/styles.css')
 
-  // ── 纯逻辑：取尾巴、丢空行、算隐藏行数 ──
+  // ── 纯逻辑：收起态不再摊结果行，只数「点开还能看到几行」 ──
+  //    2026-10-27 用户报「工具调用在折叠状态时占用面积太大，只占一行就行」，
+  //    三行预览（照 codex 的 DETAIL_PREVIEW_LINES）让每张卡从一行变四行。
   const six = ['1', '2', '3', '4', '5', '6'].join('\n')
   const tail = resultTail(six)
-  check('结果尾巴取最后 3 行', RESULT_TAIL_LINES === 3 && tail.lines.join(',') === '4,5,6', JSON.stringify(tail))
-  check('隐藏行数 = 总行数 - 摊出来的行数', tail.hidden === 3, String(tail.hidden))
-  check('末尾空行不占预览位', resultTail('a\nb\n\n\n')?.lines.join(',') === 'a,b')
-  check('中间的空白行不进预览（3 行都留给真内容）', resultTail('a\n\n\nb\n\nc')?.lines.join(',') === 'a,b,c')
-  check('结果为空 / 没回来时不给预览', resultTail('') === null && resultTail('   \n') === null && resultTail(undefined) === null)
-  const clipped = resultTail('x'.repeat(400))?.lines[0] ?? ''
-  check('单行超长截到 300 字并补省略号', Array.from(clipped).length === 300 && clipped.endsWith('…'), String(Array.from(clipped).length))
-  check('不到 3 行时 hidden 为 0', resultTail('只有一行')?.hidden === 0)
+  check('收起态一行都不摊', RESULT_TAIL_LINES === 0 && tail.lines.length === 0, JSON.stringify(tail))
+  check('隐藏行数 = 全部非空行', tail.hidden === 6, String(tail.hidden))
+  check('末尾空行不算进读数', resultTail('a\nb\n\n\n')?.hidden === 2)
+  check('中间的空白行不算进读数（只数真内容）', resultTail('a\n\n\nb\n\nc')?.hidden === 3)
+  check('结果为空 / 没回来时连读数都不给', resultTail('') === null && resultTail('   \n') === null && resultTail(undefined) === null)
+  check('单行结果也只留读数（仍不摊预览）', resultTail('只有一行')?.hidden === 1 && resultTail('只有一行')?.lines.length === 0)
 
   // ── 分组器：失败数只算 failed，不把「用户拒绝审批」算进来 ──
   const entries = [
@@ -385,10 +385,10 @@ console.log('[8] 收起态的结果与失败数（对照 codex 的活动流）')
   // ── 渲染与样式的接线 ──
   check('组头把失败数画出来（data-step-failures）', row.includes('step-fold-fail') && row.includes('data-step-failures={props.group.failures}'))
   check('失败数也进开合提示（不点开就知道里面有没有坑）', row.includes('其中 ${String(props.group.failures)} 项失败'))
-  check('工具卡收起态摊结果尾巴（resultTail + tool-tail）', factory.includes('resultTail(call.resultText)') && factory.includes('className="tool-tail"'))
-  check('展开态 / 轨迹页不重复摊同一份结果', factory.includes("bodyOpen || variant !== 'chat' || running ? null : resultTail"))
+  check('工具卡收起态不再渲染结果尾巴（只留头行）', factory.includes('resultTail(call.resultText)') && !factory.includes('className="tool-tail"'))
+  check('展开态 / 轨迹页照旧不重复摊', factory.includes("bodyOpen || variant !== 'chat' || running ? null : resultTail"))
   check('被截断的行数写在头行（tc-more）', factory.includes('tc-more') && factory.includes('tail.hidden > 0'))
-  check('结果尾巴样式落在壳的覆盖层（不碰 legacy）', css.includes('.tool-tail {') && css.includes('.tool-tail-text {') && /white-space: pre;/.test(css))
+  check('结果尾巴的样式也删干净了（不留死规则）', !/\.tool-tail(-line|-text|-gutter)?\s*\{/.test(css))
   check('组体缩进 + 竖线（层级在版面上看得见）', /\.step-body \{[\s\S]{0,160}border-left: 1px solid[\s\S]{0,120}padding-left: 9px/.test(css))
   check('失败数在窄屏也不隐藏（它是读数，不是装饰）', !/\.step-fold-fail[^{}]*\{[^}]*display: none/.test(css))
 }

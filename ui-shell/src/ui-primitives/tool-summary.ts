@@ -91,29 +91,45 @@ export const TOOL_STATUS_TEXT: Readonly<Record<string, string>> = {
 }
 
 /**
- * 已知工具的「动词 + 图标」。
+ * 已知工具的「名字 + 图标」。
  *
- * 照 codex 的口径（`• Ran <command>`）：行首一枚状态点、一枚图标、一个**加粗动词**，
- * 命令行跟在后面。动词中文化（跑了 / 读了 / 搜了…），状态点与图标承担「这是什么工具」。
+ * 口径照 dsh 的工具行（`dsh-client-ui-conversation/lib/client.js` 的 `tool.title.*` 字典）：
+ * 一行读作「**这是什么工具** + 一句摘要」，不是「一个动作用了过去式」。
+ * 2026-10-27 之前这里是动词（跑 / 读 / 搜 / 写），拼上状态后缀就读成「搜了 …」「正在写了 …」，
+ * 中文里这是叙事口吻，一屏几十行显得吵；dsh 那一列是名词短语（读取 / 搜索文件内容 / 运行命令），
+ * 状态交给行尾的状态词与状态点，所以这里按 dsh 的词表改。
+ *
+ * 词表不是新造的：`tool.title.read` = 读取、`tool.title.write` = 写入、`tool.title.edit` = 编辑、
+ * `tool.title.bash`/`pwsh` = 运行命令、`tool.title.glob` = 查找文件、
+ * `tool.title.grep` = 搜索文件内容、`tool.title.webFetch` = 网页获取、`tool.title.generic` = 工具调用。
  */
 export const KNOWN_TOOLS: Readonly<
   Record<string, { verb: string; Icon: ComponentType<{ size?: number; className?: string }> }>
 > = {
-  bash: { verb: '跑', Icon: IconTerminal },
-  shell: { verb: '跑', Icon: IconTerminal },
-  read: { verb: '读', Icon: IconFolder },
-  read_file: { verb: '读', Icon: IconFolder },
-  write: { verb: '写', Icon: IconEdit },
-  edit: { verb: '改', Icon: IconEdit },
-  glob: { verb: '搜', Icon: IconSearch },
-  grep: { verb: '搜', Icon: IconSearch },
-  webfetch: { verb: '取', Icon: IconSearch },
-  fetch: { verb: '取', Icon: IconSearch },
-  task: { verb: '派', Icon: IconSpark },
+  bash: { verb: '运行命令', Icon: IconTerminal },
+  shell: { verb: '运行命令', Icon: IconTerminal },
+  read: { verb: '读取', Icon: IconFolder },
+  read_file: { verb: '读取', Icon: IconFolder },
+  write: { verb: '写入', Icon: IconEdit },
+  edit: { verb: '编辑', Icon: IconEdit },
+  glob: { verb: '查找文件', Icon: IconSearch },
+  grep: { verb: '搜索文件内容', Icon: IconSearch },
+  webfetch: { verb: '网页获取', Icon: IconSearch },
+  fetch: { verb: '网页获取', Icon: IconSearch },
+  task: { verb: '子智能体', Icon: IconSpark },
 }
 
 /** 认不出的工具的图标。 */
 export const UNKNOWN_TOOL_ICON = IconCode
+
+/**
+ * 认不出的工具的行首标题（dsh 的 `tool.title.generic`）。
+ *
+ * 为什么是一句「工具调用」而不是动词：认不出名字就只有原名能说明身份，而原名
+ * （`mcp__foo__bar` 这类）不适合当标题的谓语；用一句泛称打头、原名跟在「 · 」后面，
+ * 与 dsh 的 `工具调用 · <工具名>` 同一个读法。
+ */
+export const UNKNOWN_TOOL_TITLE = '工具调用'
 
 /** 一次工具匹配的结果：图标 + 基础动词 + 是不是知名工具（决定要不要印原名）。 */
 export interface ToolMatch {
@@ -127,17 +143,24 @@ export function matchTool(name: string): ToolMatch {
   const known = KNOWN_TOOLS[name]
   return known !== undefined
     ? { Icon: known.Icon, known: true, base: known.verb }
-    : { Icon: UNKNOWN_TOOL_ICON, known: false, base: '调用' }
+    : { Icon: UNKNOWN_TOOL_ICON, known: false, base: UNKNOWN_TOOL_TITLE }
 }
 
 /**
- * 动词随状态变（codex 的 `Ran` / `Running` 同一套二分）。
- * 失败 / 被拒不改动词——那种情形由行尾的状态词说，不用把动词也拧一遍。
+ * 行首标题：**只给名字，不随状态变形**。
+ *
+ * 2026-10-27 之前它按状态拼后缀（`正在${base}` / `准备${base}` / `${base}了`），
+ * 于是同一行在三态之间换字，长会话里一屏十几个「搜了」「写了」，读着像叙述而不是读数。
+ * dsh 的行模型是「标题不按生命周期阶段变」：今天做什么、做到哪一步，由行尾状态词
+ * （进行中 / 失败 / 被拒）与行首状态点说，标题只说「这是哪一类操作」。
+ *
+ * 保留函数而不是让调用点直接读 `base`：三处渲染（对话页 / 轨迹页 / 工厂）共用一条口径，
+ * 将来要按状态微调时只改这里。`_status` 目前不参与拼字，留着是为了别让三处各写一份判断。
+ * @param base 工具的名字（见 {@link KNOWN_TOOLS}；认不出的工具是「工具调用」）
+ * @param _status 这一次调用的状态（当前不参与标题）
  */
-export function toolVerb(base: string, status: string): string {
-  if (status === 'running') return `正在${base}`
-  if (status === 'preparing') return `准备${base}`
-  return `${base}了`
+export function toolVerb(base: string, _status: string): string {
+  return base
 }
 
 /** 参数原文能格式化就格式化，不能就原样——绝不因为格式坏掉而不显示参数。 */

@@ -793,8 +793,9 @@ function TraceToolRow({ entry }: { entry: Extract<TraceStepEntry, { kind: 'tool'
         <span className="tool-dot" aria-hidden="true" />
         <Icon size={14} className="tool-icon" />
         <span className="verb">{toolVerb(match.base, call.status)}</span>
-        {/* 认不出的工具保留原名：没有它就看不出这是哪家的工具（MCP 那些名字不直观）。 */}
-        {match.known ? null : <span className="name">{call.name}</span>}
+        {/* 认不出的工具保留原名：没有它就看不出这是哪家的工具（MCP 那些名字不直观）。
+            分隔点照 dsh 的「工具调用 · <工具名>」。 */}
+        {match.known ? null : <span className="name">{`· ${call.name}`}</span>}
         <span className="preview">{summary}</span>
         <span className="status">
           {call.status === 'running' ? <i className="tc-spin" aria-hidden="true" /> : null}

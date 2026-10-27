@@ -18,12 +18,6 @@ import { StepGroupRow } from './step-group-row'
 import type { StepGroup } from './process-groups'
 
 /**
- * 「贴到最底下」的判据（px）：旧渲染层从 `JumpStrip.tsx` 导出这个值，组体滚动跟随与
- * 外层 transcript 共用同一把尺子。壳还没搬右缘刻度条，判据先在本地——值与旧版一字不差。
- */
-const AT_BOTTOM_EPS = 32
-
-/**
  * 把一个每次都换引用的回调固定成稳定引用，内部始终调最新的那一个。
  *
  * 为什么要它：下面两个 hidden hook 都把回调放进了 effect 依赖里，而调用方（ChatView）
@@ -130,6 +124,15 @@ export interface ScrollEdges {
 /** 静止时的两条边：都不画。 */
 const NO_EDGES: ScrollEdges = { up: false, down: false }
 
+/** 组体贴底判定（px）：dsh 的组体用 1px；壳里留 4px，容得下缩放带来的小数误差。 */
+const PROCESS_BOTTOM_EPS = 4
+
+/** 组体手势落定的等待（ms）：比外层短，组内一次手势的行程本来就小。 */
+const PROCESS_SETTLE_MS = 140
+
+/** 往上翻的键：只有「想回头读」才需要抢在内容增长前松手。 */
+const PROCESS_UP_KEYS: ReadonlySet<string> = new Set(['ArrowUp', 'PageUp', 'Home'])
+
 /**
  * 阶段组组体自己的滚动：限高之内滚动、两条方向渐隐、以及「跟随最新内容」。
  *
@@ -138,8 +141,11 @@ const NO_EDGES: ScrollEdges = { up: false, down: false }
  * - **没闭**：贴到底并继续跟随——那一组还在长，用户要看的是最新那一条；
  * - **闭了**：从顶部开始——一组收了几十条调用时，从头读才是「这一阶段干了什么」。
  *
- * 跟随与暂停的判据跟外层 transcript 用同一把尺子（贴底档 AT_BOTTOM_EPS）：用户往上滚出这一档
- * 就暂停跟随，滚回来就恢复。两者各滚各的，组内滚动不会把外层视角一起带走。
+ * 跟随怎么判，跟外层 transcript 用同一套（dsh 的 `useScrollFollow(false, 1)`）：
+ * 读者往回读（往上滚 / 往上翻页）就先松手，落定后再看离底多远；
+ * 内容变长只在跟随开着时才追，**读者往上读的时候一个字都不动**。
+ * 旧实现只在 scroll 事件里判「离底 32px 以内」，而流式内容在同一个事件循环里就可能先长高，
+ * 于是刚滚上去一点又被拽回底部——这是「组体粘滞」的来源。
  *
  * @param bodyRef 限高滚动的那个盒子
  * @param contentRef 里面不限高的内容（靠观察它的尺寸变化发现「又长高了」）
@@ -152,8 +158,11 @@ export function useProcessScroll(
   open: boolean,
   live: boolean,
 ): ScrollEdges {
-  /** 还在不在跟随最新内容。滚离底部暂停，滚回底部恢复（与 ChatView 的外层跟随同一套口径）。 */
+  /** 还在不在跟随最新内容。滚离底部暂停，滚回底部恢复。 */
   const follow = useRef(live)
+  /** 上一次由我们自己写到的位置（用来认出「这条 scroll 是我们自己引起的」）。 */
+  const written = useRef(0)
+  const settleTimer = useRef<number | null>(null)
   const [edges, setEdges] = useState<ScrollEdges>(NO_EDGES)
   /** 上一次渲染时这一组展开没有：用来分辨「这次是刚展开」与「展开着、只是状态变了」。 */
   const wasOpen = useRef(false)
@@ -172,6 +181,7 @@ export function useProcessScroll(
     if (!wasOpen.current) {
       follow.current = live
       body.scrollTop = live ? body.scrollHeight : 0
+      written.current = body.scrollTop
     }
     wasOpen.current = open
   }, [bodyRef, open, live])
@@ -180,27 +190,79 @@ export function useProcessScroll(
     const body = bodyRef.current
     const content = contentRef.current
     if (body === null || !open) return
-    /** 量一次：跟随中就贴底，然后把两条边的显隐同步进 state（值没变就不惊动 React）。 */
-    const measure = (): void => {
+    /** 贴到底并把两条渐隐边同步进 state（值没变就不惊动 React）。 */
+    const pin = (): void => {
+      body.scrollTop = body.scrollHeight
+      written.current = body.scrollTop
+    }
+    const readEdges = (): void => {
       const limit = body.scrollHeight - body.clientHeight
-      if (follow.current && limit > 0) body.scrollTop = body.scrollHeight
       const top = body.scrollTop
       const next: ScrollEdges = { up: top > 1, down: limit > 0 && top < limit - 1 }
       setEdges((previous) => (previous.up === next.up && previous.down === next.down ? previous : next))
     }
-    /** 用户自己滚：滚回贴底那一档以内恢复跟随，滚出去就暂停——两个门槛都在 AT_BOTTOM_EPS 上。 */
-    const onScroll = (): void => {
-      const limit = body.scrollHeight - body.clientHeight
-      follow.current = limit <= 0 || limit - body.scrollTop <= AT_BOTTOM_EPS
-      measure()
+    const clearSettle = (): void => {
+      if (settleTimer.current !== null) window.clearTimeout(settleTimer.current)
+      settleTimer.current = null
     }
-    measure()
+    /** 手势落定：这一刻的远近才算数。够近就恢复跟随并补齐最后几像素。 */
+    const settle = (): void => {
+      clearSettle()
+      const limit = body.scrollHeight - body.clientHeight
+      follow.current = limit - body.scrollTop <= PROCESS_BOTTOM_EPS
+      if (follow.current && limit > 0) pin()
+      readEdges()
+    }
+    const schedule = (): void => {
+      clearSettle()
+      settleTimer.current = window.setTimeout(settle, PROCESS_SETTLE_MS)
+    }
+    /** 读者自己滚：动手就松手（不等越过哪条线），落定后再判。 */
+    const onScroll = (): void => {
+      const top = body.scrollTop
+      if (Math.abs(top - written.current) <= 1) {
+        written.current = top
+        readEdges()
+        return
+      }
+      follow.current = false
+      schedule()
+      readEdges()
+    }
+    const onGesture = (): void => {
+      follow.current = false
+      schedule()
+    }
+    const onWheel = (event: WheelEvent): void => {
+      // 只认往上滚：组体在底部时往下滚什么都不该发生，这时松手会让后来居上的内容没人追。
+      if (event.ctrlKey || event.deltaY >= 0) return
+      onGesture()
+    }
+    const onKey = (event: KeyboardEvent): void => {
+      if (PROCESS_UP_KEYS.has(event.key)) onGesture()
+    }
+    /** 内容变长：跟随开着才追，读者在读就一动不动。 */
+    const observe = (): void => {
+      if (follow.current) {
+        const limit = body.scrollHeight - body.clientHeight
+        if (limit > 0 && limit - body.scrollTop > 2) pin()
+      }
+      readEdges()
+    }
+    onScroll()
     body.addEventListener('scroll', onScroll, { passive: true })
-    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : undefined
+    body.addEventListener('scrollend', settle)
+    body.addEventListener('wheel', onWheel, { passive: true })
+    body.addEventListener('keydown', onKey)
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(observe) : undefined
     observer?.observe(body)
     if (content !== null) observer?.observe(content)
     return () => {
+      clearSettle()
       body.removeEventListener('scroll', onScroll)
+      body.removeEventListener('scrollend', settle)
+      body.removeEventListener('wheel', onWheel)
+      body.removeEventListener('keydown', onKey)
       observer?.disconnect()
     }
   }, [bodyRef, contentRef, open])

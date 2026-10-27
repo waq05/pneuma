@@ -82,6 +82,7 @@ import { JumpRail, previewText } from './jump-rail'
 import { parseReviewNotice } from './review-notice'
 import { ReviewNoticeCard } from './review-notice-card'
 import { pageStartRound } from './paging'
+// 三级嵌套滚动的接力（工具详情 → 阶段组体 → 会话流），见模块头。
 // 路径/悬停/完成音/工具摘要口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，
 // 不再内联（E6）——completion-sound 带模块级 AudioContext 单例，重复一份会造出两个。
 import { TOOL_STATUS_TEXT, baseNameOf, displayPathOf, findLast, formatTokens, matchTool, oneLine, playCompletionSound, prettyJson, toolSummary, toolVerb, useHoverDelay, type ToolMatch } from '@dsc/ui-primitives'
@@ -230,24 +231,53 @@ const TURN_INDEPENDENT: ReadonlySet<string> = new Set(['user', 'plan', 'system',
 /** 空的分组结果（verbose 档共用一份，引用稳定，不给每帧新建空 Map）。 */
 const EMPTY_STEP_GROUPING: StepGrouping = { groups: [], headAt: new Map(), at: new Map() }
 
+/** 贴底判定（px）：与 dsh 的 `use-scroll-follow` 同一档（25px），差别只在取整。 */
+const FOLLOW_BOTTOM_PX = 24
+
+/** 位置落定的等待（ms）：dsh 是 500ms；壳里的手势距离都短，等太久反而像卡住。 */
+const FOLLOW_SETTLE_MS = 180
+
+/** 往上翻的键：只有「想回头读」才需要抢在内容增长前松手（往下滚到底不需要）。 */
+const UP_KEYS: ReadonlySet<string> = new Set(['ArrowUp', 'PageUp', 'Home'])
+
 /**
- * 跟着底部的自动滚动（对齐桌面端 use-chat-viewport 的核心行为）：
- * 用户停在底部时新条目进来就跟着走，自己往上翻过就暂停跟随——暂停时界面上
- * 出现「回到底部」按钮，点它恢复跟随。阈值 160px 是旧界面的口径。
- * 为什么要传 `dep`：条目数组每帧都是新的，拿引用当依赖会让每次快照都强制滚一次。
- * `pause` 给「加载更早」用（见那里的注释）：那一刻的暂停是用户表态，不该只等滚动事件判。
+ * 跟着底部的自动滚动（对齐 dsh 的 `use-scroll-follow.ts` 与 `use-chat-reading.ts`）。
  *
- * `sessionKey` 这一位是**换会话时的重新起算**（0.6.67 走查发现）：打开一条长会话时，
- * 第一次量「离底多远」量到的是 scrollTop=0（内容还没滚过），于是跟随当场被判成暂停，
- * 视角永久停在最上面——用户得先点一下「回到底部」才开始读最新那条。参考实现打开会话
- * 即锚在末尾（dsh 的对话流按末尾对齐），所以换会话这一拍不看滚动位置，直接重新钉住底部。
+ * 三条规矩，缺一条就会「粘滞」——明明往上滚了一段，下一口流式内容一到又被拽回底部：
+ *
+ * 1. **读者往回读就先松手**：往上滚的滚轮、`↑` / `PgUp` / `Home` 一到，跟随当场取消，
+ *    不等滚动位置越过哪条线；等位置落定（`scrollend`，或 180ms 内没有新滚动）再按距离重判。
+ *    只认「往上」：在底部往下滚时浏览器什么也不做，这时松手只会让下一口内容没人追。
+ * 2. **只认自己的写**：钉底要写 `scrollTop`，它引发的 scroll 事件不能当成「读者动了」。
+ *    记下每次写到哪儿，差在 1px 以内就当自己滚的（dsh 的 `movedByReader` 同一口径）。
+ * 3. **贴底的门槛要近**：dsh 用 25px；壳原来写 160px，往上滚一小段仍算「在底部」，
+ *    于是内容一长就把人拽回去，手感就是粘。
+ *
+ * 内容变长（新条目、流式正文、虚拟列表补挂）交给 `ResizeObserver`：只有跟随开着才钉底，
+ * 读者在读的时候一个字都不动（dsh 的 `onResize` 也是这条）。
+ *
+ * @param dep 条目数：条目变了要重钉一次（ResizeObserver 之外的第二道保险）
+ * @param sessionKey 换会话时重新起算（打开会话即锚在末尾）
  */
 function useFollowBottom(
   dep: number,
   sessionKey: string,
-): { setEnd: (node: HTMLDivElement | null) => void; paused: boolean; resume: () => void; pause: () => void } {
+): {
+  setEnd: (node: HTMLDivElement | null) => void
+  /** 末尾那个锚点（滚轮接力的钩子从它找 .chat；调用点不必再拿一次 DOM）。 */
+  end: HTMLDivElement | null
+  paused: boolean
+  resume: () => void
+  pause: () => void
+} {
   const [end, setEnd] = useState<HTMLDivElement | null>(null)
-  const pinned = useRef(true)
+  /** 跟随的意图。与「此刻离底多远」分开：距离只在落定时量一次。 */
+  const following = useRef(true)
+  /** 上一次由我们自己写到的位置（用来认出「这条 scroll 是我们自己引起的」）。 */
+  const written = useRef(0)
+  const settleTimer = useRef<number | null>(null)
+  /** 滚动容器的两个动作：钉到底、立刻停跟随（给 `pause` 用）。 */
+  const control = useRef<{ pin: () => void; stop: () => void } | null>(null)
   const [paused, setPaused] = useState(false)
   /** 上一次钉底是按哪条会话起的算；初值给一个空串哨兵，于是首屏也算「换了一条」。 */
   const pinnedFor = useRef('')
@@ -255,15 +285,82 @@ function useFollowBottom(
   useEffect(() => {
     const scroller = end?.closest('.chat')
     if (!(scroller instanceof HTMLElement)) return undefined
-    const onScroll = (): void => {
-      const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 160
-      pinned.current = atBottom
-      setPaused(!atBottom)
+    const floor = (): number => Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+    const pin = (): void => {
+      scroller.scrollTop = scroller.scrollHeight
+      written.current = scroller.scrollTop
     }
-    onScroll()
+    const clearSettle = (): void => {
+      if (settleTimer.current !== null) window.clearTimeout(settleTimer.current)
+      settleTimer.current = null
+    }
+    /** 位置落定：这一刻的远近才算数。够近就恢复跟随并补齐最后几像素。 */
+    const settle = (): void => {
+      clearSettle()
+      const near = floor() - scroller.scrollTop <= FOLLOW_BOTTOM_PX
+      following.current = near
+      setPaused(!near)
+      if (near) pin()
+    }
+    const schedule = (): void => {
+      clearSettle()
+      settleTimer.current = window.setTimeout(settle, FOLLOW_SETTLE_MS)
+    }
+    const onScroll = (): void => {
+      const top = scroller.scrollTop
+      if (Math.abs(top - written.current) <= 1) {
+        written.current = top
+        return
+      }
+      if (following.current) {
+        following.current = false
+        setPaused(true)
+      }
+      schedule()
+    }
+    /** 读者动手：先松手，不等这一下手势滚出多远。 */
+    const onGesture = (): void => {
+      following.current = false
+      schedule()
+    }
+    const onWheel = (event: WheelEvent): void => {
+      // 只认「往上滚」：在底部往下滚时浏览器什么也不做，这时若把跟随松掉，
+      // 下一口流式内容就没人追了（点开工具卡、往下翻也一样，不该断跟随）。
+      if (event.ctrlKey || event.deltaY >= 0) return
+      onGesture()
+    }
+    const onKey = (event: KeyboardEvent): void => {
+      if (UP_KEYS.has(event.key)) onGesture()
+    }
+    /** 内容变长：跟随开着才追，读者在读就一动不动。 */
+    const onResize = (): void => {
+      if (!following.current) return
+      if (floor() - scroller.scrollTop > 4) pin()
+    }
+    control.current = {
+      pin,
+      stop: () => {
+        clearSettle()
+        following.current = false
+        setPaused(true)
+      },
+    }
     scroller.addEventListener('scroll', onScroll, { passive: true })
+    scroller.addEventListener('scrollend', settle)
+    scroller.addEventListener('wheel', onWheel, { passive: true })
+    scroller.addEventListener('keydown', onKey)
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(onResize) : undefined
+    observer?.observe(scroller)
+    const content = scroller.firstElementChild
+    if (content !== null) observer?.observe(content)
     return () => {
+      clearSettle()
+      control.current = null
       scroller.removeEventListener('scroll', onScroll)
+      scroller.removeEventListener('scrollend', settle)
+      scroller.removeEventListener('wheel', onWheel)
+      scroller.removeEventListener('keydown', onKey)
+      observer?.disconnect()
     }
   }, [end])
 
@@ -271,22 +368,19 @@ function useFollowBottom(
   // 效果**之后**，顺序有讲究——监听效果刚按当前位置（打开会话时是 scrollTop=0）
   // 判过「暂停」，这条要盖住它。
   useEffect(() => {
-    const scroller = end?.closest('.chat')
-    if (!(scroller instanceof HTMLElement)) return
     if (pinnedFor.current !== sessionKey) {
       pinnedFor.current = sessionKey
-      pinned.current = true
+      following.current = true
       setPaused(false)
     }
-    if (!pinned.current) return
-    scroller.scrollTop = scroller.scrollHeight
+    if (!following.current) return
+    control.current?.pin()
   }, [sessionKey, end, dep])
 
   const resume = (): void => {
-    pinned.current = true
+    following.current = true
     setPaused(false)
-    const scroller = end?.closest('.chat')
-    if (scroller instanceof HTMLElement) scroller.scrollTop = scroller.scrollHeight
+    control.current?.pin()
   }
 
   /**
@@ -297,12 +391,12 @@ function useFollowBottom(
    * 拽回底部，刚补好的阅读位置全毁。这里直接表态「不跟了」，缝就没了。
    */
   const pause = (): void => {
-    pinned.current = false
-    setPaused(true)
+    control.current?.stop()
   }
 
-  return { setEnd, paused, resume, pause }
+  return { setEnd, end, paused, resume, pause }
 }
+
 
 /**
  * 首屏四张能力卡（对照 Codex UI 的 home cards）：点一下把提示词写进输入框，不直接发送——
@@ -1417,7 +1511,7 @@ function ThinkRow({
         role="button"
         tabIndex={0}
         aria-expanded={open}
-        data-tip={open ? '收起这段思考过程' : '展开这段思考过程'}
+        data-tip={open ? '收起这段思考' : '展开这段思考'}
         onClick={toggle}
         onKeyDown={(event) => {
           if (event.key !== 'Enter' && event.key !== ' ') return
@@ -1427,7 +1521,10 @@ function ThinkRow({
         }}
       >
         <IconSpark size={12} className="think-star" />
-        <span className="think-label">思考过程</span>
+        {/* 标题照 dsh 的 `message.think`（两个字「思考」）：2026-10-27 之前是「思考过程」，
+            多出来的两个字在窄栏里会被浏览器按字断行（见 views.css 里标题防竖排那条），
+            而且同一件事工具行说「读取」、这行说「思考过程」，字数与词性都对不齐。 */}
+        <span className="think-label">思考</span>
         {/* 分隔点：只在真有摘要时画（紧凑档的定稿条不画，箭头因此紧跟在标题右边）。 */}
         {preview ? <span className="think-dot" aria-hidden="true" /> : null}
         {preview ? (
@@ -1445,11 +1542,11 @@ function ThinkRow({
           放心用 overflow 裁剪做高度过渡，sticky 的参照系仍是滚动容器 .chat。 */}
       {open && barVisible ? (
         <div className="think-bar" data-think-chrome="1">
-          <span className="think-bar-status">思考过程 · {live ? '进行中' : '已完成'}</span>
+          <span className="think-bar-status">思考 · {live ? '进行中' : '已完成'}</span>
           <button
             type="button"
             className="think-collapse"
-            title="收起这段思考过程"
+            title="收起这段思考"
             onClick={() => {
               setOpenPersisted(false)
             }}
@@ -1641,8 +1738,9 @@ function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matched?: Too
         <span className="tool-dot" aria-hidden="true" />
         <Icon size={14} className="tool-icon" />
         <span className="verb">{toolVerb(match.base, call.status)}</span>
-        {/* 认不出的工具保留原名：没有它就看不出这是哪家的工具（MCP 那些名字不直观）。 */}
-        {match.known ? null : <span className="name">{call.name}</span>}
+        {/* 认不出的工具保留原名：没有它就看不出这是哪家的工具（MCP 那些名字不直观）。
+            分隔点照 dsh 的「工具调用 · <工具名>」。 */}
+        {match.known ? null : <span className="name">{`· ${call.name}`}</span>}
         <span className="preview">
           {intended !== null ? (
             <>

@@ -296,6 +296,130 @@ console.log('[7] 命令面板的滚动与翻页')
   check('键盘表那张也有 ✕', palette.includes('关闭键位表'))
 }
 
+// ── [8] 2026-10-27 第四轮：子智能体下拉出界 + 胶囊悬停分层 ──────────────────
+
+console.log('[8] 子智能体下拉与状态胶囊的悬停')
+{
+  const css = read('ui-shell/src/styles.css')
+  const team = read('ui-shell/src/plugins/team/ui.tsx')
+
+  // ① 下拉贴着按钮左下展开，按钮被长标题推到右边时会出界（用户看到的是「被遮挡」）。
+  //    打开时量一次、窗口改尺寸再量一次：右边超多少往左挪多少，下边不够就把高度收到窗口底。
+  check('下拉有定位引用（ref 挂到 .sub-menu 上）', team.includes('const menuRef = useRef<HTMLDivElement | null>(null)') && /className="row-menu sub-menu"[^>]*ref=\{menuRef\}/.test(team))
+  check('打开时先量右边越界再左移', team.includes('const overflowRight = rect.right - (window.innerWidth - margin)') && team.includes('el.style.left = '))
+  check('下方空间不够时把高度收到窗口底边', team.includes('el.style.maxHeight = '))
+  check('窗口改尺寸重算（开着菜单拉窗口也要跟）', team.includes("window.addEventListener('resize', place)") && team.includes("window.removeEventListener('resize', place)"))
+
+  // ② 行内按钮不再铺第二层底色：整行已经由 .sp-row:hover 上底，叠起来就是「没盖满 / 分层」。
+  check('可点行体自己不上底（交给整行）', /\.sp-row-open:hover \{[^}]*background: none;/.test(css))
+  check('停止钮悬停只改颜色、不上底', /\.sp-row-stop:hover \{[^}]*background: none;/.test(css))
+}
+
+// ── [9] 2026-10-27 第五轮：文案照 dsh、胶囊不报增删、轨迹钮不叠字 ──────────
+
+console.log('[9] 这一轮的四条')
+{
+  const css = read('ui-shell/src/styles.css')
+  const summary = read('ui-shell/src/ui-primitives/tool-summary.ts')
+  const transcriptSrc = read('ui-shell/src/plugins/transcript/ui.tsx')
+  const statusSrc = read('ui-shell/src/plugins/status/ui.tsx')
+  const factorySrc = read('ui-shell/src/plugins/transcript/tool-card/factory.tsx')
+  const traceSrc = read('ui-shell/src/plugins/trace/ui.tsx')
+
+  // ① 行首标题照 dsh 的 tool.title.* 词表：名词短语，不拼「搜了 / 正在写」。
+  //    用户 2026-10-27 的原话是「搜了、写了、跑了、思考过程，不舒服」。
+  for (const title of ['运行命令', '读取', '写入', '编辑', '查找文件', '搜索文件内容', '网页获取']) {
+    check(`词表里有「${title}」`, summary.includes(`verb: '${title}'`))
+  }
+  const verbSrc = summary.slice(summary.indexOf('export function toolVerb'))
+  const verbBody = verbSrc.slice(0, verbSrc.indexOf('}'))
+  check('标题不随状态变形（函数体只 return base，不拼 正在 / 准备 / 了）', /return base/.test(verbBody) && !verbBody.includes('${base}') && !verbBody.includes('了'), verbBody.trim())
+  check('认不出的工具用 dsh 的泛称「工具调用」', summary.includes("UNKNOWN_TOOL_TITLE = '工具调用'"))
+  const named = (factorySrc + transcriptSrc + traceSrc).split('`· ${call.name}`').length - 1
+  check('原名跟在「 · 」后面（对话页 / 轨迹页 / 工厂三处都改了）', named === 3, String(named))
+
+  // ② 思考块标题照 dsh 的 message.think（「思考」两个字），不再写「思考过程」。
+  check('思考块标题是「思考」', transcriptSrc.includes('<span className="think-label">思考</span>'))
+  check('没有残留的「思考过程」上屏文案', !/think-label">思考过程|think-bar-status">思考过程|收起这段思考过程/.test(transcriptSrc))
+
+  // ③ 胶囊（以及它的分区头）不再报 ± 行数：那一格量的是整个工作区的差，不是某一次操作。
+  check('胶囊摘要里没有 ± 读数', !statusSrc.includes('sp-git-delta'))
+  check('Git 分区头也不再挂 ± 读数', statusSrc.includes('trail={null}'))
+  check('文件数这个粗读数还留着', statusSrc.includes('个文件'))
+  check('行数只在工具卡上（编辑 / 写入那一份仍在）', factorySrc.includes('changes-added') && factorySrc.includes('changes-removed'))
+
+  // ④ 「在轨迹中查看」压在摘要尾巴上时，底色必须不透明，否则那半句路径会透出来（读成叠字）。
+  check('药丸底色不透明', /\.tool-card \.tool-head \.tc-trace \{[^}]*background: var\(--dsc-bg-raised\)/.test(css))
+  check('药丸仍然是绝对定位（读数不让位）', /\.tool-card \.tool-head \.tc-trace \{[^}]*position: absolute/.test(css))
+}
+// ── [10] 2026-10-27：会话标题放不下时，悬停滚一遍 ──────────────────────────
+
+console.log('[10] 会话行标题的悬停滚动')
+{
+  const css = read('ui-shell/src/styles.css')
+  const sessionsSrc = read('ui-shell/src/plugins/sessions/ui.tsx')
+
+  // ① 量：悬停（或轮到焦点）那一刻量一次溢出，没溢出就不加开关——不能让所有行都抖。
+  check('量的是「整段文字宽 − 行里给它的那一格」', sessionsSrc.includes('text.scrollWidth - box.clientWidth'))
+  check('指针进来时量（不是常驻 ResizeObserver）', sessionsSrc.includes('onPointerEnter={measureTitle}'))
+  check('键盘 Tab 到这一行也量', sessionsSrc.includes('onFocus={measureTitle}'))
+  check('只在溢出时挂 data-overflow', sessionsSrc.includes("data-overflow={titleShift > 0 ? '1' : undefined}"))
+  check('位移与时长写成自定义属性给样式用', sessionsSrc.includes("'--title-shift'") && sessionsSrc.includes("'--title-dur'"))
+  check('时长按距离算、两头夹住', /Math\.min\(6000, 1400 \+ titleShift \* 22\)/.test(sessionsSrc))
+
+  // ② 两层结构：外层裁、内层动；静息态还是省略号（与改动前一致）。
+  check('标题文字包在内层盒子里', sessionsSrc.includes('<span className="title-text">{title}</span>'))
+  check('内层静息态自己出省略号', /\.sess-item \.title-text \{[^}]*max-width: 100%;[^}]*text-overflow: ellipsis/.test(css))
+  check('外层显式 min-width: 0（flex 项才缩得动）', /\.sess-item \.title \{[^}]*min-width: 0;/.test(css))
+
+  // ③ 动效：悬停 / 键盘聚焦才跑，一条循环里两头都停一下；减弱动画时退回省略号。
+  check('悬停与键盘聚焦都触发', /\.sess-item:hover \.title\[data-overflow='1'\] \.title-text,[\s\S]{0,120}?\.sess-item:focus-visible/.test(css))
+  check('溢出时才放开 max-width（放开才会位移）', /\.sess-item:hover \.title\[data-overflow='1'\] \.title-text,[\s\S]{0,200}?max-width: none/.test(css))
+  check('关键帧用 --title-shift 位移', /@keyframes sess-title-marquee \{[\s\S]{0,400}?translateX\(var\(--title-shift/.test(css))
+  check('两头都停一拍（开头与结尾看得清）', /@keyframes sess-title-marquee \{[\s\S]{0,300}?0%,?\s*\n?\s*12%/.test(css))
+  check('减弱动画偏好下不滚、退回省略号', /prefers-reduced-motion: reduce[\s\S]{0,600}?\.title\[data-overflow='1'\] \.title-text \{[^}]*animation: none;[^}]*max-width: 100%/.test(css))
+}
+// ── [11] 2026-10-27：跟随滚动的口径照 dsh（读者一动手就松手） ─────────────
+
+console.log('[11] 跟到底部的滚动逻辑')
+{
+  const transcriptSrc = read('ui-shell/src/plugins/transcript/ui.tsx')
+  const seatsSrc = read('ui-shell/src/plugins/transcript/fold-seats.tsx')
+
+  // ① 外层：贴底门槛照 dsh 的 25px（壳取 24），旧的 160px 必须没有了——
+  //    往上滚 100px 仍算「在底部」，下一口内容一到就拽回去，就是用户说的粘滞。
+  check('贴底判定是 24px', /const FOLLOW_BOTTOM_PX = 24/.test(transcriptSrc))
+  check('旧的 160px 阈值已撤掉', !/clientHeight < 160/.test(transcriptSrc))
+  check('落定等待有常量（180ms）', /const FOLLOW_SETTLE_MS = 180/.test(transcriptSrc))
+
+  // ② 往回读先松手：只认「往上」的滚轮与键——在底部往下滚时松手，会让后来居上的内容没人追。
+  check('滚轮挂上手势', transcriptSrc.includes("scroller.addEventListener('wheel', onWheel, { passive: true })"))
+  check('只认往上滚（deltaY < 0）', transcriptSrc.includes('event.deltaY >= 0'))
+  check('往上翻的键', transcriptSrc.includes("UP_KEYS.has(event.key)") && transcriptSrc.includes("'PageUp'"))
+  check('不再抢触摸与指针按下（点开工具卡不该断跟随）', !transcriptSrc.includes('touchstart') && !transcriptSrc.includes('pointerdown'))
+  check('手势里当场 follow=false（不等越过哪条线）', /const onGesture = \(\): void => \{\s*following\.current = false/.test(transcriptSrc))
+
+  // ③ 落定：scrollend 立即判，180ms 没有新滚动也判。
+  check('落定用 scrollend', transcriptSrc.includes("scroller.addEventListener('scrollend', settle)"))
+  check('计时器兜底', transcriptSrc.includes('window.setTimeout(settle, FOLLOW_SETTLE_MS)'))
+
+  // ④ 只认自己的写：钉底引发的 scroll 不算读者动了。
+  check('记下自己写到的位置', transcriptSrc.includes('written.current = scroller.scrollTop'))
+  check('差 1px 以内当自己滚的', transcriptSrc.includes('Math.abs(top - written.current) <= 1'))
+
+  // ⑤ 内容变长只在跟随开着时才追（读者在读时一动不动）。
+  check('用 ResizeObserver 接内容生长', transcriptSrc.includes('new ResizeObserver(onResize)'))
+  check('读者在读时不钉底', /const onResize = \(\): void => \{\s*if \(!following\.current\) return/.test(transcriptSrc))
+
+  // ⑥ 组体（阶段组的限高滚动）同一套：手势松手 + 落定 + 只认自己的写。
+  check('组体贴底判定收窄到 4px', /const PROCESS_BOTTOM_EPS = 4/.test(seatsSrc))
+  check('组体也挂滚轮手势', seatsSrc.includes("body.addEventListener('wheel', onWheel, { passive: true })"))
+  check('组体也只认往上滚', seatsSrc.includes('event.deltaY >= 0') && seatsSrc.includes('PROCESS_UP_KEYS.has(event.key)'))
+  check('组体也认 scrollend', seatsSrc.includes("body.addEventListener('scrollend', settle)"))
+  check('组体也记自己写到的位置', seatsSrc.includes('written.current = body.scrollTop'))
+  check('组体读者在读时不追', /if \(follow\.current\) \{\s*const limit = body\.scrollHeight - body\.clientHeight/.test(seatsSrc))
+  check('组体不再用旧的 32px 判据', !/AT_BOTTOM_EPS/.test(seatsSrc))
+}
 if (failures === 0) console.log('\n全部通过')
 else console.log(`\n${failures} 项失败`)
 process.exit(failures === 0 ? 0 : 1)

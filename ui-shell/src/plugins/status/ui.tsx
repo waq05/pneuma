@@ -1062,12 +1062,11 @@ function MiniSummary({ summary }: { summary: CapsuleSummary | null }): ReactNode
   } else if (summary.kind === 'git') {
     icon = <IconDiff size={13} />
     text = '更改'
-    trail = (
-      <span className="sp-git-delta">
-        <span className="sp-add">{`+${String(summary.added)}`}</span>
-        <span className="sp-del">{`−${String(summary.removed)}`}</span>
-      </span>
-    )
+    // 胶囊不再报增删行数（2026-10-27 用户：+/- 行数只在「编辑文件」的操作上显示）。
+    // 原因是这一格量的是**整个工作区**相对 HEAD 的差（含不是这次会话改的、含还没提交的），
+    // 挂在常驻胶囊上就是一个一直在跳、又对不上任何一次操作的读数；真要按行数看改动，
+    // 工具卡（写入 / 编辑）与轮尾「文件已更改」卡上那一份才是「这次改了什么」。
+    // 文件数留着：它是「有没有东西没提交」的粗读数，不冒充某一次操作的量。
   } else if (summary.kind === 'goal-done') {
     icon = <IconTarget size={13} className="sp-icon-done" />
     text = summary.text
@@ -1531,12 +1530,9 @@ function GitSection({
       open={open}
       separated={separated}
       onToggle={onToggle}
-      trail={
-        <span className="sp-git-delta" data-sp-git-delta={`${String(git.added)}/${String(git.removed)}`}>
-          <span className="sp-add">{`+${String(git.added)}`}</span>
-          <span className="sp-del">{`−${String(git.removed)}`}</span>
-        </span>
-      }
+      // 分区头同样不报增删行数（与胶囊那条同一个理由，见 MiniSummary 的注释）。
+      // 行里已经有「N 个文件」，再挂一对 ± 只是把工作区总量重复一遍。
+      trail={null}
     >
       <ul className="sp-list">
         <li className="sp-row">

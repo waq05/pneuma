@@ -17,8 +17,15 @@
  * @module dsc-ui-shell/plugins/transcript/tool-card/result-tail
  */
 
-/** 收起态最多摊几行结果（与 codex 的 DETAIL_PREVIEW_LINES 同值）。 */
-export const RESULT_TAIL_LINES = 3
+/**
+ * 收起态最多摊几行结果。**0 = 收起态只留头行**（2026-10-27 起）。
+ *
+ * 原来是 3 行（照 codex 的 DETAIL_PREVIEW_LINES）：卡收起时也能读到最后几行输出。
+ * 用户报「工具调用在折叠状态时占用面积太大，只占一行就行」——三行预览让每张卡从
+ * 一行变四行，一轮里十几张卡就是半屏。现在收起态只画头行（仍然带「+N 行」读数，
+ * 点开才看结果），这个常量留在这里是为了那个行数计算。
+ */
+export const RESULT_TAIL_LINES = 0
 
 /** 预览里单行最多保留几个字（超出截断并补省略号）。 */
 export const PREVIEW_LINE_MAX_CHARS = 300
@@ -51,7 +58,8 @@ export function resultTail(text: string | undefined, limit = RESULT_TAIL_LINES):
     kept.push(clipLine(line))
   }
   if (kept.length === 0) return null
-  const lines = kept.slice(-Math.max(1, limit))
+  const cap = Math.max(0, limit)
+  const lines = cap === 0 ? [] : kept.slice(-cap)
   return { lines, hidden: kept.length - lines.length }
 }
 

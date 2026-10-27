@@ -18,7 +18,7 @@
  *
  * @module dsc-ui-shell/plugins/team
  */
-import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { SkeletonText, useDialogFocus } from '@dsc/ui-primitives'
 import {
   IconChevronDown,
@@ -205,6 +205,42 @@ function SubagentMenu(props: SlotComponentProps<Record<never, never>, never, nev
   const sessionId = useHostSelector(readSessionId)
   const [menuOpen, setMenuOpen] = useState(false)
   const mine = matesOf(mates, sessionId)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+
+  /**
+   * 下拉贴着按钮左下展开（CSS 的 left: 0）——按钮在标题后面，标题一长它就被推到
+   * 窗口右边，菜单再往外铺就出界（用户报「展开后不能自适应窗口大小，被遮挡了」）。
+   *
+   * 所以打开时量一次：右边越界多少就往左挪多少（最多挪到左边缘留 12px），
+   * 下方不够高就把 max-height 收到窗口底边。窗口尺寸变了再量一次——菜单开着的时候
+   * 用户照样会去拉窗口。
+   */
+  useEffect(() => {
+    if (!menuOpen) return undefined
+    const el = menuRef.current
+    if (el === null) return undefined
+    const place = (): void => {
+      el.style.left = '0px'
+      el.style.maxHeight = ''
+      const margin = 12
+      const rect = el.getBoundingClientRect()
+      const overflowRight = rect.right - (window.innerWidth - margin)
+      if (overflowRight > 0) {
+        const shift = Math.min(overflowRight, Math.max(0, rect.left - margin))
+        el.style.left = `${String(-shift)}px`
+      }
+      const after = el.getBoundingClientRect()
+      const room = window.innerHeight - margin - after.top
+      if (after.bottom > window.innerHeight - margin && room > 120) {
+        el.style.maxHeight = `${String(Math.round(room))}px`
+      }
+    }
+    place()
+    window.addEventListener('resize', place)
+    return () => {
+      window.removeEventListener('resize', place)
+    }
+  }, [menuOpen, mine.length])
   return (
     <>
       {mine.length === 0 ? null : (
@@ -229,7 +265,7 @@ function SubagentMenu(props: SlotComponentProps<Record<never, never>, never, nev
                   setMenuOpen(false)
                 }}
               />
-              <div className="row-menu sub-menu" role="menu" aria-label="本会话的子智能体">
+              <div className="row-menu sub-menu" role="menu" aria-label="本会话的子智能体" ref={menuRef}>
                 {mine.map((mate) => (
                   <TeamRow
                     key={mate.file}
