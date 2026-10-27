@@ -8849,3 +8849,137 @@ turn-changes / throughput），四个全绿。
 （第 2 张「从需求一路写到能跑」只有一行，标题比第 1 张低一行）。给 `.welcome-card-hint` 加
 `min-height: 2lh`：文字块等高，标题落在同一条线上；真写满三行照样往下长，不裁字。
 实测四张卡标题 `top` 全是 425，提示语高度全是 40px。
+
+**工具卡收成一行 + 子智能体下拉不出界 + 胶囊悬停不再叠层（2026-10-27，用户一次报三条）**：
+
+1. **收起的工具卡太高**：照 codex 在头行下摊 3 行结果预览，一张卡一行变四行。改成收起态只画头行，
+   右侧保留「+N 行」读数，点开才看结果。`result-tail.ts` 的 `RESULT_TAIL_LINES` 改 0、
+   factory 删掉 `.tool-tail` 渲染、四条样式一并删除。实测克隆一张真实卡片量高：卡 29px、头行 28px，
+   DOM 里 `.tool-tail` 计数 0（会话里 89 张卡全都没有尾巴了）。
+2. **子智能体下拉出界**：菜单是 `left: 0` 贴胶囊展开，胶囊被长标题推到右边就超出窗口。
+   打开时量一次 + `resize` 再量一次：右侧超出多少就往左挪多少（最多到左边缘 12px），
+   下方不够高把 `max-height` 收到窗口底边。
+3. **胶囊悬停分层**：整行已由 `.sp-row:hover` 上底，行内按钮又写了一次 `--dsc-control-hover-bg`
+   （8% 叠加色），叠出一小块更亮的方片，看着像底色没盖满按钮。去掉行内那两层（`.sp-row-open` /
+   `.sp-row-stop` 只改字色）。
+
+**测试**：`ui-transcript-render-test` [8] 的六条尾巴断言按新口径重写（0 行 + hidden = 全部非空行）；
+`ui-interaction-base-test` 新增 [8] 六条（下拉的 ref / 右移钳位 / 高度收口 / resize 重算，两条悬停不叠层）。
+
+**任务清单提醒改成按「轮」算、默认开（2026-10-27，用户报「进程不随任务更新」）**：
+
+先查了会话日志（`~/.dsc/sessions/D-dsc/bb13f0b5….jsonl`）：整个会话 `todo_write` **只被调用过一次**，
+就是开工时立的那 4 条，之后 40 多轮一次都没改状态，所以面板一直停在 0/4——不是界面没刷新，
+宿主侧 `todo_write` 写一次就 `emit('dsc/changed')`，`surfaces.todos` 是实时投影。
+
+原有的节流提醒之所以没救回来：它按「用户回合」计数、且默认关。一轮里模型会发几十次请求，
+用户回合数根本不涨，单轮长跑里永远不触发。改成：
+
+- 计数换成 `countRoundsSinceLastTodoWrite`：数「距上次 todo_write 又发了几轮」（一条 assistant = 一轮），
+  `role: tool` 的结果消息与请求尾巴的环境快照都不算。
+- 默认 `enabled: true`、`everyRounds: 8`；老配置里的 `everyTurns` 读一次当回退，不迁移不写盘。
+  设置分区两项跟着改名（「每隔几轮提醒一次」，帮助里写明「一轮 = 一次模型请求」）。
+- 注入条件仍然要求「清单里还有 pending / in_progress」，清空后立刻停。
+
+**测试**：`todo-reminder-test` 按新口径重写（纯函数 16 条 + 端到端 10 条），实测默认 8 轮时前几轮不注入、
+把间隔调成 2 后下一次请求注入；`context-pipeline-test` 的「默认不注入」照旧通过（那一轮轮数远不到 8）。
+
+**这一轮四条（2026-10-27，用户截图报「+/- 行数只在编辑文件显示」「两个详情都到底滚不动」「文案不舒服」「轨迹钮和文字重叠」）**：
+
+1. **胶囊不再报增删行数**：那颗常驻胶囊的「更改 +245 −173」量的是**整个工作区**相对 HEAD 的差，
+   与「这次会话改了什么」不是一回事，挂在常驻位上就一直跳、又对不上任何一次操作。
+   现在胶囊摘要只写「更改」、展开面板的 Git 分区头也只留「N 个文件」这一行读数；
+   ± 行数只留在工具卡（写入 / 编辑）与轮尾「文件已更改」卡上，那才是「这次改了多少」。
+   数据层（`CapsuleSummary.added/removed`）没动——`ui-status-panel-test` 那几条数值断言照旧。
+2. **三级嵌套滚动的接力**：对话页有三层能各自滚的容器——工具详情（`.tool-body .args/.result`，
+   限高 `--dsc-tool-detail-max-h`）、阶段组体（`.step-body`，限高 `min(400px,50vh)`）、会话流（`.chat`）。
+   里层滚到底、外层还有余量时手势会停住，用户读长结果读到一半就「滚不动了」。
+   先排除样式：拿同结构的裸 HTML 页（同样的 overflow / max-height / mask / grid 包裹）在真
+   Chromium 里量，scroll chaining 是通的——所以不能靠改 CSS 修。新增 `transcript/wheel-chain.ts`：
+   会话流上挂 `{ passive: false }` 的 wheel 监听，按「从里到外的静态可滚祖先」判定，
+   最靠里那一格自己还能滚就放给浏览器，它到边界就把余量交给外面最近一个还能滚的容器并 `preventDefault`。
+   判定抽成纯函数 `pickChain`，脱开 DOM 可测。
+3. **过程行文案照 dsh 词表**：原来行首是动词 + 状态后缀（跑 / 正在跑 / 准备了），一屏读成「搜了」「写了」。
+   改成 dsh `tool.title.*` 的名词短语：运行命令 / 读取 / 写入 / 编辑 / 查找文件 / 搜索文件内容 / 网页获取，
+   认不出的工具写「工具调用 · <原名>」（dsh `tool.title.generic` + 原名）；`toolVerb` 不再按状态拼字，
+   状态仍由行尾状态词与状态点说。思考块标题「思考过程」→「思考」（dsh `message.think`）。
+4. **「在轨迹中查看」不再透出底下的字**：这颗药丸是绝对定位压在头行读数与摘要尾巴上的，
+   底色原来是 4% 的 `--dsc-fill-quaternary`，于是被它盖住的路径文字从按钮里透出来，
+   看着像「按钮和文字重叠」。改成实色 `--dsc-bg-raised`（悬停时整行有高亮，用页面底色会像挖掉一块）。
+
+**测试**：新增 `scripts/ui-wheel-chain-test.mjs`（纯判定 17 条 + 接线 8 条）；`ui-interaction-base-test`
+加 [9] 段 18 条（词表 / 标题不随状态变 / 原名分隔点三处 / 思考标题 / 胶囊与分区头没有 ± / 药丸实色）；
+`ui-status-panel-test` 的 ± 数值断言不动（数据层没改）。
+
+**实测**（隔离 HOME + 真会话灌进 headless Edge，`:9342` CDP）：
+
+- 胶囊：面板头只剩「Git 工具 / 更改 / 28 个文件 / feat/dock-browser」，没有 +245 −173（截图 `shots/capsule-no-delta.png`）。
+- 文案：同一会话的八条工具行读成「查找文件 **/*.ts」「读取 desktop/electron/main/dsc-core.ts」
+  「运行命令 npm i -g typescript …」「工具调用 · lsp …」，思考行是「思考」。
+- 药丸：悬停一行时 `getComputedStyle(.tc-trace).backgroundColor` = `rgb(44, 44, 46)`（不透明），
+  `elementFromPoint` 落在药丸自己身上，不再点到下层摘要（截图 `shots/trace-pill-opaque.png`）。
+- 接力：在真页面的 `.chat` 里造三层嵌套（90px / 150px / 会话流），合成 `WheelEvent` 三次 A/B——
+  ① 两层都到底：`preventDefault=true`，会话流 `scrollTop` 0 → **120**；
+  ② 里层还能滚：`preventDefault=false`（不拦原生）；
+  ③ 里层到底、中层有余量：中层 `scrollTop` 0 → **120**，会话流不动。
+
+**会话行标题放不下时能滚（2026-10-27，用户：「鼠标放到会话上时，如果标题显示不全应该添加滚动效果」）**：
+
+侧栏一列标题被截成「当前项目最近对dsh插…」，而本壳早把 tooltip 层下线了（`data-tip` 只剩属性，
+`styles.css` 里那段「交互打磨」写着这件事），所以截断的标题**没有第二条路能读全**，只能补滚动。
+
+- 结构拆两层：外层 `.title` 是 flex 那一格（`min-width: 0` + `overflow: hidden` 裁），
+  内层 `.title-text` 是会动的盒子。静息时内层 `max-width: 100%` + 自己做省略号——
+  截断的表现与改动前一致，不会因为加了这个功能变成硬切。
+- 量在「指针进来 / 轮到焦点」那一刻（`measureTitle`：`text.scrollWidth - box.clientWidth`），
+  量到才挂 `data-overflow="1"` 并写入 `--title-shift`（负的溢出像素）与 `--title-dur`（按距离算，
+  `1400 + 22 × px`，夹在 1.4–6 秒）。没溢出的行一个像素都不动。
+- 动效是一条循环：停在开头 12% → 滑到尾 → 停一拍 → 滑回，`ease-in-out`。
+  键盘 Tab 到这一行同样触发（`:focus-visible`）；`prefers-reduced-motion` 下不滚、退回省略号。
+
+**测试**：`ui-interaction-base-test` 新增 [10] 段 14 条（测量口径、只在溢出时挂开关、两层结构、
+悬停与聚焦两个触发、关键帧位移、减弱动画的退路）。
+
+**实测**（隔离 HOME + 真会话，headless Edge `:9342`）：把指针放到一条超宽标题的行上——
+`data-overflow="1"`、`--title-shift: -42px`、`--title-dur: 2324ms`、`animation-name: sess-title-marquee`，
+900ms 时 `transform` 已经到 `matrix(1,0,0,1,-42,0)`（滑到尾并停住）；移开指针后 `animation: none`、`transform: none`。
+而宽度够的三条（「新会话」42px、「lsp代码智能插件是什么」144px）没有 `data-overflow`。
+截图 `shots/session-title-marquee.png`。
+
+
+**跟随滚动与嵌套滚动对齐 dsh（2026-10-27 第二轮，用户：「滚动相关的逻辑，查看 dsh 是怎么做的，现在还是会出现粘滞的问题」）**：
+
+先读 dsh 的两个实现：`dsh-client-ui-chat/lib/client.js` 里的 `ScrollFollow`（797 行起）与
+`ChatReading`（974 行起），以及 `use-process-scroll`（3902 行起）。它管滚动只做三件事：
+手势先掐掉正在跑的动画、按 `movedByReader` 归因（自己写的不算读者动）、位置落定后再采样判远近；
+嵌套容器一律交给浏览器原生 scroll chaining（整包只有输入草稿那一处手动转发，18493 行）。
+
+对照壳里，两个真问题：
+
+1. **贴底判据 160px 太宽**（`transcript/ui.tsx` 旧 `useFollowBottom`）：往上滚 100px 仍算「在底部」，
+   下一口流式内容一到就 `scrollTop = scrollHeight` 钉回去。实测：底部上滚 100px，「回到底部」
+   按钮**不出现**（阈值内），人感觉被胶住。
+2. **组体更糟**（`fold-seats.tsx` 旧 `useProcessScroll`）：`ResizeObserver` 一量到内容长高就直接
+   `body.scrollTop = body.scrollHeight`，而「跟不跟」只在 scroll 事件里更新——流式输出与手势同一帧到达时，
+   刚滚上去的那一点会被当场拽回。
+
+改法（两层同一套）：
+
+- 意图与位置分开：`following` 只在落定（`scrollend` 或 180ms / 140ms 无新滚动）时按距离重算；
+  往上滚的 `wheel` 与 `↑` / `PgUp` / `Home` 一到就先把 `following` 置假，不等滚动发生；
+  只认「往上」——点开工具卡或往下滚时不动跟随（否则展开一张卡就会把跟随掐掉）。
+- 归因：每次钉底记下写到的 `scrollTop`，scroll 事件差 1px 以内当自己滚的，不改意图。
+- 距离门槛：外层 24px（dsh 25），组体 4px（dsh 1），旧的 160px 与 32px 都撤掉。
+- 内容变长只用 `ResizeObserver` 追，且只在 `following` 为真时追。
+
+嵌套滚动另有一层：上一版加的 `transcript/wheel-chain.ts`（`preventDefault` 后 `scrollTop += delta`）
+删掉了。在 Electron 里发**真滚轮**（`Input.dispatchMouseEvent`）验证：两层嵌套都到底时会话流
+0 → 120 → 240，原生 chaining 本来就通；自己转发反而丢掉逐帧与惯性，是「粘滞」的另一半。
+`scripts/ui-wheel-chain-test.mjs` 随之删除。
+
+**测试**：`ui-interaction-base-test` 新增 [11] 段 20 条（24px 门槛、旧 160px 已撤、四个手势入口、
+`scrollend` 与计时器、写位置归因、`ResizeObserver` 只在跟随时追、组体同五项、旧 32px 判据已撤）。
+
+**实测**（隔离 HOME + 真会话，headless Edge `:9342`，真滚轮）：底部 `top=1088 floor=1088`，
+上滚 100 → `top=988`、按钮出现；此时追加 400px 内容 → `top` 仍 988（`floor` 1504）；
+滚回底部 → 按钮消失、`top=1504=floor`；再追加 400px → `top=1920=floor`（跟随生效）。
