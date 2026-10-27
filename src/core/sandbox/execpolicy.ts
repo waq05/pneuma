@@ -345,10 +345,35 @@ export function isNetworkSegment(segment: CommandSegment, win32 = process.platfo
   const subs = NETWORK_SUBCOMMANDS[head]
   if (subs === undefined) return false
   if (subs.has('*')) return true
-  // 子命令可能被开关夹在中间（`npm --silent install`）：取第一个非开关词元
-  const sub = segment.tokens.slice(1).find((token) => !isFlag(token, win32))
+  const sub = subcommandOf(segment.tokens, win32)
   if (sub === undefined) return false
   return subs.has(tokenName(sub))
+}
+
+/** 这些开关后面跟着一个值（目录、配置、registry），值不是子命令。 */
+const VALUE_FLAGS: ReadonlySet<string> = new Set([
+  '-c', '-C', '--git-dir', '--work-tree', '--namespace',
+  '--dir', '--prefix', '--cwd', '--workspace', '-w',
+  '--registry', '--config', '--userconfig', '--cache', '--reporter', '--filter',
+])
+
+/**
+ * 取一条命令的子命令（npm 的 install、git 的 clone）：跳过开关与开关的值。
+ *
+ * 为什么不能简单取「第一个不以 - 开头的词元」：`pnpm --dir . install` 的 `.`
+ * 会先被当成子命令，于是整条命令被判成「不联网」——网络开关关着也能装包
+ * （2026-10-28 实测）。`git -c x=y clone` 同理。
+ */
+function subcommandOf(tokens: readonly string[], win32: boolean): string | undefined {
+  for (let index = 1; index < tokens.length; index += 1) {
+    const token = tokens[index]!
+    if (isFlag(token, win32)) {
+      if (VALUE_FLAGS.has(token.toLowerCase())) index += 1
+      continue
+    }
+    return token
+  }
+  return undefined
 }
 
 // ---------------------------------------------------------------- 判定入口
@@ -387,7 +412,7 @@ export function innerShellCommand(segment: CommandSegment, win32: boolean): stri
 function expandSegments(command: string, win32: boolean, depth = 0): CommandSegment[] {
   const out: CommandSegment[] = []
   for (const segment of splitSegments(command)) {
-    if (depth < 2) {
+    if (depth < 4) {
       const inner = innerShellCommand(segment, win32)
       if (inner !== null && inner.trim() !== '') out.push(...expandSegments(inner, win32, depth + 1))
     }

@@ -69,7 +69,9 @@ const noRequest = await gate('write', { path: outside, content: 'x' }, 'write', 
 // 判据是「**哪一层**拒的」：链条最后的结论会是审批层的「用户拒绝」（无头跑没人能点卡），
 // 那恰好证明沙箱这一环已经放行。所以看 reason 是不是沙箱的口径，而不是看 deny/defer。
 const sandboxRefused = (verdict) => verdict.action === 'deny' && /沙箱拒绝/.test(verdict.reason ?? '')
-check('工作区外写、不提放宽 → 沙箱这一层就拒（它是审批卡与升权的入口）', sandboxRefused(noRequest), JSON.stringify(noRequest))
+// 2026-10-28 起对齐 dsh 的只读档：沙箱对「能问的越界」不再硬拒，而是 defer 给审批卡；
+// 无头环境没人能答卡，收场仍是 deny，但理由来自审批层而不是沙箱。
+check('工作区外写、不提放宽 → 沙箱 defer，落到审批（不再硬拒）', noRequest.action === 'deny' && !sandboxRefused(noRequest), JSON.stringify(noRequest))
 const full = await gate(
   'write',
   { path: outside, content: 'x', sandbox_permissions: 'danger-full-access', justification: '要装到另一个盘' },
@@ -123,6 +125,25 @@ check('升权卡不给 always（没有可持久化的前缀规则）', /escalati
 const sandboxSrc = readFileSync(new URL('../src/plugins/sandbox.ts', import.meta.url), 'utf8')
 check('沙箱按会话路径记账（一个会话放宽不影响别的会话）', /sessionRoots\.get\(sessionPath\)/.test(sandboxSrc))
 check('会话放宽根并进可写根参与判定', /extraWritableRoots: \[\.\.\.config\.extraWritableRoots, \.\.\.granted\]/.test(sandboxSrc))
+
+console.log('\n── 4. 只读档的 dsh 语义：沙箱拦下 → 问用户一次 ──')
+{
+  const { BUILTIN_PERMISSION_PRESETS } = await import('../lib/core/permission-presets.js')
+  const readOnly = BUILTIN_PERMISSION_PRESETS.find((preset) => preset.name === 'read-only')
+  check('只读档 = read-only 沙箱 + auto-edit + 本人审', readOnly.sandbox === 'read-only' && readOnly.policy === 'auto-edit' && readOnly.reviewer === 'user', JSON.stringify(readOnly))
+  kernel.sandbox.setMode('read-only')
+  kernel.approval.setPolicy('auto-edit')
+  const inside = join(cwd, 'inside.txt')
+  const fence = kernel.sandbox.check(inside, undefined, cwd)
+  check('工作区内写在只读档下被判越界', fence.allowed === false, JSON.stringify(fence))
+  check('越界可问用户一次（requestable）', fence.requestable === true && fence.rule === 'mode-read-only', JSON.stringify(fence))
+  const protectedFence = kernel.sandbox.check(join(home, '.dsc', 'credentials.yaml'), undefined, cwd)
+  check('受保护名不给「点一次允许」的机会', protectedFence.requestable === false, JSON.stringify(protectedFence))
+  const verdict = await gate('write', { path: inside, content: 'x' }, 'write', inside)
+  check('守卫链不再由沙箱硬拒（交审批收场）', verdict.action === 'deny' && !/沙箱拒绝/.test(verdict.reason ?? ''), JSON.stringify(verdict))
+  kernel.sandbox.setMode('workspace-write')
+  kernel.approval.setPolicy('auto-edit')
+}
 
 console.log(`\n升权与范围自检：${failures === 0 ? '全部通过' : `${String(failures)} 项失败`}`)
 process.exit(failures === 0 ? 0 : 1)

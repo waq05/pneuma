@@ -568,8 +568,14 @@ export const approvalPlugin: Plugin.Object = {
           }
         }
 
+        // 第 4 层：沙箱边界。沙箱守卫（order 8）对「能问的越界」只 defer，
+        // 最后一道落在这里：越过沙箱的事一律跳过所有自动放行，直接弹卡（只给一次）。
+        // 这一层必须排在权限模式与审阅者之前——否则「完全访问」会把沙箱的拒绝吃掉。
+        const fence = ctx.get('sandbox')?.check(target ?? undefined, command ?? undefined, cwd)
+        const fenced = fence !== undefined && !fence.allowed
+
         // 第 5 层：权限模式自己的裁决（protected 文件不参与，强制走人工卡）。
-        if (protectedWhy === null && forced === '') {
+        if (protectedWhy === null && forced === '' && !fenced) {
           if (policy === 'readonly') {
             // 「仅查看」的字面意思就是只读：策略引擎判成 allow 的命令（查看目录、看 git 状态、
             // 管道里只做筛选与格式化）原样放行，只有写与执行类才一律拒。
@@ -581,12 +587,24 @@ export const approvalPlugin: Plugin.Object = {
             autoLog('auto-deny', request, '当前是「仅查看」权限模式，写与执行类工具一律拒绝')
             return 'reject'
           }
-          if (policy === 'full-access') {
+          // 第 5.5 层（顺序在自动放行之前，2026-10-28 修）：审阅者 auto-review 时
+          // **每一次走到这里的事**都先给模型判官看一眼——包括「完全访问」本来会直接
+          // 放行的那些。判 allow 直接过；判高风险或判不出来（含网络/超时/解析失败）
+          // 落回第 6 层人工卡。只读档在上面已经拒了，轮不到判官放宽。
+          if (reviewer === 'auto-review') {
+            const reviewed = await aiReview(request, signal)
+            if (reviewed !== null) {
+              autoLog('auto-allow', request, 'AI 复核放行')
+              return reviewed
+            }
+          } else if (policy === 'full-access') {
             autoLog('auto-allow', request, '当前是「完全访问」权限模式')
             return 'allow-once'
-          }
-          if (policy === 'auto-edit') {
-            if (PATH_WRITE_TOOLS.has(request.toolName) && insideCwd) {
+          } else if (policy === 'auto-edit') {
+            // 工作区内免卡还要沙箱同意：沙箱档位是 read-only 时，同一个路径也不许写。
+            // 少了这一半，只读档会先被审批放行、再被沙箱拒，模型拿到的是「自动放行失败」。
+            const writable = PATH_WRITE_TOOLS.has(request.toolName) && insideCwd && (fence?.allowed ?? true)
+            if (writable) {
               autoLog('auto-allow', request, '工作区内的文件改动，按「工作区自动编辑」放行')
               return 'allow-once'
             }
@@ -597,31 +615,24 @@ export const approvalPlugin: Plugin.Object = {
           }
         }
 
-        // 第 5.5 层：审阅者。`auto-review` 时**每一次走到这里的事**都先给模型判官看一眼
-        // ——这一步排在档位自动放行**之前**（等价于参考实现的 `strict_auto_review`），
-        // 所以「完全访问 + AI 复核」就是旧版的「AI 审查」档：谁也不自动放行，全过模型。
-        // 判 allow 直接过；判高风险或判不出来（含网络/超时/解析失败）落回第 6 层人工卡。
-        if (reviewer === 'auto-review' && protectedWhy === null && forced === '') {
-          const reviewed = await aiReview(request, signal)
-          if (reviewed !== null) {
-            autoLog('auto-allow', request, 'AI 复核放行')
-            return reviewed
-          }
-        }
-
         // 第 6 层：人工审批卡。钩子要求确认时卡片上的原因就用它，用户才知道这张卡为什么非弹不可。
         const reason =
-          escalation !== null
-            ? `模型请求放宽沙箱（${escalation.effect}）：${escalation.justification}`
-            : forced !== ''
-              ? forced
-              : protectedWhy !== null
-                ? protectedWhy
-                : (verdict?.reason ?? (insideCwd ? '工作区内的改动需要确认' : '工作区外的改动需要确认'))
+          fenced
+            ? `沙箱边界：${fence?.reason ?? '这次调用越界'}（允许这一次就破例执行，沙箱对这一次不再拦）`
+            : escalation !== null
+              ? `模型请求放宽沙箱（${escalation.effect}）：${escalation.justification}`
+              : forced !== ''
+                ? forced
+                : protectedWhy !== null
+                  ? protectedWhy
+                  : (verdict?.reason ?? (insideCwd ? '工作区内的改动需要确认' : '工作区外的改动需要确认'))
         const risk: RiskLevel =
-          protectedWhy !== null ? 'high' : forced !== '' ? 'medium' : verdict?.decision === 'ask' ? 'medium' : insideCwd ? 'low' : 'medium'
+          fenced || protectedWhy !== null ? 'high' : forced !== '' ? 'medium' : verdict?.decision === 'ask' ? 'medium' : insideCwd ? 'low' : 'medium'
         const scopes: GrantScope[] = ['once']
-        if (escalation === null) {
+        // 沙箱越界只给「这一次」：放宽写边界是逐次决定，跨调用持久化没人能替用户担保。
+        if (fenced) {
+          // 只留 once
+        } else if (escalation === null) {
           if (protectedWhy === null) scopes.push('session')
           if (suggested !== null && protectedWhy === null) scopes.push('always')
         } else if (sandboxSessionRoot !== null) {

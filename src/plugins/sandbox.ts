@@ -66,6 +66,7 @@ import type {
   SandboxEnforcement,
   SandboxMode,
   SandboxService,
+  SandboxVerdict,
   SettingsSectionSpec,
 } from '../services/types.js'
 
@@ -95,6 +96,21 @@ interface FenceVerdict {
 }
 
 const PASS: FenceVerdict = { allowed: true, rule: 'allowed', why: '', how: '' }
+
+/**
+ * 越界之后**可以问用户一次**的规则（参考实现只读档的形态：沙箱拦下 → 审批卡问
+ * 「这一次要不要破例」）。其余规则保持硬拒：
+ *   read-only-subpath  用户亲手标的只读子树，点一次允许就等于把那个开关作废；
+ *   protected-metadata .git/.ssh/.env 与 dsc 自己的配置，改它等于换掉安全边界；
+ *   network-off        显式关掉的网络开关，不该被一张卡绕过去；
+ *   nt-namespace / ads-stream / short-name / unresolvable 是形状或解析失败，没有「这一次」可言。
+ */
+const ASKABLE_RULES = new Set(['outside-writable-roots', 'mode-read-only'])
+
+/** 规则名（可能带 `write-target:` 前缀）能不能交审批卡问一次。 */
+function askableRule(rule: string): boolean {
+  return ASKABLE_RULES.has(rule.replace(/^write-target:/, ''))
+}
 
 /** 时间戳 → `/sandbox` 里那行 `[12:03:44]`。 */
 function clockOf(ts: number): string {
@@ -294,6 +310,9 @@ export const sandboxPlugin: Plugin.Object = {
             how: legalWay(widened.rule),
           })
         }
+        // 越界但这件事可以问用户一次（参考实现只读档的语义）：沙箱只 defer，
+        // 审批卡是最后一道。审批插件不在场时不能 defer——那等于无人把关地放行。
+        if (askableRule(verdict.rule) && ctx.get('approval') !== undefined) return { action: 'defer' }
         return refuse(config, policy, input.toolName, verdict)
       },
     }
@@ -744,6 +763,29 @@ export const sandboxPlugin: Plugin.Object = {
         const out: SandboxCheck = { allowed: check.allowed, reason: check.reason }
         if (check.root !== undefined) out.root = check.root
         return out
+      },
+      /**
+       * 审批用：这次调用越界了没有、越界之后能不能问用户。
+       * 守卫里同一条判定已经做过一遍（order 8），这里再做一遍是刻意的——审批是
+       * 自动放行的最后一道，它不能假设「沙箱一定已经判过」。
+       */
+      check(target: string | undefined, command: string | undefined, cwd?: string): SandboxVerdict {
+        const { config, policy } = snapshot(cwd)
+        if (config.mode === 'danger-full-access') return { allowed: true, requestable: false }
+        const verdict =
+          target !== undefined && target.trim() !== ''
+            ? writeVerdict(policy, target)
+            : command !== undefined && command.trim() !== ''
+              ? execVerdict(config, policy, command)
+              : PASS
+        if (verdict.allowed) return { allowed: true, requestable: false }
+        const rule = verdict.rule.replace(/^write-target:/, '')
+        return {
+          allowed: false,
+          requestable: askableRule(verdict.rule),
+          reason: verdict.why,
+          rule,
+        }
       },
       describe(): string {
         const { config, policy } = snapshot()

@@ -20,6 +20,7 @@ import type { HostBrowserLink } from '../core/host-browser-link.js'
 import type { MemoryCell, MemoryConfig, MemoryOperation, MemoryTarget, MemoryWriteResult, WriteOptions } from '../core/memory.js'
 import type { ProviderConfig } from '../core/config.js'
 import type { Session, InboxOrigin } from '../core/session.js'
+import type { UserFileAttachment } from '../core/attachments.js'
 import type { ChatMessage, LlmAdapter, LlmRoute, StreamHandlers, StreamRequest, StreamResult } from '../core/llm.js'
 import type { FileChangeSummary, ToolEntry } from '../core/tools.js'
 import type { CoreEvent } from '../core/events.js'
@@ -641,8 +642,9 @@ export interface AgentService {
    *   就写进会话文件等用户回去再说（不打断也不抢跑）。
    * @param origin - 这条是用户来源还是机器来源（缺省 `'user'`）。只影响回合跑动中入箱
    *   时界面把它画在输入框上方（机器通知）还是下方（用户排队）——见 `InboxOrigin`。
+   * @param files - 视频 / 通用文件的落盘元数据（模型侧只看到路径句柄）。
    */
-  followup(text: string, images?: string[], sessionId?: string, origin?: InboxOrigin): void
+  followup(text: string, images?: string[], sessionId?: string, origin?: InboxOrigin, files?: UserFileAttachment[]): void
   /**
    * 取消在跑的回合。缺省停当前查看的会话；指定 jsonl 路径时停那个**后台**会话
    * （路径语义与 sessionFor/isRunning/stop 一致，侧栏的行标识就是路径）——
@@ -1138,6 +1140,25 @@ export interface SandboxCheck {
 }
 
 /**
+ * 一次「这次调用会不会越界」的判定（比 {@link SandboxCheck} 多两件事）。
+ *
+ * 为什么单列：守卫链里沙箱排在审批前面（8 < 30），沙箱一旦 deny 审批就再也拿不到
+ * 发言权。但参考实现的只读档语义是「沙箱拦下，问用户要不要这一次破例」——
+ * 所以越界这件事分成两种：**能问的**（defer 给审批卡，用户点一次允许就过）与
+ * **问也不该给的**（形状类攻击面、用户显式标只读的子路径、网络开关）。
+ */
+export interface SandboxVerdict {
+  /** 沙箱是否放行。 */
+  allowed: boolean
+  /** 被拒时，这件事能不能交审批卡问一次（true = 沙箱只 defer，审批是最后一道）。 */
+  requestable: boolean
+  /** 命中规则名（诊断与测试按它对号入座）。 */
+  reason?: string
+  /** 稳定规则名（`outside-writable-roots` / `mode-read-only` / `network-off` 等）。 */
+  rule?: string
+}
+
+/**
  * 沙箱（sandbox 插件提供；插件关着时这个服务不存在，读它要用 `ctx.get('sandbox')`）。
  *
  * 对外只给「查」和「判」两类能力：别的功能（将来的 PTC、无人值守的定时任务）
@@ -1162,6 +1183,13 @@ export interface SandboxService {
    *   拿挂载时的 `process.cwd()` 当基准，会把别的会话的合法写入误判成越界。
    */
   canWrite(path: string, cwd?: string): SandboxCheck
+  /**
+   * 判一次工具调用会不会越界（写类给 target、命令类给 command，两个都给就都判）。
+   *
+   * 与 {@link canWrite} 的分工：那个只回答「这个路径能不能写」，这个回答
+   * 「这次调用越界了没有、越界之后能不能问用户」。审批拿它决定要不要跳过自动放行。
+   */
+  check(target: string | undefined, command: string | undefined, cwd?: string): SandboxVerdict
   /** 当前策略的一句话摘要（系统提示与诊断用）。 */
   describe(): string
   /**

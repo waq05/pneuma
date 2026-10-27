@@ -653,10 +653,36 @@ function isReadOnlySegment(segment: CommandSegment): boolean {
   if (head === 'find' && FIND_WRITES.test(segment.raw)) return false
   if (head === 'sed' || head === 'awk') return !STREAM_EDITOR_WRITES.test(segment.raw)
   if (head === 'git') {
-    const sub = tokens[1]?.toLowerCase()
+    const sub = gitSubcommand(tokens)
     if (sub !== undefined && WRITING_SUBCOMMANDS.has(sub)) return false
   }
   return true
+}
+
+/**
+ * git 真正要跑的子命令（跳过 `-c key=value`、`-C dir`、`--git-dir=…` 这类全局开关）。
+ *
+ * 为什么不能只看 `tokens[1]`：`git -c core.pager=calc log` 的 tokens[1] 是 `-c`，
+ * 不在写操作名单里，整条就被判成只读——而 `git -c x=y reset --hard` 同理，
+ * 只读档会直接把未提交改动丢掉（2026-10-28 实测）。
+ */
+function gitSubcommand(tokens: readonly string[]): string | undefined {
+  // 带值的全局开关：它们后面那个词是参数，不是子命令。
+  const valueFlags = new Set(['-c', '-C', '--git-dir', '--work-tree', '--namespace', '--exec-path'])
+  let index = 1
+  while (index < tokens.length) {
+    const token = tokens[index]!
+    if (valueFlags.has(token)) {
+      index += 2
+      continue
+    }
+    if (token.startsWith('-')) {
+      index += 1
+      continue
+    }
+    return token.toLowerCase()
+  }
+  return undefined
 }
 
 /** 建议一个可持久化的前缀：取前 2-3 个词，别把整条命令塞进去（抄 Codex 的告诫）。 */
