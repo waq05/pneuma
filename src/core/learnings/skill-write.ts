@@ -902,7 +902,7 @@ export function curateSkills(now = Date.now(), options: AgingOptions = DEFAULT_A
   const doc = readUsage()
   let local: string[] = []
   try {
-    local = scanSkillRoot({ dir: skillsRoot(), source: 'user-dsc', rank: 400 }).map((item) => item.name)
+    local = scanSkillRoot({ dir: skillsRoot(), source: 'user-dsc', rank: 400, scope: 'global' }).map((item) => item.name)
   } catch {
     local = []
   }
@@ -971,7 +971,7 @@ export function curateSkills(now = Date.now(), options: AgingOptions = DEFAULT_A
 /** 技能目录里有哪些本地技能（整理与设置页显示用）。 */
 export function localSkillNames(): string[] {
   try {
-    return scanSkillRoot({ dir: skillsRoot(), source: 'user-dsc', rank: 400 })
+    return scanSkillRoot({ dir: skillsRoot(), source: 'user-dsc', rank: 400, scope: 'global' })
       .map((item) => item.name)
       .sort((a, b) => a.localeCompare(b))
   } catch {

@@ -37,13 +37,21 @@ import { SkeletonText, humanErrorText } from '@dsc/ui-primitives'
 /** 这一页在 page-state 里的 id（侧栏入口与页条目约定同一个值）。 */
 const PAGE = 'skills'
 
-/** 来源徽章（用户主目录最常见，不显示；其余说明技能从哪来，旧界面同款）。 */
+/**
+ * 来源标签：技能页按发现根分组，组头写「这批技能来自哪」（与 dsh 设置页的技能分组同口径）。
+ * `user-dsh` 是 dsh 自己的全局技能目录，`user-agents` 是公共 Agent 目录（`~/.agents/skills`）。
+ */
 const SOURCE_LABELS: Record<string, string> = {
   'project-dsc': '本项目 .dsc/skills',
   'project-agents': '本项目 .agents/skills',
   custom: '自定义目录',
-  'user-dsc': '',
+  'user-agents': '公共 Agent',
+  'user-dsc': '用户技能 ~/.dsc/skills',
+  'user-dsh': 'DSH 全局技能',
 }
+
+/** 分组的先后：项目在前（它们压过同名的全局技能），再按全局目录的优先级。 */
+const SOURCE_ORDER = ['project-dsc', 'project-agents', 'custom', 'user-agents', 'user-dsc', 'user-dsh']
 
 /** 宿主 `listSkills` 回来的形状（契约 `SkillInfoView`）。 */
 interface SkillRow {
@@ -57,6 +65,10 @@ interface SkillRow {
   userInvocable: boolean
   toggleable: boolean
   problem?: string
+  /** 项目 / 全局作用域（宿主算的，见 core/skills.ts 的发现根）。 */
+  scope?: 'project' | 'global'
+  /** 发现根目录（分组头显示）。 */
+  root?: string
 }
 
 /** `readSkill` 回来的形状（契约 `SkillDetail`）。 */
@@ -113,6 +125,8 @@ function SkillsView(): ReactNode {
   const [skills, setSkills] = useState<SkillRow[] | null>(null)
   const [skillsError, setSkillsError] = useState('')
   const [query, setQuery] = useState('')
+  /** 作用域筛选：与 dsh 设置页「全局技能 / 项目技能」两个页签同一个口径，这里多一个「全部」。 */
+  const [scopeTab, setScopeTab] = useState<'all' | 'global' | 'project'>('all')
   const [detail, setDetail] = useState<SkillDetail | null>(null)
   const [market, setMarket] = useState<MarketBrowseResult | null>(null)
   const [marketSource, setMarketSource] = useState('')
@@ -166,17 +180,52 @@ function SkillsView(): ReactNode {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab])
 
+  /** 作用域计数（「全部 / 全局 / 项目」三个页签上的读数）。 */
+  const scopeCounts = useMemo(() => {
+    const list = skills ?? []
+    const global = list.filter((skill) => (skill.scope ?? 'global') === 'global').length
+    return { all: list.length, global, project: list.length - global }
+  }, [skills])
+
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
-    const list = skills ?? []
-    if (needle === '') return list
-    return list.filter(
+    const inScope = (skills ?? []).filter(
+      (skill) => scopeTab === 'all' || (skill.scope ?? 'global') === scopeTab,
+    )
+    if (needle === '') return inScope
+    return inScope.filter(
       (skill) =>
         skill.name.toLowerCase().includes(needle) ||
         skill.description.toLowerCase().includes(needle) ||
         (skill.whenToUse ?? '').toLowerCase().includes(needle),
     )
-  }, [skills, query])
+  }, [skills, query, scopeTab])
+
+  /**
+   * 按发现根分组（组头写标签、条数与目录）。
+   *
+   * 为什么要分组：全局技能来自四个地方（公共 Agent、~/.dsc、DSH、自定义目录），
+   * 平铺成一列之后「这条是哪来的、同名时谁赢」看不出来；dsh 设置页也是按目录分组的。
+   */
+  const groups = useMemo(() => {
+    const map = new Map<string, { key: string; label: string; root?: string; order: number; items: SkillRow[] }>()
+    for (const skill of filtered) {
+      const key = skill.root ?? `provider:${skill.source}`
+      let group = map.get(key)
+      if (group === undefined) {
+        group = {
+          key,
+          label: SOURCE_LABELS[skill.source] ?? '插件提供',
+          root: skill.root,
+          order: SOURCE_ORDER.indexOf(skill.source) === -1 ? SOURCE_ORDER.length : SOURCE_ORDER.indexOf(skill.source),
+          items: [],
+        }
+        map.set(key, group)
+      }
+      group.items.push(skill)
+    }
+    return [...map.values()].sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))
+  }, [filtered])
 
   const marketFiltered = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -400,6 +449,29 @@ function SkillsView(): ReactNode {
         </div>
       </div>
 
+      {/* 作用域：全局（公共 Agent / ~/.dsc / DSH / 自定义目录）与项目分开看，与 dsh 同口径。 */}
+      {tab === 'installed' ? (
+        <div className="skills-scope" role="group" aria-label="技能作用域">
+          {([
+            { value: 'all', label: '全部', count: scopeCounts.all },
+            { value: 'global', label: '全局', count: scopeCounts.global },
+            { value: 'project', label: '项目', count: scopeCounts.project },
+          ] as const).map((chip) => (
+            <button
+              key={chip.value}
+              type="button"
+              className={scopeTab === chip.value ? 'on' : ''}
+              aria-pressed={scopeTab === chip.value}
+              onClick={() => {
+                setScopeTab(chip.value)
+              }}
+            >
+              {chip.label} <span className="count">{chip.count}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       {tab === 'installed' ? (
         <div className="skills-list">
           {skillsError !== '' && <div className="settings-note error">扫描失败：{humanErrorText(skillsError).text}</div>}
@@ -416,8 +488,9 @@ function SkillsView(): ReactNode {
               </span>
               <div className="empty-card-title">还没有技能</div>
               <p className="empty-card-desc">
-                把 <code>&lt;名字&gt;/SKILL.md</code> 放进 <code>~/.dsc/skills/</code> 或项目的{' '}
-                <code>.dsc/skills</code>，也可以直接导入一个目录。
+                把 <code>&lt;名字&gt;/SKILL.md</code> 放进 <code>~/.dsc/skills/</code>、
+                <code>~/.agents/skills/</code>（公共 Agent）、<code>~/.dsh/skills/</code>（DSH 全局）
+                或项目的 <code>.dsc/skills</code>，也可以直接导入一个目录。
               </p>
               <div className="empty-card-actions">
                 <button type="button" className="btn-primary" onClick={importSkill}>
@@ -435,7 +508,16 @@ function SkillsView(): ReactNode {
               </div>
             </div>
           )}
-          {filtered.map((skill) => (
+          {groups.map((group) => (
+            <div className="skills-group" key={group.key}>
+              <div className="skills-group-head">
+                <span className="skills-group-title">{group.label}</span>
+                <span className="skills-group-count">{group.items.length} 个技能</span>
+                {group.root === undefined ? null : (
+                  <span className="mono skills-group-path" data-tip={group.root}>{group.root}</span>
+                )}
+              </div>
+              {group.items.map((skill) => (
             <div className={`skill-row${skill.enabled ? '' : ' off'}`} key={`${skill.source}/${skill.name}`}>
               <div className="skill-icon">
                 <IconBolt size={15} />
@@ -446,9 +528,7 @@ function SkillsView(): ReactNode {
                     <span className="slash">/</span>
                     {skill.name}
                   </span>
-                  {skill.source !== 'user-dsc' && SOURCE_LABELS[skill.source] !== undefined && (
-                    <span className="tag">{SOURCE_LABELS[skill.source]}</span>
-                  )}
+                  {/* 来源不再逐行打标：组头已经写了「来自哪个目录」，一行两个徽章反而更吵。 */}
                   {!skill.modelInvocable && <span className="tag">仅手动</span>}
                 </div>
                 <div className={`skill-desc${skill.problem !== undefined ? ' problem' : ''}`}>
@@ -500,6 +580,8 @@ function SkillsView(): ReactNode {
                   if (skill.toggleable) toggle(skill)
                 }}
               />
+            </div>
+              ))}
             </div>
           ))}
           {skills !== null && skills.length > 0 && filtered.length === 0 && (

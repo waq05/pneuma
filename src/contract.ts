@@ -1334,7 +1334,14 @@ export interface UiCommandView {
 // ── 技能中心 ──────────────────────────────────────────────────────────────────
 
 /** 技能来源标签（rank 小者赢得重名）。 */
-export type SkillSourceLabel = 'project-dsc' | 'project-agents' | 'custom' | 'user-dsc' | (string & {})
+export type SkillSourceLabel =
+  | 'project-dsc'
+  | 'project-agents'
+  | 'custom'
+  | 'user-agents'
+  | 'user-dsc'
+  | 'user-dsh'
+  | (string & {})
 
 /** 技能清单一行（技能中心页与设置「技能」分区共用）。 */
 export interface SkillInfoView {
@@ -1355,6 +1362,10 @@ export interface SkillInfoView {
   toggleable: boolean
   /** 发现或解析问题（名字非法、frontmatter 缺字段等），正常时 undefined。 */
   problem?: string
+  /** 项目技能还是全局技能：技能页按它分「全局 / 项目」两组（与 dsh 设置页同口径）。 */
+  scope?: 'project' | 'global'
+  /** 发现根目录（分组头显示「这批技能来自哪个目录」）。 */
+  root?: string
 }
 
 /** 技能详情（正文按需读，不进模型目录）。 */

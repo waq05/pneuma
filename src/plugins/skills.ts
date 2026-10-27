@@ -247,6 +247,7 @@ export const skillsPlugin: Plugin.Object = {
           dir: dirname(definition.path),
           source: definition.source,
           rank: definition.rank,
+          scope: definition.scope ?? 'global',
         }).find((item) => item.name === name)
         if (fresh === undefined) return { ok: false, error: `${definition.path} 已被删除或改名` }
         return { ok: true, skill: { ...toSkillInfoView(fresh, disabled), content: fresh.content } }
