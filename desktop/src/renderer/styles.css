@@ -2003,12 +2003,6 @@
   color: var(--dsc-red);
 }
 
-.approval-mode {
-  color: var(--dsc-text-tertiary);
-  font-size: var(--dsc-fs-ui);
-  margin-left: auto;
-}
-
 .approval-args {
   color: var(--dsc-text-secondary);
   font-family: var(--dsc-font-mono);
@@ -2016,6 +2010,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 审批卡那行中文含义（0.7.1）：与插件壳 `ui-shell/src/legacy/views.css` 同一口径。 */
+.approval-meaning {
+  color: var(--dsc-text-primary);
+  font-size: var(--dsc-fs-ui);
+  line-height: 1.5;
 }
 
 /* 后台会话的审批卡弹到当前视图时的归属标注（0.6.49）：一眼看出这张卡是谁家的 */

@@ -2361,12 +2361,6 @@
   color: var(--dsc-red);
 }
 
-.approval-mode {
-  color: var(--dsc-text-tertiary);
-  font-size: var(--dsc-fs-ui);
-  margin-left: auto;
-}
-
 .approval-args {
   color: var(--dsc-text-secondary);
   font-family: var(--dsc-font-mono);

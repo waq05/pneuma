@@ -90,6 +90,8 @@ export interface ApprovalRequestView {
   id: string
   toolName: string
   argsSummary: string
+  /** 这次调用「要干什么」的中文一句话（0.7.1）；宿主没给或认不出来时缺省。 */
+  meaning?: string
   reason: string
   risk: 'low' | 'medium' | 'high' | 'critical'
   suggestedRule: string[] | null

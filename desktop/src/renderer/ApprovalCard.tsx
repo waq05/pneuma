@@ -12,6 +12,17 @@ import type { ApprovalAnswer, ApprovalRequestView } from '@dsc/runtime/contract.
 import { DiffRows } from './DiffPane.js'
 import { displayPathOf } from './file-util.js'
 
+/**
+ * 「为什么问你」里没有信息量的几句（与插件壳那份同口径）：通用兜底不占版面，
+ * 有话说的是复核否决、沙箱边界、安全钩子这类具体原因。
+ */
+const GENERIC_REASONS = new Set(['需要授权', '工作区内的改动需要确认'])
+
+/** 这句话是不是通用兜底。 */
+function isGenericReason(reason: string): boolean {
+  return GENERIC_REASONS.has(reason)
+}
+
 /** 风险档位对应的中文与配色档位。 */
 const RISK: Record<ApprovalRequestView['risk'], { label: string; tone: string }> = {
   low: { label: '低风险', tone: 'low' },
@@ -46,6 +57,9 @@ export function ApprovalCard(props: {
   }, [props, scopes])
 
   const risk = RISK[request.risk]
+  /** 这一档是什么、谁在审、什么协作模式：以前占一整行，现在收进卡片的悬浮提示。
+      它是「设置」的回声，不是这一张卡的非说不可；要核对时鼠标停一下就看得见。 */
+  const modeLine = `权限 ${request.policy === 'readonly' ? '仅查看' : request.policy === 'auto-edit' ? '工作区自动' : '完全访问'} · 审阅 ${request.reviewer === 'user' ? '本人' : 'AI 复核'} · 模式 ${request.mode === 'plan' ? '计划' : request.mode === 'explore' ? '探索' : request.mode === 'quiet' ? '免打扰' : '执行'}`
   const keys: Array<{ scope: 'once' | 'session' | 'always'; answer: ApprovalAnswer; label: string; key: string; title: string }> = [
     { scope: 'once', answer: 'allow-once', label: '这次允许', key: 'y', title: '只放过这一次，下次同类操作还会问' },
     { scope: 'session', answer: 'allow-session', label: '本会话允许', key: 's', title: '这个会话里同类操作不再问；换会话就失效' },
@@ -59,17 +73,20 @@ export function ApprovalCard(props: {
   ]
 
   return (
-    <div className={`approval risk-${risk.tone}`}>
+    <div className={`approval risk-${risk.tone}`} title={modeLine}>
       <div className="approval-head">
         <span className="tool-name">{request.toolName}</span>
-        <span className={`risk-badge tone-${risk.tone}`}>{risk.label}</span>
-        <span className="approval-mode">
-          权限 {request.policy === 'readonly' ? '仅查看' : request.policy === 'auto-edit' ? '工作区自动' : '完全访问'} · 审阅{' '}
-          {request.reviewer === 'user' ? '本人' : 'AI 复核'} · 模式{' '}
-          {request.mode === 'plan' ? '计划' : request.mode === 'explore' ? '探索' : request.mode === 'quiet' ? '免打扰' : '执行'}
-        </span>
+        {/* 低风险不画徽章：每张卡都挂一枚「低风险」，看到第二张就成了背景噪音。 */}
+        {request.risk === 'low' ? null : <span className={`risk-badge tone-${risk.tone}`}>{risk.label}</span>}
       </div>
-      <div className="approval-args">{request.argsSummary}</div>
+      {/* 一行中文说清这次要干什么（与插件壳同口径）。 */}
+      {request.meaning === undefined ? null : <div className="approval-meaning">{request.meaning}</div>}
+      {/* 有「将做的改动」时参数行是重复的（与插件壳同口径）。 */}
+      {request.diff === undefined ? (
+        <div className="approval-args" title={request.argsSummary}>
+          {request.argsSummary}
+        </div>
+      ) : null}
       {props.ownerLabel != null && props.ownerLabel !== '' && (
         <div className="approval-owner">来自会话「{props.ownerLabel}」</div>
       )}
@@ -107,7 +124,7 @@ export function ApprovalCard(props: {
           )}
         </div>
       )}
-      <div className="approval-reason">{request.reason}</div>
+      {isGenericReason(request.reason) ? null : <div className="approval-reason">{request.reason}</div>}
       {request.hardline ? (
         <div className="approval-hardline">这一步被安全策略判为不可放行，只能拒绝。</div>
       ) : (
@@ -120,11 +137,14 @@ export function ApprovalCard(props: {
                 <kbd>{entry.key}</kbd>
               </button>
             ))}
-          <button className="btn danger" title="不执行这一步，并把拒绝原因回给模型" onClick={() => props.onAnswer('reject')}>
+          <button
+            className="btn danger"
+            title="不执行这一步，并把拒绝原因回给模型；5 分钟没人答也按拒绝处理"
+            onClick={() => props.onAnswer('reject')}
+          >
             拒绝
             <kbd>n</kbd>
           </button>
-          <span className="hint">5 分钟没人答按拒绝处理</span>
         </div>
       )}
     </div>

@@ -215,10 +215,12 @@ function normalizeApproval(raw: unknown): ApprovalRequestView | null {
   const suggestedRule = Array.isArray(suggestedRuleRaw)
     ? suggestedRuleRaw.filter((item): item is string => typeof item === 'string')
     : null
+  const meaning = pickString(source, 'meaning')
   return {
     id: pickString(source, 'id') ?? 'approval',
     toolName: pickString(source, 'toolName', 'name') ?? '',
     argsSummary: pickString(source, 'argsSummary', 'summary') ?? '',
+    ...(meaning === null ? {} : { meaning }),
     reason: pickString(source, 'reason') ?? '',
     risk,
     suggestedRule,

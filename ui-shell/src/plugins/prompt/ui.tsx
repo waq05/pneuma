@@ -467,9 +467,13 @@ const ApprovalCard = memo(function ApprovalCard({ request }: { request: Approval
       {/* 一行中文说清这次要干什么：多数人读不懂 `Get-Content x | %{…}`，
           但他看得懂「读文件内容 x」。命令原文仍在下一行。 */}
       {request.meaning === undefined ? null : <div className="approval-meaning">{request.meaning}</div>}
-      <div className="approval-args" title={request.argsSummary}>
-        {request.argsSummary}
-      </div>
+      {/* 「将做的改动」在场时参数行是重复的：那一段已经把「写哪个文件、增删几行」说全了，
+          而 write 的参数摘要就是一段被截断的 JSON 正文。 */}
+      {request.diff === undefined ? (
+        <div className="approval-args" title={request.argsSummary}>
+          {request.argsSummary}
+        </div>
+      ) : null}
       {request.escalation === undefined ? null : (
         <div className="approval-escalation" data-approval-escalation="">
           <div className="approval-escalation-line">

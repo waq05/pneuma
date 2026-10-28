@@ -3,9 +3,12 @@
  * Esc）拒绝；按键只渲染 request.scopes 允许的档位，命中硬地板（hardline）只留拒绝。
  * 页脚按钮可鼠标点击（列区间按显示宽度与渲染同源计算，命中即等价按键）。
  *
- * 卡上补全宿主随请求带来的富信息：reason（为何要问）、risk 风险档、当前权限/协作
- * 模式、后台会话来源，write/edit 的「将做的改动」内嵌 diff（超长折叠，v 展开/收起）。
- * 键盘与鼠标路由在 App 顶层统一处理，本组件纯展示。
+ * 卡上补全宿主随请求带来的富信息：meaning（这次要干什么）、reason（为何要问）、
+ * risk 风险档、当前权限/协作模式、后台会话来源，write/edit 的「将做的改动」内嵌 diff
+ * （超长折叠，v 展开/收起）。键盘与鼠标路由在 App 顶层统一处理，本组件纯展示。
+ *
+ * 0.7.1 与桌面两张卡同口径：多一行中文含义，低风险不再挂「（低风险）」，
+ * 「需要授权」这类通用兜底理由不占一行。
  *
  * @module dsc-tui/app/ApprovalCard
  */
@@ -27,6 +30,12 @@ const RISK_LABEL: Record<ApprovalRequestView['risk'], { text: string; color: str
   high: { text: '高风险', color: STATUS_COLOR.failed },
   critical: { text: '极高风险', color: STATUS_COLOR.failed },
 }
+
+/**
+ * 「为何要问」里没有信息量的几句（与桌面两张卡同口径）：通用兜底不占版面，
+ * 有话说的是复核否决、沙箱边界、安全钩子这类具体原因。
+ */
+const GENERIC_REASONS = new Set(['需要授权', '工作区内的改动需要确认'])
 
 /** 会话 jsonl 路径的短标识（文件名去后缀取前 8 位）。 */
 const shortId = (sessionPath: string): string =>
@@ -111,17 +120,25 @@ export function ApprovalCard({
         <Text {...TEXT.label} color={BORDER.alert}>
           ⚠ 工具授权：{request.toolName}
         </Text>
-        <Text {...TEXT.label} color={risk.color}>
-          {' '}
-          （{risk.text}）
-        </Text>
+        {/* 低风险不挂标签：每一张都写「（低风险）」，第二张起就只是噪音。 */}
+        {request.risk === 'low' ? null : (
+          <Text {...TEXT.label} color={risk.color}>
+            {' '}
+            （{risk.text}）
+          </Text>
+        )}
       </Text>
-      {request.reason !== '' ? (
+      {/* 一行中文说清这次要干什么：多数人读不懂命令行原文。 */}
+      {request.meaning === undefined ? null : <Text {...TEXT.body}>{request.meaning}</Text>}
+      {request.reason !== '' && !GENERIC_REASONS.has(request.reason) ? (
         <Text {...TEXT.label} color={STATUS_COLOR.waiting}>
           为何要问：{request.reason}
         </Text>
       ) : null}
-      <Text {...TEXT.secondary} wrap="truncate-end">{oneLine(request.argsSummary, 200)}</Text>
+      {/* 有「将做的改动」时参数行是重复的（与桌面两张卡同口径）。 */}
+      {request.diff === undefined ? (
+        <Text {...TEXT.secondary} wrap="truncate-end">{oneLine(request.argsSummary, 200)}</Text>
+      ) : null}
       <Text {...TEXT.secondary} wrap="truncate-end">
         权限 {request.policy === 'readonly' ? '仅查看' : request.policy === 'auto-edit' ? '工作区自动' : '完全访问'} · 审阅{' '}
         {request.reviewer === 'user' ? '本人' : 'AI 复核'} · 模式 {request.mode}

@@ -864,6 +864,14 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+/* 审批卡那行中文含义（0.7.1）：与桌面两张卡同口径，命令原文退成灰字。 */
+.pendingcard-meaning {
+  margin: 0;
+  color: var(--fg);
+  font-size: var(--fs-body);
+  overflow-wrap: anywhere;
+}
+
 .pendingcard-args {
   display: block;
   max-height: 80px;

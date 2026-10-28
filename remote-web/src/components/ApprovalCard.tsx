@@ -28,6 +28,12 @@ const RISK_LABEL: Record<ApprovalRequestView['risk'], string> = {
   critical: '严重',
 }
 
+/**
+ * 「为什么问你」里没有信息量的几句（与桌面两张卡同口径）：
+ * 通用兜底不占版面，有话说的是复核否决、沙箱边界、安全钩子这类具体原因。
+ */
+const GENERIC_REASONS = new Set(['需要授权', '工作区内的改动需要确认'])
+
 const PLAN_LABELS: Partial<Record<ApprovalAnswer, string>> = {
   'allow-once': '批准',
   'allow-session': '本会话都批',
@@ -64,13 +70,20 @@ function ApprovalBody({
     <section className="pendingcard pendingcard-approval" aria-label="待审批">
       <header className="pendingcard-head">
         <span className="pendingcard-kind">需要审批</span>
-        <span className={`risk risk-${card.risk}`}>{RISK_LABEL[card.risk]}</span>
+        {/* 低风险不画徽章：每次审批都挂一枚「低风险」，它就只是背景色了。 */}
+        {card.risk === 'low' ? null : <span className={`risk risk-${card.risk}`}>{RISK_LABEL[card.risk]}</span>}
       </header>
       <div className="pendingcard-main">
         <span className="pendingcard-tool">{card.toolName === '' ? '等待审批' : card.toolName}</span>
+        {/* 一行中文说清这次要干什么：手机上命令原文更难读，这一行更该在最前面。 */}
+        {card.meaning === undefined || card.meaning === '' ? null : (
+          <p className="pendingcard-meaning">{card.meaning}</p>
+        )}
         {card.argsSummary !== '' ? <code className="pendingcard-args">{card.argsSummary}</code> : null}
       </div>
-      {card.reason !== '' ? <p className="pendingcard-reason">{card.reason}</p> : null}
+      {card.reason !== '' && !GENERIC_REASONS.has(card.reason) ? (
+        <p className="pendingcard-reason">{card.reason}</p>
+      ) : null}
       {card.hardline ? <p className="pendingcard-note">这个动作命中硬地板，界面不提供放行，只能拒绝。</p> : null}
       {card.suggestedRule !== null && card.suggestedRule.length > 0 ? (
         <p className="pendingcard-note mono">永久允许会记下：{card.suggestedRule.join(' ')}</p>
