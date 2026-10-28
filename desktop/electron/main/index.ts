@@ -76,9 +76,23 @@ const THEME_PAINT: Readonly<Record<UiTheme, { page: string; symbol: string; acce
  * 而壳要到界面脚本跑起来才知道主题（`getUiPrefs` 还是异步的）。读不到就按系统深浅起步，
  * 界面随后会把真颜色推过来。
  */
+/**
+ * 主进程眼里的 `settings.json`：**和宿主同一份**。
+ *
+ * 为什么不能只认 `app.getPath('home')`：那个路径走系统账号目录，不认 `USERPROFILE` /
+ * `HOME` / `DSC_HOME`，而宿主（node 进程）按环境变量解析。重定向过 HOME 的场合
+ * （自检、隔离账户、把配置放到别盘）主进程会读到另一份文件——主题和面板几何于是
+ * 和界面里显示的对不上。`DSC_HOME` 是宿主那边既有的开关，这里跟着它走。
+ */
+function settingsPath(): string {
+  const home = process.env.DSC_HOME
+  if (home !== undefined && home !== '') return join(home, 'settings.json')
+  return join(app.getPath('home'), '.dsc', 'settings.json')
+}
+
 function readUiTheme(): UiTheme {
   try {
-    const doc = JSON.parse(readFileSync(join(app.getPath('home'), '.dsc', 'settings.json'), 'utf8')) as {
+    const doc = JSON.parse(readFileSync(settingsPath(), 'utf8')) as {
       ui?: { themeMode?: unknown }
     }
     const mode = doc.ui?.themeMode
@@ -87,6 +101,38 @@ function readUiTheme(): UiTheme {
     // 首次运行没有 settings.json，或文件坏了：按系统深浅起步即可
   }
   return nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
+}
+
+/**
+ * 面板几何从地址里带一份：`panels=sidebar:320,dock:640,collapsed:1`。
+ *
+ * 为什么不只靠壳启动时那次 `getUiPrefs`：宿主冷启动时数据通道还没连上，那次调用可能
+ * 超过壳给的 1.5 秒期限，于是首帧画成默认宽、用户看到的就是「又回默认了」。主进程读的
+ * 是同一份 settings.json，同步就能拿到，首帧不必再赌一次网络往返。
+ *
+ * 坏值一律丢掉：壳那边还会按各自的区间再挡一次，这里不夹取（夹出来的宽度用户没选过）。
+ * 没配过 / 文件坏了就给空串，壳照旧走它自己那条路。
+ *
+ * @returns 拼进 query 的那一段，或空串
+ */
+function readPanelQuery(): string {
+  try {
+    const doc = JSON.parse(readFileSync(settingsPath(), 'utf8')) as {
+      ui?: { panelWidths?: Record<string, unknown> }
+    }
+    const widths = doc.ui?.panelWidths
+    if (widths === undefined || widths === null) return ''
+    const parts: string[] = []
+    for (const key of ['sidebar', 'thread', 'dock', 'diff'] as const) {
+      const px = widths[key]
+      if (typeof px !== 'number' || !Number.isFinite(px)) continue
+      parts.push(`${key}:${String(Math.round(px))}`)
+    }
+    if (widths['collapsed'] === true) parts.push('collapsed:1')
+    return parts.length === 0 ? '' : `panels=${parts.join(',')}`
+  } catch {
+    return ''
+  }
 }
 
 /** 能否交给系统给窗口控件着色：只收 #rrggbb，半透明颜色到了那侧会被丢掉。 */
@@ -372,6 +418,8 @@ function pageQuery(): string {
     // 自检要看的壳侧参数（例如 diag=1 让诊断区常显——它的 DOM 是自检的读数面）。
     process.env.DSC_UI_QUERY ?? '',
     `theme=${readUiTheme()}`,
+    // 面板宽度也这么带：宿主冷启动时壳那次 getUiPrefs 可能还没回来，首帧先按这份画。
+    readPanelQuery(),
   ]
     .filter((part) => part !== '')
     .join('&')

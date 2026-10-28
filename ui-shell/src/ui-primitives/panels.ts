@@ -56,7 +56,34 @@ export type PanelGeometry = Partial<Record<'sidebar' | 'thread' | 'dock' | 'diff
   collapsed?: boolean
 }
 
-/** localStorage 键 → 宿主键（两边一一对应，宿主那份用短名）。 */
+/**
+ * 启动那一刻从地址里带过来的几何（`?panels=sidebar:320,dock:640,collapsed:1`）。
+ *
+ * 为什么还要这一份：宿主冷启动时数据通道未必就绪，启动时那次 `getUiPrefs` 可能超时，
+ * 首帧就只能画默认宽——用户看到的就是「又回默认了」。桌面主进程读的是同一份
+ * settings.json，它把值拼在地址里，这一份同步可得，首帧不必赌网络。
+ * 只在模块求值时读一次：之后一律以 localStorage（最新）与宿主回读为准。
+ */
+const bootGeometry: Record<string, number | boolean> = (() => {
+  const out: Record<string, number | boolean> = {}
+  if (typeof window === 'undefined') return out
+  const raw = new URLSearchParams(window.location.search).get('panels')
+  if (raw === null) return out
+  for (const part of raw.split(',')) {
+    const [key = '', value = ''] = part.split(':')
+    if (key === 'collapsed') {
+      if (value === '1') out.collapsed = true
+      continue
+    }
+    const px = Number(value)
+    if (Number.isFinite(px) && (key === 'sidebar' || key === 'thread' || key === 'dock' || key === 'diff')) {
+      out[key] = px
+    }
+  }
+  return out
+})()
+
+/** 一处几何值：localStorage 键 → 宿主键（两边一一对应，宿主那份用短名）。 */
 const HOST_KEY_OF: Readonly<Record<string, keyof PanelGeometry>> = {
   [PANEL_KEYS.sidebarWidth]: 'sidebar',
   [PANEL_KEYS.threadWidth]: 'thread',
@@ -123,7 +150,10 @@ export function readStoredPx(key: string, min: number, max: number): number | nu
     // 隐私模式读不了；往下走宿主那份。
   }
   const hostKey = HOST_KEY_OF[key]
-  const fallback = hostKey === undefined ? undefined : remembered[hostKey]
+  if (hostKey === undefined) return null
+  const fromBoot = bootGeometry[hostKey]
+  if (typeof fromBoot === 'number' && valid(fromBoot)) return fromBoot
+  const fallback = remembered[hostKey]
   return typeof fallback === 'number' && valid(fallback) ? fallback : null
 }
 
@@ -147,7 +177,10 @@ export function readStoredFlag(key: string): boolean {
     // 读不了就落到宿主那份。
   }
   const hostKey = HOST_KEY_OF[key]
-  const fallback = hostKey === undefined ? undefined : remembered[hostKey]
+  if (hostKey === undefined) return false
+  const fromBoot = bootGeometry[hostKey]
+  if (typeof fromBoot === 'boolean') return fromBoot
+  const fallback = remembered[hostKey]
   return typeof fallback === 'boolean' ? fallback : false
 }
 

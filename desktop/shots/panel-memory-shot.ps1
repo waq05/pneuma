@@ -52,6 +52,8 @@ try {
   $env:DSC_DESKTOP_USER_DATA = Join-Path $pmHome 'electron-userdata'
   $env:USERPROFILE = $pmHome
   $env:HOME = $pmHome
+  # 主进程与宿主都认这一个：两边读同一份 settings.json（主题与面板几何都要它）。
+  $env:DSC_HOME = Join-Path $pmHome '.dsc'
   $env:DSC_DESKTOP_SHOT_TOPMOST = '1'
   $env:DSC_DESKTOP_SHOT = Join-Path $pm 'panel-memory.png'
   $env:DSC_DESKTOP_SHOT_DELAY = '40000'
@@ -82,5 +84,5 @@ try {
 } finally {
   Remove-Item Env:DSC_DESKTOP_SHOT, Env:DSC_DESKTOP_SHOT_DELAY, Env:DSC_DESKTOP_SHOT_EVAL_LEAD,
     Env:DSC_DESKTOP_SHOT_EVAL, Env:DSC_DESKTOP_SHOT_TOPMOST, Env:DSC_DESKTOP_SEARCH,
-    Env:DSC_RESUME_SESSION, Env:DSC_DESKTOP_USER_DATA -ErrorAction SilentlyContinue
+    Env:DSC_RESUME_SESSION, Env:DSC_DESKTOP_USER_DATA, Env:DSC_HOME -ErrorAction SilentlyContinue
 }

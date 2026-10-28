@@ -10789,6 +10789,8 @@ B 的空白页上；某个会话的删除命令被钩子拦下，理由却是「
 | `src/plugins/runtime.ts` | 只写面板几何的补丁走静默分支，不然拖一下会弹「已保存工作区名字」 |
 | `ui-shell/src/ui-primitives/panels.ts` | `primePanelGeometry` / `setPanelGeometrySaver` 两个口子：localStorage 空着时回落到宿主那份，落盘时把**整份**发过去（宿主是整键替换的补丁语义） |
 | `ui-shell/src/ui-renderer/main.tsx` | 复用启动时那次 `getUiPrefs`，渲染前 `await within(prefs, 1500)` 灌进面板模块——首帧就是对的宽度，不会先画默认再跳一下 |
+| `desktop/electron/main/index.ts` | 冷启动兜底：主进程同步读同一份 settings.json，把几何拼进地址（`?panels=sidebar:320,dock:640`）。宿主没起来时那次 `getUiPrefs` 可能超过 1.5 秒，光靠它首帧就会画成默认宽——用户看到的就是「又回默认了」 |
+| `ui-shell/src/ui-primitives/panels.ts` | 读的顺序定成 localStorage → 地址里那份 → 宿主回读：拖过的值最新，地址那份赶得上首帧，宿主回读兜住浏览器访问 |
 
 边界三条，写在这里免得下次有人当 bug：
 
@@ -10819,11 +10821,13 @@ B 的空白页上；某个会话的删除命令被钩子拦下，理由却是「
 | 项 | 读数 |
 | --- | --- |
 | `check:ui` | 45 条探针（新增 `ui-phone-command-test.mjs`） |
-| `check:core` | 67 条探针（新增 `panel-prefs-test.mjs`，34 条断言） |
+| `check:core` | 67 条探针（新增 `panel-prefs-test.mjs`，40 条断言） |
 | `check:style` | 627 个文件全过 |
 | 四项目 typecheck | 0 错 |
 | 真机截图 | `desktop/shots/slash-menu-shot.ps1` 在真 Electron 里打一个 `/`：菜单 7 行、行高 34、说明 `text-align: right`、分组标题「指令」都在（读数见脚本 stderr 的 `预跑脚本完成` 那行，图在 `desktop/shots/slash-menu.png`） |
 | 宽度回归（真机） | `desktop/shots/panel-memory-shot.ps1`：settings.json 预置 `{sidebar:320, dock:640}`、localStorage 留空（`localStorageSidebar: null`），真 Electron 首帧量到侧栏 320、右侧栏 640、`--dsc-sidebar-w: 320px` —— 宽度确实来自宿主那份，不是浏览器存储 |
+
+顺带统一了一处旧毛病：主进程原来只认 `app.getPath('home')`（走系统账号目录，不认 `USERPROFILE` / `HOME` / `DSC_HOME`），而宿主管家按环境变量解析——重定向过 HOME 的场合（自检、隔离账户、配置放别盘）主进程会读到另一份 settings.json，主题与宽度于是对不上。现在两边都认 `DSC_HOME`。
 
 **两条探针为什么这么写**：宽度这件事的坑在「读」，所以 `panel-prefs-test` 既跑 `readPrefs` 的真实现（临时 `DSC_HOME` + 手写 settings.json），也**直接 import 面板模块**并用假 localStorage 跑一遍回落与落盘——只查源码字符串的话，「回落」这件事本身测不到。菜单那条把手机的纯逻辑（`remote-web/src/lib/commands.ts`）真跑起来，因为它是这轮唯一新增的判据。
 

@@ -11,9 +11,14 @@
  *
  * @module dsc/scripts/panel-prefs-test
  */
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const root = fileURLToPath(new URL('..', import.meta.url))
+/** 读仓库里的源文件（接线检查用；真行为用下面的动态 import 跑）。 */
+const read = (rel) => readFileSync(`${root}${rel}`, 'utf8')
 
 // 先钉住 DSC_HOME，再动态 import：prefs 的 settings.json 路径是模块求值时算出来的。
 const home = mkdtempSync(join(tmpdir(), 'dsc-panel-prefs-'))
@@ -113,7 +118,10 @@ console.log('\n[6] 接线检查（读这一端之外的三处）')
     read('src/plugins/runtime.ts').includes("patch.panelWidths !== undefined && Object.keys(patch).length === 1"),
   )
   const panels = read('ui-shell/src/ui-primitives/panels.ts')
-  check('localStorage 空着时回落到宿主那份', panels.includes('const fallback = hostKey === undefined ? undefined : remembered[hostKey]'))
+  check(
+    'localStorage 空着时先看地址里那份、再看宿主回读',
+    panels.includes('const fromBoot = bootGeometry[hostKey]') && panels.includes('const fallback = remembered[hostKey]'),
+  )
   check('落盘时把整份发给宿主（宿主是整键替换的补丁语义）', panels.includes('saver?.({ ...remembered } as PanelGeometry)'))
   check('启动时灌入宿主那份', read('ui-shell/src/ui-renderer/main.tsx').includes('primePanelGeometry(loaded?.panelWidths ?? {})'))
   check('渲染前就拿到（首帧不跳一下）', read('ui-shell/src/ui-renderer/main.tsx').includes('await within(prefs, 1500)'))
@@ -164,6 +172,34 @@ console.log('\n[7] 面板模块的真行为（假 localStorage + 假宿主）')
   primePanelGeometry({ sidebar: 9999 })
   store.delete(PANEL_KEYS.sidebarWidth)
   check('宿主那份越界也不认', readStoredPx(PANEL_KEYS.sidebarWidth, 200, 420) === null, String(readStoredPx(PANEL_KEYS.sidebarWidth, 200, 420)))
+}
+
+
+console.log('\n[8] 地址里带过来的那份额外保险（宿主冷启动慢时用）')
+{
+  // 换一个模块实例：面板模块在求值时读一次地址，所以先把 window 摆好再 import。
+  globalThis.window = { location: { search: '?theme=claude&panels=sidebar:340,dock:700,collapsed:1' } }
+  const boot = await import('../ui-shell/src/ui-primitives/panels.ts?boot=1')
+  const store = new Map()
+  globalThis.localStorage = {
+    getItem: (key) => (store.has(key) ? store.get(key) : null),
+    setItem: (key, value) => {
+      store.set(key, String(value))
+    },
+    removeItem: (key) => {
+      store.delete(key)
+    },
+  }
+  check('侧栏宽取地址里那份', boot.readStoredPx(boot.PANEL_KEYS.sidebarWidth, 200, 420) === 340, String(boot.readStoredPx(boot.PANEL_KEYS.sidebarWidth, 200, 420)))
+  check('右侧栏宽取地址里那份', boot.readStoredPx(boot.PANEL_KEYS.dockWidth, 300, 820) === 700, String(boot.readStoredPx(boot.PANEL_KEYS.dockWidth, 300, 820)))
+  check('collapsed:1 读成收起', boot.readStoredFlag(boot.PANEL_KEYS.sidebarCollapsed) === true, String(boot.readStoredFlag(boot.PANEL_KEYS.sidebarCollapsed)))
+  boot.primePanelGeometry({ thread: 780 })
+  check('地址里没有的项回落到宿主回读', boot.readStoredPx(boot.PANEL_KEYS.threadWidth, 480, 3200) === 780, String(boot.readStoredPx(boot.PANEL_KEYS.threadWidth, 480, 3200)))
+  store.set(boot.PANEL_KEYS.sidebarWidth, '260')
+  check('拖过之后 localStorage 压过地址里那份', boot.readStoredPx(boot.PANEL_KEYS.sidebarWidth, 200, 420) === 260, String(boot.readStoredPx(boot.PANEL_KEYS.sidebarWidth, 200, 420)))
+  delete globalThis.window
+  const main = read('desktop/electron/main/index.ts')
+  check('主进程把几何拼进地址', main.includes('readPanelQuery()') && main.includes("parts.push(`${key}:${String(Math.round(px))}`)"), '')
 }
 
 console.log(`\n${String(passed)}/${String(passed + failed)} 通过`)
