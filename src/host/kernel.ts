@@ -19,6 +19,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { Context, type Plugin } from '@deepseek-ai/cordis'
 import type { DscCoreConfig } from '../core/config.js'
 import { bootNoticeOnce } from '../core/boot-notices.js'
+import { errText as err } from '../core/err-text.js'
 import { activeConfigFile } from '../core/config-store.js'
 import { parseTolerantYaml, type MigrationReport } from '../core/migrate.js'
 import { getPluginConfig, isPluginEnabled, migrateTeamSplit, registerPluginMeta, type PluginMeta } from '../core/plugin-registry.js'
@@ -75,8 +76,6 @@ import { dockBrowserPlugin } from '../plugins/dock-browser.js'
 import { selfImprovePlugin } from '../plugins/self-improve.js'
 import { dshCompatPlugin } from '../plugins/dsh-compat.js'
 import { fileReviewPlugin } from '../plugins/file-review.js'
-
-const err = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
 /**
  * 官方可开关插件（插件中心「官方可开关」那一档）：代码随包发布，但有开关，

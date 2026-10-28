@@ -30,6 +30,7 @@ import type {
   StatusBarPrefsView,
 } from '../contract.js'
 import type { DscCoreConfig } from '../core/config.js'
+import { errText as err } from '../core/err-text.js'
 import { readConfig } from '../core/config.js'
 import { parseTolerantYaml } from '../core/migrate.js'
 import { pickProbeModel, testConnection } from '../core/connection-test.js'
@@ -55,8 +56,6 @@ import { DSC_PLUGINS_DIR } from '../core/plugin-loader.js'
 import { DSC_VERSION } from '../core/version.js'
 import type { SettingsSectionSpec, SettingsService } from '../services/types.js'
 import { dscPath } from '../core/path-policy.js'
-
-const err = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
 /** 分区 id → 值。空对象 = 该分区没有控件值。 */
 type Values = SettingsValues

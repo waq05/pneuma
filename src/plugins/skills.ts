@@ -29,6 +29,7 @@ import {
   toMarketSkillView,
   type MarketEntry,
 } from '../core/market.js'
+import { errText as err } from '../core/err-text.js'
 import { readConfigDoc } from '../core/config-store.js'
 import { readPrefs } from '../core/prefs.js'
 import type {
@@ -37,8 +38,6 @@ import type {
   SkillProvider,
   SkillService,
 } from '../services/types.js'
-
-const err = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
 /** 描述进目录的截断长度（照 dsh 的 catalogDescriptionMaxLength）。 */
 const DESCRIPTION_LIMIT = 500
