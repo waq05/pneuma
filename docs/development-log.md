@@ -9930,6 +9930,78 @@ scroll 事件、都会改 scrollTop，光看位置分不出来。这次用的第
 
 复扫结果：400 个文件里函数体重复组 **0**（审查起点 40 组）。
 
+## 2026-10-28 审批链三处缺陷：复核判词不留痕、`$_.Key` 被误杀、中止后的幽灵卡（未发版）
+
+起因是用户拿两个现象来问：「选了 AI 复核为什么还要我点」和「工作区可写为什么弹这么多卡」。
+对照 dsh 的权限实现（`D:\deepseek-harness\deepseek-harness`，0.2.1-rc.3）逐段比过之后，
+在这条链上抓出三处。前两处是**实测复现**的，第三处是照执行路径推出来的。
+
+### 缺陷台账
+
+| 编号 | 严重度 | 缺陷 | 怎么发现的 | 状态 |
+| --- | --- | --- | --- | --- |
+| A-1 | 高 | AI 复核判「不放行」或调用失败时不留任何痕迹，卡上只写「需要授权」 | 91a667f5 会话 3 张卡、审计 0 条 auto-deny，查不出是判官否决还是判官挂了 | 已修 |
+| A-2 | 中 | deny 黑名单 `*.key` 把 `$_.Key` 这种变量属性引用当成凭据文件，整条命令被硬拒 | 实测命令（见下）当前产物直接 deny | 已修 |
+| A-3 | 中 | AI 复核期间用户按打断，审批卡仍会登记，然后挂满 5 分钟超时才自解（幽灵卡） | 读执行路径发现：已中止的信号挂 abort 监听不会补发事件 | 已修 |
+
+### A-1　复核判词不留痕
+
+根因在 `src/plugins/approval.ts:443-454`：只有 `risk` 判到 high / critical 才写一条 `auto-deny`；
+`verdict.authorized === false` 与 `catch` 两条路都是裸 `return null`，既不写审计也不告诉卡片。
+
+修法：`aiReview` 改成返回 `{ decision, note }`，三条结局（放行 / 不放行 / 没跑完）全部落审计，
+并把 `note` 当成审批卡的理由——用户点开卡第一眼就能看到「AI 复核判不放行：<判官原话>」。
+
+### A-2　`$_.Key` 被误杀
+
+复现（当前产物，默认配置）：
+
+```
+$f='...jsonl'; Get-Content $f | ForEach-Object { ($_ | ConvertFrom-Json).Key }   -> deny（*.key）
+同一句把 .Key 换成 .Name                                                          -> defer
+Get-Content C:\Users\waq\.ssh\id.key                                            -> deny（*.key，正确）
+```
+
+根因：`src/core/approval-floor.ts:514-521` 的 `globHit` 直接拿**整条命令原文与每个词元**去比，
+而 `*.key` 编出来是 `^.*\.key$`——`$_.Key` 这个词元正好以 `.Key` 结尾。
+黑名单本来只想拦「文件叫 xxx.key」，结果把一个属性名也算进去了。
+
+修法：先把命令切成「可能是一个路径或文件名」的候选片段（`pathCandidates`），再逐条比；
+以 `$` 开头且不含路径分隔符的纯变量/属性引用不参与匹配（`$env:USERPROFILE\.ssh\id_rsa` 带分隔符，照旧命中）。
+真凭据文件的七种写法在修复后必须仍被拒，这条写进了验收。
+
+### A-3　中止后的幽灵卡
+
+`askHuman` 在 `src/plugins/approval.ts:295-375` 给 `signal` 挂 `abort` 监听来收卡。
+但 EventTarget 的语义是「已中止的信号不会补发事件」：复核跑了几秒、用户这时按了打断，
+信号已经 abort，监听永远不触发，卡就一直挂在 `pendings` 里，直到 5 分钟超时（`approval.ts:50`）才按拒收场。
+用户看到的是一张没人能解释的卡。修法是在入口先看 `signal.aborted`，是就直接按拒返回，卡都不登记。
+
+### 核实过但**不是**缺陷的两条
+
+1. **`medium` 被映射成 `low`**（`approval.ts:445`）：`risk` 这个变量只服务于 `if (risk === 'high')`，
+   medium 与 low 走同一条路，行为完全等价。只把变量改成 `highRisk`，让它别再骗读代码的人。
+2. **工作区可写下 `pnpm --version` 也弹卡**：这是命令策略的既定取舍（不在只读白名单就 ask），
+   不是 bug。要减卡就得往 `DEFAULT_ALLOW_PREFIXES` 或只读白名单里加前缀，那是产品决定，本批不动。
+
+### 验收
+
+| 项 | 结果 |
+| --- | --- |
+| 复现探针（10 条：7 条该拒、3 条该放） | 10/10 与预期一致：`$_.Key` 与 `(…).Key` 恢复 defer；`id_rsa`、`.env`、`.pem`、`/etc/passwd`、`.aws/credentials`、`Program Files (x86)\app.key`、未加引号的空格路径仍 deny |
+| `shots/approval-floor-check.mjs` | PASS 95 / FAIL 0 |
+| `shots/batch-d-check.mjs`（真内核端到端，含 `approval: ask`） | 全 PASS |
+| `pnpm run typecheck` | 退出码 0 |
+| `node scripts/style-check.mjs` | 648 个文件全部通过 |
+
+A-3 没有自动化探针：造一个「复核中途按打断」的假 ctx，成本高于这次改动本身，靠代码复查与类型检查兜。
+
+**一处环境限制（与本次改动无关）**：这个会话的沙箱对 `D:\dsc\lib` 只有读权限，`pnpm run build` 写
+`lib/**.js` 时报 `EPERM`（新建文件被拒，`touch` 同样失败）。构建与全部探针因此改用
+`pnpm exec tsc -p tsconfig.json --outDir .tmp-build` 的临时产物，再用改写 import 路径的同一份自检脚本
+去跑。**`lib/` 要在你自己的终端里跑一次 `pnpm run build` 才会带上这次修复。**
+
+
 ## 十九、三处「过程噪点」：写前预览摊满屏、「已恢复会话」、切个会话就换工具集
 
 用户一次报了三件事，前两件是界面，第三件是内核级的。
@@ -9997,3 +10069,155 @@ display」留的护栏，上一次 `.ask-panel` 就是被自己的 `display:flex
 
 **教训十六：同一个东西在一个回合里取两次，就有两次不同的机会。** 工具目录、系统提示、模式都是「请求那一刻
 的快照」。发了什么就得按什么执行，中间变了算下一轮的事——否则报错会指向模型，而病根在两次取值之间。
+
+## 二十、审批卡改版：一行中文说清要干什么，收掉三样噪音（0.7.1，未发版）
+
+用户的第二句话是「弹出的审批框，减少无用信息，添加命令中文含义」。原卡长这样：
+
+```
+pwsh  中风险        权限 完全访问 · 审阅 AI 复核 · 模式 执行
+{"command":"Remove-Item -Recurse -Force D:\\dsc\\.tmp"}
+沙箱边界：这条命令要写可执行根之外（允许这一次就破例执行，沙箱对这一次不再拦）
+[这次允许 y] [本会话允许 s] [拒绝 n]        5 分钟没人答按拒绝处理
+```
+
+四行里三行都不回答「它到底要动我哪个文件」：档位行是设置的回声，参数行是一段 JSON 壳套着
+命令行，提示句是每张卡都一样的常驻尾巴。
+
+### 一　新增：一行中文含义
+
+`src/core/call-meaning.ts`（新文件）把一次调用翻成一句话：命令类解读命令，写类说清动哪个文件。
+做成确定性查表，不调模型——审批卡弹出来的时候没有余裕再等一次模型往返，而
+「同一句命令每次给同一个说法」本身就是可信度的一部分。
+
+```
+Remove-Item -Recurse -Force D:\dsc\.tmp   → 删除 D:\dsc\.tmp
+git status --porcelain                     → 看 Git 状态
+git commit -m "fix: x"                     → 提交改动
+cp a.txt D:\backup\a.txt                   → 复制 a.txt → D:\backup\a.txt
+Get-Content $f | ForEach-Object { … }      → 读文件内容 $f（共 2 段命令）
+frobnicate --fast x                        → 运行 frobnicate 命令
+```
+
+三条判据值得写下来，它们是「说不准」的三个来源：
+
+1. **认不出来就直说**。查不到程序名就给「运行 xxx 命令」，不猜。用户是拿这句话决定点不点
+   「允许」的，猜错比不说更糟。
+2. **操作数要挑对**。`git commit -m "修一处标点"` 的 `-m` 后面是提交信息，不是要改的路径，
+   所以只有本来就对着路径或分支的子命令（add / checkout / restore / diff / rm …）才把操作数写上。
+   `pnpm --version` 同理：`--version` 是开关，不能当子命令念。
+3. **管道只细说第一段**，其余报段数。`Get-Content x | %{…} | Select-Object` 的完整解读
+   是一篇小作文，而用户此刻要判断的只是「这一下要不要点允许」。
+
+### 二　命令原文替掉 JSON 壳
+
+参数摘要那一行原来给的是 `JSON.stringify(args)`，命令类工具就是 `{"command":"…"}`：
+两个花括号加一层转义，只增加噪音。现在命令类工具直接给命令原文
+（`src/plugins/approval.ts` 里那句 `const summary = command ?? request.argsSummary`），
+审计记的也是同一份，翻日志时不用再剥一层 JSON。
+
+### 三　收掉的三样噪音
+
+| 收掉的 | 原来为什么在那儿 | 现在放哪儿 |
+| --- | --- | --- |
+| `权限 X · 审阅 Y · 模式 Z` 整行 | 早期用来排查「为什么这个组合还问我」 | 卡片的悬浮提示（`title={modeLine}`），要核对时鼠标停一下 |
+| 「低风险」徽章 | 每张卡一枚，看到第二张就成了背景色 | 只在**不是**低风险时画——值得停下来的是那一种 |
+| 「5 分钟没人答按拒绝处理」 | 常驻在按钮行末尾 | 并进「拒绝」按钮的悬浮提示 |
+
+另外收掉两句兜底理由：「需要授权」与「工作区内的改动需要确认」不再占一行（`isGenericReason`）。
+它们没有信息量；有话说的是复核否决、沙箱边界、安全钩子这类具体原因，那些照原样留着。
+
+两张卡（插件壳 `ui-shell/src/plugins/prompt/ui.tsx`、旧渲染层
+`desktop/src/renderer/ApprovalCard.tsx`）同步改，样式各在自己那份样式表里加一条
+`.approval-meaning`。手机端那张卡（`remote-web`）第一轮先没动，用户点头后紧接着补上，
+见下一节。
+
+### 四　手机端那张卡也跟上了
+
+`remote-web` 自带一套样式与一份手抄的类型（`src/lib/types.ts` 不引契约），所以要在三处补：
+类型加 `meaning?`、`protocol.ts` 的归一化多读一个字段、`ApprovalCard.tsx` 画那一行并把
+「低风险」徽章和通用兜底理由一起收掉。手机上命令原文更难读，这一行更该排在最前面。
+
+### 五　判官没跑完，不再一律弹卡
+
+`aiReview` 原来只有一个出口：判官否决和判官没跑完都是 `decision: null`，一律落到人工卡。
+于是对家网络抖一下，用户就得多点一张卡——这正是「选了 AI 复核为什么还让我点」的另一半。
+
+现在 `ReviewVerdict` 多一个 `failed`，两种结局分开：
+
+| 判官说了什么 | 去向 |
+| --- | --- |
+| 放行 | 直接过 |
+| 看了看、不同意（高风险 / `authorized:false`） | 照旧弹卡，AI 不许替用户扛这个责任 |
+| 压根没看上（超时、网络断、返回的不是 JSON） | 回到**用户自己选的权限档**：那一档本来放行就放行，本来要问才弹卡 |
+
+关键在最后一行是「按权限档」而不是「一律放行」：工作区外的写、需要问的命令照旧弹卡；
+这一轮被打断时也不放行（打断是取消，不是允许）。
+
+### 六　版本号与帮助类命令不再弹卡
+
+`src/core/command-policy.ts` 的 `isReadOnlySegment` 加了 `INFO_FLAGS`（`--version` /
+`-v` / `-V` / `--help` / `-h` / `/?` / `--usage` / `version` / `help`）：
+整段除程序名之外只有这些开关时判只读。
+
+这条必须排在只读名单与解释器判断**之前**——`node` 与 `pnpm` 都不在只读名单里，
+落到后面就还是「每次问你一次版本号」。三条边界同时钉住，免得它被当成万能洗白：
+`node -v && curl …`（第二段照判）、`node -v > v.txt`（落盘不算只读）、
+`node -v --experimental-loader ./x.mjs`（多出开关不算只读）。
+
+### 七　真机看了一眼，又收了两处
+
+改完先截了张真图（`desktop/shots/approval-shot.ps1`：隔离 HOME + 假模型端点 + 真 Electron，
+不点任何按钮，让卡挂着拍）。图上暴露了两件光读代码看不出来的事：
+
+1. **沙箱边界那条理由占了三行**。它把「可写根：D:\dsh、D:\dsc\…\tmp\<uuid>」整串都带上来了——
+   那是排查用的，摆在卡上谁也读不完。改成只取第一句（`firstSentence`），
+   剩下「哪个路径不在范围内」这一句，后面的列表留在工具结果里。
+2. **参数行与「将做的改动」重复**。write 的参数摘要是一段被截断的 JSON 正文，
+   而下面那块「将写入 … +1 −0」已经把「写哪个文件、改几行」说全了。
+   三张卡都改成：有 diff 时不画参数行。
+
+顺手把终端那张卡（`src/app/ApprovalCard.tsx`）也补齐了同一套口径：含义行、
+低风险不挂标签、通用兜底理由不占行、有 diff 时不画参数行。
+
+### 八　验收
+
+| 项 | 结果 |
+| --- | --- |
+| `pnpm run build` | 通过（`lib/` 已更新，含新契约） |
+| `pnpm run build:ui` | 通过（19 份插件产物重写） |
+| `scripts/call-meaning-test.mjs`（真值表 28 条） | 全部通过 |
+| `scripts/command-policy-test.mjs`（只读判定 25 条，**新增**） | 全部通过 |
+| `scripts/approval-review-fallback-test.mjs`（判官三种结局 12 条） | 全部通过 |
+| `scripts/ui-approval-card-test.mjs`（源码级 34 条，四张卡正反双验） | 全部通过 |
+| 真机截图 `desktop/shots/approval-card.png` | 拍到了改完的卡：含义行在、参数行没了、沙箱理由一句话 |
+| `pnpm run check:core`（全量 56 条） | **56/56 通过**（532 秒） |
+| `node scripts/check-ui.mjs` | 39/39 通过（39.3s） |
+| `scripts/remote-e2e.mjs`（手机端全链） | 88/90：审批链 5 条全过，两条失败在设备清单与主控位仲裁（与本次改动无关） |
+| `shots/modes-security-check.mjs` | 全部通过 |
+| `shots/approval-floor-check.mjs` | PASS 95 / FAIL 0 |
+| `shots/batch-d-check.mjs` | 全 PASS |
+| 四个项目 `typecheck`（根 / desktop / ui-shell / remote-web） | 全部 0 错 |
+| `node scripts/style-check.mjs` | 667 个文件全部通过 |
+
+顺手修了两条**早就红了**的断言（与这批改动无关，但拦着门禁）：
+`shots/modes-security-check.mjs` 里身份段还写着旧名「你是 Muse Code」（源码早已是 Pneuma），
+`ctx.get` 白名单里少了 `git`（`desktop-dock.ts` 写类 op 之后催界面刷新分支钮）。
+
+**一处门禁本身的问题**：命令只读判定一直只在 `shots/modes-security-check.mjs` 里验过，
+而 `shots/` 被 `.gitignore` 忽略——这套口径换台机器就没有门禁。这次补了
+`scripts/command-policy-test.mjs`（25 条）进 `check:core` 自动发现，只收判定口径那一半，
+不搬 `shots/` 里那一百多条。
+
+另一处：`scripts/sandbox-parity-test.mjs` 用「字面位置」比「AI 复核排在完全访问自动放行之前」。
+把「完全访问 / 工作区自动」收进 `policyAutoReason()` 之后，`policy === 'full-access'` 最早
+出现在函数**定义**处，断言就误报了。改成比第一次**调用** `policyAutoReason()` 的位置，
+并补一条「复核缺席才走自动放行」——这才是真正要守的顺序。
+
+截图脚本留在 `desktop/shots/approval-shot.ps1`（`pwsh -NoProfile -File approval-shot.ps1`，
+产物 `approval-card.png`）：它复用 v1 走查那套隔离 HOME 与假端点，只是**不去点决定按钮**，
+让卡一直挂着——要拍一张卡片就得有一张真的卡在那儿。
+
+一个环境上的坑记一笔：`capturePage()` 在同一进程里短时间内反复调用，拿到的可能是
+上一帧（我前三次拍出来是同一张欢迎页，字节数一模一样）。把截图时刻推到 60 秒之后才正常。
+
