@@ -14,6 +14,7 @@ import { DEFAULT_CAPS, clampEffort, effortToWire, hasEffortLevel, THINKING_LEVEL
 import { OPENAI_COMPLETIONS_API, streamChat, type LlmAdapter, type ToolOrphanReport } from '../core/llm.js'
 import type { EffortLevel, ModelChoiceView, Modality } from '../contract.js'
 import type { LlmRoute, LlmService } from '../services/types.js'
+import type { Session } from '../core/session.js'
 
 /** 请求侧清洗提醒的账：会话 id → 上次报过的报告形状（同形状不重复报，形状变了再报一次）。 */
 const sanitizeNotices = new Map<string, string>()
@@ -52,26 +53,41 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
   inject: ['session'],
   provide: 'llm',
   apply(ctx, config) {
-    let currentProvider = config.defaultProvider
-    let currentModel = config.defaultModel
-    // 'default' = 不发思考字段（跟随端点默认行为）
-    let currentEffort: EffortLevel = 'default'
-    // T39：会话里记过模型选择就先恢复它（/model 切过的不丢）；没记过才用配置默认。
-    const remembered = ctx.session.current().state('model')
-    if (remembered !== undefined && findModel(remembered.provider, remembered.model) !== undefined) {
-      currentProvider = remembered.provider
-      currentModel = remembered.model
+    /**
+     * 模型与思考档位**按会话**存（2026-10-28，与权限同一批）：值在会话 `model` 状态条目里，
+     * 不再有进程级 currentProvider/currentModel。后台 agent 用自己的会话取路由，
+     * 不会因为用户看着别的会话就换模型。
+     *
+     * `lastSelected` 只服务一件事：新建会话没记过模型时沿用「上一次选的那一组」，
+     * 保持 /model 热切换的老手感；恢复老会话没有记录时按配置默认走。
+     */
+    let lastSelected = {
+      provider: config.defaultProvider,
+      model: config.defaultModel,
+      // 'default' = 不发思考字段（跟随端点默认行为）
+      effort: 'default' as EffortLevel,
     }
-    // 切会话跟着切模型：新会话记过谁就用谁，没记过保持当前选择（与 /model 的
-    // 进程级热切换同一手感）。配置里已经没有的模型不恢复，静默留在当前选择上。
-    ctx.on('dsc/session-open', ({ session }) => {
-      const recalled = session.state('model')
-      if (recalled === undefined || findModel(recalled.provider, recalled.model) === undefined) return
-      if (recalled.provider === currentProvider && recalled.model === currentModel) return
-      currentProvider = recalled.provider
-      currentModel = recalled.model
-      // 原来选的档位在新模型上未必存在，退回「默认」比留着发不出去的值强
-      currentEffort = clampEffort(capsFor(currentProvider, currentModel), currentEffort)
+    // T39：启动会话记过模型就先恢复它；没记过才用配置默认。
+    const startupSaved = ctx.session.current().state('model')
+    if (startupSaved !== undefined && findModel(startupSaved.provider, startupSaved.model) !== undefined) {
+      lastSelected = {
+        provider: startupSaved.provider,
+        model: startupSaved.model,
+        effort: clampEffort(capsFor(startupSaved.provider, startupSaved.model), startupSaved.effort ?? 'default'),
+      }
+    }
+    // 新建会话（没有 filePath）没记过模型时，把上一次选的写进去；恢复老会话只在有记录时用记录。
+    ctx.on('dsc/session-open', ({ session, filePath }) => {
+      if (session.state('model') !== undefined) {
+        ctx.emit('dsc/changed')
+        return
+      }
+      if (filePath !== undefined) return
+      // 没选过档位时用偏好的新会话默认（设置里改「思考强度」会同时记成默认）
+      const effort = lastSelected.effort === 'default'
+        ? ((ctx.get('settings')?.prefs().defaultEffort ?? 'default') as EffortLevel)
+        : lastSelected.effort
+      session.appendState('model', { provider: lastSelected.provider, model: lastSelected.model, effort })
       ctx.emit('dsc/changed')
     })
     /** 协议适配器表：id → 适配器。内置 openai-completions 预注册，插件可补新的协议。 */
@@ -117,24 +133,56 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
       }
     }
 
+    /** 某个会话生效的三项：会话记过且模型还在配置里就用它，否则回落配置默认。 */
+    interface EffectiveModel {
+      provider: string
+      model: string
+      effort: EffortLevel
+    }
+    const effectiveOf = (session: Session): EffectiveModel => {
+      // 最小假会话（探针）没有 state：按配置默认算，别把一次判定炸掉。
+      const saved = typeof session.state === 'function' ? session.state('model') : undefined
+      const provider = saved !== undefined && findModel(saved.provider, saved.model) !== undefined ? saved.provider : config.defaultProvider
+      const model = saved !== undefined && findModel(saved.provider, saved.model) !== undefined ? saved.model : config.defaultModel
+      const fallbackEffort = (ctx.get('settings')?.prefs().defaultEffort ?? 'default') as EffortLevel
+      const effort = clampEffort(capsFor(provider, model), saved?.effort ?? fallbackEffort)
+      return { provider, model, effort }
+    }
+    const windowOf = (effective: EffectiveModel): number => findModel(effective.provider, effective.model)?.contextWindow ?? 128_000
+
     const service: LlmService = {
       get provider() {
-        return currentProvider
+        return effectiveOf(ctx.session.current()).provider
       },
       get model() {
-        return currentModel
+        return effectiveOf(ctx.session.current()).model
       },
       get effort() {
-        return currentEffort
+        return effectiveOf(ctx.session.current()).effort
       },
       get contextWindow() {
-        return findModel(currentProvider, currentModel)?.contextWindow ?? 128_000
+        return windowOf(effectiveOf(ctx.session.current()))
       },
       get inputModalities(): Modality[] {
-        return capsFor(currentProvider, currentModel).modalities
+        const effective = effectiveOf(ctx.session.current())
+        return capsFor(effective.provider, effective.model).modalities
       },
       route(): LlmRoute {
-        return routeFor(currentProvider, currentModel, currentEffort)
+        const effective = effectiveOf(ctx.session.current())
+        return routeFor(effective.provider, effective.model, effective.effort)
+      },
+      routeForSession(session): LlmRoute {
+        const effective = effectiveOf(session)
+        return routeFor(effective.provider, effective.model, effective.effort)
+      },
+      providerOf(session) {
+        return effectiveOf(session).provider
+      },
+      modelOf(session) {
+        return effectiveOf(session).model
+      },
+      contextWindowOf(session) {
+        return windowOf(effectiveOf(session))
       },
       routeTo(provider, model, effort): LlmRoute {
         return routeFor(provider, model, effort)
@@ -167,7 +215,9 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
         )
       },
       setEffort(effort) {
-        const caps = capsFor(currentProvider, currentModel)
+        const session = ctx.session.current()
+        const current = effectiveOf(session)
+        const caps = capsFor(current.provider, current.model)
         if (!hasEffortLevel(caps, effort)) {
           const declared =
             caps.thinkingLevels.length === 0
@@ -176,7 +226,8 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
           const wanted = effort === 'default' ? '默认' : THINKING_LEVEL_LABELS[effort]
           throw new Error(`思考档位「${wanted}」用不了 —— ${declared}（在设置 → 模型里给它勾上）`)
         }
-        currentEffort = effort
+        session.appendState('model', { provider: current.provider, model: current.model, effort })
+        lastSelected = { provider: current.provider, model: current.model, effort }
         ctx.emit('dsc/changed')
       },
       setModel(provider, model) {
@@ -191,12 +242,11 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
             `端点 ${provider} 没有模型 ${model}；可用：${target.models.map((entry) => entry.id).join('、')}`,
           )
         }
-        currentProvider = provider
-        currentModel = model
         // 原来选的档位在新模型上未必存在，退回「默认」比留着发不出去的值强
-        currentEffort = clampEffort(capsFor(provider, model), currentEffort)
-        // T39：记进当前会话——恢复会话时优先用它，重启/重开不再回落配置默认
-        ctx.session.current().appendState('model', { provider, model })
+        const effort = clampEffort(capsFor(provider, model), effectiveOf(ctx.session.current()).effort)
+        // 记进当前会话——恢复会话时优先用它，后台 agent 也按自己的记录取路由
+        ctx.session.current().appendState('model', { provider, model, effort })
+        lastSelected = { provider, model, effort }
         ctx.emit('dsc/changed')
       },
       parseModelRef(ref) {
@@ -206,7 +256,7 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
         for (const name of names) {
           if (ref.startsWith(`${name}/`)) return { provider: name, model: ref.slice(name.length + 1) }
         }
-        return { provider: currentProvider, model: ref }
+        return { provider: effectiveOf(ctx.session.current()).provider, model: ref }
       },
       listModels(): ModelChoiceView[] {
         const choices: ModelChoiceView[] = []

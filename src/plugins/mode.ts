@@ -21,6 +21,7 @@ import { MODES, MODE_IDS, modeSpec, parseModeToken } from '../core/modes.js'
 import { activeRules } from '../core/command-policy.js'
 import { audit } from '../core/audit.js'
 import type { ToolGuard } from '../core/tool-guards.js'
+import type { Session } from '../core/session.js'
 
 /** 命令名到模式的快查（`/plan`、`/explore`、`/quiet` 直接切档）。 */
 const COMMAND_MODES: Record<string, CollaborationMode> = {
@@ -35,11 +36,19 @@ export const modePlugin: Plugin.Object = {
   inject: ['session', 'commands', 'approval', 'guards', 'prompt', 'surfaces'],
   provide: 'mode',
   apply(ctx) {
-    let mode: CollaborationMode = ctx.session.current().state('mode') ?? 'build'
+    /**
+     * 协作模式**按会话**读（2026-10-28）：值只在会话 `mode` 状态条目里，没有进程级变量。
+     * 后台会话的守卫按它自己的记录判，不会因为你切到执行模式就放行。
+     */
+    const modeOf = (session: Session): CollaborationMode => session.state('mode') ?? 'build'
+    /** 按会话 id 找模式（找不通常驻实例就按当前查看的会话）。 */
+    const modeFor = (sessionId?: string): CollaborationMode => {
+      const found = sessionId === undefined || sessionId === '' ? undefined : ctx.get('agent')?.sessionById(sessionId)
+      return modeOf(found ?? ctx.session.current())
+    }
 
     const apply = (next: CollaborationMode, opts: { record?: boolean; notice?: string } = {}): void => {
-      const changed = mode !== next
-      mode = next
+      const changed = modeFor() !== next
       if (opts.record !== false) ctx.session.current().appendState('mode', next)
       if (changed) {
         audit({
@@ -59,26 +68,37 @@ export const modePlugin: Plugin.Object = {
 
     const service: ModeService = {
       get mode() {
-        return mode
+        return modeOf(ctx.session.current())
       },
+      modeFor,
       setMode(next) {
         apply(next)
       },
       surface(): ModeSurface {
-        return { current: mode, options: MODE_IDS.map((id) => ({ id, label: MODES[id].label, hint: MODES[id].hint })) }
+        return {
+          current: modeOf(ctx.session.current()),
+          options: MODE_IDS.map((id) => ({ id, label: MODES[id].label, hint: MODES[id].hint })),
+        }
       },
     }
     ctx.provide('mode', service)
 
     // 这一档的条款进系统提示：排在工具规范之后、用户说明书之前，
     // 它每轮都可能变，往后放一点才不会把前面那些稳定段的提示缓存打没。
-    ctx.prompt.register('mode:policy', () => modeSpec(mode).prompt, { order: 30 })
+    ctx.prompt.register('mode:policy', (scope) => modeSpec(modeFor(scope?.sessionId)).prompt, { order: 30 })
 
     // 闸门：执行档一律交给后面的权限模式与审批卡；其余三档照 core/modes.ts 的判法说话。
     const modeGuard: ToolGuard = {
       id: 'mode',
       order: 10,
       decide(input) {
+        // 这次调用属于哪个会话就用那个会话的模式：后台会话在计划模式跑，你切到执行模式看它，
+        // 也不该把它的写操作放行。
+        const session =
+          input.sessionId === undefined || input.sessionId === ''
+            ? ctx.get('agent')?.sessionFor(input.sessionPath)
+            : ctx.get('agent')?.sessionById(input.sessionId)
+        const mode = modeOf(session ?? ctx.session.current())
         const gate = modeSpec(mode).gate({
           toolName: input.toolName,
           risk: input.risk,
@@ -99,12 +119,11 @@ export const modePlugin: Plugin.Object = {
 
     // 恢复历史会话：模式跟着回来（不重复写记录，也不重复播报切换）。
     ctx.on('dsc/session-open', ({ session }) => {
-      mode = session.state('mode') ?? 'build'
-      ctx.emit('dsc/mode-changed', mode)
+      ctx.emit('dsc/mode-changed', modeOf(session))
       ctx.emit('dsc/changed')
     })
     // 挂载完就播一次当前档位：比本插件先挂载的监听者（审批插件）因此不会停在默认档位上。
-    ctx.emit('dsc/mode-changed', mode)
+    ctx.emit('dsc/mode-changed', modeOf(ctx.session.current()))
 
     /** `/mode <档位>`：支持中文别名（计划 / 探索 / 免打扰 / 执行）。 */
     ctx.commands.register(

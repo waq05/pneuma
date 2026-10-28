@@ -78,7 +78,8 @@ console.log('[2] 换模型：旧档位在新模型上不存在就夹回「默认
   check('没有思考的模型上一律回默认', clampEffort(noThinking, 'low') === 'default' && clampEffort(noThinking, 'default') === 'default')
   check('hasEffortLevel 认「默认」恒可选', hasEffortLevel(noThinking, 'default') && !hasEffortLevel(noThinking, 'off'))
   // 宿主真的在 setModel 里调它（不然界面上还显示着 max，发出去却是别的）
-  check('setModel 里调用 clampEffort（换模型时夹档）', read('src/plugins/llm.ts').includes('currentEffort = clampEffort(capsFor(provider, model), currentEffort)'))
+  check('setModel 里调用 clampEffort（换模型时夹档）', read('src/plugins/llm.ts').includes('clampEffort(capsFor(provider, model), effectiveOf(ctx.session.current()).effort)'))
+  check('档位跟着模型一起写进会话（不再只存内存）', read('src/plugins/llm.ts').includes("appendState('model', { provider, model, effort })"))
   check('setEffort 先查 hasEffortLevel，认不出就报错而不是静默吞', read('src/plugins/llm.ts').includes('if (!hasEffortLevel(caps, effort))'))
   check('报错文案把可用档位列出来（用户知道该去勾哪一档）', read('src/plugins/llm.ts').includes('这个模型只支持：'))
 }

@@ -186,11 +186,11 @@ export const compactPlugin: Plugin.Object = {
       /** 当前模型路由 + 配置里的自动压缩触发线（缺省 contextWindow 的 80%）。 */
       async check(signal, target) {
         const session = target ?? ctx.session.current()
-        const threshold = ctx.llm.contextWindow * (config.autoCompactPercent / 100)
+        const threshold = ctx.llm.contextWindowOf(session) * (config.autoCompactPercent / 100)
         if (estimateTokens(session.messages) <= threshold) return
         const outcome = await compactSession(
           session,
-          ctx.llm.route(),
+          ctx.llm.routeForSession(session),
           stream,
           signal ?? new AbortController().signal,
           carry(),
@@ -211,7 +211,7 @@ export const compactPlugin: Plugin.Object = {
         const session = target ?? ctx.session.current()
         const outcome = await compactSession(
           session,
-          ctx.llm.route(),
+          ctx.llm.routeForSession(session),
           stream,
           signal ?? new AbortController().signal,
           carry(),
@@ -246,7 +246,7 @@ export const compactPlugin: Plugin.Object = {
         try {
           const outcome = await compactSession(
             ctx.session.current(),
-            ctx.llm.route(),
+            ctx.llm.routeForSession(ctx.session.current()),
             stream,
             new AbortController().signal,
             carry(),

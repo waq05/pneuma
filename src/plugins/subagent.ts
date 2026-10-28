@@ -447,7 +447,7 @@ export const subagentPlugin: Plugin.Object = {
       teammate.agent = new MiniAgent(
         {
           route: () => {
-            if (teammate.badge.model === null) return ctx.llm.route()
+            if (teammate.badge.model === null) return ctx.llm.routeForSession(teammate.parentSession)
             const at = teammate.badge.model.indexOf('/')
             const provider = at > 0 ? teammate.badge.model.slice(0, at) : teammate.badge.model
             const modelId = at > 0 ? teammate.badge.model.slice(at + 1) : ''

@@ -307,6 +307,8 @@ function firstSentence(text: string): string {
         /** 这次判定所属会话的权限模式与审阅者（卡面与审计都按它，不再读全局变量）。 */
         policy: ApprovalPolicy
         reviewer: ApprovalReviewer
+        /** 这次判定所属会话的协作模式（卡面与审计按它）。 */
+        mode: CollaborationMode
         grantKey: string
         hardline: boolean
         /** write/edit 的「将做的改动」；算不出来时 null，卡上就不画。 */
@@ -349,7 +351,7 @@ function firstSentence(text: string): string {
           ...(input.escalation === null ? {} : { escalation: input.escalation }),
           policy: input.policy,
           reviewer: input.reviewer,
-          mode: modeForCard,
+          mode: input.mode,
           // 发起会话归属（0.6.49）：卡片是全局渲染的，后台会话的卡弹出来时界面要标得清是谁家的
           sessionPath: pathOf(request),
           ...(input.diff === null ? {} : { diff: input.diff }),
@@ -363,7 +365,7 @@ function firstSentence(text: string): string {
           summary: view.argsSummary,
           reason: input.reason,
           policy: input.policy,
-          mode: view.mode,
+          mode: input.mode,
           sessionId: sid,
           cwd: request.cwd,
         })
@@ -388,7 +390,7 @@ function firstSentence(text: string): string {
             decision: decision === 'reject' ? (phase === 'decided' ? 'reject' : phase) : decision,
             reason: input.reason,
             policy: input.policy,
-            mode: view.mode,
+            mode: input.mode,
             sessionId: sid,
             ...(source === undefined ? {} : { source }),
           })
@@ -425,7 +427,7 @@ function firstSentence(text: string): string {
         summary: redact(request.argsSummary),
         reason,
         policy: policyOf(sessionOf(request.sessionPath)),
-        mode: modeForCard,
+        mode: ctx.get('mode')?.modeFor(sidOf(request)) ?? modeForCard,
         sessionId: sidOf(request),
         cwd: request.cwd,
         ...extra,
@@ -461,7 +463,8 @@ function firstSentence(text: string): string {
      */
     const aiReview = async (request: ApprovalRequest, signal: AbortSignal): Promise<ReviewVerdict> => {
       try {
-        const route = ctx.llm.route()
+        // 判官跑在「发起这次调用的会话」的模型上（后台会话不拿当前视图的模型）
+        const route = ctx.llm.routeForSession(sessionOf(request.sessionPath))
         const result = await ctx.llm.stream(
           route.api,
           {
@@ -545,7 +548,7 @@ function firstSentence(text: string): string {
           kind: 'mode-change',
           reason: `权限模式 → ${next}`,
           policy: next,
-          mode: modeForCard,
+          mode: ctx.get('mode')?.modeFor(sessionId()) ?? modeForCard,
           sessionId: sessionId(),
         })
       },
@@ -562,7 +565,7 @@ function firstSentence(text: string): string {
           kind: 'mode-change',
           reason: `审批审阅者 → ${next}`,
           policy: policyOf(ctx.session.current()),
-          mode: modeForCard,
+          mode: ctx.get('mode')?.modeFor(sessionId()) ?? modeForCard,
           sessionId: sessionId(),
         })
       },
@@ -573,6 +576,8 @@ function firstSentence(text: string): string {
         const session = sessionOf(request.sessionPath)
         const policy = permissionOf(session, 'policy', defaultPolicy())
         const reviewer = permissionOf(session, 'reviewer', defaultReviewer())
+        // 卡面写「这次属于哪个模式」：按请求会话取，后台会话的卡不会标成当前视图的模式。
+        const cardMode = ctx.get('mode')?.modeFor(session.meta.id) ?? modeForCard
         // 安全钩子可以要求「这一次必须问人」：非空时下面所有自动放行档一律跳过。
         const forced = options?.forceAskReason?.trim() ?? ''
         const facts = callFacts(request.args ?? {}, cwd)
@@ -750,6 +755,7 @@ function firstSentence(text: string): string {
           scopes,
           policy,
           reviewer,
+          mode: cardMode,
           grantKey: key,
           hardline: false,
           diff,

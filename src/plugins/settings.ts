@@ -228,7 +228,7 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
           },
           { type: 'select', key: 'policy', label: '当前会话权限模式', options: POLICY_OPTIONS, help: '要不要问：哪些操作必须先经你同意。只改当前会话；新会话默认值见权限预设' },
           { type: 'select', key: 'reviewer', label: '当前会话审阅者', options: REVIEWER_OPTIONS, help: '谁来裁：要问的事先给本人，还是先给模型判官（判不出来仍会问你）。只改当前会话' },
-          { type: 'select', key: 'effort', label: '思考强度', options: EFFORT_OPTIONS, help: '越高思考越深，耗时与用量也越大' },
+          { type: 'select', key: 'effort', label: '当前会话思考强度', options: EFFORT_OPTIONS, help: '越高思考越深，耗时与用量也越大。只改当前会话，同时记成新会话默认' },
           { type: 'select', key: 'temperature', label: '采样温度', options: TEMPERATURE_OPTIONS, help: '越高越发散，越低越稳定' },
           {
             type: 'switch',
@@ -287,9 +287,10 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
         if (key === 'effort') {
           const effort = String(value) as EffortLevel
           if (!EFFORT_OPTIONS.some((option) => option.value === effort)) throw new Error(`未知的思考强度 ${value}`)
+          // 只改当前会话；同时记成「新会话默认」（setPrefs 只写偏好，不动当前会话）。
           ctx.llm.setEffort(effort)
           savePrefs({ defaultEffort: effort })
-          return { notice: `思考强度已设为「${EFFORT_OPTIONS.find((option) => option.value === effort)?.label ?? effort}」，下次启动沿用` }
+          return { notice: `当前会话思考强度已设为「${EFFORT_OPTIONS.find((option) => option.value === effort)?.label ?? effort}」` }
         }
         if (key === 'temperature') {
           writeTemperature(value === 'follow' ? null : Number(value))
@@ -708,13 +709,8 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
     // 权限模式与审阅者不再在启动时写成全局值（2026-10-28）：它们按会话存，
     // 偏好里的 defaultPolicy/defaultReviewer 只给「还没钉过的会话」当默认值，
     // 由 approval / permission-presets 在第一次读取时钉进会话。
-    if (prefs.defaultEffort !== null && prefs.defaultEffort !== 'default') {
-      try {
-        ctx.llm.setEffort(prefs.defaultEffort)
-      } catch (error) {
-        ctx.transcript.system(`默认思考强度没生效：${err(error)}`)
-      }
-    }
+    // 思考强度也按会话存（2026-10-28 同批）：偏好里的 defaultEffort 只给新会话当默认值，
+    // 启动时不再把它写成当前会话的档位。
     if (prefs.marketSources.length === 0) {
       // 首次使用给一份默认市场源，技能中心的「市场」tab 才不是空的
       savePrefs({ marketSources: [...DEFAULT_MARKET_SOURCES] })

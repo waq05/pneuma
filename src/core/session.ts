@@ -11,7 +11,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { ChatContentPart, ChatMessage, ToolCall } from './llm.js'
-import type { ApprovalPolicy, ApprovalReviewer, CollaborationMode, PlanHistoryItem, PlanView, SandboxMode, TodoItemView, ToolPresentationView } from '../contract.js'
+import type { ApprovalPolicy, ApprovalReviewer, CollaborationMode, EffortLevel, PlanHistoryItem, PlanView, SandboxMode, TodoItemView, ToolPresentationView } from '../contract.js'
 import type { GoalSnapshot } from './goal.js'
 import { stripBaseline, type FileChangeSummary } from './tools.js'
 import { summarizeChange } from './tools/fs-tools.js'
@@ -198,7 +198,7 @@ export interface SessionStateMap {
    * T39：这份会话用的模型（llm 插件在 /model 切换与设默认时写）。恢复会话优先
    * 取它，而不是回落配置默认——会话进行到一半换过的模型不该被「重启」冲掉。
    */
-  model: { provider: string; model: string }
+  model: { provider: string; model: string; effort?: EffortLevel }
   /**
    * 自我改进的记账（self-improve 插件写）：本轮复盘到哪个轮次、本会话读过哪些技能。
    *

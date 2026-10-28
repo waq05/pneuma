@@ -84,7 +84,7 @@ export const sessionTitlePlugin: Plugin.Object = {
           .slice(0, MAX_PROMPTS)
         if (prompts.length === 0) return
 
-        const route = ctx.llm.route()
+        const route = ctx.llm.routeForSession(session)
         const result = await ctx.llm.stream(
           route.api,
           {

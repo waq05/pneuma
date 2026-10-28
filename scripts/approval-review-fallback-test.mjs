@@ -54,6 +54,10 @@ function mount(reply) {
   const ctx = {
     llm: {
       route: () => ({ api: 'openai-completions', baseUrl: 'http://127.0.0.1:9', apiKey: 'k', model: 'judge' }),
+      // 判官按发起会话取路由（2026-10-28 起模型按会话存）；假 ctx 给同一份。
+      routeForSession: () => ({ api: 'openai-completions', baseUrl: 'http://127.0.0.1:9', apiKey: 'k', model: 'judge' }),
+      providerOf: () => 'test',
+      modelOf: () => 'judge',
       stream: async () => {
         if (reply instanceof Error) throw reply
         return { text: reply }

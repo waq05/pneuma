@@ -10560,3 +10560,113 @@ const lastTab = surface.panes.reduce((count, pane) => count + pane.tabs.length, 
 - `pnpm run check:ui` 41/41、`check:style` 613 文件、`dup-scan` 0 组、根 / ui-shell /
   desktop 三份 typecheck 全过。
 
+## 二十五、模型、思考档位、协作模式也按会话走（2026-10-28）
+
+### 一　为什么接着改
+
+权限隔离做完，同一类问题还剩三处：模型与思考档位挂在 `llm` 插件的 `currentProvider` /
+`currentModel` / `currentEffort` 上，协作模式挂在 `mode` 插件的 `let mode` 上。
+后果是「你在 A 会话换模型，B 会话和后台跑着的 agent 一起换」；用量日志还会把后台
+请求记到当前视图的模型上（`src/plugins/agent.ts` 的 `model: ctx.llm.model`）。
+协作模式更隐蔽：后台会话在计划模式跑，你切到执行模式一看，它的写操作就被守卫放行了。
+
+### 二　改法
+
+1. `llm`：改为从会话 `model` 状态读三项（`{ provider, model, effort }`）。新增
+   `routeForSession(session)` / `providerOf` / `modelOf` / `contextWindowOf`；
+   `route()` 只是 `routeForSession(current)` 的简写。`setModel` / `setEffort` 写会话，
+   不再改全局。新建会话没记过时沿用「上一次选的那一组」（`lastSelected`），
+   恢复老会话没记录时按配置默认。
+2. 所有请求入口各取自己的会话：agent 的 MiniAgent、压缩（`check` / `forceCompact` /
+   `run`）、起标题、审批判官、子代理（工牌没指定模型时用父会话）都改走
+   `routeForSession`；压缩阈值改用 `contextWindowOf(session)`。
+3. 用量记账与 dsh 事件里的 `provider/model` 改按发起会话取（`providerOf/modelOf`），
+   后台请求不再记到当前视图的模型上。
+4. `mode`：值只在会话 `mode` 状态里；守卫按 `input.sessionId / sessionPath` 找那个
+   常驻会话取档，系统提示段按 `scope.sessionId` 取；服务加 `modeFor(sessionId)`，
+   审批卡的「模式」字样按请求会话取。
+
+### 三　取舍
+
+- **新建会话沿用上次选择**：不这么做会变成「每次新会话都回到配置默认」，与过去
+  `/model` 热切换的手感相反。恢复老会话没有记录时仍按配置默认（别拿当前视图的模型
+  去猜一条老会话该用什么）。
+- **`lastSelected` 是内存值**：进程重启后第一件事是读当前会话自己的记录；读不到才用
+  配置默认。它只影响「新会话的起点」，不影响已经在跑的会话。
+
+### 四　验收
+
+- 新增 `scripts/session-model-kernel-test.mjs`（17 条）：真 kernel 里 A 换 m2 / high、
+  B 仍 m1 / default；A 的执行模式与 B 的计划模式互不串；用量按发起会话记账。
+- `scripts/effort-per-model-test.mjs` 31/31（换模型夹档的断言改成新写法，另加
+  「档位跟着模型写进会话」）。
+- `scripts/approval-review-fallback-test.mjs` 全过（判官改按发起会话取路由）。
+- `scripts/session-permissions-kernel-test.mjs` 全过（权限与模型两批不互相踩）。
+
+## 二十六、前缀缓存为什么只有 72%：把微压缩冻结到「轮」（2026-10-28）
+
+### 一　先算账
+
+用户截图那张卡对应会话 `bb13f0b5`（38 次请求，1,238,946 tok，命中 72%）。
+把 `~/.dsc/usage/usage.jsonl` 里这 38 条逐条拉出来：
+
+- 命中 874,368，未命中 335,048，命中率 72.3%；
+- 每步**必须新增**的内容（工具结果、助手回复、环境快照）合计只有 89,343；
+- 剩下 **245,705（占未命中的 73%）是前缀被我们自己改写了**，不是服务端不给缓存。
+
+命中率曲线也对得上：第 6–14 步 53%–71%，第 15 步起回到 82%–91%，第 28–34 步又掉到
+62%–69%——掉的区间正是工具结果又多又大的那几段。
+
+### 二　根因：每轮重算「最近 5 条」
+
+`microcompact` 在每次请求上都重新数「最近 5 条工具结果」，更早的换成占位符。
+工具结果一多，几乎每一步都会有一条刚滑出窗口：清理点一改，从那条往后整段前缀作废。
+38 步里有 30 多步都在改前缀，命中率自然上不去。
+
+### 三　dsh 那边怎么做的（对照）
+
+dsh 各包的 README 都有一节「KV Cache 影响」，核心一句话是**只追加、别回头改**：
+
+1. 消息表面只追加，`replace` 只在压缩时用（`dsh-session`、`dsh-agent-loop`）；
+2. 系统提示词渲染不变就不动；必须变时走 `systemPromptUpdate: in-history`，
+   追加在已缓存历史之后（`dsh-system-prompt`、`dsh-llm-deepseek`）；
+3. 工具定义增量声明（`addition-only` + 延迟加载），不重写整张表（`dsh-llm`）；
+4. 时间/环境事实不进系统提示，作为尾部 user 快照（`dsh-time-context`）；
+5. 压缩摘要复用主对话前缀，不另起 system（`dsh-compaction-basic`）；
+6. 压缩与工具结果剪枝只在压力阈值触发，不每轮做（`dsh-compaction`、
+   `dsh-compaction-tool-result-pruner`）；
+7. 图片按轮卸载，替换只影响被遮住的那一段之后（`dsh-compaction-image-offload`）；
+8. 换模型/端点 = 换缓存域（`dsh-llm-deepseek`）；
+9. 不做显式 cache key，靠 DeepSeek 自动前缀缓存，只上报命中明细。
+
+dsc 已经抄到的：env-facts 尾部快照、压缩摘要复用前缀、瞬态注入用 user 角色、
+可选 `cache_control` 断点。差的正是第 6 条的前半句——**微压缩不该每轮都动**。
+
+### 四　改法
+
+1. 核心拆成「计划」与「应用」两步（`src/core/microcompact.ts`）：
+   `planMicrocompact` 算出 callId → 占位符，`applyMicrocompactPlan` 只换命中的那几条。
+2. 插件按会话冻结计划（`src/plugins/microcompact.ts`）：同一个会话、同一个轮次键、
+   消息没变短时直接复用上一份计划；只有新一轮或历史被压缩变短才重算。
+   轮次键只数**真人 user 消息**，环境快照、任务清单提醒、钩子产出不算新一轮
+   （`roundKeyOf` / `isSyntheticUserMessage`）。
+3. 投影签名加第二参 `session`（`PromptService.registerProjection` 与 prompt 插件的
+   调用点）：微压缩因此拿得到「这次请求属于哪个会话」，后台会话用自己的计划与
+   自己的失败结果集合，不再借当前查看的会话。
+4. 设置 → 旧工具结果清理加「清理时机」：`round`（默认，缓存友好）/ `request`
+   （旧行为）。配置键 `microcompact.refresh`。
+
+### 五　预期与取舍
+
+- 按这个会话的新增 token 算，上限是 `874,368 / (874,368 + 89,343) ≈ 90.7%`；
+  实际会低一点（每轮第一次请求仍要付一次前缀断裂、每轮新增内容本身未命中）。
+- 代价：同一轮内旧工具结果不再逐步清掉，单轮上下文会大一些；压缩与窗口上限仍在。
+  想换回「省上下文优先」就在设置里把清理时机改成 `request`。
+- 图片卸载本来就按用户回合算（`keepRounds`），同一轮内不会变；本轮没动它。
+
+### 六　验收
+
+- `scripts/microcompact-test.mjs` 新增 [1b]：计划条数、只改命中项、重复应用幂等、
+  轮次键不把合成消息算成新一轮；[3] 改成「同一轮不清、下一轮才清」的端到端断言。
+- 全量 `pnpm run check:core` 复跑。
+

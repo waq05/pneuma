@@ -69,11 +69,12 @@ export const agentPlugin: Plugin.Object = {
         sessionId: session.meta.id,
         cwd: session.meta.cwd,
         createdAt: session.meta.createdAt,
-        route: () => ({ provider: ctx.llm.provider ?? '', model: ctx.llm.model ?? '' }),
+        route: () => ({ provider: ctx.llm.providerOf(session), model: ctx.llm.modelOf(session) }),
       })
       return new MiniAgent(
         {
-          route: () => ctx.llm.route(),
+          // 这个 agent 自己的模型/档位（后台会话不拿「用户正在看」的那一份）
+          route: () => ctx.llm.routeForSession(session),
           // 系统提示每次请求重拼：切模式、改 AGENTS.md、换模型都不用重启。
           // 拼好的这份同时落进自己会话的 system-prompt 状态条目（hash 去重）。
           systemPrompt: () => {
@@ -100,8 +101,8 @@ export const agentPlugin: Plugin.Object = {
             // （lm/ft/d）同一条出账：界面按整个会话累计算输出速度与首字延迟。
             if (event.type === 'usage') {
               appendUsageRecord({
-                provider: ctx.llm.provider,
-                model: ctx.llm.model,
+                provider: ctx.llm.providerOf(session),
+                model: ctx.llm.modelOf(session),
                 i: event.inputTokens,
                 o: event.outputTokens,
                 ...(event.cacheHitTokens === undefined ? {} : { ch: event.cacheHitTokens }),
@@ -116,8 +117,8 @@ export const agentPlugin: Plugin.Object = {
               // 作为旁路事件发出去——发不发得出去都不影响回合（内部吞错）。
               void publishDshUsage(ctx, {
                 sessionId: session.meta.id,
-                provider: ctx.llm.provider,
-                model: ctx.llm.model,
+                provider: ctx.llm.providerOf(session),
+                model: ctx.llm.modelOf(session),
                 inputTokens: event.inputTokens,
                 outputTokens: event.outputTokens,
                 ...(event.cacheHitTokens === undefined ? {} : { cacheHitTokens: event.cacheHitTokens }),

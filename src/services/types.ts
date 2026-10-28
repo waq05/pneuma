@@ -127,6 +127,17 @@ export interface LlmService {
   /** 组装当前路由；端点缺失时抛错（调用方负责转 system 条目）。 */
   route(): LlmRoute
   /**
+   * 按**指定会话**组装路由（2026-10-28 起模型与档位按会话存）。
+   * 后台 agent / 压缩 / 起标题 / 审批判官用它，不会拿「用户正在看的会话」的模型。
+   */
+  routeForSession(session: Session): LlmRoute
+  /** 某个会话现在生效的端点名（会话归因/用量记账用）。 */
+  providerOf(session: Session): string
+  /** 某个会话现在生效的模型名（用量记账用；避免把后台请求记到当前会话的模型上）。 */
+  modelOf(session: Session): string
+  /** 某个会话现在生效的上下文窗口（压缩阈值按它算）。 */
+  contextWindowOf(session: Session): number
+  /**
    * 按指定端点/模型/思考强度组路由，不改动当前选择。
    * 子智能体用它跑角色自己指定的模型；端点或模型不存在时抛错。
    */
@@ -281,8 +292,10 @@ export interface MemoryService {
  * 模式只管「这一轮允许把手伸多远」，权限模式管「问出来之后怎么裁」，两者互不越界。
  */
 export interface ModeService {
-  /** 当前模式（执行 / 计划 / 探索 / 免打扰）。 */
+  /** 当前查看会话的模式（执行 / 计划 / 探索 / 免打扰）。 */
   readonly mode: CollaborationMode
+  /** 指定会话的模式；不传或找不到就按当前查看的会话（后台 agent 的守卫用）。 */
+  modeFor(sessionId?: string): CollaborationMode
   /** 协作模式投影（当前档 + 可切清单），界面画档位按钮的数据源。 */
   surface(): ModeSurface
   /** 切换模式：写会话记录（恢复会话时能还原）并广播快照失效。 */
@@ -754,7 +767,7 @@ export interface PromptService {
    *   fold-system 500（多条 system 并进头部一条）、env-facts 600（环境事实快照附在请求末尾）、
    *   image-diet 550（历史里太久/太多的图换成占位）、env-facts 600、drop-images 900（模型没勾照片时兜底）。
    */
-  registerProjection(id: string, fn: (messages: ChatMessage[]) => ChatMessage[], options?: { order?: number }): () => void
+  registerProjection(id: string, fn: (messages: ChatMessage[], session?: Session) => ChatMessage[], options?: { order?: number }): () => void
   /** 已注册段（带顺序），拼提示词时与内核自己的段合并；外部插件一般不必直接调。 */
   sections(scope?: AgentScope): PromptContribution[]
   /**
