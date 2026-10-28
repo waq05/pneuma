@@ -65,8 +65,7 @@
 | `src/adapter/transcript.ts` | 702 行 | 内核事件 → UI 快照的折叠投影 |
 | `src/app/` | 39 个文件 ≈7900 行 | ink 终端界面（与桌面端共用契约）；显示宽度（`display-width.ts`）是终端侧唯一一份 |
 | `desktop/electron/` | 7 个文件 ≈2670 行 | main + preload：窗口、托盘、运行时子进程、终端与浏览器 dock |
-| `desktop/src/renderer/` | 72 个文件 ≈21000 行 | 桌面界面：会话、侧栏、插件、技能、设置、队友；`chat/`（markdown 渲染 / 评价存档 / 折叠预算 / 座位计划 / 视口 hook）与 `sidebar-groups.ts` 从两个巨型组件里拆出来 |
-| `ui-shell/` | 124 个文件 ≈39500 行 | 桌面与手机共用的界面壳（插件化：布局 + 基元 + 官方界面插件；产物落 `lib/ui/assets`）。桌面端默认加载壳产物，`desktop/src/renderer/` 是旧渲染层，可回退 |
+| `ui-shell/` | 124 个文件 ≈39500 行 | 桌面与手机共用的界面壳（插件化：布局 + 基元 + 官方界面插件；产物落 `lib/ui/assets`）。**这是唯一的界面**——旧渲染层 21,035 行已于 2026-10-28 整体删除 |
 | `shots/` | 脚本 + 实拍产物 | 自检与实拍（全部跑在临时 HOME 上）。**这个目录被 `.gitignore` 忽略**：它只在本机存在，不随版本库分发 |
 | `examples/plugins/` | 5 个示例 | 手写插件的参照（上手路径见 [writing-plugins.md](writing-plugins.md)） |
 
@@ -611,7 +610,7 @@ cd D:\dsc\desktop && pnpm run dist:dir     # → dist/win-unpacked/Pneuma.exe
 桌面壳启动内核就是靠它把同一份 exe 当 node 用（`src/headless.ts:1-6`），只有当你想让
 exe 当**桌面端**跑的时候才要清掉它。
 
-界面参数想自动化，就加 `?xxx=1` 这类一次性钩子（`desktop/src/renderer/App.tsx:90-124` 已经
+界面参数想自动化，就加 `?xxx=1` 这类一次性钩子（`ui-shell/src/ui-renderer/boot.ts` 已经
 有 `view` / `settings` / `reveal` / `dropline` / `peek` 五个），别在自检脚本里手写点击。
 
 **审查台账**：2026-10-28 做过一次全仓代码审查（开发规范 / 格式统一 / 重复代码 / 架构），
@@ -638,9 +637,8 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 界面侧还要看基元包：`@dsc/ui-primitives` 已经有时间、token、文件大小、路径、吞吐、错误文案、git 读数相等判断，
 以及**从宿主快照取数**（`snapshot`：工作目录 / 会话清单 / 条目流 / 回合状态）这些口径。
 
-还开着的四条是 P1-1（旧渲染层 21,035 行已冻结，等日落日期）、P1-3（巨石文件，等契约拆分）、
-P2-2（四个 pnpm 项目四把锁，要不要收 workspace）、P3-1（91 条自检脚本无覆盖率）。
-其中旧渲染层日落、收 workspace、契约拆分三件要人拍板，其余是体力活。
+还开着的是 P1-3（巨石文件：契约已拆、组件未拆）与 P3-1（自检脚本无覆盖率统计）。
+旧渲染层日落、收 workspace、契约拆分三件都已落地（2026-10-28）。
 
 **自动门禁**：每次推与每个 PR 由 `.github/workflows/verify.yml` 跑三处 typecheck 加排版检查
 （`check:style`）；`release.yml` 只在推 tag 时跑。所以"本地绿"不算数，以这两条工作流的结论为准。
@@ -859,7 +857,7 @@ P2-2（四个 pnpm 项目四把锁，要不要收 workspace）、P3-1（91 条�
 | 宿主进程自己的 cwd（`process.cwd()`） | **只剩兜底**：没有会话时的 MCP/LSP/终端、以及「上次用的工作区」这一个记忆点（`desktop.json` 的 `lastCwd`，由界面经原生 op `rememberCwd` 记账） |
 
 原生桥那条「切工作目录」（`switchCwd` / `chooseDirectory` → 宿主重启 + 整页重载）**留着但插件壳
-不再调用**：它的能力等价于「在那个目录里开一条会话」，却要付一次重载的代价（旧渲染层仍走它）。
+不再调用**：它的能力等价于「在那个目录里开一条会话」，却要付一次重载的代价（旧渲染层删除前它是唯一调用方，现在没有消费方）。
 
 ### 检查更新与就地更新（谁在哪一半）
 
@@ -957,7 +955,7 @@ shell 候选 5 个，选中的存 renderer 的 `localStorage['dsc.dockShell']`�
 | `dsc.sidebarRail` | 侧栏是否收成 56px 图标窄栏（`Ctrl+B` 切） | `'1'` / `'0'` |
 | `dsc.threadWidth` | 中间正文列宽 | 480 ~（可用宽 − 80），默认取样式表的 `--dsc-thread-max`（76ch） |
 
-拖拽逻辑共用 `desktop/src/renderer/panels.ts` 的 `useWidthDrag`：Pointer Capture 攥住指针
+拖拽逻辑在壳自己的 `ui-shell/src/ui-layout/` 里（从旧渲染层的 `panels.ts` 搬来）：Pointer Capture 攥住指针
 （拖出窗口外再回来还接着拖），移动按 `requestAnimationFrame` 合并，取消就退回原宽。
 **拖动中只改根元素上的 CSS 变量**（`--dsc-sidebar-w`、`--dsc-thread-max`），松手才写状态和
 localStorage——每帧 setState 会重渲染整棵对话树。复位（双击）就是撤掉行内变量，让 `:root`

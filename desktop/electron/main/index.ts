@@ -64,17 +64,6 @@ function isChromeColor(value: unknown): value is string {
 // ── 宿主生命周期 ──────────────────────────────────────────────────────────────
 
 /**
- * 旧渲染层产物目录：回落用的 `loadFile` 加载的就是这里。
- *
- * 迁移期它是「默认伺服的那份界面」，但**不再**是「宿主该伺服哪份界面」这个问题的
- * 唯一答案——那份答案现在由 {@link uiAssetsDir} 按档案给出，插件壳开了就伺服壳产物。
- * 这条回落路径必须一直留着：认证失败、拿不到地址、壳产物缺失，窗口都退回这里。
- */
-function rendererDir(): string {
-  return join(__dirname, '../renderer')
-}
-
-/**
  * 插件壳产物目录：`pnpm -C ui-shell build` 写出的静态产物。
  *
  * 两态路径不同源：开发态在仓库的 `lib/ui/assets`；打包态在 extraResources 的
@@ -88,27 +77,17 @@ function shellDir(): string {
 }
 
 /**
- * 默认伺服的界面形态（阶段 5.6 翻转）：**插件壳**。旧渲染层从此是回落——
- * 档案里写 `ui: 'legacy'`、`DSC_UI_SHELL=0`、或壳产物缺失，都会退回它。
- * 「回退」永远是改一个字段（或删掉那份壳产物）的事。
- */
-const DEFAULT_UI_PROFILE = 'shell' as const
-
-/**
- * 当前该伺服哪份界面：档案（`~/.dsc/desktop.json` 的 `ui`）说了算。
+ * 界面形态只剩一种：**插件壳**。
  *
- * 显式写的 `shell` / `legacy` 都被尊重（用户把默认掰回去是合法操作）；
- * 缺失 / 读坏 / 值不认识落到 {@link DEFAULT_UI_PROFILE}。
- * `DSC_UI_SHELL` 是自检与开发期的直通开关（`1` 强制壳、`0` 强制旧界面），
- * 压过档案——自动化脚本不该去改用户的档案，也不该依赖它。
+ * 2026-10-28 删掉旧渲染层（21,035 行）之后，"伺服哪份界面"这个问题不再有第二个答案。
+ * 档案里写 `ui: 'legacy'`、或设了 `DSC_UI_SHELL=0` 的老配置仍然照常启动，只打一条
+ * 说明——老配置不该让应用起不来，也不该让人以为还有另一份界面可以切。
  */
-function uiProfile(): 'legacy' | 'shell' {
-  if (process.env['DSC_UI_SHELL'] === '1') return 'shell'
-  if (process.env['DSC_UI_SHELL'] === '0') return 'legacy'
-  const fromState = readState().ui
-  if (fromState === 'shell') return 'shell'
-  if (fromState === 'legacy') return 'legacy'
-  return DEFAULT_UI_PROFILE
+function uiProfile(): 'shell' {
+  if (process.env['DSC_UI_SHELL'] === '0' || readState().ui === 'legacy') {
+    process.stderr.write('[dsc-desktop] 旧渲染层已移除，"legacy" 设置不再有效，改用插件壳\n')
+  }
+  return 'shell'
 }
 
 /**
@@ -145,16 +124,18 @@ function missingUiHtml(reason: string): string {
   return 'data:text/html;charset=utf-8,' + encodeURIComponent(html)
 }
 
-/** 宿主该伺服的界面产物目录（经 `DSC_UI_ASSETS` 交给宿主进程）。 */
+/**
+ * 宿主该伺服的界面产物目录（经 `DSC_UI_ASSETS` 交给宿主进程）。
+ *
+ * 产物缺失时**照样**把这个路径给宿主（伺服到的是 404），而不是退回别的目录：
+ * 窗口那边会落到 {@link missingUiHtml} 那张提示页，说清缺什么、怎么补。
+ */
 function uiAssetsDir(): string {
-  if (uiProfile() === 'shell') {
-    const dir = shellDir()
-    // 壳产物缺失（路径解析错、构建没跑）时退回旧渲染层并说清，别让用户对一张白屏。
-    // 这道闸就是自检 ui-fallback 用例的落点：打包态的路径解析错了，窗口仍有完整旧界面。
-    if (existsSync(dir)) return dir
-    process.stderr.write(`[dsc-desktop] 插件壳产物不存在（${dir}），退回旧渲染层\n`)
+  const dir = shellDir()
+  if (!existsSync(dir)) {
+    process.stderr.write(`[dsc-desktop] 插件壳产物不存在（${dir}），窗口会显示"界面没构建"提示页\n`)
   }
-  return rendererDir()
+  return dir
 }
 
 /** 传给宿主进程的环境：Electron 的 env 只收字符串值，undefined 的键直接丢掉。 */
@@ -230,7 +211,7 @@ async function adoptUiServer(info: { url: string; origin: string }): Promise<voi
   // 开发模式下页面来自 vite，别把窗口抢过去。
   if ((process.env.ELECTRON_RENDERER_URL ?? '') !== '') return
   const restarted = servedPageLoaded && previous !== info.origin
-  if (servedPageLoaded && !(restarted && uiProfile() === 'shell')) return
+  if (servedPageLoaded && !restarted) return
   servedPageLoaded = true
   selfcheckNote(
     `[dsc-desktop] 窗口来自宿主界面服务 ${info.origin}${restarted ? '（宿主重启，窗口重新加载）' : ''}\n`,
@@ -663,9 +644,11 @@ function registerIpc(): void {
 
   ipcMain.handle('dsc:get-cwd', () => hostCwd)
 
-  // ── 旧渲染层那批通道 ──────────────────────────────────────────────────────
-  // 默认界面仍是旧渲染层（档案开关默认 legacy），这些一个都不能少。实现体统一抽成
-  // 上面/下面的具名函数，好让原生桥与它们走同一条路（改一处两处都跟着变）。
+  // ── 旧渲染层那批 IPC 通道 ─────────────────────────────────────────────────
+  // 旧渲染层已经整体删除（2026-10-28），这些 handler 现在**没有消费方**：插件壳走的是
+  // 原生桥（`src/core/native-bridge.ts` + preload 的白名单）。留着是因为实现体与原生桥
+  // 共用同一批具名函数，删掉它们只是少一层包装、不减少任何能力；真要删，等下一次清理
+  // `electron/preload/index.ts` 里那批通道时一起删。
   ipcMain.handle('dsc:choose-directory', () => chooseDirectory())
 
   ipcMain.handle('dsc:restart-host', async () => {
@@ -1238,15 +1221,11 @@ function createWindow(): void {
   } else {
     // 先用本机文件把窗口开起来（渲染层自己会显示「连接中」），宿主报来界面地址后再切过去。
     // 那份文件与宿主伺服的是同一份构建产物（都出自 desktop/out/renderer）。
-    const legacyIndex = join(__dirname, '../renderer/index.html')
-    if (existsSync(legacyIndex)) {
-      void mainWindow.loadFile(legacyIndex, {
-        search: query === '' ? undefined : query,
-      })
-    } else {
-      // 连回落页都没有：别留给用户一张白屏，直接说清缺什么、怎么补。
-      void mainWindow.loadURL(missingUiHtml('没找到界面产物（' + legacyIndex + '），也没连上宿主的界面服务。'))
-    }
+    // 既没有 dev server 也没有宿主界面地址：说明壳产物没构建（或宿主的界面服务没起来）。
+    // 别留给用户一张白屏，直接说清缺什么、怎么补。
+    void mainWindow.loadURL(
+      missingUiHtml('没连上宿主的界面服务，也没找到界面产物（' + shellDir() + '）。'),
+    )
   }
 
   // 点 X：开关开着就缩到托盘（宿主继续跑），否则正常关窗走退出流程

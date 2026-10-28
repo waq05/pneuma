@@ -31,7 +31,7 @@
 | P0-1 | 阻断 | 主干 `e500f9c` 编译不过：引用了未入库的 `src/core/attachments.ts`，`StatusView.progress` 也没补齐 | 已修（`7099b8a` 后干净检出 `tsc` 退出码 0） |
 | P0-2 | 高 | CI 只有 `release.yml`，类型检查与自检脚本没有任何自动门禁 | 已修（`verify.yml`） |
 | P0-3 | 高 | `a20dd74` 上 7 个 `replace` 类型错误进过主干，20 分钟后才被 `d1b8e08` 补上 | 已修 |
-| P1-1 | 高 | 四份界面代码，旧渲染层 21,035 行已冻结但仍与新壳高度重复 | 仍在（已冻结） |
+| P1-1 | 高 | 四份界面代码，旧渲染层 21,035 行已冻结但仍与新壳高度重复 | **已清**（2026-10-28 整体删除，见 §二十三） |
 | P1-2 | 中 | `formatDuration` 5 份、`errText` 体系 19 处、对话框骨架 9 处 | 已修（错误文案 / 数值收敛 / 对象判定各 1 份，TUI 浮层外框 1 处，提交对话框补了焦点；剩下 4 个 `formatDuration` 语义不同，见 §10.4） |
 | P1-3 | 中 | 巨石文件：契约 2,091 行、消息流 2,481 行 | 仍在 |
 | P2-1 | 中 | 无 ESLint / Prettier / EditorConfig / `.gitattributes`，换行符混乱 | 部分已修（`.gitattributes` + `check:style`） |
@@ -437,7 +437,7 @@ node node_modules/typescript/bin/tsc -p .tmp-headcheck/tsconfig.json --noEmit
 | P0-1 主干编译不过 | **已清** | 干净检出 `tsc` 退出码 0（复验命令见 §九） |
 | P0-2 没有 CI 门禁 | **已清** | `verify.yml` 每次推 / 每个 PR 跑三处 typecheck 加排版；`check:core` 那 8 分钟没进 CI，留给夜跑 |
 | P0-3 `replace` 那 7 个错 | 已清 | — |
-| P1-1 四份界面代码 | **仍在** | 旧渲染层 21,035 行已冻结，等一个日落日期；这是重复率的大头 |
+| P1-1 四份界面代码 | **已清** | 旧渲染层 21,035 行已删除（§二十三）；重复率的大头没了 |
 | P1-2 小工具各写一份 | **已清** | `errText` / `clampInt` / `asRecord` 各 1 份（第三批，见 §十一）；`formatDuration` 从 6 份收到 4 份，剩下 4 份**语义各不相同**（见 10.4） |
 | P1-3 巨石文件 | **仍在** | 消息流 2,557 行、输入区 2,370 行、契约 2,093 行；拆契约是第三批的事 |
 | P2-1 无格式工具 | 部分已清 | 有了 `.gitattributes` 与 `check:style`（零依赖，查 5 类硬伤）；ESLint 与全量格式化**故意没上**，理由见 §九 |
@@ -1208,3 +1208,51 @@ CI 的桌面作业用 `--ignore-scripts`，仍然由 `release.yml` 里那句 `no
 **这条经验值得记住**：workspace 收口真正会咬人的地方不是 `tsc`，是打包链路——
 `electron-builder.yml` 里 `electronDist: node_modules/electron/dist` 这种**写死路径**，
 在依赖布局变化时不会给出好看的错误，只会说一句「路径不存在」。
+
+## 二十三、第十三批（2026-10-28）：旧渲染层整体删除（21,035 行）
+
+### 23.1 三条前置，前两条早就满足了
+
+`desktop/src/renderer/bridge.ts` 里写着物理退役的三条前置：① 内置浏览器进桥或砍掉；
+② `installPlugin` / `installSkill` 有去处；③ 旧渲染层整体退出安装包。核了一遍：
+
+- ① ✅ `src/core/native-bridge.ts:415-429` 有 `dockBrowser` / `browserNav` / `browserClose`；
+- ② ✅ 同文件 `:357-363` 有 `installSkill` / `installPlugin` / `installMarketSkill`，壳里也有对应界面；
+- ③ 就是这次做的事。
+
+那段注释写于 2026-10-11，之后两条先后满足，但没人回头改它——**过期的前置条件会让后面的人
+以为还差东西**，这次一并写进文档。
+
+### 23.2 删了什么，留下什么
+
+| 动的地方 | 怎么处理 |
+| --- | --- |
+| `desktop/src/renderer/`（90 个文件 21,035 行） | 整体删除 |
+| `desktop/electron.vite.config.ts` | 去掉 `renderer` 段与 `@vitejs/plugin-react`，只剩 main / preload |
+| `desktop/tsconfig.web.json` | 删除（只剩 `src/renderer/**` 一个 include，没有输入了） |
+| `desktop/package.json` 的 `typecheck` | 只跑 `tsconfig.node.json` |
+| `desktop/electron/main/index.ts` | 删 `rendererDir()`；`uiProfile()` 恒返回 `'shell'`（老配置打一条说明）；`uiAssetsDir()` 只给壳产物；加载分支只剩「宿主地址」与「提示页」两种 |
+| `scripts/legacy-frozen-check.mjs` | 删除（它的唯一职责是查旧渲染层与壳的样式分叉） |
+| 6 条探针的「旧渲染层同口径」断言 | 删除断言与对应的文件读取，保留壳侧的断言 |
+| `ui-shell/src/legacy/*`（四份样式副本） | **保留**：壳还在用它们，与旧渲染层不是一回事 |
+
+一一对应地看，这一批没有改任何界面行为：删掉的是「第二份实现」和「跟它对齐的断言」。
+
+### 23.3 两个诚实说明
+
+**① 那批旧 IPC 通道没删。** `desktop/electron/main/index.ts` 里 `dsc:choose-directory` 这类
+handler 现在没有消费方（壳走原生桥），但它们的实现体与原生桥共用同一批具名函数，删掉只是
+少一层包装、不减少任何能力。留着的代价是「读代码的人要多问一句这是谁在用」，已在原地
+写了注释说明。真要删，等下一次清理 `electron/preload/index.ts` 时一起。
+
+**② 删除前一刻，旧渲染层还有人在改。** 另一条线把「审批卡瘦身」镜像进了旧渲染层
+（`ApprovalCard.tsx` / `styles.css`），这些改动先提交、随后随目录删除。听起来是白做，
+但顺序是对的：**先让两条界面口径一致再删，删除提交的语义才干净**；反过来就是「一半新一半旧」。
+
+### 23.4 验证
+
+- `pnpm --dir desktop typecheck` → 0（现在只剩 `tsconfig.node.json` 一套）；
+- `pnpm typecheck`（根）→ 0；
+- `pnpm run check:ui` **39/39** 通过（含 6 条改过的探针）；
+- `node scripts/dup-scan.mjs` 0 组、`style-check` 全过；
+- `check:core` 全量在后台跑（结果见下轮）。

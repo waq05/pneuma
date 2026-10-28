@@ -7,7 +7,7 @@
  *      scrollWidth 731 / clientWidth 385，于是整页能左右拖、热力图被卡片右缘切掉。
  *
  * 这一份钉住「谁溢出谁自己滚」的接线与样式，外加四档时间窗（今天 / 近 7 天 / 近 30 天 / 近一年）。
- * 桌面回退渲染层（desktop/src/renderer/UsagePanel.tsx）同一份图同一套修，一起钉。
+ * 旧渲染层那份已随目录删除（2026-10-28），这里只钉壳自己这一份。
  *
  * 用法：node scripts/ui-usage-layout-test.mjs（只读源码，不需要先编译）
  *
@@ -123,19 +123,6 @@ console.log('\n[2] 环形图：窄窗口换行，不被卡片切')
   check('图例不再拿 min-width 撑住并排（min-width: 0 + 可伸缩）', hasStyle(css, '.donut-legend', /min-width:\s*0/) && hasStyle(css, '.donut-legend', /flex:\s*1 1 200px/), JSON.stringify(ruleBodies(css, '.donut-legend')))
   check('窄屏把环缩到 150px（180 挤不下两栏）', /@media \(max-width: 640px\)[\s\S]{0,400}?\.donut-svg \{[\s\S]{0,80}?height: 150px/.test(css), '')
   check('横向滚动容器不吃掉页面手势（overscroll-behavior-x: contain）', hasStyle(css, '.hm-scroll', /overscroll-behavior-x:\s*contain/), JSON.stringify(ruleBodies(css, '.hm-scroll')))
-}
-
-console.log('\n[3] 桌面回退渲染层同一份修')
-{
-  const panel = read('desktop/src/renderer/UsagePanel.tsx')
-  check('桌面那份也收 windowDays', /function buildCells\(\s*days: UsageDayView\[\],\s*windowDays: number,?\s*\)/.test(panel) && panel.includes('windowDays - 1'), '')
-  check('桌面那份也是四档', panel.includes('type HeatRange = 1 | 7 | 30 | 364') && panel.includes('[1, 7, 30, 364] as HeatRange[]'), '')
-  check('桌面那份也包了 .hm-scroll / .hm-canvas', panel.includes('className="hm-scroll"') && panel.includes('className="hm-canvas"'), '')
-  check('桌面那份也做了「一列只挂一个月份标签」', panel.includes('!months.some((month) => month.column === columns.length)'), '')
-  const css = read('desktop/src/renderer/styles.css')
-  check('桌面样式里也有 .hm-scroll 与 .hm-canvas', hasStyle(css, '.hm-scroll', /overflow-x:\s*auto/) && hasStyle(css, '.hm-canvas', /width:\s*max-content/), '')
-  check('桌面那份环形也换行', hasStyle(css, '.donut-row', /flex-wrap:\s*wrap/), JSON.stringify(ruleBodies(css, '.donut-row')))
-  check('追加区标记仍在文件最后一行（末尾纪律）', /追加区[^\n]*\n?$/.test(css.trimEnd() + '\n'), '')
 }
 
 console.log('\n[4] 负向自证：扫描器不是空转')

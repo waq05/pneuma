@@ -203,12 +203,10 @@ console.log('[6] 悬停预览的收卡口径（0.6.69 第五轮报障：鼠标�
 {
   const ui = read('ui-shell/src/plugins/transcript/ui.tsx')
   const hook = read('ui-shell/src/ui-primitives/hover-delay.ts')
-  const legacy = read('desktop/src/renderer/hover-delay.ts')
 
   // 出卡节奏照参考实现（500ms），收卡是壳侧有意的 1s——旧渲染层那份仍 100ms（冻结不动）
   check('出卡仍是 500ms', hook.includes('const HOVER_DELAY_MS = 500'))
   check('收卡是 1s', hook.includes('const HOVER_CLOSE_MS = 1000'))
-  check('旧渲染层那份不动（还是 100ms，改的只在壳侧）', legacy.includes('const HOVER_CLOSE_MS = 100'))
   check('为什么分道写在注释里（不然下次有人「对齐」回去）', hook.includes('为什么收卡不是参考实现的 100ms'))
 
   // 卡片自己要有离开事件：只挂 onMouseEnter 会让卡永远粘住（行上的 mouseleave 早烧掉了）

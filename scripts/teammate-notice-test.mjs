@@ -18,7 +18,7 @@
  *      这里用一个真回合把两种算法各跑一次，把「修好的提到用户那条 / 旧的插错还报成功」
  *      钉成行为；
  *   ⑥ 三处消费者都按收件箱原始位置算（源码钉）：壳的 `readInboxCount`、回落层
- *      `desktop/src/renderer/App.tsx` 的插话下标、终端状态栏的条数。
+ *      终端状态栏的条数（旧渲染层那份已随目录删除，2026-10-28）。
  *
  * 隔离：临时 HOME + 假模型端点，真实 ~/.dsc 一个字节都不动。
  * 用法：pnpm build && node scripts/teammate-notice-test.mjs
@@ -347,16 +347,10 @@ console.log('[4] 三处消费者都按「整条收件箱」算（源码钉）')
 {
   const root = fileURLToPath(new URL('..', import.meta.url))
   const read = (rel) => readFileSync(join(root, rel), 'utf8')
-  const legacyApp = read('desktop/src/renderer/App.tsx')
   const tuiApp = read('src/app/App.tsx')
   const shellComposer = read('ui-shell/src/plugins/composer/ui.tsx')
   const statusBar = read('src/app/StatusBar.tsx')
 
-  check(
-    '回落层插话下标 = queued + notices（两行写法都认）',
-    /snapshot\.queued\.length\s*\+\s*\(?snapshot\.notices \?\? \[\]\)?\.length/.test(legacyApp),
-    legacyApp.split('\n').find((line) => line.includes('steerIndex')) ?? '',
-  )
   check(
     '壳的 readInboxCount 也是两面相加',
     (() => {
@@ -377,7 +371,6 @@ console.log('[4] 三处消费者都按「整条收件箱」算（源码钉）')
     statusBar.includes('整条收件箱') && statusBar.includes('`notices`'),
     'StatusBar 的 queued 注释',
   )
-  check('回落层那条改动带「回落路径修复」标注（FROZEN 规矩 3）', legacyApp.includes('回落路径修复'), '注释锚点')
 }
 
 offTool()

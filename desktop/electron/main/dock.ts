@@ -31,7 +31,7 @@ import {
   type DockViewInfo,
 } from '@dsc/runtime/core/dock-browser.js'
 
-/** 壳不给 id 时回落它（旧渲染层的单例视图）。 */
+/** 壳不给 id 时回落它（旧渲染层已删除，这条回落现在只对老 IPC 调用方有意义）。 */
 const DEFAULT_BROWSER_ID = 'main'
 
 /** 视图小到这个尺寸就不摆：页签被 `display:none` 藏起来时报上来的就是零矩形。 */

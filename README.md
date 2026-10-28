@@ -160,7 +160,7 @@ src/contract.ts     UI ⇄ 运行时 的中性契约（DscRuntime）
 src/host/kernel.ts  内核装配顺序 + 三档插件清单（运行内核 / 官方可开关 / 自定义）
 src/plugins/        每个服务一个 cordis 插件（含官方可开关插件，见上文清单）
 src/app/            ink UI（App/ChatView/Composer/ToolCard/ApprovalCard/SessionPicker/StatusBar）
-desktop/            Electron 桌面端：主进程 + 独立运行时子进程；界面默认加载壳产物，可回退旧渲染层
+desktop/            Electron 桌面端：主进程 + 独立运行时子进程；界面就是插件壳（旧渲染层已删除）
 ui-shell/           桌面与手机共用的界面壳（插件化：布局 + 基元 + 官方界面插件；产物落 lib/ui/assets）
 scripts/composer-test.mjs  候选面板/输入行的确定性测试（node scripts/composer-test.mjs，16 项断言）
 ```

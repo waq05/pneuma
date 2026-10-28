@@ -35,10 +35,8 @@ const contract = read('src/contract/approval.ts')
 const contractBarrel = read('src/contract.ts')
 const plugin = read('src/plugins/approval.ts')
 const shell = read('ui-shell/src/plugins/prompt/ui.tsx')
-const legacy = read('desktop/src/renderer/ApprovalCard.tsx')
 const tui = read('src/app/ApprovalCard.tsx')
 const shellCss = read('ui-shell/src/legacy/views.css')
-const legacyCss = read('desktop/src/renderer/styles.css')
 
 // ── [1] 数据从哪来 ─────────────────────────────────────────────────────────────
 
@@ -54,11 +52,8 @@ check('含义进了视图', plugin.includes('...(input.meaning === null ? {} : {
 
 // ── [2] 两张卡 ────────────────────────────────────────────────────────────────
 
-console.log('[2] 插件壳与旧渲染层的卡片')
-for (const [name, source] of [
-  ['插件壳', shell],
-  ['旧渲染层', legacy],
-]) {
+console.log('[2] 插件壳的卡片')
+for (const [name, source] of [['插件壳', shell]]) {
   check(`${name}：画含义行`, source.includes('className="approval-meaning"'))
   check(`${name}：低风险不画徽章`, source.includes("request.risk === 'low' ? null :"))
   check(`${name}：通用兜底理由不占版面`, source.includes('isGenericReason(request.reason)'))
@@ -73,11 +68,6 @@ for (const [name, source] of [
   const args = shell.indexOf('className="approval-args"')
   check('插件壳：含义行在命令原文之前', at > 0 && args > at, `meaning@${String(at)} args@${String(args)}`)
 }
-{
-  const at = legacy.indexOf('className="approval-meaning"')
-  const args = legacy.indexOf('className="approval-args"')
-  check('旧渲染层：含义行在命令原文之前', at > 0 && args > at, `meaning@${String(at)} args@${String(args)}`)
-}
 
 // 终端那张卡没有悬浮提示可躲，所以只收两样：风险标签与通用兜底理由；
 // 含义行照加，三张卡的说法因此一致。
@@ -89,23 +79,17 @@ check('终端：中高风险仍挂标签', tui.includes('（{risk.text}）'))
 
 // 档位行是「设置的回声」：只该出现在悬浮提示里，不该再常驻一行。
 check('插件壳：档位不再单独占一行', !shell.includes('<span className="approval-mode">'))
-check('旧渲染层：档位不再单独占一行', !legacy.includes('<span className="approval-mode">'))
 
 // 低风险徽章收掉之后，中高风险必须照旧画出来（别把整枚徽章一起删了）。
 check('插件壳：中高风险仍画徽章', shell.includes('{risk.label}'))
-check('旧渲染层：中高风险仍画徽章', legacy.includes('{risk.label}'))
 
 // 命令原文带上完整悬浮提示：卡片那行会被省略号截断，全文得能看。
 check('插件壳：命令原文有悬浮全文', shell.includes('title={request.argsSummary}'))
-check('旧渲染层：命令原文有悬浮全文', legacy.includes('title={request.argsSummary}'))
 
 // ── [3] 样式 ──────────────────────────────────────────────────────────────────
 
 console.log('[3] 样式表')
-for (const [name, css] of [
-  ['插件壳', shellCss],
-  ['旧渲染层', legacyCss],
-]) {
+for (const [name, css] of [['插件壳', shellCss]]) {
   check(`${name}：有 .approval-meaning 规则`, /\.approval-meaning\s*\{/.test(css))
 }
 
