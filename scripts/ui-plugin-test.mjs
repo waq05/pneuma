@@ -22,6 +22,7 @@
  * @module dsc/scripts/ui-plugin-test
  */
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
+import { readContractSource } from './_check-runner.mjs'
 import { request } from 'node:http'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -1456,7 +1457,7 @@ console.log('\n[8] D2 Factory')
 console.log('\n[9] 设置回执的结构化载荷')
 {
   const repoRoot = fileURLToPath(new URL('../', import.meta.url))
-  const contractText = readFileSync(join(repoRoot, 'src', 'contract.ts'), 'utf8')
+  const contractText = readContractSource()
   const interfaceBody = (name) =>
     new RegExp(`interface ${name} \\{[\\s\\S]*?\\n\\}`).exec(contractText)?.[0] ?? ''
   const okBlock = interfaceBody('SettingsMutationOk')

@@ -18,6 +18,7 @@
  * @module dsc/scripts/ui-command-menu-test
  */
 import { readFileSync } from 'node:fs'
+import { readContractSource } from './_check-runner.mjs'
 import { fileURLToPath } from 'node:url'
 
 const core = await import('../lib/core/commands-completion.js')
@@ -145,7 +146,7 @@ console.log('\n[3] 白名单与两侧接线')
   check('宿主协议清单也加了（漏一个桌面 tsc 就红）', ['listUiCommands', 'runUiCommand'].every((name) => INVOKABLE_METHODS.includes(name)), '')
   check('远程壳放行（手机与电脑同一份壳产物）', ['listUiCommands', 'runUiCommand'].every((name) => REMOTE_SHELL_METHODS.includes(name)), '')
 
-  const contract = read('src/contract.ts')
+  const contract = readContractSource()
   check('契约里声明 UiCommandView', /export interface UiCommandView \{/.test(contract) && contract.includes('duringTask'), '')
   check('契约里声明两条方法', /listUiCommands\(\): UiCommandView\[\]/.test(contract) && /runUiCommand\(input: string\): boolean/.test(contract), '')
   const sharedTypes = read('src/ui/index.ts')
@@ -227,7 +228,7 @@ console.log('\n[5] 壳侧接线')
   check('hide 进了返回对象（接口里也声明了）', /return \{ open, rows, loading, at, track, move, pick, close, hide, insertText \}/.test(menu) && /hide\(\): void/.test(menu), '')
 
   // 2026-10-27 查账：空会话欢迎态把首屏 system 整批不画，新会话里打 /help 什么都看不到
-  check('system 条目带 command 标记（契约里声明）', read('src/contract.ts').includes('command?: boolean') && read('src/adapter/transcript.ts').includes('command ? { command: true }'), '')
+  check('system 条目带 command 标记（契约里声明）', readContractSource().includes('command?: boolean') && read('src/adapter/transcript.ts').includes('command ? { command: true }'), '')
   check('命令回调把标记传下去', read('src/plugins/runtime.ts').includes("ctx.transcript.system(text, undefined, true)"), '')
   const transcriptUi = read('ui-shell/src/plugins/transcript/ui.tsx')
   check('欢迎态画命令输出（不再整批吞掉）', transcriptUi.includes('row.entry.command === true') && transcriptUi.includes('entry-system-command'), '')

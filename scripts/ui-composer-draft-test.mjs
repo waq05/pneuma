@@ -17,6 +17,7 @@
  * @module dsc/scripts/ui-composer-draft-test
  */
 import { readFileSync } from 'node:fs'
+import { readContractSource } from './_check-runner.mjs'
 import { fileURLToPath } from 'node:url'
 
 const draft = await import(new URL('../ui-shell/src/plugins/composer/draft.ts', import.meta.url).href)
@@ -119,7 +120,7 @@ console.log('[5] 接线钉：壳、宿主、契约三处')
   check('三个新选择器都接上了', ['readSessionId', 'readDraftCwd', 'readSessionUnsaved'].every((name) => composer.includes(`function ${name}(`)), '')
   const host = read('src/plugins/transcript.ts')
   check('宿主快照报 sessionUnsaved（按 messages 是否为空）', /sessionUnsaved:\s*ctx\.session\.current\(\)\.messages\.length === 0/.test(host), '')
-  const contract = read('src/contract.ts')
+  const contract = readContractSource()
   check('契约里声明了 sessionUnsaved 并写了为什么', /sessionUnsaved\?: boolean/.test(contract) && contract.includes('sessionUnsaved?: boolean'), '')
   check('draft.ts 是零依赖纯模块（不 import 任何东西）', !/^import /m.test(read('ui-shell/src/plugins/composer/draft.ts')), '')
   check('EMPTY_DRAFT 是空的那一份', EMPTY_DRAFT.value === '' && EMPTY_DRAFT.history.length === 0, JSON.stringify(EMPTY_DRAFT))

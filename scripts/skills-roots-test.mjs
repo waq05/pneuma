@@ -15,6 +15,7 @@
  * @module dsc/scripts/skills-roots-test
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { readContractSource } from './_check-runner.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -87,7 +88,7 @@ check('视图里透出 scope / root（界面靠这两个字段分组）',
 check('停用的技能在视图里 enabled=false', toSkillInfoView(globalScanned[0], new Set(['custom-one'])).enabled === false)
 
 console.log('[4] 契约与界面：来源标签、作用域筛选、分组头')
-const contract = readFileSync('src/contract.ts', 'utf8')
+const contract = readContractSource()
 check('SkillSourceLabel 认 user-agents 与 user-dsh', contract.includes("'user-agents'") && contract.includes("'user-dsh'"))
 check('SkillInfoView 带 scope 与 root', contract.includes("scope?: 'project' | 'global'") && contract.includes('root?: string'))
 const ui = readFileSync('ui-shell/src/plugins/skills/ui.tsx', 'utf8')

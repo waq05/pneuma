@@ -36,6 +36,7 @@
  * @module dsc/scripts/ui-model-picker-test
  */
 import { readFileSync, readdirSync } from 'node:fs'
+import { readContractSource } from './_check-runner.mjs'
 import { fileURLToPath } from 'node:url'
 
 const picker = await import(
@@ -350,7 +351,7 @@ console.log('[8] 界面接线（ui.tsx）')
 // ── [9] 宿主三处加法 ──────────────────────────────────────────────────────────
 console.log('[9] 宿主：端点名与显示名的产地')
 {
-  const contract = flat(read('src/contract.ts'))
+  const contract = flat(readContractSource())
   check('`StatusView.provider` 在契约里（可选：老快照没有它）', /interface StatusView \{[\s\S]*?provider\?: string/.test(contract))
   check('契约里写清了它为什么必须存在（裸名分不清同名模型）', contract.includes('同一个模型 id 可以挂在两个端点下'))
   check('`ModelChoiceView.providerDisplayName` 是必填（一级菜单的行标题）', /interface ModelChoiceView \{[\s\S]*?providerDisplayName: string/.test(contract))

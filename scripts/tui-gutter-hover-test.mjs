@@ -31,7 +31,7 @@ const { App } = await import('../lib/app/App.js')
 const { parseMouse } = await import('../lib/app/mouse.js')
 const { clearPointer, onGutter, publishPointer, readPointer } = await import('../lib/app/pointer.js')
 const { RAIL_WIDTH } = await import('../lib/app/scroll-model.js')
-const { displayWidth } = await import('../lib/app/click.js')
+const { displayWidth } = await import('../lib/app/display-width.js')
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 

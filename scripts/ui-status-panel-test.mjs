@@ -16,6 +16,7 @@
  * @module dsc/scripts/ui-status-panel-test
  */
 import { readFileSync } from 'node:fs'
+import { readContractSource } from './_check-runner.mjs'
 import { fileURLToPath } from 'node:url'
 
 const model = await import(
@@ -227,7 +228,7 @@ console.log('[5] 形态钉（结构约定）')
 
 console.log('[6] 宿主数据面（文本钉）')
 {
-  const contract = read('src/contract.ts')
+  const contract = readContractSource()
   const services = read('src/services/types.ts')
   const uiMethods = read('src/core/ui-methods.ts')
   const hostMethods = read('src/core/host-methods.ts')
@@ -388,7 +389,7 @@ console.log('[8] 工具卡补丁视图（读 / 写 / 改三类分流）')
   const dock = read('ui-shell/src/ui-dockkit/dock.tsx')
   const factory = read('ui-shell/src/plugins/transcript/tool-card/factory.tsx')
   const preview = read('ui-shell/src/plugins/preview/ui.tsx')
-  const contract = read('src/contract.ts')
+  const contract = readContractSource()
   const adapter = read('src/adapter/transcript.ts')
 
   // ── 契约 / 宿主：逐刀改动按 callId 缝回工具卡（补丁视图的数据源）──

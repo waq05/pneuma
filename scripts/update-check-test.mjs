@@ -20,6 +20,7 @@
  * @module dsc/scripts/update-check-test
  */
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { readContractSource } from './_check-runner.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -202,7 +203,7 @@ console.log('[6] 形态钉：宿主分出口 / 桌面接线 / 契约载荷')
   check('检查更新按钮用 fetchLatestRelease + pickInstaller 分出口', settings.includes('fetchLatestRelease()') && settings.includes('pickInstaller(result.info.assets'))
   check('挑得出安装器给 kind:update，挑不出才给 kind:url', settings.includes("kind: 'update', version: result.info.version") && settings.includes("kind: 'url'"))
 
-  const contract = read('src/contract.ts')
+  const contract = readContractSource()
   check('契约里有 UpdateShareData（kind:update + version）', /interface UpdateShareData \{[\s\S]{0,200}?kind: 'update'/.test(contract))
   check('SettingsMutationOk 的载荷含 UpdateShareData', /data\?: PairShareData \| LinkShareData \| UpdateShareData/.test(contract))
 

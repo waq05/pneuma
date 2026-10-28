@@ -22,6 +22,7 @@
  * @module dsc/scripts/permission-presets-test
  */
 import { readFileSync } from 'node:fs'
+import { readContractSource } from './_check-runner.mjs'
 import { fileURLToPath } from 'node:url'
 
 const presets = await import(new URL('../src/core/permission-presets.ts', import.meta.url).href)
@@ -140,7 +141,7 @@ console.log('[5] 派生状态的显示名：命中预设留空，拼出来的组
   // 名字只用于显示：它不改变「custom 不是可选项」这条（[3] 已钉 findPermissionPreset）。
   check('派生名不进预设表（表里查不到它）', BUILTIN_PERMISSION_PRESETS.every((preset) => preset.label !== 'AI 审查' && preset.label !== '自定义'))
 
-  const contract = read('src/contract.ts')
+  const contract = readContractSource()
   check('契约给 select 字段开了 derivedLabelKey', contract.includes('derivedLabelKey?: string'))
 
   const host = read('src/plugins/settings.ts')

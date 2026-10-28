@@ -34,7 +34,7 @@ const { App } = await import('../lib/app/App.js')
 const { commandsPlugin } = await import('../lib/plugins/commands.js')
 const { railGeometry } = await import('../lib/app/scroll-model.js')
 const { TimelineRail } = await import('../lib/app/TimelineRail.js')
-const { displayWidth } = await import('../lib/app/click.js')
+const { displayWidth } = await import('../lib/app/display-width.js')
 
 /**
  * 帧里某个字形所在的**终端列号**（1 基）。

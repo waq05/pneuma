@@ -8,10 +8,25 @@
  * @module dsc/scripts/_check-runner
  */
 import { spawn } from 'node:child_process'
-import { readdirSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+/**
+ * 契约源码的全文：入口 `src/contract.ts` 加上 `src/contract/` 下按域拆开的每一份。
+ *
+ * 契约在第十一批按域拆成十份，入口只剩十行 `export *`——按文本读契约的探针
+ * （"契约里有 X" 这类断言）要读整面，只读入口会一律读不到。
+ */
+export function readContractSource() {
+  const barrel = readFileSync(join(root, 'src', 'contract.ts'), 'utf8')
+  const dir = join(root, 'src', 'contract')
+  const parts = [barrel]
+  for (const file of readdirSync(dir).sort()) {
+    if (file.endsWith('.ts')) parts.push(readFileSync(join(dir, file), 'utf8'))
+  }
+  return parts.join('\n')
+}
 /** 仓库根（`scripts/` 的上一层）。 */
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 

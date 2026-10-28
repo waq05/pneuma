@@ -18,6 +18,7 @@
  * @module dsc/scripts/config-file-switch-test
  */
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readContractSource } from './_check-runner.mjs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -141,7 +142,7 @@ console.log('[4] 接线钉：原生桥 / 界面通道 / 壳那一行')
   check('桥的协议版本没涨（加操作不涨，改语义才涨）', /NATIVE_BRIDGE_VERSION = 3/.test(bridge), '')
   const uiMethods = read('src/core/ui-methods.ts')
   check('界面通道排除 setConfigFile（写类入口只走桥）', /'setConfigFile',/.test(uiMethods), '')
-  const contract = read('src/contract.ts')
+  const contract = readContractSource()
   check('契约里有 setConfigFile 与信息行动作类型', /setConfigFile\(path: string\): Promise<SettingsMutation>/.test(contract) && /export interface SettingsInfoAction/.test(contract), '')
   const hostMethods = read('src/core/host-methods.ts')
   check('宿主方法白名单里有它', /'setConfigFile',/.test(hostMethods), '')

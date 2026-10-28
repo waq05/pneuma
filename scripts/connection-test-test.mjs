@@ -19,6 +19,7 @@
  * @module dsc/scripts/connection-test-test
  */
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { readContractSource } from './_check-runner.mjs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -159,7 +160,7 @@ console.log('\n[5] 接线钉（源码）')
   const settings = read('src/plugins/settings.ts')
   const runtime = read('src/plugins/runtime.ts')
   const bridge = read('desktop/src/renderer/bridge.ts')
-  const contract = read('src/contract.ts')
+  const contract = readContractSource()
   const models = read('ui-shell/src/plugins/settings/models.tsx')
   const views = read('ui-shell/src/legacy/views.css')
 
