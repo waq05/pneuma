@@ -17,6 +17,8 @@ import { estimateSessionCostCny, isDeepseekProvider, isPeakHour } from '../core/
 import { emptySegments } from '../core/token-estimate.js'
 import type { NoticeMessageView, PlanView, QueuedMessageView, RuntimeSnapshot, StatusView, TranscriptEntry } from '../contract.js'
 import type { AsyncInboxItem } from '../core/session.js'
+import { contentText, type ChatMessage } from '../core/llm.js'
+import { SUMMARY_BANNER } from '../core/compact-anchors.js'
 import type { TranscriptService } from '../services/types.js'
 
 /**
@@ -36,9 +38,32 @@ function splitInbox(items: readonly AsyncInboxItem[]): { queued: QueuedMessageVi
       index,
       text: item.text,
       ...(item.images !== undefined && item.images.length > 0 ? { images: item.images } : {}),
+      ...(item.files !== undefined && item.files.length > 0 ? { files: item.files } : {}),
     })
   })
   return { queued, notices }
+}
+
+/**
+ * 会话进度：轮数 = 用户消息数（压缩摘要那一行不算），步数 = 助手消息数。
+ *
+ * 口径对照 dsh 的 `sessionStats`（turns = 有回复的轮、steps = 助手节点数）。这里不数
+ * 渲染条目——同一次模型调用可能拆成思考 + 正文两条，数条目会把步数算多；会话消息是
+ * 协议的原始形状，一问一答各一条，最接近 dsh 的持久投影。
+ */
+function sessionProgress(messages: readonly ChatMessage[]): { turns: number; steps: number } {
+  let turns = 0
+  let steps = 0
+  for (const message of messages) {
+    if (message.role === 'assistant') {
+      steps += 1
+      continue
+    }
+    if (message.role !== 'user') continue
+    if (contentText(message.content).startsWith(SUMMARY_BANNER)) continue
+    turns += 1
+  }
+  return { turns, steps }
 }
 
 export const transcriptPlugin: Plugin.Object = {
@@ -263,6 +288,7 @@ export const transcriptPlugin: Plugin.Object = {
             contextWindow: ctx.llm.contextWindow,
             contextUsed: transcript.contextUsed,
             contextSegments: transcript.contextSegments ?? emptySegments(),
+            progress: sessionProgress(ctx.session.current().messages),
             ...(costEstimate === undefined
               ? {}
               : { cost: { total: costEstimate.total, peakNow: isPeakHour() } }),

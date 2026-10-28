@@ -22,6 +22,7 @@
 import type { Plugin } from '@deepseek-ai/cordis'
 import { join } from 'node:path'
 import { bootNoticeOnce } from '../core/boot-notices.js'
+import { attachmentStore, sanitizeFileRefs } from '../core/attachments.js'
 import { resolvePluginConfig } from '../core/plugin-registry.js'
 import { createUiEvents, type UiEventsHandle } from '../core/ui-events.js'
 import { createUiHmr, type UiHmrFrame, type UiHmrHandle } from '../core/ui-hmr.js'
@@ -179,8 +180,13 @@ export const webserverPlugin: Plugin.Object = {
           if (!isUiMethod(method)) throw new Error(`界面通道不允许调用的方法：${method}`)
           const checked = validateUiArgs(method, args)
           if (!checked.ok) throw new Error(checked.error)
+          // 文件引用只认仓库按 sha 算出的路径：页面编的 path 一律丢掉（见 sanitizeFileRefs）。
+          const finalArgs = [...checked.args]
+          if (method === 'submit' && finalArgs.length > 2) {
+            finalArgs[2] = sanitizeFileRefs(finalArgs[2])
+          }
           // 方法名已经收窄成 DscRuntime 的键（与 host-stdio 同一处惯例）。
-          return (await Reflect.apply(runtime[method], runtime, checked.args)) ?? null
+          return (await Reflect.apply(runtime[method], runtime, finalArgs)) ?? null
         },
         methods: UI_METHODS,
         hello: () => ({
@@ -221,6 +227,7 @@ export const webserverPlugin: Plugin.Object = {
         host: { name: 'Pneuma', version: DSC_VERSION },
         port: config.port,
         events: channel,
+        attachments: attachmentStore(),
         ...(config.assetsDir === undefined ? {} : { assetsDir: config.assetsDir }),
       })
       handle = server

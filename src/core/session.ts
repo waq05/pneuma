@@ -19,6 +19,7 @@ import { dropSessionMeta, patchSessionMeta, readSessionMeta } from './session-me
 import type { SessionMetaRecord } from './session-meta.js'
 import { acquireLock, withExclusiveLock, type FileLock } from './lockfile.js'
 import { dscPath } from './path-policy.js'
+import { fileHandleText, parseAttachmentUrl, resolveImageForRequest, type UserFileAttachment } from './attachments.js'
 
 /** 会话元数据（jsonl 首行 + 列表投影）。 */
 export interface SessionMeta {
@@ -49,12 +50,50 @@ export interface SessionNote {
  */
 export type InboxOrigin = 'user' | 'notice'
 
-/** 收件箱里的一条：正文 + 可选图 + 可选来源（缺省按 `'user'` 算，老状态条目兼容）。 */
+/** 收件箱里的一条：正文 + 可选图 + 可选文件 + 可选来源（缺省按 `'user'` 算，老状态条目兼容）。 */
 export interface AsyncInboxItem {
   text: string
   images?: string[]
+  /** 视频 / 通用文件（图片仍走 `images`）。 */
+  files?: UserFileAttachment[]
   /** 来源；老状态条目没有这个字段，读时按 `'user'` 兜底。 */
   origin?: InboxOrigin
+}
+
+/**
+ * 组装一条用户消息的协议形态。
+ *
+ * 图片引用在这里读成 data URL（老会话的 data URL 原样过），视频 / 文件则把「路径 + 元数据」
+ * 拼进正文——模型侧没有文件内容块，给它一个可读、可复现的句柄才是 dsh 对非图片附件的做法。
+ * 只在这一处拼：实时写入与历史重放走同一个函数，两条路不会漂。
+ *
+ * 附件对象被删掉（用户手清 `~/.dsc/attachments`、换机器拷会话）不能让整个会话打不开：
+ * 读不出来的那张图换成一行「图片已丢失」的说明，其余照常重放——与 dsh「历史读取失败
+ * 以错误呈现、而不是给错误字节」同一个方向，代价更小。
+ */
+function userContent(text: string, images?: string[], files?: UserFileAttachment[]): string | ChatContentPart[] {
+  const handle = files === undefined || files.length === 0 ? '' : fileHandleText(files)
+  const parts: ChatContentPart[] = []
+  const missing: string[] = []
+  const push = (url: string): void => {
+    try {
+      parts.push({ type: 'image_url', image_url: { url: resolveImageForRequest(url) } })
+    } catch {
+      missing.push((parseAttachmentUrl(url) ?? url).slice(0, 12))
+    }
+  }
+  if (images !== undefined) for (const url of images) push(url)
+  // 视频关键帧跟着视频一起进这一次请求：模型看得到画面，日志只记引用，界面只画视频卡。
+  if (files !== undefined) {
+    for (const file of files) {
+      if (file.frames === undefined) continue
+      for (const frame of file.frames) push(frame)
+    }
+  }
+  const lost = missing.length === 0 ? '' : `\n\n[图片已丢失：${missing.join('、')}]`
+  const body = `${handle === '' ? text : `${text}\n\n${handle}`}${lost}`
+  if (parts.length === 0) return body
+  return [{ type: 'text', text: body }, ...parts]
 }
 
 type SessionRecord =
@@ -66,7 +105,7 @@ type SessionRecord =
    * 界面的每轮用时也才算得出来（见 contract.ts 的 TranscriptEntry.ts）。
    * 老日志没有这个字段，重放时按 undefined 处理。
    */
-  | { type: 'user'; text: string; images?: string[]; ts?: number }
+  | { type: 'user'; text: string; images?: string[]; files?: UserFileAttachment[]; ts?: number }
   | { type: 'assistant'; text: string; reasoning: string; toolCalls?: ToolCall[]; ts?: number }
   | {
       type: 'tool'
@@ -425,13 +464,8 @@ export class Session {
         case 'user':
           messages.push({
             role: 'user',
-            content:
-              record.images !== undefined && record.images.length > 0
-                ? [
-                    { type: 'text', text: record.text },
-                    ...record.images.map((url): ChatContentPart => ({ type: 'image_url', image_url: { url } })),
-                  ]
-                : record.text,
+            content: userContent(record.text, record.images, record.files),
+            ...(record.files === undefined || record.files.length === 0 ? {} : { files: record.files }),
             // 老日志没有 ts：这里就是 undefined，界面据此降级（不显示时间/用时）
             ...(record.ts === undefined ? {} : { ts: record.ts }),
           })
@@ -549,20 +583,23 @@ export class Session {
    * `ts` 只写一份给内存与磁盘共用：界面按它显示「这条消息几点发的」，
    * 也是这一轮「用时」的起点（见 contract.ts 的 TranscriptEntry.ts）。
    */
-  appendUser(text: string, images?: string[]): void {
+  appendUser(text: string, images?: string[], files?: UserFileAttachment[]): void {
     const withImages = images !== undefined && images.length > 0
+    const withFiles = files !== undefined && files.length > 0
     const ts = Date.now()
     this.messages.push({
       role: 'user',
-      content: withImages
-        ? [
-            { type: 'text', text },
-            ...images.map((url): ChatContentPart => ({ type: 'image_url', image_url: { url } })),
-          ]
-        : text,
+      content: userContent(text, images, files),
+      ...(withFiles ? { files } : {}),
       ts,
     })
-    this.write({ type: 'user', text, ...(withImages ? { images } : {}), ts })
+    this.write({
+      type: 'user',
+      text,
+      ...(withImages ? { images } : {}),
+      ...(withFiles ? { files } : {}),
+      ts,
+    })
   }
 
   appendAssistant(text: string, reasoning: string, toolCalls: ToolCall[]): void {
@@ -749,7 +786,7 @@ export class Session {
    * @param origin - 这条是用户来源还是机器来源（缺省 `'user'`，老调用点行为不变）。
    *   只有 `'notice'` 会被记进条目（`'user'` 保持条目形状与老状态一致，读时兜底）。
    */
-  enqueueAsync(text: string, images?: string[], origin: InboxOrigin = 'user'): void {
+  enqueueAsync(text: string, images?: string[], origin: InboxOrigin = 'user', files?: UserFileAttachment[]): void {
     const current = this.state('async-inbox')?.items ?? []
     this.appendState('async-inbox', {
       items: [
@@ -757,6 +794,7 @@ export class Session {
         {
           text,
           ...(images !== undefined && images.length > 0 ? { images } : {}),
+          ...(files !== undefined && files.length > 0 ? { files } : {}),
           ...(origin === 'notice' ? { origin } : {}),
         },
       ],

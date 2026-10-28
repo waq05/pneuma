@@ -40,10 +40,11 @@
  * @module dsc/core/ui-server
  */
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createReadStream, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { dirname } from 'node:path'
 import type { UiBootGraph } from '../ui/manifest.js'
+import { AttachmentError, type AttachmentStore } from './attachments.js'
 import { createUiBootSource, type UiBootRequestStats, type UiBootSource, type UiBootWatchRow } from './ui-boot-source.js'
 import { dscPath } from './path-policy.js'
 import type { UiEventsHandle } from './ui-events.js'
@@ -109,6 +110,11 @@ export interface UiServerOptions {
    * 单元测试与「只发页面不带数据」的场景都用得着。
    */
   events?: UiEventsHandle
+  /**
+   * 附件仓库（`/api/attachments` 两路由）。不给就没有上传与读取能力——
+   * 单元测试与「只发页面不带数据」的场景用不着。
+   */
+  attachments?: AttachmentStore
   /** 监听端口，0 = 让系统分配（缺省 0）。 */
   port?: number
   /** 一次性令牌有效期，缺省 10 分钟。 */
@@ -177,6 +183,65 @@ function loadUiSigningKey(log: (line: string) => void): Buffer {
   }
 }
 
+/**
+ * 解析 `Range: bytes=…`（只认单段）。
+ *
+ * 视频拖动进度条要靠它：浏览器会先发 `Range: bytes=0-`，再按需取后面的段。
+ * 头部形状不对、范围越界、`start > end` 一律当「没有 Range」——退回整段 200，
+ * 比回 416 更不容易把播放器卡死。
+ */
+function parseRange(header: string | undefined, size: number): { start: number; end: number } | null {
+  if (header === undefined) return null
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim())
+  if (match === null) return null
+  const startText = match[1] ?? ''
+  const endText = match[2] ?? ''
+  let start: number
+  let end: number
+  if (startText === '') {
+    const suffix = Number(endText)
+    if (!Number.isFinite(suffix) || suffix <= 0) return null
+    start = Math.max(0, size - suffix)
+    end = size - 1
+  } else {
+    start = Number(startText)
+    end = endText === '' ? size - 1 : Math.min(Number(endText), size - 1)
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= size) return null
+  return { start, end }
+}
+
+/** 把仓库里的一段字节流出去（Range 命中回 206，否则 200）。 */
+function sendAttachment(res: ServerResponse, path: string, mime: string, size: number, range: string | undefined, headOnly: boolean): void {
+  const base = {
+    'content-type': mime,
+    'cache-control': 'private, max-age=31536000, immutable',
+    'accept-ranges': 'bytes',
+    'content-disposition': 'inline',
+    'x-content-type-options': 'nosniff',
+  }
+  const span = parseRange(range, size)
+  if (span === null) {
+    res.writeHead(200, { ...base, 'content-length': String(size) })
+    if (headOnly) {
+      res.end()
+      return
+    }
+    createReadStream(path).on('error', () => res.destroy()).pipe(res)
+    return
+  }
+  res.writeHead(206, {
+    ...base,
+    'content-length': String(span.end - span.start + 1),
+    'content-range': `bytes ${String(span.start)}-${String(span.end)}/${String(size)}`,
+  })
+  if (headOnly) {
+    res.end()
+    return
+  }
+  createReadStream(path, { start: span.start, end: span.end }).on('error', () => res.destroy()).pipe(res)
+}
+
 /** 把 bundle 解析结果写出去：200 给头（与体），其余给状态码 + 理由 + Allow 之类的头。 */
 function sendBundleResponse(res: ServerResponse, resolved: UiBundleResponse): void {
   if (resolved.status === 200) {
@@ -224,6 +289,7 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
   const assetsDir = options.assetsDir ?? uiAssetsDir()
   const pluginsDir = options.pluginsDir ?? uiPluginsDir()
   const events = options.events ?? null
+  const attachments = options.attachments ?? null
   const log = options.log ?? ((line: string): void => { process.stderr.write(`${line}\n`) })
   const ttl = options.tokenTtlMs ?? DEFAULT_TOKEN_TTL_MS
 
@@ -318,6 +384,43 @@ export async function createUiServer(options: UiServerOptions): Promise<UiServer
       return
     }
 
+    // 附件：上传走裸字节 POST（不受 64KB JSON 上限约束），读取走同源 GET。
+    // 鉴权就在上面那道 Cookie 闸——这里不再重复判，也不认任何查询参数里的凭据。
+    if (attachments !== null && url.pathname === '/api/attachments') {
+      if (method !== 'POST') {
+        sendText(res, 405, '上传只认 POST')
+        return
+      }
+      const name = url.searchParams.get('name') ?? ''
+      try {
+        const meta = await attachments.saveStream(req, name)
+        sendJson(res, 200, { ok: true, attachment: meta })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        // 上限类错误是客户端问题（413），其余（空文件、写盘失败）分开回。
+        const status = error instanceof AttachmentError && message.includes('上限') ? 413 : error instanceof AttachmentError ? 400 : 500
+        sendJson(res, status, { ok: false, error: message })
+      }
+      return
+    }
+    if (attachments !== null && url.pathname.startsWith('/api/attachments/')) {
+      if (method !== 'GET' && method !== 'HEAD') {
+        sendText(res, 405, '附件只认 GET 与 HEAD')
+        return
+      }
+      const sha = url.pathname.slice('/api/attachments/'.length)
+      if (!/^[0-9a-f]{64}$/.test(sha)) {
+        sendText(res, 404, '没有这个附件')
+        return
+      }
+      const info = await attachments.mimeOf(sha)
+      if (info === null) {
+        sendText(res, 404, '没有这个附件')
+        return
+      }
+      sendAttachment(res, attachments.pathOf(sha), info.mime, info.size, req.headers.range, method === 'HEAD')
+      return
+    }
     // 插件 bundle：内容寻址 + 批 combo；HEAD 复用 GET 的头，非 GET/HEAD 405。
     // 解析口径与远程控制共用 core/ui-route.ts 那一份；combo 只认快照里登记过的精确地址。
     if (isUiBundleRequest(url.pathname)) {

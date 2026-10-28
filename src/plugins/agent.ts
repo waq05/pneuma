@@ -20,6 +20,7 @@
 import { createHash } from 'node:crypto'
 import type { Plugin } from '@deepseek-ai/cordis'
 import { Session, type InboxOrigin } from '../core/session.js'
+import type { UserFileAttachment } from '../core/attachments.js'
 import { MiniAgent } from '../core/loop.js'
 import { appendToolRecord, appendUsageRecord } from '../core/usage-log.js'
 import { publishDshUsage } from '../core/dsh-compat/llm-usage-event.js'
@@ -212,7 +213,7 @@ export const agentPlugin: Plugin.Object = {
     })
 
     /** 把一条输入写进没有常驻 agent 的休眠会话（等用户回去自己看到，不起回合）。 */
-    const deliverToDormant = (sessionId: string, text: string, images?: string[]): void => {
+    const deliverToDormant = (sessionId: string, text: string, images?: string[], files?: UserFileAttachment[]): void => {
       const path = tombstones.get(sessionId)
       if (path === undefined) {
         ctx.emit('dsc/notice', `一条通知没能投递：会话 ${sessionId.slice(0, 8)} 不在本窗口的名册里`)
@@ -220,7 +221,7 @@ export const agentPlugin: Plugin.Object = {
       }
       try {
         const dormant = Session.load(path, true)
-        dormant.appendUser(text, images)
+        dormant.appendUser(text, images, files)
         dormant.close()
       } catch (error) {
         ctx.emit('dsc/notice', `一条通知没能写进会话 ${sessionId.slice(0, 8)}：${errText(error)}`)
@@ -228,17 +229,17 @@ export const agentPlugin: Plugin.Object = {
     }
 
     const service: AgentService = {
-      followup(text: string, images?: string[], sessionId?: string, origin?: InboxOrigin) {
+      followup(text: string, images?: string[], sessionId?: string, origin?: InboxOrigin, files?: UserFileAttachment[]) {
         if (sessionId === undefined) {
-          if (active !== null) active.followup(text, images, origin)
+          if (active !== null) active.followup(text, images, origin, files)
           return
         }
         const agent = agents.get(sessionId)
         if (agent !== undefined) {
-          agent.followup(text, images, origin)
+          agent.followup(text, images, origin, files)
           return
         }
-        deliverToDormant(sessionId, text, images)
+        deliverToDormant(sessionId, text, images, files)
       },
       interrupt(filePath?: string) {
         if (filePath === undefined) {

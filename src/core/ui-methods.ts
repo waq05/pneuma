@@ -253,9 +253,14 @@ const MAX_PATH = 4096
 const MAX_NAME = 200
 /** 用户消息 / 提问回答的上限（请求体本身另有 64KB 上限，见 core/web-http.ts）。 */
 const MAX_TEXT = 32000
-/** 图片以 data URL 形式随消息发，单条 32KB（请求体上限之下）。 */
+/**
+ * 图片元素的上限：正常情况这里是一个短引用（`/api/attachments/<sha>?name=…`，约 120 字节），
+ * 老调用点仍可能给 data URL。32KB 是给后者留的兼容位——请求体本身另有 64KB 上限，
+ * 新链路（先上传、再发引用）根本不碰这个数。
+ */
 const MAX_IMAGE = 32000
-const MAX_IMAGES = 8
+/** 一条消息最多几张图（与 `core/attachments.ts` 的 `MAX_IMAGES_PER_MESSAGE` 同值）。 */
+const MAX_IMAGES = 20
 /** 一批会话路径的条数上限（归档 / 恢复）。 */
 const MAX_PATHS = 500
 /** 偏好 / 设置值 / 预设草稿这类 JSON 实参的上限（按序列化后的文本长度算）。 */
@@ -279,7 +284,12 @@ const GOAL_ACTIONS = ['pause', 'resume', 'clear', 'extend'] as const
  */
 export const UI_ARG_SPECS: Readonly<Record<UiMethod, MethodSpec>> = {
   // ── 对话与回合 ─────────────────────────────────────────────────────────────
-  submit: [{ shape: { kind: 'string', max: MAX_TEXT } }, { shape: { kind: 'strings', maxItems: MAX_IMAGES, max: MAX_IMAGE }, optional: true }],
+  // 第二参是图片引用（老的 data URL 也收），第三参是视频 / 通用文件的落盘元数据。
+  submit: [
+    { shape: { kind: 'string', max: MAX_TEXT } },
+    { shape: { kind: 'strings', maxItems: MAX_IMAGES, max: MAX_IMAGE }, optional: true },
+    { shape: { kind: 'json', maxBytes: MAX_PREF_JSON }, optional: true },
+  ],
   interrupt: [{ shape: { kind: 'string', max: MAX_PATH }, optional: true }],
   editQueued: [{ shape: { kind: 'number' } }, { shape: { kind: 'string', max: MAX_TEXT } }],
   removeQueued: [{ shape: { kind: 'number' } }],

@@ -22,6 +22,7 @@ import { REVIEW_FINDINGS_OPEN, TEAMMATE_REPORT_OPEN } from '../core/team-board.j
 import { addUsageToBuckets, emptyCostBuckets, isPeakHour, type CostBuckets } from '../core/pricing.js'
 import { emptySegments, type RequestSegments } from '../core/token-estimate.js'
 import type { CompactionMark, SubagentCardView, TokenUsageView, ToolCallView, ToolStatus, TranscriptEntry } from '../contract.js'
+import type { UserFileAttachment } from '../core/attachments.js'
 
 /** 工具卡条目（替换对象实现不可变更新）。 */
 type ToolEntry = Extract<TranscriptEntry, { kind: 'tool' }>
@@ -240,6 +241,7 @@ export class Transcript {
                 type: 'user',
                 text: contentText(message.content),
                 ...(images.length > 0 ? { images } : {}),
+                ...(message.files === undefined || message.files.length === 0 ? {} : { files: message.files }),
               },
               ts,
             ) || changed
@@ -385,11 +387,13 @@ export class Transcript {
         if (event.steering !== true) this.turnUsage = { inputTokens: 0, outputTokens: 0 }
         const last = this.list[this.list.length - 1]
         const imageCount = event.images?.length ?? 0
+        const fileCount = event.files?.length ?? 0
         const sameAsLast =
           last !== undefined &&
           last.kind === 'user' &&
           last.text === event.text &&
-          (last.images?.length ?? 0) === imageCount
+          (last.images?.length ?? 0) === imageCount &&
+          (last.files?.length ?? 0) === fileCount
         if (sameAsLast) return false
         // 压缩摘要本身在内存里就是一条 role:'user' 的消息（core/compact.ts 造的），
         // 正文固定以 SUMMARY_BANNER 开头：这是它和真用户消息唯一的区别。
@@ -409,6 +413,7 @@ export class Transcript {
             id: this.seq++,
             text: event.text,
             ...(imageCount > 0 ? { images: event.images } : {}),
+            ...(fileCount > 0 ? { files: event.files } : {}),
             ...(compacted ? { compaction: this.compactionMark() } : {}),
             ...(event.steering === true ? { steering: true } : {}),
             ...(internal ? { internal: true } : {}),

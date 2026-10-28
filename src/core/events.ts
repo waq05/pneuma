@@ -12,13 +12,14 @@ import type { SubagentCardView } from '../contract.js'
 /** MiniAgent 事件。 */
 export type CoreEvent =
   /**
-   * 用户输入已入会话（回显）；images 是随消息发出去的 data URL 清单。
+   * 用户输入已入会话（回显）；images 是随消息发出去的图片（引用或老式 data URL），
+   * files 是视频 / 通用文件的落盘元数据（界面据此画文件卡；模型侧只看到路径句柄）。
    *
    * `steering` = 这条是在助手回合**还没跑完**时插进来的（对照 dsh 的 steering 节点）。
    * 它同样会被并进这一轮的下一次模型请求（messages 是同一份），区别只在界面上：
    * 轮中途插过话的那一轮不再提供整轮折叠（对照 dsh 的 `hasInterleavedInput`）。
    */
-  | { type: 'user'; text: string; images?: string[]; steering?: boolean }
+  | { type: 'user'; text: string; images?: string[]; files?: import('./attachments.js').UserFileAttachment[]; steering?: boolean }
   /**
    * 收件箱变了（入箱 / 编辑 / 删除 / 提前），本身不产生条目：界面照快照里的
    * `queued` 画输入框下方的队列条。发这条是为了让快照失效重画——排队的消息

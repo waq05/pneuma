@@ -135,4 +135,5 @@ export type {
   UsageDayView,
   UsageModelView,
   UsageStatsView,
+  UserFileAttachment,
 } from '../contract.js'

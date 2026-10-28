@@ -14,6 +14,7 @@
  * @module dsc/core/llm
  */
 import { sessionAttributionHeaders } from './request-attribution.js'
+import type { UserFileAttachment } from './attachments.js'
 
 export interface ToolCall {
   id: string
@@ -50,6 +51,14 @@ export interface ChatMessage {
    * 不显示时间，不猜一个。
    */
   ts?: number
+  /**
+   * 这条用户消息带的视频 / 通用文件（图片走 content 里的 image 块）。
+   *
+   * 与 `ts` 同一条纪律：只在内存与 jsonl 里活着，协议里没有这一项，
+   * {@link serializeMessages} 发请求前会剥掉；模型看到的是拼进正文的路径句柄
+   * （见 `core/attachments.ts` 的 `fileHandleText`）。
+   */
+  files?: UserFileAttachment[]
 }
 
 /**
@@ -609,6 +618,7 @@ export function serializeMessages(messages: ChatMessage[]): unknown[] {
     // 不动别的插件往消息上挂的东西。
     const wire: ChatMessage = { ...message }
     delete wire.ts
+    delete wire.files
     if (wire.role !== 'assistant') return wire
     return {
       role: wire.role,

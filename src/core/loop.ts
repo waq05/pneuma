@@ -23,6 +23,7 @@ import type { ChatMessage, LlmRoute, StreamHandlers, StreamRequest, StreamResult
 import { LlmError, StreamInterruptedError } from './llm.js'
 import type { CoreEvent } from './events.js'
 import type { Session, InboxOrigin } from './session.js'
+import type { UserFileAttachment } from './attachments.js'
 import type { ToolGuardChain } from './tool-guards.js'
 import { callFacts, stripBaseline, type FileChangeSummary, type ToolEntry, type ToolPresentation } from './tools.js'
 import { collectGitTurnChanges, snapshotGitStatus } from './git-info.js'
@@ -185,7 +186,7 @@ export class MiniAgent {
    *   回合跑动中入箱时，`'notice'` 会记进收件箱条目，界面据此把它画在输入框上方的
    *   只读通知条（而不是输入框下方的队列条）；出账落库后两者都是同一条 user 消息。
    */
-  followup(text: string, images?: string[], origin: InboxOrigin = 'user'): void {
+  followup(text: string, images?: string[], origin: InboxOrigin = 'user', files?: UserFileAttachment[]): void {
     // 回合还没跑完就收到的消息算「轮中途到达」（对照 dsh 的 steering/inject，生产者
     // 有用户插话、后台作业完成、定时补投、goal 提醒……）。它们一律先进收件箱：
     // 直接 appendUser 会落在「还没落结果的 tool 调用」和它的结果中间——比如调用正
@@ -193,17 +194,18 @@ export class MiniAgent {
     // 都 400（0.6.46 那次卡死会话的新形状）。到达与入史拆成两段，见 drainInbox。
     // 要在 enqueueTurn 之前读 running——那之后 running 会被置真，再来一条就分不出先后了。
     if (this.running) {
-      this.session.enqueueAsync(text, images, origin)
+      this.session.enqueueAsync(text, images, origin, files)
       // 入箱只是「排队」，还没进对话：这里不发 user 事件（0.6.67 起出账时才发），
       // 只报一条「收件箱变了」，界面据此把队列条 / 通知条画出来 / 刷新。
       this.deps.emit({ type: 'inbox' })
       return
     }
-    this.session.appendUser(text, images)
+    this.session.appendUser(text, images, files)
     this.deps.emit({
       type: 'user',
       text,
       ...(images !== undefined && images.length > 0 ? { images } : {}),
+      ...(files !== undefined && files.length > 0 ? { files } : {}),
     })
     this.enqueueTurn()
   }
@@ -299,11 +301,12 @@ export class MiniAgent {
     const items = this.session.takeAsyncInbox()
     if (items.length === 0) return
     for (const item of items) {
-      this.session.appendUser(item.text, item.images)
+      this.session.appendUser(item.text, item.images, item.files)
       this.deps.emit({
         type: 'user',
         text: item.text,
         ...(item.images !== undefined && item.images.length > 0 ? { images: item.images } : {}),
+        ...(item.files !== undefined && item.files.length > 0 ? { files: item.files } : {}),
         ...(midTurn ? { steering: true } : {}),
       })
     }

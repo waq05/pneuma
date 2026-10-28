@@ -23,6 +23,7 @@ import { buildUsageStats } from '../core/usage-log.js'
 import { sideAskOnce } from '../core/side-ask.js'
 import { shellCommandRejection, shellCommands } from '../core/commands-completion.js'
 import type { DscRuntime, SettingsMutation } from '../contract.js'
+import type { UserFileAttachment } from '../core/attachments.js'
 
 export const runtimePlugin: Plugin.Object = {
   name: 'ui-runtime',
@@ -100,8 +101,8 @@ export const runtimePlugin: Plugin.Object = {
         return ctx.transcript.getSnapshot()
       },
 
-      submit(text: string, images?: string[]) {
-        ctx.agent.followup(text, images)
+      submit(text: string, images?: string[], files?: UserFileAttachment[]) {
+        ctx.agent.followup(text, images, undefined, 'user', files)
       },
 
       interrupt() {

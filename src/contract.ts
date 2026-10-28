@@ -9,6 +9,8 @@
  */
 import type { UserFileAttachment } from './core/attachments.js'
 
+export type { UserFileAttachment }
+
 /** deepseek adapter 的思考强度档位。default = 不声明思考字段（跟随端点默认）。 */
 export type EffortLevel = 'default' | 'off' | 'low' | 'high' | 'max'
 
