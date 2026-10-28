@@ -28,7 +28,7 @@
 
 | 编号 | 严重度 | 问题 | 状态 |
 | --- | --- | --- | --- |
-| P0-1 | 阻断 | 主干 `e500f9c` 编译不过：引用了未入库的 `src/core/attachments.ts`，`StatusView.progress` 也没补齐 | **仍在**（工作区已能编译，缺一次提交） |
+| P0-1 | 阻断 | 主干 `e500f9c` 编译不过：引用了未入库的 `src/core/attachments.ts`，`StatusView.progress` 也没补齐 | 已修（`7099b8a` 后干净检出 `tsc` 退出码 0） |
 | P0-2 | 高 | CI 只有 `release.yml`，类型检查与自检脚本没有任何自动门禁 | 已修（`verify.yml`） |
 | P0-3 | 高 | `a20dd74` 上 7 个 `replace` 类型错误进过主干，20 分钟后才被 `d1b8e08` 补上 | 已修 |
 | P1-1 | 高 | 四份界面代码，旧渲染层 21,035 行已冻结但仍与新壳高度重复 | 仍在（已冻结） |
@@ -36,7 +36,7 @@
 | P1-3 | 中 | 巨石文件：契约 2,091 行、消息流 2,481 行 | 仍在 |
 | P2-1 | 中 | 无 ESLint / Prettier / EditorConfig / `.gitattributes`，换行符混乱 | 部分已修（`.gitattributes` + `check:style`） |
 | P2-2 | 中 | 三个 pnpm 项目三把锁、无 workspace、`ui-shell` 版本 2.0.0 | 仍在 |
-| P2-3 | 低 | 文档里的路径与规模数字过期 | 仍在 |
+| P2-3 | 低 | 文档里的路径与规模数字过期 | 已修（§2 仓库地图按 0.7.1 重填） |
 | P3-1 | 低 | 59 条自检脚本无框架、无覆盖率 | 仍在 |
 
 ## 三、先说保住的九条
@@ -392,4 +392,108 @@ git archive HEAD | tar -x -C .tmp-headcheck && (cd .tmp-headcheck && npx tsc -p 
 ```
 
 最后一行是复验：只有干净检出也能过，才算真的修好。
+
+**2026-10-28 晚些时候的结论**：这一条已经解除。附件功能与状态栏那批改动按 `e478997` → `a4c8f25` →
+`d996bd5` 三个提交入库，本批的闸门与收口跟在 `4ef514e` → `8204b2a` → `a646f87` → `de3ae20` → `fe620fd` 后面。
+复验方式与之前一样，把 HEAD 单独导出成干净快照：
+
+```bash
+git archive HEAD | tar -x -C .tmp-headcheck
+node node_modules/typescript/bin/tsc -p .tmp-headcheck/tsconfig.json --noEmit
+# 退出码 0
+```
+
+这条教训值得留在这里：**本地绿不算数**。同一份代码在本机能编译、导出成干净快照就红，差别只是工作区里
+躺着一个没入库的文件——这种错靠人盯是盯不住的，`verify.yml` 那道门就是为它建的。
+## 十、现状总览（2026-10-28 收尾）
+
+一句话：**两个 P0 都清了，闸门已经开了，剩下的都是「要大动干戈」和「要人拍板」的账。**
+
+分支 `feat/dock-browser`，HEAD `7099b8a`。这一轮所有改动都已入库，工作区干净；没有推送。
+
+### 10.1 已入库的改动
+
+| commit | 改了什么 | 谁的问题 |
+| --- | --- | --- |
+| `e478997` | 用户贴图与文件改存内容寻址对象，消息里只留引用 | 在途工作（P0-1 的根因） |
+| `a4c8f25` | 输入区支持贴图与文件，消息流挂附件卡片 | 在途工作 |
+| `d996bd5` | 状态栏改成 dsh 的三段式，轮/步取宿主真值 | 在途工作（P0-1 的另一半） |
+| `4ef514e` | 排版闸门 `scripts/style-check.mjs`、`.gitattributes`、`verify.yml` | P0-2、P2-1 |
+| `8204b2a` | `errText` 统一从 `core/err-text` 引，删掉七份本地实现 | P1-2 |
+| `a646f87` | 抽 `PickerFrame`，收掉五份 TUI 浮层外框 | P1-2 |
+| `de3ae20` | `errText` 的三个同义别名也收敛掉 | P1-2 |
+| `fe620fd` | 提交对话框补上焦点管理 | P1-2（复审时新发现的残口） |
+| `cc599ae`、`deafc7e`、`7099b8a` | 审查报告、开发日志与手册的对应记录 | P2-3 |
+
+### 10.2 十条问题的结清情况
+
+| 编号 | 现在 | 还差什么 |
+| --- | --- | --- |
+| P0-1 主干编译不过 | **已清** | 干净检出 `tsc` 退出码 0（复验命令见 §九） |
+| P0-2 没有 CI 门禁 | **已清** | `verify.yml` 每次推 / 每个 PR 跑三处 typecheck 加排版；`check:core` 那 8 分钟没进 CI，留给夜跑 |
+| P0-3 `replace` 那 7 个错 | 已清 | — |
+| P1-1 四份界面代码 | **仍在** | 旧渲染层 21,035 行已冻结，等一个日落日期；这是重复率的大头 |
+| P1-2 小工具各写一份 | 大部分已清 | `errText` 全仓 1 份；`formatDuration` 从 6 份收到 4 份，剩下 4 份**语义各不相同**（见 10.4） |
+| P1-3 巨石文件 | **仍在** | 消息流 2,557 行、输入区 2,370 行、契约 2,093 行；拆契约是第三批的事 |
+| P2-1 无格式工具 | 部分已清 | 有了 `.gitattributes` 与 `check:style`（零依赖，查 5 类硬伤）；ESLint 与全量格式化**故意没上**，理由见 §九 |
+| P2-2 四个 pnpm 项目四把锁 | **仍在** | 要不要收成 workspace，得看发布链路愿不愿意一起改 |
+| P2-3 文档数字过期 | **已清** | §2 仓库地图按 0.7.1 重填 |
+| P3-1 自检脚本无框架 | **仍在** | 91 条 `scripts/*-test.mjs`，按文件名自动发现，没有覆盖率统计 |
+
+### 10.3 这一轮验证了什么、没验证什么
+
+在 HEAD `7099b8a` 上实跑：
+
+```
+git archive HEAD | tar -x -C .tmp-verify
+node node_modules/typescript/bin/tsc -p .tmp-verify/tsconfig.json --noEmit   # 退出码 0
+npx tsc -p tsconfig.json --noEmit                                             # 退出码 0
+(cd ui-shell && npx tsc -p tsconfig.json --noEmit)                            # 退出码 0
+(cd desktop && npx tsc --noEmit -p tsconfig.node.json && npx tsc --noEmit -p tsconfig.web.json)  # 退出码 0
+node scripts/style-check.mjs                                                  # 627 个文件 0 问题
+```
+
+**没验证的三处**，都不是「应该没事」，而是「这台机器上做不到」：
+
+| 没验证的 | 为什么 | 怎么补 |
+| --- | --- | --- |
+| TUI 五个浮层的实际排版 | `pnpm run build` 写不进 `lib/`，渲染冒烟跑的是旧产物 | 终端里开 `/model`、`/resume`、`/skills`、`/preset`，看边框与候选行位置 |
+| 提交对话框的焦点行为 | 同上（界面壳要靠 `vite build`，沙箱里 `spawn EPERM`） | 文件页点「提交」，按 Esc 该关、打开时焦点该在提交信息框里 |
+| `check:core` 那 49 条探针 | 探针要 spawn 子进程，沙箱拦成 `spawn EPERM` | 本地或 CI 跑一次 `pnpm run check:core`（约 8 分钟） |
+
+### 10.4 剩下这几个时长格式化为什么不算重复
+
+| 位置 | 入参 | 输出 |
+| --- | --- | --- |
+| `ui-primitives/time.ts:45` | 毫秒 | `2分41秒` / `8秒` / `1时02分05秒`（对话页口径，**正主**） |
+| `ui-primitives/time.ts:63`（`formatTraceDuration`） | 毫秒 | `4.2s` / `1m03s` / `2h05m`（轨迹页口径） |
+| `ui-shell/src/plugins/status/status-model.ts:182` | 毫秒 | `1小时05分`（连秒都不给，状态页要的是粗粒度） |
+| `src/core/schedule/rule.ts:705` | **秒** | `2分41秒`（日程规则里的时长，单位就不是毫秒） |
+| `desktop/src/renderer/turn-timing.ts:58` | 毫秒 | 同轨迹页口径，但它在**已冻结的旧渲染层**里，跟着旧层一起日落 |
+
+所以能合的已经合了（团队面板、状态栏两处并进正主）；剩下这几份要么单位和口径都不同，要么在等旧层下线。
+硬合成一个带开关的函数，只会让每个调用点都要先想「我该传哪个开关」。
+
+### 10.5 下次接手先跑这五条
+
+```bash
+git status --porcelain                    # 确认工作区干净
+git log --oneline -5                      # 确认起点
+npx tsc -p tsconfig.json --noEmit         # 内核类型
+(cd ui-shell && npx tsc -p tsconfig.json --noEmit)   # 界面壳类型
+node scripts/style-check.mjs              # 排版闸门（2 秒）
+```
+
+五条全绿再动手。要是 `check:style` 报出一堆「整篇 CRLF」，先跑一次 `git add --renormalize .` 再提交。
+
+### 10.6 第三批仍然卡在决策上
+
+三件事都要人拍板，代码本身没难度：
+
+1. **旧渲染层什么时候删**。它 21,035 行、已冻结，是跨文件重复率的大头（8.9% 里绝大部分来自它）。
+   建议给个三个月日落日期，到期直接删；不删的话，每个新功能都得考虑两边。
+2. **要不要收成 pnpm workspace**。现在是根 / `ui-shell` / `desktop` / `remote-web` 四个项目四把锁，
+   装依赖要装四遍，版本容易漂（`ui-shell` 还是 2.0.0）。收 workspace 会动发布链路，得一起评估。
+3. **契约要不要拆**。`contract.ts` 2,093 行、`services/types.ts` 1,432 行，按域拆成五个文件再 re-export，
+   导出面不变、风险可控，但会动到几乎每个文件的 import。
 
