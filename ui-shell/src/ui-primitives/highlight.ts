@@ -161,6 +161,58 @@ export async function highlightToHtml(code: string, lang: string | undefined): P
   })
 }
 
+/**
+ * 把一段代码高亮成**结构化**的行（每行一组「文本 + 双主题 CSS 变量」）。
+ *
+ * 为什么要有它，而不是继续吐 HTML：会话流里的代码块每来一个流式字就要重画一次，
+ * 而 `codeToHtml` 的产物只能靠 dangerouslySetInnerHTML 整块替换——React 每次都把内部
+ * DOM 重建一遍，正在增长的那块会闪、滚动位置会丢。换成结构化产物后，调用方渲染成
+ * 真正的 React 元素：行与行、段与段都能按位置复用，纯文本态和高亮态还是同一个 DOM
+ * 骨架（`pre.shiki > code > span.line`），切换时只换颜色，高度一格都不动。
+ *
+ * 没有对应语法 / 语法装不上 / shiki 解析失败 → null，调用方回落纯文本。
+ *
+ * @param code - 代码原文（调用方已去掉末尾那个装饰性换行）。
+ * @param lang - 围栏标注（`ts` 这类短名会先归一成 shiki 的语法 id）。
+ * @returns 逐行的 token 段，或 null。
+ */
+export async function highlightToLines(
+  code: string,
+  lang: string | undefined,
+): Promise<HighlightedCodeLine[] | null> {
+  if (lang === undefined) return null
+  const resolved = normalizeFenceLang(lang)
+  await loadLang(resolved)
+  // 表里没有这门语法时 loadLang 静默返回：此时宁可纯文本，也不让 shiki 抛「未装载」。
+  if (!loadedLangs.has(resolved)) return null
+  const highlighter = await getHighlighter()
+  try {
+    const result = highlighter.codeToTokens(code, {
+      lang: resolved,
+      themes: { light: 'github-light', dark: 'one-dark-pro' },
+      defaultColor: false,
+    })
+    return result.tokens.map((tokens) =>
+      tokens.map((token) => ({
+        text: token.content,
+        style: token.htmlStyle ?? (token.color === undefined ? {} : { color: token.color }),
+      })),
+    )
+  } catch {
+    // 语法本身解析失败（少见的畸形输入）与「装不上」同一种处理：回落纯文本。
+    return null
+  }
+}
+
+/** 高亮后的一行：若干段文本，每段自带 `--shiki-light` / `--shiki-dark` 两个变量。 */
+export type HighlightedCodeLine = readonly HighlightSpan[]
+
+/** 高亮后的一段文本。`style` 直接喂给 React 的 style 对象（键就是 CSS 变量名）。 */
+export interface HighlightSpan {
+  readonly text: string
+  readonly style: Record<string, string>
+}
+
 /** 高亮的规模上限（行数 / 字符数），超了整块返回 null（纯文本渲染）。 */
 const MAX_HIGHLIGHT_LINES = 2000
 const MAX_HIGHLIGHT_BYTES = 512 * 1024

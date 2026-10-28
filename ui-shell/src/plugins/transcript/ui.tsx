@@ -1171,7 +1171,7 @@ function RowBody({
         <div className={row.live ? 'entry-text live' : 'entry-text'}>
           {/* 正文渲染 markdown（与桌面端 MarkdownText 同一能力面：GFM 表格/任务列表等）。
               直播尾同样渲染——半截 markdown 短暂错排是流式的固有代价，桌面端也一样。 */}
-          <MarkdownView text={entry.text} path="" />
+          <MarkdownView text={entry.text} path="" streaming={row.live} />
         </div>
       )
     case 'thinking':
