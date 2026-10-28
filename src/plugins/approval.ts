@@ -34,6 +34,8 @@ import { argsSummary, callFacts, stripBaseline } from '../core/tools.js'
 import { summarizeChange } from '../core/tools/fs-tools.js'
 import { SANDBOX_PERMISSION_EFFECT, readSandboxRequest } from '../core/tools/sandbox-args.js'
 import { REJECTED_TOOL_TEXT } from '../core/session.js'
+import type { Session } from '../core/session.js'
+import { permissionOf, writePermissions } from '../core/permission-scope.js'
 import { resolvePluginConfig } from '../core/plugin-registry.js'
 import { toolApprovalGuard, type ToolObserver } from '../core/tool-guards.js'
 import type { ApprovalPolicy, ApprovalRequestView, ApprovalService } from '../services/types.js'
@@ -163,12 +165,28 @@ export const approvalPlugin: Plugin.Object = {
   inject: ['llm', 'session', 'guards', 'surfaces', 'waiting'],
   provide: 'approval',
   apply(ctx, passed) {
-    let policy: ApprovalPolicy = 'auto-edit'
+    /**
+     * 三项权限**按会话**读（2026-10-28）：这里不再是进程级变量。
+     * 会话没钉过时用偏好里的默认值，并在第一次读时钉进会话（见 core/permission-scope）。
+     */
+    const defaultPolicy = (): ApprovalPolicy => ctx.get('settings')?.prefs().defaultPolicy ?? 'auto-edit'
     /**
      * 「要问的事先给谁看」——与权限模式正交的一根轴。
      * `user` = 弹卡等用户点（出厂默认）；`auto-review` = 先给模型判官，判不出来再落人工卡。
      */
-    let reviewer: ApprovalReviewer = 'user'
+    const defaultReviewer = (): ApprovalReviewer => ctx.get('settings')?.prefs().defaultReviewer ?? 'user'
+    /** 这次判定属于哪个会话：请求带了路径就找那个常驻会话，否则看当前查看的。 */
+    const sessionOf = (sessionPath?: string): Session => {
+      if (sessionPath !== undefined && sessionPath !== '') {
+        const found = ctx.get('agent')?.sessionFor(sessionPath)
+        if (found !== undefined) return found
+      }
+      return ctx.session.current()
+    }
+    /** 某个会话现在生效的权限模式。 */
+    const policyOf = (session: Session): ApprovalPolicy => permissionOf(session, 'policy', defaultPolicy())
+    /** 某个会话现在生效的审阅者。 */
+    const reviewerOf = (session: Session): ApprovalReviewer => permissionOf(session, 'reviewer', defaultReviewer())
     // 每次弹卡现读：改了等待时限不必重启宿主，下一张卡就用新值。
     const timeoutMs = (): number => readTimeout(passed)
     /**
@@ -286,6 +304,9 @@ function firstSentence(text: string): string {
         meaning: string | null
         suggestedRule: string[] | null
         scopes: GrantScope[]
+        /** 这次判定所属会话的权限模式与审阅者（卡面与审计都按它，不再读全局变量）。 */
+        policy: ApprovalPolicy
+        reviewer: ApprovalReviewer
         grantKey: string
         hardline: boolean
         /** write/edit 的「将做的改动」；算不出来时 null，卡上就不画。 */
@@ -326,8 +347,8 @@ function firstSentence(text: string): string {
           hardline: input.hardline,
           scopes: input.scopes,
           ...(input.escalation === null ? {} : { escalation: input.escalation }),
-          policy,
-          reviewer,
+          policy: input.policy,
+          reviewer: input.reviewer,
           mode: modeForCard,
           // 发起会话归属（0.6.49）：卡片是全局渲染的，后台会话的卡弹出来时界面要标得清是谁家的
           sessionPath: pathOf(request),
@@ -341,7 +362,7 @@ function firstSentence(text: string): string {
           tool: request.toolName,
           summary: view.argsSummary,
           reason: input.reason,
-          policy,
+          policy: input.policy,
           mode: view.mode,
           sessionId: sid,
           cwd: request.cwd,
@@ -366,7 +387,7 @@ function firstSentence(text: string): string {
             summary: view.argsSummary,
             decision: decision === 'reject' ? (phase === 'decided' ? 'reject' : phase) : decision,
             reason: input.reason,
-            policy,
+            policy: input.policy,
             mode: view.mode,
             sessionId: sid,
             ...(source === undefined ? {} : { source }),
@@ -403,7 +424,7 @@ function firstSentence(text: string): string {
         tool: request.toolName,
         summary: redact(request.argsSummary),
         reason,
-        policy,
+        policy: policyOf(sessionOf(request.sessionPath)),
         mode: modeForCard,
         sessionId: sidOf(request),
         cwd: request.cwd,
@@ -510,11 +531,11 @@ function firstSentence(text: string): string {
 
     const service: ApprovalService = {
       get policy() {
-        return policy
+        return policyOf(ctx.session.current())
       },
 
       setPolicy(next) {
-        policy = next
+        writePermissions(ctx.session.current(), { policy: next })
         // 不往对话里写「权限模式切换为…」（2026-10-28 用户报障）：启动时 settings 与
         // permission-presets 会各自按偏好复算一遍，同一组值能被写两三行；而这些值在输入框
         // 那颗旋钮上一直看得见。要留痕的是审计（下一行），不是对话流。用户主动切换的回执
@@ -530,17 +551,17 @@ function firstSentence(text: string): string {
       },
 
       get reviewer() {
-        return reviewer
+        return reviewerOf(ctx.session.current())
       },
 
       setReviewer(next) {
-        reviewer = next
+        writePermissions(ctx.session.current(), { reviewer: next })
         // 与 setPolicy 同一条理由：这行曾是「新会话一进来就刷四五行」的一半噪声。
         audit({
           ts: Date.now(),
           kind: 'mode-change',
           reason: `审批审阅者 → ${next}`,
-          policy,
+          policy: policyOf(ctx.session.current()),
           mode: modeForCard,
           sessionId: sessionId(),
         })
@@ -548,6 +569,10 @@ function firstSentence(text: string): string {
 
       async decide(request: ApprovalRequest, signal, options): Promise<ApprovalDecision> {
         const cwd = baseCwd(request)
+        // 这个请求所属会话的三项权限：卡面、自动放行与审计都按它，不再读进程级变量。
+        const session = sessionOf(request.sessionPath)
+        const policy = permissionOf(session, 'policy', defaultPolicy())
+        const reviewer = permissionOf(session, 'reviewer', defaultReviewer())
         // 安全钩子可以要求「这一次必须问人」：非空时下面所有自动放行档一律跳过。
         const forced = options?.forceAskReason?.trim() ?? ''
         const facts = callFacts(request.args ?? {}, cwd)
@@ -630,7 +655,7 @@ function firstSentence(text: string): string {
         // 第 4 层：沙箱边界。沙箱守卫（order 8）对「能问的越界」只 defer，
         // 最后一道落在这里：越过沙箱的事一律跳过所有自动放行，直接弹卡（只给一次）。
         // 这一层必须排在权限模式与审阅者之前——否则「完全访问」会把沙箱的拒绝吃掉。
-        const fence = ctx.get('sandbox')?.check(target ?? undefined, command ?? undefined, cwd)
+        const fence = ctx.get('sandbox')?.check(target ?? undefined, command ?? undefined, cwd, request.sessionPath)
         const fenced = fence !== undefined && !fence.allowed
         /** 复核给出的「为什么没自动过」；null = 没跑复核，或复核放行了。要进卡片的理由。 */
         let reviewNote: string | null = null
@@ -723,6 +748,8 @@ function firstSentence(text: string): string {
           meaning,
           suggestedRule: suggested,
           scopes,
+          policy,
+          reviewer,
           grantKey: key,
           hardline: false,
           diff,
@@ -732,10 +759,11 @@ function firstSentence(text: string): string {
       },
 
       surface(): PolicySurface {
+        const current = ctx.session.current()
         return {
-          current: policy,
+          current: policyOf(current),
           options: [...POLICY_OPTIONS],
-          reviewer,
+          reviewer: reviewerOf(current),
           reviewerOptions: [...REVIEWER_OPTIONS],
         }
       },
@@ -777,7 +805,7 @@ function firstSentence(text: string): string {
             tool: current.view.toolName,
             rule: current.suggestedRule,
             reason: '用户在审批卡上永久允许',
-            policy,
+            policy: current.view.policy,
             sessionId: current.sessionId,
             source,
           })

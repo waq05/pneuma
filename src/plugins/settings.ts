@@ -226,8 +226,8 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
             derivedLabelKey: 'permissionPresetName',
             help: '三项捆成一个快捷档；改动下面任一项就离开预设档（这一行会置灰只读）',
           },
-          { type: 'select', key: 'policy', label: '权限模式', options: POLICY_OPTIONS, help: '要不要问：哪些操作必须先经你同意' },
-          { type: 'select', key: 'reviewer', label: '审阅者', options: REVIEWER_OPTIONS, help: '谁来裁：要问的事先给本人，还是先给模型判官（判不出来仍会问你）' },
+          { type: 'select', key: 'policy', label: '当前会话权限模式', options: POLICY_OPTIONS, help: '要不要问：哪些操作必须先经你同意。只改当前会话；新会话默认值见权限预设' },
+          { type: 'select', key: 'reviewer', label: '当前会话审阅者', options: REVIEWER_OPTIONS, help: '谁来裁：要问的事先给本人，还是先给模型判官（判不出来仍会问你）。只改当前会话' },
           { type: 'select', key: 'effort', label: '思考强度', options: EFFORT_OPTIONS, help: '越高思考越深，耗时与用量也越大' },
           { type: 'select', key: 'temperature', label: '采样温度', options: TEMPERATURE_OPTIONS, help: '越高越发散，越低越稳定' },
           {
@@ -274,16 +274,15 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
         if (key === 'policy') {
           const policy = String(value) as ApprovalPolicy
           if (!POLICY_OPTIONS.some((option) => option.value === policy)) throw new Error(`未知的权限模式 ${value}`)
+          // 只改当前会话（2026-10-28）：新会话默认值由「权限预设」的默认档决定。
           ctx.approval.setPolicy(policy)
-          savePrefs({ defaultPolicy: policy })
-          return { notice: `权限模式已设为「${POLICY_OPTIONS.find((option) => option.value === policy)?.label ?? policy}」，下次启动沿用` }
+          return { notice: `当前会话权限模式已设为「${POLICY_OPTIONS.find((option) => option.value === policy)?.label ?? policy}」` }
         }
         if (key === 'reviewer') {
           const reviewer = String(value) as ApprovalReviewer
           if (!REVIEWER_OPTIONS.some((option) => option.value === reviewer)) throw new Error(`未知的审阅者 ${value}`)
           ctx.approval.setReviewer(reviewer)
-          savePrefs({ defaultReviewer: reviewer })
-          return { notice: `审阅者已设为「${REVIEWER_OPTIONS.find((option) => option.value === reviewer)?.label ?? reviewer}」，下次启动沿用` }
+          return { notice: `当前会话审阅者已设为「${REVIEWER_OPTIONS.find((option) => option.value === reviewer)?.label ?? reviewer}」` }
         }
         if (key === 'effort') {
           const effort = String(value) as EffortLevel
@@ -671,12 +670,8 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
       },
       setPrefs(patch: Partial<DscPrefs>) {
         const next = savePrefs(patch)
-        if (patch.defaultPolicy !== undefined && patch.defaultPolicy !== null) {
-          ctx.approval.setPolicy(next.defaultPolicy ?? 'readonly')
-        }
-        if (patch.defaultReviewer !== undefined && patch.defaultReviewer !== null) {
-          ctx.approval.setReviewer(next.defaultReviewer ?? 'user')
-        }
+        // 权限两项只写「新会话默认」，绝不动当前会话（2026-10-28 按会话隔离）：
+        // 写偏好顺手改当前会话，等于把「改默认」变成「改这一条会话」。
         if (patch.defaultEffort !== undefined && patch.defaultEffort !== null) {
           ctx.llm.setEffort(next.defaultEffort ?? 'default')
         }
@@ -710,21 +705,9 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
       }
     }
 
-    // 启动时应用偏好里的默认档位（没设置就保持内核默认）
-    if (prefs.defaultPolicy !== null) {
-      try {
-        ctx.approval.setPolicy(prefs.defaultPolicy)
-      } catch (error) {
-        ctx.transcript.system(`默认权限模式没生效：${err(error)}`)
-      }
-    }
-    if (prefs.defaultReviewer !== null) {
-      try {
-        ctx.approval.setReviewer(prefs.defaultReviewer)
-      } catch (error) {
-        ctx.transcript.system(`默认审阅者没生效：${err(error)}`)
-      }
-    }
+    // 权限模式与审阅者不再在启动时写成全局值（2026-10-28）：它们按会话存，
+    // 偏好里的 defaultPolicy/defaultReviewer 只给「还没钉过的会话」当默认值，
+    // 由 approval / permission-presets 在第一次读取时钉进会话。
     if (prefs.defaultEffort !== null && prefs.defaultEffort !== 'default') {
       try {
         ctx.llm.setEffort(prefs.defaultEffort)

@@ -274,6 +274,9 @@ export const agentPlugin: Plugin.Object = {
       steerQueued(index?: number) {
         return active?.steerQueued(index) ?? false
       },
+      sessionById(sessionId: string) {
+        return agents.get(sessionId)?.session
+      },
       sessionFor(filePath: string) {
         for (const agent of agents.values()) {
           if (agent.session.filePath === filePath) return agent.session

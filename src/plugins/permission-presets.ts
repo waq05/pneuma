@@ -9,7 +9,8 @@
  *
  * 三个登记点：
  *   1. `surfaces.permissionPresets`：输入框那颗权限旋钮与设置页读它（含 `custom` 状态）；
- *   2. 启动时应用偏好里的默认预设（在新会话上生效，之后改预设不动已有会话）；
+ *   2. 预设的切换只写**当前会话**（2026-10-28 起按会话隔离，见 core/permission-scope）；
+ *      新会话的默认值仍由偏好里的 `defaultPermissionPreset` 决定；
  *   3. `dsc/permission-preset-changed` 广播，界面据此重画。
  *
  * @module dsc/plugins/permission-presets
@@ -25,6 +26,8 @@ import {
   matchPermissionPreset,
   type PermissionPreset,
 } from '../core/permission-presets.js'
+import { permissionOf, samePermissionKnobs, type PermissionKnobs } from '../core/permission-scope.js'
+import type { Session } from '../core/session.js'
 import { audit } from '../core/audit.js'
 
 /** 沙箱服务缺席时（插件被停用）读作哪一档：与沙箱插件自己的出厂默认一致。 */
@@ -48,50 +51,61 @@ export const permissionPresetsPlugin: Plugin.Object = {
   inject: ['approval', 'settings', 'surfaces', 'mode', 'session', 'transcript'],
   provide: 'permissionPresets',
   apply(ctx) {
-    /** 当前沙箱档位；沙箱插件没挂时读作默认档（它会把 preset 之外的写口也一起停掉）。 */
-    const sandboxOf = (): string => ctx.get('sandbox')?.mode ?? SANDBOX_FALLBACK
+    /** 默认权限模式 / 审阅者（偏好没写就按出厂值）。 */
+    const defaultPolicy = () => ctx.settings.prefs().defaultPolicy ?? 'auto-edit'
+    const defaultReviewer = () => ctx.settings.prefs().defaultReviewer ?? 'user'
+    /** 沙箱默认档：沙箱服务在就是它当前那一档，不在就按出厂兜底。 */
+    const defaultSandbox = () => ctx.get('sandbox')?.mode ?? SANDBOX_FALLBACK
 
-    /** 现在生效的预设名（三项全等匹配；拼不出预设就是 custom）。 */
-    const currentName = (): string =>
-      matchPermissionPreset(sandboxOf() as never, ctx.approval.policy, ctx.approval.reviewer)
+    /** 三项全用「会话优先、缺项补默认」解析（缺项会顺手钉进会话）。 */
+    const knobsOf = (session: Session): PermissionKnobs => ({
+      sandbox: permissionOf(session, 'sandbox', defaultSandbox()),
+      policy: permissionOf(session, 'policy', defaultPolicy()),
+      reviewer: permissionOf(session, 'reviewer', defaultReviewer()),
+    })
 
-    /** 新会话默认的预设名；偏好里没写就按内核默认三项推一个出来。 */
+    /** 某个会话现在匹配到的预设名；拼不出预设就是 custom。 */
+    const nameOf = (session: Session): string => {
+      const knobs = knobsOf(session)
+      return matchPermissionPreset(knobs.sandbox, knobs.policy, knobs.reviewer)
+    }
+
+    /** 新会话默认的预设名；偏好里没写就按默认三项推一个出来。 */
     const defaultName = (): string => {
       const saved = ctx.settings.prefs().defaultPermissionPreset
       if (saved !== '') return findPermissionPreset(saved) === null ? DEFAULT_PERMISSION_PRESET : saved
-      return matchPermissionPreset(SANDBOX_FALLBACK, 'auto-edit', 'user')
+      return matchPermissionPreset(defaultSandbox(), defaultPolicy(), defaultReviewer())
     }
 
     /**
      * 应用一个预设：只写**实际不同**的那几根旋钮（一次选了等价预设不该产生任何写动作）。
+     * 写口仍然只经过两个插件的 setter——预设放宽不了安全，是结构上成立的。
      * @param preset - 要应用的预设
-     * @param quiet - 不往对话里写那一句（启动时按偏好复算用：用户没动手，就不该看到「切到…」）
+     * @param quiet - 不往对话里写那一句（启动复算用：用户没动手，就不该看到「切到…」）
      * @returns 给用户看的一句话。
      */
     const apply = (preset: PermissionPreset, quiet = false): string => {
+      const session = ctx.session.current()
       const sandbox = ctx.get('sandbox')
+      const before = knobsOf(session)
       let wrote = ''
       // 沙箱插件被停用时要明说：预设里那一半「关住写盘」的能力这次落不了地，
-      // 用户不该以为自己已经被围起来了（权限模式那一半照旧生效）。
+      // 用户不该以为自己已经被围起来（权限模式那一半照旧生效）。
       let unapplied = ''
       if (sandbox === undefined) {
         if (preset.sandbox !== 'danger-full-access') unapplied = `沙箱插件没开，${preset.sandbox} 这一半没落地`
-      } else if (sandbox.mode !== preset.sandbox) {
+      } else if (before.sandbox !== preset.sandbox) {
         sandbox.setMode(preset.sandbox)
         wrote += `${wrote === '' ? '' : '、'}沙箱→${preset.sandbox}`
       }
-      if (ctx.approval.policy !== preset.policy) {
+      if (before.policy !== preset.policy) {
         ctx.approval.setPolicy(preset.policy)
         wrote += `${wrote === '' ? '' : '、'}权限→${preset.policy}`
       }
-      if (ctx.approval.reviewer !== preset.reviewer) {
+      if (before.reviewer !== preset.reviewer) {
         ctx.approval.setReviewer(preset.reviewer)
         wrote += `${wrote === '' ? '' : '、'}审阅→${preset.reviewer}`
       }
-      // 三根旋钮一起持久：沙箱那根在 apply 里已写进 plugins.json，权限模式与审阅者
-      // 只改内存的话，重启后「只读」会变成「只读沙箱 + 上次的权限模式」，界面读作自定义。
-      // 写 prefs 而不是只写运行期值，才能让三根同寿。
-      ctx.settings.setPrefs({ defaultPolicy: preset.policy, defaultReviewer: preset.reviewer })
       // 参考实现的同一条规则：取值没变也要留一条选择记录——「用户想要的是哪个预设」
       // 是意图，光看旋钮值区分不出来（两个预设可能共享一部分取值）。
       audit({
@@ -99,9 +113,9 @@ export const permissionPresetsPlugin: Plugin.Object = {
         kind: 'mode-change',
         reason: `权限预设 → ${preset.label}（${preset.name}）`,
         mode: ctx.mode.mode,
-        policy: ctx.approval.policy,
-        sessionId: ctx.session.current().meta.id,
-        cwd: ctx.session.current().meta.cwd,
+        policy: before.policy,
+        sessionId: session.meta.id,
+        cwd: session.meta.cwd,
       })
       const notice =
         wrote === ''
@@ -116,14 +130,14 @@ export const permissionPresetsPlugin: Plugin.Object = {
 
     const service: PermissionPresetService = {
       get name() {
-        return currentName()
+        return nameOf(ctx.session.current())
       },
       get defaultName() {
         return defaultName()
       },
       surface(): PermissionPresetSurface {
         return {
-          current: currentName(),
+          current: nameOf(ctx.session.current()),
           defaultName: defaultName(),
           options: BUILTIN_PERMISSION_PRESETS.map(toView),
         }
@@ -146,7 +160,14 @@ export const permissionPresetsPlugin: Plugin.Object = {
         }
         const preset = findPermissionPreset(next)
         if (preset === null) throw new Error(`没有名为「${next}」的权限预设`)
-        ctx.settings.setPrefs({ defaultPermissionPreset: next })
+        // 默认值要三根一起落，新会话才会拿到完整的一档（只改预设名的话，
+        // 沙箱与偏好仍是旧值，界面读出来会是 custom）。
+        ctx.settings.setPrefs({
+          defaultPermissionPreset: next,
+          defaultPolicy: preset.policy,
+          defaultReviewer: preset.reviewer,
+        })
+        ctx.get('sandbox')?.setDefaultMode(preset.sandbox)
         return `新会话默认权限预设已设为「${preset.label}」（当前会话不受影响）`
       },
     }
@@ -154,21 +175,16 @@ export const permissionPresetsPlugin: Plugin.Object = {
 
     ctx.surfaces.register('permissionPresets', () => service.surface())
 
-    // 启动时应用默认预设：注入了 settings，所以排在它后面挂载，
-    // 会盖过 settings 插件那两步按单旋钮应用的默认值（预设是「一次定三个」，优先级更高）。
-    const saved = ctx.settings.prefs().defaultPermissionPreset
-    if (saved !== '') {
-      const preset = findPermissionPreset(saved)
-      if (preset === null) {
-        ctx.transcript.system(`偏好里的默认权限预设「${saved}」认不出来，已按「工作区可写」走`)
-      } else {
-        try {
-          // quiet：这是启动时按偏好复算，用户没点任何东西——写进对话就是「一进来就刷一行」。
-          apply(preset, true)
-        } catch (error) {
-          ctx.transcript.system(`默认权限预设没生效：${error instanceof Error ? error.message : String(error)}`)
-        }
-      }
-    }
+    // 启动时只把当前会话缺失的权限项钉住（不应用默认预设、不写对话）：
+    // 老会话第一次打开时用当时生效的值，新会话按偏好默认值；钉住之后改偏好不影响它。
+    // 沙箱那一项不在这里钉——沙箱插件可能还没挂，由它自己第一次读取时钉。
+    const current = ctx.session.current()
+    permissionOf(current, 'policy', defaultPolicy())
+    permissionOf(current, 'reviewer', defaultReviewer())
+    // 换会话同样补钉一次：会话日志里已经有值的不会被覆盖。
+    ctx.on('dsc/session-open', ({ session }) => {
+      permissionOf(session, 'policy', defaultPolicy())
+      permissionOf(session, 'reviewer', defaultReviewer())
+    })
   },
 }

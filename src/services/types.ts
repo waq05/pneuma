@@ -690,6 +690,8 @@ export interface AgentService {
   hasAgent(sessionId: string): boolean
   /** 按 jsonl 路径找常驻会话实例（session.open 复用常驻会话、避免重复拿写租约）。 */
   sessionFor(filePath: string): Session | undefined
+  /** 按会话 id 找常驻会话实例（后台 agent 的权限/提示词按它取自己的会话）。 */
+  sessionById(sessionId: string): Session | undefined
   /** 那个会话的常驻 agent 正在跑回合吗（切回运行中会话时转录层补「回合中」状态）。 */
   isRunning(filePath: string): boolean
   /**
@@ -1212,21 +1214,23 @@ export interface SandboxService {
    *   为什么要有这个参数：可写根随会话走，同一进程里不同会话的 cwd 不同；
    *   拿挂载时的 `process.cwd()` 当基准，会把别的会话的合法写入误判成越界。
    */
-  canWrite(path: string, cwd?: string): SandboxCheck
+  canWrite(path: string, cwd?: string, sessionPath?: string): SandboxCheck
   /**
    * 判一次工具调用会不会越界（写类给 target、命令类给 command，两个都给就都判）。
    *
    * 与 {@link canWrite} 的分工：那个只回答「这个路径能不能写」，这个回答
    * 「这次调用越界了没有、越界之后能不能问用户」。审批拿它决定要不要跳过自动放行。
    */
-  check(target: string | undefined, command: string | undefined, cwd?: string): SandboxVerdict
+  check(target: string | undefined, command: string | undefined, cwd?: string, sessionPath?: string): SandboxVerdict
   /** 当前策略的一句话摘要（系统提示与诊断用）。 */
   describe(): string
   /**
-   * 切沙箱档位（写 `~/.dsc/plugins.json` 里沙箱那一项的 `mode`）。
-   * 打包权限预设与设置页的档位格走同一条写盘路径；非法档位当场抛错。
+   * 切**当前会话**的沙箱档位（写会话状态；plugins.json 那一份是新会话默认）。
+   * 打包权限预设与设置页的档位格走同一条写口；非法档位当场抛错。
    */
   setMode(mode: SandboxMode): void
+  /** 设新会话默认档位（写 `~/.dsc/plugins.json`，只影响之后新建的会话）。 */
+  setDefaultMode(mode: SandboxMode): void
   /**
    * 记一条**本会话**的放宽：把几个绝对路径并进这个会话的可写根
    * （审批卡上「本会话允许」那一按调它）。键是会话 jsonl 路径——一个会话放宽了不影响别的会话。

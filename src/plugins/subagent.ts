@@ -373,6 +373,10 @@ export const subagentPlugin: Plugin.Object = {
                 argsSummary: argsSummary(input.args),
                 args: input.args,
                 cwd: input.cwd,
+                // 队友的审批按**派它的那个会话**归属：不能落到「用户正在看的会话」，
+                // 否则权限模式会拿错档（2026-10-28 按会话隔离后这条必须显式给）。
+                sessionId: teammate.parentSession.meta.id,
+                sessionPath: teammate.parentSession.filePath,
               },
               input.signal,
             )

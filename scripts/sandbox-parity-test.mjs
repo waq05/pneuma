@@ -79,7 +79,7 @@ console.log('[2] 沙箱越界分两类：能问的 defer，不能问的硬拒')
   check('只读子路径不在可申请里', !askable.includes('read-only-subpath'))
   check('网络开关不在可申请里', !askable.includes('network-off'))
   check('越界只有审批在场时才 defer', code.includes("askableRule(verdict.rule) && ctx.get('approval') !== undefined"))
-  check('defer 之后仍会走到 refuse（没有审批就硬拒）', code.includes('return refuse(config, policy, input.toolName, verdict)'))
+  check('defer 之后仍会走到 refuse（没有审批就硬拒）', code.includes('return refuse(config, policy, mode, input.toolName, verdict)'))
   check('服务暴露 check(target, command)', code.includes('check(target: string | undefined, command: string | undefined'))
 }
 
@@ -123,12 +123,15 @@ console.log('[4] 模式四档对齐 dsh')
   check('read_image 是只读风险', imageTools.readImageTool.risk === 'read')
 }
 
-console.log('[5] 权限预设三根一起持久化')
+console.log('[5] 权限预设：切当前会话 + 默认值只给新会话')
 {
   const code = strip(read('src/plugins/permission-presets.ts'))
-  check('apply 写 defaultPolicy', code.includes('defaultPolicy: preset.policy'))
-  check('apply 写 defaultReviewer', code.includes('defaultReviewer: preset.reviewer'))
-  check('走 settings.setPrefs（与设置页同一条持久化路径）', code.includes('ctx.settings.setPrefs('))
+  check('apply 只调两个插件的 setter（不自己写盘）', code.includes('sandbox.setMode(preset.sandbox)') && code.includes('ctx.approval.setPolicy(preset.policy)'))
+  check('setDefault 三根一起落默认', code.includes('defaultPolicy: preset.policy') && code.includes('defaultReviewer: preset.reviewer'))
+  check('setDefault 走 settings.setPrefs（新会话默认）', code.includes('ctx.settings.setPrefs('))
+  check('setDefault 同时落沙箱默认档', code.includes("ctx.get('sandbox')?.setDefaultMode(preset.sandbox)"))
+  const scope = strip(read('src/core/permission-scope.ts'))
+  check('三项存在会话状态里（permissions 条目）', scope.includes("session.state('permissions')") && scope.includes("session.appendState('permissions'"))
 }
 
 rmSync(home, { recursive: true, force: true })

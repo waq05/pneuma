@@ -722,7 +722,7 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 
 | 名称 | 取值 | 位置 |
 | --- | --- | --- |
-| 权限模式 `ApprovalPolicy` | `readonly`（只读，写和执行一律拒）/ `auto-edit`（工作区内写放行，执行命令仍要审批）/ `full-access`（全部自动放行，灾难地板仍然拒）。旧的 `ai-review` 已由偏好迁移展开成「`full-access` + 审阅者 `auto-review`」（见下） | `src/contract/mode.ts:31`，判读在 `src/plugins/approval.ts`（沙箱边界第 4 层 → 权限模式 / 审阅者第 5 层），档位文案在 `approval.ts` |
+| 权限模式 `ApprovalPolicy` | `readonly`（只读，写和执行一律拒）/ `auto-edit`（工作区内写放行，执行命令仍要审批）/ `full-access`（全部自动放行，灾难地板仍然拒）。旧的 `ai-review` 已由偏好迁移展开成「`full-access` + 审阅者 `auto-review`」（见下）。**按会话存**，不是进程级：A 会话切只读不影响 B 会话 | `src/contract/mode.ts:31`，判读在 `src/plugins/approval.ts`（沙箱边界第 4 层 → 权限模式 / 审阅者第 5 层），档位文案在 `approval.ts` |
 | 审阅者 `ApprovalReviewer` | `user`（本人点卡，默认）/ `auto-review`（先给模型判官，判不出来再落人工卡）——**与权限模式正交**的一根轴，决定「要问的事先给谁看」；复核排在自动放行**之前** | `src/contract/mode.ts:45`，复核在 `src/plugins/approval.ts` 第 5 层内 |
 | 沙箱后端不可用姿态 `SandboxOnUnavailable` | `degrade`（默认，降级为策略围栏继续）/ `fail-closed`（写与执行一律拒，读照常）；只对 `docker` / `windows-token` 生效 | `src/core/sandbox/policy.ts:58` |
 | 思考强度 `EffortLevel` | `default` / `off` / `low` / `high` / `max` | `src/contract.ts:12` |
@@ -771,12 +771,14 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 | 最近工作目录记忆条数 | 12 | `desktop/electron/main/index.ts:146` |
 | 技能市场清单缓存 | 1 小时，落在 `~/.dsc/cache/` | `src/core/market.ts:10` |
 | 截图识别标记 | 工具结果文字里含「屏幕物理分辨率」才认定是自己截的图，不误伤别的插件带的图 | `src/plugins/computer-use.ts:72` |
-| 沙箱默认档 | workspace-write：可写根 = 会话 cwd + 沙箱私有临时目录，附加根默认空、网络默认关 | `src/core/sandbox/policy.ts:54-55` |
+| 沙箱默认档 | workspace-write：可写根 = 会话 cwd + 沙箱私有临时目录，附加根默认空、网络默认关。这个值只是**新会话默认**（plugins.json 的 `sandbox.mode`）；每个会话自己的档位存在会话 `permissions` 状态里 | `src/core/sandbox/policy.ts:54-55`、`src/core/permission-scope.ts` |
 | 沙箱后端不可用姿态 | `degrade`（默认，降级为策略围栏继续，=旧行为）/ `fail-closed`（写与执行类一律拒、读照常，拒因规则名 `backend-unavailable`）；只对 `docker` / `windows-token` 生效，`policy` 后端的 `partial` 是预期状态、不触发 | `src/core/sandbox/policy.ts:58` |
 | 沙箱升权 | `sandbox_permissions` + `sandbox_scope`（`once` 默认 / `session`）+ `justification` **成对校验**（只给 scope 或半截 → 按拒处理）；`workspace-write` = 留在沙箱内、把这次目标并进可写根后**重判**，`danger-full-access` = 这一次跳过沙箱判定；「本会话允许」只对「留在沙箱内」这一类给会话档（命令类与出沙箱档只给这一次） | `src/core/tools/sandbox-args.ts`、`src/plugins/sandbox.ts`（`grantSession` / `sessionGrants`） |
 | 沙箱越界的两条路 | **能问的**（`outside-writable-roots` / `mode-read-only`）沙箱只 defer，审批是最后一道，用户点「这一次允许」就执行（对齐 dsh 的 read-only + ask）；**不能问的**（NT 命名空间 / ADS / 短名 / 解析失败 / 受保护名 / 只读子路径 / 网络开关 / 后端 fail-closed）保持硬拒。审批缺场时沙箱自己硬拒，不会变成无人把关 | `src/plugins/sandbox.ts`（`ASKABLE_RULES`）、`src/plugins/approval.ts`（第 4 层 `sandbox.check`） |
 | 审批裁决顺序 | 硬地板 → 说明书类文件 → 已给授权 → **沙箱边界** → 权限模式 / 审阅者 → 人工卡。沙箱越界跳过所有自动放行（含完全访问），只给「这一次」；AI 复核排在自动放行之前，所以「完全访问 + AI 复核」每次调用都过判官 | `src/plugins/approval.ts:494-660` |
-| 出厂权限预设 | `read-only` / `workspace`（默认）/ `full-access` / `auto-review`（沙箱 + 权限模式 + 审阅者三合一，取值对齐 dsh：只读 = read-only + auto-edit + user，工作区 = workspace-write + auto-edit + user，完全访问 = danger-full-access + full-access + user，AI 复核 = danger-full-access + full-access + auto-review）；三根旋钮拼不出预设时读作 `custom`（推导状态，能停留、不能选）；缺省档偏好键 `defaultPermissionPreset`（空串 = 不按预设走）；切预设时三根一起写盘（沙箱进 plugins.json，权限与审阅者进 prefs） | `src/core/permission-presets.ts`、`src/plugins/permission-presets.ts` |
+| 出厂权限预设 | `read-only` / `workspace`（默认）/ `full-access` / `auto-review`（沙箱 + 权限模式 + 审阅者三合一，取值对齐 dsh：只读 = read-only + auto-edit + user，工作区 = workspace-write + auto-edit + user，完全访问 = danger-full-access + full-access + user，AI 复核 = danger-full-access + full-access + auto-review）；三根旋钮拼不出预设时读作 `custom`（推导状态，能停留、不能选） | `src/core/permission-presets.ts`、`src/plugins/permission-presets.ts` |
+| 权限三项的存储 | **按会话**存在 jsonl 的 `state` 条目 `permissions`：`{ sandbox, policy, reviewer }`，三项都可为 `null`（没钉过）。读取时缺哪项补哪项默认值并写回（钉住），此后改默认值不影响它；切换 / 恢复 / 分叉会话各带各的。子代理审批按派它的父会话归属 | `src/core/permission-scope.ts`、`src/core/session.ts`（`SessionStateMap.permissions`） |
+| 新会话默认权限 | 偏好 `defaultPermissionPreset`（空串 = 按单旋钮默认）优先；否则 `defaultPolicy` / `defaultReviewer` + 沙箱默认档。设置里「设为新会话默认」只写这几项，**绝不动当前会话** | `src/plugins/permission-presets.ts`（`setDefault`）、`src/plugins/settings.ts` |
 | 分支钮读数（输入框上方） | 快照面 `surfaces.git` = `repo` / `branch` / `detached` / `dirtyFileCount`（计数含未跟踪、只看会话 cwd 之内）；节奏 12s / 30s / 60s 三档 + 事件催拍（回合收工、换会话、写类 git op 落盘）；**没人读快照就不跑 git**（CLI / TUI 会话零开销） | `src/plugins/git.ts`、`src/core/git-exec.ts` |
 | git 切 / 建分支 | `dock` 的写类 op（`git-checkout` / `git-branch-create`，**过审批**，卡片文案在 `DOCK_WRITE_LABEL`），执行用 `git switch --no-guess`（避开 `checkout <名字>` 的分支/路径歧义）；分支清单是读类 op `git-branches`（界面通道直接放行，当前分支排第一） | `src/core/dock-ops.ts`、`src/plugins/desktop-dock.ts` |
 | 宿主方法调用的超时 | 默认 30 秒；**会挂起等人的方法**（写类 dock op = 过审批卡，卡自己等 5 分钟）给 5 分半——不然用户还在读卡，页面先报「调用宿主方法超时」 | `ui-shell/src/ui-layout/host-channel.ts`（`DEFAULT_INVOKE_TIMEOUT_MS` / `HUMAN_WAIT_TIMEOUT_MS`） |

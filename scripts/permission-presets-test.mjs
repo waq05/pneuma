@@ -182,7 +182,9 @@ console.log('[6] 启动复算不写对话，用户动手才有回执（2026-10-2
   const pluginCode = plugin.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
   check('apply 收了 quiet 开关', /const apply = \(preset: PermissionPreset, quiet = false\)/.test(pluginCode))
   check('quiet 时不发 dsc/notice', pluginCode.includes("if (!quiet) ctx.emit('dsc/notice', notice)"))
-  check('启动复算走 quiet', pluginCode.includes('apply(preset, true)'))
+  // 2026-10-28 起权限按会话：启动不再把默认预设「应用」一遍，只把当前会话缺的项钉住。
+  check('启动不再应用默认预设（没有 apply(preset, true)）', !pluginCode.includes('apply(preset, true)'))
+  check('启动只补钉当前会话的权限模式', pluginCode.includes("permissionOf(current, 'policy'"))
   check('用户点预设（use）仍然有回执', /use\(next\)[\s\S]*?return apply\(preset\)/.test(pluginCode))
 
   // 斜杠命令自己给回执：setter 静音之后，命令行那一下不能再闷着。

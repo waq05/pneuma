@@ -10494,3 +10494,69 @@ const lastTab = surface.panes.reduce((count, pane) => count + pane.tabs.length, 
   `use` 仍有回执、`/policy` 与 `/reviewer` 自己给回执。
 - 实机：`desktop/shots/_verify-rail-current.mjs`（隔离 HOME，gitignored）两段全过。
 
+## 二十四、权限三项按会话隔离（2026-10-28）
+
+### 一　用户看到的现象
+
+在 A 会话把权限旋钮切到「只读」，打开 B 会话，B 也是只读；后台还在跑的子代理同样
+跟着变。用户的原话是「这个模式没做会话级隔离，每个会话的权限需要是独立的」。
+
+### 二　根因
+
+三根旋钮（沙箱档位、权限模式、审阅者）各自存在插件的进程级变量里：
+
+- `src/plugins/approval.ts` 的 `let policy` / `let reviewer`；
+- `src/plugins/sandbox.ts` 的 `mode` 直接读 `~/.dsc/plugins.json`（全局一份）；
+- `src/plugins/permission-presets.ts` 的 `apply()` 一次写三处：沙箱全局配置、
+  两个全局变量、偏好 `defaultPolicy/defaultReviewer`。
+
+会话本身是能存的：jsonl 的 `state` 条目本来就在存模式、模型、任务清单、收件箱。
+缺的是「权限也往这里写」这一步。
+
+### 三　改法
+
+1. 新增 `src/core/permission-scope.ts`：三项值存在会话 `permissions` 状态条目；
+   读取时缺哪项补哪项默认值并**钉住**（`permissionOf` / `resolvePermissions`），
+   写入合并而不是整份替换，值没变不写日志。
+2. `SessionStateMap` 加 `permissions` 一条声明（`src/core/session.ts`），
+   切换、恢复、分叉会话都跟着走，不需要额外的登记表。
+3. `approval`：`decide(request)` 先按请求的 `sessionPath` 找常驻会话（没有再回落当前
+   会话），用那个会话的 policy / reviewer 走完全部裁决；卡面与审计也记这一份。
+   卡对象上直接带 `policy` / `reviewer`，弹卡期间不再读全局变量，多个会话同时弹卡
+   也不会串。
+4. `sandbox`：`modeOf(session)` 按会话取档；守卫用 `input.sessionId / sessionPath`，
+   审批复查用 `check(..., sessionPath)`；`setMode` 只写当前会话，另加
+   `setDefaultMode` 写 plugins.json（只影响新会话）。系统提示段用 `scope.sessionId`
+   取这个 agent 自己的档位。
+5. `permission-presets`：`apply` 只写当前会话，仍然只调 `sandbox.setMode` /
+   `approval.setPolicy/setReviewer`（「预设放宽不了安全」这条结构不变）；
+   `setDefault` 才写偏好，并把三项默认值一起落（否则新会话只拿到预设名、旋钮还是旧值，
+   界面读出来会是 custom）。启动不再「应用一遍默认预设」，只把当前会话缺的项钉住。
+6. `settings`：启动时不再把偏好写成全局；设置页「权限模式 / 审阅者」两行改成当前会话
+   语义，文案写明只改当前会话。`setPrefs` 不再顺手改当前会话的权限——那会把「改默认」
+   变成「改这一条会话」。
+7. 子代理审批带上父会话归属（`sessionId/sessionPath`），不再落到「用户正在看的会话」。
+8. 顺带：状态栏 Token 卡的明细改成 K/M 缩写，精确值进 `title`。
+
+### 四　取舍
+
+- **老会话第一次打开才钉住**：不钉的话，改一次默认值会把所有没动过的老会话一起改掉；
+  钉住用的是「那一刻生效的值」，所以老会话不会突然变只读或变可写。
+- **沙箱后端仍是进程级**：docker / Windows 受限令牌的执行体只有一套，每会话档位只影响
+  策略围栏的判定与系统提示。默认后端是进程内策略围栏，日常不受这条限制。
+- **改默认 != 改当前**：设置里改单旋钮只改当前会话；要让以后的新会话跟着走，用
+  「设为默认权限预设」或「新会话默认档位」。
+
+### 五　验收
+
+- `scripts/session-permissions-test.mjs`（31 条）：纯函数的两会话隔离、钉住语义、
+  五个插件的接线形态、数字进位（1,238,946 → 1.2M）。
+- `scripts/session-permissions-kernel-test.mjs`（16 条）：真 kernel + 真会话文件跑
+  「A 切只读 → 开 B 仍是默认 → B 切完全访问 → 切回 A 仍是只读 → 改默认不动 A」
+  全过；临时 HOME，不碰真实 `~/.dsc`。
+- `scripts/permission-presets-test.mjs` 62/62、`scripts/sandbox-parity-test.mjs` 41/41、
+  `scripts/approval-review-fallback-test.mjs` 全过、`scripts/resident-agents-test.mjs`
+  40/40。
+- `pnpm run check:ui` 41/41、`check:style` 613 文件、`dup-scan` 0 组、根 / ui-shell /
+  desktop 三份 typecheck 全过。
+

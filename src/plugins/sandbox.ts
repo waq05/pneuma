@@ -39,6 +39,8 @@ import { bootNoticeOnce } from '../core/boot-notices.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
 import { registerCommandRunner } from '../core/tools/command-runner.js'
 import { readSandboxRequest } from '../core/tools/sandbox-args.js'
+import { permissionOf, writePermissions } from '../core/permission-scope.js'
+import type { Session } from '../core/session.js'
 import type { ToolGuard } from '../core/tool-guards.js'
 import { createDockerRunner, probeDocker } from '../core/sandbox/backends.js'
 import { createWindowsTokenRunner, probeWindowsToken, type WindowsTokenRunnerHandle } from '../core/sandbox/win/backend.js'
@@ -147,6 +149,25 @@ export const sandboxPlugin: Plugin.Object = {
     const currentSessionPath = (): string => ctx.session.current().filePath
 
     /**
+     * 沙箱档位**按会话**读（2026-10-28）：会话里有就用会话的，没有就把默认值钉进去。
+     * 默认值来自 plugins.json 的沙箱配置——它只对「还没钉过的会话」与新会话生效。
+     */
+    const defaultMode = (): SandboxMode => readConfig().config.mode
+    /** 这次判定属于哪个会话：优先按会话 id 找常驻实例，其次按路径，最后看当前查看的。 */
+    const sessionOf = (sessionId?: string, sessionPath?: string): Session => {
+      const agent = ctx.get('agent')
+      const byId = sessionId !== undefined && sessionId !== '' ? agent?.sessionById(sessionId) : undefined
+      if (byId !== undefined) return byId
+      if (sessionPath !== undefined && sessionPath !== '') {
+        const byPath = agent?.sessionFor(sessionPath)
+        if (byPath !== undefined) return byPath
+      }
+      return ctx.session.current()
+    }
+    /** 某个会话现在生效的沙箱档位。 */
+    const modeOf = (session: Session): SandboxMode => permissionOf(session, 'sandbox', defaultMode())
+
+    /**
      * 组一份当前策略快照：设置与会话状态都现读，所以设置页改完立刻生效，不用重启宿主。
      * 沙箱私有临时目录顺手建出来（建不出来也不抛：策略会把它当普通路径判）。
      *
@@ -166,9 +187,11 @@ export const sandboxPlugin: Plugin.Object = {
     const snapshot = (
       cwdOverride?: string,
       sessionPath?: string,
+      modeOverride?: SandboxMode,
     ): { config: SandboxConfig; policy: SandboxPolicy; problems: string[] } => {
       const { config, problems } = readConfig()
       const cwd = cwdOverride ?? currentCwd()
+      const mode = modeOverride ?? modeOf(ctx.session.current())
       const granted = sessionPath === undefined ? [] : (sessionRoots.get(sessionPath) ?? [])
       const tmpDir = sandboxTmpDir(DSC_HOME, cwd, currentSessionId())
       try {
@@ -177,7 +200,7 @@ export const sandboxPlugin: Plugin.Object = {
         // 目录建不出来时写它就是失败的，不必在这里报错（工具自己会拿到真实错误）
       }
       const policy = createPolicy({
-        mode: config.mode,
+        mode,
         cwd,
         tmpDir,
         extraWritableRoots: [...config.extraWritableRoots, ...granted],
@@ -200,6 +223,7 @@ export const sandboxPlugin: Plugin.Object = {
     const refuse = (
       config: SandboxConfig,
       policy: SandboxPolicy,
+      mode: SandboxMode,
       tool: string,
       verdict: FenceVerdict,
     ): { action: 'deny'; reason: string } => {
@@ -208,7 +232,7 @@ export const sandboxPlugin: Plugin.Object = {
       const roots = policy.roots.length === 0 ? '（无）' : policy.roots.join('、')
       const reason =
         `沙箱拒绝这次 ${tool}：${verdict.why}。` +
-        `当前档位 ${config.mode}（可写根：${roots}；网络：${config.networkAccess ? '开' : '关'}），` +
+        `当前档位 ${mode}（可写根：${roots}；网络：${config.networkAccess ? '开' : '关'}），` +
         `命中规则「${verdict.rule}」。${verdict.how}`
       return { action: 'deny', reason }
     }
@@ -240,9 +264,10 @@ export const sandboxPlugin: Plugin.Object = {
       decide(input) {
         // 按这次调用的工作目录算可写根：input.cwd 就是循环传进来的会话目录，
         // 显式优先于会话状态，同进程多工作目录时才不会拿错根。
-        const { config, policy } = snapshot(input.cwd, input.sessionPath)
+        const mode = modeOf(sessionOf(input.sessionId, input.sessionPath))
+        const { config, policy } = snapshot(input.cwd, input.sessionPath, mode)
         // 不设围栏的档位：整档交出去（审批与权限模式照常管）
-        if (config.mode === 'danger-full-access') return { action: 'defer' }
+        if (mode === 'danger-full-access') return { action: 'defer' }
         // 读限制不在本插件职责内：内核 path-policy 已经管凭据读取，这里再拒一次只会给两条理由
         if (input.risk === 'read') return { action: 'defer' }
 
@@ -256,7 +281,7 @@ export const sandboxPlugin: Plugin.Object = {
             why: '你要的隔离后端（docker / Windows 受限令牌）没建起来，配置又选了「建不起来就拒」',
             how: '两条路：在「设置 → 沙箱」把后端换成策略围栏（进程内那个，接受 partial），或把「后端建不起来时」改回 degrade；也可以先修好后端（docker 起得来 / 提权 setup 成功）',
           }
-          return refuse(config, policy, input.toolName, verdict)
+          return refuse(config, policy, mode, input.toolName, verdict)
         }
 
         const request = readSandboxRequest(input.args)
@@ -269,7 +294,7 @@ export const sandboxPlugin: Plugin.Object = {
             why: `升权参数不完整：${request.reason}`,
             how: howTo('malformed-request'),
           }
-          return refuse(config, policy, input.toolName, verdict)
+          return refuse(config, policy, mode, input.toolName, verdict)
         }
 
         const verdict =
@@ -294,7 +319,7 @@ export const sandboxPlugin: Plugin.Object = {
           // 由审批卡兜底——这一条在卡片说明里写明了。
           if (widened === null) return { action: 'defer' }
           if (widened.allowed) return { action: 'defer' }
-          return refuse(config, policy, input.toolName, {
+          return refuse(config, policy, mode, input.toolName, {
             allowed: false,
             rule: widened.rule,
             why: `${widened.reason}（模型请求的是「留在沙箱内放宽写边界」，可写根放宽到这一次的目标后**仍然**不合法）`,
@@ -304,7 +329,7 @@ export const sandboxPlugin: Plugin.Object = {
         // 越界但这件事可以问用户一次（参考实现只读档的语义）：沙箱只 defer，
         // 审批卡是最后一道。审批插件不在场时不能 defer——那等于无人把关地放行。
         if (askableRule(verdict.rule) && ctx.get('approval') !== undefined) return { action: 'defer' }
-        return refuse(config, policy, input.toolName, verdict)
+        return refuse(config, policy, mode, input.toolName, verdict)
       },
     }
     const offGuard = ctx.guards.register(guard)
@@ -323,13 +348,15 @@ export const sandboxPlugin: Plugin.Object = {
       }
     }
 
-    const promptText = (): string => {
-      const { config, policy, problems } = snapshot()
-      if (config.mode === 'danger-full-access') {
+    const promptText = (scope?: { sessionId?: string; cwd?: string }): string => {
+      // 这个 agent 自己的档位（后台会话不该拿「你此刻点开的会话」的沙箱说明）。
+      const mode = modeOf(sessionOf(scope?.sessionId))
+      const { config, policy, problems } = snapshot(scope?.cwd, undefined, mode)
+      if (mode === 'danger-full-access') {
         return '【沙箱】档位 danger-full-access：沙箱不设围栏，写盘与命令只受权限模式与审批卡约束。'
       }
       const lines: string[] = []
-      lines.push(`【沙箱】档位 ${config.mode}｜强制执行 ${enforcement}（${enforcementText()}）`)
+      lines.push(`【沙箱】档位 ${mode}｜强制执行 ${enforcement}（${enforcementText()}）`)
       lines.push(
         `可写根：${policy.roots.length === 0 ? '（无，只读档不许写盘）' : policy.roots.join('、')}；` +
           `只读子路径：${policy.readOnlySubpaths.length === 0 ? '（无）' : policy.readOnlySubpaths.join('、')}；` +
@@ -458,7 +485,7 @@ export const sandboxPlugin: Plugin.Object = {
     /** 挂载时那条可见说明：只讲档位、强制等级与网络，明细（后端、可写根）在 /sandbox 与设置里。 */
     const mountLine = (): string => {
       const { config, problems } = snapshot()
-      const head = `沙箱已就绪：档位 ${config.mode}｜强制执行 ${enforcement}｜网络 ${config.networkAccess ? '开' : '关'}`
+      const head = `沙箱已就绪：档位 ${modeOf(ctx.session.current())}｜强制执行 ${enforcement}｜网络 ${config.networkAccess ? '开' : '关'}`
       const tail = enforcement === 'partial'
         ? (config.backend === 'windows-token'
           ? '。越界写已被系统层拦截；明细见 /sandbox。'
@@ -492,7 +519,7 @@ export const sandboxPlugin: Plugin.Object = {
     const report = (): string => {
       const { config, policy, problems } = snapshot()
       const lines: string[] = []
-      lines.push(`沙箱现状：档位 ${config.mode}｜强制执行 ${enforcement}`)
+      lines.push(`沙箱现状：当前会话档位 ${modeOf(ctx.session.current())}｜新会话默认 ${config.mode}｜强制执行 ${enforcement}`)
       lines.push(`后端：${config.backend} —— ${backendDetail}`)
       lines.push(`可写根（${String(policy.roots.length)}）：`)
       if (policy.roots.length === 0) lines.push('  （无：只读档不许写盘）')
@@ -526,13 +553,24 @@ export const sandboxPlugin: Plugin.Object = {
           {
             type: 'select',
             key: 'mode',
-            label: '档位',
+            label: '当前会话档位',
             options: [
               { value: 'read-only', label: '只读（任何写盘都拒）' },
               { value: 'workspace-write', label: '工作区可写（默认）' },
               { value: 'danger-full-access', label: '不设围栏（等同关掉沙箱）' },
             ],
-            help: '默认档不挡正常的工作区读写与命令：只有越界写、受保护名与「网络关时的联网命令」会被拒。',
+            help: '只改当前打开的会话；换会话各用各的档位。默认档不挡正常的工作区读写与命令：只有越界写、受保护名与「网络关时的联网命令」会被拒。',
+          },
+          {
+            type: 'select',
+            key: 'defaultMode',
+            label: '新会话默认档位',
+            options: [
+              { value: 'read-only', label: '只读（任何写盘都拒）' },
+              { value: 'workspace-write', label: '工作区可写（默认）' },
+              { value: 'danger-full-access', label: '不设围栏（等同关掉沙箱）' },
+            ],
+            help: '只影响之后新建的会话；已经打开的会话保留自己的档位。',
           },
           {
             type: 'select',
@@ -646,7 +684,8 @@ export const sandboxPlugin: Plugin.Object = {
       values(): SettingsValues {
         const { config } = readConfig()
         return {
-          mode: config.mode,
+          mode: modeOf(ctx.session.current()),
+          defaultMode: config.mode,
           networkAccess: config.networkAccess,
           networkAllowlist: formatPathList(config.networkAllowlist),
           extraWritableRoots: formatPathList(config.extraWritableRoots),
@@ -659,6 +698,12 @@ export const sandboxPlugin: Plugin.Object = {
       async save(key, value): Promise<string | void> {
         switch (key) {
           case 'mode': {
+            const mode = String(value)
+            if (!(SANDBOX_MODES as readonly string[]).includes(mode)) return `档位只能是 ${SANDBOX_MODES.join(' / ')}`
+            writePermissions(ctx.session.current(), { sandbox: mode as SandboxMode })
+            break
+          }
+          case 'defaultMode': {
             const mode = String(value)
             if (!(SANDBOX_MODES as readonly string[]).includes(mode)) return `档位只能是 ${SANDBOX_MODES.join(' / ')}`
             writePluginConfig(SANDBOX_CONFIG_KEY, { mode })
@@ -738,7 +783,7 @@ export const sandboxPlugin: Plugin.Object = {
 
     const service: SandboxService = {
       get mode(): SandboxMode {
-        return readConfig().config.mode
+        return modeOf(ctx.session.current())
       },
       get enforcement(): SandboxEnforcement {
         return enforcement
@@ -752,9 +797,9 @@ export const sandboxPlugin: Plugin.Object = {
       get tmpDir(): string {
         return snapshot().policy.tmpDir
       },
-      canWrite(path: string, cwd?: string): SandboxCheck {
+      canWrite(path: string, cwd?: string, sessionPath?: string): SandboxCheck {
         // cwd 省略时退回会话工作目录（接口约定见 src/services/types.ts 的 SandboxService）。
-        const { policy } = snapshot(cwd)
+        const { policy } = snapshot(cwd, sessionPath, modeOf(sessionOf(undefined, sessionPath)))
         const check = checkWrite(policy, path)
         const out: SandboxCheck = { allowed: check.allowed, reason: check.reason }
         if (check.root !== undefined) out.root = check.root
@@ -765,9 +810,10 @@ export const sandboxPlugin: Plugin.Object = {
        * 守卫里同一条判定已经做过一遍（order 8），这里再做一遍是刻意的——审批是
        * 自动放行的最后一道，它不能假设「沙箱一定已经判过」。
        */
-      check(target: string | undefined, command: string | undefined, cwd?: string): SandboxVerdict {
-        const { config, policy } = snapshot(cwd)
-        if (config.mode === 'danger-full-access') return { allowed: true, requestable: false }
+      check(target: string | undefined, command: string | undefined, cwd?: string, sessionPath?: string): SandboxVerdict {
+        const mode = modeOf(sessionOf(undefined, sessionPath))
+        const { config, policy } = snapshot(cwd, sessionPath, mode)
+        if (mode === 'danger-full-access') return { allowed: true, requestable: false }
         const verdict =
           target !== undefined && target.trim() !== ''
             ? writeVerdict(policy, target)
@@ -784,14 +830,9 @@ export const sandboxPlugin: Plugin.Object = {
         }
       },
       describe(): string {
-        const { config, policy } = snapshot()
-        return `沙箱 ${config.mode}（强制执行 ${enforcement}）：${describePolicy(policy)}`
+        const { policy } = snapshot()
+        return `沙箱 ${modeOf(ctx.session.current())}（强制执行 ${enforcement}）：${describePolicy(policy)}`
       },
-      /**
-       * 切档位（打包权限预设的写入口；设置页那一格走的也是同一份写盘 + 重算）。
-       * 只写配置值并立刻广播，重算后端在后台跑——档位值当拍就对，强制等级下一拍跟上。
-       * @param next - 三档之一；写错当场抛错（预设表是常量，正常到不了这里）。
-       */
       /**
        * 记一条**本会话**的放宽：把几个绝对路径并进这个会话的可写根。
        * 只有审批卡上「本会话允许」那一按会调它（调用方是 approval 插件）。
@@ -807,7 +848,24 @@ export const sandboxPlugin: Plugin.Object = {
       sessionGrants(sessionPath: string): readonly string[] {
         return sessionRoots.get(sessionPath) ?? []
       },
+      /**
+       * 切**当前会话**的档位（打包权限预设与设置页走同一条写口）。
+       * 只写会话状态，不动 plugins.json——那一份是「新会话默认」，换它要走 setDefaultMode。
+       * @param next - 三档之一；写错当场抛错（预设表是常量，正常到不了这里）。
+       */
       setMode(next: SandboxMode): void {
+        if (!(SANDBOX_MODES as readonly string[]).includes(next)) {
+          throw new Error(`沙箱档位只能是 ${SANDBOX_MODES.join(' / ')}，收到「${next}」`)
+        }
+        writePermissions(ctx.session.current(), { sandbox: next })
+        ctx.emit('dsc/changed')
+      },
+
+      /**
+       * 设「新会话默认档位」：写 plugins.json 并重算进程级后端。
+       * 只影响之后新建的会话；已有会话的档位不受影响。
+       */
+      setDefaultMode(next: SandboxMode): void {
         if (!(SANDBOX_MODES as readonly string[]).includes(next)) {
           throw new Error(`沙箱档位只能是 ${SANDBOX_MODES.join(' / ')}，收到「${next}」`)
         }

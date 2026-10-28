@@ -11,7 +11,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { ChatContentPart, ChatMessage, ToolCall } from './llm.js'
-import type { CollaborationMode, PlanHistoryItem, PlanView, TodoItemView, ToolPresentationView } from '../contract.js'
+import type { ApprovalPolicy, ApprovalReviewer, CollaborationMode, PlanHistoryItem, PlanView, SandboxMode, TodoItemView, ToolPresentationView } from '../contract.js'
 import type { GoalSnapshot } from './goal.js'
 import { stripBaseline, type FileChangeSummary } from './tools.js'
 import { summarizeChange } from './tools/fs-tools.js'
@@ -168,6 +168,11 @@ type SessionRecord =
  * `declare module '../core/session.js' { interface SessionStateMap { memory: MyRecord } }`。
  */
 export interface SessionStateMap {
+  /**
+   * 权限三项（approval / sandbox / permission-presets 写；按会话隔离，2026-10-28）。
+   * 缺项（null）= 还没钉过，读取方补默认值并钉住；钉住后改偏好不影响这个会话。
+   */
+  permissions: { sandbox: SandboxMode | null; policy: ApprovalPolicy | null; reviewer: ApprovalReviewer | null }
   /** 协作模式（mode 插件写）。 */
   mode: CollaborationMode
   /**

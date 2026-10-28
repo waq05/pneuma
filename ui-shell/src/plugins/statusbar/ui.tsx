@@ -32,6 +32,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import {
   averageTtftMs,
+  formatTokens,
   formatTokensPerSecond,
   formatTraceDuration,
   tokensPerSecond,
@@ -271,18 +272,20 @@ function TokenSegment(props: {
       <div className="ctx-card" role="note">
         <div className="ctx-head">
           <span className="ctx-title">Token 用量</span>
-          <span className="ctx-numbers">{formatExactTokens(props.total)} tok</span>
+          <span className="ctx-numbers" title={`${formatExactTokens(props.total)} tok`}>
+            {formatTokens(props.total)} tok
+          </span>
         </div>
         <div className="ctx-rule" />
         <div className="ctx-rows">
           {hitPercent !== null && <CardRow label="缓存命中" value={`${hitPercent}%`} />}
           {cacheMiss !== null ? (
-            <CardRow label="未缓存输入" value={formatExactTokens(cacheMiss)} />
+            <CardRow label="未缓存输入" value={formatTokens(cacheMiss)} title={`${formatExactTokens(cacheMiss)} tok`} />
           ) : (
-            <CardRow label="输入" value={formatExactTokens(input)} />
+            <CardRow label="输入" value={formatTokens(input)} title={`${formatExactTokens(input)} tok`} />
           )}
-          {cacheHit !== null && <CardRow label="缓存读取" value={formatExactTokens(cacheHit)} />}
-          <CardRow label="输出" value={formatExactTokens(output)} />
+          {cacheHit !== null && <CardRow label="缓存读取" value={formatTokens(cacheHit)} title={`${formatExactTokens(cacheHit)} tok`} />}
+          <CardRow label="输出" value={formatTokens(output)} title={`${formatExactTokens(output)} tok`} />
         </div>
       </div>
     </span>
@@ -360,9 +363,9 @@ function ContextSegment(props: {
 }
 
 /** 悬浮卡里的一行「标签 …… 值」：标签靠左，值右对齐成一列（旧 StatusBar 的 CardRow 同款）。 */
-function CardRow(props: { label: string; value: string }): ReactNode {
+function CardRow(props: { label: string; value: string; title?: string }): ReactNode {
   return (
-    <div className="ctx-row">
+    <div className="ctx-row" title={props.title}>
       <span className="ctx-label">{props.label}</span>
       <span className="ctx-value">{props.value}</span>
     </div>
@@ -582,14 +585,7 @@ function useSessionUsage(
 // 2026-10-28：trimZero 与吞吐三条（TPS / TTFT / 速度读数）此前在这份文件里各抄了一遍，
 // 连带那句「插件只能 require react 与 @dsc/ui」的旧理由。E6 起基元包是平台种子，直接取即可。
 
-/** 数量按 K / M 压短：1000 以下给原值，128000 读成 128K。 */
-function formatTokens(count: number): string {
-  if (count < 1_000) return String(Math.round(count))
-  if (count < 1_000_000) return `${trimZero(count / 1_000)}K`
-  return `${trimZero(count / 1_000_000)}M`
-}
-
-/** 精确数量：千分位逗号：单行读数用紧凑那份，卡片里给精确值。 */
+/** 精确数量：千分位逗号，只进 title（悬浮提示），卡面一律用 K/M 缩写。 */
 function formatExactTokens(count: number): string {
   return Math.round(count).toLocaleString('en-US')
 }
