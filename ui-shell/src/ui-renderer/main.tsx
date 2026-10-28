@@ -14,6 +14,9 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { SlotRegistry, ServiceRegistry, ServicesProvider, type UiBootGraph, type UiPrefsView } from '@dsc/ui-core'
 import { onAppearanceRequest, type SlotFactoryMap, type SlotMap } from '@dsc/ui'
+// 面板几何直接按包名取：App（@dsc/ui-layout）读的也是这个包，同一份模块实例才拿得到
+// 启动时灌进去的那份值。
+import { primePanelGeometry, setPanelGeometrySaver } from '@dsc/ui-primitives'
 import { ALLOWED_MODULES, createBootSession, readBootGraph, type UiBootSession } from './boot'
 import { startPluginHmr, type UiPluginHmr } from './hmr'
 // 骨架与运行时（App、宿主通道、外观落地）住 `@dsc/ui-layout`；槽位契约与出口住 `@dsc/ui-slots`。
@@ -61,16 +64,30 @@ const UNAVAILABLE_BOOT: UiBootGraph = {
  * 为什么失败只告警不抛：外观拿不到顶多是配色不对，界面还能用；把启动卡死在这里
  * 才是真的用不了。
  */
-async function syncAppearance(channel: ReturnType<typeof createHostChannel>): Promise<void> {
+async function syncAppearance(prefs: Promise<UiPrefsView | null>): Promise<void> {
   applyAppearance(loadCachedAppearance())
-  try {
-    const prefs = await channel.invoke<UiPrefsView>('getUiPrefs')
-    appearance = appearanceFromPrefs(prefs)
-    applyAppearance(appearance)
-    saveCachedAppearance(appearance)
-  } catch (error) {
-    console.warn('[ui-shell] 读界面偏好失败，沿用上次的外观镜像', error)
-  }
+  const loaded = await prefs
+  if (loaded === null) return
+  appearance = appearanceFromPrefs(loaded)
+  applyAppearance(appearance)
+  saveCachedAppearance(appearance)
+}
+
+/**
+ * 给一个可能永远不回的请求加个期限。
+ *
+ * 面板几何必须在上屏前拿到（否则先画默认宽再跳一下），但宿主真卡住时也不能让页面
+ * 一直空着——过期就当没读到，按默认宽起。
+ */
+async function within<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([
+    promise,
+    new Promise<null>((resolve) => {
+      window.setTimeout(() => {
+        resolve(null)
+      }, ms)
+    }),
+  ])
 }
 
 /** 最后一次生效的外观：设置面板改一项时以它为底（见下面那个注册）。 */
@@ -122,11 +139,19 @@ async function bootstrap(): Promise<void> {
     slots.declare(slot, SHELL_SLOTS[slot]),
   )
 
-  // 2. 宿主数据通道（异步连，失败也会自己重连）+ 外观。
+  // 2. 宿主数据通道（异步连，失败也会自己重连）+ 外观 + 面板几何。
   // 外观**不 await**：函数体在第一个 await 之前就把上次的镜像涂上去了，首帧已经是对的颜色，
   // 等宿主回读回来再覆盖一次。await 的话，宿主卡住时最坏要等一次 invoke 超时（30 秒）才出首帧。
+  //
+  // 同一次 getUiPrefs 也喂面板几何（侧栏宽 / 正文列宽 / 右侧栏宽 / 并排审查宽）：那几项
+  // 只存在 localStorage 的话，宿主一换端口（每次启动、每次切工作目录都换）就全丢。几何
+  // 要赶在渲染前灌进面板模块（见下面第 4 步前那几行），否则用户先看到默认宽再跳一下。
   const channel = createHostChannel()
-  void syncAppearance(channel)
+  const prefs = channel.invoke<UiPrefsView>('getUiPrefs').catch((error: unknown) => {
+    console.warn('[ui-shell] 读界面偏好失败，沿用上次的外观镜像与默认宽度', error)
+    return null
+  })
+  void syncAppearance(prefs)
 
   // 3. 启动清单 + 装**第一批**（early）。清单取不到也要起壳：空壳 + 一条诊断，比白屏好查。
   // 第二批（application）不在这里装：画完首帧后由 session.startApplication() 推到空闲时刻。
@@ -145,6 +170,17 @@ async function bootstrap(): Promise<void> {
   const hmr: UiPluginHmr | null = session === null ? null : startPluginHmr({ channel, session })
   // 服务表（A1）：会话里那份就是装载期真用的表；清单取不到时给一张空表（壳照样起）。
   const serviceRegistry = session?.services ?? new ServiceRegistry()
+
+  // 3.5 首帧的宽度：偏好通常在装插件这几百毫秒里就回来了，这里只是把它灌进面板模块。
+  // 灌进去之后 `readStoredPx` / `readStoredFlag` 在 localStorage 空着时（换过端口）回落到这一份；
+  // 再注册落盘出口，拖动松手时整份发给 `setUiPrefs`（见 ui-primitives/panels.ts）。
+  const loaded = await within(prefs, 1500)
+  primePanelGeometry(loaded?.panelWidths ?? {})
+  setPanelGeometrySaver((geometry) => {
+    void channel.invoke('setUiPrefs', [{ panelWidths: geometry }]).catch((error: unknown) => {
+      console.warn('[ui-shell] 面板几何没写成，下次启动会回默认宽', error)
+    })
+  })
 
   // 4. 渲染。服务表经 context 交给条目组件（插件用 `useService` 读服务、跟着出现/消失换源）；
   // 第一批已在注册表里，首帧就能画出它。

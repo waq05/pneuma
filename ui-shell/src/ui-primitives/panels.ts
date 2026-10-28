@@ -1,12 +1,15 @@
 /**
  * 面板尺寸与拖拽（桌面渲染层 `panels.ts` 的同构移植）：
- * 侧栏宽度、停靠面板宽度、中间对话列宽——三项都能用鼠标拖，拖完的值存在 localStorage。
+ * 侧栏宽度、停靠面板宽度、中间对话列宽——三项都能用鼠标拖，拖完的值存在 localStorage，
+ * 同时**镜像一份到 `~/.dsc/settings.json`**（`ui.panelWidths`）。
  *
- * 为什么不写进 ~/.dsc/settings.json：那份文件存的是跨机器的用户偏好，而
- * 「这个窗口在这台机器上拖成多宽」属于窗口几何，留在本地。**localStorage 键与
- * 桌面渲染层共用同一批**（`dsc.sidebarWidth` / `dsc.threadWidth` / `dsc.dockWidth`）：
- * 桌面窗口与新壳加载的是同一个源（宿主伺服的页面），共用键意味着从旧界面切到壳
- * 时拖过的宽度延续，而不是两边各记一份。
+ * 为什么要那份镜像：宿主每次启动、每次切工作目录都会换一个端口（`ui-server` 的
+ * `port ?? 0`），而 localStorage 按源隔离——换端口就是一份空存储，光靠它的话用户拖出来的
+ * 宽度每次重开都回默认（用户报障 2026-10-29）。外观镜像踩过同一个坑，处理办法一样：
+ * 宿主那份当真值，localStorage 只当同一源内的快速读写层。
+ *
+ * 键名两边一套：localStorage 用 `dsc.sidebarWidth` 这批（与旧桌面渲染层共用，切界面宽度
+ * 能延续），settings.json 用短键 `sidebar` / `thread` / `dock` / `diff` / `collapsed`。
  *
  * @module dsc-ui-shell/platform/panels
  */
@@ -46,17 +49,82 @@ export const PANEL_KEYS = {
 } as const
 
 /**
- * 读一个存过的面板宽度。没存过、存坏、或落在区间外都算没有。
+ * 宿主那份几何的形状（`~/.dsc/settings.json` 的 `ui.panelWidths`，与契约
+ * `PanelWidthsView` 同形）。只列这五个键：面板以外的东西不归这里管。
+ */
+export type PanelGeometry = Partial<Record<'sidebar' | 'thread' | 'dock' | 'diff', number>> & {
+  collapsed?: boolean
+}
+
+/** localStorage 键 → 宿主键（两边一一对应，宿主那份用短名）。 */
+const HOST_KEY_OF: Readonly<Record<string, keyof PanelGeometry>> = {
+  [PANEL_KEYS.sidebarWidth]: 'sidebar',
+  [PANEL_KEYS.threadWidth]: 'thread',
+  [PANEL_KEYS.dockWidth]: 'dock',
+  [PANEL_KEYS.diffPaneWidth]: 'diff',
+  [PANEL_KEYS.sidebarCollapsed]: 'collapsed',
+}
+
+/**
+ * 宿主那份几何的内存副本：启动时由 {@link primePanelGeometry} 灌进来，
+ * 之后每次落盘就地更新——写的时候要发整份（宿主是「整键替换」的补丁语义）。
+ */
+let remembered: Record<string, number | boolean> = {}
+
+/** 落盘的出口（由壳入口注册；没注册时只写 localStorage）。 */
+let saver: ((geometry: PanelGeometry) => void) | null = null
+
+/**
+ * 灌入宿主那份几何。启动时调一次，之后由写入路径自己维护。
+ *
+ * @param values 宿主 `getUiPrefs().panelWidths`；空对象 = 没拖过任何一项
+ */
+export function primePanelGeometry(values: PanelGeometry): void {
+  remembered = { ...values }
+}
+
+/**
+ * 注册落盘出口。壳入口接到宿主通道后调一次，把整份几何交给 `setUiPrefs`。
+ *
+ * @param fn 收到的是**整份**几何（不是单个键），因为宿主补丁是整键替换
+ */
+export function setPanelGeometrySaver(fn: ((geometry: PanelGeometry) => void) | null): void {
+  saver = fn
+}
+
+/**
+ * 把一次改动记进内存副本并发给宿主。没注册出口、或不是面板的键就只留在内存里。
+ *
+ * @param key localStorage 键
+ * @param value 新值；null = 复位（这一项从此用样式表默认）
+ */
+function remember(key: string, value: number | boolean | null): void {
+  const hostKey = HOST_KEY_OF[key]
+  if (hostKey === undefined) return
+  if (value === null) delete remembered[hostKey]
+  else remembered[hostKey] = value
+  saver?.({ ...remembered } as PanelGeometry)
+}
+
+/**
+ * 读一个存过的面板宽度：先问 localStorage（同源内的最新值），没有再问宿主那份
+ * （跨宿主重启的那份）。没存过、存坏、或落在区间外都算没有。
  */
 export function readStoredPx(key: string, min: number, max: number): number | null {
+  const valid = (px: number): boolean => Number.isFinite(px) && px >= min && px <= max
   try {
     const raw = localStorage.getItem(key)
-    if (raw === null) return null
-    const px = Number(raw)
-    return Number.isFinite(px) && px >= min && px <= max ? px : null
+    // 存坏了（手改、旧版本残留）不算「有值」：接着问宿主那份，别让一条脏键把好的挡住。
+    if (raw !== null) {
+      const px = Number(raw)
+      if (valid(px)) return px
+    }
   } catch {
-    return null
+    // 隐私模式读不了；往下走宿主那份。
   }
+  const hostKey = HOST_KEY_OF[key]
+  const fallback = hostKey === undefined ? undefined : remembered[hostKey]
+  return typeof fallback === 'number' && valid(fallback) ? fallback : null
 }
 
 /** 落盘一个面板宽度；传 null 表示复位（删键，回到样式表默认宽）。 */
@@ -65,17 +133,22 @@ export function writeStoredPx(key: string, px: number | null): void {
     if (px === null) localStorage.removeItem(key)
     else localStorage.setItem(key, String(px))
   } catch {
-    // 隐私模式或配额满都会抛；大不了下次启动回到默认宽，不该打断拖动。
+    // 隐私模式或配额满都会抛；宿主那份照记，下次启动仍能读回来。
   }
+  remember(key, px)
 }
 
-/** 读一个开关（侧栏收起状态）。 */
+/** 读一个开关（侧栏收起状态）：localStorage 里有这个键就以它为准，否则看宿主那份。 */
 export function readStoredFlag(key: string): boolean {
   try {
-    return localStorage.getItem(key) === '1'
+    const raw = localStorage.getItem(key)
+    if (raw !== null) return raw === '1'
   } catch {
-    return false
+    // 读不了就落到宿主那份。
   }
+  const hostKey = HOST_KEY_OF[key]
+  const fallback = hostKey === undefined ? undefined : remembered[hostKey]
+  return typeof fallback === 'boolean' ? fallback : false
 }
 
 /** 落盘一个开关。 */
@@ -83,8 +156,9 @@ export function writeStoredFlag(key: string, on: boolean): void {
   try {
     localStorage.setItem(key, on ? '1' : '0')
   } catch {
-    // 写不进去就算了，这只影响下次启动记不记得住。
+    // 写不进去就算了，宿主那份还会记一笔。
   }
+  remember(key, on)
 }
 
 /** 往根元素上写一个 CSS 变量，把拖出来的宽度交给样式表；null = 撤掉行内值。 */

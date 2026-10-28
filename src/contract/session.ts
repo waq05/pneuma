@@ -178,6 +178,31 @@ export interface UiPrefsView {
   turnCompleteNotify: boolean
   /** TUI 底部状态栏各段的显隐；读档缺键由 {@link normalizeStatusBarPrefs} 回落默认。 */
   statusBar: StatusBarPrefsView
+  /**
+   * 窗口几何：侧栏宽 / 正文列宽 / 右侧栏宽 / 并排审查宽 + 侧栏收起。
+   *
+   * 为什么不能只放 localStorage：宿主每次启动、每次切工作目录都会换一个端口
+   * （见 `ui-server` 的 `port ?? 0`），而 localStorage 按**源**隔离——换了端口就是一份
+   * 空存储，用户拖出来的宽度每次重开都回默认（外观镜像踩过同一个坑，见 ui-shell 的
+   * `appearance.ts`）。所以这一份跟其它界面偏好一起落进 `~/.dsc/settings.json`。
+   *
+   * 仍是**本机**的窗口几何，不是跨机器偏好；值由壳的世界限夹，读档这里只挡脏值。
+   */
+  panelWidths: PanelWidthsView
+}
+
+/** 面板几何（px；缺键 = 这一项没拖过，用样式表默认）。 */
+export interface PanelWidthsView {
+  /** 侧栏宽（200–420）。 */
+  sidebar?: number
+  /** 正文列宽（≥480）。 */
+  thread?: number
+  /** 右侧栏宽（300–820）。 */
+  dock?: number
+  /** 并排审查面板宽。 */
+  diff?: number
+  /** 侧栏收起（Ctrl+B）。 */
+  collapsed?: boolean
 }
 
 /** 状态栏段显隐的出厂默认（口径见 {@link StatusBarPrefsView}）。 */

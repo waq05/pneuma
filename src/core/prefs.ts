@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { DEFAULT_STATUS_BAR_PREFS, normalizeStatusBarPrefs } from '../contract.js'
-import type { ApprovalPolicy, ApprovalReviewer, ArchivedFilter, EffortLevel, MarketSource, SessionGroupKey, SessionSortKey, ThemeMode, UiDensity, UiPrefsView, UiProcessFold } from '../contract.js'
+import type { ApprovalPolicy, ApprovalReviewer, ArchivedFilter, EffortLevel, MarketSource, PanelWidthsView, SessionGroupKey, SessionSortKey, ThemeMode, UiDensity, UiPrefsView, UiProcessFold } from '../contract.js'
 import { isHttpUrl } from './remote/notify.js'
 import { dscPath } from './path-policy.js'
 
@@ -241,6 +241,35 @@ function readNotifyWebhook(value: unknown): string {
 /** 模式名形状，与 core/presets.ts 的 PRESET_NAME 同一张表（改这里要两边一起改）。 */
 const PRESET_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/
 
+/**
+ * 面板宽度认到多大：真上限是当时的窗口宽，由壳现场夹；这里只挡「明显不是宽度」的数
+ * （负数、0、手改的 99999）。下限 100px 同理——窄于这个数任何面板都画不出东西。
+ */
+const PANEL_PX_MIN = 100
+const PANEL_PX_MAX = 4000
+
+/**
+ * 读档里的面板几何。坏值**丢掉**而不是夹取：夹出来的 100px 侧栏用户没选过，
+ * 留着反而挡住样式表默认值（缺键 = 用默认）。
+ *
+ * @param value settings.json 里 `ui.panelWidths` 的原始值
+ * @returns 只含合法键的几何（可能为空对象）
+ */
+function readPanelWidths(value: unknown): PanelWidthsView {
+  if (typeof value !== 'object' || value === null) return {}
+  const source = value as Record<string, unknown>
+  const widths: PanelWidthsView = {}
+  for (const key of ['sidebar', 'thread', 'dock', 'diff'] as const) {
+    const px = source[key]
+    if (typeof px !== 'number' || !Number.isFinite(px)) continue
+    const rounded = Math.round(px)
+    if (rounded < PANEL_PX_MIN || rounded > PANEL_PX_MAX) continue
+    widths[key] = rounded
+  }
+  if (typeof source.collapsed === 'boolean') widths.collapsed = source.collapsed
+  return widths
+}
+
 /** 读偏好（文件缺失或损坏按默认处理，绝不因为偏好坏掉起不来）。 */
 export function readPrefs(): DscPrefs {
   const prefs: DscPrefs = {
@@ -279,6 +308,8 @@ export function readPrefs(): DscPrefs {
       turnCompleteNotify: true,
       // TUI 状态栏段显隐：出厂口径在 contract 的 DEFAULT_STATUS_BAR_PREFS（0.6.62）。
       statusBar: { ...DEFAULT_STATUS_BAR_PREFS },
+      // 面板几何：出厂全空（没拖过 = 用样式表默认宽）。
+      panelWidths: {},
     },
     remote: { enabled: false, port: REMOTE_PORT_DEFAULT, lan: false, push: false, notifyWebhook: '' },
   }
@@ -376,6 +407,9 @@ export function readPrefs(): DscPrefs {
       }
       // 状态栏段显隐（0.6.62）：逐键白名单归一，缺键/坏键回落出厂默认。
       prefs.ui.statusBar = normalizeStatusBarPrefs(ui.statusBar)
+      // 面板几何：桌面壳拖出来的宽度与侧栏收起。写方是世界限内的值（见 ui-shell 的
+      // panels.ts），这里再挡一次脏值——手改档、旧版本残留、别的界面写坏了都从这条路进来。
+      prefs.ui.panelWidths = readPanelWidths(ui.panelWidths)
     }
     // 权限档与审阅者：读两个键，兼容旧档名。旧 `ai-review` 落成
     // 「完全访问 + AI 复核」（理由见 LEGACY_AI_REVIEW）；显式写了 reviewer 时以它为准。
