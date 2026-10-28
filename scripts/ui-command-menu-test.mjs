@@ -80,7 +80,20 @@ console.log('[1] 宿主：哪些命令摆在壳的菜单里')
   }
   check('内置表每条命令都还在（没顺手删掉终端那几条）', BUILT_IN_COMMANDS.length === 23, String(BUILT_IN_COMMANDS.length))
   const help = shellCommands().find((spec) => spec.name === 'help')
-  check('/help 的说明照样来自命令表（不是壳里抄的）', help?.description === '查看帮助', JSON.stringify(help))
+  check('/help 的说明照样来自命令表（不是壳里抄的）', help?.description === '查看命令帮助', JSON.stringify(help))
+  // 2026-10-29：菜单要「中文名 + 英文名」（用户要求，照 dsh 那张菜单）。中文名住在命令表里，
+  // 三端（桌面壳 / 手机 / TUI）都从这一份读——所以这里查的是表本身，不是某一端的渲染。
+  const unlabeled = BUILT_IN_COMMANDS.filter((spec) => typeof spec.label !== 'string' || spec.label === '')
+  check('内置命令每条都有中文短名', unlabeled.length === 0, JSON.stringify(unlabeled.map((spec) => spec.name)))
+  const tooLong = BUILT_IN_COMMANDS.filter((spec) => typeof spec.label === 'string' && (spec.label.length < 2 || spec.label.length > 5))
+  check('中文短名控制在 2–5 字（再长就把英文名挤没了）', tooLong.length === 0, JSON.stringify(tooLong.map((spec) => [spec.name, spec.label])))
+  check(
+    '壳那七条的中文名与 dsh 口径一致',
+    ['new:新会话', 'compact:压缩', 'status:状态', 'usage:用量', 'diff:差异', 'review:代码审查', 'help:帮助'].every(
+      (pair) => shellCommands().find((spec) => spec.name === pair.split(':')[0])?.label === pair.split(':')[1],
+    ),
+    JSON.stringify(shellCommands().map((spec) => [spec.name, spec.label])),
+  )
 }
 
 console.log('\n[2] 闸的真行为：shellCommandRejection')
@@ -213,7 +226,29 @@ console.log('\n[5] 壳侧接线')
   check('命令位里不提文件（@ 面板让位）', composer.includes('if (commandQuery(value, caret) === null) mention.track(value, caret)'), '')
   check('面板画出来了（role=listbox + 类名）', composer.includes('aria-label="命令候选"') && composer.includes('className={`slash-item'), '')
   const styles = read('ui-shell/src/styles.css')
-  check('样式类齐（面板 / 行 / 三列 / 提示）', ['slash-pop', 'slash-item', 'slash-name', 'slash-args', 'slash-desc', 'slash-flag', 'slash-hint'].every((cls) => styles.includes(`.${cls}`)), '')
+  check(
+    '样式类齐（面板 / 分组标题 / 行 / 图标格 / 中文名 / 英文名 / 说明 / 提示）',
+    ['slash-pop', 'slash-section', 'slash-item', 'slash-icon', 'slash-label', 'slash-name', 'slash-desc', 'slash-flag', 'slash-hint'].every(
+      (cls) => styles.includes(`.${cls}`),
+    ),
+    '',
+  )
+  // 参数占位不再进菜单行（dsh 也不摆）：空格由 insertCommand 补，用法在 /help 里。
+  check('菜单行不再渲染参数占位', !composer.includes('slash-args'), '')
+  check('壳的图标表只认那七条命令', read('ui-shell/src/plugins/composer/command-face.ts').includes("new: IconNewChat") && read('ui-shell/src/plugins/composer/command-face.ts').includes('return GLYPHS[name] ?? null'), '')
+  // 桌面壳那一行：中文名在前、英文名在后、说明右对齐（三列的顺序就是读的顺序）。
+  const labelAt = composer.indexOf('className="slash-label"')
+  const nameAt = composer.indexOf('className="slash-name"')
+  const descAt = composer.indexOf('className="slash-desc"')
+  check('行内次序：中文名 → 英文名 → 说明', labelAt > 0 && labelAt < nameAt && nameAt < descAt, `${labelAt}/${nameAt}/${descAt}`)
+  // 终端面板：中文名取 title，英文名取 label 的第一段（菜单里不摆参数）。
+  const tui = read('src/app/Composer.tsx')
+  check('TUI 面板用 title 当第一列', tui.includes('item.title === undefined ? item.label :') && tui.includes("item.label.split(' ')[0]"), '')
+  // 手机：菜单、筛选、派发三件事都在。
+  const phone = read('remote-web/src/lib/commands.ts')
+  check('手机命令位判定与桌面同口径', phone.includes('if (!value.startsWith(\'/\')) return null') && phone.includes('if (/\\s/.test(word)) return null'), '')
+  check('手机发送前把命令挑出来走 runUiCommand', read('remote-web/src/pages/ChatPage.tsx').includes("invoke<boolean>('runUiCommand', [command])"), '')
+  check('手机菜单有分组标题与图标格', read('remote-web/src/components/CommandMenu.tsx').includes('cmd-section') && read('remote-web/src/components/CommandMenu.tsx').includes('cmd-icon'), '')
   const menu = read('ui-shell/src/plugins/composer/command-menu.ts')
   check('清单一次取、模块级缓存（打字每一拍不问宿主）', menu.includes('let cache: ShellCommandView[] | null = null') && menu.includes('if (cache !== null)'), '')
   check('取不到时整会话不反复问（并给一句提示）', menu.includes('let unavailable = false') && composer.includes('没接“/”命令通道'), '')

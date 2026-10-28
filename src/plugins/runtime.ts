@@ -365,6 +365,7 @@ export const runtimePlugin: Plugin.Object = {
           name: spec.name,
           args: spec.args,
           description: spec.description,
+          ...(spec.label === undefined ? {} : { label: spec.label }),
           duringTask: spec.duringTask ?? 'allow',
         }))
       },

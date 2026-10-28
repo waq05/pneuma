@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react'
 import {
   MAX_TOTAL_BYTES,
   composeOutgoing,
@@ -7,6 +7,8 @@ import {
   isImageFile,
   totalBytes,
 } from '../lib/attachments.js'
+import { commandQueryAt, filterCommands, insertCommand, type PhoneCommandView } from '../lib/commands.js'
+import { CommandMenu } from './CommandMenu.js'
 
 /**
  * 底部固定发送框。
@@ -55,6 +57,8 @@ export interface ComposerProps {
   /** 上传一个非图片文件，返回宿主给的路径；失败要把人话文案放进 Error。 */
   onUploadFile: (file: File) => Promise<string>
   onInterrupt: () => void
+  /** 宿主那份 `shell: true` 命令清单（`listUiCommands`）；空表 = 菜单不弹。 */
+  commands: readonly PhoneCommandView[]
 }
 
 export function Composer({
@@ -65,11 +69,17 @@ export function Composer({
   onSend,
   onUploadFile,
   onInterrupt,
+  commands,
 }: ComposerProps): ReactNode {
   const [text, setText] = useState('')
   const [chips, setChips] = useState<Chip[]>([])
   const [attachError, setAttachError] = useState<string | null>(null)
   const [picking, setPicking] = useState(false)
+  /** 光标位置与菜单高亮位：命令菜单只在光标还在命令名里时开。 */
+  const [caret, setCaret] = useState(0)
+  const [commandAt, setCommandAt] = useState(0)
+  /** Esc 关掉的那一个前缀（null = 没关）；内容一变就重新弹。 */
+  const [mutedFor, setMutedFor] = useState<string | null>(null)
   const area = useRef<HTMLTextAreaElement | null>(null)
   const picker = useRef<HTMLInputElement | null>(null)
   /**
@@ -96,6 +106,33 @@ export function Composer({
     .map((chip) => chip.path as string)
   const hasContent = text.trim() !== '' || ready.length > 0
   const canSend = connected && !stopping && !working && hasContent
+
+  // ── `/` 命令菜单 ───────────────────────────────────────────────────────────
+  // 口径与桌面壳一样：整条输入以 `/` 开头、光标还在第一个词里才算命令位；按了 Esc 就
+  // 记住「这个前缀别再弹」，改一个字重开。
+  const commandQuery = commandQueryAt(text, caret)
+  const commandRows = useMemo(
+    () => (commandQuery === null ? [] : filterCommands(commands, commandQuery)),
+    [commands, commandQuery],
+  )
+  const commandOpen = commandRows.length > 0 && mutedFor !== commandQuery
+  const commandIndex = Math.min(commandAt, Math.max(0, commandRows.length - 1))
+
+  /** 采纳一行：填进输入框、光标放到末尾、菜单随空格收起。 */
+  function applyCommand(row: PhoneCommandView): void {
+    const next = insertCommand(row)
+    setText(next)
+    setCaret(next.length)
+    setCommandAt(0)
+    setMutedFor(null)
+    area.current?.focus()
+  }
+
+  /** 采纳当前高亮那一行（回车 / Tab）。 */
+  function pickCommand(): void {
+    const row = commandRows[commandIndex]
+    if (row !== undefined) applyCommand(row)
+  }
 
   function commit(next: Chip[]): void {
     chipsRef.current = next
@@ -238,6 +275,9 @@ export function Composer({
             .join('；')}
         </div>
       ) : null}
+      {commandOpen ? (
+        <CommandMenu rows={commandRows} at={commandIndex} onPick={(row) => applyCommand(row)} />
+      ) : null}
       <div className="composer-row">
         <input
           ref={picker}
@@ -270,8 +310,37 @@ export function Composer({
           value={text}
           placeholder={connected ? '发消息…' : '连接断开中，恢复后可发送'}
           enterKeyHint="send"
-          onChange={(event) => setText(event.target.value)}
+          onChange={(event) => {
+            setText(event.target.value)
+            setCaret(event.target.selectionStart ?? event.target.value.length)
+          }}
+          onClick={(event) => setCaret(event.currentTarget.selectionStart ?? 0)}
           onKeyDown={(event) => {
+            // 菜单开着时，方向键 / Tab / 回车先归菜单——与桌面壳同一条归属规则，
+            // 不然「回车」会在候选还没选的时候把半条命令发出去。
+            if (commandOpen) {
+              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault()
+                const delta = event.key === 'ArrowDown' ? 1 : -1
+                setCommandAt((current) => (current + delta + commandRows.length) % commandRows.length)
+                return
+              }
+              if (event.key === 'Tab') {
+                event.preventDefault()
+                pickCommand()
+                return
+              }
+              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault()
+                pickCommand()
+                return
+              }
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                setMutedFor(commandQuery)
+                return
+              }
+            }
             if (event.key !== 'Enter') return
             if (event.shiftKey || event.nativeEvent.isComposing) return
             event.preventDefault()

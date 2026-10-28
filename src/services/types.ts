@@ -511,6 +511,14 @@ export interface CommandSpec {
   args: string
   description: string
   /**
+   * 中文短名（2–4 字），三端的 `/` 菜单第一列用它，英文 `name` 排在它后面当副标。
+   *
+   * 为什么名字与说明之外还要一份短名：`description` 是给 `/help` 的一句话，最长的那条
+   * 二十多字，塞进菜单行左边会把英文名挤没（dsh 的菜单也是这么分两列的：标题短、说明在右）。
+   * 缺省不填 = 这一行只显示英文名——外部插件注册的命令没人替它起中文名，失败关闭。
+   */
+  label?: string
+  /**
    * T44：回合跑着的时候还能不能用（codex slash_command 的 available_during_task 矩阵）。
    * 缺省 'allow'（外部命令不知道自己安不安全，按可用处理）；内置表逐条声明。
    * 派发时统一查这一位——桌面 / TUI / 远端从同一个闸过，不再各防各的。
@@ -532,6 +540,11 @@ export interface CompletionItem {
   insert: string
   label: string
   description: string
+  /**
+   * 中文短名（命令候选才有；模型候选没有）。终端面板拿它当第一列，
+   * `label` 退到第二列——与桌面壳、手机端同一套读法。
+   */
+  title?: string
 }
 
 /** 命令执行期 UI 回调。 */

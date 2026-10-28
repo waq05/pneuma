@@ -156,6 +156,13 @@ export interface UiCommandView {
   /** 参数占位提示（空串 = 无参数）。 */
   args: string
   description: string
+  /**
+   * 中文短名（2–4 字），菜单第一列；缺省 = 这一行只显示英文名。
+   *
+   * 三端（桌面壳 / 手机 / TUI）都从这一份读，菜单文案就不会各写各的。菜单里**不再**
+   * 显示参数占位：命令选中后宿主已补一个空格，接着打就行，用法在 `/help` 里。
+   */
+  label?: string
   /** 回合跑着时能不能用（`deny` 的行在菜单里标出来，派发那一步也由宿主再挡一次）。 */
   duringTask: 'allow' | 'deny'
 }

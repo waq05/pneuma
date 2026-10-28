@@ -21,6 +21,7 @@ import type { DOMElement } from 'ink'
 import type { JSX } from 'react'
 import type { ModelChoiceView } from '../contract.js'
 import { completionsFor, expandCommand } from '../core/commands-completion.js'
+import type { CompletionItem } from '../services/types.js'
 import {
   collectWorkspaceFiles,
   insertMention,
@@ -167,7 +168,7 @@ export function Composer({
   /** 光标处的 @ 提及查询（null = 不在 @ 补全态）。 */
   const mention = useMemo(() => mentionQueryAt(value, caret), [value, caret])
 
-  const completions = useMemo(() => {
+  const completions = useMemo<CompletionItem[]>(() => {
     if (value === suppressedFor) return []
     if (mention !== null) {
       return rankMentionCandidates(mentionFiles, mention.token, 8).map((path) => ({
@@ -387,10 +388,14 @@ export function Composer({
         <Box borderStyle="single" borderColor={BORDER.frame} paddingX={PAD.inline} flexDirection="column" gap={GAP.none}>
           {panelVisible.map((item, position) => {
             const selected = panelStart + position === safeIndex
+            // 命令候选带中文短名（宿主给，见 CommandSpec.label）：第一列读中文，英文名跟在后头；
+            // 英文名取 label 的第一段（`/diff [文件]` → `/diff`）——菜单里不摆参数占位，
+            // 选中后宿主已补一个空格，接着打参数就行。模型候选没有 title，照旧只画 label。
+            const english = item.title === undefined ? '' : (item.label.split(' ')[0] ?? item.label)
             return (
-              <Text key={item.label} color={selected ? ACCENT : undefined}>
+              <Text key={item.label} color={selected ? ACCENT : undefined} wrap="truncate">
                 {selected ? MARK.selected : MARK.idle}
-                {item.label}
+                {item.title === undefined ? item.label : `${item.title} ${english}`}
                 <Text {...TEXT.secondary}>
                   {SEP.gap}
                   {item.description}

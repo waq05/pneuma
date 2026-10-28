@@ -16,9 +16,11 @@
 /** 菜单一行（宿主 `UiCommandView` 的同形；壳只读不造）。 */
 export interface ShellCommandView {
   name: string
-  /** 参数占位提示（空串 = 无参数）。 */
+  /** 参数占位提示（空串 = 无参数）。菜单里不显示它，只在补全时决定要不要补空格。 */
   args: string
   description: string
+  /** 中文短名（2–4 字）；缺省 = 这一行只显示英文名。 */
+  label?: string
   /** 回合跑着时能不能用；`deny` 的行在菜单里标灰（真闸在宿主派发那一步）。 */
   duringTask: 'allow' | 'deny'
 }

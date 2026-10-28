@@ -77,7 +77,9 @@ check('空输入无占位文案', !output.includes('说点什么') && output.inc
 // 1. 输入 / 弹出全部命令
 let frame = await press('/')
 check('输入 / 后面板出现', frame.includes('/new') && frame.includes('/resume'))
-check('面板含参数提示', frame.includes('/model <[端点/]模型名>'))
+// 2026-10-29：面板改成「中文名 + 英文名 + 说明」，参数占位不再进面板（选中后宿主已补空格）。
+check('面板每行是中文名 + 英文名', frame.includes('新会话 /new') && frame.includes('模型 /model'), frame.split('\n').slice(0, 5).join(' | '))
+check('参数占位不再进面板', !frame.includes('<[端点/]模型名>'))
 check('面板含操作提示', frame.includes('Tab 补全'))
 
 // 2. ↑↓ 选择移动（/agents 插入后 /compact 顺延一位）

@@ -65,6 +65,7 @@ import { formatBytes, readTurnState, sameGitSurface as sameGit } from '@dsc/ui-p
 import { useMention } from './mention'
 import { useCommandMenu } from './command-menu'
 import { blockedNow, commandQuery } from './commands'
+import { commandGlyph } from './command-face'
 import { carryDraft, draftScopeOf, type ComposerDraft } from './draft'
 import {
   composeSubmit,
@@ -756,29 +757,41 @@ function ComposerBox(): ReactNode {
                 没有匹配的命令
               </div>
             ) : (
-              command.rows.map((row, index) => {
-                const off = blockedNow(row, working)
-                return (
-                  <button
-                    type="button"
-                    key={row.name}
-                    role="option"
-                    aria-selected={index === command.at}
-                    className={`slash-item${index === command.at ? ' on' : ''}${off ? ' off' : ''}`}
-                    title={row.description}
-                    onMouseDown={(event) => {
-                      // mousedown 而不是 click：抢在 textarea 失焦之前把候选插进去。
-                      event.preventDefault()
-                      command.pick()
-                    }}
-                  >
-                    <span className="slash-name">/{row.name}</span>
-                    {row.args === '' ? null : <span className="slash-args">{row.args}</span>}
-                    <span className="slash-desc">{row.description}</span>
-                    {off ? <span className="slash-flag">回合中不可用</span> : null}
-                  </button>
-                )
-              })
+              <>
+                {/* 分组标题：壳的菜单只列命令这一类（dsh 那张菜单分「添加 / 指令 / 技能」，
+                    我们这边没有另外两类，标题照它留一个，行才不会被当成无主的一串）。 */}
+                <div className="slash-section" role="presentation">
+                  指令
+                </div>
+                {command.rows.map((row, index) => {
+                  const off = blockedNow(row, working)
+                  const Glyph = commandGlyph(row.name)
+                  return (
+                    <button
+                      type="button"
+                      key={row.name}
+                      role="option"
+                      aria-selected={index === command.at}
+                      className={`slash-item${index === command.at ? ' on' : ''}${off ? ' off' : ''}`}
+                      title={row.description}
+                      onMouseDown={(event) => {
+                        // mousedown 而不是 click：抢在 textarea 失焦之前把候选插进去。
+                        event.preventDefault()
+                        command.pick()
+                      }}
+                    >
+                      {/* 图标格固定 14px：没有图标的命令也占着，中文名才不会一行行错开。 */}
+                      <span className="slash-icon" aria-hidden="true">
+                        {Glyph === null ? null : <Glyph size={14} />}
+                      </span>
+                      <span className="slash-label">{row.label ?? `/${row.name}`}</span>
+                      {row.label === undefined ? null : <span className="slash-name">{row.name}</span>}
+                      {off ? <span className="slash-flag">回合中不可用</span> : null}
+                      <span className="slash-desc">{row.description}</span>
+                    </button>
+                  )
+                })}
+              </>
             )}
             <div className="slash-hint">↑↓ 选 · Tab 补全 · Enter 执行 · Esc 关闭</div>
           </div>
