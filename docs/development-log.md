@@ -10406,3 +10406,91 @@ const lastTab = surface.panes.reduce((count, pane) => count + pane.tabs.length, 
 说「启动慢」，看时序就够了。
 
 
+## 二十四、刻度条贴底高亮错位、新会话刷五条权限提示（0.7.1，未发版）
+
+用户一次报了两条，另外问了两条（一条异常会话、一条思考档位能不能按模型适配）。前两条改了代码，
+后两条查证后没动代码，结论一并记在下面。
+
+### 一　刻度条：把「最新一轮」认错了地方
+
+现象：一条只有 2 轮的会话（第 2 轮是子代理汇报），滑到底部，右侧刻度条高亮的是**第 1 个**刻度，
+而贴底应该高亮最下面那个。
+
+根因在锚点的来源。`jump-rail.tsx` 旧写法用 `.entry-user` 收集锚点：
+
+- 贴底时它取**最后一个锚点的轮号**当「最新一轮」；
+- 子代理汇报是一条 `internal` 的 user 条目，`rows/user-row.tsx` 把它渲染成一行触发行
+  （`.entry-system`），**没有用户气泡**；
+- 于是第 2 轮一个锚点都没有，贴底读到的是第 1 轮 —— 高亮就停在那儿。
+
+改法分两半：
+
+1. 「最新一轮是哪一轮」不再从 DOM 里数，直接取轮清单的最后一轮（`props.rounds`）；
+2. 锚点改按 `[data-round]` 收（每一轮至少有一条行带这个属性），同一轮去重留第一行，
+   整轮收起后没有盒子的行（`getClientRects().length === 0`）跳过。
+
+判定本身抽成零依赖的 `ui-shell/src/plugins/transcript/rail-window.ts`，探针用 Node 的类型擦除
+直读（同 `rounds.ts` 的约定）；`jump-rail.tsx` 只负责量这个 DOM。
+
+实证：把用户那条真会话复制进隔离 HOME，打开滚到底，读到 `ticks=2 / active=1 / humanAnchors=1`
+—— 最后一个数正是旧算法读成 0 的原因，同时它现在不影响结果。
+
+### 二　权限提示：启动时同一组值被复算了三遍
+
+现象：新开一条会话，对话里一进来就有五行「权限模式切换为…」「审批审阅者切换为…」
+「权限预设切到…」，而用户一个旋钮都没碰。
+
+根因是启动时有三条路各自写一遍同一组值，而写入口自己会往对话流写一行：
+
+1. `settings` 插件启动时按偏好应用 `defaultPolicy` 与 `defaultReviewer` —— 两行；
+2. `permission-presets` 插件启动时应用默认预设，`apply` 里 `setPolicy` / `setReviewer` —— 又两行；
+3. 同一个 `apply` 末尾 `setPrefs({ defaultPolicy, defaultReviewer })` 回写偏好，`setPrefs`
+   不看值变没变，再调一遍两个 setter —— 再两行（与 2 同值，用户看到的是重复）；
+4. 最后 `apply` 自己那句「权限预设切到…」—— 一行。
+
+改法：写入口（`setPolicy` / `setReviewer`）不再往对话里写，只留审计；启动时 `apply` 走新加的
+`quiet` 参数，一个字都不写；用户主动点预设（`use`）照旧有那一条回执；斜杠命令 `/policy`
+`/reviewer` 原来靠写入口那行当回音，现在自己给一句。随之把只被那行用到的 `policyLabel`
+删掉（`POLICY_OPTIONS` 里有人话档位名，不必各写一份）。
+
+实证：同一个隔离 HOME、同一份偏好（`defaultPolicy: auto-edit` + 默认预设「工作区」），
+新会话里这三类提示的数量是 0。
+
+### 三　查证一：会话 02299c86 的 401 不是我们的
+
+那条会话里第 2 轮报「HTTP 401 … token's workspace not found」，紧接着一次重试报
+「连接超时（30 秒无响应）」。这两条都发生在 opencode 网关那一侧：
+
+- 用**同一把 key、同一组归因头（`user-agent` + `x-opencode-session`）、同一个会话 id**
+  重放同一份请求体，现在返回 200；
+- 也就是说 401 不是我们少发头、也不是会话 id 不合规，是网关上游那一刻找不到它自己的 workspace；
+- 401 本来就不在重试清单里（只重试 408 / 429 / 5xx 与连接失败），所以它一次就报上来；
+- 30 秒那个超时只管「等到响应头」，与模型思考多久无关。
+
+结论：不改代码，重试即可。真要改，改的是文案（把「网关上游故障」和「你的密钥不对」分开说），
+不是逻辑。
+
+### 四　查证二：思考档位按模型适配，机制通着，但配置里没人用
+
+机制这一层是完整的：档位清单来自模型自己的能力声明（`thinkingLevels` / `thinkingParam` /
+`effortMap`），滑杆按清单长度画点（`percentOf(index, levels.length)`，不写死四档），
+请求按清单发字段（`thinking:{type}` / `reasoning_effort` / 不发，三选一），换模型时旧档位
+不存在就夹回「默认」。
+
+但用户那份 `~/.dsc/config.yaml` 里**没有一个模型写了 `thinkingLevels`**，于是全部落到缺省的
+四档，看起来就「每个模型都一样」。要让它们不同：设置 → 模型 → 给那个模型勾档位（也可以写
+`thinkingParam: reasoning-effort` 与 `effortMap` 覆盖线上值）。
+
+顺带实测了当前用的端点：`deepseek-v4.1-flash` 对 `thinking: {type}` 与 `reasoning_effort`
+两种写法都返回 200，四档都发得出去。
+
+### 五　探针
+
+- 新增 `scripts/ui-jump-rail-test.mjs`（21 条）：贴底取轮清单、命中测试、几何兜底、锚点去重、
+  接线形态（不再只认用户气泡、隐藏行跳过、旧 `readCurrent` 不许回来）。
+- 新增 `scripts/effort-per-model-test.mjs`（30 条）：两档 / 四档 / 无思考三种模型的清单、
+  换模型夹档、三套端点的请求字段、滑杆按长度画、负向自证。
+- `scripts/permission-presets-test.mjs` 增到 61 条：setter 不再写对话、启动走 `quiet`、
+  `use` 仍有回执、`/policy` 与 `/reviewer` 自己给回执。
+- 实机：`desktop/shots/_verify-rail-current.mjs`（隔离 HOME，gitignored）两段全过。
+
