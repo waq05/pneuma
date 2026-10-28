@@ -14,6 +14,7 @@
  */
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { DiffRows, HUMAN_WAIT_TIMEOUT_MS, IconChevronDown, IconChevronRight, toastErr, toastOk, useHostChannel } from '@dsc/ui'
+import { useDialogFocus } from '@dsc/ui-primitives'
 import {
   parseUnifiedDiff,
   splitUnifiedDiffByFile,
@@ -398,6 +399,8 @@ function CommitDialog(props: {
   const [message, setMessage] = useState('')
   const [includeUnstaged, setIncludeUnstaged] = useState(false)
   const [selected, setSelected] = useState<readonly string[]>([])
+  // 条件渲染（打开才挂载），所以这里常 true：Esc 关、Tab 圈在弹层里、关掉把焦点还给来源。
+  const dialog = useDialogFocus(true, props.onClose)
   const unstagedPaths = props.unstaged.map((entry) => fileOf(entry))
 
   const toggleUnstagedAll = (next: boolean): void => {
@@ -421,7 +424,9 @@ function CommitDialog(props: {
       <div
         className="git-dialog"
         role="dialog"
+        aria-modal="true"
         aria-label="提交"
+        ref={dialog.ref}
         onClick={(event) => {
           event.stopPropagation()
         }}
@@ -484,6 +489,7 @@ function CommitDialog(props: {
         </div>
         <textarea
           className="git-dialog-message"
+          data-autofocus
           rows={3}
           placeholder="遵循 feat:/fix:/chore: 规范"
           value={message}
