@@ -151,6 +151,11 @@ ctx.tools.list(): ToolEntry[]
 要点：`parameters` 必须是合法 JSON Schema（`{ type: 'object', properties: {...} }`）；
 `signal` 中止时尽快返回或抛错；**不要**在 run 里再向用户提问（用审批机制表达风险）。
 
+**按会话取数**（v7，2026-10-28）：宿主同时常驻多个会话的 agent，凡是「跟会话走」的投影都得
+问清是谁在问。`ctx.tools.visible(scope?)` 与 `ctx.tools.project(id, (tools, scope) => …)` 的
+`scope` 就是这一格（`{ sessionId?, cwd? }`，不传 = 当前查看的会话）。写成读全局状态的话，
+用户点开另一个会话就会改掉后台那一轮的工具目录。
+
 **返回图像**（截图类工具）：返回 `{ text: string, images: ['data:image/png;base64,...'] }`
 ——消息以多模态 content 数组交给模型，**需要端点支持视觉**（如 GLM 视觉系列）；
 纯文本端点会报错。参考 `examples/plugins/computer-use.js` 与 `browser-control.js`。
@@ -410,6 +415,10 @@ ctx.prompt.registerProjection('my-inject', (messages) => {
 规则：`fold-system` / `drop-images` 是内核保留名，同名注册直接报错；投影抛错时这一轮
 跳过它并发一条通知，不拖垮请求；`transformMessages`（v3 的匿名改写）已移除，迁移就是把
 函数换成命名投影。
+
+**按会话取数**（v7）：附加提示的回调、骨架取舍都一样多收一格 `scope`
+（`(scope?) => string` / `(ids, scope?) => ids`），`ctx.prompt.systemPrompt(cwd, scope?)` 把它
+一路传下去。不传按当前查看的会话算。模式（预设）就是靠这一格做到「每个会话记自己那一档」。
 
 ## 5. 事件
 

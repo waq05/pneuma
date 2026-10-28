@@ -9713,6 +9713,59 @@ core 出实现 → `@dsc/ui-core` 转出（跟 `diff-text` 同一个先例）→
 `browser.ts` 与 `dock-browser.ts` 之间那四份共用工具，正确落点是 `core/cdp/`，是单独一批的活；
 `readCwd` 一族 snapshot 读取器，形状一样但「取不到时回空数组还是 null」各家不同，要逐个核对。
 
+## 十三、提问卡折叠，与流式代码块为什么会抽
+
+用户报了两件事：模型提问卡占掉小半个屏，想收起来只留一条标头；新消息正在输出时，对话上方
+**已经输出完**的代码块会一抽一抽地闪。前一件是缺功能，后一件是渲染层的结构问题，两件都在界面壳里。
+
+### 折叠：照 dsh 的 header strip，但收起不卸载
+
+dsh 的 `QuestionComposer.tsx` 有一份现成答案：`minimized` 是纯组件状态（`:243`），卡头常驻，
+收起时 `{!minimized && (body + footer)}` 整块不渲染（`:518`），收起态标题两行封顶
+（`module.css:162` 的 `-webkit-line-clamp: 2`），倒计时与关闭钮留在卡头右侧（`:477-514`）。
+
+dsc 这边只借结构，不借卸载：我们的草稿在 `AskComposer` 的 state 里而不是 Session store，
+卸载虽然也不丢（state 在父组件），但输入框会被重建、`autoFocus` 会重放一次——用户点折叠是为了
+看题，不是为了被抢焦点。所以改成给 `.ask-panel` 与 `.ask-foot` 挂 `hidden`：DOM 留着，
+草稿、焦点、翻到第几题都原样。代价是 CSS 得补一条 `.ask-panel[hidden] { display: none }`——
+`.ask-panel` 自带 `display: flex`，作者样式压过 UA 的 `[hidden]`，不补这一条收起是无效的
+（写完第一版果然无效，量 DOM 才发现）。
+
+### 抽搐：不是代码块本身在变，是它每次都被卸载重建
+
+读 react-markdown 的实现才看明白：它把 `components` 原样交给 `hast-util-to-jsx-runtime`，
+后者在 `createElement` 里直接取 `state.components[name]` 当元素类型（该包 `lib/index.js:711`）。
+我们的 `components` 写在 `MarkdownView` 的渲染函数里，三个内联箭头函数**每帧都是新引用**；
+React 比较元素类型时看到函数换了，就把整棵子树卸载重挂。于是流式每个字进来：
+代码块实例重建 → 里面「已高亮的那份 html」的 state 归零 → 先画纯文本、异步高亮完再换成
+shiki 的 HTML。两态的排版本来就不一样（`pre.file-code-plain` 吃 `.file-md pre`：字号 caption、
+内距 10/12、无行号；shiki 那份再叠 `.file-code-body .shiki`：字号 tool、内距 10/12/10/0、
+每行多一个行号），换一次高度就跳一次，看上去就是抽。
+
+dsh 在同一个问题上走得更远：`incremental.ts` 冻结前面所有块、只重解尾部两块，块 key 用源偏移
+（`render.tsx:435` 注释写得很直白），代码块还有 `StreamingHighlightSession` 只对追加行分词。
+我们用的是 react-markdown，换不成那条管线，但可以拿到同样的三个收益：
+
+1. **组件表提到模块级**（`MARKDOWN_COMPONENTS` 常量），`remarkPlugins` 同办。实例从此跨帧复用，
+   已经渲染完的块一动不动——用户看到的抽搐，主因就是这一条。
+2. **两态同构**：`highlight.ts` 新增 `highlightToLines`（吐结构化 token，不再吐 HTML 字符串），
+   代码块两态都由 React 按行渲染成 `pre.shiki > code > span.line`，切换时行容器原地复用，
+   只换行内的 span 与颜色，高度、行号、字号一格都不动。
+3. **流式中防抖上色**：`MarkdownView` 多了 `streaming` 参数，会话流把 `row.live` 传进来；
+   流式中等代码停顿 120ms 再高亮——已输出完的块不会再变，这个等待只付一次就有颜色；
+   正在增长的尾块每次增量都把定时器往后推，到落定才上色，不会每个字重算一遍。
+
+顺带修掉一个隐患：旧的 `CodeBlock` 在 `code` 变化时不清 `html`，高亮完成前显示的是**上一版
+代码**渲染出来的 HTML（内容与当前文本不一致），现在只认当前这份代码的结果，其余先亮纯文本。
+
+### 教训十一：先读依赖库的实现，再断言根因
+
+「代码块在闪」有四种可能：CSS 动画、滚动锚定、组件重挂、高亮切换。前三种都能靠读我们自己的
+代码排除；最后一种必须知道 react-markdown 怎么用 `components`。翻到 `hast-util-to-jsx-runtime`
+的 `createElement` 那七行，才把「内联函数 → 新类型 → 整树重挂」这条链坐实。没读那七行之前，
+所有修法都只是猜。
+
+
 ## 十四、第六批：浏览器两条链的输出层
 
 第六批先认落点，再动代码。
@@ -9774,6 +9827,39 @@ Node 的 `zstdDecompressSync` 一次只解第一帧，得按 `info.bytesWritten`
 
 复扫结果：函数体重复组 40 → 23 → 9 → **1**（剩下 `emit`，三行循环，有意不收）。
 
+
+## 十六、「回到底部」胶囊为什么在流式里闪
+
+用户补报：底部输出时那颗「回到底部」会自己冒出来，还在闪。查的是 `useFollowBottom`
+（`ui-shell/src/plugins/transcript/ui.tsx`）里两条判定。
+
+**第一条：`onScroll` 把「内容变矮」当成了「读者往上滚」。** 原来的判定是「本次 scrollTop 与
+我上次写入的值差超过 1px 就算读者动了」。贴底时内容自己变矮（工具卡跑完收起、步骤组收合、
+写前预览卡展开），浏览器会把 scrollTop 夹到新的上限——这也发一条 scroll 事件，形状和读者上滚
+一模一样。于是每次重排都判一次「用户在看历史」，把胶囊翻出来。
+
+**第二条：`settle` 在跟随态下还会按距离重判一次。** 落定时算 `floor - scrollTop <= 24`，
+判不近就把 `following` 置 false 并把胶囊打开。可流式内容随时会长高 24px 以上，这一算就等于
+「内容一长就把跟随松掉」，下一口 delta 再钉回底部——两处一开一关，视觉上就是闪。
+
+改法对着这两条去：
+
+1. `pin()` 顺手记下钉底那一刻的 `scrollHeight`（`pinnedHeight`）。`onScroll` 发现内容总高度
+   和上次钉底时不同，就认作内容驱动，只同步位置、不判读者。读者真的滚（滚动条拖拽、滚轮）
+   时内容高度不变，判定照旧。
+2. `settle` 只在 `following` 已经是 false（读者松过手）时才按距离决定要不要恢复；还在跟随时
+   落定只补最后几像素，不再重判。
+
+验证用 `desktop/shots/_verify-follow-pill.mjs`（真宿主 + 真壳 + CDP），两段实验：
+
+- A 段：流式途中把一大块内容 `display: none`（模拟工具卡收起），scrollHeight 从 5758 掉到 626，
+  胶囊出现次数 **0**；修复前这条 scroll 必然被判成读者滚动。
+- B 段：用 CDP 的输入管线真滚轮（合成 `WheelEvent` 不产生默认滚动，测不出来）向上滚 4 格，
+  胶囊出现；点它之后消失、离底回到 0——正常的回头路没坏。
+
+**教训十四：两种「滚动」长得一样，得靠第三个量分开。** 读者滚与浏览器夹 scrollTop 都会发
+scroll 事件、都会改 scrollTop，光看位置分不出来。这次用的第三个数是「内容总高度有没有变」：
+读者滚动不改它，内容重排会改。以后再遇到「自动滚动被误停」，先找那个能区分来源的量。
 
 ## 十七、第八批：时间戳的时区，与模块级信号的试点
 
@@ -9843,3 +9929,71 @@ Node 的 `zstdDecompressSync` 一次只解第一帧，得按 `info.bytesWritten`
 这比"以后再统一"的口号有用得多。
 
 复扫结果：400 个文件里函数体重复组 **0**（审查起点 40 组）。
+
+## 十九、三处「过程噪点」：写前预览摊满屏、「已恢复会话」、切个会话就换工具集
+
+用户一次报了三件事，前两件是界面，第三件是内核级的。
+
+### 一　写前预览为什么一直摊着
+
+那块不是工具卡，是 `file-review` 插件的写前预览：`src/plugins/file-review.ts:343` 在 write / edit
+**落盘之前**把算好的 unified diff 用 `ctx.emit('dsc/notice', …)` 塞进对话流（好让用户点「允许」
+之前先看见改什么），壳认出那行前缀后画成卡（`ui-shell/src/plugins/transcript/review-notice-card.tsx`）。
+问题在卡本身：diff 无条件摊开、限高 260px。一个任务里写十几次文件，就是十几块绿红卡压在流里。
+
+改法：整卡收成一行头（`编辑文件` / `新建文件` + 路径 + `+N 行 / -M 行` + 箭头），默认收起，
+点开才看 diff。头行是 `<button>`，带 `aria-expanded` / `aria-controls`；正文走 `hidden`，
+样式里另有一条 `.entry-review-diff[hidden] { display: none }` 兜底（这条是给「将来有人给它加
+display」留的护栏，上一次 `.ask-panel` 就是被自己的 `display:flex` 压住了 `[hidden]`）。
+
+轮尾那张汇总卡本来就有（`ui.tsx` 的 `ChangesCard`），只把标题从「N 个文件已更改」改成 dsh 的
+「已编辑 N 个文件」——用户指着 dsh 的截图说「任务结束应该像这样」。
+
+### 二　「已恢复会话」那行
+
+`src/plugins/transcript.ts` 每次打开历史会话都往转录末尾写一条 system 行。它落在最后，
+看着像一句常驻的尾巴。删掉即可：恢复这件事在侧边栏的选中态里已经说清楚了。
+（`replayIsRedundant` 里过滤 system 条目的那段不依赖它，删了照样成立。）
+
+### 三　一串「未知工具」的来历
+
+用户给了一个会话 id，说里面很多工具执行失败。翻日志：40 次工具调用里 6 次失败，**全是「未知工具」**
+（`src/core/loop.ts:582`），集中在 02:24 前后的六轮里：`run_code`、`glob`、`bash`、`grep`、
+`read`、`bash`。同一段时间里这个会话的系统提示 fingerprint 变了两次又变回来
+（`state/system-prompt` 的 `eeecc → 1314c6 → eeecc`），差异整段就是 PTC 模式的说明。
+
+两条根因：
+
+1. **模式是宿主全局量**。`src/plugins/presets.ts` 原来是一个模块级 `let name`，而
+   `dsc/session-open` 一打开别的会话就把它改成那个会话的模式。宿主从 0.6.48 起同时常驻多个
+   会话的 agent——你切走的那个会话，它那一轮还在后台跑，于是**它的工具目录与提示词跟着你
+   点开的会话换**。模型按上一份 schema 喊出来的工具，执行时已经不在目录里。
+2. **同一轮里请求一份目录、执行另取一份**。`requestOnce` 取 `deps.tools()` 发给模型，
+   `executeToolCalls` 又取一次。两次之间注册表一变，合法调用就落在「未知工具」上——错的不是
+   模型，是这里取了第二份。
+
+改法：
+
+- `AgentScope` 进契约（`src/services/types.ts`）：`visible(scope?)`、`project(id, fn(tools, scope))`、
+  `systemPrompt(cwd, scope?)`、`register(fn(scope?))`、`registerSkeletonFilter(fn(ids, scope?))`。
+  不传 scope 就是「当前查看的会话」，界面、`/命令`、诊断这些单会话调用方一个字不改。
+- `presets` 改成 `bySession: Map<sessionId, preset>`，`dsc/session-open` 只登记被打开的那一个。
+  `agent` 插件与 `compact` 把 `sessionId` 传下去（每个常驻 agent 用自己的）。
+- `loop` 在发请求时把目录存进 `requestTools`，执行按它解析；换模式的影响从**下一轮请求**起生效，
+  同一轮里模型面前与手上是同一份。
+
+顺带一条观察（不是代码问题）：用户 `~/.dsc/presets/ptc.md` 是旧版出厂文件（`tools: run_code`），
+而 `ensureBuiltinPresets` 按设计不覆盖已存在的文件。所以那个会话里「直接调 bash」本身就该失败——
+提示词明确说了只用 run_code 时模型不会犯，但提示词一抖它就去试原生工具了。
+
+验收：新增 `scripts/preset-scope-test.mjs` 17/17（打开会话不写「已恢复会话」；A 窄档 / B 标准档
+各算各的目录与提示词；切到 B 后 A 仍是窄档；换档只影响本会话；**请求发出后把模式切走，模型喊过的
+工具照样跑完**）；`ui-review-notice-test.mjs` 59/59（含新加的六条折叠钉）；根与桌面 `typecheck` 0 错，
+`build` / `build:ui` 绿。
+
+**教训十五：全局变量在多会话常驻之后就是一口共享的水缸。** 单会话时代「当前模式」用一个变量存没问题，
+一旦有后台会话在跑，任何「当前 xxx」都会变成「你正在看的那个 xxx」，而真正在干活的那个需要它自己的。
+判据很简单：这条状态属于会话还是属于进程？属于会话的一律进 `AgentScope`。
+
+**教训十六：同一个东西在一个回合里取两次，就有两次不同的机会。** 工具目录、系统提示、模式都是「请求那一刻
+的快照」。发了什么就得按什么执行，中间变了算下一轮的事——否则报错会指向模型，而病根在两次取值之间。
