@@ -18,7 +18,7 @@
  *
  * @module dsc/scripts/approval-review-fallback-test
  */
-import { mkdtempSync, realpathSync } from 'node:fs'
+import { mkdtempSync, readFileSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -44,12 +44,23 @@ const check = (name, condition, detail = '') => {
 const cwd = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsc-review-cwd-')))
 const outside = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsc-review-out-')))
 
+/** 最近一次复核请求：断言判官到底看见了什么。 */
+let reviewRequests = []
+
 /**
  * 装一台只有审批插件的假宿主。
  *
  * @param reply 判官这一次怎么回答：字符串 = 原样当模型输出；Error = 抛出去；'garbage' = 非 JSON
+ * @param options.messages 会话里已有的消息（缺省放一条真人发言 + 一条环境快照）
+ * @param options.usage 判官这次请求的 usage（缺省不报，和没有 usage 的端点一样）
  */
-function mount(reply) {
+function mount(reply, options = {}) {
+  reviewRequests = []
+  const messages = options.messages ?? [
+    { role: 'user', content: '把 a.txt 里的 x 改成 y' },
+    { role: 'user', content: '工作目录：…\n（本条是程序在每次请求时自动附上的当前环境快照，不是用户发言）' },
+  ]
+  const session = { meta: { id: 'sess-1', cwd }, filePath: join(cwd, 'sess.jsonl'), messages }
   const services = {}
   const ctx = {
     llm: {
@@ -58,13 +69,14 @@ function mount(reply) {
       routeForSession: () => ({ api: 'openai-completions', baseUrl: 'http://127.0.0.1:9', apiKey: 'k', model: 'judge' }),
       providerOf: () => 'test',
       modelOf: () => 'judge',
-      stream: async () => {
+      stream: async (api, request) => {
+        reviewRequests.push(request)
         if (reply instanceof Error) throw reply
-        return { text: reply }
+        return { text: reply, ...(options.usage === undefined ? {} : { usage: options.usage }) }
       },
     },
     // 真实会话对象上层有 filePath、下层有 meta（插件两处都读）。
-    session: { current: () => ({ meta: { id: 'sess-1', cwd }, filePath: join(cwd, 'sess.jsonl') }) },
+    session: { current: () => session },
     guards: { register() {}, registerObserver() {} },
     surfaces: { register() {} },
     waiting: { register() {} },
@@ -113,6 +125,9 @@ console.log('[1] 判官放行 / 否决 / 缺席')
   const approval = mount('{"risk":"low","authorized":true,"reason":"用户要求的改动"}')
   const run = await decide(approval, writeRequest(join(cwd, 'a.txt')), new AbortController().signal)
   check('判官放行：直接过，不弹卡', run.settled() === 'allow-once' && approval.pendingView() === null, String(run.settled()))
+  const asked = reviewRequests.at(-1)?.messages.find((message) => message.role === 'user')?.content ?? ''
+  check('复核请求带上会话里最后一条真人发言', asked.includes('用户这一轮的原话：把 a.txt 里的 x 改成 y'), JSON.stringify(asked))
+  check('环境快照不被当成用户原话', !asked.includes('当前环境快照'), JSON.stringify(asked))
 }
 
 {
@@ -176,6 +191,32 @@ console.log('[3] 没有审阅者时行为不变')
   approval.setReviewer('user')
   const run = await decide(approval, writeRequest(join(cwd, 'i.txt')), new AbortController().signal)
   check('本人审阅 + 工作区内写：按自动编辑放行，不问', run.settled() === 'allow-once' && approval.pendingView() === null, String(run.settled()))
+}
+
+console.log('[4] 判官看得见用户原话，也记上自己那次请求的用量')
+{
+  const longWords = '读一下 src/plugins/approval.ts，告诉我它干什么。'.repeat(30)
+  const approval = mount('{"risk":"low","authorized":true,"reason":"用户点名要读"}', {
+    messages: [
+      { role: 'user', content: longWords },
+      { role: 'user', content: '<teammate-report id="t1">队友汇报</teammate-report>' },
+    ],
+    usage: { inputTokens: 120, outputTokens: 30, cacheHitTokens: 10, cacheMissTokens: 110 },
+  })
+  const run = await decide(approval, writeRequest(join(cwd, 'j.txt')), new AbortController().signal)
+  check('判官放行照旧', run.settled() === 'allow-once', String(run.settled()))
+  const content = reviewRequests.at(-1)?.messages.find((message) => message.role === 'user')?.content ?? ''
+  check('复核请求带上本轮用户原话', content.includes('用户这一轮的原话：读一下 src/plugins/approval.ts'), JSON.stringify(content.slice(0, 160)))
+  check('原话截到 500 字', content.split('用户这一轮的原话：')[1].length === 500, String(content.length))
+  check('队友汇报不被当成用户原话', !content.includes('队友汇报'))
+  const usageLine = readFileSync(join(home, '.dsc', 'usage', 'usage.jsonl'), 'utf8').trim().split('\n').at(-1)
+  const record = JSON.parse(usageLine)
+  check(
+    '判官用量落一条（provider/model/sid/i/o）',
+    record.provider === 'test' && record.model === 'judge' && record.sid === 'sess-1' && record.i === 120 && record.o === 30,
+    usageLine,
+  )
+  check('判官用量带上缓存与墙钟读数', record.ch === 10 && record.cm === 110 && typeof record.lm === 'number', usageLine)
 }
 
 if (failures > 0) {

@@ -45,6 +45,11 @@ import { isInsideCwd, isProtectedInstruction, writeHardBlockReason } from '../co
 import { audit } from '../core/audit.js'
 import { redact } from '../core/secrets.js'
 import { callMeaning } from '../core/call-meaning.js'
+import { appendUsageRecord } from '../core/usage-log.js'
+import { SUMMARY_BANNER } from '../core/compact-anchors.js'
+import { TEAMMATE_REPORT_OPEN } from '../core/team-board.js'
+import { TODO_REMINDER_TEXT } from '../core/todo-reminder.js'
+import { contentText } from '../core/llm.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'approval'
@@ -159,6 +164,35 @@ type GrantScope = 'once' | 'session' | 'always'
 
 /** 风险档位：给审批卡上色，也决定 AI 审查能不能替用户做主。 */
 type RiskLevel = 'low' | 'medium' | 'high' | 'critical'
+
+/** 复核时最多带上多少字用户原话：再多读者就分不清这是「这一轮的请求」还是整篇文档。 */
+const REVIEW_USER_QUOTE_CHARS = 500
+
+/**
+ * 发起这次调用的会话里，用户这一轮到底说了什么。
+ *
+ * 从最后一条往前找真人 user 消息，跳过程序注入的几类（环境快照、todo 提醒、
+ * 钩子产出、队友汇报、压缩摘要）。这些消息也是 user 角色，但它们是程序写的，
+ * 拿它们当「用户原话」会让判官把系统的提醒当成用户的要求。
+ *
+ * 环境快照的「这是程序自动附上」那句话在正文**末尾**（前面是环境正文），
+ * 所以这里用 includes 而不是 startsWith；其余几类都按开头认。
+ */
+function lastUserWords(session: Session): string {
+  for (let i = session.messages.length - 1; i >= 0; i -= 1) {
+    const message = session.messages[i]
+    if (message.role !== 'user') continue
+    const text = contentText(message.content).trim()
+    if (text === '') continue
+    if (text === TODO_REMINDER_TEXT) continue
+    if (text.includes('（本条是程序在每次请求时自动附上的当前环境快照')) continue
+    if (text.startsWith('<external_content source="hook:')) continue
+    if (text.startsWith(TEAMMATE_REPORT_OPEN)) continue
+    if (text.startsWith(SUMMARY_BANNER)) continue
+    return text.length > REVIEW_USER_QUOTE_CHARS ? text.slice(0, REVIEW_USER_QUOTE_CHARS) : text
+  }
+  return ''
+}
 
 export const approvalPlugin: Plugin.Object = {
   name: 'approval',
@@ -464,7 +498,13 @@ function firstSentence(text: string): string {
     const aiReview = async (request: ApprovalRequest, signal: AbortSignal): Promise<ReviewVerdict> => {
       try {
         // 判官跑在「发起这次调用的会话」的模型上（后台会话不拿当前视图的模型）
-        const route = ctx.llm.routeForSession(sessionOf(request.sessionPath))
+        const reviewSession = sessionOf(request.sessionPath)
+        const route = ctx.llm.routeForSession(reviewSession)
+        // 判官要判断「用户有没有明确要求」，光看工具名与参数只能猜：把这一轮用户的原话
+        // 带上，它才知道这次调用是用户点名的、还是模型自己扩出来的。
+        const userWords = lastUserWords(reviewSession)
+        const startedAt = Date.now()
+        let firstDeltaAt: number | null = null
         const result = await ctx.llm.stream(
           route.api,
           {
@@ -488,18 +528,46 @@ function firstSentence(text: string): string {
                   '- 破坏性动作：递归删除、强推、清库、销毁基础设施、覆盖未读过的文件；\n' +
                   '- 低风险：读文件、查状态、跑测试、工作目录内的常规改动。\n' +
                   '判断要点：用户这一轮有没有明确要求做这件事？范围有没有被扩大？\n' +
+                  '判断「用户有没有明确要求」以下面那段用户原话为准；用户自己点过名的本地路径，读它属于低风险。\n' +
                   '只输出一个 JSON：{"risk":"low|medium|high|critical","authorized":true|false,"reason":"一句话中文理由"}',
               },
               {
                 role: 'user',
                 content: redact(
-                  `工具：${request.toolName}\n参数：${JSON.stringify(request.args ?? request.argsSummary)}\n工作目录：${baseCwd(request)}`,
+                  `工具：${request.toolName}\n参数：${JSON.stringify(request.args ?? request.argsSummary)}\n工作目录：${baseCwd(request)}` +
+                    (userWords === '' ? '' : `\n用户这一轮的原话：${userWords}`),
                 ),
               },
             ],
           },
-          { onDelta: () => {} },
+          {
+            onDelta: () => {
+              if (firstDeltaAt === null) firstDeltaAt = Date.now()
+            },
+          },
         )
+        const finishedAt = Date.now()
+        // 判官这次请求也是真花掉的钱：有 usage 就按同一本账记一笔。记账放在解析裁决
+        // 之前（判官答非所问也照样计费），整段包在 try 里——少一条统计无所谓，
+        // 绝不能让记账改变复核结论或异常分支。
+        try {
+          if (result.usage) {
+            appendUsageRecord({
+              // route 里没有端点名，端点取这条会话现在生效的那一个（与请求实发的一路）
+              provider: ctx.llm.providerOf(reviewSession),
+              model: route.model,
+              i: result.usage.inputTokens,
+              o: result.usage.outputTokens,
+              ...(result.usage.cacheHitTokens === undefined ? {} : { ch: result.usage.cacheHitTokens }),
+              ...(result.usage.cacheMissTokens === undefined ? {} : { cm: result.usage.cacheMissTokens }),
+              sid: request.sessionId ?? reviewSession.meta.id,
+              lm: finishedAt - startedAt,
+              ...(firstDeltaAt === null ? {} : { ft: firstDeltaAt - startedAt, d: finishedAt - firstDeltaAt }),
+            })
+          }
+        } catch {
+          // 记账失败（端点名取不到等）不打断复核
+        }
         const raw = result.text.slice(result.text.indexOf('{'), result.text.lastIndexOf('}') + 1)
         const verdict = JSON.parse(raw) as { risk?: string; authorized?: boolean; reason?: string }
         // 只有 high / critical 必须落回人工卡；medium 与 low 走同一条路（放行），

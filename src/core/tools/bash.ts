@@ -189,7 +189,7 @@ export function spawnShell(
       signal.removeEventListener('abort', onAbort)
       untrack()
       options?.onExit?.(code)
-      const truncated = output.length > outputLimit ? `${output.slice(0, outputLimit)}…（已截断）` : output
+      const truncated = truncateBashOutput(output, outputLimit)
       const body = truncated.trim()
       const lines: string[] = []
       if (reason !== null) lines.push(reason)
@@ -231,6 +231,28 @@ export function spawnShell(
     })
     child.on('close', finish)
   })
+}
+
+/**
+ * 超预算时的截断：留头 60% + 尾 40%，中间写明省了多少字符。
+ *
+ * 只留头会把「真正的失败原因」丢掉——编译错误、测试断言、退出前的报错几乎都在
+ * 输出末尾，前面几千字往往只是进度与告警（0.7.x 实况：一条 30 秒超时的构建，
+ * 模型只看到最早那批编译中提示，看不到最后那句 syntax error）。
+ *
+ * spill 插件在 4000 字符就先接手落盘，走到这里的通常是它没接住的那部分（插件没挂、
+ * 阈值被调高、后台作业）。bash 这一层自己不落盘，所以标记里只说清省略了多少字符、
+ * 以及怎么看全（缩小命令范围分段重跑），不编一个并不存在的落盘路径。
+ */
+export function truncateBashOutput(output: string, outputLimit: number): string {
+  if (output.length <= outputLimit) return output
+  const head = Math.floor(outputLimit * 0.6)
+  const tail = outputLimit - head
+  const omitted = output.length - head - tail
+  const marker =
+    `\n…（中间省略 ${String(omitted)} 字符：这里只保留开头 ${String(head)} 字与结尾 ${String(tail)} 字；` +
+    `完整输出不在结果里：要看全就把命令范围缩小分段重跑，或把设置里「命令输出封顶」调大后重跑）\n`
+  return `${output.slice(0, head)}${marker}${output.slice(output.length - tail)}`
 }
 
 /**
