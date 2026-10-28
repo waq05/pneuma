@@ -25,6 +25,7 @@
  */
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { dedupeByRound, pickCurrentRound, type RailAnchor } from './rail-window'
 
 /** 一枚刻度要的轮数据：题面与回复摘要（预览卡显示用，都已压平并截断）。 */
 export interface JumpRailRound {
@@ -52,47 +53,46 @@ const FADE_PX = 24
 /** 未加载轮等待分页放出来的最长帧数（40 帧约 0.7s，超过就放弃滚动）。 */
 const REVEAL_TRIES = 40
 
-/** 一个锚点：某轮的用户消息元素 + 它的轮号。 */
-interface Anchor {
-  el: HTMLElement
-  round: number
-}
-
 /**
- * 视口顶部那一条属于哪一轮。
- * @returns 轮号（0 基）；一枚锚点都没有时返回 -1。
+ * 视口顶部那一条属于哪一轮——判定本身在 `./rail-window`（纯函数，探针直读），
+ * 这里只负责两件它做不了的事：
+ *
+ * 1. 量锚点：按 `[data-round]` 收（每一轮至少有一条行带这个属性），**不再只认用户气泡**
+ *    `.entry-user`。子代理汇报（`internal` 的 user 条目）渲染成一行触发行，没有用户气泡，
+ *    旧写法数不到它，滑到底部时"最新一轮"就停在上一个有人说话的轮上（2026-10-28 报障）。
+ * 2. 贴底判定：「最新一轮是哪一轮」从轮清单给（`lastRound`），不从 DOM 里数。
  */
-function readCurrent(scroller: HTMLElement, anchors: readonly Anchor[]): number {
-  if (anchors.length === 0) return -1
+function measureCurrent(scroller: HTMLElement, rounds: readonly { round: number }[]): number {
   const box = scroller.getBoundingClientRect()
   const { scrollTop } = scroller
-  const last = anchors[anchors.length - 1]
-
-  // ── 0) 贴底：正在看最新一轮 ──
   const maxScroll = scroller.scrollHeight - scroller.clientHeight
-  if (maxScroll > 0 && maxScroll - scrollTop <= AT_BOTTOM_EPS && last !== undefined) return last.round
+  const rows: RailAnchor[] = []
+  for (const row of scroller.querySelectorAll<HTMLElement>('[data-round]')) {
+    const value = Number(row.getAttribute('data-round'))
+    if (!Number.isInteger(value) || value < 0) continue
+    // 整轮收起时过程行是 hidden（没有盒子）：量出来是 0，会把它当成"在最上面"。
+    if (row.getClientRects().length === 0) continue
+    rows.push({ round: value, top: row.getBoundingClientRect().top - box.top + scrollTop })
+  }
 
-  // ── 1) 命中测试：探针线上是什么，就按它身上的 data-round 认轮 ──
   // x 取横向中点：正文列是居中的，固定左缘 + 常量在宽窗口下会落进空白里。
   const probeY = box.top + PROBE_INSET
   const probeX = box.left + scroller.clientWidth / 2
   const hit = document.elementFromPoint(probeX, probeY)
+  let hitRound: number | null = null
   if (hit !== null && scroller.contains(hit)) {
     const row = hit.closest('[data-round]')
     const value = row === null ? Number.NaN : Number(row.getAttribute('data-round'))
-    if (Number.isInteger(value) && value >= 0) return value
+    if (Number.isInteger(value) && value >= 0) hitRound = value
   }
 
-  // ── 2) 几何兜底：真实 scrollTop 与各轮锚点的实际位置比 ──
-  // 不用 offsetTop：它相对最近的定位祖先，滚动容器一族一变就整体错位。
-  let current = -1
-  for (const anchor of anchors) {
-    const top = anchor.el.getBoundingClientRect().top - box.top + scrollTop
-    if (top <= scrollTop + PROBE_INSET) current = anchor.round
-    else break
-  }
-  // ── 3) 还在最顶上：高亮画出来的第一轮，而不是一枚都不亮 ──
-  return current === -1 ? (anchors[0]?.round ?? -1) : current
+  return pickCurrentRound({
+    atBottom: maxScroll > 0 && maxScroll - scrollTop <= AT_BOTTOM_EPS,
+    lastRound: rounds.at(-1)?.round ?? -1,
+    hitRound,
+    anchors: dedupeByRound(rows),
+    probeTop: scrollTop + PROBE_INSET,
+  })
 }
 
 /** 把多行文本压成一行摘要（预览卡用；与 dsh 的截断口径一致）。 */
@@ -152,13 +152,7 @@ export function JumpRail(props: {
     let raf = 0
     const measure = (): void => {
       raf = 0
-      const anchors: Anchor[] = []
-      for (const el of scroller.querySelectorAll<HTMLElement>('.entry-user')) {
-        const row = el.closest('[data-round]')
-        const value = row === null ? Number.NaN : Number(row.getAttribute('data-round'))
-        if (Number.isInteger(value) && value >= 0) anchors.push({ el, round: value })
-      }
-      setCurrent(readCurrent(scroller, anchors))
+      setCurrent(measureCurrent(scroller, props.rounds))
     }
     const schedule = (): void => {
       if (raf === 0) raf = requestAnimationFrame(measure)
