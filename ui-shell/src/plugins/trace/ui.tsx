@@ -39,16 +39,10 @@ import {
   type TranscriptEntry,
 } from '@dsc/ui'
 // 时刻/用量/工具摘要口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
-import { TOOL_STATUS_TEXT, formatClock, formatTokens, matchTool, prettyJson, readEntries, readLive, readSessionPath, toolSummary, toolVerb, type ToolMatch } from '@dsc/ui-primitives'
+import { ReviewNoticeCard, TOOL_STATUS_TEXT, formatClock, formatTokens, matchTool, parseReviewNotice, prettyJson, readEntries, readLive, readSessionPath, toolSummary, toolVerb, type ReviewNotice, type ToolMatch } from '@dsc/ui-primitives'
 import { buildTraceModel, entryUsage, formatTraceDuration, rangeHits, stepMatches, type TraceRange, type TraceRound, type TraceStepEntry } from './trace-format'
 import { TraceTimeline } from './timeline'
 import { TraceInspector } from './inspector'
-// 写前预览通知（多行 diff 纯文本）的解析与卡片：**故意从 transcript 插件借用**——
-// 这条通知的正文形状是宿主协议的一部分，认法与画法只能有一份（`plugin.json` 里
-// trace 本来就 inject transcript，两家的加载顺序已经绑着）。两个 bundle 在运行期
-// 仍各自自足（rollup 就地内联这份小模块），不产生插件间的运行期依赖。
-import { parseReviewNotice, type ReviewNotice } from '../transcript/review-notice'
-import { ReviewNoticeCard } from '../transcript/review-notice-card'
 
 /** 折叠态里的思考摘要长度：一行放不下就省略号，展开才看全文。 */
 const THINK_PREVIEW_LIMIT = 90

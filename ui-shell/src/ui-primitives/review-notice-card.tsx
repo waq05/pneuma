@@ -14,12 +14,16 @@
  * 这一轮到底改了哪些文件（那是收尾的汇总，不是过程里的每一次）。收起**不是**删掉：
  * 审批卡弹出来之前，改动仍然在原来的位置等着你点开看。
  *
- * @module dsc-ui-shell/plugins/transcript/review-notice-card
+ * 住在基元包（2026-10-28）：对话流与轨迹页都要画这张卡，放在任一个插件里都逼另一个横穿过去，
+ * 见 `./review-notice` 的头注释。
+ *
+ * @module dsc-ui-shell/ui-primitives/review-notice-card
  */
 import { useId, useState, type ReactNode } from 'react'
-import { FileIcon, IconChevronDown } from '@dsc/ui'
-// 路径展示口径从平台种子取：与工具卡、悬停预览同一份实现（相对化 + 反斜杠统一成 /）。
-import { displayPathOf } from '@dsc/ui-primitives'
+import { FileIcon } from './file-icons'
+import { IconChevronDown } from './icons'
+// 路径展示口径：与工具卡、悬停预览同一份实现（相对化 + 反斜杠统一成 /）。
+import { displayPathOf } from './paths'
 import type { ReviewNotice } from './review-notice'
 
 /** 动作词后面接的那个词：新建文件 / 编辑文件（与工具卡行头的「编辑文件」同一套说法）。 */

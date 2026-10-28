@@ -9,10 +9,15 @@
  * 前缀常量是 {@link REVIEW_NOTICE_BANNER}，与宿主字面量的漂移由
  * `scripts/ui-review-notice-test.mjs` 钉住（探针直接读宿主源文件比对）。
  *
+ * **为什么住在基元包而不是对话流插件里**（2026-10-28）：认这条通知的有两家——对话流的
+ * 渲染骨架与轨迹页。放在对话流插件里，轨迹页只能 `../transcript/review-notice` 横穿过去，
+ * 两个插件产物里各内联一份；改一处得记得改两处。搬进基元包后两边都从
+ * `@dsc/ui-primitives` 取同一个模块，插件的公开面重新只剩四个包名。
+ *
  * 零 React、零 DOM——探针按 Node 的类型擦除直接 import 这个 .ts 逐条钉
  * （所以这里只许 `import type`，不许任何运行期依赖）。
  *
- * @module dsc-ui-shell/plugins/transcript/review-notice
+ * @module dsc-ui-shell/ui-primitives/review-notice
  */
 
 /**

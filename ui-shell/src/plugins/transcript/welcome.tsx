@@ -7,9 +7,8 @@
  */
 import type { ReactNode } from 'react'
 import { IconClock, IconCode, IconDiff, IconSpark, IconTarget } from '@dsc/ui'
+import { ReviewNoticeCard, parseReviewNotice } from '@dsc/ui-primitives'
 import { keyOf, type Row } from './shared'
-import { parseReviewNotice } from './review-notice'
-import { ReviewNoticeCard } from './review-notice-card'
 
 /**
  * 首屏四张能力卡（对照 Codex UI 的 home cards）：点一下把提示词写进输入框，不直接发送——

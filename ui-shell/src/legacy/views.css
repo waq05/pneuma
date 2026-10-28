@@ -1465,7 +1465,7 @@
 
 /* ── 写前预览通知（宿主 file-review 插件那一段「【文件更改预览·尚未落盘】…」）──
    宿主发的是一段**多行 unified diff 纯文本**（同一份文本 TUI 也在读，不能改形状），
-   壳按正文前缀认它（`plugins/transcript/review-notice.ts`）后画成下面这张卡：
+   壳按正文前缀认它（`ui-primitives/review-notice.ts`）后画成下面这张卡：
    头行（图标 + 路径 + 新建/修改徽章 + 增删计数）+ 左对齐、等宽、限高滚动的 diff。
    **只有它不居中**：其余 system 通知（「这一轮被中断」这类一行短句）继续走上面
    .entry-system 的居中一行，观感不变。dsh 的对话内 diff 同样是左对齐 + 限高那一套。 */
