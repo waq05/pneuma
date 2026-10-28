@@ -42,6 +42,7 @@ import { activeRules, appendRule, classifyCommand, reloadActiveRules } from '../
 import { isInsideCwd, isProtectedInstruction, writeHardBlockReason } from '../core/path-policy.js'
 import { audit } from '../core/audit.js'
 import { redact } from '../core/secrets.js'
+import { callMeaning } from '../core/call-meaning.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'approval'
@@ -218,7 +219,19 @@ export const approvalPlugin: Plugin.Object = {
     /** 当前会话 id（授权键与审计都挂在它下面）。 */
     const sessionId = (): string => ctx.session.current().meta.id
 
-    /** 这次判定属于哪个会话：请求带了发起方就按发起方（0.6.48 多 agent），否则看当前查看的。 */
+    /**
+ * 只取一句话（到第一个句号或换行为止）。
+ *
+ * 沙箱守卫的越界说明里带着「可写根：D:\dsh、D:\dsc\…\tmp\<uuid>」这一长串——那是给
+ * 排查用的，摆在卡片上换来的是用户根本读不完的一行字。卡片要的是「哪个路径不在范围内」，
+ * 后面那一串留在工具结果里。
+ */
+function firstSentence(text: string): string {
+  const cut = text.search(/[。\n]/)
+  return cut < 0 ? text : text.slice(0, cut)
+}
+
+/** 这次判定属于哪个会话：请求带了发起方就按发起方（0.6.48 多 agent），否则看当前查看的。 */
     const sidOf = (request: ApprovalRequest): string => request.sessionId ?? sessionId()
 
     /** 这次判定的会话 jsonl 路径（侧栏状态点的键口径）。 */
@@ -276,6 +289,13 @@ export const approvalPlugin: Plugin.Object = {
       input: {
         reason: string
         risk: RiskLevel
+        /**
+         * 卡片上那行参数摘要。命令类调用传命令原文——给命令套一层 `{"command":"…"}`
+         * 只增加噪音，而这一行本来就是给人读的（审计记的也是同一份）。
+         */
+        summary: string
+        /** 这次调用「要干什么」的中文一句话；null = 认不出来，卡上不画那一行。 */
+        meaning: string | null
         suggestedRule: string[] | null
         scopes: GrantScope[]
         grantKey: string
@@ -293,6 +313,12 @@ export const approvalPlugin: Plugin.Object = {
       },
     ): Promise<ApprovalDecision> =>
       new Promise<ApprovalDecision>((resolveDone) => {
+        // 已经中止就是「这一轮已经取消」：这时再登记卡，abort 事件不会补发（EventTarget 语义），
+        // 卡要挂满超时才自解，用户看到的是一张没人管的幽灵卡。所以先看信号再决定要不要登记。
+        if (signal.aborted) {
+          resolveDone('reject')
+          return
+        }
         // 没人能回答就不弹卡：超时按拒是同一条结论，只是早 300 秒给出，并且理由说清了为什么。
         if (!someoneCanAnswer()) {
           autoLog('auto-deny', request, '当前没有界面能回答审批卡（没有终端界面，也没有桌面客户端），按拒处理')
@@ -304,7 +330,8 @@ export const approvalPlugin: Plugin.Object = {
         const view: ApprovalRequestView = {
           id,
           toolName: request.toolName,
-          argsSummary: redact(request.argsSummary),
+          argsSummary: redact(input.summary),
+          ...(input.meaning === null ? {} : { meaning: input.meaning }),
           reason: input.reason,
           risk: input.risk,
           suggestedRule: input.suggestedRule,
@@ -397,12 +424,33 @@ export const approvalPlugin: Plugin.Object = {
     }
 
     /**
+     * 一次复核的结论：`decision` 非空 = 放行；null = 回落到人工卡，理由在 `note` 里。
+     * `note` 同时进审计与审批卡，解决「卡弹出来了却查不出为什么没自动过」。
+     */
+    interface ReviewVerdict {
+      decision: ApprovalDecision | null
+      note: string
+      /**
+       * true = 判官**没给意见**（超时、网络断、返回的不是 JSON）。
+       *
+       * 与「判官说不放行」是两件事：后者是它看过了、不同意，必须弹卡；
+       * 前者是它压根没看上，这时不该把它的缺席当成否决——
+       * 否则对家网络抖一下，用户就得多点一张卡（0.7.1 实况）。
+       */
+      failed: boolean
+    }
+
+    /**
      * AI 自动审查：让模型出一份结构化裁决，而不是一个 ALLOW/DENY 词。
      * 风险分类照 Codex 的 guardian policy（数据外泄 / 凭据探测 / 持久性安全弱化 /
      * 破坏性动作 / 低风险白名单，`prompts/templates/guardian/policy.md`）。
      * 判到 high 或 critical 一律回落到人工卡——AI 不许替用户承担这个责任。
+     *
+     * 三种结局都要留痕：判官放行、判官否决、判官没跑完。少了任何一条，用户看到卡
+     * 就查不出「凭什么没自动过」——0.7.1 的实况是 91a667f5 会话弹了 3 张卡、审计里
+     * 0 条 auto-deny，连是不是判官挂了都答不上来。
      */
-    const aiReview = async (request: ApprovalRequest, signal: AbortSignal): Promise<ApprovalDecision | null> => {
+    const aiReview = async (request: ApprovalRequest, signal: AbortSignal): Promise<ReviewVerdict> => {
       try {
         const route = ctx.llm.route()
         const result = await ctx.llm.stream(
@@ -442,15 +490,33 @@ export const approvalPlugin: Plugin.Object = {
         )
         const raw = result.text.slice(result.text.indexOf('{'), result.text.lastIndexOf('}') + 1)
         const verdict = JSON.parse(raw) as { risk?: string; authorized?: boolean; reason?: string }
-        const risk = verdict.risk === 'critical' || verdict.risk === 'high' ? 'high' : 'low'
-        if (risk === 'high') {
-          autoLog('auto-deny', request, `AI 审查判为高风险：${verdict.reason ?? '未说明'}`)
-          return null // 回落到人工卡
+        // 只有 high / critical 必须落回人工卡；medium 与 low 走同一条路（放行），
+        // 所以这里是个布尔而不是三档——别把它读成「medium 被降级」。
+        const highRisk = verdict.risk === 'critical' || verdict.risk === 'high'
+        if (highRisk) {
+          const why = verdict.reason ?? '未说明'
+          autoLog('auto-deny', request, `AI 审查判为高风险：${why}`)
+          return { decision: null, note: `AI 复核判为高风险：${why}`, failed: false }
         }
-        if (verdict.authorized === false) return null
-        return 'allow-once'
-      } catch {
-        return null
+        if (verdict.authorized === false) {
+          const why = verdict.reason?.trim() ?? ''
+          const said = why === '' ? '判官没给理由' : why
+          autoLog('auto-deny', request, `AI 复核判不放行：${said}`)
+          return { decision: null, note: `AI 复核判不放行：${said}`, failed: false }
+        }
+        autoLog('auto-allow', request, 'AI 复核放行')
+        return { decision: 'allow-once', note: 'AI 复核放行', failed: false }
+      } catch (error) {
+        const why = error instanceof Error ? error.message : String(error)
+        // 这一轮被用户打断：不是判官的问题，也别写成「回落到人工卡」——卡不会弹。
+        if (signal.aborted) {
+          autoLog('auto-deny', request, `AI 复核被这一轮的中止打断：${why}`)
+          return { decision: null, note: `AI 复核被中止（${why}），这次不执行`, failed: true }
+        }
+        // 判官超时、网络断、返回的不是 JSON：都算「没跑完」。这一类的去向由上面的调用方定
+        // （判官缺席就按权限档自己的结论走），这里只负责把原因写清楚。
+        autoLog('auto-deny', request, `AI 复核没跑完：${why}（这次不按复核否决处理）`)
+        return { decision: null, note: `AI 复核没跑完（${why}），这次交给你决定`, failed: true }
       }
     }
 
@@ -499,6 +565,10 @@ export const approvalPlugin: Plugin.Object = {
         const target = facts.target ?? null
         const command = facts.command ?? null
         const insideCwd = target !== null && isInsideCwd(cwd, target)
+        // 卡片上给人看的两样东西：一行「这次要干什么」，一行命令原文。
+        // 命令原文直接当参数摘要用（不再套 JSON 壳），认不出命令时退回原来的摘要。
+        const meaning = callMeaning({ toolName: request.toolName, command, target })
+        const summary = command ?? request.argsSummary
         const verdict = command === null ? null : classifyCommand(command, { rules: activeRules() })
         // 模型这次有没有在请求放宽沙箱（工具参数那条路）。有就摊到卡上，并据此收窄授权档位。
         const request0 = readSandboxRequest(request.args ?? {})
@@ -573,6 +643,8 @@ export const approvalPlugin: Plugin.Object = {
         // 这一层必须排在权限模式与审阅者之前——否则「完全访问」会把沙箱的拒绝吃掉。
         const fence = ctx.get('sandbox')?.check(target ?? undefined, command ?? undefined, cwd)
         const fenced = fence !== undefined && !fence.allowed
+        /** 复核给出的「为什么没自动过」；null = 没跑复核，或复核放行了。要进卡片的理由。 */
+        let reviewNote: string | null = null
 
         // 第 5 层：权限模式自己的裁决（protected 文件不参与，强制走人工卡）。
         if (protectedWhy === null && forced === '' && !fenced) {
@@ -587,38 +659,47 @@ export const approvalPlugin: Plugin.Object = {
             autoLog('auto-deny', request, '当前是「仅查看」权限模式，写与执行类工具一律拒绝')
             return 'reject'
           }
-          // 第 5.5 层（顺序在自动放行之前，2026-10-28 修）：审阅者 auto-review 时
-          // **每一次走到这里的事**都先给模型判官看一眼——包括「完全访问」本来会直接
-          // 放行的那些。判 allow 直接过；判高风险或判不出来（含网络/超时/解析失败）
-          // 落回第 6 层人工卡。只读档在上面已经拒了，轮不到判官放宽。
-          if (reviewer === 'auto-review') {
-            const reviewed = await aiReview(request, signal)
-            if (reviewed !== null) {
-              autoLog('auto-allow', request, 'AI 复核放行')
-              return reviewed
-            }
-          } else if (policy === 'full-access') {
-            autoLog('auto-allow', request, '当前是「完全访问」权限模式')
-            return 'allow-once'
-          } else if (policy === 'auto-edit') {
+          // 权限档自己会不会放行这一次：返回放行理由，不放行给 null。
+          // 单独抽出来是为了让「复核没跑完」能走同一份判断（见下），两处不必各写一遍。
+          const policyAutoReason = (): string | null => {
+            if (policy === 'full-access') return '当前是「完全访问」权限模式'
+            if (policy !== 'auto-edit') return null
             // 工作区内免卡还要沙箱同意：沙箱档位是 read-only 时，同一个路径也不许写。
             // 少了这一半，只读档会先被审批放行、再被沙箱拒，模型拿到的是「自动放行失败」。
             const writable = PATH_WRITE_TOOLS.has(request.toolName) && insideCwd && (fence?.allowed ?? true)
-            if (writable) {
-              autoLog('auto-allow', request, '工作区内的文件改动，按「工作区自动编辑」放行')
+            if (writable) return '工作区内的文件改动，按「工作区自动编辑」放行'
+            if (verdict !== null && verdict.decision === 'allow') return `只读命令：${verdict.reason}`
+            return null
+          }
+          // 第 5.5 层（顺序在自动放行之前，2026-10-28 修）：审阅者 auto-review 时
+          // **每一次走到这里的事**都先给模型判官看一眼——包括「完全访问」本来会直接
+          // 放行的那些。判 allow 直接过；判高风险或判不放行落回第 6 层人工卡。
+          // 只读档在上面已经拒了，轮不到判官放宽。
+          if (reviewer === 'auto-review') {
+            const reviewed = await aiReview(request, signal)
+            if (reviewed.decision !== null) return reviewed.decision
+            reviewNote = reviewed.note
+            // 判官**没给意见**（超时、网络断、返回的不是 JSON）不等于判官否决：
+            // 这时结论回到用户自己选的那一档，不能因为对方网络抖一下就让用户来点卡。
+            // 判官明确说不放行的（deny）不在此列，它照旧弹卡；这一轮被打断时也不放行。
+            const fallback = reviewed.failed && !signal.aborted ? policyAutoReason() : null
+            if (fallback !== null) {
+              autoLog('auto-allow', request, `AI 复核没跑完，按权限档放行：${fallback}`)
               return 'allow-once'
             }
-            if (verdict !== null && verdict.decision === 'allow') {
-              autoLog('auto-allow', request, `只读命令：${verdict.reason}`)
+          } else {
+            const allowed = policyAutoReason()
+            if (allowed !== null) {
+              autoLog('auto-allow', request, allowed)
               return 'allow-once'
             }
           }
         }
 
         // 第 6 层：人工审批卡。钩子要求确认时卡片上的原因就用它，用户才知道这张卡为什么非弹不可。
-        const reason =
+        const baseReason =
           fenced
-            ? `沙箱边界：${fence?.reason ?? '这次调用越界'}（允许这一次就破例执行，沙箱对这一次不再拦）`
+            ? `沙箱边界：${firstSentence(fence?.reason ?? '这次调用越界')}（允许这一次就破例执行，沙箱对这一次不再拦）`
             : escalation !== null
               ? `模型请求放宽沙箱（${escalation.effect}）：${escalation.justification}`
               : forced !== ''
@@ -626,6 +707,9 @@ export const approvalPlugin: Plugin.Object = {
                 : protectedWhy !== null
                   ? protectedWhy
                   : (verdict?.reason ?? (insideCwd ? '工作区内的改动需要确认' : '工作区外的改动需要确认'))
+        // 卡上写「为什么现在才问你」：复核否决或没跑完时以它为准。命令层那句「需要授权」
+        // 是兜底说法，用户对着它猜不出是判官不放行还是判官挂了（0.7.1 的实况）。
+        const reason = reviewNote ?? baseReason
         const risk: RiskLevel =
           fenced || protectedWhy !== null ? 'high' : forced !== '' ? 'medium' : verdict?.decision === 'ask' ? 'medium' : insideCwd ? 'low' : 'medium'
         const scopes: GrantScope[] = ['once']
@@ -646,6 +730,8 @@ export const approvalPlugin: Plugin.Object = {
         return askHuman(request, signal, {
           reason,
           risk,
+          summary,
+          meaning,
           suggestedRule: suggested,
           scopes,
           grantKey: key,
