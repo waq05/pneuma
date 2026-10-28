@@ -18,11 +18,7 @@ import { BORDER, GAP, PAD, STATUS_COLOR, TEXT } from './theme.js'
 import { DiffBlock } from './DiffBlock.js'
 import { absoluteLeft, useClickRegion, type RegisterClick } from './click.js'
 import { displayWidth } from './display-width.js'
-
-const oneLine = (text: string, limit: number): string => {
-  const flat = text.replace(/\s+/g, ' ').trim()
-  return flat.length > limit ? `${flat.slice(0, limit)}…` : flat
-}
+import { oneLine } from '../core/strings.js'
 
 /** 风险档标签：critical / high 用失败红，medium 用等待黄，low 走暗淡。 */
 const RISK_LABEL: Record<ApprovalRequestView['risk'], { text: string; color: string | undefined }> = {

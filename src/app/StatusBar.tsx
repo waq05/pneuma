@@ -23,6 +23,7 @@ import type { RuntimeSnapshot, RuntimeSurfaces, StatusBarPrefsView, StatusView }
 import { measuredSpan, useClickRegion, type RegisterClick } from './click.js'
 import { displayWidth } from './display-width.js'
 import { PAD, PALETTE, SEP, STATUS_COLOR, TEXT } from './theme.js'
+import { compactTokens, shortCwd } from '../core/text-format.js'
 
 /** 回合状态词：中文硬编码，本项目不做 i18n。 */
 const TURN_LABEL: Record<StatusView['turnState'], string> = {
@@ -50,12 +51,6 @@ const BACKGROUND_DOT: Record<RuntimeSnapshot['sessionStates'][string], { mark: s
 /** 会话 jsonl 路径的短标识（文件名去后缀取前 8 位）。 */
 export const shortId = (sessionPath: string): string =>
   (sessionPath.split(/[\\/]/).pop() ?? sessionPath).replace(/\.jsonl$/, '').slice(0, 8)
-
-/** cwd 尾部显示：太长时只留最后两段（Windows 盘符段算一段）。 */
-const shortCwd = (cwd: string): string => {
-  const parts = cwd.split(/[\\/]/).filter((part) => part !== '')
-  return parts.length <= 2 ? cwd : `…${parts.slice(-2).join('/')}`
-}
 
 /**
  * 字段行的一个段（0.6.62 起可配置）：text 是静态短文本，chip 是可点的后台会话。
@@ -99,13 +94,6 @@ function fitSegments(
     rightFitted = rightFitted.filter((segment) => segment !== droppable)
   }
   return { left: leftFitted, right: rightFitted }
-}
-
-/** token 数的人话格式（dsh StatusMetrics 同口径）：988 / 3.4k / 12k / 1.0M。 */
-const fmtTokens = (value: number): string => {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
-  if (value >= 1000) return `${(value / 1000).toFixed(1)}k`
-  return String(value)
 }
 
 /** 后台会话芯片：一枚状态点 + 短 id，整枚可点，点了开那个会话的转录浮层。 */
@@ -212,7 +200,7 @@ export function StatusBar({
     left.push({
       kind: 'text',
       id: 'tokens',
-      text: `tok ${fmtTokens(usage.inputTokens)}↑ ${fmtTokens(usage.outputTokens)}↓`,
+      text: `tok ${compactTokens(usage.inputTokens)}↑ ${compactTokens(usage.outputTokens)}↓`,
       tone: 'secondary',
       priority: 0,
     })

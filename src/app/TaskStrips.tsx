@@ -10,11 +10,7 @@ import { Box, Text } from 'ink'
 import type { JSX } from 'react'
 import type { GoalView, TodoView } from '../contract.js'
 import { GAP, STATUS_COLOR, TEXT } from './theme.js'
-
-const oneLine = (text: string, limit: number): string => {
-  const flat = text.replace(/\s+/g, ' ').trim()
-  return flat.length > limit ? `${flat.slice(0, limit)}…` : flat
-}
+import { oneLine } from '../core/strings.js'
 
 /** 目标阶段词与颜色。 */
 const GOAL_PHASE: Record<GoalView['phase'], { text: string; color: string | undefined }> = {

@@ -19,6 +19,8 @@
  * @module dsc/core/cdp/snapshot
  */
 
+import { oneLine } from '../strings.js'
+
 /** 无障碍树里的一个值（type + value 两步取值是协议的规定形状）。 */
 export interface AxValue<T> {
   type?: string
@@ -149,22 +151,16 @@ function roleLabel(node: AxNode): string {
   return typeof value === 'string' ? value : 'unknown'
 }
 
-/** 压成一行并截断（快照是一行一个元素，绝不能带换行）。 */
-function oneLine(text: string): string {
-  const flat = text.replace(/\s+/g, ' ').trim()
-  return flat.length > MAX_INLINE_CHARS ? `${flat.slice(0, MAX_INLINE_CHARS)}…` : flat
-}
-
 /** 节点的可访问名（浏览器算好的，直接抄）。 */
 function nameOf(node: AxNode): string {
   const value = axValue(node.name)
-  return typeof value === 'string' ? oneLine(value) : ''
+  return typeof value === 'string' ? oneLine(value, MAX_INLINE_CHARS) : ''
 }
 
 /** 节点的当前值（输入框里填的内容）。 */
 function valueOf(node: AxNode): string {
   const value = axValue(node.value)
-  if (typeof value === 'string') return oneLine(value)
+  if (typeof value === 'string') return oneLine(value, MAX_INLINE_CHARS)
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
   return ''
 }
@@ -297,7 +293,7 @@ function collectText(node: AxNode, children: AxNode[], byId: Map<string, AxNode>
   const parts: string[] = []
   if (TEXT_ROLES.has(role)) {
     const value = axValue(node.name) ?? axValue(node.value)
-    if (typeof value === 'string' && value.trim() !== '') parts.push(oneLine(value))
+    if (typeof value === 'string' && value.trim() !== '') parts.push(oneLine(value, MAX_INLINE_CHARS))
   }
   for (const child of children) {
     const childRole = roleOf(child)
@@ -306,7 +302,7 @@ function collectText(node: AxNode, children: AxNode[], byId: Map<string, AxNode>
     const nested = collectText(child, grandChildren, byId, depth + 1)
     if (nested !== '') parts.push(nested)
   }
-  return oneLine(parts.join(' '))
+  return oneLine(parts.join(' '), MAX_INLINE_CHARS)
 }
 
 /**

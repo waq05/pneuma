@@ -20,6 +20,7 @@ import type { JSX } from 'react'
 import type { ToolCallView } from '../contract.js'
 import { measuredSpan, useClickRegion, type RegisterClick } from './click.js'
 import { GAP, INDENT, SEP, STATUS_COLOR, TEXT } from './theme.js'
+import { oneLine } from '../core/strings.js'
 
 /** 状态标签：中文硬编码，配色只取 `STATUS_COLOR` 里的状态色。 */
 const STATUS_LABEL: Record<ToolCallView['status'], { text: string; color: string | undefined }> = {
@@ -42,12 +43,6 @@ const fmtDuration = (ms: number): string => {
   if (ms < 1000) return `${Math.round(ms)}ms`
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
   return `${Math.floor(ms / 60_000)}m${Math.round((ms % 60_000) / 1000)}s`
-}
-
-/** 单行化并截断。 */
-const oneLine = (text: string, limit: number): string => {
-  const flat = text.replace(/\s+/g, ' ').trim()
-  return flat.length > limit ? `${flat.slice(0, limit)}…` : flat
 }
 
 export function ToolCard({

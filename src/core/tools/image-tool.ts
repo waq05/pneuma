@@ -12,9 +12,9 @@
  * @module dsc/core/tools/image-tool
  */
 import { promises as fs } from 'node:fs'
-import { isAbsolute, resolve } from 'node:path'
 import type { ToolEntry } from '../tools.js'
 import { noteRead, readBlockReason } from '../path-policy.js'
+import { absPath } from './path-args.js'
 
 /** read 认得的图片扩展名 → MIME（data URL 前缀用；与 fs-tools 的 read 同一条红线）。 */
 const IMAGE_MIME: Record<string, string> = {
@@ -30,11 +30,6 @@ const IMAGE_MIME: Record<string, string> = {
 /** 一张图进上下文的尺寸上限：6MB 原图 base64 后约 8MB，与输入框贴图同一条红线。 */
 const IMAGE_MAX_BYTES = 6 * 1024 * 1024
 
-const abs = (cwd: string, p: unknown): string => {
-  if (typeof p !== 'string' || p === '') throw new Error('path 必须是非空字符串')
-  return isAbsolute(p) ? p : resolve(cwd, p)
-}
-
 export const readImageTool: ToolEntry = {
   name: 'read_image',
   description: '看一张图片（png/jpg/gif/webp/bmp/svg），直接作为图片附件加载；文本文件请用 shell 读。',
@@ -46,7 +41,7 @@ export const readImageTool: ToolEntry = {
   risk: 'read',
   presets: ['minimal'],
   async run(args, ctx) {
-    const file = abs(ctx.cwd, args.path)
+    const file = absPath(ctx.cwd, args.path)
     const blocked = readBlockReason(file)
     if (blocked !== null) throw new Error(blocked)
     const mime = IMAGE_MIME[file.slice(file.lastIndexOf('.') + 1).toLowerCase()]

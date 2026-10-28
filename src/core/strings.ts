@@ -21,3 +21,15 @@ export function splitList(text: string): string[] {
 export function nonEmptyString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined
 }
+
+/**
+ * 压成一行并截断：换行与连续空白压成一个空格，超过 limit 个字符就砍尾加省略号。
+ *
+ * 状态栏、审批卡、工具卡、任务条各自要用「一行摘要」，此前是各自的 `const oneLine`。
+ * 不传 limit 表示只压平不截断（快照那种「一行一个元素」的场合只要求没有换行）。
+ */
+export function oneLine(text: string, limit?: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  if (limit === undefined || flat.length <= limit) return flat
+  return `${flat.slice(0, limit)}…`
+}

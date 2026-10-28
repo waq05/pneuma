@@ -6,11 +6,12 @@
  * @module dsc/core/tools/fs-tools
  */
 import { promises as fs } from 'node:fs'
-import { isAbsolute, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import type { ToolEntry, ToolOutput } from '../tools.js'
 import { diffLines, type DiffHunk } from '../diff-text.js'
 import { noteRead, noteWrite, readBlockReason, staleEditReason, staleOverwriteReason, writeHardBlockReason } from '../path-policy.js'
 import { sandboxPermissionProperties } from './sandbox-args.js'
+import { absPath, stringArg } from './path-args.js'
 
 /** read 工具缺省一次读多少行（配置没给 readLineLimit 时用它）。 */
 export const READ_DEFAULT_LINE_LIMIT = 2000
@@ -37,16 +38,6 @@ const IMAGE_MAX_BYTES = 6 * 1024 * 1024
 
 /** 变更摘要里 diff 段最多保留多少行（超出砍尾并标 truncated，防一次整篇重写撑爆条目与日志）。 */
 const CHANGE_DIFF_LINE_LIMIT = 800
-
-const abs = (cwd: string, p: unknown): string => {
-  if (typeof p !== 'string' || p === '') throw new Error('path 必须是非空字符串')
-  return isAbsolute(p) ? p : resolve(cwd, p)
-}
-
-const str = (v: unknown, name: string): string => {
-  if (typeof v !== 'string') throw new Error(`${name} 必须是字符串`)
-  return v
-}
 
 /**
  * 把「改之前 / 改之后」的全文算成一份变更摘要（轮尾「文件已更改」卡的数据）。
@@ -103,7 +94,7 @@ export function createReadTool(lineLimit = READ_DEFAULT_LINE_LIMIT): ToolEntry {
     },
     risk: 'read',
     async run(args, ctx) {
-      const file = abs(ctx.cwd, args.path)
+      const file = absPath(ctx.cwd, args.path)
       const blocked = readBlockReason(file)
       if (blocked !== null) throw new Error(blocked)
       // T25：图片按扩展名分流——整读成 data URL 走图片附件（模型没勾照片输入时
@@ -176,12 +167,12 @@ export const writeTool: ToolEntry = {
   },
   risk: 'write',
   async run(args, ctx) {
-    const file = abs(ctx.cwd, args.path)
+    const file = absPath(ctx.cwd, args.path)
     const hard = writeHardBlockReason(file)
     if (hard !== null) throw new Error(hard)
     const stale = staleOverwriteReason(file, ctx.sessionId)
     if (stale !== null) throw new Error(stale)
-    const content = str(args.content, 'content')
+    const content = stringArg(args.content, 'content')
     // T35：CAS 锚——从这一刻到 writeFile 之间文件若被第三方改过，就拒绝整写
     const anchorStat = await fs.stat(file).catch(() => null)
     // 旧内容拿不到（新建）就当空串：diff 呈现为整篇新增
@@ -219,15 +210,15 @@ export const editTool: ToolEntry = {
   },
   risk: 'write',
   async run(args, ctx) {
-    const file = abs(ctx.cwd, args.path)
+    const file = absPath(ctx.cwd, args.path)
     const hard = writeHardBlockReason(file)
     if (hard !== null) throw new Error(hard)
     // T35：模型读过、之后又被第三方改过的文件不许拿旧印象去改（与 write 同一台账，
     // 但不要求「没读过就拒绝」——edit 是现读现值，这是它与整写覆盖的语义差别）
     const stale = staleEditReason(file, ctx.sessionId)
     if (stale !== null) throw new Error(stale)
-    const oldText = str(args.old, 'old')
-    const newText = str(args.new, 'new')
+    const oldText = stringArg(args.old, 'old')
+    const newText = stringArg(args.new, 'new')
     const anchorStat = await fs.stat(file).catch(() => null)
     const raw = await fs.readFile(file, 'utf8')
     const first = raw.indexOf(oldText)

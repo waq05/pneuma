@@ -16,6 +16,7 @@ import type { JSX } from 'react'
 import { DSC_VERSION } from '../core/version.js'
 import { KEYS } from './keymap.js'
 import { GAP, PALETTE, TEXT } from './theme.js'
+import { shortCwd } from '../core/text-format.js'
 
 /** 5 行 × 5 列点阵字形（方块字，参照 dsh splashFonts 的 bold 款）。 */
 const GLYPHS: Record<string, string[]> = {
@@ -67,11 +68,6 @@ function BigWord({ rows, from, to }: { rows: string[]; from: string; to: string 
 }
 
 /** cwd 尾部显示：太长时只留最后两段（与 StatusBar 同一规则）。 */
-const shortCwd = (cwd: string): string => {
-  const parts = cwd.split(/[\\/]/).filter((part) => part !== '')
-  return parts.length <= 2 ? cwd : `…${parts.slice(-2).join('/')}`
-}
-
 export function Welcome({
   model,
   effort,

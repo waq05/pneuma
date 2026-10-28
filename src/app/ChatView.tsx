@@ -25,6 +25,8 @@ import { HINT } from './keymap.js'
 import { useTick } from './ticker.js'
 import { TranscriptViewport, type TranscriptViewportApi } from './TranscriptViewport.js'
 import { ACCENT, DIFF_COLOR, GAP, INDENT, PAD, PALETTE, STATUS_COLOR, TEXT, mixHex } from './theme.js'
+import { oneLine } from '../core/strings.js'
+import { compactTokens } from '../core/text-format.js'
 
 /** 流式思考的盲文 spinner 帧（dsh 同款字符，80-120ms 一拍）。 */
 const BRAILLE = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -57,23 +59,11 @@ function BrailleSpinner({ pulse = false }: { pulse?: boolean }): JSX.Element {
   return <Text color={color}>{BRAILLE[frame % BRAILLE.length]}</Text>
 }
 
-const oneLine = (text: string, limit: number): string => {
-  const flat = text.replace(/\s+/g, ' ').trim()
-  return flat.length > limit ? `${flat.slice(0, limit)}…` : flat
-}
-
 /** 时长的人话格式（dsh duration 同款）：48s / 3m12s；不足 1 秒返回空串（不显示）。 */
 const fmtSeconds = (ms: number): string => {
   const seconds = Math.floor(ms / 1000)
   if (seconds < 1) return ''
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60}s`
-}
-
-/** token 数的人话格式（与 StatusBar 的 fmtTokens 同口径：988 / 3.4k / 12k / 1.0M）。 */
-const fmtTokens = (value: number): string => {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
-  if (value >= 1000) return `${(value / 1000).toFixed(1)}k`
-  return String(value)
 }
 
 /** 瀑布窗口恒定 3 行（Kimi Code 视觉语言，dsh 同款）：高度不随输出抖动。子代理卡与
@@ -231,7 +221,7 @@ function SubagentCard({
           <Text {...TEXT.secondary} wrap="truncate-end">
             {`· ${sub.model ?? 'default'} · ${sub.rounds}轮 · ${sub.toolCalls}工具`}
             {seconds === '' ? '' : ` · ${seconds}`}
-            {sub.tokens === undefined ? '' : ` · ${fmtTokens(sub.tokens)} tok`}
+            {sub.tokens === undefined ? '' : ` · ${compactTokens(sub.tokens)} tok`}
             {` · `}
           </Text>
         </Box>
