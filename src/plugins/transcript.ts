@@ -190,7 +190,8 @@ export const transcriptPlugin: Plugin.Object = {
           current.fileChanges,
           current.presentations,
         )
-        transcript.system(`已恢复会话 ${current.meta.id.slice(0, 8)}`)
+        // 不再往转录里写「已恢复会话 xxx」：它落在最后，看着像一句常驻的尾巴，
+        // 用户 2026-10-28 要求去掉。恢复这件事本身在侧边栏的选中态里已经说清楚了。
       } else {
         transcript.system(
           `新会话 ${current.meta.id.slice(0, 8)}（模型 ${ctx.llm.provider}/${ctx.llm.model}）`,
