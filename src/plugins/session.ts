@@ -135,11 +135,9 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
             ...listSessions().map((item) => toSummary(item)),
             ...listArchivedSessions().map((item) => toSummary(item, item.archivedAt ?? item.updatedAt)),
           ]
-          // 还没落盘的当前会话（刚新建、一个字都还没发）：磁盘上没有它，但界面必须看得见
-          // ——侧栏要给它一个高亮行（dsh 同款：新会话立刻以空行出现，点它就是打开）。
-          // 这也是「新建会话只刷新中间区」那条路上唯一的可见回执：少了它，用户点完
-          // 那颗钮在列表里找不到任何变化，会以为没生效。
-          sessions = existsSync(session.filePath) ? listed : [pendingSummary(session), ...listed]
+          // 刚新建、一个字都还没发的会话不补行：磁盘上没有它的文件，列表也不该有它。
+          // 中间区自己的空会话回执由快照的 sessionUnsaved / sessionPath 给，不靠列表。
+          sessions = listed
         } catch (error) {
           ctx.emit('dsc/notice', `会话列表读取失败：${errText(error)}`)
         }
@@ -261,6 +259,27 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
       },
     }
 
+    /**
+     * 第一条消息落地后把新会话补进列表缓存。
+     *
+     * 为什么需要：新会话在说话之前不落盘、也不补虚拟行（2026-10-29 用户要求），
+     * 于是「文件刚出现」与「列表缓存下一次重扫」之间有一段落差——那段里侧栏没有
+     * 这条会话，用户会以为自己的会话没保存。标题生成那条路（session-title.ts）
+     * 也会 refresh，但要等一次模型请求，失败就永远补不上。
+     *
+     * 只认「当前会话第一次真正落盘」这一种情形：命中缓存直接返回，其它会话的
+     * 写盘由归档 / 分叉那些显式动作自己刷新。
+     */
+    let refreshedFor: string | null = null
+    ctx.on('dsc/changed', () => {
+      if (sessions.some((item) => item.id === session.filePath)) return
+      if (!existsSync(session.filePath)) return
+      // 同一条路径只补刷一次：文件在但扫盘没有它（升级前留下的零消息文件）时，
+      // 刷新会再发 dsc/changed，没有这道闸就成死循环。
+      if (refreshedFor === session.filePath) return
+      refreshedFor = session.filePath
+      void service.refresh()
+    })
     ctx.on('dsc/exit', () => session.close())
     ctx.provide('session', service)
   },
@@ -301,18 +320,3 @@ function toSummary(item: SessionListItem, archivedAt?: number): SessionSummary {
   }
 }
 
-/**
- * 还没落盘的当前会话在侧栏里的一行。
- *
- * id 用 jsonl 路径（与 `status.sessionPath` 同一口径，侧栏就是按它判「当前」的）；
- * updatedAt 取 createdAt 而不是 Date.now()——每次 refresh 都变的话，那一行会跟着
- * 抖动，也会无谓地把整列表重排。
- */
-function pendingSummary(session: Session): SessionSummary {
-  return {
-    id: session.filePath,
-    cwd: session.meta.cwd,
-    createdAt: session.meta.createdAt,
-    updatedAt: session.meta.createdAt,
-  }
-}

@@ -141,6 +141,9 @@ console.log('[2] 工具目录按会话算（切走别的会话不改后台那个
 {
   const sessionA = ctx.session.current()
   const sidA = sessionA.meta.id
+  // 会话要有一条对话记录才落盘（2026-10-29：点「新会话」不再建文件），后面 [4] 要按路径
+  // 切回 A，没有文件就只能静默留在 B。
+  sessionA.appendUser('（探针）让 A 落盘')
   ctx.presets.use('narrow')
   check('A 切到窄档后只剩 bash', JSON.stringify(names(ctx.tools.visible({ sessionId: sidA }))) === JSON.stringify(['bash']), JSON.stringify(names(ctx.tools.visible({ sessionId: sidA }))))
 

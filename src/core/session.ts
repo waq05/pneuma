@@ -358,6 +358,17 @@ export class Session {
   /** meta 首行是否已经写进磁盘。 */
   private metaWritten: boolean
   /**
+   * 还没落盘时攒下的 state 记账记录。
+   *
+   * 为什么要有这块缓冲：新会话一建出来，权限与模型插件就立刻补默认值，原先它们
+   * 各写一条 state 就把文件建了出来——用户只是点了「新会话」、一个字都没发，磁盘
+   * 和列表里却多了一条空会话。记账先攒在内存里，等第一条真正的日志（user /
+   * assistant / tool / summary / note）落地时，再按 meta → 攒下的记录 → 这一条
+   * 的顺序一次写出；会话 id 与路径仍由 create 当场定下，侧栏、轨迹、用量照旧按
+   * sessionId 取值，不依赖文件是否存在。
+   */
+  private pendingState: Array<Extract<SessionRecord, { type: 'state' }>> = []
+  /**
    * T30 写租约：一份会话日志同一时刻只允许一个进程写。桌面端与 TUI 从同一份
    * `.last-session` 取默认会话，没有这层时两边会交错 append、重放串线。
    * 只读打开（队友运行记录的 peek、load-bench）可以不租（`load` 的 `lease: false`）。
@@ -905,10 +916,20 @@ export class Session {
   }
 
   private write(record: SessionRecord): void {
-    // 第一条日志顺带补上 meta 首行：jsonl 的 append-only 顺序不能变
+    // 还没说过话：state 这类记账先攒着，别为了补一个默认值就在磁盘上建出空会话
+    if (this.metaWritten !== true && record.type === 'state') {
+      this.pendingState.push(record)
+      return
+    }
+    // 第一条真正的日志顺带补上 meta 首行：jsonl 的 append-only 顺序不能变。
+    // 攒下的记账紧跟在 meta 后面、按产生顺序写出——恢复时会逐条重放、最后一条
+    // 生效，顺序反了就会读到错的默认值。
     if (this.metaWritten !== true) {
       this.metaWritten = true
-      this.streamFor().write(`${JSON.stringify({ type: 'meta', ...this.meta })}\n`)
+      const stream = this.streamFor()
+      stream.write(`${JSON.stringify({ type: 'meta', ...this.meta })}\n`)
+      for (const pending of this.pendingState) stream.write(`${JSON.stringify(pending)}\n`)
+      this.pendingState.length = 0
     }
     this.streamFor().write(`${JSON.stringify(record)}\n`)
   }
@@ -999,10 +1020,27 @@ function scanSessions(root: string, metas: Record<string, SessionMetaRecord>): S
   return out.sort((a, b) => b.createdAt - a.createdAt)
 }
 
+/**
+ * 文件里有没有一条真正的对话记录（user 或 assistant）。
+ *
+ * 只有 meta 与 state 记账的文件是「点了新会话、一个字没发」留下的（缓冲上线之前的
+ * 存量文件、以及插件补默认值写出来的旧文件）：它们不该在列表里占一行。记录都由本
+ * 模块写出，type 永远是第一个键，所以按行首前缀判断就够，不用逐行 JSON.parse。
+ */
+function hasConversation(lines: string[]): boolean {
+  return lines.some((line) => line.startsWith('{"type":"user"') || line.startsWith('{"type":"assistant"'))
+}
+
 /** 读一个会话文件的前几行 + mtime；首行不是 meta（损坏/空文件）时尽量抢救（T31）。 */
 function readSessionFile(filePath: string, sidecar?: SessionMetaRecord): SessionListItem | null {
   try {
     const head = readFileSync(filePath, 'utf8').split(/\r?\n/, 200)
+    // 一条对话记录都没有：不进列表（T31「头行损坏也露脸」只放过真有对话的文件）。
+    // 这里只读了前 200 行，state 攒得多时首条用户消息可能被挤出窗口；真截断了就
+    // 把整份再看一眼，免得一条正常会话从列表里凭空消失。
+    if (!hasConversation(head) && (head.length < 200 || !hasConversation(readFileSync(filePath, 'utf8').split(/\r?\n/)))) {
+      return null
+    }
     let record: SessionRecord | undefined
     try {
       record = JSON.parse(head[0] ?? '') as SessionRecord

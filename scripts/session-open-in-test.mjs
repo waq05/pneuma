@@ -94,25 +94,28 @@ console.log('\n[3] 不带目录的新建：落在**当前会话的**目录（参
   checkEq('还是那个目录（没滑回进程目录）', session.current().meta.cwd === hostCwd, false)
 }
 
-console.log('\n[4] 还没落盘的当前会话在会话列表里（侧栏高亮就靠它）')
+console.log('\n[4] 还没落盘的当前会话不进列表，发出第一条消息后才出现')
 {
   const current = session.current()
   await session.refresh() // 壳那条路：newSessionIn 之后接一次 refreshSessions
-  const listed = kernel.transcript.getSnapshot().sessions
-  const hit = listed.filter((item) => item.id === current.filePath)
-  checkEq('列表里有它，且只有一条', hit.length, 1)
-  checkEq('那一行的目录就是会话目录', hit[0]?.cwd, current.meta.cwd)
-  check('文件还没落盘（这一条是宿主补的，不是扫盘扫出来的）', !existsSync(current.filePath))
-  // 落盘之后不该重复出现（同一路径扫盘也会扫到）
-  writeFileSync(
-    current.filePath,
-    `${JSON.stringify({ type: 'meta', id: current.meta.id, cwd: current.meta.cwd, createdAt: current.meta.createdAt })}\n` +
-      `${JSON.stringify({ type: 'user', text: '落盘了' })}\n`,
-    'utf8',
-  )
+  const before = kernel.transcript.getSnapshot().sessions.filter((item) => item.id === current.filePath)
+  checkEq('列表里没有这条空会话', before.length, 0)
+  check('磁盘上也没建出文件（补默认值只是 state 记账）', !existsSync(current.filePath))
+  checkEq('不落盘也不丢身份：目录仍是会话自己的', current.meta.cwd, wsB)
+  // 发第一条消息：缓冲里的 state 与 meta 一起写出，扫盘这才看得见它
+  current.appendUser('落盘了')
+  const deadline = Date.now() + 3000
+  while (
+    !(existsSync(current.filePath) && readFileSync(current.filePath, 'utf8').includes('"type":"user"')) &&
+    Date.now() < deadline
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  check('发第一条消息后文件出现', existsSync(current.filePath))
   await session.refresh()
-  const again = kernel.transcript.getSnapshot().sessions.filter((item) => item.id === current.filePath)
-  checkEq('落盘后仍然只有一条（补的那条让位给扫盘结果）', again.length, 1)
+  const after = kernel.transcript.getSnapshot().sessions.filter((item) => item.id === current.filePath)
+  checkEq('列表里出现且只有一条', after.length, 1)
+  checkEq('那一行的目录就是会话目录', after[0]?.cwd, current.meta.cwd)
 }
 
 console.log('\n[5] 坏目录：当场抛，且不动当前会话')

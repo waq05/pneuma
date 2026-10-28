@@ -66,6 +66,9 @@ check('A 切只读后沙箱变 read-only', ctx.sandbox.mode === 'read-only', ctx
 check('A 的权限模式仍是 auto-edit（只读档的那一半是沙箱）', ctx.approval.policy === 'auto-edit', ctx.approval.policy)
 check('A 的会话状态记下了只读', a.state('permissions')?.sandbox === 'read-only')
 
+// 会话要有一条对话记录才落盘（2026-10-29：点「新会话」不再建文件），
+// 后面按路径切回 A 才有东西可读。
+a.appendUser('（探针）让 A 落盘')
 await ctx.session.open(undefined, bDir)
 const b = ctx.session.current()
 check('换到 B 会话说的是 B 的会话', b.meta.cwd === bDir, b.meta.cwd)

@@ -51,11 +51,16 @@ const ctx = await createKernel({
 })
 
 const a = ctx.session.current()
+// 会话要有一条对话记录才落盘（2026-10-29：点「新会话」不再建文件），
+// 后面按路径切回 A 才有东西可读。
+a.appendUser('（探针）让 A 落盘')
 check('A 初始模型是配置默认 m1', ctx.llm.model === 'm1', ctx.llm.model)
 check('A 初始档位是默认', ctx.llm.effort === 'default', ctx.llm.effort)
 
 await ctx.session.open(undefined, bDir)
 const b = ctx.session.current()
+// 同 A：B 也要有一条对话记录才会落盘，后面按路径切回 B 才有东西可读。
+b.appendUser('（探针）让 B 落盘')
 check('B 初始模型是 m1', ctx.llm.model === 'm1', ctx.llm.model)
 
 await ctx.session.open(a.filePath)
