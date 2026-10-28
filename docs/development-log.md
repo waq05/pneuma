@@ -10302,9 +10302,18 @@ ui-shell/src/plugins/trace/ui.tsx:51  import ... from '../transcript/review-noti
 - 加 `.editorconfig`：2 空格 / LF / 末尾换行 / 去行尾空白，markdown 保留行尾空格，`.ps1` 走 CRLF。
   它不做重排，只是别让编辑器把 2 空格改回 4 空格。
 
-### 七　留了一条没动
+### 七　那条「要人拍板」的 CRLF，查清是虚惊
 
-238 个文件整篇是 CRLF（`core.autocrlf` 的旧检出）。`.gitattributes` 已经把行尾钉成 LF，
-归位要 `git add --renormalize .` 一次——那会让 238 个文件的 blame 全部作废。**这件事要人拍板**，
-不夹在这一批里做。
+一开始以为是个待办：`check:style` 一直提示「238 个文件整篇是 CRLF」，而旧注释写着
+「归位要 `git add --renormalize .`，代价是 238 个文件的 blame 作废」。真去跑 `git add --renormalize .`
+时，git 报 **0 处改动**——这才去逐个核对：`git cat-file --batch` 把 870 个被跟踪文件的内容全读一遍，
+**含 CR 的 0 个**。仓库里的内容本来就是 LF，那 238 个 CRLF 只是本机检出（`core.autocrlf=true`）
+呈现出来的样子，`git add` 的 clean 过滤器会归一，不进历史、不撑 diff。
+
+所以这条根本没有待办，错的是**注释里的那句建议**：它会让下一个人跑一次毫无作用的
+`--renormalize`，白担心 blame。`.gitattributes` 的头注释、`style-check.mjs` 的提示文案、
+审查记录里的三处建议一并改掉。
+
+教训记一句：**没有量过的断言不要写进注释**。「238 个文件是 CRLF」量的是工作区，
+写成了「仓库里是 CRLF」，于是凭空造出一条需要人拍板的破坏性操作。
 

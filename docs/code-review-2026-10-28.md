@@ -489,7 +489,7 @@ npx tsc -p tsconfig.json --noEmit         # 内核类型
 node scripts/style-check.mjs              # 排版闸门（2 秒）
 ```
 
-五条全绿再动手。要是 `check:style` 报出一堆「整篇 CRLF」，先跑一次 `git add --renormalize .` 再提交。
+五条全绿再动手。要是 `check:style` 报出一堆「整篇 CRLF」，**不要**去跑 `git add --renormalize .`：仓库里的内容本来就是 LF，那串提示只是本机 `core.autocrlf=true` 检出时的观感，提交时 clean 过滤器会归一（见 `.gitattributes` 的头注释）。
 
 ### 10.6 第三批仍然卡在决策上
 
@@ -1480,10 +1480,13 @@ NaN / Infinity）两侧真跑一遍比输出。改一边不改另一边，探针
 
 顺带收掉 `formatSize` 这个名字：它与 `formatBytes` 是同一件事的两个名字，留着只会招来第六份。
 
-### 没动的两条（记账）
+### 没动的一条，和一条查清的虚惊
 
-- **238 个文件整篇 CRLF**：`.gitattributes` 已钉 LF，归位要 `git add --renormalize .`，
-  一次作废 238 个文件的 blame。要人拍板，不夹在功能批里做。
+- ~~238 个文件整篇 CRLF~~ **核对后是虚惊**：`git cat-file` 逐个看 870 个被跟踪文件，
+  仓库里的内容含 CR 的 **0 个**，全是 LF。那 238 个是这台机器的检出（`core.autocrlf=true`）
+  呈现出来的样子，`git add` 时 clean 过滤器归一，既不进历史也不撑 diff——不需要
+  `git add --renormalize .`，也不会作废任何 blame。已经在 `.gitattributes` 与
+  `scripts/style-check.mjs` 里把错误的旧说法改掉。
 - **TUI 的 39 个 `src/app/*.tsx` 用 PascalCase**：与壳里 `ui.tsx` 的小写命名并存。React 组件惯例，
   改名收益只是好看，代价是全量改文件，不动。
 

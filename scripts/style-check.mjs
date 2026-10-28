@@ -19,9 +19,10 @@
  *   3. 文件开头的 BOM——`node` 读 .mjs 会把 BOM 当代码，首行直接语法错；
  *   4. 同一文件里混用 CRLF 与 LF——同一行在不同工具里算两行，合并必冲突。
  *
- * 只警告不失败：整篇都是 CRLF 的文件。这是检出配置留下的（`core.autocrlf=true`），
- * `.gitattributes` 已经把行尾钉成 LF，但历史文件要等下一次 `git add --renormalize .`
- * 才归位；在那之前拦下来只会挡住所有人。
+ * 只警告不失败：整篇都是 CRLF 的文件。这是检出时转的（`core.autocrlf=true`），
+ * **仓库里的内容本来就是 LF**（2026-10-28 用 `git cat-file` 逐个核对 870 个被跟踪文件，
+ * 含 CR 的 0 个），`git add` 的 clean 过滤器会归一，不产生 diff。所以这里只提示，
+ * 不拦——拦下来只会挡住所有人，而"归位"这件事根本不需要做。
  *
  * ## 用法
  *
@@ -149,7 +150,7 @@ if (hardCount > 0) {
 }
 console.log(`✓ 排版闸门：${String(scopes.length)} 个文件全部通过`)
 if (crlfCount > 0) {
-  console.log(`  提示：其中 ${String(crlfCount)} 个文件整篇是 CRLF（旧检出留下）。`.concat(
-    '\n  .gitattributes 已把行尾钉成 LF，跑一次 git add --renormalize . 即可归位。',
+  console.log(`  提示：其中 ${String(crlfCount)} 个文件整篇是 CRLF（本机检出转的）。`.concat(
+    '\n  仓库里的内容本身是 LF（提交时会归一），这条只是本机检出留下的观感。',
   ))
 }

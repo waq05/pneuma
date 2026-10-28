@@ -1,9 +1,10 @@
 # 行尾统一成 LF。
 #
-# 现状（2026-10-28 全仓审查实测）：仓库里 436 个文件是 LF、287 个是 CRLF、6 个是两者
-# 混用，而 Git 配置里 core.autocrlf=true——同一个文件换台机器改一行，提交时整篇行尾
-# 被改写，diff 里 300 行噪声盖住那 1 行真改动。这里把「文本用 LF」钉死在仓库里，
-# 谁检出都是 LF，不再取决于本机 Git 配置。
+# 现状（2026-10-28 用 git cat-file 逐个核对过 870 个被跟踪文件）：仓库里的内容**全是 LF**，
+# 含 CR 的 0 个。本机检出看着是 CRLF，是因为 Git 配置里 core.autocrlf=true——检出时转成
+# CRLF，提交时 clean 过滤器再转回 LF，所以它不会进历史、也不会撑大 diff。真正要防的是
+# 「有人把 core.autocrlf 改成 false 又用记事本改文件」：那时 CRLF 会原样入库。这里把
+# 「文本用 LF」钉死在仓库里，谁检出都是 LF，不再取决于本机 Git 配置。
 * text=auto eol=lf
 
 # Windows 上的脚本留 CRLF：PowerShell 与 cmd 吃 LF 也行，但用记事本改一下就会变成
