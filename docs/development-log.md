@@ -10765,3 +10765,78 @@ B 的空白页上；某个会话的删除命令被钩子拦下，理由却是「
   属于下一批。
 
 
+
+## 二十九、新会话不落盘、上下文回填、折叠设置即时生效、过程区去卡片（2026-10-29）
+
+用户报了四件，加一批视觉对齐。按层记为什么，最后一节是验收读数。
+
+### 一、点「新会话」不再在磁盘上留一个空壳
+
+**现象**：侧栏每次点「新会话」就多一行「新会话 / 刚刚」，点几次堆几行；这些会话一个字都没发。
+
+**根因**在内核的写入顺序上，不在界面。`Session.create` 本来只在内存里生成 meta 与路径（`src/core/session.ts:422`），但 `dsc/session-open` 一发出，两个插件立刻补默认值：`src/plugins/permission-presets.ts:185-188` 钉权限、`src/plugins/llm.ts:80-90` 钉模型。两者都走 `appendState` → `write()`，而 `write()` 的第一件事就是补 meta 首行并建文件。于是「补一个默认值」= 「建一条会话」。列表侧再没有过滤（`readSessionFile` 只认文件在不在），空壳就一行行堆起来。
+
+**改法**：记账与落盘解耦。
+
+- `src/core/session.ts` 新增 `pendingState` 队列：会话还没落盘时，`state` 记录只入队；第一条真正的日志（user / assistant / tool / summary / note）落地时，按 `meta → 攒下的 state → 这一条` 的顺序一次写出。会话 id 与路径仍在 `create` 时定下，右侧栏、Dock、轨迹、用量这些按 sessionId 取数的东西一个都不受影响。
+- 列表侧兜底：`readSessionFile` 里既没有 `user` 也没有 `assistant` 记录的文件不进列表。这同时清掉存量垃圾行；T31「头行损坏也要露脸」按「有没有对话记录」重判，头坏但幸存 user 的照旧出现。
+- 删掉 `pendingSummary`（`src/plugins/session.ts` 原来给未落盘会话补的那一行）：文件都没有，列表就不该有它。
+- 补上落差的另一半：文件刚出现、列表缓存还没重扫的那段里侧栏没有这条会话。宿主在 `dsc/changed` 里认「当前会话的文件在了、缓存里没有」就补刷一次，**同一条路径只刷一次**——升级前留下的零消息文件会让刷新再次发 `dsc/changed`，没有这道闸就是死循环。
+
+**为什么不在界面层删行**：界面删掉只是看不见，磁盘还在长；而且「有没有说过话」这件事宿主最清楚（`Session.persisted`）。
+
+### 二、输入框草稿留在进程里
+
+草稿存档原先是组件里的 `useRef`（`ui-shell/src/plugins/composer/ui.tsx:170`），输入区随页面切换被卸载重挂（去「技能」「插件」再回来就是一次），state 一没就全空。改成模块级 `DRAFT_STORE`，并补上「随打随存」与「挂回来先捡回」两条 effect。
+
+顺序有讲究：「随打随存」必须声明在「换会话搬运」之前——effect 按声明顺序跑，换会话那一拍要先按**旧**归属存下旧草稿，再让 `carryDraft` 搬运；顺序反过来，旧正文会先被写进新会话那一格。
+
+用户明确「先不用跨重启」，所以存档只活在进程里，不落 localStorage。
+
+### 三、上下文占用重开后不再是 0%
+
+**分子是纯内存派生值**：`contextUsed` 只在收到 `usage` 事件时赋值（`src/adapter/transcript.ts:592`），`clear()` 会把它清零，重放历史又明确「不重放 usage」。切会话、重启宿主都会掉成 0%，一直到下一次请求才有数。
+
+参考实现（dsh）的 `contextPressure` 是**从会话日志回放的投影**，所以刷新后照样有值。本仓的会话 jsonl 里没有 token，但 `~/.dsc/usage/usage.jsonl` 按会话记着每条请求的输入 token，最后一条就是此刻的真实占用（`foldSessionUsage` 的 `lastInputTokens` 注释写得很清楚）。
+
+改法：新增 `Transcript.seedContextUsage(used)`，在 `dsc/session-open` 的 clear + replay 之后、以及宿主启动恢复（`src/host/kernel.ts` 的 `emitStartupNotes`）之后各回填一次，取值 `readSessionUsage(sid)?.lastInputTokens`；这条会话一行用量都没有时**不填**——0% 是读数，不能拿来冒充「还没数」。
+
+**只补总数，不补分段**：分段（系统提示词 / 工具定义 / 对话消息）是宿主按请求内容估的，日志里没有；硬塞一份进去，卡片就会拿假的分段画进度条。它仍然等下一次 `context` 事件。
+
+界面同批对齐 dsh 的另一个行为：**没有样本时整段不渲染**（以前画 0% 与空条）。判定是「用量日志里有这条会话，或本进程收到过 usage 事件，或快照带着回填值」。
+
+### 四、「工具卡 / 思考行」的默认态改完立即生效
+
+三处消费点都只在挂载时算一次初值（`factory.tsx:166`、`tool-row.tsx:68`、`think-row.tsx:90` 的 `useState(() => readFold(...))`），而 `readFold` 把「用户存档」与「设置默认态」压成同一个布尔，分不出用户是否手动调过。于是设置一改，屏幕上的老行纹丝不动，用户以为没生效。
+
+改成「有手动存档听用户的、没有就听设置的」：`fold-state.ts` 新增 `FoldState {open, manual}` 与 `followFallback`，用 `stored === undefined` 判「没存过」（存档里合法的 `false` 仍算手动）；新的 `fold-hook.ts` 提供 `useFoldState(storeKey, fallback)`，三处消费点统一换过去。
+
+「过程折叠程度」四档本来就是 policy，每次渲染重算，天然即时，没动。
+
+### 五、过程区去掉卡片外形
+
+**现象**：每条工具调用一张带边框的卡、悬停整行铺底色，一屏放不下几条，对比度也低。
+
+改法（`ui-shell/src/legacy/views.css`、`ui-shell/src/styles.css`、`factory.tsx` 与两处行组件）：
+
+- 工具卡不再有边框、圆角与 `overflow` 裁剪；状态只由行首那颗 6px 圆点表达（展开态的吸附栏与内容块不受影响）。
+- 点击区从整行收进 `.tool-click`（状态点 + 图标 + 动词 + 名称 + 摘要），行尾读数与「在轨迹中查看」药丸不参与展开；键盘 Enter/Space 与焦点圈照旧。
+- 悬停不铺底色：`.tool-head`、`.think-head`、`.step-fold` 的 `:hover/:active` 背景全部去掉，只保留文字提一档——与 `.turn-fold` 早就定下的口径一致。截图钩子 `.shot-reveal` 跟着改成提字。
+- 行高 `--dsc-process-row-h` 28 → 24px，三处 6px 行间距收成 3px，图标 14 → 12px。
+- 摘要 `tertiary` → `secondary`，认不出的工具名 `accent` → `tertiary`；成功态不再渲染「完成」两个字（只留绿点），失败 / 被拒 / 进行中 / 准备中照旧。
+
+### 六、验收
+
+| 项 | 读数 |
+| --- | --- |
+| `pnpm run typecheck` / `pnpm --dir desktop run typecheck` | 0 错 |
+| `pnpm run build` / `pnpm run build:ui` | 通过 |
+| `pnpm run check:ui` | 45/45（新增 `ui-tool-row-flat-test.mjs` 51 条、`ui-fold-prefs-test.mjs` 50 条、`ui-composer-draft-store-test.mjs` 13 条） |
+| `pnpm run check:style` | 通过 |
+| `scripts/empty-session-test.mjs` | 48 条（新建不落盘、缓冲保序、零消息不进列表、首条消息补刷列表） |
+| `scripts/context-usage-restore-test.mjs` | 21 条 |
+| 实机截图 | `desktop/shots/_verify-tool-row-flat-rest.png` / `-hover.png` / `-open.png` |
+
+连带改的三条老探针（语义变了，不是放宽）：`session-open-in-test.mjs` 第 [4] 段从「未落盘也补一行」改成「未落盘既没文件也没行」；`session-model-kernel-test.mjs`、`session-permissions-kernel-test.mjs`、`preset-scope-test.mjs` 在首次切走前补一条用户消息——会话只有说过话才存在，按路径切回才有东西可读。
+
+**一条自查**：`ui-transcript-render-test.mjs` 原来钉的是 `readFold(storeKey, prefs.reasoningOpen)`，第四项改成 `useFoldState` 后断言跟着换，钉的语义没变（展开初值只认用户的档位，直播尾不强制展开）。

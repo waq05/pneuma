@@ -539,6 +539,15 @@ order 插队）；系统提示词不进消息流，由 agent 插件在每次请�
 | 对外提供能力给 UI | `ctx.provide('名字', {...})` + `contract.ts` + 白名单 | 见 §5 三步 |
 | 让 UI 说话 | `ctx.transcript.system(...)` / `ui.notice` | **绝不用 console.log**，用户看不见 |
 
+### 会话什么时候落盘（2026-10-29 起）
+
+- **新建只在内存**：`Session.create` 当场给 id 与路径，但**不建文件**；`appendState` 写的记账（权限、模型、目标、清单）先攒进 `pendingState` 队列。
+- **第一条真日志才写出**：user / assistant / tool / summary / note 任意一条落地时，一次写出 `meta → 攒下的 state → 这一条`（顺序不能反：恢复时逐条重放、最后一条生效）。
+- **列表只认说过话的文件**：`listSessions` 跳过既无 `user` 也无 `assistant` 记录的 jsonl。写探针 / 插件时想「按路径切回某条会话」，先给它 `appendUser` 一句，否则磁盘上没有它。
+- **首条消息出现后侧栏自动补行**：宿主在 `dsc/changed` 里认「当前会话文件在了、列表缓存没有」就补刷一次（同一路径只刷一次，防循环）。
+
+两条与之配套的读数口径：输入框草稿住在 `ui-shell/src/plugins/composer/ui.tsx` 的模块级 `DRAFT_STORE`（进程内，刷新即清）；「上下文已用」的分母来自模型配置的 `contextWindow`，分子在重开会话 / 重启宿主时由 `readSessionUsage(sid).lastInputTokens` 回填（`Transcript.seedContextUsage`），没有用量行时整段不画。
+
 ## 8. 开发流程
 
 ```sh
