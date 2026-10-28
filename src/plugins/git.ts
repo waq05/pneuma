@@ -24,6 +24,7 @@
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import { git, parsePorcelainZ, repoPrefix, toWorkspacePath } from '../core/git-exec.js'
+import { sameGitSurface as sameGit } from '../core/git-surface.js'
 import type { GitSurface } from '../contract.js'
 import type { GitService } from '../services/types.js'
 
@@ -154,14 +155,4 @@ export const gitPlugin: Plugin.Object = {
     ctx.on('dsc/turn-end', refresh)
     ctx.on('dsc/session-open', refresh)
   },
-}
-
-/** 两份读数是不是同一份（变了才推帧，免得干净仓库每 30 秒白推一帧）。 */
-function sameGit(left: GitSurface, right: GitSurface): boolean {
-  return (
-    left.repo === right.repo &&
-    left.branch === right.branch &&
-    left.detached === right.detached &&
-    left.dirtyFileCount === right.dirtyFileCount
-  )
 }

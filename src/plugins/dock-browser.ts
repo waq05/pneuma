@@ -50,6 +50,16 @@ import {
   type SnapshotRef,
 } from '../core/cdp/snapshot.js'
 import { clampInt as clamp } from '../core/clamp.js'
+import { RingBuffer } from '../core/cdp/ring-buffer.js'
+import {
+  consoleLine,
+  describeRef,
+  networkLine,
+  report,
+  safeStringify,
+  type ConsoleEntry,
+  type NetworkEntry,
+} from '../core/cdp/report.js'
 
 const CONFIG_KEY = 'dock-browser'
 /** 设置分区 id：与配置键同名，元数据 `settingsSection` 指向它。 */
@@ -97,60 +107,6 @@ const OPEN_SETTLE_MS = 8_000
 const NO_SHELL_MESSAGE =
   '宿主里没有桌面壳，这条能力要在桌面端窗口里用：侧栏浏览器由桌面主进程提供（TUI / 无头 / 远程壳里拿不到它）。'
 
-// ── 小工具（与 browser.ts 同风格，便于两处输出读起来一致）─────────────────────
-
-/** 定长环形缓冲：满了丢最旧的（照 browser.ts 的 RingBuffer 思路）。 */
-class RingBuffer<T> {
-  private items: T[] = []
-
-  constructor(private capacity: number) {}
-
-  push(item: T): void {
-    this.items.push(item)
-    if (this.capacity > 0 && this.items.length > this.capacity) {
-      this.items.splice(0, this.items.length - this.capacity)
-    }
-  }
-
-  find(predicate: (item: T) => boolean): T | undefined {
-    return this.items.find(predicate)
-  }
-
-  toArray(): T[] {
-    return [...this.items]
-  }
-
-  clear(): void {
-    this.items = []
-  }
-}
-
-/** 一行人类可读摘要 + 一行结构化 JSON（照 browser.ts 的 report）。 */
-function report(summary: string, data: Record<string, unknown>): string {
-  return `${summary}\n${JSON.stringify(data)}`
-}
-
-/** 时间戳 → HH:MM:SS。 */
-function clock(ts: number): string {
-  return new Date(ts).toISOString().slice(11, 19)
-}
-
-/** 变量值的兜底字符串化（控制台参数可能是对象或循环引用）。 */
-function safeStringify(value: unknown): string {
-  if (typeof value === 'string') return value
-  try {
-    const text = JSON.stringify(value)
-    return text === undefined ? String(value) : text
-  } catch {
-    return String(value)
-  }
-}
-
-/** ref 的人类可读描述（输出与错误信息里用）。 */
-function describeRef(ref: SnapshotRef): string {
-  return `${ref.role}${ref.name === '' ? '' : ` "${ref.name}"`}`
-}
-
 /**
  * 云元数据地址无条件拒。
  *
@@ -191,22 +147,6 @@ function assertHttpUrl(raw: string): string {
 }
 
 // ── 每台视图的会话状态 ───────────────────────────────────────────────────────
-
-interface ConsoleEntry {
-  ts: number
-  level: string
-  text: string
-}
-
-interface NetworkEntry {
-  ts: number
-  requestId: string
-  method: string
-  url: string
-  status: number
-  mimeType: string
-  failed: string
-}
 
 /** 一台 dock 视图的 CDP 会话与 ref 代际。 */
 interface ViewState {
@@ -560,7 +500,7 @@ export const dockBrowserPlugin: Plugin.Object = {
         if (entries.length === 0) {
           return '这台视图的控制台还没有输出。（事件订阅是挂上之后才建立的，订阅之前的输出拿不到）'
         }
-        const lines = entries.map((entry) => `[${clock(entry.ts)}] ${entry.level}: ${entry.text}`)
+        const lines = entries.map(consoleLine)
         return report(`视图 ${viewId} 控制台最近 ${entries.length} 条${clearing ? '（已清空缓冲）' : ''}：`, {
           action: 'console',
           viewId,
@@ -578,11 +518,7 @@ export const dockBrowserPlugin: Plugin.Object = {
         if (entries.length === 0) {
           return '这台视图还没有记录到网络请求。（事件订阅是挂上之后才建立的，之前的请求拿不到）'
         }
-        const lines = entries.map((entry) => {
-          const status = entry.failed === '' ? String(entry.status === 0 ? '进行中' : entry.status) : `失败：${entry.failed}`
-          const mime = entry.mimeType === '' ? '' : ` ${entry.mimeType}`
-          return `[${clock(entry.ts)}] ${entry.method} ${status}${mime} ${neutralizeInline(entry.url, 240)}`
-        })
+        const lines = entries.map(networkLine)
         return report(`视图 ${viewId} 网络最近 ${entries.length} 条${clearing ? '（已清空缓冲）' : ''}：`, {
           action: 'network',
           viewId,

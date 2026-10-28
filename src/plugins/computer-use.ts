@@ -46,6 +46,7 @@ import type { Plugin } from '@deepseek-ai/cordis'
 import type { SettingsField, SettingsValue } from '../contract.js'
 import type { SettingsSectionSpec } from '../services/types.js'
 import { clampInt as clamp } from '../core/clamp.js'
+import { splitList } from '../core/strings.js'
 
 /** 插件配置（存 `~/.dsc/plugins.json` 条目树的 config 里）。 */
 interface ComputerUseConfig {
@@ -85,14 +86,6 @@ const DEFAULTS: ComputerUseConfig = {
 
 /** 只读性质的动作（看，不动手）；免审批那一档就是它们。 */
 export const LOOK_ACTIONS: readonly DesktopAction[] = READ_ACTIONS
-
-/** 拆逗号分隔清单（中英文逗号都认）。 */
-function splitList(text: string): string[] {
-  return text
-    .split(/[,，\s]+/)
-    .map((entry) => entry.trim())
-    .filter((entry) => entry !== '')
-}
 
 /** 截图那条工具结果的文字开头，靠它认出「这是我们自己截的图」，不误伤别的插件带的图。 */
 const SHOT_MARK = '屏幕物理分辨率'

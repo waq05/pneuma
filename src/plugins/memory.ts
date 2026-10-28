@@ -15,7 +15,7 @@
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import { errText } from '../adapter/transcript.js'
-import { contentText, type ChatMessage } from '../core/llm.js'
+import { lastAssistantText as lastAssistantMessageText, lastUserText as lastUserMessageText } from '../core/transcript-text.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
 import {
   applyMemoryOperations,
@@ -733,24 +733,6 @@ export const memoryPlugin: Plugin.Object = {
     const offSection = ctx.settings.registerSection(section)
 
     // ── 生命周期 ─────────────────────────────────────────────────────────────
-
-    /** 会话消息里最后一条用户消息的纯文本。 */
-    function lastUserMessageText(messages: readonly ChatMessage[]): string {
-      for (let index = messages.length - 1; index >= 0; index -= 1) {
-        const message = messages[index]
-        if (message !== undefined && message.role === 'user') return contentText(message.content).trim()
-      }
-      return ''
-    }
-
-    /** 会话消息里最后一条 assistant 消息的纯文本（隐式反馈的引用面）。 */
-    function lastAssistantMessageText(messages: readonly ChatMessage[]): string {
-      for (let index = messages.length - 1; index >= 0; index -= 1) {
-        const message = messages[index]
-        if (message !== undefined && message.role === 'assistant') return contentText(message.content).trim()
-      }
-      return ''
-    }
 
     /**
      * 本段有没有「≥3 词的独立用户文本块」（ZCode 的抽取跳过规则之一）：

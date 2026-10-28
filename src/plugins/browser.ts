@@ -36,6 +36,17 @@ import { BrowserProcess, probeExecutable, type BrowserLaunchConfig } from '../co
 import { serializeAxTree, truncateByLines, lookupSnapshotRef, type AxTree, type SnapshotRef } from '../core/cdp/snapshot.js'
 import type { CdpSessionView, CdpTransport } from '../core/cdp/transport.js'
 import { clampInt as clamp } from '../core/clamp.js'
+import { splitList } from '../core/strings.js'
+import { RingBuffer } from '../core/cdp/ring-buffer.js'
+import {
+  consoleLine,
+  describeRef,
+  networkLine,
+  report,
+  safeStringify,
+  type ConsoleEntry,
+  type NetworkEntry,
+} from '../core/cdp/report.js'
 
 // ── 配置 ─────────────────────────────────────────────────────────────────────
 
@@ -92,14 +103,6 @@ const DIALOG_TIMEOUT_MS = 300_000
 const NAVIGATE_TIMEOUT_MS = 20_000
 /** 短快照/控制台输出一条最多多少字符（控制台一整段堆栈会很长）。 */
 const CONSOLE_LINE_MAX = 400
-
-/** 逗号或空白分隔的清单。 */
-function splitList(text: string): string[] {
-  return text
-    .split(/[,，\s]+/)
-    .map((entry) => entry.trim())
-    .filter((entry) => entry !== '')
-}
 
 // ── 地址策略（守卫与本插件共用；纯函数，便于自检）─────────────────────────────
 
@@ -282,86 +285,6 @@ function absolutize(raw: string, base: string): string {
   } catch {
     throw new Error(`相对地址「${raw}」拼不到当前页面 ${base} 上`)
   }
-}
-
-// ── 环形缓冲与控制台/网络条目 ────────────────────────────────────────────────
-
-interface ConsoleEntry {
-  ts: number
-  level: string
-  text: string
-}
-
-interface NetworkEntry {
-  ts: number
-  requestId: string
-  method: string
-  url: string
-  status: number
-  mimeType: string
-  failed: string
-}
-
-/** 定长环形缓冲：满了丢最旧的，条数改了把内容搬过去（不能让用户改个设置就丢光现状）。 */
-class RingBuffer<T> {
-  private items: T[] = []
-
-  constructor(private capacity: number) {}
-
-  get size(): number {
-    return this.items.length
-  }
-
-  push(item: T): void {
-    this.items.push(item)
-    if (this.capacity > 0 && this.items.length > this.capacity) {
-      this.items.splice(0, this.items.length - this.capacity)
-    }
-  }
-
-  /** 按 requestId 找一条（网络条目要按响应回填状态）。 */
-  find(predicate: (item: T) => boolean): T | undefined {
-    return this.items.find(predicate)
-  }
-
-  toArray(): T[] {
-    return [...this.items]
-  }
-
-  clear(): void {
-    this.items = []
-  }
-
-  resize(capacity: number): void {
-    this.capacity = capacity
-    if (capacity > 0 && this.items.length > capacity) this.items.splice(0, this.items.length - capacity)
-  }
-}
-
-/** 变量值的兜底字符串化（控制台参数可能是对象或循环引用）。 */
-function safeStringify(value: unknown): string {
-  if (typeof value === 'string') return value
-  try {
-    const text = JSON.stringify(value)
-    return text === undefined ? String(value) : text
-  } catch {
-    return String(value)
-  }
-}
-
-/** 一行人类可读摘要 + 一行结构化 JSON。 */
-function report(summary: string, data: Record<string, unknown>): string {
-  return `${summary}\n${JSON.stringify(data)}`
-}
-
-/** ref 的人类可读描述（错误信息里用）。 */
-function describeRef(ref: SnapshotRef): string {
-  return `${ref.role}${ref.name === '' ? '' : ` "${ref.name}"`}`
-}
-
-/** 时间戳 → HH:MM:SS。 */
-function clock(ts: number): string {
-  return new Date(ts).toISOString().slice(11, 19)
 }
 
 // ── 插件 ─────────────────────────────────────────────────────────────────────
@@ -784,7 +707,7 @@ export const browserPlugin: Plugin.Object = {
         if (entries.length === 0) {
           return '控制台还没有输出。（事件订阅是附加到页面之后才建立的，附加之前的输出拿不到）'
         }
-        const lines = entries.map((entry) => `[${clock(entry.ts)}] ${entry.level}: ${entry.text}`)
+        const lines = entries.map(consoleLine)
         return report(`控制台最近 ${entries.length} 条${clearing ? '（已清空缓冲）' : ''}：`, {
           action: 'console',
           count: entries.length,
@@ -799,11 +722,7 @@ export const browserPlugin: Plugin.Object = {
         if (entries.length === 0) {
           return '还没有记录到网络请求。（事件订阅是附加到页面之后才建立的，之前的请求拿不到）'
         }
-        const lines = entries.map((entry) => {
-          const status = entry.failed === '' ? String(entry.status === 0 ? '进行中' : entry.status) : `失败：${entry.failed}`
-          const mime = entry.mimeType === '' ? '' : ` ${entry.mimeType}`
-          return `[${clock(entry.ts)}] ${entry.method} ${status}${mime} ${neutralizeInline(entry.url, 240)}`
-        })
+        const lines = entries.map(networkLine)
         return report(`网络最近 ${entries.length} 条${clearing ? '（已清空缓冲）' : ''}：`, {
           action: 'network',
           count: entries.length,

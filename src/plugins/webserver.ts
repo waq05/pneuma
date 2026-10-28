@@ -31,6 +31,7 @@ import { isUiMethod, UI_METHODS, validateUiArgs } from '../core/ui-methods.js'
 import { createUiServer, type UiServerHandle } from '../core/ui-server.js'
 import { DSC_VERSION } from '../core/version.js'
 import type { WebServerService } from '../services/types.js'
+import { nonEmptyString } from '../core/strings.js'
 
 /** 配置键（`~/.dsc/plugins.json` 里 file 等于这个名字的那一项）。 */
 const CONFIG_KEY = 'webserver'
@@ -58,11 +59,6 @@ export interface UiServerConfig {
 function pickPort(value: unknown): number {
   const port = Number(value)
   return Number.isInteger(port) && port >= 0 && port <= 65535 ? port : 0
-}
-
-/** 取一段非空字符串配置，空串当没配。 */
-function pickDir(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value : undefined
 }
 
 /** 轮询间隔（毫秒）：环境变量优先于配置；非法值回落到 500。 */
@@ -97,7 +93,7 @@ export function readUiServerConfig(passed: unknown): UiServerConfig {
   return {
     enabled: raw.enabled === true || process.env['DSC_UI_SERVER'] === '1',
     port: pickPort(process.env['DSC_UI_PORT'] ?? raw.port),
-    assetsDir: pickDir(process.env['DSC_UI_ASSETS']) ?? pickDir(raw.assetsDir),
+    assetsDir: nonEmptyString(process.env['DSC_UI_ASSETS']) ?? nonEmptyString(raw.assetsDir),
     hmr: pickHmr(raw),
   }
 }

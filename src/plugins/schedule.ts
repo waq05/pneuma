@@ -38,9 +38,9 @@ import {
 import { ScheduleRunner, scheduleLimitsNote } from '../core/schedule/runner.js'
 import { ScheduleStore, type ScheduleTask } from '../core/schedule/store.js'
 import { errText as errorText } from '../core/err-text.js'
+import { clampInt as clampNumber } from '../core/clamp.js'
 import type { ScheduledTaskView, SettingsField, SettingsValue, SettingsValues } from '../contract.js'
 import type { SettingsSectionSpec } from '../services/types.js'
-import { clampInt as clampNumber } from '../core/clamp.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'schedule'

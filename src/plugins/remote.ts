@@ -55,6 +55,7 @@ import { bootNoticeOnce } from '../core/boot-notices.js'
 import { errText } from '../core/err-text.js'
 import { REMOTE_PORT_MAX, REMOTE_PORT_MIN, type RemotePrefs } from '../core/prefs.js'
 import { resolvePluginConfig } from '../core/plugin-registry.js'
+import { snapshotThrottleMs } from '../core/snapshot-throttle.js'
 import { RemoteFrameHub, type BuiltFrame } from '../core/remote/frames.js'
 import { isHttpUrl, sendWebhook, webhookHasPlaceholder, type WebhookMessage, type WebhookResult } from '../core/remote/notify.js'
 import { RemoteOwnerLock } from '../core/remote/owner.js'
@@ -91,9 +92,6 @@ import { UI_EVENTS_PROTOCOL_VERSION } from './webserver.js'
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'remote'
 
-/** 快照推送节流间隔的缺省值（与 host-stdio 同一个口径）。 */
-const DEFAULT_SNAPSHOT_THROTTLE_MS = 80
-
 /** 休眠时回头看一眼主控位的间隔。 */
 const OWNER_RETRY_MS = 30_000
 
@@ -106,17 +104,6 @@ const ESCALATE_MAX = 3
 
 /** 多短的一轮不值得通报（用过 15 秒以上，或者这一轮出现过审批卡，才发「轮完成」）。 */
 const TURN_NOTIFY_MIN_MS = 15_000
-
-/**
- * 取快照推送节流间隔：夹在 16 毫秒到 1 秒之间（与 host-stdio 同一条理由：再小是白烧 CPU，
- * 再大是点完按钮半天没反应）。
- */
-function readThrottle(passed: unknown): number {
-  const raw = resolvePluginConfig(CONFIG_KEY, passed)
-  const num = Number(raw.snapshotThrottleMs)
-  if (!Number.isFinite(num)) return DEFAULT_SNAPSHOT_THROTTLE_MS
-  return Math.min(Math.max(Math.round(num), 16), 1_000)
-}
 
 /**
  * 静态资源目录：编译产物是 `lib/plugins/remote.js`，界面产物在 `lib/remote/assets`
@@ -438,7 +425,8 @@ export const remotePlugin: Plugin.Object = {
   inject: ['session', 'transcript', 'agent', 'ui', 'approval', 'settings'],
   apply(ctx, passed) {
     const runtime = ctx.ui
-    const throttleMs = readThrottle(passed)
+    // 快照推送节流：与 host-stdio 同一份口径（见 `core/snapshot-throttle.ts`）。
+    const throttleMs = snapshotThrottleMs(resolvePluginConfig(CONFIG_KEY, passed).snapshotThrottleMs)
     const pairing = new RemotePairing()
     const owner = new RemoteOwnerLock()
     const tickets = new TicketStore()

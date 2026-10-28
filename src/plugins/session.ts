@@ -27,7 +27,7 @@ import {
   trashRoot,
 } from '../core/session.js'
 import { patchSessionMeta } from '../core/session-meta.js'
-import type { SessionListItem } from '../core/session.js'
+import { uuidOf, type SessionListItem } from '../core/session.js'
 import { errText } from '../adapter/transcript.js'
 import type {
   ArchivedPage,
@@ -264,11 +264,6 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
     ctx.on('dsc/exit', () => session.close())
     ctx.provide('session', service)
   },
-}
-
-/** 会话 jsonl 的 `<uuid>.jsonl` 文件名 → uuid（sidecar 的键）。 */
-function uuidOf(filePath: string): string {
-  return basename(filePath, '.jsonl')
 }
 
 /**

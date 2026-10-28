@@ -32,6 +32,7 @@ import { mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import type { SettingsField, SettingsValues } from '../contract.js'
+import { clockText } from '../core/clock.js'
 import { errText } from '../core/err-text.js'
 import { DSC_HOME } from '../core/path-policy.js'
 import { bootNoticeOnce } from '../core/boot-notices.js'
@@ -111,13 +112,6 @@ const ASKABLE_RULES = new Set(['outside-writable-roots', 'mode-read-only'])
 /** 规则名（可能带 `write-target:` 前缀）能不能交审批卡问一次。 */
 function askableRule(rule: string): boolean {
   return ASKABLE_RULES.has(rule.replace(/^write-target:/, ''))
-}
-
-/** 时间戳 → `/sandbox` 里那行 `[12:03:44]`。 */
-function clockOf(ts: number): string {
-  const date = new Date(ts)
-  const pad = (value: number): string => String(value).padStart(2, '0')
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
 export const sandboxPlugin: Plugin.Object = {
@@ -516,7 +510,7 @@ export const sandboxPlugin: Plugin.Object = {
       if (process.platform === 'win32') lines.push(`网络第二级：${networkTier} —— ${networkTierDetail}`)
       lines.push('最近 3 次拒绝：')
       if (denials.length === 0) lines.push('  （还没有）')
-      for (const one of denials) lines.push(`  [${clockOf(one.at)}] ${one.tool} · ${one.rule} —— ${one.why}`)
+      for (const one of denials) lines.push(`  [${clockText(one.at)}] ${one.tool} · ${one.rule} —— ${one.why}`)
       if (problems.length > 0) lines.push(`⚠ 配置有问题（已按默认值兜底）：${problems.join('；')}`)
       return lines.join('\n')
     }
@@ -610,7 +604,7 @@ export const sandboxPlugin: Plugin.Object = {
           {
             type: 'info',
             label: '最近 3 次拒绝',
-            text: denials.length === 0 ? '（还没有）' : denials.map((one) => `[${clockOf(one.at)}] ${one.tool} · ${one.rule} —— ${one.why}`).join('\n'),
+            text: denials.length === 0 ? '（还没有）' : denials.map((one) => `[${clockText(one.at)}] ${one.tool} · ${one.rule} —— ${one.why}`).join('\n'),
           },
           {
             type: 'button',

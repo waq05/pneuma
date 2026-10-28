@@ -21,10 +21,7 @@ import { listPluginInfos } from '../core/plugin-registry.js'
 import { mountExternalPlugin, setPluginEnabledHot } from '../core/plugin-loader.js'
 import type { ToolEntry } from '../core/tools.js'
 import { dscPath } from '../core/path-policy.js'
-
-function pluginsDir(): string {
-  return dscPath('plugins')
-}
+import { thirdPartyUiRoot } from '../core/ui-bundles.js'
 
 function renderList(): string {
   const infos = listPluginInfos()
@@ -88,8 +85,8 @@ export const pluginManagerPlugin: Plugin.Object = {
             const src = isAbsolute(source) ? source : resolve(dscPath(), source)
             if (!src.endsWith('.js')) return '错误：仅支持 .js 插件文件'
             try {
-              const dest = join(pluginsDir(), basename(src))
-              mkdirSync(pluginsDir(), { recursive: true })
+              const dest = join(thirdPartyUiRoot(), basename(src))
+              mkdirSync(thirdPartyUiRoot(), { recursive: true })
               copyFileSync(src, dest)
               const ok = await mountExternalPlugin(dest)
               if (!ok) {
@@ -133,7 +130,7 @@ export const pluginManagerPlugin: Plugin.Object = {
                 mainFile: name,
                 files: [],
               }
-              const target = await installPluginMarketEntry(entry, pluginsDir())
+              const target = await installPluginMarketEntry(entry, thirdPartyUiRoot())
               const ok = await mountExternalPlugin(target)
               if (!ok) {
                 const meta = listPluginInfos().find((info) => info.file === name)

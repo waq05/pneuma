@@ -34,6 +34,8 @@
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import { readFileSync } from 'node:fs'
+import { clampInt as clamp } from '../core/clamp.js'
+import { errText as errorText } from '../core/err-text.js'
 import type { ChatMessage } from '../core/llm.js'
 import { wrapUntrusted } from '../core/untrusted.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
@@ -62,8 +64,6 @@ import {
 import { displayPath, toDisplayCharacter, toDisplayLine, toProtocolPosition } from '../core/lsp/uri.js'
 import type { SettingsField, SettingsValue } from '../contract.js'
 import type { SettingsSectionSpec } from '../services/types.js'
-import { errText as errorText } from '../core/err-text.js'
-import { clampInt as clamp } from '../core/clamp.js'
 
 /** 插件在条目树里的键（设置分区 id 也是它）。 */
 const CONFIG_KEY = 'lsp'

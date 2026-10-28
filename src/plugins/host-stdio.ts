@@ -36,25 +36,11 @@ import { DockBrowserUnavailableError, HOST_BROWSER_SERVICE } from '../core/host-
 import type { DockOpenResult, HostBrowserLink } from '../core/host-browser-link.js'
 import { isInvokableMethod } from '../core/host-methods.js'
 import { resolvePluginConfig } from '../core/plugin-registry.js'
+import { snapshotThrottleMs } from '../core/snapshot-throttle.js'
 import type { RuntimeSnapshot } from '../contract.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'host-stdio'
-
-/** 快照推送节流间隔的缺省值（配置没给时用；界面靠它决定最多多久刷一帧）。 */
-const DEFAULT_SNAPSHOT_THROTTLE_MS = 80
-
-/**
- * 取快照推送节流间隔：夹在 16 毫秒到 1 秒之间。
- * 再小就是一帧一帧追着渲染器跑（白烧 CPU），再大就是点完按钮半天没反应。
- * @param passed - 装配时直接传进来的配置（内核挂载时的第二参数）。
- */
-function readThrottle(passed: unknown): number {
-  const raw = resolvePluginConfig(CONFIG_KEY, passed)
-  const num = Number(raw.snapshotThrottleMs)
-  if (!Number.isFinite(num)) return DEFAULT_SNAPSHOT_THROTTLE_MS
-  return Math.min(Math.max(Math.round(num), 16), 1_000)
-}
 
 /**
  * 协议版本（破坏性变更时递增，宿主据此拒绝）。
@@ -202,7 +188,8 @@ export const hostStdioPlugin: Plugin.Object = {
   inject: ['ui'],
   apply(ctx, passed) {
     const runtime = ctx.ui
-    const throttleMs = readThrottle(passed)
+    // 快照推送节流：区间与缺省值见 `core/snapshot-throttle.ts`（与 remote 同一份）。
+    const throttleMs = snapshotThrottleMs(resolvePluginConfig(CONFIG_KEY, passed).snapshotThrottleMs)
     const transport = pickTransport()
 
     // ---- 界面可达性 ----

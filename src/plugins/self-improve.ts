@@ -69,11 +69,8 @@ import {
   DEFAULT_AGING,
   DEFAULT_SKILL_LIMITS,
   isSkillPinned,
-  lastAssistantText,
-  lastUserText,
   localSkillNames,
   patchSkill,
-  previousUserText,
   readBeforeWriteCheck,
   renderSkillMarkdown,
   setSkillPinned,
@@ -89,6 +86,7 @@ import {
   type SkillDraft,
   type SkillOpResult,
 } from '../core/learnings/skill-write.js'
+import { lastAssistantText, lastUserText, previousUserText } from '../core/transcript-text.js'
 import { clampInt as clamp } from '../core/clamp.js'
 import { existsSync } from 'node:fs'
 
