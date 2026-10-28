@@ -99,6 +99,17 @@ const HISTORY_LIMIT = 50
  */
 let insertDraft: ((text: string) => void) | null = null
 
+/**
+ * 进程内的草稿存档：切换会话时换入换出（规则见 `./draft`），组件卸载时也留得住。
+ *
+ * 为什么放模块级而不是组件的 `useRef`：输入区会随页面切换被卸载重挂（点侧栏的「技能」
+ * 「插件」再回来就是一次），而正文、历史、待发附件都只活在组件 state 里——一卸载就没了。
+ * 用户报障「新会话里打了一半的话，去别的页面看一眼回来就空了」就是这条路。
+ *
+ * 只活在进程里：刷新页面（重新加载 webview）不恢复，用户 2026-10-29 明确说先不做跨重启。
+ */
+const DRAFT_STORE = new Map<string, ComposerDraft>()
+
 export default defineUiPlugin({
   name: '输入区',
   apply(ui) {
@@ -168,7 +179,7 @@ function ComposerBox(): ReactNode {
   const history = useRef<string[]>([])
   const [historyAt, setHistoryAt] = useState<number | null>(null)
   /** 每会话一份草稿（正文 + 本机历史），切会话时整份换入换出；归属规则见 draft.ts。 */
-  const drafts = useRef(new Map<string, ComposerDraft>())
+  const drafts = useRef(DRAFT_STORE)
   const draftSessionId = useHostSelector(readSessionId)
   const draftCwd = useHostSelector(readDraftCwd)
   const draftUnsaved = useHostSelector(readSessionUnsaved)
@@ -228,6 +239,40 @@ function ComposerBox(): ReactNode {
   }
 
   const working = turnState !== 'idle'
+
+  /**
+   * 挂回来时先捡回进程存档里那一份（只捡一次）。
+   *
+   * 与下面那条「随打随存」配对：卸载时 state 没了，存档还在；重挂时用存档还原正文、
+   * 历史与待发附件。之后一律以输入框为准，不再回读——否则用户删掉的字符会被存档拽回来。
+   */
+  const restored = useRef(false)
+  useEffect(() => {
+    if (restored.current) return
+    restored.current = true
+    const key = draftScopeRef.current.key
+    if (key === '') return
+    const saved = DRAFT_STORE.get(key)
+    if (saved === undefined) return
+    setText(saved.value)
+    history.current = [...saved.history]
+    setAttachments([...(saved.attachments ?? [])])
+    // 只在这一个组件实例的第一次提交后跑：draftScope / setText 都是稳定引用。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /**
+   * 随打随存：每次正文或附件变化都往进程存档写一份。
+   *
+   * 必须在「换会话」那段**之前**声明——effect 按声明顺序跑，换会话那一拍要先按**旧**归属
+   * 存下旧草稿（`draftScopeRef.current` 还没更新），再让 carryDraft 搬运。顺序反过来，
+   * 旧正文会先被写进新会话那一格。
+   */
+  useEffect(() => {
+    const key = draftScopeRef.current.key
+    if (key === '') return
+    DRAFT_STORE.set(key, { value: text, history: history.current, attachments })
+  }, [text, attachments])
 
   /**
    * 换会话时换草稿（对照旧界面 `Composer.tsx` 的 `draftsRef`）。
