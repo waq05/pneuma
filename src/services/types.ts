@@ -598,18 +598,29 @@ export interface CommandService {
 
 // ── transcript ───────────────────────────────────────────────────────────────
 
-/** 会话流服务：core 事件折叠器 + RuntimeSnapshot 快照源（UI 状态中心）。 */
+/**
+ * 会话流服务：core 事件折叠器 + RuntimeSnapshot 快照源（UI 状态中心）。
+ *
+ * 转录只有一份：「当前查看的那个会话」那一份。工具卡、system 行都是**某个会话的现场**，
+ * 不是全局广播，所以三个写入口（emit / system / plan）都收最后一个可选参数
+ * `owner`（会话 id）——带了归属又不是当前会话的，直接丢掉，连快照失效都不做。
+ *
+ * 为什么必须由调用方交代归属、而不是这里猜：写卡片的代码（PTC 脚本、压缩、文件预览）
+ * 自己知道在为哪个会话干活，转录层只知道「此刻用户在看谁」。不传 = 全局提示
+ * （启动横幅、插件加载失败这类本来就不属于任何会话的行），照写。
+ */
 export interface TranscriptService {
   /** 折叠一条 core 事件（可见变化时自动失效快照）。 */
-  emit(event: CoreEvent): void
+  emit(event: CoreEvent, owner?: string): void
   /**
    * 追加一条 system 条目。
    * @param level - `'error'` 表示要人处理的问题：界面弹一次提示，不铺在首屏；缺省只进日志。
    * @param command - 这条是输入框 `/` 命令的输出：空会话欢迎态也要画在首屏。
+   * @param owner - 归属会话 id；带了又不是当前会话的，丢掉。
    */
-  system(text: string, level?: 'info' | 'error', command?: boolean): void
+  system(text: string, level?: 'info' | 'error', command?: boolean, owner?: string): void
   /** 追加一条计划卡条目（提交评审与批完各更新一次）。 */
-  plan(view: PlanView): void
+  plan(view: PlanView, owner?: string): void
   /**
    * 恢复会话时把历史消息重放为条目（启动恢复/session-open 场景）。
    * @param toolErrors 会话日志记的工具异常标记（`Session.toolErrors`），

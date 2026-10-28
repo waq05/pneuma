@@ -202,15 +202,28 @@ export const transcriptPlugin: Plugin.Object = {
       invalidate()
     })
 
+    /**
+     * 这条写入是不是属于「此刻正被查看的会话」。
+     *
+     * 不带归属（undefined）= 全局提示，放行；带了别的会话 id = 串台，丢掉。
+     * 为什么丢的是写入而不是记到别处：每份会话都有自己的 jsonl，切回去时由重放补出，
+     * 转录只是「当前视图」的缓存，往别人的视图里塞东西没有任何去处。
+     */
+    const owned = (owner?: string): boolean =>
+      owner === undefined || owner === ctx.session.current().meta.id
+
     const service: TranscriptService = {
-      emit(event) {
+      emit(event, owner) {
+        if (!owned(owner)) return
         if (transcript.reduce(event)) invalidate()
       },
-      system(text, level, command) {
+      system(text, level, command, owner) {
+        if (!owned(owner)) return
         transcript.system(text, false, level, command === true)
         invalidate()
       },
-      plan(view: PlanView) {
+      plan(view: PlanView, owner) {
+        if (!owned(owner)) return
         transcript.plan(view)
         invalidate()
       },

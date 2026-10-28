@@ -145,11 +145,16 @@ export const agentPlugin: Plugin.Object = {
             // 只有当前查看 agent 的事件进转录：后台 agent 的流式增量与工具卡留在
             // 各自会话的 jsonl 里，切回去时由转录插件按日志重放。这正是「切走不打断」
             // 的显示面——旧模型里中止轮的残留事件污染新会话视图，这里从源头掐掉。
-            if (active !== null && active.sessionId === session.meta.id) ctx.transcript.emit(event)
+            // 归属也交给转录层兜一道（0.6.68）：这里判一次「当前是不是我」，转录层再按
+            // 会话 id 判一次——两道都过才写，防的是以后有人绕过这道 if 直接写卡片。
+            if (active !== null && active.sessionId === session.meta.id) {
+              ctx.transcript.emit(event, session.meta.id)
+            }
           },
           // 不阻断的运行时提醒（当前：请求 invariant 失配）。接成 dsc/notice，
           // 由 transcript 折成一条 system 条目；不打断请求，只让用户知道有这回事。
-          notice: (text) => ctx.emit('dsc/notice', text),
+          // 带上会话归属：后台会话的提醒不该写进用户正在看的那个视图（0.6.68）。
+          notice: (text) => ctx.emit('dsc/notice', text, undefined, session.filePath),
           // 压缩的取消信号跟着回合走（T41）：用户打断时压到一半的模型调用跟着停；
           // 压缩目标永远是这个 agent 自己的会话（0.6.48 起显式传入）。
           beforeRequest: (signal) => ctx.compact.check(signal, session),

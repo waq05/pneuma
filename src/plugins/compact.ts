@@ -202,7 +202,8 @@ export const compactPlugin: Plugin.Object = {
         const compacted = outcome === 'compacted'
         // 只有真压出结果才打压缩标记：noop 时这条提示照旧发（文案不动），
         // 但轨迹页不该凭空多出一段「压缩历史」
-        ctx.emit('dsc/notice', '上下文接近模型上限，已自动压缩历史', compacted ? 'compaction' : undefined)
+        // 带会话归属（0.6.68）：后台会话自动压缩时，这句提示不该冒到用户正在看的视图里。
+        ctx.emit('dsc/notice', '上下文接近模型上限，已自动压缩历史', compacted ? 'compaction' : undefined, session.filePath)
         if (compacted) ctx.emit('dsc/compacted')
       },
 
@@ -222,7 +223,7 @@ export const compactPlugin: Plugin.Object = {
         )
         if (outcome === 'compacted') {
           // 打上 'compaction' 类别：transcript 据此把这条通知标成压缩落点（轨迹页切区段）
-          ctx.emit('dsc/notice', '上下文超出模型窗口：已自动压缩历史并重试', 'compaction')
+          ctx.emit('dsc/notice', '上下文超出模型窗口：已自动压缩历史并重试', 'compaction', session.filePath)
           ctx.emit('dsc/compacted')
           return true
         }

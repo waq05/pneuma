@@ -330,7 +330,12 @@ export const fileReviewPlugin: Plugin.Object = {
         } catch (error) {
           // 守卫链上抛错按拒处理（core/tool-guards.ts:104-109）。预览是锦上添花的东西，
           // 没有资格因为自己算不动就把一次写操作拦下来，所以这里自己吞掉，只留一句提示。
-          ctx.emit('dsc/notice', `文件更改预览算不出来（不影响这次调用）：${error instanceof Error ? error.message : String(error)}`)
+          ctx.emit(
+            'dsc/notice',
+            `文件更改预览算不出来（不影响这次调用）：${error instanceof Error ? error.message : String(error)}`,
+            undefined,
+            input.sessionPath,
+          )
           return { action: 'defer' }
         }
         if (preview === null) return { action: 'defer' }
@@ -339,8 +344,9 @@ export const fileReviewPlugin: Plugin.Object = {
         emitted += 1
         if (rendered.omitted > 0) truncated += 1
         remember(preview.summary)
-        // 先落进对话流：审批卡（order 30）随即会弹在它下面，用户是先看见改动、再决定放不放行
-        ctx.emit('dsc/notice', rendered.text)
+        // 先落进对话流：审批卡（order 30）随即会弹在它下面，用户是先看见改动、再决定放不放行。
+        // 带会话归属：后台 agent 写文件时，diff 预览不该画到用户正在看的会话里（0.6.68）。
+        ctx.emit('dsc/notice', rendered.text, undefined, input.sessionPath)
         return { action: 'defer' }
       },
     }

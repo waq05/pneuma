@@ -254,7 +254,10 @@ export const hooksPlugin: Plugin.Object = {
         if (best === null || best.action === 'pass') return { action: 'defer' }
         if (best.action === 'note') {
           auditHook(best, input)
-          if (best.message !== '') ctx.emit('dsc/notice', `安全钩子留了一句：${best.message}`)
+          // 带会话归属：后台会话的工具调用触发的钩子留言，不该写进正在看的视图（0.6.68）
+          if (best.message !== '') {
+            ctx.emit('dsc/notice', `安全钩子留了一句：${best.message}`, undefined, input.sessionPath)
+          }
           return { action: 'defer' }
         }
         if (best.action === 'block') {

@@ -149,8 +149,9 @@ export const ptcPlugin: Plugin.Object = {
         const callId = `ptc-${Date.now().toString(36)}-${seq}`
         const started = Date.now()
         // 界面上的实时卡片：让用户看见脚本正在调什么（这一条不进会话日志，
-        // 原因见文件头第 2 条；日志靠结果正文里的调用清单留底）
-        ctx.transcript.emit({ type: 'tool/call', callId, name, args: JSON.stringify(args) })
+        // 原因见文件头第 2 条；日志靠结果正文里的调用清单留底）。
+        // 带归属：脚本可能是后台会话在跑，卡片只能落在它自己的视图里（切走了就不画）。
+        ctx.transcript.emit({ type: 'tool/call', callId, name, args: JSON.stringify(args) }, session.id)
         const verdict = await ctx.guards.gate({
           toolName: name,
           risk: entry.risk,
@@ -163,7 +164,10 @@ export const ptcPlugin: Plugin.Object = {
         })
         if (verdict.action === 'deny') {
           records.push({ name, args: argsSummary(args), ms: Date.now() - started, ok: false, note: verdict.reason })
-          ctx.transcript.emit({ type: 'tool/result', callId, text: `【被拒绝】${verdict.reason}`, error: 'rejected' })
+          ctx.transcript.emit(
+            { type: 'tool/result', callId, text: `【被拒绝】${verdict.reason}`, error: 'rejected' },
+            session.id,
+          )
           return `【被拒绝】${verdict.reason}`
         }
         try {
@@ -182,12 +186,12 @@ export const ptcPlugin: Plugin.Object = {
             ok: true,
             ...(images > 0 ? { note: `返回了 ${images} 张图，脚本里拿不到图（本轮已忽略）` } : {}),
           })
-          ctx.transcript.emit({ type: 'tool/result', callId, text })
+          ctx.transcript.emit({ type: 'tool/result', callId, text }, session.id)
           return text
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           records.push({ name, args: argsSummary(args), ms: Date.now() - started, ok: false, note: message })
-          ctx.transcript.emit({ type: 'tool/result', callId, text: message, error: 'tool-error' })
+          ctx.transcript.emit({ type: 'tool/result', callId, text: message, error: 'tool-error' }, session.id)
           return `【执行失败】${message}`
         }
       }
