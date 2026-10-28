@@ -629,6 +629,9 @@ function unwrapHeads(tokens: readonly string[]): string[] {
   return tokens.slice(index)
 }
 
+/** 「问它自己是谁」的开关：只打印版本或帮助，不动盘。 */
+const INFO_FLAGS = new Set(['--version', '-v', '-V', '--help', '-h', '/?', '--usage', 'version', 'help'])
+
 /**
  * 这一段是不是只读动作。
  *
@@ -643,6 +646,10 @@ function isReadOnlySegment(segment: CommandSegment): boolean {
   const tokens = unwrapHeads(segment.tokens)
   const head = tokens[0]?.toLowerCase().replace(/\.exe$/, '')
   if (head === undefined) return false
+  // 「问它自己是谁」类的开关（pnpm --version、node -v、eslint --help）：只打印版本或帮助，
+  // 不改盘、不联网、不执行脚本。这一条要排在只读名单与解释器判断**之前**——
+  // node / pnpm 本身都不在只读名单里，落到后面就变成「每次问你一次版本号」（0.7.1 实况）。
+  if (tokens.length >= 2 && tokens.slice(1).every((token) => INFO_FLAGS.has(token))) return true
   if (!READONLY_HEADS.has(head)) {
     // 大小写混排的命令名（Get-ChildItem）在 Set 里按原样存过，这里再比一次小写。
     const known = [...READONLY_HEADS].some((name) => name.toLowerCase() === head)

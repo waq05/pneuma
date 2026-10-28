@@ -51,8 +51,18 @@ export interface ApprovalRequestView {
   /** adapter 内部关联 id；answerApproval 不需要它（同一时刻至多一个挂起审批）。 */
   id: string
   toolName: string
-  /** 参数摘要（单行、已截断、已遮红）。 */
+  /**
+   * 参数摘要（单行、已截断、已遮红）。
+   *
+   * 命令类工具给的是**命令原文**，不是 JSON：`{"command":"…"}` 这层壳只增加噪音，
+   * 而卡上那一行本来就要给人读。
+   */
   argsSummary: string
+  /**
+   * 这次调用「要干什么」的中文一句话（0.7.1）：命令类解读命令，写类说清动哪个文件。
+   * 卡片把它画在工具名下面——不用读命令行，也知道点「允许」是放行什么。缺省 = 认不出来。
+   */
+  meaning?: string
   /** 为什么要问：命中的危险模式或规则，中文一句话。 */
   reason: string
   /** 风险档位：critical 表示只有它不会被任何自动档带走。 */
