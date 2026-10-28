@@ -32,6 +32,7 @@ import { mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import type { SettingsField, SettingsValues } from '../contract.js'
+import { errText } from '../core/err-text.js'
 import { DSC_HOME } from '../core/path-policy.js'
 import { bootNoticeOnce } from '../core/boot-notices.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
@@ -117,10 +118,6 @@ function clockOf(ts: number): string {
   const date = new Date(ts)
   const pad = (value: number): string => String(value).padStart(2, '0')
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
-}
-
-function errText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 export const sandboxPlugin: Plugin.Object = {

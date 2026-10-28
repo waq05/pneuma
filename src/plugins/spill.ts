@@ -13,6 +13,7 @@
  * @module dsc/plugins/spill
  */
 import type { Plugin } from '@deepseek-ai/cordis'
+import { errText } from '../core/err-text.js'
 import { formatBytes, listSpillFiles, readSpillConfig, SPILL_RANGES, spillText, sweepSpillDir } from '../core/spill.js'
 import type { SpillConfig } from '../core/spill.js'
 import { writePluginConfig } from '../core/plugin-registry.js'
@@ -31,10 +32,6 @@ const OBSERVER_ORDER = 50
 
 /** 不该溢出的工具：read 的结果就是模型点名要的那一段，再落盘只是让它去读另一个文件。 */
 const SKIP_TOOLS: ReadonlySet<string> = new Set(['read'])
-
-function errText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
 
 export const spillPlugin: Plugin.Object = {
   name: 'spill',

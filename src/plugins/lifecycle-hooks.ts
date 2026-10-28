@@ -36,6 +36,7 @@ import {
   subjectHits,
   wrapHookOutput,
 } from '../core/lifecycle-hooks.js'
+import { errText } from '../core/err-text.js'
 import type { LifecycleEvent, LifecycleHooksConfig, LifecyclePayload } from '../core/lifecycle-hooks.js'
 import { contentText } from '../core/llm.js'
 import type { ChatMessage } from '../core/llm.js'
@@ -56,10 +57,6 @@ type PayloadExtra = Omit<
   Partial<LifecyclePayload>,
   'session_id' | 'transcript_path' | 'cwd' | 'hook_event_name' | 'model' | 'permission_mode'
 >
-
-function errText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
 
 export const lifecycleHooksPlugin: Plugin.Object = {
   name: 'lifecycle-hooks',

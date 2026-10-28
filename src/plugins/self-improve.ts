@@ -44,6 +44,7 @@ import type { ToolEntry } from '../core/tools.js'
 import type { ChatMessage } from '../core/llm.js'
 import type { SettingsField, SettingsValues } from '../contract.js'
 import type { SettingsSectionSpec } from '../services/types.js'
+import { errText } from '../core/err-text.js'
 import { formatLedgerEntry, ledgerFile, ledgerSize, readLedger, rollbackEntry } from '../core/learnings/ledger.js'
 import {
   candidatesFile,
@@ -173,10 +174,6 @@ type WriteOrigin = 'model' | 'plugin' | 'subagent' | 'scheduled'
 
 /** 待落盘的插件自发起轮次。 */
 type PendingTurn = { mode: 'review' } | { mode: 'learn'; actor: 'model' | 'user' }
-
-function errText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
 
 /** 截断显示用（候选与提示词里都不放整篇原文）。 */
 function clip(text: string, limit: number): string {

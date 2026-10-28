@@ -24,6 +24,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { errText } from './err-text.js'
 import type { DesktopElement, DesktopFrame, DesktopRiskTier, DesktopTarget, DesktopWindowRef } from '../contract.js'
 
 /** 桌面动作（工具 action 枚举；名字尽量照 ZCode 语义）。 */
@@ -243,10 +244,6 @@ const BANNED_KEYS = ['win', 'cmd', 'super', 'meta']
 
 /** 观察/遍历上限（防止一棵病态树把上下文撑爆；超了在文本里明说被截断）。 */
 export const OBSERVE_MAX_ELEMENTS = 400
-
-function errText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
 
 /** PowerShell 单引号字符串转义。 */
 function psQuote(text: string): string {

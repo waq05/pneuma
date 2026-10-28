@@ -25,6 +25,7 @@ import type { Dirent } from 'node:fs'
 import { basename, dirname, join, normalize, relative, resolve, sep } from 'node:path'
 import { contentText, type ChatMessage } from '../llm.js'
 import { DSC_SKILLS_DIR, parseSkillMarkdown, scanSkillRoot, splitFrontmatter, writeSkillEnabled } from '../skills.js'
+import { errText } from '../err-text.js'
 import { appendLedger, copyToBackup, EMPTY_HASH, hashText, type LedgerEntry } from './ledger.js'
 
 /** 技能主文件名。 */
@@ -300,10 +301,6 @@ export function skillDirOf(name: string): string {
 /** 技能正文文件路径。 */
 export function skillFileOf(name: string): string {
   return join(skillDirOf(name), SKILL_FILE)
-}
-
-function errText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 /** 一次技能写入的结果。 */

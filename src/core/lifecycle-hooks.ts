@@ -31,6 +31,7 @@ import {
   judgeScriptRun,
   matcherHits,
 } from './hooks.js'
+import { errText } from './err-text.js'
 import type { HookJudgement, HookRun, HookScript } from './hooks.js'
 import { resolvePluginConfig } from './plugin-registry.js'
 import { scrubChildEnv, redact } from './secrets.js'
@@ -469,10 +470,6 @@ function shellOf(): { file: string; args: string[] } {
   return process.platform === 'win32'
     ? { file: 'cmd.exe', args: ['/d', '/s', '/c'] }
     : { file: '/bin/sh', args: ['-c'] }
-}
-
-function errText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 /**
