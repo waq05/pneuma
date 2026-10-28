@@ -1141,3 +1141,15 @@ const state = createSignal<ThreadViewState>({ view: 'chat', focusStep: null })
 - `build-plugins` 19 个插件全部通过 0.7.1 的 peer 门禁；
 - `ui-api-gate-test` / `ui-plugin-test` / `ui-package-plugin-test` / `ui-batches-test` 全 PASS；
 - `dup-scan` 0 组；`style-check` 全过；`check:core` 全量在后台跑（结果见下轮）。
+
+### 21.5 顺带做掉的一步：界面产物缺失时给提示页，不再白屏
+
+删旧渲染层的前置里有一条是「壳产物缺失时怎么办」。原先 `desktop/electron/main/index.ts`
+在既没有 dev server、也没有宿主界面地址时会 `loadFile(out/renderer/index.html)`；那份文件一旦
+随目录删掉，Electron 给的是一张纯白窗口——用户看不出是构建没跑还是装坏了。
+
+现在补了一道闸：文件在就照旧加载（删目录之前这段仍然有效），不在就加载一张内联提示页
+（data URL，不依赖构建产物），写清「界面还没构建出来」、跑哪两条命令、日志在 `~/.dsc/logs`。
+
+**还没做的**：`electron.vite.config.ts` 的 `renderer` 段与 `desktop/src/renderer` 目录本身。
+那两处要等另一条线把 `ApprovalCard.tsx`、`styles.css` 的改动提交掉——现在删等于把他们的活蒸发。

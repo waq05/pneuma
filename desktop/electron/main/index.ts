@@ -111,6 +111,40 @@ function uiProfile(): 'legacy' | 'shell' {
   return DEFAULT_UI_PROFILE
 }
 
+/**
+ * 界面产物缺失时给的那一页（data URL，不依赖任何构建产物）。
+ *
+ * 为什么要有它：`loadFile` 指向一个不存在的文件时，Electron 给的是一张纯白窗口——
+ * 用户看不出是「构建没跑」还是「装坏了」，也找不到下一步。这一页只说三件事：
+ * 缺的是什么、怎么补、去哪儿看日志。
+ */
+function missingUiHtml(reason: string): string {
+  const html = [
+    '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">',
+    '<title>Pneuma · 界面未就绪</title><style>',
+    ':root{color-scheme:dark}',
+    'body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;',
+    'background:#17181a;color:#e6e6e6;font:14px/1.7 "Segoe UI","Microsoft YaHei",system-ui,sans-serif}',
+    '.card{max-width:560px;padding:32px 36px;border:1px solid #2c2e33;border-radius:12px;background:#1e2024}',
+    'h1{margin:0 0 12px;font-size:17px;font-weight:600}',
+    'p{margin:0 0 10px;color:#a8adb6}',
+    'code{background:#2a2d33;padding:2px 6px;border-radius:4px;color:#d9dde4;font-size:13px}',
+    'ol{margin:12px 0 0;padding-left:20px;color:#a8adb6}',
+    'li{margin:4px 0}',
+    '</style></head><body><div class="card">',
+    '<h1>界面还没构建出来</h1>',
+    '<p>' + reason + '</p>',
+    '<ol>',
+    '<li>在仓库根跑 <code>pnpm build</code></li>',
+    '<li>再跑 <code>pnpm -C ui-shell build</code>（界面壳产物落到 <code>lib/ui/assets</code>）</li>',
+    '<li>然后重开这个窗口</li>',
+    '</ol>',
+    '<p style="margin-top:14px">宿主日志在 <code>~/.dsc/logs</code>；装出来打不开时先看那里。</p>',
+    '</div></body></html>',
+  ].join('')
+  return 'data:text/html;charset=utf-8,' + encodeURIComponent(html)
+}
+
 /** 宿主该伺服的界面产物目录（经 `DSC_UI_ASSETS` 交给宿主进程）。 */
 function uiAssetsDir(): string {
   if (uiProfile() === 'shell') {
@@ -1204,9 +1238,15 @@ function createWindow(): void {
   } else {
     // 先用本机文件把窗口开起来（渲染层自己会显示「连接中」），宿主报来界面地址后再切过去。
     // 那份文件与宿主伺服的是同一份构建产物（都出自 desktop/out/renderer）。
-    void mainWindow.loadFile(join(__dirname, '../renderer/index.html'), {
-      search: query === '' ? undefined : query,
-    })
+    const legacyIndex = join(__dirname, '../renderer/index.html')
+    if (existsSync(legacyIndex)) {
+      void mainWindow.loadFile(legacyIndex, {
+        search: query === '' ? undefined : query,
+      })
+    } else {
+      // 连回落页都没有：别留给用户一张白屏，直接说清缺什么、怎么补。
+      void mainWindow.loadURL(missingUiHtml('没找到界面产物（' + legacyIndex + '），也没连上宿主的界面服务。'))
+    }
   }
 
   // 点 X：开关开着就缩到托盘（宿主继续跑），否则正常关窗走退出流程
