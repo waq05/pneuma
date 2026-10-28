@@ -3,6 +3,11 @@
 #   - 手动 workflow_dispatch → 只做打包演练，安装器留在 workflow artifacts，不外发。
 # 前置 secret：NPM_TOKEN（npm publish 用；未配置时 npm 作业如实跳过并警告，不瞎报成功）。
 # 版本号约定：根与 desktop 两处 package.json 必须同版本，tag 必须等于该版本（verify 作业把关）。
+#
+# ui-shell 的 version **不在这里对账**：它是插件面对的 @dsc/ui 契约版本（构建期写成清单的
+# apiVersion），只在插件导出面增减时动次版本号。把它绑到产品号上，19 个内置插件的
+# "^2.0.0" peer 区间会当场合不上（见 docs/development.md 的「版本号一览」）。
+
 name: Release
 
 on:

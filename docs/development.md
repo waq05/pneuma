@@ -376,9 +376,21 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 | `KERNEL_API_VERSION` | `src/core/plugin-registry.ts:79` | 6 | 插件能用的扩展点有增减 |
 | `HOST_PROTOCOL_VERSION` | `src/core/dock-browser.ts:20`（`src/plugins/host-stdio.ts` 只做再导出） | 3 | 协议消息种类或白名单语义变了 |
 | `NATIVE_BRIDGE_VERSION` | `src/core/native-bridge.ts:70` | 3 | **加操作不涨**；改某个操作的实参或语义才涨 |
+| 插件契约版本（`apiVersion`） | `ui-shell/package.json` 的 `version` → `build-plugins.mjs` 写进清单 | 2.0.0 | 插件能用的导出**增减**时动次版本号 |
 
 两个版本都是「加载时对不上就报错」，不做静默兼容。插件可以声明 `apiVersion`，内核只拒绝
 **高于**自己的版本。
+
+第四个号（`apiVersion`）**有意不跟产品版本走**。它写的是「插件面对的 `@dsc/ui` 契约」，
+不是「这一版软件」。两条理由：
+
+1. 19 个内置插件的 `package.json` 都声明 `"@dsc/ui": "^2.0.0"`，构建期
+   （`ui-shell/build-plugins.mjs` 读 `shellVersion`）逐个校验 peer 区间；这个号一跟产品号
+   变成 0.7.1，19 个区间当场合不上，构建直接失败；
+2. 产品号每次补丁都动，契约没动也跟着动，等于让每个补丁都背上「插件可能不兼容」的假信号。
+
+所以发版对账只管 tag / 根 / `desktop` 三方（`release.yml` 的 verify 作业），`ui-shell` 不参与；
+它涨次版本号只有一种情况：插件的导出面变了。
 
 **加一个原生操作 / 事件**（`NATIVE_OPS` / `NATIVE_EVENTS`）要走四处，漏一处编译期就拦：
 
