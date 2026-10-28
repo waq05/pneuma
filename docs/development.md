@@ -59,7 +59,8 @@
 | `src/core/dsh-compat/` | 9 个文件 ≈1900 行 | dsh 插件兼容层的模块解析钩子与工具形状适配 |
 | `src/plugins/` | 58 个文件 ≈24100 行 | 每个服务一个 cordis 插件 + 十八个官方可开关插件；`remote/` 拆成 `types`/`http`/`routes`（HTTP 路由）+ `remote.ts`（传输与装配） |
 | `src/host/kernel.ts` | 487 行 | 内核装配顺序与三档插件元数据 |
-| `src/contract.ts` | 2093 行 | UI ⇄ 运行时的中性契约（`DscRuntime` + 视图类型） |
+| `src/contract.ts` | 26 行 | **只做转出**：`export * from './contract/*.js'`，导出面与拆分前一个不差 |
+| `src/contract/` | 10 个文件 ≈2100 行 | UI ⇄ 运行时的中性契约按域分家：`mode`（思考档位 / 权限 / 协作）、`task`（待办、计划、后台、定时、目标、提问）、`transcript`（工具卡、转录、差异）、`usage`（token 与用量）、`runtime`（状态行、预设面、git 读数、快照面）、`approval`（审批卡）、`session`（会话、归档、偏好）、`plugin`（插件、信任、队友、模型选择、技能、市场）、`settings`（设置、供应商、连接测试）、`snapshot`（运行时快照、`DscRuntime`、电脑操作）。每份 75–438 行 |
 | `src/services/types.ts` | 1432 行 | 服务面声明（`ctx.llm`、`ctx.mcp` 这些是什么类型） |
 | `src/adapter/transcript.ts` | 702 行 | 内核事件 → UI 快照的折叠投影 |
 | `src/app/` | 39 个文件 ≈7900 行 | ink 终端界面（与桌面端共用契约）；显示宽度（`display-width.ts`）是终端侧唯一一份 |
@@ -713,16 +714,16 @@ P2-2（四个 pnpm 项目四把锁，要不要收 workspace）、P3-1（91 条�
 
 | 名称 | 取值 | 位置 |
 | --- | --- | --- |
-| 权限模式 `ApprovalPolicy` | `readonly`（只读，写和执行一律拒）/ `auto-edit`（工作区内写放行，执行命令仍要审批）/ `full-access`（全部自动放行，灾难地板仍然拒）。旧的 `ai-review` 已由偏好迁移展开成「`full-access` + 审阅者 `auto-review`」（见下） | `src/contract.ts:43`，判读在 `src/plugins/approval.ts`（沙箱边界第 4 层 → 权限模式 / 审阅者第 5 层），档位文案在 `approval.ts` |
-| 审阅者 `ApprovalReviewer` | `user`（本人点卡，默认）/ `auto-review`（先给模型判官，判不出来再落人工卡）——**与权限模式正交**的一根轴，决定「要问的事先给谁看」；复核排在自动放行**之前** | `src/contract.ts:56`，复核在 `src/plugins/approval.ts` 第 5 层内 |
+| 权限模式 `ApprovalPolicy` | `readonly`（只读，写和执行一律拒）/ `auto-edit`（工作区内写放行，执行命令仍要审批）/ `full-access`（全部自动放行，灾难地板仍然拒）。旧的 `ai-review` 已由偏好迁移展开成「`full-access` + 审阅者 `auto-review`」（见下） | `src/contract/mode.ts:31`，判读在 `src/plugins/approval.ts`（沙箱边界第 4 层 → 权限模式 / 审阅者第 5 层），档位文案在 `approval.ts` |
+| 审阅者 `ApprovalReviewer` | `user`（本人点卡，默认）/ `auto-review`（先给模型判官，判不出来再落人工卡）——**与权限模式正交**的一根轴，决定「要问的事先给谁看」；复核排在自动放行**之前** | `src/contract/mode.ts:45`，复核在 `src/plugins/approval.ts` 第 5 层内 |
 | 沙箱后端不可用姿态 `SandboxOnUnavailable` | `degrade`（默认，降级为策略围栏继续）/ `fail-closed`（写与执行一律拒，读照常）；只对 `docker` / `windows-token` 生效 | `src/core/sandbox/policy.ts:58` |
 | 思考强度 `EffortLevel` | `default` / `off` / `low` / `high` / `max` | `src/contract.ts:12` |
-| 思考档位 `ThinkingLevel` | `off` / `low` / `high` / `max`（每个模型可只声明其中几档，`default` 不算模型能力） | `src/contract.ts:15` |
-| 档位字段 `ThinkingParam` | `thinking`（发 `thinking:{type}`，只有开关）/ `reasoning-effort`（发 `reasoning_effort`，线上值见 `EffortMap`）/ `none`（不发思考字段）。缺省 `thinking` | `src/contract.ts:23`，映射在 `src/core/model-caps.ts:201` |
-| 输入类型 `Modality` | `text`（恒含）/ `image`（贴图、computer-use 截图）/ `video`（只作声明，目前没有发视频的通路） | `src/contract.ts:26` |
-| 会话排序 `SessionSortKey` | `manual`（工作区按拖动顺序，没拖过就活动区置顶）/ `recent`（按最近写入）/ `created`（按创建时间） | `src/contract.ts:162` |
-| 列表分组 `SessionGroupKey` | `workspace`（按工作区分组）/ `tree`（嵌套目录挂到最近的祖先工作区下）/ `flat`（不分组的单列表） | `src/contract.ts:165` |
-| 归档显隐 `ArchivedFilter` | `hide`（默认，只看活动区）/ `show`（两区并成一份列表）/ `only`（只看归档区） | `src/contract.ts:168` |
+| 思考档位 `ThinkingLevel` | `off` / `low` / `high` / `max`（每个模型可只声明其中几档，`default` 不算模型能力） | `src/contract/mode.ts:14` |
+| 档位字段 `ThinkingParam` | `thinking`（发 `thinking:{type}`，只有开关）/ `reasoning-effort`（发 `reasoning_effort`，线上值见 `EffortMap`）/ `none`（不发思考字段）。缺省 `thinking` | `src/contract/mode.ts:17`，映射在 `src/core/model-caps.ts:201` |
+| 输入类型 `Modality` | `text`（恒含）/ `image`（贴图、computer-use 截图）/ `video`（只作声明，目前没有发视频的通路） | `src/contract/mode.ts:25` |
+| 会话排序 `SessionSortKey` | `manual`（工作区按拖动顺序，没拖过就活动区置顶）/ `recent`（按最近写入）/ `created`（按创建时间） | `src/contract/task.ts:89` |
+| 列表分组 `SessionGroupKey` | `workspace`（按工作区分组）/ `tree`（嵌套目录挂到最近的祖先工作区下）/ `flat`（不分组的单列表） | `src/contract/task.ts:89` |
+| 归档显隐 `ArchivedFilter` | `hide`（默认，只看活动区）/ `show`（两区并成一份列表）/ `only`（只看归档区） | `src/contract/task.ts:89` |
 | 队友审批 `TeammateApproval` | `forbid`（不允许）/ `foreground`（仅前台子允许）/ `ask`（允许并标注），从严到松按 `forbid < foreground < ask` 比较 | `src/plugins/subagent.ts:75` |
 
 **默认值与硬编码数值**
@@ -902,7 +903,7 @@ P2-2（四个 pnpm 项目四把锁，要不要收 workspace）、P3-1（91 条�
 
 - `delta` 只进「直播尾」，不进定稿表；`message` 才是定稿信号。定稿条目 id 从 1 递增，
   直播尾条目用**负 id**（`-(位置+1)`）避免撞号（`:51-59`）。
-- 工具卡状态就四个：`running` / `done` / `failed` / `rejected`（`src/contract.ts:25`），
+- 工具卡状态就四个：`running` / `done` / `failed` / `rejected`（`src/contract/mode.ts:17`），
   结果文字超 1500 字符截断（`:27`）。
 - 状态灯优先级：有挂起审批 → `awaiting-approval`，否则在回合内且working → `working`，
   回合内不 working → `thinking`，其余 `idle`（`src/plugins/transcript.ts:74-81`）。

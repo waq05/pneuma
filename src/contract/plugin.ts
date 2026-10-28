@@ -238,5 +238,3 @@ export interface MarketBrowseResult {
   error?: string
 }
 
-// ── 设置界面 ──────────────────────────────────────────────────────────────────
-

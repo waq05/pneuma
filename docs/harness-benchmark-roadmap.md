@@ -425,7 +425,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。自检脚本
 | T37 | **MCP server instructions 被丢弃**：initialize 响应整个不接（只 await 不取返回值），server 用 instructions 传达的工具用法预期模型永远看不到 | `mcp.ts:692-696` | dsh 读 instructions 并注册进 system prompt（`mcp-client/connection.ts:305-321` + `server-context.ts:16-37`，带字节上限） |
 | T38 | **PTC 脚本可并发写调用**：`Promise.all` 两个写调用并发跑，无互斥（总次数上限 200 是唯一的闸）——守卫链重入本身没问题（每调用走 `ctx.guards.gate`），缺的是 dsh 的「写/执行串行」屏障 | `plugins/ptc.ts:102-135` | dsh `core/tools/README.md:194` "mutating calls run alone" + `ptc.ts:419-441` 提交游标 + barrier |
 | T39 | **会话级模型记忆缺失**：/model 切换只改进程级内存，恢复会话回落 config 默认模型 | `plugins/llm.ts:22-25`；SessionStateMap 无 model 条目（`session.ts:103-130`） | dsh 会话事件流持久投影（`model-selection-projection.ts:35-56`）：日志里记录实际发过请求的模型，恢复优先取它 |
-| T40 | **计划拒绝反馈回路断裂**：`answerPlan` 只收决策枚举，拒绝后模型收到「把用户的反馈吸收进方案」但反馈无通道传入，只能盲猜 | `contract.ts:79,1087`；`plan.ts:109` 固定文案 | dsh 计划评审带自定义文本输入，反馈原文直接进工具结果（`plan-mode/index.ts:307-348`） |
+| T40 | **计划拒绝反馈回路断裂**：`answerPlan` 只收决策枚举，拒绝后模型收到「把用户的反馈吸收进方案」但反馈无通道传入，只能盲猜 | `contract/mode.ts:69,1087`；`plan.ts:109` 固定文案 | dsh 计划评审带自定义文本输入，反馈原文直接进工具结果（`plan-mode/index.ts:307-348`） |
 | T41 | **压缩不可取消、/compact 无运行中守卫**：三条路径都传一次性 AbortController，用户 interrupt 停不掉压缩的 LLM 调用；回合运行中 /compact 会让摘要落库与进行中工具落库交错 | `plugins/compact.ts:126,146,163` | dsh `compactNow(invocation.agent, invocation.signal, …)` + 取消回执（`command-compact/index.ts:67,75`） |
 | T42 | **轮尾「文件已更改」卡漏 bash/脚本改动**：只认 write/edit 第一方归因，bash/sed/构建脚本改的文件不进卡，用户看到「无更改」而工作区已变 | `loop.ts:374-378`；`session.ts:439-464` | dsh turn 首尾 git 快照 diff 兜底（私有对象库 + scratch index，含未跟踪与重命名检测，maxFiles=500），文件工具捕获只补 git 盲区（`workspace-changes/index.ts:143-165`） |
 

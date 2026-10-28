@@ -8,6 +8,8 @@
  */
 import type { EffortMap, Modality, ThinkingLevel, ThinkingParam } from './mode.js'
 
+// ── 设置界面 ──────────────────────────────────────────────────────────────────
+
 /** 设置项的值类型（要过 IPC，只能是这三类）。 */
 export type SettingsValue = string | number | boolean
 

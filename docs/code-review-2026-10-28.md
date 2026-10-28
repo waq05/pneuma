@@ -1072,3 +1072,72 @@ const state = createSignal<ThreadViewState>({ view: 'chat', focusStep: null })
    硬把 Map 塞进信号，每次流式增量都要整张复制一遍，换不来任何语义收益。
 3. **多字段写成一个对象、一次 `set`**。分两次写，订阅方会先渲染半套新值——
    `thread-view` 的「切到轨迹并聚焦某一步」就踩过：滚动位置会闪一下。
+
+## 二十一、第十一批（2026-10-28）：契约按域拆成十份，ui-shell 版本对齐产品号
+
+### 21.1 契约为什么值得拆，怎么拆的
+
+`src/contract.ts` 原本 2,093 行、135 个文件引用它。改「设置」里的一个字段，要在两千行里
+找位置；四个人同时改就是四次冲突。这是 P1-3 里风险最小的一块（纯类型，没逻辑），
+也是唯一不会改变任何运行行为的一块。
+
+拆法：按声明归域，**逐字搬移**，不重排、不重命名、不改注释。十个域：
+
+| 文件 | 行数 | 装什么 |
+| --- | --- | --- |
+| `contract/mode.ts` | 80 | 思考档位、权限模式、审阅者、沙箱模式、协作模式 |
+| `contract/task.ts` | 207 | 待办、计划、后台作业、定时任务、目标、提问卡 |
+| `contract/transcript.ts` | 289 | 工具卡、转录条目、压缩标记、子代理卡、差异 |
+| `contract/usage.ts` | 140 | token 用量、按日 / 按模型的用量统计、旁问 |
+| `contract/runtime.ts` | 259 | 状态行、预设面、git 读数、运行时快照面 |
+| `contract/approval.ts` | 86 | 审批卡（差异、升权、请求、应答） |
+| `contract/session.ts` | 210 | 会话、归档、主题与偏好（含 `normalizeStatusBarPrefs`） |
+| `contract/plugin.ts` | 242 | 插件行、UI 信任、队友、模型选择、`/` 命令、技能、市场 |
+| `contract/settings.ts` | 233 | 设置项、配对 / 链接分享、供应商、连接测试 |
+| `contract/snapshot.ts` | 438 | 运行时快照、`DscRuntime`（275 行）、电脑操作 |
+
+`src/contract.ts` 只剩 26 行：文件头（边界规则）+ 十行 `export *`。所以
+「`src/adapter/**` 是唯一允许 import `@deepseek-ai/*` 的层」「UI 层只依赖中立类型」这两条
+边界规则仍然写在入口上，不会被拆散。
+
+**跨域引用怎么处理**：搬完之后编译，把 `Cannot find name` 一条条按「这个名字在哪个域声明」
+补 `import type`，循环引用交给类型擦除（全是 `import type`，运行期没有边）。十份文件里
+最多的那份（`snapshot`）导入了另外 7 个域的类型。
+
+**文档里的行号引用也跟着搬**：`docs/` 里 10 处 `src/contract.ts:NNN` 已改指到新文件的
+声明行（历史记录 `development-log.md` 不动，那是当时的事实）。
+
+### 21.2 一处必须说清的操作：别人手上的未提交改动
+
+拆分时工作区里 `src/contract.ts` 还压着另一条线的未提交改动——`ApprovalRequestView` 加
+`meaning?: string`（审批卡上那句「这次调用要干什么」）。处理顺序是：
+
+1. 用 **HEAD 的版本**做拆分并提交，所以这次提交是纯搬移，不含任何人的半成品；
+2. 把那 12 行改动按原样落回 `src/contract/approval.ts`，**保持未提交**——它仍然是那条线的
+   在途改动，等着他们自己提交。
+
+换句话说：他们的改动没有丢，也没有被算进这次提交，只是换了个文件路径。
+
+### 21.3 ui-shell 的版本对齐产品号（B 案）
+
+按拍板把 `ui-shell/package.json` 从 2.0.0 降到 0.7.1，与根、`desktop` 同版；
+`release.yml` 的 verify 作业改成 tag / 根 / `desktop` / `ui-shell` 四方对账。
+
+连带要改的四处（不一起改就构建失败）：
+
+- 19 个内置插件的 `"@dsc/ui"` 区间：`^2.0.0` → `^0.7.1`；
+- 五个逻辑包的包身份（`ui-shell/src/ui-{primitives,slots,dockkit,layout,renderer}/package.json`）；
+- `src/ui/package.json`（`@dsc/ui-core` 的身份，门禁断言它与壳版本同源）；
+- 示例插件 `examples/plugin-two-halves`。
+
+**代价写进文档了**：`^0.7.1` 只认到 0.8.0 以下，所以每次改版本号都要把 19 个区间一起改。
+漏改不静默——`build-plugins` 会点名哪个插件失配，`release.yml` 在打包前先跑一次它。
+探针侧也顺手改成读壳版本（`ui-package-plugin-test.mjs` 的夹具），免得每逢发版红一次。
+
+### 21.4 验证
+
+- 根 / `ui-shell` / `desktop` 三处 `tsc` 全 0（`desktop` 那两套 tsconfig 都跑）；
+- `pnpm build` 产出 `lib/contract/*.js` + `lib/contract.js`，`@dsc/runtime/contract.js` 仍能解析；
+- `build-plugins` 19 个插件全部通过 0.7.1 的 peer 门禁；
+- `ui-api-gate-test` / `ui-plugin-test` / `ui-package-plugin-test` / `ui-batches-test` 全 PASS；
+- `dup-scan` 0 组；`style-check` 全过；`check:core` 全量在后台跑（结果见下轮）。
