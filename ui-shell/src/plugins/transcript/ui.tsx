@@ -580,17 +580,6 @@ function readFoldValue(value: unknown): ProcessFold {
   return value === 'compact' || value === 'detailed' || value === 'verbose' ? value : 'standard'
 }
 
-/** 会话清单（首屏「接着上次」用；快照里没有时给空表）。 */
-/** 相对时间（分钟 / 小时 / 天）：首屏那一行只需要「多久以前」，精确到秒没有意义。 */
-function elapsedLabel(at: number): string {
-  const minutes = Math.max(Math.round((Date.now() - at) / 60_000), 0)
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${String(minutes)} 分钟前`
-  const hours = Math.round(minutes / 60)
-  if (hours < 24) return `${String(hours)} 小时前`
-  return `${String(Math.round(hours / 24))} 天前`
-}
-
 /** 当前会话 uuid（评价存档键用；旧界面也是拿它拼键）。 */
 function readSessionId(snapshot: HostSnapshot | null): string | null {
   const status = snapshot?.['status']
