@@ -491,6 +491,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。自检脚本
 | T54 SSH 远程执行（§7.3 升出） | dsh `packages/ssh/*` 对标：远程宿主跑命令与会话；手机遥控场景的延伸 | 安全面（远程执行授权模型）先于实现 |
 | ~~T55 后台会话（dsh 常驻 agent）~~（✅ 已落地 2026-10-04，0.6.48） | dsh AgentRegistry + UI 订阅语义对齐：每会话一个常驻 agent，切换只换「当前查看」，运行中回合后台跑完；侧栏状态点 + 「已完成未读」徽标（dsh completionUnread 对位）；闲而未看的 agent 自动收摊（dsh 无淘汰，dsc 以资源计收摊——个人版窗口内常驻） | ~~设计轮~~ 已并入 0.6.48 直接落地：事故驱动的正确性修复（切会话 abort 中止收尾的工具结果误写进新会话日志，探针实锤）与功能语义一并解决 |
 | ~~V1 实机走查欠账~~（已回销 2026-10-03，0.6.38） | ✅ 不等 deepseek 限流：本地假 OpenAI 兼容端点（按请求形状应答工具调用/收尾/标题）驱动真 UI 全链走查——状态点 working→awaiting-approval→消失、T16 自动标题上侧栏、/export 提示与落盘全部实见（desktop/shots/v1-walkthrough.ps1，gitignored）。走查揪出并修掉两个真 bug：新会话提交后侧栏列表不刷新（App.tsx）、autoTitle 写入后列表缓存不刷（session-title 插件） | 权限档要点：readonly 档不弹卡直接拒、auto-edit 档工作区外写也要带 sandbox_permissions 升权请求才转审批卡（沙箱先于审批拦） |
+| ~~T56 用户附件：图片 / 视频 / 文件~~（✅ 已落地 2026-10-28） | 对标 dsh `attachment-local`：内容寻址仓库 `<DSC_HOME>/attachments/v1`、单图 20MiB、消息只记引用、请求期读成 data URL；视频按 ZCode 的「原件 + 关键帧」投影，界面气泡仍是视频卡。底部三段同时对齐 dsh 的 composer dock（位置、显隐、算法） | 手机远控页的两条附件路由未接（下一步）；图片无服务端像素校验（规范化在浏览器 canvas 里做）；T25 的 `read` 工具看图片仍独立未做 |
 
 §7.3 中被升出的三行（checkpoint/rewind、对外 SDK、SSH 远程执行）保留原文并在行内标注「已升出（T52/T53/T54）」；其余 P3 行维持「登记免遗忘」不变。
 

@@ -49,23 +49,23 @@
 
 ## 2. 仓库地图
 
-规模现量于 2026-10-16（0.7.0 时点），只数源文件行数，当量尺用。
+规模现量于 2026-10-28（0.7.1 时点），只数源文件行数，当量尺用。
 
 | 路径 | 规模 | 职责 |
 | --- | --- | --- |
-| `src/core/` | 131 个文件 ≈42400 行 | 纯能力：模型客户端与协议适配器、会话（含写租约）、循环、审批、压缩、溢出落盘、会话检索、MCP 客户端、工具、技能、设置、任务板；token 粗估（`token-estimate.ts`）与错误文案（`err-text.ts`）是全仓库唯一一份 |
-| `src/core/tools/` | 5 个文件 ≈1600 行 | 内置六件套 `bash`/`read`/`write`/`edit`/`glob`/`grep`（预算由 tools-default 配置下发）+ 沙箱的一次性升权参数与命令执行器缝 |
+| `src/core/` | 144 个文件 ≈46800 行 | 纯能力：模型客户端与协议适配器、会话（含写租约）、循环、审批、压缩、溢出落盘、会话检索、MCP 客户端、工具、技能、设置、任务板；token 粗估（`token-estimate.ts`）与错误文案（`err-text.ts`）是全仓库唯一一份 |
+| `src/core/tools/` | 6 个文件 ≈1700 行 | 内置六件套 `bash`/`read`/`write`/`edit`/`glob`/`grep`（预算由 tools-default 配置下发）+ 沙箱的一次性升权参数与命令执行器缝 |
 | `src/core/lsp/` | 7 个文件 ≈2400 行 | LSP 代码智能：`client`（连接/实例）、`manager`（池化调度）、`normalize`（应答归并）、`line-shift`（诊断行号对齐）、`framing`/`servers`/`uri` |
-| `src/core/dsh-compat/` | 2 个文件 ≈210 行 | dsh 插件兼容层的模块解析钩子与工具形状适配 |
-| `src/plugins/` | 55 个文件 ≈23100 行 | 每个服务一个 cordis 插件 + 十八个官方可开关插件；`remote/` 拆成 `types`/`http`/`routes`（HTTP 路由）+ `remote.ts`（传输与装配） |
-| `src/host/kernel.ts` | 481 行 | 内核装配顺序与三档插件元数据 |
-| `src/contract.ts` | 1962 行 | UI ⇄ 运行时的中性契约（`DscRuntime` + 视图类型） |
-| `src/services/types.ts` | 1381 行 | 服务面声明（`ctx.llm`、`ctx.mcp` 这些是什么类型） |
-| `src/adapter/transcript.ts` | 668 行 | 内核事件 → UI 快照的折叠投影 |
-| `src/app/` | 29 个文件 ≈5900 行 | ink 终端界面（与桌面端共用契约） |
-| `desktop/electron/` | 7 个文件 ≈2643 行 | main + preload：窗口、托盘、运行时子进程、终端与浏览器 dock |
-| `desktop/src/renderer/` | 90 个文件 ≈21000 行 | 桌面界面：会话、侧栏、插件、技能、设置、队友；`chat/`（markdown 渲染 / 评价存档 / 折叠预算 / 座位计划 / 视口 hook）与 `sidebar-groups.ts` 从两个巨型组件里拆出来 |
-| `ui-shell/` | 103 个文件 ≈35000 行 | 桌面与手机共用的界面壳（插件化：布局 + 基元 + 官方界面插件；产物落 `lib/ui/assets`）。桌面端默认加载壳产物，`desktop/src/renderer/` 是旧渲染层，可回退 |
+| `src/core/dsh-compat/` | 9 个文件 ≈1900 行 | dsh 插件兼容层的模块解析钩子与工具形状适配 |
+| `src/plugins/` | 58 个文件 ≈24100 行 | 每个服务一个 cordis 插件 + 十八个官方可开关插件；`remote/` 拆成 `types`/`http`/`routes`（HTTP 路由）+ `remote.ts`（传输与装配） |
+| `src/host/kernel.ts` | 487 行 | 内核装配顺序与三档插件元数据 |
+| `src/contract.ts` | 2093 行 | UI ⇄ 运行时的中性契约（`DscRuntime` + 视图类型） |
+| `src/services/types.ts` | 1432 行 | 服务面声明（`ctx.llm`、`ctx.mcp` 这些是什么类型） |
+| `src/adapter/transcript.ts` | 702 行 | 内核事件 → UI 快照的折叠投影 |
+| `src/app/` | 37 个文件 ≈7900 行 | ink 终端界面（与桌面端共用契约） |
+| `desktop/electron/` | 7 个文件 ≈2670 行 | main + preload：窗口、托盘、运行时子进程、终端与浏览器 dock |
+| `desktop/src/renderer/` | 72 个文件 ≈21000 行 | 桌面界面：会话、侧栏、插件、技能、设置、队友；`chat/`（markdown 渲染 / 评价存档 / 折叠预算 / 座位计划 / 视口 hook）与 `sidebar-groups.ts` 从两个巨型组件里拆出来 |
+| `ui-shell/` | 118 个文件 ≈39400 行 | 桌面与手机共用的界面壳（插件化：布局 + 基元 + 官方界面插件；产物落 `lib/ui/assets`）。桌面端默认加载壳产物，`desktop/src/renderer/` 是旧渲染层，可回退 |
 | `shots/` | 脚本 + 实拍产物 | 自检与实拍（全部跑在临时 HOME 上）。**这个目录被 `.gitignore` 忽略**：它只在本机存在，不随版本库分发 |
 | `examples/plugins/` | 5 个示例 | 手写插件的参照（上手路径见 [writing-plugins.md](writing-plugins.md)） |
 
@@ -410,6 +410,7 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 | `desktop.json` | 桌面主进程（`desktop/electron/main/dsc-core.ts:42-60`） | 最近工作目录（最多记 12 个）、托盘提示是否弹过 |
 | `.last-session` | 会话插件 | `--resume` 无参时指向上次的会话文件 |
 | `sessions/<cwd 压缩名>/<uuid>.jsonl` | 会话插件 | 会话历史，append-only，恢复靠重放 |
+| `attachments/v1/objects/<sha 前两位>/<sha256>` | 附件仓库（`src/core/attachments.ts`） | 用户贴进来的图片/视频/文件，内容寻址去重；`v1/tmp/` 是写入暂存区（原子改名发布）。会话 jsonl 只记引用，请求组装时才把图片读成 data URL |
 | `sessions/meta.json` | 会话插件 | sidecar：归档 / 置顶 / 改名，**不进 jsonl** |
 | `sessions/.archived/<工作区名>/` | 会话库（归档） | 归档区（把文件挪进来，不是在 jsonl 里打标记） |
 | `.trash/<工作区名>/` | 会话库（「永久删除」） | 其实是回收站：按 mtime 超过 30 天才扫掉（`src/core/session.ts:564`），删错了还能手工捞回来 |
@@ -460,13 +461,31 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 
 ```
 meta     { cwd, createdAt, ... }        第一行，重写时保留
-user     { text }
+user     { text, images?, files? }       images = 图片引用；files = 视频/文件元数据（视频带 frames）
 assistant{ text, reasoning, toolCalls? }
 tool     { callId, name, text, images?, error? }   error = rejected | tool-error
 summary  { text, keep? }                压缩产生的摘要；keep = 摘要之外保留了尾部多少条
 state    { id, payload }                功能点状态（模式/清单/计划/目标/记忆/学习/system-prompt…）
 note     { id, text }                   请求注入备忘（投影塞进请求体的日志外内容在此留底）
 ```
+
+**附件链路**（2026-10-28 起，对齐 dsh 的 `attachment-local`）：
+
+1. 输入区把文件 `POST /api/attachments?name=…`（裸字节，图片 20MiB / 其它 200MiB 上限）；
+2. 宿主 `src/core/attachments.ts` 按魔数认类型、算 sha256、落到
+   `<DSC_HOME>/attachments/v1/objects/<前两位>/<sha>`（同字节去重），回一份引用；
+3. `submit(text, images, files)` 只带引用：`images` 是图片（含视频抽帧挂在 `files[].frames`），
+   `files` 是视频/通用文件。宿主 `sanitizeFileRefs` 会丢掉页面编的 `path`，按 sha 重算；
+4. `Session.appendUser` 把图片引用读成 data URL 塞进请求，视频/文件拼一行「路径 + 大小 +
+   摘要前缀」的句柄；**jsonl 只写引用**，重放时再读回来；
+5. 界面用同源 `GET /api/attachments/<sha>` 显示（支持 Range，视频能拖进度条）；
+6. 帧只进请求、不进 `images` 列：气泡里仍是一张视频卡（dsh 把视频当独立 modality，
+   这里没有 provider 的 video 块，就用「原件 + 关键帧」达到同一件事）。
+
+**改附件之前先看**：`scripts/attachments-test.mjs` 覆盖了去重、上限、魔数、引用读回、
+Range、会话投影与路径洗白；界面侧的上传/规范化/抽帧在
+`ui-shell/src/plugins/composer/attachments.ts`，类型定义在 `draft.ts`（那份必须零 import，
+`ui-composer-draft-test.mjs` 会红）。
 
 **「模型可见 ⟺ 已记录」**（对齐 dsh 的 Model-visible ⟺ logged）：发给模型的每一份
 都要求能从日志重建——消息历史存原文，改写走 `ctx.prompt.registerProjection` 的
@@ -523,7 +542,9 @@ pnpm run check:ui                  # 36 条纯 Node 探针，31 秒
 pnpm run check:ui:e2e              # 4 条要真 Chromium，61 秒（含 diff 卡、手机尺寸远程壳）
 pnpm run check:dsh                 # dsh 兼容层 + 组合包 + 真包挂载 + 会话桥 + 流/事件旁路 + 合成验收，180 条
 pnpm run check:core                # 48 条内核探针（协议 / TUI / 会话库 / LLM 适配），约 8 分钟
-pnpm run check:all                 # 上面三条串起来（不含 e2e）
+pnpm run check:style               # 排版闸门：制表符 / 行尾空白 / BOM / 混用行尾 / 末尾缺换行，2 秒
+pnpm run check:style -- --changed  # 只查本次改动的文件（提交前用这个）
+pnpm run check:all                 # 上面四条串起来（不含 e2e）
 node scripts/dsh-real-package-e2e.mjs  # 真包验收（要联网：numa plugin add dsh-cost-meter）
 node shots/team-check.mjs          # 插件与团队，98 条（shots/ 里的，不在库里）
 node shots/storage-check.mjs       # 会话存储与会话库
@@ -575,6 +596,14 @@ exe 当**桌面端**跑的时候才要清掉它。
 
 界面参数想自动化，就加 `?xxx=1` 这类一次性钩子（`desktop/src/renderer/App.tsx:90-124` 已经
 有 `view` / `settings` / `reveal` / `dropline` / `peek` 五个），别在自检脚本里手写点击。
+
+**审查台账**：2026-10-28 做过一次全仓代码审查（开发规范 / 格式统一 / 重复代码 / 架构），
+问题清单、复现命令与三批整改建议在 [code-review-2026-10-28.md](code-review-2026-10-28.md)，
+当时未拍板。要判断"这一层是不是又欠了新账"，对照那份文档的 §四 逐条看；
+批次进度记在 [development-log.md](development-log.md) 的「2026-10-28 全仓代码审查」一节。
+
+**自动门禁**：每次推与每个 PR 由 `.github/workflows/verify.yml` 跑三处 typecheck 加排版检查
+（`check:style`）；`release.yml` 只在推 tag 时跑。所以"本地绿"不算数，以这两条工作流的结论为准。
 
 ## 9. 打包与发布
 
