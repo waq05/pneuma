@@ -15,8 +15,46 @@ const folds = new Map<string, boolean>()
 
 /** 读一条存档；没有记录 / 键缺席时给调用方的兜底默认态。 */
 export function readFold(key: string | undefined, fallback: boolean): boolean {
-  if (key === undefined) return fallback
-  return folds.get(key) ?? fallback
+  return foldStateOf(key, fallback).open
+}
+
+/**
+ * 一条键的折叠状态，多带一个「这条是不是用户手动存的」。
+ *
+ * 为什么需要这一位：设置页的「默认展开」只在**用户没亲手调过**的时候才该生效。
+ * 只靠 readFold 分不出「存档里就是 false」和「压根没存过、兜底恰好是 false」，
+ * 于是设置一改，要么全部行都不动（用户以为没生效），要么连手动调过的行一起被翻掉。
+ */
+export interface FoldState {
+  /** 当前该用的展开态：有存档用存档，没有就用调用方给的兜底。 */
+  open: boolean
+  /** 这条键有没有用户手动写下的存档（有 = 设置变化不许覆盖它）。 */
+  manual: boolean
+}
+
+/** 只读判定：这条键有没有用户手动存过的值（undefined 键 = 不存档的视图，恒为 false）。 */
+export function hasFold(key: string | undefined): boolean {
+  return key !== undefined && folds.has(key)
+}
+
+/** 读一条键的完整折叠状态（展开态 + 是否手动），口径见 {@link FoldState}。 */
+export function foldStateOf(key: string | undefined, fallback: boolean): FoldState {
+  if (key === undefined) return { open: fallback, manual: false }
+  const stored = folds.get(key)
+  // 用 `=== undefined` 而不是 `??`：存档里合法的 false 不能被当成「没存过」。
+  if (stored === undefined) return { open: fallback, manual: false }
+  return { open: stored, manual: true }
+}
+
+/**
+ * 设置默认态变化时该给哪个值：这条键有手动存档就维持现状，没有就跟随新的默认态。
+ *
+ * 为什么把这条判断也放进纯逻辑：钩子和探针共用同一份实现，探针不必复述一遍规则，
+ * 以后规则改了也不会出现「代码一套、断言另一套」。
+ */
+export function followFallback(current: boolean, key: string | undefined, fallback: boolean): boolean {
+  const state = foldStateOf(key, fallback)
+  return state.manual ? current : state.open
 }
 
 /** 写一条存档（undefined 键 = 这个视图不存档，空操作）。 */

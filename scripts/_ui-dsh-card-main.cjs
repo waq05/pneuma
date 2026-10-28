@@ -135,8 +135,8 @@ async function main() {
     'const cards = Array.from(document.querySelectorAll(".tool-card"));' +
       ' const target = cards[cards.length - 1];' +
       ' if (!target) return { cards: 0 };' +
-      ' const head = target.querySelector(".tool-head");' +
-      ' if (!target.classList.contains("open") && head) head.click();' +
+      ' const trigger = target.querySelector(".tool-click");' +
+      ' if (!target.classList.contains("open") && trigger) trigger.click();' +
       ' await new Promise((r) => setTimeout(r, 500));' +
       ' const own = (sel) => Array.from(target.querySelectorAll(sel));' +
       ' const textOf = (node) => (node === null ? "" : (node.textContent || "").trim());' +
@@ -176,8 +176,8 @@ async function main() {
       ' const cards = Array.from(document.querySelectorAll(".tool-card"));' +
       ' const last = cards[cards.length - 1];' +
       ' if (last) {' +
-      '   const head = last.querySelector(".tool-head");' +
-      '   if (!last.classList.contains("open") && head) head.click();' +
+      '   const trigger = last.querySelector(".tool-click");' +
+      '   if (!last.classList.contains("open") && trigger) trigger.click();' +
       '   last.scrollIntoView({ block: "center" });' +
       ' }' +
       ' await new Promise((r) => setTimeout(r, 400));' +

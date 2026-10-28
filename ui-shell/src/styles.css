@@ -890,8 +890,8 @@
 .tool-dot {
   border-radius: var(--dsc-r-pill);
   flex: none;
-  height: 7px;
-  width: 7px;
+  height: 6px;
+  width: 6px;
 }
 .tool-card.status-running .tool-dot {
   background: var(--dsc-accent);
@@ -909,11 +909,12 @@
   background: var(--dsc-text-quaternary);
 }
 
-/* 工具图标：与动词同行的 14px 细线图标，取三级灰——它是识别用的，不是内容。 */
+/* 工具图标：与动词同行的 12px 细线图标（收小一档，让文字更贴行），
+   取三级灰——它是识别用的，不是内容。 */
 .tool-head .tool-icon {
   flex: none;
-  height: 14px;
-  width: 14px;
+  height: 12px;
+  width: 12px;
   color: var(--dsc-text-tertiary);
 }
 
@@ -1092,8 +1093,9 @@
   border-top: 1px solid var(--dsc-stroke-4);
 }
 
-/* `/` 命令候选面板：位置与底子照 .mention-pop（同一块地方、同一种浮层），
-   一行里多两样东西——参数占位与「回合中不可用」标。 */
+/* `/` 命令候选面板：位置与底子照 .mention-pop（同一块地方、同一种浮层）。
+   行内三列照 dsh 那张菜单（ui-input-trigger 的 MenuView）：图标 14px → 中文短名 →
+   英文名（灰、小一号）→ 说明右对齐。行高 34、间距 6、上下留白 6/8，都取 dsh 的数。 */
 .slash-pop {
   background: var(--dsc-bg-raised);
   border: 1px solid var(--dsc-stroke-3);
@@ -1191,6 +1193,7 @@
 .slash-hint {
   border-top: 1px solid var(--dsc-stroke-4);
   color: var(--dsc-text-quaternary);
+  flex: none;
   font-size: var(--dsc-fs-micro);
   padding: 4px 8px 2px;
 }
@@ -3363,8 +3366,8 @@
 :root {
   /* 控件行：侧栏会话行、分组合头、选择器行共用。 */
   --dsc-row-h: calc(32px * var(--dsc-density));
-  /* 对话「过程」行：思考行、工具行、阶段组头。 */
-  --dsc-process-row-h: calc(28px * var(--dsc-density));
+  /* 对话「过程」行：思考行、工具行、阶段组头。24px：比控件行矮，仍不挤文字。 */
+  --dsc-process-row-h: calc(24px * var(--dsc-density));
 
   /* 正文与标题。 */
   --dsc-fs-body: calc(14px * var(--dsc-font-scale));
@@ -4214,6 +4217,13 @@
   padding-left: 9px;
 }
 
+/* 组体内的工具行与思考行再缩进 4px，贴齐组头那格图标的起跑线；
+   组体自己的 1px 竖线与 13px 缩进照旧，不加粗。 */
+.step-content .tool-card,
+.step-content .think-block {
+  margin-left: 4px;
+}
+
 .step-fold-fail {
   color: color-mix(in srgb, var(--dsc-red) 72%, var(--dsc-base));
   flex: none;
@@ -4243,8 +4253,8 @@
   /* 底色必须**不透明**：这颗钮压在摘要尾巴上（摘要不给它让位，见上面那条注释），
      而原来用的 --dsc-fill-quaternary 是 4% 白，悬停时那半句路径会从药丸里透出来，
      读成「按钮和文字重叠」（2026-10-27 用户报障）。改用提升面底色，药丸就是一整块。
-     为什么不是 --dsc-bg-page：悬停时整行有一层行高亮（.tool-head:hover），
-     页面底色压上去会像从行里挖掉一块。 */
+     为什么不是 --dsc-bg-page：悬停不再铺行高亮，但页面底色会从卡片周围的
+     对话底上切出一块（悬停时读数淡出、药丸浮上来），用提升面底色才读得成一整块。 */
   background: var(--dsc-bg-raised);
 }
 

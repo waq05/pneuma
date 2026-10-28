@@ -2089,32 +2089,16 @@
 }
 
 /* ── 工具行 ──
- * 参考 hermes 的工具回退：折叠时是流里的一行平铺文字，展开才给一个描边框。
- * DSC 原来每条工具调用都套 12px 圆角卡片，一屏只能看到四五条；改成平铺后
- * 能看到的条数翻倍，状态改用左侧竖条表示。 */
+ * 参考实现：一条调用就是「状态点 + 图标 + 动词 + 摘要 + 行尾读数」这一行文字，
+ * 静息没有边框、没有底色、没有圆角容器；状态只由行首那颗点表达，不再染左边条。
+ * 不写 overflow: hidden——展开体的吸附栏（.tc-bar）要拿滚动容器 .chat 当参照系，
+ * 卡片自己一旦成了滚动容器，sticky 就吸不住。 */
 .tool-card {
-  border: 1px solid transparent;
-  border-left: 2px solid var(--dsc-stroke-3);
-  border-radius: var(--dsc-r-block);
-  overflow: hidden;
-}
-
-.tool-card.status-running {
-  border-color: transparent transparent transparent color-mix(in srgb, var(--dsc-accent) 55%, transparent);
-}
-.tool-card.status-done {
-  border-left-color: var(--dsc-green);
-}
-.tool-card.status-failed {
-  border-left-color: var(--dsc-red);
-}
-.tool-card.status-rejected {
-  border-left-color: var(--dsc-yellow);
+  overflow: visible;
 }
 
 .tool-head {
   align-items: center;
-  cursor: pointer;
   display: flex;
   font-family: var(--dsc-font-mono);
   font-size: var(--dsc-fs-tool);
@@ -2124,17 +2108,46 @@
   user-select: none;
 }
 
+/* 只有文字这一段可点：状态点、图标、动词、未知名、摘要。行尾读数与药丸留在外面。 */
+.tool-click {
+  align-items: center;
+  border-radius: var(--dsc-r-control);
+  cursor: pointer;
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 不可展开的那一态（参数还没到齐）：保留文字形状，但不给手型与焦点。 */
+.tool-click.inert {
+  cursor: default;
+}
+
 .tool-head .name {
-  color: var(--dsc-accent);
+  color: var(--dsc-text-tertiary);
   flex-shrink: 0;
 }
 
 .tool-head .preview {
-  color: var(--dsc-text-tertiary);
+  color: var(--dsc-text-secondary);
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 悬停只提文字色、不铺底色（与 .turn-fold 同一套做法）。 */
+.tool-head:hover .verb {
+  color: var(--dsc-text-primary);
+}
+
+.tool-head:hover .preview {
+  color: var(--dsc-text-primary);
+}
+
+.tool-head:hover .name {
+  color: var(--dsc-text-secondary);
 }
 
 .tool-head .status {
@@ -8546,29 +8559,12 @@ body.resizing iframe {
    点开才是完整参数与结果；展开内容超过 400px 时顶部吸附一条快捷栏。
    下面只做覆盖与新增，颜色、圆角、阴影、过渡全部走 tokens.css 里的现有令牌。 */
 
-/* sticky 要求祖先别自己当滚动容器：.tool-card 原本用 overflow: hidden 裁圆角，
-   那会让 .tc-bar 的吸附参照系变成这张卡自己（卡不滚，等于不吸附）。只在展开态放开，
-   因为展开态的子块各自带圆角与底色，不会被卡片的圆角裁到。 */
-.tool-card.open {
-  overflow: visible;
-}
+/* sticky 的参照系：.tool-card 自己不再写 overflow（见上面的卡片注释），
+   所以展开态的 .tc-bar 始终拿滚动容器 .chat 当吸附对象，开合两态一致。 */
 
-/* 整行可点：悬停给底色、按下给更深一档，都是 100ms 控件时长。 */
-.tool-card .tool-head {
-  border-radius: var(--dsc-r-control);
-  transition: background var(--dsc-dur) var(--dsc-ease);
-}
-
-.tool-card .tool-head:hover {
-  background: var(--dsc-row-hover-bg);
-}
-
-.tool-card .tool-head:active {
-  background: var(--dsc-row-active-bg);
-}
-
-/* 键盘也能展开/收起：焦点圈跟着全站的行内按钮口径走（inset 描边，不撑开布局）。 */
-.tool-card .tool-head:focus-visible {
+/* 键盘也能展开/收起：焦点圈跟着全站的行内按钮口径走（inset 描边，不撑开布局）。
+   焦点落在文字段 .tool-click 上，不落在整行。 */
+.tool-card .tool-click:focus-visible {
   box-shadow: inset 0 0 0 1px var(--dsc-accent);
   outline: none;
 }
@@ -8717,8 +8713,8 @@ body.resizing iframe {
    100ms 过渡）不是一套形状，扫视时要重新认一次样式。展开之后长思考也没有快捷收起手段，
    只能一路滚到底再回头点那一行。
    改动后：紧凑行 + 展开区 + 展开超 400px 时顶部吸附的快捷栏，与 ToolCard 的紧凑行保持同一
-   规格——行高 --dsc-row-h、内距 0 8px、圆角 --dsc-r-control、悬停 --dsc-row-hover-bg、
-   按下 --dsc-row-active-bg、过渡 --dsc-dur、行尾箭头 11px + 180° 旋转、快捷栏 sticky top:0
+   规格——行高 --dsc-process-row-h、内距 0 8px、悬停只提文字色（不铺底）、过渡 --dsc-dur、
+   行尾箭头 11px + 180° 旋转、快捷栏 sticky top:0
    配不透明底色。下面只做新增，颜色/圆角/间距/动效全部走 tokens.css 的现有令牌，
    深浅两套主题各核一遍。 */
 
@@ -8732,8 +8728,7 @@ body.resizing iframe {
   border-radius: var(--dsc-r-block);
 }
 
-/* ── 紧凑行：min-height / padding / gap / border-radius / cursor / user-select / transition
-   这 7 项与 ToolCard.tsx 的 .tool-head 逐项同值 ── */
+/* ── 紧凑行：min-height / padding / gap / cursor / user-select 与工具行的 .tool-head 同值 ── */
 .think-head {
   align-items: center;
   border-radius: var(--dsc-r-control);
@@ -8742,18 +8737,12 @@ body.resizing iframe {
   gap: 8px;
   min-height: var(--dsc-process-row-h);
   padding: 0 8px;
-  transition: background var(--dsc-dur) var(--dsc-ease);
+  transition: color var(--dsc-dur) var(--dsc-ease);
   user-select: none;
 }
 
-/* 整行可点：悬停给底色、按下给更深一档，都是 100ms 控件时长（与工具卡同一组令牌）。 */
-.think-head:hover {
-  background: var(--dsc-row-hover-bg);
-}
-
-.think-head:active {
-  background: var(--dsc-row-active-bg);
-}
+/* 悬停只提文字色、不铺底色（与 .turn-fold 同一套做法）：整行仍是思考的开关，
+   但底色会把这一行重新读成一张卡。按下也不铺底。 */
 
 /* 键盘也能展开/收起：焦点圈跟全站行内按钮口径走（inset 描边，不撑开布局）。 */
 .think-head:focus-visible {
@@ -8762,9 +8751,10 @@ body.resizing iframe {
 }
 
 /* hover 态的截图钩子：真实 :hover 抓不进静态图，沿用仓库既有的 .shot-reveal 约定
-   （见本文件顶部侧栏那三条规则）把底色点亮，用来出「hover 有反馈」的证据图。 */
-.shot-reveal .think-head {
-  background: var(--dsc-row-hover-bg);
+   （见本文件顶部侧栏那三条规则）把文字色点亮；底色保持透明，截图同时证明「悬停不铺底」。 */
+.shot-reveal .think-head .think-label,
+.shot-reveal .think-head .think-summary-text {
+  color: var(--dsc-text-primary);
 }
 
 /* 行首星标：改动前是 CSS 里的 '✦ ' 文字前缀，换成同一枚 IconSpark 图标，颜色照旧。 */
@@ -9872,28 +9862,21 @@ body.resizing iframe {
   min-height: var(--dsc-process-row-h);
   padding: 0 8px;
   text-align: left;
-  transition:
-    background var(--dsc-dur) var(--dsc-ease),
-    color var(--dsc-dur) var(--dsc-ease);
+  transition: color var(--dsc-dur) var(--dsc-ease);
   width: 100%;
 }
 
-.step-fold:hover {
-  background: var(--dsc-row-hover-bg);
-}
-
-.step-fold:active {
-  background: var(--dsc-row-active-bg);
-}
+/* 悬停只提标题色、不铺底色（与 .turn-fold / 工具行同一套做法）。 */
 
 .step-fold:focus-visible {
   box-shadow: inset 0 0 0 1px var(--dsc-accent);
   outline: none;
 }
 
-/* 截图钩子（?reveal=1）：真实 :hover 抓不进静态图，沿用仓库既有的 .shot-reveal 约定。 */
-.shot-reveal .step-fold {
-  background: var(--dsc-row-hover-bg);
+/* 截图钩子（?reveal=1）：真实 :hover 抓不进静态图，沿用仓库既有的 .shot-reveal 约定。
+   只提标题色——底色在悬停时也必须是透明的。 */
+.shot-reveal .step-fold .step-fold-label {
+  color: var(--dsc-text-primary);
 }
 
 /* 类别图标与行尾箭头**各占一格**（0.6.68 改；原来是「叠在同一格、悬停时用箭头换掉图标」）。
@@ -10045,17 +10028,20 @@ body.resizing iframe {
 
    座位内的行距分三档（0.6.67 起，对照 dsh 的 ui-chat ChatView.module.css:68-95 与
    ChatGroupSeat.module.css:86-92）：
-   - **过程行之间** 6px（--dsc-stack-gap）：思考行、工具卡、阶段组头紧着排，
-     一屏能多读好几行；dsh 的 --dsh-chat-flow-gap 默认值就是 6px。
+   - **过程行之间** 3px（--dsc-stack-gap 在座位内覆写成 3px）：思考行、工具卡、
+     阶段组头紧着排，一屏能多读好几行；比 dsh 的 6px 再紧一档。
    - **用户消息之后的第一条、整轮开关两侧** 16px（--dsc-turn-gap）：dsh 给 turn-process
      这一行两侧留的白（它是一条带下边框的分节线，贴着上下内容会读不出「分节」）。
    - **助手回答两侧** 12px（--dsc-block-gap）：dsh 的 response 档。
-   为什么 gap 只写 6px、其余用 margin-top 补差：flex 容器里 gap 与 margin 相加、不会塌陷，
-   一格 gap 加一条「补差」正好落在目标值上，且不用给每条行加类名。 */
+   为什么 gap 只写 3px、其余用 margin-top 补差：flex 容器里 gap 与 margin 相加、不会塌陷，
+   一格 gap 加一条「补差」正好落在目标值上，且不用给每条行加类名。
+   座位内覆写 --dsc-stack-gap：下面的补差与收起态的负 margin 都读这个变量，
+   覆写一处就让「16px / 12px 的外层留白」保持不变，只收紧过程行之间。 */
 .turn-seat {
+  --dsc-stack-gap: calc(3px * var(--dsc-density));
   display: flex;
   flex-direction: column;
-  gap: var(--dsc-stack-gap);
+  gap: calc(3px * var(--dsc-density));
 }
 
 /* 用户消息之后的第一条、开关行自己、开关行之后那一条：一律 16px。
@@ -10107,7 +10093,7 @@ body.resizing iframe {
 .turn-process-body {
   display: flex;
   flex-direction: column;
-  gap: var(--dsc-stack-gap);
+  gap: calc(3px * var(--dsc-density));
   min-height: 0;
   overflow: hidden;
   /* 拉开帘子的同时内容淡进来（zcode 的折叠层就是「高度关键帧 + fade-in-0」这一对）。
@@ -10188,12 +10174,11 @@ body.resizing iframe {
 }
 
 /* 组体里的内容列：不限高（限高在 .step-body 上），行距与座位里的过程行同一档
-   （--dsc-stack-gap，对照 dsh 的 ChatGroupSeat.module.css:86-92 把
-   --dsh-chat-flow-gap 覆写成 6px）。 */
+   （3px，比 dsh 的 6px 再紧一档；密度倍率照旧）。 */
 .step-content {
   display: flex;
   flex-direction: column;
-  gap: var(--dsc-stack-gap);
+  gap: calc(3px * var(--dsc-density));
 }
 
 /* ── 页脚里的按钮（复制 / 分叉）──

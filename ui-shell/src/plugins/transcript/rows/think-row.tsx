@@ -7,7 +7,7 @@
  */
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { IconChevronDown, IconChevronUp, IconSpark, type TranscriptEntry } from '@dsc/ui'
-import { readFold, writeFold } from '../fold-state'
+import { useFoldState } from '../fold-hook'
 import { BAR_MIN_CONTENT_H, expandedContentHeight } from './fold-body'
 import { FoldPrefsContext } from '../shared'
 
@@ -87,15 +87,13 @@ export function ThinkRow({
    * 行的开合只由用户点击决定（use-disclosure.ts:12-13）。直播的「还活着」由扫光 + 摘要 +
    * 小圈承载（本组件三样都有），不需要把正文摊开。
    */
-  const [open, setOpen] = useState(() => readFold(storeKey, prefs.reasoningOpen))
+  // 默认档取设置里的「定稿的思考行默认展开」，走 useFoldState 是为了让设置一改、
+  // 已经画出来的行立刻跟上；用户手动点过的那一条有存档，钩子不会去翻它。
+  // 直播态照旧不参与初值（上面那条注释说的抽动就是这么来的），只影响摘要取法。
+  const [open, setOpenPersisted] = useFoldState(storeKey, prefs.reasoningOpen)
   const [barVisible, setBarVisible] = useState(false)
   const bodyRef = useRef<HTMLDivElement | null>(null)
 
-  /** 展开态一变就写回存档：组件被重挂时下一个实例才读得到。 */
-  const setOpenPersisted = (next: boolean): void => {
-    writeFold(storeKey, next)
-    setOpen(next)
-  }
   const toggle = (): void => {
     setOpenPersisted(!open)
   }

@@ -31,7 +31,7 @@ import {
 } from '@dsc/ui'
 // 路径/时刻/工具摘要口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
 import { TOOL_STATUS_TEXT, displayPathOf, formatDuration, matchTool, prettyJson, toolArgFields, toolSummary, toolVerb, type ToolMatch } from '@dsc/ui-primitives'
-import { readFold, writeFold } from '../fold-state'
+import { useFoldState } from '../fold-hook'
 import { resultTail } from './result-tail'
 import { useIntendedDiff, type IntendedDiff } from '../intended-diff'
 /**
@@ -163,7 +163,9 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
   const { entry, storeKey, persistKey, match: electedMatch, foldPrefs, cwd = '' } = props
   const variant = props.variant ?? 'chat'
   const call = entry.call
-  const [open, setOpen] = useState(() => readFold(persistKey, foldPrefs?.toolOpen ?? false))
+  // 默认档取设置里的「工具卡默认展开」；钩子让设置变化即时传到已画出的卡上，
+  // 手动调过（有存档）的卡不受影响。轨迹页不给 persistKey，因此只活在本地。
+  const [open, setOpenPersisted] = useFoldState(persistKey, foldPrefs?.toolOpen ?? false)
   const [barVisible, setBarVisible] = useState(false)
   // 参数还没到齐的这一次调用不可展开——展开也看不到东西，还会让「点一下」白点。
   const expandable = call.status !== 'preparing'
@@ -208,11 +210,6 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
     [bodyOpen, variant, running, call.resultText],
   )
 
-  /** 展开态一变就写回存档（不持久化的调用点 writeFold 自己空操作）。 */
-  const setOpenPersisted = (next: boolean): void => {
-    writeFold(persistKey, next)
-    setOpen(next)
-  }
   const toggle = (): void => {
     if (expandable) setOpenPersisted(!open)
   }
@@ -270,25 +267,33 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
     <div className={`entry tool-card status-${call.status}${bodyOpen ? ' open' : ''}`}>
       <div
         className="tool-head"
-        role="button"
-        tabIndex={expandable ? 0 : -1}
-        {...(expandable ? { 'aria-expanded': bodyOpen } : {})}
         data-tip={expandable ? (bodyOpen ? '收起参数与结果' : '展开参数与结果') : '正在准备参数'}
-        onClick={toggle}
-        onKeyDown={(event) => {
-          if (event.key !== 'Enter' && event.key !== ' ') return
-          event.preventDefault()
-          toggle()
-        }}
       >
-        {/* 行首状态点：成功绿 / 失败红 / 被拒黄 / 进行中强调色（codex 的 bullet）。 */}
-        <span className="tool-dot" aria-hidden="true" />
-        <Icon size={14} className="tool-icon" />
-        <span className="verb">{toolVerb(match.base, call.status)}</span>
-        {/* 认不出的工具保留原名：没有它就看不出这是哪家的工具（MCP 那些名字不直观）。
-            分隔点照 dsh 的「工具调用 · <工具名>」：名字是补充说明，不跟标题糊成一串。 */}
-        {match.known ? null : <span className="name">{`· ${call.name}`}</span>}
-        <Preview intended={intended} summary={summary} cwd={cwd} targetPath={targetPath} change={call.change ?? null} />
+        {/* 只有这一段文字可点：状态点 + 图标 + 动词 + 未知名 + 摘要。
+            行尾的「+N 行」、状态词、「在轨迹中查看」药丸与箭头都留在外面，
+            它们各自是读数或独立按钮，不该跟着展开体一起开合。
+            键盘 Enter/Space 也挂在这一段上（焦点圈见 views.css 的 .tool-click:focus-visible）。 */}
+        <span
+          className={`tool-click${expandable ? '' : ' inert'}`}
+          role={expandable ? 'button' : undefined}
+          tabIndex={expandable ? 0 : -1}
+          {...(expandable ? { 'aria-expanded': bodyOpen } : {})}
+          onClick={expandable ? toggle : undefined}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return
+            event.preventDefault()
+            toggle()
+          }}
+        >
+          {/* 行首状态点：成功绿 / 失败红 / 被拒黄 / 进行中强调色（codex 的 bullet）。 */}
+          <span className="tool-dot" aria-hidden="true" />
+          <Icon size={12} className="tool-icon" />
+          <span className="verb">{toolVerb(match.base, call.status)}</span>
+          {/* 认不出的工具保留原名：没有它就看不出这是哪家的工具（MCP 那些名字不直观）。
+              分隔点照 dsh 的「工具调用 · <工具名>」：名字是补充说明，不跟标题糊成一串。 */}
+          {match.known ? null : <span className="name">{`· ${call.name}`}</span>}
+          <Preview intended={intended} summary={summary} cwd={cwd} targetPath={targetPath} change={call.change ?? null} />
+        </span>
         {/* 还有几行没摊出来：把「点开能看到更多」写在明面上（codex 的「+ N lines」）。
             只在收起态、且确实有截断时出现；不占焦点，点整行照旧是展开。 */}
         {tail !== null && tail.hidden > 0 ? (

@@ -139,7 +139,12 @@ console.log('[3] 形态钉（ui.tsx / factory.tsx / status 的催拍）')
 
   // 「不该出现」的断言先剥注释：修法自己的注释里就引着旧写法，不剥会自己打脸。
   const uiCode = ui.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
-  check('③ 直播尾不再强制展开（readFold 的默认值只有用户的档位）', uiCode.includes('readFold(storeKey, prefs.reasoningOpen)') && !uiCode.includes('readFold(storeKey, live ||'))
+  // 2026-10-29：「默认展开」改成由 useFoldState 负责（设置一改老行跟着变，手动调过的不动），
+  // 这里钉的是「初值只认用户的档位」这条语义，写法换成钩子，断言跟着换。
+  check(
+    '③ 直播尾不再强制展开（展开态只认用户的档位）',
+    uiCode.includes('useFoldState(storeKey, prefs.reasoningOpen)') && !uiCode.includes('readFold(storeKey, live ||'),
+  )
   check('③ 直播的「还活着」由扫光/摘要/小圈承载（三样都在）', ui.includes('data-shimmer={live ? summary : undefined}') && ui.includes('think-status') && ui.includes('think-sr'))
 
   check('④ 展开体按「有没有 diff」分流参数', factory.includes('const paramsAsFields = patch !== null && argView.mutating'))

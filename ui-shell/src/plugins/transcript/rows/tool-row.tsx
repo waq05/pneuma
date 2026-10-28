@@ -8,7 +8,7 @@
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { DiffRows, IconChevronDown, IconChevronUp, openTrace, type SlotComponentProps, type SlotMatchedOf, type SlotOwnerOf, type TranscriptEntry } from '@dsc/ui'
 import { TOOL_STATUS_TEXT, formatDuration, formatTokens, matchTool, oneLine, prettyJson, toolSummary, toolVerb, type ToolMatch } from '@dsc/ui-primitives'
-import { readFold, writeFold } from '../fold-state'
+import { useFoldState } from '../fold-hook'
 import { BAR_MIN_CONTENT_H, expandedContentHeight } from './fold-body'
 import { useIntendedDiff } from '../intended-diff'
 import { FoldPrefsContext, ShellCwdContext, TOOLVIEW_SLOT, type ToolEntry } from '../shared'
@@ -65,7 +65,9 @@ export function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matche
   const call = entry.call
   const prefs = useContext(FoldPrefsContext)
   const cwd = useContext(ShellCwdContext)
-  const [open, setOpen] = useState(() => readFold(storeKey, prefs.toolOpen))
+  // 默认档取设置里的「工具卡默认展开」，走 useFoldState：设置一改，没手动调过的卡立刻跟，
+  // 用户自己点开/收起过的那一张有存档，保持原样。preparing 态的不可展开判定仍在下面。
+  const [open, setOpenPersisted] = useFoldState(storeKey, prefs.toolOpen)
   const [barVisible, setBarVisible] = useState(false)
   // 参数还没到齐的这一次调用不可展开——展开也看不到东西，还会让「点一下」白点。
   const expandable = call.status !== 'preparing'
@@ -81,11 +83,6 @@ export function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matche
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const barRef = useRef<HTMLDivElement | null>(null)
 
-  /** 展开态一变就写回存档：组件被重挂时下一个实例才读得到。 */
-  const setOpenPersisted = (next: boolean): void => {
-    writeFold(storeKey, next)
-    setOpen(next)
-  }
   const toggle = (): void => {
     if (expandable) setOpenPersisted(!open)
   }
