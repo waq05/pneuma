@@ -5,13 +5,22 @@
 # 附件模块没入库导致 import 找不到），两次都是本地绿灯、干净检出红灯：本机有未跟踪的
 # 文件兜着，谁也没发现。
 #
-# 这里只放「快」的门（装依赖 + 三处 typecheck + 排版，一分钟级）。那批要跑 7–8 分钟的
-# 自检探针（pnpm check:core）不进来，它们的名额留给夜跑或手动触发。
+# 推门与夜跑分工：
+#   - 推 / PR：只放「快」的门（装依赖 + 三处 typecheck + 排版，一分钟级）；
+#   - 夜跑 / 手动：那批要跑 7–8 分钟的探针（pnpm check:core，77 条探针 import 编译产物，
+#     所以得先 pnpm build）。
+#
+# 夜跑这条是补上的漏：注释里一直写着「留给夜跑」，但 on: 从来没配 schedule，
+# 于是 49 条内核探针一次都没被自动跑过（2026-10-28 补）。
 name: Verify
 
 on:
   push:
   pull_request:
+  # 每天 18:00 UTC = 北京时间 02:00，避开提交高峰。
+  schedule:
+    - cron: '0 18 * * *'
+  workflow_dispatch:
 
 # 同一个分支连着推两次，取消上一次——门禁只关心最终状态。
 concurrency:
@@ -76,3 +85,26 @@ jobs:
       - name: 编译（主进程 + 渲染层两套 tsconfig）
         working-directory: desktop
         run: pnpm typecheck
+
+  probe:
+    name: 夜跑全量自检（49 条内核探针，约 8 分钟）
+    # 只在夜跑与手动触发时跑：推一次就等 8 分钟的门，没人会去修红灯。
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      # 探针里有 77 条 import ../lib 的编译产物，不先 build 会整片模块找不到。
+      - name: 编译内核
+        run: pnpm build
+      - name: 全量自检
+        run: pnpm run check:core
