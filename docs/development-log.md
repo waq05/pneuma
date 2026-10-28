@@ -10764,6 +10764,68 @@ B 的空白页上；某个会话的删除命令被钩子拦下，理由却是「
 - `guards.observe` 的会话归属、生命周期钩子的 `basePayload` 仍按当前会话取，
   属于下一批。
 
+## 二十八、窗口宽度记不住、`/` 菜单没有中文名（2026-10-29）
+
+用户报了两件：拖宽的聊天窗口一重开就回默认；`/` 菜单要像 dsh 那样「中文名 + 英文名」，而不是只列 `/compact`。
+
+### 一、宽度为什么每次重开都回默认
+
+**不是没存，是存的地方每次启动都换。**
+
+- 面板宽度只写 localStorage：`ui-shell/src/ui-primitives/panels.ts` 的读写全在 `dsc.sidebarWidth` 那几个键上（侧栏宽 / 正文列宽 / 右侧栏宽 / 并排审查宽 / 侧栏收起）。
+- 宿主每次启动、每次切工作目录都换端口：`src/plugins/webserver.ts` 把 `config.port` 交给界面服务，默认 0，`src/core/ui-server.ts` 的 `listen(options.port ?? 0)` 由系统随机分配。
+- localStorage 按**源**隔离，`http://127.0.0.1:54015` 与 `54016` 是两份互不相干的存储。于是每次重开都读到空，右侧栏回到出厂 420。
+
+这个坑项目里踩过第二次了：外观镜像（`ui-shell/src/ui-layout/appearance.ts`）早就因为同一个原因改成「主进程读 settings.json、拼在地址里」。宽度这一批当时没跟着改。
+
+**dsh 怎么做的（查过再动手）**：它的桌面版页面跑在固定源 `dsh-app://app`，主进程用 `protocol.handle` 把请求转给宿主（`apps/desktop/src/main.ts` 与 `web-document.ts`），宿主换端口只是换个转发目标，浏览器眼里的地址不变。但**它的面板宽度本身没有持久化**：`packages/client/ui-layout/src/client/stores.ts` 的初始化全是常量，`defineStore` 没开 `persist`，也没有恢复路径——dsh 重启后同样回默认。所以这件事没有现成实现可抄。
+
+**修法**：把这五项跟别的界面偏好一起落进 `~/.dsc/settings.json`（`ui.panelWidths`），localStorage 退成同一源内的快速层。
+
+| 文件 | 改动 |
+| --- | --- |
+| `src/contract/session.ts` | `UiPrefsView` 加 `panelWidths: PanelWidthsView`（sidebar / thread / dock / diff / collapsed） |
+| `src/core/prefs.ts` | 出厂空表；读档只收 100–4000 的整数与布尔，坏值**丢掉不夹取**（夹出来的宽度用户没选过，留着反而挡住默认） |
+| `src/plugins/runtime.ts` | 只写面板几何的补丁走静默分支，不然拖一下会弹「已保存工作区名字」 |
+| `ui-shell/src/ui-primitives/panels.ts` | `primePanelGeometry` / `setPanelGeometrySaver` 两个口子：localStorage 空着时回落到宿主那份，落盘时把**整份**发过去（宿主是整键替换的补丁语义） |
+| `ui-shell/src/ui-renderer/main.tsx` | 复用启动时那次 `getUiPrefs`，渲染前 `await within(prefs, 1500)` 灌进面板模块——首帧就是对的宽度，不会先画默认再跳一下 |
+
+边界三条，写在这里免得下次有人当 bug：
+
+1. 只修面板几何。终端选过的 shell、右侧栏页签布局、旁问选过的模型仍只在 localStorage，换端口照样丢。要一次全修得给桌面换个固定源（照 dsh 那条路），代价是重写界面服务的转发、Cookie 与 SSE，风险压在认证链上，这次没动。
+2. 手机壳与桌面壳共用同一份几何（同一个 settings.json）。手机是窄屏，侧栏收起，宽度基本用不到，但真在手机上拖一次会覆盖桌面那份。
+3. 会话数据本身不在这里，settings.json 只存「这个窗口拖成多宽」，仍是本机偏好。
+
+### 二、`/` 菜单改成中文名 + 英文名
+
+行结构照 dsh 的输入提名菜单（`packages/client/ui-input-trigger/src/client/MenuView.tsx`）：图标 14px → 中文短名 → 英文名（灰）→ 说明右对齐；行高 34、间距 6、分组标题 11px。
+
+**文案只有一份**，住在宿主的命令表（`src/core/commands-completion.ts` 每条加 `label`），三端各取所需：
+
+| 端 | 从哪拿 | 画法 |
+| --- | --- | --- |
+| 桌面壳 | `listUiCommands`（`UiCommandView.label`） | 图标在 `composer/command-face.ts`，认不出的命令只画英文名 |
+| 手机 | `listUiCommands`（协议早已放行） | 新加 `/` 浮层，内联 SVG 图标，点一行采纳 |
+| TUI | `completionsFor`（宿主内直调，`CompletionItem.title`） | `▸ 压缩 compact  压缩以上对话内容`，宽度不够截断 |
+
+三条口径一起定型：
+
+- **菜单里不摆参数占位**（`<[端点/]模型名>` 这种）。选中后宿主已补一个空格，接着打就行；用法在 `/help` 里。dsh 也不摆。
+- 分组标题「指令」照留：壳的菜单只有命令这一类，但有了标题，行才不会被看成无主的一串。
+- 手机顺带修了一个现成的错：以前在手机上打 `/compact` 会被当成普通消息发给模型（`ChatPage` 直接调 `submit`），现在发送前先按清单分流，命令走 `runUiCommand`。
+
+### 三、验收
+
+| 项 | 读数 |
+| --- | --- |
+| `check:ui` | 45 条探针（新增 `ui-phone-command-test.mjs`） |
+| `check:core` | 67 条探针（新增 `panel-prefs-test.mjs`，34 条断言） |
+| `check:style` | 627 个文件全过 |
+| 四项目 typecheck | 0 错 |
+| 真机截图 | `desktop/shots/slash-menu-shot.ps1` 在真 Electron 里打一个 `/`：菜单 7 行、行高 34、说明 `text-align: right`、分组标题「指令」都在（读数见脚本 stderr 的 `预跑脚本完成` 那行，图在 `desktop/shots/slash-menu.png`） |
+| 宽度回归（真机） | `desktop/shots/panel-memory-shot.ps1`：settings.json 预置 `{sidebar:320, dock:640}`、localStorage 留空（`localStorageSidebar: null`），真 Electron 首帧量到侧栏 320、右侧栏 640、`--dsc-sidebar-w: 320px` —— 宽度确实来自宿主那份，不是浏览器存储 |
+
+**两条探针为什么这么写**：宽度这件事的坑在「读」，所以 `panel-prefs-test` 既跑 `readPrefs` 的真实现（临时 `DSC_HOME` + 手写 settings.json），也**直接 import 面板模块**并用假 localStorage 跑一遍回落与落盘——只查源码字符串的话，「回落」这件事本身测不到。菜单那条把手机的纯逻辑（`remote-web/src/lib/commands.ts`）真跑起来，因为它是这轮唯一新增的判据。
 
 
 ## 二十九、新会话不落盘、上下文回填、折叠设置即时生效、过程区去卡片（2026-10-29）
