@@ -2,11 +2,13 @@
 #   - 推 v* tag → 真发布：npm 发 CLI 内核 + GitHub Release 挂 Windows 安装器；
 #   - 手动 workflow_dispatch → 只做打包演练，安装器留在 workflow artifacts，不外发。
 # 前置 secret：NPM_TOKEN（npm publish 用；未配置时 npm 作业如实跳过并警告，不瞎报成功）。
-# 版本号约定：根与 desktop 两处 package.json 必须同版本，tag 必须等于该版本（verify 作业把关）。
+# 版本号约定：根、desktop、ui-shell 三处 package.json 必须同版本，tag 必须等于该版本
+# （verify 作业把关）。
 #
-# ui-shell 的 version **不在这里对账**：它是插件面对的 @dsc/ui 契约版本（构建期写成清单的
-# apiVersion），只在插件导出面增减时动次版本号。把它绑到产品号上，19 个内置插件的
-# "^2.0.0" peer 区间会当场合不上（见 docs/development.md 的「版本号一览」）。
+# ui-shell 跟产品号走的代价要清楚：它的 version 同时是插件清单里的 apiVersion，19 个内置
+# 插件按 "@dsc/ui": "^0.7.1" 这种区间声明兼容性，构建期逐个校验（ui-shell/build-plugins.mjs）。
+# 所以**改版本号时，19 个插件的 peer 区间要一起改**——忘了改，构建会当场失败并指出是哪个插件，
+# 不会静默放行。
 
 name: Release
 
@@ -20,19 +22,27 @@ permissions:
 
 jobs:
   verify:
-    name: 校验 tag 与两处 package.json 版本一致
+    name: 校验 tag 与三处 package.json 版本一致
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: 版本三方对账（tag / 根 / desktop）
+      - name: 版本四方对账（tag / 根 / desktop / ui-shell）
         run: |
           tag="${GITHUB_REF_NAME#v}"
           root="$(node -p "require('./package.json').version")"
           desktop="$(node -p "require('./desktop/package.json').version")"
-          if [ "$tag" != "$root" ] || [ "$tag" != "$desktop" ]; then
-            echo "::error::版本不一致：tag v$tag / 根 $root / desktop $desktop —— 两处 package.json 与 tag 必须同版"
+          shell="$(node -p "require('./ui-shell/package.json').version")"
+          if [ "$tag" != "$root" ] || [ "$tag" != "$desktop" ] || [ "$tag" != "$shell" ]; then
+            echo "::error::版本不一致：tag v$tag / 根 $root / desktop $desktop / ui-shell $shell —— 三处 package.json 与 tag 必须同版"
             exit 1
           fi
+      # 壳版本一变，插件 peer 区间没跟上就构建不出清单：这里先用一次构建把它顶出来，
+      # 别等发版打包到一半才发现 19 个插件全被门禁拒掉。
+      - name: 校验内置插件的 peer 区间跟得上壳版本
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm -C ui-shell install --frozen-lockfile
+          pnpm -C ui-shell run build-plugins
 
   npm:
     name: npm 发布 CLI 内核

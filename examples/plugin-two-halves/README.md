@@ -13,7 +13,7 @@
 "exports": { ".": "./host/index.js", "./client": "./client.bundle.js" },
 "dsh": {
   "bundle": { "patch": "./cordis.patch.yml" },   // 宿主里插一行
-  "client": { "platform": "pneuma", "api": "^2.0.0" }   // 界面壳收它
+  "client": { "platform": "pneuma", "api": "^0.7.1" }   // 界面壳收它
 }
 ```
 

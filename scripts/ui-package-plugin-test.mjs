@@ -1,6 +1,6 @@
 // 组合包的界面半边（2.0）：一个包声明 dsh.client.platform = 'pneuma'，宿主收进启动图。
 // 跑法：cd D:\dsc && pnpm run build && node scripts/ui-package-plugin-test.mjs
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -23,6 +23,10 @@ const { writePluginEnabled } = await import('../lib/core/plugin-registry.js')
 const { composeUiBootGraph } = await import('../lib/ui/manifest.js')
 const { createUiBootSource } = await import('../lib/core/ui-boot-source.js')
 const { toUiPluginRows } = await import('../lib/core/ui-bundles.js')
+
+// 夹具声明的兼容区间跟壳版本走：版本号每次发版都动，钉死字面量会让这批夹具每逢发版就红一次。
+const SHELL_VERSION = JSON.parse(readFileSync(new URL('../ui-shell/package.json', import.meta.url), 'utf8')).version
+const SHELL_API = '^' + SHELL_VERSION
 
 let pass = 0
 let fail = 0
@@ -49,13 +53,13 @@ function writePackage(name, manifest, files = {}) {
 
 const bundle = "module.exports = { name: '成本条', apply(ui) { ui.slots.register('composer.footer', { id: 'cost' }, () => null) } }\n"
 writePackage('dsh-cost-meter', {
-  dsh: { client: { platform: 'pneuma', api: '^2.0.0', inject: [] } },
+  dsh: { client: { platform: 'pneuma', api: SHELL_API, inject: [] } },
   exports: { './client': { default: './lib/client.js' } },
 }, { 'lib/client.js': bundle })
 
 // dsh 自己的载体（web）：只列不加载，不进启动图
 writePackage('dsh-other', {
-  dsh: { client: { platform: 'web', api: '^2.0.0' } },
+  dsh: { client: { platform: 'web', api: SHELL_API } },
   exports: { './client': { default: './lib/client.js' } },
 }, { 'lib/client.js': bundle })
 
@@ -72,27 +76,27 @@ writePackage('old-api', {
 }, { 'lib/client.js': bundle })
 
 // 没有 exports["./client"]
-writePackage('no-entry', { dsh: { client: { platform: 'pneuma', api: '^2.0.0' } } })
+writePackage('no-entry', { dsh: { client: { platform: 'pneuma', api: SHELL_API } } })
 
 // 载体声明写坏（'term' 不是认得的载体）：整条拒掉，不静默按 web 处理
 writePackage('bad-platforms', {
-  dsh: { client: { platform: 'pneuma', api: '^2.0.0', platforms: ['web', 'term'] } },
+  dsh: { client: { platform: 'pneuma', api: SHELL_API, platforms: ['web', 'term'] } },
   exports: { './client': { default: './lib/client.js' } },
 }, { 'lib/client.js': bundle })
 
 // 声明同时服务终端壳（platforms: [web, tui]）：一份代码出两行，两个载体各取各的
 writePackage('both-shells', {
-  dsh: { client: { platform: 'pneuma', api: '^2.0.0', platforms: ['web', 'tui'] } },
+  dsh: { client: { platform: 'pneuma', api: SHELL_API, platforms: ['web', 'tui'] } },
   exports: { './client': { default: './lib/client.js' } },
 }, { 'lib/client.js': bundle })
 
 // services / phase：与内置产物、第三方同一套字段（坏值要记问题，不能静默丢）
 writePackage('declared-deps', {
-  dsh: { client: { platform: 'pneuma', api: '^2.0.0', services: ['probe.seat'], phase: 'early' } },
+  dsh: { client: { platform: 'pneuma', api: SHELL_API, services: ['probe.seat'], phase: 'early' } },
   exports: { './client': { default: './lib/client.js' } },
 }, { 'lib/client.js': bundle })
 writePackage('bad-deps', {
-  dsh: { client: { platform: 'pneuma', api: '^2.0.0', services: 'probe.seat', phase: 'soon' } },
+  dsh: { client: { platform: 'pneuma', api: SHELL_API, services: 'probe.seat', phase: 'soon' } },
   exports: { './client': { default: './lib/client.js' } },
 }, { 'lib/client.js': bundle })
 
@@ -155,7 +159,7 @@ console.log('组合包界面半边：远程壳（手机）那张图里也要有'
   mkdirSync(emptyBuiltin, { recursive: true })
   // 空的内置目录也要带 apiVersion：门禁按它判包的 @dsc/ui 区间（没有这份清单就无从判，
   // 组合包会被当成「不知道对着哪个壳写的」拒掉——这是失败关闭，不是 bug）。
-  writeFileSync(join(emptyBuiltin, 'manifest.json'), JSON.stringify({ version: 1, apiVersion: '2.0.0', plugins: [] }), 'utf8')
+  writeFileSync(join(emptyBuiltin, 'manifest.json'), JSON.stringify({ version: 1, apiVersion: SHELL_VERSION, plugins: [] }), 'utf8')
   const remote = createUiBootSource({
     host: { name: 'Pneuma', version: 'test' },
     builtinDir: emptyBuiltin,
@@ -196,7 +200,7 @@ check('版本不满足的行带 version 档', trusts.find((item) => item.name ==
 check('没有入口的行带 artifact 档', trusts.find((item) => item.name === 'no-entry')?.problemKind === 'artifact')
 // 第三方那组（对照组）：每行也要带 key 与 origin，形状与组合包那一组一致。
 mkdirSync(join(third, 'demo-third', 'ui'), { recursive: true })
-writeFileSync(join(third, 'demo-third', 'plugin.json'), JSON.stringify({ api: '^2.0.0' }), 'utf8')
+writeFileSync(join(third, 'demo-third', 'plugin.json'), JSON.stringify({ api: SHELL_API }), 'utf8')
 writeFileSync(join(third, 'demo-third', 'ui', 'client.js'), bundle, 'utf8')
 const thirdRows = scanThirdPartyUiTrusts(artifacts.apiVersion, new Set(), third)
 check(

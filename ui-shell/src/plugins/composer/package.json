@@ -4,7 +4,7 @@
   "version": "1.1.0",
   "type": "module",
   "peerDependencies": {
-    "@dsc/ui": "^2.0.0"
+    "@dsc/ui": "^0.7.1"
   },
   "dsh": {
     "client": {
