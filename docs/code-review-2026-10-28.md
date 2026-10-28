@@ -373,7 +373,7 @@ node scripts/style-check.mjs --changed            # 只看改动，同样绿
 硬抽只会换来一堆开关；重复的是**行为**（焦点与 Esc），那已经有一个钩子在做。
 
 **这一轮没验证到的**：TUI 浮层与提交对话框都只有 `tsc` 背书。`pnpm run build` 写不进 `lib/`（沙箱拒写已存在的产物），
-所以 `scripts/commands-battery.mjs` 里那三条渲染冒烟跑的是旧产物，等于没跑；界面壳的 `vite build` 依旧 `spawn EPERM`。
+所以 `scripts/commands-battery-test.mjs` 里那三条渲染冒烟跑的是旧产物，等于没跑；界面壳的 `vite build` 依旧 `spawn EPERM`。
 这两处要在有完整权限的环境里各看一眼：终端里开一次 `/model`、`/resume`，以及文件页的「提交」。
 
 ### 卡住的一条：P0-1 缺一次提交
@@ -1428,3 +1428,74 @@ handler 现在没有消费方（壳走原生桥），但它们的实现体与原
 | `pnpm -C ui-shell build` | 0 |
 | `style-check --changed` | 全过 |
 | `dup-scan` | 430 个文件、0 组 |
+
+## 二十七、第二轮全仓复查：规范 / 格式 / 架构再看一遍（2026-10-28）
+
+上一轮十九批收拾的是结构；这一轮按 skill 的组件边界、状态归属、barrel 导入、渲染分支四类规则，
+配脚本把「规范」与「格式」变成可复查的数字，再清掉量出来的六条。**结论：格式与规范是过关的，
+缺口在工程门禁，不在代码本身。**
+
+### 量出来的数
+
+| 项 | 数 |
+| --- | --- |
+| 源文件 / 行数（不含 `node_modules`、`lib`、`.worktrees`） | 602 / 169,946 |
+| 缩进 | 2 空格 **439/439**（按最小缩进判，剔 JSDoc 行） |
+| 制表符 / 行尾空白 / BOM / 混用行尾 | 0 / 0 / 0 / 0（607 个文件） |
+| 深相对导入（`../../../`） | 0 |
+| `any` / `as any` | 3 / 2（全在测试与负例） |
+| `@ts-expect-error` | 12（全在 `slot-contract.typecheck.tsx` 的负例） |
+| 插件引用 `src/core` / 壳引用 `src` | 0 / 0 |
+| 插件横穿到另一个插件 | **2**（已修，见下） |
+
+### 修掉的六条
+
+| 编号 | 问题 | 落点 |
+| --- | --- | --- |
+| F1 | CI 夜跑不跑界面探针（40 条 + 4 条 e2e 只在 `package.json`） | `.github/workflows/verify.yml` 夜跑加 `ui-shell build` + `check:ui` |
+| F2 | 轨迹页从 `../transcript/review-notice` 横穿取模块 | 两份模块搬进 `ui-primitives`，两家改走 `@dsc/ui-primitives` |
+| F3 | `verify.yml` 数字漂（49/77 → 57/80）、同一条注释重复两遍 | 文案不写数字，去重 |
+| F4 | 13 处 `eslint-disable` 空指令（仓库没有 ESLint） | 全改成普通注释，写清「为什么故意不列依赖」 |
+| F5 | 字节读法五份（`512B` / `512 B` / `1536 字节` / `1.2 MB` / `1.00 GB`） | 并成宿主 `src/core/bytes.ts` + 壳 `ui-primitives/sizes.ts`，`ui-bytes-test` 逐字钉 |
+| F6 | `commands-battery.mjs` 不合探针命名，任何闸门都不收它 | 改名 `commands-battery-test.mjs`，自动进 `check-core` 发现列表 |
+| F7 | 无 `.editorconfig`；根目录 19 个 pack 产物 `.tgz` | 加 `.editorconfig`、删 `.tgz` |
+
+### F2 的做法与代价
+
+搬走的是两个模块：`review-notice.ts`（纯解析，零依赖）与 `review-notice-card.tsx`（79 行卡片）。
+卡片原来 import `@dsc/ui` 与 `@dsc/ui-primitives`，搬进基元包后改成 `./icons`、`./file-icons`、
+`./paths`——基元包不许反向依赖 `@dsc/ui`（`ui-plugin-test.mjs:1032` 那条链上有闸）。
+引用方三处（`transcript/render.tsx`、`transcript/welcome.tsx`、`trace/ui.tsx`）改走包名。
+
+好处是实的两条：两个插件产物里不再各存一份；transcript 改签名时 trace 不会跟着坏。
+探针 `ui-review-notice-test` 新增第 [7] 段钉住「两家都从 `@dsc/ui-primitives` 取、插件目录之间
+不再出现相对导入」——把这条路堵回去。
+
+### F5 为什么不能只留一份
+
+分层规定壳不许 import `src/`（`ui-plugin-test` 的依赖链闸门），反向也不许。所以字节读法只能
+「宿主一份 + 壳一份」，代价是两份可能漂。处理办法是钉而不是合：
+`scripts/ui-bytes-test.mjs` 抠出两份函数体、剔注释压空白后逐字比对，再把 14 个样本（含 0 / 负数 /
+NaN / Infinity）两侧真跑一遍比输出。改一边不改另一边，探针立刻红。
+
+顺带收掉 `formatSize` 这个名字：它与 `formatBytes` 是同一件事的两个名字，留着只会招来第六份。
+
+### 没动的两条（记账）
+
+- **238 个文件整篇 CRLF**：`.gitattributes` 已钉 LF，归位要 `git add --renormalize .`，
+  一次作废 238 个文件的 blame。要人拍板，不夹在功能批里做。
+- **TUI 的 39 个 `src/app/*.tsx` 用 PascalCase**：与壳里 `ui.tsx` 的小写命名并存。React 组件惯例，
+  改名收益只是好看，代价是全量改文件，不动。
+
+### 验证
+
+| 门 | 结果 |
+| --- | --- |
+| `pnpm typecheck` / `pnpm -C ui-shell typecheck` | 0 / 0 |
+| `pnpm run check:core` | 57/57 |
+| `pnpm run check:ui` | 40/40 |
+| `node scripts/ui-bytes-test.mjs` | 19/19 |
+| `node scripts/ui-review-notice-test.mjs` | 63/63 |
+| `pnpm -C ui-shell build` | 0 |
+| `check:style` 全仓 | 607 个文件全过 |
+| `dup-scan` | 431 个文件、0 组 |

@@ -65,7 +65,7 @@ dsc 已经拿到最难的三块（前缀友好的尾部 env 快照、压缩的�
 2. **CRLF**：本仓工作区是 CRLF。用 Edit 做小范围替换，**别整文件重写**（`Write` 覆盖会把
    整篇变 LF，diff 假涨几百行）。收尾自查 `git diff -w --stat`，应只显示真实改动。
 3. **构建与探针**：先 `pnpm run build`（tsc → `lib/`），再 `node scripts/<你的探针>.mjs`。
-   探针全跑在临时 HOME 上，真实 `~/.dsc` 一个字节都不动（照 `scripts/commands-battery.mjs` 的头）。
+   探针全跑在临时 HOME 上，真实 `~/.dsc` 一个字节都不动（照 `scripts/commands-battery-test.mjs` 的头）。
 4. **探针必须有负向验证**：每条断言至少抽一条，把被测行为改坏后探针应变红（证明不空转）。
    把你抽的那条写在交付说明里。
 5. **别改冻结的旧渲染层**（`desktop/src/renderer`、旧 `src/app/*` 的渲染）——本批全是宿主/内核侧。

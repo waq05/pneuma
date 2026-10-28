@@ -554,10 +554,10 @@ cd D:\dsc\desktop && pnpm run typecheck
 
 # 自检脚本：全部在临时 HOME 上跑，不碰真实 ~/.dsc
 # 三条汇总入口都按文件名自动发现，新探针不用回来登记：
-pnpm run check:ui                  # 39 条纯 Node 探针，39 秒
+pnpm run check:ui                  # 40 条纯 Node 探针，37 秒
 pnpm run check:ui:e2e              # 4 条要真 Chromium，61 秒（含 diff 卡、手机尺寸远程壳）
 pnpm run check:dsh                 # dsh 兼容层 + 组合包 + 真包挂载 + 会话桥 + 流/事件旁路 + 合成验收，180 条
-pnpm run check:core                # 56 条内核探针（协议 / TUI / 会话库 / LLM 适配 / 审批），约 9 分钟
+pnpm run check:core                # 57 条内核探针（协议 / TUI / 会话库 / LLM 适配 / 审批），约 9 分钟
 pnpm run check:style               # 排版闸门：制表符 / 行尾空白 / BOM / 混用行尾 / 末尾缺换行，2 秒
 pnpm run check:style -- --changed  # 只查本次改动的文件（提交前用这个）
 pnpm run check:all                 # 上面四条串起来（不含 e2e）
@@ -641,7 +641,13 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 旧渲染层日落、收 workspace、契约拆分三件都已落地（2026-10-28）。
 
 **自动门禁**：每次推与每个 PR 由 `.github/workflows/verify.yml` 跑三处 typecheck 加排版检查
-（`check:style`）；`release.yml` 只在推 tag 时跑。所以"本地绿"不算数，以这两条工作流的结论为准。
+（`check:style`）；夜跑（每天 02:00）与手动触发再跑两套探针——内核 `check:core`、界面
+`check:ui`（各自先 build，探针读的是编译产物）。`release.yml` 只在推 tag 时跑。所以"本地绿"
+不算数，以这两条工作流的结论为准。
+
+**编辑器口径**：仓库根有一份 `.editorconfig`（UTF-8 / LF / 末尾换行 / 2 空格缩进，markdown
+保留行尾空格，`.ps1` 走 CRLF）。它不管重排——为什么不引 Prettier / ESLint 见
+`scripts/style-check.mjs` 的头注释；那份文件也只查四条硬规则。
 
 ## 9. 打包与发布
 

@@ -10221,3 +10221,90 @@ frobnicate --fast x                        → 运行 frobnicate 命令
 一个环境上的坑记一笔：`capturePage()` 在同一进程里短时间内反复调用，拿到的可能是
 上一帧（我前三次拍出来是同一张欢迎页，字节数一模一样）。把截图时刻推到 60 秒之后才正常。
 
+## 二十一、第二轮全仓复查：把「格式统一」量出来，把五份字节读法并成两份（0.7.1，未发版）
+
+上一轮十九批拆的是结构（巨石文件、契约、重复代码），规范这一面一直靠两道闸门顶着：
+`check:style` 查四条硬规则，`dup-scan` 查函数体重复。**没量过的东西不算知道**，所以这轮
+按 skill 里跟本仓库沾边的四类规则（组件边界、状态归属、barrel 导入、渲染分支）重查一遍，
+配脚本把「格式」变成数字，再把查出来的六条清掉。
+
+### 一　格式是统一的，这次有数
+
+- 439 个有缩进的文件里，**2 空格缩进 439/439**（按「最小缩进」判，剔掉 JSDoc 的 ` * ` 行）；
+- 单引号、不加分号。全仓只有两个文件有分号结尾，翻进去看都是**注入的字符串**：
+  `src/core/cdp/actions.ts:408-419` 是送进页面执行的 JS，`src/core/sandbox/win/setup.ts:445` 起
+  是一段 C# 源码——那里的分号是别人的语法，外面不加才叫一致；
+- 0 制表符、0 行尾空白、0 BOM、0 混用行尾（607 个文件，`check:style` 全过）；
+- 深相对导入（`../../../`）0 处，全走包名；
+- 文件名 kebab-case 统一。唯一例外是 TUI 的 39 个 `src/app/*.tsx`（`App.tsx` / `ChatView.tsx`）——
+  React 组件惯例，与壳里 `ui.tsx` 的小写命名并存。**不改，写进这行说明**：真要统一，代价是把
+  TUI 全部文件改名，收益只是好看。
+
+### 二　分层零违规，只有一处插件横穿
+
+`@dsc/ui` 76 处、`@dsc/ui-primitives` 54 处、`@dsc/ui-dockkit` 7 处，插件侧没有一处绕过公开面。
+唯一的例外是轨迹页：
+
+```
+ui-shell/src/plugins/trace/ui.tsx:50  import ... from '../transcript/review-notice'
+ui-shell/src/plugins/trace/ui.tsx:51  import ... from '../transcript/review-notice-card'
+```
+
+原来那句注释写着「故意从 transcript 借用，两个 bundle 各自内联，运行期不互相依赖」——话是对的，
+代价是两个插件产物里各存一份解析器与卡片，而且 transcript 改签名时 trace 会以没人期待的方式跟着坏。
+
+搬进基元包（`ui-primitives/review-notice.ts` / `review-notice-card.tsx`，插件的公开面只剩四个包名），
+两家改从 `@dsc/ui-primitives` 取同一份。卡片里的 `@dsc/ui` / `@dsc/ui-primitives` 引用相应换成
+`./icons`、`./file-icons`、`./paths`——基元包内部不许反向依赖 `@dsc/ui`（`ui-plugin-test` 有闸）。
+
+### 三　字节读法：五份并两份，靠探针钉住不漂
+
+同一件事（把字节数读成人话）此前有五份，单位与小数位各不相同：
+
+| 位置 | 给出的写法 | 谁在看 |
+| --- | --- | --- |
+| `src/core/attachments.ts` | `512 B` / `1.5 KB` / `1.00 GB` | 附件上限报错 |
+| `src/core/spill.ts` | `1536 字节` | 设置页清理结果 |
+| `ui-shell/.../composer/attachments.ts` | `1.2 MB`（抹掉 .0） | 输入区附件条 |
+| `ui-shell/.../transcript/rows/user-row.tsx` | `512 B` / `1.5 KB` | 对话流附件行 |
+| `ui-shell/.../ui-primitives/sizes.ts` | `512B`（无空格） | 文件树、预览 |
+
+用户在同一个界面里能看到 `512B` 和 `1.2 MB` 两种写法。合并时**不能只留一份**：
+分层规定壳不许 import `src/`（反过来也不行），所以只能「宿主一份、壳一份」，靠
+`scripts/ui-bytes-test.mjs` 逐字比对两份函数体 + 逐档比对输出（0 / 1023 / 1536 / 10MB / 1.5GB /
+负数 / NaN / Infinity）。哪天有人只改一边，探针立刻红。
+
+顺带把 `formatSize` 这个名字收掉：它和 `formatBytes` 是同一件事的两个名字，留着只会让人再写第六份。
+
+### 四　13 处 `eslint-disable` 是空指令
+
+仓库没有 ESLint（`scripts/style-check.mjs:4-12` 写清了为什么不上），但 11 个文件里挂着
+`// eslint-disable-next-line react-hooks/exhaustive-deps` 这类注释——读者会以为 lint 在管，
+实际上谁也没管。全部改成普通注释，把「为什么故意不列依赖」写清（`reloadSkills 每次渲染都是
+新函数` 这种），13 处、零风险。`bin/headless.cjs` 那条 `no-require-imports` 同理，改成
+「本文件是 CommonJS 启动脚本」的说明。
+
+### 五　CI 夜跑原来不跑界面探针
+
+`.github/workflows/verify.yml` 的夜跑 job 只跑 `check:core`。`check:ui`（40 条）与 `check:ui:e2e`
+（4 条，真 Chromium）只存在于 `package.json`——壳那两万九千行、十九个插件的回归，全看谁本地想得起来。
+
+补法：夜跑 job 里加 `pnpm -C ui-shell build` + `pnpm run check:ui`（探针读插件产物，必须先 build）。
+**不放进推门**：推门的定位是一分钟级，build 插件产物一分钟起步，塞进去只会让人学会忽略红灯。
+
+### 六　四条杂项
+
+- `verify.yml` 里的数字漂了（「49 条内核探针」实际 57、「77 条 import ../lib」实际 80），
+  同一条 `--ignore-scripts` 注释还重复了一遍。数字一律不写进文案——它必然会再漂；
+- 根目录 19 个 `muse-code-*.tgz` 与 `dsc-tui-0.1.0.tgz` 是 pack 产物（已 gitignore），删掉；
+- `scripts/commands-battery.mjs` 不合探针命名（别的 97 个都叫 `*-test.mjs`），改名后自动进
+  `check-core` 的发现列表——它此前只被 `desktop/shots/_battery.mjs` 手动串进去过；
+- 加 `.editorconfig`：2 空格 / LF / 末尾换行 / 去行尾空白，markdown 保留行尾空格，`.ps1` 走 CRLF。
+  它不做重排，只是别让编辑器把 2 空格改回 4 空格。
+
+### 七　留了一条没动
+
+238 个文件整篇是 CRLF（`core.autocrlf` 的旧检出）。`.gitattributes` 已经把行尾钉成 LF，
+归位要 `git add --renormalize .` 一次——那会让 238 个文件的 blame 全部作废。**这件事要人拍板**，
+不夹在这一批里做。
+
