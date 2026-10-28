@@ -181,15 +181,35 @@ function readChromeColors(): string | null {
  * @returns 缓存的外观，或默认值
  */
 export function loadCachedAppearance(): Appearance {
+  const boot = bootTheme()
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return DEFAULT_APPEARANCE
-    return appearanceFromPrefs(JSON.parse(raw) as Partial<UiPrefsView>)
+    if (raw !== null) {
+      const cached = appearanceFromPrefs(JSON.parse(raw) as Partial<UiPrefsView>)
+      // 主题以地址上那份为准：读自 settings.json，比镜像新——镜像按源隔离，
+      // 宿主每次换端口就等于换一份空存储，靠它的话浅色用户每次冷启动都会先黑一下。
+      return boot === null ? cached : { ...cached, themeMode: boot }
+    }
   } catch (error) {
-    // 镜像只是加速手段，读不出来直接用默认值，不该把启动卡住。
-    console.warn('[ui-shell] 外观缓存读取失败，回退默认外观', error)
-    return DEFAULT_APPEARANCE
+    // 镜像只是加速手段，读不出来就用下面的兜底，不该把启动卡住。
+    console.warn('[ui-shell] 外观缓存读取失败，回退启动主题', error)
   }
+  return boot === null ? DEFAULT_APPEARANCE : { ...DEFAULT_APPEARANCE, themeMode: boot }
+}
+
+/**
+ * 地址上带过来的主题（桌面主进程从 `settings.json` 读到、拼在 query 里，见 `pageQuery`）。
+ *
+ * 为什么不能只靠 localStorage 镜像：镜像按**源**隔离，而宿主每次启动换一个端口，
+ * 换一个源就是一份新的空存储——浅色主题的用户于是每次冷启动都先按默认深色闪一下。
+ * 主进程那份不依赖存储，首帧就准。
+ *
+ * @returns 三档主题之一；浏览器里没有这个参数时给 null（交给默认值）
+ */
+function bootTheme(): ThemeMode | null {
+  if (typeof window === 'undefined') return null
+  const match = /[?&]theme=(dark|light|claude)/.exec(window.location.search)
+  return match === null ? null : (match[1] as ThemeMode)
 }
 
 /**

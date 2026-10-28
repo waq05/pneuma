@@ -4,10 +4,58 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Pneuma</title>
+    <!-- 首帧：主题与画布底色先定下来，后面才不会有「白闪 / 深闪」。
+         桌面端在地址上带 theme（主进程读 ~/.dsc/settings.json，见 THEME_PAINT）；
+         手机浏览器里没有这个参数，就按系统深浅走。三套颜色与主进程那份保持一致：
+         深色 #151517 / 浅色 #f8f9fe / 米白 #faf9f5。 -->
+    <script>
+      ;(function () {
+        var colors = { dark: '#151517', light: '#f8f9fe', claude: '#faf9f5' }
+        var accents = { dark: '#5686fe', light: '#0053fd', claude: '#d97757' }
+        var match = /[?&]theme=(dark|light|claude)/.exec(window.location.search)
+        var mode = match === null ? null : match[1]
+        if (mode === null) mode = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+        var root = document.documentElement
+        root.dataset.theme = mode
+        root.style.backgroundColor = colors[mode]
+        root.style.setProperty('--boot-page', colors[mode])
+        root.style.setProperty('--boot-ink', mode === 'dark' ? '255,255,255' : '0,0,0')
+        root.style.setProperty('--boot-accent', accents[mode])
+        // 兜底：界面脚本要是没起来（打包坏了 / 解析失败），8 秒后把占位让开，
+        // 别让它一直盖着错误提示。
+        window.setTimeout(function () {
+          var splash = document.getElementById('boot-splash')
+          if (splash !== null) splash.remove()
+        }, 8000)
+      })()
+    </script>
+    <style>
+      /* 启动占位：与主进程那张过渡页同款（desktop/electron/main/index.ts 的 splashHtml）。
+         它盖在界面上方，等 React 首帧画完由 main.tsx 淡出——所以换文档、装第二批插件
+         这两跳都藏在它后面。改这里记得同步主进程那一份。 */
+      #boot-splash{position:fixed;inset:0;z-index:9999;display:flex;flex-direction:column;
+        align-items:center;justify-content:center;gap:18px;background:var(--boot-page);
+        font:14px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;-webkit-font-smoothing:antialiased;
+        transition:opacity .16s ease-out}
+      #boot-splash.boot-splash--done{opacity:0;pointer-events:none}
+      #boot-splash .name{font-size:15px;letter-spacing:.18em;text-transform:uppercase;color:rgba(var(--boot-ink),.72)}
+      #boot-splash .track{width:132px;height:2px;border-radius:2px;overflow:hidden;background:rgba(var(--boot-ink),.12)}
+      #boot-splash .track span{display:block;width:38%;height:100%;border-radius:2px;
+        background:var(--boot-accent);animation:boot-slide 1.15s cubic-bezier(.45,0,.55,1) infinite}
+      #boot-splash .hint{font-size:12px;letter-spacing:.04em;color:rgba(var(--boot-ink),.45)}
+      @keyframes boot-slide{0%{transform:translateX(-100%)}100%{transform:translateX(360%)}}
+      @media (prefers-reduced-motion: reduce){#boot-splash .track span{animation:none;width:100%;opacity:.5}}
+    </style>
   </head>
   <body>
     <!-- 启动清单由宿主以外链 /boot.js 注入（window.__DSC_BOOT__）；本地 dev 时 fetch /api/boot 兜底。 -->
     <div id="root"></div>
+    <!-- 首帧占位：盖在 #root 之上，但不属于它（React 换内容时不会被一起换掉）。 -->
+    <div id="boot-splash" aria-hidden="true">
+      <div class="name">Pneuma</div>
+      <div class="track"><span></span></div>
+      <div class="hint">正在启动…</div>
+    </div>
     <script type="module" src="/src/ui-renderer/main.tsx"></script>
   </body>
 </html>

@@ -91,6 +91,26 @@ onAppearanceRequest((patch) => {
   saveCachedAppearance(appearance)
 })
 
+/**
+ * 让出启动占位（`index.html` 里那块盖在上面的 `#boot-splash`）。
+ *
+ * 为什么要等两帧：`createRoot().render()` 的首次提交是排队的，立刻删会让占位在界面
+ * 画出来之前就消失——那正是要避免的「中间空一帧」。两帧之后界面已经在下面了，淡出
+ * 160ms 把「换文档」和「第二批插件装上来」这两跳一起盖过去。
+ */
+function dismissBootSplash(): void {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const splash = document.getElementById('boot-splash')
+      if (splash === null) return
+      splash.classList.add('boot-splash--done')
+      window.setTimeout(() => {
+        splash.remove()
+      }, 240)
+    })
+  })
+}
+
 async function bootstrap(): Promise<void> {
   const container = document.getElementById('root')
   if (container === null) throw new Error('页面里没有 #root')
@@ -151,6 +171,7 @@ async function bootstrap(): Promise<void> {
   session?.markFirstFrame()
   // 首帧之后的空闲时刻继续装第二批——「第二批未物化时第一批已可交互」就是这两行的产品形态。
   session?.startApplication()
+  dismissBootSplash()
 }
 
 void bootstrap()

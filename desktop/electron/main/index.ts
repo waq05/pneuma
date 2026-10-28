@@ -50,11 +50,44 @@ let hostCwd = ''
 /** 原生窗口控件区的高度：renderer 的窗口控件条（caption-bar）是 36px，多给 2px 让按钮命中区不裁边。 */
 const CAPTION_HEIGHT = 38
 /**
- * 深色主题的窗口底色与控件区配色，取自深色主题下这两个令牌算出来的实际值，
- * 这样选深色时开窗到首帧之间不会看见颜色跳一下。浅色主题由 renderer 在外观
- * 生效时推过来覆盖。
+ * 主题三档。`system` 在读档时按当前系统深浅解析成 dark / light——窗口与启动页
+ * 只认一个确定值。
  */
-const DARK_CHROME = { bar: '#111421', symbol: '#b7babf' }
+type UiTheme = 'dark' | 'light' | 'claude'
+
+/**
+ * 三档主题的页面底色、控件区符号色与强调色。
+ *
+ * 数值取自 `ui-shell/src/legacy/tokens.css` 里 `--dsc-bg-page` / `--dsc-chrome-symbol` /
+ * `--dsc-accent` 算出来的实际值：窗口在 renderer 报来真颜色之前先按它上色，开窗那一帧
+ * 才不会和界面差一个色号。浅色与米白这两档以前没有（只有一份深色的 `DARK_CHROME`），
+ * 所以选浅色主题的人每次开窗都先看见一块深色。
+ */
+const THEME_PAINT: Readonly<Record<UiTheme, { page: string; symbol: string; accent: string }>> = {
+  dark: { page: '#151517', symbol: '#b7babf', accent: '#5686fe' },
+  light: { page: '#f8f9fe', symbol: '#515154', accent: '#0053fd' },
+  claude: { page: '#faf9f5', symbol: '#504d48', accent: '#d97757' },
+}
+
+/**
+ * 当前窗口主题：读 `settings.json` 的 `ui.themeMode`，`system` 按系统深浅解析。
+ *
+ * 为什么要主进程自己读一遍：窗口底色、控件区、启动页这三样必须在**第一帧之前**定下，
+ * 而壳要到界面脚本跑起来才知道主题（`getUiPrefs` 还是异步的）。读不到就按系统深浅起步，
+ * 界面随后会把真颜色推过来。
+ */
+function readUiTheme(): UiTheme {
+  try {
+    const doc = JSON.parse(readFileSync(join(app.getPath('home'), '.dsc', 'settings.json'), 'utf8')) as {
+      ui?: { themeMode?: unknown }
+    }
+    const mode = doc.ui?.themeMode
+    if (mode === 'dark' || mode === 'light' || mode === 'claude') return mode
+  } catch {
+    // 首次运行没有 settings.json，或文件坏了：按系统深浅起步即可
+  }
+  return nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
+}
 
 /** 能否交给系统给窗口控件着色：只收 #rrggbb，半透明颜色到了那侧会被丢掉。 */
 function isChromeColor(value: unknown): value is string {
@@ -90,37 +123,85 @@ function uiProfile(): 'shell' {
   return 'shell'
 }
 
+// ── 启动画面与失败页 ──────────────────────────────────────────────────────────
+
 /**
- * 界面产物缺失时给的那一页（data URL，不依赖任何构建产物）。
+ * 启动过渡页：窗口显示的第一帧。
  *
- * 为什么要有它：`loadFile` 指向一个不存在的文件时，Electron 给的是一张纯白窗口——
- * 用户看不出是「构建没跑」还是「装坏了」，也找不到下一步。这一页只说三件事：
- * 缺的是什么、怎么补、去哪儿看日志。
+ * 为什么需要它：宿主要两秒上下才报出界面地址，这段时间原来挂的是那张「界面还没构建出来」
+ * 的兜底页——提示成了每次启动的必经画面（2026-10-28 报障）。过渡页只管一件事：让用户
+ * 看见「在启动」，底色跟着主题走。
+ *
+ * 版式与壳页面里的占位（`ui-shell/index.html` 的 `#boot-splash`）**逐像素同款**：
+ * 换文档那一刻占位还在原处，界面渲染出来才把占位顶掉——所以这一跳看不见。
+ * 改这里记得同步那一份。
+ *
+ * @param theme - 当前窗口主题（决定底色与强调色）
  */
-function missingUiHtml(reason: string): string {
-  const html = [
-    '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">',
-    '<title>Pneuma · 界面未就绪</title><style>',
-    ':root{color-scheme:dark}',
-    'body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;',
-    'background:#17181a;color:#e6e6e6;font:14px/1.7 "Segoe UI","Microsoft YaHei",system-ui,sans-serif}',
-    '.card{max-width:560px;padding:32px 36px;border:1px solid #2c2e33;border-radius:12px;background:#1e2024}',
-    'h1{margin:0 0 12px;font-size:17px;font-weight:600}',
-    'p{margin:0 0 10px;color:#a8adb6}',
-    'code{background:#2a2d33;padding:2px 6px;border-radius:4px;color:#d9dde4;font-size:13px}',
-    'ol{margin:12px 0 0;padding-left:20px;color:#a8adb6}',
-    'li{margin:4px 0}',
-    '</style></head><body><div class="card">',
-    '<h1>界面还没构建出来</h1>',
-    '<p>' + reason + '</p>',
-    '<ol>',
-    '<li>在仓库根跑 <code>pnpm build</code></li>',
-    '<li>再跑 <code>pnpm -C ui-shell build</code>（界面壳产物落到 <code>lib/ui/assets</code>）</li>',
-    '<li>然后重开这个窗口</li>',
-    '</ol>',
-    '<p style="margin-top:14px">宿主日志在 <code>~/.dsc/logs</code>；装出来打不开时先看那里。</p>',
-    '</div></body></html>',
-  ].join('')
+function splashHtml(theme: UiTheme): string {
+  const paint = THEME_PAINT[theme]
+  const ink = theme === 'dark' ? '255,255,255' : '0,0,0'
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Pneuma</title><style>
+:root{color-scheme:${theme === 'dark' ? 'dark' : 'light'}}
+html,body{height:100%}
+body{margin:0;display:flex;align-items:center;justify-content:center;background:${paint.page};
+  font:14px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.splash{display:flex;flex-direction:column;align-items:center;gap:18px}
+.name{font-size:15px;letter-spacing:.18em;text-transform:uppercase;color:rgba(${ink},.72)}
+.track{width:132px;height:2px;border-radius:2px;overflow:hidden;background:rgba(${ink},.12)}
+.track span{display:block;width:38%;height:100%;border-radius:2px;background:${paint.accent};
+  animation:slide 1.15s cubic-bezier(.45,0,.55,1) infinite}
+.hint{font-size:12px;letter-spacing:.04em;color:rgba(${ink},.45)}
+@keyframes slide{0%{transform:translateX(-100%)}100%{transform:translateX(360%)}}
+@media (prefers-reduced-motion: reduce){.track span{animation:none;width:100%;opacity:.5}}
+</style></head><body><div class="splash"><div class="name">Pneuma</div><div class="track"><span></span></div><div class="hint">正在启动…</div></div></body></html>`
+  return 'data:text/html;charset=utf-8,' + encodeURIComponent(html)
+}
+
+/** 启动失败的三条真实原因——只有它们会出提示页。 */
+type FailureKind = 'no-assets' | 'host-timeout' | 'host-exit'
+
+/**
+ * 真失败时的提示页（data URL，不依赖任何构建产物）。
+ *
+ * 这一页原来叫 `missingUiHtml`，并且被当成了窗口首屏：宿主还没报地址就先加载它，
+ * 于是每次启动都要看一秒「界面还没构建出来」。现在只有三条路走到这里——
+ * 产物目录真不存在、宿主超时没起来、宿主启动途中退出。
+ *
+ * 为什么不像以前那样把原因拼成一句话：这三种失败用户要做的事不一样（重建 / 看日志 /
+ * 还原配置），标题与步骤分开写才不至于让人拿着一句「没连上」去猜。
+ *
+ * @param kind - 失败原因（决定标题与步骤）
+ * @param detail - 补充说明（例如退出码）
+ */
+function failureHtml(kind: FailureKind, detail = ''): string {
+  const tail = detail === '' ? '' : `（${detail}）`
+  const head =
+    kind === 'no-assets'
+      ? { title: '界面还没构建出来', reason: `没找到界面产物（${shellDir()}）。` }
+      : kind === 'host-exit'
+        ? { title: '宿主进程退出了', reason: `后台的内核进程启动途中退出了${tail}，界面没能连上。` }
+        : { title: '宿主没在 15 秒内起来', reason: `内核进程没有报出界面地址${tail}。` }
+  const steps =
+    kind === 'no-assets'
+      ? ['在仓库根跑 <code>pnpm build</code>', '再跑 <code>pnpm -C ui-shell build</code>（界面壳产物落到 <code>lib/ui/assets</code>）', '然后重开这个窗口']
+      : ['先看 <code>~/.dsc/logs</code> 里的宿主日志', '重开这个窗口再试一次', '改过 <code>config.yaml</code> 就先还原再启动']
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Pneuma · 启动失败</title><style>
+:root{color-scheme:dark}
+body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;
+  background:#17181a;color:#e6e6e6;font:14px/1.7 "Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+.card{max-width:560px;padding:32px 36px;border:1px solid #2c2e33;border-radius:12px;background:#1e2024}
+h1{margin:0 0 12px;font-size:17px;font-weight:600}
+p{margin:0 0 10px;color:#a8adb6}
+code{background:#2a2d33;padding:2px 6px;border-radius:4px;color:#d9dde4;font-size:13px}
+ol{margin:12px 0 0;padding-left:20px;color:#a8adb6}
+li{margin:4px 0}
+</style></head><body><div class="card">
+<h1>${head.title}</h1>
+<p>${head.reason}</p>
+<ol>${steps.map((step) => `<li>${step}</li>`).join('')}</ol>
+<p style="margin-top:14px">宿主日志在 <code>~/.dsc/logs</code>；装出来打不开时先看那里。</p>
+</div></body></html>`
   return 'data:text/html;charset=utf-8,' + encodeURIComponent(html)
 }
 
@@ -128,7 +209,7 @@ function missingUiHtml(reason: string): string {
  * 宿主该伺服的界面产物目录（经 `DSC_UI_ASSETS` 交给宿主进程）。
  *
  * 产物缺失时**照样**把这个路径给宿主（伺服到的是 404），而不是退回别的目录：
- * 窗口那边会落到 {@link missingUiHtml} 那张提示页，说清缺什么、怎么补。
+ * 窗口那边会落到 {@link failureHtml}（no-assets）那张提示页，说清缺什么、怎么补。
  */
 function uiAssetsDir(): string {
   const dir = shellDir()
@@ -155,6 +236,61 @@ function hostEnv(assetsDir: string): Record<string, string> {
 let uiServerOrigin: string | null = null
 /** 窗口是否已经切到宿主伺服的那份文档（切过一次就不再重载，免得刷掉界面状态）。 */
 let servedPageLoaded = false
+
+/**
+ * 启动已经判失败（提示页已上屏）。
+ *
+ * 为什么要记下来：产物缺失时宿主照样能起来、照样报界面地址，但伺服的是 404——
+ * 放它进来会把提示页顶成一张白底 404（2026-10-28 实测）。判失败之后这一辈子不再接
+ * 宿主的界面地址；用户重建产物后重开窗口会走「已有地址」那条路，不用重启应用。
+ */
+let bootFailed = false
+
+/** 启动耗时基准：自检日志里启动期那几行带一个 `+NNNms`，排查「启动慢」时不用再猜。 */
+const bootStart = Date.now()
+
+/** 启动期读数（带耗时前缀）。平时的读数仍走 {@link selfcheckNote}，格式不变。 */
+function bootNote(line: string): void {
+  selfcheckNote(`[+${String(Date.now() - bootStart)}ms] ${line}\n`)
+}
+
+/** 等宿主报界面地址的上限。超了就认定启动失败——这是真失败，不是「还没好」。 */
+const UI_WAIT_MS = 15_000
+
+/** 看门狗：只盯「宿主一直没报地址」这一种情况，地址到了就拆掉。 */
+let uiWaitTimer: ReturnType<typeof setTimeout> | null = null
+
+function cancelUiWait(): void {
+  if (uiWaitTimer === null) return
+  clearTimeout(uiWaitTimer)
+  uiWaitTimer = null
+}
+
+function armUiWait(): void {
+  cancelUiWait()
+  uiWaitTimer = setTimeout(() => {
+    uiWaitTimer = null
+    if (servedPageLoaded || quitting) return
+    showFailurePage('host-timeout')
+  }, UI_WAIT_MS)
+}
+
+/**
+ * 换失败页，并确保窗口可见（窗口在首帧画出来之前一直是隐着的）。
+ *
+ * 只管「真失败」：调用点只有三处——产物目录不存在、等宿主超时、宿主启动途中退出。
+ */
+function showFailurePage(kind: FailureKind, detail = ''): void {
+  cancelUiWait()
+  bootFailed = true
+  const window = mainWindow
+  if (window === null || window.isDestroyed()) return
+  bootNote(`启动失败（${kind}${detail === '' ? '' : `：${detail}`}），改为显示提示页`)
+  // 不在这里 show()：窗口在首帧画出来之前是隐着的，提前显示等于给用户看一块空白——
+  // 交给 createWindow 里那个 ready-to-show。它只在「这一页是窗口的第一份文档」时起作用，
+  // 而失败发生在启动中途时窗口早已显示，不用再管。
+  void window.loadURL(failureHtml(kind, detail))
+}
 
 /**
  * 用一次性令牌换会话 Cookie：宿主那条带 `?token=` 的地址只能换一次，换到的是
@@ -210,26 +346,40 @@ async function adoptUiServer(info: { url: string; origin: string }): Promise<voi
   if (window === null || window.isDestroyed()) return
   // 开发模式下页面来自 vite，别把窗口抢过去。
   if ((process.env.ELECTRON_RENDERER_URL ?? '') !== '') return
+  // 已经判过失败：这一窗就是提示页，别让 404 顶掉它（见 bootFailed 的说明）。
+  if (bootFailed) return
   const restarted = servedPageLoaded && previous !== info.origin
   if (servedPageLoaded && !restarted) return
   servedPageLoaded = true
-  selfcheckNote(
-    `[dsc-desktop] 窗口来自宿主界面服务 ${info.origin}${restarted ? '（宿主重启，窗口重新加载）' : ''}\n`,
+  cancelUiWait()
+  bootNote(
+    `[dsc-desktop] 窗口来自宿主界面服务 ${info.origin}${restarted ? '（宿主重启，窗口重新加载）' : ''}`,
   )
   void window.loadURL(desktopPageUrl())
 }
 
-/** 窗口该加载的地址：带自检查询参数（demo / search / ui-query）的那一份。 */
-function desktopPageUrl(): string {
-  const query = [
+/**
+ * 拼给页面的 query：自检参数 + 主题。
+ *
+ * `theme` 是给壳的**首帧底色**用的（`ui-shell/index.html` 里那段引导脚本读它）：
+ * 页面 CSS 到位之前画布得先是对的颜色，否则从过渡页换过来会闪一帧白。dev server 与
+ * 宿主伺服两条路共用同一份，省得只给一条路带参数。
+ */
+function pageQuery(): string {
+  return [
     process.env.DSC_DESKTOP_DEMO === '1' ? 'demo=1' : '',
     process.env.DSC_DESKTOP_SEARCH ?? '',
     // 自检要看的壳侧参数（例如 diag=1 让诊断区常显——它的 DOM 是自检的读数面）。
     process.env.DSC_UI_QUERY ?? '',
+    `theme=${readUiTheme()}`,
   ]
     .filter((part) => part !== '')
     .join('&')
-  return query === '' ? (uiServerOrigin ?? '') : `${uiServerOrigin ?? ''}/?${query}`
+}
+
+/** 窗口该加载的地址：宿主伺服的那一份（带 query）。 */
+function desktopPageUrl(): string {
+  return `${uiServerOrigin ?? ''}/?${pageQuery()}`
 }
 
 /** 启动 headless 宿主（utilityProcess；入口为应用自有编译产物，无用户输入）。 */
@@ -267,9 +417,14 @@ function startHost(cwd: string): void {
     const silent = suppressHostExit
     suppressHostExit = false
     protocol = null
-    if (!quitting && !silent) {
-      mainWindow?.webContents.send('dsc:host-exit', { code })
+    if (quitting || silent) return
+    // 界面还没切到宿主伺服的那份文档就退出去了：这是启动失败，不是运行中崩溃。
+    // 两条路要做的事不同（这条给提示页，那条让壳显示「连接断开」），不能混。
+    if (!servedPageLoaded) {
+      showFailurePage('host-exit', `退出码 ${String(code)}`)
+      return
     }
+    mainWindow?.webContents.send('dsc:host-exit', { code })
   })
 }
 
@@ -1103,6 +1258,8 @@ function rememberWindowBounds(win: BrowserWindow): void {
 
 function createWindow(): void {
   const memory = loadWindowMemory()
+  const theme = readUiTheme()
+  const paint = THEME_PAINT[theme]
   mainWindow = new BrowserWindow({
     width: memory.width,
     height: memory.height,
@@ -1110,14 +1267,18 @@ function createWindow(): void {
     minWidth: 960,
     minHeight: 640,
     // 无边框：Windows 用原生 overlay 窗口控件，renderer 内留出拖拽区。
-    // 窗口底色与控件区按深色主题起步；选浅色主题时 renderer 在外观生效那一刻
-    // 把压平后的两个颜色报过来（IPC 频道 dsc:set-window-chrome）。
-    backgroundColor: DARK_CHROME.bar,
+    // 底色先按 settings.json 里的主题给（深 / 浅 / 米白三套），renderer 在外观生效那一刻
+    // 还会把算出来的两个颜色再报一次（IPC 频道 dsc:set-window-chrome）。
+    //
+    // show: false 是关键的一手：窗口等**页面画出第一帧**才上屏，用户看不到从点击快捷方式
+    // 到首帧之间那块白（原来的开窗顺序是先上屏、再加载，头一帧是白的）。
+    show: false,
+    backgroundColor: paint.page,
     title: 'Pneuma',
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: DARK_CHROME.bar,
-      symbolColor: DARK_CHROME.symbol,
+      color: paint.page,
+      symbolColor: paint.symbol,
       height: CAPTION_HEIGHT,
     },
     autoHideMenuBar: true,
@@ -1129,6 +1290,12 @@ function createWindow(): void {
   })
   // dock.ts 通过全局引用向 renderer 推送事件（pty 数据 / 浏览器状态）
   ;(globalThis as { __dscMainWindow?: BrowserWindow }).__dscMainWindow = mainWindow
+
+  // 首帧：页面画出第一帧再显示窗口（配合上面的 show: false）。
+  mainWindow.once('ready-to-show', () => {
+    bootNote('首帧已画出，窗口显示')
+    mainWindow?.show()
+  })
 
   // 窗口记忆：先挂采集（种子 = 刚开好的还原态），再按记忆恢复最大化——
   // 顺序反了会把最大化尺寸当成还原态记下来
@@ -1202,30 +1369,30 @@ function createWindow(): void {
   }
 
   // 自检参数：DSC_DESKTOP_DEMO=1 自动跑一轮真实对话；DSC_DESKTOP_SEARCH 直接打开某个界面；
-  // DSC_UI_QUERY 透传给壳（例如 diag=1）。
+  // DSC_UI_QUERY 透传给壳（例如 diag=1）；theme 给首帧底色（见 pageQuery）。
   const devServerUrl = process.env.ELECTRON_RENDERER_URL
-  const query = [
-    process.env.DSC_DESKTOP_DEMO === '1' ? 'demo=1' : '',
-    process.env.DSC_DESKTOP_SEARCH ?? '',
-    process.env.DSC_UI_QUERY ?? '',
-  ]
-    .filter((part) => part !== '')
-    .join('&')
   if (devServerUrl !== undefined && devServerUrl !== '') {
-    void mainWindow.loadURL(`${devServerUrl}/${query === '' ? '' : `?${query}`}`)
+    // 开发态：页面来自 vite，直接加载它，不留过渡页（同一个源，改了立刻能看到）。
+    servedPageLoaded = true
+    void mainWindow.loadURL(`${devServerUrl}/?${pageQuery()}`)
   } else if (uiServerOrigin !== null) {
     // 宿主比窗口先起来（内核快时走这条）：直接加载伺服的那份文档，不必先落文件再切。
     servedPageLoaded = true
-    selfcheckNote(`[dsc-desktop] 窗口来自宿主界面服务 ${uiServerOrigin}\n`)
+    bootNote(`[dsc-desktop] 窗口来自宿主界面服务 ${uiServerOrigin}`)
     void mainWindow.loadURL(desktopPageUrl())
+  } else if (!existsSync(shellDir())) {
+    // 界面产物真的不存在：等下去也不会有界面，这是真失败，直接给提示页。
+    showFailurePage('no-assets')
+  } else if (isSelfCheck()) {
+    // 自检要一份**可预测**的首个文档（截图钩子挂在 did-finish-load 上），所以不插过渡页：
+    // 留空白窗口等宿主报地址，真等不到由看门狗换成提示页。
+    bootNote('自检运行：不加载过渡页，等宿主报地址')
+    armUiWait()
   } else {
-    // 先用本机文件把窗口开起来（渲染层自己会显示「连接中」），宿主报来界面地址后再切过去。
-    // 那份文件与宿主伺服的是同一份构建产物（都出自 desktop/out/renderer）。
-    // 既没有 dev server 也没有宿主界面地址：说明壳产物没构建（或宿主的界面服务没起来）。
-    // 别留给用户一张白屏，直接说清缺什么、怎么补。
-    void mainWindow.loadURL(
-      missingUiHtml('没连上宿主的界面服务，也没找到界面产物（' + shellDir() + '）。'),
-    )
+    // 宿主还在起（约两秒）：先上过渡页（带动画），地址一到就换成真界面。
+    // 提示页只在真失败时出现——它不再是启动的必经画面。
+    void mainWindow.loadURL(splashHtml(theme))
+    armUiWait()
   }
 
   // 点 X：开关开着就缩到托盘（宿主继续跑），否则正常关窗走退出流程
