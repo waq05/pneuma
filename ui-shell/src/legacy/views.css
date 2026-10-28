@@ -9602,6 +9602,76 @@ body.resizing iframe {
   min-width: 58px;
 }
 
+/* ── 卡头与折叠（2026-10-28）──
+   卡头常驻：左边题目标签（收起时换成两行封顶的题干），右边一颗 20px 图标钮。收起
+   之后卡就剩这一行，用户仍看得见「有题待答」，输入框上方不再被整卡顶住。
+
+   收起用 hidden 而不是卸载：草稿、焦点、翻页位置都留在 DOM 里，展开即原样。但
+   .ask-panel 自带 display:flex，作者样式压过 UA 的 [hidden]，所以这里要显式补一条。 */
+.ask-panel[hidden],
+.ask-foot[hidden] {
+  display: none;
+}
+
+.ask-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.ask-head-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* 收起态的题干：两行封顶，超出裁掉（dsh QuestionComposer.module.css:162 同款）。
+   不裁成一行：「asu-skills 指向的 ASU-skills 目录已经不存在了」这种句子一行放不下，
+   收起来之后就看不出在问什么了。 */
+.ask-head-title {
+  color: var(--dsc-text-primary);
+  display: -webkit-box;
+  font-size: var(--dsc-fs-body);
+  line-height: 1.5;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* 折叠钮：与翻页器同一套 20px 图标钮（.ask-page），只是多一格居中。 */
+.ask-fold {
+  background: none;
+  border: 0;
+  border-radius: var(--dsc-r-icon);
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  display: grid;
+  flex: 0 0 auto;
+  height: 20px;
+  line-height: 1;
+  place-items: center;
+  width: 20px;
+}
+
+.ask-fold:hover:not(:disabled) {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.ask-fold:disabled {
+  color: var(--dsc-text-quaternary);
+  cursor: default;
+}
+
+/* 收起态：body 与 foot 都不占盒子，卡内距随之收紧。 */
+.ask-card[data-open='false'] {
+  gap: 0;
+  padding: 8px 12px;
+}
+
 /* ══════════ 对话区修正批 ══════════ */
 /* 这一段只做两件事，别处的规则一行没改（旧段里 .meta-btn / .user-act 那几条一行没动，
    这里用同具体度的选择器写在后面把宽高、内距与图标倍率补上）：

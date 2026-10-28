@@ -38,6 +38,8 @@ import {
   defineUiPlugin,
   useHostChannel,
   useHostSelector,
+  IconChevronDown,
+  IconChevronRight,
   type ApprovalAnswer,
   type ApprovalPolicy,
   type ApprovalRequestView,
@@ -334,6 +336,20 @@ function readOwnerLabel(snapshot: HostSnapshot | null): string | null {
   return (sessions as SessionSummary[]).find((item) => item.id === request.sessionPath)?.title ?? '后台会话'
 }
 
+/**
+ * 「为什么问你」那几句话里没有信息量的几句。
+ *
+ * 命令层的兜底说法是「需要授权」，工作区内写是「工作区内的改动需要确认」——两张卡里
+ * 有一张就是这两句，念三遍等于没念。真正有话说的是复核否决、沙箱边界、安全钩子
+ * 这类具体原因，那些照原样留在卡上。
+ */
+const GENERIC_REASONS = new Set(['需要授权', '工作区内的改动需要确认'])
+
+/** 这句话是不是通用兜底（是就不画：省一行，也省得用户去猜它是什么意思）。 */
+function isGenericReason(reason: string): boolean {
+  return GENERIC_REASONS.has(reason)
+}
+
 /** 审批卡：挂起的工具审批，四个决定照后端授权的三档语义。 */
 const ApprovalCard = memo(function ApprovalCard({ request }: { request: ApprovalRequestView }): ReactNode {
   const channel = useHostChannel()
@@ -441,13 +457,19 @@ const ApprovalCard = memo(function ApprovalCard({ request }: { request: Approval
   ]
 
   return (
-    <div className={`approval risk-${risk.tone}`}>
+    <div className={`approval risk-${risk.tone}`} title={modeLine}>
       <div className="approval-head">
         <span className="tool-name">{request.toolName}</span>
-        <span className={`risk-badge tone-${risk.tone}`}>{risk.label}</span>
-        <span className="approval-mode">{modeLine}</span>
+        {/* 低风险不画徽章：每张卡都挂一枚「低风险」，看到第二张就成了背景噪音。
+            值得停下来看一眼的是「这次不是低风险」——只在那种时候占位。 */}
+        {request.risk === 'low' ? null : <span className={`risk-badge tone-${risk.tone}`}>{risk.label}</span>}
       </div>
-      <div className="approval-args">{request.argsSummary}</div>
+      {/* 一行中文说清这次要干什么：多数人读不懂 `Get-Content x | %{…}`，
+          但他看得懂「读文件内容 x」。命令原文仍在下一行。 */}
+      {request.meaning === undefined ? null : <div className="approval-meaning">{request.meaning}</div>}
+      <div className="approval-args" title={request.argsSummary}>
+        {request.argsSummary}
+      </div>
       {request.escalation === undefined ? null : (
         <div className="approval-escalation" data-approval-escalation="">
           <div className="approval-escalation-line">
@@ -496,7 +518,7 @@ const ApprovalCard = memo(function ApprovalCard({ request }: { request: Approval
           ) : null}
         </div>
       )}
-      <div className="approval-reason">{request.reason}</div>
+      {isGenericReason(request.reason) ? null : <div className="approval-reason">{request.reason}</div>}
       {request.hardline ? (
         <div className="approval-hardline">这一步被安全策略判为不可放行，只能拒绝。</div>
       ) : (
@@ -521,7 +543,7 @@ const ApprovalCard = memo(function ApprovalCard({ request }: { request: Approval
           <button
             type="button"
             className="btn danger"
-            title="不执行这一步，并把拒绝原因回给模型"
+            title="不执行这一步，并把拒绝原因回给模型；5 分钟没人答也按拒绝处理"
             disabled={busy}
             onClick={() => {
               answer('reject')
@@ -530,7 +552,6 @@ const ApprovalCard = memo(function ApprovalCard({ request }: { request: Approval
             拒绝
             <kbd>n</kbd>
           </button>
-          <span className="hint">5 分钟没人答按拒绝处理</span>
         </div>
       )}
       {fault === null ? null : <div className="shell-composer-fault">没交上去：{fault}</div>}
@@ -793,6 +814,13 @@ function AskComposer({ items }: { items: AskItem[] }): ReactNode {
    * 记着交到哪一题，重试就从那一题接着交。
    */
   const sent = useRef(0)
+  /**
+   * 卡片是否展开。
+   *
+   * 收起只留卡头一行（题目标签 + 两行封顶的题干），给输入框上方让出空间；草稿、焦点、
+   * 翻到第几题全都留在这个组件里，收起再展开一样不少。
+   */
+  const [open, setOpen] = useState(true)
   const index = Math.min(focus, items.length - 1)
   const item = items[index]
   const draft = drafts[item.key] ?? EMPTY_DRAFT
@@ -899,13 +927,45 @@ function AskComposer({ items }: { items: AskItem[] }): ReactNode {
     if (answered(draft)) continueFlow()
   }
 
+  const bodyId = 'ask-body-' + String(index)
+
   return (
-    <div className="ask-card" data-ask-count={items.length}>
-      {/* 一卡只露当前这一题：其余题目连 DOM 都不进，草稿与已答状态只存在 drafts 里。
-          key 跟着题走，换题时整块重挂——题目没选项时输入框才能重新拿到焦点。 */}
-      <div className="ask-panel" key={item.key} data-ask-index={index} data-ask-key={item.key}>
-        <div className="ask-question">
+    <div className="ask-card" data-ask-count={items.length} data-open={open ? 'true' : 'false'}>
+      {/* 卡头常驻：左边题目标签（收起时换成两行封顶的题干），右边一颗折叠钮。收起后卡
+          就剩这一行，用户仍看得见「有题待答」，输入框上方不再被整卡顶住。 */}
+      <div className="ask-head">
+        <div className="ask-head-text">
           {item.header === undefined ? null : <span className="ask-header">{item.header}</span>}
+          {open ? null : <span className="ask-head-title">{item.question}</span>}
+        </div>
+        <button
+          type="button"
+          className="ask-fold"
+          aria-expanded={open}
+          aria-controls={bodyId}
+          disabled={busy}
+          title={open ? '收起提问卡' : '展开提问卡'}
+          onClick={() => {
+            setOpen(!open)
+          }}
+        >
+          {open ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
+        </button>
+      </div>
+      {/* 一卡只露当前这一题：其余题目连 DOM 都不进，草稿与已答状态只存在 drafts 里。
+          key 跟着题走，换题时整块重挂——题目没选项时输入框才能重新拿到焦点。
+          收起时挂 hidden 而不是卸载：草稿、焦点、翻页位置都留在 DOM 里，展开即原样。
+          注意 .ask-panel 自带 display:flex，会压过 UA 的 [hidden]，所以 views.css 里
+          补了一条 .ask-panel[hidden] { display: none }。 */}
+      <div
+        className="ask-panel"
+        id={bodyId}
+        key={item.key}
+        data-ask-index={index}
+        data-ask-key={item.key}
+        hidden={!open}
+      >
+        <div className="ask-question">
           <span className="ask-text">{item.question}</span>
         </div>
         {item.options.length > 0 ? (
@@ -951,7 +1011,7 @@ function AskComposer({ items }: { items: AskItem[] }): ReactNode {
           </div>
         ) : null}
       </div>
-      <div className="ask-foot">
+      <div className="ask-foot" hidden={!open}>
         {items.length > 1 ? (
           <div className="ask-pager">
             <button
