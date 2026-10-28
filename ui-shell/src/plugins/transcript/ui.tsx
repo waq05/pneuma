@@ -284,21 +284,43 @@ function useFollowBottom(
     const scroller = end?.closest('.chat')
     if (!(scroller instanceof HTMLElement)) return undefined
     const floor = (): number => Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+    /**
+     * 上一次钉底时的内容总高度。
+     *
+     * 为什么记它：内容自己变矮（工具卡跑完收起、步骤组收合、写前预览卡展开）时，
+     * 浏览器会把 scrollTop 夹到新的上限，这也会发一条 scroll 事件——形状和「读者往上
+     * 滚」一模一样。拿内容高度变没变来认它：变了就是内容驱动的，不判读者。
+     * 不区分的话，每次内容重排都会误判一次「用户在看历史」，暂停跟随又把那颗
+     * 「回到底部」胶囊翻出来，下一秒落定再收回去——流式输出时它就一直闪。
+     */
+    const pinnedHeight = { current: scroller.scrollHeight }
     const pin = (): void => {
       scroller.scrollTop = scroller.scrollHeight
       written.current = scroller.scrollTop
+      pinnedHeight.current = scroller.scrollHeight
     }
     const clearSettle = (): void => {
       if (settleTimer.current !== null) window.clearTimeout(settleTimer.current)
       settleTimer.current = null
     }
-    /** 位置落定：这一刻的远近才算数。够近就恢复跟随并补齐最后几像素。 */
+    /**
+     * 位置落定。
+     *
+     * 还在跟随：只补齐最后几像素，**不重判**。以前这里无条件按距离重算一次，于是内容
+     * 长高超过 24px 的瞬间就把跟随松掉，下一口 delta 又被钉回底部——胶囊跟着一开一关。
+     * 读者真的松开过手（`following` 已是 false）时，才在这里按距离决定要不要恢复。
+     */
     const settle = (): void => {
       clearSettle()
-      const near = floor() - scroller.scrollTop <= FOLLOW_BOTTOM_PX
-      following.current = near
-      setPaused(!near)
-      if (near) pin()
+      if (following.current) {
+        pin()
+        return
+      }
+      if (floor() - scroller.scrollTop <= FOLLOW_BOTTOM_PX) {
+        following.current = true
+        setPaused(false)
+        pin()
+      }
     }
     const schedule = (): void => {
       clearSettle()
@@ -306,10 +328,26 @@ function useFollowBottom(
     }
     const onScroll = (): void => {
       const top = scroller.scrollTop
+      const heightChanged = pinnedHeight.current !== scroller.scrollHeight
       if (Math.abs(top - written.current) <= 1) {
         written.current = top
+        if (heightChanged) pinnedHeight.current = scroller.scrollHeight
         return
       }
+      if (heightChanged) {
+        pinnedHeight.current = scroller.scrollHeight
+        // 「高度变了」单独不算证据：流式输出时内容一直在长，读者的滚动也落在这个窗口里。
+        // 真正的判据是**夹回底部**——内容变矮时浏览器把 scrollTop 夹到新上限，结果一定
+        // 贴着新的底；读者往上滚不会贴着底。两条同时成立才认作内容驱动。
+        if (floor() - top <= FOLLOW_BOTTOM_PX) {
+          written.current = top
+          // 已经在暂停态时仍排一次落定：内容变矮之后读者可能正好滚到了底，得让它有机会
+          // 恢复跟随（跟随态不用排，`onResize` 会接着钉底）。
+          if (!following.current) schedule()
+          return
+        }
+      }
+      written.current = top
       if (following.current) {
         following.current = false
         setPaused(true)
