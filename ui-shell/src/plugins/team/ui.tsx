@@ -19,7 +19,7 @@
  * @module dsc-ui-shell/plugins/team
  */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { SkeletonText, useDialogFocus } from '@dsc/ui-primitives'
+import { SkeletonText, formatDuration, useDialogFocus } from '@dsc/ui-primitives'
 import {
   IconChevronDown,
   IconClose,
@@ -45,20 +45,6 @@ import {
   type TeammateView,
   type UiPluginApi,
 } from '@dsc/ui'
-
-/** 毫秒 → 「2分41秒」/「8秒」；拿不到（负数 / NaN）给 null（与消息流的时间口径同款，
- *  插件 bundle 各自独立，不跨插件 import——这一段很短，就地留一份）。 */
-function formatDuration(ms: number | null): string | null {
-  if (ms === null || !Number.isFinite(ms) || ms < 0) return null
-  const total = Math.max(1, Math.round(ms / 1000))
-  const seconds = total % 60
-  const minutes = Math.floor(total / 60) % 60
-  const hours = Math.floor(total / 3600)
-  const pad = (value: number): string => String(value).padStart(2, '0')
-  if (hours > 0) return `${String(hours)}时${pad(minutes)}分${pad(seconds)}秒`
-  if (minutes > 0) return `${String(minutes)}分${String(seconds)}秒`
-  return `${String(seconds)}秒`
-}
 
 /** 队友状态词（旧界面 TEAMMATE_STATE_LABEL 同款）。 */
 const STATE_LABEL: Readonly<Record<string, string>> = {

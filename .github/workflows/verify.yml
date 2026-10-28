@@ -1,0 +1,78 @@
+# 提交闸门：每次推、每个 PR 都先编译一遍。
+#
+# 为什么要有这道门：原来的 CI 只有 release.yml，它挂在 v* tag 上——主干能不能编译，
+# 要等到发版那天才知道。2026-10-28 一天里就红了两次（Preset.replace 缺字段 7 处、
+# 附件模块没入库导致 import 找不到），两次都是本地绿灯、干净检出红灯：本机有未跟踪的
+# 文件兜着，谁也没发现。
+#
+# 这里只放「快」的门（装依赖 + 三处 typecheck + 排版，一分钟级）。那批要跑 7–8 分钟的
+# 自检探针（pnpm check:core）不进来，它们的名额留给夜跑或手动触发。
+name: Verify
+
+on:
+  push:
+  pull_request:
+
+# 同一个分支连着推两次，取消上一次——门禁只关心最终状态。
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: 内核编译与排版
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 编译（src/ 全量，--noEmit）
+        run: pnpm typecheck
+      - name: 排版闸门（制表符 / 行尾空白 / BOM / 混用行尾 / 末尾缺换行）
+        run: pnpm run check:style
+
+  ui:
+    name: 界面壳编译
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # 三份独立的 pnpm 项目（本仓没有 workspace 定义），各自装各自的。
+      - name: 安装依赖
+        working-directory: ui-shell
+        run: pnpm install --frozen-lockfile
+      - name: 编译界面壳
+        working-directory: ui-shell
+        run: pnpm typecheck
+
+  desktop:
+    name: 桌面端编译
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # --ignore-scripts：typecheck 只用 electron 的类型声明，不需要它下载运行时二进制
+      # （那一步在 CI 上又慢又容易挂）。
+      - name: 安装依赖
+        working-directory: desktop
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: 编译（主进程 + 渲染层两套 tsconfig）
+        working-directory: desktop
+        run: pnpm typecheck

@@ -1,0 +1,36 @@
+# 行尾统一成 LF。
+#
+# 现状（2026-10-28 全仓审查实测）：仓库里 436 个文件是 LF、287 个是 CRLF、6 个是两者
+# 混用，而 Git 配置里 core.autocrlf=true——同一个文件换台机器改一行，提交时整篇行尾
+# 被改写，diff 里 300 行噪声盖住那 1 行真改动。这里把「文本用 LF」钉死在仓库里，
+# 谁检出都是 LF，不再取决于本机 Git 配置。
+* text=auto eol=lf
+
+# Windows 上的脚本留 CRLF：PowerShell 与 cmd 吃 LF 也行，但用记事本改一下就会变成
+# CRLF，钉成 crlf 反而不会再抖动。
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制：标成 binary 就不会被做换行转换（转换过的 png 是坏文件）。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.bmp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.7z binary
+*.exe binary
+*.dll binary
+*.node binary
+*.mp4 binary
+*.webm binary
+*.mp3 binary

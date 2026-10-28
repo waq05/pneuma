@@ -33,7 +33,8 @@
     "check:ui:list": "node scripts/check-ui.mjs --list && node scripts/check-ui.mjs --e2e --list",
     "check:dsh": "node scripts/dsh-compat-check.mjs && node scripts/dsh-bundle-check.mjs && node scripts/dsh-real-plugin-check.mjs && node scripts/dsh-session-bridge-check.mjs && node scripts/dsh-llm-event-check.mjs && node scripts/dsh-session-events-check.mjs && node scripts/dsh-compat-live-check.mjs",
     "check:core": "node scripts/check-core.mjs",
-    "check:all": "pnpm run check:ui && pnpm run check:dsh && pnpm run check:core",
+    "check:style": "node scripts/style-check.mjs",
+    "check:all": "pnpm run check:style && pnpm run check:ui && pnpm run check:dsh && pnpm run check:core",
     "ui:serve": "node scripts/_ui-shell-serve.mjs"
   },
   "dependencies": {
