@@ -1,9 +1,8 @@
 /**
  * 鼠标点击命中基础设施（原版 ink 没有命中测试，这里是 dsc 的最小实现）。
  *
- * 组成三件事：
- * - `displayWidth`：按显示宽度数列（CJK/全角记 2 列），卡片页脚「按键按钮」的列区间
- *   就靠它和渲染同源计算；
+ * 组成两件事（显示宽度是第三件，已独立成 `app/display-width.ts`，卡片页脚的列区间
+ * 与渲染同源计算就靠它）：
  * - `absoluteTop` / `measuredHeight`：沿 ink DOM 的 parentNode 链累加 yoga 的
  *   getComputedTop，得到节点在帧内的绝对行——帧恒定为「终端行数 − 1」且从屏顶排
  *  （App 根盒），帧内行就是屏幕行；
@@ -24,27 +23,6 @@ import type { DOMElement } from 'ink'
 type InkElement = DOMElement & {
   parentNode?: InkElement | null
 }
-
-/** 与终端一致的显示宽度：CJK/全角/emoji 记 2 列，其余记 1 列。 */
-export function displayWidth(text: string): number {
-  let width = 0
-  for (const char of text) {
-    const code = char.codePointAt(0) ?? 0
-    width += isWideCodePoint(code) ? 2 : 1
-  }
-  return width
-}
-
-const isWideCodePoint = (code: number): boolean =>
-  (code >= 0x1100 && code <= 0x115f) ||
-  (code >= 0x2e80 && code <= 0xa4cf) ||
-  (code >= 0xac00 && code <= 0xd7a3) ||
-  (code >= 0xf900 && code <= 0xfaff) ||
-  (code >= 0xfe30 && code <= 0xfe4f) ||
-  (code >= 0xff00 && code <= 0xff60) ||
-  (code >= 0xffe0 && code <= 0xffe6) ||
-  (code >= 0x1f300 && code <= 0x1faff) ||
-  (code >= 0x20000 && code <= 0x3fffd)
 
 /** 节点在帧内的绝对行（0 基）；量不到（非 TTY 管道、未挂载）返回 null。 */
 export function absoluteTop(node: DOMElement | null | undefined): number | null {

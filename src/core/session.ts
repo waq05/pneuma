@@ -1239,7 +1239,7 @@ export function readUserMessages(filePath: string): string[] {
 }
 
 /** 文件名就是 `<uuid>.jsonl`，取 uuid 用来写 sidecar。 */
-function uuidOf(filePath: string): string {
+export function uuidOf(filePath: string): string {
   return basename(filePath, '.jsonl')
 }
 

@@ -55,6 +55,7 @@
 
 import { DOCK_TAB_CLOSE_EVENT, DOCK_TAB_OPEN_EVENT } from './dock-browser.js'
 import { DOCK_TERM_OPS } from './dock-ops.js'
+import { jsonText } from './json-text.js'
 import type { ApprovalPolicy, ApprovalReviewer } from '../contract.js'
 
 /**
@@ -572,11 +573,3 @@ function checkShape(shape: ArgShape, value: unknown): string | null {
   }
 }
 
-/** 一段 JSON 文本；序列化不了（循环引用、BigInt、函数）给 null。 */
-function jsonText(value: unknown): string | null {
-  try {
-    return JSON.stringify(value) ?? null
-  } catch {
-    return null
-  }
-}

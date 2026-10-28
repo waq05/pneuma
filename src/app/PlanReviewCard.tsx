@@ -13,7 +13,8 @@ import type { DOMElement } from 'ink'
 import type { JSX } from 'react'
 import type { PlanView } from '../contract.js'
 import { ACCENT, BORDER, GAP, PAD, STATUS_COLOR, TEXT } from './theme.js'
-import { absoluteLeft, displayWidth, useClickRegion, type RegisterClick } from './click.js'
+import { absoluteLeft, useClickRegion, type RegisterClick } from './click.js'
+import { displayWidth } from './display-width.js'
 
 /** 折叠时保留的正文行数。 */
 const PREVIEW_LINES = 12

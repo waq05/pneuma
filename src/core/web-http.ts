@@ -25,6 +25,7 @@ export function readLastSeq(raw: string | null): number {
 }
 
 export { isRecord } from './records.js'
+
 /**
  * 读请求体的原始字节。
  *

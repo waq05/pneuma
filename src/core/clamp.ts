@@ -16,6 +16,11 @@ export function clampInt(value: unknown, min: number, max: number, fallback: num
   return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), min), max) : fallback
 }
 
+/** 有限数字才要（NaN、Infinity、非数字都不要）；类型守卫版，用在解析外部 JSON 时。 */
+export function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
 /** 区间以 `{ min, max }` 成对给出时的写法。 */
 export function clampIntIn(value: unknown, bounds: { min: number; max: number }, fallback: number): number {
   return clampInt(value, bounds.min, bounds.max, fallback)

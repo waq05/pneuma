@@ -18,6 +18,7 @@
  */
 import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
+import { nonEmptyString } from '../strings.js'
 
 /** 一个语言服务器条目。 */
 export interface LspServerDef {
@@ -262,11 +263,6 @@ export function parseServerOverrides(text: string): { servers: LspServerDef[]; p
     })
   }
   return { servers, problem: null }
-}
-
-/** 非空字符串才要，其余（含非字符串）当没给。 */
-function nonEmptyString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value : undefined
 }
 
 /** 字符串数组才要；元素必须都是非空字符串。没给（undefined）返回空数组，给了但畸形返回 undefined。 */

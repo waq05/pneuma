@@ -16,7 +16,8 @@ import type { JSX } from 'react'
 import type { ApprovalRequestView } from '../contract.js'
 import { BORDER, GAP, PAD, STATUS_COLOR, TEXT } from './theme.js'
 import { DiffBlock } from './DiffBlock.js'
-import { absoluteLeft, displayWidth, useClickRegion, type RegisterClick } from './click.js'
+import { absoluteLeft, useClickRegion, type RegisterClick } from './click.js'
+import { displayWidth } from './display-width.js'
 
 const oneLine = (text: string, limit: number): string => {
   const flat = text.replace(/\s+/g, ' ').trim()

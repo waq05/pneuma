@@ -51,6 +51,33 @@ export * from '../core/model-caps.js'
 export * from '../core/diff-text.js'
 
 /**
+ * 错误文案（`core/err-text.ts`）也进共享面：界面侧到处要写「失败：<一句话>」，
+ * 这份实现全仓只能有一份，壳与第三方插件经 `@dsc/ui-primitives` 拿。
+ */
+export * from '../core/err-text.js'
+
+/**
+ * 吞吐读数（`core/throughput.ts`）：速度与首字延迟的口径，界面侧照它算，
+ * 免得状态栏各写一份。`@dsc/ui-primitives` 再转出一手给插件。
+ */
+export * from '../core/throughput.js'
+
+/**
+ * git 读数的相等判断（`core/git-surface.ts`）：宿主判断「要不要推这一帧」与输入区判断
+ * 「要不要重画」必须是同一条口径——一边认为变了、另一边认为没变，界面就停在旧分支名上。
+ * `@dsc/ui-primitives` 再转出一手给插件。
+ */
+export * from '../core/git-surface.js'
+
+/**
+ * 模块级信号（`signal.ts`）：`Set<() => void>` + `subscribe` + 通知这套写法原先在壳里
+ * 手抄七遍，抄漏「复制订阅者再遍历」「没变就不通知」这类语义不会报错，只会表现成
+ * 「界面停在旧值上」。多字段状态写成**一个对象**、一次 `set` 发出，避免半套新值先渲染。
+ * `@dsc/ui-primitives` 再转出一手给插件。
+ */
+export * from './signal.js'
+
+/**
  * 宿主那些**界面要读的**视图类型的再导出。
  *
  * 为什么全是 `export type`：编译期就擦掉了，浏览器壳不会因为这一行把 `contract.ts`

@@ -16,7 +16,7 @@
  * @module dsc-tui/app/scroll-model
  */
 import type { TranscriptEntry } from '../contract.js'
-import { displayWidth } from './click.js'
+import { displayWidth } from './display-width.js'
 
 /** 窗口上下各多渲染几行：滚动时不留白，也不至于把整篇都拉进来。 */
 export const OVERSCAN_LINES = 8

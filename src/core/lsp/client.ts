@@ -36,6 +36,7 @@ import {
 } from './framing.js'
 import { normalizeDiagnostics, normalizeHover, normalizeLocations } from './normalize.js'
 import { asRecord } from '../records.js'
+import { quoteForCmd } from '../shell-quote.js'
 import { type LspServerDef, languageIdFor } from './servers.js'
 import { type LspPosition, type LspRange, pathToUri } from './uri.js'
 
@@ -497,11 +498,6 @@ class LspConnection {
     }
     this.write({ jsonrpc: '2.0', id, result: null })
   }
-}
-
-/** shell 那条路上参数由 cmd.exe 解析，带空格或元字符的要自己加引号（照 `core/mcp.ts`）。 */
-function quoteForCmd(arg: string): string {
-  return /[\s"&|<>^()]/.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg
 }
 
 // ── 一个实例（握手 + 无状态文档生命周期）─────────────────────────────────────

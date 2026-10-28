@@ -60,7 +60,7 @@ const READ_DENIED_EXTENSIONS = [
 const READ_DENIED_DIR_SEGMENTS = ['.ssh', '.aws', '.gnupg', '.docker', 'credentials', 'vault']
 
 /** `.env.xxx` 这一族（.env.production、.env.staging…）也拒读，只放行 .env.example。 */
-function isEnvFamily(name: string): boolean {
+export function isEnvFamily(name: string): boolean {
   const base = name.toLowerCase()
   return base.startsWith('.env') && !base.includes('example') && !base.includes('sample') && !base.includes('template')
 }
@@ -257,6 +257,17 @@ export function staleEditReason(target: string, sessionId: string): PathVerdict 
 /** 清掉某个会话的读取台账（agent 收摊时调用，防长会话窗口里台账无界增长）。 */
 export function clearReadLedger(sessionId: string): void {
   readLedger.delete(sessionId)
+}
+
+/** `~` 开头展开成用户目录；其余原样返回（相对路径交给后续文件操作按 cwd 解析）。
+ *
+ * 为什么放这里：此前 `core/spill.ts` 与 `core/lifecycle-hooks.ts` 各写了一份逐字相同的
+ * `expandHome` / `expandPath`，而「用户写的路径怎么解释」本来就是本模块的事。
+ */
+export function expandHome(text: string): string {
+  if (text === '~') return homedir()
+  if (text.startsWith('~/') || text.startsWith('~\\')) return join(homedir(), text.slice(2))
+  return text
 }
 
 /** 主目录（测试与提示词用）。 */

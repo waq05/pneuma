@@ -13,12 +13,8 @@
 import { useMemo } from 'react'
 import { Box, Text, useStdout } from 'ink'
 import type { JSX } from 'react'
-import {
-  displayWidth,
-  parseMarkdown,
-  type MarkdownBlock,
-  type MarkdownSpan,
-} from './markdown.js'
+import { parseMarkdown, type MarkdownBlock, type MarkdownSpan } from './markdown.js'
+import { displayWidth } from './display-width.js'
 import { PAD, PALETTE, TEXT } from './theme.js'
 
 /** 行内片段 → ink Text 序列（链接补注 url）。 */

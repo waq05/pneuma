@@ -18,7 +18,7 @@
 import { Box, Text, useStdout } from 'ink'
 import type { JSX } from 'react'
 import type { SettingsField, SettingsSectionView, SettingsValues } from '../contract.js'
-import { displayWidth } from './click.js'
+import { displayWidth } from './display-width.js'
 import { focusableRows, type SettingsGroupRef, type SettingsRow } from './settings-model.js'
 import { ACCENT, BORDER, GAP, MARK, PAD, PALETTE, SEP, STATUS_COLOR, TEXT } from './theme.js'
 

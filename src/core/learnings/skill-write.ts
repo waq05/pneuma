@@ -23,7 +23,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { basename, dirname, join, normalize, relative, resolve, sep } from 'node:path'
-import { contentText, type ChatMessage } from '../llm.js'
+import type { ChatMessage } from '../llm.js'
+import { lastAssistantText, lastUserText, previousUserText } from '../transcript-text.js'
 import { DSC_SKILLS_DIR, parseSkillMarkdown, scanSkillRoot, splitFrontmatter, writeSkillEnabled } from '../skills.js'
 import { errText } from '../err-text.js'
 import { appendLedger, copyToBackup, EMPTY_HASH, hashText, type LedgerEntry } from './ledger.js'
@@ -636,27 +637,6 @@ export function readBeforeWriteCheck(input: ReadBeforeWriteInput): { ok: boolean
   return { ok: false, error: `改 ${input.name} 之前得先读它：本会话还没用 skill 工具读过这个技能，先读一遍再改` }
 }
 
-/** 从会话消息里取出最后一条用户消息的纯文本（L1 的纠正语气判定用）。 */
-export function lastUserText(messages: readonly ChatMessage[]): string {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]
-    if (message !== undefined && message.role === 'user') return contentText(message.content).trim()
-  }
-  return ''
-}
-
-/** 最后一个用户消息之前那条用户消息（L1 记「上一轮用户说了什么」用）。 */
-export function previousUserText(messages: readonly ChatMessage[]): string {
-  let seen = 0
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]
-    if (message === undefined || message.role !== 'user') continue
-    seen += 1
-    if (seen === 2) return contentText(message.content).trim()
-  }
-  return ''
-}
-
 /** 本轮用了多少次工具迭代（从末尾往回数 tool 消息，遇到 user 消息停）。 */
 export function toolIterationsOfTurn(messages: readonly ChatMessage[]): number {
   let count = 0
@@ -676,14 +656,6 @@ export function userTurnIndex(messages: readonly ChatMessage[]): number {
   return count - 1
 }
 
-/** 取最后一条 assistant 消息的正文（L2 复盘结果就是这一条）。 */
-export function lastAssistantText(messages: readonly ChatMessage[]): string {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]
-    if (message !== undefined && message.role === 'assistant') return contentText(message.content).trim()
-  }
-  return ''
-}
 
 // ── 使用台账与老化分级 ─────────────────────────────────────────────────────────
 

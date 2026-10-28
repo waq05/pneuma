@@ -14,10 +14,9 @@
  */
 import { closeSync, lstatSync, mkdirSync, openSync, readdirSync, unlinkSync, writeSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
-import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { resolvePluginConfig } from './plugin-registry.js'
-import { dscPath } from './path-policy.js'
+import { dscPath, expandHome } from './path-policy.js'
 import { clampIntIn as clampInt } from './clamp.js'
 
 /** 插件在条目树（`~/.dsc/plugins.json`）里的键。 */
@@ -107,13 +106,6 @@ export interface SpillSweepResult {
   keptBytes: number
   /** 没删掉的文件与原因（权限不够、被别的进程占着）。 */
   failed: Array<{ path: string; reason: string }>
-}
-
-/** `~` 开头换成用户目录；其余原样返回（相对路径交给后面的文件操作按 cwd 解析）。 */
-function expandHome(text: string): string {
-  if (text === '~') return homedir()
-  if (text.startsWith('~/') || text.startsWith('~\\')) return join(homedir(), text.slice(2))
-  return text
 }
 
 /**

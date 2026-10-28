@@ -5,10 +5,12 @@
  * 语法按普通文本渲染，永远不比裸文本差。
  *
  * 纯函数、无 React 依赖；渲染在 MarkdownView.tsx。显示宽度一律按 CJK=2
- * （与 click.ts 的 displayWidth 同源语义），表格列宽才会和终端对得上。
+ * （`display-width.ts` 那份，与点击命中区、换行计算同源），表格列宽才会和终端对得上。
  *
  * @module dsc-tui/app/markdown
  */
+
+import { displayWidth } from './display-width.js'
 
 /** 行内片段：一段同样式的文字。 */
 export interface MarkdownSpan {
@@ -171,27 +173,6 @@ export function parseMarkdown(source: string): MarkdownBlock[] {
   }
   return blocks
 }
-
-/** 与终端一致的显示宽度：CJK/全角记 2（与 click.ts 同源实现，避免互相 import 循环）。 */
-export function displayWidth(text: string): number {
-  let width = 0
-  for (const char of text) {
-    const code = char.codePointAt(0) ?? 0
-    width += isWideCodePoint(code) ? 2 : 1
-  }
-  return width
-}
-
-const isWideCodePoint = (code: number): boolean =>
-  (code >= 0x1100 && code <= 0x115f) ||
-  (code >= 0x2e80 && code <= 0xa4cf) ||
-  (code >= 0xac00 && code <= 0xd7a3) ||
-  (code >= 0xf900 && code <= 0xfaff) ||
-  (code >= 0xfe30 && code <= 0xfe4f) ||
-  (code >= 0xff00 && code <= 0xff60) ||
-  (code >= 0xffe0 && code <= 0xffe6) ||
-  (code >= 0x1f300 && code <= 0x1faff) ||
-  (code >= 0x20000 && code <= 0x3fffd)
 
 /** 按显示宽度补空格到指定列数（超宽截断加省略号）。 */
 export function padCell(text: string, width: number): string {

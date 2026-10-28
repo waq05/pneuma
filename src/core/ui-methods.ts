@@ -85,6 +85,7 @@ import type { ApprovalAnswer, CollaborationMode, EffortLevel, PlanDecision } fro
 import { DOCK_UI_OPS } from './dock-ops.js'
 import { SIDE_ASK_MAX_QUESTION, SIDE_ASK_MAX_QUOTE } from './side-ask.js'
 import { INVOKABLE_METHODS, type InvokableMethod } from './host-methods.js'
+import { jsonText } from './json-text.js'
 
 /** 界面通道放行的方法。 */
 export const UI_METHODS = [
@@ -491,11 +492,3 @@ function checkShape(shape: ArgShape, value: unknown): string | null {
   }
 }
 
-/** 一段 JSON 文本；序列化不了（循环引用、BigInt、函数）给 null。 */
-function jsonText(value: unknown): string | null {
-  try {
-    return JSON.stringify(value) ?? null
-  } catch {
-    return null
-  }
-}

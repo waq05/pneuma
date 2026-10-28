@@ -65,13 +65,7 @@ import {
 } from './abi.js'
 import { type BoundWin32, addressOf, readMemory, slotUintPtr, throwLastError, throwWin32 } from './ffi.js'
 import { packExplicitAccessSid, sidStringToBuffer, wellKnownSidBuffer } from './token.js'
-
-/** 任意字符串 → NUL 结尾的 UTF-16 缓冲（Win32 的 str16 入参口径）。 */
-function utf16Buffer(text: string): Buffer {
-  const buffer = Buffer.alloc(text.length * 2 + 2)
-  buffer.write(text, 0, 'utf16le')
-  return buffer
-}
+import { utf16Buffer } from './utf16.js'
 
 /** `(HANDLE)-1`：CreateFileW 的失败哨兵值。 */
 const INVALID_HANDLE_VALUE = 0xffffffffffffffffn

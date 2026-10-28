@@ -29,7 +29,8 @@ import {
   type MentionQuery,
 } from '../core/mention.js'
 import { useParkedCursor } from './cursor.js'
-import { displayWidth, measuredSpan, useClickRegion, type RegisterClick } from './click.js'
+import { measuredSpan, useClickRegion, type RegisterClick } from './click.js'
+import { displayWidth } from './display-width.js'
 import { loadHistory, recordHistory } from './history-store.js'
 import { settingsWindowStart } from './settings-model.js'
 import { ACCENT, BORDER, GAP, MARK, PAD, SEP, STATUS_COLOR, TEXT } from './theme.js'

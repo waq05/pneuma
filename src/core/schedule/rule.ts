@@ -15,6 +15,7 @@
  *
  * @module dsc/core/schedule/rule
  */
+import { isFiniteNumber } from '../clamp.js'
 
 /** 六种选择器。 */
 export type ScheduleRuleKind = 'after' | 'at' | 'every' | 'daily' | 'weekly' | 'cron'
@@ -747,10 +748,6 @@ export function describeNext(rule: ScheduleRule, timeZone: string, nextMs: numbe
 }
 
 // ── 反序列化 ──────────────────────────────────────────────────────────────────
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value)
-}
 
 /**
  * 把磁盘上读回来的东西收敛成一条合法规则；认不出就返回 null（调用方跳过这条任务并记账）。

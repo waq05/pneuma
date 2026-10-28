@@ -21,7 +21,7 @@ import type { DOMElement } from 'ink'
 import type { JSX } from 'react'
 import type { RuntimeSnapshot, RuntimeSurfaces, StatusBarPrefsView, StatusView } from '../contract.js'
 import { measuredSpan, useClickRegion, type RegisterClick } from './click.js'
-import { displayWidth } from './markdown.js'
+import { displayWidth } from './display-width.js'
 import { PAD, PALETTE, SEP, STATUS_COLOR, TEXT } from './theme.js'
 
 /** 回合状态词：中文硬编码，本项目不做 i18n。 */

@@ -14,6 +14,7 @@ import { existsSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
 import { errText as errorText } from './err-text.js'
 import { asRecord } from './records.js'
+import { quoteForCmd } from './shell-quote.js'
 
 // ── 协议与命名常量（协议常量不随部署变，固定在这里） ──────────────────────────
 
@@ -292,11 +293,6 @@ export function resolveCommand(command: string, env: Record<string, string>, cwd
 function needsShell(file: string): boolean {
   const lower = file.toLowerCase()
   return lower.endsWith('.cmd') || lower.endsWith('.bat')
-}
-
-/** shell 那条路上参数由 cmd.exe 解析，带空格或元字符的要自己加引号。 */
-function quoteForCmd(arg: string): string {
-  return /[\s"&|<>^()]/.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg
 }
 
 // ── 工具命名与风险等级 ───────────────────────────────────────────────────────

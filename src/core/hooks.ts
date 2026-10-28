@@ -30,6 +30,7 @@ import { redact, scrubChildEnv } from './secrets.js'
 import type { ToolGuardInput } from './tool-guards.js'
 import { dscPath } from './path-policy.js'
 import { clampInt as clamp } from './clamp.js'
+import { shellOf } from './shell-quote.js'
 
 /** 钩子配置文件（与 settings.json、audit.jsonl 同级）。 */
 export const HOOKS_FILE = dscPath('hooks.json')
@@ -679,12 +680,6 @@ export interface HookRun {
   spawnError: string
   /** stdout 是否因为过长被截断。 */
   truncated: boolean
-}
-
-function shellOf(): { file: string; args: string[] } {
-  return process.platform === 'win32'
-    ? { file: 'cmd.exe', args: ['/d', '/s', '/c'] }
-    : { file: '/bin/sh', args: ['-c'] }
 }
 
 /**

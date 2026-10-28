@@ -20,8 +20,6 @@
  */
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 import {
   HOOK_STDERR_MAX,
   HOOK_STDOUT_MAX,
@@ -36,9 +34,11 @@ import type { HookJudgement, HookRun, HookScript } from './hooks.js'
 import { resolvePluginConfig } from './plugin-registry.js'
 import { scrubChildEnv, redact } from './secrets.js'
 import { wrapUntrusted } from './untrusted.js'
-import { dscPath } from './path-policy.js'
+import { dscPath, expandHome } from './path-policy.js'
 import { clampInt as clampNumber } from './clamp.js'
 import { isRecord } from './records.js'
+import { shellOf } from './shell-quote.js'
+import { splitList } from './strings.js'
 
 // ── 十二个事件与它们的档位 ───────────────────────────────────────────────────
 
@@ -199,13 +199,6 @@ export const LIFECYCLE_DEFAULTS: LifecycleHooksConfig = {
   commandAllowlist: '',
 }
 
-/** `~` 展开成用户目录；相对路径原样返回（交给 spawn 的 cwd 去解析）。 */
-function expandPath(text: string): string {
-  if (text === '~') return homedir()
-  if (text.startsWith('~/') || text.startsWith('~\\')) return join(homedir(), text.slice(2))
-  return text
-}
-
 function asText(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : fallback
 }
@@ -220,7 +213,7 @@ export function resolveLifecycleConfig(passed?: unknown): LifecycleHooksConfig {
   const raw = resolvePluginConfig('lifecycle-hooks', passed)
   return {
     enabled: raw.enabled !== false && raw.enabled !== 'false',
-    configPath: expandPath(asText(raw.configPath, LIFECYCLE_DEFAULTS.configPath)),
+    configPath: expandHome(asText(raw.configPath, LIFECYCLE_DEFAULTS.configPath)),
     timeoutMs: clampNumber(raw.timeoutMs, HOOK_TIMEOUT_MIN, HOOK_TIMEOUT_MAX, LIFECYCLE_DEFAULTS.timeoutMs),
     failClosed: raw.failClosed !== false && raw.failClosed !== 'false',
     commandAllowlist: typeof raw.commandAllowlist === 'string' ? raw.commandAllowlist : LIFECYCLE_DEFAULTS.commandAllowlist,
@@ -401,14 +394,6 @@ function countByEvent(hooks: readonly LifecycleHook[]): Map<LifecycleEvent, numb
 
 // ── 命令白名单 ───────────────────────────────────────────────────────────────
 
-/** 拆逗号/空格分隔的清单（中英文逗号都认）。 */
-function splitList(text: string): string[] {
-  return text
-    .split(/[,，\s]+/)
-    .map((entry) => entry.trim())
-    .filter((entry) => entry !== '')
-}
-
 /**
  * 命令是否被白名单放行。
  *
@@ -458,12 +443,6 @@ export interface LifecyclePayload {
 }
 
 // ── 跑一条外部命令 ───────────────────────────────────────────────────────────
-
-function shellOf(): { file: string; args: string[] } {
-  return process.platform === 'win32'
-    ? { file: 'cmd.exe', args: ['/d', '/s', '/c'] }
-    : { file: '/bin/sh', args: ['-c'] }
-}
 
 /**
  * 跑一条钩子命令。

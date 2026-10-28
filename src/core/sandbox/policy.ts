@@ -22,6 +22,7 @@ import { realpathSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve } from 'node:path'
 import type { SandboxMode } from '../../services/types.js'
+import { isEnvFamily } from '../path-policy.js'
 
 /** 条目树里这个插件的键，同时是设置分区 id。 */
 export const SANDBOX_CONFIG_KEY = 'sandbox'
@@ -403,12 +404,6 @@ const CREDENTIAL_EXTENSIONS = ['.pem', '.key', '.pfx', '.p12', '.ppk', '.kdbx', 
 
 /** dsc 自己家目录下的控制文件：它们决定沙箱与审批怎么跑，模型不该能写。 */
 const DSC_CONTROL_FILES = new Set(['config.yaml', 'config.yml', 'credentials.yaml', 'credentials.yml', 'policy.rules', 'plugins.json'])
-
-/** `.env` 家族（`.env.production` 这类都算）；`.env.example` 一类模板放行。 */
-function isEnvFamily(name: string): boolean {
-  const base = name.toLowerCase()
-  return base.startsWith('.env') && !base.includes('example') && !base.includes('sample') && !base.includes('template')
-}
 
 /** 路径按比较口径归一：Windows 下大小写不敏感，分隔符统一成 `\`。 */
 function compareKey(path: string, win32: boolean): string {

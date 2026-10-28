@@ -28,7 +28,8 @@ import { Box, Text } from 'ink'
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import type { JSX } from 'react'
 import type { DOMElement } from 'ink'
-import { absoluteTop, displayWidth, measuredSpan, useClickRegion, type RegisterClick } from './click.js'
+import { absoluteTop, measuredSpan, useClickRegion, type RegisterClick } from './click.js'
+import { displayWidth } from './display-width.js'
 import { useGutterPointer } from './pointer.js'
 import {
   railHitRow,

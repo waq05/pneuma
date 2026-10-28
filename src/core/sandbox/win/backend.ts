@@ -30,6 +30,7 @@ import { grantAccountAccess, grantWrite, revokeWrite, type GrantOutcome } from '
 import { type BoundWin32, bindAll, tryLoadFfi } from './ffi.js'
 import { rootWriteSid, tempWriteSid } from './workspace-sid.js'
 import { createNetProxy, proxyEnvVars, type NetProxy } from '../net-proxy.js'
+import { errText as describeError } from '../../err-text.js'
 
 /** 执行器 id（宿主诊断与 `enforcement` 上报用这个键）。 */
 export const WINDOWS_TOKEN_RUNNER_ID = 'sandbox-windows-token'
@@ -127,11 +128,6 @@ export interface WindowsTokenRunnerHandle {
 interface AuthorizedRoot {
   path: string
   sid: string
-}
-
-/** 把错误转成一行可读文本（授权失败的「错误全文」要原样报给用户）。 */
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 /**

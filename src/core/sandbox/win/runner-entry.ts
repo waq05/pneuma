@@ -61,6 +61,7 @@ import { buildRestrictedToken, type RestrictedToken } from './token.js'
 import { verifySidForPath } from './workspace-sid.js'
 import { accountBlobPath, unprotectSecret } from './account.js'
 import { readFileSync } from 'node:fs'
+import { utf16Buffer } from './utf16.js'
 
 /** runner 自身失败签名（宿主诊断认这一行）。 */
 export const RUNNER_SIGNATURE = 'dsc-sandbox-run: '
@@ -228,13 +229,6 @@ export function quoteArgv(arg: string): string {
   }
   out += '\\'.repeat(backslashes * 2) + '"'
   return out
-}
-
-/** 任意字符串 → NUL 结尾的 UTF-16 缓冲（Win32 的 str16 入参口径）。 */
-function utf16Buffer(text: string): Buffer {
-  const buffer = Buffer.alloc(text.length * 2 + 2)
-  buffer.write(text, 0, 'utf16le')
-  return buffer
 }
 
 /** 手工打包 STARTUPINFOW（104 字节，偏移见 abi.SI_OFFSETS）。 */

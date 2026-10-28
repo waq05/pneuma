@@ -30,6 +30,7 @@ import { join } from 'node:path'
 import { isValidTimeZone, normalizeRule, type ScheduleRule } from './rule.js'
 import { dscPath } from '../path-policy.js'
 import { errText as errorText } from '../err-text.js'
+import { isFiniteNumber } from '../clamp.js'
 
 /** 任务最近一次执行的结果。`never` = 从没跑过；`running` = 槽位已推进、投递还没落定。 */
 export type ScheduleStatus = 'never' | 'running' | 'ok' | 'failed' | 'blocked' | 'skipped' | 'done'
@@ -110,10 +111,6 @@ export function scheduleDir(): string {
 export interface ScheduleLoadResult {
   tasks: ScheduleTask[]
   problem: string | null
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value)
 }
 
 /** 建一个新任务 id：时间有序（列表好读）+ 4 位随机（同一毫秒也不会撞）。 */
