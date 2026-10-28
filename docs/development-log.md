@@ -10557,7 +10557,7 @@ const lastTab = surface.panes.reduce((count, pane) => count + pane.tabs.length, 
 - `scripts/permission-presets-test.mjs` 62/62、`scripts/sandbox-parity-test.mjs` 41/41、
   `scripts/approval-review-fallback-test.mjs` 全过、`scripts/resident-agents-test.mjs`
   40/40。
-- `pnpm run check:ui` 41/41、`check:style` 613 文件、`dup-scan` 0 组、根 / ui-shell /
+- `pnpm run check:ui` 41/41、`check:style` 614 文件、`dup-scan` 0 组、根 / ui-shell /
   desktop 三份 typecheck 全过。
 
 ## 二十五、模型、思考档位、协作模式也按会话走（2026-10-28）
