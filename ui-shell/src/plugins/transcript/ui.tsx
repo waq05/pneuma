@@ -67,6 +67,7 @@ import {
   type SessionSummary,
   type SlotOwnerOf,
   type TranscriptEntry,
+  type UserFileAttachment,
 } from '@dsc/ui'
 import { buildRoundFolds, processFoldPolicy, TurnFoldRow, useFoldMemory, type ProcessFold } from './round-fold'
 import { formatClock, formatDuration, liveActivity, roundDuration, turnStartedAt, type RoundInfo } from './timing'
@@ -1285,6 +1286,66 @@ function RowBody({
   }
 }
 
+/**
+ * 用户消息的附件条（贴图条之后、正文之前）：视频能就地播放，其余文件给一张可点开的文件卡。
+ *
+ * 卡片只是一层结构+类名，排版全在 `styles.css` 的 `.entry-user-files` / `.user-file-card` 里；
+ * 视频没有 `url`（宿主只给了路径句柄）时降级成普通文件卡，不留一个播不了的空播放器。
+ *
+ * @param props - `files` 是宿主给的用户附件清单，缺省/空数组时整块不渲染。
+ * @returns 附件条，或 null。
+ */
+function UserFileCards({ files }: { files?: readonly UserFileAttachment[] }): ReactNode {
+  if (files === undefined || files.length === 0) return null
+  return (
+    <div className="entry-user-files">
+      {files.map((file) =>
+        file.kind === 'video' && file.url !== undefined && file.url !== '' ? (
+          <figure key={file.sha} className="user-file-card user-video-card" data-file-kind="video">
+            <video src={file.url} controls playsInline preload="metadata" aria-label={file.name} />
+            <figcaption className="user-file-name" title={file.path}>
+              {file.name}
+            </figcaption>
+            <span className="user-file-meta">{formatBytes(file.bytes)}</span>
+          </figure>
+        ) : (
+          <FileAttachmentCard key={file.sha} file={file} />
+        ),
+      )}
+    </div>
+  )
+}
+
+/**
+ * 一个非视频附件的卡片：文档图标 + 文件名 + 体积。有 `url` 时整卡是下载链接，没有就是死卡片。
+ *
+ * @param props - `file` 是宿主给的用户附件。
+ * @returns 文件卡（`<a>` 或 `<div>`）。
+ */
+function FileAttachmentCard({ file }: { file: UserFileAttachment }): ReactNode {
+  const body = (
+    <>
+      <FileIcon name={file.name} size={16} />
+      <span className="user-file-name" title={file.path}>
+        {file.name}
+      </span>
+      <span className="user-file-meta">{formatBytes(file.bytes)}</span>
+    </>
+  )
+  if (file.url === undefined || file.url === '') {
+    return (
+      <div className="user-file-card" data-file-kind="file">
+        {body}
+      </div>
+    )
+  }
+  return (
+    <a className="user-file-card" data-file-kind="file" href={file.url} target="_blank" rel="noreferrer" title={file.path}>
+      {body}
+    </a>
+  )
+}
+
 /** 用户消息：气泡 + 贴图条 + hover 浮出的「编辑」钮（编辑重发 = 分叉新会话重发，原会话保留）。 */
 function UserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'user' }> }): ReactNode {
   const actions = useContext(FlowActionsContext)
@@ -1313,6 +1374,7 @@ function UserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'user' }> 
             ))}
           </div>
         )}
+        <UserFileCards files={entry.files} />
         {draft === null ? (
           entry.text
         ) : (
@@ -2474,8 +2536,22 @@ function ReadonlyUserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'u
             ))}
           </div>
         )}
+        <UserFileCards files={entry.files} />
         {entry.text}
       </div>
     </div>
   )
+}
+
+/**
+ * 附件体积的人话读法（1024 进制）：不到 1KB 给整数 B，不到 1MB 给一位小数 KB，再往上一位小数 MB。
+ *
+ * @param bytes - 字节数。
+ * @returns 形如 `512 B` / `3.4 KB` / `1.2 MB`；数字不合法时给一个破折号，不显示 NaN。
+ */
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '—'
+  if (bytes < 1024) return `${String(Math.round(bytes))} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }

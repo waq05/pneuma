@@ -163,13 +163,13 @@ console.log('[4] P1 三项')
   // 四张能力卡并排：提示语一句还是两句会把标题顶得高低不一，留满两行高才对得齐。
   check('能力卡提示语留满两行（标题对得齐）', /\.welcome-card-hint \{[^}]*min-height: 2lh/.test(css))
 
-  // 今日读数：状态栏与页脚同一份取数（useTodayUsage），金额口径只留一份。
+  // 今日读数只留侧栏页脚（2026-10-28 对齐 dsh：底排只有轮/步、tok、上下文三段）。
   check('共享 hook：ui-layout/usage-today 存在', existsSync(join(root, 'ui-shell/src/ui-layout/usage-today.ts')))
   check('hook 从 @dsc/ui 转出', read('ui-shell/src/plugin-api.ts').includes('useTodayUsage'))
-  check('状态栏加了今日段', statusbar.includes('useTodayUsage(settledTokens)') && statusbar.includes('function TodaySegment('))
+  check('状态栏不再挂今日段', !statusbar.includes('function TodaySegment(') && !statusbar.includes('useTodayUsage'))
   check('页脚改用同一份 hook（不再自己拉 usageStats）', sessions.includes('useTodayUsage(usage)') && !/SidebarFooter[\s\S]{0,900}?invoke<UsageStatsView>/.test(sessions))
   check('金额口径只有一份（基元库）', read('ui-shell/src/ui-primitives/tokens.ts').includes('export function formatCostCny') && !sessions.includes('function formatCostCny'))
-  check('今日段只在有记录时出现（0 不是读数）', statusbar.includes('if (today.tokens > 0)'))
+  check('轮/步取宿主 progress（步数为 0 整段不画）', statusbar.includes('readProgress') && statusbar.includes('Number(steps) > 0'))
 
   // 断线提示：通道关闭/连接中超过 3 秒才出，带手动重连。
   check('通道有手动重连入口', channel.includes('reconnect(): void') && channel.includes('reconnect() {'))

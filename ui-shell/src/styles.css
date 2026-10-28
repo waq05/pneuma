@@ -4422,3 +4422,303 @@
 .welcome .entry-system-command {
   align-self: stretch;
 }
+
+/* ══════════ 底部三段：对齐 dsh 的 composer dock（2026-10-28） ══════════
+ *
+ * dsh 的同一排是 `display:flex; justify-content:center; align-items:center; gap:12px;
+ * padding-top:4px`，段与段之间**没有**分隔符；每颗都是 13px、内距 1px 8px 的胶囊。
+ * 旧版这里用 `·` 伪元素隔开（views.css:4419），间距也不固定。下面这组覆盖只改「排布」，
+ * 颜色与悬浮卡长相仍吃 legacy 那一份。
+ */
+.statusbar .segments {
+  gap: 12px;
+}
+
+/* 对话页那一份贴在输入框下面（dsh 的 composer dock）：左右内距交给输入区那一列，
+ * 这里只留 4px 的上间距，读数与输入框才是同一摞。 */
+.composer-zone > .statusbar {
+  padding: 4px 0 2px;
+}
+
+.statusbar .segment:not(:first-child)::before {
+  content: none;
+  margin: 0;
+}
+
+.statusbar .segment {
+  gap: 6px;
+}
+
+.statusbar .ctx-trigger {
+  font-variant-numeric: tabular-nums;
+  line-height: 20px;
+  padding: 1px 8px;
+}
+
+/* 三段主文案里速度那截压成 tertiary：与 dsh 的二级读数同一个视觉层级 */
+.statusbar .seg-dim {
+  opacity: 1;
+  color: var(--dsc-text-tertiary);
+}
+
+/* 上下文卡片的三段进度条：系统提示词（中性灰）/ 工具定义（紫）/ 对话消息（品牌蓝）。
+ * 与 dsh 的 ContextMeter 同一套语义色：中性、紫、蓝。 */
+.ctx-bar-seg {
+  display: block;
+  height: 100%;
+  flex: none;
+}
+
+.ctx-bar-system {
+  background: var(--dsc-text-quaternary);
+}
+
+.ctx-bar-tools {
+  background: var(--dsc-purple);
+}
+
+.ctx-bar-messages {
+  background: var(--dsc-accent);
+}
+
+.ctx-dot-system {
+  background: var(--dsc-text-quaternary);
+}
+
+.ctx-dot-tools {
+  background: var(--dsc-purple);
+}
+
+/* ══════════ 输入区：待发附件栏（图片 / 视频 / 文件） ══════════ */
+.composer-attachments {
+  align-items: stretch;
+  display: flex;
+  gap: 8px;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 6px 2px 2px;
+  scrollbar-width: none;
+}
+
+.composer-attachments::-webkit-scrollbar {
+  display: none;
+}
+
+.attach-item {
+  background: var(--dsc-fill-secondary, rgba(127, 127, 127, 0.08));
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-control);
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  height: 64px;
+  overflow: hidden;
+  position: relative;
+  width: 64px;
+}
+
+.attach-item[data-kind='file'] {
+  align-items: center;
+  flex-direction: row;
+  gap: 8px;
+  padding: 0 10px;
+  width: 220px;
+}
+
+.attach-thumb {
+  background: var(--dsc-fill-quaternary);
+  height: 100%;
+  width: 100%;
+}
+
+.attach-thumb img,
+.attach-thumb video {
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.attach-file {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+}
+
+.attach-file .attach-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.attach-file .attach-bytes {
+  flex: none;
+}
+
+/* 缩略图那两种卡片：文件名与体积读数是给文件卡的，压在 64px 方图里只会互相挤掉
+ * （dsh 的缩略图同样只给图 + 悬停标题）。 */
+.attach-item[data-kind='image'] .attach-name,
+.attach-item[data-kind='video'] .attach-name,
+.attach-item[data-kind='image'] .attach-bytes,
+.attach-item[data-kind='video'] .attach-bytes {
+  display: none;
+}
+
+.attach-file-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.attach-name {
+  color: var(--dsc-text-secondary);
+  font-size: var(--dsc-fs-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attach-bytes {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.attach-remove {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.55);
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  height: 18px;
+  justify-content: center;
+  opacity: 0;
+  padding: 0;
+  position: absolute;
+  right: 3px;
+  top: 3px;
+  transition: opacity var(--dsc-dur) var(--dsc-ease);
+  width: 18px;
+  z-index: 2;
+}
+
+.attach-item:hover .attach-remove,
+.attach-item:focus-within .attach-remove {
+  opacity: 1;
+}
+
+/* 上传进度：底部一条细进度条 */
+.attach-progress {
+  background: rgba(0, 0, 0, 0.35);
+  bottom: 0;
+  height: 3px;
+  left: 0;
+  position: absolute;
+  right: 0;
+  z-index: 2;
+}
+
+.attach-progress > span {
+  background: var(--dsc-accent);
+  display: block;
+  height: 100%;
+  transition: width 160ms linear;
+}
+
+.attach-item[data-uploading='1'] {
+  opacity: 0.85;
+}
+
+.attach-hint {
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: var(--dsc-r-badge);
+  bottom: 4px;
+  color: #fff;
+  font-size: 10px;
+  left: 4px;
+  padding: 1px 4px;
+  position: absolute;
+  z-index: 2;
+}
+
+/* 拖着文件在输入框上方时给一圈提示（事件挂在 .composer 上） */
+.composer[data-drag='1'] {
+  border-color: var(--dsc-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsc-accent) 30%, transparent);
+}
+
+/* ══════════ 用户气泡：视频卡与文件卡 ══════════ */
+.entry-user-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.user-file-card {
+  background: var(--dsc-fill-secondary, rgba(127, 127, 127, 0.08));
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-block);
+  color: var(--dsc-text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 100%;
+  padding: 6px 10px;
+  text-decoration: none;
+}
+
+/* 通用文件卡是一行三件：图标 + 文件名 + 体积 */
+.user-file-card[data-file-kind='file'] {
+  align-items: center;
+  flex-direction: row;
+  gap: 6px;
+  max-width: 320px;
+}
+
+.user-file-card[data-file-kind='file'] .user-file-name {
+  min-width: 0;
+}
+
+a.user-file-card:hover {
+  border-color: var(--dsc-stroke-2);
+  color: var(--dsc-text-primary);
+}
+
+.user-video-card {
+  padding: 0;
+  overflow: hidden;
+  width: min(360px, 100%);
+}
+
+.user-video-card video {
+  background: #000;
+  display: block;
+  max-height: 260px;
+  width: 100%;
+}
+
+.user-video-card .user-file-name,
+.user-video-card .user-file-meta {
+  padding: 0 10px;
+}
+
+.user-video-card .user-file-meta {
+  padding-bottom: 6px;
+}
+
+.user-file-name {
+  font-size: var(--dsc-fs-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-file-meta {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-caption);
+  font-variant-numeric: tabular-nums;
+}

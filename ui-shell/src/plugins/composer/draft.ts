@@ -10,20 +10,74 @@
  * 可以互换——它没有任何内容，换一个还是同一个「空会话」。发出第一条消息之后会话就落盘了，
  * 草稿改按会话路径分坑，工作区名下那一份同时清掉（那半截话已经交给这条会话了）。
  *
- * 纯函数（不 import React / 宿主）：换会话时的搬运规则由 `scripts/ui-composer-draft-test.mjs`
- * 逐条钉住。
+ * 纯函数、**零 import**：换会话时的搬运规则由 `scripts/ui-composer-draft-test.mjs` 逐条钉住
+ * （那条探针用 Node 的类型擦除直读本文件，`import` 一行就会失败）。附件的两个类型因此也
+ * 定义在这里——它们是「草稿里放什么」的形状，和搬运规则本来就是一件事；
+ * `./attachments.ts` 只做转发，免得两处各抄一份。
  *
  * @module dsc-ui-shell/plugins/composer/draft
  */
 
-/** 一份草稿：正文 + 本机的输入历史（上下键翻）。 */
+/** 宿主 `POST /api/attachments` 回包里的元数据（语义见 `./attachments.ts` 的上传实现）。 */
+export interface AttachmentMeta {
+  /** sha256 十六进制（64 位小写）。 */
+  sha: string
+  kind: 'image' | 'video' | 'file'
+  /** 用户看到的原始文件名。 */
+  name: string
+  /** 宿主按魔数判定的实际类型。 */
+  mime: string
+  bytes: number
+  /** 同源读取地址（`/api/attachments/<sha>?name=…`），可直接塞 `<img>` / `<video>`。 */
+  url: string
+  /** 本机绝对路径（交给模型用工具读）。 */
+  path: string
+}
+
+/**
+ * 草稿里的一条附件。
+ *
+ * 只存**引用与元数据**：预览地址是宿主的同源 URL（上传中临时用本机 objectURL），图片字节
+ * 不留在 React 状态里，会话切换时草稿跟着走也不会把内存撑爆。
+ */
+export interface DraftAttachment {
+  /** 本地唯一 id（列表 key、异步回填的定位依据）。 */
+  id: string
+  kind: 'image' | 'video' | 'file'
+  /** 展示用文件名（粘贴来的截图常常没有名字，由调用方补一个）。 */
+  name: string
+  /** 上传时的类型（宿主回包里的 mime 才是权威值）。 */
+  mime: string
+  /** 原始字节数（展示用；宿主回包里的是实际落盘大小）。 */
+  bytes: number
+  /** 上传完成后的元数据；还在传时为 null。 */
+  meta: AttachmentMeta | null
+  /** 缩略图地址：上传中是本机 objectURL，上传完成后换成宿主 URL。 */
+  previewUrl: string
+  /** 上传中的本机 objectURL（完成后释放并置空）。 */
+  localUrl?: string
+  /** 视频抽出来的帧（已上传成图片附件的 URL，按时间顺序）。 */
+  frames: readonly string[]
+  /** 0..1 = 上传进度；null = 已传完。 */
+  uploading: number | null
+  /** 失败原因（失败条目会从列表里摘掉，这里留给调用方判断）。 */
+  error: string | null
+}
+
+/**
+ * 一份草稿：正文 + 本机的输入历史（上下键翻）+ 待发附件。
+ *
+ * 附件只存**引用与元数据**（`DraftAttachment` 里的 URL / sha / 文件名），不存图片字节：
+ * 切会话时跟着走的是几条指针，不是几张图。
+ */
 export interface ComposerDraft {
   value: string
   history: readonly string[]
+  attachments?: readonly DraftAttachment[]
 }
 
 /** 空草稿（查不到就用它）。 */
-export const EMPTY_DRAFT: ComposerDraft = { value: '', history: [] }
+export const EMPTY_DRAFT: ComposerDraft = { value: '', history: [], attachments: [] }
 
 /** 草稿归属：一个 key（存档键）+ 这条会话的身份与「落没落盘」。 */
 export interface DraftScope {

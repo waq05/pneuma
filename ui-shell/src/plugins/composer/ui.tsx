@@ -21,9 +21,11 @@
  *   2. **`/` 指令当场拦下**：`runCommand` 同样不在白名单里。旧界面把 `/` 开头的文本
  *      交给命令注册表，壳这边交不了——照旧发出去会变成一条「以斜杠开头」的用户消息
  *      喂给模型，那比明确拒绝更糟。
- *   3. **贴图这一版还不支持**：界面的 POST 请求体上限之下，单张图只能有 32KB
- *      （`UI_ARG_SPECS` 的 `MAX_IMAGE`），普通截图压到那个档位已经看不清了；所以贴图与
- *      拖文件都给一句明确的话，而不是静默吞掉。
+ *   3. **附件改走字节通道**：贴图 / 拖文件不再给「不支持」那句话——图片先在浏览器里缩到
+ *      2048、压到 4MiB 以内，再 POST 到宿主的 `/api/attachments` 拿同源引用；视频与通用
+ *      文件同样上传，`submit` 时分别走 `images` 与 `files` 两列。视频另外在本机抽 6 帧当
+ *      图片带给模型（不支持视频输入的模型也能看见关键画面）。上限与压缩规则见
+ *      `./attachments.ts`。
  *
  * 三根旋钮的清单**一律从快照的 `surfaces` 读**（`surfaces.permissionPresets` /
  * `surfaces.preset` / `listModels`），不在壳里抄一份档位表——旧界面 `Composer.tsx` 也是这么
@@ -75,6 +77,19 @@ import { useMention } from './mention'
 import { useCommandMenu } from './command-menu'
 import { blockedNow, commandQuery } from './commands'
 import { carryDraft, draftScopeOf, type ComposerDraft } from './draft'
+import {
+  composeSubmit,
+  displayNameOf,
+  extractVideoFrames,
+  formatBytes,
+  kindOf,
+  MAX_IMAGES,
+  newAttachmentId,
+  normalizeImage,
+  uploadFile,
+  type AttachmentKind,
+  type DraftAttachment,
+} from './attachments'
 import { summarizeNotice } from './notice-summary'
 import { EffortSlider } from './effort-slider'
 import {
@@ -177,6 +192,10 @@ function ComposerBox(): ReactNode {
   const [text, setText] = useState('')
   const [fault, setFault] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
+  /** 待发附件（上传中带进度，上传完带宿主引用；会话切换时随草稿一起搬运）。 */
+  const [attachments, setAttachments] = useState<readonly DraftAttachment[]>([])
+  /** 有文件悬在 `.composer` 上方（拖拽高亮走 `data-drag`，样式由壳统一写）。 */
+  const [dragOver, setDragOver] = useState(false)
   const [models, setModels] = useState<readonly ModelChoiceView[]>([])
   /** 模型菜单（两级：端点 → 悬浮飞出的模型列表）开没开。 */
   const [modelOpen, setModelOpen] = useState(false)
@@ -319,6 +338,53 @@ function ComposerBox(): ReactNode {
   })
   const draftScopeRef = useRef(draftScope)
 
+  /**
+   * 把一条附件的变化写回**所有**草稿存档。
+   *
+   * 为什么不是只改当前 state：上传是异步的，用户完全可能在上传途中切到别的会话；那时
+   * 当前 state 已经是另一份草稿，只有存档里那一份需要被补上「传完了 / 抽到几帧」。
+   * 切回来才能看到正确结果。
+   *
+   * @param id 附件 id
+   * @param patch 要合并的字段；`null` = 从存档里摘掉（手动移除 / 上传失败）
+   */
+  const patchDraftsAttachment = (id: string, patch: Partial<DraftAttachment> | null): void => {
+    for (const [key, draft] of drafts.current) {
+      const list = draft.attachments
+      if (list === undefined || !list.some((item) => item.id === id)) continue
+      const next =
+        patch === null
+          ? list.filter((item) => item.id !== id)
+          : list.map((item) => (item.id === id ? { ...item, ...patch } : item))
+      drafts.current.set(key, { ...draft, attachments: next })
+    }
+  }
+
+  /** 当前 state 与所有草稿存档一起改（上传进度、元数据回填都走它）。 */
+  const updateAttachment = (id: string, patch: Partial<DraftAttachment>): void => {
+    setAttachments((list) => list.map((item) => (item.id === id ? { ...item, ...patch } : item)))
+    patchDraftsAttachment(id, patch)
+  }
+
+  /** 手动移除一条附件：先释放还在上传时创建的本机预览地址，再从界面与存档里摘掉。 */
+  const removeAttachment = (id: string): void => {
+    const target = attachments.find((item) => item.id === id)
+    if (target?.localUrl !== undefined) URL.revokeObjectURL(target.localUrl)
+    setAttachments((list) => list.filter((item) => item.id !== id))
+    patchDraftsAttachment(id, null)
+  }
+
+  /** 提交成功后把当前会话草稿里的附件清空（正文由 `setText('')` 负责）。 */
+  const clearDraftAttachments = (): void => {
+    for (const item of attachments) {
+      if (item.localUrl !== undefined) URL.revokeObjectURL(item.localUrl)
+    }
+    setAttachments([])
+    const key = draftScopeRef.current.key
+    const saved = drafts.current.get(key)
+    if (saved !== undefined) drafts.current.set(key, { ...saved, attachments: [] })
+  }
+
   const working = turnState !== 'idle'
 
   /**
@@ -338,12 +404,14 @@ function ComposerBox(): ReactNode {
     const next = carryDraft(drafts.current, draftScopeRef.current, draftScope, {
       value: text,
       history: history.current,
+      attachments,
     })
     draftScopeRef.current = draftScope
     setText(next.value)
     history.current = [...next.history]
+    setAttachments([...(next.attachments ?? [])])
     setHistoryAt(null)
-  }, [draftScope.key, draftScope.sessionId, draftScope.unsaved, text])
+  }, [draftScope.key, draftScope.sessionId, draftScope.unsaved, text, attachments])
 
   // 输入框跟着内容长高，封顶 200px（超出在框内滚）。
   useEffect(() => {
@@ -391,8 +459,10 @@ function ComposerBox(): ReactNode {
     const typed = text.trim()
     const picked = command.open && typed !== '/' ? (command.insertText()?.trim() ?? null) : null
     const value = picked ?? typed
-    if (value === '' || blocked || sending) return
-    if (value.startsWith('/')) {
+    // 正文为空但有附件也算能发（只发一张图不写字是常见用法）。
+    if ((value === '' && attachments.length === 0) || blocked || sending) return
+    // 带附件时不走命令：命令没有图可带，用户贴了图就是在发内容（与旧界面 App.tsx 同一条规矩）。
+    if (value.startsWith('/') && attachments.length === 0) {
       // 回车就是「我要跑这一条」：候选面板当场收起。以前只清文本、不收面板，于是
       // 命令已经执行了、面板还挂在输入框上方等下一句（2026-10-27 报障第一条）。
       command.hide()
@@ -418,13 +488,29 @@ function ComposerBox(): ReactNode {
         })
       return
     }
+    // 还有附件在传：这一刻发出去只能发个半成品，明确拦下。
+    if (attachments.some((item) => item.uploading !== null)) {
+      setFault('附件还在上传，请等上传完成后再发送')
+      return
+    }
+    const payload = composeSubmit(attachments)
     const steerIndex = steer && working ? queuedCount : null
     setSending(true)
     setFault(null)
     void (async () => {
       try {
-        await channel.invoke('submit', [value])
-        history.current = [...history.current.filter((item) => item !== value), value].slice(-HISTORY_LIMIT)
+        // 没有附件时保持老调用形状（只传正文）；有图没文件就省掉第三参。
+        if (payload.files.length > 0) {
+          await channel.invoke('submit', [value, payload.images, payload.files])
+        } else if (payload.images.length > 0) {
+          await channel.invoke('submit', [value, payload.images])
+        } else {
+          await channel.invoke('submit', [value])
+        }
+        // 只发图不写字时不往输入历史里塞一个空串（上下键翻到空行很怪）。
+        if (value !== '') {
+          history.current = [...history.current.filter((item) => item !== value), value].slice(-HISTORY_LIMIT)
+        }
         setHistoryAt(null)
         // 新会话要等首条消息落盘才会出现在侧栏里：提交回来自会已经写盘，这时刷一次才有效。
         void channel.invoke('refreshSessions').catch(() => undefined)
@@ -433,6 +519,10 @@ function ComposerBox(): ReactNode {
           if (done !== true) setFault('插话没赶上：这一轮刚结束，这条消息会自己发出去')
         }
         setText('')
+        clearDraftAttachments()
+        if (payload.dropped > 0) {
+          setFault(`图片最多 ${String(MAX_IMAGES)} 张，已发送前 ${String(MAX_IMAGES)} 张（${String(payload.dropped)} 张未发送）`)
+        }
       } catch (reason) {
         setFault(reason instanceof Error ? reason.message : String(reason))
       } finally {
@@ -609,6 +699,13 @@ function ComposerBox(): ReactNode {
         return
       }
     }
+    if (event.key === 'Backspace' && text === '' && attachments.length > 0) {
+      // 输入框空着时退格 = 摘掉最后一条附件（与聊天软件的常用手感一致）。
+      event.preventDefault()
+      const last = attachments[attachments.length - 1]
+      if (last !== undefined) removeAttachment(last.id)
+      return
+    }
     if (event.key === 'Enter') {
       if (event.shiftKey || event.nativeEvent.isComposing) return
       event.preventDefault()
@@ -647,7 +744,7 @@ function ComposerBox(): ReactNode {
     else mention.close()
   }
 
-  const sendable = text.trim() !== ''
+  const sendable = text.trim() !== '' || attachments.length > 0
   const queueing = working && sendable
   /** 当前预设那一项（拿它的 label / description）；`custom`（旋钮拼不出任何预设）或清单缺了时为 undefined。 */
   const permOption = permissionPresets.options.find((item) => item.name === permissionPresets.current)
@@ -659,6 +756,85 @@ function ComposerBox(): ReactNode {
   const groups = groupModels(models)
   const provider = useHostSelector(readProvider)
   const current = findCurrent(groups, provider, model)
+
+  /**
+   * 当前模型能不能吃图片。模型清单里查不到（`entry` 为 undefined）时**不拦**：
+   * 清单没取到（老宿主 / 刚启动）时误伤，比放过去由宿主校验更糟。
+   * 视频也要这道门：视频会抽成图片一起带给模型。
+   */
+  const imageInputAllowed = current.entry === undefined || current.entry.modalities.includes('image')
+
+  /**
+   * 加一个文件：先插上传占位（带进度），再异步规范化 / 上传；视频传完再抽帧并上传。
+   *
+   * 失败路径统一收口：摘掉占位、释放本机预览地址、把原因写进 fault——不留一个永远转圈的
+   * 条目。抽帧失败不算失败（`extractVideoFrames` 自己吞错、返回已拿到的帧）。
+   */
+  const addOneFile = async (file: File, kind: AttachmentKind): Promise<void> => {
+    const id = newAttachmentId()
+    const name = displayNameOf(file, kind)
+    const localUrl = URL.createObjectURL(file)
+    const placeholder: DraftAttachment = {
+      id,
+      kind,
+      name,
+      mime: file.type,
+      bytes: file.size,
+      meta: null,
+      previewUrl: localUrl,
+      localUrl,
+      frames: [],
+      uploading: 0,
+      error: null,
+    }
+    setAttachments((list) => [...list, placeholder])
+    try {
+      const payload = kind === 'image' ? await normalizeImage(file) : file
+      const meta = await uploadFile(payload, name, (ratio) => {
+        updateAttachment(id, { uploading: ratio })
+      })
+      updateAttachment(id, { meta, previewUrl: meta.url, uploading: null, localUrl: undefined })
+      URL.revokeObjectURL(localUrl)
+      if (kind !== 'video') return
+      const frames = await extractVideoFrames(meta.url, 6)
+      const base = name.replace(/\.[^.]+$/, '')
+      const urls: string[] = []
+      for (const [index, frame] of frames.entries()) {
+        try {
+          const frameMeta = await uploadFile(frame, `${base}-帧${String(index + 1)}.jpg`)
+          urls.push(frameMeta.url)
+          updateAttachment(id, { frames: [...urls] })
+        } catch {
+          // 单帧失败不挡消息：视频本体与已经抽到的帧照常带出去。
+        }
+      }
+    } catch (reason) {
+      URL.revokeObjectURL(localUrl)
+      setAttachments((list) => list.filter((item) => item.id !== id))
+      patchDraftsAttachment(id, null)
+      setFault(`上传失败：${reason instanceof Error ? reason.message : String(reason)}`)
+    }
+  }
+
+  /**
+   * 接一批文件（粘贴的截图、拖进来的文件都走这里）：图片 / 视频 / 其余各归各的，
+   * 按当前模型的能力门先挡一道，再逐个进 {@link addOneFile}。
+   */
+  const addFiles = (files: readonly File[]): void => {
+    if (files.length === 0) return
+    setFault(null)
+    let rejected = false
+    for (const file of files) {
+      const kind = kindOf(file)
+      if (kind !== 'file' && !imageInputAllowed) {
+        rejected = true
+        continue
+      }
+      void addOneFile(file, kind)
+    }
+    if (rejected) setFault('当前模型不支持图片，请切换支持图片的模型')
+  }
+
   const chip = modelChipText(groups, provider, model)
   const twoLevel = shouldShowProviderLevel(groups)
   /** 飞出卡画谁家的模型：鼠标停着的那一家；没停（或它没在了）就只有一级那一列。 */
@@ -915,7 +1091,7 @@ function ComposerBox(): ReactNode {
     ? '等待审批…'
     : working
       ? '回合进行中：回车把消息排进队里，Ctrl+Enter 插话（打断当前输出）'
-      : '发消息，@ 引用文件，回车发送，Ctrl+Enter 插话'
+      : '发消息，@ 引用文件，可贴图 / 拖图片、视频或文件进来，回车发送，Ctrl+Enter 插话'
 
   return (
     // 这一层是「输入框外面那一列」：分支行在上、输入框在下，各占一行、各带自己的边。
@@ -1074,18 +1250,102 @@ function ComposerBox(): ReactNode {
           area.current?.focus()
         }}
         onPaste={(event) => {
-          if (event.clipboardData.files.length === 0) return
-          setFault('贴图这一版还不支持：界面通道的单图上限只有 32KB，普通截图压到那个档位已经看不清了')
+          // 截图粘贴就是 `clipboardData.files` 里的一个 PNG；有多张也一并接。
+          const files = Array.from(event.clipboardData.files)
+          if (files.length === 0) return
+          // 有文件时不要再让浏览器把「文件名文本」插进输入框。
+          event.preventDefault()
+          addFiles(files)
         }}
         onDrop={(event) => {
-          if (event.dataTransfer.files.length === 0) return
+          const files = Array.from(event.dataTransfer.files)
+          setDragOver(false)
+          if (files.length === 0) return
           event.preventDefault()
-          setFault('拖文件进来这一版还不支持：界面通道目前只能发文本')
+          addFiles(files)
+        }}
+        onDragEnter={(event) => {
+          if (!event.dataTransfer.types.includes('Files')) return
+          event.preventDefault()
+          setDragOver(true)
         }}
         onDragOver={(event) => {
-          if (event.dataTransfer.types.includes('Files')) event.preventDefault()
+          if (!event.dataTransfer.types.includes('Files')) return
+          event.preventDefault()
+          setDragOver(true)
         }}
+        onDragLeave={(event) => {
+          // 从输入框移到它内部某个子节点不算离开（否则拖过文字区就会闪一下）。
+          const next = event.relatedTarget
+          if (next instanceof Node && event.currentTarget.contains(next)) return
+          setDragOver(false)
+        }}
+        data-drag={dragOver ? '1' : undefined}
       >
+        {/* 待发附件：贴在 textarea 上方、`/` 与 `@` 浮层下方的一条横向滚动卡片。
+            只写结构，尺寸 / 间距 / 圆角归壳的 `styles.css`（主控统一写）。 */}
+        {attachments.length === 0 ? null : (
+          <div className="composer-attachments" aria-label="待发送的附件">
+            {attachments.map((item) => (
+              <div
+                className="attach-item"
+                key={item.id}
+                data-kind={item.kind}
+                data-uploading={item.uploading !== null ? '1' : undefined}
+              >
+                {item.kind === 'file' ? (
+                  <div className="attach-file">
+                    <IconPackage size={14} />
+                    <span className="attach-name" title={item.name}>
+                      {item.name}
+                    </span>
+                    <span className="attach-bytes">{formatBytes(item.bytes)}</span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="attach-thumb">
+                      {item.kind === 'image' ? (
+                        <img src={item.previewUrl} alt={item.name} />
+                      ) : (
+                        <video
+                          muted
+                          playsInline
+                          preload="metadata"
+                          src={item.previewUrl}
+                          aria-label={item.name}
+                        />
+                      )}
+                    </div>
+                    <span className="attach-name" title={item.name}>
+                      {item.name}
+                    </span>
+                    <span className="attach-bytes">{formatBytes(item.bytes)}</span>
+                    {item.frames.length === 0 ? null : (
+                      <span className="attach-hint">{item.frames.length} 帧</span>
+                    )}
+                  </>
+                )}
+                {item.uploading === null ? null : (
+                  <span className="attach-progress" aria-hidden="true">
+                    <span style={{ width: `${String(Math.round(item.uploading * 100))}%` }} />
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="attach-remove"
+                  aria-label={`移除 ${item.name}`}
+                  title={`移除 ${item.name}`}
+                  onClick={() => {
+                    removeAttachment(item.id)
+                  }}
+                >
+                  <IconClose size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <textarea
           ref={area}
           rows={1}

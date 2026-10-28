@@ -510,4 +510,5 @@ export type {
   UsageDayView,
   UsageModelView,
   UsageStatsView,
+  UserFileAttachment,
 } from '@dsc/ui-core'
