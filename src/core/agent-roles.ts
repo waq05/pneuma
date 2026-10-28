@@ -12,7 +12,7 @@
  * tools: read, glob, grep        # 工具白名单；写 none 表示一个工具都不给
  * model:                         # 例 deepseek/deepseek-chat；留空 = 跟随当前模型
  * effort: default                # default|off|low|high|max
- * max-turns: 12                  # 内部请求轮次上限，到点自动收手
+ * max-turns: 12                  # 内部请求轮次上限，到点自动收手；不写或写 0 = 不限
  * approval: forbid               # forbid|ask|foreground：这个角色想不想弹审批卡
  * enabled: true
  * ---
@@ -56,7 +56,7 @@ export interface AgentRole {
   model: string | null
   /** 思考强度覆盖；null = 跟随当前档位。 */
   effort: EffortLevel | null
-  /** 内部请求轮次上限（到点自动收手，防止子智能体无限自转）。 */
+  /** 内部请求轮次上限（到点自动收手，防止子智能体无限自转）；0 = 不限。 */
   maxTurns: number
   /** 这个角色想不想弹审批卡。 */
   approval: TeammateApproval
@@ -75,7 +75,6 @@ const BUILTIN_FILES: Readonly<Record<string, string>> = {
 name: explorer
 description: 只读探索：读代码、找定义、把事实汇总回来
 tools: read, glob, grep
-max-turns: 12
 approval: forbid
 ---
 
@@ -244,8 +243,9 @@ function parseRoleText(file: string, text: string): AgentRole | null {
     else problem = problem ?? `effort 只能是 ${EFFORTS.join(' / ')}，收到 ${rawEffort}，本项退回跟随当前`
   }
 
+  // 不写或写 0 = 不限；写了就夹进 1..200，0 这个值专门留给「不限」
   const rawTurns = Number.parseInt(String(doc['max-turns'] ?? doc.maxTurns ?? ''), 10)
-  const maxTurns = Number.isFinite(rawTurns) ? Math.min(Math.max(rawTurns, 1), 200) : 12
+  const maxTurns = Number.isFinite(rawTurns) ? Math.min(Math.max(rawTurns, 0), 200) : 0
 
   const rawApproval = typeof doc.approval === 'string' ? doc.approval.trim() : ''
   let approval: TeammateApproval = 'forbid'

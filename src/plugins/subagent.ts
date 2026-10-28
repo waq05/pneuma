@@ -60,6 +60,13 @@ interface SubagentConfig {
   notify: 'auto' | 'quiet'
   /** 新队友默认模型（`端点/模型`）；空 = 跟随当前模型。角色文件里的 model 优先。 */
   defaultModel: string
+  /**
+   * 轮次上限：0 = 不限，队友自己决定跑几轮。
+   *
+   * 设了就与角色文件的 max-turns 取更严的那个（角色写 0 也当不限）。设限后最后一轮
+   * 留给汇报：先提醒它交结论，再把工具表收成空，逼它用正文收尾。
+   */
+  maxTurns: number
 }
 
 const CONFIG_KEY = 'subagent'
@@ -71,12 +78,23 @@ const DEFAULTS: SubagentConfig = {
   approval: 'forbid',
   notify: 'auto',
   defaultModel: '',
+  maxTurns: 0,
 }
 
 const APPROVAL_RANK: Record<TeammateApproval, number> = { forbid: 0, foreground: 1, ask: 2 }
 
 /** 收工的队友最多在名单里留这么多个，超了就挤掉最老的（不占并发额度，只是别把名单撑爆）。 */
 const MAX_LISTED_FINISHED = 12
+
+/**
+ * 轮次预算取更严的那个：角色与插件都设了上限时取小的；任一方为 0（不限）时看另一方。
+ * @returns 0 = 不额外设限。
+ */
+function effectiveMaxTurns(roleTurns: number, pluginTurns: number): number {
+  if (roleTurns <= 0) return Math.max(pluginTurns, 0)
+  if (pluginTurns <= 0) return roleTurns
+  return Math.min(roleTurns, pluginTurns)
+}
 
 /** 主会话这一方在任务板上的名字。 */
 const LEAD = 'lead'
@@ -125,6 +143,14 @@ interface Teammate {
   awaitReport?: { minRound: number }
   /** 上一次真正回报时的 rounds（防同一轮回两遍：spawn 的首报与传话的补报会落在同一拍）。 */
   lastReportedRound: number
+  /**
+   * 预算最后一轮还欠着：rounds 到 maxTurns - 1 时补了「直接给结论」的提醒。
+   *
+   * 为什么要记：那条提醒排在收件箱里，模型这一轮若已自然收口，提醒会单独起一轮。
+   * 上一轮的 turn/end 先到，settle 若照常收工，就会把半截汇报发出去，真正最后一轮的
+   * 结论反而没人接。所以这一拍先不 settle，等最后一轮跑完再报。
+   */
+  finalRoundPending?: boolean
   /** 输出瀑布的行池（最新在后，只留 8 行；正文行与工具结果首行都进）。 */
   outputLines: string[]
   /** 当前（或最后一把）工具，画内联卡的「当前工具行」。 */
@@ -219,6 +245,7 @@ export const subagentPlugin: Plugin.Object = {
         approval,
         notify: raw.notify === 'quiet' ? 'quiet' : 'auto',
         defaultModel: typeof raw.defaultModel === 'string' ? raw.defaultModel.trim() : '',
+        maxTurns: clamp(raw.maxTurns, 0, 200, DEFAULTS.maxTurns),
       }
     }
     let config = readConfig()
@@ -311,8 +338,15 @@ export const subagentPlugin: Plugin.Object = {
         : new Promise<void>((resolve) => teammate.waiters.push(resolve))
 
     const settle = (teammate: Teammate, reason: 'completed' | 'aborted' | 'error', error?: string): void => {
+      // 预算最后一轮还欠着（提醒已排队、那一轮还没跑）：这一拍是自然收口，不算收工
+      if (teammate.finalRoundPending === true && reason === 'completed' && teammate.rounds < teammate.badge.maxTurns) return
+      teammate.finalRoundPending = false
       teammate.finishedAt = Date.now()
-      const tail = [...teammate.session.messages].reverse().find((message) => message.role === 'assistant')
+      // 汇报正文取「最后一条非空 assistant 正文」：最后一轮可能是纯工具调用（正文为空），
+      // 直接取最后一条就会把它当成「什么也没说」，前面真交过的结论反而丢了。
+      const tail = [...teammate.session.messages]
+        .reverse()
+        .find((message) => message.role === 'assistant' && typeof message.content === 'string' && message.content.trim() !== '')
       teammate.lastText = typeof tail?.content === 'string' ? tail.content : ''
       if (reason === 'completed') teammate.state = 'idle'
       else if (reason === 'aborted') teammate.state = 'stopped'
@@ -420,7 +454,8 @@ export const subagentPlugin: Plugin.Object = {
         // 工牌在此刻冻结：此后改角色文件不影响它
         badge: {
           tools: input.role.tools,
-          maxTurns: input.role.maxTurns,
+          // 角色文件与插件设置都设了上限时取更严的；两边都 0 才是真的不设限
+          maxTurns: effectiveMaxTurns(input.role.maxTurns, config.maxTurns),
           approval: input.role.approval,
           model,
           effort,
@@ -463,11 +498,19 @@ ${subagentEnvironmentText(input.parentSession.meta.cwd, teammate.badge.model ?? 
 
 # 你在团队里的位置
 你是队友「${teammate.name}」（角色 ${teammate.role}），派你活的是「${teammate.parent}」。
-你最多能发 ${teammate.badge.maxTurns} 次模型请求，用完会被自动收手，请把力气花在关键处。
+${
+            teammate.badge.maxTurns > 0
+              ? `你最多能发 ${teammate.badge.maxTurns} 次模型请求，用完会被自动收手，请把力气花在关键处；最后一轮不再给你工具，那轮直接交结论。`
+              : '轮次不设上限，但每轮都要往结论推进，别在同一个问题上打转。'
+          }
 ${teammate.badge.tools === null ? '' : `你只被授权这些工具：${teammate.badge.tools.join('、')}。用别的办法办不成就在最后一段说清楚，让 ${teammate.parent} 决定。`}
 ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需要授权的操作会被直接拒绝，不要反复尝试。' : '需要授权的操作可以向用户请求，审批卡上会写明是你（' + teammate.name + '）在请求。'}
 干完活用一段话交结果：做了什么、看到什么证据（文件名:行号）、还有什么没做。`,
-          tools: () => toolsFor(teammate),
+          // 设限时的最后一轮：工具表收成空，逼它用文本交结论（否则它会一直调工具直到被掐）
+          tools: () =>
+            teammate.badge.maxTurns > 0 && teammate.rounds >= teammate.badge.maxTurns - 1
+              ? []
+              : toolsFor(teammate),
           guards: guardsFor(teammate),
           stream: (api, request, handlers) => ctx.llm.stream(api, request, handlers),
           emit: (event) => {
@@ -478,8 +521,20 @@ ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需�
               ctx.transcript.touch()
             } else if (event.type === 'message') {
               teammate.rounds += 1
-              // 轮次预算到点就收手：这就是「子智能体不许无限自转」的闸门
-              if (teammate.rounds >= teammate.badge.maxTurns) teammate.agent.cancel()
+              const budget = teammate.badge.maxTurns
+              if (budget > 0) {
+                if (teammate.rounds >= budget) {
+                  // 轮次预算到点就收手：这就是「子智能体不许无限自转」的闸门。
+                  // 最后一轮的工具表已经收成空，正常应当以正文收束；它偏要再调工具
+                  // 才真正掐掉（走到 executeToolCalls 之前就会看到 aborted）。
+                  if ((event.toolCalls?.length ?? 0) > 0) teammate.agent.cancel()
+                } else if (teammate.rounds === budget - 1) {
+                  // 最后一轮留给汇报：先提醒它交结论，下一轮再把工具收走。
+                  // 提醒排在收件箱里，模型若就此收口，它会单独起最后一轮（settle 那边等着）。
+                  teammate.finalRoundPending = true
+                  teammate.agent.followup('下一轮是最后一次，直接给结论，不要再调工具', undefined, 'notice')
+                }
+              }
             } else if (event.type === 'tool/call') {
               teammate.toolCalls += 1
               teammate.lastTool = {
@@ -570,6 +625,25 @@ ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需�
     /** 队友报错文本暂存（emit 的 error 事件比 turn/end 早一步）。 */
     const lastError = new Map<string, string>()
 
+    /**
+     * 没留下文字结论时的说明。
+     *
+     * 为什么单独写：队友被停机、或轮次预算用完时，运行记录里往往只有一串工具调用、
+     * 一句正文都没有；原话「（它没留下文字结论）」既不说明原因，也不给证据位置。
+     * 这里标出原因并把运行记录路径给用户，让人能自己去看它干到了哪一步。
+     * @param withPath - 上文已经给过路径时传 false，免得同一段话里出现两遍。
+     */
+    const noTextNote = (teammate: Teammate, withPath = true): string => {
+      const budget = teammate.badge.maxTurns
+      const why =
+        budget > 0 && teammate.rounds >= budget
+          ? `轮次预算用完（${budget} 轮），没交最终结论`
+          : teammate.state === 'stopped'
+            ? `被停机（第 ${teammate.rounds} 轮），没交最终结论`
+            : '没交最终结论'
+      return withPath ? `${why}。运行记录：${teammate.session.filePath}` : why
+    }
+
     /** 后台队友干完，把汇报交给派它的那一方。 */
     const reportHome = (teammate: Teammate): void => {
       teammate.lastReportedRound = teammate.rounds
@@ -578,7 +652,7 @@ ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需�
         teammate.state === 'failed'
           ? `（它失败了：${teammate.error ?? '未知错误'}）`
           : teammate.lastText === ''
-            ? '（它没留下文字结论）'
+            ? noTextNote(teammate)
             : teammate.lastText
       const notice = `${TEAMMATE_REPORT_OPEN}from="${teammate.name}" role="${teammate.role}" state="${state}">
 派给它的任务：${teammate.task}
@@ -604,7 +678,13 @@ ${body}
         // 队友汇报是机器发起的唤醒：跑动中入箱时标 notice，界面画在输入框上方的
         // 只读通知条（不是输入框下方的用户队列条），不给人编辑 / 撤掉 / 插话。
         ctx.agent.followup(notice, undefined, teammate.parentSession.meta.id, 'notice')
-        ctx.transcript.system(`${line}，汇报已${live ? '并入下一轮' : '投进后台会话'}`)
+        // 带归属：父会话在后台时，这句回执只该进它自己的视图（0.6.68）
+        ctx.transcript.system(
+          `${line}，汇报已${live ? '并入下一轮' : '投进后台会话'}`,
+          undefined,
+          undefined,
+          teammate.parentSession.meta.id,
+        )
       } else {
         // 静默，或者父会话的 agent 已收摊：话写进它所属的那个会话文件，
         // 等用户回到那个会话再说话时模型自然看到，不打断也不抢跑。
@@ -613,6 +693,9 @@ ${body}
           live
             ? `${line}，汇报已写入会话，下一条消息时模型会看到`
             : `${line}，汇报写入了派出它的会话`,
+          undefined,
+          undefined,
+          teammate.parentSession.meta.id,
         )
       }
     }
@@ -893,9 +976,13 @@ ${body}
         await waitForIdle(teammate)
         runCtx.signal.removeEventListener('abort', onStop)
         const head = `${teammate.name}（${teammate.role}）${teammate.state === 'idle' ? '干完了' : teammate.state === 'stopped' ? '被打断' : '失败'}：第 ${teammate.rounds} 轮、${teammate.toolCalls} 次工具调用。运行记录：${teammate.session.filePath}`
-        return teammate.lastText === '' && teammate.state !== 'idle'
-          ? `${head}\n${teammate.error ?? '它没留下文字结论'}`
-          : `${head}\n\n${teammate.lastText === '' ? '（它没留下文字结论）' : teammate.lastText}`
+        if (teammate.lastText !== '') return `${head}\n\n${teammate.lastText}`
+        // 没有正文：失败先报错误，其余按「预算用完 / 被停机」说清原因（路径已在 head 里）
+        const reason =
+          teammate.state === 'failed' && teammate.error !== undefined
+            ? `（它失败了：${teammate.error}）`
+            : noTextNote(teammate, false)
+        return `${head}\n${reason}`
       }
 
       void waitForIdle(teammate).then(() => reportHome(teammate))
@@ -937,7 +1024,8 @@ ${body}
           const roles = listRoles().filter((role) => role.enabled)
           const lines = roles.map((role) => {
             const tools = role.tools === null ? '不限工具' : role.tools.length === 0 ? '不带工具' : role.tools.join('/')
-            return `- ${role.name}：${role.description || '（没写 description）'}（${tools}，最多 ${role.maxTurns} 轮）`
+            const turns = effectiveMaxTurns(role.maxTurns, config.maxTurns)
+            return `- ${role.name}：${role.description || '（没写 description）'}（${tools}，${turns === 0 ? '轮次不限' : `最多 ${turns} 轮`}）`
           })
           return `# 子智能体
 你可以用 subagent 工具把能独立完成的活派给队友。
@@ -964,6 +1052,15 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
       },
       { type: 'number', key: 'maxTeammates', label: '并行数量', min: 1, max: 8, step: 1, help: '每个会话各自的同时干活上限；已完成的队友不占额度，满了再派会被直接拒绝，不排队。' },
       { type: 'number', key: 'maxDepth', label: '递归层级', min: 0, max: 2, step: 1, help: '0 = 仅主会话可派队友，Lead 不可再下派；1 = Lead 可派队友，队友不可再下派。' },
+      {
+        type: 'number',
+        key: 'maxTurns',
+        label: '轮次上限',
+        min: 0,
+        max: 200,
+        step: 1,
+        help: '0 = 不限，队友自己决定跑几轮（默认）。填了就与角色文件的 max-turns 取更小的那个，角色写 0 也视为不限。设限后最后一轮不再给工具，只让它直接交结论。',
+      },
       {
         type: 'select',
         key: 'approval',
@@ -992,13 +1089,14 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
     const section: SettingsSectionSpec = {
       id: 'subagent',
       title: '子智能体',
-      subtitle: '设置子智能体的递归层级、数量和模型',
+      subtitle: '设置子智能体的递归层级、数量、轮次和模型',
       order: 40,
       fields,
       values: (): Record<string, SettingsValue> => ({
         allowDelegation: config.allowDelegation,
         maxTeammates: config.maxTeammates,
         maxDepth: config.maxDepth,
+        maxTurns: config.maxTurns,
         approval: config.approval,
         notify: config.notify,
         defaultModel: config.defaultModel,
@@ -1014,6 +1112,9 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
             break
           case 'maxDepth':
             applyConfig({ maxDepth: Number(value) })
+            break
+          case 'maxTurns':
+            applyConfig({ maxTurns: Number(value) })
             break
           case 'approval': {
             const next = String(value) as TeammateApproval

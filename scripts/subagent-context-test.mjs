@@ -191,6 +191,9 @@ console.log('[2] 端到端：父会话 cwd 换成临时目录，派队友抓它�
   check('今天写在里面', req?.system.includes(`- 今天：${today}`) === true, req?.system)
   check('模型名回填 = ctx.llm.model', req?.system.includes(`- 你用的模型：${ctx.llm.model}`) === true, req?.system)
   check('请求的 model 字段是测试模型', req?.model === 'm', req?.model)
+  // 轮次预算默认不限（explorer 出厂定义不再写 max-turns）：提示词要说清「不设上限」
+  check('不限轮次时系统提示写「轮次不设上限」', req?.system.includes('轮次不设上限，但每轮都要往结论推进，别在同一个问题上打转') === true, req?.system)
+  check('不限轮次时不再写「你最多能发 N 次模型请求」', req?.system.includes('次模型请求') === false, req?.system)
   check(
     '环境段落在角色提示之后、「# 你在团队里的位置」之前',
     (() => {
