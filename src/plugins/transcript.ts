@@ -14,6 +14,7 @@
 import type { Plugin } from '@deepseek-ai/cordis'
 import { Transcript } from '../adapter/transcript.js'
 import { estimateSessionCostCny, isDeepseekProvider, isPeakHour } from '../core/pricing.js'
+import { readSessionUsage } from '../core/usage-log.js'
 import { emptySegments } from '../core/token-estimate.js'
 import type { NoticeMessageView, PlanView, QueuedMessageView, RuntimeSnapshot, StatusView, TranscriptEntry } from '../contract.js'
 import type { AsyncInboxItem } from '../core/session.js'
@@ -190,6 +191,12 @@ export const transcriptPlugin: Plugin.Object = {
           current.fileChanges,
           current.presentations,
         )
+        // clear() 会把 contextUsed 归零，而重放不重放 usage；不从这里补回来，
+        // 每切一次会话状态栏的上下文就掉成 0%。用量日志按会话记着最后一条请求的
+        // 输入 token，它才是「此刻真实占用」。这条会话一行用量都没有时不填：
+        // 0% 是个读数，不能拿来冒充「还没数」。
+        const usage = readSessionUsage(current.meta.id)
+        if (usage !== null) transcript.seedContextUsage(usage.lastInputTokens)
         // 不再往转录里写「已恢复会话 xxx」：它落在最后，看着像一句常驻的尾巴，
         // 用户 2026-10-28 要求去掉。恢复这件事本身在侧边栏的选中态里已经说清楚了。
       } else {
@@ -212,7 +219,12 @@ export const transcriptPlugin: Plugin.Object = {
     const owned = (owner?: string): boolean =>
       owner === undefined || owner === ctx.session.current().meta.id
 
-    const service: TranscriptService = {
+    /**
+     * 对外服务面额外带一个回填入口。为什么不写进 TranscriptService 契约：它只服务
+     * 宿主启动恢复这一条路径（会话打开走的是上面直接操作 adapter），把恢复细节
+     * 摊进所有消费者看到的接口，等于让每个插件都以为自己该管上下文读数。
+     */
+    const service: TranscriptService & { seedContextUsage(used: number): void } = {
       emit(event, owner) {
         if (!owned(owner)) return
         if (transcript.reduce(event)) invalidate()
@@ -239,6 +251,10 @@ export const transcriptPlugin: Plugin.Object = {
         }
       },
       touch() {
+        invalidate()
+      },
+      seedContextUsage(used) {
+        transcript.seedContextUsage(used)
         invalidate()
       },
       getSnapshot(): RuntimeSnapshot {

@@ -16,8 +16,8 @@
  *   2. `seg-tokens`：`12.3K tok · 缓存命中 87%`（累计为 0 时整段不画）。卡片「Token 用量」
  *      列缓存命中、未缓存输入、缓存读取与输出。
  *   3. `seg-context`：`min(100, round(used/window*100))%` 的圆环 + 百分比（分母
- *      `contextWindow` 为 0 时整段不画）。卡片「上下文已用」画系统提示词 / 工具定义 /
- *      对话消息三段进度条与数值。
+ *      `contextWindow` 为 0 或完全没有用量的样本时整段不画）。卡片「上下文已用」画
+ *      系统提示词 / 工具定义 / 对话消息三段进度条与数值。
  *
  * 数据来源分三层，拿不到的那一项整行省略，绝不编数：
  *
@@ -154,7 +154,11 @@ function StatusSegments(): ReactNode {
       />,
     )
   }
-  if (contextWindow > 0) {
+  // 上下文这段只在真有样本时画（对齐 dsh 的 contextPressure 投影：没有样本整段不渲染）。
+  // 「有样本」= 用量日志里有这条会话，或本进程收到过 usage 事件，或快照已经带着回填值
+  // （重开会话时从用量日志补回来的那种）。三者都没有时，0% 与空条不是读数，是假信号。
+  const hasContextSample = logged !== null || settledTokens > 0 || contextUsed > 0
+  if (contextWindow > 0 && hasContextSample) {
     parts.push(
       <ContextSegment
         key="context"
@@ -300,6 +304,9 @@ function TokenSegment(props: {
  *
  * 卡片分段也照 dsh：系统提示词 / 工具定义 / 对话消息（用户输入 + 助手回复 + 思考）。
  * 三段来自宿主按请求内容估的分段；三者都为 0（还没发过请求）时只画空条，不摆一排 0。
+ *
+ * 重开会话时宿主会从用量日志回填总数，所以刷新后百分比照样有值；但分段仍要等下一次
+ * 请求的 context 事件——回填只给总数，不伪造系统提示词 / 工具定义 / 对话消息的拆分。
  */
 function ContextSegment(props: {
   used: number

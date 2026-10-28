@@ -22,6 +22,7 @@ import { bootNoticeOnce } from '../core/boot-notices.js'
 import { errText as err } from '../core/err-text.js'
 import { activeConfigFile } from '../core/config-store.js'
 import { parseTolerantYaml, type MigrationReport } from '../core/migrate.js'
+import { readSessionUsage } from '../core/usage-log.js'
 import { getPluginConfig, isPluginEnabled, migrateTeamSplit, registerPluginMeta, type PluginMeta } from '../core/plugin-registry.js'
 import { mountAllExternalPlugins, registerBuiltinMount } from '../core/plugin-loader.js'
 import { pluginManagerPlugin } from '../plugins/plugin-manager.js'
@@ -477,6 +478,18 @@ export function emitStartupNotes(
       root.session.current().fileChanges,
       root.session.current().presentations,
     )
+    // 重启后的第一帧状态栏也得有上下文读数：用量日志按会话存着最后一条请求的
+    // 输入 token，它与前台切会话共用同一条回填口径。日志里没有这条会话就不填，
+    // 免得把「还没数」画成 0%。
+    //
+    // 这里断言一个契约外的窄方法：回填只在启动恢复这一个入口用到，不必为它
+    // 拓宽 TranscriptService（打开会话的路径直接操作 adapter，无需经过服务面）。
+    const usage = readSessionUsage(root.session.current().meta.id)
+    if (usage !== null) {
+      ;(root.transcript as unknown as { seedContextUsage(used: number): void }).seedContextUsage(
+        usage.lastInputTokens,
+      )
+    }
   }
   // 启动提示只展示一次（0.6.64）：同一会话同一模型的开机横幅只在首次见到时写，
   // 换会话/换模型自然重现。恢复会话时转录里本来就有历史可辨认，状态栏也带短 id。
