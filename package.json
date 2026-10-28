@@ -59,7 +59,13 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "koffi"
-    ]
+      "koffi",
+      "electron"
+    ],
+    "//": "react 与 react-dom 钉死同版：四个项目收成 workspace 后，pnpm 把 react 解到 19.3.0、react-dom 解到 19.3.1，后者的 peer 要 ^19.3.1，装完就在警告里躺着。两个 React 版本不一致的后果不是装不上，是运行期 hooks 报错。",
+    "overrides": {
+      "react": "19.3.1",
+      "react-dom": "19.3.1"
+    }
   }
 }

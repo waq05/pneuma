@@ -543,6 +543,10 @@ order 插队）；系统提示词不进消息流，由 agent 插件在每次请�
 ## 8. 开发流程
 
 ```sh
+# 装依赖：一个 workspace 装齐四个项目（内核 / 界面壳 / 桌面端 / 遥控 Web），
+# 子项目不用再单独 install（2026-10-28 起）
+pnpm install
+
 # 内核（改 src/** 之后必跑）
 cd D:\dsc && pnpm run build        # tsc → lib/，自检脚本跑的就是 lib/
 
@@ -551,10 +555,10 @@ cd D:\dsc\desktop && pnpm run typecheck
 
 # 自检脚本：全部在临时 HOME 上跑，不碰真实 ~/.dsc
 # 三条汇总入口都按文件名自动发现，新探针不用回来登记：
-pnpm run check:ui                  # 36 条纯 Node 探针，31 秒
+pnpm run check:ui                  # 39 条纯 Node 探针，39 秒
 pnpm run check:ui:e2e              # 4 条要真 Chromium，61 秒（含 diff 卡、手机尺寸远程壳）
 pnpm run check:dsh                 # dsh 兼容层 + 组合包 + 真包挂载 + 会话桥 + 流/事件旁路 + 合成验收，180 条
-pnpm run check:core                # 48 条内核探针（协议 / TUI / 会话库 / LLM 适配），约 8 分钟
+pnpm run check:core                # 50 条内核探针（协议 / TUI / 会话库 / LLM 适配 / 审批），约 8 分钟
 pnpm run check:style               # 排版闸门：制表符 / 行尾空白 / BOM / 混用行尾 / 末尾缺换行，2 秒
 pnpm run check:style -- --changed  # 只查本次改动的文件（提交前用这个）
 pnpm run check:all                 # 上面四条串起来（不含 e2e）

@@ -41,7 +41,6 @@ jobs:
       - name: 校验内置插件的 peer 区间跟得上壳版本
         run: |
           pnpm install --frozen-lockfile
-          pnpm -C ui-shell install --frozen-lockfile
           pnpm -C ui-shell run build-plugins
 
   npm:
@@ -91,19 +90,17 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm build
-          # 三个前端产物各在自己的 pnpm 项目里（本仓没有 workspace 定义，三份独立锁文件）：
-          # 壳 → lib/ui/assets + lib/ui/plugins（桌面与手机页都是它）；经典远程页 → lib/remote/assets。
+          # 三个前端产物跟着根 workspace 的安装走（2026-10-28 起四个项目收成一个 workspace，
+          # 不再各自 install）：壳 → lib/ui/assets + lib/ui/plugins（桌面与手机页都是它）；
+          # 经典远程页 → lib/remote/assets。
           # 2026-10-15 第一次发 0.7.0 时这两条漏了——包里没有壳产物，app 静默回落到旧渲染层
           # （冒烟截图里是「会话用量」的旧界面才发现）。
-          pnpm -C ui-shell install --frozen-lockfile
           pnpm build:ui
-          pnpm -C remote-web install --frozen-lockfile
           pnpm -C remote-web build
       - name: 打包安装器（nsis + portable）
         working-directory: desktop
         shell: bash
         run: |
-          pnpm install --frozen-lockfile
           pnpm exec electron-vite build
           node scripts/prepare-runtime.mjs
           # electron-builder.yml 的 electronDist 指着 node_modules/electron/dist（本地份：开发机直连

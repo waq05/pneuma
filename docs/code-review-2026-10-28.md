@@ -35,7 +35,7 @@
 | P1-2 | 中 | `formatDuration` 5 份、`errText` 体系 19 处、对话框骨架 9 处 | 已修（错误文案 / 数值收敛 / 对象判定各 1 份，TUI 浮层外框 1 处，提交对话框补了焦点；剩下 4 个 `formatDuration` 语义不同，见 §10.4） |
 | P1-3 | 中 | 巨石文件：契约 2,091 行、消息流 2,481 行 | 仍在 |
 | P2-1 | 中 | 无 ESLint / Prettier / EditorConfig / `.gitattributes`，换行符混乱 | 部分已修（`.gitattributes` + `check:style`） |
-| P2-2 | 中 | 三个 pnpm 项目三把锁、无 workspace、`ui-shell` 版本 2.0.0 | 部分（版本已对齐 0.7.1，见 §七第 3 条；workspace 仍在） |
+| P2-2 | 中 | 三个 pnpm 项目三把锁、无 workspace、`ui-shell` 版本 2.0.0 | 已清（版本对齐 0.7.1，见 §七第 3 条；四个项目已收成 workspace，见 §二十二） |
 | P2-3 | 低 | 文档里的路径与规模数字过期 | 已修（§2 仓库地图按 0.7.1 重填） |
 | P3-1 | 低 | 59 条自检脚本无框架、无覆盖率 | 仍在 |
 
@@ -441,7 +441,7 @@ node node_modules/typescript/bin/tsc -p .tmp-headcheck/tsconfig.json --noEmit
 | P1-2 小工具各写一份 | **已清** | `errText` / `clampInt` / `asRecord` 各 1 份（第三批，见 §十一）；`formatDuration` 从 6 份收到 4 份，剩下 4 份**语义各不相同**（见 10.4） |
 | P1-3 巨石文件 | **仍在** | 消息流 2,557 行、输入区 2,370 行、契约 2,093 行；拆契约是第三批的事 |
 | P2-1 无格式工具 | 部分已清 | 有了 `.gitattributes` 与 `check:style`（零依赖，查 5 类硬伤）；ESLint 与全量格式化**故意没上**，理由见 §九 |
-| P2-2 四个 pnpm 项目四把锁 | **仍在** | 要不要收成 workspace，得看发布链路愿不愿意一起改 |
+| P2-2 四个 pnpm 项目四把锁 | **已清** | 2026-10-28 收成一个 workspace（§二十二）：一次安装装齐四个项目，react 与 react-dom 用 overrides 钉死同版 |
 | P2-3 文档数字过期 | **已清** | §2 仓库地图按 0.7.1 重填 |
 | P3-1 自检脚本无框架 | **仍在** | 91 条 `scripts/*-test.mjs`，按文件名自动发现，没有覆盖率统计 |
 
@@ -1153,3 +1153,58 @@ const state = createSignal<ThreadViewState>({ view: 'chat', focusStep: null })
 
 **还没做的**：`electron.vite.config.ts` 的 `renderer` 段与 `desktop/src/renderer` 目录本身。
 那两处要等另一条线把 `ApprovalCard.tsx`、`styles.css` 的改动提交掉——现在删等于把他们的活蒸发。
+
+## 二十二、第十二批（2026-10-28）：四个 pnpm 项目收成一个 workspace
+
+### 22.1 收之前是什么样
+
+根 / `ui-shell` / `desktop` / `remote-web` 各有一份 `package.json` 与一份 `pnpm-lock.yaml`，
+装依赖要装四遍，`react`、`shiki`、`xterm`、`pdfjs-dist`、`xlsx` 在三个项目里各存一份物理副本。
+版本靠人肉对齐——`ui-shell` 漂到 2.0.0、另外三个在 0.7.1，整整差一个大版本，没人发现。
+
+### 22.2 怎么收的
+
+1. 根加 `pnpm-workspace.yaml`，成员只有三个子目录。**四个项目之间没有互相依赖**
+   （它们靠 `lib/` 的构建产物与 `ui-shell/packages.json` 的别名衔接），所以不写 `workspace:*`；
+2. 删掉三份子锁，`pnpm install` 重新生成根锁；
+3. CI 两处跟着改：`verify.yml` 的界面壳 / 桌面端两个作业不再 `working-directory` 安装，
+   `release.yml` 删掉 `pnpm -C ui-shell install`、`pnpm -C remote-web install`、desktop 作业里
+   那次多余安装。
+
+### 22.3 收的过程撞到的两件事
+
+**① react 与 react-dom 版本分叉。** 分开装时各自解各自的，收成一个 workspace 之后 pnpm 统一解，
+结果是 `react 19.3.0` + `react-dom 19.3.1`——后者的 peer 要 `^19.3.1`，装完就在警告里躺着。
+两个 React 版本不一致不会装不上，会在运行期以 hooks 报错的形式出现。
+根 `pnpm.overrides` 把两个都钉到 `19.3.1`，一处管住四个项目。
+
+**② electron 的二进制不会自己下来。** 旧的 `desktop/node_modules/electron/dist` 是上次单独安装时
+留下的；workspace 重装之后那份 node_modules 被重建，二进制没了，`electron-builder` 直接报
+「The specified electronDist does not exist」。
+
+两处修：根 `pnpm.onlyBuiltDependencies` 加 `electron`（新检出执行 `pnpm install` 就会下；
+CI 的桌面作业用 `--ignore-scripts`，仍然由 `release.yml` 里那句 `node node_modules/electron/install.js`
+显式补一次，两不冲突）；本机这次先用 `node node_modules/electron/install.js` 补上。
+
+### 22.4 验证
+
+- 四个项目 `tsc --noEmit` 全 0（根 / 界面壳 / 桌面端两套 tsconfig / 遥控 Web 两套）；
+- 四处构建全绿：`pnpm build`、`pnpm -C ui-shell build`、`pnpm -C remote-web build`、
+  `pnpm -C desktop exec electron-vite build`（main / preload / renderer 三段都出产物）；
+- `pnpm run check:ui` 39/39 通过（装完依赖后重跑，确认 node_modules 结构变化没影响探针）；
+- 打包（`dist:dir`）见 22.5。
+
+### 22.5 打包这一关：验证到什么程度
+
+第一次 `dist:dir` 失败，原因是 22.3 ② 的 electron 二进制缺失，与 workspace 本身无关。
+补装这一步**本机没成功**：`node node_modules/electron/install.js` 跑了十几分钟没有任何输出，
+缓存目录也是空的——这台机器下不到 electron 二进制（仓库注释里本来就写着直连 GitHub 不稳，
+`ECONNRESET` 与 600 秒超时都撞过）。所以：
+
+- **已验的**：四处构建全绿，`electron-vite build` 的 main / preload / renderer 三段都出产物；
+- **没验的**：`electron-builder` 打包与 asar 内容。CI 的 `release.yml` 有那条显式补装，
+  路径没被我动过，但这次没有在本机跑通它。发版前必须在能下 electron 的机器上打一次包。
+
+**这条经验值得记住**：workspace 收口真正会咬人的地方不是 `tsc`，是打包链路——
+`electron-builder.yml` 里 `electronDist: node_modules/electron/dist` 这种**写死路径**，
+在依赖布局变化时不会给出好看的错误，只会说一句「路径不存在」。

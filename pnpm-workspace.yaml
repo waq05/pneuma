@@ -1,0 +1,13 @@
+# 一个仓库四个项目：内核（根）、界面壳、桌面端、遥控 Web。
+#
+# 收敛前是四份 package.json + 四把 pnpm-lock.yaml：装依赖要装四遍，react / shiki / xterm /
+# pdfjs-dist 各存一份物理副本，版本靠人肉对齐（2026-10-28 那回 ui-shell 还是 2.0.0、
+# 另外三个是 0.7.1，漂了整整一个大版本没人发现）。
+#
+# 收成一个 workspace 之后：一次 `pnpm install` 装齐，依赖只有一份副本，版本由根锁钉死。
+# 四个项目之间没有互相依赖（它们靠 `lib/` 的构建产物与 `ui-shell/packages.json` 的别名衔接），
+# 所以这里只声明成员，不写 `workspace:*`。
+packages:
+  - ui-shell
+  - desktop
+  - remote-web
