@@ -32,7 +32,7 @@
 | P0-2 | 高 | CI 只有 `release.yml`，类型检查与自检脚本没有任何自动门禁 | 已修（`verify.yml`） |
 | P0-3 | 高 | `a20dd74` 上 7 个 `replace` 类型错误进过主干，20 分钟后才被 `d1b8e08` 补上 | 已修 |
 | P1-1 | 高 | 四份界面代码，旧渲染层 21,035 行已冻结但仍与新壳高度重复 | 仍在（已冻结） |
-| P1-2 | 中 | `formatDuration` 5 份、`errText` 体系 19 处、对话框骨架 9 处 | 大部分已修（错误文案统一、时长格式化 1 份、TUI 浮层外框 1 处） |
+| P1-2 | 中 | `formatDuration` 5 份、`errText` 体系 19 处、对话框骨架 9 处 | 已修（错误文案 / 数值收敛 / 对象判定各 1 份，TUI 浮层外框 1 处，提交对话框补了焦点；剩下 4 个 `formatDuration` 语义不同，见 §10.4） |
 | P1-3 | 中 | 巨石文件：契约 2,091 行、消息流 2,481 行 | 仍在 |
 | P2-1 | 中 | 无 ESLint / Prettier / EditorConfig / `.gitattributes`，换行符混乱 | 部分已修（`.gitattributes` + `check:style`） |
 | P2-2 | 中 | 三个 pnpm 项目三把锁、无 workspace、`ui-shell` 版本 2.0.0 | 仍在 |
@@ -433,7 +433,7 @@ node node_modules/typescript/bin/tsc -p .tmp-headcheck/tsconfig.json --noEmit
 | P0-2 没有 CI 门禁 | **已清** | `verify.yml` 每次推 / 每个 PR 跑三处 typecheck 加排版；`check:core` 那 8 分钟没进 CI，留给夜跑 |
 | P0-3 `replace` 那 7 个错 | 已清 | — |
 | P1-1 四份界面代码 | **仍在** | 旧渲染层 21,035 行已冻结，等一个日落日期；这是重复率的大头 |
-| P1-2 小工具各写一份 | 大部分已清 | `errText` 全仓 1 份；`formatDuration` 从 6 份收到 4 份，剩下 4 份**语义各不相同**（见 10.4） |
+| P1-2 小工具各写一份 | **已清** | `errText` / `clampInt` / `asRecord` 各 1 份（第三批，见 §十一）；`formatDuration` 从 6 份收到 4 份，剩下 4 份**语义各不相同**（见 10.4） |
 | P1-3 巨石文件 | **仍在** | 消息流 2,557 行、输入区 2,370 行、契约 2,093 行；拆契约是第三批的事 |
 | P2-1 无格式工具 | 部分已清 | 有了 `.gitattributes` 与 `check:style`（零依赖，查 5 类硬伤）；ESLint 与全量格式化**故意没上**，理由见 §九 |
 | P2-2 四个 pnpm 项目四把锁 | **仍在** | 要不要收成 workspace，得看发布链路愿不愿意一起改 |
@@ -496,4 +496,465 @@ node scripts/style-check.mjs              # 排版闸门（2 秒）
    装依赖要装四遍，版本容易漂（`ui-shell` 还是 2.0.0）。收 workspace 会动发布链路，得一起评估。
 3. **契约要不要拆**。`contract.ts` 2,093 行、`services/types.ts` 1,432 行，按域拆成五个文件再 re-export，
    导出面不变、风险可控，但会动到几乎每个文件的 import。
+
+## 十一、第三批（2026-10-28 同日）：三个小工具各归一处
+
+### 11.1 复审又捞出三组重复
+
+前两批收的是「名字一样」的重复（叫 `errText` 的都并掉了）。这一批改成按**实现**搜，又捞出三组：
+
+| 重复的东西 | 份数 | 上一批为什么漏了 |
+| --- | --- | --- |
+| `errorText(error)` | 10 份，逐字相同 | 上一批只搜 `errText` 这个名字。`errorText` 是同一个实现的另一个名字，改一份要改十处 |
+| `clamp(value, min, max, fallback)` | 21 份 | 形态有四种：顶层函数、`readConfig` 里的箭头函数、叫 `clampNumber`、区间收成 `{min, max}`。搜同一个字符串搜不齐 |
+| `asRecord` / `isRecord` | 7 份 | 两个名字、两种用法（返回对象 / 类型守卫），散在 core 与 plugins 两头 |
+
+具体位置：`src/core/mcp.ts`、`src/core/remote/notify.ts`、`src/core/remote/push.ts`、`src/core/sandbox/win/{account,doctor,setup,wfp}.ts`、`src/core/schedule/store.ts`、`src/plugins/{lsp,mcp}.ts`（以上是 `errorText`）；`src/plugins/{ask,browser,compact,computer-use,dock-browser,file-review,goal,lsp,mcp,memory,microcompact,schedule,self-improve,session-search,subagent,tools-default,web-search}.ts`、`src/core/{hooks,lifecycle-hooks,image-diet,spill}.ts`（以上是 `clamp`）；`src/core/{mcp,lifecycle-hooks,web-http}.ts`、`src/core/remote/push.ts`、`src/core/lsp/normalize.ts`、`src/ui/frames.ts`、`src/plugins/mcp.ts`（以上是 `asRecord` / `isRecord`）。
+
+### 11.2 怎么收的
+
+| 落到哪 | 收了什么 | 引用方式 |
+| --- | --- | --- |
+| `src/core/err-text.ts`（原来就有，实现没动） | 10 份 `errorText` | `import { errText as errorText }`，调用点一个字没改 |
+| `src/core/clamp.ts`（新增 22 行） | 21 份 `clamp` / `clampNumber` | 少数值形态用 `clampInt`；区间收成对象的用 `clampIntIn`。同样用 `as` 别名保住调用点 |
+| `src/core/records.ts`（新增 24 行） | 7 份 `asRecord` / `isRecord` | 返回对象的那份用 `asRecord`，类型守卫那份用 `isRecord` |
+
+三个模块都不 import 任何东西，放 core 谁都能引；`web-http.ts` 的 `isRecord` 改成从 `records.ts` 转出，
+远程路由那几个文件的 import 一行都没动。
+
+总账：36 个文件，+92 / −185 行（提交 `62e1823`），之后又补了两处收尾（`web-http.ts` 少一个空行、三处新 import 归位到 core 块内）。
+
+### 11.3 一处行为变了，要说清楚
+
+`src/plugins/self-improve.ts` 原来那份 `clamp` 用的是 `Math.trunc`，其余 20 份都是 `Math.round`。
+它自己的注释还写着「照 memory 插件的写法」，而 memory 那份是 `Math.round`——所以是抄岔了，不是有意区分。
+统一成四舍五入后，只有「带小数的配置输入」会有差别（设置页只会给整数，手动改 `plugins.json` 写 3.6 才会体现）。
+其余 20 份的语义、区间、缺省值全部不变。
+
+### 11.4 刻意没动的三处
+
+| 位置 | 为什么不动 |
+| --- | --- |
+| `src/plugins/computer-use.ts:534` | 它是 `(num, min, max)` 三参数、没有缺省值的版本，用途是校验设置项（不合法要报错，不该静默回落）。跟 `clampInt` 不是一件事 |
+| `src/core/goal.ts:39` `clampRounds`、`src/core/model-caps.ts:179` `clampEffort`、`src/core/desktop-control.ts:747` `clampToScreen` | 名字里有 clamp，做的是别的事（轮次上下限、档位映射、坐标夹进屏幕） |
+| `desktop/src/renderer/**` | 冻结的旧渲染层，跟着旧层一起日落，不再单独改 |
+
+### 11.5 验证
+
+```
+npx tsc -p tsconfig.json --noEmit                              # 退出码 0
+(cd ui-shell && npx tsc -p tsconfig.json --noEmit)             # 退出码 0
+(cd desktop && npx tsc -p tsconfig.json --noEmit)               # 退出码 0
+(cd desktop && npx tsc -p tsconfig.node.json --noEmit)         # 退出码 0
+node scripts/style-check.mjs                                   # 629 个文件 0 问题
+```
+
+没跑的还是 §10.3 那三样（TUI 浮层排版、提交对话框焦点、`check:core`），理由一样：这台机器上 spawn 被拦。
+
+### 11.6 这一批之后 P1-2 算不算结清
+
+**补记（同日晚）：这句话下得早了。** 换成按函数体扫之后，同源实现又找出 8 处
+（`ui-shell` 七个界面插件各一份 `text`、`core/sandbox/win/backend.ts` 一份 `describeError`），
+另外 `displayWidth`、`quoteForCmd`、`expandHome`、`lastUserText` 各两处。第四批已一并处理，见 §十二。
+
+改判据：算结清不是「一份不剩」，而是三条：
+
+1. 同一件事只有一处实现（`errText` / `clampInt` / `asRecord` 各一处）；
+2. 剩下的同名函数**语义确实不同**，合并会制造开关参数（见 §10.4 与 §11.4）；
+3. 新代码要写这类小工具时，仓库里有现成的、一眼能找到的落点。
+
+下次复审要防的是复发：新增 `clamp` / `isRecord` / `errorText` 这类本地小函数，先看 `src/core/clamp.ts`、`src/core/records.ts`、`src/core/err-text.ts` 有没有现成的。
+
+## 十二、第四批（2026-10-28 同日）：按函数体扫出来的 8 份，与插件边界
+
+### 12.1 这批要解决什么
+
+§11.6 那句「P1-2 算结清」写早了。用函数体比对（不是搜名字）重扫 `src` + `ui-shell/src` 共 386 个文件，
+以下各组是**逐字相同**的实现：
+
+| 重复的东西 | 份数 | 位置 |
+| --- | --- | --- |
+| `errText`（五种名字） | 9（含正主，本次收掉 8） | 正主 `core/err-text.ts`；`core/sandbox/win/backend.ts` 叫 `describeError`；`ui-shell` 七个插件叫 `text` / `describeError` |
+| `displayWidth` + `isWideCodePoint` | 2 | `src/app/click.ts`、`src/app/markdown.ts` |
+| `quoteForCmd` | 2 | `core/mcp.ts`、`core/lsp/client.ts` |
+| `expandHome` / `expandPath` | 2 | `core/spill.ts`、`core/lifecycle-hooks.ts` |
+| `lastUserText` / `lastAssistantText` | 2（各一对） | `core/learnings/skill-write.ts`、`plugins/memory.ts` |
+
+### 12.2 插件化规范怎么约束这批改法
+
+`ui-shell` 的七个界面插件都在插件边界上，按 [plugin-development.md](plugin-development.md) §10.4.1，
+界面插件**只许值引用平台种子**（`@dsc/ui` / `@dsc/ui-primitives` / `@dsc/ui-slots` / `@dsc/ui-dockkit`），
+`@dsc/ui-core` 故意不在种子里（它是壳的内部实现）。所以这 8 份不能就地 import 一个 core 文件了事，做法分三层：
+
+1. `src/ui/index.ts`（`@dsc/ui-core`）把 `core/err-text.ts` 转出——跟着 `diff-text`、`token-estimate` 的先例，实现仍只有 core 一份；
+2. `ui-shell/src/ui-primitives/error-text.ts` 从 `@dsc/ui-core` 再转一手，进平台种子；
+3. 七个插件只写 `import { errText as text } from '@dsc/ui-primitives'`，调用点一个字没改。
+
+这样做的另一个好处：第三方插件写 `catch` 文案时也有同一个出口，不必自己再抄一遍。
+
+同一原则也决定了另外几处的落点：
+
+| 落到哪 | 为什么是这里 |
+| --- | --- |
+| `core/path-policy.ts` 加 `expandHome` | 「用户写的路径怎么解释」本来就是路径护栏的事；两个调用方（`spill`、`lifecycle-hooks`）都已经 import 这个模块 |
+| `core/shell-quote.ts`（新增） | 两个调用方都是 `shell: true` 起子进程，`cmd.exe` 的引号规则与业务无关 |
+| `core/transcript-text.ts`（新增） | 记忆插件原本要 import「技能写入」这个别的业务域才能复用一段读消息的代码——这是插件边界上的坏味道；挪到 core 后两边都只依赖 core |
+| `app/display-width.ts`（新增） | `click.ts`（点击命中）与 `markdown.ts`（表格列宽）互相 import 会成环，抽第三个无依赖模块，两边都引它 |
+
+### 12.3 改了哪些文件
+
+共 37 个文件（+163 / −194 行，另加 4 个新文件）：
+
+- 新增：`src/app/display-width.ts`、`src/core/shell-quote.ts`、`src/core/transcript-text.ts`、`ui-shell/src/ui-primitives/error-text.ts`；
+- 收口：`src/ui/index.ts`、`ui-shell/src/ui-primitives/index.ts`（两个桶各加一行出口）；
+- 调用方改写：`src/app/` 九处（`click`、`markdown`、`scroll-model`、`ChatView`、`MarkdownView`、`StatusBar`、`TimelineRail`、`ApprovalCard`、`Composer`、`PlanReviewCard`、`SettingsOverlay`）、`src/core/` 六处、`src/plugins/` 四处、`ui-shell` 插件七处。
+
+### 12.4 验证
+
+```
+npx tsc -p tsconfig.json --noEmit                              # 退出码 0
+(cd ui-shell && npx tsc -p tsconfig.json --noEmit)             # 退出码 0
+(cd desktop && npx tsc -p tsconfig.json --noEmit)               # 退出码 0
+(cd desktop && npx tsc -p tsconfig.node.json --noEmit)         # 退出码 0
+node scripts/style-check.mjs                                   # 633 个文件 0 问题
+```
+
+复扫结果：`errText`、`displayWidth`、`quoteForCmd`、`expandHome`、`lastUserText` 五组全部消失；
+剩下的重复组见 §12.5。
+
+### 12.5 还没收的重复（下一批的候选）
+
+| 组 | 份数 | 值不值得收 |
+| --- | --- | --- |
+| `subscribe` / `emit`（监听器集合） | 5 + 3 | 要抽 store 工厂，会动 `ui-layout` 的契约，得单独讨论 |
+| `readCwd` / `readTurnState` / `readSessions`（从 snapshot 取字段） | 4 / 3 / 3 | 先确认各家取值口径是否真一致，再谈合并 |
+| `splitList`（按逗号空格切词） | 3 | 值得收，但要先看三处的空值与去重规则 |
+| `shellOf`、`readBeforeWriteCheck`、`nonEmptyString`、`jsonText`、`isEnvFamily`、`isFiniteNumber`、`utf16Buffer` | 各 2 | 收益小，随手碰到再收 |
+
+### 12.6 这批评审的边界
+
+只扫了 `src` 与 `ui-shell/src` 的 TypeScript 函数体；`desktop/src/renderer`（冻结）与 `remote-web` 没扫。
+方法上也有盲区：只看 9 行以内的函数体，只看逐字相同（归一化空白后），写法不同但语义相同的仍然识别不出。
+所以「扫不出」只能说明没有这段字符串，不能说明没有重复。
+
+## 十三、第五批（2026-10-28 同日）：把「小判定」也各归一处
+
+§12.5 列出的候选里，能安全收的这次收完；要动 `ui-layout` 契约的留到下一批。
+
+### 13.1 收掉的十一组
+
+| 重复的东西 | 份数 | 收到哪 |
+| --- | --- | --- |
+| `splitList`（逗号/空白切词） | 3 | 新增 `core/strings.ts` |
+| `nonEmptyString` / `pickDir` | 2 | 同上 |
+| `shellOf`（该用哪个 shell） | 2 | `core/shell-quote.ts`（同属「起 shell」） |
+| `jsonText`（序列化不了给 null） | 2 | 新增 `core/json-text.ts` |
+| `isFiniteNumber`（类型守卫） | 2 | `core/clamp.ts`（数值判定与收敛同一个家） |
+| `isEnvFamily`（`.env` 家族判定） | 2 | `core/path-policy.ts`（原本就住这里，改成导出） |
+| `utf16Buffer`（Win32 字符串入参） | 2 | 新增 `core/sandbox/win/utf16.ts` |
+| `pluginsDir`（`~/.dsc/plugins`） | 2 | 用 `core/ui-bundles.ts` 已有的 `thirdPartyUiRoot` |
+| `uuidOf`（`<uuid>.jsonl` 取键） | 2 | `core/session.ts` 导出 |
+| `tokensPerSecond` / `averageTtftMs` / `formatTokensPerSecond` | 3 | `core/throughput.ts` → `@dsc/ui-core` → 新增 `ui-primitives/throughput.ts` |
+| `trimZero` / `oneLine` / `formatSize` / `joinPath` / `tsOf` | 各 2 | 基元包里本来就有（`tokens.ts` / `tool-summary.ts` / `sizes.ts` / `paths.ts` / `time.ts`），缺的只补一次导出 |
+
+### 13.2 插件规范再一次决定落点
+
+状态栏那三条吞吐函数上方原本写着这样一段理由：
+
+> 为什么原样抄一份而不是 import：插件能 require 的只有 react 与 @dsc/ui（boot.ts 的白名单），拉不到别的模块。
+
+这条理由**已经过期**：`ui-shell/src/plugin-api.ts:400` 写着「E6 起插件也可以直接按包名 `@dsc/ui-primitives` 取（平台种子，同一份实例）」，
+`plugin-api.ts` 本身就有 `export * from '@dsc/ui-primitives'`。也就是说，抄一份的前提早就不成立，而注释还在原地替它作证。
+这次一并删掉，并把吞吐口径按「core 出实现 → `@dsc/ui-core` 转出 → 基元包再转出 → 插件只用」三层落地。
+
+`formatSize` / `joinPath` 这类也是同一个模式：两个插件各写一份，注释都写着「与那份同口径」——
+「同口径」靠注释维持，就是迟早分叉的意思。收进基元包后由一份代码保证。
+
+### 13.3 验证
+
+```
+npx tsc -p tsconfig.json --noEmit                              # 退出码 0
+(cd ui-shell && npx tsc -p tsconfig.json --noEmit)             # 退出码 0
+(cd desktop && npx tsc --noEmit -p tsconfig.json)               # 退出码 0
+(cd desktop && npx tsc --noEmit -p tsconfig.node.json)         # 退出码 0
+node scripts/style-check.mjs                                   # 638 个文件 0 问题
+```
+
+复扫：函数体重复组从 40 组降到 23 组（本批再收 10 组，加上前几批的红利）。
+
+### 13.4 剩下的 13 组，为什么不在这批收
+
+| 组 | 份数 | 卡在哪 |
+| --- | --- | --- |
+| `subscribe` / `emit`（监听器集合） | 5 + 3 | 要抽一个 store 工厂，会动 `ui-layout` 的对外契约与 `defineStore` 的用法 |
+| `readCwd` / `readTurnState` / `readSessions` / `readSessionPath` / `readEntries` / `readLive` / `readGoal` / `readSessionId` | 4 / 3 / 3 / 2 / 2 / 2 / 2 / 2 | 都是「从 snapshot 某字段取视图」，形状像但取值口径要逐个核对（有的取不到回空数组、有的回 null） |
+| `safeStringify` / `report` / `describeRef` / `clock` | 各 2 | 在 `plugins/browser.ts` 与 `plugins/dock-browser.ts` 之间。插件之间不许互相 import，正确做法是提到 `core/cdp/`——那是单独一批的活 |
+| `readThrottle` | 2 | `plugins/host-stdio.ts` 与 `plugins/remote.ts` 各读一份自己的配置，属同一个插件间互助问题 |
+| `sameGit`、`clip` / `flatten`、`basenameOf` | 各 2 | 跨包（core 与界面壳）或跨基元包，得先定谁转出给谁，避免基元包互相 import 成环 |
+
+### 13.5 这批的边界
+
+依然只处理「逐字相同的纯函数」。像 `subscribe` 那种**结构相同、语义不同**（各自的监听器集合装的是不同的东西）的重复，
+合并它需要先设计一层抽象——那是重构，不是收口，不该混在一批里做。
+
+## 十四、第六批（2026-10-28 同日）：浏览器两条链的输出层
+
+§13.4 里「卡在哪」写的是「插件之间不许互相 import，正确落点是 `core/cdp/`」——这批就是把那个落点认下来。
+
+### 14.1 收掉的四组
+
+| 重复的东西 | 份数 | 收到哪 |
+| --- | --- | --- |
+| `report` / `describeRef` / `safeStringify` / `clock` | 各 2 | 新增 `core/cdp/report.ts` |
+| 控制台、网络两行渲染 + `ConsoleEntry` / `NetworkEntry` | 各 2 | 同上（`consoleLine` / `networkLine`） |
+| `RingBuffer`（事件环形缓冲） | 2 | 新增 `core/cdp/ring-buffer.ts`（留带 `resize` 的完整版） |
+| `readThrottle` + 缺省 80 ms + 区间 16～1000 | 2 | 新增 `core/snapshot-throttle.ts` |
+| `sameGit`（`GitSurface` 四字段） | 2 | 新增 `core/git-surface.ts` → `@dsc/ui-core` → `ui-primitives/git-surface.ts` |
+
+### 14.2 这四组为什么排到最晚：注释把它们写成了「约定」
+
+`plugins/dock-browser.ts` 里原本这么写：
+
+> 一行人类可读摘要 + 一行结构化 JSON（照 browser.ts 的 report）。
+> 定长环形缓冲：满了丢最旧的（照 browser.ts 的 RingBuffer 思路）。
+
+「照某某抄」比干脆不写注释更难被发现——扫重复时很容易读成「有意对齐」，实际含义却是「这份代码没有第二个维护者」。
+
+落点也不是随手选的：插件之间不许互相 import（[plugin-development.md](plugin-development.md) §10.4.1），
+所以浏览器那条链的共用件只能落到 `core/cdp/`。这就是它比别的组晚一批的原因——不是收不了，
+是先得认下落点，而不是在 `browser.ts` 里 `export` 一个函数让 `dock-browser.ts` 直接 import。
+
+顺带一句：`RingBuffer` 两份里 `dock-browser.ts` 那份少了 `resize`（那台链没有「改设置就重设条数」的路径）。
+合并时取完整版，行为不变：`browser.ts` 原本就在改设置后调 `resize`。
+
+### 14.3 一处「必须同口径」的读数：`sameGit`
+
+同一个 `GitSurface` 有两个地方要比一比：
+
+- 宿主 `plugins/git.ts`：读数没变就不推帧（干净仓库每 30 秒白推一帧是纯浪费）；
+- 输入区 `ui-shell/src/plugins/composer/ui.tsx`：读数没变就不重画底栏。
+
+两处只要有一处判断不同，界面就停在旧分支名上，而且**再也不会自己刷新**——每次催拍都被判成「没变」。
+这类 bug 只在切分支那一刻出现一次，之后一直错着，最难归因。收成一份后由实现本身保证，不再靠注释对齐。
+
+状态栏那份 `sameGit` 是**另一种读数**（`GitSummary`：branch / added / removed / files），不在这批的合并范围。
+
+### 14.4 顺带发现、但没改：控制台时间戳是 UTC
+
+`core/cdp/report.ts` 的 `clock` 用 `toISOString().slice(11, 19)`，输出的是 **UTC**；
+而 `plugins/sandbox.ts` 的 `clockOf` 用的是**本地时间**。同一个用户在同一次会话里会看到两套时间
+（北京时间差 8 小时），而他多半会以为是浏览器那边的时钟不对。
+
+这批没动它：它改的是用户可见输出，可能牵连既有截图与自检基线，属于单独一改。**建议两边统一走本地时间，等拍板。**
+
+### 14.5 验证
+
+```
+npx tsc -p tsconfig.json --noEmit                              # 退出码 0
+(cd ui-shell && npx tsc -p tsconfig.json --noEmit)             # 退出码 0
+(cd desktop && npx tsc --noEmit -p tsconfig.json)              # 退出码 0
+(cd desktop && npx tsc --noEmit -p tsconfig.node.json)         # 退出码 0
+node scripts/style-check.mjs                                   # 643 个文件 0 问题
+```
+
+另外用 `--noUnusedLocals` 扫了一遍：本批引入的问题共六处——`dock-browser.ts` 里重复声明的
+`ConsoleEntry` / `NetworkEntry`、五个插件里不再使用的 `HostSnapshot` 类型、`transcript` 的 `SessionSummary`，
+都当场清掉（后两类是第七批的副产物）。其余报错与 HEAD 一致，是存量，没有顺手扩大范围。
+
+复扫：函数体重复组 23 → 9。
+
+## 十五、第七批（2026-10-28 同日）：壳里十个插件的「快照读数」
+
+### 15.1 收掉的八组，加一处顺手
+
+| 重复的东西 | 份数 | 收到哪 |
+| --- | --- | --- |
+| `readCwd`（会话工作目录） | 4 | 新增 `ui-primitives/snapshot.ts` |
+| `readSessions`（会话清单） | 3 | 同上 |
+| `readSessionPath`（当前 jsonl 路径） | 2 | 同上 |
+| `readEntries` / `readLive`（条目流与在流条目） | 各 2 | 同上 |
+| `readTurnState`（回合状态） | 2 | 同上 |
+| `readSessionId`（`sessionPath` 取短名） | 2 | 同上 |
+| `NO_SESSIONS` / `NO_ENTRIES`（冻结空表） | 各 2～3 | 同上 |
+
+顺手一处：`transcript` 里另有一个 `readCwdValue`，同一个字段回的是空串而不是 `null`。
+改成 `readCwd(...) ?? ''`——一个字段不再有两种写法。
+
+### 15.2 为什么一行的解构也值得收
+
+这些函数体短得像样板，但它决定的是「字段缺失算什么」：
+
+- 十份里只要一份回空串、另一份回 `null`，界面就会出现**侧栏底部有工作目录、文件树却说没有**这种自相矛盾；
+- 空表必须是**模块级冻结常量**：`useHostSelector` 按引用判等，每帧新建数组会被判成「变了」，逐帧重画。
+
+落点是 `ui-primitives`：插件只能从平台种子取东西（`@dsc/ui` / `@dsc/ui-primitives` / `@dsc/ui-slots` / `@dsc/ui-dockkit`），
+壳自己的模块不能直接引，这跟第五批吞吐读数走的是同一条链。
+
+### 15.3 一次操作事故与恢复
+
+这批不是一次做对的，如实记下来。
+
+**事故**：用一个脚本按「函数定义 + 上方文档注释」整块删除重复函数，判断注释是否紧邻的写法是
+`/\/\*\*[\s\S]*?\*\/\n$/`。这个正则从左往右找**文件开头的第一个** `/**`，再一路吃到签名之前的最后一个
+`*/`——于是匹配到的「一块」其实是整份文件。`files/ui.tsx`、`preview/ui.tsx`、`terminal/ui.tsx` 三个文件当场变成 0 字节。
+
+**恢复**：从会话事件日志取回被删内容。日志在 `~/.dsh/sessions/--D-dsc--/<会话 id>/session.v4.jsonl.zstd`，
+是分帧压缩的（本次 2161 帧），用 Node 的 `zstdDecompressSync` 逐帧解完拿到 11 MB 事件流，
+再从 `tool/ptc-dispatch` 事件里取回那三次 `edit` 的 `old_string`，原样写回。
+
+**核对**：恢复后 `git diff` 与 HEAD 比，三个文件的差异正好等于第五批的预期改动
+（新增 `@dsc/ui-primitives` 导入、删掉本地 `formatSize` / `joinPath`），没有任何一笔别的线的工作被吞掉。
+
+**改法**：此后删除函数必须满足两条——注释的 `*/` 与函数签名**紧邻**（`before.slice(close + 2) === '\n'`），
+且算出来的待删块超过 2000 字符就抛错不删。
+
+### 15.4 验证与复扫
+
+四道 typecheck 全 0，`node scripts/style-check.mjs` → 648 个文件 0 问题。
+
+函数体重复组：40（审查起点）→ 23（第五批后）→ 9（第六批后）→ **1**。
+
+### 15.5 剩下那一组为什么不收
+
+`emit`：`for (const listener of listeners) listener()`，两份。抽成 `notifyAll(listeners)` 只是把一行换成一行调用，
+没有多出任何保证。真正的重复在 `subscribe`（5 份，各有自己的闭包与初始值），那要抽 store 工厂，
+会动 `ui-layout` 的对外契约——是重构，不是收口。
+
+### 15.6 这批的边界：工作区是共享的
+
+验证是在共享工作区上跑的。同一时段另一条线在改「提问卡可收起」（`ui-shell/src/plugins/prompt/ui.tsx`、
+`ui-shell/src/legacy/views.css`、`README.md`、`scripts/tmp-*.mjs`）。那些文件本批一行未动，
+四道门禁把它们一起带过了，但**不能算作本批的验证结论**。
+
+## 十六、第八批（2026-10-28 同日）：时间戳的时区，与界面壳的模块级信号
+
+这批不是「再找一组重复」，是 §14.4 那条待拍板的事，加上一次有意的试点。
+
+### 16.1 时间戳：两处各自"正确"，合起来是错的
+
+浏览器工具的控制台与网络输出，每行前面是 `[10:15:33]`；沙箱 `/sandbox` 的拒载日志也是同一形状。
+两处写法都挑不出错，但**时区不一样**：
+
+| 出处 | 写法 | 输出 |
+| --- | --- | --- |
+| `core/cdp/report.ts`（原） | `new Date(ts).toISOString().slice(11, 19)` | UTC |
+| `plugins/sandbox.ts`（原） | `getHours/getMinutes/getSeconds` + 补零 | 本地时间 |
+
+北京时间的用户 10:15 操作浏览器，控制台显示 `[02:15:33]`；同一屏的沙箱日志显示 `[10:15:33]`。
+他不会想到是时区——会以为浏览器那边的时钟坏了。
+
+改动：新增 `core/clock.ts` 的 `clockText(ts)`，**本地时间**；`cdp/report.ts` 的 `clock` 删除，
+`plugins/sandbox.ts` 的 `clockOf` 删除，两处都改用它。
+
+为什么不选 UTC：日志是给人看的，人按自己墙上的钟读它。真正该用 UTC 的是「按天统计用量」
+（`plugins/commands.ts:588` 取日期那处），那本来就是另一件事，没动。
+
+### 16.2 模块级信号：七处手抄的不是十行代码，是三条语义
+
+界面里有七处模块级共享状态，各自手写「`Set<() => void>` + `subscribe` + 一个 for 循环」：
+`ask/store`、`files/tree-store`、`team/ui`、`ui-dockkit/dock-state`、`ui-layout/page-state`、
+`ui-layout/thread-view`、`ui-renderer/boot`。
+
+抄过去的是三条**抄漏了不报错、只表现成"界面不刷新"或"卡"** 的语义：
+
+1. **引用稳定**：没变时 `get()` 返回同一个值。`useSyncExternalStore` 靠它判断要不要重画，克隆一次就是逐帧重画；
+2. **通知前复制订阅者**：回调里退订（组件卸载时就会发生）不能打断这一轮遍历，否则后面的订阅者这一轮收不到通知；
+3. **写入判等**：值没变就不通知。
+
+新增 `src/ui/signal.ts` 的 `createSignal`，把这三条钉死。它**不与 `defineStore` 合并**：
+后者是按登记实例化的席位（必须在 `apply(ui)` 里现建、随登记卸载消失、带 actions 与浅拷贝 draft），
+前者是模块级单例（没有登记、没有生命周期）。两者共有的只有「订阅 + 没变不通知」。
+
+落点与插件规范：实现在 `@dsc/ui-core`；`ui-layout` 可以直接引 `@dsc/ui-core`（它禁的是聚合面 `@dsc/ui`，
+见 `scripts/ui-plugin-test.mjs` 的 [5b] 禁止边表）；插件经新增的 `ui-primitives/signal.ts` 转出取。
+
+### 16.3 试点选 `thread-view`，以及一个意外
+
+原计划是「挑最小的那个先试」。`thread-view` 看着是单字段（`view`），真去改才发现它有**两个字段**
+（`view` + `focusStep`），而且 `openTrace(stepId)` 要求**一次通知同时生效**——分两次写会让轨迹页
+先按「没聚焦」渲染一帧再重排，滚动位置闪一下（这条理由原代码里就写着）。
+
+这正好是我当初列的「七处里只要有一处塞不进工厂，工厂就得加参数」的那个风险点。解法不是给工厂加"批量写"参数，
+而是**状态本身写成一个对象**：
+
+```
+const state = createSignal<ThreadViewState>({ view: 'chat', focusStep: null })
+```
+
+一次 `state.set({ view: 'trace', focusStep: 7 })` = 一次通知、没有中间态。工厂保持三行语义，不用加参数。
+
+### 16.4 验证
+
+四道 typecheck 全 0；`node scripts/style-check.mjs` → 647 个文件 0 问题。
+
+`createSignal` 另跑了一份独立单测（`tsc` 单独编译后 `node` 跑，8 条断言全过）：
+
+- 同值不通知（含 `NaN → NaN`）；变了通知一次；`get()` 返回同一引用；
+- 退订后不再收到；**回调里退订不打断本轮遍历**（a 里退订 b，b 本轮仍收到）；
+- 一个对象一次 `set` 只通知一次（多字段原子写）。
+
+### 16.5 剩下六处：第九批补上了（见 §十七）
+
+原计划等 `thread-view` 手点验证后再推广。实际下一批直接推广了八处，另有两处**明确不收**（实例作用域 + 每路事件回调签名不同）。
+理由与清单见 §十七。
+
+## 十七、第九批（2026-10-28 同日）：模块级状态全部收口，加两处例外
+
+第八批只试点了一处（`thread-view`）。这批把剩下的收完，并把**判据**写下来。
+
+### 17.1 收掉的八处
+
+| 文件 | 状态形状 | 用法 |
+| --- | --- | --- |
+| `ui-layout/page-state.ts` | `string \| null`（当前整页） | `set` |
+| `plugins/team/ui.tsx` | `{ open, peek }` | `set` |
+| `plugins/settings/ui.tsx` | `boolean`（面板开合） | `set` |
+| `plugins/actions/ui.tsx` | `readonly UiAction[]`（摊平后的动作表） | `set` |
+| `ui-dockkit/dock-state.ts` | 四份状态共用一条通道（布局 / 页签注册表 / 审查目标 / 补丁源） | `notify` |
+| `plugins/files/tree-store.ts` | 按 cwd 分键的 `Map` | `notify` |
+| `plugins/ask/store.ts` | 按会话分桶的 `Map` + 两个挂起计数 | `notify` |
+| `ui-renderer/boot.ts` | 挂在 `globalThis` 上的账本 | `notify` |
+
+加上第八批的 `thread-view`，一共九处，写法现在是同一份 `createSignal`。
+
+### 17.2 判据：值由谁拥有
+
+统一不是「看到 `Set<() => void>` 就换掉」，判据只有一条——**这份值归不归信号**：
+
+- **归信号**（`set`）：切页、面板开合、动作表、正文区那张脸。多字段写成一个对象、一次 `set` 发出，
+  避免订阅方先渲染半套新值。
+- **值在别处**（`notify`）：按 key 分的 `Map`（文件树、旁问）或挂在 `globalThis` 上的账本（启动账本）。
+  硬把 Map 塞进信号，每来一次流式增量都得整张复制一遍，换来的是零语义收益。
+  `dock-state` 是第三种：一个文件里四份状态共用一条通道，值本身没法打包进一个对象。
+
+两种用法都写在 `src/ui/signal.ts` 的模块注释里，选哪种照着判据办，不用临场发明。
+
+`boot` 那份的 `try/catch` 保住了，但换了位置：原来包在**整轮遍历**里（一个订阅者抛了，后面的人这一轮收不到通知），
+现在包在**每个订阅者**外面（只影响他自己）。这是行为改进，不是等价改写，单独记一笔。
+
+### 17.3 明确不收的两处
+
+`ui-layout/host-channel.ts`（`createHostChannel`）与 `ui-renderer/hmr.ts`（`startPluginHmr`）留着原样，理由有两条：
+
+1. **实例作用域**：它们是工厂里现建的对象，不是模块级单例。再给实例开一套「实例级信号」，
+   等于给 `defineStore` 再造一个近亲；
+2. **多路事件**：`host-channel` 有三组监听器（状态、插件帧、旁问增量），每种回调签名不同，
+   一份 `createSignal` 表达不了。
+
+写进这里，是为了下次有人扫到这两处时不必重新论证一遍。
+
+### 17.4 复扫
+
+函数体重复组：**400 个文件里 0 组**（审查起点 40 组）。
+
+### 17.5 验证
+
+四道 typecheck 全 0；`node scripts/style-check.mjs` → 647 个文件 0 问题；`createSignal` 的 8 条断言仍全过
+（第八批建立的那份单测，这批只给工厂加了 `notify`，没改原有语义）。
+
+**仍待手点**：顶栏页签切换、工具行「在轨迹中查看」、聚焦滚动、侧栏展开收起、设置面板齿轮开合、
+文件树展开与滚动位恢复、旁问流式答案、启动诊断页。这些是「订阅语义错」的典型表现面（不刷新 / 重订阅），
+自动化跑不出来，得在真实界面上过一遍。
+
+
 

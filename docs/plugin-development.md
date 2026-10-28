@@ -731,7 +731,7 @@ catch-all（priority 100）。想接管某类工具卡的渲染：往这个槽�
 
 | 包名 | 里面有什么 |
 | --- | --- |
-| `@dsc/ui-primitives` | 图标集、`Select`、`Text`、文件图标、`DiffRows` / `CodeView` / `MarkdownView` / `PdfView` / `CsvView` / `XlsxView`、时间与 token 格式化、工具摘要口径、toast / confirm、面板几何 |
+| `@dsc/ui-primitives` | 图标集、`Select`、`Text`、文件图标、`DiffRows` / `CodeView` / `MarkdownView` / `PdfView` / `CsvView` / `XlsxView`、时间与 token 格式化、工具摘要口径、toast / confirm、面板几何、错误文案（`errText`，与宿主同一份实现）、模块级信号（`createSignal`，一份状态 + 订阅 + 没变不通知）、宿主快照读数（`readCwd` / `readSessions` / `readEntries` 等） |
 | `@dsc/ui-slots` | 槽名契约（`SLOT` / `SHELL_SLOTS`）与槽位的 React 渲染出口（`SlotOutlet` / `ChainOutlet`） |
 | `@dsc/ui-dockkit` | 右侧栏的模型与状态（`useDockSurface` / `dockActions` / `registerDockTab` 等所在的那一套） |
 

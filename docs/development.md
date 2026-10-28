@@ -53,7 +53,7 @@
 
 | 路径 | 规模 | 职责 |
 | --- | --- | --- |
-| `src/core/` | 144 个文件 ≈46800 行 | 纯能力：模型客户端与协议适配器、会话（含写租约）、循环、审批、压缩、溢出落盘、会话检索、MCP 客户端、工具、技能、设置、任务板；token 粗估（`token-estimate.ts`）与错误文案（`err-text.ts`）是全仓库唯一一份 |
+| `src/core/` | 156 个文件 ≈47000 行 | 纯能力：模型客户端与协议适配器、会话（含写租约）、循环、审批、压缩、溢出落盘、会话检索、MCP 客户端、工具、技能、设置、任务板；token 粗估（`token-estimate.ts`）、错误文案（`err-text.ts`）、数值收敛（`clamp.ts`）、对象判定（`records.ts`）、消息取文（`transcript-text.ts`）、cmd 引号与 shell 选择（`shell-quote.ts`）、字符串判定（`strings.ts`）、安全序列化（`json-text.ts`）、快照推送节流（`snapshot-throttle.ts`）、git 读数相等判断（`git-surface.ts`）、时间格式化（`clock.ts`）都是全仓库唯一一份 |
 | `src/core/tools/` | 6 个文件 ≈1700 行 | 内置六件套 `bash`/`read`/`write`/`edit`/`glob`/`grep`（预算由 tools-default 配置下发）+ 沙箱的一次性升权参数与命令执行器缝 |
 | `src/core/lsp/` | 7 个文件 ≈2400 行 | LSP 代码智能：`client`（连接/实例）、`manager`（池化调度）、`normalize`（应答归并）、`line-shift`（诊断行号对齐）、`framing`/`servers`/`uri` |
 | `src/core/dsh-compat/` | 9 个文件 ≈1900 行 | dsh 插件兼容层的模块解析钩子与工具形状适配 |
@@ -62,10 +62,10 @@
 | `src/contract.ts` | 2093 行 | UI ⇄ 运行时的中性契约（`DscRuntime` + 视图类型） |
 | `src/services/types.ts` | 1432 行 | 服务面声明（`ctx.llm`、`ctx.mcp` 这些是什么类型） |
 | `src/adapter/transcript.ts` | 702 行 | 内核事件 → UI 快照的折叠投影 |
-| `src/app/` | 37 个文件 ≈7900 行 | ink 终端界面（与桌面端共用契约） |
+| `src/app/` | 39 个文件 ≈7900 行 | ink 终端界面（与桌面端共用契约）；显示宽度（`display-width.ts`）是终端侧唯一一份 |
 | `desktop/electron/` | 7 个文件 ≈2670 行 | main + preload：窗口、托盘、运行时子进程、终端与浏览器 dock |
 | `desktop/src/renderer/` | 72 个文件 ≈21000 行 | 桌面界面：会话、侧栏、插件、技能、设置、队友；`chat/`（markdown 渲染 / 评价存档 / 折叠预算 / 座位计划 / 视口 hook）与 `sidebar-groups.ts` 从两个巨型组件里拆出来 |
-| `ui-shell/` | 118 个文件 ≈39400 行 | 桌面与手机共用的界面壳（插件化：布局 + 基元 + 官方界面插件；产物落 `lib/ui/assets`）。桌面端默认加载壳产物，`desktop/src/renderer/` 是旧渲染层，可回退 |
+| `ui-shell/` | 124 个文件 ≈39500 行 | 桌面与手机共用的界面壳（插件化：布局 + 基元 + 官方界面插件；产物落 `lib/ui/assets`）。桌面端默认加载壳产物，`desktop/src/renderer/` 是旧渲染层，可回退 |
 | `shots/` | 脚本 + 实拍产物 | 自检与实拍（全部跑在临时 HOME 上）。**这个目录被 `.gitignore` 忽略**：它只在本机存在，不随版本库分发 |
 | `examples/plugins/` | 5 个示例 | 手写插件的参照（上手路径见 [writing-plugins.md](writing-plugins.md)） |
 
@@ -599,9 +599,27 @@ exe 当**桌面端**跑的时候才要清掉它。
 
 **审查台账**：2026-10-28 做过一次全仓代码审查（开发规范 / 格式统一 / 重复代码 / 架构），
 问题清单、复现命令与三批整改建议在 [code-review-2026-10-28.md](code-review-2026-10-28.md)。
-前两批已入库（HEAD `7099b8a`）：两条 P0 清掉，`errText` 与 TUI 浮层外框各收成一份，仓库地图的
-规模数字重填。**当前状态与逐条结清情况看那份文档的 §十**；要判断"这一层是不是又欠了新账"，
+前三批已入库（HEAD `32a26af`）：两条 P0 清掉，`errText`、`clampInt`、`asRecord` 三个小工具各归一处，
+TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图的规模数字重填。
+第四批到第七批（同日）在工作区：`errText` 又收掉八份（界面插件一律经 `@dsc/ui-primitives` 拿，
+不在种子里直接引 core），`displayWidth` / `quoteForCmd` / `expandHome` / `lastUserText` / `splitList` /
+`shellOf` / `jsonText` / `utf16Buffer` / 吞吐读数 / 浏览器输出口径（`cdp/report`、`cdp/ring-buffer`）/
+快照推送节流 / git 读数相等判断 / 壳里十个插件的快照读数（`ui-primitives/snapshot`）各收成一份；
+明细见报告 §十二 至 §十五。
+第八批（同日）改动两处：时间格式化统一走 `core/clock.ts`（原先浏览器那条链输出 UTC、沙箱日志输出本地时间，
+同一屏两套时间）；界面壳的模块级状态多了一份 `createSignal`，试点落在 `ui-layout/thread-view.ts`。
+第九批（同日）把模块级状态收完：切页、团队面板、设置面板、动作表、dock 布局、文件树、旁问、启动账本
+共八处改用 `createSignal`（值归信号用 `set`，值在别处用 `notify`）；`host-channel` 与 `hmr` 是实例作用域，
+明确不收。函数体重复组复扫 **0**。
+**当前状态与逐条结清情况看那份文档的 §十（总览）、§十一 至 §十七（各批）**；判断这一层是不是又欠了新账，
 对照 §四 逐条看；经过写在 [development-log.md](development-log.md) 的「2026-10-28 全仓代码审查」一节。
+
+新增这类小工具前先看 `src/core/` 下有没有现成的：`err-text`（错误文案）、`clamp`（数值）、`records`（对象判定）、
+`strings`（切词与空串判定）、`json-text`（安全序列化）、`transcript-text`（从消息取文）、`shell-quote`（起 shell）、
+`snapshot-throttle`（快照推送节流）、`git-surface`（git 读数相等判断）、`clock`（时:分:秒）、
+`cdp/report` 与 `cdp/ring-buffer`（浏览器输出与事件缓冲）、`src/ui/signal.ts`（模块级信号，界面侧用）。
+界面侧还要看基元包：`@dsc/ui-primitives` 已经有时间、token、文件大小、路径、吞吐、错误文案、git 读数相等判断，
+以及**从宿主快照取数**（`snapshot`：工作目录 / 会话清单 / 条目流 / 回合状态）这些口径。
 
 还开着的四条是 P1-1（旧渲染层 21,035 行已冻结，等日落日期）、P1-3（巨石文件，等契约拆分）、
 P2-2（四个 pnpm 项目四把锁，要不要收 workspace）、P3-1（91 条自检脚本无覆盖率）。
@@ -634,6 +652,17 @@ P2-2（四个 pnpm 项目四把锁，要不要收 workspace）、P3-1（91 条�
 - **注册即副作用**：每个注册返回清理函数，`apply` 返回合并后的清理函数。
 - **配置错误宁可炸**：能加载时发现的就在加载时报错，绝不静默跳过引用不到的东西。
 - 空 `catch` 必须说明吞了什么、为什么。
+- **按会话算的东西不许挂在模块级变量上**（`AgentScope`）。宿主同时常驻多个会话的 agent，
+  模式、工具目录、系统提示都是**会话的属性**：`ctx.tools.visible(scope)`、
+  `ctx.prompt.systemPrompt(cwd, scope)` 与各投影/提示段的回调都得把 `scope` 透传下去。
+  写成全局量的话，用户点开另一个会话就会改掉后台那一轮的工具集与提示词——2026-10-28 那串
+  「未知工具」就是这么来的（`src/plugins/presets.ts` 的 `bySession`）。
+- **一轮之内工具目录只有一份**：`src/core/loop.ts` 在发请求时取一次快照（`requestTools`），
+  执行按它解析名字。执行时再取一次，会在「请求与执行之间注册表变过」时把合法调用判成未知工具。
+- **react-markdown 的 `components` 表必须是模块级常量**（`ui-shell/src/ui-primitives/markdown.tsx`）。
+  表里的函数一旦写在渲染函数里，每帧都是新引用；react-markdown 把函数当元素类型交给 React，
+  类型一变整棵子树就重挂——流式输出时表现为全篇代码块反复卸载重建（字号、行号各闪一遍）。
+  `remarkPlugins` 数组同理，提到模块级。
 - 文件结尾恰好一个换行。
 - 提交用约定式格式：`feat:` / `fix:` / `chore:` / `docs:` / `refactor:` / `test:`，
   正文写「为什么」，中文。
@@ -653,6 +682,10 @@ P2-2（四个 pnpm 项目四把锁，要不要收 workspace）、P3-1（91 条�
 | 重新打开会话后上下文又变长了 | 不该再出现：`Session.load` 读到 `summary` 记录时把之前累积的消息换成「摘要 + 末尾 `keep` 条」（`src/core/session.ts` 的 `case 'summary'`）。老日志没有 `keep` 字段时只接回摘要之后的记录，摘要之前的原文一样不读回来 |
 | 网络断了却不重试 | 连接失败（`LlmError.retryable`，`src/core/llm.ts:199-205`）与 429 / 5xx 都会退避重试 2 次，判定在 `src/core/llm.ts:162-166`；流已开始或用户已取消则不重试 |
 | 截图后 token 暴涨 | 看是否启用了旧截图裁剪（`computer-use` 插件的 `transformMessages`） |
+| 流式输出时代码块抽搐／字号行号跳动 | `ui-shell/src/ui-primitives/markdown.tsx` 的 `components` 是否写成了内联箭头函数；代码块两态（纯文本 / 高亮）是否同一个 `pre.shiki > code > span.line` 骨架 |
+| 流式时「回到底部」胶囊一闪一闪 | `ui-shell/src/plugins/transcript/ui.tsx` 的跟随判定：`onScroll` 有没有把「内容变矮、浏览器夹 scrollTop」当成读者滚动（看 `pinnedHeight`）；`settle` 会不会在跟随态下按距离重判 |
+| 工具回「未知工具：xxx」 | 先看这一轮的请求与执行是不是同一份目录（`src/core/loop.ts` 的 `requestTools` 快照）；再看模式投影有没有按会话算（`ctx.tools.visible()` 必须带 `sessionId`，否则你在看别的会话时，后台那一轮的工具集跟着换） |
+| 切到别的会话后，后台那一轮的工具集／提示词变了 | 模式（预设）是不是又退回全局变量了：`src/plugins/presets.ts` 的 `bySession` 按会话 id 存，`dsc/session-open` 只登记被打开的那一个会话；投影与提示段的回调必须把 `scope` 传进去 |
 | 写工作区外的文件被拒（沙箱） | 拒因里带当前档位与可写根清单；确有必要就在**同一次调用**里成对带上 `sandbox_permissions` 与 `justification`（照常弹审批卡），或把目录加进「设置 → 沙箱」的附加可写根 |
 | 命令被沙箱当场拒 | 拒因写明命中规则（forbidden 前缀 / 网络开关关 / 越界写目标）；`/sandbox` 能看档位、强制执行等级与最近 3 次拒绝 |
 | 定时任务没触发 | 宿主不常驻就不触发（重启后补投最近一次错过的）；`/schedule list` 看任务是否 enabled、`lastError` 写了什么、是否标了 blocked |
