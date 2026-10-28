@@ -39,7 +39,7 @@ const IMAGE_DIET_CONFIG_KEY = 'image-diet'
 const NO_IMAGE_NOTE = '（当前模型没有声明照片输入能力，图像没有随请求发送）'
 
 /** 一条「模型可见投影」：对发给模型的消息做一次纯函数改写。 */
-type Projection = { order: number; fn: (messages: ChatMessage[]) => ChatMessage[] }
+type Projection = { order: number; fn: (messages: ChatMessage[], session?: Session) => ChatMessage[] }
 
 /** 内置投影占用的名字：协议护栏不许被外部插件顶掉，同名注册直接报错。 */
 const RESERVED_PROJECTIONS = new Set(['fold-system', 'drop-images'])
@@ -257,7 +257,8 @@ export const promptPlugin: Plugin.Object = {
         let out = messages
         for (const [id, projection] of projectionChain()) {
           try {
-            out = projection.fn(out)
+            // 把本次请求所属会话交给投影：按会话冻结/取状态的投影（微压缩）要靠它
+            out = projection.fn(out, requestSession)
           } catch (error) {
             // 一个投影崩了不该让这一轮请求整个失败：跳过它（模型本轮看到未投影的
             // 原文），但要把话说出来，别让用户对着莫名其妙的端点报错猜。

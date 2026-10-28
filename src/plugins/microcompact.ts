@@ -15,8 +15,17 @@
  * @module dsc/plugins/microcompact
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { DEFAULT_KEEP_RECENT_TOOL_RESULTS, DEFAULT_MIN_SAVE_TOKENS, microcompact } from '../core/microcompact.js'
+import {
+  applyMicrocompactPlan,
+  DEFAULT_KEEP_RECENT_TOOL_RESULTS,
+  DEFAULT_MIN_SAVE_TOKENS,
+  microcompact,
+  planMicrocompact,
+  roundKeyOf,
+  type MicrocompactPlan,
+} from '../core/microcompact.js'
 import type { ChatMessage } from '../core/llm.js'
+import type { Session } from '../core/session.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
 import type { SettingsField, SettingsValues } from '../contract.js'
 import type { SettingsSectionSpec } from '../services/types.js'
@@ -36,12 +45,18 @@ interface MicrocompactConfig {
   minSaveTokens: number
   /** 总开关。默认开：长会话里这块浪费最大，保守值下副作用很小。 */
   enabled: boolean
+  /**
+   * 什么时候重算清理集合：`round` = 每轮开始清一次（默认，缓存友好）；
+   * `request` = 每次请求都重算（旧行为，省上下文但每步都可能改前缀）。
+   */
+  refresh: 'round' | 'request'
 }
 
 const DEFAULTS: MicrocompactConfig = {
   keepRecent: DEFAULT_KEEP_RECENT_TOOL_RESULTS,
   minSaveTokens: DEFAULT_MIN_SAVE_TOKENS,
   enabled: true,
+  refresh: 'round',
 }
 
 /** 两个可调值的区间：低于下限把最近的证据也清掉，高于上限基本清不出空间。 */
@@ -59,6 +74,7 @@ function readConfig(passed?: unknown): MicrocompactConfig {
     keepRecent: clamp(raw.keepRecent, KEEP_RECENT_RANGE.min, KEEP_RECENT_RANGE.max, DEFAULTS.keepRecent),
     minSaveTokens: clamp(raw.minSaveTokens, MIN_SAVE_RANGE.min, MIN_SAVE_RANGE.max, DEFAULTS.minSaveTokens),
     enabled: raw.enabled === undefined ? DEFAULTS.enabled : raw.enabled === true || raw.enabled === 'true',
+    refresh: raw.refresh === 'request' ? 'request' : DEFAULTS.refresh,
   }
 }
 
@@ -73,21 +89,41 @@ export const microcompactPlugin: Plugin.Object = {
       config = readConfig(passed)
     }
 
+    /**
+     * 每个会话冻结的那份清理计划（2026-10-28）：一轮之内复用它，只有新一轮
+     * 或消息列表被压缩变短时才重算。投影签名现在带会话（内核 API 加了第二参），
+     * 后台会话因此拿自己的计划与自己的失败结果集合。
+     */
+    const frozen = new Map<string, { round: number; plan: MicrocompactPlan; length: number }>()
+
     const offProjection = ctx.prompt.registerProjection(
       'microcompact',
-      (messages: ChatMessage[]): ChatMessage[] => {
+      (messages: ChatMessage[], session?: Session): ChatMessage[] => {
         if (!config.enabled) return messages
+        const owner = session ?? ctx.session.current()
         // 失败/被拒的 tool_call_id 记在会话旁路（Session.toolErrors）、不在协议消息里。
-        // ⚠ 已知限制：投影函数拿不到「本次请求所属会话」，只能用当前查看的会话——常驻多
-        // agent 下后台会话在跑、用户正看着另一个会话时会取错，那条失败结果就拿不到保护、
-        // 可能被当普通旧结果清掉（是「会误清」，只是限于失败结果这一条证据）。同一模式在
-        // hooks / lsp 的投影里也有。根治要把会话线程进投影签名 `fn(messages, session)`，
-        // 属内核 API 变更，留给后续单独做，本批不动。
-        return microcompact(messages, {
+        const options = {
           keepRecent: config.keepRecent,
           minSaveTokens: config.minSaveTokens,
-          errorCallIds: new Set(ctx.session.current().toolErrors.keys()),
-        })
+          errorCallIds: new Set(owner.toolErrors.keys()),
+        }
+        if (config.refresh === 'request') return microcompact(messages, options)
+
+        const round = roundKeyOf(messages)
+        const sid = owner.meta.id
+        const held = frozen.get(sid)
+        // 同一轮、消息没变短：复用上一次的计划（前缀因此逐步稳定，缓存能一直命中）。
+        if (held !== undefined && held.round === round && messages.length >= held.length) {
+          return applyMicrocompactPlan(messages, held.plan)
+        }
+        const plan = planMicrocompact(messages, options)
+        frozen.set(sid, { round, plan, length: messages.length })
+        if (frozen.size > 64) {
+          // 会话多了别让这张表无界长；删最早登记的那一条（Map 插入序）。
+          const first = frozen.keys().next().value
+          if (first !== undefined && first !== sid) frozen.delete(first)
+        }
+        return applyMicrocompactPlan(messages, plan)
       },
       { order: PROJECTION_ORDER },
     )
@@ -98,8 +134,20 @@ export const microcompactPlugin: Plugin.Object = {
       {
         type: 'switch',
         key: 'enabled',
-        label: '每轮清理旧工具结果',
-        help: '开着时，每次请求把较旧的工具结果正文换成一句占位符（会话日志里的原文不动）。关掉则原样发送。',
+        label: '清理旧工具结果',
+        help: '开着时把较旧的工具结果正文换成一句占位符（会话日志里的原文不动）。关掉则原样发送。',
+      },
+      {
+        type: 'select',
+        key: 'refresh',
+        label: '清理时机',
+        options: [
+          { value: 'round', label: '每轮开始清一次（默认，缓存命中高）' },
+          { value: 'request', label: '每次请求都清（省上下文，前缀常失效）' },
+        ],
+        help:
+          '一轮 = 你发一句话之后模型连着跑的那几十步。每轮只清一次时，同一轮内的请求前缀不变，' +
+          '服务端前缀缓存能一直命中；每次请求都清会让刚滑出窗口的那条被改写，从那里往后整段不命中。',
       },
       {
         type: 'number',
@@ -124,19 +172,25 @@ export const microcompactPlugin: Plugin.Object = {
     const section: SettingsSectionSpec = {
       id: CONFIG_KEY,
       title: '旧工具结果清理',
-      subtitle: '每轮请求把较旧的工具结果换成占位符，只动请求体、不改会话日志',
+      subtitle: '把较旧的工具结果换成占位符：只动请求体、不改会话日志，默认每轮只清一次',
       // 紧挨压缩（35）之后：两者都是省上下文的手段，用户找起来是同一类东西。
       order: 36,
       fields: () => fields,
       // 每次打开分区都现读磁盘：手改 plugins.json 也能看到真值。
       values: (): SettingsValues => {
         config = readConfig(passed)
-        return { enabled: config.enabled, keepRecent: config.keepRecent, minSaveTokens: config.minSaveTokens }
+        return { enabled: config.enabled, refresh: config.refresh, keepRecent: config.keepRecent, minSaveTokens: config.minSaveTokens }
       },
       // 契约：save 返回字符串 = 失败原因。
       save: (key, value): string | void => {
         if (key === 'enabled') {
           applyConfig({ enabled: value === true || value === 'true' })
+          return
+        }
+        if (key === 'refresh') {
+          const next = String(value)
+          if (next !== 'round' && next !== 'request') return '清理时机只能是 round（每轮一次）或 request（每次请求）'
+          applyConfig({ refresh: next })
           return
         }
         const num = Number(value)

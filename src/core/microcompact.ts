@@ -15,6 +15,7 @@
  */
 import type { ChatMessage } from './llm.js'
 import { estimateTextTokens } from './token-estimate.js'
+import { TODO_REMINDER_TEXT } from './todo-reminder.js'
 
 /** 占位符前缀：既是给模型看的正文，也是幂等的锚点——已经是占位符的条目不处理第二遍。 */
 export const CLEARED_TOOL_RESULT_PREFIX = '[旧工具结果已清理'
@@ -93,6 +94,69 @@ function placeholderFor(toolName: string | undefined): string {
   return toolName === undefined || toolName === ''
     ? `${CLEARED_TOOL_RESULT_PREFIX}]`
     : `${CLEARED_TOOL_RESULT_PREFIX}：${toolName}]`
+}
+
+/**
+ * 一次清理的「计划」：callId → 要换成的占位符正文。
+ *
+ * 为什么要把计划单独留一份（2026-10-28）：每轮请求都重新数「最近 5 条」，
+ * 工具结果一多，几乎每一步都会有一条刚滑出窗口被清掉——清理点一改，从那条往后
+ * 整段前缀作废，服务端前缀缓存命中率被拖到 60% 上下（实测会话 bb13f0b5）。
+ * 把计划冻结到「轮到轮之间」复用，同一轮内 30 多步的前缀就是稳的。
+ */
+export type MicrocompactPlan = ReadonlyMap<string, string>
+
+/** 算出这次该清哪些工具结果（callId → 占位符）；纯函数，不改输入。 */
+export function planMicrocompact(messages: readonly ChatMessage[], options: MicrocompactOptions = {}): MicrocompactPlan {
+  const out = microcompact(messages, options)
+  const plan = new Map<string, string>()
+  messages.forEach((message, index) => {
+    if (message.role !== 'tool') return
+    const id = message.tool_call_id
+    if (id === undefined || id === '') return
+    if (out[index]!.content === message.content) return
+    plan.set(id, typeof out[index]!.content === 'string' ? out[index]!.content : '')
+  })
+  return plan
+}
+
+/**
+ * 按冻结的计划改写请求体（只换 callId 命中且内容确实不同的那几条）。
+ * 计划里已经不在本次消息里的条目直接跳过（压缩可能把整段历史换掉了）。
+ */
+export function applyMicrocompactPlan(messages: readonly ChatMessage[], plan: MicrocompactPlan): ChatMessage[] {
+  if (plan.size === 0) return [...messages]
+  return messages.map((message) => {
+    if (message.role !== 'tool') return message
+    const id = message.tool_call_id
+    if (id === undefined) return message
+    const placeholder = plan.get(id)
+    if (placeholder === undefined || message.content === placeholder) return message
+    return { ...message, content: placeholder }
+  })
+}
+
+/**
+ * 这条 user 消息是不是「程序塞进来的」（环境快照 / 任务清单提醒 / 钩子产出），
+ * 不算用户新开的一轮。轮次键只数真人发言，否则同一轮里 env 快照一刷就被判成
+ * 新一轮，冻结计划又白做了。
+ */
+export function isSyntheticUserMessage(message: ChatMessage): boolean {
+  if (message.role !== 'user') return false
+  const text = typeof message.content === 'string' ? message.content : ''
+  if (text === TODO_REMINDER_TEXT) return true
+  if (text.includes('（本条是程序在每次请求时自动附上的当前环境快照')) return true
+  if (text.startsWith('<external_content source="hook:')) return true
+  return false
+}
+
+/** 这次请求属于第几轮（真人 user 消息条数）；同一轮内计划可以冻结复用。 */
+export function roundKeyOf(messages: readonly ChatMessage[]): number {
+  let count = 0
+  for (const message of messages) {
+    if (message.role === 'user' && !isSyntheticUserMessage(message)) count += 1
+  }
+  return count
 }
 
 /** 扫一遍 assistant 的 tool_calls，建 callId → 工具名 的表（占位符要回填真名）。 */

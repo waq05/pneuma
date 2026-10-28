@@ -84,9 +84,14 @@ const assistant = (id, name) => ({ role: 'assistant', content: '', tool_calls: [
 const toolMsg = (id, content, extra = {}) => ({ role: 'tool', content, tool_call_id: id, ...extra })
 const isCleared = (content) => typeof content === 'string' && content.startsWith('[旧工具结果已清理')
 
-const { microcompact, DEFAULT_KEEP_RECENT_TOOL_RESULTS, DEFAULT_MIN_SAVE_TOKENS } = await import(
-  new URL('../src/core/microcompact.ts', import.meta.url).href
-)
+const {
+  microcompact,
+  planMicrocompact,
+  applyMicrocompactPlan,
+  roundKeyOf,
+  DEFAULT_KEEP_RECENT_TOOL_RESULTS,
+  DEFAULT_MIN_SAVE_TOKENS,
+} = await import(new URL('../src/core/microcompact.ts', import.meta.url).href)
 
 console.log('[1] 纯函数：保留窗口 / 门槛 / 跳过规则 / 幂等')
 {
@@ -272,6 +277,29 @@ const ctx = await createKernel({
   resumeSessionPath: null,
 })
 
+console.log('[1b] 冻结计划：同一轮的清理集合可以原样复用')
+{
+  const messages = [
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: '开跑' },
+  ]
+  for (let index = 1; index <= 8; index += 1) messages.push(assistant('p' + index, 'bash'), toolMsg('p' + index, longText()))
+  const plan = planMicrocompact(messages, {})
+  check('8 条结果里最旧 3 条进计划', plan.size === 3, String(plan.size))
+  const applied = applyMicrocompactPlan(messages, plan)
+  check('计划只改那 3 条，最近 5 条原文不动', applied.filter((message) => isCleared(message.content)).length === 3 && applied.slice(-5).every((message) => !isCleared(message.content)))
+  check('同一份计划再应用一次逐字节不变（幂等）', JSON.stringify(applyMicrocompactPlan(applied, plan)) === JSON.stringify(applied))
+
+  // 轮次键只数真人发言：环境快照与任务提醒不算新的一轮
+  const withSynthetic = [
+    ...messages,
+    { role: 'user', content: '环境事实：\n- 今天：2026-10-28\n（本条是程序在每次请求时自动附上的当前环境快照，不是用户发言）' },
+    { role: 'user', content: '（提醒：任务清单有未完成项，做完一步就把状态改掉）' },
+  ]
+  check('轮次键 = 1（合成消息不算新一轮）', roundKeyOf(withSynthetic) === 1, String(roundKeyOf(withSynthetic)))
+  check('真用户再说一句 → 轮次键变 2', roundKeyOf([...withSynthetic, { role: 'user', content: '继续' }]) === 2)
+}
+
 console.log('[2] 接线：投影在 env-facts(600) 与 drop-images(900) 之间跑')
 {
   // 两条哨兵投影夹住 order 650：649 看到的一定是微压缩之前、651 看到的一定是之后
@@ -369,17 +397,43 @@ console.log('[3] 端到端：后一轮请求体里旧工具结果已清，日志
   check('拿到了带 8 条工具结果的请求体', maxToolRequest !== undefined, `requests=${seenRequests.length}`)
   const requestTools = (maxToolRequest ?? []).filter((message) => message.role === 'tool')
   check('请求体里工具结果一条不少（8 条）', requestTools.length === MAX_TOOL_RESULTS, `got=${requestTools.length}`)
+  // 2026-10-28 起清理计划冻结到「轮」：同一轮内不随着新工具结果往下清，
+  // 这样 30 多步的请求前缀是稳的，前缀缓存才能一直命中。
   check(
-    '请求体里最旧 3 条已变占位符（保留窗口 5 条）',
-    requestTools.slice(0, 3).every((message) => message.content === '[旧工具结果已清理：bulk]'),
+    '同一轮内不清理旧结果（冻结计划，缓存友好）',
+    requestTools.every((message) => message.content.startsWith('日志行：')),
     JSON.stringify(requestTools.map((message) => String(message.content).slice(0, 14))),
   )
-  check('请求体里最近 5 条仍是原文', requestTools.slice(3).every((message) => message.content.startsWith('日志行：')))
   check(
     '会话日志原文一个字节没动（清理只发生在请求体上）',
     ctx.session.current().messages.filter((message) => message.role === 'tool').every((message) => typeof message.content === 'string' && message.content.startsWith('日志行：')),
     '日志被改了',
   )
+
+  // 下一轮（用户又说了一句）才重算：这时最旧的 3 条该被清。
+  const mark = seenRequests.length
+  const endedNext = new Promise((resolve) => {
+    const off = ctx.on('dsc/turn-end', () => {
+      off()
+      resolve()
+    })
+  })
+  ctx.agent.followup('再来一轮')
+  await until(() => seenRequests.length > mark)
+  await endedNext
+  await until(() => !ctx.agent.isRunning, 30000)
+  await sleep(120)
+  const nextRound = seenRequests
+    .slice(mark)
+    .filter((messages) => messages.filter((message) => message.role === 'tool').length >= MAX_TOOL_RESULTS)
+    .at(-1)
+  const nextTools = (nextRound ?? []).filter((message) => message.role === 'tool')
+  check(
+    '新一轮请求体里最旧 3 条已变占位符（保留窗口 5 条）',
+    nextTools.slice(0, 3).every((message) => message.content === '[旧工具结果已清理：bulk]'),
+    JSON.stringify(nextTools.map((message) => String(message.content).slice(0, 14))),
+  )
+  check('新一轮里最近 5 条仍是原文', nextTools.slice(3).every((message) => message.content.startsWith('日志行：')))
 
   offTool()
 }
