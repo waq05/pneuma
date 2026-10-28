@@ -32,7 +32,7 @@
 | P0-2 | 高 | CI 只有 `release.yml`，类型检查与自检脚本没有任何自动门禁 | 已修（`verify.yml`） |
 | P0-3 | 高 | `a20dd74` 上 7 个 `replace` 类型错误进过主干，20 分钟后才被 `d1b8e08` 补上 | 已修 |
 | P1-1 | 高 | 四份界面代码，旧渲染层 21,035 行已冻结但仍与新壳高度重复 | 仍在（已冻结） |
-| P1-2 | 中 | `formatDuration` 5 份、`errText` 体系 19 处、对话框骨架 9 处 | 部分已修（时长格式化收到 1 份） |
+| P1-2 | 中 | `formatDuration` 5 份、`errText` 体系 19 处、对话框骨架 9 处 | 大部分已修（错误文案统一、时长格式化 1 份、TUI 浮层外框 1 处） |
 | P1-3 | 中 | 巨石文件：契约 2,091 行、消息流 2,481 行 | 仍在 |
 | P2-1 | 中 | 无 ESLint / Prettier / EditorConfig / `.gitattributes`，换行符混乱 | 部分已修（`.gitattributes` + `check:style`） |
 | P2-2 | 中 | 三个 pnpm 项目三把锁、无 workspace、`ui-shell` 版本 2.0.0 | 仍在 |
@@ -352,6 +352,24 @@ node scripts/style-check.mjs --changed            # 只看改动，同样绿
 **验证没跑成的**：`pnpm -C ui-shell build`。这条要 vite 调 esbuild 子进程，在当前沙箱下
 被拦成 `spawn EPERM`（子进程管道不可用）。typecheck 覆盖了类型，但"打包能不能过"
 这一项本轮没有验证。
+### 第二批（2026-10-28 同日，未提交）
+
+| # | 改了什么 | 落在哪 | 验证 |
+| --- | --- | --- | --- |
+| 1 | `errText` 彻底收口：7 份本地实现改引 `core/err-text.ts`；另有 3 处 `const err = (error) => ...` 同义别名改成 `import { errText as err }`（既有调用点一个没动） | `src/core/desktop-control.ts`、`core/learnings/skill-write.ts`、`core/lifecycle-hooks.ts`、`plugins/lifecycle-hooks.ts`、`plugins/sandbox.ts`、`plugins/self-improve.ts`、`plugins/spill.ts`、`host/kernel.ts`、`plugins/settings.ts`、`plugins/skills.ts` | 全仓 `function errText` 只剩正主 1 处、`const err = (error` 0 处；根 typecheck 绿 |
+| 2 | TUI 浮层外框收口：新增 `PickerFrame`，模型 / 模式 / 技能 / 子代理 / 会话五个浮层改用它，外层 8 行属性只此一份 | `src/app/PickerFrame.tsx`（新）+ 五个浮层 | 根 typecheck 绿；五个文件各少 9 行，`ModelPicker` 从 68 行降到 59 行 |
+| 3 | 提交对话框补上焦点管理：Esc 关、Tab 圈在弹层里、打开时焦点落在提交信息框、关掉把焦点还给来源 | `ui-shell/src/plugins/files/changes.tsx:389` 起 `CommitDialog` | 界面壳 typecheck 绿 |
+| 4 | 仓库地图的规模数字按 0.7.1 实测重填（日期从 10-16 改到 10-28） | `docs/development.md` §2 | 每格都按 `find`/`wc -l` 现量 |
+
+**关于「9 处 `role="dialog"`」这条，报告写错了一半**：其中 5 处（设置、模型发现、队友面板、轨迹检查器、贴图放大）
+早在 2026-10-25 就用上了 `ui-primitives/dialog-focus.ts` 的焦点管理；命令面板与手机配对各自手写了 Esc 与
+`tabIndex`；真正裸着的只有**提交对话框**一个——它既没有 Esc、也没有焦点归还，本轮按同一套钩子补齐。
+所以「抽一个 `Dialog` 组件替换 9 处」这个建议不成立：这 9 处的遮罩、布局、关闭方式本来就不同，
+硬抽只会换来一堆开关；重复的是**行为**（焦点与 Esc），那已经有一个钩子在做。
+
+**这一轮没验证到的**：TUI 浮层与提交对话框都只有 `tsc` 背书。`pnpm run build` 写不进 `lib/`（沙箱拒写已存在的产物），
+所以 `scripts/commands-battery.mjs` 里那三条渲染冒烟跑的是旧产物，等于没跑；界面壳的 `vite build` 依旧 `spawn EPERM`。
+这两处要在有完整权限的环境里各看一眼：终端里开一次 `/model`、`/resume`，以及文件页的「提交」。
 
 ### 卡住的一条：P0-1 缺一次提交
 
