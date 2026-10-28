@@ -9,7 +9,7 @@
  */
 import { spawn } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /**
@@ -27,6 +27,29 @@ export function readContractSource() {
   }
   return parts.join('\n')
 }
+/**
+ * 一个插件目录下的全部源码（`.ts` / `.tsx`，子目录一起，按相对路径升序）。
+ *
+ * 插件在 2026-10-28 按职责拆成多份之后，「这段代码在插件里」这类文本断言不能再只读入口
+ * `ui.tsx`——入口只剩装配与主流程，行渲染、工具卡、改动卡各自搬到了别处。拼接时每份
+ * 前面留一行文件名，免得两份文件的首尾拼出一段本来不存在的文本。
+ */
+export function readPluginSource(relDir) {
+  const parts = []
+  const walk = (dir) => {
+    const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))
+    for (const entry of entries) {
+      const abs = join(dir, entry.name)
+      if (entry.isDirectory()) walk(abs)
+      else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) {
+        parts.push(`// ── ${relative(root, abs).split('\\').join('/')} ──\n${readFileSync(abs, 'utf8')}`)
+      }
+    }
+  }
+  walk(join(root, relDir))
+  return parts.join('\n')
+}
+
 /** 仓库根（`scripts/` 的上一层）。 */
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 

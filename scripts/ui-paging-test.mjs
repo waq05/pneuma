@@ -22,6 +22,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { readPluginSource } from './_check-runner.mjs'
 
 const paging = await import(
   new URL('../ui-shell/src/plugins/transcript/paging.ts', import.meta.url).href
@@ -182,7 +183,7 @@ console.log('[6] 到顶与连点两下（从中间边界继续往前攒）')
 
 console.log('[7] 形态钉（ui.tsx 里的结构约定）')
 {
-  const ui = read('ui-shell/src/plugins/transcript/ui.tsx')
+  const ui = readPluginSource('ui-shell/src/plugins/transcript')
   const source = read('ui-shell/src/plugins/transcript/paging.ts')
 
   check('paging.ts 是纯逻辑（不引 React / 任何运行期依赖）', !/from 'react'/.test(source) && !/from '\.\//.test(source))

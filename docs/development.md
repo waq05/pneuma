@@ -698,7 +698,7 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 | 网络断了却不重试 | 连接失败（`LlmError.retryable`，`src/core/llm.ts:199-205`）与 429 / 5xx 都会退避重试 2 次，判定在 `src/core/llm.ts:162-166`；流已开始或用户已取消则不重试 |
 | 截图后 token 暴涨 | 看是否启用了旧截图裁剪（`computer-use` 插件的 `transformMessages`） |
 | 流式输出时代码块抽搐／字号行号跳动 | `ui-shell/src/ui-primitives/markdown.tsx` 的 `components` 是否写成了内联箭头函数；代码块两态（纯文本 / 高亮）是否同一个 `pre.shiki > code > span.line` 骨架 |
-| 流式时「回到底部」胶囊一闪一闪 | `ui-shell/src/plugins/transcript/ui.tsx` 的跟随判定：`onScroll` 有没有把「内容变矮、浏览器夹 scrollTop」当成读者滚动（看 `pinnedHeight`）；`settle` 会不会在跟随态下按距离重判 |
+| 流式时「回到底部」胶囊一闪一闪 | `ui-shell/src/plugins/transcript/follow.ts` 的跟随判定：`onScroll` 有没有把「内容变矮、浏览器夹 scrollTop」当成读者滚动（看 `pinnedHeight`）；`settle` 会不会在跟随态下按距离重判 |
 | 工具回「未知工具：xxx」 | 先看这一轮的请求与执行是不是同一份目录（`src/core/loop.ts` 的 `requestTools` 快照）；再看模式投影有没有按会话算（`ctx.tools.visible()` 必须带 `sessionId`，否则你在看别的会话时，后台那一轮的工具集跟着换） |
 | 切到别的会话后，后台那一轮的工具集／提示词变了 | 模式（预设）是不是又退回全局变量了：`src/plugins/presets.ts` 的 `bySession` 按会话 id 存，`dsc/session-open` 只登记被打开的那一个会话；投影与提示段的回调必须把 `scope` 传进去 |
 | 写工作区外的文件被拒（沙箱） | 拒因里带当前档位与可写根清单；确有必要就在**同一次调用**里成对带上 `sandbox_permissions` 与 `justification`（照常弹审批卡），或把目录加进「设置 → 沙箱」的附加可写根 |

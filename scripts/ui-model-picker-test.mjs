@@ -36,7 +36,7 @@
  * @module dsc/scripts/ui-model-picker-test
  */
 import { readFileSync, readdirSync } from 'node:fs'
-import { readContractSource } from './_check-runner.mjs'
+import { readContractSource, readPluginSource } from './_check-runner.mjs'
 import { fileURLToPath } from 'node:url'
 
 const picker = await import(
@@ -229,7 +229,7 @@ console.log('[7] 飞出卡：挑边与夹高度（纯判定，量到的 rect 由
 // ── [8] 界面接线 ──────────────────────────────────────────────────────────────
 console.log('[8] 界面接线（ui.tsx）')
 {
-  const ui = flat(read('ui-shell/src/plugins/composer/ui.tsx'))
+  const ui = flat(readPluginSource('ui-shell/src/plugins/composer'))
   check('两颗 chip 各自带钩子（自检脚本认这两个）', ui.includes('data-composer-model=') && ui.includes('data-composer-effort='))
   check('模型 chip 画「前缀 + 名字」两段（前缀单独成 span，窄屏才收得掉）', ui.includes('className="composer-model-provider"') && ui.includes('{chip.prefix}'))
   check(
@@ -254,7 +254,9 @@ console.log('[8] 界面接线（ui.tsx）')
   )
   check('档位 chip 分成「可切」与「单档」两条路（单档不给浮层、不给箭头）', ui.includes('{switchEffort ? (') && ui.includes('className="model-btn composer-effort-chip fixed"'))
   check('当前模型与档位都走纯模块判定（不是就地拍脑袋）', ui.includes('findCurrent(groups, provider, model)') && ui.includes('effortChoices(current.entry)'))
-  check('旧口径不许回来：`value === model` 判勾 / 直接用 thinkingLevels / 壳里再抄一份档位表', !ui.includes('=== model') && !ui.includes('.thinkingLevels') && !ui.includes('EFFORT_FALLBACK') && !ui.includes('EFFORT_LABEL'))
+  // 负向断言只扫视图（ui.tsx）：`=== model` 这些比较本来就该在纯模块 `model-picker.ts` 里。
+  const view = flat(read('ui-shell/src/plugins/composer/ui.tsx'))
+  check('旧口径不许回来：`value === model` 判勾 / 直接用 thinkingLevels / 壳里再抄一份档位表', !view.includes('=== model') && !view.includes('.thinkingLevels') && !view.includes('EFFORT_FALLBACK') && !view.includes('EFFORT_LABEL'))
   check('旧的分组函数也删干净了（分组归纯模块）', !ui.includes('groupByProvider'))
   check(
     '一级只列端点（多端点才摆），行里是显示名 + 勾 + 固定的 `›`',
@@ -397,7 +399,7 @@ console.log('[10] 样式门：新类名有规则、只用令牌、退役的那�
   check('新类名没有一个是别处已经在用的（撞名 = 我的行静默继承别人的版式）', collided.length === 0, collided.join('、'))
   // 「规则在、对象不在」= 白写一条：这一版真的踩过（`.flat` 定义了但 JSX 一直没挂上，
   // 单端点面板就一直是 192px、模型名被截）。每个类名（含修饰类）都必须在 ui.tsx 里当类名用。
-  const uiSource = flat(read('ui-shell/src/plugins/composer/ui.tsx'))
+  const uiSource = flat(readPluginSource('ui-shell/src/plugins/composer'))
   const USED_CLASSES = ['model-picker', 'model-picker-body', 'model-providers', 'provider-row', 'provider-arrow', 'model-flyout', 'model-flyout-card', 'model-flyout-inline', 'model-picker-rows', 'model-picker-row', 'model-picker-check', 'model-manage', 'model-unknown', 'flat']
   const unused = USED_CLASSES.filter((name) => !new RegExp(`['"\` {}$]${name}['"\` {}$]`).test(uiSource))
   check('这一版的每个类名／修饰类都有对象（死选择器门）', unused.length === 0, unused.join('、'))
@@ -406,7 +408,7 @@ console.log('[10] 样式门：新类名有规则、只用令牌、退役的那�
   check('退役的并排两栏那四个类名不许留死规则', leftover.length === 0, leftover.join('、'))
   check(
     '新类名不叫 `.model-chip`（那是模型设置页上一版退役的类名，设置页的探针有一条闸不许它回来）',
-    !/\.model-chip[ ,{]/.test(shellCss) && !read('ui-shell/src/plugins/composer/ui.tsx').includes('"model-chip'),
+    !/\.model-chip[ ,{]/.test(shellCss) && !readPluginSource('ui-shell/src/plugins/composer').includes('"model-chip'),
   )
 
   /** 规则块里带硬编码色值的那些（`#rgb` / `#rrggbb` / `rgb(` / `rgba(`）——配色一律走令牌。 */

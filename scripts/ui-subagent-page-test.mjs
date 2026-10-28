@@ -25,6 +25,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { readPluginSource } from './_check-runner.mjs'
 
 // 零依赖直读一个 `.ts`（Node 类型擦除），证明本探针走的就是模板那条路。
 const { seatPlan } = await import(
@@ -46,7 +47,7 @@ const check = (name, condition, detail) => {
   }
 }
 
-const transcript = read('ui-shell/src/plugins/transcript/ui.tsx')
+const transcript = readPluginSource('ui-shell/src/plugins/transcript')
 const team = read('ui-shell/src/plugins/team/ui.tsx')
 
 // 模板那条零依赖 .ts 导入确实可用（本探针只拿它做一次存在性自检，不重复测它的语义）。

@@ -17,7 +17,7 @@
  * @module dsc/scripts/ui-composer-draft-test
  */
 import { readFileSync } from 'node:fs'
-import { readContractSource } from './_check-runner.mjs'
+import { readContractSource, readPluginSource } from './_check-runner.mjs'
 import { fileURLToPath } from 'node:url'
 
 const draft = await import(new URL('../ui-shell/src/plugins/composer/draft.ts', import.meta.url).href)
@@ -109,7 +109,7 @@ console.log('[4] 反向对照：按旧口径（一律按路径）分坑，剧本
 
 console.log('[5] 接线钉：壳、宿主、契约三处')
 {
-  const composer = read('ui-shell/src/plugins/composer/ui.tsx')
+  const composer = readPluginSource('ui-shell/src/plugins/composer')
   check('输入框用 draftScopeOf 算归属', composer.includes('draftScopeOf({'), '')
   check('输入框用 carryDraft 搬运（不再自己 set/get）', composer.includes('carryDraft(drafts.current'), '')
   check(

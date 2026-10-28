@@ -25,6 +25,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { readPluginSource } from './_check-runner.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const read = (rel) => readFileSync(`${root}${rel}`, 'utf8')
@@ -101,7 +102,7 @@ console.log('[1] 标准方法底线：不许用「太新」的那几个')
   check('替身带类型谓词重载（调用处的收窄照旧成立）', compat.includes('item is S'))
   const barrel = read('ui-shell/src/ui-primitives/index.ts')
   check('替身从基元库转出去（插件与壳都拿得到）', barrel.includes("export * from './compat'"))
-  const transcript = read('ui-shell/src/plugins/transcript/ui.tsx')
+  const transcript = readPluginSource('ui-shell/src/plugins/transcript')
   check('正文区改用替身（import 自 @dsc/ui-primitives）', transcript.includes('findLast') && transcript.includes("from '@dsc/ui-primitives'"))
   check('正文区不再直接调 .findLast(', !uncomment(transcript).includes('.findLast('))
 }

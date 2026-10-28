@@ -38,6 +38,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { readPluginSource } from './_check-runner.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const read = (rel) => readFileSync(`${root}${rel}`, 'utf8')
@@ -87,7 +88,7 @@ function collect(dir, out = []) {
 
 // ── 源码与样式（全部摊平）────────────────────────────────────────────────────
 const app = flat(read('ui-shell/src/ui-layout/app.tsx'))
-const composer = flat(read('ui-shell/src/plugins/composer/ui.tsx'))
+const composer = flat(readPluginSource('ui-shell/src/plugins/composer'))
 const sessions = flat(read('ui-shell/src/plugins/sessions/ui.tsx'))
 const styles = flat(read('ui-shell/src/styles.css'))
 const views = flat(read('ui-shell/src/legacy/views.css'))

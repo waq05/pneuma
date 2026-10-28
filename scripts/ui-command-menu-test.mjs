@@ -18,7 +18,7 @@
  * @module dsc/scripts/ui-command-menu-test
  */
 import { readFileSync } from 'node:fs'
-import { readContractSource } from './_check-runner.mjs'
+import { readContractSource, readPluginSource } from './_check-runner.mjs'
 import { fileURLToPath } from 'node:url'
 
 const core = await import('../lib/core/commands-completion.js')
@@ -202,7 +202,7 @@ console.log('\n[4] 壳侧纯逻辑（真跑 composer/commands.ts）')
 
 console.log('\n[5] 壳侧接线')
 {
-  const composer = read('ui-shell/src/plugins/composer/ui.tsx')
+  const composer = readPluginSource('ui-shell/src/plugins/composer')
   check('菜单数据来自宿主的 listUiCommands', composer.includes("invoke<ShellCommandView[]>('listUiCommands')") || read('ui-shell/src/plugins/composer/command-menu.ts').includes("('listUiCommands')"), '')
   check('执行走 runUiCommand（不再当场拦下）', composer.includes("invoke<boolean>('runUiCommand'"), '')
   check('旧文案已拆（“还没接到界面通道”那句不再出现）', !composer.includes('这条路还没接到界面通道'), '')
@@ -228,7 +228,7 @@ console.log('\n[5] 壳侧接线')
   // 2026-10-27 查账：空会话欢迎态把首屏 system 整批不画，新会话里打 /help 什么都看不到
   check('system 条目带 command 标记（契约里声明）', readContractSource().includes('command?: boolean') && read('src/adapter/transcript.ts').includes('command ? { command: true }'), '')
   check('命令回调把标记传下去', read('src/plugins/runtime.ts').includes("ctx.transcript.system(text, undefined, true)"), '')
-  const transcriptUi = read('ui-shell/src/plugins/transcript/ui.tsx')
+  const transcriptUi = readPluginSource('ui-shell/src/plugins/transcript')
   check('欢迎态画命令输出（不再整批吞掉）', transcriptUi.includes('row.entry.command === true') && transcriptUi.includes('entry-system-command'), '')
   check('普通对话里也走左对齐块', /entry.command === true \? \(\s*<div className="entry-system-command">/.test(transcriptUi), '')
   check('样式有了（左对齐 / 保留换行）', /\.entry-system-command \{[\s\S]{0,600}?white-space: pre-wrap/.test(read('ui-shell/src/styles.css')), '')

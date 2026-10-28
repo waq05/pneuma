@@ -18,6 +18,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { readPluginSource } from './_check-runner.mjs'
 
 const model = await import(
   new URL('../ui-shell/src/plugins/transcript/review-notice.ts', import.meta.url).href
@@ -176,7 +177,7 @@ console.log('[5] 契约漂移钉：壳常量 == 宿主 src/plugins/file-review.t
 
 console.log('[6] 壳侧接线钉（文本钉：结构约定）')
 {
-  const chat = read('ui-shell/src/plugins/transcript/ui.tsx')
+  const chat = readPluginSource('ui-shell/src/plugins/transcript')
   const trace = read('ui-shell/src/plugins/trace/ui.tsx')
   const card = read('ui-shell/src/plugins/transcript/review-notice-card.tsx')
   const css = read('ui-shell/src/legacy/views.css')

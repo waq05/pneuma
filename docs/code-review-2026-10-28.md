@@ -179,8 +179,8 @@ EXIT=2
 
 | 文件 | 行数 | 说明 |
 | --- | --- | --- |
-| `ui-shell/src/plugins/transcript/ui.tsx` | 2,481 | 31 个顶层函数 + 7 个 Context，一个文件就是整条消息流 |
-| `ui-shell/src/plugins/composer/ui.tsx` | 2,110 | |
+| `ui-shell/src/plugins/transcript/ui.tsx` | 658（原 2,481） | 第十四批已拆（见 §二十四）：装配 + 主流程 + 分页/折叠接线 |
+| `ui-shell/src/plugins/composer/ui.tsx` | 2,354 | 输入区一个组件 1,712 行，待拆（下一批） |
 | `src/contract.ts` | 2,091 | 116 个导出，UI ⇄ 运行时唯一契约 |
 | `ui-shell/src/plugins/sessions/ui.tsx` | 1,943 | |
 | `ui-shell/src/plugins/settings/models.tsx` | 1,900 | |
@@ -1256,3 +1256,68 @@ handler 现在没有消费方（壳走原生桥），但它们的实现体与原
 - `pnpm run check:ui` **39/39** 通过（含 6 条改过的探针）；
 - `node scripts/dup-scan.mjs` 0 组、`style-check` 全过；
 - `check:core` 全量在后台跑（结果见下轮）。
+
+## 二十四、第十四批（2026-10-28）：拆对话流（2,553 → 658 行）
+
+### 拆法
+
+一个文件里原本住着四种东西，各自的生命周期完全不同，硬塞在一处：
+
+| 新文件 | 行数 | 装的是什么 |
+| --- | --- | --- |
+| `shared.ts` | 175 | 三条 context（折叠偏好 / 流内动作 / 会话工作目录）、toolview 子槽的名字与渲染形状、`Row` / `Seat`、行 key 与座位切分 |
+| `follow.ts` | 213 | 贴底跟随（松手 / 只认自己的写 / 贴底门槛三条规矩） |
+| `welcome.tsx` | 161 | 空会话首屏：四张能力卡、接着上次、开场区该露的那几行 |
+| `render.tsx` | 317 | 座位骨架：一轮（`SeatBody`）→ 一行（`RowBody`）→ 行级错误边界（`RowBoundary`） |
+| `rows/user-row.tsx` | 216 | 用户消息那一行 + 附件条 + 只读出口的同一气泡 |
+| `rows/think-row.tsx` | 196 | 思考栏与两条「首行摘要」算法 |
+| `rows/tool-row.tsx` | 283 | 工具卡 + 子智能体卡 |
+| `rows/changes-card.tsx` | 274 | 一轮的「文件已更改」卡与悬停 diff |
+| `rows/foot.tsx` | 168 | 轮尾（用时 / 用量 / 复制 / 评价 / 分叉）与进行中状态行 |
+| `rows/fold-body.ts` | 29 | 思考栏与工具卡共用的「内容够不够长」量法 |
+| `subagent-flow.tsx` | 84 | 只读「子智能体条目流」 |
+
+`ui.tsx` 只剩三样：插件装配（`apply`）、`TranscriptFlow` 主流程（取数、分页、折叠接线、
+动作）、以及三个取值小函数。
+
+### 为什么按这条缝切
+
+行渲染器们只依赖 context 与平台种子，**彼此之间不互相调用**——除了 `SeatBody` 要
+`ChangesCard` + `RoundFoot`、`RowBody` 要五种行。这条依赖是单向的（骨架 → 行），所以
+把行搬到 `rows/` 不会形成环。反过来按「上半屏 / 下半屏」切就会切断一个座位的渲染。
+
+### 行为零变化
+
+只搬不移：所有函数的实现体逐字未改，`TranscriptFlow` 的空会话分支改成渲染
+`<WelcomeState …/>`，那一段 JSX 也是原样搬的。对外导出（`FoldPrefs`、`ToolEntry`、
+`TOOLVIEW_SLOT`、`SUBAGENT_FLOW_SLOT`、`TranscriptFlowProps`、`TranscriptFlowService`）
+在 `ui.tsx` 里继续 re-export，插件外面不用改一行。
+
+同时顺手清掉两处错位的注释：`ComposerDraftService` 头上原本挂着「首屏四张能力卡」的
+说明（那是 `WELCOME_CARDS` 的注释，贴错了对象），已跟着卡片搬到 `welcome.tsx`；
+`elapsedLabel` 头上原有一句「会话清单」（`readSessions` 早就搬去平台种子了），删除。
+
+### 探针跟着改
+
+12 条探针按文本读 `ui.tsx`。现在它们改读整棵插件子树（`_check-runner.mjs` 新增
+`readPluginSource`），断言原意不变——「这段代码在插件里」本来就不该钉在某个文件名上。
+三处要单独说明，都不是「改绿了事」：
+
+1. `ui-transcript-render-test` 的「排布走纯函数 `seatPlan`」原本还要求 `ui.tsx` 里出现
+   某条 import。import 随代码搬到了 `render.tsx`，改成对 `render.tsx` 判：那里有
+   `for (const item of seatPlan(`、且不出现 `kind === 'user'`（切座位的判据只在 `rounds.ts`）。
+2. 同一条里「不再另算一份 `roundInfos`」原本对整个插件判，但 `timing.ts` 本来就导出
+   `roundInfos`，整面扫必然失败。改成按 `buildSeats` 函数体判。
+3. `ui-model-picker-test` 的「旧口径不许回来」原本对整个 `composer/` 目录判，可是
+   `model-picker.ts` 里本来就该有 `=== model` 这些比较（它正是那份纯逻辑）。这条改回只扫
+   视图 `composer/ui.tsx`——这条断言从一开始说的就是「视图里别再自己判」。
+
+### 验证
+
+| 门 | 结果 |
+| --- | --- |
+| `pnpm -C ui-shell typecheck` | 0 |
+| `pnpm run check:ui` | 39/39 |
+| `node scripts/style-check.mjs --changed` | 25 个文件全过（顺手把两处混用行尾归到 CRLF） |
+| `node scripts/dup-scan.mjs` | 425 个文件、0 组 |
+| `pnpm -C ui-shell build` | 见下一条（同批跑） |

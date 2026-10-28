@@ -18,6 +18,7 @@
 import { readFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { readPluginSource } from './_check-runner.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (rel) => readFileSync(join(root, rel), 'utf8')
@@ -152,7 +153,7 @@ console.log('[4] P1 三项')
   const app = read('ui-shell/src/ui-layout/app.tsx')
   const statusbar = read('ui-shell/src/plugins/statusbar/ui.tsx')
   const sessions = read('ui-shell/src/plugins/sessions/ui.tsx')
-  const transcript = read('ui-shell/src/plugins/transcript/ui.tsx')
+  const transcript = readPluginSource('ui-shell/src/plugins/transcript')
   const channel = read('ui-shell/src/ui-layout/host-channel.ts')
 
   // 品牌两档：侧栏 20 / 窄栏 22，全部走变量。空态那档 2026-10-27 撤掉（用户说图标突兀）。
@@ -186,7 +187,7 @@ console.log('[5] 2026-10-26 四项')
   const css = read('ui-shell/src/styles.css')
   const app = read('ui-shell/src/ui-layout/app.tsx')
   const sessions = read('ui-shell/src/plugins/sessions/ui.tsx')
-  const composer = read('ui-shell/src/plugins/composer/ui.tsx')
+  const composer = readPluginSource('ui-shell/src/plugins/composer')
   const slider = read('ui-shell/src/plugins/composer/effort-slider.tsx')
   const resizer = read('ui-shell/src/ui-primitives/thread-resizer.tsx')
 
@@ -235,7 +236,7 @@ console.log('[5] 2026-10-26 四项')
 console.log('[6] 调档手感')
 {
   const css = read('ui-shell/src/styles.css')
-  const composer = read('ui-shell/src/plugins/composer/ui.tsx')
+  const composer = readPluginSource('ui-shell/src/plugins/composer')
   const slider = read('ui-shell/src/plugins/composer/effort-slider.tsx')
   const runtime = read('src/plugins/runtime.ts')
   const methods = read('src/core/ui-methods.ts')
@@ -321,7 +322,7 @@ console.log('[9] 这一轮的四条')
 {
   const css = read('ui-shell/src/styles.css')
   const summary = read('ui-shell/src/ui-primitives/tool-summary.ts')
-  const transcriptSrc = read('ui-shell/src/plugins/transcript/ui.tsx')
+  const transcriptSrc = readPluginSource('ui-shell/src/plugins/transcript')
   const statusSrc = read('ui-shell/src/plugins/status/ui.tsx')
   const factorySrc = read('ui-shell/src/plugins/transcript/tool-card/factory.tsx')
   const traceSrc = read('ui-shell/src/plugins/trace/ui.tsx')
@@ -335,7 +336,8 @@ console.log('[9] 这一轮的四条')
   const verbBody = verbSrc.slice(0, verbSrc.indexOf('}'))
   check('标题不随状态变形（函数体只 return base，不拼 正在 / 准备 / 了）', /return base/.test(verbBody) && !verbBody.includes('${base}') && !verbBody.includes('了'), verbBody.trim())
   check('认不出的工具用 dsh 的泛称「工具调用」', summary.includes("UNKNOWN_TOOL_TITLE = '工具调用'"))
-  const named = (factorySrc + transcriptSrc + traceSrc).split('`· ${call.name}`').length - 1
+  // transcriptSrc 是整棵插件子树（tool-card/factory.tsx 已含在内），别再单独加 factorySrc。
+  const named = (transcriptSrc + traceSrc).split('`· ${call.name}`').length - 1
   check('原名跟在「 · 」后面（对话页 / 轨迹页 / 工厂三处都改了）', named === 3, String(named))
 
   // ② 思考块标题照 dsh 的 message.think（「思考」两个字），不再写「思考过程」。
@@ -383,7 +385,7 @@ console.log('[10] 会话行标题的悬停滚动')
 
 console.log('[11] 跟到底部的滚动逻辑')
 {
-  const transcriptSrc = read('ui-shell/src/plugins/transcript/ui.tsx')
+  const transcriptSrc = readPluginSource('ui-shell/src/plugins/transcript')
   const seatsSrc = read('ui-shell/src/plugins/transcript/fold-seats.tsx')
 
   // ① 外层：贴底门槛照 dsh 的 25px（壳取 24），旧的 160px 必须没有了——

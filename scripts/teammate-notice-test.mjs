@@ -30,6 +30,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
+import { readPluginSource } from './_check-runner.mjs'
 
 const home = mkdtempSync(join(tmpdir(), 'dsc-notice-strip-'))
 process.env.HOME = home
@@ -348,7 +349,7 @@ console.log('[4] 三处消费者都按「整条收件箱」算（源码钉）')
   const root = fileURLToPath(new URL('..', import.meta.url))
   const read = (rel) => readFileSync(join(root, rel), 'utf8')
   const tuiApp = read('src/app/App.tsx')
-  const shellComposer = read('ui-shell/src/plugins/composer/ui.tsx')
+  const shellComposer = readPluginSource('ui-shell/src/plugins/composer')
   const statusBar = read('src/app/StatusBar.tsx')
 
   check(

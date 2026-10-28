@@ -17,6 +17,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { readPluginSource } from './_check-runner.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const read = (rel) => readFileSync(`${root}${rel}`, 'utf8')
@@ -57,7 +58,7 @@ console.log('[1] 分支钮的纯逻辑（git-branch.ts）')
 // ── [2] 壳侧接线（composer 插件文本）───────────────────────────────────────────
 console.log('[2] 输入框那颗钮的接线')
 {
-  const composer = read('ui-shell/src/plugins/composer/ui.tsx')
+  const composer = readPluginSource('ui-shell/src/plugins/composer')
   const shellCss = read('ui-shell/src/styles.css')
 
   check('读数取宿主快照面 surfaces.git（壳不自己拍 git）', composer.includes("(surfaces as Record<string, unknown>)['git']") && !composer.includes('git-status'))

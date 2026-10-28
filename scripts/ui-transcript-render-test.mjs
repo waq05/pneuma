@@ -33,6 +33,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { readPluginSource } from './_check-runner.mjs'
 
 const groups = await import(
   new URL('../ui-shell/src/plugins/transcript/process-groups.ts', import.meta.url).href
@@ -126,12 +127,14 @@ console.log('[2] toolArgFields：会改文件的工具走参数表')
 
 console.log('[3] 形态钉（ui.tsx / factory.tsx / status 的催拍）')
 {
-  const ui = read('ui-shell/src/plugins/transcript/ui.tsx')
+  const ui = readPluginSource('ui-shell/src/plugins/transcript')
   const factory = read('ui-shell/src/plugins/transcript/tool-card/factory.tsx')
   const pgs = read('ui-shell/src/plugins/transcript/process-groups.ts')
   const status = read('ui-shell/src/plugins/status/ui.tsx')
 
-  check('ui.tsx 的排布走纯函数 seatPlan（规则不在渲染体里）', ui.includes('for (const item of seatPlan(') && ui.includes("import { groupSteps, seatPlan,"))
+  // 「按 kind 切座位」的判据只在 rounds.ts（分轮真值），渲染体（render.tsx）里不许再出现。
+  const renderSrc = read('ui-shell/src/plugins/transcript/render.tsx')
+  check('排布走纯函数 seatPlan（规则不在渲染体里）', renderSrc.includes('for (const item of seatPlan(') && !/kind === 'user'/.test(renderSrc))
   check('process-groups.ts 的 seatPlan 是纯逻辑（不引 React）', !/from 'react'/.test(pgs) && pgs.includes('export function seatPlan('))
 
   // 「不该出现」的断言先剥注释：修法自己的注释里就引着旧写法，不剥会自己打脸。
@@ -165,7 +168,7 @@ console.log('[4] 漂移钉：参数表的字段名与宿主工具真定义对得
 
 console.log('[5] 整轮过程区的开合动画（0.6.69 第四轮报障）')
 {
-  const ui = read('ui-shell/src/plugins/transcript/ui.tsx')
+  const ui = readPluginSource('ui-shell/src/plugins/transcript')
   const seats = read('ui-shell/src/plugins/transcript/fold-seats.tsx')
   const css = read('ui-shell/src/legacy/views.css')
   const tokens = read('ui-shell/src/legacy/tokens.css')
@@ -201,7 +204,7 @@ console.log('[5] 整轮过程区的开合动画（0.6.69 第四轮报障）')
 
 console.log('[6] 悬停预览的收卡口径（0.6.69 第五轮报障：鼠标移出预览 1s 才收）')
 {
-  const ui = read('ui-shell/src/plugins/transcript/ui.tsx')
+  const ui = readPluginSource('ui-shell/src/plugins/transcript')
   const hook = read('ui-shell/src/ui-primitives/hover-delay.ts')
 
   // 出卡节奏照参考实现（500ms），收卡是壳侧有意的 1s——旧渲染层那份仍 100ms（冻结不动）
@@ -218,7 +221,7 @@ console.log('[6] 悬停预览的收卡口径（0.6.69 第五轮报障：鼠标�
 
 console.log('[7] 分轮口径单点 + internal 条目对齐 dsh（0.6.67 右侧刻度条错位 / 多刻度）')
 {
-  const ui = read('ui-shell/src/plugins/transcript/ui.tsx')
+  const ui = readPluginSource('ui-shell/src/plugins/transcript')
   const timing = read('ui-shell/src/plugins/transcript/timing.ts')
   const css = read('ui-shell/src/legacy/views.css')
   // 「不该出现」的断言先剥注释：修法的注释里就引着旧写法 / roundInfos，不剥会自己打脸。
@@ -270,9 +273,11 @@ console.log('[7] 分轮口径单点 + internal 条目对齐 dsh（0.6.67 右侧�
       return seat.indices.at(-1) === stop
     }),
   )
+  // roundInfos 现在住在 timing.ts 里（整个插件都读得到），「不再另算一份」只能按函数体判。
+  const buildSeatsBody = uiCode.slice(uiCode.indexOf('function buildSeats'), uiCode.indexOf('function buildSeats') + 600)
   check(
     "① buildSeats 走 splitRounds（不再自己按 kind==='user' 切座位）",
-    uiCode.includes('const split = splitRounds(all)') && uiCode.includes('split.seats.map((seat) => ({ round: seat.round') && !uiCode.includes('roundInfos('),
+    buildSeatsBody.includes('const split = splitRounds(all)') && buildSeatsBody.includes('split.seats.map((seat) => ({ round: seat.round') && !buildSeatsBody.includes('roundInfos('),
   )
   check(
     "① timing.ts 转出 rounds.ts 的 roundInfos（旧的分轮循环已撤，不留第二份判据）",
