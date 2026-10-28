@@ -213,7 +213,6 @@ function TerminalPane({ shell, visible, onShell }: { shell: ShellValue; visible:
       term.dispose()
     }
     // native 每次渲染都是新对象，但它的行为只取决于全局桥；装配只做一次。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // 起 shell：首次可见、或切了 Shell 下拉时（切 = 杀旧起新）。

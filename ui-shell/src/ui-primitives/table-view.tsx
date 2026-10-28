@@ -132,7 +132,7 @@ export function XlsxView({ base64 }: { base64: string }): JSX.Element {
     return () => {
       on = false
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // 只在这份数据换掉时重来（其余引用都是稳定值）。
   }, [base64])
   const pick = (index: number): void => {
     setActive(index)

@@ -154,7 +154,7 @@ function BrowserTab({ tab, active, expanded }: DockTabBodyProps): ReactNode {
       offOpen()
       void native.invoke('browserClose', [viewId]).catch(() => undefined)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // 装配与卸除只做一次，依赖故意留空。
   }, [])
 
   // 可见性 / 几何 / 首次加载：露出来才摆位置并进页面，藏起来只摘下视图。
@@ -241,7 +241,6 @@ function BrowserTab({ tab, active, expanded }: DockTabBodyProps): ReactNode {
     }
     // tab.path 只在「切到可见」这一刻读一次：之后地址由页面自己推回来（browser-state），
     // 把它放进依赖会让每次导航都重跑一遍挂卸。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, started])
 
   if (!native.available) {

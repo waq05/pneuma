@@ -563,7 +563,6 @@ function SessionList() {
     if (Object.keys(patch).length === 0) return
     patchPrefs({ expansion: { ...prefs.expansion, ...patch } })
     // patchPrefs 每次渲染都是新函数，这条 effect 只认 cwd / group / groups 这几个真值。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cwd, prefs.group, groups])
 
   /** 一组的展开真值（旧界面 isExpanded 同口径）：显式记录 → 默认档（树模式父节点展开、

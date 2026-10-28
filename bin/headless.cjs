@@ -11,7 +11,7 @@
  * 用法（终端手测，stdin/stdout JSONL）：
  *   node <dsc>/bin/headless.cjs
  */
-/* eslint-disable @typescript-eslint/no-require-imports */
+/* 本文件是 CommonJS 启动脚本：require 是它唯一的加载方式，不走 ESM import。 */
 'use strict'
 
 const { pathToFileURL } = require('node:url')

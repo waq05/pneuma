@@ -84,7 +84,6 @@ export function Select<T extends string>(props: {
     const top = below ? rect.bottom + POP_GAP : Math.max(4, rect.top - POP_GAP - height)
     setPlace({ left: rect.left, top, width: rect.width })
     // place 变化不重量：宽度只跟触发钮走，位置只在开合时定一次。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   // 点在浮层和触发钮外面就收起；滚轮滚页面时跟着触发钮走会穿帮，直接收。

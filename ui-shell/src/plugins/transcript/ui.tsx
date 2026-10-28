@@ -309,7 +309,6 @@ function TranscriptFlow({
     foldMemory.reset(settled)
     prevRunningRounds.current = runningRounds
     // foldMemory.reset 是稳定引用（useFoldMemory 里 useCallback 包过），不进依赖清单。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runningRounds, stepGrouping, sessionId])
 
   // 页脚「分叉这一轮」：保留到本轮用户消息（含），从这一轮的回答重来——旧界面同一语义。

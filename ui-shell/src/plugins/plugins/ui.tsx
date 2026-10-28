@@ -151,7 +151,7 @@ function PluginsView(): ReactNode {
   useEffect(() => {
     refresh()
     loadTrusts()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // 只认通道：refresh 与 loadTrusts 每次渲染都是新函数。
   }, [channel])
 
   /** 读第三方界面插件的信任状态（读类；失败摊在那一组下面，不静默）。 */
@@ -715,7 +715,7 @@ function PluginDetail({
 
   useEffect(() => {
     loadSection()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // 只认这三样：loadSection 每次渲染都是新函数。
   }, [channel, plugin.enabled, plugin.settingsSection])
 
   const sourceLabel = plugin.source === 'external' ? '自定义' : plugin.toggleable ? '官方' : '运行内核'

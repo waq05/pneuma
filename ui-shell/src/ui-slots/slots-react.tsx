@@ -331,7 +331,7 @@ function FactoryOccurrenceBody({
         )
       }
       const Selected = selections[name] ?? fallback
-      // eslint-disable-next-line react-hooks/rules-of-hooks -- 见上方文档：作者按 hook 规则调用。
+      // hook 规则由作者保证：见上方文档，插槽工厂按 hook 规则调用。
       return useMemo(() => {
         const Bound = (localProps: Record<string, unknown>): ReactNode => (
           <FactoryErrorBoundary

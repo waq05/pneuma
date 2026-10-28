@@ -172,12 +172,12 @@ function SkillsView(): ReactNode {
 
   useEffect(() => {
     reloadSkills()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // 只认通道：reloadSkills 每次渲染都是新函数。
   }, [channel])
 
   useEffect(() => {
     if (tab === 'market' && market === null && !marketLoading) browse('', false)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // 只在切到「市场」页签时拉一次：browse 每次渲染都是新函数。
   }, [tab])
 
   /** 作用域计数（「全部 / 全局 / 项目」三个页签上的读数）。 */
