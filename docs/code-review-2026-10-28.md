@@ -1321,3 +1321,57 @@ handler 现在没有消费方（壳走原生桥），但它们的实现体与原
 | `node scripts/style-check.mjs --changed` | 25 个文件全过（顺手把两处混用行尾归到 CRLF） |
 | `node scripts/dup-scan.mjs` | 425 个文件、0 组 |
 | `pnpm -C ui-shell build` | 见下一条（同批跑） |
+
+## 二十五、第十五批（2026-10-28）：拆输入区，2,354 → 1,650 行（第一批）
+
+### 这一批搬走的
+
+| 新文件 | 行数 | 装的是什么 |
+| --- | --- | --- |
+| `surfaces.ts` | 235 | 七片宿主快照面（模型 / 端点 / 档位 / 待批 / 会话路径与草稿归属 / 权限预设 / 模式预设 / git），每片「取值 + 相等判断」一对 |
+| `queue-dock.tsx` | 247 | 排队消息条：折叠语义、改 / 撤 / 插话、摘要压行 |
+| `notice-strip.tsx` | 39 | 待投递通知条（机器唤醒，只读） |
+| `branch-menu.tsx` | 261 | 分支钮与「搜 / 切 / 新建」菜单，含两个写口 |
+
+`ComposerBox` 从 1,712 行降到约 1,310 行。
+
+### 只搬不改，除了一处必须改的：开关归谁
+
+分支菜单原来和另外三张浮层共处一个组件，靠「开这一张时把别的三个 `setXxxOpen(false)`」
+维持互斥。搬出去之后，如果它自己藏一个 `branchOpen`，父组件就关不掉它——四张浮层会同时开着。
+
+所以它的开关做成受控：父组件持有 `branchOpen`，菜单收 `open` / `onOpenChange`，
+「开这张就把别的收掉」写在父组件那个回调里。菜单自己的清单、搜索词、新建输入框仍留在
+组件内——那些状态只有它用，别人不该知道。
+
+### 探针跟着改：三条，都要看清原意
+
+`ui-git-branch-test` 里有三条按「一个文件里的先后顺序」判的断言，跨文件之后 index 比较
+没有意义了：
+
+1. 「分支行与输入框是兄弟」原本比 `composer-git` 与 `composer` 的 `indexOf`。现在分支行
+   在另一个文件里。改成两段判：`ui.tsx` 里 `composer-stack` → `<BranchMenu` →
+   `.composer` → `.composer-bar` 的顺序，加 `branch-menu.tsx` 自己画出 `.composer-git`。
+2. 「故障便条在框外那层」原本用整个插件的 `indexOf('shell-composer-fault')`。可排队条里
+   也有一处同名的 fault 行，而排队条的文件排在 `ui.tsx` 前面，`indexOf` 会取到那一处。
+   改成只在 `ui.tsx` 里比位置。
+3. 两条正则里的 `setFault` / `setBranchOpen` 换成了搬迁后的 `onFault` / `onOpenChange`。
+   断言说的是「先收菜单再等审批」「失败写进 fault 行」，换了名字仍然成立。
+
+### 为什么这一批到这里停
+
+剩下的 1,310 行里最大一块是「模型 chip + 思考档位 chip + 两级浮层」（约 500 行）：
+读数、乐观值、飞出卡的量高与挑边、面板横移、端点前缀收放都写在里面。它们和输入行本身
+互相咬着三处——`barRef`（量栏宽）、`imageInputAllowed`（附件能不能收）、`fault`（错误行），
+硬拆要么把这三样也搬走（输入框就得跟着改），要么往组件里塞一堆反向回调。这批先不动它，
+单独立一批做，改完要跑满 `ui-model-picker-test` 那 90 多条（含 11 条负向自证）。
+
+### 验证
+
+| 门 | 结果 |
+| --- | --- |
+| `pnpm -C ui-shell typecheck` | 0 |
+| `pnpm run check:ui` | 39/39 |
+| `pnpm -C ui-shell build` | 19 份插件产物照常出，`bundle.json` 只重写有变化的那几份 |
+| `node scripts/style-check.mjs --changed` | 全过 |
+| `node scripts/dup-scan.mjs` | 429 个文件、0 组 |

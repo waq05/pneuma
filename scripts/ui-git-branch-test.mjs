@@ -59,36 +59,40 @@ console.log('[1] 分支钮的纯逻辑（git-branch.ts）')
 console.log('[2] 输入框那颗钮的接线')
 {
   const composer = readPluginSource('ui-shell/src/plugins/composer')
+  // 分支行 2026-10-28 搬进 branch-menu.tsx：判「在输入框外面」要分两个文件读。
+  const view = read('ui-shell/src/plugins/composer/ui.tsx')
+  const menu = read('ui-shell/src/plugins/composer/branch-menu.tsx')
   const shellCss = read('ui-shell/src/styles.css')
 
   check('读数取宿主快照面 surfaces.git（壳不自己拍 git）', composer.includes("(surfaces as Record<string, unknown>)['git']") && !composer.includes('git-status'))
   check('投影缺席 / 不是仓库时回落空读数（repo: false）', composer.includes('const EMPTY_GIT: GitSurface') && composer.includes('repo: false'))
-  check('不是仓库时整行不画', /\{git\.repo \? \(\s*<div className="composer-git">/.test(composer))
+  check('不是仓库时整行不画', /return git\.repo \? \(\s*\n\s*<div className="composer-git">/.test(menu))
   // 分支行在输入框**外面**（用户报「git 管理按钮，需要与输入框作出区分」）：插件根节点是
   // `.composer-stack`（一列两行），`.composer-git` 与带描边的 `.composer`（输入框本体）是兄弟。
-  const iStack = composer.indexOf('"composer-stack"')
-  const iGitRow = composer.indexOf('"composer-git"')
-  const iBox = composer.indexOf('"composer"')
-  const iBar = composer.indexOf('"composer-bar"')
+  const iStack = view.indexOf('"composer-stack"')
+  const iMenu = view.indexOf('<BranchMenu')
+  const iBox = view.indexOf('"composer"')
+  const iBar = view.indexOf('"composer-bar"')
+  check('分支行自己画出 .composer-git（那一列由它负责）', menu.includes('className="composer-git"'))
   check('插件根节点是外面那一列（.composer-stack）', iStack > 0)
   check(
     '分支行与输入框是兄弟：列 → 分支行 → 输入框，顺序不能反',
-    iStack > 0 && iGitRow > iStack && iBox > iGitRow && iBar > iBox,
-    `${String(iStack)} / ${String(iGitRow)} / ${String(iBox)} / ${String(iBar)}`,
+    iStack > 0 && iMenu > iStack && iBox > iMenu && iBar > iBox,
+    `${String(iStack)} / ${String(iMenu)} / ${String(iBox)} / ${String(iBar)}`,
   )
   for (const handler of ['onPaste', 'onDrop', 'onDragOver']) {
-    const at = composer.indexOf(handler)
+    const at = view.indexOf(handler)
     check(`${handler} 仍挂在输入框本体上（命中面 = 看得见的那个框）`, at > iBox && at < iBar)
   }
-  check('故障便条也在框外那层（不再被外框圈住）', composer.indexOf('shell-composer-fault') > iBar)
+  check('故障便条也在框外那层（不再被外框圈住）', view.indexOf('shell-composer-fault') > iBar)
   check('钮上显示分支名 + 箭头（无菜单时也读得出在哪条分支）', composer.includes('className="git-branch-name">{git.branch}') && composer.includes('<IconBranch size={13} />'))
   check('菜单展开即重读清单（不复用上次的快照）', /channel\s+\.invoke<GitBranchList>\('dock', \['git-branches', \{\}\]\)/.test(composer))
   check('当前分支滚进视野（分支多的仓库里不必自己找）', composer.includes("querySelector<HTMLElement>('[data-branch-current=\"true\"]')") && composer.includes("scrollIntoView({ block: 'nearest' })"))
   check('切分支走 dock 的写类 op（过审批那一档）', composer.includes("invoke('dock', ['git-checkout', { branch: name }], { timeoutMs: HUMAN_WAIT_TIMEOUT_MS })"))
   check('新建分支走 dock 的写类 op', composer.includes("invoke('dock', ['git-branch-create', { branch: name }], { timeoutMs: HUMAN_WAIT_TIMEOUT_MS })"))
-  check('菜单在等审批之前先收起（卡才是这一刻该看的东西，别被菜单盖住）', /setFault\(null\)\s*\n\s*\/\/ 菜单先收起来[\s\S]{0,200}?setBranchOpen\(false\)/.test(composer))
-  check('失败写进输入区下面那行 fault（不是静默）', composer.includes('setFault(wouldOverwrite(text) ?') && composer.includes('右侧边栏「变更」页签可以提交'))
-  check('四颗旋钮的浮层互斥（开一颗收掉另外三颗）', (composer.match(/setBranchOpen\(false\)/g) ?? []).length >= 4)
+  check('菜单在等审批之前先收起（卡才是这一刻该看的东西，别被菜单盖住）', /onFault\(null\)\s*\n\s*\/\/ 菜单先收起来[\s\S]{0,200}?onOpenChange\(false\)/.test(menu))
+  check('失败写进输入区下面那行 fault（不是静默）', menu.includes('onFault(wouldOverwrite(text) ?') && composer.includes('右侧边栏「变更」页签可以提交'))
+  check('四颗旋钮的浮层互斥（开一颗收掉另外三颗）', (view.match(/setBranchOpen\(false\)/g) ?? []).length >= 4)
 
   // 等人的宿主方法要更长的超时：审批卡自己能等 5 分钟，默认那 30 秒会把「等你点卡」
   // 报成「宿主超时」，而且点完卡那次切换已经被页面放弃了（实机走查抓到的）。

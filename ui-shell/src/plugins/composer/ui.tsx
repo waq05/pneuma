@@ -54,9 +54,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
 /** DOM 原生键盘事件（`window.addEventListener` 用；React 的 KeyboardEvent 是另一个类型）。 */
 type WindowKeyboardEvent = globalThis.KeyboardEvent
-import { IconArrowUp, IconBrain, IconBranch, IconCheck, IconChevronDown, IconChevronRight, IconClose, IconEdit, IconLayers, IconPackage, IconPlus, IconQueue, IconSearch, IconShield, IconSpark, IconStop, IconTrash } from '@dsc/ui'
+import { IconArrowUp, IconBrain, IconCheck, IconChevronDown, IconChevronRight, IconClose, IconLayers, IconPackage, IconShield, IconStop } from '@dsc/ui'
 import {
-  HUMAN_WAIT_TIMEOUT_MS,
   defineUiPlugin,
   getHostNative,
   toastErr,
@@ -64,14 +63,7 @@ import {
   useHostChannel,
   useHostSelector,
   type EffortLevel,
-  type GitSurface,
-  type HostSnapshot,
   type ModelChoiceView,
-  type PermissionPresetSurface,
-  type PresetSurface,
-  type PresetView,
-  type NoticeMessageView,
-  type QueuedMessageView,
 } from '@dsc/ui'
 import { readTurnState, sameGitSurface as sameGit } from '@dsc/ui-primitives'
 import { useMention } from './mention'
@@ -91,7 +83,6 @@ import {
   type AttachmentKind,
   type DraftAttachment,
 } from './attachments'
-import { summarizeNotice } from './notice-summary'
 import { EffortSlider } from './effort-slider'
 import {
   chooseFlyoutSide,
@@ -109,28 +100,17 @@ import {
   shouldShowProviderLevel,
   type FlyoutSide,
 } from './model-picker'
-import { filteredBranches, wouldOverwrite, type GitBranchRow } from './git-branch'
+import { BranchMenu } from './branch-menu'
+import { NoticeStrip } from './notice-strip'
+import { QueueDock } from './queue-dock'
+import { readDraftCwd, readEffort, readGit, readHasApproval, readInboxCount, readModel, readPermissionPresets, readPresetSurface, readProvider, readSessionId, readSessionPath, readSessionUnsaved, samePermissionPresets, samePresetSurface } from './surfaces'
 
 /** 输入框自动增高的上限（旧界面同一个值：200px）。 */
 const MAX_INPUT_HEIGHT = 200
-/** 排队消息摘要的字数上限（旧界面的 PREVIEW_CHARS）。 */
-const PREVIEW_CHARS = 200
 /** 本机历史输入留多少条（旧界面用会话历史；壳这边先本地记一份）。 */
 const HISTORY_LIMIT = 50
 
-/** 权限预设投影缺席时的兜底（空清单：菜单里会说「清单没取到」，不假装有几个预设）。 */
-const EMPTY_PERMISSION_PRESETS: PermissionPresetSurface = { current: '', defaultName: '', options: [] }
-/** 模式（预设）投影缺席时的兜底。 */
-const EMPTY_PRESET: PresetSurface = { current: '', defaultName: '', options: [], droppable: [] }
-/** git 读数缺席（宿主那片没登记 / 不是仓库）时的兜底：`repo: false` = 整行不画。 */
-const EMPTY_GIT: GitSurface = { repo: false, branch: '', detached: false, dirtyFileCount: 0 }
 
-/** `dock git-branches` 的回包（宿主 desktop-dock 的形状）。 */
-interface GitBranchList {
-  current: string
-  detached: boolean
-  branches: GitBranchRow[]
-}
 
 /**
  * 「往输入框写一段话」的对外口子：首屏四张能力卡（transcript 插件）经服务表调它。
@@ -229,15 +209,6 @@ function ComposerBox(): ReactNode {
   const [presetOpen, setPresetOpen] = useState(false)
   // 分支菜单（输入框上方那一行那颗钮）：与上面三根旋钮的浮层互斥，同一时刻只开一个。
   const [branchOpen, setBranchOpen] = useState(false)
-  /** 分支清单：null = 还没读到（菜单里显示「正在读取分支…」）。每次展开都重读一次。 */
-  const [branchList, setBranchList] = useState<GitBranchList | null>(null)
-  const [branchQuery, setBranchQuery] = useState('')
-  /** 有分支动作在跑（切换 / 新建）：期间整个菜单禁用，免得连点两下切两次。 */
-  const [branchBusy, setBranchBusy] = useState(false)
-  /** 「新建分支…」那一格展开没有（ZCode 用弹框，壳这边就地展开一格输入框）。 */
-  const [branchCreateOpen, setBranchCreateOpen] = useState(false)
-  const [newBranchName, setNewBranchName] = useState('')
-  const branchRows = useRef<HTMLDivElement | null>(null)
   /** 模型面板本体（量飞出卡的挑边与夹高度都拿它当参照）。 */
   const modelPanelRef = useRef<HTMLDivElement | null>(null)
   /** 已经施加在面板上的横移量（量位置时要先把它减掉，见下面那个 `useLayoutEffect`）。 */
@@ -276,40 +247,6 @@ function ComposerBox(): ReactNode {
     return () => window.removeEventListener('keydown', onKey)
   }, [modelOpen, effortOpen])
 
-  /**
-   * 分支菜单展开时读一次本地分支清单（`dock git-branches`，读类 op 直接放行）。
-   *
-   * 每次展开都重读（对照参考实现：切完再展开必须是新的那一份，不能复用上次的快照）。
-   * 关掉菜单不清清单——下一次展开会立刻重读，清空只会闪一下「正在读取」。
-   */
-  useEffect(() => {
-    if (!branchOpen) return undefined
-    let alive = true
-    setBranchQuery('')
-    setBranchCreateOpen(false)
-    setNewBranchName('')
-    void channel
-      .invoke<GitBranchList>('dock', ['git-branches', {}])
-      .then((list) => {
-        if (alive) setBranchList(list)
-      })
-      .catch((reason: unknown) => {
-        if (!alive) return
-        setBranchList(null)
-        setFault(`读分支清单失败：${reason instanceof Error ? reason.message : String(reason)}`)
-      })
-    return () => {
-      alive = false
-    }
-  }, [branchOpen, channel, git.branch])
-
-  // 清单到手后把「当前分支」那一条滚进视野（参考实现同款）：分支多的仓库里，
-  // 展开就看到自己在哪，不必自己找。`block: 'nearest'` 已在视野里就不动。
-  useEffect(() => {
-    if (!branchOpen || branchList === null) return
-    const node = branchRows.current?.querySelector<HTMLElement>('[data-branch-current="true"]')
-    node?.scrollIntoView({ block: 'nearest' })
-  }, [branchOpen, branchList])
   const area = useRef<HTMLTextAreaElement | null>(null)
   // 把「写字 + 聚焦」挂到模块级口子上（服务表在 apply 阶段已经提供出去，见文件头）。
   useEffect(() => {
@@ -580,55 +517,6 @@ function ComposerBox(): ReactNode {
       })
   }
 
-  /**
-   * 切分支：`dock git-checkout`（**写类 op，过审批**——切分支会把改动带过去或让 git 拒掉，
-   * 所以与暂存 / 提交同一档，卡片上写着切到哪个分支）。
-   *
-   * 失败分两种，都往输入的 fault 行上写（那颗钮就在输入框上方，用户的眼睛在那儿）：
-   *   - 审批被拒 / git 自己拒（工作树里有会被覆盖的改动）：git 的原文已经说清了是哪些文件，
-   *     原样给出去，再补一句「往哪儿走」（先提交或暂存）。
-   *   - 通道 / 参数层面的错：原文照给。
-   */
-  const switchBranch = (name: string): void => {
-    setBranchBusy(true)
-    setFault(null)
-    // 菜单先收起来：接下来可能弹审批卡，卡才是这一刻该看的东西（菜单盖在卡上面会让人点不到）。
-    setBranchOpen(false)
-    void channel
-      .invoke('dock', ['git-checkout', { branch: name }], { timeoutMs: HUMAN_WAIT_TIMEOUT_MS })
-      .then(() => {
-        toastOk(`已切到分支「${name}」`)
-      })
-      .catch((reason: unknown) => {
-        const text = reason instanceof Error ? reason.message : String(reason)
-        setFault(wouldOverwrite(text) ? `${text}（先提交或暂存这些改动再切：右侧边栏「变更」页签可以提交）` : text)
-      })
-      .finally(() => {
-        setBranchBusy(false)
-      })
-  }
-
-  /** 新建分支并切过去：`dock git-branch-create`（同样是写类 op，过审批）。 */
-  const createBranch = (): void => {
-    const name = newBranchName.trim()
-    if (name === '') return
-    setBranchBusy(true)
-    setFault(null)
-    setBranchOpen(false)
-    void channel
-      .invoke('dock', ['git-branch-create', { branch: name }], { timeoutMs: HUMAN_WAIT_TIMEOUT_MS })
-      .then(() => {
-        setBranchCreateOpen(false)
-        setNewBranchName('')
-        toastOk(`已新建并切到分支「${name}」`)
-      })
-      .catch((reason: unknown) => {
-        setFault(reason instanceof Error ? reason.message : String(reason))
-      })
-      .finally(() => {
-        setBranchBusy(false)
-      })
-  }
 
   /** 上下键翻本机历史；翻到底回到草稿。 */
   /** @ 文件提及补全：track 跟输入走，pick 把候选替换进文本并落光标。 */
@@ -1101,141 +989,22 @@ function ComposerBox(): ReactNode {
     // （用户报「git 管理按钮，需要与输入框作出区分」）。参考实现里这一行也在输入框上方的
     // 框外。`.composer-zone` 的「与正文列同宽」打在插件根节点上，所以这一层要接住它。
     <div className="composer-stack" style={{ marginTop: 10 }}>
-      {/* 分支控制（对照参考实现输入框上方那一行）：一颗钮显示当前分支，点开是分支菜单
-          （搜 / 切 / 新建）。读数来自宿主快照面 `surfaces.git`（宿主自己按节奏拍，
-          壳只渲染），**不是仓库时整行不画**。写口（切 / 新建）走 `dock` 的写类 op，
-          与暂存 / 提交同一档：过审批。 */}
-      {git.repo ? (
-        <div className="composer-git">
-          <div className="model-anchor">
-            <button
-              type="button"
-              className={`model-btn git-btn${branchOpen ? ' open' : ''}`}
-              data-tip={git.detached ? 'HEAD 已分离（不在任何分支上）；点开可以切回一个分支' : `当前分支：${git.branch}`}
-              aria-haspopup="menu"
-              aria-expanded={branchOpen}
-              onClick={() => {
-                setBranchOpen((open) => !open)
-                setPermOpen(false)
-                setPresetOpen(false)
-                setModelOpen(false)
-                setEffortOpen(false)
-              }}
-            >
-              <IconBranch size={13} />
-              <span className="git-branch-name">{git.branch}</span>
-              <IconChevronDown size={12} />
-            </button>
-            {branchOpen ? (
-              <>
-                <div
-                  className="pop-mask"
-                  onClick={() => {
-                    setBranchOpen(false)
-                  }}
-                />
-                <div className="model-pop git-pop" role="menu" aria-label="切换分支">
-                  <div className="pop-label">
-                    切换分支
-                    <span className="pop-note">
-                      {branchList?.detached === true ? 'HEAD 已分离' : `当前 ${branchList?.current ?? git.branch}`}
-                      {git.dirtyFileCount > 0 ? ` · ${String(git.dirtyFileCount)} 个文件已更改` : ''}
-                    </span>
-                  </div>
-                  <div className="git-search">
-                    <IconSearch size={13} />
-                    <input
-                      type="text"
-                      value={branchQuery}
-                      placeholder="搜索分支…"
-                      aria-label="搜索分支"
-                      autoFocus
-                      onChange={(event) => {
-                        setBranchQuery(event.target.value)
-                      }}
-                    />
-                  </div>
-                  <div className="model-list git-branch-list" ref={branchRows}>
-                    {branchList === null ? (
-                      <div className="pop-item">
-                        <span className="name">正在读取分支…</span>
-                      </div>
-                    ) : filteredBranches(branchList.branches, branchQuery).length === 0 ? (
-                      <div className="pop-item">
-                        <span className="name">{branchQuery.trim() === '' ? '这个仓库还没有分支' : '没有匹配的分支'}</span>
-                      </div>
-                    ) : (
-                      filteredBranches(branchList.branches, branchQuery).map((row) => (
-                        <button
-                          type="button"
-                          role="menuitemradio"
-                          aria-checked={row.current}
-                          key={row.name}
-                          className={`pop-item${row.current ? ' on' : ''}`}
-                          title={row.current ? `${row.name}（当前分支）` : `切到 ${row.name}`}
-                          disabled={row.current || branchBusy}
-                          {...(row.current ? { 'data-branch-current': 'true' } : {})}
-                          onClick={() => {
-                            switchBranch(row.name)
-                          }}
-                        >
-                          <IconBranch size={13} className="git-item-icon" />
-                          <span className="name">{row.name}</span>
-                          {row.current ? <IconCheck size={14} className="check" /> : null}
-                        </button>
-                      ))
-                    )}
-                  </div>
-                  <div className="git-foot">
-                    {branchCreateOpen ? (
-                      <form
-                        className="git-create"
-                        onSubmit={(event) => {
-                          event.preventDefault()
-                          createBranch()
-                        }}
-                      >
-                        <input
-                          type="text"
-                          value={newBranchName}
-                          placeholder="新分支名，如 feat/xxx"
-                          aria-label="新分支名"
-                          autoFocus
-                          disabled={branchBusy}
-                          onChange={(event) => {
-                            setNewBranchName(event.target.value)
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Escape') {
-                              event.preventDefault()
-                              setBranchCreateOpen(false)
-                            }
-                          }}
-                        />
-                        <button type="submit" disabled={branchBusy || newBranchName.trim() === ''}>
-                          创建并切换
-                        </button>
-                      </form>
-                    ) : (
-                      <button
-                        type="button"
-                        className="git-foot-btn"
-                        disabled={branchBusy}
-                        onClick={() => {
-                          setBranchCreateOpen(true)
-                        }}
-                      >
-                        <IconPlus size={13} />
-                        新建分支…
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
+      {/* 分支控制（输入框上方那一行）：读数 / 开关 / 写口都在 branch-menu.tsx。 */}
+      <BranchMenu
+        open={branchOpen}
+        onOpenChange={(open) => {
+          setBranchOpen(open)
+          if (!open) return
+          // 四张浮层互斥：开这一张就把别的收掉（旧界面同款）。
+          setPermOpen(false)
+          setPresetOpen(false)
+          setModelOpen(false)
+          setEffortOpen(false)
+        }}
+        git={git}
+        channel={channel}
+        onFault={setFault}
+      />
 
       {/* 输入框本体：这一层的描边 + 圆角说的才是「这里可以打字」。贴图 / 拖文件那三个
           事件挂在它上面（不在外层那一列上）：命中面就是看得见的那个框。 */}
@@ -1868,487 +1637,4 @@ function ComposerBox(): ReactNode {
       {fault === null ? null : <div className="shell-composer-fault">{fault}</div>}
     </div>
   )
-}
-
-/** 排队消息摘要：压成一行、截到 200 字（全文挂在悬浮说明上）。 */
-function previewOf(text: string): string {  const flat = text.replace(/\s+/g, ' ').trim()
-  const chars = Array.from(flat)
-  return chars.length > PREVIEW_CHARS ? `${chars.slice(0, PREVIEW_CHARS).join('')}…` : flat
-}
-
-/** 排队条一次动作的结果：`rejected` = 宿主回话说没做到，`failed` = 这次调用本身出错。 */
-type ActOutcome = 'ok' | 'rejected' | 'failed'
-
-/**
- * 待投递通知条（对照 dsh 的 turn-trigger 行）：回合跑动中到达的**机器**唤醒
- * （队友汇报、审查 findings、传话、后台作业完成、定时补投……）还没交给模型时，
- * 在输入框**上方**露一行。与下面的排队条（用户输入）分开：这一条**只读**——
- * 没有编辑 / 撤掉 / 插话三颗钮（机器消息不代表人的意图），也不把 `<teammate-report …>`
- * 这类原始标记上屏，由 {@link summarizeNotice} 压成一句含来源的人话。
- *
- * 队列空了整块不渲染（与排队条一致，不留空壳把输入框顶出一条间距）。
- */
-function NoticeStrip(): ReactNode {
-  const notices = useHostSelector(readNotices, sameNotices)
-  if (notices.length === 0) return null
-  return (
-    <div className="notice-strip" data-notice-strip="">
-      {notices.map((item) => {
-        const summary = summarizeNotice(item.text)
-        return (
-          <div className="notice-row" key={item.index}>
-            <span className="notice-lead" aria-hidden="true">
-              <IconSpark size={13} />
-            </span>
-            <span className="notice-label" data-tip={summary.detail === '' ? summary.label : summary.detail}>
-              {summary.label}
-            </span>
-            {summary.detail === '' ? null : <span className="notice-detail">{summary.detail}</span>}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-/**
- * 排队消息条（对照旧界面 `queue-dock.tsx`）。
- *
- * 折叠语义照抄：1 条时没有头行、那一行自带队列图标；多条默认折叠、点头行展开；
- * 队列空了整块不渲染。三类动作都按**行下标**定位（下标就是这条消息在队列里的身份），
- * 宿主说没做到（那条已经出账）就给一句人话，不静默。
- */
-function QueueDock(): ReactNode {
-  const channel = useHostChannel()
-  const items = useHostSelector(readQueued, sameQueued)
-  const turnState = useHostSelector(readTurnState)
-  const [collapsed, setCollapsed] = useState(true)
-  const [editing, setEditing] = useState<{ index: number; text: string } | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [fault, setFault] = useState<string | null>(null)
-  const count = items.length
-
-  // 队列空了就收回头行；正在编辑的那条出账了（下标没了）就退出编辑态，
-  // 否则回车保存会打到别人头上。
-  useEffect(() => {
-    if (count === 0 && !collapsed) setCollapsed(true)
-    if (editing !== null && !items.some((item) => item.index === editing.index)) setEditing(null)
-  }, [collapsed, editing, items, count])
-
-  if (count === 0) return null
-  const expanded = count === 1 || !collapsed || editing !== null
-  const running = turnState !== 'idle'
-
-  /**
-   * 跑一个动作。失败要分两种：`rejected` 是宿主**正常回话说没做到**（那条已经出账 /
-   * 这一轮刚结束），调用方据此补一句具体解释；`failed` 是这次调用本身出错（通道断了、
-   * 方法不在放行面里、实参不合规），原因已经由这里写进 fault，调用方**不要再覆盖**——
-   * 覆盖了就等于对用户说一句与事实相反的话，把人往错的方向带。
-   */
-  const act = async (work: () => Promise<boolean>, failure: string): Promise<ActOutcome> => {
-    setBusy(true)
-    setFault(null)
-    try {
-      return (await work()) ? 'ok' : 'rejected'
-    } catch (error) {
-      setFault(`${failure}：${error instanceof Error ? error.message : String(error)}`)
-      return 'failed'
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const save = async (index: number): Promise<void> => {
-    const value = editing?.text.trim() ?? ''
-    if (value === '') return
-    const outcome = await act(() => channel.invoke<boolean>('editQueued', [index, value]), '编辑失败')
-    if (outcome === 'ok') {
-      setEditing(null)
-      return
-    }
-    if (outcome === 'rejected') setFault('编辑失败：这条已经开始发送了')
-  }
-
-  const remove = async (index: number): Promise<void> => {
-    const outcome = await act(() => channel.invoke<boolean>('removeQueued', [index]), '撤掉失败')
-    if (outcome === 'rejected') setFault('撤掉失败：这条已经开始发送了')
-  }
-
-  /**
-   * 插话：打断当前输出，让这条立刻作为新一轮发出去。
-   *
-   * 先问一次——代价是把模型正在说的话砍断（半截会保留），点错了才发现太晚。
-   * 旧界面用的是自家样式的确认弹层（`.dsc-confirm`），壳里还没有这套弹层，
-   * 所以先用浏览器自带的确认框顶上：它有同样的「必须显式回答」语义。
-   */
-  const steer = async (index: number): Promise<void> => {
-    const ahead = index
-    const detail =
-      ahead > 0
-        ? `会打断模型当前的输出，让这条以及排在它前面的 ${String(ahead)} 条立刻作为新一轮发出去（模型已经说出的半截会保留）。`
-        : '会打断模型当前的输出，让这条立刻作为新一轮发出去（模型已经说出的半截会保留）。'
-    if (!window.confirm(`打断并插话？\n\n${detail}`)) return
-    const outcome = await act(() => channel.invoke<boolean>('steerQueued', [index]), '插话失败')
-    if (outcome === 'rejected') setFault('插话没赶上：这一轮刚结束，排队消息会自己发出去')
-  }
-
-  return (
-    <div className="queue-dock" data-queue-dock="">
-      <div className="queue-panel">
-        {count > 1 ? (
-          <button
-            type="button"
-            className="queue-head"
-            aria-expanded={expanded}
-            disabled={busy || editing !== null}
-            data-tip={expanded ? '收起排队消息' : '展开排队消息'}
-            onClick={() => {
-              setCollapsed((current) => !current)
-            }}
-          >
-            <span className="queue-lead" aria-hidden="true">
-              <IconQueue size={13} />
-            </span>
-            <span className="queue-count">{count} 条排队消息</span>
-            <span className="queue-note">这一轮跑完自动发出</span>
-            <span className="queue-caret" aria-hidden="true">
-              <IconChevronDown size={13} />
-            </span>
-          </button>
-        ) : null}
-
-        {expanded ? (
-          <ul className="queue-list">
-            {/* key 用下标：这条列表的位置就是它的身份（编辑/撤掉/插话都按位置找）。 */}
-            {items.map((item) => (
-              <li className="queue-row" key={item.index}>
-                {editing?.index === item.index ? (
-                  <>
-                    <textarea
-                      className="queue-edit-box"
-                      value={editing.text}
-                      autoFocus
-                      rows={Math.min(8, Math.max(1, editing.text.split('\n').length))}
-                      aria-label="编辑排队消息"
-                      onChange={(event) => {
-                        setEditing({ index: item.index, text: event.target.value })
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' && !event.shiftKey) {
-                          event.preventDefault()
-                          void save(item.index)
-                          return
-                        }
-                        if (event.key === 'Escape') {
-                          event.preventDefault()
-                          setEditing(null)
-                        }
-                      }}
-                    />
-                    <button
-                      type="button"
-                      className="queue-act"
-                      aria-label="保存排队消息"
-                      data-tip="保存（回车）"
-                      disabled={busy || editing.text.trim() === ''}
-                      onClick={() => void save(item.index)}
-                    >
-                      <IconCheck size={13} />
-                    </button>
-                    <button
-                      type="button"
-                      className="queue-act"
-                      aria-label="取消编辑"
-                      data-tip="取消（Esc）"
-                      disabled={busy}
-                      onClick={() => {
-                        setEditing(null)
-                      }}
-                    >
-                      <IconClose size={13} />
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    {count === 1 ? (
-                      <span className="queue-lead" aria-hidden="true">
-                        <IconQueue size={13} />
-                      </span>
-                    ) : null}
-                    <span className="queue-text" data-tip={item.text}>
-                      {previewOf(item.text)}
-                    </span>
-                    {item.images === undefined || item.images.length === 0 ? null : (
-                      <span className="queue-badge" data-tip={`随这条一起排队的 ${String(item.images.length)} 张图`}>
-                        +{item.images.length} 图
-                      </span>
-                    )}
-                    <div className="queue-acts">
-                      <button
-                        type="button"
-                        className="queue-act"
-                        aria-label="编辑排队消息"
-                        data-tip="改这条排队消息"
-                        disabled={busy}
-                        onClick={() => {
-                          setEditing({ index: item.index, text: item.text })
-                        }}
-                      >
-                        <IconEdit size={13} />
-                      </button>
-                      <button
-                        type="button"
-                        className="queue-act"
-                        aria-label="撤回排队消息"
-                        data-tip="撤掉这条（还没发出去）"
-                        disabled={busy}
-                        onClick={() => void remove(item.index)}
-                      >
-                        <IconTrash size={13} />
-                      </button>
-                      <button
-                        type="button"
-                        className="queue-act"
-                        aria-label="插话发送"
-                        data-tip={
-                          running
-                            ? '打断当前输出，让这条立刻发出去（模型已说出的半截保留）'
-                            : '这一轮已经跑完，排队消息会自己发出去'
-                        }
-                        disabled={busy || !running}
-                        onClick={() => void steer(item.index)}
-                      >
-                        {/* 旧界面这一颗是闪电图标；图标集里没有，用同一族的「前进」语义代替。 */}
-                        <IconArrowUp size={13} />
-                      </button>
-                    </div>
-                  </>
-                )}
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </div>
-      {fault === null ? null : <div className="shell-composer-fault">{fault}</div>}
-    </div>
-  )
-}
-
-/** 排队消息的相等判断：内容没变就不重渲染（宿主每帧都可能给新数组）。 */
-function sameQueued(left: readonly QueuedMessageView[], right: readonly QueuedMessageView[]): boolean {
-  if (left === right) return true
-  if (left.length !== right.length) return false
-  return left.every((item, index) => {
-    const other = right[index]
-    if (other === undefined) return false
-    return (
-      item.index === other.index &&
-      item.text === other.text &&
-      (item.images?.join('|') ?? '') === (other.images?.join('|') ?? '')
-    )
-  })
-}
-
-function readModel(snapshot: HostSnapshot | null): string {
-  const status = snapshot?.['status']
-  if (typeof status !== 'object' || status === null) return ''
-  const value = (status as Record<string, unknown>)['model']
-  return typeof value === 'string' ? value : ''
-}
-
-/**
- * 当前模型所属端点：`status.model` 是**裸名**，光有它分不清同名模型挂在哪个端点下
- * （清单里 `value` 才是 `端点/模型`）。老快照没有这一项时给空串，界面按「端点未知」处理。
- */
-function readProvider(snapshot: HostSnapshot | null): string {
-  const status = snapshot?.['status']
-  if (typeof status !== 'object' || status === null) return ''
-  const value = (status as Record<string, unknown>)['provider']
-  return typeof value === 'string' ? value : ''
-}
-
-function readEffort(snapshot: HostSnapshot | null): string {
-  const status = snapshot?.['status']
-  if (typeof status !== 'object' || status === null) return 'default'
-  const value = (status as Record<string, unknown>)['effort']
-  return typeof value === 'string' ? value : 'default'
-}
-
-/** 有挂起的审批时输入区整体禁用（旧界面把 `pendingApproval !== null` 传成 disabled）。 */
-function readHasApproval(snapshot: HostSnapshot | null): boolean {
-  const surfaces = snapshot?.['surfaces']
-  if (typeof surfaces !== 'object' || surfaces === null) return false
-  const pending = (surfaces as Record<string, unknown>)['pendingApproval']
-  return pending !== null && pending !== undefined
-}
-
-/** 会话身份（草稿按它分槽）。用 `sessionPath` 而不是 `sessionId`：路径是壳里其它地方
- *  统一的会话标识，同一条会话重开还是同一把钥匙，草稿不会因为换了进程就丢。
- *  **还没落盘的会话**（`sessionUnsaved`）路径会变，那种会话的草稿改按工作区分槽——
- *  见 plugins/composer/draft.ts 的 `draftScopeOf`。 */
-function readSessionPath(snapshot: HostSnapshot | null): string {
-  const status = snapshot?.['status']
-  if (typeof status !== 'object' || status === null) return ''
-  const path = (status as Record<string, unknown>)['sessionPath']
-  return typeof path === 'string' ? path : ''
-}
-
-/** 会话 uuid（分槽时用来分辨「换了会话」与「同一条会话刚落盘」）。 */
-function readSessionId(snapshot: HostSnapshot | null): string {
-  const status = snapshot?.['status']
-  if (typeof status !== 'object' || status === null) return ''
-  const value = (status as Record<string, unknown>)['sessionId']
-  return typeof value === 'string' ? value : ''
-}
-
-/** 会话工作目录（未落盘的新会话按它分槽）。 */
-function readDraftCwd(snapshot: HostSnapshot | null): string {
-  const status = snapshot?.['status']
-  if (typeof status !== 'object' || status === null) return ''
-  const value = (status as Record<string, unknown>)['cwd']
-  return typeof value === 'string' ? value : ''
-}
-
-/** 这条会话一条消息都还没发过吗（草稿分槽的第二个依据）。 */
-function readSessionUnsaved(snapshot: HostSnapshot | null): boolean {
-  const status = snapshot?.['status']
-  if (typeof status !== 'object' || status === null) return false
-  return (status as Record<string, unknown>)['sessionUnsaved'] === true
-}
-
-/**
- * 权限预设投影（当前生效的 + 新会话默认的 + 全部可选）。清单**从快照读**，不在壳里抄一份：
- * 出厂那几个预设（只读 / 工作区可写 / 完全访问 / AI 复核）由 permission-presets 插件给定，
- * 抄一份就会漂。`current` 是预设名，三项旋钮拼不出预设时宿主给 `'custom'`（这里不特判它，
- * 菜单找不到这一项自然显示「自定义」）。
- */
-function readPermissionPresets(snapshot: HostSnapshot | null): PermissionPresetSurface {
-  const surfaces = snapshot?.['surfaces']
-  if (typeof surfaces !== 'object' || surfaces === null) return EMPTY_PERMISSION_PRESETS
-  const presets = (surfaces as Record<string, unknown>)['permissionPresets']
-  if (typeof presets !== 'object' || presets === null) return EMPTY_PERMISSION_PRESETS
-  const record = presets as Record<string, unknown>
-  const current = record['current']
-  const options = record['options']
-  if (typeof current !== 'string' || !Array.isArray(options)) return EMPTY_PERMISSION_PRESETS
-  return {
-    current,
-    defaultName: typeof record['defaultName'] === 'string' ? record['defaultName'] : '',
-    options: options as PermissionPresetSurface['options'],
-  }
-}
-
-/**
- * 权限预设投影的相等判断：快照**每帧都换引用**，不给判断就会每帧重画输入区。
- *
- * 逐字段比而不是比引用：清单是几个预设，比一遍比让 React 重画便宜得多
- * （与 `sameQueued` 同一套写法）。
- */
-function samePermissionPresets(left: PermissionPresetSurface, right: PermissionPresetSurface): boolean {
-  if (left === right) return true
-  if (left.current !== right.current || left.defaultName !== right.defaultName) return false
-  if (left.options.length !== right.options.length) return false
-  return left.options.every((item, index) => {
-    const other = right.options[index]
-    return (
-      other !== undefined &&
-      item.name === other.name &&
-      item.label === other.label &&
-      item.description === other.description &&
-      item.builtin === other.builtin
-    )
-  })
-}
-
-/** 模式（预设）投影（当前档 + 新会话默认 + 全部可选），同样从快照读。 */
-function readPresetSurface(snapshot: HostSnapshot | null): PresetSurface {
-  const surfaces = snapshot?.['surfaces']
-  if (typeof surfaces !== 'object' || surfaces === null) return EMPTY_PRESET
-  const preset = (surfaces as Record<string, unknown>)['preset']
-  if (typeof preset !== 'object' || preset === null) return EMPTY_PRESET
-  const record = preset as Record<string, unknown>
-  const current = record['current']
-  const options = record['options']
-  if (typeof current !== 'string' || !Array.isArray(options)) return EMPTY_PRESET
-  return {
-    current,
-    defaultName: typeof record['defaultName'] === 'string' ? record['defaultName'] : '',
-    options: options as PresetView[],
-    droppable: Array.isArray(record['droppable']) ? record['droppable'] : [],
-  }
-}
-
-/** 模式投影的相等判断（比的是菜单真正用到的四个字段）。 */
-function samePresetSurface(left: PresetSurface, right: PresetSurface): boolean {
-  if (left === right) return true
-  if (left.current !== right.current || left.defaultName !== right.defaultName) return false
-  if (left.options.length !== right.options.length) return false
-  return left.options.every((item, index) => {
-    const other = right.options[index]
-    return (
-      other !== undefined &&
-      item.name === other.name &&
-      item.label === other.label &&
-      item.description === other.description &&
-      item.problem === other.problem
-    )
-  })
-}
-
-/**
- * 收件箱里还排着几条（用户队列 + 机器通知，**两个面之和**）。
- *
- * 用途只有一个：提交时按它算「这条新消息会排到收件箱第几位」，好让紧随的
- * `steerQueued(index)` 提到队首。必须数**整条收件箱**而不是只数 `queued`——
- * 队列条的面拆开后，用户消息在收件箱里的下标仍要跨过排在前面的机器通知，
- * 只数用户队列会把插话打到别的条目上。
- */
-function readInboxCount(snapshot: HostSnapshot | null): number {
-  const queued = snapshot?.['queued']
-  const notices = snapshot?.['notices']
-  return (Array.isArray(queued) ? queued.length : 0) + (Array.isArray(notices) ? notices.length : 0)
-}
-
-function readQueued(snapshot: HostSnapshot | null): readonly QueuedMessageView[] {
-  const value = snapshot?.['queued']
-  return Array.isArray(value) ? (value as QueuedMessageView[]) : EMPTY_QUEUE
-}
-
-/** 空队列常量：引用稳定，选择器（默认比较）才拦得住重渲染。 */
-const EMPTY_QUEUE: readonly QueuedMessageView[] = Object.freeze([])
-
-/** 待投递通知的相等判断：内容没变就不重渲染（宿主每帧都可能给新数组）。 */
-function sameNotices(left: readonly NoticeMessageView[], right: readonly NoticeMessageView[]): boolean {
-  if (left === right) return true
-  if (left.length !== right.length) return false
-  return left.every((item, index) => {
-    const other = right[index]
-    return other !== undefined && item.index === other.index && item.text === other.text
-  })
-}
-
-function readNotices(snapshot: HostSnapshot | null): readonly NoticeMessageView[] {
-  const value = snapshot?.['notices']
-  return Array.isArray(value) ? (value as NoticeMessageView[]) : EMPTY_NOTICES
-}
-
-/** 空通知常量：同 EMPTY_QUEUE 的理由。 */
-const EMPTY_NOTICES: readonly NoticeMessageView[] = Object.freeze([])
-
-/**
- * git 读数投影（当前分支 + 改动计数）。宿主那片是**轻读**（一条分支名 + 数一数
- * `git status` 的条数），壳只渲染，不自己拍——两处各拍一遍在大仓里就是拿 CPU 换同一行字。
- */
-function readGit(snapshot: HostSnapshot | null): GitSurface {
-  const surfaces = snapshot?.['surfaces']
-  if (typeof surfaces !== 'object' || surfaces === null) return EMPTY_GIT
-  const raw = (surfaces as Record<string, unknown>)['git']
-  if (typeof raw !== 'object' || raw === null) return EMPTY_GIT
-  const record = raw as Record<string, unknown>
-  return {
-    repo: record['repo'] === true,
-    branch: typeof record['branch'] === 'string' ? record['branch'] : '',
-    detached: record['detached'] === true,
-    dirtyFileCount: typeof record['dirtyFileCount'] === 'number' ? record['dirtyFileCount'] : 0,
-  }
 }
