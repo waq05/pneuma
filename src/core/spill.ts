@@ -17,6 +17,7 @@ import { randomBytes } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { resolvePluginConfig } from './plugin-registry.js'
 import { dscPath, expandHome } from './path-policy.js'
+import { formatBytes } from './bytes.js'
 import { clampIntIn as clampInt } from './clamp.js'
 
 /** 插件在条目树（`~/.dsc/plugins.json`）里的键。 */
@@ -363,10 +364,3 @@ export function sweepSpillDir(config: SpillConfig, keepPath?: string): SpillSwee
   return result
 }
 
-/** 字节数换成人看的写法（设置页与清理结果里用）。 */
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${String(bytes)} 字节`
-  if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1_073_741_824) return `${(bytes / 1_048_576).toFixed(1)} MB`
-  return `${(bytes / 1_073_741_824).toFixed(2)} GB`
-}

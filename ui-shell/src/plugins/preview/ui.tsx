@@ -41,7 +41,7 @@ import {
   type ChangedFileView,
   type DockTabBodyProps,
 } from '@dsc/ui'
-import { formatSize, readCwd } from '@dsc/ui-primitives'
+import { formatBytes, readCwd } from '@dsc/ui-primitives'
 
 /** `fs-read` 回来的形状（宿主 `desktop-dock` 插件的契约）。 */
 interface ReadResult {
@@ -229,7 +229,7 @@ function renderBody(read: ReadResult, fsRead: (file: string) => Promise<unknown>
   if (read.tooLarge) {
     return (
       <div className="file-preview-empty">
-        文件过大（{formatSize(read.size ?? 0)}），仅支持预览 10MB 以内的文件。
+        文件过大（{formatBytes(read.size ?? 0)}），仅支持预览 10MB 以内的文件。
       </div>
     )
   }
@@ -241,7 +241,7 @@ function renderBody(read: ReadResult, fsRead: (file: string) => Promise<unknown>
     )
   }
   if (read.kind === 'binary') {
-    return <div className="file-preview-empty">二进制文件（{formatSize(read.size ?? 0)}），暂不支持预览。</div>
+    return <div className="file-preview-empty">二进制文件（{formatBytes(read.size ?? 0)}），暂不支持预览。</div>
   }
   if (read.kind === 'bytes') {
     // bytes 只有两种宿主会给：application/pdf 走逐页渲染，其余（xlsx/xlsm）走
@@ -252,7 +252,7 @@ function renderBody(read: ReadResult, fsRead: (file: string) => Promise<unknown>
     if (read.base64 !== undefined) return <XlsxView base64={read.base64} />
     return (
       <div className="file-preview-empty">
-        这类文件（{read.mime ?? '未知类型'}，{formatSize(read.size ?? 0)}）要看内容请用「系统打开」。
+        这类文件（{read.mime ?? '未知类型'}，{formatBytes(read.size ?? 0)}）要看内容请用「系统打开」。
       </div>
     )
   }

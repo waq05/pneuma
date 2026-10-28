@@ -14,7 +14,8 @@
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import { errText } from '../core/err-text.js'
-import { formatBytes, listSpillFiles, readSpillConfig, SPILL_RANGES, spillText, sweepSpillDir } from '../core/spill.js'
+import { formatBytes } from '../core/bytes.js'
+import { listSpillFiles, readSpillConfig, SPILL_RANGES, spillText, sweepSpillDir } from '../core/spill.js'
 import type { SpillConfig } from '../core/spill.js'
 import { writePluginConfig } from '../core/plugin-registry.js'
 import type { ToolObserver } from '../core/tool-guards.js'

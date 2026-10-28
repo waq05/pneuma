@@ -61,7 +61,7 @@ import {
   useHostChannel,
   useHostSelector,
 } from '@dsc/ui'
-import { readTurnState, sameGitSurface as sameGit } from '@dsc/ui-primitives'
+import { formatBytes, readTurnState, sameGitSurface as sameGit } from '@dsc/ui-primitives'
 import { useMention } from './mention'
 import { useCommandMenu } from './command-menu'
 import { blockedNow, commandQuery } from './commands'
@@ -70,7 +70,6 @@ import {
   composeSubmit,
   displayNameOf,
   extractVideoFrames,
-  formatBytes,
   kindOf,
   MAX_IMAGES,
   newAttachmentId,
@@ -89,8 +88,6 @@ import { readDraftCwd, readGit, readHasApproval, readInboxCount, readPermissionP
 const MAX_INPUT_HEIGHT = 200
 /** 本机历史输入留多少条（旧界面用会话历史；壳这边先本地记一份）。 */
 const HISTORY_LIMIT = 50
-
-
 
 /**
  * 「往输入框写一段话」的对外口子：首屏四张能力卡（transcript 插件）经服务表调它。

@@ -42,6 +42,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, 
 import { open, rm, stat } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
+import { formatBytes } from './bytes.js'
 import { dscPath } from './path-policy.js'
 
 /** 单张图片上限（与 dsh `maxImageBytes` 的默认值一致）。 */
@@ -399,14 +400,6 @@ export function fileHandleText(files: readonly UserFileAttachment[]): string {
     return `[${kind}附件] ${file.name}（${file.mime} · ${formatBytes(file.bytes)} · sha256:${file.sha.slice(0, 12)}）\n只读路径：${file.path}`
   })
   return lines.join('\n')
-}
-
-/** 字节数读成人类可读的一段（本模块与界面提示共用同一种写法）。 */
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${String(bytes)} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
 /** 按扩展名给一个「像不像图片」的提示（只用于界面提前选路，不参与安全判断）。 */

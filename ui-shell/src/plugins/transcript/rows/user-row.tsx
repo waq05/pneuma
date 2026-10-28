@@ -7,6 +7,8 @@
  */
 import { useContext, useState, type ReactNode } from 'react'
 import { FileIcon, IconEdit, type TranscriptEntry, type UserFileAttachment } from '@dsc/ui'
+// 体积读数与文件树、预览面板、输入区附件同一份实现（壳里唯一一份）。
+import { formatBytes } from '@dsc/ui-primitives'
 import { FlowActionsContext } from '../shared'
 import { teammateReportLabel } from '../rounds'
 
@@ -205,15 +207,3 @@ export function ReadonlyUserRow({ entry }: { entry: Extract<TranscriptEntry, { k
   )
 }
 
-/**
- * 附件体积的人话读法（1024 进制）：不到 1KB 给整数 B，不到 1MB 给一位小数 KB，再往上一位小数 MB。
- *
- * @param bytes - 字节数。
- * @returns 形如 `512 B` / `3.4 KB` / `1.2 MB`；数字不合法时给一个破折号，不显示 NaN。
- */
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return '—'
-  if (bytes < 1024) return `${String(Math.round(bytes))} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}

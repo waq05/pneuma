@@ -10,7 +10,8 @@
  *   - **图片规范化**在浏览器里先缩到 2048、压到 4MiB 以内，省的是上行流量与宿主的存储；
  *   - **视频抽帧**把一段视频变成几张图，模型不支持视频输入也能「看见」关键画面。
  *
- * 探针不直接读本模块（它碰 DOM 与网络）；可测的是 `composeSubmit` / `formatBytes` 这类纯函数。
+ * 探针不直接读本模块（它碰 DOM 与网络）；可测的是 `composeSubmit` 这类纯函数。
+ * 体积读数已收进基元包（`@dsc/ui-primitives` 的 `formatBytes`），本模块不再自带一份。
  *
  * @module dsc-ui-shell/plugins/composer/attachments
  */
@@ -52,21 +53,6 @@ let nextId = 0
 export function newAttachmentId(): string {
   nextId += 1
   return `attach-${String(Date.now())}-${String(nextId)}`
-}
-
-/** 把字节数压成一行给用户看（`1.2 MB` 这种）。 */
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
-  if (bytes < 1024) return `${String(Math.round(bytes))} B`
-  const units = ['KB', 'MB', 'GB'] as const
-  let value = bytes / 1024
-  let unit = 0
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024
-    unit += 1
-  }
-  const rounded = value >= 10 ? String(Math.round(value)) : value.toFixed(1).replace(/\.0$/, '')
-  return `${rounded} ${units[unit]}`
 }
 
 /** 文件名兜底：剪贴板里的截图常常没有名字。 */

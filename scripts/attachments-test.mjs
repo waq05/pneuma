@@ -27,12 +27,12 @@ process.env.DSC_HOME = join(home, '.dsc')
 mkdirSync(process.env.DSC_HOME, { recursive: true })
 writeFileSync(join(process.env.DSC_HOME, 'config.yaml'), 'model:\n  name: test\n', 'utf8')
 
+const { formatBytes } = await import('../lib/core/bytes.js')
 const {
   AttachmentError,
   AttachmentStore,
   attachmentUrl,
   fileHandleText,
-  formatBytes,
   parseAttachmentUrl,
   resolveImageForRequest,
   sanitizeFileRefs,

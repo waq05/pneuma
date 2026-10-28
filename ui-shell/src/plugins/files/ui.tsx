@@ -40,7 +40,7 @@ import {
   useHostChannel,
   useHostSelector,
 } from '@dsc/ui'
-import { formatSize, joinPath, readCwd } from '@dsc/ui-primitives'
+import { formatBytes, joinPath, readCwd } from '@dsc/ui-primitives'
 import { ChangesPanel } from './changes'
 import {
   getTree,
@@ -168,7 +168,7 @@ function TreeLevel({ cwd, path, depth }: { cwd: string; path: string; depth: num
               <FileIcon name={entry.name} size={15} />
             </span>
             <span className="file-name">{entry.name}</span>
-            <span className="file-size">{formatSize(entry.size)}</span>
+            <span className="file-size">{formatBytes(entry.size)}</span>
           </button>
         )
       })}
