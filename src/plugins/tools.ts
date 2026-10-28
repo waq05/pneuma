@@ -14,7 +14,7 @@
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import type { ToolEntry } from '../core/tools.js'
-import type { ToolService } from '../services/types.js'
+import type { AgentScope, ToolService } from '../services/types.js'
 
 /**
  * 注册表的形状关：拦住形状不对的条目（最常见的是 dsh 风格的 ToolDefinition——
@@ -40,8 +40,11 @@ export const toolsPlugin: Plugin.Object = {
   provide: 'tools',
   apply(ctx) {
     const entries = new Map<string, ToolEntry>()
-    /** 主会话目录的投影表（按注册顺序应用）。 */
-    const projections = new Map<string, (tools: readonly ToolEntry[]) => readonly ToolEntry[]>()
+    /** 主会话目录的投影表（按注册顺序应用）。第二个入参是「谁在问」，见 AgentScope。 */
+    const projections = new Map<
+      string,
+      (tools: readonly ToolEntry[], scope?: AgentScope) => readonly ToolEntry[]
+    >()
 
     const service: ToolService = {
       register(entry) {
@@ -60,11 +63,11 @@ export const toolsPlugin: Plugin.Object = {
           if (projections.get(id) === fn) projections.delete(id)
         }
       },
-      visible() {
+      visible(scope) {
         let out: readonly ToolEntry[] = [...entries.values()]
         for (const [id, fn] of projections) {
           try {
-            out = fn(out)
+            out = fn(out, scope)
           } catch (error) {
             // 一个投影崩了不该让这一轮请求整个失败：跳过它，模型这一轮看到的是未裁剪的
             // 目录（比看不到任何工具强），同时把话写进宿主日志，别让人对着怪现象猜。

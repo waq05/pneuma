@@ -27,7 +27,7 @@ import { pruneImages, readImageDietConfig } from '../core/image-diet.js'
 import { buildSystemPrompt, DEFAULT_INSTRUCTION_BUDGET, environmentText, type PromptContribution } from '../core/prompt.js'
 import { resolvePluginConfig } from '../core/plugin-registry.js'
 import type { Session } from '../core/session.js'
-import type { PromptService } from '../services/types.js'
+import type { AgentScope, PromptService } from '../services/types.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'prompt'
@@ -88,13 +88,19 @@ export const promptPlugin: Plugin.Object = {
   apply(ctx, passed) {
     let budget = readBudget(passed)
     /** 附加提示段：id → {顺序, 取文本, 归并目标}。同名后注册者顶掉先注册的，退订只撤自己那一份。 */
-    const sections = new Map<string, { order: number; text: () => string; block?: 'agents-md' }>()
+    const sections = new Map<
+      string,
+      { order: number; text: (scope?: AgentScope) => string; block?: 'agents-md' }
+    >()
     /**
      * 骨架过滤器表：id → 取舍函数。按登记顺序串起来应用（前一个的输出是后一个的输入）。
      * 模式（presets 插件）登记的那一位把「做事方式」「工具规范」这类段摘掉，
      * 极简档因此只剩一段固定提示词；一个都不登记时提示词逐字节不变。
      */
-    const skeletonFilters = new Map<string, (ids: readonly string[]) => readonly string[]>()
+    const skeletonFilters = new Map<
+      string,
+      (ids: readonly string[], scope?: AgentScope) => readonly string[]
+    >()
     /**
      * 命名投影表：id → {次序, 改写函数}。内核两条内置投影也在表里，与插件投影
      * 走同一条按次序应用的管道——「日志原文 + 这条链」就是模型看见的内容
@@ -199,11 +205,11 @@ export const promptPlugin: Plugin.Object = {
           if (projections.get(id)?.fn === fn) projections.delete(id)
         }
       },
-      sections() {
+      sections(scope) {
         const out: PromptContribution[] = []
         for (const [id, entry] of sections) {
           try {
-            out.push({ id, order: entry.order, text: entry.text(), ...(entry.block === undefined ? {} : { block: entry.block }) })
+            out.push({ id, order: entry.order, text: entry.text(scope), ...(entry.block === undefined ? {} : { block: entry.block }) })
           } catch {
             // 一个插件把提示词生成崩了，不该让这一轮请求整个失败：这段本轮跳过。
             void id
@@ -217,7 +223,7 @@ export const promptPlugin: Plugin.Object = {
           if (skeletonFilters.get(id) === fn) skeletonFilters.delete(id)
         }
       },
-      systemPrompt(cwd) {
+      systemPrompt(cwd, scope) {
         budget = readBudget(passed)
         // 没有过滤器时走 keep=undefined 的那条路：段的清单与顺序与以前完全一样
         const filters = [...skeletonFilters.entries()]
@@ -228,7 +234,7 @@ export const promptPlugin: Plugin.Object = {
                 let out = ids
                 for (const [id, fn] of filters) {
                   try {
-                    out = fn(out)
+                    out = fn(out, scope)
                   } catch (error) {
                     // 取舍崩了就当这一位不存在（提示词多一段总比整轮请求失败强）
                     ctx.emit('dsc/notice', `提示词段取舍 ${id} 这轮没跑成，已跳过：${errText(error)}`)
@@ -236,11 +242,11 @@ export const promptPlugin: Plugin.Object = {
                 }
                 return out
               }
-        return buildSystemPrompt(cwd, {
+        return buildSystemPrompt(scope?.cwd ?? cwd, {
           skills: ctx.skills.catalogText(),
           instructionBudget: budget,
           contributions: [
-            ...service.sections(),
+            ...service.sections(scope),
             { id: 'model', order: 890, text: `当前模型：${ctx.llm.model}（provider ${ctx.llm.provider}）` },
           ],
           ...(keep === undefined ? {} : { keep }),

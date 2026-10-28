@@ -77,13 +77,19 @@ export const agentPlugin: Plugin.Object = {
           // 系统提示每次请求重拼：切模式、改 AGENTS.md、换模型都不用重启。
           // 拼好的这份同时落进自己会话的 system-prompt 状态条目（hash 去重）。
           systemPrompt: () => {
-            const text = ctx.prompt.systemPrompt(session.meta.cwd)
+            // 带上「这个 agent 的会话」：模式那段话与段的取舍都按它算。不带的话，
+            // 后台会话的提示词会跟着「你此刻点开的会话」变（0.6.48 多 agent 的坑）。
+            const text = ctx.prompt.systemPrompt(session.meta.cwd, {
+              sessionId: session.meta.id,
+              cwd: session.meta.cwd,
+            })
             noteSystemPrompt(session, text)
             return text
           },
           // 模型面前那份目录走 visible()：模式（预设）在这里做减法，极简档因此只看到 bash。
           // 队友不走这条路——它们按自己的工牌从全量注册表里挑（见 plugins/subagent.ts）。
-          tools: () => ctx.tools.visible(),
+          // 同样带会话：模式白名单按**这个 agent 的**档算（见 plugins/presets.ts 的 bySession）
+          tools: () => ctx.tools.visible({ sessionId: session.meta.id }),
           guards: ctx.guards,
           emit: (event) => {
             // 先把这条内核事件翻译成 dsh 的 session/event 广播出去（旁路，内部吞错）：

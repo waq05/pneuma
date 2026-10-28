@@ -446,6 +446,21 @@ export interface WaitingService {
 
 // ── tools ────────────────────────────────────────────────────────────────────
 
+/**
+ * 内核扩展点的「谁在问」。
+ *
+ * 0.6.48 起宿主里同时常驻多个会话的 agent（切走的那一轮在后台继续跑），而工具目录
+ * 与系统提示都是**按会话**算的（模式是会话的属性，见 plugins/presets.ts）。扩展点
+ * 因此多带这一格：不传就按「当前查看的会话」算——单会话调用方（界面、诊断、/命令）
+ * 因此不必改一行。
+ */
+export interface AgentScope {
+  /** 发起方会话 id（缺省 = 当前查看的那个会话）。 */
+  sessionId?: string
+  /** 发起方工作目录（提示词读哪份 AGENTS.md；缺省 = 那个会话自己的目录）。 */
+  cwd?: string
+}
+
 /** 工具注册表服务：外部插件注入新工具的唯一入口。 */
 export interface ToolService {
   /** 注册一个工具；返回退订函数。 */
@@ -457,15 +472,21 @@ export interface ToolService {
    *
    * 只做减法——返回的必须是入参的子集，别用它凭空造工具：模型能调用的名字必须真的
    * 在注册表里，否则守卫链按名字找不到它，审计也就无从谈起。
+   * @param fn - 第二个参数是`谁在问`（会话）；按会话算的投影（模式白名单）靠它取对归属。
    * @param id - 投影名（宿主日志与诊断用）。
    * @returns 退订函数。
    */
-  project(id: string, fn: (tools: readonly ToolEntry[]) => readonly ToolEntry[]): () => void
+  project(
+    id: string,
+    fn: (tools: readonly ToolEntry[], scope?: AgentScope) => readonly ToolEntry[],
+  ): () => void
   /**
    * 主会话要发给模型的那份目录（过一遍全部投影，按注册顺序）。
    * 只有 agent 循环读它；队友、界面、工具检索一律走 {@link list}。
+   * @param scope - 谁在问（省略 = 当前查看的会话）。每个常驻 agent 传自己的会话 id，
+   *   否则后台跑的那一轮会拿到「你此刻点开的会话」的模式白名单。
    */
-  visible(): ToolEntry[]
+  visible(scope?: AgentScope): ToolEntry[]
 }
 
 // ── commands ─────────────────────────────────────────────────────────────────
@@ -697,7 +718,11 @@ export interface PromptService {
    *   `# agentsMd` 块（与 AGENTS.md / CLAUDE.md 同一个块）。长期记忆索引走这条路；
    *   缺省 = 按 order 单独成段。
    */
-  register(id: string, text: () => string, options?: { order?: number; block?: 'agents-md' }): () => void
+  register(
+    id: string,
+    text: (scope?: AgentScope) => string,
+    options?: { order?: number; block?: 'agents-md' },
+  ): () => void
   /**
    * 注册一个「骨架取舍」（内核 API v5）：拼系统提示时按登记顺序应用，拿到全部候选段的
    * id，返回要留下的那些。模式（presets 插件）用它把「做事方式」这类叮嘱段整段摘掉，
@@ -709,7 +734,10 @@ export interface PromptService {
    * @param id - 过滤器名（诊断与文档用）。
    * @returns 退订函数。
    */
-  registerSkeletonFilter(id: string, fn: (ids: readonly string[]) => readonly string[]): () => void
+  registerSkeletonFilter(
+    id: string,
+    fn: (ids: readonly string[], scope?: AgentScope) => readonly string[],
+  ): () => void
   /**
    * 注册一个「模型可见投影」：对发给模型的消息做一次**纯函数**改写——同一输入永远
    * 同一输出、不读不改注册表之外的任何状态。
@@ -726,14 +754,16 @@ export interface PromptService {
    */
   registerProjection(id: string, fn: (messages: ChatMessage[]) => ChatMessage[], options?: { order?: number }): () => void
   /** 已注册段（带顺序），拼提示词时与内核自己的段合并；外部插件一般不必直接调。 */
-  sections(): PromptContribution[]
+  sections(scope?: AgentScope): PromptContribution[]
   /**
    * 拼出这一轮要用的完整系统提示词（内置骨架 + 各注册段 + 指令文件 + 技能目录）。
    * 环境事实不在这份提示词里（2026-10-03 起）：内核的 env-facts 投影把它作为
    * 请求末尾的 user 快照附上——它每天都会变，放提示词里会把服务端前缀缓存整段打掉。
    * @param cwd - 会话工作目录（决定读哪份 AGENTS.md）。
+   * @param scope - 谁在问（省略 = 当前查看的会话）：模式那段话、段的取舍都按它算，
+   *   后台会话的 agent 因此拿到的是自己那一档，不会拿到你此刻点开的会话的模式。
    */
-  systemPrompt(cwd: string): string
+  systemPrompt(cwd: string, scope?: AgentScope): string
   /**
    * 按注册序应用全部投影（含内置 fold-system / drop-images），得到真正发给模型的那份消息。
    * 这条链是纯函数管道：日志原文 + 这份定义 = 模型看见的内容。

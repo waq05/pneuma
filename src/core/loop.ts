@@ -144,6 +144,15 @@ export class MiniAgent {
    * 而这个 agent 从生到死只认一个会话，一个字段就是「按会话去重」。
    */
   private lastInvariantDigest: string | null = null
+  /**
+   * 本轮请求发给模型的那份工具目录（requestOnce 现取、executeToolCalls 用它解析）。
+   *
+   * 为什么执行不重新取一次：模型是照着**发出去的那份 schema** 喊名字的。取两次的话，
+   * 请求与执行之间只要注册表变过（换模式、插件热插拔），模型明明喊的是它刚被告诉的
+   * 工具，也会落到「未知工具」——2026-10-28 用户报的那一串就是这么来的。
+   * 换模式的影响因此从**下一轮请求**起生效，同一轮里模型面前与手上是同一份。
+   */
+  private requestTools: readonly ToolEntry[] | null = null
 
   constructor(
     private readonly deps: AgentDeps,
@@ -394,6 +403,8 @@ export class MiniAgent {
     for (let attempt = 1; ; attempt += 1) {
       const route = this.deps.route()
       const tools = this.deps.tools()
+      // 这一刻的目录就是这一轮模型看到的目录，执行也按它解析（见 requestTools）
+      this.requestTools = tools
       // 系统提示只拼一次：真请求与 invariant 重建侧用同一份文本（重建比的是投影链，
       // 不是提示词生成本身）。
       const systemText = this.deps.systemPrompt()
@@ -553,7 +564,10 @@ export class MiniAgent {
    * 或本轮收尾时一起收割；结果永远按模型给的顺序落库，协议形状不变。
    */
   private async executeToolCalls(result: StreamResult, signal: AbortSignal): Promise<void> {
-    const registry = new Map(this.deps.tools().map((tool) => [tool.name, tool]))
+    // 用**这一轮请求发出去的那份**目录解析名字，不再现取一次：模型是照那份 schema
+    // 喊名字的，两次取值之间注册表一变（换模式、插件热插拔），合法调用会被判成
+    // 「未知工具」——错的不是模型，是这里取了第二份。没有快照时（不该发生）才现取。
+    const registry = new Map((this.requestTools ?? this.deps.tools()).map((tool) => [tool.name, tool]))
     /** 已起飞还没落库的只读调用。 */
     let flying: Array<{ call: ToolCall; outcome: Promise<ToolOutcome> }> = []
     const flushFlying = async (): Promise<void> => {

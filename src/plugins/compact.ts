@@ -141,8 +141,8 @@ export const compactPlugin: Plugin.Object = {
      * 0.6.48：按目标会话的 cwd 拼（后台常驻 agent 的压缩不能再看「当前查看的会话」）。
      */
     const requestContext = (target: Session): { system: string; tools: readonly ToolSchema[] } => ({
-      system: ctx.prompt.systemPrompt(target.meta.cwd),
-      tools: ctx.tools.visible().map((tool) => ({
+      system: ctx.prompt.systemPrompt(target.meta.cwd, { sessionId: target.meta.id, cwd: target.meta.cwd }),
+      tools: ctx.tools.visible({ sessionId: target.meta.id }).map((tool) => ({
         name: tool.name,
         description: tool.description,
         parameters: tool.parameters,
