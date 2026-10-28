@@ -22,6 +22,7 @@ import { accountBlobPath, readSetupState, unprotectSecret, type DscSetupState } 
 import { firewallRuleNames, DSC_WFP_SUBLAYER_GUID } from './net-abi.js'
 import { DSC_SANDBOX_ACCOUNT, DSC_SANDBOX_DEFAULT_PROXY_PORT } from './setup.js'
 import { probeWfpSublayer } from './wfp.js'
+import { errText as errorText } from '../../err-text.js'
 
 /** doctor 结论：`full` = 六项全绿；`partial` = 有任何一项没对上。 */
 export interface WindowsNetworkDoctorResult {
@@ -281,9 +282,4 @@ function runPowerShell(command: string, timeoutMs: number): Promise<{ code: numb
 /** PowerShell 单引号字面量：内部单引号翻倍。 */
 function quotePowerShell(value: string): string {
   return `'${value.replace(/'/g, "''")}'`
-}
-
-/** 异常转一句话。 */
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }

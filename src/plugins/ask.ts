@@ -20,6 +20,7 @@ import { resolvePluginConfig } from '../core/plugin-registry.js'
 import type { ToolEntry } from '../core/tools.js'
 import type { AskQuestionItem, AskUserView, AskUserViewInput } from '../contract.js'
 import type { AskService } from '../services/types.js'
+import { clampInt as clamp } from '../core/clamp.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'ask'
@@ -45,10 +46,6 @@ const SUPERSEDED = '（又挂了一批新问题，这一题作废）'
  */
 function readLimits(passed: unknown): AskLimits {
   const raw = resolvePluginConfig(CONFIG_KEY, passed)
-  const clamp = (value: unknown, min: number, max: number, fallback: number): number => {
-    const num = Number(value)
-    return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), min), max) : fallback
-  }
   return {
     // 上限 8：再多界面就排不下，模型也记不住这么多岔路。
     maxQuestions: clamp(raw.maxQuestions, 1, 8, DEFAULTS.maxQuestions),

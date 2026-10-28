@@ -21,6 +21,7 @@ import type { ToolEntry } from '../core/tools.js'
 import { wrapUntrusted } from '../core/untrusted.js'
 import type { SettingsField, SettingsValues } from '../contract.js'
 import type { SettingsSectionSpec, SessionSearchService } from '../services/types.js'
+import { clampIntIn as clamp } from '../core/clamp.js'
 
 /** 配置键（`~/.dsc/plugins.json` 里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'session-search'
@@ -31,10 +32,6 @@ function readConfig(passed?: unknown): SessionIndexOptions {
   const defaults = defaultSessionIndexOptions()
   const flag = (value: unknown, fallback: boolean): boolean =>
     value === undefined ? fallback : value === true || value === 'true'
-  const clamp = (value: unknown, bounds: { min: number; max: number }, fallback: number): number => {
-    const num = Number(value)
-    return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), bounds.min), bounds.max) : fallback
-  }
   const dir = typeof raw.indexDir === 'string' ? raw.indexDir.trim() : ''
   return {
     indexDir: dir === '' ? defaults.indexDir : dir,

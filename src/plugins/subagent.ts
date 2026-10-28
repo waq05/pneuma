@@ -44,6 +44,7 @@ import { inboxAppend, REVIEW_FINDINGS_OPEN, TEAMMATE_REPORT_OPEN } from '../core
 import type { EffortLevel, SettingsField, SettingsValue, TeammateView, TranscriptEntry } from '../contract.js'
 import type { ReviewService, ReviewSpawnRequest, ReviewSpawnResult, SettingsSectionSpec, TeamService } from '../services/types.js'
 import { reviewMessage } from '../core/git-info.js'
+import { clampInt as clamp } from '../core/clamp.js'
 
 /** 插件配置（存 `~/.dsc/plugins.json` 条目树的 config 里）。 */
 interface SubagentConfig {
@@ -208,10 +209,6 @@ export const subagentPlugin: Plugin.Object = {
     // ── 配置 ────────────────────────────────────────────────────────────────
     const readConfig = (): SubagentConfig => {
       const raw = resolvePluginConfig(CONFIG_KEY, passed)
-      const clamp = (value: unknown, min: number, max: number, fallback: number): number => {
-        const num = Number(value)
-        return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), min), max) : fallback
-      }
       const approval = APPROVAL_RANK[String(raw.approval) as TeammateApproval] === undefined
         ? DEFAULTS.approval
         : (String(raw.approval) as TeammateApproval)

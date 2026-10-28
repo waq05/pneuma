@@ -24,10 +24,7 @@ export function readLastSeq(raw: string | null): number {
   return Math.trunc(value)
 }
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
+export { isRecord } from './records.js'
 /**
  * 读请求体的原始字节。
  *

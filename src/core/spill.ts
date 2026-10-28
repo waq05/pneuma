@@ -18,6 +18,7 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { resolvePluginConfig } from './plugin-registry.js'
 import { dscPath } from './path-policy.js'
+import { clampIntIn as clampInt } from './clamp.js'
 
 /** 插件在条目树（`~/.dsc/plugins.json`）里的键。 */
 const CONFIG_KEY = 'spill'
@@ -106,12 +107,6 @@ export interface SpillSweepResult {
   keptBytes: number
   /** 没删掉的文件与原因（权限不够、被别的进程占着）。 */
   failed: Array<{ path: string; reason: string }>
-}
-
-/** 夹到区间内的整数；认不出的值退回缺省。 */
-function clampInt(value: unknown, range: { min: number; max: number }, fallback: number): number {
-  const num = Number(value)
-  return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), range.min), range.max) : fallback
 }
 
 /** `~` 开头换成用户目录；其余原样返回（相对路径交给后面的文件操作按 cwd 解析）。 */

@@ -13,13 +13,7 @@
  */
 import type { LspDiagnostic, LspHover, LspLocation } from './client.js'
 import type { LspPosition, LspRange } from './uri.js'
-
-/** 认得出是个普通对象就返回，否则 null。 */
-export function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null
-}
+import { asRecord } from '../records.js'
 
 /** 线上坐标是不是非负整数。 */
 function isProtocolPosition(value: unknown): value is LspPosition {

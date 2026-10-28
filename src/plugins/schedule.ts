@@ -36,9 +36,11 @@ import {
   type ScheduleRule,
 } from '../core/schedule/rule.js'
 import { ScheduleRunner, scheduleLimitsNote } from '../core/schedule/runner.js'
-import { errorText, ScheduleStore, type ScheduleTask } from '../core/schedule/store.js'
+import { ScheduleStore, type ScheduleTask } from '../core/schedule/store.js'
+import { errText as errorText } from '../core/err-text.js'
 import type { ScheduledTaskView, SettingsField, SettingsValue, SettingsValues } from '../contract.js'
 import type { SettingsSectionSpec } from '../services/types.js'
+import { clampInt as clampNumber } from '../core/clamp.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'schedule'
@@ -57,12 +59,6 @@ interface SchedulePluginConfig {
 
 /** 缺省值：时区取系统时区，单次最长 10 分钟，历史 200 条。 */
 const DEFAULTS = { enabled: true, maxRunSeconds: 600, historyLimit: 200 }
-
-/** 数值夹取：不是数字就回落，越界就夹。 */
-function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
-  const num = Number(value)
-  return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), min), max) : fallback
-}
 
 /**
  * 从插件配置里取可调项并夹到合理区间。

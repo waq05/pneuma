@@ -17,6 +17,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { addressOf, throwLastError, type BoundWin32, type WinFfi } from './ffi.js'
+import { errText as errorText } from '../../err-text.js'
 
 /** DPAPI 标志：禁止弹任何 UI（后台无人值守路径必须给，否则可能静默失败或卡住）。 */
 export const CRYPTPROTECT_UI_FORBIDDEN = 0x1
@@ -234,9 +235,4 @@ function coerceSetupState(value: unknown): { ok: true; state: DscSetupState } | 
 /** 去掉 UTF-8 BOM（PowerShell 5.1 的 `-Encoding UTF8` 会写）。 */
 function stripBom(text: string): string {
   return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
-}
-
-/** 异常转一句话。 */
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }

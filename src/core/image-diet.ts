@@ -18,6 +18,7 @@
  * @module dsc/core/image-diet
  */
 import type { ChatContentPart, ChatMessage } from './llm.js'
+import { clampIntIn as clamp } from './clamp.js'
 
 /** 卸载后留在原位的那句话：模型看得见「这里本来有图」，只是它不再随请求发送。 */
 export const IMAGE_DIET_PLACEHOLDER = '（图片已卸载，原文里这里是一张图）'
@@ -57,10 +58,6 @@ export const DEFAULT_IMAGE_DIET_CONFIG: ImageDietConfig = { enabled: true, ...DE
 export function readImageDietConfig(raw: unknown): ImageDietConfig {
   const source: Record<string, unknown> =
     raw === null || typeof raw !== 'object' || Array.isArray(raw) ? {} : (raw as Record<string, unknown>)
-  const clamp = (value: unknown, range: { min: number; max: number }, fallback: number): number => {
-    const num = Number(value)
-    return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), range.min), range.max) : fallback
-  }
   return {
     // 只认字面 false 关：设置分区写的就是布尔；缺省（undefined/没配过）按「开」算。
     enabled: source.enabled === undefined ? DEFAULT_IMAGE_DIET_CONFIG.enabled : source.enabled !== false,

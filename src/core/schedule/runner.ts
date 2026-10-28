@@ -29,7 +29,8 @@
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { formatDuration, formatInstant, graceMs, isOneShot, nextRunAt, type ScheduleRule } from './rule.js'
-import { errorText, type ScheduleStatus, type ScheduleStore, type ScheduleTask } from './store.js'
+import { type ScheduleStatus, type ScheduleStore, type ScheduleTask } from './store.js'
+import { errText as errorText } from '../err-text.js'
 
 /** 一次定时器最多睡多久：超长延迟分段，避开 setTimeout 的 32 位溢出。 */
 export const TIMER_SLICE_MS = 6 * 3600_000

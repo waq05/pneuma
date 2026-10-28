@@ -34,6 +34,7 @@ import {
   FWP_E_SUBLAYER_NOT_FOUND,
   RPC_C_AUTHN_WINNT,
 } from './net-abi.js'
+import { errText as errorText } from '../../err-text.js'
 
 /** 探测结论：`present` 只说「查到了没有」，`detail` 说清楚「这个结论可不可信」。 */
 export interface WfpProbeResult {
@@ -231,9 +232,4 @@ function win32ErrorText(bound: BoundWin32, code: number): string {
   } catch {
     return ''
   }
-}
-
-/** 异常转一句话。 */
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }

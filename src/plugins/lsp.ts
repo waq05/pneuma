@@ -62,6 +62,8 @@ import {
 import { displayPath, toDisplayCharacter, toDisplayLine, toProtocolPosition } from '../core/lsp/uri.js'
 import type { SettingsField, SettingsValue } from '../contract.js'
 import type { SettingsSectionSpec } from '../services/types.js'
+import { errText as errorText } from '../core/err-text.js'
+import { clampInt as clamp } from '../core/clamp.js'
 
 /** 插件在条目树里的键（设置分区 id 也是它）。 */
 const CONFIG_KEY = 'lsp'
@@ -696,18 +698,6 @@ const LSP_PROMPT_TEXT = [
 /** 操作名的运行时校验。 */
 function isOperation(value: string): value is LspOperation {
   return (LSP_OPERATIONS as readonly string[]).includes(value)
-}
-
-/** 数字类配置的兜底：不是有限数就用缺省，否则夹进范围。 */
-function clamp(value: unknown, min: number, max: number, fallback: number): number {
-  const num = Number(value)
-  if (!Number.isFinite(num)) return fallback
-  return Math.min(Math.max(Math.round(num), min), max)
-}
-
-/** 错误对象取一句话。 */
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 /** 读文件为文本；读不到（不存在 / 权限）给 undefined，由调用方跳过这一步。 */

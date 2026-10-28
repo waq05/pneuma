@@ -16,6 +16,7 @@ import { globTool, grepTool } from '../core/tools/search-tools.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
 import type { BackgroundOutputView, BackgroundWorkView, SettingsField, SettingsValues } from '../contract.js'
 import type { BackgroundWorksService, SettingsSectionSpec } from '../services/types.js'
+import { clampInt as clamp } from '../core/clamp.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'tools-default'
@@ -29,10 +30,6 @@ const LINE_RANGE = { min: 100, max: 10_000 }
 /** 从插件配置取预算，区间外的值夹回来（配置写错不至于把工具夹死）。 */
 function readBudgets(passed?: unknown): BashBudgets & { readLineLimit: number } {
   const raw = resolvePluginConfig(CONFIG_KEY, passed)
-  const clamp = (value: unknown, min: number, max: number, fallback: number): number => {
-    const num = Number(value)
-    return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), min), max) : fallback
-  }
   return {
     timeoutMs: clamp(raw.bashTimeoutMs, TIMEOUT_RANGE.min, TIMEOUT_RANGE.max, BASH_DEFAULT_BUDGETS.timeoutMs),
     maxTimeoutMs: clamp(raw.bashMaxTimeoutMs, TIMEOUT_RANGE.min, TIMEOUT_RANGE.max, BASH_DEFAULT_BUDGETS.maxTimeoutMs),

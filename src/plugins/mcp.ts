@@ -30,6 +30,9 @@ import { wrapUntrusted } from '../core/untrusted.js'
 import { argsSummary, type ToolEntry } from '../core/tools.js'
 import type { SettingsField, SettingsValues } from '../contract.js'
 import type { McpServerInfo, McpService, McpToolInfo, SettingsSectionSpec } from '../services/types.js'
+import { errText as errorText } from '../core/err-text.js'
+import { clampInt as clamp } from '../core/clamp.js'
+import { asRecord } from '../core/records.js'
 
 /** 插件在 `~/.dsc/plugins.json` 条目树里的键（设置分区 id 也是它）。 */
 const CONFIG_KEY = 'mcp'
@@ -113,13 +116,6 @@ function readConfig(passed?: unknown): McpPluginConfig {
     reconnectMaxDelayMs: clamp(raw.reconnectMaxDelayMs, 1, TIMEOUT_MAX_MS, DEFAULTS.reconnectMaxDelayMs),
     reconnectMaxAttempts: clamp(raw.reconnectMaxAttempts, ATTEMPTS_MIN, ATTEMPTS_MAX, DEFAULTS.reconnectMaxAttempts),
   }
-}
-
-/** 数字类配置的兜底：不是有限数就用缺省，否则夹进范围。 */
-function clamp(value: unknown, min: number, max: number, fallback: number): number {
-  const num = Number(value)
-  if (!Number.isFinite(num)) return fallback
-  return Math.min(Math.max(Math.round(num), min), max)
 }
 
 /** 把 server 返回的工具定义起成目录项（完整名、风险等级都在这儿定）。 */
@@ -753,16 +749,6 @@ export const mcpPlugin: Plugin.Object = {
       }
     }
   },
-}
-
-/** 错误对象取一句话。 */
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
-/** 认得出是个对象就返回，否则 null（模板参数等宽松入参的兜底）。 */
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
 }
 
 /** T24：elicitation 等人点卡的上限（毫秒）——审批卡可以慢慢等，但不能永远挂着。 */

@@ -29,6 +29,7 @@ import {
   type FirewallRuleSpec,
 } from './net-abi.js'
 import { sandboxDir, setupErrorPath, setupScriptPath, readSetupState } from './account.js'
+import { errText as errorText } from '../../err-text.js'
 
 /** 固定的离线沙箱账号名（普通本地账号，不是服务账号）。 */
 export const DSC_SANDBOX_ACCOUNT = 'dsc-sandbox-offline'
@@ -412,11 +413,6 @@ function readSetupErrorText(dscHome: string): string {
   } catch {
     return ''
   }
-}
-
-/** 异常转一句话。 */
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 // ── 内嵌 C#：WFP 安装器 ──────────────────────────────────────────────────────

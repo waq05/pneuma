@@ -29,6 +29,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { isValidTimeZone, normalizeRule, type ScheduleRule } from './rule.js'
 import { dscPath } from '../path-policy.js'
+import { errText as errorText } from '../err-text.js'
 
 /** 任务最近一次执行的结果。`never` = 从没跑过；`running` = 槽位已推进、投递还没落定。 */
 export type ScheduleStatus = 'never' | 'running' | 'ok' | 'failed' | 'blocked' | 'skipped' | 'done'
@@ -559,10 +560,4 @@ export class ScheduleStore {
     const kept = task.deliveryHistory.filter((entry) => entry >= cutoff)
     return { ...task, deliveryHistory: kept.slice(Math.max(0, kept.length - this.historyLimit)) }
   }
-}
-
-/** 把 catch 到的东西变成一句话（`useUnknownInCatchVariables` 下不能直接当 Error 用）。 */
-export function errorText(error: unknown): string {
-  if (error instanceof Error) return error.message
-  return String(error)
 }

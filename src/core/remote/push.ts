@@ -20,6 +20,8 @@
 import { existsSync, readFileSync } from 'node:fs'
 import webpush from 'web-push'
 import { readJsonFile, remoteFiles, writeJsonFile, type RemoteFiles } from './store.js'
+import { isRecord } from '../records.js'
+import { errText as errorText } from '../err-text.js'
 
 /** VAPID 的 subject：推送服务只要求它是一个 mailto 或 https 地址，不校验可达性。 */
 export const PUSH_SUBJECT = 'mailto:pneuma@localhost'
@@ -63,14 +65,6 @@ export interface PushStoreOptions {
   dir?: string
   now?: () => number
   sender?: PushSender
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 /** 从 web-push 抛出来的错误里取 HTTP 状态码；取不到给 0。 */

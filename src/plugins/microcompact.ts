@@ -20,6 +20,7 @@ import type { ChatMessage } from '../core/llm.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
 import type { SettingsField, SettingsValues } from '../contract.js'
 import type { SettingsSectionSpec } from '../services/types.js'
+import { clampInt as clamp } from '../core/clamp.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'microcompact'
@@ -53,10 +54,6 @@ const MIN_SAVE_RANGE = { min: 0, max: 4000 }
  */
 function readConfig(passed?: unknown): MicrocompactConfig {
   const raw = resolvePluginConfig(CONFIG_KEY, passed)
-  const clamp = (value: unknown, min: number, max: number, fallback: number): number => {
-    const num = Number(value)
-    return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), min), max) : fallback
-  }
   return {
     // 少于 1 条等于把最近那一轮的现场证据也清掉（模型刚要接着用就没了）。
     keepRecent: clamp(raw.keepRecent, KEEP_RECENT_RANGE.min, KEEP_RECENT_RANGE.max, DEFAULTS.keepRecent),

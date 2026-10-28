@@ -45,6 +45,7 @@ import type { ChatContentPart, ChatMessage } from '../core/llm.js'
 import type { Plugin } from '@deepseek-ai/cordis'
 import type { SettingsField, SettingsValue } from '../contract.js'
 import type { SettingsSectionSpec } from '../services/types.js'
+import { clampInt as clamp } from '../core/clamp.js'
 
 /** 插件配置（存 `~/.dsc/plugins.json` 条目树的 config 里）。 */
 interface ComputerUseConfig {
@@ -228,10 +229,6 @@ export const computerUsePlugin: Plugin.Object = {
   apply(ctx, passed) {
     const readConfig = (): ComputerUseConfig => {
       const raw = resolvePluginConfig(CONFIG_KEY, passed)
-      const clamp = (value: unknown, min: number, max: number, fallback: number): number => {
-        const num = Number(value)
-        return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), min), max) : fallback
-      }
       return {
         maxEdge: clamp(raw.maxEdge, 640, 3840, DEFAULTS.maxEdge),
         format: raw.format === 'png' ? 'png' : 'jpeg',

@@ -12,6 +12,8 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
+import { errText as errorText } from './err-text.js'
+import { asRecord } from './records.js'
 
 // ── 协议与命名常量（协议常量不随部署变，固定在这里） ──────────────────────────
 
@@ -440,11 +442,6 @@ export function asRisk(value: unknown): McpRisk | undefined {
   return value === 'read' || value === 'write' || value === 'exec' ? value : undefined
 }
 
-/** 错误对象取一句话；不是 Error 就字符串化。 */
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
 // ── JSON-RPC 通道 ────────────────────────────────────────────────────────────
 
 /** 一条能发请求的通道；stdio 与 http 各实现一份。 */
@@ -473,11 +470,6 @@ function rpcErrorMessage(error: unknown): string {
 function unwrapRpc(message: Record<string, unknown>): unknown {
   if (message.error !== undefined && message.error !== null) throw new Error(rpcErrorMessage(message.error))
   return message.result
-}
-
-/** 认得出是个对象就返回，否则 null。 */
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
 }
 
 /** 超时或取消，给一句能直接进 problem 的话。 */

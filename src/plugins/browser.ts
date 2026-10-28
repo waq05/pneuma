@@ -35,6 +35,7 @@ import * as actions from '../core/cdp/actions.js'
 import { BrowserProcess, probeExecutable, type BrowserLaunchConfig } from '../core/cdp/launch.js'
 import { serializeAxTree, truncateByLines, lookupSnapshotRef, type AxTree, type SnapshotRef } from '../core/cdp/snapshot.js'
 import type { CdpSessionView, CdpTransport } from '../core/cdp/transport.js'
+import { clampInt as clamp } from '../core/clamp.js'
 
 // ── 配置 ─────────────────────────────────────────────────────────────────────
 
@@ -370,10 +371,6 @@ export const browserPlugin: Plugin.Object = {
   // session 只用在 dsc/session-open 上：换会话时把上一次会话留下的 ref 作废
   inject: ['tools', 'commands', 'settings', 'transcript', 'guards', 'prompt', 'session'],
   apply(ctx, passed: unknown) {
-    const clamp = (value: unknown, min: number, max: number, fallback: number): number => {
-      const num = Number(value)
-      return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), min), max) : fallback
-    }
 
     const readConfig = (): BrowserConfig => {
       const raw = resolvePluginConfig(CONFIG_KEY, passed)

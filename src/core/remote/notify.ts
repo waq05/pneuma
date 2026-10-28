@@ -16,6 +16,8 @@
  * @module dsc/core/remote/notify
  */
 
+import { errText as errorText } from '../err-text.js'
+
 /** 一次 Webhook 请求的超时（连不上、对面不响应都按失败算）。 */
 export const WEBHOOK_TIMEOUT_MS = 5_000
 
@@ -53,10 +55,6 @@ export function buildWebhookUrl(raw: string, message: WebhookMessage): string {
     .replaceAll('{title}', encodeURIComponent(message.title))
     .replaceAll('{body}', encodeURIComponent(message.body))
     .replaceAll('{url}', encodeURIComponent(message.url))
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 export interface WebhookSendOptions {

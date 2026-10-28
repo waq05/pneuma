@@ -37,6 +37,8 @@ import { resolvePluginConfig } from './plugin-registry.js'
 import { scrubChildEnv, redact } from './secrets.js'
 import { wrapUntrusted } from './untrusted.js'
 import { dscPath } from './path-policy.js'
+import { clampInt as clampNumber } from './clamp.js'
+import { isRecord } from './records.js'
 
 // ── 十二个事件与它们的档位 ───────────────────────────────────────────────────
 
@@ -204,11 +206,6 @@ function expandPath(text: string): string {
   return text
 }
 
-function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
-  const num = Number(value)
-  return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), min), max) : fallback
-}
-
 function asText(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : fallback
 }
@@ -251,10 +248,6 @@ export interface LifecycleHook {
 export interface LifecycleDoc {
   hooks: LifecycleHook[]
   problems: string[]
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 /**

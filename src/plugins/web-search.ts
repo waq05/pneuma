@@ -15,6 +15,7 @@ import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.
 import { wrapUntrusted } from '../core/untrusted.js'
 import type { SettingsField, SettingsValue } from '../contract.js'
 import type { SettingsSectionSpec } from '../services/types.js'
+import { clampInt as clamp } from '../core/clamp.js'
 
 /** 支持的搜索提供方。 */
 const PROVIDERS = ['tavily', 'bocha', 'serper'] as const
@@ -47,10 +48,6 @@ interface SearchHit {
 
 function readConfig(): WebSearchConfig {
   const raw = resolvePluginConfig(CONFIG_KEY)
-  const clamp = (value: unknown, min: number, max: number, fallback: number): number => {
-    const num = Number(value)
-    return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), min), max) : fallback
-  }
   return {
     provider: (PROVIDERS as readonly string[]).includes(String(raw.provider))
       ? (raw.provider as SearchProvider)

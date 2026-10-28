@@ -35,6 +35,7 @@ import type { ToolGuard, ToolGuardInput } from '../core/tool-guards.js'
 import type { SettingsField, SettingsValues } from '../contract.js'
 import type { SettingsSectionSpec } from '../services/types.js'
 import { callFacts } from '../core/tools.js'
+import { clampIntIn as clampInt } from '../core/clamp.js'
 
 /** 插件在条目树（`~/.dsc/plugins.json`）里的键；同时是设置分区 id。 */
 export const FILE_REVIEW_CONFIG_KEY = 'file-review'
@@ -68,12 +69,6 @@ export interface FileReviewConfig {
   maxLines: number
   /** 每个 hunk 前后各留几行上下文。 */
   contextLines: number
-}
-
-/** 夹到区间内的整数；认不出的值退回缺省。 */
-function clampInt(value: unknown, range: { min: number; max: number }, fallback: number): number {
-  const num = Number(value)
-  return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), range.min), range.max) : fallback
 }
 
 /**

@@ -29,6 +29,7 @@ import { randomUUID } from 'node:crypto'
 import { redact, scrubChildEnv } from './secrets.js'
 import type { ToolGuardInput } from './tool-guards.js'
 import { dscPath } from './path-policy.js'
+import { clampInt as clamp } from './clamp.js'
 
 /** 钩子配置文件（与 settings.json、audit.jsonl 同级）。 */
 export const HOOKS_FILE = dscPath('hooks.json')
@@ -152,11 +153,6 @@ const EMPTY_DOC: HooksDoc = { settings: { ...DEFAULT_SETTINGS }, rules: [], scri
 
 /** 配置文件的缓存（按 mtime + 大小判新，免得每次工具调用都重读重解析一遍磁盘）。 */
 let cache: { mtime: number; size: number; doc: HooksDoc } | null = null
-
-function clamp(value: unknown, min: number, max: number, fallback: number): number {
-  const num = Number(value)
-  return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), min), max) : fallback
-}
 
 function asString(value: unknown, max: number): string {
   return typeof value === 'string' ? value.slice(0, max).trim() : ''

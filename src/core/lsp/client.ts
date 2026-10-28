@@ -34,7 +34,8 @@ import {
   StderrTail,
   encodeMessage,
 } from './framing.js'
-import { asRecord, normalizeDiagnostics, normalizeHover, normalizeLocations } from './normalize.js'
+import { normalizeDiagnostics, normalizeHover, normalizeLocations } from './normalize.js'
+import { asRecord } from '../records.js'
 import { type LspServerDef, languageIdFor } from './servers.js'
 import { type LspPosition, type LspRange, pathToUri } from './uri.js'
 

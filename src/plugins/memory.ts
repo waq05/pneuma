@@ -45,6 +45,7 @@ import type { ToolEntry } from '../core/tools.js'
 import { argsSummary } from '../core/tools.js'
 import type { SettingsField, SettingsOption, SettingsValues } from '../contract.js'
 import type { MemoryService, SettingsSectionSpec } from '../services/types.js'
+import { clampInt as clamp } from '../core/clamp.js'
 
 /** 配置键（`~/.dsc/plugins.json` 里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'memory'
@@ -69,10 +70,6 @@ const CELL_OPTIONS: SettingsOption[] = MEMORY_TARGETS.map((target) => ({ value: 
 function readConfig(): MemoryConfig {
   const raw = resolvePluginConfig(CONFIG_KEY, undefined)
   const flag = (value: unknown, fallback: boolean): boolean => (value === undefined ? fallback : value === true || value === 'true')
-  const clamp = (value: unknown, min: number, max: number, fallback: number): number => {
-    const num = Number(value)
-    return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), min), max) : fallback
-  }
   const limits = DEFAULT_MEMORY_CONFIG.limits
   return {
     enabled: flag(raw.enabled, DEFAULT_MEMORY_CONFIG.enabled),

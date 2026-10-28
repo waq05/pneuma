@@ -18,6 +18,8 @@
  * @module dsc/ui/frames
  */
 
+import { asRecord } from '../core/records.js'
+
 /** 帧里的条目：id 是宿主发的正数（负 id 是直播尾，走 liveEntries）。 */
 export interface HostEntry {
   id: number
@@ -45,10 +47,6 @@ export class HostFrameError extends Error {}
  * 继承 HostFrameError：只判「帧有问题」的调用方不必改。
  */
 export class HostFrameGapError extends HostFrameError {}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null
-}
 
 /** 帧顶层是不是全量（先看 `full`，再看 `type`）。 */
 export function isFullFrame(raw: unknown): boolean {

@@ -28,6 +28,7 @@ import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.
 import type { Session } from '../core/session.js'
 import type { SettingsField, SettingsValues } from '../contract.js'
 import type { CompactService, SettingsSectionSpec } from '../services/types.js'
+import { clampInt as clamp } from '../core/clamp.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'compact'
@@ -71,10 +72,6 @@ const READ_STATE_BUDGET_RANGE = { min: 200, max: 10000 }
  */
 function readConfig(passed?: unknown): CompactConfig {
   const raw = resolvePluginConfig(CONFIG_KEY, passed)
-  const clamp = (value: unknown, min: number, max: number, fallback: number): number => {
-    const num = Number(value)
-    return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), min), max) : fallback
-  }
   return {
     // 少于 5 条等于没给下一个自己留上下文，多于 200 条基本压不出空间。
     keepRecent: clamp(raw.keepRecent, 5, 200, DEFAULTS.keepRecent),

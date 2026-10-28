@@ -89,6 +89,7 @@ import {
   type SkillDraft,
   type SkillOpResult,
 } from '../core/learnings/skill-write.js'
+import { clampInt as clamp } from '../core/clamp.js'
 import { existsSync } from 'node:fs'
 
 /** 配置键（`~/.dsc/plugins.json` 里 `file` 等于这个名字那一项的 `config`）。 */
@@ -123,10 +124,6 @@ const DEFAULT_CONFIG: SelfImproveConfig = {
 function readConfig(passed?: unknown): SelfImproveConfig {
   const raw = resolvePluginConfig(CONFIG_KEY, passed)
   const flag = (value: unknown, fallback: boolean): boolean => (value === undefined ? fallback : value === true || value === 'true')
-  const clamp = (value: unknown, min: number, max: number, fallback: number): number => {
-    const num = Number(value)
-    return Number.isFinite(num) ? Math.min(Math.max(Math.trunc(num), min), max) : fallback
-  }
   return {
     enabled: flag(raw.enabled, DEFAULT_CONFIG.enabled),
     // 0 = 关掉自动复盘；小于 3 次迭代就复盘等于每轮都在打断用户

@@ -49,6 +49,7 @@ import {
   type AxTree,
   type SnapshotRef,
 } from '../core/cdp/snapshot.js'
+import { clampInt as clamp } from '../core/clamp.js'
 
 const CONFIG_KEY = 'dock-browser'
 /** 设置分区 id：与配置键同名，元数据 `settingsSection` 指向它。 */
@@ -148,12 +149,6 @@ function safeStringify(value: unknown): string {
 /** ref 的人类可读描述（输出与错误信息里用）。 */
 function describeRef(ref: SnapshotRef): string {
   return `${ref.role}${ref.name === '' ? '' : ` "${ref.name}"`}`
-}
-
-/** 数字参数收敛到区间内；不是数字就取默认值。 */
-function clamp(value: unknown, min: number, max: number, fallback: number): number {
-  const num = Number(value)
-  return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), min), max) : fallback
 }
 
 /**

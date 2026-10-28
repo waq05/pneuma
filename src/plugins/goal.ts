@@ -22,6 +22,7 @@ import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.
 import type { SettingsField, SettingsValues } from '../contract.js'
 import type { ToolEntry } from '../core/tools.js'
 import type { GoalService, SettingsSectionSpec } from '../services/types.js'
+import { clampInt as clamp } from '../core/clamp.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'goal'
@@ -42,10 +43,6 @@ const DEFAULTS: GoalConfig = { defaultMaxRounds: DEFAULT_MAX_GOAL_ROUNDS, extend
  */
 function readConfig(passed?: unknown): GoalConfig {
   const raw = resolvePluginConfig(CONFIG_KEY, passed)
-  const clamp = (value: unknown, min: number, max: number, fallback: number): number => {
-    const num = Number(value)
-    return Number.isFinite(num) ? Math.min(Math.max(Math.round(num), min), max) : fallback
-  }
   return {
     // 上限 256 与 core/goal.ts 的硬顶一致：配置只能在这个范围内放开，不能取消上限。
     defaultMaxRounds: clamp(raw.defaultMaxRounds, 1, 256, DEFAULTS.defaultMaxRounds),
