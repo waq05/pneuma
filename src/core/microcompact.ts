@@ -136,10 +136,68 @@ export function applyMicrocompactPlan(messages: readonly ChatMessage[], plan: Mi
   })
 }
 
+/** 一条消息正文的字符数：字符串按长度算，数组只数 text 部件（图片本身不按 url 长度算钱）。 */
+function messageChars(message: ChatMessage): number {
+  const content = message.content
+  if (typeof content === 'string') return content.length
+  if (!Array.isArray(content)) return 0
+  let total = 0
+  for (const part of content) {
+    if (part.type === 'text' && typeof part.text === 'string') total += part.text.length
+  }
+  return total
+}
+
+/** 整段提示词的字符数：把所有消息正文加起来，不数 JSON 外壳与 tool_calls 参数（大头是正文）。 */
+export function promptCharsOf(messages: readonly ChatMessage[]): number {
+  let total = 0
+  for (const message of messages) total += messageChars(message)
+  return total
+}
+
 /**
- * 这条 user 消息是不是「程序塞进来的」（环境快照 / 任务清单提醒 / 钩子产出），
+ * 计划能省下的字符数：被替换正文长度减占位符长度，只算这次确实会改的那几条。
+ * 跟 {@link applyMicrocompactPlan} 用同一套命中条件（callId 在计划里且内容不同）。
+ */
+export function planFreeChars(messages: readonly ChatMessage[], plan: MicrocompactPlan): number {
+  let freed = 0
+  for (const message of messages) {
+    if (message.role !== 'tool') continue
+    const id = message.tool_call_id
+    if (id === undefined) continue
+    const placeholder = plan.get(id)
+    if (placeholder === undefined || message.content === placeholder) continue
+    if (typeof message.content !== 'string') continue
+    freed += message.content.length - placeholder.length
+  }
+  return freed
+}
+
+/**
+ * 这份计划值不值得应用：省下的字符占整段提示词的百分比要达到门槛。
+ *
+ * 为什么要有这道门槛：前缀缓存里命中的 token 大约只按 1/10 价收，没命中的整段按全价
+ * 重读。清 1 个 token 只省下 1/10 的钱，可清理点一动、从那儿往后整段前缀作废，要按
+ * 全价重读一遍——省得少还不如不清。所以比例不够就先不动，等攒够一轮再说。
+ *
+ * @param minFreePercent - 门槛百分比（0–100）；0 表示只要能省就应用。
+ */
+export function planWorthApplying(messages: readonly ChatMessage[], plan: MicrocompactPlan, minFreePercent: number): boolean {
+  if (plan.size === 0) return false
+  const total = promptCharsOf(messages)
+  if (total <= 0) return false
+  const threshold = Math.max(0, Math.min(100, minFreePercent))
+  return (planFreeChars(messages, plan) / total) * 100 >= threshold
+}
+
+/**
+ * 这条 user 消息是不是「程序塞进来的」（环境快照 / 任务清单提醒 / 钩子产出 / 队友汇报），
  * 不算用户新开的一轮。轮次键只数真人发言，否则同一轮里 env 快照一刷就被判成
  * 新一轮，冻结计划又白做了。
+ *
+ * 队友汇报（`<teammate-report `）也算：它是子代理干完活后由程序投进来的，不是真人开口。
+ * 如果把它算成新一轮，队友每汇报一次就翻一轮，冻结计划重算、清理点跟着移动，等于每份
+ * 汇报都花一次整段前缀重读的钱——汇报越勤，前缀缓存越碎。
  */
 export function isSyntheticUserMessage(message: ChatMessage): boolean {
   if (message.role !== 'user') return false
@@ -147,6 +205,7 @@ export function isSyntheticUserMessage(message: ChatMessage): boolean {
   if (text === TODO_REMINDER_TEXT) return true
   if (text.includes('（本条是程序在每次请求时自动附上的当前环境快照')) return true
   if (text.startsWith('<external_content source="hook:')) return true
+  if (text.startsWith('<teammate-report ')) return true
   return false
 }
 

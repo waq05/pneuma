@@ -3,7 +3,7 @@
  * （算法与跳过规则见 core/microcompact.ts 的模块注释）。
  *
  * 为什么单列一条内置插件、而不塞进 prompt 插件：它是可配、可关的一层**策略**
- * （keepRecent / minSaveTokens / enabled），跟内核那三条协议护栏（fold-system /
+ * （keepRecent / minSaveTokens / minFreePercent / enabled），跟内核那三条协议护栏（fold-system /
  * env-facts / drop-images）不是一回事——护栏不许外部顶掉、也不可关。
  *
  * 注册进投影链时 order 取 650：在 env-facts（600）之后、drop-images（900）之前。
@@ -19,8 +19,8 @@ import {
   applyMicrocompactPlan,
   DEFAULT_KEEP_RECENT_TOOL_RESULTS,
   DEFAULT_MIN_SAVE_TOKENS,
-  microcompact,
   planMicrocompact,
+  planWorthApplying,
   roundKeyOf,
   type MicrocompactPlan,
 } from '../core/microcompact.js'
@@ -37,12 +37,17 @@ const CONFIG_KEY = 'microcompact'
 /** 投影在链上的位置：env-facts(600) 之后、drop-images(900) 之前。 */
 const PROJECTION_ORDER = 650
 
+/** 空计划：门槛没达到时用它占住 frozen，同一轮的后续请求就不再重算。 */
+const EMPTY_PLAN: MicrocompactPlan = new Map()
+
 /** 微压缩的可调值。 */
 interface MicrocompactConfig {
   /** 最近多少条工具结果以内一律不碰。 */
   keepRecent: number
   /** 单条估算省下的 token 少于这个数就不清。 */
   minSaveTokens: number
+  /** 一轮总共能清掉的字符占整段提示词的百分比低于这个数，就一条都不清（0–80）。 */
+  minFreePercent: number
   /** 总开关。默认开：长会话里这块浪费最大，保守值下副作用很小。 */
   enabled: boolean
   /**
@@ -55,13 +60,16 @@ interface MicrocompactConfig {
 const DEFAULTS: MicrocompactConfig = {
   keepRecent: DEFAULT_KEEP_RECENT_TOOL_RESULTS,
   minSaveTokens: DEFAULT_MIN_SAVE_TOKENS,
+  minFreePercent: 25,
   enabled: true,
   refresh: 'round',
 }
 
-/** 两个可调值的区间：低于下限把最近的证据也清掉，高于上限基本清不出空间。 */
+/** 三个可调值的区间：低于下限把最近的证据也清掉，高于上限基本清不出空间。 */
 const KEEP_RECENT_RANGE = { min: 1, max: 50 }
 const MIN_SAVE_RANGE = { min: 0, max: 4000 }
+/** 上限 80：再高就等于要求几乎把整段提示词清空，正常会话不可能达到，等于关掉清理。 */
+const MIN_FREE_RANGE = { min: 0, max: 80 }
 
 /**
  * 从插件配置取这些可调值，并把区间外的值夹回来。
@@ -73,6 +81,7 @@ function readConfig(passed?: unknown): MicrocompactConfig {
     // 少于 1 条等于把最近那一轮的现场证据也清掉（模型刚要接着用就没了）。
     keepRecent: clamp(raw.keepRecent, KEEP_RECENT_RANGE.min, KEEP_RECENT_RANGE.max, DEFAULTS.keepRecent),
     minSaveTokens: clamp(raw.minSaveTokens, MIN_SAVE_RANGE.min, MIN_SAVE_RANGE.max, DEFAULTS.minSaveTokens),
+    minFreePercent: clamp(raw.minFreePercent, MIN_FREE_RANGE.min, MIN_FREE_RANGE.max, DEFAULTS.minFreePercent),
     enabled: raw.enabled === undefined ? DEFAULTS.enabled : raw.enabled === true || raw.enabled === 'true',
     refresh: raw.refresh === 'request' ? 'request' : DEFAULTS.refresh,
   }
@@ -107,7 +116,17 @@ export const microcompactPlugin: Plugin.Object = {
           minSaveTokens: config.minSaveTokens,
           errorCallIds: new Set(owner.toolErrors.keys()),
         }
-        if (config.refresh === 'request') return microcompact(messages, options)
+        /**
+         * 门槛：清 1 token 只按 1/10 价省，断一次前缀要按全价重读整段。
+         * 所以先算出计划能清多少字符，占整段提示词不够 minFreePercent 就换空计划——
+         * 这一轮一条都不清，等下一轮攒多了再动。
+         */
+        const worthApplying = (plan: MicrocompactPlan): boolean => planWorthApplying(messages, plan, config.minFreePercent)
+
+        if (config.refresh === 'request') {
+          const planned = planMicrocompact(messages, options)
+          return applyMicrocompactPlan(messages, worthApplying(planned) ? planned : EMPTY_PLAN)
+        }
 
         const round = roundKeyOf(messages)
         const sid = owner.meta.id
@@ -116,7 +135,10 @@ export const microcompactPlugin: Plugin.Object = {
         if (held !== undefined && held.round === round && messages.length >= held.length) {
           return applyMicrocompactPlan(messages, held.plan)
         }
-        const plan = planMicrocompact(messages, options)
+        const planned = planMicrocompact(messages, options)
+        // 判定放在「算出计划之后、写进 frozen 之前」：跳过时也冻结空计划与本轮条数，
+        // 同一轮内不再反复算（否则每一步都要重扫一遍消息，还显得计划一直在变）。
+        const plan: MicrocompactPlan = worthApplying(planned) ? planned : EMPTY_PLAN
         frozen.set(sid, { round, plan, length: messages.length })
         if (frozen.size > 64) {
           // 会话多了别让这张表无界长；删最早登记的那一条（Map 插入序）。
@@ -167,6 +189,17 @@ export const microcompactPlugin: Plugin.Object = {
         step: 64,
         help: '清一条短的省不出多少，还白丢证据，所以不到这个门槛就不清。填 0 表示只要能省就清。',
       },
+      {
+        type: 'number',
+        key: 'minFreePercent',
+        label: '总共至少省下几成才清（%）',
+        min: MIN_FREE_RANGE.min,
+        max: MIN_FREE_RANGE.max,
+        step: 5,
+        help:
+          '一轮里能清掉的字符占整段提示词的百分比，达不到就一条都不清。命中的 token 只按约 1/10 价收，' +
+          '没命中的整段按全价重读，清得太少反而亏。默认 25，填 0 表示只要能省就清。',
+      },
     ]
 
     const section: SettingsSectionSpec = {
@@ -179,7 +212,13 @@ export const microcompactPlugin: Plugin.Object = {
       // 每次打开分区都现读磁盘：手改 plugins.json 也能看到真值。
       values: (): SettingsValues => {
         config = readConfig(passed)
-        return { enabled: config.enabled, refresh: config.refresh, keepRecent: config.keepRecent, minSaveTokens: config.minSaveTokens }
+        return {
+          enabled: config.enabled,
+          refresh: config.refresh,
+          keepRecent: config.keepRecent,
+          minSaveTokens: config.minSaveTokens,
+          minFreePercent: config.minFreePercent,
+        }
       },
       // 契约：save 返回字符串 = 失败原因。
       save: (key, value): string | void => {
@@ -197,6 +236,7 @@ export const microcompactPlugin: Plugin.Object = {
         if (!Number.isFinite(num)) return '这里要填一个数字'
         if (key === 'keepRecent') applyConfig({ keepRecent: num })
         else if (key === 'minSaveTokens') applyConfig({ minSaveTokens: num })
+        else if (key === 'minFreePercent') applyConfig({ minFreePercent: num })
         else return `这个分区没有这项：${key}`
       },
     }

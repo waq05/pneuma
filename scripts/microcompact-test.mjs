@@ -1,9 +1,10 @@
 /**
  * 每轮旧工具结果微压缩（WS1）的确定性探针。
  *
- * 契约见 docs/context-token-plan.md 的「### WS1 每轮旧工具结果微压缩」。三段：
+ * 契约见 docs/context-token-plan.md 的「### WS1 每轮旧工具结果微压缩」。五段：
  *   [1] 纯函数（直读 src/core/microcompact.ts）：保留窗口 / 最小节省门槛 / 各类跳过 /
  *       幂等 / 不改输入 / 工具名回填——把跳过规则逐条钉成行为；
+ *   [1c] 插件接线的两条新策略：清理量不到门槛就一条都不清、队友汇报不翻轮；
  *   [2] 接线：真内核里注册的 `microcompact` 投影落在 env-facts(600) 与 drop-images(900)
  *       中间（用两条 649 / 651 哨兵投影夹出微压缩到底在哪一段跑），配置开关也在这里验；
  *   [3] 端到端：真内核 + 假 SSE 跑一段八次工具调用的回合，断言**后一轮请求体**里旧的
@@ -75,8 +76,12 @@ const until = async (fn, timeoutMs = 10000) => {
 
 // ── 造消息的小工具 ───────────────────────────────────────────────────────────
 
-/** 一段够长、够「像日志」的正文：约 1200 个汉字 ≈ 780 token（稳稳超过 256 的门槛）。 */
-const longText = () => `日志行：${'错'.repeat(1200)}`
+/**
+ * 一段够长、够「像日志」的正文：约 2000 个汉字 ≈ 1300 token（稳稳超过 256 的门槛）。
+ * 取 2000 还有一个原因：端到端那条会带上整段系统提示词（约 5.4 千字符），
+ * 3 条结果要占到整段请求的 25% 以上才能过 minFreePercent 门槛。
+ */
+const longText = () => `日志行：${'错'.repeat(2000)}`
 /** 一段短正文：约 30 个汉字 ≈ 20 token（省不到 256，门槛以内）。 */
 const shortText = () => '错误'.repeat(15)
 const toolCall = (id, name) => ({ id, type: 'function', function: { name, arguments: '{}' } })
@@ -88,6 +93,7 @@ const {
   microcompact,
   planMicrocompact,
   applyMicrocompactPlan,
+  planWorthApplying,
   roundKeyOf,
   DEFAULT_KEEP_RECENT_TOOL_RESULTS,
   DEFAULT_MIN_SAVE_TOKENS,
@@ -298,6 +304,87 @@ console.log('[1b] 冻结计划：同一轮的清理集合可以原样复用')
   ]
   check('轮次键 = 1（合成消息不算新一轮）', roundKeyOf(withSynthetic) === 1, String(roundKeyOf(withSynthetic)))
   check('真用户再说一句 → 轮次键变 2', roundKeyOf([...withSynthetic, { role: 'user', content: '继续' }]) === 2)
+
+  // 队友汇报是程序投进来的，不是真人开口：不能把一轮切成两轮（否则每份汇报都要重读整段前缀）
+  const withReport = [...messages, { role: 'user', content: '<teammate-report id="s1">干完了：改了 3 个文件</teammate-report>' }]
+  check('队友汇报不改变轮次键', roundKeyOf(withReport) === 1, String(roundKeyOf(withReport)))
+  check('队友汇报后的计划与原计划一致（冻结不受影响）', JSON.stringify([...planMicrocompact(withReport, {})]) === JSON.stringify([...plan]))
+}
+
+console.log('[1c] 插件策略：清理量不到门槛不清 / 队友汇报不翻轮')
+{
+  // 直接跑 src/plugins/microcompact.ts：临时 HOME 里没有 microcompact 配置条目，apply 的
+  // 第二参数就是默认值来源；不依赖 lib/ 是否已构建。
+  const { microcompactPlugin } = await import(new URL('../src/plugins/microcompact.ts', import.meta.url).href)
+  const makePlugin = () => {
+    let projection = null
+    let section = null
+    const ctx = {
+      prompt: {
+        registerProjection: (_id, fn) => {
+          projection = fn
+          return () => {}
+        },
+      },
+      settings: {
+        registerSection: (spec) => {
+          section = spec
+          return () => {}
+        },
+      },
+      session: { current: () => { throw new Error('测试里应显式传会话') } },
+    }
+    microcompactPlugin.apply(ctx, {})
+    return { projection, section }
+  }
+  const sessionOf = (id) => ({ meta: { id }, toolErrors: new Map() })
+  const conversation = (count, text) => {
+    const list = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: '开跑' },
+    ]
+    for (let index = 1; index <= count; index += 1) list.push(assistant('h' + index, 'bash'), toolMsg('h' + index, text))
+    return list
+  }
+  const cleared = (list) => list.filter((message) => message.role === 'tool' && isCleared(message.content)).length
+
+  const { projection, section } = makePlugin()
+
+  // 设置分区：默认 25%，能存盘读回，超过 80 也夹到 80（区间外不留脏值）
+  check('设置分区默认 minFreePercent = 25', section.values().minFreePercent === 25)
+  section.save('minFreePercent', 80)
+  check('保存 80 后读回 80', section.values().minFreePercent === 80)
+  section.save('minFreePercent', 100)
+  check('填 100 夹回上限 80', section.values().minFreePercent === 80)
+  section.save('minFreePercent', 25)
+
+  // 8 条长结果、正文总量约 16 千字符：清 3 条约省 6 千（约 37%），过 25% 门槛 → 照旧清
+  const roomy = conversation(8, longText())
+  const roomyOut = projection(roomy, sessionOf('probe-roomy'))
+  check('清理量高于门槛时照旧清（8 条里清 3 条）', cleared(roomyOut) === 3, 'cleared=' + cleared(roomyOut))
+  check('高于门槛时脚本判定为值得清', planWorthApplying(roomy, planMicrocompact(roomy, {}), 25))
+
+  // 同样清 3 条，但整段提示词被一条 4 万字符的 system 撑到 5.6 万：占比约 11% → 一条都不清
+  const diluted = conversation(8, longText())
+  diluted[0] = { role: 'system', content: 'sys' + '说明'.repeat(20000) }
+  const dilutedOut = projection(diluted, sessionOf('probe-diluted'))
+  check('清理量低于门槛时一条都不清（5.6 万字符里只省 6 千）', cleared(dilutedOut) === 0, 'cleared=' + cleared(dilutedOut))
+  check('低于门槛时脚本判定为不值得清', !planWorthApplying(diluted, planMicrocompact(diluted, {}), 25))
+
+  // 队友汇报：先跑出冻结计划（7 条清 2 条），再插一条汇报和 1 条新结果。
+  // 汇报若被当成新的一轮，会重算成「8 条清 3 条」；冻结生效则仍只清首轮那 2 条。
+  const teamSession = sessionOf('probe-team')
+  const first = projection(conversation(7, longText()), teamSession)
+  check('首轮冻结计划清 2 条（7 条留最近 5 条）', cleared(first) === 2, 'cleared=' + cleared(first))
+  const withReport = [
+    ...conversation(7, longText()),
+    { role: 'user', content: '<teammate-report id="s1">干完了：改了 3 个文件</teammate-report>' },
+    assistant('h8', 'bash'),
+    toolMsg('h8', longText()),
+  ]
+  check('队友汇报不改变轮次键', roundKeyOf(withReport) === 1, String(roundKeyOf(withReport)))
+  const second = projection(withReport, teamSession)
+  check('队友汇报后计划仍冻结：仍只清首轮那 2 条', cleared(second) === 2, 'cleared=' + cleared(second))
 }
 
 console.log('[2] 接线：投影在 env-facts(600) 与 drop-images(900) 之间跑')
