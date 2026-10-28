@@ -426,11 +426,33 @@ function effectiveHead(tokens: readonly string[]): { name: string; args: readonl
   return { name: baseName(head), args: tokens.slice(index + 1) }
 }
 
-/** 命令段里的所有文本（原文 + 词元），黑名单 glob 拿去逐条比。 */
-function segmentTexts(command: string): string[] {
+/**
+ * 黑名单的候选串：从命令里挑出「可能指向一个文件」的词元，黑名单 glob 只拿它们去比。
+ *
+ * 为什么要挑：路径常常嵌在长串里（`-Path C:\a\b.key`、`--file=/etc/passwd`、`$f='x.key'`），
+ * 拿整条命令原文去比只能命中「整条命令恰好以 .key 结尾」这种极窄的情况；反过来，
+ * `$_.Key` 这种变量属性引用又会被 `*.key` 当成凭据文件——实测把一条读会话日志的命令整条拒掉。
+ *
+ * 两类片段不算路径：纯变量/属性引用（`$f`、`$_.Key`，判据是「含 $ 且没有路径分隔符」），
+ * 以及表达式片段（`($_`、`ConvertFrom-Json).Key`，判据是「含括号又不以盘符或斜杠开头」）。
+ * 带分隔符的变量引用（`$env:USERPROFILE\.ssh\id_rsa`）算路径，它确实指向文件。
+ */
+function pathCandidates(command: string): string[] {
   const out: string[] = []
-  for (const segment of splitSegments(command)) out.push(segment.raw, ...segment.tokens)
+  for (const segment of splitSegments(command)) {
+    for (const token of segment.tokens) {
+      if (isPathCandidate(token)) out.push(token)
+    }
+  }
   return out
+}
+
+/** 一个词元能不能当路径去比黑名单（判据见 {@link pathCandidates}）。 */
+function isPathCandidate(token: string): boolean {
+  if (token === '') return false
+  if (token.includes('$') && !/[\\/]/.test(token)) return false
+  if (/[()]/.test(token) && !/^(?:[A-Za-z]:[\\/]|[\\/]|\\\\)/.test(token)) return false
+  return true
 }
 
 /** 内置危险模式的全部命中（整条命令与每一段都看一遍；管道类模式要整条才认得出）。 */
@@ -619,7 +641,7 @@ function evaluate(input: ToolGuardInput, config: FloorConfig, rules: readonly Pr
 
   // 第 3 层：用户 deny 黑名单与 deny 前缀规则。排在权限模式与审批之前，
   // 「完全访问」因此在审批层放行不了它（`plugins/approval.ts:334-337` 那条路径直接被抄掉）。
-  const hit = globHit([command, ...segmentTexts(command)], config.denyGlobs)
+  const hit = globHit(pathCandidates(command), config.denyGlobs)
   if (hit !== null) return { action: 'deny', layer: 'deny-list', reason: `命令命中用户 deny 黑名单（${hit}）` }
   if (verdict.matchedRule !== null && verdict.matchedRule.decision === 'deny') {
     return {
@@ -671,7 +693,7 @@ function innerDenyReason(command: string, config: FloorConfig, rules: readonly P
     if (inner !== null) return inner
   }
   if (structure.substitutions.length > 0) return '片段里还套着命令替换，拼不出实际效果'
-  const hit = globHit([text, ...segmentTexts(text)], config.denyGlobs)
+  const hit = globHit(pathCandidates(text), config.denyGlobs)
   if (hit !== null) return `命中用户 deny 黑名单（${hit}）`
   if (verdict.matchedRule !== null && verdict.matchedRule.decision === 'deny') {
     return `用户规则禁止：${verdict.matchedRule.justification ?? verdict.matchedRule.pattern.join(' ')}`
