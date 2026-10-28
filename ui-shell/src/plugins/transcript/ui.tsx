@@ -2106,7 +2106,8 @@ function ChangesCard({ rows, cwd }: { rows: readonly Row[]; cwd: string }): Reac
             <FileIcon name={(single ?? files[0]!).path} size={20} />
           </span>
           <span className="changes-titles">
-            <span className="changes-title">{single === undefined ? `${String(files.length)} 个文件已更改` : baseNameOf(single.path)}</span>
+            {/* 措辞照 dsh 的「已编辑 N 个文件」：这一轮的动作是编辑，不是「文件自己变了」。 */}
+            <span className="changes-title">{single === undefined ? `已编辑 ${String(files.length)} 个文件` : baseNameOf(single.path)}</span>
             <span className="changes-stat">
               <Counts added={totalAdded} removed={totalRemoved} />
               <span className="changes-hint">点击审查改动</span>

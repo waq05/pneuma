@@ -1480,14 +1480,59 @@
   overflow: hidden;
 }
 
+/* 头行是按钮（2026-10-28 起整卡可折叠）：按下去展开 diff，再按收起。
+   没有 diff 正文的通知（「预览算不出来」那种）不设 aria-controls，光标也就不装成可点。 */
 .entry-review-head {
   align-items: center;
+  background: none;
+  border: 0;
   border-bottom: 1px solid var(--dsc-stroke-2);
+  color: inherit;
+  cursor: pointer;
   display: flex;
   flex: none;
+  font: inherit;
   gap: 6px;
   min-width: 0;
   padding: 6px 10px;
+  text-align: left;
+  width: 100%;
+}
+
+.entry-review-head:not([aria-controls]) {
+  cursor: default;
+}
+
+.entry-review-head:hover {
+  background: var(--dsc-fill-quaternary);
+}
+
+/* 收起态不画那条分隔线：一条线的卡再挂一条底线看着像没画完。 */
+.entry-review[data-open='false'] .entry-review-head {
+  border-bottom: 0;
+}
+
+.entry-review-head:focus-visible {
+  outline: 2px solid var(--dsc-accent);
+  outline-offset: -2px;
+}
+
+/* 动作词（新建文件 / 编辑文件）：与工具卡行头的动词同一档，不抢路径的等宽视线。 */
+.entry-review-verb {
+  color: var(--dsc-text-tertiary);
+  flex: none;
+  font-size: var(--dsc-fs-caption);
+}
+
+/* 展开箭头：收起时朝下、展开时转半圈（与工具卡的 tc-chevron 同一套观感）。 */
+.entry-review-chevron {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  transition: transform 120ms ease;
+}
+
+.entry-review[data-open='true'] .entry-review-chevron {
+  transform: rotate(180deg);
 }
 
 .entry-review-icon {
@@ -1535,6 +1580,12 @@
   max-height: 260px;
   overflow: auto;
   padding: 6px 0;
+}
+
+/* 走 hidden 属性收起：UA 的 [hidden] 自带 display:none，这里显式写一条是给
+   「将来有人给这块加 display」留的护栏（同上一次 .ask-panel 踩过的坑）。 */
+.entry-review-diff[hidden] {
+  display: none;
 }
 
 /* 一行差异：`width: max-content` + `min-width: 100%` 让底色横向铺满（与 .diff-line 同款：
@@ -2323,6 +2374,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 审批卡那行中文含义（0.7.1）：命令原文是给读得懂命令行的人看的，这一行是给
+   「只想知道它要动我哪个文件」的人看的。用正文色，命令原文退成次要色。 */
+.approval-meaning {
+  color: var(--dsc-text-primary);
+  font-size: var(--dsc-fs-ui);
+  line-height: 1.5;
 }
 
 /* 模型在请求放宽沙箱（sandbox_permissions + justification）：卡片上单起一段摊开说清，

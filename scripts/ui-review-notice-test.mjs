@@ -187,7 +187,15 @@ console.log('[6] 壳侧接线钉（文本钉：结构约定）')
   check('命令输出走左对齐块（不再挤进居中的一行）', chat.includes('entry.command === true') && chat.includes('entry-system-command'))
   check('轨迹页同样认这条通知（system 步骤走同一张卡）', trace.includes('parseReviewNotice(text)') && trace.includes('<ReviewNoticeCard notice={notice} cwd="" />'))
   check('轨迹页划选 diff 不误开检查器（.entry-review 进了忽略表）', trace.includes('.tool-body, .entry-review, [data-trace-open]'))
-  check('卡片渲染复用既有计数样式（.changes-counts / changes-added / changes-removed / .diff-badge）', card.includes('className="changes-counts"') && card.includes('className="changes-added"') && card.includes('className="changes-removed"') && card.includes("'diff-badge'"))
+  check('卡片渲染复用既有计数样式（.changes-counts / changes-added / changes-removed）', card.includes('className="changes-counts"') && card.includes('className="changes-added"') && card.includes('className="changes-removed"'))
+  // 2026-10-28：整卡收成一行头，点开才看 diff。四条钉住这条交互（任何一条丢了，
+  // 界面就退回「每写一个文件摊几十行绿红块」）。默认收起是有意为之，不是漏了初值。
+  check('默认收起（useState(false)）', /const \[open, setOpen\] = useState\(false\)/.test(card))
+  check('头行是按钮且带 aria-expanded / aria-controls', /className="entry-review-head"[\s\S]{0,400}?aria-expanded/.test(card) && card.includes("'aria-controls': bodyId"))
+  check('正文按展开态走 hidden（收起不产生盒子）', /hidden=\{!open\}/.test(card))
+  check('箭头只挂在有正文的卡上（没 diff 点不动）', card.includes('{hasBody ? <IconChevronDown') && card.includes('if (hasBody) setOpen'))
+  check('动作词是「新建文件 / 编辑文件」（与其他工具行同一套说法）', card.includes('新建文件') && card.includes('编辑文件'))
+  check('样式有收起态（头行无底分隔线 + 正文 hidden 兜底）', /\.entry-review\[data-open='false'\] \.entry-review-head/.test(css) && /\.entry-review-diff\[hidden\]/.test(css))
 
   check('卡片左对齐（stretch，不居中）', /\.entry-review \{[\s\S]{0,200}?align-self: stretch/.test(css))
   check('diff 块等宽 + 限高滚动', /\.entry-review-diff \{[\s\S]{0,300}?max-height: 260px;[\s\S]{0,100}?overflow: auto/.test(css) && /\.entry-review-diff \{[\s\S]{0,200}?font-family: var\(--dsc-font-mono\)/.test(css))
