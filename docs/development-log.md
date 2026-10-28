@@ -10820,14 +10820,24 @@ B 的空白页上；某个会话的删除命令被钩子拦下，理由却是「
 
 | 项 | 读数 |
 | --- | --- |
-| `check:ui` | 45 条探针（新增 `ui-phone-command-test.mjs`） |
-| `check:core` | 67 条探针（新增 `panel-prefs-test.mjs`，40 条断言） |
+| `check:ui` | 45 条探针（新增 `ui-phone-command-test.mjs`，30 条断言） |
+| `check:core` | 67 条探针（新增 `panel-prefs-test.mjs`，41 条断言） |
 | `check:style` | 627 个文件全过 |
 | 四项目 typecheck | 0 错 |
 | 真机截图 | `desktop/shots/slash-menu-shot.ps1` 在真 Electron 里打一个 `/`：菜单 7 行、行高 34、说明 `text-align: right`、分组标题「指令」都在（读数见脚本 stderr 的 `预跑脚本完成` 那行，图在 `desktop/shots/slash-menu.png`） |
 | 宽度回归（真机） | `desktop/shots/panel-memory-shot.ps1`：settings.json 预置 `{sidebar:320, dock:640}`、localStorage 留空（`localStorageSidebar: null`），真 Electron 首帧量到侧栏 320、右侧栏 640、`--dsc-sidebar-w: 320px` —— 宽度确实来自宿主那份，不是浏览器存储 |
 
 顺带统一了一处旧毛病：主进程原来只认 `app.getPath('home')`（走系统账号目录，不认 `USERPROFILE` / `HOME` / `DSC_HOME`），而宿主管家按环境变量解析——重定向过 HOME 的场合（自检、隔离账户、配置放别盘）主进程会读到另一份 settings.json，主题与宽度于是对不上。现在两边都认 `DSC_HOME`。
+
+### 四、审查回来的三处真错（已修）
+
+这一版先交了一版，再让另一路审了一遍。审出三处「会真丢东西」的：
+
+1. **手机上必有附件时，报错看不见、附件还被清掉了**。原来错误只画在待审批卡那块里，没有卡的时候谁都看不到；而输入框在 `onSend` 返回之后立刻清空正文与 chip——用户看到的是「点了没反应」。改：错误条移到发送框上方常显；`onSend` 改成返回 boolean，被拒（命令带附件）时输入与附件都保住。
+2. **宿主那份没读到就注册落盘，会把其余几项抹掉**。宿主 `setUiPrefs` 是整键替换，壳只发手里这一份；若启动那次 `getUiPrefs` 超时（1.5 秒），手里只有地址带来的几项，第一次拖拽就会把另几项从 settings.json 里删掉。改：**拿到过宿主那份才注册**落盘出口；超时的话等回读真到了再灌一次并开写盘。
+3. **手机上「认不出的命令」又被当消息发了**。原来只有精确名或唯一前缀才算命令，`/re`、拼错的 `/comapct` 会走 `submit`——正是这次要修的旧毛病。改：与桌面壳同一条口径，`/` 开头的一律进命令通道，认不出由宿主回一句人话。
+
+顺带修的几处小的：并排审查宽原来在 `useEffect` 里铺变量（首帧是默认宽、下一帧才跳），搬到 `useLayoutEffect`；`src/plugins/commands.ts` 里 23 条注册 spec 抄了第二份 args/description（运行时本来就被表覆盖，等于死数据），改成 `builtinSpec(name)` 只从表取；TUI 的英文名去掉斜杠，三端显示同一个名字；手机拉命令清单失败时给一句话，不再静默。
 
 **两条探针为什么这么写**：宽度这件事的坑在「读」，所以 `panel-prefs-test` 既跑 `readPrefs` 的真实现（临时 `DSC_HOME` + 手写 settings.json），也**直接 import 面板模块**并用假 localStorage 跑一遍回落与落盘——只查源码字符串的话，「回落」这件事本身测不到。菜单那条把手机的纯逻辑（`remote-web/src/lib/commands.ts`）真跑起来，因为它是这轮唯一新增的判据。
 

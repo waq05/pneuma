@@ -96,7 +96,7 @@ const HOST_KEY_OF: Readonly<Record<string, keyof PanelGeometry>> = {
  * 宿主那份几何的内存副本：启动时由 {@link primePanelGeometry} 灌进来，
  * 之后每次落盘就地更新——写的时候要发整份（宿主是「整键替换」的补丁语义）。
  */
-let remembered: Record<string, number | boolean> = {}
+let remembered: Record<string, number | boolean> = { ...bootGeometry }
 
 /** 落盘的出口（由壳入口注册；没注册时只写 localStorage）。 */
 let saver: ((geometry: PanelGeometry) => void) | null = null

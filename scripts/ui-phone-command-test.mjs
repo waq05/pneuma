@@ -99,7 +99,13 @@ console.log('\n[5] 接线（菜单画在哪、命令发给谁）')
   check('清单从宿主取（listUiCommands）', page.includes("invoke<PhoneCommandView[]>('listUiCommands')"))
   check('连上才取一次（断线时别反复问）', page.includes("if (state.conn !== 'open') return"))
   check('命令走 runUiCommand，消息走 submit', page.includes("invoke<boolean>('runUiCommand', [command])") && page.includes('client.submit(text'))
-  check('带附件的命令当场拒绝（不把图悄悄吞掉）', page.includes('这条命令不接受附件'))
+  // 口径与桌面壳对齐：`/` 开头的一律进命令通道（认不出由宿主回一句人话），不按「能不能
+  // 匹配上清单」决定要不要当消息发——否则 /re、拼错的 /comapct 又会被喂给模型。
+  check('认不出的一律走命令通道（按前缀判，不按清单）', page.includes("if (text.trim().startsWith('/'))"))
+  check('带附件时当场拒绝并保住输入（返回 false）', page.includes('这条命令不接受附件') && page.includes('return false'))
+  check('错误条不再只画在待办卡里（常显）', /\{cardError !== null \? <p className="pendingcard-error">/.test(read('remote-web/src/pages/ChatPage.tsx')))
+  const composerSend = read('remote-web/src/components/Composer.tsx')
+  check('发送被拒时不清空输入与附件', composerSend.includes('if (!onSend(outgoing, images, paths)) return'))
   const css = read('remote-web/src/styles.css')
   check(
     '样式类齐（浮层 / 分组 / 行 / 图标 / 中文名 / 英文名 / 说明）',

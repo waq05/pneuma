@@ -155,7 +155,13 @@ console.log('\n[7] 面板模块的真行为（假 localStorage + 假宿主）')
   writeStoredPx(PANEL_KEYS.sidebarWidth, 260)
   check('拖完同时写 localStorage', store.get(PANEL_KEYS.sidebarWidth) === '260', String(store.get(PANEL_KEYS.sidebarWidth)))
   check('拖完把整份几何发给宿主', sent.length === 1 && sent[0].sidebar === 260 && sent[0].dock === 480, JSON.stringify(sent))
-  check('同源内先读 localStorage（比宿主那份新）', readStoredPx(PANEL_KEYS.sidebarWidth, 200, 420) === 260, String(readStoredPx(PANEL_KEYS.sidebarWidth, 200, 420)))
+  // 优先级要拿**两个不同的值**来测：以前写完之后 localStorage 与内存副本是同一个数，
+  // 删掉任何一边这条断言都照样过，等于没测。
+  primePanelGeometry({ sidebar: 300 })
+  store.set(PANEL_KEYS.sidebarWidth, '260')
+  check('同源内先读 localStorage（260）而不是宿主那份（300）', readStoredPx(PANEL_KEYS.sidebarWidth, 200, 420) === 260, String(readStoredPx(PANEL_KEYS.sidebarWidth, 200, 420)))
+  store.delete(PANEL_KEYS.sidebarWidth)
+  check('localStorage 没有时读宿主那份（300）', readStoredPx(PANEL_KEYS.sidebarWidth, 200, 420) === 300, String(readStoredPx(PANEL_KEYS.sidebarWidth, 200, 420)))
 
   writeStoredFlag(PANEL_KEYS.sidebarCollapsed, false)
   check('收起态翻回来也记（false 不是"缺键"）', sent.at(-1).collapsed === false && readStoredFlag(PANEL_KEYS.sidebarCollapsed) === false, JSON.stringify(sent.at(-1)))

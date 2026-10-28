@@ -11,7 +11,7 @@
  *
  * @module dsc-ui-shell/review-pane
  */
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useState, type ReactNode } from 'react'
 import type { ChangedFileView } from '@dsc/ui-core'
 import {
   DiffRows,
@@ -57,8 +57,9 @@ export function ReviewPane(): ReactNode {
     if (review !== null) setIndex(Math.min(review.index, Math.max(0, review.files.length - 1)))
   }, [review])
 
-  // 挂载时把存档宽度回灌进 CSS 变量（flex-basis 走 var）；没存档就是 CSS 里的默认值。
-  useEffect(() => {
+  // 存档宽度在**浏览器绘制之前**铺进 CSS 变量（flex-basis 走 var）。用 useEffect 会晚一帧：
+  // 首帧画样式表默认宽，下一帧才跳到存档宽，用户看得见那一下跳。useLayoutEffect 在绘制前跑。
+  useLayoutEffect(() => {
     const saved = readStoredPx(PANEL_KEYS.diffPaneWidth, PANE_W_MIN, PANE_W_MAX)
     if (saved !== null) setRootVar(PANE_W_VAR, `${String(saved)}px`)
   }, [])

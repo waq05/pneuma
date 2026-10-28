@@ -52,8 +52,11 @@ export interface ComposerProps {
   stopping: boolean
   connected: boolean
   error: string | null
-  /** 发送：非图片附件的路径已在 text 里，图片以 data URL 数组单发一个参数。 */
-  onSend: (text: string, images: string[]) => void
+  /**
+   * 发送。返回 false 表示「这一条没发出去」——调用方要保住输入框里的正文与附件
+   * （例如命令带了附件、宿主不收），不能让人白打一遍。
+   */
+  onSend: (text: string, images: string[], files: string[]) => boolean
   /** 上传一个非图片文件，返回宿主给的路径；失败要把人话文案放进 Error。 */
   onUploadFile: (file: File) => Promise<string>
   onInterrupt: () => void
@@ -225,8 +228,10 @@ export function Composer({
   function send(): void {
     if (!canSend) return
     const outgoing = composeOutgoing(text, paths)
-    onSend(outgoing, images)
+    // 被拒（命令不收附件之类）就原样留着：正文与 chip 一起保住，用户改完再发。
+    if (!onSend(outgoing, images, paths)) return
     setText('')
+    setCaret(0)
     setAttachError(null)
     commit([])
   }

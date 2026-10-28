@@ -391,7 +391,9 @@ export function Composer({
             // 命令候选带中文短名（宿主给，见 CommandSpec.label）：第一列读中文，英文名跟在后头；
             // 英文名取 label 的第一段（`/diff [文件]` → `/diff`）——菜单里不摆参数占位，
             // 选中后宿主已补一个空格，接着打参数就行。模型候选没有 title，照旧只画 label。
-            const english = item.title === undefined ? '' : (item.label.split(' ')[0] ?? item.label)
+            // 英文名取 label 的第一段并去掉斜杠：三端（桌面 / 手机 / 终端）显示的同一个名字。
+            const english =
+              item.title === undefined ? '' : (item.label.split(' ')[0] ?? item.label).replace(/^\//, '')
             return (
               <Text key={item.label} color={selected ? ACCENT : undefined} wrap="truncate">
                 {selected ? MARK.selected : MARK.idle}

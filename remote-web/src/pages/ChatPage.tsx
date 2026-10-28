@@ -52,7 +52,11 @@ export function ChatPage({ client, state, onOpenSessions }: ChatPageProps): Reac
       .then((list) => {
         setCommands(Array.isArray(list) ? list : [])
       })
-      .catch(() => undefined)
+      .catch((cause: unknown) => {
+        // 取不到清单 = 菜单永远不弹，用户会再撞上「`/compact` 被当消息发」那件事。
+        // 说一句，别静默；发送时没有清单也能派发（宿主自己会认）。
+        setCardError(`读不到命令清单：${cause instanceof Error ? cause.message : String(cause)}`)
+      })
   }, [client, state.conn])
 
   const cwd = snapshot?.cwd ?? null
@@ -104,33 +108,38 @@ export function ChatPage({ client, state, onOpenSessions }: ChatPageProps): Reac
             onAnswerPlan={(value: ApprovalAnswer) => answer('answerPlan', [value])}
             onAnswerQuestion={(value: string) => answer('answerQuestion', [value])}
           />
-          {cardError !== null ? <p className="pendingcard-error">{cardError}</p> : null}
         </div>
       ) : null}
+      {/* 错误条常显：以前只画在待办卡里面，没有卡的时候「命令带附件」「派发失败」都看不见。 */}
+      {cardError !== null ? <p className="pendingcard-error">{cardError}</p> : null}
       <Composer
         busy={state.busy}
         stopping={state.stopping}
         connected={state.conn === 'open'}
         error={state.lastError !== null && state.conn !== 'open' ? state.lastError : null}
         commands={commands}
-        onSend={(text, images) => {
-          // 以 `/` 开头的按命令派发（宿主那道闸会再判一次）；其余照旧当消息发。
-          // 以前手机上打 `/compact` 会被当成普通消息喂给模型，模型只好回一句「不认识」。
-          const command = commandToRun(text, commands)
-          if (command !== null) {
-            // 命令不收附件（宿主那条路只接一行文本）：与其把图悄悄吞掉，不如当场说清楚。
-            if (images.length > 0) {
-              setCardError('这条命令不接受附件，请先移除图片再发')
-              return
+        onSend={(text, images, files) => {
+          // 以 `/` 开头的一律按命令派发（宿主那道闸会再判一次，认不出就回一句人话）。
+          // 与桌面壳同一条口径：不因为「前缀撞名」或「拼错」就把半条命令当消息喂给模型——
+          // 那正是这次要修的旧毛病。以前手机上打 `/compact` 模型只会回一句「不认识」。
+          if (text.trim().startsWith('/')) {
+            // 命令不收附件（宿主那条路只接一行文本）。判定放在清空输入之前：说清楚，别静默吞。
+            if (images.length > 0 || files.length > 0) {
+              setCardError('这条命令不接受附件，请先移除附件再发')
+              return false
             }
+            const command = commandToRun(text, commands) ?? text.trim()
+            setCardError(null)
             void client.invoke<boolean>('runUiCommand', [command]).catch((cause: unknown) => {
               setCardError(cause instanceof Error ? cause.message : String(cause))
             })
-            return
+            return true
           }
+          setCardError(null)
           void client.submit(text, images.length > 0 ? images : undefined).catch((cause: unknown) => {
             setCardError(cause instanceof Error ? cause.message : String(cause))
           })
+          return true
         }}
         onUploadFile={(file) => client.upload(file).then((result) => result.path)}
         onInterrupt={() => {

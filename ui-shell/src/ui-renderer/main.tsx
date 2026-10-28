@@ -176,11 +176,27 @@ async function bootstrap(): Promise<void> {
   // 再注册落盘出口，拖动松手时整份发给 `setUiPrefs`（见 ui-primitives/panels.ts）。
   const loaded = await within(prefs, 1500)
   primePanelGeometry(loaded?.panelWidths ?? {})
-  setPanelGeometrySaver((geometry) => {
-    void channel.invoke('setUiPrefs', [{ panelWidths: geometry }]).catch((error: unknown) => {
-      console.warn('[ui-shell] 面板几何没写成，下次启动会回默认宽', error)
+  /**
+   * 注册落盘出口。**拿到过宿主那份才注册**：宿主是整键替换的补丁语义，只发手里这一份
+   * 会把没读到的另外几项从 settings.json 抹掉（超时的场合手里只有地址里那几项）。
+   */
+  const openSaver = (): void => {
+    setPanelGeometrySaver((geometry) => {
+      void channel.invoke('setUiPrefs', [{ panelWidths: geometry }]).catch((error: unknown) => {
+        console.warn('[ui-shell] 面板几何没写成，下次启动会回默认宽', error)
+      })
     })
-  })
+  }
+  if (loaded !== null) {
+    openSaver()
+  } else {
+    // 超时只是「这一帧没等到」，回读本身还在路上：到了再灌一次并开写盘。
+    void prefs.then((late) => {
+      if (late === null) return
+      primePanelGeometry(late.panelWidths ?? {})
+      openSaver()
+    })
+  }
 
   // 4. 渲染。服务表经 context 交给条目组件（插件用 `useService` 读服务、跟着出现/消失换源）；
   // 第一批已在注册表里，首帧就能画出它。

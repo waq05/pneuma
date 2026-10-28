@@ -76,16 +76,18 @@ check('空输入无占位文案', !output.includes('说点什么') && output.inc
 
 // 1. 输入 / 弹出全部命令
 let frame = await press('/')
-check('输入 / 后面板出现', frame.includes('/new') && frame.includes('/resume'))
+// 面板行是「中文名 英文名 说明」（2026-10-29 改版），英文名不再带斜杠——斜杠只留在输入框里。
+check('输入 / 后面板出现', frame.includes('新会话 new') && frame.includes('恢复会话 resume'))
 // 2026-10-29：面板改成「中文名 + 英文名 + 说明」，参数占位不再进面板（选中后宿主已补空格）。
-check('面板每行是中文名 + 英文名', frame.includes('新会话 /new') && frame.includes('模型 /model'), frame.split('\n').slice(0, 5).join(' | '))
+check('面板每行是中文名 + 英文名', frame.includes('新会话 new') && frame.includes('模型 model'), frame.split('\n').slice(0, 5).join(' | '))
 check('参数占位不再进面板', !frame.includes('<[端点/]模型名>'))
 check('面板含操作提示', frame.includes('Tab 补全'))
 
 // 2. ↑↓ 选择移动（/agents 插入后 /compact 顺延一位）
 frame = await press(KEY.down + KEY.down + KEY.down)
-const selected = frame.split('\n').find((line) => line.includes('❯') && line.includes('/'))
-check('↓↓↓ 后选中项变为 /compact', selected !== undefined && selected.includes('/compact'), `实际：${selected}`)
+// 认「面板里被选中那一行」：行首是 ❯ 且还带着中文名（输入框那行只有一个 ❯ /）。
+const selected = frame.split('\n').find((line) => line.includes('❯') && line.includes('压缩'))
+check('↓↓↓ 后选中项变为「压缩 compact」', selected !== undefined && selected.includes('压缩 compact'), `实际：${selected}`)
 
 // 3. Tab 补全无参命令（填满输入框）
 frame = await press(KEY.tab)
@@ -101,7 +103,7 @@ check('输入变化前面板保持关闭', !frame.includes('新建会话'))
 // 5. 清掉多余按键（逐键退格），输入 /mo 触发命令前缀过滤
 for (let i = 0; i < 12; i += 1) await press('\u007f')
 frame = await press('/mo')
-check('/mo 命令过滤只剩 /model', frame.includes('/model') && !frame.includes('/new'), JSON.stringify(frame.slice(-300)))
+check('/mo 命令过滤只剩「模型 model」', frame.includes('模型 model') && !frame.includes('新会话'), JSON.stringify(frame.slice(-300)))
 
 // 6. Tab 补全 /model（填入带尾空格的 /model ）→ 面板切换为模型候选列表
 frame = await press(KEY.tab)
@@ -137,14 +139,14 @@ check('/ne + Enter 自动展开为 /new', submitted[submitted.length - 1] === '/
 // 视口仍是 10 行：首屏只见前 10 条（/new … /thinking），/fork 是第 11 条，已滑出首屏。
 frame = await press('/')
 check(
-  '首屏塞满 10 行（/new … /thinking 在、/fork 已滑出）',
-  frame.includes('/new') && frame.includes('/permission') && frame.includes('/thinking') && !frame.includes('/fork'),
+  '首屏塞满 10 行（新会话 … 思考显示在、分叉已滑出）',
+  frame.includes('新会话') && frame.includes('权限预设') && frame.includes('思考显示') && !frame.includes('分叉'),
   JSON.stringify(frame.slice(-500)),
 )
 check('footer 带窗口计数（1–10/总数）', /1–10\/\d+ 条/.test(frame), JSON.stringify(frame.split('\n').find((line) => line.includes('↑↓ 选择'))))
 for (let i = 0; i < 11; i += 1) await press(KEY.down)
 frame = output
-check('↓×11 窗口滑动（/new 滚出、/plugins 入窗）', !frame.includes('/new') && frame.includes('/plugins'), JSON.stringify(frame.split('\n').filter((line) => line.includes('/')).slice(0, 3)))
+check('↓×11 窗口滑动（新会话滚出、分叉入窗）', !frame.includes('新会话') && frame.includes('分叉'), JSON.stringify(frame.split('\n').filter((line) => line.includes('条 ·')).slice(0, 1)))
 frame = await press(KEY.esc)
 check('Esc 关面板', !frame.includes('↑↓ 选择'))
 

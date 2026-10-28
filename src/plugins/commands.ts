@@ -58,6 +58,19 @@ export const commandsPlugin: Plugin.Object = {
     const helpFor = (ui: import('../services/types.js').CommandContext): string =>
       ui.shell === true ? shellHelpText() : helpText(service.specs())
 
+    /**
+     * 内置命令的 spec：**只从那张表取**，这里不再抄一份 args / description。
+     *
+     * 为什么原先抄过：注册要一个完整 CommandSpec，而 handler 是这一侧的事。但注册时
+     * `register` 本来就会用 BUILT_IN 行覆盖它（下面那行 `builtin ?? spec`），抄的那份
+     * 永远不生效——于是它只是第二份说明书，改文案时改错地方、也不会有人发现。
+     *
+     * @param name 内置命令名
+     * @returns 表里那一行；表里没有（理论上不该发生）时给一个只有名字的空壳
+     */
+    const builtinSpec = (name: string): CommandSpec =>
+      BUILT_IN_COMMANDS.find((entry) => entry.name === name) ?? { name, args: '', description: '' }
+
     const service: CommandService = {
       register(spec, handler) {
         // duringTask 以 BUILT_IN 表为准（spec 单一真源）：内置名注册时把声明合并进来，
@@ -106,31 +119,27 @@ export const commandsPlugin: Plugin.Object = {
 
     // ---- 内置命令注册 ----
     service.register(
-      { name: 'help', args: '', description: '查看帮助' },
+      builtinSpec('help'),
       ({ ui }) => ui.notice(helpFor(ui)),
     )
     service.register(
-      { name: 'new', args: '', description: '新建会话' },
+      builtinSpec('new'),
       ({ runtime }) => void runtime.openSession(undefined),
     )
     service.register(
-      { name: 'resume', args: '', description: '恢复历史会话' },
+      builtinSpec('resume'),
       ({ ui }) => ui.openPicker(),
     )
     service.register(
-      { name: 'agents', args: '', description: '查看子代理与后台会话（转录只读）' },
+      builtinSpec('agents'),
       ({ ui }) => ui.openAgents?.(),
     )
     service.register(
-      { name: 'settings', args: '', description: '打开设置页' },
+      builtinSpec('settings'),
       ({ ui }) => ui.openSettings?.(),
     )
     service.register(
-      {
-        name: 'model',
-        args: '<[端点/]模型名>',
-        description: '切换模型，下一次请求生效（无参数打开选择器）',
-      },
+      builtinSpec('model'),
       ({ args, runtime, ui }) => {
         const model = args[0]
         if (model === undefined || model === '') {
@@ -143,7 +152,7 @@ export const commandsPlugin: Plugin.Object = {
       },
     )
     service.register(
-      { name: 'status', args: '', description: '查看上下文占用与压缩余量' },
+      builtinSpec('status'),
       ({ ui }) => {
         const session = ctx.session.current()
         const messages = session.messages
@@ -162,7 +171,7 @@ export const commandsPlugin: Plugin.Object = {
       },
     )
     service.register(
-      { name: 'usage', args: '', description: '查看累计用量统计（含缓存命中率）' },
+      builtinSpec('usage'),
       ({ runtime, ui }) => {
         void runtime
           .usageStats()
@@ -173,7 +182,7 @@ export const commandsPlugin: Plugin.Object = {
       },
     )
     service.register(
-      { name: 'export', args: '[文件路径]', description: '导出当前会话为 markdown' },
+      builtinSpec('export'),
       ({ args, ui }) => {
         const session = ctx.session.current()
         if (session.messages.length === 0) {
@@ -204,7 +213,7 @@ export const commandsPlugin: Plugin.Object = {
       },
     )
     service.register(
-      { name: 'review', args: '[关注点]', description: '审查工作区未提交改动' },
+      builtinSpec('review'),
       ({ args, runtime, ui }) => {
         const cwd = ctx.session.current().meta.cwd
         const focus = args.join(' ').trim()
@@ -239,7 +248,7 @@ export const commandsPlugin: Plugin.Object = {
       },
     )
     service.register(
-      { name: 'diff', args: '[文件]', description: '查看工作区未提交改动的 diff' },
+      builtinSpec('diff'),
       ({ args, runtime, ui }) => {
         const file = args[0]
         void runtime
@@ -254,7 +263,7 @@ export const commandsPlugin: Plugin.Object = {
       },
     )
     service.register(
-      { name: 'copy', args: '', description: '复制上一条回复到剪贴板' },
+      builtinSpec('copy'),
       ({ runtime, ui }) => {
         const entries = runtime.getSnapshot().entries
         let text: string | null = null
@@ -315,19 +324,11 @@ export const commandsPlugin: Plugin.Object = {
       ui.notice(`权限模式已切到「${picked.label}」`)
     }
     service.register(
-      {
-        name: 'policy',
-        args: '[readonly|auto-edit|full-access]',
-        description: '查看或切换权限模式（自动放行集那一轴）',
-      },
+      builtinSpec('policy'),
       switchPolicy,
     )
     service.register(
-      {
-        name: 'reviewer',
-        args: '[user|auto-review]',
-        description: '查看或切换审批审阅者（要问的事先给谁看）',
-      },
+      builtinSpec('reviewer'),
       ({ args, runtime, ui }) => {
         const surface = runtime.getSnapshot().surfaces.policy
         const query = args[0]?.toLowerCase() ?? ''
@@ -360,11 +361,7 @@ export const commandsPlugin: Plugin.Object = {
       },
     )
     service.register(
-      {
-        name: 'permission',
-        args: '[预设名]',
-        description: '查看或切换打包权限预设（沙箱 + 权限模式 + 审阅者三合一）',
-      },
+      builtinSpec('permission'),
       ({ args, runtime, ui }) => {
         const presets = runtime.getSnapshot().surfaces.permissionPresets
         const query = args[0] ?? ''
@@ -397,7 +394,7 @@ export const commandsPlugin: Plugin.Object = {
       },
     )
     service.register(
-      { name: 'effort', args: '[default|off|low|high|max]', description: '查看或切换思考强度' },
+      builtinSpec('effort'),
       ({ args, runtime, ui }) => {
         const levels = [
           { id: 'default', label: '默认（不声明思考字段，跟随端点）' },
@@ -432,7 +429,7 @@ export const commandsPlugin: Plugin.Object = {
     service.register(
       // dsh 语义：整本分叉成「可恢复的副本」，现场会话与跑动回合不动（kimi-code
       // 的 fork）。按分叉点选副本走 /resume 里的 Ctrl+F，这里只做整本。
-      { name: 'fork', args: '', description: '分叉当前会话为可恢复的副本（当前会话不变）' },
+      builtinSpec('fork'),
       ({ runtime, ui }) => {
         // sessionId 是 uuid，当文件用会按进程 cwd 解析出 ENOENT（0.6.66 实锤：
         // C:\Windows\System32\<uuid>）；落盘一律走 sessionPath。
@@ -460,7 +457,7 @@ export const commandsPlugin: Plugin.Object = {
     service.register(
       // 思考块显示切换：与 Ctrl+T 同一状态（会话内生效，不持久化——持久化的
       // 默认值在设置「新会话的思考块默认摊开」）。没有思考块的端忽略回调。
-      { name: 'thinking', args: '[on|off]', description: '切换思考块展开显示（无参数 = 翻转，会话内生效）' },
+      builtinSpec('thinking'),
       ({ args, ui }) => {
         if (ui.toggleThinking === undefined) {
           ui.notice('当前界面不支持会话内切换思考块（桌面端在设置里改「新会话的思考块默认摊开」）。')
@@ -479,7 +476,7 @@ export const commandsPlugin: Plugin.Object = {
       },
     )
     service.register(
-      { name: 'plugins', args: '', description: '查看已挂载插件清单（启停与详情在桌面端插件中心）' },
+      builtinSpec('plugins'),
       ({ runtime, ui }) => {
         const plugins = runtime.listPlugins()
         if (plugins.length === 0) {
@@ -505,7 +502,7 @@ export const commandsPlugin: Plugin.Object = {
     service.register(
       // 只查不装（0.6.50 起的边界）：结果与设置「关于」的检查按钮同一份回执口径，
       // 终端打不开浏览器，新版时把发布页 URL 一并给出。
-      { name: 'update', args: '', description: '检查有没有新版（只查不装）' },
+      builtinSpec('update'),
       ({ ui }) => {
         void checkForUpdate()
           .then((result) => {
@@ -519,7 +516,7 @@ export const commandsPlugin: Plugin.Object = {
       },
     )
     service.register(
-      { name: 'ui-trust', args: '<插件目录名>', description: '信任一个第三方界面插件（首次安装的确认动作）' },
+      builtinSpec('ui-trust'),
       ({ args, ui }) => {
         const name = args[0] ?? ''
         if (name === '') {
@@ -561,7 +558,7 @@ export const commandsPlugin: Plugin.Object = {
       },
     )
     service.register(
-      { name: 'exit', args: '', description: '退出' },
+      builtinSpec('exit'),
       ({ runtime }) => runtime.exit(),
     )
 
