@@ -562,6 +562,12 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
                   )}
                   <div className="composer-zone">
                     <SlotOutlet slots={slots} slot={SLOT.composer} />
+                    {/* 状态读数贴着输入框（对齐 dsh 的 composer dock）：空会话里输入框是被
+                        居中推着的，挂在窗口最底下会隔出一大段空白，读数与输入框就不再是
+                        「同一排」。页模式（插件中心这类没有输入框的页）仍用窗口底部那一份。 */}
+                    <div className="statusbar">
+                      <SlotOutlet slots={slots} slot={SLOT.statusbar} />
+                    </div>
                   </div>
                 </div>
                 {review === null ? (
@@ -608,9 +614,13 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
             </>
           )}
 
-          <div className="statusbar">
-            <SlotOutlet slots={slots} slot={SLOT.statusbar} />
-          </div>
+          {/* 页模式（没有输入框的整页）：读数仍占窗口底部；对话页的那一份贴在输入框下面
+              （见上面 `.composer-zone` 里的注释），两处只会渲染一处。 */}
+          {page === null ? null : (
+            <div className="statusbar">
+              <SlotOutlet slots={slots} slot={SLOT.statusbar} />
+            </div>
+          )}
         </div>
 
         {/* 右侧栏（dock）：**常驻挂载**（对齐旧桌面版「收起=滑出右缘不卸载」——终端进程、

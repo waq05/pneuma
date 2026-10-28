@@ -1,44 +1,46 @@
 /**
- * 内置插件：底部状态栏（照旧桌面界面 `StatusBar.tsx` 的三段式重写）。
+ * 内置插件：底部状态栏（三段式，口径对齐 dsh 的 composer dock：`ActivityPill` +
+ * `UsagePill` + `contextPressure`）。
  *
  * 为什么 class 名逐字照搬旧版：旧样式表（`legacy/views.css`，旧渲染层 styles.css 的逐字节
  * 副本）整份搬进壳里，`.segments` / `.segment` / `.ctx-card` / `.ctx-bar` / `.ctx-legend`
- * 这一套选择器就是「状态栏长什么样」的唯一原件。段与段之间的 `·` 分隔符由
- * `.segment:not(:first-child)::before` 伪元素画（views.css:3935-3939），这里不手写分隔符。
+ * 这一套选择器就是「状态栏长什么样」的唯一原件。三段的间距、留白与分隔交给
+ * `ui-shell/src/styles.css` 的一组覆盖（对齐 dsh：`gap:12px`、段间没有分隔符）。
  *
- * 三段与三张悬浮卡与旧版一一对应：
+ * 三段与三张悬浮卡（与 dsh 一一对应）：
  *
- *   1. `seg-turn`：轮次/步数（从消息流条目数）+ 输出速度（拿得到时）。悬浮卡「会话进度」
- *      列轮数、步数、速度、首字延迟（平均）、LLM 耗时、工具耗时与会话时钟。
- *   2. `seg-tokens`：本会话累计 token（累计为 0 时整段不画——0 不是读数，是「还没发生」）。
- *      悬浮卡「会话用量」列请求数、前缀缓存命中/未命中、输入输出与最近请求时刻。
- *   3. `seg-context`：上下文占用的圆环 + 百分比（分母 `contextWindow` 为 0 时整段不画，
- *      没有分母就谈不上百分比）。悬浮卡「上下文已用」画进度条与构成分解。
+ *   1. `seg-turn`：`N 轮 M 步 · X tok/s`。轮/步取宿主下发 `status.progress` 的真值
+ *      （轮 = 用户消息数、步 = 助手消息数，口径见 contract.ts）；`步 = 0` 时整段不画
+ *      （空会话里「0 轮 0 步」不是读数，dsh 的 ActivityPill 同款）。卡片「会话统计」列
+ *      模型用时、工具调用用时、首 token 平均与输出速度。
+ *   2. `seg-tokens`：`12.3K tok · 缓存命中 87%`（累计为 0 时整段不画）。卡片「Token 用量」
+ *      列缓存命中、未缓存输入、缓存读取与输出。
+ *   3. `seg-context`：`min(100, round(used/window*100))%` 的圆环 + 百分比（分母
+ *      `contextWindow` 为 0 时整段不画）。卡片「上下文已用」画系统提示词 / 工具定义 /
+ *      对话消息三段进度条与数值。
  *
  * 数据来源分三层，拿不到的那一项整行省略，绝不编数：
  *
- *   - 轮次/步数与构成估算：宿主快照（`entries` / `status.contextSegments`，服务端真值）；
- *   - 输出速度、首字延迟与两项耗时：桌面原生桥 `sessionUsage`（壳进程读
+ *   - 轮/步与上下文分段：宿主快照（`status.progress` / `status.contextSegments`）；
+ *   - 输出速度、首 token 平均与两项耗时：桌面原生桥 `sessionUsage`（壳进程读
  *     `~/.dsc/usage/usage.jsonl` 的汇总，口径见 core/throughput.ts）——浏览器里没有这条桥，
  *     那几行整行省略，其余照常；
- *   - 会话开始/最近活动：界面侧观察（快照变化的时刻——宿主快照里没有时间戳）。
+ *   - 本会话累计 token：日志口径优先，日志里没有这条会话时退回快照累计。
  *
  * @module dsc-ui-shell/plugins/statusbar
  */
 import { useEffect, useState, type ReactNode } from 'react'
+import { formatTraceDuration } from '@dsc/ui-primitives'
 import {
   defineUiPlugin,
   getHostNative,
   IconActivity,
-  IconCoins,
   IconDatabase,
   useHostSelector,
   type ContextSegmentsView,
   type HostSnapshot,
   type StatusView,
-  useTodayUsage,
 } from '@dsc/ui'
-import { formatCostCny } from '@dsc/ui-primitives'
 
 export default defineUiPlugin({
   name: '状态栏',
@@ -85,37 +87,14 @@ interface SessionUsageView {
 /** status 缺席时读字段用的空壳：下面每个 reader 对空壳都回「没有」。 */
 const EMPTY_STATUS: Readonly<Record<string, unknown>> = Object.freeze({})
 
-/**
- * 末段：今日总量与估算金额（全局口径，与侧栏页脚同源）。
- *
- * 为什么状态栏要有它：侧栏一收起，页脚那行就看不见了；金额恰恰是"要不要继续跑"的判断依据。
- * 这一段只在今天有记录时才出——「今日 0 tok」不是读数，是噪音。
- */
-function TodaySegment({ tokens, cost }: { tokens: number; cost: number | null }): ReactNode {
-  const text = `${formatTokens(tokens)} tok${cost === null ? '' : ` · ${formatCostCny(cost)}`}`
-  return (
-    <span className="segment seg-today">
-      <span
-        className="ctx-trigger"
-        title={`今天所有会话累计 ${text}（输入 + 输出，含其他窗口的会话；金额为估算，每分钟刷新）`}
-      >
-        <span className="seg-icon">
-          <IconCoins size={12} />
-        </span>
-        今日 {text}
-      </span>
-    </span>
-  )
-}
-
-/** 装配三段。 */
+/** 装配三段（对照 dsh 的 composer dock：轮/步 → tok · 缓存命中 → 上下文 %）。 */
 function StatusSegments(): ReactNode {
   // 一个字段一个订阅，值没变就不重渲染——为什么这么切见 useStatusField。
   const turnState = useStatusField(readTurnState)
   const model = useStatusField(readModel)
   const sessionId = useStatusField(readSessionId)
-  // 轮数/步数从消息流条目统计（旧界面第一段「N 轮 N 步」的同一口径），"轮/步" 字符串稳定。
-  const tally = useHostSelector(readRoundStep)
+  // 轮数/步数取宿主的会话进度真值（口径见 contract.ts 的 StatusView.progress），"轮/步"字符串稳定。
+  const tally = useHostSelector(readProgress)
   const [rounds, steps] = tally.split('/')
   const inputTokens = useStatusField(readUsageInput)
   const outputTokens = useStatusField(readUsageOutput)
@@ -128,16 +107,12 @@ function StatusSegments(): ReactNode {
   const segAssistant = useStatusField(readSegment('assistant'))
   const segThinking = useStatusField(readSegment('thinking'))
   const segTools = useStatusField(readSegment('tools'))
-  // 会话时钟与用量日志的两个观察面（旧界面同款的两个 hook）。
+  // 用量日志的重读键：快照条目数 / 回合状态 / 累计 token 任一变了就重读一次。
   const activity = useHostSelector(readActivityKey)
-  const hasContent = useHostSelector(readHasContent)
 
   // 快照口径的本会话累计 token；它一变就说明有一次请求刚落进日志（useSessionUsage 的重读键）。
   const settledTokens = (inputTokens ?? 0) + (outputTokens ?? 0)
-  // 今日总量与金额：与侧栏页脚同一份取数（useTodayUsage），会话 token 一变就跟着重读。
-  const today = useTodayUsage(settledTokens)
   const logged = useSessionUsage(sessionId, turnState, settledTokens)
-  const clock = useSessionClock(sessionId, activity, hasContent)
   // 输出速度 = 已定稿请求的输出 token ÷ 纯解码时间（整会话累计，口径见 core/throughput.ts）；
   // 日志里没有这条会话、或老行没记解码期 → null，整截省略（不拿快照增量估一个顶上去）。
   const speed = logged === null ? null : tokensPerSecond(logged)
@@ -146,7 +121,8 @@ function StatusSegments(): ReactNode {
   const total = logged === null ? settledTokens : logged.inputTokens + logged.outputTokens
 
   const parts: ReactNode[] = []
-  if (turnState !== null) {
+  // 步数为 0 时整段不画（dsh 的 ActivityPill 同款）：空会话里「0 轮 0 步」不是读数。
+  if (turnState !== null && Number(steps) > 0) {
     parts.push(
       <TurnSegment
         key="turn"
@@ -157,7 +133,6 @@ function StatusSegments(): ReactNode {
         steps={Number(steps)}
         speed={speed}
         logged={logged}
-        clock={clock}
       />,
     )
   }
@@ -189,12 +164,6 @@ function StatusSegments(): ReactNode {
     )
   }
 
-  // 今日读数是**全局**的（所有会话），与前面三段的本会话口径不同：放在一行的最后，
-  // 前缀写明"今日"，悬浮说明再点明范围，免得被读成"这个会话用了这么多"。
-  if (today.tokens > 0) {
-    parts.push(<TodaySegment key="today" tokens={today.tokens} cost={today.cost} />)
-  }
-
   // 一段都画不出来（宿主一帧没推、或这一版快照没有 status）就整条不占位置。
   if (parts.length === 0) return null
   return <div className="segments">{parts}</div>
@@ -211,22 +180,19 @@ function TurnSegment(props: {
   turnState: TurnState
   model: string
   sessionId: string | null
-  /** 消息流里统计的轮数（用户消息数）与步数（工具调用数）。 */
+  /** 会话进度：轮数（用户消息数）与步数（助手消息数），口径见 StatusView.progress。 */
   rounds: number
   steps: number
   speed: number | null
   logged: SessionUsageView | null
-  clock: SessionClock | null
 }): ReactNode {
   const stateText = TURN_TEXT[props.turnState]
-  const startedAt = props.clock?.startedAt ?? null
-  const lastActiveAt = props.clock?.lastActiveAt ?? null
   const logged = props.logged
   // 首字延迟报平均（累计 ÷ 样本数）：单看累计毫秒没有可比性，请求一多就只见涨。
   const ttft = logged === null ? null : averageTtftMs(logged)
-  const ttftText = ttft === null ? null : formatDuration(ttft)
-  const toolText = logged === null || logged.toolCalls === 0 ? null : formatDuration(logged.toolMs)
-  const llmText = logged === null || !(logged.llmMs > 0) ? null : formatDuration(logged.llmMs)
+  const ttftText = ttft === null ? null : formatTraceDuration(ttft)
+  const toolText = logged === null || logged.toolCalls === 0 ? null : formatTraceDuration(logged.toolMs)
+  const llmText = logged === null || !(logged.llmMs > 0) ? null : formatTraceDuration(logged.llmMs)
   const hint = [
     `当前状态：${stateText}`,
     props.sessionId === null ? null : `会话 ${props.sessionId.slice(0, 8)}`,
@@ -245,27 +211,17 @@ function TurnSegment(props: {
       </button>
       <div className="ctx-card" role="note">
         <div className="ctx-head">
-          <span className="ctx-title">会话进度</span>
+          <span className="ctx-title">会话统计</span>
           <span className="ctx-numbers">
             {props.rounds} 轮 · {props.steps} 步
           </span>
         </div>
         <div className="ctx-rule" />
         <div className="ctx-rows">
-          <CardRow label="用户轮数" value={`${String(props.rounds)} 轮`} />
-          <CardRow label="工具调用" value={`${String(props.steps)} 步`} />
-          {props.speed !== null && <CardRow label="输出速度" value={`${formatTokensPerSecond(props.speed)} tok/s`} />}
-          {ttftText !== null && logged !== null && (
-            <CardRow label="首字延迟" value={`${ttftText}（平均 ${String(logged.ttftSteps)} 次）`} />
-          )}
-          {llmText !== null && <CardRow label="LLM 耗时" value={llmText} />}
-          {toolText !== null && logged !== null && (
-            <CardRow label="工具耗时" value={`${toolText} · ${String(logged.toolCalls)} 次`} />
-          )}
-          {startedAt !== null && <CardRow label="会话开始" value={clockText(startedAt)} />}
-          {lastActiveAt !== null && (
-            <CardRow label="最近活动" value={`${clockText(lastActiveAt)}（${agoText(lastActiveAt)}）`} />
-          )}
+          {llmText !== null && <CardRow label="模型用时" value={llmText} />}
+          {toolText !== null && <CardRow label="工具调用用时" value={toolText} />}
+          {ttftText !== null && <CardRow label="首 token 平均（TTFT）" value={ttftText} />}
+          {props.speed !== null && <CardRow label="输出速度（TPS）" value={`${formatTokensPerSecond(props.speed)} tok/s`} />}
         </div>
       </div>
     </span>
@@ -275,9 +231,9 @@ function TurnSegment(props: {
 /**
  * 第二段：本会话累计 token（日志口径优先，见上面 total 的口径注释）。
  *
- * 卡里给精确值（千分位）与明细：请求数、前缀缓存三行、输入/输出、最近请求时刻。
- * 缓存三行只在端点真上报过缓存明细时出现，否则退回一行「输入 token」——分母只吃
- * 上报过的请求，命中率才不会被老数据稀释（与旧 TokenCard 同口径）。
+ * 主文案照 dsh 的 UsagePill：`12.3K tok · 缓存命中 87%`——命中率是这一行的一等信息，
+ * 不再藏进悬浮卡。卡里给精确值与 DSH 同款明细：缓存命中 / 未缓存输入 / 缓存读取 / 输出。
+ * 命中率的分母只吃上报过缓存明细的请求，老日志少一行也不编数。
  */
 function TokenSegment(props: {
   total: number
@@ -289,37 +245,38 @@ function TokenSegment(props: {
   const logged = props.logged
   const input = logged?.inputTokens ?? props.snapshot.input
   const output = logged?.outputTokens ?? props.snapshot.output
-  const requests = logged?.requests ?? null
-  const lastAt = logged !== null && logged.lastAt > 0 ? logged.lastAt : null
   // 命中率的分母只算上报过缓存明细的请求（老日志没有 ch/cm）：日志在就用日志，否则用快照。
   const cacheHit = logged !== null ? logged.cacheHitTokens : props.speedContext.cacheHit
   const cacheMiss = logged !== null ? logged.cacheMissTokens : props.speedContext.cacheMiss
   const cachePrompt = cacheHit === null || cacheMiss === null ? 0 : cacheHit + cacheMiss
   const hitPercent = formatCacheHitPercent(cacheHit ?? 0, cachePrompt)
+  const hint = hitPercent === null
+    ? `这个会话累计 ${formatExactTokens(props.total)} tok；点开看输入/输出明细`
+    : `这个会话累计 ${formatExactTokens(props.total)} tok，前缀缓存命中 ${hitPercent}%；点开看输入/输出明细`
   return (
     <span className="segment seg-tokens seg-hover">
-      <button type="button" className="ctx-trigger" title="这个会话的累计 token；点开看请求数与输入/输出明细">
+      <button type="button" className="ctx-trigger" title={hint}>
         <span className="seg-icon">
           <IconDatabase size={12} />
         </span>
         {formatTokens(props.total)} tok
+        {hitPercent !== null && <span className="seg-dim"> · 缓存命中 {hitPercent}%</span>}
       </button>
       <div className="ctx-card" role="note">
         <div className="ctx-head">
-          <span className="ctx-title">会话用量</span>
+          <span className="ctx-title">Token 用量</span>
           <span className="ctx-numbers">{formatExactTokens(props.total)} tok</span>
         </div>
         <div className="ctx-rule" />
         <div className="ctx-rows">
-          {requests !== null && <CardRow label="模型请求" value={`${String(requests)} 次`} />}
           {hitPercent !== null && <CardRow label="缓存命中" value={`${hitPercent}%`} />}
-          {hitPercent !== null && cacheMiss !== null && (
+          {cacheMiss !== null ? (
             <CardRow label="未缓存输入" value={formatExactTokens(cacheMiss)} />
+          ) : (
+            <CardRow label="输入" value={formatExactTokens(input)} />
           )}
-          {hitPercent !== null && cacheHit !== null && <CardRow label="缓存读取" value={formatExactTokens(cacheHit)} />}
-          {hitPercent === null && <CardRow label="输入 token" value={formatExactTokens(input)} />}
+          {cacheHit !== null && <CardRow label="缓存读取" value={formatExactTokens(cacheHit)} />}
           <CardRow label="输出" value={formatExactTokens(output)} />
-          {lastAt !== null && <CardRow label="最近请求" value={`${clockText(lastAt)}（${agoText(lastAt)}）`} />}
         </div>
       </div>
     </span>
@@ -329,25 +286,23 @@ function TokenSegment(props: {
 /**
  * 第三段：圆环 + 百分比，悬浮出「上下文已用」卡。
  *
- * 占用读数用 `contextUsed`（最近一次请求的 prompt_tokens，服务端真值），不是 `usage`
- * 累计——累计会把早已滚出窗口的内容也算进去，条会虚胖。分子与分解的关系照旧版：
- * 「对话消息」（用户输入/助手回复/思考过程三段之和）与「系统提示词 + 工具定义」
- * （系统提示词/工具定义两段之和）都来自宿主按请求内容估的分段；真值 `contextUsed`
- * 与分段之和的差（角色标记、工具 JSON 信封那些零头）画进对话消息那一块里。
+ * 百分比公式与 dsh 的 `contextOccupancy` 一字不差：`min(100, round(used / window * 100))`。
+ * 分母是当前模型的上下文窗口，分子是最近一次请求的 prompt_tokens（服务端真值）。
  *
- * 分段讲不通时（估算跑偏：对话消息为 0、或大过真值）只画整条进度条，不摆一行
- * 自相矛盾的账（旧卡片同一条诚实规矩）。
+ * 卡片分段也照 dsh：系统提示词 / 工具定义 / 对话消息（用户输入 + 助手回复 + 思考）。
+ * 三段来自宿主按请求内容估的分段；三者都为 0（还没发过请求）时只画空条，不摆一排 0。
  */
 function ContextSegment(props: {
   used: number
   windowTokens: number
   segments: ContextSegmentsView
 }): ReactNode {
-  const percent = Math.round((props.used / props.windowTokens) * 100)
+  const percent = Math.min(100, Math.round((props.used / props.windowTokens) * 100))
   const shown = Math.min(Math.max(percent, 0), 100)
+  const system = props.segments.system
+  const tools = props.segments.tools
   const messages = props.segments.prompt + props.segments.assistant + props.segments.thinking
-  const base = props.segments.system + props.segments.tools
-  const split = messages > 0 && messages < props.used
+  const breakdown = system + tools + messages
   const widthOf = (tokens: number): string =>
     `${((Math.min(tokens, props.windowTokens) / props.windowTokens) * 100).toFixed(2)}%`
   return (
@@ -364,20 +319,32 @@ function ContextSegment(props: {
           </span>
         </div>
         <div className="ctx-bar">
-          <span className="ctx-bar-fill" style={{ width: widthOf(split ? messages : props.used) }} />
-          {split && <span className="ctx-bar-base" style={{ width: widthOf(props.used - messages) }} />}
+          {breakdown > 0 ? (
+            <>
+              <span className="ctx-bar-seg ctx-bar-system" style={{ width: widthOf(system) }} />
+              <span className="ctx-bar-seg ctx-bar-tools" style={{ width: widthOf(tools) }} />
+              <span className="ctx-bar-seg ctx-bar-messages" style={{ width: widthOf(messages) }} />
+            </>
+          ) : (
+            <span className="ctx-bar-fill" style={{ width: widthOf(props.used) }} />
+          )}
         </div>
-        {split && (
+        {breakdown > 0 && (
           <div className="ctx-legend">
+            <div className="ctx-legend-row">
+              <i className="ctx-dot ctx-dot-system" />
+              <span className="ctx-legend-label">系统提示词</span>
+              <span className="ctx-legend-value">~{formatTokens(system)}</span>
+            </div>
+            <div className="ctx-legend-row">
+              <i className="ctx-dot ctx-dot-tools" />
+              <span className="ctx-legend-label">工具定义</span>
+              <span className="ctx-legend-value">~{formatTokens(tools)}</span>
+            </div>
             <div className="ctx-legend-row">
               <i className="ctx-dot ctx-dot-messages" />
               <span className="ctx-legend-label">对话消息</span>
               <span className="ctx-legend-value">~{formatTokens(messages)}</span>
-            </div>
-            <div className="ctx-legend-row">
-              <i className="ctx-dot ctx-dot-base" />
-              <span className="ctx-legend-label">系统提示词 + 工具定义</span>
-              <span className="ctx-legend-value">~{formatTokens(props.used - messages)}</span>
             </div>
           </div>
         )}
@@ -532,21 +499,17 @@ function readSegment(key: keyof ContextSegmentsView): (status: Record<string, un
 }
 
 /**
- * 轮数/步数统计（旧界面第一段「N 轮 N 步」同口径）：用户消息计轮（插话不算—它是排队机制），
- * 工具调用计步。返回 "轮/步" 字符串——useHostSelector 的取值要引用稳定，数组对象会每帧换引用。
+ * 会话进度（口径见 contract.ts 的 StatusView.progress）：宿主直接给「轮/步」两个数。
+ *
+ * 返回 "轮/步" 字符串——useHostSelector 的取值要引用稳定，数组/对象会每帧换引用。
+ * 老宿主没有这个字段时回 "0/0"（第一段整段不画，与 dsh 的 ActivityPill 同款）。
  */
-function readRoundStep(snapshot: HostSnapshot | null): string {
-  const entries = snapshot?.['entries']
-  if (!Array.isArray(entries)) return '0/0'
-  let rounds = 0
-  let steps = 0
-  for (const entry of entries) {
-    if (typeof entry !== 'object' || entry === null) continue
-    const record = entry as Record<string, unknown>
-    if (record['kind'] === 'user' && record['steering'] !== true) rounds += 1
-    else if (record['kind'] === 'tool') steps += 1
-  }
-  return `${String(rounds)}/${String(steps)}`
+function readProgress(snapshot: HostSnapshot | null): string {
+  const status = statusOf(snapshot)
+  const progress = status === null ? null : asRecord(status['progress'])
+  const turns = progress === null ? 0 : (readNumber(progress, 'turns') ?? 0)
+  const steps = progress === null ? 0 : (readNumber(progress, 'steps') ?? 0)
+  return `${String(turns)}/${String(steps)}`
 }
 
 /**
@@ -562,23 +525,6 @@ function readActivityKey(snapshot: HostSnapshot | null): string {
   const input = usage === null ? 0 : (readNumber(usage, 'inputTokens') ?? 0)
   const output = usage === null ? 0 : (readNumber(usage, 'outputTokens') ?? 0)
   return `${String(count)}:${readText(status, 'turnState')}:${String(input)}:${String(output)}`
-}
-
-/**
- * 这条会话是不是已经有真实内容：system 灰条只是宿主发给界面的通知（新建的空会话
- * 也有），所以它不算内容；累计 token 动了也算有内容（旧 sessionHasContent 同款）。
- */
-function readHasContent(snapshot: HostSnapshot | null): boolean {
-  const status = statusOf(snapshot)
-  if (status !== null) {
-    const usage = usageOf(status)
-    if (usage !== null && (readNumber(usage, 'inputTokens') ?? 0) + (readNumber(usage, 'outputTokens') ?? 0) > 0) {
-      return true
-    }
-  }
-  const entries = snapshot?.['entries']
-  if (!Array.isArray(entries)) return false
-  return entries.some((entry) => (entry as { kind?: unknown })['kind'] !== 'system')
 }
 
 /**
@@ -625,53 +571,6 @@ function useSessionUsage(
 }
 
 /** 界面侧观察到的会话时钟（宿主快照不带时间戳，这两个时刻只能自己记）。 */
-interface SessionClock {
-  sessionId: string
-  /** 本进程内第一次看到这条会话有内容的时刻；一直没内容就是 null。 */
-  startedAt: number | null
-  /** 最近一次看到快照变化的时刻。 */
-  lastActiveAt: number
-}
-
-/**
- * 会话时钟：切会话时重置，之后每有一次快照变化就把「最近活动」推到当下，
- * 并在第一次看到内容时定下「会话开始」（旧 useSessionClock 移植）。
- *
- * 存 id 一起是必要的：切会话那一刻旧时钟必须立刻作废，不能把上一条会话的
- * 开始时间挂到新会话底下（与 useSessionUsage 同一个理由）。
- */
-function useSessionClock(sessionId: string | null, activity: string, content: boolean): SessionClock | null {
-  const [clock, setClock] = useState<SessionClock | null>(null)
-  useEffect(() => {
-    if (sessionId === null) {
-      setClock(null)
-      return
-    }
-    const now = Date.now()
-    setClock((current) =>
-      current === null || current.sessionId !== sessionId
-        ? { sessionId, startedAt: content ? now : null, lastActiveAt: now }
-        : { ...current, startedAt: current.startedAt ?? (content ? now : null), lastActiveAt: now },
-    )
-  }, [sessionId, activity, content])
-  return clock !== null && clock.sessionId === sessionId ? clock : null
-}
-
-/** 时刻写成 24 小时制的 HH:MM（旧 clockText 同款）。 */
-function clockText(at: number): string {
-  const date = new Date(at)
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
-}
-
-/** 相对时间：只到分钟与天，够读就行，不引第三方日期库（旧 agoText 同款）。 */
-function agoText(at: number): string {
-  const minutes = Math.floor((Date.now() - at) / 60000)
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${String(minutes)} 分钟前`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${String(hours)} 小时前`
-  return `${String(Math.floor(hours / 24))} 天前`
-}
 
 // ─────────── 数量与耗时格式化：原件在旧渲染层 token-estimate.ts / trace-format.ts ───────────
 // 为什么原样抄一份而不是 import：插件能 require 的只有 react 与 @dsc/ui（boot.ts 的白名单），
@@ -714,20 +613,6 @@ function averageTtftMs(totals: Pick<SessionUsageView, 'ttftMs' | 'ttftSteps'>): 
 function formatTokensPerSecond(tps: number): string {
   const clamped = Math.max(0, tps)
   return clamped >= 10 ? String(Math.round(clamped)) : String(Math.round(clamped * 10) / 10)
-}
-
-/** 耗时读数：先四舍五入到 0.1 秒再决定用秒还是用分（同旧 trace-format.ts）。 */
-function formatDuration(ms: number): string | null {
-  if (!Number.isFinite(ms) || ms < 0) return null
-  const tenths = Math.round(ms / 100) / 10
-  if (tenths < 60) return `${tenths.toFixed(1)}s`
-  const total = Math.round(ms / 1000)
-  const pad = (value: number): string => String(value).padStart(2, '0')
-  const seconds = total % 60
-  const minutes = Math.floor(total / 60) % 60
-  const hours = Math.floor(total / 3600)
-  if (hours > 0) return `${String(hours)}h${pad(minutes)}m`
-  return `${String(minutes)}m${pad(seconds)}s`
 }
 
 /** 把命中率换算成「百分比整数单位」（0 位小数 = 1 单位 1%，1 位小数 = 1 单位 0.1%）。 */
