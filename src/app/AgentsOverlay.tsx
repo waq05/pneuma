@@ -11,7 +11,8 @@
 import { Box, Text } from 'ink'
 import type { JSX } from 'react'
 import type { RuntimeSnapshot, TeammateView } from '../contract.js'
-import { BORDER, GAP, MARK, PAD, STATUS_COLOR, TEXT } from './theme.js'
+import { PickerFrame } from './PickerFrame.js'
+import { MARK, STATUS_COLOR, TEXT } from './theme.js'
 
 /** 队友状态的词与颜色。 */
 const TEAM_STATE: Record<TeammateView['state'], { text: string; color: string | undefined }> = {
@@ -84,16 +85,7 @@ export function AgentsOverlay({
 }): JSX.Element {
   const safeIndex = Math.max(0, Math.min(index, rows.length - 1))
   return (
-    <Box
-      borderStyle="round"
-      borderColor={BORDER.active}
-      paddingX={PAD.inline}
-      flexDirection="column"
-      flexGrow={1}
-      overflowY="hidden"
-      gap={GAP.none}
-    >
-      <Box flexShrink={0} flexDirection="column" gap={GAP.none}>
+    <PickerFrame>
         <Text {...TEXT.label} color={STATUS_COLOR.pending} wrap="truncate-end">
           子代理与后台会话（{rows.length} 个）
         </Text>
@@ -119,7 +111,6 @@ export function AgentsOverlay({
         <Text {...TEXT.secondary} wrap="truncate-end">
           Enter 或点击查看转录 · Esc 关闭
         </Text>
-      </Box>
-    </Box>
+    </PickerFrame>
   )
 }

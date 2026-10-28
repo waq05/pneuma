@@ -10,7 +10,8 @@
 import { Box, Text } from 'ink'
 import type { JSX } from 'react'
 import type { SkillInfoView } from '../contract.js'
-import { ACCENT, BORDER, GAP, MARK, PAD, SEP, STATUS_COLOR, TEXT } from './theme.js'
+import { PickerFrame } from './PickerFrame.js'
+import { ACCENT, MARK, SEP, STATUS_COLOR, TEXT } from './theme.js'
 
 export function SkillsPicker({
   skills,
@@ -23,16 +24,7 @@ export function SkillsPicker({
 }): JSX.Element {
   const safeIndex = Math.min(index, Math.max(0, skills.length - 1))
   return (
-    <Box
-      borderStyle="round"
-      borderColor={BORDER.active}
-      paddingX={PAD.inline}
-      flexDirection="column"
-      flexGrow={1}
-      overflowY="hidden"
-      gap={GAP.none}
-    >
-      <Box flexShrink={0} flexDirection="column" gap={GAP.none}>
+    <PickerFrame>
       <Text {...TEXT.label} color={ACCENT} wrap="truncate-end">
         技能（{skills.length} 个）
         <Text {...TEXT.secondary}>{SEP.gap}点击选中、再点回填 · Enter 把 /技能名 灌回输入行 · 启停在桌面端技能中心</Text>
@@ -68,7 +60,6 @@ export function SkillsPicker({
       <Text {...TEXT.secondary} wrap="truncate-end">
         ↑↓ 选择 · Enter 回填 · Esc 关闭 · 停用的技能要先在桌面端技能中心启用才会被加载
       </Text>
-      </Box>
-    </Box>
+    </PickerFrame>
   )
 }

@@ -15,7 +15,8 @@
 import { Box, Text } from 'ink'
 import type { JSX } from 'react'
 import type { SessionRunState, SessionSummary } from '../contract.js'
-import { ACCENT, BORDER, GAP, MARK, PAD, SEP, STATUS_COLOR, TEXT } from './theme.js'
+import { PickerFrame } from './PickerFrame.js'
+import { ACCENT, MARK, SEP, STATUS_COLOR, TEXT } from './theme.js'
 
 const shortDate = (createdAt: number): string => {
   const date = new Date(createdAt)
@@ -95,16 +96,7 @@ export function SessionPicker({
       ? `恢复会话 › ${workspaceTitle}`
       : '恢复会话'
   return (
-    <Box
-      borderStyle="round"
-      borderColor={BORDER.active}
-      paddingX={PAD.inline}
-      flexDirection="column"
-      flexGrow={1}
-      overflowY="hidden"
-      gap={GAP.none}
-    >
-      <Box flexShrink={0} flexDirection="column" gap={GAP.none}>
+    <PickerFrame>
       <Text {...TEXT.label} color={ACCENT} wrap="truncate-end">
         {title}
         {loading ? '（读取中…）' : `（${total} ${workspaceLevel ? '个工作区' : '条'}）`}
@@ -214,7 +206,6 @@ export function SessionPicker({
           )}
         </Text>
       )}
-      </Box>
-    </Box>
+    </PickerFrame>
   )
 }

@@ -9,7 +9,8 @@
 import { Box, Text } from 'ink'
 import type { JSX } from 'react'
 import type { ModelChoiceView } from '../contract.js'
-import { ACCENT, BORDER, GAP, MARK, PAD, SEP, TEXT } from './theme.js'
+import { PickerFrame } from './PickerFrame.js'
+import { ACCENT, MARK, SEP, TEXT } from './theme.js'
 
 export function ModelPicker({
   models,
@@ -22,16 +23,7 @@ export function ModelPicker({
 }): JSX.Element {
   const safeIndex = Math.min(index, Math.max(0, models.length - 1))
   return (
-    <Box
-      borderStyle="round"
-      borderColor={BORDER.active}
-      paddingX={PAD.inline}
-      flexDirection="column"
-      flexGrow={1}
-      overflowY="hidden"
-      gap={GAP.none}
-    >
-      <Box flexShrink={0} flexDirection="column" gap={GAP.none}>
+    <PickerFrame>
       <Text {...TEXT.label} color={ACCENT} wrap="truncate-end">
         模型选择（{models.length} 个）
         <Text {...TEXT.secondary}>{SEP.gap}点击选中、再点应用 · Enter 切换（下一次请求生效）</Text>
@@ -62,7 +54,6 @@ export function ModelPicker({
       <Text {...TEXT.secondary} wrap="truncate-end">
         ↑↓ 选择 · Enter 切换 · Esc 关闭
       </Text>
-      </Box>
-    </Box>
+    </PickerFrame>
   )
 }

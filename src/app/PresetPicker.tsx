@@ -9,7 +9,8 @@
 import { Box, Text } from 'ink'
 import type { JSX } from 'react'
 import type { PresetView } from '../contract.js'
-import { ACCENT, BORDER, GAP, MARK, PAD, SEP, STATUS_COLOR, TEXT } from './theme.js'
+import { PickerFrame } from './PickerFrame.js'
+import { ACCENT, MARK, SEP, STATUS_COLOR, TEXT } from './theme.js'
 
 export function PresetPicker({
   presets,
@@ -28,16 +29,7 @@ export function PresetPicker({
 }): JSX.Element {
   const safeIndex = Math.min(index, Math.max(0, presets.length - 1))
   return (
-    <Box
-      borderStyle="round"
-      borderColor={BORDER.active}
-      paddingX={PAD.inline}
-      flexDirection="column"
-      flexGrow={1}
-      overflowY="hidden"
-      gap={GAP.none}
-    >
-      <Box flexShrink={0} flexDirection="column" gap={GAP.none}>
+    <PickerFrame>
       <Text {...TEXT.label} color={ACCENT} wrap="truncate-end">
         模式选择（{presets.length} 个）
         <Text {...TEXT.secondary}>{SEP.gap}点击选中、再点切换 · Enter 切换（写进会话记录，恢复会话时跟着回来）</Text>
@@ -75,7 +67,6 @@ export function PresetPicker({
       <Text {...TEXT.secondary} wrap="truncate-end">
         ↑↓ 选择 · Enter 切换 · Esc 关闭 · 带参数切换走 /preset &lt;名字&gt;
       </Text>
-      </Box>
-    </Box>
+    </PickerFrame>
   )
 }
