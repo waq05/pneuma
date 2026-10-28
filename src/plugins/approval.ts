@@ -81,18 +81,6 @@ const REVIEWER_OPTIONS: ReadonlyArray<TierOption<ApprovalReviewer>> = [
   },
 ]
 
-/** 权限模式的中文长说法（通知、审计与设置回执共用一份，免得三处各写一套）。 */
-function policyLabel(policy: ApprovalPolicy): string {
-  switch (policy) {
-    case 'readonly':
-      return '仅查看（读类操作放行，写/执行类一律拒绝）'
-    case 'auto-edit':
-      return '工作区自动编辑（工作区内写操作自动放行，其余审批）'
-    default:
-      return '完全访问（全部工具自动放行，灾难性命令仍然拒）'
-  }
-}
-
 /** 写类工具里「目标在工作区内就能自动放行」的那几个。 */
 const PATH_WRITE_TOOLS = new Set(['write', 'edit'])
 
@@ -527,8 +515,10 @@ function firstSentence(text: string): string {
 
       setPolicy(next) {
         policy = next
-        // dsc/notice → transcript 写 system 条目（避免与 transcript 的循环依赖）
-        ctx.emit('dsc/notice', `权限模式切换为「${policyLabel(next)}」`)
+        // 不往对话里写「权限模式切换为…」（2026-10-28 用户报障）：启动时 settings 与
+        // permission-presets 会各自按偏好复算一遍，同一组值能被写两三行；而这些值在输入框
+        // 那颗旋钮上一直看得见。要留痕的是审计（下一行），不是对话流。用户主动切换的回执
+        // 由调用方给：界面走 permission-presets 的那一句，斜杠命令由 commands 自己写。
         audit({
           ts: Date.now(),
           kind: 'mode-change',
@@ -545,8 +535,7 @@ function firstSentence(text: string): string {
 
       setReviewer(next) {
         reviewer = next
-        const label = REVIEWER_OPTIONS.find((item) => item.id === next)?.label ?? next
-        ctx.emit('dsc/notice', `审批审阅者切换为「${label}」${next === 'auto-review' ? '：要问的事先给模型判官，判不出来仍会问你' : ''}`)
+        // 与 setPolicy 同一条理由：这行曾是「新会话一进来就刷四五行」的一半噪声。
         audit({
           ts: Date.now(),
           kind: 'mode-change',

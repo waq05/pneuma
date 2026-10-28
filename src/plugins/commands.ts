@@ -308,7 +308,11 @@ export const commandsPlugin: Plugin.Object = {
         )
         return
       }
-      runtime.setPolicy(matches[0].id)
+      const picked = matches[0]
+      runtime.setPolicy(picked.id)
+      // 回执在这里给：approval 的 setter 不再往对话里写（启动时会被复算刷好几行），
+      // 而斜杠命令是用户主动要的那一下，没个回音就像没生效。
+      ui.notice(`权限模式已切到「${picked.label}」`)
     }
     service.register(
       {
@@ -346,7 +350,13 @@ export const commandsPlugin: Plugin.Object = {
           )
           return
         }
-        runtime.setReviewer(matches[0].id)
+        const picked = matches[0]
+        runtime.setReviewer(picked.id)
+        ui.notice(
+          `审批审阅者已切到「${picked.label}」${
+            picked.id === 'auto-review' ? '：要问的事先给模型判官，判不出来仍会问你' : ''
+          }`,
+        )
       },
     )
     service.register(

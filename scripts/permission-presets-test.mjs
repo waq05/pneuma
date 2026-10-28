@@ -8,7 +8,7 @@
  * 纯逻辑按 Node 的类型擦除直读 `.ts`（同 `ui-paging-test.mjs` 的做法，不需要先 build），
  * 插件那半靠源码文本钉住结构约定（照 `ui-transcript-render-test.mjs` 的 `uiCode()` 去注释）。
  *
- * 四段：
+ * 六段：
  *   [1] 纯逻辑：出厂四预设的名字/顺序/三项取值 + 默认档 + 组合互不相同
  *   [2] 纯逻辑：matchPermissionPreset 三项全等才命中，任一不同 → custom
  *   [3] 纯逻辑：findPermissionPreset 认不出返回 null（custom 是推导状态、不是可选项）
@@ -16,6 +16,8 @@
  *       沙箱插件缺席时明说那一半没落地
  *   [5] 派生状态的显示名：derivedPresetLabel 的两位取值 + 契约/宿主/壳三处的接线
  *       （壳那两份同构渲染跨了层，但钉的是同一条显示规则，放一起才看得见漂移）
+ *   [6] 启动复算不写对话：setter 静音、启动 apply 走 quiet、用户动手才有回执
+ *       （2026-10-28 报障：新会话一进来就刷四五条「权限模式切换为…」）
  *
  * 运行：node scripts/permission-presets-test.mjs
  *
@@ -163,6 +165,30 @@ console.log('[5] 派生状态的显示名：命中预设留空，拼出来的组
   // 负向：真正的脏值仍然要照实显示（别把「认不出」这条路一并删掉）。
   check('认不出的值仍走「· 未识别」那条（两条路都在）', shell.includes('· 未识别') && shellPlugins.includes('· 未识别'))
   check('两处渲染各只有一条派生出口', count(shell, 'displayLabel={derivedLabel}') === 1 && count(shellPlugins, 'displayLabel={derivedLabel}') === 1)
+}
+
+console.log('[6] 启动复算不写对话，用户动手才有回执（2026-10-28 报障）')
+{
+  // 用户报的是「新会话一进来就刷四五条『权限模式切换为…』，我只切换过一次」。
+  // 根因：启动时 settings 先按偏好设一遍单旋钮、permission-presets 再按默认预设设一遍，
+  // 预设 apply 里还要回写 prefs 又触发一遍——每一遍都从 setter 里往对话流写一行。
+  const approval = read('src/plugins/approval.ts')
+  const code = approval.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
+  check('setPolicy 不再往对话里写切换提示', !code.includes('权限模式切换为'))
+  check('setReviewer 不再往对话里写切换提示', !code.includes('审批审阅者切换为'))
+  check('两处仍然记审计（kind: mode-change 各一条）', count(code, "kind: 'mode-change'") === 2, String(count(code, "kind: 'mode-change'")))
+
+  const plugin = read('src/plugins/permission-presets.ts')
+  const pluginCode = plugin.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
+  check('apply 收了 quiet 开关', /const apply = \(preset: PermissionPreset, quiet = false\)/.test(pluginCode))
+  check('quiet 时不发 dsc/notice', pluginCode.includes("if (!quiet) ctx.emit('dsc/notice', notice)"))
+  check('启动复算走 quiet', pluginCode.includes('apply(preset, true)'))
+  check('用户点预设（use）仍然有回执', /use\(next\)[\s\S]*?return apply\(preset\)/.test(pluginCode))
+
+  // 斜杠命令自己给回执：setter 静音之后，命令行那一下不能再闷着。
+  const commands = read('src/plugins/commands.ts')
+  check('/policy 切换后给一句回执', commands.includes('权限模式已切到'))
+  check('/reviewer 切换后给一句回执（AI 复核那一档带解释）', commands.includes('审批审阅者已切到') && commands.includes('判不出来仍会问你'))
 }
 
 console.log('')

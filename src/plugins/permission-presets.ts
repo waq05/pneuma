@@ -64,9 +64,11 @@ export const permissionPresetsPlugin: Plugin.Object = {
 
     /**
      * 应用一个预设：只写**实际不同**的那几根旋钮（一次选了等价预设不该产生任何写动作）。
+     * @param preset - 要应用的预设
+     * @param quiet - 不往对话里写那一句（启动时按偏好复算用：用户没动手，就不该看到「切到…」）
      * @returns 给用户看的一句话。
      */
-    const apply = (preset: PermissionPreset): string => {
+    const apply = (preset: PermissionPreset, quiet = false): string => {
       const sandbox = ctx.get('sandbox')
       let wrote = ''
       // 沙箱插件被停用时要明说：预设里那一半「关住写盘」的能力这次落不了地，
@@ -105,7 +107,7 @@ export const permissionPresetsPlugin: Plugin.Object = {
         wrote === ''
           ? `权限预设已是「${preset.label}」，三项取值没变${unapplied === '' ? '' : `（${unapplied}）`}`
           : `权限预设切到「${preset.label}」（${wrote}）${unapplied === '' ? '' : `；${unapplied}`}`
-      ctx.emit('dsc/notice', notice)
+      if (!quiet) ctx.emit('dsc/notice', notice)
       // 只广播 dsc/changed：界面读的是快照里的 surfaces（不是推事件），
       // 多一个专用事件只会多一处要登记、要对齐的地方，收益为零。
       ctx.emit('dsc/changed')
@@ -161,7 +163,8 @@ export const permissionPresetsPlugin: Plugin.Object = {
         ctx.transcript.system(`偏好里的默认权限预设「${saved}」认不出来，已按「工作区可写」走`)
       } else {
         try {
-          apply(preset)
+          // quiet：这是启动时按偏好复算，用户没点任何东西——写进对话就是「一进来就刷一行」。
+          apply(preset, true)
         } catch (error) {
           ctx.transcript.system(`默认权限预设没生效：${error instanceof Error ? error.message : String(error)}`)
         }

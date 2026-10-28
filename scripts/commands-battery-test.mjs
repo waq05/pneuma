@@ -227,8 +227,10 @@ policyRuntime.lastPreset = undefined
   )
   runCommand('/policy full', policyRuntime(), ui)
   check('/policy full 前缀匹配切档', policyRuntime.lastPolicy === 'full-access', String(policyRuntime.lastPolicy))
+  // 回执由命令自己给（approval 的 setter 2026-10-28 起不再往对话里写）：钉住它别只剩静默。
+  check('/policy 切档后有一句回执', (calls.notices.at(-1) ?? '').includes('权限模式已切到「完全访问」'), JSON.stringify(calls.notices))
   runCommand('/policy nope', policyRuntime(), ui)
-  check('未知权限档位报可选清单', (calls.notices[1] ?? '').includes('未知权限档位'), JSON.stringify(calls.notices))
+  check('未知权限档位报可选清单', (calls.notices.at(-1) ?? '').includes('未知权限档位'), JSON.stringify(calls.notices))
 }
 {
   const { ui, calls } = makeUi()
@@ -240,8 +242,9 @@ policyRuntime.lastPreset = undefined
   )
   runCommand('/reviewer auto', policyRuntime(), ui)
   check('/reviewer auto 前缀匹配切审阅者', policyRuntime.lastReviewer === 'auto-review', String(policyRuntime.lastReviewer))
+  check('/reviewer 切档后有一句回执（AI 复核带解释）', (calls.notices.at(-1) ?? '').includes('审批审阅者已切到「AI 复核」'), JSON.stringify(calls.notices))
   runCommand('/reviewer nope', policyRuntime(), ui)
-  check('未知审阅者报可选清单', (calls.notices[1] ?? '').includes('未知审阅者'), JSON.stringify(calls.notices))
+  check('未知审阅者报可选清单', (calls.notices.at(-1) ?? '').includes('未知审阅者'), JSON.stringify(calls.notices))
 }
 
 console.log('── /permission：打包预设选择器（不再是 /policy 的别名）──')
