@@ -6,7 +6,7 @@ const root = 'D:/dsc/'
 const files = readdirSync(root + 'scripts')
   .filter((f) => f.endsWith('-test.mjs'))
   .map((f) => 'scripts/' + f)
-  .concat(['scripts/commands-battery.mjs', 'scripts/legacy-frozen-check.mjs', 'scripts/settings-sections-check.mjs'])
+  .concat(['scripts/commands-battery-test.mjs', 'scripts/legacy-frozen-check.mjs', 'scripts/settings-sections-check.mjs'])
 
 const red = []
 for (const file of files) {

@@ -1,0 +1,23 @@
+# 编辑器口径：只钉「换台机器就会被改回去」的那几项，不做重排。
+#
+# 为什么不引 Prettier / ESLint：见 scripts/style-check.mjs 的头注释——448 个源文件全是
+# 手写排版，整仓跑一次格式化会把七成文件重排、git blame 全部作废。这份文件管的是另一半：
+# 编辑器新建 / 保存时不把 2 空格改成 4 空格、不把 LF 改成 CRLF、不在文件尾部留空行。
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.{md,markdown}]
+# markdown 行尾两个空格是硬换行，别让编辑器顺手删掉。
+trim_trailing_whitespace = false
+
+[*.ps1]
+# PowerShell 脚本按 .gitattributes 走 CRLF（那份文件里有理由）。
+end_of_line = crlf

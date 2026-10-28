@@ -7,11 +7,16 @@
 #
 # 推门与夜跑分工：
 #   - 推 / PR：只放「快」的门（装依赖 + 三处 typecheck + 排版，一分钟级）；
-#   - 夜跑 / 手动：那批要跑 7–8 分钟的探针（pnpm check:core，77 条探针 import 编译产物，
-#     所以得先 pnpm build）。
+#   - 夜跑 / 手动：两套探针（内核 + 界面）。内核那批每条都要 import 编译产物，所以先
+#     pnpm build；界面那批要读插件产物，所以先 pnpm -C ui-shell build。
 #
 # 夜跑这条是补上的漏：注释里一直写着「留给夜跑」，但 on: 从来没配 schedule，
-# 于是 49 条内核探针一次都没被自动跑过（2026-10-28 补）。
+# 于是内核探针一次都没被自动跑过（2026-10-28 补）。
+#
+# 界面探针（2026-10-28 补的第二半）：39 条纯 Node 探针 + 4 条要真 Chromium 的 e2e，
+# 此前只有 package.json 里的一条命令，谁本地想得起来才跑——壳那两万九千行与十九个插件
+# 于是没有任何自动化回归。放在夜跑而不是推门：它要先 build 插件产物，一分钟起步，
+# 不值得让每个 PR 都等；夜跑 + 手动足够发现「合进去才发现壳是坏的」。
 name: Verify
 
 on:
@@ -78,8 +83,6 @@ jobs:
           node-version: 22
       # --ignore-scripts：typecheck 只用 electron 的类型声明，不需要它下载运行时二进制
       # （那一步在 CI 上又慢又容易挂）。
-      # --ignore-scripts：typecheck 只用 electron 的类型声明，不需要它下载运行时二进制
-      # （那一步在 CI 上又慢又容易挂）。
       - name: 安装依赖
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: 编译（主进程 + 渲染层两套 tsconfig）
@@ -87,7 +90,7 @@ jobs:
         run: pnpm typecheck
 
   probe:
-    name: 夜跑全量自检（49 条内核探针，约 8 分钟）
+    name: 夜跑全量自检（内核探针，约 8 分钟）
     # 只在夜跑与手动触发时跑：推一次就等 8 分钟的门，没人会去修红灯。
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -103,8 +106,13 @@ jobs:
           cache: pnpm
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
-      # 探针里有 77 条 import ../lib 的编译产物，不先 build 会整片模块找不到。
+      # 多数探针 import ../lib 的编译产物，不先 build 会整片模块找不到。
       - name: 编译内核
         run: pnpm build
-      - name: 全量自检
+      - name: 内核自检
         run: pnpm run check:core
+      # 界面探针读插件产物（lib/ui/plugins/*），所以壳也要先 build。
+      - name: 编译界面壳与插件产物
+        run: pnpm -C ui-shell build
+      - name: 界面自检
+        run: pnpm run check:ui
