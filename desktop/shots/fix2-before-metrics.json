@@ -1,0 +1,61 @@
+{
+  "_note": "改前（未修正的渲染层，desktop/out 于 2026-09-30 16:13 构建）的实测读数，出自 desktop/shots/fix2-shots.ps1 的同一批预跑脚本。-Tag before 那一遍：fix2-before-fold.log / fix2-before-scroll-paused.log 是原始 JSON 行，按钮那一条（当时日志文件随旧命名被删）由这里的数字留证。改后的读数见同名的 fix2-*.log。",
+  "capturedAt": "2026-09-30 16:2x（改前构建 out/ 16:13）",
+  "buttons": {
+    "case": "buttons",
+    "dsh": { "row": 28, "gap": 8, "box": 28, "glyph": 15, "glyphAssistant": 17 },
+    "at100": {
+      "scale": "1",
+      "metaBtns": [
+        { "box": { "w": 23, "h": 19 }, "svg": { "w": 13, "h": 13 }, "padding": "3px 5px" },
+        { "box": { "w": 23, "h": 19 }, "svg": { "w": 13, "h": 13 }, "padding": "3px 5px" },
+        { "box": { "w": 23, "h": 19 }, "svg": { "w": 13, "h": 13 }, "padding": "3px 5px" }
+      ],
+      "metaGap": "2px",
+      "userEdit": { "box": { "w": 20, "h": 16 }, "svg": { "w": 12, "h": 12 }, "padding": "2px 4px" },
+      "fork": { "box": { "w": 20, "h": 14 }, "svg": { "w": 12, "h": 12 }, "padding": "1px 4px" }
+    },
+    "at130": {
+      "scale": "1.3",
+      "metaBtns": [
+        { "box": { "w": 23, "h": 19 }, "svg": { "w": 13, "h": 13 } },
+        { "box": { "w": 23, "h": 19 }, "svg": { "w": 13, "h": 13 } },
+        { "box": { "w": 23, "h": 19 }, "svg": { "w": 13, "h": 13 } }
+      ],
+      "userEdit": { "box": { "w": 20, "h": 16 }, "svg": { "w": 12, "h": 12 } },
+      "fork": { "box": { "w": 20, "h": 14 }, "svg": { "w": 12, "h": 12 } }
+    },
+    "at100BoxOk": false,
+    "at100GlyphOk": false,
+    "gapOk": false,
+    "scaled": false,
+    "scaledNumbers": { "meta": [23, 23], "userEdit": [20, 20], "fork": [20, 20], "metaGlyph": [13, 13] }
+  },
+  "fold": {
+    "case": "fold",
+    "beforeSwitch": { "open": true, "bodyInDom": true, "summary": "会话甲 第一段：这条思考是被自检点开的那一条。" },
+    "inOther": { "open": false, "bodyInDom": false, "summary": "会话乙 第一段：这条思考是被自检点开的那一条。" },
+    "otherForcedCollapsed": { "open": false, "bodyInDom": false },
+    "afterReplay": { "open": false, "bodyInDom": false, "summary": "会话甲 第一段：这条思考是被自检点开的那一条。" },
+    "reuseAToB": 0,
+    "reuseBToA": 1,
+    "expandedSurvived": false,
+    "rowsInOther": "user-turn,think-block,entry-text entry-with-meta,entry-system"
+  },
+  "scrollPaused": {
+    "case": "scroll-paused",
+    "before": { "scrollTop": 467, "gap": 1, "scrollHeight": 1045, "clientHeight": 577 },
+    "samples": [
+      { "t": 100, "scrollTop": 47, "gap": 421, "scrollHeight": 1045 },
+      { "t": 200, "scrollTop": 489, "gap": 1, "scrollHeight": 1067 },
+      { "t": 300, "scrollTop": 489, "gap": 1, "scrollHeight": 1067 },
+      { "t": 400, "scrollTop": 511, "gap": 1, "scrollHeight": 1089 },
+      { "t": 500, "scrollTop": 511, "gap": 1, "scrollHeight": 1089 }
+    ],
+    "notPulledBack500": false,
+    "notPulledBackAll": false,
+    "contentKeptGrowing": true,
+    "scrollTopKept": false,
+    "toBottomButton": false
+  }
+}

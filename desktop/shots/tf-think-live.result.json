@@ -1,0 +1,18 @@
+{
+  "case": "think-live",
+  "theme": "dark",
+  "state": "running",
+  "summary": "第二段：折叠态的摘要取最新写完的那一段首行。",
+  "summaryIsLatestCompletedParagraph": true,
+  "summaryIsNotStreamingParagraph": true,
+  "streaming": "true",
+  "shimmerContent": "\"第二段：折叠态的摘要取最新写完的那一段首行。\"",
+  "shimmerAnimation": "dsc-think-shimmer / 1.5s",
+  "maskImage": "linear-gradient(to right, rgb(0, 0, 0) calc(100% - 48px), rgba(0, 0, 0, 0))",
+  "spinCount": 1,
+  "srText": "正在思考",
+  "liveOpensByDefault": true,
+  "bodyInDom": true,
+  "rowClickable": true,
+  "dotCount": 1
+}

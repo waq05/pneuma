@@ -1,0 +1,13 @@
+{
+  "probe": {
+    "width": 376,
+    "height": 782,
+    "plugins": 19,
+    "loaded": 19,
+    "failed": [],
+    "faults": 0,
+    "overflow": 0,
+    "composer": true,
+    "sidebarCollapsed": false
+  }
+}

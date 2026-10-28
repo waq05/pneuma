@@ -1,0 +1,38 @@
+{
+  "clicked": true,
+  "info": {
+    "rowCount": 22,
+    "rows": [
+      "hello.js",
+      "subagent",
+      "team",
+      "computer-use",
+      "web-search",
+      "approval-floor",
+      "spill",
+      "session-search",
+      "lifecycle-hooks",
+      "mcp",
+      "tool-search",
+      "sandbox",
+      "file-review",
+      "schedule",
+      "lsp",
+      "browser",
+      "dock-browser",
+      "self-improve",
+      "dsh-compat",
+      "llm",
+      "session",
+      "guards"
+    ],
+    "bundleBadges": [
+      "demo-bundle"
+    ],
+    "clientLines": [
+      "platform:web,服务:tools,card"
+    ],
+    "text": "Pneuma\n新会话\n技能\n插件\n工作区\ndsc\n新会话\n刚刚\n今日总用量\n0 tok\n设置\n插件\n\n管理插件，点击卡片查看详情与配置\n\n+ 添加插件\n自定义\n1\n~/.dsc/plugins/*.js\n组\n组合包演示插件组合包 demo-bundle\n来自组合包，演示界面能力只列不加载\n界面能力（dsh 客户端插件）：platform:web、服务:tools、card · 只列不加载\n官方可开关\n18\n随包发布，按需开关，点击卡片进入详情配置\n子\n子智能体\n把任务派给有明确授权的子智能体并行执行，设置递归层级、数量和模型\n智\n智能体团队\n启用团队协作、团队工具、成员列表和共享任务看板（看板按会话各一块）\n电\n电脑操作\n控制 Windows 桌面：截屏、点击、输入，每次操作均需审批\n网\n网页搜索\n提供 web_search 工具，经配置的搜索提供方检索网页，支持 Tavily、博查、Se"
+  },
+  "shot": "D:\\dsc\\desktop\\shots\\plugin-center.png"
+}

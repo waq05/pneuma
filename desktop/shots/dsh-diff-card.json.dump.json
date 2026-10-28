@@ -1,0 +1,10 @@
+{
+  "error": "等不到 结果文字 已写入",
+  "dump": {
+    "text": "Pneuma\n新会话\n技能\n插件\n工作区\ndsc\n把这条备注写进文件，我要看它改了哪几行。\n刚刚\n今日总用量\n115 tok\n设置\n把这条备注写进文件，我要看它改了哪几行。\n对话\n轨迹\n沙箱已就绪：档位 workspace-write｜强制执行 partial｜网络 关。策略围栏拦得住工具调用，拦不住命令内部的任意写，要真隔离请在「设置 → 沙箱」换后端。\n会话 d47dbbca · 模型 fake/fake-chat\n把这条备注写进文件，我要看它改了哪几行。\n用时 1秒\n\n假端点收尾：工具已经处理过了，这一轮到此结束。\n\n用量 115 tok\n·\n20:34\nfeat/dock-browser\n+\n工作区可写\n标准模式\nfake-chat\n默认\n更改\n+468\n−3\n1 轮 1 步\n115 tok\n0%\n今日 115 tok",
+    "cards": [
+      "entry tool-card status-done | 调用了dsh_write_noteC:\\Users\\waq\\AppData\\Local\\Temp\\dsc-dsh-card-VTz…在轨迹中查看└已写入 C:\\Users\\waq\\AppData\\Local\\Temp\\dsc-dsh-card-VTzCqn\\.dsc\\dsh-note.txt"
+    ],
+    "entries": 1
+  }
+}

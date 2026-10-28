@@ -1,0 +1,272 @@
+{
+  "case": "think-collapsed",
+  "theme": "dark",
+  "count": 4,
+  "rows": [
+    {
+      "open": false,
+      "liveClass": false,
+      "state": "ok",
+      "preview": "1",
+      "headBox": {
+        "l": 423,
+        "r": 906,
+        "t": 115,
+        "b": 141,
+        "w": 483,
+        "h": 26
+      },
+      "role": "button",
+      "tabIndex": "0",
+      "ariaExpanded": "false",
+      "tip": "点击展开这段思考过程",
+      "cursor": "pointer",
+      "summary": "第一段首行：先把三条改版各自的位置量清楚。",
+      "summaryBox": {
+        "l": 517,
+        "r": 871,
+        "t": 119,
+        "b": 137,
+        "w": 354,
+        "h": 18
+      },
+      "streaming": null,
+      "shimmerContent": "none",
+      "shimmerAnimation": "none / 0s",
+      "dotCount": 1,
+      "dotBox": {
+        "l": 507,
+        "r": 509,
+        "t": 127,
+        "b": 129,
+        "w": 2,
+        "h": 2
+      },
+      "statusText": "",
+      "spinCount": 0,
+      "chevron": {
+        "l": 887,
+        "r": 898,
+        "t": 123,
+        "b": 134,
+        "w": 11,
+        "h": 11
+      },
+      "chevronTransform": "none",
+      "bodyInDom": false,
+      "bodyH": null,
+      "bodyTransition": null,
+      "bodyDisplay": null,
+      "clipOverflow": null,
+      "barCount": 0,
+      "srText": null
+    },
+    {
+      "open": false,
+      "liveClass": false,
+      "state": "ok",
+      "preview": "1",
+      "headBox": {
+        "l": 423,
+        "r": 906,
+        "t": 284,
+        "b": 310,
+        "w": 483,
+        "h": 26
+      },
+      "role": "button",
+      "tabIndex": "0",
+      "ariaExpanded": "false",
+      "tip": "点击展开这段思考过程",
+      "cursor": "pointer",
+      "summary": "第 1 段：长思考用来验证展开区的吸附快捷栏与高度过渡。",
+      "summaryBox": {
+        "l": 517,
+        "r": 871,
+        "t": 288,
+        "b": 306,
+        "w": 354,
+        "h": 18
+      },
+      "streaming": null,
+      "shimmerContent": "none",
+      "shimmerAnimation": "none / 0s",
+      "dotCount": 1,
+      "dotBox": {
+        "l": 507,
+        "r": 509,
+        "t": 296,
+        "b": 298,
+        "w": 2,
+        "h": 2
+      },
+      "statusText": "",
+      "spinCount": 0,
+      "chevron": {
+        "l": 887,
+        "r": 898,
+        "t": 291,
+        "b": 302,
+        "w": 11,
+        "h": 11
+      },
+      "chevronTransform": "none",
+      "bodyInDom": false,
+      "bodyH": null,
+      "bodyTransition": null,
+      "bodyDisplay": null,
+      "clipOverflow": null,
+      "barCount": 0,
+      "srText": null
+    },
+    {
+      "open": false,
+      "liveClass": false,
+      "state": "ok",
+      "preview": "1",
+      "headBox": {
+        "l": 423,
+        "r": 906,
+        "t": 452,
+        "b": 478,
+        "w": 483,
+        "h": 26
+      },
+      "role": "button",
+      "tabIndex": "0",
+      "ariaExpanded": "false",
+      "tip": "点击展开这段思考过程",
+      "cursor": "pointer",
+      "summary": "短思考：只占两行，展开也到不了 400px。",
+      "summaryBox": {
+        "l": 517,
+        "r": 871,
+        "t": 456,
+        "b": 474,
+        "w": 354,
+        "h": 18
+      },
+      "streaming": null,
+      "shimmerContent": "none",
+      "shimmerAnimation": "none / 0s",
+      "dotCount": 1,
+      "dotBox": {
+        "l": 507,
+        "r": 509,
+        "t": 464,
+        "b": 466,
+        "w": 2,
+        "h": 2
+      },
+      "statusText": "",
+      "spinCount": 0,
+      "chevron": {
+        "l": 887,
+        "r": 898,
+        "t": 460,
+        "b": 471,
+        "w": 11,
+        "h": 11
+      },
+      "chevronTransform": "none",
+      "bodyInDom": false,
+      "bodyH": null,
+      "bodyTransition": null,
+      "bodyDisplay": null,
+      "clipOverflow": null,
+      "barCount": 0,
+      "srText": null
+    },
+    {
+      "open": false,
+      "liveClass": false,
+      "state": "ok",
+      "preview": "1",
+      "headBox": {
+        "l": 423,
+        "r": 906,
+        "t": 643,
+        "b": 669,
+        "w": 483,
+        "h": 26
+      },
+      "role": "button",
+      "tabIndex": "0",
+      "ariaExpanded": "false",
+      "tip": "点击展开这段思考过程",
+      "cursor": "pointer",
+      "summary": "短思考：只占两行，展开也到不了 400px。",
+      "summaryBox": {
+        "l": 517,
+        "r": 871,
+        "t": 647,
+        "b": 665,
+        "w": 354,
+        "h": 18
+      },
+      "streaming": null,
+      "shimmerContent": "none",
+      "shimmerAnimation": "none / 0s",
+      "dotCount": 1,
+      "dotBox": {
+        "l": 507,
+        "r": 509,
+        "t": 655,
+        "b": 657,
+        "w": 2,
+        "h": 2
+      },
+      "statusText": "",
+      "spinCount": 0,
+      "chevron": {
+        "l": 887,
+        "r": 898,
+        "t": 651,
+        "b": 662,
+        "w": 11,
+        "h": 11
+      },
+      "chevronTransform": "none",
+      "bodyInDom": false,
+      "bodyH": null,
+      "bodyTransition": null,
+      "bodyDisplay": null,
+      "clipOverflow": null,
+      "barCount": 0,
+      "srText": null
+    }
+  ],
+  "firstSummary": "第一段首行：先把三条改版各自的位置量清楚。",
+  "firstSummaryIsFirstLine": true,
+  "firstSummaryIsNotLastParagraph": true,
+  "bodiesInDom": 0,
+  "dotsPerBlock": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "allRowClickable": true,
+  "allCollapsed": true,
+  "ariaExpanded": [
+    "false",
+    "false",
+    "false",
+    "false"
+  ],
+  "previewFlags": [
+    "1",
+    "1",
+    "1",
+    "1"
+  ],
+  "rowHeights": [
+    26,
+    26,
+    26,
+    26
+  ],
+  "headRuleText": [
+    "align-items: center; border-radius: var(--dsc-r-control); cursor: pointer; display: flex; gap: 8px; min-height: var(--dsc-row-h); padding: 0px 8px; transition: background var(--dsc-dur) var(--dsc-ease); user-select: none;"
+  ]
+}

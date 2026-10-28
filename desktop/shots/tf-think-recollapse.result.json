@@ -1,0 +1,24 @@
+{
+  "case": "think-recollapse",
+  "bodyAppeared": true,
+  "whileOpen": {
+    "open": true,
+    "bodyInDom": true,
+    "bodyH": 1126,
+    "ariaExpanded": "true",
+    "tip": "点击收起这段思考过程"
+  },
+  "afterClose": {
+    "open": false,
+    "bodyInDom": false,
+    "bodyH": null,
+    "ariaExpanded": "false",
+    "tip": "点击展开这段思考过程",
+    "summary": "第 1 段：长思考用来验证展开区的吸附快捷栏与高度过渡。",
+    "dotCount": 1,
+    "barCount": 0
+  },
+  "bodyGone": true,
+  "summaryKept": true,
+  "ariaFlippedBack": true
+}

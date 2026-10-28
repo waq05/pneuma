@@ -1,0 +1,39 @@
+{
+  "probe": {
+    "cards": 1,
+    "opened": true,
+    "head": "调用了dsh_write_noteC:\\Users\\waq\\AppData\\Local\\Temp\\dsc-dsh-card-xIX…在轨迹中查看",
+    "status": "entry tool-card status-done open",
+    "hasChangeBlock": true,
+    "hasDiffBody": true,
+    "added": "",
+    "removed": "",
+    "diffAdded": 2,
+    "diffRemoved": 0,
+    "diffLines": [
+      "1+第一行：这条备注由 dsh 风格插件写入",
+      "2+第二行：它带着一张 diff 卡片"
+    ],
+    "resultText": "已写入 C:\\Users\\waq\\AppData\\Local\\Temp\\dsc-dsh-card-xIXksO\\.dsc\\dsh-note.txt"
+  },
+  "shotProbe": {
+    "groups": 1,
+    "rect": {
+      "top": 180,
+      "height": 374
+    },
+    "opened": true,
+    "chain": [
+      "entry tool-card status-done open | display=block h=374",
+      "slot-entry | display=contents h=0",
+      "entry-row | display=flex h=374",
+      "step-content | display=flex h=374",
+      "step-body | display=block h=374",
+      "step-seat | display=flex h=402",
+      "turn-process-body | display=flex h=402",
+      "turn-process | display=grid h=402",
+      "turn-seat | display=flex h=617"
+    ]
+  },
+  "shot": true
+}

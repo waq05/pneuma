@@ -2,8 +2,21 @@ node_modules/
 # 只忽略根目录的构建产物 lib/；不锚定会连带吞掉 remote-web/src/lib/ 这类源码目录
 /lib/
 *.tsbuildinfo
-# 自检截图（DSC_DESKTOP_SHOT 的输出目录）
-shots/
+# 自检截图：**脚本进版本库，产物不进**。
+#
+# 2026-10-28 之前这里是一行 `shots/`（没有前导斜杠，匹配任意层级），于是
+# desktop/shots 下 108 个探针脚本（54 个 .ps1 + 54 个 .mjs）被一起忽略——它们
+# 只存在于某一台机器上，换机器、重装、误删就没了，而且没法从 git 找回。
+# 现在改成：整个目录先忽略，再把脚本级别的后缀放出来。
+/shots/
+desktop/shots/**
+!desktop/shots/*.ps1
+!desktop/shots/*.mjs
+!desktop/shots/*.py
+!desktop/shots/*.sh
+!desktop/shots/*.md
+!desktop/shots/*.json
+
 # 本机运行产物：工具链的事件账本、沙箱 ACL 诊断报告
 .mimosa/
 .acl-report/

@@ -1,0 +1,79 @@
+{
+  "case": "foot-left",
+  "theme": "dark",
+  "innerBox": {
+    "l": 398,
+    "r": 931,
+    "t": -331,
+    "b": 666,
+    "w": 533,
+    "h": 997
+  },
+  "contentLeft": 422,
+  "contentRight": 907,
+  "assistantBodyLeft": [
+    422,
+    422,
+    422,
+    422
+  ],
+  "footerCount": 2,
+  "rows": [
+    {
+      "round": 1,
+      "text": "16:11·用时 1秒·~181 tok",
+      "foot": {
+        "l": 422,
+        "r": 907,
+        "t": 435,
+        "b": 453,
+        "w": 485,
+        "h": 18
+      },
+      "clockLeft": 422,
+      "usedText": "用时 1秒",
+      "tokenText": "~181 tok",
+      "tokenLeft": 552,
+      "hasFork": true,
+      "forkLeft": 517,
+      "forkDisabled": true,
+      "oneRow": true
+    },
+    {
+      "round": 2,
+      "text": "16:11·用时 1秒·~25 tok",
+      "foot": {
+        "l": 422,
+        "r": 907,
+        "t": 648,
+        "b": 666,
+        "w": 485,
+        "h": 18
+      },
+      "clockLeft": 422,
+      "usedText": "用时 1秒",
+      "tokenText": "~25 tok",
+      "tokenLeft": 552,
+      "hasFork": true,
+      "forkLeft": 517,
+      "forkDisabled": false,
+      "oneRow": true
+    }
+  ],
+  "footLeftDelta": [
+    0,
+    0
+  ],
+  "allFootersAligned": true,
+  "clockAligned": true,
+  "tokenInFooter": true,
+  "metaUsageInDom": 0,
+  "footRightGap": [
+    0,
+    0
+  ],
+  "footRuleText": [
+    "align-items: center; color: var(--dsc-text-quaternary); display: flex; font-size: var(--dsc-fs-caption); font-variant-numeric: tabular-nums; gap: 6px; justify-content: flex-start; margin-top: calc(1px - var(--dsc-turn-gap));"
+  ],
+  "footerVisible": true
+}

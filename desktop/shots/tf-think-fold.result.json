@@ -1,0 +1,84 @@
+{
+  "case": "think-fold-replay",
+  "steps": [
+    {
+      "name": "ready",
+      "blocks": 4,
+      "footers": 2
+    },
+    {
+      "name": "openSession",
+      "result": "ok"
+    },
+    {
+      "name": "switchedToOther",
+      "ok": true,
+      "blocks": 1
+    },
+    {
+      "name": "openSession",
+      "result": "ok"
+    },
+    {
+      "name": "backToSelf",
+      "ok": true,
+      "blocks": 4
+    }
+  ],
+  "sameFirstElement": false,
+  "otherFirstElementReused": false,
+  "otherKeys": [
+    null
+  ],
+  "marksLeft": 0,
+  "beforeSwitch": [
+    {
+      "open": true,
+      "key": null,
+      "summary": "第一段首行：先把三条改版各自的位置量清楚。"
+    },
+    {
+      "open": false,
+      "key": null,
+      "summary": "第 1 段：长思考用来验证展开区的吸附快捷栏与高度过渡。"
+    },
+    {
+      "open": false,
+      "key": null,
+      "summary": "短思考：只占两行，展开也到不了 400px。"
+    },
+    {
+      "open": false,
+      "key": null,
+      "summary": "短思考：只占两行，展开也到不了 400px。"
+    }
+  ],
+  "switchedToOther": true,
+  "backToSelf": true,
+  "afterReplay": [
+    {
+      "open": true,
+      "key": null,
+      "summary": "第一段首行：先把三条改版各自的位置量清楚。"
+    },
+    {
+      "open": false,
+      "key": null,
+      "summary": "第 1 段：长思考用来验证展开区的吸附快捷栏与高度过渡。"
+    },
+    {
+      "open": false,
+      "key": null,
+      "summary": "短思考：只占两行，展开也到不了 400px。"
+    },
+    {
+      "open": false,
+      "key": null,
+      "summary": "短思考：只占两行，展开也到不了 400px。"
+    }
+  ],
+  "expandedSurvived": true,
+  "othersStillCollapsed": true,
+  "summaryStable": true,
+  "summaryAfterReplay": "第一段首行：先把三条改版各自的位置量清楚。"
+}

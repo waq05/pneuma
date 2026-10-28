@@ -1,0 +1,89 @@
+{
+  "case": "handle-edge",
+  "windowInner": 1132,
+  "zoneWidth": 895,
+  "atDefault": {
+    "inner": {
+      "l": 398,
+      "r": 931,
+      "t": -331,
+      "b": 666,
+      "w": 533,
+      "h": 997
+    },
+    "leftCentre": 398,
+    "rightCentre": 931,
+    "leftW": 12,
+    "rightW": 12,
+    "leftDelta": 0,
+    "rightDelta": 0,
+    "vars": {
+      "start": "161.19793701171875px",
+      "end": "693.7916870117188px"
+    }
+  },
+  "atMax": {
+    "inner": {
+      "l": 277,
+      "r": 1052,
+      "t": -189,
+      "b": 666,
+      "w": 775,
+      "h": 855
+    },
+    "leftCentre": 277,
+    "rightCentre": 1052,
+    "leftW": 12,
+    "rightW": 12,
+    "leftDelta": 0,
+    "rightDelta": 0,
+    "vars": {
+      "start": "40px",
+      "end": "815px"
+    }
+  },
+  "atReset": {
+    "inner": {
+      "l": 398,
+      "r": 931,
+      "t": -189,
+      "b": 808,
+      "w": 533,
+      "h": 997
+    },
+    "leftCentre": 398,
+    "rightCentre": 931,
+    "leftW": 12,
+    "rightW": 12,
+    "leftDelta": 0,
+    "rightDelta": 0,
+    "vars": {
+      "start": "161.19793701171875px",
+      "end": "693.7916870117188px"
+    }
+  },
+  "threadMaxDuringDrag": "775px",
+  "threadMaxAfterCommit": "775px",
+  "dragAttempts": 1,
+  "expectedMax": "775px",
+  "clampHolds": true,
+  "storedAfterDrag": "775",
+  "storedAfterReset": null,
+  "followsColumn": true,
+  "alignedAtDefault": true,
+  "varsWrittenBeforeAnyDrag": true,
+  "alignedAtReset": true,
+  "jumpStrip": {
+    "l": 1096,
+    "r": 1112,
+    "t": 383,
+    "b": 411,
+    "w": 16,
+    "h": 28
+  },
+  "gapInnerToStripAtMax": 44,
+  "stripeRuleText": [
+    "background: linear-gradient(\n    to bottom,\n    transparent calc(var(--dsc-handle-y, 50%) - 36px),\n    var(--dsc-scrollbar-thumb) calc(var(--dsc-handle-y, 50%) - 8px),\n    var(--dsc-scrollbar-thumb) calc(var(--dsc-handle-y, 50%) + 8px),\n    transparent calc(var(--dsc-handle-y, 50%) + 36px)\n  ); border-radius: var(--dsc-r-pill); content: \"\"; opacity: 0; pointer-events: none; position: absolute; top: 0px; bottom: 0px; transition: opacity var(--dsc-dur) var(--dsc-ease); width: 2px;",
+    "left: calc(50% - 1px);"
+  ]
+}
