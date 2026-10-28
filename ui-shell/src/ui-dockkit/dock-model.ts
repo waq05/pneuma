@@ -396,32 +396,30 @@ function replacePane(surface: DockSurface, paneId: string, next: DockPane): Dock
 }
 
 /**
- * 关一张页签。格被清空自动补一张 guide；**整块栏没有真内容了就收起来**。
+ * 关一张页签。格被清空自动补一张 guide；**关掉整块栏最后一张页签才收起来**。
  *
- * 为什么要有「收起」这一条：guide 的 ✕ 若只补一张新 guide（id 变了、画出来一样），
- * 用户看到的就是「点了没反应」（2026-10-27 报障）。语义上关掉最后一个页签就是
- * 把侧栏收走——栏架子和「开始」门面留着，下次展开还是它；所以判断口径是
- * 「整块栏只剩 guide」而不是「这一格空了」，分栏里清空一格后另一格还有内容时
- * 照旧只补门面、不收栏。
+ * 为什么判「最后一张」而不是「还剩不剩真内容」：后者会把「旁问」旁边那张还开着的
+ * 「开始」一起收走（2026-10-28 报障）——用户关的是一张页签，被收起的是整块栏。
+ * 而 guide 的 ✕ 若只补一张新 guide（id 变了、画出来一样），又等于「点了没反应」
+ * （2026-10-27 报障），所以关掉最后一张时仍然要收起：栏架子和门面留着，下次展开还是它。
+ *
+ * 分栏同理：只要别的格里还有页签（哪怕只剩门面），就照旧只补门面、不收栏。
  */
 export function closeTab(surface: DockSurface, tabId: string): DockSurface {
   const owner = surface.panes.find((pane) => pane.tabs.some((tab) => tab.id === tabId))
   if (owner === undefined) return surface
   const index = owner.tabs.findIndex((tab) => tab.id === tabId)
   const tabs = owner.tabs.filter((tab) => tab.id !== tabId)
+  // 收起只在「整块栏一张不剩」时发生；先数总数再删，删完这一格可能已经被补进门面
+  const lastTab = surface.panes.reduce((count, pane) => count + pane.tabs.length, 0) === 1
   if (tabs.length === 0) {
     const guide = makeTab('guide')
     const next = replacePane(surface, owner.id, { ...owner, tabs: [guide], activeTabId: guide.id })
-    return hasContent(next) ? next : setExpanded(next, false)
+    return lastTab ? setExpanded(next, false) : next
   }
   const activeTabId = owner.activeTabId === tabId ? (tabs[index] ?? tabs[tabs.length - 1]!).id : owner.activeTabId
   const next = replacePane(surface, owner.id, { ...owner, tabs, activeTabId })
-  return hasContent(next) ? next : setExpanded(next, false)
-}
-
-/** 这块栏还有没有真内容（除 guide 门面以外的页签）。 */
-function hasContent(surface: DockSurface): boolean {
-  return surface.panes.some((pane) => pane.tabs.some((tab) => tab.kind !== 'guide'))
+  return lastTab ? setExpanded(next, false) : next
 }
 
 /** 聚焦一张页签（顺带把它所在的窗格设为激活）。 */

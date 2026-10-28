@@ -942,11 +942,12 @@ dock 的操作名：`term-spawn` / `term-input` / `term-kill` / `fs-list` / `fs-
 `Dock.tsx` 四个 tab（terminal / browser / files / git），宽度夹在 300~820，双击复位 420；
 shell 候选 5 个，选中的存 renderer 的 `localStorage['dsc.dockShell']`。
 
-**关掉最后一个页签就是收起侧栏**（`ui-shell/src/ui-dockkit/dock-model.ts` 的 `closeTab`）：
+**关掉整块栏最后一张页签才是收起侧栏**（`ui-shell/src/ui-dockkit/dock-model.ts` 的 `closeTab`）：
 以前格被清空只补一张新 guide，画出来一模一样，用户点「开始」旁边的 ✕ 就像没反应。
-现在判断口径是「整块栏只剩 guide 门面」——单格清空、或分栏两格都只剩门面都收起；
-分栏里清空一格而另一格还有内容时，只补门面、栏不动。程序性关闭（桌面端
-`browser-tab-close-request` 那条）走同一个函数，栏里真没内容了也一起收起。
+判断口径是「关掉的这张是不是整块栏的最后一张」——是就收起（guide 的 ✕ 因此有反应），
+不是就只补门面、栏不动。**不能判「还剩不剩非门面页签」**：那样「旁问」+「开始」两张
+开着时关掉「旁问」，旁边那张「开始」会被一起收走（2026-10-28 报障）。程序性关闭
+（桌面端 `browser-tab-close-request` 那条）走同一个函数，关掉最后一张时也一起收起。
 
 ### 面板尺寸与收起状态存哪
 
