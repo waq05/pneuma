@@ -289,19 +289,23 @@ console.log('[10] 手机上权限/模式/档位三颗的浮层：贴住输入卡
 {
   // 报障（2026-10-15，手机截图）：点「标准模式」那张浮层，行文字只剩尾字。量出来是
   // 300px 的面板右缘对齐 chip、而 chip 排在行中间 → 面板左缘跑到屏幕外（430px 实测 x=-65）。
-  const sheetSpots = [...composer.matchAll(/model-anchor model-anchor-sheet/g)].map((match) => match.index ?? -1)
-  const popAt = (name) => composer.indexOf(name)
-  check('三颗旋钮的锚点各挂一次 sheet 类（不是同一处挂三遍）', sheetSpots.length === 3)
+  // 档位那颗 2026-10-28 搬进了 model-controls.tsx：三处 sheet 现在分在两个文件里，
+  // 跨文件的 indexOf 顺序没有意义，按文件各判各的。
+  const view = read('ui-shell/src/plugins/composer/ui.tsx')
+  const controls = read('ui-shell/src/plugins/composer/model-controls.tsx')
+  const spotsOf = (text) => [...text.matchAll(/model-anchor model-anchor-sheet/g)].map((match) => match.index ?? -1)
+  const viewSpots = spotsOf(view)
+  const ctrlSpots = spotsOf(controls)
+  check('三颗旋钮的锚点各挂一次 sheet 类（不是同一处挂三遍）', viewSpots.length === 2 && ctrlSpots.length === 1)
   check(
-    '三处 sheet 与三张浮层一一对应（权限 → 模式 → 档位，顺序不错位）',
-    sheetSpots[0] < popAt('policy-pop') &&
-      sheetSpots[1] > popAt('policy-pop') &&
-      sheetSpots[1] < popAt('preset-pop') &&
-      sheetSpots[2] > popAt('preset-pop') &&
-      sheetSpots[2] < popAt('effort-pop'),
-    JSON.stringify({ sheetSpots, pops: [popAt('policy-pop'), popAt('preset-pop'), popAt('effort-pop')] }),
+    '三处 sheet 与三张浮层一一对应（权限 → 模式，各在自己的浮层之前）',
+    viewSpots[0] < view.indexOf('policy-pop') &&
+      viewSpots[1] > view.indexOf('policy-pop') &&
+      viewSpots[1] < view.indexOf('preset-pop'),
+    JSON.stringify({ viewSpots, pops: [view.indexOf('policy-pop'), view.indexOf('preset-pop')] }),
   )
-  check('模型那颗的锚点**没**挂（它有自己一套窄面板 + 悬浮飞出）', (composer.match(/className="model-anchor"/g) ?? []).length === 2)
+  check('档位那张 sheet 在自己的浮层之前', ctrlSpots[0] >= 0 && ctrlSpots[0] < controls.indexOf('effort-pop'))
+  check('模型那颗的锚点**没**挂（它有自己一套窄面板 + 悬浮飞出）', (controls.match(/className="model-anchor"/g) ?? []).length === 1)
   check('CSS：锚点交回输入卡片（position: static）', block560 !== null && /\.composer-bar \.model-anchor-sheet \{[\s\S]*?position: static;/.test(block560))
   check(
     'CSS：面板左右各留 8px、宽度跟着卡片走',

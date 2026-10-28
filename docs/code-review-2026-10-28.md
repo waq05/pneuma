@@ -180,7 +180,7 @@ EXIT=2
 | 文件 | 行数 | 说明 |
 | --- | --- | --- |
 | `ui-shell/src/plugins/transcript/ui.tsx` | 658（原 2,481） | 第十四批已拆（见 §二十四）：装配 + 主流程 + 分页/折叠接线 |
-| `ui-shell/src/plugins/composer/ui.tsx` | 2,354 | 输入区一个组件 1,712 行，待拆（下一批） |
+| `ui-shell/src/plugins/composer/ui.tsx` | 1,023（原 2,354） | 第十五、十六批已拆完，见 §二十五、§二十六 |
 | `src/contract.ts` | 2,091 | 116 个导出，UI ⇄ 运行时唯一契约 |
 | `ui-shell/src/plugins/sessions/ui.tsx` | 1,943 | |
 | `ui-shell/src/plugins/settings/models.tsx` | 1,900 | |
@@ -1375,3 +1375,56 @@ handler 现在没有消费方（壳走原生桥），但它们的实现体与原
 | `pnpm -C ui-shell build` | 19 份插件产物照常出，`bundle.json` 只重写有变化的那几份 |
 | `node scripts/style-check.mjs --changed` | 全过 |
 | `node scripts/dup-scan.mjs` | 429 个文件、0 组 |
+
+## 二十六、第十六批（2026-10-28）：拆模型面板，1,640 → 1,023 行
+
+### 这一批搬走的
+
+| 新文件 | 行数 | 装的是什么 |
+| --- | --- | --- |
+| `model-controls.tsx` | 687 | 模型 chip 与两级浮层、档位 chip 与滑杆卡、乐观值、飞出卡的量高与挑边、面板横移、端点前缀收放 |
+
+搬完 `composer/ui.tsx` 1,023 行，其中 `ComposerBox` 约 900 行——输入区的巨石化到此结束。
+
+### 关键决定：做成 hook，不做成组件
+
+上一批的分支菜单做成了组件（受控），因为它的状态只服务自己。这一块不能照抄：它和输入行咬着
+三处——底栏的 `barRef`（量栏宽决定端点前缀收不收）、附件的能力门（当前模型吃不吃图片）、
+错误行 `fault`。
+
+做成组件的话，要么把 `barRef` 与能力门往下传、把「失败」往上回调，要么让组件自己再读一遍
+快照（两份真值）。做成 hook 则**状态仍住在 `ComposerBox`**，只是代码换了文件：
+`useModelControls` 接三个入参（通道、写错误行、开浮层前收别人），交出四样（两颗 chip 的节点、
+能力门、关这两张浮层的函数、底栏那一行的 ref）。
+
+**不新增组件边界**，所以重挂时机、状态生命周期、React 树形状一行没变。
+
+### 一处必须改的接线：互斥改成一个回调
+
+四张浮层互斥原来是四颗 chip 各自调四个 setter。搬出去之后：
+
+- 模型 / 档位两颗（在 hook 里）调 `onTakeOver()`，由父组件收掉权限 / 模式 / 分支；
+- 权限 / 模式两颗（还在父组件里）调 `controls.close()`。
+
+行为等价，但**读代码时互斥关系从「四乘四处 setter」变成了「两条通道」**，比原来清楚。
+
+### 探针跟着改：三条
+
+1. `ui-git-branch-test`「四颗旋钮的浮层互斥」原来数 `setBranchOpen(false)` 出现 ≥4 次。
+   现在模型/档位两颗不再直接调它，改数两条通道：`setBranchOpen(false) ≥3`、
+   `controls.close() ≥3`、`onTakeOver() ≥2`——四颗各有一条「收别的」路径，这才是那句话的意思。
+2. `ui-mobile-shell-test`「三处 sheet 与三张浮层一一对应」原来在整棵插件子树里比 `indexOf`。
+   档位那张搬进 `model-controls.tsx`，而它按文件名排在 `ui.tsx` 前面，跨文件比序号必然错位。
+   改成按文件各判各的：`ui.tsx` 里两张（权限 → 模式）、`model-controls.tsx` 里一张（档位）。
+3. `ui-interaction-base-test`「宿主拒绝时撤乐观值并报错」的正则里 `setFault` 换成了 `onFault`
+   （hook 的回调名），断言含义不变。
+
+### 验证
+
+| 门 | 结果 |
+| --- | --- |
+| `pnpm -C ui-shell typecheck` | 0 |
+| `pnpm run check:ui` | 39/39 |
+| `pnpm -C ui-shell build` | 0 |
+| `style-check --changed` | 全过 |
+| `dup-scan` | 430 个文件、0 组 |

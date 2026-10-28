@@ -92,7 +92,15 @@ console.log('[2] 输入框那颗钮的接线')
   check('新建分支走 dock 的写类 op', composer.includes("invoke('dock', ['git-branch-create', { branch: name }], { timeoutMs: HUMAN_WAIT_TIMEOUT_MS })"))
   check('菜单在等审批之前先收起（卡才是这一刻该看的东西，别被菜单盖住）', /onFault\(null\)\s*\n\s*\/\/ 菜单先收起来[\s\S]{0,200}?onOpenChange\(false\)/.test(menu))
   check('失败写进输入区下面那行 fault（不是静默）', menu.includes('onFault(wouldOverwrite(text) ?') && composer.includes('右侧边栏「变更」页签可以提交'))
-  check('四颗旋钮的浮层互斥（开一颗收掉另外三颗）', (view.match(/setBranchOpen\(false\)/g) ?? []).length >= 4)
+  // 模型 / 档位两颗 2026-10-28 搬进 model-controls.tsx：它们打开时走 onTakeOver()，
+  // 权限 / 模式两颗仍然直接 setBranchOpen(false)。四颗各有一条「收别的」路径。
+  const controls = read('ui-shell/src/plugins/composer/model-controls.tsx')
+  check(
+    '四颗旋钮的浮层互斥（开一颗收掉另外三颗）',
+    (view.match(/setBranchOpen\(false\)/g) ?? []).length >= 3 &&
+      (view.match(/controls\.close\(\)/g) ?? []).length >= 3 &&
+      (controls.match(/onTakeOver\(\)/g) ?? []).length >= 2,
+  )
 
   // 等人的宿主方法要更长的超时：审批卡自己能等 5 分钟，默认那 30 秒会把「等你点卡」
   // 报成「宿主超时」，而且点完卡那次切换已经被页面放弃了（实机走查抓到的）。

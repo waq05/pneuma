@@ -245,7 +245,8 @@ console.log('[6] 调档手感')
   check('点下去先落乐观值（pendingEffort）', composer.includes('const [pendingEffort, setPendingEffort] = useState<string | null>(null)') && composer.includes('const shownEffort = pendingEffort ?? effort'))
   check('宿主读数对上就撤掉乐观值', /pendingEffort !== null && effort === pendingEffort[\s\S]{0,40}?setPendingEffort\(null\)/.test(composer))
   check('宿主迟迟不认时 1.5 秒兜底（不让界面一直骗人）', /setTimeout\(\(\) => setPendingEffort\(null\), 1500\)/.test(composer))
-  check('宿主拒绝时撤乐观值并报错', /catch\(\(reason: unknown\) => \{[\s\S]{0,120}?setPendingEffort\(null\)[\s\S]{0,80}?setFault\(/.test(composer))
+  // 报错那一行 2026-10-28 随模型面板搬进 model-controls.tsx：失败走 onFault 回调（父组件就是 setFault）。
+  check('宿主拒绝时撤乐观值并报错', /catch\(\(reason: unknown\) => \{[\s\S]{0,120}?setPendingEffort\(null\)[\s\S]{0,80}?onFault\(/.test(composer))
 
   // ② 同步拖动：同一帧里按下再松开也要算数（旧写法读的是 state，那一下会被吞掉）
   check('拖动下标存在 ref 里（事件处理读得到同步值）', slider.includes('const dragRef = useRef<number | null>(null)') && slider.includes('dragRef.current = next'))
