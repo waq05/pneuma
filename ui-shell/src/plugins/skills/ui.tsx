@@ -32,7 +32,7 @@ import {
   useHostChannel,
   useShellPage,
 } from '@dsc/ui'
-import { SkeletonText, humanErrorText } from '@dsc/ui-primitives'
+import { SkeletonText, errText as text, humanErrorText } from '@dsc/ui-primitives'
 
 /** 这一页在 page-state 里的 id（侧栏入口与页条目约定同一个值）。 */
 const PAGE = 'skills'
@@ -707,9 +707,4 @@ function SkillsView(): ReactNode {
       <div className="skills-foot">模型仅能看到技能名称与一句话说明；正文按需读取，不常驻上下文。</div>
     </div>
   )
-}
-
-/** 拿异常的文字形态（宿主与桥都可能抛 Error，也可能是别的值）。 */
-function text(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }

@@ -33,6 +33,17 @@ export * from './dialog-focus'
 // 加载占位（骨架块 / 多行文本占位 / 读屏状态行）。
 export * from './skeleton'
 // 错误文案的人话层（发生了什么 / 下一步 / 原文）。
+export * from './error-text'
+// 文件大小读数（B / KB / MB）与宿主吞吐口径（TPS / TTFT）。
+export * from './sizes'
+export * from './throughput'
+// git 读数相等判断（与宿主同一个口径）。
+export * from './git-surface'
+// 宿主快照的读数（工作目录 / 会话清单 / 条目流 / 回合状态）。
+export * from './snapshot'
+// 模块级信号（一份状态 + 订阅 + 忘了就不通知的三条语义）。
+export * from './signal'
+
 export * from './humanize-error'
 // 载体基元：终端壳的同名基元在 `src/ui/tui-plugin-api.ts`（那里 Text 是 ink 的 <Text>）。
 export * from './plugin-text'

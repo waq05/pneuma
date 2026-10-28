@@ -30,7 +30,13 @@
  * @module dsc-ui-shell/plugins/statusbar
  */
 import { useEffect, useState, type ReactNode } from 'react'
-import { formatTraceDuration } from '@dsc/ui-primitives'
+import {
+  averageTtftMs,
+  formatTokensPerSecond,
+  formatTraceDuration,
+  tokensPerSecond,
+  trimZero,
+} from '@dsc/ui-primitives'
 import {
   defineUiPlugin,
   getHostNative,
@@ -572,15 +578,9 @@ function useSessionUsage(
 
 /** 界面侧观察到的会话时钟（宿主快照不带时间戳，这两个时刻只能自己记）。 */
 
-// ─────────── 数量与耗时格式化：原件在旧渲染层 token-estimate.ts / trace-format.ts ───────────
-// 为什么原样抄一份而不是 import：插件能 require 的只有 react 与 @dsc/ui（boot.ts 的白名单），
-// 拉不到别的模块；这几段本来就是「数字怎么读」的唯一口径，改写它就是换口径。
-
-/** 去掉小数末尾多余的 0：46.0K → 46K，1.00M → 1M。 */
-function trimZero(value: number): string {
-  const text = value >= 100 ? value.toFixed(0) : value.toFixed(1)
-  return text.endsWith('.0') ? text.slice(0, -2) : text
-}
+// ─────────── 数量与耗时格式化：口径都在 @dsc/ui-primitives，这里只做组合 ───────────
+// 2026-10-28：trimZero 与吞吐三条（TPS / TTFT / 速度读数）此前在这份文件里各抄了一遍，
+// 连带那句「插件只能 require react 与 @dsc/ui」的旧理由。E6 起基元包是平台种子，直接取即可。
 
 /** 数量按 K / M 压短：1000 以下给原值，128000 读成 128K。 */
 function formatTokens(count: number): string {
@@ -592,27 +592,6 @@ function formatTokens(count: number): string {
 /** 精确数量：千分位逗号：单行读数用紧凑那份，卡片里给精确值。 */
 function formatExactTokens(count: number): string {
   return Math.round(count).toLocaleString('en-US')
-}
-
-/**
- * 输出速度（token/秒）：整个会话累计，除以纯解码时间。解码期为 0 时回 null，
- * 界面据此整段省略——绝不去除一个 0 印出天文数字（口径原件 core/throughput.ts）。
- */
-function tokensPerSecond(totals: Pick<SessionUsageView, 'decodeMs' | 'decodeTokens'>): number | null {
-  if (!(totals.decodeMs > 0)) return null
-  return totals.decodeTokens / (totals.decodeMs / 1_000)
-}
-
-/** 首字延迟平均（毫秒）：没有样本时回 null，界面据此省略这一行（同 core/throughput.ts）。 */
-function averageTtftMs(totals: Pick<SessionUsageView, 'ttftMs' | 'ttftSteps'>): number | null {
-  if (!(totals.ttftSteps > 0)) return null
-  return totals.ttftMs / totals.ttftSteps
-}
-
-/** 速度读数格式：10 以上给整数，10 以下给一位小数——8.4 / 12（同 core/throughput.ts）。 */
-function formatTokensPerSecond(tps: number): string {
-  const clamped = Math.max(0, tps)
-  return clamped >= 10 ? String(Math.round(clamped)) : String(Math.round(clamped * 10) / 10)
 }
 
 /** 把命中率换算成「百分比整数单位」（0 位小数 = 1 单位 1%，1 位小数 = 1 单位 0.1%）。 */

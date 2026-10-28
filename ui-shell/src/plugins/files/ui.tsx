@@ -39,8 +39,8 @@ import {
   useActivePreviewPath,
   useHostChannel,
   useHostSelector,
-  type HostSnapshot,
 } from '@dsc/ui'
+import { formatSize, joinPath, readCwd } from '@dsc/ui-primitives'
 import { ChangesPanel } from './changes'
 import {
   getTree,
@@ -232,22 +232,3 @@ function FilesPane({ cwd }: { cwd: string }): ReactNode {
   )
 }
 
-/** Windows 风格的子路径拼接（`fs-list` / `fs-read` 都吃反斜杠绝对路径）。 */
-function joinPath(parent: string, name: string): string {
-  return /[\\/]$/.test(parent) ? parent + name : `${parent}\\${name}`
-}
-
-/** 文件大小的人类读法（树行与 tooltip 共用）。 */
-function formatSize(size: number): string {
-  if (size < 1024) return `${String(size)}B`
-  if (size < 1024 * 1024) return `${String(Math.max(1, Math.round(size / 1024)))}KB`
-  return `${(size / 1024 / 1024).toFixed(1)}MB`
-}
-
-/** 当前会话的工作目录（文件树的根；与侧栏底部同一字段）。 */
-function readCwd(snapshot: HostSnapshot | null): string | null {
-  const status = snapshot?.['status']
-  if (typeof status !== 'object' || status === null) return null
-  const value = (status as Record<string, unknown>)['cwd']
-  return typeof value === 'string' && value !== '' ? value : null
-}

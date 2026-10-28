@@ -73,6 +73,7 @@ import {
   type NoticeMessageView,
   type QueuedMessageView,
 } from '@dsc/ui'
+import { readTurnState, sameGitSurface as sameGit } from '@dsc/ui-primitives'
 import { useMention } from './mention'
 import { useCommandMenu } from './command-menu'
 import { blockedNow, commandQuery } from './commands'
@@ -2148,13 +2149,6 @@ function sameQueued(left: readonly QueuedMessageView[], right: readonly QueuedMe
   })
 }
 
-function readTurnState(snapshot: HostSnapshot | null): string {
-  const status = snapshot?.['status']
-  if (typeof status !== 'object' || status === null) return 'idle'
-  const value = (status as Record<string, unknown>)['turnState']
-  return typeof value === 'string' ? value : 'idle'
-}
-
 function readModel(snapshot: HostSnapshot | null): string {
   const status = snapshot?.['status']
   if (typeof status !== 'object' || status === null) return ''
@@ -2357,14 +2351,4 @@ function readGit(snapshot: HostSnapshot | null): GitSurface {
     detached: record['detached'] === true,
     dirtyFileCount: typeof record['dirtyFileCount'] === 'number' ? record['dirtyFileCount'] : 0,
   }
-}
-
-/** git 读数的相等判断（四个字段比一遍，比让输入区每帧重画便宜）。 */
-function sameGit(left: GitSurface, right: GitSurface): boolean {
-  return (
-    left.repo === right.repo &&
-    left.branch === right.branch &&
-    left.detached === right.detached &&
-    left.dirtyFileCount === right.dirtyFileCount
-  )
 }

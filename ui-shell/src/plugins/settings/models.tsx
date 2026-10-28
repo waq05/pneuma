@@ -65,16 +65,11 @@ import {
   type ThinkingLevel,
 } from '@dsc/ui'
 // 基元从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
-import { Select, useDialogFocus } from '@dsc/ui-primitives'
+import { Select, errText as text, useDialogFocus } from '@dsc/ui-primitives'
 import { buildKnownIndex, inferModelCaps, type InferredCaps, type KnownModel } from './model-infer'
 
 /** 左栏那条「新增端点」伪条目的键（表单占着右栏时，左栏也得有它的位置）。 */
 const NEW_PROVIDER_KEY = '__new__'
-
-/** 拿异常的文字形态。 */
-function text(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
 
 /** 连接测试的键：一个「端点 + 模型」一对（同一张列表里多个模型各测各的）。 */
 function probeKeyOf(provider: string, model: string): string {

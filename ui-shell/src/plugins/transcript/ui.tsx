@@ -64,7 +64,6 @@ import {
   type HostSnapshot,
   type SlotComponentProps,
   type SlotMatchedOf,
-  type SessionSummary,
   type SlotOwnerOf,
   type TranscriptEntry,
   type UserFileAttachment,
@@ -86,7 +85,7 @@ import { pageStartRound } from './paging'
 // 三级嵌套滚动的接力（工具详情 → 阶段组体 → 会话流），见模块头。
 // 路径/悬停/完成音/工具摘要口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，
 // 不再内联（E6）——completion-sound 带模块级 AudioContext 单例，重复一份会造出两个。
-import { TOOL_STATUS_TEXT, baseNameOf, displayPathOf, findLast, formatTokens, matchTool, oneLine, playCompletionSound, prettyJson, toolSummary, toolVerb, useHoverDelay, type ToolMatch } from '@dsc/ui-primitives'
+import { NO_ENTRIES, TOOL_STATUS_TEXT, baseNameOf, displayPathOf, findLast, formatTokens, matchTool, oneLine, playCompletionSound, prettyJson, readCwd, readEntries, readLive, readSessions, readSessionPath, readTurnState, toolSummary, toolVerb, useHoverDelay, type ToolMatch } from '@dsc/ui-primitives'
 import {
   ChatStatus,
   IntendedBody,
@@ -132,8 +131,6 @@ const ShellCwdContext = createContext('')
 const ShellSessionContext = createContext<string | null>(null)
 
 /** 空的条目表：没拿到快照时共用一份，省得每帧新建数组。 */
-const NO_ENTRIES: readonly TranscriptEntry[] = Object.freeze([])
-
 /** 工具条目（ToolRow 与 toolview 选举的 owner 形状；工具卡的 Factory 输入也用它）。 */
 export type ToolEntry = Extract<TranscriptEntry, { kind: 'tool' }>
 
@@ -441,7 +438,7 @@ function TranscriptFlow({
   const turnState = useHostSelector(readTurnState)
   const sessionPath = useHostSelector(readSessionPath)
   const sessionId = useHostSelector(readSessionId)
-  const cwd = useHostSelector(readCwdValue)
+  const cwd = useHostSelector(readCwd) ?? ''
   const channel = useHostChannel()
   /**
    * 行 key 的会话那一半：优先用会话文件路径，没有就用会话 uuid，都没有就空串
@@ -956,13 +953,6 @@ function readFoldValue(value: unknown): ProcessFold {
 }
 
 /** 会话清单（首屏「接着上次」用；快照里没有时给空表）。 */
-const NO_SESSIONS: readonly SessionSummary[] = Object.freeze([])
-
-function readSessions(snapshot: HostSnapshot | null): readonly SessionSummary[] {
-  const value = snapshot?.['sessions']
-  return Array.isArray(value) ? (value as SessionSummary[]) : NO_SESSIONS
-}
-
 /** 相对时间（分钟 / 小时 / 天）：首屏那一行只需要「多久以前」，精确到秒没有意义。 */
 function elapsedLabel(at: number): string {
   const minutes = Math.max(Math.round((Date.now() - at) / 60_000), 0)
@@ -973,35 +963,12 @@ function elapsedLabel(at: number): string {
   return `${String(Math.round(hours / 24))} 天前`
 }
 
-/** 读当前会话的 jsonl 路径（换会话时分页重置用）。 */
-function readSessionPath(snapshot: HostSnapshot | null): string | null {
-  const status = snapshot?.['status']
-  if (typeof status !== 'object' || status === null) return null
-  const value = (status as Record<string, unknown>)['sessionPath']
-  return typeof value === 'string' ? value : null
-}
-
 /** 当前会话 uuid（评价存档键用；旧界面也是拿它拼键）。 */
 function readSessionId(snapshot: HostSnapshot | null): string | null {
   const status = snapshot?.['status']
   if (typeof status !== 'object' || status === null) return null
   const value = (status as Record<string, unknown>)['sessionId']
   return typeof value === 'string' && value !== '' ? value : null
-}
-
-/** 会话工作目录（相对路径展示与「将做的改动」推演的基准）。 */
-function readCwdValue(snapshot: HostSnapshot | null): string {
-  const status = snapshot?.['status']
-  if (typeof status !== 'object' || status === null) return ''
-  const value = (status as Record<string, unknown>)['cwd']
-  return typeof value === 'string' ? value : ''
-}
-
-function readTurnState(snapshot: HostSnapshot | null): string {
-  const status = snapshot?.['status']
-  if (typeof status !== 'object' || status === null) return 'idle'
-  const value = (status as Record<string, unknown>)['turnState']
-  return typeof value === 'string' ? value : 'idle'
 }
 
 /** 一个座位的全部行：整轮总开关 → 过程行（可折）→ 改动卡 + 轮尾。 */
@@ -2429,17 +2396,6 @@ function buildSeats(
     rounds: split.seats.map((seat) => ({ round: seat.round, rows: seat.indices.map(rowOf) })),
     infos: split.rounds,
   }
-}
-
-/** 帧里的条目只保证有 `id`，视图字段的收窄在插件这一侧完成（共用核心不认识具体种类）。 */
-function readEntries(snapshot: HostSnapshot | null): readonly TranscriptEntry[] {
-  const value = snapshot?.entries
-  return Array.isArray(value) ? (value as unknown as TranscriptEntry[]) : NO_ENTRIES
-}
-
-function readLive(snapshot: HostSnapshot | null): readonly TranscriptEntry[] {
-  const value = snapshot?.liveEntries
-  return Array.isArray(value) ? (value as unknown as TranscriptEntry[]) : NO_ENTRIES
 }
 
 // ── 只读「子智能体条目流」（右栏页签用）────────────────────────────────────────

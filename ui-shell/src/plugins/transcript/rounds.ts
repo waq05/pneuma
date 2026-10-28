@@ -26,6 +26,7 @@
  * @module dsc-ui-shell/plugins/transcript/rounds
  */
 import type { TranscriptEntry } from '@dsc/ui'
+import { entryTs as tsOf } from '@dsc/ui-primitives'
 
 /**
  * 一轮对话：一条用户消息 → 模型回复结束（中间的工具调用也算这一轮）。
@@ -73,12 +74,6 @@ export interface RoundSplit {
  * 就地内联一份 `@dsc/ui-primitives` 的 `entryTs`（见模块头：本模块不许有运行期 import）。
  * 两处口径必须一致——那边改这里也要改。
  */
-function tsOf(entry: TranscriptEntry | undefined): number | null {
-  if (entry === undefined) return null
-  const ts = entry.ts
-  return typeof ts === 'number' && Number.isFinite(ts) && ts > 0 ? ts : null
-}
-
 /**
  * 把 entries 切成一轮一轮，**同时**给出座位切分。
  *

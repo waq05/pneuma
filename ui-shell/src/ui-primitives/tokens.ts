@@ -8,7 +8,7 @@
  */
 
 /** 去掉小数末尾多余的 0：46.0K → 46K，1.00M → 1M（旧渲染层 token-estimate 同款）。 */
-function trimZero(value: number): string {
+export function trimZero(value: number): string {
   const text = value >= 100 ? value.toFixed(0) : value.toFixed(1)
   return text.endsWith('.0') ? text.slice(0, -2) : text
 }

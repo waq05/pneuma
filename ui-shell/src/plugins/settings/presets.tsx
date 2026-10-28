@@ -16,7 +16,7 @@
  */
 import { useEffect, useState, type ReactNode } from 'react'
 import { IconPlus, IconRefresh } from '@dsc/ui'
-import { humanErrorText } from '@dsc/ui-primitives'
+import { errText as text, humanErrorText } from '@dsc/ui-primitives'
 import {
   useHostChannel,
   type PresetDraft,
@@ -34,11 +34,6 @@ const RISK_LABELS: Record<ToolEntryView['risk'], string> = {
   read: '只读',
   write: '写入',
   exec: '执行',
-}
-
-/** 拿异常的文字形态。 */
-function text(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 export function PresetsGroup(): ReactNode {

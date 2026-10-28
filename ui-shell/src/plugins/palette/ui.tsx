@@ -25,17 +25,9 @@ import {
   useActions,
   useHostChannel,
   useHostSelector,
-  type HostSnapshot,
-  type SessionSummary,
   type UiAction,
 } from '@dsc/ui'
-
-const NO_SESSIONS: readonly SessionSummary[] = Object.freeze([])
-
-function readSessions(snapshot: HostSnapshot | null): readonly SessionSummary[] {
-  const value = snapshot?.['sessions']
-  return Array.isArray(value) ? (value as SessionSummary[]) : NO_SESSIONS
-}
+import { readSessions } from '@dsc/ui-primitives'
 
 /** 面板打开的事件名（别处想给面板加入口时发它，不需要 import 本插件）。 */
 const OPEN_EVENT = 'shell.palette.open'

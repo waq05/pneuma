@@ -10,14 +10,13 @@
  *
  * @module dsc-ui-shell/plugins/actions
  */
-import { ACTIONS_SERVICE, defineUiPlugin, type ActionsHandle, type UiAction } from '@dsc/ui'
+import { ACTIONS_SERVICE, createSignal, defineUiPlugin, type ActionsHandle, type UiAction } from '@dsc/ui'
 
 /** owner → 它登记的那组动作（同一个 owner 再登记就整组换掉）。 */
 const byOwner = new Map<string, readonly UiAction[]>()
-const listeners = new Set<() => void>()
 
 /** 当前冻结的那一份；没有变化时引用不变（`useSyncExternalStore` 靠它判等）。 */
-let snapshot: readonly UiAction[] = Object.freeze([])
+const snapshot = createSignal<readonly UiAction[]>(Object.freeze([]))
 
 /** 重新摊平：按 owner 首次出现的顺序、组内按登记顺序，id 重复的只留第一条。 */
 function rebuild(): void {
@@ -33,8 +32,7 @@ function rebuild(): void {
       next.push(Object.freeze({ ...action }))
     }
   }
-  snapshot = Object.freeze(next)
-  for (const listener of listeners) listener()
+  snapshot.set(Object.freeze(next))
 }
 
 const handle: ActionsHandle = {
@@ -50,13 +48,8 @@ const handle: ActionsHandle = {
       if (byOwner.delete(owner)) rebuild()
     }
   },
-  list: () => snapshot,
-  subscribe(listener) {
-    listeners.add(listener)
-    return () => {
-      listeners.delete(listener)
-    }
-  },
+  list: () => snapshot.get(),
+  subscribe: snapshot.subscribe,
 }
 
 export default defineUiPlugin({

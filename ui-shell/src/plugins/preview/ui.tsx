@@ -40,8 +40,8 @@ import {
   useHostSelector,
   type ChangedFileView,
   type DockTabBodyProps,
-  type HostSnapshot,
 } from '@dsc/ui'
+import { formatSize, readCwd } from '@dsc/ui-primitives'
 
 /** `fs-read` 回来的形状（宿主 `desktop-dock` 插件的契约）。 */
 interface ReadResult {
@@ -288,17 +288,3 @@ function shortPath(path: string, cwd: string): string {
   return posix.toLowerCase().startsWith(base.toLowerCase()) ? posix.slice(base.length) : posix
 }
 
-/** 文件大小的人类读法（与文件树那份同口径）。 */
-function formatSize(size: number): string {
-  if (size < 1024) return `${String(size)}B`
-  if (size < 1024 * 1024) return `${String(Math.max(1, Math.round(size / 1024)))}KB`
-  return `${(size / 1024 / 1024).toFixed(1)}MB`
-}
-
-/** 当前会话的工作目录（把绝对路径裁成短路径用；与侧栏底部同一字段）。 */
-function readCwd(snapshot: HostSnapshot | null): string | null {
-  const status = snapshot?.['status']
-  if (typeof status !== 'object' || status === null) return null
-  const value = (status as Record<string, unknown>)['cwd']
-  return typeof value === 'string' && value !== '' ? value : null
-}

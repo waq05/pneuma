@@ -98,6 +98,7 @@ import {
   type TodoView,
   type UiPluginApi,
 } from '@dsc/ui'
+import { readSessionId } from '@dsc/ui-primitives'
 import {
   capsuleSummary,
   foldBucketKind,
@@ -301,21 +302,6 @@ function sameGoal(left: GoalView | null, right: GoalView | null): boolean {
     left.armed === right.armed &&
     left.blockedReason === right.blockedReason
   )
-}
-
-/**
- * 当前会话 id——**口径必须和 `listTeammates` 一致**：队友名册里的 `sessionId` 是它的
- * 出生会话的**文件名**（去 `.jsonl`），所以这里从快照的 `status.sessionPath` 取尾段，
- * 而不是读 `status.sessionId`（那是另一个字段，和名册对不上，第一版自检里智能体节
- * 就是这么整节不出现的）。
- */
-function readSessionId(snapshot: HostSnapshot | null): string | null {
-  const status = snapshot?.['status']
-  if (typeof status !== 'object' || status === null) return null
-  const path = (status as Record<string, unknown>)['sessionPath']
-  if (typeof path !== 'string' || path === '') return null
-  const base = path.replace(/\\/g, '/').split('/').pop() ?? ''
-  return base.endsWith('.jsonl') ? base.slice(0, -6) : base
 }
 
 /** 名册列表的相等判断：轮询每 3/5 秒换一次引用，名单没变就别重画。 */

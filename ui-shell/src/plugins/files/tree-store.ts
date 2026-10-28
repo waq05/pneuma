@@ -4,6 +4,7 @@
  * 缓存（进程内活一份）；FilesPane 收起重挂后从这里恢复，展开状态与滚动位
  * 原样回来。写入用不可变替换 + 订阅广播，React 侧 useSyncExternalStore 接。
  */
+import { createSignal } from '@dsc/ui'
 
 /** 一条目录项（fs-list 的回包行）。 */
 export interface TreeEntry {
@@ -28,10 +29,11 @@ export interface FilesTreeState {
 }
 
 const trees = new Map<string, FilesTreeState>()
-const listeners = new Set<() => void>()
+/** 变更通道：树是「按 cwd 分键的 Map」，值不在这份信号里——写完喊一声，订阅者各自重读（`createSignal` 的 notify 用法）。 */
+const treeChannel = createSignal(0)
 
 function emit(): void {
-  for (const listener of listeners) listener()
+  treeChannel.notify()
 }
 
 /** 取一棵树（没有就造一棵默认的：根展开、其余全收）。引用稳定，可作 snapshot。 */
@@ -46,10 +48,7 @@ export function getTree(cwd: string): FilesTreeState {
 
 /** 订阅树变化（useSyncExternalStore 用）。 */
 export function subscribe(listener: () => void): () => void {
-  listeners.add(listener)
-  return () => {
-    listeners.delete(listener)
-  }
+  return treeChannel.subscribe(listener)
 }
 
 /** 不可变替换一棵树并广播。 */

@@ -36,10 +36,9 @@ import {
   registerDockTab,
   useHostSelector,
   type DockTabBodyProps,
-  type HostSnapshot,
 } from '@dsc/ui'
 // 基元从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
-import { Select } from '@dsc/ui-primitives'
+import { Select, readCwd } from '@dsc/ui-primitives'
 
 /** 终端 shell 候选：与宿主 `spawnShell` 的白名单一致（对不上会被宿主回落成 PowerShell）。 */
 const SHELL_OPTIONS = [
@@ -316,10 +315,3 @@ function readTheme(): Record<string, string> {
   return theme
 }
 
-/** 当前会话的工作目录（终端起 shell 的 cwd；与侧栏底部同一字段）。 */
-function readCwd(snapshot: HostSnapshot | null): string | null {
-  const status = snapshot?.['status']
-  if (typeof status !== 'object' || status === null) return null
-  const value = (status as Record<string, unknown>)['cwd']
-  return typeof value === 'string' && value !== '' ? value : null
-}

@@ -39,7 +39,7 @@ import {
   type TranscriptEntry,
 } from '@dsc/ui'
 // 时刻/用量/工具摘要口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
-import { TOOL_STATUS_TEXT, formatClock, formatTokens, matchTool, prettyJson, toolSummary, toolVerb, type ToolMatch } from '@dsc/ui-primitives'
+import { TOOL_STATUS_TEXT, formatClock, formatTokens, matchTool, prettyJson, readEntries, readLive, readSessionPath, toolSummary, toolVerb, type ToolMatch } from '@dsc/ui-primitives'
 import { buildTraceModel, entryUsage, formatTraceDuration, rangeHits, stepMatches, type TraceRange, type TraceRound, type TraceStepEntry } from './trace-format'
 import { TraceTimeline } from './timeline'
 import { TraceInspector } from './inspector'
@@ -822,26 +822,6 @@ function TraceToolRow({ entry }: { entry: Extract<TraceStepEntry, { kind: 'tool'
 }
 
 /** 空条目表：没拿到快照时共用一份，省得每帧新建数组。 */
-const NO_ENTRIES: readonly TranscriptEntry[] = Object.freeze([])
-
-function readEntries(snapshot: HostSnapshot | null): readonly TranscriptEntry[] {
-  const value = snapshot?.entries
-  return Array.isArray(value) ? (value as unknown as TranscriptEntry[]) : NO_ENTRIES
-}
-
-function readLive(snapshot: HostSnapshot | null): readonly TranscriptEntry[] {
-  const value = snapshot?.liveEntries
-  return Array.isArray(value) ? (value as unknown as TranscriptEntry[]) : NO_ENTRIES
-}
-
-/** 当前会话的 jsonl 路径（时间条取景窗口的重置键）。 */
-function readSessionPath(snapshot: HostSnapshot | null): string | null {
-  const status = snapshot?.['status']
-  if (typeof status !== 'object' || status === null) return null
-  const value = (status as Record<string, unknown>)['sessionPath']
-  return typeof value === 'string' ? value : null
-}
-
 /** 快照上的整会话用量（`status.usage`，状态栏与轮尾读的同一份）；没有就是 null。 */
 function readUsage(snapshot: HostSnapshot | null): number | null {
   const status = snapshot?.['status']

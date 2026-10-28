@@ -7,6 +7,7 @@
  *
  * @module dsc-ui-shell/plugins/ask/store
  */
+import { createSignal } from '@dsc/ui'
 
 /** 一条旁问的状态。 */
 export type AskStatus = 'running' | 'done' | 'stopped' | 'error'
@@ -29,22 +30,16 @@ export interface AskBubble {
 const EMPTY: readonly AskBubble[] = Object.freeze([])
 
 const buckets = new Map<string, readonly AskBubble[]>()
-const listeners = new Set<() => void>()
+/** 变更通道：桶是按会话 id 分的 Map，值不在信号里——写完喊一声，页签各自重读（`createSignal` 的 notify 用法）。 */
+const askChannel = createSignal(0)
 /** 打开页签时带过去的引用（一次性的：页签读到就清）。 */
 let pendingQuote: string | null = null
 /** 每来一次打开请求 +1：页签靠它知道「有新引用要我读」。 */
 let pendingVersionOf = 0
 
-function notify(): void {
-  for (const listener of [...listeners]) listener()
-}
-
 /** 订阅（useSyncExternalStore 的接口）。 */
 export function subscribeAsk(listener: () => void): () => void {
-  listeners.add(listener)
-  return () => {
-    listeners.delete(listener)
-  }
+  return askChannel.subscribe(listener)
 }
 
 /** 某个会话的旁问列表（引用稳定：没变过就是同一个数组）。 */
@@ -68,7 +63,7 @@ export function takePendingQuote(): string | null {
 export function requestAskOpen(quote?: string): void {
   pendingQuote = quote ?? null
   pendingVersionOf += 1
-  notify()
+  askChannel.notify()
 }
 
 /** 改某一桶（纯函数式更新）。 */
@@ -77,7 +72,7 @@ export function updateAsk(
   change: (list: readonly AskBubble[]) => readonly AskBubble[],
 ): void {
   buckets.set(sessionId, change(askSnapshot(sessionId)))
-  notify()
+  askChannel.notify()
 }
 
 /** 追加一条。 */

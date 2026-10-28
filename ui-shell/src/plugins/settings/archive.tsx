@@ -23,12 +23,7 @@ import {
   type ArchivedSessionView,
   type SettingsMutation,
 } from '@dsc/ui'
-import { humanErrorText } from '@dsc/ui-primitives'
-
-/** 拿异常的文字形态。 */
-function text(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
+import { errText as text, humanErrorText } from '@dsc/ui-primitives'
 
 /** 按工作区分组：组内按归档时间倒序，组之间按各自最新的归档时间倒序。 */
 function groupByWorkspace(items: ArchivedSessionView[]): Array<{ cwd: string; items: ArchivedSessionView[] }> {

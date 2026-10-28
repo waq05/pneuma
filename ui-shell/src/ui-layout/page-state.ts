@@ -12,28 +12,23 @@
  * @module dsc-ui-shell/page-state
  */
 import { useSyncExternalStore } from 'react'
+import { createSignal } from '@dsc/ui-core'
 
-let page: string | null = null
-const listeners = new Set<() => void>()
+const page = createSignal<string | null>(null)
 
 /** 现在顶在主区的是哪一页（`null` = 对话页）。 */
 export function shellPage(): string | null {
-  return page
+  return page.get()
 }
 
-/** 切页（`null` = 回对话页）。切到同一页不重复通知。 */
+/** 切页（`null` = 回对话页）。切到同一页不重复通知（`createSignal` 自己判等）。 */
 export function setShellPage(next: string | null): void {
-  if (next === page) return
-  page = next
-  for (const listener of listeners) listener()
+  page.set(next)
 }
 
 /** 订阅切页（`useSyncExternalStore` 的订阅函数）。 */
 export function subscribePage(listener: () => void): () => void {
-  listeners.add(listener)
-  return () => {
-    listeners.delete(listener)
-  }
+  return page.subscribe(listener)
 }
 
 /**

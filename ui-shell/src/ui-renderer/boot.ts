@@ -52,7 +52,7 @@ import type {
   UiPluginLoadReport,
   UiRuntimeApi,
 } from '@dsc/ui-core'
-import { createScopedSlotApi, ServiceRegistry, unmetDependencies } from '@dsc/ui-core'
+import { createScopedSlotApi, createSignal, ServiceRegistry, unmetDependencies } from '@dsc/ui-core'
 // 装配交给 cordis（与宿主内核同一套）。这一层不改插件写法，只换「谁管生命周期」：
 // 详见 cordis-host.ts 的文件头表格。
 import { createCordisRoot, type UiApply } from './cordis-host'
@@ -178,25 +178,32 @@ export function bootState(): UiBootState | null {
   return value === undefined || value === null ? null : (value as UiBootState)
 }
 
-/** 订阅启动账本变化（诊断区重渲染用；探针直接读全局就行）。 */
+/**
+ * 启动账本的变更通道。
+ *
+ * 账本本体挂在 `globalThis`（探针要直接读它，见 `BOOT_STATE_GLOBAL`），所以这份信号只当通道用：
+ * 改完账本喊一声，订阅者自己重读。
+ */
+const bootChannel = createSignal(0)
+
+/**
+ * 订阅启动账本变化（诊断区重渲染用；探针直接读全局就行）。
+ *
+ * `try/catch` 包在每个订阅者外面（不是整轮）：一个订阅者抛了不该拖垮装载，
+ * 也不该让后面的订阅者这一轮收不到通知——`createSignal` 的遍历本身不管异常。
+ */
 export function subscribeBootState(listener: () => void): () => void {
-  const box = bootStateListeners
-  box.add(listener)
-  return () => {
-    box.delete(listener)
-  }
-}
-
-const bootStateListeners = new Set<() => void>()
-
-function notifyBootState(): void {
-  for (const listener of [...bootStateListeners]) {
+  return bootChannel.subscribe(() => {
     try {
       listener()
     } catch {
-      // 一个订阅者炸了不该拖垮装载（回调里通常就是 setState）
+      // 回调里通常就是 setState；这里吞掉，装载流程继续。
     }
-  }
+  })
+}
+
+function notifyBootState(): void {
+  bootChannel.notify()
 }
 
 /**
@@ -617,12 +624,8 @@ export async function createBootSession(
         .map((entry) => reports.get(entry.id))
         .filter((report): report is UiPluginLoadReport => report !== undefined),
     getState: () => state,
-    subscribe: (listener) => {
-      bootStateListeners.add(listener)
-      return () => {
-        bootStateListeners.delete(listener)
-      }
-    },
+    // 与 `subscribeBootState` 同一条通道、同一套「一个订阅者炸了不拖垮装载」的口径。
+    subscribe: subscribeBootState,
     markFirstFrame: () => {
       if (state.firstFrameAt === null) {
         state.firstFrameAt = Date.now()

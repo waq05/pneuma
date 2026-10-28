@@ -16,28 +16,34 @@
  * @module dsc-ui-shell/thread-view
  */
 import { useSyncExternalStore } from 'react'
+import { createSignal } from '@dsc/ui-core'
 
 /** 正文区正在显示哪一张脸。 */
 export type ThreadView = 'chat' | 'trace'
 
-let view: ThreadView = 'chat'
-let focusStep: number | null = null
-const listeners = new Set<() => void>()
-
-function emit(): void {
-  for (const listener of listeners) listener()
+/**
+ * 两张脸与「待聚焦的步骤」是**同一份状态**。
+ *
+ * 为什么不拆成两个信号：`openTrace(stepId)` 要同时改两样，拆开就是两次通知，
+ * trace 会先按「没聚焦」渲染一帧再重排，滚动位置闪一下。一个对象、一次 `set` 没有中间态。
+ */
+interface ThreadViewState {
+  view: ThreadView
+  focusStep: number | null
 }
+
+const state = createSignal<ThreadViewState>({ view: 'chat', focusStep: null })
 
 /** 现在正文区显示的是哪一张脸。 */
 export function shellThreadView(): ThreadView {
-  return view
+  return state.get().view
 }
 
-/** 切正文区的脸（切到同一张不重复通知）。 */
+/** 切正文区的脸（切到同一张不重复通知；聚焦目标保持原样）。 */
 export function setThreadView(next: ThreadView): void {
-  if (next === view) return
-  view = next
-  emit()
+  const current = state.get()
+  if (current.view === next) return
+  state.set({ view: next, focusStep: current.focusStep })
 }
 
 /**
@@ -47,31 +53,27 @@ export function setThreadView(next: ThreadView): void {
  * 先按「没聚焦」渲染一帧再重排，滚动位置会闪一下。
  */
 export function openTrace(stepId?: number): void {
+  const current = state.get()
   const nextFocus = stepId ?? null
-  if (view === 'trace' && focusStep === nextFocus) return
-  view = 'trace'
-  focusStep = nextFocus
-  emit()
+  if (current.view === 'trace' && current.focusStep === nextFocus) return
+  state.set({ view: 'trace', focusStep: nextFocus })
 }
 
 /** 当前待处理的聚焦目标（没设过是 null）。 */
 export function traceFocusStep(): number | null {
-  return focusStep
+  return state.get().focusStep
 }
 
 /** 消费掉聚焦目标（trace 插件滚到位之后调用；指令只生效一次）。 */
 export function clearTraceFocus(): void {
-  if (focusStep === null) return
-  focusStep = null
-  emit()
+  const current = state.get()
+  if (current.focusStep === null) return
+  state.set({ view: current.view, focusStep: null })
 }
 
 /** 订阅切换（`useSyncExternalStore` 的订阅函数）。 */
 export function subscribeThreadView(listener: () => void): () => void {
-  listeners.add(listener)
-  return () => {
-    listeners.delete(listener)
-  }
+  return state.subscribe(listener)
 }
 
 /**

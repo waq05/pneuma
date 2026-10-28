@@ -77,12 +77,10 @@ import {
   type SessionSummary,
   useTodayUsage,
 } from '@dsc/ui'
-import { formatCostCny, formatTokens, humanErrorLine } from '@dsc/ui-primitives'
+import { formatCostCny, formatTokens, humanErrorLine, readCwd, readSessions } from '@dsc/ui-primitives'
 import { buildWorkGroups, displayName, lastSegment, moveToEnd, moveWithin, orderedSessions, type ArchivedFilter, type GroupKey, type SortKey } from './grouping'
 
 /** 空的会话列表常量：没拿到快照时共用一份，省得每帧新建数组。 */
-const NO_SESSIONS: readonly SessionSummary[] = Object.freeze([])
-
 /** 每组默认露几条（旧界面同款），「展开剩余」按这个数加量。 */
 const PREVIEW_COUNT = 5
 
@@ -1718,12 +1716,6 @@ function oneLine(text: string): string {
   return chars.length > 60 ? `${chars.slice(0, 60).join('')}…` : flat
 }
 
-/** 从快照里取会话列表；取不到给共用空数组（引用稳定，选择器才拦得住重渲染）。 */
-function readSessions(snapshot: HostSnapshot | null): readonly SessionSummary[] {
-  const value = snapshot?.['sessions']
-  return Array.isArray(value) ? (value as SessionSummary[]) : NO_SESSIONS
-}
-
 /** 会话运行状态表（会话 jsonl 路径 → 状态）。 */
 function readStates(snapshot: HostSnapshot | null): Record<string, SessionRunState> {
   const value = snapshot?.['sessionStates']
@@ -1740,14 +1732,6 @@ function readCurrentPath(snapshot: HostSnapshot | null): string | null {
 
 function readLoading(snapshot: HostSnapshot | null): boolean {
   return snapshot?.['sessionsLoading'] === true
-}
-
-/** 当前会话的工作目录（底部行显示）。 */
-function readCwd(snapshot: HostSnapshot | null): string | null {
-  const status = snapshot?.['status']
-  if (typeof status !== 'object' || status === null) return null
-  const value = (status as Record<string, unknown>)['cwd']
-  return typeof value === 'string' && value !== '' ? value : null
 }
 
 /** 当前会话的累计 token 用量（输入 + 输出；宿主没回过用量时 null）。

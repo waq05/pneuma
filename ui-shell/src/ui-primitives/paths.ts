@@ -32,3 +32,8 @@ export function baseNameOf(path: string): string {
   const parts = path.split(/[\\/]/)
   return parts[parts.length - 1] ?? path
 }
+
+/** 拼子路径：`fs-list` / `fs-read` 吃反斜杠绝对路径，父路径已带分隔符就不再补。 */
+export function joinPath(parent: string, name: string): string {
+  return /[\\/]$/.test(parent) ? parent + name : `${parent}\\${name}`
+}

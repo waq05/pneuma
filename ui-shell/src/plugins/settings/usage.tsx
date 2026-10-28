@@ -14,13 +14,8 @@
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { IconChart, IconRefresh, useHostChannel, type UsageDayView, type UsageModelView, type UsageStatsView } from '@dsc/ui'
-import { Skeleton, SkeletonText, humanErrorText } from '@dsc/ui-primitives'
+import { Skeleton, SkeletonText, errText as text, humanErrorText } from '@dsc/ui-primitives'
 import { CELL, GAP, buildCells } from './heatmap'
-
-/** 拿异常的文字形态。 */
-function text(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
 
 /** 折线与环形的取色顺序：品牌蓝打头，后面用语义色顶上。
  *  深色主题的 --dsc-purple 本身是蓝（#7aaaff，见 tokens.css），排第三会和品牌蓝撞色，

@@ -35,7 +35,7 @@
  *
  * @module dsc-ui-shell/plugins/settings
  */
-import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import {
   IconArchive,
   IconChart,
@@ -48,6 +48,7 @@ import {
 } from '@dsc/ui'
 import {
   ACTIONS_SERVICE,
+  createSignal,
   defineUiPlugin,
   getHostNative,
   requestAppearance,
@@ -69,12 +70,7 @@ import { UsageGroup } from './usage'
 import { ArchiveGroup } from './archive'
 import { PairModal, type PairRegenerateResult } from './pair-modal'
 // 基元从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
-import { Select, Skeleton, SkeletonText, humanErrorText, useDialogFocus } from '@dsc/ui-primitives'
-
-/** 拿异常的文字形态（宿主与桥都可能抛 Error，也可能是别的值）。 */
-function text(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
+import { Select, Skeleton, SkeletonText, errText as text, humanErrorText, useDialogFocus } from '@dsc/ui-primitives'
 
 /** 面板导航里的一项（宿主分区 + 壳自己那项插件，统一成同一个形状）。 */
 interface NavItem {
@@ -109,12 +105,9 @@ function sectionIcon(id: string): ReactNode {
 }
 
 /** 面板的开合（模块级：入口钮与面板是两个槽条目，得共享同一份状态）。 */
-let settingsOpen = false
-const listeners = new Set<() => void>()
+const settingsOpen = createSignal(false)
 function setSettingsOpen(next: boolean): void {
-  if (next === settingsOpen) return
-  settingsOpen = next
-  for (const listener of listeners) listener()
+  settingsOpen.set(next)
 }
 
 export default defineUiPlugin({
@@ -1039,17 +1032,7 @@ function NotYetPanel({ section }: { section: SettingsSectionView }): ReactNode {
   )
 }
 
-/** 面板开合的订阅（两个槽条目共用这一份）。 */
+/** 面板开合的订阅（两个槽条目共用这一份；`useSyncExternalStore` 是外部状态的正确读法）。 */
 function useSettingsOpen(): boolean {
-  const [open, setOpen] = useState(settingsOpen)
-  useEffect(() => {
-    const listener = (): void => {
-      setOpen(settingsOpen)
-    }
-    listeners.add(listener)
-    return () => {
-      listeners.delete(listener)
-    }
-  }, [])
-  return open
+  return useSyncExternalStore(settingsOpen.subscribe, () => settingsOpen.get(), () => false)
 }

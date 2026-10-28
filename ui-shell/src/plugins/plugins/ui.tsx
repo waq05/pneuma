@@ -46,7 +46,7 @@ import {
   type SettingsValues,
 } from '@dsc/ui'
 // 基元从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
-import { Select, Skeleton, SkeletonText, humanErrorLine, humanErrorText } from '@dsc/ui-primitives'
+import { Select, Skeleton, SkeletonText, errText as text, humanErrorLine, humanErrorText } from '@dsc/ui-primitives'
 
 /** 这一页在 page-state 里的 id（侧栏入口与页条目约定同一个值）。 */
 const PAGE = 'plugins'
@@ -1071,9 +1071,4 @@ function ConfigFields({ section, onAction }: { section: SettingsSectionView; onA
  */
 function iconColor(_name: string): string {
   return 'var(--dsc-fill-tertiary)'
-}
-
-/** 拿异常的文字形态（宿主与桥都可能抛 Error，也可能是别的值）。 */
-function text(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }

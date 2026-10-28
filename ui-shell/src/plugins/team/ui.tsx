@@ -19,12 +19,13 @@
  * @module dsc-ui-shell/plugins/team
  */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { SkeletonText, formatDuration, useDialogFocus } from '@dsc/ui-primitives'
+import { SkeletonText, formatDuration, oneLine, readSessionId, useDialogFocus } from '@dsc/ui-primitives'
 import {
   IconChevronDown,
   IconClose,
   IconTree,
   confirmAction,
+  createSignal,
   defineStore,
   defineUiPlugin,
   registerDockTab,
@@ -37,7 +38,6 @@ import {
   useService,
   type BakedActions,
   type DockTabBodyProps,
-  type HostSnapshot,
   type SlotComponentProps,
   type SnapshotSelectorHook,
   type StoreHandle,
@@ -60,36 +60,41 @@ function matesOf(mates: readonly TeammateView[], sessionId: string | null): Team
   return mates.filter((mate) => mate.sessionId === sessionId)
 }
 
-/** 当前会话 id（快照 status.sessionPath 的短名；旧界面面包屑同款读数）。 */
-function readSessionId(snapshot: HostSnapshot | null): string | null {
-  const status = snapshot?.['status']
-  if (typeof status !== 'object' || status === null) return null
-  const path = (status as Record<string, unknown>)['sessionPath']
-  if (typeof path !== 'string' || path === '') return null
-  // 会话文件名（去扩展名）就是 id——宿主 listTeammates 的 sessionId 是同一个口径。
-  const base = path.replace(/\\/g, '/').split('/').pop() ?? ''
-  return base.endsWith('.jsonl') ? base.slice(0, -6) : base
+// ── 面板开合（模块级：子智能体菜单与团队钮是两个槽条目，共享同一份）────────────
+
+/**
+ * 开合 + 「点名要看谁」是**同一份状态**：点菜单里的一行会同时开面板并指定要看的队友，
+ * 分两次写会让面板先按名单形态渲染一帧、再切到运行记录。
+ */
+interface TeamPanelState {
+  open: boolean
+  /** 点名要看的队友名（一次性：面板读到就清，见 `takePeekWant`）。 */
+  peek: string | null
 }
 
-// ── 面板开合（模块级：子智能体菜单与团队钮是两个槽条目，共享同一份）────────────
-let panelOpen = false
-let peekWanted: string | null = null
-const openListeners = new Set<() => void>()
+const panel = createSignal<TeamPanelState>({ open: false, peek: null })
+
 function setPanelOpen(next: boolean, peek: string | null = null): void {
-  if (next === panelOpen && peek === peekWanted) return
-  panelOpen = next
-  peekWanted = peek
-  for (const listener of openListeners) listener()
+  const current = panel.get()
+  if (next === current.open && peek === current.peek) return
+  panel.set({ open: next, peek })
 }
+
+/** 读走并清空「点名要看谁」（`useSyncExternalStore` 的订阅值没变，清它不会触发重画）。 */
+function takePeekWant(): string | null {
+  const current = panel.get()
+  if (current.peek === null) return null
+  panel.set({ open: current.open, peek: null })
+  return current.peek
+}
+
 /** 订阅函数提到模块级：`useSyncExternalStore` 要求它的引用稳定（内联箭头会反复重订阅）。 */
 function subscribePanelOpen(listener: () => void): () => void {
-  openListeners.add(listener)
-  return () => {
-    openListeners.delete(listener)
-  }
+  return panel.subscribe(listener)
 }
+
 function usePanelOpen(): boolean {
-  return useSyncExternalStore(subscribePanelOpen, () => panelOpen, () => false)
+  return useSyncExternalStore(subscribePanelOpen, () => panel.get().open, () => false)
 }
 
 // ── 名册席位（D3）──────────────────────────────────────────────────────────
@@ -300,9 +305,9 @@ function TeamPanel({ useStore }: MateSeatRead): ReactNode {
 
   // 子智能体菜单点一行要直接看记录：一次性交接（读完即清）。
   useEffect(() => {
-    if (peekWanted === null) return
-    const wanted = mates.find((mate) => mate.name === peekWanted)
-    peekWanted = null
+    const want = takePeekWant()
+    if (want === null) return
+    const wanted = mates.find((mate) => mate.name === want)
     if (wanted !== undefined) setPeeking({ name: wanted.name, file: wanted.file })
   }, [mates])
 
@@ -756,9 +761,4 @@ function basename(path: string): string {
   return cut === -1 ? path : path.slice(cut + 1).replace(/\.jsonl$/, '')
 }
 
-/** 换行压空格、超长截断（运行记录行的参数摘要用）。 */
-function oneLine(text: string, max: number): string {
-  const flat = text.replace(/\s+/g, ' ').trim()
-  const chars = Array.from(flat)
-  return chars.length > max ? `${chars.slice(0, max).join('')}…` : flat
-}
+

@@ -22,7 +22,7 @@
  * @module dsc-ui-shell/dock-state
  */
 import { useSyncExternalStore, type ComponentType, type ReactNode } from 'react'
-import type { ChangedFileView } from '@dsc/ui-core'
+import { createSignal, type ChangedFileView } from '@dsc/ui-core'
 import {
   closeTab as modelCloseTab,
   defaultSurface,
@@ -58,11 +58,14 @@ let surfaces: DockSurfaces = loadSurfaces()
 let sessionId = ''
 let surface: DockSurface = surfaces[''] ?? defaultSurface()
 
-const listeners = new Set<() => void>()
-
-function notify(): void {
-  for (const listener of listeners) listener()
-}
+/**
+ * 变更通道（`createSignal` 的「值在别处」用法）。
+ *
+ * 这一个文件里其实有四份状态：布局、页签注册表、审查目标、补丁源。它们共用一条通知通道，
+ * 各自的读函数（`dockSurface` / `dockTabKinds` / `dockReview` / `patchSources`）负责取出自己那份。
+ * 所以这里不用 `set` 存值，只用 `notify`：谁改完谁喊一声，订阅者各自重读。
+ */
+const dockChannel = createSignal(0)
 
 /**
  * 切到某个会话的布局（壳从宿主快照的 sessionId 调；没会话时传空串）。
@@ -73,7 +76,7 @@ export function setDockSession(id: string): void {
   if (id === sessionId) return
   sessionId = id
   surface = surfaces[id] ?? defaultSurface()
-  notify()
+  dockChannel.notify()
 }
 
 /** 派发一个布局变更：以当前会话布局为基，算完顺手落盘（布局很小，写 localStorage 便宜）。 */
@@ -83,15 +86,12 @@ function mutate(fn: (s: DockSurface) => DockSurface): void {
   surface = next
   surfaces = { ...surfaces, [sessionId]: next }
   saveSurfaces(surfaces)
-  notify()
+  dockChannel.notify()
 }
 
 /** 订阅布局变化（`useSyncExternalStore` 的订阅函数）。 */
 export function subscribeDock(listener: () => void): () => void {
-  listeners.add(listener)
-  return () => {
-    listeners.delete(listener)
-  }
+  return dockChannel.subscribe(listener)
 }
 
 /** 当前会话的布局（`useSyncExternalStore` 的取数函数；引用稳定，变更才换）。 */
@@ -222,11 +222,11 @@ function rebuildKinds(): void {
 export function registerDockTab(meta: DockTabKindMeta): () => void {
   kindMetas.set(meta.kind, meta)
   rebuildKinds()
-  notify()
+  dockChannel.notify()
   return () => {
     kindMetas.delete(meta.kind)
     rebuildKinds()
-    notify()
+    dockChannel.notify()
   }
 }
 
@@ -256,7 +256,7 @@ export function dockTabMeta(kind: DockTabKind): DockTabKindMeta | undefined {
 export function setDockPreview(target: { path: string; cwd?: string; patch?: ChangedFileView }): void {
   if (target.patch !== undefined) {
     patchSources.set(target.path, target.patch)
-    notify()
+    dockChannel.notify()
     dockActions.openPatch(target.path)
     return
   }
@@ -328,7 +328,7 @@ export function dockReview(): DockReview | null {
 /** 交接审查目标（卡上点「审查」时调；并排面板读它画）。 */
 export function setDockReview(next: DockReview | null): void {
   review = next
-  notify()
+  dockChannel.notify()
 }
 
 // ── React 接线 ───────────────────────────────────────────────────────────────
