@@ -88,10 +88,14 @@ console.log('[3] 审批顺序：沙箱边界 → AI 复核 → 自动放行')
   const code = strip(read('src/plugins/approval.ts'))
   const fenceAt = code.indexOf("ctx.get('sandbox')?.check")
   const reviewAt = code.indexOf("if (reviewer === 'auto-review')")
-  const fullAt = code.indexOf("policy === 'full-access'")
   check('审批读沙箱的 check', fenceAt >= 0)
   check('沙箱边界排在 AI 复核之前', fenceAt >= 0 && fenceAt < reviewAt, String(fenceAt) + ' vs ' + String(reviewAt))
-  check('AI 复核排在完全访问自动放行之前', reviewAt >= 0 && fullAt >= 0 && reviewAt < fullAt, String(reviewAt) + ' vs ' + String(fullAt))
+  // 0.7.1 把「完全访问 / 工作区自动」收进 policyAutoReason()（复核没跑完时要复用同一份判断），
+  // 于是 `policy === 'full-access'` 这几个字最早出现在函数**定义**处，按字面位置比会误报。
+  // 真正要守的顺序是：先问复核，复核缺席了才轮到自动放行——所以比的是第一次**调用**的位置。
+  const autoAt = code.indexOf('policyAutoReason()')
+  check('AI 复核排在自动放行之前', reviewAt >= 0 && autoAt > reviewAt, String(reviewAt) + ' vs ' + String(autoAt))
+  check('复核缺席才走自动放行（不是反过来）', code.includes('reviewed.failed && !signal.aborted ? policyAutoReason() : null'))
   check('越界时跳过所有自动放行', code.includes('protectedWhy === null && forced === \'\' && !fenced'))
   check('越界只给「这一次」授权', code.includes('if (fenced) {'))
   check('工作区内免卡还要沙箱同意', code.includes('const writable = PATH_WRITE_TOOLS.has(request.toolName) && insideCwd && (fence?.allowed ?? true)'))
