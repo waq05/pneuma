@@ -458,6 +458,24 @@ export function scriptFileOf(command: string): string {
   return ''
 }
 
+/**
+ * 命令里写的脚本路径，**不管文件在不在**。
+ *
+ * 为什么要和 {@link scriptFileOf} 分开：那个只认「真的存在」的文件，脚本被删掉之后
+ * 它返回空串，漂移检查于是整段跳过、这条钩子被当成「已批准且没改过」照样执行，
+ * 最后才在 `node` 那一步以「退出码 1」炸掉（2026-10-28 用户报障：删除命令被拦，
+ * 理由却是「钩子脚本失败」）。这一份只看命令写了什么，用来认出「配了但文件没了」。
+ *
+ * @param command - 命令原文。
+ */
+export function scriptTokenOf(command: string): string {
+  for (const token of tokenize(command)) {
+    const lower = token.toLowerCase()
+    if (SCRIPT_SUFFIXES.some((suffix) => lower.endsWith(suffix))) return token
+  }
+  return ''
+}
+
 function readTrust(): TrustDoc {
   try {
     if (!existsSync(HOOK_TRUST_FILE)) return { trusted: [] }
@@ -490,8 +508,14 @@ function writeTrust(doc: TrustDoc): void {
   writeFileSync(HOOK_TRUST_FILE, `${JSON.stringify({ version: 1, trusted: doc.trusted }, null, 2)}\n`, 'utf8')
 }
 
-/** 一条脚本的批准状态。 */
-export type HookTrustState = 'trusted' | 'untrusted' | 'changed'
+/**
+ * 一条脚本的批准状态。
+ *
+ * `missing` = 命令里写了脚本路径，但那个文件不存在（被删了、路径改名了）。
+ * 它不是「批准过没过期」的问题，是配置已经坏了：这条钩子一律停跑并说清缺哪个文件，
+ * 免得拿「脚本以 1 退出」这种间接症状去猜。
+ */
+export type HookTrustState = 'trusted' | 'untrusted' | 'changed' | 'missing'
 
 /** 批准状态的投影（界面上那一行字由它出）。 */
 export interface HookTrust {
@@ -518,6 +542,21 @@ export interface HookTrust {
  */
 export function trustOf(script: HookScript, autoAccept = false): HookTrust {
   const scriptPath = scriptFileOf(script.command)
+  // 命令里点了脚本文件、文件却不在：配置坏了，不是「批准过没过期」。
+  // 放在最前面判，是因为这种状态跟批没批准无关——真跑起来只会得到一句
+  // 「Cannot find module」加退出码 1，然后被 fail-closed 当成「钩子拦了这次操作」。
+  if (scriptPath === '') {
+    const declared = scriptTokenOf(script.command)
+    if (declared !== '') {
+      return {
+        state: 'missing',
+        detail: `钩子脚本文件不存在：${declared}（这条钩子已停用；改 \`~/.dsc/hooks.json\` 里的路径，或删掉这条脚本）`,
+        scriptPath: declared,
+        trustedAt: 0,
+        runnable: false,
+      }
+    }
+  }
   const entry = readTrust().trusted.find((item) => item.event === script.event && item.command === script.command)
   if (entry === undefined) {
     return {
@@ -875,6 +914,21 @@ export function parseScriptVerdict(stdout: string): { action: HookAction; messag
   return { action: 'pass', message: '' }
 }
 
+/**
+ * stderr 的第一行非空内容（截到消息上限）。
+ *
+ * 钩子脚本失败时，真正的原因几乎都写在这里：文件不存在是 `Cannot find module`、
+ * 语法错是 `SyntaxError`、命令不存在是 `not recognized`。只回一个退出码，
+ * 用户只能看到「钩子失败」四个字，猜不到是脚本被删了。
+ */
+function firstStderrLine(stderr: string): string {
+  for (const line of stderr.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (trimmed !== '') return trimmed.slice(0, HOOK_STDERR_MAX)
+  }
+  return ''
+}
+
 /** 把一次执行结果折成结论（这里决定 fail-closed 的三种失败形态）。 */
 export function judgeScriptRun(run: HookRun, script: HookScript, settings: HookSettings): HookJudgement {
   const source = `脚本 ${script.command.slice(0, 40)}`
@@ -914,16 +968,19 @@ export function judgeScriptRun(run: HookRun, script: HookScript, settings: HookS
       ? note(`脚本以 ${run.exitCode} 退出但给出了放行结论`, 'block', `钩子脚本退出码是 ${run.exitCode}，按「脚本没跑成就算拦」处理。`)
       : note(`脚本以 ${run.exitCode} 退出，仍按它的结论放行`)
   }
+  // stderr 的第一行往往就是真相（「Cannot find module …」这种），以前只留退出码，
+  // 用户看到的「钩子失败」和真实原因之间隔着一条要自己去猜的沟（2026-10-28 报障）。
+  const stderrLine = firstStderrLine(run.stderr)
   if (run.exitCode === 0) {
     if (run.stdout.trim() === '') return note('')
-    const problem = '脚本输出不是能看懂的 JSON'
+    const problem = `脚本输出不是能看懂的 JSON${stderrLine === '' ? '' : `（stderr：${stderrLine}）`}`
     return failClosed
-      ? note(problem, 'block', '钩子脚本的输出读不懂（既不是 JSON 也没用退出码 2 表达阻断）。按「脚本没跑成就算拦」处理。')
+      ? note(problem, 'block', `钩子脚本的输出读不懂（既不是 JSON 也没用退出码 2 表达阻断）${stderrLine === '' ? '' : `：${stderrLine}`}。按「脚本没跑成就算拦」处理。`)
       : note(problem)
   }
-  const problem = `脚本以 ${run.exitCode} 退出，没有给出结论`
+  const problem = `脚本以 ${run.exitCode} 退出，没有给出结论${stderrLine === '' ? '' : `（stderr：${stderrLine}）`}`
   return failClosed
-    ? note(problem, 'block', `钩子脚本失败（退出码 ${run.exitCode}）。按「脚本没跑成就算拦」处理。`)
+    ? note(problem, 'block', `钩子脚本失败（退出码 ${run.exitCode}）${stderrLine === '' ? '' : `：${stderrLine}`}。按「脚本没跑成就算拦」处理。`)
     : note(problem)
 }
 
