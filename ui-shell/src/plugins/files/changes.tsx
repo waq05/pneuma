@@ -14,12 +14,12 @@
  */
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { DiffRows, HUMAN_WAIT_TIMEOUT_MS, IconChevronDown, IconChevronRight, toastErr, toastOk, useHostChannel } from '@dsc/ui'
-import { useDialogFocus } from '@dsc/ui-primitives'
 import {
   parseUnifiedDiff,
   splitUnifiedDiffByFile,
+  useDialogFocus,
   type UnifiedFileDiff,
-} from './diff'
+} from '@dsc/ui-primitives'
 
 /** 单文件的增删行数（`git-status` 的 stats 档按 cwd 相对路径给）。 */
 interface GitFileStat {

@@ -1,7 +1,7 @@
 /**
  * 宿主快照的读数（整个界面壳唯一一份）。
  *
- * 快照是宿主推过来的一棵 `unknown` 树（见 `@dsc/ui` 的 `HostSnapshot`），每个插件都要从
+ * 快照是宿主推过来的一棵 `unknown` 树（见 `@dsc/ui-core` 的 `HostSnapshot`），每个插件都要从
  * 里面取同样的几样东西：工作目录、会话清单、会话 jsonl 路径、正在跑的回合状态、条目流。
  * 此前十个插件各写一遍 `readCwd` / `readSessions` / `readSessionPath` / `readTurnState` /
  * `readEntries` / `readLive` / `readSessionId`——**同一个字段的收窄写十遍**，而收窄口径一旦
@@ -13,7 +13,7 @@
  *
  * @module dsc-ui-shell/ui-primitives/snapshot
  */
-import type { HostSnapshot, SessionSummary, TranscriptEntry } from '@dsc/ui'
+import type { HostSnapshot, SessionSummary, TranscriptEntry } from '@dsc/ui-core'
 
 /** 空会话清单：没拿到快照时共用一份（引用稳定，选择器才拦得住重渲染）。 */
 export const NO_SESSIONS: readonly SessionSummary[] = Object.freeze([])

@@ -70,6 +70,13 @@ export * from '../core/throughput.js'
 export * from '../core/git-surface.js'
 
 /**
+ * git diff 文本的解析（`core/unified-diff.ts`）也进共享面：审查面板与差异区都要把
+ * diff 文本读成结构化 hunk，旧渲染层与界面壳此前各有一份逐字相同的实现。
+ * `@dsc/ui-primitives` 再转出一手给插件。
+ */
+export * from '../core/unified-diff.js'
+
+/**
  * 模块级信号（`signal.ts`）：`Set<() => void>` + `subscribe` + 通知这套写法原先在壳里
  * 手抄七遍，抄漏「复制订阅者再遍历」「没变就不通知」这类语义不会报错，只会表现成
  * 「界面停在旧值上」。多字段状态写成**一个对象**、一次 `set` 发出，避免半套新值先渲染。

@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import { approvalDiffOf } from '../lib/plugins/approval.js'
 import { collectWorkingTree } from '../lib/core/git-info.js'
 import { reviewMessage } from '../lib/core/git-info.js'
-import { parseUnifiedDiff, splitUnifiedDiffByFile } from '../desktop/src/renderer/unified-diff.ts'
+import { parseUnifiedDiff, splitUnifiedDiffByFile } from '../src/core/unified-diff.ts'
 
 let failures = 0
 const check = (name, condition, detail = '') => {

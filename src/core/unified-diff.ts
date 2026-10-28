@@ -1,33 +1,27 @@
 /**
- * git unified diff 文本 → 结构化 hunk。dock 通道的 `git-diff` 回的是 diff 文本，
- * 渲染层只认结构，这层解析补上缺口。
+ * git unified diff 文本 → 结构化 hunk（全仓唯一一份解析）。
  *
- * 解析算法照旧渲染层 `desktop/src/renderer/unified-diff.ts` 逐字搬运；类型就地声明——
- * 壳不引 `@dsc/runtime` 的契约模块（平台模块白名单里没有它），形状与契约里的
- * DiffHunkView / DiffLineView 保持一致。
+ * 为什么会有一份「渲染用」的解析：dock 通道的 `git-diff` 回的是 diff 文本，
+ * 而审查面板与差异区只认结构化 hunk，这一层补上缺口。算法原先只长在旧渲染层
+ * （`desktop/src/renderer/unified-diff.ts`），界面壳又照它逐字搬了一份——两份
+ * 各自「以实际行数为准」的容错写在同一段注释里，改一处忘另一处就会表现成
+ * 「同一段 diff 在两个界面里行数不一样」。
  *
- * 只做渲染用解析：对不认识的行跳过、hunk 计数以实际行数为准（git 在文件末尾
- * 没换行等场景下 `@@` 头的计数与实际行会差一），解析失败宁可少一段也不抛错。
+ * 现在实现只有这一份，两边的入口都只是转出：
+ * `@dsc/ui` → `@dsc/ui-primitives`（界面壳与插件），`@dsc/runtime/core/unified-diff.js`
+ * （旧渲染层，等它整体退役）。
  *
- * @module dsc-ui-shell/plugins/files/diff
+ * 只做渲染用解析：对不认识的行跳过、hunk 计数以实际行数为准（git 在文件末尾没换行等
+ * 场景下 `@@` 头的计数与实际行会差一），解析失败宁可少一段也不抛错。
+ *
+ * 零运行期依赖（只有 `import type`）：`scripts/review-approval-test.mjs` 按 Node 的
+ * 类型擦除直读本文件逐条钉。
+ *
+ * @module dsc/core/unified-diff
  */
+import type { DiffHunkView, DiffLineView } from '../contract.js'
 
-/** 一行差异（与 `@dsc/runtime` 契约的 DiffLineView 同形）。 */
-export interface DiffLineView {
-  kind: 'context' | 'add' | 'remove'
-  text: string
-  oldLine: number | null
-  newLine: number | null
-}
-
-/** 一段 hunk（与 `@dsc/runtime` 契约的 DiffHunkView 同形）。 */
-export interface DiffHunkView {
-  oldStart: number
-  oldCount: number
-  newStart: number
-  newCount: number
-  lines: DiffLineView[]
-}
+export type { DiffHunkView, DiffLineView }
 
 const HUNK_HEAD = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/
 

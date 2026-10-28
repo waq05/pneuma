@@ -39,6 +39,8 @@ export * from './sizes'
 export * from './throughput'
 // git 读数相等判断（与宿主同一个口径）。
 export * from './git-surface'
+
+export * from './unified-diff'
 // 宿主快照的读数（工作目录 / 会话清单 / 条目流 / 回合状态）。
 export * from './snapshot'
 // 模块级信号（一份状态 + 订阅 + 忘了就不通知的三条语义）。
