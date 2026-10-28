@@ -631,6 +631,12 @@ node scripts/style-check.mjs                                   # 633 个文件 0
 | `splitList`（按逗号空格切词） | 3 | 值得收，但要先看三处的空值与去重规则 |
 | `shellOf`、`readBeforeWriteCheck`、`nonEmptyString`、`jsonText`、`isEnvFamily`、`isFiniteNumber`、`utf16Buffer` | 各 2 | 收益小，随手碰到再收 |
 
+> 这张表写于第四批，之后各批陆续把里面的候选收掉了。第十批用 `scripts/dup-scan.mjs`
+> 实测：表里 8 个「各 2」现在各只剩 1 处定义；`readCwd` 那组在第七批收进了
+> `ui-primitives/snapshot.ts`。**只剩两处**，且都是有意留的：`emit`（2 份，收它等于
+> 把一行换成一行调用）与 `formatDuration`（3 份，一份按秒、一份按毫秒、一份按天，
+> 语义不同，见 §10.4）。
+
 ### 12.6 这批评审的边界
 
 只扫了 `src` 与 `ui-shell/src` 的 TypeScript 函数体；`desktop/src/renderer`（冻结）与 `remote-web` 没扫。
@@ -957,4 +963,107 @@ const state = createSignal<ThreadViewState>({ view: 'chat', focusStep: null })
 自动化跑不出来，得在真实界面上过一遍。
 
 
+## 十八、第十批（2026-10-28）：扫描器收成工具，四组重复，以及我自己埋的一处回归
 
+### 18.1 扫描器：从「每用一次手敲一遍」到 `scripts/dup-scan.mjs`
+
+前十批收重复用的是一段临时脚本，每用一次重敲一遍，**扫描目录写死成 `src` 与 `ui-shell/src`**。
+§12.6 记过这个盲区：`remote-web` 与旧渲染层从来没被扫过，而「扫不出」被当成了「没有」。
+
+现在它是仓库里的正经工具：
+
+| 能力 | 怎么用 |
+| --- | --- |
+| 换范围 | `node scripts/dup-scan.mjs remote-web/src`（不给就扫默认两处） |
+| 放宽长度 | `node scripts/dup-scan.mjs --max-lines 20 src`（默认 10 行） |
+| 给门禁用 | `--strict`：有重复就退出码 1 |
+
+**第一版报了 42 组，全是噪声。** 原因是我把「花括号块」都当成了函数体，于是 JSX 片段、
+对象字面量、模板里的块全进来。加上一条判据——**花括号前面（跳过空白）必须是 `)` 或 `=>`**——
+之后 401 个文件里只剩 4 组，就是下面这四组。这条教训值得记：报出 42 组和报出 4 组，
+工具的成本是一样的，区别全在「什么算一个候选」写清楚没有。
+
+### 18.2 收掉的四组
+
+| 组 | 份数 | 落到哪 | 说明 |
+| --- | --- | --- | --- |
+| `oneLine`（压成一行 + 截断） | 4 | `src/core/strings.ts` | 审批卡、正文、工具卡、任务条各一份，逐字相同。收口后 `limit` 变成可选：不传就只压平不截断 |
+| `compactTokens`（1234 → `1.2k`） | 3 | `src/core/text-format.ts`（新建） | 两处 `const fmtTokens` 加 `plugins/commands.ts` 里一份内联的箭头函数 |
+| `shortCwd`（路径缩成末两级） | 2 | 同上 | 状态栏与欢迎页 |
+| `absPath` / `stringArg`（工具入参收口） | 2 | `src/core/tools/path-args.ts`（新建） | `fs-tools` 与 `image-tool` 各抄一份，连报错文案都一样 |
+
+**刻意没并的两个近亲**：`ui-shell/src/plugins/sessions/ui.tsx` 也有个 `oneLine`，但它按
+**码点**截断（`Array.from` 之后切），emoji 不会被劈成半个；上面那份按码元切。两者行为不同，
+并了就是在 emoji 上悄悄改行为。`settings/usage.tsx` 的 `fmtTokens` 是另一回事——它出的是
+「万 / 亿」，中文大数口径，和 `1.2k` 是两套给人看的刻度。
+
+### 18.3 一处我自己埋的回归：`rounds.ts` 的运行期 import
+
+`d58dcbe`（第八批那次的第三笔提交）把 `ui-shell/src/plugins/transcript/rounds.ts` 里就地内联的
+`tsOf` 换成了 `import { entryTs as tsOf } from '@dsc/ui-primitives'`。
+
+可这个文件头白纸黑字写着「零依赖 / **只许 `import type`**」——因为
+`scripts/ui-transcript-render-test.mjs` 是**按 Node 的类型擦除直接 import 这个 `.ts`** 的
+（同 `paging.ts` 的口径）。而 `@dsc/ui-primitives` 只是构建期别名（`ui-shell/packages.json`，
+由 vite 与 `build-plugins.mjs` 认），Node 解析不了。于是那条探针当场
+`ERR_MODULE_NOT_FOUND`。
+
+**为什么当时没发现**：那一次的验收跑的是 `tsc`，`tsc` 认别名，Node 不认。tsc 绿不等于没错。
+
+修法：恢复就地内联（`entry.ts` 有限正数才认），删掉运行期 import；顺带核了另外三个同样声明
+「不许运行期 import」的文件——`notice-summary.ts`、`status-model.ts`、`review-notice.ts`——
+都没被污染。
+
+### 18.4 验证
+
+- 根 `tsc --noEmit` 退出码 0；
+- `node scripts/dup-scan.mjs` → 403 个文件，**0 组**；
+- 四条相关探针 PASS：`readme-test`、`sandbox-parity-test`、`turn-changes-test`、
+  `ui-transcript-render-test`（修完 `rounds.ts` 之后）；
+- `pnpm build` 与 `check:core` **这一轮没跑成**：工作区里另一条正在改 `src/plugins/approval.ts`，
+  `ReviewVerdict` 新加了必填的 `failed`，那两处构造还没补，构建红
+  （`src/plugins/approval.ts:502`、`:507`）。全量自检要等他们提交完。
+
+### 18.5 两条方法上的教训
+
+1. **文件头写着「零依赖 / 只许 `import type`」的，是给 Node 直读的**。合并重复前先看一眼
+   文件头，别把 import 塞进去——那里省下的十行，会在探针里变成一条难查的模块解析错误。
+2. **`tsc` 全绿只证明类型对得上**，证明不了模块能被 Node 解析。凡是被 Node 直读的 `.ts`，
+   都得跑那条探针本身。
+
+## 十九、「明确不收」的清单，汇到一处
+
+这些判断此前散在 §10.4、§11.4、§12.5、§13.4、§15.5、§17.3 六个地方，找起来要翻半天。
+下次有人扫到同样的重复，先看这张表，不必重新论证一遍。
+
+| 组 | 份数 | 为什么不做 | 原判断 |
+| --- | --- | --- | --- |
+| `subscribe`（各自的监听器集合） | 5 | 要抽 store 工厂，动 `ui-layout` 的对外契约。那是重构，不是收口 | §12.5 §13.4 §15.5 |
+| `emit` | 2 | 抽成 `notifyAll(listeners)` 只是把一行换成一行调用，不多出任何保证 | §15.5 |
+| `formatDuration` | 3 | 语义不同：一份收**秒**并出「天」（定时任务），一份收**毫秒**但有小时就省掉秒（状态栏），一份收毫秒且时分秒全出（对话页）。冻结层还有第四份 | §10.4 |
+| `clampRounds` / `clampEffort` / `clampToScreen` / `computer-use` 的 `clamp` | 4 | 边界与兜底值不同；`computer-use` 那份不带兜底值是故意的 | §11.4 |
+| `createHostChannel` / `startPluginHmr` | 2 | 实例作用域（不是模块单例），且 `host-channel` 有三组不同签名的回调 | §17.3 |
+| `oneLine`（`sessions/ui.tsx` 那份） | 1 | 按码点截断，emoji 不劈半；与码元版行为不同 | §18.2 |
+| `fmtTokens`（`settings/usage.tsx` 那份） | 1 | 出的是「万 / 亿」中文大数，与 `1.2k` 是两套刻度 | §18.2 |
+| 旧渲染层 `desktop/src/renderer` | 21,035 行 | 已冻结，等日落日期整体删除；逐个合并没有意义 | §十 |
+
+## 二十、`defineStore` 与 `createSignal` 怎么选
+
+第九批之后壳里有两套状态写法，都能订阅、都能「没变不通知」。此前答案只写在
+`src/ui/signal.ts` 的注释里，新建状态的人得先读代码。这里给一张判据表。
+
+| 判据 | `defineStore`（`src/ui/store.ts`） | `createSignal`（`src/ui/signal.ts`） |
+| --- | --- | --- |
+| 谁创建它 | 插件在 `apply(ui)` 里现建，随登记卸载消失 | 模块顶层单例，谁引都是同一份 |
+| 有没有生命周期 | 有（登记时建、卸载时没） | 没有 |
+| 有没有 actions 表 | 有，还能拿浅拷贝 draft 改完一次提交 | 没有，只有 `get` / `set` / `notify` / `subscribe` |
+| 值归谁 | 归 store | `set` 归信号；`notify` 只借它当变更通道（值在 Map 或 `globalThis` 上） |
+| 典型用场 | 插件自己的界面状态 | 跨插件共享的那几处：切页、dock 布局、正文区那张脸、文件树、旁问、团队面板、启动账本 |
+
+三句话的用法：
+
+1. **问「谁建它」**：插件装上去才存在 → `defineStore`；模块一加载就该有 → `createSignal`。
+2. **问「值归不归它」**：值在信号里 → `set`；值在别处（Map、`globalThis` 的账本）→ `notify`。
+   硬把 Map 塞进信号，每次流式增量都要整张复制一遍，换不来任何语义收益。
+3. **多字段写成一个对象、一次 `set`**。分两次写，订阅方会先渲染半套新值——
+   `thread-view` 的「切到轨迹并聚焦某一步」就踩过：滚动位置会闪一下。
