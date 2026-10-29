@@ -13,6 +13,8 @@
 | 要改代码，API 怎么对应 | **§3 映射表** |
 | 为什么我的插件挂不上/行为不对 | **§4 实测坑** |
 | 交付前跑什么 | **§5 验证清单** |
+| 明确不支持哪些、别绕 | **§6 边界** |
+| 这套兼容层是怎么一步步长出来的 | **§7 历史存根** |
 | dsh 的请求组装/上下文管理内部机制（源码级） | [dsh-request-assembly.md](dsh-request-assembly.md) |
 
 ## 1. 判定流程：先看结局，再决定要不要改代码
@@ -256,3 +258,20 @@ dsc 的等价扩展点重挂，找不到就砍掉那个功能**——个人版�
 - **`config.yaml plugins` 段的 extraPaths 不享受解析重定向**：重定向按 `~/.dsc/plugins/`
   前缀匹配；放外头的插件要么搬进来，要么自带依赖（把 `@deepseek-ai/*` 装在它自己的
   node_modules 里，Node 自然解析，但 cordis 双实例风险自担）。
+
+## 7. 历史存根：这套兼容层是怎么长出来的
+
+2026-10-24 起草过一份施工计划，把"还差什么"拆成五个阶段。到 2026-10-26 全部收口，
+最终形态就是本文各节：
+
+| 当时拆的阶段 | 最后落在哪 |
+| --- | --- |
+| A 工具值契约（`output.schema` / `presentationMeta` / 六种卡片 / 并发标记） | §1 判定表第 6–8 行、§2.4 |
+| B 安装与组合（bundle + profile + pnpm + patch 层） | §2.6 |
+| C 服务桥（`sessionPersistence` / `sessions` / `llm/stream` / `session/event`） | §2.7 |
+| D 客户端插件（装配层 vs 契约层） | 装配层做了（壳里加了 cordis 根），契约层明确不做，见 §6 |
+| E 验证与金丝雀 | §5 第 8 条 |
+
+完整的缺口分析、逐阶段的改动落点、七条复审记录，留档在
+[docs/archive/dsh-plugin-adapter-plan.md](archive/dsh-plugin-adapter-plan.md)。要查"当初为什么
+这么定"再翻它；日常接线只看本文即可。

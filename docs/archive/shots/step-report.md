@@ -271,7 +271,7 @@ DOM 里带 `hidden`（它们负责 Ctrl+F 能命中）；`step-live` 里 27 次�
 ## 八、第三批（0.6.8）：轮结束原因、轮中途插话与四道折叠闸门
 
 这一批是把「与 dsh 的差异清单」里**原料已经齐、只差消费**的那几条补齐，逐项对照与踩坑见
-[development-log.md 阶段 24](../../docs/development-log.md)。四张网的变化：
+[development-log.md 阶段 24](../../development-log.md)。四张网的变化：
 
 | 网 | 条数 | 新增覆盖 |
 | --- | --- | --- |
@@ -300,7 +300,7 @@ DOM 里带 `hidden`（它们负责 Ctrl+F 能命中）；`step-live` 里 27 次�
 ## 九、第四批（0.6.9）：准备中态与模型重试行（动到流式层）
 
 前两批改的是「宿主已经报出来的东西没人消费」，这一批反过来：**原料本身不在**，要一路从 SSE
-解析透到界面。逐项对照与踩坑见 [development-log.md 阶段 25](../../docs/development-log.md)。
+解析透到界面。逐项对照与踩坑见 [development-log.md 阶段 25](../../development-log.md)。
 
 | 网 | 条数 | 新增覆盖 |
 | --- | --- | --- |

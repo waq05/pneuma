@@ -1,6 +1,7 @@
 # dsh 服务桥：把会话历史与用量接到 dsh 的插件上
 
-> 状态：**通了**（2026-10-26）。读侧落在 `src/core/dsh-compat/session-bridge.ts`，
+> 状态：已归档（已打通，2026-10-26，会话历史与用量桥落地）：正文保留原始结论，日期与版本号是写作时锚点。
+
 > 实时记账靠 `src/core/dsh-compat/llm-usage-event.ts` 派发 `llm/stream`；
 > 真包验收（`dsh-cost-meter` 1.9.41）账本里能读到 `calls / input / output`。
 > 细节与剩下的小口子见 §7。
@@ -242,5 +243,5 @@ context-costs、trajectory 只认 `assistant/message`（还要 `data.usage` 与
 ## 8. 参考
 
 - 判定表：`src/core/dsh-compat/service-map.ts`（`sessions` / `sessionPersistence` 两条）
-- 真包验收记录：[development-log.md](development-log.md) 里「真装一个 dsh 组合包」那一节
-- 安装路径：[development.md](development.md) 的「dsh 组合包怎么装」
+- 真包验收记录：[development-log.md](../development-log.md) 里「真装一个 dsh 组合包」那一节
+- 安装路径：[development.md](../development.md) 的「dsh 组合包怎么装」

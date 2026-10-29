@@ -5597,7 +5597,7 @@ Playwright 的 locator（`getByRole` / `locator().click()`）在这个页面里�
 ## 第二十一批：opencode Go 端点缺会话归因头 → 400（2026-10-14，未发版）
 
 上一批对「opencode Go 调用报错」只给了结论（是 msc 侧缺能力，不是端点脾气），这一批落地。
-分析原文与落地记录都在 [opencode-go-session-header.md](opencode-go-session-header.md)。
+分析原文与落地记录都在 [opencode-go-session-header.md](archive/opencode-go-session-header.md)。
 
 ### 为什么参考实现都不踩这个坑（读源码核过）
 
@@ -8401,7 +8401,7 @@ dsh 插件，请先在插件中心启用 dsh 兼容层」——否则用户只�
 **2.0 之后的复查：修了两处，记下十条（2026-10-26）**：
 
 四批（契约 2.0 / 包两半 / 示例包 / 19 个内置插件迁声明）做完后逐条复查，结论写进
-[计划文档 §8](dsh-plugin-adapter-plan.md)，这里只记当场修掉的两处：
+[计划文档 §8](archive/dsh-plugin-adapter-plan.md)，这里只记当场修掉的两处：
 
 1. **插件中心对 pneuma 界面半说假话**：`clientCapabilitiesOf` 把 `dsh.client` 的键名一律列成
    「dsh 客户端插件 · 只列不加载」，而 `platform: "pneuma"` 的界面半我们**会加载**。现在跳过
@@ -8659,7 +8659,7 @@ Electron 开到 390×844 加载带令牌的地址，读页内账本并截图。�
 
 `dsh-cost-meter` 的成本条没数，根因是缺 `sessionPersistence` + `sessions` 两个服务。
 这一条今天**没有做**，但把「为什么不是一批能做完」查清了，单独写成
-[dsh-service-bridge-plan.md](dsh-service-bridge-plan.md)：
+[dsh-service-bridge-plan.md](archive/dsh-service-bridge-plan.md)：
 
 - dsh 那边是事件溯源（header + 带 seq 的事件 + 读/写句柄 + revision + 迁移状态），
   Pneuma 是「一行一个 user/assistant/tool」的扁平 jsonl，且 token 用量另落
@@ -9460,7 +9460,7 @@ dsh 的这一排是 composer 下方的 dock：`gap:12px`、居中、没有分隔
 
 ## 2026-10-28 全仓代码审查：分层守住了，闸门和界面层是欠账
 
-完整报告在 [code-review-2026-10-28.md](code-review-2026-10-28.md)（含每条的复现命令、
+完整报告在 [code-review-2026-10-28.md](archive/code-review-2026-10-28.md)（含每条的复现命令、
 高相似文件对清单与整改批次）。这里只记「为什么审、审出什么、账怎么还」。
 
 ### 一、为什么审
@@ -9534,7 +9534,7 @@ dsh 的这一排是 composer 下方的 dock：`gap:12px`、居中、没有分隔
   （大量 JSON 边界仍靠运行时校验）。
 ## 2026-10-28 整改第一批：先加闸门，再动手拆重复
 
-审查报告（[code-review-2026-10-28.md](code-review-2026-10-28.md)）落地第一批。这一批的原则是
+审查报告（[code-review-2026-10-28.md](archive/code-review-2026-10-28.md)）落地第一批。这一批的原则是
 **先让机器盯着，再让人动手**——因为审查里最扎人的一条不是代码写得差，而是两处红灯进主干
 时没有任何东西拦一下。
 
@@ -11022,3 +11022,50 @@ B 的空白页上；某个会话的删除命令被钩子拦下，理由却是「
 - `desktop/shots/trace-shots.ps1 -Only trace-static`：种子内容不够高、滚动区滚不动，探针临时把滚动区压矮再量，读到 `{"scrolled":true,"squeezed":true,"gap":8,"stuck":true,"opaque":true,"barHeight":44,"statsHeight":37}`——两块之间 8px 间距（就是设计里的那条 margin）、概览条吸在滚动区顶端、吸附块底色不透明；`headerNoOverlap: true`。真实 `~/.dsc` 跑前跑后指纹一致（454 个文件）。
 - `node desktop/shots/trace-check.mjs` 新增两条源码钉：`.trace-head` 吸附且 `.trace-stats` 不再自己 `sticky`；吸附块底色不透明。
 - `pnpm run build` 0 错；`pnpm -C ui-shell build`（含 `tsc --noEmit`）通过，19 份插件产物重建；`pnpm run style:check` 628 个文件通过。
+
+## 三十三、文档整理：docs 从 23 篇压到 11 篇（2026-10-30，纯文档）
+
+用户需求一句话：「整理文档材料，删除已过期落后的，合并类型的」。
+先说结论：**根目录 23 → 11 篇，归档 3 → 14 篇，全仓 md 链接 0 失效**。
+
+**判断口径**：不看文件年龄，看「还有没有人维护」。首行自带「状态：已完成」的施工计划、
+一次性审查报告、自认停更的对照表，一律算过期；`development.md` / `development-log.md`
+这类台账不动。
+
+**四类动作**：
+
+| 动作 | 数量 | 内容 |
+| --- | --- | --- |
+| 真删除 | 3 | `temp` / `temp.txt`（内容只有「测试」、未入库）、`docs/writing-plugins.md`（内容已并入 §0） |
+| 合并 | 2 组 | dsh 适配计划→指南 §7；两份插件文档→一份 |
+| 归档 | 11 篇 | 见下 |
+| 保留 | 11 篇 | 开发手册、日志、预设、界面规范、对标路线图、功能清单、隧道、三份外部拆解 |
+
+**合并的两个决定**（写下来免得下次重犯）：
+
+1. **插件文档不重排原编号**。`plugin-development.md` 的 §1–§10 原样不动，上手路径塞成 §0。
+   如果整体重排，文档内 8 处 `§4.7`、`§10.3` 这类交叉引用要全改一遍，改错一处就指向别处。
+   代价只是编号从 0 开始，换来的是零连锁修改。
+2. **计划并入指南时只留「结局」，不留「过程」**。`dsh-plugin-adapter-plan` 的正文对今天
+   已经没用了（指南里每一条都写着最终做法），但它解释了「当初为什么这么定」。所以指南
+   加一节 §7 把 A–E 五个阶段各自的落点压成一张表，正文原样归档。
+
+**归档的 11 篇**：context-token-plan、dock-browser-control、plugin-runtime-parity-plan、
+ui-plugin-parity-plan、ui-motion-options、dsh-plugin-adapter-plan、dsh-service-bridge-plan、
+opencode-go-session-header、ui-shell-parity-audit、ui-model-picker、code-review-2026-10-28。
+每篇首行统一成 `> 状态：已归档（原因）：正文保留原始结论，日期与版本号是写作时锚点。`，
+与 `archive/` 里原有三篇的写法一致。
+
+**顺手清的**：`desktop/shots/` 六份施工报告进 `archive/shots/`（`step-report.md` 被
+`session-fold-todo.md` 引用，链接已改）；`.zcode/plans/` 九份旧计划移到 `_archived/`
+（这个目录不入库，**没删**，删了找不回来）。
+
+**验证**：写了个只读脚本扫全仓 42 个 md 的所有相对链接（跳过 node_modules / dist /
+shots），整理前 12 处失效，整理后 **0 处**；`docs/archive` 单独再扫一遍，只剩
+`tui-design-alignment-plan.md` 表格里那个 `[链接](url)` 字面示例，不是真链接。
+
+**过程里撞到的事**（不是这次整理引入的）：`docs`、`docs/archive`、`desktop` 三处目录缺
+Windows 低完整性标签与当前用户的显式权限项，沙箱写不进去。`docs` 树用 `diagnose-windows-sandbox-acl`
+脚本修好了，备份与回滚命令在 `D:\dsc\.acl-report\`；`desktop` 目录本身还缺，这次靠会话切到
+完全权限才把文件挪出来——切回 workspace-write 后写 `desktop/` 可能再被拒，要修得单独跑一次
+（会递归 1,600 多个文件）。

@@ -1,9 +1,12 @@
 # dsh 插件适配计划
 
+> 状态：已归档（计划已全部完成，留作决策记录）：五个阶段 A–E 于 2026-10-26 全部收口，
+> 现行做法见 [dsh-plugin-porting.md](../dsh-plugin-porting.md)；日期与版本号是写作时锚点。
+
 > 2026-10-24 起草。基准：dsh 上游 master `22ddee3`（发布标签 `dsh-v0.2.1-rc.3`，2026-10-23）。
 > 本地 `D:\deepseek-harness\deepseek-harness` 已于当日 21:30 更新到该提交；当时是浅克隆，随后把历史拉全了（2026-10-26 复核：分支 `master`，HEAD `22ddee3792`，23934 个提交，与上游 `commits/master` 的头一致）。
 > 本文回答"Pneuma（numa）还要补哪几块，才接得住 dsh 生态里的插件"。
-> 用户视角的操作步骤看 [dsh-plugin-porting.md](dsh-plugin-porting.md)；本文是施工计划。
+> 用户视角的操作步骤看 [dsh-plugin-porting.md](../dsh-plugin-porting.md)；本文是施工计划。
 
 ## 0. 结论先行
 
@@ -92,7 +95,7 @@ dsh 的插件分发单位是**组合包（bundle）**，安装单位是 **profil
 
 ### 2.5 界面插件
 
-Pneuma 有自己的界面插件契约（`plugin.json` + `@dsc/ui` + 槽位 + 平台种子），与 dsh 的 `dsh.client` 不是同一套（见 `docs/plugin-runtime-parity-plan.md`）。
+Pneuma 有自己的界面插件契约（`plugin.json` + `@dsc/ui` + 槽位 + 平台种子），与 dsh 的 `dsh.client` 不是同一套（见 `plugin-runtime-parity-plan.md`）。
 
 ## 3. 差距清单
 
@@ -181,7 +184,7 @@ Pneuma 有自己的界面插件契约（`plugin.json` + `@dsc/ui` + 槽位 + 平
 
 **做了（装配层）**：壳里加了一个 cordis 根（`ui-shell/src/ui-renderer/cordis-host.ts`），界面插件的
 装、卸、回收、状态全部走 fiber；插件写法不变（`apply(ui)` 照旧），所以 19 个内置插件一行没改。
-细节与三个坑见 [development.md §4](development.md) 的「界面壳那侧也走 cordis」。
+细节与三个坑见 [development.md §4](../development.md) 的「界面壳那侧也走 cordis」。
 真机验证：`node desktop/shots/_cordis-probe.mjs`（22 条断言）。
 
 **不做（契约层）**：dsh 的界面插件与 Pneuma 的界面插件仍是两套扩展方式——前者是 cordis 客户端服务
@@ -203,7 +206,7 @@ Pneuma 有自己的界面插件契约（`plugin.json` + `@dsc/ui` + 槽位 + 平
 
 1. 三个金丝雀：官方单文件工具插件、带 Config 的插件、带 bundle patch 的组合包。
 2. `scripts/dsh-compat-check.mjs` 从 15 条扩到 30 条。
-3. `docs/dsh-plugin-porting.md` 更新判定表：新增"bundle 能装""卡片能显示"两行。
+3. `../dsh-plugin-porting.md` 更新判定表：新增"bundle 能装""卡片能显示"两行。
 
 ## 5. 风险
 
@@ -272,7 +275,7 @@ sed -n '9,140p' docs/user/develop/basic/publish.zh.md
 | --- | --- | --- |
 | 1 | §4-C.1 写「同名异义一律拒绝」，实际是 `adapted` 加人话说明；C.3 写「解析钩子扩到 dsh 常用包名前缀」，实际只接管 `@deepseek-ai/*` | **已改**：两处按实际做法重写并写明偏差；开头「浅克隆」也改成「历史已拉全」 |
 | 2 | `projectContent` / `finalizeContent` 被静默忽略（两版 dsh 都有这两个成员） | **已补**：两个钩子接进 `src/core/dsh-compat/tools-facade.ts`，失败结果也过 `finalizeContent`；`dsh-compat-check` 34 → 43 条 |
-| 3 | `@deepseek-ai/dsh-tools` pin 在 0.2.0-rc.2，基准是 0.2.1-rc.3，且没有记录理由 | **已升**：到 0.2.1-rc.3，`check:dsh` 180 条与真包 e2e 6/6 全绿；cordis 仍 4.0.4（界面壳装配层是独立一批），理由写进 `plugin-development.md` §9.1 |
+| 3 | `@deepseek-ai/dsh-tools` pin 在 0.2.0-rc.2，基准是 0.2.1-rc.3，且没有记录理由 | **已升**：到 0.2.1-rc.3，`check:dsh` 180 条与真包 e2e 6/6 全绿；cordis 仍 4.0.4（界面壳装配层是独立一批），理由写进 `../plugin-development.md` §9.1 |
 | 4 | 「刷新会话后卡片仍在」只有代码路径，没有断言 | **已补**：`scripts/ui-dsh-card-replay-test.mjs` 9 条，走「读日志 → 折 transcript」两段并带反向对照 |
 
 顺带修的一处：`dsh-plugin-porting.md` 判定表说 `exec` 只有 `{ signal, cwd }`、其余字段

@@ -67,7 +67,7 @@
 | `desktop/electron/` | 7 个文件 ≈2670 行 | main + preload：窗口、托盘、运行时子进程、终端与浏览器 dock |
 | `ui-shell/` | 124 个文件 ≈39500 行 | 桌面与手机共用的界面壳（插件化：布局 + 基元 + 官方界面插件；产物落 `lib/ui/assets`）。**这是唯一的界面**——旧渲染层 21,035 行已于 2026-10-28 整体删除 |
 | `shots/` | 脚本 + 实拍产物 | 自检与实拍（全部跑在临时 HOME 上）。**这个目录被 `.gitignore` 忽略**：它只在本机存在，不随版本库分发 |
-| `examples/plugins/` | 5 个示例 | 手写插件的参照（上手路径见 [writing-plugins.md](writing-plugins.md)） |
+| `examples/plugins/` | 5 个示例 | 手写插件的参照（上手路径见 [plugin-development.md](plugin-development.md) §0） |
 
 ## 3. 三条启动链路
 
@@ -310,7 +310,7 @@ lib/ui/plugins/
 **已知边界**：包能挂上、能在插件中心认出来源，但 `dsh-cost-meter` 的成本条不会真有数——
 它靠 `sessionPersistence` + `sessions` 读会话历史算成本，这两个服务 Pneuma 没有（见
 `service-map.ts`）。这属于「服务适配器」的活，不是安装链路的问题：**形状差异、只读子集
-怎么切、拿真包怎么验收，写在 [dsh-service-bridge-plan.md](dsh-service-bridge-plan.md)** 里
+怎么切、拿真包怎么验收，写在 [dsh-service-bridge-plan.md](archive/dsh-service-bridge-plan.md)** 里
 （2026-10-26 记，仍未开工）。想先看用量，走设置里的「用量统计」或状态栏读数。
 
 ## 5. 契约层与进程间协议
@@ -623,7 +623,7 @@ exe 当**桌面端**跑的时候才要清掉它。
 有 `view` / `settings` / `reveal` / `dropline` / `peek` 五个），别在自检脚本里手写点击。
 
 **审查台账**：2026-10-28 做过一次全仓代码审查（开发规范 / 格式统一 / 重复代码 / 架构），
-问题清单、复现命令与三批整改建议在 [code-review-2026-10-28.md](code-review-2026-10-28.md)。
+问题清单、复现命令与三批整改建议在 [code-review-2026-10-28.md](archive/code-review-2026-10-28.md)。
 前三批已入库（HEAD `32a26af`）：两条 P0 清掉，`errText`、`clampInt`、`asRecord` 三个小工具各归一处，
 TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图的规模数字重填。
 第四批到第七批（同日）在工作区：`errText` 又收掉八份（界面插件一律经 `@dsc/ui-primitives` 拿，

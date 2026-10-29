@@ -1,16 +1,16 @@
 # 会话区过程折叠：清单与完成记录
 > 状态：已归档（计划已全部完成，留作决策记录）：正文里的条目均已落地，日期与版本号是写作时锚点。
 
-这份清单是 [step-report.md](../desktop/shots/step-report.md)（阶段组折叠那一步的改动与自检报告）的续篇：
+这份清单是 [step-report.md](shots/step-report.md)（阶段组折叠那一步的改动与自检报告）的续篇：
 报告回答「这一步做了什么、怎么验的」，本文档记「还剩什么、按什么顺序做、怎么算做完」——**下面这些已经全部做完**，留在这里当决策记录。
 
 | 想知道 | 去看 |
 | --- | --- |
-| 怎么装、怎么跑、怎么配 | [README.md](../README.md) |
-| 代码怎么分层、往哪改、怎么验证 | [development.md](development.md) |
-| 为什么长成这样、踩过哪些坑 | [development-log.md](development-log.md) |
-| 对标 codex / hermes / dsh 的宏观差距 | [harness-benchmark-roadmap.md](harness-benchmark-roadmap.md) |
-| **折叠这一块的改动证据与验收数据** | [step-report.md](../desktop/shots/step-report.md) |
+| 怎么装、怎么跑、怎么配 | [README.md](../../README.md) |
+| 代码怎么分层、往哪改、怎么验证 | [development.md](../development.md) |
+| 为什么长成这样、踩过哪些坑 | [development-log.md](../development-log.md) |
+| 对标 codex / hermes / dsh 的宏观差距 | [harness-benchmark-roadmap.md](../harness-benchmark-roadmap.md) |
+| **折叠这一块的改动证据与验收数据** | [step-report.md](shots/step-report.md) |
 | **本文档** | **折叠这一块还剩哪些活、先做哪个** |
 
 引用一律给到 `文件:行号`：dsh 是外部项目，用完整路径；dsc 自己用仓库相对路径。
@@ -35,7 +35,7 @@
 四张网（行为单测 163 / 端到端 25 / 回归 166 / 隔离截图六用例）全绿。
 
 **完成情况（0.6.7）**：本文档列的 12 件（编号到 F2 共 14 项）已经全部做完，
-验收数据见 [development-log.md 阶段 23](development-log.md) 与 [step-report.md](../desktop/shots/step-report.md)。
+验收数据见 [development-log.md 阶段 23](../development-log.md) 与 [step-report.md](shots/step-report.md)。
 四处与原先写的验收口径有出入，逐条记在这里，免得日后翻回来看不明白：
 
 | 项 | 原先的验收 | 实际做法与原因 |
@@ -51,7 +51,7 @@
   `color-mix` 按主题与密度算出来的，写死颜色在浅色主题下会露馅。dsh 同样用 mask。
 - **计划卡的界面验证走了一次「重新打开会话」**：因为冷启动恢复历史会话那条路不发
   `dsc/session-open`（`src/host/kernel.ts:363-366` 只重放历史），而计划卡靠那个事件回到会话流。
-  这个不一致已登记进 [harness-benchmark-roadmap.md](harness-benchmark-roadmap.md) §3.2，本批不动内核。
+  这个不一致已登记进 [harness-benchmark-roadmap.md](../harness-benchmark-roadmap.md) §3.2，本批不动内核。
 
 ---
 

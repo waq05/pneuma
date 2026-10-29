@@ -145,7 +145,7 @@ numa config show              # 查看当前生效的端点/模型/key 来源（
 「组合包界面」那一组里开关。
 
 外部插件 = 单个 ESM `.js` 文件放进 `~/.dsc/plugins/`，可注册工具、命令、监听事件，
-桌面端「插件」页可视化管理。完整 API 与开发规范见 **[docs/plugin-development.md](docs/plugin-development.md)**，上手路径与扩展点速查见 **[docs/writing-plugins.md](docs/writing-plugins.md)**；可运行示例见 `examples/plugins/ping.js`。
+桌面端「插件」页可视化管理。完整 API、上手路径与扩展点速查见 **[docs/plugin-development.md](docs/plugin-development.md)**（§0 快速上手，§1–§10 完整规格）；可运行示例见 `examples/plugins/ping.js`。
 
 ## 架构
 
@@ -217,20 +217,17 @@ cd desktop && pnpm dev           # 桌面端（先把上面两条 build 跑过�
 | --- | --- |
 | [docs/development.md](docs/development.md) | 开发手册：运行时结构、三条启动链路、进程间协议、`~/.dsc` 数据面、扩展点清单、自检与打包、代码约定、排错与关键数值 |
 | [docs/development-log.md](docs/development-log.md) | 开发记录：各阶段引入了什么、决策台账、真 bug 台账、还欠什么 |
-| [docs/plugin-development.md](docs/plugin-development.md) | 插件 API 与开发规范（规格书：全表签名、dsh 兼容层、界面插件契约） |
-| [docs/writing-plugins.md](docs/writing-plugins.md) | 写一个插件：选形态、跑通最小链路、扩展点速查、交付自检 |
+| [docs/plugin-development.md](docs/plugin-development.md) | 插件开发：§0 从零上手（选形态、跑通最小链路、扩展点速查、交付自检）+ §1–§10 完整规格（全表签名、dsh 兼容层、界面插件契约） |
 | [docs/presets.md](docs/presets.md) | **模式（Agent 预设）**：模式文件怎么写、出厂四个各是什么、可去掉哪些提示段、四条硬规矩 |
 | [docs/ui-design.md](docs/ui-design.md) | 界面开发规范：设计原则、令牌体系、原语层、布局与反馈、键盘与动效、主题引擎对照 |
 
 其余文档按用途分三类：
 
-**活参考与现状说明**：[docs/harness-benchmark-roadmap.md](docs/harness-benchmark-roadmap.md)（对标差距与路线图）、[docs/peer-feature-inventory.md](docs/peer-feature-inventory.md)（三家功能面清单）、[docs/remote-tunnel.md](docs/remote-tunnel.md)（遥控端口走隧道）、[docs/ui-shell-parity-audit.md](docs/ui-shell-parity-audit.md)（界面壳 vs 旧桌面版逐项对照）、[docs/ui-model-picker.md](docs/ui-model-picker.md)（输入区模型与档位选择）
+**活参考与现状说明**：[docs/harness-benchmark-roadmap.md](docs/harness-benchmark-roadmap.md)（对标差距与路线图）、[docs/peer-feature-inventory.md](docs/peer-feature-inventory.md)（三家功能面清单）、[docs/remote-tunnel.md](docs/remote-tunnel.md)（遥控端口走隧道）
 
-**已完成的历史计划与施工书**：[docs/context-token-plan.md](docs/context-token-plan.md)（上下文与 token 优化）、[docs/dock-browser-control.md](docs/dock-browser-control.md)（侧栏浏览器控制）、[docs/plugin-runtime-parity-plan.md](docs/plugin-runtime-parity-plan.md)（插件运行时分批与懒物化）、[docs/ui-plugin-parity-plan.md](docs/ui-plugin-parity-plan.md)（桌面界面插件化）、[docs/ui-motion-options.md](docs/ui-motion-options.md)（整轮折叠动效选型）
+**外部实现拆解（按名字查的参考资料）**：[docs/codex-request-assembly.md](docs/codex-request-assembly.md)（codex 的请求组装）、[docs/dsh-request-assembly.md](docs/dsh-request-assembly.md)（dsh 的请求组装）、[docs/dsh-plugin-porting.md](docs/dsh-plugin-porting.md)（dsh 插件搬到 Pneuma 怎么改、哪些不支持）
 
-**外部实现拆解与调查存档**：[docs/codex-request-assembly.md](docs/codex-request-assembly.md)、[docs/dsh-request-assembly.md](docs/dsh-request-assembly.md)、[docs/dsh-plugin-porting.md](docs/dsh-plugin-porting.md)、[docs/opencode-go-session-header.md](docs/opencode-go-session-header.md)
-
-已归档的旧计划在 [docs/archive/](docs/archive/)（会话折叠清单、TUI 适配计划、TUI 视觉对齐计划）。
+**已归档**：已完成的历史计划、一次性审查报告与停更的对照表都移到 [docs/archive/](docs/archive/) 了，每篇开头有一行 `状态：已归档（原因）` 和去向说明。共 14 篇，另有 `archive/shots/` 下 6 份当时的施工自检报告。
 
 ## 许可
 

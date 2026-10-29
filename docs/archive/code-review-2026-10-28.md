@@ -1,5 +1,7 @@
 # 全仓代码审查（2026-10-28）
 
+> 状态：已归档（一次性全仓审查，问题已处置，留作审查记录）：正文保留原始结论，日期与版本号是写作时锚点。
+
 > **审查基线**：分支 `feat/dock-browser`，HEAD `e500f9c`（0.7.1）。
 > 审查时间 2026-10-28 00:08–08:40。审查期间工作区有 25 个在途改动（附件功能），
 > 本文没有碰它们，也没有提交任何东西；需要区分"HEAD 事实"和"工作区现状"的地方，
@@ -7,8 +9,8 @@
 
 ## 一、怎么审的
 
-- **读**：目录结构、`package.json` / `tsconfig.json`、[development.md](development.md) 与
-  [development-log.md](development-log.md)、三条启动链路（`src/boot.ts` / `src/headless.ts` /
+- **读**：目录结构、`package.json` / `tsconfig.json`、[development.md](../development.md) 与
+  [development-log.md](../development-log.md)、三条启动链路（`src/boot.ts` / `src/headless.ts` /
   `src/host/kernel.ts`）、契约层（`src/contract.ts` / `src/services/types.ts`）。
 - **跑**：根、桌面端、界面壳三处 `tsc --noEmit`；`src` 依赖环扫描；跨文件重复块检测；
   新旧界面层文件对相似度；格式统计（缩进 / 引号 / 分号 / 行宽 / 换行符 / 文件头注释）。
@@ -91,7 +93,7 @@ EXIT=2
 ### P0-2　CI 只负责发版，不负责校验
 
 **证据**：`.github/workflows/` 下只有 `release.yml`，做三件事——tag 与两处 `package.json`
-版本对账、npm 发布、打 Windows 安装器。而 [package.json](../package.json) 里的
+版本对账、npm 发布、打 Windows 安装器。而 [package.json](../../package.json) 里的
 `typecheck`、`check:core`、`check:ui`、`check:dsh`、`check:all` **全是手动命令**，
 没有任何 job 调用它们。
 
@@ -587,7 +589,7 @@ node scripts/style-check.mjs                                   # 629 个文件 0
 
 ### 12.2 插件化规范怎么约束这批改法
 
-`ui-shell` 的七个界面插件都在插件边界上，按 [plugin-development.md](plugin-development.md) §10.4.1，
+`ui-shell` 的七个界面插件都在插件边界上，按 [plugin-development.md](../plugin-development.md) §10.4.1，
 界面插件**只许值引用平台种子**（`@dsc/ui` / `@dsc/ui-primitives` / `@dsc/ui-slots` / `@dsc/ui-dockkit`），
 `@dsc/ui-core` 故意不在种子里（它是壳的内部实现）。所以这 8 份不能就地 import 一个 core 文件了事，做法分三层：
 
@@ -731,7 +733,7 @@ node scripts/style-check.mjs                                   # 638 个文件 0
 
 「照某某抄」比干脆不写注释更难被发现——扫重复时很容易读成「有意对齐」，实际含义却是「这份代码没有第二个维护者」。
 
-落点也不是随手选的：插件之间不许互相 import（[plugin-development.md](plugin-development.md) §10.4.1），
+落点也不是随手选的：插件之间不许互相 import（[plugin-development.md](../plugin-development.md) §10.4.1），
 所以浏览器那条链的共用件只能落到 `core/cdp/`。这就是它比别的组晚一批的原因——不是收不了，
 是先得认下落点，而不是在 `browser.ts` 里 `export` 一个函数让 `dock-browser.ts` 直接 import。
 

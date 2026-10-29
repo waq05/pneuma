@@ -1,5 +1,6 @@
 # 上下文与 token 优化技术书（0.6.68 批）
-> 状态：已完成（0.6.68 批，六条线全部落地：microcompact / image-diet / env 缓存位 / request-invariant / 压缩后回插 read-state / 子代理 env + todo 提醒）。§5 验收清单里的复选框是写作时留下的，未回勾。
+
+> 状态：已归档（计划已全部完成，0.6.68 批六条线全部落地）：正文保留原始结论，日期与版本号是写作时锚点。
 
 2026-10-15。对标 codex / dsh(deepseek-harness) / ZCode 三家 agent loop 的请求组装，补 dsc
 （Pneuma）在 **省 token** 与 **能力** 两块上的缺口。本文是施工契约：六条并行线各自的
