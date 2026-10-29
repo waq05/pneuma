@@ -295,8 +295,12 @@
   --dsc-input-max-h: 150px;
   --dsc-tool-detail-max-h: calc(180px * var(--dsc-density));
   /* 会话列宽。ch 量的是数字「0」的宽度，中文一个字约等于两个 ch，
-   * 所以照抄英文的 68ch 会让中文每行只剩 30 字；76ch ≈ 38 个汉字。 */
-  --dsc-thread-max: 76ch;
+   * 所以照抄英文的 68ch 会让中文每行只剩 30 字。
+   *
+   * 2026-10-29 从 76ch（38 个汉字）放到 96ch（48 个汉字，实测 724px）：默认窗口下 76ch
+   * 两侧各空出两百多像素，长代码块与并排的签名折行偏多。这一条只管「没拖过」的默认值，
+   * 用户拖过之后以 --dsc-thread-user-max 为准。 */
+  --dsc-thread-max: 96ch;
   /* 对话区右缘的两条轨道（见 styles.css 末尾「对话区状态与刻度优化」那一区）：
    * --dsc-scrollbar-w 是竖向滚动条占的宽度，必须与 styles/base.css 里
    * `::-webkit-scrollbar { width: 5px }` 保持一致；--dsc-jump-lane 是留给

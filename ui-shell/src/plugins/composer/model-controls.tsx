@@ -400,7 +400,7 @@ export function useModelControls({ channel, onFault, onTakeOver }: ModelControls
   /**
    * 端点前缀放不下就**整段收掉**（对照 ZCode 的 `composer-provider-compact`）。
    *
-   * 为什么必须有：`.composer-zone` 封顶 `--dsc-thread-max`（76ch ≈ 531px），左组三颗 +
+   * 为什么必须有：`.composer-zone` 封顶 `--dsc-thread-max`（默认 96ch ≈ 724px），左组三颗 +
    * 档位 chip + 发送键之后，留给模型 chip 的只有一百多像素；而 `端点/模型` 两段字按这个
    * 种子要 224px。硬塞的结果是**两段都被截**——实机走查截出来是 `Dee… deepseek…`，
    * 等于什么都没说（这恰恰是用户报的那件事）。

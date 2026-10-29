@@ -224,7 +224,7 @@ console.log('[5] 2026-10-26 四项')
 
   // ④ 空会话：列宽跟着用户拖、整页不横向溢出
   check('空态列宽读用户拖过的值（不然空会话拖不动）', /\.thread-main-empty \{\s*--dsc-thread-max: var\(--dsc-thread-user-max, 720px\)/.test(css))
-  check('根上 --dsc-thread-max 也引用同一个用户变量', /:root \{\s*--dsc-thread-max: var\(--dsc-thread-user-max, 76ch\)/.test(css))
+  check('根上 --dsc-thread-max 也引用同一个用户变量', /:root \{\s*--dsc-thread-max: var\(--dsc-thread-user-max, [\d.]+ch\)/.test(css))
   check('拖拽条写的是用户变量（元素级覆盖压不到它）', resizer.includes("setRootVar('--dsc-thread-user-max'") && !resizer.includes("setRootVar('--dsc-thread-max'"))
   check('启动时铺存档也写用户变量', app.includes("setRootVar('--dsc-thread-user-max'"))
   check('整页不横向溢出（右侧栏收起时滑出窗外那块被裁掉）', /\.app \{\s*overflow-x: clip;/.test(css))

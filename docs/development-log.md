@@ -10916,3 +10916,31 @@ B 的空白页上；某个会话的删除命令被钩子拦下，理由却是「
 连带改的三条老探针（语义变了，不是放宽）：`session-open-in-test.mjs` 第 [4] 段从「未落盘也补一行」改成「未落盘既没文件也没行」；`session-model-kernel-test.mjs`、`session-permissions-kernel-test.mjs`、`preset-scope-test.mjs` 在首次切走前补一条用户消息——会话只有说过话才存在，按路径切回才有东西可读。
 
 **一条自查**：`ui-transcript-render-test.mjs` 原来钉的是 `readFold(storeKey, prefs.reasoningOpen)`，第四项改成 `useFoldState` 后断言跟着换，钉的语义没变（展开初值只认用户的档位，直播尾不强制展开）。
+
+## 三十、默认会话列宽从 76ch 放到 96ch（2026-10-29）
+
+用户一句话：「可以把会话默认宽度加大一点」，试过 88ch 那一版之后点名要 **724px**。
+
+默认列宽一直是 `--dsc-thread-max: 76ch`（`ui-shell/src/legacy/tokens.css:299`），按当时的注释是「一行 38 个汉字」。桌面默认窗口下两侧各空两百多像素，长代码块与并排的签名折得偏早。先放到 88ch，实测 664px 仍嫌窄，最后定在 **96ch = 724px**（一行 48 个汉字）。
+
+改的是「没拖过」时的默认值，不碰任何用户存档：
+
+| 文件 | 改动 |
+| --- | --- |
+| `ui-shell/src/legacy/tokens.css` | `--dsc-thread-max: 76ch` → `96ch`，注释写清哪一档是长文宽、为什么放 |
+| `ui-shell/src/styles.css` | 根节点 `var(--dsc-thread-user-max, 76ch)` → `96ch`；空态仍是 720px（比正文再宽一档） |
+
+两个值必须一起改，否则令牌表改了壳里不生效（`:root` 那条在 tokens.css 之后，读的是自己的 fallback）。为此把探针从「写死 76ch」改成**比值断言**：`scripts/ui-thread-resizer-test.mjs` 比对令牌表与根节点的默认值是否相同；`scripts/ui-interaction-base-test.mjs` 的正则不再钉具体数字。以后调默认宽度只改 CSS，探针不用跟着动。
+
+**实机读数**（`desktop/shots/thread-width-shot.ps1`，真空 Electron、临时 HOME、不预置任何宽度）：
+
+| 项 | 读数 |
+| --- | --- |
+| 页面视口 | 1707 × 1019 CSS px |
+| 根节点 `--dsc-thread-max` | `96ch` |
+| 有消息时正文列 / 输入框 | 724px / 723px（同宽） |
+| 空会话首屏 | 720px（没变） |
+| `localStorage['dsc.threadWidth']` | `null`（没拖过，走的是新默认） |
+
+老用户拖过的宽度不受影响：`--dsc-thread-user-max` 优先，双击复位才回到 96ch。
+

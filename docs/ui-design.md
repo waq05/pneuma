@@ -87,7 +87,7 @@ hermes 的 `DESIGN.md` 开头有七条，逐条换成 dsc 的说法：
 | 行几何 | `--dsc-row-h` `--dsc-row-pad-x` `--dsc-row-gap` `--dsc-row-lead` | 32px×密度 / 8 / 6 / 14 | 所有列表行共用；过程行另用 `--dsc-process-row-h`（28px×密度） |
 | 控制尺寸 | `--dsc-ctl` `-sm` `-lg` `--dsc-send` `--dsc-input-min-h` `-max-h` | 24 / 20 / 32 / 26 / 26 / 150 px | 按钮与控制件对齐用 |
 | 标题栏 | `--dsc-titlebar-h` `--dsc-titlebar-btn` `--dsc-titlebar-icon` | 36 / 24 / 13.9 px | 和原生控件条一起算，见 §10 |
-| 版面 | `--dsc-sidebar-w` `--dsc-sidebar-rail` `--dsc-page-inset` `--dsc-page-max` `--dsc-thread-max` | 237px / 56px / clamp(20px,4vw,64px) / 1200px / 76ch | 正文列宽用 `ch`，别写 px |
+| 版面 | `--dsc-sidebar-w` `--dsc-sidebar-rail` `--dsc-page-inset` `--dsc-page-max` `--dsc-thread-max` | 237px / 56px / clamp(20px,4vw,64px) / 1200px / 96ch | 正文列宽用 `ch`，别写 px |
 
 ### 2.4 字体阶梯
 
@@ -175,7 +175,7 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
 
 - 三栏：56px 图标窄栏 → 可拖宽的侧栏（默认 237px）→ 正文列。侧栏和正文列两侧都能拖
   （`ThreadResizer.tsx`，拖出来的宽度写成根元素上的 CSS 变量）。
-- 页面左右留白用 `--dsc-page-inset`，内容最大宽度 `--dsc-page-max`；正文段落宽度 `--dsc-thread-max`（76ch）。
+- 页面左右留白用 `--dsc-page-inset`，内容最大宽度 `--dsc-page-max`；正文段落宽度 `--dsc-thread-max`（96ch，没拖过时的默认值）。
 - 列表行之间**默认不加分隔线**，用间距分开；确实需要时用一条 `--dsc-stroke-3` 发丝线。
 - 顶栏高度和原生控件条联动，见 §10。
 - 面板尺寸与收起状态存在 `panels.ts` 里，重启后恢复（`development.md` §13）。

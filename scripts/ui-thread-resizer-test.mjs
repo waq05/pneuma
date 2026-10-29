@@ -175,7 +175,15 @@ console.log('[2] 样式表里的几何契约')
   const consumers = (read('ui-shell/src/legacy/views.css') + shellCss).match(/max-width: var\(--dsc-thread-max\)/g) ?? []
   check('正文列与输入区都读 --dsc-thread-max（≥2 处）', consumers.length >= 2, String(consumers.length))
   check('输入区的同宽规则打在槽条目里面的元素上', /\.composer-zone > \.slot-entry > \* \{[^}]*max-width: var\(--dsc-thread-max\)/.test(shellCss))
-  check('令牌表里 --dsc-thread-max 有定义（76ch）', /--dsc-thread-max: 76ch;/.test(read('ui-shell/src/legacy/tokens.css')))
+  // 默认列宽写在两处（令牌表 + 壳根节点），两处必须是同一个数，否则改了令牌表壳里不生效。
+  // 断言比值而不是写死数字：调默认宽度时只需改 CSS，探针不用跟着改。
+  const tokenDefault = /--dsc-thread-max:\s*([\d.]+ch);/.exec(read('ui-shell/src/legacy/tokens.css'))?.[1]
+  const rootDefault = /--dsc-thread-max: var\(--dsc-thread-user-max, ([\d.]+ch)\)/.exec(shellCss)?.[1]
+  check(
+    '令牌表与壳根节点的默认列宽是同一个值',
+    tokenDefault !== undefined && tokenDefault === rootDefault,
+    `令牌表 ${String(tokenDefault)} / 根节点 ${String(rootDefault)}`,
+  )
 
   // 幽灵令牌：新加的规则里的 var 都必须在 tokens.css 里定义过（拼错会静默透明）
   const block = emptyInner?.[0] ?? ''
@@ -214,7 +222,7 @@ console.log('[3] 量算契约（thread-resizer.tsx 与 app.tsx 的接线）')
     /\.thread-main-empty \{\s*--dsc-thread-max: var\(--dsc-thread-user-max, 720px\)/.test(read('ui-shell/src/styles.css')),
   )
   check('两条把手挂在 .thread-zone 里（正文列之外那一层）', app.includes('<ThreadResizer width={threadWidth} onCommit={commitThreadWidth} onReset={resetThreadWidth} />'))
-  check('双击复位 = 删存档（回 76ch）', resizer.includes('onDoubleClick={props.onReset}') && app.includes('writeStoredPx(PANEL_KEYS.threadWidth, null)'))
+  check('双击复位 = 删存档（回默认列宽）', resizer.includes('onDoubleClick={props.onReset}') && app.includes('writeStoredPx(PANEL_KEYS.threadWidth, null)'))
 }
 
 console.log(failures === 0 ? '\n全部通过' : `\n${String(failures)} 条失败`)

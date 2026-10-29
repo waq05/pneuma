@@ -980,7 +980,7 @@ shell 候选 5 个，选中的存 renderer 的 `localStorage['dsc.dockShell']`�
 | `dsc.dockWidth` | 右侧 dock 宽 | 300~820，双击复位 420 |
 | `dsc.sidebarWidth` | 左侧侧栏宽 | 200~420，默认取样式表的 `--dsc-sidebar-w` |
 | `dsc.sidebarRail` | 侧栏是否收成 56px 图标窄栏（`Ctrl+B` 切） | `'1'` / `'0'` |
-| `dsc.threadWidth` | 中间正文列宽 | 480 ~（可用宽 − 80），默认取样式表的 `--dsc-thread-max`（76ch） |
+| `dsc.threadWidth` | 中间正文列宽 | 480 ~（可用宽 − 80），默认取样式表的 `--dsc-thread-max`（96ch） |
 
 拖拽逻辑在壳自己的 `ui-shell/src/ui-layout/` 里（从旧渲染层的 `panels.ts` 搬来）：Pointer Capture 攥住指针
 （拖出窗口外再回来还接着拖），移动按 `requestAnimationFrame` 合并，取消就退回原宽。

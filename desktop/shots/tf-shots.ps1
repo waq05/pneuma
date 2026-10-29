@@ -495,7 +495,7 @@ $handleEval = ($head + @'
   const varAfterCommit = document.documentElement.style.getPropertyValue('--dsc-thread-max').trim();
   const storedAfterDrag = localStorage.getItem('dsc.threadWidth');
   proto.setPointerCapture = saved.set; proto.hasPointerCapture = saved.has; proto.releasePointerCapture = saved.rel;
-  // 双击复位：删掉存档，回到样式表默认的 76ch
+  // 双击复位：删掉存档，回到样式表默认的列宽
   right.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, button: 0 }));
   await wait(500);
   const storedAfterReset = localStorage.getItem('dsc.threadWidth');

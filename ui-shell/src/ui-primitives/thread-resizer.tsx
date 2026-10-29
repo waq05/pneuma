@@ -1,6 +1,6 @@
 /**
  * 中间正文列两侧的拖拽条（桌面渲染层 `ThreadResizer.tsx` 的同构移植）：
- * 向外拖对称变宽、向内拖变窄，双击复位成样式表默认的 76ch。
+ * 向外拖对称变宽、向内拖变窄，双击复位成样式表默认的列宽（96ch）。
  *
  * 宽度只写一个 CSS 变量 `--dsc-thread-max`——正文、审批卡、输入框三处都读它
  * （legacy/views.css 里三处 max-width），所以打字的地方和读字的地方永远同宽。
@@ -19,11 +19,11 @@ const COL_START_VAR = '--dsc-thread-col-start'
 const COL_END_VAR = '--dsc-thread-col-end'
 
 export function ThreadResizer(props: {
-  /** 已存档的列宽（px）。null = 还没拖过，用样式表默认的 76ch。 */
+  /** 已存档的列宽（px）。null = 还没拖过，用样式表默认的列宽。 */
   width: number | null
   /** 松手落盘（px）。 */
   onCommit(px: number): void
-  /** 双击复位：删掉存档，回到 76ch。 */
+  /** 双击复位：删掉存档，回到样式表默认的列宽。 */
   onReset(): void
 }): ReactNode {
   /** 把想要的宽度夹成当前能生效的宽度。没存档时取「真实渲染出来的宽」。 */
