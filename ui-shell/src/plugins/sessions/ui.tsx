@@ -321,6 +321,12 @@ function SessionList() {
       setFault(null)
       try {
         await channel.invoke('newSessionIn', [target])
+        // 侧栏这份「最近工作区」要自己补一行（0.7.1 用户报障「能选目录，选完没显示」）：
+        // 它只在挂载时读一次（见本组件上半部的 recentCwds），而空工作区（还没发过消息、
+        // 磁盘上没有 jsonl）**只能**经由这份清单进列表（grouping 的 map.set(dir, [])）。
+        // 少了这一步，点表头那颗 ＋ 选完目录，会话开出来了、侧栏却纹丝不动，
+        // 要等重启或发出第一条消息才出现——看着就像「新建工作区失败」。
+        setRecentCwds((list) => (list.includes(target) ? list : [target, ...list]))
         // 记一笔「最近工作区」：侧栏的空工作区占位与下次冷启动的落点都读它
         // （宿主管会话、桌面主进程管这份记忆，所以由界面显式报一声）。
         void getHostNative().invoke('rememberCwd', [target]).catch(() => undefined)

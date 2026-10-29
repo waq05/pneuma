@@ -70,6 +70,9 @@ try {
   $env:USERPROFILE = $twHome
   $env:HOME = $twHome
   $env:DSC_HOME = Join-Path $twHome '.dsc'
+  # ~/.dsc/desktop.json 走 Electron 的 app.getPath('home')，不读 USERPROFILE/HOME：
+  # 不指这条，窗口记忆（大小/位置/最近工作区）会直接读写用户真实的文件。
+  $env:DSC_DESKTOP_STATE = Join-Path $twHome 'desktop.json'
   $env:DSC_DESKTOP_SHOT_TOPMOST = '1'
   $env:DSC_DESKTOP_SHOT = Join-Path $tw 'thread-width.png'
   $env:DSC_DESKTOP_SHOT_DELAY = '40000'
@@ -100,5 +103,5 @@ try {
 } finally {
   Remove-Item Env:DSC_DESKTOP_SHOT, Env:DSC_DESKTOP_SHOT_DELAY, Env:DSC_DESKTOP_SHOT_EVAL_LEAD,
     Env:DSC_DESKTOP_SHOT_EVAL, Env:DSC_DESKTOP_SHOT_TOPMOST, Env:DSC_DESKTOP_SEARCH,
-    Env:DSC_RESUME_SESSION, Env:DSC_DESKTOP_USER_DATA, Env:DSC_HOME -ErrorAction SilentlyContinue
+    Env:DSC_RESUME_SESSION, Env:DSC_DESKTOP_USER_DATA, Env:DSC_DESKTOP_STATE, Env:DSC_HOME -ErrorAction SilentlyContinue
 }

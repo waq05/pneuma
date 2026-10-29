@@ -1,17 +1,20 @@
-# 添加工作区走查（0.6.44）：「添加工作区」按钮图标断言（dsh 的 add-workspace 同款加号）。
+# 添加工作区走查：「表头那颗 ＋」的图标 + 点完真的出现在侧栏（0.7.1 报障）。
 #
-# 注意：原设计想走 switchCwd('C:\Windows') + openSession 端到端验证「选完目录组立即出现」，
-# 但 restartHost 链路会绕过 USERPROFILE 覆盖——主进程状态（~/.dsc/desktop.json：lastCwd /
-# recentCwds）走 Electron 的 os.homedir()，永远落在真实 HOME（0.6.44 实测污染过一次已还原）。
-# 所以本脚本只做无污染的 DOM 断言，「组立即出现」一环由根侧探针 ws-add-groups-check.mjs
-# 钉住（buildWorkGroups 对 recentCwds 空组的契约）；onChooseDir → switchCwd 全套是渲染层
-# 一行复用（typecheck 保证），端到端装包人工点一遍即可。
-#
-# 断言：
+# 三个断言：
 #   ① 工作区头部第三颗按钮是加号图标（IconPlus 的两条线段 path）+ data-tip「添加工作区」
 #   ② 侧栏 footer 当前目录行仍是文件夹图标（未被误伤）
+#   ③ 端到端：播一条 shell.session.new 事件（与 ＋ 钮选完目录后走的是同一个 newSessionIn），
+#      侧栏要立刻多出这一行、且不弹任何提示条
 #
-# 用法（先在 desktop/ 跑 `pnpm run build`）：
+# ③ 是 0.7.1 用户报障「能选目录，选完没显示」的回归钉：空工作区（还没发过消息、
+# 磁盘上没有 jsonl）只能从界面的 recentCwds 清单进列表，而那份清单只在挂载时读一次。
+# 不补这一行，侧栏要等重启或发出第一条消息才出现，看着就像新建失败。
+#
+# 隔离：临时 HOME + DSC_DESKTOP_STATE 指到临时文件。
+#   ~/.dsc/desktop.json 走 Electron 的 app.getPath('home')，不读 USERPROFILE，
+#   不设 DSC_DESKTOP_STATE 就会读写用户真实的窗口记忆（0.6.44、2026-10-29 各污染过一次）。
+#
+# 用法（先在根目录跑 pnpm run build 与 pnpm -C ui-shell build）：
 #   pwsh -NoProfile -File ws-add-check.ps1
 
 $ErrorActionPreference = 'Stop'
@@ -22,6 +25,15 @@ $waElectron = Join-Path $wa '..\node_modules\electron\dist\electron.exe'
 $waEntry = Join-Path $wa '..\out\main\index.js'
 $waHome = Join-Path $wa 'sound-home'
 
+New-Item -ItemType Directory -Path $waHome -Force | Out-Null
+$waA = Join-Path $waHome 'ws-add-a'
+$waB = Join-Path $waHome 'ws-add-b'
+New-Item -ItemType Directory -Path $waA, $waB -Force | Out-Null
+# 起手只有一个空工作区：③ 要看的是「多出来那一行」，基线越少越好认。
+$waState = Join-Path $waHome 'desktop-state.json'
+@{ lastCwd = $waA; recentCwds = @($waA) } | ConvertTo-Json | Set-Content -LiteralPath $waState -Encoding utf8
+$waBJson = $waB | ConvertTo-Json -Compress
+
 $waEval = @'
 (async () => {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -30,6 +42,8 @@ $waEval = @'
     while (Date.now() < until) { const v = await pred(); if (v) return v; await wait(120); }
     return null;
   };
+  const dirs = () => [...document.querySelectorAll('.group-row .dir')].map((n) => n.textContent);
+  const toasts = () => [...document.querySelectorAll('.dsc-toast__text')].map((n) => n.textContent);
   const started = Date.now();
   try {
     await waitFor(() => document.querySelector('.group-row'), 20000);
@@ -49,14 +63,31 @@ $waEval = @'
     // ② footer 当前目录行保持文件夹图标
     const footerIcon = document.querySelector('.sidebar-footer .row svg path');
     results.footerRow = { present: footerIcon !== null };
+
+    // ③ 选完目录（同一个 newSessionIn）：侧栏立刻多一行，且没有报错提示
+    const before = dirs();
+    window.dispatchEvent(new CustomEvent('shell.session.new', { detail: { cwd: __WSB__ } }));
+    await wait(3000);
+    const after = dirs();
+    const activeRow = document.querySelector('.group-row.active .dir');
+    results.liveAdd = {
+      before,
+      after,
+      added: after.includes('ws-add-b'),
+      grewBy: after.length - before.length,
+      active: activeRow === null ? null : activeRow.textContent,
+      toasts: toasts(),
+    };
     return { ...results, ms: Date.now() - started };
   } catch (error) {
     return { case: 'ws-add-check', error: String(error), ms: Date.now() - started };
   }
 })()
 '@
+$waEval = $waEval.Replace('__WSB__', $waBJson)
 
 $env:DSC_DESKTOP_USER_DATA = Join-Path $waHome 'electron-userdata'
+$env:DSC_DESKTOP_STATE = $waState
 $env:USERPROFILE = $waHome
 $env:HOME = $waHome
 $env:SOUND_FAKE_KEY = 'e2e-fake-key'
@@ -88,5 +119,6 @@ Select-String -LiteralPath $errLog -Pattern '预跑脚本完成|预跑脚本失�
   ForEach-Object { '  ' + $_.Line }
 
 Remove-Item Env:DSC_DESKTOP_SHOT, Env:DSC_DESKTOP_SHOT_DELAY, Env:DSC_DESKTOP_SHOT_EVAL_LEAD,
-  Env:DSC_DESKTOP_SHOT_EVAL, Env:DSC_DESKTOP_USER_DATA, Env:SOUND_FAKE_KEY -ErrorAction SilentlyContinue
+  Env:DSC_DESKTOP_SHOT_EVAL, Env:DSC_DESKTOP_USER_DATA, Env:DSC_DESKTOP_STATE,
+  Env:SOUND_FAKE_KEY -ErrorAction SilentlyContinue
 Write-Output '走查完成'

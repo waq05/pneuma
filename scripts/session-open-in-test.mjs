@@ -202,6 +202,14 @@ console.log('\n[7] 源码钉：进程 cwd 不再当数据用的那几处')
   check('壳：整个会话列表插件不再调 switchCwd（反证：整页重载那条路已撤）', !sessions.includes("invoke('switchCwd'"))
   check('壳：添加工作区用无副作用的 pickDirectory', sessions.includes("native.invoke<string>('pickDirectory')"))
   check('壳：新建成功顺手记一笔最近工作区', sessions.includes("invoke('rememberCwd', [target])"))
+  // 0.7.1 用户报障「能选目录，选完没显示」：空工作区只从 recentCwds 这份清单进列表，
+  // 而它在挂载时只读一次——不在这里补一行，侧栏要等重启或发出第一条消息才出现。
+  // 顺序也要钉：补行必须在上面的 newSessionIn **之后**，失败（目录不可用）时不能留空壳。
+  {
+    const invokeAt = sessions.indexOf("channel.invoke('newSessionIn', [target])")
+    const patchAt = sessions.indexOf('setRecentCwds((list) => (list.includes(target) ? list : [target, ...list]))')
+    check('壳：新建之后把目录补进侧栏的最近工作区（空工作区立刻出现）', patchAt > invokeAt && invokeAt >= 0)
+  }
   check('桥：两条新操作在白名单里', bridge.includes("'pickDirectory',") && bridge.includes("'rememberCwd',"))
   check('桥：规格齐（取目录零实参、记账一个路径）', bridge.includes('pickDirectory: [],') && bridge.includes('rememberCwd: [{ shape: { kind: \'string\', max: MAX_PATH } }],'))
   check('桌面：pickDirectory 只弹框（不动宿主）', desktopMain.includes('async function pickDirectory(): Promise<string>'))

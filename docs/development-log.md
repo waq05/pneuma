@@ -10944,3 +10944,34 @@ B 的空白页上；某个会话的删除命令被钩子拦下，理由却是「
 
 老用户拖过的宽度不受影响：`--dsc-thread-user-max` 优先，双击复位才回到 96ch。
 
+
+## 三十一、新建工作区之后侧栏不出现（2026-10-29，0.7.1 报障）
+
+用户截图圈了工作区表头那颗 ＋，一句话：「能选目录，但选完没有显示」。系统选目录框是正常弹出来的，选完什么都没有——不是报错，是静默不动。
+
+**复现**（真 Electron、临时 HOME、不碰用户的会话；播一条 `shell.session.new` 事件，与 ＋ 钮选完目录后走的是同一个 `newSessionIn`）：
+
+| 时刻 | 侧栏工作区 | 提示条 |
+| --- | --- | --- |
+| 点之前 | 10 个（dsc / dsh / test / waq / 秋招 …） | 无 |
+| 点之后 | 还是 10 个，顺序都没变 | 无（一条都没有，所以用户只能看着像「失败」） |
+
+同时主界面确实切到了一条新会话，原生桥的 `recentCwds` 也把新目录排到了第一位。也就是说会话开出来了、记忆也记下了，只有侧栏那一行没出来。
+
+**根因**（三处拼起来才成立）：
+
+1. 空工作区（还没发过消息、磁盘上没有 jsonl）**只能**从界面的 `recentCwds` 清单进列表：`ui-shell/src/plugins/sessions/grouping.ts:156` 的 `map.set(dir, [])`。
+2. 那份清单只在会话插件挂载时读一次：`ui-shell/src/plugins/sessions/ui.tsx:217-225`。
+3. `newSessionIn` 成功之后只写了原生桥的记忆（`ui.tsx:326` 的 `rememberCwd`），**没更新界面自己的状态**；对照删除工作区那条路（`ui.tsx:358` 的 `setRecentCwds(filter)`）是改了状态的——两边不对称，漏的就是新建这一条。
+
+结果：新工作区要等重启（重新读一次 recentCwds）或发出第一条消息（会话落盘，按 cwd 兜底成组）才出现。同一个坑旧渲染层犯过一次（见本文 1427 行那段 `onChooseDir` 只 `setCwd` 的记录），新壳这次是把 `recentCwds` 前插那一步又丢了。
+
+**修法**：`newSessionIn` 在 `await channel.invoke('newSessionIn', [target])` **成功之后**补一行前插，数组去重（重复选同一目录不会出两行）。放在 await 之后而不是之前，是因为宿主会校验目录（`src/plugins/session.ts` 的 `usableDir`，不合法抛「工作目录不可用」），失败时不该在侧栏留个空壳。
+
+**回归钉**：
+
+- `scripts/session-open-in-test.mjs`：源码钉「补行必须发生在 newSessionIn 之后」，顺序一起验——防止有人把补行挪到 await 前面，又变成选错目录也留一行。
+- `desktop/shots/ws-add-check.ps1` 第 ③ 段改成端到端：临时 `DSC_DESKTOP_STATE` 里起手只有空工作区 `ws-add-a`，播事件之后要求侧栏变成 `["ws-add-b","ws-add-a"]`、活动行是 `ws-add-b`、没有任何提示条。修复后实测 `{"before":["ws-add-a"],"after":["ws-add-b","ws-add-a"],"added":true,"grewBy":1,"active":"ws-add-b","toasts":[]}`，耗时 3.8 秒。
+
+**顺带修的隔离问题**：`~/.dsc/desktop.json` 走 Electron 的 `app.getPath('home')`，**不读 `USERPROFILE`/`HOME`**，而 `desktop/shots/*.ps1` 原来只重定向 HOME——等于每个截图脚本都在读写用户真实的窗口记忆。我这次排查就往里写进了一条测试目录（`ws-probe-3`），已经从 `lastCwd` 与 `recentCwds` 里还原（`lastCwd` 回到 `D:\code\quiz-master\test-quiz-master`，`recentCwds` 回到 10 条）。`desktop/electron/main/dsc-core.ts:55-65` 本来就有 `DSC_DESKTOP_STATE` 这个开关，`ws-add-check.ps1` 与 `thread-width-shot.ps1` 现在都指到临时文件；其余几十个老脚本还没补，属待办（只影响自检隔离，不影响产品）。
+
