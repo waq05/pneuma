@@ -10975,3 +10975,50 @@ B 的空白页上；某个会话的删除命令被钩子拦下，理由却是「
 
 **顺带修的隔离问题**：`~/.dsc/desktop.json` 走 Electron 的 `app.getPath('home')`，**不读 `USERPROFILE`/`HOME`**，而 `desktop/shots/*.ps1` 原来只重定向 HOME——等于每个截图脚本都在读写用户真实的窗口记忆。我这次排查就往里写进了一条测试目录（`ws-probe-3`），已经从 `lastCwd` 与 `recentCwds` 里还原（`lastCwd` 回到 `D:\code\quiz-master\test-quiz-master`，`recentCwds` 回到 10 条）。`desktop/electron/main/dsc-core.ts:55-65` 本来就有 `DSC_DESKTOP_STATE` 这个开关，`ws-add-check.ps1` 与 `thread-width-shot.ps1` 现在都指到临时文件；其余几十个老脚本还没补，属待办（只影响自检隔离，不影响产品）。
 
+
+## 三十二、提问卡超时后再答不动、轨迹页表头重叠（2026-10-29，0.7.1 报障）
+
+用户两张截图、两句话：一是「回答超时后发送回答，AI 不能自动继续对话」，二是「时间轴和信息重叠」。
+
+**症状一：提问卡等 120 秒就被掐死，之后用户再答也没有人接。**
+
+复现现场在会话 `1e79386c`（D:\\code\\quiz-master\\test-quiz-master）：13:51 模型在 `run_code` 里调 `sdk.ask_user` 挂出三题，13:53 脚本被判超时，结果正文写「脚本跑了超过 120 秒，被掐断了」，模型只好把三个问题改用正文重问；13:57 用户在卡片上把三题都答了，界面把答案写进了工具卡，**对话一动不动**——那一轮在 13:53 就已经收尾了。
+
+三处拼起来才成立：
+
+| 位置 | 事实 |
+| --- | --- |
+| `src/core/ptc.ts:35` | PTC 脚本整段时限 `deadlineMs = 120_000` |
+| `src/plugins/ptc.ts:237-250`（旧） | 这 120 秒是**墙钟**：`setTimeout` 从脚本起跑开始算，在提问卡上等人的时间照扣 |
+| `src/plugins/ask.ts:143`（旧） | 提问卡自己没有时限，脚本死了它也不撤——卡还在 `pendings` 里挂着，用户答得进去 |
+
+于是 `answerQuestion` 把答案 resolve 给了一个已经没人等的 Promise，模型永远收不到。
+
+**修法（一处根因、两处配套）**：
+
+1. `src/core/tools.ts` 的 `ToolEntry` 加 `waitsForHuman`，`ask_user` 置 `true`——「这个工具跑起来是在等人」由工具自己声明，不靠猜名字。
+2. `src/plugins/ptc.ts` 把一次性 `setTimeout` 换成可暂停的 `createDeadline`：守卫链弹审批卡、工具声明了 `waitsForHuman` 时停表，人答完再接着走。停表是**协作式**的——脚本自己 `await sleep(60000)` 照样计入时限，跑飞了还是会被掐断（新探针里有一条反例钉这个）。
+3. `src/plugins/ask.ts` 加提问卡自己的时限 `ask.waitMs`：缺省 900000（15 分钟），夹在 10 秒~1 小时，每次挂卡现读（与审批卡同一套写法，`src/plugins/approval.ts:57-69`）。等满了自己收尾：**卡片撤掉**，替没答的题写「（等了 15 分钟，用户没有回答这一题）」交给模型，模型接着往下走。
+4. `ask_user` 的工具描述写明时限，并点明那句「用户没有回答」不是用户说的话——防止模型把它当答案。
+
+**取舍（用户拍板）**：超时之后提问卡**不留**。它一留就是一张没人管的卡，还得再设计「超时后作答算新消息」的那条路；用户随后在输入框里回复就是一条普通新回合，模型自然接着聊。
+
+**症状二：轨迹页的时间概览条与工具栏钉在同一行。**
+
+| 位置 | 事实 |
+| --- | --- |
+| `ui-shell/src/legacy/views.css:10264` | `.trace-timeline`：`position: sticky; top: 0; z-index: 2` |
+| `ui-shell/src/legacy/views.css:1739` | `.trace-stats`：同样 `sticky; top: 0`，还有 `z-index: 3` 与半透明底 + `backdrop-filter` |
+
+两条都钉在滚动区顶点，工具栏（z 3）压在概览条（z 2）上，半透明底再让下面滚过去的行透上来——截图里「时间概览 13:48:48 - 13:59」与「2 轮 43 次工具调用」挤在一行、背后还有别行的字。为什么以前没露：概览条是后加的（本文件后面那一整段「轨迹页对标 dsh 改版」），加的时候没跟老工具栏对表。
+
+**修法**：`ui-shell/src/plugins/trace/ui.tsx` 把两块包进 `.trace-head`，吸附由这一层统一负责（不透明页面底 + 12px 补缝），`.trace-stats` 去掉自己的 `sticky`/`z-index`/模糊。顺序与间距回到普通流，滚过去的内容一律被不透明底挡住。
+
+**回归钉**：`scripts/ask-timeout-test.mjs`（12 条，进 `check:core`）：① 时限读数按配置走并夹到 10 秒、描述指明「不是用户说的话」、ask_user 声明 `waitsForHuman`；② 脚本里等提问卡超过脚本时限两倍仍活着，答完拿到答案且结果里没有「被掐断」；反例——不等人时 `await sleep(600)` 照样被掐断；③ 等满时限后卡片为 `null`、答案是「没回答」的实话、写了等多久；④ 时限内作答照旧一次交回、没有二次收尾。
+
+**验证读数**（按用户要求只跑改动相关的那几条，不跑全量电池）：
+
+- `node scripts/ask-timeout-test.mjs` 12/12 通过；等满时限那条实测约 10.0 秒（配置写 1 秒被夹到下限 10 秒，顺带验了夹取）。
+- `desktop/shots/trace-shots.ps1 -Only trace-static`：种子内容不够高、滚动区滚不动，探针临时把滚动区压矮再量，读到 `{"scrolled":true,"squeezed":true,"gap":8,"stuck":true,"opaque":true,"barHeight":44,"statsHeight":37}`——两块之间 8px 间距（就是设计里的那条 margin）、概览条吸在滚动区顶端、吸附块底色不透明；`headerNoOverlap: true`。真实 `~/.dsc` 跑前跑后指纹一致（454 个文件）。
+- `node desktop/shots/trace-check.mjs` 新增两条源码钉：`.trace-head` 吸附且 `.trace-stats` 不再自己 `sticky`；吸附块底色不透明。
+- `pnpm run build` 0 错；`pnpm -C ui-shell build`（含 `tsc --noEmit`）通过，19 份插件产物重建；`pnpm run style:check` 628 个文件通过。

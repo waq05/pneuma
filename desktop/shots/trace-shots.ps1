@@ -193,6 +193,57 @@ $traceEvalBody = @'
   chat.scrollTop = chat.scrollHeight - chat.clientHeight - scrollUpBy;
   await wait(700);
   const awayAfterScrollUp = chat.scrollHeight - chat.clientHeight - chat.scrollTop;
+
+  // ── 表头叠层：时间概览条与工具栏不许互相压住（2026-10-29 报障） ──
+  // 只有滚起来才会露出来：两块原来各写 sticky top: 0，滚动之后钉在同一行，
+  // 工具栏那层半透明底还把下面滚过去的行透上来。这里量三件事：
+  // 两块之间的间隙 ≥ 0（没压住）、概览条吸在滚动区顶端、吸附块底色不透明。
+  const headerGeom = await (async () => {
+    const bar = document.querySelector('.trace-timeline');
+    const stats = document.querySelector('.trace-stats');
+    if (bar === null || stats === null) return null;
+    // 种子内容不高时滚动区根本滚不动（scrollLimit = 0），叠层就露不出来：
+    // 临时把滚动区压矮、滚到 200px 再量，量完原样还原（只影响这一次测量）。
+    const restoreHeight = chat.style.height;
+    const restoreFlex = chat.style.flex;
+    let squeezed = false;
+    if (chat.scrollHeight <= chat.clientHeight + 8) {
+      chat.style.flex = 'none';
+      chat.style.height = '320px';
+      squeezed = true;
+    }
+    const wasAt = chat.scrollTop;
+    chat.scrollTop = 200;
+    await wait(120);
+    const looked = chat.scrollTop;
+    const b = bar.getBoundingClientRect();
+    const s = stats.getBoundingClientRect();
+    const c = chat.getBoundingClientRect();
+    const head = document.querySelector('.trace-head');
+    const bg = head === null ? '' : getComputedStyle(head).backgroundColor;
+    const alpha = (() => {
+      const m = /rgba?\(([^)]+)\)/.exec(bg);
+      if (m === null) return 1;
+      const parts = m[1].split(',').map((v) => Number(v.trim()));
+      return parts.length >= 4 ? parts[3] : 1;
+    })();
+    const out = {
+      scrolled: looked >= 100,
+      squeezed,
+      gap: Math.round(s.top - b.bottom),
+      stuck: Math.abs(b.top - c.top) <= 24,
+      opaque: alpha >= 0.99,
+      barHeight: Math.round(b.height),
+      statsHeight: Math.round(s.height),
+    };
+    chat.scrollTop = wasAt;
+    if (squeezed) {
+      chat.style.height = restoreHeight;
+      chat.style.flex = restoreFlex;
+    }
+    return out;
+  })();
+
   // 内容不足以滚出 120px（暂停阈值）时，「持住」没法量，记成跳过而不是失败——
   // 短会话本来就不存在「滚离底部」这个状态，跟随后面回到贴底照旧要验。
   const heldAfterScrollUp = scrollLimit < 150
@@ -335,6 +386,8 @@ $traceEvalBody = @'
     rows: rowInfo,
     colors: { failed: failedColor, rejected: rejectedColor, ok: okColor },
     follow: { atBottomOnLoad, heldAfterScrollUp, backAtBottom, followButtonCount, diag: { scrollLimit, scrollUpBy, awayAfterScrollUp } },
+    headerGeom,
+    headerNoOverlap: headerGeom !== null && headerGeom.scrolled && headerGeom.gap >= 0 && headerGeom.stuck && headerGeom.opaque,
     selection,
     toolPanel, rawToggle, copyToast, closedByX,
     systemPanel, closedByScrim,

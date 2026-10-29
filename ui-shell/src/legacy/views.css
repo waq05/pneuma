@@ -1748,12 +1748,9 @@
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-caption);
   font-variant-numeric: tabular-nums;
-  /* 工具条吸顶（对照 dsh 的 sticky 工具栏）：长会话滚下去之后搜索框还在手边。
-     fill-quinary 是半透明底，配一层背景模糊把下面滚过去的行糊掉，文字才不叠字。 */
-  position: sticky;
-  top: 0;
-  z-index: 3;
-  backdrop-filter: blur(8px);
+  /* 吸附不归它管（2026-10-29）：整条工具栏与时间概览条一起包在 .trace-head 里吸附。
+     以前它自己也写 sticky top: 0，两条钉在同一个位置，工具栏压在概览条上，
+     半透明底还让下面滚过去的行透上来——用户看到的就是「时间轴和信息重叠」。 */
 }
 
 .trace-stats > span {
@@ -10261,10 +10258,34 @@ body.resizing iframe {
   min-width: 0;
 }
 
+/* ── 轨迹页的吸附表头 ──
+   时间概览条与工具栏（.trace-stats）包在同一个盒子里一起吸附。
+   为什么要包一层（2026-10-29 报障）：两块原来各写 sticky top: 0，钉在同一行互相压住，
+   工具栏那层半透明底再把下面滚过去的行透上来，看着就是「时间轴和信息重叠」。
+   整块吸附之后，顺序与间距全由普通流决定，滚过去的内容一律被这块不透明底挡住。 */
+.trace-head {
+  background: var(--dsc-bg-page);
+  flex: none;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+
+/* 补上 .chat 顶部那 12px 内距的缝（与 .trace-timeline::before 同一个原因、同一个高度）。 */
+.trace-head::before {
+  background: var(--dsc-bg-page);
+  bottom: 100%;
+  content: '';
+  height: 12px;
+  left: 0;
+  position: absolute;
+  right: 0;
+}
+
 /* ── 时间概览条 ──
-   固定高度 44px（需求给的 36~48px 档），sticky 贴在滚动区顶端；底色必须不透明，
-   否则滚过去的记录会从条底透出来。::before 补上 .chat 顶部那 12px 内距的缝——
-   与工具卡吸附快捷栏（.tc-bar.stuck）补缝是同一个原因、同一个高度。 */
+   固定高度 44px（需求给的 36~48px 档）；底色必须不透明，否则滚过去的记录会从条底透出来。
+   它仍然自己 sticky：表头整块吸住之后它不会再挪动，留着这一条是为了「只有时间条」的
+   场景（组件单独使用时）也贴得住。 */
 .trace-timeline {
   background: var(--dsc-bg-page);
   border: 1px solid var(--dsc-stroke-4);

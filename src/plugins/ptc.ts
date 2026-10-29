@@ -53,6 +53,69 @@ const RUN_CODE_DESCRIPTION = `用一段 JavaScript 批量调用工具，在代�
 - 交回的内容超过 ${PTC_LIMITS.resultMax} 字符会被截断：先在代码里把结果压小，再 return 摘要。
 - 同进程 vm 里跑：拿不到 process / require / 文件系统，唯一的出口就是 sdk。`
 
+/**
+ * 可暂停的脚本时限。
+ *
+ * 为什么不能只用一个 `setTimeout`：脚本里 `await sdk.ask_user(...)`、等待审批卡的时候，
+ * 那是在**等人**，不该算进「脚本跑了多久」。用户在一张卡上想三分钟，120 秒的表先响，
+ * 脚本被掐死；他把答案点完，交回来的答案已经没有人在接了——2026-10-29 报障的形状。
+ *
+ * 停表是协作式的：只有认得出来的等待（工具声明了 `waitsForHuman`、守卫链弹审批卡）
+ * 才走 `hold()`；脚本自己 `await sleep(60000)` 照样计入时限，跑飞了还是会被掐断。
+ * @param ms - 脚本的总时限（毫秒）。
+ */
+function createDeadline(ms: number): {
+  /** 到点就 reject 的 Promise：与脚本、中断信号一起 race。 */
+  promise: Promise<never>
+  /** 在这段等待期间停表，结束后接着走（嵌套调用按最外层计）。 */
+  hold<T>(fn: () => Promise<T>): Promise<T>
+  /** 收尾：撤掉计时器，之后的 resume 不再重新上表。 */
+  stop(): void
+} {
+  let expire: (error: Error) => void = () => {}
+  const promise = new Promise<never>((_resolve, reject) => {
+    expire = reject
+  })
+  /** 还剩多少毫秒。停表时扣掉已经走过的部分，续表时按它重新上表。 */
+  let remaining = ms
+  /** 当前嵌了几层等待（守卫链与工具本体可能同时停表）。 */
+  let waiting = 0
+  /** 本次上表的起点（算「已经走了多久」用）。 */
+  let startedAt = 0
+  let timer: NodeJS.Timeout | undefined
+  let closed = false
+  const arm = (): void => {
+    startedAt = Date.now()
+    timer = setTimeout(() => {
+      timer = undefined
+      expire(new Error(`脚本跑了超过 ${Math.round(ms / 1000)} 秒，被掐断了`))
+    }, Math.max(0, remaining))
+  }
+  arm()
+  return {
+    promise,
+    async hold<T>(fn: () => Promise<T>): Promise<T> {
+      waiting += 1
+      if (waiting === 1 && timer !== undefined) {
+        clearTimeout(timer)
+        timer = undefined
+        remaining = Math.max(0, remaining - (Date.now() - startedAt))
+      }
+      try {
+        return await fn()
+      } finally {
+        waiting -= 1
+        if (waiting === 0 && !closed && timer === undefined) arm()
+      }
+    },
+    stop(): void {
+      closed = true
+      if (timer !== undefined) clearTimeout(timer)
+      timer = undefined
+    },
+  }
+}
+
 export const ptcPlugin: Plugin.Object = {
   name: 'ptc',
   inject: ['tools', 'guards', 'transcript'],
@@ -81,6 +144,8 @@ export const ptcPlugin: Plugin.Object = {
       const logs: string[] = []
       let calls = 0
       let trouble: string | undefined
+      // 整段脚本的时限（等人时停表，见 createDeadline 的注释）
+      const deadline = createDeadline(PTC_LIMITS.deadlineMs)
 
       /**
        * T38 读写闸（对齐 dsh 的「mutating calls run alone」）：写/执行调用独占——
@@ -152,16 +217,19 @@ export const ptcPlugin: Plugin.Object = {
         // 原因见文件头第 2 条；日志靠结果正文里的调用清单留底）。
         // 带归属：脚本可能是后台会话在跑，卡片只能落在它自己的视图里（切走了就不画）。
         ctx.transcript.emit({ type: 'tool/call', callId, name, args: JSON.stringify(args) }, session.id)
-        const verdict = await ctx.guards.gate({
-          toolName: name,
-          risk: entry.risk,
-          cwd,
-          args,
-          signal,
-          sessionId: session.id,
-          sessionPath: session.path,
-          ...callFacts(args, cwd),
-        })
+        // 守卫链可能弹审批卡：等人点卡的时间同样不算脚本时间
+        const verdict = await deadline.hold(() =>
+          ctx.guards.gate({
+            toolName: name,
+            risk: entry.risk,
+            cwd,
+            args,
+            signal,
+            sessionId: session.id,
+            sessionPath: session.path,
+            ...callFacts(args, cwd),
+          }),
+        )
         if (verdict.action === 'deny') {
           records.push({ name, args: argsSummary(args), ms: Date.now() - started, ok: false, note: verdict.reason })
           ctx.transcript.emit(
@@ -172,8 +240,11 @@ export const ptcPlugin: Plugin.Object = {
         }
         try {
           // T38：写/执行走独占闸，只读走并发闸（闸的规矩见上面的注释）
-          const execute = (): ReturnType<typeof entry.run> =>
+          const run = (): ReturnType<typeof entry.run> =>
             entry.run(args, { cwd, signal, sessionId: session.id, sessionPath: session.path })
+          // 声明了 waitsForHuman 的工具（提问卡）整段等待停表：用户想多久都不算脚本时间
+          const execute = (): ReturnType<typeof entry.run> =>
+            entry.waitsForHuman === true ? deadline.hold(run) : run()
           const output = entry.risk === 'read' ? await gate.read(execute) : await gate.write(execute)
           const raw = typeof output === 'string' ? output : output.text
           // 工具结果里的密钥形状字符串不进脚本、不进日志（遮红挂在观察者链上）
@@ -228,7 +299,6 @@ export const ptcPlugin: Plugin.Object = {
       const context = vm.createContext(sandbox, { name: 'dsc-ptc' })
 
       let value: unknown
-      let deadline: NodeJS.Timeout | undefined
       try {
         // 脚本就是一段函数体，套一层异步立即执行函数之后顶层可以直接 await
         const script = new vm.Script(`(async () => {\n${code}\n})()`, { filename: 'dsc-ptc.js' })
@@ -236,12 +306,7 @@ export const ptcPlugin: Plugin.Object = {
         // runInContext 的 timeout 只管同步段；await 之后的时间靠这条总时限兜住
         value = await Promise.race([
           Promise.resolve(started),
-          new Promise((_resolve, reject) => {
-            deadline = setTimeout(
-              () => reject(new Error(`脚本跑了超过 ${Math.round(PTC_LIMITS.deadlineMs / 1000)} 秒，被掐断了`)),
-              PTC_LIMITS.deadlineMs,
-            )
-          }),
+          deadline.promise,
           new Promise((_resolve, reject) => {
             const abort = (): void => reject(new Error('用户打断了这一轮，脚本停止'))
             if (signal.aborted) abort()
@@ -251,7 +316,7 @@ export const ptcPlugin: Plugin.Object = {
       } catch (error) {
         trouble = error instanceof Error ? error.message : String(error)
       } finally {
-        if (deadline !== undefined) clearTimeout(deadline)
+        deadline.stop()
       }
 
       return ptcResultBody({ value, calls: records, logs, ...(trouble !== undefined ? { trouble } : {}) })

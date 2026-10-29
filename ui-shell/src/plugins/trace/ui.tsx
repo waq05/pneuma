@@ -328,72 +328,76 @@ function TraceView(props: SlotComponentProps): ReactNode {
     <div className="trace-page">
       <div className="chat" ref={scroller}>
         <div className="chat-inner trace">
-          <TraceTimeline
-            marks={model.marks}
-            boundaries={model.boundaries}
-            spanStart={model.spanStart}
-            spanEnd={model.spanEnd}
-            selected={selected}
-            selectedCount={hitIds.size}
-            resetKey={sessionPath ?? ''}
-            onSelect={setSelected}
-          />
+          {/* 时间概览条与工具栏包成一块吸附（.trace-head）：两块各自 sticky top:0 会叠住，
+              工具栏的半透明底还会把下面滚过去的行透上来。 */}
+          <div className="trace-head">
+            <TraceTimeline
+              marks={model.marks}
+              boundaries={model.boundaries}
+              spanStart={model.spanStart}
+              spanEnd={model.spanEnd}
+              selected={selected}
+              selectedCount={hitIds.size}
+              resetKey={sessionPath ?? ''}
+              onSelect={setSelected}
+            />
 
-          <div className="trace-stats" data-trace-query={search === null ? undefined : '1'}>
-            <span>{rounds.length} 轮</span>
-            <span>{toolCount} 次工具调用</span>
-            {usage !== null && (
-              <span>
-                <IconCoins size={12} /> {formatTokens(usage)} tok
-              </span>
-            )}
-            {selected !== null && (
-              <span className="trace-focus-chip" data-trace-focus="1">
-                已聚焦区间内 {hitIds.size} 步
-              </span>
-            )}
-            {search !== null && (
-              <span className="trace-focus-chip" data-trace-search-count="1">
-                搜索命中 {search.count} 步
-              </span>
-            )}
-            <button className="text-btn trace-toggle-all" onClick={toggleAll}>
-              {allOpen ? '全部折叠' : '全部展开'}
-            </button>
-            {/* 搜索（对照 dsh 的工具栏搜索框）：命中步骤高亮，未命中的轮先收起来。 */}
-            <span className="trace-search">
-              <IconSearch size={12} />
-              <input
-                type="search"
-                className="trace-search-input"
-                data-trace-search="1"
-                placeholder="搜索步骤（工具名、参数、输出…）"
-                aria-label="搜索轨迹里的步骤"
-                value={query}
-                onChange={(event) => {
-                  setQuery(event.currentTarget.value)
-                }}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Escape') return
-                  event.stopPropagation()
-                  setQuery('')
-                }}
-              />
-              {query === '' ? null : (
-                <button
-                  type="button"
-                  className="trace-search-clear"
-                  data-trace-search-clear="1"
-                  data-tip="清空搜索（Esc 也行）"
-                  aria-label="清空搜索"
-                  onClick={() => {
+            <div className="trace-stats" data-trace-query={search === null ? undefined : '1'}>
+              <span>{rounds.length} 轮</span>
+              <span>{toolCount} 次工具调用</span>
+              {usage !== null && (
+                <span>
+                  <IconCoins size={12} /> {formatTokens(usage)} tok
+                </span>
+              )}
+              {selected !== null && (
+                <span className="trace-focus-chip" data-trace-focus="1">
+                  已聚焦区间内 {hitIds.size} 步
+                </span>
+              )}
+              {search !== null && (
+                <span className="trace-focus-chip" data-trace-search-count="1">
+                  搜索命中 {search.count} 步
+                </span>
+              )}
+              <button className="text-btn trace-toggle-all" onClick={toggleAll}>
+                {allOpen ? '全部折叠' : '全部展开'}
+              </button>
+              {/* 搜索（对照 dsh 的工具栏搜索框）：命中步骤高亮，未命中的轮先收起来。 */}
+              <span className="trace-search">
+                <IconSearch size={12} />
+                <input
+                  type="search"
+                  className="trace-search-input"
+                  data-trace-search="1"
+                  placeholder="搜索步骤（工具名、参数、输出…）"
+                  aria-label="搜索轨迹里的步骤"
+                  value={query}
+                  onChange={(event) => {
+                    setQuery(event.currentTarget.value)
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Escape') return
+                    event.stopPropagation()
                     setQuery('')
                   }}
-                >
-                  <IconClose size={10} />
-                </button>
-              )}
-            </span>
+                />
+                {query === '' ? null : (
+                  <button
+                    type="button"
+                    className="trace-search-clear"
+                    data-trace-search-clear="1"
+                    data-tip="清空搜索（Esc 也行）"
+                    aria-label="清空搜索"
+                    onClick={() => {
+                      setQuery('')
+                    }}
+                  >
+                    <IconClose size={10} />
+                  </button>
+                )}
+              </span>
+            </div>
           </div>
 
           {search !== null && search.count === 0 ? (

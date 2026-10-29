@@ -170,6 +170,13 @@ const at = (needle) => js.indexOf(needle)
   check('时间条：组件与轨道在（trace-timeline / ttl-track）', js.includes('trace-timeline') && js.includes('ttl-track'))
   check('时间条：固定在记录表上方（sticky + 不参与压缩）', hasDecl('.trace-timeline', 'position', 'sticky') && hasDecl('.trace-timeline', 'flex', 'none'))
   check('时间条：高度落在 36~48px 档（44px × 密度）', hasDecl('.trace-timeline', 'height', '44px'), ruleOf('.trace-timeline')?.body)
+  // 2026-10-29 报障「时间轴和信息重叠」：两块原来各写 sticky top: 0，滚动之后钉在同一行。
+  check(
+    '表头：概览条与工具栏一起吸附（.trace-head sticky），工具栏不再各自钉顶点',
+    hasDecl('.trace-head', 'position', 'sticky') && !hasDecl('.trace-stats', 'position', 'sticky'),
+    ruleOf('.trace-stats')?.body,
+  )
+  check('表头：吸附块有不透明底（滚过去的行不许透字）', hasDecl('.trace-head', 'background', 'dsc-bg-page'))
   check('时间条：有宽度的条（ttl-bar）与只画起点的刻度（ttl-tick）分两种', js.includes('ttl-bar') && js.includes('ttl-tick'))
   check('时间条：轮次边界画分隔刻度（ttl-sep）', js.includes('ttl-sep') && js.includes('data-trace-boundary'))
   check('时间条：悬停提示与 500ms 延迟', js.includes('ttl-tip') && /HOVER_DELAY_MS = 500/.test(timelineSrc))

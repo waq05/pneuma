@@ -750,6 +750,7 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 | 压缩保留的最近消息条数 | 缺省 20 条，夹在 5~200；可配 `compact.keepRecent`，设置「上下文压缩」分区就能改 | `src/plugins/compact.ts:38-43`、`src/core/compact.ts:27` |
 | 审批卡等多久没人答 | 缺省 300 秒，夹在 10 秒~1 小时；可配 `approval.approvalTimeoutMs`，每次弹卡现读。**没人能应答时不等这个值**：没有 `interactive` 服务（tui / host-stdio 登记）且本进程不是终端直连时，直接按拒处理并写明理由 | `src/plugins/approval.ts:42-56`、`:116-128` |
 | 模型一次最多问几题 / 每题几个选项 | 缺省 3 题 / 每题 4 项，都夹在 1~8；可配 `ask.maxQuestions` / `ask.maxOptions` | `src/plugins/ask.ts` |
+| 提问卡等多久算没人答 | 缺省 900 秒（15 分钟），夹在 10 秒~1 小时；可配 `ask.waitMs`，每次挂卡现读。等满了卡片撤掉、模型拿到「用户没有回答」的实话接着走。**等人的这段时间不算 PTC 脚本的时限**（工具声明 `waitsForHuman`，`plugins/ptc.ts` 的停表只认它） | `src/plugins/ask.ts`、`src/plugins/ptc.ts` |
 | 会话目标缺省轮次上限 / 一次放宽几轮 | 缺省 24 轮 / 8 轮，夹在 1~256 / 1~64；可配 `goal.defaultMaxRounds` / `goal.extendRoundsBy`，设置「会话目标」分区就能改；256 这个硬顶不可配 | `src/plugins/goal.ts:44`、`src/core/goal.ts:30` |
 | 说明书（AGENTS.md）字符预算 | 缺省 20000，夹在 4000~200000；可配 `prompt.instructionBudget` | `src/plugins/prompt.ts`、`src/core/prompt.ts:37` |
 | 快照推送节流 | 缺省 80 ms，夹在 16 ms~1 秒；可配 `host-stdio.snapshotThrottleMs` | `src/plugins/host-stdio.ts` |

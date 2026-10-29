@@ -33,12 +33,26 @@ interface AskLimits {
 
 const DEFAULTS: AskLimits = { maxQuestions: 3, maxOptions: 4 }
 
+/** 等用户答一张卡最多多久（毫秒）：默认 15 分钟。 */
+const DEFAULT_WAIT_MS = 900_000
+
 /** 中断这一轮时替没答的题写的实话（模型据此知道这句不是用户的话）。 */
 const INTERRUPTED = '（用户没回答就中断了这一轮）'
 /** 程序退出时替没答的题写的实话。 */
 const EXITED = '（用户退出了程序，这个问题没回答）'
 /** 上一批还没答完就被新的一批顶掉时，替没答的题写的实话。 */
 const SUPERSEDED = '（又挂了一批新问题，这一题作废）'
+
+/**
+ * 等满时限还没人答时，替没答的题写的实话。
+ *
+ * 卡片同一时刻撤掉（不再挂在输入框上方），模型拿到这句之后自己决定接着做还是换个方式问。
+ * 为什么给公式而不是写死「15 分钟」：时限是配置项，卡片撤了、正文却写着别的秒数，
+ * 用户与模型都没法核对。
+ */
+function noAnswer(ms: number): string {
+  return `（等了 ${waitLabel(ms)}，用户没有回答这一题）`
+}
 
 /**
  * 从插件配置里取上限并夹到合理区间。
@@ -51,6 +65,26 @@ function readLimits(passed: unknown): AskLimits {
     maxQuestions: clamp(raw.maxQuestions, 1, 8, DEFAULTS.maxQuestions),
     maxOptions: clamp(raw.maxOptions, 1, 8, DEFAULTS.maxOptions),
   }
+}
+
+/**
+ * 取一张提问卡最多等多久（毫秒）：夹在 10 秒到 1 小时之间。
+ *
+ * 下界 10 秒与审批卡同档：再短人来不及看清题目；上界 1 小时，再长等于永不超时，
+ * 模型会一直挂在一次工具调用上。0.7.1 之前这里没有上限，实际由 PTC 脚本的 120 秒兜住，
+ * 于是「等用户」和「脚本跑飞」共用同一个数——2026-10-29 的报障就是它。
+ * @param passed - 装配时直接传进来的配置（内核挂载时的第二参数）。
+ */
+function readWaitMs(passed: unknown): number {
+  const raw = resolvePluginConfig(CONFIG_KEY, passed)
+  const num = Number(raw.waitMs)
+  if (!Number.isFinite(num)) return DEFAULT_WAIT_MS
+  return Math.min(Math.max(Math.round(num), 10_000), 3_600_000)
+}
+
+/** 等待时限的中文读数（给模型与界面看）：整分钟就写分钟，不足一分钟写秒。 */
+function waitLabel(ms: number): string {
+  return ms >= 60_000 ? `${Math.round(ms / 60_000)} 分钟` : `${Math.round(ms / 1000)} 秒`
 }
 
 /**
@@ -128,8 +162,20 @@ export const askPlugin: Plugin.Object = {
         // 单题字段就是第 1 题的投影，和 questions[0] 同源，不会出现两处不一致。
         const view: AskUserView = { id: randomUUID(), ...questions[0], questions }
         const answers: string[] = []
+        /**
+         * 这张卡最多等多久（毫秒）：每次挂卡现读配置，改时限不用重启宿主。
+         * 它是**提问卡自己的**时限，不再借 PTC 脚本的 120 秒——那一个是防脚本跑飞的，
+         * 两个数混用就会出现「用户还在想，脚本先死了」。
+         */
+        const waitMs = readWaitMs(passed)
+        /** 等满时限的计时器：任何一条出口（答完/中断/退出/被顶掉）都要把它撤掉。 */
+        let timer: NodeJS.Timeout | undefined
         const settle = (final: string[], wake = true): void => {
           if (!pendings.has(view.id)) return
+          if (timer !== undefined) {
+            clearTimeout(timer)
+            timer = undefined
+          }
           pendings.delete(view.id)
           signal.removeEventListener('abort', onAbort)
           // 答完之后回合还要继续：状态点从「等审批」翻回 working；中断/退出交给 turn-end 收口。
@@ -144,8 +190,18 @@ export const askPlugin: Plugin.Object = {
         signal.addEventListener('abort', onAbort, { once: true })
         ctx.emit('dsc/agent-status', { sessionId: session.meta.id, path, state: 'awaiting-approval' })
         // 信号进来就已经中断了（abort 事件不会再补发一次）：立刻按「没回答」收尾，别挂死。
-        if (signal.aborted) onAbort()
-        else touch()
+        if (signal.aborted) {
+          onAbort()
+          return
+        }
+        // 等满时限就自己收尾：卡片撤掉（界面上不留一张没人管的卡），
+        // 模型拿到「没回答」的实话，接着做它能做的——不再出现「答了却没人接」。
+        timer = setTimeout(() => {
+          timer = undefined
+          settle(withRest(questions, answers, noAnswer(waitMs)))
+        }, waitMs)
+        // 故意不 unref：这张卡在等答案，事件循环该被它钉住（进程退出时 `dsc/exit` 会收尾）。
+        touch()
       })
     }
 
@@ -192,7 +248,9 @@ export const askPlugin: Plugin.Object = {
           '一次可以问多个问题：它们会挂在同一张卡上让用户逐题作答、统一提交，' +
           '你在同一个工具结果里拿到全部答案（按你给的题序）。' +
           '什么时候用：需求真的有多种合理解释、或者下一步不可逆（要删数据、要改别人的配置）而用户没指定。' +
-          '什么时候不用：能自己查代码查出来的别问；纯确认式的「我可以继续吗」别问——计划该不该做由评审卡决定。'
+          '什么时候不用：能自己查代码查出来的别问；纯确认式的「我可以继续吗」别问——计划该不该做由评审卡决定。' +
+          `这张卡最多等 ${waitLabel(readWaitMs(passed))}：等到时限还没人答，你会拿到一句「用户没有回答」的实话，` +
+          '那不是用户说的话，别把它当答案；可以换个方式问，或者把要确认的点写进正文里。'
         )
       },
       parameters: {
@@ -227,6 +285,8 @@ export const askPlugin: Plugin.Object = {
         required: ['questions'],
       },
       risk: 'read',
+      // 等用户作答的时间不算 PTC 脚本的时限（见 core/tools.ts 的这一位与 plugins/ptc.ts）
+      waitsForHuman: true,
       async run(args, runCtx) {
         limits = readLimits(passed)
         const list = Array.isArray(args.questions) ? args.questions.slice(0, limits.maxQuestions) : []
