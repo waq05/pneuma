@@ -857,7 +857,7 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 | `learnings/` | 经验沉淀：`store`（候选 jsonl 状态机）、`ledger`（技能变更台账与回滚）、`skill-write`（SKILL.md 硬校验 + 威胁扫描 + read-before-write + 老化）。读会话状态一律过 `normalizeLearningsState` 收口 |
 | `tools/command-runner.ts` | 命令执行器缝：bash 在 spawn 前问注册表，容器后端换执行体用；无注册者时行为不变 |
 | `tools/sandbox-args.ts` | 一次性升权参数的 schema 与解析：`sandbox_permissions` + `justification` 必须成对，只给半截按拒处理 |
-| `session-index.ts` | 会话检索的旁路倒排索引：中文按 1-gram + 2-gram（所以「内存」这种 2 字词能命中），英文按整词小写；按 mtime + size 增量维护，落 `cache/session-index.json`，版本对不上就整表重建 |
+| `session-index.ts` | 会话检索的旁路倒排索引：中文按 1-gram + 2-gram（所以「内存」这种 2 字词能命中），英文按整词小写；严格查询（相邻两字全部命中）一条都没有时，按「每组过半两字词」再做一次宽松召回（`queryGroups` + `relaxedHits`，结果带 `fuzzy: true`，`fuzzy: false` 可关）；按 mtime + size 增量维护，落 `cache/session-index.json`，版本对不上就整表重建 |
 | `mcp.ts` | MCP 外部工具底座：stdio 与 streamable-http 两种传输上的 JSON-RPC、`mcp__服务器__工具` 命名（片段被清洗过时补 8 位短哈希，`a.b` 与 `a_b` 不撞名）、子进程环境白名单筛选、Windows 上按 PATH + PATHEXT 解析启动命令 |
 | `tool-search.ts` | 工具按需加载的纯逻辑：分词（中文按相邻两字）、手写 BM25 索引、延后判定（read 一律不许撤）、配置校验 |
 | `lifecycle-hooks.ts` | codex 十四事件的钩子引擎：事件能力清单（wired / partial / unwired 与理由）、codex 形态配置的解析、跑外部命令、按失败方向给裁决 |
