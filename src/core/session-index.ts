@@ -88,6 +88,11 @@ export interface SessionIndexHit {
   snippet: string
   /** 命中所在行号（从 1 数）。 */
   line: number
+  /**
+   * true = 这是宽松召回的结果：严格逐字相邻没有命中，按「每组命中多数两字词」找出来的。
+   * 调用方要把这层意思说给用户/模型（别让人把模糊命中当原话）。
+   */
+  fuzzy?: true
 }
 
 /** {@link SessionIndex.search} 的查询条件。 */
@@ -98,6 +103,11 @@ export interface SessionIndexSearchOptions {
   includeArchived?: boolean
   /** 只搜这个工作目录下的会话。 */
   cwd?: string
+  /**
+   * 严格查询一条都没命中时，是否再按「多数两字词」找一次（缺省 true）。
+   * 传 false 就只要严格结果（用于那些不能接受近似命中的调用方）。
+   */
+  fuzzy?: boolean
 }
 
 /** 索引现状。 */
@@ -182,6 +192,73 @@ export function documentTerms(text: string): string[] {
  */
 export function queryTerms(query: string): string[] {
   return cut(query, true)
+}
+
+/**
+ * 宽松召回用的分组：每组是「一段连续中文的相邻两字」或「一个英文整词」。
+ *
+ * 为什么要分组（2026-10-30 用户拍板 B 方案）：查询「内存占用过高」按相邻两字全 AND，
+ * 等于要求原文里逐字出现这六个字，于是「内存占用一直很高」搜不到。分组之后，整段可以
+ * 按「这一组命中多数两字词」来判，既能召回换了说法的句子，又不至于把单字命中当结果。
+ */
+export interface QueryGroup {
+  /** 这一组的两字词（英文整词只有一项）。 */
+  terms: string[]
+  /** 这一组至少要命中几个词项才算成立（中文长段取过半，短段要求全中）。 */
+  need: number
+}
+
+/**
+ * 把查询切成「必须同时成立」的组，供宽松召回用。
+ *
+ * 与 {@link queryTerms} 的差别：那边把所有两字词平铺成一个 AND 列表（严格逐字相邻），
+ * 这边保留「哪几个两字词属于同一段中文」，才能按段算命中比例。
+ *
+ * @param query - 用户/模型给的查询。
+ */
+export function queryGroups(query: string): QueryGroup[] {
+  const groups: QueryGroup[] = []
+  let run: string[] = []
+  let word = ''
+  const flushRun = (): void => {
+    if (run.length === 0) return
+    if (run.length === 1) {
+      groups.push({ terms: [run[0]!], need: 1 })
+    } else {
+      const terms: string[] = []
+      for (let at = 0; at + 1 < run.length; at += 1) terms.push(run[at]! + run[at + 1]!)
+      // 长段要求命中过半，短段（2~3 个字）与严格 AND 等价，宽松档不会给出更多结果
+      const need = terms.length <= 2 ? terms.length : Math.floor(terms.length / 2) + 1
+      groups.push({ terms, need })
+    }
+    run = []
+  }
+  const flushWord = (): void => {
+    if (word !== '') groups.push({ terms: [word], need: 1 })
+    word = ''
+  }
+  for (const char of query.toLowerCase()) {
+    if (isCjkChar(char)) {
+      flushWord()
+      run.push(char)
+      continue
+    }
+    if (WORD_CHAR.test(char)) {
+      flushRun()
+      word += char
+      continue
+    }
+    flushRun()
+    flushWord()
+  }
+  flushRun()
+  flushWord()
+  return groups
+}
+
+/** 宽松召回有没有意义：至少一组中文段长到「全中也不成立严格查询」才有额外结果。 */
+export function relaxable(groups: readonly QueryGroup[]): boolean {
+  return groups.some((group) => group.terms.length > 1 && group.need < group.terms.length)
 }
 
 /** 两个升序行号数组求交集（倒排表里的行号天然升序）。 */
@@ -507,6 +584,24 @@ export class SessionIndex {
     await this.sync()
     const terms = queryTerms(query)
     if (terms.length === 0) return []
+    const includeArchived = options.includeArchived ?? this.options.includeArchived
+    const limit = Math.max(options.limit ?? this.options.defaultLimit, 0)
+    const strict = this.strictHits(terms, includeArchived, options.cwd, limit)
+    if (strict.length > 0 || options.fuzzy === false) return strict
+    // 严格 AND 一条都没有时，按「每组命中多数两字词」再找一次（2026-10-30 用户拍板 B）：
+    // 换了说法、换了行、隔了标点的句子因此能被召回，结果带上 fuzzy 标记，调用方要说明是模糊命中。
+    const groups = queryGroups(query)
+    if (!relaxable(groups)) return strict
+    return this.relaxedHits(groups, includeArchived, options.cwd, limit)
+  }
+
+  /** 严格 AND：每个词项都要在同一行出现（原有行为，结果不带 fuzzy 标记）。 */
+  private strictHits(
+    terms: readonly string[],
+    includeArchived: boolean,
+    cwd: string | undefined,
+    limit: number,
+  ): SessionIndexHit[] {
     const tables: Array<Map<string, number[]>> = []
     for (const term of terms) {
       const table = this.postings.get(term)
@@ -516,13 +611,12 @@ export class SessionIndex {
     }
     // 从最小的倒排表开始走，能少看几个文件
     tables.sort((left, right) => left.size - right.size)
-    const includeArchived = options.includeArchived ?? this.options.includeArchived
     const hits: SessionIndexHit[] = []
     for (const [path, lines] of tables[0]!) {
       const file = this.files.get(path)
       if (file === undefined) continue
       if (!zoneVisible(file.zone, includeArchived, this.options.includeHiddenDirs)) continue
-      if (options.cwd !== undefined && file.cwd !== options.cwd) continue
+      if (cwd !== undefined && file.cwd !== cwd) continue
       let matched = lines
       for (let at = 1; at < tables.length && matched.length > 0; at += 1) {
         const other = tables[at]!.get(path)
@@ -543,7 +637,80 @@ export class SessionIndex {
       }
     }
     hits.sort(compareHits)
-    return hits.slice(0, Math.max(options.limit ?? this.options.defaultLimit, 0))
+    return hits.slice(0, limit)
+  }
+
+  /**
+   * 宽松召回：按 {@link queryGroups} 的分组，每组命中数达到 need 就算这一组成立，
+   * 所有组都成立的行入选；组内命中越多排越前。
+   *
+   * 只在严格查询一条都没有时才调用，所以常规检索的结果与以前完全一致。
+   */
+  private relaxedHits(
+    groups: readonly QueryGroup[],
+    includeArchived: boolean,
+    cwd: string | undefined,
+    limit: number,
+  ): SessionIndexHit[] {
+    // 每组：path+行号 → 这一组命中了几个词项
+    const perGroup: Array<Map<string, { path: string; line: number; count: number }>> = []
+    for (const group of groups) {
+      const counts = new Map<string, { path: string; line: number; count: number }>()
+      for (const term of group.terms) {
+        const table = this.postings.get(term)
+        if (table === undefined) continue
+        for (const [path, lines] of table) {
+          for (const line of lines) {
+            const key = path + '#' + String(line)
+            const found = counts.get(key)
+            if (found === undefined) counts.set(key, { path, line, count: 1 })
+            else found.count += 1
+          }
+        }
+      }
+      const met = new Map<string, { path: string; line: number; count: number }>()
+      for (const [key, entry] of counts) if (entry.count >= group.need) met.set(key, entry)
+      if (met.size === 0) return []
+      perGroup.push(met)
+    }
+    perGroup.sort((left, right) => left.size - right.size)
+    const terms = groups.flatMap((group) => group.terms)
+    const scored: Array<{ hit: SessionIndexHit; score: number }> = []
+    const [first, ...rest] = perGroup
+    for (const [key, base] of first!) {
+      let score = base.count
+      let ok = true
+      for (const other of rest) {
+        const found = other.get(key)
+        if (found === undefined) {
+          ok = false
+          break
+        }
+        score += found.count
+      }
+      if (!ok) continue
+      const file = this.files.get(base.path)
+      if (file === undefined) continue
+      if (!zoneVisible(file.zone, includeArchived, this.options.includeHiddenDirs)) continue
+      if (cwd !== undefined && file.cwd !== cwd) continue
+      const doc = file.byLine.get(base.line)
+      if (doc === undefined) continue
+      scored.push({
+        score,
+        hit: {
+          sessionId: file.sessionId,
+          file: file.path,
+          cwd: file.cwd,
+          role: doc.role,
+          ts: doc.ts,
+          snippet: snippetOf(doc.text, terms, this.options.snippetLength),
+          line: doc.line,
+          fuzzy: true,
+        },
+      })
+    }
+    scored.sort((left, right) => (left.score === right.score ? compareHits(left.hit, right.hit) : right.score - left.score))
+    return scored.slice(0, limit).map((item) => item.hit)
   }
 
   /**
