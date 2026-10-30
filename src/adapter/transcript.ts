@@ -279,9 +279,11 @@ export class Transcript {
               this.reduce(
                 {
                   type: 'tool/call',
-                  callId: call.id,
-                  name: call.function.name,
-                  args: call.function.arguments,
+                  // 老日志里可能存着 null（2026-10-30 那条 `未知工具：null`）：
+                  // 读回来时统一修成字符串，界面才敢对名字调字符串方法。
+                  callId: typeof call.id === 'string' ? call.id : '',
+                  name: typeof call.function.name === 'string' ? call.function.name : '',
+                  args: typeof call.function.arguments === 'string' ? call.function.arguments : '',
                 },
                 ts,
               ) || changed
@@ -502,9 +504,9 @@ export class Transcript {
         // （条目的 ts 是「最后写入时刻」，只留给界面算轮次计时）
         const startedAt = this.eventTs
         const call: ToolCallView = {
-          callId: event.callId,
-          name: event.name,
-          argsText: event.args,
+          callId: typeof event.callId === 'string' ? event.callId : '',
+          name: typeof event.name === 'string' ? event.name : '',
+          argsText: typeof event.args === 'string' ? event.args : '',
           status: 'running',
           // 重放老会话（eventTs 为 null）时拿不到发起时刻，干脆不写，界面据此降级
           ...(startedAt === null ? {} : { startedAt }),

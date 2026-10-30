@@ -70,11 +70,13 @@ export function liveActivity(
         entry.kind === 'tool' && (entry.call.status === 'running' || entry.call.status === 'preparing'),
     )
   if (running !== undefined) {
+    // 名字可能为空：模型偶尔发出一条没有名字的工具调用（网关把它回成 null，
+    // 见 core/llm.ts 的 applyToolCallDelta）。空名字时别画出「正在调用 」这种半句话。
+    const name = typeof running.call.name === 'string' && running.call.name !== '' ? running.call.name : '未知工具'
     return {
       stage: '正在执行工具',
       // 「准备中」是模型还在吐参数、「正在调用」是工具真的开跑了——两句话不同
-      activity:
-        running.call.status === 'preparing' ? `正在准备 ${running.call.name}` : `正在调用 ${running.call.name}`,
+      activity: running.call.status === 'preparing' ? `正在准备 ${name}` : `正在调用 ${name}`,
     }
   }
   if (turnState === 'working') return { stage: '正在执行工具', activity: '正在执行工具' }

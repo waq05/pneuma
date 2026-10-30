@@ -160,7 +160,7 @@ export function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matche
         <span className="verb">{toolVerb(match.base, call.status)}</span>
         {/* 认不出的工具保留原名：没有它就看不出这是哪家的工具（MCP 那些名字不直观）。
             分隔点照 dsh 的「工具调用 · <工具名>」。 */}
-        {match.known ? null : <span className="name">{`· ${call.name}`}</span>}
+        {match.known || call.name === '' ? null : <span className="name">{`· ${call.name}`}</span>}
         <span className="preview">
           {intended !== null ? (
             <>

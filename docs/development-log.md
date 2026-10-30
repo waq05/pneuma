@@ -11190,3 +11190,36 @@ deny 黑名单；改成「问人」的话，「完全访问」档会在审批层
 替换藏密钥仍拒、灾难命令仍拒、超时文案三条、时限默认与夹取），全绿；
 `command-policy-test` / `bash-truncation-test` / `ask-timeout-test` / `review-approval-test` /
 `approval-review-fallback-test` / `tool-output-fixes-test` / `compacting-status-test` 全部通过。
+
+## 三十七、工具名落成 null 导致对话页白屏（2026-10-30）
+
+报障：桌面窗口里那一页整块空白，诊断区只剩一行
+`shell.main / transcript.flow 在渲染时出错：Cannot read properties of null (reading 'toLowerCase')`。
+
+**根因在流式合并，不在界面。** 网关（该会话走 opencode 的 DeepSeek 端点）在后续分片里把
+`tool_calls[i].id` 与 `function.name` 回成 `null`。`src/core/llm.ts` 原来的合并分支用
+`x !== undefined && x !== ''` 当门，`null` 两道门都过，于是把第一片已经收到的好名字
+`run_code` 覆盖成 `null`。名字一路裸奔：`循环` 判成未知工具、日志落成
+`{"name":null,"text":"未知工具：null"}`、界面 `activityOf()` 对名字调 `.toLowerCase()`
+时抛异常——而槽的错误边界一退位，整条消息流就从页面上消失。
+
+**改法分四层，缺一层还会再崩：**
+
+1. **合并层**（`src/core/llm.ts`）：把逐片累积抽成纯函数 `applyToolCallDelta`，逐字段判
+   `typeof === 'string'`，非字符串一律当「这片没给」。顺带把 `id` 的同款漏洞一起堵上
+   （原来 `id !== undefined && id !== ''` 同样放行 `null`）。
+2. **回放层**（`src/adapter/transcript.ts`）：实时事件与历史重放两条路都在入口把
+   `callId` / `name` / `args` 收窄成字符串。这一层管的是**已经坏掉的日志**——
+   不修它，用户每次重开那个会话都会再白屏一次。
+3. **渲染纯函数**（`ui-shell/src/plugins/transcript/process-groups.ts` 的 `activityOf`、
+   `ui-shell/src/ui-primitives/tool-args.ts` 的 `toolArgFields`）：名字不是字符串时归到
+   「不认识的工具」这一档。界面是最后一环，宁可画一张「工具调用 · 失败」的卡，也不能
+   整页消失。
+4. **显示降级**：名字为空时不再印出「正在调用 」这种半句话（`timing.ts`）、不再印出
+   孤零零的「· 」（`rows/tool-row.tsx`、`tool-card/factory.tsx`），终端界面的工具卡写
+   「调用 未知 工具」（`src/app/ToolCard.tsx`）。
+
+**验证**：新增 `scripts/ui-tool-name-null-test.mjs`（29 条，四段：合并层 null 不覆盖 /
+非字符串脏值不落表、回放层把老日志的 null 修成空串、渲染纯函数不抛、源码形态钉），全绿。
+另用真实的那份坏会话（53 条消息、24 个工具条目）走 `Session.load → replayHistory`，
+坏条目从 1 条降到 0 条：

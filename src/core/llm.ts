@@ -402,6 +402,51 @@ export class StreamInterruptedError extends LlmError {
 
 const MAX_ATTEMPTS = 3
 
+/** 一条流式工具调用增量：除了 `index`，其余字段网关都可能不给，甚至给成 `null`。 */
+export interface ToolCallDelta {
+  index: number
+  id?: string | null
+  function?: { name?: string | null; arguments?: string | null } | null
+}
+
+/**
+ * 把一条流式工具调用增量并进「按 index 累积」的调用表。
+ *
+ * 为什么逐字段判 `typeof === 'string'` 而不是判「有没有值」（2026-10-30 白屏事故）：
+ * 网关在后续分片里把 `id` / `function.name` 回成 `null` 时，`x !== undefined && x !== ''`
+ * 两道门都放行，`null` 就覆盖掉了前面已经收到的好名字。于是一条本该叫 `run_code` 的调用
+ * 落成 `name: null`，日志里写着「未知工具：null」，界面再对 `call.name` 调 `.toLowerCase()`
+ * 就整块渲染崩掉（对话页白屏）。`null` 不是「给了个空值」，是「这次这片没带名字」，
+ * 所以只接受字符串，其余一律当没给。
+ *
+ * @param calls - 这次请求的调用表（键是流里的 index，同一个 index 会分多片到齐）
+ * @param call - 这一片的增量
+ * @param onName - 第一次拿到名字时的回调（界面据此先画一张「准备中」的卡）
+ */
+export function applyToolCallDelta(
+  calls: Map<number, ToolCall>,
+  call: ToolCallDelta,
+  onName?: (name: string) => void,
+): void {
+  const id = typeof call.id === 'string' ? call.id : ''
+  const name = typeof call.function?.name === 'string' ? call.function.name : ''
+  const args = typeof call.function?.arguments === 'string' ? call.function.arguments : ''
+  const existing = calls.get(call.index)
+  if (existing === undefined) {
+    calls.set(call.index, { id, name, arguments: args })
+    // 首次拿到工具名就报一声「准备中」——参数这会儿多半还没开始到
+    if (name !== '') onName?.(name)
+    return
+  }
+  if (id !== '') existing.id = id
+  if (name !== '') {
+    // 名字也可能被分片切开：只在「从没有名字变成有名字」那一次报
+    if (existing.name === '') onName?.(name)
+    existing.name = name
+  }
+  if (args !== '') existing.arguments += args
+}
+
 /** 发起一次流式对话（openai-completions 适配器的实现；经 LlmService.stream 派发）。 */
 export async function streamChat(request: StreamRequest, handlers: StreamHandlers): Promise<StreamResult> {
   let attempt = 0
@@ -549,26 +594,7 @@ async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Pro
         handlers.onDelta('text', delta.content)
       }
       for (const call of delta?.tool_calls ?? []) {
-        const existing = callsByIndex.get(call.index)
-        if (existing === undefined) {
-          const name = call.function?.name ?? ''
-          callsByIndex.set(call.index, {
-            id: call.id ?? '',
-            name,
-            arguments: call.function?.arguments ?? '',
-          })
-          // 首次拿到工具名就报一声「准备中」——参数这会儿多半还没开始到
-          if (name !== '') handlers.onToolPrepare?.(name)
-        } else {
-          if (call.id !== undefined && call.id !== '') existing.id = call.id
-          const name = call.function?.name
-          if (name !== undefined && name !== '') {
-            // 名字也可能被分片切开：只在「从没有名字变成有名字」那一次报
-            if (existing.name === '') handlers.onToolPrepare?.(name)
-            existing.name = name
-          }
-          if (call.function?.arguments !== undefined) existing.arguments += call.function.arguments
-        }
+        applyToolCallDelta(callsByIndex, call, handlers.onToolPrepare)
       }
       if (choice?.finish_reason != null) result.finishReason = choice.finish_reason
       if (chunk.usage != null) {

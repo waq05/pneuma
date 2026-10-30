@@ -201,8 +201,10 @@ export const TURN_PROCESS_INDEPENDENT: ReadonlySet<TranscriptEntry['kind']> = ne
  * 工具名：`browser`（图二里那种 navigate / evaluate）、`search` 与 `session_search`（都归
  * 「查代码」）、`skill` 与 `plugin_manager`（归通用工具）。不认识的一律归 `tools`——不猜。
  */
-export function activityOf(name: string): ProcessActivity {
-  const tool = name.toLowerCase()
+export function activityOf(name: string | null | undefined): ProcessActivity {
+  // 名字可能是 null：老会话日志里存过（2026-10-30 的 `未知工具：null`），
+  // 进到这里就是要给「不认识的工具」一个归类，不能因为名字不在就整块渲染崩掉。
+  const tool = typeof name === 'string' ? name.toLowerCase() : ''
   if (tool === 'read') return 'read'
   if (tool === 'read_image') return 'readImage'
   if (tool === 'grep' || tool === 'glob' || tool === 'search' || tool === 'session_search'

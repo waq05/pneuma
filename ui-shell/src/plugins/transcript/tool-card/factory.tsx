@@ -291,7 +291,7 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
           <span className="verb">{toolVerb(match.base, call.status)}</span>
           {/* 认不出的工具保留原名：没有它就看不出这是哪家的工具（MCP 那些名字不直观）。
               分隔点照 dsh 的「工具调用 · <工具名>」：名字是补充说明，不跟标题糊成一串。 */}
-          {match.known ? null : <span className="name">{`· ${call.name}`}</span>}
+          {match.known || call.name === '' ? null : <span className="name">{`· ${call.name}`}</span>}
           <Preview intended={intended} summary={summary} cwd={cwd} targetPath={targetPath} change={call.change ?? null} />
         </span>
         {/* 还有几行没摊出来：把「点开能看到更多」写在明面上（codex 的「+ N lines」）。

@@ -60,8 +60,8 @@ function flatten(text: string): string {
  * @param name 工具名（`write` / `edit` / …）
  * @param argsText 模型产出的原始 arguments JSON 字符串
  */
-export function toolArgFields(name: string, argsText: string): ToolArgFields {
-  const bodyFields = MUTATION_CONTENT_FIELDS[name.toLowerCase()]
+export function toolArgFields(name: string | null | undefined, argsText: string): ToolArgFields {
+  const bodyFields = MUTATION_CONTENT_FIELDS[typeof name === 'string' ? name.toLowerCase() : '']
   if (bodyFields === undefined) return { mutating: false, fields: [], omitted: [] }
   let args: unknown
   try {

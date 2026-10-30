@@ -78,7 +78,7 @@ export function ToolCard({
     <Box ref={ref} flexDirection="column" marginLeft={INDENT.tool} gap={GAP.none}>
       <Box>
         <Box flexShrink={0}>
-          <Text {...TEXT.secondary}>{`⚙  调用 ${call.name} 工具`}</Text>
+          <Text {...TEXT.secondary}>{`⚙  调用 ${call.name === '' ? '未知' : call.name} 工具`}</Text>
         </Box>
         <Box flexShrink={0}>
           <Text {...TEXT.label} color={status.color}>
