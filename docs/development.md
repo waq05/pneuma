@@ -149,7 +149,7 @@ export const myPlugin: Plugin.Object = {
 | `browser` 受控浏览器 | 关 | `browser` | 开一台隔离 Chrome：无障碍快照 + ref 定位点击输入（`browser_look` 只读 / `browser` 动手），不是截图比坐标 |
 | `file-review` 改动前预览 | 开 | `file-review` | 写文件、改文件之前把 unified diff 摆进对话流，改哪几行看得见，超长按行截断 |
 | `dock-browser` 侧栏浏览器 | 关 | `dock-browser` | 驱动桌面端侧栏那台浏览器（用户的持久登录会话）：无障碍快照 + ref 定位，动手动作每次审批 |
-| `self-improve` 经验沉淀 | 关 | `self-improve` | 三条闭环：纠正捕获候选、复盘产技能草稿（默认停用待人启用）、技能自修 + 台账回滚 |
+| `self-improve` 经验沉淀 | 关 | `self-improve` | 三条闭环：纠正捕获候选、复盘产技能草稿（默认停用待人启用）、技能自修 + 台账回滚；`skill_write` 写入只问一次审批（卡上是技能名与动作） |
 | `dsh-compat` dsh 插件兼容 | 关 | — | 挂载 dsh（DeepSeek Harness）外部插件：`logger` 服务、模块解析钩子、dsh 风格工具注册的形状适配 |
 
 默认开关按一条规矩定：会拉起外部进程、连外部服务器或改写每轮请求工具面的那几档默认关（`lifecycle-hooks`、`mcp`、`tool-search`、`schedule`、`lsp`、`browser`、`self-improve`）；提升安全与本地便利、且不配就完全无副作用的那几档默认开。文件与命令围栏是唯一的例外档：它默认开——不配就没有外部进程与外部服务器，开着的收益（越界写入当场拒）大于打扰，且默认档 workspace-write 不挡正常的工作区读写。
@@ -850,7 +850,7 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 | `compact-anchors.ts` | 摘要的机械加固件：锚点索引（正则抽 PR 号 / commit / 分支 / 文件 / 报错 / 链接）、用户原话逐字引用、细节找回指针。全是纯函数，可以脱离模型单独断言 |
 | `approval-floor.ts` | 灾难地板的判定：结构不可验证 → 灾难命令 → 用户 deny 黑名单 → 危险模式 → 命令白名单 → 无人值守，逐层给结论。配置读不通时守卫照样挂载却一律拒（挂不上等于链上没有地板，是 fail-open）。**只判「拒」或「不拒」**：命中白名单也只 `defer`，由 `approvalFloor` 服务把结论交给审批层免卡放行——地板自己 `pass` 会把 order 20 / 25 的安全钩子一并跳掉 |
 | `spill.ts` | 溢出落盘：建文件（目录 0700、文件 0600）、按整行截断并在文件末尾写明第几行没落盘、生成预览与续读写法、按 mtime 与目录总量扫目录 |
-| `sandbox/` | 沙箱纯逻辑：`policy`（路径规范化 + 可写根/受保护名/NT 前缀判定，**按每次调用的 cwd 算根**，解析失败保守拒）、`execpolicy`（命令前缀 allow/prompt/forbidden，写目标与网络命令识别，内层脚本再拆一层）、`backends`（docker 探测与执行体替换） |
+| `sandbox/` | 沙箱纯逻辑：`policy`（路径规范化 + 可写根/受保护名/NT 前缀判定，**按每次调用的 cwd 算根**，解析失败保守拒）、`execpolicy`（命令前缀 allow/prompt/forbidden，写目标与网络命令识别，内层脚本再拆一层）、`backends`（docker 探测与执行体替换）；Windows 受限令牌后端的可写根按**每次调用的 cwd** 现算（工作区 + 它的私有临时目录），不再钉死挂载时那个会话 |
 | `schedule/` | 定时任务：`rule`（六种选择器 + 时区/DST）、`store`（tasks.json 原子替换 + runs.jsonl 台账 + pendingSlot）、`runner`（自重排 setTimeout + catch-up + pre-dispatch 校验）。**先落盘推进 nextRunAt 再投递** |
 | `lsp/` | 语言服务器客户端：`framing`（Content-Length 分帧，别照抄 mcp.ts 的换行分帧）、`uri`（先解码成路径再比内外）、`servers`（内置表 + marker 找根 + PATHEXT）、`client`（握手/串行队列/idle 回收/破键退避）。挂着的请求结算用本地 settled 闸门——先清表再 settle 会让请求永不落地 |
 | `cdp/` | 浏览器 CDP 底座：`transport`（id 配对 + **按 sessionId 路由** + 事件订阅）、`launch`（探测/参数串/DevToolsActivePort/整树 taskkill）、`snapshot`（无障碍树文本化 + ref 代际）、`actions`（Input/DOM/Runtime 动作） |
@@ -858,7 +858,7 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 | `tools/command-runner.ts` | 命令执行器缝：bash 在 spawn 前问注册表，容器后端换执行体用；无注册者时行为不变 |
 | `tools/sandbox-args.ts` | 一次性升权参数的 schema 与解析：`sandbox_permissions` + `justification` 必须成对，只给半截按拒处理 |
 | `session-index.ts` | 会话检索的旁路倒排索引：中文按 1-gram + 2-gram（所以「内存」这种 2 字词能命中），英文按整词小写；按 mtime + size 增量维护，落 `cache/session-index.json`，版本对不上就整表重建 |
-| `mcp.ts` | MCP 外部工具底座：stdio 与 streamable-http 两种传输上的 JSON-RPC、`mcp__服务器__工具` 命名、子进程环境白名单筛选、Windows 上按 PATH + PATHEXT 解析启动命令 |
+| `mcp.ts` | MCP 外部工具底座：stdio 与 streamable-http 两种传输上的 JSON-RPC、`mcp__服务器__工具` 命名（片段被清洗过时补 8 位短哈希，`a.b` 与 `a_b` 不撞名）、子进程环境白名单筛选、Windows 上按 PATH + PATHEXT 解析启动命令 |
 | `tool-search.ts` | 工具按需加载的纯逻辑：分词（中文按相邻两字）、手写 BM25 索引、延后判定（read 一律不许撤）、配置校验 |
 | `lifecycle-hooks.ts` | codex 十四事件的钩子引擎：事件能力清单（wired / partial / unwired 与理由）、codex 形态配置的解析、跑外部命令、按失败方向给裁决 |
 | `approval.ts` | 只有审批通道**接口**，判读在 `src/plugins/approval.ts` |
