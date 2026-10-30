@@ -41,6 +41,7 @@ import type { Plugin } from '@deepseek-ai/cordis'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
 import { argsSummary } from '../core/tools.js'
 import type { ToolEntry } from '../core/tools.js'
+import type { ToolGuardInput } from '../core/tool-guards.js'
 import type { ChatMessage } from '../core/llm.js'
 import type { SettingsField, SettingsValues } from '../contract.js'
 import type { SettingsSectionSpec } from '../services/types.js'
@@ -264,7 +265,7 @@ export function parseDraftAnswer(text: string, descriptionMax = DEFAULT_SKILL_LI
 
 export const selfImprovePlugin: Plugin.Object = {
   name: 'self-improve',
-  inject: ['tools', 'commands', 'settings', 'transcript', 'skills', 'approval', 'session', 'agent', 'prompt', 'memory'],
+  inject: ['tools', 'guards', 'commands', 'settings', 'transcript', 'skills', 'approval', 'session', 'agent', 'prompt', 'memory'],
   apply(ctx, passed: unknown) {
     let config = readConfig(passed)
     /** 写盘并立刻重读：设置改完下一轮就用新值，不用重启宿主。 */
@@ -681,6 +682,22 @@ export const selfImprovePlugin: Plugin.Object = {
       },
     }
     disposers.push(ctx.tools.register(skillWriteTool))
+
+    // 审批只问一次（2026-10-30 修）：skill_write 是 write 档，循环先按它问一遍审批卡（通用卡，
+    // 只说「工作区外的改动」），工具自己执行前又按「create 哪个技能」问一遍——同一个动作两张卡。
+    // 自己这一张信息更全（技能名 + 动作 + 摘要），所以让守卫链跳过 order 30 那一位：
+    // 只跳过审批这一格，模式闸门（10）、沙箱（8）、安全钩子（20）与生命周期钩子（25）照问。
+    // 关掉 requireApproval 时不跳过，退回「由通用审批卡把关」的老行为。
+    disposers.push(
+      ctx.guards.register({
+        id: 'self-improve',
+        order: 29,
+        decide(input: ToolGuardInput) {
+          if (input.toolName !== 'skill_write') return { action: 'defer' }
+          return config.requireApproval ? { action: 'pass' } : { action: 'defer' }
+        },
+      }),
+    )
 
     // ── L1/L3：learning 工具（候选清单）────────────────────────────────────────
 
