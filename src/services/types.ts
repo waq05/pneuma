@@ -1450,6 +1450,19 @@ declare module '@deepseek-ai/cordis' {
      */
     'dsc/side-ask-chunk'(payload: { id: string; delta: string; done?: boolean }): void
     'dsc/compacted'(): void
+    /**
+     * 压缩开始 / 结束（compact 插件发出，0.7.2）：界面据此在消息流尾部画活动行。
+     * 带归属会话的 jsonl 路径——后台会话（常驻 agent）压缩时不该在用户正看着的视图里冒出来。
+     */
+    'dsc/compacting'(running: boolean, sessionPath?: string): void
+    /**
+     * 压缩完成后的上下文占用**估算**（compact 插件发出，0.7.2）。
+     *
+     * 为什么要有：`contextUsed` 的权威读数来自模型回来的用量，而压缩本身不发对话请求，
+     * 压完读数会一直停在压缩前（用户看到的百分比不动）。这里给一个按新历史算的估算值，
+     * 界面先用它刷新，下一次真实请求回来再按真值校正。
+     */
+    'dsc/context-used'(tokens: number, sessionPath?: string): void
   }
 }
 

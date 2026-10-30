@@ -11109,3 +11109,47 @@ bash 默认 30 秒超时（放宽会拖长卡死时间）、PTC 脚本 120 秒�
 全绿；`pnpm run typecheck` 0 错、`pnpm run build` 0 错、`pnpm run check:style` 629 个文件通过；
 相关的 `bash-truncation-test` / `command-policy-test` / `review-approval-test` /
 `approval-review-fallback-test` / `tool-search-test` 全部通过。
+
+## 三十五、`/compact` 跑着的时候看得见，压完百分比立刻动（2026-10-30）
+
+用户原话：「使用 `/` 命令没有提示，如上下文压缩命令，使用后应该像 dsh 一样在会话里显示
+正在压缩字样及动画，压缩完毕后显示压缩完毕，并把底部上下文占用显示更新」。
+
+**两个根因，都不是「命令没派发」**：
+
+1. `compact` 插件从头到尾**只在结束时**发一条 `dsc/notice`（`src/plugins/compact.ts` 的
+   `run()`），开始那一刻什么都没有。摘要要走一次模型，几秒到几十秒里会话一动不动，
+   看起来就是「命令没生效」。
+2. 底部百分比不动，是因为 `contextUsed` 只在**收到模型用量事件**时赋值
+   （`src/adapter/transcript.ts` 的 usage 分支）。压缩是本地改写历史，不发对话请求，
+   压完没有新用量回来，读数一直停在压缩前。
+
+**做法（事件驱动，界面与插件不互相认识）**：
+
+| 层 | 改动 |
+| --- | --- |
+| 契约 | `StatusView.compactingSince?: number`（开始时刻；没有这个字段 = 没在压） |
+| 契约 | 新事件 `dsc/compacting(running, sessionPath?)` 与 `dsc/context-used(tokens, sessionPath?)` |
+| 压缩插件 | `whileCompacting()` 包住三次调用（手动 / 自动阈值 / 爆窗强压），`finally` 里一定清标记；压出结果后按「新消息 + 系统提示词 + 工具目录」估算一次读数发出去 |
+| 转录插件 | 收两个事件；只认当前会话（后台 agent 压缩不该冒到正在看的视图里）；写进快照状态 |
+| 界面壳 | 复用回合状态行 `TurnStatusLine`：`compact · 正在压缩 / 把更早的历史折成摘要 / 实时用时 / 动画省略号` |
+
+为什么复用 `TurnStatusLine` 而不是新做一个：那条行已经有转圈、阶段名、活动名、每秒刷新的
+用时与三点动画，样式和布局都在 `views.css` 里验过；压缩只是「另一种正在发生的事」，
+再抄一套只会让两处的字号与间距慢慢分叉。
+
+为什么用 `finally` 清标记：摘要调用会失败（端点 500、用户打断）。漏清的话那条「正在压缩」
+会一直转下去，比不显示更糟。
+
+**已知取舍**：压完先给的是**估算值**（对话 + 提示词 + 工具目录的字符估算），不是服务端真值；
+下一次真实请求回来就会被权威读数盖掉。所以界面上它和「~」估算口径一样，只用于让百分比
+当场动起来，不写进会话日志、不参与计费。
+
+**没做**：终端 TUI（`src/app`）这一侧没有加同样的活动行——本次报障在桌面/网页壳，
+TUI 的快照里已经有这个字段，要加是下一轮的小活。
+
+**验证**：新增 `scripts/compacting-status-test.mjs`（11 条：字段出现与消失、后台会话隔离、
+估算读数落进快照、别人读数不覆盖，外加四条源码接线钉），全绿；`typecheck`（根 + 壳）0 错、
+`build`（根 + 壳，19 份插件产物重建）通过、`check:style` 630 个文件通过、`check:ui` 45/45 通过；
+`compact-readstate-test` / `transcript-order-test` / `transcript-usage-test` /
+`statusbar-test` / `session-transcript-isolation-test` 全部通过。

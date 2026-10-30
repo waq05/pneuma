@@ -19,6 +19,7 @@
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import { compactSession, DEFAULT_KEEP_RECENT, DEFAULT_PRUNE_OPTIONS, estimateTokens } from '../core/compact.js'
+import { estimateTextTokens } from '../core/token-estimate.js'
 import type { CompactLimits, PruneOptions } from '../core/compact.js'
 import type { ToolSchema } from '../core/llm.js'
 import { readSpillConfig } from '../core/spill.js'
@@ -158,6 +159,38 @@ export const compactPlugin: Plugin.Object = {
         .filter((part) => part !== '')
         .join('\n\n')
 
+    /**
+     * 包住一次压缩：开始与结束各广播一次状态，界面据此画 / 收起活动行。
+     *
+     * 为什么用 finally：摘要调用会失败（端点 500、用户打断），漏掉结束信号的话
+     * 界面那条「正在压缩」会一直转下去，比不显示更糟。
+     *
+     * @param target - 这次压缩的目标会话（后台会话的压缩不该画到当前视图里）。
+     * @param run - 真正干活的那段。
+     */
+    const whileCompacting = async <T>(target: Session, run: () => Promise<T>): Promise<T> => {
+      ctx.emit('dsc/compacting', true, target.filePath)
+      try {
+        return await run()
+      } finally {
+        ctx.emit('dsc/compacting', false, target.filePath)
+      }
+    }
+
+    /**
+     * 压完之后按新历史重算一次上下文占用（估算）。
+     *
+     * 为什么必须给一个数：`contextUsed` 的权威读数来自模型回来的用量，而压缩本身
+     * 不发对话请求——不补这一下，底部的百分比会一直停在压缩前（用户以为没压）。
+     * 口径与请求组装一致：对话消息 + 系统提示词 + 工具目录，下一次真实请求再校正。
+     */
+    const reportContextUsed = (target: Session): void => {
+      const { system, tools } = requestContext(target)
+      const used =
+        estimateTokens(target.messages) + estimateTextTokens(system) + estimateTextTokens(JSON.stringify(tools))
+      ctx.emit('dsc/context-used', Math.round(used), target.filePath)
+    }
+
     // T41 /compact 运行守卫：回合跑着的时候手动压缩，摘要落库会和进行中的工具
     // 落库交错（jsonl 里 summary 插在 tool 记录中间，重放口径会乱）。数着回合。
     // 0.6.48 起按会话计数：后台常驻 agent 的回合不该挡住当前会话的 /compact
@@ -188,43 +221,51 @@ export const compactPlugin: Plugin.Object = {
         const session = target ?? ctx.session.current()
         const threshold = ctx.llm.contextWindowOf(session) * (config.autoCompactPercent / 100)
         if (estimateTokens(session.messages) <= threshold) return
-        const outcome = await compactSession(
-          session,
-          ctx.llm.routeForSession(session),
-          stream,
-          signal ?? new AbortController().signal,
-          carry(),
-          limits(),
-          undefined,
-          prune(),
-          requestContext(session),
+        const outcome = await whileCompacting(session, () =>
+          compactSession(
+            session,
+            ctx.llm.routeForSession(session),
+            stream,
+            signal ?? new AbortController().signal,
+            carry(),
+            limits(),
+            undefined,
+            prune(),
+            requestContext(session),
+          ),
         )
         const compacted = outcome === 'compacted'
         // 只有真压出结果才打压缩标记：noop 时这条提示照旧发（文案不动），
         // 但轨迹页不该凭空多出一段「压缩历史」
         // 带会话归属（0.6.68）：后台会话自动压缩时，这句提示不该冒到用户正在看的视图里。
         ctx.emit('dsc/notice', '上下文接近模型上限，已自动压缩历史', compacted ? 'compaction' : undefined, session.filePath)
-        if (compacted) ctx.emit('dsc/compacted')
+        if (compacted) {
+          ctx.emit('dsc/compacted')
+          reportContextUsed(session)
+        }
       },
 
       /** 请求已经因爆窗失败，强制压一次（2026-09-29）：压出空间返回 true，循环方重试请求。 */
       async forceCompact(signal, target) {
         const session = target ?? ctx.session.current()
-        const outcome = await compactSession(
-          session,
-          ctx.llm.routeForSession(session),
-          stream,
-          signal ?? new AbortController().signal,
-          carry(),
-          limits(),
-          true,
-          prune(),
-          requestContext(session),
+        const outcome = await whileCompacting(session, () =>
+          compactSession(
+            session,
+            ctx.llm.routeForSession(session),
+            stream,
+            signal ?? new AbortController().signal,
+            carry(),
+            limits(),
+            true,
+            prune(),
+            requestContext(session),
+          ),
         )
         if (outcome === 'compacted') {
           // 打上 'compaction' 类别：transcript 据此把这条通知标成压缩落点（轨迹页切区段）
           ctx.emit('dsc/notice', '上下文超出模型窗口：已自动压缩历史并重试', 'compaction', session.filePath)
           ctx.emit('dsc/compacted')
+          reportContextUsed(session)
           return true
         }
         return false
@@ -245,16 +286,19 @@ export const compactPlugin: Plugin.Object = {
           return
         }
         try {
-          const outcome = await compactSession(
-            ctx.session.current(),
-            ctx.llm.routeForSession(ctx.session.current()),
-            stream,
-            new AbortController().signal,
-            carry(),
-            limits(),
-            undefined,
-            prune(),
-            requestContext(ctx.session.current()),
+          const target = ctx.session.current()
+          const outcome = await whileCompacting(target, () =>
+            compactSession(
+              target,
+              ctx.llm.routeForSession(target),
+              stream,
+              new AbortController().signal,
+              carry(),
+              limits(),
+              undefined,
+              prune(),
+              requestContext(target),
+            ),
           )
           const compacted = outcome === 'compacted'
           ctx.emit(
@@ -263,7 +307,10 @@ export const compactPlugin: Plugin.Object = {
             compacted ? 'compaction' : undefined,
           )
           // 压完等于换了半本历史：加载时冻结的东西该重算了（记忆栏就是这么挂上去的）
-          if (compacted) ctx.emit('dsc/compacted')
+          if (compacted) {
+            ctx.emit('dsc/compacted')
+            reportContextUsed(target)
+          }
         } catch (error) {
           ctx.emit('dsc/notice', `压缩失败：${errText(error)}`)
         }

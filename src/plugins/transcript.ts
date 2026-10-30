@@ -104,6 +104,28 @@ export const transcriptPlugin: Plugin.Object = {
     })
 
     ctx.on('dsc/changed', () => invalidate())
+    /**
+     * 正在压缩的会话（0.7.2）：键 = 会话 jsonl 路径，值 = 开始时刻。
+     *
+     * 为什么不并进 turnState：压缩是命令驱动的，外面没有回合，turnState 仍是 idle；
+     * 而且压缩与回合互斥（compact 插件自己挡），单独一张表最直白。
+     */
+    const compactingSince = new Map<string, number>()
+    ctx.on('dsc/compacting', (running, sessionPath) => {
+      const path = sessionPath ?? ctx.session.current().filePath
+      if (running) compactingSince.set(path, Date.now())
+      else compactingSince.delete(path)
+      invalidate()
+    })
+    /**
+     * 压缩完成后的估算读数（0.7.2）：权威值要等下一次真实请求，这期间底部不能停着不动。
+     * 只认当前会话——后台会话的读数属于它自己，不该改别人状态栏上的数字。
+     */
+    ctx.on('dsc/context-used', (tokens, sessionPath) => {
+      if (sessionPath !== undefined && sessionPath !== ctx.session.current().filePath) return
+      transcript.seedContextUsage(tokens)
+      invalidate()
+    })
     // 第二个参数是通知的类别：'compaction' = 「历史刚被压缩」的落点（compact 插件发）。
     // 本插件认这个类别给条目打压缩标记；不认识的类别按普通通知处理。
     // 事件可带会话归属（0.6.49）：后台会话发的通知/计划卡不进当前查看会话的转录，
@@ -323,6 +345,10 @@ export const transcriptPlugin: Plugin.Object = {
               ? {}
               : { cost: { total: costEstimate.total, peakNow: isPeakHour() } }),
             cwd: ctx.session.current().meta.cwd,
+            // 正在压缩时给界面一个开始时刻，它据此画活动行（0.7.2）；没在压就不带这个字段。
+            ...(compactingSince.get(ctx.session.current().filePath) === undefined
+              ? {}
+              : { compactingSince: compactingSince.get(ctx.session.current().filePath) as number }),
             // jsonl 绝对路径：sessionId 是 uuid，落盘类命令（/fork）得用这个
             sessionPath: ctx.session.current().filePath,
             // 一条消息都没发过 = 还没落盘：界面据此把输入框草稿记在工作区名下（见 contract 的说明）

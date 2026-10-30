@@ -51,6 +51,19 @@ export function readTurnState(snapshot: HostSnapshot | null): string {
   return typeof value === 'string' ? value : 'idle'
 }
 
+/**
+ * 正在压缩上下文的开始时刻（毫秒）；没在压给 null。
+ *
+ * 为什么与 turnState 分开：压缩是命令驱动的，外面没有回合，turnState 仍是 'idle'——
+ * 只看它的话，`/compact` 跑的那几十秒界面上一片安静（2026-10-29 报障）。
+ */
+export function readCompactingSince(snapshot: HostSnapshot | null): number | null {
+  const status = snapshot?.['status']
+  if (typeof status !== 'object' || status === null) return null
+  const value = (status as Record<string, unknown>)['compactingSince']
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
 /** 条目流；没有给共用空表。 */
 export function readEntries(snapshot: HostSnapshot | null): readonly TranscriptEntry[] {
   const value = snapshot?.entries

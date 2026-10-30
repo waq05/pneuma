@@ -39,7 +39,7 @@ import { stepGroupFoldKey, turnFoldKey } from './fold-state'
 import { groupSteps, type StepGrouping } from './process-groups'
 import { JumpRail, previewText } from './jump-rail'
 import { pageStartRound } from './paging'
-import { matchTool, playCompletionSound, readCwd, readEntries, readLive, readSessions, readSessionPath, readTurnState } from '@dsc/ui-primitives'
+import { matchTool, playCompletionSound, readCompactingSince, readCwd, readEntries, readLive, readSessions, readSessionPath, readTurnState } from '@dsc/ui-primitives'
 import { registerToolCard } from './tool-card/factory'
 import { EMPTY_STEP_GROUPING, FOLD_PREFS, FlowActionsContext, FoldPrefsContext, ShellCwdContext, ShellSessionContext, TOOLVIEW_SLOT, buildSeats, keyOf, type FoldPrefs, type FlowActions, type Row, type Seat, type ToolViewRender } from './shared'
 import { useFollowBottom } from './follow'
@@ -108,6 +108,8 @@ function TranscriptFlow({
   const entries = useHostSelector(readEntries)
   const live = useHostSelector(readLive)
   const turnState = useHostSelector(readTurnState)
+  // 压缩进行中（0.7.2）：压缩不是回合，turnState 一直是 idle，得单独读一个字段。
+  const compactingSince = useHostSelector(readCompactingSince)
   const sessionPath = useHostSelector(readSessionPath)
   const sessionId = useHostSelector(readSessionId)
   const cwd = useHostSelector(readCwd) ?? ''
@@ -553,6 +555,12 @@ function TranscriptFlow({
           />
         </div>
       ))}
+      {/* 压缩进行中：与回合状态行同一个位置、同一套动画（0.7.2）。
+          压缩与回合互斥（宿主自己挡住），所以两行不会同时出现；压完这条行消失，
+          宿主紧接着写一条「上下文已压缩」的通知，底部的占用百分比也一起刷新。 */}
+      {compactingSince !== null ? (
+        <TurnStatusLine stage="compact · 正在压缩" activity="把更早的历史折成摘要" startedAt={compactingSince} />
+      ) : null}
       {/* 回合进行中：流末尾的状态行（阶段 + 活动名 + 实时用时 + 动画省略号） */}
       {activity !== null ? <TurnStatusLine stage={activity.stage} activity={activity.activity} startedAt={startedAt} /> : null}
       <div ref={follow.setEnd} />
