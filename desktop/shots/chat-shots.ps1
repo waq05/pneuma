@@ -339,7 +339,9 @@ foreach ($name in $cases.Keys) {
   $env:DSC_DESKTOP_SHOT_EVAL_LEAD = [string]$spec.lead
   $env:DSC_DESKTOP_SHOT_EVAL = $spec.eval
   Write-Output "=== $name ==="
-  & $electron 'out\main\index.js' *>&1 | Out-File -FilePath $log -Encoding utf8
+  # 入口给绝对路径：这个脚本常被从 shots/ 目录下直接调用，用相对的 'out\main\index.js'
+  # 会让 electron 找不到入口、静默退出（日志只有一行空行，截图永远停在旧文件上）。
+  & $electron (Join-Path $shots '..\out\main\index.js') *>&1 | Out-File -FilePath $log -Encoding utf8
   Select-String -Path $log -Pattern '预跑脚本完成|已写出|截图失败|页面加载失败' |
     ForEach-Object { '  ' + $_.Line } | Select-Object -First 6
 }
