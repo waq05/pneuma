@@ -556,13 +556,16 @@ function TranscriptFlow({
         </div>
       ))}
       {/* 压缩进行中：与回合状态行同一个位置、同一套动画（0.7.2）。
-          压缩与回合互斥（宿主自己挡住），所以两行不会同时出现；压完这条行消失，
-          宿主紧接着写一条「上下文已压缩」的通知，底部的占用百分比也一起刷新。 */}
+          压完这条行消失，宿主紧接着写一条「上下文已压缩」的通知，底部的占用百分比也一起刷新。 */}
       {compactingSince !== null ? (
         <TurnStatusLine stage="compact · 正在压缩" activity="把更早的历史折成摘要" startedAt={compactingSince} />
       ) : null}
-      {/* 回合进行中：流末尾的状态行（阶段 + 活动名 + 实时用时 + 动画省略号） */}
-      {activity !== null ? <TurnStatusLine stage={activity.stage} activity={activity.activity} startedAt={startedAt} /> : null}
+      {/* 回合进行中：流末尾的状态行（阶段 + 活动名 + 实时用时 + 动画省略号）。
+          自动压缩发生在回合起点（beforeRequest），那时 turnState 已经是 thinking——
+          两行都画就是两个转圈，所以压缩优先，只留上面那一行。 */}
+      {activity !== null && compactingSince === null ? (
+        <TurnStatusLine stage={activity.stage} activity={activity.activity} startedAt={startedAt} />
+      ) : null}
       <div ref={follow.setEnd} />
       {/* 暂停跟随时的回头路：只在这一刻出现（跟随中不画），点一下恢复跟随并送回底部。 */}
       {follow.paused ? (
