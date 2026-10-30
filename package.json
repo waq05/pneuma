@@ -1,6 +1,6 @@
 {
   "name": "@waq666/pneuma",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Pneuma（numa）— 独立的终端 AI harness（自研 ReAct loop + ink TUI）",
   "type": "module",
   "license": "MIT",

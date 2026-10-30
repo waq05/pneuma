@@ -860,7 +860,7 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 | `tool-search.ts` | 工具渐进披露的纯逻辑：分词（中文按相邻两字）、手写 BM25 索引、延后判定（read 一律不许撤）、配置校验 |
 | `lifecycle-hooks.ts` | codex 十二事件的钩子引擎：事件能力清单（wired / partial / unwired 与理由）、codex 形态配置的解析、跑外部命令、按失败方向给裁决 |
 | `approval.ts` | 只有审批通道**接口**，判读在 `src/plugins/approval.ts` |
-| `tools/` | `bash` 缺省 30 秒、最多 120 秒，输出超 8000 字符截断（累积到 16000 就不再收）——三个值都由 tools-default 插件配置下发（`bashTimeoutMs` / `bashMaxTimeoutMs` / `bashOutputChars`，设置分区「工具预算」可改），代码里的常量只是缺省。Windows 走 `powershell -NoProfile -Command`，超时和取消都收进程树。`read` 单次缺省 2000 行（`tools-default.readLineLimit`）。`glob` 遍历上限 1 万、`grep` 2 万，都跳过 `node_modules`/`.git`/`dist`/`build`/`coverage`/`__pycache__` 与 1 MiB 以上的文件。**没有目录白名单**——路径只按会话工作目录解析 |
+| `tools/` | `bash` 缺省 30 秒、最多 120 秒，输出超 8000 字符截断（累积到 16000 就不再收）——三个值都由 tools-default 插件配置下发（`bashTimeoutMs` / `bashMaxTimeoutMs` / `bashOutputChars`，设置分区「工具预算」可改），代码里的常量只是缺省。Windows 走 `powershell -NoProfile -Command`，超时和取消都收进程树。`read` 单次缺省 2000 行（`tools-default.readLineLimit`）。`glob` / `grep` **边遍历边匹配**：按 `.gitignore`（从 git 根逐层读到搜索根，子目录的规则在进入它时生效，`!` 否定按「后出现的赢」）加内置大目录表（`node_modules`、`.git`、`dist`、`build`、`coverage`、`__pycache__`、`.venv`、`site-packages` 等）跳过，命中够 `limit` 就停，截断时明说「还有更多」；不再有「先收 1 万 / 2 万条再过滤」的全局额度——那会让 `.venv` 吃光额度、把真实结果挤成「无匹配」。`grep` 另外跳过 1 MiB 以上的文件。**没有目录白名单**——路径只按会话工作目录解析 |
 | `skills.ts` | 只认顶层 `<目录>/SKILL.md` 与顶层 `<名字>.md`，不递归（`:165-178`）。`name` 要 kebab-case，非法就退回文件名并记一条问题 |
 | `market.ts` | 缓存 1 小时、拉取超时 15 秒、浏览并发 6、附属文件最多 40 个。GitHub 匿名限额低，403/422 会提示设 `GITHUB_TOKEN` |
 | `prefs.ts` | 偏好文件读坏了按默认返回，不崩（`:89-91`）。`closeToTray` 默认 true |

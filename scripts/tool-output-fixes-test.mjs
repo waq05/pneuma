@@ -137,6 +137,26 @@ console.log('[4] glob：大括号展开')
   }
 }
 
+// ---------------------------------------------------------------- 5. edit 参数名提示
+
+console.log('[5] edit：参数名传成旧名字时，报错要直接说清楚')
+{
+  const fsTools = await import('../lib/core/tools/fs-tools.js')
+  const ctx = { cwd: tmpdir(), signal, sessionId, sessionPath }
+  const messageOf = async (args) => {
+    try {
+      await fsTools.editTool.run(args, ctx)
+      return ''
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
+  }
+  const alias = await messageOf({ path: 'nope.txt', old_string: 'a', new_string: 'b' })
+  check('old_string 被认出来并给了正确参数名', alias.includes('old_string') && alias.includes('path / old / new'), alias)
+  const fileAlias = await messageOf({ file_path: 'nope.txt', old: 'a', new: 'b' })
+  check('file_path 同样给出提示', fileAlias.includes('file_path') && fileAlias.includes('path / old / new'), fileAlias)
+}
+
 if (failures > 0) {
   console.log(`\n${String(failures)} 条用例失败`)
   process.exit(1)

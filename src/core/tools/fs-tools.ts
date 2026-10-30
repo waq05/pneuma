@@ -210,6 +210,19 @@ export const editTool: ToolEntry = {
   },
   risk: 'write',
   async run(args, ctx) {
+    // 反馈（2026-10-29）：模型按别的工具的习惯传 old_string / new_string / file_path，
+    // 只收到一句「old 必须是字符串」，得试一次才知道参数名。认得出来的别名直接说清楚。
+    const alias =
+      args.old === undefined && args.new === undefined && (args.old_string !== undefined || args.new_string !== undefined)
+        ? 'old_string / new_string'
+        : args.path === undefined && args.file_path !== undefined
+          ? 'file_path'
+          : null
+    if (alias !== null) {
+      throw new Error(
+        `参数名不对：这个工具用 path / old / new（你传的是 ${alias}）。把目标路径放 path、要替换的原文放 old、替换后的内容放 new`,
+      )
+    }
     const file = absPath(ctx.cwd, args.path)
     const hard = writeHardBlockReason(file)
     if (hard !== null) throw new Error(hard)

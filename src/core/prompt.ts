@@ -261,6 +261,19 @@ function gitLine(cwd: string, args: string[]): string | null {
 }
 
 /**
+ * 跑一条 git 命令拿**原样输出**：porcelain 的状态码带前导空格（` M file`），
+ * `trim()` 会把第一行的状态码削掉，所以这条路径不做 trim。
+ */
+function gitText(cwd: string, args: string[]): string | null {
+  try {
+    const out = execFileSync('git', args, { cwd, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] })
+    return out.trim() === '' ? null : out
+  } catch {
+    return null
+  }
+}
+
+/**
  * 环境事实全文（日期、平台、工作目录、git 分支）——由 prompt 插件的 env-facts
  * 投影附在每次请求末尾（user 快照消息），不再进系统提示词（2026-10-03）：
  * 它每天都变，放在提示词里会把服务端前缀缓存整段打掉。
@@ -278,13 +291,24 @@ export function environmentText(cwd: string): string {
   const now = new Date()
   const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
   const branch = gitLine(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])
-  const dirty = gitLine(cwd, ['status', '--porcelain']) !== null
+  // `-c core.quotePath=false`：默认 git 会把中文文件名写成 `"\351\207\215…"` 这种八进制，
+  // 模型第一眼认不出是哪个文件（2026-10-30 反馈）。这里顺手关掉。
+  const status = gitText(cwd, ['-c', 'core.quotePath=false', 'status', '--porcelain'])
+  const dirty = status === null ? [] : status.split('\n').filter((line) => line.trim() !== '')
+  const shown = dirty.slice(0, 5).map((line) => (line.length > 80 ? `${line.slice(0, 79)}…` : line))
+  const more = dirty.length > shown.length ? ` 等 ${String(dirty.length)} 项` : ''
   const lines = [
     '环境事实：',
     `- 今天：${date}`,
     `- 平台：${process.platform === 'win32' ? 'Windows（bash 工具跑的是 PowerShell）' : process.platform}`,
     `- 工作目录：${cwd}`,
-    ...(branch === null ? [] : [`- git 分支：${branch}${dirty ? '（工作区有未提交改动）' : '（工作区干净）'}`]),
+    ...(branch === null
+      ? []
+      : [
+          `- git 分支：${branch}（${
+            dirty.length === 0 ? '工作区干净' : `工作区有未提交改动：${shown.join('、')}${more}`
+          }）`,
+        ]),
   ]
   const text = lines.join('\n')
   if (envCache.size > 8) envCache.clear()

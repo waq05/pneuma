@@ -87,11 +87,18 @@ export function ptcResultBody(input: {
   }
   parts.push(`返回值：\n${ptcResultText(input.value)}`)
   if (input.calls.length > 0) {
-    const rows = input.calls.map(
-      (call, index) =>
-        `${index + 1}. ${call.ok ? '✓' : '✗'} ${call.name}(${call.args}) ${call.ms}ms${call.note === undefined ? '' : ` —— ${call.note}`}`,
+    // 成功的调用压成一行汇总，失败的单独列：六次调用铺六行会把「这次到底调了什么」淹掉，
+    // 而失败的参数与原因必须留着——那是模型下一步要改的地方（2026-10-30 反馈）。
+    const tally = new Map<string, number>()
+    for (const call of input.calls) tally.set(call.name, (tally.get(call.name) ?? 0) + 1)
+    const mix = [...tally.entries()].map(([name, count]) => (count === 1 ? name : `${name}×${String(count)}`))
+    const failed = input.calls.filter((call) => !call.ok)
+    const head = `这一轮调了 ${String(input.calls.length)} 次工具（${mix.join('、')}${failed.length === 0 ? '' : `；失败 ${String(failed.length)} 条`}）`
+    const details = failed.map(
+      (call) =>
+        `✗ ${call.name}(${call.args}) ${String(call.ms)}ms${call.note === undefined ? '' : ` —— ${call.note}`}`,
     )
-    parts.push(`这一轮调了 ${input.calls.length} 次工具：\n${rows.join('\n')}`)
+    parts.push(details.length === 0 ? head : `${head}\n${details.join('\n')}`)
   } else {
     parts.push('这一轮没有调用任何工具。')
   }
