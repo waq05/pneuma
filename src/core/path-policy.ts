@@ -148,8 +148,34 @@ export function isInsideCwd(cwd: string, target: string): boolean {
   return rel === '' || (!parent && !isAbsolute(rel))
 }
 
+/**
+ * 判路径策略时要看的所有写法：字面路径 + 跟到底的真实路径。
+ *
+ * 为什么必须跟一遍（2026-10-30 审查）：以前只看字面路径，把 ~/.ssh/id_rsa 软链成
+ * notes.txt 之后读 notes.txt 就绕过了整张读禁清单——写侧同理（软链指到 dsc 的配置文件
+ * 就能免掉「改说明书必须当面确认」）。Windows 上文件软链要管理员/开发者模式，目录 junction
+ * 不需要，所以这条洞在默认环境里是真实可达的。真实路径与字面路径相同时只判一次。
+ *
+ * @param target - 调用方给的路径（相对路径按进程目录展开）。
+ * @returns 去重后的路径清单：字面路径在前，真实路径在后。
+ */
+function policyPaths(target: string): string[] {
+  const literal = resolve(target)
+  const real = realPath(literal)
+  return normalizeKey(real) === normalizeKey(literal) ? [literal] : [literal, real]
+}
+
 /** 读这个路径要不要拒。 */
 export function readBlockReason(target: string): PathVerdict {
+  for (const candidate of policyPaths(target)) {
+    const verdict = readBlockReasonOne(candidate)
+    if (verdict !== null) return verdict
+  }
+  return null
+}
+
+/** 读禁判定的单路径版本（字面与真实路径各判一次）。 */
+function readBlockReasonOne(target: string): PathVerdict {
   const name = basename(target)
   const lowered = name.toLowerCase()
   if (isEnvFamily(lowered)) {
@@ -175,6 +201,15 @@ export function readBlockReason(target: string): PathVerdict {
 
 /** 写这个路径要不要硬拒（硬拒 = 任何模式都不放行，包括审批）。 */
 export function writeHardBlockReason(target: string): PathVerdict {
+  for (const candidate of policyPaths(target)) {
+    const verdict = writeHardBlockReasonOne(candidate)
+    if (verdict !== null) return verdict
+  }
+  return null
+}
+
+/** 写硬拒的单路径版本：字面路径与真实路径各判一次，软链指到禁写区也拦得住。 */
+function writeHardBlockReasonOne(target: string): PathVerdict {
   const candidate = target.replace(/[\\/]+$/, '')
   for (const { re, why } of WRITE_DENIED_PATTERNS) {
     if (re.test(candidate) || re.test(candidate.replace(/\\/g, '/'))) return `禁止写入：${why}。`
@@ -186,28 +221,49 @@ export function writeHardBlockReason(target: string): PathVerdict {
   return null
 }
 
-/** 这个写操作是不是「说明书」类改动（永远要弹一次卡，不受权限模式影响）。 */
+/**
+ * 这个写操作是不是「说明书」类改动（永远要弹一次卡，不受权限模式影响）。
+ *
+ * 字面路径与真实路径各判一次：软链/junction 指到 dsc 的配置文件时，只判字面路径会漏。
+ */
 export function isProtectedInstruction(target: string, cwd: string): PathVerdict {
-  const name = basename(target).toLowerCase()
-  if (PROTECTED_INSTRUCTION_BASENAMES.has(name)) {
-    // dsc 自己目录下的控制文件不豁免：它们就是权限体系本身，模型改它们等于自己给自己改权限
-    // （2026-09-29 审查发现原来的豁免让 ~/.dsc/settings.json 与 plugins.json 免卡可写）。
-    if (normalizeKey(target).startsWith(normalizeKey(DSC_HOME))) {
-      return `${name} 是 dsc 的控制文件，改动它必须用户当面确认一次。`
-    }
-    // 工作区外的 settings.json 多半是别的软件的（VS Code 用户设置这类），不归这层管。
-    if (name === 'settings.json' && !isInsideCwd(cwd, target)) return null
-    return `${name} 是给 agent 看的说明书或 dsc 的配置，改动它必须用户当面确认一次。`
+  for (const candidate of policyPaths(target)) {
+    const verdict = isProtectedInstructionOne(candidate, cwd)
+    if (verdict !== null) return verdict
   }
   return null
+}
+
+/** 说明书写判定的单路径版本。 */
+function isProtectedInstructionOne(target: string, cwd: string): PathVerdict {
+  const name = basename(target).toLowerCase()
+  if (!PROTECTED_INSTRUCTION_BASENAMES.has(name)) return null
+  // dsc 自己目录下的控制文件不豁免：它们就是权限体系本身，模型改它们等于自己给自己改权限
+  // （2026-09-29 审查发现原来的豁免让 ~/.dsc/settings.json 与 plugins.json 免卡可写）。
+  if (normalizeKey(target).startsWith(normalizeKey(DSC_HOME))) {
+    return `${name} 是 dsc 的控制文件，改动它必须用户当面确认一次。`
+  }
+  // 工作区外的 settings.json 多半是别的软件的（VS Code 用户设置这类），不归这层管。
+  if (name === 'settings.json' && !isInsideCwd(cwd, target)) return null
+  return `${name} 是给 agent 看的说明书或 dsc 的配置，改动它必须用户当面确认一次。`
+}
+
+/**
+ * 台账的键：真实路径（软链别名与它指向的文件记同一笔）。
+ *
+ * 不跟真实路径的话，「读 link.txt、写真实文件」这一对就查不到记录，
+ * 整写覆盖检查（没读过就整写）会被一条软链绕过去。
+ */
+function ledgerKey(target: string): string {
+  return normalizeKey(realPath(resolve(target)))
 }
 
 /** 记录一次读取（read 工具执行后调用），带上当时的修改时间。按会话记账（0.6.48）。 */
 export function noteRead(target: string, sessionId: string): void {
   try {
-    ledgerOf(sessionId).set(normalizeKey(target), statSync(target).mtimeMs)
+    ledgerOf(sessionId).set(ledgerKey(target), statSync(target).mtimeMs)
   } catch {
-    ledgerOf(sessionId).delete(normalizeKey(target))
+    ledgerOf(sessionId).delete(ledgerKey(target))
   }
 }
 
@@ -227,7 +283,7 @@ export function staleOverwriteReason(target: string, sessionId: string): PathVer
   } catch {
     return null // 文件不存在 = 新建，没有覆盖问题
   }
-  const seen = ledgerOf(sessionId).get(normalizeKey(target))
+  const seen = ledgerOf(sessionId).get(ledgerKey(target))
   if (seen === undefined) {
     return `${basename(target)} 已存在但本次会话没读过它。先读一遍再整写，不然会把别人改过的内容整片抹掉。`
   }
@@ -242,7 +298,7 @@ export function staleOverwriteReason(target: string, sessionId: string): PathVer
  * edit 自己会现读盘上现值，没读过的文件也允许直接改（这是它与整写覆盖的语义差别）。
  */
 export function staleEditReason(target: string, sessionId: string): PathVerdict {
-  const seen = ledgerOf(sessionId).get(normalizeKey(target))
+  const seen = ledgerOf(sessionId).get(ledgerKey(target))
   if (seen === undefined) return null
   let mtime: number
   try {
