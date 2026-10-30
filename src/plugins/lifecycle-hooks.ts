@@ -303,7 +303,7 @@ export const lifecycleHooksPlugin: Plugin.Object = {
           type: 'switch',
           key: 'failClosed',
           label: '钩子没跑成就算拦',
-          help: '超时、命令起不来、输出看不懂、退出码非 0 时按「拦下来」处理。关掉就退回「跑不成当没这条钩子」——出了事更难查，建议留着。',
+          help: '默认关，与 codex 一致：钩子只有明确用退出码 2（并在 stderr 写原因）才挡下本次操作；超时、起不来、退出码非 0 只记一条提示。打开后这些情况也一律拦——脚本有个小毛病就会把整轮工具调用掐死，只在你确定钩子稳的时候开。',
         },
         {
           type: 'text',
@@ -311,7 +311,7 @@ export const lifecycleHooksPlugin: Plugin.Object = {
           label: '命令白名单',
           mono: true,
           placeholder: '留空 = 不限制；例如 node, uv',
-          help: '填了之后只有入口在白名单里的钩子会执行，按命令的第一个词比（`node` 放行 `node guard.js`，不放行 `nodejs-evil`）。被挡下的钩子按「没跑成」处理。',
+          help: '填了之后只有入口在白名单里的钩子会执行，按命令的第一个词比（`node` 放行 `node guard.js`，不放行 `nodejs-evil`）。被挡下的钩子算「没跑成」，拦不拦由上面那个开关决定。',
         },
         {
           type: 'info',

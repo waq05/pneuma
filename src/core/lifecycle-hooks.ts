@@ -200,7 +200,13 @@ export interface LifecycleHooksConfig {
   configPath: string
   /** 钩子自己没写超时时给多少毫秒。 */
   timeoutMs: number
-  /** 钩子没跑成（超时、命令起不来、输出看不懂、退出码非 0）时按拒处理；false 才转放行。 */
+  /**
+   * 钩子没跑成（超时、命令起不来、输出看不懂、退出码非 0）时按拒处理；false 则只留一条提示。
+   *
+   * 默认 false，与 codex 同一口径：codex 把非 2 的退出码记成 Failed，`should_block` 仍为 false
+   * （`codex-rs/hooks/src/engine/mod.rs` 的 pre_tool_use 用例）。钩子坏掉是钩子自己的事，
+   * 不该把所有工具调用一起掐死；想要「没跑成也算拦」的人自己打开。
+   */
   failClosed: boolean
   /** 命令白名单：逗号或空格分隔的入口（例如 `node, uv`）；空串 = 不限制。 */
   commandAllowlist: string
@@ -211,7 +217,8 @@ export const LIFECYCLE_DEFAULTS: LifecycleHooksConfig = {
   enabled: true,
   configPath: dscPath('lifecycle-hooks.json'),
   timeoutMs: HOOK_TIMEOUT_DEFAULT,
-  failClosed: true,
+  // 默认真不拦：只有钩子明确用退出码 2（或写了 failClosed: true）才挡工具
+  failClosed: false,
   commandAllowlist: '',
 }
 
@@ -231,7 +238,8 @@ export function resolveLifecycleConfig(passed?: unknown): LifecycleHooksConfig {
     enabled: raw.enabled !== false && raw.enabled !== 'false',
     configPath: expandHome(asText(raw.configPath, LIFECYCLE_DEFAULTS.configPath)),
     timeoutMs: clampNumber(raw.timeoutMs, HOOK_TIMEOUT_MIN, HOOK_TIMEOUT_MAX, LIFECYCLE_DEFAULTS.timeoutMs),
-    failClosed: raw.failClosed !== false && raw.failClosed !== 'false',
+    // 默认不拦（与 codex 一致）：只有明确写 true 才把「钩子没跑成」当成拦
+    failClosed: raw.failClosed === true || raw.failClosed === 'true',
     commandAllowlist: typeof raw.commandAllowlist === 'string' ? raw.commandAllowlist : LIFECYCLE_DEFAULTS.commandAllowlist,
   }
 }
