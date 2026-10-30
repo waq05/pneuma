@@ -51,6 +51,9 @@ const TOOL_NAME_MAX = 64
 /** 哈希尾巴的位数。 */
 const TOOL_NAME_HASH = 12
 
+/** 片段被清洗过时补的短哈希位数（见 sanitize：a.b 与 a_b 不能撞成一个名字）。 */
+const TOOL_NAME_PART_HASH = 8
+
 /** tools/list 翻页上限：server 一直给新游标时也不能转死。 */
 const MAX_TOOL_PAGES = 100
 
@@ -320,9 +323,18 @@ function needsShell(file: string): boolean {
 
 // ── 工具命名与风险等级 ───────────────────────────────────────────────────────
 
-/** 把片段里不能出现在工具名里的字符换掉。 */
+/**
+ * 把片段里不能出现在工具名里的字符换掉。
+ *
+ * 换过的片段补 8 位短哈希（2026-10-30 修）：`a.b` 与 `a_b` 都清洗成 `a_b`，不补哈希就是
+ * 同一个工具名——后注册的把先注册的顶掉，模型看到的目录少一条、调用时还可能打到错的工具。
+ * 原样合法的片段不动（`create_issue` 还是 `create_issue`，不打扰用户手上的配置与延后规则）。
+ */
 function sanitize(part: string): string {
-  return part.replace(/[^A-Za-z0-9_-]/g, '_')
+  const clean = part.replace(/[^A-Za-z0-9_-]/g, '_')
+  if (clean === part) return clean
+  const digest = createHash('sha256').update(part).digest('hex').slice(0, TOOL_NAME_PART_HASH)
+  return `${clean}_${digest}`
 }
 
 /**
