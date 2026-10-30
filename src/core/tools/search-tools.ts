@@ -11,6 +11,70 @@ import type { ToolEntry } from '../tools.js'
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'coverage', '__pycache__'])
 const MAX_FILE_BYTES = 1024 * 1024
 
+/** 大括号展开最多出几条模式：`{a,b}{c,d}` 这种组合会指数增长，得有个头。 */
+const BRACE_EXPANSION_LIMIT = 64
+
+/** 按顶层逗号切一段（`a,{b,c}` 里内层的逗号不切）。 */
+function splitBraceOptions(body: string): string[] {
+  const parts: string[] = []
+  let depth = 0
+  let current = ''
+  for (const ch of body) {
+    if (ch === '{') depth += 1
+    else if (ch === '}') depth -= 1
+    if (ch === ',' && depth === 0) {
+      parts.push(current)
+      current = ''
+      continue
+    }
+    current += ch
+  }
+  parts.push(current)
+  return parts
+}
+
+/**
+ * 把 `{a,b}` 展开成多条模式（花括号展开的最小子集，支持嵌套）。
+ *
+ * 为什么要有（2026-10-30）：反馈里那条 `{vue,ts,js,json}` 多选模式一条都没匹配上，
+ * 而且**不报错**，看起来就像「这个目录是空的」——一次误判足以让模型走错方向。
+ * 只有真带逗号的 `{a,b}` 才展开：`{single}` 在 shell 里是字面量，这里保持一致。
+ * `{` 没有配对的 `}` 直接报错，不静默返回空结果。
+ *
+ * @param pattern - 原始模式。
+ * @param limit - 最多展开出几条；超出后截断（宁少不多，避免一次请求铺开几百个匹配器）。
+ * @returns 展开后的模式列表（不需要展开时就是原样一条）。
+ */
+export function expandBraces(pattern: string, limit = BRACE_EXPANSION_LIMIT): string[] {
+  const open = pattern.indexOf('{')
+  if (open < 0) return [pattern]
+  let depth = 0
+  let close = -1
+  for (let i = open; i < pattern.length; i += 1) {
+    if (pattern[i] === '{') depth += 1
+    else if (pattern[i] === '}') {
+      depth -= 1
+      if (depth === 0) {
+        close = i
+        break
+      }
+    }
+  }
+  if (close < 0) throw new Error(`glob 模式里的 { 没有配对的 }：${pattern}`)
+  const options = splitBraceOptions(pattern.slice(open + 1, close))
+  if (options.length < 2) return [pattern]
+  const prefix = pattern.slice(0, open)
+  const suffix = pattern.slice(close + 1)
+  const out: string[] = []
+  for (const option of options) {
+    for (const expanded of expandBraces(`${prefix}${option}${suffix}`, limit)) {
+      out.push(expanded)
+      if (out.length >= limit) return out
+    }
+  }
+  return out
+}
+
 /** 把 glob 模式转 RegExp：`**` 跨目录段，`*`/`?` 段内。 */
 function globToRegExp(pattern: string): RegExp {
   const normalized = pattern.replace(/\\/g, '/')
@@ -59,11 +123,12 @@ const displayPath = (root: string, file: string): string => relative(root, file)
 export const globTool: ToolEntry = {
   name: 'glob',
   description:
-    '按文件名模式查找文件（相对当前目录）。支持 ** 跨目录、* 段内通配、? 单字符。例：**/*.ts、src/*.json。',
+    '按文件名模式查找文件（相对当前目录）。支持 ** 跨目录、* 段内通配、? 单字符、{a,b} 花括号多选。' +
+    '例：**/*.ts、src/*.json、**/*.{vue,ts,js}。',
   parameters: {
     type: 'object',
     properties: {
-      pattern: { type: 'string', description: 'glob 模式' },
+      pattern: { type: 'string', description: 'glob 模式（支持 {a,b} 多选）' },
       path: { type: 'string', description: '搜索根目录（默认当前目录）' },
       limit: { type: 'number', description: '最多返回条数（默认 100）' },
     },
@@ -76,10 +141,14 @@ export const globTool: ToolEntry = {
       ? (isAbsolute(args.path) ? args.path : resolve(ctx.cwd, args.path))
       : ctx.cwd
     const limit = Math.max(1, typeof args.limit === 'number' ? Math.floor(args.limit) : 100)
-    const matcher = globToRegExp(args.pattern)
+    // {a,b} 先展开成多条模式再逐条编译：`**/*.{vue,ts}` 以前被当成字面量，静默给「无匹配」。
+    const matchers = expandBraces(args.pattern).map(globToRegExp)
     const files: string[] = []
     await walk(root, root, files, 10_000)
-    const hits = files.map((file) => displayPath(root, file)).filter((rel) => matcher.test(rel)).slice(0, limit)
+    const hits = files
+      .map((file) => displayPath(root, file))
+      .filter((rel) => matchers.some((matcher) => matcher.test(rel)))
+      .slice(0, limit)
     return hits.length === 0 ? `（无匹配：${args.pattern}）` : hits.join('\n')
   },
 }

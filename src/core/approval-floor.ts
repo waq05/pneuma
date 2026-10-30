@@ -532,12 +532,84 @@ function compiledGlob(glob: string): RegExp | null {
   return re
 }
 
-/** 这些文本里有没有命中黑名单；命中返回那条 glob（说给模型听）。 */
-function globHit(texts: readonly string[], globs: readonly string[]): string | null {
+/** `.env` 模板文件：只含键名与示例值，不是密钥本体（`.env.example` / `.env.sample` 这类）。 */
+const ENV_TEMPLATE_RE = /(?:^|[\\/])\.env\.(?:example|sample|template|dist)(?:\.[^\\/]*)?$/i
+
+/**
+ * 只做「存在性探测」的命令头：它们回答「这个路径在不在」，不吐出文件内容。
+ *
+ * 为什么需要这份名单（0.7.2，2026-10-29 报障）：deny 黑名单按「命令词元」匹配，
+ * `Test-Path .env` 的词元 `.env` 命中 `*.env`，于是连「这个文件存在吗」都答不了。
+ * 探测只泄漏一位信息，不泄漏内容，放行；真正读内容的命令（`type`、`Get-Content`）
+ * 不在名单里，照旧拒。
+ */
+const EXISTENCE_ONLY_HEADS: ReadonlySet<string> = new Set([
+  'test-path',
+  'test',
+  'get-item',
+  'get-childitem',
+  'gci',
+  'ls',
+  'dir',
+  'stat',
+  'file',
+  'where',
+  'which',
+  'resolve-path',
+])
+
+/** 这个路径是不是 `.env` 家族的模板（不是密钥本体）。 */
+function isEnvTemplate(path: string): boolean {
+  return ENV_TEMPLATE_RE.test(path)
+}
+
+/** 这个路径是不是 `.env` 家族（含模板）。存在性探测的放行只对这一族生效。 */
+function isEnvPath(path: string): boolean {
+  const base = path.split(/[\\/]/).pop() ?? ''
+  return base === '.env' || base.startsWith('.env.')
+}
+
+/** 整条命令是不是只做存在性探测：单段、无重定向、无命令替换、头在名单里。 */
+function existenceOnlyProbe(command: string): boolean {
+  const segments = splitSegments(command)
+  if (segments.length !== 1) return false
+  const segment = segments[0]
+  if (segment === undefined || segment.redirect || segment.subst) return false
+  const head = (segment.tokens[0] ?? '').toLowerCase().replace(/\.exe$/, '')
+  return EXISTENCE_ONLY_HEADS.has(head)
+}
+
+/** 内置那两条 `.env` 规则：模板与存在性探测的例外只对它们生效，用户自加的规则不受影响。 */
+function isEnvGlob(glob: string): boolean {
+  return glob === '*.env' || glob === '*.env.*'
+}
+
+/**
+ * 这些文本里有没有命中黑名单；命中返回那条 glob 与命中的原文（说给模型听）。
+ *
+ * 两条例外（2026-10-30）：
+ * - `.env` 模板（`.env.example` 这类）不是密钥，读写都放行——否则项目模板只能改名；
+ * - 纯存在性探测（`Test-Path .env`）只泄漏「在不在」一位信息，放行。这条只对 `.env`
+ *   一族生效：`Test-Path id_rsa` 这类仍按黑名单拒，不扩大口子。
+ *
+ * 例外只挂在 `.env` 那两条内置规则上：用户自己在黑名单里加 `.env.example` 是要拦它，
+ * 不能被这里顺手放掉。
+ */
+function denyHit(
+  texts: readonly string[],
+  globs: readonly string[],
+  allowEnvProbe: boolean,
+): { glob: string; text: string } | null {
   for (const glob of globs) {
     const re = compiledGlob(glob)
     if (re === null) continue
-    if (texts.some((text) => re.test(text))) return glob
+    const envGlob = isEnvGlob(glob)
+    for (const text of texts) {
+      if (!re.test(text)) continue
+      if (envGlob && isEnvTemplate(text)) continue
+      if (envGlob && allowEnvProbe && isEnvPath(text)) continue
+      return { glob, text }
+    }
   }
   return null
 }
@@ -604,8 +676,8 @@ function evaluate(input: ToolGuardInput, config: FloorConfig, rules: readonly Pr
 
   if (command === '') {
     if (target === undefined) return { action: 'defer', layer: 'none', reason: '既没有命令也没有写目标，交给后面的守卫' }
-    const hit = globHit([target], config.denyGlobs)
-    if (hit !== null) return { action: 'deny', layer: 'deny-list', reason: `写目标命中用户 deny 黑名单（${hit}）` }
+    const hit = denyHit([target], config.denyGlobs, false)
+    if (hit !== null) return { action: 'deny', layer: 'deny-list', reason: `写目标命中用户 deny 黑名单（${hit.glob}）` }
     if (config.unattended && !isInsideCwd(input.cwd, target)) {
       return { action: 'deny', layer: 'unattended', reason: `无人值守场景只放行工作区内的写入，这次是 ${target}` }
     }
@@ -641,8 +713,9 @@ function evaluate(input: ToolGuardInput, config: FloorConfig, rules: readonly Pr
 
   // 第 3 层：用户 deny 黑名单与 deny 前缀规则。排在权限模式与审批之前，
   // 「完全访问」因此在审批层放行不了它（`plugins/approval.ts:334-337` 那条路径直接被抄掉）。
-  const hit = globHit(pathCandidates(command), config.denyGlobs)
-  if (hit !== null) return { action: 'deny', layer: 'deny-list', reason: `命令命中用户 deny 黑名单（${hit}）` }
+  // 纯存在性探测（`Test-Path .env`）只回答「在不在」，不放进内容读取那一档（0.7.2）。
+  const hit = denyHit(pathCandidates(command), config.denyGlobs, existenceOnlyProbe(command))
+  if (hit !== null) return { action: 'deny', layer: 'deny-list', reason: `命令命中用户 deny 黑名单（${hit.glob}）` }
   if (verdict.matchedRule !== null && verdict.matchedRule.decision === 'deny') {
     return {
       action: 'deny',
@@ -693,8 +766,8 @@ function innerDenyReason(command: string, config: FloorConfig, rules: readonly P
     if (inner !== null) return inner
   }
   if (structure.substitutions.length > 0) return '片段里还套着命令替换，拼不出实际效果'
-  const hit = globHit(pathCandidates(text), config.denyGlobs)
-  if (hit !== null) return `命中用户 deny 黑名单（${hit}）`
+  const hit = denyHit(pathCandidates(text), config.denyGlobs, false)
+  if (hit !== null) return `命中用户 deny 黑名单（${hit.glob}）`
   if (verdict.matchedRule !== null && verdict.matchedRule.decision === 'deny') {
     return `用户规则禁止：${verdict.matchedRule.justification ?? verdict.matchedRule.pattern.join(' ')}`
   }

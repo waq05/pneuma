@@ -239,28 +239,48 @@ export function writeSpill(sessionId: string, text: string, config: SpillConfig)
 }
 
 /**
- * 回给模型的那段：前几行 + 完整路径 + 一句可以直接照抄的续读写法。
+ * 回给模型的那段：开头几行 + 结尾几行 + 完整路径 + 一句可以直接照抄的续读写法。
+ *
+ * 为什么尾巴必须留（2026-10-30 改）：只给开头时，报错、测试结论、脚本最后打印的结果
+ * 全在末尾——模型拿到「前 30 行」后还得再 read 一次才看得到「为什么失败」，一次溢出
+ * 变成两次调用。bash 的截断早就是「头 60% + 尾 40%」，这里对齐同一口径：两段各留
+ * {@link SpillConfig.keepLines} 行，中间的省略行数写清楚。
+ *
+ * 文件本身被截断（{@link SpillWriteResult.truncated}）时只给开头：尾巴那些行根本没写进
+ * 盘里，画出来就是让模型去读一个不存在的区间。
  *
  * @param path - 落盘文件的绝对路径。
- * @param text - 溢出的原文；这里只取前几行，尾巴绝不出现。
- * @param config - 当前配置（决定显示几行、续读一次读几行）。
+ * @param text - 溢出的原文。
+ * @param config - 当前配置（决定头尾各显示几行、续读一次读几行）。
  * @param written - {@link writeSpill} 的结果；文件本身也被截断过时把这件事一并说明。
  * @returns 替换原文的那段文本。
  */
 export function spillPreview(path: string, text: string, config: SpillConfig, written?: SpillWriteResult): string {
   const lines = text.split('\n')
+  const truncatedFile = written !== undefined && written.truncated
   // 文件只写了一部分（截断）时，预览也别显示文件里没有的行
-  const available = written !== undefined && written.truncated ? Math.min(lines.length, written.keptLines) : lines.length
-  const head = lines.slice(0, Math.min(config.keepLines, available))
-  const shown = head.length
-  const missing = lines.length - shown
-  const more = missing > 0 ? `\n…（这里只显示前 ${String(shown)} 行，还有 ${String(missing)} 行）` : ''
-  const cut =
-    written !== undefined && written.truncated
-      ? `\n（文件本身按 ${String(config.maxBytes)} 字节上限截断，只写了前 ${String(written.keptLines)} 行）`
-      : ''
-  const pointer = `[完整输出已落盘：${path}\n接着读：read(path="${path}", offset=${String(shown + 1)}, limit=${String(config.readChunkLines)})]`
-  return `${head.join('\n')}${more}${cut}\n\n${pointer}`
+  const available = truncatedFile ? Math.min(lines.length, written.keptLines) : lines.length
+  const visible = lines.slice(0, available)
+  const headCount = Math.min(config.keepLines, visible.length)
+  const head = visible.slice(0, headCount)
+  // 尾巴不与开头重叠：行数不到两倍 keepLines 时全部显示，中间省略 0 行。
+  const tailCount = truncatedFile ? 0 : Math.max(0, Math.min(config.keepLines, visible.length - headCount))
+  const tail = tailCount === 0 ? [] : visible.slice(visible.length - tailCount)
+  const omitted = visible.length - headCount - tail.length
+  const more =
+    omitted <= 0
+      ? ''
+      : tail.length === 0
+        ? `\n…（这里只显示前 ${String(headCount)} 行，还有 ${String(omitted)} 行没显示）`
+        : `\n…（中间省略 ${String(omitted)} 行，这里给了开头 ${String(headCount)} 行与结尾 ${String(tailCount)} 行）`
+  const cut = truncatedFile
+    ? `\n（文件本身按 ${String(config.maxBytes)} 字节上限截断，只写了前 ${String(written.keptLines)} 行）`
+    : ''
+  const pointer = `[完整输出已落盘：${path}\n接着读：read(path="${path}", offset=${String(headCount + 1)}, limit=${String(config.readChunkLines)})]`
+  const parts = [head.join('\n')]
+  if (more !== '') parts.push(more)
+  if (tail.length > 0) parts.push(`\n${tail.join('\n')}`)
+  return `${parts.join('')}${cut}\n\n${pointer}`
 }
 
 /**

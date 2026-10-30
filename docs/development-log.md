@@ -11069,3 +11069,43 @@ Windows 低完整性标签与当前用户的显式权限项，沙箱写不进去
 脚本修好了，备份与回滚命令在 `D:\dsc\.acl-report\`；`desktop` 目录本身还缺，这次靠会话切到
 完全权限才把文件挪出来——切回 workspace-write 后写 `desktop/` 可能再被拒，要修得单独跑一次
 （会递归 1,600 多个文件）。
+
+## 三十四、工具层四条老毛病：溢出预览、`.env` 黑名单、PowerShell 编码、glob 大括号（2026-10-30）
+
+用户需求一句话：「这份使用反馈里的问题应该还在，检查源码，修复」。
+先说结论：**反馈里 15 条，6 条早已修掉，9 条仍在**；这一轮修的是其中收益最高的四条，
+每条都能用反馈作者那次会话（`1e79386c`）的日志当验收证据。
+
+**为什么上一轮判错了**：第一遍只看了常量和函数名，得出「read 默认 2000 行，已修」，
+但实际截断发生在 **spill 的预览规则** 上——`read` 在 `SKIP_TOOLS` 里，PTC 模式下工具名却是
+`run_code`，脚本 `return` 超过 4000 字符就被砍成前 30 行。教训：反馈描述的是**现象**，
+要找的是现象背后的那一条路径，不是同名的那个默认值。
+
+**四条修复**（附证据）：
+
+1. **溢出预览改成「头 30 行 + 尾 30 行」**（`src/core/spill.ts`）。证据：那次会话里 8 条结果
+   带「这里只显示前 30 行，还有 317 行」，报错与测试结论全在末尾，模型被迫再 read 一次。
+   文件本身被截断时不画尾巴（那些行根本没落盘）。续读仍从第 31 行开始。
+2. **`.env` 黑名单精确化**（`src/core/approval-floor.ts`）。证据：10 次「命中用户 deny 黑名单
+   （`*.env`）」，`Test-Path .env` 直接拒。现在：模板（`.env.example/.sample/.template/.dist`）
+   读写都放行；`Test-Path` / `Get-Item` / `ls` / `stat` 这类**纯存在性探测**对 `.env` 一族放行；
+   `Get-Content .env`、`type .env`、写 `.env` 照旧拒；`Test-Path id_rsa` 不跟着放行。
+   存在性探测只泄漏「文件在不在」一位信息，不泄漏内容，这是刻意的取舍。
+3. **PowerShell 输出编码**（`src/core/tools/bash.ts`）。证据：25 条结果含替换字符，中文文件名、
+   Python 注释、报错里的中文路径全中。两层修：启动参数里把 `[Console]::OutputEncoding` 与
+   `$OutputEncoding` 钉成 UTF-8（cmdlet 的输出由它决定）；读取侧按字节收，UTF-8 严格解不开
+   再按 GBK 解（原生命令 python / git 按控制台代码页写字节，改不到它的编码）。
+   实测 `python -c "print('中文输出测试')"`、`Write-Output 中文`、`cmd /c echo 中文` 三路都正确，
+   `exit 3` 的退出码照旧透传。
+4. **glob 支持 `{a,b}`**（`src/core/tools/search-tools.ts`）。证据：反馈里
+   `{vue,ts,js,json}` 这种写法一条都没匹配上且不报错，看起来像目录是空的。现在是展开成多条
+   模式再逐条匹配，支持嵌套、最多 64 条；`{single}` 按字面量（与 shell 一致）；`{` 没配对
+   直接报错，不静默给「无匹配」。
+
+**没动的三条**（各有代价，留待单独拍板）：`$(...)` 一刀切拒（改成问人要动 fail-closed 口径）、
+bash 默认 30 秒超时（放宽会拖长卡死时间）、PTC 脚本 120 秒硬时限（要连改动线机制一起定）。
+
+**验证**：新增 `scripts/tool-output-fixes-test.mjs`（20 条断言，进 `check:core` 自动发现），
+全绿；`pnpm run typecheck` 0 错、`pnpm run build` 0 错、`pnpm run check:style` 629 个文件通过；
+相关的 `bash-truncation-test` / `command-policy-test` / `review-approval-test` /
+`approval-review-fallback-test` / `tool-search-test` 全部通过。

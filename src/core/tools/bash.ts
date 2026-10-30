@@ -164,11 +164,20 @@ export function spawnShell(
     const untrack = (): void => {
       if (options?.trackKey !== undefined) backgroundChildren.delete(options.trackKey)
     }
-    let output = ''
+    // 输出按字节收，退出时再决定用哪种编码解（见 decodeShellOutput）：
+    // 中文 Windows 上 PowerShell 的默认控制台编码是 GBK，按 UTF-8 硬解就是一屏乱码。
+    const chunks: Buffer[] = []
+    let bytes = 0
+    /** 后台作业的增量预览：流式解 UTF-8，跨块的多字节字符不会被切成半个。 */
+    const chunkDecoder = new TextDecoder('utf-8')
     const append = (chunk: Buffer | string): void => {
-      const text = String(chunk)
-      if (output.length < outputLimit * 2) output += text
-      options?.onChunk?.(text)
+      const buf = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk
+      // 按字节封顶（UTF-8 中文 3 字节/字、GBK 2 字节/字，4 倍字符上限足够留出截断余量）
+      if (bytes < outputLimit * 4) {
+        chunks.push(buf)
+        bytes += buf.length
+      }
+      if (options?.onChunk !== undefined) options.onChunk(chunkDecoder.decode(buf, { stream: true }))
     }
     child.stdout?.on('data', append)
     child.stderr?.on('data', append)
@@ -189,7 +198,7 @@ export function spawnShell(
       signal.removeEventListener('abort', onAbort)
       untrack()
       options?.onExit?.(code)
-      const truncated = truncateBashOutput(output, outputLimit)
+      const truncated = truncateBashOutput(decodeShellOutput(Buffer.concat(chunks)), outputLimit)
       const body = truncated.trim()
       const lines: string[] = []
       if (reason !== null) lines.push(reason)
@@ -256,6 +265,36 @@ export function truncateBashOutput(output: string, outputLimit: number): string 
 }
 
 /**
+ * PowerShell 启动前先把输出编码钉成 UTF-8（2026-10-30）。
+ *
+ * 为什么必须动手：中文 Windows 上 powershell.exe 默认按控制台代码页（936/GBK）编码
+ * 自己写的输出，Node 那边按 UTF-8 解就是一屏乱码——`Get-ChildItem` 的中文文件名、
+ * Python 报错里的中文路径都会变成问号或方框，模型据此判断不了路径对不对。
+ *
+ * 为什么包 try/catch：某些宿主（无控制台的服务里）设置 `[Console]::OutputEncoding`
+ * 会抛 IOException，编码没设成不该让整条命令失败。
+ *
+ * 注意它只管 PowerShell 自己的输出与它转发给原生程序的管道；原生命令（python、git）
+ * 仍可能按控制台代码页写字节，那边由 {@link decodeShellOutput} 的 GBK 回落兜住。
+ */
+const PS_UTF8_PROLOGUE =
+  'try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }\n$OutputEncoding = [Text.Encoding]::UTF8'
+
+/** 一段命令输出该用哪种编码解：先按 UTF-8 严格解，解不开再按 GBK 解。 */
+function decodeShellOutput(buffer: Buffer): string {
+  if (buffer.length === 0) return ''
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buffer)
+  } catch {
+    try {
+      return new TextDecoder('gbk').decode(buffer)
+    } catch {
+      return buffer.toString('utf8')
+    }
+  }
+}
+
+/**
  * 执行一条命令：先问执行器缝拿最终执行计划，再 spawn，最后让改写过的那几位收尾。
  * 没有沙箱插件注册执行器时，计划就是上面的默认那份，行为与以前完全一致。
  * T15：`background` 旁路给后台作业用——同一套计划缝与环境脱敏，回调收增量与退出。
@@ -276,7 +315,11 @@ async function runShell(
         //（powershell.exe 自己只回 0/1）。命令末尾补一句显式 exit，把最后一条
         // 原生命令的退出码带出来；纯 cmdlet 命令没有 $LASTEXITCODE，行为不变。
         // 用换行而不是分号追加：command 以注释结尾时语句不会被注释吞掉。
-        args: ['-NoProfile', '-Command', `${command}\nif ($LASTEXITCODE -ne $null) { exit $LASTEXITCODE }`],
+        args: [
+          '-NoProfile',
+          '-Command',
+          `${PS_UTF8_PROLOGUE}\n${command}\nif ($LASTEXITCODE -ne $null) { exit $LASTEXITCODE }`,
+        ],
         env,
         cwd,
       }
