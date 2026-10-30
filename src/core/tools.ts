@@ -86,6 +86,15 @@ export interface ToolOutput {
    * 随工具记录落盘（会话恢复时轮尾「文件已更改」卡据此还原）。执行失败时没有这一项。
    */
   changes?: FileChangeSummary
+  /**
+   * **一次调用动了多个文件**时的改动清单（PTC 的 `run_code` 就是这种：一段脚本里
+   * 可能调了五次 `sdk.write`）。
+   *
+   * 为什么不能只靠上面那个单值（2026-10-30 报障）：PTC 以前只取工具返回的 `text`，
+   * 把 `changes` 连同回合基线一起丢了——用户在那个会话里改了十几个文件，会话底部
+   * 一张「文件已更改」卡都没有，非 git 工作区更是完全看不见。
+   */
+  changesList?: FileChangeSummary[]
 }
 
 export interface ToolEntry {

@@ -374,7 +374,13 @@ export const sandboxPlugin: Plugin.Object = {
       if (problems.length > 0) lines.push(`⚠ 沙箱配置有问题（已按默认值兜底）：${problems.join('；')}`)
       return lines.join('\n')
     }
-    const offPrompt = ctx.prompt.register('sandbox', promptText, { order: PROMPT_ORDER })
+    // 沙箱说明挂在**请求末尾的环境快照**里，不进系统提示词（2026-10-30 报障）：
+    // 档位一改系统提示词就变，服务端前缀缓存从那一行起全失效（实测切一次权限，
+    // 下一次请求 59K 未命中、只命中 4K）。挪到快照之后前缀稳定，模型每轮照样看到最新档位。
+    // 子代理不受影响：它本来就不拿系统提示词里的这段（见 subagent 插件自己的提示词）。
+    const offPrompt = ctx.prompt.registerEnvFacts('sandbox', (session) =>
+      promptText({ sessionId: session?.meta.id, cwd: session?.meta.cwd }),
+    )
 
     // ── 后端探测与降级 ────────────────────────────────────────────────────────
 

@@ -419,7 +419,12 @@ export class MiniAgent {
       if (pristine !== undefined) this.checkRequestInvariant(messages, pristine, assembled, systemText)
       // context 条的分段在请求组装完、流还没开的时候画出来：模型还没吐字，
       // 界面就能显示这次的上下文由什么组成（每次重算，压缩/滚出自动重置）。
-      this.deps.emit({ type: 'context', segments: estimateRequestSegments(messages) })
+      this.deps.emit({
+        type: 'context',
+        // 第二项是工具定义（本次请求的 schema 文本）：它同样每次都被发一遍、同样计输入 token，
+        // 以前完全没进分段，界面上那一段「工具定义」其实指的是工具结果（见 token-estimate.ts）。
+        segments: estimateRequestSegments(messages, describeToolSchema(this.requestTools)),
+      })
       try {
         const result = await this.deps.stream(
           route.api,
@@ -657,29 +662,38 @@ export class MiniAgent {
       // 工具结果里的密钥形状字符串不进会话日志，也不回显给模型（遮红挂在观察者链上）。
       const text = this.deps.guards.observe(call.name, rawText)
       const images = typeof output === 'string' ? undefined : output.images
-      const changes = typeof output === 'string' ? undefined : output.changes
+      // 改动清单：单值（write / edit 一刀一个文件）与清单（PTC 一段脚本改多个文件）合起来看。
+      // 这里保留 baseline，落盘时再剥——回合基线记账要它（见 finishCall）。
+      const changesList =
+        typeof output === 'string'
+          ? []
+          : [...(output.changes === undefined ? [] : [output.changes]), ...(output.changesList ?? [])]
       // dsh 插件给的卡片数据（presentCall / presentResult / presentationMeta）：原样带走，
       // 让它随工具记录落盘、重放时还能重建卡片。
       const presentation = typeof output === 'string' ? undefined : output.presentation
-      // baseline 是回合基线记账的内存字段：单独摘到 outcome 上，事件与落盘形状里不留它。
-      const baseline = changes?.baseline
-      const clean = changes !== undefined ? stripBaseline(changes) : undefined
-      const untouched = text === rawText && clean === undefined && presentation === undefined
-      const stored: string | { text: string; images?: string[]; changes?: FileChangeSummary; presentation?: ToolPresentation } =
+      // baseline 是回合基线记账的内存字段：落盘形状里不留它（事件走 stripBaseline）。
+      const clean = changesList.map(stripBaseline)
+      const untouched = text === rawText && clean.length === 0 && presentation === undefined
+      const stored: string | {
+        text: string
+        images?: string[]
+        changes?: FileChangeSummary | FileChangeSummary[]
+        presentation?: ToolPresentation
+      } =
         untouched
           ? output
           : {
               text,
               ...(images !== undefined && images.length > 0 ? { images } : {}),
-              ...(clean === undefined ? {} : { changes: clean }),
+              // 单个文件写单值（与老日志同形，读的时候两边都认），多个文件写数组
+              ...(clean.length === 0 ? {} : { changes: clean.length === 1 ? clean[0]! : clean }),
               ...(presentation === undefined ? {} : { presentation }),
             }
       const imageNote = images !== undefined && images.length > 0 ? `\n[附 ${images.length} 张截图]` : ''
       return {
         text: text + imageNote,
         stored,
-        ...(baseline !== undefined ? { baseline } : {}),
-        ...(clean === undefined ? {} : { changes: clean }),
+        ...(changesList.length === 0 ? {} : { changesList }),
         ...(presentation === undefined ? {} : { presentation }),
       }
     } catch (error) {
@@ -702,11 +716,15 @@ export class MiniAgent {
       // 占用了这段时间（与 adapter 里工具卡 durationMs 同一口径）
       ...(startedAt === undefined ? {} : { ms: Math.max(0, Date.now() - startedAt) }),
     })
-    // 成功的落盘类调用随带真实改动：界面聚合成轮尾「文件已更改」卡
-    if (outcome.error === undefined && outcome.changes !== undefined) {
-      // 改前全文记进回合基线：轮尾聚合 diff = 回合起点 vs 盘上终态（同文件多刀合一）
-      if (outcome.baseline !== undefined) this.session.recordTurnChange(outcome.changes.path, outcome.baseline)
-      this.deps.emit({ type: 'tool/changes', callId: call.id, change: outcome.changes })
+    // 成功的落盘类调用随带真实改动：界面聚合成轮尾「文件已更改」卡。
+    // 一次调用可能动了多个文件（PTC 的 run_code）：逐个记基线、逐个发事件，
+    // 同文件多刀由 recordTurnChange 的「首次为准」保证基线还是回合起点。
+    if (outcome.error === undefined && outcome.changesList !== undefined) {
+      for (const change of outcome.changesList) {
+        // 改前全文记进回合基线：轮尾聚合 diff = 回合起点 vs 盘上终态（同文件多刀合一）
+        if (change.baseline !== undefined) this.session.recordTurnChange(change.path, change.baseline)
+        this.deps.emit({ type: 'tool/changes', callId: call.id, change: stripBaseline(change) })
+      }
     }
     // dsh 插件的卡片数据（没失败才发）：界面按 card 标签挑形态，没认出来的回落通用卡
     if (outcome.error === undefined && outcome.presentation !== undefined) {
@@ -717,18 +735,33 @@ export class MiniAgent {
 
 export { LlmError }
 
+/**
+ * 把本次要发的工具定义拼成一段可估算的文本。
+ *
+ * 只取 name / description / parameters 三个真正上线的字段——别的字段（risk、presets 这类
+ * 本地元数据）不随请求发出去，算进去就成了虚数。数组顺序就是发送顺序，同一份工具集
+ * 每次拼出来逐字节一致（估算值因此也稳定）。
+ */
+function describeToolSchema(tools: readonly ToolEntry[]): string {
+  if (tools.length === 0) return ''
+  return JSON.stringify(
+    tools.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
+  )
+}
+
 /** 一次工具调用的落库与广播产物（runTool 保证永不 reject）。 */
 type ToolOutcome = {
   /** 发给界面与模型的文本（已过遮红；带图时附截图说明）。 */
   text: string
   /** 落进会话日志的形状（带图 / 带文件改动时是对象）。 */
-  stored: string | { text: string; images?: string[]; changes?: FileChangeSummary }
+  stored: string | { text: string; images?: string[]; changes?: FileChangeSummary | FileChangeSummary[] }
   /** undefined = 成功；tool-error = 执行失败；rejected = 被守卫拒绝。 */
   error?: 'tool-error' | 'rejected'
-  /** 成功的 write / edit 附带的真实改动（发 `tool/changes` 事件用，不带 baseline）。 */
-  changes?: FileChangeSummary
+  /**
+   * 这次调用实际改动的文件（可能多个：PTC 一段脚本改几处）。
+   * 元素里带着 baseline（改前全文，纯内存），发事件与落盘前各自剥掉。
+   */
+  changesList?: FileChangeSummary[]
   /** 工具给的卡片数据（dsh 插件才有；发 `tool/presentation` 事件、随记录落盘）。 */
   presentation?: ToolPresentation
-  /** 这次落盘前的文件全文（回合基线记账用，纯内存；不进事件与日志）。 */
-  baseline?: string
 }

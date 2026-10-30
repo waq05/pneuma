@@ -11269,3 +11269,92 @@ deny 黑名单；改成「问人」的话，「完全访问」档会在审批层
 **验证**：新增 `scripts/search-ignore-test.mjs`（20 条：内置跳过表、gitignore 目录/通配/否定、
 截断提示、中文目录、反斜杠模式、花括号）与 `scripts/env-facts-test.mjs`（12 条：快照列文件、
 中文不转义、超过 5 项报总数、PTC 汇总一行、失败单独列），全绿。
+
+## 三十九、状态行两行重复、PTC 里写的文件不上卡、上下文读数标错、右栏拖宽压扁正文（2026-10-30 第二轮报障）
+
+四条一起报的：截图里「正在执行工具 / 正在调用 bash」上下两行像复读；会话底部永远不出「文件已更改」卡；
+状态栏说「工具定义 41.8K」；右栏拉宽之后中间的会话区挤成每行三四个字。查下来是四个互不相干的原因。
+
+**1. 状态行与过程组头说的是同一件事。**
+
+`ui-shell/src/plugins/transcript/timing.ts` 给的是两行（阶段 + 活动名），
+`rows/foot.tsx` 原样画出来还拼了「用时」；而过程组头（`step-group-row.tsx`）已经写着
+「正在运行命令 · bash」。于是工具跑动时同一条信息出现三处。
+
+改成一行，并且**有组头时不再画**：`liveActivity` 返回 `{ text, covered }`，
+`covered = true`（有工具在跑）且本轮有过程组时，状态行整块不出——组头自己说话。
+用时挪到底部状态栏（契约新增 `StatusView.turnStartedAt`，宿主按最后一条非插话用户消息填）；
+第一轮进行中 `steps` 还是 0，状态栏那一档只报「用时」，不摆「0 轮 0 步」这种假读数。
+
+实测截图（`desktop/shots/chat-working-thinking.png`）：状态行 `rows: 3`（圈 + 一句话 + 三点）、
+`hasSecondLine: false`、底部状态栏 `用时 11.0s`。
+
+**2. PTC 里 `sdk.write` 的改动被丢掉了。**
+
+`src/plugins/ptc.ts` 原来只取工具返回的 `text`：
+
+```ts
+const raw = typeof output === 'string' ? output : output.text
+```
+
+而 `write` / `edit` 返回的是 `{ text, changes, baseline }`。改动与回合基线一起丢，于是：
+没有 `tool/changes` 事件 → 轮尾卡不出现；没有基线 → `turn/diff` 聚合也没有；
+非 git 工作区连兜底都没有（`collectGitTurnChanges` 在非仓库直接返回空）。
+数据：`D-code-quiz-master-test-quiz-master` 下三个会话 251 次工具调用，带 `changes` 的记录 **0 条**。
+
+修法：PTC 收集每次调用的 `changes`（`ToolOutput.changesList`），脚本结束时交回；
+循环 `finishCall` 逐个记基线、发 `tool/changes`；落盘写数组，重放与恢复都认（老日志的单值形状照旧读）。
+顺手把 git 兜底的单轮文件上限从 20 提到 200——「显示不全」有一半是它。
+
+**3. 「工具定义 41.8K」标错了。**
+
+`ui-shell/src/plugins/statusbar/ui.tsx` 把 `segments.tools` 当「工具定义」显示，
+而 `core/token-estimate.ts` 里 `tools` 统计的是**工具结果**；真·工具定义（每次请求的 schema）
+根本没进分段。实测那个会话：62 条 `run_code` 返回合计 43,225 token，最大一条 6,343 token——
+是工具输出占的，不是工具描述。PTC 模式真正的工具定义只有 `run_code` 一个（约 400 token）。
+
+现在分四段：系统提示词 / 工具定义（`schema`，新算）/ 工具结果（`tools`，改名）/ 对话消息。
+
+**4. 右栏拖宽之后正文被压扁。**
+
+正文 `.thread-main` 只有 `min-width: 0`，dock 的拖拽上限写死 820、不看在场的窗口还剩多少。
+窗口不够时正文被压到一百来像素，中文逐字换行、输入框控件叠在一起。
+
+修法：正文保底 `min-width: min(480px, 100%)`；dock 拖拽上限按「窗口宽 − 侧栏宽 − 480」现算；
+窗口缩放时同样夹回去（只夹内存，不改用户存档的宽度）。
+
+### 缓存与上下文：顺手查了 dsh 的做法
+
+这个会话的用量日志（`~/.dsc/usage/usage.jsonl`，185 次请求）：
+
+| 项 | 数字 |
+| --- | --- |
+| prompt 总量 / 输出 | 3,657,569 / 44,563 |
+| 缓存命中 / 未命中 | 3,236,224 / 421,345（88.5%） |
+| 未命中最多的 5 次 | 45.6K、45.9K、56.5K、59.1K、81.4K，占总未命中 68.5% |
+
+五次尖峰各有原因：冷启动两次、空了 2.5 小时一次、**切权限档位一次（59.1K，只剩 4K 命中）**、
+压缩之后一次（81.4K）。切权限那次是系统提示词里的【沙箱】段被改写——前缀从第 1357 个字符断开。
+
+dsh 的口径（`packages/core/agent-loop/README.md` 的 KV Cache 一节）写得很直白：
+前缀复用要求逐字节一致；系统提示词变化时**追加到已缓存历史之后**（`systemPromptUpdate: 'in-history'`），
+不改写第 0 条；工具定义一变，从第一个变化的 token 起重算；普通历史只追加就一直命中。
+
+这里取其中改动最小的一条：把**会随用户操作变化**的两段（【沙箱】档位、当前模式）从系统提示词搬到
+请求末尾的环境快照（`PromptService.registerEnvFacts`）。切一次权限 / 模式不再动前缀，
+模型每轮照样看到最新档位与规则（探针实测：切模式后系统提示词逐字节不变）。
+
+工具结果那 43K 的另一半也用同一套思路收拾：新增 `core/tool-result-prune.ts`，
+超过 8192 字符的结果留头 4096 + 尾 1024（最近 4 条不动），中间写一句「省了多少字符、原文还在日志里」。
+**同一条消息永远切成同一段**——前缀只在它第一次越线那一轮失效一次，之后稳定。
+与 dsh 的 `compaction-tool-result-pruner` 同口径（它也是 8K/4K/1K），区别是不等压缩、
+不写额外文件，纯投影。
+
+**验证**：`scripts/ptc-changes-test.mjs`（15 条：多文件改动交回、落盘数组、重开还原、
+同文件两刀聚合、老日志单值兼容）、`scripts/context-segments-test.mjs`（21 条：schema 段、
+修剪的头尾与确定性、最近几条不动、沙箱与模式在快照里且切模式系统提示词不变）、
+`scripts/ui-turn-status-test.mjs`（17 条：单行推导、组件与样式形态、用时在状态栏、右栏保底），
+加上 `turn-changes-test`、`context-pipeline-test`、`ui-transcript-render-test` 全绿。
+
+**没做到的**：右栏拖宽的修复只做过静态断言与公式核对，没有跑真机拖拽截图——
+现有 `chat-shots.ps1` 只能截「进行中」的回合，拖拽要另写一套操作脚本，这一轮没做。

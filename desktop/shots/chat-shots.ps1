@@ -96,12 +96,16 @@ $thinkingEval = ($head + @'
   await submit('请检查一下对话区右缘的刻度条：现在的高亮判定准不准？');
   await wait(11000);
   const st = q('.turn-status');
+  const seg = q('.segment.seg-turn');
   return {
     case: 'thinking',
     turnState: q('.composer .stop') ? 'working' : 'unknown',
-    stage: st ? st.querySelector('.turn-status-stage').textContent : null,
-    activity: st ? st.querySelector('.turn-status-activity').textContent : null,
+    // 2026-10-30：状态行只剩一行（文本 + 三点动画），用时在底部状态栏
+    text: st ? st.querySelector('.turn-status-stage').textContent : null,
+    rows: st ? st.children.length : 0,
+    hasSecondLine: !!(st && st.querySelector('.turn-status-activity')),
     dots: st ? st.querySelectorAll('.turn-status-dots i').length : 0,
+    statusbarText: seg ? seg.textContent : null,
     liveThinking: !!q('.thinking.live'),
   };
 })()
@@ -115,10 +119,13 @@ $toolEval = ($head + @'
   await submit('这个需求的范围我拿不准，你先问我。');
   await wait(9000);
   const st = q('.turn-status');
+  const groupHead = q('.step-fold-label');
   return {
     case: 'tool',
-    stage: st ? st.querySelector('.turn-status-stage').textContent : null,
-    activity: st ? st.querySelector('.turn-status-activity').textContent : null,
+    // 有过程组头时状态行不画（同一件事只说一遍）；组头自己说「正在运行命令 · xxx」
+    statusText: st ? st.querySelector('.turn-status-stage').textContent : null,
+    groupLabel: groupHead ? groupHead.textContent : null,
+    hasSecondLine: !!(st && st.querySelector('.turn-status-activity')),
     runningToolCards: all('.tool-card .tool-name, .tool-card .tool-title').map((n) => n.textContent),
     askCard: !!q('.ask-card'),
   };
@@ -134,7 +141,7 @@ $roundEval = ($head + @'
   await submit('用一句话说明刻度条现在有几条轨道。');
   let started = false;
   for (let i = 0; i < 20 && !started; i += 1) { await wait(250); started = q('.turn-status') !== null; }
-  const seenActivity = q('.turn-status-activity') ? q('.turn-status-activity').textContent : null;
+  const seenActivity = q('.turn-status-stage') ? q('.turn-status-stage').textContent : null;
   let ended = false;
   for (let i = 0; i < 60 && !ended; i += 1) { await wait(250); ended = q('.turn-status') === null; }
   await wait(500);

@@ -38,18 +38,27 @@ export interface SegmentMessage {
   tool_calls?: { function: { name: string; arguments: string } }[]
 }
 
-/** 请求按内容类型的 token 估算分段（context 进度条占用段的组成，dsh 同款五段）。 */
+/** 请求按内容类型的 token 估算分段（context 进度条占用段的组成）。 */
 export interface RequestSegments {
   system: number
   prompt: number
   assistant: number
   thinking: number
+  /**
+   * 工具**结果**（tool 消息的正文）。
+   *
+   * 名字容易误解（2026-10-30 追查）：它不是工具定义，是模型读完工具输出之后留在历史里的
+   * 那一段。以前界面把这一段标成「工具定义」，用户看到 41.8K 以为工具描述太肥，实际是
+   * 62 条 run_code 的返回原文。工具定义见下面的 {@link RequestSegments.schema}。
+   */
   tools: number
+  /** 工具**定义**（每次请求随 requests 一起发出去的 schema 文本；也算输入 token）。 */
+  schema: number
 }
 
 /** 全零分段（新会话 / 尚无请求记录）。 */
 export function emptySegments(): RequestSegments {
-  return { system: 0, prompt: 0, assistant: 0, thinking: 0, tools: 0 }
+  return { system: 0, prompt: 0, assistant: 0, thinking: 0, tools: 0, schema: 0 }
 }
 
 /**
@@ -62,7 +71,16 @@ export function emptySegments(): RequestSegments {
  * 这些零头体现在权威读数（真实 prompt_tokens）与分段之和的差上，界面只拿分段画颜色，
  * 读数永远用服务端数字。
  */
-export function estimateRequestSegments(messages: readonly SegmentMessage[]): RequestSegments {
+export function estimateRequestSegments(
+  messages: readonly SegmentMessage[],
+  /**
+   * 这次请求携带的工具定义（已序列化的 schema 文本）。空串 = 不发工具（压缩摘要调用那种）。
+   *
+   * 为什么单独一项（2026-10-30）：工具定义同样占输入 token、同样被每次都发一遍，但以前
+   * 完全没进分段——界面把「工具结果」标成「工具定义」，真·定义反而一分钱都不显示。
+   */
+  toolSchema = '',
+): RequestSegments {
   const textOf = (content: SegmentMessage['content']): string => {
     if (content === null) return ''
     if (typeof content === 'string') return content
@@ -95,5 +113,6 @@ export function estimateRequestSegments(messages: readonly SegmentMessage[]): Re
     assistant: Math.ceil(segments.assistant),
     thinking: Math.ceil(segments.thinking),
     tools: Math.ceil(segments.tools),
+    schema: Math.ceil(estimateTextTokens(toolSchema)),
   }
 }

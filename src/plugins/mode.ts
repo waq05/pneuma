@@ -83,9 +83,11 @@ export const modePlugin: Plugin.Object = {
     }
     ctx.provide('mode', service)
 
-    // 这一档的条款进系统提示：排在工具规范之后、用户说明书之前，
-    // 它每轮都可能变，往后放一点才不会把前面那些稳定段的提示缓存打没。
-    ctx.prompt.register('mode:policy', (scope) => modeSpec(modeFor(scope?.sessionId)).prompt, { order: 30 })
+    // 这一档的条款挂在**请求末尾的环境快照**里，不进系统提示词（2026-10-30）。
+    // 原来它是一段 order 30 的系统提示段，换一次模式系统提示词就从头不同，服务端前缀
+    // 缓存整段失效——一次 /plan 就能把几十 K 的命中打成未命中。挪到快照之后：
+    // 前缀原样复用，模型每轮照样读到当前模式的规则（plan 的禁令一个字都不少）。
+    ctx.prompt.registerEnvFacts('mode', (session) => modeSpec(modeFor(session?.meta.id)).prompt)
 
     // 闸门：执行档一律交给后面的权限模式与审批卡；其余三档照 core/modes.ts 的判法说话。
     const modeGuard: ToolGuard = {

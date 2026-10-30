@@ -23,6 +23,27 @@ import { dockActions, dockTabMeta, useDockSurface } from './dock-state'
 /** 窄视口自动全屏的阈值（对齐旧桌面版）。 */
 const NARROW_VIEWPORT = 768
 
+/** 正文至少留多宽：与 legacy/views.css 里 .thread-main 的 min-width 同源。 */
+const THREAD_FLOOR = 480
+
+/** 侧栏此刻占多宽（收起时是 0）：从 DOM 现量，比读 CSS 变量更不容易漂。 */
+function sidebarWidth(): number {
+  const sidebar = document.querySelector('.sidebar')
+  return sidebar instanceof HTMLElement ? sidebar.getBoundingClientRect().width : 0
+}
+
+/**
+ * 右侧栏此刻最多能拖多宽。
+ *
+ * 只看固定的 820 上限是不够的（2026-10-30 报障）：窗口不够宽时拖到 820 会把正文压到
+ * 一百来像素，中文逐字换行、输入框控件叠成一团。这里按「窗口宽 − 侧栏 − 正文保底」
+ * 现算，再把配置上限取小——空间不够时先保正文，右栏停在那儿不再变宽。
+ */
+function dockDragLimit(): number {
+  const room = window.innerWidth - sidebarWidth() - THREAD_FLOOR
+  return Math.min(820, Math.max(300, room))
+}
+
 /**
  * 页签 chip 上的图标与标题；preview / patch 的 chip 用文件自己的彩色图标，见 Chip。
  *
@@ -85,8 +106,10 @@ export function Dock(props: {
     event.preventDefault()
     const startX = event.clientX
     const startWidth = props.width
+    // 上限在按下这一刻算一次：拖的过程中窗口不会变宽，跟着每帧算反而会让手感发飘
+    const limit = dockDragLimit()
     const onMove = (move: MouseEvent): void => {
-      props.onResize(Math.min(820, Math.max(300, startWidth - (move.clientX - startX))))
+      props.onResize(Math.min(limit, Math.max(300, startWidth - (move.clientX - startX))))
     }
     const onUp = (): void => {
       document.body.classList.remove('resizing')

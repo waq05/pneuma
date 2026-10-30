@@ -1231,12 +1231,18 @@
   /* 非空态的骨架（对照 dsh active 态：viewArea flex:1 把输入区推到底）：
      之前普通态没有任何规则（裸 div），chat-wrap 的 flex:1 落空——composer
      跟内容流，短对话吊在半空、长对话直接滚出视口。composer 在 .chat 滚动
-     容器之外，flex 撑开后自然恒贴底，不需要 dsh 那层 sticky。 */
+     容器之外，flex 撑开后自然恒贴底，不需要 dsh 那层 sticky。
+
+     min-width 是**保底**，不是审美参数（2026-10-30 报障）：右侧栏被拖宽时正文会被压到
+     一百来像素，中文变成一行三四个字，输入框里的元素叠在一起。给 480px 之后，拖到极限
+     是右栏不再变宽（拖拽上限在 ui-dockkit/dock.tsx 里按窗口现算），而不是正文继续被挤扁。
+     min(480px, 100%) 的写法给极窄窗口留退路：容器本来就不到 480 时按 100% 算，
+     不会横向溢出到窗口外。 */
   display: flex;
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  min-width: 0;
+  min-width: min(480px, 100%);
 }
 
 .thread-main-empty {
@@ -8423,23 +8429,19 @@ body.resizing iframe {
 }
 
 /* ── 回合进行中的状态行 ──
-   对照 dsh：两行，第一行圈 + 阶段说明，第二行星标 + 活动名 + 用时 + 省略号。
+   对照 dsh 的过程组头：**一行**，转圈 + 一句话 + 尾部三点动画。
+   曾经是两行（阶段说明 + 「正在调用 x，用时 …」），同一件事说了两遍，而过程组头往往还说第三遍
+   （2026-10-30 报障）。用时已挪到底部状态栏，这里不再计算、也不再每秒重排一次。
    整体贴左，与助手正文同一条起跑线；颜色比正文轻一档，不抢内容。 */
 .turn-status {
+  align-items: center;
   align-self: flex-start;
   color: var(--dsc-text-secondary);
   display: flex;
-  flex-direction: column;
   font-size: var(--dsc-fs-caption);
-  gap: 3px;
+  gap: 7px;
   line-height: var(--dsc-lh-caption);
   padding: 2px 0;
-}
-
-.turn-status-row {
-  align-items: center;
-  display: flex;
-  gap: 7px;
 }
 
 /* 圈：底环用品牌蓝的浅色，顶弧用实心蓝，转起来像在「转圈」；
@@ -8462,17 +8464,6 @@ body.resizing iframe {
 
 .turn-status-stage {
   color: var(--dsc-text-secondary);
-}
-
-.turn-status-icon {
-  color: var(--dsc-accent);
-  flex: none;
-}
-
-/* 活动名 + 用时合成一句：数字用等宽数字，秒数跳动时整行不会左右抖 */
-.turn-status-activity {
-  color: var(--dsc-text-tertiary);
-  font-variant-numeric: tabular-nums;
 }
 
 /* 尾部动画省略号：三个点依次亮起，表示「还在继续」 */
@@ -9178,8 +9169,7 @@ body.resizing iframe {
 /* ══════════ 对话区按钮位置与边界优化 ══════════ */
 /* 这一段只动对话区，别处的规则一行没改：
      1. 用户消息那一块（气泡 + 气泡正下方的编辑按钮）的外层容器 .user-turn；
-     2. 每轮页脚里的分叉按钮（.round-foot .user-act）；
-     3. 进行中的状态行两行之间的浅色分割线（.turn-status-rule）。
+     2. 每轮页脚里的分叉按钮（.round-foot .user-act）。
    紧挨着上面那一段「每轮分叉与编辑重发」里的 .user-actions 选择器这次一并改了：
    操作条从气泡里面搬到了气泡外面。 */
 
@@ -9249,15 +9239,6 @@ body.resizing iframe {
 .round-foot .user-act:disabled:hover {
   background: none;
   color: var(--dsc-text-quaternary);
-}
-
-/* ── 进行中的状态行：两行之间一条浅色分割线 ──
-   宽度不用给：.turn-status 是 align-self: flex-start 的收缩块，这条线作为它的子项
-   横向拉伸到「两行里最宽那一行」的宽度，也就是文本区本身的宽，左右都不越出文字。
-   颜色用 --dsc-stroke-3（tokens.css 里那只「默认分隔线」，与 .ctx-rule 同档），
-   比两行文字都轻一档；上下间距交给 .turn-status 的 3px gap，这里不再加 margin。 */
-.turn-status-rule {
-  border-top: 1px solid var(--dsc-stroke-3);
 }
 
 /* ══════════ 按钮大小滑杆 ══════════ */

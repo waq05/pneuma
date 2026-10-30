@@ -4497,8 +4497,10 @@
   color: var(--dsc-text-tertiary);
 }
 
-/* 上下文卡片的三段进度条：系统提示词（中性灰）/ 工具定义（紫）/ 对话消息（品牌蓝）。
- * 与 dsh 的 ContextMeter 同一套语义色：中性、紫、蓝。 */
+/* 上下文卡片的四段进度条：系统提示词（中性灰）/ 工具定义（紫）/ 工具结果（绿）/
+ * 对话消息（品牌蓝）。与 dsh 的 ContextMeter 同一套语义色，多出的一档绿用来分开
+ * 「工具描述」与「工具输出」——这两件事以前被合成一个数字，看着像工具描述太肥
+ * （2026-10-30 追查：41.8K 实际全是 run_code 的返回原文）。 */
 .ctx-bar-seg {
   display: block;
   height: 100%;
@@ -4509,8 +4511,12 @@
   background: var(--dsc-text-quaternary);
 }
 
-.ctx-bar-tools {
+.ctx-bar-schema {
   background: var(--dsc-purple);
+}
+
+.ctx-bar-tools {
+  background: var(--dsc-green);
 }
 
 .ctx-bar-messages {
@@ -4521,8 +4527,12 @@
   background: var(--dsc-text-quaternary);
 }
 
-.ctx-dot-tools {
+.ctx-dot-schema {
   background: var(--dsc-purple);
+}
+
+.ctx-dot-tools {
+  background: var(--dsc-green);
 }
 
 /* ══════════ 输入区：待发附件栏（图片 / 视频 / 文件） ══════════ */

@@ -27,6 +27,23 @@ import type { TranscriptService } from '../services/types.js'
  * `notices`（输入框上方只读通知条）。`index` 一律保留它在收件箱里的原始位置
  * （不重新发号）——队列条的动作（编辑 / 撤掉 / 插话）就是按这个下标打到收件箱上的。
  */
+/**
+ * 这一轮从哪一刻开始：取最后一条**非插话**的用户消息 ts（与界面 timing.turnStartedAt 同口径）。
+ *
+ * 为什么同口径两处写：界面那份算的是「含直播条目」的流，宿主这份算的是已落库的条目——
+ * 两者应当是同一时刻（用户消息先落库再进回合）。取不到（老日志没有 ts）就不带这个字段，
+ * 状态栏那边整段不画，不编一个 0。
+ */
+function turnStartOf(entries: readonly TranscriptEntry[]): number | undefined {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]
+    if (entry !== undefined && entry.kind === 'user' && entry.steering !== true) {
+      return typeof entry.ts === 'number' ? entry.ts : undefined
+    }
+  }
+  return undefined
+}
+
 function splitInbox(items: readonly AsyncInboxItem[]): { queued: QueuedMessageView[]; notices: NoticeMessageView[] } {
   const queued: QueuedMessageView[] = []
   const notices: NoticeMessageView[] = []
@@ -341,6 +358,9 @@ export const transcriptPlugin: Plugin.Object = {
             contextUsed: transcript.contextUsed,
             contextSegments: transcript.contextSegments ?? emptySegments(),
             progress: sessionProgress(ctx.session.current().messages),
+            // 本轮开始时刻（底面状态栏显示「用时」用）：回合在跑才给，跑完就没有这一项——
+            // 结束后的用时是轮尾那行的事（RoundFoot 的 title），两处各管一端。
+            ...(turnState === 'idle' ? {} : { turnStartedAt: turnStartOf(transcript.entries) }),
             ...(costEstimate === undefined
               ? {}
               : { cost: { total: costEstimate.total, peakNow: isPeakHour() } }),

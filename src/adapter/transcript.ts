@@ -243,7 +243,7 @@ export class Transcript {
   replayHistory(
     messages: readonly ChatMessage[],
     toolErrors?: ReadonlyMap<string, string>,
-    fileChanges?: ReadonlyMap<string, FileChangeSummary>,
+    fileChanges?: ReadonlyMap<string, readonly FileChangeSummary[]>,
     presentations?: ReadonlyMap<string, ToolPresentationView>,
   ): boolean {
     let changed = false
@@ -302,9 +302,9 @@ export class Transcript {
               },
               ts,
             ) || changed
-          // 成功的 write / edit 把轮尾卡的变更事实一并重放（日志 tool 记录里存着）
-          const change = fileChanges?.get(callId)
-          if (change !== undefined) {
+          // 成功的 write / edit 把轮尾卡的变更事实一并重放（日志 tool 记录里存着）。
+          // 一个 callId 可能对应多个文件（PTC 的一次脚本），逐个折成条目。
+          for (const change of fileChanges?.get(callId) ?? []) {
             changed = this.reduce({ type: 'tool/changes', callId, change }, ts) || changed
           }
           // dsh 插件的卡片数据也一并重放（日志 tool 记录里存着）

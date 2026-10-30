@@ -1,6 +1,6 @@
 /**
  * 对话区的时间口径（桌面渲染层 `turn-timing.ts` 的同构移植）：每轮的起止时刻、
- * 进行中状态行的两行文案。
+ * 进行中状态行的一句话。
  *
  * 三个底层格式化（`entryTs` / `formatClock` / `formatDuration`）已搬去平台种子库
  * （`@dsc/ui-primitives` 的 time）——轨迹页要读同一份，这里只转出去保持调用点不变。
@@ -35,50 +35,6 @@ export function turnStartedAt(entries: readonly TranscriptEntry[]): number | nul
   return null
 }
 
-/** 进行中状态行的两行文案：阶段说明 + 当前活动名。 */
-export interface LiveActivity {
-  /** 第一行：阶段说明（随阶段变化）。 */
-  stage: string
-  /** 第二行：当前活动名（正在思考 / 正在调用 read_file / 正在输出回复）。 */
-  activity: string
-}
-
-/**
- * 从快照能看到的线索推导「现在在干什么」：直播尾思考 → 分析请求；直播尾正文 → 整理回复；
- * 有 running 的工具卡 → 正在调用那个工具（用真名）；其余按 turnState 兜底。
- * 回合已结束（idle）返回 null：状态行该消失。
- */
-export function liveActivity(
-  entries: readonly TranscriptEntry[],
-  turnState: string,
-): LiveActivity | null {
-  if (turnState === 'idle') return null
-  if (turnState === 'awaiting-approval') {
-    return { stage: '等待你的确认', activity: '有一条工具调用等你批准' }
-  }
-  const tail = entries[entries.length - 1]
-  if (tail !== undefined && tail.id < 0 && tail.kind === 'thinking') {
-    return { stage: '正在分析请求', activity: '正在思考' }
-  }
-  if (tail !== undefined && tail.id < 0 && tail.kind === 'text') {
-    return { stage: '正在整理回复', activity: '正在输出回复' }
-  }
-  const running = [...entries]
-    .reverse()
-    .find(
-      (entry): entry is Extract<TranscriptEntry, { kind: 'tool' }> =>
-        entry.kind === 'tool' && (entry.call.status === 'running' || entry.call.status === 'preparing'),
-    )
-  if (running !== undefined) {
-    // 名字可能为空：模型偶尔发出一条没有名字的工具调用（网关把它回成 null，
-    // 见 core/llm.ts 的 applyToolCallDelta）。空名字时别画出「正在调用 」这种半句话。
-    const name = typeof running.call.name === 'string' && running.call.name !== '' ? running.call.name : '未知工具'
-    return {
-      stage: '正在执行工具',
-      // 「准备中」是模型还在吐参数、「正在调用」是工具真的开跑了——两句话不同
-      activity: running.call.status === 'preparing' ? `正在准备 ${name}` : `正在调用 ${name}`,
-    }
-  }
-  if (turnState === 'working') return { stage: '正在执行工具', activity: '正在执行工具' }
-  return { stage: '正在分析请求', activity: '正在思考' }
-}
+// 「现在在干什么」的推导搬去 activity.ts（零依赖纯函数：探针要直接 import 它）。
+// 这里转出，调用点与类型名一个都不用改。
+export { liveActivity, type LiveActivity } from './activity'

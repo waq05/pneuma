@@ -250,7 +250,10 @@ export interface ContextSegmentsView {
   prompt: number
   assistant: number
   thinking: number
+  /** 工具**结果**（tool 消息正文）。 */
   tools: number
+  /** 工具**定义**（每次请求携带的 schema 文本）。老宿主不推这一项，界面按 0 处理。 */
+  schema?: number
 }
 
 /** 差异里的一行（与 core/diff-text.ts 的 DiffLine 同构，视图层零宿主依赖）。 */

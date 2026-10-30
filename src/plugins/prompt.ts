@@ -25,6 +25,7 @@ import { errText } from '../adapter/transcript.js'
 import { dropImageParts, foldSystemMessages, type ChatMessage } from '../core/llm.js'
 import { pruneImages, readImageDietConfig } from '../core/image-diet.js'
 import { buildSystemPrompt, DEFAULT_INSTRUCTION_BUDGET, environmentText, type PromptContribution } from '../core/prompt.js'
+import { pruneToolResults } from '../core/tool-result-prune.js'
 import { resolvePluginConfig } from '../core/plugin-registry.js'
 import type { Session } from '../core/session.js'
 import type { AgentScope, PromptService } from '../services/types.js'
@@ -109,6 +110,15 @@ export const promptPlugin: Plugin.Object = {
     const projections = new Map<string, Projection>()
 
     /**
+     * 环境事实片段表：id → 现算文本。它们拼进末尾那条 user 快照（日期 / 平台 / 工作目录同一格）。
+     *
+     * 为什么要有这一档（2026-10-30）：沙箱档位、当前模式这类**会随用户操作变化**的内容
+     * 以前占着系统提示词的位置，切一次权限就把前缀缓存整段打掉。挪到快照之后，前缀稳定，
+     * 变化只落在尾巴；模型每轮拿到的仍然是最新的那一份。
+     */
+    const envFacts = new Map<string, (session?: Session) => string>()
+
+    /**
      * 本次改写所属的会话（0.6.48 常驻多 agent）：env-facts 这类按会话取 cwd/落
      * 状态条目的投影靠它取对归属。rewrite 是纯同步的，调用前后换值即可，
      * 不会串到别的请求；没带（老调用方）就回落当前查看的会话。
@@ -150,7 +160,17 @@ export const promptPlugin: Plugin.Object = {
       order: 600,
       fn: (messages) => {
         const session = requestSession
-        const snapshot = environmentSnapshot(session.meta.cwd)
+        const snapshot = environmentSnapshot(
+          session.meta.cwd,
+          [...envFacts.values()].map((read) => {
+            try {
+              return read(session)
+            } catch {
+              // 一个片段崩了不该让整份快照消失：跳过它，其余照发
+              return ''
+            }
+          }),
+        )
         const now = Date.now()
         const last = envSent.get(session.meta.id)
         if (last !== undefined && last.text === snapshot && now - last.at < readEnvRefreshMs(passed)) {
@@ -163,6 +183,17 @@ export const promptPlugin: Plugin.Object = {
         noteEnvFacts(session, snapshot)
         return [...messages, { role: 'user', content: snapshot }]
       },
+    })
+    // 内置投影：历史里超长的工具结果只留头尾（2026-10-30，对标 dsh 的
+    // compaction-tool-result-pruner）。PTC 模式下 run_code 常把整份文件原文返回，
+    // 那些字留在历史里每轮重发——实测一个会话里工具结果合计 43K token。
+    //
+    // 为什么是「确定性修剪」而不是每轮按当时情况重算：前缀缓存要求逐字节一致。
+    // 同一条结果只要越过「最近 4 条」这道线，就永远切成同一段文本；前缀只在它第一次
+    // 越线的那一轮失效一次，之后完全稳定。切掉的部分明说省了多少、原文去哪儿找。
+    projections.set('tool-result-prune', {
+      order: 560,
+      fn: (messages) => pruneToolResults(messages),
     })
     // 内置投影三：每轮按龄/按预算卸载图片（0.6.68 WS2，口径见 core/image-diet）。
     // 用户贴的图、工具结果里的图、电脑控制的历史截图在长会话里每轮重发，一张 JPEG 截图
@@ -194,6 +225,12 @@ export const promptPlugin: Plugin.Object = {
         sections.set(id, { order: options?.order ?? 60, text, block: options?.block })
         return () => {
           if (sections.get(id)?.text === text) sections.delete(id)
+        }
+      },
+      registerEnvFacts(id, fn) {
+        envFacts.set(id, fn)
+        return () => {
+          if (envFacts.get(id) === fn) envFacts.delete(id)
         }
       },
       registerProjection(id, fn, options) {
@@ -272,9 +309,16 @@ export const promptPlugin: Plugin.Object = {
   },
 }
 
-/** 环境快照消息的全文（发给模型与写进日志状态条目是同一份文本）。 */
-function environmentSnapshot(cwd: string): string {
-  return `${environmentText(cwd)}\n（本条是程序在每次请求时自动附上的当前环境快照，不是用户发言）`
+/**
+ * 环境快照消息的全文（发给模型与写进日志状态条目是同一份文本）。
+ *
+ * @param cwd - 会话工作目录（决定 git 那一行）
+ * @param parts - 各插件登记的「环境事实」片段（沙箱档位、当前模式这些），按登记顺序拼在
+ *   日期 / 平台 / 工作目录之后；空串片段跳过，不留下空行。
+ */
+function environmentSnapshot(cwd: string, parts: readonly string[]): string {
+  const body = [environmentText(cwd), ...parts.filter((part) => part !== '')].join('\n\n')
+  return `${body}\n（本条是程序在每次请求时自动附上的当前环境快照，不是用户发言）`
 }
 
 /** 环境快照落盘（hash 去重）：变了才写一条状态，恢复会话时最后一条就是当前环境。 */

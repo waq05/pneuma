@@ -33,7 +33,7 @@
 import { Component, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { IconSpark, defineUiPlugin, getHostNative, toastErr, toastOk, useActions, useHostChannel, useHostSelector, useService, ACTIONS_SERVICE, type ActionsHandle, type HostSnapshot, type SlotComponentProps, type TranscriptEntry } from '@dsc/ui'
 import { buildRoundFolds, processFoldPolicy, useFoldMemory, type ProcessFold } from './round-fold'
-import { liveActivity, turnStartedAt } from './timing'
+import { liveActivity } from './timing'
 import { splitRounds, teammateReportLabel } from './rounds'
 import { stepGroupFoldKey, turnFoldKey } from './fold-state'
 import { groupSteps, type StepGrouping } from './process-groups'
@@ -369,7 +369,6 @@ function TranscriptFlow({
 
   // 进行中状态行（回合没结束才有）：阶段 + 活动名 + 用时。
   const activity = useMemo(() => liveActivity([...entries, ...live], turnState), [entries, live, turnState])
-  const startedAt = useMemo(() => turnStartedAt([...entries, ...live]), [entries, live])
 
   // 右侧刻度条的数据：每轮的题面（用户消息）与回复摘要（该轮最后一条定稿正文）。
   // 含「还没画出来」的早轮——那正是刻度条要先把它们画出来的用途（点击 → onReveal）。
@@ -558,13 +557,16 @@ function TranscriptFlow({
       {/* 压缩进行中：与回合状态行同一个位置、同一套动画（0.7.2）。
           压完这条行消失，宿主紧接着写一条「上下文已压缩」的通知，底部的占用百分比也一起刷新。 */}
       {compactingSince !== null ? (
-        <TurnStatusLine stage="compact · 正在压缩" activity="把更早的历史折成摘要" startedAt={compactingSince} />
+        <TurnStatusLine text="正在压缩上下文" />
       ) : null}
-      {/* 回合进行中：流末尾的状态行（阶段 + 活动名 + 实时用时 + 动画省略号）。
-          自动压缩发生在回合起点（beforeRequest），那时 turnState 已经是 thinking——
-          两行都画就是两个转圈，所以压缩优先，只留上面那一行。 */}
-      {activity !== null && compactingSince === null ? (
-        <TurnStatusLine stage={activity.stage} activity={activity.activity} startedAt={startedAt} />
+      {/* 回合进行中：流末尾一行状态（一句话 + 转圈 + 三点动画），用时在底部状态栏。
+          两种情况不画这条：
+          1. 正在压缩——压缩发生在回合起点（beforeRequest），那一刻 turnState 已经是 thinking，
+             两条都画就是两个转圈，压缩优先；
+          2. 有工具在跑且过程组头此刻画着——组头已经在说「正在运行命令 · bash」，
+             这条再说一遍就是同一件事说两次（见 timing.liveActivity 的 covered）。 */}
+      {activity !== null && compactingSince === null && !(activity.covered && stepGrouping.groups.length > 0) ? (
+        <TurnStatusLine text={activity.text} />
       ) : null}
       <div ref={follow.setEnd} />
       {/* 暂停跟随时的回头路：只在这一刻出现（跟随中不画），点一下恢复跟随并送回底部。 */}

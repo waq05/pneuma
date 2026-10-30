@@ -5,8 +5,8 @@
  *
  * @module dsc-ui-shell/plugins/transcript/rows/foot
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { IconBranch, IconCopy, IconSpark } from '@dsc/ui'
+import type { ReactNode } from 'react'
+import { IconBranch, IconCopy } from '@dsc/ui'
 import { formatTokens } from '@dsc/ui-primitives'
 import { formatClock, formatDuration, roundDuration, type RoundInfo } from '../timing'
 
@@ -126,45 +126,28 @@ export function RoundFoot(props: {
 }
 
 /**
- * 助手回合进行中的状态行（桌面端 TurnStatusLine.tsx 同构移植）：
- * 第一行：旋转圈 + 阶段说明；中间一条浅色分割线；第二行：星标 + 当前活动名 + 已用时 + 动画省略号。
+ * 助手回合进行中的状态行：**只有一行**——转圈 + 一句话 + 尾部三点动画。
  *
- * 计时口径：这一轮从用户消息发出算起（条目上的 ts）。老会话拿不到 ts 时退回
- * 「本组件第一次看到这一轮的时刻」——计时器永远有值，不精确但不会显示 NaN。
+ * 为什么从两行改成一行（2026-10-30 报障）：原来第一行「正在执行工具」、第二行
+ * 「正在调用 bash，用时 10 分 41 秒」说的是同一件事；有过程组头时更是同一条信息出现三处
+ * （组头「正在运行命令 · bash」+ 这两行）。现在的分工是：工具在跑时由组头说，这一行只在
+ * 没有组头可依的阶段（分析 / 整理回复 / 等确认 / 压缩）露脸（见 timing.liveActivity 的 covered）。
+ *
+ * 用时不再挂在这里：它挪到底部状态栏（「N 轮 M 步 · 用时 X」），一轮跑了多久在那儿一直看得见，
+ * 不必让消息流末尾的这半句话每秒重排一次。
  */
-export function TurnStatusLine(props: { stage: string; activity: string; startedAt: number | null }): ReactNode {
-  const fallbackStart = useRef(Date.now())
-  const [now, setNow] = useState(() => Date.now())
-
-  // 每秒跳一次。这个 interval 只在状态行挂着的时候存在，回合结束随组件一起卸载。
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(timer)
-  }, [])
-
-  const elapsed = formatDuration(now - (props.startedAt ?? fallbackStart.current))
-
+export function TurnStatusLine(props: { text: string }): ReactNode {
   return (
     <div className="turn-status">
-      <div className="turn-status-row">
-        <span className="turn-status-spin" aria-hidden="true" />
-        <span className="turn-status-stage" role="status">
-          {props.stage}
-        </span>
-      </div>
-      <div className="turn-status-rule" aria-hidden="true" />
-      <div className="turn-status-row">
-        <IconSpark size={12} className="turn-status-icon" />
-        <span className="turn-status-activity">
-          {props.activity}
-          {elapsed === null ? null : `，用时 ${elapsed}`}
-        </span>
-        <span className="turn-status-dots" aria-hidden="true">
-          <i />
-          <i />
-          <i />
-        </span>
-      </div>
+      <span className="turn-status-spin" aria-hidden="true" />
+      <span className="turn-status-stage" role="status">
+        {props.text}
+      </span>
+      <span className="turn-status-dots" aria-hidden="true">
+        <i />
+        <i />
+        <i />
+      </span>
     </div>
   )
 }

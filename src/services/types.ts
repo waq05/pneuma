@@ -644,7 +644,7 @@ export interface TranscriptService {
   replayHistory(
     messages: readonly ChatMessage[],
     toolErrors?: ReadonlyMap<string, string>,
-    fileChanges?: ReadonlyMap<string, FileChangeSummary>,
+    fileChanges?: ReadonlyMap<string, readonly FileChangeSummary[]>,
     /** dsh 插件的卡片数据（Session.presentations），重放时缝回工具卡。 */
     presentations?: ReadonlyMap<string, ToolPresentationView>,
   ): boolean
@@ -792,6 +792,19 @@ export interface PromptService {
    *   image-diet 550（历史里太久/太多的图换成占位）、env-facts 600、drop-images 900（模型没勾照片时兜底）。
    */
   registerProjection(id: string, fn: (messages: ChatMessage[], session?: Session) => ChatMessage[], options?: { order?: number }): () => void
+  /**
+   * 注册一段「环境事实」：拼进每次请求末尾那条 user 快照（与日期 / 平台 / 工作目录同一格）。
+   *
+   * 为什么要这个口（2026-10-30 报障）：沙箱档位与当前模式以前是系统提示词里的两段。
+   * 这两样东西**会变**——用户切一次权限、换一次模式，系统提示词就从变化点开始整段不同，
+   * 服务端前缀缓存当场全失效。实测一个 60K 上下文的会话切一次权限，下一次请求只有
+   * 4K 命中、59K 未命中。挪到请求**末尾**之后，前缀原样复用，变化只落在尾巴这一点。
+   * dsh 的做法更彻底（系统提示词追加到历史里，不改第 0 条），这里先取等价且改动最小的一条。
+   *
+   * @param id - 片段名（诊断与覆盖用；同 id 后注册的赢）
+   * @param fn - 现算这段文本；返回空串表示这一轮没有内容要附
+   */
+  registerEnvFacts(id: string, fn: (session?: Session) => string): () => void
   /** 已注册段（带顺序），拼提示词时与内核自己的段合并；外部插件一般不必直接调。 */
   sections(scope?: AgentScope): PromptContribution[]
   /**

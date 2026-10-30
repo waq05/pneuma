@@ -290,6 +290,25 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
     if (narrow && page !== null) setSidebarCollapsed(true)
   }, [narrow, page])
 
+  /**
+   * 窗口变窄（或侧栏被拖宽）时把右栏夹回可用空间。
+   *
+   * 为什么需要（2026-10-30 报障）：存档里的宽度是按当时的窗口定的，换个小窗口之后
+   * 右栏仍然是 820，正文只剩一条，中文逐字换行、输入框挤成一团。拖拽那条路径已经在
+   * dock.tsx 里按现场算上限了，这里只管「不是拖出来的那些变化」——窗口缩放、侧栏拖宽、
+   * 恢复会话时读到的旧存档。夹小只改内存不写盘：窗口再变宽时用户原来的宽度还在。
+   */
+  useEffect(() => {
+    const fit = (): void => {
+      const room = window.innerWidth - (sidebarWidth ?? 0) - 480
+      const max = Math.min(DOCK_MAX_WIDTH, Math.max(DOCK_MIN_WIDTH, room))
+      setDockWidth((current) => (current > max ? max : current))
+    }
+    window.addEventListener('resize', fit)
+    fit()
+    return () => window.removeEventListener('resize', fit)
+  }, [sidebarWidth])
+
   const commitSidebarWidth = (px: number | null): void => {
     setSidebarWidth(px)
     writeStoredPx(PANEL_KEYS.sidebarWidth, px)

@@ -117,8 +117,11 @@ type SessionRecord =
        * 成功的 write / edit 附带的实际改动（轮尾「文件已更改」卡的数据源）。
        * 只活在日志里：内存的协议消息不带（透传给端点会被挑剔的网关判 400），
        * 恢复会话时经 {@link Session.fileChanges} 旁路还原成条目。老日志没有这个字段。
+       *
+       * 单个文件写单值（与老日志同形），一次调用改多个文件（PTC 的 run_code）写数组；
+       * 读回时两种都认。
        */
-      changes?: FileChangeSummary
+      changes?: FileChangeSummary | FileChangeSummary[]
       /**
        * dsh 插件给的卡片数据（presentCall / presentResult / presentationMeta 的产物）。
        * 与 changes 同一条旁路：只活在日志里，恢复会话时经 Session.presentations 还原。
@@ -381,11 +384,14 @@ export class Session {
    */
   readonly toolErrors = new Map<string, string>()
   /**
-   * 成功的 write / edit 的实际改动（callId → 变更摘要），轮尾「文件已更改」卡的数据源。
+   * 成功的 write / edit 的实际改动（callId → 变更摘要清单），轮尾「文件已更改」卡的数据源。
    * 与 toolErrors 同一条旁路：不挂 `messages`（协议消息透传给端点），只在 jsonl 的
    * tool 记录里存一份，重放历史时单独交给 transcript 折成 `kind: 'changes'` 条目。
+   *
+   * 为什么是清单（2026-10-30）：PTC 的 `run_code` 一次调用能改好几个文件；以前这里只收
+   * 单个 `changes`，多文件场景要么丢、要么只剩最后一个。
    */
-  readonly fileChanges = new Map<string, FileChangeSummary>()
+  readonly fileChanges = new Map<string, FileChangeSummary[]>()
   /**
    * dsh 插件给的卡片数据（callId → 卡片视图），与 fileChanges 同一条旁路：
    * 只活在日志里，重放历史时交给 transcript 折成 tool/presentation 事件。
@@ -460,7 +466,7 @@ export class Session {
     let meta: SessionMeta | undefined
     const messages: ChatMessage[] = []
     const toolErrors = new Map<string, string>()
-    const fileChanges = new Map<string, FileChangeSummary>()
+    const fileChanges = new Map<string, FileChangeSummary[]>()
     const presentations = new Map<string, ToolPresentationView>()
     /** 已应答过的 callId（首条为准）。 */
     const repliedCalls = new Set<string>()
@@ -526,7 +532,10 @@ export class Session {
           // 状态取自 error 字段；早于该字段的老日志按固定回执文案把「已拒绝」补回来
           const error = record.error ?? (record.text === REJECTED_TOOL_TEXT ? REJECTED_TOOL_ERROR : undefined)
           if (error !== undefined) toolErrors.set(record.callId, error)
-          if (record.changes !== undefined) fileChanges.set(record.callId, record.changes)
+          // 老日志写的是单值，新日志写数组：两种都收（同一份记录不会两个形状都有）
+          if (record.changes !== undefined) {
+            fileChanges.set(record.callId, Array.isArray(record.changes) ? record.changes : [record.changes])
+          }
           if (record.presentation !== undefined) presentations.set(record.callId, record.presentation)
           break
         }
@@ -653,7 +662,12 @@ export class Session {
   appendTool(
     callId: string,
     name: string,
-    output: string | { text: string; images?: string[]; changes?: FileChangeSummary; presentation?: ToolPresentationView },
+    output: string | {
+      text: string
+      images?: string[]
+      changes?: FileChangeSummary | FileChangeSummary[]
+      presentation?: ToolPresentationView
+    },
     error?: string,
   ): void {
     // 同一个 callId 已经有结果就不落第二条：中断修复补过「结果未知」合成件之后，
@@ -676,8 +690,8 @@ export class Session {
     if (error !== undefined) this.toolErrors.set(callId, error)
     // baseline（改前全文）是循环回合基线记账的内存字段，进不了日志与旁路：
     // 两处都在入口剥掉，上游忘了剥也漏不出去。
-    const clean = changes !== undefined ? stripBaseline(changes) : undefined
-    if (clean !== undefined) this.fileChanges.set(callId, clean)
+    const cleanList = changes === undefined ? [] : (Array.isArray(changes) ? changes : [changes]).map(stripBaseline)
+    if (cleanList.length > 0) this.fileChanges.set(callId, cleanList)
     if (presentation !== undefined) this.presentations.set(callId, presentation)
     this.write({
       type: 'tool',
@@ -687,7 +701,7 @@ export class Session {
       ...(images !== undefined && images.length > 0 ? { images } : {}),
       // 内存消息不带 changes（协议消息透传给端点，多字段可能被挑剔的网关判 400）；
       // 它只活在日志里，恢复会话时经 fileChanges 旁路还原成轮尾卡。
-      ...(clean !== undefined ? { changes: clean } : {}),
+      ...(cleanList.length === 0 ? {} : { changes: cleanList.length === 1 ? cleanList[0]! : cleanList }),
       ...(presentation !== undefined ? { presentation } : {}),
       ...(error !== undefined ? { error } : {}),
       ts,

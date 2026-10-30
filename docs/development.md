@@ -53,7 +53,7 @@
 
 | 路径 | 规模 | 职责 |
 | --- | --- | --- |
-| `src/core/` | 156 个文件 ≈47000 行 | 纯能力：模型客户端与协议适配器、会话（含写租约）、循环、审批、压缩、溢出落盘、会话检索、MCP 客户端、工具、技能、设置、任务板；token 粗估（`token-estimate.ts`）、错误文案（`err-text.ts`）、数值收敛（`clamp.ts`）、对象判定（`records.ts`）、消息取文（`transcript-text.ts`）、cmd 引号与 shell 选择（`shell-quote.ts`）、字符串判定（`strings.ts`）、安全序列化（`json-text.ts`）、快照推送节流（`snapshot-throttle.ts`）、git 读数相等判断（`git-surface.ts`）、时间格式化（`clock.ts`）都是全仓库唯一一份 |
+| `src/core/` | 156 个文件 ≈47000 行 | 纯能力：模型客户端与协议适配器、会话（含写租约）、循环、审批、压缩、溢出落盘、会话检索、MCP 客户端、工具、技能、设置、任务板；token 粗估（`token-estimate.ts`）、错误文案（`err-text.ts`）、数值收敛（`clamp.ts`）、对象判定（`records.ts`）、消息取文（`transcript-text.ts`）、cmd 引号与 shell 选择（`shell-quote.ts`）、默认终端探测（`terminal-env.ts`）、字符串判定（`strings.ts`）、安全序列化（`json-text.ts`）、快照推送节流（`snapshot-throttle.ts`）、git 读数相等判断（`git-surface.ts`）、时间格式化（`clock.ts`）都是全仓库唯一一份 |
 | `src/core/tools/` | 6 个文件 ≈1700 行 | 内置六件套 `bash`/`read`/`write`/`edit`/`glob`/`grep`（预算由 tools-default 配置下发）+ 沙箱的一次性升权参数与命令执行器缝 |
 | `src/core/lsp/` | 7 个文件 ≈2400 行 | LSP 代码智能：`client`（连接/实例）、`manager`（池化调度）、`normalize`（应答归并）、`line-shift`（诊断行号对齐）、`framing`/`servers`/`uri` |
 | `src/core/dsh-compat/` | 9 个文件 ≈1900 行 | dsh 插件兼容层的模块解析钩子与工具形状适配 |
@@ -768,6 +768,8 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 | 生命周期钩子缺省超时 | 缺省 10000 毫秒，夹在 500~120000；钩子最多 50 条、单条命令 1000 字符、matcher 120 字符；可配 `lifecycle-hooks.timeoutMs` | `src/core/hooks.ts:53`、`src/core/lifecycle-hooks.ts:168-170`、`:190-196` |
 | MCP 的调用与重连 | 单次调用超时 60000 毫秒、握手 20000 毫秒（都夹在 1000~600000）；重连退避 1000→30000 毫秒、连续失败 5 次放弃（1~50）；清单里没写 `defaultRisk` 的 server 缺省按 `exec` 算；可配 `mcp.*` | `src/plugins/mcp.ts:53-62`、`:65-70` |
 | 工具渐进披露 | 一次检索最多 5 条（1~20），档位缺省 2（1 = 只撤 MCP、2 = 再按 `deferRules` 撤、3 = 除 `keepTools` 外全撤）；可配 `tool-search.searchLimit` / `tier` | `src/core/tool-search.ts:24-29`、`:54-60` |
+| 历史里超长工具结果怎么切 | 超过 8192 字符切掉中间、留头 4096 + 尾 1024，中间写一句「省了多少字符、原文还在日志里」；**最近 4 条不动**（刚跑完就切等于逼模型重跑）。同一条消息永远切成同一段——前缀缓存只在它第一次越线那一轮失效一次 | `src/core/tool-result-prune.ts` 的 `DEFAULT_TOOL_RESULT_PRUNE`，投影挂在 `src/plugins/prompt.ts` 的 `tool-result-prune`（order 560） |
+| 右侧栏最宽多少 | 配置上限 820px，实际还受「窗口宽 − 侧栏宽 − 正文保底 480px」约束：拖到极限是右栏停住、正文不再被压扁；窗口缩放时同样按这条夹回去（只夹内存，不改用户存档的宽度） | `ui-shell/src/ui-dockkit/dock.tsx` 的 `dockDragLimit`、`ui-shell/src/ui-layout/app.tsx` 的 resize 夹取、`ui-shell/src/legacy/views.css` 的 `.thread-main` min-width |
 | 模型请求重试 | 最多 3 次，退避 500ms × 2^(n-1)；可重试的是连接失败（`LlmError.retryable`，一个字节都没收到时）与 HTTP 429 / 5xx | `src/core/llm.ts:152`、`:162-166` |
 | 同时在干的队友上限 | 4（收工的不占额度） | `src/plugins/subagent.ts:68` |
 | 队友派活层数 | 1（只有 Lead 能派），0 = 彻底不派 | `src/plugins/subagent.ts:69` |
@@ -860,7 +862,7 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 | `tool-search.ts` | 工具渐进披露的纯逻辑：分词（中文按相邻两字）、手写 BM25 索引、延后判定（read 一律不许撤）、配置校验 |
 | `lifecycle-hooks.ts` | codex 十二事件的钩子引擎：事件能力清单（wired / partial / unwired 与理由）、codex 形态配置的解析、跑外部命令、按失败方向给裁决 |
 | `approval.ts` | 只有审批通道**接口**，判读在 `src/plugins/approval.ts` |
-| `tools/` | `bash` 缺省 30 秒、最多 120 秒，输出超 8000 字符截断（累积到 16000 就不再收）——三个值都由 tools-default 插件配置下发（`bashTimeoutMs` / `bashMaxTimeoutMs` / `bashOutputChars`，设置分区「工具预算」可改），代码里的常量只是缺省。Windows 走 `powershell -NoProfile -Command`，超时和取消都收进程树。`read` 单次缺省 2000 行（`tools-default.readLineLimit`）。`glob` / `grep` **边遍历边匹配**：按 `.gitignore`（从 git 根逐层读到搜索根，子目录的规则在进入它时生效，`!` 否定按「后出现的赢」）加内置大目录表（`node_modules`、`.git`、`dist`、`build`、`coverage`、`__pycache__`、`.venv`、`site-packages` 等）跳过，命中够 `limit` 就停，截断时明说「还有更多」；不再有「先收 1 万 / 2 万条再过滤」的全局额度——那会让 `.venv` 吃光额度、把真实结果挤成「无匹配」。`grep` 另外跳过 1 MiB 以上的文件。**没有目录白名单**——路径只按会话工作目录解析 |
+| `tools/` | `bash` 缺省 30 秒、最多 120 秒，输出超 8000 字符截断（累积到 16000 就不再收）——三个值都由 tools-default 插件配置下发（`bashTimeoutMs` / `bashMaxTimeoutMs` / `bashOutputChars`，设置分区「工具预算」可改），代码里的常量只是缺省。Windows 缺省走 `powershell -NoProfile -Command`（`-NoProfile` + UTF-8 输出前置 + 末尾补 `exit $LASTEXITCODE` 带回原生命令退出码），超时和取消都收进程树。**执行器可在「设置 → 终端环境」里换**（2026-10-30）：`bashShell` 存在 `plugins.json` 的 tools-default 条目里，取 `powershell` / `pwsh` / `gitbash` / `wsl` / `sh` / `auto`；四档折成四套 spawn 参数（见 `core/tools/bash.ts` 的 `shellPlan`），工具说明与环境快照里的终端名跟着换，审批地板的结构扫描也按同一条口径切 PowerShell / POSIX 语法（`core/terminal-env.ts` 的 `shellFlavor`）。`wsl` 会用 `-d <发行版>` 钉住探测时挑的那只（跳过 `docker-desktop` 这类没有 bash 的管理发行版）。`read` 单次缺省 2000 行（`tools-default.readLineLimit`）。`glob` / `grep` **边遍历边匹配**：按 `.gitignore`（从 git 根逐层读到搜索根，子目录的规则在进入它时生效，`!` 否定按「后出现的赢」）加内置大目录表（`node_modules`、`.git`、`dist`、`build`、`coverage`、`__pycache__`、`.venv`、`site-packages` 等）跳过，命中够 `limit` 就停，截断时明说「还有更多」；不再有「先收 1 万 / 2 万条再过滤」的全局额度——那会让 `.venv` 吃光额度、把真实结果挤成「无匹配」。`grep` 另外跳过 1 MiB 以上的文件。**没有目录白名单**——路径只按会话工作目录解析 |
 | `skills.ts` | 只认顶层 `<目录>/SKILL.md` 与顶层 `<名字>.md`，不递归（`:165-178`）。`name` 要 kebab-case，非法就退回文件名并记一条问题 |
 | `market.ts` | 缓存 1 小时、拉取超时 15 秒、浏览并发 6、附属文件最多 40 个。GitHub 匿名限额低，403/422 会提示设 `GITHUB_TOKEN` |
 | `prefs.ts` | 偏好文件读坏了按默认返回，不崩（`:89-91`）。`closeToTray` 默认 true |
@@ -1032,6 +1034,12 @@ Windows 的最小化/最大化/关闭三个按钮由系统画，样式表够不�
 自己读一遍 `~/.dsc/settings.json` 的 `ui.themeMode`（`system` 按系统深浅解析），按深 / 浅 / 米白
 三套值给窗口底色、控件条和启动页上色。壳仍会在外观生效时推一次真颜色，两边算的是同一套令牌，
 所以看不见跳色——以前只有一份深色的 `DARK_CHROME`，选浅色的人每次开窗都先黑一下。
+
+**出厂主题是 claude（暖米白）**（2026-10-30 从 dark 改过来）。默认值一共三处，改一处必须改全：
+`src/core/prefs.ts` 的 `readPrefs`（真源，宿主回读走它）、`ui-shell/src/ui-layout/appearance.ts` 的
+`DEFAULT_APPEARANCE` 与 `normalizeTheme`（宿主还没回读、或 localStorage 镜像为空时的那一帧）、
+`desktop/electron/main/index.ts` 的 `readUiTheme` 兜底（没 `settings.json` 时的首帧底色）。
+已经存过 `settings.json` 的用户不受影响：读档优先，默认值只服务于"从没选过"的情况。
 
 启动期还有两处跟颜色有关的细节：窗口用 `show: false` 创建，等页面画出第一帧（`ready-to-show`）
 才上屏，不给人看白底板；壳的 `ui-shell/index.html` 里有一段内联引导脚本，按地址上的 `theme`

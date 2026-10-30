@@ -22,7 +22,7 @@
  */
 import vm from 'node:vm'
 import type { Plugin } from '@deepseek-ai/cordis'
-import { argsSummary, callFacts, type ToolEntry } from '../core/tools.js'
+import { argsSummary, callFacts, type FileChangeSummary, type ToolEntry } from '../core/tools.js'
 import {
   PTC_LIMITS,
   PTC_SDK_SIGNATURE,
@@ -156,7 +156,7 @@ export const ptcPlugin: Plugin.Object = {
       cwd: string,
       signal: AbortSignal,
       session: { id: string; path: string },
-    ): Promise<string> => {
+    ): Promise<{ text: string; changesList?: FileChangeSummary[] }> => {
       // 注册表在这一刻快照：脚本跑的过程中插件热挂载不会让 SDK 中途变样
       const registry = new Map<string, ToolEntry>(
         ctx.tools
@@ -165,6 +165,8 @@ export const ptcPlugin: Plugin.Object = {
           .map((entry) => [entry.name, entry]),
       )
       const records: PtcCallRecord[] = []
+      // 这一段脚本动过的文件（按调用先后；同一文件多次改交给循环按路径去重）
+      const changesList: FileChangeSummary[] = []
       const logs: string[] = []
       let calls = 0
       let trouble: string | undefined
@@ -270,6 +272,14 @@ export const ptcPlugin: Plugin.Object = {
           const execute = (): ReturnType<typeof entry.run> =>
             entry.waitsForHuman === true ? deadline.hold(run) : run()
           const output = entry.risk === 'read' ? await gate.read(execute) : await gate.write(execute)
+          // 这一步真的动了文件就记下来（2026-10-30 报障）：write / edit 除了文本还回一份
+          // 「改了哪个文件、增删几行、改前全文」。以前这里只取 text，改动与回合基线一起丢了，
+          // 于是 PTC 模式改了十几个文件、会话底部一张「文件已更改」卡都没有。
+          // 带 baseline 原样交回循环：回合基线记账要用「本回合第一次改之前」的全文。
+          if (typeof output !== 'string') {
+            if (output.changes !== undefined) changesList.push(output.changes)
+            if (output.changesList !== undefined) changesList.push(...output.changesList)
+          }
           const raw = typeof output === 'string' ? output : output.text
           // 工具结果里的密钥形状字符串不进脚本、不进日志（遮红挂在观察者链上）
           const text = ctx.guards.observe(name, raw)
@@ -343,7 +353,8 @@ export const ptcPlugin: Plugin.Object = {
         deadline.stop()
       }
 
-      return ptcResultBody({ value, calls: records, logs, ...(trouble !== undefined ? { trouble } : {}) })
+      const text = ptcResultBody({ value, calls: records, logs, ...(trouble !== undefined ? { trouble } : {}) })
+      return changesList.length === 0 ? { text } : { text, changesList }
     }
 
     ctx.tools.register({

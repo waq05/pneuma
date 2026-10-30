@@ -9,7 +9,7 @@
  *
  * 三段与三张悬浮卡（与 dsh 一一对应）：
  *
- *   1. `seg-turn`：`N 轮 M 步 · X tok/s`。轮/步取宿主下发 `status.progress` 的真值
+ *   1. `seg-turn`：`N 轮 M 步 · 用时 X · Y tok/s`（用时只在回合进行中出现）。轮/步取宿主下发 `status.progress` 的真值
  *      （轮 = 用户消息数、步 = 助手消息数，口径见 contract.ts）；`步 = 0` 时整段不画
  *      （空会话里「0 轮 0 步」不是读数，dsh 的 ActivityPill 同款）。卡片「会话统计」列
  *      模型用时、工具调用用时、首 token 平均与输出速度。
@@ -17,7 +17,7 @@
  *      列缓存命中、未缓存输入、缓存读取与输出。
  *   3. `seg-context`：`min(100, round(used/window*100))%` 的圆环 + 百分比（分母
  *      `contextWindow` 为 0 或完全没有用量的样本时整段不画）。卡片「上下文已用」画
- *      系统提示词 / 工具定义 / 对话消息三段进度条与数值。
+ *      系统提示词 / 工具定义 / 工具结果 / 对话消息四段进度条与数值。
  *
  * 数据来源分三层，拿不到的那一项整行省略，绝不编数：
  *
@@ -98,6 +98,7 @@ const EMPTY_STATUS: Readonly<Record<string, unknown>> = Object.freeze({})
 function StatusSegments(): ReactNode {
   // 一个字段一个订阅，值没变就不重渲染——为什么这么切见 useStatusField。
   const turnState = useStatusField(readTurnState)
+  const turnStartedAt = useStatusField(readTurnStartedAt)
   const model = useStatusField(readModel)
   const sessionId = useStatusField(readSessionId)
   // 轮数/步数取宿主的会话进度真值（口径见 contract.ts 的 StatusView.progress），"轮/步"字符串稳定。
@@ -114,6 +115,8 @@ function StatusSegments(): ReactNode {
   const segAssistant = useStatusField(readSegment('assistant'))
   const segThinking = useStatusField(readSegment('thinking'))
   const segTools = useStatusField(readSegment('tools'))
+  // 工具定义（schema）：老宿主不推这一项 → null → 0，整行图例就少一行，不编数。
+  const segSchema = useStatusField(readSegment('schema'))
   // 用量日志的重读键：快照条目数 / 回合状态 / 累计 token 任一变了就重读一次。
   const activity = useHostSelector(readActivityKey)
 
@@ -129,7 +132,9 @@ function StatusSegments(): ReactNode {
 
   const parts: ReactNode[] = []
   // 步数为 0 时整段不画（dsh 的 ActivityPill 同款）：空会话里「0 轮 0 步」不是读数。
-  if (turnState !== null && Number(steps) > 0) {
+  // 例外：第一轮正在进行中（有 turnStartedAt）要画——那一刻 steps 还是 0，而「用时」
+  // 恰恰是这时候最该看得见（2026-10-30：状态行的用时撤掉之后，第一轮跑起来就没读数了）。
+  if (turnState !== null && (Number(steps) > 0 || turnStartedAt !== null)) {
     parts.push(
       <TurnSegment
         key="turn"
@@ -139,6 +144,7 @@ function StatusSegments(): ReactNode {
         rounds={Number(rounds)}
         steps={Number(steps)}
         speed={speed}
+        startedAt={turnStartedAt}
         logged={logged}
       />,
     )
@@ -170,6 +176,7 @@ function StatusSegments(): ReactNode {
           assistant: segAssistant,
           thinking: segThinking,
           tools: segTools,
+          schema: segSchema,
         }}
       />,
     )
@@ -195,10 +202,26 @@ function TurnSegment(props: {
   rounds: number
   steps: number
   speed: number | null
+  /** 本轮开始时刻（毫秒）：只在回合进行中有值，用来报「用时」。 */
+  startedAt: number | null
   logged: SessionUsageView | null
 }): ReactNode {
   const stateText = TURN_TEXT[props.turnState]
   const logged = props.logged
+  // 本轮用时：跑动中每秒跳一次（这个 interval 只在跑动时存在，回合结束随段一起停）。
+  // 为什么放这儿而不是消息流里（2026-10-30 报障）：流末尾那条两行状态与过程组头重复，
+  // 撤掉之后时间在底部一直看得见，也不再让消息流每秒重排。
+  const running = props.turnState !== 'idle' && props.startedAt !== null
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!running) return undefined
+    setNow(Date.now())
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [running])
+  const elapsed = running && props.startedAt !== null
+    ? formatTraceDuration(Math.max(0, now - props.startedAt))
+    : null
   // 首字延迟报平均（累计 ÷ 样本数）：单看累计毫秒没有可比性，请求一多就只见涨。
   const ttft = logged === null ? null : averageTtftMs(logged)
   const ttftText = ttft === null ? null : formatTraceDuration(ttft)
@@ -217,7 +240,11 @@ function TurnSegment(props: {
         <span className={`seg-icon state-${props.turnState}`}>
           <IconActivity size={12} />
         </span>
-        {props.rounds} 轮 {props.steps} 步
+        {/* 第一轮进行中时 steps 还是 0：那一档只报用时，不摆「0 轮 0 步」这种假读数 */}
+        {props.steps > 0 ? `${String(props.rounds)} 轮 ${String(props.steps)} 步` : null}
+        {elapsed !== null && (
+          <span className="seg-dim">{props.steps > 0 ? ' · ' : ''}用时 {elapsed}</span>
+        )}
         {props.speed !== null && <span className="seg-dim"> · {formatTokensPerSecond(props.speed)} tok/s</span>}
       </button>
       <div className="ctx-card" role="note">
@@ -229,6 +256,7 @@ function TurnSegment(props: {
         </div>
         <div className="ctx-rule" />
         <div className="ctx-rows">
+          {elapsed !== null && <CardRow label="本轮用时（进行中）" value={elapsed} />}
           {llmText !== null && <CardRow label="模型用时" value={llmText} />}
           {toolText !== null && <CardRow label="工具调用用时" value={toolText} />}
           {ttftText !== null && <CardRow label="首 token 平均（TTFT）" value={ttftText} />}
@@ -302,7 +330,9 @@ function TokenSegment(props: {
  * 百分比公式与 dsh 的 `contextOccupancy` 一字不差：`min(100, round(used / window * 100))`。
  * 分母是当前模型的上下文窗口，分子是最近一次请求的 prompt_tokens（服务端真值）。
  *
- * 卡片分段也照 dsh：系统提示词 / 工具定义 / 对话消息（用户输入 + 助手回复 + 思考）。
+ * 卡片分段：系统提示词 / 工具定义 / 工具结果 / 对话消息（用户输入 + 助手回复 + 思考）。
+ * 「工具结果」这一档是自己加的（dsh 只画三段）：Pneuma 的 PTC 模式里 run_code 的返回
+ * 原文常常是上下文最大的一块，混进「工具定义」会让人判错优化方向。
  * 三段来自宿主按请求内容估的分段；三者都为 0（还没发过请求）时只画空条，不摆一排 0。
  *
  * 重开会话时宿主会从用量日志回填总数，所以刷新后百分比照样有值；但分段仍要等下一次
@@ -316,9 +346,13 @@ function ContextSegment(props: {
   const percent = Math.min(100, Math.round((props.used / props.windowTokens) * 100))
   const shown = Math.min(Math.max(percent, 0), 100)
   const system = props.segments.system
+  // 两段都跟「工具」有关、含义完全不同（2026-10-30 追查）：schema 是工具定义（每次请求
+  // 都发的描述），tools 是工具结果（模型读完命令输出留在历史里的正文）。混成一个数字
+  // 会让人以为工具描述太肥，实际往往是工具输出太长。
+  const schema = props.segments.schema ?? 0
   const tools = props.segments.tools
   const messages = props.segments.prompt + props.segments.assistant + props.segments.thinking
-  const breakdown = system + tools + messages
+  const breakdown = system + schema + tools + messages
   const widthOf = (tokens: number): string =>
     `${((Math.min(tokens, props.windowTokens) / props.windowTokens) * 100).toFixed(2)}%`
   return (
@@ -338,6 +372,7 @@ function ContextSegment(props: {
           {breakdown > 0 ? (
             <>
               <span className="ctx-bar-seg ctx-bar-system" style={{ width: widthOf(system) }} />
+              <span className="ctx-bar-seg ctx-bar-schema" style={{ width: widthOf(schema) }} />
               <span className="ctx-bar-seg ctx-bar-tools" style={{ width: widthOf(tools) }} />
               <span className="ctx-bar-seg ctx-bar-messages" style={{ width: widthOf(messages) }} />
             </>
@@ -353,8 +388,13 @@ function ContextSegment(props: {
               <span className="ctx-legend-value">~{formatTokens(system)}</span>
             </div>
             <div className="ctx-legend-row">
-              <i className="ctx-dot ctx-dot-tools" />
+              <i className="ctx-dot ctx-dot-schema" />
               <span className="ctx-legend-label">工具定义</span>
+              <span className="ctx-legend-value">~{formatTokens(schema)}</span>
+            </div>
+            <div className="ctx-legend-row">
+              <i className="ctx-dot ctx-dot-tools" />
+              <span className="ctx-legend-label">工具结果</span>
               <span className="ctx-legend-value">~{formatTokens(tools)}</span>
             </div>
             <div className="ctx-legend-row">
@@ -442,6 +482,16 @@ function readText(record: Record<string, unknown>, key: string): string {
 function readNumber(record: Record<string, unknown>, key: string): number | null {
   const value = record[key]
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+/**
+ * 本轮开始时刻（毫秒）：宿主只在回合进行中给这一项，空闲时是 null。
+ *
+ * 它是底部这一行「用时」的唯一来源（2026-10-30：消息流末尾那条两行状态撤掉之后，
+ * 时间改在这儿报）。拿不到就整段不画——不拿「打开会话的时刻」凑一个数。
+ */
+function readTurnStartedAt(status: Record<string, unknown>): number | null {
+  return readNumber(status, 'turnStartedAt')
 }
 
 /** 回合状态：不在这四种里（老 mock、将来加了新状态）就当没有状态，这一段不画。 */
