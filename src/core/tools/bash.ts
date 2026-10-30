@@ -219,7 +219,17 @@ export function spawnShell(
       grace.unref()
     }
 
-    const timer = setTimeout(() => arm(`命令超时（${String(timeoutMs)}ms），已终止进程`), timeoutMs)
+    // 文案改「已请求终止」而不是「已终止进程」（2026-10-30）：arm 只是开始收进程树，
+    // 真正的退出还要等宽限期；原文案让模型以为活已经死了、于是重复跑一遍。
+    // 后半句给它下一步：这类长命令要么显式加大 timeoutMs，要么转后台再去取结果。
+    const timer = setTimeout(
+      () =>
+        arm(
+          `命令超时（${String(timeoutMs)}ms），已请求终止（还没退干净会强杀）` +
+            '。长命令请加 timeoutMs，或传 run_in_background 转后台，之后用 job_output 取结果',
+        ),
+      timeoutMs,
+    )
 
     const onAbort = (): void => {
       clearTimeout(timer)

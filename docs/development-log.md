@@ -11153,3 +11153,37 @@ TUI 的快照里已经有这个字段，要加是下一轮的小活。
 `build`（根 + 壳，19 份插件产物重建）通过、`check:style` 630 个文件通过、`check:ui` 45/45 通过；
 `compact-readstate-test` / `transcript-order-test` / `transcript-usage-test` /
 `statusbar-test` / `session-transcript-isolation-test` 全部通过。
+
+## 三十六、壳判定分 shell、bash 超时文案、PTC 时限放宽（2026-10-30）
+
+同样出自那份使用反馈，三条都动到了「判定口径」，所以单独一批、单独验。
+
+**1. 「引号没闭合」的根因是套错了 shell 的转义规则。**
+结构扫描（`src/core/approval-floor.ts` 的 `inspectStructure`）原先一律按 POSIX 处理：
+双引号里 `\` 能转义下一个字符。但 Windows 上 bash 工具跑的是 powershell.exe，转义符是
+反引号。于是一条真实的
+`… .Replace((Get-Location).Path + "\","") | Sort-Object` 里，`\"` 把右引号当成转义吃掉，
+整条命令被判「引号没闭合」——那次会话里 5 条被误伤的全是这个形状。现在扫描按 shell 分两种：
+双引号内的转义符（POSIX `\` / PowerShell 反引号）、引号外的反引号（POSIX 是命令替换、
+PowerShell 是转义与续行）。默认值按 `process.platform` 取，与 bash 工具选执行器同源。
+
+**2. `$(...)` 保持拒绝，改的是理由。**
+不是不想放：`Get-Content $(echo .env)` 这种两半都只读的组合能把路径藏进替换里、绕过
+deny 黑名单；改成「问人」的话，「完全访问」档会在审批层直接放行
+（`plugins/approval.ts:334-337`）。所以维持 fail-closed，把理由从「判不出来」改成
+「改成两步：先把替换的内容赋给变量或单独跑一条命令，再用结果跑第二条」——让人有路可走。
+
+**3. bash 超时文案与大额预算。**
+- 文案：`已终止进程` 是在 arm 那一刻发出的，进程还在宽限期里没死；模型据此以为活已死、
+  又重跑一遍。改成「已请求终止（还没退干净会强杀）」，并补上「加 timeoutMs / 转后台用
+  job_output 取结果」两条出路。
+- PTC 脚本时限：`PTC_LIMITS.deadlineMs` 120 秒 → 300 秒，并可在插件配置里改
+  `deadlineMs`（30 秒 ~ 15 分钟，越界夹回）。理由是单条 bash 自己就能跑到 120 秒
+  （`bashMaxTimeoutMs`），装依赖、跑测试把额度占满后必然「脚本跑了超过 120 秒」被掐断。
+  没配置时不夹取常量——常量是代码自己的决定，夹取只管用户填的数（`ask-timeout-test`
+  靠改常量把时限调到 300 毫秒来验等人停表，这条不能被夹坏）。
+
+**验证**：新增 `scripts/floor-shell-and-budget-test.mjs`（15 条：真实误伤命令复现、
+替换藏密钥仍拒、灾难命令仍拒、超时文案三条、时限默认与夹取），全绿；
+`command-policy-test` / `bash-truncation-test` / `ask-timeout-test` / `review-approval-test` /
+`approval-review-fallback-test` / `tool-output-fixes-test` / `compacting-status-test` 全部通过。

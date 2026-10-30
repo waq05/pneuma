@@ -30,11 +30,12 @@ import {
   ptcDescribe,
   ptcResultBody,
 } from '../core/ptc.js'
+import { resolvePluginConfig } from '../core/plugin-registry.js'
 
 /** PTC 的模式名（与 core/presets.ts 的 PTC_PRESET 同一个值）。 */
 const PTC_PRESET = 'ptc'
 
-const RUN_CODE_DESCRIPTION = `用一段 JavaScript 批量调用工具，在代码里筛选汇总，只把结论交回来。
+const RUN_CODE_DESCRIPTION = (deadlineMs: number): string => `用一段 JavaScript 批量调用工具，在代码里筛选汇总，只把结论交回来。
 
 怎么写：code 是一段 JavaScript 的**函数体**（可以直接 await、可以 return）。里面用 sdk 调工具：
   ${PTC_SDK_SIGNATURE}
@@ -49,7 +50,7 @@ const RUN_CODE_DESCRIPTION = `用一段 JavaScript 批量调用工具，在代�
 规矩：
 - 每次 sdk.xxx() 都照旧过审批与安全钩子，被拒的那条返回“【被拒绝】原因”，脚本接着跑。
 - console.log 的输出会随结果一起交回来（只留最后 ${PTC_LIMITS.consoleLines} 行）。
-- 一段脚本最多调 ${PTC_LIMITS.maxCalls} 次工具，最多跑 ${Math.round(PTC_LIMITS.deadlineMs / 1000)} 秒。
+- 一段脚本最多调 ${PTC_LIMITS.maxCalls} 次工具，最多跑 ${Math.round(deadlineMs / 1000)} 秒。
 - 交回的内容超过 ${PTC_LIMITS.resultMax} 字符会被截断：先在代码里把结果压小，再 return 摘要。
 - 同进程 vm 里跑：拿不到 process / require / 文件系统，唯一的出口就是 sdk。`
 
@@ -116,10 +117,33 @@ function createDeadline(ms: number): {
   }
 }
 
+/** 插件在条目树（`~/.dsc/plugins.json`）里的键，也是 `deadlineMs` 的归属。 */
+const CONFIG_KEY = 'ptc'
+
+/** 脚本总时限的可调区间（毫秒）：低于 30 秒连装个依赖都不够，高于 15 分钟等于没有时限。 */
+export const PTC_DEADLINE_RANGE = { min: 30_000, max: 900_000 } as const
+
+/**
+ * 取脚本总时限：插件配置里的 `deadlineMs`，没有就用 {@link PTC_LIMITS.deadlineMs}。
+ *
+ * 为什么可配（2026-10-29 报障）：默认 120 秒时，一条 `npm install` 或一次 12 秒的 pytest
+ * 加上前后几步就把额度用光，脚本被掐断后只能跨轮轮询，每轮都在烧额度。
+ * @param passed - 装配时传进来的配置（内核挂载时的第二参数）。
+ */
+export function readDeadlineMs(passed: unknown): number {
+  const raw = resolvePluginConfig(CONFIG_KEY, passed)
+  const num = Number(raw.deadlineMs)
+  // 没配置就用常量，不再夹一次：常量是代码里的决定，夹取只用来约束用户填进来的数。
+  if (!Number.isFinite(num)) return PTC_LIMITS.deadlineMs
+  return Math.min(Math.max(Math.round(num), PTC_DEADLINE_RANGE.min), PTC_DEADLINE_RANGE.max)
+}
+
 export const ptcPlugin: Plugin.Object = {
   name: 'ptc',
   inject: ['tools', 'guards', 'transcript'],
-  apply(ctx) {
+  apply(ctx, passed) {
+    /** 每次跑脚本现读：改完配置不必重启宿主。 */
+    const deadlineMs = (): number => readDeadlineMs(passed)
     /**
      * 跑一段脚本。
      * @param code - 函数体源码。
@@ -145,7 +169,7 @@ export const ptcPlugin: Plugin.Object = {
       let calls = 0
       let trouble: string | undefined
       // 整段脚本的时限（等人时停表，见 createDeadline 的注释）
-      const deadline = createDeadline(PTC_LIMITS.deadlineMs)
+      const deadline = createDeadline(deadlineMs())
 
       /**
        * T38 读写闸（对齐 dsh 的「mutating calls run alone」）：写/执行调用独占——
@@ -324,7 +348,7 @@ export const ptcPlugin: Plugin.Object = {
 
     ctx.tools.register({
       name: 'run_code',
-      description: RUN_CODE_DESCRIPTION,
+      description: RUN_CODE_DESCRIPTION(deadlineMs()),
       parameters: {
         type: 'object',
         properties: {

@@ -326,22 +326,41 @@ interface StructureReport {
 const MAX_SUBSTITUTION_DEPTH = 6
 
 /**
+ * 这台机器上 bash 工具默认用的 shell。
+ *
+ * 为什么结构扫描要分 shell（2026-10-30 报障）：Windows 上 powershell.exe 是默认执行器，
+ * 它的转义符是反引号，不是反斜杠。把 POSIX 的「`\` 转义」套到 PowerShell 上，
+ * 一条 `Replace((Get-Location).Path + "\","")` 里的 `\"` 会把右引号当成转义吃掉，
+ * 于是整条合法命令被判「引号没闭合」——那次会话里 5 条被误伤的就是它。
+ */
+type ShellFlavor = 'posix' | 'powershell'
+
+const DEFAULT_SHELL: ShellFlavor = process.platform === 'win32' ? 'powershell' : 'posix'
+
+/**
  * 扫一遍命令的结构：引号与括号闭合没有、命令替换里是什么。
  *
  * 这些构造只做「括号配对 + 摘出内层片段」，不做完整 shell 语法解析：
  * 判不出来的地方一律让调用方按拒处理。
+ *
+ * 两种 shell 的差别只在两处：双引号里的转义符（POSIX `\` / PowerShell 反引号），
+ * 以及引号外的反引号是「命令替换」（POSIX）还是「转义 / 续行」（PowerShell）。
+ *
+ * @param command - 命令原文。
+ * @param shell - 这台机器上实际执行它的 shell；缺省按平台判。
  */
-function inspectStructure(command: string): StructureReport {
+function inspectStructure(command: string, shell: ShellFlavor = DEFAULT_SHELL): StructureReport {
   const substitutions: string[] = []
   const stack: Array<{ kind: 'sub' | 'paren'; start: number }> = []
   let quote: '"' | "'" | '`' | null = null
   let tickStart = -1
+  const powershell = shell === 'powershell'
 
   for (let i = 0; i < command.length; i += 1) {
     const ch = command[i]!
     if (quote !== null) {
-      // 单引号里的一切都是字面量；双引号与反引号里 `\` 可以转义（与 splitSegments 同一套规则）。
-      if (quote !== "'" && ch === '\\' && i + 1 < command.length) {
+      // 单引号里的一切都是字面量；双引号里只有本 shell 的转义符能吃掉下一个字符。
+      if (quote !== "'" && ch === (powershell ? '`' : '\\') && i + 1 < command.length) {
         i += 1
         continue
       }
@@ -352,6 +371,11 @@ function inspectStructure(command: string): StructureReport {
         }
         quote = null
       }
+      continue
+    }
+    // PowerShell 的引号外反引号是转义符（行尾则是续行），不是命令替换；只有 POSIX 才当引号。
+    if (ch === '`' && powershell) {
+      i += 1
       continue
     }
     if (ch === '"' || ch === "'" || ch === '`') {
@@ -707,8 +731,17 @@ function evaluate(input: ToolGuardInput, config: FloorConfig, rules: readonly Pr
     if (inner !== null) return { action: 'deny', layer: 'disaster', reason: `命令替换里的片段被判为灾难性动作：${inner}` }
   }
   // 内层干净也不放行：外层的实际效果是两段拼出来的，静态判不出，只能拒（fail-closed）。
+  // 为什么不改成「问用户」：`Get-Content $(echo .env)` 这种两半都只读的组合能把路径藏进
+  // 替换里，绕过 deny 黑名单；交给审批卡时「完全访问」档会直接放行（plugins/approval.ts:334-337）。
+  // 所以这里保持拒绝，但把**怎么改**写进理由，别让人只能自己猜（2026-10-30）。
   if (structure.substitutions.length > 0) {
-    return { action: 'deny', layer: 'opaque', reason: '命令里有 $(...) 或反引号，里外两层拼起来的实际效果判不出来' }
+    return {
+      action: 'deny',
+      layer: 'opaque',
+      reason:
+        '命令里有 $(...) 或反引号（命令替换），里外两层拼起来的实际效果判不出来。' +
+        '改成两步：先把替换的内容赋给变量或单独跑一条命令，再用结果跑第二条。',
+    }
   }
 
   // 第 3 层：用户 deny 黑名单与 deny 前缀规则。排在权限模式与审批之前，
