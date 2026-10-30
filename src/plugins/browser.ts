@@ -48,6 +48,9 @@ import {
   type NetworkEntry,
 } from '../core/cdp/report.js'
 
+/** 设置页「看当前标签页」的等待上限：浏览器没起来或页面卡住时，15 秒给结论。 */
+const LOOK_TAB_TIMEOUT_MS = 15_000
+
 // ── 配置 ─────────────────────────────────────────────────────────────────────
 
 /** 对话框策略：等模型处理 / 自动关掉 / 自动接受。 */
@@ -1412,12 +1415,23 @@ export const browserPlugin: Plugin.Object = {
           return `已关闭受控浏览器（整棵进程树杀掉${profile === '' ? '' : `，自建 profile ${profile} 已删除`}）。`
         }
         if (name === 'look-tab') {
-          const session = await ensurePage(new AbortController().signal)
-          const state = await actions.readDocumentState(session)
-          return (
-            `当前标签页：${neutralizeInline(state.url, 300) || '（拿不到地址）'}` +
-            `${state.title === '' ? '' : `（标题「${neutralizeInline(state.title, 120)}」）`}，加载状态 ${state.readyState}。`
-          )
+          // 设置页点一下不该无限等（2026-10-30）：浏览器没起来、页面卡在加载时给 15 秒结论。
+          // 以前用的是 new AbortController().signal —— 一个永远不会中止的信号，卡住就一直挂着。
+          const controller = new AbortController()
+          const timer = setTimeout(() => controller.abort(), LOOK_TAB_TIMEOUT_MS)
+          try {
+            const session = await ensurePage(controller.signal)
+            const state = await actions.readDocumentState(session)
+            return (
+              `当前标签页：${neutralizeInline(state.url, 300) || '（拿不到地址）'}` +
+              `${state.title === '' ? '' : `（标题「${neutralizeInline(state.title, 120)}」）`}，加载状态 ${state.readyState}。`
+            )
+          } catch (error) {
+            // 设置页的按钮只回一句话：抛出去界面只会显示「操作失败」，看不出卡在哪一步
+            return '看当前标签页没成功：' + (error instanceof Error ? error.message : String(error))
+          } finally {
+            clearTimeout(timer)
+          }
         }
         throw new Error(`这个分区没有这个按钮：${name}`)
       },
