@@ -71,6 +71,35 @@ const fmtSeconds = (ms: number): string => {
 const WATERFALL_ROWS = 3
 
 /**
+ * 压缩进行中的一行（0.7.2）：盲文 spinner + 「压缩上下文中」+ 已用时。
+ *
+ * 为什么挂在视口底部而不是当成一条条目：压缩是命令驱动的，外面没有回合，硬塞一条
+ * 假条目会改行高表与滚动坐标（历史教训：占一行会让「滚上去再滚回来差一行」）。
+ * 底部这一行不参与滚动，压缩结束随字段一起消失。
+ */
+function CompactingLine({ startedAt }: { startedAt: number }): JSX.Element {
+  useTick(SECONDS_MS)
+  const seconds = fmtSeconds(Date.now() - startedAt)
+  return (
+    <Box marginLeft={INDENT.detail} flexDirection="row" gap={1}>
+      <Box flexShrink={0}>
+        <BrailleSpinner />
+      </Box>
+      <Box minWidth={0}>
+        <Text color={STATUS_COLOR.pending} wrap="truncate-end">
+          压缩上下文中
+        </Text>
+      </Box>
+      <Box minWidth={0}>
+        <Text {...TEXT.secondary} wrap="truncate-end">
+          {`· 把更早的历史折成摘要${seconds === '' ? '' : ` · 已用 ${seconds}`}`}
+        </Text>
+      </Box>
+    </Box>
+  )
+}
+
+/**
  * 按显示宽度硬截单行：折行会破坏瀑布的恒定 3 行窗口（dsh clipLine 同款）。
  * 逐码点走，CJK/emoji 宽字符永远不会被劈成两半。
  */
@@ -528,10 +557,13 @@ export function ChatView({
   registerClick,
   viewportRef,
   onAtTailChange,
+  compactingSince,
 }: {
   /** 全量条目（窗口切片、行偏移、刻度几何都在 TranscriptViewport 里按行算）。 */
   entries: TranscriptEntry[]
   turnState: 'idle' | 'thinking' | 'working' | 'awaiting-approval'
+  /** 正在压缩上下文的开始时刻；undefined = 没在压（压缩期间底部画一行活动提示）。 */
+  compactingSince?: number
   expandThinking: boolean
   /** 全会话一条都没有（和「窗口恰好翻空」区分开，只有前者画开场提示）。 */
   empty: boolean
@@ -619,6 +651,9 @@ export function ChatView({
           registerClick={registerClick}
         />
       )}
+      {...(compactingSince === undefined
+        ? {}
+        : { footer: <CompactingLine startedAt={compactingSince} /> })}
       {...(leading === undefined ? {} : { leading })}
     />
   )

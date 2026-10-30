@@ -1745,6 +1745,7 @@ export function App({
             <ChatView
               entries={snapshot.entries}
               turnState={snapshot.status.turnState}
+              compactingSince={snapshot.status.compactingSince}
               expandThinking={expandThinking}
               empty={snapshot.entries.length === 0}
               welcome={

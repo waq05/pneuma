@@ -11145,12 +11145,15 @@ bash 默认 30 秒超时（放宽会拖长卡死时间）、PTC 脚本 120 秒�
 下一次真实请求回来就会被权威读数盖掉。所以界面上它和「~」估算口径一样，只用于让百分比
 当场动起来，不写进会话日志、不参与计费。
 
-**没做**：终端 TUI（`src/app`）这一侧没有加同样的活动行——本次报障在桌面/网页壳，
-TUI 的快照里已经有这个字段，要加是下一轮的小活。
+**终端 TUI 同步补上（同日）**：`ChatView` 接 `compactingSince`，在视口 `footer` 里画
+`⠋ 压缩上下文中 · 把更早的历史折成摘要 · 已用 3s`。为什么不塞成一条假条目：条目要进
+行高表、参与滚动坐标，硬插一条会让「滚上去再滚回来差一行」的老毛病复发；`footer` 不参与
+滚动，压缩结束随字段一起消失。`App` 把 `snapshot.status.compactingSince` 传下去。
 
 **验证**：新增 `scripts/compacting-status-test.mjs`（11 条：字段出现与消失、后台会话隔离、
-估算读数落进快照、别人读数不覆盖，外加四条源码接线钉），全绿；`typecheck`（根 + 壳）0 错、
-`build`（根 + 壳，19 份插件产物重建）通过、`check:style` 630 个文件通过、`check:ui` 45/45 通过；
+估算读数落进快照、别人读数不覆盖，外加四条源码接线钉）与 `scripts/tui-compacting-test.mjs`
+（7 条：真渲染一帧断言有/没有那一行），全绿；`typecheck`（根 + 壳）0 错、
+`build`（根 + 壳，19 份插件产物重建）通过、`check:style` 632 个文件通过、`check:ui` 45/45 通过；
 `compact-readstate-test` / `transcript-order-test` / `transcript-usage-test` /
 `statusbar-test` / `session-transcript-isolation-test` 全部通过。
 
