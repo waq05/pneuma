@@ -11636,3 +11636,53 @@ dsh 那边组头与思考行落在同一条轴（552px），工具子项整格�
 `scripts/terminal-env-settings-test.mjs`（25 条：真起内核，验分区进设置页、下拉只列探到的、
 存盘落 `plugins.json`、坏值被拒、重新检测按钮）。四个选择各自真跑一条命令：
 PowerShell 5.1 / PowerShell 7.6.5 / Git Bash 5.3 / WSL（Ubuntu）都返回了预期输出。
+
+## 官方可开关插件的两处行为决策（2026-10-30 收尾）
+
+「官方可开关插件分批审查与修复」那一节留了两个待用户拍板的行为问题，这一批按拍板的结论落地。
+
+**1. 桥接工具只问一遍守卫链（`tool_call` 的两张卡）。**
+
+旧做法：模型调 `tool_call` 转调撤下的工具时，循环先按 `tool_call`（exec）问一遍守卫链——
+弹第一张卡，卡上写「调用 tool_call」；用户点过之后，桥在 `run` 里按真名再问一遍，弹第二张卡。
+用户既看不出第一张卡要动什么，又要为同一件事点两次。
+
+新做法：`ToolEntry` 多一个可选方法 `gateAs(args, cwd)`，桥自己交出「被调工具的真名、真实风险、
+真实参数」；循环与 PTC 用同一个 `gateIdentity()`（`src/core/tools.ts`）算这一次该按谁问，
+桥的 `run` 里不再有第二次判定。三处退回情况都是「按桥自己问一遍」，保证一次调用**恰好问一遍**：
+桥不认（名字拼错、参数坏掉）、桥抛错、以及 `tool_call` 之外没有 `gateAs` 的普通工具。
+
+代价与边界：桥的 `run` 现在不自判，所以只有循环（`src/core/loop.ts`）与 PTC
+（`src/plugins/ptc.ts`）两个入口执行工具——这两个入口都按真名过守卫链，已逐一核对
+（`grep 'entry.run|tool.run'` 只剩这两处执行点）。直接调 `tool_call.run` 的测试/脚本
+不再有内置审批，这是有意的：审批归循环管，工具层不该有两份裁决。
+
+顺带改了一条旧口径：`read` 工具仍然不许被撤下，但理由从「撤了每次只读都要过审批卡」
+改成「撤了每次读都要先搜再调、多两次往返」——桥按真名判定之后，前一个理由已经不成立了。
+
+**2. 钩子没跑成不再拦路（`failClosed` 默认值）。**
+
+旧默认 `failClosed: true`：钩子超时、命令起不来、输出看不懂、退出码非 0，全都按「拦下这次操作」
+处理。脚本里一个路径写错，整轮所有工具调用一起被掐，用户看到的只是「生命周期钩子失败」。
+codex 的语义不是这样：非 2 的退出码记成 Failed，`should_block` 仍为 false
+（`codex-rs/hooks/src/engine/mod.rs` 的 pre_tool_use 用例）；只有退出码 2（stderr 写原因）
+才挡下这次调用。
+
+改法：`LIFECYCLE_DEFAULTS.failClosed` 与 `resolveLifecycleConfig` 的缺省都改成 false，
+只有明确写 `true`（布尔或字符串）才把「没跑成」当成拦；单条钩子的 `failClosed` 仍覆盖全局。
+设置页的开关说明重写：默认关、为什么关、打开会有什么后果。这是**行为变化**：老配置里没写
+`failClosed`、又依赖它兜底的人，需要自己在设置里打开。
+
+**验证**：新增 `scripts/tool-search-single-approval-test.mjs`（22 条，真内核 + 假端点：
+撤下的 exec 工具只弹一张卡且卡上是 `bash`、拒绝后没执行、允许后真的执行、只读工具经桥转调
+按 `read` 判定、守卫链上从不出现 `tool_call`）与 `scripts/lifecycle-hook-default-test.mjs`
+（22 条：缺省值、五种失败形态默认只提示、退出码 2 必拦、单条覆盖、白名单、JSON 结论不受影响）。
+`scripts/tool-search-test.mjs` 补了 5 条 `gateIdentity` 断言（共 24 条）。
+`pnpm run typecheck`、`pnpm run build`、`pnpm run check:style`（646 个文件）全过。
+
+`node scripts/check-core.mjs`（80 条探针）连跑三轮都是 79/80，三轮的失败项各不同，且都不是
+这一批改的东西：`panel-prefs-test` 一次以 `0xC0000409` 崩在 Node 里（单独复跑 3 次全过）；
+`subagent-resume-test` 两次掉在「传话后状态回到 working」这条断言上——假端点回得太快，
+队友在断言执行之前就已经收工（单独复跑 3 次全过）。两条都是旧探针自己的时序抖动，长批跑到
+后半段机器负载高时才露头。这一批新增的两条探针在三轮里都全绿（22 条 / 22 条）。
+

@@ -140,9 +140,9 @@ export const myPlugin: Plugin.Object = {
 | `approval-floor` 危险命令硬拦截 | 开 | `approval-floor` | 守卫链 order 5 的硬闸：灾难命令、命令黑名单、命令白名单、无人值守 |
 | `spill` 长输出转存 | 开 | `spill` | 工具输出超阈值就存成文件，回给模型的是头尾几行与续读写法 |
 | `session-search` 历史会话搜索 | 开 | `session-search` | 历史会话的中文全文索引，提供 `session_search` 工具与 `/search` 命令 |
-| `lifecycle-hooks` 外部命令钩子 | 关 | `lifecycle-hooks` | 读 `~/.dsc/lifecycle-hooks.json`，按 codex 的事件名在模型动手前后跑外部命令 |
+| `lifecycle-hooks` 外部命令钩子 | 关 | `lifecycle-hooks` | 读 `~/.dsc/lifecycle-hooks.json`，按 codex 的事件名在模型动手前后跑外部命令；钩子只有退出码 2 才拦，超时/起不来/非 0 退出默认只提示（与 codex 同口径，可开 `failClosed` 改回「没跑成也算拦」） |
 | `mcp` MCP 外部工具 | 关 | `mcp` | 连 stdio 或 streamable-http 的 MCP server，工具挂成 `mcp__服务器__工具` |
-| `tool-search` 工具按需加载 | 关 | `tool-search` | 用 `tool_search` / `tool_describe` / `tool_call` 把动手类与 MCP 工具的说明收进按需检索；read 工具常驻 |
+| `tool-search` 工具按需加载 | 关 | `tool-search` | 用 `tool_search` / `tool_describe` / `tool_call` 把动手类与 MCP 工具的说明收进按需检索；read 工具常驻；`tool_call` 用 `gateAs` 交出被调工具的真名与真实风险，一次动作只问一遍守卫链、只弹一张卡 |
 | `sandbox` 文件与命令围栏 | 开 | `sandbox` | 守卫链 order 8 的策略围栏（codex 路线）：三档模式、可写根白名单、受保护路径、命令前缀策略、一次性升权（`sandbox_permissions` + `justification` 成对）；容器后端可换真隔离，降级时照常执行 + 审批兜底并如实上报 |
 | `schedule` 定时任务 | 关 | `schedule` | `after`/`at`/`every`/`daily`/`weekly`/`cron` 六种选择器，到点把任务投回建它的会话；至多一次、catch-up 补投、pre-dispatch 校验 |
 | `lsp` 代码跳转与报错 | 关 | `lsp` | 连语言服务器查定义/引用/实现/悬停，并提醒本次编辑新引入的报错 |
@@ -527,7 +527,7 @@ order 插队）；系统提示词不进消息流，由 agent 插件在每次请�
 | 往系统提示加一段 | `ctx.prompt.register(id, 取文本, { order })` | 插件关着时这段话自动消失；order 决定段次（模式条款 30、模型信息 890） |
 | 加一个模型协议 | `ctx.llm.registerAdapter({ id, stream })` | 端点在 config.yaml 用 `api: <id>` 选择；未注册的协议发请求时响亮报错 |
 | 改写发给模型的消息 | `ctx.prompt.registerProjection(id, fn, { order })` | **命名纯投影**：同一输入永远同一输出；模型可见 ⟺ 日志原文 + 投影链（旧截图裁剪用的就是它）。往请求里塞日志上没有的内容时必须配 `session.appendNote` |
-| 工具动手之前拦一道 | `ctx.guards.register({ id, order, decide })` | 内置刻度：灾难地板 5、沙箱 8、协作模式 10、LSP 写前留底 7、安全钩子 20、浏览器域名 20、生命周期钩子 25、审批 30；守卫自己抛错按「拒」处理 |
+| 工具动手之前拦一道 | `ctx.guards.register({ id, order, decide })` | 内置刻度：灾难地板 5、沙箱 8、协作模式 10、LSP 写前留底 7、安全钩子 20、浏览器域名 20、生命周期钩子 25、审批 30；守卫自己抛错按「拒」处理。桥接工具在 `ToolEntry.gateAs` 里报出被调工具的真名与真实风险，守卫链只问一遍、看到的是真实身份 |
 | 改写工具的输出 | `ctx.guards.registerObserver({ id, order, observe })` | 内置刻度：密钥遮红 10、LSP 诊断注入 46、外部命令钩子 45、长输出转存 50；order 小的先加工，后一位看到的是前一位的输出 |
 | 换掉命令的执行体（真隔离） | `registerCommandRunner()`（`src/core/tools/command-runner.ts`） | 随包发布的内置插件可用（外部插件拿不到）：沙箱的容器后端把 `powershell -Command X` 换成 `docker run … sh -c X`；没有注册者时行为与从前完全一致 |
 | 往界面快照加一块状态 | `ctx.surfaces.register(id, 取值)` | 先在 `contract.ts` 的 `RuntimeSurfaces` 上声明合并；快照装配层不认识具体功能 |

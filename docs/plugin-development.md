@@ -324,6 +324,9 @@ ctx.tools.register({
   description: string                       // 模型据此决定何时调用，写清用途与返回值
   parameters: Record<string, unknown>       // JSON Schema（OpenAI function 格式）
   risk: 'read' | 'write' | 'exec'
+  // 可选：转调别人的桥接工具（如 tool_call）用它报出被调工具的真名与真实风险，
+  // 守卫链与审批卡就按那一条判定，一次调用只问一遍。返回 undefined = 认不出目标，按自己判定。
+  gateAs?(args, cwd): { name, risk, args } | undefined
   run(args: Record<string, unknown>, ctx: { cwd: string; signal: AbortSignal }): Promise<string>
 }) => () => void                            // 返回退订函数
 ctx.tools.list(): ToolEntry[]
