@@ -255,7 +255,8 @@ replay.replayHistory(
     { role: 'assistant', content: '改完了' },
   ],
   new Map(),
-  new Map([['cw', changeSample]]),
+  // 一次调用可能改多个文件（PTC 的一段脚本），所以 fileChanges 的值是数组。
+  new Map([['cw', [changeSample]]]),
 )
 check('重放经 fileChanges 还原出同样的 changes 条目', replay.entries.some((entry) => entry.kind === 'changes'))
 const noChanges = new Transcript()

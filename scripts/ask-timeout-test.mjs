@@ -60,6 +60,9 @@ const session = kernel.get('session')
 const tools = kernel.get('tools')
 const runCode = tools.list().find((entry) => entry.name === 'run_code')
 const askTool = tools.list().find((entry) => entry.name === 'ask_user')
+/** run_code 的回包可能是字符串，也可能是 `{ text }` 对象：探针统一取正文。 */
+const asText = (result) => (typeof result === 'string' ? result : String(result?.text ?? ''))
+
 const runCtx = () => ({
   cwd,
   signal: new AbortController().signal,
@@ -89,14 +92,16 @@ console.log('\n[2] 脚本里等提问卡：等人的时间不算脚本时限')
   await sleep(800) // 已经超过脚本时限两倍多
   check('脚本时限没有在半路掐断它（卡还挂着）', ask.pendingQuestion() !== null)
   await ask.answerQuestion('我选 B')
-  const text = await running
+  // 2026-10-30 起 run_code 的回包是对象（`{ text, changesList? }`：一次脚本可能改多个文件），
+  // 纯文本时也走对象形状，所以这里先取正文再断言。
+  const text = asText(await running)
   check('答完之后脚本拿到答案，正常返回', text.includes('我选 B'), text.slice(0, 200))
   check('结果里没有被掐断的记录', !text.includes('被掐断'))
   check('答完之后卡片撤掉了', ask.pendingQuestion() === null)
 
   // 反例：不等人时，脚本自己拖时间照样会被掐断（停表不是把时限关了）
   PTC_LIMITS.deadlineMs = 200
-  const killed = await runCode.run({ code: "await sleep(600); return 'ok'" }, runCtx())
+  const killed = asText(await runCode.run({ code: "await sleep(600); return 'ok'" }, runCtx()))
   check('不等人时按脚本时限掐断', killed.includes('被掐断'), killed.slice(0, 120))
   PTC_LIMITS.deadlineMs = original
 }

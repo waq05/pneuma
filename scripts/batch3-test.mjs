@@ -122,7 +122,15 @@ check('estimateRequestSegments：五段各归各位', () => {
 })
 
 check('estimateRequestSegments：空请求全零', () => {
-  assert.deepEqual(estimateRequestSegments([]), { system: 0, prompt: 0, assistant: 0, thinking: 0, tools: 0 })
+  // 2026-10-30 起 tools（工具结果）与 schema（每轮重发的工具定义）分开计，空请求两段都是 0。
+  assert.deepEqual(estimateRequestSegments([]), {
+    system: 0,
+    prompt: 0,
+    assistant: 0,
+    thinking: 0,
+    tools: 0,
+    schema: 0,
+  })
 })
 
 // ── 转录折叠（adapter/transcript）────────────────────────────────────────
@@ -191,7 +199,8 @@ check('tool/changes 把改动按 callId 缝回工具卡（call.change）且仍�
 
 check('重放历史时同样缝回：fileChanges 旁路 → call.change', () => {
   const transcript = new Transcript()
-  const fileChanges = new Map([['c2', { path: '/w/b.ts', added: 2, removed: 0, hunks: [], status: 'added' }]])
+  // 一次调用可能改多个文件（PTC 的一段脚本改好几个），所以 fileChanges 的值是数组。
+  const fileChanges = new Map([['c2', [{ path: '/w/b.ts', added: 2, removed: 0, hunks: [], status: 'added' }]]])
   transcript.replayHistory(
     [
       { role: 'assistant', content: '', tool_calls: [{ id: 'c2', function: { name: 'write', arguments: '{"path":"b.ts","content":"a\\nb"}' } }], ts: 1 },
