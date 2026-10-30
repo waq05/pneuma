@@ -14,8 +14,9 @@
  *   PostCompact      → `dsc/compacted`；
  *   Stop / Interrupt → `dsc/turn-end` 的 completed / aborted；
  *   SessionEnd       → `dsc/exit`（退出不等钩子跑完）；
- *   其余四个（PermissionRequest / PreCompact / SubagentStart / SubagentStop）dsc 没有对应扩展点，
- *   配了也不执行，只把原因写进能力清单的 problems。
+ *   其余六个（PreModelRequest / PostModelRequest / PermissionRequest / PreCompact /
+ *   SubagentStart / SubagentStop）dsc 没有对应扩展点，配了也不执行，只把原因写进能力清单的
+ *   problems。
  *
  * 钩子脚本的话进模型之前一律过 `wrapUntrusted`（来源 `hook:<事件名>`），
  * 它说的话是数据，不是指令。
