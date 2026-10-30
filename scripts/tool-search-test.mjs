@@ -48,6 +48,7 @@ const check = (name, condition, detail = '') => {
 
 const { createKernel } = await import('../lib/host/kernel.js')
 const { DEFAULT_TOOL_SEARCH_CONFIG, shouldDeferTool } = await import('../lib/core/tool-search.js')
+const { gateIdentity } = await import('../lib/core/tools.js')
 
 /** 按延后规则起一份内核（插件配置每次挂载时从 plugins.json 现读，所以可以起两份）。 */
 async function boot(rules) {
@@ -88,7 +89,7 @@ const first = await boot(['bash'])
   )
   check('命中延后规则的 `bash`（exec）已从台面撤下', !names.includes('bash'), JSON.stringify(names.filter((n) => n.includes('bash'))))
   check(
-    'read 工具一个都没撤（read 撤了每次只读都要过审批卡）',
+    'read 工具一个都没撤（撤了每次读都得先搜再调，多两次往返）',
     ['read', 'glob', 'grep'].every((name) => names.includes(name)),
     JSON.stringify(['read', 'glob', 'grep'].filter((n) => !names.includes(n))),
   )
@@ -148,6 +149,29 @@ const first = await boot(['bash'])
   check('tier 3：read 工具照样不撤（写 `*` 也拦得住）', !shouldDeferTool({ name: 'read', risk: 'read' }, { ...tier3, deferRules: ['*'] }))
   check('keepTools 保得住写类工具', !shouldDeferTool({ name: 'bash', risk: 'exec' }, { ...tier3, keepTools: ['bash'] }))
   check('tier 2 只撤命中规则的', !shouldDeferTool({ name: 'bash', risk: 'exec' }, { ...tier3, tier: 2, deferRules: ['edit'] }))
+}
+
+// ── [7] 桥接工具报出真名（一次调用只问一遍守卫的大前提） ───────────────────
+{
+  const bridge = first.tool('tool_call')
+  const held = gateIdentity(bridge, { name: 'bash', arguments: { command: 'echo hi' } }, process.cwd())
+  check(
+    '撤下的工具：守卫链看到的是真名与真实风险（不是 tool_call / exec）',
+    held.name === 'bash' && held.risk === 'exec' && held.args.command === 'echo hi',
+    JSON.stringify(held),
+  )
+  const live = gateIdentity(bridge, { name: 'read', arguments: { file_path: 'a.ts' } }, process.cwd())
+  check(
+    '台面上的只读工具：按 read 判定（不再因为走 tool_call 就多弹一张卡）',
+    live.name === 'read' && live.risk === 'read',
+    JSON.stringify(live),
+  )
+  const badName = gateIdentity(bridge, { name: 'no_such_tool' }, process.cwd())
+  check('名字拼错：退回按桥自己判定，错误留给 run 报给模型', badName.name === 'tool_call' && badName.risk === 'exec', JSON.stringify(badName))
+  const badArgs = gateIdentity(bridge, { name: 'bash', arguments: '{不是 JSON' }, process.cwd())
+  check('参数坏掉：仍按真名问一遍（参数退成空对象），run 里照样会报错', badArgs.name === 'bash' && Object.keys(badArgs.args).length === 0, JSON.stringify(badArgs))
+  const nested = gateIdentity(bridge, { name: 'tool_search' }, process.cwd())
+  check('想再包一层桥接工具：按桥自己判定（run 里会拒绝）', nested.name === 'tool_call', JSON.stringify(nested))
 }
 
 console.log(`工具渐进披露电池：${passes} PASS / ${failures} FAIL`)

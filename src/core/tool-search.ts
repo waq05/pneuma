@@ -179,8 +179,9 @@ export function matchesToolGlob(pattern: string, name: string): boolean {
 /**
  * 这条工具允许被撤下吗。
  *
- * read 风险一律不许：撤下之后模型只能经 `tool_call` 调它，而 `tool_call` 自己是 exec 档、
- * 每次都要过审批卡，「只读免审批」就变成了「每次只读都弹卡」。
+ * read 风险一律不许：撤下之后模型每次读都得先 `tool_search` 再 `tool_call`，多两次往返，
+ * 省下的那点 schema 不值这个来回。（2026-10-30 改口径：桥现在按真名过守卫链，撤只读工具
+ * 不会再变成「每次只读都弹卡」，但「多两步」这条理由照样成立。）
  *
  * @param tool - 工具的名字与风险等级。
  * @param config - 当前配置。

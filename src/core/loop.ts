@@ -25,7 +25,7 @@ import type { CoreEvent } from './events.js'
 import type { Session, InboxOrigin } from './session.js'
 import type { UserFileAttachment } from './attachments.js'
 import type { ToolGuardChain } from './tool-guards.js'
-import { callFacts, stripBaseline, type FileChangeSummary, type ToolEntry, type ToolPresentation } from './tools.js'
+import { callFacts, gateIdentity, stripBaseline, type FileChangeSummary, type ToolEntry, type ToolPresentation } from './tools.js'
 import { collectGitTurnChanges, snapshotGitStatus } from './git-info.js'
 import { errText } from './err-text.js'
 import { estimateRequestSegments } from './token-estimate.js'
@@ -615,23 +615,29 @@ export class MiniAgent {
       }
       // 一次调用动手之前先问守卫链：模式档不许改文件、免打扰档不许弹卡、审批卡等人点头，
       // 这些都是链上的人自己说的，循环不知道也不该知道是谁。守卫（含审批卡）必须串行问。
+      //
+      // 桥接工具（tool_call）在这里脱下自己的名字：问的是被它转调的那条工具的真名、真实风险与
+      // 真实参数（2026-10-30 修）。不这么做就有两张卡：第一张写「调用 tool_call」，第二张才
+      // 写真实工具，用户既看不出要动什么、又要为同一件事点两次。桥自己不再判一遍——
+      // 它只认 gateAs 认不出的情况（名字拼错、参数坏掉），那时按桥判定，仍然只问一遍。
+      const gateInput = gateIdentity(tool, args, this.cwd)
       const verdict = await this.deps.guards.gate({
-        toolName: call.name,
-        risk: tool.risk,
+        toolName: gateInput.name,
+        risk: gateInput.risk,
         cwd: this.cwd,
-        args,
+        args: gateInput.args,
         signal,
         // 发起调用的会话身份：审批授权按会话记账、审批卡标明来处都靠它（0.6.48）
         sessionId: this.session.meta.id,
         sessionPath: this.session.filePath,
-        ...callFacts(args, this.cwd),
+        ...callFacts(gateInput.args, this.cwd),
       })
       if (verdict.action === 'deny') {
         await flushFlying()
         this.finishCall(call, { text: verdict.reason, stored: verdict.reason, error: 'rejected' })
         continue
       }
-      if (tool.risk === 'read') {
+      if (gateInput.risk === 'read') {
         // 只读且放行：起飞不阻塞；落库顺序由 flushFlying 保证。
         flying.push({ call, outcome: this.runTool(call, tool, args, signal) })
         continue

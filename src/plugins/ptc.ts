@@ -22,7 +22,7 @@
  */
 import vm from 'node:vm'
 import type { Plugin } from '@deepseek-ai/cordis'
-import { argsSummary, callFacts, type FileChangeSummary, type ToolEntry } from '../core/tools.js'
+import { argsSummary, callFacts, gateIdentity, type FileChangeSummary, type ToolEntry } from '../core/tools.js'
 import {
   PTC_LIMITS,
   PTC_SDK_SIGNATURE,
@@ -243,17 +243,19 @@ export const ptcPlugin: Plugin.Object = {
         // 原因见文件头第 2 条；日志靠结果正文里的调用清单留底）。
         // 带归属：脚本可能是后台会话在跑，卡片只能落在它自己的视图里（切走了就不画）。
         ctx.transcript.emit({ type: 'tool/call', callId, name, args: JSON.stringify(args) }, session.id)
-        // 守卫链可能弹审批卡：等人点卡的时间同样不算脚本时间
+        // 守卫链可能弹审批卡：等人点卡的时间同样不算脚本时间。
+        // 桥接工具（tool_call）在这里同样交出被调工具的真名与真实风险，免得脚本里多弹一张卡。
+        const gateInput = gateIdentity(entry, args, cwd)
         const verdict = await deadline.hold(() =>
           ctx.guards.gate({
-            toolName: name,
-            risk: entry.risk,
+            toolName: gateInput.name,
+            risk: gateInput.risk,
             cwd,
-            args,
+            args: gateInput.args,
             signal,
             sessionId: session.id,
             sessionPath: session.path,
-            ...callFacts(args, cwd),
+            ...callFacts(gateInput.args, cwd),
           }),
         )
         if (verdict.action === 'deny') {

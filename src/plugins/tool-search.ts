@@ -9,11 +9,12 @@
  *   `tool_call`     按真名调用它（撤下的工具只能这样调）。
  *
  * 两条安全约束：
- *   1. 只有 write / exec 风险的工具允许被撤下。read 工具撤下之后模型只能经 `tool_call` 调它，
- *      而 `tool_call` 自己是 exec 档、每次都要过审批卡，「只读免审批」就变成了「每次只读都弹卡」。
- *      判定在 core/tool-search.ts 的 shouldDeferTool 里，配置写了 `*` 也拦得住。
- *   2. `tool_call` 执行前按真名重走一遍守卫链：模式闸门、安全钩子、审批卡看到的都是真名与真实
- *      风险，于是「谁被批准了」在审批卡与会话日志上记的还是那条工具，而不是 `tool_call`。
+ *   1. 只有 write / exec 风险的工具允许被撤下。read 工具撤下之后模型每次读都得先 `tool_search`
+ *      再 `tool_call`，多两次往返；省下的那点 schema 不值这个来回。判定在 core/tool-search.ts
+ *      的 shouldDeferTool 里，配置写了 `*` 也拦得住。
+ *   2. `tool_call` 报出目标身份（`gateAs`），循环按被调工具的真名与真实风险过一遍守卫链：
+ *      模式闸门、安全钩子、沙箱与审批卡看到的都是真名与真实写目标，一次动作只弹一张卡
+ *      （2026-10-30 修：以前桥自己再判一遍，同一件事要点两张卡）。
  *
  * 撤下的机制见 withhold()；MCP 工具的 schema 由 MCP 客户端自己撤（`mcp.deferSchemas()`），
  * 因为工具目录的持有者才知道哪些工具正挂在 ctx.tools 上。
@@ -24,7 +25,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import { callFacts, type ToolContext, type ToolEntry, type ToolOutput, type ToolRisk } from '../core/tools.js'
+import type { ToolContext, ToolEntry, ToolOutput, ToolRisk } from '../core/tools.js'
 import {
   ToolSearchIndex,
   TOOL_SEARCH_CONFIG_KEY,
@@ -63,7 +64,7 @@ interface CatalogItem {
 
 export const toolSearchPlugin: Plugin.Object = {
   name: 'tool-search',
-  inject: ['tools', 'guards', 'settings'],
+  inject: ['tools', 'settings'],
   apply(ctx, passed) {
     // 先把配置校验一遍：写错了插件就挂不上（错在哪、去哪儿改由 readConfig 的消息说清），
     // 别带着一份坏配置跑起来、等模型调工具时才炸。
@@ -184,7 +185,7 @@ export const toolSearchPlugin: Plugin.Object = {
         description: live.description,
         parameters: live.parameters,
         risk: live.risk,
-        where: '就在台面上，可以直接调用（经 tool_call 走等于多过一道审批）',
+        where: '就在台面上，直接调用即可（经 tool_call 转调也是同一条工具、同一道审批）',
         invoke: (callArgs, runCtx) =>
           live.run(callArgs, {
             cwd: runCtx.cwd,
@@ -308,7 +309,7 @@ export const toolSearchPlugin: Plugin.Object = {
       name: 'tool_call',
       description:
         '按真名调用一条工具（撤下的工具只能这样调）。真名与参数照 tool_search / tool_describe 给出的填，别自己猜。' +
-        '执行前会按真实工具名重走一遍审批与安全钩子，所以被撤下的写操作照样会弹卡、也照样能被规则拦下。',
+        '审批与安全钩子按被调工具的真名判定：撤下的写操作照样会弹卡（只弹一张）、也照样能被规则拦下。',
       parameters: {
         type: 'object',
         properties: {
@@ -321,6 +322,23 @@ export const toolSearchPlugin: Plugin.Object = {
         required: ['name'],
       },
       risk: 'exec',
+      /**
+       * 交出被调工具的身份：循环按它过守卫链，桥自己不再判一遍（那是两张卡的来源）。
+       * 名字拼错、参数坏掉时返回 undefined——循环退回按 tool_call 判定，错误留给 run 原样报给模型。
+       */
+      gateAs(gateArgs) {
+        const name = String(gateArgs.name ?? '').trim()
+        if (name === '' || BRIDGE_TOOL_NAMES.has(name)) return undefined
+        const target = resolveTool(name)
+        if (target === undefined) return undefined
+        let callArgs: Record<string, unknown> = {}
+        try {
+          callArgs = readCallArgs(gateArgs.arguments)
+        } catch {
+          // 参数不是合法 JSON：run 里会原样报错，这里按真名与真实风险问一遍，别让一张卡都没有
+        }
+        return { name: target.name, risk: target.risk, args: callArgs }
+      },
       async run(args, runCtx) {
         const name = String(args.name ?? '').trim()
         if (name === '') throw new Error('name 不能为空：填工具的真名（tool_search 给出的那个）')
@@ -332,20 +350,7 @@ export const toolSearchPlugin: Plugin.Object = {
           throw new Error(`没有这个工具：${name}。先用 tool_search 搜名字（例如「创建工单」或 github issue）。`)
         }
         const callArgs = readCallArgs(args.arguments)
-        // 关键一条：工具是被撤下之后经桥接层执行的，但守卫链必须按真实工具名与真实风险判定——
-        // 否则模式闸门、安全钩子、审批卡看到的都是 tool_call，会话日志里也记不出到底批准了谁。
-        const verdict = await ctx.guards.gate({
-          toolName: name,
-          risk: target.risk,
-          cwd: runCtx.cwd,
-          args: callArgs,
-          signal: runCtx.signal,
-          sessionId: runCtx.sessionId,
-          sessionPath: runCtx.sessionPath,
-          ...callFacts(callArgs, runCtx.cwd),
-        })
-        // 守卫说拒：理由原文回给模型（由循环记成这次工具失败），不静默、也不改写成别的话
-        if (verdict.action === 'deny') throw new Error(verdict.reason)
+        // 审批与安全钩子已经在循环里按真名判过了（见 gateAs）：这里只执行，不再问第二遍。
         return target.invoke(callArgs, runCtx)
       },
     }
@@ -371,7 +376,7 @@ export const toolSearchPlugin: Plugin.Object = {
         lines.push('MCP 工具的 schema 没撤（开关关着）')
       }
       lines.push(`注册表工具 ${String(heldNames.length)} 条${heldNames.length === 0 ? '' : `：${heldNames.join('、')}`}`)
-      lines.push('read 工具不会出现在这两行里：它们必须留在台面上，否则每次只读都要过一张审批卡。')
+      lines.push('read 工具不会出现在这两行里：撤了每次读都要先搜再调、多两次往返，省不下多少 token。')
       return lines.join('\n')
     }
 
@@ -389,7 +394,7 @@ export const toolSearchPlugin: Plugin.Object = {
             text:
               'tool_search：按关键词（中文按相邻两字切，英文按单词）在撤下的目录里检索；\n' +
               'tool_describe：取某条工具的完整参数 JSON Schema；\n' +
-              'tool_call：按真名调用它，调用前按真名重走审批与安全钩子。',
+              'tool_call：按真名调用它；审批与安全钩子按真名的真实风险判定，一次调用只弹一张卡。',
           },
           {
             type: 'switch',
@@ -414,7 +419,7 @@ export const toolSearchPlugin: Plugin.Object = {
             label: '延后规则（一行一条，支持 *）',
             placeholder: 'mcp__github__*\nedit',
             mono: true,
-            help: '只在档位 2 生效。命中的工具被撤下后要用 tool_call 调，每次调用都会过审批卡。',
+            help: '只在档位 2 生效。命中的工具被撤下后要用 tool_call 调，每次调用都按那条工具的真名问一次审批。',
           },
           {
             type: 'text',

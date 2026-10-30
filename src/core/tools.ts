@@ -132,6 +132,18 @@ export interface ToolEntry {
    * 现在只是把这个事实记下来，循环还没有并行调度器。
    */
   isConcurrencySafe?(args: Record<string, unknown>): boolean
+  /**
+   * 这个工具是「转调别人」的桥：真名、真实风险与真实参数由它自己报上来。
+   *
+   * 为什么要有这一位（2026-10-30 用户报障）：`tool_call` 这类桥接工具如果按自己的名字过
+   * 守卫链，审批卡上写的是「调用 tool_call」，用户看不出到底要动哪条工具；桥在内部再判一次，
+   * 同一个动作就要点两张卡。让桥提前交出目标身份，循环就能**只问一遍**，而模式闸门、安全钩子、
+   * 沙箱与审批卡看到的是被调的那条工具的真名、真实风险与真实写目标。
+   *
+   * 返回 undefined = 认不出目标（名字拼错、参数坏掉）：这时按桥自己判定，一次调用照旧只问一遍。
+   * 它只影响「问谁」与「按什么风险排并发」，不改变 `run` 的执行权——桥仍负责真正执行。
+   */
+  gateAs?(args: Record<string, unknown>, cwd: string): { name: string; risk: ToolRisk; args: Record<string, unknown> } | undefined
   /** 执行并返回给模型的结果；失败时抛错（loop 转成 error 结果）。 */
   run(args: Record<string, unknown>, ctx: ToolContext): Promise<string | ToolOutput>
 }
@@ -161,6 +173,30 @@ export function callFacts(
   const command = args.command ?? args.cmd
   if (typeof command === 'string' && command.trim() !== '') out.command = command
   return out
+}
+
+/**
+ * 这次调用该按谁的身份过守卫链（{@link ToolEntry.gateAs} 的唯一实现处）。
+ *
+ * 桥接工具（`tool_call`）报出被调工具的真名、真实风险与真实参数，循环与 PTC 都拿这一份去问；
+ * 两种退回情况按桥自己判定，保证一次调用**恰好问一遍**：桥不认（返回 undefined）、桥抛错。
+ *
+ * @param tool - 模型点名的那个工具（可能是桥）。
+ * @param args - 模型给它的参数。
+ * @param cwd - 会话工作目录。
+ */
+export function gateIdentity(
+  tool: ToolEntry,
+  args: Record<string, unknown>,
+  cwd: string,
+): { name: string; risk: ToolRisk; args: Record<string, unknown> } {
+  try {
+    const delegate = tool.gateAs?.(args, cwd)
+    if (delegate !== undefined) return delegate
+  } catch {
+    // 桥自己报不出目标：退回按桥的名字问一遍，不让一个坏钩子断掉整轮
+  }
+  return { name: tool.name, risk: tool.risk, args }
 }
 
 /** 卡片上那行参数摘要的最长字符数（再长就是把整篇正文塞进按钮旁边）。 */
