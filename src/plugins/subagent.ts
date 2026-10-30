@@ -6,7 +6,7 @@
  * 「另一个 MiniAgent 实例 + 它自己的会话文件 + 一张冻结的工牌」。
  *
  * 队友按会话隔离（对照 dsh 的 parentSession 过滤）：每个会话各自一份在队名单与
- * 并发额度，`subagent list` 只报本会话派出的队友；共享任务看板在「智能体团队」
+ * 并发额度，`subagent list` 只报本会话派出的队友；共享任务看板在「共享任务板」
  * 插件里，那是叠在这一层之上的协作层。
  *
  * 工牌（工具白名单 / 审批意愿 / 轮次预算 / 模型）在队友开工那一刻从角色文件复制进
@@ -36,6 +36,8 @@ import {
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
 import { MiniAgent } from '../core/loop.js'
 import { subagentEnvironmentText } from '../core/prompt.js'
+import { activeRules } from '../core/command-policy.js'
+import { modeSpec } from '../core/modes.js'
 import { REJECTED_TOOL_TEXT, Session, teammateRoot } from '../core/session.js'
 import { redact } from '../core/secrets.js'
 import { argsSummary, type ToolContext, type ToolEntry } from '../core/tools.js'
@@ -390,10 +392,34 @@ export const subagentPlugin: Plugin.Object = {
 
     /**
      * 队友自己那条工具守卫链：全局上限与角色意愿取更严的那个，通过的请求在卡上署名。
-     * 每条链只有一位审批守卫——队友不该被主会话的协作模式闸门管着，也不该跟主会话共用一条链。
+     * 每条链只有一位审批守卫——队友不共用主会话那条链（模式闸门是另起一条，按父会话判定，
+     * 见下面的 `teammate-mode`），所以主会话换档不会连带改这条链上的其它守卫。
      */
     const guardsFor = (teammate: Teammate): ToolGuardRegistry => {
       const chain = new ToolGuardRegistry()
+      // 父会话的协作模式对队友同样有效。队友的工具白名单来自角色文件，不经过主会话
+      // order 10 那道模式闸门；少了这一道，计划模式里派一个 writer 就能改工程文件。
+      // 每次判定现读父会话的 mode：中途换档也对在跑的队友生效（与主会话同一条口径）。
+      chain.register({
+        id: `teammate-mode:${teammate.name}`,
+        order: 5,
+        decide(input) {
+          const mode = String(teammate.parentSession.state('mode') ?? 'build')
+          const spec = modeSpec(mode)
+          const gate = spec.gate({
+            toolName: input.toolName,
+            risk: input.risk,
+            cwd: input.cwd,
+            target: input.target,
+            command: input.command,
+            rules: activeRules(),
+          })
+          if (gate.action === 'deny') {
+            return { action: 'deny', reason: `父会话在「${spec.label}」模式：${gate.reason}` }
+          }
+          return gate.action === 'pass' ? { action: 'pass' } : { action: 'defer' }
+        },
+      })
       chain.register(
         toolApprovalGuard({
           id: `teammate:${teammate.name}`,
@@ -936,6 +962,10 @@ ${body}
         for (const entry of finished
           .sort((a, b) => (a.finishedAt ?? a.startedAt) - (b.finishedAt ?? b.startedAt))
           .slice(0, finished.length - MAX_LISTED_FINISHED)) {
+          // 挤出名单不能只删 Map 项：队友会话还握着写租约，不 close 会一直占着，
+          // 下次同路径会话可能被当成「另一个进程正在写」。取消是幂等的（收工后再调是空操作）。
+          entry.agent.cancel()
+          entry.session.close()
           teammates.delete(entry.name)
         }
       }
@@ -1048,9 +1078,9 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
         type: 'switch',
         key: 'allowDelegation',
         label: '允许模型自主分派任务给队友',
-        help: '关闭后 subagent 工具连同提示词一并撤下，运行中的队友会被停止。',
+        help: '关闭后 subagent 工具连同提示词一并撤下；已经在跑的队友会把当前这轮跑完。',
       },
-      { type: 'number', key: 'maxTeammates', label: '并行数量', min: 1, max: 8, step: 1, help: '每个会话各自的同时干活上限；已完成的队友不占额度，满了再派会被直接拒绝，不排队。' },
+      { type: 'number', key: 'maxTeammates', label: '每个会话同时几个队友', min: 1, max: 8, step: 1, help: '每个会话各自的同时干活上限；已完成的队友不占额度，满了再派会被直接拒绝，不排队。' },
       { type: 'number', key: 'maxDepth', label: '递归层级', min: 0, max: 2, step: 1, help: '0 = 仅主会话可派队友，Lead 不可再下派；1 = Lead 可派队友，队友不可再下派。' },
       {
         type: 'number',
@@ -1089,7 +1119,7 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
     const section: SettingsSectionSpec = {
       id: 'subagent',
       title: '子智能体',
-      subtitle: '设置子智能体的递归层级、数量、轮次和模型',
+      subtitle: '队友最多几层、同时几个、各跑几轮、要不要向你申请授权',
       order: 40,
       fields,
       values: (): Record<string, SettingsValue> => ({

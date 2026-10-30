@@ -438,7 +438,7 @@ function builtinWebSocketFactory(): (url: string) => CdpSocket {
   const globalSocket = (globalThis as { WebSocket?: new (url: string) => unknown }).WebSocket
   if (typeof globalSocket !== 'function') {
     return () => {
-      throw new Error('当前 Node 没有内置 WebSocket（需要 Node ≥ 22.19）；请升级 Node 后再用浏览器自动化')
+      throw new Error('当前 Node 没有内置 WebSocket（需要 Node ≥ 22.19）；请升级 Node 后再用受控浏览器')
     }
   }
   return (url: string) => new globalSocket(url) as CdpSocket

@@ -2,11 +2,11 @@
  * 生命周期钩子引擎：按 codex 的事件名读一份外部配置，跑外部命令，把结论交回插件落位。
  *
  * 与 `core/hooks.ts`（安全钩子）的分工：那个管 dsc 自己的四个事件、配置在
- * `~/.dsc/hooks.json`；这一份管 codex 那十二个事件名、配置在
+ * `~/.dsc/hooks.json`；这一份管 codex 那十四个事件名、配置在
  * `~/.dsc/lifecycle-hooks.json`。**两份配置各读各的**，不共用文件，免得两个插件抢同一份配置。
  *
  * 三件事在这里定死，插件那边只负责挂扩展点：
- *   1. 十二个事件各自的档位（wired / partial / unwired）与不能接通的理由，见
+ *   1. 十四个事件各自的档位（wired / partial / unwired）与不能接通的理由，见
  *      {@link LIFECYCLE_CAPABILITIES}——`unwired` 的事件配了钩子也不执行，只进 `problems`；
  *   2. 外部命令怎么跑、跑不成怎么算（默认按拒，`failClosed: false` 才转放行），
  *      执行器自带一份，因为 codex 的载荷契约（snake_case、无结尾换行）与
@@ -40,13 +40,17 @@ import { isRecord } from './records.js'
 import { shellOf } from './shell-quote.js'
 import { splitList } from './strings.js'
 
-// ── 十二个事件与它们的档位 ───────────────────────────────────────────────────
+// ── 十四个事件与它们的档位 ───────────────────────────────────────────────────
 
 /**
- * codex 的十二个生命周期事件名，照抄 `codex/codex-rs/hooks/src/lib.rs:23-36`。
+ * codex 的十四个生命周期事件名，照抄 `codex/codex-rs/hooks/src/lib.rs:32-47`。
  * 名字保持 codex 原样（大驼峰），用户手上的 hooks.json 不用改一个字。
+ * 其中 PreModelRequest / PostModelRequest 在 Pneuma 没有可阻塞的模型请求挂点，
+ * 认作「未接通」：配置里写了不会静默失效，会进 problems 说明原因。
  */
 export const LIFECYCLE_EVENTS = [
+  'PreModelRequest',
+  'PostModelRequest',
   'PreToolUse',
   'PermissionRequest',
   'PostToolUse',
@@ -81,6 +85,18 @@ export interface LifecycleCapability {
  * 档位是按 dsc 现有扩展点核实过的，改扩展点就要连带改这张表。
  */
 export const LIFECYCLE_CAPABILITIES: readonly LifecycleCapability[] = [
+  {
+    event: 'PreModelRequest',
+    tier: 'unwired',
+    extension: '无',
+    note: 'Pneuma 的请求组装是同步点，等不了外部命令，也没有「在模型请求之前可阻塞」的扩展点；配了也不会执行。',
+  },
+  {
+    event: 'PostModelRequest',
+    tier: 'unwired',
+    extension: '无',
+    note: 'Pneuma 没有「每次模型请求之后」的挂点（回合结束的 dsc/turn-end 是另一层语义）；配了也不会执行。',
+  },
   {
     event: 'PreToolUse',
     tier: 'wired',
@@ -283,7 +299,7 @@ export function readLifecycleDoc(configPath: string): LifecycleDoc {
   for (const [name, groups] of Object.entries(eventMap)) {
     if (name === 'hooks' && isRecord(raw.hooks)) continue
     if (!(LIFECYCLE_EVENTS as readonly string[]).includes(name)) {
-      doc.problems.push(`不认识的事件名 ${name}，已跳过（可用的是 codex 的十二个：${LIFECYCLE_EVENTS.join(' / ')}）`)
+      doc.problems.push(`不认识的事件名 ${name}，已跳过（可用的是 codex 的十四个：${LIFECYCLE_EVENTS.join(' / ')}）`)
       continue
     }
     recognized = true
@@ -341,7 +357,7 @@ export function readLifecycleDoc(configPath: string): LifecycleDoc {
   }
 
   if (!recognized && doc.hooks.length === 0 && doc.problems.length === 0) {
-    doc.problems.push('这份钩子配置里没有任何事件（键应该是 codex 的十二个事件名之一）')
+    doc.problems.push('这份钩子配置里没有任何事件（键应该是 codex 的十四个事件名之一）')
   }
   if (doc.hooks.length > LIFECYCLE_MAX_HOOKS) {
     doc.problems.push(`钩子超过 ${LIFECYCLE_MAX_HOOKS} 条，多出来的忽略`)

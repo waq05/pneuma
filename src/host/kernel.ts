@@ -24,7 +24,7 @@ import { activeConfigFile } from '../core/config-store.js'
 import { parseTolerantYaml, type MigrationReport } from '../core/migrate.js'
 import { readSessionUsage } from '../core/usage-log.js'
 import { getPluginConfig, isPluginEnabled, migrateTeamSplit, registerPluginMeta, type PluginMeta } from '../core/plugin-registry.js'
-import { mountAllExternalPlugins, registerBuiltinMount } from '../core/plugin-loader.js'
+import { mountAllExternalPlugins, registerBuiltinMount, trackBuiltinMount } from '../core/plugin-loader.js'
 import { pluginManagerPlugin } from '../plugins/plugin-manager.js'
 import { desktopDockPlugin } from '../plugins/desktop-dock.js'
 import { gitPlugin } from '../plugins/git.js'
@@ -86,31 +86,31 @@ export const OFFICIAL_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
   {
     file: 'subagent',
     name: '子智能体',
-    description: '把任务派给有明确授权的子智能体并行执行，设置递归层级、数量和模型',
+    description: '让模型把能独立完成的活交给队友并行做；队友只看任务说明，可设层级、人数、轮次与模型',
     toggleable: true,
     defaultDisabled: true,
     settingsSection: 'subagent',
   },
   {
     file: 'team',
-    name: '智能体团队',
-    description: '启用团队协作、团队工具、成员列表和共享任务看板（看板按会话各一块）',
+    name: '共享任务板',
+    description: '一块按会话分开的任务板：登记、认领、结项，队友和你看到同一块；成员名单在「子智能体」里',
     toggleable: true,
     defaultDisabled: true,
     settingsSection: 'team',
   },
   {
     file: 'computer-use',
-    name: '电脑操作',
-    description: '控制 Windows 桌面：截屏、点击、输入，每次操作均需审批',
+    name: '操作电脑桌面',
+    description: '看屏幕、点按钮、输入文字来操作 Windows 桌面；看可免审批，动手每次要确认',
     toggleable: true,
     defaultDisabled: true,
     settingsSection: 'computer-use',
   },
   {
     file: 'web-search',
-    name: '网页搜索',
-    description: '提供 web_search 工具，经配置的搜索提供方检索网页，支持 Tavily、博查、Serper',
+    name: '联网搜索',
+    description: '让模型上网查资料并附来源链接；先选一家搜索服务（Tavily / 博查 / Serper）并填 key',
     toggleable: true,
     settingsSection: 'web-search',
   },
@@ -119,45 +119,45 @@ export const OFFICIAL_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
   // 提升安全与本地便利、且不配就完全无副作用的那几档默认开。
   {
     file: 'approval-floor',
-    name: '审批灾难地板',
-    description: '任何协作模式与权限模式下都不放行的灾难命令硬拒，外加白名单自动放行与黑名单拦截',
+    name: '危险命令硬拦截',
+    description: '关机、删盘、改注册表、读密钥这类命令一律拒绝，完全访问也救不回来；常用命令可加白名单',
     toggleable: true,
     settingsSection: 'approval-floor',
   },
   {
     file: 'spill',
-    name: '大输出溢出',
-    description: '工具输出超长时落到临时文件，只把前几行与文件路径回给模型，防止上下文被长日志撑爆',
+    name: '长输出转存',
+    description: '工具输出太长就存成文件，模型先看头尾几行；需要细节时按路径续读，上下文不会被日志撑爆',
     toggleable: true,
     settingsSection: 'spill',
   },
   {
     file: 'session-search',
-    name: '会话全文检索',
-    description: '给历史会话建中文可用的全文索引，提供 session_search 工具与 /search 命令',
+    name: '历史会话搜索',
+    description: '按关键词翻以前聊过的会话，中文一两个字也能搜到；提供 session_search 工具与 /search 命令',
     toggleable: true,
     settingsSection: 'session-search',
   },
   {
     file: 'lifecycle-hooks',
-    name: '生命周期钩子',
-    description: '读 ~/.dsc/lifecycle-hooks.json，按 Codex 的十二个生命周期事件跑外部命令钩子',
+    name: '外部命令钩子',
+    description: '在模型动手前后跑你的脚本，脚本可以拦下这次操作；事件名沿用 codex 的写法',
     toggleable: true,
     defaultDisabled: true,
     settingsSection: 'lifecycle-hooks',
   },
   {
     file: 'mcp',
-    name: 'MCP 客户端',
-    description: '连接 MCP server（stdio / streamable-http），把它们的工具挂成 mcp__服务器__工具',
+    name: 'MCP 外部工具',
+    description: '连上 MCP 服务器，把它们的工具接进来给模型用；支持本机命令（stdio）与 HTTP 两种连法',
     toggleable: true,
     defaultDisabled: true,
     settingsSection: 'mcp',
   },
   {
     file: 'tool-search',
-    name: '工具渐进披露',
-    description: '用 tool_search / tool_describe / tool_call 三个检索型工具替代把全部工具 schema 塞进每轮请求',
+    name: '工具按需加载',
+    description: '只把用得上的工具说明发给模型；撤下的动手类工具与 MCP 工具用 tool_search 查、tool_call 调',
     toggleable: true,
     defaultDisabled: true,
     settingsSection: 'tool-search',
@@ -167,46 +167,46 @@ export const OFFICIAL_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
   // 且默认档 workspace-write 不挡正常的工作区读写。
   {
     file: 'sandbox',
-    name: '沙箱',
-    description: '三档模式 + 可写根白名单 + 受保护路径 + 命令前缀策略 + 一次性升权，容器后端可换真隔离',
+    name: '文件与命令围栏',
+    description: '限定模型能写哪里：越界写、关网时联网当场拒；要破例得带理由弹审批卡',
     toggleable: true,
     settingsSection: 'sandbox',
   },
   {
     file: 'file-review',
-    name: '文件更改预览',
-    description: 'edit / write 落盘前把 unified diff 摆进对话流，改哪几行看得见，超长按行截断',
+    name: '改动前预览',
+    description: '写文件或改文件之前，先把要改的几行贴进对话；长改动按行截断，看得见改在哪',
     toggleable: true,
     settingsSection: 'file-review',
   },
   {
     file: 'schedule',
     name: '定时任务',
-    description: 'after / at / every / daily / weekly / cron 六种选择器，到点把提醒投回原会话',
+    description: '到点把任务描述投回建它的会话并跑一轮；支持六种时间选择器和时区',
     toggleable: true,
     defaultDisabled: true,
     settingsSection: 'schedule',
   },
   {
     file: 'lsp',
-    name: 'LSP 代码智能',
-    description: '连语言服务器查定义与引用，并把本次编辑新引入的报错附在写入结果里',
+    name: '代码跳转与报错',
+    description: '查定义、引用、实现，并把这次编辑新引入的报错提醒给模型',
     toggleable: true,
     defaultDisabled: true,
     settingsSection: 'lsp',
   },
   {
     file: 'browser',
-    name: '浏览器自动化',
-    description: 'DOM 级控制浏览器：无障碍快照 + ref 定位点击输入，不是截图比坐标',
+    name: '受控浏览器',
+    description: '模型自己开一台隔离 Chrome，按页面元素点击输入；动作每次审批，可设域名黑白名单',
     toggleable: true,
     defaultDisabled: true,
     settingsSection: 'browser',
   },
   {
     file: 'dock-browser',
-    name: '侧栏浏览器控制',
-    description: '让模型驱动桌面端侧栏那台浏览器（用户持久会话）：快照 + ref 定位，动手动作每次审批',
+    name: '侧栏浏览器',
+    description: '让模型操作桌面端侧栏那台浏览器；看页面可免审批，动手每次要确认',
     toggleable: true,
     defaultDisabled: true,
     // 指向插件自建的分区（`dock-browser` 插件里 ctx.settings.registerSection 注册的那张，
@@ -215,16 +215,16 @@ export const OFFICIAL_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
   },
   {
     file: 'self-improve',
-    name: '自我改进',
-    description: '从纠正与复盘里沉淀经验：候选清单、技能草稿、技能自修与审计回滚',
+    name: '经验沉淀',
+    description: '把你纠正过它的地方记成候选；你确认后才写成技能，每次改动留台账可回滚',
     toggleable: true,
     defaultDisabled: true,
     settingsSection: 'self-improve',
   },
   {
     file: 'dsh-compat',
-    name: 'dsh 兼容层',
-    description: '挂载 dsh（DeepSeek Harness）外部插件：垫起 logger 服务与 dsh 风格的工具注册，默认关',
+    name: 'dsh 插件兼容',
+    description: '让按 dsh 写法做的外部插件也能装进来跑；补 logger、模块解析与工具注册的差异',
     toggleable: true,
     defaultDisabled: true,
   },
@@ -395,7 +395,11 @@ export async function createKernel(options: KernelOptions): Promise<Context> {
     const plugin = OFFICIAL_OBJECTS[meta.file]
     if (plugin === undefined) continue
     registerBuiltinMount(meta.file, plugin)
-    if (isPluginEnabled(meta.file)) await root.plugin(plugin, getPluginConfig(meta.file))
+    if (isPluginEnabled(meta.file)) {
+      const fiber = await root.plugin(plugin, getPluginConfig(meta.file))
+      // 把 fiber 记进热挂载表：插件中心的开关只认这张表，不登记就等于“停用只写盘”。
+      trackBuiltinMount(meta.file, fiber)
+    }
   }
   return root
 }

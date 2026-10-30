@@ -1,8 +1,8 @@
 /**
- * lifecycle-hooks 插件（官方可开关）：把 codex 那十二个生命周期事件名接到 dsc 的扩展点上。
+ * lifecycle-hooks 插件（官方可开关）：把 codex 那十四个生命周期事件名接到 dsc 的扩展点上。
  *
  * 与内置的「安全钩子」（`plugins/hooks.ts`，读 `~/.dsc/hooks.json`）是两回事：
- * 那个是 dsc 自己的四个事件，这个是 codex 的十二个名字，配置在
+ * 那个是 dsc 自己的四个事件，这个是 codex 的十四个名字（其中六个在 Pneuma 未接通），配置在
  * `~/.dsc/lifecycle-hooks.json`，**两份配置各读各的**。两者会同时挂在守卫链上（安全钩子 20、
  * 这里 25，都在审批 30 之前），互不认识。
  *
@@ -77,7 +77,8 @@ export const lifecycleHooksPlugin: Plugin.Object = {
     const notify = (key: string, text: string): void => {
       if (announced.has(key)) return
       announced.add(key)
-      ctx.emit('dsc/notice', text)
+      // 带上会话归属：后台会话的钩子提示不能画到你正在看的会话里。
+      ctx.emit('dsc/notice', text, undefined, ctx.session.current().filePath)
     }
 
     /** 载荷的公共字段，字段名照 codex。 */
@@ -271,6 +272,8 @@ export const lifecycleHooksPlugin: Plugin.Object = {
     const fields = (): SettingsField[] => {
       const cfg = config()
       const report = lifecycleReport(cfg.configPath)
+      // 未接通的条数现数，不写死：事件表一加，这里的标题跟着变，免得跟下面那张清单打架。
+      const unwired = report.capabilities.filter((item) => item.tier === 'unwired').length
       const list: SettingsField[] = [
         {
           type: 'switch',
@@ -311,7 +314,7 @@ export const lifecycleHooksPlugin: Plugin.Object = {
         },
         {
           type: 'info',
-          label: '十二个事件的接通情况',
+          label: `十四个事件的接通情况（${String(unwired)} 个未接通）`,
           mono: true,
           text: report.capabilities.map((item) => `${item.event}｜${TIER_LABELS[item.tier]}｜${item.extension}`).join('\n'),
           help: '「未接通」的事件 dsc 现在没有可挂的扩展点，配了钩子也不会执行，原因见下面那条。',
@@ -342,8 +345,8 @@ export const lifecycleHooksPlugin: Plugin.Object = {
 
     const section: SettingsSectionSpec = {
       id: CONFIG_KEY,
-      title: '生命周期钩子',
-      subtitle: '按 codex 的事件名跑外部命令钩子',
+      title: '外部命令钩子',
+      subtitle: '模型动手前后运行你的脚本（沿用 codex 的事件名）',
       order: 36,
       fields,
       values(): Record<string, SettingsValue> {
@@ -394,9 +397,10 @@ export const lifecycleHooksPlugin: Plugin.Object = {
         ({ ui }) => {
           const cfg = config()
           const report = lifecycleReport(cfg.configPath)
+          const unwired = report.capabilities.filter((item) => item.tier === 'unwired').length
           const lines: string[] = [
             `生命周期钩子：${cfg.enabled ? '开着' : '关着'}｜配置文件 ${cfg.configPath}`,
-            `十二个事件（${report.capabilities.length} 个）：`,
+            `十四个事件（${String(report.capabilities.length)} 个，其中 ${String(unwired)} 个在 Pneuma 未接通）：`,
           ]
           for (const item of report.capabilities) lines.push(`  ${item.event}｜${TIER_LABELS[item.tier]}｜${item.extension}`)
           lines.push(`已加载钩子 ${report.hooks.length} 条：`)

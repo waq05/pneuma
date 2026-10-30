@@ -427,7 +427,7 @@ $swEval = @'
     align: review === null ? null : getComputedStyle(review).textAlign,
     lines: review === null ? 0 : review.querySelectorAll('[data-kind]').length,
     head: text(review === null ? null : review.querySelector('.entry-review-head')),
-    centeredLeftovers: qa('.entry-system').filter((el) => (el.textContent ?? '').includes('文件更改预览')).length,
+    centeredLeftovers: qa('.entry-system').filter((el) => (el.textContent ?? '').includes('改动前预览')).length,
   };
   const writeCard = qa('.entry.tool-card').find((card) => (card.querySelector('.tool-head')?.textContent ?? '').includes('自检写入'));
   if (writeCard !== undefined) {

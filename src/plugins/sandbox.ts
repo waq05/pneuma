@@ -214,7 +214,7 @@ export const sandboxPlugin: Plugin.Object = {
     /** 规则名 → 「怎么合法地做」。 */
     const howTo = (rule: string): string => {
       if (rule.startsWith('write-target:')) return legalWay(rule.slice('write-target:'.length) as PathCheck['rule'])
-      if (rule === 'network-off') return '在「设置 → 沙箱」打开网络开关，或换成不需要联网的做法'
+      if (rule === 'network-off') return '在「插件中心 → 文件与命令围栏」打开网络开关，或换成不需要联网的做法'
       if (rule === 'malformed-request') return '两个升权参数要么都给（sandbox_permissions + justification），要么都不给'
       return '换一个不需要改机器配置的做法；确需执行这条命令请让用户手工跑'
     }
@@ -279,7 +279,7 @@ export const sandboxPlugin: Plugin.Object = {
             allowed: false,
             rule: 'backend-unavailable',
             why: '你要的隔离后端（docker / Windows 受限令牌）没建起来，配置又选了「建不起来就拒」',
-            how: '两条路：在「设置 → 沙箱」把后端换成策略围栏（进程内那个，接受 partial），或把「后端建不起来时」改回 degrade；也可以先修好后端（docker 起得来 / 提权 setup 成功）',
+            how: '两条路：在「插件中心 → 文件与命令围栏」把后端换成策略围栏（进程内那个，接受 partial），或把「后端建不起来时」改回 degrade；也可以先修好后端（docker 起得来 / 提权 setup 成功）',
           }
           return refuse(config, policy, mode, input.toolName, verdict)
         }
@@ -336,16 +336,39 @@ export const sandboxPlugin: Plugin.Object = {
 
     // ── 系统提示段（降级必须可见）─────────────────────────────────────────────
 
-    /** 强制等级 → 一句人话。 */
-    const enforcementText = (): string => {
-      switch (enforcement) {
+    /**
+     * 强制等级 → 一句人话。
+     *
+     * 等级从参数进来，不读全局 `enforcement`：全局值记的是「进程级后端建到哪一步」，
+     * 与会话实际生效的等级可能不是一回事（见 {@link effectiveEnforcement}）。
+     * 读全局会让提示词出现「partial（none：当前档位不设围栏）」这种自相矛盾的话。
+     */
+    const enforcementText = (level: SandboxEnforcement): string => {
+      switch (level) {
         case 'full':
-          return 'full：命令的执行体被换成了容器（网络与文件系统由容器隔离）'
+          return '命令的执行体被换成了容器（网络与文件系统由容器隔离）'
         case 'partial':
-          return 'partial：进程内策略围栏（拦得住 dsc 自己发起的工具调用，拦不住命令内部的任意写）'
+          return '进程内策略围栏（拦得住自己发起的工具调用，拦不住命令内部的任意写）'
         default:
-          return 'none：当前档位不设围栏'
+          return '当前档位不设围栏'
       }
+    }
+
+    /**
+     * 某个会话实际生效的强制等级。
+     *
+     * 全局 `enforcement` 记的是「进程级后端建到哪一步」：默认档是 danger-full-access 时
+     * refreshBackend 会提前返回，全局值停在 none；但另一个会话切到 workspace-write 时，
+     * 守卫仍按进程内策略围栏拦越界写——所以对非 danger 会话，实际等级至少是 partial。
+     * 直接把全局值写进设置页/系统提示就会谎报「none：不设围栏」。
+     */
+    const effectiveEnforcement = (mode: SandboxMode): SandboxEnforcement =>
+      mode === 'danger-full-access' ? 'none' : enforcement === 'none' ? 'partial' : enforcement
+
+    /** 「等级 + 一句解释」连在一起写，两半永远取同一档。 */
+    const enforcementNote = (mode: SandboxMode): string => {
+      const level = effectiveEnforcement(mode)
+      return `${level} —— ${enforcementText(level)}`
     }
 
     const promptText = (scope?: { sessionId?: string; cwd?: string }): string => {
@@ -356,7 +379,7 @@ export const sandboxPlugin: Plugin.Object = {
         return '【沙箱】档位 danger-full-access：沙箱不设围栏，写盘与命令只受权限模式与审批卡约束。'
       }
       const lines: string[] = []
-      lines.push(`【沙箱】档位 ${mode}｜强制执行 ${enforcement}（${enforcementText()}）`)
+      lines.push(`【沙箱】档位 ${mode}｜强制执行 ${enforcementNote(mode)}`)
       lines.push(
         `可写根：${policy.roots.length === 0 ? '（无，只读档不许写盘）' : policy.roots.join('、')}；` +
           `只读子路径：${policy.readOnlySubpaths.length === 0 ? '（无）' : policy.readOnlySubpaths.join('、')}；` +
@@ -365,11 +388,11 @@ export const sandboxPlugin: Plugin.Object = {
       if (config.backend === 'windows-token') {
         lines.push(`当前后端是 Windows 受限令牌：命令内部的越界写（脚本里的 fs.writeFile 这类）会被系统层直接拒绝；读不受限；网络第二级体检 ${networkTier}（明细见 /sandbox）。`)
       } else {
-        lines.push('策略围栏拦得住 dsc 自己发起的工具调用，拦不住命令内部的任意写（脚本里的 fs.writeFile 这类）；要真隔离，请在「设置 → 沙箱」把后端换成 Windows 受限令牌（本机即可，无需 docker）或容器。')
+        lines.push('策略围栏拦得住 dsc 自己发起的工具调用，拦不住命令内部的任意写（脚本里的 fs.writeFile 这类）；要真隔离，请在「插件中心 → 文件与命令围栏」把后端换成 Windows 受限令牌（本机即可，无需 docker）或容器。')
       }
       lines.push('要写到可写根之外（例如另一个盘的项目目录），只能在这一次调用里同时给 sandbox_permissions 与 justification，且照常会弹审批卡让用户点。')
       if (degradedFailClosed) {
-        lines.push('⚠ 你要的隔离后端没建起来，且配置选了「后端建不起来就拒」：写与执行类工具现在会被沙箱直接拒（读照常）。修法见「设置 → 沙箱」。')
+        lines.push('⚠ 你要的隔离后端没建起来，且配置选了「后端建不起来就拒」：写与执行类工具现在会被沙箱直接拒（读照常）。修法见「插件中心 → 文件与命令围栏」。')
       }
       if (problems.length > 0) lines.push(`⚠ 沙箱配置有问题（已按默认值兜底）：${problems.join('；')}`)
       return lines.join('\n')
@@ -491,11 +514,12 @@ export const sandboxPlugin: Plugin.Object = {
     /** 挂载时那条可见说明：只讲档位、强制等级与网络，明细（后端、可写根）在 /sandbox 与设置里。 */
     const mountLine = (): string => {
       const { config, problems } = snapshot()
-      const head = `沙箱已就绪：档位 ${modeOf(ctx.session.current())}｜强制执行 ${enforcement}｜网络 ${config.networkAccess ? '开' : '关'}`
-      const tail = enforcement === 'partial'
+      const effective = effectiveEnforcement(modeOf(ctx.session.current()))
+      const head = `沙箱已就绪：档位 ${modeOf(ctx.session.current())}｜强制执行 ${effective}｜网络 ${config.networkAccess ? '开' : '关'}`
+      const tail = effective === 'partial'
         ? (config.backend === 'windows-token'
           ? '。越界写已被系统层拦截；明细见 /sandbox。'
-          : '。策略围栏拦得住工具调用，拦不住命令内部的任意写，要真隔离请在「设置 → 沙箱」换后端。')
+          : '。策略围栏拦得住工具调用，拦不住命令内部的任意写，要真隔离请在「插件中心 → 文件与命令围栏」换后端。')
         : '。'
       const warn = problems.length === 0 ? '' : ` ⚠ 配置有问题（已按默认值兜底）：${problems.join('；')}`
       return `${head}${tail}${warn}`
@@ -525,7 +549,7 @@ export const sandboxPlugin: Plugin.Object = {
     const report = (): string => {
       const { config, policy, problems } = snapshot()
       const lines: string[] = []
-      lines.push(`沙箱现状：当前会话档位 ${modeOf(ctx.session.current())}｜新会话默认 ${config.mode}｜强制执行 ${enforcement}`)
+      lines.push(`沙箱现状：当前会话档位 ${modeOf(ctx.session.current())}｜新会话默认 ${config.mode}｜强制执行 ${effectiveEnforcement(modeOf(ctx.session.current()))}`)
       lines.push(`后端：${config.backend} —— ${backendDetail}`)
       lines.push(`可写根（${String(policy.roots.length)}）：`)
       if (policy.roots.length === 0) lines.push('  （无：只读档不许写盘）')
@@ -550,8 +574,8 @@ export const sandboxPlugin: Plugin.Object = {
 
     const section: SettingsSectionSpec = {
       id: SANDBOX_CONFIG_KEY,
-      title: '沙箱',
-      subtitle: '档位、可写根、网络开关与强制后端：拦「能不能写」，不拦「要不要问」',
+      title: '文件与命令围栏',
+      subtitle: '限定能写哪里：可写目录、受保护路径、联网开关与强制执行后端',
       order: SECTION_ORDER,
       fields(): SettingsField[] {
         const { config, policy, problems } = snapshot()
@@ -559,22 +583,22 @@ export const sandboxPlugin: Plugin.Object = {
           {
             type: 'select',
             key: 'mode',
-            label: '当前会话档位',
+            label: '这个会话允许写哪里',
             options: [
               { value: 'read-only', label: '只读（任何写盘都拒）' },
               { value: 'workspace-write', label: '工作区可写（默认）' },
-              { value: 'danger-full-access', label: '不设围栏（等同关掉沙箱）' },
+              { value: 'danger-full-access', label: '不设围栏（等同关掉这层保护）' },
             ],
-            help: '只改当前打开的会话；换会话各用各的档位。默认档不挡正常的工作区读写与命令：只有越界写、受保护名与「网络关时的联网命令」会被拒。',
+            help: '只改当前打开的会话，换会话各用各的档位。平时保持这一档就行：正常的工作区读写与命令不会被拦，只有越界写、改受保护文件、关网时联网会被拒。',
           },
           {
             type: 'select',
             key: 'defaultMode',
-            label: '新会话默认档位',
+            label: '以后新开的会话默认写哪里',
             options: [
               { value: 'read-only', label: '只读（任何写盘都拒）' },
               { value: 'workspace-write', label: '工作区可写（默认）' },
-              { value: 'danger-full-access', label: '不设围栏（等同关掉沙箱）' },
+              { value: 'danger-full-access', label: '不设围栏（等同关掉这层保护）' },
             ],
             help: '只影响之后新建的会话；已经打开的会话保留自己的档位。',
           },
@@ -586,7 +610,7 @@ export const sandboxPlugin: Plugin.Object = {
               { value: 'degrade', label: '降级为策略围栏（照常干，审批卡兜底）' },
               { value: 'fail-closed', label: '拒绝：写与执行类一律拒（读照常）' },
             ],
-            help: '只对 docker / windows-token 这两个「要真隔离」的后端生效：它们建不起来时按哪种姿态收场。策略围栏后端的 partial 是预期状态，不受这一项影响。',
+            help: '只对 docker 与 Windows 受限令牌这两个真隔离后端生效：它们建不起来时，是降级为进程内策略围栏照常干，还是拒绝写与执行。进程内策略围栏的 partial 是预期状态，不受这一项影响。',
           },
           {
             type: 'switch',
@@ -641,7 +665,7 @@ export const sandboxPlugin: Plugin.Object = {
             placeholder: DEFAULT_SANDBOX_IMAGE,
             help: `容器后端用的镜像，默认 ${DEFAULT_SANDBOX_IMAGE}。镜像里得有你那条命令要用的工具（例如 node:20-alpine）。`,
           },
-          { type: 'info', label: '强制执行等级', text: `${enforcement} —— ${enforcementText()}` },
+          { type: 'info', label: '当前会话强制执行等级', text: enforcementNote(modeOf(ctx.session.current())) },
           { type: 'info', label: '后端现状', text: backendDetail },
           { type: 'info', label: '沙箱私有临时目录', mono: true, copyable: true, text: policy.tmpDir },
           { type: 'info', label: '当前生效', text: describePolicy(policy) },
@@ -792,7 +816,7 @@ export const sandboxPlugin: Plugin.Object = {
         return modeOf(ctx.session.current())
       },
       get enforcement(): SandboxEnforcement {
-        return enforcement
+        return effectiveEnforcement(modeOf(ctx.session.current()))
       },
       get writableRoots(): readonly string[] {
         return snapshot().policy.roots
@@ -837,7 +861,8 @@ export const sandboxPlugin: Plugin.Object = {
       },
       describe(): string {
         const { policy } = snapshot()
-        return `沙箱 ${modeOf(ctx.session.current())}（强制执行 ${enforcement}）：${describePolicy(policy)}`
+        const mode = modeOf(ctx.session.current())
+        return `沙箱 ${mode}（强制执行 ${effectiveEnforcement(mode)}）：${describePolicy(policy)}`
       },
       /**
        * 记一条**本会话**的放宽：把几个绝对路径并进这个会话的可写根。

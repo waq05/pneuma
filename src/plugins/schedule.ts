@@ -193,9 +193,12 @@ export const schedulePlugin: Plugin.Object = {
         const route = ctx.llm.route()
         return { baseUrl: route.baseUrl, apiKey: route.apiKey, model: route.model }
       },
-      deliver: (text) => {
+      deliver: (text, task) => {
         // 定点任务是机器发起的投递：跑动中入箱时标 notice，画在输入框上方的只读通知条。
-        ctx.agent.followup(text, undefined, undefined, 'notice')
+        // 目标会话用**建这条任务的那个会话**（task.sessionId），不是当前正在看的会话：
+        // 用户切走之后，提醒仍该回到原来的对话里。老任务没存 sessionId 时才回落当前会话。
+        const target = task.sessionId === '' ? undefined : task.sessionId
+        ctx.agent.followup(text, undefined, target, 'notice')
       },
       waiting: () => ctx.waiting.any,
       sessionId: () => ctx.session.current().meta.id,
@@ -455,15 +458,16 @@ export const schedulePlugin: Plugin.Object = {
     )
 
     // ── 会话结束对账：把「投出去了但回合失败」接回到重试策略上 ───────────────────
-    const turnEndDisposer = ctx.on('dsc/turn-end', (reason) => {
-      runner.noteTurnEnd(reason)
+    const turnEndDisposer = ctx.on('dsc/turn-end', (reason, signal) => {
+      // 带上会话归属：后台会话的回合结束不能把队首那条投递记成「成功了」。
+      runner.noteTurnEnd(reason, signal.sessionId)
     })
 
     // ── 设置分区 ──────────────────────────────────────────────────────────────
     const section: SettingsSectionSpec = {
       id: 'schedule',
       title: '定时任务',
-      subtitle: '六种选择器 + 显式时区；到点把任务描述投回会话',
+      subtitle: '六种时间选择器 + 时区；到点把任务投回建它的会话',
       order: 32,
       fields(): SettingsField[] {
         const current = readConfig(passed)

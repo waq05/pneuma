@@ -239,7 +239,7 @@ export const toolsDefaultPlugin: Plugin.Object = {
         min: OUTPUT_RANGE.min,
         max: OUTPUT_RANGE.max,
         step: 1000,
-        help: '超出就截断并注明。大输出溢出插件开着时，超过它的阈值会先落盘只回前几行，这条是没开插件时的兜底。',
+        help: '超出就截断并注明。长输出转存插件开着时，超过它的阈值会先落盘只回头尾几行，这条是没开插件时的兜底。',
       },
       {
         type: 'number',

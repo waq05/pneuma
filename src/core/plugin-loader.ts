@@ -98,6 +98,19 @@ export function registerBuiltinMount(file: string, plugin: Plugin.Object): void 
   builtinMounts.set(basename(file), plugin)
 }
 
+/**
+ * 登记一个“启动时就挂上”的官方插件 fiber（宿主装配时调用一次）。
+ *
+ * 为什么需要：createKernel 不走 mountExternalPlugin（启动失败应该响亮，不能静默停用），
+ * 但热停用只认 {@link mounted} 这张表。不登记的话，停用只写盘、fiber 照跑；
+ * 再启用又会挂第二份，带 provide 的插件还会因服务重名直接失败。
+ * @param file - 开关键，与 registerBuiltinMount 用的名字一致。
+ * @param fiber - root.plugin() 返回的 fiber；卸载时由 unmountExternalPlugin 统一 dispose。
+ */
+export function trackBuiltinMount(file: string, fiber: Fiber): void {
+  mounted.set(basename(file), fiber)
+}
+
 /** 初始化（宿主启动时调用一次，传入内核 root）。 */
 let rootRef: Context | null = null
 export function initPluginRuntime(root: Context): void {

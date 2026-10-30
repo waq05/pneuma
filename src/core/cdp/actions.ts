@@ -28,6 +28,7 @@ import { isAbsolute, resolve } from 'node:path'
 import type { AxNode, SnapshotRef } from './snapshot.js'
 import { refRecordMatches } from './snapshot.js'
 import type { CdpCommandTarget, CdpTransport } from './transport.js'
+import { readBlockReason } from '../path-policy.js'
 
 /** 页面上一次动作的战果（插件拿它拼给人看的摘要与结构化 JSON）。 */
 export interface PointResult {
@@ -540,6 +541,10 @@ export async function uploadFiles(page: CdpCommandTarget, ref: SnapshotRef, path
   const files = paths.map((entry) => {
     const full = isAbsolute(entry) ? entry : resolve(baseDir, entry)
     if (!existsSync(full)) throw new Error(`要上传的文件不存在：${full}`)
+    // 上传等于把文件内容交给网页：与 read 工具同一份读禁，别让模型借浏览器把
+    // ~/.ssh/id_rsa、.env 这类文件送出去。审批卡仍会显示路径，但这一道不靠人眼兜底。
+    const blocked = readBlockReason(full)
+    if (blocked !== null) throw new Error(`不能上传这个文件：${blocked}`)
     return full // Windows 上用原生反斜杠路径，DOM.setFileInputFiles 就这么收
   })
   await verifyRef(page, ref)

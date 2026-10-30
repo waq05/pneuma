@@ -632,7 +632,10 @@ function denyHit(
     if (re === null) continue
     const envGlob = isEnvGlob(glob)
     for (const text of texts) {
-      if (!re.test(text)) continue
+      // 分隔符归一：默认规则写成 POSIX 的 *.ssh/*，而 Windows 命令里通常是
+      // C:\Users\me\.ssh\config。只按原文比，反斜杠路径永远匹配不到默认黑名单。
+      // 两种写法都比一次，用户按反斜杠写的自定义规则也照旧生效。
+      if (!re.test(text) && !re.test(text.replace(/\\/g, '/'))) continue
       if (envGlob && isEnvTemplate(text)) continue
       if (envGlob && allowEnvProbe && isEnvPath(text)) continue
       return { glob, text }

@@ -311,7 +311,7 @@ export const memoryPlugin: Plugin.Object = {
       },
       risk: 'write',
       async run(args, scope) {
-        if (!config.enabled) return '长期记忆现在是关着的（设置 → 插件 → 长期记忆 里可以打开）。'
+        if (!config.enabled) return '长期记忆现在是关着的（插件中心 → 长期记忆 里可以打开）。'
         if (failedWrites >= FAILED_WRITES_PER_TURN) {
           return '这一轮已经连着几次写不进记忆了，先别再试：把你想记的东西直接写在回话里告诉用户，让他决定要不要腾额度。'
         }

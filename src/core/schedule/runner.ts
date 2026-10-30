@@ -314,8 +314,11 @@ export class ScheduleRunner {
   private ticking = false
   private lock: ScheduleLockInfo | null = null
   private lockNoticed = false
-  /** 已经投出去、还在等 `dsc/turn-end` 的那些投递（先进先出）。 */
-  private readonly deliveries: Array<{ id: string; at: number }> = []
+  /**
+   * 已经投出去、还在等 `dsc/turn-end` 的那些投递。按 sessionId 配对，
+   * 不能只看先后：后台会话的回合结束也会发这个事件，FIFO 会把别人的投递记账到自己头上。
+   */
+  private readonly deliveries: Array<{ id: string; at: number; sessionId: string }> = []
   /** 每条任务已经用掉几档重试。 */
   private readonly retryRungs = new Map<string, number>()
 
@@ -421,8 +424,11 @@ export class ScheduleRunner {
    *   error     → 按错误原文分类，配额停到恢复点、瞬时错走阶梯；
    *   aborted   → 用户中断，既不清零也不升级。
    */
-  noteTurnEnd(reason: 'completed' | 'aborted' | 'error'): void {
-    const delivery = this.deliveries.shift()
+  noteTurnEnd(reason: 'completed' | 'aborted' | 'error', sessionId?: string): void {
+    // 带会话归属时只配同会话的投递；不带（旧调用点/自检）退回 FIFO。
+    const index = sessionId === undefined ? 0 : this.deliveries.findIndex((entry) => entry.sessionId === sessionId)
+    if (index < 0) return
+    const delivery = this.deliveries.splice(index, 1)[0]
     if (delivery === undefined) return
     const task = this.deps.store.get(delivery.id)
     if (task === undefined) return
@@ -545,10 +551,16 @@ export class ScheduleRunner {
   /** pre-dispatch 校验：返回非 null 就是**不能投**的原因（一次模型请求都不会发）。 */
   private preflight(task: ScheduleTask): string | null {
     let sessionId = ''
-    try {
-      sessionId = this.deps.sessionId()
-    } catch (error) {
-      return `投递目标未知：读不到当前会话（${errorText(error)}）`
+    // 任务自带目标会话时以它为准；老任务没存 sessionId 才回落到「当前会话」。
+    // 这里只判「有没有目标」，目标是不是还活着交给 deliver 时的 dormant 写入口处理。
+    if (task.sessionId !== '') {
+      sessionId = task.sessionId
+    } else {
+      try {
+        sessionId = this.deps.sessionId()
+      } catch (error) {
+        return `投递目标未知：读不到当前会话（${errorText(error)}）`
+      }
     }
     if (sessionId === '') return '投递目标未知：当前没有打开的会话，定时任务没有地方投'
     let route: { baseUrl: string; apiKey: string; model: string }
@@ -602,7 +614,15 @@ export class ScheduleRunner {
       this.note(`定时任务「${task.title}」投递失败：${message}；${plan.detail}`)
       return
     }
-    this.deliveries.push({ id: task.id, at: now })
+    let targetSession = task.sessionId
+    if (targetSession === '') {
+      try {
+        targetSession = this.deps.sessionId()
+      } catch {
+        targetSession = ''
+      }
+    }
+    this.deliveries.push({ id: task.id, at: now, sessionId: targetSession })
     await this.deps.store.endSlot(task.id, { status: 'ok', error: null, delivered: true })
     await this.retireFinishedOneShot(task, next)
     await this.deps.store.appendRun({ at: now, id: task.id, title: task.title, slot, status: kind === 'manual' ? 'manual' : 'ok', detail: kind })

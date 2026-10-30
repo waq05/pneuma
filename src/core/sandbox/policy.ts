@@ -20,7 +20,7 @@
  */
 import { realpathSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { basename, dirname, isAbsolute, join, normalize, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import type { SandboxMode } from '../../services/types.js'
 import { isEnvFamily } from '../path-policy.js'
 
@@ -276,11 +276,19 @@ const NT_NAMESPACE = /\\\\[?.]\\|\\\?\?\\/i
  * 解析器当成设备路径。代价是 POSIX 上文件名里含反斜杠的极少数情况会被误拒——
  * 这是有意的：安全侧宁可误拒一次让人换普通路径。
  */
-export function ntNamespaceReason(raw: string): string | null {
-  if (NT_NAMESPACE.test(raw)) {
+export function ntNamespaceReason(raw: string, win32 = process.platform === 'win32'): string | null {
+  // 形状判定必须先做，而且要把正斜杠也算进来：`//?/C:/Windows` 经 win32 normalize
+  // 会变成 `\\?\C:\Windows`，只认反斜杠写法时它会溜过这一关、直接进 realpath。
+  const shaped = win32 ? raw.replace(/\//g, '\\') : raw
+  if (NT_NAMESPACE.test(shaped)) {
     return '路径里出现 Windows NT 命名空间前缀（\\\\?\\ / \\\\.\\ / \\??\\）：光解析它就可能触发一次 SMB 认证并泄漏 NTLM 凭据，因此直接拒'
   }
-  if (/globalroot/i.test(raw)) return '路径里出现 GLOBALROOT（NT 设备命名空间）：绕过所有路径校验，直接拒'
+  if (/globalroot/i.test(shaped)) return '路径里出现 GLOBALROOT（NT 设备命名空间）：绕过所有路径校验，直接拒'
+  // UNC（\\\\服务器\\共享）同样会先解析、再认证：拒绝要发生在 realpath 之前，
+  // 否则即使事后按「不在可写根」拒掉，SMB 认证与 NTLM 泄漏已经发生了。
+  if (win32 && /^\\\\[^\\?.]/.test(shaped)) {
+    return '路径是 UNC 网络共享（\\\\服务器\\共享）：解析它就会发起 SMB 认证，先把共享映射成盘符再用'
+  }
   return null
 }
 
@@ -561,21 +569,23 @@ export function insideRoot(child: string, root: string, win32: boolean): boolean
   if (a === b) return true
   const rel = relative(a, b)
   if (rel === '') return true
-  // 跨盘符时 relative 会返回绝对路径；`..` 开头就是在外面
-  return !isAbsolute(rel) && !rel.startsWith('..')
+  // 跨盘符时 relative 会返回绝对路径；只有 `..` 本身或以 `..` + 分隔符开头才是父目录，
+  // 不能笼统 startsWith('..')——根内名为 `..foo` 的文件会被误判成越界。
+  const parent = rel === '..' || rel.startsWith(`..${sep}`)
+  return !isAbsolute(rel) && !parent
 }
 
 /** 「怎么合法地做」的一句人话：拒因最后带上它，模型才有自救路径。 */
 export function legalWay(rule: PathCheck['rule']): string {
   switch (rule) {
     case 'outside-writable-roots':
-      return '把目标改到可写根内，或在「设置 → 沙箱」里把这个目录加进附加可写根；确实必须写到范围外时，在这一次调用里同时带上 sandbox_permissions 与 justification 重试（会照常弹审批卡让人点）'
+      return '把目标改到可写根内，或在「插件中心 → 文件与命令围栏」里把这个目录加进附加可写根；确实必须写到范围外时，在这一次调用里同时带上 sandbox_permissions 与 justification 重试（会照常弹审批卡让人点）'
     case 'protected-metadata':
       return '这类文件即便落在可写根内也拒写；确需改动请让用户手工执行，或换一个不受保护的路径'
     case 'mode-read-only':
-      return '当前档位禁止一切写盘：在「设置 → 沙箱」把档位切到 workspace-write（工作区可写）或 danger-full-access，或改做只读的动作'
+      return '当前档位禁止一切写盘：在「插件中心 → 文件与命令围栏」把档位切到 workspace-write（工作区可写）或 danger-full-access，或改做只读的动作'
     case 'read-only-subpath':
-      return '这条子路径被用户在「设置 → 沙箱」的只读清单里标了只读：改到别的路径，或请用户把它从清单里去掉'
+      return '这条子路径被用户在「插件中心 → 文件与命令围栏」的只读清单里标了只读：改到别的路径，或请用户把它从清单里去掉'
     case 'nt-namespace':
       return '改用普通绝对路径（例如 C:\\Users\\me\\proj\\a.txt），不要带 \\\\?\\、\\\\.\\、\\??\\ 或 GLOBALROOT'
     case 'ads-stream':
@@ -601,7 +611,7 @@ export function legalWay(rule: PathCheck['rule']): string {
  * （那一档根本没有可写根）。
  */
 export function checkWrite(policy: SandboxPolicy, raw: string): PathCheck {
-  const nt = ntNamespaceReason(raw)
+  const nt = ntNamespaceReason(raw, policy.win32)
   if (nt !== null) return { allowed: false, rule: 'nt-namespace', reason: nt, resolved: raw }
 
   const ads = adsStreamReason(raw, policy.win32)

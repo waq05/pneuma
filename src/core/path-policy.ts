@@ -143,7 +143,9 @@ export function isInsideCwd(cwd: string, target: string): boolean {
   const base = realPath(cwd)
   const child = realPath(target)
   const rel = relative(base, child)
-  return rel === '' || (rel !== undefined && !rel.startsWith('..') && !isAbsolute(rel))
+  // 只有 `..` 本身或以 `..` + 分隔符开头才是父目录；`..foo` 是根内的普通文件。
+  const parent = rel === '..' || rel.startsWith(`..${sep}`)
+  return rel === '' || (!parent && !isAbsolute(rel))
 }
 
 /** 读这个路径要不要拒。 */

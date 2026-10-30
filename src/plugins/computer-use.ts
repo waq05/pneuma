@@ -218,7 +218,7 @@ export function computerLookParameters(actions: readonly string[]): Record<strin
 
 export const computerUsePlugin: Plugin.Object = {
   name: 'computer-use',
-  inject: ['tools', 'prompt', 'settings'],
+  inject: ['tools', 'prompt', 'settings', 'guards'],
   apply(ctx, passed) {
     const readConfig = (): ComputerUseConfig => {
       const raw = resolvePluginConfig(CONFIG_KEY, passed)
@@ -300,19 +300,32 @@ export const computerUsePlugin: Plugin.Object = {
       const action = canonicalAction(actionName)
       if (action === null) throw new Error(`不认识的动作「${actionName}」。可选：${DESKTOP_ACTIONS.join(' / ')}`)
 
-      // 急停永远可调（否则卡住后没法恢复）；它杀子进程 + 关动作面。
+      // 只读入口的运行时闸门：computer_look 声明 risk=read（免审批），参数 schema 只告诉模型
+      // 「应该传哪些动作」，并不能阻止它传 click / type。少了这道判断，一条
+      // action=click 就能完全绕过审批卡——schema 是说明，不是强制。
+      // stop 也不放进来：它评的是 system 档（杀进程 + 关动作面），让一条 risk=read 的
+      // 工具能触发它，风险分级就名不副实了。急停走 computer 工具，那条通道永远留着。
+      if (viaLook && action !== 'screenshot' && !LOOK_ACTIONS.includes(action)) {
+        throw new Error(
+          `computer_look 只能做只读动作（${LOOK_ACTIONS.join(' / ')} / screenshot）；` +
+            `「${action}」会操作桌面或改变机器状态，请改用 computer 工具（急停也用它的 stop）`,
+        )
+      }
+
+      // 急停通道：动手工具里永远留着 stop（不受禁用清单与免审批档影响），否则卡住后没法恢复；
+      // 它杀子进程 + 关动作面，只读入口不放它（见上面的闸门）。
       if (action === 'stop') {
         const killed = killAllPowerShell()
         stopped = true
         audit('stop', 'system', '急停', 'ok', true)
-        return `已急停电脑操作：杀掉 ${killed} 个在跑的界面子进程，并暂停了电脑操作动作面。请在「设置 → 电脑操作」点「恢复电脑操作」再继续。`
+        return `已急停电脑操作：杀掉 ${killed} 个在跑的界面子进程，并暂停了电脑操作动作面。请在「插件中心 → 操作电脑桌面」点「恢复电脑操作」再继续（终端里也可用设置里的同名分区）。`
       }
       if (stopped) {
-        throw new Error('电脑操作已急停（stop）。请在「设置 → 电脑操作」点「恢复电脑操作」再继续。')
+        throw new Error('电脑操作已急停（stop）。请在「插件中心 → 操作电脑桌面」点「恢复电脑操作」再继续（终端里也可用设置里的同名分区）。')
       }
       const risk = gradeDesktopAction(action, args)
       if (disabled().has(action)) {
-        throw new Error(`动作「${action}」被你在设置「电脑操作」的「禁用动作」里关掉了`)
+        throw new Error(`动作「${action}」被你在「操作电脑桌面」的「禁用动作」里关掉了`)
       }
 
       try {
@@ -476,6 +489,18 @@ export const computerUsePlugin: Plugin.Object = {
       disposers.push(ctx.prompt.register('computer-use', promptText))
     }
     syncTools()
+
+    // 急停排在所有闸门之前（order 4）：它是「停下来」，不是「做事」。
+    // 审批卡没人能答、或当前是计划/只读档时，stop 仍须可用，否则卡住之后没法恢复。
+    const offStopGuard = ctx.guards.register({
+      id: 'computer-use-stop',
+      order: 4,
+      decide(input) {
+        if (input.toolName !== 'computer') return { action: 'defer' }
+        return canonicalAction(String(input.args.action ?? '')) === 'stop' ? { action: 'pass' } : { action: 'defer' }
+      },
+    })
+
     // 旧截图的图像卸载交给内核通用的 image-diet 投影（plugins/prompt.ts，order 550）：
     // 它按 toolImageBudget 保留最近 N 张工具结果图，电脑控制的截图与别的工具结果同一口径。
     // 这里原有一条 `prune-stale-screenshots`（只留最新一张截图），与通用规则重叠——两条一起
@@ -507,8 +532,8 @@ export const computerUsePlugin: Plugin.Object = {
 
     const section: SettingsSectionSpec = {
       id: 'computer-use',
-      title: '电脑操作',
-      subtitle: '让模型查看屏幕并代为点击、拖拽、输入，Windows 平台',
+      title: '操作电脑桌面',
+      subtitle: '看屏幕、点按钮、输入文字来操作 Windows 桌面；看可免审批，动手每次要确认',
       order: 45,
       fields,
       values: (): Record<string, SettingsValue> => ({
@@ -592,8 +617,12 @@ export const computerUsePlugin: Plugin.Object = {
 
     return () => {
       offSection()
+      offStopGuard()
       for (const off of disposers) off()
       disposers = []
+      // 停用插件要收掉在跑的界面子进程：只退订工具不会让已经在跑的点击/输入停下，
+      // 它们会继续动鼠标键盘，直到脚本自己跑完。
+      killAllPowerShell()
     }
   },
 }

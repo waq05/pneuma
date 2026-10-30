@@ -44,6 +44,8 @@ export const spillPlugin: Plugin.Object = {
     let warned = false
     /** 最近落盘的那份：清理时保住它，模型可能正拿着它的路径在续读。 */
     let lastSpilled: string | undefined
+    /** 上次全盘清理的时刻：目录扫描是同步 IO，不能每条长输出都扫一遍。 */
+    let lastSweepAt = 0
 
     const usage = (dir: string): { files: number; bytes: number } => {
       const files = listSpillFiles(dir)
@@ -60,14 +62,19 @@ export const spillPlugin: Plugin.Object = {
         try {
           const spilled = spillText(ctx.session.current().meta.id, text, cfg)
           lastSpilled = spilled.written.path
-          // 顺手清一次：长会话里总量上限才有意义；刚落盘的这份被 keepPath 保住
-          sweepSpillDir(cfg, lastSpilled)
+          // 顺手清一次，但要节流：长会话里连续几条大输出会把整个目录反复扫一遍，
+          // readdir + lstat + unlink 都是同步调用，扫一次就卡一次事件循环。
+          // 5 分钟一次足够让总量上限生效；刚落盘的这份始终被 keepPath 保住。
+          if (Date.now() - lastSweepAt >= 5 * 60_000) {
+            lastSweepAt = Date.now()
+            sweepSpillDir(cfg, lastSpilled)
+          }
           return spilled.text
         } catch (error) {
           if (!warned) {
             warned = true
             ctx.transcript.system(
-              `大输出溢出没能落盘（${errText(error)}），这次仍按原文回给模型。溢出目录：${cfg.dir}（磁盘满或没有写权限时先看它；这条提醒本次会话只说一次）`,
+              `长输出转存没能落盘（${errText(error)}），这次仍按原文回给模型。溢出目录：${cfg.dir}（磁盘满或没有写权限时先看它；这条提醒本次会话只说一次）`,
             )
           }
           return text
@@ -98,7 +105,7 @@ export const spillPlugin: Plugin.Object = {
           min: SPILL_RANGES.keepLines.min,
           max: SPILL_RANGES.keepLines.max,
           step: 1,
-          help: '头几行通常就能看出这次输出是什么；剩下的让模型自己决定要不要读。',
+          help: '头尾各留几行：开头能看出这是什么输出，结尾常带错误与汇总；中间省略，模型需要时再按路径续读。',
         },
         {
           type: 'number',
@@ -141,7 +148,7 @@ export const spillPlugin: Plugin.Object = {
           key: 'dir',
           label: '溢出目录',
           mono: true,
-          placeholder: '%USERPROFILE%\\.dsc\\spill',
+          placeholder: '留空 = ~/.dsc/spill（DSC_HOME/spill）',
           help: '目录权限 0700、文件 0600。换成别的盘符也行，目录会在第一次落盘时自动建。',
         },
         {
@@ -162,8 +169,8 @@ export const spillPlugin: Plugin.Object = {
 
     const section: SettingsSectionSpec = {
       id: CONFIG_KEY,
-      title: '大输出溢出',
-      subtitle: '工具输出超阈值时落盘，模型只拿头几行与续读写法',
+      title: '长输出转存',
+      subtitle: '超过阈值就存文件，模型先看头尾几行，需要时再续读',
       order: 37,
       fields,
       values(): SettingsValues {
@@ -204,6 +211,7 @@ export const spillPlugin: Plugin.Object = {
       },
       action(name): string | void {
         if (name !== 'cleanup') return `这个分区没有这个按钮：${name}`
+        lastSweepAt = Date.now()
         const result = sweepSpillDir(config(), lastSpilled)
         const kept = `还剩 ${String(result.keptFiles)} 个（${formatBytes(result.keptBytes)}）`
         if (result.failed.length > 0) {

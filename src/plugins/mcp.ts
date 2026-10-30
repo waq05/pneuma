@@ -190,6 +190,12 @@ export const mcpPlugin: Plugin.Object = {
           deferred = true
           for (const state of states.values()) applyTools(state)
         },
+        restoreSchemas: (): void => {
+          // 成对收口：Tool Search 停用/关开关时把动手类工具挂回台面。
+          // 重复调用同样是空操作（applyTools 会先 dropTools 再全量挂）。
+          deferred = false
+          for (const state of states.values()) applyTools(state)
+        },
       }
     }
 
@@ -508,7 +514,11 @@ export const mcpPlugin: Plugin.Object = {
           ctx.transcript.system(`MCP server ${state.config.name} 重新连上了，带了 ${state.tools.length} 个工具`)
         }
       } catch (error) {
+        // 建连成功但握手后的 listTools 失败时，连接已经在 box 里：不关就是一条
+        // 活着的子进程 / HTTP 连接，重连还会再起一条，越积越多。
+        const opened = box.value
         box.value = undefined
+        opened?.close()
         markFailed(state, errorText(error))
       }
     }
@@ -684,8 +694,8 @@ export const mcpPlugin: Plugin.Object = {
 
       return {
         id: CONFIG_KEY,
-        title: 'MCP 服务器',
-        subtitle: '把外部 MCP server 的工具接进模型',
+        title: 'MCP 外部工具',
+        subtitle: '连接 MCP 服务器，把外部工具接进来给模型用',
         order: 47,
         fields,
         values: (): SettingsValues => {

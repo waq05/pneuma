@@ -53,10 +53,10 @@ const HEAD = (verb, path, counts) => `${REVIEW_NOTICE_BANNER}${verb} ${path}（$
 console.log('[1] 横幅识别')
 {
   const real = noticeText(HEAD('新建', 'E:/fallout4/自我介绍.md', '+76 行 / -0 行'), '@@ -0,0 +1,76 @@', '+# 标题')
-  check('壳常量就是宿主那段前缀（含书名号与间隔点）', REVIEW_NOTICE_BANNER === '【文件更改预览·尚未落盘】', REVIEW_NOTICE_BANNER)
+  check('壳常量就是宿主那段前缀（含书名号与间隔点）', REVIEW_NOTICE_BANNER === '【改动前预览·尚未落盘】', REVIEW_NOTICE_BANNER)
   check('真横幅被认出（前缀命中）', isReviewNotice(real) && parseReviewNotice(real) !== null)
   check('单行短通知不识别（「这一轮被中断」照旧走 .entry-system）', !isReviewNotice('这一轮被中断') && parseReviewNotice('这一轮被中断') === null)
-  check('前缀差一个字也不识别', parseReviewNotice('【文件更改预览】新建 a.md（+1 行 / -0 行）') === null)
+  check('前缀差一个字也不识别', parseReviewNotice('【改动前预览】新建 a.md（+1 行 / -0 行）') === null)
   check('前缀在中间不算（必须起头）', parseReviewNotice(`前面还有话 ${REVIEW_NOTICE_BANNER}新建 a.md（+1 行 / -0 行）`) === null)
   check('空正文不识别', parseReviewNotice('') === null)
 }

@@ -24,7 +24,7 @@
  * 这条通知的正文前缀（宿主 `src/plugins/file-review.ts` 里头行的起头字面量）。
  * 认通知、切头行都从这里出发：壳与宿主各持一份时，探针比对两处，漂了要红。
  */
-export const REVIEW_NOTICE_BANNER = '【文件更改预览·尚未落盘】'
+export const REVIEW_NOTICE_BANNER = '【改动前预览·尚未落盘】'
 
 /** 头行里的动作词：新建（文件原先不存在）与修改（定点改动）。 */
 export type ReviewAction = 'create' | 'update'

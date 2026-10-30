@@ -133,26 +133,26 @@ export const myPlugin: Plugin.Object = {
 
 | 插件 | 默认 | 设置分区 | 干什么 |
 | --- | --- | --- | --- |
-| `subagent` 子智能体 | 关 | `subagent` | 把任务派给有明确授权的子智能体（`subagent` 工具），设置递归层级、数量和模型；队友按会话隔离 |
-| `team` 智能体团队 | 关 | `team` | 协作层：共享任务看板（`team_task` 工具），看板按会话各一块；已启用 `subagent` 而没动过它时自动跟着打开 |
-| `computer-use` 电脑操作 | 关 | `computer-use` | 截屏、点击、输入 Windows 桌面，每次动手都要审批 |
-| `web-search` 网页搜索 | 开 | `web-search` | 提供 `web_search` 工具，经 Tavily / 博查 / Serper 检索网页 |
-| `approval-floor` 审批灾难地板 | 开 | `approval-floor` | 守卫链 order 5 的硬闸：灾难命令、deny 黑名单、命令白名单、无人值守 |
-| `spill` 大输出溢出 | 开 | `spill` | 工具输出超阈值落到临时文件，回给模型的只有前几行与续读写法 |
-| `session-search` 会话全文检索 | 开 | `session-search` | 历史会话的中文全文索引，提供 `session_search` 工具与 `/search` 命令 |
-| `lifecycle-hooks` 生命周期钩子 | 关 | `lifecycle-hooks` | 读 `~/.dsc/lifecycle-hooks.json`，按 codex 的十二个事件名跑外部命令钩子 |
-| `mcp` MCP 客户端 | 关 | `mcp` | 连 stdio 或 streamable-http 的 MCP server，工具挂成 `mcp__服务器__工具` |
-| `tool-search` 工具渐进披露 | 关 | `tool-search` | 用 `tool_search` / `tool_describe` / `tool_call` 替下这一轮用不到的工具 schema |
-| `sandbox` 沙箱 | 开 | `sandbox` | 守卫链 order 8 的策略围栏（codex 路线）：三档模式、可写根白名单、受保护路径、命令前缀策略、一次性升权（`sandbox_permissions` + `justification` 成对）；容器后端可换真隔离，降级时照常执行 + 审批兜底并如实上报 |
-| `schedule` 定时任务 | 关 | `schedule` | `after`/`at`/`every`/`daily`/`weekly`/`cron` 六种选择器，到点把提醒投回原会话；至多一次、catch-up 补投、pre-dispatch 校验 |
-| `lsp` LSP 代码智能 | 关 | `lsp` | 连语言服务器查定义/引用/实现/悬停，并把本次编辑新引入的报错附在 write/edit 结果里 |
-| `browser` 浏览器自动化 | 关 | `browser` | DOM 级控制浏览器：无障碍快照 + ref 定位点击输入（`browser_look` 只读 / `browser` 动手），不是截图比坐标 |
-| `file-review` 文件更改预览 | 开 | `file-review` | edit / write 落盘前把 unified diff 摆进对话流，改哪几行看得见，超长按行截断 |
-| `dock-browser` 侧栏浏览器控制 | 关 | `dock-browser` | 让模型驱动桌面端侧栏那台浏览器（用户持久会话）：无障碍快照 + ref 定位，动手动作每次审批 |
-| `self-improve` 自我改进 | 关 | `self-improve` | 三条闭环：纠正捕获候选、复盘产技能草稿（默认停用待人启用）、技能自修 + 台账回滚 |
-| `dsh-compat` dsh 兼容层 | 关 | — | 挂载 dsh（DeepSeek Harness）外部插件：`logger` 服务、模块解析钩子、dsh 风格工具注册的形状适配 |
+| `subagent` 子智能体 | 关 | `subagent` | 把能独立完成的活派给队友并行做（`subagent` 工具）；可设层级、人数、轮次与模型，队友按会话隔离 |
+| `team` 共享任务板 | 关 | `team` | 共享任务看板（`team_task` 工具），看板按会话各一块；已启用 `subagent` 而没动过它时自动跟着打开 |
+| `computer-use` 操作电脑桌面 | 关 | `computer-use` | 看屏幕可免审批；点击、输入、按键每次都要确认，动作留审计 |
+| `web-search` 联网搜索 | 开 | `web-search` | 提供 `web_search` 工具，经 Tavily / 博查 / Serper 检索网页并附来源 |
+| `approval-floor` 危险命令硬拦截 | 开 | `approval-floor` | 守卫链 order 5 的硬闸：灾难命令、命令黑名单、命令白名单、无人值守 |
+| `spill` 长输出转存 | 开 | `spill` | 工具输出超阈值就存成文件，回给模型的是头尾几行与续读写法 |
+| `session-search` 历史会话搜索 | 开 | `session-search` | 历史会话的中文全文索引，提供 `session_search` 工具与 `/search` 命令 |
+| `lifecycle-hooks` 外部命令钩子 | 关 | `lifecycle-hooks` | 读 `~/.dsc/lifecycle-hooks.json`，按 codex 的事件名在模型动手前后跑外部命令 |
+| `mcp` MCP 外部工具 | 关 | `mcp` | 连 stdio 或 streamable-http 的 MCP server，工具挂成 `mcp__服务器__工具` |
+| `tool-search` 工具按需加载 | 关 | `tool-search` | 用 `tool_search` / `tool_describe` / `tool_call` 把动手类与 MCP 工具的说明收进按需检索；read 工具常驻 |
+| `sandbox` 文件与命令围栏 | 开 | `sandbox` | 守卫链 order 8 的策略围栏（codex 路线）：三档模式、可写根白名单、受保护路径、命令前缀策略、一次性升权（`sandbox_permissions` + `justification` 成对）；容器后端可换真隔离，降级时照常执行 + 审批兜底并如实上报 |
+| `schedule` 定时任务 | 关 | `schedule` | `after`/`at`/`every`/`daily`/`weekly`/`cron` 六种选择器，到点把任务投回建它的会话；至多一次、catch-up 补投、pre-dispatch 校验 |
+| `lsp` 代码跳转与报错 | 关 | `lsp` | 连语言服务器查定义/引用/实现/悬停，并提醒本次编辑新引入的报错 |
+| `browser` 受控浏览器 | 关 | `browser` | 开一台隔离 Chrome：无障碍快照 + ref 定位点击输入（`browser_look` 只读 / `browser` 动手），不是截图比坐标 |
+| `file-review` 改动前预览 | 开 | `file-review` | 写文件、改文件之前把 unified diff 摆进对话流，改哪几行看得见，超长按行截断 |
+| `dock-browser` 侧栏浏览器 | 关 | `dock-browser` | 驱动桌面端侧栏那台浏览器（用户的持久登录会话）：无障碍快照 + ref 定位，动手动作每次审批 |
+| `self-improve` 经验沉淀 | 关 | `self-improve` | 三条闭环：纠正捕获候选、复盘产技能草稿（默认停用待人启用）、技能自修 + 台账回滚 |
+| `dsh-compat` dsh 插件兼容 | 关 | — | 挂载 dsh（DeepSeek Harness）外部插件：`logger` 服务、模块解析钩子、dsh 风格工具注册的形状适配 |
 
-默认开关按一条规矩定：会拉起外部进程、连外部服务器或改写每轮请求工具面的那几档默认关（`lifecycle-hooks`、`mcp`、`tool-search`、`schedule`、`lsp`、`browser`、`self-improve`）；提升安全与本地便利、且不配就完全无副作用的那几档默认开。沙箱是唯一的例外档：它默认开——不配就没有外部进程与外部服务器，开着的收益（越界写入当场拒）大于打扰，且默认档 workspace-write 不挡正常的工作区读写。
+默认开关按一条规矩定：会拉起外部进程、连外部服务器或改写每轮请求工具面的那几档默认关（`lifecycle-hooks`、`mcp`、`tool-search`、`schedule`、`lsp`、`browser`、`self-improve`）；提升安全与本地便利、且不配就完全无副作用的那几档默认开。文件与命令围栏是唯一的例外档：它默认开——不配就没有外部进程与外部服务器，开着的收益（越界写入当场拒）大于打扰，且默认档 workspace-write 不挡正常的工作区读写。
 
 内核清单在 `src/host/kernel.ts` 的 `BUILTIN_PLUGINS`。新增一档官方可开关插件的三步写在 [plugin-development.md §3.4](plugin-development.md)。
 
@@ -428,15 +428,15 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 | `.trash/<工作区名>/` | 会话库（「永久删除」） | 其实是回收站：按 mtime 超过 30 天才扫掉（`src/core/session.ts:564`），删错了还能手工捞回来 |
 | `sessions/.teammates/<cwd>/<id>.jsonl` | 子智能体插件 | 队友运行记录。目录以点开头 ⇒ 会话列表扫不到 |
 | `team/roster.json` | 子智能体插件 | 队友名册（收工的队友靠它出现在侧栏） |
-| `team/boards/<会话 id>.json` | 智能体团队插件 | 共享任务板，每个会话各一块（0.6.16 及以前是全局的 `team/board.json`，不再读写） |
+| `team/boards/<会话 id>.json` | 共享任务板插件 | 共享任务板，每个会话各一块（0.6.16 及以前是全局的 `team/board.json`，不再读写） |
 | `team/inbox/<队友名>.jsonl` | 子智能体插件 | 给队友的留言（追加写，队友在回合边界读） |
 | `agents/<角色名>.md` | 用户 / 子智能体设置分区 | 队友角色文件，一个角色一个文件 |
 | `plugins/*.js` | 用户 | 自定义插件 |
 | `skills/` | 技能中心（安装） | 用户级技能目录，每个子目录一份 `SKILL.md` |
 | `cache/` | 技能市场（`src/core/market.ts:10`） | 市场条目清单，缓存 1 小时 |
-| `cache/session-index.json` | session-search 插件（`src/core/session-index.ts`） | 会话全文检索的倒排索引，带 `version`；是旁路缓存，删掉只会让下次检索重新回填 |
+| `cache/session-index.json` | session-search 插件（`src/core/session-index.ts`） | 历史会话搜索的倒排索引，带 `version`；是旁路缓存，删掉只会让下次检索重新回填 |
 | `spill/` | spill 插件（`src/core/spill.ts`） | 工具输出超阈值时落盘的文件，目录 0700、文件 0600；按 mtime 保留 7 天、目录总量超上限从最旧的删 |
-| `lifecycle-hooks.json` | 用户 | codex 形态的十二事件外部命令钩子配置（lifecycle-hooks 插件读它，与安全钩子的 `hooks.json` 各读各的） |
+| `lifecycle-hooks.json` | 用户 | codex 形态的十四事件外部命令钩子配置（其中六个在 Pneuma 未接通）（lifecycle-hooks 插件读它，与安全钩子的 `hooks.json` 各读各的） |
 | `memory/` | memory 插件（内核，`src/core/memory.ts`） | 跨会话留下的长期事实：全局事实、用户偏好、当前工作区各一格 |
 | `sandbox/tmp/<会话或工作区哈希>/` | sandbox 插件 | 沙箱私有临时目录：`TMP`/`TEMP`/`HOME` 在工具执行期间被重定向到这里，按会话×工作区隔离 |
 | `schedule/` | schedule 插件 | `tasks.json` 任务定义（tmp+rename 原子替换）+ `runs.jsonl` 执行台账 + `.lock` 单实例互斥（pid + 启动时间指纹） |
@@ -528,7 +528,7 @@ order 插队）；系统提示词不进消息流，由 agent 插件在每次请�
 | 加一个模型协议 | `ctx.llm.registerAdapter({ id, stream })` | 端点在 config.yaml 用 `api: <id>` 选择；未注册的协议发请求时响亮报错 |
 | 改写发给模型的消息 | `ctx.prompt.registerProjection(id, fn, { order })` | **命名纯投影**：同一输入永远同一输出；模型可见 ⟺ 日志原文 + 投影链（旧截图裁剪用的就是它）。往请求里塞日志上没有的内容时必须配 `session.appendNote` |
 | 工具动手之前拦一道 | `ctx.guards.register({ id, order, decide })` | 内置刻度：灾难地板 5、沙箱 8、协作模式 10、LSP 写前留底 7、安全钩子 20、浏览器域名 20、生命周期钩子 25、审批 30；守卫自己抛错按「拒」处理 |
-| 改写工具的输出 | `ctx.guards.registerObserver({ id, order, observe })` | 内置刻度：密钥遮红 10、LSP 诊断注入 46、生命周期钩子 45、大输出溢出 50；order 小的先加工，后一位看到的是前一位的输出 |
+| 改写工具的输出 | `ctx.guards.registerObserver({ id, order, observe })` | 内置刻度：密钥遮红 10、LSP 诊断注入 46、外部命令钩子 45、长输出转存 50；order 小的先加工，后一位看到的是前一位的输出 |
 | 换掉命令的执行体（真隔离） | `registerCommandRunner()`（`src/core/tools/command-runner.ts`） | 随包发布的内置插件可用（外部插件拿不到）：沙箱的容器后端把 `powershell -Command X` 换成 `docker run … sh -c X`；没有注册者时行为与从前完全一致 |
 | 往界面快照加一块状态 | `ctx.surfaces.register(id, 取值)` | 先在 `contract.ts` 的 `RuntimeSurfaces` 上声明合并；快照装配层不认识具体功能 |
 | 有张卡片正等用户点 | `ctx.waiting.register(id, () => 是否在等)` | 会话目标的自动续跑据此刹车 |
@@ -716,7 +716,7 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 | 流式时「回到底部」胶囊一闪一闪 | `ui-shell/src/plugins/transcript/follow.ts` 的跟随判定：`onScroll` 有没有把「内容变矮、浏览器夹 scrollTop」当成读者滚动（看 `pinnedHeight`）；`settle` 会不会在跟随态下按距离重判 |
 | 工具回「未知工具：xxx」 | 先看这一轮的请求与执行是不是同一份目录（`src/core/loop.ts` 的 `requestTools` 快照）；再看模式投影有没有按会话算（`ctx.tools.visible()` 必须带 `sessionId`，否则你在看别的会话时，后台那一轮的工具集跟着换） |
 | 切到别的会话后，后台那一轮的工具集／提示词变了 | 模式（预设）是不是又退回全局变量了：`src/plugins/presets.ts` 的 `bySession` 按会话 id 存，`dsc/session-open` 只登记被打开的那一个会话；投影与提示段的回调必须把 `scope` 传进去 |
-| 写工作区外的文件被拒（沙箱） | 拒因里带当前档位与可写根清单；确有必要就在**同一次调用**里成对带上 `sandbox_permissions` 与 `justification`（照常弹审批卡），或把目录加进「设置 → 沙箱」的附加可写根 |
+| 写工作区外的文件被拒（沙箱） | 拒因里带当前档位与可写根清单；确有必要就在**同一次调用**里成对带上 `sandbox_permissions` 与 `justification`（照常弹审批卡），或把目录加进「插件中心 → 文件与命令围栏」的附加可写根 |
 | 命令被沙箱当场拒 | 拒因写明命中规则（forbidden 前缀 / 网络开关关 / 越界写目标）；`/sandbox` 能看档位、强制执行等级与最近 3 次拒绝 |
 | 定时任务没触发 | 宿主不常驻就不触发（重启后补投最近一次错过的）；`/schedule list` 看任务是否 enabled、`lastError` 写了什么、是否标了 blocked |
 | `lsp` 工具回「没有数据」 | 按返回里的原因装对应语言服务器（typescript-language-server / pyright / rust-analyzer 等）；设置分区的状态按钮能看每个服务器的起停与 stderr 尾巴 |
@@ -761,13 +761,13 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 | 灾难地板的命令长度上限 | 缺省 4000 字符，夹在 100~100000；更长的命令按「看不清要跑什么」拒；可配 `approval-floor.maxCommandLength` | `src/core/approval-floor.ts:34`、`:116` |
 | 灾难地板的熔断 | 连续被地板拒 5 次（1~100）后冷却 60000 毫秒（0~3600000），缺省开着；可配 `approval-floor.circuitBreakerThreshold` / `circuitBreakerCooldownMs` / `circuitBreakerEnabled` | `src/core/approval-floor.ts:35-36`、`:117-119` |
 | 「只读命令」的判据 | 不止「第一个词在只读名单里」：① 引号外的 `>`（`2>&1` 不算）算写盘，整段不算只读；② `node`/`python`/`perl` 这类解释器一律不算只读，python 只有 `-m pytest`/`-m unittest`/`-m json.tool` 例外；③ `env` 会被剥掉再看真正的命令；④ `find` 带 `-delete`/`-exec`/`-fprint` 不算；⑤ `sed` 的 `e`/`w`/`-i` 与 `awk` 的 `system(`/`popen(`/`>` 不算。只有 ① 是可配的（走白名单），其余是安全不变量 | `src/core/command-policy.ts:299-320`、`:506-563` |
-| 大输出溢出阈值与预览 | 缺省超过 4000 字符就落盘（200~4000000），预览留前 30 行（1~500），续读一次 200 行（1~2000）；可配 `spill.thresholdChars` / `keepLines` / `readChunkLines` | `src/core/spill.ts:31-39`、`:65-73` |
+| 长输出转存阈值与预览 | 缺省超过 4000 字符就落盘（200~4000000），预览留前 30 行（1~500），续读一次 200 行（1~2000）；可配 `spill.thresholdChars` / `keepLines` / `readChunkLines` | `src/core/spill.ts:31-39`、`:65-73` |
 | 溢出的落盘与清理 | 单文件上限 1048576 字节（4096~268435456）、按 mtime 保留 7 天（1~3650）、目录总量上限 67108864 字节（65536~8589934592，超了从最旧的删）、目录 `~/.dsc/spill/`；可配 `spill.maxBytes` / `retentionDays` / `maxTotalBytes` / `dir` | `src/core/spill.ts:31-39`、`:65-73` |
 | 会话检索返回几条 | 缺省 20 条，夹在 1~200；可配 `session-search.defaultLimit` | `src/core/session-index.ts:70` |
 | 会话检索的片段与回填 | 命中片段 160 字符（40~2000）、回填每批 25 个文件（1~500）、单文件大小上限 8 MiB（4096~256 MiB，超了只记指纹）、索引目录 `~/.dsc/cache`；可配 `session-search.snippetLength` / `backfillBatch` / `maxFileBytes` / `indexDir` | `src/core/session-index.ts:51-56`、`:62-72` |
 | 生命周期钩子缺省超时 | 缺省 10000 毫秒，夹在 500~120000；钩子最多 50 条、单条命令 1000 字符、matcher 120 字符；可配 `lifecycle-hooks.timeoutMs` | `src/core/hooks.ts:53`、`src/core/lifecycle-hooks.ts:168-170`、`:190-196` |
 | MCP 的调用与重连 | 单次调用超时 60000 毫秒、握手 20000 毫秒（都夹在 1000~600000）；重连退避 1000→30000 毫秒、连续失败 5 次放弃（1~50）；清单里没写 `defaultRisk` 的 server 缺省按 `exec` 算；可配 `mcp.*` | `src/plugins/mcp.ts:53-62`、`:65-70` |
-| 工具渐进披露 | 一次检索最多 5 条（1~20），档位缺省 2（1 = 只撤 MCP、2 = 再按 `deferRules` 撤、3 = 除 `keepTools` 外全撤）；可配 `tool-search.searchLimit` / `tier` | `src/core/tool-search.ts:24-29`、`:54-60` |
+| 工具按需加载 | 一次检索最多 5 条（1~20），档位缺省 2（1 = 只撤 MCP、2 = 再按 `deferRules` 撤、3 = 除 `keepTools` 外全撤）；可配 `tool-search.searchLimit` / `tier` | `src/core/tool-search.ts:24-29`、`:54-60` |
 | 历史里超长工具结果怎么切 | 超过 8192 字符切掉中间、留头 4096 + 尾 1024，中间写一句「省了多少字符、原文还在日志里」；**最近 4 条不动**（刚跑完就切等于逼模型重跑）。同一条消息永远切成同一段——前缀缓存只在它第一次越线那一轮失效一次 | `src/core/tool-result-prune.ts` 的 `DEFAULT_TOOL_RESULT_PRUNE`，投影挂在 `src/plugins/prompt.ts` 的 `tool-result-prune`（order 560） |
 | 右侧栏最宽多少 | 配置上限 820px，实际还受「窗口宽 − 侧栏宽 − 正文保底 480px」约束：拖到极限是右栏停住、正文不再被压扁；窗口缩放时同样按这条夹回去（只夹内存，不改用户存档的宽度） | `ui-shell/src/ui-dockkit/dock.tsx` 的 `dockDragLimit`、`ui-shell/src/ui-layout/app.tsx` 的 resize 夹取、`ui-shell/src/legacy/views.css` 的 `.thread-main` min-width |
 | 模型请求重试 | 最多 3 次，退避 500ms × 2^(n-1)；可重试的是连接失败（`LlmError.retryable`，一个字节都没收到时）与 HTTP 429 / 5xx | `src/core/llm.ts:152`、`:162-166` |
@@ -854,13 +854,13 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 | `schedule/` | 定时任务：`rule`（六种选择器 + 时区/DST）、`store`（tasks.json 原子替换 + runs.jsonl 台账 + pendingSlot）、`runner`（自重排 setTimeout + catch-up + pre-dispatch 校验）。**先落盘推进 nextRunAt 再投递** |
 | `lsp/` | 语言服务器客户端：`framing`（Content-Length 分帧，别照抄 mcp.ts 的换行分帧）、`uri`（先解码成路径再比内外）、`servers`（内置表 + marker 找根 + PATHEXT）、`client`（握手/串行队列/idle 回收/破键退避）。挂着的请求结算用本地 settled 闸门——先清表再 settle 会让请求永不落地 |
 | `cdp/` | 浏览器 CDP 底座：`transport`（id 配对 + **按 sessionId 路由** + 事件订阅）、`launch`（探测/参数串/DevToolsActivePort/整树 taskkill）、`snapshot`（无障碍树文本化 + ref 代际）、`actions`（Input/DOM/Runtime 动作） |
-| `learnings/` | 自我改进：`store`（候选 jsonl 状态机）、`ledger`（技能变更台账与回滚）、`skill-write`（SKILL.md 硬校验 + 威胁扫描 + read-before-write + 老化）。读会话状态一律过 `normalizeLearningsState` 收口 |
+| `learnings/` | 经验沉淀：`store`（候选 jsonl 状态机）、`ledger`（技能变更台账与回滚）、`skill-write`（SKILL.md 硬校验 + 威胁扫描 + read-before-write + 老化）。读会话状态一律过 `normalizeLearningsState` 收口 |
 | `tools/command-runner.ts` | 命令执行器缝：bash 在 spawn 前问注册表，容器后端换执行体用；无注册者时行为不变 |
 | `tools/sandbox-args.ts` | 一次性升权参数的 schema 与解析：`sandbox_permissions` + `justification` 必须成对，只给半截按拒处理 |
 | `session-index.ts` | 会话检索的旁路倒排索引：中文按 1-gram + 2-gram（所以「内存」这种 2 字词能命中），英文按整词小写；按 mtime + size 增量维护，落 `cache/session-index.json`，版本对不上就整表重建 |
-| `mcp.ts` | MCP 客户端底座：stdio 与 streamable-http 两种传输上的 JSON-RPC、`mcp__服务器__工具` 命名、子进程环境白名单筛选、Windows 上按 PATH + PATHEXT 解析启动命令 |
-| `tool-search.ts` | 工具渐进披露的纯逻辑：分词（中文按相邻两字）、手写 BM25 索引、延后判定（read 一律不许撤）、配置校验 |
-| `lifecycle-hooks.ts` | codex 十二事件的钩子引擎：事件能力清单（wired / partial / unwired 与理由）、codex 形态配置的解析、跑外部命令、按失败方向给裁决 |
+| `mcp.ts` | MCP 外部工具底座：stdio 与 streamable-http 两种传输上的 JSON-RPC、`mcp__服务器__工具` 命名、子进程环境白名单筛选、Windows 上按 PATH + PATHEXT 解析启动命令 |
+| `tool-search.ts` | 工具按需加载的纯逻辑：分词（中文按相邻两字）、手写 BM25 索引、延后判定（read 一律不许撤）、配置校验 |
+| `lifecycle-hooks.ts` | codex 十四事件的钩子引擎：事件能力清单（wired / partial / unwired 与理由）、codex 形态配置的解析、跑外部命令、按失败方向给裁决 |
 | `approval.ts` | 只有审批通道**接口**，判读在 `src/plugins/approval.ts` |
 | `tools/` | `bash` 缺省 30 秒、最多 120 秒，输出超 8000 字符截断（累积到 16000 就不再收）——三个值都由 tools-default 插件配置下发（`bashTimeoutMs` / `bashMaxTimeoutMs` / `bashOutputChars`，设置分区「工具预算」可改），代码里的常量只是缺省。Windows 缺省走 `powershell -NoProfile -Command`（`-NoProfile` + UTF-8 输出前置 + 末尾补 `exit $LASTEXITCODE` 带回原生命令退出码），超时和取消都收进程树。**执行器可在「设置 → 终端环境」里换**（2026-10-30）：`bashShell` 存在 `plugins.json` 的 tools-default 条目里，取 `powershell` / `pwsh` / `gitbash` / `wsl` / `sh` / `auto`；四档折成四套 spawn 参数（见 `core/tools/bash.ts` 的 `shellPlan`），工具说明与环境快照里的终端名跟着换，审批地板的结构扫描也按同一条口径切 PowerShell / POSIX 语法（`core/terminal-env.ts` 的 `shellFlavor`）。`wsl` 会用 `-d <发行版>` 钉住探测时挑的那只（跳过 `docker-desktop` 这类没有 bash 的管理发行版）。`read` 单次缺省 2000 行（`tools-default.readLineLimit`）。`glob` / `grep` **边遍历边匹配**：按 `.gitignore`（从 git 根逐层读到搜索根，子目录的规则在进入它时生效，`!` 否定按「后出现的赢」）加内置大目录表（`node_modules`、`.git`、`dist`、`build`、`coverage`、`__pycache__`、`.venv`、`site-packages` 等）跳过，命中够 `limit` 就停，截断时明说「还有更多」；不再有「先收 1 万 / 2 万条再过滤」的全局额度——那会让 `.venv` 吃光额度、把真实结果挤成「无匹配」。`grep` 另外跳过 1 MiB 以上的文件。**没有目录白名单**——路径只按会话工作目录解析 |
 | `skills.ts` | 只认顶层 `<目录>/SKILL.md` 与顶层 `<名字>.md`，不递归（`:165-178`）。`name` 要 kebab-case，非法就退回文件名并记一条问题 |

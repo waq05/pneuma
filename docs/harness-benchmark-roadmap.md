@@ -74,7 +74,7 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:79`，`KERNEL_API_VERSION 
 | 工具渐进披露 Tool Search | ● | ◐ | ● | ◐ | 已补（T5），与 MCP 同批上 |
 | LSP 代码智能 | ● | ◐ | ○ | ● | 已落地（T12），含写后新引入报错注入 |
 | 真浏览器自动化（DOM 级） | ● | ◐ | ● | ● | 已落地（T12，CDP 无障碍树 + ref 代际校验） |
-| 生命周期 hooks | ● | ● | ● | ● | 已补（T4）：安全钩子（四个 dsc 事件）+ codex 十二事件名独立插件 |
+| 生命周期 hooks | ● | ● | ● | ● | 已补（T4）：安全钩子（四个 dsc 事件）+ codex 十四事件名独立插件 |
 | 定时任务 cron | ● | ◐ | ● | ● | 已落地（T8，六种选择器 + pre-dispatch 校验 + catch-up 补投） |
 | PTC（模型写代码调工具） | ● | ● | ● | ● | 已落地；同进程 node:vm，隔离弱于 dsh 的子进程运行时（有意取舍，见 development-log 阶段 33） |
 | 会话 checkpoint / rewind | ⊘ | ● | ● | ● | 有意不做；与 T26（部分行接受）同族，见 §7.2 |
@@ -254,7 +254,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。自检脚本
 | T1 压缩子系统 | 已落地 | 重放折叠按 `keep` 字段接回尾部（`src/core/session.ts` 的 `case 'summary'`）、切点退到 `safeCut`（`src/core/compact.ts`）、锚点索引 / 用户原话 / 找回指针在 `src/core/compact-anchors.ts`、两个字符预算进 `compact` 设置分区。`node shots/compact-check.mjs` 53 PASS / 0 FAIL；`integration-check` 另用真 `Session.load` 验了新老两种日志 |
 | T2 审批灾难地板 | 已落地 | `approval-floor` 插件挂在守卫 order 5（`src/core/approval-floor.ts` + `src/plugins/approval-floor.ts`），含命令白名单、deny glob 黑名单、熔断、无人值守。`node shots/approval-floor-check.mjs` 95 PASS / 0 FAIL；`integration-check` 在真守卫链上当场拒掉 `rm -rf /`、`format C:`、`cmd /c format C:`、`Format-Volume`、`Clear-Disk`、fork 炸弹与写 `/dev/sda`。**第二轮补了五个漏**，见 §5.2 |
 | T3 spill | 已落地 | 观察者 order 50，落 `~/.dsc/spill/`，`read` 工具跳过，目录按 mtime 与总量清理。`node shots/spill-check.mjs` 53 PASS / 0 FAIL |
-| T4 生命周期钩子 | 已落地（十二个事件里八个接通） | `lifecycle-hooks` 插件读 `~/.dsc/lifecycle-hooks.json`：PreToolUse → 守卫 25、PostToolUse → 观察者 45，其余走事件与 `transformMessages`；PermissionRequest / PreCompact / SubagentStart / SubagentStop 没有可挂的扩展点，配了不执行并把理由写进报告。`node shots/lifecycle-hooks-check.mjs` 81 PASS / 0 FAIL |
+| T4 生命周期钩子 | 已落地（十四个事件里六个未接通） | `lifecycle-hooks` 插件读 `~/.dsc/lifecycle-hooks.json`：PreToolUse → 守卫 25、PostToolUse → 观察者 45，其余走事件与 `transformMessages`；PreModelRequest / PostModelRequest / PermissionRequest / PreCompact / SubagentStart / SubagentStop 没有可挂的扩展点，配了不执行并把理由写进报告。`node shots/lifecycle-hooks-check.mjs` 81 PASS / 0 FAIL |
 | T5 MCP 客户端 + Tool Search | 已落地 | `mcp` 插件支持 stdio 与 streamable-http，工具挂成 `mcp__服务器__工具`，结果过围栏，子进程环境按白名单筛；`tool-search` 提供三个桥接工具与手写 BM25，`tool_call` 按真名重走守卫链。`node shots/mcp-check.mjs` 75 PASS / 0 FAIL；`node shots/tool-search-check.mjs` 94 PASS / 0 FAIL |
 | T6 中文会话检索 | 已落地 | 没上 SQLite：`src/core/session-index.ts` 是纯 TS 倒排索引（中文 1-gram + 2-gram，英文整词），落 `~/.dsc/cache/session-index.json`，按 mtime + size 增量维护；工具 `session_search` + `/search` 命令。`node shots/session-search-check.mjs` 70 PASS / 0 FAIL |
 | T7 记忆内核化 | 已落地（不在本轮） | `src/plugins/memory.ts` + `src/core/memory.ts` 是默认开的内核插件，带 `memory` 设置分区与三格额度 |

@@ -86,8 +86,10 @@ console.log('① 工具名与 schema 形状')
 function mount(withLook) {
   const tools = []
   const sections = []
+  const guards = []
   const ctx = {
     tools: { register: (entry) => (tools.push(entry), () => {}) },
+    guards: { register: (guard) => (guards.push(guard), () => {}) },
     prompt: { register: () => () => {}, registerProjection: () => () => {} },
     settings: {
       registerSection: (section) => (sections.push(section), () => {}),
@@ -95,10 +97,12 @@ function mount(withLook) {
     },
   }
   computerUsePlugin.apply(ctx, withLook ? { lookWithoutApproval: true } : {})
-  return { tools, sections }
+  return { tools, sections, guards }
 }
 
 const plain = mount(false)
+// 急停必须在所有闸门之前：审批卡没人能答时也要停得下来。
+check('注册了急停守卫，且排在审批（30）之前', plain.guards.some((guard) => guard.id === 'computer-use-stop' && guard.order < 30), JSON.stringify(plain.guards.map((guard) => `${guard.id}@${guard.order}`)))
 const actPlain = plain.tools.find((t) => t.name === 'computer')
 check('注册了动手工具 computer', actPlain !== undefined)
 check('computer 的风险等级是 exec（每次过审批）', actPlain?.risk === 'exec', String(actPlain?.risk))

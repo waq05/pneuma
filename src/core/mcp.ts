@@ -18,8 +18,29 @@ import { quoteForCmd } from './shell-quote.js'
 
 // ── 协议与命名常量（协议常量不随部署变，固定在这里） ──────────────────────────
 
-/** initialize 里报的协议版本（MCP 2024-11-05）。 */
-const MCP_PROTOCOL_VERSION = '2025-06-18'
+/**
+ * 支持的 MCP 协议版本（新到旧）。
+ *
+ * 握手时客户端报最新一条，server 可以回它自己支持的那条；只有回包落在这一组里才算谈成。
+ * 三条版本上 dsc 用到的 initialize / tools/list / tools/call 语义一致，所以都收。
+ */
+export const MCP_PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'] as const
+
+/** 握手时自报的版本：支持集合里最新的一条。 */
+const MCP_PROTOCOL_VERSION: string = MCP_PROTOCOL_VERSIONS[0]
+
+/**
+ * 把 server 回包里的 `protocolVersion` 对到支持集合里。
+ *
+ * 只认精确匹配：MCP 没有「主版本兼容」的约定，版本号不同就是语义可能不同；
+ * 未知版本按规范断开，不带着猜到的语义继续调工具。
+ * @param value - initialize 应答里的原值（可能是任何 JSON）。
+ * @returns 谈成的版本；不认识给 null。
+ */
+export function negotiateProtocolVersion(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  return (MCP_PROTOCOL_VERSIONS as readonly string[]).includes(value) ? value : null
+}
 
 /** initialize 里自报的客户端身份。 */
 const CLIENT_INFO = { name: 'pneuma', version: '0.1.0' }
@@ -163,6 +184,8 @@ export interface McpConnection {
   readonly instructions: string
   /** T24：server 声明的能力（resources/prompts 有没有；elicitation 是 client 能力，不在这）。 */
   readonly capabilities: McpCapabilities
+  /** 握手谈成的协议版本（server 回的那条；不在支持集合里会直接握手失败）。 */
+  readonly protocolVersion: string
   listTools(signal: AbortSignal): Promise<McpToolSpec[]>
   callTool(name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<McpCallResult>
   /** T24：列资源（resources/list 翻页到底）。server 没声明 resources 时抛错。 */
@@ -671,7 +694,17 @@ class HttpChannel implements Channel {
   }
 
   close(): void {
+    if (this.closed) return
     this.closed = true
+    // streamable-http 的会话归 server 持有：不发 DELETE，server 会一直挂着这条 session。
+    // 接口是同步的，所以只发不等；失败也只是会话晚一点过期，不影响本地状态。
+    if (this.sessionId !== undefined) {
+      void fetch(this.url, {
+        method: 'DELETE',
+        headers: { ...this.extraHeaders, 'mcp-session-id': this.sessionId },
+        signal: AbortSignal.timeout(5000),
+      }).catch(() => {})
+    }
   }
 
   /** 发一条 JSON-RPC 消息；expectId 非 null 时等那条 id 的应答。 */
@@ -795,6 +828,7 @@ export async function openConnection(server: McpServerConfig, options: McpOpenOp
       : new HttpChannel(server.url, server.headers, options.callTimeoutMs)
   let instructions = ''
   let capabilities: McpCapabilities = { resources: false, prompts: false }
+  let protocolVersion = MCP_PROTOCOL_VERSION
   try {
     // T37：initialize 的应答不再整个丢掉——里面的 `instructions` 是 server 交代
     // 自家工具怎么用的说明书，摘出来随连接交还。
@@ -811,6 +845,16 @@ export async function openConnection(server: McpServerConfig, options: McpOpenOp
       AbortSignal.timeout(options.connectTimeoutMs),
     )
     const initDoc = asRecord(initResult)
+    // 协议版本必须回看：server 可以回它自己支持的那一条，可能是旧版；
+    // 落在支持集合之外就按 MCP 规范断开，不带着未知语义继续发 tools/call。
+    const agreed = negotiateProtocolVersion(initDoc?.protocolVersion)
+    if (agreed === null) {
+      throw new Error(
+        `MCP server 回应协议版本 ${JSON.stringify(initDoc?.protocolVersion ?? null)}，` +
+          `不在 dsc 支持的范围（${MCP_PROTOCOL_VERSIONS.join(' / ')}）内`,
+      )
+    }
+    protocolVersion = agreed
     const declared = initDoc?.instructions
     if (typeof declared === 'string') instructions = declared
     const serverCaps = asRecord(initDoc?.capabilities)
@@ -839,6 +883,7 @@ export async function openConnection(server: McpServerConfig, options: McpOpenOp
     },
     instructions,
     capabilities,
+    protocolVersion,
     listTools: (signal) => listAllTools(channel, signal),
     callTool: (name, args, signal) => callTool(channel, name, args, signal),
     listResources: (signal) =>

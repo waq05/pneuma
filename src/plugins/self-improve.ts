@@ -606,7 +606,7 @@ export const selfImprovePlugin: Plugin.Object = {
       },
       risk: 'write',
       async run(args, scope) {
-        if (!config.enabled) return '自我改进现在是关着的（设置 → 插件 → 自我改进 里可以打开）。'
+        if (!config.enabled) return '经验沉淀现在是关着的（插件中心 → 经验沉淀 里可以打开）。'
         const action = String(args.action ?? '').trim()
         const name = String(args.name ?? '').trim()
         if (!['create', 'patch', 'write_file', 'archive'].includes(action)) {
@@ -732,7 +732,7 @@ export const selfImprovePlugin: Plugin.Object = {
     const learningTool: ToolEntry = {
       name: 'learning',
       description: [
-        '处理自我改进的候选清单（`~/.dsc/learnings/`）。候选**不进你的上下文**，只有用户 promote 才会变成记忆或技能。',
+        '处理经验沉淀的候选清单（`~/.dsc/learnings/`）。候选**不进你的上下文**，只有用户 promote 才会变成记忆或技能。',
         'action：propose 记一条候选（text + kind：correction | failure | note | skill-draft）；',
         'list 看清单（状态、命中次数）；promote 把候选 promoted（as=memory 写进长期记忆，as=skill 转成技能草稿）；drop 丢掉一条。',
         '什么时候用 propose：用户在对话里纠正了你的做法、或者你发现了一条以后还用得上的经验，但这些还没到「该写成技能」的程度——先记成候选，让用户决定。',
@@ -751,7 +751,7 @@ export const selfImprovePlugin: Plugin.Object = {
       },
       risk: 'write',
       async run(args) {
-        if (!config.enabled) return '自我改进现在是关着的（设置 → 插件 → 自我改进 里可以打开）。'
+        if (!config.enabled) return '经验沉淀现在是关着的（插件中心 → 经验沉淀 里可以打开）。'
         const action = String(args.action ?? 'list').trim()
         if (action === 'propose') {
           const text = String(args.text ?? '').trim()
@@ -792,7 +792,7 @@ export const selfImprovePlugin: Plugin.Object = {
         { name: 'learn', args: '[目标]', description: '把刚才这件事（或指定目标）沉淀成一个技能草稿' },
         ({ args, ui }) => {
           if (!config.enabled) {
-            ui.notice('自我改进现在是关着的（设置 → 插件 → 自我改进 里可以打开）')
+            ui.notice('经验沉淀现在是关着的（插件中心 → 经验沉淀 里可以打开）')
             return
           }
           const goal = args.join(' ').trim()
@@ -932,7 +932,7 @@ export const selfImprovePlugin: Plugin.Object = {
         lines.push('技能写入（skill_write 工具）要走审批：用户点头才落盘；新建的技能默认停用，等用户在 /skills 里启用。')
       }
       if (lines.length === 0) return ''
-      return `【自我改进】${lines.join('')}`
+      return `【经验沉淀】${lines.join('')}`
     }
 
     disposers.push(ctx.prompt.register('self-improve', promptText, { order: 43 }))
@@ -946,13 +946,13 @@ export const selfImprovePlugin: Plugin.Object = {
         {
           type: 'switch',
           key: 'enabled',
-          label: '启用自我改进',
+          label: '启用经验沉淀',
           help: '关掉之后：不再捕获纠正候选、不再自动复盘、两个工具也不再写盘。已经写在盘上的候选与技能原样留着。',
         },
         {
           type: 'number',
           key: 'reviewMinIterations',
-          label: '复盘触发：本轮工具迭代数不低于',
+          label: '一轮里工具调用超过多少次才自动复盘',
           min: 0,
           max: 200,
           step: 1,
@@ -1014,8 +1014,8 @@ export const selfImprovePlugin: Plugin.Object = {
 
     const section: SettingsSectionSpec = {
       id: 'self-improve',
-      title: '自我改进',
-      subtitle: '从纠正与复盘里沉淀经验：候选清单、技能草稿、技能自修与审计回滚',
+      title: '经验沉淀',
+      subtitle: '从纠正与复盘里沉淀经验：候选、技能草稿、技能自修与回滚',
       order: 35,
       fields: sectionFields,
       values(): SettingsValues {

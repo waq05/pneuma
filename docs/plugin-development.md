@@ -294,7 +294,7 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 | 官方可开关 | `source: 'builtin'` 且 `toggleable: true` | 可拨，`defaultDisabled: true` 时默认关 |
 | 运行内核 | `source: 'builtin'` 且没标 `toggleable` | 不给开关，页面只露 3 行，其余折叠 |
 
-现有的十八个官方可开关插件：默认开的六个是 `web-search`（网页搜索）、`approval-floor`（审批灾难地板）、`spill`（大输出溢出）、`session-search`（会话全文检索）、`sandbox`（沙箱——不配就没有外部进程与外部服务器，且默认档 workspace-write 不挡正常的工作区读写）、`file-review`（文件更改预览——edit / write 前把 diff 摆进对话流）；默认关的十二个是 `subagent`（子智能体）、`team`（智能体团队）、`computer-use`（电脑操作）、`lifecycle-hooks`（生命周期钩子）、`mcp`（MCP 客户端）、`tool-search`（工具渐进披露）、`schedule`（定时任务，到点会自己跑模型）、`lsp`（按需拉起语言服务器子进程）、`browser`（拉起浏览器进程并连调试端口）、`dock-browser`（驱动桌面端侧栏浏览器）、`self-improve`（会写技能文件与提示词面）、`dsh-compat`（挂 dsh 外部插件）。各自干什么、默认开关按什么规矩定，见 development.md §4 那张表。
+现有的十八个官方可开关插件：默认开的六个是 `web-search`（联网搜索）、`approval-floor`（危险命令硬拦截）、`spill`（长输出转存）、`session-search`（历史会话搜索）、`sandbox`（文件与命令围栏——不配就没有外部进程与外部服务器，且默认档 workspace-write 不挡正常的工作区读写）、`file-review`（改动前预览——写文件、改文件前把 diff 摆进对话流）；默认关的十二个是 `subagent`（子智能体）、`team`（共享任务板）、`computer-use`（操作电脑桌面）、`lifecycle-hooks`（外部命令钩子）、`mcp`（MCP 外部工具）、`tool-search`（工具按需加载）、`schedule`（定时任务，到点会自己跑模型）、`lsp`（代码跳转与报错）、`browser`（受控浏览器，拉起独立 Chrome）、`dock-browser`（侧栏浏览器）、`self-improve`（经验沉淀，会写技能文件）、`dsh-compat`（dsh 插件兼容）。各自干什么、默认开关按什么规矩定，见 development.md §4 那张表。
 
 新增一档官方可开关插件要做的三件事：
 

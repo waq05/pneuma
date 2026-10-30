@@ -1138,6 +1138,13 @@ export interface McpService {
    * 幂等。
    */
   deferSchemas(): void
+  /**
+   * 撤销 {@link deferSchemas}：把动手类工具重新挂回 `ctx.tools`（幂等）。
+   *
+   * 为什么要成对：撤下是 Tool Search 的决定，它停用或关掉开关时必须能收回；
+   * 没有这个方法，MCP 的动手类工具会一直缺席，只能重启宿主才恢复。
+   */
+  restoreSchemas(): void
 }
 
 /** 一条跨会话检索命中。 */

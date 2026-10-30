@@ -73,6 +73,8 @@ export const toolSearchPlugin: Plugin.Object = {
     const held = new Map<string, ToolEntry>()
     /** 注册过的东西都留退订函数，插件卸载时原样撤掉。 */
     const disposers: (() => void)[] = []
+    /** 当前是不是本插件把 MCP 的动手类 schema 撤下了：卸载与关开关要按它收回。 */
+    let mcpDeferred = false
 
     /** 取 MCP 客户端。它是可选服务（插件没开时不存在），所以必须走 ctx.get，不能写 ctx.mcp。 */
     const mcpService = (): McpService | undefined => ctx.get('mcp')
@@ -120,7 +122,14 @@ export const toolSearchPlugin: Plugin.Object = {
         }
       }
       const mcp = mcpService()
-      if (config.deferMcpSchemas && mcp !== undefined) mcp.deferSchemas()
+      if (config.deferMcpSchemas && mcp !== undefined) {
+        mcp.deferSchemas()
+        mcpDeferred = true
+      } else if (mcpDeferred) {
+        // 关掉开关要当场把动手类工具挂回台面：撤下是单向变量，不收回就只能重启宿主。
+        mcp?.restoreSchemas()
+        mcpDeferred = false
+      }
     }
 
     /** 现在能检索、能调用的目录：MCP 工具（`mcp.tools()`）+ 本插件撤下的注册表工具。 */
@@ -368,8 +377,8 @@ export const toolSearchPlugin: Plugin.Object = {
 
     const section: SettingsSectionSpec = {
       id: TOOL_SEARCH_CONFIG_KEY,
-      title: '工具渐进披露',
-      subtitle: '每轮只为用得上的工具付 schema：撤下的工具用 tool_search / tool_describe / tool_call 找回来',
+      title: '工具按需加载',
+      subtitle: '只为用得上的工具付说明文字：动手类与 MCP 工具撤下，read 工具仍常驻',
       order: 47,
       fields(): SettingsField[] {
         const config = readConfig()
@@ -385,13 +394,13 @@ export const toolSearchPlugin: Plugin.Object = {
           {
             type: 'switch',
             key: 'deferMcpSchemas',
-            label: '撤下 MCP 工具的 schema',
-            help: 'MCP 一接进来就是几十个工具的参数表，撤下收益最大。撤下由 MCP 客户端一次性执行，关掉要重启宿主才恢复。',
+            label: '把 MCP 工具也收进按需加载',
+            help: 'MCP 一接进来就是几十个工具的参数表，收进来收益最大。关掉后动手类工具会立刻挂回台面，不用重启宿主。',
           },
           {
             type: 'select',
             key: 'tier',
-            label: '渐进披露档位',
+            label: '按需加载档位',
             options: [
               { value: '1', label: '1：只撤 MCP 工具' },
               { value: '2', label: '2：再撤下面规则命中的工具（缺省）' },
@@ -497,6 +506,11 @@ export const toolSearchPlugin: Plugin.Object = {
       for (const off of disposers) off()
       // 卸载时把撤下的工具放回注册表：撤下只是替宿主省 token，卸载了就不该再扣着别人的工具
       restoreHeld()
+      // MCP 那边同样要收口：本插件停用后，动手类 MCP 工具必须回到台面。
+      if (mcpDeferred) {
+        mcpService()?.restoreSchemas()
+        mcpDeferred = false
+      }
     }
   },
 }

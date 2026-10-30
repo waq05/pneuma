@@ -151,6 +151,8 @@ interface WriteRecord {
   path: string
   /** 会话工作目录（解析相对路径、渲染相对路径都用它）。 */
   cwd: string
+  /** 发起这次写的会话：诊断只该补进这个会话的下一次请求。 */
+  sessionId: string
   /** 写前的文件内容（基线诊断就是按它算的）。 */
   preText: string
   /** 写前基线诊断的取数任务（在守卫里同步入队，观察者再去等它）。 */
@@ -173,10 +175,10 @@ export const lspPlugin: Plugin.Object = {
       baseCwd: () => sessionCwd(),
     })
 
-    /** 最近一次写操作留的底（观察者只能从这里知道写的是哪个文件）。 */
+    /** 最近一次写操作留的底（观察者只能从这里知道写的是哪个文件与会话）。 */
     let lastWrite: WriteRecord | undefined
-    /** 攒着等下一次请求补进去的诊断块。 */
-    let pendingDiagnostics: string[] = []
+    /** 按会话攒着、等该会话下一次请求补进去的诊断块（不能串到别的会话）。 */
+    const pendingDiagnostics = new Map<string, string[]>()
 
     // ── 注册与退订 ──────────────────────────────────────────────────────────
     // 宿主退出时只发事件就退进程，不走 cordis 卸载：子进程得在这一步收掉，
@@ -193,17 +195,18 @@ export const lspPlugin: Plugin.Object = {
     })
     const offObserver = ctx.guards.registerObserver(buildObserver())
     // 诊断不在会话日志里，塞进请求的同时必须落一条 note（Model-visible ⟺ logged）：
-    // 只投给主会话——队友的请求不走投影链，不会错拿主会话的 pending。
-    const offProjection = ctx.prompt.registerProjection('lsp-write-diagnostics', (messages: ChatMessage[]): ChatMessage[] => {
-      if (pendingDiagnostics.length === 0) return messages
-      const blocks = pendingDiagnostics
-      pendingDiagnostics = []
+    // 按请求所属会话取自己那份——后台会话的写诊断不能补进你正在看的会话。
+    const offProjection = ctx.prompt.registerProjection('lsp-write-diagnostics', (messages: ChatMessage[], session): ChatMessage[] => {
+      const target = session ?? ctx.session.current()
+      const blocks = pendingDiagnostics.get(target.meta.id)
+      if (blocks === undefined || blocks.length === 0) return messages
+      pendingDiagnostics.delete(target.meta.id)
       // 补在末尾、user 角色（2026-10-03）：原先补 system 段会被 fold-system 并进头部那一条，
       // 头部字节一变，服务端前缀缓存从变化点之后整段失效（下一次请求诊断消失、头部还原，
       // 再失效一次）。user 角色只往历史尾巴追加，前缀原样命中缓存——codex 的
       // environment_context、dsh 的运行时快照都是这个形状；点明出处防模型误认作用户发言。
       const text = `【LSP 诊断】以下诊断由程序在刚才写入文件后自动附上（不是用户发言）：\n\n${blocks.join('\n\n')}`
-      ctx.session.current().appendNote('lsp-write-diagnostics', text)
+      target.appendNote('lsp-write-diagnostics', text)
       return [...messages, { role: 'user', content: text }]
     })
     const offSection = ctx.settings.registerSection(buildSection())
@@ -299,7 +302,7 @@ export const lspPlugin: Plugin.Object = {
       try {
         const config = readConfig(passed)
         if (!config.enabled) {
-          return degradation('LSP 代码智能关着（设置 → LSP 代码智能 → 总开关）')
+          return degradation('代码跳转与报错关着（插件中心 → 代码跳转与报错 → 总开关）')
         }
         const operation = args.operation
         if (typeof operation !== 'string' || !isOperation(operation)) {
@@ -414,6 +417,7 @@ export const lspPlugin: Plugin.Object = {
         lastWrite = {
           path: target,
           cwd: input.cwd,
+          sessionId: input.sessionId,
           preText,
           baseline: baseline.then((outcome) => ({
             ok: outcome.ok,
@@ -470,10 +474,15 @@ export const lspPlugin: Plugin.Object = {
       )
       if (fresh.length === 0) return
       const block = formatDiagnosticBlock(record.path, fresh, record.cwd)
-      pendingDiagnostics.push(block)
+      const list = pendingDiagnostics.get(record.sessionId) ?? []
+      list.push(block)
+      pendingDiagnostics.set(record.sessionId, list)
       ctx.transcript.system(
         `lsp：${displayPath(record.path, record.cwd)} 这次改动新引入 ${fresh.length} 条 ERROR` +
           '（明细附在下一次请求里）',
+        undefined,
+        false,
+        record.sessionId,
       )
     }
 
@@ -522,7 +531,7 @@ export const lspPlugin: Plugin.Object = {
           {
             type: 'switch',
             key: 'enabled',
-            label: '启用 LSP 代码智能',
+            label: '启用代码跳转与报错',
             help: '关掉之后 lsp 工具只回一句说明，也不做编辑后诊断注入（不必停用整个插件）。',
           },
           {
@@ -540,7 +549,7 @@ export const lspPlugin: Plugin.Object = {
           {
             type: 'number',
             key: 'idleSeconds',
-            label: '空闲多久回收语言服务器（秒）',
+            label: '多久不用就关掉语言服务器（秒）',
             min: IDLE_SECONDS_MIN,
             max: IDLE_SECONDS_MAX,
             step: 30,
@@ -568,8 +577,8 @@ export const lspPlugin: Plugin.Object = {
 
       return {
         id: CONFIG_KEY,
-        title: 'LSP 代码智能',
-        subtitle: '连语言服务器查定义与引用，并把本次编辑新引入的报错附在下一次请求里',
+        title: '代码跳转与报错',
+        subtitle: '查定义、引用、实现与悬停；编辑后新出现的报错会提醒模型',
         order: 33,
         fields,
         values: (): Record<string, SettingsValue> => {

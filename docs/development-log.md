@@ -11438,6 +11438,145 @@ dsh 那边组头与思考行落在同一条轴（552px），工具子项整格�
 
 **没做的**：轨迹页仍是平铺的条目流，没有跟着分成「组头 + 工具子项」两级——这一轮只对齐了对话页。
 
+## 官方可开关插件分批审查与修复（2026-10-30）
+
+用户要求审查 18 个官方可开关插件，先改名字与设置文案，再对照 dsh / codex 找实现缺陷，
+并检查开关是否真的生效。按「复核一条、修一条、验一条」分三批做，没有一次性大改。
+
+### 一　开关机制：默认开的六个其实关不掉
+
+- 现场：`createKernel` 用 `root.plugin()` 直接挂默认开启的官方插件，没登记进
+  `plugin-loader` 的热挂载表；停用走 `unmountExternalPlugin()`，表里找不到就静默返回。
+- 实测：web-search 关掉后工具与设置分区都还在；再打开会挂第二份。带 `provide` 的
+  sandbox 更严重——第二次挂载报「service 已注册」，插件被自动改回停用。
+- 改法：新增 `trackBuiltinMount()`，启动挂载后把 fiber 记进同一张表。实测关掉后
+  `tool=false / fibers=0 / 分区=0`，再开 `fibers=1`，不再重复。
+- 顺带修 MCP 的单向撤下：`McpService` 加 `restoreSchemas()`，Tool Search 卸载或关开关时
+  把动手类工具挂回台面（以前只能重启宿主）。
+
+### 二　安全类缺陷
+
+- `computer_look` 声明 `risk: 'read'` 却把 action 原样交给 `act()`，传 `click/type/stop`
+  可完全绕过审批。`act()` 加运行时白名单；`screenshot` 照常放行。
+- `file-review` 写前预览无条件读旧文件，写 `.env` / `~/.ssh/*` 时把旧密钥当删除行
+  贴进对话。预览前先过 `readBlockReason`，命中就只给说明、不读内容。
+- 危险命令黑名单默认 glob 只写正斜杠，Windows 的 `C:\Users\me\.ssh\config`
+  匹配不到。比较时原文与归一化路径各试一次。
+- 队友的守卫链只有审批、没有父会话的模式闸门：计划模式派 writer 可改工程文件。
+  给队友链补 order 5 的模式守卫，按父会话 mode 现读。
+- 浏览器上传接受任意绝对路径：上传前过同一份 `readBlockReason`。
+
+### 三　P1 功能缺陷
+
+- 定时任务投递取 `ctx.session.current()`，切会话就投错地方。改用任务里存的
+  `sessionId`，老任务才回落当前会话；preflight 同步按任务目标判。
+- 任务板 `expected_revision` 缺省取当前版本，等于关掉并发冲突检测。改状态必须带版本号。
+- 会话搜索的 `limit` 不夹上限，传 10 万就返回 10 万条。夹到与设置同一区间（200）。
+- 联网搜索没配 key 也注册工具，模型每次调用必报错。无 key 时不挂工具与提示词，
+  设置里保存 key 后当场同步；挂载时用一条通知指路。
+- 长输出每次溢出都同步全盘扫目录。改成 5 分钟最多清一次；手动清理按钮不受限。
+- 沙箱的「强制执行等级」按新会话默认档算，默认 danger、当前 workspace-write 时
+  会报「none：不设围栏」。改成按当前会话算：danger → none，其余至少 partial。
+- LSP 在 Windows 只 kill 直接子进程，npx / pyright 的孙进程留下。改用
+  `taskkill /T /F` 收整棵树，taskkill 不可用才退回单进程 kill。
+- MCP 建连成功但 `listTools` 失败时没关连接，重连会再起一条。失败路径补 close。
+
+### 四　命名与文案
+
+- 18 个名字改成用户视角（例如「审批灾难地板 → 危险命令硬拦截」「工具渐进披露 →
+  工具按需加载」「会话全文检索 → 历史会话搜索」），描述改成先说收益。
+- 17 个设置分区的标题、副标题与关键字段标签同步；设置里指路的「设置 → X」改成
+  「插件中心 → X（终端里也可用设置）」，因为桌面设置页只列内置分区。
+- 写前预览的横幅由「文件更改预览」改成「改动前预览」，壳常量、探针、截图检查同改。
+- README、development.md、plugin-development.md 三处清单同步。
+
+### 五　验证与取舍
+
+- 临时 HOME 复现脚本覆盖：开关关/开、黑名单反斜杠、预览泄密钥、上传读禁、
+  只读工具动手、计划模式队友写文件、MCP 撤下/恢复、定时投递目标、任务板版本、
+  搜索条数上限、沙箱强制等级。
+- 自检：`pnpm run typecheck`、`pnpm run build`、`pnpm run check:style`、
+  `tool-search` / `floor-shell-and-budget` / `computer-use` / `review-approval` /
+  `sandbox-parity` / `teammate-notice` / `ui-review-notice` / `subagent-context`。
+- 没动两处需要用户拍板的行为：工具检索的双审批卡、外部命令钩子默认 fail-closed。
+
+### 六　第二轮补修（同一天）
+
+- **沙箱形状守卫**：`//?/C:/Windows` 用正斜杠写时绕过 NT 前缀检查，经 win32 normalize
+  变成设备路径后才进 realpath；UNC（`\\服务器\共享`）也是先解析再拒，SMB 认证已经发生。
+  现在形状判定先把正斜杠归一成反斜杠，并在 realpath 之前直接拒 UNC。
+- **写前预览**：旧文件超过 2MB 或前 8KB 含 NUL 时不再读全文做 diff，只回一句摘要
+  （避免同步读大文件卡住守卫链、二进制变成一屏乱码）。
+- **会话索引换配置**：旧实例在后台回填时，新实例已经落盘，两边会互相覆盖同一份索引。
+  `SessionIndex` 加 `dispose()`，换配置与插件停用都先让旧实例停手，每批之间检查一次。
+- **定时任务回合对账**：以前只要是 `dsc/turn-end` 就配队首投递，后台会话结束会把
+  另一个会话的投递记成成功。投递记录带上 sessionId，只配同会话的回合结束。
+- **侧栏浏览器 wait_for**：`startsWith` 没有路径段边界，`example.com.evil.com` 会被判成
+  「已到 example.com」；改成按 `/` 边界比。
+- **LSP 诊断按会话**：待补诊断原来是全局一个数组，后台会话的写入会补进当前查看会话的
+  下一次请求。改成 `Map<sessionId, string[]>`，投影按请求所属会话取，note 也只落那个会话。
+
+### 七　第三轮补修（同一天）
+
+- **MCP 协议版本**：原来写死 `2025-06-18`、注释却写 2024-11-05，也不看 server 回包。
+  现在声明支持 `2025-06-18 / 2025-03-26 / 2024-11-05`，握手时读 server 回的
+  `protocolVersion`：落在集合里就用它，落在集合外按规范断开并说明原因。
+- **根内 `..foo` 误判**：`isInsideCwd` 与沙箱 `insideRoot` 用 `startsWith('..')` 判父目录，
+  工作区里名为 `..foo` 的普通文件会被当成越界。改成只认 `..` 本身或 `..` + 分隔符。
+- **codex 生命周期事件**：codex 现在是十四个事件（多 PreModelRequest / PostModelRequest），
+  原来只认十二个，抄来的配置里这两个会被当「不认识」跳过。现在认全十四个，其中两个
+  标记未接通（Pneuma 没有可阻塞的模型请求挂点），配了会进 problems 说明原因。
+
+### 八　第四轮补修（同一天）
+
+- **电脑操作急停**：`stop` 原来走 `computer`（exec）的审批卡，没人能答时停不下来。
+  新增 order 4 的守卫，只对 `computer action=stop` 返回 pass，排在模式与审批之前。
+- **电脑操作停用收尾**：原来只退订工具与分区，在跑的 PowerShell 会继续点鼠标键盘。
+  卸载时调 `killAllPowerShell()`；实测停用后长跑脚本被终止。
+- **子代理挤出收工队友**：超过 12 个只 `teammates.delete`，会话写租约不释放。
+  挤出前先 `agent.cancel()` + `session.close()`。
+- **MCP HTTP 会话**：`close()` 只置标志，不发 DELETE，server 会一直挂着 session。
+  有 session id 时补发 DELETE（同步接口，fire-and-forget）。
+- **侧栏浏览器 evaluate**：只查敏感原语、不查表达式里的地址；补上 `assertHttpUrl`
+  （挡云元数据与非 http(s)）。
+- **外部命令钩子通知**：`dsc/notice` 不带会话归属，后台会话的钩子提示会画到当前会话；
+  补 `sessionPath`。
+- **联网搜索摘要**：单条摘要不封顶，一页 10 条能吃掉两万 token；按 dsh 的口径封顶 800 字。
+
+### 九　审查后补的六处漏项（同一天）
+
+这一批交出去后请独立审查跑了一遍，功能与安全边界没问题，漏的是「话说不一致」的六处，
+逐条补掉：
+
+- **沙箱强制等级的解释读了全局值**：等级本身已经按当前会话算，紧跟其后的那句解释却仍读
+  进程级的 `enforcement`。默认档是 danger-full-access 时全局停在 `none`，于是某个会话切到
+  workspace-write 后，提示词会写出「partial（none：当前档位不设围栏）」这种自打嘴巴的话。
+  改成 `enforcementText(level)` 收参数，两者由同一个 `enforcementNote(mode)` 拼出来；
+  `/sandbox` 的 `describe()` 也一起改口。顺带去掉了解释里重复的等级前缀。
+- **「十四个事件里两个未接通」实为六个**：PreModelRequest / PostModelRequest 加进来之后，
+  未接通的是六个。标题里的条数改成现场数（`filter(tier === 'unwired').length`），事件表
+  以后再变，标题自己跟着变，不会跟下面那张清单打架。`docs/development.md`、
+  `docs/harness-benchmark-roadmap.md` 里写死的「两个」一并改掉，并补上两个新事件名。
+- **分区改名后仍有旧指路**：沙箱分区已经叫「文件与命令围栏」，但网络关闭的拒因、fail-closed
+  的提示、三条自救说明（`core/sandbox/policy.ts`）、沙箱代理的阻断提示
+  （`core/sandbox/net-proxy.ts`）还写着「设置 → 沙箱」，用户照着找不到入口。同类还有
+  `self-improve`、`memory` 两个插件的关停提示。全部改成「插件中心 → X」。
+- **`computer_look` 的急停承诺与闸门不一致**：只读入口的闸门不放行 `stop`，旁边那句注释却写
+  「急停永远可调」。选择保留闸门而不是放行 `stop`：`stop` 评的是 `system` 档，让一条
+  `risk=read` 的工具能触发它，风险分级就名不副实。改为把注释与错误提示写准——急停走
+  `computer` 工具，那条通道永远留着。
+- **`readBefore` 的文档注释被挤到 `looksBinary` 头上**：把第一段挪回 `readBefore`。
+- **`guardsFor` 的注释与本轮新增的模式闸门相抵**：改为「队友不共用主会话那条链，模式闸门
+  另起一条按父会话判定」，免得后来人把新闸门当成违约删掉。
+
+验证：`pnpm run typecheck` 通过；`computer-use-test`、`sandbox-parity-test`（41/41）、
+`settings-sections-check`、`subagent-context-test`、`floor-shell-and-budget-test`、
+`settings-test`、`hooks-test` 全过；另起一段探针确认能力表是 14 个事件、6 个未接通。
+
+
+
+
+
 ## 四十、出厂主题改成 claude、默认终端可选、三家 runtime 对照（2026-10-30）
 
 这一批不是报障驱动，是产品口径与能力补齐，三件事各有一个"为什么现在做"。

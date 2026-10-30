@@ -243,8 +243,8 @@ export async function launchBrowser(
     const configured = config.executablePath.trim()
     throw new Error(
       configured === ''
-        ? '没找到 Chrome 或 Edge。请在设置「浏览器自动化」里把 executablePath 填成浏览器可执行文件的绝对路径'
-        : `配置的浏览器路径不存在：${configured}（请在设置「浏览器自动化」里改掉）`,
+        ? '没找到 Chrome 或 Edge。请在「受控浏览器」设置里把 executablePath 填成浏览器可执行文件的绝对路径'
+        : `配置的浏览器路径不存在：${configured}（请在「受控浏览器」设置里改掉）`,
     )
   }
   const ownedProfile = config.profileDir.trim() === ''

@@ -108,7 +108,7 @@ export function createNetProxy(options: NetProxyOptions): Promise<NetProxy> {
     record({ at: Date.now(), host: parsed.host, port: parsed.port, allowed: one.allowed, why: one.allowed ? '在白名单里' : one.why })
     if (!one.allowed) {
       res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' })
-      res.end(`dsc 沙箱代理：${parsed.host} 被阻断 —— ${one.why}。要放行请在「设置 → 沙箱」把它加进出网白名单。`)
+      res.end(`dsc 沙箱代理：${parsed.host} 被阻断 —— ${one.why}。要放行请在「插件中心 → 文件与命令围栏」把它加进出网白名单。`)
       return
     }
     // 放行：按原样转发（去代理语义的 URL 前缀），流式直通不缓存
@@ -138,7 +138,7 @@ export function createNetProxy(options: NetProxyOptions): Promise<NetProxy> {
     const one = verdict(parsed.host)
     record({ at: Date.now(), host: parsed.host, port: parsed.port, allowed: one.allowed, why: one.allowed ? '在白名单里' : one.why })
     if (!one.allowed) {
-      const body = `dsc 沙箱代理：${parsed.host} 被阻断 —— ${one.why}。要放行请在「设置 → 沙箱」把它加进出网白名单。`
+      const body = `dsc 沙箱代理：${parsed.host} 被阻断 —— ${one.why}。要放行请在「插件中心 → 文件与命令围栏」把它加进出网白名单。`
       socket.write(`HTTP/1.1 403 Forbidden\r\ncontent-type: text/plain; charset=utf-8\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`)
       socket.destroy()
       return

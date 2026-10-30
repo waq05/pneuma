@@ -25,7 +25,7 @@
  *
  * @module dsc/core/lsp/client
  */
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import {
   MAX_MESSAGE_BYTES,
@@ -364,24 +364,40 @@ class LspConnection {
     this.pushes.delete(uri)
   }
 
-  /** 先 SIGTERM，宽限期内没退就 SIGKILL。幂等。 */
-  terminate(): void {
-    if (this.exited) return
+  /**
+   * 结束语言服务器进程（含它拉起的孙进程）。
+   *
+   * Windows 上 `child.kill()` 只结束直接子进程：`npx` / `cmd.exe` / `pyright.cmd` 这一层退出后，
+   * 它拉起的 node 仍在跑，下次查询又起一条，慢慢堆成一群孤儿。`taskkill /T /F` 按进程树收，
+   * 这是 Windows 上唯一不依赖额外依赖的做法。
+   */
+  private killTree(force: boolean): void {
     const child = this.child
+    if (process.platform === 'win32' && child.pid !== undefined) {
+      // 控制台进程不认温和信号，这里直接 /F 整树收；协议层的 shutdown 已经在调用方走过一遍。
+      const result = spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      })
+      if (result.error === undefined && result.status === 0) return
+      // taskkill 不可用时退回单进程 kill（至少把直接子进程收掉）
+    }
     try {
       if (process.platform === 'win32') child.kill()
-      else child.kill('SIGTERM')
+      else child.kill(force ? 'SIGKILL' : 'SIGTERM')
     } catch {
       // 已经退了的进程再 kill 会抛，无害
     }
+  }
+
+  /** 先温和结束，宽限期内没退就强杀整棵树。幂等。 */
+  terminate(): void {
+    if (this.exited) return
+    this.killTree(false)
     if (this.exited) return
     this.killTimer = setTimeout(() => {
       if (this.exited) return
-      try {
-        child.kill('SIGKILL')
-      } catch {
-        // 同上
-      }
+      this.killTree(true)
     }, this.options.killGraceMs)
     this.killTimer.unref()
   }

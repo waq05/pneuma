@@ -720,7 +720,7 @@ function firstSentence(text: string): string {
         if (forced === '' && protectedWhy === null && command !== null && floor !== undefined) {
           const prefix = floor.whitelist(command)
           if (prefix !== null) {
-            autoLog('auto-allow', request, `命中审批灾难地板白名单「${prefix.join(' ')}」，免审批卡`)
+            autoLog('auto-allow', request, `命中危险命令硬拦截白名单「${prefix.join(' ')}」，免审批卡`)
             return 'allow-once'
           }
         }

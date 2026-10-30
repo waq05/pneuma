@@ -356,8 +356,15 @@ export const dockBrowserPlugin: Plugin.Object = {
      */
     const waitForDockPage = async (page: CdpCommandTarget, wanted: string, timeoutMs: number): Promise<string> => {
       const deadline = Date.now() + timeoutMs
-      const same = (left: string, right: string): boolean =>
-        left.replace(/\/+$/, '') === right.replace(/\/+$/, '') || left.startsWith(right)
+      const same = (left: string, right: string): boolean => {
+        const a = left.replace(/\/+$/, '')
+        const b = right.replace(/\/+$/, '')
+        if (a === b) return true
+        // 按 URL 边界比，不能只 startsWith：https://example.com.evil.com 会命中 example.com。
+        // 路径、查询串、锚点都算「到了这一页」。
+        if (b === '' || !a.startsWith(b)) return false
+        return /^[\\/?#]/.test(a.slice(b.length))
+      }
       let seen = ''
       for (;;) {
         const state = await actions.readDocumentState(page).catch(() => null)
@@ -722,6 +729,8 @@ export const dockBrowserPlugin: Plugin.Object = {
           if (scanned.sensitive.length > 0) {
             throw new Error(`表达式里用了敏感原语（${scanned.sensitive.join('、')}）。页面里这些本来也不该出现，换个写法`)
           }
+          // 表达式里出现的地址也要过一道：与 browser.ts 同口径，至少挡住云元数据与 file:/javascript: 这类。
+          for (const url of scanned.urls) assertHttpUrl(url)
           const outcome = await actions.evaluateInPage(page, expression)
           return `求值结果（视图 ${viewId}）：\n${wrapUntrusted('browser', outcome.text)}`
         }
@@ -828,7 +837,7 @@ export const dockBrowserPlugin: Plugin.Object = {
     const section: SettingsSectionSpec = {
       id: SECTION_ID,
       title: '侧栏浏览器',
-      subtitle: '让模型驱动桌面端侧栏那台浏览器（用户自己的持久会话，不是自管那台一次性 Chrome）',
+      subtitle: '驱动桌面端侧栏那台浏览器（你的持久登录会话，不是自管的一次性 Chrome）',
       order: 35,
       fields: (): SettingsField[] => [
         {
@@ -836,14 +845,14 @@ export const dockBrowserPlugin: Plugin.Object = {
           key: 'lookWithoutApproval',
           label: '看侧栏浏览器免审批',
           help:
-            '打开后 browser_dock_look（views / snapshot / screenshot / console / network / wait_for）以只读档注册、不再逐次弹审批卡。' +
-            '注意它看的是**你自己登录着的那台浏览器**（持久分区 persist:dsc-browser），页面上可能有你的登录态与隐私内容，按需打开。' +
-            '点击、输入、求值这些动手动作（browser_dock）仍每次要确认。',
+            '打开后「看一眼」的工具（列视图、快照、截图、看控制台与网络、等文本出现）不再逐次弹审批卡。' +
+            '注意它看的是**你自己登录着的那台浏览器**，页面上可能有登录态与隐私内容，按需打开。' +
+            '点击、输入、求值这些动手动作仍每次要确认。',
         },
         {
           type: 'info',
           label: '说明',
-          text: '这一档只决定「看」的工具是否注册（browser_dock_look）；动手工具 browser_dock 恒为每次审批。',
+          text: '这一档只决定「看」的工具是否注册；动手工具恒为每次审批。',
         },
       ],
       values: (): Record<string, SettingsValue> => ({ lookWithoutApproval: config.lookWithoutApproval }),

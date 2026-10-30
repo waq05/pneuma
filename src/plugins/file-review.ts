@@ -22,7 +22,7 @@
  *
  * @module dsc/plugins/file-review
  */
-import { readFileSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
 import { relative } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import {
@@ -36,12 +36,19 @@ import type { SettingsField, SettingsValues } from '../contract.js'
 import type { SettingsSectionSpec } from '../services/types.js'
 import { callFacts } from '../core/tools.js'
 import { clampIntIn as clampInt } from '../core/clamp.js'
+import { readBlockReason } from '../core/path-policy.js'
 
 /** 插件在条目树（`~/.dsc/plugins.json`）里的键；同时是设置分区 id。 */
 export const FILE_REVIEW_CONFIG_KEY = 'file-review'
 
 /** 走这套预览的工具：只认会落盘的那两个（bash 里的写没法在动手前知道结果，不在这一位管）。 */
 const REVIEWED_TOOLS: ReadonlySet<string> = new Set(['write', 'edit'])
+
+/** 预览最多读多大的旧文件：再大就不是「改哪几行」，而是整篇贴进对话。 */
+const MAX_PREVIEW_BYTES = 2 * 1024 * 1024
+
+/** 嗅探二进制的前若干字节：含 NUL 就按二进制处理，不读全文。 */
+const BINARY_SNIFF_BYTES = 8192
 
 /** 可调值的区间：设置页的 min/max 与这里的夹取共用一份，免得两处对不上。 */
 export const FILE_REVIEW_RANGES = {
@@ -155,6 +162,21 @@ function targetPathOf(input: ToolGuardInput): string | null {
   return callFacts(input.args, input.cwd).target ?? input.target ?? null
 }
 
+/** 前 8KB 里有没有 NUL：有就当二进制，不把整篇当文本 diff。 */
+function looksBinary(path: string): boolean {
+  let fd: number | null = null
+  try {
+    fd = openSync(path, 'r')
+    const buffer = Buffer.alloc(BINARY_SNIFF_BYTES)
+    const read = readSync(fd, buffer, 0, BINARY_SNIFF_BYTES, 0)
+    return buffer.subarray(0, read).includes(0)
+  } catch {
+    return false
+  } finally {
+    if (fd !== null) closeSync(fd)
+  }
+}
+
 /** 读旧内容。文件不存在 = 新建（读失败与不存在要分开，读失败得说一句）。 */
 function readBefore(path: string): { text: string; missing: boolean; problem: string | null } {
   try {
@@ -180,6 +202,46 @@ export function buildPreview(input: ToolGuardInput, config: FileReviewConfig): F
   if (!REVIEWED_TOOLS.has(input.toolName.toLowerCase())) return null
   const path = targetPathOf(input)
   if (path === null) return null
+
+  // 读禁先行：预览读的是「改之前的旧内容」，和 read 工具读的是同一份东西。
+  // 少了这一道，写 ~/.ssh/id_rsa、.env 时旧密钥会以删除行的形式贴进对话与会话日志，
+  // 等于借预览绕过 path-policy 的读禁（写硬拒并不覆盖 .ssh）。
+  if (existsSync(path)) {
+    const blocked = readBlockReason(path)
+    if (blocked !== null) {
+      return noteOnly(
+        input.toolName,
+        input.cwd,
+        path,
+        `旧内容按读禁规则不能读（${blocked}）；这里不显示改前内容，这次写入是否放行仍由审批卡决定`,
+      )
+    }
+    // 大文件与二进制不做逐行 diff：同步读整篇会卡住守卫链，二进制转成 utf8 只是一屏乱码。
+    // 两者都退成一句摘要，审批照常进行。stat 失败（刚好被删）就按「不预览」走，
+    // 绝不能让守卫抛错——守卫链抛错会被按拒处理，等于因为预览失败拦下一次写。
+    let size = 0
+    try {
+      size = statSync(path).size
+    } catch {
+      return noteOnly(input.toolName, input.cwd, path, '旧文件读数失败（可能刚被删除），这里不显示改前内容')
+    }
+    if (size > MAX_PREVIEW_BYTES) {
+      return noteOnly(
+        input.toolName,
+        input.cwd,
+        path,
+        `旧文件有 ${String(size)} 字节（超过 ${String(MAX_PREVIEW_BYTES)}），预览不读全文；这次写入是否放行仍由审批卡决定`,
+      )
+    }
+    if (looksBinary(path)) {
+      return noteOnly(
+        input.toolName,
+        input.cwd,
+        path,
+        '旧文件看起来是二进制（前 8KB 含 NUL），预览不做逐行 diff；这次写入是否放行仍由审批卡决定',
+      )
+    }
+  }
 
   const before = readBefore(path)
   let after = ''
@@ -275,7 +337,7 @@ export function renderReview(preview: FileReviewPreview, config: FileReviewConfi
   const counts = diff.ok
     ? `+${String(diff.added)} 行 / -${String(diff.removed)} 行`
     : '逐行 diff 未给出'
-  const head: string[] = [`【文件更改预览·尚未落盘】${verb} ${preview.displayPath}（${counts}）`]
+  const head: string[] = [`【改动前预览·尚未落盘】${verb} ${preview.displayPath}（${counts}）`]
 
   const body: string[] = []
   if (diff.identical) {
@@ -332,7 +394,7 @@ export const fileReviewPlugin: Plugin.Object = {
           // 没有资格因为自己算不动就把一次写操作拦下来，所以这里自己吞掉，只留一句提示。
           ctx.emit(
             'dsc/notice',
-            `文件更改预览算不出来（不影响这次调用）：${error instanceof Error ? error.message : String(error)}`,
+            `改动前预览算不出来（不影响这次调用）：${error instanceof Error ? error.message : String(error)}`,
             undefined,
             input.sessionPath,
           )
@@ -356,7 +418,7 @@ export const fileReviewPlugin: Plugin.Object = {
     const describe = (): string => {
       const cfg = config()
       const lines: string[] = []
-      lines.push(`文件更改预览：${cfg.enabled ? '开着' : '关着'}｜守卫链 order 25（模式 10、安全钩子 20、本插件 25、审批 30）`)
+      lines.push(`改动前预览：${cfg.enabled ? '开着' : '关着'}｜守卫链 order 25（模式 10、安全钩子 20、本插件 25、审批 30）`)
       lines.push(`一条预览最多显示 ${String(cfg.maxLines)} 行｜每个 hunk 前后留 ${String(cfg.contextLines)} 行上下文`)
       lines.push(`这次挂载以来发过 ${String(emitted)} 条预览（其中 ${String(truncated)} 条被截断）`)
       lines.push('配置文件：~/.dsc/plugins.json 的 file-review 条目（设置页也能改）')
@@ -366,15 +428,15 @@ export const fileReviewPlugin: Plugin.Object = {
     const offCommand = ctx.commands.register(
       // 不叫 /review：那是内置的「审查工作区未提交改动」命令，同名注册会把它顶掉
       // （registry 是 Map.set 覆盖语义，file-review 默认启用，曾把 /review 劫走）。
-      { name: 'file-review', args: '', description: '看文件更改预览的状态与最近几次预览' },
+      { name: 'file-review', args: '', description: '看改动前预览的状态与最近几次预览' },
       ({ ui }) => ui.notice(describe()),
     )
 
     // ── 设置分区 ──────────────────────────────────────────────────────────────
     const section: SettingsSectionSpec = {
       id: FILE_REVIEW_CONFIG_KEY,
-      title: '文件更改预览',
-      subtitle: 'edit / write 落盘前先把 unified diff 摆进对话流，改哪几行看得见',
+      title: '改动前预览',
+      subtitle: '写文件、改文件之前，先把改哪几行摆出来',
       // 排在大输出溢出（37）前面：这一档管的是「改之前看见」，比事后截断更靠前
       order: 36,
       fields(): SettingsField[] {
@@ -383,7 +445,7 @@ export const fileReviewPlugin: Plugin.Object = {
           {
             type: 'switch',
             key: 'enabled',
-            label: '启用文件更改预览',
+            label: '启用改动前预览',
             help: '关掉之后不再往对话流贴 diff，工具照常执行、审批照常问。',
           },
           {

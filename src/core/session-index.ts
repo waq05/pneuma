@@ -405,6 +405,8 @@ export class SessionIndex {
   private updatedAt = 0
   /** 正在跑的那次对齐；并发的 search 共用它，免得同一时刻重复扫目录。 */
   private inflight: Promise<number> | null = null
+  /** 旧实例已被换下：正在跑的 sync 在下一批检查处停下，不再写盘覆盖新实例。 */
+  private disposed = false
 
   constructor(options: SessionIndexOptions) {
     this.options = options
@@ -474,6 +476,7 @@ export class SessionIndex {
    * @returns 这一次真正重新解析了几个文件。
    */
   sync(onProgress?: (done: number, total: number) => void): Promise<number> {
+    if (this.disposed) return Promise.resolve(0)
     if (this.inflight !== null) return this.inflight
     const run = this.runSync(onProgress)
     const guarded = run.finally(() => {
@@ -543,6 +546,14 @@ export class SessionIndex {
     return hits.slice(0, Math.max(options.limit ?? this.options.defaultLimit, 0))
   }
 
+  /**
+   * 这个实例不再用了（换配置重建、插件停用）：让在跑的 sync 尽快停手。
+   * 不这么做的话，旧实例会在新实例落盘之后又把自己的整张表写回去，两边互相覆盖。
+   */
+  dispose(): void {
+    this.disposed = true
+  }
+
   /** 索引现状（设置页与自检读它）。 */
   stats(): SessionIndexStats {
     return { files: this.files.size, terms: this.postings.size, updatedAt: this.updatedAt }
@@ -550,6 +561,7 @@ export class SessionIndex {
 
   /** 增量对齐的主体。IO 失败一律吞在这一层，绝不让一个坏文件把整张索引带崩。 */
   private async runSync(onProgress?: (done: number, total: number) => void): Promise<number> {
+    if (this.disposed) return 0
     const targets = this.scanTargets()
     const present = new Set(targets.map((target) => target.path))
     for (const path of [...this.files.keys()]) {
@@ -565,9 +577,11 @@ export class SessionIndex {
       const slice = changed.slice(at, at + batch)
       for (const target of slice) this.parseFile(target)
       const done = at + slice.length
+      if (this.disposed) return done
       onProgress?.(done, changed.length)
       if (done < changed.length) await yieldToHost()
     }
+    if (this.disposed) return changed.length
     if (changed.length > 0) this.save()
     return changed.length
   }

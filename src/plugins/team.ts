@@ -44,7 +44,13 @@ export const teamPlugin: Plugin.Object = {
       const action = String(args.action ?? '')
       const board = readBoard(sessionId)
       const id = String(args.id ?? '')
-      const revision = Number(args.expected_revision ?? board.revision)
+      const revision = Number(args.expected_revision)
+      // 改状态必须带版本号：不传就默认「当前版本」等于把并发冲突检测关掉，
+      // 两个队友同时认领同一条时后到的会悄悄覆盖先到的。
+      const MUTATING_ACTIONS = new Set(['claim', 'release', 'complete', 'reopen', 'delete', 'set_dependencies'])
+      if (MUTATING_ACTIONS.has(action) && !Number.isInteger(revision)) {
+        return `改任务板状态要带 expected_revision（你上次 list/create 看到的版本号，当前第 ${board.revision} 版）。`
+      }
       const ownerDefault = caller
       try {
         switch (action) {
@@ -119,7 +125,7 @@ export const teamPlugin: Plugin.Object = {
           subject: { type: 'string', description: 'create 必填：任务标题' },
           description: { type: 'string', description: 'create：任务的详细说明（背景、验收口径）' },
           id: { type: 'string', description: '除 create/list 外必填：任务 id，例如 t3' },
-          expected_revision: { type: 'number', description: '你看到的任务板版本号，来自上一次 list/create' },
+          expected_revision: { type: 'number', description: '改状态（claim/release/complete/reopen/delete/set_dependencies）必填：你上次 list/create 看到的版本号' },
           owner: { type: 'string', description: 'claim 时的认领人；不填就是你自己' },
           claim_now: { type: 'boolean', description: 'create：true = 建完直接算你认领（状态直接进 in_progress）' },
           write_scopes: { type: 'array', items: { type: 'string' }, description: 'create：这个任务打算改的路径前缀，用于提醒别人别撞车' },
@@ -138,7 +144,7 @@ export const teamPlugin: Plugin.Object = {
         const ready = isReady(board, task)
         return `- ${task.id} [${task.status}${ready ? ' · 可开工' : ''}] ${task.subject}${task.owner === null ? '' : ` @${task.owner}`}`
       })
-      return `# 智能体团队（共享任务板）
+      return `# 共享任务板
 本会话有一块共享任务板，你可以用 team_task 工具登记要做的事、认领和结项；队友和你看到的是同一块板。
 ${lines.length === 0 ? '板上还没有任务。' : `板上的任务：\n${lines.join('\n')}`}
 
@@ -155,8 +161,8 @@ ${lines.length === 0 ? '板上还没有任务。' : `板上的任务：\n${lines
 
     const section: SettingsSectionSpec = {
       id: 'team',
-      title: '智能体团队',
-      subtitle: '启用团队协作、共享任务看板；成员列表跟随「子智能体」插件',
+      title: '共享任务板',
+      subtitle: '登记、认领、结项都在本会话的任务板上；成员名单由「子智能体」提供',
       fields,
       values: (): Record<string, SettingsValue> => ({}),
       action: (name): string => {

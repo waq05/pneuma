@@ -77,7 +77,7 @@ export const approvalFloorPlugin: Plugin.Object = {
       const { config, problems } = readConfig()
       const breaker = floor.breaker()
       const lines: string[] = []
-      lines.push('审批灾难地板：守卫链 order 5（先于模式 10、安全钩子 20、审批 30）')
+      lines.push('危险命令硬拦截：守卫链 order 5（先于模式 10、安全钩子 20、审批 30）')
       lines.push(`白名单（命中由审批层免卡放行，共 ${config.allowPrefixes.length} 条）：`)
       for (const pattern of config.allowPrefixes) lines.push(`  ${pattern.join(' ')}`)
       lines.push(`deny 黑名单（命中即拒，共 ${config.denyGlobs.length} 条）：`)
@@ -97,7 +97,7 @@ export const approvalFloorPlugin: Plugin.Object = {
     }
 
     const offCommand = ctx.commands.register(
-      { name: 'floor', args: '', description: '看审批灾难地板的规则、白名单与熔断状态' },
+      { name: 'floor', args: '', description: '看危险命令硬拦截的规则、白名单与熔断状态' },
       ({ ui }) => {
         ui.notice(describe())
       },
@@ -107,8 +107,8 @@ export const approvalFloorPlugin: Plugin.Object = {
 
     const section: SettingsSectionSpec = {
       id: FLOOR_CONFIG_KEY,
-      title: '审批灾难地板',
-      subtitle: '先于模式与审批的一道硬闸：灾难命令、deny 黑名单、可无人值守',
+      title: '危险命令硬拦截',
+      subtitle: '比权限模式和审批卡都早一步的硬拦截：危险命令、黑名单、无人值守',
       order: 33,
       fields(): SettingsField[] {
         const { config, problems } = readConfig()
@@ -129,15 +129,15 @@ export const approvalFloorPlugin: Plugin.Object = {
             label: '命令白名单（一行一条，逗号也行）',
             placeholder: 'pnpm run build',
             mono: true,
-            help: '命中就不弹审批卡。前缀按词元逐个匹配，`*` 只能放末尾。命令里有管道、分号、子 shell、变量、重定向、引号时一律不走白名单。',
+            help: '命中就不弹审批卡。按空格切词、从头逐词比，`*` 只能放末尾。命令里有管道、分号、子 shell、变量、重定向、引号时一律不走白名单。',
           },
           {
             type: 'text',
             key: 'denyGlobs',
-            label: 'deny 黑名单（一行一条，glob）',
+            label: '命令黑名单（一行一条，通配符）',
             placeholder: '*etc/passwd*',
             mono: true,
-            help: '出现在命令原文、命令词元或写目标路径里就拒，先于完全访问生效。`*` 配任意字符，`?` 配一个字符。',
+            help: '出现在命令的参数词或写目标路径里就拒，先于「完全访问」生效。`*` 配任意字符，`?` 配一个字符。',
           },
           {
             type: 'number',
@@ -249,7 +249,7 @@ export const approvalFloorPlugin: Plugin.Object = {
     // 配置坏掉时说一次：地板会一律拒，用户得知道去改哪儿。
     const problems = readConfig().problems
     if (problems.length > 0) {
-      ctx.emit('dsc/notice', `审批灾难地板配置有问题，现在一律拒：${problems.join('；')}（改 ${FLOOR_CONFIG_KEY} 的配置后立刻恢复）`)
+      ctx.emit('dsc/notice', `危险命令硬拦截配置有问题，现在一律拒：${problems.join('；')}（改 ${FLOOR_CONFIG_KEY} 的配置后立刻恢复）`)
     }
 
     // 注册一律返回清理函数，这里把四份合成一份。
