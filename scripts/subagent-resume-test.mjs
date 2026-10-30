@@ -158,7 +158,14 @@ check('叫停后仍在名册里（没被删掉）', stateOf(name) !== undefined,
 console.log('3. 传话接着用：它会再干一轮，并把结果报回来')
 const messageText = await team.message(name, '再确认一次包名')
 check('传话没被「没有叫…的队友」挡下', !messageText.includes('没有叫'), messageText)
-check('传话后状态回到 working（界面不再显示停着）', await until(() => stateOf(name) === 'working'), JSON.stringify(team.list()))
+// 这一条原来直接等 state === 'working'：假端点回得太快时，第二轮在断言执行之前就收工了，
+// 状态已经翻回 idle，于是长批跑到这里偶发失败（2026-10-30 实测两次：耗时 12.6 秒、rounds=2、
+// finishedAt 已写）。意图是「传话真的把它叫起来了，没停在 idle」——观测到 working 或第二轮
+// 已经跑完都算成立；后面三条（第二轮真跑了 / 干完回 idle / 汇报写回主会话）会继续钉细节。
+const woke = await until(
+  () => stateOf(name) === 'working' || (team.list().find((mate) => mate.name === name)?.rounds ?? 0) >= 2,
+)
+check('传话把它叫起来了（观测到 working，或第二轮已经跑完）', woke, JSON.stringify(team.list()))
 check('第二轮确实跑了（假端点收到两次队友请求）', await until(() => teammateCalls === 2), String(teammateCalls))
 check('第二轮干完回到 idle', await until(() => stateOf(name) === 'idle'), JSON.stringify(team.list()))
 check(
