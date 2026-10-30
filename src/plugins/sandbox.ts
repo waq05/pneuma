@@ -461,8 +461,8 @@ export const sandboxPlugin: Plugin.Object = {
           : undefined
         const handle: WindowsTokenRunnerHandle = createWindowsTokenRunner({
           mode: config.mode === 'read-only' ? 'read-only' : 'workspace-write',
+          // 这里只是「挂载时所在会话」的起点；之后每次调用按 run.cwd 现算可写根（常驻多会话）
           cwd: currentCwd(),
-          tmpDir: sandboxTmpDir(DSC_HOME, currentCwd(), currentSessionId()),
           extraRoots: config.extraWritableRoots,
           networkAccess: () => readConfig().config.networkAccess,
           networkAllowlist: () => readConfig().config.networkAllowlist,

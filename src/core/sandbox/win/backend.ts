@@ -30,6 +30,7 @@ import { grantAccountAccess, grantWrite, revokeWrite, type GrantOutcome } from '
 import { type BoundWin32, bindAll, tryLoadFfi } from './ffi.js'
 import { rootWriteSid, tempWriteSid } from './workspace-sid.js'
 import { createNetProxy, proxyEnvVars, type NetProxy } from '../net-proxy.js'
+import { sandboxTmpDir } from '../policy.js'
 import { errText as describeError } from '../../err-text.js'
 
 /** 执行器 id（宿主诊断与 `enforcement` 上报用这个键）。 */
@@ -84,10 +85,12 @@ export function probeWindowsToken(): { available: boolean; detail: string } {
 /** 执行器构造入参（路径都要求是 realpath 规范化后的绝对路径）。 */
 export interface WindowsTokenRunnerOptions {
   mode: 'read-only' | 'workspace-write'
-  /** 会话工作目录（常驻可写根）。 */
+  /**
+   * 挂载时所在会话的工作目录：先把它授权好，第一次调用就不必等 ACL。
+   *
+   * 它只是**起点**：常驻多会话时每次调用都按 `run.cwd` 现算可写根（2026-10-30 修）。
+   */
   cwd: string
-  /** 沙箱私有临时目录（会话结束回收授权）。 */
-  tmpDir: string
   /** 附加可写根。 */
   extraRoots?: readonly string[]
   /** 网络开关（每次都现取，改设置立即生效）。 */
@@ -130,6 +133,45 @@ interface AuthorizedRoot {
   sid: string
 }
 
+/** 一次调用要授权的目录与它的能力 SID。 */
+export interface SandboxWriteRoot {
+  path: string
+  sid: string
+  /** root = 工作区/附加根（常驻授权，不回收）；temp = 该工作区的私有临时目录（收尾回收）。 */
+  side: 'root' | 'temp'
+}
+
+/**
+ * 一次命令调用该授权的可写根（2026-10-30 修：以前按挂载时那个会话钉死）。
+ *
+ * 常驻多会话时，后台会话的工作目录与当前查看的会话往往不是同一个：钉死之后，
+ * 后台会话在自己的工作区里写东西会被 ACL 挡住（错误地当成「越界」），而当前会话的
+ * 工作区反倒被永久授权。现在按 `run.cwd` 现算：工作区一个 root SID、它的私有临时目录
+ * 一个 temp SID，附加可写根照配置带进来。
+ *
+ * @param cwd - 这次调用所在会话的工作目录（realpath 后的绝对路径）。
+ * @param extraRoots - 配置里的附加可写根。
+ */
+export function writeRootsFor(cwd: string, extraRoots: readonly string[] = []): SandboxWriteRoot[] {
+  const trim = (path: string): string => path.replace(/[\\/]+$/, '')
+  const list: SandboxWriteRoot[] = []
+  /** 同一个目录只出现一次：尾巴分隔符不同、或附加根与工作区重合，都算同一个。 */
+  const add = (path: string, side: 'root' | 'temp'): void => {
+    const key = path.toLowerCase()
+    if (list.some((item) => item.path.toLowerCase() === key)) return
+    list.push({ path, sid: side === 'root' ? rootWriteSid(path) : tempWriteSid(path), side })
+  }
+  const root = trim(cwd)
+  add(root, 'root')
+  add(sandboxTmpDir(DSC_HOME, root), 'temp')
+  for (const extra of extraRoots) {
+    const trimmed = trim(extra.trim())
+    if (trimmed === '') continue
+    add(trimmed, 'root')
+  }
+  return list
+}
+
 /**
  * 建一个受限令牌执行器。
  *
@@ -140,18 +182,23 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
   // 目录清单：工作目录、私有临时目录、附加可写根（工作区与附加根用 rootWriteSid，
   // temp 用 tempWriteSid，两种派生前缀不同，永不撞号）
   const roots: AuthorizedRoot[] = []
-  const push = (path: string, sid: string): void => {
+  /** 已经授权过的临时目录（收尾时逐个回收，见 dispose）。 */
+  const tempPaths = new Set<string>()
+  const push = (path: string, sid: string, temp: boolean): void => {
     const key = path.replace(/[\\/]+$/, '').toLowerCase()
     if (roots.some((root) => root.path.replace(/[\\/]+$/, '').toLowerCase() === key)) return
     roots.push({ path, sid })
+    if (temp) tempPaths.add(path)
   }
-  if (options.mode === 'workspace-write') {
-    push(options.cwd, rootWriteSid(options.cwd))
-    push(options.tmpDir, tempWriteSid(options.tmpDir))
-    for (const extra of options.extraRoots ?? []) {
-      if (extra.trim() !== '') push(extra, rootWriteSid(extra))
-    }
+  /**
+   * 把一次调用的可写根补进清单（常驻多会话：每个会话的工作目录各授权一次）。
+   * 已经在清单里的路径跳过，所以每次调用都调它也只有第一次付 ACL 的成本。
+   */
+  const scopeOf = (cwd: string): void => {
+    if (options.mode !== 'workspace-write') return
+    for (const root of writeRootsFor(cwd, options.extraRoots ?? [])) push(root.path, root.sid, root.side === 'temp')
   }
+  scopeOf(options.cwd)
   // read-only 刻意不做任何 ACL 授权：该档令牌不含能力 SID，写本来就全拒；
   // 授权只会「永久改用户工作区的 ACL + 强制标签」，是纯副作用零收益，违背最小惊扰
 
@@ -163,21 +210,28 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
   /** 本地白名单代理（账号分支且开网时惰性起，dispose 时收）。 */
   let proxy: NetProxy | null = null
 
-  /** 惰性物化授权：true = 可以换执行体，false = 已降级（此后 plan 一律返回 null）。 */
+  /**
+   * 惰性物化授权：true = 可以换执行体，false = 已降级（此后 plan 一律返回 null）。
+   *
+   * 不能「授权过一次就短路」：清单会随着不同会话的调用继续增长（见 scopeOf），
+   * 新补进来的根必须在这一次调用之前授权好。已授权的根在 grants 里有记录，重复调用只花几次查找。
+   */
   const ensureAuthorized = (): boolean => {
     if (degraded) return false
-    if (authorized) return true
     if (roots.length === 0) {
       // read-only：没有可授权目录，连 FFI 都不必加载（dispose 靠 bound===null 短路）
       authorized = true
       return true
     }
+    if (authorized && roots.every((root) => grants.has(root.path))) return true
     try {
-      const loaded = tryLoadFfi()
-      if (!loaded.ok) throw new Error(`Win32 FFI 底座不可用：${loaded.why}`)
-      const boundNow = bindAll(loaded.ffi)
-      bound = boundNow
-      mkdirSync(LOCK_DIR, { recursive: true })
+      if (bound === null) {
+        const loaded = tryLoadFfi()
+        if (!loaded.ok) throw new Error(`Win32 FFI 底座不可用：${loaded.why}`)
+        bound = bindAll(loaded.ffi)
+        mkdirSync(LOCK_DIR, { recursive: true })
+      }
+      const boundNow = bound
       for (const root of roots) {
         if (grants.has(root.path)) continue
         try {
@@ -228,6 +282,9 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
     id: WINDOWS_TOKEN_RUNNER_ID,
     order: RUNNER_ORDER,
     async plan(run, current): Promise<SpawnPlan | null> {
+      // 先按这次调用所在会话的工作目录补齐可写根（常驻多会话：每个工作区各授权一次），
+      // 再物化授权——顺序反了就会用「上一个会话的工作区」去跑这一条命令。
+      scopeOf(run.cwd)
       if (!ensureAuthorized()) return null
       // 已经是本后端换过的计划（别人套第二次）：不套两层
       if (current.file === process.execPath && current.args[0] === entry) return null
@@ -244,7 +301,8 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
       const args = [
         entry,
         '--mode', options.mode,
-        '--temp', options.tmpDir,
+        // 临时目录按这次调用的工作区取（与 roots 里的 temp 同源）
+        '--temp', sandboxTmpDir(DSC_HOME, run.cwd.replace(/[\\/]+$/, '')),
         ...roots.flatMap((root) => ['--root', `${root.sid}=${root.path}`]),
         ...(options.account === undefined ? [] : ['--account', options.account.name, '--dsc-home', options.account.dscHome]),
         '--',
@@ -267,7 +325,8 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
       // 没有任何真实账号持有它）
       if (bound === null) return
       try {
-        revokeWrite(bound, options.tmpDir, tempWriteSid(options.tmpDir), LOCK_DIR)
+        // 每个工作区一个临时目录，逐个回收
+        for (const temp of tempPaths) revokeWrite(bound, temp, tempWriteSid(temp), LOCK_DIR)
       } catch (error) {
         options.onDetail?.(`回收临时目录授权失败（不影响本次结果）：${describeError(error)}`)
       }
