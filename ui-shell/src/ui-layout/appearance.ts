@@ -43,9 +43,14 @@ export interface Appearance {
   density: UiDensity
 }
 
-/** 出厂默认：深色、标准字号、标准密度。真源是 `core/prefs.ts` 的 readPrefs 默认值。 */
+/**
+ * 出厂默认：claude（暖米白）、标准字号、标准密度。
+ *
+ * 真源是 `core/prefs.ts` 的 readPrefs 默认值；这里跟着一起改，是为了宿主还没回读、
+ * 或 localStorage 镜像为空的那一帧也落在同一个主题上（0.7.2 起默认由 dark 改成 claude）。
+ */
 export const DEFAULT_APPEARANCE: Appearance = {
-  themeMode: 'dark',
+  themeMode: 'claude',
   fontSize: FONT_SCALE_DEFAULT,
   density: 'standard',
 }
@@ -71,9 +76,14 @@ function normalizeDensity(value: unknown): UiDensity {
   return value === 'compact' || value === 'roomy' ? value : 'standard'
 }
 
-/** 主题只有三档；认不出的值回落 dark。 */
+/** 主题四档（与 `src/core/prefs.ts` 的 `THEME_MODES` 同一份口径）。 */
+const THEME_MODES: readonly ThemeMode[] = ['dark', 'light', 'claude', 'system']
+
+/** 主题只有四档；认不出的值回落 claude（与出厂默认一致）。 */
 function normalizeTheme(value: unknown): ThemeMode {
-  return value === 'light' || value === 'claude' || value === 'system' ? value : 'dark'
+  return typeof value === 'string' && (THEME_MODES as readonly string[]).includes(value)
+    ? (value as ThemeMode)
+    : 'claude'
 }
 
 /**

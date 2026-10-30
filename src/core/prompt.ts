@@ -23,6 +23,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { userHome } from './path-policy.js'
+import { readShellChoice, shellLabel } from './terminal-env.js'
 import { wrapUntrusted } from './untrusted.js'
 
 /** 一段可装配的提示词贡献（插件与内核共用同一套顺序刻度）。 */
@@ -274,6 +275,19 @@ function gitText(cwd: string, args: string[]): string | null {
 }
 
 /**
+ * 平台那一行：带上**这台机器实际执行命令的终端**。
+ *
+ * 为什么要写终端名（2026-10-30）：默认终端可以在设置里改成 Git Bash / WSL，
+ * 模型据此决定命令怎么写（`ls -la` 还是 `Get-ChildItem`）。只写「Windows」会让它
+ * 按 PowerShell 写，而实际执行的是 bash。
+ */
+function platformLine(): string {
+  const shell = shellLabel(readShellChoice())
+  if (process.platform === 'win32') return `Windows（bash 工具跑的是 ${shell}）`
+  return `${process.platform}（bash 工具跑的是 ${shell}）`
+}
+
+/**
  * 环境事实全文（日期、平台、工作目录、git 分支）——由 prompt 插件的 env-facts
  * 投影附在每次请求末尾（user 快照消息），不再进系统提示词（2026-10-03）：
  * 它每天都变，放在提示词里会把服务端前缀缓存整段打掉。
@@ -300,7 +314,7 @@ export function environmentText(cwd: string): string {
   const lines = [
     '环境事实：',
     `- 今天：${date}`,
-    `- 平台：${process.platform === 'win32' ? 'Windows（bash 工具跑的是 PowerShell）' : process.platform}`,
+    `- 平台：${platformLine()}`,
     `- 工作目录：${cwd}`,
     ...(branch === null
       ? []
@@ -333,7 +347,7 @@ export function subagentEnvironmentText(cwd: string, model: string): string {
   return [
     '环境事实：',
     `- 今天：${date}`,
-    `- 平台：${process.platform === 'win32' ? 'Windows（bash 工具跑的是 PowerShell）' : process.platform}`,
+    `- 平台：${platformLine()}`,
     `- 工作目录：${cwd}`,
     `- 你用的模型：${model}`,
   ].join('\n')

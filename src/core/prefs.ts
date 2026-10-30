@@ -291,7 +291,9 @@ export function readPrefs(): DscPrefs {
       archivedFilter: 'hide',
       workspaceOrder: [],
       workspaceAliases: {},
-      themeMode: 'dark',
+      // 出厂主题是 claude（暖米白）。2026-10-30 从 dark 改过来：这是产品默认口径，
+      // 不是个人偏好——已经存过 settings.json 的用户不受影响（读档优先）。
+      themeMode: 'claude',
       fontSize: FONT_SCALE_DEFAULT,
       buttonScale: BUTTON_SCALE_DEFAULT,
       density: 'standard',

@@ -179,7 +179,10 @@ console.log('[7] 档门：Claude 档在四处开关与两份令牌里都接上')
   const electronMain = flat(read('/desktop/electron/main/index.ts'))
   check('内核类型里有 claude', contract.includes("export type ThemeMode = 'dark' | 'light' | 'claude' | 'system'"))
   check('偏好白名单放行 claude（不然存了也会被读回 dark）', prefs.includes("['dark', 'light', 'claude', 'system']"))
-  check('壳的归一化认 claude', shellAppearance.includes("value === 'claude'"))
+  // 2026-10-30 出厂默认从 dark 改成 claude：归一化改成四档白名单 + 回落 claude，
+  // 所以这里断的是「白名单里含 claude」与「兜底是 claude」两件事，不再依赖某一句字面量。
+  check('壳的归一化认 claude', shellAppearance.includes("['dark', 'light', 'claude', 'system']"))
+  check('壳的归一化兜底是 claude（与出厂默认一致）', /:\s*'claude'/.test(shellAppearance))
   check('设置里四个磁贴（浅色 / Claude / 深色 / 跟随系统）', settingsUi.includes("{ value: 'claude', label: 'Claude' }"))
   check('原生弹层把 claude 报成 light（nativeTheme 只认深浅）', electronMain.includes("mode === 'claude' ? 'light' : mode"))
   const shellTokens = flat(read('/ui-shell/src/legacy/tokens.css'))

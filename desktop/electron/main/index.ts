@@ -100,7 +100,9 @@ function readUiTheme(): UiTheme {
   } catch {
     // 首次运行没有 settings.json，或文件坏了：按系统深浅起步即可
   }
-  return nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
+  // 没配过 / 文件坏了：跟宿主的出厂默认走（claude 暖米白），不再按系统深浅起步——
+  // 出厂默认既然定了 claude，第一帧就该是 claude，否则未选过主题的用户每次开窗都先闪一下深色。
+  return 'claude'
 }
 
 /**

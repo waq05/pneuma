@@ -31,6 +31,7 @@ import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.
 import type { SettingsField, SettingsValue, SettingsValues } from '../contract.js'
 import type { SettingsSectionSpec } from '../services/types.js'
 import { dscPath } from '../core/path-policy.js'
+import { readShellChoice, shellFlavor } from '../core/terminal-env.js'
 
 /** 配置与设置提示里要写清的来源文件（手改它同样生效）。 */
 const PLUGINS_FILE = dscPath('plugins.json')
@@ -56,6 +57,9 @@ export const approvalFloorPlugin: Plugin.Object = {
     const floor = createApprovalFloor({
       readConfig,
       rules: () => activeRules(),
+      // 结构扫描按**实际执行命令的终端**判（2026-10-30 默认终端可切换）：
+      // 选了 Git Bash / WSL 就按 POSIX 规则看引号与转义，不能继续套 PowerShell 那套。
+      shell: () => shellFlavor(readShellChoice()),
     })
     const offGuard = ctx.guards.register(floor.guard)
 

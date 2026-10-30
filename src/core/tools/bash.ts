@@ -14,6 +14,7 @@ import type { ToolEntry } from '../tools.js'
 import { classifyCommand } from '../command-policy.js'
 import { redact, scrubChildEnv } from '../secrets.js'
 import { wrapUntrusted } from '../untrusted.js'
+import { readShellChoice, resolveShellExecutable, shellLabel, wslDistroName, type ShellChoice } from '../terminal-env.js'
 import { finishCommand, planCommand, type SpawnPlan } from './command-runner.js'
 import { sandboxPermissionProperties } from './sandbox-args.js'
 
@@ -305,6 +306,54 @@ function decodeShellOutput(buffer: Buffer): string {
 }
 
 /**
+ * 把「用户选的终端」折成一次 spawn 的 file + args（2026-10-30 起的默认终端设置）。
+ *
+ * 四档的差别只在三处：可执行文件、怎么把命令交给它、以及命令里能写什么语法。
+ * 其余（环境脱敏、超时、输出封顶、遮红、spill）四条路完全一致。
+ *
+ * - PowerShell 家族（powershell / pwsh）：`-NoProfile -Command`，前面钉 UTF-8 输出编码，
+ *   末尾补 exit 把最后一条原生命令的退出码带出来（`-Command` 自己只回 0/1）。
+ * - Git Bash：`--noprofile --norc -c`——不读 profile，起得快也不会被用户的 rc 脚本改动行为。
+ * - WSL：`--cd <Windows 路径>` 让命令落在对应工作区（WSL 会把盘符翻成 `/mnt/x`），
+ *   再交给发行版里的 `bash -lc`；`-l` 是为了让 PATH 带上发行版里配好的工具链。
+ * - sh：POSIX 上的出厂值，行为与以前一模一样。
+ *
+ * @param choice - 设置里的默认终端
+ * @param command - 模型给的命令原文
+ * @param cwd - 工作目录（WSL 要用它做 `--cd`）
+ * @param env - 已脱敏的子进程环境
+ */
+export function shellPlan(
+  choice: ShellChoice,
+  command: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): SpawnPlan {
+  const powershellArgs = [
+    '-NoProfile',
+    '-Command',
+    `${PS_UTF8_PROLOGUE}\n${command}\nif ($LASTEXITCODE -ne $null) { exit $LASTEXITCODE }`,
+  ]
+  if (choice === 'gitbash') return { file: resolveShellExecutable('gitbash'), args: ['--noprofile', '--norc', '-c', command], env, cwd }
+  if (choice === 'wsl') {
+    // `-d` 钉住探测时挑的那只发行版：默认发行版在装了 Docker Desktop 的机器上常常是
+    // `docker-desktop`（里面没有 bash），不钉就会全挂（2026-10-30 实测）。
+    const distro = wslDistroName()
+    const target = distro === '' ? [] : ['-d', distro]
+    return {
+      file: resolveShellExecutable('wsl'),
+      args: [...target, '--cd', cwd, '-e', 'bash', '-lc', command],
+      env,
+      cwd,
+    }
+  }
+  if (choice === 'sh') return { file: 'sh', args: ['-c', command], env, cwd }
+  if (choice === 'pwsh') return { file: resolveShellExecutable('pwsh'), args: powershellArgs, env, cwd }
+  if (isWin) return { file: resolveShellExecutable('powershell'), args: powershellArgs, env, cwd }
+  return { file: 'sh', args: ['-c', command], env, cwd }
+}
+
+/**
  * 执行一条命令：先问执行器缝拿最终执行计划，再 spawn，最后让改写过的那几位收尾。
  * 没有沙箱插件注册执行器时，计划就是上面的默认那份，行为与以前完全一致。
  * T15：`background` 旁路给后台作业用——同一套计划缝与环境脱敏，回调收增量与退出。
@@ -318,22 +367,7 @@ async function runShell(
   background?: ShellRunOptions,
 ): Promise<string> {
   const { env } = scrubChildEnv(process.env)
-  const base: SpawnPlan = isWin
-    ? {
-        file: 'powershell.exe',
-        // T15 探针抓出来的老毛病：PowerShell -Command 不透传原生命令的退出码
-        //（powershell.exe 自己只回 0/1）。命令末尾补一句显式 exit，把最后一条
-        // 原生命令的退出码带出来；纯 cmdlet 命令没有 $LASTEXITCODE，行为不变。
-        // 用换行而不是分号追加：command 以注释结尾时语句不会被注释吞掉。
-        args: [
-          '-NoProfile',
-          '-Command',
-          `${PS_UTF8_PROLOGUE}\n${command}\nif ($LASTEXITCODE -ne $null) { exit $LASTEXITCODE }`,
-        ],
-        env,
-        cwd,
-      }
-    : { file: 'sh', args: ['-c', command], env, cwd }
+  const base: SpawnPlan = shellPlan(readShellChoice(), command, cwd, env)
   const run = { command, cwd, timeoutMs, signal }
   const { plan, changed } = await planCommand(run, base)
   try {
@@ -361,23 +395,50 @@ export function runShellBackground(
 }
 
 /**
- * T20：起一个长命交互 shell（终端会话的进程原语）。shell 与参数都是固定字面量，
- * 不拼任何外部输入；环境与前台命令同一份脱敏。没有 tty（管道模式）——全屏程序
- * 跑不了，这是终端降级版的已知边界。进程原语不出本文件。
+ * T20：起一个长命交互 shell（终端会话的进程原语）。可执行文件取自设置里的默认终端，
+ * 参数都是固定字面量，不拼任何外部输入；环境与前台命令同一份脱敏。
+ * 没有 tty（管道模式）——全屏程序跑不了，这是终端降级版的已知边界。进程原语不出本文件。
  */
 export function spawnTerminalShell(cwd: string): ChildProcess {
   const { env } = scrubChildEnv(process.env)
+  const choice = readShellChoice()
   const options: SpawnOptions = {
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
     env,
   }
   if (cwd !== '') options.cwd = cwd
+  if (choice === 'gitbash') {
+    return spawn(resolveShellExecutable('gitbash'), ['--noprofile', '--norc'], options)
+  }
+  if (choice === 'wsl') {
+    // 交互式 WSL：`--cd` 落在会话目录；不传 `-i`，管道模式下 bash 照样从 stdin 读命令，
+    // 加了只会多一串提示符噪声。
+    return spawn(resolveShellExecutable('wsl'), cwd === '' ? ['--', 'bash', '-l'] : ['--cd', cwd, '--', 'bash', '-l'], options)
+  }
+  if (choice === 'sh') {
+    options.detached = true
+    return spawn('bash', ['--noprofile', '--norc'], options)
+  }
+  if (choice === 'pwsh') {
+    return spawn(resolveShellExecutable('pwsh'), ['-NoProfile', '-Command', '-'], options)
+  }
   if (isWin) {
-    return spawn('powershell.exe', ['-NoProfile', '-Command', '-'], options)
+    return spawn(resolveShellExecutable('powershell'), ['-NoProfile', '-Command', '-'], options)
   }
   options.detached = true
   return spawn('bash', ['--noprofile', '--norc'], options)
+}
+
+/**
+ * 工具说明里那句「执行什么命令」的宾语：模型看这句话决定怎么写命令，
+ * 所以必须与设置里选中的终端一致（选了 Git Bash 还写「执行 PowerShell 命令」= 骗模型）。
+ */
+function shellNoun(choice: ShellChoice): string {
+  if (choice === 'powershell' || choice === 'pwsh' || (choice === 'auto' && isWin)) return 'PowerShell'
+  if (choice === 'gitbash') return 'Git Bash'
+  if (choice === 'wsl') return 'WSL 里的 bash'
+  return 'shell'
 }
 
 /**
@@ -390,18 +451,20 @@ export function createBashTool(
   budgets: BashBudgets = BASH_DEFAULT_BUDGETS,
   background?: { launch(command: string, cwd: string, owner?: string): string },
 ): ToolEntry {
+  // 说明里的终端名在**注册时**定（默认终端改了会重注册，见 tools-default 的 syncTools）。
+  const choice = readShellChoice()
+  const noun = shellNoun(choice)
+  const powershell = noun === 'PowerShell'
   return {
     name: 'bash',
-    description: isWin
-      ? '执行 PowerShell 命令（工作目录 = 会话目录）。只留给「非 shell 不可」的事：构建、安装、git、跑测试、查进程。' +
-        '不要用 cat/head/tail 读文件（用 read），不要用 grep/rg/Get-ChildItem -Recurse 找代码（用 grep/glob），' +
-        '不要用 echo 重定向或 heredoc 造文件（用 write），不要用 sed/awk 改文件（用 edit）。' +
-        '一条命令里有 | ; && 时会被切成几段分别判定，任何一段危险整条就要问用户；带重定向或变量赋值的段不给走已授权规则。' +
-        '耗时命令设 timeoutMs；构建/测试/起服务这类更长的活传 run_in_background 转后台，立即返回 job id。'
-      : '执行 shell 命令（工作目录 = 会话目录）。只留给构建、安装、git、跑测试这类必须用 shell 的事；' +
-        '读文件用 read，找代码用 grep/glob，改文件用 edit/write。' +
-        '一条命令里有 | ; && 时会被切成几段分别判定，任何一段危险整条就要问用户。耗时命令设 timeoutMs；' +
-        '更长的活传 run_in_background 转后台，立即返回 job id。',
+    description:
+      `执行 ${noun} 命令（工作目录 = 会话目录）。只留给「非 shell 不可」的事：构建、安装、git、跑测试、查进程。` +
+      '不要用 cat/head/tail 读文件（用 read），不要用 grep/rg' +
+      (powershell ? '/Get-ChildItem -Recurse' : ' -r') +
+      ' 找代码（用 grep/glob），' +
+      '不要用 echo 重定向或 heredoc 造文件（用 write），不要用 sed/awk 改文件（用 edit）。' +
+      '一条命令里有 | ; && 时会被切成几段分别判定，任何一段危险整条就要问用户；带重定向或变量赋值的段不给走已授权规则。' +
+      '耗时命令设 timeoutMs；构建/测试/起服务这类更长的活传 run_in_background 转后台，立即返回 job id。',
     parameters: {
       type: 'object',
       properties: {
@@ -1021,16 +1084,14 @@ export class TerminalTable {
  * 没挂 PTY（降级版）：全屏程序跑不了；也没有中途打断——长命令等完或 close 重开。
  */
 export function createTerminalTool(table: TerminalTable): ToolEntry {
+  const noun = shellNoun(readShellChoice())
   return {
     name: 'terminal',
-    description: isWin
-      ? '开一个持久的交互 PowerShell 会话（没有 tty：vim/htop 这类全屏程序跑不了）。' +
-        '适合「先激活环境、再连续跑几条命令」的场景——环境在会话里留着，一次不用重设。' +
-        'open 开会话，send 写命令（自带换行才执行），read 读输出（增量），close 收掉，list 清点。' +
-        '没有中途打断：跑歪了的命令等它结束，或 close 收掉会话重开。'
-      : '开一个持久的交互 bash 会话（没有 tty：vim/htop 这类全屏程序跑不了）。' +
-        '适合「先激活环境、再连续跑几条命令」的场景。open 开会话，send 写命令（自带换行才执行），' +
-        'read 读输出（增量），close 收掉，list 清点。没有中途打断：跑歪了的命令等它结束，或 close 收掉会话重开。',
+    description:
+      `开一个持久的交互 ${noun} 会话（没有 tty：vim/htop 这类全屏程序跑不了）。` +
+      '适合「先激活环境、再连续跑几条命令」的场景——环境在会话里留着，一次不用重设。' +
+      'open 开会话，send 写命令（自带换行才执行），read 读输出（增量），close 收掉，list 清点。' +
+      '没有中途打断：跑歪了的命令等它结束，或 close 收掉会话重开。',
     parameters: {
       type: 'object',
       properties: {

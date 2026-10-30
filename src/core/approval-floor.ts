@@ -25,6 +25,7 @@ import { audit } from './audit.js'
 import { builtinDangerHit, classifyCommand, splitSegments, type PrefixRule } from './command-policy.js'
 import { isInsideCwd } from './path-policy.js'
 import { argsSummary } from './tools.js'
+import type { ShellFlavor } from './terminal-env.js'
 import type { ToolGuard, ToolGuardInput, ToolGuardVerdict } from './tool-guards.js'
 
 /** 配置键：插件条目树里的 file，同时是设置分区 id。 */
@@ -326,15 +327,17 @@ interface StructureReport {
 const MAX_SUBSTITUTION_DEPTH = 6
 
 /**
- * 这台机器上 bash 工具默认用的 shell。
+ * 这台机器上 bash 工具默认用的 shell 家族（调用方没传 `options.shell` 时的兜底）。
  *
  * 为什么结构扫描要分 shell（2026-10-30 报障）：Windows 上 powershell.exe 是默认执行器，
  * 它的转义符是反引号，不是反斜杠。把 POSIX 的「`\` 转义」套到 PowerShell 上，
  * 一条 `Replace((Get-Location).Path + "\","")` 里的 `\"` 会把右引号当成转义吃掉，
  * 于是整条合法命令被判「引号没闭合」——那次会话里 5 条被误伤的就是它。
+ *
+ * 2026-10-30 起默认终端可以在设置里改成 Git Bash / WSL：那种情况下实际执行器是 POSIX
+ * bash，扫描必须跟着换成 POSIX 规则（由 `plugins/approval-floor.ts` 经 `options.shell`
+ * 传入，见 `core/terminal-env.ts` 的 `shellFlavor`）。
  */
-type ShellFlavor = 'posix' | 'powershell'
-
 const DEFAULT_SHELL: ShellFlavor = process.platform === 'win32' ? 'powershell' : 'posix'
 
 /**
@@ -691,7 +694,12 @@ function whitelistHit(command: string, config: FloorConfig): string[] | null {
 }
 
 /** 逐层判定一次调用。每一层的理由写在分支旁边。 */
-function evaluate(input: ToolGuardInput, config: FloorConfig, rules: readonly PrefixRule[]): FloorOutcome {
+function evaluate(
+  input: ToolGuardInput,
+  config: FloorConfig,
+  rules: readonly PrefixRule[],
+  shell: ShellFlavor = DEFAULT_SHELL,
+): FloorOutcome {
   const command = input.command?.trim() ?? ''
   const target = input.target
 
@@ -712,7 +720,7 @@ function evaluate(input: ToolGuardInput, config: FloorConfig, rules: readonly Pr
   if (command.length > config.maxCommandLength) {
     return { action: 'deny', layer: 'opaque', reason: `命令有 ${command.length} 个字符，超过上限 ${config.maxCommandLength}，看不清要跑什么` }
   }
-  const structure = inspectStructure(command)
+  const structure = inspectStructure(command, shell)
   if (structure.fatal !== null) return { action: 'deny', layer: 'opaque', reason: structure.fatal }
   const opaque = opaqueShellReason(command)
   if (opaque !== null) return { action: 'deny', layer: 'opaque', reason: opaque }
@@ -727,7 +735,7 @@ function evaluate(input: ToolGuardInput, config: FloorConfig, rules: readonly Pr
 
   // 命令替换与反引号里的片段递归再判一次：`echo $(rm -rf /)` 外层看不出灾难，内层看得出。
   for (const fragment of structure.substitutions) {
-    const inner = innerDenyReason(fragment, config, rules, 1)
+    const inner = innerDenyReason(fragment, config, rules, 1, shell)
     if (inner !== null) return { action: 'deny', layer: 'disaster', reason: `命令替换里的片段被判为灾难性动作：${inner}` }
   }
   // 内层干净也不放行：外层的实际效果是两段拼出来的，静态判不出，只能拒（fail-closed）。
@@ -781,12 +789,18 @@ function evaluate(input: ToolGuardInput, config: FloorConfig, rules: readonly Pr
 }
 
 /** 命令替换片段里的灾难性判定：只看「判不了」与「灾难」两类，理由里不带前缀。 */
-function innerDenyReason(command: string, config: FloorConfig, rules: readonly PrefixRule[], depth: number): string | null {
+function innerDenyReason(
+  command: string,
+  config: FloorConfig,
+  rules: readonly PrefixRule[],
+  depth: number,
+  shell: ShellFlavor = DEFAULT_SHELL,
+): string | null {
   const text = command.trim()
   if (text === '') return null
   if (depth > MAX_SUBSTITUTION_DEPTH) return `命令替换嵌套超过 ${MAX_SUBSTITUTION_DEPTH} 层`
   if (text.length > config.maxCommandLength) return `命令替换里的片段太长（${text.length} 个字符）`
-  const structure = inspectStructure(text)
+  const structure = inspectStructure(text, shell)
   if (structure.fatal !== null) return structure.fatal
   const opaque = opaqueShellReason(text)
   if (opaque !== null) return opaque
@@ -795,7 +809,7 @@ function innerDenyReason(command: string, config: FloorConfig, rules: readonly P
   const doom = doomReason(text)
   if (doom !== null) return doom
   for (const fragment of structure.substitutions) {
-    const inner = innerDenyReason(fragment, config, rules, depth + 1)
+    const inner = innerDenyReason(fragment, config, rules, depth + 1, shell)
     if (inner !== null) return inner
   }
   if (structure.substitutions.length > 0) return '片段里还套着命令替换，拼不出实际效果'
@@ -827,6 +841,14 @@ export interface ApprovalFloorOptions {
   rules: () => readonly PrefixRule[]
   /** 当前时间（自检可以把时钟说快一点）。 */
   now?: () => number
+  /**
+   * 这台机器上实际执行命令的 shell 家族（2026-10-30 默认终端可切换之后由插件传入）。
+   *
+   * 为什么必须跟着走：结构扫描按 PowerShell / POSIX 两套引号与转义规则判闭合，
+   * 用户把默认终端切成 Git Bash 之后仍按 PowerShell 判，`\"` 这类写法会被误伤或漏判。
+   * 不给就按平台默认（Windows 认 PowerShell，其余认 POSIX）。
+   */
+  shell?: () => ShellFlavor
 }
 
 /** 灾难地板：一位守卫 + 它的熔断状态。 */
@@ -917,7 +939,7 @@ export function createApprovalFloor(options: ApprovalFloorOptions): ApprovalFloo
           false,
         )
       }
-      return settle(evaluate(input, config, options.rules()), input, config, true)
+      return settle(evaluate(input, config, options.rules(), options.shell?.() ?? DEFAULT_SHELL), input, config, true)
     },
   }
 

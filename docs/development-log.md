@@ -11358,3 +11358,63 @@ dsh 的口径（`packages/core/agent-loop/README.md` 的 KV Cache 一节）写�
 
 **没做到的**：右栏拖宽的修复只做过静态断言与公式核对，没有跑真机拖拽截图——
 现有 `chat-shots.ps1` 只能截「进行中」的回合，拖拽要另写一套操作脚本，这一轮没做。
+
+## 四十、出厂主题改成 claude、默认终端可选、三家 runtime 对照（2026-10-30）
+
+这一批不是报障驱动，是产品口径与能力补齐，三件事各有一个"为什么现在做"。
+
+**1. 出厂主题从深色改成 Claude（暖米白）。**
+
+改一个默认值，风险全在"哪里还藏着第二份默认值"。查下来一共三处：宿主的
+`core/prefs.ts`（真源）、壳的 `appearance.ts`（宿主还没回读时那一帧）、桌面主进程的
+`readUiTheme`（没有 `settings.json` 时的首帧底色）。只改第一处的话，新用户第一次开窗
+会先看见深色再跳米白；只改壳的话，后台起出来的会话还是深色口径。
+三处一起改，并且都只影响"从没选过主题"的人——存过档的用户照样读自己的值。
+
+顺带把主题归一化改成"四档白名单 + 回落 claude"：那个兜底管的是"存档里是个认不得的值"，
+它与出厂默认不一致的话，同一个人在两台机器上会看到两种颜色。
+
+**2. 默认终端可选：真去探，探到才给选项。**
+
+原来 Windows 上写死 `powershell.exe`。装了 PowerShell 7 的人拿不到 UTF-8 默认编码与更快的启动；
+用 Git Bash 的人写的 `ls -la` 会在 PowerShell 里报错；WSL 里的人希望命令落在 Linux 里。
+这三件事都不是猜得出来的，所以新模块 `core/terminal-env.ts` 做真探测：跑
+`$PSVersionTable` / `bash --version` / `wsl.exe --status`，带 4 秒超时、5 分钟缓存，
+探测失败就标"未检测到"并且**不出现在下拉里**——给一个选了会报错的选项比不给更糟。
+
+改动面比"换个 exe"大，因为终端换了有三处必须跟着换口径，漏一处就是"看起来能用、实际错"：
+
+- **工具说明**：模型照着 `bash` 的描述决定写 `Get-ChildItem` 还是 `ls`。所以 `createBashTool`
+  注册时按选中的终端生成描述，改了设置就重注册（`applyConfig → syncTools`）。
+- **环境快照**：`- 平台：Windows（bash 工具跑的是 PowerShell）` 这句进每次请求，
+  选了 Git Bash 还这么写，模型就会写错语法。改成从设置里读。
+- **审批地板的结构扫描**：这一处最隐蔽。`inspectStructure` 分 PowerShell / POSIX 两套引号与
+  转义规则（第三十六节刚为误伤修过），默认按平台判。用户把终端切成 Git Bash 之后仍按
+  PowerShell 判，`\"` 这类写法就会朝反方向误判——误伤变漏判。所以 `createApprovalFloor`
+  多了一个 `shell()` 供给，由插件按同一个配置值传进来。
+
+两个实测踩到的坑：
+
+- WSL 的默认发行版在这台机器上是 `docker-desktop`（Docker Desktop 装的微型发行版，
+  里面只有 `sh`、没有 `bash`），照默认发行版跑 `bash -lc` 直接
+  `/bin/sh: bash: Permission denied`。现在探测时挑发行版：默认那只如果不是 Docker 管理的
+  就用它，否则退到第一只非 Docker 的（这里退到 `Ubuntu`）；起命令时用 `-d` 钉住。
+- 设置页每次打开都会跑一遍各分区的 `fields()`，而探测是同步起四个子进程（冷启动约 2.5 秒）。
+  所以缓存给到 5 分钟、`tools-default` 挂载后后台预热一次，「重新检测」按钮强制重探。
+- 还有一个自查抓到的契约错误：`save()` 返回字符串在设置服务里表示**失败原因**，
+  回执必须返回对象 `{ notice }`。第一版写成了返回字符串，界面上会把"已切到 Git Bash"
+  当成错误红字。
+
+**3. 三家 runtime 对照写进 `docs/runtime-comparison.md`。**
+
+三份逐行读的报告（dsh 的 asar 包、codex 的 Rust 源码、本仓库）合成一篇对照，回答
+"一轮怎么转、每轮收到什么、安全/成本/效率靠什么"。写的时候纠正了一个流传的说法：
+**PTC 模式并不撤掉原生工具**，`run_code` 是叠加的（`src/plugins/presets.ts:141-165`）。
+文档末尾列了五条对 Pneuma 的建议，按投入产出比排序；其中"主循环没有步数上限"与
+"AGENTS.md 放在 system 里会打掉前缀缓存"两条是与另两家最实质的差异。
+
+**验证**：新增 `scripts/terminal-env-test.mjs`（47 条：探测形状与缓存、取值解析与语法家族、
+四套 spawn 参数、配置读写、工具说明与环境快照跟着改口、审批地板的引号口径）与
+`scripts/terminal-env-settings-test.mjs`（25 条：真起内核，验分区进设置页、下拉只列探到的、
+存盘落 `plugins.json`、坏值被拒、重新检测按钮）。四个选择各自真跑一条命令：
+PowerShell 5.1 / PowerShell 7.6.5 / Git Bash 5.3 / WSL（Ubuntu）都返回了预期输出。

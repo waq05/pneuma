@@ -991,9 +991,9 @@ function normalizePrefs(prefs: Partial<UiPrefsView> | null | undefined): Appeara
   const second = fromLegacy ?? size
   return {
     themeMode:
-      prefs?.themeMode === 'light' || prefs?.themeMode === 'claude' || prefs?.themeMode === 'system'
+      prefs?.themeMode === 'light' || prefs?.themeMode === 'dark' || prefs?.themeMode === 'system'
         ? prefs.themeMode
-        : 'dark',
+        : 'claude',
     fontSize: Math.min(1.35, Math.max(0.85, Math.round(second * 100) / 100)),
     density: prefs?.density === 'compact' || prefs?.density === 'roomy' ? prefs.density : 'standard',
     processFold:

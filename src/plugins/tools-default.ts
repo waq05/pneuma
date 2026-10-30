@@ -14,9 +14,17 @@ import { createReadTool, editTool, READ_DEFAULT_LINE_LIMIT, writeTool } from '..
 import { readImageTool } from '../core/tools/image-tool.js'
 import { globTool, grepTool } from '../core/tools/search-tools.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import type { BackgroundOutputView, BackgroundWorkView, SettingsField, SettingsValues } from '../contract.js'
+import type { BackgroundOutputView, BackgroundWorkView, SettingsField, SettingsMutationOk, SettingsValues } from '../contract.js'
 import type { BackgroundWorksService, SettingsSectionSpec } from '../services/types.js'
 import { clampInt as clamp } from '../core/clamp.js'
+import {
+  detectShells,
+  forgetShellDetection,
+  parseShellChoice,
+  readShellChoice,
+  shellChoiceLabel,
+  SHELL_CHOICES,
+} from '../core/terminal-env.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'tools-default'
@@ -273,6 +281,89 @@ export const toolsDefaultPlugin: Plugin.Object = {
     }
     const offSection = ctx.settings.registerSection(section)
 
+    // ---- 终端环境（2026-10-30）：探出这台机器上有哪几个 shell，让用户选默认执行器 ----
+    //
+    // 为什么单开一个分区、而不是塞进「工具预算」：这一项改的不是预算而是**命令怎么写**。
+    // 选了 Git Bash，模型该写 `ls -la`；选了 PowerShell，该写 `Get-ChildItem`。
+    // 界面上挨着预算摆，用户会以为是同一类旋钮。
+    const shellSection: SettingsSectionSpec = {
+      id: 'terminal-env',
+      title: '终端环境',
+      subtitle: '这台机器上有哪些 shell 能执行命令，以及 bash 工具默认用哪一个',
+      order: 6,
+      fields(): SettingsField[] {
+        // 每次打开分区都现探一次（10 秒缓存）：刚装好 PowerShell 7 再打开就能看见。
+        const detected = detectShells()
+        const current = readShellChoice()
+        const options = detected
+          .filter((item) => item.value === 'auto' || item.available)
+          .map((item) => ({ value: item.value, label: item.label }))
+        // 选过但现在已经不可用（卸载了 Git / 关掉了 WSL）：仍要能显示当前值，
+        // 否则下拉会显示成第一项，用户以为已经跟着改了。
+        if (!options.some((option) => option.value === current)) {
+          options.push({ value: current, label: `${current}（当前不可用，实际回落平台默认）` })
+        }
+        const summary = detected
+          .map((item) => `${item.available ? '✓' : '✗'} ${item.label}`)
+          .join('　')
+        return [
+          {
+            type: 'select',
+            key: 'bashShell',
+            label: '默认终端',
+            options,
+            help:
+              'bash 工具与终端会话都从这里起进程。切了之后模型看到的工具说明也会跟着改，' +
+              '它会按新终端的语法写命令。只列出这台机器上真检测到的；没检测到的不会出现在选项里。',
+          },
+          { type: 'info', label: '检测结果', text: summary },
+          {
+            type: 'button',
+            action: 'redetect',
+            label: '重新检测',
+            style: 'ghost',
+            help: '刚装完 PowerShell 7 / Git / WSL 时点一下，不用重启。',
+          },
+        ]
+      },
+      values: (): SettingsValues => ({ bashShell: readShellChoice() }),
+      // 契约：save 返回字符串 = 失败原因，返回对象 = 成功（`notice` 是给用户看的回执）。
+      // 这里成功必须走对象——返回字符串会被当成「失败原因」摆到界面上（2026-10-30 自查发现）。
+      save: (key, value): string | SettingsMutationOk => {
+        if (key !== 'bashShell') return `这个分区没有这项：${key}`
+        if (typeof value !== 'string' || !(SHELL_CHOICES as readonly string[]).includes(value)) {
+          return `不认识的终端：${String(value)}`
+        }
+        const choice = parseShellChoice(value)
+        const detected = detectShells()
+        const hit = detected.find((item) => item.value === choice)
+        if (choice !== 'auto' && hit !== undefined && !hit.available) {
+          return `这台机器上没检测到 ${hit.label}，先装好（或点「重新检测」）再选`
+        }
+        // 走 applyConfig：写 plugins.json 之后重注册工具——工具说明里的终端名要跟着换。
+        applyConfig({ bashShell: choice })
+        forgetShellDetection()
+        return { notice: `已切到 ${shellChoiceLabel(choice)}；下一条命令起生效` }
+      },
+      action: (name): string | void => {
+        // 动作的契约与 save 不同：字符串是**成功**的提示文案，失败要抛错。
+        if (name !== 'redetect') throw new Error(`不认识的按钮：${name}`)
+        forgetShellDetection()
+        const detected = detectShells(true)
+        const available = detected.filter((item) => item.available).map((item) => item.label)
+        return `重新检测完成：${available.join('、')}`
+      },
+    }
+    const offShellSection = ctx.settings.registerSection(shellSection, { inSettings: true })
+
+    // 后台预热一次探测（挂载 50ms 之后，不占启动关键路径）：设置页第一次打开时下拉里就该
+    // 已经有选项。不预热的话，`sections()` 会同步跑一次冷探测（四个子进程约 2.5 秒），
+    // 用户点开设置就是一阵卡。
+    const primeTimer = setTimeout(() => {
+      detectShells(true)
+    }, 50)
+    primeTimer.unref?.()
+
     return () => {
       for (const off of disposers) off()
       disposers = []
@@ -280,7 +371,9 @@ export const toolsDefaultPlugin: Plugin.Object = {
       for (const timer of noticeTimers.values()) clearTimeout(timer)
       noticeTimers.clear()
       stopAllBackgroundChildren()
+      clearTimeout(primeTimer)
       offSection()
+      offShellSection()
     }
   },
 }
