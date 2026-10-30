@@ -12,21 +12,33 @@
  * @module dsc-ui-shell/platform/tool-summary
  */
 import type { ComponentType } from 'react'
-import { IconCode, IconEdit, IconFolder, IconSearch, IconSpark, IconTerminal } from './icons'
+import {
+  IconCode, IconEdit, IconFolder, IconGlobe, IconInfo, IconQueue, IconSearch, IconSpark, IconTerminal, IconTree,
+} from './icons'
 
 /** 各工具的摘要字段；不在表里的走 {@link DEFAULT_FIELDS}。 */
 export const SUMMARY_FIELDS: Readonly<Record<string, readonly string[]>> = {
   bash: ['command', 'description'],
   shell: ['command', 'description'],
+  pwsh: ['command', 'description'],
   read: ['file_path', 'path'],
   read_file: ['file_path', 'path'],
+  read_image: ['file_path', 'path'],
   write: ['file_path', 'path'],
   edit: ['file_path', 'path'],
   glob: ['pattern', 'path'],
   grep: ['pattern', 'path'],
   webfetch: ['url'],
   fetch: ['url'],
+  web_search: ['query'],
+  session_search: ['query'],
+  // run_code 的参数只有一段脚本：取第一行（去掉行首注释）当摘要，见 toolSummary 里的分流。
+  run_code: ['code'],
+  ask_user: ['question', 'prompt'],
+  ask_user_question: ['question', 'prompt'],
+  skill: ['name'],
   task: ['description', 'prompt'],
+  subagent: ['description', 'prompt'],
 }
 
 /** 不认识的工具：只挑最像「目标」的几个字段。 */
@@ -57,6 +69,21 @@ export function shortUrl(url: string): string {
 }
 
 /**
+ * 脚本类参数（`run_code` 的 `code`）的第一行：跳过空行，去掉行首注释标记。
+ *
+ * 为什么不直接把整段脚本压成一行：脚本动辄十几行，压平后摘要变成一长串没有句读的代码，
+ * 前 48 个字往往还停在 import 或注释上。取第一行（通常是模型自己写的一句「这是干什么」）
+ * 才是这张卡真正想说的话。
+ */
+function firstCodeLine(code: string): string {
+  for (const raw of code.split('\n')) {
+    const line = raw.trim().replace(/^\/\/\s*/, '')
+    if (line !== '') return line
+  }
+  return ''
+}
+
+/**
  * 工具调用的入参摘要：从 JSON 参数里挑两个关键字段拼成一行。
  *
  * 参数还没吐全（preparing）时不是合法 JSON，直接把原文当摘要（旧界面同样兜这一手）。
@@ -75,7 +102,9 @@ export function toolSummary(name: string, argsText: string): string {
   for (const field of picks) {
     const value = record[field]
     if (typeof value !== 'string' || value === '') continue
-    parts.push(oneLine(field === 'url' ? shortUrl(value) : value, 48))
+    const text = field === 'url' ? shortUrl(value) : field === 'code' ? firstCodeLine(value) : value
+    if (text === '') continue
+    parts.push(oneLine(text, 48))
     if (parts.length === 2) break
   }
   return oneLine(parts.join(' · '), 72)
@@ -108,6 +137,19 @@ export const KNOWN_TOOLS: Readonly<
 > = {
   bash: { verb: '运行命令', Icon: IconTerminal },
   shell: { verb: '运行命令', Icon: IconTerminal },
+  // 2026-10-30 补：这台机器的工具表里跑得最多的就是下面这几个，缺一个就退化成
+  // 「工具调用 · run_code」——标题没信息，摘要也取不到字段，一屏十几次同样的行。
+  run_code: { verb: '运行代码', Icon: IconCode },
+  pwsh: { verb: '运行命令', Icon: IconTerminal },
+  read_image: { verb: '读取图片', Icon: IconFolder },
+  web_search: { verb: '搜索网页', Icon: IconGlobe },
+  session_search: { verb: '搜索会话', Icon: IconSearch },
+  todo_write: { verb: '更新计划', Icon: IconQueue },
+  ask_user: { verb: '提问', Icon: IconInfo },
+  ask_user_question: { verb: '提问', Icon: IconInfo },
+  skill: { verb: '读取技能', Icon: IconSpark },
+  subagent: { verb: '子智能体', Icon: IconTree },
+  exit_plan_mode: { verb: '提交计划', Icon: IconQueue },
   read: { verb: '读取', Icon: IconFolder },
   read_file: { verb: '读取', Icon: IconFolder },
   write: { verb: '写入', Icon: IconEdit },

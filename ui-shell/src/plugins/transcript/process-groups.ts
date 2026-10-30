@@ -16,7 +16,11 @@
  *   process-groups.ts:159-162）——一条正文就是「上一阶段干完了」的信号。dsc 的 transcript
  *   里思考与正文本来就是两条独立条目（adapter/transcript.ts:284-298 的 message 分支），
  *   所以这条规则不用解析 assistant-step 就能照搬；
- * - 思考与工具调用进当前组（process-groups.ts:157-163）；
+ * - **只有工具调用进组**（2026-10-30 改）：思考行是模型的自述，与组头同级、单独成行，
+ *   不再被收进组体。这不是随手改的版式偏好——dsh 那边（ChatGroupSeat / ReasoningRow）
+ *   思考与组头落在同一条轴、工具才是缩进的子项；之前把思考塞进组里，导致同一条流里
+ *   思考行跟着工具一起缩进，读起来像「思考是这一组干的活」，而不是「模型在执行前想了什么」。
+ *   连带效果：只思考没调工具的一段不再有「已完成分析」组头，思考行自己就是那一行；
  * - **计划卡单独成界**：封掉前面的组，自己也不进组。它是审批流的一部分（「等你点批准」），
  *   跟过程内容不是一回事；dsh 里 exit_plan_mode 走审批，同属过程之外的一类；
  * - **system 提示既不进组也不封组**：dsc 的 system 混了错误提示、宿主通知、「已恢复会话」
@@ -24,10 +28,11 @@
  * - **尾组只有等这一轮收尾才算「已结束」**：收尾前它一直在长（新工具会并进来），这正是需要
  *   的行为——组序号不变，用户已经展开的那一组不会被直播新增的内容重置。
  *
- * 实时详情（对照 dsh 的 liveToolDetail / liveReasoningDetail，process-activity.ts:23-87）：
+ * 实时详情（对照 dsh 的 liveToolDetail，process-activity.ts:23-87）：
  * 组体默认收起之后，屏幕上「现在在干什么」只剩组头这一行，所以未结束的组头除了类别还要带一句
  * 具体任务——「正在运行命令 · pnpm build」。取参数的键序照抄 dsh（命令 → 路径 → 查询 → …），
- * 一个都取不到就退回工具名；没有运行中的工具时取组内最后一段直播尾思考。
+ * 一个都取不到就退回工具名。思考行不再进组，所以这里不再有「组内最后一段直播思考」这条兜底
+ * （那一句现在由思考行自己带扫光与摘要）。
  *
  * @module dsc-ui-shell/plugins/transcript/process-groups
  */
@@ -52,10 +57,10 @@ export interface ActivityCount {
 }
 
 /**
- * 一个阶段组：一轮里相邻的过程条目，被一条定稿正文（或计划卡、轮末）收口。
+ * 一个阶段组：一轮里相邻的**工具调用**，被一条定稿正文（或计划卡、轮末、思考行）收口。
  *
- * 组里只有思考与工具调用；中间那些「阶段性正文」不进组，但仍属于整轮过程范围
- * （整轮收起时它们一起消失，见 ChatView 的 inFold）。
+ * 组里只有工具调用：思考行不进组，作为组头同级的独立行渲染（2026-10-30，理由见模块头）。
+ * 中间那些「阶段性正文」不进组，但仍属于整轮过程范围（整轮收起时它们一起消失）。
  */
 export interface StepGroup {
   /** 属于哪一轮（与 RoundInfo.index 同源）。 */
@@ -73,7 +78,7 @@ export interface StepGroup {
   /** 组内最后一条可折叠条目在 entries 里的下标（含）。 */
   endIndex: number
   /**
-   * 组里收着几条（思考段 + 工具调用一起数）。
+   * 组里收着几条**工具调用**（2026-10-30 起不再把思考段算进来：思考行不在组里了）。
    *
    * 为什么单独给一个字段而不是让界面自己减下标：下标之差在「组里有不渲染的条目」时是错的，
    * 而组头要把「点开会放出几项」写在明面上（`.step-fold-count`）。
@@ -108,9 +113,8 @@ export interface StepGroup {
   /**
    * 未结束组的实时任务详情（「pnpm build」这种），已结束的组不带。
    *
-   * 来源二选一：组里最后一个运行中的工具的某个参数字段；组里没有运行中的工具时，取最后一段
-   * 直播尾思考（对照 dsh 的 liveReasoningDetail，它在没有 running 工具时才启用）。
-   * 两边都取不到就是 undefined——组头只显示类别，不显示空的分隔点。
+   * 来源：组里最后一个运行中的工具的某个参数字段。取不到就是 undefined——组头只显示类别，
+   * 不显示空的分隔点。
    */
   runningDetail?: string
   /**
@@ -327,8 +331,9 @@ export function liveToolDetail(name: string, argsText: string): string {
 /**
  * 一段思考里的实时详情：取最后一个非空段落，去掉 `**` 后压成一行。
  *
- * 为什么取「最后一段」而不是首行：直播中思考在往长里写，最后一段才是模型此刻在琢磨的事
- * （对照 dsh 的 liveReasoningDetail，process-activity.ts:53-68 从后往前扫段落）。
+ * 2026-10-30 起本模块不再调用它（思考行不进组，组头没有「组内直播思考」这条兜底了）。
+ * 保留导出是为了让轨迹页 / 将来的实时组头仍能按同一口径取一句话——
+ * 口径本身照 dsh 的 liveReasoningDetail（process-activity.ts:53-68，从后往前扫段落）。
  *
  * @param text 思考原文（通常是直播尾那一条）
  * @returns 一行详情；整段都是空白时返回空字符串
@@ -569,22 +574,6 @@ function runningTool(
   return live
 }
 
-/**
- * 组里最后一条直播尾思考的原文（没有就是空字符串）。
- *
- * 为什么只认 `id < 0`：那是还在往外吐的那一段（见 ChatView 的「直播尾」口径）。定稿的思考条目
- * 不属于「现在在干什么」，拿它当实时详情会把上一阶段的事报成当前的。
- */
-function lastLiveThinking(entries: readonly TranscriptEntry[], indexes: readonly number[]): string {
-  let text = ''
-  for (const index of indexes) {
-    const entry = entries[index]
-    if (entry === undefined || entry.kind !== 'thinking' || entry.id >= 0) continue
-    text = entry.text
-  }
-  return text
-}
-
 /** 数一数这一组里的工具调用各属哪一类（对照 dsh 的 processActivity，process-activity.ts:94-128）。 */
 function countActivities(
   entries: readonly TranscriptEntry[],
@@ -668,9 +657,8 @@ export function groupSteps(
         if (live !== undefined) {
           group.running = live.activity
           if (live.preparing) group.preparing = true
+          if (live.detail !== '') group.runningDetail = live.detail
         }
-        const detail = live?.detail ?? reasoningDetail(lastLiveThinking(entries, pending))
-        if (detail !== '') group.runningDetail = detail
       }
       groups.push(group)
       seq += 1
@@ -679,8 +667,15 @@ export function groupSteps(
     for (let at = round.startIndex + 1; at <= round.endIndex; at += 1) {
       const entry = entries[at]
       if (entry === undefined) continue
-      if (entry.kind === 'thinking' || entry.kind === 'tool') {
+      if (entry.kind === 'tool') {
         pending.push(at)
+        continue
+      }
+      // 思考行不进组（2026-10-30）：它是模型的自述，与组头同级单独成行（见模块头的切分规则）。
+      // 这里必须**封组**：组体的成员是 `[startIndex, endIndex]` 这个连续区间，中间夹一条
+      // 不进组的行，区间就会把它一起算进 members，等于同一个思考渲染两次。
+      if (entry.kind === 'thinking') {
+        flush(true)
         continue
       }
       // 下面这几种都是**独立节点**：封掉前面的组，自己不进组。

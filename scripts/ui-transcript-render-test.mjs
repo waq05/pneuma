@@ -66,7 +66,9 @@ const entry = (kind, extra = {}) => ({ kind, id: Math.floor(Math.random() * 1000
 
 console.log('[1] seatPlan：每条行恰好出现一次')
 {
-  // 一轮：[user, thinking, tool, text, thinking, tool]——两个组各 2 员，正文把两组切开
+  // 一轮：[user, thinking, tool, text, thinking, tool]
+  // 2026-10-30 起只有工具进组、思考行是组外的同级行（对齐 dsh 的版式），所以这里是两个
+  // 各装一条工具的组，外加两条独立的思考行与一条正文。
   const entries = [
     entry('user', { text: '题面' }),
     entry('thinking', { text: '想一' }),
@@ -78,7 +80,8 @@ console.log('[1] seatPlan：每条行恰好出现一次')
   const rounds = [{ index: 0, startIndex: 0, endIndex: 5, startTs: 1, endTs: 2, answered: true }]
   const grouping = groupSteps(entries, rounds, () => false)
   check('分组器切出两个组', grouping.groups.length === 2, String(grouping.groups.length))
-  check('两组各两员', grouping.groups.every((group) => group.size === 2))
+  check('每组只装工具调用（思考不进组）', grouping.groups.every((group) => group.size === 1))
+  check('思考行不在任何组的成员区间里', !grouping.at.has(1) && !grouping.at.has(4), JSON.stringify([...grouping.at.keys()]))
 
   const ats = entries.map((_, index) => index).slice(1)
   const items = seatPlan(ats, grouping)
@@ -89,7 +92,8 @@ console.log('[1] seatPlan：每条行恰好出现一次')
   }
   check('每条行恰好出现一次（0.6.67 的重复就是这么来的）', seen.length === ats.length && new Set(seen).size === ats.length, JSON.stringify(seen))
   check('顺序与出现顺序一致', JSON.stringify(seen) === JSON.stringify([...seen].sort((a, b) => a - b)))
-  check('两个组块（正文那条单独出）', items.filter((item) => item.kind === 'group').length === 2 && items.filter((item) => item.kind === 'row').length === 1)
+  check('两个组块 + 三条单独行（思考 ×2 + 正文 ×1）', items.filter((item) => item.kind === 'group').length === 2 && items.filter((item) => item.kind === 'row').length === 3)
+  check('思考行进 row 项（与组头同级渲染）', items.filter((item) => item.kind === 'row').some((item) => item.at === 1) && items.filter((item) => item.kind === 'row').some((item) => item.at === 4))
   check('组员绝不出现在 row 项里（组体铺过就不再单独铺）', items.filter((item) => item.kind === 'row').every((item) => !grouping.at.has(item.at)))
   check('组块带全成员（升序）', items.filter((item) => item.kind === 'group').every((item) => JSON.stringify(item.members) === JSON.stringify([...item.members].sort((a, b) => a - b))))
   check('空表进空表出', seatPlan([], grouping).length === 0)
@@ -199,8 +203,10 @@ console.log('[5] 整轮过程区的开合动画（0.6.69 第四轮报障）')
   check('组体（max-height 那一层）不延迟：内容留在文档里，本来就平滑', /const bodyRef = useSearchableHidden\(!props\.open, revealGroup\)/.test(seats))
   check('焦点在里层、或被查找命中时的放行照旧（Ctrl+F 与键盘都不受影响）', seats.includes('element.contains(element.ownerDocument.activeElement)') && seats.includes("element.addEventListener('beforematch', reveal)"))
 
-  // 阶段组那一级：收起态本来就是 max-height: 0（内容留文档里），补一条过渡即可
-  check('组体的一级开合也走过渡（两头都是 max-height 的确定值）', /\.step-body \{[\s\S]{0,400}transition: max-height var\(--dsc-dur-slow\) var\(--dsc-ease\);/.test(css))
+  // 阶段组那一级：收起态本来就是 max-height: 0（内容留文档里），补一条过渡即可。
+  // 窗口从「400 字符」改成「整条规则内」（[^}]*）：2026-10-30 的栅格改造在规则头上加了
+  // 缩进三件套，按字符距离找 transition 会假红。
+  check('组体的一级开合也走过渡（两头都是 max-height 的确定值）', /\.step-body \{[^}]*transition: max-height var\(--dsc-dur-slow\) var\(--dsc-ease\);/.test(css))
 
   // 降级：base.css 那条全局 reduced-motion 把过渡压成瞬时
   check('系统说「少动」时全站过渡归零（base.css 兜底，不用逐组件再写）', /@media \(prefers-reduced-motion: reduce\) \{[\s\S]{0,300}transition-duration: 0\.01ms !important/.test(read('ui-shell/src/legacy/base.css')))
@@ -364,6 +370,8 @@ console.log('[8] 收起态的结果与失败数（对照 codex 的活动流）')
   const factory = read('ui-shell/src/plugins/transcript/tool-card/factory.tsx')
   const row = read('ui-shell/src/plugins/transcript/step-group-row.tsx')
   const css = read('ui-shell/src/styles.css')
+  // 组体的缩进与竖线 2026-10-30 并进了 legacy/views.css（同一选择器原来分在两份样式表里）。
+  const viewsCss = read('ui-shell/src/legacy/views.css')
 
   // ── 纯逻辑：收起态不再摊结果行，只数「点开还能看到几行」 ──
   //    2026-10-27 用户报「工具调用在折叠状态时占用面积太大，只占一行就行」，
@@ -397,7 +405,11 @@ console.log('[8] 收起态的结果与失败数（对照 codex 的活动流）')
   check('展开态 / 轨迹页照旧不重复摊', factory.includes("bodyOpen || variant !== 'chat' || running ? null : resultTail"))
   check('被截断的行数写在头行（tc-more）', factory.includes('tc-more') && factory.includes('tail.hidden > 0'))
   check('结果尾巴的样式也删干净了（不留死规则）', !/\.tool-tail(-line|-text|-gutter)?\s*\{/.test(css))
-  check('组体缩进 + 竖线（层级在版面上看得见）', /\.step-body \{[\s\S]{0,160}border-left: 1px solid[\s\S]{0,120}padding-left: 9px/.test(css))
+  // 2026-10-30 起缩进改由令牌驱动（--proc-indent / --proc-pad），竖线提到 stroke-1：
+  // 写死的 9px 与 stroke-2 正是「三列各走各的轴、竖线在截图里看不见」的来源。
+  // 口径见 docs/ui-design.md §15；逐条断言在 scripts/ui-process-grid-test.mjs。
+  check('组体缩进 + 竖线（层级在版面上看得见）', /\.step-body \{[^}]*border-left: 1px solid var\(--dsc-stroke-1\)[^}]*margin-left: var\(--proc-pad\)[^}]*padding-left: calc\(var\(--proc-indent\)/.test(viewsCss))
+  check('组体的缩进只剩一处（styles.css 里没有第二份 .step-body）', !/\.step-body\s*\{/.test(css))
   check('失败数在窄屏也不隐藏（它是读数，不是装饰）', !/\.step-fold-fail[^{}]*\{[^}]*display: none/.test(css))
 }
 

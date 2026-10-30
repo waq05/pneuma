@@ -155,18 +155,21 @@ console.log('6. 源码钉：钩子本身与设置下发链路')
 console.log('7. 源码钉：四档 policy 表逐字未变')
 {
   const roundFold = read('ui-shell/src/plugins/transcript/round-fold.tsx')
+  // 2026-10-30：compact 的 reasoningPreview 由 false 改成 true（用户拍板「紧凑档也保留摘要」）。
+  // 这一档管的是「整轮折不折」，不该连行内摘要一起删——理由写在 round-fold.tsx 那条注释里。
   const expected = [
-    'export const PROCESS_FOLD_POLICIES: Readonly<Record<ProcessFold, ProcessFoldPolicy>> = {',
-    "  compact: { foldTurns: true, stepGrouping: 'collapsed', liveDetail: false, reasoningPreview: false },",
-    "  standard: { foldTurns: true, stepGrouping: 'collapsed', liveDetail: true, reasoningPreview: true },",
-    "  detailed: { foldTurns: true, stepGrouping: 'history', liveDetail: true, reasoningPreview: true },",
-    "  verbose: { foldTurns: false, stepGrouping: 'none', liveDetail: false, reasoningPreview: true },",
-    '}',
-  ].join('\n')
+    "compact: { foldTurns: true, stepGrouping: 'collapsed', liveDetail: false, reasoningPreview: true },",
+    "standard: { foldTurns: true, stepGrouping: 'collapsed', liveDetail: true, reasoningPreview: true },",
+    "detailed: { foldTurns: true, stepGrouping: 'history', liveDetail: true, reasoningPreview: true },",
+    "verbose: { foldTurns: false, stepGrouping: 'none', liveDetail: false, reasoningPreview: true },",
+  ]
   const found = roundFold.match(/export const PROCESS_FOLD_POLICIES[\s\S]*?\n\}/)
-  const actual = found === null ? '' : found[0].replace(/[ \t]+/g, ' ')
-  const wanted = expected.replace(/[ \t]+/g, ' ')
-  check('四档能力表内容与顺序未变', actual === wanted, actual === wanted ? '' : JSON.stringify(actual))
+  // 只取四行档位定义：表头上写理由的注释是允许的，逐字比整块会把注释也算进契约。
+  const actual = (found === null ? '' : found[0])
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /^(compact|standard|detailed|verbose): \{/.test(line))
+  check('四档能力表内容与顺序未变', actual.join('\n') === expected.join('\n'), JSON.stringify(actual))
 }
 
 console.log('')

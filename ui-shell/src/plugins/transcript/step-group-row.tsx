@@ -124,6 +124,8 @@ export function StepGroupRow(props: {
   open: boolean
   /** 这一档要不要在组头里显示实时详情（dsh 的 liveProcessDetail：紧凑档为假）。 */
   showDetail: boolean
+  /** 已定稿的组：组头「类别 · 任务」的后半句（见 render.tsx 的 groupTask；空串不画）。 */
+  task: string
   onToggle(): void
 }): JSX.Element {
   const closed = props.group.closed
@@ -181,13 +183,25 @@ export function StepGroupRow(props: {
           直播思考一长（上限 160 字）就把整行撑出会话（0.6.46 报障）——换行后详情在
           柱内单行截断，截断宽度是组头自己的宽度，永远出不了会话。 */}
       <span className="step-fold-text">
-        <span
-          className="step-fold-label"
-          // 跑动中的扫光：属性值就是 ::after 要复制的那串文字（见 styles.css 里那条共用规则）。
-          // 收口的组不给——它已经不动了，扫光反而像还在干活（对照 dsh 的 active={!data.closed}）。
-          data-shimmer={closed ? undefined : label}
-        >
-          {label}
+        {/* 标题行：类别 + 「· 具体任务」（2026-10-30 补）。后半句照 dsh 的组头读法
+            「类别 · 任务」，只给已定稿的组——跑动中那半句由下面的实时详情占着。 */}
+        <span className="step-fold-line">
+          <span
+            className="step-fold-label"
+            // 跑动中的扫光：属性值就是 ::after 要复制的那串文字（见 styles.css 里那条共用规则）。
+            // 收口的组不给——它已经不动了，扫光反而像还在干活（对照 dsh 的 active={!data.closed}）。
+            data-shimmer={closed ? undefined : label}
+          >
+            {label}
+          </span>
+          {props.task === '' ? null : (
+            <>
+              <span className="step-fold-dot" aria-hidden="true" />
+              <span className="step-fold-task" title={props.task}>
+                {props.task}
+              </span>
+            </>
+          )}
         </span>
         {detail !== '' && (
           <span className="step-fold-detail" data-shimmer={detail}>

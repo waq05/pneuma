@@ -33,7 +33,11 @@ export interface ProcessFoldPolicy {
 
 /** 四档各自开哪几项能力（与桌面端逐格对应）。 */
 export const PROCESS_FOLD_POLICIES: Readonly<Record<ProcessFold, ProcessFoldPolicy>> = {
-  compact: { foldTurns: true, stepGrouping: 'collapsed', liveDetail: false, reasoningPreview: false },
+  // 紧凑档也带摘要（2026-10-30 用户拍板）：这一档管的是「定稿的回合收成一行用时」，
+  // 它不该顺手把行内摘要一起删掉——摘要回答的是「这条思考讲了什么」，与整轮折不折是两件事。
+  // 删掉之后紧凑档的过程行只剩「思考 ∨」「工具调用 · run_code」这种没有内容的标题，
+  // 用户的原话是「现在的思考行没有思考摘要显示」。
+  compact: { foldTurns: true, stepGrouping: 'collapsed', liveDetail: false, reasoningPreview: true },
   standard: { foldTurns: true, stepGrouping: 'collapsed', liveDetail: true, reasoningPreview: true },
   detailed: { foldTurns: true, stepGrouping: 'history', liveDetail: true, reasoningPreview: true },
   verbose: { foldTurns: false, stepGrouping: 'none', liveDetail: false, reasoningPreview: true },

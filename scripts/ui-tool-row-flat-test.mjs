@@ -142,7 +142,9 @@ check(
 check('.turn-seat 的 gap 是 3px', /\.turn-seat \{[\s\S]{0,220}gap: calc\(3px \* var\(--dsc-density\)\)/.test(views))
 check('.turn-process-body 的 gap 是 3px', /\.turn-process-body \{[\s\S]{0,160}gap: calc\(3px \* var\(--dsc-density\)\)/.test(views))
 check('.step-content 的 gap 是 3px', /\.step-content \{[\s\S]{0,120}gap: calc\(3px \* var\(--dsc-density\)\)/.test(views))
-check('工具头左右内距仍是 8px', rule(views, '.tool-head').includes('padding: 0 8px'))
+// 2026-10-30 起三行共用栅格令牌（--proc-pad / --proc-indent），旧的 8px 字面量与
+// 「组体内再缩进 4px」一起撤掉；口径见 docs/ui-design.md §15，逐条在 ui-process-grid-test。
+check('工具头左右内距走 --proc-pad', rule(views, '.tool-head').includes('padding: 0 var(--proc-pad)'))
 
 console.log('[6] 对比度、尺寸与缩进分级')
 
@@ -151,8 +153,8 @@ check('未知名是 tertiary', /\.tool-head \.name \{[^}]*color: var\(--dsc-text
 check('图标 12px', /\.tool-head \.tool-icon \{[^}]*height: 12px;[^}]*width: 12px;/.test(styles))
 check('状态点 6px', /\.tool-dot \{[^}]*height: 6px;[^}]*width: 6px;/.test(styles))
 check('四种状态点配色仍齐全', ['running', 'done', 'failed', 'rejected'].every((status) => new RegExp('\\.tool-card\\.status-' + status + ' \\.tool-dot \\{[^}]*background:').test(styles)))
-check('组体竖线仍是 1px、13px 缩进没加粗', /\.step-body \{[^}]*border-left: 1px solid[^}]*margin-left: 3px;[^}]*padding-left: 9px;/.test(styles))
-check('组体内工具行再缩进 4px', /\.step-content \.tool-card,?\s*\n?\.step-content \.think-block \{\s*margin-left: 4px;/.test(styles))
+check('组体竖线 1px、缩进走 --proc-indent', /\.step-body \{[^}]*border-left: 1px solid[^}]*margin-left: var\(--proc-pad\)[^}]*padding-left: calc\(var\(--proc-indent\)/.test(views))
+check('组体内不再有第二处缩进（卡片不许写 margin-left）', !/\.step-content \.tool-card[^{]*\{[^}]*margin-left/.test(views) && !/\.step-content \.think-block[^{]*\{[^}]*margin-left/.test(views))
 check('焦点圈挪到文字段', /\.tool-card \.tool-click:focus-visible \{[^}]*box-shadow: inset/.test(views))
 
 console.log('')

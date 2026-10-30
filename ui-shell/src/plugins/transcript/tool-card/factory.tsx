@@ -285,9 +285,12 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
             toggle()
           }}
         >
-          {/* 行首状态点：成功绿 / 失败红 / 被拒黄 / 进行中强调色（codex 的 bullet）。 */}
-          <span className="tool-dot" aria-hidden="true" />
-          <Icon size={12} className="tool-icon" />
+          {/* 行首一格：状态点（成功绿 / 失败红 / 被拒黄 / 进行中强调色，codex 的 bullet）+ 工具图标。
+              整格宽度固定 --proc-gutter，与思考行的星标、组头的类别图标落在同一条竖线上（§15）。 */}
+          <span className="tool-leading" aria-hidden="true">
+            <span className="tool-dot" />
+            <Icon size={12} className="tool-icon" />
+          </span>
           <span className="verb">{toolVerb(match.base, call.status)}</span>
           {/* 认不出的工具保留原名：没有它就看不出这是哪家的工具（MCP 那些名字不直观）。
               分隔点照 dsh 的「工具调用 · <工具名>」：名字是补充说明，不跟标题糊成一串。 */}

@@ -932,13 +932,13 @@
   color: var(--dsc-text-tertiary);
 }
 
-/* 思考行收起态更安静：低对比 + 斜体（codex 的思考行默认 dim + italic）。
-   跑动中的那一条（`.think-block.live`）保持原样，它正被读。 */
+/* 思考行收起态更安静：低对比（codex 的思考行默认 dim）。
+   2026-10-30 用户：「思考」这个标头换成正的、别斜体。两条理由：
+   中文没有真正的斜体，浏览器只能把字形机械往右倒，小字号下笔画发虚；
+   而且这一行现在后面跟着摘要，标题斜、摘要正，同一行里两种姿态读着打架。
+   跑动中的那一条（`.think-block.live`）本来就保持原样，它正被读。 */
 .think-block:not(.live):not(.open) .think-head {
   color: var(--dsc-text-tertiary);
-}
-.think-block:not(.live):not(.open) .think-label {
-  font-style: italic;
 }
 
 /* 右侧栏（dock）的布局规则全在 legacy/views.css 的 `.dock` 系列里（它就是照旧
@@ -4211,18 +4211,9 @@
  * 3. 工具卡收起态摊 3 行结果尾巴（对照 codex 的 DETAIL_PREVIEW_LINES=3）。
  *    行高 1.55、等宽小字、quaternary：预览是「顺带看一眼」的信息，不许比工具名更响。
  */
-.step-body {
-  border-left: 1px solid var(--dsc-stroke-2);
-  margin-left: 3px;
-  padding-left: 9px;
-}
-
-/* 组体内的工具行与思考行再缩进 4px，贴齐组头那格图标的起跑线；
-   组体自己的 1px 竖线与 13px 缩进照旧，不加粗。 */
-.step-content .tool-card,
-.step-content .think-block {
-  margin-left: 4px;
-}
+/* 组体的缩进与竖线已并进 legacy/views.css 的 `.step-body`（那份管限高与滚动，
+   同一选择器分散在两份样式表里，改一处忘一处就漂）。组内的工具卡与思考行也不许再写
+   margin-left：栅格由 tokens.css 的 --proc-* 三个令牌统一给（docs/ui-design.md §15）。 */
 
 .step-fold-fail {
   color: color-mix(in srgb, var(--dsc-red) 72%, var(--dsc-base));
@@ -4282,13 +4273,8 @@
 /* 收起态的结果预览在 2026-10-27 撤掉（用户：折叠只占一行）。原来这里是 .tool-tail /
    .tool-tail-line / .tool-tail-gutter / .tool-tail-text 四条规则，随渲染一起删了。 */
 
-/* 窄屏：缩进退到 6px（组体本来就只有一列宽，再缩就压到卡片内文），竖线保留。 */
-@media (max-width: 640px) {
-  .step-body {
-    margin-left: 0;
-    padding-left: 6px;
-  }
-}
+/* 窄屏的缩进已改成令牌覆盖（`--proc-indent`），落在 legacy/views.css 的 `.step-body` 旁边 —
+   直接改 `.step-body` 的 padding 会和 22px 图标列对不上。 */
 
 /* ── 技能页：作用域筛选 + 按发现根分组（2026-10-27）────────────────────────────
  *

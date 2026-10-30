@@ -7,7 +7,7 @@
  */
 import { Component, useContext, type ReactNode } from 'react'
 import { MarkdownView, estimateTextTokens, type TranscriptEntry } from '@dsc/ui'
-import { ReviewNoticeCard, findLast, parseReviewNotice } from '@dsc/ui-primitives'
+import { ReviewNoticeCard, findLast, parseReviewNotice, toolSummary } from '@dsc/ui-primitives'
 import { FoldPrefsContext, ShellCwdContext, ShellSessionContext, TOOLVIEW_SLOT, TURN_INDEPENDENT, keyOf, type Row, type Seat, type ToolViewRender } from './shared'
 import { stepGroupFoldKey, turnFoldKey } from './fold-state'
 import { useFoldMemory } from './round-fold'
@@ -20,6 +20,31 @@ import { ThinkRow } from './rows/think-row'
 import { SubagentRow, ToolRow } from './rows/tool-row'
 import { ChangesCard } from './rows/changes-card'
 import { RoundFoot } from './rows/foot'
+
+/**
+ * 已定稿的阶段组：给组头补一句「这一段具体干了什么」。
+ *
+ * 组头原来只有聚合类别（「运行了代码」+「5 项」），配上 N 项读数只能说「这一阶段跑过几次」，
+ * 说不出「跑的是什么」。参考实现（dsh）的组头是「类别 · 具体任务」——后半句才是人看的那半。
+ *
+ * 取法按可信度：先找组内第一条工具调用（参数摘要），工具都没有就用第一段思考的首行。
+ * 只给已定稿的组用：跑动中那半句由组头的实时详情占着，两个都画会打架。
+ */
+function groupTask(members: readonly Row[]): string {
+  for (const member of members) {
+    const entry = member.entry
+    if (entry.kind !== 'tool') continue
+    const text = toolSummary(entry.call.name, entry.call.argsText)
+    if (text !== '') return text
+  }
+  for (const member of members) {
+    const entry = member.entry
+    if (entry.kind !== 'thinking') continue
+    const line = (entry.text.split('\n')[0] ?? '').replaceAll('**', '').trim()
+    if (line !== '') return line
+  }
+  return ''
+}
 
 export function SeatBody({
   seat,
@@ -144,6 +169,7 @@ export function SeatBody({
           turnCollapsed={collapsed}
           open={groupOpen(head)}
           showDetail={liveDetail}
+          task={head.closed ? groupTask(members) : ''}
           onToggle={() => toggleGroup(head)}
           onRevealTurn={reveal}
         >

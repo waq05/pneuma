@@ -561,3 +561,54 @@ cd D:\dsc\desktop && pnpm run dist:dir     # → dist/win-unpacked/Pneuma.exe
 实拍的环境变量钩子（`desktop/electron/main/index.ts`）见
 [development.md §8](development.md)。看深浅两套时**务必两边都拍**：这轮重构里
 「浅色主题下弹层还是深色」「原生控件条不跟主题」都是只在浅色下才暴露的问题。
+
+## 15. 过程区三级栅格（2026-10-30）
+
+对话流里的「过程」是三层：**阶段组头（与思考行同级）→ 组内工具行 → 展开体**。这三层原来各走
+一套内边距，1423px 宽的窗口里实测文字左缘分别是 181 / 213 / 236px——三段差 55px，读者看到的是
+三列互不相干的字，而不是一棵树。参考实现（dsh）用的是另一套算法：**组头与思考行同一条轴，
+工具子项整格缩进，中间压一条竖线**——所以思考行不在组里，它是组头的同级行。
+
+### 15.1 三层怎么排
+
+| 级 | 是什么 | 字号 | 颜色 | 首列 | 行高 |
+| --- | --- | --- | --- | --- | --- |
+| L1 | 阶段组头（`.step-fold`）与思考行（`.think-head`） | `--proc-head-fs` 13px / `--dsc-fs-ui` 12px | `--dsc-text-secondary` / `tertiary` | `--proc-gutter` 22px | `--proc-head-h` 28px / `--dsc-process-row-h` 24px |
+| L2 | 组内工具行（`.tool-head`） | `--dsc-fs-tool` 11px | `--dsc-text-tertiary` | `--proc-gutter` 22px，整行再缩进 `--proc-indent` | `--dsc-process-row-h` 24px |
+| L3 | 展开体（`.think-body` / `.tool-body`） | `--dsc-fs-caption` | 正文色 | 再缩进一格 | 不限 |
+
+L1 的组头文案是「类别 · 任务」：前半句是聚合类别（「运行了代码」），后半句取组内第一条工具调用的
+参数摘要，读作「运行了代码 · 审计这两份文档」。只给已定稿的组——跑动中那半句由实时详情占着。
+
+L1 的思考行是**组外**的一行（`process-groups.ts` 只把工具调用收进组）：图标列 + 「思考 · 摘要」+
+行尾箭头。摘要取首行（跑动中取最新一个写完段落的首行），最多 80 字。
+
+L2 只有工具行：图标列 + 「运行代码 · 摘要」+ 行尾读数。读不出内容的行说明渲染表缺条目
+（见 §15.3），不是排版问题。
+
+### 15.2 三条硬规则
+
+1. **一条轴**：`--proc-gutter: 22px`（状态点 6 + 4 + 图标 12）配 `--proc-gap: 6px`，文字左缘恒等于
+   「容器左缘 + 8 + 22 + 6」。新增行型也必须进这条轴，不许自己写 padding 拼出来。
+2. **一条缩进**：组内缩进只在 `.step-body` 给一次（`--proc-indent: 20px`），组内卡片不许再写
+   `margin-left`。竖线画在 `.step-body` 的左边，颜色用 `--dsc-stroke-1`（`--dsc-stroke-2` 太淡，
+   截图里看不见）。窄屏只覆盖 `--proc-indent` 这一个令牌，不另写 padding。
+3. **卡片只属于展开体**：收起的那一行无底色、无描边，悬停才给 `--dsc-fill-quaternary`。灰底圆角卡
+   会让思考行比它上一级的组头更「重」，层级读反。
+
+### 15.3 不在栅格里的两样
+
+- **整轮总开关**（`.turn-fold`，那一行「用时 X」）比组头还高一级：它贴正文左缘、带一条分节线，
+  不参与 22px 图标列。
+- **工具名与摘要表**（`ui-primitives/tool-summary.ts` 的 `KNOWN_TOOLS` / `SUMMARY_FIELDS`）决定 L2
+  能不能读出内容。表里缺条目时，行会退化成「工具调用 · run_code」且没有摘要——那要补表，改样式没用。
+
+### 15.4 验收
+
+```sh
+node scripts/ui-process-grid-test.mjs   # 令牌、三行同源、首列宽度、禁令、唯一缩进源
+node scripts/ui-transcript-render-test.mjs  # 思考行不进组、每条行恰好一次
+cd D:\dsc\desktop && pnpm run typecheck
+```
+
+实拍看 `desktop/shots/conv-shots.ps1`，深色浅色各一张。

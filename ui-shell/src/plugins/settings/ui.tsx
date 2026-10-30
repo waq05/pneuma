@@ -895,7 +895,7 @@ function AppearanceRows(): ReactNode {
         <div className="setting-text">
           <div className="setting-label">过程折叠程度</div>
           <div className="setting-help">
-            定稿的回合收得多紧：紧凑＝只剩「用时」一行；标准＝思考行带首行摘要、跑动中报实时详情；详细＝跑动中的那一轮也摊开不分组（定稿的仍收）；完全展开＝定稿的回合也不收。
+            定稿的回合收得多紧：紧凑＝只剩「用时」一行；标准＝跑动中报实时详情；详细＝跑动中的那一轮也摊开不分组（定稿的仍收）；完全展开＝定稿的回合也不收。四档的思考行都带首行摘要——摘要回答「这条思考讲了什么」，与整轮折不折是两件事。
           </div>
         </div>
         <div className="setting-control">

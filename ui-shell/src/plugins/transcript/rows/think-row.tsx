@@ -16,6 +16,18 @@ function firstLine(text: string): string {
   return newline === -1 ? text : text.slice(0, newline)
 }
 
+/** 摘要最多留几个字素簇（按码点切，别把代理对劈成半个字）。 */
+const MAX_SUMMARY_CHARS = 80
+
+/**
+ * 把摘要收到一行能显示的长度：摘要本来是 `white-space: nowrap` + 省略号，
+ * 多出来的字符看不见，却会被扫光那份 `data-shimmer` 整串复制进 `::after` 的 content。
+ */
+function clipSummary(text: string): string {
+  const chars = Array.from(text)
+  return chars.length > MAX_SUMMARY_CHARS ? `${chars.slice(0, MAX_SUMMARY_CHARS).join('')}…` : text
+}
+
 /**
  * 最新一个「已经写完的段落」的首行（旧版 `ThinkingBlock.tsx:54-70`，语义同 dsh 的
  * `latestCompletedParagraphFirstLine`）。
@@ -99,9 +111,13 @@ export function ThinkRow({
   }
 
   // 摘要（折叠态那一行右边那一段）：跑动中只认写完的段落，收工后取首行；`**` 一律去掉。
-  const summary = (live ? latestCompletedParagraphFirstLine(entry.text) : firstLine(entry.text)).replaceAll('**', '')
-  // 这一行现在画不画摘要：空摘要不画；紧凑档的定稿条也不画（那一档的语义就是「只剩标题 + 箭头」，
-  // 对照 dsh 的 settledReasoningPreview）。跑动中照画——正在写的那一句不能因为档位被藏了。
+  // 长度收在 MAX_SUMMARY：这一行是单行省略号收尾，多留的字符既看不见、又会被扫光那份
+  // `data-shimmer` 复制一遍（::after 的 content 就是整串），长摘要白占 DOM。
+  const summary = clipSummary(
+    (live ? latestCompletedParagraphFirstLine(entry.text) : firstLine(entry.text)).replaceAll('**', ''),
+  )
+  // 这一行现在画不画摘要：空摘要不画。四档都画（2026-10-30 起紧凑档也保留摘要）——
+  // 摘要回答「这条思考讲了什么」，与整轮折不折是两件事（见 round-fold.tsx 的档位表）。
   const preview = summary !== '' && (live || prefs.policy.reasoningPreview)
 
   // 展开内容够长才给快捷栏；阈值判断放在布局之后量，量的是真实像素而不是估算。
@@ -147,7 +163,11 @@ export function ThinkRow({
           toggle()
         }}
       >
-        <IconSpark size={12} className="think-star" />
+        {/* 首列固定宽度（--proc-gutter）：星标与工具行的「点 + 图标」占同一格，
+            两行文字才落在同一条竖线上（见 docs/ui-design.md §15）。 */}
+        <span className="think-leading" aria-hidden="true">
+          <IconSpark size={12} className="think-star" />
+        </span>
         {/* 标题照 dsh 的 `message.think`（两个字「思考」）：2026-10-27 之前是「思考过程」，
             多出来的两个字在窄栏里会被浏览器按字断行（见 views.css 里标题防竖排那条），
             而且同一件事工具行说「读取」、这行说「思考过程」，字数与词性都对不齐。 */}

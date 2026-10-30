@@ -2105,9 +2105,9 @@
   display: flex;
   font-family: var(--dsc-font-mono);
   font-size: var(--dsc-fs-tool);
-  gap: 8px;
+  gap: var(--proc-gap);
   min-height: var(--dsc-process-row-h);
-  padding: 0 8px;
+  padding: 0 var(--proc-pad);
   user-select: none;
 }
 
@@ -2118,7 +2118,7 @@
   cursor: pointer;
   display: flex;
   flex: 1;
-  gap: 8px;
+  gap: var(--proc-gap);
   min-width: 0;
 }
 
@@ -2138,6 +2138,15 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 动词与摘要之间的分隔点（「运行代码 · 列目录」，照 dsh 的「工具调用 · ops_bash · 构建界面壳」）。
+   以前两者只隔 6px，读起来像两个并排的词。`:not(:empty)` 挡住没有摘要的行
+   （preview 里若挂的是路径按钮或 diff 读数，它不是空的，点照画）。 */
+.tool-head .preview:not(:empty)::before {
+  color: var(--dsc-text-quaternary);
+  content: '·';
+  margin-right: 4px;
 }
 
 /* 悬停只提文字色、不铺底色（与 .turn-fold 同一套做法）。 */
@@ -8706,14 +8715,26 @@ body.resizing iframe {
    配不透明底色。下面只做新增，颜色/圆角/间距/动效全部走 tokens.css 的现有令牌，
    深浅两套主题各核一遍。 */
 
-/* ── 容器：外形与 .tool-card 同口径（圆角、描边、小一号的底色）──
+/* ── 容器：收起时是「过程行」，展开时才是一个盒子 ──
+   2026-10-30（docs/ui-design.md §15 规则 3）：原来这里常驻一层灰底 + 描边，于是思考行比它
+   上一级的阶段组头更「重」，层级读反了，同一条流里也变成「卡片、裸行、卡片」三种外形。
+   现在底色与描边只在 `.open` 出现，而且描边走 box-shadow（不占布局）——用 border 的话
+   展开那一拍正文会横移 1px，三行共用的文字左缘当场错开。
    为什么这里不写 overflow: hidden：sticky 的吸附参照系必须落在滚动容器 .chat 上，
    overflow 非 visible 的祖先会把吸附参照系换成这个盒子自己（盒子不滚，等于不吸附）。
    不裁剪也不会让内容溢出圆角：展开区只有一条带左竖线的文本，左右各留了 8px 内距。 */
 .think-block {
-  background: var(--dsc-fill-quinary);
-  border: 1px solid var(--dsc-stroke-3);
+  background: none;
+  border: none;
   border-radius: var(--dsc-r-block);
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    box-shadow var(--dsc-dur) var(--dsc-ease);
+}
+
+.think-block.open {
+  background: var(--dsc-fill-quinary);
+  box-shadow: inset 0 0 0 1px var(--dsc-stroke-3);
 }
 
 /* ── 紧凑行：min-height / padding / gap / cursor / user-select 与工具行的 .tool-head 同值 ── */
@@ -8722,9 +8743,9 @@ body.resizing iframe {
   border-radius: var(--dsc-r-control);
   cursor: pointer;
   display: flex;
-  gap: 8px;
+  gap: var(--proc-gap);
   min-height: var(--dsc-process-row-h);
-  padding: 0 8px;
+  padding: 0 var(--proc-pad);
   transition: color var(--dsc-dur) var(--dsc-ease);
   user-select: none;
 }
@@ -8749,6 +8770,23 @@ body.resizing iframe {
 .think-star {
   color: var(--dsc-text-quaternary);
   flex: none;
+}
+
+/* 首列（固定 --proc-gutter）：思考行只有一个星标，工具行是「状态点 + 图标」两个东西，
+   但两者都必须占满同一格、文字落在同一条竖线上（§15 的对齐口径）。
+   以前星标 12 + gap 8 = 20，工具是 6 + 8 + 12 + 8 = 34，两行文字差 13px。 */
+.think-leading,
+.tool-leading {
+  align-items: center;
+  display: inline-flex;
+  flex: none;
+  justify-content: flex-start;
+  width: var(--proc-gutter);
+}
+
+/* 工具行首列内部：状态点 6 + 4 + 图标 12 = 22，正好填满 --proc-gutter。 */
+.tool-leading {
+  gap: 4px;
 }
 
 /* 标题：字号沿用思考自己的 --dsc-fs-ui（12px）。为什么不跟工具名一样用 11px 等宽——
@@ -9318,7 +9356,10 @@ body.resizing iframe {
    摘要是 label-tertiary，所以这里标题 --dsc-text-tertiary、摘要 --dsc-text-quaternary。 */
 .think-summary {
   color: var(--dsc-text-quaternary);
-  flex: 1 1 auto;
+  /* flex 0 1 auto 而不是 1 1 auto（2026-10-30）：摘要原来吃掉整行剩余宽度，把箭头推到行尾，
+     读起来像「思考和箭头之间隔着一大片空白」。现在摘要只占自己需要的宽度、超长才缩，
+     箭头紧跟在文字后面，与 dsh 的「思考 · 摘要 ∨」同一个读法。 */
+  flex: 0 1 auto;
   font-size: var(--dsc-fs-caption);
   min-width: 0;
   overflow: hidden;
@@ -9833,12 +9874,13 @@ body.resizing iframe {
   display: flex;
   font-family: inherit;
   font-size: var(--dsc-fs-ui);
-  /* gap 6px：比 .think-head 的 8px 紧一点。组头只有图标 + 标题两项，图标是标题的类别标记
-     而不是独立的一格，靠紧些才读成「图标 + 一句话」这一整块。 */
-  gap: 6px;
+  /* gap 走 --proc-gap（6px）：三类过程行同一条首列，见图一的对齐口径
+     （docs/ui-design.md §15）。组头只有图标 + 标题两项，靠紧些才读成「图标 + 一句话」。 */
+  gap: var(--proc-gap);
   justify-content: flex-start;
-  min-height: var(--dsc-process-row-h);
-  padding: 0 8px;
+  /* 组头比过程行高一档（字号 13 / 行高 28）：层级不只靠颜色差 */
+  min-height: var(--proc-head-h);
+  padding: 0 var(--proc-pad);
   text-align: left;
   transition: color var(--dsc-dur) var(--dsc-ease);
   width: 100%;
@@ -9869,14 +9911,12 @@ body.resizing iframe {
    / `− Show less`，transcript_view/layout.rs:24-58）是**把开合这件事写在明面上**的——
    我们取后者：隐式箭头在长会话里太容易被当成装饰。 */
 .step-fold-leading {
-  display: inline-grid;
+  align-items: center;
+  display: inline-flex;
   flex: none;
-  place-items: center;
-}
-
-/* 叠放用的 grid-area 已随「图标/箭头互换」一起撤掉（见上一条注释）。 */
-.step-fold-leading > * + * {
-  margin-left: 4px;
+  /* 固定首列：组头图标与组内行的图标落在同一竖线上，文字才对得齐（§15 的「一条轴」）。 */
+  justify-content: flex-start;
+  width: var(--proc-gutter);
 }
 
 /* 类别图标：静息压到 quaternary——它是「这一组属于哪类活」的标记，不该比标题抢眼。 */
@@ -9933,12 +9973,43 @@ body.resizing iframe {
 
 .step-fold-label {
   color: var(--dsc-text-secondary);
-  font-size: var(--dsc-fs-ui);
+  /* 标题不参与压缩：挤在一起时先牺牲后面的任务段，标题永远读得全 */
+  flex: none;
+  font-size: var(--proc-head-fs);
   /* nowrap + 溢出截断：与 .think-label 那两条同一个道理（见上面「竖排字」那段注释）——
      标题不许被压成一列字；侧栏收到极窄时标题自己收进省略号，也不许顶开柱。 */
   overflow: hidden;
   /* 跑动中的扫光是 ::after 绝对定位叠在字形上（见下面那条共用规则），要一个定位父级 */
   position: relative;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 标题行：类别 + 分隔点 + 具体任务（2026-10-30 补的后半句，照 dsh 的「类别 · 任务」读法）。
+   标题 flex: none、任务段可缩——两者挤在同一行时，先牺牲任务。 */
+.step-fold-line {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 类别与任务之间的分隔点：2px 见方，与思考行标题后面那枚同款（两边各 6px 靠 flex gap）。 */
+.step-fold-dot {
+  background: var(--dsc-text-quaternary);
+  border-radius: 1px;
+  flex: none;
+  height: 2px;
+  width: 2px;
+}
+
+/* 具体任务：比标题暗一档、字号取工具行那一档——它是补充说明，不是第二个标题。 */
+.step-fold-task {
+  color: var(--dsc-text-quaternary);
+  flex: 0 1 auto;
+  font-size: var(--dsc-fs-tool);
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -10098,6 +10169,13 @@ body.resizing iframe {
    用 50vh 兜底是因为小窗口里 400px 会占掉大半屏。
    为什么要组内独立滚动：这一组滚它的，外层 transcript 的跟随照旧在底部——两者互不干扰。 */
 .step-body {
+  /* 组体缩进（§15）：竖线落在 --proc-pad 那一格，子行文字因此比组头右移 --proc-indent 一档。
+     这条规则原来分在 styles.css 与这里两处（一处管缩进、一处管限高滚动），改一处忘一处就漂；
+     2026-10-30 起合并到这一处，styles.css 里那份已删。 */
+  border-left: 1px solid var(--dsc-stroke-1);
+  margin-left: var(--proc-pad);
+  /* --proc-indent 已含竖线与留白，减掉外边距那条线才是内距 */
+  padding-left: calc(var(--proc-indent) - var(--proc-pad) - 1px);
   max-height: min(400px, 50vh);
   overflow-y: auto;
   overscroll-behavior-y: auto;
@@ -10137,6 +10215,15 @@ body.resizing iframe {
     #000 calc(100% - 24px),
     transparent 100%
   );
+}
+
+/* 窄屏：组体本来就只有一列宽，缩进收一档，**只改令牌**——
+   直接改 `.step-body` 的 padding-left 会让组内行不再落在 22px 图标列上（2026-10-30 前
+   这里就是写死 `padding-left: 6px`，窄屏下三类行又歪回三列）。 */
+@media (max-width: 640px) {
+  :root {
+    --proc-indent: 10px;
+  }
 }
 
 /* 组体收起（0.6.68 补）：**显式**收起来，不把「收起来」这件事只押在内核那条
