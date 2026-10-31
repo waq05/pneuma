@@ -230,7 +230,7 @@ export function queryGroups(query: string): QueryGroup[] {
       const bigrams: string[] = []
       for (let at = 0; at + 1 < run.length; at += 1) bigrams.push(run[at]! + run[at + 1]!)
       const terms = [...new Set(bigrams)]
-      // 长段要求命中过半；只有两个两字词（3 个字）的短段要全中，与严格 AND 等价
+      // 长段要求命中过半；去重后不超过两个两字词的短段要全中，与严格 AND 等价
       const need = terms.length <= 2 ? terms.length : Math.floor(terms.length / 2) + 1
       groups.push({ terms, need })
     }
