@@ -85,6 +85,10 @@ jobs:
       # （那一步在 CI 上又慢又容易挂）。
       - name: 安装依赖
         run: pnpm install --frozen-lockfile --ignore-scripts
+      # 桌面端主进程直接引用根项目的编译产物（`@dsc/runtime/*` 经 tsconfig paths 指到 ../lib），
+      # 干净检出时那些 d.ts 还不存在，不先编一遍会整片 TS2307。
+      - name: 编译内核（桌面端类型指向根 lib）
+        run: pnpm build
       - name: 编译（主进程 + 渲染层两套 tsconfig）
         working-directory: desktop
         run: pnpm typecheck

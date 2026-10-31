@@ -50,7 +50,8 @@ jobs:
       - name: 校验内置插件的 peer 区间跟得上壳版本
         run: |
           pnpm install --frozen-lockfile
-          pnpm -C ui-shell run build-plugins
+          # ui-shell 里的脚本名是 build:plugins（build 整体那条会连 vite 一起跑，这里只要清单）。
+          pnpm -C ui-shell run build:plugins
 
   npm:
     name: npm 发布 CLI 内核
