@@ -9878,7 +9878,8 @@ body.resizing iframe {
      （docs/ui-design.md §15）。组头只有图标 + 标题两项，靠紧些才读成「图标 + 一句话」。 */
   gap: var(--proc-gap);
   justify-content: flex-start;
-  /* 组头比过程行高一档（字号 13 / 行高 28）：层级不只靠颜色差 */
+  /* 行高比过程行高一档（28 / 24）：组头收着下面一组缩进行，松一点才分得开。
+     字号与思考行同档（12px，见 --proc-head-fs），层级靠缩进与灰度说，不靠字号差。 */
   min-height: var(--proc-head-h);
   padding: 0 var(--proc-pad);
   text-align: left;

@@ -39,7 +39,7 @@ const groups = await import(
   new URL('../ui-shell/src/plugins/transcript/process-groups.ts', import.meta.url).href
 )
 const args = await import(new URL('../ui-shell/src/ui-primitives/tool-args.ts', import.meta.url).href)
-const { seatPlan, groupSteps } = groups
+const { seatPlan, groupSteps, needsGroupHeader } = groups
 const { toolArgFields, MUTATION_CONTENT_FIELDS } = args
 const roundsMod = await import(
   new URL('../ui-shell/src/plugins/transcript/rounds.ts', import.meta.url).href
@@ -100,6 +100,19 @@ console.log('[1] seatPlan：每条行恰好出现一次')
   // detailed 档的「运行中那一轮」：settledOnly 跳过它，于是一组都不成——全出 row 项
   const running = groupSteps(entries, rounds, () => true, true)
   check('没有分组的轮（detailed 档的运行中轮）全出 row 项', running.groups.length === 0 && seatPlan(ats, running).every((item) => item.kind === 'row'))
+
+  // 单条组不画组头（2026-10-31）：分组器照样切出这一组，但渲染层要把它放平成一行。
+  check('单条组判为「不必画组头」', needsGroupHeader(grouping.groups[0]) === false && grouping.groups[0].size === 1)
+  const twoTools = groupSteps(
+    [
+      entry('user', { text: '题面' }),
+      entry('tool', { call: { callId: 'a', name: 'read', argsText: '{}', status: 'done' } }),
+      entry('tool', { call: { callId: 'b', name: 'read', argsText: '{}', status: 'done' } }),
+    ],
+    [{ index: 0, startIndex: 0, endIndex: 2, startTs: 1, endTs: 2, answered: true }],
+    () => false,
+  )
+  check('两条同行工具照旧成组（层级只在真压缩时出现）', twoTools.groups.length === 1 && twoTools.groups[0].size === 2 && needsGroupHeader(twoTools.groups[0]) === true)
 }
 
 console.log('[2] toolArgFields：会改文件的工具走参数表')

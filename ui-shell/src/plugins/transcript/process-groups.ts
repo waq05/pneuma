@@ -179,6 +179,23 @@ export function seatPlan(ats: readonly number[], grouping: StepGrouping): SeatPl
 }
 
 /**
+ * 这一组值不值当画组头（2026-10-31）。
+ *
+ * 只有一次工具调用的组不该画：组头那半句「类别 · 参数摘要」与组里那条工具行一字不差，
+ * 多出来的缩进与「1 项」读数一个东西也没压缩掉。实测一条长会话（43 组）里 26 组是单条——
+ * 思考行会把组切开，模型最常见的节奏就是「想一句、调一次、再想一句」，于是屏幕上几乎
+ * 每条工具都套着一个「1 项」的壳。
+ *
+ * 所以渲染层对单条组**放平**：那条工具行直接摆在思考行同一层，不缩进、不画组头。
+ * 两次以上才出现组头与缩进——层级只在真的藏了东西时才出现。
+ *
+ * @param group {@link groupSteps} 切出来的组
+ */
+export function needsGroupHeader(group: StepGroup): boolean {
+  return group.size >= 2
+}
+
+/**
  * 不进整轮过程区、也不该被整轮折叠藏起来的条目类型
  * （逐项对照 dsh 的 `TURN_PROCESS_INDEPENDENT_KINDS`，contract/turn-process.ts:20-34）。
  *

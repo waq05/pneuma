@@ -164,8 +164,29 @@ console.log('7. 内容：组头后半句与工具摘要表')
 
   check('组头画「类别 · 任务」的分隔点与任务段', row.includes('step-fold-task') && row.includes('step-fold-dot'))
   check('任务段只在已定稿的组出现（跑动中由实时详情占位）', render.includes('task={head.closed ? groupTask(members) : \'\'}'))
-  check('任务取法：先工具摘要、再思考首行', /function groupTask/.test(render) && render.includes('toolSummary(entry.call.name, entry.call.argsText)'))
-  check('组头字号与行高独立成一档（层级不只靠灰度）', /--proc-head-fs:/.test(tokens) && /--proc-head-h:/.test(tokens))
+  check('任务取法：组里第一条工具的参数摘要', /function groupTask/.test(render) && render.includes('toolSummary(entry.call.name, entry.call.argsText)'))
+}
+
+console.log('7b. 组头字号与思考行同档（用户 2026-10-31：「运行了代码字体应该和思考一样大吧」）')
+{
+  // 13px 与 12px 的差在 100% 截图里只显得「没对齐」，不显得「更高一级」；
+  // 两者都是过程区的标题行，层级该由缩进与灰度说。钉住「组头字号别再自己写死一个数」。
+  check('组头字号直接引用 --dsc-fs-ui（不写死像素）', /--proc-head-fs:\s*var\(--dsc-fs-ui\)/.test(tokens))
+  check('--dsc-fs-ui 就是 12px 那一档', /--dsc-fs-ui:\s*calc\(12px/.test(tokens))
+  check('组头标签吃这个令牌', /\.step-fold-label \{[^}]*font-size: var\(--proc-head-fs\)/.test(views))
+  check('行高仍比过程行高一档（28 / 24）', /--proc-head-h: calc\(28px/.test(tokens) && /--dsc-process-row-h: calc\(24px/.test(tokens))
+}
+
+console.log('7c. 单条工具组放平（2026-10-31：屏幕上「所有都是一项」）')
+{
+  // 思考行会把组切开，模型最常见的节奏是「想一句、调一次、再想一句」——实测一条长会话
+  // 43 个组里 26 个只装一次调用。给它套组头 + 缩进 + 「1 项」不压缩任何东西。
+  const groups = read('ui-shell/src/plugins/transcript/process-groups.ts')
+  const render = read('ui-shell/src/plugins/transcript/render.tsx')
+  const row = read('ui-shell/src/plugins/transcript/step-group-row.tsx')
+  check('纯函数 needsGroupHeader 只认两条以上', /export function needsGroupHeader\(group: StepGroup\): boolean \{\s*return group\.size >= 2/.test(groups))
+  check('渲染层对单条组直接摆那一行（不再套组头）', render.includes('needsGroupHeader(head)') && /if \(!needsGroupHeader\(head\)\)/.test(render))
+  check('开合提示只数工具调用（思考不在组里）', row.includes('次工具调用') && !row.includes('项思考与工具调用'))
 }
 
 console.log('8. 思考标头是正体（用户 2026-10-30：「换成正的，别斜体」）')

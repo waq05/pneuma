@@ -28,7 +28,10 @@
  * （transcript_view/layout.rs:24-58）是同一思路——把开合这件事写在明面上。
  *
  * 「正在… / 已…」两套文案由 group.closed 决定（见 process-groups.ts 的 stepGroupTitle）。
- * 已结束且一类工具都没调过的组显示「已完成分析」——那是「只思考没动手」的那一阶段。
+ *
+ * **只有两次以上工具调用的组才走到这里**（2026-10-31）：单条组由 render.tsx 放平成一行
+ * 工具行，组头与那条工具行说的是同一句话，再套一层缩进与「1 项」不压缩任何东西。
+ * 「已完成分析」那条文案因此成了死分支（组里只装工具，没有「只思考」的组了）。
  *
  * @module dsc-ui-shell/plugins/transcript/step-group-row
  */
@@ -148,8 +151,8 @@ export function StepGroupRow(props: {
   // 提示语带上条数与失败数：点一下会发生什么、里面有没有坑，读提示就能答（不必先点一次试）。
   const failNote = props.group.failures > 0 ? `，其中 ${String(props.group.failures)} 项失败` : ''
   const tip = props.open
-    ? `收起这一阶段（${String(props.group.size)} 项思考与工具调用${failNote}）`
-    : `展开这一阶段，放出 ${String(props.group.size)} 项思考与工具调用${failNote}`
+    ? `收起这一阶段（${String(props.group.size)} 次工具调用${failNote}）`
+    : `展开这一阶段，放出 ${String(props.group.size)} 次工具调用${failNote}`
   return (
     <button
       type="button"
@@ -217,8 +220,8 @@ export function StepGroupRow(props: {
           {props.group.failures === 1 ? '1 失败' : `${String(props.group.failures)} 失败`}
         </span>
       ) : null}
-      {/* 「点开会得到什么」写在明面上：这一组收着几条（思考段 + 工具调用合起来数）。
-          用户在长会话里看到的是一列组头，光看标题猜不出里面有多少东西。 */}
+      {/* 「点开会得到什么」写在明面上：这一组收着几次工具调用（思考行不在组里，
+          所以这里只数工具）。用户在长会话里看到的是一列组头，光看标题猜不出里面有多少东西。 */}
       <span className="step-fold-count" data-step-size={props.group.size}>
         {`${String(props.group.size)} 项`}
       </span>

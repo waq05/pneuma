@@ -13,7 +13,7 @@ import { stepGroupFoldKey, turnFoldKey } from './fold-state'
 import { useFoldMemory } from './round-fold'
 import { RowSeat, StepGroupSeat } from './fold-seats'
 import { TurnFoldRow } from './round-fold'
-import { seatPlan, type StepGroup, type StepGrouping } from './process-groups'
+import { needsGroupHeader, seatPlan, type StepGroup, type StepGrouping } from './process-groups'
 import type { RoundInfo } from './timing'
 import { UserRow } from './rows/user-row'
 import { ThinkRow } from './rows/think-row'
@@ -27,7 +27,8 @@ import { RoundFoot } from './rows/foot'
  * 组头原来只有聚合类别（「运行了代码」+「5 项」），配上 N 项读数只能说「这一阶段跑过几次」，
  * 说不出「跑的是什么」。参考实现（dsh）的组头是「类别 · 具体任务」——后半句才是人看的那半。
  *
- * 取法按可信度：先找组内第一条工具调用（参数摘要），工具都没有就用第一段思考的首行。
+ * 取法：组里第一条工具调用的参数摘要。组里只装工具（思考行不在组里，2026-10-30），
+ * 原来那条「没有工具就用第一段思考的首行」的兜底已经没有触发条件，删掉了。
  * 只给已定稿的组用：跑动中那半句由组头的实时详情占着，两个都画会打架。
  */
 function groupTask(members: readonly Row[]): string {
@@ -36,12 +37,6 @@ function groupTask(members: readonly Row[]): string {
     if (entry.kind !== 'tool') continue
     const text = toolSummary(entry.call.name, entry.call.argsText)
     if (text !== '') return text
-  }
-  for (const member of members) {
-    const entry = member.entry
-    if (entry.kind !== 'thinking') continue
-    const line = (entry.text.split('\n')[0] ?? '').replaceAll('**', '').trim()
-    if (line !== '') return line
   }
   return ''
 }
@@ -156,12 +151,28 @@ export function SeatBody({
   const rowByAt = new Map(seat.rows.map((row) => [row.at, row]))
   const processBlocks: ReactNode[] = []
   const afterBlocks: ReactNode[] = []
+  /** 这一行落在整轮过程区里（才吃整轮收起的 `hidden`）。 */
+  const inProcessOf = (row: Row): boolean =>
+    fold !== undefined && fold.foldable && fold.hasContent
+    && row.at >= fold.startIndex && row.at <= fold.endIndex
+  /** 按「过程 / 之后」两档摆一行（组员与单独行共用这一条，别在别处再写一遍）。 */
+  const pushRow = (row: Row): void => {
+    if (inProcessOf(row) && !TURN_INDEPENDENT.has(row.entry.kind)) processBlocks.push(seatRow(row, collapsed))
+    else afterBlocks.push(seatRow(row, false))
+  }
   for (const item of seatPlan(seat.rows.slice(1).map((row) => row.at), stepGrouping)) {
     if (item.kind === 'group') {
       const head = item.group
       const members = item.members
         .map((at) => rowByAt.get(at))
         .filter((member): member is Row => member !== undefined)
+      // 单条工具组放平（2026-10-31）：组头与那条工具行说的是同一句话，再套一层缩进与
+      // 「1 项」不压缩任何东西。实测长会话里过半的组是单条，等于每条工具都顶一个空壳。
+      if (!needsGroupHeader(head)) {
+        const only = members[0]
+        if (only !== undefined) pushRow(only)
+        continue
+      }
       processBlocks.push(
         <StepGroupSeat
           key={`step-${String(head.roundIndex)}-${String(head.seq)}`}
@@ -180,11 +191,7 @@ export function SeatBody({
     }
     const row = rowByAt.get(item.at)
     if (row === undefined) continue
-    const inProcess =
-      fold !== undefined && fold.foldable && fold.hasContent
-      && row.at >= fold.startIndex && row.at <= fold.endIndex
-    if (inProcess && !TURN_INDEPENDENT.has(row.entry.kind)) processBlocks.push(seatRow(row, collapsed))
-    else afterBlocks.push(seatRow(row, false))
+    pushRow(row)
   }
   return (
     <>

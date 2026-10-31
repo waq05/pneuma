@@ -573,7 +573,7 @@ cd D:\dsc\desktop && pnpm run dist:dir     # → dist/win-unpacked/Pneuma.exe
 
 | 级 | 是什么 | 字号 | 颜色 | 首列 | 行高 |
 | --- | --- | --- | --- | --- | --- |
-| L1 | 阶段组头（`.step-fold`）与思考行（`.think-head`） | `--proc-head-fs` 13px / `--dsc-fs-ui` 12px | `--dsc-text-secondary` / `tertiary` | `--proc-gutter` 22px | `--proc-head-h` 28px / `--dsc-process-row-h` 24px |
+| L1 | 阶段组头（`.step-fold`）与思考行（`.think-head`） | 同一档 `--dsc-fs-ui` 12px（组头另引 `--proc-head-fs`，值就是它） | `--dsc-text-secondary` / `tertiary` | `--proc-gutter` 22px | `--proc-head-h` 28px / `--dsc-process-row-h` 24px |
 | L2 | 组内工具行（`.tool-head`） | `--dsc-fs-tool` 11px | `--dsc-text-tertiary` | `--proc-gutter` 22px，整行再缩进 `--proc-indent` | `--dsc-process-row-h` 24px |
 | L3 | 展开体（`.think-body` / `.tool-body`） | `--dsc-fs-caption` | 正文色 | 再缩进一格 | 不限 |
 
@@ -585,6 +585,16 @@ L1 的思考行是**组外**的一行（`process-groups.ts` 只把工具调用�
 
 L2 只有工具行：图标列 + 「运行代码 · 摘要」+ 行尾读数。读不出内容的行说明渲染表缺条目
 （见 §15.3），不是排版问题。
+
+### 15.1.1 单条工具不分层（2026-10-31）
+
+**一次工具调用的阶段不出组头**，那条工具行直接摆在 L1（与思考行同一条轴、同一档字号、无缩进、
+无「N 项」）。理由：组头那半句「类别 · 参数摘要」与组里那条工具行一字不差，多一层缩进与一个
+「1 项」读数不压缩任何东西。实测一条长会话 43 个组里 26 个只装一次调用——思考行会把组切开，
+模型最常见的节奏就是「想一句、调一次、再想一句」，于是屏幕上几乎每条工具都顶着一个空壳。
+
+两条以上才出现组头与缩进（`process-groups.ts` 的 `needsGroupHeader`，组体仍是
+`--proc-indent` 那一档）。层级只在真的藏了东西时出现。
 
 ### 15.2 三条硬规则
 
@@ -606,8 +616,9 @@ L2 只有工具行：图标列 + 「运行代码 · 摘要」+ 行尾读数。�
 ### 15.4 验收
 
 ```sh
-node scripts/ui-process-grid-test.mjs   # 令牌、三行同源、首列宽度、禁令、唯一缩进源
-node scripts/ui-transcript-render-test.mjs  # 思考行不进组、每条行恰好一次
+node scripts/ui-process-grid-test.mjs   # 令牌、三行同源、首列宽度、组头字号与思考行同档、
+                                       # 单条组放平、禁令、唯一缩进源
+node scripts/ui-transcript-render-test.mjs  # 思考行不进组、每条行恰好一次、单条组不画组头
 cd D:\dsc\desktop && pnpm run typecheck
 ```
 
