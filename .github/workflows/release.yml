@@ -26,6 +26,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # 版本检查本身只要 node（runner 自带），但下面那条「跑一次 build-plugins」要 pnpm 与依赖：
+      # 缺这一步时 2026-10-31 的 v0.8.0 首发直接以 127 停在 verify，npm 与安装器两个作业全被跳过。
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
       - name: 版本四方对账（tag / 根 / desktop / ui-shell）
         run: |
           tag="${GITHUB_REF_NAME#v}"
