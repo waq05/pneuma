@@ -1,7 +1,7 @@
 {
   "name": "@dsc/ui-renderer",
   "private": true,
-  "version": "0.7.2",
+  "version": "0.8.0",
   "type": "module",
   "description": "界面壳的渲染器/装载器包（启动图取回 + 分批装载 + 平台种子表 + 热更 + 页面入口）：E4 起独立成包。",
   "types": "index.ts"

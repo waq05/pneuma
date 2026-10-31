@@ -376,7 +376,7 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 | `KERNEL_API_VERSION` | `src/core/plugin-registry.ts:79` | 6 | 插件能用的扩展点有增减 |
 | `HOST_PROTOCOL_VERSION` | `src/core/dock-browser.ts:20`（`src/plugins/host-stdio.ts` 只做再导出） | 3 | 协议消息种类或白名单语义变了 |
 | `NATIVE_BRIDGE_VERSION` | `src/core/native-bridge.ts:70` | 3 | **加操作不涨**；改某个操作的实参或语义才涨 |
-| 插件契约版本（`apiVersion`） | `ui-shell/package.json` 的 `version` → `build-plugins.mjs` 写进清单 | 0.7.1 | **跟产品号同版**（`release.yml` 四方对账） |
+| 插件契约版本（`apiVersion`） | `ui-shell/package.json` 的 `version` → `build-plugins.mjs` 写进清单 | 0.8.0 | **跟产品号同版**（`release.yml` 四方对账） |
 
 两个版本都是「加载时对不上就报错」，不做静默兼容。插件可以声明 `apiVersion`，内核只拒绝
 **高于**自己的版本。
@@ -385,9 +385,9 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 由 `ui-shell/package.json` 的 `version` 写进清单，`release.yml` 按 tag / 根 / `desktop` / `ui-shell`
 四方对账。
 
-**代价要清楚**：19 个内置插件的 `package.json` 都声明 `"@dsc/ui": "^0.7.1"` 这样的区间，
+**代价要清楚**：19 个内置插件的 `package.json` 都声明 `"@dsc/ui": "^0.8.0"` 这样的区间，
 构建期（`ui-shell/build-plugins.mjs` 读 `shellVersion`）逐个校验。所以每次改版本号，
-**19 个插件的 peer 区间要一起改**——`^0.7.1` 只认到 0.8.0 以下，出 0.8.0 那天不改就会被门禁拒掉。
+**19 个插件的 peer 区间要一起改**——`^0.8.0` 只认到 0.9.0 以下，出 0.9.0 那天不改就会被门禁拒掉。
 
 好在漏改不会静默：`build-plugins` 会把失配的插件点名，`release.yml` 在打包前先跑一次
 `build-plugins`，19 个全挂时发版直接停在 verify 作业，不会产出一个「界面全空」的安装包。

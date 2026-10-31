@@ -1,7 +1,7 @@
 {
   "name": "@dsc/ui-slots",
   "private": true,
-  "version": "0.7.2",
+  "version": "0.8.0",
   "type": "module",
   "description": "界面壳的槽位包（槽名契约 + React 渲染出口）：E4 起独立成包，E6 起作为平台种子下发给插件。",
   "types": "index.ts"

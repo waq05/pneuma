@@ -11846,3 +11846,42 @@ order 30 的审批（只跳这一格，模式闸门 10、沙箱 8、安全钩子
 （13px 时组头是 19~20），两条工具同行的组仍显示「2 项」。
 
 `pnpm run typecheck`、`pnpm run build:ui`、`desktop` 的 `pnpm run build` 全过。
+
+## 0.8.0 发版：版本号四处对账、首次成文的更新日志（2026-10-31）
+
+上一版公开发布是 0.7.1（2026-10-17，只动了仓库首页）。此后 187 个提交全压在一条功能分支上，
+`v0.7.1` 从来没有打过 tag，仓库里的版本号一直停在 0.7.2。这次一并收口。
+
+**一、版本号改成 0.8.0，动的地方比文档写的多三处。**
+
+`docs/development.md` 的版本表写的是「根 / desktop / ui-shell 三处 + 19 个插件 peer 区间」。
+按这条改完，`check:ui` 立刻挂两条：
+
+- `ui-plugin-test` 的「五个逻辑包的包身份与壳同源」：`ui-shell/src/ui-{primitives,slots,dockkit,layout,renderer}/package.json`
+  的 `version` 也要求跟壳同源（`scripts/ui-plugin-test.mjs:1086`）。这五个包在文档里没提，
+  漏改不会被构建拦下，只有这条断言会喊。
+- `ui-two-halves-test` 的「界面半收进了产物表」：`examples/plugin-two-halves/package.json` 的
+  `dsh.client.api` 写的是 `^0.7.1`，壳升到 0.8.0 之后版本门禁按「声明高于壳」拒掉，示例包直接加载不了。
+
+所以这次的清单是 **4 + 19 + 5 + 1**：根 / desktop / ui-shell / `src/ui` 四个 `version`，
+19 个内置插件的 peer 区间，5 个逻辑包的 `version`，示例包声明的契约区间。`docs/development.md`
+那张表和 `release.yml` 的头注释一并改成 `^0.8.0` 的例子。
+
+**二、`CHANGELOG.md` 第一次成文。**
+
+187 个提交没法逐条念给用户听，按「桌面端 / 插件体系 / 对话界面 / 权限与安全 / 会话与上下文 /
+工具 / 终端界面 / 工程」八块归并，只留装完能感觉到的变化。0.7.1 那一节如实写成「与 0.7.0 功能相同，
+只更新了仓库首页说明」——查 `git log v0.7.0..07de1c9` 只有一条 README 提交，没有功能变化，
+不编造历史。
+
+**三、门禁读数**（都在改完之后重跑）
+
+- `pnpm run typecheck`、`pnpm --dir desktop typecheck`：均无输出；
+- `pnpm run build`、`pnpm run build:ui`：19 份 `bundle.json` 的 `apiVersion` 已是 0.8.0，清单顶层同步；
+- `pnpm run check:core`：85/85（614 秒）；
+- `pnpm run check:ui`：48/48；
+- `pnpm run check:style`：651 个文件全过；
+- `npm pack --dry-run`：`@waq666/pneuma@0.8.0`，849 个文件、5.3 MB 包体。
+
+发版走仓库自己的流水线：推 `v0.8.0` tag 之后 `release.yml` 先四方对账（tag / 根 / desktop / ui-shell），
+再跑一次 `build-plugins` 顶出 peer 区间失配，然后 npm 发布与 Windows 安装器两个作业并行。

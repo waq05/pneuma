@@ -6,7 +6,7 @@
 # （verify 作业把关）。
 #
 # ui-shell 跟产品号走的代价要清楚：它的 version 同时是插件清单里的 apiVersion，19 个内置
-# 插件按 "@dsc/ui": "^0.7.1" 这种区间声明兼容性，构建期逐个校验（ui-shell/build-plugins.mjs）。
+# 插件按 "@dsc/ui": "^0.8.0" 这种区间声明兼容性，构建期逐个校验（ui-shell/build-plugins.mjs）。
 # 所以**改版本号时，19 个插件的 peer 区间要一起改**——忘了改，构建会当场失败并指出是哪个插件，
 # 不会静默放行。
 
