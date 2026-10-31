@@ -1161,6 +1161,11 @@ export interface SessionSearchHit {
   snippet: string
   /** 命中所在行号（从 1 数），供精确定位。 */
   line: number
+  /**
+   * true = 这条是宽松召回的结果：严格逐字相邻没有命中，按「每组命中多数两字词」找出来的。
+   * 调用方要把这层意思说给用户/模型，别让人把模糊命中当成原话。
+   */
+  fuzzy?: true
 }
 
 /** {@link SessionSearchService.search} 的可选条件。 */
@@ -1171,6 +1176,11 @@ export interface SessionSearchOptions {
   includeArchived?: boolean
   /** 只搜这个工作目录下的会话。 */
   cwd?: string
+  /**
+   * 严格查询一条都没命中时，是否再按「多数两字词」找一次（缺省 true）。
+   * 传 false 就只要严格结果。
+   */
+  fuzzy?: boolean
 }
 
 /**
@@ -1179,7 +1189,11 @@ export interface SessionSearchOptions {
  * 检索走旁路索引，不改会话 jsonl 的主格式：索引坏了重建即可，会话历史不受影响。
  */
 export interface SessionSearchService {
-  /** 按关键词检索历史会话正文；中文按 bigram 切词，所以 1-2 字词也命中。 */
+  /**
+   * 按关键词检索历史会话正文；中文按 bigram 切词，所以 1-2 字词也命中。
+   * 严格逐字相邻一条都没命中时，按「每组过半两字词」兜底召回一次，这些结果带 fuzzy 标记；
+   * 传 fuzzy: false 只要严格结果。
+   */
   search(query: string, options?: SessionSearchOptions): Promise<SessionSearchHit[]>
   /** 丢掉索引整表重建（回填用）。 */
   rebuild(): Promise<void>

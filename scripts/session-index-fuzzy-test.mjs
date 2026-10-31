@@ -11,7 +11,8 @@
  *   [3] fuzzy:false 关掉兜底时仍然一条不返回（调用方可以要严格结果）；
  *   [4] 只共享一个两字词的句子不算命中（避免「多数」退化成「沾边就算」）；
  *   [5] 严格能命中时不走兜底（结果不带 fuzzy 标记，原有行为不变）；
- *   [6] 分组切法本身：长段要过半、短段要全中、英文整词单独一组。
+ *   [6] 分组切法本身：长段要过半、短段要全中、英文整词单独一组；
+ *   [7] 查询里重复的字符只算一个两字词，不能靠重复计数凑满阈值、凭空召回。
  *
  * 隔离：临时 DSC_HOME，真实 ~/.dsc 一个字节都不动。
  * 用法：pnpm run build && node scripts/session-index-fuzzy-test.mjs
@@ -55,6 +56,7 @@ writeSession('sess-loosely', 'ws-a', ['内存占用一直很高，机器很卡']
 writeSession('sess-narrow', 'ws-b', ['内存很卡'])
 writeSession('sess-strict', 'ws-c', ['内存占用过高，已经重启过'])
 writeSession('sess-mixed', 'ws-d', ['内存泄漏比较严重，用 leak 工具查过'])
+writeSession('sess-dup', 'ws-e', ['这里是重复的内容'])
 
 const { defaultSessionIndexOptions, queryGroups, SessionIndex } = await import('../lib/core/session-index.js')
 
@@ -102,6 +104,13 @@ const shortGroup = queryGroups('内存')
 check('短段要全中（2 字词：1 项、need 1）', shortGroup.length === 1 && shortGroup[0].terms.length === 1 && shortGroup[0].need === 1, JSON.stringify(shortGroup))
 const mixedGroups = queryGroups('内存 leak')
 check('英文整词单独一组', mixedGroups.length === 2 && mixedGroups[1].terms[0] === 'leak' && mixedGroups[1].need === 1, JSON.stringify(mixedGroups))
+// [7] 重复字符的查询：同一个两字词只算一次
+const dupGroup = queryGroups('重复重复重复')
+check('重复字符切出的两字词去重后只剩 2 项、need 2', dupGroup.length === 1 && dupGroup[0].terms.length === 2 && dupGroup[0].need === 2, JSON.stringify(dupGroup))
+const dupStrict = await index.search('重复重复重复', { fuzzy: false })
+const dupLoose = await index.search('重复重复重复')
+check('重复字符的查询不靠重复计数凭空召回（严格 0 条，兜底也 0 条）', dupStrict.length === 0 && dupLoose.length === 0, JSON.stringify(dupLoose.map((hit) => [hit.sessionId, hit.fuzzy])))
+
 const threeGroup = queryGroups('人工智能')
 check('4 字段：3 个两字词里命中过半（2 个）即成立', threeGroup.length === 1 && threeGroup[0].terms.length === 3 && threeGroup[0].need === 2, JSON.stringify(threeGroup))
 

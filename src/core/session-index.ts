@@ -225,9 +225,12 @@ export function queryGroups(query: string): QueryGroup[] {
     if (run.length === 1) {
       groups.push({ terms: [run[0]!], need: 1 })
     } else {
-      const terms: string[] = []
-      for (let at = 0; at + 1 < run.length; at += 1) terms.push(run[at]! + run[at + 1]!)
-      // 长段要求命中过半，短段（2~3 个字）与严格 AND 等价，宽松档不会给出更多结果
+      // 词项去重：查询里重复的字符（例如「重复重复重复」）会切出同一个两字词好几次，
+      // 不去重的话 relaxedHits 会把同一处命中重复计数，一行就能凑满阈值、凭空召回。
+      const bigrams: string[] = []
+      for (let at = 0; at + 1 < run.length; at += 1) bigrams.push(run[at]! + run[at + 1]!)
+      const terms = [...new Set(bigrams)]
+      // 长段要求命中过半；只有两个两字词（3 个字）的短段要全中，与严格 AND 等价
       const need = terms.length <= 2 ? terms.length : Math.floor(terms.length / 2) + 1
       groups.push({ terms, need })
     }
