@@ -12,7 +12,16 @@
 # 隔离：USERPROFILE/HOME + DSC_DESKTOP_STATE + DSC_DESKTOP_USER_DATA 全钉在隔离目录；
 # 工作区是 shots 下的一次性目录，假端点只监听回环、只回内存里的 SSE。
 #
-# 用法：pwsh -NoProfile -File ui-tail-changes-check.ps1（壳产物需已构建：pnpm run build:ui）
+# 用法：
+#   pwsh -NoProfile -File ui-tail-changes-check.ps1
+#     → 跑仓库里的 electron + out/main（开发态；壳产物需已构建：pnpm run build:ui）
+#   pwsh -NoProfile -File ui-tail-changes-check.ps1 -ExePath D:\dsc\desktop\dist\win-unpacked\Pneuma.exe
+#     → 跑**打包产物**（冒烟：验 asar / dsc-core / 原生模块装得对不对）
+#   两种都要求先起一个不冲突的假端点端口；产物版没有 out/main 可指，只认 exe。
+
+param(
+  [string]$ExePath = ''
+)
 
 $ErrorActionPreference = 'Stop'
 Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
@@ -24,6 +33,8 @@ $swHome = Join-Path $swShots 'tail-probe-home'
 $swDsc = Join-Path $swHome '.dsc'
 $swWs = Join-Path $swShots 'tail-probe-ws'
 $swPort = 17421
+$swPackaged = $ExePath -ne ''
+if ($swPackaged -and -not (Test-Path -LiteralPath $ExePath)) { throw "没有这个 exe：$ExePath" }
 
 # ── 现场清干净（只清这个自检自己的三个目录）───────────────────────────────────
 foreach ($dir in @($swHome, $swWs)) {
@@ -163,7 +174,11 @@ function Get-TreeIds([int]$root) {
 }
 
 try {
-  $swProc = Start-Process -FilePath $swElectron -ArgumentList $swEntry -PassThru -RedirectStandardOutput $outLog -RedirectStandardError $errLog
+  $swProc = if ($swPackaged) {
+    Start-Process -FilePath $ExePath -PassThru -RedirectStandardOutput $outLog -RedirectStandardError $errLog
+  } else {
+    Start-Process -FilePath $swElectron -ArgumentList $swEntry -PassThru -RedirectStandardOutput $outLog -RedirectStandardError $errLog
+  }
   $swStart = Get-Date
   $memLog = Join-Path $swShots 'ui-tail-changes-memory.csv'
   Remove-Item -LiteralPath $memLog -ErrorAction SilentlyContinue
