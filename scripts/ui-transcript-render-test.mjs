@@ -426,6 +426,24 @@ console.log('[8] 收起态的结果与失败数（对照 codex 的活动流）')
   check('失败数在窄屏也不隐藏（它是读数，不是装饰）', !/\.step-fold-fail[^{}]*\{[^}]*display: none/.test(css))
 }
 
+console.log('[9] 轮尾「已编辑 N 个文件」卡只在一轮收口之后出现')
+{
+  // 报障现场（2026-11-01）：一轮还在跑，转圈下面先挂出一份只算了一半的清单，
+  // 点「审查」看到的是半截改动。判据只认 ChatView 给的 running（turnState + 最后一轮）。
+  const renderSrc = read('ui-shell/src/plugins/transcript/render.tsx')
+  check(
+    '① 卡在 running 成立时不画（收口才上屏）',
+    /running \? null : <ChangesCard rows=\{seat\.rows\} cwd=\{cwd\} \/>/.test(renderSrc),
+  )
+  // 为什么不能用 roundFold 的 running：它含「这一轮没答完」，被中断的旧轮永远成立，
+  // 那些轮改过的文件就再也点不到「审查」了。
+  check(
+    '② 不拿 roundFold 的 running 当判据（中断过的旧轮它的卡还在）',
+    !/foldRunning \? null : <ChangesCard/.test(renderSrc)
+      && renderSrc.includes('/** 这一轮还在跑（只有最后一轮会跑）：轮尾的时刻与用量此时不画。 */'),
+  )
+}
+
 console.log('')
 console.log(`通过 ${String(passed)}/${String(passed + failures)}`)
 process.exit(failures === 0 ? 0 : 1)

@@ -221,7 +221,14 @@ export function SeatBody({
         </div>
       )}
       {afterBlocks}
-      <ChangesCard rows={seat.rows} cwd={cwd} />
+      {/* 「已编辑 N 个文件」是**轮尾**卡：这一轮还在跑时不画。
+          0.8.0 之前它一出现第一条 changes 条目就上屏，于是「正在运行命令」的转圈下面
+          先挂出一份只算了一半的清单——用户看到的是「这一轮改了 5 个文件」，
+          而实际上后面还有几刀没落地，点「审查」看到的是半截改动（2026-11-01 报障）。
+          判据只认 running（ChatView 的 turnState + 「是不是最后一轮」）：它精确对应
+          「这一轮正在执行」。不拿 roundFold 的 running——那个还含「这一轮没答完」，
+          被中断的旧轮会永远成立，它的改动卡就再也画不出来了。 */}
+      {running ? null : <ChangesCard rows={seat.rows} cwd={cwd} />}
       <RoundFoot
         round={roundInfo}
         running={running}
