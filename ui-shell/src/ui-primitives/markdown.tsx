@@ -67,8 +67,37 @@ const MARKDOWN_ENV = createContext<MarkdownEnv>({ base: '', streaming: false })
 /** remark 插件表也提成常量：数组每帧新建会让 react-markdown 重建整条解析管线。 */
 const REMARK_PLUGINS = [remarkGfm]
 
+/**
+ * 内嵌图片缓存的**字符预算**（约 24 MB 的 base64 文本，也就是 18 MB 上下的原图）。
+ *
+ * 为什么要有上限：这张表按绝对路径一键一值，值是一整份 base64 字符串——一张
+ * 1832×1218 的截图就有 1～2 MB。用户翻一天文档、来回看几十张图，这张表只进不出，
+ * 进程内存就这么一块一块涨上去（2026-11-01 查内存时发现的唯一无界表）。
+ * 超预算按插入序淘汰最老的：缓存只影响「再看一次要不要重新读盘」，丢一份不坏功能。
+ */
+const MD_IMAGE_BUDGET_CHARS = 24 * 1024 * 1024
+
 /** 相对路径图片的 base64 缓存（进程内一份；key = 绝对路径）。 */
 const mdImageCache = new Map<string, string>()
+/** 表里现在的字符总量（淘汰时按它算，不必每次遍历求和）。 */
+let mdImageChars = 0
+
+/** 塞一份图片进缓存：单张超过预算的干脆不缓存（它自己就顶破整张表）。 */
+function putImage(abs: string, url: string): void {
+  if (url.length > MD_IMAGE_BUDGET_CHARS) return
+  const previous = mdImageCache.get(abs)
+  if (previous !== undefined) mdImageChars -= previous.length
+  mdImageCache.delete(abs)
+  mdImageCache.set(abs, url)
+  mdImageChars += url.length
+  while (mdImageChars > MD_IMAGE_BUDGET_CHARS) {
+    const oldest = mdImageCache.keys().next().value
+    if (oldest === undefined) break
+    const dropped = mdImageCache.get(oldest)
+    mdImageCache.delete(oldest)
+    mdImageChars -= dropped?.length ?? 0
+  }
+}
 
 /** markdown 里的一张图：http(s)/data 直接给 src；相对路径经 fs-read 转 data URL。 */
 function MdImage({ src, alt }: { src: string; alt: string }): JSX.Element {
@@ -87,7 +116,7 @@ function MdImage({ src, alt }: { src: string; alt: string }): JSX.Element {
         if (!on) return
         if (read.kind === 'image' && read.tooLarge !== true && read.base64 !== undefined) {
           const url = `data:${read.mime};base64,${read.base64}`
-          mdImageCache.set(abs, url)
+          putImage(abs, url)
           setResolved(url)
         } else {
           setFailed(true)
@@ -108,14 +137,54 @@ function MdImage({ src, alt }: { src: string; alt: string }): JSX.Element {
 
 /* ────────────────────────────── 代码块 ────────────────────────────── */
 
-/** 已算好的高亮行缓存上限（条）。会话里反复出现的同一段代码不必再跑一遍 shiki。 */
+/**
+ * 已算好的高亮行缓存上限（条）。会话里反复出现的同一段代码不必再跑一遍 shiki。
+ *
+ * 条数之外还要一道**字符预算**：一条缓存的份量是「源码 + 每个 token 的文本」，
+ * 也就是大致两倍源码。只按 200 条封顶的话，200 段 200 KB 的大代码块就是 80 MB；
+ * 按 1.5M 字符（约 3 MB 文本）封顶才真的把这张表按住。两道闸都留着：条数挡
+ * 「无数小片段」，字符挡「少量巨无霸」。
+ */
 const LINE_CACHE_LIMIT = 200
+
+/** 高亮行缓存的字符预算（按源码长度计，约等于实际占用的一半）。 */
+const LINE_CACHE_BUDGET_CHARS = 1_500_000
 
 /** 高亮行缓存：键＝语法 + 源码。插入序即淘汰序（够用，不做真 LRU）。 */
 const LINE_CACHE = new Map<string, HighlightedCodeLine[]>()
 
+/** 表里现行缓存的源码总长（淘汰时按它算）。 */
+let lineCacheChars = 0
+
+/** 每一份缓存占了多少字符（键 → 源码长度；与缓存同增同减，不在淘汰时反推）。 */
+const lineCacheCost = new Map<string, number>()
+
 function cacheKeyOf(code: string, lang: string): string {
   return lang + '\u0000' + code
+}
+
+/**
+ * 塞一份高亮结果进缓存，两道闸都过一遍：条数与字符预算。
+ *
+ * 淘汰按插入序（先来先走）：高亮缓存命中的是「同一段代码重画」（切会话、展开整轮），
+ * 近因顺序与命中率并不严格对应，真 LRU 的代价不值这个差额。
+ */
+function putLines(code: string, key: string, value: HighlightedCodeLine[]): void {
+  if (LINE_CACHE.has(key)) {
+    LINE_CACHE.delete(key)
+    lineCacheChars -= lineCacheCost.get(key) ?? 0
+    lineCacheCost.delete(key)
+  }
+  LINE_CACHE.set(key, value)
+  lineCacheCost.set(key, code.length)
+  lineCacheChars += code.length
+  while (LINE_CACHE.size > LINE_CACHE_LIMIT || lineCacheChars > LINE_CACHE_BUDGET_CHARS) {
+    const oldest = LINE_CACHE.keys().next().value
+    if (oldest === undefined) break
+    LINE_CACHE.delete(oldest)
+    lineCacheChars -= lineCacheCost.get(oldest) ?? 0
+    lineCacheCost.delete(oldest)
+  }
 }
 
 /** 一行的外壳：第一行前不加换行符，其余每行前面补一个（与 shiki 的 HTML 同构）。 */
@@ -168,11 +237,7 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
       highlightToLines(code, lang)
         .then((value) => {
           if (!on || value === null) return
-          if (LINE_CACHE.size >= LINE_CACHE_LIMIT) {
-            const oldest = LINE_CACHE.keys().next().value
-            if (oldest !== undefined) LINE_CACHE.delete(oldest)
-          }
-          LINE_CACHE.set(key, value)
+          putLines(code, key, value)
           applied.current = key
           setLines({ key, value })
         })
