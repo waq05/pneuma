@@ -1,4 +1,4 @@
-# 打包件冒烟：直接起 dist/win-unpacked 的 Muse Code.exe（electron-builder 刚出的产物），
+# 打包件冒烟：直接起 dist/win-unpacked 的 Pneuma.exe（electron-builder 刚出的产物），
 # 隔离 HOME 与 userData，截图 + eval 断言 UI 真渲染（不是白屏）。
 #
 # 用法：pwsh -NoProfile -File pkg-smoke.ps1
@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
 
 $pkgShots = 'D:\dsc\desktop\shots'
-$pkgExe = 'D:\dsc\desktop\dist\win-unpacked\Muse Code.exe'
+$pkgExe = 'D:\dsc\desktop\dist\win-unpacked\Pneuma.exe'
 $pkgHome = Join-Path $pkgShots 'pkg-smoke-home'
 
 # 种子最小化：只建目录骨架 + 假端点配置（打包件起来不出请求）

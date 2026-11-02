@@ -1019,6 +1019,11 @@ function openPathBySystem(path: unknown): Promise<string> {
 /** 用系统浏览器打开 http/https 链接；别的协议一律丢掉。 */
 function openExternalUrl(url: unknown): void {
   if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return
+  // 自检：只记账、不真开浏览器。验「点击链接不会把主窗口导航走」时不该给用户弹一堆网页。
+  if (process.env.DSC_NO_EXTERNAL_OPEN === '1') {
+    selfcheckNote(`[selfcheck] 跳过打开外部链接：${url}\n`)
+    return
+  }
   void shell.openExternal(url)
 }
 
@@ -1340,6 +1345,43 @@ function createWindow(): void {
   })
   // dock.ts 通过全局引用向 renderer 推送事件（pty 数据 / 浏览器状态）
   ;(globalThis as { __dscMainWindow?: BrowserWindow }).__dscMainWindow = mainWindow
+
+  // 主窗口只跑界面，绝不许自己换页。
+  //
+  // 为什么要有这两道闸：正文里的链接（markdown 里的 `<a href>`）以前就是裸链接，点一下
+  // 主窗口直接导航过去——整个界面被换成那个网页，加载不出来就是一片白，而且没有后退路，
+  // 只能重启（2026-11-02 报障「点会话里的网址直接白屏」）。内嵌浏览器那台视图一直有这两道
+  // （`dock.ts` 的 setWindowOpenHandler / will-navigate），主窗口漏了。
+  //
+  // 规矩：同源（附件预览 `/api/attachments/<sha>` 这类）保持原样；http/https 外链交给
+  // 系统浏览器；别的协议一律丢掉。
+  const sameOriginAsApp = (target: string): boolean => {
+    const win = mainWindow
+    if (win === null) return false
+    try {
+      const current = new URL(win.webContents.getURL())
+      const next = new URL(target, current)
+      // `file:` 与 `data:` 的 origin 都是字符串 "null"，光比 origin 会把它们放进来
+      if (next.origin !== current.origin) return false
+      return current.protocol === 'http:' || current.protocol === 'https:'
+    } catch {
+      return false
+    }
+  }
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    // 同源开窗是旧行为（附件卡片 `<a target="_blank">` 靠它看原文件），保留；
+    // 外链不再新开 Electron 窗口，交系统浏览器。
+    if (sameOriginAsApp(url)) return { action: 'allow' }
+    openExternalUrl(url)
+    return { action: 'deny' }
+  })
+  const blockNavigation = (event: { preventDefault: () => void }, url: string): void => {
+    // 主窗口是单页应用，任何整页导航都是错的：一律拦下，外链转系统浏览器。
+    event.preventDefault()
+    openExternalUrl(url)
+  }
+  mainWindow.webContents.on('will-navigate', blockNavigation)
+  mainWindow.webContents.on('will-redirect', blockNavigation)
 
   // 首帧：页面画出第一帧再显示窗口（配合上面的 show: false）。
   mainWindow.once('ready-to-show', () => {
