@@ -747,7 +747,8 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 
 | 数值 | 值 | 出处 |
 | --- | --- | --- |
-| 压缩保留的最近消息条数 | 缺省 20 条，夹在 5~200；可配 `compact.keepRecent`，设置「上下文压缩」分区就能改 | `src/plugins/compact.ts:38-43`、`src/core/compact.ts:27` |
+| 压缩保留的最近消息条数 | 缺省 20 条，夹在 5~200；可配 `compact.keepRecent`，设置「上下文压缩」分区就能改。它是**条数下限**，真正决定切点的是下面那条 token 预算 | `src/plugins/compact.ts:39`、`src/core/compact.ts:38` |
+| 压缩保留尾部的 token 预算 | 缺省按模型上下文窗口的 16%（夹 5%~40%），可配 `compact.retainPercent`；核心侧是绝对值，插件按 `contextWindowOf(session) × 百分比` 折算后传 `retainTokens`。从尾往前累加估算 token 够预算才停，再退到「不拆开工具调用与结果」的安全边界 | `src/plugins/compact.ts`（`limits`）、`src/core/compact.ts`（`selectCut`） |
 | 审批卡等多久没人答 | 缺省 300 秒，夹在 10 秒~1 小时；可配 `approval.approvalTimeoutMs`，每次弹卡现读。**没人能应答时不等这个值**：没有 `interactive` 服务（tui / host-stdio 登记）且本进程不是终端直连时，直接按拒处理并写明理由 | `src/plugins/approval.ts:42-56`、`:116-128` |
 | 模型一次最多问几题 / 每题几个选项 | 缺省 3 题 / 每题 4 项，都夹在 1~8；可配 `ask.maxQuestions` / `ask.maxOptions` | `src/plugins/ask.ts` |
 | 提问卡等多久算没人答 | 缺省 900 秒（15 分钟），夹在 10 秒~1 小时；可配 `ask.waitMs`，每次挂卡现读。等满了卡片撤掉、模型拿到「用户没有回答」的实话接着走。**等人的这段时间不算 PTC 脚本的时限**（工具声明 `waitsForHuman`，`plugins/ptc.ts` 的停表只认它） | `src/plugins/ask.ts`、`src/plugins/ptc.ts` |
@@ -755,7 +756,8 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 | 说明书（AGENTS.md）字符预算 | 缺省 20000，夹在 4000~200000；可配 `prompt.instructionBudget` | `src/plugins/prompt.ts`、`src/core/prompt.ts:37` |
 | 快照推送节流 | 缺省 80 ms，夹在 16 ms~1 秒；可配 `host-stdio.snapshotThrottleMs` | `src/plugins/host-stdio.ts` |
 | LLM 连接超时 / 流空闲超时 | 缺省 30 s / 180 s（流空闲：这么久一个字节都没到就判服务端挂起）；可用 `DSC_LLM_CONNECT_TIMEOUT_MS` / `DSC_LLM_STREAM_IDLE_MS` 覆盖（毫秒，夹在 1 秒~10 分钟，每次调用现读）。端点连不上时默认要等 30 s × 3 次重试 ≈ 90 s 才把失败浮上来，网络差的把它调小（如 8000） | `src/core/llm.ts` 的 `readTimeoutMs` |
-| 自动压缩触发线 | 缺省为模型上下文窗口的 80%，夹在 50%~95%；可配 `compact.autoCompactPercent`，设置「上下文压缩」分区就能改 | `src/plugins/compact.ts:40`、`:63` |
+| 自动压缩触发线 | 缺省为模型上下文窗口的 80%，夹在 50%~95%；可配 `compact.autoCompactPercent`。实际阈值取 `min(窗口×百分比, 窗口 − 输出预留 − 安全余量)`：输出预留是这条路由的 `maxTokens`，安全余量缺省按窗口 6.4% 算并封顶 65536（可配 `compact.headroomTokens`，0 = 自动），下限 1024 | `src/plugins/compact.ts`（`thresholdOf`） |
+| 压一次不够时最多再压几次 | 缺省 1 次，夹 0~3；可配 `compact.compactionRetries`。第一次压完复量，仍超阈值才补压；补压会绕开「历史太短」守卫，允许折进上一份摘要本身。手动 `/compact` 与爆窗强压都不循环 | `src/plugins/compact.ts`（`check`）、`src/core/compact.ts` |
 | 压缩摘要的锚点索引预算 | 缺省 6000 字符，夹在 1000~20000；可配 `compact.anchorBudgetChars` | `src/core/compact-anchors.ts:32`、`src/plugins/compact.ts:46` |
 | 压缩摘要的用户原话预算 | 缺省 8000 字符，夹在 1000~40000；可配 `compact.userQuoteBudgetChars` | `src/core/compact-anchors.ts:35`、`src/plugins/compact.ts:47` |
 | 灾难地板的命令长度上限 | 缺省 4000 字符，夹在 100~100000；更长的命令按「看不清要跑什么」拒；可配 `approval-floor.maxCommandLength` | `src/core/approval-floor.ts:34`、`:116` |
@@ -1112,8 +1114,17 @@ Windows 的最小化/最大化/关闭三个按钮由系统画，样式表够不�
 零 node 依赖的纯模块，渲染层（经 `@dsc/runtime/core/commands-completion.js` alias）、TUI
 与插件三方共用。渲染层 import 链上任何一个模块顶层碰 node 内置模块，vite externalize
 代理一求值就把整个渲染进程炸成白屏（0.6.26 踩的，见 development-log 阶段 44 与 memory）。
-内置命令 23 条（`src/core/commands-completion.ts`，从 :35 起）
-（`src/core/commands-completion.ts:35-61`）；`/review` 的 handler 在 `src/plugins/commands.ts`
-（收集工作区未提交改动组装审查轮，git 收集在 `src/core/git-info.ts`）。插件注册的命令进
-`extraSpecs`。输入 `/ne` 按 Enter 会展开成 `/new`（唯一前缀）。`/effort` 保留着但只回
+内置命令 25 条（`src/core/commands-completion.ts`）
+（`src/core/commands-completion.ts`）。命令可以声明 `input: { hint }`：带这一位的命令在输入框
+回车时**不执行**，只把 `/<名字> ` 补进输入（光标落尾部、下方显示 hint），再回车才带着
+写成的要求派发——`/review` 就是这么收「关注点」的（`inputClaimOf` 是 TUI 与壳共用的那条判定）。
+`/review` 的 handler 在 `src/plugins/commands.ts`：空输入时先弹范围卡（对比基准分支 / 未提交改动 /
+某次提交 / 自定义要求，走 `ask` 服务的提问通道），再由 `src/core/git-info.ts` 的
+`collectReviewScope` 把**完整** diff 落盘到 `<DSC_HOME>/cache/review/`（不再按字符截断），
+任务书 `reviewTaskText` 给审查队友路径与读法；队友自己用 `read` 分批读。`/review-status`
+读 `<DSC_HOME>/code-review/<会话>.json`，`/review-cancel` 叫停正在跑的那次。
+**引用校验**：用户手填的分支/提交先过 `assertReviewRef`——`execFile` 挡得住 shell 拼接，
+挡不住 `--output=<路径>` 这种选项注入，所以不许以 `-` 开头、只放行正常引用字符。
+插件注册的命令进 `extraSpecs`。输入 `/ne` 按 Enter 会展开成 `/new`（唯一前缀；候选里
+**精确同名排第一**，所以 `/review` 不会被 `/reviewer` 截走）。`/effort` 保留着但只回
 一句「已移除」（`src/plugins/commands.ts:118`）。
