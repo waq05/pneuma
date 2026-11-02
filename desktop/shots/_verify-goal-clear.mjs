@@ -91,9 +91,14 @@ async function launch(resumePath) {
     DSC_RESUME_SESSION: resumePath,
   }
   delete env.ELECTRON_RUN_AS_NODE
-  const electron = spawn(join(root, 'desktop/node_modules/electron/dist/electron.exe'), [
-    join(root, 'desktop/out/main/index.js'), '--remote-debugging-port=' + debugPort,
-  ], { cwd: join(root, 'desktop'), env, stdio: ['ignore', 'pipe', 'pipe'] })
+  const electron = process.env.DSC_PROBE_EXE
+    ? // 打包装的产物也能验：`DSC_PROBE_EXE=...\Pneuma.exe node this.mjs`
+      spawn(process.env.DSC_PROBE_EXE, ['--remote-debugging-port=' + debugPort], {
+        cwd: join(root, 'desktop'), env, stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    : spawn(join(root, 'desktop/node_modules/electron/dist/electron.exe'), [
+      join(root, 'desktop/out/main/index.js'), '--remote-debugging-port=' + debugPort,
+    ], { cwd: join(root, 'desktop'), env, stdio: ['ignore', 'pipe', 'pipe'] })
   let log = ''
   electron.stdout.on('data', (d) => { log += String(d) })
   electron.stderr.on('data', (d) => { log += String(d) })
