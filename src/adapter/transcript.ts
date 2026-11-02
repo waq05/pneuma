@@ -259,6 +259,10 @@ export class Transcript {
                 text: contentText(message.content),
                 ...(images.length > 0 ? { images } : {}),
                 ...(message.files === undefined || message.files.length === 0 ? {} : { files: message.files }),
+                // 机器投递的通知带着 origin 落库（见 core/session 的 InboxOrigin）：重放时
+                // 原样交给 reduce，靠它与前缀一起判 internal，否则「重开旧会话」会把它们
+                // 又还原成用户气泡。
+                ...(message.origin === 'notice' ? { origin: message.origin } : {}),
               },
               ts,
             ) || changed
@@ -424,8 +428,15 @@ export class Transcript {
         // 但不该在对话页装成人打的字。跟压缩摘要同一个套路——靠正文前缀认出来，认出后
         // 打 internal 标记，界面按「非人发起的唤醒」渲染（对照 dsh 的 turn-trigger 节点）。
         // 重放历史走的是同一条 reduce，所以老会话里的汇报也照样被认出来。
+        //
+        // 另一种认法：`origin: 'notice'`。机器投递的唤醒（后台作业完成、定时补投、目标续跑、
+        // 记忆复盘……）正文没有固定前缀可言，靠事件/日志里的 origin 认（2026-11-02 报障：
+        // 后台作业通知没有前缀，于是当成人打的字渲染成了可编辑气泡）。两条判据是并集：
+        // 队友汇报与 findings 走前缀（老日志也认得出），其余机器消息走 origin。
         const internal =
-          event.text.startsWith(TEAMMATE_REPORT_OPEN) || event.text.startsWith(REVIEW_FINDINGS_OPEN)
+          event.text.startsWith(TEAMMATE_REPORT_OPEN) ||
+          event.text.startsWith(REVIEW_FINDINGS_OPEN) ||
+          event.origin === 'notice'
         this.list.push(
           this.stamp({
             kind: 'user',

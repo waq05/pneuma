@@ -194,3 +194,31 @@ export function teammateReportLabel(text: string): string {
     report.state === '已失败' ? '失败了' : report.state === '已停止' ? '停了下来' : '汇报了运行结果'
   return `${who} ${verb}`
 }
+
+/**
+ * 内部触发行的一句话标签：机器投递进来的消息（`internal`）在对话页不画成气泡，只画一行。
+ *
+ * 为什么要按类型分：这条行里**只有**这一句话，用户扫过去就得知道「刚刚发生了什么」——
+ * 全都写「子任务汇报」会把后台作业完成、定时任务投递这类通知说成队友汇报，读错人。
+ *
+ * 认法只能靠正文：界面拿到的条目只有 `internal` 这一个标记，没有「谁发的」这个字段；
+ * 宿主投递作业通知时也没写前缀（与队友汇报不同）。所以这里按正文形状分三档：
+ *   1. `<teammate-report …>`：沿用队友汇报的标签（findings 更早一步就解析成卡片了，
+ *      根本走不到这里）；
+ *   2. `后台作业 job-N（命令）成功完成 / 失败（退出码 N）/ 启动失败：…`：宿主
+ *      `core/tools/bash.ts` 的完成通知，取出作业号与成败；
+ *   3. 其余（定时补投 / 目标续跑 / 记忆复盘……）：一句通用话。
+ * 认不出的绝不把原文当标签（原文整段挂在 title 上，要看悬停）。
+ */
+export function internalLabel(text: string): string {
+  // findings（`<review-findings …>`）在 user-row 里更早一步被解析成卡片，走不到这里，
+  // 所以这里只认队友汇报这一种前缀。
+  if (text.startsWith(TEAMMATE_REPORT_OPEN)) return teammateReportLabel(text)
+  const job = /^后台作业\s+(\S+?)\s*(（|\(|启动失败|成功|失败)/.exec(text)
+  if (job !== null) {
+    const id = job[1] ?? ''
+    const failed = text.includes('失败')
+    return failed ? `后台作业 ${id} 失败了` : `后台作业 ${id} 完成了`
+  }
+  return '运行时通知'
+}

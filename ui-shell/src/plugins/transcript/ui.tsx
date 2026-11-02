@@ -34,7 +34,7 @@ import { Component, useEffect, useLayoutEffect, useMemo, useRef, useState, type 
 import { IconSpark, defineUiPlugin, getHostNative, toastErr, toastOk, useActions, useHostChannel, useHostSelector, useService, ACTIONS_SERVICE, type ActionsHandle, type HostSnapshot, type SlotComponentProps, type TranscriptEntry } from '@dsc/ui'
 import { buildRoundFolds, processFoldPolicy, useFoldMemory, type ProcessFold } from './round-fold'
 import { liveActivity } from './timing'
-import { splitRounds, teammateReportLabel } from './rounds'
+import { internalLabel, splitRounds } from './rounds'
 import { stepGroupFoldKey, turnFoldKey } from './fold-state'
 import { groupSteps, type StepGrouping } from './process-groups'
 import { JumpRail, previewText } from './jump-rail'
@@ -384,13 +384,13 @@ function TranscriptFlow({
         return {
           round: seat.round,
           // 题面预览只在来源是**人**时才填（对照 dsh 的 turnOutline：非 user 来源不留题面）。
-          // internal 汇报（队友干完活）有刻度但不给原文，改给一句人话——绝不把
-          // `<teammate-report …>` 当题面塞进悬停卡。
+          // internal 消息（队友汇报、后台作业通知……）有刻度但不给原文，改给一句人话——
+          // 绝不把 `<teammate-report …>` 或作业通知原文当题面塞进悬停卡。
           prompt:
             user?.kind !== 'user'
               ? ''
               : user.internal === true
-                ? teammateReportLabel(user.text)
+                ? internalLabel(user.text)
                 : previewText(user.text, 'prompt'),
           response: answer === undefined ? '' : previewText(answer.text, 'response'),
         }

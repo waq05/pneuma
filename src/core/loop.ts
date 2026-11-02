@@ -209,12 +209,15 @@ export class MiniAgent {
       this.deps.emit({ type: 'inbox' })
       return
     }
-    this.session.appendUser(text, images, files)
+    this.session.appendUser(text, images, files, origin)
     this.deps.emit({
       type: 'user',
       text,
       ...(images !== undefined && images.length > 0 ? { images } : {}),
       ...(files !== undefined && files.length > 0 ? { files } : {}),
+      // 机器投递的要带上来源：界面据此画内部触发行，而不是一个能编辑的用户气泡。
+      // 日志里同一条记录也写了 origin，重放时走同一条判据（见 adapter/transcript）。
+      ...(origin === 'notice' ? { origin } : {}),
     })
     this.enqueueTurn()
   }
@@ -310,13 +313,16 @@ export class MiniAgent {
     const items = this.session.takeAsyncInbox()
     if (items.length === 0) return
     for (const item of items) {
-      this.session.appendUser(item.text, item.images, item.files)
+      this.session.appendUser(item.text, item.images, item.files, item.origin)
       this.deps.emit({
         type: 'user',
         text: item.text,
         ...(item.images !== undefined && item.images.length > 0 ? { images: item.images } : {}),
         ...(item.files !== undefined && item.files.length > 0 ? { files: item.files } : {}),
         ...(midTurn ? { steering: true } : {}),
+        // 来源跟着出账（出账前它只用来分「队列条 / 通知条」两种排队画法）：机器投递的
+        // 那几条出账后仍是内部触发行，不会变成用户气泡（2026-11-02 报障）。
+        ...(item.origin === 'notice' ? { origin: item.origin } : {}),
       })
     }
     if (!midTurn) this.pendingTurn = true

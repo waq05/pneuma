@@ -59,6 +59,15 @@ export interface ChatMessage {
    * （见 `core/attachments.ts` 的 `fileHandleText`）。
    */
   files?: UserFileAttachment[]
+  /**
+   * 这条 user 消息是谁发起的：人打的字（缺省）还是机器投递的唤醒（`'notice'`：
+   * 后台作业完成、定时补投、目标续跑、记忆复盘……）。
+   *
+   * 与 `ts` / `files` 同一条纪律：只在内存与 jsonl 里活着，协议里没有这一项，
+   * {@link serializeMessages} 发请求前会剥掉。它存在的唯一理由是**重放也要认得出机器消息**——
+   * 界面据此把这类消息画成一行内部触发行，而不是一个可编辑的用户气泡（见 adapter/transcript）。
+   */
+  origin?: 'user' | 'notice'
 }
 
 /**
@@ -645,6 +654,7 @@ export function serializeMessages(messages: ChatMessage[]): unknown[] {
     const wire: ChatMessage = { ...message }
     delete wire.ts
     delete wire.files
+    delete wire.origin
     if (wire.role !== 'assistant') return wire
     return {
       role: wire.role,

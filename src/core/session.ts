@@ -45,8 +45,11 @@ export interface SessionNote {
  *   - `'notice'`：机器发起的唤醒（队友汇报、后台作业完成、目标续跑、定时补投……）——
  *     出账前画输入框上方的只读「待投递通知」条，不给人编辑 / 撤掉 / 插话。
  *
- * 两条路落库后都是同一条 `user` 消息（模型侧无差别）；这个来源只在**出账前**用于
- * 界面分流，不落进消息、不参与重放（见 {@link SessionStateMap} 的 `async-inbox`）。
+ * 两条路落库后都是同一条 `user` 消息（模型侧无差别），但来源**要**跟着落库
+ * （{@link SessionRecord} 的 `origin` 字段，只有 `'notice'` 才写）：出账那一刻界面靠它
+ * 把这批消息画成内部触发行，重开历史会话时靠同一个字段还原——不落库的话，机器通知会
+ * 长成一个能编辑、能再发一遍的用户气泡（2026-11-02 报障：后台作业完成通知就是这么冒出来的）。
+ * 协议侧不受影响：`ChatMessage.origin` 在发请求前被剥掉（见 core/llm 的 serializeMessages）。
  */
 export type InboxOrigin = 'user' | 'notice'
 
@@ -105,7 +108,12 @@ type SessionRecord =
    * 界面的每轮用时也才算得出来（见 contract.ts 的 TranscriptEntry.ts）。
    * 老日志没有这个字段，重放时按 undefined 处理。
    */
-  | { type: 'user'; text: string; images?: string[]; files?: UserFileAttachment[]; ts?: number }
+  /**
+   * `origin` 只在机器发起的投递（`'notice'`）上写：人打的字不写，老日志里也根本没有这个
+   * 字段，两边都按缺省的 `'user'` 读。它落库的唯一用途是重放时认出「这不是人打的字」
+   * （见 {@link InboxOrigin} 的注释），请求侧由 serializeMessages 剥掉。
+   */
+  | { type: 'user'; text: string; images?: string[]; files?: UserFileAttachment[]; ts?: number; origin?: InboxOrigin }
   | { type: 'assistant'; text: string; reasoning: string; toolCalls?: ToolCall[]; ts?: number }
   | {
       type: 'tool'
@@ -195,8 +203,14 @@ export interface SessionStateMap {
    * 分不出哪份是谁交的，归属就记在这里。
    */
   plans: { items: PlanHistoryItem[] }
-  /** 会话目标快照（goal 插件写）。 */
-  goal: GoalSnapshot
+  /**
+   * 会话目标快照（goal 插件写）。
+   *
+   * **可以是 null**：用户在目标条上点 ✕ 清空时，插件往日志追加一条 `null`。
+   * 日志是 append-only、最后一条生效，于是恢复会话读到 null 就是「这个会话没有目标」。
+   * 早期版本清空时不写这一条，导致清掉的目标重启后又冒出来（2026-11-02 报障）。
+   */
+  goal: GoalSnapshot | null
   /**
    * T39：这份会话用的模型（llm 插件在 /model 切换与设默认时写）。恢复会话优先
    * 取它，而不是回落配置默认——会话进行到一半换过的模型不该被「重启」冲掉。
@@ -490,6 +504,8 @@ export class Session {
             ...(record.files === undefined || record.files.length === 0 ? {} : { files: record.files }),
             // 老日志没有 ts：这里就是 undefined，界面据此降级（不显示时间/用时）
             ...(record.ts === undefined ? {} : { ts: record.ts }),
+            // 机器投递的通知（老日志没有这个字段，按人打的字读）
+            ...(record.origin === 'notice' ? { origin: record.origin } : {}),
           })
           break
         case 'assistant': {
@@ -595,8 +611,9 @@ export class Session {
     if (lease !== null) {
       session.repairInterruptedTurns()
       // 收件箱遗债：入箱后没等到边界就重启/切换的异步输入。修复完历史必然闭合，
-      // 直接落库（dsh 的收件箱是持久投影，重启后同样要交货）。
-      for (const item of session.takeAsyncInbox()) session.appendUser(item.text, item.images)
+      // 直接落库（dsh 的收件箱是持久投影，重启后同样要交货）。来源跟着走：
+      // 机器投递的那几条不能因为「重启过一次」就变回人打的字（见 InboxOrigin）。
+      for (const item of session.takeAsyncInbox()) session.appendUser(item.text, item.images, item.files, item.origin)
     }
     return session
   }
@@ -607,15 +624,20 @@ export class Session {
    *
    * `ts` 只写一份给内存与磁盘共用：界面按它显示「这条消息几点发的」，
    * 也是这一轮「用时」的起点（见 contract.ts 的 TranscriptEntry.ts）。
+   *
+   * @param origin - 谁发起的这条（缺省 `'user'`）。只有 `'notice'`（机器投递）会写进日志，
+   *   界面与重放据此把它画成内部触发行而不是用户气泡（见 {@link InboxOrigin}）。
    */
-  appendUser(text: string, images?: string[], files?: UserFileAttachment[]): void {
+  appendUser(text: string, images?: string[], files?: UserFileAttachment[], origin: InboxOrigin = 'user'): void {
     const withImages = images !== undefined && images.length > 0
     const withFiles = files !== undefined && files.length > 0
+    const notice = origin === 'notice'
     const ts = Date.now()
     this.messages.push({
       role: 'user',
       content: userContent(text, images, files),
       ...(withFiles ? { files } : {}),
+      ...(notice ? { origin } : {}),
       ts,
     })
     this.write({
@@ -623,6 +645,7 @@ export class Session {
       text,
       ...(withImages ? { images } : {}),
       ...(withFiles ? { files } : {}),
+      ...(notice ? { origin } : {}),
       ts,
     })
   }
