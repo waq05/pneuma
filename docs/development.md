@@ -473,7 +473,9 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 
 ```
 meta     { cwd, createdAt, ... }        第一行，重写时保留
-user     { text, images?, files? }       images = 图片引用；files = 视频/文件元数据（视频带 frames）
+user     { text, images?, files?, origin? }  images = 图片引用；files = 视频/文件元数据（视频带 frames）；
+                                         origin = 'notice' 表示机器投递（后台作业完成、定时补投、目标续跑……），
+                                         **只有机器投递才写**，人打的字不写、老日志也没有这个字段
 assistant{ text, reasoning, toolCalls? }
 tool     { callId, name, text, images?, error? }   error = rejected | tool-error
 summary  { text, keep? }                压缩产生的摘要；keep = 摘要之外保留了尾部多少条
@@ -493,6 +495,11 @@ note     { id, text }                   请求注入备忘（投影塞进请求�
 5. 界面用同源 `GET /api/attachments/<sha>` 显示（支持 Range，视频能拖进度条）；
 6. 帧只进请求、不进 `images` 列：气泡里仍是一张视频卡（dsh 把视频当独立 modality，
    这里没有 provider 的 video 块，就用「原件 + 关键帧」达到同一件事）。
+
+**待发贴图的预览**走 `ui-primitives/image-lightbox`：输入区手上只有 dataURL，浏览器禁止
+顶层导航到 `data:`，所以缩略图是按钮、点开由这个浮层（`.img-lightbox`）显示，点遮罩或
+Esc 关；已发送贴图与待发贴图共用 `image-lightbox`（那边地址虽是同源
+`/api/attachments/<sha>`，但点开也是浮层，不再另开窗口）。
 
 **改附件之前先看**：`scripts/attachments-test.mjs` 覆盖了去重、上限、魔数、引用读回、
 Range、会话投影与路径洗白；界面侧的上传/规范化/抽帧在
@@ -802,6 +809,7 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 | 命令输出截断 | bash 超预算时留**头 60% + 尾 40%**，中间写明清掉多少字符、怎么看全（缩范围重跑或调大「命令输出封顶」）。只留头会把编译错误、测试断言这些「最后才打印」的原因丢掉 | `src/core/tools/bash.ts`（`truncateBashOutput`） |
 | 模型与思考档位 | 按会话存在 `model` 状态条目（`{ provider, model, effort }`）。请求路由走 `ctx.llm.routeForSession(session)`，后台 agent / 压缩 / 起标题 / 审批判官 / 子代理各用自己那条；用量日志的 `provider/model` 也按发起会话记。新建会话没记过时沿用「上一次选的那一组」，恢复老会话没有记录时按配置默认 | `src/plugins/llm.ts`、`src/plugins/agent.ts`、`src/plugins/compact.ts` |
 | 协作模式 | 按会话存在 `mode` 状态条目；守卫按本次调用的 `sessionId/sessionPath` 取那一档（后台会话在计划模式跑，不会因为你在看执行模式就被放行）；系统提示段的模式条款同样按 `scope.sessionId` 取 | `src/plugins/mode.ts`、`src/services/types.ts`（`ModeService.modeFor`） |
+| 会话目标的清空 | 目标存在会话日志的 `goal` 状态条目里，**清空也是一条记录**：用户点 ✕ 时追加 `goal = null` 盖掉上一条（日志 append-only、最后一条生效）。旧版见 null 就不写，重启重放又把旧目标带回来（2026-11-02 报障） | `src/plugins/goal.ts`（`persist`）、`src/core/session.ts`（`SessionStateMap.goal`） |
 | 分支钮读数（输入框上方） | 快照面 `surfaces.git` = `repo` / `branch` / `detached` / `dirtyFileCount`（计数含未跟踪、只看会话 cwd 之内）；节奏 12s / 30s / 60s 三档 + 事件催拍（回合收工、换会话、写类 git op 落盘）；**没人读快照就不跑 git**（CLI / TUI 会话零开销） | `src/plugins/git.ts`、`src/core/git-exec.ts` |
 | git 切 / 建分支 | `dock` 的写类 op（`git-checkout` / `git-branch-create`，**过审批**，卡片文案在 `DOCK_WRITE_LABEL`），执行用 `git switch --no-guess`（避开 `checkout <名字>` 的分支/路径歧义）；分支清单是读类 op `git-branches`（界面通道直接放行，当前分支排第一） | `src/core/dock-ops.ts`、`src/plugins/desktop-dock.ts` |
 | 宿主方法调用的超时 | 默认 30 秒；**会挂起等人的方法**（写类 dock op = 过审批卡，卡自己等 5 分钟）给 5 分半——不然用户还在读卡，页面先报「调用宿主方法超时」 | `ui-shell/src/ui-layout/host-channel.ts`（`DEFAULT_INVOKE_TIMEOUT_MS` / `HUMAN_WAIT_TIMEOUT_MS`） |
@@ -974,6 +982,25 @@ shell 候选 5 个，选中的存 renderer 的 `localStorage['dsc.dockShell']`�
 开着时关掉「旁问」，旁边那张「开始」会被一起收走（2026-10-28 报障）。程序性关闭
 （桌面端 `browser-tab-close-request` 那条）走同一个函数，关掉最后一张时也一起收起。
 
+### 主窗口不许自己换页（2026-11-02 起）
+
+主窗口只跑界面，是一张单页应用：**任何整页导航都是错的**。点一下会话里的网址如果让主窗口
+导航过去，整个界面就被换成那个网页，加载不出来就是一片白，而且没有后退路，只能重启。
+
+规矩：
+
+- **界面里的链接一律新窗口**：`ui-shell/src/ui-primitives/markdown.tsx` 的组件表覆盖了 `a`，
+  统一加 `target="_blank" rel="noreferrer noopener"`；附件卡片（`user-row.tsx` 的
+  `.user-file-card`）本来就是这么写的。
+- **原生侧两道闸**在 `desktop/electron/main/index.ts` 的 `createWindow` 里：
+  `setWindowOpenHandler` 决定新窗开不开（同源的附件预览照旧放行，http/https 外链交系统
+  浏览器，别的协议丢掉），`will-navigate` / `will-redirect` 把所有整页导航拦下。
+  内嵌浏览器那台 `WebContentsView` 一直有这套（`desktop/electron/main/dock.ts`），主窗口
+  以前漏了——这就是「点网址白屏」的根因。
+- **自检开关**：`DSC_NO_EXTERNAL_OPEN=1` 时 `openExternalUrl` 只往 stderr 记一行
+  「跳过打开外部链接：…」，不真开浏览器；探针验「主窗口没被导航走」时用它，免得给用户
+  弹一堆网页（`desktop/shots/_verify-link-open.mjs`）。
+
 ### 面板尺寸与收起状态存哪
 
 存在 renderer 的 `localStorage`、而不是 `~/.dsc/settings.json` 的用户状态，都是「这个窗口在
@@ -986,6 +1013,7 @@ shell 候选 5 个，选中的存 renderer 的 `localStorage['dsc.dockShell']`�
 | `dsc.sidebarWidth` | 左侧侧栏宽 | 200~420，默认取样式表的 `--dsc-sidebar-w` |
 | `dsc.sidebarRail` | 侧栏是否收成 56px 图标窄栏（`Ctrl+B` 切） | `'1'` / `'0'` |
 | `dsc.threadWidth` | 中间正文列宽 | 480 ~（可用宽 − 80），默认取样式表的 `--dsc-thread-max`（96ch） |
+| `dsc.statusPanel.pos` | 收起态状态胶囊的落点（相对默认落点的位移 `{x,y}`） | 拖动时夹在 `.main` 内、四边留 8px；离默认点 24px 内松手复位并删掉这条存档 |
 
 拖拽逻辑在壳自己的 `ui-shell/src/ui-layout/` 里（从旧渲染层的 `panels.ts` 搬来）：Pointer Capture 攥住指针
 （拖出窗口外再回来还接着拖），移动按 `requestAnimationFrame` 合并，取消就退回原宽。
@@ -993,6 +1021,30 @@ shell 候选 5 个，选中的存 renderer 的 `localStorage['dsc.dockShell']`�
 localStorage——每帧 setState 会重渲染整棵对话树。复位（双击）就是撤掉行内变量，让 `:root`
 里那份默认值自己回来，JS 里不抄第二份默认数字。正文列宽写一个变量就够，是因为正文、审批卡、
 输入区三处读的都是它。
+
+### 状态胶囊的落点与拖动（`plugins/status`）
+
+收起态那颗胶囊（`.sp-host > .sp`，组件在 `ui-shell/src/plugins/status/ui.tsx`）2026-11-02 起：
+
+- **默认落点：顶栏页签行右端**（`.topbar .tabs`，选择器常量 `TOPBAR_TABS_SELECTOR`，`ui.tsx:161`）。
+  那一行右侧本来就是空的，胶囊摆那儿不压正文第一行。CSS 在 `styles.css:2373`：
+  `.topbar .tabs` 补 `position: relative`，`.topbar .tabs .sp-host` 给 `top: 1px; right: 0`
+  （页签行 36px、胶囊 34px，上下各留 1px）。
+- **手机档回落**：窄于 860px 时没有页签行，宿主退回从哨兵往上找的正文区
+  （`[data-thread-area]`）右上角。
+- **可拖动，位置记在本机**：`localStorage` 的 `dsc.statusPanel.pos`，存的是相对默认落点的
+  位移 `{x,y}`（`ui.tsx:165`）。拖动挂在 `.sp-mini` 这颗按钮上——展开态没有这颗按钮，
+  所以天然只在收起态可拖。
+- **拖动范围夹在 `.main` 内**：按下时算一次允许区间（`dragBounds`，`ui.tsx:261`），
+  四边内缩 8px；容器比胶囊还窄、区间反过来时退化成最小值。
+- **离默认点 24px 内松手吸附复位**：把存档删掉，下次进来还是默认点。
+- **宽度裁决仍看正文区**：自动档的 `AUTO_PANEL_MIN_WIDTH = 1280` 量的还是
+  `[data-thread-area]` 的 `clientWidth`（`ui.tsx:584` 的 `area`），跟胶囊画在哪无关——
+  落点搬去页签行不会顺手改掉自动档行为。
+
+拖动手感的三条约束（别顺手改）：位移不到 4px 算点击，不算拖动；移动按
+`requestAnimationFrame` 合并、每帧直接写 `host.style.transform`（不 setState，
+面板每秒有一次时钟重渲染）；松手那一次 `click` 要吞掉，否则「拖一下」会变成「拖完弹开面板」。
 
 ### 主题色怎么送到原生窗口控件
 
@@ -1128,3 +1180,21 @@ Windows 的最小化/最大化/关闭三个按钮由系统画，样式表够不�
 插件注册的命令进 `extraSpecs`。输入 `/ne` 按 Enter 会展开成 `/new`（唯一前缀；候选里
 **精确同名排第一**，所以 `/review` 不会被 `/reviewer` 截走）。`/effort` 保留着但只回
 一句「已移除」（`src/plugins/commands.ts:118`）。
+
+### 机器投递的消息（`origin: 'notice'`）
+
+`followup(text, images, origin, files)` 的第四个别名参数 `'notice'` 表示「这条不是人打的字」：
+后台作业收工、定时任务到点、目标续跑、记忆复盘、审稿队友的 findings 都走这条。它与人打的字
+在模型侧完全是同一条 `user` 消息，差别只在**界面怎么画**：
+
+- 出账前：画在输入框上方的只读「待投递通知」条（人打的字画在下方，可编辑 / 撤掉 / 插话）；
+- 出账后：`origin` 落进 jsonl，`adapter/transcript.ts` 把这条标成 `internal`，界面画成一行
+  内部触发行（`.entry-system[data-internal='1']`，文案见 `ui-shell/.../transcript/rounds.ts` 的
+  `internalLabel`），不是可编辑的用户气泡。
+
+两个容易踩的点：
+
+1. **`origin` 必须落库**。只写事件不写日志的话，重开历史会话又会长回气泡——2026-11-02 的报障
+   就是这么来的（当时的设计是「来源只用于出账前分流」）。
+2. **协议里没有这个字段**。`ChatMessage.origin` 只在内存与 jsonl 里活着，
+   `serializeMessages` 发请求前会 `delete`；新增同类字段务必在同一处一起剥掉，否则挑剔的网关判 400。

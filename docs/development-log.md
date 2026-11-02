@@ -11985,3 +11985,459 @@ write，每刀前等 2.5 秒）。渲染层每 250ms 采样一次「停止生成
 - 补压通常只多花一次「立刻 noop」的空调用：默认下限 20 条时，第一次压完只剩 21 条，小于「历史太短」的 22 条门线；真正能连压的是尾部因工具配对回退而变长的情况。这与参照实现一致（它那边复压也只在第一次没收够时才真压），但收益比纸面小。
 - 阈值里的 6.4% 是按比例推的，参照实现是定值 65536，两边在 1M 窗口上数值接近、在 128k 窗口上不同口径。真想按「留多少余量」精调的用户用 `compact.headroomTokens` 覆盖。
 - `/review` 的范围选择没有回合取消信号可用（命令派发那条路不带 signal），卡只能由用户自己答完或跳过。
+
+## 正文左下角那根竖条：删掉流式光标（2026-11-02）
+
+用户截了一张输出中的会话，指着正文左下方一根浅棕色短竖条说：这个别显示。
+
+**一、现场与根因。**
+
+竖条是 6×25 像素、圆角、浅色主题下呈 `#d97757` 三四成透明的**竖方块字符**——也就是
+`ui-shell/src/legacy/views.css` 里那条「流式直播尾光标」`.live::after { content: '▍' }`，
+配一段 `blink` 闪烁。它本来应该跟在最后一段正在吐出的文字后面，像终端的输入光标。
+
+问题是 `.live` 这个类挂在**块级容器**上：正文是 `.entry-text.live`（整段 markdown 容器），
+思考是 `.think-block.live`（整条思考行）。容器里最后一块是 markdown 渲染出来的 `<p>`
+（块级盒子），行内伪元素排不进那一行，浏览器只能把它摆到**下一行的行首**、按容器左缘
+对齐。于是它的位置不再是「文字的末尾」，而是「文字块左下方」。
+
+所以报障画面里那两根：第一根在思考行下面，是思考容器的光标；第二根在正文下面，是正文
+容器的光标。它们不是装饰，是光标站错了地方。
+
+**二、为什么是删，不是挪。**
+
+想把光标真正放回文字末尾，就得让伪元素落进「最后一块可内联的东西」里：`.entry-text.live > :last-child::after`。
+可最后一块可能是段落、列表、代码块、表格、甚至一张图——每种都要单独一条选择器兜住，
+一旦有没兜住的情形，光标又会掉回下一行，等于把一处视觉瑕疵换成一张维护表。而「这一轮
+还在跑」这件事本来就不缺信号：思考行那颗转圈（`.think-spin`）与扫光还在，正文在长高，
+底部还有「回到底部」胶囊。删掉之后信息一条没少，位置错了四次的字符却没了。
+
+**三、验证。**
+
+复现工具是 `desktop/shots/_verify-stream-caret.mjs` + 同名假端点：真宿主 + 真界面壳（CDP
+驱动），假端点先吐思考再吐正文并挂住不回 finish，界面因此停在「直播中的思考行 + 直播中的
+正文」。探针扫对话区 DOM，把两个 `.live` 的 `::after` 与所有「宽 ≤ 10px」的元素打出来。
+
+- 改前：两处 `::after` 的 `content` 都是 `"▍"`，截图里正文下方能看见那根浅棕竖条。
+- 改后：两处 `content` 都是 `"none"`，`pseudos` 为空，截图干净。
+- 形态钉：`scripts/ui-transcript-render-test.mjs` 新增第 `[10]` 节 5 条断言（光标规则没了、
+  `blink` 关键帧一起删、没留空壳 `.live` 规则、转圈还在、删的理由在注释里），该探针 104/104。
+
+**四、诚实边界。**
+
+- 删掉之后，正在输出的正文与思考**没有**专门的光标了。如果以后要「文字末尾跟一根竖条」，
+  得在渲染层（而不是 CSS）把光标塞进最后一个可内联节点，或者干脆不做——不要再用容器上的
+  `::after`，那是这次踩过的坑。
+- 这条只影响界面壳的对话页。提问气泡（ask 插件）自己那份 2px 光标是另一处实现，没动。
+
+## 轮尾的复制 / 分叉：停下之后、鼠标压在输出上才现（2026-11-02）
+
+用户截图指着轮尾那两颗钮说：得等这一轮停了、鼠标移到输出内容上再出现。
+
+**一、改前是什么样。**
+
+两颗钮在 `.round-foot` 里，跟着每轮最后一行一起画：这一轮还在流式输出时它们就在，其中
+分叉是置灰的、复制是能点的——于是「复制」拿到的是半截回答，「分叉」分出来的是半截会话。
+停下之后它们又常驻，长会话往下滚，每一轮后面都拖着一排按钮。
+
+**二、现在的判据分两段。**
+
+- **这一轮停没停**由组件判：`rows/foot.tsx` 里 `copy` 与 `fork` 都加了 `!props.running`。
+  跑动中这两颗钮**压根不渲染**（不是画成灰的），轮尾这一行此时只剩读数为空 → 整行也不占位。
+  分叉按钮上那句 `disabled={props.running}` 跟着删掉：它已经渲染不出来了，留着是死属性。
+- **鼠标在不在输出上**由样式判：`.round-foot .round-act, .round-foot .user-act` 默认
+  `opacity: 0`，下面几种情形提到 1——鼠标压在**这一轮的非首块**上、压在页脚自己那一行上、
+  或键盘焦点进这一轮（`Tab` 依次走到两颗钮）。
+
+为什么是「非首块」而不是 `.turn-seat:hover`：座位的第一块是**用户自己那条提问**。挂在座位
+上，鼠标停在刚发的问题上也会从底下冒出这一轮的复制与分叉，读起来像「复制我的提问」。
+也不点名 `.entry-text`：这一轮的输出可能只是一行思考、一个过程组、一张改动卡，它们都得算
+输出，而第一块永远是那条提问。
+
+为什么用 `opacity` 而不是 `display: none` / `visibility: hidden`：后两者会让按钮不可聚焦，
+键盘用户就再也点不到复制。这条与用户消息那颗编辑按钮（`.user-turn .user-actions`）同一套
+做法，那个 0.6.x 的坑已经踩过一次。
+
+**三、验证。**
+
+探针 `desktop/shots/_verify-round-actions.mjs` + 同名假端点：真宿主 + 真界面壳（CDP 驱动），
+假端点吐一句思考 + 两段正文后正常收尾，然后用 `Input.dispatchMouseEvent` 真的挪鼠标，读
+计算后的 opacity：
+
+| 时刻 | 读数 |
+|---|---|
+| 跑动中（正文已在流） | `.round-foot` 与两颗钮都**不在 DOM 里**（0 个） |
+| 收尾后、鼠标在别处 | 1 颗（复制），opacity **0** |
+| 鼠标移到正文上 | **1**（截图里按钮才出现） |
+| 鼠标移到用户那条提问上 | **0** |
+| 鼠标移到页脚读数上 | **1** |
+| 第二轮（有分叉钮）：鼠标在第 1 轮输出上 | 第 1 轮两颗 **1**、第 2 轮两颗 **0**（只亮当前这一轮） |
+
+形态钉：`scripts/ui-transcript-render-test.mjs` 第 `[11]` 节 9 条（跑动中不画 / 不置灰 /
+两颗同一条透明规则 / 非首块悬浮 / 页脚自身悬浮 / 焦点 / 不用 display / 减动效），该探针 113/113。
+
+**四、诚实边界。**
+
+- 透明不等于不占位：两颗钮的位置一直留着（否则每次浮现都会让页脚那一行抖一下）。所以
+  页脚左边始终有一小段空白，这是有意的。
+- 触屏上「悬浮」不存在：那类设备看不到这两颗钮。没做长按弹出——桌面壳现在没有触屏形态。
+- 复制按钮的可见性只跟鼠标走，不与「这一轮有没有最终回答」联动：以工具结果收尾的轮没有
+  `copyText`，那颗钮本来就不渲染。
+
+## 机器投递的消息不再长成用户气泡（2026-11-02）
+
+用户截图问：对话里怎么冒出两个灰色气泡，正文是「后台作业 job-3（…）成功完成。用 job_output(job_id="job-3") 查看输出…」，还带编辑铅笔？
+
+**一、那不是工具结果，是后台作业的收工通知。**
+
+链路是：`bash` 带 `run_in_background` 起作业 → 作业退出时内核生成通知（`core/tools/bash.ts` 的 `onExit`）→ `tools-default` 的作业表把它按会话合并 800ms → `ctx.agent.followup(text, undefined, owner, 'notice')` 投进会话 → 模型据此去调 `job_output`。所以它必须留在上下文里（模型要看），问题只在**界面把它画成了人打的字**。
+
+**二、根因：来源在落库那一刻被丢掉了。**
+
+- `loop.followup`（空闲直落）与 `loop.drainInbox`（收件箱出账）都只把 `text / images / files` 交给 `session.appendUser`，`origin` 没往下传；
+- `appendUser` 也只写这三样。`InboxOrigin` 原先的设计是「只用于出账前的界面分流，不落进消息、不参与重放」（见旧注释），于是机器来源一落地就没了；
+- 界面侧（`adapter/transcript.ts`）只靠两种**正文前缀**认机器消息：`<teammate-report`、`<review-findings`。作业通知没有前缀 → 按人打的字渲染 → 气泡 + 编辑铅笔 + 可再发一遍。
+
+**三、修法：来源跟着落库、跟着事件、跟着重放。**
+
+| 层 | 改动 |
+|---|---|
+| 日志 | `SessionRecord.user` 加可选 `origin`，**只有** `'notice'` 才写；老日志没这个字段，读时按 `'user'` 兜底 |
+| 内存/请求 | `ChatMessage.origin` 只活在内存与 jsonl 里，`serializeMessages` 发请求前 `delete`（协议里没这一项，挑剔的网关会判 400） |
+| 事件 | `user` 事件加 `origin`；`followup` 与 `drainInbox` 都把来源带上（`drainInbox` 之前只在出账前用它分「队列条 / 通知条」） |
+| 重放 | `replayHistory` 把 `message.origin` 交回 `reduce`；`Session` 解析日志时读回 origin，收件箱遗债出账也带上 |
+| 判据 | `internal = 正文前缀命中 || origin === 'notice'`（两条并集：老日志里的队友汇报仍靠前缀认，本次之前落库的作业通知只能算人打的字——见边界） |
+| 标签 | 内部触发行不再一律写「子任务汇报」：`rounds.ts` 的 `internalLabel` 按正文分三档——队友汇报 / 后台作业（取作业号与成败）/ 其它运行时通知；全文挂 title |
+
+**四、验证。**
+
+- `scripts/notice-origin-test.mjs`（新，21 项）：落库只给机器投递写 origin、重开日志读得回来、`serializeMessages` 剥掉 origin、adapter 两条判据、重放认得、五种标签。
+- `scripts/ui-transcript-render-test.mjs` 第 `[12]` 节 8 条：界面没有绕开这套判据（触发行与刻度悬停卡共用 `internalLabel`、出账两条路都传 origin）。
+- 真宿主（重放路）：`desktop/shots/_verify-notice-row.mjs` 种一份带 `origin: 'notice'` 的会话日志，让真壳打开它 → 界面上是**一行**「后台作业 job-3 完成了」（title 是通知全文），人打的那条仍是气泡，通知上没有编辑铅笔。截图 `desktop/shots/_verify-notice-row.png`。
+
+**五、诚实边界。**
+
+- 老会话里已经落库的通知（内存与日志都没有 origin、正文也没有前缀）反推不出来，重开旧会话仍是气泡。只能保证**新投递**的。
+- 触屏/纯键盘使用时这一行不承载动作，它本来就是只读的；要在作业列表里操作还是走状态面板的「终端」区。
+- `'notice'` 目前只分「人 / 机器」两档，没有再细分来源类型（作业 / 定时 / 目标……）：界面标签靠正文形状认类型，宿主侧要真分类得另加字段，这次没做。
+
+## 状态胶囊挪到顶栏页签行，并且可以拖着走（2026-11-02）
+
+**一、起因是一张截图。**
+
+用户发来的截图里，长会话正跑到一半，收起态那颗胶囊正好压在消息流第一行的
+「思考 · 进行中」上——第一行的字被盖掉半截。这不是偶发：胶囊以前钉在正文区
+（`[data-thread-area]`）的右上角，而正文第一行永远从那个位置开始，只要面板有数据
+（几乎一直有），第一行就一直有一块被压着。
+
+**二、为什么不是简单给正文加个上内边距。**
+
+加内边距等于凭空让出一行的高度：胶囊没数据时（干净仓库、没有任务、没有子智能体）
+那一行留白还在，白掉一行。而且这面板是可以收起来不看的，为它常驻一条留白，代价和收益
+不成比例。真正的解法是**换个不挡东西的落点**——不是让正文给它让路。
+
+**三、为什么是页签行右端，不是标题行。**
+
+顶栏有两行：标题行（会话标题 + 搜索 + 工作区那几个钮）与页签行（对话 / 轨迹）。
+标题行右端已经排满了（搜索钮、在资源管理器打开、更多打开方式、dock 开关），塞进去就是
+挤掉别人；页签行只有左边两颗页签，右侧一整段是空的。胶囊摆那儿：不压正文、不挤已有按钮，
+和「这半区整体的状态」这个语义也贴。
+
+**四、落点换了，宽度的口径没换。**
+
+自动展开档 `AUTO_PANEL_MIN_WIDTH = 1280` 量的一直是**正文区**的宽度（右侧 dock 开合
+改的是正文区宽度，不是窗口宽度）。这次只把 portal 宿主换到页签行，量宽度的 `ResizeObserver`
+仍然观察正文区。两者分开之后：胶囊画在哪不影响「多宽才自动展开」，将来再挪落点也不会
+顺手把自动档的行为改掉。
+
+顺带紧了一条兜底：手机档（<860px）没有页签行，宿主仍回落到正文区右上角——那档窗口窄，
+正文第一行本来也压不着多少字。
+
+**五、拖动的几处判断，理由各是什么。**
+
+| 决定 | 为什么 |
+|---|---|
+| 位移 4px 以内算点击 | 手指 / 鼠标按下去总有点抖。1~2px 就判拖动的话，想点开面板的人会被判成「拖了一下」，面板反而不开。4px 是「明确想动」的下限，又远小于胶囊尺寸，不会吃掉正常的点击 |
+| 移动里按帧直接写 DOM | 面板每秒有一次时钟重渲染（`now` 状态），移动里 `setState` 就是每次指针移动触发一次整棵面板重渲染。所以只按 `requestAnimationFrame` 合并、每帧写一次 `host.style.transform`，松手才把最终值交回 React 状态。这是壳里拖拽条（侧栏 / 正文列）早就在用的同一套 |
+| 按下时算一次夹取区间 | 一边拖一边量 `getBoundingClientRect` 会读到「已经被自己挪动过」的矩形。按下时量一次、把「没位移时的基准位置」倒推出来，之后每帧只是把新位移夹进那个固定区间，便宜也不会漂 |
+| 位置存在 `localStorage` | 这是「这台机器上这个窗口摆成什么样」，跟 `dsc.dockWidth` / `dsc.sidebarWidth` 同一类，不进 `~/.dsc/settings.json`：换台机器不该跟着走。存档坏了、隐私模式写不进去，都当没拖过、回默认落点 |
+| 离默认点 24px 内松手吸附复位 | 差一点点摆在那儿比默认还难看，而且会一直留着一份几乎等于 0 的存档。24px 大约是一颗胶囊高度的七成，够分清「手滑」与「真想挪」 |
+| 拖动后吞掉那次 click | 胶囊是 `<button>`，拖动结束浏览器仍会补一次 `click`——不吞掉就是「拖完顺手把面板弹开」。用一次性标记挡掉，正常点击照旧展开 |
+
+**六、自检。**
+
+`scripts/ui-status-panel-test.mjs` 第 `[9]` 节改成两段式（`querySelector(页签行)` 优先、
+`closest(正文区)` 兜底；宽度量的是 `area`），新增 `[11]` 节 20 条钉住落点 CSS、存档键与阈值、
+Pointer Capture、按帧合并、夹取、吞 click，以及「基础 z-index 仍是
+`calc(var(--dsc-z-menu) - 1)`」这条负向。
+
+**七、诚实边界。**
+
+- 拖动的夹取容器是 `.main`：胶囊在收起态可以拖到顶栏任意位置，包括压住页签本身。这是
+  「用户自己摆的」结果，不做额外拦截。
+- 展开态不给拖动（那颗按钮只在收起态存在）。想挪回去，拖回默认点附近松手即可。
+- 窗口缩小时的夹取只走 `resize` 事件，不跟 `ResizeObserver`：改 dock 宽度让 `.main` 变窄时
+  胶囊不会当场被夹回来，要等下一次 `resize`（或者下一次拖动）。
+- 触屏上靠 `touch-action: none` 才拖得动，代价是那颗胶囊上不能滚页面（本来也不该滚）。
+
+## 输入框里的贴图点不开：补回贴图浮层（2026-11-02）
+
+**一、用户报的是「输入框里的贴图点不开」。**
+
+拖进来或粘贴进去的图片，在输入框上方排成一排 64×64 的缩略图，鼠标移上去是普通箭头，
+点一下什么也不发生，只能靠删掉重贴来决定这张图要不要发。已发出去的消息里那些贴图是好的，
+点开能看原图——所以第一眼看上去像「只有新贴的坏」。
+
+**二、根因：贴图是 dataURL，浏览器不许顶层跳 `data:`。**
+
+输入区拿到的 `previewUrl` 是 `data:image/png;base64,…`（本机刚贴进来的文件，还没上传完，
+先给用户看自己贴了什么）。Chromium 明确禁止页面顶层导航到 `data:` 地址，所以
+`<a href={item.previewUrl} target="_blank">` 点了也不会有反应——不是样式问题，也不是事件没挂上。
+
+第二条路「交给系统图片查看器」同样没门：dataURL 没有文件路径，打开系统查看器要的是路径。
+
+旧界面本来就有这个浮层（`docs/development-log.md` 里 0.6.50 那条「贴图 chip 双击开全屏
+lightbox」），移植到壳的时候只把样式搬过来了——`.img-lightbox` 还在
+`ui-shell/src/legacy/views.css:6879`，组件本身没跟过来，于是缩略图就只剩缩略图。
+
+**三、做法：自己画一层浮层，视觉复用旧的那一套。**
+
+- 新增 `ui-shell/src/ui-primitives/image-lightbox.tsx`：`createPortal` 挂到 `document.body`
+  （输入区祖先有 `overflow: hidden` 和圆角，留在里面会被裁掉），根节点 `.img-lightbox`，
+  点根节点就关（图片不拦事件，点图、点遮罩都关，与旧界面「点任意处关」一致），`window` 上
+  挂 `keydown` 认 Esc，卸载时摘掉。
+- 焦点归还：打开时记下 `document.activeElement`，关闭时只在那个节点仍然在文档里
+  （`isConnected`）才 `focus()` 回去——附件可能在上传失败或切会话时已经被移除，往一个
+  脱离文档的节点上聚焦不会有任何效果。
+- 视觉一律用旧样式（`.img-lightbox` 的 scrim 遮罩、模糊、`max-height: 90vh` 大图），
+  没有新造一套。轨迹检查器里那份 `trace-lightbox` 是另一套视觉，没动它。
+- 输入区这侧：缩略图从裸 `<img>` 改成 `<button className="attach-zoom">`，整格都是点击面，
+  `cursor: zoom-in`，图片本身 `pointer-events: none`（免得点在 img 上不冒泡），
+  点开写 `zoom` 状态，`ImageLightbox` 渲染在输入区 JSX 末尾。
+- 视频（`kind === 'video'`）这一轮不动：没有对应的浮层需求，原样保留 `<video>`。
+
+**四、为什么不是别的那几条路。**
+
+| 选项 | 为什么不选 |
+|---|---|
+| `<a target="_blank">` | Chromium 禁止顶层导航到 `data:`，点了静默失败。已发消息里的贴图能用 `<a>`，是因为那些地址是宿主的同源 `/api/attachments/<sha>` |
+| 新开一个页签塞 iframe / blob | 要处理生命周期、关页签回收，为一个「看一眼大图」的动作太重；blob 还得自己管 revoke |
+| 交给系统图片查看器 | 没有路径可给 |
+| 另造一套浮层视觉 | 旧界面这套 `.img-lightbox` 还在，主题令牌（scrim / blur / 大图圆角）都是现成的，重画只会多一套要维护的样式 |
+
+**五、自检。**
+
+- `scripts/ui-attach-preview-test.mjs`（新，40 项）：组件存在与门户 / class / Esc / 焦点归还、
+  基元库转出、输入区按钮与 `zoom` 两条写路径、**负向**「不许回到 `<a href={item.previewUrl}>`」、
+  样式两条（`cursor: zoom-in` 与 `pointer-events: none`）、**负向**「视频没被包进按钮」。
+- `pnpm run typecheck`、`pnpm run build:ui`、`node scripts/check-ui.mjs`、`node scripts/style-check.mjs`
+  同批跑过。
+
+**六、诚实边界。**
+
+- 只做了图片。视频缩略图仍然不能点开预览；要播视频得等附件上传完、消息发出去之后在正文里看。
+- 浮层只显示原图，没有缩放 / 拖动 / 多图左右切换：旧界面也只有「看大图 + 点哪都关」，
+  这次按原样补回来，没有加需求外的能力。
+
+## 已发送贴图也收进同一个浮层（2026-11-02）
+
+**一、之前已发送那支是什么样。**
+
+上一节把输入框待发贴图的浮层补回来了，但对话里已发出去的贴图没动：外面仍套着
+`<a href={url} target="_blank">`。那些地址是宿主的同源 `/api/attachments/<sha>`，点得开
+是点得开，但点一下会在 Electron 里另开一个窗口看原图——跟输入框那套「点一下盖一层浮层、
+点遮罩或 Esc 就关」完全不是一回事。同一个动作在界面里有两套反应，用户会觉得别扭。
+
+**二、统一之后：两条路一个组件。**
+
+- `ui-shell/src/plugins/transcript/rows/user-row.tsx` 里两处气泡（可编辑行与只读出口）
+  都把裸 `<a>` 换成 `<button className="entry-shot">`，点开写本地的 `zoom` 状态，
+  根节点末尾渲染同一个 `ImageLightbox`（`ui-primitives/image-lightbox`）。
+  两份气泡各自持有一份 `zoom`，主会话点开不影响右栏那条。
+- 样式新增 `.entry-shot`（`ui-shell/src/styles.css`，紧挨 `.attach-zoom`）：透明底、无边框、
+  `cursor: zoom-in`、`line-height: 0`，图片 `pointer-events: none` 让整格都是点击面；
+  `:focus-visible` 给一圈焦点框。132×96 的展示框仍是 `.entry-user-images img` 那条旧规则，
+  没动。
+- 代价是给按钮补了 `aria-label`（「放大第 N 张贴图」），读屏与键盘用户能知道按下去干什么。
+
+**三、为什么不给 `<a>` 加预览，而要换成按钮。**
+
+- 键盘可达：`<a>` 不挂 `href` 就不再可聚焦，靠自己模拟点击既丢焦点语义又丢回车 / 空格。
+  `<button>` 天然进 Tab 序列，回车与空格都能开，焦点还原也由浮层负责。
+- 观感一致：`cursor: zoom-in` 是「点开看图」的通用手势；链接默认是 `pointer` 手型，
+  与输入框那排待发贴图的鼠标形状对不上。
+- 行为一致：按钮只切本地状态，不触发导航；`<a target="_blank">` 即使挂 `onClick`
+  也得 `preventDefault`，否则新窗口照样弹。少一个要记得拦的默认行为。
+
+**四、自检。**
+
+`scripts/ui-transcript-render-test.mjs` 新增第 `[13]` 节：两处按钮、两处 `setZoom`、
+两处 `ImageLightbox`、两份 `zoom` 状态各一条正向，`href={url}` 与多出来的
+`target="_blank"` 两条负向（文件下载卡那一条保留），外加 CSS 的
+`cursor: zoom-in` 与 `pointer-events: none`、以及 132×96 展示框没被顺手改掉。
+`pnpm run typecheck`、`pnpm run build:ui`、`node scripts/check-ui.mjs`、
+`node scripts/style-check.mjs` 同批跑过。
+
+**五、诚实边界。**
+
+- 只读出口那一份也要自己 `useState`：两处气泡是并列的组件，不共用状态；
+  「点开一张、另一处也跟着开」既做不到也不需要。
+- 浮层仍只显示原图，没有左右切换：一次点一张，跟上一节的能力边界一样。
+- 视频附件仍走原来的卡片 / 播放器，不在这次范围内。
+
+## 面板右上角两颗钮只剩两个灰点（2026-11-02）
+
+**一、现场。**
+
+用户截图：展开的状态面板里，「Git 工具 / 更改 92 个文件 / master / 智能体」都正常，
+只有右上角本该是两颗图标钮的地方，剩两个 2px 宽的灰点。用户的原话是「叉号没了，
+展开方式按钮也显示错误」。
+
+**二、根因：页签行的样式漏进了搬过去的浮层。**
+
+同一批里状态面板的默认落点从正文区右上角挪进了顶栏页签行（`.topbar .tabs`，
+见 `ui-shell/src/styles.css:2379`）。落点是挪对了，但页签行有一条老规则：
+
+```css
+/* ui-shell/src/legacy/views.css:1185（改前） */
+.topbar .tabs button {
+  padding: 0 10px;      /* 特异度 0,2,1 */
+  font-size: var(--dsc-fs-body);
+  ...
+}
+```
+
+面板自己的图标钮是 `.sp-icon-btn { width: 22px; height: 22px; padding: 0 }`
+（`ui-shell/src/styles.css:2454`，特异度 0,1,0）。全局 `box-sizing: border-box`
+（`ui-shell/src/legacy/base.css:11`）之下，22px 的盒子里再塞左右各 10px 内边距，
+内容区只剩 **2px**；里面 13px 的 SVG 是 flex 子项，被压成一根 2px 宽的竖线。
+截图里那两个灰点就是它。
+
+连带伤不止这两颗：面板里 17 颗按钮（分区标题、行、清空、已结束行、菜单项）全被灌进
+`padding: 0 10px` 与 14px 字号；`.sp-menu-item.on` 还会白捡页签选中态那条橙色下划线。
+面板原先在正文区，这些规则一条都碰不到——是「挪位置」把整套页签样式带进来的。
+
+**三、改法：页签行只认直连子级。**
+
+页签本身就是 `.tabs` 的直接子元素（`ui-shell/src/ui-layout/app.tsx:525-548`
+的 `<nav className="tabs"><button>…`），把四条规则从后代选择器收成直连子级，
+面板是 `.sp-host` 包着的另一棵子树，从此不受影响：
+
+| 文件 | 行 | 改前 → 改后 |
+| --- | --- | --- |
+| `ui-shell/src/legacy/views.css` | 1191 | `.topbar .tabs button` → `.topbar .tabs > button` |
+| 同上 | 1205 | `… button:hover` → `… > button:hover` |
+| 同上 | 1209 | `… button.on` → `… > button.on` |
+| 同上 | 1213 | `… button.on::after` → `… > button.on::after` |
+| `ui-shell/src/styles.css` | 144 | `.topbar .tabs button { gap: 6px }` → `.topbar .tabs > button` |
+
+`.topbar .tabs .sp-host` 那条注释补了一段「这一行里还有一棵外来户」，把口径写在那儿，
+下次谁往页签行塞浮层都知道按钮规则要写直连。
+
+**四、自检。**
+
+- `scripts/ui-status-panel-test.mjs` 新增第 `[13]` 节三条：页签四条规则都带 `> `、
+  **负向**「两份 CSS 里都不许再有 `.topbar .tabs button`」、以及 `.sp-icon-btn` 的
+  22px 盒与 `padding: 0` 还在（防止有人「修」成把它删掉）。
+- 真机探针 `desktop/shots/_verify-status-pill.mjs` 加了一段量尺寸：展开面板之后读两颗钮的
+  `getBoundingClientRect()`、`paddingLeft/Right` 与内部 SVG 的宽高。修完的实测是
+  `22×22` 盒、`padding 0`、SVG `13×13`——两个都是 13px，画得出来。
+  截图 `desktop/shots/_verify-panel-icons.png` 里「…」与「⌄」都回到了右上角。
+- `pnpm run check:ui`、`node scripts/style-check.mjs` 同批跑过。
+
+**五、诚实边界。**
+
+- 面板右上角现在仍是「…（展开方式）」与「⌄（收起为胶囊）」两颗，没有「×」：
+  这颗面板从第一版起就没有关闭钮（收成胶囊就是「收起来」），这次没有加。
+  要「×」得定义第三种语义（彻底隐藏面板），是另一个需求。
+- 直连子级只修了页签行这一套规则；`.topbar` 下若还有别的后代选择器点到 `button`，
+  这次没逐个排查（`grep` 过一遍，只剩这五条）。
+
+## 目标点 ✕ 清空之后，重启又回来（2026-11-02）
+
+**一、现场。** 用户在目标条上点了 ✕，目标条当场消失；重启应用，同一条目标又挂在输入框上方。
+
+**二、根因：清空这个动作根本没落盘。**
+
+`src/plugins/goal.ts` 的落盘函数旧版是这样：
+
+```ts
+const persist = (): void => {
+  const snapshot = goals.snapshot
+  if (snapshot !== null) ctx.session.current().appendState('goal', snapshot)
+  touch()
+}
+```
+
+点 ✕ 走 `goalAction('clear')` → `goals.clearByUser()`：目标变 null，于是这一行什么都不写。
+会话日志是 append-only、恢复时逐条重放且**最后一条生效**（`src/core/session.ts` 的
+`Session.load`），所以 jsonl 里最后一条 `state: goal` 仍是清空前那份；重启时
+`src/plugins/goal.ts` 开头 `ctx.session.current().state('goal')` 把它读回来，`goals.restore`
+原样恢复。
+
+再加一层设计缺口：`SessionStateMap.goal` 的类型是 `GoalSnapshot`，不可空——存储层压根
+没有「这个会话已经没目标了」这种表示。
+
+**三、改法。**
+
+- `src/core/session.ts`：`goal: GoalSnapshot | null`，注释写明 null = 用户清空过。
+- `src/plugins/goal.ts`：`persist()` 去掉 null 守卫，清空也追加一条 `state: goal = null`。
+  日志只追加不回头改，最后一条生效，恢复时读到的就是「没有目标」。
+
+**四、自检。**
+
+- 新增 `scripts/goal-persist-test.mjs`（进 `check-core` 自动发现，88 → 89 条）：
+  两条文本钉（`persist` 里直接 append、负向「不许再有 null 守卫」）＋ 两条类型钉
+  （`GoalSnapshot | null`、注释在）＋ 三条**真跑日志重放**：只有目标的对照组读得回来、
+  目标后跟一条 null 的读成 null、清空后又建新目标的读到新目标。
+- 新增真机探针 `desktop/shots/_verify-goal-clear.mjs`：种一条带目标的会话 → 启动后目标条在 →
+  用 CDP 点那颗 ✕ → 目标条当场消失 → 读**真正在写的那份** jsonl（恢复会话时 `Session.load`
+  会把写入落到 `sessions/<cwd 的 slug>/` 下，不是种子的那条路径）确认最后一条 `goal` 是
+  `null` → 杀掉进程、用这份会话重启 → 目标条不再出现。四条全过。
+- `pnpm run build`、`node scripts/check-core.mjs goal-persist-test.mjs` 通过。
+
+**五、诚实边界。** 这次只补了「清空」这一条路径。目标的其他动作（暂停 / 继续 / 加轮次）
+本来就会写日志，没动。老会话里清不掉的残留不用迁移：再点一次 ✕ 就补上那条 null。
+
+## 点会话里的网址直接白屏（2026-11-02）
+
+**一、现场。** 用户点回答里的仓库链接（`https://github.com/waq05/huixue-classroom`），
+Pneuma 窗口整片变白，除了重启没有回来的路。
+
+**二、根因：主窗口没有导航闸门，链接就是「在应用里换页」。**
+
+- `ui-shell/src/ui-primitives/markdown.tsx` 的组件表只覆盖了 `img` / `code` / `pre`，
+  没有 `a`，所以正文里的链接渲染成裸 `<a href="https://…">`；
+- `desktop/electron/main/index.ts` 的 `createWindow` 没有 `setWindowOpenHandler`，也没有
+  `will-navigate` / `will-redirect`（全文件 grep 一处都没有）。内嵌浏览器那台
+  `WebContentsView` 一直有这套（`desktop/electron/main/dock.ts`），主窗口漏了。
+
+于是点击 = 主窗口自己导航到 github.com：整个单页应用被换成那个网页，加载不出来（或
+被后续重定向打断）就是白屏；就算加载出来，界面也没了，且没有后退历史可用。
+
+**三、改法：两道闸 + 链接统一走新窗。**
+
+- `desktop/electron/main/index.ts`：主窗口上挂
+  `setWindowOpenHandler`（同源放行——附件预览 `/api/attachments/<sha>` 靠它开窗；
+  http/https 外链交系统浏览器；其他协议丢弃）与 `will-navigate` / `will-redirect`
+  （主窗口一律不许整页导航，外链转系统浏览器）。
+- `ui-shell/src/ui-primitives/markdown.tsx`：组件表补 `a`，统一
+  `target="_blank" rel="noreferrer noopener"`，点击走上面那条开窗路径，不再靠「先导航再被拦」。
+- `openExternalUrl` 加自检开关 `DSC_NO_EXTERNAL_OPEN=1`：只往 stderr 记一行
+  「跳过打开外部链接：…」，不真开浏览器——否则探针每跑一次就给用户弹一个网页。
+
+**四、自检。**
+
+- 新增真机探针 `desktop/shots/_verify-link-open.mjs`：种一条带 markdown 链接的会话，
+  用 CDP 点那颗 `<a>`，四条断言——链接确实是 `target="_blank"` 的外链、点完 `location.href`
+  没变、`#root` 里 `.app` 还在（不是白屏）、页面数仍是 1（没新开窗口），外加一条从
+  electron stderr 里找「跳过打开外部链接」。四条全过。
+- `pnpm run typecheck`、`pnpm --dir desktop run typecheck`、`pnpm run build`、
+  `pnpm run build:ui`、`pnpm --dir desktop run build`、`pnpm run check:ui`（50/50）同批跑过。
+
+**五、诚实边界。**
+
+- 同源的**开窗**仍然放行（附件卡片靠它看原文件）；同源的**整页导航**也被拦了，
+  这是有意的：主窗口是单页应用，没有任何一处需要换页。
+- markdown 里的相对链接（`docs/x.md` 这类）也会新开一个窗口，指到应用页面的相对地址上
+  —— 跟以前「主窗口导航过去」一样是 404，没有变好也没有变坏，这次不扩范围。
