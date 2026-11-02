@@ -556,8 +556,10 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
                   审查开着时正文让位，右缘的拖拽条一并让位）。 */}
               <div className="thread-zone" {...(review !== null ? { 'data-review': '1' } : {})}>
                 <div
-                  // 正文区（消息流 + 输入区）的定位锚：绝对定位的浮层（状态面板 / 胶囊）
-                  // 认的是**这一格**的右上角，不是 `.chat-wrap`——空会话态里 `.chat-wrap`
+                  // 正文区（消息流 + 输入区）的锚点：**宽度裁决**认这一格（状态面板自动档
+                  // 的 1280px 量的是它的 clientWidth，dock 开合改它不改窗口宽）。
+                  // 落点则不必是这里了——状态胶囊默认画在顶栏页签行右端，只有手机档没有
+                  // 那一行时才回落到这一格的右上角。**不是 `.chat-wrap`**：空会话态里它
                   // 只有内容高、还被上下 auto 边距推着居中，认它会飘到版心（见 styles.css）。
                   data-thread-area=""
                   className={

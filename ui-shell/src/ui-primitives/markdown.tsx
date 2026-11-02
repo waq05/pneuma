@@ -310,6 +310,14 @@ function MarkdownCode({ className, children, node }: {
  * 这里每一项都允许重渲染，但不允许「换函数」：换函数＝换元素类型＝整棵子树重挂。
  */
 const MARKDOWN_COMPONENTS: Components = {
+  // 链接一律新窗口（`target="_blank"`）：主窗口是单页应用，裸 `<a href>` 点一下会把整个
+  // 界面导航走——加载不出来就是白屏，还没有后退路（2026-11-02 报障）。走新窗口这条，
+  // 原生层按「外链交系统浏览器 / 同源附件照旧开窗」处理，见 desktop 主进程的开窗闸门。
+  a: ({ href, children, title }) => (
+    <a href={href} {...(title === undefined ? {} : { title })} rel="noreferrer noopener" target="_blank">
+      {children}
+    </a>
+  ),
   img: ({ src, alt }) => {
     const source = typeof src === 'string' ? src : ''
     return source === '' ? (

@@ -140,8 +140,10 @@
 }
 
 /* 页签行里带图标的那颗（手机档的「← 对话」返回钮，legacy 那两颗是纯文字、不吃这条）：
-   图标与文字之间给一点气口，否则 14px 的箭头会贴着第一个字。 */
-.topbar .tabs button {
+   图标与文字之间给一点气口，否则 14px 的箭头会贴着第一个字。
+   同样只吃直连子级：面板浮层就挂在这一行里（`.topbar .tabs .sp-host`），
+   写成后代选择器会给面板里每一颗按钮塞一个 6px 的 gap。 */
+.topbar .tabs > button {
   gap: 6px;
 }
 
@@ -2365,6 +2367,32 @@
   pointer-events: auto;
 }
 
+/* 默认落点：顶栏页签行（`.topbar .tabs`）的右端（2026-11-02 起）。
+   为什么换地方：原先落在正文区右上角，长会话里正好压在消息流第一行的「思考 · 进行中」上；
+   页签行右侧本来就是空的，摆那儿不挡任何内容。页签行是 36px 高、胶囊 34px，
+   上下各留 1px；左右贴到那一行的右内缘（`.topbar` 自己有 12px 内边距，不会顶到窗口控件）。
+   这一行的 `position: relative` 得由我们补：`legacy/views.css` 只给了 flex / 高度。 */
+.topbar .tabs {
+  position: relative;
+}
+
+.topbar .tabs .sp-host {
+  top: 1px;
+  right: 0;
+}
+
+/* 这一行里还有一棵「外来户」：整块状态面板。页签行自己的按钮规则（底色/内边距/字号/
+   选中态下划线）一律写成直连子级 `.topbar .tabs > button`，不进这棵子树——2026-11-02
+   报障的「面板右上角两颗钮消失、只剩两个灰点」就是这里漏进去的内边距
+   （`padding: 0 10px` 压过 `.sp-icon-btn` 的 `padding: 0`，22px 盒子只剩 2px 内容宽，
+   13px 的 SVG 被压成一条竖线）。加新样式时照这个口径写。 */
+
+/* 拖动时临时抬到菜单层之上：拖动的是用户自己手里的东西，被自己的下拉菜单压住会看不清。
+   只在这一属性存在期间抬；`.sp-host` 的基础层级仍是 `--dsc-z-menu` − 1（见上）。 */
+.sp-host[data-dragging] {
+  z-index: calc(var(--dsc-z-menu) + 1);
+}
+
 /* ── 壳（两态共用）── 底色不透明（下方是正文，半透明会读出重影）。 */
 .sp {
   background: var(--dsc-bg-raised);
@@ -2995,7 +3023,7 @@
   padding: 0 var(--dsc-sp-3);
 }
 
-/* ── 胶囊态 ── 一颗药丸：图标 + 一句读数（+ 可选读数尾巴）；点它展开成面板。
+/* ── 胶囊态 ── 一颗药丸：图标 + 一句读数（+ 可选读数尾巴）；点它展开成面板，按住可以拖动。
    收起态在流内、展开态绝对定位让位——同一棵 DOM，藏起来而不是卸载，形变过渡不断。 */
 .sp-mini {
   align-items: center;
@@ -3003,7 +3031,9 @@
   border: none;
   border-radius: var(--dsc-r-pill);
   color: var(--dsc-text-secondary);
-  cursor: pointer;
+  /* 按住能拖：抓取手形；触屏上必须禁止浏览器把这次按下当滚动，否则拖不动（只滚页面）。 */
+  cursor: grab;
+  touch-action: none;
   display: inline-flex;
   font-size: var(--dsc-fs-ui);
   gap: var(--dsc-sp-2);
@@ -3030,6 +3060,11 @@
 
 .sp-mini:hover {
   color: var(--dsc-text-primary);
+}
+
+/* 拽着的时候手形换成「攥住」，跟拖拽条那几个把手同一套反馈。 */
+.sp-host[data-dragging] .sp-mini {
+  cursor: grabbing;
 }
 
 .sp-mini:focus-visible {
@@ -4569,6 +4604,49 @@
   height: 100%;
   object-fit: cover;
   width: 100%;
+}
+
+/* 待发贴图：点一下开浮层看大图。贴图是 dataURL，浏览器不许顶层跳 data:，
+   所以只能是自己的浮层（样式用 legacy 的 .img-lightbox）。 */
+.attach-zoom {
+  background: none;
+  border: none;
+  cursor: zoom-in;
+  display: block;
+  height: 100%;
+  padding: 0;
+  width: 100%;
+}
+
+/* 图片不接事件：整块缩略图都是那颗按钮的点击面。 */
+.attach-zoom img {
+  pointer-events: none;
+}
+
+.attach-zoom:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--dsc-accent);
+  outline: none;
+}
+
+/* 已发送消息的贴图：点一下开浮层（跟输入框待发贴图同一套观感、同一个组件）。
+   132×96 的展示框仍由 legacy/views.css 的 .entry-user-images img 负责，这里只管点击面。 */
+.entry-shot {
+  background: none;
+  border: none;
+  cursor: zoom-in;
+  display: block;
+  line-height: 0;
+  padding: 0;
+}
+
+/* 图片不接事件：整块缩略图都是那颗按钮的点击面。 */
+.entry-shot img {
+  pointer-events: none;
+}
+
+.entry-shot:focus-visible {
+  box-shadow: 0 0 0 2px var(--dsc-accent);
+  outline: none;
 }
 
 .attach-file {

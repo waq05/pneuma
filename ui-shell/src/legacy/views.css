@@ -1181,8 +1181,13 @@
   -webkit-app-region: no-drag;
 }
 
-/* 选中的页签不加重字重：加粗会把旁边页签推来推去，只靠下划线和品牌色区分。 */
-.topbar .tabs button {
+/* 选中的页签不加重字重：加粗会把旁边页签推来推去，只靠下划线和品牌色区分。
+   **只吃直连子级（`> button`）**：状态面板 2026-11-02 起整个浮层搬进这一行
+   （`.topbar .tabs .sp-host`），写成后代选择器会把「padding: 0 10px / 14px 字号 /
+   选中态下划线」一并灌进面板——22px 的图标钮被内边距挤成 2px，两颗图标肉眼看不见。
+   页签本身就是 `.tabs` 的直接子元素（app.tsx 的 `<nav className="tabs">` 里那两颗），
+   直连不丢任何一颗。 */
+.topbar .tabs > button {
   align-items: center;
   color: var(--dsc-text-tertiary);
   display: flex;
@@ -1192,15 +1197,15 @@
   transition: color var(--dsc-dur) var(--dsc-ease);
 }
 
-.topbar .tabs button:hover {
+.topbar .tabs > button:hover {
   color: var(--dsc-text-secondary);
 }
 
-.topbar .tabs button.on {
+.topbar .tabs > button.on {
   color: var(--dsc-text-primary);
 }
 
-.topbar .tabs button.on::after {
+.topbar .tabs > button.on::after {
   background: var(--dsc-accent);
   border-radius: var(--dsc-r-pill);
   bottom: -1px;
@@ -2009,22 +2014,18 @@
   text-align: center;
 }
 
-/* 流式直播尾光标 */
-.live {
-  position: relative;
-}
-
-.live::after {
-  content: '▍';
-  color: var(--dsc-accent);
-  animation: blink 1s steps(2) infinite;
-}
-
-@keyframes blink {
-  50% {
-    opacity: 0;
-  }
-}
+/* 流式直播尾光标：2026-11-02 删掉，别加回来。
+ *
+ * 原来是 `.live::after { content: '▍' }`——在「直播尾」元素末尾跟一个闪动的光标。
+ * 可 `.live` 挂在**块级容器**上：正文是 `.entry-text.live`，思考是 `.think-block.live`。
+ * 容器里最后一块是 markdown 的 `<p>`（块级），行内伪元素排不进上一行，浏览器就把它
+ * 摆到下一行的行首、按容器左缘对齐——用户看到的是正文左下方一根 6×25 的浅棕色短竖条
+ * （浅色主题 accent #d97757 的字形），每多一行就多一根，看着像排版错位。
+ *
+ * 为什么是删而不是挪：想在文字末尾跟光标，就得把光标塞进「最后一个可内联的块」里，
+ * 而最后一块可能是段落、列表、代码块、表格，四种情形各写一条选择器，等于把一处视觉
+ * 瑕疵换成一张维护表。直播状态本来就不缺信号：思考行有转圈与扫光，正文在长高，
+ * 底部还有「回到底部」胶囊。 */
 
 /* ── 思考折叠（与正文明确区分：灰字、小一号、左竖线、可折叠） ── */
 .thinking {
@@ -11967,6 +11968,50 @@ body.resizing iframe {
   display: inline-block;
   padding-left: 6px;
   width: calc(100% - 8px);
+}
+
+/* ── 轮尾的复制 / 分叉：停下之后、鼠标落到这一轮的输出上才现（2026-11-02）──
+ *
+ * 报障：输出中间就挂着「复制 / 分叉」两颗钮，且一直占着版面。两颗钮在这一轮还没停下时
+ * 本来就是假的（复制拿到半截回答，分叉分出半截会话），停下之后常驻又让每一轮后面都拖着
+ * 一排按钮，长会话里全是噪音。
+ *
+ * 现在是两段合起来才现：
+ *   ① 「这一轮停了」由组件判（foot.tsx 的 `running`）——跑动中这两颗钮压根不渲染；
+ *   ② 「鼠标在输出上」由这里判：默认 opacity: 0，鼠标压在这一轮的**任一非首块**上、
+ *      或压在页脚自己这一行上、或键盘焦点进这一轮（Tab 依次走到两颗钮）才提到 1。
+ *
+ * 为什么用 opacity 而不是 display: none / visibility: hidden：后两者会让按钮不可聚焦，
+ * 键盘用户就再也点不到「复制」。opacity: 0 的钮仍在无障碍树与 Tab 顺序里，与用户消息
+ * 那颗编辑按钮（`.user-turn .user-actions`）同一套做法。
+ *
+ * 为什么选择器是「非首块」而不是 `.turn-seat:hover`：座位的第一块是**用户自己那条消息**。
+ * 挂在座位上会让「把鼠标放在自己刚发的问题上」也弹出这一轮底部的动作，说不通。
+ * 认 `*:not(:first-child)` 而不是点名 `.entry-text`，是因为这一轮的输出可能只是一行思考、
+ * 一个过程组、一张改动卡——它们都得算「输出内容」，而第一块永远是那条提问。 */
+.round-foot .round-act,
+.round-foot .user-act {
+  opacity: 0;
+  transition:
+    opacity var(--dsc-dur) var(--dsc-ease),
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+}
+
+.turn-seat > *:not(:first-child):hover ~ .round-foot .round-act,
+.turn-seat > *:not(:first-child):hover ~ .round-foot .user-act,
+.turn-seat > .round-foot:hover .round-act,
+.turn-seat > .round-foot:hover .user-act,
+.turn-seat:focus-within > .round-foot .round-act,
+.turn-seat:focus-within > .round-foot .user-act {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .round-foot .round-act,
+  .round-foot .user-act {
+    transition: none;
+  }
 }
 
 /* 追加区：新样式段一律加在这行之下，加完把这行挪到文件末尾（trace-check 的末尾纪律断言认这行） */

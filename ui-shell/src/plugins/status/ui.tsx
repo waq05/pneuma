@@ -5,7 +5,8 @@
  *
  * 长会话里「现在到底有几件事在跑」原本散在多处：输入框上方的任务条（`plugins/tasks`）、
  * 标题旁的「N 个子智能体」下拉（`plugins/team`）、状态栏的读数，各答一半——任务条不报队友，
- * 队友下拉不报任务进度。这个面板把这几条**合成一块钉在正文右上角**的浮层。
+ * 队友下拉不报任务进度。这个面板把这几条**合成一块浮层，默认落在顶栏页签行右端**
+ * （收起态的胶囊可以按住拖动，位置记在本机，见 {@link POS_KEY}）。
  * （第一版之后任务条与「智能体团队」钮已从壳里撤掉：它们报的东西这里都有，留着是两份。）
  *
  * ## 形状（照 ZCode 的状态面板）
@@ -13,20 +14,25 @@
  * - **同一壳收展（morph）**：收起态是胶囊（一颗药丸，只报优先级最高的那一条摘要），
  *   展开态是一块 320px 浮层。两态是**同一棵 DOM**（`[data-expanded]` 切换），收起/展开
  *   过渡最大高度、圆角、背景与阴影。ZCode 的 shell 也是这么做的。
- * - **自动档按宿主宽度裁决**：量的是定位父级（正文区，`.thread-main` 上的 `data-thread-area`）
+ * - **自动档按正文区宽度裁决**：量的是正文区（`.thread-main` 上的 `data-thread-area`）
  *   的宽度（ResizeObserver），
- *   不读 `window.innerWidth`——右侧 dock 开合会改宿主宽度但不改窗口宽度。
+ *   不读 `window.innerWidth`——右侧 dock 开合会改正文区宽度但不改窗口宽度。
+ *   注意**宽度的裁决口径与落点分开**：胶囊默认画在顶栏页签行，但 1280px 这条线量的仍是正文区，
+ *   否则把胶囊挪个位置就把自动档的行为一起改了。
  * - **分区七个**（顺序照 ZCode 的 Git 工具 / 目标 / 计划 / 进程 / 终端 / 工作流 / 智能体），
  *   各自可折叠、各自限高滚动；进程区超过 6 条启用聚焦窗口（当前项 ±1 连续 3 条，
  *   前后折成折叠桶，hover 出预览卡）。
  * - **智能体区只列在跑的**；收工的折成一条「已结束 · N ›」目录行，经 team 插件的
  *   `teamPanel` 服务打开团队面板（缺这个服务时整行不渲染——点了没反应的入口比没有更糟）。
  *
- * ## 为什么挂在 `shell.main` 槽里却画在正文右上角
+ * ## 为什么挂在 `shell.main` 槽里却画到顶栏页签行
  *
  * `shell.main` 的条目渲染在滚动容器里（`.chat-inner`），静态排布会随正文滚走。所以这里
  * 用的是右缘刻度条（`plugins/transcript/jump-rail.tsx`）那一套：**一个 hidden 哨兵**在文档流里
- * 占位，组件从它往上找正文区这一格（定位父级，见 {@link THREAD_AREA_SELECTOR}），再把浮层 portal 进去。
+ * 占位，组件把浮层 portal 出去。portal 宿主优先取顶栏页签行（`.topbar .tabs`）：
+ * 那一行的右侧本来就是空的，胶囊摆那儿不压正文第一行。手机档（<860px）没有这一行，
+ * 回落到正文区右上角（从哨兵往上找 `[data-thread-area]`，见 {@link THREAD_AREA_SELECTOR}）。
+ * 收起态的胶囊可以按住拖动，位置存在本机（{@link POS_KEY}），拖不出可见范围。
  *
  * ## 数据（逐区）
  *
@@ -48,7 +54,7 @@
  *
  * @module dsc-ui-shell/plugins/status
  */
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
   IconActivity,
@@ -142,12 +148,27 @@ const CLOCK_SLOW_MS = 10_000
 const AUTO_PANEL_MIN_WIDTH = 1280
 /**
  * 定位锚选择器：正文区（壳打在 `.thread-main` / `.thread-main-empty` 上的 `data-thread-area`）。
- * 定位与宽度裁决都认它——**不认 `.chat-wrap`**（那个在空会话态只有内容高，认它这面板
- * 会锚到版心；见壳 `styles.css` 的 `[data-thread-area]` 规则）。
+ * 它是**宽度裁决**的锚（{@link AUTO_PANEL_MIN_WIDTH}）；portal 宿主取不到页签行时也回落用它。
+ * **不认 `.chat-wrap`**（那个在空会话态只有内容高，认它这面板会锚到版心；
+ * 见壳 `styles.css` 的 `[data-thread-area]` 规则）。
  */
 const THREAD_AREA_SELECTOR = '[data-thread-area]'
+/**
+ * 默认落点：顶栏页签行（`.topbar .tabs`）的右端。那一行的右侧本来就是空的，胶囊摆那儿
+ * 不压正文第一行（2026-11-02 用户截图：胶囊正好盖在消息流第一行的「思考 · 进行中」上）。
+ * 手机档（<860px）没有这一行，回落正文区右上角。
+ */
+const TOPBAR_TABS_SELECTOR = '.topbar .tabs'
 /** 展示档位的存档键（本机，跟人走而不跟会话走）。 */
 const MODE_KEY = 'dsc.statusPanel.mode'
+/** 胶囊位置的存档键（本机存档，与 {@link MODE_KEY} 同一套规矩；不跟会话走）。 */
+const POS_KEY = 'dsc.statusPanel.pos'
+/** 拖动判定阈值（px）：按下后位移没超过这个数就当点击，不当拖动。 */
+const DRAG_SLOP = 4
+/** 松手时离默认落点小于这个距离（px）就吸附回默认，并清掉存档。 */
+const SNAP_BACK_PX = 24
+/** 拖动范围离容器边缘的最小留白（px）：胶囊不顶在边上。 */
+const DRAG_MARGIN = 8
 /** 折叠桶预览卡的开 / 关延迟（ZCode 的 120ms / 80ms）：滑过不停留不弹卡。 */
 const PREVIEW_OPEN_MS = 120
 const PREVIEW_CLOSE_MS = 80
@@ -180,6 +201,75 @@ function writeMode(mode: DisplayMode): void {
     globalThis.localStorage?.setItem(MODE_KEY, mode)
   } catch {
     // 同上：存档是锦上添花。
+  }
+}
+
+/** 胶囊位置（相对默认落点的位移，px）。 */
+type CapsulePos = { x: number; y: number }
+
+/** 读存档的胶囊位置；没有、坏掉、不是有限数，一律当「没拖过」（回默认落点）。 */
+function readPos(): CapsulePos | null {
+  try {
+    const raw = globalThis.localStorage?.getItem(POS_KEY)
+    if (raw === null || raw === undefined) return null
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null) return null
+    const x = (parsed as { x?: unknown }).x
+    const y = (parsed as { y?: unknown }).y
+    if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) return null
+    return { x, y }
+  } catch {
+    // 隐私模式 / 存储被禁 / 存的是坏 JSON：都当没拖过。
+    return null
+  }
+}
+
+/** 写胶囊位置存档（写不进去不算失败——下次进来回到默认落点而已）。 */
+function writePos(pos: CapsulePos): void {
+  try {
+    globalThis.localStorage?.setItem(POS_KEY, JSON.stringify(pos))
+  } catch {
+    // 同上：存档是锦上添花。
+  }
+}
+
+/** 删掉胶囊位置存档（吸附回默认落点时用）。 */
+function clearPos(): void {
+  try {
+    globalThis.localStorage?.removeItem(POS_KEY)
+  } catch {
+    // 同上。
+  }
+}
+
+/** 把值夹进区间；区间反了（容器比胶囊还窄）就退化成 min，别把胶囊甩出容器。 */
+function clampIn(value: number, min: number, max: number): number {
+  return min > max ? min : Math.min(Math.max(value, min), max)
+}
+
+/** 位移的允许区间（相对默认落点的 px）。 */
+type DragBounds = { minX: number; maxX: number; minY: number; maxY: number }
+
+/**
+ * 算位移允许区间：容器取 `.main`（取不到退正文区），内缩 {@link DRAG_MARGIN}；
+ * 再结合 `.sp-host` 当前的 `getBoundingClientRect()` 倒推出它「没有位移时」在哪，
+ * 于是区间就是「胶囊左缘 ≥ 容器左内缘、右缘 ≤ 容器右内缘」这两个不等式解出来的 x 范围。
+ *
+ * `applied` 是**此刻**已经生效的位移（不是想去的位移）：屏幕上量到的矩形含它，
+ * 减掉才是基准位置。
+ */
+function dragBounds(hostEl: HTMLElement, applied: CapsulePos): DragBounds | null {
+  const container = hostEl.closest('.main') ?? hostEl.closest(THREAD_AREA_SELECTOR)
+  if (container === null) return null
+  const frame = container.getBoundingClientRect()
+  const rect = hostEl.getBoundingClientRect()
+  const left = rect.left - applied.x
+  const top = rect.top - applied.y
+  return {
+    minX: frame.left + DRAG_MARGIN - left,
+    maxX: frame.right - DRAG_MARGIN - rect.width - left,
+    minY: frame.top + DRAG_MARGIN - top,
+    maxY: frame.bottom - DRAG_MARGIN - rect.height - top,
   }
 }
 
@@ -490,28 +580,55 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
   const sentinel = useRef<HTMLDivElement | null>(null)
   const box = useRef<HTMLDivElement | null>(null)
   const [host, setHost] = useState<HTMLElement | null>(null)
-  // 可用宽度的初值也从宿主取（首帧就按宿主裁决，不闪一下）；量不到时按「宽」起步，
-  // 下面的 ResizeObserver 会立刻纠正。**不读 window.innerWidth**——dock 开合改宿主宽
+  // 正文区（量宽度用）：它和 portal 宿主是两件事——落点可以在页签行，宽度裁决仍看正文区。
+  const [area, setArea] = useState<HTMLElement | null>(null)
+  // 胶囊的位置（相对默认落点的位移）：先读本机存档，没有就落默认点。
+  const [pos, setPos] = useState<CapsulePos>(() => readPos() ?? { x: 0, y: 0 })
+  // 位置的「最新真值」：拖动时每帧直接写 DOM（不 setState），松手才回灌状态。
+  const posRef = useRef<CapsulePos>(pos)
+  /** 拖动过程中的临时账本；null 表示现在没在拖。 */
+  const dragRef = useRef<{
+    pointerId: number
+    startX: number
+    startY: number
+    baseX: number
+    baseY: number
+    bounds: DragBounds
+    moved: boolean
+    frame: number | null
+    nextX: number
+    nextY: number
+  } | null>(null)
+  // 真拖动过之后浏览器还会补一次 click：这个标记让那一次不展开面板。
+  const suppressClickRef = useRef(false)
+  // 可用宽度的初值也从正文区取（首帧就按正文区裁决，不闪一下）；量不到时按「宽」起步，
+  // 下面的 ResizeObserver 会立刻纠正。**不读 window.innerWidth**——dock 开合改正文区宽
   // 不改窗口宽，按窗口判会在这两种情况里判错。
   const [avail, setAvail] = useState(() => {
-    const area = typeof document === 'undefined' ? null : document.querySelector(THREAD_AREA_SELECTOR)
-    return area instanceof HTMLElement && area.clientWidth > 0 ? area.clientWidth : AUTO_PANEL_MIN_WIDTH
+    const el = typeof document === 'undefined' ? null : document.querySelector(THREAD_AREA_SELECTOR)
+    return el instanceof HTMLElement && el.clientWidth > 0 ? el.clientWidth : AUTO_PANEL_MIN_WIDTH
   })
 
-  // 定位父级：从哨兵往上找正文区（`data-thread-area`，见壳 styles.css）。
+  // 落点与宽度锚一次性解析出来（换会话 / 换视图时重算）：
+  //   落点（portal 目标）：优先顶栏页签行 `.topbar .tabs`——那一行右侧本来就是空的；
+  //   取不到（手机档没有这一行）再回落正文区右上角。
+  //   宽度锚：正文区 `[data-thread-area]`，与落点无关（自动档 1280px 的口径不跟着胶囊走）。
   // **不认 `.chat-wrap`**（右缘刻度条至今认它）：空会话态里它只有内容高、还被居中边距
   // 推着走，认它会把这面板锚到版心——0.6.67 用户报的「更改面板位置不对」就是这一条。
   useEffect(() => {
     const node = sentinel.current
-    const found = node?.closest(THREAD_AREA_SELECTOR)
-    setHost(found instanceof HTMLElement ? found : null)
+    const tabs = document.querySelector(TOPBAR_TABS_SELECTOR)
+    const nextHost: Element | null = tabs ?? node?.closest(THREAD_AREA_SELECTOR) ?? null
+    setHost(nextHost instanceof HTMLElement ? nextHost : null)
+    const nextArea = node?.closest(THREAD_AREA_SELECTOR) ?? null
+    setArea(nextArea instanceof HTMLElement ? nextArea : null)
   }, [view])
 
-  // 可用宽度：量**宿主**（正文区）而不是 window——右边 dock 开合、左栏折叠都会
-  // 改宿主的宽度而窗口宽度不动；旧版读 window.innerWidth，自动档在这两种情况下判错。
+  // 可用宽度：量**正文区**（不是 window、也不是胶囊的落点容器）——右边 dock 开合、左栏
+  // 折叠都会改正文区的宽度而窗口宽度不动；旧版读 window.innerWidth，自动档在这两种情况下判错。
   useEffect(() => {
-    if (host === null) return undefined
-    const element = host
+    if (area === null) return undefined
+    const element = area
     const measure = (): void => setAvail(element.clientWidth)
     measure()
     if (typeof ResizeObserver === 'undefined') {
@@ -521,7 +638,113 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
     const observer = new ResizeObserver(measure)
     observer.observe(element)
     return () => observer.disconnect()
-  }, [host])
+  }, [area])
+
+  /** 落状态 + 落盘（拖动松手、窗口缩放夹取都走这一条，保证 ref 与 state 同步）。 */
+  const commitPos = useCallback((next: CapsulePos): void => {
+    posRef.current = next
+    setPos(next)
+    if (next.x === 0 && next.y === 0) clearPos()
+    else writePos(next)
+  }, [])
+
+  /** 拖动起点：记下指针、基准位置与夹取区间；按钮上攥住指针，拖出窗口外再回来还接着拖。 */
+  const onMiniPointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>): void => {
+    if (event.button !== 0) return
+    const hostEl = box.current
+    if (hostEl === null) return
+    const bounds = dragBounds(hostEl, posRef.current)
+    if (bounds === null) return
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId)
+    } catch {
+      // 合成事件没有活动指针时会抛：抓不住不影响拖动本身（只是拖出窗口会断）。
+    }
+    hostEl.setAttribute('data-dragging', '1')
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      baseX: posRef.current.x,
+      baseY: posRef.current.y,
+      bounds,
+      moved: false,
+      frame: null,
+      nextX: posRef.current.x,
+      nextY: posRef.current.y,
+    }
+  }, [])
+
+  /**
+   * 拖动中：位移没超过 {@link DRAG_SLOP} 就什么都不做（保持「点一下展开」的语义）；
+   * 超过之后按帧合并——每帧最多写一次 `host.style.transform`，不走 setState，
+   * 否则一秒一拍的时钟读数会陪着整棵面板一起重渲染。
+   */
+  const onMiniPointerMove = useCallback((event: ReactPointerEvent<HTMLButtonElement>): void => {
+    const drag = dragRef.current
+    if (drag === null || event.pointerId !== drag.pointerId) return
+    const dx = event.clientX - drag.startX
+    const dy = event.clientY - drag.startY
+    if (!drag.moved && Math.abs(dx) < DRAG_SLOP && Math.abs(dy) < DRAG_SLOP) return
+    drag.moved = true
+    drag.nextX = clampIn(drag.baseX + dx, drag.bounds.minX, drag.bounds.maxX)
+    drag.nextY = clampIn(drag.baseY + dy, drag.bounds.minY, drag.bounds.maxY)
+    if (drag.frame !== null) return
+    drag.frame = window.requestAnimationFrame(() => {
+      drag.frame = null
+      const hostEl = box.current
+      if (hostEl === null) return
+      hostEl.style.transform = `translate3d(${String(drag.nextX)}px, ${String(drag.nextY)}px, 0)`
+    })
+  }, [])
+
+  /** 松手（含被系统打断）：真拖动过才落状态与存档；离默认点很近就吸附复位。 */
+  const onMiniPointerUp = useCallback((event: ReactPointerEvent<HTMLButtonElement>): void => {
+    const drag = dragRef.current
+    if (drag === null || event.pointerId !== drag.pointerId) return
+    dragRef.current = null
+    if (drag.frame !== null) {
+      window.cancelAnimationFrame(drag.frame)
+      drag.frame = null
+    }
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    } catch {
+      // 指针已经没了（pointercancel）：放开是幂等的，抛了就算了。
+    }
+    box.current?.removeAttribute('data-dragging')
+    if (!drag.moved) return
+    // 拖动结束后按钮还会收到一次 click：吞掉它，不然拖完就弹开面板。
+    suppressClickRef.current = true
+    const moved: CapsulePos = { x: drag.nextX, y: drag.nextY }
+    // 离默认落点太近就吸附回去并忘掉存档，下次进来还是默认点。
+    const final: CapsulePos = Math.hypot(moved.x, moved.y) < SNAP_BACK_PX ? { x: 0, y: 0 } : moved
+    // 最终位移在这里手写一次：吸附回 0 时状态值与上一帧相同，React 见样式没变不会重写
+    // DOM，胶囊会停在拖到的位置上（这就是那次「松手了它不回家」的来源）。
+    const hostEl = box.current
+    if (hostEl !== null) hostEl.style.transform = `translate3d(${String(final.x)}px, ${String(final.y)}px, 0)`
+    commitPos(final)
+  }, [commitPos])
+
+  // 窗口变小 / dock 打开：把已记住的位置重新夹进可见范围（夹过就写回状态与存档）。
+  useEffect(() => {
+    if (host === null) return undefined
+    const onResize = (): void => {
+      const hostEl = box.current
+      if (hostEl === null) return
+      const bounds = dragBounds(hostEl, posRef.current)
+      if (bounds === null) return
+      const current = posRef.current
+      const clamped: CapsulePos = {
+        x: clampIn(current.x, bounds.minX, bounds.maxX),
+        y: clampIn(current.y, bounds.minY, bounds.maxY),
+      }
+      if (clamped.x === current.x && clamped.y === current.y) return
+      commitPos(clamped)
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [host, commitPos])
 
   // 名册本地轮询（回落到「没有共享席位」时才跑）：页面不可见时不问（后台省心跳），
   // 切回可见立刻补一拍。共享席位出现时这条 effect 被拆掉，轮询随之停止。
@@ -835,8 +1058,14 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
       <div
         className="sp-host"
         ref={box}
-        // 面板宽度上限以宿主宽度为准（窄宿主里 320px 浮层会盖掉半篇正文）。
-        style={{ '--sp-avail': `${String(avail)}px` } as CSSProperties}
+        // 面板宽度上限以正文区宽度为准（窄正文里 320px 浮层会盖掉半篇正文）。
+        // 位移一律照写（为 0 也写）：拖动时同一份写法则每帧直接改 DOM，两条路不给两套代码。
+        style={
+          {
+            '--sp-avail': `${String(avail)}px`,
+            transform: `translate3d(${String(pos.x)}px, ${String(pos.y)}px, 0)`,
+          } as CSSProperties
+        }
       >
         <aside
           className="sp"
@@ -844,7 +1073,8 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
           data-expanded={expanded ? '1' : '0'}
           aria-label="状态"
         >
-          {/* 收起态：一颗药丸。同一棵 DOM 里常驻，展开时靠 CSS 藏起来（过渡不断）。 */}
+          {/* 收起态：一颗药丸。同一棵 DOM 里常驻，展开时靠 CSS 藏起来（过渡不断）。
+              展开态没有这颗按钮，所以「按住拖动」天然只在收起态生效。 */}
           <button
             type="button"
             className="sp-mini"
@@ -853,8 +1083,17 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
             aria-hidden={expanded}
             tabIndex={expanded ? -1 : 0}
             inert={expanded}
-            data-tip="展开状态面板"
+            data-tip="展开状态面板（按住可以拖动）"
+            onPointerDown={onMiniPointerDown}
+            onPointerMove={onMiniPointerMove}
+            onPointerUp={onMiniPointerUp}
+            onPointerCancel={onMiniPointerUp}
             onClick={() => {
+              // 刚拖完松手时浏览器会补一次 click：这一次只清标记，不展开。
+              if (suppressClickRef.current) {
+                suppressClickRef.current = false
+                return
+              }
               chooseMode('panel')
             }}
           >

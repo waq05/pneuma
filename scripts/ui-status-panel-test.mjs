@@ -5,9 +5,10 @@
  *   1. 纯逻辑——聚焦窗口 / 折叠桶语义 / 胶囊十档优先级链 / 时间口径（规则对照 ZCode
  *      `packages/ui/src/v4/ConversationStatusPanel.tsx`，模型按 Node 类型擦除直读 .ts，
  *      不需要先 build）；
- *   2. 形态钉——「同一壳收展（morph）」「按宿主宽度裁决而不是 window.innerWidth」
- *      「七个分区的顺序」「Git 本地轮询三档」「预览卡开合延迟」「已结束目录经 teamPanel
- *      服务」这几条只能靠文本钉住（它们是结构约定，不是可单位化的纯函数）；
+ *   2. 形态钉——「同一壳收展（morph）」「按正文区宽度裁决而不是 window.innerWidth」
+ *      「默认落点在顶栏页签行、胶囊可拖动」「七个分区的顺序」「Git 本地轮询三档」
+ *      「预览卡开合延迟」「已结束目录经 teamPanel 服务」这几条只能靠文本钉住
+ *      （它们是结构约定，不是可单位化的纯函数）；
  *   3. 宿主数据面的文本钉（新旧 surfaces / stopBackground 与 readBackground 白名单 /
  *      计划目录读会话账「按会话、不扫盘」/ 后台活按会话筛与归属校验 / 输出面读口走 peek）。
  *
@@ -418,21 +419,31 @@ console.log('[8] 工具卡补丁视图（读 / 写 / 改三类分流）')
   check('补丁视图另给「打开原文件」出口（开的是当前内容预览）', preview.includes('打开原文件') && preview.includes('onClick={() => setDockPreview({ path })}'))
 }
 
-console.log('[9] 面板的定位锚是正文区（不是 .chat-wrap）')
+console.log('[9] 面板的落点与宽度锚（落点看页签行，宽度看正文区）')
 {
   const statusPanel = read('ui-shell/src/plugins/status/ui.tsx')
   const app = read('ui-shell/src/ui-layout/app.tsx')
   const shellCss = read('ui-shell/src/styles.css')
 
   // 空会话态里 `.chat-wrap` 只有内容高、还被上下 auto 边距推着居中：把面板锚在它上面的话，
-  // 收起态的胶囊与展开态的面板会落在**版心**而不是正文右上角（0.6.67 用户报障的位置）。
+  // 收起态的胶囊与展开态的面板会落在**版心**而不是正文区（0.6.67 用户报障的位置）。
+  // 2026-11-02 起宿主解析是两段：先找顶栏页签行（默认落点），找不到才回落正文区。
   check(
-    '面板定位认 data-thread-area（哨兵往上找正文区那一格）',
-    statusPanel.includes("const THREAD_AREA_SELECTOR = '[data-thread-area]'") && statusPanel.includes('node?.closest(THREAD_AREA_SELECTOR)'),
+    '落点常量在：顶栏页签行是默认落点',
+    statusPanel.includes("const TOPBAR_TABS_SELECTOR = '.topbar .tabs'"),
   )
   check(
-    '宽度裁决也认同一个宿主（dock 开合改它不改窗口宽）',
-    statusPanel.includes('const measure = (): void => setAvail(element.clientWidth)') && statusPanel.includes('observer.observe(element)'),
+    '宿主解析两段：querySelector(页签行) 优先、closest(正文区) 兜底',
+    statusPanel.includes('document.querySelector(TOPBAR_TABS_SELECTOR)') && statusPanel.includes('node?.closest(THREAD_AREA_SELECTOR)'),
+  )
+  // 宽度裁决与落点分开：胶囊挪到页签行之后，自动档的 1280px 仍然量正文区，
+  // 否则「挪个位置」顺手把自动档的行为也改了。
+  check(
+    '宽度裁决量的是正文区（area）而不是 portal 宿主',
+    statusPanel.includes('const [area, setArea] = useState<HTMLElement | null>(null)') &&
+      statusPanel.includes('if (area === null) return undefined') &&
+      statusPanel.includes('const measure = (): void => setAvail(element.clientWidth)') &&
+      statusPanel.includes('observer.observe(element)'),
   )
   check('面板不再把 .chat-wrap 当定位父级', !statusPanel.includes("closest('.chat-wrap')") && !statusPanel.includes("querySelector('.chat-wrap')"))
   check('壳把锚点打在正文区那两态上（thread-main / thread-main-empty 是同一元素）', app.includes('data-thread-area=""'))
@@ -482,6 +493,108 @@ console.log('[10] 右上角的层序与「更多打开方式」的收起时机')
   )
   check('尺寸经 iconSizeStyle 挂 --dsc-icon-size（按钮倍率认它）', primitives.includes('iconSizeStyle(size)') && read('ui-shell/src/ui-primitives/icons.tsx').includes('export function iconSizeStyle'))
 }
+console.log('[11] 状态胶囊的落点与拖动')
+{
+  const statusPanel = read('ui-shell/src/plugins/status/ui.tsx')
+  const shellCss = read('ui-shell/src/styles.css')
+
+  // 2026-11-02 用户截图：收起态的胶囊正好压在消息流第一行（思考 · 进行中）上。默认落点
+  // 挪到顶栏页签行右端——那一行右侧本来就是空的。这两条钉住「默认落点在页签行」这件事：
+  // 掉了就说明有人把 CSS 改回正文区右上角，截图那种遮挡会跟着回来。
+  check(
+    '默认落点是页签行（.topbar .tabs .sp-host 且 top: 1px / right: 0）',
+    /\.topbar \.tabs \.sp-host \{[^}]*top: 1px[^}]*right: 0/.test(shellCss),
+  )
+  check(
+    '页签行自己是定位父级（position: relative）',
+    /\.topbar \.tabs \{[^}]*position: relative/.test(shellCss),
+  )
+
+  // 位置要记住：存档键与两个阈值是行为契约（改数字就是改手感），得有人明确拍板才动。
+  check('位置存档键 dsc.statusPanel.pos', statusPanel.includes("const POS_KEY = 'dsc.statusPanel.pos'"))
+  check('拖动阈值 DRAG_SLOP = 4（位移不到 4px 算点击）', statusPanel.includes('const DRAG_SLOP = 4'))
+  check('吸附阈值 SNAP_BACK_PX = 24（离默认点 24px 内松手复位）', statusPanel.includes('const SNAP_BACK_PX = 24'))
+  check('拖动留白 DRAG_MARGIN = 8（不顶容器边）', statusPanel.includes('const DRAG_MARGIN = 8'))
+
+  // 拖动用 Pointer Capture 攥住指针（拖出窗口外再回来还接着拖）；拖动期给宿主打标记，
+  // CSS 靠这个属性换手形、临时抬层级。
+  check(
+    '拖动用 setPointerCapture 攥住指针',
+    statusPanel.includes('setPointerCapture(event.pointerId)') && statusPanel.includes('releasePointerCapture(event.pointerId)'),
+  )
+  check(
+    '拖动期给 .sp-host 打 data-dragging',
+    statusPanel.includes("setAttribute('data-dragging', '1')") && statusPanel.includes("removeAttribute('data-dragging')"),
+  )
+
+  // 移动里按帧合并、直接写 DOM：面板每秒有一次时钟重渲染，移动里 setState 就是每次指针
+  // 移动触发一次整棵树重渲染（拖拽条那几个把手早就是这么干的，照抄）。
+  const moveStart = statusPanel.indexOf('const onMiniPointerMove = useCallback')
+  const moveEnd = statusPanel.indexOf('const onMiniPointerUp = useCallback', moveStart)
+  const moveSrc = moveStart < 0 || moveEnd < 0 ? '' : statusPanel.slice(moveStart, moveEnd)
+  check('移动里按帧合并（requestAnimationFrame）', moveSrc.includes('requestAnimationFrame'))
+  check('移动里直接写 host.style.transform', moveSrc.includes('style.transform = `translate3d('))
+  check('负向：移动里不 setPos（每帧 setState 会重渲染整棵面板）', moveStart > 0 && !moveSrc.includes('setPos('))
+
+  // 拖不出可见范围：按下时算一次区间，容器是 `.main`（兜底正文区），内缩 DRAG_MARGIN。
+  // `applied` 传的是「此刻已生效的位移」，量到的矩形减掉它就是基准位置。
+  check(
+    '拖动范围有夹取（getBoundingClientRect + DRAG_MARGIN）',
+    statusPanel.includes('function dragBounds(') &&
+      statusPanel.includes("hostEl.closest('.main')") &&
+      statusPanel.includes('DRAG_MARGIN - left') &&
+      statusPanel.includes('frame.right - DRAG_MARGIN'),
+  )
+  check(
+    '区间反了退化成 min（容器比胶囊还窄时不把胶囊甩出去）',
+    statusPanel.includes('return min > max ? min : Math.min(Math.max(value, min), max)'),
+  )
+
+  // 拖动结束时浏览器还会补一次 click：不吞掉的话「拖一下」就变成「拖完弹开面板」。
+  check(
+    '拖动后吞掉那次 click（抑制标记，用完就清）',
+    statusPanel.includes('suppressClickRef.current = true') &&
+      statusPanel.includes('if (suppressClickRef.current)') &&
+      statusPanel.includes('suppressClickRef.current = false'),
+  )
+  check('没拖动时仍然是「点一下展开」（onClick 里 chooseMode(panel)）', /onClick=\{\(\) => \{[\s\S]{0,300}?chooseMode\('panel'\)/.test(statusPanel))
+  check('位移一律照写（0 也写，拖动与状态不给两套代码）', statusPanel.includes('transform: `translate3d(${String(pos.x)}px, ${String(pos.y)}px, 0)`'))
+
+  // 拖动时是临时抬层级，基础层级必须仍是「低菜单一档」（2026-10-25 那条修过，别被顺手改掉）。
+  check('负向：.sp-host 基础 z-index 仍是 calc(--dsc-z-menu - 1)', /\.sp-host \{[^}]*z-index: calc\(var\(--dsc-z-menu\) - 1\)/.test(shellCss))
+  check('拖动时才抬到菜单层之上（data-dragging 那一档）', /\.sp-host\[data-dragging\] \{[^}]*z-index: calc\(var\(--dsc-z-menu\) \+ 1\)/.test(shellCss))
+  check('胶囊的手形：常态 grab、拖动期 grabbing', /\.sp-mini \{[^}]*cursor: grab/.test(shellCss) && /\.sp-host\[data-dragging\] \.sp-mini \{[^}]*cursor: grabbing/.test(shellCss))
+  check('触屏能拖（.sp-mini 带 touch-action: none）', /\.sp-mini \{[^}]*touch-action: none/.test(shellCss))
+}
+
+console.log('[13] 面板搬进页签行之后，页签行的样式不许漏进面板')
+{
+  const shellCss = read('ui-shell/src/styles.css')
+  const viewsCss = read('ui-shell/src/legacy/views.css')
+
+  // 2026-11-02 报障：展开面板右上角的两颗图标钮只剩两个灰点。原因是面板整个浮层挂在
+  // `.topbar .tabs` 里，而页签行有一条后代选择器 `.topbar .tabs button { padding: 0 10px;
+  // font-size: 14px; ... }`——特异度（0,2,1）压过面板自己的 `.sp-icon-btn`（0,1,0），
+  // 22px 的盒子被左右各 10px 内边距吃掉，内容区只剩 2px，13px 的图标被 flex 压成一条竖线。
+  // 口径：页签行只认**直连子级**（页签本身就是 `.tabs` 的直接子元素，见 app.tsx），
+  // 面板这棵子树从此不受影响。
+  check(
+    '页签行的按钮规则只吃直连子级（.topbar .tabs > button）',
+    viewsCss.includes('.topbar .tabs > button {') &&
+      viewsCss.includes('.topbar .tabs > button:hover') &&
+      viewsCss.includes('.topbar .tabs > button.on'),
+  )
+  check(
+    '负向：页签行不再用后代选择器点按钮（会把内边距/字号灌进面板）',
+    !/\.topbar \.tabs button\b/.test(viewsCss) && !/\.topbar \.tabs button\b/.test(shellCss),
+  )
+  // 尺寸归面板自己：22px 的盒 + padding 0，图标才有 13px 的画布。
+  check(
+    '图标钮的尺寸还在（22px 盒、padding 0，图标才画得下）',
+    /\.sp-icon-btn \{[^}]*height: 22px[^}]*padding: 0[^}]*width: 22px/.test(shellCss),
+  )
+}
+
 if (failures === 0) {
   console.log('\n全部通过')
 } else {

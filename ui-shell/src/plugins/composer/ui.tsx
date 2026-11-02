@@ -61,7 +61,7 @@ import {
   useHostChannel,
   useHostSelector,
 } from '@dsc/ui'
-import { formatBytes, readTurnState, sameGitSurface as sameGit } from '@dsc/ui-primitives'
+import { formatBytes, ImageLightbox, readTurnState, sameGitSurface as sameGit } from '@dsc/ui-primitives'
 import { useMention } from './mention'
 import { useCommandMenu } from './command-menu'
 import { blockedNow, commandQuery } from './commands'
@@ -145,6 +145,11 @@ function ComposerBox(): ReactNode {
   const [attachments, setAttachments] = useState<readonly DraftAttachment[]>([])
   /** 有文件悬在 `.composer` 上方（拖拽高亮走 `data-drag`，样式由壳统一写）。 */
   const [dragOver, setDragOver] = useState(false)
+  /**
+   * 正在放大查看的那张贴图。贴图是 dataURL，浏览器不许顶层跳 `data:`，
+   * 所以只能自己开浮层——组件在 `ui-primitives/image-lightbox`。
+   */
+  const [zoom, setZoom] = useState<{ src: string; alt: string } | null>(null)
   // 权限预设与模式（预设）两根旋钮各自的浮层：三者互斥（开一根把另两根收掉，旧界面同款）。
   const [permOpen, setPermOpen] = useState(false)
   const [presetOpen, setPresetOpen] = useState(false)
@@ -749,8 +754,20 @@ function ComposerBox(): ReactNode {
                 ) : (
                   <>
                     <div className="attach-thumb">
+                      {/* 图片做成按钮：整块缩略图都是点击面，点开走自己的浮层
+                          （贴图是 dataURL，`<a target="_blank">` 打不开）。视频这轮不预览。 */}
                       {item.kind === 'image' ? (
-                        <img src={item.previewUrl} alt={item.name} />
+                        <button
+                          type="button"
+                          className="attach-zoom"
+                          data-tip="点开看大图"
+                          aria-label={`预览 ${item.name}`}
+                          onClick={() => {
+                            setZoom({ src: item.previewUrl, alt: item.name })
+                          }}
+                        >
+                          <img src={item.previewUrl} alt={item.name} />
+                        </button>
                       ) : (
                         <video
                           muted
@@ -1085,6 +1102,17 @@ function ComposerBox(): ReactNode {
 
       {inputHint === null ? null : <div className="shell-composer-hint">{inputHint}</div>}
       {fault === null ? null : <div className="shell-composer-fault">{fault}</div>}
+
+      {/* 贴图放大：自己 portal 到 body，点遮罩或 Esc 关。 */}
+      {zoom === null ? null : (
+        <ImageLightbox
+          src={zoom.src}
+          alt={zoom.alt}
+          onClose={() => {
+            setZoom(null)
+          }}
+        />
+      )}
     </div>
   )
 }

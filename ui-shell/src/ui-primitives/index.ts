@@ -64,6 +64,8 @@ export * from './file-type-icon'
 export * from './file-icons'
 export * from './highlight'
 export * from './hover-delay'
+// 贴图放大浮层（待发附件栏里点缩略图看大图）。
+export * from './image-lightbox'
 export * from './lang-table'
 export * from './markdown'
 export * from './native'

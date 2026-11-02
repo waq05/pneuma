@@ -26,6 +26,8 @@
  *   [7] 分轮口径单点 + internal 条目对齐 dsh（右侧刻度条 `.jump-rail` 错位 / 多刻度报障）：
  *       座位切分与轮元信息同源（rounds.ts 的 `splitRounds`）、steering 不另起一轮、
  *       回合中途并进的 internal 不增刻度而回合收尾的增一枚、internal 题面预览不出现原文
+ *   [13] 已发送消息的贴图也收进浮层（2026-11-02）：可编辑行与只读出口都从 `<a>` 换成
+ *       `<button className="entry-shot">`，点开共用同一个 `ImageLightbox`，不再另开窗口
  *
  * 运行：node scripts/ui-transcript-render-test.mjs
  *
@@ -44,7 +46,7 @@ const { toolArgFields, MUTATION_CONTENT_FIELDS } = args
 const roundsMod = await import(
   new URL('../ui-shell/src/plugins/transcript/rounds.ts', import.meta.url).href
 )
-const { splitRounds, roundInfos, teammateReportLabel } = roundsMod
+const { splitRounds, roundInfos, teammateReportLabel, internalLabel } = roundsMod
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const read = (rel) => readFileSync(`${root}${rel}`, 'utf8')
@@ -348,11 +350,13 @@ console.log('[7] 分轮口径单点 + internal 条目对齐 dsh（0.6.67 右侧�
   check('③ 状态进文案（state="已失败" → 失败了）', teammateReportLabel('<teammate-report from="mate-2" state="已失败">x').includes('失败了'))
   check(
     '③ 刻度题面预览：internal 走人话标签，不取原文（悬停卡不会出现 <teammate-report）',
-    /user\.internal === true\s*\?\s*teammateReportLabel\(user\.text\)/.test(ui),
+    /user\.internal === true\s*\?\s*internalLabel\(user\.text\)/.test(ui),
   )
   check(
     '③ 对话里的触发行带队友名、保留 data-internal="1"（不再写死「子任务状态更新」）',
-    /data-internal="1"[\s\S]{0,200}teammateReportLabel\(entry\.text\)/.test(ui) && !ui.includes('子任务状态更新'),
+    /data-internal="1"[\s\S]{0,200}internalLabel\(entry\.text\)/.test(ui) &&
+      !ui.includes('子任务状态更新') &&
+      internalLabel(teammateBody).includes('队友 mate-1'),
   )
   check('③ 触发行样式落在 legacy/views.css（.entry-system[data-internal=\'1\']）', css.includes(".entry-system[data-internal='1']"))
 
@@ -442,6 +446,115 @@ console.log('[9] 轮尾「已编辑 N 个文件」卡只在一轮收口之后出
     !/foldRunning \? null : <ChangesCard/.test(renderSrc)
       && renderSrc.includes('/** 这一轮还在跑（只有最后一轮会跑）：轮尾的时刻与用量此时不画。 */'),
   )
+}
+
+console.log('[10] 流式光标那根竖条（2026-11-02 报障：正文左下角多出一根浅棕色短竖条）')
+{
+  // 现场：`.live::after { content: '▍' }` 挂在**块级容器**上（`.entry-text.live` 整段正文、
+  // `.think-block.live` 整条思考行），容器里最后一块是 markdown 的 `<p>`，行内伪元素排不进
+  // 上一行，被摆到下一行行首按容器左缘对齐——用户看到的就是那根 6×25 的浅棕色竖条。
+  // 修法是删掉光标本身（不是挪位置）：直播信号还有思考行的转圈与扫光，正文在长高。
+  const css = read('ui-shell/src/legacy/views.css')
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  check('光标规则已删（不再有 content 是方块字符的那条）', !code.includes('▍'))
+  check('连带 blink 关键帧一起删（不留只被它用的死规则）', !/@keyframes\s+blink\s*\{/.test(code))
+  check('也没留下空壳的 .live 规则（那条 position: relative 只为光标存在）', !/^\.live\s*\{/m.test(code))
+  const think = read('ui-shell/src/plugins/transcript/rows/think-row.tsx')
+  check('直播信号还在：思考行那颗转圈（.think-spin）', /\.think-spin \{/.test(code) && think.includes('think-spin'))
+  check('删的理由与「别加回来」留在注释里', css.includes('流式直播尾光标：2026-11-02 删掉，别加回来'))
+}
+
+console.log('[11] 轮尾的复制 / 分叉：停下之后、鼠标压在输出上才现（2026-11-02 报障）')
+{
+  // 报障现场：这一轮还在输出，轮尾已经挂着「复制 / 分叉」——复制拿到半截回答、分叉分出
+  // 半截会话；停下之后两颗钮又常驻，长会话里每轮后面都拖着一排按钮。
+  // 两段判据：跑动中由组件不渲染（running），停下后由样式默认透明、悬浮输出才提到 1。
+  const foot = read('ui-shell/src/plugins/transcript/rows/foot.tsx')
+  const css = read('ui-shell/src/legacy/views.css')
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, '')
+
+  check('跑动中不画复制（不再是「留着但没意义」）', /const copy = !props\.running && /.test(foot))
+  check('跑动中不画分叉（不再是置灰占位）', /const fork = !props\.running && /.test(foot))
+  check('分叉那颗不再挂 disabled（已经渲染不出来了，留着就是死属性）', !/disabled=\{props\.running\}/.test(foot))
+  check(
+    '默认透明是两颗钮一起（复制 .round-act / 分叉 .user-act 同一条规则）',
+    /\.round-foot \.round-act,\s*\n\.round-foot \.user-act \{\s*\n\s*opacity: 0;/.test(code),
+  )
+  check(
+    '悬浮这一轮的「非首块」才现（首块是用户自己的提问，压在上面不该弹）',
+    /\.turn-seat > \*:not\(:first-child\):hover ~ \.round-foot \.round-act/.test(code),
+  )
+  check('压在页脚自己那一行上也现（按钮就在那行里，否则点不到）', /\.turn-seat > \.round-foot:hover \.round-act/.test(code))
+  check('键盘焦点进这一轮也现（Tab 走得到两颗钮）', /\.turn-seat:focus-within > \.round-foot \.round-act/.test(code))
+  check('用 opacity 不用 display/visibility（后者会让按钮不可聚焦）', !/\.round-foot \.round-act[^{]*\{[^}]*display: none/.test(code))
+  check('系统说「少动」时淡入也关掉', /prefers-reduced-motion: reduce\) \{[\s\S]{0,200}\.round-foot \.round-act,[\s\S]{0,120}\.round-foot \.user-act \{\s*\n\s*transition: none;/.test(code))
+}
+
+console.log('[12] 机器投递的消息画成触发行，不是用户气泡（2026-11-02 报障：后台作业通知冒成气泡）')
+{
+  // 判据在宿主三处（落库 / 事件 / 重放），界面这一侧只认 `internal` 并给一句话标签。
+  // 逐条断言的实测在 scripts/notice-origin-test.mjs（21 项）；这一节钉的是「界面没有绕开它」。
+  const userRow = read('ui-shell/src/plugins/transcript/rows/user-row.tsx')
+  const uiSrc = read('ui-shell/src/plugins/transcript/ui.tsx')
+  const rounds = read('ui-shell/src/plugins/transcript/rounds.ts')
+  const adapter = read('src/adapter/transcript.ts')
+  const session = read('src/core/session.ts')
+  const loop = read('src/core/loop.ts')
+  const llm = read('src/core/llm.ts')
+
+  check('内部行按类型给标签（不再一律说「子任务汇报」）', userRow.includes('{internalLabel(entry.text)}'))
+  check('刻度条悬停卡与触发行共用同一句', uiSrc.includes("? internalLabel(user.text)"))
+  check('标签函数认得队友汇报 / 后台作业 / 其它三种', ['teammateReportLabel(text)', '后台作业', "'运行时通知'"].every((piece) => rounds.includes(piece)))
+  check('适配器：前缀命中 **或** origin === notice', /event\.origin === 'notice'/.test(adapter) && adapter.includes('startsWith(TEAMMATE_REPORT_OPEN)'))
+  check('落库：机器投递才写 origin（人打的字不写）', /appendUser\([^)]*origin: InboxOrigin = 'user'/.test(session) && /origin === 'notice' \? \{ origin \}/.test(session))
+  check('出账两条路都把来源带上（空闲直落 + 收件箱出账）', (loop.match(/appendUser\([^)]*origin\)/g) ?? []).length === 2)
+  check('重放认得 origin（否则重开旧会话又变气泡）', /message\.origin === 'notice' \? \{ origin: message\.origin \}/.test(adapter))
+  check('请求侧把 origin 剥掉（协议里没这一项）', /delete wire\.origin/.test(llm))
+}
+
+console.log('[13] 已发送消息里的贴图也开浮层（可编辑行 + 只读出口，同一套）')
+{
+  const userRow = read('ui-shell/src/plugins/transcript/rows/user-row.tsx')
+  const css = read('ui-shell/src/styles.css')
+  const viewsCss = read('ui-shell/src/legacy/views.css')
+
+  // 「不该出现」的断言先剥注释：文件头就引着旧写法（`<a target="_blank">`），不剥会自己打脸。
+  const code = userRow.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
+
+  // 两份气泡（可编辑行 / 只读出口）都得改到：按钮、点击写 zoom、根节点挂浮层，每样都是两份。
+  check(
+    '两处贴图都是 <button className="entry-shot">（可编辑行与只读出口各一份）',
+    (code.match(/className="entry-shot"/g) ?? []).length === 2,
+    String((code.match(/className="entry-shot"/g) ?? []).length),
+  )
+  check(
+    '两处点击都写 setZoom（不是只挂了一个按钮）',
+    (code.match(/onClick=\{\(\) => \{\s*setZoom\(url\)/g) ?? []).length === 2,
+    String((code.match(/onClick=\{\(\) => \{\s*setZoom\(url\)/g) ?? []).length),
+  )
+  check(
+    '两处都渲染同一个 ImageLightbox（src 取 zoom）',
+    (code.match(/<ImageLightbox src=\{zoom\}/g) ?? []).length === 2,
+    String((code.match(/<ImageLightbox src=\{zoom\}/g) ?? []).length),
+  )
+  check(
+    '两处各有自己的 zoom 状态（只读出口不是借来的）',
+    (code.match(/const \[zoom, setZoom\] = useState<string \| null>\(null\)/g) ?? []).length === 2,
+  )
+  check('ImageLightbox 从 @dsc/ui-primitives 取（跟壳里其它基元一个口径）', /import \{[^}]*ImageLightbox[^}]*\} from '@dsc\/ui-primitives'/.test(userRow))
+
+  // 负向：贴图不再是链接。文件卡的下载链接是另一回事，只钉「贴图那条 a」和 target 的条数。
+  check('贴图不再是 <a href={url}>', !code.includes('href={url}'))
+  check(
+    '贴图不再另开窗口（target="_blank" 只剩文件下载卡那一条）',
+    (code.match(/target="_blank"/g) ?? []).length === 1,
+    String((code.match(/target="_blank"/g) ?? []).length),
+  )
+
+  // 样式：点击面与浮层观感（132×96 的展示框没被顺手改掉）。
+  check('CSS 里 .entry-shot 是 zoom-in 的点击面', /\.entry-shot \{[\s\S]{0,200}cursor: zoom-in/.test(css))
+  check('CSS 里图片不接事件（整格都是点击面）', /\.entry-shot img \{\s*\n\s*pointer-events: none/.test(css))
+  check('既有的 132×96 展示框没动（.entry-user-images img 仍是 contain）', /\.entry-user-images img \{[^}]*width: 132px;[^}]*height: 96px;[^}]*object-fit: contain;/.test(viewsCss))
 }
 
 console.log('')

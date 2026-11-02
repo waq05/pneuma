@@ -24,7 +24,13 @@ import { formatClock, formatDuration, roundDuration, type RoundInfo } from '../t
  * 降级规则（老会话没有 ts 时是常态，不是异常）：什么都没有 → 整行不画；只拿得到开始
  * 时刻 → 只显示 HH:mm；用时算不出来（含乱序日志）→ 不往 title 里写。绝不显示 NaN。
  * 这一轮还在跑时时刻与用量都不画：那一刻流末尾的状态行正在报同一份时间，两处一起跳
- * 反而乱；用量还在长，报半截数字没有意义。分叉按钮要留在这一行上（置灰）。
+ * 反而乱；用量还在长，报半截数字没有意义。
+ *
+ * 复制与分叉**只在停止之后才画**（2026-11-02 报障）：这一轮还在跑时按「复制」拿到的是
+ * 半截回答，按「分叉」分出来的是半截会话——两颗钮那会儿都是假的。原先的补救是把分叉
+ * 置灰、复制留着，可一张灰钮摆在正在输出的正文下面，读起来仍是「这里能点」。
+ * 停下之后它们也不常驻：默认透明，鼠标落到这一轮的输出上、或键盘 Tab 进这一轮才现
+ * （样式见 legacy/views.css 末尾「轮尾的复制 / 分叉」那一段）。
  */
 export function RoundFoot(props: {
   /** 这一轮的起止时刻（timing.roundInfos 那份；用时 = 它俩之差）。 */
@@ -50,8 +56,8 @@ export function RoundFoot(props: {
       : null
   // 回落口径：没有宿主上报的用量才用正文估算顶上（显示时带 ~）。
   const estimated = real !== null || props.running || props.tokens === null || props.tokens <= 0 ? null : props.tokens
-  const copy = props.copyText !== undefined && props.copyText !== ''
-  const fork = props.onFork !== undefined
+  const copy = !props.running && props.copyText !== undefined && props.copyText !== ''
+  const fork = !props.running && props.onFork !== undefined
   // 老会话什么时间都拿不到、又没有动作与用量要画：这一行不必占位（旧界面整行不渲染）。
   if (clock === null && !copy && !fork && real === null && estimated === null) return null
   return (
@@ -88,7 +94,6 @@ export function RoundFoot(props: {
           className="user-act"
           title="以这条消息为界分叉出新会话"
           aria-label="以这条消息为界分叉出新会话"
-          disabled={props.running}
           onClick={props.onFork}
         >
           {/* 图标 15px：方向性动作用小图标（与旧界面同一档），读数（用量、时刻）才用大的。 */}
