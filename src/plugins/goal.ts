@@ -67,10 +67,15 @@ export const goalPlugin: Plugin.Object = {
     if (restored !== undefined) goals.restore(restored)
 
     const touch = (): void => ctx.emit('dsc/changed')
-    /** 把当前目标快照写进会话日志（恢复会话时靠它）并让快照失效。 */
+    /**
+     * 把当前目标快照写进会话日志（恢复会话时靠它）并让快照失效。
+     *
+     * **空目标也要写**：用户点 ✕ 清空之后快照是 null，得追加一条 `goal = null` 盖掉
+     * 日志里上一条真目标；不写的话日志最后一条仍是清空前那份，重启重放又把它读回来
+     * （2026-11-02 报障「目标关闭后重启又会出现」）。
+     */
     const persist = (): void => {
-      const snapshot = goals.snapshot
-      if (snapshot !== null) ctx.session.current().appendState('goal', snapshot)
+      ctx.session.current().appendState('goal', goals.snapshot)
       touch()
     }
 
