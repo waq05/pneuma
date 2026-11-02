@@ -59,7 +59,19 @@ export const BUILT_IN_COMMANDS: CommandSpec[] = [
   { name: 'diff', args: '[文件]', label: '差异', description: '查看工作区未提交改动（可跟一个文件名只看它）', shell: true },
   { name: 'copy', args: '', label: '复制回复', description: '复制上一条回复到剪贴板' },
   { name: 'export', args: '[文件路径]', label: '导出', description: '导出当前会话为 markdown' },
-  { name: 'review', args: '[关注点]', label: '代码审查', description: '审查工作区未提交改动（可跟一句关注点收窄范围）', shell: true },
+  {
+    name: 'review',
+    args: '[关注点]',
+    label: '代码审查',
+    description: '审查工作区未提交改动（可跟一句关注点收窄范围）',
+    shell: true,
+    // 这条命令要收一段自由文本：回车先补成 `/review `，别当场跑审查——用户还没说要审什么。
+    input: { hint: '写上关注点；不写就先选审查范围（未提交改动 / 基准分支 / 某次提交）' },
+  },
+  // 审查跑起来之后的两条配套命令：一条回看，一条叫停。与 /review 一样只往会话里写通知，
+  // 所以同样进壳的命令清单（shell: true）。
+  { name: 'review-status', args: '', label: '审查状态', description: '查看最近一次代码审查的状态与结论', shell: true },
+  { name: 'review-cancel', args: '', label: '取消审查', description: '取消正在跑的代码审查', shell: true },
   { name: 'settings', args: '', label: '设置', description: '打开设置页' },
   { name: 'help', args: '', label: '帮助', description: '查看命令帮助', shell: true },
   { name: 'exit', args: '', label: '退出', description: '退出' },
@@ -135,8 +147,12 @@ export function commandCompletions(input: string): CompletionItem[] {
   const body = input.slice(1)
   if (body.includes(' ')) return []
   const lower = body.toLowerCase()
-  return allSpecs()
-    .filter((command) => command.name.startsWith(lower))
+  const matched = allSpecs().filter((command) => command.name.startsWith(lower))
+  // 精确同名排第一：`/review` 同时也是 `/reviewer` 的前缀，而表里 `/reviewer` 在前，
+  // 不排序的话「打全 `/review` 再回车」会被高亮项截成 `/reviewer`（2026-11-02 实测）。
+  // 其余保持表内次序（表本身就是展示次序，不重排）。
+  const ordered = [...matched.filter((command) => command.name === lower), ...matched.filter((command) => command.name !== lower)]
+  return ordered
     .map((command) => ({
       insert: `/${command.name}${command.args === '' ? '' : ' '}`,
       label: `/${command.name}${command.args === '' ? '' : ` ${command.args}`}`,
@@ -191,6 +207,43 @@ export function expandCommand(input: string): string {
   if (allSpecs().some((command) => command.name === name)) return input
   const matches = allSpecs().filter((command) => command.name.startsWith(name.toLowerCase()))
   return matches.length === 1 ? `/${matches[0].name}${rest}` : input
+}
+
+/**
+ * 这一行是不是「要收输入」的命令、且还没写参数；是就给出补全文本与提示语。
+ *
+ * 口径（TUI 与桌面壳共用这一份，不许各写一套）：
+ *   - 去尾空格后整体必须是 `/名字` 或 `/名字 参数`；
+ *   - 名字先按 {@link expandCommand} 做唯一前缀展开（与回车那条路同一条规矩）；
+ *   - 名字后面已经写了非空参数 → null：这时回车就是「带着要求执行」，不再补全；
+ *   - 这条命令没有 `input` 字段 → null：行为与改造前一模一样。
+ *
+ * 撞名的那一档（`/rev` 同时是 `/review` 与 `/reviewer` 的前缀）单独兜一下：
+ * 只有 `/review` 要收输入，就认它。补全这件事只对「要收输入」的命令有意义，
+ * 所以在这一批里取唯一前缀比让用户手打全名更顺；打全 `/reviewer` 照旧直接执行。
+ */
+export function inputClaimOf(line: string): { insert: string; hint: string } | null {
+  // 尾空格不算参数：`/review ` 与 `/review` 是同一条「还没写要求」的命令。
+  const trimmed = line.trimEnd()
+  if (!trimmed.startsWith('/')) return null
+  const body = expandCommand(trimmed).slice(1)
+  const match = /^(\S+)(?:\s+([\s\S]*))?$/.exec(body)
+  if (match === null) return null
+  const name = match[1] ?? ''
+  // 名字后面已经有内容：那是参数，回车该执行了。
+  if ((match[2] ?? '').trim() !== '') return null
+  const spec = allSpecs().find((command) => command.name === name) ?? uniqueInputPrefix(name)
+  if (spec === undefined || spec.input === undefined) return null
+  return { insert: `/${spec.name} `, hint: spec.input.hint }
+}
+
+/** 名字没能在全表里唯一展开时，在「要收输入」的这批命令里再取一次唯一前缀。 */
+function uniqueInputPrefix(name: string): CommandSpec | undefined {
+  const lower = name.toLowerCase()
+  const matched = allSpecs().filter(
+    (command) => command.input !== undefined && command.name.startsWith(lower),
+  )
+  return matched.length === 1 ? matched[0] : undefined
 }
 
 /**

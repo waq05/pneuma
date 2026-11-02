@@ -6,7 +6,7 @@
  * 哪几条一定不能跑」，以及两侧接线（宿主白名单 / 契约 / 旧桥 / 壳）。
  *
  * 五段：
- *   [1] 宿主那份 `shell: true` 清单：就是那七条；危险动作一条都不在里面（逐条列名对照）；
+ *   [1] 宿主那份 `shell: true` 清单：就是那九条；危险动作一条都不在里面（逐条列名对照）；
  *   [2] `shellCommandRejection`：闸的真行为——前缀展开后仍拦、参数阶段放行、非 `/` 输入拦，
  *       外加**负向对照**（拿掉 `shell` 标记就拦得住，证明闸不是恒放行）；
  *   [3] 白名单与接线：界面通道 / 宿主协议 / 远程壳 / 契约 / 共享类型 / 旧桥 / 宿主插件；
@@ -27,7 +27,7 @@ const { UI_METHODS, UI_EXCLUDED, UI_ARG_SPECS } = await import('../lib/core/ui-m
 const { INVOKABLE_METHODS } = await import('../lib/core/host-methods.js')
 const { REMOTE_SHELL_METHODS } = await import('../lib/plugins/remote/types.js')
 const shell = await import(new URL('../ui-shell/src/plugins/composer/commands.ts', import.meta.url).href)
-const { commandQuery, filterCommands, insertCommand, blockedNow } = shell
+const { claimInput, commandQuery, filterCommands, insertCommand, blockedNow } = shell
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const read = (rel) => readFileSync(`${root}${rel}`, 'utf8')
@@ -44,13 +44,14 @@ const check = (name, condition, detail = '') => {
   }
 }
 
-/** 壳里能跑的那七条（改这一份就是改口径：清单动了探针必须跟着动）。 */
-const EXPECTED = ['new', 'compact', 'status', 'usage', 'diff', 'review', 'help']
+/** 壳里能跑的清单（改这一份就是改口径：清单动了探针必须跟着动）。 */
+// 2026-11：/review 之后多了两条配套命令（看状态 / 取消），壳清单从七条变九条。
+const EXPECTED = ['new', 'compact', 'status', 'usage', 'diff', 'review', 'review-status', 'review-cancel', 'help']
 
 console.log('[1] 宿主：哪些命令摆在壳的菜单里')
 {
   const names = shellCommands().map((spec) => spec.name)
-  check('清单就是那七条（次序照命令表的原序）', JSON.stringify(names) === JSON.stringify(EXPECTED), JSON.stringify(names))
+  check('清单就是那九条（次序照命令表的原序）', JSON.stringify(names) === JSON.stringify(EXPECTED), JSON.stringify(names))
   for (const name of EXPECTED) {
     check(`listUiCommands 会列出 /${name}`, names.includes(name), '')
     check(`/不可执行的闸放行 /${name}`, isShellCommand(name), '')
@@ -78,7 +79,7 @@ console.log('[1] 宿主：哪些命令摆在壳的菜单里')
   for (const name of forbidden) {
     check(`/不可执行：/${name} 不在菜单里`, !names.includes(name) && !isShellCommand(name), '')
   }
-  check('内置表每条命令都还在（没顺手删掉终端那几条）', BUILT_IN_COMMANDS.length === 23, String(BUILT_IN_COMMANDS.length))
+  check('内置表每条命令都还在（没顺手删掉终端那几条）', BUILT_IN_COMMANDS.length === 25, String(BUILT_IN_COMMANDS.length))
   const help = shellCommands().find((spec) => spec.name === 'help')
   check('/help 的说明照样来自命令表（不是壳里抄的）', help?.description === '查看命令帮助', JSON.stringify(help))
   // 2026-10-29：菜单要「中文名 + 英文名」（用户要求，照 dsh 那张菜单）。中文名住在命令表里，
@@ -93,6 +94,14 @@ console.log('[1] 宿主：哪些命令摆在壳的菜单里')
       (pair) => shellCommands().find((spec) => spec.name === pair.split(':')[0])?.label === pair.split(':')[1],
     ),
     JSON.stringify(shellCommands().map((spec) => [spec.name, spec.label])),
+  )
+  // 2026-11：/review 标了 input —— 回车先补全成 `/review `、不执行，让用户写关注点。
+  const reviewSpec = BUILT_IN_COMMANDS.find((spec) => spec.name === 'review')
+  check(
+    '/review 标了 input 与提示语（只有它一条）',
+    reviewSpec?.input?.hint.includes('关注点') === true &&
+      BUILT_IN_COMMANDS.filter((spec) => spec.input !== undefined).map((spec) => spec.name).join(',') === 'review',
+    JSON.stringify(reviewSpec?.input),
   )
 }
 
@@ -142,12 +151,12 @@ console.log('\n[2b] /help 只列壳里跑得了的')
 {
   const text = shellHelpText()
   const listed = text.split('\n').filter((line) => line.startsWith('/')).map((line) => line.slice(1).split(/\s/)[0])
-  check('列出来的就是那七条', JSON.stringify(listed) === JSON.stringify(EXPECTED), JSON.stringify(listed))
+  check('列出来的就是那九条', JSON.stringify(listed) === JSON.stringify(EXPECTED), JSON.stringify(listed))
   check('跑不了的命令一条都不出现', ['export', 'exit', 'model', 'policy', 'copy', 'fork'].every((name) => !listed.includes(name)), JSON.stringify(listed))
-  check('头部写清条数', text.includes('7 条'), text.split('\n')[0])
+  check('头部写清条数', text.includes('9 条'), text.split('\n')[0])
   check('末尾给出路（终端 / 底栏旋钮）', text.includes('终端') && text.includes('旋钮'), text.split('\n').at(-1))
   const all = core.helpText(core.allSpecs())
-  check('终端那份仍是全量（同一个注册表两种口径）', all.split('\n').length === 23, String(all.split('\n').length))
+  check('终端那份仍是全量（同一个注册表两种口径）', all.split('\n').length === 25, String(all.split('\n').length))
 }
 
 console.log('\n[3] 白名单与两侧接线')
@@ -204,13 +213,38 @@ console.log('\n[4] 壳侧纯逻辑（真跑 composer/commands.ts）')
   check('补全文本：有参数带一个空格（接着打参数）', insertCommand(table[1]) === '/review ', JSON.stringify(insertCommand(table[1])))
   // 前缀展开在全表里撞名（/rev 撞 /reviewer）时，壳这条路的出口是「菜单过滤只在壳
   // 清单里算 + Enter 采纳高亮项」：过滤后只剩一条，采纳它就成。
+  // 2026-11：/review 后面又加了 review-status / review-cancel，`/rev` 现在命中三条——
+  // 这是事实，菜单把它们都列出来由用户挑。
   const shellNames = filterCommands(shellCommands(), 'rev').map((row) => row.name)
-  check('菜单过滤按壳清单算（/rev 只剩 review 一条）', JSON.stringify(shellNames) === JSON.stringify(['review']), JSON.stringify(shellNames))
+  check('菜单过滤按壳清单算（/rev 剩 review 那三条）', JSON.stringify(shellNames) === JSON.stringify(['review', 'review-status', 'review-cancel']), JSON.stringify(shellNames))
   const upper = filterCommands(shellCommands(), 're').map((row) => row.name)
-  check('菜单过滤大小写不敏感（/RE 命中壳那批）', JSON.stringify(upper) === JSON.stringify(['review']), JSON.stringify(upper))
+  check('菜单过滤大小写不敏感（/RE 命中壳那批）', JSON.stringify(upper) === JSON.stringify(['review', 'review-status', 'review-cancel']), JSON.stringify(upper))
   check('回合中：deny 的行标灰', blockedNow(table[0], true) === true, '')
   check('回合中：allow 的行不标灰', blockedNow(table[1], true) === false, '')
   check('闲着的时候都不标灰', blockedNow(table[0], false) === false, '')
+
+  // 2026-11：要收输入的命令（/review）——壳侧纯逻辑，与宿主 `inputClaimOf` 同一口径。
+  const claimRows = [
+    { name: 'review', args: '[关注点]', description: '代码审查', duringTask: 'allow', input: { hint: '写上关注点' } },
+    { name: 'reviewer', args: '', description: '审阅者', duringTask: 'allow' },
+    { name: 'diff', args: '[文件]', description: '差异', duringTask: 'allow' },
+  ]
+  const claim = claimInput(claimRows, '/review')
+  check(
+    '/review 回车前给出补全文本与提示',
+    claim !== null && claim.insert === '/review ' && claim.hint === '写上关注点',
+    JSON.stringify(claim),
+  )
+  check('尾空格不算参数（/review   仍给补全）', claimInput(claimRows, '/review   ')?.insert === '/review ', JSON.stringify(claimInput(claimRows, '/review   ')))
+  check('已经写了参数不补全（/review 只看登录逻辑）', claimInput(claimRows, '/review 只看登录逻辑') === null, JSON.stringify(claimInput(claimRows, '/review 只看登录逻辑')))
+  check(
+    '/rev 撞 /reviewer 时只认收输入的那条',
+    claimInput(claimRows, '/rev')?.insert === '/review ',
+    JSON.stringify(claimInput(claimRows, '/rev')),
+  )
+  check('没有 input 的命令行为不变（/diff 返回 null）', claimInput(claimRows, '/diff') === null, JSON.stringify(claimInput(claimRows, '/diff')))
+  check('清单为空/还没取到时返回 null（不为这条去请求宿主）', claimInput([], '/review') === null, JSON.stringify(claimInput([], '/review')))
+  check('普通消息不认（不以 / 开头）', claimInput(claimRows, '看看 /review') === null, '')
 }
 
 console.log('\n[5] 壳侧接线')
@@ -258,7 +292,12 @@ console.log('\n[5] 壳侧接线')
   check('回车执行时收面板（send 里调 command.hide()）', /command\.hide\(\)/.test(composer), '')
   check('hide 与 Esc 的 close 分开（Esc 要记住「这个前缀别再弹」，执行完不用）', /const hide = \(\): void => \{[\s\S]{0,160}?setOpen\(false\)/.test(menu) && /dismissed\.current = token\.query/.test(menu), '')
   check('hide 不清 dismissed 的那份清单？相反：hide 只清 latest（下次打同样的字还能弹）', /const hide = \(\): void => \{[\s\S]{0,120}?latest\.current = null[\s\S]{0,80}?setOpen\(false\)/.test(menu), '')
-  check('hide 进了返回对象（接口里也声明了）', /return \{ open, rows, loading, at, track, move, pick, close, hide, insertText \}/.test(menu) && /hide\(\): void/.test(menu), '')
+  check(
+    'hide 进了返回对象（接口里也声明了）',
+    /return \{ open, rows, loading, at, track, move, pick, close, hide, insertText, claim, adopt \}/.test(menu) &&
+      /hide\(\): void/.test(menu),
+    '',
+  )
 
   // 2026-10-27 查账：空会话欢迎态把首屏 system 整批不画，新会话里打 /help 什么都看不到
   check('system 条目带 command 标记（契约里声明）', readContractSource().includes('command?: boolean') && read('src/adapter/transcript.ts').includes('command ? { command: true }'), '')
@@ -267,6 +306,56 @@ console.log('\n[5] 壳侧接线')
   check('欢迎态画命令输出（不再整批吞掉）', transcriptUi.includes('row.entry.command === true') && transcriptUi.includes('entry-system-command'), '')
   check('普通对话里也走左对齐块', /entry.command === true \? \(\s*<div className="entry-system-command">/.test(transcriptUi), '')
   check('样式有了（左对齐 / 保留换行）', /\.entry-system-command \{[\s\S]{0,600}?white-space: pre-wrap/.test(read('ui-shell/src/styles.css')), '')
+
+  // 2026-11：/review 的回车改成「先补全、不执行」——契约、宿主透出、壳三个口子都要在。
+  const runtimeSource = read('src/plugins/runtime.ts')
+  check(
+    '契约 UiCommandView 有 input（带 hint）',
+    /interface UiCommandView \{[\s\S]{0,900}?input\?: \{ hint: string \}/.test(readContractSource()),
+    '',
+  )
+  check('共享类型 CommandSpec 有 input', /input\?: \{ hint: string \}/.test(read('src/services/types.ts')), '')
+  check(
+    '宿主 listUiCommands 透出 input（缺省不带）',
+    runtimeSource.includes('spec.input === undefined ? {} : { input: spec.input }'),
+    '',
+  )
+  check(
+    '壳的菜单接口声明 claim 与 adopt',
+    /claim\(value: string\): \{ insert: string; hint: string \} \| null/.test(menu) &&
+      /adopt\(text: string\): void/.test(menu),
+    '',
+  )
+  check(
+    'claim 只查已取到的清单（cache 为 null 返回 null）',
+    /if \(cache === null\) return null[\s\S]{0,80}?claimInput\(cache, value\)/.test(menu),
+    '',
+  )
+  check(
+    'send 里先问 claim 再派发（命中就 adopt 后返回）',
+    /const claim = attachments\.length === 0 \? command\.claim\(value\) : null/.test(composer) &&
+      /command\.adopt\(claim\.insert\)/.test(composer) &&
+      /if \(claim !== null\) \{[\s\S]{0,160}?return/.test(composer),
+    '',
+  )
+  check(
+    '输入框下方有提示行（shell-composer-hint 只在有 claim 时渲染）',
+    composer.includes('className="shell-composer-hint"') &&
+      composer.includes('const inputHint = command.claim(text)?.hint ?? null'),
+    '',
+  )
+  check(
+    '提示行样式取次要文字色、字号与 fault 一致',
+    /\.shell-composer-hint \{[\s\S]{0,200}?color: var\(--dsc-text-tertiary\)[\s\S]{0,80}?font-size: var\(--dsc-fs-caption\)/.test(
+      read('ui-shell/src/legacy/views.css'),
+    ),
+    '',
+  )
+  check(
+    'TUI 回车分支用 inputClaimOf（命中就补全返回）',
+    /inputClaimOf\(text\)[\s\S]{0,400}?update\(claim\.insert, claim\.insert\.length\)[\s\S]{0,40}?return/.test(tui),
+    '',
+  )
 }
 
 console.log(`\n壳的 / 命令菜单：${String(passed)}/${String(passed + failures)} 通过`)

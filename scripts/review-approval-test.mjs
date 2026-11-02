@@ -1,22 +1,36 @@
 /**
- * 0.6.26 宿主直测：审批卡「将做的改动」推演 + /review 的改动收集与消息组装 +
+ * 0.6.26 宿主直测：审批卡「将做的改动」推演 + /review 的改动取数与任务书组装 +
  * 渲染层 unified diff 解析器（type stripping 直接跑 TS 源，import type 剥掉后零依赖）。
  *
- * 不走真模型（限流期）：approvalDiffOf / collectWorkingTree / reviewMessage /
+ * 不走真模型（限流期）：approvalDiffOf / collectReviewScope / reviewTaskText /
  * parseUnifiedDiff 都是纯函数或 fs+git 级函数，临时目录 + 临时 git 仓库直接断言。
  *
  * 运行：pnpm build && node scripts/review-approval-test.mjs
  *
  * @module dsc/scripts/review-approval-test
  */
-import { execFileSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { approvalDiffOf } from '../lib/plugins/approval.js'
-import { collectWorkingTree } from '../lib/core/git-info.js'
-import { reviewMessage } from '../lib/core/git-info.js'
-import { parseUnifiedDiff, splitUnifiedDiffByFile } from '../src/core/unified-diff.ts'
+
+// /review 的 diff 落盘走 DSC_HOME，而 core/path-policy 在**模块加载时**就把这个值读死了。
+// 本进程里 import 已经跑完再改环境变量没用（模块缓存），所以先设一个临时 HOME 重新跑一遍自己：
+// 探针绝不碰真实的 ~/.dsc。子进程里 DSC_HOME 有值，直接往下走。
+if (process.env['DSC_HOME'] === undefined) {
+  const home = mkdtempSync(join(tmpdir(), 'dsc-626-home-'))
+  const child = spawnSync(process.execPath, [fileURLToPath(import.meta.url)], {
+    stdio: 'inherit',
+    env: { ...process.env, DSC_HOME: home },
+  })
+  rmSync(home, { recursive: true, force: true })
+  process.exit(child.status ?? 1)
+}
+
+const { collectReviewScope, reviewTaskText } = await import('../lib/core/git-info.js')
+const { parseUnifiedDiff, splitUnifiedDiffByFile } = await import('../src/core/unified-diff.ts')
 
 let failures = 0
 const check = (name, condition, detail = '') => {
@@ -124,12 +138,12 @@ console.log('审批卡「将做的改动」推演（approvalDiffOf）')
   check('hunks 里的密钥形状被遮红', !joined.includes('sk-abcdefghijklmnop123456'), joined)
 }
 
-console.log('/review 的改动收集与消息组装')
+console.log('/review 的改动取数与任务书组装')
 
 // ── 7. 非 git 目录 → null ──
-check('非 git 目录返回 null', (await collectWorkingTree(root)) === null)
+check('非 git 目录返回 null', (await collectReviewScope(root, { kind: 'worktree' })) === null)
 
-// ── 8. 临时 git 仓库：已跟踪改动进 diff，新文件列 untracked ──
+// ── 8. 临时 git 仓库：完整 diff 落盘 + stat + untracked 名单 ──
 const repo = join(root, 'repo')
 mkdirSync(repo)
 const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' })
@@ -140,17 +154,27 @@ git('add', '.')
 git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', 'add tracked')
 writeFileSync(join(repo, 'tracked.txt'), 'one\nTWO!\n', 'utf8')
 writeFileSync(join(repo, 'fresh.txt'), 'brand new\n', 'utf8')
-const collected = await collectWorkingTree(repo)
-check('git 仓库收集到 diff', collected !== null && collected.diff.includes('-two') && collected.diff.includes('+TWO!'), JSON.stringify(collected?.diff.slice(0, 120)))
-check('untracked 只列名单不进 diff', collected?.untracked.length === 1 && collected.untracked[0] === 'fresh.txt' && !collected.diff.includes('brand new'))
+const collected = await collectReviewScope(repo, { kind: 'worktree' })
+check('git 仓库把完整 diff 落盘', collected !== null && existsSync(collected.diffPath))
+// 落盘之后一律按文件读回断言：这才是审查队友真正看到的东西
+const landed = collected === null ? '' : readFileSync(collected.diffPath, 'utf8')
+check('落盘内容就是 git diff HEAD', landed.includes('-two') && landed.includes('+TWO!'), landed.slice(0, 120))
+check(
+  'diffBytes 与文件字节数一致',
+  collected !== null && Buffer.byteLength(landed, 'utf8') === collected.diffBytes,
+)
+check('stat 给出改动清单', collected !== null && collected.stat.includes('tracked.txt'), collected?.stat ?? '')
+check('untracked 只列名单不进 diff', collected?.untracked.length === 1 && collected.untracked[0] === 'fresh.txt' && !landed.includes('brand new'))
 
-// ── 9. 消息组装：关注点 / diff / untracked 名单 ──
-{
-  const message = reviewMessage({ diff: 'diff --git a/x b/x', untracked: ['fresh.txt'] }, '只看安全')
-  check('消息带关注点', message.includes('关注点：只看安全'))
-  check('消息带 diff 与未跟踪名单', message.includes('diff --git a/x b/x') && message.includes('- fresh.txt'))
-  const noDiff = reviewMessage({ diff: '', untracked: ['a.txt'] }, '')
-  check('只有未跟踪文件时说明空白', noDiff.includes('只有未跟踪的新文件') && !noDiff.includes('关注点'))
+// ── 9. 任务书：范围 / 落盘路径 / 清单 / 关注点 ──
+if (collected !== null) {
+  const message = reviewTaskText(collected, '只看安全')
+  check('任务书带范围与落盘路径', message.includes('未提交改动') && message.includes(collected.diffPath))
+  check('任务书带改动清单', message.includes('## 改动清单') && message.includes('tracked.txt'))
+  check('任务书带未跟踪名单', message.includes('- fresh.txt'))
+  check('任务书带关注点', message.includes('## 关注点') && message.includes('只看安全'))
+  check('任务书给 P0–P3 与整体结论要求', message.includes('### [P0]') && message.includes('整体结论：可提交'))
+  check('没写关注点时不留空段', !reviewTaskText(collected, '').includes('## 关注点'))
 }
 
 console.log('渲染层 unified diff 解析器')

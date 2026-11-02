@@ -326,6 +326,15 @@ function ComposerBox(): ReactNode {
     const value = picked ?? typed
     // 正文为空但有附件也算能发（只发一张图不写字是常见用法）。
     if ((value === '' && attachments.length === 0) || blocked || sending) return
+    // 要收输入的命令（`/review`）：回车只把 `/<名字> ` 补进输入框并给一行提示，**不执行**。
+    // 用户接着写要求，再按一次回车才带着要求跑。带附件时不走这条路：命令没有图可带，
+    // 用户贴了图就是在发内容（与下面那条规矩一致）。
+    const claim = attachments.length === 0 ? command.claim(value) : null
+    if (claim !== null) {
+      setFault(null)
+      command.adopt(claim.insert)
+      return
+    }
     // 带附件时不走命令：命令没有图可带，用户贴了图就是在发内容（与旧界面 App.tsx 同一条规矩）。
     if (value.startsWith('/') && attachments.length === 0) {
       // 回车就是「我要跑这一条」：候选面板当场收起。以前只清文本、不收面板，于是
@@ -561,6 +570,11 @@ function ComposerBox(): ReactNode {
   }
 
   const sendable = text.trim() !== '' || attachments.length > 0
+  /**
+   * 输入框下方的「这条命令要收一段输入」提示：只有当前输入正好是这种命令、且还没写参数
+   * 时才有（宿主给的 `hint`，壳不自己编文案）。
+   */
+  const inputHint = command.claim(text)?.hint ?? null
   const queueing = working && sendable
   /** 当前预设那一项（拿它的 label / description）；`custom`（旋钮拼不出任何预设）或清单缺了时为 undefined。 */
   const permOption = permissionPresets.options.find((item) => item.name === permissionPresets.current)
@@ -1069,6 +1083,7 @@ function ComposerBox(): ReactNode {
         </div>
       </div>
 
+      {inputHint === null ? null : <div className="shell-composer-hint">{inputHint}</div>}
       {fault === null ? null : <div className="shell-composer-fault">{fault}</div>}
     </div>
   )

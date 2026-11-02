@@ -20,7 +20,7 @@ import { Box, Text, useInput } from 'ink'
 import type { DOMElement } from 'ink'
 import type { JSX } from 'react'
 import type { ModelChoiceView } from '../contract.js'
-import { completionsFor, expandCommand } from '../core/commands-completion.js'
+import { completionsFor, expandCommand, inputClaimOf } from '../core/commands-completion.js'
 import type { CompletionItem } from '../services/types.js'
 import {
   collectWorkspaceFiles,
@@ -302,9 +302,21 @@ export function Composer({
     if (key.return && !key.shift && !(key.ctrl && input === 'j')) {
       if (panelOpen && mention !== null) return // 上面已处理
       // 面板打开时 Enter 采用当前选中项（`/mo`+Enter → `/model `），否则按前缀展开。
+      const typed = value.trim()
       const chosen = panelOpen ? completions[safeIndex]?.insert : undefined
-      const text = expandCommand((chosen ?? value).trim())
+      const text = expandCommand((chosen ?? typed).trim())
       if (text === '') return
+      // 要收输入的命令（`/review`）：回车只补成 `/review ` 并停手，让用户在框里写要求；
+      // 再按一次回车才带着写好的要求提交。走 update 是为了顺带把补全面板选中项归零。
+      //
+      // 这里只认最终那一行（含面板选中项）：`/review` 撞 `/reviewer` 前缀的问题在候选
+      // 排序里解决（`commandCompletions` 把精确同名排第一），不在这里按用户原话覆盖，
+      // 否则「用 ↑↓ 选了 /reviewer」会被改写成 /review。
+      const claim = inputClaimOf(text)
+      if (claim !== null) {
+        update(claim.insert, claim.insert.length)
+        return
+      }
       setHistory((previous) => recordHistory(previous, text))
       setHistoryIndex(-1)
       setSuppressedFor(null)

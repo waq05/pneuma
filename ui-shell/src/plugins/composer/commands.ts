@@ -21,6 +21,11 @@ export interface ShellCommandView {
   description: string
   /** 中文短名（2–4 字）；缺省 = 这一行只显示英文名。 */
   label?: string
+  /**
+   * 这条命令要收一段自由输入（宿主 `UiCommandView.input` 的同形）。
+   * 有它就表示：回车不执行，只把 `/<名字> ` 补进输入并显示 `hint`。
+   */
+  input?: { hint: string }
   /** 回合跑着时能不能用；`deny` 的行在菜单里标灰（真闸在宿主派发那一步）。 */
   duringTask: 'allow' | 'deny'
 }
@@ -59,4 +64,43 @@ export function insertCommand(command: ShellCommandView): string {
  */
 export function blockedNow(command: ShellCommandView, working: boolean): boolean {
   return working && command.duringTask === 'deny'
+}
+
+/**
+ * 这一行是不是「要收输入」的命令、且还没写参数；是就给出补全文本与提示语。
+ *
+ * 宿主那份命令表（`src/core/commands-completion.ts` 的 `inputClaimOf`）与这里同一条口径，
+ * 但壳不能 import 宿主源码（两份产物各自打包），所以纯逻辑在这边留一份；真正的
+ * `hint` 文案仍从宿主的 `listUiCommands` 读，壳不抄命令表。
+ *
+ *   - 去尾空格后整体必须是 `/名字` 或 `/名字 参数`；
+ *   - 名字按唯一前缀展开（`/rev` 这一档不是唯一：`/reviewer` 也沾边，但只有
+ *     `/review` 要收输入，所以在「要收输入」的这批里取唯一——与宿主同一个兜底）；
+ *   - 名字后面已有非空参数 → null（回车该执行了）；
+ *   - 命令没有 `input` → null（行为与改造前一模一样）。
+ */
+export function claimInput(
+  commands: readonly ShellCommandView[],
+  value: string,
+): { insert: string; hint: string } | null {
+  const trimmed = value.trimEnd()
+  if (!trimmed.startsWith('/')) return null
+  const body = trimmed.slice(1)
+  const match = /^(\S+)(?:\s+([\s\S]*))?$/.exec(body)
+  if (match === null) return null
+  const word = match[1] ?? ''
+  if ((match[2] ?? '').trim() !== '') return null
+  const lower = word.toLowerCase()
+  const exact = commands.find((command) => command.name === word)
+  const prefix = commands.filter((command) => command.name.toLowerCase().startsWith(lower))
+  // 精确名字优先；否则唯一前缀；撞名时在「要收输入」的这批里再取一次唯一。
+  const spec =
+    exact ??
+    (prefix.length === 1 ? prefix[0] : undefined) ??
+    (prefix.filter((command) => command.input !== undefined).length === 1
+      ? prefix.find((command) => command.input !== undefined)
+      : undefined)
+  if (spec === undefined || spec.input === undefined) return null
+  // 名字回填成命令表里的规范写法（`/rev` → `/review `），大小写也归正。
+  return { insert: `/${spec.name} `, hint: spec.input.hint }
 }

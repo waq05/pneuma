@@ -145,9 +145,9 @@ console.log('[2] compactSession 摘要拼接顺序（readState 在 recovery 之�
   const messages = [
     { role: 'user', content: '帮我看看这两个文件' },
     readAssistant('c1', 'D:\\proj\\a.ts', 1, 30),
-    { role: 'tool', content: 'a.ts 的内容', tool_call_id: 'c1' },
+    { role: 'tool', content: `a.ts 的内容 ${'x'.repeat(4000)}`, tool_call_id: 'c1' },
     readAssistant('c2', 'D:\\proj\\b.ts', 10, 20),
-    { role: 'tool', content: 'b.ts 的内容', tool_call_id: 'c2' },
+    { role: 'tool', content: `b.ts 的内容 ${'x'.repeat(4000)}`, tool_call_id: 'c2' },
     ...Array.from({ length: 6 }, (_, index) => ({ role: 'user', content: `填充 ${index}` })),
   ]
   const session = {
@@ -174,7 +174,7 @@ console.log('[2] compactSession 摘要拼接顺序（readState 在 recovery 之�
     { imageBudget: 4, toolResultChars: 2000 },
     { system: 'SYS', tools: [] },
   )
-  check('压缩成功', outcome === 'compacted', outcome)
+  check('压缩成功', outcome.outcome === 'compacted', outcome.outcome)
   const text = session.summary
   check('摘要含 read-state 段', text.includes('## 读过的文件'), text)
   const atAnchor = text.indexOf('## 锚点索引')
@@ -253,7 +253,7 @@ console.log('[3] 真内核 + 假 SSE 端到端')
     const callId = `r${index}`
     const path = `D:\\proj\\src\\f${index}.ts`
     session.appendAssistant('', '', [{ id: callId, name: 'read', arguments: JSON.stringify({ path, offset: 1, limit: 200 }) }])
-    session.appendTool(callId, 'read', index === 1 ? SENTINEL : `f${index}.ts 的内容`)
+    session.appendTool(callId, 'read', index === 1 ? `${SENTINEL} ${'x'.repeat(4000)}` : `f${index}.ts 的内容 ${'x'.repeat(4000)}`)
   }
   session.appendUser('继续')
   session.appendAssistant('收到', '', [])

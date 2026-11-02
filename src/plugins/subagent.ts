@@ -45,7 +45,7 @@ import { ToolGuardRegistry, toolApprovalGuard } from '../core/tool-guards.js'
 import { inboxAppend, REVIEW_FINDINGS_OPEN, TEAMMATE_REPORT_OPEN } from '../core/team-board.js'
 import type { EffortLevel, SettingsField, SettingsValue, TeammateView, TranscriptEntry } from '../contract.js'
 import type { ReviewService, ReviewSpawnRequest, ReviewSpawnResult, SettingsSectionSpec, TeamService } from '../services/types.js'
-import { reviewMessage } from '../core/git-info.js'
+import { reviewTaskText, ReviewJournal, REVIEW_CANCELED_TEXT } from '../core/git-info.js'
 import { clampInt as clamp } from '../core/clamp.js'
 
 /** 插件配置（存 `~/.dsc/plugins.json` 条目树的 config 里）。 */
@@ -812,11 +812,20 @@ ${body}
     }
     ctx.provide('team', teamService)
 
-    // ── 只读代码审查通道（T18）─────────────────────────────────────────────
+    // ── 只读代码审查通道（T45）─────────────────────────────────────────────
     // /review 的升级路径：派一个工牌被强制压到只读交集的队友（工具 = read/glob/grep，
     // 审批 = forbid，与角色文件怎么改无关），后台审查，findings 以 <review-findings>
     // 包裹写回发起会话——渲染层解析成卡片，主会话不吃模型轮。
+    //
+    // 完整 diff 由 core/git-info 的 collectReviewScope 落盘，任务书里只给路径与读法：
+    // 审查队友有 read，可以按 offset/limit 分批读完，不需要把 diff 截断塞进描述。
     const READONLY_TOOLS = ['read', 'glob', 'grep']
+
+    /**
+     * 审查记录账本：内存记「本会话有没有在跑的审查」，磁盘留最近一次的状态与结论。
+     * 数据目录取 settings.about().home（就是 DSC_HOME），重启后 /review-status 仍读得到。
+     */
+    const reviewJournal = new ReviewJournal(ctx.settings.about().home)
 
     const spawnReviewer = (request: ReviewSpawnRequest): ReviewSpawnResult => {
       const parentSession = ctx.session.current()
@@ -835,11 +844,17 @@ ${body}
       const teammate = startTeammate({
         name: uniqueName('reviewer'),
         role,
-        task: reviewMessage(request, request.focus),
+        task: reviewTaskText(request.scope, request.focus),
         caller: { name: LEAD, depth: 0, background: true },
         background: true,
         seed: null,
         parentSession,
+      })
+      // 先登记再等收工：这中间用户可能已经 /review-status 或 /review-cancel
+      reviewJournal.begin(parentSession.meta.id, {
+        target: request.scope.label,
+        handle: teammate.name,
+        startedAt: teammate.startedAt,
       })
       void waitForIdle(teammate).then(() => deliverReview(teammate))
       return { ok: true, name: teammate.name }
@@ -847,24 +862,45 @@ ${body}
 
     /** 审查收工：findings（或失败原因）写进发起会话，渲染层认 <review-findings> 标记出卡。 */
     const deliverReview = (teammate: Teammate): void => {
+      const sessionId = teammate.parentSession.meta.id
+      // 取消过的那次：记录与上屏都用同一句实话，别让「已停止」把「被取消」盖掉
+      const wasCancelled = reviewJournal.wasCancelled(sessionId)
       const state = teammate.state === 'idle' ? '已完成' : teammate.state === 'stopped' ? '已停止' : '已失败'
       const body =
-        teammate.state === 'failed'
-          ? `审查没有完成：${teammate.error ?? '未知错误'}`
-          : teammate.state === 'stopped'
-            ? '审查被停止，没有交回结论。'
-            : teammate.lastText === ''
-              ? '审查没有留下文字结论。'
-              : teammate.lastText
+        wasCancelled
+          ? REVIEW_CANCELED_TEXT
+          : teammate.state === 'failed'
+            ? `审查没有完成：${teammate.error ?? '未知错误'}`
+            : teammate.state === 'stopped'
+              ? '审查被停止，没有交回结论。'
+              : teammate.lastText === ''
+                ? '审查没有留下文字结论。'
+                : teammate.lastText
       const notice = `${REVIEW_FINDINGS_OPEN}teammate="${teammate.name}" state="${state}">\n${body}\n</review-findings>`
       const line = `审查队友 ${teammate.name}，${state}`
       teammate.parentSession.appendUser(notice)
+      // 记录跟着收工：/review-status 回看的就是这里写下去的那份
+      reviewJournal.finish(sessionId, body, teammate.name)
       const live = ctx.session.current() === teammate.parentSession
       ctx.transcript.system(live ? `${line}，findings 已写进会话` : `${line}，findings 写入了派出它的会话`)
       ctx.transcript.touch()
     }
 
-    const reviewService: ReviewService = { spawn: spawnReviewer }
+    const reviewService: ReviewService = {
+      spawn: spawnReviewer,
+      status() {
+        return reviewJournal.status(ctx.session.current().meta.id)
+      },
+      cancel() {
+        const sessionId = ctx.session.current().meta.id
+        const run = reviewJournal.running(sessionId)
+        if (run === undefined) return false
+        // 叫停走队友那条现成的路（agent.cancel + 保留名册），再把记录标成取消
+        stopTeammate(run.handle, 'stop')
+        reviewJournal.cancel(sessionId)
+        return true
+      },
+    }
     ctx.provide('review', reviewService)
 
     // ── 模型侧工具 ──────────────────────────────────────────────────────────

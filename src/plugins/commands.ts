@@ -13,13 +13,21 @@ import { spawn } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import type {
+  AskService,
   CommandHandler,
   CommandInvocation,
   CommandService,
   CommandSpec,
 } from '../services/types.js'
 import type { DscRuntime, UsageStatsView } from '../contract.js'
-import { collectWorkingTree, reviewMessage } from '../core/git-info.js'
+import {
+  collectReviewScope,
+  listReviewBranches,
+  listReviewCommits,
+  reviewStatusText,
+  reviewTaskText,
+  type ReviewTarget,
+} from '../core/git-info.js'
 import { estimateTokens } from '../core/compact.js'
 import { exportSessionMarkdown } from '../core/session-export.js'
 import { checkForUpdate } from '../core/update-check.js'
@@ -212,39 +220,173 @@ export const commandsPlugin: Plugin.Object = {
         ui.notice(`已导出 ${session.messages.length} 条消息 → ${target}`)
       },
     )
+    // ── /review：先选范围，再派只读审查队友（T45）────────────────────────────
+    //
+    // 范围分四档，与 codex /review 同口径：不传参数就先问「审什么」——diff 从哪来
+    // 决定了这次审查在看什么，默认只审未提交改动会让「分支相对 main 改了什么」
+    // 这种最常见的诉求每次都得自己先跑 git diff 再贴过来。
+    // 传了参数（`/review 只看安全`）就按未提交改动审，那句话是关注点。
+    /** 范围卡的四个选项（顺序即展示顺序）。 */
+    const REVIEW_SCOPE_OPTIONS = [
+      { label: '对比基准分支', description: '从共同祖先审查当前分支的更改' },
+      { label: '审查未提交的更改', description: '暂存、未暂存与未跟踪的净改动' },
+      { label: '审查某次提交', description: '挑一个提交看它改了什么' },
+      { label: '自定义审查要求', description: '写一段要求，按它审当前改动' },
+    ]
+
+    /** 界面在用户点「跳过」时交回的原文（`answerOf` 的口径）；与空串一样算没答。 */
+    const SKIPPED_ANSWER = '（用户跳过了这一题）'
+
+    /**
+     * 弹一张卡问一句，返回答案原文（空串 = 没答 / 跳过 / 没有提问通道）。
+     *
+     * 为什么这里的信号是自己 new 的：斜杠命令这条路口**没有回合取消信号**（它不是模型
+     * 发起的那一轮工具调用），所以卡只能由用户自己答完或跳过。这个控制器因此不会主动
+     * abort，只是为了满足 ask 的契约参数。
+     */
+    const askInCard = async (
+      ask: AskService,
+      question: { question: string; options: { label: string; description?: string }[] },
+      signal: AbortSignal,
+    ): Promise<string> => {
+      const answer = await ask.ask(
+        {
+          question: question.question,
+          header: '代码审查',
+          options: question.options,
+          multiSelect: false,
+          allowFreeText: true,
+        },
+        signal,
+      )
+      const text = answer.trim()
+      return text === SKIPPED_ANSWER ? '' : text
+    }
+
+    /**
+     * 问出这次要审的范围；用户取消或空答返回 null（调用方收口成「审查已取消」）。
+     *
+     * 在范围卡上直接写自由文本时按「自定义审查要求」理解：用户写了话就是有要求，
+     * 再追问一遍「你要什么要求」是废话。
+     */
+    const pickReviewTarget = async (
+      cwd: string,
+      ask: AskService,
+      signal: AbortSignal,
+    ): Promise<ReviewTarget | null> => {
+      const choice = await askInCard(ask, { question: '选择审查范围', options: REVIEW_SCOPE_OPTIONS }, signal)
+      if (choice === '') return null
+      if (choice === '审查未提交的更改') return { kind: 'worktree' }
+      if (choice === '自定义审查要求') {
+        const instructions = await askInCard(
+          ask,
+          { question: '写一段审查要求，按它审当前的未提交改动', options: [] },
+          signal,
+        )
+        return instructions === '' ? null : { kind: 'custom', instructions }
+      }
+      if (choice === '对比基准分支') {
+        const branches = await listReviewBranches(cwd)
+        const ref = await askInCard(
+          ask,
+          { question: '选择基准分支，也可以直接填写分支名或引用', options: branches.map((branch) => ({ label: branch })) },
+          signal,
+        )
+        return ref === '' ? null : { kind: 'base', ref }
+      }
+      if (choice === '审查某次提交') {
+        const commits = await listReviewCommits(cwd)
+        const labels = commits.map((commit) => `${commit.sha.slice(0, 10)} ${commit.subject}`.trim())
+        const answer = await askInCard(
+          ask,
+          { question: '选择提交，也可以直接填写提交 SHA', options: labels.map((label) => ({ label })) },
+          signal,
+        )
+        if (answer === '') return null
+        const at = labels.indexOf(answer)
+        const picked = at < 0 ? undefined : commits[at]
+        // 手填的 SHA 认不出来也照样交给 git：它自己会报「找不到这个引用」
+        return picked === undefined
+          ? { kind: 'commit', ref: answer }
+          : { kind: 'commit', ref: picked.sha, ...(picked.subject === '' ? {} : { title: picked.subject }) }
+      }
+      // 认不出的答案就是用户在卡上直接写的要求
+      return { kind: 'custom', instructions: choice }
+    }
+
     service.register(
       builtinSpec('review'),
       ({ args, runtime, ui }) => {
-        const cwd = ctx.session.current().meta.cwd
+        const session = ctx.session.current()
+        const cwd = session.meta.cwd
         const focus = args.join(' ').trim()
-        void collectWorkingTree(cwd)
-          .then((collected) => {
-            if (collected === null) {
-              ui.notice('这里不是 git 仓库，/review 没有可审查的改动。')
+        // 本命令自己的信号（见 askInCard 的说明）：命令这条路口没有回合取消信号。
+        const signal = new AbortController().signal
+        void (async () => {
+          const ask = ctx.get('ask')
+          let target: ReviewTarget | null
+          if (focus !== '') {
+            // 有参数 = 审未提交改动，那句话是关注点（不再弹卡，按回车就开跑）
+            target = { kind: 'worktree' }
+          } else if (ask === undefined) {
+            // 没有提问通道（ask 插件关着）：退回默认口径，别让命令整个不可用
+            ui.notice('这个会话没有提问卡通道，/review 按未提交改动审。')
+            target = { kind: 'worktree' }
+          } else {
+            target = await pickReviewTarget(cwd, ask, signal)
+          }
+          if (target === null) {
+            ui.notice('审查已取消。')
+            return
+          }
+          const scope = await collectReviewScope(cwd, target, session.meta.id)
+          if (scope === null) {
+            ui.notice('这里不是 git 仓库，/review 没有可审查的改动。')
+            return
+          }
+          if (scope.diffBytes === 0 && scope.untracked.length === 0) {
+            ui.notice(`这个范围里没有可审查的改动（${scope.label}）。`)
+            return
+          }
+          // 自定义要求已经写进 scope.target，不再算一次「关注点」（否则任务书里会出现两遍）
+          const effectiveFocus = target.kind === 'custom' ? '' : focus
+          // T18：subagent 插件开着就走只读审查队友——后台审，findings 直接出卡片，
+          // 不占用当前会话的模型轮；插件没开（或额度满）回落主会话审查轮。
+          const review = ctx.get('review')
+          if (review !== undefined) {
+            const spawned = review.spawn({ scope, focus: effectiveFocus })
+            if (spawned.ok) {
+              ui.notice(
+                `已派出只读审查队友 ${spawned.name}（范围：${scope.label}），结论出来后直接出现在会话里；/review-status 看状态，/review-cancel 取消`,
+              )
               return
             }
-            if (collected.diff === '' && collected.untracked.length === 0) {
-              ui.notice('工作区没有未提交的改动。')
-              return
-            }
-            // T18：subagent 插件开着就走只读审查队友——后台审，findings 直接出卡片，
-            // 不占用当前会话的模型轮；插件没开（或额度满）回落 v1 的主会话审查轮。
-            const review = ctx.get('review')
-            if (review !== undefined) {
-              const spawned = review.spawn({ ...collected, focus })
-              if (spawned.ok) {
-                ui.notice(`已派出只读审查队友 ${spawned.name}，结论出来后直接出现在会话里`)
-                return
-              }
-              ui.notice(`/review 没派出审查队友（${spawned.reason}），改在本会话里审`)
-            }
-            // 组装一条审查请求走正常对话轮（runtime.submit → agent.followup）：
-            // 回复就是审查意见，与用户自己贴着 diff 问「帮我看看」同一条链路。
-            runtime.submit(reviewMessage(collected, focus))
-          })
-          .catch((cause: unknown) => {
-            ui.notice(`/review 失败：${cause instanceof Error ? cause.message : String(cause)}`)
-          })
+            ui.notice(`/review 没派出审查队友（${spawned.reason}），改在本会话里审`)
+          }
+          // 组装一条审查请求走正常对话轮（runtime.submit → agent.followup）：
+          // 回复就是审查意见，与用户自己贴着 diff 问「帮我看看」同一条链路。
+          runtime.submit(reviewTaskText(scope, effectiveFocus))
+        })().catch((cause: unknown) => {
+          ui.notice(`/review 失败：${errText(cause)}`)
+        })
+      },
+    )
+    service.register(
+      builtinSpec('review-status'),
+      ({ ui }) => {
+        // 审查通道不存在（subagent 插件关着）时就是「没有记录」，与没跑过审查同一种回答
+        ui.notice(reviewStatusText(ctx.get('review')?.status() ?? null))
+      },
+    )
+    service.register(
+      builtinSpec('review-cancel'),
+      ({ ui }) => {
+        const review = ctx.get('review')
+        if (review === undefined) {
+          ui.notice('审查通道没开着（subagent 插件关着），当前没有在跑的审查。')
+          return
+        }
+        ui.notice(review.cancel() ? '已取消这次审查。' : '当前没有在跑的审查。')
       },
     )
     service.register(

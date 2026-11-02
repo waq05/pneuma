@@ -366,6 +366,8 @@ export const runtimePlugin: Plugin.Object = {
           args: spec.args,
           description: spec.description,
           ...(spec.label === undefined ? {} : { label: spec.label }),
+          // 要收输入的命令（/review）：壳据此把回车改成「先补全、不执行」。
+          ...(spec.input === undefined ? {} : { input: spec.input }),
           duringTask: spec.duringTask ?? 'allow',
         }))
       },

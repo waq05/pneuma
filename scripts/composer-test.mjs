@@ -13,6 +13,7 @@ import { PassThrough } from 'node:stream'
 import React from 'react'
 import { render } from 'ink'
 import { Composer } from '../lib/app/Composer.js'
+import { inputClaimOf } from '../lib/core/commands-completion.js'
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -149,6 +150,64 @@ frame = output
 check('↓×11 窗口滑动（新会话滚出、分叉入窗）', !frame.includes('新会话') && frame.includes('分叉'), JSON.stringify(frame.split('\n').filter((line) => line.includes('条 ·')).slice(0, 1)))
 frame = await press(KEY.esc)
 check('Esc 关面板', !frame.includes('↑↓ 选择'))
+
+// 12. 要收输入的命令（/review）：回车只补全成 `/review `、不执行（2026-11 新增）。
+//     先清空上一步留下的 `/`，再逐条走键盘路径——这是用户真正会走的那条。
+for (let i = 0; i < 40; i += 1) await press('\u007f')
+frame = await press('/review')
+check('输入 /review 时候选面板在（代码审查）', frame.includes('代码审查'), JSON.stringify(frame.slice(-300)))
+const beforeClaim = submitted.length
+frame = await press(KEY.enter)
+check('/review + Enter 不执行（没有提交）', submitted.length === beforeClaim, JSON.stringify(submitted.slice(beforeClaim)))
+check('/review + Enter 把输入补成「/review 」（尾空格已补）', /\/review[ \u001b]*$/.test(frame.trimEnd()) || frame.includes('/review '), JSON.stringify(frame.slice(-120)))
+// 再按一次回车、没写要求：仍然不执行（这条命令要求一段输入，和 dsh 的 leadingInput 同义）。
+await press(KEY.enter)
+check('空参数的 /review 再按回车仍不执行', submitted.length === beforeClaim, JSON.stringify(submitted.slice(beforeClaim)))
+// 写上要求再回车：这一次要执行，参数原样带过去（补全已经带了一个空格，接着打就行）。
+await press('只看登录逻辑')
+await press(KEY.enter)
+check('/review 只看登录逻辑 仍照常执行', submitted.at(-1) === '/review 只看登录逻辑', JSON.stringify(submitted.at(-1)))
+
+// 13. 撞前缀的归属保持改造前口径：`/rev` 的候选里 `/reviewer` 在表内更靠前，回车执行高亮
+//     那一项；要审代码就 ↓ 选到 `/review`，那一次回车才补全成 `/review `。
+//     （候选排序把「精确同名」排第一，所以打全 `/review` 不会再被 `/reviewer` 截走。）
+for (let i = 0; i < 40; i += 1) await press('\u007f')
+await press('/rev')
+const beforeSelect = submitted.length
+await press(KEY.enter)
+check('/rev + Enter 执行面板高亮项 /reviewer（与改造前同口径）', submitted.at(-1) === '/reviewer', JSON.stringify(submitted.at(-1)))
+for (let i = 0; i < 40; i += 1) await press('\u007f')
+await press('/rev')
+await press(KEY.down)
+await press(KEY.enter)
+check('/rev ↓ 选到 /review 再回车只补全、不执行', submitted.length === beforeSelect + 1 && output.includes('/review '), JSON.stringify(submitted.slice(beforeSelect)))
+await press('看差异')
+await press(KEY.enter)
+check('/review 补全后带参数执行', submitted.at(-1) === '/review 看差异', JSON.stringify(submitted.at(-1)))
+
+// 14. 没有 input 字段的命令行为不变：/diff 回车直接执行。
+for (let i = 0; i < 40; i += 1) await press('\u007f')
+await press('/diff')
+await press(KEY.enter)
+check('/diff（没有 input）回车照旧直接执行', submitted.at(-1) === '/diff', JSON.stringify(submitted.at(-1)))
+
+// 15. 纯函数口径（TUI 与壳共用同一条规则，这里直接钉住边界）。
+const reviewClaim = inputClaimOf('/review')
+check(
+  'inputClaimOf(/review) 给出补全文本与提示语',
+  reviewClaim !== null && reviewClaim.insert === '/review ' && reviewClaim.hint.includes('关注点'),
+  JSON.stringify(reviewClaim),
+)
+check('inputClaimOf(/rev) 认唯一前缀', inputClaimOf('/rev')?.insert === '/review ', JSON.stringify(inputClaimOf('/rev')))
+check('inputClaimOf(/review 关注点) 返回 null（已经写了参数）', inputClaimOf('/review 关注点') === null, JSON.stringify(inputClaimOf('/review 关注点')))
+check('inputClaimOf(/diff) 返回 null（没有 input 字段）', inputClaimOf('/diff') === null, JSON.stringify(inputClaimOf('/diff')))
+check(
+  'inputClaimOf(/review   ) 尾空格不算参数（仍给补全）',
+  inputClaimOf('/review   ')?.insert === '/review ',
+  JSON.stringify(inputClaimOf('/review   ')),
+)
+check('inputClaimOf(普通消息) 返回 null', inputClaimOf('看看 /review') === null, JSON.stringify(inputClaimOf('看看 /review')))
+check('inputClaimOf(裸 /) 返回 null', inputClaimOf('/') === null, JSON.stringify(inputClaimOf('/')))
 
 instance.unmount()
 stdin.end()

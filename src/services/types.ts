@@ -23,6 +23,7 @@ import type { Session, InboxOrigin } from '../core/session.js'
 import type { UserFileAttachment } from '../core/attachments.js'
 import type { ChatMessage, LlmAdapter, LlmRoute, StreamHandlers, StreamRequest, StreamResult } from '../core/llm.js'
 import type { FileChangeSummary, ToolEntry } from '../core/tools.js'
+import type { ReviewScope } from '../core/git-info.js'
 import type { CoreEvent } from '../core/events.js'
 import type { SkillDefinition, SkillSummary } from '../core/skills.js'
 import type { DscPrefs } from '../core/prefs.js'
@@ -525,6 +526,13 @@ export interface CommandSpec {
    */
   duringTask?: 'allow' | 'deny'
   /**
+   * 这条命令要收一段自由输入（不是从候选里挑的参数）。
+   *
+   * 有它就表示：输入框回车时**不执行**，只把 `/<名字> ` 补进输入并显示 `hint`，
+   * 让用户在后面写要求；再按回车才带着写好的要求执行。缺省 = 回车直接执行。
+   */
+  input?: { hint: string }
+  /**
    * 壳（桌面 / 手机那份插件化界面）的 `/` 菜单里列不列、能不能执行。
    *
    * 缺省 false 是**失败关闭**：外部插件注册的命令默认不进界面菜单，内置表里逐条标过才
@@ -686,6 +694,22 @@ export interface CompactService {
    * @returns 退订函数。
    */
   registerCarry(contribute: () => string): () => void
+}
+
+/**
+ * 旧工具结果微压缩的投影估算（microcompact 插件提供）。
+ *
+ * 为什么要这个服务：微压缩是**请求体投影**，不改会话日志——模型真正收到的那份请求
+ * 可能早就把旧工具结果换成了占位符。压缩插件在「请求爆窗了要不要压摘要」这一刻
+ * 必须看投影后的体积，否则会为了一个本来装得下的请求去牺牲历史。
+ */
+export interface MicrocompactService {
+  /**
+   * 按当前配置把旧工具结果换成占位符之后，整段消息的估算 token 数。
+   * 门槛没达到（清得太少不划算）或总开关关掉时，返回原文的估算值。
+   * @param messages - 要估算的消息（与请求体同一份）。
+   */
+  projectedTokens(messages: readonly ChatMessage[]): number
 }
 
 // ── agent ────────────────────────────────────────────────────────────────────
@@ -859,9 +883,12 @@ export interface TeamService {
 }
 
 /**
- * 只读代码审查通道（T18）：由 subagent 插件提供，/review 命令的升级路径。
+ * 只读代码审查通道（T45）：由 subagent 插件提供，/review 命令的升级路径。
  * 派出去的队友工牌被强制压到只读交集（工具 = read/glob/grep，审批 = forbid），
  * 与角色文件怎么改无关——审查通道天然安全，不靠配置自觉。
+ *
+ * 一次审查的范围与完整 diff 由 `core/git-info.ts` 的 `collectReviewScope` 备好落盘，
+ * 这里只负责派队友、记状态、叫停。
  */
 export interface ReviewService {
   /**
@@ -870,20 +897,34 @@ export interface ReviewService {
    * @returns ok=false 时 reason 是给用户看的一句话（额度满/角色不可用等），调用方回落。
    */
   spawn(request: ReviewSpawnRequest): ReviewSpawnResult
+  /** 最近一次审查的状态与结论；没有记录返回 null。 */
+  status(): ReviewStatusView | null
+  /** 取消当前会话正在跑的审查；没有在跑返回 false。 */
+  cancel(): boolean
 }
 
-/** /review 交给审查通道的输入（collectWorkingTree 的产出 + 关注点）。 */
+/** /review 交给审查通道的输入：落盘好的范围 + 关注点。 */
 export interface ReviewSpawnRequest {
-  /** `git diff HEAD --no-textconv --no-ext-diff` 的输出（collectWorkingTree 已按预算截断）。 */
-  diff: string
-  /** 未跟踪文件名单（diff 里没有，队友自己 read）。 */
-  untracked: string[]
+  /** 取数结果（完整 diff 已落盘，队友自己按 offset/limit 读）。 */
+  scope: ReviewScope
   /** 用户写在 /review 后面的关注点；空 = 不限。 */
   focus: string
 }
 
 /** 派审查队友的结果：ok=false 时 reason 说明原因并回落主会话轮。 */
 export type ReviewSpawnResult = { ok: true; name: string } | { ok: false; reason: string }
+
+/** 一次审查的状态视图（`/review-status` 的数据源；记录文件里的字段与它同形）。 */
+export interface ReviewStatusView {
+  /** running = 还在跑；finished = 已收工（含被取消）。 */
+  state: 'running' | 'finished'
+  /** 开始时间（毫秒时间戳）。 */
+  startedAt: number
+  /** 范围的一句话描述（`ReviewScope.label`）。 */
+  target: string
+  /** 收工后的 findings 正文；还在跑时没有。 */
+  findings?: string
+}
 
 // ── skills ───────────────────────────────────────────────────────────────────
 
@@ -1364,6 +1405,8 @@ declare module '@deepseek-ai/cordis' {
     transcript: TranscriptService
     commands: CommandService
     compact: CompactService
+    /** 旧工具结果微压缩的投影估算（microcompact 插件提供；没开时不存在）。 */
+    microcompact?: MicrocompactService
     agent: AgentService
     /** 请求组装扩展点（附加系统提示 + 请求体改写）。 */
     prompt: PromptService

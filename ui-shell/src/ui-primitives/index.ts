@@ -73,6 +73,9 @@ export * from './pdf-view'
 // 「文件更改预览」通知：宿主那段多行 diff 纯文本的认法与画法（对话流与轨迹页共用一份）。
 export * from './review-notice'
 export * from './review-notice-card'
+// /review 结论：审查队友交回的 `<review-findings>` 汇报的解析与卡片（P0–P3 四档）。
+export * from './review-findings'
+export * from './review-findings-card'
 export * from './select'
 export * from './table-view'
 export * from './thread-resizer'

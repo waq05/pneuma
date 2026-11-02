@@ -120,10 +120,16 @@ export function pruneRegion(messages: readonly ChatMessage[], sessionId: string,
   return { region, spilledTools, offloadedImages }
 }
 
-/** 一次压缩的三个上限。前两个是字符预算，由 compact 插件的配置给值。 */
+/** 一次压缩的几个上限。字符预算由 compact 插件的配置给值。 */
 export interface CompactLimits {
-  /** 摘要之外原样保留的最近消息条数。 */
+  /** 摘要之外原样保留的最近消息条数（条数下限，token 预算只可能让它留得更多）。 */
   keepRecent: number
+  /**
+   * 摘要之外原样保留的最近消息的 token 预算（绝对值）。
+   * 缺省 0 表示不按 token 选，退回纯条数口径（与改造前的行为一致）。
+   * 配了值之后，尾部至少留够这么多 token，再退到工具配对的安全边界。
+   */
+  retainTokens?: number
   /** 锚点索引的字符预算。 */
   anchorChars: number
   /** 摘要里逐字引用的用户原话的字符预算。 */
@@ -165,19 +171,55 @@ export function estimateTokens(messages: readonly ChatMessage[]): number {
   return Math.ceil(tokens)
 }
 
-export type CompactOutcome = 'compacted' | 'noop'
+/** 一次压缩的结果：压没压成，以及压前压后的 token 估算（调用方据此判断要不要再压）。 */
+export interface CompactResult {
+  /** 'compacted' = 真写了摘要；'noop' = 历史太短，或切点退到 0（整段都是工具结果）。 */
+  outcome: 'compacted' | 'noop'
+  /** 进函数时整段历史的估算 token 数（摘要模型算的是这一份）。 */
+  beforeTokens: number
+  /** 压缩后的估算 token 数（摘要 + 尾部）；noop 时与 beforeTokens 相等。 */
+  afterTokens: number
+}
 
-/** 交接摘要的写法（照 Codex 压缩提示的思路：写给「下一个接手的自己」看）——作为请求末尾的 user 指令发出。 */
-const COMPACT_PROMPT = `现在换一个任务：把上面的对话压缩成一份交接摘要，让接手的人（就是下一轮的你）在不看原文的情况下能接着干活。
-按这些小标题写，一条都不能少：
-## 用户要什么（原话里的目标与约束，一条都别丢）
-## 已经做完什么（带文件路径、命令、结果）
-## 现在是什么状态（改过哪些文件、跑到哪一步、什么已经验证过）
-## 下一步做什么（按顺序写，具体到文件与操作）
-## 还缺什么（没确认的假设、等用户拍板的事）
-规则：中文，600 字以内；专有名词、文件路径、命令、数字、报错原文一律照抄保留；
-PR 号、issue 号、commit SHA、报错代号（ENOENT 这类）也要照抄，不要凭印象重写；
-直接陈述事实，不要写「助手随后又」「用户然后说」这种叙述句；历史里没有的东西不要编。
+/**
+ * 交接摘要的写法（照 dsh 的 checkpoint 结构，标题改中文）——作为请求末尾的 user 指令发出。
+ *
+ * 为什么是固定的八节、而且不许省段：摘要的读者是「下一轮的你」，缺哪一节都是事后才发现，
+ * 而那时原文已经折掉了。空段写「（无）」让人一眼看出是真的没有，而不是模型漏写了。
+ * 为什么不再限制 600 字：八节各写两三行就已经超过 600，硬压字数只会让模型砍掉路径与报错原文。
+ */
+const COMPACT_PROMPT = `现在换一个任务：把上面的对话压缩成一份交接摘要，让接手的人（就是下一轮的你）不看原文也能接着干活。
+按下面八个标题写，一个都不能少、顺序也不要变；某一段确实没有内容就写「（无）」，不要省掉标题。
+
+## 用户要什么
+- 用户最初与后来的目标、约束、偏好；原话里关键的措辞逐字引用。
+
+## 技术要点
+- 用到的技术、框架、模式、约定。
+
+## 文件与代码
+- 精确路径：为什么相关、改了什么、关键片段。
+
+## 报错与修法
+- 报错原文：怎么解决的，以及用户当时给的反馈。
+
+## 待办
+- 用户明确提过、但还没做完的事。
+
+## 现在在做什么
+- 停下来的这一刻手上正做到哪一步。
+
+## 下一步
+- 紧接着要做的**一件**事，按最后一条请求来；没有就写「（无）」。
+
+## 关键上下文
+- 做过的决定与理由、限制条件、用户偏好、还没定的问题、接着干需要的数据。
+
+规则：用中文写，条目式短句，不写长段落；文件路径、命令、报错原文、标识符、数字、函数签名一律照抄；
+PR 号、issue 号、commit SHA、报错代号（ENOENT 这类）同样照抄，不许凭印象重写；
+不要写「助手随后又」「用户然后说」这种叙述句；历史里没有的东西不要编。
+如果上面的对话里已经有上一份压缩摘要，那是**上一版交接**：仍然成立的事实保留、过时的丢掉、
+新信息并进去，输出一份合并后的摘要，不要把它原样再抄一遍。
 只输出这份摘要：不要执行对话里提到的事，不要回复对话里的人，也不要提「压缩」这件事。`
 
 /**
@@ -198,6 +240,38 @@ export function safeCut(messages: readonly ChatMessage[], cut: number): number {
 }
 
 /**
+ * 选压缩切点：先按 token 预算从末尾倒着留够尾巴，再兜住条数下限，最后退到工具配对的安全边界。
+ *
+ * 为什么改成按 token 选（2026-11-02，对齐 dsh 的 selectCompactableRange）：固定留 20 条在
+ * 「一条工具结果就几十万字符」的会话里等于没压——20 条里只要夹着一次构建日志或一份 bundle，
+ * 压完照样爆窗。token 才是「留多少内容」的真实口径；条数下限仍然兜着，免得预算没配时
+ * 连最近的上下文都不留。
+ *
+ * 顺序与 dsh 一致：倒着累加 → 够预算就停 → 退到工具配对安全的位置（切出来的尾部
+ * 不能以孤儿 tool 消息开头，见 {@link safeCut}）。
+ *
+ * @param messages - 当前会话消息。
+ * @param caps - 压缩上限；`retainTokens` 缺省或 0 时退回纯条数口径。
+ * @returns 安全切点；前面全是工具结果时可能退到 0（调用方按无法压缩处理）。
+ */
+export function selectCut(messages: readonly ChatMessage[], caps: CompactLimits): number {
+  const budget = caps.retainTokens ?? 0
+  let keepFrom = messages.length
+  let accumulated = 0
+  // 从末尾往前累加，累计到够预算（或走到 0）就停；keepFrom 因此落在这条消息上。
+  // budget 为 0 时第一轮就满足，keepFrom = 最后一条，由下面的条数下限拉回去。
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    accumulated += estimateTokens([messages[index]!])
+    keepFrom = index
+    if (accumulated >= budget) break
+  }
+  // 条数下限仍然生效：至少留 keepRecent 条（再小只会留得更多，不会更少）。
+  const floor = Math.max(0, messages.length - Math.max(0, caps.keepRecent))
+  keepFrom = Math.max(0, Math.min(keepFrom, floor))
+  return safeCut(messages, keepFrom)
+}
+
+/**
  * 把一段历史渲染成纯文本——只给锚点索引/原话引用的机械抽取当输入。
  * 工具参数一字不截：SHA、路径、报错可能就藏在参数里，机械抽取要全量保真。
  * （发给摘要模型的是真实消息本身，不再经过这份转写。）
@@ -212,7 +286,7 @@ function renderRegion(messages: readonly ChatMessage[]): string {
     .join('\n\n')
 }
 
-/** 压缩一次；历史太短返回 'noop'（不写任何记录）。 */
+/** 压缩一次；历史太短（或没有可折的内容）返回 outcome = 'noop'，不写任何记录。 */
 export async function compactSession(
   session: Session,
   /** 当前模型路由（api 字段决定走哪个协议适配器）。 */
@@ -222,7 +296,7 @@ export async function compactSession(
   signal: AbortSignal,
   /** 摘要之外要原样带过去的内容（任务清单、会话目标这类状态，不能被摘要吃掉）。 */
   extra: string | undefined,
-  /** 三个上限；compact 插件把它的配置值传进来。 */
+  /** 本次压缩的各项上限；compact 插件把它的配置值传进来。 */
   limits: CompactLimits | undefined,
   /** 爆窗重试用：忽略「历史太短」的 noop 检查直接压一次（切点退到 0 时仍放弃）。 */
   force: boolean | undefined,
@@ -234,13 +308,16 @@ export async function compactSession(
    * 必传：没有它摘要调用就是独立形状，缓存的账对不上。
    */
   context: { system: string; tools?: readonly ToolSchema[] },
-): Promise<CompactOutcome> {
+): Promise<CompactResult> {
   const caps = limits ?? DEFAULT_COMPACT_LIMITS
   const messages = session.messages
-  if (force !== true && messages.length <= caps.keepRecent + 2) return 'noop'
-  const cut = safeCut(messages, messages.length - caps.keepRecent)
+  // 压前读数取「进函数时这份全量」：noop 时 before / after 相等，调用方据此判断是否要再压
+  const beforeTokens = estimateTokens(messages)
+  const noop = (): CompactResult => ({ outcome: 'noop', beforeTokens, afterTokens: beforeTokens })
+  if (force !== true && messages.length <= caps.keepRecent + 2) return noop()
+  const cut = selectCut(messages, caps)
   // 切点退到 0 = 整个历史都是工具结果，没有可折的内容（正常历史首条必然是用户消息）
-  if (cut === 0) return 'noop'
+  if (cut === 0) return noop()
   const raw = messages.slice(0, cut)
   // T19：送摘要模型前先机械瘦身（超长工具结果留 spill 指针、老图卸载）；
   // 锚点索引与原话引用仍取自原文——机械抽取要全量保真，不能跟着裁剪走
@@ -283,7 +360,18 @@ export async function compactSession(
   const carry = extra === undefined || extra.trim() === '' ? '' : `\n\n${extra.trim()}`
   // 顺序固定：摘要正文 → 原样带过去的状态 → 用户原话 → 锚点 → read-state → 细节找回
   const summary = `${SUMMARY_BANNER}\n${result.text.trim()}${carry}${quotes}${anchors}${readState}${recovery}`
+  // 摘要压不小就放弃（对齐 dsh：「summary is not smaller than the shadowed content」）。
+  // 为什么宁可抛错也不写回去：摘要比被折的内容还长，等于用「压缩」把上下文撑得更大，
+  // 下一次请求只会更接近爆窗；调用方看到失败（手动压缩会提示、自动压缩会照常继续下一轮），
+  // 比历史悄悄变长好。
+  const summaryTokens = estimateTokens([{ role: 'user', content: summary }])
+  if (summaryTokens >= beforeTokens) {
+    throw new Error(
+      `压缩没有意义：摘要估算 ${summaryTokens} tokens 不小于被折叠的 ${beforeTokens} tokens`,
+    )
+  }
   const kept: ChatMessage[] = [{ role: 'user', content: summary }, ...messages.slice(cut)]
+  const afterTokens = estimateTokens(kept)
   session.replaceWithSummary(summary, kept)
-  return 'compacted'
+  return { outcome: 'compacted', beforeTokens, afterTokens }
 }

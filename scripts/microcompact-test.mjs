@@ -319,6 +319,7 @@ console.log('[1c] 插件策略：清理量不到门槛不清 / 队友汇报不�
   const makePlugin = () => {
     let projection = null
     let section = null
+    let provided = null
     const ctx = {
       prompt: {
         registerProjection: (_id, fn) => {
@@ -333,9 +334,15 @@ console.log('[1c] 插件策略：清理量不到门槛不清 / 队友汇报不�
         },
       },
       session: { current: () => { throw new Error('测试里应显式传会话') } },
+      // 2026-11-02：插件开始对外 provide `microcompact` 服务（压缩插件爆窗时要看投影估算），
+      // 桩里得有一个挂载点，否则 apply 直接抛「ctx.provide is not a function」。
+      provide: (_name, service) => {
+        provided = service
+        return () => {}
+      },
     }
     microcompactPlugin.apply(ctx, {})
-    return { projection, section }
+    return { projection, section, provided }
   }
   const sessionOf = (id) => ({ meta: { id }, toolErrors: new Map() })
   const conversation = (count, text) => {
@@ -348,7 +355,8 @@ console.log('[1c] 插件策略：清理量不到门槛不清 / 队友汇报不�
   }
   const cleared = (list) => list.filter((message) => message.role === 'tool' && isCleared(message.content)).length
 
-  const { projection, section } = makePlugin()
+  const { projection, section, provided } = makePlugin()
+  check('provide 了 microcompact 服务（projectedTokens）', typeof provided?.projectedTokens === 'function')
 
   // 设置分区：默认 25%，能存盘读回，超过 80 也夹到 80（区间外不留脏值）
   check('设置分区默认 minFreePercent = 25', section.values().minFreePercent === 25)

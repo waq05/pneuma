@@ -13,7 +13,7 @@
  */
 import { useRef, useState } from 'react'
 import type { useHostChannel } from '@dsc/ui'
-import { commandQuery, filterCommands, insertCommand, type ShellCommandView } from './commands'
+import { claimInput, commandQuery, filterCommands, insertCommand, type ShellCommandView } from './commands'
 
 /** 候选缓存：抓到一次就够（模块级，全壳共用一份）。 */
 let cache: ShellCommandView[] | null = null
@@ -45,6 +45,18 @@ export interface CommandMenuApi {
    * 「Enter 采纳选中项」那条路取它来当要执行的原文——与 TUI 的 panelOpen 分支同口径。
    */
   insertText(): string | null
+  /**
+   * 这条输入是不是「要收输入」的命令（只有名字、没参数）——是就给出要填的文本与提示。
+   *
+   * 只查已经取到的清单（模块级 `cache`）：**不为这件事去请求宿主**。还没取过清单
+   * （菜单没打开过）就返回 null，行为与改造前一模一样（回车直接执行）。
+   */
+  claim(value: string): { insert: string; hint: string } | null
+  /**
+   * 把一段文本直接补进输入框并把菜单收起来（`/review` 那条「先补全、不执行」的落点）。
+   * 形状与 {@link pick} 一致：走同一个 `apply`，光标落在文本末尾。
+   */
+  adopt(text: string): void
 }
 
 export function useCommandMenu(options: {
@@ -130,10 +142,20 @@ export function useCommandMenu(options: {
   const pick = (): void => {
     const inserted = insertText()
     if (inserted === null) return
+    adopt(inserted)
+  }
+
+  const adopt = (text: string): void => {
     latest.current = null
     dismissed.current = null
     setOpen(false)
-    apply(inserted, inserted.length)
+    apply(text, text.length)
+  }
+
+  const claim = (value: string): { insert: string; hint: string } | null => {
+    // 清单还没取过：不为了这一条去请求宿主，直接按老行为放行（回车执行）。
+    if (cache === null) return null
+    return claimInput(cache, value)
   }
 
   const insertText = (): string | null => {
@@ -142,5 +164,5 @@ export function useCommandMenu(options: {
     return command === undefined ? null : insertCommand(command)
   }
 
-  return { open, rows, loading, at, track, move, pick, close, hide, insertText }
+  return { open, rows, loading, at, track, move, pick, close, hide, insertText, claim, adopt }
 }

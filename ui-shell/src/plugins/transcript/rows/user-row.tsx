@@ -6,10 +6,10 @@
  * @module dsc-ui-shell/plugins/transcript/rows/user-row
  */
 import { useContext, useState, type ReactNode } from 'react'
-import { FileIcon, IconEdit, type TranscriptEntry, type UserFileAttachment } from '@dsc/ui'
+import { FileIcon, IconEdit, setDockPreview, type TranscriptEntry, type UserFileAttachment } from '@dsc/ui'
 // 体积读数与文件树、预览面板、输入区附件同一份实现（壳里唯一一份）。
-import { formatBytes } from '@dsc/ui-primitives'
-import { FlowActionsContext } from '../shared'
+import { formatBytes, parseReviewFindings, ReviewFindingsCard } from '@dsc/ui-primitives'
+import { FlowActionsContext, ShellCwdContext } from '../shared'
 import { teammateReportLabel } from '../rounds'
 
 /**
@@ -75,8 +75,16 @@ function FileAttachmentCard({ file }: { file: UserFileAttachment }): ReactNode {
 /** 用户消息：气泡 + 贴图条 + hover 浮出的「编辑」钮（编辑重发 = 分叉新会话重发，原会话保留）。 */
 export function UserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'user' }> }): ReactNode {
   const actions = useContext(FlowActionsContext)
+  const cwd = useContext(ShellCwdContext)
   // 编辑中的草稿（null = 没在编辑）。Enter 提交 / Shift+Enter 换行 / Esc 取消。
   const [draft, setDraft] = useState<string | null>(null)
+  // 审查队友的 findings：宿主也当成一条 role:'user' 的消息投进来（模型要看），但它不是人打的字，
+  // 解析成卡片——徽标、位置、说明、建议按条摆开，比整段 `<review-findings …>` 标记文本好读。
+  // 位置点开走预览页签：`setDockPreview` 这一侧没有行号参数，先只打开文件（行号仍写在按钮上）。
+  const findings = parseReviewFindings(entry.text)
+  if (findings !== null) {
+    return <ReviewFindingsCard doc={findings} cwd={cwd} onOpenLocation={(path) => setDockPreview({ path })} />
+  }
   // 运行时投递进来的消息（队友汇报）不拿它当人打的字渲染，也不压成居中的 system 断句：
   // 按 dsh 的 turn-trigger 画成一行「触发行」——一句话说清是谁的汇报（队友名 / 状态都从
   // body 头里解出来，见 rounds.ts 的 teammateReportLabel）。`data-internal="1"` 属性留着
@@ -184,6 +192,12 @@ export function UserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'us
 
 /** 只读用户消息：UserRow 的同款气泡，去掉 hover 浮出的「编辑并重发」。 */
 export function ReadonlyUserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'user' }> }): ReactNode {
+  const cwd = useContext(ShellCwdContext)
+  // 审查结论同样画成卡（右栏看队友记录时也是同一种展示，不退回标记文本）
+  const findings = parseReviewFindings(entry.text)
+  if (findings !== null) {
+    return <ReviewFindingsCard doc={findings} cwd={cwd} onOpenLocation={(path) => setDockPreview({ path })} />
+  }
   // 运行时投递进来的消息（队友汇报）整条交给 UserRow：它对这个 kind 提前 return「触发行」，
   // 本来就不带编辑钮，所以只读出口可以原样复用——文案只有一处（rounds.ts 的
   // teammateReportLabel），不会出现主会话与右栏对同一件事说两句话。

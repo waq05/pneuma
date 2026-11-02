@@ -2893,6 +2893,16 @@
   color: var(--dsc-red);
 }
 
+/* 输入框下方的「这条命令要收一段输入」提示（`/review` 回车先补全、不执行）。
+   与壳的 `.shell-composer-fault` 同级相邻；字号照它，颜色取次要文字色，不新造色值。
+   放在输入区这一段末尾，改输入区布局时一眼能看见它。 */
+.shell-composer-hint {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+  margin-top: 4px;
+  padding: 0 4px;
+}
+
 /* ══════════ 排队消息条（输入框下方，对照 dsh 的 conversation.input.dock）══════════
    回合跑动中提交的消息先进内核的收件箱，这里把它们列出来：一眼看见「发了、还没轮到」，
    并且改得动 / 撤得掉 / 插得上。队列空了整块不渲染（组件直接 return null）。 */
@@ -11857,7 +11867,7 @@ body.resizing iframe {
   min-width: 0;
 }
 
-/* 优先级徽标：P1 红、P2 橙、P3 灰（语义色令牌，浅深主题各自取值）。 */
+/* 优先级徽标：P0/P1 红、P2 橙、P3 灰（语义色令牌，浅深主题各自取值）。 */
 .review-finding-badge {
   border: 1px solid color-mix(in srgb, var(--dsc-stroke-2) 80%, transparent);
   border-radius: var(--dsc-r-control);
@@ -11866,6 +11876,14 @@ body.resizing iframe {
   font-size: var(--dsc-fs-caption);
   padding: 0 6px;
   white-space: nowrap;
+}
+
+/* P0（最高一档）：与 P1 共用红色令牌，只额外染一层底色并加粗——两档摆在一起时
+   光看颜色分不出轻重，多这一层才「一眼看见最该先修的那条」。 */
+.review-finding[data-priority='P0'] .review-finding-badge {
+  background: color-mix(in srgb, var(--dsc-red) 14%, transparent);
+  color: var(--dsc-red);
+  font-weight: 600;
 }
 
 .review-finding[data-priority='P1'] .review-finding-badge {

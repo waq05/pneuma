@@ -11,8 +11,8 @@
  * 摘要调用复用主对话前缀（2026-10-03）：系统提示词取自 prompt 服务、工具目录取自 tools 服务，
  * 摘要请求因此是上一次真实请求的前缀扩展，命中服务端 KV 缓存（见 core/compact.ts 的 context 参数）。
  *
- * 六个可调值（保留条数、自动压缩触发线、锚点索引字符预算、用户原话字符预算、
- * read-state 文件数、read-state 字符预算）读自己的插件配置，
+ * 九个可调值（保留条数、保留尾部的窗口占比、自动压缩触发线、安全余量、压一次不够时最多再压几次、
+ * 锚点索引字符预算、用户原话字符预算、read-state 文件数、read-state 字符预算）读自己的插件配置，
  * 并以设置分区的面目交给界面；保存后本插件立刻重读，下一次压缩就用新值。
  *
  * @module dsc/plugins/compact
@@ -40,6 +40,20 @@ interface CompactConfig {
   keepRecent: number
   /** 估算用量超过模型上下文窗口的这个百分比就自动压缩。 */
   autoCompactPercent: number
+  /**
+   * 上下文窗口里给「输出预留之外」再留多少 token 的安全余量（绝对值）。
+   * 0 = 自动：按窗口的 6.4% 算，封顶 65536；正数则直接用这个值。
+   */
+  headroomTokens: number
+  /** 一次自动压缩没压到阈值以下时，最多再补压几次（0 = 只压一次）。 */
+  compactionRetries: number
+  /**
+   * 摘要之外原样保留的最近消息，按模型上下文窗口的这个百分比折算成 token 预算。
+   *
+   * 为什么不能只看条数：一条工具结果就可能几十万字符，固定 20 条在那种会话里
+   * 等于没压——压完还在阈值之上，白丢一次摘要调用。
+   */
+  retainPercent: number
   /** 摘要里机械抽取的锚点索引占多少字符。 */
   anchorBudgetChars: number
   /** 摘要里逐字引用的用户原话占多少字符。 */
@@ -53,6 +67,9 @@ interface CompactConfig {
 const DEFAULTS: CompactConfig = {
   keepRecent: DEFAULT_KEEP_RECENT,
   autoCompactPercent: 80,
+  headroomTokens: 0,
+  compactionRetries: 1,
+  retainPercent: 16,
   anchorBudgetChars: DEFAULT_ANCHOR_BUDGET_CHARS,
   userQuoteBudgetChars: DEFAULT_USER_QUOTE_BUDGET_CHARS,
   readStateFiles: DEFAULT_READ_STATE_FILES,
@@ -66,6 +83,19 @@ const USER_QUOTE_BUDGET_RANGE = { min: 1000, max: 40000 }
 const READ_STATE_FILES_RANGE = { min: 0, max: 20 }
 /** read-state 字符预算的区间（默认 1500，压得很紧）。 */
 const READ_STATE_BUDGET_RANGE = { min: 200, max: 10000 }
+/**
+ * 安全余量的区间：0 = 自动（窗口的 6.4%，封顶 65536）。
+ * 上限给到 131072：再大的窗口配再大的余量也够用了，填得比窗口还大等于永远触发压缩。
+ */
+const HEADROOM_RANGE = { min: 0, max: 131072 }
+/** 补压次数的区间：0 = 只压一次（手动 `/compact` 就是这条口径），最多补 3 次。 */
+const COMPACTION_RETRIES_RANGE = { min: 0, max: 3 }
+/**
+ * 尾部保留占比的区间（百分比）。
+ * 低于 5% 等于几乎不留给下一个自己；高于 40% 时压完留下的比折掉的还多，压缩没意义。
+ * 缺省 16%：dsh 的 retainRatio 就是这个数（按它那边 1M 窗口留约 16 万 token）。
+ */
+const RETAIN_PERCENT_RANGE = { min: 5, max: 40 }
 
 /**
  * 从插件配置取这些可调值，并把区间外的值夹回来。
@@ -78,6 +108,14 @@ function readConfig(passed?: unknown): CompactConfig {
     keepRecent: clamp(raw.keepRecent, 5, 200, DEFAULTS.keepRecent),
     // 低于 50% 会在干活时频繁打断，高于 95% 等于等模型报错才压。
     autoCompactPercent: clamp(raw.autoCompactPercent, 50, 95, DEFAULTS.autoCompactPercent),
+    headroomTokens: clamp(raw.headroomTokens, HEADROOM_RANGE.min, HEADROOM_RANGE.max, DEFAULTS.headroomTokens),
+    compactionRetries: clamp(
+      raw.compactionRetries,
+      COMPACTION_RETRIES_RANGE.min,
+      COMPACTION_RETRIES_RANGE.max,
+      DEFAULTS.compactionRetries,
+    ),
+    retainPercent: clamp(raw.retainPercent, RETAIN_PERCENT_RANGE.min, RETAIN_PERCENT_RANGE.max, DEFAULTS.retainPercent),
     anchorBudgetChars: clamp(
       raw.anchorBudgetChars,
       ANCHOR_BUDGET_RANGE.min,
@@ -118,14 +156,30 @@ export const compactPlugin: Plugin.Object = {
       writePluginConfig(CONFIG_KEY, patch)
       config = readConfig()
     }
-    /** 当前配置里的压缩上限，现读 config，保存后下一压就用新值。 */
-    const limits = (): CompactLimits => ({
-      keepRecent: config.keepRecent,
-      anchorChars: config.anchorBudgetChars,
-      userQuoteChars: config.userQuoteBudgetChars,
-      readStateFiles: config.readStateFiles,
-      readStateChars: config.readStateChars,
-    })
+    /**
+     * 当前配置里的压缩上限，现读 config，保存后下一压就用新值。
+     *
+     * 需要目标会话：尾部 token 预算按**这条会话**的模型窗口折算（后台会话按它自己的路由，
+     * 不看用户正在看的那条）。窗口拿不到时退回纯条数口径，不猜一个数。
+     *
+     * @param target - 要压的会话
+     * @param retain - 是否按窗口占比留尾巴。自动阈值压缩留（省下的空间还得放得下这一轮），
+     *   手动 `/compact` 与爆窗强压**不留**：这两条路的目的是尽快腾出空间，只保留条数下限。
+     *   不留这一档不是省事：100 万窗口的模型上，16% 的尾巴就是 16 万 token，短历史手动压
+     *   会因为「尾巴装得下整段」直接判成没得压——用户看到的是一句「历史不长，无需压缩」。
+     */
+    const limits = (target: Session, retain = true): CompactLimits => {
+      const window = ctx.llm.contextWindowOf(target)
+      const retainTokens = retain ? Math.floor(window * (config.retainPercent / 100)) : 0
+      return {
+        keepRecent: config.keepRecent,
+        ...(retainTokens > 0 ? { retainTokens } : {}),
+        anchorChars: config.anchorBudgetChars,
+        userQuoteChars: config.userQuoteBudgetChars,
+        readStateFiles: config.readStateFiles,
+        readStateChars: config.readStateChars,
+      }
+    }
     /** T19 前置裁剪口径：spill 配置复用 spill 插件的那份（目录与上限一致，模型可照常 read）。 */
     const prune = (): PruneOptions => ({
       ...DEFAULT_PRUNE_OPTIONS,
@@ -208,6 +262,30 @@ export const compactPlugin: Plugin.Object = {
       else runningTurnsBySid.set(sid, count - 1)
     })
 
+    /**
+     * 自动压缩的触发阈值（token）。
+     *
+     * 口径对齐 dsh：阈值 = min(窗口 × 触发比例, 窗口 − 输出预留 − 安全余量)。
+     * 为什么要减输出预留与安全余量：一次请求最多吐 maxTokens，这部分窗口不能拿去装历史；
+     * 余量留给「系统提示词 + 工具目录 + 本轮新增消息」的浮动空间，压到贴边的话
+     * 下一轮请求立刻又超。
+     * 余量为什么按窗口 6.4% 算并封顶 65536：dsh 那里是写死的 65536（按 1M 窗口设计），
+     * 照搬到 128k 窗口的模型上，阈值会掉到窗口的一半以下（131072 − 8192 输出 − 65536
+     * 只剩 57344，约 44%），活干到一半就被压一次。按窗口缩放才跟着窗口走。
+     *
+     * @param target - 要判定的会话（阈值跟这个会话的模型路由走，不看「当前查看的会话」）。
+     */
+    const thresholdOf = (target: Session): number => {
+      const window = ctx.llm.contextWindowOf(target)
+      const reserve = ctx.llm.routeForSession(target).maxTokens ?? 0
+      const headroom =
+        config.headroomTokens > 0 ? config.headroomTokens : Math.min(65_536, Math.floor(window * 0.064))
+      const byRatio = Math.floor(window * (config.autoCompactPercent / 100))
+      // 下限 1024：窗口配得很小、或 maxTokens 接近窗口时，阈值不能变成 0 甚至负数，
+      // 否则每次请求都判成「超了」，压缩会连着空转（每次都是 noop）。
+      return Math.max(1024, Math.min(byRatio, window - reserve - headroom))
+    }
+
     const service: CompactService = {
       registerCarry(contribute) {
         carries.push(contribute)
@@ -216,52 +294,89 @@ export const compactPlugin: Plugin.Object = {
           if (at >= 0) carries.splice(at, 1)
         }
       },
-      /** 当前模型路由 + 配置里的自动压缩触发线（缺省 contextWindow 的 80%）。 */
+      /** 当前模型路由 + 配置里的自动压缩触发线（缺省 min(窗口的 80%, 窗口 − 输出预留 − 余量)）。 */
       async check(signal, target) {
         const session = target ?? ctx.session.current()
-        const threshold = ctx.llm.contextWindowOf(session) * (config.autoCompactPercent / 100)
-        if (estimateTokens(session.messages) <= threshold) return
-        const outcome = await whileCompacting(session, () =>
-          compactSession(
-            session,
-            ctx.llm.routeForSession(session),
-            stream,
-            signal ?? new AbortController().signal,
-            carry(),
-            limits(),
-            undefined,
-            prune(),
-            requestContext(session),
-          ),
-        )
-        const compacted = outcome === 'compacted'
+        const threshold = thresholdOf(session)
+        let used = estimateTokens(session.messages)
+        if (used <= threshold) return
+        // 压完复量、还超就再压（对齐 dsh 的 compactionRetries）：一次压缩的收缩率
+        // 跟摘要模型当时的输出质量有关，偶尔一次压不到线以下；补压一两次比直接放弃好。
+        // 手动 /compact 与 forceCompact 不循环——手动只压一次，爆窗重试也只看这一次的成败。
+        //
+        // 补压这一刀必须绕开「历史太短」守卫（force）：第一次压完只剩摘要 + 条数下限那几条，
+        // 正常判定会认为没得压、直接 noop，可恰恰是「尾巴本身就超预算」才需要再压。
+        // 带 force 之后能折进上一份摘要本身，尾部按 token 预算重新收紧——这才是补压的意义。
+        let attempts = 0
+        for (let attempt = 0; attempt <= config.compactionRetries; attempt += 1) {
+          const result = await whileCompacting(session, () =>
+            compactSession(
+              session,
+              ctx.llm.routeForSession(session),
+              stream,
+              signal ?? new AbortController().signal,
+              carry(),
+              limits(session),
+              attempt > 0 ? true : undefined,
+              prune(),
+              requestContext(session),
+            ),
+          )
+          // 一轮都没压成（历史太短 / 整段都是工具结果）就别再试：再压还是同一个结果
+          if (result.outcome !== 'compacted') break
+          attempts += 1
+          // 复量按新历史算：摘要 + 尾巴的实际估算（dsh 在同一处也用 token 计量器重量）
+          used = estimateTokens(session.messages)
+          if (used <= threshold) break
+        }
+        const compacted = attempts > 0
         // 只有真压出结果才打压缩标记：noop 时这条提示照旧发（文案不动），
         // 但轨迹页不该凭空多出一段「压缩历史」
         // 带会话归属（0.6.68）：后台会话自动压缩时，这句提示不该冒到用户正在看的视图里。
-        ctx.emit('dsc/notice', '上下文接近模型上限，已自动压缩历史', compacted ? 'compaction' : undefined, session.filePath)
-        if (compacted) {
-          ctx.emit('dsc/compacted')
-          reportContextUsed(session)
+        if (!compacted) {
+          ctx.emit('dsc/notice', '上下文接近模型上限，已自动压缩历史', undefined, session.filePath)
+          return
         }
+        if (used <= threshold) {
+          ctx.emit('dsc/notice', '上下文接近模型上限，已自动压缩历史', 'compaction', session.filePath)
+        } else {
+          // 补压用完仍在阈值之上：说清「还超多少、压了几次」，用户才知道该不该手动收紧口径
+          ctx.emit(
+            'dsc/notice',
+            `上下文仍接近模型上限（估算 ${used} tokens ≥ 阈值 ${threshold}），已连续压缩 ${attempts} 次`,
+            'compaction',
+            session.filePath,
+          )
+        }
+        ctx.emit('dsc/compacted')
+        reportContextUsed(session)
       },
 
       /** 请求已经因爆窗失败，强制压一次（2026-09-29）：压出空间返回 true，循环方重试请求。 */
       async forceCompact(signal, target) {
         const session = target ?? ctx.session.current()
-        const outcome = await whileCompacting(session, () =>
+        // 先看微压缩（2026-11-02）：旧工具结果换成占位符是**投影**，不落历史，
+        // 此时真正发出去的请求本来就是清理过的。若清理后已经装进窗口，就没必要
+        // 牺牲历史去压摘要——白白丢掉原文，还可能把工具配对切坏。直接让调用方重试。
+        const micro = ctx.get('microcompact')
+        if (micro !== undefined && micro.projectedTokens(session.messages) < ctx.llm.contextWindowOf(session)) {
+          ctx.emit('dsc/notice', '上下文超出模型窗口，但旧工具结果清理后已在窗口内，直接重试', undefined, session.filePath)
+          return false
+        }
+        const result = await whileCompacting(session, () =>
           compactSession(
             session,
             ctx.llm.routeForSession(session),
             stream,
             signal ?? new AbortController().signal,
             carry(),
-            limits(),
+            limits(session, false),
             true,
             prune(),
             requestContext(session),
           ),
         )
-        if (outcome === 'compacted') {
+        if (result.outcome === 'compacted') {
           // 打上 'compaction' 类别：transcript 据此把这条通知标成压缩落点（轨迹页切区段）
           ctx.emit('dsc/notice', '上下文超出模型窗口：已自动压缩历史并重试', 'compaction', session.filePath)
           ctx.emit('dsc/compacted')
@@ -287,20 +402,20 @@ export const compactPlugin: Plugin.Object = {
         }
         try {
           const target = ctx.session.current()
-          const outcome = await whileCompacting(target, () =>
+          const result = await whileCompacting(target, () =>
             compactSession(
               target,
               ctx.llm.routeForSession(target),
               stream,
               new AbortController().signal,
               carry(),
-              limits(),
+              limits(target, false),
               undefined,
               prune(),
               requestContext(target),
             ),
           )
-          const compacted = outcome === 'compacted'
+          const compacted = result.outcome === 'compacted'
           ctx.emit(
             'dsc/notice',
             compacted ? '上下文已压缩（任务清单与目标原样保留）' : '历史不长，无需压缩',
@@ -348,7 +463,34 @@ export const compactPlugin: Plugin.Object = {
         min: 50,
         max: 95,
         step: 5,
-        help: '估算用量超过这个比例就自动压缩；/compact 手动压缩不受这条线限制。',
+        help: '估算用量超过这个比例就自动压缩；/compact 手动压缩不受这条线限制。阈值还会被「窗口减去输出预留与安全余量」压低，取两者中较小的那个。',
+      },
+      {
+        type: 'number',
+        key: 'headroomTokens',
+        label: '安全余量（token，0 = 按窗口自动）',
+        min: HEADROOM_RANGE.min,
+        max: HEADROOM_RANGE.max,
+        step: 1024,
+        help: '压到多早才开始动手：阈值会给输出预留（模型的 maxTokens 上限）再加这么多 token 的安全余量。0 = 自动（窗口的 6.4%，最多 65536）。调大 = 更早压缩、留给这一轮的空间更多；调小 = 压得更晚、更省历史。',
+      },
+      {
+        type: 'number',
+        key: 'compactionRetries',
+        label: '压一次还不够时最多再压几次',
+        min: COMPACTION_RETRIES_RANGE.min,
+        max: COMPACTION_RETRIES_RANGE.max,
+        step: 1,
+        help: '自动压缩后若估算用量仍在阈值之上，会再压一次，最多补这么多次。代价：每多压一次就多一次摘要模型调用（要等它写完才发真实请求），并且每次都把更早的原文折成摘要，细节会再丢一层。0 = 只压一次。',
+      },
+      {
+        type: 'number',
+        key: 'retainPercent',
+        label: '保留尾部（占模型窗口的百分比）',
+        min: RETAIN_PERCENT_RANGE.min,
+        max: RETAIN_PERCENT_RANGE.max,
+        step: 1,
+        help: '压缩后原样保留最近这些对话，按模型窗口折算成 token 预算，再退到「工具调用与结果不拆开」的安全边界；「压缩后保留最近多少条」仍是条数下限。为什么按 token 算：一条工具结果就可能几十万字符，只按条数留会在这种会话里压不动。调大 = 原文留得更多、省出的空间更少。',
       },
       {
         type: 'number',
@@ -400,6 +542,9 @@ export const compactPlugin: Plugin.Object = {
         return {
           keepRecent: config.keepRecent,
           autoCompactPercent: config.autoCompactPercent,
+          headroomTokens: config.headroomTokens,
+          compactionRetries: config.compactionRetries,
+          retainPercent: config.retainPercent,
           anchorBudgetChars: config.anchorBudgetChars,
           userQuoteBudgetChars: config.userQuoteBudgetChars,
           readStateFiles: config.readStateFiles,
@@ -412,6 +557,9 @@ export const compactPlugin: Plugin.Object = {
         if (!Number.isFinite(num)) return '这里要填一个数字'
         if (key === 'keepRecent') applyConfig({ keepRecent: num })
         else if (key === 'autoCompactPercent') applyConfig({ autoCompactPercent: num })
+        else if (key === 'headroomTokens') applyConfig({ headroomTokens: num })
+        else if (key === 'compactionRetries') applyConfig({ compactionRetries: num })
+        else if (key === 'retainPercent') applyConfig({ retainPercent: num })
         else if (key === 'anchorBudgetChars') applyConfig({ anchorBudgetChars: num })
         else if (key === 'userQuoteBudgetChars') applyConfig({ userQuoteBudgetChars: num })
         else if (key === 'readStateFiles') applyConfig({ readStateFiles: num })

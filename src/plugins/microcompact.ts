@@ -12,6 +12,9 @@
  *
  * 不改会话日志：日志原文不动，模型看见的是「原文 + 投影链」的结果，可复算。
  *
+ * 另外对外提供 `microcompact` 服务（2026-11-02）：压缩插件在爆窗重试前先用它算一眼
+ * 「清理之后还装不装得下」，装得下就不必牺牲历史去压摘要。
+ *
  * @module dsc/plugins/microcompact
  */
 import type { Plugin } from '@deepseek-ai/cordis'
@@ -24,11 +27,12 @@ import {
   roundKeyOf,
   type MicrocompactPlan,
 } from '../core/microcompact.js'
+import { estimateTokens } from '../core/compact.js'
 import type { ChatMessage } from '../core/llm.js'
 import type { Session } from '../core/session.js'
 import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
 import type { SettingsField, SettingsValues } from '../contract.js'
-import type { SettingsSectionSpec } from '../services/types.js'
+import type { MicrocompactService, SettingsSectionSpec } from '../services/types.js'
 import { clampInt as clamp } from '../core/clamp.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
@@ -150,6 +154,29 @@ export const microcompactPlugin: Plugin.Object = {
       { order: PROJECTION_ORDER },
     )
 
+    /**
+     * 投影估算服务（2026-11-02）：把旧工具结果换成占位符之后，整段消息的估算 token 数。
+     * 只算不落盘，用的是本插件现读的 config 与同一套 plan / apply，跟真正发请求时一致。
+     *
+     * 失败/被拒的 tool_call_id 记在会话旁路（`Session.toolErrors`），这个接口只收消息、
+     * 拿不到会话，所以按空集算：那类结果本来就该保留，少清几条只会让估算偏保守
+     * （偏保守 = 更容易判定「装不下」= 老老实实去压摘要，不会误判成熟）。
+     */
+    const service: MicrocompactService = {
+      projectedTokens(messages: readonly ChatMessage[]): number {
+        // 关掉时没有投影，发出去的就是原文
+        if (!config.enabled) return estimateTokens(messages)
+        const plan = planMicrocompact(messages, {
+          keepRecent: config.keepRecent,
+          minSaveTokens: config.minSaveTokens,
+        })
+        // 门槛没达到时投影也不生效（见 planWorthApplying 的注释），估算按原文算
+        if (!planWorthApplying(messages, plan, config.minFreePercent)) return estimateTokens(messages)
+        return estimateTokens(applyMicrocompactPlan(messages, plan))
+      },
+    }
+    const offService = ctx.provide('microcompact', service)
+
     // ── 设置分区 ─────────────────────────────────────────────────────────────
 
     const fields: SettingsField[] = [
@@ -243,6 +270,7 @@ export const microcompactPlugin: Plugin.Object = {
     const offSection = ctx.settings.registerSection(section)
 
     return () => {
+      offService()
       offProjection()
       offSection()
     }
