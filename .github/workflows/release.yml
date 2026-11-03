@@ -73,14 +73,35 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
       - name: 发布（未配 NPM_TOKEN 则跳过）
+        id: publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -z "$NODE_AUTH_TOKEN" ]; then
             echo "::warning::secret NPM_TOKEN 未配置，跳过 npm 发布；到仓库 Settings → Secrets and variables → Actions 配置后重跑 npm 作业，或本地 npm publish"
+            echo "published=0" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           npm publish
+          echo "published=1" >> "$GITHUB_OUTPUT"
+      - name: 核对 npm 上的版本
+        if: steps.publish.outputs.published == '1'
+        shell: bash
+        # npm 对新包有时先回 202（处理中），过几秒到几分钟才查得到；轮询 5 分钟再判失败，
+        # 免得「发布成功但立刻查不到」被误报成失败。
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          for attempt in $(seq 1 30); do
+            if npm view "$name@$version" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+              echo "npm 上已有 $name@$version"
+              exit 0
+            fi
+            echo "第 $attempt 次还没查到，等 10 秒"
+            sleep 10
+          done
+          echo "::error::npm 上查不到 $name@$version（发布后等了 5 分钟仍未生效）"
+          exit 1
 
   desktop:
     name: Windows 安装器 + GitHub Release
@@ -119,12 +140,18 @@ jobs:
           # 本机已有 dist 时 install.js 会立刻退出（isInstalled 命中），跑一次无副作用。
           node node_modules/electron/install.js
           pnpm exec electron-builder --publish never
+      - name: 生成发布正文（取 CHANGELOG 当前版本一节 + 安装说明）
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        # 正文来源只有一个：仓库里的 CHANGELOG。找不到这一版时脚本给兜底正文并提示，不挡发布。
+        run: node scripts/release-notes.mjs "$GITHUB_REF_NAME" --out release-notes.md
       - name: 发布 GitHub Release（tag 触发才执行）
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: desktop/dist/pneuma-*.exe
-          generate_release_notes: true
+          # 用上面那一步生成的正文；换成 body_path 之后就不再让 GitHub 自动生成一行对比链接
+          body_path: release-notes.md
       - name: 演练产物上传 artifacts（手动触发才执行）
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4

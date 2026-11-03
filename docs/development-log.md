@@ -12679,3 +12679,25 @@ Pneuma 窗口整片变白，除了重启没有回来的路。
 
 **以后**：发版 tag 从 main 打。开发放在分支上，发布前先把 main 合回分支（或分支合进 main）再打 tag，
 别让默认分支再落后一个大版本。
+
+## 发版正文与 npm 发布固化进 CI（2026-11-03）
+
+**问题**：0.8.1 的发布页正文只有一行 “Full Changelog”，是手工补的；npm 也没自动发出去——CI 的 npm
+作业因为仓库没配 `NPM_TOKEN` 一直警告后跳过。两件事都靠人记得，下一版还会漏。
+
+**做法**：
+
+- 新增 `scripts/release-notes.mjs`：从 `CHANGELOG.md` 取 `## <版本> — <日期>` 这一节，前面加「装哪个」
+  （安装版 / 免安装 / npm 命令三条），结尾链回 CHANGELOG；找不到这一版时给兜底正文并在 stderr 提示，
+  不挡发布。
+- `release.yml` 的 Windows 作业在打包后跑它生成 `release-notes.md`，发布步骤改用 `body_path`，
+  去掉 `generate_release_notes`——正文只有一个来源：仓库里的 CHANGELOG。
+- npm 作业：发布成功后轮询官方源最多 5 分钟确认版本真出现（npm 对新包有时先回 202，原先的情况是
+  「命令成功、源上还查不到」）；未配 secret 仍按原口径警告跳过，不挡安装包。
+- 新增 `scripts/release-notes-test.mjs`（五条口径：只取目标版本、标题不进正文、三个安装入口带版本号、
+  缺版本不改崩、结尾链回 CHANGELOG），按文件名自动进 `check:core`。
+
+**结果**：以后推 tag，发布页正文与 npm 版本都从仓库内容长出来，不用再手工补。
+
+**还差一步**：`NPM_TOKEN` 这个 secret 要有人在仓库设置里填一次。我这边没有写仓库密钥的权限，
+也不该替你把凭据写进仓库。

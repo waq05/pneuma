@@ -678,6 +678,13 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 产物里的位置：`resources/app.asar`（壳）+ `resources/dsc-core/lib`（内核）。
 **内核没跟着 exe 更新**时先怀疑 `prepare-runtime` 之前没跑 `pnpm run build`。
 
+**发布流水线**（`.github/workflows/release.yml`，推 `v*` tag 触发，tag 打在 `main` 上）：
+`verify` 对账 tag / 根 / `desktop` / `ui-shell` 四处版本号，并跑一次 `build:plugins` 检查 19 个内置
+插件的 `@dsc/ui` peer 区间；`npm` 作业用 `NPM_TOKEN` 发 CLI，发完轮询官方源确认版本真出现
+（未配 secret 时警告并跳过，不挡安装包）；Windows 作业构建两个安装器，正文由
+`scripts/release-notes.mjs` 从 `CHANGELOG.md` 取当前版本那一节、前面补一段「装哪个」再上传，
+所以**发版前只要在 CHANGELOG 写清这一版**，发布页就有内容，不用再手工补。
+
 `asar: true` 会吃掉 fs 直读，自检脚本里那句「`app.asar` 里没找到运行时」就是这么来的。
 
 ## 10. 代码约定
