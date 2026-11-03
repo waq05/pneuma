@@ -1,0 +1,30 @@
+  approval-review-fallback-test.mjs  ok     581ms  全部通过
+  ask-timeout-test.mjs               ok   16665ms  全部通过
+  async-inbox-test.mjs               ok    2927ms  全部通过
+  attachments-test.mjs               ok     950ms  全部通过
+  bash-truncation-test.mjs           ok     325ms  全部通过
+  batch3-test.mjs                    ok     166ms  19 PASS / 0 FAIL
+  boot-notices-test.mjs              FAIL (exit 1)    1756ms
+  call-meaning-test.mjs              ok     177ms  全部通过
+  command-policy-test.mjs            ok     153ms  全部通过
+  commands-battery-test.mjs          FAIL (exit 1)     813ms
+  compact-readstate-test.mjs         ok    5514ms  压缩 read-state 电池：全部通过
+  compact-token-tail-test.mjs        ok   13006ms  压缩口径探针：全部通过
+  compacting-status-test.mjs         ok    1990ms  全部通过
+  composer-test.mjs                  ok   47972ms  全部通过
+  computer-use-test.mjs              ok     198ms  电脑操作 parity 自检：全部通过
+  config-file-switch-test.mjs        ok    1733ms  换配置文件：38/38 通过
+  connection-test-test.mjs           ok   11409ms  测试连接电池：全部通过
+  context-pipeline-test.mjs          ok    2254ms  上下文流水线整合自检：全部通过
+  context-segments-test.mjs          ok    2299ms  全部通过
+  context-usage-restore-test.mjs     ok    2466ms  PASS 21/21
+  dock-browser-test.mjs              ok    1035ms  通过 95/95
+  effort-per-model-test.mjs          ok     215ms  通过 31/31
+  empty-session-test.mjs             FAIL (exit 1)    5441ms
+  env-cache-test.mjs                 FAIL (exit 1)    1444ms
+  env-facts-test.mjs                 ok    5241ms  全部通过（12 项）
+  escalation-scope-test.mjs          ok    3949ms  升权与范围自检：全部通过
+  floor-shell-and-budget-test.mjs    ok    4641ms  全部通过
+  goal-persist-test.mjs              ok     177ms  全部通过
+  hooks-test.mjs                     ok     164ms  
+  image-diet-test.mjs                

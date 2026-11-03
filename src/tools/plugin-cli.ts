@@ -19,6 +19,8 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import YAML from 'yaml'
 import { activeProfileDir } from '../core/plugin-loader.js'
 import { DSH_CONTRACT_VERSION, bundleDirOf, enginesProblem, readBundle, readProfile } from '../core/plugin-bundle.js'
 import { dscPath } from '../core/path-policy.js'
@@ -155,18 +157,87 @@ function runRemove(name: string | undefined, args: readonly string[]): number {
   return 0
 }
 
+/** 应用自带的包（`<应用根>/lib/node_modules/@pneuma/**`）。 */
+const APP_ROOT = fileURLToPath(new URL('../..', import.meta.url))
+
+/** 读 ~/.dsc/plugins.json 的条目树（CLI 不启内核，只能自己读一眼）。 */
+function readEntries(): Map<string, boolean> {
+  const out = new Map<string, boolean>()
+  try {
+    const doc = JSON.parse(readFileSync(dscPath('plugins.json'), 'utf8')) as { entries?: unknown }
+    if (!Array.isArray(doc.entries)) return out
+    for (const entry of doc.entries) {
+      if (entry !== null && typeof entry === 'object') {
+        const file = (entry as { file?: unknown }).file
+        if (typeof file === 'string') out.set(file, (entry as { disabled?: unknown }).disabled === true)
+      }
+    }
+  } catch {
+    // 没有条目树就是全默认
+  }
+  return out
+}
+
+/**
+ * 列出应用自带的全部行：读 `@pneuma/base` 的 patch，再逐个包读 package.json。
+ *
+ * 为什么要读磁盘而不是写死清单：这一屏的意义就是「应用里到底装了什么、哪一行关了」，
+ * 写死等于又造了一份会和构建产物漂移的表。
+ */
+function listApplicationRows(): void {
+  const basePatch = join(APP_ROOT, 'lib', 'node_modules', '@pneuma', 'base', 'cordis.patch.yml')
+  if (!existsSync(basePatch)) {
+    console.log('应用自带的包清单没找到（' + basePatch + '）：先跑 pnpm build。')
+    return
+  }
+  const entries = readEntries()
+  let rows: unknown
+  try {
+    rows = YAML.parse(readFileSync(basePatch, 'utf8'))
+  } catch (error) {
+    console.log('应用自带的包清单读不了：' + (error instanceof Error ? error.message : String(error)))
+    return
+  }
+  const insert = []
+  for (const entry of Array.isArray(rows) ? rows : []) {
+    if (entry !== null && typeof entry === 'object') insert.push(...(((entry as { insert?: unknown }).insert ?? []) as unknown[]))
+  }
+  console.log('应用自带  ' + APP_ROOT + '（' + String(insert.length) + ' 行）')
+  for (const row of insert) {
+    if (row === null || typeof row !== 'object') continue
+    const id = String((row as { id?: unknown }).id ?? '')
+    const name = String((row as { name?: unknown }).name ?? '')
+    const rowOff = (row as { disabled?: unknown }).disabled === true
+    const dir = join(APP_ROOT, 'lib', 'node_modules', ...name.split('/'))
+    let version = '?'
+    let title = ''
+    try {
+      const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as Record<string, unknown>
+      version = String(manifest.version ?? '?')
+      const pneuma = manifest.pneuma as { title?: unknown } | undefined
+      title = typeof pneuma?.title === 'string' ? pneuma.title : ''
+    } catch {
+      // 包不在：标成缺件，别假装有版本
+      version = '缺件'
+    }
+    const off = entries.has(id) ? entries.get(id) === true : rowOff
+    console.log('  ' + id.padEnd(20) + ' v' + version.padEnd(8) + (off ? '关 ' : '开 ') + title)
+  }
+}
+
 function runList(args: readonly string[]): number {
+  listApplicationRows()
   const dir = resolveProfileDir(args)
+  console.log('')
+  console.log('profile  ' + dir)
+  console.log('对照的 dsh 契约版本  ' + DSH_CONTRACT_VERSION)
   if (!existsSync(join(dir, 'package.json'))) {
-    console.log('没有这个 profile：' + dir)
-    console.log('先 numa plugin add <包名> 会创建它。')
+    console.log('（还没建这个 profile；首次启动会自动铺默认 profile）')
     return 0
   }
   const profile = readProfile(dir)
-  console.log('profile  ' + dir)
-  console.log('对照的 dsh 契约版本  ' + DSH_CONTRACT_VERSION)
   if (profile.bundles.length === 0) {
-    console.log('这个 profile 里还没装组合包。')
+    console.log('（没有额外组合包）')
     return 0
   }
   for (const name of profile.bundles) {
