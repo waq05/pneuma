@@ -135,9 +135,9 @@ const off = ctx.commands.register(
 #### 0.3.3 设置分区
 
 `ctx.settings.registerSection({ id, title, fields, values, save, action })`，控件类型是
-`text` / `number` / `select` / `switch` / `info` / `button`。分区 order 惯例：通用 0、模型 10、
-技能 20、关于 900。框架不做取值夹取，`save(key, value)` 里自己判（越界返回字符串即失败原因，
-返回 `void` 即成功）。
+`text` / `number` / `select` / `switch` / `info` / `button`。分区 order 惯例：通用 0、模型 10、预设 15、
+技能 20、用量 25、归档 30、终端 35、关于 900。框架不做取值夹取，`save(key, value)` 里自己判（越界返回字符串即失败原因，
+返回 `void` 即成功）。**分区默认只出现在插件中心的卡片上**，要进设置页左栏得加第二参 `{ inSettings: true }`。
 
 #### 0.3.4 守卫与观察者
 
@@ -158,10 +158,11 @@ order 是刻度，数字小的先跑：灾难地板 5、沙箱 8、协作模式 
 
 #### 0.3.6 事件
 
-内核事件集中定义在 `src/services/types.ts` 的 `Events` 接口：`dsc/changed`、`dsc/notice`、
+内核事件集中定义在 `src/services/types.ts` 的 `Events` 接口，**共 18 个**：`dsc/changed`、`dsc/notice`、
 `dsc/plan`、`dsc/session-open`、`dsc/exit`、`dsc/open-picker`、`dsc/open-models`、`dsc/dock-data`、
 `dsc/skills-changed`、`dsc/mode-changed`、`dsc/preset-changed`、`dsc/turn-start`、`dsc/turn-end`、
-`dsc/agent-status`、`dsc/compacted`。自己发的事件用 `dsc/plugin/<插件名>/<事件>` 这样的名字，
+`dsc/agent-status`、`dsc/side-ask-chunk`、`dsc/compacted`、`dsc/compacting`、`dsc/context-used`。
+每个事件的载荷与触发时机见 §5 那张表。自己发的事件用 `dsc/plugin/<插件名>/<事件>` 这样的名字，
 避免撞车。
 
 ### 0.4 写界面插件（简版）
@@ -197,8 +198,9 @@ dsc 采用「万物皆插件」架构：内核（cordis Context）只提供一�
 维护插件自身状态与清理逻辑、声明 API 版本与元数据；往桌面端设置面板注册一个**设置分区**，
 或往技能中心注册一个**技能来源 / 市场源**。
 **做不到的**（当前版本边界，不要向用户承诺）：
-- 不能注入自定义 React 组件、HTML 或 CSS。界面扩展只接受可 JSON 序列化的控件声明
-  （`SettingsField`，见 §4.7），渲染由桌面端唯一的渲染器完成；TUI 不渲染插件分区；
+- **宿主插件**（本文 1–9 节的单文件 `.js`）不能注入 React 组件、HTML 或 CSS：它的界面扩展只接受
+  可 JSON 序列化的控件声明（`SettingsField`，见 §4.7），渲染由桌面端唯一的渲染器完成；TUI 不渲染插件分区。
+  要画真界面得写成**界面插件**——那条体系见 §10（`ui/client.js` + 槽位注册，可以写 React 组件）；
 - 不要尝试覆盖内置服务（cordis 允许 provide 同名服务，但该路径未经验证）。
 
 ## 2. 硬性规则（MUST / NEVER）
@@ -216,8 +218,8 @@ dsc 采用「万物皆插件」架构：内核（cordis Context）只提供一�
    **停用是热卸载**（disposer 会被立即调用，未清理的资源会泄漏）。
 9. **MUST** 给工具声明正确的 `risk`：只读数据用 `'read'`（自动放行）；
    任何写文件 / 执行命令的行为用 `'write'` / `'exec'`（受权限模式与审批卡约束）。
-10. **MUST** 工具 `run` 返回 `Promise<string>`——这段文本会被原样交给模型，请返回
-    简洁、信息密度高的纯文本；失败直接 `throw new Error(...)`。
+10. **MUST** 工具 `run` 返回 `Promise<string | ToolOutput>`——字符串会被原样交给模型，请返回
+    简洁、信息密度高的纯文本；要带图就返回 `{ text, images }`。失败直接 `throw new Error(...)`。
 
 ## 3. 插件解剖
 
@@ -250,9 +252,9 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 
 - `disabled`：停用开关（桌面端「插件」页切换的就是它）；不在 entries 里的文件默认启用。
 - `config`：**透传给 `apply(ctx, config)` 第二参**——插件用它读自己的配置，不必再自建
-  配置文件。取值统一走 `resolvePluginConfig('<file>', passed)`（`src/core/plugin-registry.ts:168`）：
+  配置文件。取值统一走 `resolvePluginConfig('<file>', passed)`（`src/core/plugin-registry.ts:246`）：
   装配时那份作底，磁盘上这份覆盖它，所以设置分区保存后正在跑的插件下一次用值就是新值，不用重启宿主。
-  读它的内置插件有 `compact`、`approval`、`ask`、`goal`、`prompt`、`host-stdio`，取值范围都带上下限夹取；十八个官方可开关插件（`subagent`、`team`、`computer-use`、`web-search`、`approval-floor`、`spill`、`session-search`、`lifecycle-hooks`、`mcp`、`tool-search`、`sandbox`、`file-review`、`schedule`、`lsp`、`browser`、`dock-browser`、`self-improve`、`dsh-compat`）也各读这一份，并把可调值挂进自己的设置分区。
+  读它的内置插件有 `compact`、`approval`、`ask`、`goal`、`prompt`、`host-stdio`，取值范围都带上下限夹取；十八个官方可开关插件（`subagent`、`team`、`computer-use`、`web-search`、`approval-floor`、`spill`、`session-search`、`lifecycle-hooks`、`mcp`、`tool-search`、`sandbox`、`file-review`、`schedule`、`lsp`、`browser`、`dock-browser`、`self-improve`、`dsh-compat`）里有可调项的那些也照这条路读，并把可调值挂进自己的设置分区；`team`、`spill`、`lifecycle-hooks`、`dsh-compat` 四个没有可调项，不读配置。
 - **启停热生效**：切换开关 → 内核卸载（调用 disposer）或重新挂载插件，无需重启宿主；
   文件内容变更后重新启用也会加载新代码（按 mtime 破坏模块缓存）。
 
@@ -268,10 +270,10 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 |---|---|
 | 1 | 初始版本：工具、命令、事件、全部内核服务 |
 | 2 | 新增 `settings` 与 `skills` 服务：设置分区、技能来源、市场源三个扩展点；桌面端设置面板与技能中心 |
-| 3 | 新增请求组装扩展点：`ctx.prompt.register`（附加系统提示，带 order 刻度）与 `ctx.prompt.transformMessages`（改写发出去的请求体）；外部插件可用 `export const settingsSection` 声明自己的设置分区 id |
-| 6 | 模型层两条缝：`ctx.llm.registerAdapter`（协议适配器 + 端点 `api` 字段 + `ctx.llm.stream` 派发）；`ctx.prompt.registerProjection`（命名纯投影，接替 v3 的匿名 `transformMessages`，内置 `fold-system` / `drop-images` 为保留名）；会话新增 `session.appendNote`（投影注入日志外内容必须落一条） |
-| 4 | 新增三个内核扩展点：工具守卫链（`ctx.guards.register` / `registerObserver`）、快照片段（`ctx.surfaces.register`）、等人登记（`ctx.waiting.register`）；会话记录多一对按 id 存取的状态（`ctx.session.appendState` / `session.state`） |
-| 5 | 新增一个可选服务 `sandbox`（当前档位、强制执行等级、可写根与路径判定；读它要用 `ctx.get('sandbox')`），并把「命令执行器缝」（`src/core/tools/command-runner.ts`，沙箱的容器后端换执行体用）开给随包发布的内置插件 |
+| 3 | 新增请求组装扩展点：`ctx.prompt.register`（附加系统提示，带 order 刻度）与**命名的请求投影**（当时叫 `transformMessages`，v6 起改名 `registerProjection` 并固定为纯函数）；外部插件可用 `export const settingsSection` 声明自己的设置分区 id |
+| 4 | 新增三个内核扩展点：工具守卫链（`ctx.guards.register` / `registerObserver`）、快照片段（`ctx.surfaces.register`）、等人登记（`ctx.waiting.register`）；会话记录多一对按 id 存取的状态（`ctx.session.current().appendState` / `state`） |
+| 5 | 新增一个可选服务 `sandbox`（当前档位、强制执行等级、可写根与路径判定；读它要用 `ctx.get('sandbox')`），并把「命令执行器缝」（`src/core/tools/command-runner.ts`，沙箱的容器后端与受限令牌后端换执行体用）开给随包发布的内置插件 |
+| 6 | 模型层两条缝：`ctx.llm.registerAdapter`（协议适配器 + 端点 `api` 字段 + `ctx.llm.stream` 派发）；`ctx.prompt.registerProjection`（命名纯投影，接替 v3 的匿名 `transformMessages`，内置 `fold-system` / `drop-images` 为保留名）；会话新增 `session.current().appendNote`（投影注入日志外内容必须落一条） |
 
 `apiVersion = 1` 的旧插件在 v2 内核上照常挂载（判定只拒绝**高于**内核的声明），不用改代码；
 但要用 §4.7 / §4.8 的扩展点就必须声明 `apiVersion = 2`。
@@ -292,7 +294,7 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 |---|---|---|
 | 自定义 | `source: 'external'`（`~/.dsc/plugins/*.js`） | 可拨，默认开 |
 | 官方可开关 | `source: 'builtin'` 且 `toggleable: true` | 可拨，`defaultDisabled: true` 时默认关 |
-| 运行内核 | `source: 'builtin'` 且没标 `toggleable` | 不给开关，页面只露 3 行，其余折叠 |
+| 运行内核 | `source: 'builtin'` 且没标 `toggleable` | 不给开关，页面只露摘要几行，其余折叠 |
 
 现有的十八个官方可开关插件：默认开的六个是 `web-search`（联网搜索）、`approval-floor`（危险命令硬拦截）、`spill`（长输出转存）、`session-search`（历史会话搜索）、`sandbox`（文件与命令围栏——不配就没有外部进程与外部服务器，且默认档 workspace-write 不挡正常的工作区读写）、`file-review`（改动前预览——写文件、改文件前把 diff 摆进对话流）；默认关的十二个是 `subagent`（子智能体）、`team`（共享任务板）、`computer-use`（操作电脑桌面）、`lifecycle-hooks`（外部命令钩子）、`mcp`（MCP 外部工具）、`tool-search`（工具按需加载）、`schedule`（定时任务，到点会自己跑模型）、`lsp`（代码跳转与报错）、`browser`（受控浏览器，拉起独立 Chrome）、`dock-browser`（侧栏浏览器）、`self-improve`（经验沉淀，会写技能文件）、`dsh-compat`（dsh 插件兼容）。各自干什么、默认开关按什么规矩定，见 development.md §4 那张表。
 
@@ -327,7 +329,7 @@ ctx.tools.register({
   // 可选：转调别人的桥接工具（如 tool_call）用它报出被调工具的真名与真实风险，
   // 守卫链与审批卡就按那一条判定，一次调用只问一遍。返回 undefined = 认不出目标，按自己判定。
   gateAs?(args, cwd): { name, risk, args } | undefined
-  run(args: Record<string, unknown>, ctx: { cwd: string; signal: AbortSignal }): Promise<string>
+  run(args: Record<string, unknown>, ctx: { cwd: string; signal: AbortSignal }): Promise<string | ToolOutput>
 }) => () => void                            // 返回退订函数
 ctx.tools.list(): ToolEntry[]
 ```
@@ -374,8 +376,8 @@ ctx.commands.register(
 壳只能把名字读出来、再发回来，拿不到 handler，也够不着没标这一位的命令。标之前先量一件事：
 **这条命令的动作别超出界面通道已有的权力面**——写文件、改权限旋钮、落信任、退出这类写完面
 一律在原生桥单开（与第三方界面插件的信任同一先例，见 §10.3），壳的菜单里只该出现
-「列出来也不多给任何东西」的命令。挑选尺子与内置那二十三条的清单写在
-`src/core/commands-completion.ts:35`。
+「列出来也不多给任何东西」的命令。挑选尺子与内置那 25 条的清单（`BUILT_IN_COMMANDS`）写在
+`src/core/commands-completion.ts:32`。
 
 ### 4.3 transcript —— 会话流（反馈用户的正道）
 
@@ -394,7 +396,7 @@ ctx.llm.provider / ctx.llm.model / ctx.llm.effort / ctx.llm.contextWindow   // �
 ctx.llm.route(): LlmRoute               // { api, baseUrl, apiKey, model, maxTokens?, thinking? }
                                         // 注意：返回值含 apiKey，不要打印/落盘
 ctx.llm.setModel(provider, model)       // 切换；端点/模型不存在时抛错
-ctx.llm.setEffort('off' | 'low' | 'high' | 'max')
+ctx.llm.setEffort('default' | 'off' | 'low' | 'high' | 'max')
 ctx.llm.listModels(): ModelChoiceView[] // [{ value: '端点/模型', provider, model, description }]
 
 // 模型协议适配器（内核 API v6）：一种线上协议一份实现，端点在 config.yaml 里
@@ -415,15 +417,33 @@ const off = ctx.llm.registerAdapter({
 ctx.session.current(): Session          // Session.meta: { id, cwd, createdAt }；Session.messages: 协议消息数组
 ctx.session.open(filePath?: string): Promise<void>  // undefined=新建；传入 jsonl 路径=恢复
 ctx.session.refresh(): Promise<void>    // 刷新会话列表缓存（ctx.session.sessions）
-ctx.session.appendState(id, payload)    // 自己那块状态写进会话记录（见 §4.9 的键表）
+ctx.session.current().appendState(id, payload)  // 自己那块状态写进会话记录（见 §4.9 的键表）
 ctx.session.current().state(id)         // 恢复会话时读回来；没写过就是 undefined
 
-ctx.agent.followup(text: string)        // 以用户身份投递一条消息（触发完整 Agent 回合）
-ctx.agent.interrupt()                   // 取消当前回合
+// 会话库操作（走 shell 时同样能用，返回结构与设置页同源）
+ctx.session.archive(paths: string[]): Promise<SettingsMutation>
+ctx.session.restore(paths: string[]): SettingsMutation
+ctx.session.purge(paths: string[]): Promise<SettingsMutation>
+ctx.session.rename(path: string, title: string): SettingsMutation
+ctx.session.setPinned(path: string, pinned: boolean): SettingsMutation
+ctx.session.fork(path: string, index: number): SessionForkResult
+ctx.session.rewind(path: string, keep: number, text?: string): SettingsMutation
 
-ctx.approval.decide(request, signal): Promise<'allow-once' | 'reject'>  // 编程式审批
+ctx.agent.followup(text: string, images?: string[], sessionId?: string): void  // 以用户身份投递一条消息（触发完整 Agent 回合）
+ctx.agent.interrupt(filePath?: string)  // 取消当前回合；给 jsonl 路径就停那个后台会话
+// 排队中的输入（回合跑着时插进来的那批）可以干预，都是按下标操作
+ctx.agent.editQueued(index: number, text: string): boolean
+ctx.agent.removeQueued(index: number): boolean
+ctx.agent.steerQueued(index?: number): boolean
+ctx.agent.isRunning(filePath: string): boolean
+ctx.agent.stop(filePath: string): Promise<void>
+
+ctx.approval.decide(request, signal, options?): Promise<'allow-once' | 'allow-session' | 'allow-always' | 'reject'>
+                                        // 编程式审批；options.forceAskReason 强制问人并跳过所有自动放行档
 ctx.compact.run(): Promise<void>        // 手动压缩上下文
 ```
+
+完整的服务方法面以 `src/services/types.ts` 的 `SessionService` / `AgentService` 为准，这里只列插件常碰的那几组。
 
 ### 4.6 ui —— DscRuntime（与桌面端/TUI 同一接口）
 
@@ -449,7 +469,7 @@ const off = ctx.settings.registerSection({
   id: 'my-plugin-prefs',              // 导航键，建议 `<插件名>-<分区>`；内置 id 见下方规则
   title: '我的插件',                   // 左栏标题（插件贡献的分区会带上「插件」标记）
   subtitle: '轮询与同步设置',           // 可选：分区标题下的一行说明
-  order: 30,                          // 小者在前；内置：通用 0 / 模型 10 / 技能 20 / 关于 900
+  order: 30,                          // 小者在前；内置：通用 0 / 模型 10 / 预设 15 / 技能 20 / 用量 25 / 归档 30 / 终端 35 / 关于 900
   fields: () => [                     // 每次打开分区都调用；返回值必须能 JSON 序列化
     { type: 'switch', key: 'enabled', label: '启用轮询' },
     { type: 'select', key: 'interval', label: '间隔', options: [{ value: '60', label: '1 分钟' }, { value: '300', label: '5 分钟' }] },
@@ -476,8 +496,10 @@ return off                            // MUST 在 disposer 里退订
 - `fields()` 与 `values()` 每次打开分区都会调用，可随状态返回不同清单；
 - `save()` 抛异常与返回字符串等价，都是一句就地错误（不会弹全局提示条）；
 - 分区被停用时 disposer 执行完，分区立刻从左栏消失，用户已存的值不受影响；
-- id 撞了内置的 `general` / `models` / `skills` / `about` 时，这个分区被忽略（设置面板里看不到），
-  会话里会多一行系统提示说明原因，插件其余部分照常挂载；
+- id 撞了内置的 `general` / `models` / `presets` / `skills` / `usage` / `archive` / `tui` / `about` 时，
+  这个分区被忽略（设置面板里看不到），会话里会多一行系统提示说明原因，插件其余部分照常挂载；
+- **默认只在插件中心那张卡上出现**：要在桌面端设置页左栏也列出，`registerSection` 加第二参
+  `{ inSettings: true }`（内核级功能用它；普通插件保持不传，避免同一处配置两个入口）；
 - `custom: true`（界面由桌面端自己画）只给内置的「模型」「技能」分区用，
   插件请拆成几个普通分区，不要指望桌面端为你的分区写特判。
 
@@ -548,8 +570,8 @@ const offWaiting = ctx.waiting.register('my-plugin', () => panelOpen)
 上声明合并这个键，`appendState` 与 `state()` 的类型才对得上）：
 
 ```js
-ctx.session.appendState('myPanel', { open: true })   // 写一条 { type:'state', id, payload }
-ctx.session.current().state('myPanel')               // 恢复会话时读回来
+ctx.session.current().appendState('myPanel', { open: true })   // 写一条 { type:'state', id, payload }
+ctx.session.current().state('myPanel')                          // 恢复会话时读回来
 ```
 
 这四样都是**注册**，不是改内核：内置的协作模式闸门、审批卡、灾难地板、安全钩子、生命周期钩子、任务清单、计划评审、会话目标、密钥遮红、大输出溢出全都挂在这些点上，外部插件走同一扇门。
@@ -612,14 +634,26 @@ ctx.prompt.registerProjection('my-inject', (messages) => {
 | 事件 | 载荷 | 触发时机 |
 |---|---|---|
 | `dsc/changed` | — | 任何影响快照的状态变化后 |
-| `dsc/notice` | `(text: string)` | 请求写一条 system 条目 |
-| `dsc/session-open` | `({ session, filePath })` | 会话已切换（filePath=undefined 表示新建） |
+| `dsc/notice` | `(text, kind?: 'compaction', sessionPath?)` | 请求写一条 system 条目（`kind` 只给压缩摘要用的那类标记） |
+| `dsc/session-open` | `({ session, filePath })` | 会话已切换（`filePath` 为 undefined 表示新建） |
 | `dsc/exit` | — | 请求收尾；监听器须同步执行 |
-| `dsc/open-picker` | — | 命令请求打开会话选择面板 |
-| `dsc/skills-changed` | — | 技能清单或启停状态变化（桌面端技能中心据此重取） |
-| `dsc/mode-changed` | `(mode: CollaborationMode)` | 协作模式换档（含启动时那一次）。审批卡据此在卡上写当前档位，不必反过来问模式服务 |
-| `dsc/turn-end` | `(reason: 'completed' \| 'aborted' \| 'error')` | 一个回合结束。只有 `completed` 会触发会话目标的自动续跑 |
-| `dsc/plan` | `(plan: PlanView)` | 计划交付卡的内容有变（写出来、被批准或被驳回） |
+| `dsc/open-picker` | — | 命令请求打开会话选择面板（`/resume`） |
+| `dsc/open-models` | — | 命令请求打开模型选择面板（`/model` 无参数） |
+| `dsc/dock-data` | `(id, data)` | dock 终端输出流（desktop-dock → 界面面板） |
+| `dsc/skills-changed` | — | 技能清单或启停状态变化（agent 据此重算模型可见目录） |
+| `dsc/mode-changed` | `(mode: CollaborationMode)` | 协作模式换档（含启动时那一次）。审批卡据此写当前档位，不必反过来问模式服务 |
+| `dsc/preset-changed` | `(name: string)` | 模式（预设）换了一个；想知道「工具目录刚变了」的功能点听它 |
+| `dsc/turn-start` | `(payload: TurnSignal)` | 一轮开始。压缩插件数着它做 `/compact` 的运行中守卫；0.6.48 起带会话归属 |
+| `dsc/turn-end` | `(reason: 'completed' \| 'aborted' \| 'error', payload: TurnSignal)` | 一轮结束。只有 `completed` 会触发会话目标的自动续跑 |
+| `dsc/agent-status` | `(payload: AgentStatusPayload)` | 某会话运行状态变化（working / awaiting-approval / idle），侧栏状态点与未读徽标的数据源 |
+| `dsc/side-ask-chunk` | `({ id, delta, done? })` | 旁问的增量（`id` 是这次旁问的票据；`done` 为真表示流已收尾） |
+| `dsc/compacted` | — | 历史刚被压缩掉；加载时冻结的东西（如记忆栏）要重算 |
+| `dsc/compacting` | `(running: boolean, sessionPath?)` | 压缩开始 / 结束，界面据此在消息流尾部画活动行（0.7.2） |
+| `dsc/context-used` | `(tokens: number, sessionPath?)` | 压缩完成后的上下文占用**估算**（压缩本身不发请求，权威读数要等下一次真请求才回来，0.7.2） |
+| `dsc/plan` | `(plan: PlanView, sessionPath?)` | 计划卡的内容有变（写出来、被批准或被驳回） |
+
+内核事件全集以 `src/services/types.ts` 的 `Events` 接口为准，共 18 个；插件自己发的事件用
+`dsc/plugin/<插件名>/<事件>` 这样的名字，别占用 `dsc/` 下面的顶级名字。
 
 ## 6. 示例
 
@@ -754,8 +788,9 @@ export function apply(ctx, config) {
 4. **功能**：命令插件 → 让用户输入 `/<命令名>`；工具插件 → 在对话里诱导模型调用并确认
    结果返回；事件插件 → 触发对应场景（如切换会话）。
 5. **展示**：桌面端「插件」页确认 name/description 出现且开关可用。
-   注册了设置分区 → 打开左栏「设置」，确认分区在左栏列出（带「插件」标记）、控件能读写、
-   校验失败时错误就地显示；注册了技能来源 → 打开「技能」页，确认条目带来源标记且 `/技能名` 能调用。
+   注册了设置分区 → 打开**插件中心那张卡**，确认分区列出、控件能读写、校验失败时错误就地显示；
+   只有 `registerSection` 传了 `{ inSettings: true }` 的分区才会进设置页左栏，没传就别去左栏找。
+   注册了技能来源 → 打开「技能」页，确认条目带来源标记且 `/技能名` 能调用。
 6. **risk 一致**：每个工具的 `risk` 与它实际做的事一致（只读 `read`，写文件 `write`，
    执行命令 `exec`）；`exec` 类确认每次弹审批卡。
 7. **清理**：每个注册点的退订函数都进了 `apply` 返回的 disposer；停用后工具从注册表消失、
@@ -775,9 +810,10 @@ export function apply(ctx, config) {
 | 控制台刷 `cannot get property "xxx" without inject` | 那是可选服务（插件关着时不存在）。别把它写进 `inject`，读它的人改用 `ctx.get('xxx')`；`ctx.xxx?.` 不算，属性访问就先抛了 |
 | 桌面端看不到任何输出 | 用了 console.log；反馈必须走 `transcript.system` / `ui.notice` |
 | 模型从不调用你的工具 | description 太弱或 parameters 不是合法 JSON Schema；name 要让模型望文生义 |
-| 设置分区/技能来源没出现 | `inject` 里忘了声明 `settings` 或 `skills`；或分区 id 撞了内置的 `general/models/skills/about`（该分区被忽略，会话里有一行提示） |
+| 设置分区/技能来源没出现 | `inject` 里忘了声明 `settings` 或 `skills`；或分区 id 撞了内置的 `general/models/presets/skills/usage/archive/tui/about`（该分区被忽略，会话里有一行提示） |
+| 设置分区只在插件卡上、设置页左栏没有 | 没传第二参 `{ inSettings: true }`——壳只列 builtin 分区与显式声明进设置页的插件分区 |
 | 设置分区里控件点不动、值不回填 | `values()` 返回的 key 和 `fields()` 里的 `key` 对不上；或 `values()` 返回了不能 JSON 序列化的对象（函数、Date） |
-| 技能中心有条目但 `/名字` 调不动 | 条目 `userInvocable` 为 false，或名字撞了内置命令（内置命令二十三条，例如 new/resume/compact/model/help/exit/review/diff/policy/status/usage） |
+| 技能中心有条目但 `/名字` 调不动 | 条目 `userInvocable` 为 false，或名字撞了内置命令（内置命令 25 条，全表在 `src/core/commands-completion.ts` 的 `BUILT_IN_COMMANDS`，或直接敲 `/help` 看） |
 | 写入类工具绕过审批直接执行 | risk 误标为 `'read'`——写文件/执行命令必须是 `'write'`/`'exec'`（权限模式 readonly 下一律拒绝） |
 | 模型收到的工具结果是 `[object Object]` | `run` 返回了对象，改回字符串（或规范的 `{ text, images }`） |
 | 停用后功能还在 | 没保存退订函数，热卸载时旧监听没卸掉 |
