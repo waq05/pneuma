@@ -12496,3 +12496,169 @@ Pneuma 窗口整片变白，除了重启没有回来的路。
   消息后它换成真行，一切照旧。
 - 输入框里的半截话按**工作区**分槽（0.6.70 的老口径）：同一个工作区里两条空会话彼此可以互换，
   所以「点新会话」捡回来的就是那半截话，而不是某个 uuid 的草稿。
+
+## 切会话慢、轮尾小字常驻、编辑重发跳会话（2026-11-03）
+
+**一、现场。**
+
+用户三句话：「现在切换会话的速度有点慢」「时间和 token 也需要和复制分叉一样能自动隐藏，
+鼠标悬浮再出现」「图二重新编辑不要切新会话，还在当前会话」。
+
+**二、把「慢」量出来（先量再改）。**
+
+两套临时量具（跑完即删，量的是同一件事的两端）：
+
+- `desktop/shots/_bench-real.mjs`：直接按 stdio 协议驱动 `lib/headless.js`，喂**本机真实会话
+  文件**（只把 meta 里的 cwd 换到自检目录）。它给的是宿主侧的数：小会话切一次 50–65ms、
+  6.79MB / 1906 条目的会话 129–150ms，且快照还要再晚 60ms 到。
+- `desktop/shots/_bench-switch.mjs`：真窗口、真点击，用 MutationObserver 与 rAF 量「点击 →
+  高亮换人 → 正文首个 DOM 变动 → DOM 静止」。它给的是用户感觉到的数：小会话之间 99–137ms，
+  大会话 204–282ms。
+
+拆开来看，四笔账（都在 `open()` 这条路上）：
+
+1. **每点一次会话就整份重扫会话列表**：界面 `open()` 之后跟一次 `refreshSessions`，宿主
+   `listSessions()` 把**每个** jsonl 整个读一遍（只为取 meta 行与首条用户消息）。你机器上
+   76 条活动会话 + 10 条归档：120–150ms + 49ms。切会话根本不改文件，这 170ms 是纯浪费。
+2. **`dsc/session-open` 的同步监听里重扫磁盘**：技能目录（8–30ms 的 stat 与读）、git 状态
+   （每次切会话重拉三个 git 子进程，30–50ms 的进程创建）。同一个工作区里换会话，这两样一个字
+   节都没变。埋点实测这一段 23–42ms。
+3. **切回去照样重读整份 jsonl**：`Session.load` 同步读 6.8MB 再逐行解析，45–65ms；而人在
+   两三条会话之间来回跳是常态，磁盘上那会儿什么都没变。
+4. **快照固定等一个节流窗口**：`scheduleSnapshot` 一有变化就 `setTimeout(throttleMs)`，
+   于是「点一下」这种刚做完的动作永远要多等 60–80ms（默认窗口 80ms）。埋点：宿主 21ms 就
+   干完了，界面 95ms 才看到第一处变动。
+
+另外还有一个界面侧的账：**高亮只认快照里的 `status.sessionPath`**，所以点击到高亮之间隔着上面
+全部四笔。
+
+**三、改法。**
+
+- 侧栏高亮不等宿主：点下去立刻把那一行画成当前（`pendingOpen`），快照对上了再交还宿主真值，
+  4 秒兜底撤回（宿主失败时不至于一行永远亮着）。
+- 切走但空闲的 agent 留 3 个（`IDLE_KEEP`）：切回去命中 `sessionFor`，一次读盘都不用；跑着
+  的会话仍走原来那条「留在后台继续」的分支。
+- 技能目录、git 读数只在**工作目录真变了**时才重扫 / 重拍。
+- `listSessions()` 每一行按「文件 mtime + 大小 + 侧栏属性」缓存：76 条从 120–150ms 降到 ~18ms。
+- 模式文件（`listPresets`）也按 mtime 缓存：它是快照面 `surfaces.preset` 的数据源，原来**每一帧**
+  都把九个模式文件重读重解析（5–10ms/帧）。
+- 快照推送改成 leading-edge：距上一帧超过窗口就立刻推，窗口内的连续变化仍旧合并（密度上限不变）。
+
+**四、自检。**
+
+- 宿主侧（真实文件）：小会话 50–65ms → 26–36ms；6.79MB 会话首次 129–150ms → 126ms、
+  切回去 149ms → 33ms；「点已在看的那条」仍是 0.4ms。`listSessions` 128ms → 17.6ms。
+- 真窗口：高亮从 99–282ms 降到 **1ms**；正文落地仍在 96–195ms（大头是快照 1.39MB 的序列化
+  与 500 条 DOM 的卸载/挂载）。
+- 新增 `scripts/session-rewind-test.mjs`（内核八段口径，含「原文是新文件的前缀」「重放与内存
+  一致」「序号越界一个字节都不动」）；`scripts/ui-edit-in-place-test.mjs`（五条含弄脏副本必须红）；
+  `scripts/ui-round-foot-hover-test.mjs`（四条含弄脏副本必须红）。
+- 两条旧探针按新契约更新（不是放宽）：`ui-git-branch-test.mjs` 的「换会话无条件催拍」改成
+  「只在目录变了才催拍」；`ui-transcript-render-test.mjs` 的轮尾透明规则改成「两颗钮 + 用量 +
+  时刻同一条规则」。
+- 真机探针 `desktop/shots/_verify-edit-in-place.mjs`（九条）：不悬浮时用量/时刻 opacity 0、
+  悬浮变 1、移开又回 0；点铅笔改完重发后**侧栏仍只亮一行**、第二轮的问答都没了、改过的文字
+  在正文里、会话目录里没多出第二个文件、日志多一条 `rewind { keep: 0 }` 且原文仍是前缀。
+- `pnpm run check:ui` 53/53、`check:style` 664 个文件全过、根与 desktop 的 typecheck 全绿。
+
+**五、诚实边界。**
+
+- 正文落地那一跳没有根治：大会话带 1906 条目的快照仍是 1.39MB，渲染层要卸载旧的 500 条再挂
+  新的。再往下压得动契约（快照只推当前可见页），那是另一批活。
+- 轮尾的用量/时刻只是**视觉**隐藏：`opacity: 0` 保留在无障碍树里（与复制 / 分叉同一套做法），
+  读屏软件仍读得到；没有改成 `display: none`，否则键盘 Tab 会走过一片看不见的按钮。
+- 编辑重发的作废是**逻辑**作废：磁盘上原文一条不删，重放按 `rewind` 规则截断。被作废那段里的
+  工具派生状态（错误标记、改动清单、卡片）会从内存里清掉——同一个 callId 不会再来一次，
+  这是刻意的。
+- 只认当前会话：别的会话没有常驻 agent 承接截断后的历史，调用会被拒绝并说明原因。
+
+### 审查补记（同日）
+
+改完自审 + 拉了一次独立审查，抓出四条，修了三条、驳回一条（附证据）：
+
+- **真 bug：远程端的 leading-edge 没接上。** `remote.ts` 里算出了 `wait`，`setTimeout` 仍写
+  `deps.throttleMs`——变量没人读，行为一点没变。改成 `}, wait)`。自审时我只看了一眼「有
+  wait 变量」就放过了，这正是「改完要读执行点」的那类漏。
+- **真漏洞：`rewind` 之后分叉不认作废。** `forkSession` / `readUserMessages` 是逐行扫原文的，
+  于是分叉菜单里还列着被作废的消息，从那儿分叉出来的新会话还会把 `rewind` 记录一起带过去，
+  重放时把自己截成空会话。补了 `applyRewinds()`（把 rewind 应用成「还剩哪些行」，结果里不再
+  留这条记录），两条读盘路都先走它。标题推导同理会回落到被作废的原文——改成由界面把改过的
+  文字一起传上来，直接写成自动标题（`rewindSession(path, keep, text)`）。
+- **真竞态：点「新会话」不撤旧高亮。** `open()` 只在给了 id 时写 `pendingOpen`，于是「点了 A，
+  快照还没到又点新会话」这 30–150ms 里，侧栏继续亮着 A，真正新开的那一行不亮。改成
+  `setPendingOpen(id ?? null)`。
+- **驳回：压缩之后计数错位。** 审查说界面按可见条目数、宿主按消息数，摘要那条会让两边差一。
+  我拿真实重放对了一遍（`Session.load` + `transcript.replayHistory`）：压缩摘要**两边都是
+  一条 `kind: 'user'`**，界面数到 2、宿主也数到 2，`rewindToUser(2)` 正好截在 Q4 上。这条不
+  成立，但「没有测试钉住它」这条意见成立——补了 `session-rewind-test.mjs` 的第 [11] 段（先用
+  真 Transcript 重放数条目，再拿这个数去截断，断言摘要还在、Q4 没了）。
+- 顺带：`onIdle` 收摊原来自己删一遍名册，现在统一走 `disposeAgent`（否则「空闲保留」名册里
+  会留下已经收摊的 id）。
+
+补完之后：`check-core` 90/90（含 `session-rewind-test` 十一条口径）、`check:ui` 53/53、
+`check:style` 664 个文件、两处 typecheck 全绿；真机探针 `_verify-edit-in-place` 九条
+（新增「侧栏标题换成改过的那句话」）、`_verify-new-session-row` 六条全过。
+
+## 点会话时间跳「刚刚」、置顶图钉重画（2026-11-03）
+
+**一、报障与证据。**
+
+用户两条：①「我点击会话会导致会话最近使用时间更新，最近使用时间是会话最后一步的时间」；
+②「置顶图标需要优化一下，现在太丑」。
+
+第一条不是错觉。查磁盘：`~/.dsc/sessions/D-deepseek-harness/18802ff5-….jsonl` 的最后三行是
+
+```
+{"type":"state","id":"permissions","payload":{"sandbox":null,"policy":null,"reviewer":null}}
+{"type":"state","id":"permissions","payload":{"sandbox":null,"policy":"auto-edit","reviewer":"user"}}
+{"type":"state","id":"permissions","payload":{"sandbox":"workspace-write","policy":"auto-edit","reviewer":"user"}}
+```
+
+三条都没有 `ts`，是**打开会话时**补的权限默认值：`permissionOf` 一项一钉，钉完就
+`appendState` 落盘（`permission-scope.ts` 的 `writePermissions`），文件 mtime 变成「现在」。
+而侧栏那列时间读的正是 mtime（`session.ts` 的 `readSessionFileUncached`），于是老会话点一次就
+从「3 天前」跳到「刚刚」——它的对话一条都没多。
+
+第二条看图就明白：`IconPin` 原来是 45° 斜拼的三段线，13px 下缩成一个小哑铃。
+
+**二、改法。**
+
+- 时间改读「最后一条带 `ts` 的对话记录」：新增 `lastActivityAt(text, fallback)`，只扫文件尾部
+  512KB（append-only 的日志最后一条贴着尾巴），逐行从后往前找带数字 `ts` 的记录；`state`
+  这类记账没有 `ts` 自然被跳过；老日志（`ts` 字段引入之前）整份找不到就回落 mtime。mtime 仍
+  留着当侧栏读盘缓存的键，缓存失效口径不变。
+- 补钉不再为「看一眼」写盘：`Session` 新增 `setState`（只改内存，记进 `deferredState`），
+  `write()` 在下一次真正落日志前把攒下的状态先写出去、顺序在触发它的记录之前；`appendState`
+  顺手删掉同名的 deferred 项（真值来了，别再重复落一遍）。`permissionOf` 改走
+  `pinPermission` → `setState`，用户真改档位那条路仍是 `appendState` 立即写。
+- 图钉换竖向推钉：顶帽一横、梯形钉身、一根针，`IconPin` 加 `filled` 参数（已置顶时钉身填
+  `currentColor`），尺寸 13 → 14；`.lead-pin` 补 `svg { display: block }` 与悬浮淡底，置顶
+  态守成黄色。
+
+**三、验证。**
+
+- 新增 `scripts/session-activity-time-test.mjs`（20 条）：最后一条是 state 时时间取 300 而不是
+  mtime；老日志回落 mtime；空会话不进列表；`Session.load` + `resolvePermissions` 之后文件
+  字节数与 mtime 都不变；补钉值当场可读且不跟着默认值漂；下一次 `appendUser` 时补钉值落盘、
+  顺序在用户那条之前、重放回来还是同一份；再点一次时间与 mtime 都不动。
+- 新增 `scripts/ui-pin-icon-test.mjs`（五组）：「竖向三段几何、旧斜线不再出现」「`filled` 实现」
+  「会话行传 `filled={pinned}` 且 14px」「置顶黄色 + 块级对齐 + 悬浮淡底」「未置顶平时隐形」，
+  每条都配「弄脏副本必须红」。
+- 真机探针 `desktop/shots/_verify-activity-time-and-pin.mjs`（隔离 HOME，六条全过）：种一条
+  「最后一步 3 天前、尾巴却是刚写的记账」的会话，侧栏显示「3天」而不是「刚刚」；点开之后仍是
+  「3天」、文件字节数与 mtime 一个没变；来回切两次两条会话都不动；置顶行常显且钉身
+  `fill="currentColor"`、未置顶行平时 `opacity: 0`、悬浮后变 1 且是 `fill="none"`。三张截图
+  目检：1x 侧栏里那枚黄色小图钉清楚可辨，4x 放大能看到顶帽与针。
+- 门禁：`check-core` 91/91（新增这一条）、`check:ui` 54/54（新增图钉这条）、`check:style`
+  666 个文件、根与 desktop 的 typecheck、两次 build 全绿。
+
+**四、边界与教训。**
+
+- 时间只扫尾部 512KB：正常日志的最后一条就在文件尾，够用；万一最后一条本身超过窗口被切碎，
+  解析失败会继续往前找，实在找不到才回落 mtime。异常日志不会被截出个假时间。
+- 补钉延后落盘意味着「打开一次、什么都没做就关掉」不会在磁盘上留这三条默认值——下次再打开
+  会按当时的默认值重新钉。这正是「没做过动作就不该改文件」的代价，符合预期。
+- 探针隔离踩到一个坑：桌面主进程的 `desktop.json` 用 `app.getPath('home')` 定位，Windows 上
+  它走系统 API、不认 `USERPROFILE`，于是「临时 HOME」的探针仍读到了真实工作区列表。已给探针
+  补 `DSC_DESKTOP_STATE` 指向临时文件；此后截图里只剩种子那一条工作区。查过真实
+  `~/.dsc/desktop.json`，本次探针没有写进任何 `_verify-*` 路径。
