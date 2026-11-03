@@ -49,24 +49,25 @@
 
 ## 2. 仓库地图
 
-规模现量于 2026-10-28（0.7.1 时点），只数源文件行数，当量尺用。
+规模现量于 2026-11-03（0.8.1 时点），当量尺用：按 `git ls-files <目录>` 只数受版本库跟踪的
+`.ts` / `.tsx` / `.css` / `.mjs` 文件，文件数同口径，行数取 `wc -l` 求和；`node_modules`、构建产物与本机截图产物都不算。
 
 | 路径 | 规模 | 职责 |
 | --- | --- | --- |
-| `src/core/` | 156 个文件 ≈47000 行 | 纯能力：模型客户端与协议适配器、会话（含写租约）、循环、审批、压缩、溢出落盘、会话检索、MCP 客户端、工具、技能、设置、任务板；token 粗估（`token-estimate.ts`）、错误文案（`err-text.ts`）、数值收敛（`clamp.ts`）、对象判定（`records.ts`）、消息取文（`transcript-text.ts`）、cmd 引号与 shell 选择（`shell-quote.ts`）、默认终端探测（`terminal-env.ts`）、字符串判定（`strings.ts`）、安全序列化（`json-text.ts`）、快照推送节流（`snapshot-throttle.ts`）、git 读数相等判断（`git-surface.ts`）、时间格式化（`clock.ts`）都是全仓库唯一一份 |
-| `src/core/tools/` | 6 个文件 ≈1700 行 | 内置六件套 `bash`/`read`/`write`/`edit`/`glob`/`grep`（预算由 tools-default 配置下发）+ 沙箱的一次性升权参数与命令执行器缝 |
-| `src/core/lsp/` | 7 个文件 ≈2400 行 | LSP 代码智能：`client`（连接/实例）、`manager`（池化调度）、`normalize`（应答归并）、`line-shift`（诊断行号对齐）、`framing`/`servers`/`uri` |
-| `src/core/dsh-compat/` | 9 个文件 ≈1900 行 | dsh 插件兼容层的模块解析钩子与工具形状适配 |
-| `src/plugins/` | 58 个文件 ≈24100 行 | 每个服务一个 cordis 插件 + 十八个官方可开关插件；`remote/` 拆成 `types`/`http`/`routes`（HTTP 路由）+ `remote.ts`（传输与装配） |
-| `src/host/kernel.ts` | 487 行 | 内核装配顺序与三档插件元数据 |
+| `src/core/` | 164 个文件 ≈50561 行 | 纯能力：模型客户端与协议适配器、会话（含写租约）、循环、审批、压缩、溢出落盘、会话检索、MCP 客户端、工具、技能、设置、任务板；token 粗估（`token-estimate.ts`）、错误文案（`err-text.ts`）、数值收敛（`clamp.ts`）、对象判定（`records.ts`）、消息取文（`transcript-text.ts`）、cmd 引号与 shell 选择（`shell-quote.ts`）、默认终端探测（`terminal-env.ts`）、字符串判定（`strings.ts`）、安全序列化（`json-text.ts`）、快照推送节流（`snapshot-throttle.ts`）、git 读数相等判断（`git-surface.ts`）、时间格式化（`clock.ts`）都是全仓库唯一一份 |
+| `src/core/tools/` | 7 个文件 ≈2147 行 | 内置六件套 `bash`/`read`/`write`/`edit`/`glob`/`grep`（预算由 tools-default 配置下发）+ 沙箱的一次性升权参数与命令执行器缝 |
+| `src/core/lsp/` | 7 个文件 ≈2422 行 | LSP 代码智能：`client`（连接/实例）、`manager`（池化调度）、`normalize`（应答归并）、`line-shift`（诊断行号对齐）、`framing`/`servers`/`uri` |
+| `src/core/dsh-compat/` | 9 个文件 ≈1949 行 | dsh 插件兼容层的模块解析钩子与工具形状适配 |
+| `src/plugins/` | 58 个文件 ≈25585 行 | 每个服务一个 cordis 插件 + 十八个官方可开关插件；`remote/` 拆成 `types`/`http`/`routes`（HTTP 路由）+ `remote.ts`（传输与装配） |
+| `src/host/kernel.ts` | 503 行 | 内核装配顺序与三档插件元数据 |
 | `src/contract.ts` | 26 行 | **只做转出**：`export * from './contract/*.js'`，导出面与拆分前一个不差 |
-| `src/contract/` | 10 个文件 ≈2100 行 | UI ⇄ 运行时的中性契约按域分家：`mode`（思考档位 / 权限 / 协作）、`task`（待办、计划、后台、定时、目标、提问）、`transcript`（工具卡、转录、差异）、`usage`（token 与用量）、`runtime`（状态行、预设面、git 读数、快照面）、`approval`（审批卡）、`session`（会话、归档、偏好）、`plugin`（插件、信任、队友、模型选择、技能、市场）、`settings`（设置、供应商、连接测试）、`snapshot`（运行时快照、`DscRuntime`、电脑操作）。每份 75–438 行 |
-| `src/services/types.ts` | 1432 行 | 服务面声明（`ctx.llm`、`ctx.mcp` 这些是什么类型） |
-| `src/adapter/transcript.ts` | 702 行 | 内核事件 → UI 快照的折叠投影 |
-| `src/app/` | 39 个文件 ≈7900 行 | ink 终端界面（与桌面端共用契约）；显示宽度（`display-width.ts`）是终端侧唯一一份 |
-| `desktop/electron/` | 7 个文件 ≈2670 行 | main + preload：窗口、托盘、运行时子进程、终端与浏览器 dock |
-| `ui-shell/` | 124 个文件 ≈39500 行 | 桌面与手机共用的界面壳（插件化：布局 + 基元 + 官方界面插件；产物落 `lib/ui/assets`）。**这是唯一的界面**——旧渲染层 21,035 行已于 2026-10-28 整体删除 |
-| `shots/` | 脚本 + 实拍产物 | 自检与实拍（全部跑在临时 HOME 上）。**这个目录被 `.gitignore` 忽略**：它只在本机存在，不随版本库分发 |
+| `src/contract/` | 10 个文件 ≈2279 行 | UI ⇄ 运行时的中性契约按域分家：`mode`（思考档位 / 权限 / 协作）、`task`（待办、计划、后台、定时、目标、提问）、`transcript`（工具卡、转录、差异）、`usage`（token 与用量）、`runtime`（状态行、预设面、git 读数、快照面）、`approval`（审批卡）、`session`（会话、归档、偏好）、`plugin`（插件、信任、队友、模型选择、技能、市场）、`settings`（设置、供应商、连接测试）、`snapshot`（运行时快照、`DscRuntime`、电脑操作）。每份 75–438 行 |
+| `src/services/types.ts` | 1608 行 | 服务面声明（`ctx.llm`、`ctx.mcp` 这些是什么类型） |
+| `src/adapter/transcript.ts` | 732 行 | 内核事件 → UI 快照的折叠投影 |
+| `src/app/` | 39 个文件 ≈7886 行 | ink 终端界面（与桌面端共用契约）；显示宽度（`display-width.ts`）是终端侧唯一一份 |
+| `desktop/electron/` | 7 个文件 ≈2945 行 | main + preload：窗口、托盘、运行时子进程、终端与浏览器 dock |
+| `ui-shell/` | 157 个文件 ≈60812 行（ts 79 / tsx 69 / css 6 / mjs 3） | 桌面与手机共用的界面壳（插件化：布局 + 基元 + 官方界面插件；产物落 `lib/ui/assets`）。**这是唯一的界面**——旧渲染层 21,035 行已于 2026-10-28 整体删除 |
+| `desktop/shots/` | 70 个 `.mjs` ≈11741 行（整个目录受跟踪 163 个文件） | 桌面端实拍与自检脚本（都在临时 HOME 上跑）。根 `shots/` 已不存在；`.gitignore` 先忽略整个目录，再用 13–18 行的反选规则把 `.ps1` / `.mjs` / `.py` / `.sh` / `.md` / `.json` 放回版本库——**脚本进库，只有截图产物被忽略** |
 | `examples/plugins/` | 5 个示例 | 手写插件的参照（上手路径见 [plugin-development.md](plugin-development.md) §0） |
 
 ## 3. 三条启动链路
@@ -77,15 +78,17 @@
 2. `src/boot.ts` 只做装配，按顺序：`migrateFromDsh()`（幂等，只读 dsh）→ `readConfig()` →
    `readUiConfig()` → `createKernel()` → 装 TUI 插件 → `loadExternalPlugins()` →
    `emitStartupNotes()`。`readUiConfig()` 读 `config.yaml` 的 `ui` 段与 `plugins` 段，
-   但 boot 是**无条件**挂 TUI 的（`src/boot.ts:27`）——真正起作用的只有 `plugins` 段；
-3. `--resume` 走 `DSC_RESUME_SESSION` 环境变量传给子进程（`auto` = 看 `.last-session` 指针）。
+   但 boot 是**无条件**挂 TUI 的（`src/boot.ts:29`）——真正起作用的只有 `plugins` 段；
+3. `--resume` 走 `DSC_RESUME_SESSION` 环境变量传给子进程（`bin/dsc.js:77` 裸 `--resume` 写 `1`，
+   boot / headless 再把它译成 `auto` = 看 `.last-session` 指针）。
 
 **桌面**（`dist/win-unpacked/Pneuma.exe` 或 `pnpm run dev`）
 
 1. 主进程 `readState()` 读 `~/.dsc/desktop.json`（最近工作目录最多记 12 个、托盘提示是否
-   弹过），写侧 `writeState()` 做合并（`desktop/electron/main/dsc-core.ts:42-60`）；
+   弹过），写侧 `writeState()` 做合并（`desktop/electron/main/dsc-core.ts:67`、`:79`；
+   12 条上限在 `desktop/electron/main/index.ts:718`）；
 2. `requestSingleInstanceLock()`，`DSC_DESKTOP_USER_DATA` 可以换 userData 让并行实例互不干扰
-   （`desktop/electron/main/index.ts:363`）；
+   （`desktop/electron/main/index.ts:1583`）；
 3. `dsc-core.ts` 以 `ELECTRON_RUN_AS_NODE=1` spawn 打包进 `resources/dsc-core/` 的运行时
    （`src/headless.ts:1-6`：exe 兼作内核的 node 解释器）；
 4. 运行时 `hello { protocolVersion }` 握手，版本对不上直接报错；
@@ -127,7 +130,7 @@ export const myPlugin: Plugin.Object = {
 | --- | --- | --- | --- |
 | 自定义 | `source: 'external'`，文件在 `~/.dsc/plugins/*.js` | 可拨，默认开 | 用户自己的（dsh 风格的插件走兼容层，见 [plugin-development.md](plugin-development.md) 的「dsh 兼容层」章） |
 | 官方可开关 | `source: 'builtin'` + `toggleable: true` | 可拨，默认由 `defaultDisabled` 定 | 见下面那张表，共 18 个 |
-| 运行内核 | `source: 'builtin'` 且没标 `toggleable` | 不给开关 | `llm`/`session`/`guards`/`surfaces`/`waiting`/`approval`/`hooks`/`tools`/`tools-default`/`transcript`/`commands`/`skills`/`prompt`/`mode`/`presets`/`ptc`/`runtime-api`/`settings`/`compact`/`microcompact`/`image-diet`/`session-title`/`todo`/`plan`/`ask`/`agent`/`goal`/`memory`/`runtime`/`webserver` 共 30 个 |
+| 运行内核 | `source: 'builtin'` 且没标 `toggleable` | 不给开关 | `llm`/`session`/`guards`/`surfaces`/`waiting`/`approval`/`hooks`/`tools`/`tools-default`/`transcript`/`commands`/`skills`/`prompt`/`mode`/`presets`/`ptc`/`runtime-api`/`settings`/`compact`/`microcompact`/`image-diet`/`session-title`/`todo`/`plan`/`ask`/`agent`/`goal`/`memory`/`runtime`/`webserver` 共 30 条元数据；`createKernel()` 实际挂 34 个，差额是没登记元数据的 `permission-presets`/`desktop-dock`/`git`/`plugin-manager`（所以插件中心的「运行内核」清单里看不到这四个） |
 
 官方可开关插件（`src/host/kernel.ts` 的 `OFFICIAL_PLUGINS` + `OFFICIAL_OBJECTS`）：
 
@@ -152,7 +155,7 @@ export const myPlugin: Plugin.Object = {
 | `self-improve` 经验沉淀 | 关 | `self-improve` | 三条闭环：纠正捕获候选、复盘产技能草稿（默认停用待人启用）、技能自修 + 台账回滚；`skill_write` 写入只问一次审批（卡上是技能名与动作） |
 | `dsh-compat` dsh 插件兼容 | 关 | — | 挂载 dsh（DeepSeek Harness）外部插件：`logger` 服务、模块解析钩子、dsh 风格工具注册的形状适配 |
 
-默认开关按一条规矩定：会拉起外部进程、连外部服务器或改写每轮请求工具面的那几档默认关（`lifecycle-hooks`、`mcp`、`tool-search`、`schedule`、`lsp`、`browser`、`self-improve`）；提升安全与本地便利、且不配就完全无副作用的那几档默认开。文件与命令围栏是唯一的例外档：它默认开——不配就没有外部进程与外部服务器，开着的收益（越界写入当场拒）大于打扰，且默认档 workspace-write 不挡正常的工作区读写。
+默认开关按一条规矩定：会拉起外部进程、连外部服务器、动用户的桌面或改写每轮请求工具面的那几档默认关，共 12 个：`subagent`、`team`、`computer-use`、`lifecycle-hooks`、`mcp`、`tool-search`、`schedule`、`lsp`、`browser`、`dock-browser`、`self-improve`、`dsh-compat`；提升安全与本地便利、且不配就完全无副作用的那几档默认开。文件与命令围栏是唯一的例外档：它默认开——不配就没有外部进程与外部服务器，开着的收益（越界写入当场拒）大于打扰，且默认档 workspace-write 不挡正常的工作区读写。
 
 内核清单在 `src/host/kernel.ts` 的 `BUILTIN_PLUGINS`。新增一档官方可开关插件的三步写在 [plugin-development.md §3.4](plugin-development.md)。
 
@@ -317,8 +320,8 @@ lib/ui/plugins/
 
 `src/contract.ts` 定义 `DscRuntime`：TUI 与桌面端消费同一接口，桌面端经协议转接。
 
-**消息种类**（`src/plugins/host-stdio.ts:29-42`，桌面侧镜像在
-`desktop/electron/main/protocol.ts:36`）：
+**消息种类**（`src/plugins/host-stdio.ts:56-80`，桌面侧镜像在
+`desktop/electron/main/protocol.ts:47`）：
 
 | 方向 | 消息 | 作用 |
 | --- | --- | --- |
@@ -327,7 +330,7 @@ lib/ui/plugins/
 | 运行时 → 宿主 | `hello { protocolVersion }` | 启动握手 |
 | 运行时 → 宿主 | `result { id, ok, value \| error }` | 调用应答 |
 | 运行时 → 宿主 | `snapshot { snapshot }` | 全量快照推送 |
-| 运行时 → 宿主 | `ui { action: 'open-picker' }` | 命令要求开界面 |
+| 运行时 → 宿主 | `ui { action: 'open-picker' \| 'open-models' }` | 命令要求开界面 |
 | 运行时 → 宿主 | `dock-data { id, data }` | 终端输出流 |
 
 **方法白名单**就是 `DscRuntime` 去掉 `subscribe` / `getSnapshot` / `exit` / `dispose`
@@ -373,10 +376,10 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 
 | 常量 | 位置 | 当前值 | 什么时候动 |
 | --- | --- | --- | --- |
-| `KERNEL_API_VERSION` | `src/core/plugin-registry.ts:79` | 6 | 插件能用的扩展点有增减 |
+| `KERNEL_API_VERSION` | `src/core/plugin-registry.ts:93` | 6 | 插件能用的扩展点有增减 |
 | `HOST_PROTOCOL_VERSION` | `src/core/dock-browser.ts:20`（`src/plugins/host-stdio.ts` 只做再导出） | 3 | 协议消息种类或白名单语义变了 |
-| `NATIVE_BRIDGE_VERSION` | `src/core/native-bridge.ts:70` | 3 | **加操作不涨**；改某个操作的实参或语义才涨 |
-| 插件契约版本（`apiVersion`） | `ui-shell/package.json` 的 `version` → `build-plugins.mjs` 写进清单 | 0.8.0 | **跟产品号同版**（`release.yml` 四方对账） |
+| `NATIVE_BRIDGE_VERSION` | `src/core/native-bridge.ts:71` | 3 | **加操作不涨**；改某个操作的实参或语义才涨 |
+| 插件契约版本（`apiVersion`） | `ui-shell/package.json` 的 `version` → `build-plugins.mjs` 写进清单 | 0.8.1 | **跟产品号同版**（`release.yml` 四方对账） |
 
 两个版本都是「加载时对不上就报错」，不做静默兼容。插件可以声明 `apiVersion`，内核只拒绝
 **高于**自己的版本。
@@ -385,9 +388,9 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 由 `ui-shell/package.json` 的 `version` 写进清单，`release.yml` 按 tag / 根 / `desktop` / `ui-shell`
 四方对账。
 
-**代价要清楚**：19 个内置插件的 `package.json` 都声明 `"@dsc/ui": "^0.8.0"` 这样的区间，
+**代价要清楚**：19 个内置插件的 `package.json` 都声明 `"@dsc/ui": "^0.8.1"` 这样的区间，
 构建期（`ui-shell/build-plugins.mjs` 读 `shellVersion`）逐个校验。所以每次改版本号，
-**19 个插件的 peer 区间要一起改**——`^0.8.0` 只认到 0.9.0 以下，出 0.9.0 那天不改就会被门禁拒掉。
+**19 个插件的 peer 区间要一起改**——`^0.8.1` 只认到 0.9.0 以下，出 0.9.0 那天不改就会被门禁拒掉。
 
 好在漏改不会静默：`build-plugins` 会把失配的插件点名，`release.yml` 在打包前先跑一次
 `build-plugins`，19 个全挂时发版直接停在 verify 作业，不会产出一个「界面全空」的安装包。
@@ -419,29 +422,39 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 | `settings.json` | 设置界面与 `ctx.settings`（`src/core/prefs.ts:15`） | 审批与思考强度默认值、市场源清单、关窗是否缩托盘、侧栏界面偏好（排序、工作区顺序与别名） |
 | `plugins.json` | 插件中心、`plugin_manager` 工具 | 条目树：`entries[{file, disabled, config}]` + `history` 版本记录（自动回滚靠它）。十八个官方可开关插件各占一条，`config` 里存它们的可调值（dsh 插件的 `risk` / `risks` 也存这里） |
 | `skills.json` | 技能中心 | 每个技能的开关 |
-| `desktop.json` | 桌面主进程（`desktop/electron/main/dsc-core.ts:42-60`） | 最近工作目录（最多记 12 个）、托盘提示是否弹过 |
+| `desktop.json` | 桌面主进程（容错读写在 `desktop/electron/main/dsc-core.ts:67`、`:79`） | 最近工作目录（`lastCwd` + `recentCwds`，最多记 12 个）、托盘提示是否弹过（`trayHintShown`）、窗口位置与大小（`windowBounds`）、更新检查读数（`lastUpdateCheckAt` / `lastUpdateVersion`）、界面形态（`ui`：`shell` / `legacy`） |
 | `.last-session` | 会话插件 | `--resume` 无参时指向上次的会话文件 |
 | `sessions/<cwd 压缩名>/<uuid>.jsonl` | 会话插件 | 会话历史，append-only，恢复靠重放 |
 | `attachments/v1/objects/<sha 前两位>/<sha256>` | 附件仓库（`src/core/attachments.ts`） | 用户贴进来的图片/视频/文件，内容寻址去重；`v1/tmp/` 是写入暂存区（原子改名发布）。会话 jsonl 只记引用，请求组装时才把图片读成 data URL |
 | `sessions/meta.json` | 会话插件 | sidecar：归档 / 置顶 / 改名，**不进 jsonl** |
 | `sessions/.archived/<工作区名>/` | 会话库（归档） | 归档区（把文件挪进来，不是在 jsonl 里打标记） |
-| `.trash/<工作区名>/` | 会话库（「永久删除」） | 其实是回收站：按 mtime 超过 30 天才扫掉（`src/core/session.ts:564`），删错了还能手工捞回来 |
+| `.trash/<工作区名>/` | 会话库（「永久删除」） | 其实是回收站：按 mtime 超过 30 天才扫掉（`src/core/session.ts:1151`、`:1431`），删错了还能手工捞回来 |
 | `sessions/.teammates/<cwd>/<id>.jsonl` | 子智能体插件 | 队友运行记录。目录以点开头 ⇒ 会话列表扫不到 |
 | `team/roster.json` | 子智能体插件 | 队友名册（收工的队友靠它出现在侧栏） |
 | `team/boards/<会话 id>.json` | 共享任务板插件 | 共享任务板，每个会话各一块（0.6.16 及以前是全局的 `team/board.json`，不再读写） |
 | `team/inbox/<队友名>.jsonl` | 子智能体插件 | 给队友的留言（追加写，队友在回合边界读） |
 | `agents/<角色名>.md` | 用户 / 子智能体设置分区 | 队友角色文件，一个角色一个文件 |
+| `presets/` | 预设（模式）插件（`src/core/presets.ts:41`） | 自定义模式，一份 `<名字>.md`（frontmatter + 提示词正文）；出厂四个模式首次启动会各写一份到这里，之后读盘，用户改过的不覆盖 |
 | `plugins/*.js` | 用户 | 自定义插件 |
 | `skills/` | 技能中心（安装） | 用户级技能目录，每个子目录一份 `SKILL.md` |
 | `cache/` | 技能市场（`src/core/market.ts:10`） | 市场条目清单，缓存 1 小时 |
 | `cache/session-index.json` | session-search 插件（`src/core/session-index.ts`） | 历史会话搜索的倒排索引，带 `version`；是旁路缓存，删掉只会让下次检索重新回填 |
 | `spill/` | spill 插件（`src/core/spill.ts`） | 工具输出超阈值时落盘的文件，目录 0700、文件 0600；按 mtime 保留 7 天、目录总量超上限从最旧的删 |
 | `lifecycle-hooks.json` | 用户 | codex 形态的十四事件外部命令钩子配置（其中六个在 Pneuma 未接通）（lifecycle-hooks 插件读它，与安全钩子的 `hooks.json` 各读各的） |
+| `audit.jsonl` | 审批 / 钩子 / 模式切换 / 计划 / 预设（`src/core/audit.ts:18` 的 `audit()`） | 审批与授权审计：一次决定一行 JSON，`asked` 与 `decided` 用同一个 id 串起来；审计开关在设置里 |
+| `hooks-trusted.json` | 安全钩子（`src/core/hooks.ts:38`） | 脚本钩子的批准名单，与 `hooks.json` 分开存（批准不该跟着配置一起被覆盖） |
+| `policy.rules` | 用户 / 审批卡追加（`src/core/command-policy.ts:26`） | 命令前缀规则的 JSON：`{ rules: [{ pattern, decision, justification? }] }`，`decision` 取 `allow` / `ask` / `deny`；能手改，审批卡也能往里追加 |
+| `usage/usage.jsonl` | 宿主（`src/core/usage-log.ts:73`） | 用量与工具调用台账，一行一条 JSON；写失败不影响对话轮次 |
+| `remote/` | 远程控制（`src/core/remote/store.ts:21`） | 配对码、已配对设备、主控位、Web Push 密钥与订阅，五份 JSON 都在这里 |
 | `memory/` | memory 插件（内核，`src/core/memory.ts`） | 跨会话留下的长期事实：全局事实、用户偏好、当前工作区各一格 |
 | `sandbox/tmp/<会话或工作区哈希>/` | sandbox 插件 | 沙箱私有临时目录：`TMP`/`TEMP`/`HOME` 在工具执行期间被重定向到这里，按会话×工作区隔离 |
 | `schedule/` | schedule 插件 | `tasks.json` 任务定义（tmp+rename 原子替换）+ `runs.jsonl` 执行台账 + `.lock` 单实例互斥（pid + 启动时间指纹） |
 | `learnings/<工作区哈希>/candidates.jsonl` | self-improve 插件 | 纠正/失败候选（`dsc/turn-end` 落一条），**不进系统提示**，`/learnings promote` 才生效 |
 | `skills/.ledger.jsonl`、`skills/.usage.json`、`skills/.archive/` | self-improve 插件 | 技能变更台账（前后 hash，`/skills-ledger rollback <id>` 可回滚；patch 前另有 `SKILL.md.bak.<秒级时间戳>` 漂移备份）、命中计数与老化（active → stale 14 天 → archived 30 天，pin 挡自动改写）、归档区（只搬不删） |
+
+**三个环境变量能改默认坐标**：`DSC_HOME` 换整个 `~/.dsc`（`src/core/path-policy.ts:20`）、
+`DSC_DESKTOP_STATE` 换 `desktop.json` 的路径（`desktop/electron/main/dsc-core.ts:61`）、
+`DSC_UI_PORT` 换本机界面监听的端口（`src/plugins/webserver.ts:95`，`0` = 自动挑；这条不动数据）。
 
 技能发现的优先级（rank 小的赢，`src/core/skills.ts` 的 `skillRoots`）：
 
@@ -480,6 +493,7 @@ assistant{ text, reasoning, toolCalls? }
 tool     { callId, name, text, images?, error? }   error = rejected | tool-error
 summary  { text, keep? }                压缩产生的摘要；keep = 摘要之外保留了尾部多少条
 state    { id, payload }                功能点状态（模式/清单/计划/目标/记忆/学习/system-prompt…）
+rewind   { keep }                       编辑并重发：保留前 keep 条人打的用户消息，其后作废（原文不删）
 note     { id, text }                   请求注入备忘（投影塞进请求体的日志外内容在此留底）
 ```
 
@@ -522,8 +536,9 @@ order 插队）；系统提示词不进消息流，由 agent 插件在每次请�
 早于这个字段的老日志没有它，读的时候按固定拒绝文案补判一次（`src/core/session.ts` 的 `REJECTED_TOOL_TEXT`）。
 
 **内核事件**（`src/core/loop.ts` 发出，`src/adapter/transcript.ts` 折叠成快照）：
-`user` / `turn/start` / `turn/end{completed|aborted|error}` / `error` /
-`delta{kind,text}` / `message` / `usage` / `tool/call` / `tool/result{error:tool-error|rejected}`。
+`user` / `inbox` / `turn/start` / `turn/end{completed|aborted|error}` / `error` / `delta{kind,text}` /
+`message` / `model/retry` / `usage` / `context` / `tool/prepare` / `tool/call` /
+`tool/result{error:tool-error|rejected}` / `tool/changes` / `tool/presentation` / `turn/diff` / `subagent`。
 
 ## 7. 扩展点清单（新功能往这儿挂）
 
@@ -570,51 +585,33 @@ cd D:\dsc\desktop && pnpm run typecheck
 
 # 自检脚本：全部在临时 HOME 上跑，不碰真实 ~/.dsc
 # 三条汇总入口都按文件名自动发现，新探针不用回来登记：
-pnpm run check:ui                  # 45 条纯 Node 探针，40 秒
+pnpm run check:ui                  # 54 条纯 Node 探针，40 秒（新探针按文件名自动进门禁，条数会涨）
 pnpm run check:ui:e2e              # 4 条要真 Chromium，61 秒（含 diff 卡、手机尺寸远程壳）
-pnpm run check:dsh                 # dsh 兼容层 + 组合包 + 真包挂载 + 会话桥 + 流/事件旁路 + 合成验收，180 条
-pnpm run check:core                # 67 条内核探针（协议 / TUI / 会话库 / LLM 适配 / 审批），约 9 分钟
+pnpm run check:dsh                 # dsh 兼容层 + 组合包 + 真包挂载 + 会话桥 + 流/事件旁路 + 合成验收，176 条（新探针按命名自动进门禁，条数会涨）
+pnpm run check:core                # 92 条内核探针（协议 / TUI / 会话库 / LLM 适配 / 审批），约 11 分钟（新探针按命名自动进门禁，条数会涨）
 pnpm run check:style               # 排版闸门：制表符 / 行尾空白 / BOM / 混用行尾 / 末尾缺换行，2 秒
 pnpm run check:style -- --changed  # 只查本次改动的文件（提交前用这个）
 pnpm run check:all                 # 上面四条串起来（不含 e2e）
 node scripts/dsh-real-package-e2e.mjs  # 真包验收（要联网：numa plugin add dsh-cost-meter）
-node shots/team-check.mjs          # 插件与团队，98 条（shots/ 里的，不在库里）
-node shots/storage-check.mjs       # 会话存储与会话库
-node shots/llm-retry-check.mjs     # LLM 重试（连接失败 / 429 重试，400 与取消不重试）+ 版本号（10 条）
-node shots/llm-adapter-check.mjs   # 协议适配器接缝：注册/派发/卸载、重复拒绝、未注册报错、api 字段校验（11 条）
-node shots/prompt-projection-check.mjs # 命名投影链 + system-prompt 落盘 + note 记录与重放（17 条）
-node scripts/dsh-compat-check.mjs  # dsh 兼容层：解析钩子、工具兼容面、内容钩子、logger 桥、不支持项响亮拒绝（43 条）
-node scripts/dsh-session-bridge-check.mjs # 会话历史只读桥：形状照真实消费方、事件翻成 dsh 类型、写侧响亮拒绝（42 条）
-node scripts/dsh-llm-event-check.mjs # llm/stream 旁路：事件名/参数/chunk 形状/不伤人（12 条）
-node scripts/dsh-session-events-check.mjs # session/event 旁路：顺序、seq、surfaceOp、重试不另开步、真挂载（36 条）
-node scripts/dsh-compat-live-check.mjs # 合成验收：真内核跑真回合，一个探针插件同时吃三条面（19 条）
-node scripts/ui-dsh-card-replay-test.mjs # 重开会话后 dsh 卡片还在：日志落盘 → Session 读回 → transcript 重放（9 条）
-node shots/model-caps-check.mjs    # 模型能力字段读写往返 + 档位 → 请求字段映射（23 条）
-node shots/order-check.mjs         # 侧栏工作区排序落点 + 按工作区树的层级（跑前先编 workspace-order.ts）
-node shots/sandbox-check.mjs       # 沙箱：路径围栏、命令策略、一次性升权、降级可见（193 条）
-node shots/schedule-check.mjs      # 定时任务：六种选择器、DST、至多一次、catch-up、原子落盘（207 条）
-node shots/lsp-check.mjs           # LSP：分帧、URI/UTF-16、服务器表、真握手（自带假语言服务器，167 条）
-node shots/browser-check.mjs       # 浏览器：CDP 消息层、ref 代际、快照截断、整树清理（210 条，本机有 Chrome/Edge 才跑真启动段）
-node shots/self-improve-check.mjs  # 自我改进：候选状态机、SKILL.md 硬校验、台账回滚、老化（181 条）
-node shots/integration-check.mjs   # 集成交付自检（既有：守卫链次序 + 灾难命令 + 压缩重放，95 条）
-node shots/m5-integration-check.mjs# 第五轮集成自检：五插件登记/挂载/热卸载/沙箱默认开不误伤（起四次真内核）
-node shots/seed-ui-home.mjs        # 造一份临时 HOME 的会话数据，配 DSC_DESKTOP_SHOT 拍侧栏/轨迹
-node shots/seed-model-home.mjs     # 造三个带能力字段的端点 + 一条带贴图的消息，拍模型设置与贴图
+# 老探针已按 scripts/<话题>-test.mjs 命名统一收进门禁（check:ui / check:core / check:dsh
+# 都按文件名自动发现，新探针不用回来登记）。desktop/shots/ 只剩桌面端实拍脚本
+# （desktop/shots/*.mjs，例如 readme-shot.mjs 拍 README 图、ui-seed.mjs 造临时 HOME 的会话数据），
+# 本机跑、不进 CI；截图产物被 .gitignore 忽略，脚本本身进版本库。
 node scripts/composer-test.mjs     # TUI 输入候选面板
 
 # 打包版实拍
 cd D:\dsc\desktop && pnpm run dist:dir     # → dist/win-unpacked/Pneuma.exe
 ```
 
-实拍的环境变量钩子（`desktop/electron/main/index.ts`，截图块从 `:433` 起，
-`captureCaptionStrip` 在 `:545`，界面参数钩子在 `:499` 附近）：
+实拍的环境变量钩子（`desktop/electron/main/index.ts`，截图块从 `:1397` 起，
+`captureCaptionStrip` 在 `:1523`，`DSC_DESKTOP_SEARCH` / `DSC_DESKTOP_DEMO` 拼在 `:418-419`）：
 
 | 变量 | 作用 |
 | --- | --- |
 | `DSC_DESKTOP_SHOT=<png 路径>` | 加载完成后截图并退出（带看门狗，`capturePage` 卡住也会退） |
 | `DSC_DESKTOP_SHOT_DELAY` | 截图前等多久，默认 4000 ms |
 | `DSC_DESKTOP_SHOT_TOPMOST=1` | 把窗口钉在最上层并 `show()` 一次。脚本启动 exe 时 STARTUPINFO 里的 `SW_HIDE` 会让窗口开成隐藏的，那样整屏抓图只能抓到窗口后面的东西 |
-| `DSC_DESKTOP_SHOT_STRIP=<png 路径>` | 整屏抓图后裁出窗口右上角的原生控件条，写出 PNG 并把取样颜色打进日志。系统画的最小化/最大化/关闭**不在 `capturePage` 里**，只能这么看（实现见 `captureCaptionStrip`，`:433`） |
+| `DSC_DESKTOP_SHOT_STRIP=<png 路径>` | 整屏抓图后裁出窗口右上角的原生控件条，写出 PNG 并把取样颜色打进日志。系统画的最小化/最大化/关闭**不在 `capturePage` 里**，只能这么看（实现见 `captureCaptionStrip`，`:1523`） |
 | `DSC_DESKTOP_SHOT_EVAL=<js>` | 截图前先在渲染层跑一段脚本：点开某个弹层，或把算出来的颜色读回来 |
 | `DSC_DESKTOP_SHOT_EVAL_LEAD` | 上面这段脚本提前多少毫秒跑，默认 2000 ms |
 | `DSC_DESKTOP_SEARCH` | 拼到界面的 query：`view=plugins`、`settings=subagent`、`teammates=1`、`peek=1`、`reveal=1`（让 hover 才出现的按钮常驻） |
@@ -626,8 +623,11 @@ cd D:\dsc\desktop && pnpm run dist:dir     # → dist/win-unpacked/Pneuma.exe
 桌面壳启动内核就是靠它把同一份 exe 当 node 用（`src/headless.ts:1-6`），只有当你想让
 exe 当**桌面端**跑的时候才要清掉它。
 
-界面参数想自动化，就加 `?xxx=1` 这类一次性钩子（`ui-shell/src/ui-renderer/boot.ts` 已经
-有 `view` / `settings` / `reveal` / `dropline` / `peek` 五个），别在自检脚本里手写点击。
+界面参数想自动化，就加 `?xxx=1` 这类一次性钩子，现成的五个是：`skillstab`
+（`ui-shell/src/plugins/skills/ui.tsx:121`）、`dock`（`ui-shell/src/ui-layout/app.tsx:231`）、
+`diag`（同文件 `:899`）、`theme`（`ui-shell/src/ui-layout/appearance.ts:221`）、
+`panels`（`ui-shell/src/ui-primitives/panels.ts:60`）；`theme` 取值 `dark` / `light` / `claude`，
+`panels` 形如 `sidebar:320,dock:640,collapsed:1`。别在自检脚本里手写点击。
 
 **审查台账**：2026-10-28 做过一次全仓代码审查（开发规范 / 格式统一 / 重复代码 / 架构），
 问题清单、复现命令与三批整改建议在 [code-review-2026-10-28.md](archive/code-review-2026-10-28.md)。
@@ -681,7 +681,9 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 **发布流水线**（`.github/workflows/release.yml`，推 `v*` tag 触发，tag 打在 `main` 上）：
 `verify` 对账 tag / 根 / `desktop` / `ui-shell` 四处版本号，并跑一次 `build:plugins` 检查 19 个内置
 插件的 `@dsc/ui` peer 区间；`npm` 作业用 `NPM_TOKEN` 发 CLI，发完轮询官方源确认版本真出现
-（未配 secret 时警告并跳过，不挡安装包）；Windows 作业构建两个安装器，正文由
+（未配 secret 时警告并跳过，不挡安装包）；`NPM_TOKEN` 是一枚限 `@waq666/pneuma`、勾了
+Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到期前换新并重写 secret，
+否则发布作业会以 401 失败；Windows 作业构建两个安装器，正文由
 `scripts/release-notes.mjs` 从 `CHANGELOG.md` 取当前版本那一节、前面补一段「装哪个」再上传，
 所以**发版前只要在 CHANGELOG 写清这一版**，发布页就有内容，不用再手工补。
 
@@ -745,13 +747,13 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 
 | 名称 | 取值 | 位置 |
 | --- | --- | --- |
-| 权限模式 `ApprovalPolicy` | `readonly`（只读，写和执行一律拒）/ `auto-edit`（工作区内写放行，执行命令仍要审批）/ `full-access`（全部自动放行，灾难地板仍然拒）。旧的 `ai-review` 已由偏好迁移展开成「`full-access` + 审阅者 `auto-review`」（见下）。**按会话存**，不是进程级：A 会话切只读不影响 B 会话 | `src/contract/mode.ts:31`，判读在 `src/plugins/approval.ts`（沙箱边界第 4 层 → 权限模式 / 审阅者第 5 层），档位文案在 `approval.ts` |
-| 审阅者 `ApprovalReviewer` | `user`（本人点卡，默认）/ `auto-review`（先给模型判官，判不出来再落人工卡）——**与权限模式正交**的一根轴，决定「要问的事先给谁看」；复核排在自动放行**之前** | `src/contract/mode.ts:45`，复核在 `src/plugins/approval.ts` 第 5 层内 |
-| 沙箱后端不可用姿态 `SandboxOnUnavailable` | `degrade`（默认，降级为策略围栏继续）/ `fail-closed`（写与执行一律拒，读照常）；只对 `docker` / `windows-token` 生效 | `src/core/sandbox/policy.ts:58` |
-| 思考强度 `EffortLevel` | `default` / `off` / `low` / `high` / `max` | `src/contract.ts:12` |
-| 思考档位 `ThinkingLevel` | `off` / `low` / `high` / `max`（每个模型可只声明其中几档，`default` 不算模型能力） | `src/contract/mode.ts:14` |
-| 档位字段 `ThinkingParam` | `thinking`（发 `thinking:{type}`，只有开关）/ `reasoning-effort`（发 `reasoning_effort`，线上值见 `EffortMap`）/ `none`（不发思考字段）。缺省 `thinking` | `src/contract/mode.ts:17`，映射在 `src/core/model-caps.ts:201` |
-| 输入类型 `Modality` | `text`（恒含）/ `image`（贴图、computer-use 截图）/ `video`（只作声明，目前没有发视频的通路） | `src/contract/mode.ts:25` |
+| 权限模式 `ApprovalPolicy` | `readonly`（只读，写和执行一律拒）/ `auto-edit`（工作区内写放行，执行命令仍要审批）/ `full-access`（全部自动放行，灾难地板仍然拒）。旧的 `ai-review` 已由偏好迁移展开成「`full-access` + 审阅者 `auto-review`」（见下）。**按会话存**，不是进程级：A 会话切只读不影响 B 会话 | `src/contract/mode.ts:45`，判读在 `src/plugins/approval.ts`（沙箱边界第 4 层 → 权限模式 / 审阅者第 5 层），档位文案在 `approval.ts` |
+| 审阅者 `ApprovalReviewer` | `user`（本人点卡，默认）/ `auto-review`（先给模型判官，判不出来再落人工卡）——**与权限模式正交**的一根轴，决定「要问的事先给谁看」；复核排在自动放行**之前** | `src/contract/mode.ts:58`，复核在 `src/plugins/approval.ts` 第 5 层内 |
+| 沙箱后端不可用姿态 `SandboxOnUnavailable` | `degrade`（默认，降级为策略围栏继续）/ `fail-closed`（写与执行一律拒，读照常）；只对 `docker` / `windows-token` 生效 | `src/core/sandbox/policy.ts:61` |
+| 思考强度 `EffortLevel` | `default` / `off` / `low` / `high` / `max` | `src/contract/mode.ts:14` |
+| 思考档位 `ThinkingLevel` | `off` / `low` / `high` / `max`（每个模型可只声明其中几档，`default` 不算模型能力） | `src/contract/mode.ts:17` |
+| 档位字段 `ThinkingParam` | `thinking`（发 `thinking:{type}`，只有开关）/ `reasoning-effort`（发 `reasoning_effort`，线上值见 `EffortMap`）/ `none`（不发思考字段）。缺省 `thinking` | `src/contract/mode.ts:25`，映射在 `src/core/model-caps.ts:201` |
+| 输入类型 `Modality` | `text`（恒含）/ `image`（贴图、computer-use 截图）/ `video`（只作声明，目前没有发视频的通路） | `src/contract/mode.ts:28` |
 | 会话排序 `SessionSortKey` | `manual`（工作区按拖动顺序，没拖过就活动区置顶）/ `recent`（按最近写入）/ `created`（按创建时间） | `src/contract/task.ts:89` |
 | 列表分组 `SessionGroupKey` | `workspace`（按工作区分组）/ `tree`（嵌套目录挂到最近的祖先工作区下）/ `flat`（不分组的单列表） | `src/contract/task.ts:89` |
 | 归档显隐 `ArchivedFilter` | `hide`（默认，只看活动区）/ `show`（两区并成一份列表）/ `only`（只看归档区） | `src/contract/task.ts:89` |
@@ -799,8 +801,8 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 | 最近工作目录记忆条数 | 12 | `desktop/electron/main/index.ts:146` |
 | 技能市场清单缓存 | 1 小时，落在 `~/.dsc/cache/` | `src/core/market.ts:10` |
 | 截图识别标记 | 工具结果文字里含「屏幕物理分辨率」才认定是自己截的图，不误伤别的插件带的图 | `src/plugins/computer-use.ts:72` |
-| 沙箱默认档 | workspace-write：可写根 = 会话 cwd + 沙箱私有临时目录，附加根默认空、网络默认关。这个值只是**新会话默认**（plugins.json 的 `sandbox.mode`）；每个会话自己的档位存在会话 `permissions` 状态里 | `src/core/sandbox/policy.ts:54-55`、`src/core/permission-scope.ts` |
-| 沙箱后端不可用姿态 | `degrade`（默认，降级为策略围栏继续，=旧行为）/ `fail-closed`（写与执行类一律拒、读照常，拒因规则名 `backend-unavailable`）；只对 `docker` / `windows-token` 生效，`policy` 后端的 `partial` 是预期状态、不触发 | `src/core/sandbox/policy.ts:58` |
+| 沙箱默认档 | workspace-write：可写根 = 会话 cwd + 沙箱私有临时目录，附加根默认空、网络默认关。这个值只是**新会话默认**（plugins.json 的 `sandbox.mode`）；每个会话自己的档位存在会话 `permissions` 状态里 | `src/core/sandbox/policy.ts:87-89`、`src/core/permission-scope.ts` |
+| 沙箱后端不可用姿态 | `degrade`（默认，降级为策略围栏继续，=旧行为）/ `fail-closed`（写与执行类一律拒、读照常，拒因规则名 `backend-unavailable`）；只对 `docker` / `windows-token` 生效，`policy` 后端的 `partial` 是预期状态、不触发 | `src/core/sandbox/policy.ts:61` |
 | 沙箱升权 | `sandbox_permissions` + `sandbox_scope`（`once` 默认 / `session`）+ `justification` **成对校验**（只给 scope 或半截 → 按拒处理）；`workspace-write` = 留在沙箱内、把这次目标并进可写根后**重判**，`danger-full-access` = 这一次跳过沙箱判定；「本会话允许」只对「留在沙箱内」这一类给会话档（命令类与出沙箱档只给这一次） | `src/core/tools/sandbox-args.ts`、`src/plugins/sandbox.ts`（`grantSession` / `sessionGrants`） |
 | 沙箱越界的两条路 | **能问的**（`outside-writable-roots` / `mode-read-only`）沙箱只 defer，审批是最后一道，用户点「这一次允许」就执行（对齐 dsh 的 read-only + ask）；**不能问的**（NT 命名空间 / ADS / 短名 / 解析失败 / 受保护名 / 只读子路径 / 网络开关 / 后端 fail-closed）保持硬拒。审批缺场时沙箱自己硬拒，不会变成无人把关 | `src/plugins/sandbox.ts`（`ASKABLE_RULES`）、`src/plugins/approval.ts`（第 4 层 `sandbox.check`） |
 | 审批裁决顺序 | 硬地板 → 说明书类文件 → 已给授权 → **沙箱边界** → 权限模式 / 审阅者 → 人工卡。沙箱越界跳过所有自动放行（含完全访问），只给「这一次」；AI 复核排在自动放行之前，所以「完全访问 + AI 复核」每次调用都过判官 | `src/plugins/approval.ts:494-660` |
@@ -853,7 +855,7 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 官方可开关插件之间还有一条硬约束：`tool-search` 必须排在 `mcp` 之后，否则它 apply 时 `ctx.get('mcp')` 是 `undefined`，MCP 工具的 schema 永远不会被撤下。
 
 **自检脚本同进程起多个内核时要先停再验**：命令补全面（`src/plugins/commands.ts` 的模块级 `extraSpecs`）与插件元数据一样是进程级共享——不先停掉前面的内核，后起内核的 `specs()` 会看见前几份注册，验「关掉后消失」全是假阳性。cordis 的 `Context` 本身没有 dispose，fiber 在 `ctx.fiber` 上，停整棵内核是 `await ctx.fiber.dispose()`（m5 集成自检踩过这个坑）。
-注意 `desktop-dock` 与 `plugin-manager` 不显示在插件中心的「运行内核」清单里。
+注意 `permission-presets`、`desktop-dock`、`git` 与 `plugin-manager` 不显示在插件中心的「运行内核」清单里（它们没有 `BUILTIN_PLUGINS` 元数据，这正是元数据 30 条、实挂 34 个的那 4 个差额）。
 把 `tools-default` 剔掉就得到一个只有对话、没有工具的 harness（`src/plugins/tools-default.ts:3`）。
 
 ### core 层
@@ -869,7 +871,7 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 | `connection-test.ts` | 端点连接测试（设置 → 模型「测试连接」）：固定两条探针消息（system + user `hi`）、无历史无工具、输出预算 16、走与正常对话**同一条**链路（同协议适配器、同一份归因头），**流正常收尾即算通**（正文为空也算）。超时（20 秒）与「端点回了错」分开说；失败折成 `{ ok:false, error }` 不往外抛（点一次按钮不该弹两次错）。`pickProbeModel()` 定测哪个模型：显式给的 > 默认端点那份默认模型 > 清单第一个 |
 | `session.ts` | 列表只读每个文件前 8 行 + mtime（`:463-472`），所以列表页别指望读到深处的内容。目录名把 `\\`、`/`、`:` 换成 `-`（`:34-36`） |
 | `session-meta.ts` | `sessions/meta.json` 用 uuid 当键，所以归档挪文件不会丢状态（`:7`）。`version` 不是 1 就整表当空（`:53`） |
-| `events.ts` | `CoreEvent` 九个变体，是 core 唯一对外通道（`:10-22`） |
+| `events.ts` | `CoreEvent` 17 个变体，是 core 唯一对外通道（`:13-130`） |
 | `compact.ts` | 见 §12 |
 | `compact-anchors.ts` | 摘要的机械加固件：锚点索引（正则抽 PR 号 / commit / 分支 / 文件 / 报错 / 链接）、用户原话逐字引用、细节找回指针。全是纯函数，可以脱离模型单独断言 |
 | `approval-floor.ts` | 灾难地板的判定：结构不可验证 → 灾难命令 → 用户 deny 黑名单 → 危险模式 → 命令白名单 → 无人值守，逐层给结论。配置读不通时守卫照样挂载却一律拒（挂不上等于链上没有地板，是 fail-open）。**只判「拒」或「不拒」**：命中白名单也只 `defer`，由 `approvalFloor` 服务把结论交给审批层免卡放行——地板自己 `pass` 会把 order 20 / 25 的安全钩子一并跳掉 |
