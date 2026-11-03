@@ -74,6 +74,14 @@ export const skillsPlugin: Plugin.Object = {
     let catalog = ''
     let inFlight: Promise<void> | null = null
     let staleAgain = false
+    /**
+     * 上一次重扫时的工作目录（null = 还没扫过）。
+     *
+     * 「切会话」是重扫技能目录的唯一日常触发点，而多数切换发生在同一个工作区里——
+     * 那种切换下技能目录、定制目录、停用清单一样都没变，重扫只是白读一遍磁盘
+     * （2026-11-03 实测：每次切换 8–30ms，且拖慢这次切换的回执）。
+     */
+    let scannedCwd: string | null = null
     const commandDisposers = new Map<string, () => void>()
 
     const cwd = (): string => ctx.session.current().meta.cwd
@@ -386,6 +394,12 @@ export const skillsPlugin: Plugin.Object = {
     })
 
     ctx.on('dsc/session-open', () => {
+      // 同一个工作区内换会话：技能目录（含工作区里的定制目录）一个字节都没变，重扫一遍
+      // 纯属白花——实测每次切会话要耗 8–30ms 的 stat 与文件读（2026-11-03 的量具）。
+      // 目录真变了才重扫；技能文件本身的改动走 `dsc/skills-changed` 那条，不受这里影响。
+      const next = cwd()
+      if (next === scannedCwd) return
+      scannedCwd = next
       void refresh()
     })
     ctx.on('dsc/skills-changed', () => {
@@ -393,6 +407,7 @@ export const skillsPlugin: Plugin.Object = {
     })
 
     ctx.provide('skills', service)
+    scannedCwd = cwd()
     void refresh()
   },
 }

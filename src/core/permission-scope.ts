@@ -8,7 +8,11 @@
  *
  * 口径照 dsh 的 `permission-presets`：**会话值优先，缺项才用默认值**；默认值
  * 只对「还没钉过的会话」生效，钉住之后改默认值不影响它（老会话第一次打开时
- * 把当时生效的值写进去，而不是让它跟着偏好漂）。
+ * 把当时生效的值钉进内存，而不是让它跟着偏好漂）。
+ *
+ * 补钉只改内存、不立刻写盘（2026-11-03）：打开会话会补三条默认值，以前当场
+ * 追加进 jsonl，「只看一眼」也会刷新文件 mtime，侧栏的「最近使用」跟着跳成
+ * 「刚刚」。现在补钉值等下一次真正写日志时顺带落盘，见 {@link pinPermission}。
  *
  * 这一层是纯的：不读磁盘、不认识插件，只认一个最小的会话形状，探针可以直读。
  *
@@ -33,7 +37,13 @@ export interface PermissionKnobs {
 /** 存权限需要的会话最小面（`Session` 结构上满足它；探针用假对象也能测）。 */
 export interface PermissionSession {
   state(id: 'permissions'): SessionPermissionState | undefined
+  /** 立刻落盘（用户真改了档位时用）。 */
   appendState(id: 'permissions', payload: SessionPermissionState): void
+  /**
+   * 只记内存、等下一次写日志时顺带落盘（读路径补默认值用）。
+   * 老调用方的假会话没有这一项，{@link pinPermission} 会退回 `appendState`。
+   */
+  setState?(id: 'permissions', payload: SessionPermissionState): void
 }
 
 /** 三项的中文名（诊断与报错用）。 */
@@ -99,10 +109,33 @@ export function writePermissions(session: PermissionSession, patch: Partial<Sess
 }
 
 /**
+ * 补默认值时的写入：先记内存，下一次真正写日志时再跟着落盘。
+ *
+ * 为什么单独一条（2026-11-03 用户报障「点一下会话，时间就变刚刚」）：补钉发生在
+ * **读**的时候，以前直接 `appendState`，于是「只是点开看一眼」也会往会话日志里
+ * 追加三条 state、把文件 mtime 刷新成现在，侧栏的「最近使用」跟着跳到「刚刚」。
+ * 补钉值在同一进程里立刻生效，磁盘上等用户下一次说话/切档位时顺带带出即可。
+ *
+ * `appendState` 只留给用户真的动了档位那条路（见 {@link writePermissions}）。
+ */
+function pinPermission(session: PermissionSession, patch: Partial<SessionPermissionState>): void {
+  const before = storedPermissions(session)
+  const after: SessionPermissionState = {
+    sandbox: patch.sandbox ?? before.sandbox,
+    policy: patch.policy ?? before.policy,
+    reviewer: patch.reviewer ?? before.reviewer,
+  }
+  if (typeof session.setState === 'function') session.setState('permissions', after)
+  else if (typeof session.appendState === 'function') session.appendState('permissions', after)
+  else setFallbackOf(session, after)
+}
+
+/**
  * 取某一项：会话里钉过就用它，没钉过就落 `fallback` 并钉住。
  *
  * 为什么在读取时钉、而不是只在启动/切会话时钉：沙箱是官方可开关插件，挂载顺序
  * 晚于 permission-presets；谁先被问谁完成钉住，三条插件都不会读到「半份状态」。
+ * 钉的动作只在内存里做（见 {@link pinPermission}），不为了「看一眼」改文件。
  */
 export function permissionOf<K extends keyof SessionPermissionState>(
   session: PermissionSession,
@@ -111,7 +144,7 @@ export function permissionOf<K extends keyof SessionPermissionState>(
 ): NonNullable<SessionPermissionState[K]> {
   const stored = storedPermissions(session)[key]
   if (stored !== undefined && stored !== null) return stored as NonNullable<SessionPermissionState[K]>
-  writePermissions(session, { [key]: fallback } as Partial<SessionPermissionState>)
+  pinPermission(session, { [key]: fallback } as Partial<SessionPermissionState>)
   return fallback
 }
 

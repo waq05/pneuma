@@ -182,6 +182,8 @@ export function createRemoteServer(deps: RemoteServerDeps): RemoteServerHandle {
   const hub = new RemoteFrameHub()
   let frameTimer: NodeJS.Timeout | null = null
   let framePending = false
+  /** 上一帧推出去的时刻（0 = 还没推过）：节流按 leading-edge 走，见 scheduleFrame。 */
+  let lastFrameAt = 0
   /**
    * 一条连接都没有的时候发生的会话变化：帧流那时不前进（没人看，白算），
    * 所以下一条连接补完缓冲里的帧之后，必须再补一帧全量把这段时间的变化对上。
@@ -225,16 +227,20 @@ export function createRemoteServer(deps: RemoteServerDeps): RemoteServerHandle {
     }
     framePending = true
     if (frameTimer !== null) return
+    // leading-edge（2026-11-03，与 host-stdio 同一口径）：距上一帧已经超过窗口就立刻推，
+    // 窗口内的连续变化才合并。旧写法每次都要等满一个窗口，用户点完会话要干等 60–80ms。
+    const wait = Math.max(0, deps.throttleMs - (Date.now() - lastFrameAt))
     frameTimer = setTimeout(() => {
       frameTimer = null
       if (!framePending) return
       framePending = false
+      lastFrameAt = Date.now()
       if (sockets.size === 0) {
         missedWhileIdle = true
         return
       }
       emitFrame(false)
-    }, deps.throttleMs)
+    }, wait)
   }
 
   const stopFrames = (): void => {

@@ -59,6 +59,14 @@ export const gitPlugin: Plugin.Object = {
     let dueAt = 0
     /** 一拍还在跑时不再起第二拍（git 慢的时候）。 */
     let busy = false
+    /**
+     * 手上这份 {@link cache} 属于哪个工作目录（null = 还没读过）。
+     *
+     * 用来回答「这次换会话要不要重拍」：读数只有一份、跟着当前会话的目录走，
+     * 同一个工作区里换会话读到的还是同一份，重拍纯属白拉三个 git 子进程
+     * （2026-11-03 量到每次切会话约 30–50ms 的进程创建开销）。
+     */
+    let cacheCwd: string | null = null
 
     const schedule = (ms: number): void => {
       const at = Date.now() + ms
@@ -74,6 +82,7 @@ export const gitPlugin: Plugin.Object = {
     /** 读一拍：分支名 + 改动条数。读不动（不是仓库 / git 不在 / 目录没了）按空读数记。 */
     const read = async (): Promise<void> => {
       const cwd = ctx.session.current().meta.cwd
+      cacheCwd = cwd
       let next: GitSurface
       try {
         // 先问一句「这儿是不是仓库」：不然「不是仓库」与「空仓库（还没提交过）」
@@ -153,6 +162,10 @@ export const gitPlugin: Plugin.Object = {
     // 三处催拍：回合收工（这一轮可能落了文件/切了分支）、换会话（换了工作区）、
     // 以及写类 git op 自己调 refresh()（那条在 desktop-dock 里）。
     ctx.on('dsc/turn-end', refresh)
-    ctx.on('dsc/session-open', refresh)
+    // 换会话只在**工作目录真的变了**时才重拍：同一个工作区里的会话共用一个仓库读数，
+    // 每切一次就拉三个 git 子进程是纯浪费（读数本身由巡检按 12s/30s 的节奏保鲜）。
+    ctx.on('dsc/session-open', ({ session }) => {
+      if (session.meta.cwd !== cacheCwd) refresh()
+    })
   },
 }

@@ -206,8 +206,12 @@ export interface SessionService {
   archived(): ArchivedPage
   /** 从归档区恢复一批会话。 */
   restore(paths: string[]): SettingsMutation
-  /** 永久删除一批会话（移进回收站，30 天后清）。 */
-  purge(paths: string[]): SettingsMutation
+  /**
+   * 永久删除一批会话（移进回收站，30 天后清）。
+   *
+   * 是异步的：切走不久、还在「空闲保留」名册里的会话握着写入流，要先等它收摊才能挪文件。
+   */
+  purge(paths: string[]): Promise<SettingsMutation>
   /** 改会话显示名（写 meta.json，不动 jsonl）。 */
   rename(path: string, title: string): SettingsMutation
   /** 置顶或取消置顶一个会话。 */
@@ -216,6 +220,17 @@ export interface SessionService {
   userMessages(path: string): string[]
   /** 分叉会话：复制到第 index 条用户消息之前，成功时给新会话路径。 */
   fork(path: string, index: number): SessionForkResult
+  /**
+   * 作废第 keep 条用户消息及其之后的内容（「编辑并重发」用）：日志追加一条 `rewind`
+   * 记录并让转录层按截断后的历史重建，之后由调用方把改过的文字重新提交。
+   *
+   * 与 {@link fork} 的区别：分叉**保住**原会话、另开一条；这条是**在原地**截断重来。
+   * 因此它只对「当前正在看的那条会话」有效——别的会话没有常驻的 agent 承接截断后的历史。
+   *
+   * @param text - 改过的那句话（可选）：作废的是第一条消息时，侧栏标题要跟着换成它，
+   *   否则会一直显示那句已经被作废的原文。
+   */
+  rewind(path: string, keep: number, text?: string): SettingsMutation
 }
 
 // ── approval ─────────────────────────────────────────────────────────────────

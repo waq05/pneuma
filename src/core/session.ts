@@ -6,7 +6,7 @@
  *
  * @module dsc/core/session
  */
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, promises as fsp } from 'node:fs'
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, promises as fsp, type Stats } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -20,6 +20,7 @@ import type { SessionMetaRecord } from './session-meta.js'
 import { acquireLock, withExclusiveLock, type FileLock } from './lockfile.js'
 import { dscPath } from './path-policy.js'
 import { fileHandleText, parseAttachmentUrl, resolveImageForRequest, type UserFileAttachment } from './attachments.js'
+import { REVIEW_FINDINGS_OPEN, TEAMMATE_REPORT_OPEN } from './team-board.js'
 
 /** 会话元数据（jsonl 首行 + 列表投影）。 */
 export interface SessionMeta {
@@ -155,6 +156,18 @@ type SessionRecord =
    * 存储层不认识具体功能，`id` 与负载类型见 {@link SessionStateMap}。
    */
   | { type: 'state'; id: string; payload: unknown }
+  /**
+   * 「回到某一条用户消息之前重来」（2026-11-03）：界面上的「编辑并重发」不再分叉新会话，
+   * 而是在**当前会话里**把这条消息及其之后的内容作废，再按改过的文字重发。
+   *
+   * 日志仍是 append-only：一条记录都不删，靠这条 `rewind` 声明「从这里往后作废」。
+   * `keep` = 保留几条**人打的**用户消息（`origin: 'notice'` 的机器投递不算），
+   * 重放时遇到它就把已经读到的消息截到第 keep 条用户消息之前（见 load 的 `case 'rewind'`）。
+   *
+   * 老构建读到此类型会静默跳过（load 的 switch 没有 default），只会多看到被作废的那段
+   * 历史——比读不出会话好。
+   */
+  | { type: 'rewind'; keep: number; ts?: number }
   /**
    * 请求注入备忘（Model-visible ⟺ logged 的补丁）：插件投影往请求体里塞的、日志上
    * 本来没有的内容（LSP 写后诊断、生命周期钩子的话术）在此留底。备忘不进请求消息流、
@@ -364,6 +377,46 @@ function commonDirectory(paths: Iterable<string>): string | null {
   return candidate
 }
 
+/**
+ * 这条用户消息是不是「人打的」。
+ *
+ * 三类不算：机器投递的唤醒（`origin: 'notice'`，2026-11-02）、队友汇报与审查结论
+ * （正文以 `<teammate-report ` / `<review-findings ` 开头，见 `core/team-board.ts`）。
+ *
+ * 为什么存储层要认这三类：界面上它们画成一行触发行 / 一张结论卡，**不开一轮对话**；
+ * 「编辑并重发」把「界面上第几轮」换算成消息下标时，两边必须是同一套判据，否则会
+ * 截到错的位置（少算=没截干净，多算=把还在用的历史截掉）。
+ */
+function isHumanUserMessage(message: ChatMessage): boolean {
+  if (message.role !== 'user') return false
+  if (message.origin === 'notice') return false
+  const text =
+    typeof message.content === 'string'
+      ? message.content
+      : (message.content?.find((part) => part.type === 'text')?.text ?? '')
+  return !text.startsWith(TEAMMATE_REPORT_OPEN) && !text.startsWith(REVIEW_FINDINGS_OPEN)
+}
+
+/**
+ * 「第 keep 条**人打的**用户消息」在消息数组里的下标（0 基）；没有这一条返回 -1。
+ *
+ * 为什么只数人打的：机器投递的通知与队友汇报在界面上都是一行触发行，不开一轮对话；
+ * 把界面上的「第几轮」换算成消息下标时，两种口径必须一致（判据见
+ * {@link isHumanUserMessage}，界面对应 `entry.internal !== true`）。
+ *
+ * @param messages - 协议消息（`Session.messages` 或重放中的中间结果）。
+ * @param keep - 要保留几轮用户消息：下标落在这条消息上，它本身是要被作废的那条。
+ */
+function cutIndexBeforeUser(messages: readonly ChatMessage[], keep: number): number {
+  let seen = 0
+  for (let index = 0; index < messages.length; index += 1) {
+    if (!isHumanUserMessage(messages[index]!)) continue
+    if (seen === keep) return index
+    seen += 1
+  }
+  return -1
+}
+
 /** 一个会话：内存消息 + 磁盘日志。 */
 export class Session {
   readonly meta: SessionMeta
@@ -385,6 +438,15 @@ export class Session {
    * sessionId 取值，不依赖文件是否存在。
    */
   private pendingState: Array<Extract<SessionRecord, { type: 'state' }>> = []
+  /**
+   * 只改了内存、还没落盘的状态（id → 负载）：读路径补默认值用。
+   *
+   * 为什么（2026-11-03「点一下老会话时间就变刚刚」）：权限三项在**读**的时候补钉
+   * （见 core/permission-scope），以前一补就写盘，于是「只是点开看一眼」也会把
+   * 会话文件改一遍。改成先记在这里，等下一次真正要写日志（用户说话、切档位）时
+   * 跟着那一条一起落盘——同一进程里读到的值立刻生效，不会跟着偏好漂。
+   */
+  private readonly deferredState = new Map<string, unknown>()
   /**
    * T30 写租约：一份会话日志同一时刻只允许一个进程写。桌面端与 TUI 从同一份
    * `.last-session` 取默认会话，没有这层时两边会交错 append、重放串线。
@@ -574,6 +636,15 @@ export class Session {
         case 'state':
           state.set(record.id, record.payload)
           break
+        case 'rewind': {
+          // 「从这里往后作废」（编辑并重发）：截到第 keep 条人打的用户消息之前。
+          // 序号越界（老日志被别的东西改过）就当没看见——宁可多显示一段历史，也不能
+          // 把正常内容截没。
+          const keep = Number.isFinite(record.keep) && record.keep >= 0 ? Math.floor(record.keep) : 0
+          const cut = cutIndexBeforeUser(messages, keep)
+          if (cut >= 0) messages.length = cut
+          break
+        }
         case 'note':
           notes.push({ id: record.id, text: record.text, ts: record.ts })
           break
@@ -648,6 +719,40 @@ export class Session {
       ...(notice ? { origin } : {}),
       ts,
     })
+  }
+
+  /**
+   * 作废第 keep 条用户消息及其之后的一切（「编辑并重发」用，2026-11-03）。
+   *
+   * 语义：保留前 keep 条人打的用户消息与它们各自的回答，从第 keep 条（0 基）开始整段丢掉，
+   * 之后由调用方 appendUser 把改过的文字重新写进去。**日志一个字都不删**——落一条
+   * `rewind` 记录声明「从这里往后作废」，重放按同一条规则截断（见 load 的 `case 'rewind'`）。
+   *
+   * @param keep - 保留几轮（人打的用户消息条数）。
+   * @returns false = 这条消息已经不在会话里（序号越界），调用方应当如实回报而不是硬改。
+   */
+  rewindToUser(keep: number): boolean {
+    const cut = cutIndexBeforeUser(this.messages, keep)
+    if (cut < 0) return false
+    const dropped = this.messages.splice(cut)
+    // 被丢掉那段的工具派生状态（错误标记 / 改动清单 / 卡片）一并清掉：它们按 callId 存，
+    // 作用域只到那些消息为止，留着就是纯占内存（同一个 callId 不会再来一次）。
+    const kept = new Set<string>()
+    for (const message of this.messages) {
+      if (message.role === 'tool' && message.tool_call_id !== undefined) kept.add(message.tool_call_id)
+      for (const call of message.tool_calls ?? []) kept.add(call.id)
+    }
+    const forget = (callId: string): void => {
+      this.toolErrors.delete(callId)
+      this.fileChanges.delete(callId)
+      this.presentations.delete(callId)
+    }
+    for (const message of dropped) {
+      if (message.role === 'tool' && message.tool_call_id !== undefined && !kept.has(message.tool_call_id)) forget(message.tool_call_id)
+      for (const call of message.tool_calls ?? []) if (!kept.has(call.id)) forget(call.id)
+    }
+    this.write({ type: 'rewind', keep, ts: Date.now() })
+    return true
   }
 
   appendAssistant(text: string, reasoning: string, toolCalls: ToolCall[]): void {
@@ -829,7 +934,21 @@ export class Session {
    */
   appendState<K extends keyof SessionStateMap>(id: K, payload: SessionStateMap[K]): void {
     this.stateById.set(id as string, payload)
+    // 这个 id 之前攒着的默认值被真实写入顶掉了，别再跟着下一条日志重复落一遍
+    this.deferredState.delete(id as string)
     this.write({ type: 'state', id: String(id), payload })
+  }
+
+  /**
+   * 只改内存里的状态，等下一次真正写日志时再落盘（读路径补默认值专用）。
+   *
+   * 与 {@link appendState} 的区别：这里的值由后续写盘顺带带出，所以「只打开一次
+   * 会话、什么都没做」不会再改动文件（mtime 不变，侧栏的「最近使用」也就不会跳）。
+   * 同一进程里读到的值立刻生效，和落过盘没有区别。
+   */
+  setState<K extends keyof SessionStateMap>(id: K, payload: SessionStateMap[K]): void {
+    this.stateById.set(id as string, payload)
+    this.deferredState.set(id as string, payload)
   }
 
   /**
@@ -968,6 +1087,15 @@ export class Session {
       for (const pending of this.pendingState) stream.write(`${JSON.stringify(pending)}\n`)
       this.pendingState.length = 0
     }
+    // 读路径攒下的默认值跟着这一条一起落盘：顺序在触发它的记录之前，重放时最后一条
+    // 生效，与「先补钉、再做事」的因果一致。
+    if (this.deferredState.size > 0) {
+      const stream = this.streamFor()
+      for (const [id, payload] of this.deferredState) {
+        stream.write(`${JSON.stringify({ type: 'state', id, payload })}\n`)
+      }
+      this.deferredState.clear()
+    }
     this.streamFor().write(`${JSON.stringify(record)}\n`)
   }
 
@@ -989,7 +1117,8 @@ export class Session {
 
 /**
  * 列表投影的一行：读一个 jsonl 文件得到的元数据 + sidecar 属性 + 文件路径。
- * `updatedAt` 来自文件 mtime（最后一次写入日志的时间），是「最近使用」的排序依据。
+ * `updatedAt` 是「最后一步」的时刻（最后一条带 `ts` 的对话记录，见
+ * {@link lastActivityAt}），是「最近使用」的排序依据；文件 mtime 只用来做读盘缓存的键。
  */
 export interface SessionListItem {
   /** 会话 uuid。 */
@@ -997,7 +1126,7 @@ export interface SessionListItem {
   cwd: string
   /** 创建时间（meta 首行）。 */
   createdAt: number
-  /** 最后一次写入的时间（文件 mtime）。 */
+  /** 最后一步的时刻：最后一条带 `ts` 的对话记录；老日志没有 ts 时回落文件 mtime。 */
   updatedAt: number
   /** 展示标题：用户改过的标题优先，否则首条用户消息截断。 */
   title?: string
@@ -1068,14 +1197,85 @@ function hasConversation(lines: string[]): boolean {
   return lines.some((line) => line.startsWith('{"type":"user"') || line.startsWith('{"type":"assistant"'))
 }
 
+/**
+ * 侧栏一行的读盘缓存（2026-11-03）：键 = 文件路径 + 侧栏属性（标题/置顶），
+ * 值 = 上次的 mtime、大小与读出来的那一行。
+ *
+ * 为什么加：`listSessions()` 每次都把**每个会话文件的整份内容**读一遍（只为拿 meta 行
+ * 与第一条用户消息），实测 76 条会话要 120–150ms；而界面**每点一次会话**就会
+ * `refreshSessions` 重扫一次——这一下比读会话本身还贵，且完全没必要：切会话不会
+ * 改动任何文件。
+ *
+ * 认 mtime + 大小：会话在长（append），那一条自己会失效重读；其余几十条一个字节没变，
+ * 直接复用。标题/置顶存在 meta.json sidecar 里、不碰 jsonl，所以把它们一起编进键，
+ * 改完名字立刻能看到（代价是这条会多读一次，改名是低频动作）。
+ */
+const sessionRowCache = new Map<string, { mtimeMs: number; size: number; item: SessionListItem | null }>()
+
 /** 读一个会话文件的前几行 + mtime；首行不是 meta（损坏/空文件）时尽量抢救（T31）。 */
 function readSessionFile(filePath: string, sidecar?: SessionMetaRecord): SessionListItem | null {
+  let stat: Stats
   try {
-    const head = readFileSync(filePath, 'utf8').split(/\r?\n/, 200)
+    stat = statSync(filePath)
+  } catch {
+    return null
+  }
+  const key = `${filePath}\u0000${sidecar?.title ?? ''}\u0000${sidecar?.autoTitle ?? ''}\u0000${String(sidecar?.pinnedAt ?? '')}`
+  const cached = sessionRowCache.get(key)
+  if (cached !== undefined && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.item
+  const item = readSessionFileUncached(filePath, stat.mtimeMs, sidecar)
+  // 上限只是防御：正常是一个工作目录几十到几百条会话。
+  if (sessionRowCache.size > 512) sessionRowCache.clear()
+  sessionRowCache.set(key, { mtimeMs: stat.mtimeMs, size: stat.size, item })
+  return item
+}
+
+/** 读尾部找「最后一句话」时的窗口：state 记账一条不到 1KB，512KB 够翻过一大批。 */
+const TAIL_SCAN_CHARS = 512 * 1024
+
+/**
+ * 「最近使用」的时刻 = 最后一条带 `ts` 的记录，不是文件 mtime。
+ *
+ * 为什么（2026-11-03 用户报障「点一下会话，时间就变刚刚」）：mtime 只说明「这个文件
+ * 刚被写过」。权限三项的默认值、模型档位这些记账都会在**打开会话**时补写一条
+ * `state`，于是老会话被点开一次，侧栏时间就跳到「刚刚」——可它一个字都没多。
+ * 界面要的是「最后一步是什么时候」，所以取最后一条带 `ts` 的对话记录
+ * （user / assistant / tool / summary / rewind / note 都带），没有 `ts` 的 state
+ * 记账自然被跳过。
+ *
+ * 老日志（`ts` 字段引入之前）整份都找不到 ts：回落到 mtime，至少排序不乱。
+ * 只扫尾部：append-only 的日志里最后一条记录必定贴着文件尾，单独一段够用；
+ * 万一最后一条本身超过窗口被切碎，解析失败就当没看见，继续往前找。
+ *
+ * @param text - 会话文件全文（调用方已经读出来了，不再读第二次）。
+ * @param fallback - 找不到任何 `ts` 时用它（调用方传 mtime）。
+ */
+function lastActivityAt(text: string, fallback: number): number {
+  const tail = text.length > TAIL_SCAN_CHARS ? text.slice(text.length - TAIL_SCAN_CHARS) : text
+  const lines = tail.split(/\r?\n/)
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]!
+    // 便宜的先筛：没有 ts 字样的行（state 记账都是这种）直接跳过，不做 JSON.parse
+    if (!line.includes('"ts"')) continue
+    try {
+      const record = JSON.parse(line) as { ts?: unknown }
+      if (typeof record.ts === 'number' && Number.isFinite(record.ts)) return record.ts
+    } catch {
+      // 窗口起点切碎的半行、坏行：跳过，继续往前找
+    }
+  }
+  return fallback
+}
+
+/** {@link readSessionFile} 的真读：mtime 由调用方传进来，省一次 stat。 */
+function readSessionFileUncached(filePath: string, mtimeMs: number, sidecar?: SessionMetaRecord): SessionListItem | null {
+  try {
+    const text = readFileSync(filePath, 'utf8')
+    const head = text.split(/\r?\n/, 200)
     // 一条对话记录都没有：不进列表（T31「头行损坏也露脸」只放过真有对话的文件）。
     // 这里只读了前 200 行，state 攒得多时首条用户消息可能被挤出窗口；真截断了就
     // 把整份再看一眼，免得一条正常会话从列表里凭空消失。
-    if (!hasConversation(head) && (head.length < 200 || !hasConversation(readFileSync(filePath, 'utf8').split(/\r?\n/)))) {
+    if (!hasConversation(head) && (head.length < 200 || !hasConversation(text.split(/\r?\n/)))) {
       return null
     }
     let record: SessionRecord | undefined
@@ -1096,7 +1296,7 @@ function readSessionFile(filePath: string, sidecar?: SessionMetaRecord): Session
         id: record.id,
         cwd: record.cwd,
         createdAt: record.createdAt,
-        updatedAt: statSync(filePath).mtimeMs,
+        updatedAt: lastActivityAt(text, mtimeMs),
         ...(title !== undefined ? { title } : {}),
         ...(sidecar?.pinnedAt !== undefined ? { pinnedAt: sidecar.pinnedAt } : {}),
         path: filePath,
@@ -1132,7 +1332,7 @@ function readSessionFile(filePath: string, sidecar?: SessionMetaRecord): Session
       id: basename(filePath, '.jsonl'),
       cwd: commonDirectory(paths) ?? '',
       createdAt,
-      updatedAt: statSync(filePath).mtimeMs,
+      updatedAt: lastActivityAt(text, mtimeMs),
       ...(title !== undefined ? { title } : {}),
       ...(sidecar?.pinnedAt !== undefined ? { pinnedAt: sidecar.pinnedAt } : {}),
       path: filePath,
@@ -1261,6 +1461,53 @@ export function countTrashFiles(): number {
 }
 
 /**
+ * 把日志里的 `rewind` 指令**应用**到原始行上：返回「作废之后还剩哪些行」。
+ *
+ * 为什么需要它：`rewind` 是「从这里往后作废」的一条声明，内存与重放都认（见
+ * {@link Session.rewindToUser} 与 load 的 `case 'rewind'`），但还有几条读盘的路是
+ * **逐行扫原文**的——分叉、分叉菜单、标题推导。不在这里把 rewind 应用一遍，那些路就会
+ * 把已经被作废的消息当成还在：分叉菜单里列着它们，从那里分叉出来的新会话还会把
+ * `rewind` 记录一起带过去，重放时再把自己截空（2026-11-03 审查抓到）。
+ *
+ * 结果里的 `rewind` 记录本身不再保留：它已经生效了，留着会让下游再截一次。
+ * 越界的 keep（比人打的消息还多）按「没看见」处理，与 load 同一条兜底。
+ *
+ * @param lines - 一份 jsonl 切出来的行（不含空行）。
+ */
+function applyRewinds(lines: readonly string[]): string[] {
+  const out: string[] = []
+  /** 保留下来的行里，每条**人打的**用户消息落在 `out` 的哪个下标（0 基，按消息序）。 */
+  const humanAt: number[] = []
+  for (const line of lines) {
+    if (!line.startsWith('{"type":"')) {
+      out.push(line)
+      continue
+    }
+    let record: SessionRecord
+    try {
+      record = JSON.parse(line) as SessionRecord
+    } catch {
+      out.push(line)
+      continue
+    }
+    if (record.type === 'rewind') {
+      const keep = Number.isFinite(record.keep) && record.keep >= 0 ? Math.floor(record.keep) : 0
+      const cut = humanAt[keep]
+      if (cut !== undefined) {
+        out.length = cut
+        humanAt.length = keep
+      }
+      continue
+    }
+    if (record.type === 'user' && record.origin !== 'notice' && !record.text.startsWith(TEAMMATE_REPORT_OPEN) && !record.text.startsWith(REVIEW_FINDINGS_OPEN)) {
+      humanAt.push(out.length)
+    }
+    out.push(line)
+  }
+  return out
+}
+
+/**
  * 分叉一个会话：复制日志到第 `beforeUserMessage` 条用户消息之前，
  * 首行 meta 换成新 uuid 与新创建时间，返回新文件路径。
  *
@@ -1269,7 +1516,9 @@ export function countTrashFiles(): number {
  */
 export function forkSession(filePath: string, beforeUserMessage: number): string {
   const source = assertLiveSessionFile(filePath)
-  const lines = readFileSync(source, 'utf8').split(/\r?\n/).filter((line) => line !== '')
+  // 先应用 rewind：被作废的那段既不该出现在分叉菜单里，也不该被复制进新会话
+  // （带着 rewind 记录复制的话，新会话重放时又会把自己截空——2026-11-03 审查抓到）。
+  const lines = applyRewinds(readFileSync(source, 'utf8').split(/\r?\n/).filter((line) => line !== ''))
   const first = JSON.parse(lines[0] ?? '') as SessionRecord
   if (first.type !== 'meta') throw new Error(`源会话首行不是 meta：${basename(source)}`)
   let seen = 0
@@ -1304,7 +1553,8 @@ export function forkSession(filePath: string, beforeUserMessage: number): string
 
 /** 读一个会话里的用户消息（分叉菜单用它选分叉位置，下标一一对应）。 */
 export function readUserMessages(filePath: string): string[] {
-  const lines = readFileSync(filePath, 'utf8').split(/\r?\n/)
+  // 同样先应用 rewind：分叉菜单里不该列出已经被「编辑重发」作废的消息
+  const lines = applyRewinds(readFileSync(filePath, 'utf8').split(/\r?\n/))
   const out: string[] = []
   for (const line of lines) {
     if (!line.startsWith('{"type":"user"')) continue

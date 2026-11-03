@@ -198,17 +198,27 @@ export const hostStdioPlugin: Plugin.Object = {
     const offInteractive = ctx.provide('interactive', { kind: 'host' as const, reachable: () => transport.reachable() })
 
     // ---- 快照节流推送 ----
+    //
+    // 节流的口径是「一帧最密的间隔」，不是「每次变化都先等一个窗口」（2026-11-03）：
+    // 旧写法第一处变化就 setTimeout(throttleMs)，于是「点一下会话」这类**用户刚做完的
+    // 动作**永远要多等 60–80ms 才出现在界面上——量到的正是这段（宿主 30ms 就干完了，
+    // 界面 95ms 才看到）。现在退化成标准的 leading-edge：距上一帧已经超过窗口就立刻推，
+    // 窗口内的连续变化仍旧合并成一帧，密度上限不变。
     let pendingSnapshot = false
     let timer: NodeJS.Timeout | null = null
+    /** 上一帧推出去的时刻（0 = 还没推过）。 */
+    let lastSentAt = 0
     const scheduleSnapshot = (): void => {
       pendingSnapshot = true
       if (timer !== null) return
+      const wait = Math.max(0, throttleMs - (Date.now() - lastSentAt))
       timer = setTimeout(() => {
         timer = null
         if (!pendingSnapshot) return
         pendingSnapshot = false
+        lastSentAt = Date.now()
         transport.send({ type: 'snapshot', snapshot: runtime.getSnapshot() })
-      }, throttleMs)
+      }, wait)
     }
     const unsubscribe = runtime.subscribe(scheduleSnapshot)
 

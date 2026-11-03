@@ -30,7 +30,7 @@
  *
  * @module dsc/core/presets
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import YAML from 'yaml'
@@ -192,16 +192,42 @@ function readList(raw: unknown): string[] {
   return items.map((item) => item.trim()).filter((item) => item !== '')
 }
 
+/**
+ * 模式文件的解析缓存（2026-11-03）：键 = 文件路径，值 = 这份文件的 mtime 与解析结果。
+ *
+ * 为什么加：`listPresets()` 是快照面 `surfaces.preset` 的唯一数据源，而快照在界面连着时
+ * 每帧都要重建一次——于是「切一次会话 / 跑一步工具」就要把每个模式文件整段读一遍再解析。
+ * 实测一帧在这条路上要 5–10ms（九个模式文件），而它们改动的频率远低于快照。
+ *
+ * 认 mtime 而不是「读一次就永远缓存」：用户在设置页改了模式文件、或手改磁盘上的 .md，
+ * 下一帧就该看到新内容；statSync 一次几十微秒，比整文件读+解析便宜两个数量级。
+ */
+const presetCache = new Map<string, { mtimeMs: number; preset: Preset | null }>()
+
 /** 读一个模式文件；返回 null = 文件名不合法或读不起来。 */
 export function readPreset(file: string): Preset | null {
+  let mtimeMs: number
+  try {
+    mtimeMs = statSync(file).mtimeMs
+  } catch {
+    presetCache.delete(file)
+    return null
+  }
+  const cached = presetCache.get(file)
+  if (cached !== undefined && cached.mtimeMs === mtimeMs) return cached.preset
   let text: string
   try {
     text = readFileSync(file, 'utf8')
   } catch {
+    presetCache.delete(file)
     return null
   }
   const base = basename(file, '.md')
-  return parsePreset(text, base, file, base in BUILTIN_FILES)
+  const preset = parsePreset(text, base, file, base in BUILTIN_FILES)
+  // 上限只是防御：正常情况下文件数与模式数一样，几个到几十个。
+  if (presetCache.size > 64) presetCache.clear()
+  presetCache.set(file, { mtimeMs, preset })
+  return preset
 }
 
 /**

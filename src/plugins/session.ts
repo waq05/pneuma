@@ -222,10 +222,15 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
         }
       },
 
-      purge(paths) {
+      async purge(paths) {
         if (paths.some((path) => path === session.filePath)) {
           return { ok: false, error: '当前打开的会话不能删除，先切到别的会话' }
         }
+        // 常驻 agent 先收摊再挪文件（与归档同一套，0.6.48 的口径）：切走没多久的会话还在
+        // 「空闲保留」的名册里（见 agent.ts 的 rememberIdle），它攥着这个 jsonl 的写入流，
+        // 直接 rename 在 Windows 上是原生 EPERM。
+        const agent = ctx.get('agent')
+        for (const path of paths) await agent?.stop(path)
         try {
           for (const path of paths) purgeSession(path)
           return { ok: true, notice: `已删除 ${paths.length} 个会话（进了回收站，30 天后自动清空）` }
@@ -269,6 +274,55 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
         } catch (error) {
           return { ok: false, error: errText(error) }
         }
+      },
+
+      rewind(path, keep, text): SettingsMutation {
+        // 只认当前会话：截断后的历史要由**常驻的那个 agent** 接着用，别的会话没有承接者
+        // （硬截了文件却没人重放，等于把界面和模型看到的东西拆成两半）。
+        if (path !== session.filePath) {
+          return { ok: false, error: '只能改当前会话里的消息：先切到那条会话再编辑' }
+        }
+        // 回合还在跑：这一轮的工具调用与结果正按老历史往下写，此时截断会让它在半截
+        // 历史上继续跑（工具结果对不上前面的调用）。界面那颗钮本来就是灰的，这里再挡一道。
+        if (ctx.get('agent')?.isRunning(path) === true) {
+          return { ok: false, error: '这一轮还在跑：等它结束或打断之后再改' }
+        }
+        const resident = ctx.get('agent')?.sessionFor(path)
+        try {
+          if (resident !== undefined) {
+            if (!resident.rewindToUser(keep)) return { ok: false, error: '这条消息已经不在会话里了（可能刚改过），刷新后再试' }
+          } else {
+            // 当前会话却没有常驻 agent（极端情形：agent 刚在别处收摊了）。拿一份临时副本
+            // 改完就关，日志照样落盘，界面这边由下面的 session-open 重新读回。
+            const temp: Session = Session.load(path)
+            try {
+              if (!temp.rewindToUser(keep)) return { ok: false, error: '这条消息已经不在会话里了（可能刚改过），刷新后再试' }
+            } finally {
+              temp.close()
+            }
+          }
+        } catch (error) {
+          return { ok: false, error: errText(error) }
+        }
+        // 改的是第一条消息（keep = 0）时，侧栏标题得跟着换：标题的展示链是
+        // 用户改名 → 自动生成 → 首条用户消息，而自动生成那份还记着被作废的那句话。
+        // 只清自动生成的（用户手动改过的名字不动），下一条重扫就会按新的首条消息重算。
+        if (keep === 0) {
+          // 改过的那句话就是新的「第一句」：直接拿它当自动标题（与列表从首条用户消息
+          // 派生同一条口径：压成一行的前 60 字）。界面没给文字时退回「清掉自动标题」，
+          // 下一次成功起标题会覆盖它。
+          const derived = text === undefined ? '' : text.replace(/\s+/g, ' ').trim().slice(0, 60)
+          try {
+            patchSessionMeta(uuidOf(path), { autoTitle: derived === '' ? null : derived })
+          } catch {
+            // 写不进只是标题暂时旧着，不值得让整次编辑失败
+          }
+        }
+        // 转录层按截断后的历史重建：与「打开会话」走同一条事件，`open()` 的那条
+        // 「已经在看这条就 no-op」短路在这里不适用（我们就是要它重放一遍）。
+        ctx.emit('dsc/session-open', { session, filePath: path } satisfies SessionOpenPayload)
+        ctx.emit('dsc/changed')
+        return { ok: true }
       },
     }
 

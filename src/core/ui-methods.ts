@@ -106,6 +106,7 @@ export const UI_METHODS = [
   'setSessionPinned',
   'listUserMessages',
   'forkSession',
+  'rewindSession',
   'listArchivedSessions',
   'usageStats',
   // 旁问（只读一次性问答）：不建会话、不落盘、不带工具，见 core/side-ask.ts。
@@ -310,6 +311,11 @@ export const UI_ARG_SPECS: Readonly<Record<UiMethod, MethodSpec>> = {
   setSessionPinned: [{ shape: { kind: 'string', max: MAX_PATH } }, { shape: { kind: 'boolean' } }],
   listUserMessages: [{ shape: { kind: 'string', max: MAX_PATH } }],
   forkSession: [{ shape: { kind: 'string', max: MAX_PATH } }, { shape: { kind: 'number' } }],
+  rewindSession: [
+    { shape: { kind: 'string', max: MAX_PATH } },
+    { shape: { kind: 'number' } },
+    { shape: { kind: 'string', max: MAX_NAME }, optional: true },
+  ],
   listArchivedSessions: [],
   usageStats: [],
   // 旁问：问题 + 可选引用 + 取消票据。上限与 core/side-ask.ts 的常量对齐（那边截断引用、

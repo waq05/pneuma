@@ -195,6 +195,11 @@ export interface DscRuntime {
   listUserMessages(path: string): Promise<string[]>
   /** 分叉会话：把日志复制到第 index 条用户消息之前，返回新会话路径。 */
   forkSession(path: string, index: number): Promise<SessionForkResult>
+  /**
+   * 作废第 keep 条用户消息及其之后的内容（「编辑并重发」）：留在**当前会话**里截断重来，
+   * 日志追加一条 `rewind` 记录（append-only，原文仍在，可回查）。
+   */
+  rewindSession(path: string, keep: number, text?: string): Promise<SettingsMutation>
   /** 侧栏界面偏好（排序方式、工作区顺序与别名）。 */
   getUiPrefs(): UiPrefsView
   /** 改侧栏界面偏好（写 `~/.dsc/settings.json`）。 */

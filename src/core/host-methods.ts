@@ -88,6 +88,7 @@ export const INVOKABLE_METHODS = [
   'setSessionPinned',
   'listUserMessages',
   'forkSession',
+  'rewindSession',
   'getUiPrefs',
   'setUiPrefs',
   // 技能中心

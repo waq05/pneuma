@@ -536,6 +536,10 @@ export const runtimePlugin: Plugin.Object = {
         return Promise.resolve(ctx.session.fork(path, index))
       },
 
+      rewindSession(path, keep, text) {
+        return Promise.resolve(ctx.session.rewind(path, keep, text))
+      },
+
       getUiPrefs() {
         return ctx.settings.prefs().ui
       },

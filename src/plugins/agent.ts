@@ -42,6 +42,12 @@ function noteSystemPrompt(session: Session, text: string): void {
   session.appendState('system-prompt', { hash, text })
 }
 
+/**
+ * 切走之后最多留几个空闲会话（见 {@link rememberIdle}）。
+ * 3 够覆盖「在最近三条之间来回跳」，再多只是白占内存。
+ */
+const IDLE_KEEP = 3
+
 export const agentPlugin: Plugin.Object = {
   name: 'agent',
   inject: ['session', 'transcript', 'tools', 'llm', 'compact', 'prompt', 'guards'],
@@ -49,6 +55,8 @@ export const agentPlugin: Plugin.Object = {
   apply(ctx) {
     /** 常驻注册表：会话 id（meta.id）→ agent。含当前查看的那个。 */
     const agents = new Map<string, MiniAgent>()
+    /** 切走但还留着的空闲会话（按「最近切走的」排在后面），上限见 {@link IDLE_KEEP}。 */
+    const idleOrder: string[] = []
     /** 收摊 agent 的墓碑：id → jsonl 路径。非常驻投递（followup 带 id）靠它找文件。 */
     const tombstones = new Map<string, string>()
     /** 当前查看的 agent。不变量：它的会话就是 ctx.session.current() 那个对象。 */
@@ -165,15 +173,14 @@ export const agentPlugin: Plugin.Object = {
           stream: (api, request, handlers) => ctx.llm.stream(api, request, handlers),
           // 完全闲下来又不是当前查看的：就地收摊（释放写租约与内存）。正被查看的
           // 留着——用户下一句话还得靠它。
+          //
+          // 收摊统一走 disposeAgent（2026-11-03）：它同时清「空闲保留」名册（idleOrder），
+          // 这里要是自己删一遍，名册里就会留下已经收摊的 id。
           onIdle: () => {
             if (active !== null && active.sessionId === session.meta.id) return
             const agent = agents.get(session.meta.id)
             if (agent === undefined) return
-            agents.delete(session.meta.id)
-            tombstones.set(session.meta.id, session.filePath)
-            // 「先读过才许改」的台账跟着会话走，收摊时一起清，防长窗口无界增长
-            clearReadLedger(session.meta.id)
-            agent.dispose()
+            disposeAgent(agent)
           },
         },
         session,
@@ -182,10 +189,37 @@ export const agentPlugin: Plugin.Object = {
 
     const disposeAgent = (agent: MiniAgent): void => {
       agents.delete(agent.sessionId)
+      const idleAt = idleOrder.indexOf(agent.sessionId)
+      if (idleAt >= 0) idleOrder.splice(idleAt, 1)
       tombstones.set(agent.sessionId, agent.session.filePath)
       // 「先读过才许改」的台账跟着会话走，收摊时一起清，防长窗口无界增长
       clearReadLedger(agent.sessionId)
       agent.dispose()
+    }
+
+    /**
+     * 切走之后**先不收摊**，把空闲 agent 留下几个（0.6.48 常驻多 agent 的延伸，2026-11-03）。
+     *
+     * 为什么：切会话的耗时里最大的一块是重新把整份 jsonl 读回来解析（实测 6.8MB 的会话
+     * 45–65ms，同步跑在宿主主线程上）。而人在几条会话之间来回跳是常态——刚切走又切回来，
+     * 那时磁盘上的文件一个字都没变，重读纯属白烧。留下最近几个，切回去直接命中
+     * `sessionFor`（`plugins/session.ts` 的 open 里那条短路），一次读盘都不用。
+     *
+     * 为什么是 3：配合 `IDLE_KEEP` 的数量，内存里最多三份已解析的历史（每份几 MB），
+     * 换来「来回跳」全部零加载；再多就只是白占内存。
+     *
+     * 与「常驻」不冲突：这里留下的都是**空闲**的（跑着的走上面 busy 那条分支，本来就不收摊），
+     * 也就是说不会有一轮在跑、却因为被人切走而被打断或错位。
+     */
+    const rememberIdle = (sessionId: string): void => {
+      const at = idleOrder.indexOf(sessionId)
+      if (at >= 0) idleOrder.splice(at, 1)
+      idleOrder.push(sessionId)
+      while (idleOrder.length > IDLE_KEEP) {
+        const oldest = idleOrder.shift()
+        const agent = oldest === undefined ? undefined : agents.get(oldest)
+        if (agent !== undefined) disposeAgent(agent)
+      }
     }
 
     // ---- 初始 agent：内核启动恢复/新建的那个会话 ----
@@ -198,6 +232,10 @@ export const agentPlugin: Plugin.Object = {
       if (next === undefined) {
         next = makeAgent(session)
         agents.set(session.meta.id, next)
+      } else {
+        // 又切回来了一条还留着的会话：把它从「空闲待收摊」里摘出来（它就是现在这条）。
+        const idleAt = idleOrder.indexOf(session.meta.id)
+        if (idleAt >= 0) idleOrder.splice(idleAt, 1)
       }
       active = next
       if (prev !== null && prev !== next) {
@@ -214,7 +252,7 @@ export const agentPlugin: Plugin.Object = {
             state: waitingApproval ? 'awaiting-approval' : 'working',
           })
         } else {
-          disposeAgent(prev)
+          rememberIdle(prev.sessionId)
         }
       }
     })
