@@ -284,6 +284,12 @@ function SessionList() {
    */
   const open = (id?: string): void => {
     setShellPage(null)
+    // 点「新会话」要给得出看得见的一行：它落在当前会话的工作区里，而那个组被用户收起过的话
+    // 新会话那一行正好被挡住——等于又变成「点了没反应」。与组行那颗 ＋ 同一条口径：
+    // 只在这一拍把该展开的组撑开，用户之后自己收起来照样尊重。
+    if (id === undefined && cwd !== null && cwd !== '' && prefs.expansion[cwd] === false) {
+      patchPrefs({ expansion: { ...prefs.expansion, [cwd]: true } })
+    }
     void (async () => {
       await run('openSession', id === undefined ? [] : [id])
       await run('refreshSessions', [])
@@ -349,7 +355,9 @@ function SessionList() {
    */
   const deleteWorkspace = (target: string, sessionsOfGroup: readonly SessionSummary[]): void => {
     void (async () => {
-      const count = sessionsOfGroup.length
+      // 还没落盘的临时行不算数：它的路径上没有文件，交给归档只会让整批失败。
+      const real = sessionsOfGroup.filter((session) => session.unsaved !== true)
+      const count = real.length
       const detail =
         count > 0
           ? `其下 ${String(count)} 个会话会全部归档（移进「设置 → 归档」，消息一个字不删，可恢复），工作区从侧边栏移除。`
@@ -371,7 +379,7 @@ function SessionList() {
         return
       }
       try {
-        await channel.invoke('archiveSessions', [sessionsOfGroup.map((session) => session.id)])
+        await channel.invoke('archiveSessions', [real.map((session) => session.id)])
         await run('refreshSessions', [])
         toastOk(`工作区已删除，${String(count)} 个会话已归档`)
       } catch {
@@ -664,7 +672,9 @@ function SessionList() {
     const compatible =
       sessDrag !== null && sessDrag.cwd === groupCwd && sessDrag.pinned === (session.pinnedAt !== undefined)
     return {
-      enabled: prefs.sort === 'manual' && session.archivedAt === undefined,
+      // 临时行（还没落盘）不参与拖拽：拖完要写 sessionOrder，而它在列表里的位置只由
+      // 「谁是当前会话」决定，拖了也不会被记住。
+      enabled: prefs.sort === 'manual' && session.archivedAt === undefined && session.unsaved !== true,
       mark: sessDrag !== null && sessDrag.over !== null && sessDrag.over.id === session.id ? sessDrag.over.half : null,
       onStart: (event: DragEvent<HTMLDivElement>) => {
         event.dataTransfer.effectAllowed = 'move'
@@ -1509,6 +1519,14 @@ function SessionRow({
   const [draft, setDraft] = useState<string | null>(null)
   const pinned = session.pinnedAt !== undefined
   const archived = session.archivedAt !== undefined
+  /**
+   * 宿主补的**临时行**：这是当前那条还没发过消息的会话，路径定下了、文件还没落盘。
+   *
+   * 它是一份「新建成功」的回执，不是一条可以去改的会话：改名 / 置顶 / 归档 / 分叉
+   * 全都按路径找文件，文件还不存在，点了只会弹失败。所以这些动作一律不给——
+   * 发第一条消息之后它就会换成扫盘出来的真行，那时什么都恢复了。
+   */
+  const unsaved = session.unsaved === true
   const title = session.title ?? '新会话'
   const dot = state === undefined ? undefined : DOT_CLASS[state]
   const dotLabel = state === undefined ? '' : DOT_LABEL[state]
@@ -1557,6 +1575,7 @@ function SessionRow({
       openRow()
       return
     }
+    if (unsaved) return
     if (!event.ctrlKey && !event.metaKey) return
     const lower = event.key.toLowerCase()
     if (event.ctrlKey && event.altKey && lower === 'r') {
@@ -1590,9 +1609,11 @@ function SessionRow({
       role="button"
       tabIndex={0}
       data-tip={
-        archived
-          ? `${title}（已归档）；恢复后才能在对话里打开`
-          : `${title}；双击标题改名 · Ctrl+Alt+F 分叉 · Ctrl+Shift+A 归档`
+        unsaved
+          ? `${title}：还没发过消息，发出第一条后才会存进磁盘`
+          : archived
+            ? `${title}（已归档）；恢复后才能在对话里打开`
+            : `${title}；双击标题改名 · Ctrl+Alt+F 分叉 · Ctrl+Shift+A 归档`
       }
       // 改名中不拖行（旧界面 editing === null 的守卫）：输入框里选字别把整行拎起来。
       draggable={drag?.enabled === true && draft === null}
@@ -1609,26 +1630,33 @@ function SessionRow({
       }}
       onContextMenu={(event) => {
         event.preventDefault()
+        // 临时行不给行级菜单：里面的动作都要按路径读写文件，这会儿文件还不存在。
+        if (unsaved) return
         onMenu(event.clientX, event.clientY)
       }}
     >
       {dot === undefined ? (
-        // 没有运行状态时才给图钉：旧界面里这一格是「状态点 / 图钉」二选一，
-        // 两样同时画会把行首撑宽。
-        <span className="row-slot">
-          <button
-            type="button"
-            className={`lead-pin${pinned ? ' pinned' : ''}`}
-            data-tip={pinned ? '取消置顶' : '置顶会话'}
-            aria-label={pinned ? '取消置顶' : '置顶会话'}
-            onClick={(event) => {
-              stop(event)
-              onPin(!pinned)
-            }}
-          >
-            <IconPin size={13} />
-          </button>
-        </span>
+        unsaved ? (
+          // 临时行不给图钉：置顶要写 jsonl，文件还没有。占位撑住行首宽度，视觉不塌。
+          <span className="row-slot" />
+        ) : (
+          // 没有运行状态时才给图钉：旧界面里这一格是「状态点 / 图钉」二选一，
+          // 两样同时画会把行首撑宽。
+          <span className="row-slot">
+            <button
+              type="button"
+              className={`lead-pin${pinned ? ' pinned' : ''}`}
+              data-tip={pinned ? '取消置顶' : '置顶会话'}
+              aria-label={pinned ? '取消置顶' : '置顶会话'}
+              onClick={(event) => {
+                stop(event)
+                onPin(!pinned)
+              }}
+            >
+              <IconPin size={13} />
+            </button>
+          </span>
+        )
       ) : (
         <span className={`row-slot session-dot ${dot}`} data-tip={dotLabel} aria-label={dotLabel}>
           <span className="dot" />
@@ -1647,9 +1675,10 @@ function SessionRow({
               : undefined
           }
           onDoubleClick={(event) => {
-            // 双击标题改名（旧界面行为）；归档行不给改（宿主只认活动区路径）。
+            // 双击标题改名（旧界面行为）；归档行不给改（宿主只认活动区路径），
+            // 还没落盘的临时行也不给改（改名要写 jsonl，文件还没有）。
             event.stopPropagation()
-            if (!archived) setDraft(session.title ?? '')
+            if (!archived && !unsaved) setDraft(session.title ?? '')
           }}
         >
           {/* 会动的是这一层：外层负责裁，内层负责位移，静息时它自己出省略号。 */}
@@ -1686,9 +1715,10 @@ function SessionRow({
       {/* 行尾时间在「创建时间」档读创建时刻，其余档读最近更新/归档时刻（旧界面同口径）。 */}
       <span className="when">{relativeTime(sort === 'created' ? session.createdAt : (session.archivedAt ?? session.updatedAt))}</span>
 
-      {/* 行尾 hover 钮对齐旧界面：只剩归档/恢复一件事——重命名/分叉/复制都在右键菜单里。 */}
+      {/* 行尾 hover 钮对齐旧界面：只剩归档/恢复一件事——重命名/分叉/复制都在右键菜单里。
+          临时行（还没落盘）不给：归档要挪文件，这会儿文件还不存在。 */}
       <span className="row-actions" onClick={stop}>
-        {archived ? (
+        {unsaved ? null : archived ? (
           <button
             type="button"
             className="icon-btn"
