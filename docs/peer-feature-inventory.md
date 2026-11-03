@@ -282,7 +282,7 @@
 - 子代理（MiniAgent 队友，按会话隔离、审批意愿取全局∩角色）+ 智能体团队（共享任务看板 + `team_task`）；级联默认限 1 层
 - 电脑操作（PowerShell + user32，DPI 感知，每次审批）；浏览器自动化（CDP DOM 级，ref 代际校验，默认关）；侧栏浏览器页签
 - 网页搜索（tavily/bocha/serper，**域过滤 include/exclude_domains 直通**，`src/plugins/web-search.ts:123-135`）；定时任务；LSP（定义/引用/实现/悬停 + 写后新引入报错）
-- PTC：`run_code` 同进程 `node:vm`，整段时限 300 秒、单次调用 15 秒、总调用数 200；**读写闸写独占**，两个写调用不会并发（`src/core/ptc.ts:31,41`、`src/plugins/ptc.ts:177-190`）
+- PTC：`run_code` 同进程 `node:vm`，整段脚本时限 300 秒、同步执行段 15 秒、内部调用总数 200；**读写闸写独占**，两个写调用不会并发（`src/core/ptc.ts:31,38,41`、`src/plugins/ptc.ts:177-190`）
 - 工具渐进披露（`tool_search`/`tool_describe`/`tool_call` + 手写 BM25，默认关）
 - 结构化工具：`ask_user_question`、`exit_plan_mode`、`todo_write`、goal 四件、`schedule_*`、`memory`、`skill`/`skill_write`、`session_search`、self-improve 三闭环
 - 已知边界：无 notebook/Jupyter 工具；MCP 无 dynamic tools（prompts→工具）
@@ -347,7 +347,7 @@
 - 已知边界：无桌面原生系统通知（只有托盘气泡 + toast）；手机端无团队/模式面板
 
 ### 10. 传输部署 ——【完整】
-- 远程宿主：HTTP + WS **9 条 `api` 路由**（pair/ticket/revoke/upload/push-key/push-subscribe/push-unsubscribe/invoke/events，`src/plugins/remote/routes.ts:310-365`）+ 主控位锁 + 多设备 `devices.json` + `INVOKABLE_COVERAGE` 编译期兜底
+- 远程宿主：HTTP + WS **10 条 `api` 路由**（pair/ticket/revoke/upload/push-key/push-subscribe/push-unsubscribe/invoke/events/boot，`src/plugins/remote/routes.ts:310-405`）+ 主控位锁 + 多设备 `devices.json` + `INVOKABLE_COVERAGE` 编译期兜底
 - 桌面宿主通道：Electron utilityProcess + host-stdio JSONL（协议 v2，白名单由 DscRuntime 推出）；嵌入运行时依赖闭包自动组装
 - TUI（ink，同契约）+ CLI 入口（`bin/dsc.js`）+ headless；SSH 隧道只有文档（`remote-tunnel.md`），无隧道代码
 - 界面壳：插件化装配（cordis），19 个内置界面插件，组合包（宿主半 + 界面半）按 `package.json` 的 `dsh.client` 收进启动图
@@ -356,7 +356,7 @@
 ### 11. 插件系统与杂项 ——【完整】
 - 三档插件（内核不可停 30 / 官方可开关 18 / 外部单文件）+ 热挂载 + `plugin_manager` 工具（含 `browse_remote` / `install_remote` 远程安装，必须 https，装前过审批）+ dsh 插件兼容层（logger 桥 / 模块解析钩子 / 双形状 `ctx.tools`）
 - 界面插件契约 2.0：槽位、chain 槽、类型化槽位、`provide`/`consume`、席位、Component Factory、动作表、分批启动与 HMR；第三方目录要过一次 `/ui-trust` 信任，产物带内容摘要 rev
-- 服务面 37 个 `ctx.provide`（tools / commands / prompt / guards / surfaces / waiting / session / approval / sandbox / lsp / mcp / team / review / backgroundWorks / webServer …），`KERNEL_API_VERSION = 6`（`src/core/plugin-registry.ts:93`）
+- 服务面 39 个 `ctx.provide`（tools / commands / prompt / guards / surfaces / waiting / session / approval / sandbox / lsp / mcp / team / review / backgroundWorks / webServer …），`KERNEL_API_VERSION = 6`（`src/core/plugin-registry.ts:93`）
 - 技能市场（GitHub 目录 / 索引 JSON 两类源，缓存 1h）
 - 已知边界：宿主插件无 HMR（界面插件有）；无 doctor 式体检命令；插件远程安装只支持 https 直链（npm 包形态 T49 未做）
 
