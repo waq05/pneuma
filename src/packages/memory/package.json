@@ -1,0 +1,22 @@
+{
+  "name": "@pneuma/memory",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 280,
+    "resolution": "overridable",
+    "title": "长期记忆",
+    "description": "跨会话留下的事实：全局事实、用户偏好、当前工作区各一格，注入给模型的就是这些",
+    "settingsSection": "memory"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

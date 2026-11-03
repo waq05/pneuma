@@ -1,0 +1,21 @@
+{
+  "name": "@pneuma/surfaces",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 40,
+    "resolution": "pinned",
+    "title": "快照片段注册表",
+    "description": "界面快照里每块状态投影由那个功能点自己登记"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

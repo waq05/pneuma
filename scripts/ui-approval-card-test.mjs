@@ -33,7 +33,7 @@ const check = (name, condition, detail = '') => {
 // 审批那一份才是实体，转出那份只用来确认「导出面没断」。
 const contract = read('src/contract/approval.ts')
 const contractBarrel = read('src/contract.ts')
-const plugin = read('src/plugins/approval.ts')
+const plugin = read('src/packages/approval/index.ts')
 const shell = read('ui-shell/src/plugins/prompt/ui.tsx')
 const tui = read('src/app/ApprovalCard.tsx')
 const shellCss = read('ui-shell/src/legacy/views.css')

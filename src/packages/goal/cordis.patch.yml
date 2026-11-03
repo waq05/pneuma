@@ -1,0 +1,4 @@
+# 会话目标
+- insert:
+    - id: goal
+      name: '@pneuma/goal'

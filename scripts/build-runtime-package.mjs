@@ -19,8 +19,17 @@ const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const lib = join(root, 'lib')
 const dest = join(lib, 'node_modules', '@pneuma', 'runtime')
 
-/** 收进运行时包的四个目录（与 src 下的目录名一致）。 */
-const ROOTS = ['core', 'contract', 'services', 'adapter']
+/**
+ * 收进运行时包的目录（与 src 下的目录名一致）。
+ *
+ * `app` 与 `ui` 是终端壳要用的：tui 插件搬进功能包之后不能再写 `../app/App.js`
+ * （打包后那是 lib/node_modules/app），只能走裸说明符。它们不进浏览器产物，
+ * 只在 Node 侧解析。
+ */
+const ROOTS = ['core', 'contract', 'services', 'adapter', 'app', 'ui']
+
+/** 界面构建产物目录不是模块，别给它们生成桩。 */
+const SKIP = ['/ui/plugins/', '/ui/assets/']
 
 const rootManifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 
@@ -58,6 +67,8 @@ for (const name of ROOTS) {
   }
   for (const file of walk(srcDir)) {
     if (!file.endsWith('.js') && !file.endsWith('.d.ts')) continue
+    const normalized = file.split('\\').join('/')
+    if (SKIP.some((part) => normalized.includes(part))) continue
     const rel = relative(lib, file)
     const target = join(dest, rel)
     mkdirSync(dirname(target), { recursive: true })

@@ -1,0 +1,4 @@
+# 斜杠命令
+- insert:
+    - id: commands
+      name: '@pneuma/commands'

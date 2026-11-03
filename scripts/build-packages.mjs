@@ -10,7 +10,7 @@
  * @module scripts/build-packages
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
 
@@ -18,6 +18,24 @@ const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const srcDir = join(root, 'src', 'packages')
 const outDir = join(root, 'lib', 'node_modules', '@pneuma')
 const rootManifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+
+/** 递归列出目录下的文件。 */
+function walkFiles(dir) {
+  const out = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) out.push(...walkFiles(path))
+    else out.push(path)
+  }
+  return out
+}
+
+/** 一条再导出桩：指回 lib/packages 里的真实文件。 */
+function stubBody(fromFile, toFile) {
+  let rel = relative(dirname(fromFile), toFile).split('\\').join('/')
+  if (!rel.startsWith('.')) rel = './' + rel
+  return `export * from '${rel}';\n`
+}
 
 /** 一个源包的读盘结果。 */
 function readPackage(dir) {
@@ -55,13 +73,30 @@ for (const name of existsSync(outDir) ? readdirSync(outDir) : []) {
 
 const generated = []
 for (const pkg of packages) {
-  const dest = join(outDir, pkg.id)
+  // 目录名按**包名**去掉 scope，不能按源目录名：`runtime` 这个插件叫
+  // `@pneuma/runtime-adapter`，按 id 落盘会盖掉运行时适配包（同名冲突）。
+  const dirName = (pkg.manifest.name ?? `@pneuma/${pkg.id}`).replace(/^@[^/]+\//, '')
+  if (dirName === 'runtime') {
+    problems.push(`${pkg.id} 的包名不能是 @pneuma/runtime：这个名字留给构建生成的运行时适配包`)
+    continue
+  }
+  const dest = join(outDir, dirName)
   const compiled = join(root, 'lib', 'packages', pkg.id, 'index.js')
   if (!existsSync(compiled)) {
     problems.push(`${pkg.id} 没有编译产物（lib/packages/${pkg.id}/index.js）`)
     continue
   }
-  mkdirSync(dest, { recursive: true })
+  // 不复制，生成「再导出桩」：lib/packages/<id> 是唯一实体，
+  // 探针与 App 直接 import 它，内核从 node_modules 里 import——两边必须是同一个模块实例，
+  // 复制一份的话 commands 的 serviceRef 这类模块级单例就裂成两份（斜杠命令电池会当场红）。
+  const srcPkgDir = join(root, 'lib', 'packages', pkg.id)
+  for (const file of walkFiles(srcPkgDir)) {
+    if (!file.endsWith('.js') && !file.endsWith('.d.ts')) continue
+    const rel = relative(srcPkgDir, file)
+    const target = join(dest, rel)
+    mkdirSync(dirname(target), { recursive: true })
+    writeFileSync(target, stubBody(target, file), 'utf8')
+  }
   const pneuma = pkg.manifest.pneuma ?? {}
   const exports = {
     '.': './index.js',

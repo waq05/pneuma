@@ -40,6 +40,14 @@ writeFileSync(
 // .js → .ts 解析回落：纯函数源文件里照常写 `./token-estimate.js`，直读 .ts 时才需要它
 registerHooks({
   resolve(specifier, context, nextResolve) {
+    // 源码期裸说明符：@pneuma/runtime/x.js → src/x.ts。
+    // 只对**源码文件**生效：内核从 lib 加载时也要走同一段解析钩子，把它的 import 也改到 .ts
+    // 会在 strip-only 模式下炸（参数属性等语法）。
+    const fromSource = (context.parentURL ?? '').includes('/src/')
+    if (fromSource && typeof specifier === 'string' && specifier.startsWith('@pneuma/runtime/')) {
+      const rest = specifier.slice('@pneuma/runtime/'.length).replace(/\.js$/, '.ts')
+      return { url: new URL('../src/' + rest, import.meta.url).href, shortCircuit: true }
+    }
     try {
       return nextResolve(specifier, context)
     } catch (error) {
@@ -282,7 +290,6 @@ const ctx = await createKernel({
   },
   resumeSessionPath: null,
 })
-
 console.log('[1b] 冻结计划：同一轮的清理集合可以原样复用')
 {
   const messages = [
@@ -315,7 +322,7 @@ console.log('[1c] 插件策略：清理量不到门槛不清 / 队友汇报不�
 {
   // 直接跑 src/plugins/microcompact.ts：临时 HOME 里没有 microcompact 配置条目，apply 的
   // 第二参数就是默认值来源；不依赖 lib/ 是否已构建。
-  const { microcompactPlugin } = await import(new URL('../src/plugins/microcompact.ts', import.meta.url).href)
+  const { microcompactPlugin } = await import(new URL('../src/packages/microcompact/index.ts', import.meta.url).href)
   const makePlugin = () => {
     let projection = null
     let section = null

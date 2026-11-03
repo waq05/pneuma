@@ -1,0 +1,5 @@
+# 子智能体
+- insert:
+    - id: subagent
+      name: '@pneuma/subagent'
+      disabled: true

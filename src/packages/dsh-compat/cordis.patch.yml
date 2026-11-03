@@ -1,0 +1,5 @@
+# dsh 插件兼容
+- insert:
+    - id: dsh-compat
+      name: '@pneuma/dsh-compat'
+      disabled: true

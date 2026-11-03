@@ -1,0 +1,22 @@
+{
+  "name": "@pneuma/web-search",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 3630,
+    "resolution": "overridable",
+    "title": "联网搜索",
+    "description": "让模型上网查资料并附来源链接；先选一家搜索服务（Tavily / 博查 / Serper）并填 key",
+    "settingsSection": "web-search"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

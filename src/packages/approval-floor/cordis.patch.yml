@@ -1,0 +1,4 @@
+# 危险命令硬拦截
+- insert:
+    - id: approval-floor
+      name: '@pneuma/approval-floor'

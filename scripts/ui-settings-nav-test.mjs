@@ -90,7 +90,7 @@ console.log('[3] 其余手画分区没被挤掉')
 // ── [4] 边界：宿主与侧栏那两份照旧 ───────────────────────────────────────────
 console.log('[4] 去掉的是哪一份')
 {
-  const host = read('src/plugins/settings.ts')
+  const host = read('src/packages/settings/index.ts')
   check('宿主仍发技能分区（TUI 的设置浮层与旧桌面版消费同一张表）', /id: 'skills',\s*\n\s*title: '技能',/.test(host))
   check("它在宿主那张表里的 order 还是 20（TUI 里的位次没变）", /id: 'skills',[\s\S]{0,120}?order: 20,/.test(host))
   const skillsPage = read('ui-shell/src/plugins/skills/ui.tsx')

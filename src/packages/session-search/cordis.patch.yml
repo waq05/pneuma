@@ -1,0 +1,4 @@
+# 历史会话搜索
+- insert:
+    - id: session-search
+      name: '@pneuma/session-search'

@@ -1,0 +1,22 @@
+{
+  "name": "@pneuma/approval-floor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 3640,
+    "resolution": "overridable",
+    "title": "危险命令硬拦截",
+    "description": "关机、删盘、改注册表、读密钥这类命令一律拒绝，完全访问也救不回来；常用命令可加白名单",
+    "settingsSection": "approval-floor"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

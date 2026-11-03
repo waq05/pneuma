@@ -70,7 +70,7 @@ console.log('[1] 命令判定：git 全局开关、网络开关、嵌套 shell')
 
 console.log('[2] 沙箱越界分两类：能问的 defer，不能问的硬拒')
 {
-  const code = strip(read('src/plugins/sandbox.ts'))
+  const code = strip(read('src/packages/sandbox/index.ts'))
   check('有可申请规则集合 ASKABLE_RULES', code.includes('ASKABLE_RULES'))
   const askable = code.slice(code.indexOf('const ASKABLE_RULES'), code.indexOf('}', code.indexOf('const ASKABLE_RULES')))
   check('可申请含 outside-writable-roots', askable.includes("'outside-writable-roots'"))
@@ -85,7 +85,7 @@ console.log('[2] 沙箱越界分两类：能问的 defer，不能问的硬拒')
 
 console.log('[3] 审批顺序：沙箱边界 → AI 复核 → 自动放行')
 {
-  const code = strip(read('src/plugins/approval.ts'))
+  const code = strip(read('src/packages/approval/index.ts'))
   const fenceAt = code.indexOf("ctx.get('sandbox')?.check")
   const reviewAt = code.indexOf("if (reviewer === 'auto-review')")
   check('审批读沙箱的 check', fenceAt >= 0)
@@ -125,7 +125,7 @@ console.log('[4] 模式四档对齐 dsh')
 
 console.log('[5] 权限预设：切当前会话 + 默认值只给新会话')
 {
-  const code = strip(read('src/plugins/permission-presets.ts'))
+  const code = strip(read('src/packages/permission-presets/index.ts'))
   check('apply 只调两个插件的 setter（不自己写盘）', code.includes('sandbox.setMode(preset.sandbox)') && code.includes('ctx.approval.setPolicy(preset.policy)'))
   check('setDefault 三根一起落默认', code.includes('defaultPolicy: preset.policy') && code.includes('defaultReviewer: preset.reviewer'))
   check('setDefault 走 settings.setPrefs（新会话默认）', code.includes('ctx.settings.setPrefs('))

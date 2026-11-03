@@ -33,6 +33,17 @@ export const DSH_CONTRACT_VERSION = '0.2.1'
 /** 默认接受的 dsh 版本范围（含预发布：dsh 自己就是 rc 版在跑）。 */
 export const DSH_CONTRACT_RANGE = '>=0.2.0-0 <0.3.0'
 
+/**
+ * Pneuma 自己的插件契约版本（与产品版本号分开走）。
+ *
+ * 功能包在 `engines.pneuma` 里声明它要哪一代契约；装一个要求 `>=2` 的包，
+ * 我们没实现过那一代，先在版本闸这里拦下，别等运行深处炸。
+ */
+export const RUNTIME_CONTRACT_VERSION = '1.0.0'
+
+/** 默认接受的 Pneuma 运行时范围。 */
+export const RUNTIME_CONTRACT_RANGE = '>=1.0.0 <2.0.0'
+
 /** 一个组合包的读盘结果。 */
 export interface BundleInfo {
   /** 包目录（绝对路径）。 */
@@ -87,6 +98,16 @@ function readJson(file: string): unknown {
  * @returns 不满足时的中文原因；满足或没设限给 null
  */
 export function enginesProblem(manifest: BundleManifest): string | null {
+  // Pneuma 原生包先看 engines.pneuma：它跟的是运行时契约，不是 dsh 契约。
+  const pneumaRange = manifest.engines?.pneuma
+  if (typeof pneumaRange === 'string' && pneumaRange.trim() !== '') {
+    try {
+      if (semver.satisfies(RUNTIME_CONTRACT_VERSION, pneumaRange)) return null
+    } catch {
+      return `版本范围写得不对（engines.pneuma = ${pneumaRange}），没法判断能不能装`
+    }
+    return `这个包要求 Pneuma 运行时 ${pneumaRange}，当前契约是 ${RUNTIME_CONTRACT_VERSION}（${RUNTIME_CONTRACT_RANGE}）`
+  }
   const raw =
     typeof manifest.engines?.dsh === 'string'
       ? manifest.engines.dsh

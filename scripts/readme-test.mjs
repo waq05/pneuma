@@ -9,7 +9,7 @@
  *   [2] 相对路径全部命中：README 里每个相对链接 / 图片在磁盘上真实存在，
  *       且图片只从 `docs/assets/` 出（`shots/` 整目录被 gitignore，指过去必 404）；
  *   [3] 节序与锚点：H2 清单与设计一致，正文里 `](#锚点)` 引的标题真的在；
- *   [4] 数字口径对齐源码：18 个官方可开关插件 / 默认开 6 / 工具 10 件；
+ *   [4] 数字口径对齐源码：功能包 56 个 / 默认关 13 个 / 工具 10 件；
  *   [5] 正文点名的仓库路径都存在（架构树、`scripts/xxx.mjs` 这类示例最容易腐坏——
  *       写「跑 node scripts/xxx-test.mjs」而那个文件早改名了，读者照着敲就是空跑）。
  *
@@ -17,7 +17,8 @@
  *
  * @module dsc/scripts/readme-test
  */
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -129,24 +130,21 @@ check('正文里引的锚点都存在', dangling.length === 0, dangling.join('�
 // ── [4] 数字口径对齐源码 ────────────────────────────────────────────────────
 console.log('\n[4] 数字口径')
 
-// 注释里就写着 `defaultDisabled: true` 这句，先砍掉注释行再解析，否则会被当成字段
-const kernel = read('src/host/kernel.ts')
-  .split('\n')
-  .filter((line) => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
-  .join('\n')
-const officialStart = kernel.indexOf('export const OFFICIAL_PLUGINS')
-const official = kernel.slice(officialStart, kernel.indexOf('\n]', officialStart))
-const pluginEntries = official.split(/file: '/).slice(1)
-const defaultOn = pluginEntries.filter((entry) => !/defaultDisabled: true/.test(entry)).length
+// 0.9 起功能都在 src/packages/<id>/：总数看目录，默认关看各自 patch 行上的 disabled。
+const packageIds = readdirSync(join(root, 'src', 'packages'), { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name)
+  .filter((name) => existsSync(join(root, 'src', 'packages', name, 'cordis.patch.yml')))
+let defaultOff = 0
+for (const id of packageIds) {
+  if (/^\s*disabled: true$/m.test(read(join('src', 'packages', id, 'cordis.patch.yml')))) defaultOff += 1
+}
 
-const pluginsClaim = Number(/官方可开关插件共 \*\*(\d+) 个\*\*/.exec(readme)?.[1] ?? '0')
-check('插件数写的是源码里的数', pluginsClaim === pluginEntries.length, `README ${String(pluginsClaim)} / 源码 ${String(pluginEntries.length)}`)
-
-const onListLine = readme.split('\n').find((line) => line.includes('默认开：')) ?? ''
-const onListed = (line) => (line.split('默认开：')[1] ?? '').split('默认关：')[0].split('、').filter((name) => name.trim() !== '')
-check('「默认开」点名 6 个', onListed(onListLine).length === 6, onListed(onListLine).join('、'))
-check('「默认开」的个数与源码一致', onListed(onListLine).length === defaultOn, `源码默认开 ${String(defaultOn)} 个`)
-check('默认开 + 默认关 = 总数', onListed(onListLine).length + ((onListLine.split('默认关：')[1] ?? '').split('；')[0].split('、').filter((n) => n.trim() !== '').length) <= pluginEntries.length)
+const pluginsClaim = Number(/功能包共 \*\*(\d+) 个\*\*/.exec(readme)?.[1] ?? '0')
+check('功能包数写的是磁盘上的数', pluginsClaim === packageIds.length, `README ${String(pluginsClaim)} / 磁盘 ${String(packageIds.length)}`)
+const offClaim = Number(/默认关 (\d+) 个/.exec(readme)?.[1] ?? '0')
+check('默认关的个数与包清单一致', offClaim === defaultOff, `README ${String(offClaim)} / 包清单 ${String(defaultOff)}`)
+check('默认关是少数（一半以下）', defaultOff < packageIds.length, `${String(defaultOff)}/${String(packageIds.length)}`)
 
 const toolModules = ['bash', 'fs-tools', 'search-tools'].map((name) => read(`src/core/tools/${name}.ts`))
 const toolNames = new Set(toolModules.flatMap((source) => [...source.matchAll(/^ {2,}name: '([a-z_]+)',$/gm)].map((match) => match[1])))

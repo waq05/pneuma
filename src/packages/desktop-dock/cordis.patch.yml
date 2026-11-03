@@ -1,0 +1,4 @@
+# desktop-dock
+- insert:
+    - id: desktop-dock
+      name: '@pneuma/desktop-dock'

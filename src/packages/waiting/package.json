@@ -1,0 +1,21 @@
+{
+  "name": "@pneuma/waiting",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 50,
+    "resolution": "pinned",
+    "title": "等人登记表",
+    "description": "哪张卡片正挂着等用户做决定，一问就知道"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

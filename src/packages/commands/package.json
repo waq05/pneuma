@@ -1,0 +1,21 @@
+{
+  "name": "@pneuma/commands",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 100,
+    "resolution": "pinned",
+    "title": "斜杠命令",
+    "description": "/ 命令注册与补全"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

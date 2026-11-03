@@ -1,0 +1,4 @@
+# permission-presets
+- insert:
+    - id: permission-presets
+      name: '@pneuma/permission-presets'

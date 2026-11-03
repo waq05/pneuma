@@ -38,8 +38,8 @@ const { RemotePairing, CODE_ALPHABET, CODE_LENGTH, CODE_TTL_MS, CODE_LOCK_MS, MA
 )
 const { TicketStore, TICKET_TTL_MS } = await import('../lib/core/remote/tickets.js')
 const { RemoteOwnerLock } = await import('../lib/core/remote/owner.js')
-const { REMOTE_METHODS, REMOTE_SHELL_METHODS: REMOTE_SHELL } = await import('../lib/plugins/remote/types.js')
-const { hostHeaderAllowed } = await import('../lib/plugins/remote/http.js')
+const { REMOTE_METHODS, REMOTE_SHELL_METHODS: REMOTE_SHELL } = await import('../lib/packages/remote/types.js')
+const { hostHeaderAllowed } = await import('../lib/packages/remote/http.js')
 
 let total = 0
 let failures = 0
@@ -374,7 +374,7 @@ function httpCall(port, path, options = {}) {
 }
 
 {
-  const { createRemoteServer } = await import('../lib/plugins/remote.js')
+  const { createRemoteServer } = await import('../lib/packages/remote/index.js')
   const { RemoteUploads } = await import('../lib/core/remote/uploads.js')
   const { request } = await import('node:http')
   // 由系统挑一个空闲端口：写死端口会和别人撞
@@ -792,8 +792,8 @@ console.log('通知 Webhook（Bark 占位符 GET / ntfy JSON POST）')
 // ── 12. HTTP + WS：上传路由、推送路由、全局 seq、lastSeq 补帧 ───────────────────
 console.log('HTTP 与 WebSocket（上传 / 推送订阅 / 帧流）')
 {
-  const { createRemoteServer } = await import('../lib/plugins/remote.js')
-  const { REMOTE_PROTOCOL_VERSION } = await import('../lib/plugins/remote/types.js')
+  const { createRemoteServer } = await import('../lib/packages/remote/index.js')
+  const { REMOTE_PROTOCOL_VERSION } = await import('../lib/packages/remote/types.js')
   const { RemoteUploads } = await import('../lib/core/remote/uploads.js')
   const { RemotePush } = await import('../lib/core/remote/push.js')
   const { request } = await import('node:http')

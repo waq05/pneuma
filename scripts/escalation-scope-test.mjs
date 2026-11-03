@@ -118,11 +118,11 @@ const guarded = { ...widened, readOnlySubpaths: [join(home, 'granted', 'keep')] 
 check('放宽的可写根里，只读子路径照旧不许写（放宽的是写边界，不是安全边界）', !checkWrite(guarded, join(home, 'granted', 'keep', 'a.txt')).allowed)
 
 console.log('\n── 3. 范围与会话放宽的接线 ──')
-const approvalSrc = readFileSync(new URL('../src/plugins/approval.ts', import.meta.url), 'utf8')
+const approvalSrc = readFileSync(new URL('../src/packages/approval/index.ts', import.meta.url), 'utf8')
 check('答「本会话允许」时把目标并进该会话的可写根', /grantSession\(current\.sessionPath, \[current\.sandboxSessionRoot\]\)/.test(approvalSrc))
 check('只有写类 + workspace-write 才产生可放宽的根', /escalation\.permission === 'workspace-write' && target !== null && PATH_WRITE_TOOLS\.has\(request\.toolName\)/.test(approvalSrc))
 check('升权卡不给 always（没有可持久化的前缀规则）', /escalation === null\) \{[\s\S]{0,200}scopes\.push\('always'\)/.test(approvalSrc))
-const sandboxSrc = readFileSync(new URL('../src/plugins/sandbox.ts', import.meta.url), 'utf8')
+const sandboxSrc = readFileSync(new URL('../src/packages/sandbox/index.ts', import.meta.url), 'utf8')
 check('沙箱按会话路径记账（一个会话放宽不影响别的会话）', /sessionRoots\.get\(sessionPath\)/.test(sandboxSrc))
 check('会话放宽根并进可写根参与判定', /extraWritableRoots: \[\.\.\.config\.extraWritableRoots, \.\.\.granted\]/.test(sandboxSrc))
 

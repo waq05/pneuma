@@ -69,7 +69,7 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:93`，`KERNEL_API_VERSION 
 | 会话区过程折叠（三层 + 四档） | ● | ◐ | ◐ | ● | 已对齐 dsh（T13），见 §3.2 |
 | 沙箱 | ◐ | ● | ○ | ● | 已落地（T9）：三档模式 + 可写根白名单 + 命令前缀策略 + 一次性升权 + docker 容器后端 + **Windows 受限令牌后端**（三个缺口如实披露：硬链接别名、读不受限、网络只软墙）；Seatbelt / Landlock 未做 |
 | MCP 客户端 | ● | ● | ● | ● | 已补（T5），安全层与围栏复用现成的；resources / prompts / elicitation 三类能力已于 0.6.33 补齐（T24） |
-| 长期记忆 | ● | ● | ● | ◐ | 已内核化（`src/plugins/memory.ts`） |
+| 长期记忆 | ● | ● | ● | ◐ | 已内核化（`src/packages/memory/index.ts`） |
 | 跨会话全文检索 | ● | ◐ | ● | ● | 已补（T6），零依赖倒排索引，中文按 1+2-gram |
 | 工具渐进披露 Tool Search | ● | ◐ | ● | ◐ | 已补（T5），与 MCP 同批上 |
 | LSP 代码智能 | ● | ◐ | ○ | ● | 已落地（T12），含写后新引入报错注入 |
@@ -86,8 +86,8 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:93`，`KERNEL_API_VERSION 
 | /review 审查命令 | ● | ● | — | ○ | 已升级（T18，0.6.32）：四档范围 + 只读审查队友 + 结构化 findings 卡 + 行号跳转；codex 的形态是独立 review 子线程 |
 | 输入端 @ 文件提及 | ● | ● | — | ● | 已补（T14，0.6.29）：`src/core/mention.ts` 纯模块做定位/排序/插回，终端 TUI 与界面壳各接一层补全 |
 | bash 后台任务 | ● | ◐ | — | ● | 已补（T15，0.6.31）：`src/core/tools/bash.ts:496` 的 `run_in_background` + `job_output`/`job_list`/`job_kill` |
-| 会话标题自动生成 | ● | ◐ | — | ● | 已补（T16，0.6.29）：`src/plugins/session-title.ts` 用独立小请求起名，autoTitle 与用户改名分家 |
-| 上下文占用表 / /status | ● | ● | — | ● | 已补（T17，0.6.29）：`src/plugins/commands.ts:766` 的 `statusReport`，估算口径与自动压缩同源 |
+| 会话标题自动生成 | ● | ◐ | — | ● | 已补（T16，0.6.29）：`src/packages/session-title/index.ts` 用独立小请求起名，autoTitle 与用户改名分家 |
+| 上下文占用表 / /status | ● | ● | — | ● | 已补（T17，0.6.29）：`src/packages/commands/index.ts:766` 的 `statusReport`，估算口径与自动压缩同源 |
 | 会话导出 | ● | ● | — | ● | 已补（T22，0.6.29）：`src/core/session-export.ts` 把会话消息序列化成 markdown |
 | 侧栏会话运行状态点 | ● | ◐ | — | ● | 已补（T21，0.6.30）：`src/contract/snapshot.ts:42` 的 `sessionStates` 供侧栏状态点 |
 | 手机 / 移动端遥控 | ● | ◐ | ◐ | ◐ | **dsc 独有优势**：PWA + Web Push/Webhook + 二维码配对 |
@@ -121,7 +121,7 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:93`，`KERNEL_API_VERSION 
 
 **挂话不折整轮（已补齐）**：`hasSteering` —— 轮内插过话（`entry.steering === true`）的那一轮不给整轮折叠（`ui-shell/src/plugins/transcript/round-fold.tsx:100`）。dsc 的转录条目补齐了 `steering?: boolean`（`src/contract/transcript.ts:137`），0.6.47 又把「轮中途输入」落成 async-inbox 收件箱、步骤边界写库，所以这条不再是「有意不做」。
 
-**顺手发现的一处不一致（未动）**：启动恢复历史会话走的是 `src/host/kernel.ts:478` 的重放分支，**没有发 `dsc/session-open`**，而切会话（`src/plugins/session.ts:122`）会发。于是靠这个事件恢复自己状态的插件（plan / todo / goal / mode）在「冷启动恢复」这条路上不会被触发——计划卡因此不会出现在冷启动的会话流里（`src/plugins/plan.ts:209`）。要让两条路一致，得把 kernel 的重放分支改成走 `session.open(resumePath)`，或者补发一次事件；那会影响 approval-floor 的 reset 与 agent 的 switchSession，属于内核改动，单独立项。
+**顺手发现的一处不一致（未动）**：启动恢复历史会话走的是 `src/host/kernel.ts:478` 的重放分支，**没有发 `dsc/session-open`**，而切会话（`src/packages/session/index.ts:122`）会发。于是靠这个事件恢复自己状态的插件（plan / todo / goal / mode）在「冷启动恢复」这条路上不会被触发——计划卡因此不会出现在冷启动的会话流里（`src/packages/plan/index.ts:209`）。要让两条路一致，得把 kernel 的重放分支改成走 `session.open(resumePath)`，或者补发一次事件；那会影响 approval-floor 的 reset 与 agent 的 switchSession，属于内核改动，单独立项。
 
 ### 3.3 会话区继续对齐：剩余批次（用户裁决「完全对齐 dsh」）
 
@@ -169,7 +169,7 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:93`，`KERNEL_API_VERSION 
 
 #### T2. 审批加固插件（P0，挂 `ctx.guards`，不动内核）
 - **是什么**：在现有权限档位之前叠两层。① **灾难命令地板**：`rm -rf /`、fork bomb、`dd of=/dev/sd*`、引号不可解析等，任何模式（含 full-access）都直接拒，fail-closed（参照 `hermes/tools/approval_floors.py:98`、`approval_detection.py:88-128`）。② **用户 deny glob 黑名单**（先于 yolo 生效）。③ **命令白名单**：`git status`、`ls` 等安全前缀自动放行（参照 codex `execpolicy/src/rule.rs` 的命令前缀匹配）。④ 可选：连续被拒 N 次熔断、无人值守（cron / 脚本）场景直接按拒快速失败。
-- **为什么**：dsc 的 `full-access` 直接放行，没有一层「连满权限也不许」的兜底（`src/plugins/approval.ts:280`）；个人机器误放一条 `rm -rf` 就没了。codex 的白名单与 hermes 的黑名单地板方向互补，dsc 两个都该要。
+- **为什么**：dsc 的 `full-access` 直接放行，没有一层「连满权限也不许」的兜底（`src/packages/approval/index.ts:280`）；个人机器误放一条 `rm -rf` 就没了。codex 的白名单与 hermes 的黑名单地板方向互补，dsc 两个都该要。
 - **落点**：`ctx.guards.register({ id, order, decide })`，排在审批（order 30）之前，比如 order 5。白名单 / 黑名单 / 地板都是规则表，走设置分区或独立配置文件。**必须排这么前的原因**是守卫链「第一位给出 deny 或 pass 的赢」：模式闸门（order 10）对只读工具、只读命令与工作区内的写直接返回 pass，它一返回 pass，后面的安全钩子（20）与审批（30）就轮不上；所以「连满权限也不许跑的灾难命令」只能由排在它们前面的一位自己判。
 - **动内核**：否。**难度**：低。
 - **风险**：白名单前缀匹配要防绕过（管道、`;`、子 shell、编码绕过）；地板宁可误拦不可漏放。
@@ -186,7 +186,7 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:93`，`KERNEL_API_VERSION 
 #### T4. 生命周期 hooks 插件（P1，映射到现有扩展点）
 - **是什么**：读一份 codex 形态的钩子配置，跑外部命令钩子，实现「工具前拦截 / 注入上下文 / 强制续跑」。codex 有 12 个生命周期事件（`codex/codex-rs/hooks/src/lib.rs:23-36`）：PreToolUse / PostToolUse / PreCompact / PostCompact / SessionStart / SessionEnd / UserPromptSubmit / SubagentStart / SubagentStop / Stop / Interrupt / PermissionRequest。
 - **为什么**：不动内核就扩展行为；dsc 已有 `ctx.guards.register`（动手前闸门，可返回拒）、`ctx.prompt.transformMessages`（改写请求）、`ctx.events.on`（回合 / 工具事件），正好覆盖主要子集。
-- **落点**：一个官方可开关插件，把 `PreToolUse` → `guards.register`、`PostToolUse` → `guards.registerObserver`、`SessionStart / UserPromptSubmit` → `prompt.transformMessages` 逐类映射。dsh 的 `hooks-codex` 直接跑现成 hooks.json，可作桥接蓝本。这一项**不是从零补 hooks**：dsc 当时已有自研的安全钩子（`src/core/hooks.ts` + `src/plugins/hooks.ts`，四个 dsc 自己的事件，配置 `~/.dsc/hooks.json`，守卫 order 20），要加的是另一份事件名与配置格式都照 codex 的插件，两份配置各读各的（实际落地读 `~/.dsc/lifecycle-hooks.json`，见 §5.1）。
+- **落点**：一个官方可开关插件，把 `PreToolUse` → `guards.register`、`PostToolUse` → `guards.registerObserver`、`SessionStart / UserPromptSubmit` → `prompt.transformMessages` 逐类映射。dsh 的 `hooks-codex` 直接跑现成 hooks.json，可作桥接蓝本。这一项**不是从零补 hooks**：dsc 当时已有自研的安全钩子（`src/core/hooks.ts` + `src/packages/hooks/index.ts`，四个 dsc 自己的事件，配置 `~/.dsc/hooks.json`，守卫 order 20），要加的是另一份事件名与配置格式都照 codex 的插件，两份配置各读各的（实际落地读 `~/.dsc/lifecycle-hooks.json`，见 §5.1）。
 - **动内核**：否。**难度**：低-中。
 - **风险**：外部命令的超时与失败处理；钩子输出进模型前要走 `untrusted` 围栏。
 - **验收**：配一个 PreToolUse 钩子能拦下指定工具并给出模型可见的拒绝理由。
@@ -206,7 +206,7 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:93`，`KERNEL_API_VERSION 
 - **风险**：做 lineage 时会撞上「会话边界」问题（`/new`、空闲过期、压缩续接、委派子会话算不算同一会话），要让存储层与检索层共用同一份边界常量。**验收**：中文关键词能命中历史会话正文并跳回。
 
 #### T7. 记忆系统内核化（P2）
-- **是什么**：把记忆做成官方插件：`ctx.tools.register` 加记忆工具，用独立 `~/.dsc/memory/` 落盘，`ctx.prompt.register` 注入系统提示。照 codex 给每条记忆记来源与用量上限，避免无限膨胀（`codex/codex-rs/memories/write/src/phase1.rs`）。**已落地**：`src/plugins/memory.ts` + `src/core/memory.ts`，工具名 `memory`，原来那份示例插件 `examples/plugins/memory.js` 已删除（见 §5.1）。
+- **是什么**：把记忆做成官方插件：`ctx.tools.register` 加记忆工具，用独立 `~/.dsc/memory/` 落盘，`ctx.prompt.register` 注入系统提示。照 codex 给每条记忆记来源与用量上限，避免无限膨胀（`codex/codex-rs/memories/write/src/phase1.rs`）。**已落地**：`src/packages/memory/index.ts` + `src/core/memory.ts`，工具名 `memory`，原来那份示例插件 `examples/plugins/memory.js` 已删除（见 §5.1）。
 - **落点**：新官方插件，全用现有扩展点。**动内核**：否。**难度**：中。
 - **风险**：注入记忆会改系统提示，若用前缀缓存要做到会话内稳定。**验收**：写入的事实跨回合可见、有大小上限、超限不静默裁剪。
 
@@ -224,7 +224,7 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:93`，`KERNEL_API_VERSION 
 - dsh 蓝本最贴 dsc：`ptc-runtime-node` 在一个受沙箱管的新 Node 子进程里跑模型写的 async TS，`return await tools.add(…)` 就能调工具，多步塌成一轮。但**没有沙箱时 PTC 等于给模型开「随便跑代码」的后门**，与 T9 强绑定，要一起才安全。参照 `dsh/ptc-runtime/ptc-runtime`、`hermes/tools/code_execution_tool.py`。
 
 #### T11. 自我改进闭环（独立路线）
-- hermes 从经验自动造技能、用时自我修订、定期老化归档。**关键前置**：dsc 当时根本没有让 agent 写技能的能力——`skill` 工具是 `risk: 'read'` 只能读正文（`src/plugins/skills.ts:352-363`），技能启停只写 `skills.json`，市场安装靠人在技能中心点。所以这不是「给现有裸写补护栏」，而是「要开放 self-writing 之前必须先立写入门」。照 hermes 先建门（写技能要确认、cron / 子 agent 的写直接拒、来源徽章 `agent_created / hub / bundled`），再谈 `skill_manage`。**否则一开放 self-writing 就同时开了注入后门。**（注：这一段是立项时的现状；写入门与 `skill_write` 已在 T11 落地，见 §5.1。）
+- hermes 从经验自动造技能、用时自我修订、定期老化归档。**关键前置**：dsc 当时根本没有让 agent 写技能的能力——`skill` 工具是 `risk: 'read'` 只能读正文（`src/packages/skills/index.ts:352-363`），技能启停只写 `skills.json`，市场安装靠人在技能中心点。所以这不是「给现有裸写补护栏」，而是「要开放 self-writing 之前必须先立写入门」。照 hermes 先建门（写技能要确认、cron / 子 agent 的写直接拒、来源徽章 `agent_created / hub / bundled`），再谈 `skill_manage`。**否则一开放 self-writing 就同时开了注入后门。**（注：这一段是立项时的现状；写入门与 `skill_write` 已在 T11 落地，见 §5.1。）
 
 #### T12. 其他按需
 - **LSP 代码智能**（参照 `dsh/lsp`）：编码体验加成大，中等工程量。
@@ -254,15 +254,15 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。
 | 项 | 状态 | 落地与验收证据 |
 | --- | --- | --- |
 | T1 压缩子系统 | 已落地 | 重放折叠按 `keep` 字段接回尾部（`src/core/session.ts` 的 `case 'summary'`）、切点退到 `safeCut`（`src/core/compact.ts`）、锚点索引 / 用户原话 / 找回指针在 `src/core/compact-anchors.ts`、两个字符预算进 `compact` 设置分区。回归：`scripts/compact-readstate-test.mjs`、`compact-token-tail-test.mjs`、`microcompact-test.mjs`、`compacting-status-test.mjs` |
-| T2 审批灾难地板 | 已落地 | `approval-floor` 插件挂在守卫 order 5（`src/core/approval-floor.ts` + `src/plugins/approval-floor.ts`），含命令白名单、deny glob 黑名单、熔断、无人值守；真守卫链上当场拒掉 `rm -rf /`、`format C:`、`cmd /c format C:`、`Format-Volume`、`Clear-Disk`、fork 炸弹与写 `/dev/sda`。回归：`scripts/floor-shell-and-budget-test.mjs`、`approval-review-fallback-test.mjs`。**第二轮补了五个漏**，见 §5.2 |
+| T2 审批灾难地板 | 已落地 | `approval-floor` 插件挂在守卫 order 5（`src/core/approval-floor.ts` + `src/packages/approval-floor/index.ts`），含命令白名单、deny glob 黑名单、熔断、无人值守；真守卫链上当场拒掉 `rm -rf /`、`format C:`、`cmd /c format C:`、`Format-Volume`、`Clear-Disk`、fork 炸弹与写 `/dev/sda`。回归：`scripts/floor-shell-and-budget-test.mjs`、`approval-review-fallback-test.mjs`。**第二轮补了五个漏**，见 §5.2 |
 | T3 spill | 已落地 | 观察者 order 50，落 `~/.dsc/spill/`，`read` 工具跳过，目录按 mtime 与总量清理；回归由 `check:core` 的溢出用例覆盖 |
 | T4 生命周期钩子 | 已落地（十四个事件里六个未接通） | `lifecycle-hooks` 插件读 `~/.dsc/lifecycle-hooks.json`：PreToolUse → 守卫 25、PostToolUse → 观察者 45，其余走事件与 `transformMessages`；PreModelRequest / PostModelRequest / PermissionRequest / PreCompact / SubagentStart / SubagentStop 没有可挂的扩展点，配了不执行并把理由写进报告（档位表在 `src/core/lifecycle-hooks.ts` 的 `LIFECYCLE_CAPABILITIES`：3 完整 / 5 部分 / 6 未接）。回归：`scripts/lifecycle-hook-default-test.mjs`、`hooks-test.mjs` |
 | T5 MCP 客户端 + Tool Search | 已落地 | `mcp` 插件支持 stdio 与 streamable-http，工具挂成 `mcp__服务器__工具`，结果过围栏，子进程环境按白名单筛；`tool-search` 提供三个桥接工具与手写 BM25，`tool_call` 按真名重走守卫链。回归：`scripts/mcp-name-test.mjs`、`tool-search-test.mjs`、`tool-search-single-approval-test.mjs` |
 | T6 中文会话检索 | 已落地 | 没上 SQLite：`src/core/session-index.ts` 是纯 TS 倒排索引（中文 1-gram + 2-gram，英文整词），落 `~/.dsc/cache/session-index.json`，按 mtime + size 增量维护；工具 `session_search` + `/search` 命令。回归：`scripts/session-index-fuzzy-test.mjs` |
-| T7 记忆内核化 | 已落地（不在本轮） | `src/plugins/memory.ts` + `src/core/memory.ts` 是默认开的内核插件，带 `memory` 设置分区与三格额度 |
-| T8 schedule 定时跟进 | 已落地（第五轮） | `src/plugins/schedule.ts` + `src/core/schedule/{rule,store,runner}.ts`：六种选择器（cron 只收五字段 Vixie）、显式 IANA 时区与 DST 两规则、**先落盘推进 `nextRunAt` 再投递**的至多一次语义、重启 catch-up（grace 半周期夹 120s~2h，不补积压）、pre-dispatch 校验（凭据不可解析就标 blocked，一次模型请求都不发）、`.lock` 互斥、投递文本明写「定时触发不是用户指令不构成授权」且投前问 `ctx.waiting.any`。宿主无常驻进程，靠自重排 `setTimeout`（unref）+ 重启补投，界面写明「关机时段不触发」；**没有用 `schtasks` 兜底**（§3 判它是后门高危）。回归由 `check:core` 的定时任务用例覆盖 |
-| T9 沙箱 | 已落地（第五轮，**codex 路线**，非本节原先写的 dsh fail-closed 路线） | `src/plugins/sandbox.ts` + `src/core/sandbox/{policy,execpolicy,backends}.ts`，守卫 order 8：三档模式（默认 workspace-write）、可写根白名单（`realpathSync.native` 规范化 + 祖先包含 + 最深存在祖先回退）、受保护元数据名、NT 命名空间前缀守卫（resolve 之前判原始串）、8.3/ADS/junction、命令前缀 allow/prompt/forbidden（含内层脚本再拆一层）、一次性升权（`sandbox_permissions`+`justification` 必须成对、只对本次生效、照常弹审批卡）、**降级照 codex：强制层不可用不 fail-closed，改为照常执行 + 审批兜底并如实上报 `enforced: full/partial`**。容器后端（docker，探测通过且用户显式选择才启用）与 **Windows 受限令牌后端**（`src/core/sandbox/win/`：经 FFI 调 Win32，ACL 能力 SID 授权 + `WRITE_RESTRICTED` pass-2 交集 + 换执行体跑 `runner-entry`；三个缺口如实披露——硬链接别名、读不受限、网络只软墙）都经命令执行器缝（`src/core/tools/command-runner.ts`）真换执行体。回归：`scripts/sandbox-parity-test.mjs`、`sandbox-write-roots-test.mjs` |
-| T11 自我改进闭环 | 已落地（第五轮，三条闭环先立写入门） | `src/plugins/self-improve.ts` + `src/core/learnings/{store,ledger,skill-write}.ts`：L1 纠正捕获（`dsc/turn-end` 落候选，**不进系统提示**，`/learnings promote` 才生效）；L2 复盘产技能草稿（迭代数 ≥12 触发，走 `agent.followup`，落盘即写进 `skills.json` disabled **默认停用**）；L3 `skill_write` 工具（read-before-write 硬校验、`.bak` 备份、`.ledger.jsonl` 台账可回滚、威胁扫描不过就还原、archive 只搬不删）。写入走 `ctx.approval.decide`；cron/队友/插件发起的写直接拒（判不出的退审批门，宁严不松）。回归：`scripts/self-improve-single-approval-test.mjs` |
+| T7 记忆内核化 | 已落地（不在本轮） | `src/packages/memory/index.ts` + `src/core/memory.ts` 是默认开的内核插件，带 `memory` 设置分区与三格额度 |
+| T8 schedule 定时跟进 | 已落地（第五轮） | `src/packages/schedule/index.ts` + `src/core/schedule/{rule,store,runner}.ts`：六种选择器（cron 只收五字段 Vixie）、显式 IANA 时区与 DST 两规则、**先落盘推进 `nextRunAt` 再投递**的至多一次语义、重启 catch-up（grace 半周期夹 120s~2h，不补积压）、pre-dispatch 校验（凭据不可解析就标 blocked，一次模型请求都不发）、`.lock` 互斥、投递文本明写「定时触发不是用户指令不构成授权」且投前问 `ctx.waiting.any`。宿主无常驻进程，靠自重排 `setTimeout`（unref）+ 重启补投，界面写明「关机时段不触发」；**没有用 `schtasks` 兜底**（§3 判它是后门高危）。回归由 `check:core` 的定时任务用例覆盖 |
+| T9 沙箱 | 已落地（第五轮，**codex 路线**，非本节原先写的 dsh fail-closed 路线） | `src/packages/sandbox/index.ts` + `src/core/sandbox/{policy,execpolicy,backends}.ts`，守卫 order 8：三档模式（默认 workspace-write）、可写根白名单（`realpathSync.native` 规范化 + 祖先包含 + 最深存在祖先回退）、受保护元数据名、NT 命名空间前缀守卫（resolve 之前判原始串）、8.3/ADS/junction、命令前缀 allow/prompt/forbidden（含内层脚本再拆一层）、一次性升权（`sandbox_permissions`+`justification` 必须成对、只对本次生效、照常弹审批卡）、**降级照 codex：强制层不可用不 fail-closed，改为照常执行 + 审批兜底并如实上报 `enforced: full/partial`**。容器后端（docker，探测通过且用户显式选择才启用）与 **Windows 受限令牌后端**（`src/core/sandbox/win/`：经 FFI 调 Win32，ACL 能力 SID 授权 + `WRITE_RESTRICTED` pass-2 交集 + 换执行体跑 `runner-entry`；三个缺口如实披露——硬链接别名、读不受限、网络只软墙）都经命令执行器缝（`src/core/tools/command-runner.ts`）真换执行体。回归：`scripts/sandbox-parity-test.mjs`、`sandbox-write-roots-test.mjs` |
+| T11 自我改进闭环 | 已落地（第五轮，三条闭环先立写入门） | `src/packages/self-improve/index.ts` + `src/core/learnings/{store,ledger,skill-write}.ts`：L1 纠正捕获（`dsc/turn-end` 落候选，**不进系统提示**，`/learnings promote` 才生效）；L2 复盘产技能草稿（迭代数 ≥12 触发，走 `agent.followup`，落盘即写进 `skills.json` disabled **默认停用**）；L3 `skill_write` 工具（read-before-write 硬校验、`.bak` 备份、`.ledger.jsonl` 台账可回滚、威胁扫描不过就还原、archive 只搬不删）。写入走 `ctx.approval.decide`；cron/队友/插件发起的写直接拒（判不出的退审批门，宁严不松）。回归：`scripts/self-improve-single-approval-test.mjs` |
 | T12 LSP + 浏览器自动化 | 已落地（第五轮，checkpoint 仍未动） | LSP：`src/core/lsp/{framing,uri,servers,client}.ts` + 单工具按 operation 分发（定义/引用含声明/实现/悬停，100 条 + 16000 字符双上限），无状态同步（读盘→didOpen→请求→didClose），idle 回收 + 破键退避，诊断经 `registerObserver` 只报本次编辑新引入的 ERROR（回归由 `check:core` 的 LSP 用例覆盖）。浏览器：`src/core/cdp/{transport,launch,snapshot,actions}.ts`，无障碍树文本化 + 行内 ref、**ref 代际校验**（动作前 `DOM.describeNode` 复核）、独立临时 profile + `DevToolsActivePort`、对话框三策略、`browser_look`（read）/`browser`（exec）分档、`taskkill /T /F` 整树清理；回归：`scripts/dock-browser-test.mjs`、`ui-browser-address-test.mjs` |
 | T13 会话区过程折叠 | 已落地（第三轮，见 §3.2） | 三层结构（整轮总开关 / 阶段组头 / 单条思考与工具行）+ 四档展示档位（档位语义在 `ui-shell/src/plugins/transcript/round-fold.tsx`，逐格对照 dsh 的 `presentation-policy.ts`）、运行中组头的实时任务详情（取参数的键序照抄 dsh，160 字素簇上限）、组头标题 150ms 最短保留（纯函数 `liveTitleDecision` 可测）、组体 `min(400px, 50vh)` 限高 + 24px mask 方向渐隐 + 组内独立滚动跟随、收起改挂 `hidden="until-found"`（Ctrl+F 能命中收起内容、自动收起不抽走键盘焦点）、两个与档位正交的默认态开关（思考行 / 工具卡，dsc 自己的增量）。四张网：`desktop/shots/step-groups-check.mjs`、`step-seed-check.mjs`、`fold-check.mjs`、`step-shots.ps1` 六用例隔离截图；另加 `scripts/ui-fold-prefs-test.mjs`。**已知未做：无**（轮内插话不折整轮已补齐，见 §3.2） |
 
@@ -555,11 +555,11 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。
 
 dsc（相对路径）：
 - 压缩：`src/core/compact.ts`（`safeCut` 切点 + 摘要拼装）、`src/core/compact-anchors.ts`（锚点索引 / 用户原话 / 找回指针）、重放折叠 `src/core/session.ts` 的 `case 'summary'`；会话列表读文件头前 200 行（`src/core/session.ts:1274`）
-- 灾难地板 `src/core/approval-floor.ts` + `src/plugins/approval-floor.ts`；溢出 `src/core/spill.ts` + `src/plugins/spill.ts`；MCP `src/core/mcp.ts` + `src/plugins/mcp.ts`；渐进披露 `src/core/tool-search.ts` + `src/plugins/tool-search.ts`；十二事件钩子 `src/core/lifecycle-hooks.ts`；会话检索 `src/core/session-index.ts` + `src/plugins/session-search.ts`
-- 审批档位判定与审阅者复核（第 5.5 层）`src/plugins/approval.ts`；守卫链刻度见 development.md §7
+- 灾难地板 `src/core/approval-floor.ts` + `src/packages/approval-floor/index.ts`；溢出 `src/core/spill.ts` + `src/packages/spill/index.ts`；MCP `src/core/mcp.ts` + `src/packages/mcp/index.ts`；渐进披露 `src/core/tool-search.ts` + `src/packages/tool-search/index.ts`；十二事件钩子 `src/core/lifecycle-hooks.ts`；会话检索 `src/core/session-index.ts` + `src/packages/session-search/index.ts`
+- 审批档位判定与审阅者复核（第 5.5 层）`src/packages/approval/index.ts`；守卫链刻度见 development.md §7
 - 扩展点与内核 API 版本 `src/core/plugin-registry.ts:93`；插件配置热生效 `src/core/plugin-registry.ts:246`
 - 防注入围栏（已预留 mcp 来源）`src/core/untrusted.ts:31`
-- 技能只读工具 `src/plugins/skills.ts:352`（另有 `skill_write` 走审批，见 T11）
+- 技能只读工具 `src/packages/skills/index.ts:352`（另有 `skill_write` 走审批，见 T11）
 
 codex（`D:\codex\codex\codex-rs\`）：
 - `sandboxing\`（bwrap / landlock / seatbelt）、`execpolicy\src\rule.rs`

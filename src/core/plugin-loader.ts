@@ -11,12 +11,13 @@
  *
  * @module dsc/core/plugin-loader
  */
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { basename, isAbsolute, join } from 'node:path'
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import type { Context, Fiber, Plugin } from '@deepseek-ai/cordis'
-import { ensureResolveHook } from './dsh-compat/resolve-hook.js'
+import { ensureResolveHook, setResolveHookAppRoot, setResolveHookCompat } from './dsh-compat/resolve-hook.js'
 import { dshToolsFacade } from './dsh-compat/tools-facade.js'
 import {
   checkApiVersion,
@@ -24,6 +25,7 @@ import {
   getPluginMeta,
   isPluginEnabled,
   readPluginEntries,
+  registerPluginAlias,
   registerPluginMeta,
   writePluginEnabled,
   KERNEL_API_VERSION,
@@ -34,13 +36,26 @@ import { activeConfigFile } from './config-store.js'
 import { parseTolerantYaml } from './migrate.js'
 import { describeForeignServices } from './dsh-compat/service-map.js'
 import { compatServiceOf } from './dsh-compat/session-bridge.js'
-import { applyPatchLayers, type PatchLayer, type PluginRow } from './plugin-patch.js'
+import { applyPatchLayers, readPatchFile, type PatchDuplicate, type PatchLayer, type PluginRow } from './plugin-patch.js'
 import { bundleDirOf, enginesProblem, readBundle, readProfile, type BundleInfo } from './plugin-bundle.js'
 import { dscPath } from './path-policy.js'
 import { activeProfileDir } from './profile-dir.js'
 
 /** 内核插件 API 版本（重导出，供宿主/文档引用）。 */
 export { KERNEL_API_VERSION }
+
+/**
+ * 应用安装目录 = 运行中 Pneuma 的 `package.json` 所在目录。
+ *
+ * 构建产物住在 `<应用根>/lib/core/plugin-loader.js`，往上两级即是应用根
+ * （桌面端是 `dsc-core/`）。应用侧的包统一落在 `<应用根>/lib/node_modules/` 下
+ * （运行时适配包与各功能包同住一层，Node 从任何一个包目录向上都能命中同一个
+ * `@pneuma/runtime`，单实例由目录唯一性保证）。
+ */
+export const APP_INSTALL_DIR = fileURLToPath(new URL('../../', import.meta.url))
+
+// 解析钩子（含 dsh-compat 插件的兜底调用）缺省用这个应用根，不必自己按文件深度算。
+setResolveHookAppRoot(APP_INSTALL_DIR)
 
 /**
  * dsc 自己的全部服务名（services/types.ts 的 Context 声明）。外部插件 inject 里
@@ -79,10 +94,50 @@ function clientCapabilitiesOf(raw: unknown): string[] {
   return names
 }
 
-/** 兼容层开着的判定与说明文案在挂载路径里；这里只留服务名清单。 */
+/**
+ * 把模块的 `inject` 归成字符串数组。
+ *
+ * cordis 允许 `inject` 写字符串或字符串数组；dsh 插件偶尔还写对象（可选依赖）。
+ * 认不出的部分一律当「没声明」，不猜。
+ * @param raw - 模块导出的 inject
+ * @returns 服务名清单（保持原顺序）
+ */
+function injectNamesOf(raw: unknown): string[] {
+  if (typeof raw === 'string') return raw === '' ? [] : [raw]
+  if (!Array.isArray(raw)) return []
+  return raw.filter((name): name is string => typeof name === 'string' && name !== '')
+}
 
-/** 已挂载的外部插件：文件名 → cordis Fiber（dispose 即卸载）。 */
-const mounted = new Map<string, Fiber>()
+/**
+ * 已挂载的插件：**身份** → cordis Fiber（dispose 即卸载）。
+ *
+ * 身份 = 行 id（契约 §4）。外部单文件插件没有行，身份就退回文件名（老行为）；
+ * 组合包里的行即使是同一个包的不同子路径，也是各自独立的身份与开关。
+ */
+const mountedByRoot = new WeakMap<Context, Map<string, Fiber>>()
+
+/** 这个 root 上「身份 → Fiber」的表。按 root 分开：自检会在一个进程里连开多个内核。 */
+function mountedOf(root: Context): Map<string, Fiber> {
+  let table = mountedByRoot.get(root)
+  if (table === undefined) {
+    table = new Map<string, Fiber>()
+    mountedByRoot.set(root, table)
+  }
+  return table
+}
+
+/**
+ * 身份 → 它的磁盘入口文件。
+ *
+ * 组合包的行 id（例如 `ops`）和入口文件名（例如 `index.js`）不是一个东西，
+ * 热启停时要靠这张表把 id 换回文件；默认关的行也要登记，否则用户打开开关时无路可走。
+ */
+const pluginSources = new Map<string, string>()
+
+/** 登记一个插件身份对应的磁盘入口（组合包默认关的行也要登记）。 */
+export function registerPluginSource(identity: string, file: string): void {
+  pluginSources.set(identity, file)
+}
 
 /**
  * 内置但可停用的官方插件（智能体团队、电脑操作）：这里登记它们的插件对象，
@@ -108,7 +163,8 @@ export function registerBuiltinMount(file: string, plugin: Plugin.Object): void 
  * @param fiber - root.plugin() 返回的 fiber；卸载时由 unmountExternalPlugin 统一 dispose。
  */
 export function trackBuiltinMount(file: string, fiber: Fiber): void {
-  mounted.set(basename(file), fiber)
+  const fiberRoot = rootRef
+  if (fiberRoot !== null) mountedOf(fiberRoot).set(basename(file), fiber)
 }
 
 /** 初始化（宿主启动时调用一次，传入内核 root）。 */
@@ -124,6 +180,8 @@ interface PluginModule {
   apiVersion?: unknown
   inject?: unknown
   apply?: unknown
+  /** 插件贡献的设置分区 id（外部单文件插件用它声明；组合包以 package.json 为准）。 */
+  settingsSection?: unknown
   /** dsh 插件的 schemastery 配置 schema（可调用：传入原始 config，返回校验后的值）。 */
   Config?: unknown
   /**
@@ -132,6 +190,35 @@ interface PluginModule {
    */
   client?: unknown
   dshClient?: unknown
+  /** 包入口的默认导出：Pneuma 功能包用它导出插件对象（对象插件，不是模块级 apply）。 */
+  default?: unknown
+}
+
+/**
+ * 从模块里认出插件对象。
+ *
+ * 为什么要有这一层：dsh 插件把 `apply` 直接写在模块上（`export function apply`），
+ * 而 Pneuma 的功能包导出的是 `export const xxxPlugin: Plugin.Object = { apply }`——
+ * 名字随包不同，不能靠猜。规则按优先级：
+ *   1. 默认导出带 `apply` → 用它；
+ *   2. 恰好一个命名导出带 `apply` → 用它（多于一个说明模块没说清，报错让人补默认导出）；
+ *   3. 模块自身带 `apply`（dsh 形状） → 用它。
+ * 找到之后与模块级字段合并：模块上还能写 `Config` / `client` / `apiVersion` 这类旁挂声明。
+ * @param mod - 导入到的模块
+ * @returns 插件对象；认不出给 null
+ */
+function pickPluginObject(mod: PluginModule): Record<string, unknown> | null {
+  const hasApply = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === 'object' && typeof (value as { apply?: unknown }).apply === 'function'
+  const base = mod as Record<string, unknown>
+  if (hasApply(mod.default)) return { ...base, ...mod.default }
+  const named: Array<[string, Record<string, unknown>]> = []
+  for (const [key, value] of Object.entries(base)) {
+    if (key !== 'default' && hasApply(value)) named.push([key, value as Record<string, unknown>])
+  }
+  if (named.length === 1) return { ...base, ...named[0]![1] }
+  if (hasApply(base)) return base
+  return null
 }
 
 /**
@@ -162,15 +249,51 @@ async function importPluginModule(file: string, meta: PluginMeta): Promise<Plugi
   }
 }
 
+/** 行级覆盖项：patch 行（或宿主）说了就盖过插件模块自带的声明。 */
+export interface RowMountOptions {
+  /**
+   * 行上的 `inject`。写了就**盖过**模块导出的 inject——行的依赖关系以 profile 为准，
+   * 模块里的那份只是包作者的缺省。
+   */
+  inject?: readonly string[]
+  /**
+   * 宿主直接给的那份配置：**整份替代** `plugins.json` 里那一条（不做深合并）。
+   *
+   * 为什么需要：llm / session / settings 这几行拿的是宿主现组装的配置
+   * （providers、resume 路径、cwd），plugins.json 里根本没有这些；不整份替代的话，
+   * 包化之后它们的配置会在第一次挂载时就丢掉。
+   */
+  config?: Record<string, unknown>
+  /**
+   * 这是 Pneuma 自己的功能包（`@pneuma/*`）。
+   *
+   * 原生包不按 dsh 插件口径处理：不做「inject 里有陌生服务名 = dsh 插件」的判定，
+   * 也不套 `dshToolsFacade`。否则 `inject: ['presets']` 这种自己的服务名会被误判，
+   * 工具注册会被换成 dsh 形状，原生插件当场挂不上。
+   */
+  native?: boolean
+}
+
 /**
  * 挂载一个外部插件（热；已挂载时先卸载旧 fiber）。
  * 失败路径：apiVersion 不兼容 / 模块损坏 / 缺 apply → 元数据记 problem，
  * 自动停用（写盘回滚到可用状态），返回 false。
+ * @param file - 入口文件绝对路径
+ * @param identity - 运行时身份（行 id）。不传 = 退回文件名（外部单文件插件的老行为）
+ * @param rowOptions - 行级覆盖（目前只有 inject）
  */
-export async function mountExternalPlugin(file: string): Promise<boolean> {
+export async function mountExternalPlugin(
+  file: string,
+  identity?: string,
+  rowOptions: RowMountOptions = {},
+): Promise<boolean> {
   const root = rootRef
   if (root === null) throw new Error('plugin runtime 未初始化')
-  const base = basename(file)
+  // 身份 = 行 id（契约 §4）：mounted / plugins.json / 插件中心 / settingsSection 全按它。
+  const base = identity !== undefined && identity !== '' ? identity : basename(file)
+  // 行 id 与文件名不一致时登记旧键：0.8.1 写的 plugins.json 里是文件名，双查才能读到老配置。
+  if (base !== basename(file)) registerPluginAlias(base, basename(file))
+  registerPluginSource(base, file)
 
   // 内置官方插件：对象已在宿主装配时登记，不必读文件；与内核同源，跳过 apiVersion 检查。
   const builtin = builtinMounts.get(base)
@@ -179,7 +302,7 @@ export async function mountExternalPlugin(file: string): Promise<boolean> {
     try {
       const fiber = root.plugin(builtin, getPluginConfig(base))
       await fiber
-      mounted.set(base, fiber)
+      mountedOf(root).set(base, fiber)
       const own = getPluginMeta(base)
       if (own !== undefined) own.problem = undefined
       return true
@@ -194,22 +317,38 @@ export async function mountExternalPlugin(file: string): Promise<boolean> {
   const meta: PluginMeta = { file: base, name: base.replace(/\.js$/, ''), description: '', source: 'external' }
   registerPluginMeta(meta)
 
-  // 解析钩子必须在**导入之前**就位：dsh 插件在模块顶层就 import @deepseek-ai/* 的东西，
-  // 等 apply 时再注册已经太晚（import 早就抛 ERR_MODULE_NOT_FOUND 了）。
-  const needsCompat = isPluginEnabled('dsh-compat')
-  if (needsCompat) {
-    ensureResolveHook([DSC_PLUGINS_DIR])
-    normalizeDshHome()
-  }
+  // 解析钩子必须在**导入之前**就位：插件在模块顶层就 import @pneuma/runtime 与
+  // @deepseek-ai/* 的东西，等 apply 时再注册已经太晚（import 早就抛 ERR_MODULE_NOT_FOUND 了）。
+  // 注册**不再依赖 dsh-compat 开关**：dsh 兼容层只是"能不能跑 dsh 插件"的判定，
+  // 而 @pneuma/runtime 的重定向与开关无关。
+  const native = rowOptions.native === true
+  const needsCompat = !native && isPluginEnabled('dsh-compat')
+  ensureResolveHook([DSC_PLUGINS_DIR], APP_INSTALL_DIR)
+  // 钩子永远在（@pneuma/runtime 要单实例），但 @deepseek-ai/* 的重定向跟着开关走：
+  // 关掉兼容层时让 dsh 插件在 import 阶段就失败，用户才看得到「先启用 dsh-compat」。
+  setResolveHookCompat(isPluginEnabled('dsh-compat'))
+  if (needsCompat) normalizeDshHome()
 
   const mod = await importPluginModule(file, meta)
   if (mod === null) {
     await disableSilently(base)
     return false
   }
-  if (typeof mod.name === 'string' && mod.name !== '') meta.name = mod.name
-  if (typeof mod.description === 'string' && mod.description !== '') meta.description = mod.description
-  if (typeof mod.apiVersion === 'number') meta.apiVersion = mod.apiVersion
+  // 包入口导出插件对象（默认导出或唯一一个带 apply 的命名导出）；dsh 插件则是模块自带 apply。
+  const entry = pickPluginObject(mod)
+  if (entry === null) {
+    meta.problem = '模块里找不到插件对象：既没有默认导出，也没有唯一一个带 apply 的命名导出'
+    await disableSilently(base)
+    return false
+  }
+  if (typeof entry.name === 'string' && entry.name !== '') meta.name = entry.name
+  else if (typeof mod.name === 'string' && mod.name !== '') meta.name = mod.name
+  if (typeof entry.description === 'string' && entry.description !== '') meta.description = entry.description
+  else if (typeof mod.description === 'string' && mod.description !== '') meta.description = mod.description
+  if (typeof entry.apiVersion === 'number') meta.apiVersion = entry.apiVersion
+  else if (typeof mod.apiVersion === 'number') meta.apiVersion = mod.apiVersion
+  // 外部单文件插件没有 package.json 可读，设置分区只能靠模块导出（契约 §2 的缺省口径）。
+  if (typeof mod.settingsSection === 'string' && mod.settingsSection !== '') meta.settingsSection = mod.settingsSection
   const capabilities = clientCapabilitiesOf(mod.client ?? mod.dshClient)
   if (capabilities.length > 0) meta.clientCapabilities = capabilities
 
@@ -220,17 +359,20 @@ export async function mountExternalPlugin(file: string): Promise<boolean> {
     await disableSilently(base)
     return false
   }
-  if (typeof mod.apply !== 'function') {
-    meta.problem = '缺少 apply 导出（不是 cordis object plugin）'
+  if (typeof entry.apply !== 'function') {
+    meta.problem = '缺少 apply（不是 cordis object plugin）'
     await disableSilently(base)
     return false
   }
 
+  // ---- 行级 inject：行上写了就盖过模块自带的（依赖关系属于装配，不属于包本身） ----
+  const rowInject = rowOptions.inject === undefined ? undefined : [...rowOptions.inject]
+
   // ---- dsh 风格识别 ----
   // inject 里有 dsc 不认识的服务名 = dsh 生态的插件。兼容层没开就提示先开它；开了也
   // 垫不起的（sessionProjections、agents 这类要整个 dsh 会话语义的），话说明白再回滚。
-  const injectNames = Array.isArray(mod.inject) ? mod.inject.filter((n): n is string => typeof n === 'string') : []
-  const foreign = injectNames.filter((n) => !DSC_SERVICE_NAMES.has(n))
+  const injectNames = rowInject ?? injectNamesOf(entry.inject ?? mod.inject)
+  const foreign = native ? [] : injectNames.filter((n) => !DSC_SERVICE_NAMES.has(n))
   if (foreign.length > 0) {
     // 一句「超出范围」帮不到插件作者：这张表给每个常见 dsh 服务名一句判定
     // （有对应但语义不同 / 根本没有），见 core/dsh-compat/service-map.ts。
@@ -249,10 +391,12 @@ export async function mountExternalPlugin(file: string): Promise<boolean> {
   }
 
   // ---- 配置校验（dsh 插件用 schemastery 导出 Config；有就调一次，失败响亮回滚） ----
-  let configForApply = getPluginConfig(base)
-  if (typeof (mod.Config as unknown) === 'function') {
+  // 宿主给了配置就整份用它（不深合并）：宿主知道的那几项磁盘上根本没有。
+  let configForApply = rowOptions.config ?? getPluginConfig(base)
+  const configSchema = mod.Config ?? entry.Config
+  if (typeof (configSchema as unknown) === 'function') {
     try {
-      const validated = (mod.Config as (raw: unknown) => unknown)(configForApply)
+      const validated = (configSchema as (raw: unknown) => unknown)(configForApply)
       if (validated !== null && typeof validated === 'object') configForApply = validated as Record<string, unknown>
     } catch (error) {
       meta.problem = `插件配置校验失败：${err(error)}（检查 ~/.dsc/plugins.json 里这条目目的 config）`
@@ -271,16 +415,16 @@ export async function mountExternalPlugin(file: string): Promise<boolean> {
   try {
     const pluginObject = {
       name: meta.name,
-      inject: mod.inject as string[] | undefined,
+      inject: rowInject ?? ((entry.inject ?? mod.inject) as string[] | undefined),
       apply: (innerCtx: Context, config: Record<string, unknown>): unknown =>
-        (mod.apply as (ctx: Context, config: Record<string, unknown>) => unknown)(
+        (entry.apply as (ctx: Context, config: Record<string, unknown>) => unknown)(
           needsCompat ? compatCtx(innerCtx, base, asked) : innerCtx,
           config,
         ),
     }
     const fiber = root.plugin(pluginObject, configForApply)
     await fiber
-    mounted.set(base, fiber)
+    mountedOf(root).set(base, fiber)
     meta.problem = undefined
     return true
   } catch (error) {
@@ -354,11 +498,14 @@ function resolveRiskConfig(file: string): { risk?: unknown; risks?: Record<strin
   return { risk: raw.risk, risks: raw.risks as Record<string, unknown> | undefined }
 }
 
-/** 卸载外部插件（未挂载时静默）。 */
+/** 卸载外部插件（未挂载时静默；只动当前 root 上的那份）。 */
 export async function unmountExternalPlugin(file: string): Promise<void> {
-  const fiber = mounted.get(file)
+  const current = rootRef
+  if (current === null) return
+  const table = mountedOf(current)
+  const fiber = table.get(file)
   if (fiber === undefined) return
-  mounted.delete(file)
+  table.delete(file)
   try {
     await fiber.dispose()
   } catch {
@@ -378,10 +525,14 @@ async function disableSilently(file: string): Promise<void> {
  */
 export async function setPluginEnabledHot(file: string, enabled: boolean): Promise<{ ok: boolean; problem?: string }> {
   if (enabled) {
-    // 内置官方插件没有磁盘文件，登记过的对象直接挂；其余仍按 ~/.dsc/plugins/ 里的文件找。
-    const entryFile = builtinMounts.has(basename(file)) ? file : resolveEntryPath(file)
+    // 内置官方插件没有磁盘文件，登记过的对象直接挂；组合包的行按行 id 找回它原来那个入口；
+    // 其余（外部单文件插件）仍按 ~/.dsc/plugins/ 里的文件找。
+    const entryFile = builtinMounts.has(basename(file))
+      ? file
+      : (pluginSources.get(file) ?? resolveEntryPath(file))
     if (entryFile === null) return { ok: false, problem: `找不到插件文件 ${file}（检查 ~/.dsc/plugins/）` }
-    const ok = await mountExternalPlugin(entryFile)
+    // 身份 = 行 id：文件与 id 不同时才显式传，单文件插件仍走文件名（兼容现状）。
+    const ok = await mountExternalPlugin(entryFile, file === basename(entryFile) ? undefined : file)
     if (!ok) return { ok: false, problem: getPluginMeta(file)?.problem ?? '挂载失败' }
     // 挂载成功后确保条目树里是启用状态
     writePluginEnabled(file, true)
@@ -450,6 +601,17 @@ export async function mountAllExternalPlugins(
  */
 export { activeProfileDir }
 
+/** 组合包挂载的额外选项。 */
+export interface BundleMountOptions {
+  /**
+   * 应用安装目录（运行中 Pneuma 的 package.json 所在目录）。
+   *
+   * 缺省按构建产物位置推算（{@link APP_INSTALL_DIR}）。自检把它指到临时目录，
+   * 免得为了造「应用侧也有一份包」往真 node_modules 里塞夹具。
+   */
+  appDir?: string
+}
+
 /**
  * 装一个 profile 里的组合包插件（dsh 的安装形态）。
  *
@@ -461,17 +623,23 @@ export { activeProfileDir }
  * compatibility.json 里登记了豁免）。
  * @param root - 内核 root（组合包也走同一条热挂载路径）
  * @param profileDir - profile 目录
+ * @param options - 应用锚点（自检用；缺省按构建产物位置推算）
  * @returns 挂载失败清单（与 mountAllExternalPlugins 同形）+ 告警
+ * @throws {Error} 行 id 重复、同一包名解析出两个物理目录（都是配置错误，带着跑只会更糟）
  */
 export async function mountBundlePlugins(
   root: Context,
   profileDir: string,
+  options: BundleMountOptions = {},
 ): Promise<{ failures: PluginMountFailure[]; warnings: string[] }> {
   initPluginRuntime(root)
-  // 组合包的插件代码在 profile 自己的 node_modules 里，它们 import @deepseek-ai/* 时
-  // 要把这个目录也当成「允许重定向的插件根」——只认 ~/.dsc/plugins/ 的话，真装一个
-  // dsh 组合包会在 import 阶段就 ERR_MODULE_NOT_FOUND。
-  if (isPluginEnabled('dsh-compat')) ensureResolveHook([join(profileDir, 'node_modules')])
+  const appDir = options.appDir ?? APP_INSTALL_DIR
+  // 组合包的插件代码在 profile 自己的 node_modules 里，它们 import @pneuma/runtime 与
+  // @deepseek-ai/* 时要把这个目录也当成「允许重定向的插件根」——只认 ~/.dsc/plugins/ 的话，
+  // 真装一个组合包会在 import 阶段就 ERR_MODULE_NOT_FOUND。
+  // 无条件注册：@pneuma/runtime 的重定向与 dsh-compat 开关无关。
+  ensureResolveHook([join(profileDir, 'node_modules')], appDir)
+  setResolveHookCompat(isPluginEnabled('dsh-compat'))
   const profile = readProfile(profileDir)
   const layers: PatchLayer[] = []
   const warnings: string[] = []
@@ -528,58 +696,476 @@ export async function mountBundlePlugins(
   const base: PluginRow[] = []
   const applied = applyPatchLayers(base, layers)
   warnings.push(...applied.warnings)
+  // 行 id 重复是配置错误：dsh 那边静默让后写覆盖前写，两个来源抢一个身份，出问题查不出来。
+  if (applied.duplicates.length > 0) throw duplicateRowsError(applied.duplicates, '组合包')
 
   const failures: PluginMountFailure[] = []
+  const ctx: RowMountContext = {
+    profileDir,
+    appDir,
+    where: '组合包',
+    layerOwner,
+    ownerOf,
+    bundleInfoOf,
+    hostConfig: undefined,
+    warnings,
+    root,
+  }
   for (const row of applied.rows) {
-    const target = typeof row.name === 'string' ? row.name : undefined
-    if (target === undefined) {
-      warnings.push(`组合包里有一行没有 name（不知道加载什么），已跳过`)
-      continue
-    }
-    const file = resolveBundleTarget(profileDir, target, layerOwner)
-    if (file === null) {
-      warnings.push(`组合包里的「${target}」找不到对应文件，已跳过`)
-      continue
-    }
-    if (row.disabled === true) continue
-    const ok = await mountExternalPlugin(file)
-    const meta = getPluginMeta(basename(file))
-    const owner = typeof row.id === 'string' ? ownerOf.get(row.id) : undefined
-    if (ok && meta !== undefined) {
-      if (owner !== undefined) meta.bundle = owner
-      // 有的包把界面能力写在 package.json 的 dsh.client（不在模块导出里）。
-      // 只列不加载，但要列得出来，否则用户在插件中心看不到「它还想改界面」。
-      //
-      // 例外：platform = 'pneuma' 的是**我们自己会加载**的界面半（见 core/ui-bundles 的
-      // discoverPackageUiArtifacts）。把它列成「dsh 客户端插件 · 只列不加载」是假话。
-      const declared = owner === undefined ? undefined : bundleInfoOf.get(owner)?.client
-      const platform = (declared as { platform?: unknown } | undefined)?.platform
-      if (meta.clientCapabilities === undefined && declared !== undefined && platform !== 'pneuma') {
-        meta.clientCapabilities = clientCapabilitiesOf(declared)
-      }
-    }
-    if (!ok && meta?.problem !== undefined) {
-      failures.push({ file: basename(file), name: meta.name, problem: meta.problem })
-    }
+    const failure = await mountRow(row, ctx)
+    if (failure !== null) failures.push(failure)
   }
   return { failures, warnings }
+}
+
+/** 本进程的界面形态。 */
+export type ApplicationSurface = 'tui' | 'headless' | 'none'
+
+/**
+ * 界面形态 → 不挂的行 id。
+ *
+ * **这是「界面形态决定哪些行不挂」的唯一出处**：kernel / boot / headless 只把 surface
+ * 传进来，不许各自再写一遍判断；patch 里也不表达这件事（同一份 patch 要能同时喂给三种壳）。
+ * 未传 surface 时这张表不生效（都挂），留给自检与单进程调试。
+ */
+export const SURFACE_ROW_SKIPS: Readonly<Record<ApplicationSurface, readonly string[]>> = {
+  // 终端界面：交互式宿主那条 stdio 行不该起来（它会把 stdio 抢走）
+  tui: ['host-stdio'],
+  // 无界面（桌面宿主）：TUI 行不该起来
+  headless: ['tui'],
+  // 不传 surface 的默认值：三个「界面/外部连接」行都不挂。
+  //
+  // 为什么要这个默认值：探针会直接 createKernel。TUI 行一挂就起 ink 渲染与定时器，
+  // 进程不退出；host-stdio 会抢 stdin。以前这两行由入口挂，探针天然没有；
+  // 包化之后必须由 surface 表达「这是测试宿主」。
+  none: ['tui', 'host-stdio', 'remote'],
+}
+
+/** {@link mountApplicationRows} 的选项。 */
+export interface ApplicationRowsOptions {
+  /** 应用安装目录；缺省 {@link APP_INSTALL_DIR}。 */
+  appDir?: string
+  /** 本进程的界面形态，决定 {@link SURFACE_ROW_SKIPS} 里哪些行跳过；不传 = 'none'。 */
+  surface?: ApplicationSurface
+  /**
+   * 由宿主直接组装的配置：键是行 id，值**整份替代** `plugins.json` 里的 config。
+   *
+   * 不做深合并——宿主说了算（providers、resume 路径、cwd 这些磁盘上本来就没有）。
+   */
+  hostConfig?: Record<string, unknown>
+}
+
+/**
+ * 挂「应用自带行」：`<appDir>/lib/node_modules/@pneuma/base/cordis.patch.yml` 里的 insert 行。
+ *
+ * 内核自己的 llm / session / tools 这些行将来都从这份 patch 来，走的是与 profile 组合包
+ * **同一条**「解析 → 身份 → 挂载」路径，差别只有三处：不叠 profile 层；界面形态决定跳过
+ * 哪些行；已经挂上的身份跳过（这个入口会被重复调用）。
+ *
+ * 「文件不存在」是 P3 期间的正常状态（base 包还没生成）：不报错，返回空数组，记一条 warning。
+ * @param root - 内核 root
+ * @param options - 应用安装目录与界面形态
+ * @returns 挂载失败清单（与 mountAllExternalPlugins 同形）
+ * @throws {Error} 行 id 重复、同一包名解析出两个物理目录、patch 含 `!!js`（都是配置错误）
+ */
+export async function mountApplicationRows(
+  root: Context,
+  options: ApplicationRowsOptions = {},
+): Promise<PluginMountFailure[]> {
+  initPluginRuntime(root)
+  const appDir = options.appDir ?? APP_INSTALL_DIR
+  const baseDir = join(appDir, 'lib', 'node_modules', '@pneuma', 'base')
+  const patchFile = join(baseDir, 'cordis.patch.yml')
+  if (!existsSync(patchFile)) {
+    warnApplicationRow(root, `应用自带的插件清单还没生成（${patchFile} 不存在），这次不挂任何内置行`)
+    return []
+  }
+  // 读失败（!!js / 坏 YAML）照常抛：构建产物写错了，带着跑只会更糟。
+  const layer = readPatchFile(patchFile, '@pneuma/base')
+  if (layer === null) return []
+
+  const applied = applyPatchLayers([], [layer])
+  for (const warning of applied.warnings) warnApplicationRow(root, `应用自带行：${warning}`)
+  if (applied.duplicates.length > 0) throw duplicateRowsError(applied.duplicates, '应用自带行')
+
+  // 不传 surface = 'none'：探针/自检直接 createKernel 时不该把 TUI 或 stdio 行拉起来。
+  const surface = options.surface ?? 'none'
+  const skipped = new Set(SURFACE_ROW_SKIPS[surface])
+  const warnings: string[] = []
+  const ctx: RowMountContext = {
+    // 应用自带行没有 profile：把 base 包目录当「profile 锚点」，相对路径也相对它算
+    profileDir: baseDir,
+    appDir,
+    where: '应用自带行',
+    layerOwner: new Map([[layer.label, baseDir]]),
+    ownerOf: new Map(),
+    bundleInfoOf: new Map(),
+    hostConfig: options.hostConfig,
+    warnings,
+    root,
+  }
+  const failures: PluginMountFailure[] = []
+  for (const row of applied.rows) {
+    if (skipped !== undefined && typeof row.id === 'string' && skipped.has(row.id)) continue
+    const failure = await mountRow(row, ctx)
+    if (failure !== null) failures.push(failure)
+  }
+  for (const warning of warnings) warnApplicationRow(root, `应用自带行：${warning}`)
+  return failures
+}
+
+/** 应用自带行的告警走对话流；没有 transcript 的宿主（自检里的裸 Context）就只丢一条。 */
+function warnApplicationRow(root: Context, text: string): void {
+  const transcript = root.get('transcript') as { system?: (text: string) => void } | undefined
+  if (transcript !== undefined && typeof transcript.system === 'function') transcript.system(text)
+}
+
+/** 挂一行的上下文：组合包与应用自带行的差异都收在这里。 */
+interface RowMountContext {
+  /** 解析相对路径与「profile 锚点」用的目录。 */
+  profileDir: string
+  /** 应用安装目录。 */
+  appDir: string
+  /** 告警文案里怎么称呼这批行（组合包 / 应用自带行）。 */
+  where: string
+  /** 层标签 → 包目录（相对路径按写它的那层算）。 */
+  layerOwner: ReadonlyMap<string, string>
+  /** 行 id → 组合包名（插件中心显示来源）。 */
+  ownerOf: ReadonlyMap<string, string>
+  /** 包名 → 读盘结果（界面能力声明）。 */
+  bundleInfoOf: ReadonlyMap<string, BundleInfo>
+  /** 宿主直给的配置（键是行 id）；没命中就走 plugins.json。 */
+  hostConfig: Readonly<Record<string, unknown>> | undefined
+  /** 收集要写进对话流的告警。 */
+  warnings: string[]
+  /** 这份行属于哪个 root：已挂身份按 root 记（一个进程可以有多个内核）。 */
+  root: Context
+}
+
+/**
+ * 挂 patch 里的一行：解析目标 → 登记目录 → 按身份挂载。
+ *
+ * 组合包与应用自带行走同一条路，差异由 {@link RowMountContext} 收口——
+ * 以后再加一种「行从哪来」时只补上下文，不要再把这段抄一遍。
+ * @param row - patch 里的行
+ * @param ctx - 挂载上下文
+ * @returns 失败信息；挂上或被跳过给 null
+ */
+async function mountRow(row: PluginRow, ctx: RowMountContext): Promise<PluginMountFailure | null> {
+  const target = typeof row.name === 'string' ? row.name : undefined
+  if (target === undefined) {
+    ctx.warnings.push(`${ctx.where}里有一行没有 name（不知道加载什么），已跳过`)
+    return null
+  }
+  const resolved = resolveBundleTarget(ctx.profileDir, target, ctx.layerOwner, ctx.appDir)
+  if (resolved === null) {
+    ctx.warnings.push(`${ctx.where}里的「${target}」找不到对应文件（包没装，或者 exports 里没有这一路），已跳过`)
+    return null
+  }
+  ctx.warnings.push(...resolved.warnings)
+  const file = resolved.file
+  // 身份 = 行 id（契约 §4）；没有 id 的行退回文件名，老行为不变。
+  const rowId = typeof row.id === 'string' && row.id !== '' ? row.id : basename(file)
+  // 幂等：已经挂上的身份直接返回（应用自带行重复调用不该再挂一份）
+  if (mountedOf(ctx.root).has(rowId)) return null
+  const owner = typeof row.id === 'string' ? ctx.ownerOf.get(row.id) : undefined
+  const pneuma = pneumaFieldsOf(manifestOfFile(file, ctx.profileDir))
+  registerPluginSource(rowId, file)
+  // 旧键（= 文件名）登记进来：0.8.1 的 plugins.json 按文件名写，双查才读得到老配置。
+  registerPluginAlias(rowId, basename(file))
+  // 目录先登记：默认关的行也要在插件中心看得见（只是不 import、不挂载）。
+  registerPluginMeta({
+    file: rowId,
+    name: pneuma.title ?? basename(file).replace(/\.js$/, ''),
+    description: pneuma.description ?? '',
+    source: 'external',
+    ...(pneuma.settingsSection === undefined ? {} : { settingsSection: pneuma.settingsSection }),
+    ...(row.disabled === true ? { defaultDisabled: true } : {}),
+    ...(owner === undefined ? {} : { bundle: owner }),
+  })
+  // 开关：plugins.json 里有这条记录就按记录，没有才按行的 disabled（行只是默认值）。
+  if (!isPluginEnabled(rowId)) return null
+  // 行上的 inject 盖过模块自带的（依赖关系属于装配，不属于包）；
+  // 宿主直给的配置整份替代 plugins.json（没命中才读磁盘）。
+  const hostConfig = ctx.hostConfig === undefined ? undefined : ctx.hostConfig[rowId]
+  const ok = await mountExternalPlugin(file, rowId, {
+    inject: rowInjectOf(row),
+    native: typeof row.name === 'string' && row.name.startsWith('@pneuma/'),
+    ...(hostConfig !== null && typeof hostConfig === 'object' && !Array.isArray(hostConfig)
+      ? { config: hostConfig as Record<string, unknown> }
+      : {}),
+  })
+  const meta = getPluginMeta(rowId)
+  if (meta !== undefined) {
+    // package.json 是插件中心的显示口径；模块导出只作缺省（外部单文件插件没有清单）。
+    if (pneuma.title !== undefined) meta.name = pneuma.title
+    if (pneuma.description !== undefined) meta.description = pneuma.description
+    if (pneuma.settingsSection !== undefined) meta.settingsSection = pneuma.settingsSection
+    if (owner !== undefined) meta.bundle = owner
+    // 有的包把界面能力写在 package.json 的 dsh.client（不在模块导出里）。
+    // 只列不加载，但要列得出来，否则用户在插件中心看不到「它还想改界面」。
+    //
+    // 例外：platform = 'pneuma' 的是**我们自己会加载**的界面半（见 core/ui-bundles 的
+    // discoverPackageUiArtifacts）。把它列成「dsh 客户端插件 · 只列不加载」是假话。
+    const declared = owner === undefined ? undefined : ctx.bundleInfoOf.get(owner)?.client
+    const platform = (declared as { platform?: unknown } | undefined)?.platform
+    if (meta.clientCapabilities === undefined && declared !== undefined && platform !== 'pneuma') {
+      meta.clientCapabilities = clientCapabilitiesOf(declared)
+    }
+  }
+  if (!ok && meta?.problem !== undefined) return { file: rowId, name: meta.name, problem: meta.problem }
+  return null
+}
+
+/**
+ * 行 id 重复的启动失败文案（组合包与应用自带行共用）。
+ * @param duplicates - 重复清单
+ * @param where - 哪一批行（组合包 / 应用自带行）
+ */
+function duplicateRowsError(duplicates: readonly PatchDuplicate[], where: string): Error {
+  const detail = duplicates.map((item) => `「${item.id}」分别来自 ${item.first} 与 ${item.second}`).join('；')
+  return new Error(
+    `${where}的行 id 重复：${detail}。行 id 是运行时身份（开关、配置、设置分区都按它），` +
+      '同一个 id 只能出现一次，请改掉重复的那一行。',
+  )
+}
+
+/** 一次行目标解析的结果。 */
+interface RowTarget {
+  /** 入口文件的绝对路径。 */
+  file: string
+  /** 解析过程中要说给用户听的话（pinned 包被 profile 副本让路之类）。 */
+  warnings: string[]
+}
+
+/**
+ * 一个包的解析口径（`pneuma.resolution`）。
+ *
+ * 只认 `pinned`，其余（含 dsh.* 包与没写的）都是 `overridable`——缺省值必须是可覆盖，
+ * 否则 profile 里装的新版本永远不生效。
+ */
+type ResolutionPolicy = 'pinned' | 'overridable'
+
+/**
+ * 全进程一张解析表：包名 → 已选定的物理目录。
+ *
+ * 同一个包名第二次解析出另一个目录就启动失败：两份实体 = 两份服务实例，出问题只会表现成
+ * 「一边的配置改了、另一边没动」。pinned / overridable 的「两边都有」由口径裁决，不算冲突。
+ */
+const resolvedDirs = new Map<string, string>()
+
+/** 每个锚点一个 `createRequire`（解析起点固定，不必每次重建）。 */
+const requires = new Map<string, ReturnType<typeof createRequire>>()
+
+/** 解析一个行目标用的锚点。 */
+interface Anchor {
+  /** 诊断里怎么称呼它（应用安装目录 / profile）。 */
+  label: string
+  /** `createRequire` 的起点文件（不必存在，只用它的目录做解析起点）。 */
+  requireFrom: string
+  /** 这个锚点上该包的实际目录（不存在给 null）。 */
+  pkgDir: string | null
+  /** Node 解析不出来时，退回「猜入口」的 node_modules 目录。 */
+  lookup: string
+}
+
+/** 物理目录（解开 pnpm 的软链）；解不开就用原路径。 */
+function physicalDir(dir: string): string {
+  try {
+    return realpathSync(dir)
+  } catch {
+    return resolve(dir)
+  }
 }
 
 /**
  * 把行里的 `name` 解析成文件路径。
  *
- * 三种写法：绝对路径、以 `./` `../` 开头（相对 profile 目录）、或包名（从 profile 的
- * node_modules 解析）。解析不出来给 null（调用方记告警）。
+ * 三种写法：绝对路径、以 `./` `../` 开头（相对 profile 目录）、或包名。包名**交给
+ * Node 自己解析**（`createRequire(锚点/package.json).resolve(name)`）：`pkg/sub` 因此
+ * 走包自己的 `exports` 子路径、conditions 与通配——这些手写展开一定会漏。
+ * @param profileDir - profile 目录
+ * @param target - 行上的 name
+ * @param layerOwner - 层标签 → 包目录（相对路径按写它的那层算）
+ * @param appDir - 应用安装目录
+ * @returns 入口文件 + 告警；解析不出来给 null（调用方记一条「缺包」告警并跳过该行）
+ * @throws {Error} 同一包名解析出两个物理目录
  */
-function resolveBundleTarget(profileDir: string, target: string, layerOwner: ReadonlyMap<string, string>): string | null {
-  if (isAbsolute(target)) return entryFileOf(target)
+function resolveBundleTarget(
+  profileDir: string,
+  target: string,
+  layerOwner: ReadonlyMap<string, string>,
+  appDir: string,
+): RowTarget | null {
+  if (isAbsolute(target)) {
+    const file = entryFileOf(target)
+    return file === null ? null : { file, warnings: [] }
+  }
   if (target.startsWith('./') || target.startsWith('../')) {
     // 相对路径按「哪一层的 patch 写的」算：bundle 的 patch 相对它自己的包目录。
     const owner = [...layerOwner.values()].find((dir) => existsSync(join(dir, target)))
     const candidate = owner === undefined ? join(profileDir, target) : join(owner, target)
-    return entryFileOf(candidate)
+    const file = entryFileOf(candidate)
+    return file === null ? null : { file, warnings: [] }
   }
-  return entryFileOf(join(profileDir, 'node_modules', ...target.split('/')))
+  return resolvePackageRow(profileDir, target, appDir)
+}
+
+/**
+ * 按包名解析一行：先定口径（pinned / overridable），再按顺序在两个锚点上解析。
+ *
+ * 应用侧的包住在 `<应用根>/lib/node_modules/`（运行时适配包与功能包同一层）。两边都有
+ * 同名包时由包自己的 `pneuma.resolution` 裁决，不报冲突；只有「同一个包名在一次启动里
+ * 被解析成两个目录」才失败。
+ */
+function resolvePackageRow(profileDir: string, target: string, appDir: string): RowTarget | null {
+  const pkgName = packageNameOf(target)
+  if (pkgName === null) return null
+  const parts = pkgName.split('/')
+  const profilePkgDir = join(profileDir, 'node_modules', ...parts)
+  const appPkgDir = appPackageDir(appDir, parts)
+  const profileManifest = existsSync(profilePkgDir) ? readJsonObject(join(profilePkgDir, 'package.json')) : null
+  const appManifest = appPkgDir === null ? null : readJsonObject(join(appPkgDir, 'package.json'))
+  // 两份都在时先看应用那份：pinned 的那一份才该决定口径。
+  const policy = resolutionOf(appManifest ?? profileManifest)
+  const profileAnchor: Anchor = {
+    label: 'profile',
+    requireFrom: join(profileDir, 'package.json'),
+    pkgDir: existsSync(profilePkgDir) ? profilePkgDir : null,
+    lookup: join(profileDir, 'node_modules'),
+  }
+  const appAnchor: Anchor = {
+    label: '应用安装目录',
+    requireFrom: join(appDir, 'lib', 'node_modules', '_.js'),
+    pkgDir: appPkgDir,
+    lookup: join(appDir, 'lib', 'node_modules'),
+  }
+  const anchors = policy === 'pinned' ? [appAnchor, profileAnchor] : [profileAnchor, appAnchor]
+
+  for (const anchor of anchors) {
+    if (anchor.pkgDir === null) continue
+    const file = entryFromAnchor(anchor, target)
+    if (file === null) continue
+    rememberResolvedDir(pkgName, anchor.pkgDir)
+    const warnings: string[] = []
+    // pinned 包在 profile 里也有同名副本：用应用那份，并把「你不生效的那份在哪」说出来。
+    if (policy === 'pinned' && anchor === appAnchor && profileAnchor.pkgDir !== null) {
+      warnings.push(
+        `「${pkgName}」声明为 pinned：profile 里的同名副本（${profilePkgDir}）不生效，` +
+          `用的是应用安装目录里的 ${String(anchor.pkgDir)}`,
+      )
+    }
+    return { file, warnings }
+  }
+  return null
+}
+
+/** 应用侧的包目录：优先 `<应用根>/lib/node_modules/<包名>`，再退回仓库根的 node_modules。 */
+function appPackageDir(appDir: string, parts: readonly string[]): string | null {
+  for (const root of [join(appDir, 'lib', 'node_modules'), join(appDir, 'node_modules')]) {
+    const candidate = join(root, ...parts)
+    if (existsSync(candidate)) return candidate
+  }
+  return null
+}
+
+/** 从锚点解析一个行目标；Node 解析不出来再退回原来的「猜入口」逻辑。 */
+function entryFromAnchor(anchor: Anchor, target: string): string | null {
+  try {
+    let require = requires.get(anchor.requireFrom)
+    if (require === undefined) {
+      require = createRequire(anchor.requireFrom)
+      requires.set(anchor.requireFrom, require)
+    }
+    // 交给 Node 自己解析：exports 子路径、conditions、通配都由它算，不手写展开。
+    return require.resolve(target)
+  } catch {
+    // Node 解析不出来（老包没有 exports，或只写了目录）→ 退回下面的入口猜测
+  }
+  return entryFileOf(join(anchor.lookup, ...target.split('/')))
+}
+
+/**
+ * 登记一个包名的物理目录；第二次解析出别的目录就抛错。
+ * @param pkgName - 包名
+ * @param dir - 这次选定的包目录
+ */
+function rememberResolvedDir(pkgName: string, dir: string): void {
+  const physical = physicalDir(dir)
+  const previous = resolvedDirs.get(pkgName)
+  if (previous === undefined) {
+    resolvedDirs.set(pkgName, physical)
+    return
+  }
+  if (previous === physical) return
+  throw new Error(
+    `包「${pkgName}」在这次启动里解析出两个不同的目录：${previous} 与 ${physical}。` +
+      '同一个包名只能有一份实体（否则会挂出两份服务实例），请检查 profile 与应用安装目录里是不是各装了一份。',
+  )
+}
+
+/** 从包名/子路径里取出包名（`@scope/name/sub` → `@scope/name`）。 */
+function packageNameOf(target: string): string | null {
+  if (target === '' || target.startsWith('.') || isAbsolute(target)) return null
+  const parts = target.split('/')
+  if (target.startsWith('@')) return parts.length >= 2 && parts[1] !== '' ? `${parts[0]}/${parts[1]}` : null
+  return parts[0] === '' ? null : parts[0]
+}
+
+/** 包清单里的 `pneuma.resolution`（缺省 overridable；`dsh.*` 包没这个字段，同样是 overridable）。 */
+function resolutionOf(manifest: Record<string, unknown> | null): ResolutionPolicy {
+  const raw = manifest?.['pneuma']
+  if (raw === null || typeof raw !== 'object') return 'overridable'
+  return (raw as Record<string, unknown>)['resolution'] === 'pinned' ? 'pinned' : 'overridable'
+}
+
+/** 插件中心要显示的那几项（`pneuma.title/description/settingsSection`）。 */
+interface PneumaFields {
+  title?: string
+  description?: string
+  settingsSection?: string
+}
+
+/** 读包清单里的 `pneuma` 展示字段（不加载代码也能列进插件中心）。 */
+function pneumaFieldsOf(manifest: Record<string, unknown> | null): PneumaFields {
+  const raw = manifest?.['pneuma']
+  if (raw === null || typeof raw !== 'object') return {}
+  const record = raw as Record<string, unknown>
+  const pick = (key: string): string | undefined => {
+    const value = record[key]
+    return typeof value === 'string' && value !== '' ? value : undefined
+  }
+  return { title: pick('title'), description: pick('description'), settingsSection: pick('settingsSection') }
+}
+
+/**
+ * 从入口文件往上找它所属包的 package.json（最多 8 层，走到 profile 目录为止）。
+ *
+ * 绝对/相对路径的行没有包名可查，但它们的展示字段仍写在最近的 package.json 里。
+ */
+function manifestOfFile(file: string, stopAt: string): Record<string, unknown> | null {
+  let dir = dirname(file)
+  const stop = resolve(stopAt)
+  for (let depth = 0; depth < 8; depth += 1) {
+    const manifest = readJsonObject(join(dir, 'package.json'))
+    if (manifest !== null) return manifest
+    if (resolve(dir) === stop) return null
+    const parent = dirname(dir)
+    if (parent === dir) return null
+    dir = parent
+  }
+  return null
+}
+
+/**
+ * 行上的 `inject`（字符串或数组）；没写给 undefined = 用模块自带的那份。
+ * @param row - patch 行
+ */
+function rowInjectOf(row: PluginRow): readonly string[] | undefined {
+  const raw = row['inject']
+  if (typeof raw === 'string') return raw === '' ? [] : [raw]
+  if (!Array.isArray(raw)) return undefined
+  return raw.filter((name): name is string => typeof name === 'string' && name !== '')
 }
 
 /**

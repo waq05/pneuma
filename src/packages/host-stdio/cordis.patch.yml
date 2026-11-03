@@ -1,0 +1,4 @@
+# host-stdio
+- insert:
+    - id: host-stdio
+      name: '@pneuma/host-stdio'

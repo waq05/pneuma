@@ -1,0 +1,4 @@
+# 会话标题
+- insert:
+    - id: session-title
+      name: '@pneuma/session-title'

@@ -1,0 +1,4 @@
+# 本机界面服务
+- insert:
+    - id: webserver
+      name: '@pneuma/webserver'

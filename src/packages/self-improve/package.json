@@ -1,0 +1,22 @@
+{
+  "name": "@pneuma/self-improve",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 3760,
+    "resolution": "overridable",
+    "title": "经验沉淀",
+    "description": "把你纠正过它的地方记成候选；你确认后才写成技能，每次改动留台账可回滚",
+    "settingsSection": "self-improve"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

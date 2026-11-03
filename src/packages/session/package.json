@@ -1,0 +1,21 @@
+{
+  "name": "@pneuma/session",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 20,
+    "resolution": "pinned",
+    "title": "会话",
+    "description": "会话存储、恢复与列表"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

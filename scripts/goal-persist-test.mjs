@@ -34,7 +34,7 @@ const check = (name, condition, detail) => {
 
 console.log('[1] 落盘函数：空目标也要写一条')
 {
-  const goal = read('src/plugins/goal.ts')
+  const goal = read('src/packages/goal/index.ts')
   const start = goal.indexOf('const persist = ')
   const body = start < 0 ? '' : goal.slice(start, start + 400)
   check('persist 里直接 appendState（不再有 null 守卫）', body.includes("appendState('goal', goals.snapshot)"))

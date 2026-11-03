@@ -1,0 +1,4 @@
+# git
+- insert:
+    - id: git
+      name: '@pneuma/git'

@@ -1,0 +1,4 @@
+# 改动前预览
+- insert:
+    - id: file-review
+      name: '@pneuma/file-review'

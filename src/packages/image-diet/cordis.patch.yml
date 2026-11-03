@@ -1,0 +1,4 @@
+# 图片卸载
+- insert:
+    - id: image-diet
+      name: '@pneuma/image-diet'

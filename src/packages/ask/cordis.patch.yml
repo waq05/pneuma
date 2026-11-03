@@ -1,0 +1,4 @@
+# 模型提问
+- insert:
+    - id: ask
+      name: '@pneuma/ask'

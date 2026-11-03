@@ -109,7 +109,7 @@ console.log('[2] 输入框那颗钮的接线')
   // 超时闸本身是手写的（老内核没有 `AbortSignal.timeout`，那条线在
   // scripts/ui-legacy-compat-test.mjs 里钉），这里只钉口径：预算能按调用给、默认 30 秒。
   check('通道支持按调用给超时（默认 30 秒不变）', channel.includes('const budget = options?.timeoutMs ?? DEFAULT_INVOKE_TIMEOUT_MS') && channel.includes('const gate = new AbortController()'))
-  check('长窗口常量盖得住审批卡（5 分半 > 卡的 5 分钟）', channel.includes('export const HUMAN_WAIT_TIMEOUT_MS = 330_000') && read('src/plugins/approval.ts').includes('DEFAULT_APPROVAL_TIMEOUT_MS = 300_000'))
+  check('长窗口常量盖得住审批卡（5 分半 > 卡的 5 分钟）', channel.includes('export const HUMAN_WAIT_TIMEOUT_MS = 330_000') && read('src/packages/approval/index.ts').includes('DEFAULT_APPROVAL_TIMEOUT_MS = 300_000'))
   check('四个过审批的 git 写口都带上了它（暂存 / 提交 / 切 / 建）', (changes.match(/timeoutMs: HUMAN_WAIT_TIMEOUT_MS/g) ?? []).length === 2 && (composer.match(/timeoutMs: HUMAN_WAIT_TIMEOUT_MS/g) ?? []).length === 2)
 
   // CSS：新加的规则只用 --dsc-* 令牌（拼错的幽灵令牌会静默透明）
@@ -156,12 +156,12 @@ console.log('[3] op 分档：切 / 建过审批，清单直接放行')
 // ── [4] 宿主侧：三个 op 都真接了（desktop-dock 的 switch 分支）────────────────────────
 console.log('[4] 宿主 desktop-dock 的三个 op')
 {
-  const dock = read('src/plugins/desktop-dock.ts')
+  const dock = read('src/packages/desktop-dock/index.ts')
   check('git-branches 真有实现（for-each-ref refs/heads）', dock.includes("case 'git-branches':") && dock.includes("'for-each-ref'"))
   check('git-checkout 真有实现（switch --no-guess，避开 checkout 的分支/路径歧义）', dock.includes("case 'git-checkout':") && dock.includes("'switch', '--no-guess'"))
   check('git-branch-create 真有实现（switch -c）', dock.includes("case 'git-branch-create':") && dock.includes("'-c'"))
   check('写类落盘后催一拍 git 读数（那颗钮当场跟上）', dock.includes("if (write) ctx.get('git')?.refresh()"))
-  const gitPlugin = read('src/plugins/git.ts')
+  const gitPlugin = read('src/packages/git/index.ts')
   check('快照面登记为 surfaces.git（一片轻读：分支 + 改动条数）', gitPlugin.includes("ctx.surfaces.register('git'") && gitPlugin.includes("['status', '--porcelain=v1', '-z']"))
   check('「没人看就不拍」：只在这片最近被读过时才跑 git', gitPlugin.includes('const INTEREST_MS') && gitPlugin.includes('if (Date.now() - lastReadAt > INTEREST_MS)'))
   check(

@@ -1,0 +1,21 @@
+{
+  "name": "@pneuma/presets",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 140,
+    "resolution": "pinned",
+    "title": "模式",
+    "description": "人格、工具目录与提示词的那根旋钮：标准 / 极简 / 创造 / PTC 四个内置模式，可自己加"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

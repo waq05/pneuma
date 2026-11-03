@@ -27,7 +27,7 @@ const home = mkdtempSync(join(tmpdir(), 'dsc-archive-refresh-home-'))
 process.env.HOME = home
 process.env.USERPROFILE = home
 
-const { sessionPlugin } = await import('../lib/plugins/session.js')
+const { sessionPlugin } = await import('../lib/packages/session/index.js')
 const { sessionsRoot, slugCwd } = await import('../lib/core/session.js')
 
 let failures = 0

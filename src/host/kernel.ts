@@ -1,416 +1,75 @@
 /**
- * 内核装配：cordis root Context + 内置 base 插件集（不含 UI）。
- * boot（终端）与 headless（桌面端宿主）共用；UI 插件由各自入口追加。
+ * 内核装配：只做四件事——建 Context、挂应用自带的行、挂外部插件、启动收尾。
  *
- * 装配顺序即依赖顺序（cordis 也会按 inject 声明等待服务就绪）：
- *   llm → session → 三个扩展点（guards / surfaces / waiting）→ approval → tools
- *   → tools-default → transcript → commands → skills → prompt → mode → settings → hooks
- *   → compact → microcompact → todo → plan → ask → agent → goal → runtime → [UI] → 外部插件
+ * 为什么这个文件里没有任何插件的 import：所有功能（含 llm/session/tools 这些核心服务）
+ * 都是 `src/packages/<id>/` 里的包，行清单由 `scripts/build-packages.mjs` 合成到
+ * `@pneuma/base`。装配顺序不再写在这里：行序由各包的 `pneuma.order` 决定，
+ * 依赖关系由行/插件的 `inject` 表达。
  *
- * 两处顺序是有原因的，不只是好看：
- *   - approval 早于 mode：模式换档广播 `dsc/mode-changed`，审批要听（审批卡上写当前档位）；
- *   - transcript 早于 plan：恢复会话时先把会话流清空，计划卡那条条目才不会被清掉。
+ * 三个入口只决定「界面形态」（surface），不决定挂哪些插件：
+ * boot = tui，headless = headless，测试不传 = 全挂。
  *
  * @module dsc/host/kernel
  */
-import { existsSync, readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
-import { Context, type Plugin } from '@deepseek-ai/cordis'
+import { dirname, isAbsolute, resolve } from 'node:path'
+import { Context } from '@deepseek-ai/cordis'
 import type { DscCoreConfig } from '../core/config.js'
-import { bootNoticeOnce } from '../core/boot-notices.js'
-import { errText as err } from '../core/err-text.js'
 import { activeConfigFile } from '../core/config-store.js'
-import { parseTolerantYaml, type MigrationReport } from '../core/migrate.js'
-import { readSessionUsage } from '../core/usage-log.js'
-import { getPluginConfig, isPluginEnabled, migrateTeamSplit, registerPluginMeta, type PluginMeta } from '../core/plugin-registry.js'
-import { mountAllExternalPlugins, registerBuiltinMount, trackBuiltinMount } from '../core/plugin-loader.js'
-import { pluginManagerPlugin } from '../plugins/plugin-manager.js'
-import { desktopDockPlugin } from '../plugins/desktop-dock.js'
-import { gitPlugin } from '../plugins/git.js'
-import { llmPlugin } from '../plugins/llm.js'
-import { sessionPlugin } from '../plugins/session.js'
-import { guardsPlugin } from '../plugins/guards.js'
-import { surfacesPlugin } from '../plugins/surfaces.js'
-import { waitingPlugin } from '../plugins/waiting.js'
-import { approvalPlugin } from '../plugins/approval.js'
-import { hooksPlugin } from '../plugins/hooks.js'
-import { promptPlugin } from '../plugins/prompt.js'
-import { modePlugin } from '../plugins/mode.js'
-import { presetsPlugin } from '../plugins/presets.js'
-import { permissionPresetsPlugin } from '../plugins/permission-presets.js'
-import { ptcPlugin } from '../plugins/ptc.js'
-import { runtimeApiPlugin } from '../plugins/runtime-api.js'
-import { todoPlugin } from '../plugins/todo.js'
-import { planPlugin } from '../plugins/plan.js'
-import { askPlugin } from '../plugins/ask.js'
-import { goalPlugin } from '../plugins/goal.js'
-import { memoryPlugin } from '../plugins/memory.js'
-import { toolsPlugin } from '../plugins/tools.js'
-import { toolsDefaultPlugin } from '../plugins/tools-default.js'
-import { transcriptPlugin } from '../plugins/transcript.js'
-import { commandsPlugin } from '../plugins/commands.js'
-import { skillsPlugin } from '../plugins/skills.js'
-import { settingsPlugin } from '../plugins/settings.js'
-import { compactPlugin } from '../plugins/compact.js'
-import { microcompactPlugin } from '../plugins/microcompact.js'
-import { sessionTitlePlugin } from '../plugins/session-title.js'
-import { agentPlugin } from '../plugins/agent.js'
-import { runtimePlugin } from '../plugins/runtime.js'
-import { webserverPlugin } from '../plugins/webserver.js'
-import { subagentPlugin } from '../plugins/subagent.js'
-import { teamPlugin } from '../plugins/team.js'
-import { computerUsePlugin } from '../plugins/computer-use.js'
-import { imageDietPlugin } from '../plugins/image-diet.js'
-import { webSearchPlugin } from '../plugins/web-search.js'
-import { approvalFloorPlugin } from '../plugins/approval-floor.js'
-import { spillPlugin } from '../plugins/spill.js'
-import { sessionSearchPlugin } from '../plugins/session-search.js'
-import { lifecycleHooksPlugin } from '../plugins/lifecycle-hooks.js'
-import { mcpPlugin } from '../plugins/mcp.js'
-import { toolSearchPlugin } from '../plugins/tool-search.js'
-import { sandboxPlugin } from '../plugins/sandbox.js'
-import { schedulePlugin } from '../plugins/schedule.js'
-import { lspPlugin } from '../plugins/lsp.js'
-import { browserPlugin } from '../plugins/browser.js'
-import { dockBrowserPlugin } from '../plugins/dock-browser.js'
-import { selfImprovePlugin } from '../plugins/self-improve.js'
-import { dshCompatPlugin } from '../plugins/dsh-compat.js'
-import { fileReviewPlugin } from '../plugins/file-review.js'
-import { opsPlugin } from '../plugins/ops.js'
-
-/**
- * 官方可开关插件（插件中心「官方可开关」那一档）：代码随包发布，但有开关，
- * 也能跳到自己的设置分区。`defaultDisabled` 为 true 的那些在用户主动打开前不挂载。
- */
-export const OFFICIAL_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
-  {
-    file: 'subagent',
-    name: '子智能体',
-    description: '让模型把能独立完成的活交给队友并行做；队友只看任务说明，可设层级、人数、轮次与模型',
-    toggleable: true,
-    defaultDisabled: true,
-    settingsSection: 'subagent',
-  },
-  {
-    file: 'team',
-    name: '共享任务板',
-    description: '一块按会话分开的任务板：登记、认领、结项，队友和你看到同一块；成员名单在「子智能体」里',
-    toggleable: true,
-    defaultDisabled: true,
-    settingsSection: 'team',
-  },
-  {
-    file: 'computer-use',
-    name: '操作电脑桌面',
-    description: '看屏幕、点按钮、输入文字来操作 Windows 桌面；看可免审批，动手每次要确认',
-    toggleable: true,
-    defaultDisabled: true,
-    settingsSection: 'computer-use',
-  },
-  {
-    file: 'web-search',
-    name: '联网搜索',
-    description: '让模型上网查资料并附来源链接；先选一家搜索服务（Tavily / 博查 / Serper）并填 key',
-    toggleable: true,
-    settingsSection: 'web-search',
-  },
-  // 下面这批默认开关按一条规矩定：会拉起外部进程、连外部服务器或改写每轮请求
-  // 工具面的那几档默认关（`defaultDisabled: true`），使用者按需打开；
-  // 提升安全与本地便利、且不配就完全无副作用的那几档默认开。
-  {
-    file: 'approval-floor',
-    name: '危险命令硬拦截',
-    description: '关机、删盘、改注册表、读密钥这类命令一律拒绝，完全访问也救不回来；常用命令可加白名单',
-    toggleable: true,
-    settingsSection: 'approval-floor',
-  },
-  {
-    file: 'spill',
-    name: '长输出转存',
-    description: '工具输出太长就存成文件，模型先看头尾几行；需要细节时按路径续读，上下文不会被日志撑爆',
-    toggleable: true,
-    settingsSection: 'spill',
-  },
-  {
-    file: 'session-search',
-    name: '历史会话搜索',
-    description: '按关键词翻以前聊过的会话，中文一两个字也能搜到；提供 session_search 工具与 /search 命令',
-    toggleable: true,
-    settingsSection: 'session-search',
-  },
-  {
-    file: 'lifecycle-hooks',
-    name: '外部命令钩子',
-    description: '在模型动手前后跑你的脚本，脚本可以拦下这次操作；事件名沿用 codex 的写法',
-    toggleable: true,
-    defaultDisabled: true,
-    settingsSection: 'lifecycle-hooks',
-  },
-  {
-    file: 'mcp',
-    name: 'MCP 外部工具',
-    description: '连上 MCP 服务器，把它们的工具接进来给模型用；支持本机命令（stdio）与 HTTP 两种连法',
-    toggleable: true,
-    defaultDisabled: true,
-    settingsSection: 'mcp',
-  },
-  {
-    file: 'tool-search',
-    name: '工具按需加载',
-    description: '只把用得上的工具说明发给模型；撤下的动手类工具与 MCP 工具用 tool_search 查、tool_call 调',
-    toggleable: true,
-    defaultDisabled: true,
-    settingsSection: 'tool-search',
-  },
-  // 第二批官方可开关插件。默认开关同一条规矩，沙箱是唯一例外：
-  // 它默认开——不配就没有外部进程、没有外部服务器，开着的收益（越界写入当场拒）大于打扰，
-  // 且默认档 workspace-write 不挡正常的工作区读写。
-  {
-    file: 'sandbox',
-    name: '文件与命令围栏',
-    description: '限定模型能写哪里：越界写、关网时联网当场拒；要破例得带理由弹审批卡',
-    toggleable: true,
-    settingsSection: 'sandbox',
-  },
-  {
-    file: 'file-review',
-    name: '改动前预览',
-    description: '写文件或改文件之前，先把要改的几行贴进对话；长改动按行截断，看得见改在哪',
-    toggleable: true,
-    settingsSection: 'file-review',
-  },
-  {
-    file: 'schedule',
-    name: '定时任务',
-    description: '到点把任务描述投回建它的会话并跑一轮；支持六种时间选择器和时区',
-    toggleable: true,
-    defaultDisabled: true,
-    settingsSection: 'schedule',
-  },
-  {
-    file: 'lsp',
-    name: '代码跳转与报错',
-    description: '查定义、引用、实现，并把这次编辑新引入的报错提醒给模型',
-    toggleable: true,
-    defaultDisabled: true,
-    settingsSection: 'lsp',
-  },
-  {
-    file: 'browser',
-    name: '受控浏览器',
-    description: '模型自己开一台隔离 Chrome，按页面元素点击输入；动作每次审批，可设域名黑白名单',
-    toggleable: true,
-    defaultDisabled: true,
-    settingsSection: 'browser',
-  },
-  {
-    file: 'dock-browser',
-    name: '侧栏浏览器',
-    description: '让模型操作桌面端侧栏那台浏览器；看页面可免审批，动手每次要确认',
-    toggleable: true,
-    defaultDisabled: true,
-    // 指向插件自建的分区（`dock-browser` 插件里 ctx.settings.registerSection 注册的那张，
-    // 带「看侧栏浏览器免审批」开关）。壳是「按 id 在已注册分区里查」，启用后就能查到。
-    settingsSection: 'dock-browser',
-  },
-  {
-    file: 'self-improve',
-    name: '经验沉淀',
-    description: '把你纠正过它的地方记成候选；你确认后才写成技能，每次改动留台账可回滚',
-    toggleable: true,
-    defaultDisabled: true,
-    settingsSection: 'self-improve',
-  },
-  {
-    file: 'ops',
-    name: '文档与批量读取',
-    description: '读 PDF / Word / CSV、一次读多段文件、改之前先看差异；引擎来自 dsh-ops 的 Rust worker，要先装 dsh-ops',
-    toggleable: true,
-    defaultDisabled: true,
-    settingsSection: 'ops',
-  },
-  {
-    file: 'dsh-compat',
-    name: 'dsh 插件兼容',
-    description: '让按 dsh 写法做的外部插件也能装进来跑；补 logger、模块解析与工具注册的差异',
-    toggleable: true,
-    defaultDisabled: true,
-  },
-]
-
-/** 官方可开关插件的插件对象（开关键 → 对象）。 */
-const OFFICIAL_OBJECTS: Readonly<Record<string, Plugin.Object>> = {
-  subagent: subagentPlugin,
-  team: teamPlugin,
-  'computer-use': computerUsePlugin,
-  'web-search': webSearchPlugin,
-  'approval-floor': approvalFloorPlugin,
-  spill: spillPlugin,
-  'session-search': sessionSearchPlugin,
-  'lifecycle-hooks': lifecycleHooksPlugin,
-  mcp: mcpPlugin,
-  'tool-search': toolSearchPlugin,
-  sandbox: sandboxPlugin,
-  'file-review': fileReviewPlugin,
-  schedule: schedulePlugin,
-  lsp: lspPlugin,
-  browser: browserPlugin,
-  'dock-browser': dockBrowserPlugin,
-  'self-improve': selfImprovePlugin,
-  'dsh-compat': dshCompatPlugin,
-  ops: opsPlugin,
-}
+import { migrateTeamSplit } from '../core/plugin-registry.js'
+import {
+  initPluginRuntime,
+  mountAllExternalPlugins,
+  mountApplicationRows,
+  type ApplicationSurface,
+  type PluginMountFailure,
+} from '../core/plugin-loader.js'
 
 export interface KernelOptions {
   config: DscCoreConfig
   /** 'auto' = last-session 指针；路径 = 指定 jsonl；null = 新建。 */
   resumeSessionPath?: string | null
+  /** 界面形态：决定 `tui` / `host-stdio` 这两行挂不挂（见 loader 的 SURFACE_ROW_SKIPS）。 */
+  surface?: ApplicationSurface
 }
 
-/** 内置 base 插件清单（插件管理页的「内置」分组；不可停用）。 */
-export const BUILTIN_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
-  { file: 'llm', name: '模型路由', description: '配置端点间切换模型与思考强度' },
-  { file: 'session', name: '会话', description: '会话存储、恢复与列表' },
-  { file: 'guards', name: '工具守卫链', description: '工具动手之前该问谁：模式闸门与审批卡各占一环' },
-  { file: 'surfaces', name: '快照片段注册表', description: '界面快照里每块状态投影由那个功能点自己登记' },
-  { file: 'waiting', name: '等人登记表', description: '哪张卡片正挂着等用户做决定，一问就知道' },
-  { file: 'approval', name: '审批', description: '工具执行前的人工授权' },
-  {
-    file: 'hooks',
-    name: '安全钩子',
-    description: '工具动手之前按用户自己登记的规则与脚本拦一道，能直接拦下或强制问人',
-    settingsSection: 'hooks',
-  },
-  { file: 'tools', name: '工具注册表', description: '工具的注册与查找' },
-  {
-    file: 'tools-default',
-    name: '内置工具',
-    description: 'bash / read / write / edit / glob / grep',
-    settingsSection: 'tools-default',
-  },
-  { file: 'transcript', name: '会话流', description: '事件折叠成对话条目与快照' },
-  { file: 'commands', name: '斜杠命令', description: '/ 命令注册与补全' },
-  { file: 'skills', name: '技能', description: 'SKILL.md 发现、开关、市场与 skill 工具' },
-  { file: 'prompt', name: '提示词组装', description: '系统提示词分段注册表与请求体改写链' },
-  { file: 'mode', name: '协作模式', description: '执行 / 计划 / 探索 / 免打扰四档与工具闸门' },
-  {
-    file: 'presets',
-    name: '模式',
-    description: '人格、工具目录与提示词的那根旋钮：标准 / 极简 / 创造 / PTC 四个内置模式，可自己加',
-  },
-  {
-    file: 'ptc',
-    name: 'PTC 代码调用',
-    description: 'run_code 工具：模型写一段脚本批量调工具，只把结论交回上下文（只属于 PTC 模式）',
-  },
-  {
-    file: 'runtime-api',
-    name: '运行时查询',
-    description: 'runtime_api 只读工具：内核 API、插件、工具目录、提示段、守卫链（只属于创造模式）',
-  },
-  { file: 'settings', name: '设置', description: '设置分区注册表、模型配置与偏好' },
-  { file: 'compact', name: '压缩', description: '上下文超阈值自动压缩', settingsSection: 'compact' },
-  {
-    file: 'microcompact',
-    name: '旧工具结果清理',
-    description: '每轮请求把较旧的工具结果正文换成占位符，只改请求体、不动会话日志',
-    settingsSection: 'microcompact',
-  },
-  {
-    file: 'image-diet',
-    name: '图片卸载',
-    description: '历史里太久/太多的图不再随每轮请求重发：用户图与工具图各按预算保留，更早回合的图全卸载',
-    settingsSection: 'image-diet',
-  },
-  { file: 'session-title', name: '会话标题', description: '首回合结束后自动生成会话标题（用户改名优先）' },
-  { file: 'todo', name: '任务清单', description: '模型自己维护的清单与实时进度条', settingsSection: 'todo' },
-  { file: 'plan', name: '计划交付', description: '写计划文件并弹评审卡等用户批' },
-  { file: 'ask', name: '模型提问', description: 'ask_user 工具与它的选项卡' },
-  { file: 'agent', name: 'Agent 循环', description: 'ReAct 推理与工具调用循环' },
-  { file: 'goal', name: '会话目标', description: '跨轮自动续跑与它的刹车', settingsSection: 'goal' },
-  {
-    file: 'memory',
-    name: '长期记忆',
-    description: '跨会话留下的事实：全局事实、用户偏好、当前工作区各一格，注入给模型的就是这些',
-    settingsSection: 'memory',
-  },
-  { file: 'runtime', name: '运行时适配器', description: '把服务织成 UI 消费的 DscRuntime' },
-  {
-    file: 'webserver',
-    name: '本机界面服务',
-    description: '插件版界面的宿主半边：回环 HTTP + 一次性令牌 + 插件 bundle 下发（默认不占端口，桌面或 DSC_UI_SERVER=1 时才起来）',
-  },
-]
+/**
+ * 由宿主直接组装的配置：这三个插件拿的是宿主对象，不是 plugins.json。
+ *
+ * llm 与 settings 收整个 `DscCoreConfig`（providers / 凭据都在里面）；
+ * session 收恢复路径与启动目录；desktop-dock 收工作目录。
+ * 写成一张表传下去，是为了让「行」这条路径对所有插件一视同仁。
+ */
+function hostConfigOf(options: KernelOptions): Record<string, unknown> {
+  return {
+    llm: options.config,
+    settings: options.config,
+    session: { resumeSessionPath: options.resumeSessionPath ?? null, cwd: process.cwd() },
+    'desktop-dock': { cwd: process.cwd() },
+  }
+}
 
-/** 创建内核并装好 base 插件集（服务全部就绪；UI 与外部插件未装）。 */
+/** 把挂载失败写成一条人能看懂的话；transcript 还没起来时退到 stderr。 */
+function reportFailures(root: Context, failures: readonly PluginMountFailure[]): void {
+  if (failures.length === 0) return
+  const transcript = root.get('transcript') as { system?: (text: string, level?: string) => void } | undefined
+  for (const failure of failures) {
+    const line = `插件 ${failure.name}（${failure.file}）未能加载：${failure.problem}`
+    if (typeof transcript?.system === 'function') transcript.system(line, 'error')
+    else console.error('[numa] ' + line)
+  }
+}
+
+/** 创建内核：应用自带的全部行挂好，外部插件由调用方再追加。 */
 export async function createKernel(options: KernelOptions): Promise<Context> {
   const root = new Context()
-  for (const meta of BUILTIN_PLUGINS) registerPluginMeta({ ...meta, source: 'builtin' })
-  for (const meta of OFFICIAL_PLUGINS) registerPluginMeta({ ...meta, source: 'builtin' })
-  await root.plugin(llmPlugin, options.config)
-  await root.plugin(sessionPlugin, { resumeSessionPath: options.resumeSessionPath })
-  // 三个内核扩展点先挂：后面每个功能点都要往它们上面登记自己那一块。
-  await root.plugin(guardsPlugin)
-  await root.plugin(surfacesPlugin)
-  await root.plugin(waitingPlugin)
-  await root.plugin(approvalPlugin, getPluginConfig('approval'))
-  await root.plugin(toolsPlugin)
-  await root.plugin(toolsDefaultPlugin)
-  await root.plugin(transcriptPlugin)
-  await root.plugin(commandsPlugin)
-  await root.plugin(skillsPlugin)
-  await root.plugin(promptPlugin, getPluginConfig('prompt'))
-  await root.plugin(modePlugin)
-  // 模式（预设）排在协作模式之后：它要往提示词、工具目录、快照三个扩展点上登记自己那一块。
-  await root.plugin(presetsPlugin)
-  // PTC 的 run_code 与创造模式的 runtime_api：两个都只在自己那一档模式下露面
-  await root.plugin(ptcPlugin)
-  await root.plugin(settingsPlugin, options.config)
-  // 图片卸载的配置界面：它只往设置里挂一个分区（卸载本体是 prompt 插件里的 image-diet 投影），
-  // 排在设置之后才拿得到 settings 服务。
-  await root.plugin(imageDietPlugin)
-  // 打包权限预设：把沙箱 + 权限模式 + 审阅者捆成一颗按钮。
-  // 排在设置之后（要读偏好里那个默认预设并应用），也排在沙箱之后（要写它的档位）。
-  await root.plugin(permissionPresetsPlugin)
-  // 安全钩子排在设置之后：它既要往设置里挂自己的分区，又要把闸门挂到守卫链上。
-  await root.plugin(hooksPlugin)
-  await root.plugin(compactPlugin)
-  // 旧工具结果微压缩：排在 prompt 与 settings 之后（它要往投影链与设置分区各挂一块），
-  // 也排在 compact 之后——两者都是省上下文的手段，压缩管「整段折成摘要」，它管「旧的逐条换占位符」。
-  await root.plugin(microcompactPlugin, getPluginConfig('microcompact'))
-  // 会话标题跟着压缩走：两者都监听回合结束，都只做会话级的轻量收尾
-  await root.plugin(sessionTitlePlugin)
-  await root.plugin(todoPlugin)
-  await root.plugin(planPlugin)
-  await root.plugin(askPlugin, getPluginConfig('ask'))
-  await root.plugin(agentPlugin)
-  await root.plugin(goalPlugin, getPluginConfig('goal'))
-  // 长期记忆排在 agent 之后：轮次结束时它要用 agent.followup 启动一次记忆复盘。
-  await root.plugin(memoryPlugin, getPluginConfig('memory'))
-  await root.plugin(runtimePlugin)
-  // 本机界面服务：挂载本身零成本（不监听），有人要（桌面主进程 / DSC_UI_SERVER=1）才占端口。
-  await root.plugin(webserverPlugin, getPluginConfig('webserver'))
-  await root.plugin(desktopDockPlugin, { cwd: process.cwd() })
-  // git 观测：当前工作区的分支与改动读数（快照面 `surfaces.git`，输入框那颗分支钮读它）。
-  // 排在 desktop-dock 之后——写类 op 落盘后要经 `ctx.get('git')` 催它一拍。
-  await root.plugin(gitPlugin)
-  await root.plugin(pluginManagerPlugin)
-  // 运行时查询要等工具、插件表、模式都就位，所以排在最后
-  await root.plugin(runtimeApiPlugin)
-  // 官方可开关插件：先把插件对象登记进热挂载表（拨开关时不必找磁盘文件），
-  // 再按条目树决定这次启动挂不挂（没被用户打开过的默认不挂）。
+  initPluginRuntime(root)
+  // 老版本把「团队」拆成两个开关，这里把旧的启用状态迁到新键上（幂等）。
   migrateTeamSplit()
-  for (const meta of OFFICIAL_PLUGINS) {
-    const plugin = OFFICIAL_OBJECTS[meta.file]
-    if (plugin === undefined) continue
-    registerBuiltinMount(meta.file, plugin)
-    if (isPluginEnabled(meta.file)) {
-      const fiber = await root.plugin(plugin, getPluginConfig(meta.file))
-      // 把 fiber 记进热挂载表：插件中心的开关只认这张表，不登记就等于“停用只写盘”。
-      trackBuiltinMount(meta.file, fiber)
-    }
-  }
+  const failures = await mountApplicationRows(root, {
+    ...(options.surface === undefined ? {} : { surface: options.surface }),
+    hostConfig: hostConfigOf(options),
+  })
+  reportFailures(root, failures)
   return root
 }
 
@@ -436,78 +95,5 @@ export async function loadExternalPlugins(root: Context, configured: string[]): 
   }
 }
 
-// ── config.yaml 的 plugins 段（外部插件清单） ────────────────────────────────
-
-export interface UiConfig {
-  plugins: string[]
-}
-
-export function readUiConfig(): UiConfig {
-  try {
-    const file = activeConfigFile()
-    if (!existsSync(file)) return { plugins: [] }
-    const doc = parseTolerantYaml(readFileSync(file, 'utf8')) as {
-      ui?: unknown
-      plugins?: unknown
-    }
-    return {
-      plugins: Array.isArray(doc.plugins)
-        ? doc.plugins.filter((entry): entry is string => typeof entry === 'string')
-        : [],
-    }
-  } catch {
-    return { plugins: [] }
-  }
-}
-
-// ── 启动提示（boot 与 headless 共享；全部插件就绪后一次性写入 transcript） ────
-
-export function emitStartupNotes(
-  root: Context,
-  migration: MigrationReport | null,
-  config: DscCoreConfig,
-): void {
-  if (Object.keys(config.providers).length === 0) {
-    root.transcript.system(
-      'Pneuma：没有可用的模型端点。\n' +
-        '请编辑 ~/.dsc/config.yaml 配置 providers（api: openai-completions 风格），\n' +
-        'key 放到 apiKeyEnv 指向的环境变量或 ~/.dsc/credentials.yaml。\n' +
-        '若本机有 dsh 配置，可运行 `numa config migrate --force` 迁移。',
-      // 没有端点等于什么都干不了：标成错误，界面弹一次提示，不铺在首屏。
-      'error',
-    )
-  }
-  if (migration !== null) {
-    root.transcript.system(
-      `已从 dsh 迁移模型配置到 ${migration.configPath}（端点 ${migration.providers.join('、')}` +
-        `${migration.credentialsPath === null ? '；凭据仍读 dsh 凭据库' : `；凭据已复制到 ${migration.credentialsPath}`}）`,
-    )
-  }
-  if (root.session.startupNote !== null) root.transcript.system(root.session.startupNote)
-  if (root.session.resumedStartup) {
-    // 启动恢复了历史会话：重放历史到条目（与 dsc/session-open 的行为一致）
-    root.transcript.replayHistory(
-      root.session.current().messages,
-      root.session.current().toolErrors,
-      root.session.current().fileChanges,
-      root.session.current().presentations,
-    )
-    // 重启后的第一帧状态栏也得有上下文读数：用量日志按会话存着最后一条请求的
-    // 输入 token，它与前台切会话共用同一条回填口径。日志里没有这条会话就不填，
-    // 免得把「还没数」画成 0%。
-    //
-    // 这里断言一个契约外的窄方法：回填只在启动恢复这一个入口用到，不必为它
-    // 拓宽 TranscriptService（打开会话的路径直接操作 adapter，无需经过服务面）。
-    const usage = readSessionUsage(root.session.current().meta.id)
-    if (usage !== null) {
-      ;(root.transcript as unknown as { seedContextUsage(used: number): void }).seedContextUsage(
-        usage.lastInputTokens,
-      )
-    }
-  }
-  // 启动提示只展示一次（0.6.64）：同一会话同一模型的开机横幅只在首次见到时写，
-  // 换会话/换模型自然重现。恢复会话时转录里本来就有历史可辨认，状态栏也带短 id。
-  const bootBanner = `会话 ${root.session.current().meta.id.slice(0, 8)} · 模型 ${root.llm.provider}/${root.llm.model}`
-  if (bootNoticeOnce('boot.session-model', bootBanner)) root.transcript.system(bootBanner)
-  root.transcript.touch()
-}
+// 启动收尾（读 plugins 段、写启动提示）住在 host/startup.ts；这里转出保持入口的 import 不变。
+export { readUiConfig, emitStartupNotes, type UiConfig } from './startup.js'

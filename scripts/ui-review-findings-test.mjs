@@ -71,7 +71,7 @@ check('认不出的档位记 undefined 但条目留着', doc?.findings[2]?.title
 
 // ── 3. 字段：位置 / 说明 / 建议 / 解析不动的行 ──
 const first = doc?.findings[0]
-check('位置解析成 path:line', first?.location?.path === 'src/plugins/subagent.ts' && first?.location?.line === 870, JSON.stringify(first?.location))
+check('位置解析成 path:line', first?.location?.path === 'src/packages/subagent/index.ts' && first?.location?.line === 870, JSON.stringify(first?.location))
 check('说明多行续写不丢', first?.detail.includes('无条件写 finished') === true && first?.detail.includes('按 handle 比对') === true, first?.detail)
 check('建议单独成段', first?.suggestion === '给 finish 传队友名。', first?.suggestion)
 const second = doc?.findings[1]

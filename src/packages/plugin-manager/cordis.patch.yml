@@ -1,0 +1,4 @@
+# plugin-manager
+- insert:
+    - id: plugin-manager
+      name: '@pneuma/plugin-manager'

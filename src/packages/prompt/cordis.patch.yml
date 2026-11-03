@@ -1,0 +1,4 @@
+# 提示词组装
+- insert:
+    - id: prompt
+      name: '@pneuma/prompt'

@@ -1,0 +1,5 @@
+# MCP 外部工具
+- insert:
+    - id: mcp
+      name: '@pneuma/mcp'
+      disabled: true

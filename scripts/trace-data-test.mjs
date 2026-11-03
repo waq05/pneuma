@@ -23,7 +23,7 @@
  */
 import { Transcript } from '../lib/adapter/transcript.js'
 import { SUMMARY_BANNER } from '../lib/core/compact-anchors.js'
-import { transcriptPlugin } from '../lib/plugins/transcript.js'
+import { transcriptPlugin } from '../lib/packages/transcript/index.js'
 
 let failures = 0
 const check = (name, condition, detail = '') => {

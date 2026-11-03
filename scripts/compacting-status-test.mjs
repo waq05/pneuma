@@ -127,8 +127,8 @@ if (failures > 0) {
 console.log('[5] 接线还在（压缩插件发、转录插件收、壳画）')
 {
   const { readFileSync } = await import('node:fs')
-  const compactSource = readFileSync(new URL('../src/plugins/compact.ts', import.meta.url), 'utf8')
-  const transcriptSource = readFileSync(new URL('../src/plugins/transcript.ts', import.meta.url), 'utf8')
+  const compactSource = readFileSync(new URL('../src/packages/compact/index.ts', import.meta.url), 'utf8')
+  const transcriptSource = readFileSync(new URL('../src/packages/transcript/index.ts', import.meta.url), 'utf8')
   const shellSource = readFileSync(new URL('../ui-shell/src/plugins/transcript/ui.tsx', import.meta.url), 'utf8')
   check('压缩插件在 finally 里清状态', /whileCompacting[\s\S]*?finally[\s\S]*?'dsc\/compacting', false/.test(compactSource))
   check('压完发一次估算读数', /'dsc\/context-used'/.test(compactSource))

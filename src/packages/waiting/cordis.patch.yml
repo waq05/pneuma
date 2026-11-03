@@ -1,0 +1,4 @@
+# 等人登记表
+- insert:
+    - id: waiting
+      name: '@pneuma/waiting'

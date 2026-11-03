@@ -28,7 +28,7 @@ process.env.HOME = home
 process.env.USERPROFILE = home
 process.env.DSC_HOME = join(home, '.dsc')
 
-const { approvalPlugin } = await import('../lib/plugins/approval.js')
+const { approvalPlugin } = await import('../lib/packages/approval/index.js')
 const { setAuditEnabled } = await import('../lib/core/audit.js')
 setAuditEnabled(false)
 

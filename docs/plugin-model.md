@@ -127,3 +127,19 @@ lib/ui/plugins/<id>/client.js
 
 `src/host/kernel.ts` 只允许：建 Context、读 profile、调 `mountBundlePlugins`、启动收尾。行数 ≤ 120。
 `src/boot.ts` / `src/headless.ts` 只允许选择 profile 与界面形态，不得静态 import 任何插件。
+## 11. 界面形态与原生包
+
+- **surface**：`createKernel` 收 `'tui' | 'headless'`。哪些行不挂写在 loader 的
+  `SURFACE_ROW_SKIPS`（tui 不挂 `host-stdio`，headless 不挂 `tui`），是这张表的唯一出处；
+  入口只传 surface，不自己判断。
+- **原生包**：行名以 `@pneuma/` 开头的包不按 dsh 插件口径处理——不做「陌生服务名 = dsh 插件」
+  的判定，也不套 dsh 的工具兼容面。否则 `inject: ['presets']` 这种自己的服务名会被误判成
+  dsh 插件，天然挂不上。
+- **名字冲突**：`@pneuma/runtime` 这个名字留给构建生成的运行时适配包。功能包里叫 `runtime`
+  的那个（运行时适配器插件）包名是 `@pneuma/runtime-adapter`，行 id 仍是 `runtime`；
+  构建脚本遇到包名撞 `@pneuma/runtime` 直接报错。
+- **幂等按 root**：同一进程可以有多个 Context（自检会连开两个内核）。「已挂身份」按 root 记，
+  换 Context 就该重新挂；看全局表会让第二个内核一行都起不来。
+- **包产物是再导出桩**：`lib/packages/<id>/` 是唯一实体，`lib/node_modules/@pneuma/<id>/` 里每个文件只有一行
+  `export * from '<指回 lib/packages 的相对路径>'`。这样探针/App 直接 import `lib/packages/...`、内核从
+  `node_modules` 加载时，拿到的是**同一个模块实例**——`commands` 的 `serviceRef` 这类模块级单例才不会裂成两份。

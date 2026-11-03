@@ -1,0 +1,22 @@
+{
+  "name": "@pneuma/dock-browser",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 3750,
+    "resolution": "overridable",
+    "title": "侧栏浏览器",
+    "description": "让模型操作桌面端侧栏那台浏览器；看页面可免审批，动手每次要确认",
+    "settingsSection": "dock-browser"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

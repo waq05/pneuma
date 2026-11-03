@@ -14,7 +14,7 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { approvalDiffOf } from '../lib/plugins/approval.js'
+import { approvalDiffOf } from '../lib/packages/approval/index.js'
 
 // /review 的 diff 落盘走 DSC_HOME，而 core/path-policy 在**模块加载时**就把这个值读死了。
 // 本进程里 import 已经跑完再改环境变量没用（模块缓存），所以先设一个临时 HOME 重新跑一遍自己：

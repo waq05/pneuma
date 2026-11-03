@@ -1,0 +1,4 @@
+# 内置工具
+- insert:
+    - id: tools-default
+      name: '@pneuma/tools-default'

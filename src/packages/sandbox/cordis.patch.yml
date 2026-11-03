@@ -1,0 +1,4 @@
+# 文件与命令围栏
+- insert:
+    - id: sandbox
+      name: '@pneuma/sandbox'

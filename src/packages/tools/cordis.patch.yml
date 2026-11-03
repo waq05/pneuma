@@ -1,0 +1,4 @@
+# 工具注册表
+- insert:
+    - id: tools
+      name: '@pneuma/tools'

@@ -256,7 +256,7 @@ const ctx = await createKernel({
   },
   resumeSessionPath: null,
 })
-const { runCommand } = await import('../lib/plugins/commands.js')
+const { runCommand } = await import('../lib/packages/commands/index.js')
 const usageOf = () => core.readUsage()
 const injectedOf = (key) => usageOf()[key]?.injected ?? 0
 const countOf = (key) => usageOf()[key]?.count ?? 0

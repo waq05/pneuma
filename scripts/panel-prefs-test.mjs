@@ -115,7 +115,7 @@ console.log('\n[6] 接线检查（读这一端之外的三处）')
   check('契约里有 panelWidths 一项', read('src/contract/session.ts').includes('panelWidths: PanelWidthsView'))
   check(
     '写面板几何不发回执（不然拖一下弹一句"已保存工作区名字"）',
-    read('src/plugins/runtime.ts').includes("patch.panelWidths !== undefined && Object.keys(patch).length === 1"),
+    read('src/packages/runtime/index.ts').includes("patch.panelWidths !== undefined && Object.keys(patch).length === 1"),
   )
   const panels = read('ui-shell/src/ui-primitives/panels.ts')
   check(

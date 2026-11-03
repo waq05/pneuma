@@ -270,7 +270,7 @@ console.log('[8] 投影链：电脑控制正在跑时最新那张截图不许被
 {
   // 挂上电脑操作插件：它原来那条只留最新一张截图的投影（prune-stale-screenshots）已降级为
   // 不登记，截图与别的工具结果走同一套通用规则（toolImageBudget=2）。挂上它才能钉住这件事。
-  const { computerUsePlugin } = await import('../lib/plugins/computer-use.js')
+  const { computerUsePlugin } = await import('../lib/packages/computer-use/index.js')
   await ctx.plugin(computerUsePlugin, {})
   const input = [
     { role: 'user', content: '点一下那个按钮' },

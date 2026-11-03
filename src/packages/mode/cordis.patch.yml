@@ -1,0 +1,4 @@
+# 协作模式
+- insert:
+    - id: mode
+      name: '@pneuma/mode'

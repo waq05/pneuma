@@ -1,0 +1,4 @@
+# 长输出转存
+- insert:
+    - id: spill
+      name: '@pneuma/spill'

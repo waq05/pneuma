@@ -1,0 +1,4 @@
+# tui
+- insert:
+    - id: tui
+      name: '@pneuma/tui'

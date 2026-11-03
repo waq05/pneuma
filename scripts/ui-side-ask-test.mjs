@@ -133,7 +133,7 @@ console.log('[3] 界面通道：白名单与实参规格')
 
 console.log('[4] 接线与产物')
 {
-  const runtime = read('src/plugins/runtime.ts')
+  const runtime = read('src/packages/runtime/index.ts')
   check('runtime 走同一条派发口', runtime.includes('ctx.llm.stream(api, request, handlers)'))
   check('runtime 支持指定模型（空串则跟随主会话）', runtime.includes("ctx.llm.routeTo(provider, model, 'default')") && runtime.includes('ctx.llm.route()'))
   check('runtime 把增量经事件发出去', runtime.includes("ctx.emit('dsc/side-ask-chunk', { id: requestId, delta })"))
@@ -159,7 +159,7 @@ console.log('[4] 接线与产物')
 console.log('[5] 流式与模型选择')
 {
   const events = read('src/core/ui-events.ts')
-  const webserver = read('src/plugins/webserver.ts')
+  const webserver = read('src/packages/webserver/index.ts')
   const channel = read('ui-shell/src/ui-layout/host-channel.ts')
   const api = read('ui-shell/src/plugin-api.ts')
   const store = read('ui-shell/src/plugins/ask/store.ts')

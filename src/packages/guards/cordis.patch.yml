@@ -1,0 +1,4 @@
+# 工具守卫链
+- insert:
+    - id: guards
+      name: '@pneuma/guards'

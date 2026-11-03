@@ -1,0 +1,4 @@
+# 审批
+- insert:
+    - id: approval
+      name: '@pneuma/approval'

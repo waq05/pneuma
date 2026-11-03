@@ -245,7 +245,7 @@ check('replace 回执按文件数+处数分开说', repRun.includes('改动 1 �
 
 
 // ── [11] 审批卡的「将做的改动」认得 ops 写类 ────────────────────────────────
-const { approvalDiffOf } = await import('../lib/plugins/approval.js')
+const { approvalDiffOf } = await import('../lib/packages/approval/index.js')
 const preview = (toolName, args) => approvalDiffOf({ toolName, args, cwd: work, argsSummary: '' })
 const beforeText = readFileSync(rwFile, 'utf8')
 const writePrev = await preview('ops_write_file', { path: rwFile, content: 'X\nb\nC\n' })

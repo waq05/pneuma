@@ -1,0 +1,4 @@
+# 会话流
+- insert:
+    - id: transcript
+      name: '@pneuma/transcript'

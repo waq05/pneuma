@@ -1,0 +1,4 @@
+# 联网搜索
+- insert:
+    - id: web-search
+      name: '@pneuma/web-search'

@@ -1,0 +1,21 @@
+{
+  "name": "@pneuma/webserver",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 300,
+    "resolution": "overridable",
+    "title": "本机界面服务",
+    "description": "插件版界面的宿主半边：回环 HTTP + 一次性令牌 + 插件 bundle 下发（默认不占端口，桌面或 DSC_UI_SERVER=1 时才起来）"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

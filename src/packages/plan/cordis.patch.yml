@@ -1,0 +1,4 @@
+# 计划交付
+- insert:
+    - id: plan
+      name: '@pneuma/plan'

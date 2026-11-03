@@ -1,0 +1,5 @@
+# 代码跳转与报错
+- insert:
+    - id: lsp
+      name: '@pneuma/lsp'
+      disabled: true

@@ -1,0 +1,5 @@
+# 受控浏览器
+- insert:
+    - id: browser
+      name: '@pneuma/browser'
+      disabled: true

@@ -51,7 +51,7 @@ const { collectUiPluginArtifacts, readUiPluginBundle, readUiPluginManifest, uiPl
   '../lib/core/ui-bundles.js'
 )
 const { inside } = await import('../lib/core/web-static.js')
-const { readUiServerConfig } = await import('../lib/plugins/webserver.js')
+const { readUiServerConfig } = await import('../lib/packages/webserver/index.js')
 const { isUiBundleRequest, resolveUiBundleRequest } = await import('../lib/core/ui-route.js')
 const { createUiServer } = await import('../lib/core/ui-server.js')
 const { createUiEvents } = await import('../lib/core/ui-events.js')

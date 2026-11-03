@@ -1,0 +1,22 @@
+{
+  "name": "@pneuma/lsp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 3730,
+    "resolution": "overridable",
+    "title": "代码跳转与报错",
+    "description": "查定义、引用、实现，并把这次编辑新引入的报错提醒给模型",
+    "settingsSection": "lsp"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

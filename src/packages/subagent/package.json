@@ -1,0 +1,22 @@
+{
+  "name": "@pneuma/subagent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 3600,
+    "resolution": "overridable",
+    "title": "子智能体",
+    "description": "让模型把能独立完成的活交给队友并行做；队友只看任务说明，可设层级、人数、轮次与模型",
+    "settingsSection": "subagent"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

@@ -105,7 +105,7 @@ lib/packages/<id>/package.json + cordis.patch.yml + index.js   # 构建产物
 ### P3 功能包化（10–14 天，可并行）
 
 - 56 个包，顺序：核心服务 → 官方可开关 → 未登记的 4 个 → 3 个入口插件。
-- 每包 `package.json` + `cordis.patch.yml` + `index.ts`（源码从 `src/plugins/x.ts` 搬进 `src/packages/x/index.ts`）。
+- 每包 `package.json` + `cordis.patch.yml` + `index.ts`（源码从 `src/packages/x/index.ts` 搬进 `src/packages/x/index.ts`）。
 - 依赖一律用行/插件的 `inject` 表达（行序不承载加载语义）；实在表达不了的三处（approval 要在 mode 首次广播前就位、transcript 要在 plan 恢复前清空、memory 要在 agent 之后）用行序兜底，patch 注释写明原因并用探针钉住。
 - 共享常量下沉到 runtime/contract：browser 的 `CLOUD_METADATA_HOSTS`、webserver 的 `UI_EVENTS_PROTOCOL_VERSION`；`tui.ts` 对 `../app/App.js` 的引用改成构造参数。
 - 三张表（`BUILTIN_PLUGINS`/`OFFICIAL_PLUGINS`/`OFFICIAL_OBJECTS`）退役。
@@ -174,3 +174,21 @@ node scripts/plugin-swap-e2e.mjs     # P5 起
 - 不实现 `!!js` 表达式。
 - 不做插件市场安装 UI。
 - 不改界面信息架构，只换归属。
+
+## 9. 进度（2026-11-03）
+
+| 期 | 状态 | 提交 | 备注 |
+|---|---|---|---|
+| P0 契约与基线 | 完成 | `19e0f92` | 契约、model-check、0.8.1 基线 |
+| P1 运行时适配包 | 完成 | `3de6f11` | 577 个桩；481 处 import 改写；单实例自检 |
+| P2 加载器对齐 | 完成 | 见 P3 提交 | 子路径行、行 id 身份、锚点、解析表、plugins.json 双键与拒写 |
+| P3 功能包化 | 完成 | 见本次提交 | 56 个包；kernel 100 行；boot/headless 只传 surface |
+| P4 界面半边 | 未开始 | — | 界面源码仍在 `ui-shell/src/plugins/` |
+| P5 桌面发布形态 | 未开始 | — | dsc-core 携带 packages 与默认 profile |
+
+P3 的三个已知偏差（都已写进契约 §11）：
+
+1. 「运行时适配器」插件包名改为 `@pneuma/runtime-adapter`，行 id 仍是 `runtime`；
+2. 原生包（行名 `@pneuma/*`）跳过 dsh 插件的服务名判定，也不套 dsh 工具兼容面；
+3. `surface` 默认 `none`：不传 surface 时不挂 `tui` / `host-stdio` / `remote` 三行，
+   探针直接 `createKernel` 不会被 TUI 或 stdio 拖住。

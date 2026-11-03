@@ -1,0 +1,965 @@
+{
+  "version": 1,
+  "count": 56,
+  "packages": [
+    {
+      "id": "llm",
+      "package": "@pneuma/llm",
+      "title": "模型路由",
+      "description": "配置端点间切换模型与思考强度",
+      "order": 10,
+      "resolution": "pinned",
+      "inject": [
+        "session"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "session",
+      "package": "@pneuma/session",
+      "title": "会话",
+      "description": "会话存储、恢复与列表",
+      "order": 20,
+      "resolution": "pinned",
+      "inject": [],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "guards",
+      "package": "@pneuma/guards",
+      "title": "工具守卫链",
+      "description": "工具动手之前该问谁：模式闸门与审批卡各占一环",
+      "order": 30,
+      "resolution": "pinned",
+      "inject": [],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "surfaces",
+      "package": "@pneuma/surfaces",
+      "title": "快照片段注册表",
+      "description": "界面快照里每块状态投影由那个功能点自己登记",
+      "order": 40,
+      "resolution": "pinned",
+      "inject": [],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "waiting",
+      "package": "@pneuma/waiting",
+      "title": "等人登记表",
+      "description": "哪张卡片正挂着等用户做决定，一问就知道",
+      "order": 50,
+      "resolution": "pinned",
+      "inject": [],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "approval",
+      "package": "@pneuma/approval",
+      "title": "审批",
+      "description": "工具执行前的人工授权",
+      "order": 60,
+      "resolution": "pinned",
+      "inject": [
+        "llm",
+        "session",
+        "guards",
+        "surfaces",
+        "waiting"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "tools",
+      "package": "@pneuma/tools",
+      "title": "工具注册表",
+      "description": "工具的注册与查找",
+      "order": 70,
+      "resolution": "pinned",
+      "inject": [],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "tools-default",
+      "package": "@pneuma/tools-default",
+      "title": "内置工具",
+      "description": "bash / read / write / edit / glob / grep",
+      "order": 80,
+      "resolution": "pinned",
+      "inject": [
+        "tools",
+        "settings",
+        "agent",
+        "surfaces",
+        "session"
+      ],
+      "settingsSection": "tools-default",
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "transcript",
+      "package": "@pneuma/transcript",
+      "title": "会话流",
+      "description": "事件折叠成对话条目与快照",
+      "order": 90,
+      "resolution": "pinned",
+      "inject": [
+        "session",
+        "llm",
+        "surfaces"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "commands",
+      "package": "@pneuma/commands",
+      "title": "斜杠命令",
+      "description": "/ 命令注册与补全",
+      "order": 100,
+      "resolution": "pinned",
+      "inject": [
+        "session",
+        "llm"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "skills",
+      "package": "@pneuma/skills",
+      "title": "技能",
+      "description": "SKILL.md 发现、开关、市场与 skill 工具",
+      "order": 110,
+      "resolution": "pinned",
+      "inject": [
+        "session",
+        "tools",
+        "commands",
+        "transcript"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "prompt",
+      "package": "@pneuma/prompt",
+      "title": "提示词组装",
+      "description": "系统提示词分段注册表与请求体改写链",
+      "order": 120,
+      "resolution": "pinned",
+      "inject": [
+        "llm",
+        "skills",
+        "session"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "mode",
+      "package": "@pneuma/mode",
+      "title": "协作模式",
+      "description": "执行 / 计划 / 探索 / 免打扰四档与工具闸门",
+      "order": 130,
+      "resolution": "pinned",
+      "inject": [
+        "session",
+        "commands",
+        "approval",
+        "guards",
+        "prompt",
+        "surfaces"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "presets",
+      "package": "@pneuma/presets",
+      "title": "模式",
+      "description": "人格、工具目录与提示词的那根旋钮：标准 / 极简 / 创造 / PTC 四个内置模式，可自己加",
+      "order": 140,
+      "resolution": "pinned",
+      "inject": [
+        "session",
+        "commands",
+        "prompt",
+        "tools",
+        "settings",
+        "surfaces",
+        "approval",
+        "mode"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "ptc",
+      "package": "@pneuma/ptc",
+      "title": "PTC 代码调用",
+      "description": "run_code 工具：模型写一段脚本批量调工具，只把结论交回上下文（只属于 PTC 模式）",
+      "order": 150,
+      "resolution": "overridable",
+      "inject": [
+        "tools",
+        "guards",
+        "transcript"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "settings",
+      "package": "@pneuma/settings",
+      "title": "设置",
+      "description": "设置分区注册表、模型配置与偏好",
+      "order": 160,
+      "resolution": "pinned",
+      "inject": [
+        "llm",
+        "approval",
+        "transcript"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "image-diet",
+      "package": "@pneuma/image-diet",
+      "title": "图片卸载",
+      "description": "历史里太久/太多的图不再随每轮请求重发：用户图与工具图各按预算保留，更早回合的图全卸载",
+      "order": 170,
+      "resolution": "overridable",
+      "inject": [
+        "settings"
+      ],
+      "settingsSection": "image-diet",
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "permission-presets",
+      "package": "@pneuma/permission-presets",
+      "title": "permission-presets",
+      "description": "",
+      "order": 180,
+      "resolution": "overridable",
+      "inject": [
+        "approval",
+        "settings",
+        "surfaces",
+        "mode",
+        "session",
+        "transcript"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": true
+    },
+    {
+      "id": "hooks",
+      "package": "@pneuma/hooks",
+      "title": "安全钩子",
+      "description": "工具动手之前按用户自己登记的规则与脚本拦一道，能直接拦下或强制问人",
+      "order": 190,
+      "resolution": "pinned",
+      "inject": [
+        "session",
+        "approval",
+        "guards",
+        "settings",
+        "transcript",
+        "commands"
+      ],
+      "settingsSection": "hooks",
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "compact",
+      "package": "@pneuma/compact",
+      "title": "压缩",
+      "description": "上下文超阈值自动压缩",
+      "order": 200,
+      "resolution": "pinned",
+      "inject": [
+        "llm",
+        "session",
+        "commands",
+        "settings",
+        "prompt",
+        "tools"
+      ],
+      "settingsSection": "compact",
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "microcompact",
+      "package": "@pneuma/microcompact",
+      "title": "旧工具结果清理",
+      "description": "每轮请求把较旧的工具结果正文换成占位符，只改请求体、不动会话日志",
+      "order": 210,
+      "resolution": "overridable",
+      "inject": [
+        "prompt",
+        "settings",
+        "session"
+      ],
+      "settingsSection": "microcompact",
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "session-title",
+      "package": "@pneuma/session-title",
+      "title": "会话标题",
+      "description": "首回合结束后自动生成会话标题（用户改名优先）",
+      "order": 220,
+      "resolution": "overridable",
+      "inject": [
+        "session",
+        "llm"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "todo",
+      "package": "@pneuma/todo",
+      "title": "任务清单",
+      "description": "模型自己维护的清单与实时进度条",
+      "order": 230,
+      "resolution": "overridable",
+      "inject": [
+        "session",
+        "tools",
+        "commands",
+        "surfaces",
+        "compact",
+        "prompt",
+        "settings"
+      ],
+      "settingsSection": "todo",
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "plan",
+      "package": "@pneuma/plan",
+      "title": "计划交付",
+      "description": "写计划文件并弹评审卡等用户批",
+      "order": 240,
+      "resolution": "overridable",
+      "inject": [
+        "mode"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "ask",
+      "package": "@pneuma/ask",
+      "title": "模型提问",
+      "description": "ask_user 工具与它的选项卡",
+      "order": 250,
+      "resolution": "overridable",
+      "inject": [
+        "session",
+        "tools",
+        "surfaces",
+        "waiting"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "agent",
+      "package": "@pneuma/agent",
+      "title": "Agent 循环",
+      "description": "ReAct 推理与工具调用循环",
+      "order": 260,
+      "resolution": "pinned",
+      "inject": [
+        "session",
+        "transcript",
+        "tools",
+        "llm",
+        "compact",
+        "prompt",
+        "guards"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "goal",
+      "package": "@pneuma/goal",
+      "title": "会话目标",
+      "description": "跨轮自动续跑与它的刹车",
+      "order": 270,
+      "resolution": "overridable",
+      "inject": [
+        "session",
+        "tools",
+        "commands",
+        "agent",
+        "transcript",
+        "surfaces",
+        "waiting",
+        "compact",
+        "settings"
+      ],
+      "settingsSection": "goal",
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "memory",
+      "package": "@pneuma/memory",
+      "title": "长期记忆",
+      "description": "跨会话留下的事实：全局事实、用户偏好、当前工作区各一格，注入给模型的就是这些",
+      "order": 280,
+      "resolution": "overridable",
+      "inject": [
+        "session",
+        "tools",
+        "prompt",
+        "approval",
+        "agent",
+        "commands",
+        "transcript",
+        "settings"
+      ],
+      "settingsSection": "memory",
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "runtime",
+      "package": "@pneuma/runtime",
+      "title": "运行时适配器",
+      "description": "把服务织成 UI 消费的 DscRuntime",
+      "order": 290,
+      "resolution": "pinned",
+      "inject": [
+        "agent",
+        "session",
+        "transcript",
+        "approval",
+        "llm",
+        "commands",
+        "dock",
+        "skills",
+        "settings",
+        "compact",
+        "// 设置 → 模式 的工具多选要读完整工具目录（listTools）\r\n    tools",
+        "// 界面上那几块卡片的操作要落到各自的功能点：档位切换、清单、计划卡、提问卡、目标。\r\n    mode",
+        "presets",
+        "// 打包权限预设那颗旋钮（沙箱 + 权限模式 + 审阅者三合一）读它、切它。\r\n    permissionPresets",
+        "todo",
+        "plan",
+        "ask",
+        "goal"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "webserver",
+      "package": "@pneuma/webserver",
+      "title": "本机界面服务",
+      "description": "插件版界面的宿主半边：回环 HTTP + 一次性令牌 + 插件 bundle 下发（默认不占端口，桌面或 DSC_UI_SERVER=1 时才起来）",
+      "order": 300,
+      "resolution": "overridable",
+      "inject": [
+        "ui",
+        "transcript"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "desktop-dock",
+      "package": "@pneuma/desktop-dock",
+      "title": "desktop-dock",
+      "description": "",
+      "order": 310,
+      "resolution": "overridable",
+      "inject": [],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": true
+    },
+    {
+      "id": "git",
+      "package": "@pneuma/git",
+      "title": "git",
+      "description": "",
+      "order": 320,
+      "resolution": "overridable",
+      "inject": [
+        "session",
+        "surfaces"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": true
+    },
+    {
+      "id": "plugin-manager",
+      "package": "@pneuma/plugin-manager",
+      "title": "plugin-manager",
+      "description": "",
+      "order": 330,
+      "resolution": "overridable",
+      "inject": [
+        "tools",
+        "commands"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": true
+    },
+    {
+      "id": "runtime-api",
+      "package": "@pneuma/runtime-api",
+      "title": "运行时查询",
+      "description": "runtime_api 只读工具：内核 API、插件、工具目录、提示段、守卫链（只属于创造模式）",
+      "order": 340,
+      "resolution": "overridable",
+      "inject": [
+        "tools",
+        "guards",
+        "prompt",
+        "surfaces",
+        "presets"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": false
+    },
+    {
+      "id": "subagent",
+      "package": "@pneuma/subagent",
+      "title": "子智能体",
+      "description": "让模型把能独立完成的活交给队友并行做；队友只看任务说明，可设层级、人数、轮次与模型",
+      "order": 3600,
+      "resolution": "overridable",
+      "inject": [
+        "session",
+        "tools",
+        "llm",
+        "approval",
+        "transcript",
+        "prompt",
+        "settings",
+        "agent"
+      ],
+      "settingsSection": "subagent",
+      "defaultDisabled": true,
+      "toggleable": true
+    },
+    {
+      "id": "team",
+      "package": "@pneuma/team",
+      "title": "共享任务板",
+      "description": "一块按会话分开的任务板：登记、认领、结项，队友和你看到同一块；成员名单在「子智能体」里",
+      "order": 3610,
+      "resolution": "overridable",
+      "inject": [
+        "session",
+        "tools",
+        "prompt",
+        "settings"
+      ],
+      "settingsSection": "team",
+      "defaultDisabled": true,
+      "toggleable": true
+    },
+    {
+      "id": "computer-use",
+      "package": "@pneuma/computer-use",
+      "title": "操作电脑桌面",
+      "description": "看屏幕、点按钮、输入文字来操作 Windows 桌面；看可免审批，动手每次要确认",
+      "order": 3620,
+      "resolution": "overridable",
+      "inject": [
+        "tools",
+        "prompt",
+        "settings",
+        "guards"
+      ],
+      "settingsSection": "computer-use",
+      "defaultDisabled": true,
+      "toggleable": true
+    },
+    {
+      "id": "web-search",
+      "package": "@pneuma/web-search",
+      "title": "联网搜索",
+      "description": "让模型上网查资料并附来源链接；先选一家搜索服务（Tavily / 博查 / Serper）并填 key",
+      "order": 3630,
+      "resolution": "overridable",
+      "inject": [
+        "tools",
+        "prompt",
+        "settings"
+      ],
+      "settingsSection": "web-search",
+      "defaultDisabled": false,
+      "toggleable": true
+    },
+    {
+      "id": "approval-floor",
+      "package": "@pneuma/approval-floor",
+      "title": "危险命令硬拦截",
+      "description": "关机、删盘、改注册表、读密钥这类命令一律拒绝，完全访问也救不回来；常用命令可加白名单",
+      "order": 3640,
+      "resolution": "overridable",
+      "inject": [
+        "guards",
+        "commands",
+        "settings"
+      ],
+      "settingsSection": "approval-floor",
+      "defaultDisabled": false,
+      "toggleable": true
+    },
+    {
+      "id": "spill",
+      "package": "@pneuma/spill",
+      "title": "长输出转存",
+      "description": "工具输出太长就存成文件，模型先看头尾几行；需要细节时按路径续读，上下文不会被日志撑爆",
+      "order": 3650,
+      "resolution": "overridable",
+      "inject": [
+        "guards",
+        "session",
+        "settings",
+        "transcript"
+      ],
+      "settingsSection": "spill",
+      "defaultDisabled": false,
+      "toggleable": true
+    },
+    {
+      "id": "session-search",
+      "package": "@pneuma/session-search",
+      "title": "历史会话搜索",
+      "description": "按关键词翻以前聊过的会话，中文一两个字也能搜到；提供 session_search 工具与 /search 命令",
+      "order": 3660,
+      "resolution": "overridable",
+      "inject": [
+        "tools",
+        "commands",
+        "settings",
+        "transcript",
+        "session"
+      ],
+      "settingsSection": "session-search",
+      "defaultDisabled": false,
+      "toggleable": true
+    },
+    {
+      "id": "lifecycle-hooks",
+      "package": "@pneuma/lifecycle-hooks",
+      "title": "外部命令钩子",
+      "description": "在模型动手前后跑你的脚本，脚本可以拦下这次操作；事件名沿用 codex 的写法",
+      "order": 3670,
+      "resolution": "overridable",
+      "inject": [
+        "session",
+        "llm",
+        "approval",
+        "guards",
+        "prompt",
+        "settings",
+        "commands"
+      ],
+      "settingsSection": "lifecycle-hooks",
+      "defaultDisabled": true,
+      "toggleable": true
+    },
+    {
+      "id": "mcp",
+      "package": "@pneuma/mcp",
+      "title": "MCP 外部工具",
+      "description": "连上 MCP 服务器，把它们的工具接进来给模型用；支持本机命令（stdio）与 HTTP 两种连法",
+      "order": 3680,
+      "resolution": "overridable",
+      "inject": [
+        "tools",
+        "transcript",
+        "settings",
+        "prompt",
+        "approval",
+        "session"
+      ],
+      "settingsSection": "mcp",
+      "defaultDisabled": true,
+      "toggleable": true
+    },
+    {
+      "id": "tool-search",
+      "package": "@pneuma/tool-search",
+      "title": "工具按需加载",
+      "description": "只把用得上的工具说明发给模型；撤下的动手类工具与 MCP 工具用 tool_search 查、tool_call 调",
+      "order": 3690,
+      "resolution": "overridable",
+      "inject": [
+        "tools",
+        "settings"
+      ],
+      "settingsSection": "tool-search",
+      "defaultDisabled": true,
+      "toggleable": true
+    },
+    {
+      "id": "sandbox",
+      "package": "@pneuma/sandbox",
+      "title": "文件与命令围栏",
+      "description": "限定模型能写哪里：越界写、关网时联网当场拒；要破例得带理由弹审批卡",
+      "order": 3700,
+      "resolution": "overridable",
+      "inject": [
+        "guards",
+        "transcript",
+        "settings",
+        "prompt",
+        "commands",
+        "session"
+      ],
+      "settingsSection": "sandbox",
+      "defaultDisabled": false,
+      "toggleable": true
+    },
+    {
+      "id": "file-review",
+      "package": "@pneuma/file-review",
+      "title": "改动前预览",
+      "description": "写文件或改文件之前，先把要改的几行贴进对话；长改动按行截断，看得见改在哪",
+      "order": 3710,
+      "resolution": "overridable",
+      "inject": [
+        "guards",
+        "settings",
+        "commands"
+      ],
+      "settingsSection": "file-review",
+      "defaultDisabled": false,
+      "toggleable": true
+    },
+    {
+      "id": "schedule",
+      "package": "@pneuma/schedule",
+      "title": "定时任务",
+      "description": "到点把任务描述投回建它的会话并跑一轮；支持六种时间选择器和时区",
+      "order": 3720,
+      "resolution": "overridable",
+      "inject": [
+        "tools",
+        "commands",
+        "settings",
+        "transcript",
+        "agent",
+        "session",
+        "waiting",
+        "llm",
+        "prompt",
+        "surfaces"
+      ],
+      "settingsSection": "schedule",
+      "defaultDisabled": true,
+      "toggleable": true
+    },
+    {
+      "id": "lsp",
+      "package": "@pneuma/lsp",
+      "title": "代码跳转与报错",
+      "description": "查定义、引用、实现，并把这次编辑新引入的报错提醒给模型",
+      "order": 3730,
+      "resolution": "overridable",
+      "inject": [
+        "tools",
+        "settings",
+        "transcript",
+        "guards",
+        "prompt",
+        "session"
+      ],
+      "settingsSection": "lsp",
+      "defaultDisabled": true,
+      "toggleable": true
+    },
+    {
+      "id": "browser",
+      "package": "@pneuma/browser",
+      "title": "受控浏览器",
+      "description": "模型自己开一台隔离 Chrome，按页面元素点击输入；动作每次审批，可设域名黑白名单",
+      "order": 3740,
+      "resolution": "overridable",
+      "inject": [
+        "tools",
+        "commands",
+        "settings",
+        "transcript",
+        "guards",
+        "prompt",
+        "session"
+      ],
+      "settingsSection": "browser",
+      "defaultDisabled": true,
+      "toggleable": true
+    },
+    {
+      "id": "dock-browser",
+      "package": "@pneuma/dock-browser",
+      "title": "侧栏浏览器",
+      "description": "让模型操作桌面端侧栏那台浏览器；看页面可免审批，动手每次要确认",
+      "order": 3750,
+      "resolution": "overridable",
+      "inject": [
+        "tools",
+        "settings"
+      ],
+      "settingsSection": "dock-browser",
+      "defaultDisabled": true,
+      "toggleable": true
+    },
+    {
+      "id": "self-improve",
+      "package": "@pneuma/self-improve",
+      "title": "经验沉淀",
+      "description": "把你纠正过它的地方记成候选；你确认后才写成技能，每次改动留台账可回滚",
+      "order": 3760,
+      "resolution": "overridable",
+      "inject": [
+        "tools",
+        "guards",
+        "commands",
+        "settings",
+        "transcript",
+        "skills",
+        "approval",
+        "session",
+        "agent",
+        "prompt",
+        "memory"
+      ],
+      "settingsSection": "self-improve",
+      "defaultDisabled": true,
+      "toggleable": true
+    },
+    {
+      "id": "ops",
+      "package": "@pneuma/ops",
+      "title": "文档与批量读取",
+      "description": "读 PDF / Word / CSV、一次读多段文件、改之前先看差异；引擎来自 dsh-ops 的 Rust worker，要先装 dsh-ops",
+      "order": 3770,
+      "resolution": "overridable",
+      "inject": [
+        "tools",
+        "settings",
+        "prompt",
+        "transcript"
+      ],
+      "settingsSection": "ops",
+      "defaultDisabled": true,
+      "toggleable": true
+    },
+    {
+      "id": "dsh-compat",
+      "package": "@pneuma/dsh-compat",
+      "title": "dsh 插件兼容",
+      "description": "让按 dsh 写法做的外部插件也能装进来跑；补 logger、模块解析与工具注册的差异",
+      "order": 3780,
+      "resolution": "overridable",
+      "inject": [
+        "logger"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": true,
+      "toggleable": true
+    },
+    {
+      "id": "tui",
+      "package": "@pneuma/tui",
+      "title": "tui",
+      "description": "",
+      "order": 9000,
+      "resolution": "overridable",
+      "inject": [
+        "ui",
+        "transcript"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": true
+    },
+    {
+      "id": "host-stdio",
+      "package": "@pneuma/host-stdio",
+      "title": "host-stdio",
+      "description": "",
+      "order": 9010,
+      "resolution": "overridable",
+      "inject": [
+        "ui"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": true
+    },
+    {
+      "id": "remote",
+      "package": "@pneuma/remote",
+      "title": "remote",
+      "description": "",
+      "order": 9020,
+      "resolution": "overridable",
+      "inject": [
+        "session",
+        "transcript",
+        "agent",
+        "ui",
+        "approval",
+        "settings"
+      ],
+      "settingsSection": null,
+      "defaultDisabled": false,
+      "toggleable": true
+    }
+  ]
+}

@@ -16,7 +16,7 @@
 const floorModule = await import('../lib/core/approval-floor.js')
 const bashModule = await import('../lib/core/tools/bash.js')
 const ptcCore = await import('../lib/core/ptc.js')
-const ptcPlugin = await import('../lib/plugins/ptc.js')
+const ptcPlugin = await import('../lib/packages/ptc/index.js')
 
 let failures = 0
 const check = (name, condition, detail = '') => {

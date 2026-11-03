@@ -114,7 +114,7 @@ check('[2] title 判据对脏副本必须红', !tipReachable(dirtyAll(src, 'titl
 // ── [3] 通道可用性钉（两条传输面都开着） ─────────────────────────────────────────
 
 const uiMethodsSource = read('src/core/ui-methods.ts')
-const remoteTypesSource = read('src/plugins/remote/types.ts')
+const remoteTypesSource = read('src/packages/remote/types.ts')
 check('[3] 桌面界面白名单放行 usageStats', uiMethodsSource.includes("'usageStats'"))
 check('[3] 手机 remote 面放行 usageStats', remoteTypesSource.includes("'usageStats'"))
 check('[3] 桌面判据对脏副本必须红',

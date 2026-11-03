@@ -1,0 +1,21 @@
+{
+  "name": "@pneuma/runtime-adapter",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 290,
+    "resolution": "pinned",
+    "title": "运行时适配器",
+    "description": "把服务织成 UI 消费的 DscRuntime"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

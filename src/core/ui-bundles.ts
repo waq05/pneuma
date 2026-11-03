@@ -1048,7 +1048,12 @@ export function trustThirdPartyUiPlugin(
   if (isUiPluginTrusted(`${name}/ui/client.js`)) {
     return { ok: true, notice: `「${name}」早就信任过了——重启宿主（或刷新页面）后装载` }
   }
-  trustUiPlugin(`${name}/ui/client.js`)
+  try {
+    trustUiPlugin(`${name}/ui/client.js`)
+  } catch (error) {
+    // plugins.json 坏了：拒绝写盘（不覆盖用户配过的东西），把原因原样交回调用方
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
   return { ok: true, notice: `已信任「${name}」——重启宿主（或刷新页面）后装载` }
 }
 

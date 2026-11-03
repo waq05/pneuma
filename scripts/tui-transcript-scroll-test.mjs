@@ -31,7 +31,7 @@ process.env.USERPROFILE = home
 process.env.DSC_HOME = join(home, '.dsc')
 
 const { App } = await import('../lib/app/App.js')
-const { commandsPlugin } = await import('../lib/plugins/commands.js')
+const { commandsPlugin } = await import('../lib/packages/commands/index.js')
 const { railGeometry } = await import('../lib/app/scroll-model.js')
 const { TimelineRail } = await import('../lib/app/TimelineRail.js')
 const { displayWidth } = await import('../lib/app/display-width.js')

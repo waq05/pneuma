@@ -184,7 +184,7 @@ order 是刻度，数字小的先跑：灾难地板 5、沙箱 8、协作模式 
   - `dsh-style-clock.js` —— 用 dsh 的工具形状注册，走 `dsh-compat` 并消费 `ctx.logger`；
   - `browser-control.js` —— 经 CDP 驱动浏览器，单工具按 action 分发，截图以图片返回；
   - `computer-use.js` —— 操控 Windows 桌面，演示图像返回。
-- 挂载机制：[development.md](development.md) 第 3 节三档插件与第 4 节服务清单。
+- 挂载机制：[development.md](development.md) 第 3 节「插件从哪来」与第 4 节服务清单。
 
 ---
 
@@ -286,24 +286,25 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 确认没有同名文件；`install` 只接受绝对路径；版本不兼容的插件会被自动停用并在清单里
 标注原因，此时应向用户说明而不是反复重试。
 
-### 3.4 插件中心的三档：自定义 / 官方可开关 / 运行内核
+### 3.4 插件从哪来：应用自带包 / profile 组合包 / 自定义单文件
 
-桌面端「插件」页从上到下分三档，档位由插件元数据决定（`PluginMeta`，见 `dsc/src/core/plugin-registry.ts`）：
+桌面端「插件」页按来源分档，但**每一行都能停用**（0.9 起没有「运行内核」这一档）：
 
-| 档位 | 判定 | 开关 |
+| 来源 | 判定 | 开关 |
 |---|---|---|
-| 自定义 | `source: 'external'`（`~/.dsc/plugins/*.js`） | 可拨，默认开 |
-| 官方可开关 | `source: 'builtin'` 且 `toggleable: true` | 可拨，`defaultDisabled: true` 时默认关 |
-| 运行内核 | `source: 'builtin'` 且没标 `toggleable` | 不给开关，页面只露摘要几行，其余折叠 |
+| 应用自带包 | 行来自 `@pneuma/base`（构建产物 `lib/node_modules/@pneuma/base/cordis.patch.yml`） | 可拨，默认由行的 `disabled` 定 |
+| profile 组合包 | profile `node_modules` 里带 `pneuma.bundle.patch` / `dsh.bundle.patch` 的包 | 可拨，默认由行的 `disabled` 定 |
+| 自定义单文件 | `source: 'external'`（`~/.dsc/plugins/*.js`） | 可拨，默认开 |
 
 现有的十九个官方可开关插件：默认开的六个是 `web-search`（联网搜索）、`approval-floor`（危险命令硬拦截）、`spill`（长输出转存）、`session-search`（历史会话搜索）、`sandbox`（文件与命令围栏——不配就没有外部进程与外部服务器，且默认档 workspace-write 不挡正常的工作区读写）、`file-review`（改动前预览——写文件、改文件前把 diff 摆进对话流）；默认关的十三个是 `subagent`（子智能体）、`team`（共享任务板）、`computer-use`（操作电脑桌面）、`lifecycle-hooks`（外部命令钩子）、`mcp`（MCP 外部工具）、`tool-search`（工具按需加载）、`schedule`（定时任务，到点会自己跑模型）、`lsp`（代码跳转与报错）、`browser`（受控浏览器，拉起独立 Chrome）、`dock-browser`（侧栏浏览器）、`self-improve`（经验沉淀，会写技能文件）、`dsh-compat`（dsh 插件兼容）、`ops`（文档与批量读取，要先装 dsh-ops）。各自干什么、默认开关按什么规矩定，见 development.md §4 那张表。
 
-新增一档官方可开关插件要做的三件事：
+新增一个功能包要做的三件事：
 
-1. 在 `dsc/src/host/kernel.ts` 的 `OFFICIAL_PLUGINS` 里登记元数据，带上
-   `toggleable: true`、`settingsSection: '<分区 id>'`（该默认关的再加 `defaultDisabled: true`），
-   并把插件对象填进同文件的 `OFFICIAL_OBJECTS`——少填这一处，内核装配时会直接跳过它，
-   开关拨了也不挂载；
+1. 建 `dsc/src/packages/<id>/`：`package.json`（`pneuma` 段写 `bundle.patch`、`order`、
+   `title`、`description`、`resolution`、可选的 `settingsSection` 与 `engines.pneuma`）、
+   `cordis.patch.yml`（`insert` 一行 `{ id, name: '@pneuma/<id>' }`，默认关就加
+   `disabled: true`）、`index.ts`（导出插件对象）。`pnpm build` 会把它打进
+   `lib/node_modules/@pneuma/<id>`，并按 `order` 合成进 `@pneuma/base`；
 2. 插件如果要对外提供服务，在 `apply()` 末尾 `ctx.provide('<服务名>', {...})`；
    没有对外服务的（例如 `approval-floor`、`spill`）跳过这一步；
 3. **不要**把这个可选服务写进 `inject`：插件关着时它不存在，写了 `inject` 会让整个挂载失败。

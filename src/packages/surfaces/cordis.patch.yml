@@ -1,0 +1,4 @@
+# 快照片段注册表
+- insert:
+    - id: surfaces
+      name: '@pneuma/surfaces'

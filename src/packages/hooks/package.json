@@ -1,0 +1,22 @@
+{
+  "name": "@pneuma/hooks",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 190,
+    "resolution": "pinned",
+    "title": "安全钩子",
+    "description": "工具动手之前按用户自己登记的规则与脚本拦一道，能直接拦下或强制问人",
+    "settingsSection": "hooks"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

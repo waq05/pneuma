@@ -168,8 +168,8 @@ const {
 } = contract
 const { createDockSession } = await import(modUrl('lib/core/dock-session.js'))
 const { HOST_BROWSER_SERVICE, DockBrowserUnavailableError } = await import(modUrl('lib/core/host-browser-link.js'))
-const { hostStdioPlugin } = await import(modUrl('lib/plugins/host-stdio.js'))
-const { dockBrowserPlugin } = await import(modUrl('lib/plugins/dock-browser.js'))
+const { hostStdioPlugin } = await import(modUrl('lib/packages/host-stdio/index.js'))
+const { dockBrowserPlugin } = await import(modUrl('lib/packages/dock-browser/index.js'))
 // 动作层（第 9 节）：CDP 应答是两层这件事就发生在这一份里，且 browser 插件与 dock 插件共用它。
 const actions = await import(modUrl('lib/core/cdp/actions.js'))
 const { NATIVE_EVENTS, NATIVE_EVENT_SET, NATIVE_BRIDGE_VERSION } = await import(modUrl('lib/core/native-bridge.js'))
@@ -187,7 +187,7 @@ console.log('[1] 契约单一真源：协议版本只有一处定义')
     'src/core/dock-browser.ts 出现了 import：它被宿主侧 `node lib/headless.js` 与桌面主进程两棵编译树同时引用，一旦拉进 electron 或带副作用的东西，探针也直读不了它',
   )
 
-  const stdioSrc = uncomment(read('src/plugins/host-stdio.ts'))
+  const stdioSrc = uncomment(read('src/packages/host-stdio/index.ts'))
   check(
     'host-stdio 从契约取版本（自己不许写死 = 2 / = 3）',
     !/HOST_PROTOCOL_VERSION\s*=\s*\d/.test(stdioSrc) && has(stdioSrc, "} from '@pneuma/runtime/core/dock-browser.js'") && stdioSrc.includes('HOST_PROTOCOL_VERSION'),
@@ -1005,7 +1005,7 @@ console.log('\n[9] 走查抓出来的四个缺陷（回归）')
     openMs >= 250 && openMs < 5_000,
     `本次 open 用了 ${String(openMs)}ms：< 250ms 说明没真的等（150ms 一拍的轮询至少两拍），过大说明上限（OPEN_SETTLE_MS）没生效`,
   )
-  const pluginCode = uncomment(read('src/plugins/dock-browser.ts'))
+  const pluginCode = uncomment(read('src/packages/dock-browser/index.ts'))
   const settleBody = functionBody(pluginCode, 'const waitForDockPage = async (')
   const openSettleMs = Number((pluginCode.match(/const OPEN_SETTLE_MS = ([\d_]+)/)?.[1] ?? '').replace(/_/g, ''))
   check(

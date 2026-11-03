@@ -238,7 +238,7 @@ console.log('[6] 调档手感')
   const css = read('ui-shell/src/styles.css')
   const composer = readPluginSource('ui-shell/src/plugins/composer')
   const slider = read('ui-shell/src/plugins/composer/effort-slider.tsx')
-  const runtime = read('src/plugins/runtime.ts')
+  const runtime = read('src/packages/runtime/index.ts')
   const methods = read('src/core/ui-methods.ts')
 
   // ① 乐观值：点下去立刻显示，不等宿主一个来回（否则先弹回旧档再跳过来）

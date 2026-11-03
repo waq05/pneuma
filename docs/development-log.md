@@ -232,7 +232,7 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 正在跑的插件却看不见（`subagent`、`computer-use` 的分区也一样中招）。现在统一走
 `resolvePluginConfig(file, passed)`（`src/core/plugin-registry.ts:165`）：装配那份作底，
 磁盘那份覆盖它，插件每次用值时现调，改完立刻生效。`compact` 与 `goal` 的两个数值各自
-注册成设置分区（`src/plugins/compact.ts:140`、`src/plugins/goal.ts:259`），并在内核清单里声明
+注册成设置分区（`src/packages/compact/index.ts:140`、`src/packages/goal/index.ts:259`），并在内核清单里声明
 `settingsSection`（`src/host/kernel.ts:112`、`:117`），于是它们出现在插件中心那两条「运行内核」
 详情的配置区里——设置面板按既定分工只列内核自己的六个分区，不收插件贡献的分区。
 `GoalStore` 的缺省轮次改成取值函数（`src/core/goal.ts:35`），新建的目标马上用新上限。
@@ -286,7 +286,7 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 | 摘要记录加 `keep` 字段记「尾部保留了几条」，重放时按它接回 | 日志是 append-only，摘要之前的原始记录一条都没删：只改成「遇到 `summary` 就把消息清空」的话，清空之后没法知道压缩当时留了哪几条尾部，最近几轮对话会被一起丢掉。`keep` 是唯一能从日志还原「摘要 + 保留尾部」的凭据；老日志没这个字段按 0 走，退化成「摘要 + 摘要之后的记录」，比把原文整段读回来（压缩等于白压）好 |
 | 压缩切点先退到安全边界（`safeCut`） | 协议要求每条 `tool` 消息紧跟在带同 id `tool_calls` 的 assistant 消息后面，从中间切开会让压缩后的第一次请求直接 HTTP 400；退到那条 assistant 上，工具调用与它的结果一起留在尾部 |
 | 锚点索引与用户原话直接附在摘要消息里 | 模型写的叙述会漏 SHA、文件路径、报错原文与用户原话，这三样换成正则抽取与逐字引用，不经模型改写。它们全是纯函数（`src/core/compact-anchors.ts`），可以脱开模型单独断言 |
-| 灾难地板排在守卫链 order 5（模式 10、安全钩子 20、审批 30 之前） | 守卫链是「第一位给出 deny 或 pass 的赢」：模式闸门对只读工具、只读命令与工作区内的写直接返回 pass（`src/core/modes.ts:104`、`:135`），它一返回 pass，后面的安全钩子与审批就再也拿不到发言权；权限模式的「完全访问」还会在审批层直接放行（`src/plugins/approval.ts:334-337`）。所以「灾难命令连满权限也不许跑」只能由排在它们前面的一位自己完成 |
+| 灾难地板排在守卫链 order 5（模式 10、安全钩子 20、审批 30 之前） | 守卫链是「第一位给出 deny 或 pass 的赢」：模式闸门对只读工具、只读命令与工作区内的写直接返回 pass（`src/core/modes.ts:104`、`:135`），它一返回 pass，后面的安全钩子与审批就再也拿不到发言权；权限模式的「完全访问」还会在审批层直接放行（`src/packages/approval/index.ts:334-337`）。所以「灾难命令连满权限也不许跑」只能由排在它们前面的一位自己完成 |
 | 地板自己判定，不注入 `mode` 服务；配置读不通时照样挂载却一律拒 | 注入会让地板在模式插件没挂时压根不 mount，挂不上等于链上根本没有地板（fail-open）；配置读坏的处置同理——全部拒掉让用户看见问题去改，比静默放过安全 |
 | 溢出观察者排在遮红之后（order 50 > 10） | 标记链按 order 从小到大加工，后一位看到前一位的输出：先遮红再落盘，磁盘上写的是脱敏文本。反序会把脱敏前的原文留在磁盘上，而回给模型的预览是脱敏的，泄漏悄无声息。`shots/spill-check.mjs` 把顺序故意反着挂了一次，断言原密钥真的会落进文件，证明验的是顺序不是巧合 |
 | 溢出跳过 `read` 工具 | read 的结果就是模型点名要的那一段，再落盘只会让它照预览里的续读写法再去 read 一次，又溢出、又落盘，形成活锁 |
@@ -300,8 +300,8 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 
 ### 设置分区 save() 返回值的不一致（本轮已修）
 
-`src/plugins/settings.ts` 原先让分区 `save()` 与 `action()` 共用同一个 `mutate()`，把返回的字符串一律当成**成功提示**；而 `src/services/types.ts` 的 `SettingsSectionSpec.save` 注释写的是「抛错或返回字符串 = 失败原因」。于是 `web-search`、`compact`、`approval-floor`、`spill`、`session-search`、`lifecycle-hooks`、`tool-search` 这些按注释契约写、把校验错误当字符串返回的分区，校验失败时界面弹的是绿色提示条，错值却已经落盘。
-改法是给 `save()` 单开一条 `mutateSave()`（返回字符串即失败原因），`mutate()` 留给 `action()` 与 `saveProvider()` / `removeProvider()`——后面那几条的返回值确实是完成提示（例如「已添加端点 X」），不能一起改成错误语义。`src/plugins/mcp.ts` 原先靠抛错绕开这层语义差，改完两条路等价，它的写法不用动。
+`src/packages/settings/index.ts` 原先让分区 `save()` 与 `action()` 共用同一个 `mutate()`，把返回的字符串一律当成**成功提示**；而 `src/services/types.ts` 的 `SettingsSectionSpec.save` 注释写的是「抛错或返回字符串 = 失败原因」。于是 `web-search`、`compact`、`approval-floor`、`spill`、`session-search`、`lifecycle-hooks`、`tool-search` 这些按注释契约写、把校验错误当字符串返回的分区，校验失败时界面弹的是绿色提示条，错值却已经落盘。
+改法是给 `save()` 单开一条 `mutateSave()`（返回字符串即失败原因），`mutate()` 留给 `action()` 与 `saveProvider()` / `removeProvider()`——后面那几条的返回值确实是完成提示（例如「已添加端点 X」），不能一起改成错误语义。`src/packages/mcp/index.ts` 原先靠抛错绕开这层语义差，改完两条路等价，它的写法不用动。
 回归断言写在 `shots/integration-check.mjs` 的「设置写入的返回值契约」一节：注册一个探针分区，分别验 `save()` 返回字符串按失败处理、`save()` 不返回按成功处理、`action()` 返回字符串仍按成功提示处理。
 
 ---
@@ -319,7 +319,7 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 | 审批卡「没人能应答」由入口登记判定，不靠 `process.stdin.isTTY` 猜 | `tui` 与 `host-stdio` 各登记一份 `interactive` 服务，`reachable()` 是各自的传输状态（标准输入关了 / 父端口还在）。审批层读不到登记且本进程不是终端直连时，直接按拒并写明理由。`approval-floor.ts` 原来那句「dsc 没有可靠的宿主交互信号」是错的：入口是确定的 |
 | 灾难命令的自检断言必须连带验耗时 | 只断言 `deny` 会放过「等审批超时按拒」这条路径——第一轮交付里 `format C:` 就是这么判成通过的，同时把 `integration-check` 拖成 300.6 秒。改成「是地板当场拒且 < 1 秒」，那 300 秒立刻变成红灯 |
 
-改动落在 `src/core/command-policy.ts`（正则、`HARDLINE`、只读判定、`CommandSegment.redirect`）、`src/core/approval-floor.ts`（`SHELL_HEADS` 补 `cmd`、白名单改 defer、`whitelist()`）、`src/services/types.ts`（两个新服务类型）、`src/plugins/approval.ts`（白名单免卡 + 无人应答快速拒）、`src/plugins/approval-floor.ts`（登记服务）、`src/plugins/tui.ts` 与 `src/plugins/host-stdio.ts`（登记界面可达性，`Transport` 加 `reachable()`）。自检改动：`shots/integration-check.mjs` 加四节（只读判定、白名单不截断链、没有界面时的审批卡、界面可达性按兄弟插件接线），`shots/approval-floor-check.mjs` 里按旧行为写的五条断言改成新语义。
+改动落在 `src/core/command-policy.ts`（正则、`HARDLINE`、只读判定、`CommandSegment.redirect`）、`src/core/approval-floor.ts`（`SHELL_HEADS` 补 `cmd`、白名单改 defer、`whitelist()`）、`src/services/types.ts`（两个新服务类型）、`src/packages/approval/index.ts`（白名单免卡 + 无人应答快速拒）、`src/packages/approval-floor/index.ts`（登记服务）、`src/packages/tui/index.ts` 与 `src/packages/host-stdio/index.ts`（登记界面可达性，`Transport` 加 `reachable()`）。自检改动：`shots/integration-check.mjs` 加四节（只读判定、白名单不截断链、没有界面时的审批卡、界面可达性按兄弟插件接线），`shots/approval-floor-check.mjs` 里按旧行为写的五条断言改成新语义。
 
 ---
 
@@ -342,7 +342,7 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 
 验收：五个单元自检全绿（sandbox 193 / schedule 207 / lsp 167 / browser 210 / self-improve 181，全部 0 FAIL，跑在临时 HOME 上），两份集成自检全绿（既有 95 条 + 新增 m5：起四次真内核验登记/挂载/热卸载/沙箱不误伤），全套既有回归 15 个脚本 0 FAIL。过程中自检真实逮到并修掉的实现 bug：LSP 的 pending 结账先清表后 settle（挂着的请求永不落地、进程 exit 13）、启动失败不透传 stderr 尾巴、PATHEXT 候选顺序错；self-improve 的 store 重复声明会话状态键（项目编译失败）；沙箱可写根误用挂载 cwd。
 
-阶段 13 补记（交接时容易漏的三件小事）：内核侧除执行器缝与 `sandbox` 服务外，`SessionStateMap` 也加了一个 `learnings` 键——形状故意留 `unknown`，core 层不认识插件层类型，读回一律过 `normalizeLearningsState` 收口；plugin-development 的内核 API 版本表原先只写到 v2，v3/v4 两行一直只在 `src/core/plugin-registry.ts` 的注释里，这次连同 v5 一起补全；两个被自检逼出来的架构事实进了 development.md §4——命令补全面（`src/plugins/commands.ts` 的模块级 `extraSpecs`）是进程级共享，同进程起多个内核验「热卸载无残留」必须先 `await ctx.fiber.dispose()`（cordis 的 `Context` 本身没有 dispose，fiber 在 `ctx.fiber` 上）。
+阶段 13 补记（交接时容易漏的三件小事）：内核侧除执行器缝与 `sandbox` 服务外，`SessionStateMap` 也加了一个 `learnings` 键——形状故意留 `unknown`，core 层不认识插件层类型，读回一律过 `normalizeLearningsState` 收口；plugin-development 的内核 API 版本表原先只写到 v2，v3/v4 两行一直只在 `src/core/plugin-registry.ts` 的注释里，这次连同 v5 一起补全；两个被自检逼出来的架构事实进了 development.md §4——命令补全面（`src/packages/commands/index.ts` 的模块级 `extraSpecs`）是进程级共享，同进程起多个内核验「热卸载无残留」必须先 `await ctx.fiber.dispose()`（cordis 的 `Context` 本身没有 dispose，fiber 在 `ctx.fiber` 上）。
 
 ---
 
@@ -683,7 +683,7 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 | `stop` / `message` 从 `subagent` 工具的动作里抽出来，工具与 `TeamService` 共用同一段函数 | 话术一字不差，模型与用户看到的必须是同一件事；重写第二套迟早会漂。名字不存在时返回一句明确的错误说明（契约是 `Promise<string>`，界面直接显示这句话），不抛错 |
 | 宿主方法名用 `stopTeammate` / `messageTeammate`，与 `listTeammates` 同族，并进 `INVOKABLE_METHODS`；**不进** remote 的 `REMOTE_METHODS` | 手机端本批不做管理。`INVOKABLE_METHODS` 的 `satisfies` + `INVOKE_COVERAGE` 是编译期兜底：往 `DscRuntime` 加了方法却没进白名单，编译当场报错 |
 
-**中途撞上的一件事（记一笔）**：本批开发期间，树里另有一个批次（dsh 兼容层）正在写未跟踪的 `src/plugins/dsh-compat.ts` 与 `src/core/dsh-compat/`，并且**与我们同改 `src/services/types.ts`**（它加 `LoggerService` 与 `llm.registerAdapter` / `prompt.registerProjection`，把 `KERNEL_API_VERSION` 从 5 提到 6）。那段时间根 `pnpm run typecheck` 报的 4～6 条错全在它的文件/行上（`tools-facade.ts` 的 `../../tools.js` 路径笔误、`logger?: LoggerService` 与 cordis 内置 `logger` 的声明合并冲突）。处理办法是**不改别人的文件**：把 `src` 拷一份到临时目录、只摘掉它那两处，再单独 `tsc` → 0 错，以此证明本批改动本身干净；它修完之后整树两次 `pnpm run typecheck` / `pnpm run build` 都是 0 错（本阶段的验收数字以最终整树为准）。
+**中途撞上的一件事（记一笔）**：本批开发期间，树里另有一个批次（dsh 兼容层）正在写未跟踪的 `src/packages/dsh-compat/index.ts` 与 `src/core/dsh-compat/`，并且**与我们同改 `src/services/types.ts`**（它加 `LoggerService` 与 `llm.registerAdapter` / `prompt.registerProjection`，把 `KERNEL_API_VERSION` 从 5 提到 6）。那段时间根 `pnpm run typecheck` 报的 4～6 条错全在它的文件/行上（`tools-facade.ts` 的 `../../tools.js` 路径笔误、`logger?: LoggerService` 与 cordis 内置 `logger` 的声明合并冲突）。处理办法是**不改别人的文件**：把 `src` 拷一份到临时目录、只摘掉它那两处，再单独 `tsc` → 0 错，以此证明本批改动本身干净；它修完之后整树两次 `pnpm run typecheck` / `pnpm run build` 都是 0 错（本阶段的验收数字以最终整树为准）。
 
 验收（全部在最终整树上跑）：
 
@@ -691,7 +691,7 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 - `node scripts/settings-sections-check.mjs`（本批新建）**20/20**：内核六个分区 `builtin` 不变；挂上 remote 插件后「远程控制」分区 `builtin=true`、`fields` 有控件；挂插件前后插件中心清单逐字节一致；分区投影的字段名只有 `builtin,custom,fields,id,order,subtitle,title` 七个（`inSettings` 不漏进 IPC）；不传第二参的插件分区照旧 `builtin=false`；传了的是 true；退订后分区消失且写不进去。
 - `node shots/team-check.mjs` **118 PASS / 1 FAIL**：本批新加的 **21 条全过**（3a 两条：系统提示词标题、插件中心插件名；3b 七条：老名册无 `sessionId` 不炸也不补空值、带 `sessionId` 的原样露出、IPC 那条路同样读得到、真派一个队友后名册与投影都带出生会话 id；3c 十二条：`TeamService` 上两个方法在位、`stopTeammate` 收掉队友、收掉后台账仍在而在场名单里没有它、投话进信箱且署名 `user`、不存在的名字与空话都给明确说明、`team` 服务与 `ui` 适配器同路，另加团队没开时两个方法都拒得说明白）。唯一那条 FAIL 与本次改动无关：`shots/team-check.mjs:127` 写死 `KERNEL_API_VERSION === 5`，而并行 dsh-compat 批次已把它升到 6（`src/core/plugin-registry.ts` 的 `5 → 6` 是它的改动，本批没碰这一行）。
 - `node shots/integration-check.mjs` **104/104**、`node scripts/remote-host-test.mjs` **134/134**：远程插件的挂载、注册与白名单没被本批带偏。
-- 嵌入运行时：`node desktop/scripts/prepare-runtime.mjs` 组装 **35 个依赖包**，`node_modules/ws` 与 `node_modules/web-push` 及其全部传递依赖（`asn1.js` / `http_ece` / `https-proxy-agent` / `jws` / `minimist` / `bn.js` / `inherits` / `minimalistic-assert` / `safer-buffer` / `agent-base` / `debug` / `jwa` / `safe-buffer` / `ms` / `buffer-equal-constant-time` / `ecdsa-sig-formatter`）真实存在；脚本自己从产物目录 `require` 这两个包成功。再做一次「换机器」的等价验证：把整个 `desktop/runtime-staging/dsc-core` 拷到 `%TEMP%`（没有任何祖先 `node_modules`）后 `import lib/plugins/remote.js` 成功（`remotePlugin` 是对象）；离线静态扫描 `lib` 下 157 个 `.js` 的裸依赖，除刻意不带的 `ink` / `react` 外**零缺失**。
+- 嵌入运行时：`node desktop/scripts/prepare-runtime.mjs` 组装 **35 个依赖包**，`node_modules/ws` 与 `node_modules/web-push` 及其全部传递依赖（`asn1.js` / `http_ece` / `https-proxy-agent` / `jws` / `minimist` / `bn.js` / `inherits` / `minimalistic-assert` / `safer-buffer` / `agent-base` / `debug` / `jwa` / `safe-buffer` / `ms` / `buffer-equal-constant-time` / `ecdsa-sig-formatter`）真实存在；脚本自己从产物目录 `require` 这两个包成功。再做一次「换机器」的等价验证：把整个 `desktop/runtime-staging/dsc-core` 拷到 `%TEMP%`（没有任何祖先 `node_modules`）后 `import lib/packages/remote/index.js` 成功（`remotePlugin` 是对象）；离线静态扫描 `lib` 下 157 个 `.js` 的裸依赖，除刻意不带的 `ink` / `react` 外**零缺失**。
 - 隔离纪律：四个探针各自把 `HOME` / `USERPROFILE` 换到临时目录；跑前跑后对真实 `~/.dsc` 逐文件比对（138 个文件的路径 + 大小 + UTC 时间戳），**零改动**。
 
 诚实边界：① **桌面渲染层不在本批**：设置页那个「只画 `builtin` 分区」的过滤、队友面板上的收掉与传话按钮、`remote-web` 的一切，都由并行批次 B 做；本批只保证协议与投影这一半（`listSections` 里「远程控制」的 `builtin=true`、两个新方法在 `INVOKABLE_METHODS` 上可调），界面到底画没画出来、按钮接没接上，要 B 的截图证据。② **旧名册的 `sessionId` 不回填**：老记录永远是 `undefined`，界面要么按「未知」显示要么不显示这一栏；不回填是因为名册里没有能反查会话的依据，填了就是编。③ **收掉的队友仍留在名册里**：`team.list()` 是名册投影，`stopTeammate` 收掉后那条记录还在（状态可能还写着 `working`），这是工具版 `stop` 一直以来的行为，本批没改；UI 要显示成「已收掉」得自己加一档状态。④ 依赖闭包按**当前平台**解析 `optionalDependencies`：Windows 上只带 `@koromix/koffi-win32-x64`，跨平台打包要在各自平台各跑一遍（既有约束没变）。⑤ `lib` 里 import 了、dev 树上也没有的包只警告不拦——今天最终树上是零警告，但这条口子留在那里，将来真漏了包只会看到一行字，不会停打包。⑥ 更名只做了宿主侧：`README.md`、`docs/development.md`、`docs/plugin-development.md` 与 `desktop/src`（渲染层）里还留着「子智能体团队」，前三份不在本批允许改的文件清单里、后者归批次 B。
@@ -822,7 +822,7 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 
 用户截图圈了三处：Webhook 帮助文字压住输入框、侧栏「远程控制」图标像个太阳、「连接手机」按钮折成两行。顺着走查把同类问题一次清完。
 
-- **文案**（宿主 `src/plugins/remote.ts`、`settings.ts`、`sandbox.ts` 与渲染层 `SettingsModal.tsx` 外观行）：帮助文字统一压短、说人话——Webhook 的三条帮助合并成「留空 = 关。带 {title}/{body}/{url} 占位符按 GET 发（Bark），不带的按 POST JSON 发（ntfy）」；「伺服状态」改名「运行状态」；外观五项的帮助各一句话。
+- **文案**（宿主 `src/packages/remote/index.ts`、`settings.ts`、`sandbox.ts` 与渲染层 `SettingsModal.tsx` 外观行）：帮助文字统一压短、说人话——Webhook 的三条帮助合并成「留空 = 关。带 {title}/{body}/{url} 占位符按 GET 发（Bark），不带的按 POST JSON 发（ntfy）」；「伺服状态」改名「运行状态」；外观五项的帮助各一句话。
 - **图标**：`IconGear` 重绘成真齿轮（原来的分离射线段在 15px 下像太阳）；新增 `IconPhone`（圆角机身 + 听筒线 + 主屏点），设置导航里「远程控制」用它。
 - **尺寸**：`.btn-ghost`/`.btn-primary` 补 `white-space: nowrap`（按钮在 flex 行里被压折行的根因）；`.setting-help` 补 `overflow-wrap: anywhere`（URL 长词溢出压住控件的根因）；配对弹窗地址在窄面板里可折行。
 - **用量面板**：深色主题下 `--dsc-purple` 是蓝色系（dsh 配色扩展），与品牌蓝在系列色里撞色——调换顺序；热力图从「尾部一列漂浮」改成全年 GitHub 式画布（补齐空档列与月份标签），月份标签 nowrap 防折行。
@@ -1044,7 +1044,7 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 - `harness-benchmark-roadmap.md`：差距矩阵全面修订（沙箱从 ⊘ 改 ◐ 策略级、LSP/浏览器/定时任务/PTC 改 ●，新增 diff 审查链 / /review / @提及 / 后台任务 / 标题生成 / 占用表 / 会话导出 / 运行状态点 / 手机遥控九行；hermes 未重读，新行标「—」待核对）；新增 §7 差距登记 **T14–T28**（P1 六件：T14 输入端 @ 文件提及补全、T15 bash 后台任务、T16 会话标题自动生成、T17 上下文占用表 + /status、T18 /review 升级独立子代理与结构化 findings、T19 压缩前置裁剪 + 图像卸载；P2 九件：持久终端工具 / 侧栏运行状态 / 会话导出 / 在线模型发现 / MCP elicitation+resources / read 支持图片 / 部分行接受与回滚 / 检查更新落地 / 插件远程安装；P3 十三条登记免遗忘）；§7.4 单列 dsc 独有领先项、§7.5 给建议落地顺序。顺手修正附录 A 两处：codex 沙箱「fail-closed」表述与 §5.1 T9 落地记录矛盾（codex 降级同样不 fail-closed，dsc 照的是这个），并补 codex 新发现能力（review 子代理 / exec_command / backtrack / mention / request_permissions / Guardian）。
 - `development.md`：§13「命令与补全」刷成现状——单一真源是 `core/commands-completion.ts`（顶层零 node 依赖，渲染层 import 链白屏教训写明）、内置命令 7 条（/review 进表）、/effort 占位行号更新；导航表补 peer-feature-inventory 入口。
 
-**方法**：三路并行只读源码梳理（dsh 全仓 11 能力域、codex 全仓 10 能力域、dsc 代码 + 全部 44 阶段日志），不运行任何一家；dsc 侧另行查证了四个易错事实——内置命令现为 7 条（`src/core/commands-completion.ts:16-22`）、/effort 保留占位（`src/plugins/commands.ts:118`）、read 工具不支持图片（`src/core/tools/fs-tools.ts` 无 mime 分流）、侧栏无会话运行状态（`desktop/src/renderer/Sidebar.tsx:671` 占位注释自证）；桌面端粘贴贴图已有（`Composer.tsx` 剪贴板图片 + modalities 检查），不算差距。
+**方法**：三路并行只读源码梳理（dsh 全仓 11 能力域、codex 全仓 10 能力域、dsc 代码 + 全部 44 阶段日志），不运行任何一家；dsc 侧另行查证了四个易错事实——内置命令现为 7 条（`src/core/commands-completion.ts:16-22`）、/effort 保留占位（`src/packages/commands/index.ts:118`）、read 工具不支持图片（`src/core/tools/fs-tools.ts` 无 mime 分流）、侧栏无会话运行状态（`desktop/src/renderer/Sidebar.tsx:671` 占位注释自证）；桌面端粘贴贴图已有（`Composer.tsx` 剪贴板图片 + modalities 检查），不算差距。
 
 **诚实边界**：① hermes 本轮未重读（矩阵新行 hermes 列标「—」），三家清单是 2026-10-02 的源码快照，上游会漂移；② codex 功能面按本地 `D:\codex\codex` 源码梳理，官方文档站未对照（附录 C 既有声明沿用）；③ 差距登记只做了「是什么/对标/落点/验收」级别的立项，P1 六件都还没做探索与排期，落地前各需一轮设计（尤其 T15 动内核、T26 依赖回滚语义要先单独立项）；④ T17 的 token 估算与 compact 触发线的「同源」验收要防止两套估算并存。
 
@@ -1058,7 +1058,7 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 
 **改了什么（P0 五件，缺陷级）**：
 
-- **T29 计划评审死锁**：`dsc/session-open` 监听器现在先 `planDone?.('rejected', true)` 再清场（`src/plugins/plan.ts`），挂起的 `exit_plan_mode` await 能返回了，agent 循环不再永久 running。配套两处：`propose` 在提交时捕获会话引用，清理落库写回「提交时」的那个会话而不是已切换后的 `ctx.session.current()`；切会话/退出的清理走 quiet 标记，不再往新会话的界面喊「计划未获批准」。
+- **T29 计划评审死锁**：`dsc/session-open` 监听器现在先 `planDone?.('rejected', true)` 再清场（`src/packages/plan/index.ts`），挂起的 `exit_plan_mode` await 能返回了，agent 循环不再永久 running。配套两处：`propose` 在提交时捕获会话引用，清理落库写回「提交时」的那个会话而不是已切换后的 `ctx.session.current()`；切会话/退出的清理走 quiet 标记，不再往新会话的界面喊「计划未获批准」。
 - **T30 会话写租约**：新增 `src/core/lockfile.ts`（O_EXCL 独占创建 + pid/进程指纹 + 陈锁接管 + **同进程可重入计数**——同进程重复打开同一会话不能自己锁死自己）。`Session.create/load` 拿租约、`close()` 归还；归档/恢复/删除走短临界区锁；meta.json 的读改写进同一把锁并改成「临时文件 + 原子替换」。只读重放（队友记录 peek）显式 `lease: false` 不抢锁。两个 Muse Code 同开一个工作区时，第二方现在拿到「这份会话已在另一个 Muse Code 窗口打开」的明确报错，而不是交错写坏日志。
 - **T31 头损坏抢救**：`Session.load` 遇到 meta 首行半截 JSON 不再直接 throw——从内容反推 meta（id 用文件名、createdAt 用文件诞生时间、cwd 用「绝对路径祖先 + slug 匹配日志目录名」两条件夹出来，推不出退最长公共目录）；列表投影 `readSessionFile` 同步抢救让损坏会话在侧栏可见。实在推不出 cwd 时抛明确错误、文件保留原位，绝不静默回落「开新会话」。
 - **T32 中断回合修复**：恢复会话时扫尾部孤儿 tool_calls，各补一条「已发起、结果未知，先核查再决定重试」的合成结果并落盘（dsh interruptedTurnClosers 同款语义）；重复恢复幂等；修复只在握着写租约时做（写的人才负责修）。请求侧的 `sanitizeToolOrphans` 退居协议兜底。
@@ -1158,7 +1158,7 @@ roadmap §7 的 T14–T28 全量开工，第一批四件（全部不动内核的
 
 **T14 输入端 @ 文件提及**：`desktop/src/renderer/mention-complete.ts`（新，纯模块）——`mentionQueryAt` 定位光标处的 @token（`@` 前必须是空白或行首，邮箱不触发）、`rankMentionCandidates` 候选排序（文件名前缀 > 文件名包含 > 路径包含，同档路径短的靠前）、`insertMention` 替换回填、`collectWorkspaceFiles` 工作区遍历（注入 fs-list lister，跳过 node_modules/.git/dist 等构建目录，2000 条/6 层封顶）。Composer 加 @ 面板（与 / 命令面板互斥、Esc 关闭同 token 不再弹、键盘可选），App 注入带 60 秒缓存的文件清单；`matchMentionPath` 识别时剥掉前导 `@`，发出去的 `@路径` 照常命中改动卡 chip。
 
-**T16 会话标题自动生成**：`src/plugins/session-title.ts`（新）——首个 completed 回合后经 `ctx.llm.stream` 发一次独立小请求（前 3 条用户消息各截 600 字符，20 秒超时），标题写 meta.json 的 `autoTitle`（与用户改名 `title` 分开存）；展示链改为 用户改名 → 自动标题 → 首条消息截断（session.ts 两处投影 + contract 注释）。用户改过名或已生成过的永不覆盖；失败完全静默（截断标题兜底）。
+**T16 会话标题自动生成**：`src/packages/session-title/index.ts`（新）——首个 completed 回合后经 `ctx.llm.stream` 发一次独立小请求（前 3 条用户消息各截 600 字符，20 秒超时），标题写 meta.json 的 `autoTitle`（与用户改名 `title` 分开存）；展示链改为 用户改名 → 自动标题 → 首条消息截断（session.ts 两处投影 + contract 注释）。用户改过名或已生成过的永不覆盖；失败完全静默（截断标题兜底）。
 
 **T17 /status**：`CompactService.describe()` 新增（services/types + compact 插件，现读配置与 `check()` 同源）；`/status` 内建命令（plugins/commands.ts 的 `statusReport` 纯函数）报模型窗口、消息数、估算用量与占比、自动压缩触发线与剩余余量——估算走 compact 同一个 `estimateTokens`。
 
@@ -1504,7 +1504,7 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 
 **修法（宿主层收尾）**：`plugins/session.ts` 的 `archive` 在挪完文件后自己重扫一次列表缓存——`if (done.length > 0) await service.refresh()`。`refresh()` 发 `dsc/changed`，宿主据此推新快照，侧栏与选择器跟着变；失败一半也扫，已经挪走的那部分同样不该再出现在活动区列表里。渲染层不动：别的会话库操作（`Sidebar` 的 `run()`）本来就自己调 `refreshSessions()`，这次把收尾放在宿主侧，所有调用方（含 remote / TUI 路径）一起受益，不必各自记得刷。
 
-**验证**：typecheck（根）绿。新回归 `scripts/session-archive-refresh-test.mjs`（临时 HOME，7 断言：apply 提供 session 服务、归档前两条都在活动区、archive 报成功、归档后活动区缓存不再有它、归档区那份带 archivedAt、没误伤保留的那条、archive 期间发过 dsc/changed）全绿。变异核实：把 `lib/plugins/session.js` 里那行 `await service.refresh()` 换成 `void 0`（等价修复前行为）后探针 3 条转红——「归档后活动区缓存里不再有它」正是用户看到的现象；重新构建还原后 7/7 全绿。端到端（侧栏的组当真空掉）需装包重启宿主复验，本轮未跑桌面走查（`desktop.json` 是走查与真实档案的交叉点，按阶段 65 的教训不主动碰）。
+**验证**：typecheck（根）绿。新回归 `scripts/session-archive-refresh-test.mjs`（临时 HOME，7 断言：apply 提供 session 服务、归档前两条都在活动区、archive 报成功、归档后活动区缓存不再有它、归档区那份带 archivedAt、没误伤保留的那条、archive 期间发过 dsc/changed）全绿。变异核实：把 `lib/packages/session/index.js` 里那行 `await service.refresh()` 换成 `void 0`（等价修复前行为）后探针 3 条转红——「归档后活动区缓存里不再有它」正是用户看到的现象；重新构建还原后 7/7 全绿。端到端（侧栏的组当真空掉）需装包重启宿主复验，本轮未跑桌面走查（`desktop.json` 是走查与真实档案的交叉点，按阶段 65 的教训不主动碰）。
 
 **版本号**：本轮未 bump `package.json`（仍 0.6.49），发版时统一走。
 
@@ -1808,7 +1808,7 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 - `src/core/ui-route.ts`：`/plugins/<id>/<file>?rev=` 的解析，**宿主界面服务与远程控制共用一份**（C-真 的要点是桌面与远程看同一份界面，判断口径不能两处各写一遍）。`rev` 与当下算出来的不一致就 404：旧地址不拿新代码，新地址不拿旧代码。
 - `src/core/ui-server.ts`：本机回环 HTTP（可独立测试，不依赖 cordis）。一次性令牌 → `/?token=` 换 HttpOnly `dsc_ui` Cookie → 302 到 `/`；令牌用一次作废。**Host 头校验是所有路由的总闸**（防 DNS rebinding，恶意网页把自己的域名解析到 127.0.0.1 也打不进来）。送 `index.html` 之前把启动图塞进 `window.__DSC_BOOT__`（与 dsh 同一个位置、同一个名字）。静态资源目录不存在时返回一张"界面资产未构建"的占位页。
 - `src/core/web-http.ts` / `src/core/web-static.ts`：把 remote 里的 Host 校验、Bearer 解析、请求体读取、静态伺服上移到 core 共用；`plugins/remote/http.ts` 退化成一层转发（远程那边的引用一行没改），`plugins/remote/routes.ts` 的静态兜底页改调共用实现。
-- `src/plugins/webserver.ts`：新宿主插件，`provide: 'webServer'`。**默认不监听**——终端里跑 `msc` 的人不该平白多出一个端口；桌面主进程将来通过协议要地址，自检与终端调试用 `DSC_UI_SERVER=1` 或插件配置 `enabled: true`。起来时打印一条带一次性令牌的地址（`Muse Code 界面： http://127.0.0.1:<port>/?token=…`）。已进 `host/kernel.ts` 的 `BUILTIN_PLUGINS` 与装配序列（排在 runtime 之后）。
+- `src/packages/webserver/index.ts`：新宿主插件，`provide: 'webServer'`。**默认不监听**——终端里跑 `msc` 的人不该平白多出一个端口；桌面主进程将来通过协议要地址，自检与终端调试用 `DSC_UI_SERVER=1` 或插件配置 `enabled: true`。起来时打印一条带一次性令牌的地址（`Muse Code 界面： http://127.0.0.1:<port>/?token=…`）。已进 `host/kernel.ts` 的 `BUILTIN_PLUGINS` 与装配序列（排在 runtime 之后）。
 
 **界面壳（新包 `ui-shell/`，与 remote-web 同构）**：
 
@@ -2290,7 +2290,7 @@ views.css 里那批 `calc(Npx * var(--dsc-btn-scale))` 用**固定 px** 覆盖�
   摘要只放这次要动什么）。
 - `src/core/ui-methods.ts`：`dock` 从排除名单挪到放行面，实参规格
   `[enum(DOCK_UI_OPS), json]`；文件头把"为什么原来排除、现在为什么能放两档"写清。
-- `src/plugins/desktop-dock.ts`：写类 op 进 switch **之前**先过 `requireWriteApproval`；
+- `src/packages/desktop-dock/index.ts`：写类 op 进 switch **之前**先过 `requireWriteApproval`；
   审批服务没起来就**拒**（失败关闭）。读类与终端不受影响。
 - `src/core/native-bridge.ts`：加 `terminal` op（`[enum(DOCK_TERM_OPS), json≤8KB]`）与
   事件白名单 `NATIVE_EVENTS = ['dock-data']`；协议版本 2。
@@ -2693,7 +2693,7 @@ class 名照旧界面的文件树与预览写（`.files-pane` / `.files-list` / 
 `没有名为 beta 的端点；可用：（无）`。查下来是**宿主的既有链路**：
 
 - `src/core/config.ts:75` 的 `toProvider` 在 key 为空时**返回 null**，所以没配密钥的端点不注册进运行期配置；
-- 而 `src/plugins/settings.ts:524` 的 `setDefaultModel` 是**先写文件、再校验运行期**：
+- 而 `src/packages/settings/index.ts:524` 的 `setDefaultModel` 是**先写文件、再校验运行期**：
   `writeDefaultModel()` 已经把 `config.yaml` 改成 `beta/beta-pro` 了，随后 `ctx.llm.setModel()` 抛错，
   `mutateWith`（:563）只把错误包成 `{ok:false}` 返回，**不回滚文件**。
 
@@ -3706,7 +3706,7 @@ csv/xlsx 表格预览、手动排序拖拽、桌面信任卡、remote-web 切壳
 
 ### 真 bug：文件树 / git / 终端的根不是当前会话的工作区
 
-- **根因**：宿主 `src/plugins/desktop-dock.ts` 的工作目录在**插件挂载时**钉死
+- **根因**：宿主 `src/packages/desktop-dock/index.ts` 的工作目录在**插件挂载时**钉死
   （`config.cwd ?? process.cwd()`，即宿主进程启动目录）；而常驻多会话模型下（0.6.48 起）
   同一宿主进程里不同会话的 cwd 不同——切到别的工作区的会话后，文件树/git/终端继续指着
   启动目录。桌面自检复现（宿主启动目录 start-dir ≠ 会话 cwd ws-b：切到 ws-b 的会话后
@@ -4380,7 +4380,7 @@ csv/xlsx 表格预览、手动排序拖拽、桌面信任卡、remote-web 切壳
   产品面），不是渲染层能补的；目标节是**瘦身版**：`GoalView` 没有逐轮 todo 与累计耗时字段，
   所以只有正文 + 相位 / 轮次 + 暂停 / 继续；
 ②智能体「在跑那一行点开右栏」这条路径**没有真机覆盖**：名册里 `state: working` 但没有本进程
-  live 记录的条目会被宿主读成 stopped（`src/plugins/subagent.ts:570` 的僵尸判定），自检造不出
+  live 记录的条目会被宿主读成 stopped（`src/packages/subagent/index.ts:570` 的僵尸判定），自检造不出
   活队友；代码路径保留、结构由探针钉住，但没端到端跑过；
 ③截图的坑见教训①——把自检的截图延时从 150s 收到 100s（eval 预算 72s）降低暴露面；判「功能
   在不在」以 DOM 读数为准，截图只是佐证；
@@ -4623,7 +4623,7 @@ fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tr
 
 ### 落地
 
-宿主 `src/plugins/desktop-dock.ts`：
+宿主 `src/packages/desktop-dock/index.ts`：
 
 1. `hasHead(cwd)`（`git rev-parse --verify --quiet HEAD`）+ `trackedDiff()`：HEAD 在仍是
    一段 `diff HEAD`（已暂存 + 未暂存合并，行为不变），没出生就 `diff` + `diff --cached`
@@ -4972,7 +4972,7 @@ JSON 字符串里全是 `\n` 转义，读者要的是「改了哪几行」。
 
 **落地。** `ApprovalPolicy` 收敛为 `readonly | auto-edit | full-access`（`src/contract.ts`），
 新增 `ApprovalReviewer = 'user' | 'auto-review'`。复核落在审批判定链的**第 5.5 层**
-（`src/plugins/approval.ts`）——**跑在自动放行之前**，所以「完全访问 + AI 复核」里每一次走到
+（`src/packages/approval/index.ts`）——**跑在自动放行之前**，所以「完全访问 + AI 复核」里每一次走到
 这一步的事都先给模型判官看一眼，与旧 `ai-review` 档**逐字等价**（谁也不自动放行，全过模型）。
 旧偏好值 `ai-review` 由 `src/core/prefs.ts` 的 `LEGACY_AI_REVIEW` 自动迁移成「`full-access`
 档 + `auto-review` 审阅者」这一组合，行为不变（显式写了 reviewer 时以它为准）。
@@ -4986,7 +4986,7 @@ JSON 字符串里全是 `\n` 转义，读者要的是「改了哪几行」。
 「完全访问 + 沙箱仍 `workspace-write`」这种自相矛盾的组合。参考实现里预设本来就是「沙箱 +
 审批」一对，dsc 在这一对之上再加审阅者这一轴。
 
-**落地。** 新插件 `src/plugins/permission-presets.ts`（`provide: 'permissionPresets'`），
+**落地。** 新插件 `src/packages/permission-presets/index.ts`（`provide: 'permissionPresets'`），
 **纯表在 `src/core/permission-presets.ts`**（零依赖，探针直读）。出厂四个：
 `read-only`（只读：`read-only` 沙箱 + `readonly` + `user`）/ `workspace`（工作区可写：
 `workspace-write` + `auto-edit` + `user`，**默认**）/ `full-access`（完全访问：
@@ -5057,7 +5057,7 @@ JSON 字符串里全是 `\n` 转义，读者要的是「改了哪几行」。
   转**全部通过**（那条 `ctx.get` 断言原来少列了三个合法软依赖名）；`preset-check` /
   `modes-runtime-smoke` / `m5-integration-check` / `integration-check` / `kernel-boot` 全绿。
 - `pnpm build` + `pnpm build:ui` 产物核验：composer / prompt 客户端 bundle 里含 `permissionPresets` /
-  `approval-escalation`，`lib/plugins/sandbox.js` 含 `grantSession`。
+  `approval-escalation`，`lib/packages/sandbox/index.js` 含 `grantSession`。
 - 施工中发现并修掉的真 bug：新插件 `permission-presets.ts` 起初 `inject` 少了 `mode` / `session` /
   `transcript`，运行期会抛「cannot get property ... without inject」（由探针抓出，已补）。
 
@@ -5114,7 +5114,7 @@ band」，那才是它要的盒子。
 窗口（与权限预设那颗同一处境、同一处理）。
 
 **读数为什么住宿主**：这颗钮要**一直**显示当前分支。界面自己拉 `dock git-status` 的话，同一份
-读数就成了「状态面板一拍、输入区再一拍」；而新插件 `src/plugins/git.ts` 给的是**一片轻读**
+读数就成了「状态面板一拍、输入区再一拍」；而新插件 `src/packages/git/index.ts` 给的是**一片轻读**
 （一条分支名 + 数一数 `git status --porcelain -z` 的条数），登记成快照面 `surfaces.git`
 （`repo / branch / detached / dirtyFileCount`），壳只渲染。状态面板那条重读（`stats: true`：
 每文件增删行数、未跟踪按内容数行）**留在壳里**按它自己更松的节奏走——两处要的东西本就不同。
@@ -5175,8 +5175,8 @@ band」，那才是它要的盒子。
   / `ui-hmr-test` / `ui-third-party-test` / `remote-host-test` 140/140 / `legacy-frozen-check`
   / `commands-battery` / `ui-native-bridge-test` 96 条）。
 - 产物核验：`pnpm -C ui-shell build` 后 `lib/ui/plugins/composer/client.js` 含 `composer-git` /
-  `git-branch-create`，`lib/ui/assets/*.css` 含 `.composer-git`，`lib/plugins/desktop-dock.js`
-  含 `git-branches`，`lib/plugins/git.js` + `lib/core/git-exec.js` 在位。
+  `git-branch-create`，`lib/ui/assets/*.css` 含 `.composer-git`，`lib/packages/desktop-dock/index.js`
+  含 `git-branches`，`lib/packages/git/index.js` + `lib/core/git-exec.js` 在位。
 - 施工中同步改掉的两处**探针指针**：`ui-status-panel-test` 里三条读 `desktop-dock.ts` 原文的
   断言（porcelain `-z` / rename 跳过 / show-prefix）随这次抽取改指 `core/git-exec.ts`——它们是
   「实现住在哪」的钉子，实现搬家就得跟着搬。
@@ -5477,7 +5477,7 @@ Radix Collapsible 的**高度关键帧 300ms + 内容 fade**，且**收起后延
 ### ① 打开的是宿主进程的启动目录，不是当前会话的工作区
 
 **根因（两侧各一半，谁都没错，接起来就错）**：壳按**当前会话的 cwd** 显示「当前工作区」
-（`src/plugins/transcript.ts:242` 的 `status.cwd`，也就是侧栏底部那一行的读数）；按钮原先只报一个
+（`src/packages/transcript/index.ts:242` 的 `status.cwd`，也就是侧栏底部那一行的读数）；按钮原先只报一个
 kind、不说开哪个目录（`ui-shell/src/plugins/sessions/ui.tsx:1777` 修前是 `invoke('openWorkspace', [kind])`），
 桌面主进程只好用 `hostCwd`——那是**宿主进程的启动目录**（`desktop/electron/main/index.ts:202`
 在 `startHost(cwd)` 里赋值）。0.6.48 起常驻多会话模型下「一个宿主进程里不同会话各有各的 cwd」，
@@ -5535,9 +5535,9 @@ kind、不说开哪个目录（`ui-shell/src/plugins/sessions/ui.tsx:1777` 修�
   一节：流量像 coding agent、**用自己的 user agent**、每条会话在 `x-opencode-session` 里带稳定
   session ID；「Known problematic clients」第一条就是 DeepSeek Harness，理由是「session 信息在部分
   模型路径上带、部分不带」）；
-- 建议改法也对：会话 id 在插件层拿得到（`src/plugins/llm.ts:23`），但要先给 `StreamRequest` 加字段；
-  而**所有** LLM 流量（主循环 `src/core/loop.ts:390`、标题生成 `src/plugins/session-title.ts:88`、
-  审批判官 `src/plugins/approval.ts:388`、子智能体）都从 `src/plugins/llm.ts:137` 那个 `stream()`
+- 建议改法也对：会话 id 在插件层拿得到（`src/packages/llm/index.ts:23`），但要先给 `StreamRequest` 加字段；
+  而**所有** LLM 流量（主循环 `src/core/loop.ts:390`、标题生成 `src/packages/session-title/index.ts:88`、
+  审批判官 `src/packages/approval/index.ts:388`、子智能体）都从 `src/packages/llm/index.ts:137` 那个 `stream()`
   汇聚点过，所以「在派发前把会话 id 塞进 request」这一处改动的覆盖面是对的（辅助请求不会漏——
   正好避开 dsh 那个「部分路径带、部分路径没带」的坑）；
 - 两条提醒（**不能无条件加头**、补齐头不等于一定放行）与 `src/core/llm.ts:44-46` 记的同类教训一致。
@@ -5592,7 +5592,7 @@ Playwright 的 locator（`getByRole` / `locator().click()`）在这个页面里�
 | --- | --- |
 | `src/core/request-attribution.ts`（新，纯模块） | 门控 `isOpenCodeGoBaseUrl`（host + path 一起判，大小写/尾斜杠宽容）；会话 id 合法性只放行 `[A-Za-z0-9._:-]{1,128}`，非法/超长/空一律**省略这个头**；`sessionAttributionHeaders` 出「自标识 UA + 命中才加会话头」 |
 | `src/core/llm.ts` | `StreamRequest` 加可选 `sessionId`；`streamOnce` 的 fetch 头展开归因头——不命中就是空表 |
-| `src/plugins/llm.ts` | 派发口兜底 `request.sessionId ?? currentSessionId(ctx)`（所有 LLM 流量都从这条缝过） |
+| `src/packages/llm/index.ts` | 派发口兜底 `request.sessionId ?? currentSessionId(ctx)`（所有 LLM 流量都从这条缝过） |
 | `src/core/loop.ts`、`core/compact.ts`、`plugins/session-title.ts`、`plugins/approval.ts` | 各带**自己那条会话**的 id（后台会话也在跑，不能填「当前查看的会话」） |
 
 **与上一批那份建议的一处偏离**：原提议「端点配置开个可选字段，让用户写 `config.yaml`」。
@@ -5643,9 +5643,9 @@ Playwright 的 locator（`getByRole` / `locator().click()`）在这个页面里�
 | --- | --- |
 | `src/core/connection-test.ts`（新，纯逻辑） | `connectionProbeRequest()`（两条消息、预算 16、路由里的思考字段原样带）、`clipReply()`（压平 + 截断 80 字）、`pickProbeModel()`（显式 > 默认端点那份默认模型 > 清单第一个）、`testConnection(route, stream, timeout)`。判定口径：**流正常收尾即通**（正文被预算截断、甚至为空都算通）；**超时（20 秒）与「端点回了错」分开说**；失败折成 `{ok:false, error}` 不往外抛；**不重试**（测试要的是当下的真相） |
 | `src/contract.ts` / `src/services/types.ts` | `ConnectionTestOutcome` / `ConnectionTestView` 两个视图类型 + `testConnection(provider, model?)` 方法（`DscRuntime` 与设置服务两处） |
-| `src/plugins/settings.ts` | 实现：端点不存在 / 没配 key / 一个模型都没有，三种「连试都试不成」当场说清（各自的文案）；路由用 `ctx.llm.routeTo(provider, pick, 'default')`——档位取默认，因为测的是「能不能通」而不是「某个思考档能不能通」 |
+| `src/packages/settings/index.ts` | 实现：端点不存在 / 没配 key / 一个模型都没有，三种「连试都试不成」当场说清（各自的文案）；路由用 `ctx.llm.routeTo(provider, pick, 'default')`——档位取默认，因为测的是「能不能通」而不是「某个思考档能不能通」 |
 | `src/core/host-methods.ts` / `src/core/ui-methods.ts` | 宿主协议清单 + 界面白名单 + 实参规格（端点名 `MAX_NAME` 字符串 + 可选模型名）。**为什么放行**写在文件头：实参只是**端点名**，地址与 key 都取自宿主那份配置，页面指不了别处——与 `discoverModels` 同一把尺；想变成「把 key 发到任意地址」得先改端点，而那是被排除的 `saveProvider` 三件 |
-| `src/plugins/runtime.ts` / `desktop/src/renderer/bridge.ts` | 两处透传（后者是 `keyof DscRuntime` 的映射，少一站就编不过） |
+| `src/packages/runtime/index.ts` / `desktop/src/renderer/bridge.ts` | 两处透传（后者是 `keyof DscRuntime` 的映射，少一站就编不过） |
 | `ui-shell/src/plugins/settings/models.tsx` + `legacy/views.css` | 按钮（`IconBolt` + 测中态）+ 结果行就地留在卡上（`✓ 通了 · m-2 · 312 ms` / `✗ 没通 · <端点原文>`）；忙碌态**按端点记**（沿用第十八批那条教训）；样式只用令牌（成功绿 `--dsc-green` / 失败红 `--dsc-red`） |
 
 **测哪个模型不在界面挑**：宿主按「这个端点平时会用到的那份」定，结果里把实际测的那个带回来
@@ -6400,7 +6400,7 @@ Selector 在 dsc 未接线。
 
 ### ③ 查⑥：batch8 那两条 Git 断言红**不是产品 bug**，是走查脚本自己的时序账
 
-先把宿主语义核对清楚（`src/plugins/desktop-dock.ts:408-462`）：`added` / `removed` = 已暂存
+先把宿主语义核对清楚（`src/packages/desktop-dock/index.ts:408-462`）：`added` / `removed` = 已暂存
 numstat + 未暂存 numstat + **未跟踪文件按内容行数**（`untrackedLineStats`）；`dirtyFileCount`
 含未跟踪。所以种子态（readme 追加 1 行 + 一个 1 行的未跟踪文件）的正确读数就是
 **`+2 −0` / 脏 2**——脚本里那两处注释写的 `+1 −0` 是错的。
@@ -7137,7 +7137,7 @@ ZCode 二级的 `max-h-72`，超出自己滚）。一级行 hover / focus / 点�
 
 **② 扫码配对：二维码早就带着码，配对页却不读它。**
 桌面「连接手机」弹窗那张二维码的内容是 `地址?code=<8 位码>`（remote 插件 `regenerate-code` 回执），
-但配对页（`src/plugins/remote/routes.ts` 的 `PAIRING_HTML/PAIRING_JS`）只认手输——扫完还得把码抄一遍。
+但配对页（`src/packages/remote/routes.ts` 的 `PAIRING_HTML/PAIRING_JS`）只认手输——扫完还得把码抄一遍。
 **修法**：把配对动作提成 `pair(value)`，页面加载时读 `URLSearchParams(location.search).get('code')`，
 有就直接配对（码也填进输入框，失败时能看着改）；没带码时仍是原来那张手输表单。文案改成
 「用手机相机扫那张二维码即可直接进来（地址里带着码）」。
@@ -7207,7 +7207,7 @@ CI 的打包面上没人问过「壳在不在包里」。tag `v0.7.0` 第二次�
 
 ### 根因（都钉到行）
 
-- **卡**：`src/plugins/subagent.ts:459` 队友的**每一个**事件（含每个 text/reasoning delta）
+- **卡**：`src/packages/subagent/index.ts:459` 队友的**每一个**事件（含每个 text/reasoning delta）
   末尾都调 `forwardSubagent()` → `transcript.emit` → `transcript.ts:54` 的 `invalidate()`
   **同步**通知，而 TUI 的 `App.tsx` 直接 `useSyncExternalStore(runtime.subscribe, …)`——
   **每个 delta 一次全树 reconcile**。桌面/远程早有 80ms 合并（`host-stdio` / `remote`），
@@ -7540,7 +7540,7 @@ yoga 会把它们挤掉（几行合并成一行）。改成「有字符的行用
 
 - **启动提示不再上首屏**：`TranscriptEntry` 的 system 变体加可选 `level: 'info' | 'error'`
   （`src/contract.ts`），`TranscriptService.system(text, level)` 一路透传到适配器（`src/services/types.ts`、
-  `src/plugins/transcript.ts`、`src/adapter/transcript.ts`）。没有可用端点、外部插件加载失败、回合错误
+  `src/packages/transcript/index.ts`、`src/adapter/transcript.ts`）。没有可用端点、外部插件加载失败、回合错误
   这三类标 `'error'`；沙箱档位、迁移报告、启动备注仍是信息档，**只进会话 jsonl 与轨迹页**。
 - **界面侧**：欢迎态不再渲染 `.welcome-note`（`ui-shell/src/plugins/transcript/ui.tsx`），改成挂载后对
   第一条错误档条目弹一次 Toast（只取第一行，后面几行命令去设置页看）。写前预览卡照旧走
@@ -8728,7 +8728,7 @@ ctx.get 现取」的真挂载路径，以及写侧四条拒绝断言、分页游
 补法（`src/core/dsh-compat/llm-usage-event.ts`）：回合里每记一条用量，就按 waterfall 约定
 派发一次 `llm/stream`，把这次调用**真实的** token 数包成唯一一个 usage chunk 交出去，然后
 把被插件包过的迭代器消费完（插件的 `finally` 与记账都在里面）。调用点在
-`src/plugins/agent.ts` 的用量分支，`void` 发出、内部吞错——记账失败不能带崩回合。
+`src/packages/agent/index.ts` 的用量分支，`void` 发出、内部吞错——记账失败不能带崩回合。
 
 再跑真包验收，四条全过，账本里是真数：`calls: 2、input: 80、output: 35`，按
 `fake:fake-chat` 分渠道、按会话分账（花费 0 是因为假端点没有价目表，数字对、钱对不上正常）。
@@ -8752,7 +8752,7 @@ ctx.get 现取」的真挂载路径，以及写侧四条拒绝断言、分页游
    `turn/start`（dsh 相反，所以回合没开时先收着）；内核先发 `message` 再发 `usage`
    （dsh 把用量放在同一条助手消息里，所以助手消息先压着等用量，没用量就在下一条事件前
    定稿）；`context` 就是「一步开始」，重试再来一条不算新的一步。调用点在
-   `src/plugins/agent.ts` 的 `emit` 第一行，整体吞错。
+   `src/packages/agent/index.ts` 的 `emit` 第一行，整体吞错。
 2. 历史桥改成 dsh 的类型与消息形状，用量并进前面最近的 `assistant/message`；`meta` 不再
    当事件，`state` 这类自有记录标 `ignorable` 透传。这就是 cost-meter 的 backfill /
    context-costs / trajectory 认的东西——原来它们空转，因为只认 `assistant/message`。
@@ -9133,7 +9133,7 @@ Claude 块的值逐条对表（侧栏 `rgb(240 238 230)`、正文 `rgb(20 20 19 
 
 ### 5 手机上设置 → 模型 / 模式整页打不开
 
-报错是 `协议不允许调用的方法：getModelConfig`。手机走的是远程壳白名单（`src/plugins/remote/types.ts`），
+报错是 `协议不允许调用的方法：getModelConfig`。手机走的是远程壳白名单（`src/packages/remote/types.ts`），
 里面只有 25 条，模型页要的 `getModelConfig` 与模式页要的 `listPresets` 都不在——注释里原来把
 「端点读视图」和「端点写入」混成一类挡掉了。
 
@@ -9210,7 +9210,7 @@ learn 探针：`scripts/ui-dock-close-test.mjs`（11 条，含分栏两种与负
 
 ### 3 队友叫停之后接不回来
 
-三条断点都在 `src/plugins/subagent.ts`：
+三条断点都在 `src/packages/subagent/index.ts`：
 
 - `stop` 直接把队友从 `teammates` 里删掉（`stopTeammate`），之后传话只写信箱没人读——
   「中断之后主会话能不能继续这个子代理」的答案是「不能」；
@@ -9300,7 +9300,7 @@ dsh。检查有没有逻辑错误或者越界风险。检查沙箱机制有没�
 
 ### 二、AI 复核根本没有跑（最严重的一条）
 
-`src/plugins/approval.ts` 的第 5 层里 `full-access` 直接 `return 'allow-once'`，而审阅者的判官
+`src/packages/approval/index.ts` 的第 5 层里 `full-access` 直接 `return 'allow-once'`，而审阅者的判官
 在第 5.5 层。预设「AI 复核」恰好是 `full-access + auto-review`，所以判官永远轮不到——
 这一档实际就是「完全访问」。`src/contract.ts` 却写着「复核发生在自动放行之前」。
 
@@ -9469,7 +9469,7 @@ dsh 的这一排是 composer 下方的 dock：`gap:12px`、居中、没有分隔
 **一、主干编译不过，这是 24 小时内第二次。** 把 HEAD 单独导出成干净快照再跑类型检查，
 退出码 2：`src/contract.ts:10` 与 `src/services/types.ts:23` 引用了
 `core/attachments.js`，而 `src/core/attachments.ts` **没有入库**（工作区里是未跟踪状态）；
-`src/plugins/transcript.ts:254` 构造 `StatusView` 时漏了新增的必填字段 `progress`。
+`src/packages/transcript/index.ts:254` 构造 `StatusView` 时漏了新增的必填字段 `progress`。
 根因是同一批改动只提交了一半——引用方进了库，被引用方没进。本机之所以看着是绿的，
 是因为那个未跟踪文件恰好躺在工作区里。
 
@@ -9940,7 +9940,7 @@ scroll 事件、都会改 scrollTop，光看位置分不出来。这次用的第
 
 ### A-1　复核判词不留痕
 
-根因在 `src/plugins/approval.ts:443-454`：只有 `risk` 判到 high / critical 才写一条 `auto-deny`；
+根因在 `src/packages/approval/index.ts:443-454`：只有 `risk` 判到 high / critical 才写一条 `auto-deny`；
 `verdict.authorized === false` 与 `catch` 两条路都是裸 `return null`，既不写审计也不告诉卡片。
 
 修法：`aiReview` 改成返回 `{ decision, note }`，三条结局（放行 / 不放行 / 没跑完）全部落审计，
@@ -9966,7 +9966,7 @@ Get-Content C:\Users\waq\.ssh\id.key                                            
 
 ### A-3　中止后的幽灵卡
 
-`askHuman` 在 `src/plugins/approval.ts:295-375` 给 `signal` 挂 `abort` 监听来收卡。
+`askHuman` 在 `src/packages/approval/index.ts:295-375` 给 `signal` 挂 `abort` 监听来收卡。
 但 EventTarget 的语义是「已中止的信号不会补发事件」：复核跑了几秒、用户这时按了打断，
 信号已经 abort，监听永远不触发，卡就一直挂在 `pendings` 里，直到 5 分钟超时（`approval.ts:50`）才按拒收场。
 用户看到的是一张没人能解释的卡。修法是在入口先看 `signal.aborted`，是就直接按拒返回，卡都不登记。
@@ -10002,7 +10002,7 @@ A-3 没有自动化探针：造一个「复核中途按打断」的假 ctx，成
 
 ### 一　写前预览为什么一直摊着
 
-那块不是工具卡，是 `file-review` 插件的写前预览：`src/plugins/file-review.ts:343` 在 write / edit
+那块不是工具卡，是 `file-review` 插件的写前预览：`src/packages/file-review/index.ts:343` 在 write / edit
 **落盘之前**把算好的 unified diff 用 `ctx.emit('dsc/notice', …)` 塞进对话流（好让用户点「允许」
 之前先看见改什么），壳认出那行前缀后画成卡（`ui-shell/src/plugins/transcript/review-notice-card.tsx`）。
 问题在卡本身：diff 无条件摊开、限高 260px。一个任务里写十几次文件，就是十几块绿红卡压在流里。
@@ -10017,7 +10017,7 @@ display」留的护栏，上一次 `.ask-panel` 就是被自己的 `display:flex
 
 ### 二　「已恢复会话」那行
 
-`src/plugins/transcript.ts` 每次打开历史会话都往转录末尾写一条 system 行。它落在最后，
+`src/packages/transcript/index.ts` 每次打开历史会话都往转录末尾写一条 system 行。它落在最后，
 看着像一句常驻的尾巴。删掉即可：恢复这件事在侧边栏的选中态里已经说清楚了。
 （`replayIsRedundant` 里过滤 system 条目的那段不依赖它，删了照样成立。）
 
@@ -10030,7 +10030,7 @@ display」留的护栏，上一次 `.ask-panel` 就是被自己的 `display:flex
 
 两条根因：
 
-1. **模式是宿主全局量**。`src/plugins/presets.ts` 原来是一个模块级 `let name`，而
+1. **模式是宿主全局量**。`src/packages/presets/index.ts` 原来是一个模块级 `let name`，而
    `dsc/session-open` 一打开别的会话就把它改成那个会话的模式。宿主从 0.6.48 起同时常驻多个
    会话的 agent——你切走的那个会话，它那一轮还在后台跑，于是**它的工具目录与提示词跟着你
    点开的会话换**。模型按上一份 schema 喊出来的工具，执行时已经不在目录里。
@@ -10107,7 +10107,7 @@ frobnicate --fast x                        → 运行 frobnicate 命令
 
 参数摘要那一行原来给的是 `JSON.stringify(args)`，命令类工具就是 `{"command":"…"}`：
 两个花括号加一层转义，只增加噪音。现在命令类工具直接给命令原文
-（`src/plugins/approval.ts` 里那句 `const summary = command ?? request.argsSummary`），
+（`src/packages/approval/index.ts` 里那句 `const summary = command ?? request.argsSummary`），
 审计记的也是同一份，翻日志时不用再剥一层 JSON。
 
 ### 三　收掉的三样噪音
@@ -10499,9 +10499,9 @@ const lastTab = surface.panes.reduce((count, pane) => count + pane.tabs.length, 
 
 三根旋钮（沙箱档位、权限模式、审阅者）各自存在插件的进程级变量里：
 
-- `src/plugins/approval.ts` 的 `let policy` / `let reviewer`；
-- `src/plugins/sandbox.ts` 的 `mode` 直接读 `~/.dsc/plugins.json`（全局一份）；
-- `src/plugins/permission-presets.ts` 的 `apply()` 一次写三处：沙箱全局配置、
+- `src/packages/approval/index.ts` 的 `let policy` / `let reviewer`；
+- `src/packages/sandbox/index.ts` 的 `mode` 直接读 `~/.dsc/plugins.json`（全局一份）；
+- `src/packages/permission-presets/index.ts` 的 `apply()` 一次写三处：沙箱全局配置、
   两个全局变量、偏好 `defaultPolicy/defaultReviewer`。
 
 会话本身是能存的：jsonl 的 `state` 条目本来就在存模式、模型、任务清单、收件箱。
@@ -10561,7 +10561,7 @@ const lastTab = surface.panes.reduce((count, pane) => count + pane.tabs.length, 
 权限隔离做完，同一类问题还剩三处：模型与思考档位挂在 `llm` 插件的 `currentProvider` /
 `currentModel` / `currentEffort` 上，协作模式挂在 `mode` 插件的 `let mode` 上。
 后果是「你在 A 会话换模型，B 会话和后台跑着的 agent 一起换」；用量日志还会把后台
-请求记到当前视图的模型上（`src/plugins/agent.ts` 的 `model: ctx.llm.model`）。
+请求记到当前视图的模型上（`src/packages/agent/index.ts` 的 `model: ctx.llm.model`）。
 协作模式更隐蔽：后台会话在计划模式跑，你切到执行模式一看，它的写操作就被守卫放行了。
 
 ### 二　改法
@@ -10640,7 +10640,7 @@ dsc 已经抄到的：env-facts 尾部快照、压缩摘要复用前缀、瞬态
 
 1. 核心拆成「计划」与「应用」两步（`src/core/microcompact.ts`）：
    `planMicrocompact` 算出 callId → 占位符，`applyMicrocompactPlan` 只换命中的那几条。
-2. 插件按会话冻结计划（`src/plugins/microcompact.ts`）：同一个会话、同一个轮次键、
+2. 插件按会话冻结计划（`src/packages/microcompact/index.ts`）：同一个会话、同一个轮次键、
    消息没变短时直接复用上一份计划；只有新一轮或历史被压缩变短才重算。
    轮次键只数**真人 user 消息**，环境快照、任务清单提醒、钩子产出不算新一轮
    （`roundKeyOf` / `isSyntheticUserMessage`）。
@@ -10675,8 +10675,8 @@ B 的空白页上；某个会话的删除命令被钩子拦下，理由却是「
 
 - 现场：截图里 B 会话只有四张 `glob` 卡（界面标题「查找文件」），一条用户消息都没有。
   PTC 的卡片是**纯内存**的（不落 jsonl），所以只可能是别人正在跑的那段脚本写进来的。
-- 根因：`src/plugins/agent.ts:148` 有「只有当前 agent 的事件进转录」这道闸，但 PTC
-  绕过了它——`src/plugins/ptc.ts` 里脚本每次调工具都直接 `ctx.transcript.emit(...)`，
+- 根因：`src/packages/agent/index.ts:148` 有「只有当前 agent 的事件进转录」这道闸，但 PTC
+  绕过了它——`src/packages/ptc/index.ts` 里脚本每次调工具都直接 `ctx.transcript.emit(...)`，
   而转录只有一份（当前查看会话那一份）。
 - 修法不是给 PTC 单独打补丁，而是把「归属」做成转录层的契约：
   `TranscriptService.emit / system / plan` 各收一个可选的会话 id，带了又不是当前
@@ -10767,7 +10767,7 @@ B 的空白页上；某个会话的删除命令被钩子拦下，理由却是「
 **不是没存，是存的地方每次启动都换。**
 
 - 面板宽度只写 localStorage：`ui-shell/src/ui-primitives/panels.ts` 的读写全在 `dsc.sidebarWidth` 那几个键上（侧栏宽 / 正文列宽 / 右侧栏宽 / 并排审查宽 / 侧栏收起）。
-- 宿主每次启动、每次切工作目录都换端口：`src/plugins/webserver.ts` 把 `config.port` 交给界面服务，默认 0，`src/core/ui-server.ts` 的 `listen(options.port ?? 0)` 由系统随机分配。
+- 宿主每次启动、每次切工作目录都换端口：`src/packages/webserver/index.ts` 把 `config.port` 交给界面服务，默认 0，`src/core/ui-server.ts` 的 `listen(options.port ?? 0)` 由系统随机分配。
 - localStorage 按**源**隔离，`http://127.0.0.1:54015` 与 `54016` 是两份互不相干的存储。于是每次重开都读到空，右侧栏回到出厂 420。
 
 这个坑项目里踩过第二次了：外观镜像（`ui-shell/src/ui-layout/appearance.ts`）早就因为同一个原因改成「主进程读 settings.json、拼在地址里」。宽度这一批当时没跟着改。
@@ -10780,7 +10780,7 @@ B 的空白页上；某个会话的删除命令被钩子拦下，理由却是「
 | --- | --- |
 | `src/contract/session.ts` | `UiPrefsView` 加 `panelWidths: PanelWidthsView`（sidebar / thread / dock / diff / collapsed） |
 | `src/core/prefs.ts` | 出厂空表；读档只收 100–4000 的整数与布尔，坏值**丢掉不夹取**（夹出来的宽度用户没选过，留着反而挡住默认） |
-| `src/plugins/runtime.ts` | 只写面板几何的补丁走静默分支，不然拖一下会弹「已保存工作区名字」 |
+| `src/packages/runtime/index.ts` | 只写面板几何的补丁走静默分支，不然拖一下会弹「已保存工作区名字」 |
 | `ui-shell/src/ui-primitives/panels.ts` | `primePanelGeometry` / `setPanelGeometrySaver` 两个口子：localStorage 空着时回落到宿主那份，落盘时把**整份**发过去（宿主是整键替换的补丁语义） |
 | `ui-shell/src/ui-renderer/main.tsx` | 复用启动时那次 `getUiPrefs`，渲染前 `await within(prefs, 1500)` 灌进面板模块——首帧就是对的宽度，不会先画默认再跳一下 |
 | `desktop/electron/main/index.ts` | 冷启动兜底：主进程同步读同一份 settings.json，把几何拼进地址（`?panels=sidebar:320,dock:640`）。宿主没起来时那次 `getUiPrefs` 可能超过 1.5 秒，光靠它首帧就会画成默认宽——用户看到的就是「又回默认了」 |
@@ -10831,7 +10831,7 @@ B 的空白页上；某个会话的删除命令被钩子拦下，理由却是「
 2. **宿主那份没读到就注册落盘，会把其余几项抹掉**。宿主 `setUiPrefs` 是整键替换，壳只发手里这一份；若启动那次 `getUiPrefs` 超时（1.5 秒），手里只有地址带来的几项，第一次拖拽就会把另几项从 settings.json 里删掉。改：**拿到过宿主那份才注册**落盘出口；超时的话等回读真到了再灌一次并开写盘。
 3. **手机上「认不出的命令」又被当消息发了**。原来只有精确名或唯一前缀才算命令，`/re`、拼错的 `/comapct` 会走 `submit`——正是这次要修的旧毛病。改：与桌面壳同一条口径，`/` 开头的一律进命令通道，认不出由宿主回一句人话。
 
-顺带修的几处小的：并排审查宽原来在 `useEffect` 里铺变量（首帧是默认宽、下一帧才跳），搬到 `useLayoutEffect`；`src/plugins/commands.ts` 里 23 条注册 spec 抄了第二份 args/description（运行时本来就被表覆盖，等于死数据），改成 `builtinSpec(name)` 只从表取；TUI 的英文名去掉斜杠，三端显示同一个名字；手机拉命令清单失败时给一句话，不再静默。
+顺带修的几处小的：并排审查宽原来在 `useEffect` 里铺变量（首帧是默认宽、下一帧才跳），搬到 `useLayoutEffect`；`src/packages/commands/index.ts` 里 23 条注册 spec 抄了第二份 args/description（运行时本来就被表覆盖，等于死数据），改成 `builtinSpec(name)` 只从表取；TUI 的英文名去掉斜杠，三端显示同一个名字；手机拉命令清单失败时给一句话，不再静默。
 
 **两条探针为什么这么写**：宽度这件事的坑在「读」，所以 `panel-prefs-test` 既跑 `readPrefs` 的真实现（临时 `DSC_HOME` + 手写 settings.json），也**直接 import 面板模块**并用假 localStorage 跑一遍回落与落盘——只查源码字符串的话，「回落」这件事本身测不到。菜单那条把手机的纯逻辑（`remote-web/src/lib/commands.ts`）真跑起来，因为它是这轮唯一新增的判据。
 
@@ -10844,13 +10844,13 @@ B 的空白页上；某个会话的删除命令被钩子拦下，理由却是「
 
 **现象**：侧栏每次点「新会话」就多一行「新会话 / 刚刚」，点几次堆几行；这些会话一个字都没发。
 
-**根因**在内核的写入顺序上，不在界面。`Session.create` 本来只在内存里生成 meta 与路径（`src/core/session.ts:422`），但 `dsc/session-open` 一发出，两个插件立刻补默认值：`src/plugins/permission-presets.ts:185-188` 钉权限、`src/plugins/llm.ts:80-90` 钉模型。两者都走 `appendState` → `write()`，而 `write()` 的第一件事就是补 meta 首行并建文件。于是「补一个默认值」= 「建一条会话」。列表侧再没有过滤（`readSessionFile` 只认文件在不在），空壳就一行行堆起来。
+**根因**在内核的写入顺序上，不在界面。`Session.create` 本来只在内存里生成 meta 与路径（`src/core/session.ts:422`），但 `dsc/session-open` 一发出，两个插件立刻补默认值：`src/packages/permission-presets/index.ts:185-188` 钉权限、`src/packages/llm/index.ts:80-90` 钉模型。两者都走 `appendState` → `write()`，而 `write()` 的第一件事就是补 meta 首行并建文件。于是「补一个默认值」= 「建一条会话」。列表侧再没有过滤（`readSessionFile` 只认文件在不在），空壳就一行行堆起来。
 
 **改法**：记账与落盘解耦。
 
 - `src/core/session.ts` 新增 `pendingState` 队列：会话还没落盘时，`state` 记录只入队；第一条真正的日志（user / assistant / tool / summary / note）落地时，按 `meta → 攒下的 state → 这一条` 的顺序一次写出。会话 id 与路径仍在 `create` 时定下，右侧栏、Dock、轨迹、用量这些按 sessionId 取数的东西一个都不受影响。
 - 列表侧兜底：`readSessionFile` 里既没有 `user` 也没有 `assistant` 记录的文件不进列表。这同时清掉存量垃圾行；T31「头行损坏也要露脸」按「有没有对话记录」重判，头坏但幸存 user 的照旧出现。
-- 删掉 `pendingSummary`（`src/plugins/session.ts` 原来给未落盘会话补的那一行）：文件都没有，列表就不该有它。
+- 删掉 `pendingSummary`（`src/packages/session/index.ts` 原来给未落盘会话补的那一行）：文件都没有，列表就不该有它。
 - 补上落差的另一半：文件刚出现、列表缓存还没重扫的那段里侧栏没有这条会话。宿主在 `dsc/changed` 里认「当前会话的文件在了、缓存里没有」就补刷一次，**同一条路径只刷一次**——升级前留下的零消息文件会让刷新再次发 `dsc/changed`，没有这道闸就是死循环。
 
 **为什么不在界面层删行**：界面删掉只是看不见，磁盘还在长；而且「有没有说过话」这件事宿主最清楚（`Session.persisted`）。
@@ -10960,7 +10960,7 @@ B 的空白页上；某个会话的删除命令被钩子拦下，理由却是「
 
 结果：新工作区要等重启（重新读一次 recentCwds）或发出第一条消息（会话落盘，按 cwd 兜底成组）才出现。同一个坑旧渲染层犯过一次（见本文 1427 行那段 `onChooseDir` 只 `setCwd` 的记录），新壳这次是把 `recentCwds` 前插那一步又丢了。
 
-**修法**：`newSessionIn` 在 `await channel.invoke('newSessionIn', [target])` **成功之后**补一行前插，数组去重（重复选同一目录不会出两行）。放在 await 之后而不是之前，是因为宿主会校验目录（`src/plugins/session.ts` 的 `usableDir`，不合法抛「工作目录不可用」），失败时不该在侧栏留个空壳。
+**修法**：`newSessionIn` 在 `await channel.invoke('newSessionIn', [target])` **成功之后**补一行前插，数组去重（重复选同一目录不会出两行）。放在 await 之后而不是之前，是因为宿主会校验目录（`src/packages/session/index.ts` 的 `usableDir`，不合法抛「工作目录不可用」），失败时不该在侧栏留个空壳。
 
 **回归钉**：
 
@@ -10983,16 +10983,16 @@ B 的空白页上；某个会话的删除命令被钩子拦下，理由却是「
 | 位置 | 事实 |
 | --- | --- |
 | `src/core/ptc.ts:35` | PTC 脚本整段时限 `deadlineMs = 120_000` |
-| `src/plugins/ptc.ts:237-250`（旧） | 这 120 秒是**墙钟**：`setTimeout` 从脚本起跑开始算，在提问卡上等人的时间照扣 |
-| `src/plugins/ask.ts:143`（旧） | 提问卡自己没有时限，脚本死了它也不撤——卡还在 `pendings` 里挂着，用户答得进去 |
+| `src/packages/ptc/index.ts:237-250`（旧） | 这 120 秒是**墙钟**：`setTimeout` 从脚本起跑开始算，在提问卡上等人的时间照扣 |
+| `src/packages/ask/index.ts:143`（旧） | 提问卡自己没有时限，脚本死了它也不撤——卡还在 `pendings` 里挂着，用户答得进去 |
 
 于是 `answerQuestion` 把答案 resolve 给了一个已经没人等的 Promise，模型永远收不到。
 
 **修法（一处根因、两处配套）**：
 
 1. `src/core/tools.ts` 的 `ToolEntry` 加 `waitsForHuman`，`ask_user` 置 `true`——「这个工具跑起来是在等人」由工具自己声明，不靠猜名字。
-2. `src/plugins/ptc.ts` 把一次性 `setTimeout` 换成可暂停的 `createDeadline`：守卫链弹审批卡、工具声明了 `waitsForHuman` 时停表，人答完再接着走。停表是**协作式**的——脚本自己 `await sleep(60000)` 照样计入时限，跑飞了还是会被掐断（新探针里有一条反例钉这个）。
-3. `src/plugins/ask.ts` 加提问卡自己的时限 `ask.waitMs`：缺省 900000（15 分钟），夹在 10 秒~1 小时，每次挂卡现读（与审批卡同一套写法，`src/plugins/approval.ts:57-69`）。等满了自己收尾：**卡片撤掉**，替没答的题写「（等了 15 分钟，用户没有回答这一题）」交给模型，模型接着往下走。
+2. `src/packages/ptc/index.ts` 把一次性 `setTimeout` 换成可暂停的 `createDeadline`：守卫链弹审批卡、工具声明了 `waitsForHuman` 时停表，人答完再接着走。停表是**协作式**的——脚本自己 `await sleep(60000)` 照样计入时限，跑飞了还是会被掐断（新探针里有一条反例钉这个）。
+3. `src/packages/ask/index.ts` 加提问卡自己的时限 `ask.waitMs`：缺省 900000（15 分钟），夹在 10 秒~1 小时，每次挂卡现读（与审批卡同一套写法，`src/packages/approval/index.ts:57-69`）。等满了自己收尾：**卡片撤掉**，替没答的题写「（等了 15 分钟，用户没有回答这一题）」交给模型，模型接着往下走。
 4. `ask_user` 的工具描述写明时限，并点明那句「用户没有回答」不是用户说的话——防止模型把它当答案。
 
 **取舍（用户拍板）**：超时之后提问卡**不留**。它一留就是一张没人管的卡，还得再设计「超时后作答算新消息」的那条路；用户随后在输入框里回复就是一条普通新回合，模型自然接着聊。
@@ -11111,7 +11111,7 @@ bash 默认 30 秒超时（放宽会拖长卡死时间）、PTC 脚本 120 秒�
 
 **两个根因，都不是「命令没派发」**：
 
-1. `compact` 插件从头到尾**只在结束时**发一条 `dsc/notice`（`src/plugins/compact.ts` 的
+1. `compact` 插件从头到尾**只在结束时**发一条 `dsc/notice`（`src/packages/compact/index.ts` 的
    `run()`），开始那一刻什么都没有。摘要要走一次模型，几秒到几十秒里会话一动不动，
    看起来就是「命令没生效」。
 2. 底部百分比不动，是因为 `contextUsed` 只在**收到模型用量事件**时赋值
@@ -11285,7 +11285,7 @@ deny 黑名单；改成「问人」的话，「完全访问」档会在审批层
 
 **2. PTC 里 `sdk.write` 的改动被丢掉了。**
 
-`src/plugins/ptc.ts` 原来只取工具返回的 `text`：
+`src/packages/ptc/index.ts` 原来只取工具返回的 `text`：
 
 ```ts
 const raw = typeof output === 'string' ? output : output.text
@@ -11621,7 +11621,7 @@ dsh 那边组头与思考行落在同一条轴（552px），工具子项整格�
 
 三份逐行读的报告（dsh 的 asar 包、codex 的 Rust 源码、本仓库）合成一篇对照，回答
 "一轮怎么转、每轮收到什么、安全/成本/效率靠什么"。写的时候纠正了一个流传的说法：
-**PTC 模式并不撤掉原生工具**，`run_code` 是叠加的（`src/plugins/presets.ts:141-165`）。
+**PTC 模式并不撤掉原生工具**，`run_code` 是叠加的（`src/packages/presets/index.ts:141-165`）。
 文档末尾列了五条对 Pneuma 的建议，按投入产出比排序；其中"主循环没有步数上限"与
 "AGENTS.md 放在 system 里会打掉前缀缓存"两条是与另两家最实质的差异。
 
@@ -11647,7 +11647,7 @@ PowerShell 5.1 / PowerShell 7.6.5 / Git Bash 5.3 / WSL（Ubuntu）都返回了�
 桥不认（名字拼错、参数坏掉）、桥抛错、以及 `tool_call` 之外没有 `gateAs` 的普通工具。
 
 代价与边界：桥的 `run` 现在不自判，所以只有循环（`src/core/loop.ts`）与 PTC
-（`src/plugins/ptc.ts`）两个入口执行工具——这两个入口都按真名过守卫链，已逐一核对
+（`src/packages/ptc/index.ts`）两个入口执行工具——这两个入口都按真名过守卫链，已逐一核对
 （`grep 'entry.run|tool.run'` 只剩这两处执行点）。直接调 `tool_call.run` 的测试/脚本
 不再有内置审批，这是有意的：审批归循环管，工具层不该有两份裁决。
 
@@ -12353,7 +12353,7 @@ lightbox」），移植到壳的时候只把样式搬过来了——`.img-lightb
 
 **二、根因：清空这个动作根本没落盘。**
 
-`src/plugins/goal.ts` 的落盘函数旧版是这样：
+`src/packages/goal/index.ts` 的落盘函数旧版是这样：
 
 ```ts
 const persist = (): void => {
@@ -12366,7 +12366,7 @@ const persist = (): void => {
 点 ✕ 走 `goalAction('clear')` → `goals.clearByUser()`：目标变 null，于是这一行什么都不写。
 会话日志是 append-only、恢复时逐条重放且**最后一条生效**（`src/core/session.ts` 的
 `Session.load`），所以 jsonl 里最后一条 `state: goal` 仍是清空前那份；重启时
-`src/plugins/goal.ts` 开头 `ctx.session.current().state('goal')` 把它读回来，`goals.restore`
+`src/packages/goal/index.ts` 开头 `ctx.session.current().state('goal')` 把它读回来，`goals.restore`
 原样恢复。
 
 再加一层设计缺口：`SessionStateMap.goal` 的类型是 `GoalSnapshot`，不可空——存储层压根
@@ -12375,7 +12375,7 @@ const persist = (): void => {
 **三、改法。**
 
 - `src/core/session.ts`：`goal: GoalSnapshot | null`，注释写明 null = 用户清空过。
-- `src/plugins/goal.ts`：`persist()` 去掉 null 守卫，清空也追加一条 `state: goal = null`。
+- `src/packages/goal/index.ts`：`persist()` 去掉 null 守卫，清空也追加一条 `state: goal = null`。
   日志只追加不回头改，最后一条生效，恢复时读到的就是「没有目标」。
 
 **四、自检。**
@@ -12444,7 +12444,7 @@ Pneuma 窗口整片变白，除了重启没有回来的路。
 
 **二、根因：补行被连坐删掉了。**
 
-`src/plugins/session.ts` 的 `refresh()` 只认磁盘扫出来的会话。2026-10-29 那轮报障是
+`src/packages/session/index.ts` 的 `refresh()` 只认磁盘扫出来的会话。2026-10-29 那轮报障是
 「每点一次新会话，侧栏就多一行空壳，点几次堆几行」，当时删了两样东西：
 
 1. 每次新建都在磁盘上建出零消息 jsonl——**真病灶**；
@@ -12459,7 +12459,7 @@ Pneuma 窗口整片变白，除了重启没有回来的路。
 
 - `src/contract/session.ts`：`SessionSummary` 加可选 `unsaved`，注释写清它是「当前那条还没
   发过消息的会话」的临时行。
-- `src/plugins/session.ts` 的 `refresh()`：`!session.persisted` 时往列表头插一行
+- `src/packages/session/index.ts` 的 `refresh()`：`!session.persisted` 时往列表头插一行
   （id = `session.filePath`、cwd / createdAt 取会话自己的 meta、`unsaved: true`）。
   **只补当前这一条**：它一旦不是当前会话，既没内容也没稳定身份，切走就该消失。
 - 同文件 `dsc/changed` 那条「第一条消息落盘后补刷列表」的守卫改判据：原来只看
@@ -12772,7 +12772,7 @@ stdout 一段 JSON，跟 dsh 的进程模型无关。2026-11-03 手工喂 JSON �
   `[Notice: …]` 风格、还带写类回执与结果引用），只照它的字段口径重写了七种形状。
 - `src/core/ops/tools.ts`：七个只读工具，risk 全是 `read`，每个路径先过 numa 自己的
   `readBlockReason`（`.env`、私钥、凭据目录不进对话），worker 侧还有 `deny_credential_names` 兜底。
-- `src/plugins/ops.ts` + `src/host/kernel.ts`：官方可开关、默认关、带设置分区（状态、worker 路径、
+- `src/packages/ops/index.ts` + `src/host/kernel.ts`：官方可开关、默认关、带设置分区（状态、worker 路径、
   时限）。没找到 worker 时**一个工具都不注册**，设置页写清找过哪些位置，开机提示按同一句话去重。
 
 **第二批：写类六件**（同一天）：
@@ -12820,3 +12820,34 @@ stdout 一段 JSON，跟 dsh 的进程模型无关。2026-11-03 手工喂 JSON �
 exe 的协议按 dsh-ops 0.4.x 钉住，上游改字段就得跟着改；二进制不进仓库，靠用户装 `dsh-ops`
 （MIT AND Apache-2.0，不随包分发，省掉 bash 载荷那堆 GPL 组件）。
 
+
+## 2026-11-03 插件体系统一（P0–P3）
+
+**问题**：0.8.x 之前的「官方插件」是 `src/host/kernel.ts` 里静态 import 的对象，
+「外部插件」才走磁盘包 + patch 行。两套路径带来三个具体后果：换一个插件要重打包应用；
+官方插件与第三方插件的启停/配置/设置分区语义不一致；内核文件 500 行里一半是装配代码。
+
+**这次做的**：
+
+- 契约先行：`docs/plugin-equality-plan.md`（判定标准与五期计划）、`docs/plugin-model.md`
+  （包形状、行模型、身份、解析表、版本闸、失败分级），外加 `scripts/plugin-model-check.mjs`
+  做机器校验（0 包、行 id 重复、入口残留静态 import 任一即红）与 `scripts/plugin-inventory.mjs`
+  存 0.8.1 基线（49 插件 / 23 设置分区 / 19 界面单元）。
+- 运行时适配包：构建后生成 `lib/node_modules/@pneuma/runtime`（577 个 `export *` 桩），
+  插件的 `../core/x.js` 全部改成 `@pneuma/runtime/core/x.js`。桩指回真实文件，
+  所以模块实例仍是一份——`core/tools/command-runner.ts` 的注册表不会裂。
+- 加载器对齐：行目标改用 Node 解析（支持 `pkg/sub`）、身份改成行 id、加安装锚点与
+  `pinned`/`overridable` 单张解析表、默认关的行也进目录、行级 `inject` 盖过模块声明、
+  `plugins.json` 新旧键双查且坏文件拒写、行 id 重复直接 fatal、解析钩子与 dsh-compat 解耦。
+- 56 个功能包：`src/packages/<id>/` + `package.json`（`pneuma` 段）+ `cordis.patch.yml`；
+  `scripts/build-packages.mjs` 按 `pneuma.order` 合成 `@pneuma/base`。`kernel.ts` 从 503 行降到 100 行，
+  `boot.ts`/`headless.ts` 只传 surface，不再 import 任何插件。
+
+**踩到的三个坑（都写进契约了）**：
+
+1. `@pneuma/runtime` 这个名字既是构建生成的适配包，又被「运行时适配器」插件用着；
+   后者改名 `@pneuma/runtime-adapter`（行 id 仍是 `runtime`），构建脚本对撞名直接报错。
+2. 加载器把 `inject: ['presets']` 当成「陌生的 dsh 服务」→ 误判成 dsh 插件 → 工具注册被换成
+   dsh 形状 → 原生插件全挂不上。原生包（行名 `@pneuma/*`）现在跳过该判定。
+3. 「已挂身份」原先记在全局表：同一进程连开两个内核时，第二个内核一行都不起。
+   改成按 root 记；`surface` 也补了默认值 `none`（探针直接 createKernel 时不该拉 TUI/stdio）。

@@ -1,0 +1,22 @@
+{
+  "name": "@pneuma/microcompact",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 210,
+    "resolution": "overridable",
+    "title": "旧工具结果清理",
+    "description": "每轮请求把较旧的工具结果正文换成占位符，只改请求体、不动会话日志",
+    "settingsSection": "microcompact"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

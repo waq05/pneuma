@@ -22,7 +22,12 @@ const { readConfig } = await import('../lib/core/config.js')
 const { createKernel } = await import('../lib/host/kernel.js')
 const { listPluginInfos } = await import('../lib/core/plugin-registry.js')
 
-const root = await createKernel({ config: readConfig(), resumeSessionPath: null })
+// 挂载期间屏蔽 stdout：tui 会写整屏横幅，host-stdio 会写一行 hello，两者都会顶掉 JSON。
+const realWrite = process.stdout.write.bind(process.stdout)
+process.stdout.write = () => true
+// headless：不挂 tui 那一行（整屏横幅）。
+const root = await createKernel({ config: readConfig(), resumeSessionPath: null, surface: 'headless' })
+process.stdout.write = realWrite
 
 const plugins = listPluginInfos()
   .map((info) => ({

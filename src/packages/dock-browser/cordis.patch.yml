@@ -1,0 +1,5 @@
+# 侧栏浏览器
+- insert:
+    - id: dock-browser
+      name: '@pneuma/dock-browser'
+      disabled: true

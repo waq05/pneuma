@@ -94,10 +94,93 @@ export const KERNEL_API_VERSION = 6
 
 /** 条目树的一项。 */
 export interface PluginEntry {
+  /** 开关键 = 插件身份（行 id；外部单文件插件为文件名）。 */
   file: string
   disabled: boolean
   /** 透传给插件 apply(ctx, config) 的配置对象。 */
   config: Record<string, unknown>
+  /** 不认识的键原样留着（这一份文件被多条体系共用，谁都不许把别人的段吃掉）。 */
+  [key: string]: unknown
+}
+
+/**
+ * 身份 → 它的旧键（0.8.1 用文件名当键，现在用行 id）。
+ *
+ * 迁移只做「读」这一步：读的时候按行 id 找不到就翻旧键，命中了下次写盘再把新键补上。
+ * 旧键不删——回滚到旧版本时它还得读得到自己的开关。
+ */
+const legacyKeys = new Map<string, Set<string>>()
+
+/** 旧键 → 唯一认领它的身份。 */
+const legacyOwners = new Map<string, string>()
+
+/**
+ * 被两个身份认领过的旧键。撞车之后谁都不能拿它当线索。
+ *
+ * 为什么这么严：组合包里的入口十有八九都叫 `index.js`，按文件名迁移必然撞车。
+ * 撞车时宁可不迁移（读不到老配置，用户重配一次），也不能让 A 行读到 B 行的开关。
+ */
+const ambiguousLegacyKeys = new Set<string>()
+
+/** 登记一个身份的旧键（行 id ≠ 入口文件名时由 loader 调用）。 */
+export function registerPluginAlias(identity: string, legacyKey: string): void {
+  if (identity === '' || legacyKey === '' || identity === legacyKey) return
+  if (ambiguousLegacyKeys.has(legacyKey)) return
+  const owner = legacyOwners.get(legacyKey)
+  if (owner !== undefined && owner !== identity) {
+    // 撞车：把先认领的那一份也撤掉，这个旧键从此只当「有歧义」处理
+    ambiguousLegacyKeys.add(legacyKey)
+    legacyOwners.delete(legacyKey)
+    const keys = legacyKeys.get(owner)
+    if (keys !== undefined) keys.delete(legacyKey)
+    return
+  }
+  legacyOwners.set(legacyKey, identity)
+  const keys = legacyKeys.get(identity) ?? new Set<string>()
+  keys.add(legacyKey)
+  legacyKeys.set(identity, keys)
+}
+
+/**
+ * 找某个身份对应的条目下标：先按新键精确找，找不到再按登记过的旧键找。
+ * @param entries - 条目树
+ * @param file - 行 id（或外部插件文件名）
+ * @returns 下标；没有给 -1
+ */
+function entryIndexOf(entries: readonly PluginEntry[], file: string): number {
+  const exact = entries.findIndex((entry) => entry.file === file)
+  if (exact >= 0) return exact
+  const legacy = legacyKeys.get(file)
+  if (legacy === undefined) return -1
+  return entries.findIndex((entry) => legacy.has(entry.file))
+}
+
+/**
+ * 把一条改动落到条目树。
+ *
+ * 旧键命中时**双写**：旧键那一条跟着改（回滚到旧版本仍读到对的开关），新键再补一条。
+ * @param entries - 条目树（就地改）
+ * @param file - 新键（行 id）
+ * @param patch - 要改的字段
+ */
+function putEntry(entries: PluginEntry[], file: string, patch: { disabled?: boolean; config?: Record<string, unknown> }): void {
+  const index = entryIndexOf(entries, file)
+  if (index < 0) {
+    entries.push({
+      file,
+      disabled: patch.disabled ?? catalog.get(file)?.defaultDisabled === true,
+      config: patch.config ?? {},
+    })
+    return
+  }
+  const found = entries[index]!
+  const next: PluginEntry = {
+    ...found,
+    ...(patch.disabled === undefined ? {} : { disabled: patch.disabled }),
+    ...(patch.config === undefined ? {} : { config: patch.config }),
+  }
+  entries[index] = next
+  if (found.file !== file) entries.push({ ...next, file })
 }
 
 const PLUGINS_JSON = dscPath('plugins.json')
@@ -139,22 +222,48 @@ export function isUiPluginTrusted(fileKey: string): boolean {
 
 /** 落一条信任记录（信任确认动作的终点；重复信任无害）。 */
 export function trustUiPlugin(fileKey: string): void {
-  mkdirSync(dscPath(), { recursive: true })
-  const doc = (() => {
-    try {
-      if (!existsSync(PLUGINS_JSON)) return { version: 1, entries: [] as PluginEntry[], uiTrust: {} }
-      return JSON.parse(readFileSync(PLUGINS_JSON, 'utf8')) as {
-        version?: number
-        entries?: PluginEntry[]
-        uiTrust?: Record<string, UiPluginTrustEntry>
-      }
-    } catch {
-      return { version: 1, entries: [] as PluginEntry[], uiTrust: {} }
-    }
-  })()
-  const uiTrust = doc.uiTrust !== null && typeof doc.uiTrust === 'object' && !Array.isArray(doc.uiTrust) ? doc.uiTrust : {}
+  // 与条目树共用同一份读写：坏文件在这里会抛错，而不是把别人的段覆盖掉。
+  const doc = readPluginsDoc() ?? {}
+  const uiTrust = isPlainObject(doc.uiTrust) ? doc.uiTrust : {}
   uiTrust[fileKey] = { trustedAt: Date.now() }
-  writeFileSync(PLUGINS_JSON, `${JSON.stringify({ version: 1, entries: doc.entries ?? [], uiTrust }, null, 2)}\n`, 'utf8')
+  writePluginsDoc({ ...doc, version: 1, uiTrust })
+}
+
+/** 判断一个值是不是普通对象（数组也算不是）。 */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/**
+ * 读 `plugins.json` 的原文：文件不存在给 null。
+ *
+ * 文件存在但读不成 JSON 时**抛错**而不是当空：这一份文件被多条体系共用（开关、配置、
+ * 界面信任），当成空再整份写回去等于把用户配过的东西一次抹掉。
+ * @returns 顶层对象；文件不存在或内容是空白给 null
+ * @throws {Error} 文件存在但解析失败（中文说明，调用方不许吞）
+ */
+function readPluginsDoc(): Record<string, unknown> | null {
+  if (!existsSync(PLUGINS_JSON)) return null
+  const text = readFileSync(PLUGINS_JSON, 'utf8')
+  // 空白文件没有可丢的内容，按「还没有记录」处理
+  if (text.trim() === '') return null
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (!isPlainObject(parsed)) throw new Error('顶层不是 JSON 对象')
+    return parsed
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    throw new Error(
+      `~/.dsc/plugins.json 存在但解析不了（${reason}）。这次不写盘，免得把整份插件开关与配置覆盖成空；` +
+        '请修好这个文件（或删掉它重新配置）后再试。',
+    )
+  }
+}
+
+/** 写 `plugins.json`（原子性不追求——个人版单写者）。 */
+function writePluginsDoc(doc: Record<string, unknown>): void {
+  mkdirSync(dscPath(), { recursive: true })
+  writeFileSync(PLUGINS_JSON, `${JSON.stringify(doc, null, 2)}\n`, 'utf8')
 }
 
 /** 读取条目树（文件缺失/损坏按空处理；兼容旧版 disabled 数组格式）。 */
@@ -170,11 +279,11 @@ export function readPluginEntries(): PluginEntry[] {
       return doc.entries
         .filter((entry): entry is Record<string, unknown> => entry !== null && typeof entry === 'object')
         .map((entry) => ({
+          // 不认识的键（例如别的版本写的 enabled）原样留着
+          ...entry,
           file: String(entry.file ?? ''),
           disabled: entry.disabled === true,
-          config: entry.config !== null && typeof entry.config === 'object' && !Array.isArray(entry.config)
-            ? (entry.config as Record<string, unknown>)
-            : {},
+          config: isPlainObject(entry.config) ? entry.config : {},
         }))
         .filter((entry) => entry.file !== '')
     }
@@ -189,28 +298,21 @@ export function readPluginEntries(): PluginEntry[] {
   }
 }
 
-/** 写入条目树（原子性不追求——个人版单写者）。 */
+/**
+ * 写入条目树。
+ *
+ * 顶层不认识的段（`uiTrust` 等）原样保留——这份文件被多条体系共用，各写各的段。
+ * @throws {Error} 原文件存在但解析失败（拒绝写盘，见 {@link readPluginsDoc}）
+ */
 export function writePluginEntries(entries: PluginEntry[]): void {
-  mkdirSync(dscPath(), { recursive: true })
-  // 保留文件里其他顶层段（uiTrust 等）——这份文件被多条体系共用，各写各的段。
-  const previousUiTrust = (() => {
-    try {
-      const doc = JSON.parse(readFileSync(PLUGINS_JSON, 'utf8')) as { uiTrust?: unknown }
-      return doc.uiTrust !== null && typeof doc.uiTrust === 'object' && !Array.isArray(doc.uiTrust) ? doc.uiTrust : undefined
-    } catch {
-      return undefined
-    }
-  })()
-  writeFileSync(
-    PLUGINS_JSON,
-    `${JSON.stringify({ version: 1, entries, ...(previousUiTrust === undefined ? {} : { uiTrust: previousUiTrust }) }, null, 2)}\n`,
-    'utf8',
-  )
+  const previous = readPluginsDoc() ?? {}
+  writePluginsDoc({ ...previous, version: 1, entries })
 }
 
 export function getPluginConfig(file: string): Record<string, unknown> {
-  const entry = readPluginEntries().find((candidate) => candidate.file === file)
-  return entry?.config ?? {}
+  const entries = readPluginEntries()
+  const index = entryIndexOf(entries, file)
+  return index < 0 ? {} : entries[index]!.config
 }
 
 /**
@@ -222,16 +324,16 @@ export function writePluginConfig(
   patch: Record<string, unknown | null>,
 ): Record<string, unknown> {
   const entries = readPluginEntries()
-  const index = entries.findIndex((entry) => entry.file === file)
+  const index = entryIndexOf(entries, file)
   const config: Record<string, unknown> = index >= 0 ? { ...entries[index]!.config } : {}
   for (const [key, value] of Object.entries(patch)) {
     if (key === '') continue
     if (value === null) delete config[key]
     else config[key] = value
   }
-  if (index >= 0) entries[index] = { ...entries[index]!, config }
-  // 新建条目时沿用元数据声明的默认开关：只改配置值不该顺手把插件点亮
-  else entries.push({ file, disabled: catalog.get(file)?.defaultDisabled === true, config })
+  // 旧键命中时 putEntry 会双写（旧键同步、新键补一条）；新建时沿用默认开关，
+  // 只改配置值不该顺手把插件点亮。
+  putEntry(entries, file, { config })
   writePluginEntries(entries)
   return config
 }
@@ -254,9 +356,10 @@ export function resolvePluginConfig(file: string, passed?: unknown): Record<stri
  * （`defaultDisabled` 为 true 的官方插件在用户主动打开之前不挂载）。
  */
 export function isPluginEnabled(file: string): boolean {
-  const entry = readPluginEntries().find((candidate) => candidate.file === file)
-  if (entry === undefined) return catalog.get(file)?.defaultDisabled !== true
-  return !entry.disabled
+  const entries = readPluginEntries()
+  const index = entryIndexOf(entries, file)
+  if (index < 0) return catalog.get(file)?.defaultDisabled !== true
+  return !entries[index]!.disabled
 }
 
 /**
@@ -268,12 +371,7 @@ export function writePluginEnabled(file: string, enabled: boolean): boolean {
   const canToggle = meta === undefined || meta.source === 'external' || meta.toggleable === true
   if (!canToggle) return false
   const entries = readPluginEntries()
-  const index = entries.findIndex((entry) => entry.file === file)
-  if (index >= 0) {
-    entries[index] = { ...entries[index]!, disabled: !enabled }
-  } else {
-    entries.push({ file, disabled: !enabled, config: {} })
-  }
+  putEntry(entries, file, { disabled: !enabled })
   writePluginEntries(entries)
   return true
 }

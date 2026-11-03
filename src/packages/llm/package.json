@@ -1,0 +1,21 @@
+{
+  "name": "@pneuma/llm",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 10,
+    "resolution": "pinned",
+    "title": "模型路由",
+    "description": "配置端点间切换模型与思考强度"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

@@ -116,11 +116,11 @@ dsc 这一版不是。换来的是：脚本能做的事 = 它能调用的工具�
 | 位置 | 角色 |
 |---|---|
 | `src/core/presets.ts` | 模式文件的读写、出厂四个、可去掉的段名单、别名表 |
-| `src/plugins/presets.ts` | `presets` 服务：状态、提示段、骨架取舍、工具投影、`/preset` 命令 |
+| `src/packages/presets/index.ts` | `presets` 服务：状态、提示段、骨架取舍、工具投影、`/preset` 命令 |
 | `src/core/permission-presets.ts` | **权限预设**（另一套「预设」）的纯表：出厂四个、`custom` 推导、`matchPermissionPreset`（零依赖） |
-| `src/plugins/permission-presets.ts` | 权限预设服务：状态、`/permission` 命令、写口只调沙箱/审批各自 setter |
-| `src/plugins/ptc.ts` + `src/core/ptc.ts` | `run_code` 与它的沙箱执行、结果整形 |
-| `src/plugins/runtime-api.ts` | 创造模式的 `runtime_api` 只读查询 |
+| `src/packages/permission-presets/index.ts` | 权限预设服务：状态、`/permission` 命令、写口只调沙箱/审批各自 setter |
+| `src/packages/ptc/index.ts` + `src/core/ptc.ts` | `run_code` 与它的沙箱执行、结果整形 |
+| `src/packages/runtime-api/index.ts` | 创造模式的 `runtime_api` 只读查询 |
 | `ui-shell/src/plugins/settings/presets.tsx` | 设置 → 模式的卡片与就地表单 |
 | `ui-shell/src/plugins/composer/ui.tsx` | 输入框下方那颗模式旋钮 |
 | `scripts/sandbox-parity-test.mjs` | 四档模式与权限预设对齐 dsh 的回归（PTC 全量、极简 read_image、顺序、持久化） |

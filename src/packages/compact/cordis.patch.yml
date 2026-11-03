@@ -1,0 +1,4 @@
+# 压缩
+- insert:
+    - id: compact
+      name: '@pneuma/compact'

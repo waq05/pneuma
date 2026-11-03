@@ -1,0 +1,4 @@
+# PTC 代码调用
+- insert:
+    - id: ptc
+      name: '@pneuma/ptc'

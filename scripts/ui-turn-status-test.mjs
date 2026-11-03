@@ -89,7 +89,7 @@ console.log('\n[4] 用时在底部状态栏')
   check('悬浮卡里有本轮用时一行', statusbar.includes('本轮用时（进行中）'))
   const contract = read('../src/contract/runtime.ts')
   check('契约里有 turnStartedAt 字段', contract.includes('turnStartedAt?: number'))
-  const host = read('../src/plugins/transcript.ts')
+  const host = read('../src/packages/transcript/index.ts')
   check('宿主快照填了 turnStartedAt', host.includes('turnStartedAt: turnStartOf('))
 }
 

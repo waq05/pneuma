@@ -1,0 +1,4 @@
+# 任务清单
+- insert:
+    - id: todo
+      name: '@pneuma/todo'

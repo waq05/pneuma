@@ -1,0 +1,22 @@
+{
+  "name": "@pneuma/lifecycle-hooks",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 3670,
+    "resolution": "overridable",
+    "title": "外部命令钩子",
+    "description": "在模型动手前后跑你的脚本，脚本可以拦下这次操作；事件名沿用 codex 的写法",
+    "settingsSection": "lifecycle-hooks"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

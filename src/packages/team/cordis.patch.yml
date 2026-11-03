@@ -1,0 +1,5 @@
+# 共享任务板
+- insert:
+    - id: team
+      name: '@pneuma/team'
+      disabled: true

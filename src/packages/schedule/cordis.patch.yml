@@ -1,0 +1,5 @@
+# 定时任务
+- insert:
+    - id: schedule
+      name: '@pneuma/schedule'
+      disabled: true

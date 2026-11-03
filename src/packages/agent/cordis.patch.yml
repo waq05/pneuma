@@ -1,0 +1,4 @@
+# Agent 循环
+- insert:
+    - id: agent
+      name: '@pneuma/agent'

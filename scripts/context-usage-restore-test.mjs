@@ -143,7 +143,7 @@ bootedEmpty.session.current().close()
 
 // ── 5. 源文件断言：入口在哪、有没有绕开日志 ───────────────────────────────
 const adapterSource = readFileSync(new URL('../src/adapter/transcript.ts', import.meta.url), 'utf8')
-const pluginSource = readFileSync(new URL('../src/plugins/transcript.ts', import.meta.url), 'utf8')
+const pluginSource = readFileSync(new URL('../src/packages/transcript/index.ts', import.meta.url), 'utf8')
 const kernelSource = readFileSync(new URL('../src/host/kernel.ts', import.meta.url), 'utf8')
 const statusbarSource = readFileSync(new URL('../ui-shell/src/plugins/statusbar/ui.tsx', import.meta.url), 'utf8')
 check('adapter 提供 seedContextUsage 回填入口', /seedContextUsage\(used: number\)/.test(adapterSource))
@@ -154,7 +154,11 @@ check(
 check('session-open 一行用量都没有时不填（null 判断）', /if \(usage !== null\) transcript\.seedContextUsage/.test(pluginSource))
 check(
   'kernel 启动恢复同样回填',
-  /readSessionUsage\(root\.session\.current\(\)\.meta\.id\)[\s\S]*?root\.transcript[\s\S]*?seedContextUsage/.test(kernelSource),
+  // 启动收尾 0.9 起住在 host/startup.ts（kernel 只剩装配），两处都认。
+  /readSessionUsage\(root\.session\.current\(\)\.meta\.id\)[\s\S]*?root\.transcript[\s\S]*?seedContextUsage/.test(
+    kernelSource +
+      readFileSync(new URL('../src/host/startup.ts', import.meta.url), 'utf8'),
+  ),
 )
 check('usage 没有被写进会话日志（core/session 的写入记录里没有 token 字段）', !/contextUsed|lastInputTokens/.test(readFileSync(new URL('../src/core/session.ts', import.meta.url), 'utf8')))
 check(

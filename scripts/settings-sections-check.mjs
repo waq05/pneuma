@@ -28,7 +28,7 @@ mkdirSync(join(shotHome, '.dsc'), { recursive: true })
 writeFileSync(join(shotHome, '.dsc', 'config.yaml'), 'model:\n  name: test\n', 'utf8')
 
 const { createKernel } = await import('../lib/host/kernel.js')
-const { remotePlugin } = await import('../lib/plugins/remote.js')
+const { remotePlugin } = await import('../lib/packages/remote/index.js')
 
 let failures = 0
 function check(label, condition, extra = '') {
@@ -92,7 +92,7 @@ check('成功回执走 notice（不进 error 字段）', tuiSaved.ok === true &&
 check('值落到了 prefs.ui（ui 层深合并不动其它键）', kernel.settings.prefs().ui.reasoningDefaultOpen === true, String(kernel.settings.prefs().ui.reasoningDefaultOpen))
 
 console.log('\n── 浏览器自动化：字段收成分组（0.6.62 的子页导航数据面） ──')
-const { browserPlugin } = await import('../lib/plugins/browser.js')
+const { browserPlugin } = await import('../lib/packages/browser/index.js')
 await kernel.plugin(browserPlugin, {})
 const browserSectionView = kernel.settings.sections().find((section) => section.id === 'browser')
 const browserGroups = browserSectionView?.groups ?? []

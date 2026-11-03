@@ -1,0 +1,4 @@
+# 模式
+- insert:
+    - id: presets
+      name: '@pneuma/presets'

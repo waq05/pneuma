@@ -56,7 +56,7 @@ const {
   killAllPowerShell,
 } = await import('../lib/core/desktop-control.js')
 const { computerUsePlugin, LOOK_ACTIONS, computerToolParameters, computerLookParameters, argProps } = await import(
-  '../lib/plugins/computer-use.js'
+  '../lib/packages/computer-use/index.js'
 )
 
 let failures = 0

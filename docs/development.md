@@ -40,7 +40,7 @@
 三条铁律：
 
 1. **内核不碰界面**。`src/core/` 里出现 `ink`、`electron`、`react` 就算越界；
-2. **UI 不碰内核**。renderer 只能调 `host-stdio` 白名单里的方法（`src/plugins/host-stdio.ts`
+2. **UI 不碰内核**。renderer 只能调 `host-stdio` 白名单里的方法（`src/packages/host-stdio/index.ts`
    的 `INVOKABLE_METHODS`：它就是 `DscRuntime` 去掉 `subscribe`/`getSnapshot`/`exit`/`dispose`
    这四个只在宿主进程里成立的方法，清单漏一个编译就报错），想知道内核有什么，看
    `src/contract.ts` 的 `DscRuntime`；
@@ -58,8 +58,8 @@
 | `src/core/tools/` | 7 个文件 ≈2147 行 | 内置六件套 `bash`/`read`/`write`/`edit`/`glob`/`grep`（预算由 tools-default 配置下发）+ 沙箱的一次性升权参数与命令执行器缝 |
 | `src/core/lsp/` | 7 个文件 ≈2422 行 | LSP 代码智能：`client`（连接/实例）、`manager`（池化调度）、`normalize`（应答归并）、`line-shift`（诊断行号对齐）、`framing`/`servers`/`uri` |
 | `src/core/dsh-compat/` | 9 个文件 ≈1949 行 | dsh 插件兼容层的模块解析钩子与工具形状适配 |
-| `src/plugins/` | 59 个文件 ≈25800 行 | 每个服务一个 cordis 插件 + 十九个官方可开关插件；`remote/` 拆成 `types`/`http`/`routes`（HTTP 路由）+ `remote.ts`（传输与装配） |
-| `src/host/kernel.ts` | 503 行 | 内核装配顺序与三档插件元数据 |
+| `src/packages/` | 56 个包 ≈25800 行 | 每个功能一个包：`package.json`（`pneuma` 段）+ `cordis.patch.yml` + `index.ts`；`remote` 包里再拆 `types`/`http`/`routes` |
+| `src/host/kernel.ts` | 100 行 | 内核装配器：建 Context、挂应用自带的行、挂外部插件 |
 | `src/contract.ts` | 26 行 | **只做转出**：`export * from './contract/*.js'`，导出面与拆分前一个不差 |
 | `src/contract/` | 10 个文件 ≈2279 行 | UI ⇄ 运行时的中性契约按域分家：`mode`（思考档位 / 权限 / 协作）、`task`（待办、计划、后台、定时、目标、提问）、`transcript`（工具卡、转录、差异）、`usage`（token 与用量）、`runtime`（状态行、预设面、git 读数、快照面）、`approval`（审批卡）、`session`（会话、归档、偏好）、`plugin`（插件、信任、队友、模型选择、技能、市场）、`settings`（设置、供应商、连接测试）、`snapshot`（运行时快照、`DscRuntime`、电脑操作）。每份 75–438 行 |
 | `src/services/types.ts` | 1608 行 | 服务面声明（`ctx.llm`、`ctx.mcp` 这些是什么类型） |
@@ -124,15 +124,23 @@ export const myPlugin: Plugin.Object = {
   [development-log.md 坑 4](development-log.md)）。
 - **waterfall 监听必须调 `next()`**，不调就把链断了。
 
-### 三档插件
+### 插件从哪来（2026-11 起：全是包，全是一行）
 
-| 档 | 判定 | 开关 | 现在有谁 |
+0.8.x 之前，核心服务与官方插件是 `src/host/kernel.ts` 里静态 import 的对象；
+现在统一成包 + 行：源码在 `src/packages/<id>/`，构建产物落
+`lib/node_modules/@pneuma/<id>/`，行清单由各包的 `cordis.patch.yml` 按 `pneuma.order`
+合成到 `@pneuma/base`。`createKernel()` 只剩「建 Context + 读清单 + 挂行」。
+
+| 来源 | 判定 | 开关 | 例子 |
 | --- | --- | --- | --- |
-| 自定义 | `source: 'external'`，文件在 `~/.dsc/plugins/*.js` | 可拨，默认开 | 用户自己的（dsh 风格的插件走兼容层，见 [plugin-development.md](plugin-development.md) 的「dsh 兼容层」章） |
-| 官方可开关 | `source: 'builtin'` + `toggleable: true` | 可拨，默认由 `defaultDisabled` 定 | 见下面那张表，共 19 个 |
-| 运行内核 | `source: 'builtin'` 且没标 `toggleable` | 不给开关 | `llm`/`session`/`guards`/`surfaces`/`waiting`/`approval`/`hooks`/`tools`/`tools-default`/`transcript`/`commands`/`skills`/`prompt`/`mode`/`presets`/`ptc`/`runtime-api`/`settings`/`compact`/`microcompact`/`image-diet`/`session-title`/`todo`/`plan`/`ask`/`agent`/`goal`/`memory`/`runtime`/`webserver` 共 30 条元数据；`createKernel()` 实际挂 34 个，差额是没登记元数据的 `permission-presets`/`desktop-dock`/`git`/`plugin-manager`（所以插件中心的「运行内核」清单里看不到这四个） |
+| 应用自带包 | 行来自 `@pneuma/base`（`appDir/lib/node_modules/@pneuma/base/cordis.patch.yml`） | 可拨，默认由行的 `disabled` 定 | 全部 56 个：`llm`、`session`、`ops`…… |
+| profile 组合包 | profile `node_modules` 里、带 `dsh.bundle.patch` OR `pneuma.bundle.patch` 的包 | 可拨，默认由行 `disabled` 定 | 用户 `numa plugin add` 装的包 |
+| 自定义单文件 | `~/.dsc/plugins/*.js` | 可拨，默认开 | dsh 风格插件（走兼容层） |
 
-官方可开关插件（`src/host/kernel.ts` 的 `OFFICIAL_PLUGINS` + `OFFICIAL_OBJECTS`）：
+「运行内核」这一档不再存在：每个包都能停用，停了以后依赖它的行会挂不上并逐个报出原因。
+默认关的仍是那 13 个（见下），只是判据从元数据表换成了行上的 `disabled: true`。
+
+功能档一览（56 个包里默认关/开各半，这里是 19 个功能档）：
 
 | 插件 | 默认 | 设置分区 | 干什么 |
 | --- | --- | --- | --- |
@@ -158,7 +166,7 @@ export const myPlugin: Plugin.Object = {
 
 默认开关按一条规矩定：会拉起外部进程、连外部服务器、动用户的桌面或改写每轮请求工具面的那几档默认关，共 13 个：`subagent`、`team`、`computer-use`、`lifecycle-hooks`、`mcp`、`tool-search`、`schedule`、`lsp`、`browser`、`dock-browser`、`self-improve`、`dsh-compat`、`ops`；提升安全与本地便利、且不配就完全无副作用的那几档默认开。文件与命令围栏是唯一的例外档：它默认开——不配就没有外部进程与外部服务器，开着的收益（越界写入当场拒）大于打扰，且默认档 workspace-write 不挡正常的工作区读写。
 
-内核清单在 `src/host/kernel.ts` 的 `BUILTIN_PLUGINS`。新增一档官方可开关插件的三步写在 [plugin-development.md §3.4](plugin-development.md)。
+行清单在 `src/packages/<id>/cordis.patch.yml`，包元数据（标题、描述、默认关、设置分区、行序）在同一个目录的 `package.json` 的 `pneuma` 段。新增一个功能包的三步写在 [plugin-development.md §3.4](plugin-development.md)。
 
 ### 界面壳那侧也走 cordis（2026-10-26 起）
 
@@ -321,7 +329,7 @@ lib/ui/plugins/
 
 `src/contract.ts` 定义 `DscRuntime`：TUI 与桌面端消费同一接口，桌面端经协议转接。
 
-**消息种类**（`src/plugins/host-stdio.ts:56-80`，桌面侧镜像在
+**消息种类**（`src/packages/host-stdio/index.ts:56-80`，桌面侧镜像在
 `desktop/electron/main/protocol.ts:47`）：
 
 | 方向 | 消息 | 作用 |
@@ -343,8 +351,8 @@ lib/ui/plugins/
 **加一个方法要走三步**，少一步就是「renderer 里点了没反应」：
 
 1. `src/contract.ts` 的 `DscRuntime` 加签名；
-2. `src/plugins/runtime.ts` 实现；
-3. `src/plugins/host-stdio.ts` 的 `INVOKABLE_METHODS` 加名字，renderer 侧 `bridge.ts` 加一行转发。
+2. `src/packages/runtime/index.ts` 实现；
+3. `src/packages/host-stdio/index.ts` 的 `INVOKABLE_METHODS` 加名字，renderer 侧 `bridge.ts` 加一行转发。
    两份清单现在都由 `DscRuntime` 推出来：第 3 步漏了会编译报错（白名单那份 `satisfies`
    一份类型兜底，`bridge.ts` 那份是映射类型，少写一个实现就补不上），不再靠人记。
 4. **要让浏览器里的插件壳也够得着**，还得进 `src/core/ui-methods.ts`：`UI_METHODS` 放行，
@@ -352,7 +360,7 @@ lib/ui/plugins/
    注意这条通道的规矩：**省略只能从尾部开始**——`null`/`undefined` 占位会被拒，所以
    「第二个参数可选」这种排布在这一面根本表达不出来（`newSessionIn` 因此是独立方法，
    而不是 `openSession(id?, cwd?)`）。
-5. **手机（远程页）是第三份清单**：`src/plugins/remote/types.ts` 的 `REMOTE_SHELL_METHODS`
+5. **手机（远程页）是第三份清单**：`src/packages/remote/types.ts` 的 `REMOTE_SHELL_METHODS`
    = `REMOTE_METHODS` + 几条壳的必要交互。壳与电脑是同一份产物，所以每加一条要问
    「手机上点得到吗、点到了是读还是写」：**只读投影一律放行**（`getModelConfig` /
    `listPresets` / `readPreset`，2026-10-27 补的），写入类（`saveProvider` /
@@ -378,7 +386,7 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 | 常量 | 位置 | 当前值 | 什么时候动 |
 | --- | --- | --- | --- |
 | `KERNEL_API_VERSION` | `src/core/plugin-registry.ts:93` | 6 | 插件能用的扩展点有增减 |
-| `HOST_PROTOCOL_VERSION` | `src/core/dock-browser.ts:20`（`src/plugins/host-stdio.ts` 只做再导出） | 3 | 协议消息种类或白名单语义变了 |
+| `HOST_PROTOCOL_VERSION` | `src/core/dock-browser.ts:20`（`src/packages/host-stdio/index.ts` 只做再导出） | 3 | 协议消息种类或白名单语义变了 |
 | `NATIVE_BRIDGE_VERSION` | `src/core/native-bridge.ts:71` | 3 | **加操作不涨**；改某个操作的实参或语义才涨 |
 | 插件契约版本（`apiVersion`） | `ui-shell/package.json` 的 `version` → `build-plugins.mjs` 写进清单 | 0.8.1 | **跟产品号同版**（`release.yml` 四方对账） |
 
@@ -405,7 +413,7 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 4. 要推事件的话主进程 `mainWindow?.webContents.send('dsc:<事件名>', payload)`——preload 的
    `on()` 是通用转发（按 `NATIVE_EVENT_SET` 拒生名字），不用改。
 
-**加一个设置项**：宿主侧 `src/plugins/settings.ts` 的某个分区 `fields()` 加控件声明、`values()`
+**加一个设置项**：宿主侧 `src/packages/settings/index.ts` 的某个分区 `fields()` 加控件声明、`values()`
 回读、`save()` 加键分派（写进 `core/prefs.ts` 的偏好键）；壳侧不用动（通用表单渲染器按声明画）。
 若这项的值可能「不在选项表里」（派生值，如权限预设的 `custom`），在 select 字段上声明
 `derivedLabelKey`：壳读 `values[该键]` 当显示名，并把这一行渲染成**置灰只读**——派生值本来
@@ -455,7 +463,7 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 
 **三个环境变量能改默认坐标**：`DSC_HOME` 换整个 `~/.dsc`（`src/core/path-policy.ts:20`）、
 `DSC_DESKTOP_STATE` 换 `desktop.json` 的路径（`desktop/electron/main/dsc-core.ts:61`）、
-`DSC_UI_PORT` 换本机界面监听的端口（`src/plugins/webserver.ts:95`，`0` = 自动挑；这条不动数据）。
+`DSC_UI_PORT` 换本机界面监听的端口（`src/packages/webserver/index.ts:95`，`0` = 自动挑；这条不动数据）。
 
 技能发现的优先级（rank 小的赢，`src/core/skills.ts` 的 `skillRoots`）：
 
@@ -474,7 +482,7 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 `writePluginConfig` 写它，插件取值走 `resolvePluginConfig(file, passed)`
 （`src/core/plugin-registry.ts:168`）——装配时传进来的那份作底，磁盘上那份覆盖它，
 插件每次用值时现调这个函数，所以改完不必重启宿主。
-界面上就能改的：`compact`（压缩保留条数、自动压缩触发线、锚点索引与用户原话两个字符预算）、`goal`（缺省轮次、一次加几轮）、`approval-floor`、`spill`、`session-search`、`lifecycle-hooks`、`mcp`、`tool-search`、`subagent`、`computer-use`、`web-search`——插件贡献的分区都排在**插件中心**那个插件的详情页里（内置插件要在内核清单里声明 `settingsSection`，见 `src/host/kernel.ts` 的 `BUILTIN_PLUGINS` 与 `OFFICIAL_PLUGINS`），设置面板只列内核自己的六个分区。
+界面上就能改的：`compact`（压缩保留条数、自动压缩触发线、锚点索引与用户原话两个字符预算）、`goal`（缺省轮次、一次加几轮）、`approval-floor`、`spill`、`session-search`、`lifecycle-hooks`、`mcp`、`tool-search`、`subagent`、`computer-use`、`web-search`——插件贡献的分区都排在**插件中心**那个插件的详情页里（功能包在 `package.json` 的 `pneuma.settingsSection` 声明分区 id），设置面板只列内核自己的六个分区。
 只能手写这个文件的：`approval.approvalTimeoutMs`（每次弹卡现读，改完下一张卡生效）、
 `ask.maxQuestions` / `ask.maxOptions`（每次提问现读）、`prompt.instructionBudget`（每次拼提示词现读）、
 `host-stdio.snapshotThrottleMs`（只在挂载时读一次，改完要重启）。
@@ -703,7 +711,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
   模式、工具目录、系统提示都是**会话的属性**：`ctx.tools.visible(scope)`、
   `ctx.prompt.systemPrompt(cwd, scope)` 与各投影/提示段的回调都得把 `scope` 透传下去。
   写成全局量的话，用户点开另一个会话就会改掉后台那一轮的工具集与提示词——2026-10-28 那串
-  「未知工具」就是这么来的（`src/plugins/presets.ts` 的 `bySession`）。
+  「未知工具」就是这么来的（`src/packages/presets/index.ts` 的 `bySession`）。
 - **一轮之内工具目录只有一份**：`src/core/loop.ts` 在发请求时取一次快照（`requestTools`），
   执行按它解析名字。执行时再取一次，会在「请求与执行之间注册表变过」时把合法调用判成未知工具。
 - **react-markdown 的 `components` 表必须是模块级常量**（`ui-shell/src/ui-primitives/markdown.tsx`）。
@@ -732,7 +740,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | 流式输出时代码块抽搐／字号行号跳动 | `ui-shell/src/ui-primitives/markdown.tsx` 的 `components` 是否写成了内联箭头函数；代码块两态（纯文本 / 高亮）是否同一个 `pre.shiki > code > span.line` 骨架 |
 | 流式时「回到底部」胶囊一闪一闪 | `ui-shell/src/plugins/transcript/follow.ts` 的跟随判定：`onScroll` 有没有把「内容变矮、浏览器夹 scrollTop」当成读者滚动（看 `pinnedHeight`）；`settle` 会不会在跟随态下按距离重判 |
 | 工具回「未知工具：xxx」 | 先看这一轮的请求与执行是不是同一份目录（`src/core/loop.ts` 的 `requestTools` 快照）；再看模式投影有没有按会话算（`ctx.tools.visible()` 必须带 `sessionId`，否则你在看别的会话时，后台那一轮的工具集跟着换） |
-| 切到别的会话后，后台那一轮的工具集／提示词变了 | 模式（预设）是不是又退回全局变量了：`src/plugins/presets.ts` 的 `bySession` 按会话 id 存，`dsc/session-open` 只登记被打开的那一个会话；投影与提示段的回调必须把 `scope` 传进去 |
+| 切到别的会话后，后台那一轮的工具集／提示词变了 | 模式（预设）是不是又退回全局变量了：`src/packages/presets/index.ts` 的 `bySession` 按会话 id 存，`dsc/session-open` 只登记被打开的那一个会话；投影与提示段的回调必须把 `scope` 传进去 |
 | 写工作区外的文件被拒（沙箱） | 拒因里带当前档位与可写根清单；确有必要就在**同一次调用**里成对带上 `sandbox_permissions` 与 `justification`（照常弹审批卡），或把目录加进「插件中心 → 文件与命令围栏」的附加可写根 |
 | 命令被沙箱当场拒 | 拒因写明命中规则（forbidden 前缀 / 网络开关关 / 越界写目标）；`/sandbox` 能看档位、强制执行等级与最近 3 次拒绝 |
 | 定时任务没触发 | 宿主不常驻就不触发（重启后补投最近一次错过的）；`/schedule list` 看任务是否 enabled、`lastError` 写了什么、是否标了 blocked |
@@ -748,8 +756,8 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 
 | 名称 | 取值 | 位置 |
 | --- | --- | --- |
-| 权限模式 `ApprovalPolicy` | `readonly`（只读，写和执行一律拒）/ `auto-edit`（工作区内写放行，执行命令仍要审批）/ `full-access`（全部自动放行，灾难地板仍然拒）。旧的 `ai-review` 已由偏好迁移展开成「`full-access` + 审阅者 `auto-review`」（见下）。**按会话存**，不是进程级：A 会话切只读不影响 B 会话 | `src/contract/mode.ts:45`，判读在 `src/plugins/approval.ts`（沙箱边界第 4 层 → 权限模式 / 审阅者第 5 层），档位文案在 `approval.ts` |
-| 审阅者 `ApprovalReviewer` | `user`（本人点卡，默认）/ `auto-review`（先给模型判官，判不出来再落人工卡）——**与权限模式正交**的一根轴，决定「要问的事先给谁看」；复核排在自动放行**之前** | `src/contract/mode.ts:58`，复核在 `src/plugins/approval.ts` 第 5 层内 |
+| 权限模式 `ApprovalPolicy` | `readonly`（只读，写和执行一律拒）/ `auto-edit`（工作区内写放行，执行命令仍要审批）/ `full-access`（全部自动放行，灾难地板仍然拒）。旧的 `ai-review` 已由偏好迁移展开成「`full-access` + 审阅者 `auto-review`」（见下）。**按会话存**，不是进程级：A 会话切只读不影响 B 会话 | `src/contract/mode.ts:45`，判读在 `src/packages/approval/index.ts`（沙箱边界第 4 层 → 权限模式 / 审阅者第 5 层），档位文案在 `approval.ts` |
+| 审阅者 `ApprovalReviewer` | `user`（本人点卡，默认）/ `auto-review`（先给模型判官，判不出来再落人工卡）——**与权限模式正交**的一根轴，决定「要问的事先给谁看」；复核排在自动放行**之前** | `src/contract/mode.ts:58`，复核在 `src/packages/approval/index.ts` 第 5 层内 |
 | 沙箱后端不可用姿态 `SandboxOnUnavailable` | `degrade`（默认，降级为策略围栏继续）/ `fail-closed`（写与执行一律拒，读照常）；只对 `docker` / `windows-token` 生效 | `src/core/sandbox/policy.ts:61` |
 | 思考强度 `EffortLevel` | `default` / `off` / `low` / `high` / `max` | `src/contract/mode.ts:14` |
 | 思考档位 `ThinkingLevel` | `off` / `low` / `high` / `max`（每个模型可只声明其中几档，`default` 不算模型能力） | `src/contract/mode.ts:17` |
@@ -758,25 +766,25 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | 会话排序 `SessionSortKey` | `manual`（工作区按拖动顺序，没拖过就活动区置顶）/ `recent`（按最近写入）/ `created`（按创建时间） | `src/contract/task.ts:89` |
 | 列表分组 `SessionGroupKey` | `workspace`（按工作区分组）/ `tree`（嵌套目录挂到最近的祖先工作区下）/ `flat`（不分组的单列表） | `src/contract/task.ts:89` |
 | 归档显隐 `ArchivedFilter` | `hide`（默认，只看活动区）/ `show`（两区并成一份列表）/ `only`（只看归档区） | `src/contract/task.ts:89` |
-| 队友审批 `TeammateApproval` | `forbid`（不允许）/ `foreground`（仅前台子允许）/ `ask`（允许并标注），从严到松按 `forbid < foreground < ask` 比较 | `src/plugins/subagent.ts:75` |
+| 队友审批 `TeammateApproval` | `forbid`（不允许）/ `foreground`（仅前台子允许）/ `ask`（允许并标注），从严到松按 `forbid < foreground < ask` 比较 | `src/packages/subagent/index.ts:75` |
 
 **默认值与硬编码数值**
 
 | 数值 | 值 | 出处 |
 | --- | --- | --- |
-| 压缩保留的最近消息条数 | 缺省 20 条，夹在 5~200；可配 `compact.keepRecent`，设置「上下文压缩」分区就能改。它是**条数下限**，真正决定切点的是下面那条 token 预算 | `src/plugins/compact.ts:39`、`src/core/compact.ts:38` |
-| 压缩保留尾部的 token 预算 | 缺省按模型上下文窗口的 16%（夹 5%~40%），可配 `compact.retainPercent`；核心侧是绝对值，插件按 `contextWindowOf(session) × 百分比` 折算后传 `retainTokens`。从尾往前累加估算 token 够预算才停，再退到「不拆开工具调用与结果」的安全边界 | `src/plugins/compact.ts`（`limits`）、`src/core/compact.ts`（`selectCut`） |
-| 审批卡等多久没人答 | 缺省 300 秒，夹在 10 秒~1 小时；可配 `approval.approvalTimeoutMs`，每次弹卡现读。**没人能应答时不等这个值**：没有 `interactive` 服务（tui / host-stdio 登记）且本进程不是终端直连时，直接按拒处理并写明理由 | `src/plugins/approval.ts:42-56`、`:116-128` |
-| 模型一次最多问几题 / 每题几个选项 | 缺省 3 题 / 每题 4 项，都夹在 1~8；可配 `ask.maxQuestions` / `ask.maxOptions` | `src/plugins/ask.ts` |
-| 提问卡等多久算没人答 | 缺省 900 秒（15 分钟），夹在 10 秒~1 小时；可配 `ask.waitMs`，每次挂卡现读。等满了卡片撤掉、模型拿到「用户没有回答」的实话接着走。**等人的这段时间不算 PTC 脚本的时限**（工具声明 `waitsForHuman`，`plugins/ptc.ts` 的停表只认它） | `src/plugins/ask.ts`、`src/plugins/ptc.ts` |
-| 会话目标缺省轮次上限 / 一次放宽几轮 | 缺省 24 轮 / 8 轮，夹在 1~256 / 1~64；可配 `goal.defaultMaxRounds` / `goal.extendRoundsBy`，设置「会话目标」分区就能改；256 这个硬顶不可配 | `src/plugins/goal.ts:44`、`src/core/goal.ts:30` |
-| 说明书（AGENTS.md）字符预算 | 缺省 20000，夹在 4000~200000；可配 `prompt.instructionBudget` | `src/plugins/prompt.ts`、`src/core/prompt.ts:37` |
-| 快照推送节流 | 缺省 80 ms，夹在 16 ms~1 秒；可配 `host-stdio.snapshotThrottleMs` | `src/plugins/host-stdio.ts` |
+| 压缩保留的最近消息条数 | 缺省 20 条，夹在 5~200；可配 `compact.keepRecent`，设置「上下文压缩」分区就能改。它是**条数下限**，真正决定切点的是下面那条 token 预算 | `src/packages/compact/index.ts:39`、`src/core/compact.ts:38` |
+| 压缩保留尾部的 token 预算 | 缺省按模型上下文窗口的 16%（夹 5%~40%），可配 `compact.retainPercent`；核心侧是绝对值，插件按 `contextWindowOf(session) × 百分比` 折算后传 `retainTokens`。从尾往前累加估算 token 够预算才停，再退到「不拆开工具调用与结果」的安全边界 | `src/packages/compact/index.ts`（`limits`）、`src/core/compact.ts`（`selectCut`） |
+| 审批卡等多久没人答 | 缺省 300 秒，夹在 10 秒~1 小时；可配 `approval.approvalTimeoutMs`，每次弹卡现读。**没人能应答时不等这个值**：没有 `interactive` 服务（tui / host-stdio 登记）且本进程不是终端直连时，直接按拒处理并写明理由 | `src/packages/approval/index.ts:42-56`、`:116-128` |
+| 模型一次最多问几题 / 每题几个选项 | 缺省 3 题 / 每题 4 项，都夹在 1~8；可配 `ask.maxQuestions` / `ask.maxOptions` | `src/packages/ask/index.ts` |
+| 提问卡等多久算没人答 | 缺省 900 秒（15 分钟），夹在 10 秒~1 小时；可配 `ask.waitMs`，每次挂卡现读。等满了卡片撤掉、模型拿到「用户没有回答」的实话接着走。**等人的这段时间不算 PTC 脚本的时限**（工具声明 `waitsForHuman`，`plugins/ptc.ts` 的停表只认它） | `src/packages/ask/index.ts`、`src/packages/ptc/index.ts` |
+| 会话目标缺省轮次上限 / 一次放宽几轮 | 缺省 24 轮 / 8 轮，夹在 1~256 / 1~64；可配 `goal.defaultMaxRounds` / `goal.extendRoundsBy`，设置「会话目标」分区就能改；256 这个硬顶不可配 | `src/packages/goal/index.ts:44`、`src/core/goal.ts:30` |
+| 说明书（AGENTS.md）字符预算 | 缺省 20000，夹在 4000~200000；可配 `prompt.instructionBudget` | `src/packages/prompt/index.ts`、`src/core/prompt.ts:37` |
+| 快照推送节流 | 缺省 80 ms，夹在 16 ms~1 秒；可配 `host-stdio.snapshotThrottleMs` | `src/packages/host-stdio/index.ts` |
 | LLM 连接超时 / 流空闲超时 | 缺省 30 s / 180 s（流空闲：这么久一个字节都没到就判服务端挂起）；可用 `DSC_LLM_CONNECT_TIMEOUT_MS` / `DSC_LLM_STREAM_IDLE_MS` 覆盖（毫秒，夹在 1 秒~10 分钟，每次调用现读）。端点连不上时默认要等 30 s × 3 次重试 ≈ 90 s 才把失败浮上来，网络差的把它调小（如 8000） | `src/core/llm.ts` 的 `readTimeoutMs` |
-| 自动压缩触发线 | 缺省为模型上下文窗口的 80%，夹在 50%~95%；可配 `compact.autoCompactPercent`。实际阈值取 `min(窗口×百分比, 窗口 − 输出预留 − 安全余量)`：输出预留是这条路由的 `maxTokens`，安全余量缺省按窗口 6.4% 算并封顶 65536（可配 `compact.headroomTokens`，0 = 自动），下限 1024 | `src/plugins/compact.ts`（`thresholdOf`） |
-| 压一次不够时最多再压几次 | 缺省 1 次，夹 0~3；可配 `compact.compactionRetries`。第一次压完复量，仍超阈值才补压；补压会绕开「历史太短」守卫，允许折进上一份摘要本身。手动 `/compact` 与爆窗强压都不循环 | `src/plugins/compact.ts`（`check`）、`src/core/compact.ts` |
-| 压缩摘要的锚点索引预算 | 缺省 6000 字符，夹在 1000~20000；可配 `compact.anchorBudgetChars` | `src/core/compact-anchors.ts:32`、`src/plugins/compact.ts:46` |
-| 压缩摘要的用户原话预算 | 缺省 8000 字符，夹在 1000~40000；可配 `compact.userQuoteBudgetChars` | `src/core/compact-anchors.ts:35`、`src/plugins/compact.ts:47` |
+| 自动压缩触发线 | 缺省为模型上下文窗口的 80%，夹在 50%~95%；可配 `compact.autoCompactPercent`。实际阈值取 `min(窗口×百分比, 窗口 − 输出预留 − 安全余量)`：输出预留是这条路由的 `maxTokens`，安全余量缺省按窗口 6.4% 算并封顶 65536（可配 `compact.headroomTokens`，0 = 自动），下限 1024 | `src/packages/compact/index.ts`（`thresholdOf`） |
+| 压一次不够时最多再压几次 | 缺省 1 次，夹 0~3；可配 `compact.compactionRetries`。第一次压完复量，仍超阈值才补压；补压会绕开「历史太短」守卫，允许折进上一份摘要本身。手动 `/compact` 与爆窗强压都不循环 | `src/packages/compact/index.ts`（`check`）、`src/core/compact.ts` |
+| 压缩摘要的锚点索引预算 | 缺省 6000 字符，夹在 1000~20000；可配 `compact.anchorBudgetChars` | `src/core/compact-anchors.ts:32`、`src/packages/compact/index.ts:46` |
+| 压缩摘要的用户原话预算 | 缺省 8000 字符，夹在 1000~40000；可配 `compact.userQuoteBudgetChars` | `src/core/compact-anchors.ts:35`、`src/packages/compact/index.ts:47` |
 | 灾难地板的命令长度上限 | 缺省 4000 字符，夹在 100~100000；更长的命令按「看不清要跑什么」拒；可配 `approval-floor.maxCommandLength` | `src/core/approval-floor.ts:34`、`:116` |
 | 灾难地板的熔断 | 连续被地板拒 5 次（1~100）后冷却 60000 毫秒（0~3600000），缺省开着；可配 `approval-floor.circuitBreakerThreshold` / `circuitBreakerCooldownMs` / `circuitBreakerEnabled` | `src/core/approval-floor.ts:35-36`、`:117-119` |
 | 「只读命令」的判据 | 不止「第一个词在只读名单里」：① 引号外的 `>`（`2>&1` 不算）算写盘，整段不算只读；② `node`/`python`/`perl` 这类解释器一律不算只读，python 只有 `-m pytest`/`-m unittest`/`-m json.tool` 例外；③ `env` 会被剥掉再看真正的命令；④ `find` 带 `-delete`/`-exec`/`-fprint` 不算；⑤ `sed` 的 `e`/`w`/`-i` 与 `awk` 的 `system(`/`popen(`/`>` 不算。只有 ① 是可配的（走白名单），其余是安全不变量 | `src/core/command-policy.ts:299-320`、`:506-563` |
@@ -785,58 +793,58 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | 会话检索返回几条 | 缺省 20 条，夹在 1~200；可配 `session-search.defaultLimit` | `src/core/session-index.ts:70` |
 | 会话检索的片段与回填 | 命中片段 160 字符（40~2000）、回填每批 25 个文件（1~500）、单文件大小上限 8 MiB（4096~256 MiB，超了只记指纹）、索引目录 `~/.dsc/cache`；可配 `session-search.snippetLength` / `backfillBatch` / `maxFileBytes` / `indexDir` | `src/core/session-index.ts:51-56`、`:62-72` |
 | 生命周期钩子缺省超时 | 缺省 10000 毫秒，夹在 500~120000；钩子最多 50 条、单条命令 1000 字符、matcher 120 字符；可配 `lifecycle-hooks.timeoutMs` | `src/core/hooks.ts:53`、`src/core/lifecycle-hooks.ts:168-170`、`:190-196` |
-| MCP 的调用与重连 | 单次调用超时 60000 毫秒、握手 20000 毫秒（都夹在 1000~600000）；重连退避 1000→30000 毫秒、连续失败 5 次放弃（1~50）；清单里没写 `defaultRisk` 的 server 缺省按 `exec` 算；可配 `mcp.*` | `src/plugins/mcp.ts:53-62`、`:65-70` |
+| MCP 的调用与重连 | 单次调用超时 60000 毫秒、握手 20000 毫秒（都夹在 1000~600000）；重连退避 1000→30000 毫秒、连续失败 5 次放弃（1~50）；清单里没写 `defaultRisk` 的 server 缺省按 `exec` 算；可配 `mcp.*` | `src/packages/mcp/index.ts:53-62`、`:65-70` |
 | 工具按需加载 | 一次检索最多 5 条（1~20），档位缺省 2（1 = 只撤 MCP、2 = 再按 `deferRules` 撤、3 = 除 `keepTools` 外全撤）；可配 `tool-search.searchLimit` / `tier` | `src/core/tool-search.ts:24-29`、`:54-60` |
-| 历史里超长工具结果怎么切 | 超过 8192 字符切掉中间、留头 4096 + 尾 1024，中间写一句「省了多少字符、原文还在日志里」；**最近 4 条不动**（刚跑完就切等于逼模型重跑）。同一条消息永远切成同一段——前缀缓存只在它第一次越线那一轮失效一次 | `src/core/tool-result-prune.ts` 的 `DEFAULT_TOOL_RESULT_PRUNE`，投影挂在 `src/plugins/prompt.ts` 的 `tool-result-prune`（order 560） |
+| 历史里超长工具结果怎么切 | 超过 8192 字符切掉中间、留头 4096 + 尾 1024，中间写一句「省了多少字符、原文还在日志里」；**最近 4 条不动**（刚跑完就切等于逼模型重跑）。同一条消息永远切成同一段——前缀缓存只在它第一次越线那一轮失效一次 | `src/core/tool-result-prune.ts` 的 `DEFAULT_TOOL_RESULT_PRUNE`，投影挂在 `src/packages/prompt/index.ts` 的 `tool-result-prune`（order 560） |
 | 右侧栏最宽多少 | 配置上限 820px，实际还受「窗口宽 − 侧栏宽 − 正文保底 480px」约束：拖到极限是右栏停住、正文不再被压扁；窗口缩放时同样按这条夹回去（只夹内存，不改用户存档的宽度） | `ui-shell/src/ui-dockkit/dock.tsx` 的 `dockDragLimit`、`ui-shell/src/ui-layout/app.tsx` 的 resize 夹取、`ui-shell/src/legacy/views.css` 的 `.thread-main` min-width |
 | 模型请求重试 | 最多 3 次，退避 500ms × 2^(n-1)；可重试的是连接失败（`LlmError.retryable`，一个字节都没收到时）与 HTTP 429 / 5xx | `src/core/llm.ts:152`、`:162-166` |
-| 同时在干的队友上限 | 4（收工的不占额度） | `src/plugins/subagent.ts:68` |
-| 队友派活层数 | 1（只有 Lead 能派），0 = 彻底不派 | `src/plugins/subagent.ts:69` |
-| 队友审批默认 | `forbid` | `src/plugins/subagent.ts:70` |
-| 名册里最多留几条收工记录 | 12（`MAX_LISTED_FINISHED`） | `src/plugins/subagent.ts` |
-| 截图最长边 | 1568 px，JPEG 质量 80 | `src/plugins/computer-use.ts:49-51` |
-| 动作之间等待 | 120 ms | `src/plugins/computer-use.ts:52` |
-| 距上次截屏允许的动作数 | 12，超了强制要求先看一眼 | `src/plugins/computer-use.ts:53` |
-| 应用白名单 | 空串 = 不限 | `src/plugins/computer-use.ts:54` |
-| 看屏免审批 | 默认关 | `src/plugins/computer-use.ts:56` |
+| 同时在干的队友上限 | 4（收工的不占额度） | `src/packages/subagent/index.ts:68` |
+| 队友派活层数 | 1（只有 Lead 能派），0 = 彻底不派 | `src/packages/subagent/index.ts:69` |
+| 队友审批默认 | `forbid` | `src/packages/subagent/index.ts:70` |
+| 名册里最多留几条收工记录 | 12（`MAX_LISTED_FINISHED`） | `src/packages/subagent/index.ts` |
+| 截图最长边 | 1568 px，JPEG 质量 80 | `src/packages/computer-use/index.ts:49-51` |
+| 动作之间等待 | 120 ms | `src/packages/computer-use/index.ts:52` |
+| 距上次截屏允许的动作数 | 12，超了强制要求先看一眼 | `src/packages/computer-use/index.ts:53` |
+| 应用白名单 | 空串 = 不限 | `src/packages/computer-use/index.ts:54` |
+| 看屏免审批 | 默认关 | `src/packages/computer-use/index.ts:56` |
 | 最近工作目录记忆条数 | 12 | `desktop/electron/main/index.ts:146` |
 | 技能市场清单缓存 | 1 小时，落在 `~/.dsc/cache/` | `src/core/market.ts:10` |
-| 截图识别标记 | 工具结果文字里含「屏幕物理分辨率」才认定是自己截的图，不误伤别的插件带的图 | `src/plugins/computer-use.ts:72` |
+| 截图识别标记 | 工具结果文字里含「屏幕物理分辨率」才认定是自己截的图，不误伤别的插件带的图 | `src/packages/computer-use/index.ts:72` |
 | 沙箱默认档 | workspace-write：可写根 = 会话 cwd + 沙箱私有临时目录，附加根默认空、网络默认关。这个值只是**新会话默认**（plugins.json 的 `sandbox.mode`）；每个会话自己的档位存在会话 `permissions` 状态里 | `src/core/sandbox/policy.ts:87-89`、`src/core/permission-scope.ts` |
 | 沙箱后端不可用姿态 | `degrade`（默认，降级为策略围栏继续，=旧行为）/ `fail-closed`（写与执行类一律拒、读照常，拒因规则名 `backend-unavailable`）；只对 `docker` / `windows-token` 生效，`policy` 后端的 `partial` 是预期状态、不触发 | `src/core/sandbox/policy.ts:61` |
-| 沙箱升权 | `sandbox_permissions` + `sandbox_scope`（`once` 默认 / `session`）+ `justification` **成对校验**（只给 scope 或半截 → 按拒处理）；`workspace-write` = 留在沙箱内、把这次目标并进可写根后**重判**，`danger-full-access` = 这一次跳过沙箱判定；「本会话允许」只对「留在沙箱内」这一类给会话档（命令类与出沙箱档只给这一次） | `src/core/tools/sandbox-args.ts`、`src/plugins/sandbox.ts`（`grantSession` / `sessionGrants`） |
-| 沙箱越界的两条路 | **能问的**（`outside-writable-roots` / `mode-read-only`）沙箱只 defer，审批是最后一道，用户点「这一次允许」就执行（对齐 dsh 的 read-only + ask）；**不能问的**（NT 命名空间 / ADS / 短名 / 解析失败 / 受保护名 / 只读子路径 / 网络开关 / 后端 fail-closed）保持硬拒。审批缺场时沙箱自己硬拒，不会变成无人把关 | `src/plugins/sandbox.ts`（`ASKABLE_RULES`）、`src/plugins/approval.ts`（第 4 层 `sandbox.check`） |
-| 审批裁决顺序 | 硬地板 → 说明书类文件 → 已给授权 → **沙箱边界** → 权限模式 / 审阅者 → 人工卡。沙箱越界跳过所有自动放行（含完全访问），只给「这一次」；AI 复核排在自动放行之前，所以「完全访问 + AI 复核」每次调用都过判官 | `src/plugins/approval.ts:494-660` |
-| 出厂权限预设 | `read-only` / `workspace`（默认）/ `full-access` / `auto-review`（沙箱 + 权限模式 + 审阅者三合一，取值对齐 dsh：只读 = read-only + auto-edit + user，工作区 = workspace-write + auto-edit + user，完全访问 = danger-full-access + full-access + user，AI 复核 = danger-full-access + full-access + auto-review）；三根旋钮拼不出预设时读作 `custom`（推导状态，能停留、不能选） | `src/core/permission-presets.ts`、`src/plugins/permission-presets.ts` |
+| 沙箱升权 | `sandbox_permissions` + `sandbox_scope`（`once` 默认 / `session`）+ `justification` **成对校验**（只给 scope 或半截 → 按拒处理）；`workspace-write` = 留在沙箱内、把这次目标并进可写根后**重判**，`danger-full-access` = 这一次跳过沙箱判定；「本会话允许」只对「留在沙箱内」这一类给会话档（命令类与出沙箱档只给这一次） | `src/core/tools/sandbox-args.ts`、`src/packages/sandbox/index.ts`（`grantSession` / `sessionGrants`） |
+| 沙箱越界的两条路 | **能问的**（`outside-writable-roots` / `mode-read-only`）沙箱只 defer，审批是最后一道，用户点「这一次允许」就执行（对齐 dsh 的 read-only + ask）；**不能问的**（NT 命名空间 / ADS / 短名 / 解析失败 / 受保护名 / 只读子路径 / 网络开关 / 后端 fail-closed）保持硬拒。审批缺场时沙箱自己硬拒，不会变成无人把关 | `src/packages/sandbox/index.ts`（`ASKABLE_RULES`）、`src/packages/approval/index.ts`（第 4 层 `sandbox.check`） |
+| 审批裁决顺序 | 硬地板 → 说明书类文件 → 已给授权 → **沙箱边界** → 权限模式 / 审阅者 → 人工卡。沙箱越界跳过所有自动放行（含完全访问），只给「这一次」；AI 复核排在自动放行之前，所以「完全访问 + AI 复核」每次调用都过判官 | `src/packages/approval/index.ts:494-660` |
+| 出厂权限预设 | `read-only` / `workspace`（默认）/ `full-access` / `auto-review`（沙箱 + 权限模式 + 审阅者三合一，取值对齐 dsh：只读 = read-only + auto-edit + user，工作区 = workspace-write + auto-edit + user，完全访问 = danger-full-access + full-access + user，AI 复核 = danger-full-access + full-access + auto-review）；三根旋钮拼不出预设时读作 `custom`（推导状态，能停留、不能选） | `src/core/permission-presets.ts`、`src/packages/permission-presets/index.ts` |
 | 权限三项的存储 | **按会话**存在 jsonl 的 `state` 条目 `permissions`：`{ sandbox, policy, reviewer }`，三项都可为 `null`（没钉过）。读取时缺哪项补哪项默认值并写回（钉住），此后改默认值不影响它；切换 / 恢复 / 分叉会话各带各的。子代理审批按派它的父会话归属 | `src/core/permission-scope.ts`、`src/core/session.ts`（`SessionStateMap.permissions`） |
-| 新会话默认权限 | 偏好 `defaultPermissionPreset`（空串 = 按单旋钮默认）优先；否则 `defaultPolicy` / `defaultReviewer` + 沙箱默认档。设置里「设为新会话默认」只写这几项，**绝不动当前会话** | `src/plugins/permission-presets.ts`（`setDefault`）、`src/plugins/settings.ts` |
-| 旧工具结果清理时机 | `round`（默认）：同一轮内只算一次清理计划，之后每步复用，请求前缀不因新工具结果而改；`request`：每次请求重算（旧行为，省上下文但前缀常失效）。配置键 `microcompact.refresh`，设置 → 旧工具结果清理 | `src/core/microcompact.ts`（`planMicrocompact` / `applyMicrocompactPlan` / `roundKeyOf`）、`src/plugins/microcompact.ts` |
-| 旧工具结果清理门槛 | 计划能清掉的字符占整段提示词不足 **25%** 就一条都不清（0–80 可配，配置键 `microcompact.minFreePercent`）。理由：命中的缓存 token 只按约 1/10 价收，清 1 token 只省 1/10 的钱；清理点一动，从那儿往后整段前缀按全价重读。实测一次 11.9k 字符的清理让下一次请求多付 32k 未命中，比例只有 24%——正是这道门槛该拦的形状。队友汇报（`<teammate-report`）算程序注入，不再触发「新一轮」重算 | `src/core/microcompact.ts`（`planWorthApplying` / `isSyntheticUserMessage`）、`src/plugins/microcompact.ts` |
-| 转录的会话归属 | `transcript.emit / system / plan` 的最后一个参数是归属会话 id：带了又不是当前查看的会话，整条丢掉（连快照失效都不做）；不传 = 全局提示（启动横幅、插件加载失败这类照写）。PTC 脚本内部的 `tool/call` / `tool/result`、压缩通知、文件更改预览、钩子留言、队友汇报回执都带各自的会话 id | `src/services/types.ts`（`TranscriptService`）、`src/plugins/transcript.ts`（`owned`）、`src/plugins/ptc.ts` |
-| 钩子脚本的健康状态 | 批准状态多一档 `missing`：命令里写了脚本路径、文件却不在，就停跑并写明缺哪个文件。以前 `scriptFileOf` 只认存在的文件，文件没了等于跳过漂移检查、被当成「已批准」，跑到 `node` 那一步才以「退出码 1」失败；现在还会把 stderr 首行写进拦截理由（`Cannot find module` 这类） | `src/core/hooks.ts`（`scriptTokenOf` / `trustOf` / `judgeScriptRun`）、`src/plugins/hooks.ts` |
-| 队友轮次预算 | 默认**不限**（插件设置「轮次上限」= 0，配置键 `subagent.maxTurns`）；填了就与角色文件的 `max-turns` 取更小的那个，角色写 0 也当不限。设限时最后一轮收走工具表、先补一句「直接给结论」，并把汇报推迟到这一轮跑完，避免半截汇报抢跑 | `src/plugins/subagent.ts`（`effectiveMaxTurns` / `finalRoundPending` / `settle`）、`src/core/agent-roles.ts` |
-| AI 复核的输入 | 判官除了工具名、参数、工作目录，还带上**这一轮用户的原话**（最后一条真人 user 消息，跳过环境快照 / 清单提醒 / 钩子产出 / 队友汇报 / 压缩摘要，截 500 字）；判官自己那次请求的用量也按会话记账 | `src/plugins/approval.ts`（`lastUserWords` / `aiReview`） |
+| 新会话默认权限 | 偏好 `defaultPermissionPreset`（空串 = 按单旋钮默认）优先；否则 `defaultPolicy` / `defaultReviewer` + 沙箱默认档。设置里「设为新会话默认」只写这几项，**绝不动当前会话** | `src/packages/permission-presets/index.ts`（`setDefault`）、`src/packages/settings/index.ts` |
+| 旧工具结果清理时机 | `round`（默认）：同一轮内只算一次清理计划，之后每步复用，请求前缀不因新工具结果而改；`request`：每次请求重算（旧行为，省上下文但前缀常失效）。配置键 `microcompact.refresh`，设置 → 旧工具结果清理 | `src/core/microcompact.ts`（`planMicrocompact` / `applyMicrocompactPlan` / `roundKeyOf`）、`src/packages/microcompact/index.ts` |
+| 旧工具结果清理门槛 | 计划能清掉的字符占整段提示词不足 **25%** 就一条都不清（0–80 可配，配置键 `microcompact.minFreePercent`）。理由：命中的缓存 token 只按约 1/10 价收，清 1 token 只省 1/10 的钱；清理点一动，从那儿往后整段前缀按全价重读。实测一次 11.9k 字符的清理让下一次请求多付 32k 未命中，比例只有 24%——正是这道门槛该拦的形状。队友汇报（`<teammate-report`）算程序注入，不再触发「新一轮」重算 | `src/core/microcompact.ts`（`planWorthApplying` / `isSyntheticUserMessage`）、`src/packages/microcompact/index.ts` |
+| 转录的会话归属 | `transcript.emit / system / plan` 的最后一个参数是归属会话 id：带了又不是当前查看的会话，整条丢掉（连快照失效都不做）；不传 = 全局提示（启动横幅、插件加载失败这类照写）。PTC 脚本内部的 `tool/call` / `tool/result`、压缩通知、文件更改预览、钩子留言、队友汇报回执都带各自的会话 id | `src/services/types.ts`（`TranscriptService`）、`src/packages/transcript/index.ts`（`owned`）、`src/packages/ptc/index.ts` |
+| 钩子脚本的健康状态 | 批准状态多一档 `missing`：命令里写了脚本路径、文件却不在，就停跑并写明缺哪个文件。以前 `scriptFileOf` 只认存在的文件，文件没了等于跳过漂移检查、被当成「已批准」，跑到 `node` 那一步才以「退出码 1」失败；现在还会把 stderr 首行写进拦截理由（`Cannot find module` 这类） | `src/core/hooks.ts`（`scriptTokenOf` / `trustOf` / `judgeScriptRun`）、`src/packages/hooks/index.ts` |
+| 队友轮次预算 | 默认**不限**（插件设置「轮次上限」= 0，配置键 `subagent.maxTurns`）；填了就与角色文件的 `max-turns` 取更小的那个，角色写 0 也当不限。设限时最后一轮收走工具表、先补一句「直接给结论」，并把汇报推迟到这一轮跑完，避免半截汇报抢跑 | `src/packages/subagent/index.ts`（`effectiveMaxTurns` / `finalRoundPending` / `settle`）、`src/core/agent-roles.ts` |
+| AI 复核的输入 | 判官除了工具名、参数、工作目录，还带上**这一轮用户的原话**（最后一条真人 user 消息，跳过环境快照 / 清单提醒 / 钩子产出 / 队友汇报 / 压缩摘要，截 500 字）；判官自己那次请求的用量也按会话记账 | `src/packages/approval/index.ts`（`lastUserWords` / `aiReview`） |
 | 命令输出截断 | bash 超预算时留**头 60% + 尾 40%**，中间写明清掉多少字符、怎么看全（缩范围重跑或调大「命令输出封顶」）。只留头会把编译错误、测试断言这些「最后才打印」的原因丢掉 | `src/core/tools/bash.ts`（`truncateBashOutput`） |
-| 模型与思考档位 | 按会话存在 `model` 状态条目（`{ provider, model, effort }`）。请求路由走 `ctx.llm.routeForSession(session)`，后台 agent / 压缩 / 起标题 / 审批判官 / 子代理各用自己那条；用量日志的 `provider/model` 也按发起会话记。新建会话没记过时沿用「上一次选的那一组」，恢复老会话没有记录时按配置默认 | `src/plugins/llm.ts`、`src/plugins/agent.ts`、`src/plugins/compact.ts` |
-| 协作模式 | 按会话存在 `mode` 状态条目；守卫按本次调用的 `sessionId/sessionPath` 取那一档（后台会话在计划模式跑，不会因为你在看执行模式就被放行）；系统提示段的模式条款同样按 `scope.sessionId` 取 | `src/plugins/mode.ts`、`src/services/types.ts`（`ModeService.modeFor`） |
-| 会话目标的清空 | 目标存在会话日志的 `goal` 状态条目里，**清空也是一条记录**：用户点 ✕ 时追加 `goal = null` 盖掉上一条（日志 append-only、最后一条生效）。旧版见 null 就不写，重启重放又把旧目标带回来（2026-11-02 报障） | `src/plugins/goal.ts`（`persist`）、`src/core/session.ts`（`SessionStateMap.goal`） |
-| 新会话在侧栏的回执 | 点「新建会话」当场在侧栏当前工作区顶部出一行「新会话」（`SessionSummary.unsaved = true` 的临时行，宿主 `refresh()` 给**当前**那条没落盘的会话补）。切到别的会话这行就消失（它没内容也没稳定身份），输入框里的半截话按工作区留着，再点「新会话」捡回来；这一行是只读回执——不给改名 / 置顶 / 归档 / 分叉 / 拖拽 / 右键菜单（文件还不存在）。发出第一条消息后宿主补刷一次，临时行换成扫盘出来的真行，不出重复行 | `src/plugins/session.ts`（`refresh` 与 `dsc/changed` 守卫）、`src/contract/session.ts`（`SessionSummary.unsaved`）、`ui-shell/src/plugins/sessions/ui.tsx`（`SessionRow` 的 `unsaved` 分支） |
-| 切会话的回执与成本 | 侧栏高亮**不等宿主那一帧**：点下去立刻把那一行画成当前（`pendingOpen`，快照对上了再交还宿主真值，4 秒兜底撤回），正文仍等真数据。宿主侧三条省钱：① 切走但空闲的 agent 留 3 个（`IDLE_KEEP`），切回去命中 `sessionFor` 不再读 jsonl；② 技能目录 / git 读数只在**工作目录真变了**时重扫重拍；③ `listSessions()` 按「文件 mtime + 大小 + 侧栏属性」缓存每一行（76 条会话从 120–150ms 降到 ~18ms）。快照推送改成 leading-edge：距上一帧超过节流窗口就立刻推，用户动作不再干等 60–80ms | `ui-shell/src/plugins/sessions/ui.tsx`（`pendingOpen` / `shownPath`）、`src/plugins/agent.ts`（`rememberIdle`）、`src/plugins/skills.ts`、`src/plugins/git.ts`（`cacheCwd`）、`src/core/session.ts`（`sessionRowCache`）、`src/plugins/host-stdio.ts`（`lastSentAt`）、`src/plugins/remote.ts`（`lastFrameAt`） |
+| 模型与思考档位 | 按会话存在 `model` 状态条目（`{ provider, model, effort }`）。请求路由走 `ctx.llm.routeForSession(session)`，后台 agent / 压缩 / 起标题 / 审批判官 / 子代理各用自己那条；用量日志的 `provider/model` 也按发起会话记。新建会话没记过时沿用「上一次选的那一组」，恢复老会话没有记录时按配置默认 | `src/packages/llm/index.ts`、`src/packages/agent/index.ts`、`src/packages/compact/index.ts` |
+| 协作模式 | 按会话存在 `mode` 状态条目；守卫按本次调用的 `sessionId/sessionPath` 取那一档（后台会话在计划模式跑，不会因为你在看执行模式就被放行）；系统提示段的模式条款同样按 `scope.sessionId` 取 | `src/packages/mode/index.ts`、`src/services/types.ts`（`ModeService.modeFor`） |
+| 会话目标的清空 | 目标存在会话日志的 `goal` 状态条目里，**清空也是一条记录**：用户点 ✕ 时追加 `goal = null` 盖掉上一条（日志 append-only、最后一条生效）。旧版见 null 就不写，重启重放又把旧目标带回来（2026-11-02 报障） | `src/packages/goal/index.ts`（`persist`）、`src/core/session.ts`（`SessionStateMap.goal`） |
+| 新会话在侧栏的回执 | 点「新建会话」当场在侧栏当前工作区顶部出一行「新会话」（`SessionSummary.unsaved = true` 的临时行，宿主 `refresh()` 给**当前**那条没落盘的会话补）。切到别的会话这行就消失（它没内容也没稳定身份），输入框里的半截话按工作区留着，再点「新会话」捡回来；这一行是只读回执——不给改名 / 置顶 / 归档 / 分叉 / 拖拽 / 右键菜单（文件还不存在）。发出第一条消息后宿主补刷一次，临时行换成扫盘出来的真行，不出重复行 | `src/packages/session/index.ts`（`refresh` 与 `dsc/changed` 守卫）、`src/contract/session.ts`（`SessionSummary.unsaved`）、`ui-shell/src/plugins/sessions/ui.tsx`（`SessionRow` 的 `unsaved` 分支） |
+| 切会话的回执与成本 | 侧栏高亮**不等宿主那一帧**：点下去立刻把那一行画成当前（`pendingOpen`，快照对上了再交还宿主真值，4 秒兜底撤回），正文仍等真数据。宿主侧三条省钱：① 切走但空闲的 agent 留 3 个（`IDLE_KEEP`），切回去命中 `sessionFor` 不再读 jsonl；② 技能目录 / git 读数只在**工作目录真变了**时重扫重拍；③ `listSessions()` 按「文件 mtime + 大小 + 侧栏属性」缓存每一行（76 条会话从 120–150ms 降到 ~18ms）。快照推送改成 leading-edge：距上一帧超过节流窗口就立刻推，用户动作不再干等 60–80ms | `ui-shell/src/plugins/sessions/ui.tsx`（`pendingOpen` / `shownPath`）、`src/packages/agent/index.ts`（`rememberIdle`）、`src/packages/skills/index.ts`、`src/packages/git/index.ts`（`cacheCwd`）、`src/core/session.ts`（`sessionRowCache`）、`src/packages/host-stdio/index.ts`（`lastSentAt`）、`src/packages/remote/index.ts`（`lastFrameAt`） |
 | 轮尾附注的显隐 | 「~N tok · 时刻」与复制 / 分叉同一套：默认 `opacity: 0`，鼠标压在**这一轮的输出**（非首块）上、或压页脚那一行、或键盘焦点进这一轮才浮现；`prefers-reduced-motion` 下不做过渡。保留版面（不 `display: none`）——隐着也占位，浮现时不跳版，键盘仍能聚焦 | `ui-shell/src/legacy/views.css`（「轮尾的复制 / 分叉 / 用量 · 时刻」段）、`ui-shell/src/plugins/transcript/rows/foot.tsx` |
 | 会话列表的「最近使用」时间 | 取「最后一条带 `ts` 的对话记录」的时刻，**不取文件 mtime**：打开老会话时，权限三项的默认值会补写 `state` 记账（没有 `ts`），mtime 被刷成现在，侧栏就跳「刚刚」——可它一个字都没多。`ts` 只扫文件尾部 512KB（append-only 的日志最后一条贴着尾巴）；老日志整份找不到 `ts` 时回落 mtime，mtime 仍当读盘缓存的键 | `src/core/session.ts`（`lastActivityAt` / `readSessionFileUncached`） |
 | 读路径补默认值不写盘 | 权限三项（沙箱 / 权限模式 / 审阅者）在读取时补钉：只记内存（`Session.setState` → `deferredState`），下一次真正写日志（用户说话、切档位）时跟着那一条一起落盘；用户真改了档位仍走 `appendState` 立刻写。好处是「只点开看一眼」不产生任何文件改动，mtime 不动 | `src/core/permission-scope.ts`（`pinPermission` / `permissionOf`）、`src/core/session.ts`（`setState` / `write` 里冲刷 `deferredState`） |
 | 行首置顶图钉 | 竖向推钉（顶帽 + 梯形钉身 + 针），14px：未置顶平时 `opacity: 0`、悬浮与键盘聚焦时浮出；已置顶常显、钉身填实（`IconPin` 的 `filled`）并染提示色。行首被状态点占用时整格让给状态点，图钉只剩右键菜单入口 | `ui-shell/src/ui-primitives/icons.tsx`（`IconPin`）、`ui-shell/src/plugins/sessions/ui.tsx`（`SessionRow`）、`ui-shell/src/legacy/views.css`（`.lead-pin`） |
-| 编辑并重发（重新编辑） | **留在当前会话里**截断重来：宿主给日志追加一条 `rewind { keep }` 记录（`keep` = 保留几条**人打的**用户消息，机器的 `notice` 不算），内存里把第 keep 条及其之后的消息丢掉并清掉它们的工具派生状态，然后发 `dsc/session-open` 让转录层重放。日志仍 append-only——原文一条不删，重启按同一条规则重放；界面只调 `rewindSession`，不再 `forkSession` / `openSession`。改的是第一条时把改过的文字一起传上去，直接写成自动标题（否则侧栏一直显示被作废的原文）。读原文的那几条路（分叉 / 分叉菜单）先过 `applyRewinds()`，把 rewind 应用成「还剩哪些行」，免得列出、或复制走已作废的消息 | `src/core/session.ts`（`rewindToUser` / `cutIndexBeforeUser` / `case 'rewind'`）、`src/plugins/session.ts`（`rewind`）、`src/core/ui-methods.ts`、`ui-shell/src/plugins/transcript/ui.tsx`（`editAndResend`） |
-| 分支钮读数（输入框上方） | 快照面 `surfaces.git` = `repo` / `branch` / `detached` / `dirtyFileCount`（计数含未跟踪、只看会话 cwd 之内）；节奏 12s / 30s / 60s 三档 + 事件催拍（回合收工、换会话、写类 git op 落盘）；**没人读快照就不跑 git**（CLI / TUI 会话零开销） | `src/plugins/git.ts`、`src/core/git-exec.ts` |
-| git 切 / 建分支 | `dock` 的写类 op（`git-checkout` / `git-branch-create`，**过审批**，卡片文案在 `DOCK_WRITE_LABEL`），执行用 `git switch --no-guess`（避开 `checkout <名字>` 的分支/路径歧义）；分支清单是读类 op `git-branches`（界面通道直接放行，当前分支排第一） | `src/core/dock-ops.ts`、`src/plugins/desktop-dock.ts` |
+| 编辑并重发（重新编辑） | **留在当前会话里**截断重来：宿主给日志追加一条 `rewind { keep }` 记录（`keep` = 保留几条**人打的**用户消息，机器的 `notice` 不算），内存里把第 keep 条及其之后的消息丢掉并清掉它们的工具派生状态，然后发 `dsc/session-open` 让转录层重放。日志仍 append-only——原文一条不删，重启按同一条规则重放；界面只调 `rewindSession`，不再 `forkSession` / `openSession`。改的是第一条时把改过的文字一起传上去，直接写成自动标题（否则侧栏一直显示被作废的原文）。读原文的那几条路（分叉 / 分叉菜单）先过 `applyRewinds()`，把 rewind 应用成「还剩哪些行」，免得列出、或复制走已作废的消息 | `src/core/session.ts`（`rewindToUser` / `cutIndexBeforeUser` / `case 'rewind'`）、`src/packages/session/index.ts`（`rewind`）、`src/core/ui-methods.ts`、`ui-shell/src/plugins/transcript/ui.tsx`（`editAndResend`） |
+| 分支钮读数（输入框上方） | 快照面 `surfaces.git` = `repo` / `branch` / `detached` / `dirtyFileCount`（计数含未跟踪、只看会话 cwd 之内）；节奏 12s / 30s / 60s 三档 + 事件催拍（回合收工、换会话、写类 git op 落盘）；**没人读快照就不跑 git**（CLI / TUI 会话零开销） | `src/packages/git/index.ts`、`src/core/git-exec.ts` |
+| git 切 / 建分支 | `dock` 的写类 op（`git-checkout` / `git-branch-create`，**过审批**，卡片文案在 `DOCK_WRITE_LABEL`），执行用 `git switch --no-guess`（避开 `checkout <名字>` 的分支/路径歧义）；分支清单是读类 op `git-branches`（界面通道直接放行，当前分支排第一） | `src/core/dock-ops.ts`、`src/packages/desktop-dock/index.ts` |
 | 宿主方法调用的超时 | 默认 30 秒；**会挂起等人的方法**（写类 dock op = 过审批卡，卡自己等 5 分钟）给 5 分半——不然用户还在读卡，页面先报「调用宿主方法超时」 | `ui-shell/src/ui-layout/host-channel.ts`（`DEFAULT_INVOKE_TIMEOUT_MS` / `HUMAN_WAIT_TIMEOUT_MS`） |
 | schedule 最小间隔 | `every` 下限 60 秒 | `src/core/schedule/rule.ts:26` |
 | schedule catch-up 窗口 | 一次性 120 秒；循环取半周期夹在 120 秒 ~ 2 小时，超窗只跑一次不补积压 | `src/core/schedule/rule.ts:29-35` |
 | lsp idle 回收 | 600 秒（设置可调，下限 30 秒） | `src/core/lsp/client.ts:22` |
-| lsp 结果上限 | 默认 100 条（可配 1~1000）+ 16000 字符双上限 | `src/plugins/lsp.ts:71-76` |
-| browser 快照与缓冲 | 快照默认 15000 字符按行截断（不切碎元素）；控制台环形 200 条 | `src/plugins/browser.ts:79,84` |
+| lsp 结果上限 | 默认 100 条（可配 1~1000）+ 16000 字符双上限 | `src/packages/lsp/index.ts:71-76` |
+| browser 快照与缓冲 | 快照默认 15000 字符按行截断（不切碎元素）；控制台环形 200 条 | `src/packages/browser/index.ts:79,84` |
 | browser profile 清理 | 整树 taskkill 后等 300ms 再删自建 profile | `src/core/cdp/launch.ts:288,444` |
-| self-improve 复盘触发 | 本轮工具迭代数 ≥ 12（对齐 hermes 用迭代数不用轮数） | `src/plugins/self-improve.ts:115` |
+| self-improve 复盘触发 | 本轮工具迭代数 ≥ 12（对齐 hermes 用迭代数不用轮数） | `src/packages/self-improve/index.ts:115` |
 | self-improve 技能草稿 | description ≤60 字符（超了拒收不截断）；老化 14 天 stale / 30 天归档 | `src/core/learnings/skill-write.ts:61,866` |
 
 **队友的叫停与续跑**：`subagent` 的 `interrupt` 与 `stop` 都只停当前这一轮，队友**留在名册里**
@@ -855,9 +863,9 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 这个顺序里有两处是必须的，不只是好看：`approval` 早于 `mode`，因为换档广播 `dsc/mode-changed` 而审批要听（审批卡上得写当前档位）；`transcript` 早于 `plan`，因为恢复会话时要先把会话流清空，计划卡那条条目才不会被清掉。
 官方可开关插件之间还有一条硬约束：`tool-search` 必须排在 `mcp` 之后，否则它 apply 时 `ctx.get('mcp')` 是 `undefined`，MCP 工具的 schema 永远不会被撤下。
 
-**自检脚本同进程起多个内核时要先停再验**：命令补全面（`src/plugins/commands.ts` 的模块级 `extraSpecs`）与插件元数据一样是进程级共享——不先停掉前面的内核，后起内核的 `specs()` 会看见前几份注册，验「关掉后消失」全是假阳性。cordis 的 `Context` 本身没有 dispose，fiber 在 `ctx.fiber` 上，停整棵内核是 `await ctx.fiber.dispose()`（m5 集成自检踩过这个坑）。
-注意 `permission-presets`、`desktop-dock`、`git` 与 `plugin-manager` 不显示在插件中心的「运行内核」清单里（它们没有 `BUILTIN_PLUGINS` 元数据，这正是元数据 30 条、实挂 34 个的那 4 个差额）。
-把 `tools-default` 剔掉就得到一个只有对话、没有工具的 harness（`src/plugins/tools-default.ts:3`）。
+**自检脚本同进程起多个内核时要先停再验**：命令补全面（`src/packages/commands/index.ts` 的模块级 `extraSpecs`）与插件元数据一样是进程级共享——不先停掉前面的内核，后起内核的 `specs()` 会看见前几份注册，验「关掉后消失」全是假阳性。cordis 的 `Context` 本身没有 dispose，fiber 在 `ctx.fiber` 上，停整棵内核是 `await ctx.fiber.dispose()`（m5 集成自检踩过这个坑）。
+0.9 起没有「运行内核」这一档：`permission-presets`、`desktop-dock`、`git`、`plugin-manager` 都有了包与行，和其余 52 个一样可在插件中心停用。
+把 `tools-default` 剔掉就得到一个只有对话、没有工具的 harness（`src/packages/tools-default/index.ts:3`）。
 
 ### core 层
 
@@ -868,7 +876,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | `config-store.ts` | 设置界面写 `config.yaml` / `credentials.yaml` 的**唯一**入口。端点名要匹配 `/^[a-z0-9][a-z0-9_-]{0,40}$/`（`:137`）；不写 `apiKeyEnv` 时按端点名推导成 `<名字大写>_API_KEY`；草稿的能力字段在 `validateDraft()`（`:156`）过枚举，缺省字段由 `capsOf()` 补，能力字段只在偏离缺省时写进 YAML（`:186`）；覆盖前会先存一份 `config.yaml.bak`，**YAML 注释会在这一步丢掉**（`:44`） |
 | `migrate.ts` | 一次性搬 dsh 的配置，只读 dsh。目标已存在且没给 `force` 就直接返回（`:107`）。只收 `api: openai-completions` 的端点（`:78`） |
 | `llm.ts` | 手写 SSE 解析：只认 `data:` 行，单行 JSON 解析失败就跳过。思考增量字段是 `delta.reasoning_content`，重放给模型时原样回传（空串不回传）。工具调用按 `delta.tool_calls[].index` 拼，`arguments` 用 `+=` 续接，最后按 index 排序。最多 3 次尝试，退避 500ms、1000ms。**协议适配器**：这份实现就是内置 `openai-completions` 适配器（`LlmAdapter`），别的协议由插件经 `ctx.llm.registerAdapter` 注册，端点配置 `api` 字段选择。请求头**不无条件加**：只有归因头命中门控的端点才多带两行（见下一行） |
-| `request-attribution.ts` | 请求归因头（自标识 + 端点点名要的会话头）的纯逻辑。门控 `isOpenCodeGoBaseUrl()` 认的是**端点事实**——host 是 `opencode.ai` 或其子域、path 规范化后正好 `/zen/go/v1`（不认 provider id，那是用户随手起的名字）；命中才补 `user-agent`（`pneuma/<版本>`）与 `x-opencode-session`（值 = 会话 id；非法/超长/空一律**省略这个头**而不是照发——一个换行就能让 `fetch` 抛异常）。会话 id 由 `src/plugins/llm.ts` 的派发口兜底、四个调用方各自填自己那条会话 |
+| `request-attribution.ts` | 请求归因头（自标识 + 端点点名要的会话头）的纯逻辑。门控 `isOpenCodeGoBaseUrl()` 认的是**端点事实**——host 是 `opencode.ai` 或其子域、path 规范化后正好 `/zen/go/v1`（不认 provider id，那是用户随手起的名字）；命中才补 `user-agent`（`pneuma/<版本>`）与 `x-opencode-session`（值 = 会话 id；非法/超长/空一律**省略这个头**而不是照发——一个换行就能让 `fetch` 抛异常）。会话 id 由 `src/packages/llm/index.ts` 的派发口兜底、四个调用方各自填自己那条会话 |
 | `connection-test.ts` | 端点连接测试（设置 → 模型「测试连接」）：固定两条探针消息（system + user `hi`）、无历史无工具、输出预算 16、走与正常对话**同一条**链路（同协议适配器、同一份归因头），**流正常收尾即算通**（正文为空也算）。超时（20 秒）与「端点回了错」分开说；失败折成 `{ ok:false, error }` 不往外抛（点一次按钮不该弹两次错）。`pickProbeModel()` 定测哪个模型：显式给的 > 默认端点那份默认模型 > 清单第一个 |
 | `session.ts` | 列表只读每个文件前 8 行 + mtime（`:463-472`），所以列表页别指望读到深处的内容。目录名把 `\\`、`/`、`:` 换成 `-`（`:34-36`） |
 | `session-meta.ts` | `sessions/meta.json` 用 uuid 当键，所以归档挪文件不会丢状态（`:7`）。`version` 不是 1 就整表当空（`:53`） |
@@ -889,7 +897,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | `mcp.ts` | MCP 外部工具底座：stdio 与 streamable-http 两种传输上的 JSON-RPC、`mcp__服务器__工具` 命名（片段被清洗过时补 8 位短哈希，`a.b` 与 `a_b` 不撞名）、子进程环境白名单筛选、Windows 上按 PATH + PATHEXT 解析启动命令 |
 | `tool-search.ts` | 工具按需加载的纯逻辑：分词（中文按相邻两字）、手写 BM25 索引、延后判定（read 一律不许撤）、配置校验 |
 | `lifecycle-hooks.ts` | codex 十四事件的钩子引擎：事件能力清单（wired / partial / unwired 与理由）、codex 形态配置的解析、跑外部命令、按失败方向给裁决 |
-| `approval.ts` | 只有审批通道**接口**，判读在 `src/plugins/approval.ts` |
+| `approval.ts` | 只有审批通道**接口**，判读在 `src/packages/approval/index.ts` |
 | `tools/` | `bash` 缺省 30 秒、最多 120 秒，输出超 8000 字符截断（累积到 16000 就不再收）——三个值都由 tools-default 插件配置下发（`bashTimeoutMs` / `bashMaxTimeoutMs` / `bashOutputChars`，设置分区「工具预算」可改），代码里的常量只是缺省。Windows 缺省走 `powershell -NoProfile -Command`（`-NoProfile` + UTF-8 输出前置 + 末尾补 `exit $LASTEXITCODE` 带回原生命令退出码），超时和取消都收进程树。**执行器可在「设置 → 终端环境」里换**（2026-10-30）：`bashShell` 存在 `plugins.json` 的 tools-default 条目里，取 `powershell` / `pwsh` / `gitbash` / `wsl` / `sh` / `auto`；四档折成四套 spawn 参数（见 `core/tools/bash.ts` 的 `shellPlan`），工具说明与环境快照里的终端名跟着换，审批地板的结构扫描也按同一条口径切 PowerShell / POSIX 语法（`core/terminal-env.ts` 的 `shellFlavor`）。`wsl` 会用 `-d <发行版>` 钉住探测时挑的那只（跳过 `docker-desktop` 这类没有 bash 的管理发行版）。`read` 单次缺省 2000 行（`tools-default.readLineLimit`）。`glob` / `grep` **边遍历边匹配**：按 `.gitignore`（从 git 根逐层读到搜索根，子目录的规则在进入它时生效，`!` 否定按「后出现的赢」）加内置大目录表（`node_modules`、`.git`、`dist`、`build`、`coverage`、`__pycache__`、`.venv`、`site-packages` 等）跳过，命中够 `limit` 就停，截断时明说「还有更多」；不再有「先收 1 万 / 2 万条再过滤」的全局额度——那会让 `.venv` 吃光额度、把真实结果挤成「无匹配」。`grep` 另外跳过 1 MiB 以上的文件。**没有目录白名单**——路径只按会话工作目录解析 |
 | `skills.ts` | 只认顶层 `<目录>/SKILL.md` 与顶层 `<名字>.md`，不递归（`:165-178`）。`name` 要 kebab-case，非法就退回文件名并记一条问题 |
 | `market.ts` | 缓存 1 小时、拉取超时 15 秒、浏览并发 6、附属文件最多 40 个。GitHub 匿名限额低，403/422 会提示设 `GITHUB_TOKEN` |
@@ -903,7 +911,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 
 | 谁 | 读的是哪个目录 |
 | --- | --- |
-| 会话出生目录 | `SessionService.open(filePath?, cwd?)` 的 `cwd` → 没给时退到**当前会话的目录**，再退宿主启动目录（`src/plugins/session.ts`）。界面那侧是 `newSessionIn(cwd)`：在指定目录里开一条会话，**不重启宿主、不重载窗口** |
+| 会话出生目录 | `SessionService.open(filePath?, cwd?)` 的 `cwd` → 没给时退到**当前会话的目录**，再退宿主启动目录（`src/packages/session/index.ts`）。界面那侧是 `newSessionIn(cwd)`：在指定目录里开一条会话，**不重启宿主、不重载窗口** |
 | 工具 / 沙箱围栏 / git 面 / 轮尾 diff | `core/loop.ts` 的 `get cwd()` = `session.meta.cwd`（每次调用传进 `ToolContext`） |
 | 指令文件（AGENTS.md）、记忆 / learnings、项目技能、hooks 执行目录 | 会话目录（`prompt.instructionFiles(cwd)` / `memory.workspaceKey(cwd)` / `skills.skillRoots(cwd)` …），调用方传的是会话 cwd |
 | dock 文件树 / 终端 / 预览 / git 页签 | 会话目录（`plugins/desktop-dock.ts` 的 `baseCwd()`） |
@@ -938,7 +946,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 开窗瞬间就把按钮画出来（不必等网络）。安装器落在 `userData/updates/`，**不自动清理**（安装程序
 可能正在跑），同版本文件名固定，下次下载直接覆盖。
 
-### 审批判定顺序（`src/plugins/approval.ts:126-152`）
+### 审批判定顺序（`src/packages/approval/index.ts:126-152`）
 
 只有 `risk !== 'read'` 的工具进审批（`src/core/loop.ts:198`）。判读顺序：
 
@@ -954,7 +962,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 所以「`full-access` + `auto-review`」与旧的 `ai-review` 档**逐字等价**——谁也不自动放行，全过模型。
 
 **审批有超时**：挂起的审批等 `approval.approvalTimeoutMs`（缺省 300 秒，夹在 10 秒~1 小时，
-每次弹卡现读），到点按拒绝结算（`src/plugins/approval.ts:172`）；本轮被中断也按拒绝结算。
+每次弹卡现读），到点按拒绝结算（`src/packages/approval/index.ts:172`）；本轮被中断也按拒绝结算。
 被拒时循环会补一条 tool 消息「用户拒绝了这次工具调用。」，因为协议要求每个工具调用都有
 对应的 tool 消息，否则下一轮直接 400（`src/core/loop.ts:203-207`）。
 
@@ -965,7 +973,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 - 工具卡状态就四个：`running` / `done` / `failed` / `rejected`（`src/contract/mode.ts:17`），
   结果文字超 1500 字符截断（`:27`）。
 - 状态灯优先级：有挂起审批 → `awaiting-approval`，否则在回合内且working → `working`，
-  回合内不 working → `thinking`，其余 `idle`（`src/plugins/transcript.ts:74-81`）。
+  回合内不 working → `thinking`，其余 `idle`（`src/packages/transcript/index.ts:74-81`）。
   0.6.50 起「有挂起审批」只数**当前查看会话**的卡（`approval.pendingView` 按
   `ctx.session.current().filePath` 过滤，后台会话的卡不串进当前视图）；后台会话的灯由
   `dsc/agent-status` 事件喂 `backgroundStates`，agent 切走 busy 会话时按
@@ -978,7 +986,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 
 | 侧 | 管什么 | 护栏 |
 | --- | --- | --- |
-| `src/plugins/desktop-dock.ts` | 终端会话、工作区文件读写、git | 路径必须在宿主工作目录内；读文件超 512KB 返回 `tooLarge`；git 全部 `execFile` 固定子命令 + 参数净化（拒 `\0`、拒以 `-` 开头的注入）；默认超时 15 秒 |
+| `src/packages/desktop-dock/index.ts` | 终端会话、工作区文件读写、git | 路径必须在宿主工作目录内；读文件超 512KB 返回 `tooLarge`；git 全部 `execFile` 固定子命令 + 参数净化（拒 `\0`、拒以 `-` 开头的注入）；默认超时 15 秒 |
 | `desktop/electron/main/dock.ts` | 内置浏览器视图 | `contextIsolation: true`、`nodeIntegration: false`；弹窗一律 deny 并把新窗口 URL 就地加载；只允许 `http`/`https` |
 
 dock 的操作名：`term-spawn` / `term-input` / `term-kill` / `fs-list` / `fs-read` /
@@ -987,7 +995,7 @@ dock 的操作名：`term-spawn` / `term-input` / `term-kill` / `fs-list` / `fs-
 审批口径见 `src/core/dock-ops.ts`（读类直接放行；`git-stage` / `git-unstage` / `git-commit` /
 `git-checkout` / `git-branch-create` 五个写类**过审批**）。终端是管道模式（没有 tty），
 所以全屏程序跑不了。git 的执行与 porcelain 解析在 `src/core/git-exec.ts`（desktop-dock 与
-`git` 插件共用一份）；当前分支与改动计数由 `src/plugins/git.ts` 登记成快照面 `surfaces.git`
+`git` 插件共用一份）；当前分支与改动计数由 `src/packages/git/index.ts` 登记成快照面 `surfaces.git`
 （输入框上那颗分支钮读它）。
 
 `Dock.tsx` 四个 tab（terminal / browser / files / git），宽度夹在 300~820，双击复位 420；
@@ -1185,7 +1193,7 @@ Windows 的最小化/最大化/关闭三个按钮由系统画，样式表够不�
 请求分段（`loop.ts` 的 `estimateRequestSegments`）与壳的用量读数都走它。展示层的
 `formatTokens`（K/M 两级）在 `ui-shell/src/ui-primitives/tokens.ts`，只有这一份。
 
-### 命令与补全（`src/core/commands-completion.ts` + `src/plugins/commands.ts`）
+### 命令与补全（`src/core/commands-completion.ts` + `src/packages/commands/index.ts`）
 
 命令表、补全与唯一前缀展开的**单一真源是 `src/core/commands-completion.ts`**——它是顶层
 零 node 依赖的纯模块，渲染层（经 `@dsc/runtime/core/commands-completion.js` alias）、TUI
@@ -1225,7 +1233,7 @@ Windows 的最小化/最大化/关闭三个按钮由系统画，样式表够不�
 命令可以声明 `input: { hint }`：带这一位的命令在输入框
 回车时**不执行**，只把 `/<名字> ` 补进输入（光标落尾部、下方显示 hint），再回车才带着
 写成的要求派发——`/review` 就是这么收「关注点」的（`inputClaimOf` 是 TUI 与壳共用的那条判定）。
-`/review` 的 handler 在 `src/plugins/commands.ts`：空输入时先弹范围卡（对比基准分支 / 未提交改动 /
+`/review` 的 handler 在 `src/packages/commands/index.ts`：空输入时先弹范围卡（对比基准分支 / 未提交改动 /
 某次提交 / 自定义要求，走 `ask` 服务的提问通道），再由 `src/core/git-info.ts` 的
 `collectReviewScope` 把**完整** diff 落盘到 `<DSC_HOME>/cache/review/`（不再按字符截断），
 任务书 `reviewTaskText` 给审查队友路径与读法；队友自己用 `read` 分批读。`/review-status`
@@ -1234,7 +1242,7 @@ Windows 的最小化/最大化/关闭三个按钮由系统画，样式表够不�
 挡不住 `--output=<路径>` 这种选项注入，所以不许以 `-` 开头、只放行正常引用字符。
 插件注册的命令进 `extraSpecs`。输入 `/ne` 按 Enter 会展开成 `/new`（唯一前缀；候选里
 **精确同名排第一**，所以 `/review` 不会被 `/reviewer` 截走）。`/effort` 保留着但只回
-一句「已移除」（`src/plugins/commands.ts:118`）。
+一句「已移除」（`src/packages/commands/index.ts:118`）。
 
 ### 机器投递的消息（`origin: 'notice'`）
 

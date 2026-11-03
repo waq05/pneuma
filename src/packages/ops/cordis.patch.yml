@@ -1,0 +1,5 @@
+# 文档与批量读取
+- insert:
+    - id: ops
+      name: '@pneuma/ops'
+      disabled: true

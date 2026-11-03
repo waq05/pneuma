@@ -1,0 +1,4 @@
+# 安全钩子
+- insert:
+    - id: hooks
+      name: '@pneuma/hooks'

@@ -1,0 +1,4 @@
+# 技能
+- insert:
+    - id: skills
+      name: '@pneuma/skills'

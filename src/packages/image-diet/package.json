@@ -1,0 +1,22 @@
+{
+  "name": "@pneuma/image-diet",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 170,
+    "resolution": "overridable",
+    "title": "图片卸载",
+    "description": "历史里太久/太多的图不再随每轮请求重发：用户图与工具图各按预算保留，更早回合的图全卸载",
+    "settingsSection": "image-diet"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

@@ -54,11 +54,29 @@ export interface PatchLayer {
   patches: readonly PatchEntry[]
 }
 
+/** 套完之后发现的一处行 id 重复（同一个 id 出现两次以上 = 配置错误）。 */
+export interface PatchDuplicate {
+  /** 重复的行 id。 */
+  id: string
+  /** 第一次出现的位置（`层标签 第 N 条`）。 */
+  first: string
+  /** 撞上的那一份来自哪里（`层标签 第 N 条`）。 */
+  second: string
+}
+
 /** 一层 patch 的结果。 */
 export interface PatchResult {
   rows: PluginRow[]
   /** 人话告警（找不到目标行、目标不是 group、名字不符、含 `!!js` 被拒）。 */
   warnings: string[]
+  /**
+   * 同一个行 id 出现两次以上的清单。
+   *
+   * 为什么要报出来而不是让后写覆盖前写：行 id 是运行时身份（mounted / plugins.json /
+   * 插件中心都按它），两个来源撞同一个 id 等于两个插件抢一个开关，出问题只会表现为
+   * 「配置改了这个、那个也变了」。dsh 那边静默覆盖，我们直接失败（见 plugin-loader）。
+   */
+  duplicates: PatchDuplicate[]
 }
 
 /** patch 文件里出现了 `!!js`（求值等于任意代码执行）时的错误。 */
@@ -124,6 +142,8 @@ export function readPatchFile(file: string, label = file): PatchLayer | null {
 export function applyPatchLayers(rows: readonly PluginRow[], layers: readonly PatchLayer[]): PatchResult {
   const data: PluginRow[] = structuredClone(rows as PluginRow[])
   const warnings: string[] = []
+  /** 行对象 → 它是哪一条 patch 插进来的（重复 id 的报错要说清两个来源）。 */
+  const originOf = new WeakMap<PluginRow, string>()
   /** id → 行（group 的子行也进来）。 */
   const index = new Map<string, PluginRow>()
   const buildIndex = (entries: readonly PluginRow[]): void => {
@@ -140,6 +160,7 @@ export function applyPatchLayers(rows: readonly PluginRow[], layers: readonly Pa
       const insert = patch.insert
       if (insert !== undefined) {
         const added = structuredClone(insert)
+        for (const row of added) originOf.set(row, where)
         if (patch.id === undefined) {
           data.push(...added)
         } else {
@@ -182,5 +203,21 @@ export function applyPatchLayers(rows: readonly PluginRow[], layers: readonly Pa
     }
   }
 
-  return { rows: data, warnings }
+  // 全层套完再查重：同一层内部、跨层撞车都算（insert 之后还可能被后面的层改配置）。
+  const seen = new Map<string, string>()
+  const duplicates: PatchDuplicate[] = []
+  const collect = (entries: readonly PluginRow[]): void => {
+    for (const entry of entries) {
+      if (typeof entry.id === 'string' && entry.id !== '') {
+        const from = originOf.get(entry) ?? '调用方传入的初始行'
+        const previous = seen.get(entry.id)
+        if (previous === undefined) seen.set(entry.id, from)
+        else duplicates.push({ id: entry.id, first: previous, second: from })
+      }
+      if (entry.group === true && Array.isArray(entry.config)) collect(entry.config as PluginRow[])
+    }
+  }
+  collect(data)
+
+  return { rows: data, warnings, duplicates }
 }

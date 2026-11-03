@@ -1,0 +1,22 @@
+{
+  "name": "@pneuma/file-review",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 3710,
+    "resolution": "overridable",
+    "title": "改动前预览",
+    "description": "写文件或改文件之前，先把要改的几行贴进对话；长改动按行截断，看得见改在哪",
+    "settingsSection": "file-review"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

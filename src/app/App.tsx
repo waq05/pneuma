@@ -44,7 +44,8 @@ import type {
   TranscriptEntry,
 } from '../contract.js'
 import { DEFAULT_STATUS_BAR_PREFS, normalizeStatusBarPrefs } from '../contract.js'
-import { runCommand } from '../plugins/commands.js'
+// runCommand 是命令插件暴露给 TUI 的派发口（模块级注册表单例），所以这里指向功能包。
+import { runCommand } from '../packages/commands/index.js'
 import { AgentsOverlay, buildAgentRows } from './AgentsOverlay.js'
 import { absoluteTop, measuredHeight, useClickRegion, type ClickEntry, type RegisterClick } from './click.js'
 import { ApprovalCard, type ApprovalAction } from './ApprovalCard.js'

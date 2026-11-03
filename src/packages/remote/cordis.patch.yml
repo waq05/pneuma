@@ -1,0 +1,4 @@
+# remote
+- insert:
+    - id: remote
+      name: '@pneuma/remote'

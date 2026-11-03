@@ -21,7 +21,7 @@ import { render } from 'ink'
 
 process.env.DSC_HOME = mkdtempSync(join(tmpdir(), 'dsc-settings-test-'))
 const { App } = await import('../lib/app/App.js')
-const { commandsPlugin } = await import('../lib/plugins/commands.js')
+const { commandsPlugin } = await import('../lib/packages/commands/index.js')
 
 commandsPlugin.apply({
   provide: () => {},

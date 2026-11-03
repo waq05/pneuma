@@ -1,0 +1,4 @@
+# 运行时适配器
+- insert:
+    - id: runtime
+      name: '@pneuma/runtime-adapter'

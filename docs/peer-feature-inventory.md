@@ -255,11 +255,11 @@
 - **头行损坏可抢救**：meta 半截 JSON 时按内容反推 cwd 重建，不再整份会话打不开（`src/core/session.ts:306`）
 - **中断回合自愈**：恢复时给「已发起、结果未知」的工具调用落盘补合成结果，模型知道先核查再重试，重复恢复幂等（`src/core/session.ts:872-896`）
 - 列表：三种分组（工作区/树/单列）+ 三种排序 + 置顶（竖钉图标，未置顶时悬停才显）+ 拖拽 + 每组 5 条增量展开 + 展开态持久化；侧栏本地过滤搜索框；会话时间取最后一条对话，不读文件写过的时间
-- 重命名/置顶/归档/回收站（30 天后自动清空）/恢复/永久删除/分叉/重新编辑（`src/plugins/session.ts:236`）
-- 跨会话全文检索：纯 TS 倒排索引（中文 1+2-gram，两段式召回，严格没命中按多数两字词兜底并标成模糊命中），`session_search` 工具 + `/search` 命令 + 后台回填（`src/plugins/session-search.ts:171`）
+- 重命名/置顶/归档/回收站（30 天后自动清空）/恢复/永久删除/分叉/重新编辑（`src/packages/session/index.ts:236`）
+- 跨会话全文检索：纯 TS 倒排索引（中文 1+2-gram，两段式召回，严格没命中按多数两字词兜底并标成模糊命中），`session_search` 工具 + `/search` 命令 + 后台回填（`src/packages/session-search/index.ts:171`）
 - 恢复启动：`--resume auto`（.last-session 指针）；孤儿 tool_calls 由请求侧 `sanitizeToolOrphans` 兜底
 - **后台会话**：每会话一个常驻 agent，切换只换「当前查看」，运行中的回合在后台跑完；侧栏状态点（working / awaiting-approval / just-finished）与「已完成未读」徽标（`src/contract/snapshot.ts:26,42`）
-- 会话标题：首回合后用一个独立小请求起名，用户改名后永不覆盖（`src/plugins/session-title.ts`）
+- 会话标题：首回合后用一个独立小请求起名，用户改名后永不覆盖（`src/packages/session-title/index.ts`）
 - 导出：`/export` 与 `src/core/session-export.ts` 的 markdown 序列化
 - 输入侧：`@` 文件提及补全（`src/core/mention.ts`，桌面与 TUI 共用同一纯模块）
 - 已知边界：无格式版本迁移链（有意不加版本号，损坏走抢救而非升级）；无 `@session` 跨会话引用
@@ -268,21 +268,21 @@
 - 协议接缝 `registerAdapter`（内置 openai-completions，SSE 手写解析）；config.yaml 多端点多模型，`/model` 带参数级补全
 - 推理档位五档（default/off/low/high/max）+ 档位字段三态（thinking / reasoning-effort / none）+ 模型能力字段（`src/core/model-caps.ts` 单一真源）
 - **在线模型发现**：`GET {baseURL}/models` 拉取填充，认 OpenAI / ollama / 纯数组三种形状（`src/core/model-discovery.ts`）
-- **会话级模型记忆**：会话 state 记实际发过请求的模型，恢复会话优先取它而不是回落 config 默认（`src/core/session.ts:228-231`、`src/plugins/llm.ts:70`）
+- **会话级模型记忆**：会话 state 记实际发过请求的模型，恢复会话优先取它而不是回落 config 默认（`src/core/session.ts:228-231`、`src/packages/llm/index.ts:70`）
 - **流中断不丢已收内容**：半截回复按 `StreamInterruptedError` 落库，连接期有重试预算（`src/core/llm.ts:8-12`）
 - 用量统计：usage.jsonl + 设置页聚合（汇总卡 + 全年热力图 + 分模型趋势 + 环形图，`ui-shell/src/plugins/settings/usage.tsx`）
-- 上下文占用表：`/status` 与壳里的占用卡，估算口径与自动压缩同源（`src/plugins/commands.ts:766`）
+- 上下文占用表：`/status` 与壳里的占用卡，估算口径与自动压缩同源（`src/packages/commands/index.ts:766`）
 - dsh 配置一次性只读迁移
 - 已知边界：账号 OAuth 不做；**有人民币花费估算**（按 DeepSeek 官方单价 + 峰谷分桶，`src/core/pricing.ts`，状态栏与用量页都显示），但只对名含 deepseek 的端点生效，其它 provider 不显示金额
 
 ### 3. 工具集 ——【完整，多为官方插件可开关】
-- 内置工具面：`bash`（含 `run_in_background`）、`job_output`/`job_list`/`job_kill`、`terminal`（open/read/send/close/list 五动作，无 PTY）、`read`/`read_image`/`write`/`edit`/`glob`/`grep`（`src/plugins/tools-default.ts:197-205`）
+- 内置工具面：`bash`（含 `run_in_background`）、`job_output`/`job_list`/`job_kill`、`terminal`（open/read/send/close/list 五动作，无 PTY）、`read`/`read_image`/`write`/`edit`/`glob`/`grep`（`src/packages/tools-default/index.ts:197-205`）
 - **输出防线齐了**：`read` 有 16000 字符顶 + 2000 行长上限 + NUL 二进制检测（`src/core/tools/fs-tools.ts:19-24`）；`edit`/`write` 带 mtime 锚，读改写窗口内被别人改过会当场拒（`:176`、`:241`）；bash 超时走 SIGTERM → 3 秒宽限 → 杀进程树，已收输出保留（`src/core/tools/bash.ts:186-232`）；大输出溢出落盘（spill 插件，observer order 50）
 - MCP：stdio + streamable-http 手写 JSON-RPC，`mcp__服务器__工具`，环境变量白名单；**resources / prompts / elicitation 三类能力齐全**（`src/core/mcp.ts:128,150`），server instructions 进系统提示（`:183`）
 - 子代理（MiniAgent 队友，按会话隔离、审批意愿取全局∩角色）+ 智能体团队（共享任务看板 + `team_task`）；级联默认限 1 层
 - 电脑操作（PowerShell + user32，DPI 感知，每次审批）；浏览器自动化（CDP DOM 级，ref 代际校验，默认关）；侧栏浏览器页签
-- 网页搜索（tavily/bocha/serper，**域过滤 include/exclude_domains 直通**，`src/plugins/web-search.ts:123-135`）；定时任务；LSP（定义/引用/实现/悬停 + 写后新引入报错）
-- PTC：`run_code` 同进程 `node:vm`，整段脚本时限 300 秒、同步执行段 15 秒、内部调用总数 200；**读写闸写独占**，两个写调用不会并发（`src/core/ptc.ts:31,38,41`、`src/plugins/ptc.ts:177-190`）
+- 网页搜索（tavily/bocha/serper，**域过滤 include/exclude_domains 直通**，`src/packages/web-search/index.ts:123-135`）；定时任务；LSP（定义/引用/实现/悬停 + 写后新引入报错）
+- PTC：`run_code` 同进程 `node:vm`，整段脚本时限 300 秒、同步执行段 15 秒、内部调用总数 200；**读写闸写独占**，两个写调用不会并发（`src/core/ptc.ts:31,38,41`、`src/packages/ptc/index.ts:177-190`）
 - 工具渐进披露（`tool_search`/`tool_describe`/`tool_call` + 手写 BM25，默认关）
 - 结构化工具：`ask_user_question`、`exit_plan_mode`、`todo_write`、goal 四件、`schedule_*`、`memory`、`skill`/`skill_write`、`session_search`、self-improve 三闭环
 - 已知边界：无 notebook/Jupyter 工具；MCP 无 dynamic tools（prompts→工具）
@@ -306,7 +306,7 @@
 - 右栏审查面板：unified⇄split、换行、shiki 高亮、拖宽、系统打开
 - 悬停预览：轮尾卡行 / 正文提及 chip 停 500ms 出该文件 diff（Esc capture 截停防误拒审批）
 - git 页签 diff：全量 / 单文件 `git diff HEAD --no-textconv --no-ext-diff` + stage/commit
-- **`/review` 四档范围**（未提交改动 / 基准分支 / 某次提交 / 自定义关注点），派一个工牌强制只读的审查队友，产出结构化 `review-findings` 卡并支持行号跳转；配 `/review-status`、`/review-cancel`（`src/plugins/commands.ts:223-370`、`src/plugins/subagent.ts:816-882`）
+- **`/review` 四档范围**（未提交改动 / 基准分支 / 某次提交 / 自定义关注点），派一个工牌强制只读的审查队友，产出结构化 `review-findings` 卡并支持行号跳转；配 `/review-status`、`/review-cancel`（`src/packages/commands/index.ts:223-370`、`src/packages/subagent/index.ts:816-882`）
 - 已知边界：审查面板纯只读（无部分行接受）；bash/sed 改的文件不进第一方归因卡（靠 git 页签兜底）
 
 ### 6. 命令系统 ——【完整】
@@ -323,8 +323,8 @@
 - 微压缩冻结到「轮」，前缀缓存命中从七成拉回约九成
 - 长期记忆三格 Markdown（global/USER/workspace）+ 轮尾自动复盘；todo 实时进度条；goal 跨轮续跑（带刹车）；技能（四层发现根 + 市场缓存）
 - 模式（Agent 预设）：标准/极简/创造/PTC 四内置 + 自定义 `presets/*.md`
-- **计划拒绝带反馈**：驳回时用户的原文捎进工具结果，模型不必盲猜（`src/plugins/plan.ts:202-204`）
-- 技能目录行带上 `whenToUse` 那一句（`src/plugins/skills.ts:114-116`）
+- **计划拒绝带反馈**：驳回时用户的原文捎进工具结果，模型不必盲猜（`src/packages/plan/index.ts:202-204`）
+- 技能目录行带上 `whenToUse` 那一句（`src/packages/skills/index.ts:114-116`）
 - 已知边界：压缩不可取消（interrupt 停不掉压缩那次模型调用）
 
 ### 8. 终端与执行 ——【部分，缺 PTY】
@@ -339,15 +339,15 @@
 - 进程区：三级栅格（思考行 / 工具行 / 阶段组头同一套对齐）+ 四档展示档位（compact / standard / detailed / verbose）；只有一条工具调用时不套组头
 - 主题：深 / 浅 / 跟随系统 + 四档出厂主题 + 原生控件条 IPC 同步 + 密度档；设计令牌 `--dsc-*`
 - 快捷键：键位表 10 条（`Ctrl K` 命令面板、`Ctrl B` 侧栏、`Ctrl P` 文件、`` Ctrl ` `` 终端、`Ctrl T` 浏览器、`Ctrl Enter` 插话、`Ctrl Alt R` 重命名、`Ctrl Alt F` 分叉、`Ctrl Shift A` 归档、`Esc` 关浮层），按 `?` 随时打开（`ui-shell/src/plugins/palette/ui.tsx:327-338`）
-- 设置页：8 个内置分区（通用 / 模型 / 预设 / 技能 / 归档 / 用量 / 终端 / 关于，`src/plugins/settings.ts:520`）+ 声明了 `inSettings: true` 的插件分区（远程控制、终端环境）；其余插件分区只在插件中心那张卡上
+- 设置页：8 个内置分区（通用 / 模型 / 预设 / 技能 / 归档 / 用量 / 终端 / 关于，`src/packages/settings/index.ts:520`）+ 声明了 `inSettings: true` 的插件分区（远程控制、终端环境）；其余插件分区只在插件中心那张卡上
 - 附件：内容寻址仓库 + 输入框贴图与文件 + 消息只留引用 + 附件卡与图片 lightbox
 - 状态栏三段式（轮 / 步取宿主真值，不再估算）；轨迹页（TraceView / Timeline / Inspector）；队友面板 / 用量面板 / 技能中心 / 插件中心 / 配对弹窗
 - 托盘（关窗缩托盘 + 一次性气泡）；检查更新（更新源已接 GitHub Releases，只查不装，有新版给「立即更新」或打开发布页）
-- **手机遥控（独有）**：PWA 遥控端（visualViewport 键盘适配、图片压缩上传、增量帧重连补帧）+ Web Push（VAPID）+ Webhook（Bark/ntfy）+ 二维码半小时配对 + 逐台设备吊销；推送三处盲区已修（2 分钟升级再提醒 ×3、节流键带卡号、ask 提问卡与计划评审卡入列，`src/plugins/remote.ts:657-706`）
+- **手机遥控（独有）**：PWA 遥控端（visualViewport 键盘适配、图片压缩上传、增量帧重连补帧）+ Web Push（VAPID）+ Webhook（Bark/ntfy）+ 二维码半小时配对 + 逐台设备吊销；推送三处盲区已修（2 分钟升级再提醒 ×3、节流键带卡号、ask 提问卡与计划评审卡入列，`src/packages/remote/index.ts:657-706`）
 - 已知边界：**有**桌面原生系统通知（后台回合跑完且窗口不在前台时弹「任务完成」，点击回主窗，设置可关，`ui-shell/src/plugins/transcript/ui.tsx:156-185`）；手机端有模式面板与归档管理，只缺团队名册/任务板
 
 ### 10. 传输部署 ——【完整】
-- 远程宿主：HTTP + WS **10 条 `api` 路由**（pair/ticket/revoke/upload/push-key/push-subscribe/push-unsubscribe/invoke/events/boot，`src/plugins/remote/routes.ts:310-405`）+ 主控位锁 + 多设备 `devices.json` + `INVOKABLE_COVERAGE` 编译期兜底
+- 远程宿主：HTTP + WS **10 条 `api` 路由**（pair/ticket/revoke/upload/push-key/push-subscribe/push-unsubscribe/invoke/events/boot，`src/packages/remote/routes.ts:310-405`）+ 主控位锁 + 多设备 `devices.json` + `INVOKABLE_COVERAGE` 编译期兜底
 - 桌面宿主通道：Electron utilityProcess + host-stdio JSONL（协议 v2，白名单由 DscRuntime 推出）；嵌入运行时依赖闭包自动组装
 - TUI（ink，同契约）+ CLI 入口（`bin/dsc.js`）+ headless；SSH 隧道只有文档（`remote-tunnel.md`），无隧道代码
 - 界面壳：插件化装配（cordis），19 个内置界面插件，组合包（宿主半 + 界面半）按 `package.json` 的 `dsh.client` 收进启动图

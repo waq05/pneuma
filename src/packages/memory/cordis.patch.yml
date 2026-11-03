@@ -1,0 +1,4 @@
+# 长期记忆
+- insert:
+    - id: memory
+      name: '@pneuma/memory'

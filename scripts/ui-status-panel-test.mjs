@@ -233,10 +233,10 @@ console.log('[6] 宿主数据面（文本钉）')
   const services = read('src/services/types.ts')
   const uiMethods = read('src/core/ui-methods.ts')
   const hostMethods = read('src/core/host-methods.ts')
-  const toolsDefault = read('src/plugins/tools-default.ts')
+  const toolsDefault = read('src/packages/tools-default/index.ts')
   const bashCore = read('src/core/tools/bash.ts')
-  const plan = read('src/plugins/plan.ts')
-  const schedule = read('src/plugins/schedule.ts')
+  const plan = read('src/packages/plan/index.ts')
+  const schedule = read('src/packages/schedule/index.ts')
 
   check('契约里有三个新面（scheduled 可缺席）',
     contract.includes('backgroundWorks: BackgroundWorkView[]') &&
@@ -278,7 +278,7 @@ console.log('[6] 宿主数据面（文本钉）')
 
 console.log('[7] Git 页签（空仓库不报错 + 未跟踪可预览 + 每文件行数 / 就地展开 / 提交对话框的形态钉）')
 {
-  const desktopDock = read('src/plugins/desktop-dock.ts')
+  const desktopDock = read('src/packages/desktop-dock/index.ts')
   // 执行姿势与 porcelain 解析在 core/git-exec.ts（desktop-dock 与 git 插件共用一份：
   // 两处都在读同一个工作区，解析规则不能有两份）。
   const gitExec = read('src/core/git-exec.ts')

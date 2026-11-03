@@ -1,0 +1,4 @@
+# 设置
+- insert:
+    - id: settings
+      name: '@pneuma/settings'

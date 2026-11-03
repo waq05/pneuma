@@ -25,7 +25,7 @@ const core = await import('../lib/core/commands-completion.js')
 const { shellCommands, shellCommandRejection, isShellCommand, addExtraSpec, removeExtraSpec, BUILT_IN_COMMANDS, expandCommand, shellHelpText } = core
 const { UI_METHODS, UI_EXCLUDED, UI_ARG_SPECS } = await import('../lib/core/ui-methods.js')
 const { INVOKABLE_METHODS } = await import('../lib/core/host-methods.js')
-const { REMOTE_SHELL_METHODS } = await import('../lib/plugins/remote/types.js')
+const { REMOTE_SHELL_METHODS } = await import('../lib/packages/remote/types.js')
 const shell = await import(new URL('../ui-shell/src/plugins/composer/commands.ts', import.meta.url).href)
 const { claimInput, commandQuery, filterCommands, insertCommand, blockedNow } = shell
 
@@ -175,17 +175,17 @@ console.log('\n[3] 白名单与两侧接线')
   check('共享类型面转出 UiCommandView（壳按它写渲染）', sharedTypes.includes('UiCommandView,'), '')
   const pluginApi = read('ui-shell/src/plugin-api.ts')
   check('@dsc/ui 转出 UiCommandView', pluginApi.includes('UiCommandView,'), '')
-  const runtime = read('src/plugins/runtime.ts')
+  const runtime = read('src/packages/runtime/index.ts')
   check('宿主插件走纯函数那道闸', runtime.includes('shellCommandRejection(input)'), '')
   check('列表与派发共用一份 UI 回调（notice 落会话，壳直接读得到）', runtime.includes('function commandUi(') && runtime.includes('commandUi(true)'), '')
   check('壳这条通道给命令表打上 shell 标记（/help 据此只列能跑的）', runtime.includes('commandUi(true)') && runtime.includes('shell ? { shell: true }'), '')
-  check('/help 按通道给文本', read('src/plugins/commands.ts').includes('ui.shell === true ? shellHelpText()'), '')
+  check('/help 按通道给文本', read('src/packages/commands/index.ts').includes('ui.shell === true ? shellHelpText()'), '')
   const core = read('src/core/commands-completion.ts')
   check('尺子写在命令表旁边（shell: true 那段注释在）', core.includes('shell: true') && core.includes('失败关闭'), '')
   const spec = read('src/services/types.ts')
   check('CommandSpec 有 shell 一位并写了失败关闭', /shell\?: boolean/.test(spec) && spec.includes('失败关闭'), '')
   check('CommandContext 也有 shell 一位（命令看得见自己在哪个通道）', /shell\?: boolean/.test(spec) && spec.includes('runUiCommand'))
-  const compact = read('src/plugins/compact.ts')
+  const compact = read('src/packages/compact/index.ts')
   check('/compact 带参数只回用法、不执行（对齐 dsh）', compact.includes('args.length > 0') && compact.includes('用法：/compact（不带参数）'), '')
 }
 
@@ -301,14 +301,14 @@ console.log('\n[5] 壳侧接线')
 
   // 2026-10-27 查账：空会话欢迎态把首屏 system 整批不画，新会话里打 /help 什么都看不到
   check('system 条目带 command 标记（契约里声明）', readContractSource().includes('command?: boolean') && read('src/adapter/transcript.ts').includes('command ? { command: true }'), '')
-  check('命令回调把标记传下去', read('src/plugins/runtime.ts').includes("ctx.transcript.system(text, undefined, true)"), '')
+  check('命令回调把标记传下去', read('src/packages/runtime/index.ts').includes("ctx.transcript.system(text, undefined, true)"), '')
   const transcriptUi = readPluginSource('ui-shell/src/plugins/transcript')
   check('欢迎态画命令输出（不再整批吞掉）', transcriptUi.includes('row.entry.command === true') && transcriptUi.includes('entry-system-command'), '')
   check('普通对话里也走左对齐块', /entry.command === true \? \(\s*<div className="entry-system-command">/.test(transcriptUi), '')
   check('样式有了（左对齐 / 保留换行）', /\.entry-system-command \{[\s\S]{0,600}?white-space: pre-wrap/.test(read('ui-shell/src/styles.css')), '')
 
   // 2026-11：/review 的回车改成「先补全、不执行」——契约、宿主透出、壳三个口子都要在。
-  const runtimeSource = read('src/plugins/runtime.ts')
+  const runtimeSource = read('src/packages/runtime/index.ts')
   check(
     '契约 UiCommandView 有 input（带 hint）',
     /interface UiCommandView \{[\s\S]{0,900}?input\?: \{ hint: string \}/.test(readContractSource()),

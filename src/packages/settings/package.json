@@ -1,0 +1,21 @@
+{
+  "name": "@pneuma/settings",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 160,
+    "resolution": "pinned",
+    "title": "设置",
+    "description": "设置分区注册表、模型配置与偏好"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

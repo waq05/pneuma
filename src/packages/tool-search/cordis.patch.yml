@@ -1,0 +1,5 @@
+# 工具按需加载
+- insert:
+    - id: tool-search
+      name: '@pneuma/tool-search'
+      disabled: true

@@ -1,0 +1,21 @@
+{
+  "name": "@pneuma/mode",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 130,
+    "resolution": "pinned",
+    "title": "协作模式",
+    "description": "执行 / 计划 / 探索 / 免打扰四档与工具闸门"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

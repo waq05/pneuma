@@ -1,0 +1,4 @@
+# 模型路由
+- insert:
+    - id: llm
+      name: '@pneuma/llm'

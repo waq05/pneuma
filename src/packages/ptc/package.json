@@ -1,0 +1,21 @@
+{
+  "name": "@pneuma/ptc",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 150,
+    "resolution": "overridable",
+    "title": "PTC 代码调用",
+    "description": "run_code 工具：模型写一段脚本批量调工具，只把结论交回上下文（只属于 PTC 模式）"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

@@ -4,7 +4,7 @@
 > 能打开遥控页、能在设置里生成配对码。本文只讲「怎么让手机从外网走到这个端口」，
 > 不讲插件怎么开。
 >
-> **隧道本身没有代码实现**：仓库里只有本机的遥控服务（`src/plugins/remote.ts` 与
+> **隧道本身没有代码实现**：仓库里只有本机的遥控服务（`src/packages/remote/index.ts` 与
 > `src/core/remote/`），对外那段由 cloudflared 或 ssh 这类外部进程完成。所以这篇是纯操作手册，
 > 照着敲命令即可，不用在仓库里找隧道的源码。
 >
@@ -16,7 +16,7 @@
 
 1. **默认只听本机 `127.0.0.1`；打开「允许局域网访问」后才会监听 `0.0.0.0`，风险自负。**
    插件默认的设计前提是「只有本机能连」，外网入口交给隧道进程。设置里的局域网开关
-   （`src/plugins/remote.ts` 的 `lan`）一打开，监听地址随之变成 `0.0.0.0`，同一 Wi-Fi 下的
+   （`src/packages/remote/index.ts` 的 `lan`）一打开，监听地址随之变成 `0.0.0.0`，同一 Wi-Fi 下的
    设备都能连进来——那等于把一个能执行命令、读工作区文件的接口摆到网段扫描器面前。
 2. **配对码在电脑上生成，只在自己手上输入。** 配对码 + 隧道地址 = 一台全权客户端，
    别发到聊天窗口、别截图分享。
@@ -248,7 +248,7 @@ ssh -N -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R 17321:127.0.0.1:173
 「Pneuma 轮完成」，正文「用时 Xs」；只有这一轮用过 15 秒以上、或者这一轮里出现过审批卡才发）、
 以及**审批久等再提醒**（同一张卡等过 2 分钟推第一声「Pneuma 还在等人」，之后每 2 分钟一声，
 最多 3 声）。同类通知 10 秒内只发一条，不会因为连着弹卡刷屏——节流键带卡号，后一张卡不会被
-前一张吞掉（`src/plugins/remote.ts:657-723`，`ESCALATE_WAIT_MS` / `ESCALATE_MAX` 在 `:101,103`）。
+前一张吞掉（`src/packages/remote/index.ts:657-723`，`ESCALATE_WAIT_MS` / `ESCALATE_MAX` 在 `:101,103`）。
 
 ### 5.1 路 1：通知 Webhook（Bark / ntfy，推荐）
 
@@ -280,7 +280,7 @@ ssh -N -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R 17321:127.0.0.1:173
    生成 VAPID 密钥（`~/.dsc/remote/push-keys.json`）并接受订阅；关着时订阅接口直接回 403。
 2. **手机上**：用浏览器打开遥控页，选「添加到主屏幕」，然后**从主屏幕图标**打开它。
 3. 在遥控页里点一次「开启通知」：网页端先 `GET /api/push-key` 取公钥，再
-   `POST /api/push-subscribe` 交订阅（两条接口在 `src/plugins/remote/routes.ts`）。订阅成功后设置页的
+   `POST /api/push-subscribe` 交订阅（两条接口在 `src/packages/remote/routes.ts`）。订阅成功后设置页的
    「推送状态」会显示已订阅几台。
 4. 想要静音就再把开关关掉；用户清了站点数据之后推送服务会回 404/410，宿主会**当场把
    那条订阅从库里删掉**（不会一直往一个死地址发）。换手机、换浏览器之后重新订阅一次即可。

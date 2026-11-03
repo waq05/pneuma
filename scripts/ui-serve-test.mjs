@@ -45,7 +45,7 @@ const { collectUiPluginArtifacts, uiArtifactCacheCounters, resetUiArtifactCacheC
 )
 const { resolveUiBundleRequest } = await import('../lib/core/ui-route.js')
 const { checkUiRequestTrust, timingSafeEqualText, verifyUiCookie } = await import('../lib/core/ui-trust.js')
-const { webserverPlugin } = await import('../lib/plugins/webserver.js')
+const { webserverPlugin } = await import('../lib/packages/webserver/index.js')
 
 let failures = 0
 const check = (name, condition, detail = '') => {

@@ -1,0 +1,21 @@
+{
+  "name": "@pneuma/session-title",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 220,
+    "resolution": "overridable",
+    "title": "会话标题",
+    "description": "首回合结束后自动生成会话标题（用户改名优先）"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "@pneuma/goal",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 270,
+    "resolution": "overridable",
+    "title": "会话目标",
+    "description": "跨轮自动续跑与它的刹车",
+    "settingsSection": "goal"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  }
+}
