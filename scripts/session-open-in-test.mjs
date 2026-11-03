@@ -94,12 +94,15 @@ console.log('\n[3] 不带目录的新建：落在**当前会话的**目录（参
   checkEq('还是那个目录（没滑回进程目录）', session.current().meta.cwd === hostCwd, false)
 }
 
-console.log('\n[4] 还没落盘的当前会话不进列表，发出第一条消息后才出现')
+console.log('\n[4] 还没落盘的当前会话：列表里有且只有一行临时回执，落盘后换成真行')
 {
   const current = session.current()
   await session.refresh() // 壳那条路：newSessionIn 之后接一次 refreshSessions
   const before = kernel.transcript.getSnapshot().sessions.filter((item) => item.id === current.filePath)
-  checkEq('列表里没有这条空会话', before.length, 0)
+  // 2026-11-03 改口径（不是放宽）：点「新会话」要看得见一行，所以宿主 refresh() 给当前这条
+  // 还没落盘的会话补一行 `unsaved` 的临时行——文件仍然不建（这条没变）。
+  checkEq('列表里有一行（新建要有回执）', before.length, 1)
+  checkEq('这一行标着 unsaved', before[0]?.unsaved, true)
   check('磁盘上也没建出文件（补默认值只是 state 记账）', !existsSync(current.filePath))
   checkEq('不落盘也不丢身份：目录仍是会话自己的', current.meta.cwd, wsB)
   // 发第一条消息：缓冲里的 state 与 meta 一起写出，扫盘这才看得见它
@@ -114,8 +117,22 @@ console.log('\n[4] 还没落盘的当前会话不进列表，发出第一条消�
   check('发第一条消息后文件出现', existsSync(current.filePath))
   await session.refresh()
   const after = kernel.transcript.getSnapshot().sessions.filter((item) => item.id === current.filePath)
-  checkEq('列表里出现且只有一条', after.length, 1)
+  checkEq('落盘后仍然只有一行（临时行换成真行，不重复）', after.length, 1)
+  check('那一行不再是临时行', after[0]?.unsaved !== true)
   checkEq('那一行的目录就是会话目录', after[0]?.cwd, current.meta.cwd)
+
+  // 切走：临时行只属于「当前那条」，换了会话就该消失（用户口径：切到别的会话，新会话隐藏）
+  await runtime.openSession()
+  const blank = session.current()
+  await session.refresh()
+  const present = kernel.transcript
+    .getSnapshot()
+    .sessions.filter((item) => item.id === blank.filePath)
+  checkEq('新的空会话又占了一行', present.length, 1)
+  await runtime.openSession(current.filePath)
+  await session.refresh()
+  const gone = kernel.transcript.getSnapshot().sessions.filter((item) => item.id === blank.filePath)
+  checkEq('切到别的会话之后，那行临时回执消失', gone.length, 0)
 }
 
 console.log('\n[5] 坏目录：当场抛，且不动当前会话')
