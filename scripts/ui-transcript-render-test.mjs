@@ -476,9 +476,15 @@ console.log('[11] 轮尾的复制 / 分叉：停下之后、鼠标压在输出�
   check('跑动中不画复制（不再是「留着但没意义」）', /const copy = !props\.running && /.test(foot))
   check('跑动中不画分叉（不再是置灰占位）', /const fork = !props\.running && /.test(foot))
   check('分叉那颗不再挂 disabled（已经渲染不出来了，留着就是死属性）', !/disabled=\{props\.running\}/.test(foot))
+  // 2026-11-03：用量（.round-tokens）与时刻（.round-clock）也并进同一条规则——它们
+  // 常驻同样把每一轮后面拖成一行小字；分隔点（.round-sep）一起，免得剩个孤零零的「·」。
+  const footHidden = /\.round-foot \.round-act,([\s\S]{0,220}?)opacity: 0;/.exec(code)
   check(
-    '默认透明是两颗钮一起（复制 .round-act / 分叉 .user-act 同一条规则）',
-    /\.round-foot \.round-act,\s*\n\.round-foot \.user-act \{\s*\n\s*opacity: 0;/.test(code),
+    '默认透明是两颗钮 + 用量/时刻一起（同一条规则）',
+    footHidden !== null &&
+      ['.round-foot .user-act', '.round-foot .round-tokens', '.round-foot .round-sep', '.round-foot .round-clock'].every(
+        (sel) => footHidden[1].includes(sel),
+      ),
   )
   check(
     '悬浮这一轮的「非首块」才现（首块是用户自己的提问，压在上面不该弹）',
@@ -487,7 +493,10 @@ console.log('[11] 轮尾的复制 / 分叉：停下之后、鼠标压在输出�
   check('压在页脚自己那一行上也现（按钮就在那行里，否则点不到）', /\.turn-seat > \.round-foot:hover \.round-act/.test(code))
   check('键盘焦点进这一轮也现（Tab 走得到两颗钮）', /\.turn-seat:focus-within > \.round-foot \.round-act/.test(code))
   check('用 opacity 不用 display/visibility（后者会让按钮不可聚焦）', !/\.round-foot \.round-act[^{]*\{[^}]*display: none/.test(code))
-  check('系统说「少动」时淡入也关掉', /prefers-reduced-motion: reduce\) \{[\s\S]{0,200}\.round-foot \.round-act,[\s\S]{0,120}\.round-foot \.user-act \{\s*\n\s*transition: none;/.test(code))
+  check(
+    '系统说「少动」时淡入也关掉（两颗钮 + 用量/时刻都在那条规则里）',
+    /prefers-reduced-motion: reduce\) \{[\s\S]{0,300}\.round-foot \.round-clock \{\s*\n\s*transition: none;/.test(code),
+  )
 }
 
 console.log('[12] 机器投递的消息画成触发行，不是用户气泡（2026-11-02 报障：后台作业通知冒成气泡）')

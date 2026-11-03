@@ -169,7 +169,15 @@ console.log('[4] 宿主 desktop-dock 的三个 op')
     gitPlugin.includes('const first = lastReadAt === 0') && gitPlugin.includes('if (first || now - fetchedAt > POLL_CLEAN_MS) schedule(0)'),
   )
   check('读过之后记下取数时刻（过期判断才有依据）', gitPlugin.includes('fetchedAt = Date.now()'))
-  check('事件催拍：回合收工 + 换会话', gitPlugin.includes("ctx.on('dsc/turn-end', refresh)") && gitPlugin.includes("ctx.on('dsc/session-open', refresh)"))
+  check('事件催拍：回合收工', gitPlugin.includes("ctx.on('dsc/turn-end', refresh)"))
+  // 换会话不再无条件重拍（2026-11-03）：同一个工作区里的会话共用一个仓库读数，
+  // 每切一次就拉三个 git 子进程是白烧（实测每次切换 30–50ms 的进程创建开销）。
+  // 目录真变了才重拍，读数本身由 12s/30s 的巡检保鲜。
+  check(
+    '换会话只在工作目录变了时才催拍',
+    gitPlugin.includes("ctx.on('dsc/session-open', ({ session }) => {") && gitPlugin.includes('if (session.meta.cwd !== cacheCwd) refresh()'),
+  )
+  check('缓存记着自己属于哪个目录', gitPlugin.includes('let cacheCwd: string | null = null') && gitPlugin.includes('cacheCwd = cwd'))
 }
 
 if (failures === 0) {

@@ -82,6 +82,14 @@ const skipsUnsavedOnDelete = (s) => s.includes('const real = sessionsOfGroup.fil
 check('[4] 删工作区跳过临时行', skipsUnsavedOnDelete(ui))
 check('[4] 跳过判据对脏副本必须红', !skipsUnsavedOnDelete(dirty(ui, 'session.unsaved !== true', 'true')))
 
+// ── [5] 点会话当场高亮（2026-11-03），点「新会话」时撤掉还没落地的高亮 ──────────────
+// 高亮只认快照里的 status.sessionPath 的话，用户点完要等宿主读盘 + 推帧（30–150ms）
+// 才看到「有反应」。乐观值补这一拍；而新建会话时必须把它撤掉，否则侧栏会继续亮旧行。
+const optimistic = (s) => s.includes('const shownPath = pendingOpen ?? currentPath') && s.includes('setPendingOpen(id ?? null)')
+check('[5] 点会话当场高亮（乐观值优先，快照到了交还真值）', optimistic(ui))
+check('[5] 新会话那一拍先撤掉旧高亮', ui.includes('setPendingOpen(id ?? null)'))
+check('[5] 乐观高亮判据对脏副本必须红', !optimistic(dirty(ui, 'setPendingOpen(id ?? null)', 'if (id !== undefined) setPendingOpen(id)')))
+
 console.log('─'.repeat(24))
 if (failures === 0) {
   console.log('ui-sessions-unsaved-row-test：全部绿。')
