@@ -1,8 +1,8 @@
 # 三家对标产品功能清单（dsh / codex / Pneuma）
 
-[对标计划书](harness-benchmark-roadmap.md)的证据底料：三家产品的**全面功能清单**，2026-10-02 分别从源码逐包梳理得出。计划书只引用本清单的结论（§7 差距登记），想核对某条差距的出处就回到这里。
+[对标计划书](harness-benchmark-roadmap.md)的证据底料：三家产品的**全面功能清单**。前两节 2026-10-02 从各自源码逐包梳理得出，第三节 2026-11-03 按本仓库 0.8.1 的代码重写。计划书只引用本清单的结论（§7 差距登记），想核对某条差距的出处就回到这里。
 
-> **快照时点**：前两节是对外部两家的事实快照，不随本仓库演进：dsh 快照提交 `4878cdabd8`，之后已 +4639 个提交；codex 快照 `1cc7e23612`，之后 +1384 个提交（数据按各自仓库的当前 HEAD 算）。行号与结论都按 2026-10-02 那一刻为准。
+> **快照时点**：前两节是对外部两家的事实快照，不随本仓库演进：dsh 快照提交 `4878cdabd8`，之后已 +4639 个提交；codex 快照 `1cc7e23612`，之后 +1384 个提交（数据按各自仓库的当前 HEAD 算）。行号与结论都按 2026-10-02 那一刻为准。第三节不同——它跟着本仓库走，时点是 0.8.1。
 
 | 想知道 | 去看 |
 | --- | --- |
@@ -14,9 +14,9 @@
 
 - **dsh**：`D:\deepseek-harness\deepseek-harness`，约 60 个功能包组、60+ client UI 插件包、4 个 app。工具权威目录 `docs/tool-catalog.md`、配置权威目录 `docs/config-catalog.md`（由脚本从运行时生成）。
 - **codex**：`D:\codex\codex`，Rust 主体 `codex-rs`（150+ crate）+ `sdk/`（TS/Python）+ `docs/`。
-- **Pneuma**：本仓库，基于代码取证 + [development-log.md](development-log.md) 各阶段（已记到 0.7.0）。
+- **Pneuma**：本仓库，基于代码取证 + [development-log.md](development-log.md) 各阶段（已记到 0.8.1）。
 - 全部为只读源码梳理，未运行任何一家；「未见」指在该仓库活动代码中未找到，不排除文档口径或仓库外实现。
-- dsc 清单经两轮：第一轮按能力域盘点（本节主体），第二轮对已具备能力做**实现深度复核**（与 dsh/codex 同层细比，确认的疏漏编号 T29–T47，登记在 [harness-benchmark-roadmap.md](harness-benchmark-roadmap.md) §7.5）——本节各「差距」行已并入第二轮结论。
+- dsc 清单经三轮：第一轮按能力域盘点，第二轮对已具备能力做**实现深度复核**（与 dsh/codex 同层细比，确认的疏漏编号 T29–T47，登记在 [harness-benchmark-roadmap.md](harness-benchmark-roadmap.md) §7.5），第三轮在 0.8.1 上逐条重测——第二轮那批疏漏已全部修掉，因此本轮把「差距」翻成了现状，仍未做的收进 §12。
 
 ---
 
@@ -245,102 +245,146 @@
 
 ## 三、Pneuma（本仓库，dsc）
 
-**Pneuma 段截至 0.7.0**，以下差距已补齐（保留原文备查）。
+**Pneuma 段截至 0.8.1**（2026-11-03）。这一节按代码现状重写过一遍：早期以「差距」口吻登记的条目，多数已在 0.6.27–0.8.1 之间修掉，下面只写现在成立的事实；仍未做的统一收在 §12。
 
-定位：个人终端 harness，TS + cordis 插件 + Electron 桌面端 + ink TUI + 手机 PWA 遥控端。装配约 45 个内置/官方插件（`src/host/kernel.ts`）。
+定位：个人终端 harness，TS + cordis 插件 + Electron 桌面端 + ink TUI + 手机 PWA 遥控端。内核装配 48 条元数据（内置 30 + 官方可开关 18，`src/host/kernel.ts:85,262`），另有 4 个无元数据的常驻插件（`permission-presets`、`desktop-dock`、`git`、`plugin-manager`）。
 
 ### 1. 会话管理 ——【完整】
-- append-only JSONL 落盘与重放恢复（`src/core/session.ts`）；summary/keep 压缩折叠、state/note 记录、「模型可见 ⟺ 已记录」不变量
-- 列表：三种分组（工作区/树/单列）+ 三种排序 + 置顶 + 拖拽 + 每组 5 条增量展开 + 展开态持久化；侧栏本地过滤搜索框
-- 重命名/置顶/归档/回收站（30 天）/恢复/永久删除/分叉；sidecar `meta.json` 不污染重放
-- 跨会话全文检索：纯 TS 倒排索引（中文 1+2-gram），`session_search` 工具 + `/search` 命令 + 后台回填
-- 恢复启动：`--resume auto`（.last-session 指针）；孤儿 tool_calls 自愈清洗
-- 差距：会话标题靠首条消息截断（无 LLM 生成）；无会话导出；侧栏无运行状态点/待审批圆点（`Sidebar.tsx:671` 占位）；无轮中途插话（有意不做）。（**已实现**：会话导出见 `src/core/session-export.ts`，自动标题见 `src/plugins/session-title.ts`，侧栏状态点见 `src/contract/snapshot.ts:42` 的 `sessionStates`。）**深度复核**（T30/T31/T32）：无跨进程写锁——桌面端与 TUI 同开一个工作区即交叉写坏同一份日志（dsc 在 schedule/sandbox 都做了锁，唯独会话没有）；会话头行损坏即整个会话打不开且静默回落新会话；中断 turn 恢复后模型对未完成动作失忆（孤儿调用被静默剔除，dsh 是落盘合成闭合 + 重试指引）
+- append-only JSONL 落盘与重放恢复（`src/core/session.ts:1080`）；summary/keep 压缩折叠、state/note 记录、「模型可见 ⟺ 已记录」不变量
+- **跨进程写租约**：同工作区的会话被第二个宿主打开时争用失败并明说，不再两边交错写坏同一份日志；`meta.json` 归同一把锁（`src/core/session.ts:20`，锁实现在 `src/core/lockfile.ts`）
+- **头行损坏可抢救**：meta 半截 JSON 时按内容反推 cwd 重建，不再整份会话打不开（`src/core/session.ts:306`）
+- **中断回合自愈**：恢复时给「已发起、结果未知」的工具调用落盘补合成结果，模型知道先核查再重试，重复恢复幂等（`src/core/session.ts:872-896`）
+- 列表：三种分组（工作区/树/单列）+ 三种排序 + 置顶（竖钉图标，未置顶时悬停才显）+ 拖拽 + 每组 5 条增量展开 + 展开态持久化；侧栏本地过滤搜索框；会话时间取最后一条对话，不读文件写过的时间
+- 重命名/置顶/归档/回收站（30 天后自动清空）/恢复/永久删除/分叉/重新编辑（`src/plugins/session.ts:236`）
+- 跨会话全文检索：纯 TS 倒排索引（中文 1+2-gram，两段式召回，严格没命中按多数两字词兜底并标成模糊命中），`session_search` 工具 + `/search` 命令 + 后台回填（`src/plugins/session-search.ts:171`）
+- 恢复启动：`--resume auto`（.last-session 指针）；孤儿 tool_calls 由请求侧 `sanitizeToolOrphans` 兜底
+- **后台会话**：每会话一个常驻 agent，切换只换「当前查看」，运行中的回合在后台跑完；侧栏状态点（working / awaiting-approval / just-finished）与「已完成未读」徽标（`src/contract/snapshot.ts:26,42`）
+- 会话标题：首回合后用一个独立小请求起名，用户改名后永不覆盖（`src/plugins/session-title.ts`）
+- 导出：`/export` 与 `src/core/session-export.ts` 的 markdown 序列化
+- 输入侧：`@` 文件提及补全（`src/core/mention.ts`，桌面与 TUI 共用同一纯模块）
+- 已知边界：无格式版本迁移链（有意不加版本号，损坏走抢救而非升级）；无 `@session` 跨会话引用
 
 ### 2. 模型与 provider ——【完整】
 - 协议接缝 `registerAdapter`（内置 openai-completions，SSE 手写解析）；config.yaml 多端点多模型，`/model` 带参数级补全
-- 推理档位五档（default/off/low/high/max）+ 档位字段三态（thinking/reasoning-effort/none）+ 模型能力字段（model-caps.ts 唯一真源：thinkingLevels/modalities/effortMap）
-- 用量统计：usage.jsonl + 设置页聚合（汇总卡 + 全年热力图 + 分模型趋势 + 环形图）
+- 推理档位五档（default/off/low/high/max）+ 档位字段三态（thinking / reasoning-effort / none）+ 模型能力字段（`src/core/model-caps.ts` 单一真源）
+- **在线模型发现**：`GET {baseURL}/models` 拉取填充，认 OpenAI / ollama / 纯数组三种形状（`src/core/model-discovery.ts`）
+- **会话级模型记忆**：会话 state 记实际发过请求的模型，恢复会话优先取它而不是回落 config 默认（`src/core/session.ts:228-231`、`src/plugins/llm.ts:70`）
+- **流中断不丢已收内容**：半截回复按 `StreamInterruptedError` 落库，连接期有重试预算（`src/core/llm.ts:8-12`）
+- 用量统计：usage.jsonl + 设置页聚合（汇总卡 + 全年热力图 + 分模型趋势 + 环形图，`ui-shell/src/plugins/settings/usage.tsx`）
+- 上下文占用表：`/status` 与壳里的占用卡，估算口径与自动压缩同源（`src/plugins/commands.ts:766`）
 - dsh 配置一次性只读迁移
-- 差距：无在线模型发现（手填清单）；无会话内上下文占用表；无 /status；账号 OAuth 不做。（**已实现**：在线模型发现见 `src/core/model-discovery.ts`；占用表与 `/status` 见 `src/plugins/commands.ts:766` 的 `statusReport`。）**深度复核**（T39）：无会话级模型记忆——/model 切换只改进程内存，恢复会话回落 config 默认模型（dsh 从会话日志投影实际用过的模型）。深度复核（T33）：流式响应中途断线时半截回复直接丢弃且不落库、流期零重试（重试预算「连接期 3 次、流期 0 次」；dsh 已收内容 durable 落库 + step 重试，codex stream_max_retries 缺省 10）
+- 已知边界：账号 OAuth 不做；无美元成本估算
 
 ### 3. 工具集 ——【完整，多为官方插件可开关】
-- 内置六件 bash/read/write/edit/glob/grep（预算可配、进程树收割、输出遮红、外部内容围栏）；大输出溢出落盘（spill）
-- MCP：stdio + streamable-http 手写 JSON-RPC，`mcp__服务器__工具`，环境变量白名单（默认关）
-- 子代理（MiniAgent 队友，按会话隔离、审批意愿取全局∩角色）+ 智能体团队（共享任务看板 + team_task）
-- 电脑操作（PowerShell+user32，DPI 感知，每次审批）；浏览器自动化（CDP DOM 级，ref 代际校验，默认关）
-- 网页搜索（tavily/bocha/serper）；定时任务（六种选择器 + DST + pre-dispatch 校验 + catch-up 补投）；LSP（定义/引用/实现/悬停 + 写后新引入报错）
-- PTC：`run_code` 同进程 node:vm（15s/120s/调用数上限）；runtime_api（创造模式）
-- 工具渐进披露（tool_search/tool_describe/tool_call + BM25，默认关）
-- ask_user（批量选项）、exit_plan_mode、todo_write、goal、memory、skill/skill_write、session_search、self-improve（三闭环）
-- 差距：无后台任务（bash.ts 自认）；无持久终端工具（终端面板是人用的）；read 不支持图片文件；MCP 无 elicitation/resources/prompts。（**已实现**：后台任务见 `src/core/tools/bash.ts:496` 的 `run_in_background`；read 读图见 `src/core/tools/fs-tools.ts:28-30`；MCP resources/prompts 见 `src/core/mcp.ts` 的 T24 段。）**深度复核**（T34/T35/T36/T37/T38/T46）：read 无字节上限、行长上限与二进制检测（spill 刻意排除 read，成了全系统唯一无防线输出入口）；edit/write 无 CAS 版本校验（读改写窗口静默覆盖第三方修改；write 有 mtime 检测、edit 全裸）；bash 超时丢全部已收输出且无 SIGTERM 优雅档（直接强杀）；MCP server instructions 被丢弃（initialize 响应不接）；PTC 脚本可并发写调用（无 dsh 的写/执行串行屏障；守卫链重入本身复核通过）；web_search 无域过滤（tavily 原生 include_domains 白白不用，对标 codex 成立）
+- 内置工具面：`bash`（含 `run_in_background`）、`job_output`/`job_list`/`job_kill`、`terminal`（open/read/send/close/list 五动作，无 PTY）、`read`/`read_image`/`write`/`edit`/`glob`/`grep`（`src/plugins/tools-default.ts:197-205`）
+- **输出防线齐了**：`read` 有 16000 字符顶 + 2000 行长上限 + NUL 二进制检测（`src/core/tools/fs-tools.ts:19-24`）；`edit`/`write` 带 mtime 锚，读改写窗口内被别人改过会当场拒（`:176`、`:241`）；bash 超时走 SIGTERM → 3 秒宽限 → 杀进程树，已收输出保留（`src/core/tools/bash.ts:186-232`）；大输出溢出落盘（spill 插件，observer order 50）
+- MCP：stdio + streamable-http 手写 JSON-RPC，`mcp__服务器__工具`，环境变量白名单；**resources / prompts / elicitation 三类能力齐全**（`src/core/mcp.ts:128,150`），server instructions 进系统提示（`:183`）
+- 子代理（MiniAgent 队友，按会话隔离、审批意愿取全局∩角色）+ 智能体团队（共享任务看板 + `team_task`）；级联默认限 1 层
+- 电脑操作（PowerShell + user32，DPI 感知，每次审批）；浏览器自动化（CDP DOM 级，ref 代际校验，默认关）；侧栏浏览器页签
+- 网页搜索（tavily/bocha/serper，**域过滤 include/exclude_domains 直通**，`src/plugins/web-search.ts:123-135`）；定时任务；LSP（定义/引用/实现/悬停 + 写后新引入报错）
+- PTC：`run_code` 同进程 `node:vm`，整段时限 300 秒、单次调用 15 秒、总调用数 200；**读写闸写独占**，两个写调用不会并发（`src/core/ptc.ts:31,41`、`src/plugins/ptc.ts:177-190`）
+- 工具渐进披露（`tool_search`/`tool_describe`/`tool_call` + 手写 BM25，默认关）
+- 结构化工具：`ask_user_question`、`exit_plan_mode`、`todo_write`、goal 四件、`schedule_*`、`memory`、`skill`/`skill_write`、`session_search`、self-improve 三闭环
+- 已知边界：无 notebook/Jupyter 工具；MCP 无 dynamic tools（prompts→工具）
 
 ### 4. 权限与审批 ——【完整，本仓库最重】
-- 双旋钮：协作模式四档（build/plan/explore/quiet）× 权限模式**三档**（readonly/auto-edit/full-access）+ 审阅者**正交轴**（user/auto-review）；另有打包权限预设（沙箱 + 权限模式 + 审阅者三合一：只读 / 工作区可写（默认）/ 完全访问 / AI 复核）
-- 审批裁决四档（allow-once/session/always/reject），键盘 y/s/a/n/Esc，风险动态限档
-- 审批灾难地板（order 5 硬拒 + 白名单 + deny 黑名单 + 熔断 + 无人值守拒）；命令策略引擎（逐段判定 + 前缀 DSL 规则文件 + 加载期自检）
-- AI 复核轴（模型逐次判断，失败退人工卡，与权限模式正交——复核跑在自动放行之前）；安全钩子（规则 + 脚本，fail-closed，mtime 信任名单）；生命周期钩子（codex 12 事件名，8 个接通）
-- 守卫链固定刻度（5 地板/8 沙箱/10 模式/20 安全钩子/25 预览/30 审批）；审计日志 + 密钥遮红
-- 沙箱：三档 + 可写根白名单 + 受保护路径 + 命令前缀策略 + 升权（`sandbox_permissions` + `sandbox_scope`（once/session）+ `justification` 成对；两个目标档**分家**——workspace-write 留在沙箱内、把这次目标并进可写根后重判，danger-full-access 这一次跳过沙箱判定）+ docker 容器后端 + Windows 受限令牌后端；后端建不起来时的姿态可配（degrade 默认降级为策略围栏继续 / fail-closed 写与执行一律拒、读照常）（219 条自检）
-- Windows 真隔离（受限令牌）不做；权限预设已从「无」补成**有**——打包权限预设（沙箱 + 权限模式 + 审阅者三合一），`/mode` 与 `/sandbox` 仍可分开细调
+- 双旋钮：协作模式四档（build/plan/explore/quiet）× 权限模式三档（readonly/auto-edit/full-access）+ 审阅者正交轴（user/auto-review）；打包权限预设四档（只读 / 工作区可写（默认）/ 完全访问 / AI 复核），三根一起写盘
+- **审批裁决四档**：allow-once（y）/ allow-session（a）/ allow-always（p）/ reject（n 或 Esc），另 `v` 切 diff；风险动态限档（`src/app/App.tsx:1241-1250`）
+- 审批灾难地板（order 5 硬拒 + 命令白名单 + deny 黑名单 + 熔断 + 无人值守拒）；命令策略引擎（逐段判定 + 前缀 DSL 规则文件 + 加载期自检）
+- AI 复核轴（模型逐次判断，失败退人工卡，与权限模式正交）；安全钩子（规则 + 脚本，fail-closed，mtime 信任名单）；生命周期钩子（codex 十四事件名：3 个完整接通、5 个部分、6 个无挂点）
+- 守卫链固定刻度：5 地板 / 8 沙箱 / 10 模式 / 20 安全钩子 / 25 文件预览 / 30 审批（`src/core/tool-guards.ts:147`）
+- 审计日志 + 密钥遮红；**权限四项与模型、思考档位按会话隔离**，A 会话换档不影响 B 会话与后台子代理
+- 沙箱三档 + 可写根白名单 + 受保护路径 + 命令前缀策略 + 一次性升权（`sandbox_permissions` + `sandbox_scope`（once/session）+ `justification` 成对）；三个后端 `policy` / `docker` / `windows-token`（`src/core/sandbox/policy.ts:43`）
+- **Windows 受限令牌后端已实现**（`src/core/sandbox/win/`，ACL 能力 SID + WRITE_RESTRICTED pass-2 + 换执行体），并如实披露三个缺口：硬链接别名、读不受限、网络只有软墙（`src/core/sandbox/win/backend.ts:1-26`）；ACL 授权任一步失败就自废后端退回策略围栏，不搞半吊子强制
+- 沙箱越界改成「拦下之后问一次」，不再静默失败
 
-### 5. diff 与代码审查 ——【完整，0.6.24–0.6.26 三连批刚补齐】
-- 底层 LCS unified diff（diff-text.ts）
-- 工具卡 intended diff：write/edit running 期间从参数+盘上现值推演写后 diff，折叠行 +N -M 徽标 + mismatch 预告「执行会失败」
+### 5. diff 与代码审查 ——【完整】
+- 底层 LCS unified diff（`diff-text.ts`）
+- 工具卡 intended diff：write/edit running 期间从参数 + 盘上现值推演写后 diff，折叠行 +N -M 徽标 + mismatch 预告「执行会失败」
 - 审批卡内嵌 diff：弹卡前推演、密钥遮红、默认收起一键展开
 - 轮尾聚合卡「N 个文件已更改」（第一方归因）+ 回合级基线聚合（turnBaselines，纯内存）
 - 右栏审查面板：unified⇄split、换行、shiki 高亮、拖宽、系统打开
-- 悬停预览：轮尾卡行/正文提及 chip 停 500ms 出该文件 diff（Esc capture 截停防误拒审批）
-- git 页签 diff：全量/单文件 `git diff HEAD --no-textconv --no-ext-diff` + stage/commit
-- `/review [关注点]`：收集工作区未提交改动组装审查轮（v1）
-- 差距：/review 无独立子代理与结构化 findings；审查面板纯只读（无部分行接受）；面板不追文件后续变化；bash 改文件不进聚合卡（dsh 用 turn 首尾 git 快照 diff 兜底能抓到 bash/sed 的改动，dsc 只认 write/edit 第一方归因——T42）
+- 悬停预览：轮尾卡行 / 正文提及 chip 停 500ms 出该文件 diff（Esc capture 截停防误拒审批）
+- git 页签 diff：全量 / 单文件 `git diff HEAD --no-textconv --no-ext-diff` + stage/commit
+- **`/review` 四档范围**（未提交改动 / 基准分支 / 某次提交 / 自定义关注点），派一个工牌强制只读的审查队友，产出结构化 `review-findings` 卡并支持行号跳转；配 `/review-status`、`/review-cancel`（`src/plugins/commands.ts:223-370`、`src/plugins/subagent.ts:816-882`）
+- 已知边界：审查面板纯只读（无部分行接受）；bash/sed 改的文件不进第一方归因卡（靠 git 页签兜底）
 
 ### 6. 命令系统 ——【完整】
-- 内置 7 条：/new /resume /compact /model /review /help /exit（`src/core/commands-completion.ts:16-22`，单一真源）；/effort 保留「已移除」占位
-- 插件注册约 18 条：/search /plugins /floor /hooks /learn /learnings /lifecycle-hooks /memory /mode /sandbox /schedule /skills /skills-ledger /todo /goal /browser 等
-- 补全：命令前缀候选 + `/model` 参数级候选 + 唯一前缀自动展开（渲染层/TUI/插件共用同一纯模块）
+- 内置 **25 条**（`src/core/commands-completion.ts:32-78`，单一真源）：`/new` `/resume` `/agents` `/compact` `/model` `/policy` `/reviewer` `/permission` `/effort` `/thinking` `/fork` `/plugins` `/ui-trust` `/update` `/status` `/usage` `/diff` `/copy` `/export` `/review` `/review-status` `/review-cancel` `/settings` `/help` `/exit`
+- **回合中可用性声明矩阵**：`duringTask: 'deny'` 的五条（`/new` `/resume` `/compact` `/fork` `/update`）在回合跑动时挡下，其余随时可用；壳的派发闸与菜单读同一份 spec
+- 插件注册约 21 条（`/search` `/plugins` `/floor` `/hooks` `/learn` `/learnings` `/lifecycle-hooks` `/memory` `/mode` `/sandbox` `/schedule` `/skills` `/skills-ledger` `/todo` `/goal` `/browser` 等）
+- 补全：命令前缀候选 + `/model` 参数级候选 + 唯一前缀自动展开（渲染层/TUI/插件共用同一纯模块）；菜单三列「中文名 + 英文名 + 说明」
 - 自定义命令：外部插件 `ctx.commands.register`
-- 差距：输入端无 @ 文件提及补全（输出端已有内联 chip）；无 @session 引用。**深度复核**（T44）：命令可用性无声明矩阵、三端防护不一致——桌面审批等待期禁输入框但侧栏「新会话」按钮可绕过直接打断挂着审批的回合（codex 每条命令声明 available_during_task）
+- 已知边界：无 `@session` 跨会话引用
 
 ### 7. 上下文工程 ——【完整】
-- system prompt 分段注册（稳定在前缓存友好）；AGENTS.md/CLAUDE.md/cursorrules 逐级上找 8 层 + 用户全局，20k 预算头尾保留
-- compact：手动 + 自动阈值（80%×contextWindow，CJK 感知），保头折尾 + 锚点索引 + 用户原话逐字 + 细节找回指针
+- system prompt 分段注册（稳定在前缓存友好）；AGENTS.md / CLAUDE.md 发现链：有 git 仓库时按 project root → cwd 有序发现，另有 `AGENTS.override.md` 与 `*.local.md` 覆盖层，20k 预算头尾保留（`src/core/prompt.ts:74,127-130,159`）
+- compact：手动 `/compact` + 自动阈值（80%×contextWindow，CJK 感知），保头折尾 + 锚点索引 + 用户原话逐字 + 细节找回指针；**压缩前先机械瘦身**（超长工具结果换指针、图像按预算卸载，`src/core/compact.ts:41-55,91-116`）
+- 微压缩冻结到「轮」，前缀缓存命中从七成拉回约九成
 - 长期记忆三格 Markdown（global/USER/workspace）+ 轮尾自动复盘；todo 实时进度条；goal 跨轮续跑（带刹车）；技能（四层发现根 + 市场缓存）
-- 模式（Agent 预设）：标准/极简/创造/PTC 四内置 + 自定义 presets/*.md
-- 差距：压缩前不对超限工具输出预裁剪；压缩时无图像预算卸载。**深度复核**（T40/T41/T43/T47）：压缩不可取消且 /compact 无运行中守卫（回合运行中压缩会与工具落库交错）；AGENTS.md 无深层目录触达增量发现 / override·local 覆盖层 / project-root 有序发现（cwd 向上 8 层硬截断）；计划拒绝反馈回路断裂（模型被要求「吸收用户的反馈」但反馈无通道传入回执）；技能 whenToUse 解析了但不进目录行、无隐式调用识别
+- 模式（Agent 预设）：标准/极简/创造/PTC 四内置 + 自定义 `presets/*.md`
+- **计划拒绝带反馈**：驳回时用户的原文捎进工具结果，模型不必盲猜（`src/plugins/plan.ts:202-204`）
+- 技能目录行带上 `whenToUse` 那一句（`src/plugins/skills.ts:114-116`）
+- 已知边界：压缩不可取消（interrupt 停不掉压缩那次模型调用）
 
-### 8. 终端与执行 ——【基础】
-- bash 前台一次性（30s/120s/8000 字符，超时收进程树）；桌面交互终端面板（xterm.js 多页签，人用）
-- 执行体缝：沙箱容器后端可整体换 spawn
-- 差距：无后台 job、无模型可用的持久 PTY
+### 8. 终端与执行 ——【完整】
+- `bash` 前台一次性（30s/120s 预算、8000 字符输出）；超时 SIGTERM → 宽限 → 杀树，已收输出仍可读；长活走 `run_in_background` + `job_*` 三工具
+- 模型可用的 `terminal` 五动作工具（open/read/send/close/list），**无 PTY**——全屏程序跑不了，这是 T20 的降级版
+- 桌面交互终端面板（xterm.js 多页签，人用）；设置里可选 PowerShell 5.1 / PowerShell 7 / Git Bash / WSL，工具说明跟着改口
+- 执行体缝：沙箱容器后端与受限令牌后端都经 `src/core/tools/command-runner.ts` 真换执行体
+- 已知边界：PTY 完整版（signal 真中断）未做，T48 立项待排期
 
 ### 9. UI ——【完整】
-- 布局：左栏会话区 + 正文列 + 右侧 dock（guide/terminal/browser/files/git/preview 多页签、两格分栏、全屏、每会话布局持久化、caption 避让）
-- 主题：深/浅/跟随系统 + 原生控件条 IPC 同步 + 密度档 + 原生 select 全量自绘；设计令牌 `--dsc-*`
-- 快捷键固定 8 个（Ctrl+B/P/`/T、Ctrl+Alt+R/F、Ctrl+Shift+A）；设置页 7 内置分区 + 25 插件分区热生效
-- 文件面板（树形懒加载 + vscode-icons 全集 + 多类型预览）；轨迹页（TraceView/Timeline/Inspector）；队友面板/用量面板/技能中心/插件中心/配对弹窗
-- 托盘（关窗缩托盘 + 一次性气泡）；检查更新（占位，UPDATE_CHECK_URL 空串）
-- **手机遥控（独有）**：PWA 遥控端（visualViewport 键盘适配、图片压缩上传、增量帧重连补帧）+ Web Push（VAPID）+ Webhook（Bark/ntfy）+ 二维码半小时配对 + 逐台设备吊销
-- 差距：无会话运行状态点；桌面无原生系统通知（只有托盘气泡+toast）；手机端无团队/模式面板、归档只读。**深度复核**（T45）：推送盲区——审批久等无升级再提醒、10 秒同类节流会吞掉第二张审批卡的推送、ask_user 提问卡与计划评审卡完全不推（审批推送本身仍是 dsc 领先项）
+- 布局：左栏会话区 + 正文列 + 右侧 dock（guide/terminal/browser/files/git/preview 多页签、两格分栏、全屏、每会话布局持久化、caption 避让）；会话列宽默认 96ch
+- 进程区：三级栅格（思考行 / 工具行 / 阶段组头同一套对齐）+ 四档展示档位（compact / standard / detailed / verbose）；只有一条工具调用时不套组头
+- 主题：深 / 浅 / 跟随系统 + 四档出厂主题 + 原生控件条 IPC 同步 + 密度档；设计令牌 `--dsc-*`
+- 快捷键：键位表 10 条（`Ctrl K` 命令面板、`Ctrl B` 侧栏、`Ctrl P` 文件、`` Ctrl ` `` 终端、`Ctrl T` 浏览器、`Ctrl Enter` 插话、`Ctrl Alt R` 重命名、`Ctrl Alt F` 分叉、`Ctrl Shift A` 归档、`Esc` 关浮层），按 `?` 随时打开（`ui-shell/src/plugins/palette/ui.tsx:327-338`）
+- 设置页：8 个内置分区（通用 / 模型 / 预设 / 技能 / 归档 / 用量 / 终端 / 关于，`src/plugins/settings.ts:520`）+ 声明了 `inSettings: true` 的插件分区（远程控制、终端环境）；其余插件分区只在插件中心那张卡上
+- 附件：内容寻址仓库 + 输入框贴图与文件 + 消息只留引用 + 附件卡与图片 lightbox
+- 状态栏三段式（轮 / 步取宿主真值，不再估算）；轨迹页（TraceView / Timeline / Inspector）；队友面板 / 用量面板 / 技能中心 / 插件中心 / 配对弹窗
+- 托盘（关窗缩托盘 + 一次性气泡）；检查更新（更新源已接 GitHub Releases，只查不装，有新版给「立即更新」或打开发布页）
+- **手机遥控（独有）**：PWA 遥控端（visualViewport 键盘适配、图片压缩上传、增量帧重连补帧）+ Web Push（VAPID）+ Webhook（Bark/ntfy）+ 二维码半小时配对 + 逐台设备吊销；推送三处盲区已修（2 分钟升级再提醒 ×3、节流键带卡号、ask 提问卡与计划评审卡入列，`src/plugins/remote.ts:657-706`）
+- 已知边界：无桌面原生系统通知（只有托盘气泡 + toast）；手机端无团队/模式面板
 
 ### 10. 传输部署 ——【完整】
-- 远程宿主：HTTP+WS（配对/票据/上传/推送 7 条路由 + 主控位锁 + 多设备 devices.json + INVOKABLE_COVERAGE 编译期兜底）
+- 远程宿主：HTTP + WS **9 条 `api` 路由**（pair/ticket/revoke/upload/push-key/push-subscribe/push-unsubscribe/invoke/events，`src/plugins/remote/routes.ts:310-365`）+ 主控位锁 + 多设备 `devices.json` + `INVOKABLE_COVERAGE` 编译期兜底
 - 桌面宿主通道：Electron utilityProcess + host-stdio JSONL（协议 v2，白名单由 DscRuntime 推出）；嵌入运行时依赖闭包自动组装
-- TUI（ink，同契约）+ CLI 入口（bin/dsc.js）+ headless；SSH 隧道文档（remote-tunnel.md）
-- 差距：无对外 SDK/协议面（host-stdio 是内部协议）；ACP 无
+- TUI（ink，同契约）+ CLI 入口（`bin/dsc.js`）+ headless；SSH 隧道只有文档（`remote-tunnel.md`），无隧道代码
+- 界面壳：插件化装配（cordis），19 个内置界面插件，组合包（宿主半 + 界面半）按 `package.json` 的 `dsh.client` 收进启动图
+- 已知边界：无对外 SDK / 协议面（host-stdio 是内部协议）；无 ACP
 
 ### 11. 插件系统与杂项 ——【完整】
-- 三档插件（内核不可停 / 官方可开关 18 / 外部单文件）+ 热挂载 + plugin_manager 工具 + dsh 插件兼容层（logger 桥/模块解析钩子/双形状 ctx.tools）
-- 技能市场（GitHub 目录/索引 JSON 两类源，缓存 1h）
-- 扩展点 15+（tools/commands/prompt/guards/surfaces/waiting/session.appendState/events/settings/skills/provide…），KERNEL_API_VERSION=6
-- 差距：外部插件无 npm/GitHub 远程安装（只收本地 .js）；无 doctor 式体检命令；无插件管理器 HMR
+- 三档插件（内核不可停 30 / 官方可开关 18 / 外部单文件）+ 热挂载 + `plugin_manager` 工具（含 `browse_remote` / `install_remote` 远程安装，必须 https，装前过审批）+ dsh 插件兼容层（logger 桥 / 模块解析钩子 / 双形状 `ctx.tools`）
+- 界面插件契约 2.0：槽位、chain 槽、类型化槽位、`provide`/`consume`、席位、Component Factory、动作表、分批启动与 HMR；第三方目录要过一次 `/ui-trust` 信任，产物带内容摘要 rev
+- 服务面 37 个 `ctx.provide`（tools / commands / prompt / guards / surfaces / waiting / session / approval / sandbox / lsp / mcp / team / review / backgroundWorks / webServer …），`KERNEL_API_VERSION = 6`（`src/core/plugin-registry.ts:93`）
+- 技能市场（GitHub 目录 / 索引 JSON 两类源，缓存 1h）
+- 已知边界：宿主插件无 HMR（界面插件有）；无 doctor 式体检命令；插件远程安装只支持 https 直链（npm 包形态 T49 未做）
+
+### 12. 仍未做（原样登记，别把上面当成「全齐了」）
+
+| 项 | 现状 |
+| --- | --- |
+| checkpoint / rewind / 部分行接受 | 与协作回滚同族，T51/T52 已立项未动工；审查面板仍纯只读 |
+| 对外 SDK / 协议面、ACP | host-stdio 只够内部用 |
+| SSH 远程执行 | 只有隧道文档，无隧道代码 |
+| 可观测性 otel | 无 |
+| doctor 体检命令 | 分散在 `/plugins`、`/sandbox`、设置页 |
+| 宿主插件 HMR、npm 包形态安装 | 界面插件有 HMR；远程安装只认 https 直链 |
+| PTY 完整版 | `terminal` 是管道降级版，无 signal 真中断 |
+| 完整 steering | 只有 async-inbox 最小版（步骤边界落库），无多端排队 inbox |
+| 子代理级联 | 有意限 1 层 |
+| 会话格式版本迁移链 | 有意不加版本号 |
+| 移动端团队 / 模式面板、归档管理 | 手机端定位是遥控 |
+| OS 通知（会话完成） | 只有托盘气泡 |
+| 美元成本估算 | 只有 token 与用量 |
 
 ### Pneuma 独有/领先项（相对 dsh 与 codex）
 1. **手机遥控**：PWA + Web Push/Webhook + 二维码配对 + 逐台设备管理——三家都没有
-2. **审批安全纵深**：灾难地板 + 熔断 + 命令策略引擎逐段判定 + 安全钩子 fail-closed + AI 复核轴 + 无人值守拒——比 dsh（ask/never 两档）细
-3. **中文优先**：会话检索 1+2-gram、界面全中文（codex/dsh 主英文）
-4. 用量统计面板（热力图/趋势/环形）
+2. **审批安全纵深**：灾难地板 + 熔断 + 命令策略引擎逐段判定 + 安全钩子 fail-closed + AI 复核轴 + 无人值守拒——比 dsh（ask/never 两档）细，且审批推送带升级再提醒
+3. **中文优先**：会话检索 1+2-gram 与模糊兜底、界面全中文（codex/dsh 主英文）
+4. 用量统计面板（热力图/趋势/环形）+ token 与上下文占用同源估算
 5. 技能自修 + 台账回滚（self-improve 三闭环 + 老化）
-6. 会话回收站（30 天可捞回）
+6. 会话回收站（30 天可捞回）+ 会话写租约 + 头行抢救
 7. 目标续跑带刹车 + 定时任务 pre-dispatch 校验（坏配置一次 token 不花）
 8. 轨迹页（整轮折叠 + 时间线 + 独立节点检查器）
+9. Windows 受限令牌沙箱（与 dsh 各自独立实现，均如实披露缺口）
