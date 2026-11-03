@@ -1,9 +1,0 @@
-feat(cli): numa plugin list 列出应用自带的全部行
-
-为什么：判定标准第 1 条要求「清单能列出全部功能，带包名、版本、行 id、来源」。
-之前这条命令只列 profile 里装的组合包，核心服务与官方功能档一条都看不到。
-
-- 读 @pneuma/base 的 patch + 各包 package.json：id / 版本 / 开关 / 标题
-- 开关状态先看 ~/.dsc/plugins.json 的条目，没有才回落到行上的 disabled
-- 包不在时标「缺件」，不假装有版本
-- profile 段落保留，没建时提示首启会自动铺

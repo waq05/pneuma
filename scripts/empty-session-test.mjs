@@ -47,8 +47,13 @@ const { Session, listSessions, sessionsRoot, slugCwd } = await import('../lib/co
 const ws = join(home, 'ws')
 mkdirSync(ws, { recursive: true })
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-/** 等到文件里真的出现某段文本（写流是异步的，existsSync 会先真后假）。 */
-const waitForText = async (file, needle, timeout = 3000) => {
+/**
+ * 等到文件里真的出现某段文本（写流是异步的，existsSync 会先真后假）。
+ *
+ * 3s 在门禁里太紧：整轮 94 个探针串行跑，磁盘/杀软抖动时落盘会晚到 5s 以上。
+ * 10s 给「写盘 + 读回」留余量——真没写盘照样超时，不是掩盖问题。
+ */
+const waitForText = async (file, needle, timeout = 10000) => {
   const deadline = Date.now() + timeout
   while (Date.now() < deadline) {
     if (existsSync(file) && readFileSync(file, 'utf8').includes(needle)) return true
