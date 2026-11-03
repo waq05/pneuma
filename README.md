@@ -233,7 +233,7 @@ cd desktop && pnpm dev           # 桌面端（先把上面两条 build 跑过�
 
 **活参考与现状说明**：[docs/harness-benchmark-roadmap.md](docs/harness-benchmark-roadmap.md)（对标差距与路线图）、[docs/peer-feature-inventory.md](docs/peer-feature-inventory.md)（三家功能面清单）、[docs/remote-tunnel.md](docs/remote-tunnel.md)（遥控端口走隧道）
 
-**外部实现拆解（按名字查的参考资料）**：[docs/codex-request-assembly.md](docs/codex-request-assembly.md)（codex 的请求组装）、[docs/dsh-request-assembly.md](docs/dsh-request-assembly.md)（dsh 的请求组装）、[docs/dsh-plugin-porting.md](docs/dsh-plugin-porting.md)（dsh 插件搬到 Pneuma 怎么改、哪些不支持）
+**外部实现拆解（按名字查的参考资料）**：[docs/codex-request-assembly.md](docs/codex-request-assembly.md)（codex 的请求组装）、[docs/dsh-request-assembly.md](docs/dsh-request-assembly.md)（dsh 的请求组装）、[docs/dsh-plugin-porting.md](docs/dsh-plugin-porting.md)（dsh 插件搬到 Pneuma 怎么改、哪些不支持）、[docs/runtime-comparison.md](docs/runtime-comparison.md)（三家 runtime 逐轮编排对照）
 
 **已归档**：已完成的历史计划、一次性审查报告与停更的对照表都移到 [docs/archive/](docs/archive/) 了，每篇开头有一行 `状态：已归档（原因）` 和去向说明。共 14 篇，另有 `archive/shots/` 下 6 份当时的施工自检报告。
 

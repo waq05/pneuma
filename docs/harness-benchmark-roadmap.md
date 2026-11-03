@@ -84,12 +84,12 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:79`，`KERNEL_API_VERSION 
 | 可观测性（otel） | ○ | ● | ◐ | ● | 个人版低优先 |
 | diff 审查链（轮尾聚合卡 / 右栏面板 / 悬停预览 / intended diff / 审批内嵌 / git 页签） | ● | ◐ | — | ● | 0.6.24–0.6.26 三连批补齐（development-log 阶段 42–44）；codex 的形态是 apply_patch diff 预览 + `/diff`，无轮尾聚合卡 |
 | /review 审查命令 | ◐ | ● | — | ○ | dsc v1 发审查轮回复即意见；codex 有独立 review 子代理与结构化 findings（T18） |
-| 输入端 @ 文件提及 | ○ | ● | — | ● | 输出端内联 chip 已有；输入端补全缺（T14） |
-| bash 后台任务 | ○ | ◐ | — | ● | bash 超长任务目前只能等或砍（T15） |
-| 会话标题自动生成 | ○ | ◐ | — | ● | 现靠首条消息截断 + 手动改名（T16） |
-| 上下文占用表 / /status | ○ | ● | — | ● | 用量统计在设置页，会话内看不到占用（T17） |
-| 会话导出 | ○ | ● | — | ● | （T22） |
-| 侧栏会话运行状态点 | ○ | ◐ | — | ● | `Sidebar.tsx:671` 留空占位（T21） |
+| 输入端 @ 文件提及 | ● | ● | — | ● | 已补（T14，0.6.29）：`src/core/mention.ts` 纯模块做定位/排序/插回，终端 TUI 与界面壳各接一层补全 |
+| bash 后台任务 | ● | ◐ | — | ● | 已补（T15，0.6.31）：`src/core/tools/bash.ts:496` 的 `run_in_background` + `job_output`/`job_list`/`job_kill` |
+| 会话标题自动生成 | ● | ◐ | — | ● | 已补（T16，0.6.29）：`src/plugins/session-title.ts` 用独立小请求起名，autoTitle 与用户改名分家 |
+| 上下文占用表 / /status | ● | ● | — | ● | 已补（T17，0.6.29）：`src/plugins/commands.ts:766` 的 `statusReport`，估算口径与自动压缩同源 |
+| 会话导出 | ● | ● | — | ● | 已补（T22，0.6.29）：`src/core/session-export.ts` 把会话消息序列化成 markdown |
+| 侧栏会话运行状态点 | ● | ◐ | — | ● | 已补（T21，0.6.30）：`src/contract/snapshot.ts:42` 的 `sessionStates` 供侧栏状态点 |
 | 手机 / 移动端遥控 | ● | ◐ | ◐ | ◐ | **dsc 独有优势**：PWA + Web Push/Webhook + 二维码配对 |
 
 ### 3.1 压缩重放（已修，见 §5.1）
@@ -372,7 +372,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。自检脚本
 
 以下能力 dsc 领先或独有（出处见 [peer-feature-inventory.md](peer-feature-inventory.md) §三）：
 
-1. **手机遥控全家桶**（PWA + Web Push/Webhook + 二维码配对 + 逐台设备管理）——dsh 只有 `0.0.0.0` 裸暴露 + SSH 隧道，codex 只有 app-server remote；
+1. **手机遥控全家桶**（PWA + Web Push/Webhook + 二维码配对 + 逐台设备管理）——dsh 已有 `packages/api/remote-access` 包（这是本文写作之后才有的，当时只有 `0.0.0.0` 裸暴露 + SSH 隧道），codex 只有 app-server remote；
 2. **审批安全纵深**：灾难地板 + 熔断 + 命令策略引擎逐段判定 + 安全钩子 fail-closed + AI 复核轴 + 无人值守拒——dsh 明确只有一次性 allow-once（README 原文），codex 的 granular 档未开放时主要靠沙箱兜底；
 3. **中文优先**：会话检索 1+2-gram、界面全中文；
 4. 技能自修 + 台账回滚 + 老化（self-improve 三闭环）；

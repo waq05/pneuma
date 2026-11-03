@@ -2,6 +2,8 @@
 
 [对标计划书](harness-benchmark-roadmap.md)的证据底料：三家产品的**全面功能清单**，2026-10-02 分别从源码逐包梳理得出。计划书只引用本清单的结论（§7 差距登记），想核对某条差距的出处就回到这里。
 
+> **快照时点**：前两节是对外部两家的事实快照，不随本仓库演进：dsh 快照提交 `4878cdabd8`，之后已 +4639 个提交；codex 快照 `1cc7e23612`，之后 +1384 个提交（数据按各自仓库的当前 HEAD 算）。行号与结论都按 2026-10-02 那一刻为准。
+
 | 想知道 | 去看 |
 | --- | --- |
 | 这些清单怎么用、差距怎么排 | [harness-benchmark-roadmap.md](harness-benchmark-roadmap.md) |
@@ -243,6 +245,8 @@
 
 ## 三、Pneuma（本仓库，dsc）
 
+**Pneuma 段截至 0.7.0**，以下差距已补齐（保留原文备查）。
+
 定位：个人终端 harness，TS + cordis 插件 + Electron 桌面端 + ink TUI + 手机 PWA 遥控端。装配约 45 个内置/官方插件（`src/host/kernel.ts`）。
 
 ### 1. 会话管理 ——【完整】
@@ -251,14 +255,14 @@
 - 重命名/置顶/归档/回收站（30 天）/恢复/永久删除/分叉；sidecar `meta.json` 不污染重放
 - 跨会话全文检索：纯 TS 倒排索引（中文 1+2-gram），`session_search` 工具 + `/search` 命令 + 后台回填
 - 恢复启动：`--resume auto`（.last-session 指针）；孤儿 tool_calls 自愈清洗
-- 差距：会话标题靠首条消息截断（无 LLM 生成）；无会话导出；侧栏无运行状态点/待审批圆点（`Sidebar.tsx:671` 占位）；无轮中途插话（有意不做）。**深度复核**（T30/T31/T32）：无跨进程写锁——桌面端与 TUI 同开一个工作区即交叉写坏同一份日志（dsc 在 schedule/sandbox 都做了锁，唯独会话没有）；会话头行损坏即整个会话打不开且静默回落新会话；中断 turn 恢复后模型对未完成动作失忆（孤儿调用被静默剔除，dsh 是落盘合成闭合 + 重试指引）
+- 差距：会话标题靠首条消息截断（无 LLM 生成）；无会话导出；侧栏无运行状态点/待审批圆点（`Sidebar.tsx:671` 占位）；无轮中途插话（有意不做）。（**已实现**：会话导出见 `src/core/session-export.ts`，自动标题见 `src/plugins/session-title.ts`，侧栏状态点见 `src/contract/snapshot.ts:42` 的 `sessionStates`。）**深度复核**（T30/T31/T32）：无跨进程写锁——桌面端与 TUI 同开一个工作区即交叉写坏同一份日志（dsc 在 schedule/sandbox 都做了锁，唯独会话没有）；会话头行损坏即整个会话打不开且静默回落新会话；中断 turn 恢复后模型对未完成动作失忆（孤儿调用被静默剔除，dsh 是落盘合成闭合 + 重试指引）
 
 ### 2. 模型与 provider ——【完整】
 - 协议接缝 `registerAdapter`（内置 openai-completions，SSE 手写解析）；config.yaml 多端点多模型，`/model` 带参数级补全
 - 推理档位五档（default/off/low/high/max）+ 档位字段三态（thinking/reasoning-effort/none）+ 模型能力字段（model-caps.ts 唯一真源：thinkingLevels/modalities/effortMap）
 - 用量统计：usage.jsonl + 设置页聚合（汇总卡 + 全年热力图 + 分模型趋势 + 环形图）
 - dsh 配置一次性只读迁移
-- 差距：无在线模型发现（手填清单）；无会话内上下文占用表；无 /status；账号 OAuth 不做。**深度复核**（T39）：无会话级模型记忆——/model 切换只改进程内存，恢复会话回落 config 默认模型（dsh 从会话日志投影实际用过的模型）。深度复核（T33）：流式响应中途断线时半截回复直接丢弃且不落库、流期零重试（重试预算「连接期 3 次、流期 0 次」；dsh 已收内容 durable 落库 + step 重试，codex stream_max_retries 缺省 10）
+- 差距：无在线模型发现（手填清单）；无会话内上下文占用表；无 /status；账号 OAuth 不做。（**已实现**：在线模型发现见 `src/core/model-discovery.ts`；占用表与 `/status` 见 `src/plugins/commands.ts:766` 的 `statusReport`。）**深度复核**（T39）：无会话级模型记忆——/model 切换只改进程内存，恢复会话回落 config 默认模型（dsh 从会话日志投影实际用过的模型）。深度复核（T33）：流式响应中途断线时半截回复直接丢弃且不落库、流期零重试（重试预算「连接期 3 次、流期 0 次」；dsh 已收内容 durable 落库 + step 重试，codex stream_max_retries 缺省 10）
 
 ### 3. 工具集 ——【完整，多为官方插件可开关】
 - 内置六件 bash/read/write/edit/glob/grep（预算可配、进程树收割、输出遮红、外部内容围栏）；大输出溢出落盘（spill）
@@ -269,7 +273,7 @@
 - PTC：`run_code` 同进程 node:vm（15s/120s/调用数上限）；runtime_api（创造模式）
 - 工具渐进披露（tool_search/tool_describe/tool_call + BM25，默认关）
 - ask_user（批量选项）、exit_plan_mode、todo_write、goal、memory、skill/skill_write、session_search、self-improve（三闭环）
-- 差距：无后台任务（bash.ts 自认）；无持久终端工具（终端面板是人用的）；read 不支持图片文件；MCP 无 elicitation/resources/prompts。**深度复核**（T34/T35/T36/T37/T38/T46）：read 无字节上限、行长上限与二进制检测（spill 刻意排除 read，成了全系统唯一无防线输出入口）；edit/write 无 CAS 版本校验（读改写窗口静默覆盖第三方修改；write 有 mtime 检测、edit 全裸）；bash 超时丢全部已收输出且无 SIGTERM 优雅档（直接强杀）；MCP server instructions 被丢弃（initialize 响应不接）；PTC 脚本可并发写调用（无 dsh 的写/执行串行屏障；守卫链重入本身复核通过）；web_search 无域过滤（tavily 原生 include_domains 白白不用，对标 codex 成立）
+- 差距：无后台任务（bash.ts 自认）；无持久终端工具（终端面板是人用的）；read 不支持图片文件；MCP 无 elicitation/resources/prompts。（**已实现**：后台任务见 `src/core/tools/bash.ts:496` 的 `run_in_background`；read 读图见 `src/core/tools/fs-tools.ts:28-30`；MCP resources/prompts 见 `src/core/mcp.ts` 的 T24 段。）**深度复核**（T34/T35/T36/T37/T38/T46）：read 无字节上限、行长上限与二进制检测（spill 刻意排除 read，成了全系统唯一无防线输出入口）；edit/write 无 CAS 版本校验（读改写窗口静默覆盖第三方修改；write 有 mtime 检测、edit 全裸）；bash 超时丢全部已收输出且无 SIGTERM 优雅档（直接强杀）；MCP server instructions 被丢弃（initialize 响应不接）；PTC 脚本可并发写调用（无 dsh 的写/执行串行屏障；守卫链重入本身复核通过）；web_search 无域过滤（tavily 原生 include_domains 白白不用，对标 codex 成立）
 
 ### 4. 权限与审批 ——【完整，本仓库最重】
 - 双旋钮：协作模式四档（build/plan/explore/quiet）× 权限模式**三档**（readonly/auto-edit/full-access）+ 审阅者**正交轴**（user/auto-review）；另有打包权限预设（沙箱 + 权限模式 + 审阅者三合一：只读 / 工作区可写（默认）/ 完全访问 / AI 复核）

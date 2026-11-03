@@ -2,6 +2,10 @@
 
 「dsh 每轮对话给模型组装什么、怎么规范」的源码级拆解。2026-10-03 从本机 `D:\deepseek-harness\deepseek-harness` **逐包只读梳理**得出，快照 **HEAD `4878cdabd8`**（最后提交 2026-09-28）——dsh 仓库会继续演进，**行号是当日快照**；引用一律「包路径:行号」，拿不准时回源核对。用途：以后要再对齐 dsh，先读这里，不必重新探索。
 
+> **这是定点快照，不是现状文档，且已是本文腐坏最重的一篇。** 快照对象是本机 `D:\deepseek-harness\deepseek-harness`（作者本机路径），快照提交 `4878cdabd8`，比当前 HEAD `ce7073d512` 落后 4639 个提交。
+>
+> 已经对不上的：§5 当强制点写的 `packages/core/agent-loop/src/invariant.ts` 已不存在（该目录只剩 7 个文件）；`deriveMessages` 已移到 `agent.ts:728`。仍然成立、不必改的：`system-prompt/src/index.ts:53` 的 `PromptSection` 接口、`HARNESS_IDENTITY = -1000`、agent-instructions 的候选名单。**§5 与全文行号一律按「当时快照」读，不要当成现在的位置**；要动手前先回源核对。
+
 | 想知道 | 去看 |
 | --- | --- |
 | dsh 插件怎么挂进 dsc（适配指南） | [dsh-plugin-porting.md](dsh-plugin-porting.md) |

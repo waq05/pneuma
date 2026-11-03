@@ -2,6 +2,10 @@
 
 「codex（OpenAI Codex CLI，`codex-rs`）每轮对话给模型组装什么、怎么规范」的源码级拆解。2026-10-03 从本机 `D:\codex\codex` **只读梳理**得出，快照 **HEAD `1cc7e23612`**——仓库会继续演进，**行号是当日快照**；引用一律「文件:行号」（相对 `codex-rs/`）。用途：以后要对齐 codex，先读这里，不必重新探索。
 
+> **这是定点快照，不是现状文档。** 快照对象是本机 `D:\codex\codex`（作者本机路径），快照提交 `1cc7e23612`，比当前 HEAD `582a8812e0` 落后 1384 个提交。外部代码已经往前走了，下文行号与结论都按 2026-10-03 那一刻为准。
+>
+> 快照之后动过的地方：`run_turn` 现在在 `core/src/session/turn.rs:176`（原文写 `1610-1645`）；permissions 文案的生成拆在 `prompts/src/permissions_instructions.rs`，并新增 `approval_instructions.rs`、`writable_roots.rs`、`incremental_tools.rs`；`unified_exec` 拆出了 `preparation.rs`。仍然成立、不必改的：没有 `ModelFamily`（当前代码全仓无命中）、`models-manager/prompt.md` 仍是 275 行。回源核对时以当前代码为准。
+
 | 想知道 | 去看 |
 | --- | --- |
 | dsh 的同类拆解 | [dsh-request-assembly.md](dsh-request-assembly.md) |

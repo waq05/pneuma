@@ -5,6 +5,10 @@
 > （`D:\codex\codex`，HEAD `582a8812e0`）、本仓库 Pneuma（`src/`）。
 > 所有结论都带 `文件:行号`；三家之外的话一律标成"我的判断"。
 >
+> **快照时点**：这是对照当时的定点记录，不是现状。dsh 按快照提交 `4878cdabd8` 那批随包代码，
+> codex 按 `582a8812e0`，Pneuma 是"对照时的仓库状态"——本仓库还在往前走，Pneuma 侧的行号
+> 会随后续改动漂移，回源时要重新定位。
+>
 > 这篇回答三个问题：**一轮是怎么转的**、**模型每一轮到底收到什么**、**安全 / 成本 / 效率
 > 各自靠什么保证**。最后一节列我认为 Pneuma 现在就该改的几条。
 
@@ -13,7 +17,7 @@
 1. **三家的主循环骨架几乎一样**：`while(true) { 组装请求 → 流式调模型 → 没有工具调用就停 → 执行工具 → 再来一圈 }`，
    结束条件都是"这一轮没有工具调用"，都**没有步数上限**（dsh 明说不内置轮次预算，
    `dsh-agent-loop/README.zh.md:221`；codex 的注释把"只回消息就算一轮完"写在
-   `core/src/session/turn.rs:162-175`；Pneuma 的 `for(;;)` 里没有计数器，`src/core/loop.ts:338`）。
+   `core/src/session/turn.rs:162-175`；Pneuma 的 `for(;;)` 里没有计数器，`src/core/loop.ts:344`）。
 2. **差别全在"每一轮请求里装什么、怎么装"**。三家都意识到前缀缓存才是成本大头，但做法分三派：
    dsh 把易变内容全挪出 system 节点、codex 给提示词算确定性 UUID、Pneuma 把易变内容做成
    请求**末尾**的一条投影消息。方向一致，代价不同。
@@ -59,7 +63,7 @@
 
 | | dsh | codex | Pneuma |
 |---|---|---|---|
-| 有无 `system` 字段 | **没有**，提示词是 `messages[0]` 的 `system/message`（`dsh-system-prompt/README.zh.md:141`） | 没有，提示词是 `input[0]` 的 `developer` 项（`core/src/client.rs:1052-1083`） | **有**，`[{role:'system'}, ...history]`（`src/core/loop.ts:411`） |
+| 有无 `system` 字段 | **没有**，提示词是 `messages[0]` 的 `system/message`（`dsh-system-prompt/README.zh.md:141`） | 没有，提示词是 `input[0]` 的 `developer` 项（`core/src/client.rs:1052-1083`） | **有**，`[{role:'system'}, ...history]`（`src/core/loop.ts:419`） |
 | 历史 | `session.deriveMessages()` 全量 | `clone_history().for_prompt()` 全量 + `store:false`（`client.rs:1161`） | `session.messages` 全量 |
 | 工具定义 | 每轮全量重发 | 每轮重发，另有"增量工具"通道（`turn.rs:1709-1722`） | 每轮全量重发，取当轮快照 `requestTools`（`loop.ts:448-458`） |
 | 工具 schema 单独计量 | 有（`toolsTokens`） | 无（算在整体里） | **有**，单列一段（`core/token-estimate.ts:55-57`） |
@@ -160,7 +164,7 @@ Pneuma 的"头 60% + 尾 40%"值得单独说：它是对一条真实报障的修
   tools: [...], reasoning: {effort, summary}, prompt_cache_key, text: {verbosity, format} }
 ```
 
-**Pneuma**（`src/core/loop.ts:411`，投影后）：
+**Pneuma**（`src/core/loop.ts:419`，投影后）：
 
 ```
 [0] system     身份 + 做事方式 + 工具规范 + # agentsMd + 技能目录 + 当前模型
