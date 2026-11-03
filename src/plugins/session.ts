@@ -135,8 +135,21 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
             ...listSessions().map((item) => toSummary(item)),
             ...listArchivedSessions().map((item) => toSummary(item, item.archivedAt ?? item.updatedAt)),
           ]
-          // 刚新建、一个字都还没发的会话不补行：磁盘上没有它的文件，列表也不该有它。
-          // 中间区自己的空会话回执由快照的 sessionUnsaved / sessionPath 给，不靠列表。
+          // 还没发过消息的当前会话：给它一行看得见的回执（点「新会话」不该像没反应）。
+          //
+          // 只补**当前**这一条：它一旦不是当前会话就既没内容也没稳定身份，列表里不该留着
+          // ——这正是 2026-10-29 那次「点几次堆几行」要的结果。当时删的是“补行”，真正
+          // 的病灶（每次新建都在磁盘上建空壳文件）已经由 `Session` 的 pendingState 修掉
+          // （`src/core/session.ts` 的 write()），所以这行可以回来了。
+          if (!session.persisted && !listed.some((item) => item.id === session.filePath)) {
+            listed.unshift({
+              id: session.filePath,
+              cwd: session.meta.cwd,
+              createdAt: session.meta.createdAt,
+              updatedAt: session.meta.createdAt,
+              unsaved: true,
+            })
+          }
           sessions = listed
         } catch (error) {
           ctx.emit('dsc/notice', `会话列表读取失败：${errText(error)}`)
@@ -262,9 +275,9 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
     /**
      * 第一条消息落地后把新会话补进列表缓存。
      *
-     * 为什么需要：新会话在说话之前不落盘、也不补虚拟行（2026-10-29 用户要求），
-     * 于是「文件刚出现」与「列表缓存下一次重扫」之间有一段落差——那段里侧栏没有
-     * 这条会话，用户会以为自己的会话没保存。标题生成那条路（session-title.ts）
+     * 为什么需要：新会话在说话之前不落盘，列表里那一行是宿主动态补的临时行（`unsaved`），
+     * 「文件刚出现」与「列表缓存下一次重扫」之间有一段落差——那段里侧栏没有这条会话，
+     * 用户会以为自己的会话没保存。标题生成那条路（session-title.ts）
      * 也会 refresh，但要等一次模型请求，失败就永远补不上。
      *
      * 只认「当前会话第一次真正落盘」这一种情形：命中缓存直接返回，其它会话的
@@ -272,7 +285,8 @@ export const sessionPlugin: Plugin.Object<SessionPluginOptions> = {
      */
     let refreshedFor: string | null = null
     ctx.on('dsc/changed', () => {
-      if (sessions.some((item) => item.id === session.filePath)) return
+      // 临时行（unsaved）不算“已经在列表里”：第一句话发出去之后正是要把它换成扫盘的真行。
+      if (sessions.some((item) => item.id === session.filePath && item.unsaved !== true)) return
       if (!existsSync(session.filePath)) return
       // 同一条路径只补刷一次：文件在但扫盘没有它（升级前留下的零消息文件）时，
       // 刷新会再发 dsc/changed，没有这道闸就成死循环。
