@@ -1176,14 +1176,51 @@ Windows 的最小化/最大化/关闭三个按钮由系统画，样式表够不�
    之后取胜；模型那颗不挂这个类（它有自己一套窄面板 + 悬浮飞出）。
    状态栏的悬浮卡与正文列把手藏掉（它们参与横向溢出，390px 下会把文档撑到 431px）。
 
+### token 怎么估（`src/core/token-estimate.ts`）
+
+估算全仓只有一份：`estimateTextTokens` 把中文按 0.65、其余按 0.33（≈3 字符一个 token）累加，
+整体宁高不低——早压一次比爆窗便宜。压缩（`compact.ts`、`microcompact.ts`）、压缩插件的预算、
+请求分段（`loop.ts` 的 `estimateRequestSegments`）与壳的用量读数都走它。展示层的
+`formatTokens`（K/M 两级）在 `ui-shell/src/ui-primitives/tokens.ts`，只有这一份。
+
 ### 命令与补全（`src/core/commands-completion.ts` + `src/plugins/commands.ts`）
 
 命令表、补全与唯一前缀展开的**单一真源是 `src/core/commands-completion.ts`**——它是顶层
 零 node 依赖的纯模块，渲染层（经 `@dsc/runtime/core/commands-completion.js` alias）、TUI
 与插件三方共用。渲染层 import 链上任何一个模块顶层碰 node 内置模块，vite externalize
 代理一求值就把整个渲染进程炸成白屏（0.6.26 踩的，见 development-log 阶段 44 与 memory）。
-内置命令 25 条（`src/core/commands-completion.ts`）
-（`src/core/commands-completion.ts`）。命令可以声明 `input: { hint }`：带这一位的命令在输入框
+内置命令 25 条，全在 `BUILT_IN_COMMANDS` 那张表里；「回合中」一列是 `duringTask: 'deny'`——
+模型还在跑的回合里按下去会被挡掉，其余随时可用：
+
+| 命令 | 参数 | 干什么 | 回合中 |
+| --- | --- | --- | --- |
+| `/new` | — | 新建空会话 | 挡 |
+| `/resume` | — | 恢复历史会话（先选工作区再选会话） | 挡 |
+| `/agents` | — | 看子代理与后台会话（转录只读） | 可 |
+| `/compact` | — | 压缩以上对话 | 挡 |
+| `/model` | `[端点/]模型名` | 本会话用哪个模型（无参数打开选择器） | 可 |
+| `/policy` | `[readonly\|auto-edit\|full-access]` | 权限模式 | 可 |
+| `/reviewer` | `[user\|auto-review]` | 要问的事先给谁看 | 可 |
+| `/permission` | `[预设名]` | 权限预设（沙箱 + 模式 + 审阅者三合一） | 可 |
+| `/effort` | `[default\|off\|low\|high\|max]` | 思考强度 | 可 |
+| `/thinking` | `[on\|off]` | 思考块展开（无参数 = 翻转，会话内生效） | 可 |
+| `/fork` | — | 分叉成可恢复的副本，当前会话不动 | 挡 |
+| `/plugins` | — | 已挂载插件清单 | 可 |
+| `/ui-trust` | `<插件目录名>` | 信任一个第三方界面插件 | 可 |
+| `/update` | — | 查有没有新版（只查不装） | 挡 |
+| `/status` | — | 上下文占用与压缩余量 | 可 |
+| `/usage` | — | 累计用量（含缓存命中率） | 可 |
+| `/diff` | `[文件]` | 工作区未提交改动 | 可 |
+| `/copy` | — | 复制上一条回复 | 可 |
+| `/export` | `[文件路径]` | 导出为 markdown | 可 |
+| `/review` | `[关注点]` | 审查工作区未提交改动 | 可 |
+| `/review-status` | — | 最近一次审查的状态与结论 | 可 |
+| `/review-cancel` | — | 叫停正在跑的审查 | 可 |
+| `/settings` | — | 打开设置页 | 可 |
+| `/help` | — | 命令帮助 | 可 |
+| `/exit` | — | 退出 | 可 |
+
+命令可以声明 `input: { hint }`：带这一位的命令在输入框
 回车时**不执行**，只把 `/<名字> ` 补进输入（光标落尾部、下方显示 hint），再回车才带着
 写成的要求派发——`/review` 就是这么收「关注点」的（`inputClaimOf` 是 TUI 与壳共用的那条判定）。
 `/review` 的 handler 在 `src/plugins/commands.ts`：空输入时先弹范围卡（对比基准分支 / 未提交改动 /
