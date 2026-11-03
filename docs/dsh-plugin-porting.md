@@ -250,6 +250,12 @@ dsc 的等价扩展点重挂，找不到就砍掉那个功能**——个人版�
   写成 `platform: 'pneuma'` 的那一半是我们自己的界面插件协议，不是 dsh 的——两套别混。
 - **`ctx.tools` 兼容面只实现了 `register`**：调其余成员（`schemas` / dispatch 类）会响亮
   报错，不会静默 undefined——这是刻意的，别依赖。
+- **宿主执行层（`sandboxPolicy` / `subprocess` / `jobs`）没有对应**：要这三个服务才肯注册
+  工具的插件（典型是 `dsh-ops` 的 file 行），整包挂上去会**静默零产出**——`ctx.inject` 等不到
+  服务，回调永远不执行。这类插件别硬塞，先看它的内核能不能单独跑：`dsh-ops` 的
+  `dsh-ops-worker` 是一次性进程（stdin JSON 进、stdout JSON 出），Pneuma 的 `ops` 插件就是
+  只复用这个 exe、把交互层重写成 numa 版（见 `src/core/ops/`）。判定一条：插件的能力是不是
+  全在子进程里；是就搬子进程，不是就得补宿主服务。
 - **`session/event` 是合成流，不是 dsh 的会话日志**：`seq` 是我们自己从 0 起的连续计数，
   不是磁盘上的事件号；只发已知的那八种（见 §2.7），`request/header`、`compaction/summary`、
   `assistant/chunk` 逐帧、`system/message` 不发。第一个参数是**只读会话视图**（`id` /

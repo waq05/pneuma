@@ -12740,3 +12740,83 @@ Pneuma 窗口整片变白，除了重启没有回来的路。
 还有用，坏掉的是里面的数字和路径。
 
 **代价**：文档里写死的行号会随重构漂移，只能保一段时间。查代码时先按符号名 grep，行号当线索。
+
+## 文档与批量读取：只搬 dsh-ops 的内核（2026-11-03）
+
+**起因**：用户问「dsh-ops 能不能移植到 Pneuma 上」。第一轮答复只看了它的 npm 包结构就说
+「整包装不上、要重写外壳」，被追问「那我做的适配框架算什么」之后重新对账，结论改了两次，
+最后落在「复用内核、重写交互层」——这条才是对的做法。
+
+**为什么整包装不上**（不是框架失效，是它压在框架边界外）：
+
+- `dsh-ops/file` 行的 apply 里写着 `root.inject(['tools', 'sandboxPolicy', 'subprocess'], …)`
+  （`lib/index.js` 的 `applyComponent`，0.4.1 在 :139、0.4.4 挪到 :144）。Pneuma 的服务清单里没有 `sandboxPolicy` 与 `subprocess`，这个回调
+  永远不会执行——十六个文件工具一个都不注册，**也不报错**，这是最难查的一种失败。
+- `dsh-ops/ptc` 还要 `systemPrompt`（Pneuma 叫 `prompt`）、`dsh-ops/shell` 要 `jobs`，
+  `dsh-ops/discovery` 按 `agent/created`、`agent/pre-step` 逐个 agent 发布工具（Pneuma 是单回合
+  循环，没有这层作用域）；界面半声明 `platform: 'web'`，按 `dsh-plugin-porting.md` 只列出不加载。
+- 它连第一个工具都注册不了还有一层原因：`lib/file/result-provider.js` 一上来
+  `import('@deepseek-ai/dsh-scope')`，这个包不在 Pneuma 的 node_modules 里。
+
+**能搬的是什么**：`runtime/<平台>/dsh-ops-worker.exe` 是**一次性进程**——stdin 一段 JSON，
+stdout 一段 JSON，跟 dsh 的进程模型无关。2026-11-03 手工喂 JSON 验了三条路：读（行号、
+修订号）、写（带 expectedRevision，内容真的变了）、越界（`write_roots` 之外当场
+`POLICY_DENIED`）。所以复用的是这个 exe，不是它的 JS 外壳。
+
+**这一批做了什么**：
+
+- `src/core/ops/worker.ts`：找 exe（显式配置 → `DSC_OPS_WORKER` → `~/.dsc/plugins/node_modules/dsh-ops`
+  → `~/.dsh/profiles/*/node_modules/dsh-ops`）、拼请求、用 `node:child_process` 起进程、
+  超时用 taskkill 收场、stdout 超限直接判失败（不把半截当完整）。
+- `src/core/ops/render.ts`：中文紧凑渲染。没抄 dsh-ops 的 `render.js`（英文
+  `[Notice: …]` 风格、还带写类回执与结果引用），只照它的字段口径重写了七种形状。
+- `src/core/ops/tools.ts`：七个只读工具，risk 全是 `read`，每个路径先过 numa 自己的
+  `readBlockReason`（`.env`、私钥、凭据目录不进对话），worker 侧还有 `deny_credential_names` 兜底。
+- `src/plugins/ops.ts` + `src/host/kernel.ts`：官方可开关、默认关、带设置分区（状态、worker 路径、
+  时限）。没找到 worker 时**一个工具都不注册**，设置页写清找过哪些位置，开机提示按同一句话去重。
+
+**第二批：写类六件**（同一天）：
+
+- `ops_write_file`（整写，父目录自动建、可 `dryRun`）、`ops_edit_file`（同一文件 1-100 处替换，
+  一次性对着同一份原始内容校验）、`ops_copy` / `ops_move`（目标已存在就拒，不悄悄覆盖）、
+  `ops_remove`（只删文件、不递归目录）、`ops_replace`（字面量批量替换，可限定 glob、可预演）。
+- 六件都带**修订锚**：不传 `expectedRevision` 就现取一次 `stat`，传了而版本不符时整次拒绝、
+  一个字节都不改（worker 的 `REVISION_CONFLICT`）。注意现取的那个锚是「现在」的版本，不是
+  「模型读它的时候」的版本——要防旧印象覆盖，得把 `ops_stat` 给的完整版本号显式传回来。
+- 预演只有三件：整写、多处替换、整目录替换。`copy`/`move`/`remove` 的 worker 协议里没有
+  `dryRun` 字段（实测传了直接 `INVALID_ARGUMENT`），所以这三件不宣称预演。
+- `copy`/`move` 加了 `gateAs`：守卫链与审批卡只认 `args.path`，而这两件真正写的是 `to`；
+  不映射的话，目标落在工作区外时沙箱判不到、审批卡还会按源路径写成「工作区内改动」。
+- 都接 numa 的三条既有规矩：risk `write`（每次过审批卡）、`writeHardBlockReason`（凭据目录一类
+  硬禁）、先读后写台账（`staleOverwriteReason` / `staleEditReason`；预演不查台账，否则
+  「先预演看一眼」这条最安全的路径反而走不通）。ops 自己的读工具成功后会 `noteRead`，
+  `ops_move`/`ops_remove` 成功后会对源路径 `noteRead` 清掉旧条目。
+- 可写边界由 numa 的守卫链与审批卡决定，worker 侧不传 `write_roots`——传了反而会把用户
+  在审批卡上「本会话允许」放出来的外部路径挡死。工具层**不自己判沙箱档位**：那要按调用方
+  会话判，工具层拿「当前查看的会话」会判错后台会话，还会把已批准的一次性升权挡死。
+
+**补审批卡的「将做的改动」**（同日，用户点名要补的缺口）：ops 写类原来只有参数摘要，
+用户点卡时看不见要改什么。现在 `approval.ts` 的 `approvalDiffOf` 按工具语义推演：
+整写从传入内容算、多处替换把每处套到同一份原文上（对不上/多处/重叠标 `mismatch`）、
+单文件替换按字面量算、复制/移动按目标路径画「新增」、删除画整篇删除（为此把
+`ApprovalDiffView.status` 扩了 `deleted`，卡片写「将删除」）；目录替换要先扫盘，
+弹卡前不做，退回参数摘要。渲染层工具卡（`ui-shell` 的 `intended-diff.ts`）同步认得
+`ops_write_file` / `ops_edit_file` / `ops_replace`，执行中的卡也能提前看到差异。
+
+**故意没搬的**：`ops_result` 的结果引用与分页、`ops_batch`、`ops_load_sdk`、`discover_tools`
+是 dsh 的 PTC 生态，Pneuma 的 `run_code` 已经覆盖；`ops_bash`、`ops_grep`、`ops_glob`
+与现有工具重复。
+
+**验证**（`scripts/ops-test.mjs`，50 条断言）：独立读、四种返回形状、只读模式下写类被拒、
+`.env` 在到达 worker 前被拦、渲染写出「共 N 行 / offset 续读」；写类那边钉了预演不落盘、
+没读过就整写被拒、ops 读过之后能整写、多处替换一次生效、复制不覆盖、移动删源、删除落地、
+整目录替换的预演与处数、显式旧版本被 `REVISION_CONFLICT` 挡住且内容不变、复制/移动的
+`gateAs` 把写目标映射成 `to`、三件不宣称 `dryRun`、replace 回执把文件数与处数分开说；审批预览那段钉了整写、多处替换、替换、复制、删除与「目录替换不推演」。另跑了一次真内核装配：`ops` 打开后十三个
+工具都在架上、设置分区标题是「文档与批量读取」；把 `DSC_OPS_WORKER` 指到不存在的路径后
+工具数为 0、分区还在。
+
+**要说清的代价**：沙箱强度比 dsh 版弱一档——dsh 会用 AppContainer/sandbox-exec 把 worker
+关进笼子，这边只能靠 numa 自己的守卫链与审批卡（worker 侧不再传可写根，见上）；
+exe 的协议按 dsh-ops 0.4.x 钉住，上游改字段就得跟着改；二进制不进仓库，靠用户装 `dsh-ops`
+（MIT AND Apache-2.0，不随包分发，省掉 bash 载荷那堆 GPL 组件）。
+

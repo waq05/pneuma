@@ -58,7 +58,7 @@
 | `src/core/tools/` | 7 个文件 ≈2147 行 | 内置六件套 `bash`/`read`/`write`/`edit`/`glob`/`grep`（预算由 tools-default 配置下发）+ 沙箱的一次性升权参数与命令执行器缝 |
 | `src/core/lsp/` | 7 个文件 ≈2422 行 | LSP 代码智能：`client`（连接/实例）、`manager`（池化调度）、`normalize`（应答归并）、`line-shift`（诊断行号对齐）、`framing`/`servers`/`uri` |
 | `src/core/dsh-compat/` | 9 个文件 ≈1949 行 | dsh 插件兼容层的模块解析钩子与工具形状适配 |
-| `src/plugins/` | 58 个文件 ≈25585 行 | 每个服务一个 cordis 插件 + 十八个官方可开关插件；`remote/` 拆成 `types`/`http`/`routes`（HTTP 路由）+ `remote.ts`（传输与装配） |
+| `src/plugins/` | 59 个文件 ≈25800 行 | 每个服务一个 cordis 插件 + 十九个官方可开关插件；`remote/` 拆成 `types`/`http`/`routes`（HTTP 路由）+ `remote.ts`（传输与装配） |
 | `src/host/kernel.ts` | 503 行 | 内核装配顺序与三档插件元数据 |
 | `src/contract.ts` | 26 行 | **只做转出**：`export * from './contract/*.js'`，导出面与拆分前一个不差 |
 | `src/contract/` | 10 个文件 ≈2279 行 | UI ⇄ 运行时的中性契约按域分家：`mode`（思考档位 / 权限 / 协作）、`task`（待办、计划、后台、定时、目标、提问）、`transcript`（工具卡、转录、差异）、`usage`（token 与用量）、`runtime`（状态行、预设面、git 读数、快照面）、`approval`（审批卡）、`session`（会话、归档、偏好）、`plugin`（插件、信任、队友、模型选择、技能、市场）、`settings`（设置、供应商、连接测试）、`snapshot`（运行时快照、`DscRuntime`、电脑操作）。每份 75–438 行 |
@@ -129,7 +129,7 @@ export const myPlugin: Plugin.Object = {
 | 档 | 判定 | 开关 | 现在有谁 |
 | --- | --- | --- | --- |
 | 自定义 | `source: 'external'`，文件在 `~/.dsc/plugins/*.js` | 可拨，默认开 | 用户自己的（dsh 风格的插件走兼容层，见 [plugin-development.md](plugin-development.md) 的「dsh 兼容层」章） |
-| 官方可开关 | `source: 'builtin'` + `toggleable: true` | 可拨，默认由 `defaultDisabled` 定 | 见下面那张表，共 18 个 |
+| 官方可开关 | `source: 'builtin'` + `toggleable: true` | 可拨，默认由 `defaultDisabled` 定 | 见下面那张表，共 19 个 |
 | 运行内核 | `source: 'builtin'` 且没标 `toggleable` | 不给开关 | `llm`/`session`/`guards`/`surfaces`/`waiting`/`approval`/`hooks`/`tools`/`tools-default`/`transcript`/`commands`/`skills`/`prompt`/`mode`/`presets`/`ptc`/`runtime-api`/`settings`/`compact`/`microcompact`/`image-diet`/`session-title`/`todo`/`plan`/`ask`/`agent`/`goal`/`memory`/`runtime`/`webserver` 共 30 条元数据；`createKernel()` 实际挂 34 个，差额是没登记元数据的 `permission-presets`/`desktop-dock`/`git`/`plugin-manager`（所以插件中心的「运行内核」清单里看不到这四个） |
 
 官方可开关插件（`src/host/kernel.ts` 的 `OFFICIAL_PLUGINS` + `OFFICIAL_OBJECTS`）：
@@ -154,8 +154,9 @@ export const myPlugin: Plugin.Object = {
 | `dock-browser` 侧栏浏览器 | 关 | `dock-browser` | 驱动桌面端侧栏那台浏览器（用户的持久登录会话）：无障碍快照 + ref 定位，动手动作每次审批 |
 | `self-improve` 经验沉淀 | 关 | `self-improve` | 三条闭环：纠正捕获候选、复盘产技能草稿（默认停用待人启用）、技能自修 + 台账回滚；`skill_write` 写入只问一次审批（卡上是技能名与动作） |
 | `dsh-compat` dsh 插件兼容 | 关 | — | 挂载 dsh（DeepSeek Harness）外部插件：`logger` 服务、模块解析钩子、dsh 风格工具注册的形状适配 |
+| `ops` 文档与批量读取 | 关 | `ops` | 十三个工具：七个只读（`ops_read_pdf` / `ops_read_docx` / `ops_read_table` / `ops_read_files` / `ops_diff` / `ops_stat` / `ops_inspect_local_file`）+ 六个写类（`ops_write_file` / `ops_edit_file` / `ops_copy` / `ops_move` / `ops_remove` / `ops_replace`，都带 SHA-256 修订锚；整写、多处替换、整目录替换三件另有 `dryRun`）。写类不自己判沙箱档位，授权统一走守卫链与审批卡；审批卡会按工具语义推演「将做的改动」（整写、多处替换、单文件替换、复制/移动的目标、整篇删除），目录替换退回参数摘要。内核是 dsh-ops 的 Rust worker（独立进程、JSON 进 JSON 出），装一次 `dsh-ops` 就有；没装就一个工具都不注册，设置页写清找过哪些位置 |
 
-默认开关按一条规矩定：会拉起外部进程、连外部服务器、动用户的桌面或改写每轮请求工具面的那几档默认关，共 12 个：`subagent`、`team`、`computer-use`、`lifecycle-hooks`、`mcp`、`tool-search`、`schedule`、`lsp`、`browser`、`dock-browser`、`self-improve`、`dsh-compat`；提升安全与本地便利、且不配就完全无副作用的那几档默认开。文件与命令围栏是唯一的例外档：它默认开——不配就没有外部进程与外部服务器，开着的收益（越界写入当场拒）大于打扰，且默认档 workspace-write 不挡正常的工作区读写。
+默认开关按一条规矩定：会拉起外部进程、连外部服务器、动用户的桌面或改写每轮请求工具面的那几档默认关，共 13 个：`subagent`、`team`、`computer-use`、`lifecycle-hooks`、`mcp`、`tool-search`、`schedule`、`lsp`、`browser`、`dock-browser`、`self-improve`、`dsh-compat`、`ops`；提升安全与本地便利、且不配就完全无副作用的那几档默认开。文件与命令围栏是唯一的例外档：它默认开——不配就没有外部进程与外部服务器，开着的收益（越界写入当场拒）大于打扰，且默认档 workspace-write 不挡正常的工作区读写。
 
 内核清单在 `src/host/kernel.ts` 的 `BUILTIN_PLUGINS`。新增一档官方可开关插件的三步写在 [plugin-development.md §3.4](plugin-development.md)。
 
@@ -420,7 +421,7 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 | `credentials.yaml` | 用户 / 设置界面 | key 的第二来源（第一是 `apiKeyEnv` 指向的环境变量，第三是回退读 `~/.dsh`） |
 | `config.json` | 用户（可选） | 轻量覆盖：provider / model / temperature |
 | `settings.json` | 设置界面与 `ctx.settings`（`src/core/prefs.ts:15`） | 审批与思考强度默认值、市场源清单、关窗是否缩托盘、侧栏界面偏好（排序、工作区顺序与别名） |
-| `plugins.json` | 插件中心、`plugin_manager` 工具 | 条目树：`entries[{file, disabled, config}]` + `history` 版本记录（自动回滚靠它）。十八个官方可开关插件各占一条，`config` 里存它们的可调值（dsh 插件的 `risk` / `risks` 也存这里） |
+| `plugins.json` | 插件中心、`plugin_manager` 工具 | 条目树：`entries[{file, disabled, config}]` + `history` 版本记录（自动回滚靠它）。十九个官方可开关插件各占一条，`config` 里存它们的可调值（dsh 插件的 `risk` / `risks` 也存这里） |
 | `skills.json` | 技能中心 | 每个技能的开关 |
 | `desktop.json` | 桌面主进程（容错读写在 `desktop/electron/main/dsc-core.ts:67`、`:79`） | 最近工作目录（`lastCwd` + `recentCwds`，最多记 12 个）、托盘提示是否弹过（`trayHintShown`）、窗口位置与大小（`windowBounds`）、更新检查读数（`lastUpdateCheckAt` / `lastUpdateVersion`）、界面形态（`ui`：`shell` / `legacy`） |
 | `.last-session` | 会话插件 | `--resume` 无参时指向上次的会话文件 |
@@ -588,7 +589,7 @@ cd D:\dsc\desktop && pnpm run typecheck
 pnpm run check:ui                  # 54 条纯 Node 探针，40 秒（新探针按文件名自动进门禁，条数会涨）
 pnpm run check:ui:e2e              # 4 条要真 Chromium，61 秒（含 diff 卡、手机尺寸远程壳）
 pnpm run check:dsh                 # dsh 兼容层 + 组合包 + 真包挂载 + 会话桥 + 流/事件旁路 + 合成验收，176 条（新探针按命名自动进门禁，条数会涨）
-pnpm run check:core                # 92 条内核探针（协议 / TUI / 会话库 / LLM 适配 / 审批），约 11 分钟（新探针按命名自动进门禁，条数会涨）
+pnpm run check:core                # 93 条内核探针（协议 / TUI / 会话库 / LLM 适配 / 审批），约 12 分钟（新探针按命名自动进门禁，条数会涨）
 pnpm run check:style               # 排版闸门：制表符 / 行尾空白 / BOM / 混用行尾 / 末尾缺换行，2 秒
 pnpm run check:style -- --changed  # 只查本次改动的文件（提交前用这个）
 pnpm run check:all                 # 上面四条串起来（不含 e2e）
@@ -850,7 +851,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 
 ### 内核装配顺序
 
-`createKernel()` 依次挂 34 个内核插件：`llm` → `session` → `guards` → `surfaces` → `waiting` → `approval` → `tools` → `tools-default` → `transcript` → `commands` → `skills` → `prompt` → `mode` → `presets` → `ptc` → `settings` → `image-diet` → `permission-presets` → `hooks` → `compact` → `microcompact` → `session-title` → `todo` → `plan` → `ask` → `agent` → `goal` → `memory` → `runtime` → `webserver` → `desktop-dock` → `git` → `plugin-manager` → `runtime-api`；末尾把十八个官方可开关插件登记进热挂载表（`registerBuiltinMount`），再按 `plugins.json` 的条目决定本次挂不挂（`src/host/kernel.ts`）。
+`createKernel()` 依次挂 34 个内核插件：`llm` → `session` → `guards` → `surfaces` → `waiting` → `approval` → `tools` → `tools-default` → `transcript` → `commands` → `skills` → `prompt` → `mode` → `presets` → `ptc` → `settings` → `image-diet` → `permission-presets` → `hooks` → `compact` → `microcompact` → `session-title` → `todo` → `plan` → `ask` → `agent` → `goal` → `memory` → `runtime` → `webserver` → `desktop-dock` → `git` → `plugin-manager` → `runtime-api`；末尾把十九个官方可开关插件登记进热挂载表（`registerBuiltinMount`），再按 `plugins.json` 的条目决定本次挂不挂（`src/host/kernel.ts`）。
 这个顺序里有两处是必须的，不只是好看：`approval` 早于 `mode`，因为换档广播 `dsc/mode-changed` 而审批要听（审批卡上得写当前档位）；`transcript` 早于 `plan`，因为恢复会话时要先把会话流清空，计划卡那条条目才不会被清掉。
 官方可开关插件之间还有一条硬约束：`tool-search` 必须排在 `mcp` 之后，否则它 apply 时 `ctx.get('mcp')` 是 `undefined`，MCP 工具的 schema 永远不会被撤下。
 
@@ -883,6 +884,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | `learnings/` | 经验沉淀：`store`（候选 jsonl 状态机）、`ledger`（技能变更台账与回滚）、`skill-write`（SKILL.md 硬校验 + 威胁扫描 + read-before-write + 老化）。读会话状态一律过 `normalizeLearningsState` 收口 |
 | `tools/command-runner.ts` | 命令执行器缝：bash 在 spawn 前问注册表，容器后端换执行体用；无注册者时行为不变 |
 | `tools/sandbox-args.ts` | 一次性升权参数的 schema 与解析：`sandbox_permissions` + `justification` 必须成对，只给半截按拒处理 |
+| `ops/` | 文档与批量读取的交互层：`worker`（找 `dsh-ops-worker` 的 exe、拼请求信封、`node:child_process` 起进程、超时/取消/输出限额）、`render`（把 Outcome 折成中文行号视图，分页与「不完整」都要说出来）、`tools`（十三个工具的条目：七个只读 + 六个写类）。**内核是 dsh-ops 的 Rust worker，只复用 exe 不复用 JS 外壳**（那套要 dsh 的 `sandboxPolicy`/`subprocess`/`agents`）。`read_files` 的 `nextIndex` 恒等于段数，别拿它当「还有没读完」的信号；`diff` 的 `offset` 是 0 起 |
 | `session-index.ts` | 会话检索的旁路倒排索引：中文按 1-gram + 2-gram（所以「内存」这种 2 字词能命中），英文按整词小写；严格查询（相邻两字全部命中）一条都没有时，按「每组过半两字词」再做一次宽松召回（`queryGroups` + `relaxedHits`，结果带 `fuzzy: true`，`fuzzy: false` 可关）；按 mtime + size 增量维护，落 `cache/session-index.json`，版本对不上就整表重建 |
 | `mcp.ts` | MCP 外部工具底座：stdio 与 streamable-http 两种传输上的 JSON-RPC、`mcp__服务器__工具` 命名（片段被清洗过时补 8 位短哈希，`a.b` 与 `a_b` 不撞名）、子进程环境白名单筛选、Windows 上按 PATH + PATHEXT 解析启动命令 |
 | `tool-search.ts` | 工具按需加载的纯逻辑：分词（中文按相邻两字）、手写 BM25 索引、延后判定（read 一律不许撤）、配置校验 |
