@@ -168,6 +168,19 @@ export const myPlugin: Plugin.Object = {
 
 行清单在 `src/packages/<id>/cordis.patch.yml`，包元数据（标题、描述、默认关、设置分区、行序）在同一个目录的 `package.json` 的 `pneuma` 段。新增一个功能包的三步写在 [plugin-development.md §3.4](plugin-development.md)。
 
+**换掉一个自带包**：37 个包的 `pneuma.resolution` 是 `overridable`，把改过的同名包放进
+`~/.dsc/profiles/default/node_modules/@pneuma/<id>/` 就顶替应用那份，重启生效；19 个 `pinned` 包
+（`llm`/`session`/`tools`/`approval` 这些核心服务）不认覆盖，profile 里有同名副本时告警并写清哪份不生效。
+`numa plugin list` 每行末尾标的就是这件事：`← profile 覆盖`，或者 pinned 让路那句说明。
+
+**版本闸判两次**：读组合包时判整包能不能装（`engines.dsh` / `engines.pneuma`）；挂每一行之前再判这一行
+实际解析到的包的 `engines.pneuma`（覆盖版的要求可能与组合包不同）。不满足 → 插件中心显示带 problem 的那行、
+启动跳过它；`profile 的 compatibility.json` 里登记包名可以放行。dsh 包的 `engines.dsh` 只在整包那一次判，
+否则老插件的 `peerDependencies: @deepseek-ai/dsh ^0.1` 会在行级被误杀。
+
+**清单快照**：`docs/baseline/0.9.0/inventory.json`（55 插件 / 24 设置分区 / 19 界面单元）。改完插件清单跑
+`node scripts/plugin-inventory-check.mjs`，它逐项 diff，不一致就红；确认变化是有意的再 `--write` 重写快照。
+
 ### 界面壳那侧也走 cordis（2026-10-26 起）
 
 界面壳（`ui-shell/`）原先自己写了一份小一号的装载器：`boot.ts` 用一支退订账本管回收、用
@@ -597,10 +610,12 @@ cd D:\dsc\desktop && pnpm run typecheck
 pnpm run check:ui                  # 54 条纯 Node 探针，40 秒（新探针按文件名自动进门禁，条数会涨）
 pnpm run check:ui:e2e              # 4 条要真 Chromium，61 秒（含 diff 卡、手机尺寸远程壳）
 pnpm run check:dsh                 # dsh 兼容层 + 组合包 + 真包挂载 + 会话桥 + 流/事件旁路 + 合成验收，176 条（新探针按命名自动进门禁，条数会涨）
-pnpm run check:core                # 93 条内核探针（协议 / TUI / 会话库 / LLM 适配 / 审批），约 12 分钟（新探针按命名自动进门禁，条数会涨）
+pnpm run check:core                # 94 条内核探针（协议 / TUI / 会话库 / LLM 适配 / 审批），约 12 分钟（新探针按命名自动进门禁，条数会涨）
+pnpm run check:plugin              # 插件模型闸（约 1 分钟）：56 包/56 行/0 缺口 + 清单快照 + 92 条加载器探针 + 15 条 list 探针 + 17 条换包 e2e
+node scripts/plugin-inventory-check.mjs --write   # 确认插件清单的变化是有意的，重写 docs/baseline/0.9.0/inventory.json
 pnpm run check:style               # 排版闸门：制表符 / 行尾空白 / BOM / 混用行尾 / 末尾缺换行，2 秒
 pnpm run check:style -- --changed  # 只查本次改动的文件（提交前用这个）
-pnpm run check:all                 # 上面四条串起来（不含 e2e）
+pnpm run check:all                 # style + plugin + ui + dsh + core 串起来（不含 ui:e2e）
 node scripts/dsh-real-package-e2e.mjs  # 真包验收（要联网：numa plugin add dsh-cost-meter）
 # 老探针已按 scripts/<话题>-test.mjs 命名统一收进门禁（check:ui / check:core / check:dsh
 # 都按文件名自动发现，新探针不用回来登记）。desktop/shots/ 只剩桌面端实拍脚本

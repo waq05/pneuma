@@ -161,12 +161,15 @@ lib/packages/<id>/package.json + cordis.patch.yml + index.js   # 构建产物
 pnpm run typecheck && pnpm --dir desktop typecheck
 pnpm run build && pnpm run build:ui
 pnpm run check:style --changed
-node scripts/plugin-model-check.mjs --strict
-node scripts/check-core.mjs          # 93 套
+pnpm run check:plugin                # 模型检查 + 清单快照 + 加载器 92 条 + list 15 条 + 换包 e2e 17 条
+node scripts/check-core.mjs          # 94 套（plugin-list-test 自动进来）
 node scripts/ops-test.mjs
 pnpm run check:dsh
-node scripts/plugin-swap-e2e.mjs     # P5 起
 ```
+
+`check:plugin` 的四个脚本分工：`plugin-model-check --strict`（结构：包数 / 行数 / 内核行数 / 缺口）、
+`plugin-inventory-check`（清单与该在的样子的逐项 diff）、`plugin-model-test`（加载器行为）、
+`plugin-list-test`（用户看得见的那一屏）、`plugin-swap-e2e`（真进程里换包 / 覆盖 / 删包）。
 
 ## 8. 范围外
 
@@ -215,3 +218,20 @@ P3 的三个已知偏差（都已写进契约 §11）：
 
 P4 的实现取舍：界面包的源码放在 `ui-shell/src/packages/ui-<id>/`（React/xterm 依赖与构建都在壳里），
 产物落点与 id 不变；宿主功能包在 `src/packages/<id>/`。两者都是包、都走同一份 `package.json` 契约。
+
+## 11. 收尾（2026-11-03 晚）：把「半成品」那几处补齐
+
+P5 交付后复核出来的四件事，全部有现场证据，逐条修完：
+
+| 问题 | 现场 | 修法 | 验证 |
+|---|---|---|---|
+| 应用自带行不查 profile，37 个 `overridable` 包的用户覆盖永远不生效 | 把改过的 `@pneuma/todo` 放进 profile，启动后 `globalThis.__MARK` 仍是 undefined | `RowMountContext` 拆出 `overrideDir`，与「相对路径基准」分开；profile 的 `node_modules` 也交给解析钩子 | `plugin-model-test` 5 条 + e2e 2 条 |
+| 行级 `engines.pneuma` 闸没实现 | `enginesProblem` 只在读组合包时调一次 | 新增 `pneumaEnginesProblem`，挂行前判；不满足登记 problem + 跳过；`compatibility.json` 可豁免 | `plugin-model-test` 12 条 |
+| `numa plugin list` 看不出每行用的是谁 | 只有一行「应用自带 <root>」 | 行尾标 `← profile 覆盖` / pinned 让路说明，版本显示生效那份，末尾汇总覆盖行数 | `plugin-list-test` 15 条 |
+| 换包 e2e 其实用了真实家目录；清单快照只导出不比对 | `spawnSync` 没传 env；`docs/baseline/0.8.1` 之后没有新快照 | e2e 把 `DSC_HOME` 指到副本并加 pinned 两个方向；新增 `plugin-inventory-check` + `docs/baseline/0.9.0/inventory.json` | e2e 17 条 + 清单闸（含反向自测） |
+
+验收数字（2026-11-03 晚）：`check:plugin` 全绿——56 包 / 56 行 / kernel 103 行 / 0 缺口；清单 55 插件 /
+24 设置分区 / 19 界面单元与快照一致；加载器 92 PASS；list 15 PASS；换包 e2e 17 PASS。
+
+**这次算不算「完」**：判定标准 1–5 现在都有可复核的证据（第 5 条的两个方向都在真进程里跑了）。
+仍然明确不做、并写进契约的：进程内换 profile（解析表不重置）、界面包单独发 npm 包、热换包。

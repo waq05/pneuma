@@ -22,7 +22,14 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
 import { activeProfileDir } from '../core/plugin-loader.js'
-import { DSH_CONTRACT_VERSION, bundleDirOf, enginesProblem, readBundle, readProfile } from '../core/plugin-bundle.js'
+import {
+  DSH_CONTRACT_VERSION,
+  bundleDirOf,
+  enginesProblem,
+  pneumaEnginesProblem,
+  readBundle,
+  readProfile,
+} from '../core/plugin-bundle.js'
 import { dscPath } from '../core/path-policy.js'
 import { activeConfigFile } from '../core/config-store.js'
 
@@ -178,13 +185,41 @@ function readEntries(): Map<string, boolean> {
   return out
 }
 
+/** 一个包的清单里这一屏要用的几个字段。 */
+interface RowPackage {
+  version: string
+  title: string
+  /** `pneuma.resolution`：pinned 的包不接受 profile 覆盖。 */
+  pinned: boolean
+  /** `engines` 原文：这一行会不会被版本闸拦下，只有它知道。 */
+  engines: unknown
+}
+
+/** 读一个包目录的清单；目录不在给 null（显示成「缺件」）。 */
+function readRowPackage(dir: string): RowPackage | null {
+  try {
+    const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as Record<string, unknown>
+    const pneuma = manifest['pneuma'] as { title?: unknown; resolution?: unknown } | undefined
+    return {
+      version: String(manifest['version'] ?? '?'),
+      title: typeof pneuma?.title === 'string' ? pneuma.title : '',
+      pinned: pneuma?.resolution === 'pinned',
+      engines: manifest['engines'],
+    }
+  } catch {
+    return null
+  }
+}
+
 /**
  * 列出应用自带的全部行：读 `@pneuma/base` 的 patch，再逐个包读 package.json。
  *
  * 为什么要读磁盘而不是写死清单：这一屏的意义就是「应用里到底装了什么、哪一行关了」，
  * 写死等于又造了一份会和构建产物漂移的表。
+ * @param profileDir - 用户 profile 目录（看有没有覆盖版）
+ * @param profileActive - 这个 profile 现在真的生效吗（没生效就不算覆盖）
  */
-function listApplicationRows(): void {
+function listApplicationRows(profileDir: string, profileActive: boolean): void {
   const basePatch = join(APP_ROOT, 'lib', 'node_modules', '@pneuma', 'base', 'cordis.patch.yml')
   if (!existsSync(basePatch)) {
     console.log('应用自带的包清单没找到（' + basePatch + '）：先跑 pnpm build。')
@@ -203,31 +238,44 @@ function listApplicationRows(): void {
     if (entry !== null && typeof entry === 'object') insert.push(...(((entry as { insert?: unknown }).insert ?? []) as unknown[]))
   }
   console.log('应用自带  ' + APP_ROOT + '（' + String(insert.length) + ' 行）')
+  let overridden = 0
   for (const row of insert) {
     if (row === null || typeof row !== 'object') continue
     const id = String((row as { id?: unknown }).id ?? '')
     const name = String((row as { name?: unknown }).name ?? '')
     const rowOff = (row as { disabled?: unknown }).disabled === true
-    const dir = join(APP_ROOT, 'lib', 'node_modules', ...name.split('/'))
-    let version = '?'
-    let title = ''
-    try {
-      const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as Record<string, unknown>
-      version = String(manifest.version ?? '?')
-      const pneuma = manifest.pneuma as { title?: unknown } | undefined
-      title = typeof pneuma?.title === 'string' ? pneuma.title : ''
-    } catch {
-      // 包不在：标成缺件，别假装有版本
-      version = '缺件'
-    }
+    const parts = name.split('/')
+    const app = readRowPackage(join(APP_ROOT, 'lib', 'node_modules', ...parts))
+    // 覆盖版只在这个 profile 真的生效时才算数（内核走的是 activeProfileDir 那一条）。
+    const profilePkg = profileActive ? readRowPackage(join(profileDir, 'node_modules', ...parts)) : null
+    // pinned 的包不接受覆盖：profile 里有同名副本也不生效，照旧显示应用那份。
+    const useProfile = profilePkg !== null && app?.pinned !== true
+    if (useProfile) overridden += 1
+    const effective = useProfile ? profilePkg : app
+    const version = effective === null || effective === undefined ? '缺件' : effective.version
+    const title = effective === null || effective === undefined ? '' : effective.title
     const off = entries.has(id) ? entries.get(id) === true : rowOff
-    console.log('  ' + id.padEnd(20) + ' v' + version.padEnd(8) + (off ? '关 ' : '开 ') + title)
+    // 版本闸不过比「用的是哪份」更该先说：这一行启动时会被跳过，不管它来自哪。
+    const gate = effective === null || effective === undefined ? null : pneumaEnginesProblem({ engines: effective.engines })
+    // 来源放在行尾：中文列宽按显示宽度算才有对齐可言，这里不值得为它引入宽度计算。
+    const note =
+      gate !== null
+        ? '  ← 版本闸不过，启动会跳过这一行：' + gate
+        : profilePkg === null || profilePkg === undefined
+          ? ''
+          : useProfile
+            ? '  ← profile 覆盖'
+            : '  ← 应用（profile 里的同名副本因 pinned 不生效）'
+    console.log('  ' + id.padEnd(20) + ' v' + version.padEnd(9) + (off ? '关 ' : '开 ') + title + note)
   }
+  if (overridden > 0) console.log('  其中 ' + String(overridden) + ' 行用的是 profile 里的覆盖版')
 }
 
 function runList(args: readonly string[]): number {
-  listApplicationRows()
   const dir = resolveProfileDir(args)
+  // 覆盖只在「这个 profile 是生效的那一个」时才成立：--profile 指别处时，内核仍用 activeProfileDir。
+  const active = activeProfileDir()
+  listApplicationRows(dir, active !== null && dir === active)
   console.log('')
   console.log('profile  ' + dir)
   console.log('对照的 dsh 契约版本  ' + DSH_CONTRACT_VERSION)

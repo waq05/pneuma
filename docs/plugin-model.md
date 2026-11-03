@@ -83,6 +83,13 @@ lib/ui/plugins/<id>/client.js
 - 应用安装目录 = 运行中 Pneuma 的 `package.json` 所在目录（桌面端 `dsc-core/`）。
 - 全进程**一张解析表**：每个包名只允许一个物理目录；同一包名解析出两个目录 = 启动失败并打印双方路径（dsh 同口径，防两份服务实例）。
 - 包缺失：告警并跳过该行，其余照常；插件中心显示「缺包」与期望版本。
+- **应用自带的行也走这套解析**：行目标是包名时按包自己的 `pneuma.resolution` 在「应用安装目录」与
+  「生效的 profile」两个锚点里选（生效 = `activeProfileDir()`）。用户装一份改过的官方包，就会真的顶替
+  应用那份；`pinned` 的包不认覆盖。
+- **两个锚点不混用**：应用自带行的相对路径（`./x`）仍按 `@pneuma/base` 包目录算，包级覆盖去 profile 里找。
+  混成一条会出两种错：相对路径跑进 profile，或者覆盖永远不生效。
+- profile 里的覆盖版会 `import '@pneuma/runtime/*'`，所以挂应用自带行时也要把 profile 的
+  `node_modules` 交给解析钩子（否则覆盖版一加载就 `ERR_MODULE_NOT_FOUND`）。
 - 解析钩子只负责**库**：`@pneuma/runtime`（永远指向应用内那一份）与 `@deepseek-ai/*`（dsh 兼容），**不劫持 `@pneuma/<功能包>`**——劫持了 overridable 就永远不生效。钩子无条件生效，不依赖 dsh-compat 开关。
 
 ## 6. 运行时
@@ -97,7 +104,14 @@ lib/ui/plugins/<id>/client.js
 
 - `engines.pneuma` 对 `RUNTIME_CONTRACT_VERSION` 做 semver 比对。
 - 插件模块仍可导出 `apiVersion`（数字），对 `KERNEL_API_VERSION` 比对；两者都在时都要满足。
-- 不满足 → 跳过该行、写清原因，不影响其它行。
+- 判**两次**：
+  1. 读组合包时判一次（`engines.dsh` / `engines.pneuma`，管整包能不能装）；
+  2. **挂每一行之前再判一次 `engines.pneuma`**，判的是这一行实际解析到的包——`overridable` 的行会被
+     profile 里的副本换掉，换上来那份要求哪一代契约只有它自己知道。
+- 行级闸不满足 → 目录里登记该行并带 `problem`（插件中心看得见），挂载跳过，其余行照常。
+  `profile 的 compatibility.json` 里登记过包名就照挂，并在告警里说明是豁免放行的。
+- dsh 包的 `engines.dsh` 只在整包那一次判：行级只看 `engines.pneuma`，否则老插件的
+  `peerDependencies: @deepseek-ai/dsh ^0.1` 会在行级被误杀。
 
 ## 8. 界面半边
 
@@ -155,7 +169,20 @@ lib/ui/plugins/<id>/client.js
   **存在就用的 `profiles/default`** → null。旧用户没铺过就走老路径。
 - 用户装的包、覆盖版官方包都放这个 profile 的 `node_modules`；解析按包自己的
   `pneuma.resolution` 裁决（pinned 应用优先，overridable profile 优先）。
+- 这条对**应用自带的 56 个功能包同样成立**：37 个 `overridable` 的包，用户在 profile 里放一份改过的
+  就顶替应用那份（`numa plugin list` 会在那一行标「← profile 覆盖」，版本显示 profile 那份）；
+  19 个 `pinned` 的包不认覆盖，profile 里有同名副本时告警并写清哪份不生效。
 - 换包 = 换目录 + 重启。不承诺热换：`exports` 在启动时解析一次，替换后不重新解析
   （dsh 同样如此）。
-- 验收脚本 `scripts/plugin-swap-e2e.mjs`（进 `check:plugin`）：拷一份 `lib/` 到临时目录，
-  换包验行为变化、删可选包验仍能启动、删核心包验报出缺哪行。
+- 验收脚本 `scripts/plugin-swap-e2e.mjs`（进 `check:plugin`）：把 `lib/` 拷到临时目录、
+  家目录也指到副本里，一个字节不碰真实的 `~/.dsc`；五件事——换包验行为变化、
+  换 pinned 包的 profile 副本验「不让路 + 告警」、把声明改成 overridable 验「同一份副本立刻生效」、
+  删可选包验仍能启动、删核心包验报出缺哪行。
+
+## 13. 清单快照（门禁）
+
+- 快照：`docs/baseline/0.9.0/inventory.json`，内容是「插件清单 / 设置分区 / 界面单元」三份，由
+  `scripts/plugin-inventory.mjs` 在临时家目录里起一遍内核导出。
+- 比对：`scripts/plugin-inventory-check.mjs` 逐项 diff（少的、多的、字段变了的都列出来），不一致非零退出；
+  `--write` 表示「这次变化是有意的」，重写快照。它进 `check:plugin`。
+- 0.8.1 那一份留在 `docs/baseline/0.8.1/`，只作改造前后的对照，不参与门禁（行数本来就该变）。

@@ -12851,3 +12851,75 @@ exe 的协议按 dsh-ops 0.4.x 钉住，上游改字段就得跟着改；二进�
    dsh 形状 → 原生插件全挂不上。原生包（行名 `@pneuma/*`）现在跳过该判定。
 3. 「已挂身份」原先记在全局表：同一进程连开两个内核时，第二个内核一行都不起。
    改成按 root 记；`surface` 也补了默认值 `none`（探针直接 createKernel 时不该拉 TUI/stdio）。
+
+## 2026-11-03 界面半边成包、默认 profile 与换包 e2e（P4+P5，补记）
+
+**问题**：P3 之后宿主功能已经是包，但界面半边还在 `ui-shell/src/plugins/`（改一个界面单元仍要动壳的
+源码树、按壳的构建走），用户也没有默认 profile 可放覆盖版包——「换插件不用重打包」只完成了一半。
+
+**这次做的**：
+
+- P4：19 个界面单元搬进 `ui-shell/src/packages/ui-<id>/`，各带一份 `package.json`（`api` 区间不变），
+  `ui-shell/build-plugins.mjs` 改成扫包目录生成；产物落点（`lib/ui/plugins/<id>/client.js`）与 id 不变，
+  构建日志「重写 0 份」= 19 份产物与 0.8.1 逐字节一致。三源发现（内置目录 / 第三方目录 / profile 包）不动。
+- P5：首启铺 `~/.dsc/profiles/default/package.json`（已有不动）；`activeProfileDir()` 增加
+  「存在就用的 profiles/default」这条回退（往 `config.yaml` 写 `profile: default` 的方案被否掉了：
+  它会让旧用户的 `config.yaml` 多一行他们没写过的配置）；`ops` worker 查找补 `<profile>/node_modules/dsh-ops`；
+  `desktop/scripts/prepare-runtime.mjs` 的依赖闭包扫描跳过 `@pneuma/*`（它在 `lib/` 内，不是外部依赖）。
+- 换包 e2e 首版（10 条断言）：拷 `lib/` 到临时目录，换包验行为变化、删可选包验仍能起、
+  删核心包验报出缺哪行；`check:plugin` 进 `check:all`。
+
+**当时没做、这次补上的**：那份 e2e 没有 `pinned` 场景；也还没人验过「用户装的覆盖版官方包真的顶替了
+应用那份」。下一节就是这个洞的现场。
+
+## 2026-11-03 收尾：覆盖口径、行级版本闸与清单快照
+
+**五个问题，都有现场**（不是「怕它有问题」，是跑出来看见的）：
+
+1. **应用自带的行根本不查 profile**。`mountApplicationRows` 把 `@pneuma/base` 包目录当「profile 锚点」
+   传给解析器（`src/core/plugin-loader.ts:827`，修前那一行是 `profileDir: baseDir`），于是 37 个
+   `overridable` 包的用户覆盖永远不生效。
+   实测：把 `@pneuma/todo` 改过的副本放进 profile，启动后加载的仍是应用那份（副本里打的
+   `globalThis.__MARK` 是 undefined）。契约 §12 与 README 写的「覆盖版官方包」当时是一句空话。
+2. **行级版本闸没实现**。`enginesProblem` 只在读组合包时调一次（`plugin-loader.ts:670`），
+   profile 里换上一个要求 `engines.pneuma >=2` 的包会照挂，直到运行深处才炸；契约 §7 写的是
+   「不满足 → 跳过该行」。
+3. **`numa plugin list` 看不出「这一行用的是谁」**。只有一行「应用自带 <root>」，覆盖版、pinned 让路
+   都看不出来；计划 §1 的判定 1 要求「带来源」。
+4. **换包 e2e 说自己不碰真实家目录，其实碰了**。`spawnSync` 没传 `env`，探针继承开发机的
+   `DSC_HOME` / `DSC_PROFILE`：清单里有多少行取决于开发机的 `plugins.json`，还会替真实家目录铺 profile。
+5. **清单快照只导出不比对**。`plugin-inventory.mjs` 能导出三份清单，但没人比就没有意义；
+   `docs/baseline/0.8.1/` 之后没有 0.9 的快照，改一行少一行没人发现。
+
+**修法**：
+
+1. `RowMountContext` 拆出 `overrideDir`：**相对路径的基准**与**包级覆盖的锚点**分开。应用自带行的
+   `overrideDir` = `activeProfileDir()`，同时把 profile 的 `node_modules` 交给解析钩子（覆盖版要
+   `import '@pneuma/runtime/*'`，不注册就 `ERR_MODULE_NOT_FOUND`）。
+   验证：`plugin-model-test` 5 条；换包 e2e 里 `todo` 的 profile 副本真的顶替、pinned 的 `waiting`
+   仍用应用那份。
+2. 新增 `pneumaEnginesProblem`（只判 `engines.pneuma`），挂每一行之前判一次。不满足 → 登记
+   `meta.problem`（插件中心看得见）+ 跳过 + 告警，`compatibility.json` 登记包名可放行。
+   dsh 的 `engines.dsh` 仍只在整包判——行级也判会把 `peerDependencies: @deepseek-ai/dsh ^0.1` 的老插件
+   误杀。验证：`plugin-model-test` 12 条（含豁免与「应用自带行也过闸」）。
+3. `numa plugin list` 每行末尾标来源：`← profile 覆盖`（版本显示 profile 那份）、
+   `← 应用（profile 里的同名副本因 pinned 不生效）`；末尾汇总「其中 N 行用的是 profile 里的覆盖版」。
+   `--profile` 指到别的目录时不算覆盖（内核仍用 `activeProfileDir`）——两处口径不能显示成一样。
+   新探针 `scripts/plugin-list-test.mjs` 15 条（含一条「版本闸不过的行要在这一屏说出来」）。
+4. e2e 把 `DSC_HOME` 指到副本、清掉 `DSC_PROFILE`；新增 pinned 两个方向：pinned 时用应用那份且告警
+   写清哪份不生效；把应用侧声明改成 `overridable` 后同一份副本立刻生效（反向结果才算证明「副本被
+   看见了，只是被口径挡住」）。17 条断言。
+5. 新增 `scripts/plugin-inventory-check.mjs` + `docs/baseline/0.9.0/inventory.json`
+   （55 插件 / 24 设置分区 / 19 界面单元），进 `check:plugin`；`--write` 表示「这次变化是有意的」。
+   反向自测：手工删一行插件、改一个分区标题 → 报 2 处差异并非零退出。
+   顺带修了 `plugin-inventory.mjs` 不删 `DSC_PROFILE` 的问题（清单会跟着开发机的 profile 漂）。
+
+**数字**：`check:plugin` = 56 包 / 56 行 / kernel 103 行 / 0 缺口 + 清单 55/24/19 一致 +
+加载器 92 条 + list 15 条 + 换包 e2e 17 条，全绿；`typecheck`（根 + 桌面）与 `build` 全过。
+
+**还开着的**：
+
+- 进程内换 profile 不重置解析表（同一包名两个目录 = 启动失败，dsh 同口径），所以不承诺热换；
+- 界面包的源码仍跟壳走（React / xterm 的依赖与构建都在壳里），不单独发 npm 包；
+- `pinned` 的判定以**应用侧清单**为准：应用那份没写 `resolution` 时，profile 副本自己写 `pinned` 也拦不住
+  覆盖（`appManifest ?? profileManifest` 的顺序）。这是有意的：口径该由应用声明，不由装进来的包自己宣称。

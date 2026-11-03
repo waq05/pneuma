@@ -90,6 +90,28 @@ function readJson(file: string): unknown {
 }
 
 /**
+ * 只判 `engines.pneuma` 这一项：包要求哪一代 Pneuma 运行时契约。
+ *
+ * 单拎出来的原因：组合包的版本闸在「读包」时判一次（{@link enginesProblem}），但行级的
+ * 包可能被 profile 里的副本换掉（`pneuma.resolution: overridable`），换上来那一份的要
+ * 求跟组合包自己写的不一定一样。加载器挂每一行时用它再判一次（契约 §7）。
+ * @param manifest - 包的 package.json
+ * @returns 不满足时的中文原因；满足或没写 `engines.pneuma` 给 null
+ */
+export function pneumaEnginesProblem(manifest: { engines?: unknown } | null): string | null {
+  const engines = manifest?.engines
+  if (engines === null || engines === undefined || typeof engines !== 'object') return null
+  const range = (engines as Record<string, unknown>)['pneuma']
+  if (typeof range !== 'string' || range.trim() === '') return null
+  try {
+    if (semver.satisfies(RUNTIME_CONTRACT_VERSION, range)) return null
+  } catch {
+    return `版本范围写得不对（engines.pneuma = ${range}），没法判断能不能装`
+  }
+  return `这个包要求 Pneuma 运行时 ${range}，当前契约是 ${RUNTIME_CONTRACT_VERSION}（${RUNTIME_CONTRACT_RANGE}）`
+}
+
+/**
  * 判一个包的 dsh 版本要求能不能满足。
  *
  * 读的顺序与 dsh 一致：`engines.dsh` → `peerDependencies` 里任一 `@deepseek-ai/dsh*`。
@@ -100,14 +122,7 @@ function readJson(file: string): unknown {
 export function enginesProblem(manifest: BundleManifest): string | null {
   // Pneuma 原生包先看 engines.pneuma：它跟的是运行时契约，不是 dsh 契约。
   const pneumaRange = manifest.engines?.pneuma
-  if (typeof pneumaRange === 'string' && pneumaRange.trim() !== '') {
-    try {
-      if (semver.satisfies(RUNTIME_CONTRACT_VERSION, pneumaRange)) return null
-    } catch {
-      return `版本范围写得不对（engines.pneuma = ${pneumaRange}），没法判断能不能装`
-    }
-    return `这个包要求 Pneuma 运行时 ${pneumaRange}，当前契约是 ${RUNTIME_CONTRACT_VERSION}（${RUNTIME_CONTRACT_RANGE}）`
-  }
+  if (typeof pneumaRange === 'string' && pneumaRange.trim() !== '') return pneumaEnginesProblem(manifest)
   const raw =
     typeof manifest.engines?.dsh === 'string'
       ? manifest.engines.dsh

@@ -1,7 +1,7 @@
 /**
  * P2「加载器对齐」自检：行目标解析（含 exports 子路径）/ 身份 = 行 id / 安装锚点与
  * pinned-overridable / 默认关的行进目录 / 行级 inject / 设置分区元数据 /
- * plugins.json 迁移与坏文件拒写 / 行 id 重复即失败。
+ * 行级版本闸（engines.pneuma）/ plugins.json 迁移与坏文件拒写 / 行 id 重复即失败。
  *
  * 全部夹具造在临时目录里（HOME 与 DSC_HOME 都指过去），不碰真实的 ~/.dsc。
  * 运行：pnpm build && node scripts/plugin-model-test.mjs
@@ -146,6 +146,7 @@ function makeApp(appName, rows) {
     makePackage(lib, row.name, {
       entries: { 'index.js': row.tag },
       ...(row.pneuma === undefined ? {} : { pneuma: row.pneuma }),
+      ...(row.extra === undefined ? {} : { extra: row.extra }),
       ...(row.recordConfig === true ? { recordConfig: true } : {}),
     })
   }
@@ -323,6 +324,65 @@ console.log('── 安装锚点：pinned / overridable ──')
     warnings,
   )
   check('overridable 不算冲突、也没有多余告警', !warnings.includes('@p2/ovr'), warnings)
+}
+
+// ── 3b. 行级版本闸：engines.pneuma 按「实际解析到的包」判 ─────────────────────
+console.log('── 行级版本闸：engines.pneuma ──')
+{
+  const profileDir = makeProfile('engines')
+  makePackage(profileDir, '@p2/gate-ok', {
+    entries: { 'index.js': 'gate-ok' },
+    extra: { engines: { pneuma: '>=1.0.0 <2.0.0' } },
+  })
+  makePackage(profileDir, '@p2/gate-bad', {
+    pneuma: { title: '下一代契约的包' },
+    entries: { 'index.js': 'gate-bad' },
+    extra: { engines: { pneuma: '>=2.0.0' } },
+  })
+  writeText(
+    join(profileDir, 'cordis.patch.yml'),
+    insertRows([
+      { id: 'gate-ok', name: '@p2/gate-ok' },
+      { id: 'gate-bad', name: '@p2/gate-bad' },
+    ]),
+  )
+
+  const { result } = await mountProfile(profileDir)
+  const warnings = result.warnings.join(' | ')
+  check('契约满足的行照常挂上', globalThis.__P2.mounted.includes('gate-ok'))
+  check('要求下一代契约的行被跳过', !globalThis.__P2.mounted.includes('gate-bad'))
+  check(
+    '跳过的那一行进失败清单（内核会报出来）',
+    result.failures.length === 1 && result.failures[0].file === 'gate-bad',
+    JSON.stringify(result.failures),
+  )
+  check(
+    '失败文案写了包要求什么、当前契约是什么',
+    String(result.failures[0]?.problem).includes('>=2.0.0') && String(result.failures[0]?.problem).includes('1.0.0'),
+    String(result.failures[0]?.problem),
+  )
+  check(
+    '插件中心看得见这一行、并且带 problem',
+    infoOf('gate-bad')?.problem !== undefined && String(infoOf('gate-bad')?.problem).includes('>=2.0.0'),
+    JSON.stringify(infoOf('gate-bad')),
+  )
+  check('告警说了怎么办（compatibility.json 登记豁免）', warnings.includes('compatibility.json'), warnings)
+}
+
+{
+  // 豁免：profile 的 compatibility.json 里登记过就照挂，并说明是豁免放行的
+  const profileDir = makeProfile('engines-exempt')
+  makePackage(profileDir, '@p2/gate-exempt', {
+    entries: { 'index.js': 'gate-exempt' },
+    extra: { engines: { pneuma: '>=2.0.0' } },
+  })
+  writeText(join(profileDir, 'compatibility.json'), JSON.stringify({ exemptions: [{ package: '@p2/gate-exempt' }] }))
+  writeText(join(profileDir, 'cordis.patch.yml'), insertRows([{ id: 'gate-exempt', name: '@p2/gate-exempt' }]))
+
+  const { result } = await mountProfile(profileDir)
+  check('登记豁免后照常挂上', globalThis.__P2.mounted.includes('gate-exempt'), JSON.stringify(result.failures))
+  check('豁免过的行不算失败', result.failures.length === 0, JSON.stringify(result.failures))
+  check('告警说明是豁免放行的', result.warnings.join(' | ').includes('豁免'), result.warnings.join(' | '))
 }
 
 // ── 4. plugins.json 迁移：旧键双查 + 惰性写回 + 未知键保留 ─────────────────────
@@ -533,6 +593,77 @@ console.log('── 应用自带行：解析、身份、surface、幂等、hostC
     threw = error
   }
   check('base 清单不存在时返回空数组且不抛', threw === null && Array.isArray(result) && result.length === 0, threw === null ? JSON.stringify(result) : String(threw))
+}
+
+{
+  // 应用自带的包也过同一个闸：版本闸挂在「挂一行」这一步，不在「读组合包」那一步。
+  const appDir = makeApp('rows-engines', [
+    { id: 'app-gate', name: '@p3/gate', tag: 'app-gate', extra: { engines: { pneuma: '>=2.0.0' } } },
+  ])
+  const failures = await loader.mountApplicationRows(newContext(), { appDir, surface: 'none' })
+  check(
+    '应用自带行也过版本闸（不满足就跳过）',
+    failures.length === 1 && failures[0].file === 'app-gate',
+    JSON.stringify(failures),
+  )
+  check('被闸拦住的行没有挂上', !globalThis.__P2.mounted.includes('app-gate'))
+  const exempt = await loader.mountApplicationRows(newContext(), { appDir, surface: 'none', exemptions: ['@p3/gate'] })
+  check(
+    '传了豁免名单就照挂',
+    exempt.length === 0 && globalThis.__P2.mounted.includes('app-gate'),
+    JSON.stringify(exempt),
+  )
+  await loader.unmountExternalPlugin('app-gate')
+}
+
+{
+  // 应用自带行的包级覆盖：overridable 用 profile 那份，pinned 仍用应用那份。
+  // 这是「官方功能包与第三方包一视同仁」的落点：用户装一份改过的 @pneuma/ops 才真的生效。
+  const appDir = makeApp('rows-override', [
+    { id: 'ovr-a', name: '@p3/ovr-a', tag: 'app-ovr-a', pneuma: { resolution: 'overridable' } },
+    { id: 'pin-a', name: '@p3/pin-a', tag: 'app-pin-a', pneuma: { resolution: 'pinned' } },
+  ])
+  const profileDir = makeProfile('override')
+  makePackage(profileDir, '@p3/ovr-a', { entries: { 'index.js': 'profile-ovr-a' } })
+  makePackage(profileDir, '@p3/pin-a', { entries: { 'index.js': 'profile-pin-a' } })
+
+  const failures = await loader.mountApplicationRows(newContext(), {
+    appDir,
+    surface: 'none',
+    overrideDir: profileDir,
+  })
+  check('应用自带行不算失败', failures.length === 0, JSON.stringify(failures))
+  check(
+    'overridable 的应用行用 profile 那份',
+    globalThis.__P2.mounted.includes('profile-ovr-a'),
+    JSON.stringify(globalThis.__P2.mounted.slice(-4)),
+  )
+  check('overridable 的应用行没有误用应用那份', !globalThis.__P2.mounted.includes('app-ovr-a'))
+  check(
+    'pinned 的应用行仍用应用那份',
+    globalThis.__P2.mounted.includes('app-pin-a') && !globalThis.__P2.mounted.includes('profile-pin-a'),
+    JSON.stringify(globalThis.__P2.mounted.slice(-4)),
+  )
+  for (const id of ['ovr-a', 'pin-a']) await loader.unmountExternalPlugin(id)
+
+  // 不查 profile（overrideDir: null）：另起一份安装目录，免得上一次解析进解析表。
+  // （解析表是「一次启动里一个包名一个目录」，同一进程里对同名包改口径会被它拦下——那是对的。）
+  const appDirNoOverride = makeApp('rows-override-null', [
+    { id: 'ovr-c', name: '@p3/ovr-c', tag: 'app-ovr-c', pneuma: { resolution: 'overridable' } },
+  ])
+  makePackage(profileDir, '@p3/ovr-c', { entries: { 'index.js': 'profile-ovr-c' } })
+  const noOverride = await loader.mountApplicationRows(newContext(), {
+    appDir: appDirNoOverride,
+    surface: 'none',
+    overrideDir: null,
+  })
+  check(
+    '不查 profile 时 overridable 走应用那份',
+    noOverride.length === 0 && globalThis.__P2.mounted.includes('app-ovr-c'),
+    JSON.stringify(noOverride),
+  )
+  check('不查 profile 时没有加载 profile 副本', !globalThis.__P2.mounted.includes('profile-ovr-c'))
+  await loader.unmountExternalPlugin('ovr-c')
 }
 
 {

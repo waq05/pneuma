@@ -136,7 +136,9 @@ if (!existsSync(kernelFile)) {
   gap('kernel', 'src/host/kernel.ts 不存在')
 } else {
   const text = readFileSync(kernelFile, 'utf8')
-  kernelLines = text.split(/\r?\n/).length
+  // 按「行」数（与 wc -l 同口径）：文件末尾那个换行不算多一行，否则每个文件都虚报 1。
+  const rows = text.split(/\r?\n/)
+  kernelLines = rows.length - (rows[rows.length - 1] === '' ? 1 : 0)
   if (kernelLines > KERNEL_MAX_LINES) {
     gap('kernel', `kernel.ts 有 ${kernelLines} 行（上限 ${KERNEL_MAX_LINES}），装配代码还没搬走`)
   }

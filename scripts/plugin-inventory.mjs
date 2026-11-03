@@ -17,6 +17,8 @@ import { fileURLToPath } from 'node:url'
 const home = mkdtempSync(join(tmpdir(), 'numa-inventory-'))
 process.env['DSC_HOME'] = home
 process.env['DSC_UI_SERVER'] = '0'
+// 环境里带的 profile 会让清单跟着开发机的目录漂：快照只认「第一次启动」的样子。
+delete process.env['DSC_PROFILE']
 
 const { readConfig } = await import('../lib/core/config.js')
 const { createKernel } = await import('../lib/host/kernel.js')

@@ -37,7 +37,7 @@ import { parseTolerantYaml } from './migrate.js'
 import { describeForeignServices } from './dsh-compat/service-map.js'
 import { compatServiceOf } from './dsh-compat/session-bridge.js'
 import { applyPatchLayers, readPatchFile, type PatchDuplicate, type PatchLayer, type PluginRow } from './plugin-patch.js'
-import { bundleDirOf, enginesProblem, readBundle, readProfile, type BundleInfo } from './plugin-bundle.js'
+import { bundleDirOf, enginesProblem, pneumaEnginesProblem, readBundle, readProfile, type BundleInfo } from './plugin-bundle.js'
 import { dscPath } from './path-policy.js'
 import { activeProfileDir } from './profile-dir.js'
 
@@ -703,11 +703,13 @@ export async function mountBundlePlugins(
   const ctx: RowMountContext = {
     profileDir,
     appDir,
+    overrideDir: profileDir,
     where: '组合包',
     layerOwner,
     ownerOf,
     bundleInfoOf,
     hostConfig: undefined,
+    exemptions: profile.exemptions,
     warnings,
     root,
   }
@@ -753,6 +755,30 @@ export interface ApplicationRowsOptions {
    * 不做深合并——宿主说了算（providers、resume 路径、cwd 这些磁盘上本来就没有）。
    */
   hostConfig?: Record<string, unknown>
+  /**
+   * 包级覆盖的锚点（用户 profile 目录）；缺省读 {@link activeProfileDir}，传 `null` 表示不查。
+   *
+   * 自检要造「profile 里有覆盖版」又不想动真实 profile 时用这个入口。
+   */
+  overrideDir?: string | null
+  /**
+   * 版本闸的豁免名单（包名）；缺省读当前 profile 的 `compatibility.json`。
+   *
+   * 自检要造「要求下一代契约的包」又不想铺 profile，所以留了这个入口。
+   */
+  exemptions?: readonly string[]
+}
+
+/**
+ * 一个 profile 里登记豁免的包名；没有 profile 就是空名单。
+ *
+ * 每次挂应用自带行现读一次：内核只在启动时调一次，省不到什么，反而会和
+ * `numa plugin add` 刚写完的 compatibility.json 漂移。
+ * @param dir - profile 目录（null = 没有 profile）
+ */
+function profileExemptionsOf(dir: string | null): readonly string[] {
+  if (dir === null || !existsSync(join(dir, 'package.json'))) return []
+  return readProfile(dir).exemptions
 }
 
 /**
@@ -792,15 +818,22 @@ export async function mountApplicationRows(
   const surface = options.surface ?? 'none'
   const skipped = new Set(SURFACE_ROW_SKIPS[surface])
   const warnings: string[] = []
+  // 应用自带行的相对路径按 base 包算；包级覆盖去用户 profile 里找。
+  // 两条解析链必须分开：混用会让「./x」这种相对路径跑进 profile，或者覆盖永远不生效。
+  const overrideDir = options.overrideDir === undefined ? activeProfileDir() : options.overrideDir
+  // profile 里的覆盖版会 import @pneuma/runtime，那个说明符要能重定向到应用内那一份。
+  if (overrideDir !== null) ensureResolveHook([join(overrideDir, 'node_modules')], appDir)
   const ctx: RowMountContext = {
-    // 应用自带行没有 profile：把 base 包目录当「profile 锚点」，相对路径也相对它算
     profileDir: baseDir,
     appDir,
+    overrideDir,
     where: '应用自带行',
     layerOwner: new Map([[layer.label, baseDir]]),
     ownerOf: new Map(),
     bundleInfoOf: new Map(),
     hostConfig: options.hostConfig,
+    // 覆盖版是 profile 给的，豁免名单也读同一份 profile（不能各读一个目录）。
+    exemptions: options.exemptions ?? profileExemptionsOf(overrideDir),
     warnings,
     root,
   }
@@ -826,6 +859,8 @@ interface RowMountContext {
   profileDir: string
   /** 应用安装目录。 */
   appDir: string
+  /** 包级覆盖的锚点（用户 profile）；null = 这些行不接受 profile 覆盖。 */
+  overrideDir: string | null
   /** 告警文案里怎么称呼这批行（组合包 / 应用自带行）。 */
   where: string
   /** 层标签 → 包目录（相对路径按写它的那层算）。 */
@@ -836,6 +871,8 @@ interface RowMountContext {
   bundleInfoOf: ReadonlyMap<string, BundleInfo>
   /** 宿主直给的配置（键是行 id）；没命中就走 plugins.json。 */
   hostConfig: Readonly<Record<string, unknown>> | undefined
+  /** compatibility.json 里登记过豁免的包名（版本闸不满足也照挂）。 */
+  exemptions: readonly string[]
   /** 收集要写进对话流的告警。 */
   warnings: string[]
   /** 这份行属于哪个 root：已挂身份按 root 记（一个进程可以有多个内核）。 */
@@ -857,7 +894,7 @@ async function mountRow(row: PluginRow, ctx: RowMountContext): Promise<PluginMou
     ctx.warnings.push(`${ctx.where}里有一行没有 name（不知道加载什么），已跳过`)
     return null
   }
-  const resolved = resolveBundleTarget(ctx.profileDir, target, ctx.layerOwner, ctx.appDir)
+  const resolved = resolveBundleTarget(ctx.profileDir, target, ctx.layerOwner, ctx.appDir, ctx.overrideDir)
   if (resolved === null) {
     // 缺包不是「静默跳过」：目录里要留一条带 problem 的记录，插件中心看得见，
     // 内核也会把它当失败条目报出来（契约 §5）。
@@ -874,22 +911,37 @@ async function mountRow(row: PluginRow, ctx: RowMountContext): Promise<PluginMou
   // 幂等：已经挂上的身份直接返回（应用自带行重复调用不该再挂一份）
   if (mountedOf(ctx.root).has(rowId)) return null
   const owner = typeof row.id === 'string' ? ctx.ownerOf.get(row.id) : undefined
-  const pneuma = pneumaFieldsOf(manifestOfFile(file, ctx.profileDir))
+  const manifest = manifestOfFile(file, ctx.profileDir)
+  const pneuma = pneumaFieldsOf(manifest)
+  const rowName = pneuma.title ?? basename(file).replace(/\.js$/, '')
+  // 版本闸（契约 §7）：判的是**这一行实际解析到的包**，不是组合包自己写的要求——
+  // overridable 的行会被 profile 里的副本换掉，换上来那份要求哪一代契约只有它自己知道。
+  const engineProblem = pneumaEnginesProblem(manifest)
+  const exempt = engineProblem !== null && isEngineExempt(manifest, target, ctx.exemptions)
+  const skippedByGate = engineProblem !== null && !exempt
   registerPluginSource(rowId, file)
   // 旧键（= 文件名）登记进来：0.8.1 的 plugins.json 按文件名写，双查才读得到老配置。
   registerPluginAlias(rowId, basename(file))
   // 目录先登记：默认关的行也要在插件中心看得见（只是不 import、不挂载）。
   registerPluginMeta({
     file: rowId,
-    name: pneuma.title ?? basename(file).replace(/\.js$/, ''),
+    name: rowName,
     description: pneuma.description ?? '',
     source: 'external',
     ...(pneuma.settingsSection === undefined ? {} : { settingsSection: pneuma.settingsSection }),
     ...(row.disabled === true ? { defaultDisabled: true } : {}),
     ...(owner === undefined ? {} : { bundle: owner }),
+    ...(skippedByGate ? { problem: String(engineProblem) } : {}),
   })
   // 开关：plugins.json 里有这条记录就按记录，没有才按行的 disabled（行只是默认值）。
   if (!isPluginEnabled(rowId)) return null
+  // 闸放在开关之后：用户已经关掉的行不该每次启动都报一条失败。
+  if (exempt) ctx.warnings.push(`${ctx.where}：「${rowName}」的版本闸没过（${engineProblem}），已在 compatibility.json 登记豁免，照常挂载`)
+  if (skippedByGate) {
+    const problem = `${engineProblem}；这一行已跳过（在 profile 的 compatibility.json 里登记豁免可以强行启用）`
+    ctx.warnings.push(`${ctx.where}：「${rowName}」的版本闸没过：${problem}`)
+    return { file: rowId, name: rowName, problem }
+  }
   // 行上的 inject 盖过模块自带的（依赖关系属于装配，不属于包）；
   // 宿主直给的配置整份替代 plugins.json（没命中才读磁盘）。
   const hostConfig = ctx.hostConfig === undefined ? undefined : ctx.hostConfig[rowId]
@@ -989,10 +1041,11 @@ function physicalDir(dir: string): string {
  * 三种写法：绝对路径、以 `./` `../` 开头（相对 profile 目录）、或包名。包名**交给
  * Node 自己解析**（`createRequire(锚点/package.json).resolve(name)`）：`pkg/sub` 因此
  * 走包自己的 `exports` 子路径、conditions 与通配——这些手写展开一定会漏。
- * @param profileDir - profile 目录
+ * @param profileDir - 相对路径的基准目录（组合包 = profile，应用自带行 = base 包）
  * @param target - 行上的 name
  * @param layerOwner - 层标签 → 包目录（相对路径按写它的那层算）
  * @param appDir - 应用安装目录
+ * @param overrideDir - 包级覆盖的锚点（用户 profile）；null = 不查 profile
  * @returns 入口文件 + 告警；解析不出来给 null（调用方记一条「缺包」告警并跳过该行）
  * @throws {Error} 同一包名解析出两个物理目录
  */
@@ -1001,6 +1054,7 @@ function resolveBundleTarget(
   target: string,
   layerOwner: ReadonlyMap<string, string>,
   appDir: string,
+  overrideDir: string | null,
 ): RowTarget | null {
   if (isAbsolute(target)) {
     const file = entryFileOf(target)
@@ -1013,7 +1067,7 @@ function resolveBundleTarget(
     const file = entryFileOf(candidate)
     return file === null ? null : { file, warnings: [] }
   }
-  return resolvePackageRow(profileDir, target, appDir)
+  return resolvePackageRow(profileDir, target, appDir, overrideDir)
 }
 
 /**
@@ -1023,11 +1077,19 @@ function resolveBundleTarget(
  * 同名包时由包自己的 `pneuma.resolution` 裁决，不报冲突；只有「同一个包名在一次启动里
  * 被解析成两个目录」才失败。
  */
-function resolvePackageRow(profileDir: string, target: string, appDir: string): RowTarget | null {
+function resolvePackageRow(
+  profileDir: string,
+  target: string,
+  appDir: string,
+  overrideDir: string | null,
+): RowTarget | null {
   const pkgName = packageNameOf(target)
   if (pkgName === null) return null
   const parts = pkgName.split('/')
-  const profilePkgDir = join(profileDir, 'node_modules', ...parts)
+  // 覆盖锚点与「相对路径基准」不是一回事：应用自带行的相对路径按 base 包算，
+  // 但它的包级覆盖要去用户 profile 里找（契约 §5：overridable 的用户副本优先）。
+  const overrideRoot = overrideDir ?? profileDir
+  const profilePkgDir = join(overrideRoot, 'node_modules', ...parts)
   const appPkgDir = appPackageDir(appDir, parts)
   const profileManifest = existsSync(profilePkgDir) ? readJsonObject(join(profilePkgDir, 'package.json')) : null
   const appManifest = appPkgDir === null ? null : readJsonObject(join(appPkgDir, 'package.json'))
@@ -1035,9 +1097,9 @@ function resolvePackageRow(profileDir: string, target: string, appDir: string): 
   const policy = resolutionOf(appManifest ?? profileManifest)
   const profileAnchor: Anchor = {
     label: 'profile',
-    requireFrom: join(profileDir, 'package.json'),
+    requireFrom: join(overrideRoot, 'package.json'),
     pkgDir: existsSync(profilePkgDir) ? profilePkgDir : null,
-    lookup: join(profileDir, 'node_modules'),
+    lookup: join(overrideRoot, 'node_modules'),
   }
   const appAnchor: Anchor = {
     label: '应用安装目录',
@@ -1122,6 +1184,26 @@ function resolutionOf(manifest: Record<string, unknown> | null): ResolutionPolic
   const raw = manifest?.['pneuma']
   if (raw === null || typeof raw !== 'object') return 'overridable'
   return (raw as Record<string, unknown>)['resolution'] === 'pinned' ? 'pinned' : 'overridable'
+}
+
+/**
+ * 这一行的包名在不在版本闸豁免名单里（profile 的 `compatibility.json`）。
+ *
+ * 包名优先取行目标（`@p2/foo/sub` → `@p2/foo`）；相对路径的行没有包名，
+ * 退回它自己 package.json 的 `name`。
+ * @param manifest - 行的包清单（可能没有）
+ * @param target - 行上的 name
+ * @param exemptions - 豁免包名
+ */
+function isEngineExempt(
+  manifest: Record<string, unknown> | null,
+  target: string,
+  exemptions: readonly string[],
+): boolean {
+  if (exemptions.length === 0) return false
+  const declared = manifest?.['name']
+  const pkgName = packageNameOf(target) ?? (typeof declared === 'string' && declared !== '' ? declared : null)
+  return pkgName !== null && exemptions.includes(pkgName)
 }
 
 /** 插件中心要显示的那几项（`pneuma.title/description/settingsSection`）。 */
