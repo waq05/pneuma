@@ -672,7 +672,7 @@ console.log('\n[6] 工具面：注册、风险档与「没有桌面壳」时的�
 
 console.log('\n[7] 壳侧不许手抄漂移：事件名、实参位置、页签去重')
 {
-  const uiSrc = read('ui-shell/src/plugins/browser/ui.tsx')
+  const uiSrc = read('ui-shell/src/packages/ui-browser/ui.tsx')
   const uiCode = uncomment(uiSrc)
   const subscribed = [...uiCode.matchAll(/native\.on\(\s*'([^']+)'/g)].map((match) => match[1])
   check(
@@ -926,7 +926,7 @@ console.log('\n[9] 走查抓出来的四个缺陷（回归）')
   )
 
   // ── ② 侧栏几何没落定不许上报 ────────────────────────────────────────────
-  const uiCode9 = uncomment(read('ui-shell/src/plugins/browser/ui.tsx'))
+  const uiCode9 = uncomment(read('ui-shell/src/packages/ui-browser/ui.tsx'))
   const reportBody = functionBody(uiCode9, 'const report = (): void =>')
   check(
     '② report() 有「几何不可用就下一帧再看、到上限才照报」这条分支',

@@ -859,8 +859,13 @@ async function mountRow(row: PluginRow, ctx: RowMountContext): Promise<PluginMou
   }
   const resolved = resolveBundleTarget(ctx.profileDir, target, ctx.layerOwner, ctx.appDir)
   if (resolved === null) {
-    ctx.warnings.push(`${ctx.where}里的「${target}」找不到对应文件（包没装，或者 exports 里没有这一路），已跳过`)
-    return null
+    // 缺包不是「静默跳过」：目录里要留一条带 problem 的记录，插件中心看得见，
+    // 内核也会把它当失败条目报出来（契约 §5）。
+    const rowId = typeof row.id === 'string' && row.id !== '' ? row.id : target
+    const problem = `${ctx.where}里的「${target}」找不到对应文件（包没装，或者 exports 里没有这一路）`
+    registerPluginMeta({ file: rowId, name: rowId, description: '', source: 'external', problem })
+    ctx.warnings.push(problem + '，已跳过')
+    return { file: rowId, name: rowId, problem }
   }
   ctx.warnings.push(...resolved.warnings)
   const file = resolved.file

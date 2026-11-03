@@ -43,7 +43,7 @@ const {
   normalizeThinkingLevels,
 } = caps
 const picker = await import(
-  new URL('../ui-shell/src/plugins/composer/model-picker.ts', import.meta.url).href
+  new URL('../ui-shell/src/packages/ui-composer/model-picker.ts', import.meta.url).href
 )
 const { effortChoices } = picker
 
@@ -105,13 +105,13 @@ console.log('[3] 请求字段：三套端点三种发法')
 
 console.log('[4] 壳侧滑杆：按清单长度画，不写死四档')
 {
-  const slider = read('ui-shell/src/plugins/composer/effort-slider.tsx')
+  const slider = read('ui-shell/src/packages/ui-composer/effort-slider.tsx')
   check('点位由清单长度决定（percentOf(index, count)）', slider.includes('function percentOf(index: number, count: number)') && slider.includes('percentOf(at, levels.length)'))
   check('每个档位画一个点（levels.map）', slider.includes('{levels.map((level, at) => ('))
   check('滑钮位置同样按长度算', /style=\{\{ left: percentOf\(index, levels\.length\) \+ '%' \}\}/.test(slider))
   check('键盘 Home/End 落在首尾两档（不是写死的 3）', slider.includes('next = levels.length - 1'))
-  check('宿主拒绝时把原因显示出来（不是默默回到旧值）', read('ui-shell/src/plugins/composer/model-controls.tsx').includes('onFault(reason instanceof Error ? reason.message : String(reason))'))
-  check('档位清单来自模型自己的能力声明（不是固定表）', read('ui-shell/src/plugins/composer/model-picker.ts').includes('const levels: readonly ThinkingLevel[] = entry.thinkingLevels'))
+  check('宿主拒绝时把原因显示出来（不是默默回到旧值）', read('ui-shell/src/packages/ui-composer/model-controls.tsx').includes('onFault(reason instanceof Error ? reason.message : String(reason))'))
+  check('档位清单来自模型自己的能力声明（不是固定表）', read('ui-shell/src/packages/ui-composer/model-picker.ts').includes('const levels: readonly ThinkingLevel[] = entry.thinkingLevels'))
 }
 
 console.log('[5] 负向：把「一律四档」塞回去要报红')

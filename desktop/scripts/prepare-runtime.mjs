@@ -145,7 +145,9 @@ expand()
 // ——ws / web-push 当年正是这样漏掉的（代码在插件里，手工清单没人更新）。
 // 这一步只补不删：闭包里已经有了的（例如 cordis 的传递依赖 schemastery）直接跳过。
 for (const name of scanLibImports(join(staging, 'lib'))) {
-  if (TUI_ONLY.has(name) || closure.has(name)) continue
+  // @pneuma/* 是运行时自己带的（lib/node_modules/@pneuma/* 会原样拷进 dsc-core），
+  // 不是外部依赖：去 dev 树的 node_modules 里找只会白报一条「解析不到」。
+  if (name.startsWith('@pneuma/') || TUI_ONLY.has(name) || closure.has(name)) continue
   let dir = null
   // 从 dsc 根和闭包里每个已解析目录各试一次：pnpm 把传递依赖放在虚拟 node_modules 里，
   // 只从根找是找不到的

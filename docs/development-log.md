@@ -1878,7 +1878,7 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 - `ui-shell/src/host-channel.ts`（新）：EventSource + POST 客户端；状态放在 React 之外（`getSnapshot()` 要能直接喂 `useSyncExternalStore`，两次变化之间必须同引用——遥控端同款做法）。
 - `ui-shell/src/runtime-context.tsx`（新）：把通道接进 React，并从 `@dsc/ui` 交给插件三个 hook（`useHostSnapshot` / `useChannelStatus` / `useHostHello`）——插件 bundle 只能 require 白名单模块，拿不到壳的内部模块，所以 hook 必须由壳提供。
 - `ui/plugin.ts`：插件 API 增加 `runtime`（订阅 + 调方法）。内置插件与第三方用的是同一份 API，没有内置特权。
-- `ui-shell/src/plugins/runtime/ui.tsx`（新内置插件）：实时状态卡片 + 一枚状态条徽标 + 一个"调宿主方法"按钮（调 `listTools`）。
+- `ui-shell/src/packages/ui-runtime/ui.tsx`（新内置插件）：实时状态卡片 + 一枚状态条徽标 + 一个"调宿主方法"按钮（调 `listTools`）。
 
 **验证**：
 
@@ -2358,7 +2358,7 @@ views.css 里那批 `calc(Npx * var(--dsc-btn-scale))` 用**固定 px** 覆盖�
   `SLOT`（槽名常量表，插件不必手打字符串）、`readCssColor` / `readCssValue` / `toHexColor`
   （读"算完的颜色/尺寸"，`appearance.ts` 里那份私有实现一并收编到这里，两处不再各写一份）。
 
-### 终端插件（`ui-shell/src/plugins/terminal/ui.tsx`）
+### 终端插件（`ui-shell/src/packages/ui-terminal/ui.tsx`）
 
 顶栏一颗开合钮（`shell.header`）+ 停靠面板（`shell.dock`）。面板里是 xterm 本体，
 行为照旧界面的口径搬：
@@ -2631,7 +2631,7 @@ class 名照旧界面的文件树与预览写（`.files-pane` / `.files-list` / 
 `listPresets` / `readPreset` / `usePreset` / `savePreset` / `removePreset` / `setDefaultPreset`
 全在放行面，所以这是 5.4 验收里「改预设落盘」那一条的落地。
 
-### 做了什么（新模块 `ui-shell/src/plugins/settings/presets.tsx`）
+### 做了什么（新模块 `ui-shell/src/packages/ui-settings/presets.tsx`）
 
 逐条对位旧桌面端的 `PresetsPanel`（同一套 `preset-*` class，`legacy/views.css` 里现成）：
 
@@ -2674,7 +2674,7 @@ class 名照旧界面的文件树与预览写（`.files-pane` / `.files-list` / 
 
 ## 阶段 107（对齐计划 5.4 收尾 3）：设置 → 模型面板（只读端点 + 选默认模型）（未发版）
 
-同一步的第三个结构化分区（新模块 `ui-shell/src/plugins/settings/models.tsx`）。范围**刻意收窄**：
+同一步的第三个结构化分区（新模块 `ui-shell/src/packages/ui-settings/models.tsx`）。范围**刻意收窄**：
 增删端点（`saveProvider` / `removeProvider`）与写 API key（`setProviderKey`）被界面通道有意排除——它们
 写凭据与配置，属供应链写入口——所以壳里只做宿主放行的三件事：**看现在的配置**（`getModelConfig`）、
 **把默认模型指到哪一个**（`setDefaultModel`）、**从端点拉线上模型清单**（`discoverModels`，只读）。
@@ -2724,7 +2724,7 @@ class 名照旧界面的文件树与预览写（`.files-pane` / `.files-list` / 
 
 ## 阶段 108（对齐计划 5.4 收尾 4）：设置 → 用量统计面板（热力图 + 趋势 + 模型占比）（未发版）
 
-第四个结构化分区（新模块 `ui-shell/src/plugins/settings/usage.tsx`），数据走界面通道白名单里的
+第四个结构化分区（新模块 `ui-shell/src/packages/ui-settings/usage.tsx`），数据走界面通道白名单里的
 `usageStats`（**零实参只读**，`src/core/ui-methods.ts:88,247`）。版式整体搬旧桌面端 `UsagePanel.tsx`
 （393 行）：顶部一排汇总卡、GitHub 式 Token 活动年历热力图、每日 Token 趋势折线（近 7/30 日切换）、
 模型用量环形图。图全用内联 SVG / CSS 网格手画，不引图表库。
@@ -2768,7 +2768,7 @@ class 名照旧界面的文件树与预览写（`.files-pane` / `.files-list` / 
 
 ## 阶段 109（对齐计划 5.4 收尾 5）：设置 → 归档面板 + 远程分区定案（未发版）
 
-第五个结构化分区（新模块 `ui-shell/src/plugins/settings/archive.tsx`），版式搬旧桌面端
+第五个结构化分区（新模块 `ui-shell/src/packages/ui-settings/archive.tsx`），版式搬旧桌面端
 `ArchivedView.tsx`：按工作区分组列出已归档会话、单条恢复、整组恢复、回收站说明。
 六个结构化分区至此**只剩「远程控制」占位**——它需要的宿主方法一条都不在界面通道白名单里
 （远程是网络暴露面，有意收紧），这是定案不是欠账。
@@ -3091,7 +3091,7 @@ node_modules，ui-shell 从「共享根副本」变成「持有独立副本」�
 
 ### 修 3：文件面板「变更」页签（验收 2 补口）
 
-- `ui-shell/src/plugins/files/`：新增「变更」页签（changes.tsx + diff.ts），git 状态三分组
+- `ui-shell/src/packages/ui-files/`：新增「变更」页签（changes.tsx + diff.ts），git 状态三分组
   （已暂存/未暂存/未跟踪）+ 单文件或全量未提交 diff 视图；数据走 dock 读类 op
   `git-status` / `git-diff`，浏览器里也能用。
 - **只读是刻意的边界**：暂存/取消暂存/提交是写类 op（要走审批），旧界面做在同一面板里，
@@ -3968,7 +3968,7 @@ csv/xlsx 表格预览、手动排序拖拽、桌面信任卡、remote-web 切壳
 - **codex**：`ActivityGroup` + 每个活动一个**显式**开合控件：`+ Show details` /
   `+ N lines` / `− Show less`（`transcript_view/layout.rs:24-58`）。reasoning 在主滚动区
   **根本不显示**（`transcript-only`，`history_cell/messages.rs:400-406`），只在展开视图里出现。
-- dsc 现有的阶段组（`ui-shell/src/plugins/transcript/process-groups.ts`）与旧桌面版
+- dsc 现有的阶段组（`ui-shell/src/packages/ui-transcript/process-groups.ts`）与旧桌面版
   **逐字节同构**，也就是说它本来就是照 dsh 写的——所以「怪异」不在文案与分组规则，
   在**开合这件事没有被表达出来**：静息只显示类别图标，整行读起来像一句状态说明；
   而同一条流里高一层的整轮总开关（`.turn-fold`）却是**行尾常显箭头**——两种折叠行两种
@@ -4008,7 +4008,7 @@ csv/xlsx 表格预览、手动排序拖拽、桌面信任卡、remote-web 切壳
 
 ### 四、状态面板（新插件）+ 子智能体右侧栏页签
 
-- **`ui-shell/src/plugins/status/`（第 16 个插件）**：正文右上角的浮层，形状照 ZCode 的
+- **`ui-shell/src/packages/ui-status/`（第 16 个插件）**：正文右上角的浮层，形状照 ZCode 的
   「状态」面板（用户给了截图）——**胶囊态**报当前最该知道的一条（有队友在跑报队友，
   否则报「进程 N/M」），**面板态**分「进程 / 智能体」两节，每行是一颗**胶囊行**
   （状态点 + 标题 + 时长；跑着的给「停止」）。展示档三档（自动 / 始终展开 / 始终收起），
@@ -4308,7 +4308,7 @@ csv/xlsx 表格预览、手动排序拖拽、桌面信任卡、remote-web 切壳
 2228 行 + `conversationStatusPanelModel.ts` + 两份规格文档 + 两组测试），逐条对位后再动手；
 结论：**dsc 有数据面的部分全做，没有数据面的部分不做并记账**。
 
-### 一、纯派生逻辑独立成模型（`ui-shell/src/plugins/status/status-model.ts`）
+### 一、纯派生逻辑独立成模型（`ui-shell/src/packages/ui-status/status-model.ts`）
 
 零 React、零 DOM、只许 `import type`——Node 的类型擦除能直接读它，新探针
 `scripts/ui-status-panel-test.mjs` 逐条钉（35 条）。
@@ -4321,7 +4321,7 @@ csv/xlsx 表格预览、手动排序拖拽、桌面信任卡、remote-web 切壳
   当前待办 → 目标 → 最后一条办完的 → 进程 x/y → 在跑的队友数；**已结束的队友不进胶囊**；
 - 时长口径（`formatDuration` / `mateElapsedMs` / `longestElapsedMs`）。
 
-### 二、组件重做（`ui-shell/src/plugins/status/ui.tsx`，492 → 约 900 行）
+### 二、组件重做（`ui-shell/src/packages/ui-status/ui.tsx`，492 → 约 900 行）
 
 - **同一壳收展（morph）**：胶囊与面板不再是两个组件来回重挂，而是同一棵 `<aside>` 挂
   `data-expanded`——收起过渡 max-height / 圆角 / 阴影，藏起来的那一态用
@@ -4636,7 +4636,7 @@ fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tr
    非 ASCII 路径不再被 C 引号转义成 `"…\351\262\270…"`——用户那个仓库里正好有一个中文名
    文件，照旧那串点下去必然对不上号，这是「点不动」的第二层原因。
 
-壳 `ui-shell/src/plugins/files/changes.tsx`：
+壳 `ui-shell/src/packages/ui-files/changes.tsx`：
 
 1. 未跟踪组也传 `onShowDiff`（行可点，不再禁用）；
 2. diff 状态加 `note`：宿主回的说明单独一行显示，不再统一说「未跟踪文件不会出现在 diff 里」。
@@ -5023,7 +5023,7 @@ JSON 字符串里全是 `\n` 转义，读者要的是「改了哪几行」。
 - `danger-full-access` = 这一次跳过沙箱判定。
 
 审批卡新增 `escalation` 视图字段，单起一段摊开「模型请求放宽沙箱：<效果>」+ 理由（壳
-`ui-shell/src/plugins/prompt/ui.tsx` + `.approval-escalation` 样式；终端 `src/app/ApprovalCard.tsx`）。
+`ui-shell/src/packages/ui-prompt/ui.tsx` + `.approval-escalation` 样式；终端 `src/app/ApprovalCard.tsx`）。
 
 **会话档的边界**：卡上答「本会话允许」时，`SandboxService.grantSession(sessionPath, roots)` 把
 目标并进**该会话**的可写根（键是会话路径，互不串），`sessionGrants(sessionPath)` 可读。
@@ -5106,7 +5106,7 @@ band」，那才是它要的盒子。
 
 ### ② 输入框上那颗分支钮：读数住宿主，写口过审批
 
-**形状**（`ui-shell/src/plugins/composer/ui.tsx`）：输入框**上方**一行、左侧一颗钮
+**形状**（`ui-shell/src/packages/ui-composer/ui.tsx`）：输入框**上方**一行、左侧一颗钮
 （分支图标 + 分支名 + 小箭头，长了截断）→ 点开菜单：搜索框（本地筛，大小写不敏感）、
 分支清单（当前那条排第一、带勾、展开即滚进视野）、底部「新建分支…」（就地展开一格输入框 +
 创建并切换）。**不是 git 仓库时整行不渲染**，非仓库工作区的输入区与以前逐像素一样。
@@ -5259,7 +5259,7 @@ band」，那才是它要的盒子。
 
 旧行为是「一律按缺省装」：128k 窗口 / 8192 输出 / thinking 开关 / 只吃文本——用户报的正是
 这条（1M 上下文、能收图的模型拉进来全成了缺省）。新模块
-`ui-shell/src/plugins/settings/model-infer.ts`（零运行时依赖，探针用 Node 类型擦除直读）
+`ui-shell/src/packages/ui-settings/model-infer.ts`（零运行时依赖，探针用 Node 类型擦除直读）
 按**四档来源从强到弱**推断，每一档都带 `source` 与一句人话，界面照着写提示：
 
 | 档 | 依据 | 例 |
@@ -5478,7 +5478,7 @@ Radix Collapsible 的**高度关键帧 300ms + 内容 fade**，且**收起后延
 
 **根因（两侧各一半，谁都没错，接起来就错）**：壳按**当前会话的 cwd** 显示「当前工作区」
 （`src/packages/transcript/index.ts:242` 的 `status.cwd`，也就是侧栏底部那一行的读数）；按钮原先只报一个
-kind、不说开哪个目录（`ui-shell/src/plugins/sessions/ui.tsx:1777` 修前是 `invoke('openWorkspace', [kind])`），
+kind、不说开哪个目录（`ui-shell/src/packages/ui-sessions/ui.tsx:1777` 修前是 `invoke('openWorkspace', [kind])`），
 桌面主进程只好用 `hostCwd`——那是**宿主进程的启动目录**（`desktop/electron/main/index.ts:202`
 在 `startHost(cwd)` 里赋值）。0.6.48 起常驻多会话模型下「一个宿主进程里不同会话各有各的 cwd」，
 两者经常不是同一个目录。
@@ -5509,7 +5509,7 @@ kind、不说开哪个目录（`ui-shell/src/plugins/sessions/ui.tsx:1777` 修�
 
 **修法**：`ui-shell/src/ui-primitives/hover-delay.ts:18` 的 `HOVER_CLOSE_MS` 100 → **1000**（注释写明
 这是壳侧有意与参考实现分道：出卡 500ms 照旧，收卡 1s 是用户口径；**旧渲染层那份不动**）；
-`DiffHoverCard`（`ui-shell/src/plugins/transcript/ui.tsx:1657`）补 `onMouseLeave={onLeave}`，在调用点
+`DiffHoverCard`（`ui-shell/src/packages/ui-transcript/ui.tsx:1657`）补 `onMouseLeave={onLeave}`，在调用点
 （`:1824`）接 `hoverDelay.disarm`——与「从行上移开」同一条倒计时。
 
 **验证（页面内时戳，真指针移动）**：
@@ -5646,7 +5646,7 @@ Playwright 的 locator（`getByRole` / `locator().click()`）在这个页面里�
 | `src/packages/settings/index.ts` | 实现：端点不存在 / 没配 key / 一个模型都没有，三种「连试都试不成」当场说清（各自的文案）；路由用 `ctx.llm.routeTo(provider, pick, 'default')`——档位取默认，因为测的是「能不能通」而不是「某个思考档能不能通」 |
 | `src/core/host-methods.ts` / `src/core/ui-methods.ts` | 宿主协议清单 + 界面白名单 + 实参规格（端点名 `MAX_NAME` 字符串 + 可选模型名）。**为什么放行**写在文件头：实参只是**端点名**，地址与 key 都取自宿主那份配置，页面指不了别处——与 `discoverModels` 同一把尺；想变成「把 key 发到任意地址」得先改端点，而那是被排除的 `saveProvider` 三件 |
 | `src/packages/runtime/index.ts` / `desktop/src/renderer/bridge.ts` | 两处透传（后者是 `keyof DscRuntime` 的映射，少一站就编不过） |
-| `ui-shell/src/plugins/settings/models.tsx` + `legacy/views.css` | 按钮（`IconBolt` + 测中态）+ 结果行就地留在卡上（`✓ 通了 · m-2 · 312 ms` / `✗ 没通 · <端点原文>`）；忙碌态**按端点记**（沿用第十八批那条教训）；样式只用令牌（成功绿 `--dsc-green` / 失败红 `--dsc-red`） |
+| `ui-shell/src/packages/ui-settings/models.tsx` + `legacy/views.css` | 按钮（`IconBolt` + 测中态）+ 结果行就地留在卡上（`✓ 通了 · m-2 · 312 ms` / `✗ 没通 · <端点原文>`）；忙碌态**按端点记**（沿用第十八批那条教训）；样式只用令牌（成功绿 `--dsc-green` / 失败红 `--dsc-red`） |
 
 **测哪个模型不在界面挑**：宿主按「这个端点平时会用到的那份」定，结果里把实际测的那个带回来
 ——界面写出来，用户才知道刚才测的是什么。
@@ -5731,7 +5731,7 @@ Playwright 的 locator（`getByRole` / `locator().click()`）在这个页面里�
 **不是宿主坏了**：`regenerate-code` 照常签发配对码——截图那行说明就是它的 `notice`。
 坏在**壳只读了回执的一半**：`runSettingAction` 的回执除 `notice` 还带结构化载荷 `data`
 （`src/contract.ts` 的 `PairShareData` / `LinkShareData`）。旧的冻结渲染层据此弹「手机连接」
-弹窗（`desktop/src/renderer/PairModal.tsx`）、开浏览器；而 `ui-shell/src/plugins/settings/ui.tsx`
+弹窗（`desktop/src/renderer/PairModal.tsx`）、开浏览器；而 `ui-shell/src/packages/ui-settings/ui.tsx`
 的 `act()` 只看了 `ok` / `notice`，`data` 一个字段没读。阶段 5.6 把默认界面翻到壳之后，
 点「连接手机」就只剩一行说明：**码签发了、每点一次作废上一张，人却永远看不见**。
 
@@ -5742,7 +5742,7 @@ Playwright 的 locator（`getByRole` / `locator().click()`）在这个页面里�
 
 | 面 | 改动 |
 | --- | --- |
-| 新组件 | `ui-shell/src/plugins/settings/pair-modal.tsx`：旧 `PairModal` 的同构移植（二维码 + 8 位码 + 可扫地址 + 倒计时 + 重新生成；`createPortal` 挂 body，Esc / Tab 在捕获段拦） |
+| 新组件 | `ui-shell/src/packages/ui-settings/pair-modal.tsx`：旧 `PairModal` 的同构移植（二维码 + 8 位码 + 可扫地址 + 倒计时 + 重新生成；`createPortal` 挂 body，Esc / Tab 在捕获段拦） |
 | 回执分派 | 壳的 `act()` 按 `data.kind` 分出口：`pair-code` → 开弹窗（不再只出说明）；`url`（检查更新发现新版）→ 说明照走行内提示，发布页交 `openExternal` |
 | 重新生成 | 弹窗那颗钮调同一个宿主动作原地换码；失败原因写在**弹窗里**，不写行内说明——那份说明此刻正被弹窗盖着，关窗后才冒出来的旧话只会让人以为刚刚成功过 |
 | 类型面 | `PairShareData` / `LinkShareData` 进 `src/ui/index.ts` 与 `ui-shell/src/plugin-api.ts` 的转出表（壳要按 `kind` 收窄，编不过比画空好） |
@@ -5796,7 +5796,7 @@ Playwright 的 locator（`getByRole` / `locator().click()`）在这个页面里�
 ## 第二十五批：浏览器侧边栏对齐 dsh（多页签 + 完整工具条 + guest 硬化）（2026-10-14，未发版）
 
 用户给一张 dsh 的截图（右侧「浏览器 × / ＋」+ 地址栏 + 「输入 HTTP(S) 地址开始浏览」）说
-「参考 dsh 的浏览器侧边栏实现」。dsc 其实**已经有**浏览器页签（`ui-shell/src/plugins/browser/ui.tsx`
+「参考 dsh 的浏览器侧边栏实现」。dsc 其实**已经有**浏览器页签（`ui-shell/src/packages/ui-browser/ui.tsx`
 + 主进程 `WebContentsView`），但只是雏形：**单例单页**、chip 上永远写「浏览器」、前进后退
 永远是启用的（点了没反应）、地址栏草稿与页面地址共用一份 state（页面一跳转就把打了一半的字冲掉）、
 `⌘/Ctrl+T` 等于「聚焦已开的那一张」。
@@ -5898,7 +5898,7 @@ Playwright 的 locator（`getByRole` / `locator().click()`）在这个页面里�
 
 ### 根因（三条独立证据）
 
-① 代码：`ui-shell/src/plugins/sessions/ui.tsx` 的 `newSessionIn` 对**非当前**工作区先走原生桥
+① 代码：`ui-shell/src/packages/ui-sessions/ui.tsx` 的 `newSessionIn` 对**非当前**工作区先走原生桥
 `switchCwd` → 桌面主进程 `restartHost`（宿主换端口重启）→ 新 origin → `adoptUiServer` 里
 `window.loadURL()`——**整页重载**；就算点的是当前工作区，那也是「换目录」语义，只是恰好被短路。
 ② 落盘证据（只读看的用户真实 `~/.dsc`）：报障那一刻 `desktop.json` 被写过（运行中只有
@@ -5997,7 +5997,7 @@ CDP 驱动真窗口里的真界面：当前工作区是 A，点**B 组**那颗 �
 **根因**：`permissionPreset` 是**派生量**——沙箱 + 权限模式 + 审阅者三项全等才命中出厂预设
 （`src/core/permission-presets.ts`），任一项被单独改动就落到推导态 `custom`。而壳的通用 select
 把「值不在选项表里」一律当成「宿主给了个认不出的值」，原样打印 + 贴「未识别」
-（`ui-shell/src/plugins/settings/ui.tsx`）→ `custom · 未识别`：既漏内部 id，又说了一句与事实
+（`ui-shell/src/packages/ui-settings/ui.tsx`）→ `custom · 未识别`：既漏内部 id，又说了一句与事实
 相反的话。而且 `custom` 本来**就不是可选项**（宿主 `use('custom')` 当场拒），画成能点开的下拉
 自相矛盾。
 
@@ -6592,7 +6592,7 @@ dsc」，而是「谁的约束跟 dsc 一致」（离线单包、令牌配色、
 侧栏、再点「新会话」拿到的又是另一个路径，草稿自然找不回来。
 **修法**：`StatusView` 新增 `sessionUnsaved`（宿主报「一条消息都没发过」），壳把这类会话的草稿记在
 **工作区名下**（`new:<cwd>`）；发出第一条消息后会话落盘，改按路径分坑、工作区那一格清掉（免得下一个
-新会话捡到刚发出去的那句话）。搬运规则抽成零依赖纯模块 `ui-shell/src/plugins/composer/draft.ts`。
+新会话捡到刚发出去的那句话）。搬运规则抽成零依赖纯模块 `ui-shell/src/packages/ui-composer/draft.ts`。
 **证据**：新探针 `scripts/ui-composer-draft-test.mjs`（28 条）：归属三种情形、搬运四条、**用户那条
 剧本**（新会话→写半截→切走→再点新会话→话回来了）、跨工作区不串门、反向对照（按旧口径分坑必丢）、
 接线钉 8 条。**实机**：新会话写「半截话：这条应该留着」→ 切到同一工作区的历史会话（输入框换成它的
@@ -6799,7 +6799,7 @@ Tailwind 的 `h-8 rounded-lg`；dsh 的模型行是 grid 不是 flex。只看截
 
 ### ③ 判定抽成零依赖纯模块
 
-新 `ui-shell/src/plugins/composer/model-picker.ts`（只 `import type`）：`groupModels` / `findCurrent`
+新 `ui-shell/src/packages/ui-composer/model-picker.ts`（只 `import type`）：`groupModels` / `findCurrent`
 （端点+裸名 → value 全等 → 裸名，带 `exact`）/ `modelChipText` / `effortChoices`（恒含 default）/
 `effortSwitchable` / `modelBadges` / `contextLabel` / `providerHint` / `filterModels`。
 抽出来的理由写在文件头：①② 能在代码里活这么久，就是因为它们原地长在 `.tsx` 里、探针够不着。
@@ -7542,7 +7542,7 @@ yoga 会把它们挤掉（几行合并成一行）。改成「有字符的行用
   （`src/contract.ts`），`TranscriptService.system(text, level)` 一路透传到适配器（`src/services/types.ts`、
   `src/packages/transcript/index.ts`、`src/adapter/transcript.ts`）。没有可用端点、外部插件加载失败、回合错误
   这三类标 `'error'`；沙箱档位、迁移报告、启动备注仍是信息档，**只进会话 jsonl 与轨迹页**。
-- **界面侧**：欢迎态不再渲染 `.welcome-note`（`ui-shell/src/plugins/transcript/ui.tsx`），改成挂载后对
+- **界面侧**：欢迎态不再渲染 `.welcome-note`（`ui-shell/src/packages/ui-transcript/ui.tsx`），改成挂载后对
   第一条错误档条目弹一次 Toast（只取第一行，后面几行命令去设置页看）。写前预览卡照旧走
   `ReviewNoticeCard`。删掉了只用在那处的 `isSessionMarker`。
 - **页面收列**：`.settings-body:not(.settings-body-fill) > *` 收到 720px（模型页是左右两栏，
@@ -7593,7 +7593,7 @@ yoga 会把它们挤掉（几行合并成一行）。改成「有字符的行用
 ### 命令面板 + 容器查询 + 去掉重复按钮（2026-10-24，用户：两个添加插件重复了；继续做命令面板与 @container）
 
 - **重复按钮**：插件页空态卡里那颗「添加插件」删掉了，文案改成指右上角那颗——同一动作一个入口。
-- **全局命令面板**（新插件 `ui-shell/src/plugins/palette/`）：Ctrl/⌘+K 开合，Esc 关，↑↓ 选、回车进。
+- **全局命令面板**（新插件 `ui-shell/src/packages/ui-palette/`）：Ctrl/⌘+K 开合，Esc 关，↑↓ 选、回车进。
   数据两类：固定动作（新会话 / 技能页 / 插件页 / 设置·通用 / 设置·模型 / 设置·归档）与会话
   （按 updatedAt 取前 8 条，标「会话 · 工作目录」以免和「新会话」动作重名）。
   注册进 `shell.header`（常挂载，与设置面板同一个槽），自己按开合渲染遮罩；设置分区用
@@ -7619,7 +7619,7 @@ yoga 会把它们挤掉（几行合并成一行）。改成「有字符的行用
 设置的分区表在面板里读、在面板里跳，会话的「新会话」只有侧栏和窄栏事件两处。加一条动作要改
 三四处，改漏的表现是「面板里有、卡片里没有」。
 
-- **新插件 `ui-shell/src/plugins/actions/`**（第 18 个）：只做登记与通知，自己一条动作都不提供。
+- **新插件 `ui-shell/src/packages/ui-actions/`**（第 18 个）：只做登记与通知，自己一条动作都不提供。
   契约放在 `@dsc/ui`（`ui-shell/src/plugin-api.ts` 的 `UiAction` / `ActionsHandle` /
   `ACTIONS_SERVICE` / `useActions()`）：插件不必 import 动作表插件，缺席时 `useActions()` 给空表。
   去重按 `id`，重复登记告警并忽略后一条；同一个 owner 再登记是整组替换，`Map.set` 保留首次
@@ -7627,7 +7627,7 @@ yoga 会把它们挤掉（几行合并成一行）。改成「有字符的行用
 - **三个插件改成登记**：会话插件登记「新会话」（run 走 `shell.session.new` 事件，不随渲染重建），
   设置插件按宿主分区表逐条登记（`settings.<分区 id>`，面板因此自动多出「设置 · 模式 / 用量统计 /
   终端界面」这些原先没有的跳转），转录插件把四张能力卡登记成 `welcome.<卡片 id>`。
-- **命令面板改读表**（`ui-shell/src/plugins/palette/ui.tsx`）：动作按组画小标题，右侧给键位，
+- **命令面板改读表**（`ui-shell/src/packages/ui-palette/ui.tsx`）：动作按组画小标题，右侧给键位，
   搜索词 = 标签 + 说明 + `keywords`；会话仍由面板自己拼（来自宿主快照的最近 8 条，单列「最近会话」
   一组，免得和「新会话」两条同名条目挨在一起）。Tab 不再跑出面板。
 - **侧栏页脚的「搜索」行**：`shell.palette.open` 事件此前只有键盘入口，现在有一颗能点的按钮
@@ -7887,7 +7887,7 @@ P1 十五条约（三档 logo、共享 hook、今日段条件、断线条延迟�
 - **宿主**：新增界面方法 `sideAsk` / `sideAskCancel`（`sideAsk` 走当前路由 + `ctx.llm.stream`，与正常回合
   同一条派发路径）。请求里**不带 tools**、系统提示写明边界、输出预算封顶 1200、90 秒截止；
   取消靠票据表（`runtime.ts` 的 `sideAsks`）。结果不落盘，会话日志里一个字节都不多。
-- **界面**：新插件 `ui-shell/src/plugins/ask/`（注册 dock 页签 `ask`，keepMounted）。选区判定与浮钮坐标是
+- **界面**：新插件 `ui-shell/src/packages/ui-ask/`（注册 dock 页签 `ask`，keepMounted）。选区判定与浮钮坐标是
   纯函数（`select.ts`），状态是模块级按会话分桶的 store（`store.ts`）：关掉页签再打开，气泡还在。
   另外两条入口：命令面板「打开旁问 / 就选中内容旁问」、快捷键 `Ctrl+Shift+K`。
 - **一个顺手修的冲突**：命令面板的 Ctrl+K 原来不看 Shift，于是 Ctrl+Shift+K 会同时弹命令面板与旁问；
@@ -7975,7 +7975,7 @@ background:
 
 四条一起改的，前三条是「照参考图改样子」，第四条是两个真 bug。
 
-**一、思考强度改成滑杆**（`ui-shell/src/plugins/composer/effort-slider.tsx` 新建，样式在 `styles.css` 的 `.effort-slider` 一节）：
+**一、思考强度改成滑杆**（`ui-shell/src/packages/ui-composer/effort-slider.tsx` 新建，样式在 `styles.css` 的 `.effort-slider` 一节）：
 
 - 原来是一列按钮（默认 / 关 / 低 / 高 / 最大），档位有顺序却看不出来。现在是一条绿→蓝的渐变轨道
   （`--dsc-green` → `--dsc-cyan` → `--dsc-purple`），四档各一个停点，点亮到当前档。
@@ -7991,7 +7991,7 @@ background:
 
 **二、模式菜单瘦身**：
 
-- 去掉顶行那句「新建/编辑：设置 → 模式」（`ui-shell/src/plugins/composer/ui.tsx` 的模式浮层）——
+- 去掉顶行那句「新建/编辑：设置 → 模式」（`ui-shell/src/packages/ui-composer/ui.tsx` 的模式浮层）——
   它把菜单顶行撑满，又误导人去设置页。
 - `.model-pop.preset-pop` 从写死 300px 改成 `max-content` + 上下限（180–280）：四行短标签右边那条空白没了。
 
@@ -8998,7 +8998,7 @@ Clay `#d97757`、暖灰 21 级 `#f0eee6` / `#e8e6dc` / `#b0aea5` …）是这套
 改到的文件：`src/contract.ts`（`ThemeMode`）、`src/core/prefs.ts`（`THEME_MODES`）、
 `src/core/native-bridge.ts`（桥的枚举）、`ui-shell/src/plugin-api.ts`（`AppearancePatch`）、
 `ui-shell/src/ui-layout/appearance.ts`（归一化 + 不把 `claude` 卷进 `system` 解析）、
-`ui-shell/src/plugins/settings/ui.tsx`（四块磁贴 + 归一化 + 说明文案）、
+`ui-shell/src/packages/ui-settings/ui.tsx`（四块磁贴 + 归一化 + 说明文案）、
 `ui-shell/src/legacy/tokens.css` 与 `desktop/src/renderer/styles/tokens.css`（两套令牌块，逐字一致）、
 `desktop/src/renderer/{appearance,SettingsModal,bridge}.tsx`、`desktop/electron/{preload/index,main/index}.ts`、
 `ui-shell/scripts/build-color-fallback.mjs`（第三套重放）→ 重生成 `ui-shell/src/legacy-color-fallback.css`、
@@ -9043,7 +9043,7 @@ Claude 块的值逐条对表（侧栏 `rgb(240 238 230)`、正文 `rgb(20 20 19 
    是同一个目录，用 `dedupeRoots` 按路径去重，不会把同一批技能扫两遍。
 2. `SkillRoot` / `SkillSummary` 加 `scope`（project / global）与 `root`（发现根目录），
    `scanSkillRoot` 扫完统一盖章——技能文件自己说了不算。契约 `SkillInfoView` 透出这两个字段。
-3. 技能页（`ui-shell/src/plugins/skills/ui.tsx`）：顶部一行「全部 N / 全局 N / 项目 N」，
+3. 技能页（`ui-shell/src/packages/ui-skills/ui.tsx`）：顶部一行「全部 N / 全局 N / 项目 N」，
    列表按发现根分组，组头写「来源 + 条数 + 目录」（与 dsh 的设置页同一形态）；行内不再逐个打来源徽章，
    否则一行两个徽章比组头还吵。
 
@@ -9074,8 +9074,8 @@ Claude 块的值逐条对表（侧栏 `rgb(240 238 230)`、正文 `rgb(20 20 19 
 于是命令已经执行了、面板还挂在输入框上方。`command.close()` 不能用：它会记下「这个前缀别再弹」，
 下一次在同一位置打同样的字就再也不弹了。
 
-- `ui-shell/src/plugins/composer/command-menu.ts`：新增 `hide()`（只清 `latest` 与 `open`，不动 `dismissed`）。
-- `ui-shell/src/plugins/composer/ui.tsx`：`send()` 的命令分支一进来就 `hide()`。
+- `ui-shell/src/packages/ui-composer/command-menu.ts`：新增 `hide()`（只清 `latest` 与 `open`，不动 `dismissed`）。
+- `ui-shell/src/packages/ui-composer/ui.tsx`：`send()` 的命令分支一进来就 `hide()`。
 
 **实测**（headless Edge，390px）：输 `/comp` 后 `.slash-pop` 1 个、候选 1 条；回车后 `.slash-pop` 0 个、
 输入框清空、无 fault。
@@ -9258,7 +9258,7 @@ learn 探针：`scripts/ui-dock-close-test.mjs`（11 条，含分栏两种与负
 `left` 一模一样，直接叠成一团。
 
 **修法**：同一列只挂一个标签（占这列天数更多的那个月先到，后来者跳过）。顺带把
-`buildCells` 从 `usage.tsx` 拆成纯模块 `ui-shell/src/plugins/settings/heatmap.ts`——
+`buildCells` 从 `usage.tsx` 拆成纯模块 `ui-shell/src/packages/ui-settings/heatmap.ts`——
 这个错只有真算一遍才抓得到，拆出来之后 Node 探针能直接跑它，不必把 React 文件拖进测试。
 桌面回退层 `desktop/src/renderer/UsagePanel.tsx` 是同一份逻辑，同一条规则补上。
 
@@ -9825,7 +9825,7 @@ Node 的 `zstdDecompressSync` 一次只解第一帧，得按 `info.bytesWritten`
 ## 十六、「回到底部」胶囊为什么在流式里闪
 
 用户补报：底部输出时那颗「回到底部」会自己冒出来，还在闪。查的是 `useFollowBottom`
-（`ui-shell/src/plugins/transcript/ui.tsx`）里两条判定。
+（`ui-shell/src/packages/ui-transcript/ui.tsx`）里两条判定。
 
 **第一条：`onScroll` 把「内容变矮」当成了「读者往上滚」。** 原来的判定是「本次 scrollTop 与
 我上次写入的值差超过 1px 就算读者动了」。贴底时内容自己变矮（工具卡跑完收起、步骤组收合、
@@ -10004,7 +10004,7 @@ A-3 没有自动化探针：造一个「复核中途按打断」的假 ctx，成
 
 那块不是工具卡，是 `file-review` 插件的写前预览：`src/packages/file-review/index.ts:343` 在 write / edit
 **落盘之前**把算好的 unified diff 用 `ctx.emit('dsc/notice', …)` 塞进对话流（好让用户点「允许」
-之前先看见改什么），壳认出那行前缀后画成卡（`ui-shell/src/plugins/transcript/review-notice-card.tsx`）。
+之前先看见改什么），壳认出那行前缀后画成卡（`ui-shell/src/packages/ui-transcript/review-notice-card.tsx`）。
 问题在卡本身：diff 无条件摊开、限高 260px。一个任务里写十几次文件，就是十几块绿红卡压在流里。
 
 改法：整卡收成一行头（`编辑文件` / `新建文件` + 路径 + `+N 行 / -M 行` + 箭头），默认收起，
@@ -10121,7 +10121,7 @@ frobnicate --fast x                        → 运行 frobnicate 命令
 另外收掉两句兜底理由：「需要授权」与「工作区内的改动需要确认」不再占一行（`isGenericReason`）。
 它们没有信息量；有话说的是复核否决、沙箱边界、安全钩子这类具体原因，那些照原样留着。
 
-两张卡（插件壳 `ui-shell/src/plugins/prompt/ui.tsx`、旧渲染层
+两张卡（插件壳 `ui-shell/src/packages/ui-prompt/ui.tsx`、旧渲染层
 `desktop/src/renderer/ApprovalCard.tsx`）同步改，样式各在自己那份样式表里加一条
 `.approval-meaning`。手机端那张卡（`remote-web`）第一轮先没动，用户点头后紧接着补上，
 见下一节。
@@ -10240,8 +10240,8 @@ frobnicate --fast x                        → 运行 frobnicate 命令
 唯一的例外是轨迹页：
 
 ```
-ui-shell/src/plugins/trace/ui.tsx:50  import ... from '../transcript/review-notice'
-ui-shell/src/plugins/trace/ui.tsx:51  import ... from '../transcript/review-notice-card'
+ui-shell/src/packages/ui-trace/ui.tsx:50  import ... from '../transcript/review-notice'
+ui-shell/src/packages/ui-trace/ui.tsx:51  import ... from '../transcript/review-notice-card'
 ```
 
 原来那句注释写着「故意从 transcript 借用，两个 bundle 各自内联，运行期不互相依赖」——话是对的，
@@ -10423,7 +10423,7 @@ const lastTab = surface.panes.reduce((count, pane) => count + pane.tabs.length, 
 2. 锚点改按 `[data-round]` 收（每一轮至少有一条行带这个属性），同一轮去重留第一行，
    整轮收起后没有盒子的行（`getClientRects().length === 0`）跳过。
 
-判定本身抽成零依赖的 `ui-shell/src/plugins/transcript/rail-window.ts`，探针用 Node 的类型擦除
+判定本身抽成零依赖的 `ui-shell/src/packages/ui-transcript/rail-window.ts`，探针用 Node 的类型擦除
 直读（同 `rounds.ts` 的约定）；`jump-rail.tsx` 只负责量这个 DOM。
 
 实证：把用户那条真会话复制进隔离 HOME，打开滚到底，读到 `ticks=2 / active=1 / humanAnchors=1`
@@ -10857,7 +10857,7 @@ B 的空白页上；某个会话的删除命令被钩子拦下，理由却是「
 
 ### 二、输入框草稿留在进程里
 
-草稿存档原先是组件里的 `useRef`（`ui-shell/src/plugins/composer/ui.tsx:170`），输入区随页面切换被卸载重挂（去「技能」「插件」再回来就是一次），state 一没就全空。改成模块级 `DRAFT_STORE`，并补上「随打随存」与「挂回来先捡回」两条 effect。
+草稿存档原先是组件里的 `useRef`（`ui-shell/src/packages/ui-composer/ui.tsx:170`），输入区随页面切换被卸载重挂（去「技能」「插件」再回来就是一次），state 一没就全空。改成模块级 `DRAFT_STORE`，并补上「随打随存」与「挂回来先捡回」两条 effect。
 
 顺序有讲究：「随打随存」必须声明在「换会话搬运」之前——effect 按声明顺序跑，换会话那一拍要先按**旧**归属存下旧草稿，再让 `carryDraft` 搬运；顺序反过来，旧正文会先被写进新会话那一格。
 
@@ -10954,8 +10954,8 @@ B 的空白页上；某个会话的删除命令被钩子拦下，理由却是「
 
 **根因**（三处拼起来才成立）：
 
-1. 空工作区（还没发过消息、磁盘上没有 jsonl）**只能**从界面的 `recentCwds` 清单进列表：`ui-shell/src/plugins/sessions/grouping.ts:156` 的 `map.set(dir, [])`。
-2. 那份清单只在会话插件挂载时读一次：`ui-shell/src/plugins/sessions/ui.tsx:217-225`。
+1. 空工作区（还没发过消息、磁盘上没有 jsonl）**只能**从界面的 `recentCwds` 清单进列表：`ui-shell/src/packages/ui-sessions/grouping.ts:156` 的 `map.set(dir, [])`。
+2. 那份清单只在会话插件挂载时读一次：`ui-shell/src/packages/ui-sessions/ui.tsx:217-225`。
 3. `newSessionIn` 成功之后只写了原生桥的记忆（`ui.tsx:326` 的 `rememberCwd`），**没更新界面自己的状态**；对照删除工作区那条路（`ui.tsx:358` 的 `setRecentCwds(filter)`）是改了状态的——两边不对称，漏的就是新建这一条。
 
 结果：新工作区要等重启（重新读一次 recentCwds）或发出第一条消息（会话落盘，按 cwd 兜底成组）才出现。同一个坑旧渲染层犯过一次（见本文 1427 行那段 `onChooseDir` 只 `setCwd` 的记录），新壳这次是把 `recentCwds` 前插那一步又丢了。
@@ -11006,7 +11006,7 @@ B 的空白页上；某个会话的删除命令被钩子拦下，理由却是「
 
 两条都钉在滚动区顶点，工具栏（z 3）压在概览条（z 2）上，半透明底再让下面滚过去的行透上来——截图里「时间概览 13:48:48 - 13:59」与「2 轮 43 次工具调用」挤在一行、背后还有别行的字。为什么以前没露：概览条是后加的（本文件后面那一整段「轨迹页对标 dsh 改版」），加的时候没跟老工具栏对表。
 
-**修法**：`ui-shell/src/plugins/trace/ui.tsx` 把两块包进 `.trace-head`，吸附由这一层统一负责（不透明页面底 + 12px 补缝），`.trace-stats` 去掉自己的 `sticky`/`z-index`/模糊。顺序与间距回到普通流，滚过去的内容一律被不透明底挡住。
+**修法**：`ui-shell/src/packages/ui-trace/ui.tsx` 把两块包进 `.trace-head`，吸附由这一层统一负责（不透明页面底 + 12px 补缝），`.trace-stats` 去掉自己的 `sticky`/`z-index`/模糊。顺序与间距回到普通流，滚过去的内容一律被不透明底挡住。
 
 **回归钉**：`scripts/ask-timeout-test.mjs`（12 条，进 `check:core`）：① 时限读数按配置走并夹到 10 秒、描述指明「不是用户说的话」、ask_user 声明 `waitsForHuman`；② 脚本里等提问卡超过脚本时限两倍仍活着，答完拿到答案且结果里没有「被掐断」；反例——不等人时 `await sleep(600)` 照样被掐断；③ 等满时限后卡片为 `null`、答案是「没回答」的实话、写了等多久；④ 时限内作答照旧一次交回、没有二次收尾。
 
@@ -11205,7 +11205,7 @@ deny 黑名单；改成「问人」的话，「完全访问」档会在审批层
 2. **回放层**（`src/adapter/transcript.ts`）：实时事件与历史重放两条路都在入口把
    `callId` / `name` / `args` 收窄成字符串。这一层管的是**已经坏掉的日志**——
    不修它，用户每次重开那个会话都会再白屏一次。
-3. **渲染纯函数**（`ui-shell/src/plugins/transcript/process-groups.ts` 的 `activityOf`、
+3. **渲染纯函数**（`ui-shell/src/packages/ui-transcript/process-groups.ts` 的 `activityOf`、
    `ui-shell/src/ui-primitives/tool-args.ts` 的 `toolArgFields`）：名字不是字符串时归到
    「不认识的工具」这一档。界面是最后一环，宁可画一张「工具调用 · 失败」的卡，也不能
    整页消失。
@@ -11271,7 +11271,7 @@ deny 黑名单；改成「问人」的话，「完全访问」档会在审批层
 
 **1. 状态行与过程组头说的是同一件事。**
 
-`ui-shell/src/plugins/transcript/timing.ts` 给的是两行（阶段 + 活动名），
+`ui-shell/src/packages/ui-transcript/timing.ts` 给的是两行（阶段 + 活动名），
 `rows/foot.tsx` 原样画出来还拼了「用时」；而过程组头（`step-group-row.tsx`）已经写着
 「正在运行命令 · bash」。于是工具跑动时同一条信息出现三处。
 
@@ -11302,7 +11302,7 @@ const raw = typeof output === 'string' ? output : output.text
 
 **3. 「工具定义 41.8K」标错了。**
 
-`ui-shell/src/plugins/statusbar/ui.tsx` 把 `segments.tools` 当「工具定义」显示，
+`ui-shell/src/packages/ui-statusbar/ui.tsx` 把 `segments.tools` 当「工具定义」显示，
 而 `core/token-estimate.ts` 里 `tools` 统计的是**工具结果**；真·工具定义（每次请求的 schema）
 根本没进分段。实测那个会话：62 条 `run_code` 返回合计 43,225 token，最大一条 6,343 token——
 是工具输出占的，不是工具描述。PTC 模式真正的工具定义只有 `run_code` 一个（约 400 token）。
@@ -12244,7 +12244,7 @@ lightbox」），移植到壳的时候只把样式搬过来了——`.img-lightb
 
 **二、统一之后：两条路一个组件。**
 
-- `ui-shell/src/plugins/transcript/rows/user-row.tsx` 里两处气泡（可编辑行与只读出口）
+- `ui-shell/src/packages/ui-transcript/rows/user-row.tsx` 里两处气泡（可编辑行与只读出口）
   都把裸 `<a>` 换成 `<button className="entry-shot">`，点开写本地的 `zoom` 状态，
   根节点末尾渲染同一个 `ImageLightbox`（`ui-primitives/image-lightbox`）。
   两份气泡各自持有一份 `zoom`，主会话点开不影响右栏那条。
@@ -12465,7 +12465,7 @@ Pneuma 窗口整片变白，除了重启没有回来的路。
 - 同文件 `dsc/changed` 那条「第一条消息落盘后补刷列表」的守卫改判据：原来只看
   「缓存里有没有这条路径」，临时行会把它骗过去，于是第一句话发出去后行反倒消失。改成
   `item.unsaved !== true` 才算「已经在列表里」。
-- `ui-shell/src/plugins/sessions/ui.tsx`：临时行当只读回执画——不画图钉（占位撑住行首宽度，
+- `ui-shell/src/packages/ui-sessions/ui.tsx`：临时行当只读回执画——不画图钉（占位撑住行首宽度，
   不然整行的字会左跳）、不给行尾归档钮、不弹右键菜单、双击不改名、行级快捷键直接返回、
   不进拖拽、删工作区时跳过它（它的路径上没有文件，交给归档只会让整批失败）。
 - 同文件 `open()`：点「新会话」时若所在工作区被收起，先展开——否则回执照样被折叠挡住，

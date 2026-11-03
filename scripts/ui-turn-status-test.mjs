@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url'
 
 // 零依赖模块（timing.ts 会 import 平台种子库，Node 解析不了工作区别名）
 const timing = await import(
-  new URL('../ui-shell/src/plugins/transcript/activity.ts', import.meta.url).href
+  new URL('../ui-shell/src/packages/ui-transcript/activity.ts', import.meta.url).href
 )
 
 let failures = 0
@@ -62,7 +62,7 @@ console.log('\n[1] liveActivity：工具在跑时交给组头，其余阶段一�
 
 console.log('\n[2] 状态行组件只剩一行')
 {
-  const foot = read('../ui-shell/src/plugins/transcript/rows/foot.tsx')
+  const foot = read('../ui-shell/src/packages/ui-transcript/rows/foot.tsx')
   check('不再渲染分割线', !foot.includes('turn-status-rule'))
   check('不再有第二行的活动名', !foot.includes('turn-status-activity'))
   check('不再自己算用时（没有每秒 interval）', !foot.includes('setInterval'))
@@ -80,7 +80,7 @@ console.log('\n[3] 样式是横向一行')
 
 console.log('\n[4] 用时在底部状态栏')
 {
-  const statusbar = read('../ui-shell/src/plugins/statusbar/ui.tsx')
+  const statusbar = read('../ui-shell/src/packages/ui-statusbar/ui.tsx')
   check('状态栏读 turnStartedAt', statusbar.includes('readTurnStartedAt'))
   // 第一轮进行中时 steps 还是 0，此时不再摆「0 轮 0 步」，只报用时——分隔符是条件渲染的，
   // 所以断「用时 {elapsed}」这个本体，外加「steps 为 0 也画」这条行为。

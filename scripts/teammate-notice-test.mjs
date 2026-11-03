@@ -349,7 +349,7 @@ console.log('[4] 三处消费者都按「整条收件箱」算（源码钉）')
   const root = fileURLToPath(new URL('..', import.meta.url))
   const read = (rel) => readFileSync(join(root, rel), 'utf8')
   const tuiApp = read('src/app/App.tsx')
-  const shellComposer = readPluginSource('ui-shell/src/plugins/composer')
+  const shellComposer = readPluginSource('ui-shell/src/packages/ui-composer')
   const statusBar = read('src/app/StatusBar.tsx')
 
   check(

@@ -106,20 +106,20 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:93`，`KERNEL_API_VERSION 
 2. **阶段组头**：轮内再按「阶段正文」切段，每段一行类别聚合文案（`process-groups.ts` 的切分规则 + `step-process.ts` 的文案拼法）。运行中的组头带实时任务详情（「正在运行命令 · pnpm build」）；
 3. **单条思考 / 工具行**：各自折叠成一行（`ReasoningRow.tsx` / `ui-tool` 的 `ToolRow.tsx`）。
 
-**四档展示档位**（`presentation-policy.ts` 的四个能力逐格对照，落地在 `ui-shell/src/plugins/transcript/round-fold.tsx`）：
+**四档展示档位**（`presentation-policy.ts` 的四个能力逐格对照，落地在 `ui-shell/src/packages/ui-transcript/round-fold.tsx`）：
 `compact`（折 + 分组 + 无摘要 + 组头不带详情）/ `standard`（默认）/ `detailed`（整轮照折，但只有**历史轮**分组）/ `verbose`（不折、也不分组）。
 
 **本轮补齐的三项「dsh 有、dsc 原来没有」的界面能力**：
 
 | 项 | dsh 的蓝本 | dsc 落地 |
 | --- | --- | --- |
-| 组体限高 + 方向渐隐 + 组内独立滚动 | `use-process-scroll.ts` + `ChatGroupSeat.module.css` 的 `max-height: min(400px, 50vh)` 与 mask 渐隐 | `.step-body` / `useProcessScroll`（`ui-shell/src/plugins/transcript/fold-seats.tsx`） |
+| 组体限高 + 方向渐隐 + 组内独立滚动 | `use-process-scroll.ts` + `ChatGroupSeat.module.css` 的 `max-height: min(400px, 50vh)` 与 mask 渐隐 | `.step-body` / `useProcessScroll`（`ui-shell/src/packages/ui-transcript/fold-seats.tsx`） |
 | 收起的 DOM 仍能被浏览器查找命中 | `chat/searchable-hidden.ts` 的 `hidden="until-found"` + `beforematch` | `useSearchableHidden`（同上），两处收起都不再 `return null` |
 | 自动收起不抽走键盘焦点 | 同一个 `useSearchableHidden` 里的焦点检查（隐藏前先看焦点在不在里面） | 同上；另外组头点击时先把焦点落到组头自己身上 |
 
 **口径变更（会改变观感，值得记一笔）**：`processFold` 原本是「compact / standard / detailed」三档，其中 `detailed` 的语义是「不做整轮折叠」——那其实是 dsh 的 `verbose`。对齐之后 `detailed` 改为 dsh 的语义（整轮照折，只有历史轮分组），原来那种「全摊开」由新的 `verbose` 档承担。老 `settings.json` 里存着 `detailed` 的用户升级后会看到过程折起来了，去设置里改「完全展开」即可（没有做存档迁移：这个档位是 0.6.3 才加的，且迁移需要额外引入一个存档版本位）。
 
-**挂话不折整轮（已补齐）**：`hasSteering` —— 轮内插过话（`entry.steering === true`）的那一轮不给整轮折叠（`ui-shell/src/plugins/transcript/round-fold.tsx:100`）。dsc 的转录条目补齐了 `steering?: boolean`（`src/contract/transcript.ts:137`），0.6.47 又把「轮中途输入」落成 async-inbox 收件箱、步骤边界写库，所以这条不再是「有意不做」。
+**挂话不折整轮（已补齐）**：`hasSteering` —— 轮内插过话（`entry.steering === true`）的那一轮不给整轮折叠（`ui-shell/src/packages/ui-transcript/round-fold.tsx:100`）。dsc 的转录条目补齐了 `steering?: boolean`（`src/contract/transcript.ts:137`），0.6.47 又把「轮中途输入」落成 async-inbox 收件箱、步骤边界写库，所以这条不再是「有意不做」。
 
 **顺手发现的一处不一致（未动）**：启动恢复历史会话走的是 `src/host/kernel.ts:478` 的重放分支，**没有发 `dsc/session-open`**，而切会话（`src/packages/session/index.ts:122`）会发。于是靠这个事件恢复自己状态的插件（plan / todo / goal / mode）在「冷启动恢复」这条路上不会被触发——计划卡因此不会出现在冷启动的会话流里（`src/packages/plan/index.ts:209`）。要让两条路一致，得把 kernel 的重放分支改成走 `session.open(resumePath)`，或者补发一次事件；那会影响 approval-floor 的 reset 与 agent 的 switchSession，属于内核改动，单独立项。
 
@@ -264,7 +264,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。
 | T9 沙箱 | 已落地（第五轮，**codex 路线**，非本节原先写的 dsh fail-closed 路线） | `src/packages/sandbox/index.ts` + `src/core/sandbox/{policy,execpolicy,backends}.ts`，守卫 order 8：三档模式（默认 workspace-write）、可写根白名单（`realpathSync.native` 规范化 + 祖先包含 + 最深存在祖先回退）、受保护元数据名、NT 命名空间前缀守卫（resolve 之前判原始串）、8.3/ADS/junction、命令前缀 allow/prompt/forbidden（含内层脚本再拆一层）、一次性升权（`sandbox_permissions`+`justification` 必须成对、只对本次生效、照常弹审批卡）、**降级照 codex：强制层不可用不 fail-closed，改为照常执行 + 审批兜底并如实上报 `enforced: full/partial`**。容器后端（docker，探测通过且用户显式选择才启用）与 **Windows 受限令牌后端**（`src/core/sandbox/win/`：经 FFI 调 Win32，ACL 能力 SID 授权 + `WRITE_RESTRICTED` pass-2 交集 + 换执行体跑 `runner-entry`；三个缺口如实披露——硬链接别名、读不受限、网络只软墙）都经命令执行器缝（`src/core/tools/command-runner.ts`）真换执行体。回归：`scripts/sandbox-parity-test.mjs`、`sandbox-write-roots-test.mjs` |
 | T11 自我改进闭环 | 已落地（第五轮，三条闭环先立写入门） | `src/packages/self-improve/index.ts` + `src/core/learnings/{store,ledger,skill-write}.ts`：L1 纠正捕获（`dsc/turn-end` 落候选，**不进系统提示**，`/learnings promote` 才生效）；L2 复盘产技能草稿（迭代数 ≥12 触发，走 `agent.followup`，落盘即写进 `skills.json` disabled **默认停用**）；L3 `skill_write` 工具（read-before-write 硬校验、`.bak` 备份、`.ledger.jsonl` 台账可回滚、威胁扫描不过就还原、archive 只搬不删）。写入走 `ctx.approval.decide`；cron/队友/插件发起的写直接拒（判不出的退审批门，宁严不松）。回归：`scripts/self-improve-single-approval-test.mjs` |
 | T12 LSP + 浏览器自动化 | 已落地（第五轮，checkpoint 仍未动） | LSP：`src/core/lsp/{framing,uri,servers,client}.ts` + 单工具按 operation 分发（定义/引用含声明/实现/悬停，100 条 + 16000 字符双上限），无状态同步（读盘→didOpen→请求→didClose），idle 回收 + 破键退避，诊断经 `registerObserver` 只报本次编辑新引入的 ERROR（回归由 `check:core` 的 LSP 用例覆盖）。浏览器：`src/core/cdp/{transport,launch,snapshot,actions}.ts`，无障碍树文本化 + 行内 ref、**ref 代际校验**（动作前 `DOM.describeNode` 复核）、独立临时 profile + `DevToolsActivePort`、对话框三策略、`browser_look`（read）/`browser`（exec）分档、`taskkill /T /F` 整树清理；回归：`scripts/dock-browser-test.mjs`、`ui-browser-address-test.mjs` |
-| T13 会话区过程折叠 | 已落地（第三轮，见 §3.2） | 三层结构（整轮总开关 / 阶段组头 / 单条思考与工具行）+ 四档展示档位（档位语义在 `ui-shell/src/plugins/transcript/round-fold.tsx`，逐格对照 dsh 的 `presentation-policy.ts`）、运行中组头的实时任务详情（取参数的键序照抄 dsh，160 字素簇上限）、组头标题 150ms 最短保留（纯函数 `liveTitleDecision` 可测）、组体 `min(400px, 50vh)` 限高 + 24px mask 方向渐隐 + 组内独立滚动跟随、收起改挂 `hidden="until-found"`（Ctrl+F 能命中收起内容、自动收起不抽走键盘焦点）、两个与档位正交的默认态开关（思考行 / 工具卡，dsc 自己的增量）。四张网：`desktop/shots/step-groups-check.mjs`、`step-seed-check.mjs`、`fold-check.mjs`、`step-shots.ps1` 六用例隔离截图；另加 `scripts/ui-fold-prefs-test.mjs`。**已知未做：无**（轮内插话不折整轮已补齐，见 §3.2） |
+| T13 会话区过程折叠 | 已落地（第三轮，见 §3.2） | 三层结构（整轮总开关 / 阶段组头 / 单条思考与工具行）+ 四档展示档位（档位语义在 `ui-shell/src/packages/ui-transcript/round-fold.tsx`，逐格对照 dsh 的 `presentation-policy.ts`）、运行中组头的实时任务详情（取参数的键序照抄 dsh，160 字素簇上限）、组头标题 150ms 最短保留（纯函数 `liveTitleDecision` 可测）、组体 `min(400px, 50vh)` 限高 + 24px mask 方向渐隐 + 组内独立滚动跟随、收起改挂 `hidden="until-found"`（Ctrl+F 能命中收起内容、自动收起不抽走键盘焦点）、两个与档位正交的默认态开关（思考行 / 工具卡，dsc 自己的增量）。四张网：`desktop/shots/step-groups-check.mjs`、`step-seed-check.mjs`、`fold-check.mjs`、`step-shots.ps1` 六用例隔离截图；另加 `scripts/ui-fold-prefs-test.mjs`。**已知未做：无**（轮内插话不折整轮已补齐，见 §3.2） |
 
 集体验收：真内核起停与插件登记/热卸载无残留这两个面向，现在由 `pnpm run check:core` 与 `check:ui` 两道总闸承担（`scripts/` 下已入库，早期那两份 `integration-check.mjs` 未随目录迁移，已删除）。
 
@@ -365,7 +365,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。
 | 对外 SDK / 协议面 | dsh SDK（TS+Python）；codex app-server v2 | 个人版没有第三方集成方；host-stdio 协议 v2 内部够用；**已升出立项 T53（§7.8）** |
 | SSH 远程执行 | dsh `packages/ssh/*` | 手机遥控已覆盖「人不在电脑前」的主场景；**已升出立项 T54（§7.8）** |
 | 消息评分反馈 | dsh Like/Dislike + `/feedback` | 无消费方（dsh 的评分喂官方日志上传，dsc 没有这条链路） |
-| 快捷键自定义 / Vim 模式 | codex keymap + Vim；dsh shortcuts 持久化 + 冲突检测 | 键位表只有 10 条（`ui-shell/src/plugins/palette/ui.tsx`），且硬编码在一处、没有运行期注册表，冲突面小 |
+| 快捷键自定义 / Vim 模式 | codex keymap + Vim；dsh shortcuts 持久化 + 冲突检测 | 键位表只有 10 条（`ui-shell/src/packages/ui-palette/ui.tsx`），且硬编码在一处、没有运行期注册表，冲突面小 |
 | GitHub PR 审查 webhook | dsh `webhook-github` 自动建只读审查会话 | 个人版没有 CI 场景 |
 | OAuth 账号 / OS keyring | codex login PKCE + keyring-store；dsh DeepSeek 账号 | dsc 用环境变量/credentials.yaml，个人机器可接受 |
 | i18n 英文界面 | dsh zh/en 双语 + 强制字典 gate | 全中文是产品定位 |
@@ -471,7 +471,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。
 
 | 项 | 状态 | 落地形态 |
 | --- | --- | --- |
-| T14 @ 文件提及 | ✅ 0.6.29 | `src/core/mention.ts` 纯模块（定位/排序/插回）+ 壳的 composer 面板（`ui-shell/src/plugins/composer/mention.ts`）；`matchMentionPath` 剥 `@` 使发送后 chip 可识别 |
+| T14 @ 文件提及 | ✅ 0.6.29 | `src/core/mention.ts` 纯模块（定位/排序/插回）+ 壳的 composer 面板（`ui-shell/src/packages/ui-composer/mention.ts`）；`matchMentionPath` 剥 `@` 使发送后 chip 可识别 |
 | T16 会话标题自动生成 | ✅ 0.6.29 | `session-title` 官方插件；autoTitle 独立字段，用户改名永不被覆盖 |
 | T17 /status 占用表 | ✅ 0.6.29 | `statusReport` 纯函数；窗口/消息数/估算/触发线，估算口径与自动压缩同源 |
 | T22 会话导出 | ✅ 0.6.29 | `core/session-export.ts` markdown 序列化（工具输出限额留头去尾、围栏修无反引号 4 连 bug） |

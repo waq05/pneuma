@@ -143,3 +143,19 @@ lib/ui/plugins/<id>/client.js
 - **包产物是再导出桩**：`lib/packages/<id>/` 是唯一实体，`lib/node_modules/@pneuma/<id>/` 里每个文件只有一行
   `export * from '<指回 lib/packages 的相对路径>'`。这样探针/App 直接 import `lib/packages/...`、内核从
   `node_modules` 加载时，拿到的是**同一个模块实例**——`commands` 的 `serviceRef` 这类模块级单例才不会裂成两份。
+- **界面包的源码跟着壳走**：19 个界面包在 `ui-shell/src/packages/ui-<id>/`（React / xterm 这些依赖与构建都在壳里），
+  产物仍落 `lib/ui/plugins/<id>/`，id 与 0.8.1 一致。宿主功能包在 `src/packages/<id>/`。
+  判据不变：一个包最多一条界面声明，缺产物只上宿主半边。
+
+## 12. 默认 profile 与换包
+
+- 首启（`createKernel` 第一行）铺 `~/.dsc/profiles/default/package.json`（`bundles: []`）。
+  已有就一个字节不动。
+- `activeProfileDir()` 的解析顺序：`DSC_PROFILE` → `config.yaml` 的 `profile:` →
+  **存在就用的 `profiles/default`** → null。旧用户没铺过就走老路径。
+- 用户装的包、覆盖版官方包都放这个 profile 的 `node_modules`；解析按包自己的
+  `pneuma.resolution` 裁决（pinned 应用优先，overridable profile 优先）。
+- 换包 = 换目录 + 重启。不承诺热换：`exports` 在启动时解析一次，替换后不重新解析
+  （dsh 同样如此）。
+- 验收脚本 `scripts/plugin-swap-e2e.mjs`（进 `check:plugin`）：拷一份 `lib/` 到临时目录，
+  换包验行为变化、删可选包验仍能启动、删核心包验报出缺哪行。

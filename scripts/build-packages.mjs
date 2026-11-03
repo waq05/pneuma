@@ -55,6 +55,8 @@ const problems = []
 
 if (existsSync(srcDir)) {
   for (const name of readdirSync(srcDir).sort()) {
+    // ui-* 是界面包（只有界面半边，由 ui-shell 的构建产出），不参与 @pneuma/base 的行清单。
+    if (name.startsWith('ui-')) continue
     const dir = join(srcDir, name)
     if (!statSync(dir).isDirectory()) continue
     if (!existsSync(join(dir, 'package.json'))) {

@@ -59,6 +59,8 @@ if (!existsSync(packagesDir)) {
   gap('packages', 'src/packages 不存在：功能还是静态插件文件，没有包化')
 } else {
   for (const name of readdirSync(packagesDir).sort()) {
+    // 界面包（ui-*）只有界面半边，没有 patch 行；它们的门禁在 ui-shell 的构建里。
+    if (name.startsWith('ui-')) continue
     const dir = join(packagesDir, name)
     if (!statSync(dir).isDirectory()) continue
     const manifestFile = join(dir, 'package.json')

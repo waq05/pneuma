@@ -192,3 +192,26 @@ P3 的三个已知偏差（都已写进契约 §11）：
 2. 原生包（行名 `@pneuma/*`）跳过 dsh 插件的服务名判定，也不套 dsh 工具兼容面；
 3. `surface` 默认 `none`：不传 surface 时不挂 `tui` / `host-stdio` / `remote` 三行，
    探针直接 `createKernel` 不会被 TUI 或 stdio 拖住。
+
+## 10. 进度（2026-11-03 收尾）
+
+| 期 | 状态 | 提交 |
+|---|---|---|
+| P0 契约与基线 | 完成 | `19e0f92` |
+| P1 运行时适配包 | 完成 | `3de6f11` |
+| P2 加载器对齐 | 完成 | `52c48be` |
+| P3 功能包化（56 个） | 完成 | `52c48be` |
+| P4 界面半边归位（19 个） | 完成 | 见 P4/P5 提交 |
+| P5 桌面发布形态与换包 e2e | 完成 | 见 P4/P5 提交 |
+
+验收证据（2026-11-03）：
+
+- `plugin-model-check --strict`：56 包 / 56 行 / kernel 100 行 / 0 缺口
+- `plugin-model-test`：74/74；`plugin-swap-e2e`：10/10（换包、删可选包、删核心包）
+- `check:plugin` 已进 `check:all`
+- 打包产物冒烟：`desktop/runtime-staging/dsc-core` 起来后 19 个界面插件登记、0 个插件加载失败、
+  默认 profile 自动铺好
+- 界面产物：19 份，与 0.8.1 逐字节一致（构建日志「重写 0 份」）
+
+P4 的实现取舍：界面包的源码放在 `ui-shell/src/packages/ui-<id>/`（React/xterm 依赖与构建都在壳里），
+产物落点与 id 不变；宿主功能包在 `src/packages/<id>/`。两者都是包、都走同一份 `package.json` 契约。

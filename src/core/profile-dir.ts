@@ -12,6 +12,7 @@
  * @module dsc/core/profile-dir
  */
 import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { dscPath } from './path-policy.js'
 import { activeConfigFile } from './config-store.js'
 import { parseTolerantYaml } from './migrate.js'
@@ -23,8 +24,11 @@ import { parseTolerantYaml } from './migrate.js'
 export function activeProfileDir(): string | null {
   const fromEnv = process.env['DSC_PROFILE']
   const name = typeof fromEnv === 'string' && fromEnv.trim() !== '' ? fromEnv.trim() : readProfileNameFromConfig()
-  if (name === null) return null
-  return dscPath('profiles', name)
+  if (name !== null) return dscPath('profiles', name)
+  // 0.9 起有默认 profile：首启由 profile-bootstrap 铺好，用户装的包放这里。
+  // 只在它**真的存在**时才算生效——旧用户没铺过就仍走「没有 profile」的老路径。
+  const fallback = dscPath('profiles', 'default')
+  return existsSync(join(fallback, 'package.json')) ? fallback : null
 }
 
 function readProfileNameFromConfig(): string | null {

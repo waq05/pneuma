@@ -37,7 +37,7 @@ const { Session } = await import('../lib/core/session.js')
 const { Transcript } = await import('../lib/adapter/transcript.js')
 const { serializeMessages } = await import('../lib/core/llm.js')
 const { internalLabel } = await import(
-  new URL('../ui-shell/src/plugins/transcript/rounds.ts', import.meta.url).href
+  new URL('../ui-shell/src/packages/ui-transcript/rounds.ts', import.meta.url).href
 )
 
 let passed = 0

@@ -24,7 +24,8 @@ import { satisfies, validRange } from 'semver'
 import { build } from 'vite'
 
 const root = dirname(fileURLToPath(import.meta.url))
-const srcDir = join(root, 'src', 'plugins')
+// 0.9 起界面半边也是功能包：源码在 src/packages/ui-<id>/，产物仍落 lib/ui/plugins/<id>。
+const packagesDir = join(root, 'src', 'packages')
 const outRoot = resolve(root, '..', 'lib', 'ui', 'plugins')
 const stageRoot = `${outRoot}.staging`
 
@@ -194,19 +195,22 @@ function applyExtraFields(meta, doc, where) {
   return meta
 }
 
-const ids = readdirSync(srcDir, { withFileTypes: true })
-  .filter((entry) => entry.isDirectory())
-  .map((entry) => entry.name)
+// 目录名 → 产物 id：ui-browser → browser（清单 id 与 0.8 一致，宿主不用改发现逻辑）。
+const dirToId = (name) => name.slice('ui-'.length)
+
+const ids = readdirSync(packagesDir, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory() && entry.name.startsWith('ui-'))
+  .map((entry) => dirToId(entry.name))
   .sort()
 
-const missingEntry = ids.filter((id) => !existsSync(join(srcDir, id, 'ui.tsx')))
+const missingEntry = ids.filter((id) => !existsSync(join(packagesDir, 'ui-' + id, 'ui.tsx')))
 if (missingEntry.length > 0) {
-  console.error(`[build-plugins] 这些插件目录里没有 ui.tsx：${missingEntry.join('、')}（目录存在就该有入口）`)
+  console.error(`[build-plugins] 这些界面包里没有 ui.tsx：${missingEntry.join('、')}（目录存在就该有入口）`)
   process.exit(1)
 }
 
 if (ids.length === 0) {
-  console.error('[build-plugins] src/plugins 下没有找到任何插件（缺 ui.tsx？）')
+  console.error('[build-plugins] src/packages 下没有找到任何 ui-* 界面包（缺 ui.tsx？）')
   process.exit(1)
 }
 
@@ -215,7 +219,7 @@ if (ids.length === 0) {
 const metas = new Map()
 for (const id of ids) {
   try {
-    metas.set(id, readMeta(join(srcDir, id)))
+    metas.set(id, readMeta(join(packagesDir, 'ui-' + id)))
   } catch (error) {
     console.error(`[build-plugins] ${error instanceof Error ? error.message : String(error)}`)
     process.exit(1)
@@ -241,7 +245,7 @@ for (const id of ids) {
       target: 'es2022',
       minify: false,
       sourcemap: false,
-      lib: { entry: join(srcDir, id, 'ui.tsx'), formats: ['cjs'], fileName: () => 'client' },
+      lib: { entry: join(packagesDir, 'ui-' + id, 'ui.tsx'), formats: ['cjs'], fileName: () => 'client' },
       rollupOptions: {
         external: EXTERNAL,
         output: {

@@ -16,6 +16,7 @@ import { Context } from '@deepseek-ai/cordis'
 import type { DscCoreConfig } from '../core/config.js'
 import { activeConfigFile } from '../core/config-store.js'
 import { migrateTeamSplit } from '../core/plugin-registry.js'
+import { ensureDefaultProfile } from '../core/profile-bootstrap.js'
 import {
   initPluginRuntime,
   mountAllExternalPlugins,
@@ -63,6 +64,9 @@ function reportFailures(root: Context, failures: readonly PluginMountFailure[]):
 export async function createKernel(options: KernelOptions): Promise<Context> {
   const root = new Context()
   initPluginRuntime(root)
+  // 首启铺默认 profile：用户装的包与覆盖版官方包都住这里，解析顺序才有落点。
+  // 已有清单时一个字节都不动。
+  ensureDefaultProfile()
   // 老版本把「团队」拆成两个开关，这里把旧的启用状态迁到新键上（幂等）。
   migrateTeamSplit()
   const failures = await mountApplicationRows(root, {

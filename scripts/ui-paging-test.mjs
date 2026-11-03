@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url'
 import { readPluginSource } from './_check-runner.mjs'
 
 const paging = await import(
-  new URL('../ui-shell/src/plugins/transcript/paging.ts', import.meta.url).href
+  new URL('../ui-shell/src/packages/ui-transcript/paging.ts', import.meta.url).href
 )
 const { PAGE_MIN_ENTRIES, PAGE_MIN_ROUNDS, PAGE_MAX_ENTRIES, pageStartRound } = paging
 
@@ -183,8 +183,8 @@ console.log('[6] 到顶与连点两下（从中间边界继续往前攒）')
 
 console.log('[7] 形态钉（ui.tsx 里的结构约定）')
 {
-  const ui = readPluginSource('ui-shell/src/plugins/transcript')
-  const source = read('ui-shell/src/plugins/transcript/paging.ts')
+  const ui = readPluginSource('ui-shell/src/packages/ui-transcript')
+  const source = read('ui-shell/src/packages/ui-transcript/paging.ts')
 
   check('paging.ts 是纯逻辑（不引 React / 任何运行期依赖）', !/from 'react'/.test(source) && !/from '\.\//.test(source))
   check('ui.tsx 的口径来自 paging.ts，按轮写死的 PAGE_ROUNDS 已撤', ui.includes("from './paging'") && !ui.includes('PAGE_ROUNDS'))

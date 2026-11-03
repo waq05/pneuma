@@ -35,7 +35,7 @@ const check = (label, condition, extra = '') => {
   console.log('FAIL  ' + label + (extra === '' ? '' : ' — ' + extra))
 }
 
-const composer = read('ui-shell/src/plugins/composer/ui.tsx')
+const composer = read('ui-shell/src/packages/ui-composer/ui.tsx')
 
 console.log('1. 源码钉：存档住模块级，组件只借用')
 {
@@ -60,7 +60,7 @@ console.log('2. 源码钉：随打随存，且排在换会话搬运之前')
 
 console.log('3. 行为：draft.ts 的搬运规则没被带坏')
 {
-  const { carryDraft, draftScopeOf, EMPTY_DRAFT } = await import(modUrl('ui-shell/src/plugins/composer/draft.ts'))
+  const { carryDraft, draftScopeOf, EMPTY_DRAFT } = await import(modUrl('ui-shell/src/packages/ui-composer/draft.ts'))
   const unsaved = draftScopeOf({ sessionPath: '', sessionId: 's1', cwd: 'D:/w', unsaved: true })
   check('未落盘按工作区归类', unsaved.key === 'new:D:/w', unsaved.key)
   const same = draftScopeOf({ sessionPath: '', sessionId: 's1', cwd: 'D:/w', unsaved: true })

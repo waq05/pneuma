@@ -289,7 +289,7 @@ profile 目录）、停用状态（停掉的会多一枚「已停用」，不必
 入库）。合成包那一路是 `node scripts/dsh-bundle-check.mjs`（15 条）；三条一起跑用
 `pnpm run check:dsh`。
 
-**内置插件的界面半也读同一处**：`ui-shell/src/plugins/<id>/package.json` 的 `dsh.client`
+**内置插件的界面半也读同一处**：`ui-shell/src/packages/ui-<id>/package.json` 的 `dsh.client`
 （19 个已全部迁完，旧 `plugin.json` 已删；两处并存构建会失败）。
 
 **构建产物布局（2.0 起：一个插件一处声明）**：
@@ -526,7 +526,7 @@ Esc 关；已发送贴图与待发贴图共用 `image-lightbox`（那边地址�
 
 **改附件之前先看**：`scripts/attachments-test.mjs` 覆盖了去重、上限、魔数、引用读回、
 Range、会话投影与路径洗白；界面侧的上传/规范化/抽帧在
-`ui-shell/src/plugins/composer/attachments.ts`，类型定义在 `draft.ts`（那份必须零 import，
+`ui-shell/src/packages/ui-composer/attachments.ts`，类型定义在 `draft.ts`（那份必须零 import，
 `ui-composer-draft-test.mjs` 会红）。
 
 **「模型可见 ⟺ 已记录」**（对齐 dsh 的 Model-visible ⟺ logged）：发给模型的每一份
@@ -577,7 +577,7 @@ order 插队）；系统提示词不进消息流，由 agent 插件在每次请�
 - **列表只认说过话的文件**：`listSessions` 跳过既无 `user` 也无 `assistant` 记录的 jsonl。写探针 / 插件时想「按路径切回某条会话」，先给它 `appendUser` 一句，否则磁盘上没有它。
 - **首条消息出现后侧栏自动补行**：宿主在 `dsc/changed` 里认「当前会话文件在了、列表缓存没有」就补刷一次（同一路径只刷一次，防循环）。
 
-两条与之配套的读数口径：输入框草稿住在 `ui-shell/src/plugins/composer/ui.tsx` 的模块级 `DRAFT_STORE`（进程内，刷新即清）；「上下文已用」的分母来自模型配置的 `contextWindow`，分子在重开会话 / 重启宿主时由 `readSessionUsage(sid).lastInputTokens` 回填（`Transcript.seedContextUsage`），没有用量行时整段不画。
+两条与之配套的读数口径：输入框草稿住在 `ui-shell/src/packages/ui-composer/ui.tsx` 的模块级 `DRAFT_STORE`（进程内，刷新即清）；「上下文已用」的分母来自模型配置的 `contextWindow`，分子在重开会话 / 重启宿主时由 `readSessionUsage(sid).lastInputTokens` 回填（`Transcript.seedContextUsage`），没有用量行时整段不画。
 
 ## 8. 开发流程
 
@@ -633,7 +633,7 @@ cd D:\dsc\desktop && pnpm run dist:dir     # → dist/win-unpacked/Pneuma.exe
 exe 当**桌面端**跑的时候才要清掉它。
 
 界面参数想自动化，就加 `?xxx=1` 这类一次性钩子，现成的五个是：`skillstab`
-（`ui-shell/src/plugins/skills/ui.tsx:121`）、`dock`（`ui-shell/src/ui-layout/app.tsx:231`）、
+（`ui-shell/src/packages/ui-skills/ui.tsx:121`）、`dock`（`ui-shell/src/ui-layout/app.tsx:231`）、
 `diag`（同文件 `:899`）、`theme`（`ui-shell/src/ui-layout/appearance.ts:221`）、
 `panels`（`ui-shell/src/ui-primitives/panels.ts:60`）；`theme` 取值 `dark` / `light` / `claude`，
 `panels` 形如 `sidebar:320,dock:640,collapsed:1`。别在自检脚本里手写点击。
@@ -738,7 +738,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | 网络断了却不重试 | 连接失败（`LlmError.retryable`，`src/core/llm.ts:199-205`）与 429 / 5xx 都会退避重试 2 次，判定在 `src/core/llm.ts:162-166`；流已开始或用户已取消则不重试 |
 | 截图后 token 暴涨 | 看是否启用了旧截图裁剪（`computer-use` 插件的 `transformMessages`） |
 | 流式输出时代码块抽搐／字号行号跳动 | `ui-shell/src/ui-primitives/markdown.tsx` 的 `components` 是否写成了内联箭头函数；代码块两态（纯文本 / 高亮）是否同一个 `pre.shiki > code > span.line` 骨架 |
-| 流式时「回到底部」胶囊一闪一闪 | `ui-shell/src/plugins/transcript/follow.ts` 的跟随判定：`onScroll` 有没有把「内容变矮、浏览器夹 scrollTop」当成读者滚动（看 `pinnedHeight`）；`settle` 会不会在跟随态下按距离重判 |
+| 流式时「回到底部」胶囊一闪一闪 | `ui-shell/src/packages/ui-transcript/follow.ts` 的跟随判定：`onScroll` 有没有把「内容变矮、浏览器夹 scrollTop」当成读者滚动（看 `pinnedHeight`）；`settle` 会不会在跟随态下按距离重判 |
 | 工具回「未知工具：xxx」 | 先看这一轮的请求与执行是不是同一份目录（`src/core/loop.ts` 的 `requestTools` 快照）；再看模式投影有没有按会话算（`ctx.tools.visible()` 必须带 `sessionId`，否则你在看别的会话时，后台那一轮的工具集跟着换） |
 | 切到别的会话后，后台那一轮的工具集／提示词变了 | 模式（预设）是不是又退回全局变量了：`src/packages/presets/index.ts` 的 `bySession` 按会话 id 存，`dsc/session-open` 只登记被打开的那一个会话；投影与提示段的回调必须把 `scope` 传进去 |
 | 写工作区外的文件被拒（沙箱） | 拒因里带当前档位与可写根清单；确有必要就在**同一次调用**里成对带上 `sandbox_permissions` 与 `justification`（照常弹审批卡），或把目录加进「插件中心 → 文件与命令围栏」的附加可写根 |
@@ -828,13 +828,13 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | 模型与思考档位 | 按会话存在 `model` 状态条目（`{ provider, model, effort }`）。请求路由走 `ctx.llm.routeForSession(session)`，后台 agent / 压缩 / 起标题 / 审批判官 / 子代理各用自己那条；用量日志的 `provider/model` 也按发起会话记。新建会话没记过时沿用「上一次选的那一组」，恢复老会话没有记录时按配置默认 | `src/packages/llm/index.ts`、`src/packages/agent/index.ts`、`src/packages/compact/index.ts` |
 | 协作模式 | 按会话存在 `mode` 状态条目；守卫按本次调用的 `sessionId/sessionPath` 取那一档（后台会话在计划模式跑，不会因为你在看执行模式就被放行）；系统提示段的模式条款同样按 `scope.sessionId` 取 | `src/packages/mode/index.ts`、`src/services/types.ts`（`ModeService.modeFor`） |
 | 会话目标的清空 | 目标存在会话日志的 `goal` 状态条目里，**清空也是一条记录**：用户点 ✕ 时追加 `goal = null` 盖掉上一条（日志 append-only、最后一条生效）。旧版见 null 就不写，重启重放又把旧目标带回来（2026-11-02 报障） | `src/packages/goal/index.ts`（`persist`）、`src/core/session.ts`（`SessionStateMap.goal`） |
-| 新会话在侧栏的回执 | 点「新建会话」当场在侧栏当前工作区顶部出一行「新会话」（`SessionSummary.unsaved = true` 的临时行，宿主 `refresh()` 给**当前**那条没落盘的会话补）。切到别的会话这行就消失（它没内容也没稳定身份），输入框里的半截话按工作区留着，再点「新会话」捡回来；这一行是只读回执——不给改名 / 置顶 / 归档 / 分叉 / 拖拽 / 右键菜单（文件还不存在）。发出第一条消息后宿主补刷一次，临时行换成扫盘出来的真行，不出重复行 | `src/packages/session/index.ts`（`refresh` 与 `dsc/changed` 守卫）、`src/contract/session.ts`（`SessionSummary.unsaved`）、`ui-shell/src/plugins/sessions/ui.tsx`（`SessionRow` 的 `unsaved` 分支） |
-| 切会话的回执与成本 | 侧栏高亮**不等宿主那一帧**：点下去立刻把那一行画成当前（`pendingOpen`，快照对上了再交还宿主真值，4 秒兜底撤回），正文仍等真数据。宿主侧三条省钱：① 切走但空闲的 agent 留 3 个（`IDLE_KEEP`），切回去命中 `sessionFor` 不再读 jsonl；② 技能目录 / git 读数只在**工作目录真变了**时重扫重拍；③ `listSessions()` 按「文件 mtime + 大小 + 侧栏属性」缓存每一行（76 条会话从 120–150ms 降到 ~18ms）。快照推送改成 leading-edge：距上一帧超过节流窗口就立刻推，用户动作不再干等 60–80ms | `ui-shell/src/plugins/sessions/ui.tsx`（`pendingOpen` / `shownPath`）、`src/packages/agent/index.ts`（`rememberIdle`）、`src/packages/skills/index.ts`、`src/packages/git/index.ts`（`cacheCwd`）、`src/core/session.ts`（`sessionRowCache`）、`src/packages/host-stdio/index.ts`（`lastSentAt`）、`src/packages/remote/index.ts`（`lastFrameAt`） |
-| 轮尾附注的显隐 | 「~N tok · 时刻」与复制 / 分叉同一套：默认 `opacity: 0`，鼠标压在**这一轮的输出**（非首块）上、或压页脚那一行、或键盘焦点进这一轮才浮现；`prefers-reduced-motion` 下不做过渡。保留版面（不 `display: none`）——隐着也占位，浮现时不跳版，键盘仍能聚焦 | `ui-shell/src/legacy/views.css`（「轮尾的复制 / 分叉 / 用量 · 时刻」段）、`ui-shell/src/plugins/transcript/rows/foot.tsx` |
+| 新会话在侧栏的回执 | 点「新建会话」当场在侧栏当前工作区顶部出一行「新会话」（`SessionSummary.unsaved = true` 的临时行，宿主 `refresh()` 给**当前**那条没落盘的会话补）。切到别的会话这行就消失（它没内容也没稳定身份），输入框里的半截话按工作区留着，再点「新会话」捡回来；这一行是只读回执——不给改名 / 置顶 / 归档 / 分叉 / 拖拽 / 右键菜单（文件还不存在）。发出第一条消息后宿主补刷一次，临时行换成扫盘出来的真行，不出重复行 | `src/packages/session/index.ts`（`refresh` 与 `dsc/changed` 守卫）、`src/contract/session.ts`（`SessionSummary.unsaved`）、`ui-shell/src/packages/ui-sessions/ui.tsx`（`SessionRow` 的 `unsaved` 分支） |
+| 切会话的回执与成本 | 侧栏高亮**不等宿主那一帧**：点下去立刻把那一行画成当前（`pendingOpen`，快照对上了再交还宿主真值，4 秒兜底撤回），正文仍等真数据。宿主侧三条省钱：① 切走但空闲的 agent 留 3 个（`IDLE_KEEP`），切回去命中 `sessionFor` 不再读 jsonl；② 技能目录 / git 读数只在**工作目录真变了**时重扫重拍；③ `listSessions()` 按「文件 mtime + 大小 + 侧栏属性」缓存每一行（76 条会话从 120–150ms 降到 ~18ms）。快照推送改成 leading-edge：距上一帧超过节流窗口就立刻推，用户动作不再干等 60–80ms | `ui-shell/src/packages/ui-sessions/ui.tsx`（`pendingOpen` / `shownPath`）、`src/packages/agent/index.ts`（`rememberIdle`）、`src/packages/skills/index.ts`、`src/packages/git/index.ts`（`cacheCwd`）、`src/core/session.ts`（`sessionRowCache`）、`src/packages/host-stdio/index.ts`（`lastSentAt`）、`src/packages/remote/index.ts`（`lastFrameAt`） |
+| 轮尾附注的显隐 | 「~N tok · 时刻」与复制 / 分叉同一套：默认 `opacity: 0`，鼠标压在**这一轮的输出**（非首块）上、或压页脚那一行、或键盘焦点进这一轮才浮现；`prefers-reduced-motion` 下不做过渡。保留版面（不 `display: none`）——隐着也占位，浮现时不跳版，键盘仍能聚焦 | `ui-shell/src/legacy/views.css`（「轮尾的复制 / 分叉 / 用量 · 时刻」段）、`ui-shell/src/packages/ui-transcript/rows/foot.tsx` |
 | 会话列表的「最近使用」时间 | 取「最后一条带 `ts` 的对话记录」的时刻，**不取文件 mtime**：打开老会话时，权限三项的默认值会补写 `state` 记账（没有 `ts`），mtime 被刷成现在，侧栏就跳「刚刚」——可它一个字都没多。`ts` 只扫文件尾部 512KB（append-only 的日志最后一条贴着尾巴）；老日志整份找不到 `ts` 时回落 mtime，mtime 仍当读盘缓存的键 | `src/core/session.ts`（`lastActivityAt` / `readSessionFileUncached`） |
 | 读路径补默认值不写盘 | 权限三项（沙箱 / 权限模式 / 审阅者）在读取时补钉：只记内存（`Session.setState` → `deferredState`），下一次真正写日志（用户说话、切档位）时跟着那一条一起落盘；用户真改了档位仍走 `appendState` 立刻写。好处是「只点开看一眼」不产生任何文件改动，mtime 不动 | `src/core/permission-scope.ts`（`pinPermission` / `permissionOf`）、`src/core/session.ts`（`setState` / `write` 里冲刷 `deferredState`） |
-| 行首置顶图钉 | 竖向推钉（顶帽 + 梯形钉身 + 针），14px：未置顶平时 `opacity: 0`、悬浮与键盘聚焦时浮出；已置顶常显、钉身填实（`IconPin` 的 `filled`）并染提示色。行首被状态点占用时整格让给状态点，图钉只剩右键菜单入口 | `ui-shell/src/ui-primitives/icons.tsx`（`IconPin`）、`ui-shell/src/plugins/sessions/ui.tsx`（`SessionRow`）、`ui-shell/src/legacy/views.css`（`.lead-pin`） |
-| 编辑并重发（重新编辑） | **留在当前会话里**截断重来：宿主给日志追加一条 `rewind { keep }` 记录（`keep` = 保留几条**人打的**用户消息，机器的 `notice` 不算），内存里把第 keep 条及其之后的消息丢掉并清掉它们的工具派生状态，然后发 `dsc/session-open` 让转录层重放。日志仍 append-only——原文一条不删，重启按同一条规则重放；界面只调 `rewindSession`，不再 `forkSession` / `openSession`。改的是第一条时把改过的文字一起传上去，直接写成自动标题（否则侧栏一直显示被作废的原文）。读原文的那几条路（分叉 / 分叉菜单）先过 `applyRewinds()`，把 rewind 应用成「还剩哪些行」，免得列出、或复制走已作废的消息 | `src/core/session.ts`（`rewindToUser` / `cutIndexBeforeUser` / `case 'rewind'`）、`src/packages/session/index.ts`（`rewind`）、`src/core/ui-methods.ts`、`ui-shell/src/plugins/transcript/ui.tsx`（`editAndResend`） |
+| 行首置顶图钉 | 竖向推钉（顶帽 + 梯形钉身 + 针），14px：未置顶平时 `opacity: 0`、悬浮与键盘聚焦时浮出；已置顶常显、钉身填实（`IconPin` 的 `filled`）并染提示色。行首被状态点占用时整格让给状态点，图钉只剩右键菜单入口 | `ui-shell/src/ui-primitives/icons.tsx`（`IconPin`）、`ui-shell/src/packages/ui-sessions/ui.tsx`（`SessionRow`）、`ui-shell/src/legacy/views.css`（`.lead-pin`） |
+| 编辑并重发（重新编辑） | **留在当前会话里**截断重来：宿主给日志追加一条 `rewind { keep }` 记录（`keep` = 保留几条**人打的**用户消息，机器的 `notice` 不算），内存里把第 keep 条及其之后的消息丢掉并清掉它们的工具派生状态，然后发 `dsc/session-open` 让转录层重放。日志仍 append-only——原文一条不删，重启按同一条规则重放；界面只调 `rewindSession`，不再 `forkSession` / `openSession`。改的是第一条时把改过的文字一起传上去，直接写成自动标题（否则侧栏一直显示被作废的原文）。读原文的那几条路（分叉 / 分叉菜单）先过 `applyRewinds()`，把 rewind 应用成「还剩哪些行」，免得列出、或复制走已作废的消息 | `src/core/session.ts`（`rewindToUser` / `cutIndexBeforeUser` / `case 'rewind'`）、`src/packages/session/index.ts`（`rewind`）、`src/core/ui-methods.ts`、`ui-shell/src/packages/ui-transcript/ui.tsx`（`editAndResend`） |
 | 分支钮读数（输入框上方） | 快照面 `surfaces.git` = `repo` / `branch` / `detached` / `dirtyFileCount`（计数含未跟踪、只看会话 cwd 之内）；节奏 12s / 30s / 60s 三档 + 事件催拍（回合收工、换会话、写类 git op 落盘）；**没人读快照就不跑 git**（CLI / TUI 会话零开销） | `src/packages/git/index.ts`、`src/core/git-exec.ts` |
 | git 切 / 建分支 | `dock` 的写类 op（`git-checkout` / `git-branch-create`，**过审批**，卡片文案在 `DOCK_WRITE_LABEL`），执行用 `git switch --no-guess`（避开 `checkout <名字>` 的分支/路径歧义）；分支清单是读类 op `git-branches`（界面通道直接放行，当前分支排第一） | `src/core/dock-ops.ts`、`src/packages/desktop-dock/index.ts` |
 | 宿主方法调用的超时 | 默认 30 秒；**会挂起等人的方法**（写类 dock op = 过审批卡，卡自己等 5 分钟）给 5 分半——不然用户还在读卡，页面先报「调用宿主方法超时」 | `ui-shell/src/ui-layout/host-channel.ts`（`DEFAULT_INVOKE_TIMEOUT_MS` / `HUMAN_WAIT_TIMEOUT_MS`） |
@@ -1050,7 +1050,7 @@ localStorage——每帧 setState 会重渲染整棵对话树。复位（双击�
 
 ### 状态胶囊的落点与拖动（`plugins/status`）
 
-收起态那颗胶囊（`.sp-host > .sp`，组件在 `ui-shell/src/plugins/status/ui.tsx`）2026-11-02 起：
+收起态那颗胶囊（`.sp-host > .sp`，组件在 `ui-shell/src/packages/ui-status/ui.tsx`）2026-11-02 起：
 
 - **默认落点：顶栏页签行右端**（`.topbar .tabs`，选择器常量 `TOPBAR_TABS_SELECTOR`，`ui.tsx:161`）。
   那一行右侧本来就是空的，胶囊摆那儿不压正文第一行。CSS 在 `styles.css:2373`：

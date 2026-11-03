@@ -1,5 +1,5 @@
 /**
- * 设置导航的分区筛选（`ui-shell/src/plugins/settings/ui.tsx`）的探针。
+ * 设置导航的分区筛选（`ui-shell/src/packages/ui-settings/ui.tsx`）的探针。
  *
  * 用户要求「把设置页的技能页去掉」。去掉的是**壳的导航里那一项**，不是宿主的分区：
  * 技能中心已经是侧栏的独立整页（`plugins/skills`，与旧桌面端 `SkillsView` 同构），而同一张
@@ -38,7 +38,7 @@ const check = (name, condition, detail) => {
   console.log(`FAIL  ${name}${detail === undefined ? '' : `  <- ${detail}`}`)
 }
 
-const shell = read('ui-shell/src/plugins/settings/ui.tsx')
+const shell = read('ui-shell/src/packages/ui-settings/ui.tsx')
 
 // ── [1] 三处都过筛选 ─────────────────────────────────────────────────────────
 console.log('[1] 滤掉的分区清单，三处都过')
@@ -93,7 +93,7 @@ console.log('[4] 去掉的是哪一份')
   const host = read('src/packages/settings/index.ts')
   check('宿主仍发技能分区（TUI 的设置浮层与旧桌面版消费同一张表）', /id: 'skills',\s*\n\s*title: '技能',/.test(host))
   check("它在宿主那张表里的 order 还是 20（TUI 里的位次没变）", /id: 'skills',[\s\S]{0,120}?order: 20,/.test(host))
-  const skillsPage = read('ui-shell/src/plugins/skills/ui.tsx')
+  const skillsPage = read('ui-shell/src/packages/ui-skills/ui.tsx')
   check('侧栏那个技能整页入口还在（开关管这里）', /const PAGE = 'skills'/.test(skillsPage))
   check('技能整页照旧调 listSkills / setSkillEnabled（写口没跟着一起收）', skillsPage.includes('listSkills') && skillsPage.includes('setSkillEnabled'))
   check('壳仍按宿主给的分区表渲染（不是硬编一份清单）', /\(sections \?\? \[\]\)/.test(shell))

@@ -34,7 +34,7 @@ const check = (name, condition, detail = '') => {
 const contract = read('src/contract/approval.ts')
 const contractBarrel = read('src/contract.ts')
 const plugin = read('src/packages/approval/index.ts')
-const shell = read('ui-shell/src/plugins/prompt/ui.tsx')
+const shell = read('ui-shell/src/packages/ui-prompt/ui.tsx')
 const tui = read('src/app/ApprovalCard.tsx')
 const shellCss = read('ui-shell/src/legacy/views.css')
 

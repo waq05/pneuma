@@ -40,8 +40,8 @@ const check = (name, condition, detail) => {
   console.log(`FAIL  ${name}${detail === undefined ? '' : `  <- ${detail}`}`)
 }
 
-const models = flat(read('ui-shell/src/plugins/settings/models.tsx'))
-const panel = flat(read('ui-shell/src/plugins/settings/ui.tsx'))
+const models = flat(read('ui-shell/src/packages/ui-settings/models.tsx'))
+const panel = flat(read('ui-shell/src/packages/ui-settings/ui.tsx'))
 const views = flat(read('ui-shell/src/legacy/views.css'))
 const shellStyles = flat(read('ui-shell/src/styles.css'))
 

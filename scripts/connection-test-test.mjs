@@ -160,7 +160,7 @@ console.log('\n[5] 接线钉（源码）')
   const settings = read('src/packages/settings/index.ts')
   const runtime = read('src/packages/runtime/index.ts')
   const contract = readContractSource()
-  const models = read('ui-shell/src/plugins/settings/models.tsx')
+  const models = read('ui-shell/src/packages/ui-settings/models.tsx')
   const views = read('ui-shell/src/legacy/views.css')
 
   check('界面白名单放了它（放行的理由写在文件头的注释里）', UI_METHODS.includes('testConnection'))

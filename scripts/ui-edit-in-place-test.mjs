@@ -36,9 +36,9 @@ const dirty = (hay, from, to) => hay.split(from).join(to)
 const core = read('src/core/session.ts')
 const host = read('src/packages/session/index.ts')
 const runtime = read('src/packages/runtime/index.ts')
-const flow = read('ui-shell/src/plugins/transcript/ui.tsx')
-const row = read('ui-shell/src/plugins/transcript/rows/user-row.tsx')
-const shared = read('ui-shell/src/plugins/transcript/shared.ts')
+const flow = read('ui-shell/src/packages/ui-transcript/ui.tsx')
+const row = read('ui-shell/src/packages/ui-transcript/rows/user-row.tsx')
+const shared = read('ui-shell/src/packages/ui-transcript/shared.ts')
 
 // ── [1] 内核：记录类型 + 截断实现 ────────────────────────────────────────────────
 const recordType = (s) => s.includes("type: 'rewind'")

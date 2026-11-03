@@ -88,8 +88,8 @@ function collect(dir, out = []) {
 
 // ── 源码与样式（全部摊平）────────────────────────────────────────────────────
 const app = flat(read('ui-shell/src/ui-layout/app.tsx'))
-const composer = flat(readPluginSource('ui-shell/src/plugins/composer'))
-const sessions = flat(read('ui-shell/src/plugins/sessions/ui.tsx'))
+const composer = flat(readPluginSource('ui-shell/src/packages/ui-composer'))
+const sessions = flat(read('ui-shell/src/packages/ui-sessions/ui.tsx'))
 const styles = flat(read('ui-shell/src/styles.css'))
 const views = flat(read('ui-shell/src/legacy/views.css'))
 
@@ -291,8 +291,8 @@ console.log('[10] 手机上权限/模式/档位三颗的浮层：贴住输入卡
   // 300px 的面板右缘对齐 chip、而 chip 排在行中间 → 面板左缘跑到屏幕外（430px 实测 x=-65）。
   // 档位那颗 2026-10-28 搬进了 model-controls.tsx：三处 sheet 现在分在两个文件里，
   // 跨文件的 indexOf 顺序没有意义，按文件各判各的。
-  const view = read('ui-shell/src/plugins/composer/ui.tsx')
-  const controls = read('ui-shell/src/plugins/composer/model-controls.tsx')
+  const view = read('ui-shell/src/packages/ui-composer/ui.tsx')
+  const controls = read('ui-shell/src/packages/ui-composer/model-controls.tsx')
   const spotsOf = (text) => [...text.matchAll(/model-anchor model-anchor-sheet/g)].map((match) => match.index ?? -1)
   const viewSpots = spotsOf(view)
   const ctrlSpots = spotsOf(controls)

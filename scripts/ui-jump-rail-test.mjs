@@ -24,7 +24,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const rail = await import(
-  new URL('../ui-shell/src/plugins/transcript/rail-window.ts', import.meta.url).href
+  new URL('../ui-shell/src/packages/ui-transcript/rail-window.ts', import.meta.url).href
 )
 const { dedupeByRound, pickCurrentRound } = rail
 
@@ -127,9 +127,9 @@ console.log('[3] 锚点去重：同一轮多行只留第一行')
   )
 }
 
-console.log('[4] 接线形态（ui-shell/src/plugins/transcript/jump-rail.tsx）')
+console.log('[4] 接线形态（ui-shell/src/packages/ui-transcript/jump-rail.tsx）')
 {
-  const src = flat(read('ui-shell/src/plugins/transcript/jump-rail.tsx'))
+  const src = flat(read('ui-shell/src/packages/ui-transcript/jump-rail.tsx'))
   check('判定从纯模块来（pickCurrentRound / dedupeByRound）', src.includes('pickCurrentRound(') && src.includes('dedupeByRound('))
   check('不再拿 .entry-user 当锚点（子代理那一轮没有气泡）', !src.includes("querySelectorAll<HTMLElement>('.entry-user')"))
   check('锚点按 [data-round] 收', src.includes("querySelectorAll<HTMLElement>('[data-round]')"))

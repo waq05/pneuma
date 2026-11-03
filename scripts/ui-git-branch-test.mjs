@@ -1,5 +1,5 @@
 /**
- * 输入框上那颗分支钮（`ui-shell/src/plugins/composer`）的探针。
+ * 输入框上那颗分支钮（`ui-shell/src/packages/ui-composer`）的探针。
  *
  * 三组断言：
  *
@@ -37,7 +37,7 @@ console.log('[1] 分支钮的纯逻辑（git-branch.ts）')
 {
   // 零依赖 `.ts`，Node 的类型擦除直读（与 ui-paging-test 同一套写法；`.tsx` 读不了）。
   const { filteredBranches, wouldOverwrite } = await import(
-    new URL('../ui-shell/src/plugins/composer/git-branch.ts', import.meta.url).href
+    new URL('../ui-shell/src/packages/ui-composer/git-branch.ts', import.meta.url).href
   )
   const rows = [
     { name: 'main', current: true },
@@ -58,10 +58,10 @@ console.log('[1] 分支钮的纯逻辑（git-branch.ts）')
 // ── [2] 壳侧接线（composer 插件文本）───────────────────────────────────────────
 console.log('[2] 输入框那颗钮的接线')
 {
-  const composer = readPluginSource('ui-shell/src/plugins/composer')
+  const composer = readPluginSource('ui-shell/src/packages/ui-composer')
   // 分支行 2026-10-28 搬进 branch-menu.tsx：判「在输入框外面」要分两个文件读。
-  const view = read('ui-shell/src/plugins/composer/ui.tsx')
-  const menu = read('ui-shell/src/plugins/composer/branch-menu.tsx')
+  const view = read('ui-shell/src/packages/ui-composer/ui.tsx')
+  const menu = read('ui-shell/src/packages/ui-composer/branch-menu.tsx')
   const shellCss = read('ui-shell/src/styles.css')
 
   check('读数取宿主快照面 surfaces.git（壳不自己拍 git）', composer.includes("(surfaces as Record<string, unknown>)['git']") && !composer.includes('git-status'))
@@ -94,7 +94,7 @@ console.log('[2] 输入框那颗钮的接线')
   check('失败写进输入区下面那行 fault（不是静默）', menu.includes('onFault(wouldOverwrite(text) ?') && composer.includes('右侧边栏「变更」页签可以提交'))
   // 模型 / 档位两颗 2026-10-28 搬进 model-controls.tsx：它们打开时走 onTakeOver()，
   // 权限 / 模式两颗仍然直接 setBranchOpen(false)。四颗各有一条「收别的」路径。
-  const controls = read('ui-shell/src/plugins/composer/model-controls.tsx')
+  const controls = read('ui-shell/src/packages/ui-composer/model-controls.tsx')
   check(
     '四颗旋钮的浮层互斥（开一颗收掉另外三颗）',
     (view.match(/setBranchOpen\(false\)/g) ?? []).length >= 3 &&
@@ -105,7 +105,7 @@ console.log('[2] 输入框那颗钮的接线')
   // 等人的宿主方法要更长的超时：审批卡自己能等 5 分钟，默认那 30 秒会把「等你点卡」
   // 报成「宿主超时」，而且点完卡那次切换已经被页面放弃了（实机走查抓到的）。
   const channel = read('ui-shell/src/ui-layout/host-channel.ts')
-  const changes = read('ui-shell/src/plugins/files/changes.tsx')
+  const changes = read('ui-shell/src/packages/ui-files/changes.tsx')
   // 超时闸本身是手写的（老内核没有 `AbortSignal.timeout`，那条线在
   // scripts/ui-legacy-compat-test.mjs 里钉），这里只钉口径：预算能按调用给、默认 30 秒。
   check('通道支持按调用给超时（默认 30 秒不变）', channel.includes('const budget = options?.timeoutMs ?? DEFAULT_INVOKE_TIMEOUT_MS') && channel.includes('const gate = new AbortController()'))

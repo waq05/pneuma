@@ -38,13 +38,13 @@ import { fileURLToPath } from 'node:url'
 import { readPluginSource } from './_check-runner.mjs'
 
 const groups = await import(
-  new URL('../ui-shell/src/plugins/transcript/process-groups.ts', import.meta.url).href
+  new URL('../ui-shell/src/packages/ui-transcript/process-groups.ts', import.meta.url).href
 )
 const args = await import(new URL('../ui-shell/src/ui-primitives/tool-args.ts', import.meta.url).href)
 const { seatPlan, groupSteps, needsGroupHeader } = groups
 const { toolArgFields, MUTATION_CONTENT_FIELDS } = args
 const roundsMod = await import(
-  new URL('../ui-shell/src/plugins/transcript/rounds.ts', import.meta.url).href
+  new URL('../ui-shell/src/packages/ui-transcript/rounds.ts', import.meta.url).href
 )
 const { splitRounds, roundInfos, teammateReportLabel, internalLabel } = roundsMod
 
@@ -146,13 +146,13 @@ console.log('[2] toolArgFields：会改文件的工具走参数表')
 
 console.log('[3] 形态钉（ui.tsx / factory.tsx / status 的催拍）')
 {
-  const ui = readPluginSource('ui-shell/src/plugins/transcript')
-  const factory = read('ui-shell/src/plugins/transcript/tool-card/factory.tsx')
-  const pgs = read('ui-shell/src/plugins/transcript/process-groups.ts')
-  const status = read('ui-shell/src/plugins/status/ui.tsx')
+  const ui = readPluginSource('ui-shell/src/packages/ui-transcript')
+  const factory = read('ui-shell/src/packages/ui-transcript/tool-card/factory.tsx')
+  const pgs = read('ui-shell/src/packages/ui-transcript/process-groups.ts')
+  const status = read('ui-shell/src/packages/ui-status/ui.tsx')
 
   // 「按 kind 切座位」的判据只在 rounds.ts（分轮真值），渲染体（render.tsx）里不许再出现。
-  const renderSrc = read('ui-shell/src/plugins/transcript/render.tsx')
+  const renderSrc = read('ui-shell/src/packages/ui-transcript/render.tsx')
   check('排布走纯函数 seatPlan（规则不在渲染体里）', renderSrc.includes('for (const item of seatPlan(') && !/kind === 'user'/.test(renderSrc))
   check('process-groups.ts 的 seatPlan 是纯逻辑（不引 React）', !/from 'react'/.test(pgs) && pgs.includes('export function seatPlan('))
 
@@ -192,8 +192,8 @@ console.log('[4] 漂移钉：参数表的字段名与宿主工具真定义对得
 
 console.log('[5] 整轮过程区的开合动画（0.6.69 第四轮报障）')
 {
-  const ui = readPluginSource('ui-shell/src/plugins/transcript')
-  const seats = read('ui-shell/src/plugins/transcript/fold-seats.tsx')
+  const ui = readPluginSource('ui-shell/src/packages/ui-transcript')
+  const seats = read('ui-shell/src/packages/ui-transcript/fold-seats.tsx')
   const css = read('ui-shell/src/legacy/views.css')
   const tokens = read('ui-shell/src/legacy/tokens.css')
 
@@ -230,7 +230,7 @@ console.log('[5] 整轮过程区的开合动画（0.6.69 第四轮报障）')
 
 console.log('[6] 悬停预览的收卡口径（0.6.69 第五轮报障：鼠标移出预览 1s 才收）')
 {
-  const ui = readPluginSource('ui-shell/src/plugins/transcript')
+  const ui = readPluginSource('ui-shell/src/packages/ui-transcript')
   const hook = read('ui-shell/src/ui-primitives/hover-delay.ts')
 
   // 出卡节奏照参考实现（500ms），收卡是壳侧有意的 1s——旧渲染层那份仍 100ms（冻结不动）
@@ -247,8 +247,8 @@ console.log('[6] 悬停预览的收卡口径（0.6.69 第五轮报障：鼠标�
 
 console.log('[7] 分轮口径单点 + internal 条目对齐 dsh（0.6.67 右侧刻度条错位 / 多刻度）')
 {
-  const ui = readPluginSource('ui-shell/src/plugins/transcript')
-  const timing = read('ui-shell/src/plugins/transcript/timing.ts')
+  const ui = readPluginSource('ui-shell/src/packages/ui-transcript')
+  const timing = read('ui-shell/src/packages/ui-transcript/timing.ts')
   const css = read('ui-shell/src/legacy/views.css')
   // 「不该出现」的断言先剥注释：修法的注释里就引着旧写法 / roundInfos，不剥会自己打脸。
   const uiCode = ui.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
@@ -381,11 +381,11 @@ console.log('[7] 分轮口径单点 + internal 条目对齐 dsh（0.6.67 右侧�
 console.log('[8] 收起态的结果与失败数（对照 codex 的活动流）')
 {
   const tailMod = await import(
-    new URL('../ui-shell/src/plugins/transcript/tool-card/result-tail.ts', import.meta.url).href
+    new URL('../ui-shell/src/packages/ui-transcript/tool-card/result-tail.ts', import.meta.url).href
   )
   const { resultTail, RESULT_TAIL_LINES } = tailMod
-  const factory = read('ui-shell/src/plugins/transcript/tool-card/factory.tsx')
-  const row = read('ui-shell/src/plugins/transcript/step-group-row.tsx')
+  const factory = read('ui-shell/src/packages/ui-transcript/tool-card/factory.tsx')
+  const row = read('ui-shell/src/packages/ui-transcript/step-group-row.tsx')
   const css = read('ui-shell/src/styles.css')
   // 组体的缩进与竖线 2026-10-30 并进了 legacy/views.css（同一选择器原来分在两份样式表里）。
   const viewsCss = read('ui-shell/src/legacy/views.css')
@@ -434,7 +434,7 @@ console.log('[9] 轮尾「已编辑 N 个文件」卡只在一轮收口之后出
 {
   // 报障现场（2026-11-01）：一轮还在跑，转圈下面先挂出一份只算了一半的清单，
   // 点「审查」看到的是半截改动。判据只认 ChatView 给的 running（turnState + 最后一轮）。
-  const renderSrc = read('ui-shell/src/plugins/transcript/render.tsx')
+  const renderSrc = read('ui-shell/src/packages/ui-transcript/render.tsx')
   check(
     '① 卡在 running 成立时不画（收口才上屏）',
     /running \? null : <ChangesCard rows=\{seat\.rows\} cwd=\{cwd\} \/>/.test(renderSrc),
@@ -459,7 +459,7 @@ console.log('[10] 流式光标那根竖条（2026-11-02 报障：正文左下角
   check('光标规则已删（不再有 content 是方块字符的那条）', !code.includes('▍'))
   check('连带 blink 关键帧一起删（不留只被它用的死规则）', !/@keyframes\s+blink\s*\{/.test(code))
   check('也没留下空壳的 .live 规则（那条 position: relative 只为光标存在）', !/^\.live\s*\{/m.test(code))
-  const think = read('ui-shell/src/plugins/transcript/rows/think-row.tsx')
+  const think = read('ui-shell/src/packages/ui-transcript/rows/think-row.tsx')
   check('直播信号还在：思考行那颗转圈（.think-spin）', /\.think-spin \{/.test(code) && think.includes('think-spin'))
   check('删的理由与「别加回来」留在注释里', css.includes('流式直播尾光标：2026-11-02 删掉，别加回来'))
 }
@@ -469,7 +469,7 @@ console.log('[11] 轮尾的复制 / 分叉：停下之后、鼠标压在输出�
   // 报障现场：这一轮还在输出，轮尾已经挂着「复制 / 分叉」——复制拿到半截回答、分叉分出
   // 半截会话；停下之后两颗钮又常驻，长会话里每轮后面都拖着一排按钮。
   // 两段判据：跑动中由组件不渲染（running），停下后由样式默认透明、悬浮输出才提到 1。
-  const foot = read('ui-shell/src/plugins/transcript/rows/foot.tsx')
+  const foot = read('ui-shell/src/packages/ui-transcript/rows/foot.tsx')
   const css = read('ui-shell/src/legacy/views.css')
   const code = css.replace(/\/\*[\s\S]*?\*\//g, '')
 
@@ -503,9 +503,9 @@ console.log('[12] 机器投递的消息画成触发行，不是用户气泡（20
 {
   // 判据在宿主三处（落库 / 事件 / 重放），界面这一侧只认 `internal` 并给一句话标签。
   // 逐条断言的实测在 scripts/notice-origin-test.mjs（21 项）；这一节钉的是「界面没有绕开它」。
-  const userRow = read('ui-shell/src/plugins/transcript/rows/user-row.tsx')
-  const uiSrc = read('ui-shell/src/plugins/transcript/ui.tsx')
-  const rounds = read('ui-shell/src/plugins/transcript/rounds.ts')
+  const userRow = read('ui-shell/src/packages/ui-transcript/rows/user-row.tsx')
+  const uiSrc = read('ui-shell/src/packages/ui-transcript/ui.tsx')
+  const rounds = read('ui-shell/src/packages/ui-transcript/rounds.ts')
   const adapter = read('src/adapter/transcript.ts')
   const session = read('src/core/session.ts')
   const loop = read('src/core/loop.ts')
@@ -523,7 +523,7 @@ console.log('[12] 机器投递的消息画成触发行，不是用户气泡（20
 
 console.log('[13] 已发送消息里的贴图也开浮层（可编辑行 + 只读出口，同一套）')
 {
-  const userRow = read('ui-shell/src/plugins/transcript/rows/user-row.tsx')
+  const userRow = read('ui-shell/src/packages/ui-transcript/rows/user-row.tsx')
   const css = read('ui-shell/src/styles.css')
   const viewsCss = read('ui-shell/src/legacy/views.css')
 

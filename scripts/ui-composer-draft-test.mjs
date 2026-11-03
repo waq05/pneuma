@@ -20,7 +20,7 @@ import { readFileSync } from 'node:fs'
 import { readContractSource, readPluginSource } from './_check-runner.mjs'
 import { fileURLToPath } from 'node:url'
 
-const draft = await import(new URL('../ui-shell/src/plugins/composer/draft.ts', import.meta.url).href)
+const draft = await import(new URL('../ui-shell/src/packages/ui-composer/draft.ts', import.meta.url).href)
 const { draftScopeOf, carryDraft, EMPTY_DRAFT } = draft
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -109,7 +109,7 @@ console.log('[4] 反向对照：按旧口径（一律按路径）分坑，剧本
 
 console.log('[5] 接线钉：壳、宿主、契约三处')
 {
-  const composer = readPluginSource('ui-shell/src/plugins/composer')
+  const composer = readPluginSource('ui-shell/src/packages/ui-composer')
   check('输入框用 draftScopeOf 算归属', composer.includes('draftScopeOf({'), '')
   check('输入框用 carryDraft 搬运（不再自己 set/get）', composer.includes('carryDraft(drafts.current'), '')
   check(
@@ -122,7 +122,7 @@ console.log('[5] 接线钉：壳、宿主、契约三处')
   check('宿主快照报 sessionUnsaved（按 messages 是否为空）', /sessionUnsaved:\s*ctx\.session\.current\(\)\.messages\.length === 0/.test(host), '')
   const contract = readContractSource()
   check('契约里声明了 sessionUnsaved 并写了为什么', /sessionUnsaved\?: boolean/.test(contract) && contract.includes('sessionUnsaved?: boolean'), '')
-  check('draft.ts 是零依赖纯模块（不 import 任何东西）', !/^import /m.test(read('ui-shell/src/plugins/composer/draft.ts')), '')
+  check('draft.ts 是零依赖纯模块（不 import 任何东西）', !/^import /m.test(read('ui-shell/src/packages/ui-composer/draft.ts')), '')
   check('EMPTY_DRAFT 是空的那一份', EMPTY_DRAFT.value === '' && EMPTY_DRAFT.history.length === 0, JSON.stringify(EMPTY_DRAFT))
 }
 

@@ -150,7 +150,11 @@ numa config show              # 查看当前生效的端点/模型/key 来源（
 
 19 个功能档里，默认开 6 个（联网搜索、危险命令硬拦截、长输出转存、历史会话搜索、文件与命令围栏、改动前预览），默认关 13 个（子智能体、共享任务板、操作电脑桌面、外部命令钩子、MCP 外部工具、工具按需加载、定时任务、代码跳转与报错、受控浏览器、侧栏浏览器、经验沉淀、dsh 插件兼容、文档与批量读取）。完整清单与各自干什么见 [docs/development.md](docs/development.md) 第 4 节。
 
-换一个功能包的版本 = 换 `~/.dsc/profiles/<名字>/node_modules/@pneuma/<id>` 后重启，不用重新打包应用（核心契约包 `@pneuma/runtime` 除外，它跟应用走）。
+首启会在 `~/.dsc/profiles/default/` 铺一份 profile（已有就不动）。换一个功能包的版本 = 换
+`~/.dsc/profiles/default/node_modules/@pneuma/<id>` 后重启，不用重新打包应用（核心契约包
+`@pneuma/runtime` 除外，它跟应用走）。删掉一个可选包后应用照常启动，插件中心把那一行标成缺包。
+
+界面包（19 个）源码在 `ui-shell/src/packages/ui-<id>/`，产物落 `lib/ui/plugins/<id>/`，id 与 0.8.1 一致。
 
 「文档与批量读取」要先用一次 `npm install dsh-ops`（装在 `~/.dsc/plugins` 下即可），插件默认关，装好后在插件中心打开；没装时会一个工具都不注册，设置页写清找过哪些位置。
 

@@ -90,6 +90,11 @@ export function resolveOpsWorker(explicit?: string): OpsWorkerLookup {
   }
   const fromPlugins = wanted(join(dscPath('plugins'), 'node_modules', 'dsh-ops', 'runtime', target, name), 'numa 插件目录里的 dsh-ops')
   if (fromPlugins !== null) return fromPlugins
+  // 0.9 起包都装在 profile 里：`numa plugin add dsh-ops --profile default` 的落点也要认。
+  for (const profile of dscProfiles()) {
+    const found = wanted(join(profile, 'node_modules', 'dsh-ops', 'runtime', target, name), `numa profile：${profile}`)
+    if (found !== null) return found
+  }
   for (const profile of dshProfiles()) {
     const found = wanted(join(profile, 'node_modules', 'dsh-ops', 'runtime', target, name), `dsh profile：${profile}`)
     if (found !== null) return found
@@ -100,6 +105,22 @@ export function resolveOpsWorker(explicit?: string): OpsWorkerLookup {
       `没找到 dsh-ops 的 worker（找过 ${join(dscPath('plugins'), 'node_modules', 'dsh-ops')} 与 ${join(homedir(), '.dsh', 'profiles', '*', 'node_modules', 'dsh-ops')}）。` +
       '装一次 dsh-ops 就行：npm install dsh-ops（装进 ~/.dsc/plugins），或在设置里直接填 worker 的绝对路径',
   }
+}
+
+/** Pneuma 自己的 profile 目录（默认那个 + 显式配置的）。 */
+function dscProfiles(): string[] {
+  const out = [dscPath('profiles', 'default')]
+  const named = process.env['DSC_PROFILE']
+  if (typeof named === 'string' && named.trim() !== '') out.push(dscPath('profiles', named.trim()))
+  try {
+    const root = dscPath('profiles')
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (entry.isDirectory()) out.push(join(root, entry.name))
+    }
+  } catch {
+    // 没有 profiles 目录就等于只有默认那个
+  }
+  return [...new Set(out)]
 }
 
 /** dsh 各 profile 的 dsh-ops 安装位置：只读列目录，出错就当没有。 */
