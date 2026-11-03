@@ -70,7 +70,7 @@ hermes 的 `DESIGN.md` 开头有七条，逐条换成 dsc 的说法：
 `--dsc-accent-text` 和 `--dsc-accent-hover` 是**派生色**，写在 `tokens.css` 末尾的 `:root` 块里，
 用 `color-mix()` 从主题变量算出来，这样浅色主题会自己重算。新增派生色照这个写法。
 
-浅色主题的侧栏底色是**灰绿**（`--dsc-seed-side: #eef5f2`，`--dsc-mix-side: 100%`）：靠色相把侧栏与
+浅色主题的侧栏底色是**灰绿**（`--dsc-seed-side: #f3f7ff`，`--dsc-mix-side: 100%`）：靠色相把侧栏与
 正文白分开，不用再画分隔线。改它只动这一个变量，别在组件里写死。
 
 **主色只干三件事**（2026-10-25 补，品牌声部的第一条规矩）：可交互（链接、主按钮）、选中（当前行、
@@ -82,9 +82,9 @@ hermes 的 `DESIGN.md` 开头有七条，逐条换成 dsc 的说法：
 
 | 组 | 令牌 | 取值 | 规矩 |
 | --- | --- | --- | --- |
-| 圆角 | `--dsc-r-control` `-badge` `-icon` `-block` `-row` `-overlay` `-card` `-composer` `-pill` | 6 / 3 / 4 / 7 / 8 / 8 / 14 / 12 / 999 px | 方角不做胶囊。**不许写圆角字面量**，没有合适的那一档再商量加一档。2026-10-24 外观档整档上调过一次（`ui-shell/src/styles.css` 末节）。 |
+| 圆角 | `--dsc-r-control` `-badge` `-icon` `-block` `-row` `-overlay` `-card` `-composer` `-pill` | 2.5 / 3 / 4 / 5 / 6 / 8 / 10 / 8 / 999 px | 方角不做胶囊。**不许写圆角字面量**，没有合适的那一档再商量加一档。2026-10-24 外观档整档上调过一次（`ui-shell/src/styles.css` 末节）。 |
 | 间距 | `--dsc-sp-0` … `--dsc-sp-8` | 2 / 4 / 6 / 8 / 10 / 12 / 16 / 20 / 24 px | 布局留白走这一套，别写 `gap: 13px` |
-| 行几何 | `--dsc-row-h` `--dsc-row-pad-x` `--dsc-row-gap` `--dsc-row-lead` | 32px×密度 / 8 / 6 / 14 | 所有列表行共用；过程行另用 `--dsc-process-row-h`（28px×密度） |
+| 行几何 | `--dsc-row-h` `--dsc-row-pad-x` `--dsc-row-gap` `--dsc-row-lead` | 26px×密度 / 8 / 6 / 14 | 所有列表行共用；过程行另用 `--dsc-process-row-h`（24px×密度） |
 | 控制尺寸 | `--dsc-ctl` `-sm` `-lg` `--dsc-send` `--dsc-input-min-h` `-max-h` | 24 / 20 / 32 / 26 / 26 / 150 px | 按钮与控制件对齐用 |
 | 标题栏 | `--dsc-titlebar-h` `--dsc-titlebar-btn` `--dsc-titlebar-icon` | 36 / 24 / 13.9 px | 和原生控件条一起算，见 §10 |
 | 版面 | `--dsc-sidebar-w` `--dsc-sidebar-rail` `--dsc-page-inset` `--dsc-page-max` `--dsc-thread-max` | 237px / 56px / clamp(20px,4vw,64px) / 1200px / 96ch | 正文列宽用 `ch`，别写 px |
@@ -95,7 +95,7 @@ hermes 的 `DESIGN.md` 开头有七条，逐条换成 dsc 的说法：
 
 | 令牌 | 基准 | 用在哪 |
 | --- | --- | --- |
-| `--dsc-fs-body` / `--dsc-lh-body` | 14 / 20 px | 正文、会话标题（与正文 pro 档同大，长回答不再比侧栏字小） |
+| `--dsc-fs-body` / `--dsc-lh-body` | 13 / 18 px | 正文、会话标题；模型长文另用 `--dsc-fs-prose`（14 / 22 px）那一档 |
 | `--dsc-fs-caption` / `--dsc-lh-caption` | 12 / 16 px | 说明、时间、次要信息 |
 | `--dsc-fs-tool` | 11 px | 工具行参数与结果 |
 | `--dsc-fs-label` `--dsc-fs-micro` | 10.2 / 9.6 px | 小节标签、角标 |
@@ -117,8 +117,8 @@ hermes 的 `DESIGN.md` 开头有七条，逐条换成 dsc 的说法：
 | --- | --- | --- |
 | 阴影 | `--dsc-shadow-xs` `-sm` `-md` `-float` `-composer` | `xs` 贴地、`md` 菜单与下拉、`float` 弹层与对话框、`composer` 输入区 |
 | 层级 | `--dsc-z-dock` 20 / `-handle` 24 / `-menu` 40 / `-backdrop` 120 / `-modal` 130 / `-modal-popover` 140 / `-toast` 200 / `-tip` 210 / `-picker` 220 / `-crash` 1500 | 选一档，**不许写 `z-index: 9999`**。正文右上角的胶囊取 `-menu` − 1（39）：它要盖正文，但永远让位给菜单 |
-| 动效 | `--dsc-dur` 140ms / `--dsc-dur-slow` 200ms / `--dsc-ease` `cubic-bezier(0.16, 1, 0.3, 1)` | 过渡只写 `var(--dsc-dur) var(--dsc-ease)`。缓动前段快、尾段收，位移收尾有「到位」感 |
-| 提示 | `--dsc-tip-delay` 200ms / `--dsc-tip-warm` 300ms | 首次悬停等 200ms，热了之后 300ms 内秒开 |
+| 动效 | `--dsc-dur` 100ms / `--dsc-dur-slow` 180ms / `--dsc-ease` `cubic-bezier(0.4, 0, 0.2, 1)` | 过渡只写 `var(--dsc-dur) var(--dsc-ease)`。缓动先加速后减速，收尾不硬停 |
+| 提示 | `--dsc-tip-delay` 200ms / `--dsc-tip-warm` 300ms | 令牌还在，但没有消费方：本壳没有自绘提示层，见 §7 |
 
 **故意保留的颜色字面量只有两类**：界面自己的 6 处（品牌渐变 logo 和它上面的白字、彩底上的白色图标、
 开关的白滑块、两处深色遮罩——`.dsc-overlay` 与设置页遮罩），以及**读对象本身颜色**的那几套：代码文件片的
@@ -147,21 +147,14 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
 
 | 原语 | 选择器 | 档位与要点 |
 | --- | --- | --- |
-| 表单控件 | `.dsc-ctl` | 输入框/文本域/下拉共用；静息描边 7%，悬停翻倍，聚焦更亮；`aria-invalid` 走危险色；`data-size: xs/sm` |
-| 字段行 | `.dsc-field` `__label` `__help` | 设置页每一行就是「标签 + 说明 + 控件」 |
-| 徽标 / 计数 | `.dsc-badge` | `data-tone: accent/muted/success/warn/danger/outline`，`data-size: xs`；**徽标不可点**，可点的筛选片是 `.dsc-btn[data-variant='chip']` |
+| 表单控件 / 字段行 | 无通用原语 | 设置页用 `.settings-fields` / `.setting-row` / `.setting-text`；输入框、下拉的样式按所在区域写 |
+| 徽标 / 计数 | 无通用原语 | 各页自己的类（`.crumb-badge` / `.risk-badge` / `.diff-badge`…）；可点的筛选片仍是 `.dsc-btn[data-variant='chip']` |
 | 分段选择 | `.dsc-segmented` `__btn` | 少量互斥选项（主题、密度、统计周期）；两态视图切换不用它，用一个 `ghost` 图标按钮显示「切过去是什么」 |
-| 列表行 | `.dsc-row` `__body` `__lead` `__label` `__meta` `__actions` | 侧栏会话行是基准，导航行、插件行、技能行、设置行、归档行全沿用它的几何；`data-active` / `aria-current` 表选中 |
-| 小节标签 | `.dsc-sect` `__meta` | `meta` 槽放计数 |
-| 日期分隔 | `.dsc-date-sep` | 两侧发丝线由伪元素画 |
-| 文本标签页 | `.dsc-tabs` `__btn` | 用 `aria-selected` 表选中 |
-| 浮层容器 | `.dsc-pop` | `data-size: menu/menu-lg/menu-xl`；底色 + `--dsc-shadow-float` |
-| 菜单 | `.dsc-menu` `__item` `__label` `__sep` `__key` | `__item[data-tone='danger']` 是危险项，`__key` 放快捷键 |
+| 列表行 / 小节标签 / 日期分隔 / 标签页 / 浮层容器 / 菜单 | 无通用原语 | `.dsc-row` / `.dsc-sect` / `.dsc-date-sep` / `.dsc-tabs` / `.dsc-pop` / `.dsc-menu` 在 0.6.37 随孤儿清理移除；行、菜单、弹层现在各页自己写（`.row-menu` / `.menu-item` / `.pop-item`…） |
 | 遮罩对话框 | `.dsc-overlay` `__card` | 卡片 = 抬升面 + 浮层阴影 |
 | 确认框 | `.dsc-confirm` `__title` `__detail` `__actions` | 走 `confirmAction()`，见 §6 |
-| 悬浮提示 | `.dsc-tip` | 走 `installTipLayer()`，见 §7 |
-| 加载 / 骨架 / 空态 / 列表内空态 | `.dsc-loader` `.dsc-skeleton` `.dsc-state-empty` `.dsc-state-inlist` | 别再手写第三种居中空态 |
-| 通告 / 吐司 | `.dsc-notice` `.dsc-toast` | 通告目前只有 `data-tone='danger'`；吐司有 `danger` 和 `success` |
+| 骨架 | `.dsc-skeleton` `.dsc-skeleton-text` | 由 `Skeleton` / `SkeletonText` 组件输出，别手写；见 §6 |
+| 吐司 | `.dsc-toasts` `.dsc-toast` | 走 `toastOk()` / `toastErr()`；`data-tone` 只有 `danger` 与 `success` 两档 |
 
 ### 3.3 什么时候扩原语、什么时候别新建
 
@@ -314,13 +307,12 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
 
 | 场景 | 用什么 | 注意 |
 | --- | --- | --- |
-| 加载中 | `Skeleton` / `SkeletonText`（2026-10-25 补回；旧的 `.dsc-loader` / `.dsc-skeleton` 早已移除） | 不要写「加载中…」这种死文字配一个转圈 |
-| 列表为空 | `.dsc-state-inlist` | 行内空态，带一个图标和一句为什么空 |
-| 整页为空 | `.dsc-state-empty` | 标题 + 说明，别手写第三种居中空态 |
-| 报错 | `.dsc-notice[data-tone='danger']` | 说明**发生了什么 + 怎么办**，不要只贴错误码 |
+| 加载中 | `Skeleton` / `SkeletonText`（`ui-primitives/skeleton.tsx`；旧的 `.dsc-loader` 已移除） | 不要写「加载中…」这种死文字配一个转圈 |
+| 列表为空 / 整页为空 | 各页自己的空态（如 `.settings-empty`、`.plugins-empty`） | 没有通用空态原语，别再手写第三种居中空态 |
+| 报错 | `humanizeError()` 拆出的标题与下一步，落在行内提示（如 `.settings-note.error`） | 说明**发生了什么 + 怎么办**，不要只贴错误码 |
 | 轻提示 | `toastOk()` / `toastErr()` | 一次性、可自动消失；要用户做决定的事不要用吐司 |
 | 要用户确认 | `confirmAction({...})` | 唯一的「你确定吗」通道；打开即聚焦确认键，`Enter` 确认、`Esc` 取消；**不许用 `window.confirm`** |
-| 悬停解释 | `installTipLayer()` + `.dsc-tip` | 只在「悬停能学到新东西」时用，详 §7 |
+| 悬停解释 | 系统原生 `title` | 本壳没有自绘提示层，只给被截断的路径这类确实读不全的地方用，详 §7 |
 
 **加载态（2026-10-25）**：数据没回来时画骨架，不写「正在读取…」。
 
@@ -342,13 +334,12 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
 
 ## 7. 提示、图标与品牌
 
-**提示**（hermes 的 `<Tip>` 规则，dsc 一致）：
+**提示**：本壳没有自绘提示层——`data-tip` 只是属性，气泡与 `installTipLayer()` 已下线，需要补充信息的地方直接用系统原生 `title`（样式与约 500ms 的延迟都交给系统，别再自己画一套）。
 
 - 该提示的：没标签的顶栏/工具栏图标、快捷键、被截断的路径、归属标记。
 - **不该提示的**：菜单触发器（`⋯`、齿轮——它自己的语义就是「打开菜单」，动词在菜单里）、关闭叉、
   以及可见文字已经说清楚的控件。
-- 别用原生 `title=`：样式不可控、延迟约 500ms，和自绘提示打架。
-- 时序：首次悬停等 `--dsc-tip-delay`(200ms)，之后 `--dsc-tip-warm`(300ms) 内秒开；出场 100ms 淡出。
+- `--dsc-tip-delay` / `--dsc-tip-warm` 还留在 `tokens.css` 里，但目前没有消费方，别拿它们算时序。
 
 **图标**：`icons.tsx` 是自维护的细线 SVG 集（`stroke-width: 1.6`、`currentColor`、默认 16px）。
 一个动作对应一个图标，不引入第二套图标库、不在同一组控件里混风格。品牌方块是 `.welcome-mark`
@@ -448,11 +439,11 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
 落地要同步的六处（漏一处就有一套界面停在上一个主题里）：
 
 - `src/contract.ts` 的 `ThemeMode`、`src/core/prefs.ts` 的 `THEME_MODES`
-- 壳（`ui-shell/src/ui-layout/appearance.ts`）与旧渲染层（`desktop/src/renderer/appearance.ts`）的归一化
+- 壳的归一化（`ui-shell/src/ui-layout/appearance.ts`）
 - 设置里的磁贴（`plugins/settings/ui.tsx` 的 `THEME_TILES`，四块一行：每块 76px，行宽 328px）
 - `desktop/electron/main/index.ts` 的 `applyThemeSource`：`claude` 报成 `light`，
   因为系统画的原生弹层只认深浅，透传会被 `nativeTheme` 拒掉
-- 两份令牌文件（`ui-shell/src/legacy/tokens.css` 与 `desktop/src/renderer/styles/tokens.css`，内容必须逐字一致）
+- 令牌文件 `ui-shell/src/legacy/tokens.css`（壳只认这一份）
 - 兜底生成器 `ui-shell/scripts/build-color-fallback.mjs` 的 `THEMES`（加一行，再重跑生成）
 
 浅色专属的那些选择器（代码高亮、文件类型图标补色）要一起扩到 `[data-theme='claude']`，
@@ -518,11 +509,11 @@ dsc 现在这套（`tokens.css` 一份、深色默认、浅色用 `[data-theme='
 | `DesktopTheme.darkColors`（主题自带两套盘） | `[data-theme='dark'/'light'/'claude']` 覆盖块 | hermes 一个「皮肤」可带深浅两套；dsc 的皮肤与明暗是同一个 `data-theme` 枚举，不引入第三层身份（Claude 那档是浅色皮肤，见 §10.1） |
 | `shadow-nous` + `--stroke-nous` | `--dsc-shadow-float` + `--dsc-stroke-float` | 浮层抬升组合 |
 | `<Button variant size>` | `.dsc-btn[data-variant][data-size]` | 同一套变体名，dsc 多了 `chip` / `floating` / `grip` |
-| `SearchField` | `.dsc-ctl` | dsc 没有独立搜索框原语 |
+| `SearchField` | 各页自己的输入框（如 `.side-search input`） | dsc 没有独立搜索框原语 |
 | `SegmentedControl` | `.dsc-segmented` | 语义一致 |
-| `ListRow` | `.dsc-row` | 语义一致 |
+| `ListRow` | 各页自己的行（如 `.row-menu` 那一组） | dsc 没有通用行原语 |
 | `ConfirmDialog` / `confirm()` | `confirmAction()` | 语义一致 |
-| `Loader` / `ErrorState` / `EmptyState` | `.dsc-loader` / `.dsc-notice` / `.dsc-state-*` | 语义一致 |
+| `Loader` / `ErrorState` / `EmptyState` | `Skeleton` 组件 / `humanizeError()` / 各页空态 | 分工一致，但没有一套通用类 |
 | Tabler + Codicon | `icons.tsx` | dsc 自维护细线图标集 |
 | `useI18n()` | 无 | **dsc 的中文文案直接写在组件里**，不做多语言 |
 | nanostores | React state + IPC 快照流 | dsc 的状态来自运行时快照 |

@@ -29,7 +29,7 @@ drop: tool-rules                # 要去掉的骨架提示段（可选，名单�
 | `maker` | 创造模式 | 全量 + `runtime_api` | 在标准能力之上加运行时只读查询：给自己加模式、给 dsc 写插件 |
 | `ptc` | PTC 模式 | 全量 + `run_code` | 在标准能力之上加 `run_code`：批量任务写一段脚本调工具，在代码里筛选汇总（原生工具照旧可用） |
 
-四个档的顺序跟 dsh 的 preset order 一致（standard → ptc → minimal → cordis），自定义档排在后面。
+四个档的顺序跟 dsh 的 preset order 一致（standard → ptc → minimal → maker，`cordis` 是 `maker` 的别名），自定义档排在后面。
 
 四个文件第一次启动时写出到 `~/.dsc/presets/`，**已存在的一律不覆盖**——你改过的一直是你的。
 内置四个删不掉（删了下次启动又会长回来），想改就直接编辑它。
@@ -60,7 +60,7 @@ drop: tool-rules                # 要去掉的骨架提示段（可选，名单�
    看的是命令行与权限模式，不看模式。
 2. **默认档必须等价于「没有模式这个概念」。** 标准模式的工具投影是恒等映射、提示段是空串，
    所以系统提示词逐字节不变（服务端提示缓存只认前缀，默认档一变就等于全失效）。
-   自检里有这一条断言（`shots/preset-check.mjs`）。
+   自检里有相关断言（`scripts/sandbox-parity-test.mjs` 的 [4] 组：标准档是全量工具、不替换人格）。
 3. **坏文件不许把启动拦下来。** frontmatter 解析不了、`drop` 写了不认识的段、两个文件声明了同一个名字——
    都只是列出来时带一句 `problem`，模型仍按标准档跑。
 4. **模式与权限/协作那几根旋钮互不越界**：
@@ -107,9 +107,9 @@ dsc 这一版不是。换来的是：脚本能做的事 = 它能调用的工具�
 `run_code` 的结果正文——模型看到的与日志里存的是同一份。
 
 额度（`core/ptc.ts` 的 `PTC_LIMITS`）：一段脚本最多调 200 次工具、同步段最长 15 秒、
-整段最长 120 秒、交回正文最多 20000 字符。
+整段最长 300 秒、交回正文最多 20000 字符。
 
-**等人不算脚本的时间**：脚本里 `await sdk.ask_user(...)` 或等审批卡点下来的时候，这 120 秒停表，人答完再接着走（时限本身不变，脚本自己 `await sleep(...)` 拖时间照样会被掐断）。不这么分的话，用户在卡上想三分钟，表先响，答案交回来已经没人接了。
+**等人不算脚本的时间**：脚本里 `await sdk.ask_user(...)` 或等审批卡点下来的时候，这 300 秒停表，人答完再接着走（时限本身不变，脚本自己 `await sleep(...)` 拖时间照样会被掐断）。不这么分的话，用户在卡上想三分钟，表先响，答案交回来已经没人接了。
 
 ## 相关代码
 
@@ -121,9 +121,8 @@ dsc 这一版不是。换来的是：脚本能做的事 = 它能调用的工具�
 | `src/plugins/permission-presets.ts` | 权限预设服务：状态、`/permission` 命令、写口只调沙箱/审批各自 setter |
 | `src/plugins/ptc.ts` + `src/core/ptc.ts` | `run_code` 与它的沙箱执行、结果整形 |
 | `src/plugins/runtime-api.ts` | 创造模式的 `runtime_api` 只读查询 |
-| `desktop/src/renderer/PresetsPanel.tsx` | 设置 → 模式的卡片与编辑表单 |
-| `desktop/src/renderer/Composer.tsx` | 输入框下方那颗模式旋钮 |
+| `ui-shell/src/plugins/settings/presets.tsx` | 设置 → 模式的卡片与就地表单 |
+| `ui-shell/src/plugins/composer/ui.tsx` | 输入框下方那颗模式旋钮 |
 | `scripts/sandbox-parity-test.mjs` | 四档模式与权限预设对齐 dsh 的回归（PTC 全量、极简 read_image、顺序、持久化） |
-| `shots/preset-check.mjs` | 内核那一半的自检（默认档逐字节等价、极简工具集、PTC 守卫、坏文件…） |
 | `src/core/tools/image-tool.ts` | 极简档专用的 `read_image` |
 | `desktop/shots/presets-shots.ps1` | 界面截图与 DOM 测量 |

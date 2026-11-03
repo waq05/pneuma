@@ -166,7 +166,7 @@ order 是刻度，数字小的先跑：灾难地板 5、沙箱 8、协作模式 
 
 ### 0.4 写界面插件（简版）
 
-界面插件的契约版本就是 `ui-shell/package.json` 的 `version`（当前 **1.2.0**），壳与插件之间
+界面插件的契约版本就是 `ui-shell/package.json` 的 `version`（当前 **0.8.1**），壳与插件之间
 靠 semver 区间对账。
 
 - 目录形状：`~/.dsc/plugins/<名字>/` 下放 `plugin.json` 与 `ui/client.js`，`plugin.json` 的
@@ -335,7 +335,7 @@ ctx.tools.list(): ToolEntry[]
 要点：`parameters` 必须是合法 JSON Schema（`{ type: 'object', properties: {...} }`）；
 `signal` 中止时尽快返回或抛错；**不要**在 run 里再向用户提问（用审批机制表达风险）。
 
-**按会话取数**（v7，2026-10-28）：宿主同时常驻多个会话的 agent，凡是「跟会话走」的投影都得
+**按会话取数**（v6，2026-10-28）：宿主同时常驻多个会话的 agent，凡是「跟会话走」的投影都得
 问清是谁在问。`ctx.tools.visible(scope?)` 与 `ctx.tools.project(id, (tools, scope) => …)` 的
 `scope` 就是这一格（`{ sessionId?, cwd? }`，不传 = 当前查看的会话）。写成读全局状态的话，
 用户点开另一个会话就会改掉后台那一轮的工具目录。
@@ -513,7 +513,7 @@ return () => { offProvider(); offMarket() }
 退订函数，插件卸载就在下一次判定 / 下一次装配快照前生效；同 id 再注册算顶掉前一份。
 
 ```js
-// 1) 工具动手之前拦一道。order 小的先问：灾难地板 5、协作模式 10、安全钩子 20、审批 30。
+// 1) 工具动手之前拦一道。order 小的先问：灾难地板 5、沙箱 8、协作模式 10、安全钩子 20 / 25、审批 30。
 //    裁决三种：deny（当场拒，reason 原样回给模型）/ pass（免问直接执行）/ defer（问下一位）。
 //    守卫自己抛错按 deny 处理——坏掉的闸门不该等于放行。
 const offGuard = ctx.guards.register({
@@ -600,7 +600,7 @@ ctx.prompt.registerProjection('my-inject', (messages) => {
 跳过它并发一条通知，不拖垮请求；`transformMessages`（v3 的匿名改写）已移除，迁移就是把
 函数换成命名投影。
 
-**按会话取数**（v7）：附加提示的回调、骨架取舍都一样多收一格 `scope`
+**按会话取数**（v6）：附加提示的回调、骨架取舍都一样多收一格 `scope`
 （`(scope?) => string` / `(ids, scope?) => ids`），`ctx.prompt.systemPrompt(cwd, scope?)` 把它
 一路传下去。不传按当前查看的会话算。模式（预设）就是靠这一格做到「每个会话记自己那一档」。
 
@@ -854,12 +854,12 @@ cd ~/.dsc/plugins && npm install <dsh 插件包>
 
 ### 10.1 契约版本与门禁
 
-- 界面插件面对的契约是 **`@dsc/ui`**（壳的导出面 + 槽位语义 + 清单字段含义），契约版本从
-  **1.0.0** 起（`ui-shell/package.json` 的 version，构建时写进 `lib/ui/plugins/manifest.json`
+- 界面插件面对的契约是 **`@dsc/ui`**（壳的导出面 + 槽位语义 + 清单字段含义），契约版本就是
+  `ui-shell/package.json` 的 `version`（当前 **0.8.1**，构建时写进 `lib/ui/plugins/manifest.json`
   顶层 `apiVersion`）。
 - 第三方界面插件**必须**声明自己对着哪个区间（`plugin.json` 的 `api` 字段，semver，如
-  `^1.0.0`）。宿主在组启动图时做 `satisfies(壳版本, 区间)` 判定：不满足就**不进启动图**，
-  原因（「插件 X 要求 @dsc/ui ^2.0.0，当前壳 1.0.0，已跳过加载」）进诊断区。判定在宿主侧，
+  `^0.8.1`）。宿主在组启动图时做 `satisfies(壳版本, 区间)` 判定：不满足就**不进启动图**，
+  原因（「插件 X 要求 @dsc/ui ^0.9.0，当前壳 0.8.1，已跳过加载」）进诊断区。判定在宿主侧，
   浏览器产物里没有 semver。
 - `workspace:` 前缀与非法区间一律拒绝——**请写具体版本区间**，没有「等于当前」的猜法。
 - 豁免通道第一期不做。
@@ -872,7 +872,7 @@ cd ~/.dsc/plugins && npm install <dsh 插件包>
 | 纯增量（新导出、新槽、新可选字段） | 次版本 +1 |
 | 修 bug 不改形状 | 补丁 +1 |
 
-插件作者按此写区间：只用旧能力写 `^1.0.0`；用上新能力再抬下限。区间写宽了在语义变更的
+插件作者按此写区间：只用旧能力写 `^0.8.1`；用上新能力再抬下限。区间写宽了在语义变更的
 大版本里会「加载成功但行为不对」——这正是门禁防的事，区间别写宽。
 
 ### 10.3 第三方界面插件：目录形状、信任与 rev
@@ -881,7 +881,7 @@ cd ~/.dsc/plugins && npm install <dsh 插件包>
 
 ```
 ~/.dsc/plugins/demo-greeter/
-  plugin.json     ← { "api": "^1.0.0", "platforms": ["web", "tui"], "phase": "early" }（api 必填）
+  plugin.json     ← { "api": "^0.8.1", "platforms": ["web", "tui"], "phase": "early" }（api 必填）
   ui/client.js    ← 界面半边（CJS 工厂，注册名必须等于目录 id）
 ```
 
@@ -899,7 +899,7 @@ cd ~/.dsc/plugins && npm install <dsh 插件包>
 旧页面的旧地址拿旧字节、新地址拿新字节。宿主换代时只保留**上一代**（单资源与批 combo 各一份），
 更早的地址刷新页面即可。
 
-### 10.4 chain 槽与壳内置平台层（1.1.0 起可用）
+### 10.4 chain 槽与壳内置平台层（0.8 起可用）
 
 **chain 槽**：第四种槽形态，「条目自己选举」。声明方把它开成子槽（`children: { 'xxx.yyy': 'chain' }`），
 渲染方对每一份 owner 值问一遍链上的登记：按 `priority` 升序逐个调 `select(owner)`，
@@ -911,7 +911,7 @@ cd ~/.dsc/plugins && npm install <dsh 插件包>
 catch-all（priority 100）。想接管某类工具卡的渲染：往这个槽注册一条 priority 更小、
 `select` 只认领自己那类工具的登记即可，认领范围外返回 `null` 让给后面。
 
-**壳内置平台层（仅 web 值面）**：`@dsc/ui` 从 1.1.0 起额外导出四件壳内置实现，
+**壳内置平台层（仅 web 值面）**：`@dsc/ui` 另外还导出四件壳内置实现，
 供界面插件直接用、**不必也不许**自带这些重依赖（平台模块表里没有它们）：
 
 | 导出 | 用途 |
@@ -924,7 +924,7 @@ catch-all（priority 100）。想接管某类工具卡的渲染：往这个槽�
 终端壳（TUI 载体）的 `@dsc/ui` 不导出这四件——它们是 DOM 组件；双载体插件里请先判
 `ui.host.platform` 再引用。
 
-### 10.4.1 平台种子：可以按包名 require 的基元包（1.2.0 起）
+### 10.4.1 平台种子：可以按包名 require 的基元包（0.8 起）
 
 除了 `@dsc/ui`，壳还把三个基元包作为**平台种子**下发（web 载体）。插件 bundle 里对它们的
 引用由壳提供：构建期保留成 `require('@dsc/ui-primitives')` 这样的外部请求，运行期从壳的
@@ -943,7 +943,7 @@ catch-all（priority 100）。想接管某类工具卡的渲染：往这个槽�
    先判 `ui.host.platform`；只在类型面引用不会产生 require。
 2. **`@dsc/ui-core` 不在种子里**（故意）：它是壳的内部实现，插件当值引用会得到
    「白名单外的模块」那句错；插件要的能力都经 `@dsc/ui` 或上面三个包给。
-3. **类型面（1.2.0 起随 SDK 发布 `.d.ts`）**：第三方 TS 作者按包名就能拿到官方类型——界面壳
+3. **类型面（随 SDK 发布 `.d.ts`）**：第三方 TS 作者按包名就能拿到官方类型——界面壳
    构建时用 tsc 出一棵类型树，落在发行包的 `lib/ui/sdk/@dsc/<包名>/`（`ui-shell/build-types.mjs`），
    每个包目录里有真实 `package.json`（`types` / `exports` 指向入口 `.d.ts`）。你的工程只要
    一条 paths：
@@ -1010,7 +1010,7 @@ catch-all（priority 100）。想接管某类工具卡的渲染：往这个槽�
 写法上两者等价、取向不同：`@dsc/ui` 是**聚合面**（少量重依赖与图标经它转出，老插件照旧
 可用），按包名 require 是**按需取整包**（想用 `Select` 就写 `@dsc/ui-primitives`，语义直白）。
 
-### 10.5 类型化槽位契约（1.2.0 起可用）
+### 10.5 类型化槽位契约（0.8 起可用）
 
 壳与插件用 **`declare module '@dsc/ui'`** 往一张槽位契约表 `SlotMap` 上并键（表声明在
 `@dsc/ui` 本体里，插件 import 的就是它；`declare module` 的合并只认这个模块本身，别的
@@ -1036,10 +1036,10 @@ declare module '@dsc/ui' {
 - 未声明过 `children` 的组件调 `renderSlot('某个槽')` 是编译错误；对子槽传错 owner props
   也是。运行期行为不变（拼错的名字仍当场抛装配错误）。
 
-升级提示：1.2.0 把 `UiComponent` 从 `ComponentType<any>` 收窄成裸调用签名，**只影响类型面**——
+升级提示：当前版本把 `UiComponent` 从 `ComponentType<any>` 收窄成裸调用签名，**只影响类型面**——
 零参组件与声明了 props 的组件都不需要改代码。
 
-### 10.6 服务面：`provide` / `consume`、`inject` 与 `services`（2.0 起两个字段）
+### 10.6 服务面：`provide` / `consume`、`inject` 与 `services`（0.8 起两个字段）
 
 插件之间共享对象走 **服务表**：
 
@@ -1049,19 +1049,19 @@ ui.provide('teammates', seat)          // 一个名字只能有一个提供者�
 const got = ui.consume<typeof seat>('teammates')   // 缺席给 undefined（软依赖）
 ```
 
-- **硬依赖分两个字段**（2.0 起，不再双关）：
+- **硬依赖分两个字段**（0.8 起，不再双关）：
   - `inject: ["another-plugin"]` —— 依赖另一个**插件**（拓扑排序也用它）。那条没装成，这个
     插件不 apply，诊断区按三档说清：「插件 X 没装上：…」「插件 X 被停用了（在插件中心或
     ~/.dsc/plugins.json 里打开）」「插件 X 不在清单里」。被停用单列一档，是为了别把人指去
     重装一个已经装好的插件。
   - `services: ["teammates"]` —— 依赖一个**服务名**。服务表里没有提供者就等待，诊断区写
     「服务 X 还没有提供者」；等提供者装上后装载器会重试一轮。
-- **为什么要拆**：1.x 里一个 `inject` 字段两种含义，靠「这个名字在不在清单里」猜——插件改个名、
+- **为什么要拆**：旧版里一个 `inject` 字段两种含义，靠「这个名字在不在清单里」猜——插件改个名、
   或者服务恰好与某个插件同名，判断就悄悄变了，报错还会指错人。拆成两个字段后每种依赖只有
   一种查法。这条由 `scripts/ui-plugin-test.mjs` 的 [6] 组钉着（两档文案分开、同名两边都写、
   `inject` 里的名字不再回落当服务名）。
-- **升级到 2.0 要改什么**：把 `inject` 里原本写服务名的那些名字挪到 `services`；其余不用动。
-  旧清单（声明 `^1.x` 的第三方插件）会被 API 门禁拒掉，提示就是这一句。
+- **升级到当前契约要改什么**：把 `inject` 里原本写服务名的那些名字挪到 `services`；其余不用动。
+  旧清单（声明旧版本区间的第三方插件）会被 API 门禁拒掉，提示就是这一句。
 - 想在**渲染期**跟着服务的出现/消失换数据源（例如提供者被停用），用 `useService<T>(name)`
   （React hook，缺席给 `undefined`；服务表出现变化会唤醒组件）。
 - 服务**不必是席位**：provide 出去的对象可以是**动作面**——例如 team 插件把
@@ -1070,9 +1070,9 @@ const got = ui.consume<typeof seat>('teammates')   // 缺席给 undefined（软�
   （状态面板的选择是整行不渲染：点了没反应的入口比没有入口更糟）；给动作面起名同样别撞
   插件 id。
 
-### 10.6.1 一个包两半：宿主半 + 界面半（2.0 起）
+### 10.6.1 一个包两半：宿主半 + 界面半（0.8 起）
 
-dsh 的构造单位是**一个 npm 包两半**，Pneuma 2.0 起照同一份声明收界面半：
+dsh 的构造单位是**一个 npm 包两半**，现在的 Pneuma 照同一份声明收界面半：
 
 ```jsonc
 // package.json
@@ -1086,7 +1086,7 @@ dsh 的构造单位是**一个 npm 包两半**，Pneuma 2.0 起照同一份声�
     "bundle": { "patch": "./cordis.patch.yml" },   // 宿主行（可选）
     "client": {
       "platform": "pneuma",            // 我们的壳只认这个值
-      "api": "^0.7.1",                 // @dsc/ui 的版本区间（必填）
+      "api": "^0.8.1",                 // @dsc/ui 的版本区间（必填）
       "platforms": ["web", "tui"],     // 服务哪些载体（可选，缺省 ["web"]）
       "inject": ["trace"],             // 依赖的插件 id（可选）
       "services": ["teammates"],       // 依赖的服务名（可选）
@@ -1132,7 +1132,7 @@ dsh 的构造单位是**一个 npm 包两半**，Pneuma 2.0 起照同一份声�
 `node scripts/ui-two-halves-e2e.mjs`（真 Electron + 真宿主，断言状态栏里真的画出了那一段，
 截图落 `desktop/shots/two-halves.png`）。
 
-### 10.7 席位：跨插件共享一份状态（1.2.0 起可用）
+### 10.7 席位：跨插件共享一份状态（0.8 起可用）
 
 ```ts
 // 提供方：handle 在 apply 里现建（不许模块级——模块缓存会让它变成跨重载的伪单例）
@@ -1155,7 +1155,7 @@ const list = useSeat(instance, (state) => state.list)                  // 缺席
   （`draft.list = [...draft.list, item]`），不要原地改嵌套对象。
 - TUI：`ui.slots.seat` 与 `defineStore` 两壳一致；浏览器壳与终端壳都支持。
 
-### 10.8 Component Factory：一份装配、多个父位置（1.2.0 起可用）
+### 10.8 Component Factory：一份装配、多个父位置（0.8 起可用）
 
 一份定义、若干**无关的父位置**各自渲染一次 occurrence，父按 occurrence 选局部组件：
 
@@ -1203,7 +1203,7 @@ props.renderFactorySlot('myplugin.card', { entry }, {
   （`examples/ui-plugin-demo/ui/client.js` 往工具卡里注册一行）在真机上走查——自动化探针
   到不了那里（本仓库的真机走查跑的是空档案，没有工具卡）。要往这里加东西时，先问
   「第三方会不会要」。
-### 10.9 动作表：全局动作登记到一处（1.2.0 起可用）
+### 10.9 动作表：全局动作登记到一处（0.8 起可用）
 
 命令面板、首屏能力卡这些「入口」不该各自硬编码一份动作清单。全局、**无参**的动作登记到
 动作表（`actions` 插件提供的服务 `actions`，契约类型 `UiAction` 在 `@dsc/ui`）：
@@ -1232,10 +1232,10 @@ const list = useActions()
   登记错不该让整页崩掉）。
 - `run` 里不用自己关面板：命令面板选中后统一收起。
 
-### 10.10 启动分批、批取数与本页热更（1.2.0 起可用）
+### 10.10 启动分批、批取数与本页热更（0.8 起可用）
 
-**`plugin.json` 的 `phase`**（内置插件写在目录里的可选 `plugin.json`，第三方写在自己的
-`plugin.json`）：
+**`phase`**（内置插件写在自己 `package.json` 的 `dsh.client` 里，第三方写在自己的
+`plugin.json` 里）：
 
 | 取值 | 含义 |
 | --- | --- |
@@ -1245,7 +1245,7 @@ const list = useActions()
 两条纪律：
 
 1. **早期批要尽量小**——它的取数挡在首帧前面（一个批一次请求，见下），塞进三个以上插件
-   就失去意义了。内置的 `composer` 与 `statusbar` 声明为 early，其余 14 个是 application。
+   就失去意义了。内置的 `composer` 与 `statusbar` 声明为 early，其余 17 个是 application。
 2. **phase 是页面加载级的**：本页热更（改文件）不会改一条插件的 phase，改 phase 要刷新页面。
    写坏取值的方向：内置插件 = **构建失败**；第三方 = 记一条问题、按 application 处理（不进
    `early`，也不整条丢弃）。
