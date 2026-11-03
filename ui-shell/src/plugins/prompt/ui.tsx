@@ -487,10 +487,13 @@ const ApprovalCard = memo(function ApprovalCard({ request }: { request: Approval
         <div className="approval-diff">
           <div className="approval-diff-head">
             <span className="approval-diff-path" title={request.diff.path}>
-              {`${request.diff.status === 'added' ? '将写入' : '将修改'} ${displayPathOf(request.diff.path, cwd)}`}
+              {`${
+                request.diff.status === 'added' ? '将写入' : request.diff.status === 'deleted' ? '将删除' : '将修改'
+              } ${displayPathOf(request.diff.path, cwd)}`}
             </span>
             <span className="changes-counts">
               {request.diff.status === 'added' ? <span className="diff-badge">新增</span> : null}
+              {request.diff.status === 'deleted' ? <span className="diff-badge">删除</span> : null}
               <span className="changes-added">{`+${String(request.diff.added)}`}</span>
               <span className="changes-removed">{`-${String(request.diff.removed)}`}</span>
             </span>

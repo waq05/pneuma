@@ -25,15 +25,21 @@ const MAX_DIFF_LINES = 800
 export interface IntendedInput {
   /** 参数里的目标路径（可能是相对路径，转绝对由 {@link toAbsPath} 做）。 */
   path: string
-  /** write 的整写内容 / edit 的替换后的那段文本（参数 `new`）。 */
+  /** write 的整写内容 / edit 的替换后的那段文本（参数 `new`）；多处编辑与替换时不用它。 */
   content: string
   /** 仅 edit：要被替换的原文（参数 `old`）。 */
   old?: string
+  /** 仅 ops_edit_file：一次多处替换（每处对着同一份原文恰好匹配一次）。 */
+  edits?: { old: string; new: string }[]
+  /** 仅 ops_replace：字面量批量替换（单文件才能推演，目录读不到会回落参数差异）。 */
+  replace?: { pattern: string; replacement: string }
 }
 
-/** 解析 write / edit 的入参；参数不齐（流式半截 JSON、缺字段）就返回 null。 */
+/** 解析 write / edit / ops 写类的入参；参数不齐（流式半截 JSON、缺字段）就返回 null。 */
 export function parseIntended(name: string, argsText: string): IntendedInput | null {
-  if (name !== 'write' && name !== 'edit') return null
+  if (name !== 'write' && name !== 'edit' && name !== 'ops_write_file' && name !== 'ops_edit_file' && name !== 'ops_replace') {
+    return null
+  }
   let parsed: unknown
   try {
     parsed = JSON.parse(argsText)
@@ -44,11 +50,27 @@ export function parseIntended(name: string, argsText: string): IntendedInput | n
   const args = parsed as Record<string, unknown>
   const path = typeof args.path === 'string' ? args.path : ''
   if (path === '') return null
-  if (name === 'write') {
+  if (name === 'write' || name === 'ops_write_file') {
     return typeof args.content === 'string' ? { path, content: args.content } : null
   }
-  if (typeof args.old !== 'string' || typeof args.new !== 'string') return null
-  return { path, content: args.new, old: args.old }
+  if (name === 'edit') {
+    if (typeof args.old !== 'string' || typeof args.new !== 'string') return null
+    return { path, content: args.new, old: args.old }
+  }
+  if (name === 'ops_edit_file') {
+    const raw = Array.isArray(args.edits) ? args.edits : []
+    const edits = raw.map((entry) => {
+      const record = entry !== null && typeof entry === 'object' ? (entry as Record<string, unknown>) : {}
+      return {
+        old: typeof record['oldText'] === 'string' ? record['oldText'] : '',
+        new: typeof record['newText'] === 'string' ? record['newText'] : '',
+      }
+    })
+    if (edits.length === 0 || edits.some((edit) => edit.old === '')) return null
+    return { path, content: '', edits }
+  }
+  if (typeof args.pattern !== 'string' || args.pattern === '' || typeof args.replacement !== 'string') return null
+  return { path, content: '', replace: { pattern: args.pattern, replacement: args.replacement } }
 }
 
 /** 相对路径拼到工作目录下（宿主工具 abs() 的同款判定：绝对形状直接用）。 */
@@ -114,6 +136,47 @@ export function useIntendedDiff(call: ToolCallView, workdir: string, enabled = t
     let on = true
     setState(null)
     const apply = (before: string | null): void => {
+      const fellBack = before === null
+      // ops_replace：整篇按字面量替换；读不到盘时只能拿参数本身当「改前」。
+      if (input.replace !== undefined) {
+        const effectiveBefore = before ?? input.replace.pattern
+        const after = before === null ? input.replace.replacement : before.split(input.replace.pattern).join(input.replace.replacement)
+        setState({ absPath, file: diffToView(absPath, effectiveBefore, after), fellBack })
+        return
+      }
+      // ops_edit_file：每处对着同一份原文恰好匹配一次、且互不重叠（worker 的契约）。
+      if (input.edits !== undefined) {
+        const edits = input.edits
+        const first = edits[0]!
+        if (before === null) {
+          setState({ absPath, file: diffToView(absPath, first.old, first.new), fellBack: true })
+          return
+        }
+        const ranges: { start: number; end: number; text: string }[] = []
+        for (const edit of edits) {
+          const at = before.indexOf(edit.old)
+          if (at < 0) {
+            setState({ absPath, file: diffToView(absPath, edit.old, edit.new), fellBack: false, mismatch: 'missing' })
+            return
+          }
+          if (before.indexOf(edit.old, at + 1) >= 0) {
+            setState({ absPath, file: diffToView(absPath, edit.old, edit.new), fellBack: false, mismatch: 'ambiguous' })
+            return
+          }
+          ranges.push({ start: at, end: at + edit.old.length, text: edit.new })
+        }
+        ranges.sort((left, right) => left.start - right.start)
+        for (let index = 1; index < ranges.length; index += 1) {
+          if (ranges[index]!.start < ranges[index - 1]!.end) {
+            setState({ absPath, file: diffToView(absPath, first.old, first.new), fellBack: false, mismatch: 'ambiguous' })
+            return
+          }
+        }
+        let after = before
+        for (const range of [...ranges].reverse()) after = after.slice(0, range.start) + range.text + after.slice(range.end)
+        setState({ absPath, file: diffToView(absPath, before, after), fellBack: false })
+        return
+      }
       if (before !== null && input.old !== undefined) {
         const at = before.indexOf(input.old)
         if (at < 0) {
@@ -125,7 +188,6 @@ export function useIntendedDiff(call: ToolCallView, workdir: string, enabled = t
           return
         }
       }
-      const fellBack = before === null
       let after: string
       let effectiveBefore: string
       if (input.old === undefined) {

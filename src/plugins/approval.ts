@@ -91,62 +91,34 @@ const REVIEWER_OPTIONS: ReadonlyArray<TierOption<ApprovalReviewer>> = [
 /** 写类工具里「目标在工作区内就能自动放行」的那几个。 */
 const PATH_WRITE_TOOLS = new Set(['write', 'edit'])
 
+/** 有「将做的改动」可推演的工具：内置 write/edit + ops 的写类六件。 */
+const DIFF_PREVIEW_TOOLS = new Set([
+  'write',
+  'edit',
+  'ops_write_file',
+  'ops_edit_file',
+  'ops_replace',
+  'ops_copy',
+  'ops_move',
+  'ops_remove',
+])
+
 /**
- * write / edit 审批卡的「将做的改动」（codex 审批弹窗内嵌 diff 的同位能力）：
- * 读盘上现值、按工具语义推演写后的全文、走 summarizeChange 同一套算法截断。
- * 与渲染层工具卡的推演（intended-diff.ts）同一套语义，两处分头实现——宿主这份
- * 在弹卡前算好随视图下发，渲染层那份等服务期里自己读盘，环境不同没有共享面。
- *
- * 三种降级：盘上读不到（工作区外 / 文件还不存在）→ write 从空串、edit 用 old→new
- * 的参数差异，标 `fellBack`；edit 的 old 对不上盘（missing / 多处）→ 执行必然失败，
- * 给参数差异并标 `mismatch`，卡片上要提示；完全算不出（非这两类工具、参数不齐、
- * 内容一致）→ null，卡片回到只有参数摘要的常态。
+ * 把「改前 → 改后」折成卡片要的那份差异：走 summarizeChange 同一套算法截断，
+ * hunks 的文本过一遍遮红（摊到卡上的是文件内容，可能带密钥）。
  */
-export async function approvalDiffOf(request: ApprovalRequest): Promise<ApprovalDiffView | null> {
-  if (request.toolName !== 'write' && request.toolName !== 'edit') return null
-  const args = request.args ?? {}
-  const rawPath = typeof args.path === 'string' ? args.path : ''
-  if (rawPath === '') return null
-  // 绝对路径不需要基准；相对路径必须有 cwd 才算得出在看哪一份文件。都没有就不给
-  // 差异预览（卡片退回参数摘要那条常态），**不**拿 process.cwd() 猜——猜出来的
-  // 差异是另一个目录里的同名文件，比没有更糟。
-  if (!isAbsolute(rawPath) && (request.cwd === undefined || request.cwd === '')) return null
-  const abs = isAbsolute(rawPath) ? rawPath : resolve(request.cwd ?? '', rawPath)
-  const content = typeof args.content === 'string' ? args.content : null
-  const oldText = typeof args.old === 'string' ? args.old : null
-  const newText = typeof args.new === 'string' ? args.new : null
-  if (request.toolName === 'write' ? content === null : oldText === null || newText === null) return null
-  const read = await fsp.readFile(abs, 'utf8').catch(() => null)
-  let effectiveBefore: string
-  let after: string
-  let mismatch: ApprovalDiffView['mismatch']
-  if (request.toolName === 'write') {
-    effectiveBefore = read ?? ''
-    after = content!
-  } else if (read === null) {
-    effectiveBefore = oldText!
-    after = newText!
-  } else {
-    const at = read.indexOf(oldText!)
-    if (at < 0) {
-      mismatch = 'missing'
-      effectiveBefore = oldText!
-      after = newText!
-    } else if (read.indexOf(oldText!, at + 1) >= 0) {
-      mismatch = 'ambiguous'
-      effectiveBefore = oldText!
-      after = newText!
-    } else {
-      effectiveBefore = read
-      after = read.slice(0, at) + newText! + read.slice(at + oldText!.length)
-    }
-  }
-  const changes = summarizeChange(abs, effectiveBefore, after)
+function diffViewOf(
+  abs: string,
+  before: string,
+  after: string,
+  options: { status?: 'added' | 'modified' | 'deleted'; fellBack?: boolean; mismatch?: ApprovalDiffView['mismatch'] } = {},
+): ApprovalDiffView {
+  const changes = summarizeChange(abs, before, after)
   // 内容一致（覆盖写了个寂寞）也给一份空 diff：卡片上「不会有实际改动」比「没有信息」好。
   const clean =
     changes === undefined
-      ? { path: abs, added: 0, removed: 0, hunks: [], status: 'modified' as const }
-      : stripBaseline(changes)
+      ? { path: abs, added: 0, removed: 0, hunks: [], status: options.status ?? ('modified' as const) }
+      : { ...stripBaseline(changes), ...(options.status === undefined ? {} : { status: options.status }) }
   return {
     ...clean,
     // hunks 的行文本会摊到卡上：密钥形状的字符串过一遍遮红，别让审批动作本身泄密
@@ -154,9 +126,141 @@ export async function approvalDiffOf(request: ApprovalRequest): Promise<Approval
       ...hunk,
       lines: hunk.lines.map((line) => ({ ...line, text: redact(line.text) })),
     })),
-    ...(read === null ? { fellBack: true } : {}),
-    ...(mismatch !== undefined ? { mismatch } : {}),
+    ...(options.fellBack === true ? { fellBack: true } : {}),
+    ...(options.mismatch === undefined ? {} : { mismatch: options.mismatch }),
   }
+}
+
+/** 参数里的路径收成绝对路径；相对路径没有 cwd 就不猜（返回 null）。 */
+function targetOf(raw: string, cwd: string | undefined): string | null {
+  if (raw === '') return null
+  if (isAbsolute(raw)) return raw
+  if (cwd === undefined || cwd === '') return null
+  return resolve(cwd, raw)
+}
+
+/**
+ * ops_edit_file 的参数推演：每处 oldText 都必须在**同一份原始内容**里恰好出现一次，
+ * 且各处区间互不重叠（worker 的契约就是这么写的）。
+ *
+ * @returns 改后的全文；对不上时给 mismatch 与「oldText→newText」的参数差异
+ */
+function applyOpsEdits(
+  before: string,
+  edits: readonly { oldText: string; newText: string }[],
+): { after: string } | { mismatch: 'missing' | 'ambiguous'; firstOld: string; firstNew: string } {
+  const ranges: { start: number; end: number; newText: string }[] = []
+  for (const edit of edits) {
+    const at = before.indexOf(edit.oldText)
+    // 报的是**出错的那一处**，不是第一处：卡片上贴别的替换会误导用户判断。
+    if (at < 0) return { mismatch: 'missing', firstOld: edit.oldText, firstNew: edit.newText }
+    if (before.indexOf(edit.oldText, at + 1) >= 0) {
+      return { mismatch: 'ambiguous', firstOld: edit.oldText, firstNew: edit.newText }
+    }
+    ranges.push({ start: at, end: at + edit.oldText.length, newText: edit.newText })
+  }
+  ranges.sort((left, right) => left.start - right.start)
+  for (let index = 1; index < ranges.length; index += 1) {
+    if (ranges[index]!.start < ranges[index - 1]!.end) {
+      const overlapped = edits[index] ?? edits[0]!
+      return { mismatch: 'ambiguous', firstOld: overlapped.oldText, firstNew: overlapped.newText }
+    }
+  }
+  let after = before
+  for (const range of [...ranges].reverse()) {
+    after = after.slice(0, range.start) + range.newText + after.slice(range.end)
+  }
+  return { after }
+}
+
+/**
+ * 审批卡的「将做的改动」（codex 审批弹窗内嵌 diff 的同位能力）：读盘上现值、
+ * 按工具语义推演写后的全文、走 summarizeChange 同一套算法截断。
+ *
+ * 覆盖内置 write/edit，以及 ops 的写类六件：
+ *   - `ops_write_file` 同 write；`ops_edit_file` 把 edits 依次套到同一份原文上；
+ *   - `ops_replace` 只推演「path 是文件」那种（目录要先扫盘，弹卡前不做）；
+ *   - `ops_copy` / `ops_move` 推演目标是 `to`（源内容 → 空白目标，卡片按「新增」画）；
+ *   - `ops_remove` 推演成整篇删除（status `deleted`）。
+ *
+ * 三种降级：盘上读不到（工作区外 / 文件还不存在）→ 整写从空串、编辑用参数差异，
+ * 标 `fellBack`；编辑的 old 对不上盘（missing / 多处 / 重叠）→ 执行必然失败，给参数
+ * 差异并标 `mismatch`；完全算不出（参数不齐、目录替换、源文件读不到）→ null，
+ * 卡片回到只有参数摘要的常态。
+ */
+export async function approvalDiffOf(request: ApprovalRequest): Promise<ApprovalDiffView | null> {
+  const name = request.toolName
+  if (!DIFF_PREVIEW_TOOLS.has(name)) return null
+  const args = request.args ?? {}
+  const rawPath = typeof args.path === 'string' ? args.path : ''
+  const rawTo = typeof args.to === 'string' ? args.to : ''
+  const destTool = name === 'ops_copy' || name === 'ops_move'
+  const target = destTool ? rawTo : rawPath
+  const abs = targetOf(target, request.cwd)
+  if (abs === null) return null
+
+  // ops_copy / ops_move：写的是 to，源内容从 path 读。
+  if (destTool) {
+    const source = targetOf(rawPath, request.cwd)
+    if (source === null) return null
+    const content = await fsp.readFile(source, 'utf8').catch(() => null)
+    if (content === null) return null
+    const existing = await fsp.readFile(abs, 'utf8').catch(() => null)
+    if (existing !== null) return null
+    return diffViewOf(abs, '', content, { status: 'added' })
+  }
+
+  const read = await fsp.readFile(abs, 'utf8').catch(() => null)
+
+  if (name === 'write' || name === 'ops_write_file') {
+    const content = typeof args.content === 'string' ? args.content : null
+    if (content === null) return null
+    return diffViewOf(abs, read ?? '', content, { fellBack: read === null })
+  }
+
+  if (name === 'edit') {
+    const oldText = typeof args.old === 'string' ? args.old : null
+    const newText = typeof args.new === 'string' ? args.new : null
+    if (oldText === null || newText === null) return null
+    if (read === null) return diffViewOf(abs, oldText, newText, { fellBack: true })
+    const at = read.indexOf(oldText)
+    if (at < 0) return diffViewOf(abs, oldText, newText, { mismatch: 'missing' })
+    if (read.indexOf(oldText, at + 1) >= 0) return diffViewOf(abs, oldText, newText, { mismatch: 'ambiguous' })
+    return diffViewOf(abs, read, read.slice(0, at) + newText + read.slice(at + oldText.length))
+  }
+
+  if (name === 'ops_edit_file') {
+    const rawEdits = Array.isArray(args.edits) ? args.edits : []
+    const edits = rawEdits
+      .map((entry) => (entry !== null && typeof entry === 'object' ? entry : {}))
+      .map((entry) => ({
+        oldText: typeof (entry as Record<string, unknown>)['oldText'] === 'string' ? String((entry as Record<string, unknown>)['oldText']) : '',
+        newText: typeof (entry as Record<string, unknown>)['newText'] === 'string' ? String((entry as Record<string, unknown>)['newText']) : '',
+      }))
+    if (edits.length === 0 || edits.some((edit) => edit.oldText === '')) return null
+    if (read === null) {
+      const first = edits[0]!
+      return diffViewOf(abs, first.oldText, first.newText, { fellBack: true })
+    }
+    const applied = applyOpsEdits(read, edits)
+    if ('mismatch' in applied) {
+      return diffViewOf(abs, applied.firstOld, applied.firstNew, { mismatch: applied.mismatch })
+    }
+    return diffViewOf(abs, read, applied.after)
+  }
+
+  if (name === 'ops_replace') {
+    const pattern = typeof args.pattern === 'string' ? args.pattern : ''
+    const replacement = typeof args.replacement === 'string' ? args.replacement : ''
+    if (pattern === '' || read === null) return null
+    const info = await fsp.stat(abs).catch(() => null)
+    if (info === null || !info.isFile()) return null
+    return diffViewOf(abs, read, read.split(pattern).join(replacement))
+  }
+
+  // ops_remove：整篇删除。
+  if (read === null) return null
+  return diffViewOf(abs, read, '', { status: 'deleted' })
 }
 
 /** 一张卡允许出现的授权档位。 */

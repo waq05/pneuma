@@ -11,8 +11,8 @@ import type { DiffHunkView } from './transcript.js'
 
 /**
  * 审批卡内嵌的「将做的改动」（codex 审批弹窗内嵌 diff 的同位能力）：宿主在弹卡前
- * 读盘上现值、按工具语义推演出这次 write / edit 将产生的差异。
- * 算不出来（非 write/edit、参数不齐）时整个字段缺省。
+ * 读盘上现值、按工具语义推演出这次 write / edit / ops 写类将产生的差异。
+ * 算不出来（参数不齐、目录替换、源文件读不到）时整个字段缺省。
  */
 export interface ApprovalDiffView {
   /** 目标绝对路径。 */
@@ -23,8 +23,8 @@ export interface ApprovalDiffView {
   hunks: DiffHunkView[]
   /** true = hunks 超行数预算被砍过尾。 */
   truncated?: boolean
-  /** `added` = 新建文件（改前不存在 / 从空串起算）；`modified` = 改已有文件。 */
-  status: 'added' | 'modified'
+  /** `added` = 新建文件（改前不存在 / 从空串起算）；`modified` = 改已有文件；`deleted` = 整个删除。 */
+  status: 'added' | 'modified' | 'deleted'
   /** true = 盘上现值没读到（工作区外 / 文件还不存在），差异是从参数推算的。 */
   fellBack?: boolean
   /** 仅 edit：old 在盘上匹配不到 / 匹配多处——照参数执行会失败，卡片要提示。 */

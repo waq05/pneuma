@@ -77,6 +77,7 @@ import { dockBrowserPlugin } from '../plugins/dock-browser.js'
 import { selfImprovePlugin } from '../plugins/self-improve.js'
 import { dshCompatPlugin } from '../plugins/dsh-compat.js'
 import { fileReviewPlugin } from '../plugins/file-review.js'
+import { opsPlugin } from '../plugins/ops.js'
 
 /**
  * 官方可开关插件（插件中心「官方可开关」那一档）：代码随包发布，但有开关，
@@ -222,6 +223,14 @@ export const OFFICIAL_PLUGINS: readonly Omit<PluginMeta, 'source'>[] = [
     settingsSection: 'self-improve',
   },
   {
+    file: 'ops',
+    name: '文档与批量读取',
+    description: '读 PDF / Word / CSV、一次读多段文件、改之前先看差异；引擎来自 dsh-ops 的 Rust worker，要先装 dsh-ops',
+    toggleable: true,
+    defaultDisabled: true,
+    settingsSection: 'ops',
+  },
+  {
     file: 'dsh-compat',
     name: 'dsh 插件兼容',
     description: '让按 dsh 写法做的外部插件也能装进来跑；补 logger、模块解析与工具注册的差异',
@@ -250,6 +259,7 @@ const OFFICIAL_OBJECTS: Readonly<Record<string, Plugin.Object>> = {
   'dock-browser': dockBrowserPlugin,
   'self-improve': selfImprovePlugin,
   'dsh-compat': dshCompatPlugin,
+  ops: opsPlugin,
 }
 
 export interface KernelOptions {
