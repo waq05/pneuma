@@ -1,0 +1,10 @@
+test(ui): 界面探针跟上界面包的目录搬迁
+
+为什么：19 个界面单元搬进 ui-shell/src/packages/ui-<id>/ 之后，四条探针还在按旧路径
+读源码或按旧目录排除自身，导致 check:ui 4 条假红（实现字节未变）。
+
+- ui-model-picker：排除自身目录改成 /packages/ui-composer/
+- ui-native-bridge / ui-plugin：join(...,'src','plugins','<id>') → 'packages','ui-<id>'
+- ui-review-findings：语料里的位置改成 src/packages/subagent/index.ts
+
+验证：check:ui 54/54。

@@ -380,10 +380,10 @@ console.log('[10] 样式门：新类名有规则、只用令牌、退役的那�
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const full = `${dir}/${entry.name}`
         if (entry.isDirectory()) {
-          if (entry.name !== 'node_modules' && !/\/composer$/.test(dir)) walk(full)
+          if (entry.name !== 'node_modules' && !/\/ui-composer$/.test(dir)) walk(full)
           continue
         }
-        if (/\.(ts|tsx)$/.test(entry.name) && !full.includes('/plugins/composer/')) out.push(full)
+        if (/\.(ts|tsx)$/.test(entry.name) && !full.includes('/packages/ui-composer/')) out.push(full)
       }
       return out
     }

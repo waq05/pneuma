@@ -1475,7 +1475,7 @@ console.log('\n[9] 设置回执的结构化载荷')
     JSON.stringify(kinds),
   )
 
-  const settingsDir = join(repoRoot, 'ui-shell', 'src', 'plugins', 'settings')
+  const settingsDir = join(repoRoot, 'ui-shell', 'src', 'packages', 'ui-settings')
   const sources = readdirSync(settingsDir)
     .filter((file) => file.endsWith('.tsx'))
     .map((file) => readFileSync(join(settingsDir, file), 'utf8'))

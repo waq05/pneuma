@@ -36,7 +36,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 /** 走查的靶子：改动落点（一个**首屏批**里的小插件，apply 只有一行，改它不牵动别人）。 */
 const TARGET = {
   id: 'statusbar',
-  file: join(root, 'ui-shell', 'src', 'plugins', 'statusbar', 'ui.tsx'),
+  file: join(root, 'ui-shell', 'src', 'packages', 'ui-statusbar', 'ui.tsx'),
 }
 /** 标记插在 apply 体第一行：锚不到就报错退出（源码结构变了要有人看一眼）。 */
 const ANCHOR = 'apply(ui) {'

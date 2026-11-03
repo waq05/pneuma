@@ -255,7 +255,7 @@ console.log('[7] 分轮口径单点 + internal 条目对齐 dsh（0.6.67 右侧�
 
   let seq = 0
   const e = (kind, extra = {}) => ({ kind, id: (seq += 1), ...extra })
-  // 宿主 subagent 插件（src/plugins/subagent.ts:517）造出来的队友汇报正文形状。
+  // 宿主 subagent 插件（src/packages/subagent/index.ts:517）造出来的队友汇报正文形状。
   const teammateBody =
     '<teammate-report from="mate-1" role="coder" state="已完成">\n派给它的任务：改个 bug\n它的汇报：\n搞定了\n</teammate-report>'
 

@@ -50,7 +50,7 @@ const sample = wrap(
     '整体看过一遍，改动集中在 /review 这条链上。',
     '',
     '### [P0] 取消之后记录还会被覆盖',
-    '位置：src/plugins/subagent.ts:870',
+    '位置：src/packages/subagent/index.ts:870',
     '说明：收工回调里无条件写 finished，取消的结论会被冲掉。',
     '续一句：这里要按 handle 比对。',
     '建议：给 finish 传队友名。',
