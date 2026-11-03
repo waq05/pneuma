@@ -1,0 +1,683 @@
+{
+  "version": 1,
+  "plugins": [
+    {
+      "file": "agent",
+      "name": "Agent 循环",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "approval",
+      "name": "审批",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "approval-floor",
+      "name": "危险命令硬拦截",
+      "enabled": true,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "approval-floor",
+      "bundle": null
+    },
+    {
+      "file": "ask",
+      "name": "模型提问",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "browser",
+      "name": "受控浏览器",
+      "enabled": false,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "browser",
+      "bundle": null
+    },
+    {
+      "file": "commands",
+      "name": "斜杠命令",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "compact",
+      "name": "压缩",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": "compact",
+      "bundle": null
+    },
+    {
+      "file": "computer-use",
+      "name": "操作电脑桌面",
+      "enabled": false,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "computer-use",
+      "bundle": null
+    },
+    {
+      "file": "dock-browser",
+      "name": "侧栏浏览器",
+      "enabled": false,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "dock-browser",
+      "bundle": null
+    },
+    {
+      "file": "dsh-compat",
+      "name": "dsh 插件兼容",
+      "enabled": false,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "file-review",
+      "name": "改动前预览",
+      "enabled": true,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "file-review",
+      "bundle": null
+    },
+    {
+      "file": "goal",
+      "name": "会话目标",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": "goal",
+      "bundle": null
+    },
+    {
+      "file": "guards",
+      "name": "工具守卫链",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "hooks",
+      "name": "安全钩子",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": "hooks",
+      "bundle": null
+    },
+    {
+      "file": "image-diet",
+      "name": "图片卸载",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": "image-diet",
+      "bundle": null
+    },
+    {
+      "file": "lifecycle-hooks",
+      "name": "外部命令钩子",
+      "enabled": false,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "lifecycle-hooks",
+      "bundle": null
+    },
+    {
+      "file": "llm",
+      "name": "模型路由",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "lsp",
+      "name": "代码跳转与报错",
+      "enabled": false,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "lsp",
+      "bundle": null
+    },
+    {
+      "file": "mcp",
+      "name": "MCP 外部工具",
+      "enabled": false,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "mcp",
+      "bundle": null
+    },
+    {
+      "file": "memory",
+      "name": "长期记忆",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": "memory",
+      "bundle": null
+    },
+    {
+      "file": "microcompact",
+      "name": "旧工具结果清理",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": "microcompact",
+      "bundle": null
+    },
+    {
+      "file": "mode",
+      "name": "协作模式",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "ops",
+      "name": "文档与批量读取",
+      "enabled": false,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "ops",
+      "bundle": null
+    },
+    {
+      "file": "plan",
+      "name": "计划交付",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "presets",
+      "name": "模式",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "prompt",
+      "name": "提示词组装",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "ptc",
+      "name": "PTC 代码调用",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "runtime",
+      "name": "运行时适配器",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "runtime-api",
+      "name": "运行时查询",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "sandbox",
+      "name": "文件与命令围栏",
+      "enabled": true,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "sandbox",
+      "bundle": null
+    },
+    {
+      "file": "schedule",
+      "name": "定时任务",
+      "enabled": false,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "schedule",
+      "bundle": null
+    },
+    {
+      "file": "self-improve",
+      "name": "经验沉淀",
+      "enabled": false,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "self-improve",
+      "bundle": null
+    },
+    {
+      "file": "session",
+      "name": "会话",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "session-search",
+      "name": "历史会话搜索",
+      "enabled": true,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "session-search",
+      "bundle": null
+    },
+    {
+      "file": "session-title",
+      "name": "会话标题",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "settings",
+      "name": "设置",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "skills",
+      "name": "技能",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "spill",
+      "name": "长输出转存",
+      "enabled": true,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "spill",
+      "bundle": null
+    },
+    {
+      "file": "subagent",
+      "name": "子智能体",
+      "enabled": false,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "subagent",
+      "bundle": null
+    },
+    {
+      "file": "surfaces",
+      "name": "快照片段注册表",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "team",
+      "name": "共享任务板",
+      "enabled": false,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "team",
+      "bundle": null
+    },
+    {
+      "file": "todo",
+      "name": "任务清单",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": "todo",
+      "bundle": null
+    },
+    {
+      "file": "tool-search",
+      "name": "工具按需加载",
+      "enabled": false,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "tool-search",
+      "bundle": null
+    },
+    {
+      "file": "tools",
+      "name": "工具注册表",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "tools-default",
+      "name": "内置工具",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": "tools-default",
+      "bundle": null
+    },
+    {
+      "file": "transcript",
+      "name": "会话流",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "waiting",
+      "name": "等人登记表",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "web-search",
+      "name": "联网搜索",
+      "enabled": true,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "web-search",
+      "bundle": null
+    },
+    {
+      "file": "webserver",
+      "name": "本机界面服务",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    }
+  ],
+  "sections": [
+    {
+      "id": "about",
+      "title": "关于",
+      "order": 900,
+      "builtin": true
+    },
+    {
+      "id": "approval-floor",
+      "title": "危险命令硬拦截",
+      "order": 33,
+      "builtin": false
+    },
+    {
+      "id": "archive",
+      "title": "归档",
+      "order": 30,
+      "builtin": true
+    },
+    {
+      "id": "compact",
+      "title": "上下文压缩",
+      "order": 35,
+      "builtin": false
+    },
+    {
+      "id": "file-review",
+      "title": "改动前预览",
+      "order": 36,
+      "builtin": false
+    },
+    {
+      "id": "general",
+      "title": "通用",
+      "order": 0,
+      "builtin": true
+    },
+    {
+      "id": "goal",
+      "title": "会话目标",
+      "order": 36,
+      "builtin": false
+    },
+    {
+      "id": "hooks",
+      "title": "安全钩子",
+      "order": 34,
+      "builtin": false
+    },
+    {
+      "id": "image-diet",
+      "title": "图片卸载",
+      "order": 38,
+      "builtin": false
+    },
+    {
+      "id": "memory",
+      "title": "长期记忆",
+      "order": 35,
+      "builtin": false
+    },
+    {
+      "id": "microcompact",
+      "title": "旧工具结果清理",
+      "order": 36,
+      "builtin": false
+    },
+    {
+      "id": "models",
+      "title": "模型",
+      "order": 10,
+      "builtin": true
+    },
+    {
+      "id": "presets",
+      "title": "模式",
+      "order": 15,
+      "builtin": true
+    },
+    {
+      "id": "sandbox",
+      "title": "文件与命令围栏",
+      "order": 31,
+      "builtin": false
+    },
+    {
+      "id": "session-search",
+      "title": "历史会话搜索",
+      "order": 47,
+      "builtin": false
+    },
+    {
+      "id": "skills",
+      "title": "技能",
+      "order": 20,
+      "builtin": true
+    },
+    {
+      "id": "spill",
+      "title": "长输出转存",
+      "order": 37,
+      "builtin": false
+    },
+    {
+      "id": "terminal-env",
+      "title": "终端环境",
+      "order": 6,
+      "builtin": true
+    },
+    {
+      "id": "todo",
+      "title": "任务清单",
+      "order": 45,
+      "builtin": false
+    },
+    {
+      "id": "tools-default",
+      "title": "工具预算",
+      "order": 36,
+      "builtin": false
+    },
+    {
+      "id": "tui",
+      "title": "终端界面",
+      "order": 35,
+      "builtin": true
+    },
+    {
+      "id": "usage",
+      "title": "用量统计",
+      "order": 25,
+      "builtin": true
+    },
+    {
+      "id": "web-search",
+      "title": "联网搜索",
+      "order": 46,
+      "builtin": false
+    }
+  ],
+  "ui": [
+    {
+      "id": "actions",
+      "platform": "web",
+      "api": "^0.8.1"
+    },
+    {
+      "id": "ask",
+      "platform": "web",
+      "api": "^0.8.1"
+    },
+    {
+      "id": "browser",
+      "platform": "web",
+      "api": "^0.8.1"
+    },
+    {
+      "id": "composer",
+      "platform": "web",
+      "api": "^0.8.1"
+    },
+    {
+      "id": "files",
+      "platform": "web",
+      "api": "^0.8.1"
+    },
+    {
+      "id": "palette",
+      "platform": "web",
+      "api": "^0.8.1"
+    },
+    {
+      "id": "plugins",
+      "platform": "web",
+      "api": "^0.8.1"
+    },
+    {
+      "id": "preview",
+      "platform": "web",
+      "api": "^0.8.1"
+    },
+    {
+      "id": "prompt",
+      "platform": "web",
+      "api": "^0.8.1"
+    },
+    {
+      "id": "sessions",
+      "platform": "web",
+      "api": "^0.8.1"
+    },
+    {
+      "id": "settings",
+      "platform": "web",
+      "api": "^0.8.1"
+    },
+    {
+      "id": "skills",
+      "platform": "web",
+      "api": "^0.8.1"
+    },
+    {
+      "id": "status",
+      "platform": "web",
+      "api": "^0.8.1"
+    },
+    {
+      "id": "statusbar",
+      "platform": "web",
+      "api": "^0.8.1"
+    },
+    {
+      "id": "tasks",
+      "platform": "web",
+      "api": "^0.8.1"
+    },
+    {
+      "id": "team",
+      "platform": "web",
+      "api": "^0.8.1"
+    },
+    {
+      "id": "terminal",
+      "platform": "web",
+      "api": "^0.8.1"
+    },
+    {
+      "id": "trace",
+      "platform": "web",
+      "api": "^0.8.1"
+    },
+    {
+      "id": "transcript",
+      "platform": "web",
+      "api": "^0.8.1"
+    }
+  ]
+}
