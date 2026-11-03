@@ -9,6 +9,10 @@
 > codex 按 `582a8812e0`，Pneuma 是"对照时的仓库状态"——本仓库还在往前走，Pneuma 侧的行号
 > 会随后续改动漂移，回源时要重新定位。
 >
+> **两家外部仓库之后都变了**：dsh 已前进 4639 个提交、codex 已前进 1384 个（按各自仓库当前 HEAD 算），
+> 所以下面凡是「codex 怎么做的 / dsh 怎么做的」都要当成**当时的样子**读；要拿来当设计依据，
+> 先去那两个仓库核一遍还在不在。Pneuma 侧的行号已在 2026-11-03 按 0.8.1 校过一遍。
+>
 > 这篇回答三个问题：**一轮是怎么转的**、**模型每一轮到底收到什么**、**安全 / 成本 / 效率
 > 各自靠什么保证**。最后一节列我认为 Pneuma 现在就该改的几条。
 
@@ -35,7 +39,7 @@
 | 环节 | dsh | codex | Pneuma |
 |---|---|---|---|
 | 入口 | 从收件箱领活，`preStep` 组装 | `run_turn` 先做四件准备，再进循环 | `runTurn`：`beforeRequest` 后进 `for(;;)` |
-| 循环体 | `preStep → step/start → 请求 → assistant 落盘 → 有工具就执行 → step/end`（`dsh-agent-loop/lib/index.js:936-1000`） | 收插入输入 → 抓上下文快照 → 拼历史 → 采样 → 收口判断（`turn.rs:475-595`） | `requestOnce` → 无 tool_calls 就 break → `executeToolCalls` → 步骤边界出账（`src/core/loop.ts:355-359`） |
+| 循环体 | `preStep → step/start → 请求 → assistant 落盘 → 有工具就执行 → step/end`（`dsh-agent-loop/lib/index.js:936-1000`） | 收插入输入 → 抓上下文快照 → 拼历史 → 采样 → 收口判断（`turn.rs:475-595`） | `requestOnce` → 无 tool_calls 就 break → `executeToolCalls` → 步骤边界出账（`src/core/loop.ts:344-363`） |
 | 结束条件 | 没有工具调用；`concludeTurn` 收口；`max-tokens` 截断**不**结束而是续写（`lib/index.js:1164`） | 没有工具调用；stop hook 要求继续则再跑（`turn.rs:761-778`） | 没有 tool_calls / 被 abort / 抛错 |
 | 步数上限 | 无 | 无 | 无（子代理才有 `maxTurns`） |
 | 计划阶段 | 不是阶段，是一段 plan mode 提示词 | 不是阶段，是提示词里的 `update_plan` 工具（`models-manager/prompt.md:52-60`） | 不是阶段，是模式条款（投影在请求末尾的 user 快照里，`src/plugins/mode.ts:86-90`） |
@@ -65,7 +69,7 @@
 |---|---|---|---|
 | 有无 `system` 字段 | **没有**，提示词是 `messages[0]` 的 `system/message`（`dsh-system-prompt/README.zh.md:141`） | 没有，提示词是 `input[0]` 的 `developer` 项（`core/src/client.rs:1052-1083`） | **有**，`[{role:'system'}, ...history]`（`src/core/loop.ts:419`） |
 | 历史 | `session.deriveMessages()` 全量 | `clone_history().for_prompt()` 全量 + `store:false`（`client.rs:1161`） | `session.messages` 全量 |
-| 工具定义 | 每轮全量重发 | 每轮重发，另有"增量工具"通道（`turn.rs:1709-1722`） | 每轮全量重发，取当轮快照 `requestTools`（`loop.ts:448-458`） |
+| 工具定义 | 每轮全量重发 | 每轮重发，另有"增量工具"通道（`turn.rs:1709-1722`） | 每轮全量重发，取当轮快照 `requestTools`（`loop.ts:412-415`） |
 | 工具 schema 单独计量 | 有（`toolsTokens`） | 无（算在整体里） | **有**，单列一段（`core/token-estimate.ts:55-57`） |
 
 三家都是"每轮全量重发"，这是无状态请求的必然结果。省钱的着力点只能在**前缀别变**和
@@ -85,7 +89,7 @@
 永远同一个 id，服务端缓存前缀就能命中；提示词一改 id 自动变，缓存自然失效。
 这是"用 id 表达缓存边界"，另外两家都没有。
 
-**Pneuma**：`src/core/prompt.ts:369-397` 按刻度拼（身份 0、做事方式 10、工具规范 20、
+**Pneuma**：`src/core/prompt.ts:383-411` 按刻度拼（身份 0、做事方式 10、工具规范 20、
 agentsMd 200、技能 210、当前模型 890），排序原则写在 `prompt.ts:1-21`：稳定的在前、
 易变的在后。
 
@@ -98,7 +102,7 @@ agentsMd 200、技能 210、当前模型 890），排序原则写在 `prompt.ts:
 |---|---|---|
 | dsh | 投影成带 `source` 的 **user 消息**（工作目录、沙箱、审批、子代理身份…） | `dsh-system-prompt/lib/index.js:45-53`、`dsh-agent-loop/lib/index.js:910-920` |
 | codex | 做成 `<environment_context>` 片段，且**只发差异**（跟上次快照逐字段比） | `core/src/context/world_state/environment.rs:115-202`、`:263-330` |
-| Pneuma | 拼成一条 user 快照，**附在请求末尾**（每轮都发，缺省不跳过） | `src/core/prompt.ts:288-317`、`src/plugins/prompt.ts:158-185` |
+| Pneuma | 拼成一条 user 快照，**附在请求末尾**（每轮都发，缺省不跳过） | `src/core/prompt.ts:302-330`、`src/plugins/prompt.ts:159-208` |
 
 三者代价不同，值得说清楚：
 
@@ -108,7 +112,8 @@ agentsMd 200、技能 210、当前模型 890），排序原则写在 `prompt.ts:
   `render_diff` 与"旧片段匹配器"，`core/src/context/world_state/` 目录 7 884 行
   （报告里的统计）。新增一类上下文接近新增一个子系统。
 - Pneuma 每轮都在**末尾**追加一条完整的快照：前面逐字节不变，缓存一定命中；代价是
-  每轮多几百 token，且快照不落库（日志里没有它，只有投影能复算）。
+  每轮多几百 token，且快照本身**不落会话历史**——日志里只留一条按 hash 去重的 `env-facts`
+  状态条目（`src/plugins/prompt.ts:153-160`、`src/core/session.ts:246-249`），要复算得靠投影重跑。
 
 ### 2.4 AGENTS.md 与时间
 
@@ -236,7 +241,7 @@ Pneuma 是"子进程环境脱敏 + 输出遮红（观察者链 order 10）→ sp
 |---|---|
 | dsh | `floor(min(W × 0.8, W − O − 65536))`，逐字保留 `(W − O) × 0.16`（`dsh-compaction-basic/README.zh.md:63`、`:67-77`） |
 | codex | 三条线同时算：模型目录的 `auto_compact_scope_limit`、`context_window × percent`、`scope + buffer`，任一命中就压（`core/src/session/context_window.rs:53-130`）；另有"收口时提前压"，把成本挪到用户读答案的空档 |
-| Pneuma | 估算 > `contextWindow × autoCompactPercent`（缺省 80，可调 50–95），保留最近 20 条原文（`src/plugins/compact.ts:53-60`、`src/core/compact.ts:38`） |
+| Pneuma | 估算 > `contextWindow × autoCompactPercent`（缺省 80，可调 50–95）；保留尾部按 **token 预算 16%** 算，条数只是下限（`src/plugins/compact.ts:72,96`、`src/core/compact.ts:256-270`） |
 
 ### 4.2 压缩本身怎么省钱
 
@@ -249,10 +254,10 @@ Pneuma 是"子进程环境脱敏 + 输出遮红（观察者链 order 10）→ sp
   压缩提示词只有两句——写一份交接摘要（进度、约束、待办、关键数据），前面套固定前缀
   （`prompts/templates/compact/prompt.md`、`summary_prefix.md`）。压缩后历史重建为
   "窗口前缀 + 保留上下文 + 摘要"（`compact.rs:85-110`）。
-- **Pneuma**：摘要调用同样复用主对话前缀（`src/core/compact.ts:250-269`），但额外附三样
+- **Pneuma**：摘要调用同样复用主对话前缀（`src/core/compact.ts:330`），但额外附三样
   **机械产物**：正则抽的锚点索引（PR 号/SHA/路径/报错原文）、用户原话逐字引用、
   read-state（压前读过哪几段）。理由是"模型写的摘要会漏掉 SHA 与报错"
-  （`compact.ts:244-247`、`:275-285`）。
+  （`compact.ts:354-362`）。
 
 另外 Pneuma 有一层另两家没有的**每轮微压缩**：请求组装时把较旧的工具结果换成占位符，
 日志原文不动；缺省要满足"最近 5 条之外 + 单条至少省 256 token + **当轮总共省 ≥25%**"
@@ -357,7 +362,7 @@ codex 按模型目录的 `truncation_policy`。共同点是**"先落盘再决定
 
 ### 7.4 压缩摘要复用前缀这件事已经做了，可以再补一件（低）
 
-Pneuma 已经让摘要调用复用主对话前缀（`compact.ts:250-269`），这一步是对的。
+Pneuma 已经让摘要调用复用主对话前缀（`compact.ts:330`），这一步是对的。
 还可以补的是 dsh 的**"变化才落 request envelope"**：把每次请求的
 provider/model/tools/窗口记录进会话日志，只在变化时追加（`dsh-agent-loop/lib/index.js:1227-1268`）。
 好处是出问题能完整回放"那一轮到底发了什么"，而现在的日志只有消息、没有 envelope。

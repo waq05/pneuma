@@ -28,10 +28,11 @@ hermes 的 `DESIGN.md` 开头有七条，逐条换成 dsc 的说法：
 | 6 | **意图先于自动** | 后台有结果回来可以更新角标和缓存，但不许自己切页面、抢焦点、弹面板。 |
 | 7 | **即时反馈** | 直接操作先改界面，落盘和网络后面对账；失败了要看得见地回滚。 |
 
-第 1、4、5 条是这轮重构的主线：改之前 `styles.css` 里有 28 处写死的颜色、24 处圆角字面量、
-6 处 z-index 字面量，现在分别是 6 处（故意留的）、6 处、0 处。
+第 1、4、5 条是这轮重构的主线：改之前 `styles.css` 里到处是写死的颜色、圆角与 z-index 字面量，
+现在剩下的都是带注释故意留的几处。**新代码不要再写死**——颜色走令牌、圆角走 `--dsc-r-*`、层级走
+`--dsc-z-*`，拿不准就去 `tokens.css` 里找现成的。
 
-## 2. 令牌体系（`styles/tokens.css`）
+## 2. 令牌体系（`ui-shell/src/legacy/tokens.css`）
 
 全部令牌在这一份文件里，**深色写在 `:root`，浅色写在 `[data-theme='light']`，密度写在
 `[data-density='compact'|'roomy']`**。样式表其余部分只引用，不定义。
@@ -70,8 +71,9 @@ hermes 的 `DESIGN.md` 开头有七条，逐条换成 dsc 的说法：
 `--dsc-accent-text` 和 `--dsc-accent-hover` 是**派生色**，写在 `tokens.css` 末尾的 `:root` 块里，
 用 `color-mix()` 从主题变量算出来，这样浅色主题会自己重算。新增派生色照这个写法。
 
-浅色主题的侧栏底色是**灰绿**（`--dsc-seed-side: #f3f7ff`，`--dsc-mix-side: 100%`）：靠色相把侧栏与
-正文白分开，不用再画分隔线。改它只动这一个变量，别在组件里写死。
+浅色主题的侧栏底色是**灰绿**（`--dsc-neutral-side` / `--dsc-seed-side` 都是 `#eef5f2`，在
+`ui-shell/src/legacy/tokens.css` 的 `[data-theme='light']` 块里；`styles.css` 里那段同名覆盖是旧值，
+迟早并回去）：靠色相把侧栏与正文白分开，不用再画分隔线。改它只动这两个变量，别在组件里写死。
 
 **主色只干三件事**（2026-10-25 补，品牌声部的第一条规矩）：可交互（链接、主按钮）、选中（当前行、
 当前页签）、焦点（焦环、输入框激活边）。**不拿它当装饰色**——标题、图标、空态底纹、图表系列色
@@ -101,7 +103,7 @@ hermes 的 `DESIGN.md` 开头有七条，逐条换成 dsc 的说法：
 | `--dsc-fs-label` `--dsc-fs-micro` | 10.2 / 9.6 px | 小节标签、角标 |
 | `--dsc-fs-code` | 11.2 px | 代码块与行内代码 |
 | `--dsc-fs-ui` `--dsc-fs-ui-lg` | 12 / 14 px | 界面控件文字 |
-| `--dsc-fs-title` `--dsc-fs-hero` | 16 / 28 px | 面板标题、欢迎页大字 |
+| `--dsc-fs-title` `--dsc-fs-hero` | 16 / 21 px | 面板标题、欢迎页大字 |
 | `--dsc-fs-prose` / `--dsc-lh-prose` | 14 / 22 px | 模型长文（比界面正文大一档，读起来不费劲） |
 
 小节标签还有 `--dsc-label-case: uppercase` 和 `--dsc-label-track: 0.16em`，用 `.dsc-sect` 自动带上。
@@ -126,7 +128,7 @@ hermes 的 `DESIGN.md` 开头有七条，逐条换成 dsc 的说法：
 VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*` 只会让图标随主题跳色。别的地方出现 `#`
 开头的颜色就是漏网的。
 
-## 3. 原语层（`styles/primitives.css`）
+## 3. 原语层（`ui-shell/src/legacy/primitives.css`）
 
 一个关注点一个原语，全部 `.dsc-` 前缀、全部用属性选档位。**调用点只给属性，不给尺寸。**
 
@@ -167,7 +169,8 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
 ## 4. 布局与几何
 
 - 三栏：56px 图标窄栏 → 可拖宽的侧栏（默认 237px）→ 正文列。侧栏和正文列两侧都能拖
-  （`ThreadResizer.tsx`，拖出来的宽度写成根元素上的 CSS 变量）。
+  （`ui-shell/src/ui-primitives/thread-resizer.tsx`，拖出来的宽度写成根元素上的 CSS 变量，
+  同时镜像进 `settings.json` 的 `ui.panelWidths`，换端口/换工作目录回来还是这个宽度）。
 - 页面左右留白用 `--dsc-page-inset`，内容最大宽度 `--dsc-page-max`；正文段落宽度 `--dsc-thread-max`（96ch，没拖过时的默认值）。
 - 列表行之间**默认不加分隔线**，用间距分开；确实需要时用一条 `--dsc-stroke-3` 发丝线。
 - 顶栏高度和原生控件条联动，见 §10。
@@ -176,7 +179,7 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
 ## 5. 聊天、工具行与状态
 
 - **对话是主界面**：正文栏永远优先，工具、预览、轨迹是补充。
-- 工具行（`ToolCard.tsx`）：参数与结果用 `--dsc-fs-tool`；展开的详情高度上限 `--dsc-tool-detail-max-h`。
+- 工具行（`ui-shell/src/plugins/transcript/tool-card/`，注册入口 `factory.tsx` 的 `registerToolCard`）：参数与结果用 `--dsc-fs-tool`；展开的详情高度上限 `--dsc-tool-detail-max-h`。
 - **危险红只给真正的失败**：用户拒绝、执行报错才用 `--dsc-red`；读不到文件、退出码 1 这类模糊结果
   用中性通告（这就是「已拒绝」状态落盘那一轮改的东西）。
 - 思考块、工具块这类「面板里的面」用 `--dsc-fill-quinary` 一档的软填充，不要描边。
@@ -203,7 +206,7 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
   「文件已更改」卡上那一份才是「这次改了什么」。胶囊与 Git 分区头现在只留「N 个文件」这个粗读数。
 - 步骤时间线的竖线是**中性色**（`color-mix(in srgb, var(--dsc-base) 10%, transparent)`），
   不要用带品牌色的 `--dsc-stroke-1`——浅色主题下会变成一条很吵的蓝线。
-- 审批卡（`ApprovalCard.tsx`）停在对话流里，不抢焦点、不自动展开面板。卡只渲染在**发起它的那个会话**的视图里
+- 审批卡（`ui-shell/src/plugins/prompt/ui.tsx` 的 `readApproval` 与 `CardBoundary`，与计划审阅卡、提问卡同住）停在对话流里，不抢焦点、不自动展开面板。卡只渲染在**发起它的那个会话**的视图里
   （kernel 的 `pendingView` 按当前查看会话过滤，0.6.50）——后台会话的卡留在自己家，侧栏橙点引导你切过去；
   别的会话的卡挂着时，当前会话的输入框不被禁用。
 - 用户气泡里的贴图（`.entry-user-images img`）与输入框上方那排待发贴图都走
@@ -342,9 +345,8 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
 - `--dsc-tip-delay` / `--dsc-tip-warm` 还留在 `tokens.css` 里，但目前没有消费方，别拿它们算时序。
 
 **图标**：`icons.tsx` 是自维护的细线 SVG 集（`stroke-width: 1.6`、`currentColor`、默认 16px）。
-一个动作对应一个图标，不引入第二套图标库、不在同一组控件里混风格。品牌方块是 `.welcome-mark`
-（首屏那颗 52px 的渐变色块，`styles.css:850`）和侧栏的 `.sidebar-header .brand`，它们是 §2.6 里
-允许写死颜色的地方。
+一个动作对应一个图标，不引入第二套图标库、不在同一组控件里混风格。品牌声部只剩侧栏的
+`.sidebar-header .brand`，它是 §2.6 里允许写死颜色的地方（原来那颗首屏渐变色块已随「正文不出现 logo」一起去掉）。
 
 **logo 两档（2026-10-25，2026-10-27 减一档）**：`--dsc-logo-sm` 20px（侧栏行内）、
 `--dsc-logo-md` 22px（收起后的窄栏）。两档都是变量，别在组件里写像素。
@@ -365,7 +367,7 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
   的图标在「按钮大小」滑杆上不跟队。
 - 新增彩色图标先问一句：它是不是在画**对象本身**（文件夹、应用、文件类型）？是界面动作就用线性集。
 
-**终端配色**：`components/terminalTheme.ts` 把 `--dsc-*` 转成 xterm 的 `ITheme`。注意 xterm 只认
+**终端配色**：取色在 `ui-shell/src/plugins/terminal/ui.tsx`（`xterm` 的 `ITheme` 在那里拼）。注意 xterm 只认
 具体色值，而令牌大多是没求值的 `color-mix(...)` 原文，所以它和 `appearance.ts` 用的是同一套两步
 取色：先借隐藏元素拿计算色，再过 1×1 画布归一成 sRGB。**加终端颜色不要另写一套取色**。
 
@@ -383,28 +385,33 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
 
 - 键盘归属跟着焦点走：焦点在哪块，哪块收键；全局快捷键不许抢终端和编辑器的绑定。
 - 焦环统一由 `base.css` 画（3px 强调色环），原语自己带，调用点不要另外加 `outline`。
-- 选中文本用暖黄而不是品牌蓝：蓝底压白字在深色主题里会把字吃掉（`base.css:32`）。
+- 选中文本按主题分开，别统一成品牌蓝：深色是蓝 40%（`rgb(59 130 246 / .4)`），浅色用暖黄
+  （`rgb(255 210 74 / .55)`），Claude 用陶土橙——都写在 `--dsc-selection-bg`，见
+  `ui-shell/src/legacy-color-fallback.css:36/89/139`。蓝底压白字在深色主题里会把字吃掉，所以才要分档。
 - 一次取消只做一件事：取消当前交互，**或**关掉最上层可关的面，不许两个都做。
 - `Esc` 关掉所有可关的浮层；取消在界面上是同步的，哪怕清理是异步的。
 - **弹层焦点**：一律走 `useDialogFocus(active, onClose)`（`ui-primitives/dialog-focus.ts`）——打开记来源、
   焦点移进弹层、Tab 在弹层内循环、Esc 关、关闭归还焦点。嵌套弹层靠 Esc 的 `stopPropagation` 只关里层。
-  别在组件里各写一份（壳里 9 个 `role="dialog"`，只有一份实现才不会有一半忘了还焦点）。
+  别在组件里各写一份（壳里 `role="dialog"` 共 11 处、分布在 9 个组件里，只有一份实现才不会有一半忘了还焦点）。
 - **菜单的收起时机**：组外 `pointerdown`（捕获阶段）+ `Esc`，两路都要。别只挂一张全屏遮罩
   ——遮罩与浮层同层时压不住后挂的元素，还会把别处按钮的点击一起吞掉（顶栏「更多打开方式」
   2026-10-25 就是这个形状：点胶囊不收起，点插件钮只收菜单、页面不动）。
 
 ## 10. 外观设置与主题
 
-「外观」四项存在 `~/.dsc/settings.json` 的 `ui` 里（`themeMode` / `fontSize` / `density` / `buttonScale`），
-设置界面改完立刻生效并落盘：
+「外观」三项存在 `~/.dsc/settings.json` 的 `ui` 里（`themeMode` / `fontSize` / `density`），
+设置界面改完立刻生效并落盘。**「按钮大小」那条轴已经退场**：`--dsc-btn-scale` 不再写值，
+`styles.css` 用固定尺寸覆盖了旧的 `calc(Npx * var(--dsc-btn-scale))`；旧存档里存着 `buttonScale`
+的读得到就忽略（`ui-shell/src/ui-layout/appearance.ts:15-16,130`），照着它调不会有任何效果。
 
-1. `appearance.ts` 的 `applyAppearance()` 往 `<html>` 写 `data-theme` / `data-density` / `--dsc-font-scale` / `--dsc-btn-scale`，
-   样式表据此换色、换字号、换按钮大小；
+1. `appearance.ts` 的 `applyAppearance()` 往 `<html>` 写 `data-theme` / `data-density` / `--dsc-font-scale`，
+   样式表据此换色、换字号；
 2. 同一份外观写一份 localStorage 镜像，`main.tsx` 首帧和 `App.tsx` 的 `uiPrefs` 初值都读它——
    这样宿主返回真实设置之前不会先闪一次默认深色；
-3. `pushWindowChrome()` 把 `--dsc-chrome-bar` / `--dsc-chrome-symbol` 算成 `#rrggbb` 通过
+3. `pushNativeChrome()` 把 `--dsc-chrome-bar` / `--dsc-chrome-symbol` 算成 `#rrggbb` 通过
    `dsc:set-window-chrome` 发给主进程，主进程调 `setTitleBarOverlay` + `setBackgroundColor` 改
-   系统画的那三个窗口按钮。
+   系统画的那三个窗口按钮；它同时还上报一次 `setThemeSource`（让系统原生滚动条与标题栏跟着深浅走），
+   颜色与上次相同时直接跳过不发。
 
 细节和坑（`color(srgb …)` 序列化、只收不透明色、深浅默认值）写在
 [development.md §13「主题色怎么送到原生窗口控件」](development.md)。
@@ -533,16 +540,19 @@ dsc 现在这套（`tokens.css` 一份、深色默认、浅色用 `[data-theme='
 - [ ] 后台事件不会切页面、抢焦点、自动展开面板？
 - [ ] 键盘归属正确，`Esc` 只关一层，焦环没被覆盖？
 - [ ] **深色和浅色都看过**（`外观 → 主题` 切换），对比度都够？
-- [ ] 改完跑了 `cd D:\dsc\desktop && pnpm run typecheck`？
+- [ ] 改完跑了 `pnpm run typecheck`（根）与 `pnpm --dir desktop run typecheck`？
 
 ## 14. 改完怎么验证
 
 ```sh
-# 类型检查
-cd D:\dsc\desktop && pnpm run typecheck
+# 类型检查（两处都要：内核一层、桌面一层）
+cd D:\dsc && pnpm run typecheck && pnpm --dir desktop run typecheck
 
-# 开发态起界面（改 renderer 会热更新）
-cd D:\dsc\desktop && pnpm dev
+# 界面壳单独构建（改了 ui-shell 里的插件就要跑）
+cd D:\dsc && pnpm run build:ui
+
+# 开发态起界面：本机界面服务 + 插件 bundle 热更（改 ui-shell 里的插件会自动重下）
+cd D:\dsc && pnpm run ui:serve
 
 # 打包版实拍（快捷键指向的就是它）
 cd D:\dsc\desktop && pnpm run dist:dir     # → dist/win-unpacked/Pneuma.exe

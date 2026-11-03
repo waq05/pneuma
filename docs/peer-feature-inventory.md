@@ -273,7 +273,7 @@
 - 用量统计：usage.jsonl + 设置页聚合（汇总卡 + 全年热力图 + 分模型趋势 + 环形图，`ui-shell/src/plugins/settings/usage.tsx`）
 - 上下文占用表：`/status` 与壳里的占用卡，估算口径与自动压缩同源（`src/plugins/commands.ts:766`）
 - dsh 配置一次性只读迁移
-- 已知边界：账号 OAuth 不做；无美元成本估算
+- 已知边界：账号 OAuth 不做；**有人民币花费估算**（按 DeepSeek 官方单价 + 峰谷分桶，`src/core/pricing.ts`，状态栏与用量页都显示），但只对名含 deepseek 的端点生效，其它 provider 不显示金额
 
 ### 3. 工具集 ——【完整，多为官方插件可开关】
 - 内置工具面：`bash`（含 `run_in_background`）、`job_output`/`job_list`/`job_kill`、`terminal`（open/read/send/close/list 五动作，无 PTY）、`read`/`read_image`/`write`/`edit`/`glob`/`grep`（`src/plugins/tools-default.ts:197-205`）
@@ -327,7 +327,7 @@
 - 技能目录行带上 `whenToUse` 那一句（`src/plugins/skills.ts:114-116`）
 - 已知边界：压缩不可取消（interrupt 停不掉压缩那次模型调用）
 
-### 8. 终端与执行 ——【完整】
+### 8. 终端与执行 ——【部分，缺 PTY】
 - `bash` 前台一次性（30s/120s 预算、8000 字符输出）；超时 SIGTERM → 宽限 → 杀树，已收输出仍可读；长活走 `run_in_background` + `job_*` 三工具
 - 模型可用的 `terminal` 五动作工具（open/read/send/close/list），**无 PTY**——全屏程序跑不了，这是 T20 的降级版
 - 桌面交互终端面板（xterm.js 多页签，人用）；设置里可选 PowerShell 5.1 / PowerShell 7 / Git Bash / WSL，工具说明跟着改口
@@ -344,7 +344,7 @@
 - 状态栏三段式（轮 / 步取宿主真值，不再估算）；轨迹页（TraceView / Timeline / Inspector）；队友面板 / 用量面板 / 技能中心 / 插件中心 / 配对弹窗
 - 托盘（关窗缩托盘 + 一次性气泡）；检查更新（更新源已接 GitHub Releases，只查不装，有新版给「立即更新」或打开发布页）
 - **手机遥控（独有）**：PWA 遥控端（visualViewport 键盘适配、图片压缩上传、增量帧重连补帧）+ Web Push（VAPID）+ Webhook（Bark/ntfy）+ 二维码半小时配对 + 逐台设备吊销；推送三处盲区已修（2 分钟升级再提醒 ×3、节流键带卡号、ask 提问卡与计划评审卡入列，`src/plugins/remote.ts:657-706`）
-- 已知边界：无桌面原生系统通知（只有托盘气泡 + toast）；手机端无团队/模式面板
+- 已知边界：**有**桌面原生系统通知（后台回合跑完且窗口不在前台时弹「任务完成」，点击回主窗，设置可关，`ui-shell/src/plugins/transcript/ui.tsx:156-185`）；手机端有模式面板与归档管理，只缺团队名册/任务板
 
 ### 10. 传输部署 ——【完整】
 - 远程宿主：HTTP + WS **10 条 `api` 路由**（pair/ticket/revoke/upload/push-key/push-subscribe/push-unsubscribe/invoke/events/boot，`src/plugins/remote/routes.ts:310-405`）+ 主控位锁 + 多设备 `devices.json` + `INVOKABLE_COVERAGE` 编译期兜底
@@ -364,19 +364,17 @@
 
 | 项 | 现状 |
 | --- | --- |
-| checkpoint / rewind / 部分行接受 | 与协作回滚同族，T51/T52 已立项未动工；审查面板仍纯只读 |
-| 对外 SDK / 协议面、ACP | host-stdio 只够内部用 |
-| SSH 远程执行 | 只有隧道文档，无隧道代码 |
-| 可观测性 otel | 无 |
-| doctor 体检命令 | 分散在 `/plugins`、`/sandbox`、设置页 |
-| 宿主插件 HMR、npm 包形态安装 | 界面插件有 HMR；远程安装只认 https 直链 |
-| PTY 完整版 | `terminal` 是管道降级版，无 signal 真中断 |
+| checkpoint / rewind / 部分行接受 | 已有会话级回退（双击 Esc 撤回上一轮、`rewind` 记录截断重发）；文件级回滚与 per-hunk 接受未做，T51/T52 立项未动工，审查面板仍纯只读 |
+| 对外 SDK / 协议面、ACP | host-stdio 只够内部用；CLI 只有 `--resume` / `config` / `plugin` 三路子命令 |
+| SSH 远程执行 | 只有隧道文档，无隧道代码（T54） |
+| 可观测性 otel | 无（只有本地审计日志） |
+| doctor 体检命令 | 沙箱有 Windows 网络六项驻检（`/sandbox doctor`）；安装 / 配置 / auth 的总检没有 |
+| 宿主插件 HMR、npm 包形态安装 | 界面插件有 HMR；宿主插件只能启停热挂载；远程安装单文件只认 https 直链，组合包走 pnpm |
+| PTY 完整版 | `terminal` 是管道降级版（五动作、无 tty、无 signal 真中断）（T48） |
 | 完整 steering | 只有 async-inbox 最小版（步骤边界落库），无多端排队 inbox |
-| 子代理级联 | 有意限 1 层 |
+| 子代理级联 | 默认 1 层，可配到 2（不是硬限） |
 | 会话格式版本迁移链 | 有意不加版本号 |
-| 移动端团队 / 模式面板、归档管理 | 手机端定位是遥控 |
-| OS 通知（会话完成） | 只有托盘气泡 |
-| 美元成本估算 | 只有 token 与用量 |
+| 移动端团队名册 / 任务板 | 模式面板与归档管理都做了，只缺这一块 |
 
 ### Pneuma 独有/领先项（相对 dsh 与 codex）
 1. **手机遥控**：PWA + Web Push/Webhook + 二维码配对 + 逐台设备管理——三家都没有

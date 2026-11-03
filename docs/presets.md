@@ -25,9 +25,9 @@ drop: tool-rules                # 要去掉的骨架提示段（可选，名单�
 | 标识 | 界面名 | 工具 | 一句话 |
 |---|---|---|---|
 | `standard` | 标准模式 | 全量 | 处理代码、文件和资料；提示词与出厂完全一致（默认档） |
+| `ptc` | PTC 模式 | 全量 + `run_code` | 在标准能力之上加 `run_code`：批量任务写一段脚本调工具，在代码里筛选汇总（原生工具照旧可用） |
 | `minimal` | 极简模式 | `bash` + `read_image` | 只给一条 shell（Windows 上是 PowerShell）与读图；`replace: true`，系统提示里只有这一段正文 + AGENTS.md，用来对照模型的基础表现 |
 | `maker` | 创造模式 | 全量 + `runtime_api` | 在标准能力之上加运行时只读查询：给自己加模式、给 dsc 写插件 |
-| `ptc` | PTC 模式 | 全量 + `run_code` | 在标准能力之上加 `run_code`：批量任务写一段脚本调工具，在代码里筛选汇总（原生工具照旧可用） |
 
 四个档的顺序跟 dsh 的 preset order 一致（standard → ptc → minimal → maker，`cordis` 是 `maker` 的别名），自定义档排在后面。
 

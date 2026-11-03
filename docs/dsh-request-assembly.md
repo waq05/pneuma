@@ -4,7 +4,7 @@
 
 > **这是定点快照，不是现状文档，且已是本文腐坏最重的一篇。** 快照对象是本机 `D:\deepseek-harness\deepseek-harness`（作者本机路径），快照提交 `4878cdabd8`，比当前 HEAD `ce7073d512` 落后 4639 个提交。
 >
-> 已经对不上的：§5 当强制点写的 `packages/core/agent-loop/src/invariant.ts` 已不存在（该目录只剩 7 个文件）；`deriveMessages` 已移到 `agent.ts:728`。仍然成立、不必改的：`system-prompt/src/index.ts:53` 的 `PromptSection` 接口、`HARNESS_IDENTITY = -1000`、agent-instructions 的候选名单。**§5 与全文行号一律按「当时快照」读，不要当成现在的位置**；要动手前先回源核对。
+> 已经对不上的：§5 当强制点写的 `packages/core/agent-loop/src/invariant.ts` 已不存在（该目录只剩 6 个文件）；`deriveMessages` 已移到 `agent.ts:728`。仍然成立、不必改的：`system-prompt/src/index.ts:53` 的 `PromptSection` 接口、`HARNESS_IDENTITY = -1000`、agent-instructions 的候选名单。**§5 与全文行号一律按「当时快照」读，不要当成现在的位置**；要动手前先回源核对。
 
 | 想知道 | 去看 |
 | --- | --- |
