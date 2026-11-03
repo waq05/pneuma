@@ -16,8 +16,8 @@
  * @module dsc/plugins/permission-presets
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import type { PermissionPresetSurface, PermissionPresetView } from '../contract.js'
-import type { PermissionPresetService } from '../services/types.js'
+import type { PermissionPresetSurface, PermissionPresetView } from '@pneuma/runtime/contract.js'
+import type { PermissionPresetService } from '@pneuma/runtime/services/types.js'
 import {
   BUILTIN_PERMISSION_PRESETS,
   CUSTOM_PERMISSION_PRESET,
@@ -25,10 +25,10 @@ import {
   findPermissionPreset,
   matchPermissionPreset,
   type PermissionPreset,
-} from '../core/permission-presets.js'
-import { permissionOf, samePermissionKnobs, type PermissionKnobs } from '../core/permission-scope.js'
-import type { Session } from '../core/session.js'
-import { audit } from '../core/audit.js'
+} from '@pneuma/runtime/core/permission-presets.js'
+import { permissionOf, samePermissionKnobs, type PermissionKnobs } from '@pneuma/runtime/core/permission-scope.js'
+import type { Session } from '@pneuma/runtime/core/session.js'
+import { audit } from '@pneuma/runtime/core/audit.js'
 
 /** 沙箱服务缺席时（插件被停用）读作哪一档：与沙箱插件自己的出厂默认一致。 */
 const SANDBOX_FALLBACK = 'workspace-write' as const

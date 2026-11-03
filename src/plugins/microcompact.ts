@@ -26,14 +26,14 @@ import {
   planWorthApplying,
   roundKeyOf,
   type MicrocompactPlan,
-} from '../core/microcompact.js'
-import { estimateTokens } from '../core/compact.js'
-import type { ChatMessage } from '../core/llm.js'
-import type { Session } from '../core/session.js'
-import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import type { SettingsField, SettingsValues } from '../contract.js'
-import type { MicrocompactService, SettingsSectionSpec } from '../services/types.js'
-import { clampInt as clamp } from '../core/clamp.js'
+} from '@pneuma/runtime/core/microcompact.js'
+import { estimateTokens } from '@pneuma/runtime/core/compact.js'
+import type { ChatMessage } from '@pneuma/runtime/core/llm.js'
+import type { Session } from '@pneuma/runtime/core/session.js'
+import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
+import type { MicrocompactService, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'microcompact'

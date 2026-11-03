@@ -13,14 +13,14 @@
  * @module dsc/plugins/spill
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { errText } from '../core/err-text.js'
-import { formatBytes } from '../core/bytes.js'
-import { listSpillFiles, readSpillConfig, SPILL_RANGES, spillText, sweepSpillDir } from '../core/spill.js'
-import type { SpillConfig } from '../core/spill.js'
-import { writePluginConfig } from '../core/plugin-registry.js'
-import type { ToolObserver } from '../core/tool-guards.js'
-import type { SettingsField, SettingsValues } from '../contract.js'
-import type { SettingsSectionSpec } from '../services/types.js'
+import { errText } from '@pneuma/runtime/core/err-text.js'
+import { formatBytes } from '@pneuma/runtime/core/bytes.js'
+import { listSpillFiles, readSpillConfig, SPILL_RANGES, spillText, sweepSpillDir } from '@pneuma/runtime/core/spill.js'
+import type { SpillConfig } from '@pneuma/runtime/core/spill.js'
+import { writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import type { ToolObserver } from '@pneuma/runtime/core/tool-guards.js'
+import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
+import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 
 /** 插件在条目树里的键，也是设置分区 id。 */
 const CONFIG_KEY = 'spill'

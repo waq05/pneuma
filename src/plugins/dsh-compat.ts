@@ -23,9 +23,9 @@
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import { Logger, defaultFormatters } from '@deepseek-ai/cordis'
-import { ensureResolveHook } from '../core/dsh-compat/resolve-hook.js'
-import { DSC_PLUGINS_DIR } from '../core/plugin-loader.js'
-import { dscPath } from '../core/path-policy.js'
+import { ensureResolveHook } from '@pneuma/runtime/core/dsh-compat/resolve-hook.js'
+import { DSC_PLUGINS_DIR } from '@pneuma/runtime/core/plugin-loader.js'
+import { dscPath } from '@pneuma/runtime/core/path-policy.js'
 
 export const dshCompatPlugin: Plugin.Object = {
   name: 'dsh-compat',

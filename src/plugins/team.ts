@@ -21,10 +21,10 @@ import {
   readBoard,
   resetBoard,
   type BoardAction,
-} from '../core/team-board.js'
-import type { ToolContext, ToolEntry } from '../core/tools.js'
-import type { SettingsField, SettingsValue } from '../contract.js'
-import type { SettingsSectionSpec } from '../services/types.js'
+} from '@pneuma/runtime/core/team-board.js'
+import type { ToolContext, ToolEntry } from '@pneuma/runtime/core/tools.js'
+import type { SettingsField, SettingsValue } from '@pneuma/runtime/contract.js'
+import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 
 /** 主会话这一方在任务板上的名字。 */
 const LEAD = 'lead'

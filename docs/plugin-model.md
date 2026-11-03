@@ -34,6 +34,8 @@ lib/ui/plugins/<id>/client.js
   "pneuma": {
     "bundle": { "patch": "./cordis.patch.yml" },
     "resolution": "overridable",       // pinned | overridable
+    "title": "文档与批量读取",          // 插件中心显示名（不加载代码也能列出来）
+    "description": "读 PDF / Word / CSV……",
     "settingsSection": "ops",          // 可选：插件中心齿轮跳转的分区 id
     "client": { "platform": "pneuma", "api": "^2.0.0", "inject": ["settings"] }
   },

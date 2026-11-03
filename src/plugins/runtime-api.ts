@@ -13,8 +13,8 @@
  * @module dsc/plugins/runtime-api
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { KERNEL_API_VERSION, listPluginInfos } from '../core/plugin-registry.js'
-import { DROPPABLE_SECTIONS, DSC_PRESETS_DIR } from '../core/presets.js'
+import { KERNEL_API_VERSION, listPluginInfos } from '@pneuma/runtime/core/plugin-registry.js'
+import { DROPPABLE_SECTIONS, DSC_PRESETS_DIR } from '@pneuma/runtime/core/presets.js'
 
 /** 能单独问的主题（省略 = 全都要）。 */
 const TOPICS = ['plugins', 'tools', 'prompt', 'guards', 'surfaces', 'presets'] as const

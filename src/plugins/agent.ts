@@ -19,15 +19,15 @@
  */
 import { createHash } from 'node:crypto'
 import type { Plugin } from '@deepseek-ai/cordis'
-import { Session, type InboxOrigin } from '../core/session.js'
-import type { UserFileAttachment } from '../core/attachments.js'
-import { MiniAgent } from '../core/loop.js'
-import { appendToolRecord, appendUsageRecord } from '../core/usage-log.js'
-import { publishDshUsage } from '../core/dsh-compat/llm-usage-event.js'
-import { createDshSessionEventBridge } from '../core/dsh-compat/session-events.js'
-import { clearReadLedger } from '../core/path-policy.js'
-import { errText } from '../adapter/transcript.js'
-import type { AgentService, TurnSignal } from '../services/types.js'
+import { Session, type InboxOrigin } from '@pneuma/runtime/core/session.js'
+import type { UserFileAttachment } from '@pneuma/runtime/core/attachments.js'
+import { MiniAgent } from '@pneuma/runtime/core/loop.js'
+import { appendToolRecord, appendUsageRecord } from '@pneuma/runtime/core/usage-log.js'
+import { publishDshUsage } from '@pneuma/runtime/core/dsh-compat/llm-usage-event.js'
+import { createDshSessionEventBridge } from '@pneuma/runtime/core/dsh-compat/session-events.js'
+import { clearReadLedger } from '@pneuma/runtime/core/path-policy.js'
+import { errText } from '@pneuma/runtime/adapter/transcript.js'
+import type { AgentService, TurnSignal } from '@pneuma/runtime/services/types.js'
 
 /**
  * 系统提示词落盘（Model-visible ⟺ logged 的提示词半边）：系统提示不进 user/assistant

@@ -25,19 +25,19 @@
  * @module dsc/plugins/browser
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import type { SettingsField, SettingsValue } from '../contract.js'
-import type { SettingsSectionSpec } from '../services/types.js'
-import type { ToolEntry, ToolContext, ToolOutput } from '../core/tools.js'
-import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import { neutralizeInline, wrapUntrusted } from '../core/untrusted.js'
-import { redact } from '../core/secrets.js'
-import * as actions from '../core/cdp/actions.js'
-import { BrowserProcess, probeExecutable, type BrowserLaunchConfig } from '../core/cdp/launch.js'
-import { serializeAxTree, truncateByLines, lookupSnapshotRef, type AxTree, type SnapshotRef } from '../core/cdp/snapshot.js'
-import type { CdpSessionView, CdpTransport } from '../core/cdp/transport.js'
-import { clampInt as clamp } from '../core/clamp.js'
-import { splitList } from '../core/strings.js'
-import { RingBuffer } from '../core/cdp/ring-buffer.js'
+import type { SettingsField, SettingsValue } from '@pneuma/runtime/contract.js'
+import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import type { ToolEntry, ToolContext, ToolOutput } from '@pneuma/runtime/core/tools.js'
+import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import { neutralizeInline, wrapUntrusted } from '@pneuma/runtime/core/untrusted.js'
+import { redact } from '@pneuma/runtime/core/secrets.js'
+import * as actions from '@pneuma/runtime/core/cdp/actions.js'
+import { BrowserProcess, probeExecutable, type BrowserLaunchConfig } from '@pneuma/runtime/core/cdp/launch.js'
+import { serializeAxTree, truncateByLines, lookupSnapshotRef, type AxTree, type SnapshotRef } from '@pneuma/runtime/core/cdp/snapshot.js'
+import type { CdpSessionView, CdpTransport } from '@pneuma/runtime/core/cdp/transport.js'
+import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
+import { splitList } from '@pneuma/runtime/core/strings.js'
+import { RingBuffer } from '@pneuma/runtime/core/cdp/ring-buffer.js'
 import {
   consoleLine,
   describeRef,
@@ -46,7 +46,7 @@ import {
   safeStringify,
   type ConsoleEntry,
   type NetworkEntry,
-} from '../core/cdp/report.js'
+} from '@pneuma/runtime/core/cdp/report.js'
 
 /** 设置页「看当前标签页」的等待上限：浏览器没起来或页面卡住时，15 秒给结论。 */
 const LOOK_TAB_TIMEOUT_MS = 15_000

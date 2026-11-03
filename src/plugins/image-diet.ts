@@ -14,10 +14,10 @@
  * @module dsc/plugins/image-diet
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { IMAGE_DIET_RANGES, readImageDietConfig } from '../core/image-diet.js'
-import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import type { SettingsField, SettingsValues } from '../contract.js'
-import type { SettingsSectionSpec } from '../services/types.js'
+import { IMAGE_DIET_RANGES, readImageDietConfig } from '@pneuma/runtime/core/image-diet.js'
+import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
+import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'image-diet'

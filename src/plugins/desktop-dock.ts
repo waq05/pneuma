@@ -17,10 +17,10 @@ import { readFileSync, readdirSync, statSync, type Stats } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import type { ChildProcess } from 'node:child_process'
-import { DOCK_WRITE_LABEL, isDockWriteOp, type DockWriteOp } from '../core/dock-ops.js'
+import { DOCK_WRITE_LABEL, isDockWriteOp, type DockWriteOp } from '@pneuma/runtime/core/dock-ops.js'
 // 执行姿势与 porcelains 解析住在 core：git 插件（分支/改动读数那条快照面）读的是同一个
 // 工作区，两处必须共用一份（尤其是 `-z` 的 rename 双记录），见 core/git-exec.ts。
-import { git, parsePorcelainZ, repoPrefix, toWorkspacePath } from '../core/git-exec.js'
+import { git, parsePorcelainZ, repoPrefix, toWorkspacePath } from '@pneuma/runtime/core/git-exec.js'
 
 /** 参数净化：拒绝空字节/换行与选项注入位。 */
 function safeArg(value: unknown, allowNewline = false): string {

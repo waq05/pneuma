@@ -14,14 +14,14 @@
  * @module dsc/plugins/ops
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { bootNoticeOnce } from '../core/boot-notices.js'
-import { clampIntIn as clamp } from '../core/clamp.js'
-import { createOpsTools } from '../core/ops/tools.js'
-import { OPS_MAX_BYTES, OPS_TIMEOUT_MS, resolveOpsWorker } from '../core/ops/worker.js'
-import type { OpsWorkerLookup } from '../core/ops/worker.js'
-import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import type { SettingsField, SettingsValues } from '../contract.js'
-import type { SettingsSectionSpec } from '../services/types.js'
+import { bootNoticeOnce } from '@pneuma/runtime/core/boot-notices.js'
+import { clampIntIn as clamp } from '@pneuma/runtime/core/clamp.js'
+import { createOpsTools } from '@pneuma/runtime/core/ops/tools.js'
+import { OPS_MAX_BYTES, OPS_TIMEOUT_MS, resolveOpsWorker } from '@pneuma/runtime/core/ops/worker.js'
+import type { OpsWorkerLookup } from '@pneuma/runtime/core/ops/worker.js'
+import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
+import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 
 /** 插件在条目树里的键，也是设置分区 id。 */
 const CONFIG_KEY = 'ops'

@@ -15,13 +15,13 @@
  * @module dsc/plugins/mode
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import type { CollaborationMode, ModeSurface } from '../contract.js'
-import type { ModeService } from '../services/types.js'
-import { MODES, MODE_IDS, modeSpec, parseModeToken } from '../core/modes.js'
-import { activeRules } from '../core/command-policy.js'
-import { audit } from '../core/audit.js'
-import type { ToolGuard } from '../core/tool-guards.js'
-import type { Session } from '../core/session.js'
+import type { CollaborationMode, ModeSurface } from '@pneuma/runtime/contract.js'
+import type { ModeService } from '@pneuma/runtime/services/types.js'
+import { MODES, MODE_IDS, modeSpec, parseModeToken } from '@pneuma/runtime/core/modes.js'
+import { activeRules } from '@pneuma/runtime/core/command-policy.js'
+import { audit } from '@pneuma/runtime/core/audit.js'
+import type { ToolGuard } from '@pneuma/runtime/core/tool-guards.js'
+import type { Session } from '@pneuma/runtime/core/session.js'
 
 /** 命令名到模式的快查（`/plan`、`/explore`、`/quiet` 直接切档）。 */
 const COMMAND_MODES: Record<string, CollaborationMode> = {

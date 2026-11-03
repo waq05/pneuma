@@ -19,11 +19,11 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { dirname } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
-import { planFilePath } from '../core/modes.js'
-import { audit } from '../core/audit.js'
-import type { ToolEntry } from '../core/tools.js'
-import type { PlanDecision, PlanEntryView, PlanView } from '../contract.js'
-import type { PlanService } from '../services/types.js'
+import { planFilePath } from '@pneuma/runtime/core/modes.js'
+import { audit } from '@pneuma/runtime/core/audit.js'
+import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
+import type { PlanDecision, PlanEntryView, PlanView } from '@pneuma/runtime/contract.js'
+import type { PlanService } from '@pneuma/runtime/services/types.js'
 
 /** propose 的结果：决定本身 + 拒绝时用户附的反馈原话（仅 rejected 且用户填了才有）。 */
 interface PlanOutcome {

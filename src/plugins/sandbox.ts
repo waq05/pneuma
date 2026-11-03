@@ -31,23 +31,23 @@
 import { mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
-import type { SettingsField, SettingsValues } from '../contract.js'
-import { clockText } from '../core/clock.js'
-import { errText } from '../core/err-text.js'
-import { DSC_HOME } from '../core/path-policy.js'
-import { bootNoticeOnce } from '../core/boot-notices.js'
-import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import { registerCommandRunner } from '../core/tools/command-runner.js'
-import { readSandboxRequest } from '../core/tools/sandbox-args.js'
-import { permissionOf, writePermissions } from '../core/permission-scope.js'
-import type { Session } from '../core/session.js'
-import type { ToolGuard } from '../core/tool-guards.js'
-import { createDockerRunner, probeDocker } from '../core/sandbox/backends.js'
-import { createWindowsTokenRunner, probeWindowsToken, type WindowsTokenRunnerHandle } from '../core/sandbox/win/backend.js'
-import { readSetupState } from '../core/sandbox/win/account.js'
-import { runSetupElevated } from '../core/sandbox/win/setup.js'
-import { doctorWindowsNetwork } from '../core/sandbox/win/doctor.js'
-import { evaluateCommand } from '../core/sandbox/execpolicy.js'
+import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
+import { clockText } from '@pneuma/runtime/core/clock.js'
+import { errText } from '@pneuma/runtime/core/err-text.js'
+import { DSC_HOME } from '@pneuma/runtime/core/path-policy.js'
+import { bootNoticeOnce } from '@pneuma/runtime/core/boot-notices.js'
+import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import { registerCommandRunner } from '@pneuma/runtime/core/tools/command-runner.js'
+import { readSandboxRequest } from '@pneuma/runtime/core/tools/sandbox-args.js'
+import { permissionOf, writePermissions } from '@pneuma/runtime/core/permission-scope.js'
+import type { Session } from '@pneuma/runtime/core/session.js'
+import type { ToolGuard } from '@pneuma/runtime/core/tool-guards.js'
+import { createDockerRunner, probeDocker } from '@pneuma/runtime/core/sandbox/backends.js'
+import { createWindowsTokenRunner, probeWindowsToken, type WindowsTokenRunnerHandle } from '@pneuma/runtime/core/sandbox/win/backend.js'
+import { readSetupState } from '@pneuma/runtime/core/sandbox/win/account.js'
+import { runSetupElevated } from '@pneuma/runtime/core/sandbox/win/setup.js'
+import { doctorWindowsNetwork } from '@pneuma/runtime/core/sandbox/win/doctor.js'
+import { evaluateCommand } from '@pneuma/runtime/core/sandbox/execpolicy.js'
 import {
   checkWrite,
   createPolicy,
@@ -64,7 +64,7 @@ import {
   type PathCheck,
   type SandboxConfig,
   type SandboxPolicy,
-} from '../core/sandbox/policy.js'
+} from '@pneuma/runtime/core/sandbox/policy.js'
 import type {
   SandboxCheck,
   SandboxEnforcement,
@@ -72,7 +72,7 @@ import type {
   SandboxService,
   SandboxVerdict,
   SettingsSectionSpec,
-} from '../services/types.js'
+} from '@pneuma/runtime/services/types.js'
 
 /** 守卫刻度：灾难地板 5 < 沙箱 8 < 协作模式 10 < 安全钩子 20 < 审批 30。 */
 const GUARD_ORDER = 8

@@ -25,13 +25,13 @@ import {
   parsePrefixListText,
   resolveFloorConfig,
   type FloorConfig,
-} from '../core/approval-floor.js'
-import { activeRules } from '../core/command-policy.js'
-import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import type { SettingsField, SettingsValue, SettingsValues } from '../contract.js'
-import type { SettingsSectionSpec } from '../services/types.js'
-import { dscPath } from '../core/path-policy.js'
-import { readShellChoice, shellFlavor } from '../core/terminal-env.js'
+} from '@pneuma/runtime/core/approval-floor.js'
+import { activeRules } from '@pneuma/runtime/core/command-policy.js'
+import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import type { SettingsField, SettingsValue, SettingsValues } from '@pneuma/runtime/contract.js'
+import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { dscPath } from '@pneuma/runtime/core/path-policy.js'
+import { readShellChoice, shellFlavor } from '@pneuma/runtime/core/terminal-env.js'
 
 /** 配置与设置提示里要写清的来源文件（手改它同样生效）。 */
 const PLUGINS_FILE = dscPath('plugins.json')

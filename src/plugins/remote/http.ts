@@ -19,4 +19,4 @@ export {
   readLastSeq,
   sendJson,
   sendText,
-} from '../../core/web-http.js'
+} from '@pneuma/runtime/core/web-http.js'

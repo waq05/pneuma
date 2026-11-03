@@ -8,6 +8,8 @@
     "strict": true,
     "outDir": "lib",
     "rootDir": "src",
+    "baseUrl": ".",
+    "paths": { "@pneuma/runtime/*": ["src/*"] },
     "declaration": true,
     "skipLibCheck": true,
     "esModuleInterop": true,

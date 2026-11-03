@@ -18,8 +18,8 @@ import type {
   CommandInvocation,
   CommandService,
   CommandSpec,
-} from '../services/types.js'
-import type { DscRuntime, UsageStatsView } from '../contract.js'
+} from '@pneuma/runtime/services/types.js'
+import type { DscRuntime, UsageStatsView } from '@pneuma/runtime/contract.js'
 import {
   collectReviewScope,
   listReviewBranches,
@@ -27,15 +27,15 @@ import {
   reviewStatusText,
   reviewTaskText,
   type ReviewTarget,
-} from '../core/git-info.js'
-import { estimateTokens } from '../core/compact.js'
-import { exportSessionMarkdown } from '../core/session-export.js'
-import { checkForUpdate } from '../core/update-check.js'
-import { errText } from '../core/err-text.js'
-import { discoverThirdPartyUiArtifacts, readUiPluginManifestReport } from '../core/ui-bundles.js'
-import { dscPath } from '../core/path-policy.js'
-import { trustUiPlugin } from '../core/plugin-registry.js'
-import { DSC_VERSION } from '../core/version.js'
+} from '@pneuma/runtime/core/git-info.js'
+import { estimateTokens } from '@pneuma/runtime/core/compact.js'
+import { exportSessionMarkdown } from '@pneuma/runtime/core/session-export.js'
+import { checkForUpdate } from '@pneuma/runtime/core/update-check.js'
+import { errText } from '@pneuma/runtime/core/err-text.js'
+import { discoverThirdPartyUiArtifacts, readUiPluginManifestReport } from '@pneuma/runtime/core/ui-bundles.js'
+import { dscPath } from '@pneuma/runtime/core/path-policy.js'
+import { trustUiPlugin } from '@pneuma/runtime/core/plugin-registry.js'
+import { DSC_VERSION } from '@pneuma/runtime/core/version.js'
 import {
   addExtraSpec,
   allSpecs,
@@ -44,7 +44,7 @@ import {
   helpText,
   removeExtraSpec,
   shellHelpText,
-} from '../core/commands-completion.js'
+} from '@pneuma/runtime/core/commands-completion.js'
 
 /** 当前壳的 `@dsc/ui` 契约版本（内置清单顶层那个）；读不到就不设门（发现层会给出问题清单）。 */
 function shellApiVersionForTrust(): string | undefined {
@@ -63,7 +63,7 @@ export const commandsPlugin: Plugin.Object = {
      * `/help` 的文本按通道给：壳只列 `shell: true` 那批，终端列全量。
      * 两处共用一个注册表，但能跑的范围不同——文本必须跟着范围走（2026-10-27 查账）。
      */
-    const helpFor = (ui: import('../services/types.js').CommandContext): string =>
+    const helpFor = (ui: import('@pneuma/runtime/services/types.js').CommandContext): string =>
       ui.shell === true ? shellHelpText() : helpText(service.specs())
 
     /**
@@ -716,7 +716,7 @@ let serviceRef: CommandService | null = null
 export function runCommand(
   input: string,
   runtime: DscRuntime,
-  ui: import('../services/types.js').CommandContext,
+  ui: import('@pneuma/runtime/services/types.js').CommandContext,
 ): boolean {
   return serviceRef !== null ? serviceRef.run(input, runtime, ui) : false
 }

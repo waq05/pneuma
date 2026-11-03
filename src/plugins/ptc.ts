@@ -22,15 +22,15 @@
  */
 import vm from 'node:vm'
 import type { Plugin } from '@deepseek-ai/cordis'
-import { argsSummary, callFacts, gateIdentity, type FileChangeSummary, type ToolEntry } from '../core/tools.js'
+import { argsSummary, callFacts, gateIdentity, type FileChangeSummary, type ToolEntry } from '@pneuma/runtime/core/tools.js'
 import {
   PTC_LIMITS,
   PTC_SDK_SIGNATURE,
   type PtcCallRecord,
   ptcDescribe,
   ptcResultBody,
-} from '../core/ptc.js'
-import { resolvePluginConfig } from '../core/plugin-registry.js'
+} from '@pneuma/runtime/core/ptc.js'
+import { resolvePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 
 /** PTC 的模式名（与 core/presets.ts 的 PTC_PRESET 同一个值）。 */
 const PTC_PRESET = 'ptc'

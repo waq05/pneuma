@@ -24,8 +24,8 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
-import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import type { ToolContext, ToolEntry, ToolOutput, ToolRisk } from '../core/tools.js'
+import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import type { ToolContext, ToolEntry, ToolOutput, ToolRisk } from '@pneuma/runtime/core/tools.js'
 import {
   ToolSearchIndex,
   TOOL_SEARCH_CONFIG_KEY,
@@ -35,10 +35,10 @@ import {
   shouldDeferTool,
   summarizeToolDescription,
   type ToolSearchConfig,
-} from '../core/tool-search.js'
-import type { SettingsField, SettingsValues } from '../contract.js'
-import type { McpService, SettingsSectionSpec } from '../services/types.js'
-import { dscPath } from '../core/path-policy.js'
+} from '@pneuma/runtime/core/tool-search.js'
+import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
+import type { McpService, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { dscPath } from '@pneuma/runtime/core/path-policy.js'
 
 /** 三个桥接工具的固定名字（它们自己不许被撤下，也不许再经 tool_call 包一层）。 */
 const BRIDGE_TOOL_NAMES = new Set(['tool_search', 'tool_describe', 'tool_call'])

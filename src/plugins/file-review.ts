@@ -29,14 +29,14 @@ import {
   diffLines,
   renderHunk,
   type DiffResult,
-} from '../core/diff-text.js'
-import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import type { ToolGuard, ToolGuardInput } from '../core/tool-guards.js'
-import type { SettingsField, SettingsValues } from '../contract.js'
-import type { SettingsSectionSpec } from '../services/types.js'
-import { callFacts } from '../core/tools.js'
-import { clampIntIn as clampInt } from '../core/clamp.js'
-import { readBlockReason } from '../core/path-policy.js'
+} from '@pneuma/runtime/core/diff-text.js'
+import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import type { ToolGuard, ToolGuardInput } from '@pneuma/runtime/core/tool-guards.js'
+import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
+import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { callFacts } from '@pneuma/runtime/core/tools.js'
+import { clampIntIn as clampInt } from '@pneuma/runtime/core/clamp.js'
+import { readBlockReason } from '@pneuma/runtime/core/path-policy.js'
 
 /** 插件在条目树（`~/.dsc/plugins.json`）里的键；同时是设置分区 id。 */
 export const FILE_REVIEW_CONFIG_KEY = 'file-review'

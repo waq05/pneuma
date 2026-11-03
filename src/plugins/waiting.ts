@@ -9,7 +9,7 @@
  * @module dsc/plugins/waiting
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import type { WaitingService } from '../services/types.js'
+import type { WaitingService } from '@pneuma/runtime/services/types.js'
 
 export const waitingPlugin: Plugin.Object = {
   name: 'waiting',

@@ -11,11 +11,11 @@
  * @module dsc/plugins/web-search
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import { wrapUntrusted } from '../core/untrusted.js'
-import type { SettingsField, SettingsValue } from '../contract.js'
-import type { SettingsSectionSpec } from '../services/types.js'
-import { clampInt as clamp } from '../core/clamp.js'
+import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import { wrapUntrusted } from '@pneuma/runtime/core/untrusted.js'
+import type { SettingsField, SettingsValue } from '@pneuma/runtime/contract.js'
+import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
 
 /** 支持的搜索提供方。 */
 const PROVIDERS = ['tavily', 'bocha', 'serper'] as const
@@ -172,7 +172,7 @@ export const webSearchPlugin: Plugin.Object = {
       // 没有 key 就不挂工具：挂上去只会让模型每次都拿到一句「还没配 key」的报错，
       // 白烧一轮请求。设置里填好 key 后 save() 会再 sync 一次，工具当场出现。
       if (resolveKey(config) === '') return () => {}
-      const tool: import('../core/tools.js').ToolEntry = {
+      const tool: import('@pneuma/runtime/core/tools.js').ToolEntry = {
         name: 'web_search',
         description:
           '搜索互联网，返回网页结果（标题、链接、摘要）。需要查时事、文档、价格、版本号等' +

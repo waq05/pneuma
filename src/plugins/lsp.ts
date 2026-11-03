@@ -34,13 +34,13 @@
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import { readFileSync } from 'node:fs'
-import { clampInt as clamp } from '../core/clamp.js'
-import { errText as errorText } from '../core/err-text.js'
-import type { ChatMessage } from '../core/llm.js'
-import { wrapUntrusted } from '../core/untrusted.js'
-import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import type { ToolGuardInput, ToolGuardVerdict, ToolObserver } from '../core/tool-guards.js'
-import type { ToolContext } from '../core/tools.js'
+import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
+import { errText as errorText } from '@pneuma/runtime/core/err-text.js'
+import type { ChatMessage } from '@pneuma/runtime/core/llm.js'
+import { wrapUntrusted } from '@pneuma/runtime/core/untrusted.js'
+import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import type { ToolGuardInput, ToolGuardVerdict, ToolObserver } from '@pneuma/runtime/core/tool-guards.js'
+import type { ToolContext } from '@pneuma/runtime/core/tools.js'
 import {
   type LspDiagnostic,
   type LspHover,
@@ -49,10 +49,10 @@ import {
   type LspQueryOutcome,
   type LspStatusEntry,
   LSP_OPERATIONS,
-} from '../core/lsp/client.js'
-import { LspManager } from '../core/lsp/manager.js'
-import { buildLineShift, shiftDiagnostics } from '../core/lsp/line-shift.js'
-import { diagnosticKey } from '../core/lsp/normalize.js'
+} from '@pneuma/runtime/core/lsp/client.js'
+import { LspManager } from '@pneuma/runtime/core/lsp/manager.js'
+import { buildLineShift, shiftDiagnostics } from '@pneuma/runtime/core/lsp/line-shift.js'
+import { diagnosticKey } from '@pneuma/runtime/core/lsp/normalize.js'
 import {
   BUILTIN_SERVERS,
   type LspServerDef,
@@ -60,10 +60,10 @@ import {
   installHint,
   mergeServers,
   parseServerOverrides,
-} from '../core/lsp/servers.js'
-import { displayPath, toDisplayCharacter, toDisplayLine, toProtocolPosition } from '../core/lsp/uri.js'
-import type { SettingsField, SettingsValue } from '../contract.js'
-import type { SettingsSectionSpec } from '../services/types.js'
+} from '@pneuma/runtime/core/lsp/servers.js'
+import { displayPath, toDisplayCharacter, toDisplayLine, toProtocolPosition } from '@pneuma/runtime/core/lsp/uri.js'
+import type { SettingsField, SettingsValue } from '@pneuma/runtime/contract.js'
+import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 
 /** 插件在条目树里的键（设置分区 id 也是它）。 */
 const CONFIG_KEY = 'lsp'

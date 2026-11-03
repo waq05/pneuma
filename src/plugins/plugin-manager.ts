@@ -16,12 +16,12 @@ import { copyFileSync, mkdirSync } from 'node:fs'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import type { Plugin } from '@deepseek-ai/cordis'
-import { browsePluginMarketSource, installPluginMarketEntry, type MarketEntry } from '../core/market.js'
-import { listPluginInfos } from '../core/plugin-registry.js'
-import { mountExternalPlugin, setPluginEnabledHot } from '../core/plugin-loader.js'
-import type { ToolEntry } from '../core/tools.js'
-import { dscPath } from '../core/path-policy.js'
-import { thirdPartyUiRoot } from '../core/ui-bundles.js'
+import { browsePluginMarketSource, installPluginMarketEntry, type MarketEntry } from '@pneuma/runtime/core/market.js'
+import { listPluginInfos } from '@pneuma/runtime/core/plugin-registry.js'
+import { mountExternalPlugin, setPluginEnabledHot } from '@pneuma/runtime/core/plugin-loader.js'
+import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
+import { dscPath } from '@pneuma/runtime/core/path-policy.js'
+import { thirdPartyUiRoot } from '@pneuma/runtime/core/ui-bundles.js'
 
 function renderList(): string {
   const infos = listPluginInfos()

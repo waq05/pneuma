@@ -35,18 +35,18 @@ import {
   takeScreenshot,
   type DesktopArgs,
   type DesktopAction,
-} from '../core/desktop-control.js'
-import type { DesktopRiskTier, DesktopTarget } from '../contract.js'
-import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import { classifyCommand } from '../core/command-policy.js'
-import { redact } from '../core/secrets.js'
-import { wrapUntrusted } from '../core/untrusted.js'
-import type { ChatContentPart, ChatMessage } from '../core/llm.js'
+} from '@pneuma/runtime/core/desktop-control.js'
+import type { DesktopRiskTier, DesktopTarget } from '@pneuma/runtime/contract.js'
+import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import { classifyCommand } from '@pneuma/runtime/core/command-policy.js'
+import { redact } from '@pneuma/runtime/core/secrets.js'
+import { wrapUntrusted } from '@pneuma/runtime/core/untrusted.js'
+import type { ChatContentPart, ChatMessage } from '@pneuma/runtime/core/llm.js'
 import type { Plugin } from '@deepseek-ai/cordis'
-import type { SettingsField, SettingsValue } from '../contract.js'
-import type { SettingsSectionSpec } from '../services/types.js'
-import { clampInt as clamp } from '../core/clamp.js'
-import { splitList } from '../core/strings.js'
+import type { SettingsField, SettingsValue } from '@pneuma/runtime/contract.js'
+import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
+import { splitList } from '@pneuma/runtime/core/strings.js'
 
 /** 插件配置（存 `~/.dsc/plugins.json` 条目树的 config 里）。 */
 interface ComputerUseConfig {
@@ -420,7 +420,7 @@ export const computerUsePlugin: Plugin.Object = {
     }
 
     /** 动手的工具（每次都要审批）；没开免审批时，只读的看屏动作也留在里面一起过审批。 */
-    function buildActTool(): import('../core/tools.js').ToolEntry {
+    function buildActTool(): import('@pneuma/runtime/core/tools.js').ToolEntry {
       // 免审批开着：看屏动作归 computer_look，这个工具就不该再留（否则同一个动作两个入口）
       // 免审批没开：看屏动作只能走这个工具，否则模型连屏幕都看不到
       // stop 是急停，永远留在动手工具里（且不因禁用清单以外的东西消失）。
@@ -441,7 +441,7 @@ export const computerUsePlugin: Plugin.Object = {
     }
 
     /** 看屏幕的工具（免审批那一档）。 */
-    function buildLookTool(): import('../core/tools.js').ToolEntry {
+    function buildLookTool(): import('@pneuma/runtime/core/tools.js').ToolEntry {
       const actions = LOOK_ACTIONS.filter((action) => !disabled().has(action))
       return {
         name: 'computer_look',

@@ -21,14 +21,14 @@
  */
 import { createHash } from 'node:crypto'
 import type { Plugin } from '@deepseek-ai/cordis'
-import { errText } from '../adapter/transcript.js'
-import { dropImageParts, foldSystemMessages, type ChatMessage } from '../core/llm.js'
-import { pruneImages, readImageDietConfig } from '../core/image-diet.js'
-import { buildSystemPrompt, DEFAULT_INSTRUCTION_BUDGET, environmentText, type PromptContribution } from '../core/prompt.js'
-import { pruneToolResults } from '../core/tool-result-prune.js'
-import { resolvePluginConfig } from '../core/plugin-registry.js'
-import type { Session } from '../core/session.js'
-import type { AgentScope, PromptService } from '../services/types.js'
+import { errText } from '@pneuma/runtime/adapter/transcript.js'
+import { dropImageParts, foldSystemMessages, type ChatMessage } from '@pneuma/runtime/core/llm.js'
+import { pruneImages, readImageDietConfig } from '@pneuma/runtime/core/image-diet.js'
+import { buildSystemPrompt, DEFAULT_INSTRUCTION_BUDGET, environmentText, type PromptContribution } from '@pneuma/runtime/core/prompt.js'
+import { pruneToolResults } from '@pneuma/runtime/core/tool-result-prune.js'
+import { resolvePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import type { Session } from '@pneuma/runtime/core/session.js'
+import type { AgentScope, PromptService } from '@pneuma/runtime/services/types.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'prompt'

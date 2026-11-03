@@ -12,7 +12,7 @@
  */
 import { dirname } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
-import type { DscRuntime, MarketSkillView, MarketSource } from '../contract.js'
+import type { DscRuntime, MarketSkillView, MarketSource } from '@pneuma/runtime/contract.js'
 import {
   DSC_SKILLS_DIR,
   expandSkillDir,
@@ -22,22 +22,22 @@ import {
   toSkillInfoView,
   writeSkillEnabled,
   type SkillDefinition,
-} from '../core/skills.js'
+} from '@pneuma/runtime/core/skills.js'
 import {
   browseMarketSource,
   installMarketEntry,
   toMarketSkillView,
   type MarketEntry,
-} from '../core/market.js'
-import { errText as err } from '../core/err-text.js'
-import { readConfigDoc } from '../core/config-store.js'
-import { readPrefs } from '../core/prefs.js'
+} from '@pneuma/runtime/core/market.js'
+import { errText as err } from '@pneuma/runtime/core/err-text.js'
+import { readConfigDoc } from '@pneuma/runtime/core/config-store.js'
+import { readPrefs } from '@pneuma/runtime/core/prefs.js'
 import type {
   CommandContext,
   SkillMarketProvider,
   SkillProvider,
   SkillService,
-} from '../services/types.js'
+} from '@pneuma/runtime/services/types.js'
 
 /** 描述进目录的截断长度（照 dsh 的 catalogDescriptionMaxLength）。 */
 const DESCRIPTION_LIMIT = 500

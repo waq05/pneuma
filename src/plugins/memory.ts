@@ -14,9 +14,9 @@
  * @module dsc/plugins/memory
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { errText } from '../adapter/transcript.js'
-import { lastAssistantText as lastAssistantMessageText, lastUserText as lastUserMessageText } from '../core/transcript-text.js'
-import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
+import { errText } from '@pneuma/runtime/adapter/transcript.js'
+import { lastAssistantText as lastAssistantMessageText, lastUserText as lastUserMessageText } from '@pneuma/runtime/core/transcript-text.js'
+import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import {
   applyMemoryOperations,
   clearCell,
@@ -37,15 +37,15 @@ import {
   TARGET_LABELS,
   usedChars,
   writeEval,
-} from '../core/memory.js'
-import type { MemoryCell, MemoryConfig, MemoryOperation, MemoryTarget, MemoryType } from '../core/memory.js'
-import { evaluateMemory, formatMemoryReport, readingsOf } from '../core/memory-eval.js'
-import type { MemoryEvalEntry, MemoryEvalInput, MemoryEvalReadings, MemoryEvalReport } from '../core/memory-eval.js'
-import type { ToolEntry } from '../core/tools.js'
-import { argsSummary } from '../core/tools.js'
-import type { SettingsField, SettingsOption, SettingsValues } from '../contract.js'
-import type { MemoryService, SettingsSectionSpec } from '../services/types.js'
-import { clampInt as clamp } from '../core/clamp.js'
+} from '@pneuma/runtime/core/memory.js'
+import type { MemoryCell, MemoryConfig, MemoryOperation, MemoryTarget, MemoryType } from '@pneuma/runtime/core/memory.js'
+import { evaluateMemory, formatMemoryReport, readingsOf } from '@pneuma/runtime/core/memory-eval.js'
+import type { MemoryEvalEntry, MemoryEvalInput, MemoryEvalReadings, MemoryEvalReport } from '@pneuma/runtime/core/memory-eval.js'
+import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
+import { argsSummary } from '@pneuma/runtime/core/tools.js'
+import type { SettingsField, SettingsOption, SettingsValues } from '@pneuma/runtime/contract.js'
+import type { MemoryService, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
 
 /** 配置键（`~/.dsc/plugins.json` 里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'memory'

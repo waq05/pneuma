@@ -8,9 +8,9 @@
  * @module dsc/plugins/surfaces
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { SurfaceRegistry } from '../core/surface-registry.js'
-import type { RuntimeSurfaces } from '../contract.js'
-import type { SurfaceService } from '../services/types.js'
+import { SurfaceRegistry } from '@pneuma/runtime/core/surface-registry.js'
+import type { RuntimeSurfaces } from '@pneuma/runtime/contract.js'
+import type { SurfaceService } from '@pneuma/runtime/services/types.js'
 
 export const surfacesPlugin: Plugin.Object = {
   name: 'surfaces',

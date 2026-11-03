@@ -9,12 +9,12 @@
  * @module dsc/plugins/llm
  */
 import type { Plugin, Context } from '@deepseek-ai/cordis'
-import type { ModelInfo, DscCoreConfig } from '../core/config.js'
-import { DEFAULT_CAPS, clampEffort, effortToWire, hasEffortLevel, THINKING_LEVEL_LABELS, type ModelCaps } from '../core/model-caps.js'
-import { OPENAI_COMPLETIONS_API, streamChat, type LlmAdapter, type ToolOrphanReport } from '../core/llm.js'
-import type { EffortLevel, ModelChoiceView, Modality } from '../contract.js'
-import type { LlmRoute, LlmService } from '../services/types.js'
-import type { Session } from '../core/session.js'
+import type { ModelInfo, DscCoreConfig } from '@pneuma/runtime/core/config.js'
+import { DEFAULT_CAPS, clampEffort, effortToWire, hasEffortLevel, THINKING_LEVEL_LABELS, type ModelCaps } from '@pneuma/runtime/core/model-caps.js'
+import { OPENAI_COMPLETIONS_API, streamChat, type LlmAdapter, type ToolOrphanReport } from '@pneuma/runtime/core/llm.js'
+import type { EffortLevel, ModelChoiceView, Modality } from '@pneuma/runtime/contract.js'
+import type { LlmRoute, LlmService } from '@pneuma/runtime/services/types.js'
+import type { Session } from '@pneuma/runtime/core/session.js'
 
 /** 请求侧清洗提醒的账：会话 id → 上次报过的报告形状（同形状不重复报，形状变了再报一次）。 */
 const sanitizeNotices = new Map<string, string>()

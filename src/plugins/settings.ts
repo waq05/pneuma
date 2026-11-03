@@ -28,13 +28,13 @@ import type {
   SettingsSectionView,
   SettingsValues,
   StatusBarPrefsView,
-} from '../contract.js'
-import type { DscCoreConfig } from '../core/config.js'
-import { errText as err } from '../core/err-text.js'
-import { readConfig } from '../core/config.js'
-import { parseTolerantYaml } from '../core/migrate.js'
-import { pickProbeModel, testConnection } from '../core/connection-test.js'
-import { discoverModels } from '../core/model-discovery.js'
+} from '@pneuma/runtime/contract.js'
+import type { DscCoreConfig } from '@pneuma/runtime/core/config.js'
+import { errText as err } from '@pneuma/runtime/core/err-text.js'
+import { readConfig } from '@pneuma/runtime/core/config.js'
+import { parseTolerantYaml } from '@pneuma/runtime/core/migrate.js'
+import { pickProbeModel, testConnection } from '@pneuma/runtime/core/connection-test.js'
+import { discoverModels } from '@pneuma/runtime/core/model-discovery.js'
 import {
   activeConfigFile,
   CREDENTIALS_FILE,
@@ -46,16 +46,16 @@ import {
   writeDefaultModel,
   writeProviderKey,
   writeTemperature,
-} from '../core/config-store.js'
-import { DSC_SKILLS_DIR } from '../core/skills.js'
-import { fetchLatestRelease, pickInstaller, UPDATE_CHECK_URL } from '../core/update-check.js'
-import { derivedPresetLabel } from '../core/permission-presets.js'
-import { DEFAULT_MARKET_SOURCES, readPrefs, writePrefs, UPDATE_CHECK_MODES, type DscPrefs, type UpdateCheckMode } from '../core/prefs.js'
-import { KERNEL_API_VERSION } from '../core/plugin-registry.js'
-import { DSC_PLUGINS_DIR } from '../core/plugin-loader.js'
-import { DSC_VERSION } from '../core/version.js'
-import type { SettingsSectionSpec, SettingsService } from '../services/types.js'
-import { dscPath } from '../core/path-policy.js'
+} from '@pneuma/runtime/core/config-store.js'
+import { DSC_SKILLS_DIR } from '@pneuma/runtime/core/skills.js'
+import { fetchLatestRelease, pickInstaller, UPDATE_CHECK_URL } from '@pneuma/runtime/core/update-check.js'
+import { derivedPresetLabel } from '@pneuma/runtime/core/permission-presets.js'
+import { DEFAULT_MARKET_SOURCES, readPrefs, writePrefs, UPDATE_CHECK_MODES, type DscPrefs, type UpdateCheckMode } from '@pneuma/runtime/core/prefs.js'
+import { KERNEL_API_VERSION } from '@pneuma/runtime/core/plugin-registry.js'
+import { DSC_PLUGINS_DIR } from '@pneuma/runtime/core/plugin-loader.js'
+import { DSC_VERSION } from '@pneuma/runtime/core/version.js'
+import type { SettingsSectionSpec, SettingsService } from '@pneuma/runtime/services/types.js'
+import { dscPath } from '@pneuma/runtime/core/path-policy.js'
 
 /** 分区 id → 值。空对象 = 该分区没有控件值。 */
 type Values = SettingsValues

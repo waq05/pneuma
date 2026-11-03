@@ -190,7 +190,7 @@ console.log('[1] 契约单一真源：协议版本只有一处定义')
   const stdioSrc = uncomment(read('src/plugins/host-stdio.ts'))
   check(
     'host-stdio 从契约取版本（自己不许写死 = 2 / = 3）',
-    !/HOST_PROTOCOL_VERSION\s*=\s*\d/.test(stdioSrc) && has(stdioSrc, "} from '../core/dock-browser.js'") && stdioSrc.includes('HOST_PROTOCOL_VERSION'),
+    !/HOST_PROTOCOL_VERSION\s*=\s*\d/.test(stdioSrc) && has(stdioSrc, "} from '@pneuma/runtime/core/dock-browser.js'") && stdioSrc.includes('HOST_PROTOCOL_VERSION'),
     'src/plugins/host-stdio.ts 里出现了 `HOST_PROTOCOL_VERSION = <数字>` 这样的本地定义：契约升到 4 时这一侧不会跟着动，握手版本两边不同步',
   )
   check(

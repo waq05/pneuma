@@ -23,7 +23,7 @@ import { SlotRegistry } from '../ui/slots.js'
 import { SlotOutlet } from '../ui/slots-ink.js'
 import { loadTuiPlugins } from '../ui/tui-plugins.js'
 import { TUI_SLOTS } from '../ui/tui-plugin-api.js'
-import { DSC_VERSION } from '../core/version.js'
+import { DSC_VERSION } from '@pneuma/runtime/core/version.js'
 import type { InkComponent } from '../ui/tui-plugins.js'
 
 const ENTER_ALT = '\x1b[?1049h\x1b[2J\x1b[H'

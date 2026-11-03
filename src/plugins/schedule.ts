@@ -23,7 +23,7 @@
  * @module dsc/plugins/schedule
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
+import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import {
   describeNext,
   describeRule,
@@ -34,13 +34,13 @@ import {
   systemTimeZone,
   SCHEDULE_RULE_KINDS,
   type ScheduleRule,
-} from '../core/schedule/rule.js'
-import { ScheduleRunner, scheduleLimitsNote } from '../core/schedule/runner.js'
-import { ScheduleStore, type ScheduleTask } from '../core/schedule/store.js'
-import { errText as errorText } from '../core/err-text.js'
-import { clampInt as clampNumber } from '../core/clamp.js'
-import type { ScheduledTaskView, SettingsField, SettingsValue, SettingsValues } from '../contract.js'
-import type { SettingsSectionSpec } from '../services/types.js'
+} from '@pneuma/runtime/core/schedule/rule.js'
+import { ScheduleRunner, scheduleLimitsNote } from '@pneuma/runtime/core/schedule/runner.js'
+import { ScheduleStore, type ScheduleTask } from '@pneuma/runtime/core/schedule/store.js'
+import { errText as errorText } from '@pneuma/runtime/core/err-text.js'
+import { clampInt as clampNumber } from '@pneuma/runtime/core/clamp.js'
+import type { ScheduledTaskView, SettingsField, SettingsValue, SettingsValues } from '@pneuma/runtime/contract.js'
+import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'schedule'

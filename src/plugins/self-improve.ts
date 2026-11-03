@@ -38,15 +38,15 @@
  * @module dsc/plugins/self-improve
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import { argsSummary } from '../core/tools.js'
-import type { ToolEntry } from '../core/tools.js'
-import type { ToolGuardInput } from '../core/tool-guards.js'
-import type { ChatMessage } from '../core/llm.js'
-import type { SettingsField, SettingsValues } from '../contract.js'
-import type { SettingsSectionSpec } from '../services/types.js'
-import { errText } from '../core/err-text.js'
-import { formatLedgerEntry, ledgerFile, ledgerSize, readLedger, rollbackEntry } from '../core/learnings/ledger.js'
+import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import { argsSummary } from '@pneuma/runtime/core/tools.js'
+import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
+import type { ToolGuardInput } from '@pneuma/runtime/core/tool-guards.js'
+import type { ChatMessage } from '@pneuma/runtime/core/llm.js'
+import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
+import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { errText } from '@pneuma/runtime/core/err-text.js'
+import { formatLedgerEntry, ledgerFile, ledgerSize, readLedger, rollbackEntry } from '@pneuma/runtime/core/learnings/ledger.js'
 import {
   candidatesFile,
   DEFAULT_STORE_OPTIONS,
@@ -60,7 +60,7 @@ import {
   type LearningKind,
   type LearningStoreOptions,
   type LearningsState,
-} from '../core/learnings/store.js'
+} from '@pneuma/runtime/core/learnings/store.js'
 import {
   archiveRoot,
   archivedCount,
@@ -86,9 +86,9 @@ import {
   archiveSkill as archiveSkillOp,
   type SkillDraft,
   type SkillOpResult,
-} from '../core/learnings/skill-write.js'
-import { lastAssistantText, lastUserText, previousUserText } from '../core/transcript-text.js'
-import { clampInt as clamp } from '../core/clamp.js'
+} from '@pneuma/runtime/core/learnings/skill-write.js'
+import { lastAssistantText, lastUserText, previousUserText } from '@pneuma/runtime/core/transcript-text.js'
+import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
 import { existsSync } from 'node:fs'
 
 /** 配置键（`~/.dsc/plugins.json` 里 `file` 等于这个名字那一项的 `config`）。 */

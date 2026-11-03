@@ -24,15 +24,15 @@ import {
   type McpRisk,
   type McpServerConfig,
   type McpToolSpec,
-} from '../core/mcp.js'
-import { clampInt as clamp } from '../core/clamp.js'
-import { errText as errorText } from '../core/err-text.js'
-import { asRecord } from '../core/records.js'
-import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import { wrapUntrusted } from '../core/untrusted.js'
-import { argsSummary, type ToolEntry } from '../core/tools.js'
-import type { SettingsField, SettingsValues } from '../contract.js'
-import type { McpServerInfo, McpService, McpToolInfo, SettingsSectionSpec } from '../services/types.js'
+} from '@pneuma/runtime/core/mcp.js'
+import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
+import { errText as errorText } from '@pneuma/runtime/core/err-text.js'
+import { asRecord } from '@pneuma/runtime/core/records.js'
+import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import { wrapUntrusted } from '@pneuma/runtime/core/untrusted.js'
+import { argsSummary, type ToolEntry } from '@pneuma/runtime/core/tools.js'
+import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
+import type { McpServerInfo, McpService, McpToolInfo, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 
 /** 插件在 `~/.dsc/plugins.json` 条目树里的键（设置分区 id 也是它）。 */
 const CONFIG_KEY = 'mcp'

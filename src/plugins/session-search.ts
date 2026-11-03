@@ -13,15 +13,15 @@
  * @module dsc/plugins/session-search
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { errText } from '../adapter/transcript.js'
-import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import { defaultSessionIndexOptions, SESSION_INDEX_BOUNDS, SESSION_INDEX_FILE, SessionIndex } from '../core/session-index.js'
-import type { SessionIndexHit, SessionIndexOptions, SessionIndexSearchOptions } from '../core/session-index.js'
-import type { ToolEntry } from '../core/tools.js'
-import { wrapUntrusted } from '../core/untrusted.js'
-import type { SettingsField, SettingsValues } from '../contract.js'
-import type { SettingsSectionSpec, SessionSearchService } from '../services/types.js'
-import { clampIntIn as clamp } from '../core/clamp.js'
+import { errText } from '@pneuma/runtime/adapter/transcript.js'
+import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import { defaultSessionIndexOptions, SESSION_INDEX_BOUNDS, SESSION_INDEX_FILE, SessionIndex } from '@pneuma/runtime/core/session-index.js'
+import type { SessionIndexHit, SessionIndexOptions, SessionIndexSearchOptions } from '@pneuma/runtime/core/session-index.js'
+import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
+import { wrapUntrusted } from '@pneuma/runtime/core/untrusted.js'
+import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
+import type { SettingsSectionSpec, SessionSearchService } from '@pneuma/runtime/services/types.js'
+import { clampIntIn as clamp } from '@pneuma/runtime/core/clamp.js'
 
 /** 配置键（`~/.dsc/plugins.json` 里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'session-search'

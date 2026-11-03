@@ -16,11 +16,11 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { Plugin } from '@deepseek-ai/cordis'
-import { resolvePluginConfig } from '../core/plugin-registry.js'
-import type { ToolEntry } from '../core/tools.js'
-import type { AskQuestionItem, AskUserView, AskUserViewInput } from '../contract.js'
-import type { AskService } from '../services/types.js'
-import { clampInt as clamp } from '../core/clamp.js'
+import { resolvePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
+import type { AskQuestionItem, AskUserView, AskUserViewInput } from '@pneuma/runtime/contract.js'
+import type { AskService } from '@pneuma/runtime/services/types.js'
+import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'ask'

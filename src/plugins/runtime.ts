@@ -7,9 +7,9 @@
  * @module dsc/plugins/runtime
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { errText } from '../adapter/transcript.js'
-import { listPluginInfos, writePluginEnabled } from '../core/plugin-registry.js'
-import { setPluginEnabledHot } from '../core/plugin-loader.js'
+import { errText } from '@pneuma/runtime/adapter/transcript.js'
+import { listPluginInfos, writePluginEnabled } from '@pneuma/runtime/core/plugin-registry.js'
+import { setPluginEnabledHot } from '@pneuma/runtime/core/plugin-loader.js'
 import {
   discoverThirdPartyUiArtifacts,
   isPackageUiEntry,
@@ -18,12 +18,12 @@ import {
   scanPackageUiTrusts,
   scanThirdPartyUiTrusts,
   trustThirdPartyUiPlugin,
-} from '../core/ui-bundles.js'
-import { buildUsageStats } from '../core/usage-log.js'
-import { sideAskOnce } from '../core/side-ask.js'
-import { shellCommandRejection, shellCommands } from '../core/commands-completion.js'
-import type { DscRuntime, SettingsMutation } from '../contract.js'
-import type { UserFileAttachment } from '../core/attachments.js'
+} from '@pneuma/runtime/core/ui-bundles.js'
+import { buildUsageStats } from '@pneuma/runtime/core/usage-log.js'
+import { sideAskOnce } from '@pneuma/runtime/core/side-ask.js'
+import { shellCommandRejection, shellCommands } from '@pneuma/runtime/core/commands-completion.js'
+import type { DscRuntime, SettingsMutation } from '@pneuma/runtime/contract.js'
+import type { UserFileAttachment } from '@pneuma/runtime/core/attachments.js'
 
 export const runtimePlugin: Plugin.Object = {
   name: 'ui-runtime',
@@ -71,7 +71,7 @@ export const runtimePlugin: Plugin.Object = {
      * openPicker / openModels 只是事件——终端壳与旧桌面渲染层各有一条转发链
      * （host-stdio / remote → 各自界面）。壳自己的那批命令不依赖这两个回调。
      */
-    function commandUi(shell = false): import('../services/types.js').CommandContext {
+    function commandUi(shell = false): import('@pneuma/runtime/services/types.js').CommandContext {
       return {
         // 壳那条通道只放行 `shell: true` 的命令，/help 据此只列能跑的那批
         ...(shell ? { shell: true } : {}),

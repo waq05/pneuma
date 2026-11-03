@@ -11,8 +11,8 @@
  * @module dsc/plugins/guards
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { ToolGuardRegistry } from '../core/tool-guards.js'
-import type { GuardService } from '../services/types.js'
+import { ToolGuardRegistry } from '@pneuma/runtime/core/tool-guards.js'
+import type { GuardService } from '@pneuma/runtime/services/types.js'
 
 export const guardsPlugin: Plugin.Object = {
   name: 'guards',

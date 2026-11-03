@@ -12,15 +12,15 @@
  * @module dsc/plugins/transcript
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { Transcript } from '../adapter/transcript.js'
-import { estimateSessionCostCny, isDeepseekProvider, isPeakHour } from '../core/pricing.js'
-import { readSessionUsage } from '../core/usage-log.js'
-import { emptySegments } from '../core/token-estimate.js'
-import type { NoticeMessageView, PlanView, QueuedMessageView, RuntimeSnapshot, StatusView, TranscriptEntry } from '../contract.js'
-import type { AsyncInboxItem } from '../core/session.js'
-import { contentText, type ChatMessage } from '../core/llm.js'
-import { SUMMARY_BANNER } from '../core/compact-anchors.js'
-import type { TranscriptService } from '../services/types.js'
+import { Transcript } from '@pneuma/runtime/adapter/transcript.js'
+import { estimateSessionCostCny, isDeepseekProvider, isPeakHour } from '@pneuma/runtime/core/pricing.js'
+import { readSessionUsage } from '@pneuma/runtime/core/usage-log.js'
+import { emptySegments } from '@pneuma/runtime/core/token-estimate.js'
+import type { NoticeMessageView, PlanView, QueuedMessageView, RuntimeSnapshot, StatusView, TranscriptEntry } from '@pneuma/runtime/contract.js'
+import type { AsyncInboxItem } from '@pneuma/runtime/core/session.js'
+import { contentText, type ChatMessage } from '@pneuma/runtime/core/llm.js'
+import { SUMMARY_BANNER } from '@pneuma/runtime/core/compact-anchors.js'
+import type { TranscriptService } from '@pneuma/runtime/services/types.js'
 
 /**
  * 收件箱按来源拆两个面：用户来源 → `queued`（输入框下方队列条），机器来源 →

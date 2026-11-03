@@ -22,22 +22,22 @@
  * @module dsc/plugins/host-stdio
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { errText } from '../adapter/transcript.js'
-import type { CdpCommandTarget } from '../core/cdp/transport.js'
-import type { DockBrowserReply } from '../core/dock-browser.js'
+import { errText } from '@pneuma/runtime/adapter/transcript.js'
+import type { CdpCommandTarget } from '@pneuma/runtime/core/cdp/transport.js'
+import type { DockBrowserReply } from '@pneuma/runtime/core/dock-browser.js'
 import {
   DOCK_CALL_TIMEOUT_MS,
   DOCK_OPEN_TIMEOUT_MS,
   HOST_PROTOCOL_VERSION,
-} from '../core/dock-browser.js'
-import type { DockBrowserEventPush, DockBrowserRequest, DockViewInfo } from '../core/dock-browser.js'
-import { createDockSession } from '../core/dock-session.js'
-import { DockBrowserUnavailableError, HOST_BROWSER_SERVICE } from '../core/host-browser-link.js'
-import type { DockOpenResult, HostBrowserLink } from '../core/host-browser-link.js'
-import { isInvokableMethod } from '../core/host-methods.js'
-import { resolvePluginConfig } from '../core/plugin-registry.js'
-import { snapshotThrottleMs } from '../core/snapshot-throttle.js'
-import type { RuntimeSnapshot } from '../contract.js'
+} from '@pneuma/runtime/core/dock-browser.js'
+import type { DockBrowserEventPush, DockBrowserRequest, DockViewInfo } from '@pneuma/runtime/core/dock-browser.js'
+import { createDockSession } from '@pneuma/runtime/core/dock-session.js'
+import { DockBrowserUnavailableError, HOST_BROWSER_SERVICE } from '@pneuma/runtime/core/host-browser-link.js'
+import type { DockOpenResult, HostBrowserLink } from '@pneuma/runtime/core/host-browser-link.js'
+import { isInvokableMethod } from '@pneuma/runtime/core/host-methods.js'
+import { resolvePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import { snapshotThrottleMs } from '@pneuma/runtime/core/snapshot-throttle.js'
+import type { RuntimeSnapshot } from '@pneuma/runtime/contract.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'host-stdio'

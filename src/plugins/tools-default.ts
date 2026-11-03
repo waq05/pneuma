@@ -9,14 +9,14 @@
  * @module dsc/plugins/tools-default
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { createBashTool, BASH_DEFAULT_BUDGETS, createJobTools, createTerminalTool, JobTable, stopAllBackgroundChildren, stopBackgroundChild, TerminalTable, type BashBudgets } from '../core/tools/bash.js'
-import { createReadTool, editTool, READ_DEFAULT_LINE_LIMIT, writeTool } from '../core/tools/fs-tools.js'
-import { readImageTool } from '../core/tools/image-tool.js'
-import { globTool, grepTool } from '../core/tools/search-tools.js'
-import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import type { BackgroundOutputView, BackgroundWorkView, SettingsField, SettingsMutationOk, SettingsValues } from '../contract.js'
-import type { BackgroundWorksService, SettingsSectionSpec } from '../services/types.js'
-import { clampInt as clamp } from '../core/clamp.js'
+import { createBashTool, BASH_DEFAULT_BUDGETS, createJobTools, createTerminalTool, JobTable, stopAllBackgroundChildren, stopBackgroundChild, TerminalTable, type BashBudgets } from '@pneuma/runtime/core/tools/bash.js'
+import { createReadTool, editTool, READ_DEFAULT_LINE_LIMIT, writeTool } from '@pneuma/runtime/core/tools/fs-tools.js'
+import { readImageTool } from '@pneuma/runtime/core/tools/image-tool.js'
+import { globTool, grepTool } from '@pneuma/runtime/core/tools/search-tools.js'
+import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import type { BackgroundOutputView, BackgroundWorkView, SettingsField, SettingsMutationOk, SettingsValues } from '@pneuma/runtime/contract.js'
+import type { BackgroundWorksService, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
 import {
   detectShells,
   forgetShellDetection,
@@ -24,7 +24,7 @@ import {
   readShellChoice,
   shellChoiceLabel,
   SHELL_CHOICES,
-} from '../core/terminal-env.js'
+} from '@pneuma/runtime/core/terminal-env.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'tools-default'

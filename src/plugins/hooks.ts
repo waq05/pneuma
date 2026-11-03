@@ -16,8 +16,8 @@
  * @module dsc/plugins/hooks
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { audit, readAudit } from '../core/audit.js'
-import { POLICY_RULES_FILE } from '../core/command-policy.js'
+import { audit, readAudit } from '@pneuma/runtime/core/audit.js'
+import { POLICY_RULES_FILE } from '@pneuma/runtime/core/command-policy.js'
 import {
   addRule,
   addScript,
@@ -44,12 +44,12 @@ import {
   trustOf,
   trustScript,
   untrustScript,
-} from '../core/hooks.js'
-import type { HookEvent, HookJudgement, HookRuleAction, HookRuleField, HookScript } from '../core/hooks.js'
-import type { ToolGuard, ToolGuardInput } from '../core/tool-guards.js'
-import { argsSummary } from '../core/tools.js'
-import type { SettingsField, SettingsOption, SettingsValues } from '../contract.js'
-import type { HookService, SettingsSectionSpec } from '../services/types.js'
+} from '@pneuma/runtime/core/hooks.js'
+import type { HookEvent, HookJudgement, HookRuleAction, HookRuleField, HookScript } from '@pneuma/runtime/core/hooks.js'
+import type { ToolGuard, ToolGuardInput } from '@pneuma/runtime/core/tool-guards.js'
+import { argsSummary } from '@pneuma/runtime/core/tools.js'
+import type { SettingsField, SettingsOption, SettingsValues } from '@pneuma/runtime/contract.js'
+import type { HookService, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 
 /** 事件名 → 界面上的中文说法（下拉与详情行都用它，两处不会写岔）。 */
 const EVENT_LABELS: Record<HookEvent, string> = {
@@ -146,7 +146,7 @@ export const hooksPlugin: Plugin.Object = {
       event: HookEvent,
       input: { toolName: string; args: Record<string, unknown>; cwd: string; command: string; target: string },
       extra: Record<string, unknown>,
-    ): import('../core/hooks.js').HookPayload => ({
+    ): import('@pneuma/runtime/core/hooks.js').HookPayload => ({
       hook_event_name: event,
       tool_name: input.toolName,
       tool_input: input.args,

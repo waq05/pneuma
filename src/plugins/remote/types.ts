@@ -7,17 +7,17 @@
  *
  * @module dsc/plugins/remote/types
  */
-import { INVOKABLE_METHODS } from '../../core/host-methods.js'
-import type { UiMethod } from '../../core/ui-methods.js'
-import type { UiComboTable } from '../../core/ui-combo.js'
-import type { UiEventsHandle } from '../../core/ui-events.js'
+import { INVOKABLE_METHODS } from '@pneuma/runtime/core/host-methods.js'
+import type { UiMethod } from '@pneuma/runtime/core/ui-methods.js'
+import type { UiComboTable } from '@pneuma/runtime/core/ui-combo.js'
+import type { UiEventsHandle } from '@pneuma/runtime/core/ui-events.js'
 import type { UiBootGraph } from '../../ui/manifest.js'
 import type { IncomingMessage } from 'node:http'
-import type { RuntimeSnapshot } from '../../contract.js'
-import type { PushSubscribeOutcome } from '../../core/remote/push.js'
-import type { RemotePairing } from '../../core/remote/pairing.js'
-import type { TicketStore } from '../../core/remote/tickets.js'
-import type { RemoteUploads } from '../../core/remote/uploads.js'
+import type { RuntimeSnapshot } from '@pneuma/runtime/contract.js'
+import type { PushSubscribeOutcome } from '@pneuma/runtime/core/remote/push.js'
+import type { RemotePairing } from '@pneuma/runtime/core/remote/pairing.js'
+import type { TicketStore } from '@pneuma/runtime/core/remote/tickets.js'
+import type { RemoteUploads } from '@pneuma/runtime/core/remote/uploads.js'
 
 /** WS 协议版本：批 B 的界面按它认版本，破坏性变更时递增（v3 = 全局 seq + 增量帧 + 补帧）。 */
 export const REMOTE_PROTOCOL_VERSION = 3

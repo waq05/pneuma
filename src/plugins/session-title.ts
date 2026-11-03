@@ -14,9 +14,9 @@
  * @module dsc/plugins/session-title
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { Session } from '../core/session.js'
-import { patchSessionMeta, readSessionMeta } from '../core/session-meta.js'
-import { contentText } from '../core/llm.js'
+import { Session } from '@pneuma/runtime/core/session.js'
+import { patchSessionMeta, readSessionMeta } from '@pneuma/runtime/core/session-meta.js'
+import { contentText } from '@pneuma/runtime/core/llm.js'
 
 /** 标题请求的超时（毫秒）：起标题不值得让用户等太久，超了就用兜底。 */
 const TITLE_TIMEOUT_MS = 20_000

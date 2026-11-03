@@ -31,26 +31,26 @@
  * @module dsc/plugins/dock-browser
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import type { ToolEntry, ToolContext, ToolOutput } from '../core/tools.js'
-import type { SettingsField, SettingsValue } from '../contract.js'
-import type { SettingsSectionSpec } from '../services/types.js'
-import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import { neutralizeInline, wrapUntrusted } from '../core/untrusted.js'
-import { redact } from '../core/secrets.js'
-import { DOCK_ACTIONS, DOCK_LOOK_ACTIONS, isAgentView } from '../core/dock-browser.js'
-import { HOST_BROWSER_SERVICE, type HostBrowserLink } from '../core/host-browser-link.js'
+import type { ToolEntry, ToolContext, ToolOutput } from '@pneuma/runtime/core/tools.js'
+import type { SettingsField, SettingsValue } from '@pneuma/runtime/contract.js'
+import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import { neutralizeInline, wrapUntrusted } from '@pneuma/runtime/core/untrusted.js'
+import { redact } from '@pneuma/runtime/core/secrets.js'
+import { DOCK_ACTIONS, DOCK_LOOK_ACTIONS, isAgentView } from '@pneuma/runtime/core/dock-browser.js'
+import { HOST_BROWSER_SERVICE, type HostBrowserLink } from '@pneuma/runtime/core/host-browser-link.js'
 import { CLOUD_METADATA_HOSTS } from './browser.js'
-import type { CdpCommandTarget } from '../core/cdp/transport.js'
-import * as actions from '../core/cdp/actions.js'
+import type { CdpCommandTarget } from '@pneuma/runtime/core/cdp/transport.js'
+import * as actions from '@pneuma/runtime/core/cdp/actions.js'
 import {
   lookupSnapshotRef,
   serializeAxTree,
   truncateByLines,
   type AxTree,
   type SnapshotRef,
-} from '../core/cdp/snapshot.js'
-import { clampInt as clamp } from '../core/clamp.js'
-import { RingBuffer } from '../core/cdp/ring-buffer.js'
+} from '@pneuma/runtime/core/cdp/snapshot.js'
+import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
+import { RingBuffer } from '@pneuma/runtime/core/cdp/ring-buffer.js'
 import {
   consoleLine,
   describeRef,
@@ -59,7 +59,7 @@ import {
   safeStringify,
   type ConsoleEntry,
   type NetworkEntry,
-} from '../core/cdp/report.js'
+} from '@pneuma/runtime/core/cdp/report.js'
 
 const CONFIG_KEY = 'dock-browser'
 /** 设置分区 id：与配置键同名，元数据 `settingsSection` 指向它。 */

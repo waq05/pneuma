@@ -13,8 +13,8 @@
  * @module dsc/plugins/tools
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import type { ToolEntry } from '../core/tools.js'
-import type { AgentScope, ToolService } from '../services/types.js'
+import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
+import type { AgentScope, ToolService } from '@pneuma/runtime/services/types.js'
 
 /**
  * 注册表的形状关：拦住形状不对的条目（最常见的是 dsh 风格的 ToolDefinition——

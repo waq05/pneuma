@@ -23,10 +23,10 @@
  * @module dsc/plugins/git
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { git, parsePorcelainZ, repoPrefix, toWorkspacePath } from '../core/git-exec.js'
-import { sameGitSurface as sameGit } from '../core/git-surface.js'
-import type { GitSurface } from '../contract.js'
-import type { GitService } from '../services/types.js'
+import { git, parsePorcelainZ, repoPrefix, toWorkspacePath } from '@pneuma/runtime/core/git-exec.js'
+import { sameGitSurface as sameGit } from '@pneuma/runtime/core/git-surface.js'
+import type { GitSurface } from '@pneuma/runtime/contract.js'
+import type { GitService } from '@pneuma/runtime/services/types.js'
 
 /** 空读数（不是仓库 / 还没读到）：界面按「整块不画」处理。 */
 const EMPTY_GIT: GitSurface = { repo: false, branch: '', detached: false, dirtyFileCount: 0 }

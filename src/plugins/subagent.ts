@@ -21,7 +21,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
-import { Transcript } from '../adapter/transcript.js'
+import { Transcript } from '@pneuma/runtime/adapter/transcript.js'
 import {
   builtinRoleNames,
   builtinRole,
@@ -32,21 +32,21 @@ import {
   writeRole,
   type AgentRole,
   type TeammateApproval,
-} from '../core/agent-roles.js'
-import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import { MiniAgent } from '../core/loop.js'
-import { subagentEnvironmentText } from '../core/prompt.js'
-import { activeRules } from '../core/command-policy.js'
-import { modeSpec } from '../core/modes.js'
-import { REJECTED_TOOL_TEXT, Session, teammateRoot } from '../core/session.js'
-import { redact } from '../core/secrets.js'
-import { argsSummary, type ToolContext, type ToolEntry } from '../core/tools.js'
-import { ToolGuardRegistry, toolApprovalGuard } from '../core/tool-guards.js'
-import { inboxAppend, REVIEW_FINDINGS_OPEN, TEAMMATE_REPORT_OPEN } from '../core/team-board.js'
-import type { EffortLevel, SettingsField, SettingsValue, TeammateView, TranscriptEntry } from '../contract.js'
-import type { ReviewService, ReviewSpawnRequest, ReviewSpawnResult, SettingsSectionSpec, TeamService } from '../services/types.js'
-import { reviewTaskText, ReviewJournal, REVIEW_CANCELED_TEXT } from '../core/git-info.js'
-import { clampInt as clamp } from '../core/clamp.js'
+} from '@pneuma/runtime/core/agent-roles.js'
+import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import { MiniAgent } from '@pneuma/runtime/core/loop.js'
+import { subagentEnvironmentText } from '@pneuma/runtime/core/prompt.js'
+import { activeRules } from '@pneuma/runtime/core/command-policy.js'
+import { modeSpec } from '@pneuma/runtime/core/modes.js'
+import { REJECTED_TOOL_TEXT, Session, teammateRoot } from '@pneuma/runtime/core/session.js'
+import { redact } from '@pneuma/runtime/core/secrets.js'
+import { argsSummary, type ToolContext, type ToolEntry } from '@pneuma/runtime/core/tools.js'
+import { ToolGuardRegistry, toolApprovalGuard } from '@pneuma/runtime/core/tool-guards.js'
+import { inboxAppend, REVIEW_FINDINGS_OPEN, TEAMMATE_REPORT_OPEN } from '@pneuma/runtime/core/team-board.js'
+import type { EffortLevel, SettingsField, SettingsValue, TeammateView, TranscriptEntry } from '@pneuma/runtime/contract.js'
+import type { ReviewService, ReviewSpawnRequest, ReviewSpawnResult, SettingsSectionSpec, TeamService } from '@pneuma/runtime/services/types.js'
+import { reviewTaskText, ReviewJournal, REVIEW_CANCELED_TEXT } from '@pneuma/runtime/core/git-info.js'
+import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
 
 /** 插件配置（存 `~/.dsc/plugins.json` 条目树的 config 里）。 */
 interface SubagentConfig {

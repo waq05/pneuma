@@ -131,7 +131,7 @@ console.log('[4] 形态钉：插件那半只做组合，不放宽安全（src/pl
   check('登记 surfaces.permissionPresets', code.includes("ctx.surfaces.register('permissionPresets'"))
   check('provide 的是 permissionPresets', code.includes("provide: 'permissionPresets'"))
   // 表来自纯表模块，不在插件里另抄一份（两边各写一份迟早会漂）。
-  check('预设表来自 core/permission-presets（不另抄一份）', code.includes('BUILTIN_PERMISSION_PRESETS') && code.includes("from '../core/permission-presets.js'"))
+  check('预设表来自 core/permission-presets（不另抄一份）', code.includes('BUILTIN_PERMISSION_PRESETS') && code.includes("from '@pneuma/runtime/core/permission-presets.js'"))
 }
 
 console.log('[5] 派生状态的显示名：命中预设留空，拼出来的组合读作「AI 审查」/「自定义」')

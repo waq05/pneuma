@@ -24,7 +24,7 @@
  * @module dsc/plugins/lifecycle-hooks
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { HOOK_TIMEOUT_MAX, HOOK_TIMEOUT_MIN } from '../core/hooks.js'
+import { HOOK_TIMEOUT_MAX, HOOK_TIMEOUT_MIN } from '@pneuma/runtime/core/hooks.js'
 import {
   commandAllowed,
   denyReasonFor,
@@ -36,16 +36,16 @@ import {
   runLifecycleCommand,
   subjectHits,
   wrapHookOutput,
-} from '../core/lifecycle-hooks.js'
-import { errText } from '../core/err-text.js'
-import type { LifecycleEvent, LifecycleHooksConfig, LifecyclePayload } from '../core/lifecycle-hooks.js'
-import { contentText } from '../core/llm.js'
-import type { ChatMessage } from '../core/llm.js'
-import { writePluginConfig } from '../core/plugin-registry.js'
-import type { ToolGuard, ToolGuardInput, ToolObserver } from '../core/tool-guards.js'
-import type { HookJudgement } from '../core/hooks.js'
-import type { SettingsField, SettingsValue } from '../contract.js'
-import type { SettingsSectionSpec } from '../services/types.js'
+} from '@pneuma/runtime/core/lifecycle-hooks.js'
+import { errText } from '@pneuma/runtime/core/err-text.js'
+import type { LifecycleEvent, LifecycleHooksConfig, LifecyclePayload } from '@pneuma/runtime/core/lifecycle-hooks.js'
+import { contentText } from '@pneuma/runtime/core/llm.js'
+import type { ChatMessage } from '@pneuma/runtime/core/llm.js'
+import { writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import type { ToolGuard, ToolGuardInput, ToolObserver } from '@pneuma/runtime/core/tool-guards.js'
+import type { HookJudgement } from '@pneuma/runtime/core/hooks.js'
+import type { SettingsField, SettingsValue } from '@pneuma/runtime/contract.js'
+import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 
 /** 插件在条目树里的键，也是设置分区 id。 */
 const CONFIG_KEY = 'lifecycle-hooks'

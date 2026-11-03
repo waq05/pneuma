@@ -16,9 +16,9 @@
  */
 import { readFileSync } from 'node:fs'
 import type { Plugin } from '@deepseek-ai/cordis'
-import type { PresetDraft, PresetSurface, PresetView } from '../contract.js'
-import type { AgentScope, PresetService } from '../services/types.js'
-import type { Session } from '../core/session.js'
+import type { PresetDraft, PresetSurface, PresetView } from '@pneuma/runtime/contract.js'
+import type { AgentScope, PresetService } from '@pneuma/runtime/services/types.js'
+import type { Session } from '@pneuma/runtime/core/session.js'
 import {
   DROPPABLE_LABELS,
   DROPPABLE_SECTIONS,
@@ -31,8 +31,8 @@ import {
   standardPreset,
   writePreset,
   type Preset,
-} from '../core/presets.js'
-import { audit } from '../core/audit.js'
+} from '@pneuma/runtime/core/presets.js'
+import { audit } from '@pneuma/runtime/core/audit.js'
 
 /** 模式 → 界面投影（IPC 只带这些字段）。 */
 function toView(preset: Preset): PresetView {

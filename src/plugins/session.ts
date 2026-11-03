@@ -25,10 +25,10 @@ import {
   restoreSession,
   saveLastSession,
   trashRoot,
-} from '../core/session.js'
-import { patchSessionMeta } from '../core/session-meta.js'
-import { uuidOf, type SessionListItem } from '../core/session.js'
-import { errText } from '../adapter/transcript.js'
+} from '@pneuma/runtime/core/session.js'
+import { patchSessionMeta } from '@pneuma/runtime/core/session-meta.js'
+import { uuidOf, type SessionListItem } from '@pneuma/runtime/core/session.js'
+import { errText } from '@pneuma/runtime/adapter/transcript.js'
 import type {
   ArchivedPage,
   SessionForkResult,
@@ -36,7 +36,7 @@ import type {
   SessionService,
   SessionSummary,
   SettingsMutation,
-} from '../services/types.js'
+} from '@pneuma/runtime/services/types.js'
 
 export interface SessionPluginOptions {
   cwd?: string

@@ -10,13 +10,13 @@
  * @module dsc/plugins/remote/routes
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { errText } from '../../core/err-text.js'
-import { TICKET_TTL_MS } from '../../core/remote/tickets.js'
-import { UPLOAD_MAX_BYTES } from '../../core/remote/uploads.js'
-import { isUiBundleRequest, resolveUiResourceRequest } from '../../core/ui-route.js'
-import { injectBootScriptTag, UI_CONTENT_SECURITY_POLICY } from '../../core/ui-server.js'
-import { readCookie } from '../../core/web-http.js'
-import { serveStatic as serveAssets } from '../../core/web-static.js'
+import { errText } from '@pneuma/runtime/core/err-text.js'
+import { TICKET_TTL_MS } from '@pneuma/runtime/core/remote/tickets.js'
+import { UPLOAD_MAX_BYTES } from '@pneuma/runtime/core/remote/uploads.js'
+import { isUiBundleRequest, resolveUiResourceRequest } from '@pneuma/runtime/core/ui-route.js'
+import { injectBootScriptTag, UI_CONTENT_SECURITY_POLICY } from '@pneuma/runtime/core/ui-server.js'
+import { readCookie } from '@pneuma/runtime/core/web-http.js'
+import { serveStatic as serveAssets } from '@pneuma/runtime/core/web-static.js'
 import { bearerToken, hostHeaderAllowed, isRecord, readBody, readBodyBytes, sendJson } from './http.js'
 import { REMOTE_COOKIE, REMOTE_COOKIE_MAX_AGE_MS, type RemoteServerDeps } from './types.js'
 

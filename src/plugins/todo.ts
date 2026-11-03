@@ -16,12 +16,12 @@
  * @module dsc/plugins/todo
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { resolvePluginConfig, writePluginConfig } from '../core/plugin-registry.js'
-import { appendTodoReminder } from '../core/todo-reminder.js'
-import { TodoStore } from '../core/todo.js'
-import type { ToolEntry } from '../core/tools.js'
-import type { SettingsField, SettingsValues } from '../contract.js'
-import type { SettingsSectionSpec, TodoService } from '../services/types.js'
+import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import { appendTodoReminder } from '@pneuma/runtime/core/todo-reminder.js'
+import { TodoStore } from '@pneuma/runtime/core/todo.js'
+import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
+import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
+import type { SettingsSectionSpec, TodoService } from '@pneuma/runtime/services/types.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'todo'
