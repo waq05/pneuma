@@ -73,7 +73,7 @@ function FileAttachmentCard({ file }: { file: UserFileAttachment }): ReactNode {
   )
 }
 
-/** 用户消息：气泡 + 贴图条 + hover 浮出的「编辑」钮（编辑重发 = 分叉新会话重发，原会话保留）。 */
+/** 用户消息：气泡 + 贴图条 + hover 浮出的「编辑」钮（编辑重发 = 在当前会话里截断到这条再重发）。 */
 export function UserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'user' }> }): ReactNode {
   const actions = useContext(FlowActionsContext)
   const cwd = useContext(ShellCwdContext)
@@ -146,10 +146,10 @@ export function UserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'us
                   const text = draft.trim()
                   if (text === '') return
                   setDraft(null)
-                  actions.editRefork(entry, text)
+                  actions.editAndResend(entry, text)
                 }}
               />
-              <p className="user-edit-note">Enter 重发（分叉出新会话，原会话保留） · Shift+Enter 换行 · Esc 取消</p>
+              <p className="user-edit-note">Enter 重发（这条之后的回答会作废，在当前会话里重来） · Shift+Enter 换行 · Esc 取消</p>
               <div className="user-edit-actions">
                 <button
                   type="button"
@@ -172,7 +172,7 @@ export function UserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'us
                     const text = draft.trim()
                     if (text === '') return
                     setDraft(null)
-                    actions.editRefork(entry, text)
+                    actions.editAndResend(entry, text)
                   }}
                 >
                   重发
@@ -186,7 +186,7 @@ export function UserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'us
             <button
               type="button"
               className="user-act"
-              title={actions.busy ? '这一轮还在跑，先等它结束或打断再编辑' : '编辑这条消息并重发（会分叉出新会话，原会话保留）'}
+              title={actions.busy ? '这一轮还在跑，先等它结束或打断再编辑' : '编辑这条消息并重发（这条之后的回答会作废，在当前会话里重来）'}
               aria-label="编辑并重发这条消息"
               disabled={actions.busy}
               onClick={() => {

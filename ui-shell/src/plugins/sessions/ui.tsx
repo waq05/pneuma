@@ -157,6 +157,20 @@ function SessionList() {
   const sessions = useHostSelector(readSessions)
   const states = useHostSelector(readStates)
   const currentPath = useHostSelector(readCurrentPath)
+  /**
+   * 点了、但宿主的快照还没换过来的那条会话（乐观高亮，2026-11-03）。
+   *
+   * 为什么要这一层：切会话的耗时里，宿主读盘重放 + 推一帧快照加起来是 30–150ms
+   * （大会话最贵）。这段里侧栏如果只认快照里的 `status.sessionPath`，用户点完会看到
+   * 「什么都没动」——明明点了，行没亮，过一会儿才整块换掉。这里把那一下的反应提前到
+   * 点击当帧：行立刻亮，正文随后落地（内容仍是快照的，不抢在宿主前面猜）。
+   *
+   * 什么时候清：快照里的当前会话真的变成这一条时；宿主那边失败（读不出来 / 会话被删）
+   * 则由下面那个超时兜底清掉，不让一行永远亮着骗人。
+   */
+  const [pendingOpen, setPendingOpen] = useState<string | null>(null)
+  /** 侧栏这一帧该把哪一行画成「当前」：以乐观值为先，它一落地就回落到宿主真值。 */
+  const shownPath = pendingOpen ?? currentPath
   const loading = useHostSelector(readLoading)
   const cwd = useHostSelector(readCwd)
   /** 主区是不是顶在插件页上（侧栏「插件」入口的点亮态与再点回退）。 */
@@ -284,6 +298,10 @@ function SessionList() {
    */
   const open = (id?: string): void => {
     setShellPage(null)
+    // 点了就亮：高亮不等宿主那一帧（见上面 `pendingOpen` 的说明）。
+    // 新建会话（id 缺省）时反过来——先撤掉上一轮还没落地的乐观高亮，否则侧栏会继续把
+    // 刚才点的那条旧会话画成当前，真正新开的那一行反倒不亮（2026-11-03 审查抓到）。
+    setPendingOpen(id ?? null)
     // 点「新会话」要给得出看得见的一行：它落在当前会话的工作区里，而那个组被用户收起过的话
     // 新会话那一行正好被挡住——等于又变成「点了没反应」。与组行那颗 ＋ 同一条口径：
     // 只在这一拍把该展开的组撑开，用户之后自己收起来照样尊重。
@@ -547,12 +565,27 @@ function SessionList() {
    * 所属工作区的图标也跟着亮；没有选中会话（或它被筛出列表）时回落宿主 cwd。
    */
   const activeCwd = useMemo(() => {
-    if (currentPath !== null) {
-      const owner = sessions.find((session) => session.id === currentPath)
+    if (shownPath !== null) {
+      const owner = sessions.find((session) => session.id === shownPath)
       if (owner !== undefined) return owner.cwd
     }
     return cwd
-  }, [sessions, currentPath, cwd])
+  }, [sessions, shownPath, cwd])
+
+  // 乐观高亮的收尾：快照对上了就交还宿主真值；对不上（失败）4 秒后自己撤掉。
+  useEffect(() => {
+    if (pendingOpen === null) return
+    if (currentPath === pendingOpen) {
+      setPendingOpen(null)
+      return
+    }
+    const timer = setTimeout(() => {
+      setPendingOpen(null)
+    }, 4000)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [pendingOpen, currentPath])
 
   /**
    * 当前工作区（树模式连同祖先链）自动展开并落盘——旧界面 `setGroupExpanded(currentGroup, true)`
@@ -841,7 +874,7 @@ function SessionList() {
               key={session.id}
               session={session}
               state={states[session.id]}
-              current={currentPath !== null && session.id === currentPath}
+              current={shownPath !== null && session.id === shownPath}
               sort={prefs.sort}
               renameRequest={renaming === session.id}
               onOpen={open}
@@ -997,7 +1030,7 @@ function SessionList() {
                         key={session.id}
                         session={session}
                         state={states[session.id]}
-                        current={currentPath !== null && session.id === currentPath}
+                        current={shownPath !== null && session.id === shownPath}
                         sort={prefs.sort}
                         renameRequest={renaming === session.id}
                         drag={dragFor(group.cwd, session)}
@@ -1653,7 +1686,7 @@ function SessionRow({
                 onPin(!pinned)
               }}
             >
-              <IconPin size={13} />
+              <IconPin size={14} filled={pinned} />
             </button>
           </span>
         )

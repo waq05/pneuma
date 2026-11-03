@@ -462,13 +462,22 @@ export function IconArchive(props: IconProps): JSX.Element {
   )
 }
 
-/** 置顶（图钉）。 */
-export function IconPin(props: IconProps): JSX.Element {
+/**
+ * 置顶（图钉）：竖向推钉——顶帽一横、梯形钉身、一根针。
+ *
+ * 为什么改成竖的（2026-11-03 用户报障「置顶图标太丑」）：原来那版是 45° 斜拼的
+ * 三段线，缩到 13px 糊成一个小哑铃，谁看都认不出是图钉。竖向对称的形状在同样
+ * 尺寸下轮廓清楚，一眼能认。
+ *
+ * @param filled - 钉身填实。已置顶的那枚用它：和「悬浮才露出的灰描边」拉开区别，
+ *                 不用再靠颜色深浅去猜有没有钉住。
+ */
+export function IconPin({ filled = false, ...props }: IconProps & { filled?: boolean }): JSX.Element {
   return base(
     <>
-      <path d="M14.2 3.6 20.4 9.8" />
-      <path d="M16.4 5.6 12 11.4l-5.6 2.4 3.8 3.8 2.4-5.6 5.8-4.4Z" />
-      <path d="M9.6 17.4 6.4 20.6" />
+      <path d="M9 3h6" />
+      <path d="M10.2 3.4v5.1L7.8 11.9h8.4L13.8 8.5V3.4Z" fill={filled ? 'currentColor' : 'none'} />
+      <path d="M12 12.3v6.3" />
     </>,
     props,
   )

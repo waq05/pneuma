@@ -24,14 +24,24 @@ export interface FoldPrefs {
 export const FOLD_PREFS: FoldPrefs = { policy: processFoldPolicy('standard'), reasoningOpen: false, toolOpen: false }
 export const FoldPrefsContext = createContext<FoldPrefs>(FOLD_PREFS)
 
-/** 流内动作（TranscriptFlow 提供，深处的行消费）：编辑重发。 */
+/**
+ * 流内动作（TranscriptFlow 提供，深处的行消费）：编辑重发。
+ *
+ * 2026-11-03 起「编辑并重发」不再分叉新会话：它把这条消息及其之后的回答在当前会话里
+ * 作废，再把改过的文字重新发出去（等于回到那一刻重来）。原会话就是你现在看的这条，
+ * 所以不再有「原会话保留、另开一条」这回事——动作名也相应从 `editRefork` 改成
+ * `editAndResend`，免得后来的人照着旧名以为还在分叉。
+ */
 export interface FlowActions {
-  /** 编辑一条用户消息并重发：分叉新会话（第 1 条前无内容则开全新会话），原会话保留。 */
-  editRefork(entry: Extract<TranscriptEntry, { kind: 'user' }>, text: string): void
+  /**
+   * 编辑一条用户消息并重发：**当前会话**里截断到这条之前再重发（见
+   * `plugins/transcript/ui.tsx` 的 `editAndResend`）。
+   */
+  editAndResend(entry: Extract<TranscriptEntry, { kind: 'user' }>, text: string): void
   /** 回合跑动中置灰编辑（旧界面同款：跑动中不让编辑）。 */
   busy: boolean
 }
-export const NO_ACTIONS: FlowActions = { editRefork: () => undefined, busy: false }
+export const NO_ACTIONS: FlowActions = { editAndResend: () => undefined, busy: false }
 export const FlowActionsContext = createContext<FlowActions>(NO_ACTIONS)
 
 /**

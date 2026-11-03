@@ -480,7 +480,9 @@
 }
 
 /* 行首前置图钉（图二样式）：平时隐形，悬浮/键盘聚焦时浮出；已置顶的常显并染强调色。
-   状态点占用的行（正在跑/等审批）整个前置槽让位给状态点，图钉只剩右键菜单里的入口。 */
+   状态点占用的行（正在跑/等审批）整个前置槽让位给状态点，图钉只剩右键菜单里的入口。
+   2026-11-03：图形换成竖向推钉并放大到 14px（13px 的斜图钉糊成一团，用户嫌丑）；
+   已置顶那枚钉身填实，靠形状区分，不用再靠颜色深浅猜。 */
 .sess-item .lead-pin {
   align-items: center;
   background: transparent;
@@ -497,6 +499,11 @@
   width: 16px;
 }
 
+/* 图标是块级元素：不让行内基线的空隙把 14px 的图钉顶歪 */
+.sess-item .lead-pin > svg {
+  display: block;
+}
+
 .sess-item:hover .lead-pin,
 .sess-item:focus-within .lead-pin,
 .sess-item .lead-pin.pinned {
@@ -507,8 +514,18 @@
   color: var(--dsc-yellow);
 }
 
-.sess-item .lead-pin:hover {
+/* 悬浮时垫一层淡底：告诉用户这一格能点，也让细线条的图钉在行背景上立得住 */
+.sess-item .lead-pin:hover,
+.sess-item .lead-pin:focus-visible {
+  background: color-mix(in srgb, currentColor 14%, transparent);
   color: var(--dsc-text-primary);
+}
+
+/* 已置顶那枚：点它是「取消置顶」，颜色守成黄色，只在底下垫一层同色淡底 */
+.sess-item .lead-pin.pinned:hover,
+.sess-item .lead-pin.pinned:focus-visible {
+  background: color-mix(in srgb, var(--dsc-yellow) 18%, transparent);
+  color: var(--dsc-yellow);
 }
 
 /* 「展开剩余 / 收起」（dsh 的 sessionOverflowButton）：占满一行的左对齐文本钮 */
@@ -11970,11 +11987,15 @@ body.resizing iframe {
   width: calc(100% - 8px);
 }
 
-/* ── 轮尾的复制 / 分叉：停下之后、鼠标落到这一轮的输出上才现（2026-11-02）──
+/* ── 轮尾的复制 / 分叉 / 用量 · 时刻：停下之后、鼠标落到这一轮的输出上才现（2026-11-02）──
  *
  * 报障：输出中间就挂着「复制 / 分叉」两颗钮，且一直占着版面。两颗钮在这一轮还没停下时
  * 本来就是假的（复制拿到半截回答，分叉分出半截会话），停下之后常驻又让每一轮后面都拖着
  * 一排按钮，长会话里全是噪音。
+ *
+ * 2026-11-03：同一套规则扩到用量（`~653 tok`）与时刻（`21:53`）那一段——它们和两颗钮
+ * 是同一行里的同一类东西（轮尾附注），常驻同样把每一轮后面拖成一行小字。现在整行只有
+ * 鼠标进来才浮现，分隔点也是，免得剩一个孤零零的「·」。
  *
  * 现在是两段合起来才现：
  *   ① 「这一轮停了」由组件判（foot.tsx 的 `running`）——跑动中这两颗钮压根不渲染；
@@ -11990,7 +12011,10 @@ body.resizing iframe {
  * 认 `*:not(:first-child)` 而不是点名 `.entry-text`，是因为这一轮的输出可能只是一行思考、
  * 一个过程组、一张改动卡——它们都得算「输出内容」，而第一块永远是那条提问。 */
 .round-foot .round-act,
-.round-foot .user-act {
+.round-foot .user-act,
+.round-foot .round-tokens,
+.round-foot .round-sep,
+.round-foot .round-clock {
   opacity: 0;
   transition:
     opacity var(--dsc-dur) var(--dsc-ease),
@@ -12000,16 +12024,28 @@ body.resizing iframe {
 
 .turn-seat > *:not(:first-child):hover ~ .round-foot .round-act,
 .turn-seat > *:not(:first-child):hover ~ .round-foot .user-act,
+.turn-seat > *:not(:first-child):hover ~ .round-foot .round-tokens,
+.turn-seat > *:not(:first-child):hover ~ .round-foot .round-sep,
+.turn-seat > *:not(:first-child):hover ~ .round-foot .round-clock,
 .turn-seat > .round-foot:hover .round-act,
 .turn-seat > .round-foot:hover .user-act,
+.turn-seat > .round-foot:hover .round-tokens,
+.turn-seat > .round-foot:hover .round-sep,
+.turn-seat > .round-foot:hover .round-clock,
 .turn-seat:focus-within > .round-foot .round-act,
-.turn-seat:focus-within > .round-foot .user-act {
+.turn-seat:focus-within > .round-foot .user-act,
+.turn-seat:focus-within > .round-foot .round-tokens,
+.turn-seat:focus-within > .round-foot .round-sep,
+.turn-seat:focus-within > .round-foot .round-clock {
   opacity: 1;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .round-foot .round-act,
-  .round-foot .user-act {
+  .round-foot .user-act,
+  .round-foot .round-tokens,
+  .round-foot .round-sep,
+  .round-foot .round-clock {
     transition: none;
   }
 }

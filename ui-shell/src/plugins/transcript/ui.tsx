@@ -335,37 +335,50 @@ function TranscriptFlow({
   }
 
   /**
-   * 编辑一条用户消息并重发（旧界面同款）：提交=分叉新会话并重发改文——
-   * 第 1 条消息前没有内容，分叉出来是空的，所以直接开全新会话；原会话保留不动。
-   * 分叉会话本身是「复制到第 index 条用户消息之前」，所以编辑第 N 条就分叉到 N-1。
+   * 编辑一条用户消息并重发：**在当前会话里**截断到这条之前再重发（2026-11-03 改）。
+   *
+   * 以前是「分叉新会话再重发」：编辑第 N 条就等于复制出 N-1 条到新会话，原会话留着。
+   * 实际用起来这不是「改一下这句话」，而是「多出一条会话」——用户想改的是手头这条，
+   * 结果被换到另一条新会话里，还得自己回去收拾原来那条。现在改成原地重来：
+   * 宿主作废这条及其之后的回答（日志追加一条 `rewind` 记录，原文仍在磁盘上可回查），
+   * 然后把改过的文字重新提交——会话还是这条，哈希、标题、工作区都不动。
+   *
+   * 保留几轮的口径：这条消息**之前**有多少条开轮的用户消息。每一条开轮的用户消息
+   * 恰好对应一轮（rounds.ts 规则 1），所以「startIndex 落在本条目之前的轮」数量就是它。
    */
-  const editRefork = (entry: Extract<TranscriptEntry, { kind: 'user' }>, text: string): void => {
-    // 分叉序号 = 这条消息**之前**有多少条开轮的用户消息。旧写法手数「非插话的 user」，
-    // 与分轮口径是两处真值（插话 / internal 一变就错开）；现在直接数轮——每一条开轮的
-    // 用户消息恰好对应一轮（rounds.ts 规则 1），所以「startIndex 落在本条目之前的轮」数量就是它。
+  const editAndResend = (entry: Extract<TranscriptEntry, { kind: 'user' }>, text: string): void => {
     const all = [...entries, ...live]
     const at = all.findIndex((item) => item.id === entry.id)
-    const index = rounds.filter((round) => round.startIndex < at).length
+    if (at < 0) {
+      toastErr('这条消息已经不在会话里了，刷新后再试')
+      return
+    }
+    // 保留几条 = 这条之前**人打的**用户消息条数。这里不能拿 `rounds` 数：rounds.ts 的规则 3
+    // 让内部汇报（队友回报 / 审查结论）也占一枚刻度，那种会话里会多算几轮，宿主就会截到
+    // 更早的位置。判据与宿主 `src/core/session.ts` 的 isHumanUserMessage 一一对应
+    // （界面上就是 `internal !== true`：机器投递的通知、队友汇报、审查结论都带这个标记）。
+    const keep = all.slice(0, at).filter((item) => item.kind === 'user' && item.internal !== true).length
+    if (sessionPath === null) {
+      toastErr('这条会话还没落盘，先发一条消息再编辑')
+      return
+    }
     void (async () => {
       try {
-        if (sessionPath === null || index === 0) {
-          await channel.invoke('openSession', [])
-        } else {
-          const result = await channel.invoke<{ ok: boolean; path?: string; error?: string }>('forkSession', [sessionPath, index])
-          if (result.ok !== true) {
-            toastErr(result.error ?? '分叉失败')
-            return
-          }
-          await channel.invoke('openSession', result.path === undefined ? [] : [result.path])
+        // 第三个参数是改过的正文：作废的是第一条消息时，宿主拿它当新的侧栏标题
+        const result = await channel.invoke<{ ok: boolean; error?: string }>('rewindSession', [sessionPath, keep, text])
+        if (result?.ok !== true) {
+          toastErr(result?.error ?? '编辑失败')
+          return
         }
-        await channel.invoke('refreshSessions', [])
         await channel.invoke('submit', [text])
+        // 标题、排序都跟最后一条消息走：改完重扫一次，侧栏立刻对上（现在这一步是缓存命中）。
+        await channel.invoke('refreshSessions', [])
       } catch (reason) {
         toastErr(`重发失败：${reason instanceof Error ? reason.message : String(reason)}`)
       }
     })()
   }
-  const actions: FlowActions = { editRefork, busy: turnState !== 'idle' }
+  const actions: FlowActions = { editAndResend, busy: turnState !== 'idle' }
 
   // 进行中状态行（回合没结束才有）：阶段 + 活动名 + 用时。
   const activity = useMemo(() => liveActivity([...entries, ...live], turnState), [entries, live, turnState])
