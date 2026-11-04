@@ -270,7 +270,7 @@
 - **在线模型发现**：`GET {baseURL}/models` 拉取填充，认 OpenAI / ollama / 纯数组三种形状（`src/core/model-discovery.ts`）
 - **会话级模型记忆**：会话 state 记实际发过请求的模型，恢复会话优先取它而不是回落 config 默认（`src/core/session.ts:228-231`、`src/packages/llm/index.ts:70`）
 - **流中断不丢已收内容**：半截回复按 `StreamInterruptedError` 落库，连接期有重试预算（`src/core/llm.ts:8-12`）
-- 用量统计：usage.jsonl + 设置页聚合（汇总卡 + 全年热力图 + 分模型趋势 + 环形图，`ui-shell/src/packages/ui-settings/usage.tsx`）
+- 用量统计：usage.jsonl + 设置页聚合（汇总卡 + 全年热力图 + 分模型趋势 + 环形图，`src/packages/ui-settings/ui/usage.tsx`）
 - 上下文占用表：`/status` 与壳里的占用卡，估算口径与自动压缩同源（`src/packages/commands/index.ts:766`）
 - dsh 配置一次性只读迁移
 - 已知边界：账号 OAuth 不做；**有人民币花费估算**（按 DeepSeek 官方单价 + 峰谷分桶，`src/core/pricing.ts`，状态栏与用量页都显示），但只对名含 deepseek 的端点生效，其它 provider 不显示金额
@@ -338,13 +338,13 @@
 - 布局：左栏会话区 + 正文列 + 右侧 dock（guide/terminal/browser/files/git/preview 多页签、两格分栏、全屏、每会话布局持久化、caption 避让）；会话列宽默认 96ch
 - 进程区：三级栅格（思考行 / 工具行 / 阶段组头同一套对齐）+ 四档展示档位（compact / standard / detailed / verbose）；只有一条工具调用时不套组头
 - 主题：深 / 浅 / 跟随系统 + 四档出厂主题 + 原生控件条 IPC 同步 + 密度档；设计令牌 `--dsc-*`
-- 快捷键：键位表 10 条（`Ctrl K` 命令面板、`Ctrl B` 侧栏、`Ctrl P` 文件、`` Ctrl ` `` 终端、`Ctrl T` 浏览器、`Ctrl Enter` 插话、`Ctrl Alt R` 重命名、`Ctrl Alt F` 分叉、`Ctrl Shift A` 归档、`Esc` 关浮层），按 `?` 随时打开（`ui-shell/src/packages/ui-palette/ui.tsx:327-338`）
+- 快捷键：键位表 10 条（`Ctrl K` 命令面板、`Ctrl B` 侧栏、`Ctrl P` 文件、`` Ctrl ` `` 终端、`Ctrl T` 浏览器、`Ctrl Enter` 插话、`Ctrl Alt R` 重命名、`Ctrl Alt F` 分叉、`Ctrl Shift A` 归档、`Esc` 关浮层），按 `?` 随时打开（`src/packages/ui-palette/ui/ui.tsx:327-338`）
 - 设置页：8 个内置分区（通用 / 模型 / 预设 / 技能 / 归档 / 用量 / 终端 / 关于，`src/packages/settings/index.ts:520`）+ 声明了 `inSettings: true` 的插件分区（远程控制、终端环境）；其余插件分区只在插件中心那张卡上
 - 附件：内容寻址仓库 + 输入框贴图与文件 + 消息只留引用 + 附件卡与图片 lightbox
 - 状态栏三段式（轮 / 步取宿主真值，不再估算）；轨迹页（TraceView / Timeline / Inspector）；队友面板 / 用量面板 / 技能中心 / 插件中心 / 配对弹窗
 - 托盘（关窗缩托盘 + 一次性气泡）；检查更新（更新源已接 GitHub Releases，只查不装，有新版给「立即更新」或打开发布页）
 - **手机遥控（独有）**：PWA 遥控端（visualViewport 键盘适配、图片压缩上传、增量帧重连补帧）+ Web Push（VAPID）+ Webhook（Bark/ntfy）+ 二维码半小时配对 + 逐台设备吊销；推送三处盲区已修（2 分钟升级再提醒 ×3、节流键带卡号、ask 提问卡与计划评审卡入列，`src/packages/remote/index.ts:657-706`）
-- 已知边界：**有**桌面原生系统通知（后台回合跑完且窗口不在前台时弹「任务完成」，点击回主窗，设置可关，`ui-shell/src/packages/ui-transcript/ui.tsx:156-185`）；手机端有模式面板与归档管理，只缺团队名册/任务板
+- 已知边界：**有**桌面原生系统通知（后台回合跑完且窗口不在前台时弹「任务完成」，点击回主窗，设置可关，`src/packages/ui-transcript/ui/ui.tsx:156-185`）；手机端有模式面板与归档管理，只缺团队名册/任务板
 
 ### 10. 传输部署 ——【完整】
 - 远程宿主：HTTP + WS **10 条 `api` 路由**（pair/ticket/revoke/upload/push-key/push-subscribe/push-unsubscribe/invoke/events/boot，`src/packages/remote/routes.ts:310-405`）+ 主控位锁 + 多设备 `devices.json` + `INVOKABLE_COVERAGE` 编译期兜底

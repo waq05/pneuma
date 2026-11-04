@@ -115,14 +115,18 @@ lib/ui/plugins/<id>/client.js
 
 ## 8. 界面半边
 
-- 粒度和 dsh 一样是**包**，不是行：一个包最多一条界面声明。
-- **一个包两半边**：界面半源码就住在宿主包里 —— `src/packages/<id>/ui/`，与 `index.ts` 同级。
-  2026-11-04 起 transcript 已按这个形态落位；剩下 18 个界面包暂时还在 `ui-shell/src/packages/ui-<id>/`，
-  构建脚本两个根都扫（新根优先、旧根兜底）。
-- **id 由产物目录名决定**（`src/core/ui-bundles.ts:355`），不由包名决定。所以搬源码不改 id、不改产物路径：
-  产物仍落 `lib/ui/plugins/<id>/client.js`，启动图、HMR 监听、`plugins.json` 开关键、清单快照全都不动。
+- 粒度和 dsh 一样是**包**：一个界面单元 = 一个独立的包，**不并进宿主功能包**。
+  形态照 dsh 的 `packages/client/ui-goal`：宿主半边是空的 `apply() {}`（只为进 Loader、拿到自己那一行与开关），
+  界面半边在 `ui/`。2026-11-04 起 19 个界面单元全部是这个形态，源码在 `src/packages/ui-<id>/ui/`。
+- **为什么不做成"一个功能一个包"**：两个界面单元挤一个包，它们的开关就绑在一起了——关一个面板会连带关掉另一个。
+  dsh 也是每个界面单元一个包（`dsh-client-ui-*`），host 功能另包。
+- **id 由产物目录名决定**（`src/core/ui-bundles.ts:355`），不由包名决定。包里叫 `ui-<id>`，产物仍落
+  `lib/ui/plugins/<id>/client.js`；换算只有一处：`build-plugins.mjs` 的 `hostIdOf()`（先查覆盖表、再剥 `ui-` 前缀）。
+- **开关按行 id 走**：产物 id 是 `<id>`，行 id 是 `ui-<id>`，换算在 `ui-bundles.ts` 的 `builtinSwitchKey(id)`。
+  所以 `cordis.patch.yml` 里的行 id **必须写 `ui-<id>`**；写成 `<id>` 的话这一行永远关不掉对应的面板。
+- **order**：19 个界面单元统一占 `350–368` 专用段（按 id 字典序），界面行不做任何事，这个段只为人读得懂。
 - `pneuma.client.platform` 必须是 `pneuma`（写 `web`/`tui` 的属于 dsh 自己的壳，一律不收）；`api` 是
-  `@dsc/ui` 的 semver 区间；`inject` 是客户端服务名。`dsh.client` 继续兼容读。
+  `@dsc/ui` 的 semver 区间；`inject` 是客户端服务名。`dsh.client` 继续兼容读（内置界面包目前写的就是它）。
 - **`exports["./client"]` 只对装在 profile 里的包有意义**：它指向包自己构建出来的 `client.js`。
   内置界面半的产物不在包内（在 `lib/ui/plugins/<id>/`），所以构建时不把这条抄进产物清单——
   抄进去就是一条 `ERR_MODULE_NOT_FOUND`。内置包的界面声明留在 `dsh.client` 元数据里。
@@ -165,9 +169,9 @@ lib/ui/plugins/<id>/client.js
 - **包产物是再导出桩**：`lib/packages/<id>/` 是唯一实体，`lib/node_modules/@pneuma/<id>/` 里每个文件只有一行
   `export * from '<指回 lib/packages 的相对路径>'`。这样探针/App 直接 import `lib/packages/...`、内核从
   `node_modules` 加载时，拿到的是**同一个模块实例**——`commands` 的 `serviceRef` 这类模块级单例才不会裂成两份。
-- **界面半边的归属正在从壳迁回包**：目标形态是一个包两半边（`src/packages/<id>/ui/`），
-  2026-11-04 transcript 已迁完（产物字节与 id 都未变）。剩下 18 个仍在 `ui-shell/src/packages/ui-<id>/`，
-  构建脚本双根扫描兜着。判据不变：一个包最多一条界面声明，缺产物只上宿主半边。
+- **界面半边是独立的包**：`src/packages/ui-<id>/`（薄宿主半 + `ui/`），19 个已全部落位，
+  `ui-shell/src/packages/` 已删空。构建脚本仍保留旧根兜底分支与 `resolveUiHalf` 的三段查找，
+  但正常路径上只会有新根。判据不变：一个包最多一条界面声明，缺产物只上宿主半边。
 - **界面半边的依赖与类型归壳管**：`ui-shell/tsconfig.json` 反向 include `../src/packages/*/ui`，
   根 `tsconfig.json` 则 exclude 掉同一批路径（根 `lib` 只有 ES2023、没有 DOM）。
   两条必须同时成立，漏任一条的表现分别是「壳 typecheck 红」或「界面代码被当 Node 侧编进 lib」。

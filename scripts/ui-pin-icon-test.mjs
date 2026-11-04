@@ -34,7 +34,7 @@ const read = (part) => readFileSync(join(root, part), 'utf8')
 const dirty = (hay, from, to) => hay.split(from).join(to)
 
 const icons = read('ui-shell/src/ui-primitives/icons.tsx')
-const sessionsUi = read('ui-shell/src/packages/ui-sessions/ui.tsx')
+const sessionsUi = read('src/packages/ui-sessions/ui/ui.tsx')
 const css = read('ui-shell/src/legacy/views.css')
 
 /** 只看 `IconPin` 那一段（同一文件里还有几十个图标，全文找会认错）。 */

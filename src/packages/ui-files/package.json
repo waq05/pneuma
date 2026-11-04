@@ -1,0 +1,32 @@
+{
+  "name": "@pneuma/ui-files",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./ui/ui.tsx",
+    "./package.json": "./package.json"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 354,
+    "resolution": "overridable",
+    "title": "文件（界面）",
+    "description": "工作区文件树与 Git 变更两个页签"
+  },
+  "dsh": {
+    "client": {
+      "platform": "pneuma",
+      "api": "^0.8.1"
+    }
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  }
+}

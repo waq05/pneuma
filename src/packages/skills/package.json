@@ -5,7 +5,6 @@
   "type": "module",
   "exports": {
     ".": "./index.js",
-    "./client": "./ui/ui.tsx",
     "./package.json": "./package.json"
   },
   "pneuma": {
@@ -16,12 +15,6 @@
     "resolution": "pinned",
     "title": "技能",
     "description": "SKILL.md 发现、开关、市场与 skill 工具"
-  },
-  "dsh": {
-    "client": {
-      "platform": "pneuma",
-      "api": "^0.8.1"
-    }
   },
   "engines": {
     "pneuma": ">=1.0.0 <2.0.0"

@@ -1,5 +1,5 @@
 /**
- * 设置导航的分区筛选（`ui-shell/src/packages/ui-settings/ui.tsx`）的探针。
+ * 设置导航的分区筛选（`src/packages/ui-settings/ui/ui.tsx`）的探针。
  *
  * 用户要求「把设置页的技能页去掉」。去掉的是**壳的导航里那一项**，不是宿主的分区：
  * 技能中心已经是侧栏的独立整页（`plugins/skills`，与旧桌面端 `SkillsView` 同构），而同一张

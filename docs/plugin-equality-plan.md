@@ -180,7 +180,7 @@ pnpm run check:dsh
 | 不发布第二个 npm 包、不建运行时工作区包 | `@pneuma/runtime` 仍是构建生成的单实例适配包（`docs/plugin-model.md:97`） | Q6：包形态对齐（各包可独立发布的字段齐全）；运行时适配包是否保留，看 Q4 搬完之后 `lib/core` 还剩多少共享模块 |
 | 不实现 `!!js` 表达式 | loader 读 patch 时一律拒绝（`plugin-model.md:68`） | **待用户裁决**：dsh 会求值（`vendor/include/src/index.ts:9-23`）。这是"插件包能在宿主进程里执行任意表达式"的安全边界，不对齐会缺一块能力，对齐会把安全模型打开一个口子 |
 | 不做插件市场安装 UI | 只有 `numa plugin` 命令行 | Q6 之后单独立项（dsh 有 `apps/plugin-market-generator` + `plugin-manager` 的安装/卸载/升级） |
-| 不改界面信息架构，只换归属 | 19 个界面包在 `ui-shell/src/packages/` | Q3 改成"一个包两半边"，信息架构不动、归属动 |
+| 不改界面信息架构，只换归属 | 19 个界面单元已是 `src/packages/ui-<id>/` 的独立包 | Q3 已落地：每个界面单元一个包（薄宿主半 + `ui/`），信息架构没动，只动归属 |
 
 ## 9. 进度（2026-11-03）
 
@@ -249,7 +249,7 @@ P5 交付后复核出来的四件事，全部有现场证据，逐条修完：
 
 | # | 目标 | 现在的反证 |
 |---|---|---|
-| 1 | **一个功能 = 一个包**，宿主半边与界面半边住同一个包 | 56 个宿主包里 0 个声明 `pneuma.client`；19 个界面包在 `ui-shell/src/packages/`，是另一份 `package.json` |
+| 1 | **每个界面单元一个包**（薄宿主半 + `ui/`），宿主功能与界面各自成包 | 已落地：75 个包 = 56 宿主 + 19 界面单元，各自一行；宿主包里不再声明 `dsh.client` |
 | 2 | **功能实现在包里**，core 只留内核 | 55/56 个包 `import '@pneuma/runtime/core/*'`，共 363 处；core 52,813 行 vs 包 25,908 行 |
 | 3 | **改包代码不重启即生效**，失败保留旧版本 | `?t=mtime` 打在桩上被架空（`lib/node_modules/@pneuma/<id>/index.js` 只有一行 `export *`）；`mountRow` 幂等（`plugin-loader.ts:924`） |
 | 4 | **开发标准与 dsh 一致** | 0 个包有 README、0 个包有包内测试；停用插件不注销注册（40 处 `ctx.tools.register` 仅 2 处 `ctx.effect`） |
@@ -300,40 +300,36 @@ dsh 走 Node 内部接口（`loadCache` / `require.cache` / `ResolveCache` 打�
 
 失败语义按用户 2026-11-04 裁决：**先导入新模块成功，再停旧 fiber；失败保留旧版本**（dsh 是逐出后失败即失败，旧代码不回来）。
 
-### 12.5 Q3 界面半边归位：施工序列（2026-11-04 勘查）
+### 12.5 Q3 界面半边归位：已完成（2026-11-04）
 
-**便宜的根因**：内置界面插件的 id 由**产物目录名**决定（`src/core/ui-bundles.ts:355`），不由包名决定。所以「并包」不必改名：源码搬进 `src/packages/<id>/ui/`，产物仍落 `lib/ui/plugins/<旧 id>/client.js`，启动图、HMR、`plugins.json` 开关键、探针全都不用动。
+**最终形态（用户裁决，照 dsh）**：一个界面单元 = 一个**独立的包**，`src/packages/ui-<id>/`，
+宿主半边是空的 `apply() {}`（只为进 Loader、拿到自己那一行与开关），界面半边在 `ui/`。
+**不并进宿主功能包**——两个面板挤一个包，它们的开关就绑在一起，关一个会连带关另一个；
+dsh 也是每个界面单元一个包（`dsh-client-ui-*`），host 功能另包。
 
-现状与依赖（实测）：
-- 19 个界面包只 import `@dsc/ui`（69 处）与 `@dsc/ui-primitives`（35 处）；跨插件边只有 `ui-trace/package.json` 的 `inject:["transcript"]`。
-- React 在构建期就在 externals 里（`ui-shell/build-plugins.mjs:61`），搬源码不影响实例。
-- **真代价在 typecheck**：根 `tsconfig.json:20` 是 `include:["src"]` 且 `lib:["ES2023"]`（无 DOM），界面代码一进 `src/` 就会被当 Node 侧编译，DOM 全局与 jsx 立红。
-- 19 个 id 与 56 个宿主包：7 个同名（ask/browser/prompt/settings/skills/team/transcript），8 个可归并（trace→transcript、tasks→todo、terminal→tui、sessions→session、plugins→plugin-manager、palette→commands、preview→file-review、files→git），4 个宿主里没有对应物（actions、composer、status、statusbar）。
+为什么换位置可以很便宜：内置 id 由**产物目录名**决定（`src/core/ui-bundles.ts:355`），
+包名叫 `ui-<id>` 只是把 `ui-` 前缀剥掉（`build-plugins.mjs` 的 `hostIdOf()`），
+产物仍是 `lib/ui/plugins/<id>/client.js`——启动图条目、停用记录、探针全都不用改。
 
-施工序列（每步可独立验收）：
+| 项 | 结果 |
+|---|---|
+| 包数 / 行数 | 56 → **75**（19 个界面单元各一个包、各一行） |
+| 19 份 `client.js` | sha256 与改造前**逐个逐字节一致**（含 settings 那份 222KB 的） |
+| 启动图整图 rev | `be3b5638799b` 未变 |
+| order | 19 个单元统一占 `350–368` 专用段（按 id 字典序），界面行不做任何事 |
+| 开关 | 产物 id `<id>` ↔ 行 id `ui-<id>`，换算只在 `builtinSwitchKey()`；`UiArtifactCache.table()` 取表时按开关切 |
+| 行 id 约定 | `cordis.patch.yml` 必须写 `ui-<id>`，写成 `<id>` 就永远关不掉 |
+| 残留 | `ui-shell/src/packages/` 已删空；构建脚本保留旧根兜底与 `resolveUiHalf` 三段查找 |
 
-| 步 | 内容 | 验收 |
-|---|---|---|
-| 1 | 试点 transcript：源码搬进 `src/packages/transcript/ui/`，宿主 `package.json` 补 `dsh.client` 与 `exports["./client"]`，`build-plugins.mjs` 加第二个扫描根，根 tsconfig 排除 `src/packages/*/ui/**` | 该 `client.js` 与旧产物**字节一致**（rev 不变）；`ui-plugin-test` 全绿 |
-| 2 | 双根并存，逐个迁其余 18 个，id 用映射表钉死等于旧 id | `lib/ui/plugins` 仍 19 个目录；`client.js` 无字节变化 |
-| 3 | 7 个同名包补 `dsh.client.api`（构建期改写为根版本） | `plugin-inventory-check` 只差预期字段 |
-| 4 | 4 个无对应物的包：新建宿主包（56→60）或写清归属 | 快照 `--write` 后插件数变化被审 |
-| 5 | 收口：删空目录、`ui-shell` 的 build 只留壳 | `build` + `check:all` |
+**过程中踩到的三个坑**（都写进注释了）：
+1. **tsc 按文件位置找 node_modules**，不看 tsconfig 在哪。源码一搬出 `ui-shell`，`build:ui` 第一步 tsc
+   就红在 `react-dom` 类型上，解法是根 devDeps 补类型包。
+2. **两份 React**：解析起点从 `ui-shell` 变成仓库根，workspace 下会落到两个路径，加了 dedupe。
+3. **`settings` 的 client.js 内联了 `qrcode`**（它不在壳的 platform-modules 里），根 devDeps 的版本
+   与 `ui-shell` 差一格，sha256 立刻变——这是「字节一致」这条验收线最容易被无声破坏的地方。
 
-**产物目录暂不动**：动它要同时改内容摘要 rev、combo 批地址、HMR 监听行、清单快照四处，收益小、风险大。
-
-**进度**：第 1 步（transcript 试点）2026-11-04 完成——源码搬到 `src/packages/transcript/ui/`，
-`client.js` 的 sha256（`28fa4d99…`）与启动图 rev（`28fa4d99c0e2`）与改造前逐字节一致；
-`ui-plugin-test` 261 条、`ui-two-halves` 16 条、`check:ui` 54 套全过。
-迁这一个是试路子，剩下 18 个按第 2 步走之前要先做两件收口（见下）。
-
-**迁剩下 18 个前要收口的两件事**：
-1. **探针路径收口**：这次为了让 20 个探针不 ENOENT，逐个改了硬编码路径（68 行）。迁 18 个会重复 18 遍。
-   先给 `scripts/_check-runner.mjs` 加一个 `resolveUiHalf(id)`（先试 `src/packages/<id>/ui`，再回落旧根），
-   探针只调它。
-2. **依赖补齐**：`ui-settings` 要 `qrcode` + `@types/qrcode`；`ui-terminal` 要 `@xterm/xterm` +
-   `@xterm/addon-fit`（自带类型）。其余 16 个只用 `@dsc/ui`/`@dsc/ui-primitives`/`react`/`react-dom`，
-   根依赖现在够了。
+**还没做的**：包级 README / `tests/` 仍缺（Q6）；界面包现在是"空宿主半"，将来若要给它真正的
+宿主逻辑（例如预取数据），行已经有了，不用再改结构。
 
 ### 12.6 Q5 壳层包化：边界
 

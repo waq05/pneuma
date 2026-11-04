@@ -246,7 +246,7 @@ const missing = NATIVE_OPS.filter((op) => !new RegExp(`\\b${op}:`).test(mainSour
 check('每个操作都在主进程的分派表里出现过', missing.length === 0, `缺：${missing.join('、')}`)
 
 console.log('\n── 打开工作区带着目录走（2026-10-14 用户报障：打开的不是当前工作区）──')
-const shellSessions = readFileSync(join(root, 'ui-shell', 'src', 'packages', 'ui-sessions', 'ui.tsx'), 'utf8')
+const shellSessions = readFileSync(join(root, resolveUiHalf('sessions'), 'ui.tsx'), 'utf8')
 check(
   'openWorkspace 的第二个实参是可选的路径（要打开哪个目录）',
   NATIVE_ARG_SPECS.openWorkspace.length === 2 &&

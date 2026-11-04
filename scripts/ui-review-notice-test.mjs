@@ -181,7 +181,7 @@ console.log('[5] 契约漂移钉：壳常量 == 宿主 src/plugins/file-review.t
 console.log('[6] 壳侧接线钉（文本钉：结构约定）')
 {
   const chat = readPluginSource(UI)
-  const trace = read('ui-shell/src/packages/ui-trace/ui.tsx')
+  const trace = read('src/packages/ui-trace/ui/ui.tsx')
   const card = read('ui-shell/src/ui-primitives/review-notice-card.tsx')
   const css = read('ui-shell/src/legacy/views.css')
 
@@ -215,7 +215,7 @@ console.log('[7] 插件边界：两家都从基元包取，没有插件横穿到
 {
   // 2026-10-28 之前：轨迹页 `../transcript/review-notice` 横穿过去，两个 bundle 各内联
   // 一份。搬进 ui-primitives 后这条钉住搬回去的路——插件目录之间不许再出现相对导入。
-  const traceSrc = readPluginSource('ui-shell/src/packages/ui-trace')
+  const traceSrc = readPluginSource('src/packages/ui-trace/ui')
   const chatSrc = readPluginSource(UI)
   check('轨迹页从 @dsc/ui-primitives 取解析与卡片', /import \{[^}]*ReviewNoticeCard[^}]*\} from '@dsc\/ui-primitives'/.test(traceSrc) && /import \{[^}]*parseReviewNotice[^}]*\} from '@dsc\/ui-primitives'/.test(traceSrc))
   check('对话流从 @dsc/ui-primitives 取解析与卡片', /import \{[^}]*ReviewNoticeCard[^}]*\} from '@dsc\/ui-primitives'/.test(chatSrc) && /import \{[^}]*parseReviewNotice[^}]*\} from '@dsc\/ui-primitives'/.test(chatSrc))

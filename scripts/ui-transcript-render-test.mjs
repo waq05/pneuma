@@ -152,7 +152,7 @@ console.log('[3] 形态钉（ui.tsx / factory.tsx / status 的催拍）')
   const ui = readPluginSource(UI)
   const factory = read(UI + '/tool-card/factory.tsx')
   const pgs = read(UI + '/process-groups.ts')
-  const status = read('ui-shell/src/packages/ui-status/ui.tsx')
+  const status = read('src/packages/ui-status/ui/ui.tsx')
 
   // 「按 kind 切座位」的判据只在 rounds.ts（分轮真值），渲染体（render.tsx）里不许再出现。
   const renderSrc = read(UI + '/render.tsx')

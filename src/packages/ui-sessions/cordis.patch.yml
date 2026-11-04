@@ -1,0 +1,5 @@
+# 会话列表的界面单元：纯界面插件，宿主半是空 apply（进 Loader 只为拿到开关）
+# 界面单元专用 order 段 350–368（19 个按 id 字典序编号）：本行 ui-sessions = 359
+- insert:
+    - id: ui-sessions
+      name: '@pneuma/ui-sessions'

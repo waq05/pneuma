@@ -29,7 +29,7 @@ const { shellCommands, shellCommandRejection, isShellCommand, addExtraSpec, remo
 const { UI_METHODS, UI_EXCLUDED, UI_ARG_SPECS } = await import('../lib/core/ui-methods.js')
 const { INVOKABLE_METHODS } = await import('../lib/core/host-methods.js')
 const { REMOTE_SHELL_METHODS } = await import('../lib/packages/remote/types.js')
-const shell = await import(new URL('../ui-shell/src/packages/ui-composer/commands.ts', import.meta.url).href)
+const shell = await import(new URL('../src/packages/ui-composer/ui/commands.ts', import.meta.url).href)
 const { claimInput, commandQuery, filterCommands, insertCommand, blockedNow } = shell
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -252,8 +252,8 @@ console.log('\n[4] 壳侧纯逻辑（真跑 composer/commands.ts）')
 
 console.log('\n[5] 壳侧接线')
 {
-  const composer = readPluginSource('ui-shell/src/packages/ui-composer')
-  check('菜单数据来自宿主的 listUiCommands', composer.includes("invoke<ShellCommandView[]>('listUiCommands')") || read('ui-shell/src/packages/ui-composer/command-menu.ts').includes("('listUiCommands')"), '')
+  const composer = readPluginSource('src/packages/ui-composer/ui')
+  check('菜单数据来自宿主的 listUiCommands', composer.includes("invoke<ShellCommandView[]>('listUiCommands')") || read('src/packages/ui-composer/ui/command-menu.ts').includes("('listUiCommands')"), '')
   check('执行走 runUiCommand（不再当场拦下）', composer.includes("invoke<boolean>('runUiCommand'"), '')
   check('旧文案已拆（“还没接到界面通道”那句不再出现）', !composer.includes('这条路还没接到界面通道'), '')
   check('/compact 老特例已并入统一派发', !composer.includes("value === '/compact'"), '')
@@ -272,7 +272,7 @@ console.log('\n[5] 壳侧接线')
   )
   // 参数占位不再进菜单行（dsh 也不摆）：空格由 insertCommand 补，用法在 /help 里。
   check('菜单行不再渲染参数占位', !composer.includes('slash-args'), '')
-  check('壳的图标表只认那七条命令', read('ui-shell/src/packages/ui-composer/command-face.ts').includes("new: IconNewChat") && read('ui-shell/src/packages/ui-composer/command-face.ts').includes('return GLYPHS[name] ?? null'), '')
+  check('壳的图标表只认那七条命令', read('src/packages/ui-composer/ui/command-face.ts').includes("new: IconNewChat") && read('src/packages/ui-composer/ui/command-face.ts').includes('return GLYPHS[name] ?? null'), '')
   // 桌面壳那一行：中文名在前、英文名在后、说明右对齐（三列的顺序就是读的顺序）。
   const labelAt = composer.indexOf('className="slash-label"')
   const nameAt = composer.indexOf('className="slash-name"')
@@ -286,10 +286,10 @@ console.log('\n[5] 壳侧接线')
   check('手机命令位判定与桌面同口径', phone.includes('if (!value.startsWith(\'/\')) return null') && phone.includes('if (/\\s/.test(word)) return null'), '')
   check('手机发送前把命令挑出来走 runUiCommand', read('remote-web/src/pages/ChatPage.tsx').includes("invoke<boolean>('runUiCommand', [command])"), '')
   check('手机菜单有分组标题与图标格', read('remote-web/src/components/CommandMenu.tsx').includes('cmd-section') && read('remote-web/src/components/CommandMenu.tsx').includes('cmd-icon'), '')
-  const menu = read('ui-shell/src/packages/ui-composer/command-menu.ts')
+  const menu = read('src/packages/ui-composer/ui/command-menu.ts')
   check('清单一次取、模块级缓存（打字每一拍不问宿主）', menu.includes('let cache: ShellCommandView[] | null = null') && menu.includes('if (cache !== null)'), '')
   check('取不到时整会话不反复问（并给一句提示）', menu.includes('let unavailable = false') && composer.includes('没接“/”命令通道'), '')
-  check('纯模块零依赖（不 import React / 宿主）', !/^import /m.test(read('ui-shell/src/packages/ui-composer/commands.ts')), '')
+  check('纯模块零依赖（不 import React / 宿主）', !/^import /m.test(read('src/packages/ui-composer/ui/commands.ts')), '')
 
   // 2026-10-27 报障第一条：回车跑完命令，候选面板还挂在输入框上方不收。
   check('回车执行时收面板（send 里调 command.hide()）', /command\.hide\(\)/.test(composer), '')

@@ -101,7 +101,7 @@ console.log('[2] 弹层焦点管理')
     [resolveUiHalf('settings') + '/ui.tsx', 'settings', '设置面板'],
     [resolveUiHalf('settings') + '/models.tsx', 'models-discover-card', '模型清单弹窗'],
     [resolveUiHalf('team') + '/ui.tsx', 'team-panel', '智能体团队'],
-    ['ui-shell/src/packages/ui-trace/inspector.tsx', 'trace-inspector', '轨迹检查器'],
+    ['src/packages/ui-trace/ui/inspector.tsx', 'trace-inspector', '轨迹检查器'],
   ]
   for (const [file, marker, label] of wiring) {
     const src = read(file)
@@ -131,7 +131,7 @@ console.log('[3] 骨架屏')
   const sites = [
     [resolveUiHalf('settings') + '/ui.tsx', '正在读取分区…', '设置分区'],
     [resolveUiHalf('settings') + '/usage.tsx', '正在读取用量记录…', '用量页'],
-    ['ui-shell/src/packages/ui-plugins/ui.tsx', '正在读取配置…', '插件配置'],
+    ['src/packages/ui-plugins/ui/ui.tsx', '正在读取配置…', '插件配置'],
     [resolveUiHalf('skills') + '/ui.tsx', '正在扫描技能目录…', '技能页'],
     [resolveUiHalf('team') + '/ui.tsx', '正在读运行记录…', '团队运行记录'],
   ]
@@ -154,8 +154,8 @@ console.log('[4] P1 三项')
 {
   const css = read('ui-shell/src/styles.css')
   const app = read('ui-shell/src/ui-layout/app.tsx')
-  const statusbar = read('ui-shell/src/packages/ui-statusbar/ui.tsx')
-  const sessions = read('ui-shell/src/packages/ui-sessions/ui.tsx')
+  const statusbar = read('src/packages/ui-statusbar/ui/ui.tsx')
+  const sessions = read('src/packages/ui-sessions/ui/ui.tsx')
   const transcript = readPluginSource(UI)
   const channel = read('ui-shell/src/ui-layout/host-channel.ts')
 
@@ -189,9 +189,9 @@ console.log('[5] 2026-10-26 四项')
 {
   const css = read('ui-shell/src/styles.css')
   const app = read('ui-shell/src/ui-layout/app.tsx')
-  const sessions = read('ui-shell/src/packages/ui-sessions/ui.tsx')
-  const composer = readPluginSource('ui-shell/src/packages/ui-composer')
-  const slider = read('ui-shell/src/packages/ui-composer/effort-slider.tsx')
+  const sessions = read('src/packages/ui-sessions/ui/ui.tsx')
+  const composer = readPluginSource('src/packages/ui-composer/ui')
+  const slider = read('src/packages/ui-composer/ui/effort-slider.tsx')
   const resizer = read('ui-shell/src/ui-primitives/thread-resizer.tsx')
 
   // ① 滑杆：档位有顺序，画成一条轨道；四档四套动效，没有「默认」这一格。
@@ -239,8 +239,8 @@ console.log('[5] 2026-10-26 四项')
 console.log('[6] 调档手感')
 {
   const css = read('ui-shell/src/styles.css')
-  const composer = readPluginSource('ui-shell/src/packages/ui-composer')
-  const slider = read('ui-shell/src/packages/ui-composer/effort-slider.tsx')
+  const composer = readPluginSource('src/packages/ui-composer/ui')
+  const slider = read('src/packages/ui-composer/ui/effort-slider.tsx')
   const runtime = read('src/packages/runtime/index.ts')
   const methods = read('src/core/ui-methods.ts')
 
@@ -271,7 +271,7 @@ console.log('[6] 调档手感')
 console.log('[7] 命令面板的滚动与翻页')
 {
   const css = read('ui-shell/src/styles.css')
-  const palette = read('ui-shell/src/packages/ui-palette/ui.tsx')
+  const palette = read('src/packages/ui-palette/ui/ui.tsx')
 
   // ① 结果列必须是真滚动区：flex 项默认 min-height:auto，内容一高就被面板的
   //    overflow:hidden 裁掉——看着像列表断了，其实滚不动。
@@ -327,9 +327,9 @@ console.log('[9] 这一轮的四条')
   const css = read('ui-shell/src/styles.css')
   const summary = read('ui-shell/src/ui-primitives/tool-summary.ts')
   const transcriptSrc = readPluginSource(UI)
-  const statusSrc = read('ui-shell/src/packages/ui-status/ui.tsx')
+  const statusSrc = read('src/packages/ui-status/ui/ui.tsx')
   const factorySrc = read(UI + '/tool-card/factory.tsx')
-  const traceSrc = read('ui-shell/src/packages/ui-trace/ui.tsx')
+  const traceSrc = read('src/packages/ui-trace/ui/ui.tsx')
 
   // ① 行首标题照 dsh 的 tool.title.* 词表：名词短语，不拼「搜了 / 正在写」。
   //    用户 2026-10-27 的原话是「搜了、写了、跑了、思考过程，不舒服」。
@@ -363,7 +363,7 @@ console.log('[9] 这一轮的四条')
 console.log('[10] 会话行标题的悬停滚动')
 {
   const css = read('ui-shell/src/styles.css')
-  const sessionsSrc = read('ui-shell/src/packages/ui-sessions/ui.tsx')
+  const sessionsSrc = read('src/packages/ui-sessions/ui/ui.tsx')
 
   // ① 量：悬停（或轮到焦点）那一刻量一次溢出，没溢出就不加开关——不能让所有行都抖。
   check('量的是「整段文字宽 − 行里给它的那一格」', sessionsSrc.includes('text.scrollWidth - box.clientWidth'))

@@ -179,7 +179,7 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
 ## 5. 聊天、工具行与状态
 
 - **对话是主界面**：正文栏永远优先，工具、预览、轨迹是补充。
-- 工具行（`ui-shell/src/packages/ui-transcript/tool-card/`，注册入口 `factory.tsx` 的 `registerToolCard`）：参数与结果用 `--dsc-fs-tool`；展开的详情高度上限 `--dsc-tool-detail-max-h`。
+- 工具行（`src/packages/ui-transcript/ui/tool-card/`，注册入口 `factory.tsx` 的 `registerToolCard`）：参数与结果用 `--dsc-fs-tool`；展开的详情高度上限 `--dsc-tool-detail-max-h`。
 - **危险红只给真正的失败**：用户拒绝、执行报错才用 `--dsc-red`；读不到文件、退出码 1 这类模糊结果
   用中性通告（这就是「已拒绝」状态落盘那一轮改的东西）。
 - 思考块、工具块这类「面板里的面」用 `--dsc-fill-quinary` 一档的软填充，不要描边。
@@ -206,7 +206,7 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
   「文件已更改」卡上那一份才是「这次改了什么」。胶囊与 Git 分区头现在只留「N 个文件」这个粗读数。
 - 步骤时间线的竖线是**中性色**（`color-mix(in srgb, var(--dsc-base) 10%, transparent)`），
   不要用带品牌色的 `--dsc-stroke-1`——浅色主题下会变成一条很吵的蓝线。
-- 审批卡（`ui-shell/src/packages/ui-prompt/ui.tsx` 的 `readApproval` 与 `CardBoundary`，与计划审阅卡、提问卡同住）停在对话流里，不抢焦点、不自动展开面板。卡只渲染在**发起它的那个会话**的视图里
+- 审批卡（`src/packages/ui-prompt/ui/ui.tsx` 的 `readApproval` 与 `CardBoundary`，与计划审阅卡、提问卡同住）停在对话流里，不抢焦点、不自动展开面板。卡只渲染在**发起它的那个会话**的视图里
   （kernel 的 `pendingView` 按当前查看会话过滤，0.6.50）——后台会话的卡留在自己家，侧栏橙点引导你切过去；
   别的会话的卡挂着时，当前会话的输入框不被禁用。
 - 用户气泡里的贴图（`.entry-user-images img`）与输入框上方那排待发贴图都走
@@ -367,7 +367,7 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
   的图标在「按钮大小」滑杆上不跟队。
 - 新增彩色图标先问一句：它是不是在画**对象本身**（文件夹、应用、文件类型）？是界面动作就用线性集。
 
-**终端配色**：取色在 `ui-shell/src/packages/ui-terminal/ui.tsx`（`xterm` 的 `ITheme` 在那里拼）。注意 xterm 只认
+**终端配色**：取色在 `src/packages/ui-terminal/ui/ui.tsx`（`xterm` 的 `ITheme` 在那里拼）。注意 xterm 只认
 具体色值，而令牌大多是没求值的 `color-mix(...)` 原文，所以它和 `appearance.ts` 用的是同一套两步
 取色：先借隐藏元素拿计算色，再过 1×1 画布归一成 sRGB。**加终端颜色不要另写一套取色**。
 

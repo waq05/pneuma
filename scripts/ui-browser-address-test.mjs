@@ -1,5 +1,5 @@
 /**
- * 地址栏输入整成可加载地址（`ui-shell/src/packages/ui-browser/address.ts`）的确定性探针。
+ * 地址栏输入整成可加载地址（`src/packages/ui-browser/ui/address.ts`）的确定性探针。
  *
  * 为什么单钉这一份：它是**地址栏唯一能去哪些地方**的判定口——原生视图那边只在校验
  * 「壳发起的 load 是 http/https」（`desktop/electron/main/dock.ts` 的 `navigateDockBrowser`），

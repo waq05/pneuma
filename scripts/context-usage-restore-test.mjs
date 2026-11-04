@@ -145,7 +145,7 @@ bootedEmpty.session.current().close()
 const adapterSource = readFileSync(new URL('../src/adapter/transcript.ts', import.meta.url), 'utf8')
 const pluginSource = readFileSync(new URL('../src/packages/transcript/index.ts', import.meta.url), 'utf8')
 const kernelSource = readFileSync(new URL('../src/host/kernel.ts', import.meta.url), 'utf8')
-const statusbarSource = readFileSync(new URL('../ui-shell/src/packages/ui-statusbar/ui.tsx', import.meta.url), 'utf8')
+const statusbarSource = readFileSync(new URL('../src/packages/ui-statusbar/ui/ui.tsx', import.meta.url), 'utf8')
 check('adapter 提供 seedContextUsage 回填入口', /seedContextUsage\(used: number\)/.test(adapterSource))
 check(
   'session-open 在重放之后调用回填',

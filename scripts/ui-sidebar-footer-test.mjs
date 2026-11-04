@@ -75,7 +75,7 @@ check('[1] tokens 从共享出口（ui-primitives/index.ts）',
 
 // ── [2] 页脚契约（sessions/ui.tsx 文本钉） ────────────────────────────────────────
 
-const src = read('ui-shell/src/packages/ui-sessions/ui.tsx')
+const src = read('src/packages/ui-sessions/ui/ui.tsx')
 // 2026-10-25：取数口径搬到共享 hook（ui-layout/usage-today.ts），页脚只消费它。
 // 判定因此拆两处：页脚「用没用共享 hook」、hook「怎么取、取哪一格、多久刷」。
 const hookSrc = read('ui-shell/src/ui-layout/usage-today.ts')

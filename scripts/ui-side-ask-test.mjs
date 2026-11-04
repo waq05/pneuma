@@ -165,7 +165,7 @@ console.log('[5] 流式与模型选择')
   const api = read('ui-shell/src/plugin-api.ts')
   const store = read(resolveUiHalf('ask') + '/store.ts')
   const plugin = read(resolveUiHalf('ask') + '/ui.tsx')
-  const sessions = read('ui-shell/src/packages/ui-sessions/ui.tsx')
+  const sessions = read('src/packages/ui-sessions/ui/ui.tsx')
 
   check('通道另有 ask 事件（与 plugins 同级，不进帧 hub）', events.includes("writeEvent(res, 'ask', data)") && events.includes("subscribe((chunk) => {"))
   check('webserver 把 dsc/side-ask-chunk 转成 ask 帧', webserver.includes("ctx.on('dsc/side-ask-chunk'") && webserver.includes('ask: {'))

@@ -124,7 +124,7 @@ console.log('[5] 用量数字自动进位')
   check('335,048 → 335K', formatTokens(335048) === '335K', formatTokens(335048))
   check('29,530 → 29.5K', formatTokens(29530) === '29.5K', formatTokens(29530))
   check('999 → 999', formatTokens(999) === '999', formatTokens(999))
-  const bar = read('ui-shell/src/packages/ui-statusbar/ui.tsx')
+  const bar = read('src/packages/ui-statusbar/ui/ui.tsx')
   check('状态栏卡片用 K/M 缩写（不再有 formatExactTokens 直接当卡面）', bar.includes('value={formatTokens(cacheHit)}') && bar.includes('value={formatTokens(output)}'))
   check('精确值仍留在 title 里', bar.includes('title={`${formatExactTokens(props.total)} tok`}'))
 }

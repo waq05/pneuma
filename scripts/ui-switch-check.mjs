@@ -37,6 +37,19 @@ function writeSwitch(file, enabled) {
   )
 }
 
+/** 一次落多条开关（同一份文件、同一套字段，批量开合时用）。 */
+function writeSwitches(files, enabled) {
+  writeFileSync(
+    pluginsJson,
+    JSON.stringify(
+      { version: 1, entries: files.map((file) => ({ file, disabled: !enabled, config: {} })) },
+      null,
+      2,
+    ) + '\n',
+    'utf8',
+  )
+}
+
 let pass = 0
 let fail = 0
 function check(name, ok, extra = '') {
@@ -120,6 +133,35 @@ check('单元数回来了（18 → 19）', on.entries.length === total, String(o
 const onGraph = composeUiBootGraph(host, toUiPluginRows(on.entries), on.disabled)
 check('transcript 回到启动图', inGraph(onGraph, 'transcript'))
 check('整图 rev 与出厂态一致（内容没变）', onGraph.rev === initialGraph.rev, onGraph.rev + ' ≠ ' + initialGraph.rev)
+
+console.log('19 个单元逐个停用/启用')
+{
+  const ids = initial.entries.map((entry) => entry.id).sort()
+  check('出厂态 19 个单元（逐个开关的前提）', ids.length === 19, String(ids.length))
+  const missed = []
+  const collateral = []
+  for (const id of ids) {
+    writeSwitch('ui-' + id, false)
+    const off = collectUiArtifactsForPlatform('web')
+    if (inTable(off, id) || !off.disabled.includes(id)) missed.push(id)
+    if (off.entries.length !== 18) collateral.push(id + ':' + String(off.entries.length))
+  }
+  check('每一个 ui-<id> 都能单独停掉（键写错就会漏）', missed.length === 0, missed.join(','))
+  check('停一个只少一个（没有牵连别的单元）', collateral.length === 0, collateral.join(';'))
+  writeSwitches(ids.map((id) => 'ui-' + id), false)
+  const allOff = collectUiArtifactsForPlatform('web')
+  check('19 个全停：产物表为空', allOff.entries.length === 0, String(allOff.entries.length))
+  check('19 个全停：disabled 报满 19 个', allOff.disabled.length === ids.length, String(allOff.disabled.length))
+  writeSwitches(ids.map((id) => 'ui-' + id), true)
+  const allOn = collectUiArtifactsForPlatform('web')
+  check('19 个全开：都回到产物表', allOn.entries.length === ids.length, String(allOn.entries.length))
+  const allOnGraph = composeUiBootGraph(host, toUiPluginRows(allOn.entries), allOn.disabled)
+  check(
+    '全开后整图 rev 与出厂态一致（内容没变）',
+    allOnGraph.rev === initialGraph.rev,
+    allOnGraph.rev + ' ≠ ' + initialGraph.rev,
+  )
+}
 
 console.log(String.fromCharCode(10) + pass + ' PASS / ' + fail + ' FAIL')
 process.exit(fail === 0 ? 0 : 1)

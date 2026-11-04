@@ -1,0 +1,32 @@
+{
+  "name": "@pneuma/ui-status",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./ui/ui.tsx",
+    "./package.json": "./package.json"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 362,
+    "resolution": "overridable",
+    "title": "状态面板（界面）",
+    "description": "可收成胶囊的多分区总览浮层"
+  },
+  "dsh": {
+    "client": {
+      "platform": "pneuma",
+      "api": "^0.8.1"
+    }
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  }
+}

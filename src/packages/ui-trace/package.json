@@ -1,0 +1,35 @@
+{
+  "name": "@pneuma/ui-trace",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./ui/ui.tsx",
+    "./package.json": "./package.json"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 367,
+    "resolution": "overridable",
+    "title": "执行轨迹（界面）",
+    "description": "轨迹页：时间轴、轮次记录与行内检查器"
+  },
+  "dsh": {
+    "client": {
+      "platform": "pneuma",
+      "api": "^0.8.1",
+      "inject": [
+        "transcript"
+      ]
+    }
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  }
+}

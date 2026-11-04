@@ -1,0 +1,32 @@
+{
+  "name": "@pneuma/ui-sessions",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./ui/ui.tsx",
+    "./package.json": "./package.json"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 359,
+    "resolution": "overridable",
+    "title": "会话列表（界面）",
+    "description": "左侧栏会话列表：分组、搜索、重命名与拖拽排序"
+  },
+  "dsh": {
+    "client": {
+      "platform": "pneuma",
+      "api": "^0.8.1"
+    }
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "@pneuma/ui-composer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./ui/ui.tsx",
+    "./package.json": "./package.json"
+  },
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 353,
+    "resolution": "overridable",
+    "title": "输入区（界面）",
+    "description": "输入框、模型与思考档位旋钮、附件、排队消息条"
+  },
+  "dsh": {
+    "client": {
+      "platform": "pneuma",
+      "api": "^0.8.1",
+      "phase": "early"
+    }
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  }
+}

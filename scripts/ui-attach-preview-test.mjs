@@ -68,7 +68,7 @@ console.log('[2] 基元库转出')
 
 console.log('[3] 输入区接法')
 {
-  const src = read('ui-shell/src/packages/ui-composer/ui.tsx')
+  const src = read('src/packages/ui-composer/ui/ui.tsx')
   check('从 @dsc/ui-primitives 取 ImageLightbox', /import \{[^}]*ImageLightbox[^}]*\} from '@dsc\/ui-primitives'/.test(src))
   check('图片缩略图是 <button className="attach-zoom"', /<button\s+type="button"\s+className="attach-zoom"/.test(src))
   check('按钮带 aria-label 与提示', /aria-label=\{`预览 \$\{item\.name\}`\}/.test(src) && src.includes('data-tip="点开看大图"'))
@@ -112,7 +112,7 @@ console.log('[4] 样式')
 
 console.log('[5] 视频分支没被顺手改掉')
 {
-  const src = read('ui-shell/src/packages/ui-composer/ui.tsx')
+  const src = read('src/packages/ui-composer/ui/ui.tsx')
   const thumbAt = src.indexOf('className="attach-thumb"')
   const zoomAt = src.indexOf('className="attach-zoom"')
   const videoAt = src.indexOf('<video')

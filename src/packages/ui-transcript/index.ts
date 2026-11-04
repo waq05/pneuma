@@ -11,6 +11,12 @@
  * （见 `src/core/ui-bundles.ts` 的 `UiArtifactCache.table()`）。停用只影响本界面单元，
  * 折叠事件、快照服务那一半仍在 `@pneuma/transcript` 里照常跑。
  *
+ * order 规则：19 个界面单元统一占 350–368 专用段，按 id 字典序逐个编号
+ * （actions 350、ask 351、browser 352、composer 353、files 354、palette 355、plugins 356、
+ *  preview 357、prompt 358、sessions 359、settings 360、skills 361、status 362、
+ *  statusbar 363、tasks 364、team 365、terminal 366、trace 367、transcript 368）；
+ * 本包是 transcript，order = 368。界面行不做任何事，order 只影响清单的可读性。
+ *
  * @module pneuma/ui-transcript
  */
 

@@ -146,18 +146,18 @@ numa config show              # 查看当前生效的端点/模型/key 来源（
 
 ## 插件
 
-功能包共 **56 个**（默认关 13 个）。每个功能是一个包，住在 `src/packages/<id>/`，构建后落到 `lib/node_modules/@pneuma/<id>`，由 `@pneuma/base` 的行清单按顺序挂载。**核心服务（模型路由、会话、工具注册表、审批…）与 19 个功能档没有区别**：都能在插件中心停用，停了以后依赖它的行会报出原因。
+功能包共 **75 个**（默认关 13 个；其中 19 个是界面单元 `ui-<id>`，宿主半是空 `apply`）。每个功能是一个包，住在 `src/packages/<id>/`，构建后落到 `lib/node_modules/@pneuma/<id>`，由 `@pneuma/base` 的行清单按顺序挂载。**核心服务（模型路由、会话、工具注册表、审批…）与 19 个功能档没有区别**：都能在插件中心停用，停了以后依赖它的行会报出原因。
 
 19 个功能档里，默认开 6 个（联网搜索、危险命令硬拦截、长输出转存、历史会话搜索、文件与命令围栏、改动前预览），默认关 13 个（子智能体、共享任务板、操作电脑桌面、外部命令钩子、MCP 外部工具、工具按需加载、定时任务、代码跳转与报错、受控浏览器、侧栏浏览器、经验沉淀、dsh 插件兼容、文档与批量读取）。完整清单与各自干什么见 [docs/development.md](docs/development.md) 第 4 节。
 
 首启会在 `~/.dsc/profiles/default/` 铺一份 profile（已有就不动）。把一个改过的功能包放进
 `~/.dsc/profiles/default/node_modules/@pneuma/<id>` 再重启，就顶替应用里那份，不用重新打包：
-37 个功能包支持这样覆盖；`llm` / `session` / `tools` / `approval` 这 19 个核心包声明为 pinned，
+56 个功能包支持这样覆盖；`llm` / `session` / `tools` / `approval` 这 19 个核心包声明为 pinned，
 不认覆盖，profile 里放同名副本时会告警并写清哪一份不生效。核心契约包 `@pneuma/runtime` 同样跟应用走。
 `numa plugin list` 的每一行会标出现在到底用的是谁：`← profile 覆盖`，或者 pinned 让路时那句说明。
 删掉一个可选包后应用照常启动，插件中心把那一行标成缺包。
 
-界面包（19 个）源码在 `ui-shell/src/packages/` 下（每个目录一个包），产物落 `lib/ui/plugins/`，id 与 0.8.1 一致。
+界面包（19 个）是独立包，源码住在 `src/packages/` 下的 `ui-<id>` 目录（每个单元一个包，`index.ts` 是空 `apply` 的宿主半，界面半在 `ui/`），产物落 `lib/ui/plugins/`，id 与 0.8.1 一致。
 
 「文档与批量读取」要先用一次 `npm install dsh-ops`（装在 `~/.dsc/plugins` 下即可），插件默认关，装好后在插件中心打开；没装时会一个工具都不注册，设置页写清找过哪些位置。
 
@@ -191,7 +191,7 @@ src/core/           自研引擎（零 UI 依赖）
 src/adapter/        core 事件 → 快照投影（transcript 折叠 + core-runtime）
 src/contract.ts     UI ⇄ 运行时 的中性契约（DscRuntime）
 src/host/kernel.ts  内核装配器：建 Context、挂应用自带的行、挂外部插件（103 行）
-src/packages/       56 个功能包（package.json + cordis.patch.yml + index.ts）
+src/packages/       75 个包：56 个功能包 + 19 个界面单元（package.json + cordis.patch.yml + index.ts）
 src/app/            ink UI（App/ChatView/Composer/ToolCard/ApprovalCard/SessionPicker/StatusBar）
 desktop/            Electron 桌面端：主进程 + 独立运行时子进程；界面就是插件壳（旧渲染层已删除）
 ui-shell/           桌面与手机共用的界面壳（插件化：布局 + 基元 + 官方界面插件；产物落 lib/ui/assets）

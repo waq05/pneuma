@@ -34,7 +34,7 @@ const dirty = (hay, from, to) => hay.split(from).join(to)
 
 const contract = read('src/contract/session.ts')
 const host = read('src/packages/session/index.ts')
-const ui = read('ui-shell/src/packages/ui-sessions/ui.tsx')
+const ui = read('src/packages/ui-sessions/ui/ui.tsx')
 
 // ── [1] 契约与宿主 ────────────────────────────────────────────────────────────────
 const contractHasFlag = (s) => s.includes('unsaved?: boolean')

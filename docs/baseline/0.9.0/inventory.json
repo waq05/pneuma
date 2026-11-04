@@ -470,6 +470,168 @@
       "bundle": null
     },
     {
+      "file": "ui-actions",
+      "name": "动作表（界面）",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "ui-ask",
+      "name": "模型提问（界面）",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "ui-browser",
+      "name": "受控浏览器（界面）",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "ui-composer",
+      "name": "输入区（界面）",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "ui-files",
+      "name": "文件（界面）",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "ui-palette",
+      "name": "命令面板（界面）",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "ui-plugins",
+      "name": "插件中心（界面）",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "ui-preview",
+      "name": "文件预览（界面）",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "ui-prompt",
+      "name": "提示词组装（界面）",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "ui-sessions",
+      "name": "会话列表（界面）",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "ui-settings",
+      "name": "设置（界面）",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "ui-skills",
+      "name": "技能（界面）",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "ui-status",
+      "name": "状态面板（界面）",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "ui-statusbar",
+      "name": "状态栏（界面）",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "ui-tasks",
+      "name": "任务与目标（界面）",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "ui-team",
+      "name": "共享任务板（界面）",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "ui-terminal",
+      "name": "终端（界面）",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "ui-trace",
+      "name": "执行轨迹（界面）",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
       "file": "ui-transcript",
       "name": "会话流（界面）",
       "enabled": true,

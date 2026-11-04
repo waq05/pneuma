@@ -22,7 +22,7 @@
  *
  * @module dsc/scripts/ui-legacy-compat-test
  */
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readPluginSource, resolveUiHalf } from './_check-runner.mjs'
@@ -84,7 +84,16 @@ console.log('[1] 标准方法底线：不许用「太新」的那几个')
     }
     return hits
   }
-  const files = [...collect(join(root, 'ui-shell/src')), ...collect(join(root, 'src/ui'))]
+  // 19 个界面单元的源码已搬到 src/packages/ui-<id>/ui/：它们同样是「界面核心」，
+  // 只扫 ui-shell/src 会漏掉这三十多个文件（搬家前它们在壳里），门禁的覆盖面就少了半截。
+  const halves = readdirSync(join(root, 'src/packages'), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(join(root, 'src/packages', entry.name, 'ui')))
+    .map((entry) => join(root, 'src/packages', entry.name, 'ui'))
+  const files = [
+    ...collect(join(root, 'ui-shell/src')),
+    ...collect(join(root, 'src/ui')),
+    ...halves.flatMap((dir) => collect(dir)),
+  ]
   check('扫到了源码（不是空目录）', files.length > 100, String(files.length))
   const hits = scan(files)
   check(`壳与界面核心里没有禁用的新 API（扫了 ${String(files.length)} 个文件）`, hits.length === 0, hits.slice(0, 4).join(' | '))

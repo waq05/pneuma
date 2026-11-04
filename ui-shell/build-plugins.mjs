@@ -29,7 +29,7 @@ const root = dirname(fileURLToPath(import.meta.url))
 //   新：src/packages/<目录>/ui/          —— 目录名有两种形状，都算新根：
 //       · <id>      宿主包自带界面半（一个包两半边，共用一个 package.json）
 //       · ui-<id>   独立界面包（纯界面单元，宿主半是空 apply）
-//   旧：ui-shell/src/packages/ui-<id>/  —— 还没迁的包仍在这里
+//   旧：ui-shell/src/packages/ui-<id>/  —— 迁移期的兜底根（19 个内置单元已全部搬走，这里现在是空的）
 // **产物目录与 id 一律不动**：id 决定 lib/ui/plugins/<id>，也是启动图条目与停用记录里的身份。
 // 搬源码只搬源码，产物路径一改等于换了个插件——所以 ui-transcript 的产物仍是
 // lib/ui/plugins/transcript/client.js，与它当宿主包半边时逐字节相同。
@@ -308,7 +308,7 @@ function discover() {
       found.set(id, { id, entry: entryFile, metaDir: join(hostPackagesDir, name), hostHalf: true })
     }
   }
-  // 2) 旧根兜底：ui-shell/src/packages/ui-<id>/ui.tsx。
+  // 2) 旧根兜底：ui-shell/src/packages/ui-<id>/ui.tsx（内置单元已全部搬走，留着这段兼容旧检出）。
   const missingEntry = []
   if (existsSync(legacyPackagesDir)) {
     for (const entry of readdirSync(legacyPackagesDir, { withFileTypes: true })) {

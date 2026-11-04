@@ -12,7 +12,7 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     },
-    "order": 95,
+    "order": 368,
     "resolution": "overridable",
     "title": "会话流（界面）",
     "description": "事件折叠成对话条目与快照"

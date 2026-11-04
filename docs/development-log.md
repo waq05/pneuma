@@ -13011,9 +13011,67 @@ exe 的协议按 dsh-ops 0.4.x 钉住，上游改字段就得跟着改；二进�
 
 ### Q3　transcript 的两半边（试点）
 
-界面半从 `ui-shell/src/packages/ui-transcript/` 搬进 `src/packages/transcript/ui/`，
-**产物一个字节没变**（sha256 `28fa4d99…`，启动图 rev `28fa4d99c0e2` 前后一致）。
-能做到是因为内置 id 由**产物目录名**决定，不由包名决定——搬源码只是搬源码。
+界面半一开始搬进了宿主包（`src/packages/transcript/ui/`），**产物一个字节没变**（sha256 `28fa4d99…`，
+启动图 rev `28fa4d99c0e2` 前后一致）。能做到是因为内置 id 由**产物目录名**决定，不由包名决定。
+这条经验后来直接复用到最终形态上——见下一节「界面单元独立成包」。
+
+## 2026-11-04　界面单元独立成包：19 个包、19 份产物字节不变
+
+### 先说结论变了两次，最后定在 dsh 的形态
+
+这一批一开始按「一个功能一个包」做，把界面半并进宿主包（transcript 试点 + 6 个同名包）。
+做到一半去核 dsh 的真实结构，发现它是**每个界面单元一个包**（`packages/client/ui-goal`，宿主半是空的
+`apply() {}`），host 功能另包。用户裁决照 dsh 改，于是全部拆成独立包。
+
+**为什么这个形态更好**（不是照抄，是想清楚了的）：两个界面单元挤一个包，它们的开关就绑在一起——
+关掉"执行轨迹"会连带关掉"会话流"的宿主行。「一视同仁」在这里的落点就是：每个面板都是一个插件、一行、一个开关。
+
+### 形态与换算
+
+- 19 个包 `src/packages/ui-<id>/`：`index.ts`（空 apply）、`cordis.patch.yml`（行 id `ui-<id>`）、
+  `package.json`、`ui/`。包数 56 → **75**，行数 56 → 75。
+- 包名叫 `ui-<id>`，产物 id 仍 `<id>`：换算只在 `build-plugins.mjs` 的 `hostIdOf()`（先查覆盖表、再剥前缀）。
+  19 份 `client.js` 的 sha256 与改造前**逐个逐字节一致**，启动图整图 rev `be3b5638799b` 没动。
+- **行 id 是开关的钥匙**：产物 id 是 `<id>`、行 id 是 `ui-<id>`，换算在 `ui-bundles.ts` 的 `builtinSwitchKey()`。
+  所以 `cordis.patch.yml` 里必须写 `ui-<id>`——写成 `<id>` 的话，那一行永远关不掉对应的面板，而且**不报错**。
+  这是这批最容易埋雷的一处，探针里专门有一条按"停用宿主行不影响界面单元"来钉它。
+- order：19 个单元统一占 `350–368` 专用段（按 id 字典序）。界面行不做任何事，这个段只为人读得懂；
+  之前的插队号（`ui-transcript` 一度用 95）在批量做时没有容身之处。
+
+### 开关真的生效：闸放在"取表"，不放"重建"
+
+`UiArtifactCache.table()` 每次取表时按 `readEnabledPlugins()` 切一刀，停用的进 `disabled` 不进 `entries`。
+**故意不放在 rebuild**：缓存钥匙是 `manifest.json`/`bundle.json`，`plugins.json` 不在指纹里，
+放进 rebuild 会一直读旧值；并进指纹又会让每扳一次开关整表重建。
+
+顺带修了一个既有缺陷：`collectUiArtifactsForPlatform` 原来只并第三方与组合包的 `disabled` 段，
+内置那份被丢掉——探针当场抓到，现在三份都并。
+
+### 三个坑（都写进注释了）
+
+1. **tsc 按文件位置找 node_modules**，不看 tsconfig 在哪。源码搬出 `ui-shell` 后，`build:ui` 第一步
+   tsc 红在 `react-dom` 类型上；解法是根 devDeps 补类型包。
+2. **两份 React**：解析起点从 `ui-shell` 变成仓库根，workspace 下会落到两个路径，加了 dedupe。
+3. **`ui-settings` 的 client.js 内联了 `qrcode`**（它不在壳的 platform-modules 里），根 devDeps 的版本
+   与 `ui-shell` 差一格，sha256 立刻变——「字节一致」这条验收线最容易被无声破坏的地方。
+
+### 一条自己的教训：数字断言会腐化
+
+`plugin-list-test` 里硬编码了「56 行」。试点把行数变成 57，它当场红，但**没人在门禁里看见**——
+因为 `check:plugin` 是在试点提交之前跑的。批量这一批才发现它一直是红的（12 PASS / 3 FAIL）。
+教训：门禁里的数字断言必须紧随结构变更同批更新，否则它保护的是旧结构，不是正确性。
+
+### 数字
+
+`typecheck` 0；`build` 0（75 包 / 75 行）；`build:ui` 0（重写 0 份）；`plugin-model-check --strict` 75/75/缺口 0；
+`ui-plugin-test` 261；`ui-two-halves` 16；`check:ui` 54/54；`ui-switch-check` **34**（含 19 个单元逐个停用/启用、
+全停/全开、全开后 rev 与出厂态一致）；清单快照 `--write` 后 74 插件 / 24 分区 / 19 单元。
+
+### 还开着的
+
+- 界面包现在是"空宿主半"，将来要给它真正的宿主逻辑（例如预取数据）时有现成的行可用。
+- `ui-shell/src/packages/` 已删空，但构建脚本保留旧根兜底与 `resolveUiHalf` 三段查找（防误伤）。
+
 
 三个坑，都写进注释了：
 1. **tsc 按文件位置找 node_modules**，不看 tsconfig 在哪。源码搬出 ui-shell 后 `build:ui` 第一步

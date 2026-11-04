@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url'
 const UI = resolveUiHalf('transcript')
 
 const model = await import(
-  new URL('../ui-shell/src/packages/ui-status/status-model.ts', import.meta.url).href
+  new URL('../src/packages/ui-status/ui/status-model.ts', import.meta.url).href
 )
 const {
   todoFocusWindow,
@@ -182,10 +182,10 @@ console.log('[4] 时间口径')
 
 console.log('[5] 形态钉（结构约定）')
 {
-  const status = read('ui-shell/src/packages/ui-status/ui.tsx')
+  const status = read('src/packages/ui-status/ui/ui.tsx')
   const css = read('ui-shell/src/styles.css')
   const team = read(resolveUiHalf('team') + '/ui.tsx')
-  const tasks = read('ui-shell/src/packages/ui-tasks/ui.tsx')
+  const tasks = read('src/packages/ui-tasks/ui/ui.tsx')
   /** 去掉注释再查「不许出现」的东西：注释里提到 window.innerWidth 是在解释为什么不用它。 */
   const stripComments = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
@@ -285,7 +285,7 @@ console.log('[7] Git 页签（空仓库不报错 + 未跟踪可预览 + 每文�
   // 执行姿势与 porcelain 解析在 core/git-exec.ts（desktop-dock 与 git 插件共用一份：
   // 两处都在读同一个工作区，解析规则不能有两份）。
   const gitExec = read('src/core/git-exec.ts')
-  const changes = read('ui-shell/src/packages/ui-files/changes.tsx')
+  const changes = read('src/packages/ui-files/ui/changes.tsx')
 
   check(
     'diff 不再硬依赖 HEAD（先问 hasHead，问不到走未暂存 + 已暂存两段）',
@@ -392,7 +392,7 @@ console.log('[8] 工具卡补丁视图（读 / 写 / 改三类分流）')
   const dockState = read('ui-shell/src/ui-dockkit/dock-state.ts')
   const dock = read('ui-shell/src/ui-dockkit/dock.tsx')
   const factory = read(UI + '/tool-card/factory.tsx')
-  const preview = read('ui-shell/src/packages/ui-preview/ui.tsx')
+  const preview = read('src/packages/ui-preview/ui/ui.tsx')
   const contract = readContractSource()
   const adapter = read('src/adapter/transcript.ts')
 
@@ -424,7 +424,7 @@ console.log('[8] 工具卡补丁视图（读 / 写 / 改三类分流）')
 
 console.log('[9] 面板的落点与宽度锚（落点看页签行，宽度看正文区）')
 {
-  const statusPanel = read('ui-shell/src/packages/ui-status/ui.tsx')
+  const statusPanel = read('src/packages/ui-status/ui/ui.tsx')
   const app = read('ui-shell/src/ui-layout/app.tsx')
   const shellCss = read('ui-shell/src/styles.css')
 
@@ -456,7 +456,7 @@ console.log('[9] 面板的落点与宽度锚（落点看页签行，宽度看正
 console.log('[10] 右上角的层序与「更多打开方式」的收起时机')
 {
   const shellCss = read('ui-shell/src/styles.css')
-  const sessions = read('ui-shell/src/packages/ui-sessions/ui.tsx')
+  const sessions = read('src/packages/ui-sessions/ui/ui.tsx')
   const primitives = read('ui-shell/src/ui-primitives/icons-workspace.tsx')
   const barrel = read('ui-shell/src/ui-primitives/index.ts')
 
@@ -498,7 +498,7 @@ console.log('[10] 右上角的层序与「更多打开方式」的收起时机')
 }
 console.log('[11] 状态胶囊的落点与拖动')
 {
-  const statusPanel = read('ui-shell/src/packages/ui-status/ui.tsx')
+  const statusPanel = read('src/packages/ui-status/ui/ui.tsx')
   const shellCss = read('ui-shell/src/styles.css')
 
   // 2026-11-02 用户截图：收起态的胶囊正好压在消息流第一行（思考 · 进行中）上。默认落点
