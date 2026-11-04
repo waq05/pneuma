@@ -15,8 +15,7 @@
  *
  * @module dsc/core/dock-session
  */
-import type { CdpCommandTarget } from './cdp/transport.js'
-import type { DockBrowserEventPush } from './dock-browser.js'
+import type { CdpCommandTarget, DockBrowserEventPush } from './dock-browser.js'
 
 /**
  * dock 会话的后端：宿主链路门面（`HostBrowserLink`）满足这个形状。

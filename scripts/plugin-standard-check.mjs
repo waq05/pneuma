@@ -10,6 +10,7 @@
  *      engines.pneuma / cordis 对等依赖；功能包另有 pneuma.bundle.patch /
  *      pneuma.resolution / pneuma.order，库包不需要）；
  *   2. exports 的键集只许 .、./client、./package.json、./locale/*.json；
+ *      库包另许模块子路径 ./<模块>.js（键与目标一字不差，功能包不给这条）；
  *   3. 功能包：cordis.patch.yml 能解析、恰好一条 insert 行，行 id 与目录名一致、
  *      name 等于包名（库包没有行，不判）；
  *   4. 功能包：入口 index.ts 能导出一个插件（模块级 apply / default / 唯一带 apply 的
@@ -63,6 +64,16 @@ const packagesDir = join(root, 'src', 'packages')
 const ALLOWED_EXPORT_KEYS = new Set(['.', './client', './package.json'])
 /** 本地化文件是允许的第二类键：./locale/<语言>.json。 */
 const LOCALE_EXPORT_KEY = /^\.\/locale\/[^/]+\.json$/
+/**
+ * 库包的第三类键：模块子路径（`./actions.js` → `./actions.js`）。
+ *
+ * 为什么只给库包开：库包是被功能包 import 的一侧，源码里就有好几个模块
+ * （cdp 的 transport / actions / snapshot …），它们只能靠子路径导出被裸说明符引用。
+ * 功能包对外只有一个插件入口，多开子路径等于让别的包绕过开关直接拿内部实现；
+ * 键与目标必须一字不差（不做任意的 `./x` → `./y` 映射），这样构建产物里
+ * 每条导出都指向包内真实存在的同名文件。
+ */
+const LIBRARY_MODULE_EXPORT_KEY = /^\.\/[a-z0-9][a-z0-9-]*\.js$/
 
 /** cordis 对等依赖的键名：版本区间由 build-packages 统一注入，这里只查有没有。 */
 const CORDIS_PEER = '@deepseek-ai/cordis'
@@ -261,6 +272,8 @@ for (const id of ids) {
   if (keyOk) {
     for (const key of Object.keys(exportsField)) {
       if (ALLOWED_EXPORT_KEYS.has(key) || LOCALE_EXPORT_KEY.test(key)) continue
+      // 库包的模块子路径：键与目标一字不差才算（见 LIBRARY_MODULE_EXPORT_KEY）。
+      if (pkg.kind === 'library' && LIBRARY_MODULE_EXPORT_KEY.test(key) && exportsField[key] === key) continue
       keyOk = false
       fail(2, id, `exports 里有计划外的键「${key}」——要不要收由主控定，别在包里偷偷加`)
     }

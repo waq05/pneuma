@@ -191,6 +191,10 @@ writeFileSync(
 )
 writeFileSync(join(baseDir, 'cordis.patch.yml'), YAML.stringify([{ insert }]), 'utf8')
 
-console.log(`功能包：${generated.length} 个包，基础包 ${insert.length} 行 -> ${outDir}`)
+// 库包也走同一套产物（子路径导出要指回 lib/packages/<id>），但它们没有行，
+// 所以「功能包」只数带行的那些，库包单独报——否则数字会看起来像凭空多了个功能。
+const libraryCount = generated.filter((pkg) => pkg.manifest.pneuma?.library === true).length
+const featureCount = generated.length - libraryCount
+console.log(`功能包：${featureCount} 个包，基础包 ${insert.length} 行 -> ${outDir}（另有库包 ${libraryCount} 个，不占行）`)
 for (const problem of problems) console.error('问题：' + problem)
 if (problems.length > 0) process.exit(1)

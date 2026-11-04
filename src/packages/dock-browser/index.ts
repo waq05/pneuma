@@ -39,18 +39,18 @@ import { neutralizeInline, wrapUntrusted } from '@pneuma/runtime/core/untrusted.
 import { redact } from '@pneuma/runtime/core/secrets.js'
 import { DOCK_ACTIONS, DOCK_LOOK_ACTIONS, isAgentView } from '@pneuma/runtime/core/dock-browser.js'
 import { HOST_BROWSER_SERVICE, type HostBrowserLink } from '@pneuma/runtime/core/host-browser-link.js'
-import { CLOUD_METADATA_HOSTS } from '@pneuma/runtime/core/cdp/cloud-metadata.js'
-import type { CdpCommandTarget } from '@pneuma/runtime/core/cdp/transport.js'
-import * as actions from '@pneuma/runtime/core/cdp/actions.js'
+import { CLOUD_METADATA_HOSTS } from '@pneuma/cdp/cloud-metadata.js'
+import type { CdpCommandTarget } from '@pneuma/cdp/transport.js'
+import * as actions from '@pneuma/cdp/actions.js'
 import {
   lookupSnapshotRef,
   serializeAxTree,
   truncateByLines,
   type AxTree,
   type SnapshotRef,
-} from '@pneuma/runtime/core/cdp/snapshot.js'
+} from '@pneuma/cdp/snapshot.js'
 import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
-import { RingBuffer } from '@pneuma/runtime/core/cdp/ring-buffer.js'
+import { RingBuffer } from '@pneuma/cdp/ring-buffer.js'
 import {
   consoleLine,
   describeRef,
@@ -59,7 +59,7 @@ import {
   safeStringify,
   type ConsoleEntry,
   type NetworkEntry,
-} from '@pneuma/runtime/core/cdp/report.js'
+} from '@pneuma/cdp/report.js'
 
 const CONFIG_KEY = 'dock-browser'
 /** 设置分区 id：与配置键同名，元数据 `settingsSection` 指向它。 */

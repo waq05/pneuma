@@ -13,8 +13,7 @@
  *
  * @module dsc/core/host-browser-link
  */
-import type { CdpCommandTarget } from './cdp/transport.js'
-import type { DockBrowserEventPush, DockViewInfo } from './dock-browser.js'
+import type { CdpCommandTarget, DockBrowserEventPush, DockViewInfo } from './dock-browser.js'
 
 /** `ctx.provide` / `ctx.get` 用的服务名。 */
 export const HOST_BROWSER_SERVICE = 'hostBrowser'

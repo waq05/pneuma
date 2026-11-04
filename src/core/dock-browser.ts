@@ -113,6 +113,37 @@ export interface DockViewInfo {
   visible: boolean
 }
 
+/**
+ * 一条 CDP 命令的可选参数：与 `packages/cdp/transport.ts` 里 `CdpCommandOptions` 去掉
+ * `sessionId` 之后同形。写在这里而不是从包那边 import，是因为本模块要与
+ * 「零 import」这条约束共存（宿主侧 headless、桌面主进程、探针都用类型擦除直读它）。
+ */
+export interface CdpCommandRequestOptions {
+  /** 超时毫秒；<= 0 表示不设超时。 */
+  timeoutMs?: number
+  /** 取消信号（用户打断时用来立刻结束等待）。 */
+  signal?: AbortSignal
+}
+
+/**
+ * 「能执行 CDP 命令的那点东西」——快照层与动作层真正依赖的形状。
+ *
+ * 为什么放在这份契约模块里：`CdpSessionView` 是一条 WebSocket 连接上的一个 session，
+ * 而 dock 视图（侧栏里那台浏览器）没有 WebSocket，命令经宿主协议转给桌面主进程。
+ * 抽成结构类型之后，`src/packages/cdp/` 里那套快照与动作两条后端共用一份。
+ *
+ * 放在这里还解掉一个方向问题：内核的 `dock-session.ts` 与 `host-browser-link.ts` 都要
+ * 引用这个类型，而 `src/core` 不许 import `@pneuma/` 包。这份模块没有任何 import，
+ * 两边都从它取，类型只有一个来源。
+ */
+export interface CdpCommandTarget {
+  readonly sessionId: string
+  /** 发一条命令。 */
+  send<T = unknown>(method: string, params?: Record<string, unknown>, options?: CdpCommandRequestOptions): Promise<T>
+  /** 订事件（没有 session 概念的实现自己按视图过滤）。 */
+  on(method: string, handler: (params: Record<string, unknown>) => void): () => void
+}
+
 /** 一条命令的默认超时：跨进程 + 可能等页面，给得比 CDP 那层（20s）宽一点。 */
 export const DOCK_CALL_TIMEOUT_MS = 25_000
 

@@ -1,0 +1,28 @@
+{
+  "name": "@pneuma/cdp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./actions.js": "./actions.js",
+    "./cloud-metadata.js": "./cloud-metadata.js",
+    "./launch.js": "./launch.js",
+    "./report.js": "./report.js",
+    "./ring-buffer.js": "./ring-buffer.js",
+    "./snapshot.js": "./snapshot.js",
+    "./transport.js": "./transport.js",
+    "./package.json": "./package.json"
+  },
+  "pneuma": {
+    "library": true,
+    "title": "CDP 底层库",
+    "description": "Chrome DevTools Protocol 的传输、动作、快照与启动器；browser / dock-browser / host-stdio 三个功能包共用同一份实例"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  }
+}

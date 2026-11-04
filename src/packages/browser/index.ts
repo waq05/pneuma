@@ -30,15 +30,15 @@ import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import type { ToolEntry, ToolContext, ToolOutput } from '@pneuma/runtime/core/tools.js'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { neutralizeInline, wrapUntrusted } from '@pneuma/runtime/core/untrusted.js'
-import { CLOUD_METADATA_HOSTS } from '@pneuma/runtime/core/cdp/cloud-metadata.js'
+import { CLOUD_METADATA_HOSTS } from '@pneuma/cdp/cloud-metadata.js'
 import { redact } from '@pneuma/runtime/core/secrets.js'
-import * as actions from '@pneuma/runtime/core/cdp/actions.js'
-import { BrowserProcess, probeExecutable, type BrowserLaunchConfig } from '@pneuma/runtime/core/cdp/launch.js'
-import { serializeAxTree, truncateByLines, lookupSnapshotRef, type AxTree, type SnapshotRef } from '@pneuma/runtime/core/cdp/snapshot.js'
-import type { CdpSessionView, CdpTransport } from '@pneuma/runtime/core/cdp/transport.js'
+import * as actions from '@pneuma/cdp/actions.js'
+import { BrowserProcess, probeExecutable, type BrowserLaunchConfig } from '@pneuma/cdp/launch.js'
+import { serializeAxTree, truncateByLines, lookupSnapshotRef, type AxTree, type SnapshotRef } from '@pneuma/cdp/snapshot.js'
+import type { CdpSessionView, CdpTransport } from '@pneuma/cdp/transport.js'
 import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
 import { splitList } from '@pneuma/runtime/core/strings.js'
-import { RingBuffer } from '@pneuma/runtime/core/cdp/ring-buffer.js'
+import { RingBuffer } from '@pneuma/cdp/ring-buffer.js'
 import {
   consoleLine,
   describeRef,
@@ -47,7 +47,7 @@ import {
   safeStringify,
   type ConsoleEntry,
   type NetworkEntry,
-} from '@pneuma/runtime/core/cdp/report.js'
+} from '@pneuma/cdp/report.js'
 
 /** 设置页「看当前标签页」的等待上限：浏览器没起来或页面卡住时，15 秒给结论。 */
 const LOOK_TAB_TIMEOUT_MS = 15_000

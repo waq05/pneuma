@@ -23,7 +23,7 @@
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import { errText } from '@pneuma/runtime/adapter/transcript.js'
-import type { CdpCommandTarget } from '@pneuma/runtime/core/cdp/transport.js'
+import type { CdpCommandTarget } from '@pneuma/cdp/transport.js'
 import type { DockBrowserReply } from '@pneuma/runtime/core/dock-browser.js'
 import {
   DOCK_CALL_TIMEOUT_MS,

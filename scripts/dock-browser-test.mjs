@@ -178,7 +178,7 @@ const { HOST_BROWSER_SERVICE, DockBrowserUnavailableError } = await import(modUr
 const { hostStdioPlugin } = await import(modUrl('lib/packages/host-stdio/index.js'))
 const { dockBrowserPlugin } = await import(modUrl('lib/packages/dock-browser/index.js'))
 // 动作层（第 9 节）：CDP 应答是两层这件事就发生在这一份里，且 browser 插件与 dock 插件共用它。
-const actions = await import(modUrl('lib/core/cdp/actions.js'))
+const actions = await import(modUrl('lib/packages/cdp/actions.js'))
 const { NATIVE_EVENTS, NATIVE_EVENT_SET, NATIVE_BRIDGE_VERSION } = await import(modUrl('lib/core/native-bridge.js'))
 
 console.log('[1] 契约单一真源：协议版本只有一处定义')
