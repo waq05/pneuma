@@ -35,7 +35,7 @@ import {
   shouldDeferTool,
   summarizeToolDescription,
   type ToolSearchConfig,
-} from '@pneuma/runtime/core/tool-search.js'
+} from './tool-search.js'
 import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { McpService, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { dscPath } from '@pneuma/runtime/core/path-policy.js'

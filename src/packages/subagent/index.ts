@@ -32,7 +32,7 @@ import {
   writeRole,
   type AgentRole,
   type TeammateApproval,
-} from '@pneuma/runtime/core/agent-roles.js'
+} from './agent-roles.js'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { MiniAgent } from '@pneuma/runtime/core/loop.js'
 import { subagentEnvironmentText } from '@pneuma/runtime/core/prompt.js'

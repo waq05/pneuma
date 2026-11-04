@@ -37,10 +37,10 @@ import {
   TARGET_LABELS,
   usedChars,
   writeEval,
-} from '@pneuma/runtime/core/memory.js'
-import type { MemoryCell, MemoryConfig, MemoryOperation, MemoryTarget, MemoryType } from '@pneuma/runtime/core/memory.js'
-import { evaluateMemory, formatMemoryReport, readingsOf } from '@pneuma/runtime/core/memory-eval.js'
-import type { MemoryEvalEntry, MemoryEvalInput, MemoryEvalReadings, MemoryEvalReport } from '@pneuma/runtime/core/memory-eval.js'
+} from './memory.js'
+import type { MemoryCell, MemoryConfig, MemoryOperation, MemoryTarget, MemoryType } from './memory.js'
+import { evaluateMemory, formatMemoryReport, readingsOf } from './memory-eval.js'
+import type { MemoryEvalEntry, MemoryEvalInput, MemoryEvalReadings, MemoryEvalReport } from './memory-eval.js'
 import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
 import { argsSummary } from '@pneuma/runtime/core/tools.js'
 import type { SettingsField, SettingsOption, SettingsValues } from '@pneuma/runtime/contract.js'

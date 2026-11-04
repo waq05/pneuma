@@ -13100,4 +13100,74 @@ exe 的协议按 dsh-ops 0.4.x 钉住，上游改字段就得跟着改；二进�
   把 client.js 同时放进包目录（Q3 第 6 步，收益小风险大，暂不做）。
 - Q4 仍是第一批：剩下 10 批里，「解耦后可搬」那一档必须先让内核不再 import，再搬。
 
+## 2026-11-04　Q4 第二、三批：13 个实现搬进包，探针改成「跟桩读源」
+
+### 为什么这一批能搬
+
+§12.7 定的硬规则只有一条：**内核不再 import 它，才能搬**。原因是代数戳只打在 `lib/packages/**`，
+模块一进包就有了换代资格；内核若还握着它，换代后内核用旧实例、包用新实例，模块级状态会分裂。
+
+这一批 13 个文件都过线：除了包自己的 `index.ts`，`src/` 里没有第二个引用方。
+
+| 原位置 | 新位置 | 行数 |
+|---|---|---|
+| `src/core/mcp.ts` | `src/packages/mcp/mcp.ts` | 1,077 |
+| `src/core/memory.ts` | `src/packages/memory/memory.ts` | 876 |
+| `src/core/memory-eval.ts` | `src/packages/memory/memory-eval.ts` | 318 |
+| `src/core/tools/bash.ts` | `src/packages/tools-default/bash.ts` | 1,141 |
+| `src/core/tools/search-tools.ts` | `src/packages/tools-default/search-tools.ts` | 430 |
+| `src/core/tools/image-tool.ts` | `src/packages/tools-default/image-tool.ts` | 62 |
+| `src/core/session-index.ts` | `src/packages/session-search/session-index.ts` | 958 |
+| `src/core/tool-search.ts` | `src/packages/tool-search/tool-search.ts` | 378 |
+| `src/core/call-meaning.ts` | `src/packages/approval/call-meaning.ts` | 359 |
+| `src/core/approval.ts` | `src/packages/approval/approval.ts` | 46 |
+| `src/core/agent-roles.ts` | `src/packages/subagent/agent-roles.ts` | 309 |
+
+合计 5,954 行，原位置各留一行转发桩（`export * from '../packages/<id>/<x>.js';`，`core/tools/` 下的是 `../../`）。
+调用方一行没改——这正是留桩的目的。
+
+### `command-runner` 故意留在内核
+
+`core/tools/command-runner.ts:75` 有一张模块级 Map（正在跑的命令）。`bash.ts` 与 `sandbox/index.ts`
+必须拿到**同一个**实例，否则沙箱判定会 fail-open。所以 `bash.ts` 搬进包、`command-runner` 留内核，
+包用相对路径 import 内核那一份（`packages/tools-default/bash.ts:18`）。
+
+同理没搬的还有 `core/tools/path-args.ts`、`core/tools/sandbox-args.ts`——它们被多个包与内核共用，
+搬走就要拆成库包，属于 Q4-b2 的活。
+
+### 断掉的探针：加一支跟桩读源的助手，而不是逐条改路径
+
+四支探针读 `src/core/*.ts` 的**文本**做断言，一支直接 import 源码：
+
+- `scripts/session-open-in-test.mjs:173`（读 `core/tools/bash.ts`、`core/mcp.ts`）
+- `scripts/ui-status-panel-test.mjs:240`（读 `core/tools/bash.ts`）
+- `scripts/readme-test.mjs:149`（读 `core/tools/{bash,fs-tools,search-tools}.ts` 数工具名）
+- `scripts/memory-eval-test.mjs:68`（`import('../src/core/memory-eval.ts')`）
+
+桩只有一行，前三支的断言全部假失败（README 的工具数当场从 10 掉到 3），第四支直接 `ERR_MODULE_NOT_FOUND`。
+
+没有逐个改路径：每搬一个文件就要改一次，搬完 130 个文件要改 130 次。改成 `scripts/_source.mjs`：
+认出「整份文件只有一行再导出」的桩，跟到真文件，返回文本或 import 它。多层转发也跟，成环有 8 层上限。
+四支探针只换了取源那一行，**断言内容一个字没改**——它们要钉的仍然是那份实现。
+
+### 一个容易误判的现象：Node 不会把 `.js` 回落到 `.ts`
+
+`microcompact-test` 读的是同样的转发桩，却一直是绿的。查下来不是 Node 宽容，而是它自己注册了
+resolve 钩子（`scripts/microcompact-test.mjs:41-60`），把 `.js` 回落成 `.ts`。多数探针没有这个钩子，
+所以同样的搬运在它们那里就是断的。以后遇到「有的探针绿、有的红」，先看它有没有自己的解析钩子。
+
+### 数字
+
+`typecheck` 0；`build` 0（75 个功能包 / 75 行 + 1 个库包，产物里 `lib/packages/<id>/*.js` 都在）；
+`check:plugin` 0（换包 e2e 17 PASS / 0 FAIL）；四支修好的探针各自全绿（memory-eval 全部通过、
+session-open-in 全绿、ui-status-panel 全部通过、readme 26 条断言）；`check:core` **98/98 通过（732.7s）**。
+转发桩现在 46 个文件、46 行。
+
+### 还开着的
+
+- 剩下能搬的都在「解耦后可搬」那一档：内核还 import 它们（`hooks.ts`、`compact.ts`、`prompt.ts`、
+  `modes.ts`、`permission-scope.ts`、`market.ts`、`loop.ts` 等 10 个被 2 个以上包共用）。
+  要搬得先把它们变成库包（Q4-b2），并给库包加 pinned 解析，否则 profile 覆盖场景会 `ERR_MODULE_NOT_FOUND`。
+- `src/core/dsh-compat/*`、`remote/*`、`ui-server.ts` / `ui-methods.ts` / `ui-hmr.ts` 是加载器本体，留内核。
+- 界面壳（`src/ui/index.ts` 静态再导出 8 个 core 模块）要先拆，才能把 `ui-layout` / `ui-renderer` 成包。
 

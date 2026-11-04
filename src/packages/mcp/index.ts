@@ -24,7 +24,7 @@ import {
   type McpRisk,
   type McpServerConfig,
   type McpToolSpec,
-} from '@pneuma/runtime/core/mcp.js'
+} from './mcp.js'
 import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
 import { errText as errorText } from '@pneuma/runtime/core/err-text.js'
 import { asRecord } from '@pneuma/runtime/core/records.js'

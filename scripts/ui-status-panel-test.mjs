@@ -18,6 +18,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { readContractSource, resolveUiHalf } from './_check-runner.mjs'
+import { readSource } from './_source.mjs'
 import { fileURLToPath } from 'node:url'
 
 // 界面半的新旧根由 resolveUiHalf 判：transcript 已搬进宿主包，旧根那条只剩兜底。
@@ -237,7 +238,8 @@ console.log('[6] 宿主数据面（文本钉）')
   const uiMethods = read('src/core/ui-methods.ts')
   const hostMethods = read('src/core/host-methods.ts')
   const toolsDefault = read('src/packages/tools-default/index.ts')
-  const bashCore = read('src/core/tools/bash.ts')
+  // bash 实现已搬进 tools-default 包，顺着转发桩读真文件（断言内容不变）
+  const bashCore = readSource('src/core/tools/bash.ts')
   const plan = read('src/packages/plan/index.ts')
   const schedule = read('src/packages/schedule/index.ts')
 

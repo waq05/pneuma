@@ -21,6 +21,7 @@ import { createServer } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { importSource } from './_source.mjs'
 
 const home = mkdtempSync(join(tmpdir(), 'dsc-memory-eval-'))
 process.env.HOME = home
@@ -65,7 +66,7 @@ const until = async (fn, timeoutMs = 10000) => {
 }
 
 // ── A. 纯模块：memory-eval.ts 直读（Node 类型擦除，零运行期依赖）──────────────────
-const evalMod = await import(new URL('../src/core/memory-eval.ts', import.meta.url).href)
+const evalMod = await importSource('src/core/memory-eval.ts')
 const { evaluateMemory, formatMemoryReport, readingsOf } = evalMod
 
 /** 造一条评估条目。 */

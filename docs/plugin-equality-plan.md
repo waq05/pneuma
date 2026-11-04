@@ -382,3 +382,19 @@ numa 对应：
 | 9 | 包间零直接 import（只走服务） | 0 处，保持 | 门禁加一条反向断言 |
 
 **顺序**：第 1、4、5、7 条可先做静态门禁（不动行为），第 3 条已经落地，第 6 条跟着 Q4 逐批走。
+
+### 12.9 Q4 进度：实现搬包（2026-11-04，第二、三批）
+
+按 §12.7 的硬规则只搬「零内核引用」这一档。每搬一个，`src/core/x.ts` 就变成一行转发桩，调用方一行不改。
+
+| 批 | 文件 → 包 | 行数 |
+|---|---|---|
+| 一 | sandbox 17 件、lsp 7 件、self-improve 3 件、computer-use / ops / approval-floor / lifecycle-hooks / microcompact / settings / commands / prompt / surfaces 各若干 | 见 §9–§11 |
+| 二 | `mcp.ts`→`mcp`、`memory.ts`/`memory-eval.ts`→`memory`、`tools/{bash,image-tool,search-tools}.ts`→`tools-default`、`call-meaning.ts`/`approval.ts`→`approval`、`agent-roles.ts`→`subagent` | 11 个文件 / 5,954 行，桩 11 行 |
+| 三 | `session-index.ts`→`session-search`、`tool-search.ts`→`tool-search` | 2 个文件 / 1,336 行 |
+
+**为什么 `tools/command-runner.ts` 搬不走**：它有一张模块级 Map（正在跑的命令）。`bash.ts` 与 `sandbox/index.ts` 必须拿到**同一个**实例，而代数戳只打在 `lib/packages/**` 上——搬进包就等于给它换代资格，内核算旧表、包算新表，沙箱判定会 fail-open。所以 `bash.ts` 搬进包、`command-runner` 留在内核，包用相对路径 import 内核那一份（`packages/tools-default/bash.ts:18`）。
+
+**这一批暴露的第三个坑：直读源码的探针会被转发桩断掉。** 四支探针读 `src/core/*.ts` 的**文本**做断言（`session-open-in-test`、`ui-status-panel-test`、`readme-test`），还有一支直接 import 源码（`memory-eval-test`）。桩只有一行，断言要么假失败、要么 `ERR_MODULE_NOT_FOUND`。修法不是逐个改路径（每搬一个文件就要改一次），而是加一支 `scripts/_source.mjs`：识别「整份文件只有一行再导出」的桩，跟到真文件再给文本 / 再 import。多层转发也跟，环有 8 层上限；断言内容一个字没改。
+
+顺带记一个容易误判的现象：Node 的类型擦除**不会**把源码里 `export * from './x.js'` 回落到 `./x.ts`。`microcompact-test` 之所以没断，是因为它自己注册了 resolve 钩子（`scripts/microcompact-test.mjs:41`），不是 Node 默认行为。

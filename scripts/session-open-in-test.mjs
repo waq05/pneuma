@@ -19,6 +19,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { readSource } from './_source.mjs'
 
 const home = mkdtempSync(join(tmpdir(), 'dsc-open-in-'))
 process.env.HOME = home
@@ -170,8 +171,9 @@ console.log('\n[6] 界面通道：白名单 + 实参规格')
 console.log('\n[7] 源码钉：进程 cwd 不再当数据用的那几处')
 {
   const read = (p) => readFileSync(join(process.cwd(), p), 'utf8')
-  const bash = read('src/core/tools/bash.ts')
-  const mcpCore = read('src/core/mcp.ts')
+  // 这两份实现已搬进包，readSource 会顺着转发桩找到真文件（断言内容不变）
+  const bash = readSource('src/core/tools/bash.ts')
+  const mcpCore = readSource('src/core/mcp.ts')
   const mcpPlugin = read('src/packages/mcp/index.ts')
   const approval = read('src/packages/approval/index.ts')
   const kernel = read('src/host/kernel.ts')
