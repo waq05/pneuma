@@ -66,9 +66,9 @@ test('ui/ui.tsx：转出 main 需要的挂载面，并带 defineUiPlugin 的默�
 })
 
 test('骨架是平台种子：@dsc/ui-layout 在装载器的 require 表里（否则会内联第二份实现）', () => {
-  const modules = JSON.parse(read('../../ui-renderer/ui/platform-modules.json'))
+  const modules = JSON.parse(read('../../ui-boot/ui/platform-modules.json'))
   assert.ok(modules.includes('@dsc/ui-layout'), `platform-modules.json 里没有 @dsc/ui-layout：${modules.join(',')}`)
-  const boot = read('../../ui-renderer/ui/boot.ts')
+  const boot = read('../../ui-boot/ui/boot.ts')
   assert.match(boot, /from '@dsc\/ui-layout'/)
   assert.match(boot, /'@dsc\/ui-layout':\s*uiLayout/)
   passed += 1

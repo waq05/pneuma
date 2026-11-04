@@ -26,7 +26,12 @@
   },
   "include": [
     "src/plugin-api.ts",
+    // ui-* 覆盖六个界面包（含新一代的 ui-boot：它的 @dsc/ui-boot 别名从 tsconfig.json
+    // 继承进来，这里按目录收声明，SDK 树会多出 @dsc/ui-boot 一个包）。
     "../src/packages/ui-*/ui/index.ts",
+    // 渲染器按发布包子路径 import type（@pneuma/ui-boot/boot.js）：本地类型桥不在入口的
+    // import 图里（是 ambient module），要显式收进来，声明构建才解得开那两个子路径。
+    "../src/packages/ui-renderer/ui/boot-types.d.ts",
     "../src/packages/ui-core/index.ts",
     "../src/packages/ui-primitives/ui/vite-env.d.ts"
   ]

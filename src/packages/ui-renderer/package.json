@@ -5,17 +5,23 @@
   "type": "module",
   "exports": {
     ".": "./index.js",
+    "./client": "./ui/ui.tsx",
     "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json"
   },
   "pneuma": {
-    "library": true,
-    "title": "装载器",
-    "description": "界面壳的装载器与入口：启动图取回、分批装载、平台种子表、热更对账与页面入口",
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 348,
+    "resolution": "overridable",
+    "title": "界面渲染器",
+    "description": "界面壳的渲染器：取骨架、建宿主通道、按批装插件、画首帧与骨架诊断",
     "client": {
       "platform": "pneuma",
       "api": "^0.8.1",
-      "immediately": true
+      "immediately": true,
+      "phase": "early"
     }
   },
   "engines": {

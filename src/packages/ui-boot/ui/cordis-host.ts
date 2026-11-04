@@ -115,7 +115,14 @@ export interface UiCordisRoot {
 export interface UiCordisRootOptions {
   slots: UiSlots
   host: UiHostInfo
-  runtime: UiRuntimeApi
+  /**
+   * 运行时通道，或它的取值函数。
+   *
+   * 为什么允许函数：根由**引导**建（装配内核归引导），通道由**渲染器**建（通道属于骨架）。
+   * 建根时通道还不存在，渲染器建好后调 `bindRuntime` 回填；根里提供给插件的是下面那层
+   * 转发壳，所以插件拿到的仍是同一个对象语义（三个方法都现取现转）。
+   */
+  runtime: UiRuntimeApi | (() => UiRuntimeApi)
   /** 界面侧服务表（provide/consume 的既有读面，插件与 `useService` 都读它）。 */
   services: ServiceRegistry
 }
@@ -131,9 +138,22 @@ export function createCordisRoot(options: UiCordisRootOptions): UiCordisRoot {
   const ctx = new Context()
   ctx.provide('slots', options.slots)
   ctx.provide('host', options.host)
+  /**
+   * 运行时通道的转发壳：建根时可能还没有通道（渲染器后建），所以三个方法都现取现转。
+   * 通道没回填就有人调用，说明装配顺序错了——当场说清楚，别让插件读到 undefined 再懵。
+   */
+  const runtimeNow = (): UiRuntimeApi => {
+    if (typeof options.runtime === 'function') return options.runtime()
+    return options.runtime
+  }
+  const runtime: UiRuntimeApi = {
+    getSnapshot: () => runtimeNow().getSnapshot(),
+    subscribe: (listener) => runtimeNow().subscribe(listener),
+    invoke: (method, args) => runtimeNow().invoke(method, args),
+  }
   // 服务名要避开 cordis 自带的 Context 成员（runtime / effect / fiber 都是它的），
   // 重名会当场抛「already declared as accessor」。
-  ctx.provide('uiRuntime', options.runtime)
+  ctx.provide('uiRuntime', runtime)
 
   const fibers = new Map<string, Fiber>()
   /** 卸载进行中的承诺：cordis 的卸载是异步的，重复调用要等同一次。 */

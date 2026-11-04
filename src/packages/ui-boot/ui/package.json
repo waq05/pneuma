@@ -1,0 +1,8 @@
+{
+  "name": "@dsc/ui-boot",
+  "private": true,
+  "version": "0.8.1",
+  "type": "module",
+  "description": "界面壳的引导（浏览器半边）：启动图取回、平台种子表、cordis 根、分批装载会话、热更对账与页面入口。",
+  "types": "index.ts"
+}

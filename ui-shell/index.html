@@ -31,7 +31,7 @@
     </script>
     <style>
       /* 启动占位：与主进程那张过渡页同款（desktop/electron/main/index.ts 的 splashHtml）。
-         它盖在界面上方，等 React 首帧画完由 main.tsx 淡出——所以换文档、装第二批插件
+         它盖在界面上方，等 React 首帧画完由渲染器的 start(api) 淡出——所以换文档、装第二批插件
          这两跳都藏在它后面。改这里记得同步主进程那一份。 */
       #boot-splash{position:fixed;inset:0;z-index:9999;display:flex;flex-direction:column;
         align-items:center;justify-content:center;gap:18px;background:var(--boot-page);
@@ -56,8 +56,9 @@
       <div class="track"><span></span></div>
       <div class="hint">正在启动…</div>
     </div>
-    <!-- 入口在包外（E7 把装载器搬进 src/packages/ui-renderer/）：写相对路径，Vite 按本文件
-         所在目录解析；dev 下它会自动改写成 /@fs/<仓库根>/… 那份地址，不用手工加前缀。 -->
-    <script type="module" src="../src/packages/ui-renderer/ui/main.tsx"></script>
+    <!-- 入口是**引导**（2026-11-04 起搬进 src/packages/ui-boot/）：它读启动图、建 cordis 根，
+         再按启动图找到渲染器那一条并调它的 start(api)。写相对路径，Vite 按本文件所在目录解析；
+         dev 下它会自动改写成 /@fs/<仓库根>/… 那份地址，不用手工加前缀。 -->
+    <script type="module" src="../src/packages/ui-boot/ui/main.tsx"></script>
   </body>
 </html>

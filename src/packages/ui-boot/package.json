@@ -1,0 +1,29 @@
+{
+  "name": "@pneuma/ui-boot",
+  "version": "0.8.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./boot.js": "./boot.js",
+    "./hmr.js": "./hmr.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "pneuma": {
+    "library": true,
+    "title": "界面引导",
+    "client": {
+      "platform": "pneuma",
+      "api": "^0.8.1",
+      "immediately": true
+    },
+    "description": "界面壳的引导：启动图取回、平台种子表、cordis 根、分批装载会话与热更对账"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  }
+}

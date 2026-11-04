@@ -470,9 +470,36 @@ numa 对应：
 
 | 数字 | 含义 |
 |---|---|
-| 87 | `src/packages/` 下的包目录（76 功能包 + 11 库包） |
-| 76 | 装配行数（= 功能包数；库包不占行） |
-| 75 | `plugin-inventory` 数出的插件数：headless 不挂 `tui` 那一行 |
-| 20 | `lib/ui/plugins/` 的界面产物（19 个单元 + layout） |
+| 88 | `src/packages/` 下的包目录（77 功能包 + 11 库包） |
+| 77 | 装配行数（= 功能包数；库包不占行） |
+| 76 | `plugin-inventory` 数出的插件数：headless 不挂 `tui` 那一行 |
+| 21 | `lib/ui/plugins/` 的界面产物（19 个单元 + layout + renderer） |
+
+### 12.14 审查后逐条确认：还差的三条与撤回的一条
+
+**① 引导与渲染器同包（本轮修掉）**。dsh 是 `dsh-client-modules`（parser-blocking 引导）+ `dsh-client-ui-renderer`
+（`immediately` 的客户端插件）；numa 原来两者都在 `ui-renderer` 一个包里，且 renderer 无行。拆开后：
+`ui-boot` 是库包（无行、HTML 入口），`ui-renderer` 有行（order 348）与 `./client`；停用 renderer 或 layout，
+引导画诊断页。**判据**：`lib/ui/plugins/` 20 → 21；装配行 76 → 77。
+
+**② layout 的实现不在自己的 bundle 里（仍未补，代价最大）**。实测：`lib/ui/plugins/layout/client.js` **1320 B**，
+壳的 app bundle **990 KB**。原因：`@dsc/ui`（`ui-shell/src/plugin-api.ts`）把 `@dsc/ui-layout` 的读 hook 整包转出给插件，
+layout 的实现因此被静态编进壳；bundle 只是薄入口（`require('@dsc/ui-layout')` 命中平台种子）。
+**要补必须三件一起做**，缺一件就退化成分裂的 `RuntimeContext`：
+1. `plugin-api.ts` 不再静态 import layout，改成运行时委托（layout bundle 加载时写进 `__DSC_LAYOUT_API__`）；
+2. build-plugins 对 layout 关掉 `@dsc/ui-layout` 的 external（让它内联自己的实现），同时保留 `@dsc/ui` 的 external；
+3. 19 个单元的 bundle 必须在 layout **之后**求值（它们 import 的 hook 从那份委托取），启动分批次序要钉死。
+收益：停用 layout 真的省掉那块代码；风险：20 份 bundle 的字节与首帧时序全变，19 个单元逐个复验。
+
+**③ 界面内文案仍是中文（仍未补）**。locale 机制已就位（每包可带 `locale/<lang>.json`、内核按 `language` 读），
+但只覆盖清单两行字。要补到界面，得给每个 UI 单元抽字符串、定键名、写 en 译本；19 个单元每个几十到上百条，
+这是排期活，不是一次改动。
+
+**④ 撤回一条**：上一轮说「`src/contract.ts` 是单文件契约桶、与 dsh 不同」——复核后不是偏离。dsh 也没有
+`packages/contract`，契约散在 `packages/api`、`packages/sdk`、`packages/core` 里；numa 的 `src/contract.ts` 只有 27 行，
+底下 `src/contract/*.ts` 按域拆了 10 个文件，与 `packages/api` 同形。
+
+**⑤ 浏览器 e2e 没跑**：诊断页与首帧只在类型、产物、真实启动图三层验过。补法：仿 `scripts/ui-dsh-card-e2e.mjs`
+起真宿主 + 真 Electron，三态截图（正常 / 停用 layout / 停用 renderer），断言诊断文案可见。
 
 

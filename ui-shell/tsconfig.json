@@ -17,6 +17,7 @@
     "paths": {
       "@dsc/ui-core": ["../src/packages/ui-core/index.ts"],
       "@dsc/ui": ["./src/plugin-api.ts"],
+      "@dsc/ui-boot": ["../src/packages/ui-boot/ui/index.ts"],
       "@dsc/ui-dockkit": ["../src/packages/ui-dockkit/ui/index.ts"],
       "@dsc/ui-layout": ["../src/packages/ui-layout/ui/index.ts"],
       "@dsc/ui-primitives": ["../src/packages/ui-primitives/ui/index.ts"],

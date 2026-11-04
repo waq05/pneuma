@@ -1009,7 +1009,7 @@ console.log('\n[5b] 分包落点')
   // @dsc/ui-core 故意不下发给插件：平台模块表里没有它（build-plugins 的 EXTERNAL 保它外部化，
   // 插件当值用时运行期拿到「白名单外的模块」那句错，而不是静默内联一份私有实现）。
   const platformModules = JSON.parse(
-    readFileSync(join(repoRoot, 'src', 'packages', 'ui-renderer', 'ui', 'platform-modules.json'), 'utf8'),
+    readFileSync(join(repoRoot, 'src', 'packages', 'ui-boot', 'ui', 'platform-modules.json'), 'utf8'),
   )
   check('@dsc/ui-core 不在平台模块表里（故意不给插件）', !platformModules.includes('@dsc/ui-core'), platformModules.join(','))
 
@@ -1109,11 +1109,22 @@ console.log('\n[5b] 分包落点')
       layoutPkg.pneuma?.client?.platform === 'pneuma',
     JSON.stringify(layoutPkg.pneuma),
   )
+  // 2026-11-04 晚进一步对齐 dsh：引导拆成 `ui-boot`（库包、无行、HTML 入口），渲染器本身变成
+  // 有行的插件（order 348，在 layout 349 之前）——dsh 那边同样是 `dsh-client-modules` + renderer 两个包。
   const rendererPkg = manifestOf('@dsc/ui-renderer')
   check(
-    'ui-renderer 是唯一 parser-blocking 引导（immediately: true、不占行）',
-    rendererPkg.pneuma?.client?.immediately === true && rendererPkg.pneuma?.bundle === undefined,
+    'ui-renderer 是可停用的插件（有行、immediately、./client）',
+    rendererPkg.pneuma?.bundle?.patch === './cordis.patch.yml' &&
+      rendererPkg.pneuma?.client?.immediately === true &&
+      rendererPkg.exports?.['./client'] !== undefined &&
+      rendererPkg.pneuma?.library === undefined,
     JSON.stringify(rendererPkg.pneuma),
+  )
+  const bootPkg = JSON.parse(readFileSync(join(repoRoot, 'src', 'packages', 'ui-boot', 'package.json'), 'utf8'))
+  check(
+    'ui-boot 是引导库包（library、无行、immediately）',
+    bootPkg.pneuma?.library === true && bootPkg.pneuma?.bundle === undefined && bootPkg.pneuma?.client?.immediately === true,
+    JSON.stringify(bootPkg.pneuma),
   )
 
   const upwardEdges = []
@@ -1180,7 +1191,7 @@ console.log('\n[5b] 分包落点')
   // 这取代了 E4 时那条「三个新包不在平台模块表里」的断言：当时三个包还不该下发给插件
   // （alias 已登记但种子表未扩，插件按包名 require 会撞「白名单外的模块」）；E6 的任务正是
   // 把这张表扩到它们——所以断言反向。MODULE_DRIFT 只在 console 里报，探针才是闸门。
-  const bootTs = readFileSync(join(repoRoot, 'src', 'packages', 'ui-renderer', 'ui', 'boot.ts'), 'utf8')
+  const bootTs = readFileSync(join(repoRoot, 'src', 'packages', 'ui-boot', 'ui', 'boot.ts'), 'utf8')
   const seedPackages = ['@dsc/ui-slots', '@dsc/ui-primitives', '@dsc/ui-dockkit']
   for (const name of seedPackages) {
     check(`平台模块表含 ${name}（E6 起下发给插件）`, platformModules.includes(name), platformModules.join(','))

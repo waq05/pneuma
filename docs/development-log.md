@@ -13257,6 +13257,36 @@ session-open-in 全绿、ui-status-panel 全部通过、readme 26 条断言）�
 - **界面内文案仍是中文**：本轮本地化只到清单两行字。
 - **D 档 30 个 core 模块**与 `src/contract.ts` 仍在内核（加载器本体与契约面）。
 - 浏览器 e2e（诊断页两种态）只做了构建 + 真实启动图层面的验证，没跑真窗口。
+  → 已被同日晚的第二轮补掉：拆分引导与渲染器 + 真机 e2e 三态，见下一条日志。
+
+## 2026-11-04　拆开引导与渲染器，补真机 e2e：停用任何一层都有话说
+
+### 做了什么
+
+1. **`ui-boot` 新库包**（对应 dsh 的 `dsh-client-modules`）：`boot.ts`（870 行）、`hmr.ts`、
+   `platform-modules.json` 与**瘦身后的** `ui/main.tsx`（262 行）搬进来，`pneuma.library: true`、无行；
+   `ui-shell/index.html` 的入口改指它。
+2. **`ui-renderer` 变成有行的插件**（对应 dsh 的 `dsh-client-ui-renderer`）：`cordis.patch.yml`（id `ui-renderer`、
+   order 348，在 layout 349 之前）、`exports['./client']`、`ui/ui.tsx` 导出 `start(api)`；引导按启动图找到它、
+   物化、调 `start`，拿不到就画诊断页。
+3. **真机 e2e** `scripts/ui-boot-e2e.mjs`（+ Electron 驱动 `_ui-boot-e2e-main.cjs`）：起真宿主 + 真 Electron，
+   跑三态并截图——正常（`.app` 在、无诊断文案）、停用 layout、停用 renderer（两态都是诊断页、没有 `.app`、
+   正文非空）。断言不只看文案，还读页面里注入的 `window.__DSC_BOOT__`，证明是宿主真把那一行摘掉了。
+
+### 数字
+
+- 包：**88 个 = 77 功能包 + 11 库包**；装配行 77；`lib/ui/plugins/` **21 个产物**（19 单元 + layout + renderer）。
+- `check:core` 99/99；`check:ui` 54 套；`check:plugin` 0；`check:style` 0；`ui-boot-e2e` 24 条断言、约 50 秒。
+
+### 踩到的坑
+
+1. **探针按文件落点写断言，搬家就红**：`panel-prefs-test` 读 `ui-renderer/ui/main.tsx` 找 `primePanelGeometry`，
+   搬到 `ui-boot` 后主/半边分家（那句其实进了 `ui-renderer/ui/ui.tsx`）。搬家时要按「这句逻辑归谁」改，不是按文
+   件名改。
+2. **`ui-layout` 的包测试也读 `platform-modules.json`**：那份表跟着 boot 搬走，包测试跟着改路径；这类跨包夹具
+   在包里写死相对路径，搬一次就要扫一遍 `tests/`。
+3. **e2e 的三段会互相污染**：第二段把 layout 写成 disabled，第三段跑起来时 `disabled` 已经是 `["layout","renderer"]`。
+   改成「每段先把 disabled 清空，再只停本段那一条」，否则断言会随执行顺序变色。
 
 ### 踩到的坑
 

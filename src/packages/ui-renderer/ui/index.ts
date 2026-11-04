@@ -1,21 +1,13 @@
 /**
- * `@dsc/ui-renderer`：界面壳的渲染器/装载器包——启动图取回、分批装载、平台种子表、
- * 插件热更对账与页面入口。
+ * `@dsc/ui-renderer`：界面渲染器的浏览器半边——首帧入口 `start(api)` 与骨架诊断。
  *
- * 与 dsh 的 `modules`（浏览器半边：load/materialize）＋`ui-renderer`（渲染出口）同一个位置。
- * dsc 的壳小，装载内核与入口合在一位上，不再切第二刀（切了要动 A2/A3 的取数路径，收益为零）。
- * 包内分工：`boot.ts` 是装载会话与平台种子表（`MODULES`），`hmr.ts` 是它的热更半边，
- * `main.tsx` 是入口（声明槽 → 装插件 → 渲染 App）。
+ * 与 dsh 的 `dsh-client-ui-renderer` 同位：引导（`@dsc/ui-boot`）按启动图取它、调
+ * `start(api)`；它再取骨架、建通道、装插件、渲染 App。停用本包后引导画诊断页。
  *
- * 分层纪律（[5b] 钉）：本包在最上层，向下依赖 `@dsc/ui-layout`（App 与运行时）、
- * `@dsc/ui-slots`、`@dsc/ui`（种子里的插件契约面）与 `@dsc/ui-core`；
- * `ui-shell/src/platform-modules.json` 是数据文件（平台模块表的单一事实源，E7 之后
- * 仍在壳里，`boot.ts` 按仓库根的相对路径读它）。
- *
- * `main.tsx` **刻意不从本索引转出**：它带顶层副作用（`void bootstrap()` 真的挂载应用），
- * 谁 import 到它谁就会起一个壳；入口只由 `index.html` 指向。
+ * `ui/ui.tsx` 是**插件入口**（界面壳的构建把它打成 `client.js`），本索引只是作者面的
+ * 出口：类型与 `start` 从这里转出，方便类型产物与探针按包名引。`ui/main.tsx` 的时代
+ * 已经结束——页面入口搬到了引导包。
  *
  * @module dsc-ui-shell/ui-renderer
  */
-export * from './boot'
-export * from './hmr'
+export { default, start } from './ui'

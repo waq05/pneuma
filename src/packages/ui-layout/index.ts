@@ -4,7 +4,7 @@
  *
  * 骨架的实体在界面半（`ui/`）：App、页与视图的真源、宿主通道的 React 面、外观落地。界面壳的
  * 构建（`ui-shell/build-plugins.mjs`）把它打成 `lib/ui/plugins/layout/client.js`，页面入口
- * （`src/packages/ui-renderer/ui/main.tsx`）按启动图取它、拿 `App` 挂到 `#root`——
+ * （`src/packages/ui-boot/ui/main.tsx`）按启动图取它、拿 `App` 挂到 `#root`——
  * **不是**静态 import 进壳的 app bundle。
  *
  * 因此下面这个 apply 里**一行都不该加**：这一行没有任何下发给宿主的功能，它的存在只为

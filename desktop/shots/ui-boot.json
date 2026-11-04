@@ -1,0 +1,402 @@
+{
+  "generatedAt": "2026-11-04T13:40:01.048Z",
+  "electron": "D:\\dsc\\desktop\\node_modules\\electron\\dist\\electron.exe",
+  "driver": "D:\\dsc\\scripts\\_ui-boot-e2e-main.cjs",
+  "durationMs": 50438,
+  "pass": 24,
+  "fail": 0,
+  "ok": true,
+  "scenes": [
+    {
+      "key": "normal",
+      "title": "正常态：骨架画出来了，没有诊断文案",
+      "shot": "desktop/shots/ui-boot-normal.png",
+      "durationMs": 16895,
+      "assertions": [
+        {
+          "name": "页面里有骨架根节点 .app",
+          "ok": true,
+          "detail": ".app 个数=1"
+        },
+        {
+          "name": ".app 有可见尺寸（不是 0×0 的空壳）",
+          "ok": true,
+          "detail": "{\"width\":1266,\"height\":797}"
+        },
+        {
+          "name": "没有渲染器诊断文案（「界面渲染器」）",
+          "ok": true,
+          "detail": "Pneuma 新会话 技能 插件 工作区 dsc 新会话 刚刚 今日总用量 0 tok 设置 新会话 对话 轨迹 更改 有什么可以帮忙的？ 输入 / 查看可用指令 · 消息会携带当前工作目录上下文 看懂代码 解释一处实现的来龙去脉 做点东西 从需求一路写到能跑 审查改动 看未提交的改动有没有坑 排查问题 从一个报错查到根因 feat/pluginization + 工作区可写 标准模式 fake-chat 默认"
+        },
+        {
+          "name": "没有布局诊断文案（「界面布局」）",
+          "ok": true,
+          "detail": "Pneuma 新会话 技能 插件 工作区 dsc 新会话 刚刚 今日总用量 0 tok 设置 新会话 对话 轨迹 更改 有什么可以帮忙的？ 输入 / 查看可用指令 · 消息会携带当前工作目录上下文 看懂代码 解释一处实现的来龙去脉 做点东西 从需求一路写到能跑 审查改动 看未提交的改动有没有坑 排查问题 从一个报错查到根因 feat/pluginization + 工作区可写 标准模式 fake-chat 默认"
+        },
+        {
+          "name": "启动图里有 layout 与 renderer 两条",
+          "ok": true,
+          "detail": "[\"actions\",\"ask\",\"browser\",\"composer\",\"files\",\"layout\",\"palette\",\"plugins\",\"preview\",\"prompt\",\"renderer\",\"sessions\",\"settings\",\"skills\",\"status\",\"statusbar\",\"tasks\",\"team\",\"terminal\",\"transcript\",\"trace\"]"
+        },
+        {
+          "name": "启动图 disabled 里没有 layout / renderer",
+          "ok": true,
+          "detail": "[]"
+        },
+        {
+          "name": "启动占位 #boot-splash 已退场",
+          "ok": true,
+          "detail": "false"
+        },
+        {
+          "name": "截图在且不是空帧",
+          "ok": true,
+          "detail": "D:\\dsc\\desktop\\shots\\ui-boot-normal.png"
+        }
+      ],
+      "probe": {
+        "app": 1,
+        "appBox": {
+          "width": 1266,
+          "height": 797
+        },
+        "splash": false,
+        "hasRendererDiag": false,
+        "hasLayoutDiag": false,
+        "boot": {
+          "rev": "f10d83907729",
+          "entries": [
+            "actions",
+            "ask",
+            "browser",
+            "composer",
+            "files",
+            "layout",
+            "palette",
+            "plugins",
+            "preview",
+            "prompt",
+            "renderer",
+            "sessions",
+            "settings",
+            "skills",
+            "status",
+            "statusbar",
+            "tasks",
+            "team",
+            "terminal",
+            "transcript",
+            "trace"
+          ],
+          "disabled": [],
+          "host": {
+            "name": "Pneuma",
+            "version": "0.8.1"
+          },
+          "batches": [
+            {
+              "phase": "early",
+              "entries": [
+                "composer",
+                "layout",
+                "renderer",
+                "statusbar"
+              ]
+            },
+            {
+              "phase": "application",
+              "entries": [
+                "actions",
+                "ask",
+                "browser",
+                "files",
+                "palette",
+                "plugins",
+                "preview",
+                "prompt",
+                "sessions",
+                "settings",
+                "skills",
+                "status",
+                "tasks",
+                "team",
+                "terminal",
+                "transcript",
+                "trace"
+              ]
+            }
+          ]
+        },
+        "bootPlugins": {
+          "actions": "loaded",
+          "ask": "loaded",
+          "browser": "loaded",
+          "composer": "loaded",
+          "files": "loaded",
+          "layout": "loaded",
+          "palette": "loaded",
+          "plugins": "loaded",
+          "preview": "loaded",
+          "prompt": "loaded",
+          "renderer": "loaded",
+          "sessions": "loaded",
+          "settings": "loaded",
+          "skills": "loaded",
+          "status": "loaded",
+          "statusbar": "loaded",
+          "tasks": "loaded",
+          "team": "loaded",
+          "terminal": "loaded",
+          "transcript": "loaded",
+          "trace": "loaded"
+        },
+        "firstFrameAt": 1793799554128,
+        "text": "Pneuma 新会话 技能 插件 工作区 dsc 新会话 刚刚 今日总用量 0 tok 设置 新会话 对话 轨迹 更改 有什么可以帮忙的？ 输入 / 查看可用指令 · 消息会携带当前工作目录上下文 看懂代码 解释一处实现的来龙去脉 做点东西 从需求一路写到能跑 审查改动 看未提交的改动有没有坑 排查问题 从一个报错查到根因 feat/pluginization + 工作区可写 标准模式 fake-chat 默认"
+      }
+    },
+    {
+      "key": "layout-off",
+      "title": "停用骨架：画布局诊断页，没有 .app",
+      "shot": "desktop/shots/ui-boot-layout-off.png",
+      "durationMs": 16627,
+      "assertions": [
+        {
+          "name": "页面文字里有「界面布局」",
+          "ok": true,
+          "detail": "界面布局（ui-layout）已停用 整张页面只有骨架能画出来。骨架没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。 打开它的地方：编辑 ~/.dsc/plugins.json，找到 \"file\": \"ui-layout\" 那一条， 把 \"disabled\" 改成 false（或删掉那一条），然后刷新本页。 宿主重启后它也会回到插件中心的内置插件列表里。"
+        },
+        {
+          "name": "页面文字里有「ui-layout」",
+          "ok": true,
+          "detail": "界面布局（ui-layout）已停用 整张页面只有骨架能画出来。骨架没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。 打开它的地方：编辑 ~/.dsc/plugins.json，找到 \"file\": \"ui-layout\" 那一条， 把 \"disabled\" 改成 false（或删掉那一条），然后刷新本页。 宿主重启后它也会回到插件中心的内置插件列表里。"
+        },
+        {
+          "name": "页面里没有骨架根节点 .app",
+          "ok": true,
+          "detail": ".app 个数=0"
+        },
+        {
+          "name": "启动图 disabled 里记着 layout",
+          "ok": true,
+          "detail": "[\"layout\"]"
+        },
+        {
+          "name": "启动图 entries 里没有 layout、仍有 renderer",
+          "ok": true,
+          "detail": "[\"actions\",\"ask\",\"browser\",\"composer\",\"files\",\"palette\",\"plugins\",\"preview\",\"prompt\",\"renderer\",\"sessions\",\"settings\",\"skills\",\"status\",\"statusbar\",\"tasks\",\"team\",\"terminal\",\"transcript\",\"trace\"]"
+        },
+        {
+          "name": "诊断页不是空白（正文长度 > 40）",
+          "ok": true,
+          "detail": "长度=185"
+        },
+        {
+          "name": "启动占位 #boot-splash 已退场（诊断页没被盖住）",
+          "ok": true,
+          "detail": "false"
+        },
+        {
+          "name": "截图在且不是空帧",
+          "ok": true,
+          "detail": "D:\\dsc\\desktop\\shots\\ui-boot-layout-off.png"
+        }
+      ],
+      "probe": {
+        "app": 0,
+        "appBox": null,
+        "splash": false,
+        "hasRendererDiag": false,
+        "hasLayoutDiag": true,
+        "boot": {
+          "rev": "6aa8ea03fb05",
+          "entries": [
+            "actions",
+            "ask",
+            "browser",
+            "composer",
+            "files",
+            "palette",
+            "plugins",
+            "preview",
+            "prompt",
+            "renderer",
+            "sessions",
+            "settings",
+            "skills",
+            "status",
+            "statusbar",
+            "tasks",
+            "team",
+            "terminal",
+            "transcript",
+            "trace"
+          ],
+          "disabled": [
+            "layout"
+          ],
+          "host": {
+            "name": "Pneuma",
+            "version": "0.8.1"
+          },
+          "batches": [
+            {
+              "phase": "early",
+              "entries": [
+                "composer",
+                "renderer",
+                "statusbar"
+              ]
+            },
+            {
+              "phase": "application",
+              "entries": [
+                "actions",
+                "ask",
+                "browser",
+                "files",
+                "palette",
+                "plugins",
+                "preview",
+                "prompt",
+                "sessions",
+                "settings",
+                "skills",
+                "status",
+                "tasks",
+                "team",
+                "terminal",
+                "transcript",
+                "trace"
+              ]
+            }
+          ]
+        },
+        "bootPlugins": null,
+        "firstFrameAt": null,
+        "text": "界面布局（ui-layout）已停用 整张页面只有骨架能画出来。骨架没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。 打开它的地方：编辑 ~/.dsc/plugins.json，找到 \"file\": \"ui-layout\" 那一条， 把 \"disabled\" 改成 false（或删掉那一条），然后刷新本页。 宿主重启后它也会回到插件中心的内置插件列表里。"
+      }
+    },
+    {
+      "key": "renderer-off",
+      "title": "停用渲染器：画渲染器诊断页",
+      "shot": "desktop/shots/ui-boot-renderer-off.png",
+      "durationMs": 16914,
+      "assertions": [
+        {
+          "name": "页面文字里有「界面渲染器」",
+          "ok": true,
+          "detail": "界面渲染器（ui-renderer）已停用 整张页面只有渲染器能启动。渲染器没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。 打开它的地方：编辑 ~/.dsc/plugins.json，找到 \"file\": \"ui-renderer\" 那一条， 把 \"disabled\" 改成 false（或删掉那一条），然后刷新本页。 宿主重启后它也会回到插件中心的内置插件列表里。"
+        },
+        {
+          "name": "页面文字里有「ui-renderer」",
+          "ok": true,
+          "detail": "界面渲染器（ui-renderer）已停用 整张页面只有渲染器能启动。渲染器没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。 打开它的地方：编辑 ~/.dsc/plugins.json，找到 \"file\": \"ui-renderer\" 那一条， 把 \"disabled\" 改成 false（或删掉那一条），然后刷新本页。 宿主重启后它也会回到插件中心的内置插件列表里。"
+        },
+        {
+          "name": "页面里没有骨架根节点 .app",
+          "ok": true,
+          "detail": ".app 个数=0"
+        },
+        {
+          "name": "启动图 disabled 里记着 renderer",
+          "ok": true,
+          "detail": "[\"renderer\"]"
+        },
+        {
+          "name": "启动图 entries 里没有 renderer、骨架 layout 仍在",
+          "ok": true,
+          "detail": "[\"actions\",\"ask\",\"browser\",\"composer\",\"files\",\"layout\",\"palette\",\"plugins\",\"preview\",\"prompt\",\"sessions\",\"settings\",\"skills\",\"status\",\"statusbar\",\"tasks\",\"team\",\"terminal\",\"transcript\",\"trace\"]"
+        },
+        {
+          "name": "诊断页不是空白（正文长度 > 40）",
+          "ok": true,
+          "detail": "长度=191"
+        },
+        {
+          "name": "启动占位 #boot-splash 已退场（诊断页没被盖住）",
+          "ok": true,
+          "detail": "false"
+        },
+        {
+          "name": "截图在且不是空帧",
+          "ok": true,
+          "detail": "D:\\dsc\\desktop\\shots\\ui-boot-renderer-off.png"
+        }
+      ],
+      "probe": {
+        "app": 0,
+        "appBox": null,
+        "splash": false,
+        "hasRendererDiag": true,
+        "hasLayoutDiag": false,
+        "boot": {
+          "rev": "149d0f80c06a",
+          "entries": [
+            "actions",
+            "ask",
+            "browser",
+            "composer",
+            "files",
+            "layout",
+            "palette",
+            "plugins",
+            "preview",
+            "prompt",
+            "sessions",
+            "settings",
+            "skills",
+            "status",
+            "statusbar",
+            "tasks",
+            "team",
+            "terminal",
+            "transcript",
+            "trace"
+          ],
+          "disabled": [
+            "renderer"
+          ],
+          "host": {
+            "name": "Pneuma",
+            "version": "0.8.1"
+          },
+          "batches": [
+            {
+              "phase": "early",
+              "entries": [
+                "composer",
+                "layout",
+                "statusbar"
+              ]
+            },
+            {
+              "phase": "application",
+              "entries": [
+                "actions",
+                "ask",
+                "browser",
+                "files",
+                "palette",
+                "plugins",
+                "preview",
+                "prompt",
+                "sessions",
+                "settings",
+                "skills",
+                "status",
+                "tasks",
+                "team",
+                "terminal",
+                "transcript",
+                "trace"
+              ]
+            }
+          ]
+        },
+        "bootPlugins": null,
+        "firstFrameAt": null,
+        "text": "界面渲染器（ui-renderer）已停用 整张页面只有渲染器能启动。渲染器没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。 打开它的地方：编辑 ~/.dsc/plugins.json，找到 \"file\": \"ui-renderer\" 那一条， 把 \"disabled\" 改成 false（或删掉那一条），然后刷新本页。 宿主重启后它也会回到插件中心的内置插件列表里。"
+      }
+    }
+  ]
+}

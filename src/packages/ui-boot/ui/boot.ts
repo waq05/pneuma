@@ -25,10 +25,12 @@
  * 宿主的 CSP 已经加上（`core/ui-server.ts`，script-src 'self'）——插件走 `<script src>`
  * 正好在放行面里；eval 一旦进了某段代码，报错来自浏览器安全策略，不会出现在诊断区。
  *
- * E4 起本文件住 `@dsc/ui-renderer`（与 `main.tsx` / `hmr.ts` 同包）：装载内核与入口是
- * 同一条链，拆开只会多一份跨包接线；取数形状归本包，渲染骨架归 `@dsc/ui-layout`。
+ * 2026-11-04 起本文件住 `@pneuma/ui-boot`（引导，对应 dsh 的 `dsh-client-modules`）：
+ * 装载内核、cordis 根、槽位注册表与启动图读取都在引导里；`@pneuma/ui-renderer` 变成
+ * 可停用的插件（对应 `dsh-client-ui-renderer`），只消费引导交进来的 {@link UiRendererApi}。
+ * 引导不认识渲染器，`ui/main.tsx` 按启动图找到 `renderer` 那一条再调它的 `start(api)`。
  *
- * @module dsc-ui-shell/ui-renderer/boot
+ * @module dsc-ui-shell/ui-boot/boot
  */
 import * as React from 'react'
 import * as ReactDOM from 'react-dom'
@@ -57,10 +59,19 @@ import type {
   UiPluginLoadReport,
   UiRuntimeApi,
 } from '@dsc/ui-core'
-import { createScopedSlotApi, createSignal, ServiceRegistry, unmetDependencies } from '@dsc/ui-core'
+import {
+  createScopedSlotApi,
+  createSignal,
+  ServiceRegistry,
+  ServicesProvider,
+  unmetDependencies,
+} from '@dsc/ui-core'
 // 装配交给 cordis（与宿主内核同一套）。这一层不改插件写法，只换「谁管生命周期」：
 // 详见 cordis-host.ts 的文件头表格。
-import { createCordisRoot, type UiApply } from './cordis-host'
+import { createCordisRoot, type UiApply, type UiCordisRoot } from './cordis-host'
+// 渲染器交进来的通道类型（渲染器 -> 引导只有这一条**类型**边，运行期由 api 传值）。
+import type { HostChannel } from '@dsc/ui-layout'
+import type { UiPluginHmr } from './hmr'
 // 插件契约面（`@dsc/ui` 的落点就是 src/plugin-api.ts）与平台模块表数据文件：
 // 前者同时是 MODULES 里 `@dsc/ui` 一格的实现，必须与壳内部用的是同一份模块实例。
 // 后者就放在本目录：它随本包走，`ui-shell/build-plugins.mjs` 与
@@ -278,6 +289,63 @@ export interface UiBootSession {
 }
 
 /**
+ * 引导交给渲染器的入口面（`@pneuma/ui-renderer` 的 `start(api)` 收它）。
+ *
+ * 为什么是传值而不是让渲染器 import 引导：渲染器是**可停用的插件**，它的 bundle 由受控
+ * `require` 执行，能拿到的只有平台模块表里那几项（React / @dsc/ui / 种子包），没有
+ * `@pneuma/ui-boot`。所以引导把自己的能力做成这一份面递过去；渲染器只需要类型，
+ * 类型边是 \`import type\`（编译期擦除，运行期零字节）。
+ */
+export interface UiRendererApi {
+  /** 挂载点（页面里的 `#root`）。 */
+  container: HTMLElement
+  /** 启动图（含批次、停用记录与宿主身份）。 */
+  boot: UiBootGraph
+  /** 取启动图失败的原因（成功时 null；诊断区画它）。 */
+  bootError: string | null
+  /** 已声明好壳槽的注册表（渲染器把它交给 App）。 */
+  slots: UiSlots
+  /**
+   * 引导建好的 cordis 根。
+   *
+   * 为什么由引导建：装配语义（plugin / inject / effect）是引导的职责，渲染器不该再建
+   * 第二套。运行时通道由渲染器建（通道属于骨架），建好后调 {@link bindRuntime} 回填。
+   */
+  cordis: UiCordisRoot
+  /** 与 cordis 根同一份的界面侧服务表（装载会话用它，失败时也拿它当空表）。 */
+  services: ServiceRegistry
+  /** 服务表的 React 面（`@dsc/ui-core` 故意不下发给插件，只能由引导递过来）。 */
+  servicesProvider: typeof ServicesProvider
+  /** 平台模块白名单读数（诊断区那行）。 */
+  allowedModules: readonly string[]
+  /** 渲染器建好宿主通道后回填运行时（根里的 `uiRuntime` 服务读它）。 */
+  bindRuntime(runtime: UiRuntimeApi): void
+  /** 从启动图取一条产物并物化（渲染器用它先拿骨架）。 */
+  loadPluginModule(entry: UiPluginEntry): Promise<unknown>
+  /** 壳侧热更对账（引擎在引导，渲染器只把它接到通道上）。 */
+  startPluginHmr(options: { channel: HostChannel; session: UiBootSession }): UiPluginHmr
+  /** 建装载会话；槽位表、cordis 根与服务表都由引导绑好，渲染器只交宿主身份与通道。 */
+  createBootSession(
+    graph: UiBootGraph,
+    options: { host: UiHostInfo; runtime: UiRuntimeApi },
+  ): Promise<UiBootSession>
+}
+
+/** 引导已经建好的装配底座：cordis 根与它的服务表必须同源。 */
+export interface UiBootAssembly {
+  cordis: UiCordisRoot
+  services: ServiceRegistry
+}
+
+/** `createBootSession` 的入参；`assembly` 缺省时在会话里新建（探针与测试用）。 */
+export interface UiBootSessionOptions {
+  slots: UiSlots
+  host: UiHostInfo
+  runtime: UiRuntimeApi
+  assembly?: UiBootAssembly
+}
+
+/**
  * 装配路径的灰度开关。
  *
  * 默认**全部走 cordis**：2026-10-26 先用 `statusbar` 一条验证过（首帧、换装、卸载顺序都过），
@@ -309,12 +377,12 @@ function cordisSelector(): (id: string) => boolean {
  * 缺 `batches` 的旧宿主按「单隐含 application 批」处理（向前兼容，壳与宿主版本会错位）。
  *
  * @param graph - 宿主给的启动图（entries 已按依赖排好）
- * @param options - 槽位注册表、宿主身份与运行时通道
+ * @param options - 槽位注册表、宿主身份、运行时通道与（可选的）已建好的装配底座
  * @returns 装载会话（报告、批状态、服务表与卸载口都在它上面）
  */
 export async function createBootSession(
   graph: UiBootGraph,
-  options: { slots: UiSlots; host: UiHostInfo; runtime: UiRuntimeApi },
+  options: UiBootSessionOptions,
 ): Promise<UiBootSession> {
   const batches = normalizeBatches(graph)
   const batchByEntry = new Map<string, UiBootBatch>()
@@ -370,16 +438,22 @@ export async function createBootSession(
     )
     return run
   }
-  // 每调用一次装载一张新表：插件之间「谁提供、谁消费」全部经它（A1）。
-  const services = new ServiceRegistry()
+  // 装配底座：页面入口（引导）通常已经建好 cordis 根与服务表并交进来——运行时通道由
+  // 渲染器建，所以根只能先建、runtime 后绑（见 cordis-host 的 getter 口径）。不传时
+  // 在会话里新建，探针/单测因此仍然只传 slots / host / runtime 就能起。
+  //
+  // 每张服务表只服务一次装载：插件之间「谁提供、谁消费」全部经它（A1）。
+  const services = options.assembly?.services ?? new ServiceRegistry()
   // cordis 根：与宿主内核同一套装配语义（plugin / inject / effect / fiber 状态）。
   // 它与旧账本共用**同一份**槽位注册表与服务表，所以两条路径装出来的界面没有差别。
-  const cordis = createCordisRoot({
-    slots: options.slots,
-    host: options.host,
-    runtime: options.runtime,
-    services,
-  })
+  const cordis =
+    options.assembly?.cordis ??
+    createCordisRoot({
+      slots: options.slots,
+      host: options.host,
+      runtime: options.runtime,
+      services,
+    })
   /** 这一条是否走 cordis（灰度开关；同一次装载里答案固定）。 */
   const viaCordis = cordisSelector()
   /**

@@ -123,8 +123,8 @@ console.log('\n[6] 接线检查（读这一端之外的三处）')
     panels.includes('const fromBoot = bootGeometry[hostKey]') && panels.includes('const fallback = remembered[hostKey]'),
   )
   check('落盘时把整份发给宿主（宿主是整键替换的补丁语义）', panels.includes('saver?.({ ...remembered } as PanelGeometry)'))
-  check('启动时灌入宿主那份', read('src/packages/ui-renderer/ui/main.tsx').includes('primePanelGeometry(loaded?.panelWidths ?? {})'))
-  check('渲染前就拿到（首帧不跳一下）', read('src/packages/ui-renderer/ui/main.tsx').includes('await within(prefs, 1500)'))
+  check('启动时灌入宿主那份', read('src/packages/ui-renderer/ui/ui.tsx').includes('primePanelGeometry(loaded?.panelWidths ?? {})'))
+  check('渲染前就拿到（首帧不跳一下）', read('src/packages/ui-renderer/ui/ui.tsx').includes('await within(prefs, 1500)'))
 }
 
 

@@ -1,66 +1,36 @@
 /**
- * 界面壳入口：取启动图 → 取骨架 → 建通道 → 建注册表 → 声明槽 → 装插件 → 挂载。
+ * 界面渲染器的界面半（插件入口）：`lib/ui/plugins/renderer/client.js`。
  *
- * 顺序不能反，而且现在多了一环「骨架」：
+ * 2026-11-04 起「引导」与「渲染器」分家：引导（`@pneuma/ui-boot`）读启动图、建 cordis 根，
+ * 再把 {@link UiRendererApi} 交给本文件的 {@link start}。渲染器负责首帧之前的那一段：
  *
- *   1. **启动图**先取（骨架从图里拿，与其它插件同一条路）；
- *   2. **骨架**（布局插件 `layout` 的产物）在首帧之前**显式 await**——它不是静态 import
+ *   1. **骨架**（布局插件 `layout` 的产物）在首帧之前**显式 await**——它不是静态 import
  *      进壳的，而是 `lib/ui/plugins/layout/client.js`，装载器那条 require 表交给它的还是
  *      壳里那一份实例（`@dsc/ui` 已经把它的读 hook 转出给插件了，不能有第二份）；
- *   3. 通道由骨架提供，所以通道只能排在建完骨架之后；
- *   4. 槽必须**先声明**再让插件注册（注册到未声明的槽当场报错，这是刻意设计的——
- *      拼错槽名不该静默丢掉一整块界面），所以整体次序是 声明 → 加载 → 渲染。
+ *   2. 通道由骨架提供，所以通道只能排在建完骨架之后；建好通道立刻 `bindRuntime` 回填给
+ *      引导的 cordis 根（插件拿到的 `ui.runtime` 读的就是它）；
+ *   3. 槽由引导声明好（`api.slots`），插件按批装进 cordis，然后渲染 <App/>、打首帧、
+ *      在空闲时刻装第二批。
  *
  * 骨架缺席（被停用、产物没构建、取字节失败）时**不画白屏**：{@link LayoutUnavailable}
- * 画一块诊断页，说清是哪一种、以及去哪把开关打开。
+ * 画一块诊断页，说清是哪一种、以及去哪把开关打开——与引导那张（渲染器缺席）同一套措辞。
  *
- * 数据通道（SSE）与启动清单（`__DSC_BOOT__`）是两件事：清单决定装哪些插件，
- * 通道决定界面上显示什么状态。通道先建（它自己异步连），装插件时一并交给它们。
+ * 本文件是**插件入口**：产物是纯 JS 的 CommonJS 工厂，`@dsc/ui` / `@dsc/ui-primitives`
+ * 走 require 表拿壳里那一份；引导的能力只能从 `start(api)` 的入参拿（类型走
+ * `import type`，编译期擦除，运行期不产生跨包 import）。
  *
- * @module dsc-ui-shell/ui-renderer/main
+ * @module @pneuma/ui-renderer/client
  */
 import { StrictMode, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { SlotRegistry, ServiceRegistry, ServicesProvider, type UiBootGraph, type UiPrefsView } from '@dsc/ui-core'
-import { onAppearanceRequest, type SlotFactoryMap, type SlotMap } from '@dsc/ui'
-// 面板几何直接按包名取：骨架（布局插件里那份 @dsc/ui-layout）读的也是这个包，
-// 同一份模块实例才拿得到启动时灌进去的那份值。
+import { defineUiPlugin, onAppearanceRequest } from '@dsc/ui'
+import type { UiPrefsView } from '@dsc/ui-core'
 import { primePanelGeometry, setPanelGeometrySaver } from '@dsc/ui-primitives'
-import {
-  ALLOWED_MODULES,
-  createBootSession,
-  loadPluginModule,
-  readBootGraph,
-  type UiBootSession,
-} from './boot'
-import { startPluginHmr, type UiPluginHmr } from './hmr'
-import { SHELL_SLOTS, type ShellSlot } from '@dsc/ui-slots'
-import type { UiComponent, UiSlots } from '@dsc/ui'
-// 顺序即层叠：令牌 → 全局基线 → 原语 → 各视图（从旧渲染层原样搬来的四份）
-// → 壳自己的补充。反了就会互相覆盖，与旧渲染层 main.tsx:6-9 同一套次序。
-// 样式随入口一起住本包的 `styles/`：`legacy/` 是从旧渲染层逐字节搬来的四份
-// （改它们等于改旧界面，走 `src/packages/ui-renderer/ui/styles/legacy/PROVENANCE.md` 的规矩），`styles.css`
-// 是壳新增的补充层。层叠顺序不能反，理由见 `styles/styles.css` 抬头。
-import './styles/legacy/tokens.css'
-import './styles/legacy/base.css'
-import './styles/legacy/primitives.css'
-import './styles/legacy/views.css'
-// 终端（xterm）的样式必须由**壳**加载：插件 bundle 是纯 JS，带不了 CSS 文件，
-// 而 xterm 的网格与滚动条要靠它自己的样式表才画得对。放在 legacy 之后、styles.css 之前。
-import '@xterm/xterm/css/xterm.css'
-import './styles/styles.css'
-// 老内核的调色板兜底（**生成物**，见 ui-shell/scripts/build-color-fallback.mjs）。
-// 必须排在最后：它整块包在 `@supports not (color: color-mix(...))` 里，靠**源码序**压过
-// tokens.css 那批 color-mix 令牌（同特异性，后写的赢）；认得 color-mix 的内核整块不生效。
-import './styles/legacy-color-fallback.css'
-
-/** 取不到清单时的启动图（空壳 + 一条诊断，比白屏好查）。 */
-const UNAVAILABLE_BOOT: UiBootGraph = {
-  rev: 'unavailable',
-  entries: [],
-  batches: [],
-  host: { name: 'Pneuma', version: '未知版本' },
-}
+/// <reference path="./boot-types.d.ts" />
+// 引导的类型面按**发布包的子路径**取（本地类型桥见 boot-types.d.ts）；运行期能力全从
+// `start(api)` 的入参拿，插件 bundle 不 import 引导。
+import type { UiBootSession, UiRendererApi } from '@pneuma/ui-boot/boot.js'
+import type { UiPluginHmr } from '@pneuma/ui-boot/hmr.js'
 
 /**
  * 布局插件的**产物 id**（`lib/ui/plugins/layout/`）。
@@ -249,46 +219,33 @@ function renderLayoutUnavailable(container: HTMLElement, failure: LayoutFailure)
   dismissBootSplash()
 }
 
-async function bootstrap(): Promise<void> {
-  const container = document.getElementById('root')
-  if (container === null) throw new Error('页面里没有 #root')
+/**
+ * 渲染器入口：引导把启动图、槽位表、cordis 根与装载能力一起交进来，这里负责首帧。
+ *
+ * @param api - 引导交来的入口面（槽位表、启动图、cordis 根、装载会话与热更）
+ */
+export async function start(api: UiRendererApi): Promise<void> {
+  const { container, boot } = api
 
-  // 1. 槽位注册表：壳认识位置，不认识功能。
-  const slots: UiSlots = new SlotRegistry<UiComponent, SlotMap, SlotFactoryMap>()
-  // 键的联合类型在 Object.keys 上会退化成 string，这里显式收回来（槽名与形态一一对应）。
-  const declared = (Object.keys(SHELL_SLOTS) as ShellSlot[]).map((slot) =>
-    slots.declare(slot, SHELL_SLOTS[slot]),
-  )
-
-  // 2. 启动清单：骨架也从这里取（与其它插件同一条路，没有第二套地址）。
-  //    清单取不到也要起壳：诊断页会说明是哪一步断的，比白屏好查。
-  let boot: UiBootGraph = UNAVAILABLE_BOOT
-  let bootError: string | null = null
-  try {
-    boot = await readBootGraph()
-  } catch (error) {
-    bootError = error instanceof Error ? error.message : String(error)
-  }
-
-  // 3. 骨架：**首帧之前就位**（显式 await，不靠批调度）。取不到就不画 App——
+  // 1. 骨架：**首帧之前就位**（显式 await，不靠批调度）。取不到就不画 App——
   //    白屏会让人以为壳坏了，而实际可能只是 `ui-layout` 那一行被停用了。
   const layoutEntry = boot.entries.find((entry) => entry.id === LAYOUT_ID)
   let layout: LayoutSurface | null = null
   let failure: LayoutFailure | null =
     layoutEntry === undefined
       ? boot.disabled?.includes(LAYOUT_ID) === true
-        ? { reason: '已停用', detail: bootError }
+        ? { reason: '已停用', detail: api.bootError }
         : {
             reason: '没有进启动清单',
             detail:
-              bootError ??
+              api.bootError ??
               `启动图里没有 ${LAYOUT_ID} 这一条：产物没构建，或被 API 门禁拦下了。` +
                 '跑 `pnpm -C ui-shell build` 后刷新本页；插件中心 → 内置插件里也能看到它的开关。',
           }
       : null
   if (layoutEntry !== undefined) {
     try {
-      const loaded = (await loadPluginModule(layoutEntry)) as LayoutSurface
+      const loaded = (await api.loadPluginModule(layoutEntry)) as LayoutSurface
       if (typeof loaded.App !== 'function') {
         throw new Error('产物里没有 App（client.js 的形状不对：期望导出 App 组件）')
       }
@@ -307,37 +264,38 @@ async function bootstrap(): Promise<void> {
   layoutSurface = layout
   const { App, RuntimeProvider } = layout
 
-  // 4. 宿主数据通道（异步连，失败也会自己重连）+ 外观 + 面板几何。
+  // 2. 宿主数据通道（异步连，失败也会自己重连）+ 外观 + 面板几何。
   // 外观**不 await**：函数体在第一个 await 之前就把上次的镜像涂上去了，首帧已经是对的颜色，
   // 等宿主回读回来再覆盖一次。await 的话，宿主卡住时最坏要等一次 invoke 超时（30 秒）才出首帧。
   //
   // 同一次 getUiPrefs 也喂面板几何（侧栏宽 / 正文列宽 / 右侧栏宽 / 并排审查宽）：那几项
   // 只存在 localStorage 的话，宿主一换端口（每次启动、每次切工作目录都换）就全丢。几何
-  // 要赶在渲染前灌进面板模块（见下面第 6 步前那几行），否则用户先看到默认宽再跳一下。
+  // 要赶在渲染前灌进面板模块（见下面第 5 步前那几行），否则用户先看到默认宽再跳一下。
   const channel = layout.createHostChannel()
+  // 通道建好就回填给引导的 cordis 根：插件拿到的 `ui.runtime` 与 App 读的必须是同一条。
+  api.bindRuntime(channel)
   const prefs = channel.invoke<UiPrefsView>('getUiPrefs').catch((error: unknown) => {
     console.warn('[ui-shell] 读界面偏好失败，沿用上次的外观镜像与默认宽度', error)
     return null
   })
   void syncAppearance(layout, prefs)
 
-  // 5. 装**第一批**（early）。第二批（application）不在这里装：画完首帧后由
+  // 3. 装**第一批**（early）。第二批（application）不在这里装：画完首帧后由
   //    session.startApplication() 推到空闲时刻。骨架这一行也在第一批里（`phase: early`）——
   //    它的产物刚才已经物化过一次，这里走同一个物化缓存，工厂不会再执行第二遍。
+  let bootError = api.bootError
   let session: UiBootSession | null = null
   try {
-    session = await createBootSession(boot, { slots, host: boot.host, runtime: channel })
+    session = await api.createBootSession(boot, { host: boot.host, runtime: channel })
   } catch (error) {
     bootError = error instanceof Error ? error.message : String(error)
   }
-  void declared
-
   // 壳侧热更：连接上来之后宿主的 `plugins` 帧都会走对账（失败只记在页内诊断区）。
-  const hmr: UiPluginHmr | null = session === null ? null : startPluginHmr({ channel, session })
-  // 服务表（A1）：会话里那份就是装载期真用的表；装载失败时给一张空表（壳照样起）。
-  const serviceRegistry = session?.services ?? new ServiceRegistry()
+  const hmr: UiPluginHmr | null = session === null ? null : api.startPluginHmr({ channel, session })
+  // 服务表（A1）：会话里那份就是装载期真用的表；装载失败时给引导那份（壳照样起）。
+  const serviceRegistry = session?.services ?? api.services
 
-  // 6. 首帧的宽度：偏好通常在装插件这几百毫秒里就回来了，这里只是把它灌进面板模块。
+  // 4. 首帧的宽度：偏好通常在装插件这几百毫秒里就回来了，这里只是把它灌进面板模块。
   // 灌进去之后 `readStoredPx` / `readStoredFlag` 在 localStorage 空着时（换过端口）回落到这一份；
   // 再注册落盘出口，拖动松手时整份发给 `setUiPrefs`（见 ui-primitives/panels.ts）。
   const loaded = await within(prefs, 1500)
@@ -364,23 +322,26 @@ async function bootstrap(): Promise<void> {
     })
   }
 
-  // 7. 渲染。服务表经 context 交给条目组件（插件用 `useService` 读服务、跟着出现/消失换源）；
+  // 5. 渲染。服务表经 context 交给条目组件（插件用 `useService` 读服务、跟着出现/消失换源）；
   // 第一批已在注册表里，首帧就能画出它。App 与 RuntimeProvider 必须来自**同一份**骨架导出
   // （同一个模块实例）：插件的 `useHostSnapshot` 读的是那份 RuntimeContext。
+  //
+  // 服务表的 React 面包在引导里（`@dsc/ui-core` 故意不下发给插件），所以从 api 取。
+  const ServicesProvider = api.servicesProvider
   createRoot(container).render(
     <StrictMode>
       <RuntimeProvider channel={channel}>
         <ServicesProvider services={serviceRegistry}>
           <App
-            slots={slots}
+            slots={api.slots}
             boot={boot}
             serviceRegistry={serviceRegistry}
             session={session}
             hmr={hmr}
             bootError={bootError}
-            // 平台模块白名单的读数由这里给：白名单住在装载器（本包），诊断区住在骨架 ——
-            // 传值而不是让骨架反向 import 本包，两包之间就没有反向边（E4 的成环剪法）。
-            allowedModules={ALLOWED_MODULES}
+            // 平台模块白名单的读数由引导给：白名单住在装载器，诊断区住在骨架 ——
+            // 传值而不是让骨架反向 import 引导，两包之间就没有反向边（E4 的成环剪法）。
+            allowedModules={api.allowedModules}
           />
         </ServicesProvider>
       </RuntimeProvider>
@@ -393,4 +354,16 @@ async function bootstrap(): Promise<void> {
   dismissBootSplash()
 }
 
-void bootstrap()
+/**
+ * 渲染器这一行的插件本体。
+ *
+ * `apply` 里不登记任何东西：渲染器的实体是上面的 `start`，由引导按启动图调它；这一行
+ * 的意义是**可停用**——停用后产物不进启动图，引导画诊断页而不是白屏（见
+ * `cordis.patch.yml` 与 `ui-boot/ui/main.tsx`）。
+ */
+export default defineUiPlugin({
+  name: '界面渲染器',
+  apply() {
+    // 没有要登记的东西：渲染器不是「往槽里放一块」，它就是画那张纸的手。
+  },
+})

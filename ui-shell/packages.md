@@ -10,12 +10,12 @@
 2. `tsconfig.json` 的 `paths` 抄同一条（写法与上面一致，漂移检查会盯）；
 3. 新包的源码目录放 `package.json`（`name` 与包名一致、`types` 指向入口——漂移检查拿它当锚）；
 4. 定它在构建期的身份：**要下发给插件**就加进 `src/platform-modules.json`，同时在
-   `src/packages/ui-renderer/ui/boot.ts` 的 `MODULES` 里挂上实现（两边漂移由 `MODULE_DRIFT` 当场报，
+   `src/packages/ui-boot/ui/boot.ts` 的 `MODULES` 里挂上实现（两边漂移由 `MODULE_DRIFT` 当场报，
    且被 `scripts/ui-plugin-test.mjs` 的 [5b] 用「键集且顺序全等」钉住）；
    **只给壳自己用**就加进 `build-plugins.mjs` 的 `EXTERNAL`（构建期保留成 require、
    运行期故意不给——插件当值用它时得到「白名单外的模块」那句错）。
 
-七个包已按上面配方登记。`@dsc/ui-*` 那五个的源码搬到了 `src/packages/ui-<包名后半>/ui/`
+八个包已按上面配方登记。`@dsc/ui-*` 那五个的源码搬到了 `src/packages/ui-<包名后半>/ui/`
 （每包一个 `ui/index.ts` 作出口，宿主半是同目录的 `index.ts`）；`@dsc/ui` 与 `@dsc/ui-core`
 仍在原处，一个字没动：
 
@@ -25,7 +25,8 @@
 | `@dsc/ui-core` | `../src/packages/ui-core/index.ts` | **只给壳**（`EXTERNAL` 里「故意不给」的那一格） |
 | `@dsc/ui-primitives` / `@dsc/ui-slots` / `@dsc/ui-dockkit` | `../src/packages/ui-*/ui/index.ts` | 下发给插件（E6 起进 `platform-modules.json`） |
 | `@dsc/ui-layout` | `../src/packages/ui-layout/ui/index.ts` | **下发给插件**：它既是插件（order 349、`phase: early`，可停用），也是平台种子——`@dsc/ui` 把它的读 hook 转出给插件，插件与骨架必须共用同一份 `RuntimeContext` |
-| `@dsc/ui-renderer` | `../src/packages/ui-renderer/ui/index.ts` | 只给壳（唯一 parser-blocking 的引导，对应的 dsh 位置是 `dsh-client-modules`） |
+| `@dsc/ui-boot` | `../src/packages/ui-boot/ui/index.ts` | 只给壳（唯一 parser-blocking 的引导，对应的 dsh 位置是 `dsh-client-modules`；库包，没有行） |
+| `@dsc/ui-renderer` | `../src/packages/ui-renderer/ui/index.ts` | **下发给插件**：渲染器（order 348、`phase: early`，可停用）——取骨架、建通道、装插件、画首帧；停用后由引导画诊断页 |
 
 旧路径（`src/icons.tsx`、`src/dock-state.ts`、`src/platform/*`、`src/slots.ts`、
 `src/boot.ts` …）上的**迁移期转发壳已全部删除**（E4 收尾）：调用点（`plugin-api.ts` /

@@ -1,4 +1,4 @@
 {
-  "title": "UI loader",
-  "description": "Shell loader and entry: startup graph, batched mount, seeds, hot update"
+  "title": "UI renderer",
+  "description": "Layout lookup, host channel, batched mount, first frame, diagnostics"
 }

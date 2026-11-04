@@ -560,6 +560,15 @@
       "bundle": null
     },
     {
+      "file": "ui-renderer",
+      "name": "界面渲染器",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
       "file": "ui-sessions",
       "name": "会话列表（界面）",
       "enabled": true,
@@ -871,6 +880,11 @@
     },
     {
       "id": "prompt",
+      "platform": "web",
+      "api": "^0.8.1"
+    },
+    {
+      "id": "renderer",
       "platform": "web",
       "api": "^0.8.1"
     },
