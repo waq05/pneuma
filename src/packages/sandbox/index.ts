@@ -24,7 +24,7 @@
  *   - `ctx.prompt.register` 把当前档位与强制执行等级写进系统提示（降级必须可见）；
  *   - 设置分区 id 'sandbox' 与 `/sandbox` 命令。
  *
- * 支撑模块（本插件独占，别的插件不碰）：`src/core/sandbox/{policy,execpolicy,backends}.ts`
+ * 支撑模块（本插件独占，别的插件不碰）：`src/packages/sandbox/{policy,execpolicy,backends}.ts`
  *
  * @module dsc/plugins/sandbox
  */
@@ -42,12 +42,12 @@ import { readSandboxRequest } from '@pneuma/runtime/core/tools/sandbox-args.js'
 import { permissionOf, writePermissions } from '@pneuma/runtime/core/permission-scope.js'
 import type { Session } from '@pneuma/runtime/core/session.js'
 import type { ToolGuard } from '@pneuma/runtime/core/tool-guards.js'
-import { createDockerRunner, probeDocker } from '@pneuma/runtime/core/sandbox/backends.js'
-import { createWindowsTokenRunner, probeWindowsToken, type WindowsTokenRunnerHandle } from '@pneuma/runtime/core/sandbox/win/backend.js'
-import { readSetupState } from '@pneuma/runtime/core/sandbox/win/account.js'
-import { runSetupElevated } from '@pneuma/runtime/core/sandbox/win/setup.js'
-import { doctorWindowsNetwork } from '@pneuma/runtime/core/sandbox/win/doctor.js'
-import { evaluateCommand } from '@pneuma/runtime/core/sandbox/execpolicy.js'
+import { createDockerRunner, probeDocker } from './backends.js'
+import { createWindowsTokenRunner, probeWindowsToken, type WindowsTokenRunnerHandle } from './win/backend.js'
+import { readSetupState } from './win/account.js'
+import { runSetupElevated } from './win/setup.js'
+import { doctorWindowsNetwork } from './win/doctor.js'
+import { evaluateCommand } from './execpolicy.js'
 import {
   checkWrite,
   createPolicy,
@@ -64,7 +64,7 @@ import {
   type PathCheck,
   type SandboxConfig,
   type SandboxPolicy,
-} from '@pneuma/runtime/core/sandbox/policy.js'
+} from './policy.js'
 import type {
   SandboxCheck,
   SandboxEnforcement,
