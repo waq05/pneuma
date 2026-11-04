@@ -161,13 +161,14 @@ lib/packages/<id>/package.json + cordis.patch.yml + index.js   # 构建产物
 pnpm run typecheck && pnpm --dir desktop typecheck
 pnpm run build && pnpm run build:ui
 pnpm run check:style --changed
-pnpm run check:plugin                # 模型检查 + 清单快照 + 加载器 92 条 + list 15 条 + 换包 e2e 17 条
+pnpm run check:plugin                # 模型检查 + 包标准六条 + 清单快照 + 加载器 92 条 + list 15 条 + 换包 e2e 17 条
 node scripts/check-core.mjs          # 97 套（hmr-dispose-test、plugin-hot-update-test 自动进来）
 node scripts/ops-test.mjs
 pnpm run check:dsh
 ```
 
-`check:plugin` 的四个脚本分工：`plugin-model-check --strict`（结构：包数 / 行数 / 内核行数 / 缺口）、
+`check:plugin` 的五个脚本分工：`plugin-model-check --strict`（结构：包数 / 行数 / 内核行数 / 缺口）、
+`plugin-standard-check`（包标准六条硬项：清单字段 / exports 键集 / 行 / 入口导出 / 包间 import / order 撞号；另有 README、tests 两条待办只提示）、
 `plugin-inventory-check`（清单与该在的样子的逐项 diff）、`plugin-model-test`（加载器行为）、
 `plugin-list-test`（用户看得见的那一屏）、`plugin-swap-e2e`（真进程里换包 / 覆盖 / 删包）。
 

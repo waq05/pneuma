@@ -242,3 +242,33 @@ lib/ui/plugins/<id>/client.js
 - 换**目录**仍要重启（解析表不重置，同一包名两个目录是启动失败）。
 - 换代后旧 URL 的模块实例留在进程里直到退出；开发态可接受，重启即清。
 - 外部单文件插件（`~/.dsc/plugins/*.js`）仍用入口 URL 的 `?t=<mtime>` 换代，不参与代数戳。
+
+## 15. 包标准（门禁）
+
+`scripts/plugin-standard-check.mjs` 进 `check:plugin`，对 `src/packages/*` 逐包判。**六条硬项不过就红**，三条待办只打印不挡合并（它们没有全绿之前，别对外说"标准齐了"）。
+
+| # | 硬项 | 判据 |
+|---|---|---|
+| 1 | 清单字段 | `name`、`version`（源码期一律 `0.0.0`）、`private`、`type`、`exports` 至少 `.` 与 `./package.json`、`pneuma.bundle.patch`、`pneuma.resolution`、`pneuma.order`、`engines.pneuma`、cordis 对等依赖 |
+| 2 | exports 键集 | 只许标准键：`.`、`./client`、`./package.json`、`./locale/*.json`；多一个就报出来由人决定 |
+| 3 | 行 | `cordis.patch.yml` 恰好一条 insert、一行；行 id 与目录约定一致（`ui-<id>` 目录 → `ui-<id>`，其余 → 目录名）；行 name 等于包名 |
+| 4 | 入口导出 | 能按 loader 的兜底规则拿到插件对象（用 TypeScript 语法树判，不用正则） |
+| 5 | 包间 import | 功能包之间零直接 import；功能包 → 库包允许；库包 → 任何包禁止；core → 包禁止（含 `import type`） |
+| 6 | order | 撞号即红（两个包同号） |
+
+待办三项：README 缺「Model Experience」「Known Limitations」两段、缺 `tests/` 目录、可疑的模块级可变状态。**现状：75 个包全缺 README 与 tests**——这是 Q6 还剩的主体工作。
+
+### 15.1 一处比 dsh 松，且是有意的
+
+dsh 要求函数插件命名导出 `name`/`inject`/`Config`/`apply`，服务插件 default 导出服务类。numa 的宿主包写的是
+`export const xxxPlugin = { name, provide, apply }`，靠 `plugin-loader` 的兜底规则（默认导出带 apply → 唯一命名导出带 apply → 模块自身 apply）加载。
+
+**不改的原因是产物形状**：`lib/node_modules/@pneuma/<id>/` 是 `export *` 桩，而 `export *` 不转发 `default`——
+改成 default 导出，运行时反而拿不到，只是看着合规。要真走 dsh 形状，得先改 `build-packages.mjs` 的 `stubBody`。
+
+### 15.2 门禁判不了、只能靠评审的三件事
+
+1. 行的 `disabled` 该不该关、`order` 的先后有没有依赖依据（行序运行期由 `inject` 决定，静态看不出来）。
+2. 动态拼出来的说明符（`import('@pneuma/' + name)`）与绕相对路径跨包。
+3. README 的内容质量（门禁只判两段标题在不在）。
+
