@@ -12990,3 +12990,56 @@ exe 的协议按 dsh-ops 0.4.x 钉住，上游改字段就得跟着改；二进�
 - 每换代一次，旧 URL 的模块实例留在进程里直到退出；开发态可接受，重启即清。
 - 包间零 import 是现状（0 处）：一旦引入包间 import，`pneuma.order` 就会变成隐式依赖。
 
+## 2026-11-04　Q3 试点 + Q4 第一批：把「实现」和「界面半」各搬回包里
+
+这一批是第二波的头两锄：一个界面边界（transcript 的两半边）、一个实现边界（sandbox 域）。
+
+### Q4　sandbox 域搬进 sandbox 包（17 文件 5,738 行）
+
+做法是**搬家留桩**：实现搬进 `src/packages/sandbox/`，`src/core/sandbox/` 每个文件留一行
+`export * from ...`。为什么能这么搬：`src/core` 里除注释外**零引用** sandbox，所以不会出现
+「内核握旧实例、包拿新实例」的两份注册表——那在沙箱上就是 fail-open。
+
+为什么先搬它（而不是更好搬的小叶子）：实现在 `lib/core` 时，解析钩子对运行时包是短路返回、
+不打代数戳（`resolve-hook.ts:190`），`isFeaturePackageFile` 又显式排除 `lib/core`，
+于是**改沙箱代码既触发不了热重挂、真重挂了拿到的还是旧模块**。搬进 `lib/packages` 之后
+`watchDirsOf` 盯得到、解析结果带 `?g=N`，这条链才闭合。搬它同时验证了「内核注册表 + 包实现」这条缝。
+
+一个容易漏的点：`win/backend.ts` 用 `new URL('./runner-entry.js', import.meta.url)` 找子进程入口。
+换代后 `import.meta.url` 会带 `?g=N`，但相对解析会丢掉查询串（实测 `child = file:///…/runner-entry.js`），
+所以子进程路径不受影响——两个文件必须一起搬，别拆。
+
+### Q3　transcript 的两半边（试点）
+
+界面半从 `ui-shell/src/packages/ui-transcript/` 搬进 `src/packages/transcript/ui/`，
+**产物一个字节没变**（sha256 `28fa4d99…`，启动图 rev `28fa4d99c0e2` 前后一致）。
+能做到是因为内置 id 由**产物目录名**决定，不由包名决定——搬源码只是搬源码。
+
+三个坑，都写进注释了：
+1. **tsc 按文件位置找 node_modules**，不看 tsconfig 在哪。源码搬出 ui-shell 后 `build:ui` 第一步
+   tsc 红在 `react-dom` 类型上，解法是根 devDeps 补 `@types/react-dom`。
+2. **两份 React**：解析起点从 ui-shell 变成仓库根，workspace 下会落到两个不同路径。加了 dedupe。
+3. **根 tsconfig 不排除界面半的后果不是报错**，而是把界面代码当 Node 侧编进 `lib/packages/<id>/ui/`，
+   表现是「多出一堆 js」。根 exclude 与 ui-shell 的 include 必须成对。
+
+顺带修掉一条自己造出来的坏引用：`exports["./client"]` 指向源码 `./ui/ui.tsx`，被
+`build-packages` 原样抄进产物清单，于是 `import '@pneuma/transcript/client'` 是 ERR_MODULE_NOT_FOUND。
+现在构建只抄包里真的存在的入口，并把 `dsh.client` 元数据带过去——内置界面半本来就不靠 exports
+（走产物目录的 bundle.json）。
+
+### 数字
+
+`typecheck` 0；`build` 0；`build:ui` 0（transcript 从新路径打）；`check:plugin` 0；
+`ui-plugin-test` 261 条；`ui-two-halves` 16 条；`check:ui` 54 套；`sandbox-parity` 41 条、
+`sandbox-write-roots` 12 条、`session-permissions-kernel` 16 条、`ops-test` 50 条、`escalation-scope` 全过；
+桩 17 行、包内 6,691 行、`check-core` 仍是 97 套。
+
+### 还开着的
+
+- 剩下 18 个界面包迁之前要先收口两件事：**探针路径**（这次为 transcript 逐个改了 20 个探针 68 行，
+  迁 18 个会重复 18 遍，应改成 `resolveUiHalf(id)` 一个帮助函数）与**根依赖**（`qrcode`、`@xterm/*`）。
+- 内置包**不含**界面产物，所以「把内置包装进 profile 再当界面半用」这条路还不通；要走通得让构建
+  把 client.js 同时放进包目录（Q3 第 6 步，收益小风险大，暂不做）。
+- Q4 仍是第一批：剩下 10 批里，「解耦后可搬」那一档必须先让内核不再 import，再搬。
+
+

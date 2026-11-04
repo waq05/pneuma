@@ -322,6 +322,19 @@ dsh 走 Node 内部接口（`loadCache` / `require.cache` / `ResolveCache` 打�
 
 **产物目录暂不动**：动它要同时改内容摘要 rev、combo 批地址、HMR 监听行、清单快照四处，收益小、风险大。
 
+**进度**：第 1 步（transcript 试点）2026-11-04 完成——源码搬到 `src/packages/transcript/ui/`，
+`client.js` 的 sha256（`28fa4d99…`）与启动图 rev（`28fa4d99c0e2`）与改造前逐字节一致；
+`ui-plugin-test` 261 条、`ui-two-halves` 16 条、`check:ui` 54 套全过。
+迁这一个是试路子，剩下 18 个按第 2 步走之前要先做两件收口（见下）。
+
+**迁剩下 18 个前要收口的两件事**：
+1. **探针路径收口**：这次为了让 20 个探针不 ENOENT，逐个改了硬编码路径（68 行）。迁 18 个会重复 18 遍。
+   先给 `scripts/_check-runner.mjs` 加一个 `resolveUiHalf(id)`（先试 `src/packages/<id>/ui`，再回落旧根），
+   探针只调它。
+2. **依赖补齐**：`ui-settings` 要 `qrcode` + `@types/qrcode`；`ui-terminal` 要 `@xterm/xterm` +
+   `@xterm/addon-fit`（自带类型）。其余 16 个只用 `@dsc/ui`/`@dsc/ui-primitives`/`react`/`react-dom`，
+   根依赖现在够了。
+
 ### 12.6 Q5 壳层包化：边界
 
 dsh 的答案分三层：页面内核 → 模块系统（唯一 bootstrap，只有 `dsh-client-modules` 一个包是 parser-blocking）→ 其余全是插件（`ui-renderer` 声明 `immediately:true`，`ui-layout` 带 5 条 inject）。种子包 `ui-slots`/`ui-primitives`/`ui-dockkit` **是包但不当插件**——别人要 require 同一份实例。
@@ -354,3 +367,21 @@ numa 对应：
 **反面案例（看着能搬其实不能）**：`dsh-compat/resolve-hook.ts`（plugin-loader 直接 import，是加载器本体）、`cdp/transport.ts`（dock-session、host-browser-link 直接 import）、`tools/command-runner.ts`（注册表本体）、`goal.ts`（session.ts 与 services/types 引它）、`memory.ts`（类型被 services/types 引用且带跨会话缓存）。
 
 **第一批**：sandbox（17 文件 5,755 行，占 core 的 10.7%，7 处包引用、2 个探针、零内核引用）。它同时验证「内核注册表 + 包实现」这条缝。
+
+### 12.8 Q6 包形态与开发标准：检查清单
+
+对齐 dsh 的 `packages/AGENTS.md` 与 `docs/defensive-patterns/package-surface.md`，落到 numa 的写法。**能在门禁里机器判的必须机器判**，判不了的在评审时逐条勾。
+
+| # | 要求 | 现在 | 怎么验 |
+|---|---|---|---|
+| 1 | 入口只导出 `name`/`inject`/`Config`/`apply`（或 default 导出服务类），两种形状不混用 | loader 两种都收，不强制 | `plugin-model-check` 加一条静态检查 |
+| 2 | 可选服务一律 `ctx.get(name)`，不进 `inject` | 未强制 | 评审 |
+| 3 | 每个注册都有 disposer（`ctx.effect` 或显式接退订），并有「停用即消失」的断言 | 139 处已改，探针 34 条 | `hmr-dispose-test` 扩成覆盖全部可停用行 |
+| 4 | `package.json` 字段齐全：`version` 与根一致、`type:module`、`exports` 含 `.`/`./client`/`./package.json`/`./locale/*.json` | 源码是 `0.0.0`、`exports` 只有 `.` | 新门禁脚本逐包比对 |
+| 5 | 界面半边写在 `pneuma.client`（`dsh.client` 继续兼容读），值域 `platform/api/inject/immediately/phase` | 19 个界面包写的是 `dsh.client` | 门禁比对键名 |
+| 6 | 包级 `tests/`，产品可见的插件要有走 Loader 的真实组合测试 | 0 个包有包内测试（全在仓库级 `scripts/`） | 分批迁，先给新包立规矩 |
+| 7 | `README.md` 两段：Model Experience / Known Limitations | 0 个包有 README | 门禁检查两段标题 |
+| 8 | 禁止模块级可变单例（`core/tools/command-runner.ts` 属内核，是例外） | 少数包有模块级缓存 | 评审 + 静态扫描 |
+| 9 | 包间零直接 import（只走服务） | 0 处，保持 | 门禁加一条反向断言 |
+
+**顺序**：第 1、4、5、7 条可先做静态门禁（不动行为），第 3 条已经落地，第 6 条跟着 Q4 逐批走。
