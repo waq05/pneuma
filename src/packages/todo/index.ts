@@ -18,7 +18,7 @@
 import type { Plugin } from '@deepseek-ai/cordis'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { appendTodoReminder } from '@pneuma/runtime/core/todo-reminder.js'
-import { TodoStore } from '@pneuma/runtime/core/todo.js'
+import { TodoStore } from './todo.js'
 import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
 import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec, TodoService } from '@pneuma/runtime/services/types.js'

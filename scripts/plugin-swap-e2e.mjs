@@ -123,19 +123,26 @@ writeText(
 )
 writeText(join(profile, 'cordis.patch.yml'), "- insert:\n    - id: pinned-only\n      name: '@p3/pinned-only'\n")
 
-/** 把应用里的某个包抄进 profile，并给这份副本打上哪来的标记。 */
-function copyIntoProfile(pkgName, moduleFile, marker) {
+/**
+ * 把应用里的某个包抄进 profile，并给这份副本打上哪来的标记。
+ *
+ * 抄的是**整个包目录**（`lib/packages/<id>/`），不是光 `index.js`：包里的实现文件
+ * 从 2026-11-04 起陆续搬进了包目录（todo 的 `todo.ts` 就是这样），只抄入口会让
+ * `import './todo.js'` 在副本里找不到文件，副本整个加载失败——那时测的就不是
+ * 「口径让不让路」，而是「抄漏了文件」。
+ */
+function copyIntoProfile(pkgName, pkgDir, marker) {
   const from = join(app, 'lib', 'node_modules', ...pkgName.split('/'))
   const to = join(profile, 'node_modules', ...pkgName.split('/'))
+  cpSync(join(app, 'lib', 'packages', pkgDir), to, { recursive: true })
   writeText(join(to, 'package.json'), readFileSync(join(from, 'package.json'), 'utf8'))
-  writeText(join(to, 'index.js'), readFileSync(join(app, 'lib', 'packages', moduleFile), 'utf8'))
   markFile(join(to, 'index.js'), marker)
 }
 
 markFile(join(app, 'lib', 'packages', 'waiting', 'index.js'), "globalThis.__WAITING = 'app'")
 markFile(join(app, 'lib', 'packages', 'todo', 'index.js'), "globalThis.__TODO = 'app'")
-copyIntoProfile('@pneuma/waiting', 'waiting/index.js', "globalThis.__WAITING = 'profile'")
-copyIntoProfile('@pneuma/todo', 'todo/index.js', "globalThis.__TODO = 'profile'")
+copyIntoProfile('@pneuma/waiting', 'waiting', "globalThis.__WAITING = 'profile'")
+copyIntoProfile('@pneuma/todo', 'todo', "globalThis.__TODO = 'profile'")
 
 // 应用侧的夹具包：声明 pinned，profile 里也有一份同名副本
 const pinnedDir = join(app, 'lib', 'node_modules', '@p3', 'pinned-only')

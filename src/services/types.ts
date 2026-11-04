@@ -28,9 +28,7 @@ import type { CoreEvent } from '../core/events.js'
 import type { SkillDefinition, SkillSummary } from '../core/skills.js'
 import type { DscPrefs } from '../core/prefs.js'
 import type { ToolGuard, ToolGuardChain, ToolObserver } from '../core/tool-guards.js'
-import type { GoalStore } from '../core/goal.js'
 import type { PromptContribution } from '../core/prompt.js'
-import type { TodoWriteResult } from '../core/todo.js'
 import type {
   ApprovalAnswer,
   ApprovalPolicy,
@@ -47,6 +45,8 @@ import type {
   DscRuntime,
   EffortLevel,
   GitSurface,
+  GoalResult,
+  GoalSnapshot,
   GoalView,
   MarketBrowseResult,
   MarketSkillView,
@@ -66,6 +66,7 @@ import type {
   RuntimeSurfaces,
   TeammateView,
   TodoView,
+  TodoWriteResult,
   TranscriptEntry,
   SessionForkResult,
   SessionSummary,
@@ -412,12 +413,48 @@ export interface AskService {
   answerQuestion(answer: string): void
 }
 
+/**
+ * 目标存储（goal 包内部那台状态机）在契约层露出的形状。
+ *
+ * 为什么写成结构声明而不 import 那个类：实现类住在 `@pneuma/goal` 包里，
+ * 契约层反过来 import 包就把依赖方向倒过来了（services → packages）。这里只声明
+ * 调用方会碰的成员，形状与 `packages/goal/goal.ts` 的 `GoalStore` 同构。
+ */
+export interface GoalStorePort {
+  /** 当前目标快照；null = 没有目标。 */
+  readonly snapshot: GoalSnapshot | null
+  /** 驱动器该不该继续塞续跑消息（phase=active 且已上膛）。 */
+  readonly shouldContinue: boolean
+  /** 进程本地开关：重启或切会话后为 false。 */
+  readonly armed: boolean
+  /** 上膛 / 卸膛。 */
+  setArmed(value: boolean): void
+  /** 从会话日志恢复目标本体（恢复后一律卸膛）。 */
+  restore(snapshot: Partial<GoalSnapshot> | null): void
+  /** 建新目标（同会话已有未完成目标时拒）。 */
+  create(objective: string, maxRounds?: number): GoalResult
+  /** 标完成（模型可调用，前提是真的做完了）。 */
+  complete(): GoalResult
+  /** 报告阻塞（必须写清卡在哪）。 */
+  block(reason: string): GoalResult
+  /** 用户暂停。 */
+  pauseByUser(): GoalResult
+  /** 用户恢复 / 上膛。 */
+  resumeByUser(): GoalResult
+  /** 用户改目标文本或轮次上限。 */
+  editByUser(patch: { objective?: string; maxRounds?: number }): GoalResult
+  /** 用户清掉目标。 */
+  clearByUser(): GoalResult
+  /** 跑完一轮后记账；到上限自动转 blocked。 */
+  countRound(): GoalSnapshot | null
+}
+
 /** 会话目标服务（goal 那一块）：跨轮自动续跑与它的刹车。 */
 export interface GoalService {
   /** 会话目标投影；null = 没设目标。 */
   goalView(): GoalView | null
   /** 目标存储（goal 工具与自动续跑驱动器共用）。 */
-  readonly goals: GoalStore
+  readonly goals: GoalStorePort
   /** 用户侧目标动作（暂停 / 继续 / 清空 / 放宽轮次上限）。 */
   goalAction(action: 'pause' | 'resume' | 'clear' | 'extend'): SettingsMutation
   /**

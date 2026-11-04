@@ -10,7 +10,7 @@
 
 /**
  * 任务清单条目的状态。
- * core/todo.ts 直接用它（不再另写一遍四个字符串），界面与存储因此不可能各说一套。
+ * todo 包的实现直接用它（不再另写一遍四个字符串），界面与存储因此不可能各说一套。
  */
 export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 
@@ -33,6 +33,19 @@ export interface TodoView {
   total: number
   /** 当前在做的那条正文（清单条上直接显示）。 */
   active: string | null
+}
+
+/**
+ * 一次清单写入的结果：整表 + 新版本号 + 对被静悄悄修掉的地方说的话。
+ *
+ * 住在契约层而不留在 todo 包：`TodoService.writeTodos` 的返回值就是它，
+ * 用服务的插件要按这个形状读；包反过来 import 契约，方向才对。
+ */
+export interface TodoWriteResult {
+  items: TodoItemView[]
+  revision: number
+  /** 校正说明（过长截断、父任务不存在、id 重复合并），原样回给模型。 */
+  notes: string[]
 }
 
 /** 计划评审卡的状态。 */
@@ -145,7 +158,7 @@ export interface ScheduledTaskView {
 
 /**
  * 目标阶段。
- * `core/goal.ts` 直接 import 这个类型（那里只留别名），界面与存储因此共用一份声明。
+ * `packages/goal/goal.ts` 直接 import 这个类型（那里只留别名），界面与存储因此共用一份声明。
  */
 export type GoalPhaseView = 'active' | 'paused' | 'blocked' | 'complete'
 
@@ -160,6 +173,26 @@ export interface GoalView {
   /** 自动续跑开关（进程本地；重启后为 false）。 */
   armed: boolean
 }
+
+/**
+ * 会话目标快照（进会话日志，也进界面）。
+ *
+ * 住在契约层：会话存储（`core/session.ts` 的 `SessionStateMap.goal`）按它落盘与重放，
+ * goal 包按它实现——两边的形状只能是同一份声明。
+ */
+export interface GoalSnapshot {
+  id: string
+  revision: number
+  objective: string
+  phase: GoalPhaseView
+  /** phase=blocked 时必填：卡在哪。 */
+  blockedReason?: string
+  maxRounds: number
+  rounds: number
+}
+
+/** 目标动作的结果（失败带原因，直接回给模型或界面）。 */
+export type GoalResult = { ok: true; snapshot: GoalSnapshot } | { ok: false; error: string }
 
 /** 模型问用户的一个问题（ask_user 工具的数据）。 */
 export interface AskOptionView {

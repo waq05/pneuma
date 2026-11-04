@@ -17,7 +17,7 @@
  * @module dsc/plugins/goal
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { DEFAULT_MAX_GOAL_ROUNDS, GoalStore } from '@pneuma/runtime/core/goal.js'
+import { DEFAULT_MAX_GOAL_ROUNDS, GoalStore } from './goal.js'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
@@ -44,7 +44,7 @@ const DEFAULTS: GoalConfig = { defaultMaxRounds: DEFAULT_MAX_GOAL_ROUNDS, extend
 function readConfig(passed?: unknown): GoalConfig {
   const raw = resolvePluginConfig(CONFIG_KEY, passed)
   return {
-    // 上限 256 与 core/goal.ts 的硬顶一致：配置只能在这个范围内放开，不能取消上限。
+    // 上限 256 与 goal.ts 的硬顶一致：配置只能在这个范围内放开，不能取消上限。
     defaultMaxRounds: clamp(raw.defaultMaxRounds, 1, 256, DEFAULTS.defaultMaxRounds),
     extendRoundsBy: clamp(raw.extendRoundsBy, 1, 64, DEFAULTS.extendRoundsBy),
   }

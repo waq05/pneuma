@@ -15,8 +15,8 @@
 - 提醒是追加一条 user 消息，不是系统指令，模型可以不理（core/todo-reminder.ts 的 `appendTodoReminder`）。
 - 提醒不落会话日志：它是投影，每次组装请求时重算，刷新后重新拼（core/todo-reminder.ts 文件头）。
 - 清单是会话级的：一个会话一份，切会话换一份（index.ts:221-226）。
-- 有硬上限：单条正文 300 字、最多 64 条（core/todo.ts:26、29），超出的部分被截断，并在回显里说明。
-- 「同一时刻最多一条 in_progress」只写在工具说明里（index.ts:56），存储层不校验（core/todo.ts:210-229）；传两条也照存，进度条只显示找到的第一条（core/todo.ts:117-125）。
+- 有硬上限：单条正文 300 字、最多 64 条（todo.ts:24、27），超出的部分被截断，并在回显里说明。
+- 「同一时刻最多一条 in_progress」只写在工具说明里（index.ts:56），存储层不校验（todo.ts:201-221）；传两条也照存，进度条只显示找到的第一条（todo.ts:108-116）。
 - 与 dsh 同族能力的差异：待确认，本包只写「形状抄 Codex 的 update_plan 与 DSH 的 todo_write」（index.ts:13-14），没有列出差异。
 
 ## 行与开关
