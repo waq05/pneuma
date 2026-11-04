@@ -161,7 +161,7 @@ console.log('[5] 流式与模型选择')
 {
   const events = read('src/core/ui-events.ts')
   const webserver = read('src/packages/webserver/index.ts')
-  const channel = read('src/packages/ui-layout/ui/host-channel.ts')
+  const channel = read('src/packages/ui-runtime/ui/host-channel.ts')
   const api = read('ui-shell/src/plugin-api.ts')
   const store = read(resolveUiHalf('ask') + '/store.ts')
   const plugin = read(resolveUiHalf('ask') + '/ui.tsx')

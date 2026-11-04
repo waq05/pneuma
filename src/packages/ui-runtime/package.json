@@ -1,0 +1,22 @@
+{
+  "name": "@pneuma/ui-runtime",
+  "version": "0.8.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "pneuma": {
+    "library": true,
+    "title": "界面运行时",
+    "description": "界面壳的共享运行时：宿主通道、React 上下文与读数 hook、页与视图信号、外观落地、今日用量；作为平台种子下发给界面插件"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  }
+}

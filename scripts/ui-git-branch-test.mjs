@@ -104,7 +104,7 @@ console.log('[2] 输入框那颗钮的接线')
 
   // 等人的宿主方法要更长的超时：审批卡自己能等 5 分钟，默认那 30 秒会把「等你点卡」
   // 报成「宿主超时」，而且点完卡那次切换已经被页面放弃了（实机走查抓到的）。
-  const channel = read('src/packages/ui-layout/ui/host-channel.ts')
+  const channel = read('src/packages/ui-runtime/ui/host-channel.ts')
   const changes = read('src/packages/ui-files/ui/changes.tsx')
   // 超时闸本身是手写的（老内核没有 `AbortSignal.timeout`，那条线在
   // scripts/ui-legacy-compat-test.mjs 里钉），这里只钉口径：预算能按调用给、默认 30 秒。

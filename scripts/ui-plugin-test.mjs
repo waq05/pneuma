@@ -1012,6 +1012,13 @@ console.log('\n[5b] 分包落点')
     readFileSync(join(repoRoot, 'src', 'packages', 'ui-boot', 'ui', 'platform-modules.json'), 'utf8'),
   )
   check('@dsc/ui-core 不在平台模块表里（故意不给插件）', !platformModules.includes('@dsc/ui-core'), platformModules.join(','))
+  // 2026-11-04 夜：布局从「种子」降回「插件」。它的实现必须随自己的 bundle 走，
+  // 所以表里换成运行时包（状态）——两个包在表里的位置一换，正好就是「状态 / 画图」那一刀。
+  check(
+    '@dsc/ui-runtime 在平台模块表里、@dsc/ui-layout 不在',
+    platformModules.includes('@dsc/ui-runtime') && !platformModules.includes('@dsc/ui-layout'),
+    platformModules.join(','),
+  )
 
   // ── 包内分层：五个逻辑包的单向依赖（E2/E3/E5/E4） ─────────────────────────────
   // 逻辑分包没有 workspace 的依赖图兜底：反向依赖编译器不拦，症状是运行期解析出两份实现
@@ -1025,6 +1032,7 @@ console.log('\n[5b] 分包落点')
     '@dsc/ui-primitives': join(repoRoot, 'src', 'packages', 'ui-primitives', 'ui'),
     '@dsc/ui-slots': join(repoRoot, 'src', 'packages', 'ui-slots', 'ui'),
     '@dsc/ui-dockkit': join(repoRoot, 'src', 'packages', 'ui-dockkit', 'ui'),
+    '@dsc/ui-runtime': join(repoRoot, 'src', 'packages', 'ui-runtime', 'ui'),
     '@dsc/ui-layout': join(repoRoot, 'src', 'packages', 'ui-layout', 'ui'),
     '@dsc/ui-renderer': join(repoRoot, 'src', 'packages', 'ui-renderer', 'ui'),
   }
@@ -1037,9 +1045,11 @@ console.log('\n[5b] 分包落点')
   // 那条 `ui-layout → @dsc/ui → ui-layout` 的环随之剪断；这条禁止同样是防回归
   // （之前它只是「过渡期放行」，靠人记得别再加一处）。
   const forbiddenUpward = {
-    '@dsc/ui-primitives': ['@dsc/ui-dockkit', '@dsc/ui-slots', '@dsc/ui-layout', '@dsc/ui-renderer'],
-    '@dsc/ui-slots': ['@dsc/ui-dockkit', '@dsc/ui-layout', '@dsc/ui-renderer'],
-    '@dsc/ui-dockkit': ['@dsc/ui-slots', '@dsc/ui-layout', '@dsc/ui-renderer'],
+    '@dsc/ui-primitives': ['@dsc/ui-dockkit', '@dsc/ui-slots', '@dsc/ui-runtime', '@dsc/ui-layout', '@dsc/ui-renderer'],
+    '@dsc/ui-slots': ['@dsc/ui-dockkit', '@dsc/ui-runtime', '@dsc/ui-layout', '@dsc/ui-renderer'],
+    '@dsc/ui-dockkit': ['@dsc/ui-slots', '@dsc/ui-runtime', '@dsc/ui-layout', '@dsc/ui-renderer'],
+    // 运行时是「状态」那一层的顶：上面就是画图的布局与渲染器，再往上就是聚合面。
+    '@dsc/ui-runtime': ['@dsc/ui-layout', '@dsc/ui-renderer'],
     '@dsc/ui-layout': ['@dsc/ui-renderer'],
     '@dsc/ui-renderer': [],
   }
@@ -1072,7 +1082,7 @@ console.log('\n[5b] 分包落点')
   const drifted = layerNames.filter((name) => resolved[name] !== join(layerDirs[name], 'index.ts'))
   check('每个 @dsc/ui-* 别名都落在对应包的 ui/index.ts', drifted.length === 0, drifted.map((n) => `${n}: ${resolved[n]}`).join('；'))
   check(
-    '五个逻辑包的入口都在盘上',
+    '六个逻辑包的入口都在盘上',
     layerNames.every((name) => existsSync(join(layerDirs[name], 'index.ts'))),
     layerNames.filter((name) => !existsSync(join(layerDirs[name], 'index.ts'))).join(','),
   )
@@ -1086,7 +1096,7 @@ console.log('\n[5b] 分包落点')
   //   - layout / renderer：**客户端插件**（有 `cordis.patch.yml` 与 `pneuma.client`）。
   //     layout 是 `phase: early` 的普通插件（停用后壳画诊断页，不白屏）；renderer 是唯一
   //     parser-blocking 的引导（与 dsh 的 `modules` 同位），声明了 `immediately` 但不占行。
-  const seedNames = ['@dsc/ui-slots', '@dsc/ui-primitives', '@dsc/ui-dockkit']
+  const seedNames = ['@dsc/ui-slots', '@dsc/ui-primitives', '@dsc/ui-dockkit', '@dsc/ui-runtime']
   const manifestOf = (name) => JSON.parse(readFileSync(join(dirname(layerDirs[name]), 'package.json'), 'utf8'))
   const badIdentity = layerNames.filter((name) => {
     // 包身份在包根（`ui/` 的上一层），别名落点才是 `ui/index.ts`。
@@ -1097,7 +1107,7 @@ console.log('\n[5b] 分包落点')
     if (seedNames.includes(name)) return pkg.pneuma?.library !== true || pkg.pneuma?.client !== undefined
     return false
   })
-  check('三个种子包的包身份（library、无 client 声明）', badIdentity.length === 0, badIdentity.join('、'))
+  check('四个种子包的包身份（library、无 client 声明）', badIdentity.length === 0, badIdentity.join('、'))
 
   // 两档的差别正是 dsh 的差别：种子包「有包无插件」，layout 是插件，renderer 是引导。
   const layoutPkg = manifestOf('@dsc/ui-layout')
@@ -1148,7 +1158,7 @@ console.log('\n[5b] 分包落点')
       }
     }
   }
-  check('包内不出现反向依赖（primitives / slots ← dockkit ← layout ← renderer）', upwardEdges.length === 0, upwardEdges.join('；'))
+  check('包内不出现反向依赖（primitives / slots ← dockkit ← runtime ← layout ← renderer）', upwardEdges.length === 0, upwardEdges.join('；'))
   check('相对 import 不出包（契约类型边与资源文件除外）', outsideEdges.length === 0, outsideEdges.join('；'))
 
   // `@dsc/ui` 是聚合面：它既转出下层实现，也是 **契约类型的唯一来源**（`SlotMap` /

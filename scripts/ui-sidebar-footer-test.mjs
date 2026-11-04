@@ -78,7 +78,7 @@ check('[1] tokens 从共享出口（ui-primitives/index.ts）',
 const src = read('src/packages/ui-sessions/ui/ui.tsx')
 // 2026-10-25：取数口径搬到共享 hook（ui-layout/usage-today.ts），页脚只消费它。
 // 判定因此拆两处：页脚「用没用共享 hook」、hook「怎么取、取哪一格、多久刷」。
-const hookSrc = read('src/packages/ui-layout/ui/usage-today.ts')
+const hookSrc = read('src/packages/ui-runtime/ui/usage-today.ts')
 const labelOnce = (s) => s.split('<span>今日总用量</span>').length === 2
 const usesSharedHook = (s) => s.includes('useTodayUsage(usage)')
 const channelCall = (s) => s.includes(".invoke<UsageStatsShape>('usageStats')")

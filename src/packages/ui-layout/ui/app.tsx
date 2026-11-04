@@ -15,7 +15,21 @@
  */
 import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import type { ServiceRegistry, UiBootGraph, UiPluginLoadReport } from '@dsc/ui-core'
-import { NATIVE_BRIDGE_VERSION, NATIVE_OPS } from '@dsc/ui-core'
+// 原生桥的两枚常量与下面那批运行时都从平台种子 `@dsc/ui-runtime` 取：`@dsc/ui-core` 是
+// **故意不下发给插件**的（构建期保成 external，bundle 里当值用会在运行期撞「白名单外的模块」）。
+import {
+  NATIVE_BRIDGE_VERSION,
+  NATIVE_OPS,
+  setShellPage,
+  setThreadView,
+  useChannelStatus,
+  useHostChannel,
+  useHostError,
+  useHostHello,
+  useHostSelector,
+  useShellPage,
+  useThreadView,
+} from '@dsc/ui-runtime'
 import {
   DOCK_DEFAULT_WIDTH,
   DOCK_MAX_WIDTH,
@@ -48,9 +62,7 @@ import { Dock, dockActions, openDockBrowserTab, openDockTab, setDockSession, use
 // 装载会话与热更句柄**不从这里 import**：它们的份额按结构定义在下面（AppBootSession /
 // AppSyncHandle），由入口以 props 递进来——两包之间因此没有反向边（剪掉成环的那一刀）。
 import { SLOT, SlotOutlet, useSlotFaults } from '@dsc/ui-slots'
-// 宿主桥在 @dsc/ui-primitives（native.ts / css.ts，E4 收尾从 `@dsc/ui` 沉下来的）；
-// 页 / 视图真源就在本包（page-state / thread-view），不再经 `@dsc/ui` 转一道——
-// 那样会让本包反向引聚合面，包间成环（探针 [5b] 已把 `@dsc/ui` 列为本包的禁止向上边）。
+// 宿主桥在 @dsc/ui-primitives（native.ts / css.ts，E4 收尾从 `@dsc/ui` 沉下来的）。
 import { getHostNative } from '@dsc/ui-primitives'
 // `UiSlots` 这个别名由 `SlotMap` / `SlotFactoryMap`（declare 合并认的是**文件身份**，
 // 别的路径 re-export 不算，见 ui-slots/slots.ts 的同款说明）与 `UiComponent` 拼出来，
@@ -58,10 +70,8 @@ import { getHostNative } from '@dsc/ui-primitives'
 // 路径跨不出包了，改走 `@dsc/ui`（别名落点就是那个文件，文件身份不变，合并照样成立）。
 // `import type` 编译期擦除、零运行期字节，包与包之间没有新增的运行时边。
 import type { UiSlots } from '@dsc/ui'
-import { setShellPage, useShellPage } from './page-state'
-import { setThreadView, useThreadView } from './thread-view'
+// 画图的那三块留在这里（它们随布局插件的 bundle 走）；共享状态全在 @dsc/ui-runtime。
 import { UpdateButton } from './update-button'
-import { useChannelStatus, useHostChannel, useHostError, useHostHello, useHostSelector } from './runtime-context'
 import { ReviewPane } from './review-pane'
 
 /**

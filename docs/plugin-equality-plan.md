@@ -470,10 +470,11 @@ numa 对应：
 
 | 数字 | 含义 |
 |---|---|
-| 88 | `src/packages/` 下的包目录（77 功能包 + 11 库包） |
+| 89 | `src/packages/` 下的包目录（77 功能包 + 12 库包） |
 | 77 | 装配行数（= 功能包数；库包不占行） |
 | 76 | `plugin-inventory` 数出的插件数：headless 不挂 `tui` 那一行 |
 | 21 | `lib/ui/plugins/` 的界面产物（19 个单元 + layout + renderer） |
+| 89 | 包级测试用例数（每个包一个 `tests/*.test.mjs`，合计 447 条断言） |
 
 ### 12.14 审查后逐条确认：还差的三条与撤回的一条
 
@@ -501,5 +502,56 @@ layout 的实现因此被静态编进壳；bundle 只是薄入口（`require('@d
 
 **⑤ 浏览器 e2e 没跑**：诊断页与首帧只在类型、产物、真实启动图三层验过。补法：仿 `scripts/ui-dsh-card-e2e.mjs`
 起真宿主 + 真 Electron，三态截图（正常 / 停用 layout / 停用 renderer），断言诊断文案可见。
+
+### 12.15 补完 ②③：共享运行时成库包，布局回落成真插件；界面文案走 per-package 译本（2026-11-04 夜）
+
+用户裁决「继续，把所有未完成的都完成」。两条都按**能被门禁判死**的方式收尾，不留「做了七成」的灰区。
+
+#### ② layout 的实现搬进自己的 bundle：换一条路（比 12.14 的原方案便宜，且更贴 dsh）
+
+12.14 写的三件套（运行时委托全局 + 关 external + 钉死 19 个单元的求值顺序）代价在于第三件：
+求值顺序变成隐性契约，谁在后面加一个单元就可能踩空。改成按 dsh 的真实形状切——**共享的留下，画图的搬走**：
+
+| 归属 | 内容 | 理由 |
+|---|---|---|
+| 新库包 `@pneuma/ui-runtime`（`pneuma.library: true`、无行、进平台种子表） | 宿主通道 `host-channel.ts`、`runtime-context.tsx`（RuntimeContext + 四个 hook）、`page-state.ts`、`thread-view.ts`、`appearance.ts`、`usage-today.ts` | 这些是**状态**：React context、页 / 视图信号、外观的模块级记录。全页只能有一份，且必须与插件读到的是同一份 |
+| `@pneuma/ui-layout`（有行、`./client`、`phase: early`） | `app.tsx`（App 骨架）、`review-pane.tsx`、`update-button.tsx`、入口 `ui.tsx` | 这些是**画图**：组件与它自己的 DOM 结构。dsh 的 `ui-layout` 同样是普通客户端插件，靠 `ui-slots` 这些种子拿共享面 |
+
+配套三处：
+1. `ui-shell/src/plugin-api.ts` 的整包转出改指 `@dsc/ui-runtime`——插件写的 `useHostSnapshot()` 一字不改。
+2. 平台种子表（`platform-modules.json` ↔ `boot.ts` 的 MODULES）用 `@dsc/ui-runtime` 换掉 `@dsc/ui-layout`：
+   布局不再是种子，它的 `client.js` 内联自己的组件。
+3. `app.tsx` 里那两枚 `@dsc/ui-core` 的**值**（`NATIVE_BRIDGE_VERSION` / `NATIVE_OPS`）改经 `@dsc/ui-runtime` 转出：
+   `@dsc/ui-core` 是故意不给插件的（进了 bundle 就是运行期一句「白名单外的模块」）。构建脚本新增一条硬断言：
+   任何 `client.js` 里出现 `require("@dsc/ui-core")` 即构建失败。
+
+**判据**：`lib/ui/plugins/layout/client.js` 从 1.3 KB 涨到 30 KB 以上；停用 layout 后 19 个单元仍在、只是没有骨架（已有的诊断页）。
+风险：布局 bundle 的字节与首帧时序变了，19 个单元与三态 e2e 全部重跑。
+
+**结果（同夜完成）**：布局产物 **1,320 B → 41,714 B**，壳的主 bundle **990 KB → 969.9 KB**；
+`platform-modules.json` 换成 `@dsc/ui-runtime`，`@dsc/ui-layout` 出表；构建新增「产物里不许 require 内核或布局包」
+的硬断言。验证：`check:plugin` 89/89、`check:ui` 54/54、三态 e2e 29 条断言全绿（正常态截图确认骨架画得对）。
+包数 88 → **89 = 77 功能包 + 12 库包**。
+
+#### ③ 界面文案本地化：per-package 译本 + 一条能判死的闸
+
+dsh 的现状值得照抄：每个包的 `locale/*.json` 只放清单两行字（`meta.title/description`），界面内的文案走运行期
+locale 服务与各包自带的字典。numa 照这个分两层：
+
+1. **清单两行**：已有（`plugin-locale.ts`，`locale/en.json`）。
+2. **界面内文案**：每个界面单元在 `locale/ui.zh.json` / `ui.en.json` 里放自己的键值，入口 `import` 这两个 JSON
+   （vite 直接内联进 `client.js`，不需要宿主下发文件），语言由启动图的 `host.language` 决定（新增字段，
+   来源是 `config.yaml` 的 `language:`）。
+3. `@dsc/ui` 新增 `createT({ zh, en })`：返回 `t(key, params?)`，插值写 `{name}`；缺译回落中文原文，再缺给键名本身并
+   在控制台报一次——**不许静默变空白**。
+4. 门禁 `scripts/ui-locale-check.mjs`：扫 `src/packages/ui-*/ui/**`，剔注释后
+   - 字符串字面量与 JSX 文本里**不许再有汉字**（白名单：`locale/*.json`）；
+   - 每份 `ui.zh.json` 的每个键，`ui.en.json` 必须有且译文中不含汉字；
+   - 每个 `t('...')` 的键必须在该包的 zh 字典里。
+   这条闸把「译了一半」变成红，而不是靠人眼扫。
+
+**判据**：上述闸 0；`language: en` 时截图里界面是英文。
+
+
 
 

@@ -4,7 +4,7 @@
  * 为什么只钉形状、不钉界面行为：本包的实体在界面半（`ui/`）里，由 `ui-shell` 的构建打
  * 成 `lib/ui/plugins/layout/client.js`；界面行为由 `scripts/ui-plugin-test.mjs` 那批集成
  * 探针负责（它们要整套壳才成立）。这里能验的是「声明的三处（package.json / cordis.patch.yml /
- * ui/ui.tsx）对得上，且骨架不会被内联成第二份」。
+ * ui/ui.tsx）对得上，且实现真的随自己的 bundle 走、共享状态不被内联成第二份」。
  *
  * 全部读源码、不读 `lib/`：产物没构建时这几条照样能跑，改坏了当场红。
  *
@@ -56,21 +56,33 @@ test('cordis.patch.yml：一行 insert，id 与包名都是本包', () => {
   passed += 1
 })
 
-test('ui/ui.tsx：转出 main 需要的挂载面，并带 defineUiPlugin 的默认导出', () => {
+test('ui/ui.tsx：只转出 App 与默认导出；通道 / 上下文 / 外观改从 @dsc/ui-runtime 取', () => {
   const entry = read('../ui/ui.tsx')
-  for (const name of ['App', 'createHostChannel', 'RuntimeProvider', 'applyAppearance']) {
-    assert.match(entry, new RegExp(`\\b${name}\\b`), `ui/ui.tsx 没有转出 ${name}`)
-  }
+  assert.match(entry, /export \{ App \} from '\.\/app'/, 'ui/ui.tsx 没有转出 App')
   assert.match(entry, /export default defineUiPlugin\(/, '没有默认导出：装载器会报「插件没有导出 apply」')
+  // 2026-11-04 夜起这几项由渲染器直接从平台种子取：本包再转手就是第二份入口，
+  // 停用布局时「谁提供了通道」会说不清。先剔注释——文件头的说明里本来就会提到这些名字。
+  const code = entry.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  for (const name of ['createHostChannel', 'RuntimeProvider', 'applyAppearance']) {
+    assert.doesNotMatch(code, new RegExp(`\\b${name}\\b`), `ui/ui.tsx 还在转出 ${name}：它属于 @dsc/ui-runtime`)
+  }
   passed += 1
 })
 
-test('骨架是平台种子：@dsc/ui-layout 在装载器的 require 表里（否则会内联第二份实现）', () => {
+test('布局不再是平台种子：@dsc/ui-layout 不在 require 表里，实现随自己的 bundle 走', () => {
   const modules = JSON.parse(read('../../ui-boot/ui/platform-modules.json'))
-  assert.ok(modules.includes('@dsc/ui-layout'), `platform-modules.json 里没有 @dsc/ui-layout：${modules.join(',')}`)
+  assert.ok(!modules.includes('@dsc/ui-layout'), `platform-modules.json 里还有 @dsc/ui-layout：${modules.join(',')}`)
   const boot = read('../../ui-boot/ui/boot.ts')
-  assert.match(boot, /from '@dsc\/ui-layout'/)
-  assert.match(boot, /'@dsc\/ui-layout':\s*uiLayout/)
+  assert.doesNotMatch(boot, /from '@dsc\/ui-layout'/)
+  passed += 1
+})
+
+test('共享状态仍只有一份：@dsc/ui-runtime 在平台种子里，App 从它取 hook', () => {
+  const modules = JSON.parse(read('../../ui-boot/ui/platform-modules.json'))
+  assert.ok(modules.includes('@dsc/ui-runtime'), `platform-modules.json 里没有 @dsc/ui-runtime：${modules.join(',')}`)
+  const app = read('../ui/app.tsx')
+  assert.match(app, /from '@dsc\/ui-runtime'/, 'app.tsx 没从 @dsc/ui-runtime 取共享状态：会内联出第二个 RuntimeContext')
+  assert.doesNotMatch(app, /from '\.\/(page-state|thread-view|runtime-context|appearance)'/)
   passed += 1
 })
 

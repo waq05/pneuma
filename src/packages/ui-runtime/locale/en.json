@@ -1,0 +1,4 @@
+{
+  "title": "UI runtime",
+  "description": "Shared runtime of the UI shell: host channel, React context and read hooks, page/view signals, appearance, today's usage; seeded to UI plugins"
+}

@@ -121,7 +121,7 @@ console.log('[1] 标准方法底线：不许用「太新」的那几个')
 
 console.log('[2] AbortSignal：超时闸是手写的')
 {
-  const channel = read('src/packages/ui-layout/ui/host-channel.ts')
+  const channel = read('src/packages/ui-runtime/ui/host-channel.ts')
   const code = uncomment(channel)
   check('不再用 AbortSignal.timeout / AbortSignal.any', !code.includes('AbortSignal.timeout(') && !code.includes('AbortSignal.any('))
   check('用 AbortController 自建闸', code.includes('new AbortController()'))

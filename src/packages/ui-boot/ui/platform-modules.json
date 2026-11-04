@@ -7,7 +7,7 @@
   "@dsc/ui-slots",
   "@dsc/ui-primitives",
   "@dsc/ui-dockkit",
-  "@dsc/ui-layout",
+  "@dsc/ui-runtime",
   "@xterm/xterm",
   "@xterm/addon-fit"
 ]

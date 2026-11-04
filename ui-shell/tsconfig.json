@@ -22,6 +22,7 @@
       "@dsc/ui-layout": ["../src/packages/ui-layout/ui/index.ts"],
       "@dsc/ui-primitives": ["../src/packages/ui-primitives/ui/index.ts"],
       "@dsc/ui-renderer": ["../src/packages/ui-renderer/ui/index.ts"],
+      "@dsc/ui-runtime": ["../src/packages/ui-runtime/ui/index.ts"],
       "@dsc/ui-slots": ["../src/packages/ui-slots/ui/index.ts"]
     }
   },

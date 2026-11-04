@@ -74,6 +74,16 @@ const PLATFORM_MODULES = JSON.parse(
 const EXTERNAL = [...PLATFORM_MODULES, '@dsc/ui-core']
 
 /**
+ * 每个插件实际的外部化清单：只有**一个例外**——布局插件（id `layout`）要把
+ * `@dsc/ui-layout` 的实现内联进自己的 bundle，那正是它的产物存在的意义（停用就真的省掉
+ * 那块代码）。其余插件若引用 `@dsc/ui-layout`，留成 require 会在运行期撞「白名单外的模块」，
+ * 构建末尾那条断言会先把它拦在构建这一步。
+ * @param id - 产物 id
+ */
+const externalOf = (id) =>
+  id === 'layout' ? EXTERNAL.filter((name) => name !== '@dsc/ui-layout') : [...EXTERNAL, '@dsc/ui-layout']
+
+/**
  * 不许出现第二份 React。图里这些模块本身是 external（不会被打进 bundle），但界面半搬到
  * `src/packages/<id>/ui/` 之后，import 的解析起点从 ui-shell 变成了仓库根：pnpm workspace
  * 下两边各有一份 react 时，解析会落到两个不同路径。把解析钉回壳那一份，防的是那件事。
@@ -386,7 +396,7 @@ for (const plugin of plugins) {
       sourcemap: false,
       lib: { entry: plugin.entry, formats: ['cjs'], fileName: () => 'client' },
       rollupOptions: {
-        external: EXTERNAL,
+        external: externalOf(id),
         output: {
           exports: 'named',
           // lib 模式默认按 format 加后缀（type: module 的包会写成 .cjs）；
@@ -399,6 +409,18 @@ for (const plugin of plugins) {
   })
   const target = join(outDir, 'client.js')
   const code = readFileSync(target, 'utf8')
+  // 硬断言：产物里不许留这两种 require。它们都只在运行期才炸，报错也指不到构建这一步。
+  //   `@dsc/ui-core` —— 故意不给插件（撞「白名单外的模块」）；
+  //   `@dsc/ui-layout` —— 只有布局插件自己的 bundle 内联它，别的 bundle 引用就是错的。
+  for (const banned of ['@dsc/ui-core', '@dsc/ui-layout']) {
+    if (!externalOf(id).includes(banned)) continue
+    if (!code.includes(`require("${banned}")`)) continue
+    console.error(
+      `[build-plugins] ${id} 的产物里有 require("${banned}")：这个模块不提供给插件构造。` +
+        '改从 @dsc/ui / @dsc/ui-runtime 取，或把实现搬进自己的包。',
+    )
+    process.exit(1)
+  }
   writeFileSync(
     target,
     `(globalThis.${FACTORY_GLOBAL} ??= {})[${JSON.stringify(id)}] = function (require, module, exports) {\n${code}};\n`,

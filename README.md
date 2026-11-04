@@ -191,7 +191,7 @@ src/core/           自研引擎（零 UI 依赖）
 src/adapter/        core 事件 → 快照投影（transcript 折叠 + core-runtime）
 src/contract.ts     UI ⇄ 运行时 的中性契约（DscRuntime）
 src/host/kernel.ts  内核装配器：建 Context、挂应用自带的行、挂外部插件（103 行）
-src/packages/       88 个包：77 个功能包（含 19 个界面单元、界面骨架与渲染器）+ 11 个库包（package.json + cordis.patch.yml + index.ts）
+src/packages/       89 个包：77 个功能包（含 19 个界面单元、界面骨架与渲染器）+ 12 个库包（package.json + cordis.patch.yml + index.ts）
 src/packages/tui/app/  ink UI（App/ChatView/Composer/ToolCard/ApprovalCard/SessionPicker/StatusBar）
 desktop/            Electron 桌面端：主进程 + 独立运行时子进程；界面就是插件壳（旧渲染层已删除）
 ui-shell/           桌面与手机共用的界面壳（插件化：布局 + 基元 + 官方界面插件；产物落 lib/ui/assets）

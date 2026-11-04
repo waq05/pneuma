@@ -5,9 +5,9 @@
  * 再把 {@link UiRendererApi} 交给本文件的 {@link start}。渲染器负责首帧之前的那一段：
  *
  *   1. **骨架**（布局插件 `layout` 的产物）在首帧之前**显式 await**——它不是静态 import
- *      进壳的，而是 `lib/ui/plugins/layout/client.js`，装载器那条 require 表交给它的还是
- *      壳里那一份实例（`@dsc/ui` 已经把它的读 hook 转出给插件了，不能有第二份）；
- *   2. 通道由骨架提供，所以通道只能排在建完骨架之后；建好通道立刻 `bindRuntime` 回填给
+ *      进壳的，而是 `lib/ui/plugins/layout/client.js`；
+ *   2. 通道与 `RuntimeProvider` 由**平台种子** `@dsc/ui-runtime` 提供（那份状态全页只有
+ *      一份，布局 bundle 里的 App 与插件读的是同一份）；建好通道立刻 `bindRuntime` 回填给
  *      引导的 cordis 根（插件拿到的 `ui.runtime` 读的就是它）；
  *   3. 槽由引导声明好（`api.slots`），插件按批装进 cordis，然后渲染 <App/>、打首帧、
  *      在空闲时刻装第二批。
@@ -26,6 +26,17 @@ import { createRoot } from 'react-dom/client'
 import { defineUiPlugin, onAppearanceRequest } from '@dsc/ui'
 import type { UiPrefsView } from '@dsc/ui-core'
 import { primePanelGeometry, setPanelGeometrySaver } from '@dsc/ui-primitives'
+// 共享运行时（平台种子）：通道工厂、RuntimeProvider、外观落地。它们由 **shell** 提供，
+// 布局插件的 bundle 里读的也是这一份——这正是「状态只许一份」那条纪律的落点。
+import {
+  DEFAULT_APPEARANCE,
+  RuntimeProvider,
+  applyAppearance,
+  appearanceFromPrefs,
+  createHostChannel,
+  loadCachedAppearance,
+  saveCachedAppearance,
+} from '@dsc/ui-runtime'
 /// <reference path="./boot-types.d.ts" />
 // 引导的类型面按**发布包的子路径**取（本地类型桥见 boot-types.d.ts）；运行期能力全从
 // `start(api)` 的入参拿，插件 bundle 不 import 引导。
@@ -41,12 +52,13 @@ import type { UiPluginHmr } from '@pneuma/ui-boot/hmr.js'
 const LAYOUT_ID = 'layout'
 
 /**
- * 布局产物的导出面：就是 `@dsc/ui-layout` 那棵树。
+ * 布局产物的导出面：只有 `App` 一项。
  *
- * 这里只借**类型**（`typeof import()` 在编译期擦除、运行期不产生 import）——实现必须来自
- * 启动图里那一份，否则「停用就真的不装」这条开关就是假的。
+ * 2026-11-04 夜起，通道 / RuntimeProvider / 外观落地都从 `@dsc/ui-runtime`（平台种子）取，
+ * 布局的 bundle 里只留它自己的组件；这里只借**类型**（`typeof import()` 在编译期擦除、
+ * 运行期不产生 import）——实现必须来自启动图里那一份，否则「停用就真的不装」这条开关就是假的。
  */
-type LayoutSurface = typeof import('@dsc/ui-layout')
+type LayoutSurface = Pick<typeof import('@dsc/ui-layout'), 'App'>
 
 /** 骨架缺席的三种来路（诊断页按它写标题与下一步）。 */
 interface LayoutFailure {
@@ -68,16 +80,13 @@ interface LayoutFailure {
  * @param layout - 启动图里取回来的骨架导出面（外观落地只有这一份实现）
  * @param prefs - 已经发出去的那次 `getUiPrefs`
  */
-async function syncAppearance(
-  layout: LayoutSurface,
-  prefs: Promise<UiPrefsView | null>,
-): Promise<void> {
-  layout.applyAppearance(layout.loadCachedAppearance())
+async function syncAppearance(prefs: Promise<UiPrefsView | null>): Promise<void> {
+  applyAppearance(loadCachedAppearance())
   const loaded = await prefs
   if (loaded === null) return
-  appearance = layout.appearanceFromPrefs(loaded)
-  layout.applyAppearance(appearance)
-  layout.saveCachedAppearance(appearance)
+  appearance = appearanceFromPrefs(loaded)
+  applyAppearance(appearance)
+  saveCachedAppearance(appearance)
 }
 
 /**
@@ -103,10 +112,10 @@ async function within<T>(promise: Promise<T>, ms: number): Promise<T | null> {
  * `null` = 骨架还没装上来（那时候也不该有插件在改外观）。类型按骨架导出的默认值取，
  * 免得在这里另抄一份形状。
  */
-type Appearance = LayoutSurface['DEFAULT_APPEARANCE']
+type Appearance = typeof DEFAULT_APPEARANCE
 let appearance: Appearance | null = null
 
-/** 骨架装上来之后的导出面：外观落地与诊断两处都要按它走。 */
+/** 骨架装上来之后的导出面：诊断一处要按它走（通道与外观已不从它取）。 */
 let layoutSurface: LayoutSurface | null = null
 
 /**
@@ -121,11 +130,10 @@ let layoutSurface: LayoutSurface | null = null
  * 写盘由插件自己做（它调 `setUiPrefs`）——这里只负责让界面立刻跟上与记住镜像。
  */
 onAppearanceRequest((patch) => {
-  const layout = layoutSurface
-  if (layout === null) return
-  appearance = { ...(appearance ?? layout.DEFAULT_APPEARANCE), ...patch }
-  layout.applyAppearance(appearance)
-  layout.saveCachedAppearance(appearance)
+  if (layoutSurface === null) return
+  appearance = { ...(appearance ?? DEFAULT_APPEARANCE), ...patch }
+  applyAppearance(appearance)
+  saveCachedAppearance(appearance)
 })
 
 /**
@@ -262,7 +270,7 @@ export async function start(api: UiRendererApi): Promise<void> {
     return
   }
   layoutSurface = layout
-  const { App, RuntimeProvider } = layout
+  const { App } = layout
 
   // 2. 宿主数据通道（异步连，失败也会自己重连）+ 外观 + 面板几何。
   // 外观**不 await**：函数体在第一个 await 之前就把上次的镜像涂上去了，首帧已经是对的颜色，
@@ -271,14 +279,14 @@ export async function start(api: UiRendererApi): Promise<void> {
   // 同一次 getUiPrefs 也喂面板几何（侧栏宽 / 正文列宽 / 右侧栏宽 / 并排审查宽）：那几项
   // 只存在 localStorage 的话，宿主一换端口（每次启动、每次切工作目录都换）就全丢。几何
   // 要赶在渲染前灌进面板模块（见下面第 5 步前那几行），否则用户先看到默认宽再跳一下。
-  const channel = layout.createHostChannel()
+  const channel = createHostChannel()
   // 通道建好就回填给引导的 cordis 根：插件拿到的 `ui.runtime` 与 App 读的必须是同一条。
   api.bindRuntime(channel)
   const prefs = channel.invoke<UiPrefsView>('getUiPrefs').catch((error: unknown) => {
     console.warn('[ui-shell] 读界面偏好失败，沿用上次的外观镜像与默认宽度', error)
     return null
   })
-  void syncAppearance(layout, prefs)
+  void syncAppearance(prefs)
 
   // 3. 装**第一批**（early）。第二批（application）不在这里装：画完首帧后由
   //    session.startApplication() 推到空闲时刻。骨架这一行也在第一批里（`phase: early`）——
@@ -323,8 +331,8 @@ export async function start(api: UiRendererApi): Promise<void> {
   }
 
   // 5. 渲染。服务表经 context 交给条目组件（插件用 `useService` 读服务、跟着出现/消失换源）；
-  // 第一批已在注册表里，首帧就能画出它。App 与 RuntimeProvider 必须来自**同一份**骨架导出
-  // （同一个模块实例）：插件的 `useHostSnapshot` 读的是那份 RuntimeContext。
+  // 第一批已在注册表里，首帧就能画出它。RuntimeProvider 与插件的 `useHostSnapshot` 都取自
+  // 平台种子 `@dsc/ui-runtime`（同一份模块实例）——**不是**布局 bundle 里又内联的一份。
   //
   // 服务表的 React 面包在引导里（`@dsc/ui-core` 故意不下发给插件），所以从 api 取。
   const ServicesProvider = api.servicesProvider

@@ -44,11 +44,12 @@ import * as xtermFit from '@xterm/addon-fit'
 import * as uiSlots from '@dsc/ui-slots'
 import * as uiPrimitives from '@dsc/ui-primitives'
 import * as uiDockkit from '@dsc/ui-dockkit'
-// 布局包也是平台种子——理由见 `ui/ui.tsx` 的抬头：`@dsc/ui`（`ui-shell/src/plugin-api.ts:298-323`）
-// 把它的读 hook 整包转出给插件，插件拿到的那几个 hook 与骨架里的 App 必须读同一份模块状态
-// （RuntimeContext、页 / 视图信号）。布局自己的 client.js 里 `require('@dsc/ui-layout')` 因此
-// 必须命中这里这一份：内联第二份的话，插件一渲染就抛「useHostChannel 必须在 RuntimeProvider 里用」。
-import * as uiLayout from '@dsc/ui-layout'
+// 运行时包也是平台种子——理由见 `@pneuma/ui-runtime` 的抬头：它装的是**状态**
+// （RuntimeContext、页 / 视图信号、外观落地），`@dsc/ui` 把这些整包转出给插件，
+// 插件拿到的 hook 与布局插件 bundle 里的 App 必须读同一份模块。布局自己的 client.js 里
+// `require('@dsc/ui-runtime')` 因此必须命中这里这一份：内联第二份的话，插件一渲染就抛
+// 「useHostChannel 必须在 RuntimeProvider 里用」。
+import * as uiRuntime from '@dsc/ui-runtime'
 import { UiArrivalLedger, type UiArrivalHost } from '@dsc/ui-core'
 import type {
   UiBootBatch,
@@ -70,7 +71,7 @@ import {
 // 详见 cordis-host.ts 的文件头表格。
 import { createCordisRoot, type UiApply, type UiCordisRoot } from './cordis-host'
 // 渲染器交进来的通道类型（渲染器 -> 引导只有这一条**类型**边，运行期由 api 传值）。
-import type { HostChannel } from '@dsc/ui-layout'
+import type { HostChannel } from '@dsc/ui-runtime'
 import type { UiPluginHmr } from './hmr'
 // 插件契约面（`@dsc/ui` 的落点就是 src/plugin-api.ts）与平台模块表数据文件：
 // 前者同时是 MODULES 里 `@dsc/ui` 一格的实现，必须与壳内部用的是同一份模块实例。
@@ -105,11 +106,14 @@ export const BOOT_STATE_GLOBAL = '__DSC_UI_BOOT_STATE__'
  * 静态 import 提供——与壳的同一个 vite 图，保证实例一致。TUI 壳是**另一张表**
  * （`src/packages/ui-core/tui-plugins.ts`），这几条只对 web 值面成立。
  *
- * `@dsc/ui-layout` 也在表里，但它与那三个不是同一种：那三个是库包（没有 `./client`），
- * 布局是**真的客户端插件**（有自己的行与 `lib/ui/plugins/layout/client.js`）。它进这张表
- * 是因为 `@dsc/ui` 把它的读 hook 整包转出给插件——插件拿到的 hook 与骨架里的 App 必须
- * 是同一份模块（条目的 `./client` 只是转出这一份，见 `src/packages/ui-layout/ui/ui.tsx`）。
- * 不放进表里的话，插件 bundle 会各内联一份，RuntimeContext 分家、页与视图信号各写各的。
+ * `@dsc/ui-runtime` 也在表里，与那三个同属「种子包」一档：装的是**状态**（宿主通道、
+ * RuntimeContext、页 / 视图信号、外观落地）。它进这张表是因为 `@dsc/ui` 把这些整包转出给
+ * 插件，而布局插件的 bundle 也读同一批——不放进表里的话，插件 bundle 与布局 bundle 会各
+ * 内联一份，RuntimeContext 分家，首渲染就抛「useHostChannel 必须在 RuntimeProvider 里用」。
+ *
+ * `@dsc/ui-layout` **不在**表里（2026-11-04 夜起）：它是画出骨架的插件，实现随自己的
+ * `client.js` 走；一旦有 bundle 把 `@dsc/ui-layout` 留成 require，运行期会撞「白名单外的模块」，
+ * 构建脚本因此加了一条「产物里不许出现 @dsc/ui-core / @dsc/ui-layout 的 require」的硬断言。
  *
  * `@xterm/xterm` 与 `@xterm/addon-fit` 在表里（2026-10-10 加的）：终端插件要用它们，
  * 而"每个插件自带一份 xterm"会让每个用到终端的插件都拖进 ~400KB。放进平台表之后
@@ -124,8 +128,8 @@ const MODULES: Readonly<Record<string, unknown>> = {
   '@dsc/ui-slots': uiSlots,
   '@dsc/ui-primitives': uiPrimitives,
   '@dsc/ui-dockkit': uiDockkit,
-  // 布局的 client.js 只转出这一份（它自己的骨架在壳的 app bundle 里，见 ui/ui.tsx 抬头）。
-  '@dsc/ui-layout': uiLayout,
+  // 布局插件的 bundle 与 19 个界面单元都按包名 require 到这一份（同一份状态）。
+  '@dsc/ui-runtime': uiRuntime,
   '@xterm/xterm': xterm,
   '@xterm/addon-fit': xtermFit,
 }

@@ -402,7 +402,7 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
 「外观」三项存在 `~/.dsc/settings.json` 的 `ui` 里（`themeMode` / `fontSize` / `density`），
 设置界面改完立刻生效并落盘。**「按钮大小」那条轴已经退场**：`--dsc-btn-scale` 不再写值，
 `styles.css` 用固定尺寸覆盖了旧的 `calc(Npx * var(--dsc-btn-scale))`；旧存档里存着 `buttonScale`
-的读得到就忽略（`src/packages/ui-layout/ui/appearance.ts:15-16,130`），照着它调不会有任何效果。
+的读得到就忽略（`src/packages/ui-runtime/ui/appearance.ts:15-16,130`），照着它调不会有任何效果。
 
 1. `appearance.ts` 的 `applyAppearance()` 往 `<html>` 写 `data-theme` / `data-density` / `--dsc-font-scale`，
    样式表据此换色、换字号；
@@ -446,7 +446,7 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
 落地要同步的六处（漏一处就有一套界面停在上一个主题里）：
 
 - `src/contract.ts` 的 `ThemeMode`、`src/core/prefs.ts` 的 `THEME_MODES`
-- 壳的归一化（`src/packages/ui-layout/ui/appearance.ts`）
+- 壳的归一化（`src/packages/ui-runtime/ui/appearance.ts`）
 - 设置里的磁贴（`plugins/settings/ui.tsx` 的 `THEME_TILES`，四块一行：每块 76px，行宽 328px）
 - `desktop/electron/main/index.ts` 的 `applyThemeSource`：`claude` 报成 `light`，
   因为系统画的原生弹层只认深浅，透传会被 `nativeTheme` 拒掉

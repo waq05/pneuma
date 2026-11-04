@@ -174,7 +174,7 @@ console.log('[7] 档门：Claude 档在四处开关与两份令牌里都接上')
 {
   const contract = flat(readContractSource())
   const prefs = flat(read('/src/core/prefs.ts'))
-  const shellAppearance = flat(read('/src/packages/ui-layout/ui/appearance.ts'))
+  const shellAppearance = flat(read('/src/packages/ui-runtime/ui/appearance.ts'))
   const settingsUi = flat(read('/' + resolveUiHalf('settings') + '/ui.tsx'))
   const electronMain = flat(read('/desktop/electron/main/index.ts'))
   check('内核类型里有 claude', contract.includes("export type ThemeMode = 'dark' | 'light' | 'claude' | 'system'"))

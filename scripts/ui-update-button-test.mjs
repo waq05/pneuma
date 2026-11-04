@@ -15,7 +15,7 @@
  *
  * @module dsc/scripts/ui-update-button-test
  */
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { resolveUiHalf } from './_check-runner.mjs'
@@ -89,11 +89,11 @@ console.log('[5] 设置页「关于」的 kind:update 分出口')
   check('有新版时不再打开发布页（两条出口互斥）', !/kind === 'update'[\s\S]{0,120}?openExternal/.test(settings))
 }
 
-console.log('[6] 产物钉：真打进 lib/ui/assets 了')
+console.log('[6] 产物钉：真打进布局插件的 bundle 了')
 {
-  const dir = join(root, 'lib', 'ui', 'assets')
-  const files = readdirSync(dir).filter((name) => name.endsWith('.js'))
-  const bundle = files.map((name) => readFileSync(join(dir, name), 'utf8')).join('\n')
+  // 2026-11-04 夜起更新钮随布局插件走（骨架实现搬进了 `lib/ui/plugins/layout/client.js`），
+  // 不再编进壳的 app bundle——这里改读那份产物，钉的是「真打进去了」而不是「在哪一份里」。
+  const bundle = read(join('lib', 'ui', 'plugins', 'layout', 'client.js'))
   check('产物里有 update-btn（按钮真打进去了）', bundle.includes('update-btn'))
   check('产物里有 checkUpdate / installUpdate', bundle.includes('checkUpdate') && bundle.includes('installUpdate'))
   check('产物里订阅了两个更新事件', bundle.includes('update-status') && bundle.includes('update-progress'))

@@ -37,7 +37,7 @@ import {
   subscribeDock,
   type DockReview,
 } from '@dsc/ui-dockkit'
-import { shellPage, subscribePage } from '@dsc/ui-layout'
+import { shellPage, subscribePage } from '@dsc/ui-runtime'
 
 // 载体基元与槽名契约：终端壳的对应物在 `src/packages/ui-core/tui-plugin-api.ts`。
 // 槽名两边导出同名常量——插件 import 它写注册目标，字符串字面量不散落。
@@ -222,8 +222,8 @@ export function hostStatus(snapshot: HostSnapshot | null): HostStatusView | null
  *
  * `getHostNative` / `useHostNative` / `HostNative` / `readCssColor` / `readCssValue` /
  * `toHexColor` 的实现住 `@dsc/ui-primitives`（`native.ts` / `css.ts`），由文件尾
- * 那句整包转出交给插件。为什么挪下去：壳自己（`ui-layout` 的 appearance / app）也要用
- * 它们，实现留在这一层就得让 `ui-layout` 反过来引 `@dsc/ui`——包间成环（E4 收尾剪掉的）。
+ * 那句整包转出交给插件。为什么挪下去：壳自己（`ui-runtime` 的 appearance、`ui-layout` 的 app）
+ * 也要用它们，实现留在这一层就得让下层反过来引 `@dsc/ui`——包间成环（E4 收尾剪掉的）。
  * 两条路（插件与壳）取到的仍是**同一份实现**（同一个模块实例）。
  */
 
@@ -291,15 +291,15 @@ export type { DockReview, DockTabBodyProps, DockTabKindMeta } from '@dsc/ui-dock
  * 页条目注册在 `shell.page` 槽里，自己读 `useShellPage()` 比对自己的 id：
  * 不是自己就返回 null。侧栏入口（或页自己的返回钮）写 `setShellPage`。
  *
- * 三个读 hook（页 / 正文脸 / 聚焦步骤）都**实现**在 `@dsc/ui-layout`（那份状态的
- * 同一个模块里），这里只转出——壳自己也要读它们，实现放这一层就会让 `ui-layout`
- * 反过来引 `@dsc/ui`（包间成环，E4 收尾时沉下去的）。
+ * 三个读 hook（页 / 正文脸 / 聚焦步骤）都**实现**在 `@dsc/ui-runtime`（那份状态的
+ * 同一个模块里），这里只转出——壳自己也要读它们，实现放这一层就会让下层反过来引
+ * `@dsc/ui`（包间成环，E4 收尾时沉下去的）。
  */
-export { setShellPage, useShellPage } from '@dsc/ui-layout'
+export { setShellPage, useShellPage } from '@dsc/ui-runtime'
 
 /** 槽名常量表也从这里转出去：插件写 `SLOT.header` 比手打字符串不容易错。 */
 export { SLOT, type ShellSlot } from '@dsc/ui-slots'
-export { subscribePage, shellPage } from '@dsc/ui-layout'
+export { subscribePage, shellPage } from '@dsc/ui-runtime'
 
 /**
  * ── 正文区的两张脸（对话 / 轨迹）──────────────────────────────────────────────
@@ -307,20 +307,20 @@ export { subscribePage, shellPage } from '@dsc/ui-layout'
  * 顶栏页签、会话右键的「查看轨迹」、工具行的「在轨迹中查看」药丸都往这里写；
  * 轨迹插件读 `useThreadView()` 决定画不画、读 `useTraceFocus()` 拿一次性聚焦目标。
  */
-import { clearTraceFocus, openTrace, setThreadView, shellThreadView, subscribeThreadView, traceFocusStep } from '@dsc/ui-layout'
+import { clearTraceFocus, openTrace, setThreadView, shellThreadView, subscribeThreadView, traceFocusStep } from '@dsc/ui-runtime'
 export { clearTraceFocus, openTrace, setThreadView, subscribeThreadView, traceFocusStep, shellThreadView }
-export { useThreadView, useTraceFocus } from '@dsc/ui-layout'
-export type { ThreadView } from '@dsc/ui-layout'
+export { useThreadView, useTraceFocus } from '@dsc/ui-runtime'
+export type { ThreadView } from '@dsc/ui-runtime'
 
 
-export { useChannelStatus, useHostChannel, useHostError, useHostSelector, useHostSnapshot } from '@dsc/ui-layout'
-export { useTodayUsage, type TodayUsage } from '@dsc/ui-layout'
+export { useChannelStatus, useHostChannel, useHostError, useHostSelector, useHostSnapshot } from '@dsc/ui-runtime'
+export { useTodayUsage, type TodayUsage } from '@dsc/ui-runtime'
 // 旁问的流式增量（`event: ask`）：插件只要一个回调，不必认识 SSE。
-export { useAskStream } from '@dsc/ui-layout'
-export type { AskChunk } from '@dsc/ui-layout'
+export { useAskStream } from '@dsc/ui-runtime'
+export type { AskChunk } from '@dsc/ui-runtime'
 // 等人的宿主方法（写类 dock op = 过审批卡）要用的长超时：30 秒的默认档会把「等你点卡」
 // 报成「宿主超时」。插件里凡是会弹审批卡的调用都该带上它。
-export { HUMAN_WAIT_TIMEOUT_MS, type InvokeOptions } from '@dsc/ui-layout'
+export { HUMAN_WAIT_TIMEOUT_MS, type InvokeOptions } from '@dsc/ui-runtime'
 /**
  * 服务表的 React 订阅面（A1）：插件用它读别的插件提供的服务，并跟着服务的出现/消失
  * 换数据源（D3 的 status 面板靠它从本地轮询切到 team 的共享席位，无需刷新页面）。
@@ -393,7 +393,7 @@ export function useActions(): readonly UiAction[] {
 export { useSeat } from '@dsc/ui-core'
 export { defineStore } from '@dsc/ui-core'
 export type { ActionsDecl, BakedActions, PropsStoreOf, SeatInstance, SnapshotSelectorHook, StoreHandle } from '@dsc/ui-core'
-export type { ChannelStatus, HostHello } from '@dsc/ui-layout'
+export type { ChannelStatus, HostHello } from '@dsc/ui-runtime'
 export type { SlotEntry, SlotKind, UiHostInfo, UiRuntimeApi, UiSlotApi, HostSnapshot }
 // 基元库整包转出（E2 拆包后原来是经 `./icons` 转发壳整包转出的，导出面与那时**逐名相同**）：
 // 插件 bundle 里 `import { IconPin } from '@dsc/ui'` 即可，不必各自内联一份 SVG。

@@ -20,8 +20,8 @@
  *
  * @module dsc-ui-shell/ui-renderer/hmr
  */
-// 宿主通道类型住 `@dsc/ui-layout`（通道的 React 面同址）；装载会话同包，相对取。
-import type { HostChannel, HostPluginsFrame } from '@dsc/ui-layout'
+// 宿主通道类型住 `@dsc/ui-runtime`（通道的 React 面同址）；装载会话同包，相对取。
+import type { HostChannel, HostPluginsFrame } from '@dsc/ui-runtime'
 import type { UiBootSession } from './boot'
 
 /** 一条「页内同步失败」（只影响这个页面，不改宿主的启用状态）。 */

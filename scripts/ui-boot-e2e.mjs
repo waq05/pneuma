@@ -20,7 +20,7 @@
  * 依赖：`lib/` 与 `lib/ui/`（先构建）、`desktop/node_modules/electron`。
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -250,6 +250,31 @@ async function main() {
   const shellOk = check('界面壳产物在', existsSync(join(root, 'lib', 'ui', 'assets', 'index.html')))
   check('渲染器产物在', existsSync(join(root, 'lib', 'ui', 'plugins', 'renderer', 'client.js')))
   check('骨架产物在', existsSync(join(root, 'lib', 'ui', 'plugins', 'layout', 'client.js')))
+  // [0] 产物形态：骨架的实现必须**真在这个 bundle 里**（2026-11-04 夜搬完之后的判据）。
+  // 1.3 KB 那种「转手 require 平台种子」的薄入口正是这一轮要消灭的东西，所以按体积与
+  // 依赖两条一起看：体积证明实现进来了，require 清单证明共享状态还是从种子里取的。
+  const layoutCode = readFileSync(join(root, 'lib', 'ui', 'plugins', 'layout', 'client.js'), 'utf8')
+  check(
+    '骨架产物体积说明实现真在里面（> 30 KB）',
+    Buffer.byteLength(layoutCode) > 30 * 1024,
+    String(Buffer.byteLength(layoutCode)) + ' B',
+  )
+  check(
+    '骨架产物从平台种子取共享状态（require @dsc/ui-runtime）',
+    layoutCode.includes('require("@dsc/ui-runtime")'),
+  )
+  check(
+    '骨架产物不把布局包留成 require（实现是内联的）',
+    !layoutCode.includes('require("@dsc/ui-layout")'),
+  )
+  // 所有产物都不许 require 这两个：前者不提供给插件，后者只属于布局自己。
+  const pluginDir = join(root, 'lib', 'ui', 'plugins')
+  const offenders = readdirSync(pluginDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => ({ id: entry.name, code: readFileSync(join(pluginDir, entry.name, 'client.js'), 'utf8') }))
+    .filter((row) => row.code.includes('require("@dsc/ui-core")') || (row.id !== 'layout' && row.code.includes('require("@dsc/ui-layout")')))
+    .map((row) => row.id)
+  check('没有产物 require 内核或布局包', offenders.length === 0, offenders.join(','))
   if (!electronOk || !shellOk) {
     writeReport([], Date.now())
     process.exit(1)

@@ -157,7 +157,7 @@ console.log('[4] P1 三项')
   const statusbar = read('src/packages/ui-statusbar/ui/ui.tsx')
   const sessions = read('src/packages/ui-sessions/ui/ui.tsx')
   const transcript = readPluginSource(UI)
-  const channel = read('src/packages/ui-layout/ui/host-channel.ts')
+  const channel = read('src/packages/ui-runtime/ui/host-channel.ts')
 
   // 品牌两档：侧栏 20 / 窄栏 22，全部走变量。空态那档 2026-10-27 撤掉（用户说图标突兀）。
   check('品牌档位表存在（两档变量）', ['--dsc-logo-sm: 20px', '--dsc-logo-md: 22px'].every((line) => css.includes(line)))
@@ -168,7 +168,7 @@ console.log('[4] P1 三项')
   check('能力卡提示语留满两行（标题对得齐）', /\.welcome-card-hint \{[^}]*min-height: 2lh/.test(css))
 
   // 今日读数只留侧栏页脚（2026-10-28 对齐 dsh：底排只有轮/步、tok、上下文三段）。
-  check('共享 hook：ui-layout/usage-today 存在', existsSync(join(root, 'src/packages/ui-layout/ui/usage-today.ts')))
+  check('共享 hook：ui-runtime/usage-today 存在', existsSync(join(root, 'src/packages/ui-runtime/ui/usage-today.ts')))
   check('hook 从 @dsc/ui 转出', read('ui-shell/src/plugin-api.ts').includes('useTodayUsage'))
   check('状态栏不再挂今日段', !statusbar.includes('function TodaySegment(') && !statusbar.includes('useTodayUsage'))
   check('页脚改用同一份 hook（不再自己拉 usageStats）', sessions.includes('useTodayUsage(usage)') && !/SidebarFooter[\s\S]{0,900}?invoke<UsageStatsView>/.test(sessions))

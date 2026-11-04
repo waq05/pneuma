@@ -13335,3 +13335,70 @@ session-open-in 全绿、ui-status-panel 全部通过、readme 26 条断言）�
 - `src/core/dsh-compat/*`、`remote/*`、`ui-server.ts` / `ui-methods.ts` / `ui-hmr.ts` 是加载器本体，留内核。
 - 界面壳（`src/ui/index.ts` 静态再导出 8 个 core 模块）要先拆，才能把 `ui-layout` / `ui-renderer` 成包。
 
+## 2026-11-04 夜：骨架的实现搬回布局插件自己的 bundle（② 收尾）
+
+### 为什么动这一刀
+
+上一轮留下的 ② 是：`lib/ui/plugins/layout/client.js` 只有 **1.3 KB**，壳的 app bundle **990 KB**——布局是
+「有行、能停用的插件」，可它一行实现都不在自己的产物里，停用省下的只是那 1.3 KB 的空壳。这与 dsh 的
+`ui-layout` 差得最远：那边布局插件带走的是 AppFrame 的整棵组件树。
+
+原来那版方案（运行时全局委托 `__DSC_LAYOUT_API__` + 关 external + 钉死 19 个单元的求值顺序）代价在第三件：
+求值顺序变成隐性契约，谁在后面加一个单元就可能踩空。这次换成按 dsh 的真实形状切——**共享的留下，画图的搬走**：
+
+| 归属 | 内容 |
+|---|---|
+| 新库包 `@pneuma/ui-runtime`（`pneuma.library: true`、无行、平台种子） | `host-channel.ts`、`runtime-context.tsx`、`page-state.ts`、`thread-view.ts`、`appearance.ts`、`usage-today.ts` |
+| `@pneuma/ui-layout`（有行、`./client`、`phase: early`） | `app.tsx`、`review-pane.tsx`、`update-button.tsx`、入口 `ui.tsx` |
+
+判据不是「文件搬了几只」，而是「停用真的省掉了什么」：布局产物 **1,320 B → 41,714 B**，壳的主 bundle
+**990 KB → 969.9 KB**（少掉的正是 App 那棵树）。
+
+### 改了什么
+
+- 新包 `src/packages/ui-runtime/`：`package.json`（library）、`index.ts`（空 apply）、`ui/index.ts`（六个模块的桶）、
+  `ui/package.json`（`@dsc/ui-runtime` 身份）、`locale/en.json`、`README.md`、`tests/ui-runtime.test.mjs`（6 条）。
+- `ui-shell/src/plugin-api.ts` 的整包转出从 `@dsc/ui-layout` 改指 `@dsc/ui-runtime`——插件写的
+  `useHostSnapshot()` / `useShellPage()` / `useThreadView()` 一个字都不用改。
+- 平台种子表（`src/packages/ui-boot/ui/platform-modules.json` ↔ `boot.ts` 的 `MODULES`）换成
+  `@dsc/ui-runtime`；`@dsc/ui-layout` 离开这张表——它不再是种子，实现随自己的 `client.js` 走。
+- `ui-shell/build-plugins.mjs`：外部化清单改成按 id 算（只有 `layout` 例外，去掉 `@dsc/ui-layout`），
+  并加一条硬断言：任何产物里出现 `require("@dsc/ui-core")` 或（除 layout 外）`require("@dsc/ui-layout")`
+  就构建失败。这两种错原本只在浏览器里炸，报错还指不到构建这一步。
+- `ui-renderer/ui/ui.tsx`：通道 / `RuntimeProvider` / 外观落地改从 `@dsc/ui-runtime` 取；
+  布局产物的导出面收窄成「只有 `App`」。
+- `ui-layout/ui/app.tsx` 里那两枚 `@dsc/ui-core` 的**值**（`NATIVE_BRIDGE_VERSION` / `NATIVE_OPS`）改经
+  `@dsc/ui-runtime` 转出——`@dsc/ui-core` 是故意不给插件的，直接引会在运行期撞「白名单外的模块」。
+- 探针跟着搬家：`ui-color-fallback-test`、`ui-git-branch-test`、`ui-interaction-base-test`、
+  `ui-legacy-compat-test`、`ui-side-ask-test`、`ui-sidebar-footer-test` 六支读源码的路径改到
+  `src/packages/ui-runtime/ui/`；`ui-update-button-test` 的产物钉从 `lib/ui/assets` 改成
+  `lib/ui/plugins/layout/client.js`（更新钮现在随布局走）。
+- `scripts/ui-plugin-test.mjs` 的 [5b]：层表加 `@dsc/ui-runtime`（种子档），forbidden 表按新链条
+  `primitives / slots ← dockkit ← runtime ← layout ← renderer` 重写；新增一条「runtime 在种子表里、
+  layout 不在」。
+- `scripts/ui-boot-e2e.mjs` 加 [0] 产物形态四条：骨架产物 > 30 KB、它 require `@dsc/ui-runtime`、
+  它不 require `@dsc/ui-layout`、没有任何产物 require 内核或布局包。三态截图与断言仍是原来那套（24 → 29 条）。
+
+### 验证
+
+- `pnpm run typecheck` 0；`pnpm run build` 0（77 个功能包 / 77 行 + **12** 个库包）；
+  `pnpm -C ui-shell build` 0（21 份 `client.js`；布局 41,714 B）。
+- `pnpm run check:plugin` 0：标准八项 **89/89**、包测试 **89 个用例 / 447 条断言**、换包 e2e 17 PASS。
+- `pnpm run check:ui` 0（**54/54**）。
+- `node scripts/ui-boot-e2e.mjs` 全绿（三态，29 条断言，约 61 秒），截图
+  `desktop/shots/ui-boot-{normal,layout-off,renderer-off}.png`；正常态那张里侧栏、欢迎页、输入区、
+  今日用量都在——说明骨架从插件 bundle 里装上来之后画得对。
+
+### 踩到的坑
+
+1. **「实现搬走」与「状态搬走」必须分开**：共享的 React context / 信号 / 外观记录一旦随组件进了 bundle，
+   插件与骨架就会各有一份，首渲染抛「useHostChannel 必须在 RuntimeProvider 里用」。先切「状态 / 画图」，
+   再谈 external，顺序反了会得到一个能构建、一打开就白的产物。
+2. **`@dsc/ui-core` 的值是隐形的雷**：它在 `EXTERNAL` 里但不在白名单里，类型引用没事、值引用必炸。
+   布局里那两枚原生桥常量就是这种用法，原来被「布局在壳里」掩盖了，搬进 bundle 才暴露。
+3. **探针读的是文件，不是包**：这一轮又有六支探针因为路径写死而 ENOENT。搬家时先 grep
+   `src/packages/<旧包>/ui/` 全部引用，比事后看红快。
+4. **产物钉要跟着归属走**：更新钮的产物断言原来读壳的 `lib/ui/assets`，按钮搬进布局 bundle 后那条必然红。
+   判据应是「真打进了哪份产物」，不是「以前在哪份」。
+
+

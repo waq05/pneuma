@@ -651,7 +651,7 @@ exe 当**桌面端**跑的时候才要清掉它。
 
 界面参数想自动化，就加 `?xxx=1` 这类一次性钩子，现成的五个是：`skillstab`
 （`src/packages/ui-skills/ui/ui.tsx:121`）、`dock`（`src/packages/ui-layout/ui/app.tsx:231`）、
-`diag`（同文件 `:899`）、`theme`（`src/packages/ui-layout/ui/appearance.ts:221`）、
+`diag`（同文件 `:899`）、`theme`（`src/packages/ui-runtime/ui/appearance.ts:221`）、
 `panels`（`src/packages/ui-primitives/ui/panels.ts:60`）；`theme` 取值 `dark` / `light` / `claude`，
 `panels` 形如 `sidebar:320,dock:640,collapsed:1`。别在自检脚本里手写点击。
 
@@ -665,7 +665,7 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 快照推送节流 / git 读数相等判断 / 壳里十个插件的快照读数（`ui-primitives/snapshot`）各收成一份；
 明细见报告 §十二 至 §十五。
 第八批（同日）改动两处：时间格式化统一走 `core/clock.ts`（原先浏览器那条链输出 UTC、沙箱日志输出本地时间，
-同一屏两套时间）；界面壳的模块级状态多了一份 `createSignal`，试点落在 `ui-layout/thread-view.ts`。
+同一屏两套时间）；界面壳的模块级状态多了一份 `createSignal`，试点落在 `ui-runtime/thread-view.ts`。
 第九批（同日）把模块级状态收完：切页、团队面板、设置面板、动作表、dock 布局、文件树、旁问、启动账本
 共八处改用 `createSignal`（值归信号用 `set`，值在别处用 `notify`）；`host-channel` 与 `hmr` 是实例作用域，
 明确不收。函数体重复组复扫 **0**。
@@ -854,7 +854,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | 编辑并重发（重新编辑） | **留在当前会话里**截断重来：宿主给日志追加一条 `rewind { keep }` 记录（`keep` = 保留几条**人打的**用户消息，机器的 `notice` 不算），内存里把第 keep 条及其之后的消息丢掉并清掉它们的工具派生状态，然后发 `dsc/session-open` 让转录层重放。日志仍 append-only——原文一条不删，重启按同一条规则重放；界面只调 `rewindSession`，不再 `forkSession` / `openSession`。改的是第一条时把改过的文字一起传上去，直接写成自动标题（否则侧栏一直显示被作废的原文）。读原文的那几条路（分叉 / 分叉菜单）先过 `applyRewinds()`，把 rewind 应用成「还剩哪些行」，免得列出、或复制走已作废的消息 | `src/core/session.ts`（`rewindToUser` / `cutIndexBeforeUser` / `case 'rewind'`）、`src/packages/session/index.ts`（`rewind`）、`src/core/ui-methods.ts`、`src/packages/ui-transcript/ui/ui.tsx`（`editAndResend`） |
 | 分支钮读数（输入框上方） | 快照面 `surfaces.git` = `repo` / `branch` / `detached` / `dirtyFileCount`（计数含未跟踪、只看会话 cwd 之内）；节奏 12s / 30s / 60s 三档 + 事件催拍（回合收工、换会话、写类 git op 落盘）；**没人读快照就不跑 git**（CLI / TUI 会话零开销） | `src/packages/git/index.ts`、`src/core/git-exec.ts` |
 | git 切 / 建分支 | `dock` 的写类 op（`git-checkout` / `git-branch-create`，**过审批**，卡片文案在 `DOCK_WRITE_LABEL`），执行用 `git switch --no-guess`（避开 `checkout <名字>` 的分支/路径歧义）；分支清单是读类 op `git-branches`（界面通道直接放行，当前分支排第一） | `src/core/dock-ops.ts`、`src/packages/desktop-dock/index.ts` |
-| 宿主方法调用的超时 | 默认 30 秒；**会挂起等人的方法**（写类 dock op = 过审批卡，卡自己等 5 分钟）给 5 分半——不然用户还在读卡，页面先报「调用宿主方法超时」 | `src/packages/ui-layout/ui/host-channel.ts`（`DEFAULT_INVOKE_TIMEOUT_MS` / `HUMAN_WAIT_TIMEOUT_MS`） |
+| 宿主方法调用的超时 | 默认 30 秒；**会挂起等人的方法**（写类 dock op = 过审批卡，卡自己等 5 分钟）给 5 分半——不然用户还在读卡，页面先报「调用宿主方法超时」 | `src/packages/ui-runtime/ui/host-channel.ts`（`DEFAULT_INVOKE_TIMEOUT_MS` / `HUMAN_WAIT_TIMEOUT_MS`） |
 | schedule 最小间隔 | `every` 下限 60 秒 | `src/core/schedule/rule.ts:26` |
 | schedule catch-up 窗口 | 一次性 120 秒；循环取半周期夹在 120 秒 ~ 2 小时，超窗只跑一次不补积压 | `src/core/schedule/rule.ts:29-35` |
 | lsp idle 回收 | 600 秒（设置可调，下限 30 秒） | `src/packages/lsp/client.ts:22` |
@@ -1136,7 +1136,7 @@ Windows 的最小化/最大化/关闭三个按钮由系统画，样式表够不�
 所以看不见跳色——以前只有一份深色的 `DARK_CHROME`，选浅色的人每次开窗都先黑一下。
 
 **出厂主题是 claude（暖米白）**（2026-10-30 从 dark 改过来）。默认值一共三处，改一处必须改全：
-`src/core/prefs.ts` 的 `readPrefs`（真源，宿主回读走它）、`src/packages/ui-layout/ui/appearance.ts` 的
+`src/core/prefs.ts` 的 `readPrefs`（真源，宿主回读走它）、`src/packages/ui-runtime/ui/appearance.ts` 的
 `DEFAULT_APPEARANCE` 与 `normalizeTheme`（宿主还没回读、或 localStorage 镜像为空时的那一帧）、
 `desktop/electron/main/index.ts` 的 `readUiTheme` 兜底（没 `settings.json` 时的首帧底色）。
 已经存过 `settings.json` 的用户不受影响：读档优先，默认值只服务于"从没选过"的情况。
