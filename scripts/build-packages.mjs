@@ -100,10 +100,35 @@ for (const pkg of packages) {
     writeFileSync(target, stubBody(target, file), 'utf8')
   }
   const pneuma = pkg.manifest.pneuma ?? {}
+  /**
+   * 只保留产物里**真的存在**的入口。
+   *
+   * 一个包两半边之后，界面半边的源码在包里（`./ui/ui.tsx`），但构建产物落
+   * `lib/ui/plugins/<id>/client.js`，**不在包内**。照抄会留下一条
+   * `import '@pneuma/<id>/client'` → ERR_MODULE_NOT_FOUND 的坏引用；
+   * 内置界面半本来就不走 exports（走产物目录的 bundle.json），所以这里去掉它，
+   * 把「这个包有界面半」这件事留在 `dsh.client` / `pneuma.client` 声明里。
+   */
+  const existsInDest = (target) => typeof target === 'string' && existsSync(join(dest, target))
+  // 基础两条永远在（`index.js` 是桩、`package.json` 还没写盘，别拿它们做过不过滤的判据）。
   const exports = {
     '.': './index.js',
     ...(pkg.manifest.exports ?? {}),
     './package.json': './package.json',
+  }
+  for (const [key, target] of Object.entries(pkg.manifest.exports ?? {})) {
+    const targetPath =
+      typeof target === 'string'
+        ? target
+        : target !== null && typeof target === 'object' && 'default' in target
+          ? target.default
+          : null
+    // dsh 形状的 `{types, default}` 只看 default；认不出的保持原样，别替人做决定。
+    // `.` 与 `./package.json` 是产物固定有的，不参与过滤（后者此刻还没写盘）。
+    if (key === '.' || key === './package.json') continue
+    if (targetPath !== null && typeof targetPath === 'string' && !existsInDest(targetPath)) {
+      delete exports[key]
+    }
   }
   const outManifest = {
     name: pkg.manifest.name ?? `@pneuma/${pkg.id}`,
@@ -112,6 +137,9 @@ for (const pkg of packages) {
     type: 'module',
     exports,
     pneuma,
+    // dsh.client 也要带过去：它是「这个包有界面半」在产物里的唯一声明（内置界面半的
+    // 产物不在包内，exports 那条已被上面的过滤去掉）。
+    ...(pkg.manifest.dsh === undefined ? {} : { dsh: pkg.manifest.dsh }),
     ...(pkg.manifest.engines === undefined ? {} : { engines: pkg.manifest.engines }),
     peerDependencies: { '@deepseek-ai/cordis': rootManifest.dependencies['@deepseek-ai/cordis'] },
   }

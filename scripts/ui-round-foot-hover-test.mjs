@@ -33,7 +33,7 @@ const read = (part) => readFileSync(join(root, part), 'utf8')
 const dirty = (hay, from, to) => hay.split(from).join(to)
 
 const css = read('ui-shell/src/legacy/views.css')
-const foot = read('ui-shell/src/packages/ui-transcript/rows/foot.tsx')
+const foot = read('src/packages/transcript/ui/rows/foot.tsx')
 
 /**
  * 只看这一段的样式（视图里还有别的 `.round-foot` 规则，从全文里找第一个会认错）：

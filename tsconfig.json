@@ -17,5 +17,8 @@
     "useUnknownInCatchVariables": true,
     "types": ["node"]
   },
-  "include": ["src"]
+  "include": ["src"],
+  // 界面半（src/packages/<id>/ui/）是浏览器代码：这里没有 DOM 库、也不带 React 的类型依赖，
+  // 编进来会一路报错。它们由 ui-shell/tsconfig.json 单独检查（那边有 DOM 与 jsx 环境）。
+  "exclude": ["src/packages/*/ui/**"]
 }

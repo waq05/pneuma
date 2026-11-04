@@ -121,7 +121,7 @@ check(
 // ── 7. 基元包导出 + 对话流接线 ──
 const barrel = read('ui-shell/src/ui-primitives/index.ts')
 check('基元包导出解析与卡片', barrel.includes("export * from './review-findings'") && barrel.includes("export * from './review-findings-card'"))
-const userRow = read('ui-shell/src/packages/ui-transcript/rows/user-row.tsx')
+const userRow = read('src/packages/transcript/ui/rows/user-row.tsx')
 check('对话流的用户消息先认 findings 再画气泡', userRow.includes('parseReviewFindings(entry.text)') && userRow.includes('<ReviewFindingsCard'))
 check('只读出口（右栏队友记录）也画成卡', (userRow.match(/ReviewFindingsCard/g) ?? []).length >= 2)
 

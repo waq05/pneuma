@@ -119,7 +119,7 @@ console.log('[3] 没有第三份拷贝')
   for (const dir of ['src', 'ui-shell/src', 'desktop/electron', 'remote-web/src']) walk(join(root, dir))
   check('全仓只有这两份实现', found.length === 2 && found.includes(CORE) && found.includes(SHELL), found.join(', '))
   // 界面侧不许再出现「按 size 格式化」的另一套名字。
-  const legacy = ['src/packages/spill/index.ts', 'ui-shell/src/packages/ui-composer/attachments.ts', 'ui-shell/src/packages/ui-transcript/rows/user-row.tsx'].filter((rel) => /function format(Size|Bytes)\s*\(/.test(read(rel)))
+  const legacy = ['src/packages/spill/index.ts', 'ui-shell/src/packages/ui-composer/attachments.ts', 'src/packages/transcript/ui/rows/user-row.tsx'].filter((rel) => /function format(Size|Bytes)\s*\(/.test(read(rel)))
   check('三个曾经的拷贝点都不再自带实现', legacy.length === 0, legacy.join(', '))
 }
 

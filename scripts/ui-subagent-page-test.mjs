@@ -29,7 +29,7 @@ import { readPluginSource } from './_check-runner.mjs'
 
 // 零依赖直读一个 `.ts`（Node 类型擦除），证明本探针走的就是模板那条路。
 const { seatPlan } = await import(
-  new URL('../ui-shell/src/packages/ui-transcript/process-groups.ts', import.meta.url).href
+  new URL('../src/packages/transcript/ui/process-groups.ts', import.meta.url).href
 )
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -47,7 +47,7 @@ const check = (name, condition, detail) => {
   }
 }
 
-const transcript = readPluginSource('ui-shell/src/packages/ui-transcript')
+const transcript = readPluginSource('src/packages/transcript/ui')
 const team = read('ui-shell/src/packages/ui-team/ui.tsx')
 
 // 模板那条零依赖 .ts 导入确实可用（本探针只拿它做一次存在性自检，不重复测它的语义）。

@@ -30,7 +30,7 @@ const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s
 
 const views = stripComments(read('ui-shell/src/legacy/views.css'))
 const styles = stripComments(read('ui-shell/src/styles.css'))
-const factory = read('ui-shell/src/packages/ui-transcript/tool-card/factory.tsx')
+const factory = read('src/packages/transcript/ui/tool-card/factory.tsx')
 
 let failures = 0
 let passes = 0

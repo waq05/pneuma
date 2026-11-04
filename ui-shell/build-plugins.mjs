@@ -1,5 +1,5 @@
 /**
- * 插件 bundle 的构建：把 `src/plugins/<id>/ui.tsx` 打成 `lib/ui/plugins/<id>/client.js`
+ * 插件 bundle 的构建：把界面半的入口 `ui.tsx` 打成 `lib/ui/plugins/<id>/client.js`
  * （注册进全局工厂表的 CommonJS 工厂），并写一份 `manifest.json` 说明有哪些插件、依赖谁。
  *
  * 为什么是 CJS 工厂而不是 ESM：插件 bundle 在页面里由加载器交给一个受控的 `require`
@@ -10,23 +10,30 @@
  * 而不是让加载器 `new Function(code)`：后者要求页面放开 `unsafe-eval`，
  * 一旦给页面加 CSP 所有插件会同时失效，而且报错来自浏览器安全策略、不进我们的诊断。
  *
- * 每个插件目录**必须**有 `package.json`：`peerDependencies['@dsc/ui']` 是它面对的契约区间，
- * 构建时写进清单条目的 `api`（宿主拿它做 semver 门禁，内置条目同样逐条判）。可选：再放一个
- * `plugin.json` 声明 `inject` / `immediately` / `external` / `platforms` / `phase`（两种文件并存）。
+ * 每个界面半**必须**声明它面对的契约区间：宿主包写在 `package.json` 的 `dsh.client.api`
+ * （一个包两半边），旧界面包写在 `peerDependencies['@dsc/ui']`。构建时写进清单条目的 `api`
+ * （宿主拿它做 semver 门禁，内置条目同样逐条判）。其余字段（`inject` / `immediately` /
+ * `external` / `platforms` / `phase`）也都在 `dsh.client` 里声明，不再认 `plugin.json`。
  *
  * @module dsc-ui-shell/build-plugins
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import react from '@vitejs/plugin-react'
 import { satisfies, validRange } from 'semver'
 import { build } from 'vite'
 
 const root = dirname(fileURLToPath(import.meta.url))
-// 0.9 起界面半边也是功能包：源码在 src/packages/ui-<id>/，产物仍落 lib/ui/plugins/<id>。
-const packagesDir = join(root, 'src', 'packages')
-const outRoot = resolve(root, '..', 'lib', 'ui', 'plugins')
+// 界面半边的源码有两个扫描根，新根优先、旧根兜底：
+//   新：src/packages/<id>/ui/           —— 一个包两半边，界面半与宿主半共用一个 package.json
+//   旧：ui-shell/src/packages/ui-<id>/  —— 还没迁的包仍在这里
+// **产物目录与 id 一律不动**：id 决定 lib/ui/plugins/<id>，也是启动图条目与停用记录里的身份。
+// 搬源码只搬源码，产物路径一改等于换了个插件。
+const repoRoot = resolve(root, '..')
+const hostPackagesDir = join(repoRoot, 'src', 'packages')
+const legacyPackagesDir = join(root, 'src', 'packages')
+const outRoot = join(repoRoot, 'lib', 'ui', 'plugins')
 const stageRoot = `${outRoot}.staging`
 
 /**
@@ -60,18 +67,35 @@ const PLATFORM_MODULES = JSON.parse(readFileSync(join(root, 'src', 'platform-mod
  */
 const EXTERNAL = [...PLATFORM_MODULES, '@dsc/ui-core']
 
+/**
+ * 不许出现第二份 React。图里这些模块本身是 external（不会被打进 bundle），但界面半搬到
+ * `src/packages/<id>/ui/` 之后，import 的解析起点从 ui-shell 变成了仓库根：pnpm workspace
+ * 下两边各有一份 react 时，解析会落到两个不同路径。把解析钉回壳那一份，防的是那件事。
+ */
+const DEDUPE = ['react', 'react-dom', 'react/jsx-runtime', 'react-dom/client']
+
 /** 工厂注册用的全局名（与 `src/boot.ts` 的 `FACTORY_GLOBAL` 同一个）。 */
 const FACTORY_GLOBAL = '__DSC_UI_FACTORIES__'
 
 /**
- * 读一个插件目录的元数据：`package.json` 的 peer 区间 → 清单 `api`，与可选的
- * `plugin.json` 并成一份（写坏了就报错——清单错一半比没有更糟）。
+ * 读一个界面半的元数据：界面契约区间 → 清单 `api`，载体声明 → inject / phase / …
+ *
+ * 声明有两处来源，按源码落点选：
+ *   - 宿主包（`src/packages/<id>/`，一个包两半边）：读包自己的 package.json，
+ *     `dsh.client` 是唯一声明处，`api` 从 `dsh.client.api` 读（与组合包、第三方同一套字段）；
+ *     `peerDependencies['@dsc/ui']` 可写可不写，写了就必须与它一致。
+ *   - 旧界面包（`ui-shell/src/packages/ui-<id>/`）：仍按 2.0 的读法，
+ *     `peerDependencies['@dsc/ui']` 是 api 区间，`dsh.client` 可选。
+ *
+ * 写坏了就报错——清单错一半比没有更糟。
+ * @param dir - 声明所在目录（宿主包根 / 旧界面包根）
+ * @param hostHalf - true = 宿主包里的界面半边
  */
-function readMeta(dir) {
+function readMeta(dir, hostHalf) {
   const pkgFile = join(dir, 'package.json')
   if (!existsSync(pkgFile)) {
     throw new Error(
-      `${pkgFile} 不存在：每个插件目录都必须有 package.json（写 name / version / peerDependencies['@dsc/ui']）`,
+      `${pkgFile} 不存在：界面半的声明必须写在自己的 package.json 里（dsh.client 或 peerDependencies['@dsc/ui']）`,
     )
   }
   let pkg
@@ -80,17 +104,44 @@ function readMeta(dir) {
   } catch (error) {
     throw new Error(`${pkgFile} 不是合法 JSON（${error instanceof Error ? error.message : String(error)}）`)
   }
-  const rawPeer =
-    pkg !== null && typeof pkg === 'object' ? (pkg.peerDependencies ?? {})['@dsc/ui'] : undefined
-  if (typeof rawPeer !== 'string' || rawPeer.trim() === '') {
-    throw new Error(
-      `${pkgFile} 的 peerDependencies['@dsc/ui'] 缺失或不是非空字符串（要写 semver 区间，如「^1.1.0」）——清单的 api 字段从它读`,
-    )
+  const record = pkg !== null && typeof pkg === 'object' ? pkg : {}
+  const rawPeer = (record.peerDependencies ?? {})['@dsc/ui']
+  const declaredClient = record.dsh?.client
+  /** 区间来自哪一处：报错时要指得准，不然作者会去改错文件。 */
+  let api
+  let apiWhere
+  if (hostHalf === true) {
+    // 宿主包：dsh.client 是唯一声明处，缺了不能猜、也不能回落到目录名。
+    if (declaredClient === null || typeof declaredClient !== 'object') {
+      throw new Error(
+        `${pkgFile} 没有 dsh.client：宿主包的界面半边靠它声明` +
+          `（至少写 { platform: 'pneuma', api: '^0.8.1' }）`,
+      )
+    }
+    if (typeof declaredClient.api !== 'string' || declaredClient.api.trim() === '') {
+      throw new Error(
+        `${pkgFile} 的 dsh.client.api 缺失或不是非空字符串（要写 semver 区间，如「^0.8.1」）——清单的 api 字段从它读`,
+      )
+    }
+    api = declaredClient.api.trim()
+    apiWhere = "dsh.client.api"
+    if (typeof rawPeer === 'string' && rawPeer.trim() !== '' && rawPeer.trim() !== api) {
+      throw new Error(
+        `${pkgFile}: peerDependencies['@dsc/ui']「${rawPeer.trim()}」与 dsh.client.api「${api}」不一致（一处声明就够，两处会分叉）`,
+      )
+    }
+  } else {
+    if (typeof rawPeer !== 'string' || rawPeer.trim() === '') {
+      throw new Error(
+        `${pkgFile} 的 peerDependencies['@dsc/ui'] 缺失或不是非空字符串（要写 semver 区间，如「^1.1.0」）——清单的 api 字段从它读`,
+      )
+    }
+    api = rawPeer.trim()
+    apiWhere = "peerDependencies['@dsc/ui']"
   }
-  const api = rawPeer.trim()
   if (validRange(api) === null) {
     throw new Error(
-      `${pkgFile} 的 peerDependencies['@dsc/ui']「${api}」不是合法的 semver 区间（要像 ^1.1.0 / 1.x 这样）`,
+      `${pkgFile} 的 ${apiWhere}「${api}」不是合法的 semver 区间（要像 ^1.1.0 / 1.x 这样）`,
     )
   }
   if (!satisfies(shellVersion, api, { includePrerelease: true })) {
@@ -100,10 +151,9 @@ function readMeta(dir) {
     )
   }
   const meta = { api }
-  // 2.0 起，插件可以在**自己的 package.json** 里用 `dsh.client` 声明界面半——与组合包
+  // 2.0 起，界面半在**自己的 package.json** 里用 `dsh.client` 声明——与组合包
   // （profile 里装的第三方包）同一套字段。声明了它就不再读 plugin.json：一个插件只有
   // 一处声明，两处并存迟早会分叉。
-  const declaredClient = pkg !== null && typeof pkg === 'object' ? pkg.dsh?.client : undefined
   if (declaredClient !== undefined) {
     if (declaredClient === null || typeof declaredClient !== 'object') {
       throw new Error(`${pkgFile} 的 dsh.client 必须是对象（platform / api / phase / inject / services）`)
@@ -195,31 +245,86 @@ function applyExtraFields(meta, doc, where) {
   return meta
 }
 
-// 目录名 → 产物 id：ui-browser → browser（清单 id 与 0.8 一致，宿主不用改发现逻辑）。
+/**
+ * 宿主包目录名 → 产物 id 的映射口子。
+ *
+ * 内置这批（含已迁的 transcript）旧 id 与宿主包目录同名，所以表是空的。将来若出现
+ * 「旧 id ≠ 包名」的包，在这里登记一行：id 一改，产物目录、启动图条目、用户停用记录
+ * 全部跟着变，所以只许显式登记，不许按命名规则猜。
+ */
+const HOST_ID_OVERRIDES = new Map()
+
+/** 旧界面包目录名 → 产物 id：ui-browser → browser（清单 id 与 0.8 一致，宿主不用改发现逻辑）。 */
 const dirToId = (name) => name.slice('ui-'.length)
 
-const ids = readdirSync(packagesDir, { withFileTypes: true })
-  .filter((entry) => entry.isDirectory() && entry.name.startsWith('ui-'))
-  .map((entry) => dirToId(entry.name))
-  .sort()
+/**
+ * 扫两个根，得到「这次要构建哪些界面半」。
+ *
+ * 新根优先：同一个 id 在两边都有时用新根，并打一行提示（迁移只该是「一边有」，
+ * 两边都有就是搬完没删旧目录）。旧根等 19 个包迁完可以整个删掉。
+ * 旧根仍守着老规矩：`ui-*` 目录存在就必须有 `ui.tsx`（缺了说明目录建早了）。
+ * @returns {{ plugins: {id: string, entry: string, metaDir: string, hostHalf: boolean}[], missingEntry: string[] }}
+ */
+function discover() {
+  const found = new Map()
+  // 1) 新根：src/packages/<id>/ui/ui.tsx —— 宿主包里长出来的界面半边。
+  //    宿主包没有 ui/ 是常态（37 个包只有宿主半），所以这里不看目录名开头，只看有没有入口。
+  if (existsSync(hostPackagesDir)) {
+    for (const entry of readdirSync(hostPackagesDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      const uiDir = join(hostPackagesDir, entry.name, 'ui')
+      const entryFile = join(uiDir, 'ui.tsx')
+      if (!existsSync(entryFile)) continue
+      const id = HOST_ID_OVERRIDES.get(entry.name) ?? entry.name
+      found.set(id, { id, entry: entryFile, metaDir: join(hostPackagesDir, entry.name), hostHalf: true })
+    }
+  }
+  // 2) 旧根兜底：ui-shell/src/packages/ui-<id>/ui.tsx。
+  const missingEntry = []
+  if (existsSync(legacyPackagesDir)) {
+    for (const entry of readdirSync(legacyPackagesDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !entry.name.startsWith('ui-')) continue
+      const entryFile = join(legacyPackagesDir, entry.name, 'ui.tsx')
+      if (!existsSync(entryFile)) {
+        missingEntry.push(entry.name)
+        continue
+      }
+      const id = dirToId(entry.name)
+      const existing = found.get(id)
+      if (existing !== undefined) {
+        console.log(
+          `[build-plugins] ${id}：新根已有 ${relative(repoRoot, existing.entry).split('\\').join('/')}，` +
+            `忽略旧根 ${entry.name}（搬完就该删掉旧目录）`,
+        )
+        continue
+      }
+      found.set(id, { id, entry: entryFile, metaDir: join(legacyPackagesDir, entry.name), hostHalf: false })
+    }
+  }
+  const plugins = [...found.values()].sort((a, b) => a.id.localeCompare(b.id))
+  return { plugins, missingEntry }
+}
 
-const missingEntry = ids.filter((id) => !existsSync(join(packagesDir, 'ui-' + id, 'ui.tsx')))
+const { plugins, missingEntry } = discover()
+
 if (missingEntry.length > 0) {
-  console.error(`[build-plugins] 这些界面包里没有 ui.tsx：${missingEntry.join('、')}（目录存在就该有入口）`)
+  console.error(`[build-plugins] 这些旧界面包里没有 ui.tsx：${missingEntry.join('、')}（目录存在就该有入口）`)
   process.exit(1)
 }
 
-if (ids.length === 0) {
-  console.error('[build-plugins] src/packages 下没有找到任何 ui-* 界面包（缺 ui.tsx？）')
+if (plugins.length === 0) {
+  console.error('[build-plugins] 两个扫描根下都没有找到界面半（src/packages/<id>/ui/ui.tsx 或 ui-<id>/ui.tsx）')
   process.exit(1)
 }
 
-// 元数据先全部读完再动手构建：缺 package.json / 区间写坏要立刻失败——不能先花一轮
+const ids = plugins.map((plugin) => plugin.id)
+
+// 元数据先全部读完再动手构建：缺声明 / 区间写坏要立刻失败——不能先花一轮
 // vite 构建再报，更不能产出一份「宿主门禁会把自家内置插件拦掉」的清单。
 const metas = new Map()
-for (const id of ids) {
+for (const plugin of plugins) {
   try {
-    metas.set(id, readMeta(join(packagesDir, 'ui-' + id)))
+    metas.set(plugin.id, readMeta(plugin.metaDir, plugin.hostHalf))
   } catch (error) {
     console.error(`[build-plugins] ${error instanceof Error ? error.message : String(error)}`)
     process.exit(1)
@@ -231,21 +336,22 @@ for (const id of ids) {
 rmSync(stageRoot, { recursive: true, force: true })
 
 const bundles = []
-for (const id of ids) {
+for (const plugin of plugins) {
+  const id = plugin.id
   const outDir = join(stageRoot, id)
   await build({
     configFile: false,
     root,
     logLevel: 'warn',
     plugins: [react()],
-    resolve: { alias },
+    resolve: { alias, dedupe: DEDUPE },
     build: {
       outDir,
       emptyOutDir: true,
       target: 'es2022',
       minify: false,
       sourcemap: false,
-      lib: { entry: join(packagesDir, 'ui-' + id, 'ui.tsx'), formats: ['cjs'], fileName: () => 'client' },
+      lib: { entry: plugin.entry, formats: ['cjs'], fileName: () => 'client' },
       rollupOptions: {
         external: EXTERNAL,
         output: {
@@ -271,7 +377,11 @@ for (const id of ids) {
   // 每个插件目录一份自述（2.0 起一个插件一处声明）：载体写成数组，一份产物出几行由
   // 自述决定，宿主扫目录时按它铺开（`src/core/ui-bundles.ts` 的 readBundleDeclarations）。
   bundles.push({ id, text: `${JSON.stringify({ apiVersion: shellVersion, file: 'client.js', platforms, ...meta }, null, 2)}\n` })
-  console.log(`[build-plugins] ${id} → lib/ui/plugins/${id}/{client.js,bundle.json}（${platforms.join(' + ')}）`)
+  // 日志里带上源码落点：迁完之后还能一眼看出这条产物是从哪个根打出来的。
+  console.log(
+    `[build-plugins] ${id} ← ${relative(repoRoot, plugin.entry).split('\\').join('/')}`
+      + ` → lib/ui/plugins/${id}/{client.js,bundle.json}（${platforms.join(' + ')}）`,
+  )
 }
 
 /**

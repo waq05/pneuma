@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url'
 
 // 零依赖模块（timing.ts 会 import 平台种子库，Node 解析不了工作区别名）
 const timing = await import(
-  new URL('../ui-shell/src/packages/ui-transcript/activity.ts', import.meta.url).href
+  new URL('../src/packages/transcript/ui/activity.ts', import.meta.url).href
 )
 
 let failures = 0
@@ -62,7 +62,7 @@ console.log('\n[1] liveActivity：工具在跑时交给组头，其余阶段一�
 
 console.log('\n[2] 状态行组件只剩一行')
 {
-  const foot = read('../ui-shell/src/packages/ui-transcript/rows/foot.tsx')
+  const foot = read('../src/packages/transcript/ui/rows/foot.tsx')
   check('不再渲染分割线', !foot.includes('turn-status-rule'))
   check('不再有第二行的活动名', !foot.includes('turn-status-activity'))
   check('不再自己算用时（没有每秒 interval）', !foot.includes('setInterval'))

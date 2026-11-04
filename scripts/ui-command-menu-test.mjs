@@ -302,7 +302,7 @@ console.log('\n[5] 壳侧接线')
   // 2026-10-27 查账：空会话欢迎态把首屏 system 整批不画，新会话里打 /help 什么都看不到
   check('system 条目带 command 标记（契约里声明）', readContractSource().includes('command?: boolean') && read('src/adapter/transcript.ts').includes('command ? { command: true }'), '')
   check('命令回调把标记传下去', read('src/packages/runtime/index.ts').includes("ctx.transcript.system(text, undefined, true)"), '')
-  const transcriptUi = readPluginSource('ui-shell/src/packages/ui-transcript')
+  const transcriptUi = readPluginSource('src/packages/transcript/ui')
   check('欢迎态画命令输出（不再整批吞掉）', transcriptUi.includes('row.entry.command === true') && transcriptUi.includes('entry-system-command'), '')
   check('普通对话里也走左对齐块', /entry.command === true \? \(\s*<div className="entry-system-command">/.test(transcriptUi), '')
   check('样式有了（左对齐 / 保留换行）', /\.entry-system-command \{[\s\S]{0,600}?white-space: pre-wrap/.test(read('ui-shell/src/styles.css')), '')

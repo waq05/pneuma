@@ -153,7 +153,7 @@ console.log('[4] P1 三项')
   const app = read('ui-shell/src/ui-layout/app.tsx')
   const statusbar = read('ui-shell/src/packages/ui-statusbar/ui.tsx')
   const sessions = read('ui-shell/src/packages/ui-sessions/ui.tsx')
-  const transcript = readPluginSource('ui-shell/src/packages/ui-transcript')
+  const transcript = readPluginSource('src/packages/transcript/ui')
   const channel = read('ui-shell/src/ui-layout/host-channel.ts')
 
   // 品牌两档：侧栏 20 / 窄栏 22，全部走变量。空态那档 2026-10-27 撤掉（用户说图标突兀）。
@@ -323,9 +323,9 @@ console.log('[9] 这一轮的四条')
 {
   const css = read('ui-shell/src/styles.css')
   const summary = read('ui-shell/src/ui-primitives/tool-summary.ts')
-  const transcriptSrc = readPluginSource('ui-shell/src/packages/ui-transcript')
+  const transcriptSrc = readPluginSource('src/packages/transcript/ui')
   const statusSrc = read('ui-shell/src/packages/ui-status/ui.tsx')
-  const factorySrc = read('ui-shell/src/packages/ui-transcript/tool-card/factory.tsx')
+  const factorySrc = read('src/packages/transcript/ui/tool-card/factory.tsx')
   const traceSrc = read('ui-shell/src/packages/ui-trace/ui.tsx')
 
   // ① 行首标题照 dsh 的 tool.title.* 词表：名词短语，不拼「搜了 / 正在写」。
@@ -386,8 +386,8 @@ console.log('[10] 会话行标题的悬停滚动')
 
 console.log('[11] 跟到底部的滚动逻辑')
 {
-  const transcriptSrc = readPluginSource('ui-shell/src/packages/ui-transcript')
-  const seatsSrc = read('ui-shell/src/packages/ui-transcript/fold-seats.tsx')
+  const transcriptSrc = readPluginSource('src/packages/transcript/ui')
+  const seatsSrc = read('src/packages/transcript/ui/fold-seats.tsx')
 
   // ① 外层：贴底门槛照 dsh 的 25px（壳取 24），旧的 160px 必须没有了——
   //    往上滚 100px 仍算「在底部」，下一口内容一到就拽回去，就是用户说的粘滞。

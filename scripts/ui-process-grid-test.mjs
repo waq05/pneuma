@@ -152,8 +152,8 @@ console.log('6. 数学：三类行左缘相等，组内行右移一档')
 console.log('7. 内容：组头后半句与工具摘要表')
 {
   const summary = read('ui-shell/src/ui-primitives/tool-summary.ts')
-  const row = read('ui-shell/src/packages/ui-transcript/step-group-row.tsx')
-  const render = read('ui-shell/src/packages/ui-transcript/render.tsx')
+  const row = read('src/packages/transcript/ui/step-group-row.tsx')
+  const render = read('src/packages/transcript/ui/render.tsx')
 
   // 这三张卡原来读作「工具调用 · run_code」，标题没信息、摘要为空。
   for (const tool of ['run_code', 'pwsh', 'read_image', 'web_search']) {
@@ -181,9 +181,9 @@ console.log('7c. 单条工具组放平（2026-10-31：屏幕上「所有都是�
 {
   // 思考行会把组切开，模型最常见的节奏是「想一句、调一次、再想一句」——实测一条长会话
   // 43 个组里 26 个只装一次调用。给它套组头 + 缩进 + 「1 项」不压缩任何东西。
-  const groups = read('ui-shell/src/packages/ui-transcript/process-groups.ts')
-  const render = read('ui-shell/src/packages/ui-transcript/render.tsx')
-  const row = read('ui-shell/src/packages/ui-transcript/step-group-row.tsx')
+  const groups = read('src/packages/transcript/ui/process-groups.ts')
+  const render = read('src/packages/transcript/ui/render.tsx')
+  const row = read('src/packages/transcript/ui/step-group-row.tsx')
   check('纯函数 needsGroupHeader 只认两条以上', /export function needsGroupHeader\(group: StepGroup\): boolean \{\s*return group\.size >= 2/.test(groups))
   check('渲染层对单条组直接摆那一行（不再套组头）', render.includes('needsGroupHeader(head)') && /if \(!needsGroupHeader\(head\)\)/.test(render))
   check('开合提示只数工具调用（思考不在组里）', row.includes('次工具调用') && !row.includes('项思考与工具调用'))

@@ -51,7 +51,7 @@ const throws = (fn) => {
 
 const llm = await import('../lib/core/llm.js')
 const { Transcript } = await import('../lib/adapter/transcript.js')
-const groups = await import(new URL('../ui-shell/src/packages/ui-transcript/process-groups.ts', import.meta.url).href)
+const groups = await import(new URL('../src/packages/transcript/ui/process-groups.ts', import.meta.url).href)
 const argsMod = await import(new URL('../ui-shell/src/ui-primitives/tool-args.ts', import.meta.url).href)
 
 // ── [1] 合并层 ────────────────────────────────────────────────────────────────
@@ -139,7 +139,7 @@ const argsMod = await import(new URL('../ui-shell/src/ui-primitives/tool-args.ts
   check('回放路径收窄名字类型', adapterSource.includes("typeof call.function.name === 'string'"))
   check('实时事件收窄名字类型', adapterSource.includes("typeof event.name === 'string'"))
 
-  const groupsSource = read('ui-shell/src/packages/ui-transcript/process-groups.ts')
+  const groupsSource = read('src/packages/transcript/ui/process-groups.ts')
   check('activityOf 收 null/undefined', groupsSource.includes('name: string | null | undefined'))
   const argsSource = read('ui-shell/src/ui-primitives/tool-args.ts')
   check('toolArgFields 收 null/undefined', argsSource.includes('name: string | null | undefined'))
