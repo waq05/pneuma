@@ -256,7 +256,20 @@ lib/ui/plugins/<id>/client.js
 | 5 | 包间 import | 功能包之间零直接 import；功能包 → 库包允许；库包 → 任何包禁止；core → 包禁止（含 `import type`） |
 | 6 | order | 撞号即红（两个包同号） |
 
-待办三项：README 缺「Model Experience」「Known Limitations」两段、缺 `tests/` 目录、可疑的模块级可变状态。**现状：75 个包全缺 README 与 tests**——这是 Q6 还剩的主体工作。
+待办三项：README 缺「Model Experience」「Known Limitations」两段、缺 `tests/` 目录、可疑的模块级可变状态。
+
+**现状（2026-11-04）**：README **76 篇全齐**（75 个功能包 + 库包 `@pneuma/cdp`），
+每篇两段标题齐全、26–34 行；`tests/` 仍 **75 个包全缺**，这是 Q6 剩下的主体工作；
+「模块级可变状态」那 19 条逐条看过全是导出的只读常量表，是规则噪声。
+
+### 15.0 README 与标题的写法约定
+
+- README 首行固定 `# <目录名>（<pneuma.title 去掉尾部「（界面）」>）`。界面包的 title 带「（界面）」
+  后缀用于插件中心区分同名宿主包，README 里再套一层括号会难看，所以只在 README 里去后缀。
+- 每篇三节：`## Model Experience（模型体验）` / `## Known Limitations（已知限制）` / `## 行与开关`。
+- 每条结论都要能指回代码（`文件:行号`）。**查不到就删掉那条，不许写「待确认」占位**——
+  占位会让人以为有人核对过。
+- 与 dsh 的差异只在查到实证时写；绝大多数包没有可指认的差异，就不写这一条。
 
 ### 15.1 一处比 dsh 松，且是有意的
 
