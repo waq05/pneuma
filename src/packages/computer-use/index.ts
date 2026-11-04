@@ -35,7 +35,7 @@ import {
   takeScreenshot,
   type DesktopArgs,
   type DesktopAction,
-} from '@pneuma/runtime/core/desktop-control.js'
+} from './desktop-control.js'
 import type { DesktopRiskTier, DesktopTarget } from '@pneuma/runtime/contract.js'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { classifyCommand } from '@pneuma/runtime/core/command-policy.js'

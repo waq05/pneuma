@@ -2,7 +2,7 @@
  * ops 插件：给 numa 补上「内置 read 做不到的那几件事」——文档、表格、批量读、
  * 差异预演、文件体检、16 进制视图。
  *
- * 内核不自己写：它是 dsh-ops 那个 Rust worker（见 `core/ops/worker`）。这个插件只做
+ * 内核不自己写：它是 dsh-ops 那个 Rust worker（见 `packages/ops/worker`）。这个插件只做
  * 装配——找 exe、注册十三个工具（七个只读 + 六个写类）、给一段系统提示、开一个设置分区。
  *
  * 为什么默认关：它会拉起一个外部进程（哪怕只是只读），按库里那条规矩「会拉起外部
@@ -16,9 +16,9 @@
 import type { Plugin } from '@deepseek-ai/cordis'
 import { bootNoticeOnce } from '@pneuma/runtime/core/boot-notices.js'
 import { clampIntIn as clamp } from '@pneuma/runtime/core/clamp.js'
-import { createOpsTools } from '@pneuma/runtime/core/ops/tools.js'
-import { OPS_MAX_BYTES, OPS_TIMEOUT_MS, resolveOpsWorker } from '@pneuma/runtime/core/ops/worker.js'
-import type { OpsWorkerLookup } from '@pneuma/runtime/core/ops/worker.js'
+import { createOpsTools } from './tools.js'
+import { OPS_MAX_BYTES, OPS_TIMEOUT_MS, resolveOpsWorker } from './worker.js'
+import type { OpsWorkerLookup } from './worker.js'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'

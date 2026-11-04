@@ -33,7 +33,7 @@
  * **候选正文绝不拼进提示词**——候选里存的常常是用户原话，而用户原话可能夹着从网页粘进来的
  * 外部文本，拼进去等于给外部文本开一条进模型上下文的直通车。
  *
- * 支撑模块（本插件独占）：`src/core/learnings/{store,ledger,skill-write}.ts`
+ * 支撑模块（本插件独占）：`src/packages/self-improve/{store,ledger,skill-write}.ts`
  *
  * @module dsc/plugins/self-improve
  */
@@ -46,7 +46,7 @@ import type { ChatMessage } from '@pneuma/runtime/core/llm.js'
 import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { errText } from '@pneuma/runtime/core/err-text.js'
-import { formatLedgerEntry, ledgerFile, ledgerSize, readLedger, rollbackEntry } from '@pneuma/runtime/core/learnings/ledger.js'
+import { formatLedgerEntry, ledgerFile, ledgerSize, readLedger, rollbackEntry } from './ledger.js'
 import {
   candidatesFile,
   DEFAULT_STORE_OPTIONS,
@@ -60,7 +60,7 @@ import {
   type LearningKind,
   type LearningStoreOptions,
   type LearningsState,
-} from '@pneuma/runtime/core/learnings/store.js'
+} from './store.js'
 import {
   archiveRoot,
   archivedCount,
@@ -86,7 +86,7 @@ import {
   archiveSkill as archiveSkillOp,
   type SkillDraft,
   type SkillOpResult,
-} from '@pneuma/runtime/core/learnings/skill-write.js'
+} from './skill-write.js'
 import { lastAssistantText, lastUserText, previousUserText } from '@pneuma/runtime/core/transcript-text.js'
 import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
 import { existsSync } from 'node:fs'

@@ -28,7 +28,7 @@
  *     有的服务器回 `file:///c%3A/…`；盘符大小写、UNC、`%5C`、`%00` 都要过）；
  *   - 列偏移不用换算：JS 字符串长度天然是 UTF-16 code unit，只做一基/零基转换。
  *
- * 支撑模块（本插件独占）：`src/core/lsp/{framing,client,manager,normalize,line-shift,servers,uri}.ts`
+ * 支撑模块（本插件独占）：`src/packages/lsp/{framing,client,manager,normalize,line-shift,servers,uri}.ts`
  *
  * @module dsc/plugins/lsp
  */
@@ -49,10 +49,10 @@ import {
   type LspQueryOutcome,
   type LspStatusEntry,
   LSP_OPERATIONS,
-} from '@pneuma/runtime/core/lsp/client.js'
-import { LspManager } from '@pneuma/runtime/core/lsp/manager.js'
-import { buildLineShift, shiftDiagnostics } from '@pneuma/runtime/core/lsp/line-shift.js'
-import { diagnosticKey } from '@pneuma/runtime/core/lsp/normalize.js'
+} from './client.js'
+import { LspManager } from './manager.js'
+import { buildLineShift, shiftDiagnostics } from './line-shift.js'
+import { diagnosticKey } from './normalize.js'
 import {
   BUILTIN_SERVERS,
   type LspServerDef,
@@ -60,8 +60,8 @@ import {
   installHint,
   mergeServers,
   parseServerOverrides,
-} from '@pneuma/runtime/core/lsp/servers.js'
-import { displayPath, toDisplayCharacter, toDisplayLine, toProtocolPosition } from '@pneuma/runtime/core/lsp/uri.js'
+} from './servers.js'
+import { displayPath, toDisplayCharacter, toDisplayLine, toProtocolPosition } from './uri.js'
 import type { SettingsField, SettingsValue } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 
