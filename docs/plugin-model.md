@@ -294,17 +294,16 @@ dsh 要求函数插件命名导出 `name`/`inject`/`Config`/`apply`，服务插�
 `config.yaml` 的 `language:` 现读（见 `src/core/plugin-locale.ts`）。**界面里的文案**是另一件事：
 按钮、占位符、空态、错误提示多到几百条，跟着组件树走，必须在打包时就进 bundle。
 
-**现状（2026-11-05 凌晨）**：26 个界面包全部迁完，**1890 个键**（中英各一份）、**2135 处 `t()`**、
-`scripts/ui-locale-test.mjs` 0 条硬编码、17 条协议豁免（每条都在行尾写 `i18n-keep` 与理由）。
-**还没覆盖**：宿主机声明的配置面（设置分区 / 字段、内置权限档位名、内置模式名）——那是宿主拼好交给界面的，
-不在这道闸的扫描范围里，见 §16.5。
+**现状（2026-11-05 凌晨）**：26 个界面包 + 28 个宿主包全部迁完，**2790 个键**（中英各一份）、
+**3047 处 `t()`**、`scripts/ui-locale-test.mjs` 0 条硬编码、协议豁免若干条（每条都在行尾写 `i18n-keep` 与理由）。
+宿主那一半（设置分区、权限档位名、模式名）也进了同一套字典，见 §16.5。
 
 ### 16.1 约定
 
 | 文件 | 内容 | 谁读 |
 |---|---|---|
 | `locale/en.json` | 清单两行字：`title` / `description` | 内核（插件中心、`numa plugin list`） |
-| `locale/ui.zh.json` | 本包界面文案的中文原文（**语义真源**） | 构建时内联进 bundle |
+| `locale/ui.zh.json` | 本包文案的中文原文（**语义真源**） | 界面半：构建时内联进 bundle；宿主半：运行期 `hostT` 按包目录读 |
 | `locale/ui.en.json` | 同一批键的英文译本 | 同上 |
 
 `exports` 里的 `./locale/*.json` 一个键覆盖两种文件；包标准第 3 项（清单本地化）只判
@@ -324,6 +323,8 @@ const t = createT({ zh, en })
   页面生命周期内不变，所以不需要订阅、不会闪。
 - 插值：`t('x', { n })` 配字典里的 `{n}`；英文缺译回落中文；中文也缺会显示键名并在控制台告警一次。
 - 键名点号分层、只在本包内唯一（`composer.send`、`settings.model.title`）。包与包之间不共享键表。
+- **宿主半**写法只差一行：`const t = hostT(import.meta.dirname)`（`@pneuma/runtime/core/i18n.js`），
+  语言来自 `config.yaml` 而不是启动图；判定、插值、缺译回落都是同一份 `src/core/i18n-text.ts`。
 
 ### 16.3 闸
 
@@ -341,16 +342,25 @@ const t = createT({ zh, en })
 动词会永远落到「汇报了运行结果」。这类行在**行尾**写 `// i18n-keep` 加一句为什么，闸门跳过它并在汇总里
 报出豁免条数（现在是 17 条）——豁免是可见的，不会悄悄长大。
 
-### 16.5 还没覆盖的一层：宿主声明的配置面
+### 16.5 宿主声明的配置面也走同一套字典（2026-11-05 补完）
 
-设置页的分区标题与字段（`pneuma.settingsSection` 里的 `title` / `label` / `description`）、
-内置权限档位名（只读 / 工作区可写 / 完全访问 / AI 复核）、内置模式名（标准 / 极简 / 创造 / PTC），
-都是**宿主包**拼好后经界面通道交给壳的，不在 `src/packages/*/ui/` 里，所以 `ui-locale-test` 扫不到。
-英文界面下它们仍显示中文。
+设置页的分区标题与字段、内置权限档位名、内置模式名，都是**宿主包**拼好后经界面通道交给壳的，
+不在界面半的扫描范围里。补法（已落地）：
 
-要补得让设置面按语言出两份：`getSettingsSections(language)`，各宿主包把自己的三段文案放进
-`locale/ui.<语言>.json`，与界面用同一个 `createT`。这需要一个独立的批次（涉及十来个宿主包与设置面的组装点），
-不能顺手带掉——记在这里，别当成已完成。
+| 位置 | 做法 |
+|---|---|
+| 语言从哪来 | 宿主自己读 `config.yaml` 的 `language:`：`src/core/i18n.ts` 的 `hostUiLanguage()`，与 `webserver` 写进启动图的是同一个函数。**不给 `getSettingsSections(language)` 加参数**——那样要改 4 个调用方加 4 处契约、还要管 TUI 没有 `host.language` 这件事 |
+| 字典放哪 | 每个宿主包自己的 `locale/ui.zh.json` / `ui.en.json`（与界面半同名同格式），`build-packages` 抄进**两个**落点：适配包目录与真实模块目录（`lib/packages/<id>/locale`，`hostT` 按 `import.meta.dirname` 找它） |
+| 取词 | `const t = hostT(import.meta.dirname)`，模块级一行；判定与插值共用 `src/core/i18n-text.ts`（零依赖，界面半的 `createT` 也是它） |
+| 模块级常量 | 表里有文案的（`POLICY_OPTIONS`、`sandbox` 的档位表……）改成 `xxxOptions()` 工厂函数：模块导入时配置还没落盘，早调 `t()` 会把语言钉死成中文 |
+| 两张不在 `registerSection` 里的表 | 权限档位名在 `permission-core` 的常量里、模式名在写到磁盘的 `.md` 里。两者都在**投影那一步**换译本（`permission-presets/index.ts` 与 `presets/index.ts` 的 `toView`）：内核常量留中文原文当语义真源，界面拿到的是当前语言的文字 |
+| 用户改过的模式 | 只换「仍然是出厂默认值」的标签与描述（与 `BUILTIN_PRESET_LABELS` / `BUILTIN_PRESET_DESCRIPTIONS` 比）。用户改过的措辞是用户自己的话，宿主不该替他翻译 |
+| 闸 | `scripts/ui-locale-test.mjs` 现在两半都扫：界面半判全量中文字面量；宿主半只判「长得像设置分区」的对象里的八个键（`title/subtitle/label/help/tip/placeholder/text` 与字段形对象里的 `description`），外加 `save`/`action` 的 `return` 文案——工具说明与日志不算。当前 **54 个包 / 2790 个键 / 0 条硬编码** |
+
+**还没翻的一层（有意留下，要拍板）**：会话流里的宿主系统提示（`ctx.transcript.system`，例如
+「已启用插件 X，即时生效」）与斜杠命令的输出仍是中文。它们是**写进会话记录**的内容：
+翻了会让同一条会话在中英之间混排（旧记录还是中文），不翻则在英文界面里露出一句中文。
+这属于产品口径，不是漏做。
 
 ### 16.6 为什么不是 dsh 那种运行期 locale 服务
 
@@ -358,5 +368,4 @@ dsh 有一个 `dsh-client-locale` 插件，各包在运行期 `ctx.locale.regist
 numa 的界面语言只在启动时定一次（`config.yaml`），因此不需要那套运行期注册：每个包在构建时带上
 两份字典，`createT` 按语言取一条，代码路径短、没有额外的服务依赖，也就没有「插件没装 locale 服务
 就崩」这种耦合。代价是切语言要刷新页面——这与「语言是配置文件里的值」是同一个取舍。
-
 

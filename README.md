@@ -112,7 +112,8 @@ npm i -g file:.       # 全局 numa 命令指向本地构建
 
 Pneuma 只读**自己的**配置文件（`~/.dsc/`）：
 
-- **`~/.dsc/config.yaml`**（主配置）：`default`（默认 provider/model）+ `providers`
+- **`~/.dsc/config.yaml`**（主配置）：`language`（界面语言，`en` 开头即英文，其余中文，缺省中文）
+  + `default`（默认 provider/model）+ `providers`
   （`displayName` / `baseURL` / `apiKeyEnv` / `models` 列表；可选 `api` 选线上协议适配器，
   缺省 `openai-compat` 风格的 `openai-completions`，装了提供别的协议的插件后可换）。
 - **模型可选字段**（不写就用默认，设置界面「模型」分区每个模型一行可直接改）：
@@ -137,6 +138,10 @@ Pneuma 只读**自己的**配置文件（`~/.dsc/`）：
 ```sh
 numa config show              # 查看当前生效的端点/模型/key 来源（不打印 key）
 ```
+
+- **界面语言**（2026-11-05 起）：`config.yaml` 顶层写 `language: en`，重启宿主并刷新页面就是整页英文——
+  侧栏、对话区、设置页每个分区与字段、内置权限档位名、内置模式名都跟着换。中文是语义原文，
+  英文缺译会回落中文而不是显示键名；会话流里**已经记下**的宿主提示不翻译（记录按写入时的说法留着）。
 
 - **会话落盘**：`~/.dsc/sessions/<cwd 压缩名>/<uuid>.jsonl`（append-only，重放恢复）；
   `~/.dsc/.last-session` 是 `--resume` 无参时的指针。

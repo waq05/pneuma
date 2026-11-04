@@ -13457,3 +13457,61 @@ session-open-in 全绿、ui-status-panel 全部通过、readme 26 条断言）�
 
 
 
+
+
+## 2026-11-05 凌晨（续）：宿主设置面也走字典；界面插件开关不再要求刷新
+
+上一轮收尾时留了一条明账：界面文案翻完了，但**宿主拼好交给界面的那层**（设置分区与字段、内置权限
+档位名、内置模式名）还是中文。这一轮把它补完，并且把「停用一个界面插件要刷新页面」这条与 dsh 不一致
+的行为修掉。
+
+### 宿主设置面：一份纯逻辑、两个语言来源
+
+- 新增 `src/core/i18n-text.ts`（零依赖）：语言归一、查字典、插值、缺译回落——界面半的 `createT` 与
+  宿主半的 `hostT` 共用这一份，判定永远一致。
+- 新增 `src/core/i18n.ts`（宿主侧）：语言读 `config.yaml` 的 `language:`（与 `webserver` 写进启动图的
+  是同一个函数），字典读本包 `locale/ui.zh.json` / `ui.en.json`。第一次取词才解析语言——插件 apply 时
+  配置可能还没落盘。缺字典**不抛**：记一条 `[i18n]` 告警、显示键名，坏在这一层不该让插件起不来；
+  判死交给 `ui-locale-test`。
+- `build-packages` 把 `locale/` 抄进**两个**落点：适配包目录与真实模块目录。少抄后者，产物里第一句话
+  就是「缺 locale/ui.zh.json」——源码树里明明有（子代理先踩到，我补的）。
+
+### 28 个宿主包，2790 个键
+
+分批派子代理时先把机制冻住（键名规范、`hostT` 三行、样例包 `goal`），再按 5+8+7+7 分四批推完。
+子代理回传的坑有三条值得记：
+
+1. **模块级常量要在调用时求值**：`POLICY_OPTIONS` 这类表若在原地调 `t()`，模块导入那一刻配置还没落盘，
+   语言被钉成中文。改法统一成 `xxxOptions()` 工厂（`settings`、`sandbox`、`mcp` 都这么改）。
+2. **工具说明不是文案**：同一份文件里 `description` 既可能是设置字段、也可能是 JSON Schema 给模型的
+   提示词。闸门因此只认「长得像设置分区」的对象里的八个键，外加字段形对象里的 `description`；
+   `save` / `action` 的 `return` 单独认（保存失败的红字是给用户看的）。
+3. **两张表不在 `registerSection` 里**：权限档位名在 `permission-core` 的常量里，模式名在写到磁盘的
+   `.md` frontmatter 里。两者都在投影那一步换译本；模式只换「仍是出厂默认值」的标签（用户改过的话
+   是他自己的措辞）。为此把出厂标签与描述抽成 `BUILTIN_PRESET_LABELS` / `BUILTIN_PRESET_DESCRIPTIONS`。
+
+闸门 `scripts/ui-locale-test.mjs` 扩成两半都扫：当前 **54 个包 / 2790 个键 / 3047 处 `t()` / 0 条硬编码**。
+
+### 界面插件开关：从「刷新页面」改成即时生效
+
+- 现象：停用一条界面插件（比如「命令面板」）之后，宿主那边已经换了图，页面还挂着它，要刷新才对齐。
+- 通路：通道本来就有（`event: plugins` + 壳侧 `ui-boot/ui/hmr.ts` 的核对），缺的是**没人推那一帧**。
+  `runtime.setPluginEnabled` 现在发 `dsc/ui-plugins-changed`，`webserver` 收到后换图并推帧。
+- 踩到的坑：第一版按「换图前后比对」当前推条件——**永远不推**。因为页面任何一个请求都会走到
+  `source.graph()`，等事件到的时候宿主这份图已经是新的了。改成「收到事件就推」：页面侧的核对本来就是
+  幂等的（同 rev 跳过、按图卸载/装载），多推一帧只多一次空对账。
+- 骨架（`ui-layout`）与渲染器（`ui-renderer`）例外：它们是页面的根，换掉等于换整页，仍提示刷新。
+
+### 内联脚本被 CSP 拦掉（真机走查发现）
+
+`ui-shell/index.html` 里那段「主题预涂 + 启动占位兜底」是内联脚本，而界面服务的 CSP 是
+`script-src 'self'`。被拦掉的表现不是报错页：主题回到默认色、8 秒兜底计时器不跑，只有控制台一行
+警告。搬成同源外链 `ui-shell/public/theme.js`（不带 defer/async，仍在样式之前执行）。
+
+### 验证
+
+- 新增 `scripts/ui-sweep.mjs` + `scripts/_ui-sweep-main.cjs`：临时 HOME + 假模型端点 + 真 Electron，
+  按一份 69 步的清单逐项点、逐项断言、逐项截图（中文 69/69、英文 69/69）。
+  它顺手抓出了上面那条热更缺陷——单元测试不可能发现「点了开关页面没变」。
+- `pnpm run typecheck` / `pnpm run build` / `check:plugin` / `check:ui` / `check:core` / `check:style`
+  全绿；`ui-boot-e2e` 四段仍绿。

@@ -563,8 +563,43 @@ locale 服务与各包自带的字典。numa 照这个分两层：
 （只读 / 工作区可写 / 完全访问 / AI 复核）、内置模式名（标准 / 极简 / 创造 / PTC）。它们由**宿主**拼好交给界面，
 不在 `src/packages/*/ui/` 里，所以这道闸管不到；英文界面下它们仍显示中文（截图里输入框上那两颗 chip 就是）。
 补法：让设置面按语言出两份（`getSettingsSections(language)`），各宿主包把自己的 `title/label/description`
-放进 `locale/ui.<语言>.json`——与界面那套用同一份文件、同一个 `createT`。这是下一批的活，不是这轮能顺手带掉的。
 
 
+### 12.16 第三轮审查（2026-11-05 凌晨）：宿主配置面补完、开关即时生效、真机 69 步走查
 
+用户要求「重新审查任务完成情况、检查未完成项、全部对齐 dsh、复查代码再功能测试」。这一轮做了四件事，
+并把**仍然没对齐的项**逐条记进 12.17（不再散落在报告里）。
 
+**① 宿主声明的配置面补完**（12.15 末尾那条「下一批」）。28 个宿主包迁进同一套 locale/ui.zh.json 与
+ui.en.json，取词器 hostT(import.meta.dirname)（src/core/i18n.ts），判定与插值共用 src/core/i18n-text.ts
+（与界面半的 createT 同一份）。权限档位名与模式名不在 registerSection 里，改在投影那一步换译本。
+闸门 ui-locale-test 扩成两半都扫：**54 个包 / 2790 个键 / 3047 处 t() / 0 条硬编码**。
+
+**② 界面半边开关即时生效**（第三次对账里唯一用户可感知的缺陷）。runtime.setPluginEnabled 发
+dsc/ui-plugins-changed，webserver 换图推帧，壳侧按图卸载/装载。**骨架与渲染器例外**（页面的根，
+换掉等于换整页，仍提示刷新）。判据：停用「命令面板」后不刷新页面，Ctrl+K 打不开；再启用，又打得开。
+
+**③ 内联脚本被 CSP 拦掉**（真机走查发现）。ui-shell/index.html 里那段主题预涂是内联脚本，而界面的
+CSP 是 script-src 'self'——被拦之后主题回默认、启动占位的兜底计时器不跑，只有控制台一行警告。
+搬成同源外链 ui-shell/public/theme.js（仍不带 defer/async，所以还在样式之前执行）。
+
+**④ 真机走查装置**：scripts/ui-sweep.mjs（临时 HOME + 假模型端点 + 真 Electron）+
+scripts/_ui-sweep-main.cjs（按清单点/断言/截图）。69 步覆盖启动、侧栏折叠、新建会话、发消息、
+底栏三颗 chip、斜杠与 @ 菜单、技能页、插件页、界面插件热更、轨迹页、设置七个分区、命令面板；
+中文 69/69、英文 69/69。
+
+### 12.17 第三轮对账后**仍未对齐**的项（按影响排序，未做，别当成已完成）
+
+| 优先级 | 项 | dsh | numa 现状 | 代价 |
+|---|---|---|---|---|
+| 1 | 装包即生效 | 监听 profile 的 package.json 与 patch，自动重组行 | numa plugin add 之后要重启宿主（src/packages/cli/plugin-cli.ts:145），plugin-watch 不盯 profile | 中：运行时重跑一遍「组合包 → patch 层 → 行」的组合，再挂新增行 |
+| 2 | 平台种子表缺 cordis / zod / react-virtual | 壳把这几样给客户端插件共用 | platform-modules.json 只有自家模块；插件拿不到壳的 cordis 实例 | 中：要先把「客户端插件的上下文」定死，再决定放哪几样 |
+| 3 | 包清单的 npm 发布字段 | 每包有 description / files / main / types，exports 带 types 条件 | 只有 pneuma.*；exports 是纯字符串 | 低，意义也低：numa 的包随 app 发布、不单独上 npm |
+| 4 | cordis.patch.yml 的导出键 | 23 个 bundle 包导出它 | 包标准第 3 项把它判成「计划外」 | 低：门禁白名单 + 77 个 package.json 各加一行 |
+| 5 | dsh.client.external | 插件可声明额外平台模块 | 无此字段，表外模块一律运行期报错 | 中：与第 2 项同一件事 |
+| 6 | README 内容闸 | 5 条 doc-sync 闸（模型体验、已知限制等） | 只判两段标题在不在 | 低（评审活） |
+| 7 | 真实组合测试 | 产品可见插件有走 Loader 的组合测试 | 包级测试只测包内 | 高 |
+| 8 | 第三方安装入口 / 版本豁免 / 信任强度 | dsh plugin --profile 透传；--accept-risk；信任记录带内容摘要 | 只有 add/remove/list；豁免要手改 compatibility.json；信任只记 trustedAt，换内容仍可信 | 中 |
+
+**会话流文案**（transcript.system 与命令输出）仍中文，属于**产品口径**而不是漏做：它们是写进会话记录的
+内容，翻了新旧记录会混排。要翻得先定「记录按当时语言还是按当前语言显示」。
