@@ -1,5 +1,5 @@
 /**
- * 老内核调色板兜底的探针：`ui-shell/src/legacy-color-fallback.css` 是不是**跟着 tokens.css 走**。
+ * 老内核调色板兜底的探针：`src/packages/ui-renderer/ui/styles/legacy-color-fallback.css` 是不是**跟着 tokens.css 走**。
  *
  * 背景（2026-10-14 手机报障）：令牌体系几乎全部由 `color-mix()` 算出，而手机上的老 WebView
  * 不认这个函数——解析期整条声明被丢掉，于是侧栏/浮层底色变透明、文字全是一个白度。
@@ -154,7 +154,7 @@ console.log('[5] 主题门：浅色块必须与深色块不同')
 
 console.log('[6] 接线：引入次序 + 产物')
 {
-  const entry = flat(read('ui-shell/src/ui-renderer/main.tsx'))
+  const entry = flat(read('src/packages/ui-renderer/ui/main.tsx'))
   const stylesAt = entry.indexOf("import '../styles.css'")
   const fallbackAt = entry.indexOf("import '../legacy-color-fallback.css'")
   check('入口引入了兜底 CSS', fallbackAt !== -1)
@@ -174,7 +174,7 @@ console.log('[7] 档门：Claude 档在四处开关与两份令牌里都接上')
 {
   const contract = flat(readContractSource())
   const prefs = flat(read('/src/core/prefs.ts'))
-  const shellAppearance = flat(read('/ui-shell/src/ui-layout/appearance.ts'))
+  const shellAppearance = flat(read('/src/packages/ui-layout/ui/appearance.ts'))
   const settingsUi = flat(read('/' + resolveUiHalf('settings') + '/ui.tsx'))
   const electronMain = flat(read('/desktop/electron/main/index.ts'))
   check('内核类型里有 claude', contract.includes("export type ThemeMode = 'dark' | 'light' | 'claude' | 'system'"))
@@ -185,7 +185,7 @@ console.log('[7] 档门：Claude 档在四处开关与两份令牌里都接上')
   check('壳的归一化兜底是 claude（与出厂默认一致）', /:\s*'claude'/.test(shellAppearance))
   check('设置里四个磁贴（浅色 / Claude / 深色 / 跟随系统）', settingsUi.includes("{ value: 'claude', label: 'Claude' }"))
   check('原生弹层把 claude 报成 light（nativeTheme 只认深浅）', electronMain.includes("mode === 'claude' ? 'light' : mode"))
-  const shellTokens = flat(read('/ui-shell/src/legacy/tokens.css'))
+  const shellTokens = flat(read('/src/packages/ui-renderer/ui/styles/legacy/tokens.css'))
   check('两份 fallback 与 Claude 块都认 color-scheme: light', /:root\[data-theme='claude'\] \{\s*color-scheme: light;/.test(shellTokens))
 }
 console.log('')

@@ -1,0 +1,21 @@
+{
+  "name": "@pneuma/ui-dockkit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "pneuma": {
+    "library": true,
+    "title": "右侧栏工具箱",
+    "description": "界面壳右侧栏的那一套：分栏模型、会话级状态与 React 画法"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  }
+}

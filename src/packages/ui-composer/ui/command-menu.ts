@@ -6,7 +6,7 @@
  * 浪费；取不到（宿主没这条通道、或请求被拒）就整会话记住不可用，菜单不再弹——
  * 比弹一个空面板诚实。
  *
- * 交互口径照 TUI（`src/app/Composer.tsx`）：↑↓ 选、Tab 补全、Esc 关且同一前缀不再弹；
+ * 交互口径照 TUI（`src/packages/tui/app/Composer.tsx`）：↑↓ 选、Tab 补全、Esc 关且同一前缀不再弹；
  * Enter 由调用方处理（选中项在菜单开着时先采纳，见 Composer 的按键分支）。
  *
  * @module dsc-ui-shell/plugins/composer/command-menu

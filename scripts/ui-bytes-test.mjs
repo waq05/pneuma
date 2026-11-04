@@ -28,7 +28,7 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 const read = (rel) => readFileSync(join(root, rel), 'utf8')
 
 const CORE = 'src/core/bytes.ts'
-const SHELL = 'ui-shell/src/ui-primitives/sizes.ts'
+const SHELL = 'src/packages/ui-primitives/ui/sizes.ts'
 
 const coreModel = await import(new URL('../' + CORE, import.meta.url).href)
 const shellModel = await import(new URL('../' + SHELL, import.meta.url).href)

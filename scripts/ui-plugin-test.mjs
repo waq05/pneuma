@@ -957,7 +957,8 @@ console.log('\n[5] 真实构建产物')
 // 只能手抄）：不一致的表现是「编译期按一种类型、构建期解析到另一份实现」，最坏是两份 React。
 console.log('\n[5b] 分包落点')
 {
-  const uiShell = fileURLToPath(new URL('../ui-shell/', import.meta.url))
+  const repoRoot = fileURLToPath(new URL('../', import.meta.url))
+  const uiShell = join(repoRoot, 'ui-shell')
   const packages = JSON.parse(readFileSync(join(uiShell, 'packages.json'), 'utf8'))
   const shellPackage = JSON.parse(readFileSync(join(uiShell, 'package.json'), 'utf8'))
   const tsconfig = JSON.parse(readFileSync(join(uiShell, 'tsconfig.json'), 'utf8'))
@@ -1005,7 +1006,9 @@ console.log('\n[5b] 分包落点')
 
   // @dsc/ui-core 故意不下发给插件：平台模块表里没有它（build-plugins 的 EXTERNAL 保它外部化，
   // 插件当值用时运行期拿到「白名单外的模块」那句错，而不是静默内联一份私有实现）。
-  const platformModules = JSON.parse(readFileSync(join(uiShell, 'src', 'platform-modules.json'), 'utf8'))
+  const platformModules = JSON.parse(
+    readFileSync(join(repoRoot, 'src', 'packages', 'ui-renderer', 'ui', 'platform-modules.json'), 'utf8'),
+  )
   check('@dsc/ui-core 不在平台模块表里（故意不给插件）', !platformModules.includes('@dsc/ui-core'), platformModules.join(','))
 
   // ── 包内分层：五个逻辑包的单向依赖（E2/E3/E5/E4） ─────────────────────────────
@@ -1013,12 +1016,15 @@ console.log('\n[5b] 分包落点')
   // （hooks 直接崩）或插件 bundle 把整层内联进去。这里对各包逐文件走查 import 说明符
   // （先剔注释再取 `from '…'` / `import('…')` / 裸 `import '…'`），把
   // 「primitives / slots ← dockkit ← layout ← renderer」这条单向链钉死。
+  // 五个层已按 dsh 的形状搬成独立包（`src/packages/ui-<id>/`）：包身份是 `@pneuma/ui-<id>`
+  // （`pneuma.library: true`，没有装配行），作者看到的 `@dsc/ui-<id>` 是构建期别名。
+  // 这里按**包内 ui/ 目录**走查——它的 index.ts 就是别名落点，也是声明的入口。
   const layerDirs = {
-    '@dsc/ui-primitives': join(uiShell, 'src', 'ui-primitives'),
-    '@dsc/ui-slots': join(uiShell, 'src', 'ui-slots'),
-    '@dsc/ui-dockkit': join(uiShell, 'src', 'ui-dockkit'),
-    '@dsc/ui-layout': join(uiShell, 'src', 'ui-layout'),
-    '@dsc/ui-renderer': join(uiShell, 'src', 'ui-renderer'),
+    '@dsc/ui-primitives': join(repoRoot, 'src', 'packages', 'ui-primitives', 'ui'),
+    '@dsc/ui-slots': join(repoRoot, 'src', 'packages', 'ui-slots', 'ui'),
+    '@dsc/ui-dockkit': join(repoRoot, 'src', 'packages', 'ui-dockkit', 'ui'),
+    '@dsc/ui-layout': join(repoRoot, 'src', 'packages', 'ui-layout', 'ui'),
+    '@dsc/ui-renderer': join(repoRoot, 'src', 'packages', 'ui-renderer', 'ui'),
   }
   // 每包**不许**出现的包名：往上走的那些。`@dsc/ui`（聚合面）转出的正是这些包，
   // 从下面往回引等于把插件 API 拖进环里（alias 会解析出第二份实现）。
@@ -1029,26 +1035,17 @@ console.log('\n[5b] 分包落点')
   // 那条 `ui-layout → @dsc/ui → ui-layout` 的环随之剪断；这条禁止同样是防回归
   // （之前它只是「过渡期放行」，靠人记得别再加一处）。
   const forbiddenUpward = {
-    '@dsc/ui-primitives': ['@dsc/ui-dockkit', '@dsc/ui-slots', '@dsc/ui-layout', '@dsc/ui-renderer', '@dsc/ui'],
-    '@dsc/ui-slots': ['@dsc/ui-dockkit', '@dsc/ui-layout', '@dsc/ui-renderer', '@dsc/ui'],
-    '@dsc/ui-dockkit': ['@dsc/ui-slots', '@dsc/ui-layout', '@dsc/ui-renderer', '@dsc/ui'],
-    '@dsc/ui-layout': ['@dsc/ui-renderer', '@dsc/ui'],
+    '@dsc/ui-primitives': ['@dsc/ui-dockkit', '@dsc/ui-slots', '@dsc/ui-layout', '@dsc/ui-renderer'],
+    '@dsc/ui-slots': ['@dsc/ui-dockkit', '@dsc/ui-layout', '@dsc/ui-renderer'],
+    '@dsc/ui-dockkit': ['@dsc/ui-slots', '@dsc/ui-layout', '@dsc/ui-renderer'],
+    '@dsc/ui-layout': ['@dsc/ui-renderer'],
     '@dsc/ui-renderer': [],
   }
-  // 每包**刻意保留**的相对边（白名单之外，任何一处走出包的相对 import 都会红）：
-  //   - ui-slots 的 `../plugin-api`：`declare module` 的合并落在**文件身份**上（re-export
-  //     与包名 alias 不参与合并），且 SlotMap / UiComponent 等契约类型只能从那个文件取——
-  //     纯类型面，擦除后零字节。这是机制要求，不是过渡态。
-  //   - ui-layout 的 `../plugin-api`：同一条机制要求的类型面——`UiSlots` 别名由
-  //     `SlotMap` / `SlotFactoryMap`（同上，只在那一个文件里）与 `UiComponent` 拼成，
-  //     而 app.tsx 的 props 要它。`import type`，零运行期字节。
-  //   - ui-layout 的过渡边已随 E4 清零（原 `../boot` / `../slots` / `../slots-react` /
-  //     `../hmr` 四条：两条换包名、两条改成 props 递值），`@dsc/ui` 那条向上边也清零
-  //     （宿主桥与读色沉到 ui-primitives、页 / 视图真源留在本包）。
-  const packageTransitionEdges = {
-    '@dsc/ui-slots': new Set(['../plugin-api']),
-    '@dsc/ui-layout': new Set(['../plugin-api']),
-  }
+  // 曾经的白名单（`ui-slots` / `ui-layout` 各一条 `../plugin-api`）随 E7 搬家消失：
+  // 五个层落进 `src/packages/ui-<id>/ui/` 后，那些边跨出了包边界，而 `@dsc/ui` 的别名
+  // 落点就是同一个 `src/plugin-api.ts`——`declare module '@dsc/ui'` 合并的仍是同一份
+  // 文件身份。所以现在**没有**任何跨包相对 import 的豁免；剩下的放行只有样式表与数据 JSON
+  // （没有模块身份，重复加载不产生两份实现），见下面的扩展名判断。
   const sourceFilesOf = (dir, out = []) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const file = join(dir, entry.name)
@@ -1067,23 +1064,33 @@ console.log('\n[5b] 分包落点')
   }
 
   const layerNames = Object.keys(layerDirs)
+  // 别名落点必须**正好**是包内 `ui/index.ts`：packages.json 与 tsconfig 的 paths 是手抄的
+  // 两份（tsconfig 读不了 JSON），落点写成包根就编译得过去，但插件拿到的类型与运行期
+  // 实现会分家——最坏是两份 React。这里把「别名 ↔ 包内入口」这对钉死。
+  const drifted = layerNames.filter((name) => resolved[name] !== join(layerDirs[name], 'index.ts'))
+  check('每个 @dsc/ui-* 别名都落在对应包的 ui/index.ts', drifted.length === 0, drifted.map((n) => `${n}: ${resolved[n]}`).join('；'))
   check(
     '五个逻辑包的入口都在盘上',
     layerNames.every((name) => existsSync(join(layerDirs[name], 'index.ts'))),
     layerNames.filter((name) => !existsSync(join(layerDirs[name], 'index.ts'))).join(','),
   )
-  // 包身份与 @dsc/ui-core 同一套纪律：name = 包名、private、version 与壳同源（契约版本
-  // 一起走）、types 指入口。写错了不会影响构建，只会让「这是哪个包」在以后认不出来。
+  // 包身份按 dsh 的形状：目录 `src/packages/ui-<id>/` 对 `@pneuma/ui-<id>`，`private`，
+  // 且 `pneuma.library: true`（没有 cordis.patch.yml、没有装配行——它在构建期被打进壳，
+  // 不是一个可停用的功能单元）。作者侧的 `@dsc/ui-<id>` 只是构建期别名，不出现在任何
+  // package.json 里；两者必须一一对应，否则插件按别名引用时解析到的是另一份实现。
   const badIdentity = layerNames.filter((name) => {
-    const pkg = JSON.parse(readFileSync(join(layerDirs[name], 'package.json'), 'utf8'))
+    // 包身份在包根（`ui/` 的上一层），别名落点才是 `ui/index.ts`。
+    const pkg = JSON.parse(readFileSync(join(dirname(layerDirs[name]), 'package.json'), 'utf8'))
+    // 作者侧 name 是 `@dsc/ui-<id>`，包身份是 `@pneuma/ui-<id>`：只换作用域前缀。
     return (
-      pkg.name !== name ||
+      pkg.name !== name.replace('@dsc/', '@pneuma/') ||
       pkg.private !== true ||
-      pkg.version !== shellPackage.version ||
-      pkg.types !== 'index.ts'
+      pkg.pneuma?.library !== true ||
+      typeof pkg.version !== 'string' ||
+      pkg.version === ''
     )
   })
-  check('五个逻辑包的包身份与壳同源（name / private / version / types）', badIdentity.length === 0, badIdentity.join('、'))
+  check('五个逻辑包的包身份（@pneuma/ui-* / private / pneuma.library）', badIdentity.length === 0, badIdentity.join('、'))
 
   const upwardEdges = []
   const outsideEdges = []
@@ -1092,7 +1099,7 @@ console.log('\n[5b] 分包落点')
     for (const file of sourceFilesOf(dir)) {
       for (const spec of importsOf(readFileSync(file, 'utf8'))) {
         if (forbiddenUpward[name].includes(spec)) {
-          upwardEdges.push(`${relative(uiShell, file)} → ${spec}`)
+          upwardEdges.push(`${relative(repoRoot, file)} → ${spec}`)
           continue
         }
         if (!spec.startsWith('.')) continue
@@ -1102,19 +1109,51 @@ console.log('\n[5b] 分包落点')
         // 不是这个检查要防的「两份实现」（两份 React 那种）。入口的 legacy/*.css 与
         // 装载器的 ../platform-modules.json 因此按扩展名放行。
         if (/\.(css|json)$/.test(spec)) continue
-        if ((packageTransitionEdges[name] ?? new Set()).has(spec)) continue
-        outsideEdges.push(`${relative(uiShell, file)} → ${spec}`)
+        outsideEdges.push(`${relative(repoRoot, file)} → ${spec}`)
       }
     }
   }
   check('包内不出现反向依赖（primitives / slots ← dockkit ← layout ← renderer）', upwardEdges.length === 0, upwardEdges.join('；'))
   check('相对 import 不出包（契约类型边与资源文件除外）', outsideEdges.length === 0, outsideEdges.join('；'))
 
+  // `@dsc/ui` 是聚合面：它既转出下层实现，也是 **契约类型的唯一来源**（`SlotMap` /
+  // `UiComponent` / `UiSlots`）。层包用它只能是 `import type`——擦除后零字节，且别名落点
+  // 与 `../plugin-api` 是同一个文件，`declare module` 合并照样成立。真正会把环接回去的是
+  // **值** import：那会把插件 API 的实现拖进层包，vite 在包里内联一份。所以这里只禁值引用。
+  // 判定按**语句**走：先剔注释，再把「以 import 开头、到 `from '…'` 结束」的行攒成一条
+  // 语句。不能用跨行正则——它会把上一条 `from '@dsc/ui-core'` 与下一条 `import type … from
+  // '@dsc/ui'` 粘在一起，类型引用被误判成值引用（本检查第一版就这么错过）。
+  const valueUiImports = []
+  for (const name of layerNames) {
+    // renderer 是链条顶端（启动图的持有者），它本来就该拿到聚合面的值；下面四层不许。
+    if (name === '@dsc/ui-renderer') continue
+    for (const file of sourceFilesOf(layerDirs[name])) {
+      const clean = readFileSync(file, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1')
+      let statement = null
+      for (const line of clean.split('\n')) {
+        const trimmed = line.trim()
+        if (statement === null && !trimmed.startsWith('import')) continue
+        statement = statement === null ? trimmed : `${statement}\n${trimmed}`
+        if (!/from\s*'[^']+'/.test(statement)) continue
+        if (/from\s*'@dsc\/ui'/.test(statement) && !/^import\s+type\b/.test(statement)) {
+          valueUiImports.push(`${relative(repoRoot, file)} → @dsc/ui`)
+        }
+        statement = null
+      }
+      if (/import\s*\(\s*'@dsc\/ui'\s*\)/.test(clean)) {
+        valueUiImports.push(`${relative(repoRoot, file)} → import('@dsc/ui')`)
+      }
+    }
+  }
+  check('四个下层对 @dsc/ui 只有类型引用（值 import 会把插件 API 内联进包）', valueUiImports.length === 0, valueUiImports.join('；'))
+
   // ── E6：三个平台种子词三处一致（JSON ↔ boot.ts 的 MODULES ↔ 诊断读数）───────────
   // 这取代了 E4 时那条「三个新包不在平台模块表里」的断言：当时三个包还不该下发给插件
   // （alias 已登记但种子表未扩，插件按包名 require 会撞「白名单外的模块」）；E6 的任务正是
   // 把这张表扩到它们——所以断言反向。MODULE_DRIFT 只在 console 里报，探针才是闸门。
-  const bootTs = readFileSync(join(uiShell, 'src', 'ui-renderer', 'boot.ts'), 'utf8')
+  const bootTs = readFileSync(join(repoRoot, 'src', 'packages', 'ui-renderer', 'ui', 'boot.ts'), 'utf8')
   const seedPackages = ['@dsc/ui-slots', '@dsc/ui-primitives', '@dsc/ui-dockkit']
   for (const name of seedPackages) {
     check(`平台模块表含 ${name}（E6 起下发给插件）`, platformModules.includes(name), platformModules.join(','))
@@ -1141,9 +1180,10 @@ console.log('\n[5b] 分包落点')
 // ── 5c. 槽位契约表（D1）：壳槽键集在源码声明与产物里对得上（防「表改了一半」）─────
 console.log('\n[5c] 槽位契约表')
 {
-  const shellDir = fileURLToPath(new URL('../ui-shell/', import.meta.url))
+  const repoRoot = fileURLToPath(new URL('../', import.meta.url))
+  const shellDir = join(repoRoot, 'ui-shell')
   // E4 起槽位契约（含 9 个壳槽的 declare module）住 `@dsc/ui-slots` 包。
-  const slotsSource = readFileSync(join(shellDir, 'src', 'ui-slots', 'slots.ts'), 'utf8')
+  const slotsSource = readFileSync(join(repoRoot, 'src', 'packages', 'ui-slots', 'ui', 'slots.ts'), 'utf8')
   // SLOT 常量表的值（9 个壳槽名）与 declare module 块里并进 SlotMap 的键集必须一致。
   // 前者被 `{ [K in ShellSlot]: SlotMap[K]['kind'] }` 钉死（少并一个键是编译错）；
   // 这里再钉一遍产物层——契约表是插件作者看的东西，不能只活在源码里。
@@ -1505,7 +1545,7 @@ console.log('\n[9] 设置回执的结构化载荷')
   // 地址行原来借的是设置页 info 行的版式（「值靠右、动作贴行尾」），且它那句
   // `white-space: normal` 挂在 `.pair-url .mono` 上——类数比 `.setting-info > span:first-child`
   // 少一档、一直没生效，长地址会被省略号截掉（地址里带着配对码，截了就没法照着输）。
-  const viewsCss = readFileSync(join(repoRoot, 'ui-shell', 'src', 'legacy', 'views.css'), 'utf8')
+  const viewsCss = readFileSync(join(repoRoot, 'src', 'packages', 'ui-renderer', 'ui', 'styles', 'legacy', 'views.css'), 'utf8')
   const cssBlock = (pattern) => new RegExp(`\\n${pattern} \\{[\\s\\S]*?\\n\\}`).exec(viewsCss)?.[0] ?? ''
   const urlBlock = cssBlock('\\.pair-url')
   const urlTextBlock = cssBlock('\\.pair-url-text')

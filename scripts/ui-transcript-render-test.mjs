@@ -43,7 +43,7 @@ const UI = resolveUiHalf('transcript')
 const groups = await import(
   new URL('../' + UI + '/process-groups.ts', import.meta.url).href
 )
-const args = await import(new URL('../ui-shell/src/ui-primitives/tool-args.ts', import.meta.url).href)
+const args = await import(new URL('../src/packages/ui-primitives/ui/tool-args.ts', import.meta.url).href)
 const { seatPlan, groupSteps, needsGroupHeader } = groups
 const { toolArgFields, MUTATION_CONTENT_FIELDS } = args
 const roundsMod = await import(
@@ -197,8 +197,8 @@ console.log('[5] 整轮过程区的开合动画（0.6.69 第四轮报障）')
 {
   const ui = readPluginSource(UI)
   const seats = read(UI + '/fold-seats.tsx')
-  const css = read('ui-shell/src/legacy/views.css')
-  const tokens = read('ui-shell/src/legacy/tokens.css')
+  const css = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
+  const tokens = read('src/packages/ui-renderer/ui/styles/legacy/tokens.css')
 
   // 结构：过程区必须**包一层**才能整片一起动（平铺时收起的行不占位，flex gap 会留下一堆空档）
   check('过程区包进 .turn-process + .turn-process-body 两层', /<div className="turn-process" data-fold=\{collapsed \? 'closed' : 'open'\}>/.test(ui) && ui.includes('<div className="turn-process-body">{processBlocks}</div>'))
@@ -227,14 +227,14 @@ console.log('[5] 整轮过程区的开合动画（0.6.69 第四轮报障）')
   check('组体的一级开合也走过渡（两头都是 max-height 的确定值）', /\.step-body \{[^}]*transition: max-height var\(--dsc-dur-slow\) var\(--dsc-ease\);/.test(css))
 
   // 降级：base.css 那条全局 reduced-motion 把过渡压成瞬时
-  check('系统说「少动」时全站过渡归零（base.css 兜底，不用逐组件再写）', /@media \(prefers-reduced-motion: reduce\) \{[\s\S]{0,300}transition-duration: 0\.01ms !important/.test(read('ui-shell/src/legacy/base.css')))
+  check('系统说「少动」时全站过渡归零（base.css 兜底，不用逐组件再写）', /@media \(prefers-reduced-motion: reduce\) \{[\s\S]{0,300}transition-duration: 0\.01ms !important/.test(read('src/packages/ui-renderer/ui/styles/legacy/base.css')))
   check('参考实现的做法在注释里留了档（dsh 只转箭头 / zcode 高度关键帧）', css.includes('dsh') && css.includes('zcode'))
 }
 
 console.log('[6] 悬停预览的收卡口径（0.6.69 第五轮报障：鼠标移出预览 1s 才收）')
 {
   const ui = readPluginSource(UI)
-  const hook = read('ui-shell/src/ui-primitives/hover-delay.ts')
+  const hook = read('src/packages/ui-primitives/ui/hover-delay.ts')
 
   // 出卡节奏照参考实现（500ms），收卡是壳侧有意的 1s——旧渲染层那份仍 100ms（冻结不动）
   check('出卡仍是 500ms', hook.includes('const HOVER_DELAY_MS = 500'))
@@ -252,7 +252,7 @@ console.log('[7] 分轮口径单点 + internal 条目对齐 dsh（0.6.67 右侧�
 {
   const ui = readPluginSource(UI)
   const timing = read(UI + '/timing.ts')
-  const css = read('ui-shell/src/legacy/views.css')
+  const css = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
   // 「不该出现」的断言先剥注释：修法的注释里就引着旧写法 / roundInfos，不剥会自己打脸。
   const uiCode = ui.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
 
@@ -389,9 +389,9 @@ console.log('[8] 收起态的结果与失败数（对照 codex 的活动流）')
   const { resultTail, RESULT_TAIL_LINES } = tailMod
   const factory = read(UI + '/tool-card/factory.tsx')
   const row = read(UI + '/step-group-row.tsx')
-  const css = read('ui-shell/src/styles.css')
+  const css = read('src/packages/ui-renderer/ui/styles/styles.css')
   // 组体的缩进与竖线 2026-10-30 并进了 legacy/views.css（同一选择器原来分在两份样式表里）。
-  const viewsCss = read('ui-shell/src/legacy/views.css')
+  const viewsCss = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
 
   // ── 纯逻辑：收起态不再摊结果行，只数「点开还能看到几行」 ──
   //    2026-10-27 用户报「工具调用在折叠状态时占用面积太大，只占一行就行」，
@@ -457,7 +457,7 @@ console.log('[10] 流式光标那根竖条（2026-11-02 报障：正文左下角
   // `.think-block.live` 整条思考行），容器里最后一块是 markdown 的 `<p>`，行内伪元素排不进
   // 上一行，被摆到下一行行首按容器左缘对齐——用户看到的就是那根 6×25 的浅棕色竖条。
   // 修法是删掉光标本身（不是挪位置）：直播信号还有思考行的转圈与扫光，正文在长高。
-  const css = read('ui-shell/src/legacy/views.css')
+  const css = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
   const code = css.replace(/\/\*[\s\S]*?\*\//g, '')
   check('光标规则已删（不再有 content 是方块字符的那条）', !code.includes('▍'))
   check('连带 blink 关键帧一起删（不留只被它用的死规则）', !/@keyframes\s+blink\s*\{/.test(code))
@@ -473,7 +473,7 @@ console.log('[11] 轮尾的复制 / 分叉：停下之后、鼠标压在输出�
   // 半截会话；停下之后两颗钮又常驻，长会话里每轮后面都拖着一排按钮。
   // 两段判据：跑动中由组件不渲染（running），停下后由样式默认透明、悬浮输出才提到 1。
   const foot = read(UI + '/rows/foot.tsx')
-  const css = read('ui-shell/src/legacy/views.css')
+  const css = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
   const code = css.replace(/\/\*[\s\S]*?\*\//g, '')
 
   check('跑动中不画复制（不再是「留着但没意义」）', /const copy = !props\.running && /.test(foot))
@@ -527,8 +527,8 @@ console.log('[12] 机器投递的消息画成触发行，不是用户气泡（20
 console.log('[13] 已发送消息里的贴图也开浮层（可编辑行 + 只读出口，同一套）')
 {
   const userRow = read(UI + '/rows/user-row.tsx')
-  const css = read('ui-shell/src/styles.css')
-  const viewsCss = read('ui-shell/src/legacy/views.css')
+  const css = read('src/packages/ui-renderer/ui/styles/styles.css')
+  const viewsCss = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
 
   // 「不该出现」的断言先剥注释：文件头就引着旧写法（`<a target="_blank">`），不剥会自己打脸。
   const code = userRow.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')

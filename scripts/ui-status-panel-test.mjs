@@ -184,7 +184,7 @@ console.log('[4] 时间口径')
 console.log('[5] 形态钉（结构约定）')
 {
   const status = read('src/packages/ui-status/ui/ui.tsx')
-  const css = read('ui-shell/src/styles.css')
+  const css = read('src/packages/ui-renderer/ui/styles/styles.css')
   const team = read(resolveUiHalf('team') + '/ui.tsx')
   const tasks = read('src/packages/ui-tasks/ui/ui.tsx')
   /** 去掉注释再查「不许出现」的东西：注释里提到 window.innerWidth 是在解释为什么不用它。 */
@@ -390,9 +390,9 @@ console.log('[7] Git 页签（空仓库不报错 + 未跟踪可预览 + 每文�
 
 console.log('[8] 工具卡补丁视图（读 / 写 / 改三类分流）')
 {
-  const dockModel = read('ui-shell/src/ui-dockkit/dock-model.ts')
-  const dockState = read('ui-shell/src/ui-dockkit/dock-state.ts')
-  const dock = read('ui-shell/src/ui-dockkit/dock.tsx')
+  const dockModel = read('src/packages/ui-dockkit/ui/dock-model.ts')
+  const dockState = read('src/packages/ui-dockkit/ui/dock-state.ts')
+  const dock = read('src/packages/ui-dockkit/ui/dock.tsx')
   const factory = read(UI + '/tool-card/factory.tsx')
   const preview = read('src/packages/ui-preview/ui/ui.tsx')
   const contract = readContractSource()
@@ -427,8 +427,8 @@ console.log('[8] 工具卡补丁视图（读 / 写 / 改三类分流）')
 console.log('[9] 面板的落点与宽度锚（落点看页签行，宽度看正文区）')
 {
   const statusPanel = read('src/packages/ui-status/ui/ui.tsx')
-  const app = read('ui-shell/src/ui-layout/app.tsx')
-  const shellCss = read('ui-shell/src/styles.css')
+  const app = read('src/packages/ui-layout/ui/app.tsx')
+  const shellCss = read('src/packages/ui-renderer/ui/styles/styles.css')
 
   // 空会话态里 `.chat-wrap` 只有内容高、还被上下 auto 边距推着居中：把面板锚在它上面的话，
   // 收起态的胶囊与展开态的面板会落在**版心**而不是正文区（0.6.67 用户报障的位置）。
@@ -457,10 +457,10 @@ console.log('[9] 面板的落点与宽度锚（落点看页签行，宽度看正
 
 console.log('[10] 右上角的层序与「更多打开方式」的收起时机')
 {
-  const shellCss = read('ui-shell/src/styles.css')
+  const shellCss = read('src/packages/ui-renderer/ui/styles/styles.css')
   const sessions = read('src/packages/ui-sessions/ui/ui.tsx')
-  const primitives = read('ui-shell/src/ui-primitives/icons-workspace.tsx')
-  const barrel = read('ui-shell/src/ui-primitives/index.ts')
+  const primitives = read('src/packages/ui-primitives/ui/icons-workspace.tsx')
+  const barrel = read('src/packages/ui-primitives/ui/index.ts')
 
   // 胶囊（.sp-host）与菜单（.row-menu / .menu-backdrop）原先同为 40：同层时谁赢看 DOM 顺序，
   // 而胶囊挂在正文区、在 DOM 里比顶栏更靠后——于是顶栏「更多打开方式」的下拉被它压住两行
@@ -496,12 +496,12 @@ console.log('[10] 右上角的层序与「更多打开方式」的收起时机')
     '颜色写死 #RRGGBB（读对象本身的颜色，不跟主题跳色）',
     primitives.includes("const FOLDER_FRONT = '#F3B44C'") && primitives.includes("const VSCODE = '#2C9CE6'"),
   )
-  check('尺寸经 iconSizeStyle 挂 --dsc-icon-size（按钮倍率认它）', primitives.includes('iconSizeStyle(size)') && read('ui-shell/src/ui-primitives/icons.tsx').includes('export function iconSizeStyle'))
+  check('尺寸经 iconSizeStyle 挂 --dsc-icon-size（按钮倍率认它）', primitives.includes('iconSizeStyle(size)') && read('src/packages/ui-primitives/ui/icons.tsx').includes('export function iconSizeStyle'))
 }
 console.log('[11] 状态胶囊的落点与拖动')
 {
   const statusPanel = read('src/packages/ui-status/ui/ui.tsx')
-  const shellCss = read('ui-shell/src/styles.css')
+  const shellCss = read('src/packages/ui-renderer/ui/styles/styles.css')
 
   // 2026-11-02 用户截图：收起态的胶囊正好压在消息流第一行（思考 · 进行中）上。默认落点
   // 挪到顶栏页签行右端——那一行右侧本来就是空的。这两条钉住「默认落点在页签行」这件事：
@@ -574,8 +574,8 @@ console.log('[11] 状态胶囊的落点与拖动')
 
 console.log('[13] 面板搬进页签行之后，页签行的样式不许漏进面板')
 {
-  const shellCss = read('ui-shell/src/styles.css')
-  const viewsCss = read('ui-shell/src/legacy/views.css')
+  const shellCss = read('src/packages/ui-renderer/ui/styles/styles.css')
+  const viewsCss = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
 
   // 2026-11-02 报障：展开面板右上角的两颗图标钮只剩两个灰点。原因是面板整个浮层挂在
   // `.topbar .tabs` 里，而页签行有一条后代选择器 `.topbar .tabs button { padding: 0 10px;

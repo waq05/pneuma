@@ -1,5 +1,5 @@
 /**
- * TUI 快照合并存储（`src/app/snapshot-subscribe.ts`）的两层测试：
+ * TUI 快照合并存储（`src/packages/tui/app/snapshot-subscribe.ts`）的两层测试：
  *
  * [1] 纯模块语义：leading（静默期后第一个变更立刻放值）、trailing（窗口内的后续攒成一次）、
  *     **冻结**（两次放值之间 `getSnapshot()` 返回同一个引用——React 的复读不会再多提交一帧）、
@@ -27,8 +27,8 @@ process.env.HOME = home
 process.env.USERPROFILE = home
 process.env.DSC_HOME = join(home, '.dsc')
 
-const { createCoalescedStore, TUI_SNAPSHOT_MS } = await import('../lib/app/snapshot-subscribe.js')
-const { App } = await import('../lib/app/App.js')
+const { createCoalescedStore, TUI_SNAPSHOT_MS } = await import('../lib/packages/tui/app/snapshot-subscribe.js')
+const { App } = await import('../lib/packages/tui/app/App.js')
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 

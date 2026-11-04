@@ -117,7 +117,7 @@ console.log('\n[1b] 月份标签：一列只挂一个（2026-10-27 报障「10�
 
 console.log('\n[2] 环形图：窄窗口换行，不被卡片切')
 {
-  const css = read('ui-shell/src/styles.css')
+  const css = read('src/packages/ui-renderer/ui/styles/styles.css')
   check('热力图容器的横向溢出是真的 auto（不是 hidden/visible）', hasStyle(css, '.hm-scroll', /overflow-x:\s*auto/), JSON.stringify(ruleBodies(css, '.hm-scroll')))
   check('画布宽度跟着内容（max-content），标签才对得上格子', hasStyle(css, '.hm-canvas', /width:\s*max-content/), JSON.stringify(ruleBodies(css, '.hm-canvas')))
   check('环形那一行允许换行', hasStyle(css, '.donut-row', /flex-wrap:\s*wrap/), JSON.stringify(ruleBodies(css, '.donut-row')))

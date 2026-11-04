@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url'
 
 const scope = await import(new URL('../src/core/permission-scope.ts', import.meta.url).href)
 const { storedPermissions, writePermissions, permissionOf, resolvePermissions, samePermissionKnobs } = scope
-const tokens = await import(new URL('../ui-shell/src/ui-primitives/tokens.ts', import.meta.url).href)
+const tokens = await import(new URL('../src/packages/ui-primitives/ui/tokens.ts', import.meta.url).href)
 const { formatTokens } = tokens
 
 const root = fileURLToPath(new URL('..', import.meta.url))

@@ -28,7 +28,7 @@ const require = createRequire(import.meta.url)
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 const sdkRoot = join(repoRoot, 'lib', 'ui', 'sdk')
 const packagesJson = join(repoRoot, 'ui-shell', 'packages.json')
-const platformModulesFile = join(repoRoot, 'ui-shell', 'src', 'platform-modules.json')
+const platformModulesFile = join(repoRoot, 'src', 'packages', 'ui-renderer', 'ui', 'platform-modules.json')
 const sampleDir = join(repoRoot, 'examples', 'ui-sdk-types-demo')
 
 let failures = 0

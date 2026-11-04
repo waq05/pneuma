@@ -709,10 +709,20 @@ export const commandsPlugin: Plugin.Object = {
   },
 }
 
-/** 注册表单例引用（App.tsx 的 runCommand 走它，外部命令一并派发）。 */
+/**
+ * 最近一次装上的注册表。
+ *
+ * 只服务于下面那个兼容导出；产品代码（tui 宿主半）改成每次派发时现查
+ * `ctx.commands`，所以热替换后不会留着旧实例。
+ */
 let serviceRef: CommandService | null = null
 
-/** 兼容导出：v2 的 runCommand（App.tsx 零逻辑改动，仅 import 路径变化）。 */
+/**
+ * 兼容导出：v2 的 `runCommand`。
+ *
+ * 终端界面 0.8.2 起不再 import 它（那会让 tui 依赖命令包）。留着是因为包外
+ * 还有调用方按这个名字派发；没有插件实例时它返回 false，不抛。
+ */
 export function runCommand(
   input: string,
   runtime: DscRuntime,

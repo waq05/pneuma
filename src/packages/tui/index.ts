@@ -18,13 +18,14 @@
 import React from 'react'
 import { render, type Instance } from 'ink'
 import type { Plugin } from '@deepseek-ai/cordis'
-import { App } from '@pneuma/runtime/app/App.js'
+import { App } from './app/App.js'
 import { SlotRegistry } from '@pneuma/runtime/ui/slots.js'
 import { SlotOutlet } from '@pneuma/runtime/ui/slots-ink.js'
 import { loadTuiPlugins } from '@pneuma/runtime/ui/tui-plugins.js'
 import { TUI_SLOTS } from '@pneuma/runtime/ui/tui-plugin-api.js'
 import { DSC_VERSION } from '@pneuma/runtime/core/version.js'
 import type { InkComponent } from '@pneuma/runtime/ui/tui-plugins.js'
+import type { CommandService } from '@pneuma/runtime/services/types.js'
 
 const ENTER_ALT = '\x1b[?1049h\x1b[2J\x1b[H'
 const LEAVE_ALT = '\x1b[?1049l'
@@ -34,6 +35,7 @@ export const tuiPlugin: Plugin.Object = {
   name: 'tui',
   // transcript：界面插件装载失败的原因（没信任、api 不匹配…）进会话流——
   // 「插件怎么不见了」不能只写在 stderr 里。
+  // commands 是软依赖，不进 inject：关掉命令插件时终端界面照常起来，只是 `/` 不响应。
   inject: ['ui', 'transcript'],
   apply(ctx) {
     const runtime = ctx.ui
@@ -63,9 +65,16 @@ export const tuiPlugin: Plugin.Object = {
     })
 
     // exitOnCtrlC=false：Ctrl+C 交给 App（一次打断 / 双击退出）。
-    const instance: Instance = render(React.createElement(App, { runtime, tuiNoticeExtras }), {
-      exitOnCtrlC: false,
-    })
+    const instance: Instance = render(
+      React.createElement(App, {
+        runtime,
+        tuiNoticeExtras,
+        // 每次派发时现查，不缓存：命令插件可能后装、也可能被热替换成一个新实例。
+        dispatchCommand: (input, target, ui) =>
+          (ctx.get('commands') as CommandService | undefined)?.run(input, target, ui) ?? false,
+      }),
+      { exitOnCtrlC: false },
+    )
 
     const leaveAlt = (): void => {
       if (altScreen) stdout.write(LEAVE_ALT)

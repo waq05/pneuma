@@ -36,7 +36,7 @@ const check = (name, condition, detail = '') => {
 }
 
 const { humanizeError, humanErrorLine, humanErrorText } = await import(
-  new URL('../ui-shell/src/ui-primitives/humanize-error.ts', import.meta.url).href
+  new URL('../src/packages/ui-primitives/ui/humanize-error.ts', import.meta.url).href
 )
 
 // ── [1] 人话层真值表 ───────────────────────────────────────────────────────────
@@ -89,7 +89,7 @@ console.log('[1] humanizeError 真值表')
 
 console.log('[2] 弹层焦点管理')
 {
-  const hook = read('ui-shell/src/ui-primitives/dialog-focus.ts')
+  const hook = read('src/packages/ui-primitives/ui/dialog-focus.ts')
   check('记下来源焦点', hook.includes('document.activeElement') && hook.includes('last.isConnected'))
   check('关掉归还来源焦点', hook.includes('last.focus({ preventScroll: true })'))
   check('初始焦点按 [data-autofocus] → 第一个可聚焦 → 弹层本身', hook.includes("'[data-autofocus]'") && hook.includes('items()[0] ?? dialog'))
@@ -118,13 +118,13 @@ console.log('[2] 弹层焦点管理')
 
 console.log('[3] 骨架屏')
 {
-  const css = read('ui-shell/src/styles.css')
+  const css = read('src/packages/ui-renderer/ui/styles/styles.css')
   check('CSS 有 .dsc-skeleton 与扫光 keyframes', /\.dsc-skeleton \{[\s\S]*?\}/.test(css) && css.includes('@keyframes dsc-skeleton-sweep'))
   check('reduced-motion 时扫光停下', /@media \(prefers-reduced-motion: reduce\) \{[\s\S]{0,200}?\.dsc-skeleton::after \{\s*animation: none/.test(css))
   check('读屏状态行视觉藏起来但没进 display:none', /\.dsc-loading-status \{[^}]*clip-path: inset\(50%\)/.test(css))
-  const barrel = read('ui-shell/src/ui-primitives/index.ts')
+  const barrel = read('src/packages/ui-primitives/ui/index.ts')
   check('骨架组件从基元库转出', barrel.includes("export * from './skeleton'"))
-  const comp = read('ui-shell/src/ui-primitives/skeleton.tsx')
+  const comp = read('src/packages/ui-primitives/ui/skeleton.tsx')
   check('组件三件：Skeleton / SkeletonText / LoadingStatus', ['export function Skeleton', 'export function SkeletonText', 'export function LoadingStatus'].every((name) => comp.includes(name)))
   check('占位块不进可达树（aria-hidden）', comp.includes('aria-hidden="true"'))
 
@@ -152,12 +152,12 @@ console.log('[3] 骨架屏')
 
 console.log('[4] P1 三项')
 {
-  const css = read('ui-shell/src/styles.css')
-  const app = read('ui-shell/src/ui-layout/app.tsx')
+  const css = read('src/packages/ui-renderer/ui/styles/styles.css')
+  const app = read('src/packages/ui-layout/ui/app.tsx')
   const statusbar = read('src/packages/ui-statusbar/ui/ui.tsx')
   const sessions = read('src/packages/ui-sessions/ui/ui.tsx')
   const transcript = readPluginSource(UI)
-  const channel = read('ui-shell/src/ui-layout/host-channel.ts')
+  const channel = read('src/packages/ui-layout/ui/host-channel.ts')
 
   // 品牌两档：侧栏 20 / 窄栏 22，全部走变量。空态那档 2026-10-27 撤掉（用户说图标突兀）。
   check('品牌档位表存在（两档变量）', ['--dsc-logo-sm: 20px', '--dsc-logo-md: 22px'].every((line) => css.includes(line)))
@@ -168,11 +168,11 @@ console.log('[4] P1 三项')
   check('能力卡提示语留满两行（标题对得齐）', /\.welcome-card-hint \{[^}]*min-height: 2lh/.test(css))
 
   // 今日读数只留侧栏页脚（2026-10-28 对齐 dsh：底排只有轮/步、tok、上下文三段）。
-  check('共享 hook：ui-layout/usage-today 存在', existsSync(join(root, 'ui-shell/src/ui-layout/usage-today.ts')))
+  check('共享 hook：ui-layout/usage-today 存在', existsSync(join(root, 'src/packages/ui-layout/ui/usage-today.ts')))
   check('hook 从 @dsc/ui 转出', read('ui-shell/src/plugin-api.ts').includes('useTodayUsage'))
   check('状态栏不再挂今日段', !statusbar.includes('function TodaySegment(') && !statusbar.includes('useTodayUsage'))
   check('页脚改用同一份 hook（不再自己拉 usageStats）', sessions.includes('useTodayUsage(usage)') && !/SidebarFooter[\s\S]{0,900}?invoke<UsageStatsView>/.test(sessions))
-  check('金额口径只有一份（基元库）', read('ui-shell/src/ui-primitives/tokens.ts').includes('export function formatCostCny') && !sessions.includes('function formatCostCny'))
+  check('金额口径只有一份（基元库）', read('src/packages/ui-primitives/ui/tokens.ts').includes('export function formatCostCny') && !sessions.includes('function formatCostCny'))
   check('轮/步取宿主 progress（步数为 0 整段不画）', statusbar.includes('readProgress') && statusbar.includes('Number(steps) > 0'))
 
   // 断线提示：通道关闭/连接中超过 3 秒才出，带手动重连。
@@ -187,12 +187,12 @@ console.log('[4] P1 三项')
 
 console.log('[5] 2026-10-26 四项')
 {
-  const css = read('ui-shell/src/styles.css')
-  const app = read('ui-shell/src/ui-layout/app.tsx')
+  const css = read('src/packages/ui-renderer/ui/styles/styles.css')
+  const app = read('src/packages/ui-layout/ui/app.tsx')
   const sessions = read('src/packages/ui-sessions/ui/ui.tsx')
   const composer = readPluginSource('src/packages/ui-composer/ui')
   const slider = read('src/packages/ui-composer/ui/effort-slider.tsx')
-  const resizer = read('ui-shell/src/ui-primitives/thread-resizer.tsx')
+  const resizer = read('src/packages/ui-primitives/ui/thread-resizer.tsx')
 
   // ① 滑杆：档位有顺序，画成一条轨道；四档四套动效，没有「默认」这一格。
   check('档位卡换成滑杆（轨道 + 停点 + 滑钮）', slider.includes('data-effort-track') && slider.includes('data-effort-dot') && slider.includes('data-effort-knob'))
@@ -217,7 +217,7 @@ console.log('[5] 2026-10-26 四项')
   check('模式菜单宽度按内容（不再写死 300px）', /\.model-pop\.preset-pop \{[^}]*width: max-content/.test(css) && !/\.model-pop\.preset-pop \{\s*\n\s*width: 300px/.test(css))
 
   // ③ 入口搬家：旁问进右侧栏「开始」页，搜索进顶栏
-  check('旁问在右侧栏「开始」页（不是左侧栏导航）', /kind: 'ask', title: '旁问'/.test(read('ui-shell/src/ui-dockkit/dock.tsx')) && !sessions.includes('data-nav="ask"'))
+  check('旁问在右侧栏「开始」页（不是左侧栏导航）', /kind: 'ask', title: '旁问'/.test(read('src/packages/ui-dockkit/ui/dock.tsx')) && !sessions.includes('data-nav="ask"'))
   check('页脚不再有旁问与搜索两行', !sessions.includes('row row-btn ask-entry') && !sessions.includes('shell.palette.open'))
   check('搜索挪到顶栏、压在「在资源管理器打开」左边', app.indexOf('topbar-search') > 0 && app.indexOf('topbar-search') < app.indexOf('slot={SLOT.header}'))
   check('搜索钮真会开命令面板', /className="icon-btn topbar-search"[\s\S]{0,400}?shell\.palette\.open/.test(app))
@@ -238,7 +238,7 @@ console.log('[5] 2026-10-26 四项')
 
 console.log('[6] 调档手感')
 {
-  const css = read('ui-shell/src/styles.css')
+  const css = read('src/packages/ui-renderer/ui/styles/styles.css')
   const composer = readPluginSource('src/packages/ui-composer/ui')
   const slider = read('src/packages/ui-composer/ui/effort-slider.tsx')
   const runtime = read('src/packages/runtime/index.ts')
@@ -270,7 +270,7 @@ console.log('[6] 调档手感')
 
 console.log('[7] 命令面板的滚动与翻页')
 {
-  const css = read('ui-shell/src/styles.css')
+  const css = read('src/packages/ui-renderer/ui/styles/styles.css')
   const palette = read('src/packages/ui-palette/ui/ui.tsx')
 
   // ① 结果列必须是真滚动区：flex 项默认 min-height:auto，内容一高就被面板的
@@ -305,7 +305,7 @@ console.log('[7] 命令面板的滚动与翻页')
 
 console.log('[8] 子智能体下拉与状态胶囊的悬停')
 {
-  const css = read('ui-shell/src/styles.css')
+  const css = read('src/packages/ui-renderer/ui/styles/styles.css')
   const team = read(resolveUiHalf('team') + '/ui.tsx')
 
   // ① 下拉贴着按钮左下展开，按钮被长标题推到右边时会出界（用户看到的是「被遮挡」）。
@@ -324,8 +324,8 @@ console.log('[8] 子智能体下拉与状态胶囊的悬停')
 
 console.log('[9] 这一轮的四条')
 {
-  const css = read('ui-shell/src/styles.css')
-  const summary = read('ui-shell/src/ui-primitives/tool-summary.ts')
+  const css = read('src/packages/ui-renderer/ui/styles/styles.css')
+  const summary = read('src/packages/ui-primitives/ui/tool-summary.ts')
   const transcriptSrc = readPluginSource(UI)
   const statusSrc = read('src/packages/ui-status/ui/ui.tsx')
   const factorySrc = read(UI + '/tool-card/factory.tsx')
@@ -362,7 +362,7 @@ console.log('[9] 这一轮的四条')
 
 console.log('[10] 会话行标题的悬停滚动')
 {
-  const css = read('ui-shell/src/styles.css')
+  const css = read('src/packages/ui-renderer/ui/styles/styles.css')
   const sessionsSrc = read('src/packages/ui-sessions/ui/ui.tsx')
 
   // ① 量：悬停（或轮到焦点）那一刻量一次溢出，没溢出就不加开关——不能让所有行都抖。

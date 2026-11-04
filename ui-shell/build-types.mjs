@@ -17,9 +17,9 @@
  *
  * 1. `@dsc/ui` 的入口就是 `plugin-api.d.ts` 本身（不是薄转发）——`SlotMap` /
  *    `SlotFactoryMap` 的声明合并认的是**这个模块的文件身份**，转发一层合并就失效。
- * 2. 包内对 `'../plugin-api'` 的引用改写成 `'@dsc/ui'`：源码里 ui-slots / ui-layout 按
- *    相对路径引它（合并只认词法相邻的文件身份），而 SDK 里 `@dsc/ui` 与 `plugin-api.d.ts`
- *    是同一个模块，按包名引指向的还是那一份——合并照样成立。
+ * 2. 万一还有文件按 `'../plugin-api'` 相对引，落盘前改写成 `'@dsc/ui'`。汇总阶段本来
+ *    就要求按包名引（源码里 ui-slots / ui-layout 已经改成 `@dsc/ui`），这段是兜底：
+ *    界面半搬出 ui-shell 后，相对路径在 SDK 树里会指到包外，静默变成 any。
  *
  * @module dsc-ui-shell/build-types
  */
@@ -86,9 +86,10 @@ for (const [name, rel] of Object.entries(PACKAGES)) {
     const contract = join(emitRoot, 'src', 'contract.d.ts')
     if (existsSync(contract)) targets.set(`${name}/contract.d.ts`, readFileSync(contract, 'utf8'))
   } else {
-    // 其余包源码落点是 ./src/<pkgdir>/index.ts：把对应产物目录整段搬进 @dsc/<name>/。
-    const pkgDir = rel.replace(/^\.\//, '').split('/').slice(-2, -1)[0]
-    const abs = join(emitRoot, 'ui-shell', 'src', pkgDir)
+    // 其余包源码落点是 ../src/packages/<pkgdir>/ui/index.ts：把对应的 ui/ 产物目录整段搬进 @dsc/<name>/。
+    // 按 'src/packages/' 之后的第一段取包名——不能再用「倒数第二段」，那是 ui/ 了。
+    const pkgDir = rel.split('src/packages/')[1]?.split('/')[0]
+    const abs = pkgDir === undefined ? '' : join(emitRoot, 'src', 'packages', pkgDir, 'ui')
     if (!existsSync(abs)) {
       console.error(`[build-types] 找不到 ${name} 的声明产物 ${pkgDir}——落点与 packages.json 对不上？`)
       process.exit(1)

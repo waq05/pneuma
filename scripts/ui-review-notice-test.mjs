@@ -5,7 +5,7 @@
  * 三段：
  *   1. **纯解析**——横幅识别 / 头行三件（动作 / 路径 / 计数）/ 逐行四类判定 /
  *      说明行不当作 diff（模型按 Node 类型擦除直读
- *      `ui-shell/src/ui-primitives/review-notice.ts`，不需要先 build）；
+ *      `src/packages/ui-primitives/ui/review-notice.ts`，不需要先 build）；
  *   2. **契约漂移钉**——壳看到的是宿主拼出来的**纯文本**，两边的字面量各持一份：
  *      探针直读宿主源文件，把壳常量与宿主模板逐字对上（漂了要红，否则界面上
  *      认不出这条通知，几十行 diff 又会走回居中的 `.entry-system`）；
@@ -24,7 +24,7 @@ import { readPluginSource, resolveUiHalf } from './_check-runner.mjs'
 const UI = resolveUiHalf('transcript')
 
 const model = await import(
-  new URL('../ui-shell/src/ui-primitives/review-notice.ts', import.meta.url).href
+  new URL('../src/packages/ui-primitives/ui/review-notice.ts', import.meta.url).href
 )
 const {
   REVIEW_NOTICE_BANNER,
@@ -172,7 +172,7 @@ console.log('[5] 契约漂移钉：壳常量 == 宿主 src/plugins/file-review.t
   check('宿主截断说明仍是 `…（` 起头', host.includes('…（这份预览只显示前 '))
   // 版本纪律的另一半：壳侧那份字面量只能在这一处（多抄一份就会漂）。数之前先剔注释——
   // 注释里举例是说明，不算第二份字面量；代码里的第二份才算。
-  const shellModule = read('ui-shell/src/ui-primitives/review-notice.ts')
+  const shellModule = read('src/packages/ui-primitives/ui/review-notice.ts')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1')
   check('壳侧的横幅字面量只在 review-notice.ts 里定义一次', shellModule.split(REVIEW_NOTICE_BANNER).length - 1 === 1)
@@ -182,8 +182,8 @@ console.log('[6] 壳侧接线钉（文本钉：结构约定）')
 {
   const chat = readPluginSource(UI)
   const trace = read('src/packages/ui-trace/ui/ui.tsx')
-  const card = read('ui-shell/src/ui-primitives/review-notice-card.tsx')
-  const css = read('ui-shell/src/legacy/views.css')
+  const card = read('src/packages/ui-primitives/ui/review-notice-card.tsx')
+  const css = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
 
   check('对话流的 system 分支先问 parseReviewNotice，认出就走卡片', /case 'system': \{[\s\S]{0,600}?parseReviewNotice\(entry\.text\)[\s\S]{0,400}?<ReviewNoticeCard/.test(chat))
   // 2026-10-27：命令输出（entry.command）单独走左对齐块，其余短通知仍走居中的 .entry-system
@@ -220,7 +220,7 @@ console.log('[7] 插件边界：两家都从基元包取，没有插件横穿到
   check('轨迹页从 @dsc/ui-primitives 取解析与卡片', /import \{[^}]*ReviewNoticeCard[^}]*\} from '@dsc\/ui-primitives'/.test(traceSrc) && /import \{[^}]*parseReviewNotice[^}]*\} from '@dsc\/ui-primitives'/.test(traceSrc))
   check('对话流从 @dsc/ui-primitives 取解析与卡片', /import \{[^}]*ReviewNoticeCard[^}]*\} from '@dsc\/ui-primitives'/.test(chatSrc) && /import \{[^}]*parseReviewNotice[^}]*\} from '@dsc\/ui-primitives'/.test(chatSrc))
   check('两个插件都不再相对引用别的插件目录', !/\.\.\/(transcript|trace)\//.test(traceSrc + chatSrc))
-  const primitivesBarrel = read('ui-shell/src/ui-primitives/index.ts')
+  const primitivesBarrel = read('src/packages/ui-primitives/ui/index.ts')
   check('基元包导出这两件（包的公开面才有它们）', primitivesBarrel.includes("export * from './review-notice'") && primitivesBarrel.includes("export * from './review-notice-card'"))
 }
 

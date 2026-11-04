@@ -51,7 +51,10 @@
     "yaml": "^2.9.1"
   },
   "devDependencies": {
+    "@shikijs/langs": "^4.5.0",
+    "@shikijs/themes": "^4.5.0",
     "@types/node": "^24.0.0",
+    "@types/papaparse": "^5.3.16",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
@@ -60,8 +63,14 @@
     "@types/ws": "^8.18.2",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "papaparse": "^5.7.0",
+    "pdfjs-dist": "^6.3.289",
     "qrcode": "^1.5.4",
-    "typescript": "^5.9.0"
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.0",
+    "shiki": "^4.5.0",
+    "typescript": "^5.9.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

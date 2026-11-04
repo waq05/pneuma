@@ -40,7 +40,7 @@ const dirtyAll = (hay, from, to) => hay.split(from).join(to)
 // ── [1] 单位量级口径（共享 formatTokens 的 K/M 真值表） ──────────────────────────
 
 const { formatTokens } =
-  await import(new URL('../ui-shell/src/ui-primitives/tokens.ts', import.meta.url).href)
+  await import(new URL('../src/packages/ui-primitives/ui/tokens.ts', import.meta.url).href)
 
 /** 全部档位必须命中——0 / 个位 / 千档 / 万档 / 百 K / M 档 / 千 M 档 / 非法值各占几条 */
 const TRUTH_TABLE = [
@@ -70,7 +70,7 @@ check('[1] K/M 量级真值表（共享 formatTokens）', truthTableOk(formatTok
 check('[1] 真值表对「永不缩写」假实现必须红', !truthTableOk((value) => String(Math.round(value))),
   '真值表收不了假实现——换算口径的断言空转')
 check('[1] tokens 从共享出口（ui-primitives/index.ts）',
-  read('ui-shell/src/ui-primitives/index.ts').includes("export * from './tokens'"),
+  read('src/packages/ui-primitives/ui/index.ts').includes("export * from './tokens'"),
   'index.ts 没把 tokens 从种子出口——页脚的共享引用会静默 undefined')
 
 // ── [2] 页脚契约（sessions/ui.tsx 文本钉） ────────────────────────────────────────
@@ -78,7 +78,7 @@ check('[1] tokens 从共享出口（ui-primitives/index.ts）',
 const src = read('src/packages/ui-sessions/ui/ui.tsx')
 // 2026-10-25：取数口径搬到共享 hook（ui-layout/usage-today.ts），页脚只消费它。
 // 判定因此拆两处：页脚「用没用共享 hook」、hook「怎么取、取哪一格、多久刷」。
-const hookSrc = read('ui-shell/src/ui-layout/usage-today.ts')
+const hookSrc = read('src/packages/ui-layout/ui/usage-today.ts')
 const labelOnce = (s) => s.split('<span>今日总用量</span>').length === 2
 const usesSharedHook = (s) => s.includes('useTodayUsage(usage)')
 const channelCall = (s) => s.includes(".invoke<UsageStatsShape>('usageStats')")

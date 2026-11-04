@@ -58,10 +58,13 @@ const shellVersion = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')
 /**
  * 由壳提供的模块：插件 bundle 里对它们的引用保持原样，运行期从白名单表取。
  *
- * 这份表与运行期那张（`src/boot.ts` 的 `MODULES`）必须一模一样，所以两者同读
- * `platform-modules.json`；任何一边单独改动都会在这里当场构建失败。
+ * 这份表与运行期那张（`src/packages/ui-renderer/ui/boot.ts` 的 `MODULES`）必须一模一样，
+ * 所以两者同读 `platform-modules.json`；任何一边单独改动都会在这里当场构建失败。
+ * 表已随界面半搬进 ui-renderer 包，这里按仓库根指过去。
  */
-const PLATFORM_MODULES = JSON.parse(readFileSync(join(root, 'src', 'platform-modules.json'), 'utf8'))
+const PLATFORM_MODULES = JSON.parse(
+  readFileSync(join(root, '..', 'src', 'packages', 'ui-renderer', 'ui', 'platform-modules.json'), 'utf8'),
+)
 
 /**
  * 额外保持外部化、但**故意不给**插件的那一个：`@dsc/ui-core` 是壳的内部实现。

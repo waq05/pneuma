@@ -87,11 +87,11 @@ function collect(dir, out = []) {
 }
 
 // ── 源码与样式（全部摊平）────────────────────────────────────────────────────
-const app = flat(read('ui-shell/src/ui-layout/app.tsx'))
+const app = flat(read('src/packages/ui-layout/ui/app.tsx'))
 const composer = flat(readPluginSource('src/packages/ui-composer/ui'))
 const sessions = flat(read('src/packages/ui-sessions/ui/ui.tsx'))
-const styles = flat(read('ui-shell/src/styles.css'))
-const views = flat(read('ui-shell/src/legacy/views.css'))
+const styles = flat(read('src/packages/ui-renderer/ui/styles/styles.css'))
+const views = flat(read('src/packages/ui-renderer/ui/styles/legacy/views.css'))
 
 const block860 = mediaBlock(styles, 860, '.sidebar:not(.rail)')
 const block560 = mediaBlock(styles, 560, '.composer-bar .bar-left')
@@ -331,7 +331,7 @@ console.log('[11] 样式门：新类名、撞名、硬编码色、幽灵令牌')
 
   // 撞名门：新类名不许在 legacy 四份 CSS 里出现过（上一版吃过这个亏：`.model-row` 撞上
   // 设置页同名类，行静默竖排）。styles.css 是它自己的家，所以只扫 legacy 那四份。
-  const legacyCss = ['views', 'tokens', 'base', 'primitives'].map((n) => flat(read(`ui-shell/src/legacy/${n}.css`))).join('\n')
+  const legacyCss = ['views', 'tokens', 'base', 'primitives'].map((n) => flat(read(`src/packages/ui-renderer/ui/styles/legacy/${n}.css`))).join('\n')
   const collideLegacy = NEW_CSS_CLASSES.concat('topbar-nav-btn').filter((name) => new RegExp(`\\.${name}[\\s,{:.]`).test(legacyCss))
   check('不撞 legacy 里的既有类名', collideLegacy.length === 0, collideLegacy.join(','))
   check('新类名在 styles.css 里只定义一次（不留第二份漂移）', (stylesNoFallback.match(/\.sidebar-scrim[ \t]*\{/g) ?? []).length === 1)
@@ -357,7 +357,7 @@ console.log('[11] 样式门：新类名、撞名、硬编码色、幽灵令牌')
   check('新类名的规则体里没有硬编码色', hardcodedColors(styles, NEW_CSS_CLASSES).length === 0, hardcodedColors(styles, NEW_CSS_CLASSES).join(','))
 
   // 幽灵令牌：新样式块里每个 var(--dsc-*) 都要在五份 CSS 的并集里有定义（拼错会静默透明）。
-  const tokenTable = ['views', 'tokens', 'base', 'primitives'].map((n) => flat(read(`ui-shell/src/legacy/${n}.css`))).join('\n')
+  const tokenTable = ['views', 'tokens', 'base', 'primitives'].map((n) => flat(read(`src/packages/ui-renderer/ui/styles/legacy/${n}.css`))).join('\n')
   const ghostScan = (slice) =>
     [...slice.matchAll(/var\((--dsc-[a-z0-9-]+)/g)]
       .map((match) => match[1])

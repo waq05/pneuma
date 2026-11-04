@@ -7,7 +7,7 @@
  * 根因是修 10-27 时把口径定成了「整块栏只剩 guide 就收起」——它把旁边那张还开着的
  * 「开始」一起算了「没有真内容」。
  *
- * 这一条只压纯模型（ui-shell/src/ui-dockkit/dock-model.ts，零 React、零 DOM）：
+ * 这一条只压纯模型（src/packages/ui-dockkit/ui/dock-model.ts，零 React、零 DOM）：
  *   [1] 单格只剩 guide → 关掉就收起，guide 留着当下次展开的落地页；
  *   [2] 单格还有真内容 → 关一张照旧留栏（不能把用户正在看的终端一起收走）；
  *   [3] 「开始」+「旁问」，关掉「旁问」→ 栏留着，「开始」还在（10-28 报障本体）；
@@ -18,7 +18,7 @@
  *
  * @module dsc/scripts/ui-dock-close-test
  */
-const model = await import(new URL('../ui-shell/src/ui-dockkit/dock-model.ts', import.meta.url).href)
+const model = await import(new URL('../src/packages/ui-dockkit/ui/dock-model.ts', import.meta.url).href)
 const { defaultSurface, makeTab, closeTab, setExpanded, splitPane } = model
 
 let failures = 0

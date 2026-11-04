@@ -18,10 +18,10 @@ process.env.FORCE_COLOR = '3'  // 真彩：金色题面才不会被降级成亮�
 const { PassThrough } = await import('node:stream')
 const React = (await import('react')).default
 const { render, Box } = await import('ink')
-const { Entry } = await import('../lib/app/ChatView.js')
-const { StatusBar } = await import('../lib/app/StatusBar.js')
-const { estimateLines } = await import('../lib/app/scroll-model.js')
-const { absoluteTop, measuredHeight } = await import('../lib/app/click.js')
+const { Entry } = await import('../lib/packages/tui/app/ChatView.js')
+const { StatusBar } = await import('../lib/packages/tui/app/StatusBar.js')
+const { estimateLines } = await import('../lib/packages/tui/app/scroll-model.js')
+const { absoluteTop, measuredHeight } = await import('../lib/packages/tui/app/click.js')
 
 let failures = 0
 const check = (name, condition, detail = '') => {
@@ -312,10 +312,10 @@ console.log('会话流排版契约测试')
 
 // ── [6] 呼吸色与刻度列悬停提亮 ──────────────────────────────────────────────
 {
-  const { mixHex, RAIL_COLOR } = await import('../lib/app/theme.js')
-  const { onGutter, publishPointer, clearPointer } = await import('../lib/app/pointer.js')
-  const { TimelineRail } = await import('../lib/app/TimelineRail.js')
-  const { railGeometry } = await import('../lib/app/scroll-model.js')
+  const { mixHex, RAIL_COLOR } = await import('../lib/packages/tui/app/theme.js')
+  const { onGutter, publishPointer, clearPointer } = await import('../lib/packages/tui/app/pointer.js')
+  const { TimelineRail } = await import('../lib/packages/tui/app/TimelineRail.js')
+  const { railGeometry } = await import('../lib/packages/tui/app/scroll-model.js')
   check('mixHex：两端原样（t=0 / t=1）', mixHex('#4D6BFE', '#93BEFF', 0).toLowerCase() === '#4d6bfe' && mixHex('#4D6BFE', '#93BEFF', 1).toLowerCase() === '#93beff', mixHex('#4D6BFE', '#93BEFF', 0))
   check('mixHex：中点取两端的平均', mixHex('#000000', '#ffffff', 0.5) === '#808080', mixHex('#000000', '#ffffff', 0.5))
   check('mixHex：t 越界夹住（正弦算出来不会越界，但别让越界值渲染出坏色）', mixHex('#000000', '#ffffff', 9) === '#ffffff' && mixHex('#000000', '#ffffff', -3) === '#000000')

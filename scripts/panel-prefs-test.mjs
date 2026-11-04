@@ -117,14 +117,14 @@ console.log('\n[6] 接线检查（读这一端之外的三处）')
     '写面板几何不发回执（不然拖一下弹一句"已保存工作区名字"）',
     read('src/packages/runtime/index.ts').includes("patch.panelWidths !== undefined && Object.keys(patch).length === 1"),
   )
-  const panels = read('ui-shell/src/ui-primitives/panels.ts')
+  const panels = read('src/packages/ui-primitives/ui/panels.ts')
   check(
     'localStorage 空着时先看地址里那份、再看宿主回读',
     panels.includes('const fromBoot = bootGeometry[hostKey]') && panels.includes('const fallback = remembered[hostKey]'),
   )
   check('落盘时把整份发给宿主（宿主是整键替换的补丁语义）', panels.includes('saver?.({ ...remembered } as PanelGeometry)'))
-  check('启动时灌入宿主那份', read('ui-shell/src/ui-renderer/main.tsx').includes('primePanelGeometry(loaded?.panelWidths ?? {})'))
-  check('渲染前就拿到（首帧不跳一下）', read('ui-shell/src/ui-renderer/main.tsx').includes('await within(prefs, 1500)'))
+  check('启动时灌入宿主那份', read('src/packages/ui-renderer/ui/main.tsx').includes('primePanelGeometry(loaded?.panelWidths ?? {})'))
+  check('渲染前就拿到（首帧不跳一下）', read('src/packages/ui-renderer/ui/main.tsx').includes('await within(prefs, 1500)'))
 }
 
 
@@ -141,7 +141,7 @@ console.log('\n[7] 面板模块的真行为（假 localStorage + 假宿主）')
       store.delete(key)
     },
   }
-  const panels = await import('../ui-shell/src/ui-primitives/panels.ts')
+  const panels = await import('../src/packages/ui-primitives/ui/panels.ts')
   const { PANEL_KEYS, primePanelGeometry, readStoredPx, readStoredFlag, setPanelGeometrySaver, writeStoredPx, writeStoredFlag } = panels
 
   const sent = []
@@ -185,7 +185,7 @@ console.log('\n[8] 地址里带过来的那份额外保险（宿主冷启动慢�
 {
   // 换一个模块实例：面板模块在求值时读一次地址，所以先把 window 摆好再 import。
   globalThis.window = { location: { search: '?theme=claude&panels=sidebar:340,dock:700,collapsed:1' } }
-  const boot = await import('../ui-shell/src/ui-primitives/panels.ts?boot=1')
+  const boot = await import('../src/packages/ui-primitives/ui/panels.ts?boot=1')
   const store = new Map()
   globalThis.localStorage = {
     getItem: (key) => (store.has(key) ? store.get(key) : null),

@@ -288,7 +288,7 @@ src/packages/<id>/
 | **Q2** | 代码热更新：解析钩子代数戳 + 文件监听（去抖）+ 单行重挂；**先导入新的成功再停旧的，失败保留旧版本** | 改 `lib/packages/todo/index.js` 不重启即生效；故意写坏语法后旧版本继续工作且报一条失败 |
 | **Q3** | 一个包两半边：19 个界面包并入宿主包 | 插件清单从 19 份并到 56 份；界面产物逐字节不变 |
 | **Q4** | 实现搬包：core 的实现按域搬进对应包 | core 行数降到内核线；搬完的包能单独替换（不再依赖 core 里的同名实现） |
-| **Q5** | 壳层包化：`ui-layout`/`ui-primitives`/`ui-slots`/`ui-dockkit`/`ui-renderer`、TUI 组件树、CLI 子命令 | 每件都有 `package.json` + 行 + 可停用；壳只剩引导 |
+| **Q5** | 壳层包化：`ui-layout`/`ui-primitives`/`ui-slots`/`ui-dockkit`/`ui-renderer`、TUI 组件树、CLI 子命令 | 五层各一个**库包**（`pneuma.library`、无装配行），TUI 一个功能包，样式随入口走；`ui-shell/` 只剩构建装置。别名落点必须正好是包内 `ui/index.ts`，包间零相对 import（§12.10） |
 | **Q6** | 包形态与开发标准：README 两段、包级 `tests/`、`exports` 标准键集、导出形状、可发布字段 | 新包缺项即红（门禁）；20 条检查清单全绿 |
 
 ### 12.4 热更新的实现路线（与 dsh 的差异）
@@ -398,3 +398,30 @@ numa 对应：
 **这一批暴露的第三个坑：直读源码的探针会被转发桩断掉。** 四支探针读 `src/core/*.ts` 的**文本**做断言（`session-open-in-test`、`ui-status-panel-test`、`readme-test`），还有一支直接 import 源码（`memory-eval-test`）。桩只有一行，断言要么假失败、要么 `ERR_MODULE_NOT_FOUND`。修法不是逐个改路径（每搬一个文件就要改一次），而是加一支 `scripts/_source.mjs`：识别「整份文件只有一行再导出」的桩，跟到真文件再给文本 / 再 import。多层转发也跟，环有 8 层上限；断言内容一个字没改。
 
 顺带记一个容易误判的现象：Node 的类型擦除**不会**把源码里 `export * from './x.js'` 回落到 `./x.ts`。`microcompact-test` 之所以没断，是因为它自己注册了 resolve 钩子（`scripts/microcompact-test.mjs:41`），不是 Node 默认行为。
+
+### 12.10 Q5 壳层包化：五个层是**库包**，不是装配行（2026-11-04 裁决）
+
+**形态**：`src/packages/ui-{layout,primitives,slots,renderer,dockkit}/`，各有 `package.json`（`private:true`、`pneuma.library:true`、`version` 随根）与 `index.ts` 半（13 行、空 `apply`），**没有** `cordis.patch.yml`、**不占**装配行。真实现在 `ui/`，`ui/index.ts` 是出口桶（barrel）。
+
+**为什么不做成行**（这里的取舍与 §12.5 的界面单元相反，理由必须写清）：
+
+1. numa 的界面是**一个预构建 bundle**，不是运行期按包拼装。给壳层加一行，得到的是一个开关：打开等于现在的行为，关掉等于白屏——它不改变任何东西，属于"看起来可停用，其实不可停用"，比没有更糟。
+2. `ui-primitives` 若拆成独立产物，它导出的 React context 会在 19 个插件 bundle 里各内联一份，同一棵树上出现两个 Provider：表现为"状态改了、组件不重渲染"，排查成本极高。dsh 同样把种子包排除在插件产物之外。
+3. 热更新能力不靠"是不是行"来获得：`registerLibraryGenerationRoots`（`src/core/plugin-loader.ts:193`）会把库包目录登记为换代根，引用它的行在库改动后被重新挂载。所以库包照样热更新，只是它自己没有开关。
+
+**两个名字**（维护陷阱，`[5b]` 已钉）：
+
+| 名字 | 用途 | 出处 |
+|---|---|---|
+| `@pneuma/ui-<id>` | 包身份：loader/注册表/清单认它 | 各包 `package.json` 的 `name` |
+| `@dsc/ui-<id>` | 作者面：插件与壳内部 import 用它 | `ui-shell/packages.json` + `ui-shell/tsconfig.json` 的 `paths` |
+
+别名必须**正好**落在 `src/packages/ui-<id>/ui/index.ts`：落点写歪成包根也编译得过去，代价是类型面与运行期实现分家。
+
+**这一批踩到的坑**：
+
+1. **tsc 按文件位置找 `node_modules`**，不看 tsconfig 在哪。源码搬到 `src/packages/**` 后，`react-dom` / `shiki` / `papaparse` / `xlsx` / `pdfjs-dist` 的类型全部解析失败（81 条 TS2307）。解法是把这 9 个包补进**根** devDeps，而不是给 tsconfig 加 `paths`——后者能让 tsc 假绿，vite 构建仍旧红。
+2. **样式得跟着入口走**。`main.tsx` 原来 import `../legacy/*.css`，搬到 `ui-renderer/ui/` 后这条相对路径指到了空处（vite: `Could not resolve "../legacy/base.css"`）。四份 legacy 样式、补充层 `styles.css`、色板兜底生成物一起搬进 `src/packages/ui-renderer/ui/styles/`，色板生成脚本的 `TOKENS_PATH`/`OUT_PATH` 同步改。
+3. **26 支探针按路径读样式源码做断言**（`ui-attach-preview-test`、`ui-color-fallback-test` 等）。搬家必须同批改，否则断的是"断言读不到文件"，而不是样式回归。
+
+**`ui-shell/` 现在只剩构建装置**：`packages.json`（别名唯一真源）、`tsconfig.json`、`vite.config.ts`、`build-plugins.mjs`、`build-types.mjs`、`index.html`、`src/plugin-api.ts`（`@dsc/ui` 的类型面）、`src/slot-contract.typecheck.tsx`。这里不是"代码放错了地方"，是"壳的构建配方放这里"——产物落点、产物 id 换算、种子表都在其中。

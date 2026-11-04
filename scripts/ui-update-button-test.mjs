@@ -38,10 +38,10 @@ const check = (name, condition, detail) => {
 /** 数一段文本里某个片段出现几次（钉子要「只此一处」时用）。 */
 const count = (text, piece) => text.split(piece).length - 1
 
-const button = read('ui-shell/src/ui-layout/update-button.tsx')
-const app = read('ui-shell/src/ui-layout/app.tsx')
+const button = read('src/packages/ui-layout/ui/update-button.tsx')
+const app = read('src/packages/ui-layout/ui/app.tsx')
 const settings = read(resolveUiHalf('settings') + '/ui.tsx')
-const css = read('ui-shell/src/styles.css')
+const css = read('src/packages/ui-renderer/ui/styles/styles.css')
 
 console.log('[1] 挂在品牌行：Pneuma 右边、收起钮左边')
 {
@@ -53,7 +53,7 @@ console.log('[1] 挂在品牌行：Pneuma 右边、收起钮左边')
   check('更新钮在名字右边', brand > 0 && update > brand, `brand=${String(brand)} update=${String(update)}`)
   check('更新钮在收起钮左边', rail > 0 && update < rail, `update=${String(update)} rail=${String(rail)}`)
   check('导入了 UpdateButton（同包相对边）', /import \{ UpdateButton \} from '\.\/update-button'/.test(app))
-  check('ui-layout 的出口转出它（@dsc/ui-layout 取得到）', read('ui-shell/src/ui-layout/index.ts').includes("export * from './update-button'"))
+  check('ui-layout 的出口转出它（@dsc/ui-layout 取得到）', read('src/packages/ui-layout/ui/index.ts').includes("export * from './update-button'"))
 }
 
 console.log('[2] 只有真有新版才出现')

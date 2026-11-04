@@ -1,5 +1,5 @@
 /**
- * 行滚动模型（`src/app/scroll-model.ts`）的纯函数测试。
+ * 行滚动模型（`src/packages/tui/app/scroll-model.ts`）的纯函数测试。
  *
  * 钉住的四件事：
  *   [1] 估算：没量过的条目按显示宽度数折行（CJK 记 2 列），不认识的字面量不炸；
@@ -31,7 +31,7 @@ const {
   RAIL_GLYPH,
   OVERSCAN_LINES,
   RAIL_MIN_COLUMNS,
-} = await import('../lib/app/scroll-model.js')
+} = await import('../lib/packages/tui/app/scroll-model.js')
 
 /** 跟尾（没有锚点）的布局：探针里绝大多数用例都是这个形状。 */
 const TAIL = null

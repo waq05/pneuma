@@ -1,0 +1,21 @@
+{
+  "name": "@pneuma/ui-renderer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "pneuma": {
+    "library": true,
+    "title": "装载器",
+    "description": "界面壳的装载器与入口：启动图取回、分批装载、平台种子表、热更对账与页面入口"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  }
+}

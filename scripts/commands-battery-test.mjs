@@ -338,9 +338,9 @@ console.log('── duringTask 闸：deny 命令回合中挡下 ──')
 }
 
 console.log('── 渲染冒烟：三个浮层组件 ──')
-const { PresetPicker } = await import('../lib/app/PresetPicker.js')
-const { SkillsPicker } = await import('../lib/app/SkillsPicker.js')
-const { SessionPicker } = await import('../lib/app/SessionPicker.js')
+const { PresetPicker } = await import('../lib/packages/tui/app/PresetPicker.js')
+const { SkillsPicker } = await import('../lib/packages/tui/app/SkillsPicker.js')
+const { SessionPicker } = await import('../lib/packages/tui/app/SessionPicker.js')
 const { render } = await import('ink')
 
 // statusbar-test 的经验：render 的 stdout 选项要带 columns（组件 useStdout 看到的那份），

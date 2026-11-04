@@ -121,7 +121,7 @@ console.log('[3] 壳侧接线（设置 → 模型页）')
 
 console.log('[4] 模型行的窄格（重叠那个 bug）')
 {
-  const css = read('ui-shell/src/legacy/views.css')
+  const css = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
   check('.setting-input 的通用下限仍是 220px（别处照旧）', /\.setting-input,\s*\n\.setting-select \{[\s\S]{0,400}min-width: 220px/.test(css))
   check('模型行的输入框把下限收回 0（110px 的格子装得下，不会溢出压邻居）', /\.model-row-field \.setting-input \{\s*\n\s*min-width: 0;/.test(css))
   check('「线上值」那几个 84px 的输入框同样收回下限', /\.cap-wire-input \{[\s\S]{0,200}min-width: 0;/.test(css))
@@ -135,7 +135,7 @@ console.log('[5] 形状钉：来源标签')
     check(`来源 ${source} 在推断模块里存在`, read(resolveUiHalf('settings') + '/model-infer.ts').includes(`'${source}'`))
   }
   check('弹窗把来源打到 DOM 上（自检/探针认得出走了哪一档）', models.includes("data-discover-source={caps.source}"))
-  check('能力摘要与端点卡片上那颗钮同一套写法（ctx + cap-badge）', models.includes('className="models-discover-caps"') && read('ui-shell/src/legacy/views.css').includes('.models-discover-caps'))
+  check('能力摘要与端点卡片上那颗钮同一套写法（ctx + cap-badge）', models.includes('className="models-discover-caps"') && read('src/packages/ui-renderer/ui/styles/legacy/views.css').includes('.models-discover-caps'))
 }
 
 if (failures === 0) {

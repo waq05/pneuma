@@ -1,0 +1,21 @@
+{
+  "name": "@pneuma/ui-layout",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "pneuma": {
+    "library": true,
+    "title": "界面骨架",
+    "description": "界面壳的骨架与运行时：App 骨架、审查栏、正文区的两张脸、宿主通道与外观落地"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  }
+}

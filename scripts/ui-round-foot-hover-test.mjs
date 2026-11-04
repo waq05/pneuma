@@ -36,7 +36,7 @@ const check = (name, condition, detail = '') => {
 const read = (part) => readFileSync(join(root, part), 'utf8')
 const dirty = (hay, from, to) => hay.split(from).join(to)
 
-const css = read('ui-shell/src/legacy/views.css')
+const css = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
 const foot = read(UI + '/rows/foot.tsx')
 
 /**

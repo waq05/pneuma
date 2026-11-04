@@ -7,7 +7,7 @@
  * 加一条新命令不会在壳里静默多出/少掉一条。
  *
  * 这里只放三件纯事：光标处算不算「在打命令名」、按前缀过滤、补全要填的文本。
- * 行为口径照 TUI（`src/app/Composer.tsx`）：整条输入以 `/` 开头才算命令位，
+ * 行为口径照 TUI（`src/packages/tui/app/Composer.tsx`）：整条输入以 `/` 开头才算命令位，
  * 参数阶段（打了空格）菜单收起——参数没有候选可列。
  *
  * @module dsc-ui-shell/plugins/composer/commands

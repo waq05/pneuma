@@ -109,10 +109,10 @@ console.log('[1] 标准方法底线：不许用「太新」的那几个')
   void probeFile
   check('负向：人造的 findLast 调用会被抓到', caught.length === 1 && caught[0].includes('.findLast('), JSON.stringify(caught))
 
-  const compat = read('ui-shell/src/ui-primitives/compat.ts')
+  const compat = read('src/packages/ui-primitives/ui/compat.ts')
   check('替身模块导出了 findLast', compat.includes('export function findLast'))
   check('替身带类型谓词重载（调用处的收窄照旧成立）', compat.includes('item is S'))
-  const barrel = read('ui-shell/src/ui-primitives/index.ts')
+  const barrel = read('src/packages/ui-primitives/ui/index.ts')
   check('替身从基元库转出去（插件与壳都拿得到）', barrel.includes("export * from './compat'"))
   const transcript = readPluginSource(UI)
   check('正文区改用替身（import 自 @dsc/ui-primitives）', transcript.includes('findLast') && transcript.includes("from '@dsc/ui-primitives'"))
@@ -121,7 +121,7 @@ console.log('[1] 标准方法底线：不许用「太新」的那几个')
 
 console.log('[2] AbortSignal：超时闸是手写的')
 {
-  const channel = read('ui-shell/src/ui-layout/host-channel.ts')
+  const channel = read('src/packages/ui-layout/ui/host-channel.ts')
   const code = uncomment(channel)
   check('不再用 AbortSignal.timeout / AbortSignal.any', !code.includes('AbortSignal.timeout(') && !code.includes('AbortSignal.any('))
   check('用 AbortController 自建闸', code.includes('new AbortController()'))
@@ -135,7 +135,7 @@ console.log('[2] AbortSignal：超时闸是手写的')
 
 console.log('[3] inset 兜底：整屏遮罩')
 {
-  const styles = flat(read('ui-shell/src/styles.css'))
+  const styles = flat(read('src/packages/ui-renderer/ui/styles/styles.css'))
   const block = /@supports not \(inset: 0\) \{([\s\S]*?)\n\}/.exec(styles)
   check('styles.css 里有 @supports not (inset: 0) 兜底块', block !== null)
   const masks = ['dsc-overlay', 'menu-backdrop', 'pop-mask', 'git-dialog-backdrop', 'overlay', 'sidebar-scrim']
@@ -149,7 +149,7 @@ console.log('[3] inset 兜底：整屏遮罩')
   // 与 legacy 那侧对账：兜底点的名字必须在 legacy 里真的是 `inset: 0` 的规则，
   // 否则这条兜底会变成僵尸（名字改了没人发现）。`.sidebar-scrim` 是后加的那张，
   // 它住在 styles.css 的窄屏段（只在手机上渲染的那张浮层），单独对账。
-  const legacy = flat(read('ui-shell/src/legacy/views.css')) + flat(read('ui-shell/src/legacy/primitives.css'))
+  const legacy = flat(read('src/packages/ui-renderer/ui/styles/legacy/views.css')) + flat(read('src/packages/ui-renderer/ui/styles/legacy/primitives.css'))
   const stale = masks.filter((name) => name !== 'sidebar-scrim').filter((name) => !new RegExp(`\\.${name}\\s*\\{[^}]*inset:\\s*0`).test(legacy))
   check('这五个名字在 legacy 里确实还是 inset: 0（兜底没变僵尸）', stale.length === 0, stale.join(','))
   check('`.sidebar-scrim` 自己也确实是 `inset: 0` 的一张遮罩（在壳的窄屏段里）', /\.sidebar-scrim \{[\s\S]*?inset: 0;/.test(styles))
@@ -174,7 +174,7 @@ console.log('[3] inset 兜底：整屏遮罩')
 
 console.log('[4] 窄屏规则：输入行、状态栏、停靠区')
 {
-  const styles = flat(read('ui-shell/src/styles.css'))
+  const styles = flat(read('src/packages/ui-renderer/ui/styles/styles.css'))
   /** 取 `@media (max-width: Npx)` 里**含某段文字**的那一块（同一档可能不止一处）。 */
   const mediaBlock = (width, marker) => {
     const all = [...styles.matchAll(new RegExp(`@media \\(max-width: ${String(width)}px\\) \\{([\\s\\S]*?)\\n\\}`, 'g'))]

@@ -22,11 +22,14 @@ const dest = join(lib, 'node_modules', '@pneuma', 'runtime')
 /**
  * 收进运行时包的目录（与 src 下的目录名一致）。
  *
- * `app` 与 `ui` 是终端壳要用的：tui 插件搬进功能包之后不能再写 `../app/App.js`
- * （打包后那是 lib/node_modules/app），只能走裸说明符。它们不进浏览器产物，
+ * `ui` 是终端壳要用的：tui 插件搬进功能包之后不能再写 `../ui/slots.js`
+ * （打包后那是 lib/node_modules/ui），只能走裸说明符。它不进浏览器产物，
  * 只在 Node 侧解析。
+ *
+ * 终端界面自己的组件树跟着 tui 包走了（`src/packages/tui/app/**`），产物在
+ * `lib/packages/tui/app`，所以这里不再有 `app`。
  */
-const ROOTS = ['core', 'contract', 'services', 'adapter', 'app', 'ui']
+const ROOTS = ['core', 'contract', 'services', 'adapter', 'ui']
 
 /** 界面构建产物目录不是模块，别给它们生成桩。 */
 const SKIP = ['/ui/plugins/', '/ui/assets/']

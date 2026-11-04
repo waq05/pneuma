@@ -33,9 +33,9 @@ const check = (name, condition, detail = '') => {
 const read = (part) => readFileSync(join(root, part), 'utf8')
 const dirty = (hay, from, to) => hay.split(from).join(to)
 
-const icons = read('ui-shell/src/ui-primitives/icons.tsx')
+const icons = read('src/packages/ui-primitives/ui/icons.tsx')
 const sessionsUi = read('src/packages/ui-sessions/ui/ui.tsx')
-const css = read('ui-shell/src/legacy/views.css')
+const css = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
 
 /** 只看 `IconPin` 那一段（同一文件里还有几十个图标，全文找会认错）。 */
 const pinSource = (src) => {

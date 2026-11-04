@@ -22,7 +22,7 @@ import React from 'react'
 import { render } from 'ink'
 
 process.env.DSC_HOME = mkdtempSync(join(tmpdir(), 'dsc-picker-test-'))
-const { App } = await import('../lib/app/App.js')
+const { App } = await import('../lib/packages/tui/app/App.js')
 const { commandsPlugin } = await import('../lib/packages/commands/index.js')
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))

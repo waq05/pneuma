@@ -59,7 +59,7 @@ export const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
  * 顺序（先新后旧，越靠前越「目标形态」）：
  *   1. `src/packages/<id>/ui`       —— 一个宿主包带两半边（界面半与宿主半共用一个包）
  *   2. `src/packages/ui-<id>/ui`    —— 独立界面包（纯界面单元，宿主半是空 apply；目标形态）
- *   3. `ui-shell/src/packages/ui-<id>` —— 旧根兜底（还没搬的包）
+ *   3. `src/packages/ui-<id>/ui` —— 界面半（19 个 ui-* 包搬进来之前的老落点，留着兜底）
  *
  * 第 2 条写在第 1 条之后、旧根之前：两者都是「新根」，同一个 id 同时存在时说明旧形态
  * 还没删干净，此时按目标形态（独立包）取；而只要新根有一份，就不该再回落到旧根。
@@ -75,14 +75,14 @@ export const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
  * @throws 三个落点都不存在时抛出，报错里列出试过的路径与仓库根
  */
 export function resolveUiHalf(id) {
-  const candidates = [`src/packages/${id}/ui`, `src/packages/ui-${id}/ui`, `ui-shell/src/packages/ui-${id}`]
+  const candidates = [`src/packages/${id}/ui`, `src/packages/ui-${id}/ui`]
   for (const rel of candidates) {
     const stat = statSync(join(root, rel), { throwIfNoEntry: false })
     if (stat?.isDirectory() === true) return rel
   }
   throw new Error(
     `找不到界面包「${id}」的源码目录：试过 ${candidates.map((rel) => join(root, rel)).join(' 与 ')}` +
-      '（`src/packages/<id>/ui`、`src/packages/ui-<id>/ui` 与旧根 `ui-shell/src/packages/ui-<id>` 都没有）',
+      '（`src/packages/<id>/ui` 与 `src/packages/ui-<id>/ui` 都没有）',
   )
 }
 

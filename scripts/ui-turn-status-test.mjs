@@ -75,7 +75,7 @@ console.log('\n[2] 状态行组件只剩一行')
 
 console.log('\n[3] 样式是横向一行')
 {
-  const css = read('../ui-shell/src/legacy/views.css')
+  const css = read('../src/packages/ui-renderer/ui/styles/legacy/views.css')
   const block = css.slice(css.indexOf('.turn-status {'), css.indexOf('.turn-status {') + 400)
   check('.turn-status 是横向 flex', /display: flex/.test(block) && !/flex-direction: column/.test(block), block.slice(0, 200))
   check('分割线样式已删除', !css.includes('.turn-status-rule'))
@@ -99,9 +99,9 @@ console.log('\n[4] 用时在底部状态栏')
 
 console.log('\n[5] 右栏拉宽不挤扁正文')
 {
-  const css = read('../ui-shell/src/legacy/views.css')
+  const css = read('../src/packages/ui-renderer/ui/styles/legacy/views.css')
   check('正文有 480 的最小宽', css.includes('min-width: min(480px, 100%)'))
-  const dock = read('../ui-shell/src/ui-dockkit/dock.tsx')
+  const dock = read('../src/packages/ui-dockkit/ui/dock.tsx')
   check('拖拽上限按窗口现算', dock.includes('dockDragLimit') && dock.includes('THREAD_FLOOR'))
   check('上限里扣掉了侧栏宽', dock.includes('window.innerWidth - sidebarWidth() - THREAD_FLOOR'))
 }

@@ -43,8 +43,8 @@ const check = (name, condition, detail) => {
 
 const models = flat(read(resolveUiHalf('settings') + '/models.tsx'))
 const panel = flat(read(resolveUiHalf('settings') + '/ui.tsx'))
-const views = flat(read('ui-shell/src/legacy/views.css'))
-const shellStyles = flat(read('ui-shell/src/styles.css'))
+const views = flat(read('src/packages/ui-renderer/ui/styles/legacy/views.css'))
+const shellStyles = flat(read('src/packages/ui-renderer/ui/styles/styles.css'))
 
 /** 规则块里带硬编码色值的那些（`#rgb` / `#rrggbb` / `rgb(` / `rgba(`）——配色一律走令牌。 */
 function hardcodedColors(css, classNames) {

@@ -1,0 +1,21 @@
+{
+  "name": "@pneuma/ui-slots",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "pneuma": {
+    "library": true,
+    "title": "槽位契约",
+    "description": "界面壳的槽位契约与 React 渲染出口：槽名表、SlotMap 并表与三个出口"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  }
+}

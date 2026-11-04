@@ -32,8 +32,8 @@ const root = new URL('../', import.meta.url)
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, root)), 'utf8').replace(/\r\n/g, '\n')
 const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
-const views = stripComments(read('ui-shell/src/legacy/views.css'))
-const styles = stripComments(read('ui-shell/src/styles.css'))
+const views = stripComments(read('src/packages/ui-renderer/ui/styles/legacy/views.css'))
+const styles = stripComments(read('src/packages/ui-renderer/ui/styles/styles.css'))
 const factory = read(UI + '/tool-card/factory.tsx')
 
 let failures = 0

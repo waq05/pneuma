@@ -1,5 +1,5 @@
 /**
- * 正文列宽那条拖拽条（`ui-shell/src/ui-primitives/thread-resizer.tsx` + `panels.ts`）的探针。
+ * 正文列宽那条拖拽条（`src/packages/ui-primitives/ui/thread-resizer.tsx` + `panels.ts`）的探针。
  *
  * 三组断言：
  *
@@ -68,7 +68,7 @@ console.log('[1] 面板尺寸的纯逻辑（panels.ts）')
     getPropertyValue: (name) => styleVars[name] ?? '',
   })
 
-  const panels = await import(new URL('../ui-shell/src/ui-primitives/panels.ts', import.meta.url).href)
+  const panels = await import(new URL('../src/packages/ui-primitives/ui/panels.ts', import.meta.url).href)
 
   check('夹取区间是常量（侧栏 200–420）', panels.SIDEBAR_MIN === 200 && panels.SIDEBAR_MAX === 420)
   check(
@@ -129,8 +129,8 @@ console.log('[1] 面板尺寸的纯逻辑（panels.ts）')
 // ── [2] CSS 契约：空态列宽 + 把手几何 ────────────────────────────────────────
 console.log('[2] 样式表里的几何契约')
 {
-  const shellCss = read('ui-shell/src/styles.css')
-  const views = read('ui-shell/src/legacy/views.css')
+  const shellCss = read('src/packages/ui-renderer/ui/styles/styles.css')
+  const views = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
   const legacy_ = views
 
   // 空态正文列：必须撑满列宽（这是「拖动有效 / 量算准」的前提）
@@ -172,12 +172,12 @@ console.log('[2] 样式表里的几何契约')
   check('hover 与拖动才亮', /\.thread-handle:hover::after,\s*\n\.thread-handle\[data-dragging\]::after \{\s*\n\s*opacity: 1/.test(legacy_))
 
   // --dsc-thread-max 的消费者：正文列与输入区（两处同宽才是「对齐」）
-  const consumers = (read('ui-shell/src/legacy/views.css') + shellCss).match(/max-width: var\(--dsc-thread-max\)/g) ?? []
+  const consumers = (read('src/packages/ui-renderer/ui/styles/legacy/views.css') + shellCss).match(/max-width: var\(--dsc-thread-max\)/g) ?? []
   check('正文列与输入区都读 --dsc-thread-max（≥2 处）', consumers.length >= 2, String(consumers.length))
   check('输入区的同宽规则打在槽条目里面的元素上', /\.composer-zone > \.slot-entry > \* \{[^}]*max-width: var\(--dsc-thread-max\)/.test(shellCss))
   // 默认列宽写在两处（令牌表 + 壳根节点），两处必须是同一个数，否则改了令牌表壳里不生效。
   // 断言比值而不是写死数字：调默认宽度时只需改 CSS，探针不用跟着改。
-  const tokenDefault = /--dsc-thread-max:\s*([\d.]+ch);/.exec(read('ui-shell/src/legacy/tokens.css'))?.[1]
+  const tokenDefault = /--dsc-thread-max:\s*([\d.]+ch);/.exec(read('src/packages/ui-renderer/ui/styles/legacy/tokens.css'))?.[1]
   const rootDefault = /--dsc-thread-max: var\(--dsc-thread-user-max, ([\d.]+ch)\)/.exec(shellCss)?.[1]
   check(
     '令牌表与壳根节点的默认列宽是同一个值',
@@ -187,7 +187,7 @@ console.log('[2] 样式表里的几何契约')
 
   // 幽灵令牌：新加的规则里的 var 都必须在 tokens.css 里定义过（拼错会静默透明）
   const block = emptyInner?.[0] ?? ''
-  const tokens = read('ui-shell/src/legacy/tokens.css')
+  const tokens = read('src/packages/ui-renderer/ui/styles/legacy/tokens.css')
   const ghost = [...block.matchAll(/var\((--dsc-[a-z0-9-]+)/g)]
     .map((match) => match[1])
     .filter((token) => !tokens.includes(`${token}:`))
@@ -197,8 +197,8 @@ console.log('[2] 样式表里的几何契约')
 // ── [3] 量算契约：量的是 .chat-inner 的真实矩形 ──────────────────────────────
 console.log('[3] 量算契约（thread-resizer.tsx 与 app.tsx 的接线）')
 {
-  const resizer = read('ui-shell/src/ui-primitives/thread-resizer.tsx')
-  const app = read('ui-shell/src/ui-layout/app.tsx')
+  const resizer = read('src/packages/ui-primitives/ui/thread-resizer.tsx')
+  const app = read('src/packages/ui-layout/ui/app.tsx')
 
   check('两缘写进 --dsc-thread-col-start / -end 两个变量', resizer.includes("COL_START_VAR = '--dsc-thread-col-start'") && resizer.includes("COL_END_VAR = '--dsc-thread-col-end'"))
   check('量的是 .chat-inner 的 getBoundingClientRect（不是自己重算居中）', resizer.includes("zone.querySelector<HTMLElement>('.chat-inner')") && resizer.includes('getBoundingClientRect()'))
@@ -219,7 +219,7 @@ console.log('[3] 量算契约（thread-resizer.tsx 与 app.tsx 的接线）')
   // 空态那条元素级声明必须引用同一个用户变量，否则空会话里拖不动（2026-10-26 用户报的）。
   check(
     '空态列宽引用用户变量（元素级声明不再写死 720）',
-    /\.thread-main-empty \{\s*--dsc-thread-max: var\(--dsc-thread-user-max, 720px\)/.test(read('ui-shell/src/styles.css')),
+    /\.thread-main-empty \{\s*--dsc-thread-max: var\(--dsc-thread-user-max, 720px\)/.test(read('src/packages/ui-renderer/ui/styles/styles.css')),
   )
   check('两条把手挂在 .thread-zone 里（正文列之外那一层）', app.includes('<ThreadResizer width={threadWidth} onCommit={commitThreadWidth} onReset={resetThreadWidth} />'))
   check('双击复位 = 删存档（回默认列宽）', resizer.includes('onDoubleClick={props.onReset}') && app.includes('writeStoredPx(PANEL_KEYS.threadWidth, null)'))

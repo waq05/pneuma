@@ -162,7 +162,7 @@ console.log('\n[5] 接线钉（源码）')
   const runtime = read('src/packages/runtime/index.ts')
   const contract = readContractSource()
   const models = read(resolveUiHalf('settings') + '/models.tsx')
-  const views = read('ui-shell/src/legacy/views.css')
+  const views = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
 
   check('界面白名单放了它（放行的理由写在文件头的注释里）', UI_METHODS.includes('testConnection'))
   check('实参规格：端点名（MAX_NAME 字符串）+ 可选的模型名',

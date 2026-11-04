@@ -727,7 +727,7 @@ console.log('\n[7] 壳侧不许手抄漂移：事件名、实参位置、页签�
     'browser-tab-close-request 的 handler 里没有 `dockActions.closeTab(id)`：桌面侧关掉视图后壳会留下一张点不开的空页签（正是这条事件存在的理由）',
   )
 
-  const stateSrc = read('ui-shell/src/ui-dockkit/dock-state.ts')
+  const stateSrc = read('src/packages/ui-dockkit/ui/dock-state.ts')
   check(
     'openDockBrowserTab 的第二个形参就是 viewId（实参只能从尾部加）',
     /export function openDockBrowserTab\(\s*url\?:\s*string,\s*viewId\?:\s*string\s*\)/.test(stateSrc) &&
@@ -736,7 +736,7 @@ console.log('\n[7] 壳侧不许手抄漂移：事件名、实参位置、页签�
   )
 
   // 真跑 dock-model 源码（Node 类型擦除直读 .ts）：同 id 重开只聚焦、不新建。
-  const model = await import(modUrl('ui-shell/src/ui-dockkit/dock-model.ts'))
+  const model = await import(modUrl('src/packages/ui-dockkit/ui/dock-model.ts'))
   const { makeTab, defaultSurface, openBrowserTab } = model
   check(
     'makeTab 支持第三个可选 id，给了就用它',

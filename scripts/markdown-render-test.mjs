@@ -15,9 +15,9 @@ import React from 'react'
 import { render } from 'ink'
 
 process.env.DSC_HOME = mkdtempSync(join(tmpdir(), 'dsc-md-test-'))
-const { parseInline, parseMarkdown } = await import('../lib/app/markdown.js')
-const { displayWidth } = await import('../lib/app/display-width.js')
-const { MarkdownView } = await import('../lib/app/MarkdownView.js')
+const { parseInline, parseMarkdown } = await import('../lib/packages/tui/app/markdown.js')
+const { displayWidth } = await import('../lib/packages/tui/app/display-width.js')
+const { MarkdownView } = await import('../lib/packages/tui/app/MarkdownView.js')
 
 let failures = 0
 const check = (name, condition, detail = '') => {
@@ -122,7 +122,7 @@ check('行内代码不带反引号（围栏行的反引号合法）', frame.incl
 check('列表符号渲染', frame.includes('- 工作目录') && frame.includes('1. 第一点'))
 check('表格框线', frame.includes('┌') && frame.includes('┼') && frame.includes('└'))
 // 竖线对齐：每行表格标记的显示列位置必须一致（CJK 宽度算错的经典翻车点）
-const { displayWidth: cellWidth } = await import('../lib/app/display-width.js')
+const { displayWidth: cellWidth } = await import('../lib/packages/tui/app/display-width.js')
 const markCols = lines
   .filter((l) => /[│┌┬┐├┼┤└┴┘]/.test(l))
   .map((l) => {

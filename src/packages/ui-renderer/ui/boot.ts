@@ -1,0 +1,817 @@
+/**
+ * 插件加载器：把宿主给的启动清单变成「界面里真的多了几块」，并按**批**分时段装。
+ *
+ * 与参考实现的模块系统同一个形状，只是小了一号：
+ *   - 宿主组图（顺序 + 地址 + 版本 + 批），页面只负责取回来执行；
+ *   - 插件 bundle 是 CommonJS 工厂（`module.exports = { apply }`），执行时拿到的
+ *     `require` **只看白名单表**——表外一律抛错，这是插件代码的依赖边界
+ *     （它是「一致性边界」不是安全沙箱：插件照样拿得到 window/fetch/DOM，
+ *     真正的信任边界是「谁能往插件的产物目录里放文件」）；
+ *   - 一个插件加载失败只记一条报告，不拖垮壳与别的插件（失败的列在诊断区里）。
+ *
+ * A2/A3 起多出来的四件事：
+ *
+ *   1. **分批**：`early` 批装完就交还控制权（`main.tsx` 立刻画首帧），`application` 批
+ *      在首帧之后的空闲时刻才取字节、才 apply——「第二批未物化时第一批已可交互」。
+ *      phase 是**页面加载级**的属性，HMR 重更不会改它。
+ *   2. **批取数**：一个批一条 combo URL（`plugins/??…&rev=…`），失败按
+ *      `@dsc/ui-core` 的 arrival 协议回退到单资源（最多三次请求/每条缺行）。
+ *      批只在首装时取；HMR 重更只按该行的单资源 URL 取一个新 rev，绝不重放批。
+ *   3. **可观测**：`globalThis.__DSC_UI_BOOT_STATE__` 记批次时刻、每插件 phase/rev/状态、
+ *      每次 /plugins 取数（探针与桌面自检读它；诊断区画它）。
+ *   4. **可换装**：`reload(id)` 走账本卸载再装（HMR 用），并剔除该插件物化时插进来的样式。
+ *
+ * 为什么用 `<script>` 标签而不是 `new Function`：后者要求页面放开 `unsafe-eval`。
+ * 宿主的 CSP 已经加上（`core/ui-server.ts`，script-src 'self'）——插件走 `<script src>`
+ * 正好在放行面里；eval 一旦进了某段代码，报错来自浏览器安全策略，不会出现在诊断区。
+ *
+ * E4 起本文件住 `@dsc/ui-renderer`（与 `main.tsx` / `hmr.ts` 同包）：装载内核与入口是
+ * 同一条链，拆开只会多一份跨包接线；取数形状归本包，渲染骨架归 `@dsc/ui-layout`。
+ *
+ * @module dsc-ui-shell/ui-renderer/boot
+ */
+import * as React from 'react'
+import * as ReactDOM from 'react-dom'
+import * as ReactDOMClient from 'react-dom/client'
+import * as jsxRuntime from 'react/jsx-runtime'
+import * as xterm from '@xterm/xterm'
+import * as xtermFit from '@xterm/addon-fit'
+// 平台种子里的三个基元/槽位包（E6）：静态 import 进壳的同一个 vite 图，插件 require 到的是
+// 与壳内部**同一份实例**（带模块级状态的模块——toast / confirm / completion-sound /
+// dock-state——重复一份就会出两份状态，这里是正确性要求而不只是体积）。
+import * as uiSlots from '@dsc/ui-slots'
+import * as uiPrimitives from '@dsc/ui-primitives'
+import * as uiDockkit from '@dsc/ui-dockkit'
+import { UiArrivalLedger, type UiArrivalHost } from '@dsc/ui-core'
+import type {
+  UiBootBatch,
+  UiBootGraph,
+  UiBootPhase,
+  UiHostInfo,
+  UiPluginEntry,
+  UiPluginLoadReport,
+  UiRuntimeApi,
+} from '@dsc/ui-core'
+import { createScopedSlotApi, createSignal, ServiceRegistry, unmetDependencies } from '@dsc/ui-core'
+// 装配交给 cordis（与宿主内核同一套）。这一层不改插件写法，只换「谁管生命周期」：
+// 详见 cordis-host.ts 的文件头表格。
+import { createCordisRoot, type UiApply } from './cordis-host'
+// 插件契约面（`@dsc/ui` 的落点就是 src/plugin-api.ts）与平台模块表数据文件：
+// 前者同时是 MODULES 里 `@dsc/ui` 一格的实现，必须与壳内部用的是同一份模块实例。
+// 后者就放在本目录：它随本包走，`ui-shell/build-plugins.mjs` 与
+// `scripts/ui-plugin-test.mjs` 都按这个路径读同一份，谁单独改动都会当场红。
+import * as pluginApi from '@dsc/ui'
+import platformModules from './platform-modules.json'
+import type { UiComponent, UiPluginApi, UiSlots } from '@dsc/ui'
+
+/** 启动图注入页面时用的全局名（宿主 `core/ui-server.ts` 里同一个名字）。 */
+const BOOT_GLOBAL = '__DSC_BOOT__'
+
+/** bundle 往这个全局名下注册自己的工厂（构建脚本按同一个名字包一层）。 */
+const FACTORY_GLOBAL = '__DSC_UI_FACTORIES__'
+
+/** 启动账本挂的全局名（探针与桌面自检的读数面；诊断区也画它）。 */
+export const BOOT_STATE_GLOBAL = '__DSC_UI_BOOT_STATE__'
+
+/**
+ * 插件能 require 的模块表。
+ *
+ * 这里是**唯一**的依赖边界：表外的模块名一律拒绝。React 由壳提供，
+ * 所以壳与所有插件共用同一份 React 实例（两份 React 会让 hooks 直接崩）。
+ * `react-dom/client` 必须在表里：漏了它，插件里 `createRoot` 的 import
+ * 会被打包器内联成第二份 react-dom，同页两套协调器，症状是 hooks 报错或事件失灵。
+ *
+ * 故意不在表里的：`@dsc/ui-core`（壳的内部实现，插件只该用 `@dsc/ui`；
+ * 它被构建期保留成 require，所以真当值用了会得到一句明确的「白名单外的模块」）。
+ *
+ * `@dsc/ui-slots` / `@dsc/ui-primitives` / `@dsc/ui-dockkit` 在表里（E6 起的平台种子）：
+ * 插件按包名 require 到的就是壳内部那一份实现，不必也不能各自内联。三者的值由上面的
+ * 静态 import 提供——与壳的同一个 vite 图，保证实例一致。TUI 壳是**另一张表**
+ * （`src/ui/tui-plugins.ts`），这三条只对 web 值面成立。
+ *
+ * `@xterm/xterm` 与 `@xterm/addon-fit` 在表里（2026-10-10 加的）：终端插件要用它们，
+ * 而"每个插件自带一份 xterm"会让每个用到终端的插件都拖进 ~400KB。放进平台表之后
+ * 只有壳带一份（xterm 的 CSS 也由壳在 `main.tsx` 里静态 import，插件拿不到样式文件）。
+ */
+const MODULES: Readonly<Record<string, unknown>> = {
+  react: React,
+  'react-dom': ReactDOM,
+  'react-dom/client': ReactDOMClient,
+  'react/jsx-runtime': jsxRuntime,
+  '@dsc/ui': pluginApi,
+  '@dsc/ui-slots': uiSlots,
+  '@dsc/ui-primitives': uiPrimitives,
+  '@dsc/ui-dockkit': uiDockkit,
+  '@xterm/xterm': xterm,
+  '@xterm/addon-fit': xtermFit,
+}
+
+/** 白名单里的模块名（诊断与提前校验用）。 */
+export const ALLOWED_MODULES: readonly string[] = Object.keys(MODULES)
+
+// 构建期把同一张表交给了打包器（`build-plugins.mjs` 也读 platform-modules.json）。
+// 万一有人只改了一边，这里立刻指出来：否则插件会在加载那一刻才炸，报错还指不到根因。
+const PLATFORM_MODULES: readonly string[] = platformModules
+const MODULE_DRIFT = [
+  ...PLATFORM_MODULES.filter((spec: string) => !(spec in MODULES)),
+  ...Object.keys(MODULES).filter((spec) => !PLATFORM_MODULES.includes(spec)),
+]
+if (MODULE_DRIFT.length > 0) {
+  console.error(`[ui-shell] 平台模块表与运行时 require 表对不上：${MODULE_DRIFT.join('、')}`)
+}
+
+/** bundle 注册的那种工厂：壳把受控的 require/module/exports 传进去。 */
+type Factory = (require: (spec: string) => unknown, module: { exports: unknown }, exports: unknown) => void
+
+/** 一次插件取数（探针读数：一条页面加载花了几次 /plugins 请求就是数它）。 */
+export interface UiBootRequestLog {
+  url: string
+  /** `batch` = combo 批地址；`single` = 单资源。 */
+  kind: 'batch' | 'single'
+  /** 触发这次取数的插件 id（批被多条 entry 共享时记第一条）。 */
+  id: string
+  phase: UiBootPhase
+  at: number
+  ok: boolean
+}
+
+/** 一个插件在页面里的现况（诊断与探针读它）。 */
+export interface UiBootPluginState {
+  id: string
+  phase: UiBootPhase
+  rev: string
+  state: 'pending' | 'loading' | 'loaded' | 'failed' | 'removed'
+  attempts: number
+  error?: string
+  /** 装好（或失败）的时刻。 */
+  at?: number
+  /** 装配方式：`cordis` = 走 cordis 纤维；`ledger` = 旧的退订账本（灰度期两种并存）。 */
+  via?: 'cordis' | 'ledger'
+  /** 走 cordis 时那条纤维的状态码（0 待装 / 1 装载中 / 2 生效 / 3 失败 / 4 已卸）。 */
+  fiber?: number
+}
+
+/** 一个批的现况（`at` 们是探针断言时序的读面）。 */
+export interface UiBootBatchState {
+  phase: UiBootPhase
+  entries: string[]
+  state: 'pending' | 'scheduled' | 'loading' | 'done' | 'failed'
+  scheduledAt?: number
+  startedAt?: number
+  doneAt?: number
+  failures: string[]
+}
+
+/** 启动账本：批次时刻、每插件状态、每次取数（挂 `globalThis.__DSC_UI_BOOT_STATE__`）。 */
+export interface UiBootState {
+  rev: string
+  host: { name: string; version: string }
+  startedAt: number
+  /** `main.tsx` 画完首帧打点的时刻（A2 的验收：early 装完 ≤ 它 < application 开始）。 */
+  firstFrameAt: number | null
+  batches: UiBootBatchState[]
+  plugins: Record<string, UiBootPluginState>
+  requests: UiBootRequestLog[]
+}
+
+/** 界面壳读启动账本的入口（没起过壳时 null）。 */
+export function bootState(): UiBootState | null {
+  const value = (globalThis as Record<string, unknown>)[BOOT_STATE_GLOBAL]
+  return value === undefined || value === null ? null : (value as UiBootState)
+}
+
+/**
+ * 启动账本的变更通道。
+ *
+ * 账本本体挂在 `globalThis`（探针要直接读它，见 `BOOT_STATE_GLOBAL`），所以这份信号只当通道用：
+ * 改完账本喊一声，订阅者自己重读。
+ */
+const bootChannel = createSignal(0)
+
+/**
+ * 订阅启动账本变化（诊断区重渲染用；探针直接读全局就行）。
+ *
+ * `try/catch` 包在每个订阅者外面（不是整轮）：一个订阅者抛了不该拖垮装载，
+ * 也不该让后面的订阅者这一轮收不到通知——`createSignal` 的遍历本身不管异常。
+ */
+export function subscribeBootState(listener: () => void): () => void {
+  return bootChannel.subscribe(() => {
+    try {
+      listener()
+    } catch {
+      // 回调里通常就是 setState；这里吞掉，装载流程继续。
+    }
+  })
+}
+
+function notifyBootState(): void {
+  bootChannel.notify()
+}
+
+/**
+ * 取启动图：优先用宿主注入的那一份（外链 /boot.js 在 `</head>` 前同步执行完，
+ * 页面脚本跑起来时全局已就位），本地 `pnpm dev` 直连 vite 时没有它，回落到 `/api/boot`。
+ */
+export async function readBootGraph(): Promise<UiBootGraph> {
+  const injected = (globalThis as Record<string, unknown>)[BOOT_GLOBAL]
+  if (injected !== undefined && injected !== null) return injected as UiBootGraph
+  const response = await fetch('/api/boot', { headers: { accept: 'application/json' } })
+  if (!response.ok) {
+    // 这条兜底只在「页面不是宿主伺服的那一份」时才走：说清楚，省得去查网络。
+    throw new Error(
+      `取启动清单失败：HTTP ${String(response.status)}（这一页不是宿主伺服的页面？` +
+        '宿主启动时会打印一个带令牌的地址，用那个地址打开）',
+    )
+  }
+  return (await response.json()) as UiBootGraph
+}
+
+/** 壳的一次装载会话：分批装、可单条换装（HMR）、给 App 读报告与账本。 */
+export interface UiBootSession {
+  readonly graph: UiBootGraph
+  /** 已尝试过的插件报告（按图里的顺序；还没轮到的批不在里面）。 */
+  getReports(): UiPluginLoadReport[]
+  getState(): UiBootState
+  subscribe(listener: () => void): () => void
+  /** `main.tsx` 画完首帧后打点（账本里的 `firstFrameAt`）。 */
+  markFirstFrame(): void
+  /** 首帧之后继续装 application 批（幂等；不调它第二批就永远不装）。 */
+  startApplication(): void
+  /** HMR 换装一条：账本卸载旧条目，再按新 entry 的单资源 URL 取数安装。 */
+  reload(entry: UiPluginEntry): Promise<string | null>
+  /** 卸载一条（HMR 的 removed 帧；也用于回滚）。 */
+  uninstall(id: string): void
+  /** 已经装上的 rev（HMR 幂等判据：同 rev 忽略）。 */
+  installedRev(id: string): string | undefined
+  /**
+   * 把一件「装/卸」排进会话的**安装器队列**。
+   *
+   * 批安装与 HMR 对账都从这里走（参考实现的图同步/重试/单条换装也是同一条队列）：
+   * 两条并行的安装器各自 await 取字节之后都会 apply，第二次就会撞「同一个格子已经有人了」
+   * ——真机走查抓到过：plugins / prompt / sessions 三条报失败，界面其实已经装上了。
+   */
+  enqueue<T>(task: () => Promise<T>): Promise<T>
+  /**
+   * 这一条所属的批还没轮到装（pending / scheduled）。
+   *
+   * 帧对账读它：这类条目**留给批装**，别按单资源抢先装——抢先装会把一条 combo 拆成 N 条
+   * 单资源请求，A3 的取数口径（16 个插件 2 条请求）就没了。
+   */
+  awaitingBatch(id: string): boolean
+  /** 服务表（A1）：装载期「谁提供、谁消费」的那张表；`main.tsx` 用它包 ServicesProvider。 */
+  readonly services: ServiceRegistry
+  /** 卸载全部并停止（页面卸载/失败兜底用）。 */
+  disposeAll(): void
+}
+
+/**
+ * 装配路径的灰度开关。
+ *
+ * 默认**全部走 cordis**：2026-10-26 先用 `statusbar` 一条验证过（首帧、换装、卸载顺序都过），
+ * 再把 19 条一起切过来。旧账本那条路留着，因为它是回滚面：出问题时一个字符串就能退回。
+ *
+ * 覆盖方式（不必重新构建）：
+ *   - `globalThis.__DSC_CORDIS_PROBE__ = 'none'`   → 全部退回旧账本；
+ *   - `globalThis.__DSC_CORDIS_PROBE__ = ['sessions']` → 只有名单里的走 cordis，其余走账本；
+ *   - `'*'` / 不设 → 全部走 cordis。
+ */
+const CORDIS_DEFAULT_ALL = true
+
+/** 按上面的开关决定某条插件走哪条装配路径。 */
+function cordisSelector(): (id: string) => boolean {
+  const override = (globalThis as Record<string, unknown>)['__DSC_CORDIS_PROBE__']
+  if (override === 'none') return () => false
+  if (override === '*') return () => true
+  if (Array.isArray(override)) {
+    const picked = new Set(override.filter((id): id is string => typeof id === 'string'))
+    return (id) => picked.has(id)
+  }
+  return () => CORDIS_DEFAULT_ALL
+}
+
+/**
+ * 建一次装载会话：装 early 批（**await 完**再返回，调用方随后画首帧）。
+ *
+ * application 批不在这里装——调用方画完首帧调 {@link UiBootSession.startApplication}。
+ * 缺 `batches` 的旧宿主按「单隐含 application 批」处理（向前兼容，壳与宿主版本会错位）。
+ *
+ * @param graph - 宿主给的启动图（entries 已按依赖排好）
+ * @param options - 槽位注册表、宿主身份与运行时通道
+ * @returns 装载会话（报告、批状态、服务表与卸载口都在它上面）
+ */
+export async function createBootSession(
+  graph: UiBootGraph,
+  options: { slots: UiSlots; host: UiHostInfo; runtime: UiRuntimeApi },
+): Promise<UiBootSession> {
+  const batches = normalizeBatches(graph)
+  const batchByEntry = new Map<string, UiBootBatch>()
+  for (const batch of batches) {
+    for (const id of batch.entries) batchByEntry.set(id, batch)
+  }
+
+  const state: UiBootState = {
+    rev: graph.rev,
+    host: { name: graph.host.name, version: graph.host.version },
+    startedAt: Date.now(),
+    firstFrameAt: null,
+    batches: batches.map((batch) => ({ phase: batch.phase, entries: [...batch.entries], state: 'pending', failures: [] })),
+    plugins: {},
+    requests: [],
+  }
+  for (const entry of graph.entries) {
+    state.plugins[entry.id] = {
+      id: entry.id,
+      phase: batchByEntry.get(entry.id)?.phase ?? 'application',
+      rev: entry.rev,
+      state: 'pending',
+      attempts: 0,
+    }
+  }
+  /** 条目 → 它那份批状态（`awaitingBatch` 与批安装共用同一批对象，读的就是这一个）。 */
+  const batchStateByEntry = new Map<string, UiBootBatchState>()
+  for (let index = 0; index < batches.length; index += 1) {
+    for (const id of batches[index].entries) batchStateByEntry.set(id, state.batches[index])
+  }
+  // 账本先挂上再开始装：探针在任意时刻读到的都是「进行中的真实状态」。
+  ;(globalThis as Record<string, unknown>)[BOOT_STATE_GLOBAL] = state
+  notifyBootState()
+
+  const ledger = new UiArrivalLedger()
+  const table = factoryTable()
+  const disposers = new Map<string, () => void>()
+  /**
+   * 安装器队列：批安装与 HMR 对账共用这一条。
+   *
+   * 为什么必须共用（真机走查抓到过）：SSE 一连上就发初始 `plugins` 帧，它对账的时机与
+   * `startApplication` 推的 application 批常常叠在一起——两条并行安装器各自取完字节都会
+   * `apply` 一遍，第二次撞「同一个格子已经有人了」，于是 plugins / prompt / sessions 三条
+   * 报失败（界面其实已经装上了）。参考实现也正是把图同步、重试、单条换装排进同一条队列。
+   */
+  let installQueue: Promise<unknown> = Promise.resolve()
+  const enqueue = <T,>(task: () => Promise<T>): Promise<T> => {
+    const run = installQueue.then(task)
+    // 一件失败不拖累后面的：队列自己吞掉 rejection（调用方拿到的 run 照常 reject）。
+    installQueue = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
+  }
+  // 每调用一次装载一张新表：插件之间「谁提供、谁消费」全部经它（A1）。
+  const services = new ServiceRegistry()
+  // cordis 根：与宿主内核同一套装配语义（plugin / inject / effect / fiber 状态）。
+  // 它与旧账本共用**同一份**槽位注册表与服务表，所以两条路径装出来的界面没有差别。
+  const cordis = createCordisRoot({
+    slots: options.slots,
+    host: options.host,
+    runtime: options.runtime,
+    services,
+  })
+  /** 这一条是否走 cordis（灰度开关；同一次装载里答案固定）。 */
+  const viaCordis = cordisSelector()
+  /**
+   * 这条插件要交给 cordis 的那部分依赖：`services`。
+   *
+   * 2.0 起清单把两种依赖拆成两个字段：`inject` 是插件 id（由装载器排序与检查），
+   * `services` 是服务名（交给 cordis 的 `inject`）。以前一个字段双关，靠「这个 id
+   * 在不在清单里」猜——插件改个名就猜错。
+   */
+  const serviceDepsOf = (item: UiPluginEntry): string[] => [...(item.services ?? [])]
+  const reports = new Map<string, UiPluginLoadReport>()
+  const installed = new Map<string, string>()
+  /**
+   * 报告的展示顺序：首装时 = 图里的顺序；HMR 新装的插件（不在原图里）追到末尾，
+   * 否则诊断区会漏掉「刚被宿主加进来」的那几条。
+   */
+  const entryOrder: UiPluginEntry[] = [...graph.entries]
+
+  const notify = (): void => {
+    notifyBootState()
+  }
+
+  const setPlugin = (id: string, patch: Partial<UiBootPluginState>): void => {
+    const current = state.plugins[id]
+    if (current === undefined) return
+    Object.assign(current, patch)
+    notify()
+  }
+
+  /** 给一个插件造 arrival 的宿主面：load 里记一笔取数（探针的请求计数面）。 */
+  const arrivalHostFor = (id: string, phase: UiBootPhase): UiArrivalHost => ({
+    has: (entryId) => typeof table[entryId] === 'function',
+    load: (url) => {
+      const log: UiBootRequestLog = {
+        url,
+        kind: url.includes('??') ? 'batch' : 'single',
+        id,
+        phase,
+        at: Date.now(),
+        ok: true,
+      }
+      state.requests.push(log)
+      return appendScript(url, id).catch((error: unknown) => {
+        log.ok = false
+        notify()
+        throw error
+      })
+    },
+  })
+
+  /** 装一条插件；成功返回 null，失败返回原因（报告与账本都由它写）。 */
+  const install = async (entry: UiPluginEntry, attempt: number, mode: 'batch' | 'single' = 'batch'): Promise<string | null> => {
+    // 幂等闸：同一条同 rev 已经装上就当作成功，不再 apply 一遍。重复请求来自队列里两件任务
+    // （批安装 + 帧对账），参考实现的说法是 "identical targets share pending loads"。
+    if (installed.get(entry.id) === entry.rev && reports.get(entry.id)?.ok === true) return null
+    const batch = batchByEntry.get(entry.id)
+    const phase = batch?.phase ?? 'application'
+    // 这个插件的登记账本：中途抛错时按它回滚，重试才不会撞「id 已被占用」。
+    const ledgerOfPlugin: (() => void)[] = []
+    const provides: string[] = []
+    const rollback = (): void => {
+      for (const release of [...ledgerOfPlugin].reverse()) {
+        try {
+          release()
+        } catch (error) {
+          console.error(`插件 ${entry.id} 回滚登记时出错：`, error)
+        }
+      }
+      ledgerOfPlugin.length = 0
+    }
+    // 硬依赖先解析：插件 id 与服务名分开查（manifest.ts 的两个字段），
+    // 未满足就不 apply，并留一行中文原因——第一轮没就绪的，重试轮会再试一次。
+    const unmet = unmetDependencies(
+      { ...(entry.inject === undefined ? {} : { plugins: entry.inject }), ...(entry.services === undefined ? {} : { services: entry.services }) },
+      (id) => reports.get(id),
+      services,
+      // 图里带着「被停用的 id」：那种依赖要报「被停用了」，不能说「不在清单里」。
+      new Set(graph.disabled ?? []),
+    )
+    if (unmet.length > 0) {
+      const reason = `等待：${unmet.join('；')}`
+      reports.set(entry.id, { id: entry.id, ok: false, error: reason, attempts: attempt })
+      setPlugin(entry.id, { state: 'failed', at: Date.now(), attempts: attempt, error: reason })
+      return reason
+    }
+    setPlugin(entry.id, {
+      state: 'loading',
+      phase,
+      rev: entry.rev,
+      attempts: attempt,
+      via: viaCordis(entry.id) ? 'cordis' : 'ledger',
+    })
+    try {
+      // 批 URL 是首选；它不是单资源时带单资源回退（arrival 协议管三态与请求数）。
+      // HMR 换装（mode='single'）只走单资源：批地址带的是旧 rev，重放没有任何意义。
+      const preferred = mode === 'single' ? entry.url : (batch?.url ?? entry.url)
+      const fallback = preferred === entry.url ? undefined : entry.url
+      await ledger.arrive({ id: entry.id, preferred, ...(fallback === undefined ? {} : { fallback }) }, arrivalHostFor(entry.id, phase))
+      const factory = table[entry.id]
+      if (typeof factory !== 'function') throw new Error(`插件 ${entry.id} 的脚本没有注册工厂（bundle 形状不对？）`)
+      const exported = instantiate(factory, entry.id)
+      const module_ = (exported as { default?: unknown } | null)?.default ?? exported
+      const apply = (module_ as { apply?: unknown } | null)?.apply
+      if (typeof apply !== 'function') throw new Error('插件没有导出 apply(ui)')
+      // ── 两条装配路径（灰度）────────────────────────────────────────────────
+      // 插件代码一个字都不变：交出去的仍是那六项 `ui`，`apply(ui)` 的签名也照旧。
+      // 差别只在「谁管生命周期」：cordis 走 fiber（`ctx.effect()` 按依赖顺序回收、
+      // 状态可读），账本走退订函数倒序调用。
+      let dispose: (() => void) | undefined
+      if (viaCordis(entry.id)) {
+        const fiber = await cordis.mount(entry.id, apply as UiApply, {
+          onProvide: (provided) => provides.push(provided),
+          inject: serviceDepsOf(entry),
+          // 纤维自己会变状态：依赖后补上来时从「待装」变成「生效」，这里把账本跟上。
+          onState: (state, missing) => {
+            if (state === 2) {
+              setPlugin(entry.id, { fiber: 2, state: 'loaded', error: undefined, at: Date.now() })
+              const settledReport = reports.get(entry.id)
+              if (settledReport !== undefined && settledReport.ok !== true) {
+                reports.set(entry.id, { ...settledReport, ok: true, error: undefined })
+              }
+              return
+            }
+            if (state === 3) {
+              const reason = 'cordis 纤维装载失败（细节见控制台）'
+              reports.set(entry.id, { id: entry.id, ok: false, error: reason, attempts: attempt })
+              setPlugin(entry.id, { fiber: 3, state: 'failed', error: reason, at: Date.now() })
+              return
+            }
+            // 0 待装 / 1 装载中 / 4 已卸：账本只记状态码，别把「还差哪个服务」吞掉。
+            setPlugin(entry.id, {
+              fiber: state,
+              ...(missing.length === 0 ? {} : { error: `等待服务：${missing.join('、')}` }),
+            })
+          },
+        })
+        // 依赖没就绪时 `await fiber` 会直接放行（纤维停在「待装」）：这不算装好，
+        // 但也不能当失败回滚——服务后补上来 cordis 会自己启动它。所以记一条
+        // 中文原因、挂进账本，等 onState 把状态翻成「生效」。
+        const waiting = cordis.missingOf(entry.id)
+        if (fiber.state !== 2) {
+          const reason = waiting.length === 0 ? '等待依赖就绪' : `等待服务：${waiting.join('、')}`
+          reports.set(entry.id, { id: entry.id, ok: false, error: reason, attempts: attempt })
+          setPlugin(entry.id, { via: 'cordis', fiber: fiber.state, state: 'loading', error: reason })
+          disposers.set(entry.id, rollback)
+          installed.set(entry.id, entry.rev)
+          ledgerOfPlugin.push(() => {
+            void cordis.unmount(entry.id)
+          })
+          return null
+        }
+        setPlugin(entry.id, { via: 'cordis', fiber: fiber.state })
+        // 清理归纤维自己（apply 交回来的退订函数由 cordis 收下）；这里只把「卸这条」
+        // 挂进账本，供 uninstall / disposeAll / 失败回滚调用。
+        dispose = () => {
+          void cordis.unmount(entry.id)
+        }
+      } else {
+        const ui: UiPluginApi = {
+          id: entry.id,
+          // 槽位登记与 provide 共用同一条回滚账（外壳在 @dsc/ui-core，与终端壳共用）：
+          // apply 抛错时可能只登记了一半，直接重试会撞「同一个格子已经有人了」。
+          slots: createScopedSlotApi(options.slots, (release) => record(ledgerOfPlugin, release)),
+          host: options.host,
+          runtime: options.runtime,
+          provide: (name, value) => {
+            record(ledgerOfPlugin, services.provide(name, value, entry.id))
+            provides.push(name)
+          },
+          consume: (name) => services.consume(name),
+        }
+        const returned = (apply as (api: UiPluginApi) => void | (() => void))(ui)
+        // 插件可以什么都不返回：只有真给了退订函数才进账本。
+        dispose = typeof returned === 'function' ? returned : undefined
+      }
+      if (typeof dispose === 'function') ledgerOfPlugin.push(dispose)
+      disposers.set(entry.id, rollback)
+      installed.set(entry.id, entry.rev)
+      const name = (module_ as { name?: unknown } | null)?.name
+      reports.set(entry.id, {
+        id: entry.id,
+        ok: true,
+        attempts: attempt,
+        ...(typeof name === 'string' && name !== '' ? { name } : {}),
+        ...(provides.length === 0 ? {} : { provides: [...provides] }),
+      })
+      setPlugin(entry.id, { state: 'loaded', at: Date.now(), attempts: attempt, error: undefined })
+      return null
+    } catch (error) {
+      rollback()
+      const reason = error instanceof Error ? error.message : String(error)
+      reports.set(entry.id, { id: entry.id, ok: false, error: reason, attempts: attempt })
+      setPlugin(entry.id, { state: 'failed', error: reason, at: Date.now(), attempts: attempt })
+      return reason
+    }
+  }
+
+  /** 装一个批（两轮：失败重试一次，与全局版同一条纪律）。 */
+  const installBatch = async (batch: UiBootBatch, batchState: UiBootBatchState | undefined): Promise<void> => {
+    if (batchState !== undefined) {
+      batchState.state = 'loading'
+      batchState.startedAt = Date.now()
+      batchState.failures = []
+      notify()
+    }
+    const failed: UiPluginEntry[] = []
+    for (const id of batch.entries) {
+      const entry = graph.entries.find((candidate) => candidate.id === id)
+      if (entry === undefined) continue
+      if ((await install(entry, 1)) !== null) failed.push(entry)
+    }
+    // 失败重试一轮。最常见的失败不是插件写错了，而是**顺序**：先加载的插件给一个
+    // 还没被声明出来的槽登记（UndeclaredSlotError），等声明它的插件装完再试一次就成了。
+    // 只重试一轮——真的写错了不能靠反复重试掩盖，但也不能一次失败就让这块永久缺席。
+    for (const entry of failed) {
+      if (reports.get(entry.id)?.ok === true) continue
+      await install(entry, 2)
+    }
+    if (batchState !== undefined) {
+      batchState.failures = batch.entries.filter((id) => reports.get(id)?.ok === false)
+      batchState.state = batchState.failures.length > 0 ? 'failed' : 'done'
+      batchState.doneAt = Date.now()
+      notify()
+    }
+  }
+
+  // 第一档预取：清单里标了 immediately 的先**并发**把工厂拿回来（只注册工厂，不物化），
+  // 首屏要用的那几块就不必排在队尾。取字节与物化分开，正是为了让这一步有用。
+  // 预取跨批进行（与 phase 正交）：批是调度档位，immediately 是「谁先被取回来」。
+  const prefetch = async (entry: UiPluginEntry): Promise<void> => {
+    const batch = batchByEntry.get(entry.id)
+    const preferred = batch?.url ?? entry.url
+    const fallback = preferred === entry.url ? undefined : entry.url
+    try {
+      await ledger.arrive({ id: entry.id, preferred, ...(fallback === undefined ? {} : { fallback }) }, arrivalHostFor(entry.id, batch?.phase ?? 'application'))
+    } catch {
+      // 预取失败不算数：下面按批顺序加载时会再试一次，那时才记报告。
+    }
+  }
+  await Promise.all(
+    graph.entries
+      .filter((entry) => entry.immediately === true && state.plugins[entry.id]?.state === 'pending')
+      .map((entry) => prefetch(entry)),
+  )
+
+  // early 批：装完才交还控制权（调用方随后画首帧）。
+  for (let index = 0; index < batches.length; index += 1) {
+    if (batches[index].phase !== 'early') continue
+    await installBatch(batches[index], state.batches[index])
+  }
+
+  let applicationStarted = false
+  const session: UiBootSession = {
+    graph,
+    getReports: () =>
+      entryOrder
+        .map((entry) => reports.get(entry.id))
+        .filter((report): report is UiPluginLoadReport => report !== undefined),
+    getState: () => state,
+    // 与 `subscribeBootState` 同一条通道、同一套「一个订阅者炸了不拖垮装载」的口径。
+    subscribe: subscribeBootState,
+    markFirstFrame: () => {
+      if (state.firstFrameAt === null) {
+        state.firstFrameAt = Date.now()
+        notify()
+      }
+    },
+    startApplication: () => {
+      if (applicationStarted) return
+      applicationStarted = true
+      const run = (): void => {
+        const pending: { batch: UiBootBatch; batchState: UiBootBatchState | undefined }[] = []
+        for (let index = 0; index < batches.length; index += 1) {
+          if (batches[index].phase !== 'application') continue
+          const batchState = state.batches[index]
+          if (batchState !== undefined && batchState.state === 'pending') {
+            batchState.state = 'scheduled'
+            batchState.scheduledAt = Date.now()
+          }
+          pending.push({ batch: batches[index], batchState })
+        }
+        notify()
+        // 批安装排进安装器队列：与 HMR 对账串行（同一刻只有一个安装器在动同一条插件）。
+        void enqueue(async () => {
+          for (const item of pending) await installBatch(item.batch, item.batchState)
+        }).catch((error: unknown) => {
+          console.error('[ui-shell] 应用批安装出错', error)
+        })
+      }
+      // 首帧之后挑一个浏览器空闲时刻；没有 requestIdleCallback 的载体用 setTimeout 0。
+      const idle = (globalThis as { requestIdleCallback?: (callback: () => void, opts?: { timeout: number }) => number })
+        .requestIdleCallback
+      if (typeof idle === 'function') idle(run, { timeout: 2000 })
+      else setTimeout(run, 0)
+    },
+    reload: async (entry) => {
+      // HMR 新加的插件不在原图的条目表里：补进报告顺序（换装的则原位不动）。
+      if (!entryOrder.some((candidate) => candidate.id === entry.id)) entryOrder.push(entry)
+      session.uninstall(entry.id)
+      // cordis 的卸载是异步的（fibers 要等清理跑完）：换装前等它落地，否则新旧两条
+      // 纤维会同时占着同一个槽格子，报「已经有人了」。
+      await cordis.unmount(entry.id)
+      return install(entry, 1, 'single')
+    },
+    uninstall: (id) => {
+      const dispose = disposers.get(id)
+      if (dispose !== undefined) {
+        try {
+          dispose()
+        } catch (error) {
+          console.error(`插件 ${id} 卸载时出错：`, error)
+        }
+      }
+      disposers.delete(id)
+      installed.delete(id)
+      // 工厂表是后写覆盖的：删掉这一条，HMR 重取时才知道新脚本真的注册了。
+      delete table[id]
+      removeOwnedStyles(id)
+      reports.delete(id)
+      setPlugin(id, { state: 'removed', at: Date.now(), error: undefined })
+    },
+    installedRev: (id) => installed.get(id),
+    enqueue,
+    awaitingBatch: (id) => {
+      const batchState = batchStateByEntry.get(id)
+      return batchState !== undefined && (batchState.state === 'pending' || batchState.state === 'scheduled')
+    },
+    services,
+    disposeAll: () => {
+      for (const [id, dispose] of [...disposers].reverse()) {
+        try {
+          dispose()
+        } catch (error) {
+          console.error(`插件 ${id} 卸载时出错：`, error)
+        }
+      }
+      disposers.clear()
+      installed.clear()
+      // cordis 那条路不经过 disposers 的账本（纤维自己持有清理）：单独收一次。
+      void cordis.disposeAll()
+    },
+  }
+  return session
+}
+
+/**
+ * 把图里的批规范化成「每个 entry 恰一批、early 在前」的列表。
+ *
+ * 坏批（id 不在图里）就地过滤；没被任何批覆盖的 entry 补进 application——旧宿主
+ * （没有 batches）与手工组图的探针都因此走「单隐含 application 批」，不会丢插件。
+ */
+export function normalizeBatches(graph: UiBootGraph): UiBootBatch[] {
+  const known = new Set(graph.entries.map((entry) => entry.id))
+  const batches: UiBootBatch[] = []
+  for (const batch of graph.batches ?? []) {
+    const entries = batch.entries.filter((id) => known.has(id))
+    if (entries.length > 0) batches.push({ ...batch, entries })
+  }
+  const covered = new Set(batches.flatMap((batch) => batch.entries))
+  const rest = graph.entries.filter((entry) => !covered.has(entry.id)).map((entry) => entry.id)
+  if (rest.length > 0) batches.push({ phase: 'application', entries: rest })
+  const order = (phase: UiBootPhase): number => (phase === 'early' ? 0 : 1)
+  return [...batches].sort((a, b) => order(a.phase) - order(b.phase))
+}
+
+/** 把一个退订动作挂进插件的账本（provide 与槽位登记共用同一条回滚路径）。 */
+function record(ledger: (() => void)[], release: () => void): () => void {
+  ledger.push(release)
+  return release
+}
+
+/** 全局工厂表（bundle 里的那一层包装写的就是它）。 */
+function factoryTable(): Record<string, Factory> {
+  const scope = globalThis as unknown as Record<string, unknown>
+  const existing = scope[FACTORY_GLOBAL]
+  if (existing !== undefined && typeof existing === 'object' && existing !== null) {
+    return existing as Record<string, Factory>
+  }
+  const created: Record<string, Factory> = {}
+  scope[FACTORY_GLOBAL] = created
+  return created
+}
+
+/** 物化前还没打标的 `<style>`（插件可以自己往页面插样式，HMR 换装时要能剔除它那几份）。 */
+function untaggedStyles(): Set<Element> {
+  const found = new Set<Element>()
+  if (typeof document === 'undefined') return found
+  for (const element of document.querySelectorAll('style:not([data-dsc-plugin])')) found.add(element)
+  return found
+}
+
+/**
+ * 物化边界：把这次新出现、还没打标的 `<style>` 记成这个插件的（与参考实现同一个口径）。
+ * CSS 注入发生在物化时，所以剔除与重装天然同一节奏（`uninstall` 再 `install`）。
+ */
+function claimStyles(before: Set<Element>, id: string): void {
+  if (typeof document === 'undefined') return
+  for (const element of document.querySelectorAll('style:not([data-dsc-plugin])')) {
+    if (!before.has(element)) element.setAttribute('data-dsc-plugin', id)
+  }
+}
+
+/** 剔除一个插件物化时插进来的样式。 */
+function removeOwnedStyles(id: string): void {
+  if (typeof document === 'undefined') return
+  for (const element of document.querySelectorAll('style[data-dsc-plugin]')) {
+    if (element.getAttribute('data-dsc-plugin') === id) element.remove()
+  }
+}
+
+/** 跑一个工厂拿到它导出的东西（require 只认白名单）。 */
+function instantiate(factory: Factory, id: string): unknown {
+  const styleBefore = untaggedStyles()
+  const module_ = { exports: {} as unknown }
+  const require_ = (spec: string): unknown => {
+    if (!(spec in MODULES)) {
+      throw new Error(`插件 ${id} 请求了白名单外的模块「${spec}」（允许：${ALLOWED_MODULES.join('、')}）`)
+    }
+    return MODULES[spec]
+  }
+  try {
+    factory(require_, module_, module_.exports)
+    return module_.exports
+  } finally {
+    // 失败路径也要认领：半截注入的样式不该在换装时留下脏标签。
+    claimStyles(styleBefore, id)
+  }
+}
+
+/** 插 `<script>` 并等它执行完。 */
+function appendScript(url: string, id: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const script = document.createElement('script')
+    script.src = url
+    // async=false 让动态插入的脚本保持插入顺序执行（壳里本来就按清单顺序来）。
+    script.async = false
+    script.dataset['dscPlugin'] = id
+    script.addEventListener('load', () => {
+      script.remove()
+      resolve()
+    })
+    script.addEventListener('error', () => {
+      script.remove()
+      reject(new Error(`取 bundle 失败：${url}`))
+    })
+    document.head.append(script)
+  })
+}

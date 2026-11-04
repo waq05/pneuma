@@ -2,7 +2,7 @@
  * `/review` 结论卡（`<review-findings>` 汇报）的确定性探针。
  *
  * 三段，全是不需要宿主与真模型的纯检查：
- *   1. **纯解析**——直读 `ui-shell/src/ui-primitives/review-findings.ts`（Node 的类型擦除，
+ *   1. **纯解析**——直读 `src/packages/ui-primitives/ui/review-findings.ts`（Node 的类型擦除，
  *      不用先 build）：包裹识别、teammate/state 属性、P0–P3 四档、位置 `path:line`、
  *      字段剥壳（加粗 / 反引号 / 列表前缀 / 全角冒号）、多行续写、解析不动的行不丢；
  *   2. **样式复用**——卡片只准用 `views.css` 里已有的那套类名与 `data-priority`，
@@ -21,7 +21,7 @@ import { resolveUiHalf } from './_check-runner.mjs'
 const UI = resolveUiHalf('transcript')
 
 const { parseReviewFindings } = await import(
-  new URL('../ui-shell/src/ui-primitives/review-findings.ts', import.meta.url).href
+  new URL('../src/packages/ui-primitives/ui/review-findings.ts', import.meta.url).href
 )
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -97,7 +97,7 @@ check('建议的续行仍在建议里', suggestDoc?.findings[0]?.suggestion === 
 console.log('\n样式与接线')
 
 // ── 6. 卡片用现有类名与 data-priority 四档 ──
-const card = read('ui-shell/src/ui-primitives/review-findings-card.tsx')
+const card = read('src/packages/ui-primitives/ui/review-findings-card.tsx')
 const classes = [
   'review-findings',
   'review-findings-head',
@@ -116,14 +116,14 @@ const classes = [
 const missing = classes.filter((name) => !card.includes(name))
 check('卡片只用 views.css 里已有的那套类名', missing.length === 0, JSON.stringify(missing))
 check('优先级写进 data-priority（P0–P3 徽标色靠它）', card.includes('data-priority') && card.includes('`P${String(priority)}`'))
-const css = read('ui-shell/src/legacy/views.css')
+const css = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
 check(
   '四档徽标色都在（含 P0 最高档）',
   ["data-priority='P0'", "data-priority='P1'", "data-priority='P2'", "data-priority='P3'"].every((selector) => css.includes(selector)),
 )
 
 // ── 7. 基元包导出 + 对话流接线 ──
-const barrel = read('ui-shell/src/ui-primitives/index.ts')
+const barrel = read('src/packages/ui-primitives/ui/index.ts')
 check('基元包导出解析与卡片', barrel.includes("export * from './review-findings'") && barrel.includes("export * from './review-findings-card'"))
 const userRow = read(UI + '/rows/user-row.tsx')
 check('对话流的用户消息先认 findings 再画气泡', userRow.includes('parseReviewFindings(entry.text)') && userRow.includes('<ReviewFindingsCard'))

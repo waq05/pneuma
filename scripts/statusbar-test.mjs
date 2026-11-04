@@ -20,9 +20,9 @@ import React from 'react'
 import { render } from 'ink'
 
 process.env.DSC_HOME = mkdtempSync(join(tmpdir(), 'dsc-statusbar-test-'))
-const { StatusBar, shortId } = await import('../lib/app/StatusBar.js')
+const { StatusBar, shortId } = await import('../lib/packages/tui/app/StatusBar.js')
 const { DEFAULT_STATUS_BAR_PREFS } = await import('../lib/contract.js')
-const { absoluteTop, measuredSpan } = await import('../lib/app/click.js')
+const { absoluteTop, measuredSpan } = await import('../lib/packages/tui/app/click.js')
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 

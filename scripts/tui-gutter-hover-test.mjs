@@ -27,11 +27,11 @@ process.env.HOME = home
 process.env.USERPROFILE = home
 process.env.DSC_HOME = join(home, '.dsc')
 
-const { App } = await import('../lib/app/App.js')
-const { parseMouse } = await import('../lib/app/mouse.js')
-const { clearPointer, onGutter, publishPointer, readPointer } = await import('../lib/app/pointer.js')
-const { RAIL_WIDTH } = await import('../lib/app/scroll-model.js')
-const { displayWidth } = await import('../lib/app/display-width.js')
+const { App } = await import('../lib/packages/tui/app/App.js')
+const { parseMouse } = await import('../lib/packages/tui/app/mouse.js')
+const { clearPointer, onGutter, publishPointer, readPointer } = await import('../lib/packages/tui/app/pointer.js')
+const { RAIL_WIDTH } = await import('../lib/packages/tui/app/scroll-model.js')
+const { displayWidth } = await import('../lib/packages/tui/app/display-width.js')
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 

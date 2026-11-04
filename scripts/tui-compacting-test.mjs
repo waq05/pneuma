@@ -13,7 +13,7 @@ import React from 'react'
 import { render } from 'ink'
 import { PassThrough } from 'node:stream'
 
-const { ChatView } = await import('../lib/app/ChatView.js')
+const { ChatView } = await import('../lib/packages/tui/app/ChatView.js')
 
 let failures = 0
 const check = (name, condition, detail = '') => {
@@ -83,7 +83,7 @@ console.log('[2] 没在压缩：这一行不出现')
 console.log('[3] 源码钉：App 把字段传给会话视图')
 {
   const { readFileSync } = await import('node:fs')
-  const app = readFileSync(new URL('../src/app/App.tsx', import.meta.url), 'utf8')
+  const app = readFileSync(new URL('../src/packages/tui/app/App.tsx', import.meta.url), 'utf8')
   check('App 传 compactingSince', /compactingSince=\{snapshot\.status\.compactingSince\}/.test(app))
 }
 

@@ -31,9 +31,9 @@ const check = (name, condition, detail = '') => {
 }
 
 const { classifyFileType, CODE_FILE_TYPES, isCodeFileType, fileExtension, basename } =
-  await import(new URL('../ui-shell/src/ui-primitives/file-type-classify.ts', import.meta.url).href)
+  await import(new URL('../src/packages/ui-primitives/ui/file-type-classify.ts', import.meta.url).href)
 const { CODE_FILE_ARTWORK, CODE_FILE_ICON_ID_TOKEN } =
-  await import(new URL('../ui-shell/src/ui-primitives/code-file-icon-artwork.ts', import.meta.url).href)
+  await import(new URL('../src/packages/ui-primitives/ui/code-file-icon-artwork.ts', import.meta.url).href)
 
 /** 全部档位必须命中这些真值——文件名精确、扩展名、大小写、双扩展、双分隔符各占几条。 */
 const TRUTH_TABLE = Object.entries({
@@ -130,9 +130,9 @@ console.log('[2] 48 个代码档 ↔ 全彩字形数据逐项相等（含顺序�
 
 console.log('[3] 传统档字形齐套 + 令牌纪律')
 {
-  const glyphTx = readFileSync(join(root, 'ui-shell/src/ui-primitives/file-type-icon.tsx'), 'utf8')
-  const classifyTx = readFileSync(join(root, 'ui-shell/src/ui-primitives/file-type-classify.ts'), 'utf8')
-  const css = readFileSync(join(root, 'ui-shell/src/styles.css'), 'utf8')
+  const glyphTx = readFileSync(join(root, 'src/packages/ui-primitives/ui/file-type-icon.tsx'), 'utf8')
+  const classifyTx = readFileSync(join(root, 'src/packages/ui-primitives/ui/file-type-classify.ts'), 'utf8')
+  const css = readFileSync(join(root, 'src/packages/ui-renderer/ui/styles/styles.css'), 'utf8')
 
   const switchCases = traditionalKinds.filter((kind) => glyphTx.includes(`case '${kind}':`))
   check(`traditionalGlyph 的 switch 覆盖全部 ${traditionalKinds.length} 个传统档`, switchCases.length === traditionalKinds.length, `缺：${traditionalKinds.filter((k) => !switchCases.includes(k)).join(',')}`)
@@ -154,7 +154,7 @@ console.log('[3] 传统档字形齐套 + 令牌纪律')
 
   // 目录行的琥珀色旧账（2026-10-15 第三十一批）：`.tree-folder` 裸选择器在 views.css 里排在
   // `.file-icon` 之前，同名 color 谁在后谁赢，琥珀一直被盖成灰。修法 = 提一级特异性。
-  const viewsTx = readFileSync(join(root, 'ui-shell/src/legacy/views.css'), 'utf8')
+  const viewsTx = readFileSync(join(root, 'src/packages/ui-renderer/ui/styles/legacy/views.css'), 'utf8')
   const amberPinned = (text) => /\.file-row \.tree-folder\s*\{[^}]*color:\s*var\(--dsc-yellow\)/.test(text)
   check('目录行琥珀钉：views.css 里是 .file-row .tree-folder：--dsc-yellow（有意换的特异性订）', amberPinned(viewsTx))
   check('琥珀钉对降级回裸选择器的副本会红（负向）', amberPinned(viewsTx.replace(/\.file-row \.tree-folder/g, '.tree-folder')) === false, '判据空转：特异性退回去也绿')
@@ -162,9 +162,9 @@ console.log('[3] 传统档字形齐套 + 令牌纪律')
 
 console.log('[4] 出口面与产物')
 {
-  const indexTx = readFileSync(join(root, 'ui-shell/src/ui-primitives/index.ts'), 'utf8')
+  const indexTx = readFileSync(join(root, 'src/packages/ui-primitives/ui/index.ts'), 'utf8')
   const apiTx = readFileSync(join(root, 'ui-shell/src/plugin-api.ts'), 'utf8')
-  const fileIconsTx = readFileSync(join(root, 'ui-shell/src/ui-primitives/file-icons.tsx'), 'utf8')
+  const fileIconsTx = readFileSync(join(root, 'src/packages/ui-primitives/ui/file-icons.tsx'), 'utf8')
 
   check('@dsc/ui 仍导出 FileIcon / fileIconName', apiTx.includes('export { FileIcon, fileIconName }'))
   check('FileIcon 是 FileTypeIcon 的转发（换代没换名）', fileIconsTx.includes('FileTypeIcon') && fileIconsTx.includes('fileIconName'))
@@ -172,7 +172,7 @@ console.log('[4] 出口面与产物')
   const indexCorrupted = `${indexTx}\nexport * from './file-icon-map.generated'`
   check('出口判据对复活映射的副本会红（负向）', !(indexTx.includes("export * from './file-icon-map.generated'")) && indexCorrupted.includes("export * from './file-icon-map.generated'"), '判据空转：源码里怎么写都绿')
   check('壳源码再无 file-icon-map 的真实引用（只剩注释）',
-    (await Promise.all(['ui-shell/src/ui-primitives/file-icons.tsx'].map(async (f) => readFileSync(join(root, f), 'utf8'))))
+    (await Promise.all(['src/packages/ui-primitives/ui/file-icons.tsx'].map(async (f) => readFileSync(join(root, f), 'utf8'))))
       .every((t) => !t.includes("from './file-icon-map.generated'")))
   const packageJson = JSON.parse(readFileSync(join(root, 'ui-shell/package.json'), 'utf8'))
   check('vscode-icons-js 已从 ui-shell 依赖摘除', packageJson.dependencies?.['vscode-icons-js'] === undefined)

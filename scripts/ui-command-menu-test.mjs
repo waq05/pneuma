@@ -262,7 +262,7 @@ console.log('\n[5] 壳侧接线')
   check('按键归属：↑↓/Tab/Esc 先归菜单', composer.includes('command.move(event.key === ' + "'ArrowDown'" + ' ? 1 : -1)') && composer.includes('command.pick()'), '')
   check('命令位里不提文件（@ 面板让位）', composer.includes('if (commandQuery(value, caret) === null) mention.track(value, caret)'), '')
   check('面板画出来了（role=listbox + 类名）', composer.includes('aria-label="命令候选"') && composer.includes('className={`slash-item'), '')
-  const styles = read('ui-shell/src/styles.css')
+  const styles = read('src/packages/ui-renderer/ui/styles/styles.css')
   check(
     '样式类齐（面板 / 分组标题 / 行 / 图标格 / 中文名 / 英文名 / 说明 / 提示）',
     ['slash-pop', 'slash-section', 'slash-item', 'slash-icon', 'slash-label', 'slash-name', 'slash-desc', 'slash-flag', 'slash-hint'].every(
@@ -279,7 +279,7 @@ console.log('\n[5] 壳侧接线')
   const descAt = composer.indexOf('className="slash-desc"')
   check('行内次序：中文名 → 英文名 → 说明', labelAt > 0 && labelAt < nameAt && nameAt < descAt, `${labelAt}/${nameAt}/${descAt}`)
   // 终端面板：中文名取 title，英文名取 label 的第一段（菜单里不摆参数）。
-  const tui = read('src/app/Composer.tsx')
+  const tui = read('src/packages/tui/app/Composer.tsx')
   check('TUI 面板用 title 当第一列', tui.includes('item.title === undefined ? item.label :') && tui.includes("item.label.split(' ')[0]"), '')
   // 手机：菜单、筛选、派发三件事都在。
   const phone = read('remote-web/src/lib/commands.ts')
@@ -308,7 +308,7 @@ console.log('\n[5] 壳侧接线')
   const transcriptUi = readPluginSource(UI)
   check('欢迎态画命令输出（不再整批吞掉）', transcriptUi.includes('row.entry.command === true') && transcriptUi.includes('entry-system-command'), '')
   check('普通对话里也走左对齐块', /entry.command === true \? \(\s*<div className="entry-system-command">/.test(transcriptUi), '')
-  check('样式有了（左对齐 / 保留换行）', /\.entry-system-command \{[\s\S]{0,600}?white-space: pre-wrap/.test(read('ui-shell/src/styles.css')), '')
+  check('样式有了（左对齐 / 保留换行）', /\.entry-system-command \{[\s\S]{0,600}?white-space: pre-wrap/.test(read('src/packages/ui-renderer/ui/styles/styles.css')), '')
 
   // 2026-11：/review 的回车改成「先补全、不执行」——契约、宿主透出、壳三个口子都要在。
   const runtimeSource = read('src/packages/runtime/index.ts')
@@ -350,7 +350,7 @@ console.log('\n[5] 壳侧接线')
   check(
     '提示行样式取次要文字色、字号与 fault 一致',
     /\.shell-composer-hint \{[\s\S]{0,200}?color: var\(--dsc-text-tertiary\)[\s\S]{0,80}?font-size: var\(--dsc-fs-caption\)/.test(
-      read('ui-shell/src/legacy/views.css'),
+      read('src/packages/ui-renderer/ui/styles/legacy/views.css'),
     ),
     '',
   )

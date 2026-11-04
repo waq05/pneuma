@@ -56,6 +56,8 @@
       <div class="track"><span></span></div>
       <div class="hint">正在启动…</div>
     </div>
-    <script type="module" src="/src/ui-renderer/main.tsx"></script>
+    <!-- 入口在包外（E7 把装载器搬进 src/packages/ui-renderer/）：写相对路径，Vite 按本文件
+         所在目录解析；dev 下它会自动改写成 /@fs/<仓库根>/… 那份地址，不用手工加前缀。 -->
+    <script type="module" src="../src/packages/ui-renderer/ui/main.tsx"></script>
   </body>
 </html>

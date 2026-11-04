@@ -1,0 +1,21 @@
+{
+  "name": "@pneuma/ui-primitives",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "pneuma": {
+    "library": true,
+    "title": "界面基元",
+    "description": "界面壳的基元库：图标、载体基元、平台视图、面板几何与格式化口径，也作为平台种子下发给界面插件"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  }
+}

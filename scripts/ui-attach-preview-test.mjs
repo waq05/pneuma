@@ -37,7 +37,7 @@ const check = (name, condition, detail = '') => {
 
 console.log('[1] image-lightbox 组件')
 {
-  const rel = 'ui-shell/src/ui-primitives/image-lightbox.tsx'
+  const rel = 'src/packages/ui-primitives/ui/image-lightbox.tsx'
   check('文件存在', existsSync(join(root, rel)))
   const src = existsSync(join(root, rel)) ? read(rel) : ''
   check('导出 ImageLightbox', /export function ImageLightbox\(/.test(src))
@@ -60,7 +60,7 @@ console.log('[1] image-lightbox 组件')
 
 console.log('[2] 基元库转出')
 {
-  const barrel = read('ui-shell/src/ui-primitives/index.ts')
+  const barrel = read('src/packages/ui-primitives/ui/index.ts')
   check("index.ts 有 export * from './image-lightbox'", /export \* from '\.\/image-lightbox'/.test(barrel))
 }
 
@@ -95,7 +95,7 @@ console.log('[3] 输入区接法')
 
 console.log('[4] 样式')
 {
-  const css = read('ui-shell/src/styles.css')
+  const css = read('src/packages/ui-renderer/ui/styles/styles.css')
   const zoomRule = /\.attach-zoom \{([\s\S]*?)\}/.exec(css)
   check('styles.css 有 .attach-zoom 规则', zoomRule !== null)
   check('光标是放大镜', zoomRule !== null && zoomRule[1].includes('cursor: zoom-in'))
@@ -104,7 +104,7 @@ console.log('[4] 样式')
   check('.attach-zoom img 不接事件', imgRule !== null && imgRule[1].includes('pointer-events: none'))
   check('焦点可见圈', /\.attach-zoom:focus-visible \{/.test(css))
   // 视觉复用旧界面那一套，不新造。
-  const legacy = read('ui-shell/src/legacy/views.css')
+  const legacy = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
   check('legacy 的 .img-lightbox 还在（视觉复用）', /\.img-lightbox \{/.test(legacy) && legacy.includes('var(--dsc-scrim)'))
 }
 

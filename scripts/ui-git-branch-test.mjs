@@ -62,7 +62,7 @@ console.log('[2] 输入框那颗钮的接线')
   // 分支行 2026-10-28 搬进 branch-menu.tsx：判「在输入框外面」要分两个文件读。
   const view = read('src/packages/ui-composer/ui/ui.tsx')
   const menu = read('src/packages/ui-composer/ui/branch-menu.tsx')
-  const shellCss = read('ui-shell/src/styles.css')
+  const shellCss = read('src/packages/ui-renderer/ui/styles/styles.css')
 
   check('读数取宿主快照面 surfaces.git（壳不自己拍 git）', composer.includes("(surfaces as Record<string, unknown>)['git']") && !composer.includes('git-status'))
   check('投影缺席 / 不是仓库时回落空读数（repo: false）', composer.includes('const EMPTY_GIT: GitSurface') && composer.includes('repo: false'))
@@ -104,7 +104,7 @@ console.log('[2] 输入框那颗钮的接线')
 
   // 等人的宿主方法要更长的超时：审批卡自己能等 5 分钟，默认那 30 秒会把「等你点卡」
   // 报成「宿主超时」，而且点完卡那次切换已经被页面放弃了（实机走查抓到的）。
-  const channel = read('ui-shell/src/ui-layout/host-channel.ts')
+  const channel = read('src/packages/ui-layout/ui/host-channel.ts')
   const changes = read('src/packages/ui-files/ui/changes.tsx')
   // 超时闸本身是手写的（老内核没有 `AbortSignal.timeout`，那条线在
   // scripts/ui-legacy-compat-test.mjs 里钉），这里只钉口径：预算能按调用给、默认 30 秒。

@@ -25,7 +25,7 @@ const { SlotRegistry } = await import('../lib/ui/slots.js')
 const { loadTuiPlugins } = await import('../lib/ui/tui-plugins.js')
 const { TUI_SLOTS } = await import('../lib/ui/tui-plugin-api.js')
 const { SlotOutlet } = await import('../lib/ui/slots-ink.js')
-const { App } = await import('../lib/app/App.js')
+const { App } = await import('../lib/packages/tui/app/App.js')
 
 let failures = 0
 const check = (name, condition, detail = '') => {

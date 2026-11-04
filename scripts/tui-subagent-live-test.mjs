@@ -117,7 +117,7 @@ await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
 const { port } = server.address()
 
 const { createKernel } = await import('../lib/host/kernel.js')
-const { App } = await import('../lib/app/App.js')
+const { App } = await import('../lib/packages/tui/app/App.js')
 
 const ctx = await createKernel({
   config: {

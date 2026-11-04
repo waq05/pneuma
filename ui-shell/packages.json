@@ -1,9 +1,9 @@
 {
   "@dsc/ui": "./src/plugin-api.ts",
   "@dsc/ui-core": "../src/ui/index.ts",
-  "@dsc/ui-dockkit": "./src/ui-dockkit/index.ts",
-  "@dsc/ui-layout": "./src/ui-layout/index.ts",
-  "@dsc/ui-primitives": "./src/ui-primitives/index.ts",
-  "@dsc/ui-renderer": "./src/ui-renderer/index.ts",
-  "@dsc/ui-slots": "./src/ui-slots/index.ts"
+  "@dsc/ui-dockkit": "../src/packages/ui-dockkit/ui/index.ts",
+  "@dsc/ui-layout": "../src/packages/ui-layout/ui/index.ts",
+  "@dsc/ui-primitives": "../src/packages/ui-primitives/ui/index.ts",
+  "@dsc/ui-renderer": "../src/packages/ui-renderer/ui/index.ts",
+  "@dsc/ui-slots": "../src/packages/ui-slots/ui/index.ts"
 }

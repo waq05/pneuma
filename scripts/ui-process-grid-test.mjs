@@ -30,9 +30,9 @@ const UI = resolveUiHalf('transcript')
 const root = new URL('../', import.meta.url)
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, root)), 'utf8').replace(/\r\n/g, '\n')
 
-const tokens = read('ui-shell/src/legacy/tokens.css')
-const views = read('ui-shell/src/legacy/views.css')
-const styles = read('ui-shell/src/styles.css')
+const tokens = read('src/packages/ui-renderer/ui/styles/legacy/tokens.css')
+const views = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
+const styles = read('src/packages/ui-renderer/ui/styles/styles.css')
 
 let failures = 0
 let passes = 0
@@ -155,7 +155,7 @@ console.log('6. 数学：三类行左缘相等，组内行右移一档')
 
 console.log('7. 内容：组头后半句与工具摘要表')
 {
-  const summary = read('ui-shell/src/ui-primitives/tool-summary.ts')
+  const summary = read('src/packages/ui-primitives/ui/tool-summary.ts')
   const row = read(UI + '/step-group-row.tsx')
   const render = read(UI + '/render.tsx')
 

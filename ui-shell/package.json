@@ -12,26 +12,13 @@
     "build:plugins": "node build-plugins.mjs",
     "build:types": "node build-types.mjs"
   },
+  "//": "界面半（src/packages/ui-*/ui/**）搬出本目录后，shiki/papaparse/pdfjs/xlsx/markdown 这些第三方依赖改由根 package.json 提供：importer 在 ../src 下，node 从那里向上只看得见根 node_modules。这里只剩壳自己的构建工具与 react。",
   "dependencies": {
-    "@deepseek-ai/cordis": "^4.0.4",
-    "@shikijs/langs": "^4.5.0",
-    "@shikijs/themes": "^4.5.0",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
-    "papaparse": "^5.7.0",
-    "pdfjs-dist": "^6.3.289",
-    "qrcode": "^1.5.4",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.0",
-    "shiki": "^4.5.0",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "@types/papaparse": "^5.3.16",
-    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.0.0",

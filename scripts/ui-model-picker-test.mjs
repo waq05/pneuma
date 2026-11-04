@@ -329,7 +329,7 @@ console.log('[8] 界面接线（ui.tsx）')
   )
   check(
     '宽度兜底：面板不许比视口还宽（位置量得再准，盒子本身出界救不了）',
-    /max-width: calc\(100vw - 8px\)/.test(read('ui-shell/src/styles.css')),
+    /max-width: calc\(100vw - 8px\)/.test(read('src/packages/ui-renderer/ui/styles/styles.css')),
   )
   check('飞出高度是量出来的（夹取纯函数 + 卡片自然高）', /placeFlyout\(\s*rowBox\.top - panelBox\.top/.test(ui) && ui.includes('card.scrollHeight'))
   check('指针离开面板就收起飞出卡（卡片是面板的子节点，所以移进卡片不算离开）', /onMouseLeave=\{\(\) => \{[\s\S]{0,200}?setHoverProvider\(null\)[\s\S]{0,80}?setFlyout\(null\)/.test(ui))
@@ -346,7 +346,7 @@ console.log('[8] 界面接线（ui.tsx）')
   check('四张浮层两两互斥（开一颗收掉其余三颗）', (ui.match(/setEffortOpen\(false\)/g) ?? []).length >= 4 && (ui.match(/setModelOpen\(false\)/g) ?? []).length >= 4)
   check('两颗新图标来自基元库（`@dsc/ui` 整包转出）', ui.includes('IconPackage') && ui.includes('IconBrain') && read('ui-shell/src/plugin-api.ts').includes("export * from '@dsc/ui-primitives'"))
   check('死的 `data-tip` 换成真 `title`（壳里 data-tip 是不渲染的死属性）', !ui.includes('data-tip="模型与思考强度"') && ui.includes('title={`模型：${chip.full}（点开换）`}'))
-  const icons = flat(read('ui-shell/src/ui-primitives/icons.tsx'))
+  const icons = flat(read('src/packages/ui-primitives/ui/icons.tsx'))
   check('两颗图标真定义了（细线风格，currentColor）', icons.includes('export function IconPackage(') && icons.includes('export function IconBrain('))
 }
 
@@ -366,8 +366,8 @@ console.log('[9] 宿主：端点名与显示名的产地')
 // ── [10] 样式门 ───────────────────────────────────────────────────────────────
 console.log('[10] 样式门：新类名有规则、只用令牌、退役的那两版都不许留')
 {
-  const shellCss = flat(read('ui-shell/src/styles.css'))
-  const viewsCss = flat(read('ui-shell/src/legacy/views.css'))
+  const shellCss = flat(read('src/packages/ui-renderer/ui/styles/styles.css'))
+  const viewsCss = flat(read('src/packages/ui-renderer/ui/styles/legacy/views.css'))
   const NEW_CLASSES = ['composer-model-chip', 'composer-model-provider', 'composer-effort-chip', 'model-picker', 'model-picker-body', 'model-providers', 'provider-row', 'provider-arrow', 'model-flyout', 'model-flyout-card', 'model-picker-rows', 'model-picker-row', 'model-picker-check', 'model-manage', 'model-unknown']
   const missing = NEW_CLASSES.filter((name) => !new RegExp(`\\.${name}[\\s,{:.]`).test(shellCss))
   check('十五个新类名都在壳的 styles.css 里定义过', missing.length === 0, missing.join('、'))
@@ -483,7 +483,7 @@ console.log('[10] 样式门：新类名有规则、只用令牌、退役的那�
 // ── [11] 负向自证 ─────────────────────────────────────────────────────────────
 console.log('[11] 负向自证：这些扫描器不是空转的')
 {
-  const shellCss = flat(read('ui-shell/src/styles.css'))
+  const shellCss = flat(read('src/packages/ui-renderer/ui/styles/styles.css'))
   const hardcodedColors = (css, classNames) => {
     const hits = []
     for (const match of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {

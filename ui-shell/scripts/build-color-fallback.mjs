@@ -1,7 +1,7 @@
 /**
- * 生成 `ui-shell/src/legacy-color-fallback.css`：给**认不得 `color-mix()` 的内核**的整套调色板兜底。
+ * 生成 `src/packages/ui-renderer/ui/styles/legacy-color-fallback.css`：给**认不得 `color-mix()` 的内核**的整套调色板兜底。
  *
- * 为什么需要它：令牌体系（`src/legacy/tokens.css`）几乎全部由 `color-mix()` 算出——页面/侧栏/卡片底色、
+ * 为什么需要它：令牌体系（`src/packages/ui-renderer/ui/styles/legacy/tokens.css`）几乎全部由 `color-mix()` 算出——页面/侧栏/卡片底色、
  * 五级填充、四级描边、四级文字色、悬停底色、阴影。`color-mix()` 是 Chromium 111（2023-03）才有的函数，
  * 比它旧的内核**在解析期就把这些声明整条丢掉**，于是每个令牌都成了「未定义」：
  *
@@ -34,8 +34,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const shellRoot = join(here, '..')
-export const TOKENS_PATH = join(shellRoot, 'src', 'legacy', 'tokens.css')
-export const OUT_PATH = join(shellRoot, 'src', 'legacy-color-fallback.css')
+export const TOKENS_PATH = join(shellRoot, '..', 'src', 'packages', 'ui-renderer', 'ui', 'styles', 'legacy', 'tokens.css')
+export const OUT_PATH = join(shellRoot, '..', 'src', 'packages', 'ui-renderer', 'ui', 'styles', 'legacy-color-fallback.css')
 
 /* ── 一、把 tokens.css 拆成规则（认得 @media 嵌套，别的 at-rule 不需要） ────────────── */
 
@@ -403,7 +403,7 @@ export function buildFallbackCss(tokensCss) {
   const header = `/*
  * 老内核的调色板兜底（**生成物，别手改**）。
  *
- * 由 \`ui-shell/scripts/build-color-fallback.mjs\` 从 \`src/legacy/tokens.css\` 算出：
+ * 由 \`ui-shell/scripts/build-color-fallback.mjs\` 从 \`src/packages/ui-renderer/ui/styles/legacy/tokens.css\` 算出：
  * 把里面每个 \`color-mix()\` 令牌按 CSS 规范（预乘 alpha）求成实色，包在
  * \`@supports not (color: color-mix(...))\` 里。认不得 \`color-mix()\` 的内核
  * （Chromium < 111，手机上的老 WebView 常见）靠这一块拿到整套底色/文字色/描边；

@@ -12,7 +12,7 @@
 import { PassThrough } from 'node:stream'
 import React from 'react'
 import { render } from 'ink'
-import { Composer } from '../lib/app/Composer.js'
+import { Composer } from '../lib/packages/tui/app/Composer.js'
 import { inputClaimOf } from '../lib/core/commands-completion.js'
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
