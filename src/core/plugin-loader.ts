@@ -17,7 +17,14 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import type { Context, Fiber, Plugin } from '@deepseek-ai/cordis'
-import { ensureResolveHook, setResolveHookAppRoot, setResolveHookCompat } from './dsh-compat/resolve-hook.js'
+import {
+  bumpGeneration,
+  currentGeneration,
+  ensureResolveHook,
+  registerGenerationRoot,
+  setResolveHookAppRoot,
+  setResolveHookCompat,
+} from './dsh-compat/resolve-hook.js'
 import { dshToolsFacade } from './dsh-compat/tools-facade.js'
 import {
   checkApiVersion,
@@ -43,6 +50,15 @@ import { activeProfileDir } from './profile-dir.js'
 
 /** 内核插件 API 版本（重导出，供宿主/文档引用）。 */
 export { KERNEL_API_VERSION }
+
+/**
+ * 功能包模块的「代数」重导出（热重挂的机制在 dsh-compat/resolve-hook）。
+ *
+ * 代数 0 = 启动态（不打戳）；`bumpGeneration()` 之后功能包解析结果带 `?g=`，
+ * 下一次 `import` 就会拿到新代码。{@link remountExternalPlugin} 自己会换代，
+ * 这里转出是给探针与排障用的。
+ */
+export { bumpGeneration, currentGeneration }
 
 /**
  * 应用安装目录 = 运行中 Pneuma 的 `package.json` 所在目录。
@@ -137,6 +153,66 @@ const pluginSources = new Map<string, string>()
 /** 登记一个插件身份对应的磁盘入口（组合包默认关的行也要登记）。 */
 export function registerPluginSource(identity: string, file: string): void {
   pluginSources.set(identity, file)
+}
+
+/**
+ * 一个入口文件所属的包目录（自下而上找最近的 `package.json`，最多 8 层）。
+ *
+ * 热更要盯的是「包目录下所有 .js/.json」，入口文件本身不够——应用自带包的入口是
+ * 一层再导出桩（`lib/node_modules/@pneuma/<id>/index.js`），真正的代码在
+ * `lib/packages/<id>/` 里，桩的 mtime 永远不会跟着变。
+ * @param file - 入口文件绝对路径
+ * @returns 包目录；找不到清单（外部单文件插件）给 null
+ */
+export function pluginPackageDirOf(file: string): string | null {
+  let dir = dirname(file)
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (existsSync(join(dir, 'package.json'))) return dir
+    const parent = dirname(dir)
+    if (parent === dir) return null
+    dir = parent
+  }
+  return null
+}
+
+/**
+ * 把一行的包目录登记成「功能包路径」（代数戳的落点）。
+ *
+ * 只认 `node_modules` 里的包：用户目录里的单文件插件没有包边界，把它的父目录当
+ * 「包」登记会让整片目录被戳（连别人的依赖一起换代）。
+ * @param file - 入口文件绝对路径
+ */
+function registerPackageGenerationRoot(file: string): void {
+  const pkgDir = pluginPackageDirOf(file)
+  if (pkgDir === null) return
+  const segments = resolve(pkgDir).split(/[\\/]/)
+  if (!segments.includes('node_modules')) return
+  registerGenerationRoot(pkgDir)
+}
+
+/**
+ * 已挂载插件的那一份对象与参数：热重挂失败时用它把旧版本原样放回去。
+ *
+ * 为什么不能只留 Fiber：Fiber 只能 dispose，不能「重新启用」；要回滚就得留住
+ * `root.plugin()` 当时收到的插件对象与配置，再挂一次。
+ */
+interface MountedDetail {
+  plugin: Plugin.Object
+  config: Record<string, unknown>
+  /** 首次挂载时的行级覆盖（inject / 宿主配置 / native），热重挂要沿用同一份。 */
+  options: RowMountOptions
+}
+
+const mountDetailsByRoot = new WeakMap<Context, Map<string, MountedDetail>>()
+
+/** 这个 root 上「身份 → 挂载明细」的表（与 {@link mountedOf} 同生命周期）。 */
+function mountDetailsOf(root: Context): Map<string, MountedDetail> {
+  let table = mountDetailsByRoot.get(root)
+  if (table === undefined) {
+    table = new Map<string, MountedDetail>()
+    mountDetailsByRoot.set(root, table)
+  }
+  return table
 }
 
 /**
@@ -274,6 +350,122 @@ export interface RowMountOptions {
   native?: boolean
 }
 
+/** 一次「导入 + 校验」的结果：返回挂载要用的全部材料。 */
+interface InspectedModule {
+  /** 插件对象（默认导出 / 唯一带 apply 的命名导出 / 模块自身）。 */
+  entry: Record<string, unknown>
+  /** 整个模块（apply 与 inject 的回落来源）。 */
+  mod: PluginModule
+  /** 校验过的配置（宿主给的整份替代磁盘；跑了 Config 就用返回值）。 */
+  configForApply: Record<string, unknown>
+  /** 行级 inject（没写就是 undefined，挂载时回落到模块自带的那份）。 */
+  inject: readonly string[] | undefined
+  /** 要不要套 dsh 兼容的 ctx 视图（决定 apply 收到哪个 ctx）。 */
+  needsCompat: boolean
+}
+
+/** {@link inspectPluginModule} 的结果：成功给材料，失败给一句人话。 */
+type InspectResult = { ok: true; value: InspectedModule } | { ok: false; problem: string }
+
+/**
+ * 导入一个插件模块并做全部挂载前校验（首次挂载与热重挂共用）。
+ *
+ * 为什么拆出来：热重挂必须「先导入 + 校验，全过了才动旧 fiber」；两条路径各写一遍
+ * 判定迟早会漂移（比如一边认 apiVersion 一边不认）。这里只做判定与读元数据，
+ * **不卸载任何东西**——回滚语义由调用方决定（首次挂载失败 = 停用；热重挂失败 = 保旧）。
+ * @param file - 入口文件绝对路径
+ * @param identity - 运行时身份（行 id）
+ * @param rowOptions - 行级覆盖（inject / 宿主配置 / native）
+ * @param meta - 这一行的元数据（模块声明的展示字段会写进来）
+ */
+async function inspectPluginModule(
+  file: string,
+  identity: string,
+  rowOptions: RowMountOptions,
+  meta: PluginMeta,
+): Promise<InspectResult> {
+  const native = rowOptions.native === true
+  const needsCompat = !native && isPluginEnabled('dsh-compat')
+  // 解析钩子必须在**导入之前**就位：插件在模块顶层就 import @pneuma/runtime 与
+  // @deepseek-ai/* 的东西，等 apply 时再注册已经太晚（import 早就抛 ERR_MODULE_NOT_FOUND 了）。
+  // 注册**不再依赖 dsh-compat 开关**：dsh 兼容层只是"能不能跑 dsh 插件"的判定，
+  // 而 @pneuma/runtime 的重定向与开关无关。
+  ensureResolveHook([DSC_PLUGINS_DIR], APP_INSTALL_DIR)
+  // 钩子永远在（@pneuma/runtime 要单实例），但 @deepseek-ai/* 的重定向跟着开关走：
+  // 关掉兼容层时让 dsh 插件在 import 阶段就失败，用户才看得到「先启用 dsh-compat」。
+  setResolveHookCompat(isPluginEnabled('dsh-compat'))
+  if (needsCompat) normalizeDshHome()
+  // 代数戳的落点：这一行的包目录算「功能包路径」，换代后 import 到的才是新代码。
+  // 0 代不加戳，所以首次挂载登记它没有任何副作用（启动态与探针仍是同一实例）。
+  registerPackageGenerationRoot(file)
+
+  const mod = await importPluginModule(file, meta)
+  if (mod === null) return { ok: false, problem: meta.problem ?? '模块导入失败' }
+  // 包入口导出插件对象（默认导出或唯一一个带 apply 的命名导出）；dsh 插件则是模块自带 apply。
+  const entry = pickPluginObject(mod)
+  if (entry === null) {
+    return { ok: false, problem: '模块里找不到插件对象：既没有默认导出，也没有唯一一个带 apply 的命名导出' }
+  }
+  if (typeof entry.name === 'string' && entry.name !== '') meta.name = entry.name
+  else if (typeof mod.name === 'string' && mod.name !== '') meta.name = mod.name
+  if (typeof entry.description === 'string' && entry.description !== '') meta.description = entry.description
+  else if (typeof mod.description === 'string' && mod.description !== '') meta.description = mod.description
+  if (typeof entry.apiVersion === 'number') meta.apiVersion = entry.apiVersion
+  else if (typeof mod.apiVersion === 'number') meta.apiVersion = mod.apiVersion
+  // 外部单文件插件没有 package.json 可读，设置分区只能靠模块导出（契约 §2 的缺省口径）。
+  if (typeof mod.settingsSection === 'string' && mod.settingsSection !== '') meta.settingsSection = mod.settingsSection
+  const capabilities = clientCapabilitiesOf(mod.client ?? mod.dshClient)
+  if (capabilities.length > 0) meta.clientCapabilities = capabilities
+
+  // ---- 版本管理：不兼容自动回滚（停用并写盘） ----
+  const problem = checkApiVersion(meta.apiVersion)
+  if (problem !== null) return { ok: false, problem }
+  if (typeof entry.apply !== 'function') return { ok: false, problem: '缺少 apply（不是 cordis object plugin）' }
+
+  // ---- 行级 inject：行上写了就盖过模块自带的（依赖关系属于装配，不属于包本身） ----
+  const rowInject = rowOptions.inject === undefined ? undefined : [...rowOptions.inject]
+
+  // ---- dsh 风格识别 ----
+  // inject 里有 dsc 不认识的服务名 = dsh 生态的插件。兼容层没开就提示先开它；开了也
+  // 垫不起的（sessionProjections、agents 这类要整个 dsh 会话语义的），话说明白再回滚。
+  const injectNames = rowInject ?? injectNamesOf(entry.inject ?? mod.inject)
+  const foreign = native ? [] : injectNames.filter((n) => !DSC_SERVICE_NAMES.has(n))
+  if (foreign.length > 0) {
+    // 一句「超出范围」帮不到插件作者：这张表给每个常见 dsh 服务名一句判定
+    // （有对应但语义不同 / 根本没有），见 core/dsh-compat/service-map.ts。
+    const detail = describeForeignServices(foreign)
+    if (!isPluginEnabled('dsh-compat')) {
+      return {
+        ok: false,
+        problem:
+          `插件需要 dsc 不认识的服务：${detail}。若这是 dsh（DeepSeek Harness）风格的插件，` +
+          '请先在插件中心启用「dsh 兼容层」（dsh-compat）再打开本插件',
+      }
+    }
+    return {
+      ok: false,
+      problem:
+        `这个 dsh 插件要的服务 Pneuma 没有或对不上：${detail}。` +
+        '依赖这些语义的插件在 Pneuma 上跑不起来，需要改写（或等对应服务做出来）',
+    }
+  }
+
+  // ---- 配置校验（dsh 插件用 schemastery 导出 Config；有就调一次，失败响亮回滚） ----
+  // 宿主给了配置就整份用它（不深合并）：宿主知道的那几项磁盘上根本没有。
+  let configForApply = rowOptions.config ?? getPluginConfig(identity)
+  const configSchema = mod.Config ?? entry.Config
+  if (typeof (configSchema as unknown) === 'function') {
+    try {
+      const validated = (configSchema as (raw: unknown) => unknown)(configForApply)
+      if (validated !== null && typeof validated === 'object') configForApply = validated as Record<string, unknown>
+    } catch (error) {
+      return { ok: false, problem: `插件配置校验失败：${err(error)}（检查 ~/.dsc/plugins.json 里这条目目的 config）` }
+    }
+  }
+
+  return { ok: true, value: { entry, mod, configForApply, inject: rowInject, needsCompat } }
+}
+
 /**
  * 挂载一个外部插件（热；已挂载时先卸载旧 fiber）。
  * 失败路径：apiVersion 不兼容 / 模块损坏 / 缺 apply → 元数据记 problem，
@@ -300,9 +492,11 @@ export async function mountExternalPlugin(
   if (builtin !== undefined) {
     await unmountExternalPlugin(base)
     try {
-      const fiber = root.plugin(builtin, getPluginConfig(base))
+      const config = getPluginConfig(base)
+      const fiber = root.plugin(builtin, config)
       await fiber
       mountedOf(root).set(base, fiber)
+      mountDetailsOf(root).set(base, { plugin: builtin, config, options: rowOptions })
       const own = getPluginMeta(base)
       if (own !== undefined) own.problem = undefined
       return true
@@ -317,93 +511,14 @@ export async function mountExternalPlugin(
   const meta: PluginMeta = { file: base, name: base.replace(/\.js$/, ''), description: '', source: 'external' }
   registerPluginMeta(meta)
 
-  // 解析钩子必须在**导入之前**就位：插件在模块顶层就 import @pneuma/runtime 与
-  // @deepseek-ai/* 的东西，等 apply 时再注册已经太晚（import 早就抛 ERR_MODULE_NOT_FOUND 了）。
-  // 注册**不再依赖 dsh-compat 开关**：dsh 兼容层只是"能不能跑 dsh 插件"的判定，
-  // 而 @pneuma/runtime 的重定向与开关无关。
-  const native = rowOptions.native === true
-  const needsCompat = !native && isPluginEnabled('dsh-compat')
-  ensureResolveHook([DSC_PLUGINS_DIR], APP_INSTALL_DIR)
-  // 钩子永远在（@pneuma/runtime 要单实例），但 @deepseek-ai/* 的重定向跟着开关走：
-  // 关掉兼容层时让 dsh 插件在 import 阶段就失败，用户才看得到「先启用 dsh-compat」。
-  setResolveHookCompat(isPluginEnabled('dsh-compat'))
-  if (needsCompat) normalizeDshHome()
-
-  const mod = await importPluginModule(file, meta)
-  if (mod === null) {
+  // 导入 + 校验：与热重挂（remountExternalPlugin）共用同一套判定，避免两条路径各判一遍。
+  const inspected = await inspectPluginModule(file, base, rowOptions, meta)
+  if (!inspected.ok) {
+    meta.problem = inspected.problem
     await disableSilently(base)
     return false
   }
-  // 包入口导出插件对象（默认导出或唯一一个带 apply 的命名导出）；dsh 插件则是模块自带 apply。
-  const entry = pickPluginObject(mod)
-  if (entry === null) {
-    meta.problem = '模块里找不到插件对象：既没有默认导出，也没有唯一一个带 apply 的命名导出'
-    await disableSilently(base)
-    return false
-  }
-  if (typeof entry.name === 'string' && entry.name !== '') meta.name = entry.name
-  else if (typeof mod.name === 'string' && mod.name !== '') meta.name = mod.name
-  if (typeof entry.description === 'string' && entry.description !== '') meta.description = entry.description
-  else if (typeof mod.description === 'string' && mod.description !== '') meta.description = mod.description
-  if (typeof entry.apiVersion === 'number') meta.apiVersion = entry.apiVersion
-  else if (typeof mod.apiVersion === 'number') meta.apiVersion = mod.apiVersion
-  // 外部单文件插件没有 package.json 可读，设置分区只能靠模块导出（契约 §2 的缺省口径）。
-  if (typeof mod.settingsSection === 'string' && mod.settingsSection !== '') meta.settingsSection = mod.settingsSection
-  const capabilities = clientCapabilitiesOf(mod.client ?? mod.dshClient)
-  if (capabilities.length > 0) meta.clientCapabilities = capabilities
-
-  // ---- 版本管理：不兼容自动回滚（停用并写盘） ----
-  const problem = checkApiVersion(meta.apiVersion)
-  if (problem !== null) {
-    meta.problem = problem
-    await disableSilently(base)
-    return false
-  }
-  if (typeof entry.apply !== 'function') {
-    meta.problem = '缺少 apply（不是 cordis object plugin）'
-    await disableSilently(base)
-    return false
-  }
-
-  // ---- 行级 inject：行上写了就盖过模块自带的（依赖关系属于装配，不属于包本身） ----
-  const rowInject = rowOptions.inject === undefined ? undefined : [...rowOptions.inject]
-
-  // ---- dsh 风格识别 ----
-  // inject 里有 dsc 不认识的服务名 = dsh 生态的插件。兼容层没开就提示先开它；开了也
-  // 垫不起的（sessionProjections、agents 这类要整个 dsh 会话语义的），话说明白再回滚。
-  const injectNames = rowInject ?? injectNamesOf(entry.inject ?? mod.inject)
-  const foreign = native ? [] : injectNames.filter((n) => !DSC_SERVICE_NAMES.has(n))
-  if (foreign.length > 0) {
-    // 一句「超出范围」帮不到插件作者：这张表给每个常见 dsh 服务名一句判定
-    // （有对应但语义不同 / 根本没有），见 core/dsh-compat/service-map.ts。
-    const detail = describeForeignServices(foreign)
-    if (!isPluginEnabled('dsh-compat')) {
-      meta.problem =
-        `插件需要 dsc 不认识的服务：${detail}。若这是 dsh（DeepSeek Harness）风格的插件，` +
-        '请先在插件中心启用「dsh 兼容层」（dsh-compat）再打开本插件'
-    } else {
-      meta.problem =
-        `这个 dsh 插件要的服务 Pneuma 没有或对不上：${detail}。` +
-        '依赖这些语义的插件在 Pneuma 上跑不起来，需要改写（或等对应服务做出来）'
-    }
-    await disableSilently(base)
-    return false
-  }
-
-  // ---- 配置校验（dsh 插件用 schemastery 导出 Config；有就调一次，失败响亮回滚） ----
-  // 宿主给了配置就整份用它（不深合并）：宿主知道的那几项磁盘上根本没有。
-  let configForApply = rowOptions.config ?? getPluginConfig(base)
-  const configSchema = mod.Config ?? entry.Config
-  if (typeof (configSchema as unknown) === 'function') {
-    try {
-      const validated = (configSchema as (raw: unknown) => unknown)(configForApply)
-      if (validated !== null && typeof validated === 'object') configForApply = validated as Record<string, unknown>
-    } catch (error) {
-      meta.problem = `插件配置校验失败：${err(error)}（检查 ~/.dsc/plugins.json 里这条目目的 config）`
-      await disableSilently(base)
-      return false
-    }
-  }
+  const { entry, mod, configForApply, inject: rowInject, needsCompat } = inspected.value
 
   // ---- 挂载 ----
   await unmountExternalPlugin(base)
@@ -425,6 +540,8 @@ export async function mountExternalPlugin(
     const fiber = root.plugin(pluginObject, configForApply)
     await fiber
     mountedOf(root).set(base, fiber)
+    // 留住插件对象与配置：热重挂失败时要靠它把旧版本原样放回去（Fiber 只能 dispose）。
+    mountDetailsOf(root).set(base, { plugin: pluginObject, config: configForApply, options: rowOptions })
     meta.problem = undefined
     return true
   } catch (error) {
@@ -439,6 +556,140 @@ export async function mountExternalPlugin(
     await disableSilently(base)
     return false
   }
+}
+
+/** 热重挂的结果。 */
+export interface RemountResult {
+  ok: boolean
+  /** 这次热重挂用的代数（失败也给，方便对照日志与探针）。 */
+  generation: number
+  problem?: string
+}
+
+/**
+ * 把一行**已挂载**的插件换成磁盘上的新代码（改代码不重启即生效）。
+ *
+ * 时序（与 dsh 的有意差异：dsh 是先逐出、失败即失败；我们要保旧的）：
+ *   1. 换代（{@link bumpGeneration}）——之后功能包的解析结果都带 `?g=<新代数>`；
+ *   2. **先**导入新模块并做与首次挂载同一套校验（插件对象 / apiVersion / Config）；
+ *   3. 全过了才 dispose 旧 fiber，再用新对象挂载；
+ *   4. 挂载这一步失败 → 用留住的旧对象与配置再挂一次（回滚），原因写 meta.problem。
+ *
+ * 任何一步失败都**不碰** `plugins.json`（不 disableSilently）：用户装的东西不能被
+ * 一次手滑的语法错误停掉。失败只写 meta.problem 并返回 false。
+ * @param identity - 行 id（首次挂载时的身份；不是文件路径）
+ */
+export async function remountExternalPlugin(identity: string): Promise<RemountResult> {
+  const root = rootRef
+  if (root === null) return { ok: false, generation: currentGeneration(), problem: '插件运行时还没初始化' }
+  const table = mountedOf(root)
+  // 幂等判断（mountRow 用的那一处）只拦「首次挂载」；热重挂走的正是「已经挂上了」这一支。
+  if (!table.has(identity)) {
+    return { ok: false, generation: currentGeneration(), problem: '这一行当前没有挂载，热重挂只对已挂载的行生效' }
+  }
+  // 内置官方插件的对象随内核编译，磁盘上没有它的产物：没有新旧版本可言。
+  if (builtinMounts.has(identity)) {
+    return { ok: false, generation: currentGeneration(), problem: '内置插件随内核编译，没有可重挂的磁盘产物' }
+  }
+  const file = pluginSources.get(identity) ?? resolveEntryPath(identity)
+  if (file === null || !existsSync(file)) {
+    const problem = `找不到这一行的入口文件（${identity}），无法热重挂`
+    const missing = getPluginMeta(identity)
+    if (missing !== undefined) missing.problem = problem
+    return { ok: false, generation: currentGeneration(), problem }
+  }
+  const meta: PluginMeta = getPluginMeta(identity) ?? {
+    file: identity,
+    name: identity.replace(/\.js$/, ''),
+    description: '',
+    source: 'external',
+  }
+  const details = mountDetailsOf(root)
+  const previous = details.get(identity)
+  // 失败时连元数据一起还原：新模块可能已经把 name/apiVersion 改成新值，旧 fiber 却还在跑。
+  const metaBefore: PluginMeta = { ...meta }
+  const generation = bumpGeneration()
+  // 行级 inject / 宿主配置沿用首次挂载那一份（重挂不是重新装配）。
+  const inspected = await inspectPluginModule(file, identity, previous?.options ?? {}, meta)
+  if (!inspected.ok) {
+    restoreMeta(meta, metaBefore)
+    meta.problem = `热重挂失败：${inspected.problem}（旧版本继续运行）`
+    return { ok: false, generation, problem: meta.problem }
+  }
+
+  const { entry, mod, configForApply, inject, needsCompat } = inspected.value
+  /** 插件运行时直接 `ctx.get` 过的服务名（诊断用）。 */
+  const asked: string[] = []
+  const pluginObject = {
+    name: meta.name,
+    inject: inject ?? ((entry.inject ?? mod.inject) as string[] | undefined),
+    apply: (innerCtx: Context, config: Record<string, unknown>): unknown =>
+      (entry.apply as (ctx: Context, config: Record<string, unknown>) => unknown)(
+        needsCompat ? compatCtx(innerCtx, identity, asked) : innerCtx,
+        config,
+      ),
+  }
+  // 导入与校验都过了，才动旧 fiber：cordis 里两份同时 provide 同一个服务会直接失败，
+  // 所以顺序只能是「先卸再挂」。
+  await unmountExternalPlugin(identity)
+  try {
+    const fiber = root.plugin(pluginObject, configForApply)
+    await fiber
+    table.set(identity, fiber)
+    details.set(identity, { plugin: pluginObject, config: configForApply, options: previous?.options ?? {} })
+    meta.problem = undefined
+    return { ok: true, generation }
+  } catch (error) {
+    const failure = `新版本挂载失败：${err(error)}`
+    let restored = false
+    if (previous !== undefined) {
+      try {
+        const fiber = root.plugin(previous.plugin, previous.config)
+        await fiber
+        table.set(identity, fiber)
+        restored = true
+      } catch {
+        // 旧版本也起不来：下面的文案会说清「没能恢复」，不留一句假安慰。
+      }
+    }
+    restoreMeta(meta, metaBefore)
+    meta.problem = restored
+      ? `${failure}；已回滚到旧版本（${identity} 仍在运行）`
+      : `${failure}；旧版本也没能恢复`
+    return { ok: false, generation, problem: meta.problem }
+  }
+}
+
+/**
+ * 把元数据还原成热重挂之前的样子。
+ *
+ * `Object.assign` 只覆盖、不删除：新模块可能新增过 apiVersion / clientCapabilities，
+ * 不先删掉新键的话，插件中心会显示一份并不在跑的声明。
+ */
+function restoreMeta(meta: PluginMeta, before: PluginMeta): void {
+  for (const key of Object.keys(meta) as Array<keyof PluginMeta>) {
+    if (!(key in before)) delete (meta as unknown as Record<string, unknown>)[key]
+  }
+  Object.assign(meta, before)
+}
+
+/**
+ * 当前已挂载、且从磁盘加载的行（行 id → 入口文件）。功能包热更轮询用。
+ *
+ * 内置插件（对象在内存里）与已卸载的行不在名单里；组合包默认关的行虽然登记了来源，
+ * 但没挂载，也不该被轮询。
+ */
+export function listMountedPluginSources(): Array<{ identity: string; file: string }> {
+  const root = rootRef
+  if (root === null) return []
+  const table = mountedOf(root)
+  const sources: Array<{ identity: string; file: string }> = []
+  for (const [identity, file] of pluginSources) {
+    if (!table.has(identity)) continue
+    if (builtinMounts.has(identity)) continue
+    sources.push({ identity, file })
+  }
+  return sources
 }
 
 /**
@@ -800,6 +1051,10 @@ export async function mountApplicationRows(
 ): Promise<PluginMountFailure[]> {
   initPluginRuntime(root)
   const appDir = options.appDir ?? APP_INSTALL_DIR
+  // 代数戳的落点：应用自带包的真实文件住在 <应用根>/lib/packages/**。钩子按 appRootHint
+  // 也能推出来，但自检把 appDir 指到临时目录时它推不到——显式登记一次，两条路都成立。
+  const appPackagesDir = join(appDir, 'lib', 'packages')
+  if (existsSync(appPackagesDir)) registerGenerationRoot(appPackagesDir)
   const baseDir = join(appDir, 'lib', 'node_modules', '@pneuma', 'base')
   const patchFile = join(baseDir, 'cordis.patch.yml')
   if (!existsSync(patchFile)) {
@@ -844,7 +1099,30 @@ export async function mountApplicationRows(
     if (failure !== null) failures.push(failure)
   }
   for (const warning of warnings) warnApplicationRow(root, `应用自带行：${warning}`)
+  // 热更轮询在这里拉起：内核装配每次都走这个入口，「默认开」不必宿主再记一条调用。
+  // 失败不影响启动（探针/自检里通常是空转：夹具文件在挂载后不再变化）。
+  await startPluginHotUpdate(root)
   return failures
+}
+
+/**
+ * 启动功能包热更轮询（幂等，`DSC_HOT=0` 关闭）。
+ *
+ * 为什么由加载器自己拉起而不是内核显式调用：{@link mountApplicationRows} 是每次装配
+ * 的必经之路（连探针都走它），默认开就落在这一处；宿主想自己控制时调
+ * `plugin-watch` 的 `startPluginWatch` 也是幂等的。
+ *
+ * 动态 import 而不是静态：plugin-watch 反过来要用本模块的
+ * `listMountedPluginSources` / `remountExternalPlugin`，静态 import 会成环。
+ */
+async function startPluginHotUpdate(root: Context): Promise<void> {
+  if (process.env['DSC_HOT'] === '0') return
+  try {
+    const watch = await import('./plugin-watch.js')
+    watch.startPluginWatch(root)
+  } catch (error) {
+    warnApplicationRow(root, `功能包热更没起来：${err(error)}（不影响启动）`)
+  }
 }
 
 /** 应用自带行的告警走对话流；没有 transcript 的宿主（自检里的裸 Context）就只丢一条。 */

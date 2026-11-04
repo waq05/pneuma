@@ -13,6 +13,9 @@
  *   3. 两个 **dsh 宿主库**换成我们自己的实现（{@link SHIMS}）：它们不是随便哪个
  *      第三方包，而是「用户数据目录在哪」「凭据引用怎么建」这两件宿主才知道的事，
  *      照 dsh 的原样返回 `~/.dsh` 会把插件的账本写到别人家里去。
+ *   4. 功能包的解析结果追加**代数戳**（`?g=<代数>`，见 {@link bumpGeneration}）。
+ *      `lib/packages/<id>/index.js` 被一层再导出桩（`lib/node_modules/@pneuma/<id>/index.js`）
+ *      挡着，改真实文件不会变 URL；戳在解析结果上，热重挂才能拿到新模块。
  *
  * 为什么用 `registerHooks`（同步、本线程）而不是 `register`（异步、hooks 线程）：
  * 注册完成即可生效，挂载路径不必等钩子线程就绪，也没有跨线程状态要传。
@@ -23,8 +26,8 @@
  * @module dsc/core/dsh-compat/resolve-hook
  */
 import { registerHooks, createRequire } from 'node:module'
-import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { join, resolve, sep } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 let registered = false
 
@@ -57,6 +60,66 @@ export function setResolveHookCompat(enabled: boolean): void {
 /** 登记应用安装目录的缺省值（plugin-loader 在模块加载时调用一次）。 */
 export function setResolveHookAppRoot(dir: string): void {
   appRootHint = dir
+}
+
+// ── 代数戳：功能包改代码不重启即生效 ───────────────────────────────────────────
+//
+// 代数（generation）是「功能包这一族模块的版本号」：
+//
+//   - **0 = 启动态**：一个戳都不加。启动路径 import 到的是
+//     `lib/packages/<id>/index.js` 本身，探针裸 import 同一个文件也命中同一份实例
+//     ——`@pneuma/runtime` 的单实例约定靠的就是这一点，不能破。
+//   - **热重挂前 `bumpGeneration()`**：之后所有落在功能包目录里的解析结果都带
+//     `?g=<代数>`。URL 变了，Node 的 ESM 缓存就不再复用旧模块。
+//   - 同一代数内所有 import（不同入口、桩、包与包之间）收敛到同一个 URL，所以
+//     「一代一个实例」；换代才出现新实例。
+//
+// 为什么必须做在解析钩子里、而不是在 loader 里改 import 说明符：再导出桩的
+// `export * from '../../../packages/<id>/index.js'` 和包内部的 `./sub.js` 都不经过
+// loader——只有解析钩子看得见它们。
+//
+// 为什么只戳功能包：`lib/core/**` 与 `@pneuma/runtime/**` 一旦被戳就会出现第二份
+// 内核状态，模块级注册表会落空、沙箱会 fail-open。这两处永远排除（见
+// {@link isFeaturePackageFile}）。
+let generation = 0
+
+/** 允许打戳的包目录（绝对路径）。`<应用根>/lib/packages` 由 appRootHint 直接推出。 */
+const generationRoots: string[] = []
+
+/** 当前代数（0 = 启动态，不加任何戳）。 */
+export function currentGeneration(): number {
+  return generation
+}
+
+/**
+ * 换代：功能包下一次解析拿到的 URL 全部带上新代数。
+ *
+ * 调用方（plugin-loader 的热重挂）在**导入新模块之前**调它；失败不需要回退代数——
+ * 旧 fiber 里的模块对象已经在内存里，代数只影响「下一次 import 拿哪一份」。
+ * @returns 新代数（从 1 开始；0 永远保留给启动态）
+ */
+export function bumpGeneration(): number {
+  generation += 1
+  return generation
+}
+
+/**
+ * 登记一个「功能包目录」：解析结果落在它里面时打代数戳。
+ *
+ * 应用自带包不用逐个登记：loader 会把 `<应用根>/lib/packages` 整个登记一次
+ * （见 mountApplicationRows）。重复登记无害；外部单文件插件不登记——它的 loader
+ * 缓存键 `?t=<mtime>` 本来就跟着文件变。
+ * @param dir - 包目录绝对路径（`<profile>/node_modules/<包名>` 这类）
+ */
+export function registerGenerationRoot(dir: string): void {
+  if (dir === '') return
+  const normalized = resolve(dir)
+  // 内核与运行时适配包永远不戳：登记它们等于给自己埋第二份 core。
+  if (appRootHint !== null) {
+    if (isUnder(normalized, join(appRootHint, 'lib', 'core'))) return
+    if (isUnder(normalized, join(appRootHint, 'lib', 'node_modules', '@pneuma', 'runtime'))) return
+  }
+  if (!generationRoots.includes(normalized)) generationRoots.push(normalized)
 }
 
 /**
@@ -112,7 +175,9 @@ export function ensureResolveHook(pluginRoots: readonly string[], appDir?: strin
     resolve(specifier, context, nextResolve) {
       const parent = context.parentURL ?? ''
       const fromPlugin = parent.startsWith('file:') && roots.some((root) => parent.startsWith(root))
-      if (!fromPlugin) return nextResolve(specifier, context)
+      // 不来自插件目录的解析也过一次代数戳：loader 自己 import 再导出桩（绝对文件 URL）
+      // 时 parent 是 `lib/core/**`，桩不换 URL 就永远是同一份旧模块。
+      if (!fromPlugin) return withGeneration(nextResolve(specifier, context))
 
       // dsh 宿主库替身与 @deepseek-ai/* 重定向只在兼容层开着时生效：
       // 关着还放行，等于让 dsh 插件半加载，用户反而看不出「兼容层没开」。
@@ -121,6 +186,7 @@ export function ensureResolveHook(pluginRoots: readonly string[], appDir?: strin
 
       // 运行时适配包**永远**指向应用内的那一份：profile 里装的插件包即使自带 node_modules，
       // 也不能变成第二份 lib/core（两份实例会让模块级注册表落空、沙箱 fail-open）。
+      // 这条是短路返回、不过 withGeneration：运行时包一个戳都不许有。
       const runtime = runtimeSpecifierUrl(specifier, runtimeDir)
       if (runtime !== null) return { url: runtime, shortCircuit: true }
 
@@ -128,13 +194,15 @@ export function ensureResolveHook(pluginRoots: readonly string[], appDir?: strin
         for (const base of bases) {
           try {
             // 借基点目录当 parent：裸说明符解析只用目录做向上查走，假文件名不要求存在
-            return nextResolve(specifier, { ...context, parentURL: pathToFileURL(join(base, 'package.json')).href })
+            return withGeneration(
+              nextResolve(specifier, { ...context, parentURL: pathToFileURL(join(base, 'package.json')).href }),
+            )
           } catch {
             // 换下一个基点；全失败就走默认解析（ERR_MODULE_NOT_FOUND，响亮）
           }
         }
       }
-      return nextResolve(specifier, context)
+      return withGeneration(nextResolve(specifier, context))
     },
   })
 }
@@ -152,4 +220,65 @@ function runtimeSpecifierUrl(specifier: string, runtimeDir: string): string | nu
   const prefix = '@pneuma/runtime/'
   if (!specifier.startsWith(prefix) || specifier.length === prefix.length) return null
   return pathToFileURL(join(runtimeDir, specifier.slice(prefix.length))).href
+}
+
+/**
+ * 给一次解析结果加代数戳（0 代原样返回）。
+ *
+ * 已有查询串的 URL 用 `URLSearchParams.set` 追加 `&g=`，不会覆盖 loader 的 `?t=`；
+ * 已经有 `g` 的不重复追加（同一 URL 被多层解析时结果稳定，缓存才不会抖）。
+ * @param result - 默认解析（nextResolve）的返回值
+ * @returns 同样形状的结果，必要时换 url
+ */
+function withGeneration<T extends { url: string }>(result: T): T {
+  if (generation === 0) return result
+  const url = result.url
+  if (!url.startsWith('file:')) return result
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return result
+  }
+  if (parsed.searchParams.has('g')) return result
+  let file: string
+  try {
+    // fileURLToPath 只看 pathname：带查询串的文件 URL 也能还原成磁盘路径。
+    file = fileURLToPath(parsed)
+  } catch {
+    return result
+  }
+  if (!isFeaturePackageFile(file)) return result
+  parsed.searchParams.set('g', String(generation))
+  return { ...result, url: parsed.href }
+}
+
+/**
+ * 这个文件属不属于「功能包」。
+ *
+ * 规则：`<应用根>/lib/packages/**` 与登记过的包目录（profile 的
+ * `node_modules/<包名>`）算；`lib/core/**`、`@pneuma/runtime/**` 与别的 node_modules
+ * 依赖不算。后两条是硬要求——多一份 core 会让模块级注册表落空、沙箱 fail-open。
+ * @param file - 解析结果的磁盘路径（已去掉查询串）
+ */
+function isFeaturePackageFile(file: string): boolean {
+  if (appRootHint !== null) {
+    if (isUnder(file, join(appRootHint, 'lib', 'core'))) return false
+    if (isUnder(file, join(appRootHint, 'lib', 'node_modules', '@pneuma', 'runtime'))) return false
+    if (isUnder(file, join(appRootHint, 'lib', 'packages'))) return true
+  }
+  return generationRoots.some((root) => isUnder(file, root))
+}
+
+/** `file` 在不在目录 `dir` 里（按路径段比较；Windows 下大小写不敏感）。 */
+function isUnder(file: string, dir: string): boolean {
+  const target = comparablePath(file)
+  const base = comparablePath(dir)
+  return target === base || target.startsWith(base.endsWith(sep) ? base : base + sep)
+}
+
+/** 比较用的路径：绝对化 + Windows 下统一小写。 */
+function comparablePath(path: string): string {
+  const absolute = resolve(path)
+  return process.platform === 'win32' ? absolute.toLowerCase() : absolute
 }
