@@ -24,7 +24,8 @@
 | `@dsc/ui` | `src/plugin-api.ts` | 下发给插件（平台种子，本包没有包帧——落点是单文件） |
 | `@dsc/ui-core` | `../src/packages/ui-core/index.ts` | **只给壳**（`EXTERNAL` 里「故意不给」的那一格） |
 | `@dsc/ui-primitives` / `@dsc/ui-slots` / `@dsc/ui-dockkit` | `../src/packages/ui-*/ui/index.ts` | 下发给插件（E6 起进 `platform-modules.json`） |
-| `@dsc/ui-layout` / `@dsc/ui-renderer` | `../src/packages/ui-*/ui/index.ts` | 只给壳（插件不该直接消费骨架与装载器） |
+| `@dsc/ui-layout` | `../src/packages/ui-layout/ui/index.ts` | **下发给插件**：它既是插件（order 349、`phase: early`，可停用），也是平台种子——`@dsc/ui` 把它的读 hook 转出给插件，插件与骨架必须共用同一份 `RuntimeContext` |
+| `@dsc/ui-renderer` | `../src/packages/ui-renderer/ui/index.ts` | 只给壳（唯一 parser-blocking 的引导，对应的 dsh 位置是 `dsh-client-modules`） |
 
 旧路径（`src/icons.tsx`、`src/dock-state.ts`、`src/platform/*`、`src/slots.ts`、
 `src/boot.ts` …）上的**迁移期转发壳已全部删除**（E4 收尾）：调用点（`plugin-api.ts` /

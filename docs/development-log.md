@@ -13246,7 +13246,7 @@ session-open-in 全绿、ui-status-panel 全部通过、readme 26 条断言）�
 
 - `pnpm run build` 0：**76 个功能包 / 76 行 + 11 个库包**，base patch 76 行，`lib/ui/plugins` 20 个目录。
 - `pnpm run typecheck` 0；`pnpm -C ui-shell typecheck` 0；`pnpm run build:ui` 0。
-- `check:plugin` 0（标准八项 87/87、package-tests 86/86、换包 e2e 17 PASS）。
+- `check:plugin` 0（标准八项 87/87、package-tests 87/87、换包 e2e 17 PASS）。
 - `check:ui` 0（54 套）；`check:style` 0；`check:core` 98/99 → readme 的数字口径修完后单独复跑绿。
 - 本地化探针 38 条断言；`plugin-inventory` 74 个插件 → 75（含 layout 的界面半）、20 个界面单元。
 

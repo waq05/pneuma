@@ -444,7 +444,7 @@ numa 对应：
 | 依赖方向 | 功能→库允许；功能→功能、库→任何包、core→任何包都红（含 import type） | 81/81 |
 | order 撞号 | 每个功能包的 pneuma.order 唯一 | 75/75 |
 | 清单本地化 | 声明 `./locale/*.json` 就必须真有译本，且 title / description 非空 | 87/87 |
-| 文档与测试 | README 有 Model Experience / Known Limitations 两节；tests/ 下至少一个 *.test.mjs | 87/87 |
+| 文档与测试 | README 有 Model Experience / Known Limitations 两节；tests/ 下至少一个 *.test.mjs | 87/87（87 个用例 / 437 条断言） |
 
 第 7 项这次从「待办只提示」升级成硬项。理由是这两件事都不是有空再补的装饰：README 两段是给**模型**看的（这段代码在什么场景下被用到、边界在哪），tests 是给**改这个包的人**看的护栏。只有目录没有文件的那种「看起来有测试」最坏，所以判据落在文件上，不看目录。
 
