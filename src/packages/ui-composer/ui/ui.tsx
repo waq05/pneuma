@@ -346,7 +346,7 @@ function ComposerBox(): ReactNode {
       // 命令已经执行了、面板还挂在输入框上方等下一句（2026-10-27 报障第一条）。
       command.hide()
       // 命令走界面通道的受限派发 `runUiCommand`：能跑的名字钉在宿主那份 `shell: true`
-      // 清单上（见宿主 core/commands-completion.ts），清单外的名字由宿主明确报错。
+      // 清单上（见宿主 packages/commands-core/commands-completion.ts），清单外的名字由宿主明确报错。
       // 输出（/status、/diff、/usage…）是宿主写进会话的系统条目，与 TUI 同一份。
       const target = value
       setFault(null)

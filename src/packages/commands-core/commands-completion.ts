@@ -1,0 +1,263 @@
+/**
+ * 斜杠命令的注册表与补全（/help 文本、命令与模型参数候选、唯一前缀展开）。
+ *
+ * 为什么独立成模块：渲染层 Composer 直接 import 这一份拿补全函数——vite 对
+ * `node:child_process` 之类内置模块是「externalize 即炸」（顶层 import 一求值就抛，
+ * 0.6.26 白屏教训），所以**这个模块的顶层不许出现任何 node 内置模块**。
+ * 插件（plugins/commands.ts）从这里 re-export，终端侧的入口不变。
+ *
+ * @module dsc/core/commands-completion
+ */
+import type { CommandSpec, CompletionItem } from '@pneuma/runtime/services/types.js'
+import type { ModelChoiceView } from '@pneuma/runtime/contract.js'
+
+/**
+ * 内置命令表（spec 单一真源；handler 在插件 apply 时注册）。
+ *
+ * `shell: true` 那批是**桌面壳输入框里列得出来、也执行得了**的命令（界面通道的
+ * `listUiCommands` / `runUiCommand` 只认它们，见 core/ui-methods.ts）。挑的尺子两条，
+ * 缺一不可：
+ *
+ *   1. 动作不出界面通道已有的权力面：`/new` ≈ `openSession`、`/compact` ≈ `compact`、
+ *      `/review` ≈ `submit`、`/diff` ≈ `dock` 读类，其余四条只往会话里写一条系统通知；
+ *   2. 壳里没有更顺手的替身：权限三根旋钮（`/policy` `/reviewer` `/permission`）与
+ *      `/model` `/effort` 的旋钮就长在输入框底栏，`/resume` `/settings` `/agents`
+ *      `/plugins` 各有常驻入口——在壳里再列一遍只会多出第二条真源。
+ *
+ * 硬理由不放的那几条：`/export`（往任意路径写文件）、`/ui-trust`（落第三方界面插件的
+ * 信任记录）、`/exit`（宿主生命周期）写完面一律留在原生桥（core/native-bridge.ts），
+ * 那是只对装了 preload 的桌面窗口开放的一条路；`/copy` 动的是**宿主**机器的剪贴板，
+ * 手机端看着像复制到自己手机上，语义错位。
+ */
+export const BUILT_IN_COMMANDS: CommandSpec[] = [
+  // T44：duringTask = 回合跑着的时候还能不能用。new/resume 会打断挂着审批的回合、
+  // compact 会和进行中的落库交错，运行中一律挡下；其余随时可用。
+  //
+  // label = 菜单第一列的中文短名（2–4 字），英文 name 排在它后面。说明列那句取
+  // description，与 /help 同一句——菜单和帮助各说各话的那种漂移就是这么来的，别再抄一份。
+  { name: 'new', args: '', label: '新会话', description: '新建一个空会话', duringTask: 'deny', shell: true },
+  { name: 'resume', args: '', label: '恢复会话', description: '恢复历史会话（先选工作区再选会话）', duringTask: 'deny' },
+  { name: 'agents', args: '', label: '子代理', description: '查看子代理与后台会话（转录只读）' },
+  { name: 'compact', args: '', label: '压缩', description: '压缩以上对话内容', duringTask: 'deny', shell: true },
+  {
+    name: 'model',
+    args: '<[端点/]模型名>',
+    label: '模型',
+    description: '选择本会话使用的模型（无参数打开选择器）',
+  },
+  { name: 'policy', args: '[readonly|auto-edit|full-access]', label: '权限模式', description: '查看或切换权限模式（自动放行集那一轴）' },
+  { name: 'reviewer', args: '[user|auto-review]', label: '审阅者', description: '查看或切换审批审阅者（要问的事先给谁看）' },
+  { name: 'permission', args: '[预设名]', label: '权限预设', description: '查看或切换打包权限预设（沙箱 + 权限模式 + 审阅者三合一）' },
+  { name: 'effort', args: '[default|off|low|high|max]', label: '思考强度', description: '查看或切换思考强度' },
+  { name: 'thinking', args: '[on|off]', label: '思考显示', description: '切换思考块展开显示（无参数 = 翻转，会话内生效）' },
+  { name: 'fork', args: '', label: '分叉', description: '分叉当前会话为可恢复的副本（当前会话不变）', duringTask: 'deny' },
+  { name: 'plugins', args: '', label: '插件', description: '查看已挂载插件清单（启停与详情在桌面端插件中心）' },
+  { name: 'ui-trust', args: '<插件目录名>', label: '信任界面', description: '信任一个第三方界面插件（首次安装的确认动作）' },
+  { name: 'update', args: '', label: '检查更新', description: '检查有没有新版（只查不装）', duringTask: 'deny' },
+  { name: 'status', args: '', label: '状态', description: '查看上下文占用与压缩余量', shell: true },
+  { name: 'usage', args: '', label: '用量', description: '查看累计用量统计（含缓存命中率）', shell: true },
+  { name: 'diff', args: '[文件]', label: '差异', description: '查看工作区未提交改动（可跟一个文件名只看它）', shell: true },
+  { name: 'copy', args: '', label: '复制回复', description: '复制上一条回复到剪贴板' },
+  { name: 'export', args: '[文件路径]', label: '导出', description: '导出当前会话为 markdown' },
+  {
+    name: 'review',
+    args: '[关注点]',
+    label: '代码审查',
+    description: '审查工作区未提交改动（可跟一句关注点收窄范围）',
+    shell: true,
+    // 这条命令要收一段自由文本：回车先补成 `/review `，别当场跑审查——用户还没说要审什么。
+    input: { hint: '写上关注点；不写就先选审查范围（未提交改动 / 基准分支 / 某次提交）' },
+  },
+  // 审查跑起来之后的两条配套命令：一条回看，一条叫停。与 /review 一样只往会话里写通知，
+  // 所以同样进壳的命令清单（shell: true）。
+  { name: 'review-status', args: '', label: '审查状态', description: '查看最近一次代码审查的状态与结论', shell: true },
+  { name: 'review-cancel', args: '', label: '取消审查', description: '取消正在跑的代码审查', shell: true },
+  { name: 'settings', args: '', label: '设置', description: '打开设置页' },
+  { name: 'help', args: '', label: '帮助', description: '查看命令帮助', shell: true },
+  { name: 'exit', args: '', label: '退出', description: '退出' },
+]
+
+/** 外部插件注册的命令（补全与唯一前缀展开用；模块级单例，进程内唯一注册表）。 */
+const extraSpecs: CommandSpec[] = []
+
+/** 全量 spec：内置 + 外部插件注册的。 */
+export const allSpecs = (): CommandSpec[] => [...BUILT_IN_COMMANDS, ...extraSpecs]
+
+/** 外部插件注册成功后把 spec 挂进来（registry 是唯一调用方）。 */
+export function addExtraSpec(spec: CommandSpec): void {
+  extraSpecs.push(spec)
+}
+
+/** 外部插件注销时摘掉。 */
+export function removeExtraSpec(spec: CommandSpec): void {
+  const at = extraSpecs.findIndex((entry) => entry.name === spec.name)
+  if (at >= 0) extraSpecs.splice(at, 1)
+}
+
+/**
+ * 壳（桌面 / 手机那份插件化界面）可见也可执行的命令：`shell: true` 那批。
+ *
+ * 界面通道的 `listUiCommands`（菜单数据源）与 `runUiCommand`（派发闸）都读这一份，
+ * 所以「菜单里列出来的」与「真能执行的」不可能各说各话。外部插件默认不在里面
+ * （spec 不标 `shell` 就不进）——失败关闭；宿主侧插件本就有完整宿主权力，标了也只是
+ * 把它自己的命令摆到菜单里，不多给任何东西。
+ */
+export const shellCommands = (): CommandSpec[] => allSpecs().filter((spec) => spec.shell === true)
+
+/** 这个名字能不能从壳里执行（`runUiCommand` 的闸；大小写与展开后的名字比）。 */
+export function isShellCommand(name: string): boolean {
+  return allSpecs().some((spec) => spec.name === name && spec.shell === true)
+}
+
+/**
+ * 界面通道派发前的那道闸（`runUiCommand` 只做两件事：问它、照原样派发）。
+ *
+ * 独立成纯函数是为了能直测：它是「壳能跑什么」这句话的可执行版本，而 `runCommand`
+ * 那条路（终端与旧桌面渲染层用）**不过这道闸**——两边的差别只在这里。
+ *
+ * @returns null = 放行；字符串 = 给用户看的原因（调用方原样抛出去）。
+ */
+export function shellCommandRejection(input: string): string | null {
+  if (!input.startsWith('/')) return '界面通道的命令派发只接 `/` 开头的输入'
+  // 名字按「唯一前缀展开」算（`/rev` → `/review`），与 TUI 敲一半按回车的口径一致。
+  const expanded = expandCommand(input)
+  const name = expanded.slice(1).trim().split(/\s+/)[0] ?? ''
+  // 裸 `/`（没有名字）落到 /help，与 TUI 同一条出口，不算越界。
+  if (name === '') return null
+  if (isShellCommand(name)) return null
+  return `/${name} 不在桌面壳的命令清单里（输入框打 / 看能用的那几条；权限、模型、退出这些在界面上有旋钮或按钮）`
+}
+
+/** /help 文本（命令表驱动）。 */
+export function helpText(specs: readonly CommandSpec[]): string {
+  return specs
+    .map((command) => `/${command.name}${command.args === '' ? '' : ` ${command.args}`}\t${command.description}`)
+    .join('\n')
+}
+
+/** 兼容导出：v2 的 HELP_TEXT（内置表静态快照）。 */
+export const HELP_TEXT = helpText(BUILT_IN_COMMANDS)
+
+/**
+ * 命令候选（输入 `/` 或 `/mo` 阶段）。
+ * 已进入参数阶段（含空格）或非命令输入返回空。
+ */
+export function commandCompletions(input: string): CompletionItem[] {
+  if (!input.startsWith('/')) return []
+  const body = input.slice(1)
+  if (body.includes(' ')) return []
+  const lower = body.toLowerCase()
+  const matched = allSpecs().filter((command) => command.name.startsWith(lower))
+  // 精确同名排第一：`/review` 同时也是 `/reviewer` 的前缀，而表里 `/reviewer` 在前，
+  // 不排序的话「打全 `/review` 再回车」会被高亮项截成 `/reviewer`（2026-11-02 实测）。
+  // 其余保持表内次序（表本身就是展示次序，不重排）。
+  const ordered = [...matched.filter((command) => command.name === lower), ...matched.filter((command) => command.name !== lower)]
+  return ordered
+    .map((command) => ({
+      insert: `/${command.name}${command.args === '' ? '' : ' '}`,
+      label: `/${command.name}${command.args === '' ? '' : ` ${command.args}`}`,
+      description: command.description,
+      // 菜单第一列的中文短名；插件注册的命令多半没有，终端面板会退回去只画英文名。
+      ...(command.label === undefined ? {} : { title: command.label }),
+    }))
+}
+
+/**
+ * 模型候选（`/model ` 参数阶段）：展示全部可切换模型的 `端点/模型名`。
+ * 补全到精确匹配后面板自动关闭；`model 名`本身也可前缀匹配（`/model deep`）。
+ */
+export function modelCompletions(input: string, models: readonly ModelChoiceView[]): CompletionItem[] {
+  if (!input.startsWith('/model')) return []
+  const body = input.slice('/model'.length)
+  if (!body.startsWith(' ')) return [] // 还没打空格：交给命令候选
+  const arg = body.slice(1)
+  if (arg.includes(' ')) return [] // 参数已完整（带后续参数不适用于 /model）
+  const lower = arg.toLowerCase()
+  const matched = models.filter(
+    (choice) =>
+      choice.value.toLowerCase().startsWith(lower) || choice.model.toLowerCase().startsWith(lower),
+  )
+  if (matched.length === 1 && matched[0].value.toLowerCase() === lower) return []
+  return matched.map((choice) => ({
+    insert: `/model ${choice.value}`,
+    label: choice.value,
+    description: choice.description,
+  }))
+}
+
+/** 统一补全入口：model 参数阶段优先，否则按命令前缀。 */
+export function completionsFor(input: string, models: readonly ModelChoiceView[]): CompletionItem[] {
+  const byModel = modelCompletions(input, models)
+  return byModel.length > 0 ? byModel : commandCompletions(input)
+}
+
+/**
+ * 命令名唯一前缀自动展开（`/ne` → `/new`）；多候选或已精确匹配时原样返回。
+ * 供 Enter 提交前调用，避免"输了一半按回车报未知命令"。
+ *
+ * 带参数时只展开**名字那一段**，参数原样接回去：`/di HEAD` → `/diff HEAD`。
+ * 以前见空格就整条返回，于是「/di 能跑、/di HEAD 却被拒」，同一个前缀两种命（2026-10-27 查账）。
+ */
+export function expandCommand(input: string): string {
+  if (!input.startsWith('/')) return input
+  const body = input.slice(1)
+  const split = body.search(/\s/)
+  const name = split < 0 ? body : body.slice(0, split)
+  const rest = split < 0 ? '' : body.slice(split)
+  if (allSpecs().some((command) => command.name === name)) return input
+  const matches = allSpecs().filter((command) => command.name.startsWith(name.toLowerCase()))
+  return matches.length === 1 ? `/${matches[0].name}${rest}` : input
+}
+
+/**
+ * 这一行是不是「要收输入」的命令、且还没写参数；是就给出补全文本与提示语。
+ *
+ * 口径（TUI 与桌面壳共用这一份，不许各写一套）：
+ *   - 去尾空格后整体必须是 `/名字` 或 `/名字 参数`；
+ *   - 名字先按 {@link expandCommand} 做唯一前缀展开（与回车那条路同一条规矩）；
+ *   - 名字后面已经写了非空参数 → null：这时回车就是「带着要求执行」，不再补全；
+ *   - 这条命令没有 `input` 字段 → null：行为与改造前一模一样。
+ *
+ * 撞名的那一档（`/rev` 同时是 `/review` 与 `/reviewer` 的前缀）单独兜一下：
+ * 只有 `/review` 要收输入，就认它。补全这件事只对「要收输入」的命令有意义，
+ * 所以在这一批里取唯一前缀比让用户手打全名更顺；打全 `/reviewer` 照旧直接执行。
+ */
+export function inputClaimOf(line: string): { insert: string; hint: string } | null {
+  // 尾空格不算参数：`/review ` 与 `/review` 是同一条「还没写要求」的命令。
+  const trimmed = line.trimEnd()
+  if (!trimmed.startsWith('/')) return null
+  const body = expandCommand(trimmed).slice(1)
+  const match = /^(\S+)(?:\s+([\s\S]*))?$/.exec(body)
+  if (match === null) return null
+  const name = match[1] ?? ''
+  // 名字后面已经有内容：那是参数，回车该执行了。
+  if ((match[2] ?? '').trim() !== '') return null
+  const spec = allSpecs().find((command) => command.name === name) ?? uniqueInputPrefix(name)
+  if (spec === undefined || spec.input === undefined) return null
+  return { insert: `/${spec.name} `, hint: spec.input.hint }
+}
+
+/** 名字没能在全表里唯一展开时，在「要收输入」的这批命令里再取一次唯一前缀。 */
+function uniqueInputPrefix(name: string): CommandSpec | undefined {
+  const lower = name.toLowerCase()
+  const matched = allSpecs().filter(
+    (command) => command.input !== undefined && command.name.startsWith(lower),
+  )
+  return matched.length === 1 ? matched[0] : undefined
+}
+
+/**
+ * 壳里 `/help` 的文本：只列**这个通道真跑得了**的那批（`shell: true`）。
+ *
+ * 为什么不能沿用全量表：壳输入框打 `/help` 会把 23 条全列出来，其中 16 条经
+ * `runUiCommand` 会被当场拒绝（`/export`、`/exit`、`/model`…），用户照着敲却跑不了；
+ * 而输入框打 `/` 弹出的菜单只列 7 条，两处说法对不上（2026-10-27 查账）。
+ */
+export function shellHelpText(): string {
+  return [
+    `桌面壳里能用的命令（${String(shellCommands().length)} 条）：`,
+    helpText(shellCommands()),
+    '',
+    '其余命令（权限、模型、思考强度、导出、退出…）在终端里用，或点输入框底栏的旋钮。',
+  ].join('\n')
+}

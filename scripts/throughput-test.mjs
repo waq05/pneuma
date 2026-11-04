@@ -30,7 +30,7 @@ process.env.USERPROFILE = home
 process.env.DSC_HOME = join(home, '.dsc')
 
 const { Session } = await import('../lib/core/session.js')
-const { MiniAgent } = await import('../lib/core/loop.js')
+const { MiniAgent } = await import('../lib/packages/session-core/loop.js')
 const { appendToolRecord, appendUsageRecord, foldSessionUsage, readSessionUsage, readUsageRecords, usageLogFile } =
   await import('../lib/core/usage-log.js')
 const { averageTtftMs, formatTokensPerSecond, tokensPerSecond } = await import('../lib/core/throughput.js')

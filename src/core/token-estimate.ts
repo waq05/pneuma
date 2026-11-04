@@ -1,7 +1,7 @@
 /**
  * 正文 token 粗估（全仓库唯一一份）。
  *
- * 为什么单独一个模块：这段口径此前在宿主 core/compact.ts 和渲染层 token-estimate.ts
+ * 为什么单独一个模块：这段口径此前在宿主 packages/session-core/compact.ts 和渲染层 token-estimate.ts
  * 各抄了一份——界面上写的「约 N token」必须和宿主自动压缩用的阈值同源，不然会出现
  * 界面说 3 万、宿主按 5 万判断压缩这种对不上的情况。现在宿主与渲染层都从这里取
  * （渲染层经 `@dsc/runtime/core/token-estimate.js`，纯函数、零依赖，进得了渲染层）。

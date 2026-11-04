@@ -19,6 +19,7 @@ import { render } from 'ink'
 
 process.env.DSC_HOME = mkdtempSync(join(tmpdir(), 'dsc-features-test-'))
 const { App } = await import('../lib/packages/tui/app/App.js')
+import { dispatchCommand } from './_tui-commands.mjs'
 const { commandsPlugin } = await import('../lib/packages/commands/index.js')
 
 commandsPlugin.apply({
@@ -162,7 +163,7 @@ stdout.on('data', (chunk) => {
   output += String(chunk)
 })
 
-render(React.createElement(App, { runtime, clipboardReader, imageRenderer }), {
+render(React.createElement(App, { runtime, dispatchCommand, clipboardReader, imageRenderer }), {
   stdin,
   stdout,
   exitOnCtrlC: false,

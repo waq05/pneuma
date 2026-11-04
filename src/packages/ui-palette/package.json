@@ -15,9 +15,7 @@
     "order": 355,
     "resolution": "overridable",
     "title": "命令面板（界面）",
-    "description": "Ctrl+K 一处搜动作、会话、页面与设置"
-  },
-  "dsh": {
+    "description": "Ctrl+K 一处搜动作、会话、页面与设置",
     "client": {
       "platform": "pneuma",
       "api": "^0.8.1"

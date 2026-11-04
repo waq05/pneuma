@@ -15,9 +15,7 @@
     "order": 367,
     "resolution": "overridable",
     "title": "执行轨迹（界面）",
-    "description": "轨迹页：时间轴、轮次记录与行内检查器"
-  },
-  "dsh": {
+    "description": "轨迹页：时间轴、轮次记录与行内检查器",
     "client": {
       "platform": "pneuma",
       "api": "^0.8.1",

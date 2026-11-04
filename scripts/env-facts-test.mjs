@@ -18,7 +18,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const { environmentText } = await import('../lib/core/prompt.js')
+const { environmentText } = await import('../lib/packages/session-core/prompt.js')
 const { ptcResultBody } = await import('../lib/core/ptc.js')
 
 let passed = 0

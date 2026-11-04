@@ -279,7 +279,7 @@ async function renderFrame(registry, slot) {
 }
 
 // ── 用例三：组合包的界面半进终端壳（声明 platforms 才有，缺省只服务浏览器壳）──────
-// 2.0 起组合包的界面半默认只给 web；要服务终端必须在 dsh.client.platforms 里写 tui。
+// 2.0 起组合包的界面半默认只给 web；要服务终端必须在 pneuma.client.platforms 里写 tui。
 // 这条用例同时钉住「终端也不用去内置目录里瞎找包」——入口由包的 exports 决定。
 {
   const pkgDir = join(work, 'pkg-builtin')

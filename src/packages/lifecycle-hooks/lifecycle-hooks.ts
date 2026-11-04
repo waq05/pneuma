@@ -1,7 +1,7 @@
 /**
  * 生命周期钩子引擎：按 codex 的事件名读一份外部配置，跑外部命令，把结论交回插件落位。
  *
- * 与 `core/hooks.ts`（安全钩子）的分工：那个管 dsc 自己的四个事件、配置在
+ * 与 `packages/session-core/hooks.ts`（安全钩子）的分工：那个管 dsc 自己的四个事件、配置在
  * `~/.dsc/hooks.json`；这一份管 codex 那十四个事件名、配置在
  * `~/.dsc/lifecycle-hooks.json`。**两份配置各读各的**，不共用文件，免得两个插件抢同一份配置。
  *
@@ -10,7 +10,7 @@
  *      {@link LIFECYCLE_CAPABILITIES}——`unwired` 的事件配了钩子也不执行，只进 `problems`；
  *   2. 外部命令怎么跑、跑不成怎么算（默认按拒，`failClosed: false` 才转放行），
  *      执行器自带一份，因为 codex 的载荷契约（snake_case、无结尾换行）与
- *      `core/hooks.ts` 的 `runHookScript` 不一样；
+ *      `packages/session-core/hooks.ts` 的 `runHookScript` 不一样；
  *   3. 钩子说的话进模型之前一律过 `wrapUntrusted`，来源写 `hook:<事件名>`。
  *
  * 复用的是判定那一半：`matcherHits` 匹配工具名、`judgeScriptRun` 折裁决与失败方向、
@@ -28,9 +28,9 @@ import {
   HOOK_TIMEOUT_MIN,
   judgeScriptRun,
   matcherHits,
-} from '../../core/hooks.js'
+} from '@pneuma/session-core/hooks.js'
 import { errText } from '../../core/err-text.js'
-import type { HookJudgement, HookRun, HookScript } from '../../core/hooks.js'
+import type { HookJudgement, HookRun, HookScript } from '@pneuma/session-core/hooks.js'
 import { resolvePluginConfig } from '../../core/plugin-registry.js'
 import { scrubChildEnv, redact } from '../../core/secrets.js'
 import { wrapUntrusted } from '../../core/untrusted.js'

@@ -1,0 +1,23 @@
+{
+  "name": "@pneuma/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./config-cli.js": "./config-cli.js",
+    "./plugin-cli.js": "./plugin-cli.js",
+    "./package.json": "./package.json"
+  },
+  "pneuma": {
+    "library": true,
+    "title": "命令行子命令",
+    "description": "numa config 与 numa plugin 两个子命令的实现：在内核起来之前跑，不进启动图"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  }
+}

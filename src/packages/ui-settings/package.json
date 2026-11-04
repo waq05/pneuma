@@ -15,9 +15,7 @@
     "order": 360,
     "resolution": "overridable",
     "title": "设置（界面）",
-    "description": "设置分区注册表、模型配置与偏好"
-  },
-  "dsh": {
+    "description": "设置分区注册表、模型配置与偏好",
     "client": {
       "platform": "pneuma",
       "api": "^0.8.1"

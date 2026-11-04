@@ -238,7 +238,7 @@ function readNotifyWebhook(value: unknown): string {
   return isHttpUrl(trimmed) ? trimmed : ''
 }
 
-/** 模式名形状，与 core/presets.ts 的 PRESET_NAME 同一张表（改这里要两边一起改）。 */
+/** 模式名形状，与 packages/config-core/presets.ts 的 PRESET_NAME 同一张表（改这里要两边一起改）。 */
 const PRESET_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/
 
 /**

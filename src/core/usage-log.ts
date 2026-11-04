@@ -40,7 +40,7 @@ export interface UsageRecord {
   /** 发起请求的会话 uuid（队友的轮次也归到主会话名下时用它区分）。 */
   sid: string
   /**
-   * 这一步的三个墙钟读数（毫秒，0.6.67 起；口径见 core/loop.ts 的 stepTiming）：
+   * 这一步的三个墙钟读数（毫秒，0.6.67 起；口径见 packages/session-core/loop.ts 的 stepTiming）：
    * `lm` 发出 → 定稿、`ft` 发出 → 第一口输出、`d` 第一口输出 → 定稿。
    *
    * 后两项成对出现：没拿到第一口就只有 `lm`。界面按「整会话累计 outputs ÷ 累计 d」

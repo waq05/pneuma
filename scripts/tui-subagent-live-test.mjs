@@ -118,6 +118,7 @@ const { port } = server.address()
 
 const { createKernel } = await import('../lib/host/kernel.js')
 const { App } = await import('../lib/packages/tui/app/App.js')
+import { dispatchCommand } from './_tui-commands.mjs'
 
 const ctx = await createKernel({
   config: {
@@ -166,7 +167,7 @@ render(
   React.createElement(
     React.Profiler,
     { id: 'app', onRender: () => { commits += 1 } },
-    React.createElement(App, { runtime: ctx.ui }),
+    React.createElement(App, { runtime: ctx.ui, dispatchCommand }),
   ),
   { stdin, stdout, exitOnCtrlC: false, patchConsole: false },
 )

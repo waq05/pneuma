@@ -7,7 +7,7 @@
 - 不注册工具，注册 `/compact` 命令（index.ts:436-446）；这条命令不吃参数，多打的字会被提示用法。
 - 自动触发线 = min(窗口 × 80%, 窗口 − 输出预留 − 安全余量)，余量按窗口 6.4% 算、封顶 65536（index.ts:278-287；80% 是 69 行的缺省值）。
 - 摘要请求复用主对话前缀：系统提示词取自 prompt 服务、工具目录取自 tools 服务（index.ts:198-205），让摘要调用成为上一次真实请求的前缀扩展，好命中服务端缓存。
-- 摘要之外保留最近 20 条原文（`DEFAULT_KEEP_RECENT`，core/compact.ts:38）；自动压缩时还按窗口 16% 折成 token 预算（index.ts:171-182）。
+- 摘要之外保留最近 20 条原文（`DEFAULT_KEEP_RECENT`，packages/session-core/compact.ts:38）；自动压缩时还按窗口 16% 折成 token 预算（index.ts:171-182）。
 - 压缩包里多一段「原样带过去」的文本：`registerCarry` 收集各功能点登记的文本，拼在摘要之后（index.ts:207-214）；任务清单与会话目标各登记一段（todo/index.ts:139、goal/index.ts:184-188）。
 - 停用之后，模型侧少掉这道兜底：上下文跑到窗口上限只能等请求报错；`registerCarry` 不存在，todo 与 goal 也挂不上（两者都 inject compact）。
 

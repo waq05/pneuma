@@ -126,7 +126,7 @@ headers: {
 | `src/core/request-attribution.ts`（新，纯模块） | 门控 `isOpenCodeGoBaseUrl`（host ∈ {`opencode.ai`, `*.opencode.ai`} 且 path 规范化 = `/zen/go/v1`）；会话 id 合法性只放行 `[A-Za-z0-9._:-]{1,128}`，非法/超长/空一律**省略这个头**（绝不让观测字段把请求弄坏）；`sessionAttributionHeaders` 出「自标识 UA + 命中才加会话头」 |
 | `src/core/llm.ts` | `StreamRequest` 加可选 `sessionId`；`streamOnce` 的 fetch 头展开 `...sessionAttributionHeaders(request.baseUrl, request.sessionId)`——不命中就是空表，别家端点发出去的头与修前逐字节一样 |
 | `src/plugins/llm.ts` | 派发口兜底 `sessionId: request.sessionId ?? currentSessionId(ctx)`：所有 LLM 流量都从这条缝过，改一处全体受益 |
-| `src/core/loop.ts` / `compact.ts` / `plugins/session-title.ts` / `plugins/approval.ts` | 各自带上**自己那条会话**的 id（回合用 `this.session.meta.id`——后台会话也在跑，不能填「当前查看的会话」；摘要算被压的会话；标题算被起名的会话；审批算发起调用的会话） |
+| `src/packages/session-core/loop.ts` / `compact.ts` / `plugins/session-title.ts` / `plugins/approval.ts` | 各自带上**自己那条会话**的 id（回合用 `this.session.meta.id`——后台会话也在跑，不能填「当前查看的会话」；摘要算被压的会话；标题算被起名的会话；审批算发起调用的会话） |
 
 **与上面「建议改法」的偏离**：原文提议给 `FileProvider`/`ProviderConfig` 加可选字段让用户在
 `config.yaml` 里开。最后没走配置，改走 URL 门控——两份参考实现都这么判，而且「配置写不出来」

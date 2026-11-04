@@ -44,7 +44,7 @@ export const UI_PLUGIN_MANIFEST = 'manifest.json'
  *
  * 为什么不是 package.json：产物目录里没有包（是构建出来的四件东西），拿 package.json 的
  * 名字会让人以为那是 npm 包；也不是 plugin.json——1.x 的 plugin.json 是「源码目录里的声明」，
- * 2.0 已经并进各插件自己的 package.json 的 dsh.client 了，同名会混淆两件事。
+ * 2.0 已经并进各插件自己的 package.json 的 pneuma.client 了，同名会混淆两件事。
  */
 export const UI_PLUGIN_BUNDLE = 'bundle.json'
 
@@ -352,7 +352,7 @@ function readBundleDeclarations(dir: string, problems: string[]): BundleDeclarat
     if (typeof declared === 'string' && declared.trim() !== '') apiVersions.add(declared.trim())
     const where = `${name}/${UI_PLUGIN_BUNDLE}`
     // 载体：自述里写 platforms 数组（一份产物出几行），缺省 ['web']——与组合包的
-    // dsh.client.platforms 同一套词表与默认值，只是这里是构建产物、那边是包。
+    // pneuma.client.platforms 同一套词表与默认值，只是这里是构建产物、那边是包。
     const rawPlatforms = record['platforms']
     let platforms: UiPlatform[] = ['web']
     if (rawPlatforms !== undefined) {
@@ -1141,12 +1141,13 @@ export function lookupThirdPartyUiBundle(
 
 // ── 组合包里的界面半边（2.0 起）──────────────────────────────────────────────────
 //
-// dsh 的构造是「一个包两半」：`package.json` 的 `dsh.client` 声明界面半，`exports["./client"]`
-// 是它的入口。这里按同一份声明把 **Pneuma 自己的**界面半收进启动图：
+// 构造是「一个包两半」：`package.json` 的 `pneuma.client` 声明界面半，`exports["./client"]`
+// 是它的入口（dsh 那边同一个位置的键叫 `dsh.client`，读的一侧两处都认，见
+// readClientDeclaration）。这里按同一份声明把 **Pneuma 自己的**界面半收进启动图：
 //
-//   - `dsh.client.platform === 'pneuma'` 才收；写 `web`（dsh 自己的载体）一律不收，
+//   - `pneuma.client.platform === 'pneuma'` 才收；写 `web`（dsh 自己的载体）一律不收，
 //     那些是给 dsh 客户端运行时写的代码，跑在我们的壳里等于白屏（插件中心只列不加载）。
-//   - `dsh.client.api` 必填（`@dsc/ui` 的区间），按同一套 API 门禁判——与第三方目录同一口径。
+//   - `pneuma.client.api` 必填（`@dsc/ui` 的区间），按同一套 API 门禁判——与第三方目录同一口径。
 //   - 信任：组合包是用户自己在终端跑 `numa plugin add` 装进 profile 的，那一步就是同意；
 //     `~/.dsc/plugins/` 下手工放进去的界面插件仍要单独点一次（见 discoverThirdPartyUiArtifacts）。
 //     启停仍走 plugins.json，键 `<包名>/client`。
@@ -1183,7 +1184,12 @@ interface PackageCached {
 const packageCaches = new Map<string, Map<string, PackageCached>>()
 
 /**
- * 在一个已装包的 `package.json` 里读 `dsh.client`。
+ * 在一个已装包的 `package.json` 里读界面半声明：先 `pneuma.client`，再 `dsh.client`。
+ *
+ * 为什么读两处：我们自己那 19 个界面包写 `pneuma.client`（本项目的命名空间），而真实
+ * dsh 生态里另有 90 个包写 `dsh.client`——那是别人发布的包，不能要求他们改。写的只有
+ * 一处，读的两处都认，这就是「兼容而不将就」。
+ *
  * @param dir - 包的目录
  * @returns 声明；没写或形状不对给 null（形状问题由调用方记 problems）
  */
@@ -1205,8 +1211,11 @@ function readClientDeclaration(dir: string): {
   } catch {
     return null
   }
-  const dsh = manifest['dsh']
-  const client = dsh !== null && typeof dsh === 'object' ? (dsh as { client?: unknown }).client : undefined
+  const sectionOf = (key: string): Record<string, unknown> | undefined => {
+    const value = manifest[key]
+    return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : undefined
+  }
+  const client = sectionOf('pneuma')?.['client'] ?? sectionOf('dsh')?.['client']
   if (client === null || typeof client !== 'object') return null
   const decl = client as Record<string, unknown>
   return {
@@ -1312,7 +1321,7 @@ function existsStamp(path: string): number {
 interface PackageClientJudgement {
   /** 声明的 `@dsc/ui` 区间；没写时 undefined（同时 problem 已写）。 */
   api?: string
-  /** 声明的载体（`dsh.client.platforms`；缺省 `['web']`）。 */
+  /** 声明的载体（`pneuma.client.platforms`；缺省 `['web']`）。 */
   platforms: UiPlatform[]
   /** 入口的相对路径（`exports["./client"]`）；没有时 null。 */
   clientPath: string | null
@@ -1325,10 +1334,10 @@ interface PackageClientJudgement {
 }
 
 /**
- * 读 `dsh.client.platforms`（载体声明）：不写就是 `['web']`——组合包的界面半默认只服务
+ * 读 `pneuma.client.platforms`（载体声明）：不写就是 `['web']`——组合包的界面半默认只服务
  * 浏览器壳。终端壳的插件是 ink 组件，与浏览器那份 `@dsc/ui` 不是同一套值面，所以**要服务
  * 终端得显式声明**，不能靠猜。
- * @param raw - `dsh.client.platforms` 的原始值
+ * @param raw - `pneuma.client.platforms` 的原始值
  * @returns 载体清单；声明坏了给 null（调用方记一条 problem，当装不上处理）
  */
 function packagePlatformsOf(raw: unknown): UiPlatform[] | null {
@@ -1361,7 +1370,7 @@ function judgePackageClient(
       platforms: [],
       clientPath: decl.clientPath,
       path: null,
-      problem: `${where}: dsh.client.platforms 只能是 'web' / 'tui' 的非空数组（收到 ${JSON.stringify(decl.platforms)}）`,
+      problem: `${where}: pneuma.client.platforms 只能是 'web' / 'tui' 的非空数组（收到 ${JSON.stringify(decl.platforms)}）`,
       problemKind: 'manifest',
     }
   }
@@ -1371,7 +1380,7 @@ function judgePackageClient(
       platforms,
       clientPath: decl.clientPath,
       path: null,
-      problem: `${where}: dsh.client.api 没写（@dsc/ui 的版本区间，如 "^2.0.0"）——组合包的界面半必须声明`,
+      problem: `${where}: pneuma.client.api 没写（@dsc/ui 的版本区间，如 "^2.0.0"）——组合包的界面半必须声明`,
       problemKind: 'manifest',
     }
   }
@@ -1443,7 +1452,7 @@ export function discoverPackageUiArtifacts(
         // dsh 自己的界面半：只列不加载（插件中心会显示它的能力），这里静默跳过。
         continue
       }
-      problems.push(`${name}: dsh.client.platform 只能是 'pneuma'（收到 ${JSON.stringify(decl.platform)}），界面半跳过`)
+      problems.push(`${name}: pneuma.client.platform 只能是 'pneuma'（收到 ${JSON.stringify(decl.platform)}），界面半跳过`)
       continue
     }
     const where = `${name}/client`
@@ -1459,11 +1468,11 @@ export function discoverPackageUiArtifacts(
     }
     // services / phase / inject 与内置产物、第三方同一套词表与校验口径：坏值记一条问题、
     // 当没声明处理（丢一个依赖等于让插件少等一件事；拼错的 phase 会静默落进 application）。
-    const services = readNameList(decl.services, name, 'dsh.client.services', problems)
+    const services = readNameList(decl.services, name, 'pneuma.client.services', problems)
     const rawPhase = decl.phase
     const phase = rawPhase === 'early' || rawPhase === 'application' ? rawPhase : undefined
     if (rawPhase !== undefined && phase === undefined) {
-      problems.push(`${name}: dsh.client.phase 只能是 'early' / 'application'（${JSON.stringify(rawPhase)}），当没声明处理`)
+      problems.push(`${name}: pneuma.client.phase 只能是 'early' / 'application'（${JSON.stringify(rawPhase)}），当没声明处理`)
     }
     if (!isPluginEnabled(where)) {
       disabled.push(name) // 停用不是问题，是用户的开关；但要能报「它被停用了」
@@ -1558,7 +1567,7 @@ export function scanPackageUiTrusts(
         trusted: true,
         enabled: isPluginEnabled(key),
         ...provenance,
-        problem: `dsh.client.platform 只能是 'pneuma'（收到 ${JSON.stringify(decl.platform)}），界面半不会装载`,
+        problem: `pneuma.client.platform 只能是 'pneuma'（收到 ${JSON.stringify(decl.platform)}），界面半不会装载`,
         problemKind: 'manifest',
       })
       continue
@@ -1631,7 +1640,7 @@ export function lookupPackageUiBundle(
 
 /**
  * 一个平台视图下的**全部**界面插件：内置（构建产物清单）+ 第三方（`~/.dsc/plugins/`
- * 里带界面半边的目录）+ 组合包（profile 里装的、`dsh.client.platform = 'pneuma'` 的包）。
+ * 里带界面半边的目录）+ 组合包（profile 里装的、`pneuma.client.platform = 'pneuma'` 的包）。
  * 启动图（web）与终端装载器（tui）都从这一个口子取，谁也不许自己再拼一份——口径分叉
  * 就是从这里开始的。
  */

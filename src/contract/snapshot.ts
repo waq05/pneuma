@@ -325,7 +325,7 @@ export interface DscRuntime {
   runCommand(input: string): boolean
   /**
    * 壳 `/` 菜单的数据源：标了 `shell: true` 那批命令的元数据
-   * （清单单一真源在 `core/commands-completion.ts`，理由也写在那里）。
+   * （清单单一真源在 `packages/commands-core/commands-completion.ts`，理由也写在那里）。
    */
   listUiCommands(): UiCommandView[]
   /**

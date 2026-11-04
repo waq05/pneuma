@@ -36,7 +36,7 @@ drop: tool-rules                # 要去掉的骨架提示段（可选，名单�
 
 ## 可以去掉哪些提示段
 
-`drop` 只认这四个（`core/presets.ts` 的 `DROPPABLE_SECTIONS`）：
+`drop` 只认这四个（`packages/config-core/presets.ts` 的 `DROPPABLE_SECTIONS`）：
 
 | id | 是什么 |
 |---|---|
@@ -73,7 +73,7 @@ drop: tool-rules                # 要去掉的骨架提示段（可选，名单�
    - 协作模式（执行 / 计划 / 探索 / 免打扰）管「这一轮允许把手伸多远」；
    - 上面这三根还可以再打包成一个**权限预设**（沙箱 + 权限模式 + 审阅者三合一，
      出厂四个：只读 / 工作区可写（默认）/ 完全访问 / AI 复核，见
-     `src/core/permission-presets.ts`）——预设只做组合，**放宽不了安全**。
+     `src/packages/permission-core/permission-presets.ts`）——预设只做组合，**放宽不了安全**。
      取值对齐 dsh 的 `cordis.patch.yml`：只读 = 只读沙箱 + 该问就问（沙箱拦下，你点一次
      允许才越界）；工作区可写 = 工作区沙箱 + 该问就问；完全访问 = 不设围栏 + 不问；
      AI 复核 = 不设围栏 + 每次调用先过判官。切预设时三根旋钮一起写盘，重启后还是同一档；
@@ -115,9 +115,9 @@ dsc 这一版不是。换来的是：脚本能做的事 = 它能调用的工具�
 
 | 位置 | 角色 |
 |---|---|
-| `src/core/presets.ts` | 模式文件的读写、出厂四个、可去掉的段名单、别名表 |
+| `src/packages/config-core/presets.ts` | 模式文件的读写、出厂四个、可去掉的段名单、别名表 |
 | `src/packages/presets/index.ts` | `presets` 服务：状态、提示段、骨架取舍、工具投影、`/preset` 命令 |
-| `src/core/permission-presets.ts` | **权限预设**（另一套「预设」）的纯表：出厂四个、`custom` 推导、`matchPermissionPreset`（零依赖） |
+| `src/packages/permission-core/permission-presets.ts` | **权限预设**（另一套「预设」）的纯表：出厂四个、`custom` 推导、`matchPermissionPreset`（零依赖） |
 | `src/packages/permission-presets/index.ts` | 权限预设服务：状态、`/permission` 命令、写口只调沙箱/审批各自 setter |
 | `src/packages/ptc/index.ts` + `src/core/ptc.ts` | `run_code` 与它的沙箱执行、结果整形 |
 | `src/packages/runtime-api/index.ts` | 创造模式的 `runtime_api` 只读查询 |

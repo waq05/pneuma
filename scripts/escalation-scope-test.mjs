@@ -128,7 +128,7 @@ check('会话放宽根并进可写根参与判定', /extraWritableRoots: \[\.\.\
 
 console.log('\n── 4. 只读档的 dsh 语义：沙箱拦下 → 问用户一次 ──')
 {
-  const { BUILTIN_PERMISSION_PRESETS } = await import('../lib/core/permission-presets.js')
+  const { BUILTIN_PERMISSION_PRESETS } = await import('../lib/packages/permission-core/permission-presets.js')
   const readOnly = BUILTIN_PERMISSION_PRESETS.find((preset) => preset.name === 'read-only')
   check('只读档 = read-only 沙箱 + auto-edit + 本人审', readOnly.sandbox === 'read-only' && readOnly.policy === 'auto-edit' && readOnly.reviewer === 'user', JSON.stringify(readOnly))
   kernel.sandbox.setMode('read-only')

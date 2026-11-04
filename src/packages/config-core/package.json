@@ -1,0 +1,23 @@
+{
+  "name": "@pneuma/config-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./presets.js": "./presets.js",
+    "./market.js": "./market.js",
+    "./package.json": "./package.json"
+  },
+  "pneuma": {
+    "library": true,
+    "title": "配置核心库",
+    "description": "用户级模式（preset）文件的读写与技能市场条目的浏览安装；presets / runtime-api / skills / plugin-manager 四个功能包共用"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  }
+}

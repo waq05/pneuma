@@ -25,4 +25,4 @@
 - resolution 是 overridable（core/plugin-loader.ts:1394）。
 - 默认关：cordis.patch.yml 里写着 `disabled: true`。
 - inject 七个服务：`session`、`llm`、`approval`、`guards`、`prompt`、`settings`、`commands`（index.ts:64）。
-- 命令看能力清单与事件接通状态（index.ts:397-415）；设置分区 id `lifecycle-hooks`、order 36（index.ts:348-352）；钩子脚本的超时区间与内置安全钩子共用 500~120000 毫秒（index.ts:27、core/hooks.ts:57-58）。
+- 命令看能力清单与事件接通状态（index.ts:397-415）；设置分区 id `lifecycle-hooks`、order 36（index.ts:348-352）；钩子脚本的超时区间与内置安全钩子共用 500~120000 毫秒（index.ts:27、packages/session-core/hooks.ts:57-58）。

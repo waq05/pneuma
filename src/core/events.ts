@@ -100,7 +100,7 @@ export type CoreEvent =
    * `model` 是这次请求实际用的模型 id（0.6.60 起）：费用估算按笔归属到模型价目，
    * 会话中途换模型不会把 A 模型的用量算到 B 的单价上。
    *
-   * 0.6.67 起随带这一步的三个墙钟读数（毫秒，口径见 core/loop.ts 的 stepTiming）：
+   * 0.6.67 起随带这一步的三个墙钟读数（毫秒，口径见 packages/session-core/loop.ts 的 stepTiming）：
    * `llmMs` 发出→定稿、`ttftMs` 发出→第一口输出、`decodeMs` 第一口输出→定稿。
    * 拿不到第一口时后两项不报（没有分母就不报数，不编 0）。
    */

@@ -15,9 +15,7 @@
     "order": 364,
     "resolution": "overridable",
     "title": "任务与目标（界面）",
-    "description": "输入框上方的会话目标条"
-  },
-  "dsh": {
+    "description": "输入框上方的会话目标条",
     "client": {
       "platform": "pneuma",
       "api": "^0.8.1"

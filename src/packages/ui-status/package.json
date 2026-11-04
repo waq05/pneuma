@@ -15,9 +15,7 @@
     "order": 362,
     "resolution": "overridable",
     "title": "状态面板（界面）",
-    "description": "可收成胶囊的多分区总览浮层"
-  },
-  "dsh": {
+    "description": "可收成胶囊的多分区总览浮层",
     "client": {
       "platform": "pneuma",
       "api": "^0.8.1"

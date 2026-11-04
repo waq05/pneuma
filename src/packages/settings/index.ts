@@ -49,7 +49,7 @@ import {
 } from '@pneuma/runtime/core/config-store.js'
 import { DSC_SKILLS_DIR } from '@pneuma/runtime/core/skills.js'
 import { fetchLatestRelease, pickInstaller, UPDATE_CHECK_URL } from '@pneuma/runtime/core/update-check.js'
-import { derivedPresetLabel } from '@pneuma/runtime/core/permission-presets.js'
+import { derivedPresetLabel } from '@pneuma/permission-core/permission-presets.js'
 import { DEFAULT_MARKET_SOURCES, readPrefs, writePrefs, UPDATE_CHECK_MODES, type DscPrefs, type UpdateCheckMode } from '@pneuma/runtime/core/prefs.js'
 import { KERNEL_API_VERSION } from '@pneuma/runtime/core/plugin-registry.js'
 import { DSC_PLUGINS_DIR } from '@pneuma/runtime/core/plugin-loader.js'

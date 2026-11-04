@@ -27,7 +27,7 @@ import {
   roundKeyOf,
   type MicrocompactPlan,
 } from './microcompact.js'
-import { estimateTokens } from '@pneuma/runtime/core/compact.js'
+import { estimateTokens } from '@pneuma/session-core/compact.js'
 import type { ChatMessage } from '@pneuma/runtime/core/llm.js'
 import type { Session } from '@pneuma/runtime/core/session.js'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'

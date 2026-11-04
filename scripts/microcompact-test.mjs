@@ -48,6 +48,17 @@ registerHooks({
       const rest = specifier.slice('@pneuma/runtime/'.length).replace(/\.js$/, '.ts')
       return { url: new URL('../src/' + rest, import.meta.url).href, shortCircuit: true }
     }
+    // 源码期的**包间**裸说明符：@pneuma/<id>/x.js → src/packages/<id>/x.ts。
+    // 包实现从 core 搬进别的包之后（这里用 session-core 的 compact），源码里写的是包名，
+    // 而源码树里没有 node_modules/@pneuma，不映射就会 ERR_MODULE_NOT_FOUND。
+    if (fromSource && typeof specifier === 'string' && specifier.startsWith('@pneuma/')) {
+      const rest = specifier.slice('@pneuma/'.length).replace(/\.js$/, '.ts')
+      try {
+        return nextResolve(new URL('../src/packages/' + rest, import.meta.url).href, context)
+      } catch {
+        // 不是包内模块（比如别的裸依赖），交回默认解析。
+      }
+    }
     try {
       return nextResolve(specifier, context)
     } catch (error) {

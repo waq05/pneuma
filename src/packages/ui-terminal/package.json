@@ -15,9 +15,7 @@
     "order": 366,
     "resolution": "overridable",
     "title": "终端（界面）",
-    "description": "停靠面板里的终端页签"
-  },
-  "dsh": {
+    "description": "停靠面板里的终端页签",
     "client": {
       "platform": "pneuma",
       "api": "^0.8.1"

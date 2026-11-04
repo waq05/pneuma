@@ -15,9 +15,7 @@
     "order": 363,
     "resolution": "overridable",
     "title": "状态栏（界面）",
-    "description": "底部状态栏：轮次、token 与上下文三段读数"
-  },
-  "dsh": {
+    "description": "底部状态栏：轮次、token 与上下文三段读数",
     "client": {
       "platform": "pneuma",
       "api": "^0.8.1",

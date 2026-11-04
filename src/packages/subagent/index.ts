@@ -34,10 +34,10 @@ import {
   type TeammateApproval,
 } from './agent-roles.js'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
-import { MiniAgent } from '@pneuma/runtime/core/loop.js'
-import { subagentEnvironmentText } from '@pneuma/runtime/core/prompt.js'
+import { MiniAgent } from '@pneuma/session-core/loop.js'
+import { subagentEnvironmentText } from '@pneuma/session-core/prompt.js'
 import { activeRules } from '@pneuma/runtime/core/command-policy.js'
-import { modeSpec } from '@pneuma/runtime/core/modes.js'
+import { modeSpec } from '@pneuma/session-core/modes.js'
 import { REJECTED_TOOL_TEXT, Session, teammateRoot } from '@pneuma/runtime/core/session.js'
 import { redact } from '@pneuma/runtime/core/secrets.js'
 import { argsSummary, type ToolContext, type ToolEntry } from '@pneuma/runtime/core/tools.js'

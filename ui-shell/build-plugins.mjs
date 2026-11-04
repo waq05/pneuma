@@ -10,10 +10,10 @@
  * 而不是让加载器 `new Function(code)`：后者要求页面放开 `unsafe-eval`，
  * 一旦给页面加 CSP 所有插件会同时失效，而且报错来自浏览器安全策略、不进我们的诊断。
  *
- * 每个界面半**必须**声明它面对的契约区间：宿主包写在 `package.json` 的 `dsh.client.api`
+ * 每个界面半**必须**声明它面对的契约区间：宿主包写在 `package.json` 的 `pneuma.client.api`
  * （一个包两半边），旧界面包写在 `peerDependencies['@dsc/ui']`。构建时写进清单条目的 `api`
  * （宿主拿它做 semver 门禁，内置条目同样逐条判）。其余字段（`inject` / `immediately` /
- * `external` / `platforms` / `phase`）也都在 `dsh.client` 里声明，不再认 `plugin.json`。
+ * `external` / `platforms` / `phase`）也都在 `pneuma.client` 里声明，不再认 `plugin.json`。
  *
  * @module dsc-ui-shell/build-plugins
  */
@@ -88,11 +88,11 @@ const FACTORY_GLOBAL = '__DSC_UI_FACTORIES__'
  *
  * 声明有两处来源，按源码落点选：
  *   - 新根（`src/packages/<id>/` 一个包两半边，或 `src/packages/ui-<id>/` 独立界面包）：
- *     读包自己的 package.json，`dsh.client` 是唯一声明处，`api` 从 `dsh.client.api` 读
+ *     读包自己的 package.json，`pneuma.client` 是唯一声明处，`api` 从 `pneuma.client.api` 读
  *     （与组合包、第三方同一套字段）；`peerDependencies['@dsc/ui']` 可写可不写，
  *     写了就必须与它一致。
  *   - 旧界面包（`ui-shell/src/packages/ui-<id>/`）：仍按 2.0 的读法，
- *     `peerDependencies['@dsc/ui']` 是 api 区间，`dsh.client` 可选。
+ *     `peerDependencies['@dsc/ui']` 是 api 区间，`pneuma.client` 可选。
  *
  * 写坏了就报错——清单错一半比没有更糟。
  * @param dir - 声明所在目录（宿主包根 / 旧界面包根）
@@ -102,7 +102,7 @@ function readMeta(dir, hostHalf) {
   const pkgFile = join(dir, 'package.json')
   if (!existsSync(pkgFile)) {
     throw new Error(
-      `${pkgFile} 不存在：界面半的声明必须写在自己的 package.json 里（dsh.client 或 peerDependencies['@dsc/ui']）`,
+      `${pkgFile} 不存在：界面半的声明必须写在自己的 package.json 里（pneuma.client 或 peerDependencies['@dsc/ui']）`,
     )
   }
   let pkg
@@ -113,28 +113,29 @@ function readMeta(dir, hostHalf) {
   }
   const record = pkg !== null && typeof pkg === 'object' ? pkg : {}
   const rawPeer = (record.peerDependencies ?? {})['@dsc/ui']
-  const declaredClient = record.dsh?.client
+  // 两处都认：我们自己那 19 个界面包写 pneuma.client，真实 dsh 生态写 pneuma.client。
+  const declaredClient = record.pneuma?.client ?? record.dsh?.client
   /** 区间来自哪一处：报错时要指得准，不然作者会去改错文件。 */
   let api
   let apiWhere
   if (hostHalf === true) {
-    // 宿主包：dsh.client 是唯一声明处，缺了不能猜、也不能回落到目录名。
+    // 宿主包：pneuma.client 是唯一声明处，缺了不能猜、也不能回落到目录名。
     if (declaredClient === null || typeof declaredClient !== 'object') {
       throw new Error(
-        `${pkgFile} 没有 dsh.client：宿主包的界面半边靠它声明` +
+        `${pkgFile} 没有 pneuma.client：宿主包的界面半边靠它声明` +
           `（至少写 { platform: 'pneuma', api: '^0.8.1' }）`,
       )
     }
     if (typeof declaredClient.api !== 'string' || declaredClient.api.trim() === '') {
       throw new Error(
-        `${pkgFile} 的 dsh.client.api 缺失或不是非空字符串（要写 semver 区间，如「^0.8.1」）——清单的 api 字段从它读`,
+        `${pkgFile} 的 pneuma.client.api 缺失或不是非空字符串（要写 semver 区间，如「^0.8.1」）——清单的 api 字段从它读`,
       )
     }
     api = declaredClient.api.trim()
-    apiWhere = "dsh.client.api"
+    apiWhere = "pneuma.client.api"
     if (typeof rawPeer === 'string' && rawPeer.trim() !== '' && rawPeer.trim() !== api) {
       throw new Error(
-        `${pkgFile}: peerDependencies['@dsc/ui']「${rawPeer.trim()}」与 dsh.client.api「${api}」不一致（一处声明就够，两处会分叉）`,
+        `${pkgFile}: peerDependencies['@dsc/ui']「${rawPeer.trim()}」与 pneuma.client.api「${api}」不一致（一处声明就够，两处会分叉）`,
       )
     }
   } else {
@@ -158,35 +159,35 @@ function readMeta(dir, hostHalf) {
     )
   }
   const meta = { api }
-  // 2.0 起，界面半在**自己的 package.json** 里用 `dsh.client` 声明——与组合包
+  // 2.0 起，界面半在**自己的 package.json** 里用 `pneuma.client` 声明——与组合包
   // （profile 里装的第三方包）同一套字段。声明了它就不再读 plugin.json：一个插件只有
   // 一处声明，两处并存迟早会分叉。
   if (declaredClient !== undefined) {
     if (declaredClient === null || typeof declaredClient !== 'object') {
-      throw new Error(`${pkgFile} 的 dsh.client 必须是对象（platform / api / phase / inject / services）`)
+      throw new Error(`${pkgFile} 的 pneuma.client 必须是对象（platform / api / phase / inject / services）`)
     }
     const client = declaredClient
     if (client.platform !== 'pneuma') {
       throw new Error(
-        `${pkgFile} 的 dsh.client.platform 必须是 'pneuma'（内置插件就是我们的界面半；` +
+        `${pkgFile} 的 pneuma.client.platform 必须是 'pneuma'（内置插件就是我们的界面半；` +
           `收到 ${JSON.stringify(client.platform)}）`,
       )
     }
     if (client.api !== undefined && client.api !== api) {
-      throw new Error(`${pkgFile}: dsh.client.api 与 peerDependencies['@dsc/ui'] 不一致（一处声明就够，两处会分叉）`)
+      throw new Error(`${pkgFile}: pneuma.client.api 与 peerDependencies['@dsc/ui'] 不一致（一处声明就够，两处会分叉）`)
     }
     const legacy = join(dir, 'plugin.json')
     if (existsSync(legacy)) {
-      throw new Error(`${dir}: 同时有 dsh.client 与 plugin.json——2.0 起只认 package.json 里那一处声明`)
+      throw new Error(`${dir}: 同时有 pneuma.client 与 plugin.json——2.0 起只认 package.json 里那一处声明`)
     }
     return applyExtraFields(meta, client, pkgFile)
   }
-  // 2.0 起一个插件只许有一处声明。19 个内置插件已全部迁进 package.json 的 dsh.client，
+  // 2.0 起一个插件只许有一处声明。19 个内置插件已全部迁进 package.json 的 pneuma.client，
   // 再见到 plugin.json 就是没迁干净（或者有人照着旧文档加回来的）。
   if (existsSync(join(dir, 'plugin.json'))) {
     throw new Error(
       `${dir}: 2.0 起不再支持 plugin.json——把 phase / inject / services / external / platforms 搬进 ` +
-        'package.json 的 dsh.client（一个插件一处声明）',
+        'package.json 的 pneuma.client（一个插件一处声明）',
     )
   }
   return meta
@@ -195,7 +196,7 @@ function readMeta(dir, hostHalf) {
 /**
  * 把界面半的附加声明并进清单条目。
  *
- * 两个来源共用这一份校验：2.0 起是 `package.json` 的 `dsh.client`（与组合包同一套字段），
+ * 两个来源共用这一份校验：2.0 起是 `package.json` 的 `pneuma.client`（与组合包同一套字段），
  * 旧的是 `plugin.json`。字段名一样，报错里指的位置不同——`where` 就是那个位置。
  * @param meta - 已经带 api 的条目
  * @param doc - 声明来源

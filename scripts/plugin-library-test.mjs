@@ -259,6 +259,12 @@ console.log('── 5. 依赖方向门禁：允许与禁止的文案 ──')
       }
       writeText(join(dir, 'src', 'packages', pkg.id, 'package.json'), JSON.stringify(manifest, null, 2) + '\n')
       writeText(join(dir, 'src', 'packages', pkg.id, 'index.ts'), pkg.source)
+      // 第 7 项（文档与测试）是硬项：夹具包也得齐，否则「库包不红」那条会假红。
+      writeText(
+        join(dir, 'src', 'packages', pkg.id, 'README.md'),
+        '# ' + pkg.id + '\n\n## Model Experience\n\n夹具包。\n\n## Known Limitations\n\n只用于门禁夹具。\n',
+      )
+      writeText(join(dir, 'src', 'packages', pkg.id, 'tests', pkg.id + '.test.mjs'), 'export {}\n')
       if (pkg.patch !== true) continue
       writeText(join(dir, 'src', 'packages', pkg.id, 'cordis.patch.yml'), "- insert:\n    - id: " + pkg.id + "\n      name: '@pneuma/" + pkg.id + "'\n")
     }

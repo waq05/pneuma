@@ -97,7 +97,7 @@ void REMOTE_COVERAGE
  *   - `listUiCommands` / `runUiCommand`：输入框的 `/` 命令菜单。手机上的壳与电脑上
  *     同一份产物，菜单不该一到手机上就消失；而代价与 `submit` / `compact` / `setModel`
  *     同一档——能跑的那批名字钉死在宿主那份 `shell: true` 清单上（见
- *     `core/commands-completion.ts`），凭据写入、装东西、宿主生命周期一个都不在里面。
+ *     `packages/commands-core/commands-completion.ts`），凭据写入、装东西、宿主生命周期一个都不在里面。
  *
  * 每条都必须是界面通道白名单（`core/ui-methods.ts`）的成员：实参校验直接复用
  * `validateUiArgs`，不另立一份规格——多出来的口子也必须过同一道形校验。

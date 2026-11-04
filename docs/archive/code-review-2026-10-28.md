@@ -109,9 +109,9 @@ EXIT=2
 ### P0-3　类型错误进过主干一次（已修，留作证据）
 
 **证据**：`a20dd74` 上 `npx tsc -p tsconfig.json --noEmit` 报 7 个错误，全部同一根因：
-`Preset` 接口缺 `replace` 字段，而 `src/core/presets.ts` 的 222 / 249 / 280 / 306 / 373 行
+`Preset` 接口缺 `replace` 字段，而 `src/packages/config-core/presets.ts` 的 222 / 249 / 280 / 306 / 373 行
 在写它、`src/plugins/presets.ts` 的 44 / 155 行在读它。`d1b8e08`（00:32）在
-`src/core/presets.ts:87` 补上了 `replace: boolean`。
+`src/packages/config-core/presets.ts:87` 补上了 `replace: boolean`。
 
 **这条的价值不在"修好了"，在于它证明了 P0-2**：一个 7 个错误的提交，在一个只有发版
 流水线的仓库里，是可以静悄悄进主干的。
@@ -339,7 +339,7 @@ UI 侧"宿主只暴露白名单方法"的边界，这套骨架经得起看：实
 | 2 | 行尾归一：`.gitattributes` 把文本钉成 LF、二进制标 `binary`、Windows 脚本留 CRLF | `.gitattributes`（新） | `git diff` 里已出现"CRLF will be replaced by LF"提示，规则生效 |
 | 3 | CI 门禁：每次推与每个 PR 跑根 / 界面壳 / 桌面端三处 typecheck 加排版检查 | `.github/workflows/verify.yml`（新） | 三处 typecheck 本地均绿（见下） |
 | 4 | 时长格式化收口：团队面板与状态栏各删一份本地 `formatDuration`，改引 `ui-primitives/time.ts` | `ui-shell/src/plugins/team/ui.tsx`、`ui-shell/src/plugins/statusbar/ui.tsx` | `ui-shell` typecheck 绿 |
-| 5 | 闸门查出来的既有问题一并修掉：4 个文件混用了行尾（`src/core/config.ts`、`src/core/market.ts`、`src/core/session-meta.ts`、`scripts/session-open-in-test.mjs`），11 个文件末尾缺换行 | 见 `git diff --numstat` | 混用的 4 个文件修完 `git diff` 为零（Git 本就按 LF 存）；缺末尾换行的 11 个文件各只多 1 行 |
+| 5 | 闸门查出来的既有问题一并修掉：4 个文件混用了行尾（`src/core/config.ts`、`src/packages/config-core/market.ts`、`src/core/session-meta.ts`、`scripts/session-open-in-test.mjs`），11 个文件末尾缺换行 | 见 `git diff --numstat` | 混用的 4 个文件修完 `git diff` 为零（Git 本就按 LF 存）；缺末尾换行的 11 个文件各只多 1 行 |
 
 **为什么没上 Prettier**：整仓重排会让 14.7 万行的 `git blame` 全部作废；"只查改动文件"
 又会在每个被顺手改到的老文件上报出一堆与本次修改无关的错，逼着人重排，diff 更没法看。
@@ -391,7 +391,7 @@ node scripts/style-check.mjs --changed            # 只看改动，同样绿
 
 ```bash
 git add src/core/attachments.ts src/contract.ts src/services/types.ts src/plugins/transcript.ts \
-        src/core/session.ts src/core/loop.ts src/core/llm.ts src/core/events.ts \
+        src/core/session.ts src/packages/session-core/loop.ts src/core/llm.ts src/core/events.ts \
         src/core/ui-methods.ts src/core/ui-server.ts ui-shell/src/plugins/composer/attachments.ts
 git add .gitattributes .github/workflows/verify.yml scripts/style-check.mjs package.json
 git commit -m "fix(build): 补齐附件模块与状态进度字段，主干恢复编译"

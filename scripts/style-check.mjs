@@ -28,7 +28,7 @@
  *
  *   node scripts/style-check.mjs                  # 全仓
  *   node scripts/style-check.mjs --changed        # 只看本次改动（CI 与提交前用）
- *   node scripts/style-check.mjs src/core/loop.ts # 点名几个文件
+ *   node scripts/style-check.mjs src/packages/session-core/loop.ts # 点名几个文件
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'

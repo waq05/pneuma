@@ -54,10 +54,11 @@ if (first === '--help' || first === '-h') {
   process.exit(0)
 }
 
-// ── 子命令：config（交给 lib/tools/config-cli.js） ───────────────────────────
+// ── 子命令：config / plugin（交给 @pneuma/cli 包里那两个脚本） ───────────────
+// 路径从包目录来（lib/packages/cli/），不是 lib/tools/：两个脚本 2026-11-04 搬进包了。
 if (first === 'config' || first === 'plugin') {
   const tool = first === 'config' ? 'config-cli.js' : 'plugin-cli.js'
-  const child = spawn(process.execPath, [join(PKG_ROOT, 'lib', 'tools', tool), ...process.argv.slice(3)], {
+  const child = spawn(process.execPath, [join(PKG_ROOT, 'lib', 'packages', 'cli', tool), ...process.argv.slice(3)], {
     stdio: 'inherit',
     env: process.env,
   })

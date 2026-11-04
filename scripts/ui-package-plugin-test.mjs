@@ -1,4 +1,4 @@
-// 组合包的界面半边（2.0）：一个包声明 dsh.client.platform = 'pneuma'，宿主收进启动图。
+// 组合包的界面半边（2.0）：一个包声明 pneuma.client.platform = 'pneuma'，宿主收进启动图。
 // 跑法：cd D:\dsc && pnpm run build && node scripts/ui-package-plugin-test.mjs
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -121,7 +121,7 @@ check(
 )
 check(
   'services / phase 坏值记 problems，不当没看见',
-  problems.includes('bad-deps') && problems.includes('dsh.client.services') && problems.includes('dsh.client.phase'),
+  problems.includes('bad-deps') && problems.includes('pneuma.client.services') && problems.includes('pneuma.client.phase'),
   problems,
 )
 const tuiArtifacts = collectUiArtifactsForPlatform('tui', { packageDir: profile, thirdPartyDir: third, force: true })

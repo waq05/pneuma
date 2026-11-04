@@ -61,7 +61,7 @@ const check = (label, condition, extra = '') => {
   console.log(`FAIL  ${label}${extra === '' ? '' : ` → ${extra}`}`)
 }
 
-const { selectCut, safeCut, estimateTokens, compactSession } = await import('../lib/core/compact.js')
+const { selectCut, safeCut, estimateTokens, compactSession } = await import('../lib/packages/session-core/compact.js')
 
 // ── [1][2] 纯函数：切点选择 ──────────────────────────────────────────────────
 console.log('── [1] token 预算选尾 vs 固定条数 ──')

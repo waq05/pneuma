@@ -15,9 +15,7 @@
     "order": 356,
     "resolution": "overridable",
     "title": "插件中心（界面）",
-    "description": "插件整页：清单、开关、详情与配置表单"
-  },
-  "dsh": {
+    "description": "插件整页：清单、开关、详情与配置表单",
     "client": {
       "platform": "pneuma",
       "api": "^0.8.1"

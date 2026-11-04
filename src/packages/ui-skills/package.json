@@ -15,9 +15,7 @@
     "order": 361,
     "resolution": "overridable",
     "title": "技能（界面）",
-    "description": "SKILL.md 发现、开关、市场与 skill 工具"
-  },
-  "dsh": {
+    "description": "SKILL.md 发现、开关、市场与 skill 工具",
     "client": {
       "platform": "pneuma",
       "api": "^0.8.1"

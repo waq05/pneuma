@@ -8,7 +8,7 @@
  * 按 `isPluginEnabled('ui-prompt')` 把它滤掉，这个界面单元随之不进启动图
  * （见 `src/core/ui-bundles.ts` 的 `UiArtifactCache.table()`）。停用只影响本界面单元。
  * 界面半原来住在宿主包 `src/packages/prompt/ui/`，2026-11-04 搬到本包独立成单元；
- * 宿主包只剩宿主半，它的 package.json 不再声明 `dsh.client` 与 `exports["./client"]`。
+ * 宿主包只剩宿主半，它的 package.json 不再声明 `pneuma.client` 与 `exports["./client"]`。
  *
  * order 规则：19 个界面单元统一占 350–368 专用段，按 id 字典序逐个编号
  * （actions 350、ask 351、browser 352、composer 353、files 354、palette 355、

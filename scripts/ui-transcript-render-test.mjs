@@ -511,7 +511,7 @@ console.log('[12] 机器投递的消息画成触发行，不是用户气泡（20
   const rounds = read(UI + '/rounds.ts')
   const adapter = read('src/adapter/transcript.ts')
   const session = read('src/core/session.ts')
-  const loop = read('src/core/loop.ts')
+  const loop = read('src/packages/session-core/loop.ts')
   const llm = read('src/core/llm.ts')
 
   check('内部行按类型给标签（不再一律说「子任务汇报」）', userRow.includes('{internalLabel(entry.text)}'))

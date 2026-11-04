@@ -27,7 +27,7 @@ writeFileSync(join(home, '.dsc', 'config.yaml'), 'model:\n  name: test\n', 'utf8
 
 const { createKernel } = await import('../lib/host/kernel.js')
 const { runCommand } = await import('../lib/packages/commands/index.js')
-const { allSpecs } = await import('../lib/core/commands-completion.js')
+const { allSpecs } = await import('../lib/packages/commands-core/commands-completion.js')
 const { forkSession, readUserMessages } = await import('../lib/core/session.js')
 
 // 起内核：presets/skills/commands 插件在此挂载，serviceRef 与 /preset /skills handler 就位

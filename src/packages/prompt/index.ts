@@ -24,7 +24,7 @@ import type { Plugin } from '@deepseek-ai/cordis'
 import { errText } from '@pneuma/runtime/adapter/transcript.js'
 import { dropImageParts, foldSystemMessages, type ChatMessage } from '@pneuma/runtime/core/llm.js'
 import { pruneImages, readImageDietConfig } from '@pneuma/runtime/core/image-diet.js'
-import { buildSystemPrompt, DEFAULT_INSTRUCTION_BUDGET, environmentText, type PromptContribution } from '@pneuma/runtime/core/prompt.js'
+import { buildSystemPrompt, DEFAULT_INSTRUCTION_BUDGET, environmentText, type PromptContribution } from '@pneuma/session-core/prompt.js'
 import { pruneToolResults } from './tool-result-prune.js'
 import { resolvePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import type { Session } from '@pneuma/runtime/core/session.js'
@@ -47,7 +47,7 @@ const RESERVED_PROJECTIONS = new Set(['fold-system', 'drop-images'])
 
 /**
  * 取指令文件的预算：夹在 4k 到 200k 之间。单位是**字符**（不是字节；与 codex/dsh/ZCode
- * 的字节口径怎么换算，见 core/prompt.ts 的 DEFAULT_INSTRUCTION_BUDGET 注释）。
+ * 的字节口径怎么换算，见 packages/session-core/prompt.ts 的 DEFAULT_INSTRUCTION_BUDGET 注释）。
  * @param passed - 装配时直接传进来的配置（内核挂载时的第二参数）。
  */
 function readBudget(passed: unknown): number {
@@ -67,7 +67,7 @@ const DEFAULT_ENV_FACTS_REFRESH_MS = 0
  *
  * **缺省是 0（每轮都发）**，不是 dsh 那个 10 分钟——理由比「省几十个 token」硬：
  * 「平台：Windows（bash 工具跑的是 PowerShell）」这条事实**只有 env 快照一个载体**
- * （core/prompt.ts 的 IDENTITY/BEHAVIOR/TOOL_RULES 里没有它，dsh 那边也没有平台注入）。
+ * （packages/session-core/prompt.ts 的 IDENTITY/BEHAVIOR/TOOL_RULES 里没有它，dsh 那边也没有平台注入）。
  * 一旦按「没变就不发」跳过，被跳过的那几轮请求里模型既没有环境、又很可能写出 bash-ism
  * （dsc 主力平台就是 Windows）。省下的那点 token 明显不划算，所以缺省保持每轮都发；
  * 这条闸门留给想要「同一份环境不重复烧 token」的人自己打开（设一个非 0 的毫秒数）。

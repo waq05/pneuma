@@ -90,7 +90,7 @@ export interface ToolPresentationView {
  *
  * 压缩有两个落点，各自留在原本的 kind 上：
  * - 实时：compact 插件经 `dsc/notice(text, 'compaction')` 写下的 **system** 条目；
- * - 重放：摘要自己在内存里就是一条 `role: 'user'` 的消息（core/compact.ts 造的），
+ * - 重放：摘要自己在内存里就是一条 `role: 'user'` 的消息（packages/session-core/compact.ts 造的），
  *   正文固定以 `SUMMARY_BANNER` 开头，adapter 靠这个前缀把它认出来，仍是 **user** 条目。
  *   没有换成专属 kind，是因为「对话」页现在把摘要当用户气泡渲染——换 kind 会让摘要
  *   正文当场从对话页和终端界面消失。

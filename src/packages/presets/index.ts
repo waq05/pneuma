@@ -1,7 +1,7 @@
 /**
  * presets 插件：provide `presets` 服务（模式状态 + 三个登记点 + 切换命令）。
  *
- * 模式（模式文件见 `core/presets.ts`）只干三件事，都在自己文件里：
+ * 模式（模式文件见 `packages/config-core/presets.ts`）只干三件事，都在自己文件里：
  *   1. 往系统提示里加一段这个模式的话（提示词层，order 15，排在「做事方式」之后、
  *      「工具规范」之前），并登记一个骨架取舍把该摘的叮嘱段摘掉；
  *   2. 给主会话的工具目录过一层投影（`ctx.tools.project`）——极简档因此只把 bash
@@ -31,7 +31,7 @@ import {
   standardPreset,
   writePreset,
   type Preset,
-} from '@pneuma/runtime/core/presets.js'
+} from '@pneuma/config-core/presets.js'
 import { audit } from '@pneuma/runtime/core/audit.js'
 
 /** 模式 → 界面投影（IPC 只带这些字段）。 */

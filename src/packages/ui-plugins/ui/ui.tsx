@@ -371,7 +371,7 @@ function PluginsView(): ReactNode {
                   <IconPuzzle size={13} /> 组合包界面 <span className="count">{packages.length}</span>
                   <span className="group-hint">
                     {packageProfiles.length === 0 ? '' : `profile ${packageProfiles.join('、')} · `}
-                    profile 里装的包（package.json 的 dsh.client.platform = pneuma）；装了就算同意，这里只开关
+                    profile 里装的包（package.json 的 pneuma.client.platform = pneuma）；装了就算同意，这里只开关
                   </span>
                 </div>
                 {packages.map((row) => (
@@ -529,7 +529,7 @@ const TRUST_PROBLEM_TIERS = {
 
 /**
  * 组合包同一批档位的「下一步」：位置不同——它不在 `~/.dsc/plugins/`，而在 profile 的
- * `node_modules/<包名>/`，声明也不是 plugin.json 而是 package.json 的 `dsh.client`。
+ * `node_modules/<包名>/`，声明也不是 plugin.json 而是 package.json 的 `pneuma.client`。
  */
 const PACKAGE_PROBLEM_TIERS = {
   version: {
@@ -542,7 +542,7 @@ const PACKAGE_PROBLEM_TIERS = {
   },
   manifest: {
     label: '清单缺声明',
-    next: '检查这个包的 package.json：dsh.client.platform 要是 "pneuma"，dsh.client.api 要写（如 "^2.0.0"）。',
+    next: '检查这个包的 package.json：pneuma.client.platform 要是 "pneuma"，pneuma.client.api 要写（如 "^2.0.0"）。',
   },
   clash: {
     label: '与已有插件撞名',
@@ -558,7 +558,7 @@ const UNKNOWN_TRUST_PROBLEM = {
 
 const UNKNOWN_PACKAGE_PROBLEM = {
   label: '装不上',
-  next: '照上面的原因检查这个包的 package.json（`dsh.client` 段）与 exports["./client"]。',
+  next: '照上面的原因检查这个包的 package.json（`pneuma.client` 段）与 exports["./client"]。',
 } as const
 
 /** 一行问题的档：有标用标，没标给兜底；「下一步去哪儿看」按来源分。 */

@@ -29,6 +29,7 @@ process.env.DSC_HOME = join(home, '.dsc')
 
 const { createCoalescedStore, TUI_SNAPSHOT_MS } = await import('../lib/packages/tui/app/snapshot-subscribe.js')
 const { App } = await import('../lib/packages/tui/app/App.js')
+import { dispatchCommand } from './_tui-commands.mjs'
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -189,7 +190,7 @@ async function mountApp(snapshotMs) {
           counters.commits += 1
         },
       },
-      React.createElement(App, { runtime, ...(snapshotMs === undefined ? {} : { snapshotMs }) }),
+      React.createElement(App, { runtime, dispatchCommand, ...(snapshotMs === undefined ? {} : { snapshotMs }) }),
     ),
     { stdin, stdout, exitOnCtrlC: false, patchConsole: false },
   )

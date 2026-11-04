@@ -103,7 +103,7 @@ console.log('[3] 审批顺序：沙箱边界 → AI 复核 → 自动放行')
 
 console.log('[4] 模式四档对齐 dsh')
 {
-  const presets = await import(new URL('../lib/core/presets.js', import.meta.url).href)
+  const presets = await import(new URL('../lib/packages/config-core/presets.js', import.meta.url).href)
   presets.ensureBuiltinPresets()
   const list = presets.listPresets()
   check('四个出厂档都在', list.length >= 4, String(list.length))
@@ -130,7 +130,7 @@ console.log('[5] 权限预设：切当前会话 + 默认值只给新会话')
   check('setDefault 三根一起落默认', code.includes('defaultPolicy: preset.policy') && code.includes('defaultReviewer: preset.reviewer'))
   check('setDefault 走 settings.setPrefs（新会话默认）', code.includes('ctx.settings.setPrefs('))
   check('setDefault 同时落沙箱默认档', code.includes("ctx.get('sandbox')?.setDefaultMode(preset.sandbox)"))
-  const scope = strip(read('src/core/permission-scope.ts'))
+  const scope = strip(read('src/packages/permission-core/permission-scope.ts'))
   check('三项存在会话状态里（permissions 条目）', scope.includes("session.state('permissions')") && scope.includes("session.appendState('permissions'"))
 }
 

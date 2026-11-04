@@ -15,9 +15,7 @@
     "order": 354,
     "resolution": "overridable",
     "title": "文件（界面）",
-    "description": "工作区文件树与 Git 变更两个页签"
-  },
-  "dsh": {
+    "description": "工作区文件树与 Git 变更两个页签",
     "client": {
       "platform": "pneuma",
       "api": "^0.8.1"

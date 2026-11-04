@@ -107,7 +107,7 @@ try {
   check('jsonl 的 tool 记录不带 baseline', !raw.includes('baseline'), raw.slice(0, 400))
 
   // ── MiniAgent 整轮集成：假 stream 吐两个写调用（同文件两刀）→ 收尾聚合 emit ──
-  const { MiniAgent } = await import('../lib/core/loop.js')
+  const { MiniAgent } = await import('../lib/packages/session-core/loop.js')
   const session3 = Session.create(dir)
   const events = []
   let modelCalls = 0

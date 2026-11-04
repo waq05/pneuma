@@ -1,0 +1,779 @@
+/**
+ * MiniAgent：参考 dsh ReactLoopAgent 的 turn 语义的个人版 ReAct 循环。
+ *
+ * 一个 turn = `while(true){ streamChat → 定稿 assistant → 无 tool_calls 则
+ * 结束；有则逐个 审批 → 执行 → append tool 消息 → 下一轮 }`。与 dsh 的
+ * 差异（个人版取舍）：无 step/子代理/checkpoint 修复——单队列串行 turn，
+ * 打断用 AbortController 贯穿 fetch 与工具执行。
+ *
+ * 0.6.47 起补了 dsh inbox 的最小版：轮中途到达的输入（用户插话、作业完成
+ * 通知、定时补投）先进 `async-inbox` 状态条目排队，步骤边界/回合收尾才落库
+ * （drainInbox）——它们不能落在「还没落结果的 tool 调用」和结果中间，否则
+ * 网关按「tool 结果必须紧跟 tool_calls」判 400，会话从此卡死。
+ * 0.6.67 起「入箱」与「进对话」在界面上也分开：入箱期间它只是输入框下方的
+ * 队列条（可以编辑 / 删除 / 插话），出账那一刻才画成对话里的气泡。
+ *
+ * 每个协议要求：assistant 带 tool_calls 时，后续必须为每个 call 补一条
+ * tool 消息（包括被拒绝的调用——拒绝也 append "用户拒绝" 结果），
+ * 否则下一轮请求会被服务端 400。
+ *
+ * @module dsc/core/loop
+ */
+import type { ChatMessage, LlmRoute, StreamHandlers, StreamRequest, StreamResult, ToolCall, ToolSchema } from '@pneuma/runtime/core/llm.js'
+import { LlmError, StreamInterruptedError } from '@pneuma/runtime/core/llm.js'
+import type { CoreEvent } from '@pneuma/runtime/core/events.js'
+import type { Session, InboxOrigin } from '@pneuma/runtime/core/session.js'
+import type { UserFileAttachment } from '@pneuma/runtime/core/attachments.js'
+import type { ToolGuardChain } from '@pneuma/runtime/core/tool-guards.js'
+import { callFacts, gateIdentity, stripBaseline, type FileChangeSummary, type ToolEntry, type ToolPresentation } from '@pneuma/runtime/core/tools.js'
+import { collectGitTurnChanges, snapshotGitStatus } from '@pneuma/runtime/core/git-info.js'
+import { errText } from '@pneuma/runtime/core/err-text.js'
+import { estimateRequestSegments } from '@pneuma/runtime/core/token-estimate.js'
+import { checkReconstructable, snapshotMessages } from '@pneuma/runtime/core/request-invariant.js'
+
+export interface AgentDeps {
+  /** 每次请求时动态读取（支持 /model 热切换）。 */
+  route(): LlmRoute
+  systemPrompt(): string
+  tools(): ToolEntry[]
+  /**
+   * 工具守卫链：一次调用动手之前该问谁，由链上的人自己说。
+   * 循环只问结果（拦 / 免问 / 照常），不知道也不该知道链上有模式闸门、审批卡还是别的谁。
+   */
+  guards: ToolGuardChain
+  emit(event: CoreEvent): void
+  /**
+   * 发一次流式模型请求：按端点声明的协议经 llm 服务的适配器表派发。
+   * 循环不认识具体协议——OpenAI 兼容也好、别的插件注册的也好，都从这条缝过。
+   */
+  stream(api: string, request: StreamRequest, handlers: StreamHandlers): Promise<StreamResult>
+  /**
+   * 报一条不阻断的运行时提醒（宿主接成 `dsc/notice`）。缺省不报。
+   * 运行时请求 invariant 用它——校验只报不杀，见 core/request-invariant。
+   */
+  notice?(text: string): void
+  /**
+   * 每轮请求前的一次维护动作（上下文压缩检查挂在这里）；缺省不启用。
+   * T41：传入这一轮的取消信号——压缩若真在跑模型调用，用户打断要能停得掉它。
+   */
+  beforeRequest?(signal: AbortSignal): Promise<void>
+  /**
+   * 请求报「上下文装不下」（HTTP 400 的爆窗文案）时调：强制压缩一次历史。
+   * 返回 true = 压出了空间，循环重试这轮请求；false 或缺省 = 原错误照抛。
+   * T41：同样吃这一轮的取消信号。
+   */
+  onContextOverflow?(signal: AbortSignal): Promise<boolean>
+  /**
+   * 组装好「发给模型的那份消息」之后的投影链（只影响请求体，不改会话日志）。
+   * 插件用它丢掉过期截图之类「留在历史里只会撑上下文、对下一轮没用」的内容；
+   * 往请求里注入日志上没有的内容时，注入方自己用 appendNote 落一条备忘。
+   * 第二参数是这个 agent 自己的会话（0.6.48 起常驻多 agent：env-facts 这类要按
+   * 会话取 cwd 的投影靠它取对归属，不能再看「当前查看的会话」）。
+   */
+  rewrite?(messages: ChatMessage[], session: Session): ChatMessage[]
+  /**
+   * 完全闲下来（回合收完、没有排队的下一轮）时调一次。常驻注册表用它决定
+   * 「非当前查看的 agent 就地收摊」（释放写租约与内存）；当前查看的 agent 不收。
+   */
+  onIdle?(): void
+}
+
+/**
+ * T33：流中断后「保留半截再续」的自动重试次数（对齐 codex 的 stream_max_retries，
+ * 个人版取 1 次且不做配置面：半截落库之后模型的续写是从中断处自然接上的）。
+ */
+const STREAM_RECOVERY_ATTEMPTS = 1
+
+/**
+ * 判定一个错误是不是「上下文装不下」：各家网关都把它报成 HTTP 400，措辞不一，多认几种。
+ * 只认 400——流开始之后不会再有 400（llm 层对已开始的流不重试），半截回复不走这条路。
+ */
+function isContextOverflowError(error: unknown): boolean {
+  if (!(error instanceof LlmError)) return false
+  if (error.status !== 400) return false
+  return /context.{0,24}(length|window)|maximum.{0,20}context|(prompt|input).{0,20}too long|too many (tokens|输入)|上下文.{0,10}(长度|超)|length limit/i.test(
+    error.message,
+  )
+}
+
+/** 单行摘要工具参数（审批卡/日志用）。 */
+function summarizeArgs(argsText: string): string {
+  const flat = argsText.replace(/\s+/g, ' ').trim()
+  return flat.length > 160 ? `${flat.slice(0, 160)}…` : flat
+}
+
+/**
+ * 一步模型请求的三个墙钟读数（毫秒），口径与 dsh 的 sessionStats 投影一致：
+ * `llmMs` = 发出 → 定稿；`ttftMs` = 发出 → 第一口输出（首字延迟）；
+ * `decodeMs` = 第一口输出 → 定稿（纯解码时间，输出速度的分母）。
+ *
+ * 一步里始终没拿到输出（请求立刻失败、或没吐字就被打断）就只报 `llmMs`：
+ * 后两项没有可信的终点，不报比编 0 好。
+ */
+function stepTiming(
+  startedAt: number,
+  firstTokenAt: number | null,
+  finishedAt: number,
+): { llmMs: number; ttftMs?: number; decodeMs?: number } {
+  const llmMs = Math.max(0, finishedAt - startedAt)
+  if (firstTokenAt === null) return { llmMs }
+  return {
+    llmMs,
+    ttftMs: Math.max(0, firstTokenAt - startedAt),
+    decodeMs: Math.max(0, finishedAt - firstTokenAt),
+  }
+}
+
+export class MiniAgent {
+  /** 这个 agent 从生到死只认一个会话（0.6.48 常驻模型：切会话=换 agent，不再换底层会话）。 */
+  readonly session: Session
+  private abort: AbortController | null = null
+  private running = false
+  /** 回合真正在跑（turn/start 起到 turn/end 发出为止）。收尾聚合的尾段不算。 */
+  private turnActive = false
+  private pendingTurn = false
+  /**
+   * 已广播 `tool/call` 还没落结果的调用 → 发起时刻。
+   *
+   * 工具耗时的起点只认这一刻（对照 dsh 的 `tool/call` → `tool/result` 折叠）：
+   * 打断时给没开始的调用补的合成结果没有起点，就不报耗时。
+   */
+  private readonly callStartedAt = new Map<string, number>()
+  /**
+   * 上次报过的 invariant 失配形状。同一形状只报一次——误报会刷屏且吓人，
+   * 而这个 agent 从生到死只认一个会话，一个字段就是「按会话去重」。
+   */
+  private lastInvariantDigest: string | null = null
+  /**
+   * 本轮请求发给模型的那份工具目录（requestOnce 现取、executeToolCalls 用它解析）。
+   *
+   * 为什么执行不重新取一次：模型是照着**发出去的那份 schema** 喊名字的。取两次的话，
+   * 请求与执行之间只要注册表变过（换模式、插件热插拔），模型明明喊的是它刚被告诉的
+   * 工具，也会落到「未知工具」——2026-10-28 用户报的那一串就是这么来的。
+   * 换模式的影响因此从**下一轮请求**起生效，同一轮里模型面前与手上是同一份。
+   */
+  private requestTools: readonly ToolEntry[] | null = null
+
+  constructor(
+    private readonly deps: AgentDeps,
+    session: Session,
+  ) {
+    this.session = session
+  }
+
+  get sessionId(): string {
+    return this.session.meta.id
+  }
+
+  get cwd(): string {
+    return this.session.meta.cwd
+  }
+
+  get isRunning(): boolean {
+    return this.running
+  }
+
+  /**
+   * 还有没活干（回合在跑，或收件箱出账后排了下一轮）。常驻注册表据此决定收不收摊。
+   * 用 turnActive 而不是 running：turn/end 发出之后还有一段异步收尾（git 聚合），
+   * 那段时间 running 仍为 true，但回合已经结束——切走时它该算「闲」，收摊、翻徽标。
+   */
+  get busy(): boolean {
+    return this.turnActive || this.pendingTurn
+  }
+
+  /** 收摊：取消在跑的回合并关闭会话（释放写租约）。app 退出与非活跃常驻 agent 清理都走这里。 */
+  dispose(): void {
+    this.cancel()
+    this.session.close()
+  }
+
+  /**
+   * 追加一条用户消息并排队跑一轮。
+   * @param images - 随消息发送的图片（data URL 清单）；模型收不收图由请求前的改写决定。
+   * @param origin - 这条是用户来源还是机器来源（缺省 `'user'`，老调用点行为不变）。
+   *   回合跑动中入箱时，`'notice'` 会记进收件箱条目，界面据此把它画在输入框上方的
+   *   只读通知条（而不是输入框下方的队列条）；出账落库后两者都是同一条 user 消息。
+   */
+  followup(text: string, images?: string[], origin: InboxOrigin = 'user', files?: UserFileAttachment[]): void {
+    // 回合还没跑完就收到的消息算「轮中途到达」（对照 dsh 的 steering/inject，生产者
+    // 有用户插话、后台作业完成、定时补投、goal 提醒……）。它们一律先进收件箱：
+    // 直接 appendUser 会落在「还没落结果的 tool 调用」和它的结果中间——比如调用正
+    // 等审批时作业完成通知插队——网关要求 tool 结果紧跟 tool_calls，从此每轮请求
+    // 都 400（0.6.46 那次卡死会话的新形状）。到达与入史拆成两段，见 drainInbox。
+    // 要在 enqueueTurn 之前读 running——那之后 running 会被置真，再来一条就分不出先后了。
+    if (this.running) {
+      this.session.enqueueAsync(text, images, origin, files)
+      // 入箱只是「排队」，还没进对话：这里不发 user 事件（0.6.67 起出账时才发），
+      // 只报一条「收件箱变了」，界面据此把队列条 / 通知条画出来 / 刷新。
+      this.deps.emit({ type: 'inbox' })
+      return
+    }
+    this.session.appendUser(text, images, files, origin)
+    this.deps.emit({
+      type: 'user',
+      text,
+      ...(images !== undefined && images.length > 0 ? { images } : {}),
+      ...(files !== undefined && files.length > 0 ? { files } : {}),
+      // 机器投递的要带上来源：界面据此画内部触发行，而不是一个能编辑的用户气泡。
+      // 日志里同一条记录也写了 origin，重放时走同一条判据（见 adapter/transcript）。
+      ...(origin === 'notice' ? { origin } : {}),
+    })
+    this.enqueueTurn()
+  }
+
+  /**
+   * 改一条排队中的输入（回合跑动中提交、还没出账的那些）。
+   * @returns 是否真的改了；越界（等到出账了）返回 false，界面据此提示。
+   */
+  editQueued(index: number, text: string): boolean {
+    const changed = this.session.editAsync(index, text)
+    if (changed) this.deps.emit({ type: 'inbox' })
+    return changed
+  }
+
+  /** 撤掉一条排队中的输入：它还没进对话，撤了就等于没发过。 */
+  removeQueued(index: number): boolean {
+    const changed = this.session.removeAsync(index)
+    if (changed) this.deps.emit({ type: 'inbox' })
+    return changed
+  }
+
+  /**
+   * 插话（对照 dsh 的 steer）：把要插的那条提到队首，并打断当前回合——回合收尾
+   * 出账时它先落库，紧接着自动补一轮，模型下一句话就先看它。
+   *
+   * 为什么要打断：dsc 的收件箱本来就在**下一个步骤边界**自动并进当前回合
+   * （见 runTurn 里的 drainInbox(true)），所以「排在后面等」与「插话」的差别只剩
+   * 「模型现在正在吐的这段话要不要说完」。要更快，只能打断——半截回复按 T33 的
+   * 规矩保留为截断的 assistant 记录，输入一条不丢。
+   *
+   * @param index - 提到队首的那一条；省略则保持原顺序把整队送进去。
+   * @returns 是否真的插上了；agent 没在跑（队列马上就会自己出账）时返回 false。
+   */
+  steerQueued(index?: number): boolean {
+    if (!this.running) return false
+    // 队列空了就绝不打断：界面按「提交那一刻的队列长度」算下标，而这一轮可能在
+    // 提交与插话之间刚好跑完——那时消息已经作为新一轮发出去（不在队列里），
+    // 不设这道闸就会把刚开始的那一轮白打断。
+    const items = this.session.asyncInbox()
+    if (items.length === 0) return false
+    if (index !== undefined) {
+      if (items[index] === undefined) return false
+      this.session.promoteAsync(index)
+    }
+    this.deps.emit({ type: 'inbox' })
+    this.cancel()
+    return true
+  }
+
+  cancel(): void {
+    this.abort?.abort()
+  }
+
+  private enqueueTurn(): void {
+    if (this.running) {
+      this.pendingTurn = true
+      return
+    }
+    this.running = true
+    void this.runTurn()
+      .catch(() => {})
+      .finally(() => {
+        this.running = false
+        // 关窗补出账：turn/end 事件发在 runTurn 内部，事件监听里紧跟的 followup
+        // （界面解锁后用户立刻发话、探针连发两条）会在 running 仍为 true 时入箱，
+        // 而上一轮的收尾出账已经跑过——这里不补一次，这条输入就永远没人出账。
+        this.drainInbox(false)
+        if (this.pendingTurn) {
+          this.pendingTurn = false
+          this.enqueueTurn()
+        }
+        // 完全闲下来（没排下一轮）才报 idle：常驻注册表据此收掉「用户已经切走、
+        // 又没活干」的 agent，释放会话写租约；正被查看的 agent 由监听方自行豁免。
+        if (!this.running) this.deps.onIdle?.()
+      })
+  }
+
+  /**
+   * 收件箱出账：把排队中的异步输入落到对话历史。
+   *
+   * 两个调用点（对照 dsh 的 claim 时机）：
+   * - **步骤边界**（`midTurn = true`）：工具结果已闭合，消息以 steering 身份并入本轮，
+   *   下一轮请求自然带上——不多花回合。
+   * - **回合收尾**（`midTurn = false`）：消息悬在最后一条 assistant 之后，挂起
+   *   pendingTurn 让模型接话；正在跑的回合收不了尾时输入也不会丢。
+   *
+   * 0.6.67 起 user 事件在这里发（而不是入箱时）：排队的消息在这一刻才真正进对话，
+   * 界面上也就这一刻才画气泡——入箱期间它是输入框下方的队列条（快照的 `queued`）。
+   * `steering` 按出账时机标：步骤边界并进本轮的算轮中途插话（界面上带 ↩），
+   * 收尾出账的那批属于下一轮，不是插话。
+   */
+  private drainInbox(midTurn: boolean): void {
+    const items = this.session.takeAsyncInbox()
+    if (items.length === 0) return
+    for (const item of items) {
+      this.session.appendUser(item.text, item.images, item.files, item.origin)
+      this.deps.emit({
+        type: 'user',
+        text: item.text,
+        ...(item.images !== undefined && item.images.length > 0 ? { images: item.images } : {}),
+        ...(item.files !== undefined && item.files.length > 0 ? { files: item.files } : {}),
+        ...(midTurn ? { steering: true } : {}),
+        // 来源跟着出账（出账前它只用来分「队列条 / 通知条」两种排队画法）：机器投递的
+        // 那几条出账后仍是内部触发行，不会变成用户气泡（2026-11-02 报障）。
+        ...(item.origin === 'notice' ? { origin: item.origin } : {}),
+      })
+    }
+    if (!midTurn) this.pendingTurn = true
+  }
+
+  private async runTurn(): Promise<void> {
+    const abort = new AbortController()
+    this.abort = abort
+    // 0.6.48 常驻模型起一个 agent 只认一个会话：收尾聚合、收件箱出账都落在
+    // 自己的会话里，不存在「会话已切走」的归属问题。
+    this.turnActive = true
+    this.deps.emit({ type: 'turn/start' })
+    // T42：回合起点的 git 快照异步起跑，收尾才等它——write/edit 之外（bash/sed/构建
+    // 脚本）动过的文件靠「起点 vs 终点」的 porcelain 差集兜底进轮尾卡。
+    const gitStart = snapshotGitStatus(this.cwd)
+    try {
+      await this.deps.beforeRequest?.(abort.signal)
+      if (abort.signal.aborted) throw new Error('aborted')
+      for (;;) {
+        let result: StreamResult
+        try {
+          result = await this.requestOnce(abort.signal)
+        } catch (error) {
+          // 上下文爆窗：强制压缩一次再重试这轮请求（只试一次，压不出空间就把原错误抛回去）。
+          if (
+            abort.signal.aborted ||
+            this.deps.onContextOverflow === undefined ||
+            !isContextOverflowError(error)
+          ) {
+            throw error
+          }
+          if (!(await this.deps.onContextOverflow(abort.signal))) throw error
+          result = await this.requestOnce(abort.signal)
+        }
+        if (abort.signal.aborted) break
+        if (result.toolCalls.length === 0) break
+        await this.executeToolCalls(result, abort.signal)
+        // 步骤边界（对照 dsh 的 preStep claim）：上一步的结果已闭合，收件箱此刻出账
+        // 落库，下一轮请求自然带上——作业通知合并进本轮，不多花一个回合。
+        this.drainInbox(true)
+      }
+      this.deps.emit({ type: 'turn/end', reason: abort.signal.aborted ? 'aborted' : 'completed' })
+    } catch (error) {
+      if (abort.signal.aborted) {
+        this.deps.emit({ type: 'turn/end', reason: 'aborted' })
+      } else {
+        this.deps.emit({ type: 'error', message: errText(error) })
+        this.deps.emit({ type: 'turn/end', reason: 'error' })
+      }
+    } finally {
+      // turn/end 已经发出：从这一刻起 busy 不再把本回合算作「在跑」——
+      // 剩下的只有异步收尾（出账 + git 聚合），切走的归属决策不等它。
+      this.turnActive = false
+      this.abort = null
+      // 收尾出账：最后一步之后/流式定稿期间入箱的输入还欠着，这里落库（dsh：回合
+      // 不许隔着未交货的收件箱收尾）。落库后它们悬在最后一条 assistant 之后，补一轮
+      // 让模型接话。出错/打断一样算——输入不该因为回合失败而蒸发。
+      this.drainInbox(false)
+      // 收尾聚合（成功/中断/出错一样算——改了的文件如实展示）。条目按「下一条用户消息
+      // 之前归当前轮」的口径落位，晚于 turn/end 也能进这一轮的轮尾卡区间。
+      try {
+        const files = await this.session.takeTurnChanges()
+        // T42：git 快照差集补上 bash/脚本改的文件（write/edit 已记的路径不重复）
+        const extra = await collectGitTurnChanges(this.cwd, await gitStart, await snapshotGitStatus(this.cwd), files.map((file) => file.path))
+        files.push(...extra)
+        if (files.length > 0) this.deps.emit({ type: 'turn/diff', files })
+      } catch {
+        // 聚合失败不遮回合本身的结果
+      }
+    }
+  }
+
+  /**
+   * 一轮模型请求：流式增量 → emit；定稿 → 落库 + emit message/usage。
+   * T33：流已开始后中断且已收到内容时，半截先落库成截断的 assistant 记录，
+   * 再自动整轮重试一次（消息按会话现状重新组装——半截已经在里面了，模型顺着续）。
+   */
+  private async requestOnce(signal: AbortSignal): Promise<StreamResult> {
+    // 这一步的墙钟读数（随 usage 事件出账，界面算输出速度与首字延迟，算法见
+    // core/throughput.ts）：起点放重试循环外面——一步之内重试几次都算这一步，
+    // 与 dsh 的 step/start → assistant/message 边界同一口径。
+    const startedAt = Date.now()
+    let firstTokenAt: number | null = null
+    for (let attempt = 1; ; attempt += 1) {
+      const route = this.deps.route()
+      const tools = this.deps.tools()
+      // 这一刻的目录就是这一轮模型看到的目录，执行也按它解析（见 requestTools）
+      this.requestTools = tools
+      // 系统提示只拼一次：真请求与 invariant 重建侧用同一份文本（重建比的是投影链，
+      // 不是提示词生成本身）。
+      const systemText = this.deps.systemPrompt()
+      const assembled: ChatMessage[] = [{ role: 'system', content: systemText }, ...this.session.messages]
+      // 投影链跑之前拍一份输入快照：之后比对「投影有没有就地改它拿到的输入」
+      //（就地改会污染与会话日志共享的消息对象，比结果不一致更隐蔽）。没有 rewrite 就不必拍。
+      const pristine = this.deps.rewrite === undefined ? undefined : snapshotMessages(assembled)
+      const messages =
+        this.deps.rewrite === undefined ? assembled : this.deps.rewrite(assembled, this.session)
+      // 组装与发送之间：校验「发出去的这份」能不能从日志 + 投影链重建。
+      // 只报不杀——不一致也照发，理由见 core/request-invariant。
+      if (pristine !== undefined) this.checkRequestInvariant(messages, pristine, assembled, systemText)
+      // context 条的分段在请求组装完、流还没开的时候画出来：模型还没吐字，
+      // 界面就能显示这次的上下文由什么组成（每次重算，压缩/滚出自动重置）。
+      this.deps.emit({
+        type: 'context',
+        // 第二项是工具定义（本次请求的 schema 文本）：它同样每次都被发一遍、同样计输入 token，
+        // 以前完全没进分段，界面上那一段「工具定义」其实指的是工具结果（见 token-estimate.ts）。
+        segments: estimateRequestSegments(messages, describeToolSchema(this.requestTools)),
+      })
+      try {
+        const result = await this.deps.stream(
+          route.api,
+          {
+            baseUrl: route.baseUrl,
+            apiKey: route.apiKey,
+            model: route.model,
+            // 这次请求属于**这个 agent 自己的会话**，不是「当前查看的会话」：
+            // 常驻多 agent 下后台会话照样在跑，端点要的会话归因头得认对归属
+            // （路由与 prompt 缓存都按它算）。别的调用方（压缩/标题/审批）没有
+            // 会话在手上，由 llm 服务的派发口兜底填当前会话。
+            sessionId: this.session.meta.id,
+            messages,
+            maxTokens: route.maxTokens,
+            temperature: route.temperature,
+            thinking: route.thinking,
+            reasoningEffort: route.reasoningEffort,
+            // 显式缓存断点跟着路由走：端点没声明就是 undefined，请求体一个字节不变
+            cacheControl: route.cacheControl,
+            signal,
+            ...(tools.length > 0
+              ? {
+                  tools: tools.map(
+                    (tool): ToolSchema => ({
+                      name: tool.name,
+                      description: tool.description,
+                      parameters: tool.parameters,
+                    }),
+                  ),
+                }
+              : {}),
+          },
+          {
+            onDelta: (kind, text) => {
+              // 第一口输出定下首字延迟的终点；之后每一口都不再动它
+              if (firstTokenAt === null) firstTokenAt = Date.now()
+              this.deps.emit({ type: 'delta', kind, text })
+            },
+            // 「模型决定要调什么」与「工具真的开跑」之间那段真空，界面上靠这一条才有线索。
+            // 工具名同样是模型的输出 token（对照 dsh 的 isTokenDelta：具名工具增量算首 token），
+            // 所以它也要参与首字延迟——只出工具调用、不吐正文的一步否则就没有首字时刻了。
+            onToolPrepare: (name) => {
+              if (firstTokenAt === null) firstTokenAt = Date.now()
+              this.deps.emit({ type: 'tool/prepare', name })
+            },
+            // 重试发生在 llm 层内部，不透出来用户只会觉得界面莫名卡了几秒
+            onRetry: (attempt, reason) => this.deps.emit({ type: 'model/retry', attempt, reason }),
+          },
+        )
+        this.session.appendAssistant(result.text, result.reasoning, result.toolCalls)
+        const timing = stepTiming(startedAt, firstTokenAt, Date.now())
+        this.deps.emit({
+          type: 'message',
+          text: result.text,
+          reasoning: result.reasoning,
+          finishReason: result.finishReason,
+          // 工具调用跟消息一起给：dsh 的 assistant/message 是「正文 + 工具调用」一条，
+          // 只听 tool/call 重建不出这条消息（兼容层派发 session/event 时要用）。
+          toolCalls: result.toolCalls.map((call) => ({ id: call.id, name: call.name, arguments: call.arguments })),
+        })
+        if (result.usage !== null) {
+          this.deps.emit({
+            type: 'usage',
+            inputTokens: result.usage.inputTokens,
+            outputTokens: result.usage.outputTokens,
+            ...(result.usage.cacheHitTokens === undefined ? {} : { cacheHitTokens: result.usage.cacheHitTokens }),
+            ...(result.usage.cacheMissTokens === undefined ? {} : { cacheMissTokens: result.usage.cacheMissTokens }),
+            model: route.model,
+            ...timing,
+          })
+        }
+        return result
+      } catch (error) {
+        if (!(error instanceof StreamInterruptedError) || signal.aborted || attempt > STREAM_RECOVERY_ATTEMPTS) throw error
+        this.persistPartial(error.partial)
+        this.deps.emit({
+          type: 'model/retry',
+          attempt: attempt + 1,
+          reason: `流中断，已保留半截回复并重试：${error.message}`,
+        })
+      }
+    }
+  }
+
+  /** T33：把流中断的半截回复落库（截断的 assistant 记录，不带工具调用——参数可能不完整）。 */
+  private persistPartial(partial: StreamResult): void {
+    this.session.appendAssistant(partial.text, partial.reasoning, [])
+    this.deps.emit({
+      type: 'message',
+      text: partial.text,
+      reasoning: partial.reasoning,
+      finishReason: 'interrupted',
+    })
+  }
+
+  /**
+   * 运行时请求 invariant：把「日志 + 投影链」再跑一遍，比对这次真发出去的消息。
+   *
+   * 只报不杀：dsh 在这里 fail（杀请求），dsc 选择报出但不打断——报出来人还能去查是哪条
+   * 投影坏了，杀掉只会让用户丢一轮对话。校验本身崩了也绝不连累请求。
+   *
+   * 重建侧从「日志现状」再快照一份喂进投影链：用独立副本，校验自己绝不动会话日志。
+   */
+  private checkRequestInvariant(
+    sent: readonly ChatMessage[],
+    pristine: readonly ChatMessage[],
+    assembled: readonly ChatMessage[],
+    systemText: string,
+  ): void {
+    const rewrite = this.deps.rewrite
+    if (rewrite === undefined) return
+    try {
+      const derived = rewrite(
+        snapshotMessages([{ role: 'system', content: systemText }, ...this.session.messages]),
+        this.session,
+      )
+      const report = checkReconstructable(sent, derived, { before: pristine, after: assembled })
+      if (report.ok) return
+      this.reportInvariant(
+        `请求 invariant：模型这次看到的消息与日志可重建的对不上 —— ${report.reason ?? '（无详情）'}。请求照常发出，这只影响本次告警。`,
+        report.digest ?? 'unknown',
+      )
+    } catch (error) {
+      this.reportInvariant(`请求 invariant 这轮没跑成，已跳过：${errText(error)}`, 'error')
+    }
+  }
+
+  /** 报一次 invariant 提醒：同一形状只报一次（不刷屏），经 deps.notice 接成 dsc/notice。 */
+  private reportInvariant(text: string, digest: string): void {
+    if (this.lastInvariantDigest === digest) return
+    this.lastInvariantDigest = digest
+    // 终端日志留一份（排查时看得到），用户可见的那份走 dsc/notice。
+    console.warn(`[dsc] ${text}`)
+    this.deps.notice?.(text)
+  }
+
+  /**
+   * 执行（或拒绝）本轮全部工具调用，append 对应 tool 消息。
+   *
+   * 并行策略（2026-09-29）：守卫链与审批卡必须串行问（一次只能弹一张卡），
+   * 但「只读且放行」的调用不必等前一个跑完——先起飞，等撞上第一个写/执行调用
+   * 或本轮收尾时一起收割；结果永远按模型给的顺序落库，协议形状不变。
+   */
+  private async executeToolCalls(result: StreamResult, signal: AbortSignal): Promise<void> {
+    // 用**这一轮请求发出去的那份**目录解析名字，不再现取一次：模型是照那份 schema
+    // 喊名字的，两次取值之间注册表一变（换模式、插件热插拔），合法调用会被判成
+    // 「未知工具」——错的不是模型，是这里取了第二份。没有快照时（不该发生）才现取。
+    const registry = new Map((this.requestTools ?? this.deps.tools()).map((tool) => [tool.name, tool]))
+    /** 已起飞还没落库的只读调用。 */
+    let flying: Array<{ call: ToolCall; outcome: Promise<ToolOutcome> }> = []
+    const flushFlying = async (): Promise<void> => {
+      const batch = flying
+      flying = []
+      const outcomes = await Promise.all(batch.map((item) => item.outcome))
+      for (const [index, outcome] of outcomes.entries()) {
+        this.finishCall(batch[index]!.call, outcome)
+      }
+    }
+    for (const call of result.toolCalls) {
+      // 已打断：在飞的收尾，之后每一条没开始的调用都补一条合成结果——
+      // 协议要求 assistant 的每个 tool_call 都有对应 tool 消息，缺一条下轮请求就 400。
+      if (signal.aborted) {
+        await flushFlying()
+        for (const rest of result.toolCalls.slice(result.toolCalls.indexOf(call))) {
+          this.finishCall(rest, { text: '用户取消，调用未执行', stored: '用户取消，调用未执行', error: 'tool-error' })
+        }
+        return
+      }
+      this.deps.emit({ type: 'tool/call', callId: call.id, name: call.name, args: call.arguments })
+      this.callStartedAt.set(call.id, Date.now())
+      const tool = registry.get(call.name)
+      if (tool === undefined) {
+        await flushFlying()
+        this.finishCall(call, { text: `未知工具：${call.name}`, stored: `未知工具：${call.name}`, error: 'tool-error' })
+        continue
+      }
+      let args: Record<string, unknown>
+      try {
+        args = JSON.parse(call.arguments) as Record<string, unknown>
+      } catch {
+        await flushFlying()
+        this.finishCall(call, {
+          text: `参数不是合法 JSON：${summarizeArgs(call.arguments)}`,
+          stored: `参数不是合法 JSON：${summarizeArgs(call.arguments)}`,
+          error: 'tool-error',
+        })
+        continue
+      }
+      // 一次调用动手之前先问守卫链：模式档不许改文件、免打扰档不许弹卡、审批卡等人点头，
+      // 这些都是链上的人自己说的，循环不知道也不该知道是谁。守卫（含审批卡）必须串行问。
+      //
+      // 桥接工具（tool_call）在这里脱下自己的名字：问的是被它转调的那条工具的真名、真实风险与
+      // 真实参数（2026-10-30 修）。不这么做就有两张卡：第一张写「调用 tool_call」，第二张才
+      // 写真实工具，用户既看不出要动什么、又要为同一件事点两次。桥自己不再判一遍——
+      // 它只认 gateAs 认不出的情况（名字拼错、参数坏掉），那时按桥判定，仍然只问一遍。
+      const gateInput = gateIdentity(tool, args, this.cwd)
+      const verdict = await this.deps.guards.gate({
+        toolName: gateInput.name,
+        risk: gateInput.risk,
+        cwd: this.cwd,
+        args: gateInput.args,
+        signal,
+        // 发起调用的会话身份：审批授权按会话记账、审批卡标明来处都靠它（0.6.48）
+        sessionId: this.session.meta.id,
+        sessionPath: this.session.filePath,
+        ...callFacts(gateInput.args, this.cwd),
+      })
+      if (verdict.action === 'deny') {
+        await flushFlying()
+        this.finishCall(call, { text: verdict.reason, stored: verdict.reason, error: 'rejected' })
+        continue
+      }
+      if (gateInput.risk === 'read') {
+        // 只读且放行：起飞不阻塞；落库顺序由 flushFlying 保证。
+        flying.push({ call, outcome: this.runTool(call, tool, args, signal) })
+        continue
+      }
+      // 写与执行不和在飞的只读并发：先把它们收干净再动手。
+      await flushFlying()
+      this.finishCall(call, await this.runTool(call, tool, args, signal))
+    }
+    await flushFlying()
+  }
+
+  /** 跑一个工具调用并把异常折进结果里（永不 reject），正文先过遮红观察者链。 */
+  private async runTool(
+    call: ToolCall,
+    tool: ToolEntry,
+    args: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<ToolOutcome> {
+    try {
+      const output = await tool.run(args, {
+        cwd: this.cwd,
+        signal,
+        // 工具生成的后续产物（后台作业完成通知等）按会话归属投递（0.6.48）
+        sessionId: this.session.meta.id,
+        sessionPath: this.session.filePath,
+      })
+      const rawText = typeof output === 'string' ? output : output.text
+      // 工具结果里的密钥形状字符串不进会话日志，也不回显给模型（遮红挂在观察者链上）。
+      const text = this.deps.guards.observe(call.name, rawText)
+      const images = typeof output === 'string' ? undefined : output.images
+      // 改动清单：单值（write / edit 一刀一个文件）与清单（PTC 一段脚本改多个文件）合起来看。
+      // 这里保留 baseline，落盘时再剥——回合基线记账要它（见 finishCall）。
+      const changesList =
+        typeof output === 'string'
+          ? []
+          : [...(output.changes === undefined ? [] : [output.changes]), ...(output.changesList ?? [])]
+      // dsh 插件给的卡片数据（presentCall / presentResult / presentationMeta）：原样带走，
+      // 让它随工具记录落盘、重放时还能重建卡片。
+      const presentation = typeof output === 'string' ? undefined : output.presentation
+      // baseline 是回合基线记账的内存字段：落盘形状里不留它（事件走 stripBaseline）。
+      const clean = changesList.map(stripBaseline)
+      const untouched = text === rawText && clean.length === 0 && presentation === undefined
+      const stored: string | {
+        text: string
+        images?: string[]
+        changes?: FileChangeSummary | FileChangeSummary[]
+        presentation?: ToolPresentation
+      } =
+        untouched
+          ? output
+          : {
+              text,
+              ...(images !== undefined && images.length > 0 ? { images } : {}),
+              // 单个文件写单值（与老日志同形，读的时候两边都认），多个文件写数组
+              ...(clean.length === 0 ? {} : { changes: clean.length === 1 ? clean[0]! : clean }),
+              ...(presentation === undefined ? {} : { presentation }),
+            }
+      const imageNote = images !== undefined && images.length > 0 ? `\n[附 ${images.length} 张截图]` : ''
+      return {
+        text: text + imageNote,
+        stored,
+        ...(changesList.length === 0 ? {} : { changesList }),
+        ...(presentation === undefined ? {} : { presentation }),
+      }
+    } catch (error) {
+      const message = errText(error)
+      return { text: message, stored: message, error: 'tool-error' }
+    }
+  }
+
+  /** 落库一条 tool 消息并广播结果事件。 */
+  private finishCall(call: ToolCall, outcome: ToolOutcome): void {
+    const startedAt = this.callStartedAt.get(call.id)
+    this.callStartedAt.delete(call.id)
+    this.session.appendTool(call.id, call.name, outcome.stored, outcome.error)
+    this.deps.emit({
+      type: 'tool/result',
+      callId: call.id,
+      text: outcome.text,
+      ...(outcome.error !== undefined ? { error: outcome.error } : {}),
+      // done / failed / rejected 一视同仁：跑挂了、被审批拒掉、半路被打断的调用同样
+      // 占用了这段时间（与 adapter 里工具卡 durationMs 同一口径）
+      ...(startedAt === undefined ? {} : { ms: Math.max(0, Date.now() - startedAt) }),
+    })
+    // 成功的落盘类调用随带真实改动：界面聚合成轮尾「文件已更改」卡。
+    // 一次调用可能动了多个文件（PTC 的 run_code）：逐个记基线、逐个发事件，
+    // 同文件多刀由 recordTurnChange 的「首次为准」保证基线还是回合起点。
+    if (outcome.error === undefined && outcome.changesList !== undefined) {
+      for (const change of outcome.changesList) {
+        // 改前全文记进回合基线：轮尾聚合 diff = 回合起点 vs 盘上终态（同文件多刀合一）
+        if (change.baseline !== undefined) this.session.recordTurnChange(change.path, change.baseline)
+        this.deps.emit({ type: 'tool/changes', callId: call.id, change: stripBaseline(change) })
+      }
+    }
+    // dsh 插件的卡片数据（没失败才发）：界面按 card 标签挑形态，没认出来的回落通用卡
+    if (outcome.error === undefined && outcome.presentation !== undefined) {
+      this.deps.emit({ type: 'tool/presentation', callId: call.id, presentation: outcome.presentation })
+    }
+  }
+}
+
+export { LlmError }
+
+/**
+ * 把本次要发的工具定义拼成一段可估算的文本。
+ *
+ * 只取 name / description / parameters 三个真正上线的字段——别的字段（risk、presets 这类
+ * 本地元数据）不随请求发出去，算进去就成了虚数。数组顺序就是发送顺序，同一份工具集
+ * 每次拼出来逐字节一致（估算值因此也稳定）。
+ */
+function describeToolSchema(tools: readonly ToolEntry[]): string {
+  if (tools.length === 0) return ''
+  return JSON.stringify(
+    tools.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
+  )
+}
+
+/** 一次工具调用的落库与广播产物（runTool 保证永不 reject）。 */
+type ToolOutcome = {
+  /** 发给界面与模型的文本（已过遮红；带图时附截图说明）。 */
+  text: string
+  /** 落进会话日志的形状（带图 / 带文件改动时是对象）。 */
+  stored: string | { text: string; images?: string[]; changes?: FileChangeSummary | FileChangeSummary[] }
+  /** undefined = 成功；tool-error = 执行失败；rejected = 被守卫拒绝。 */
+  error?: 'tool-error' | 'rejected'
+  /**
+   * 这次调用实际改动的文件（可能多个：PTC 一段脚本改几处）。
+   * 元素里带着 baseline（改前全文，纯内存），发事件与落盘前各自剥掉。
+   */
+  changesList?: FileChangeSummary[]
+  /** 工具给的卡片数据（dsh 插件才有；发 `tool/presentation` 事件、随记录落盘）。 */
+  presentation?: ToolPresentation
+}

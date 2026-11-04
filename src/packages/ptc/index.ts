@@ -32,7 +32,7 @@ import {
 } from '@pneuma/runtime/core/ptc.js'
 import { resolvePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 
-/** PTC 的模式名（与 core/presets.ts 的 PTC_PRESET 同一个值）。 */
+/** PTC 的模式名（与 packages/config-core/presets.ts 的 PTC_PRESET 同一个值）。 */
 const PTC_PRESET = 'ptc'
 
 const RUN_CODE_DESCRIPTION = (deadlineMs: number): string => `用一段 JavaScript 批量调用工具，在代码里筛选汇总，只把结论交回来。

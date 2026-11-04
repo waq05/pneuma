@@ -20,7 +20,7 @@ import { Box, Text, useInput } from 'ink'
 import type { DOMElement } from 'ink'
 import type { JSX } from 'react'
 import type { ModelChoiceView } from '@pneuma/runtime/contract.js'
-import { completionsFor, expandCommand, inputClaimOf } from '@pneuma/runtime/core/commands-completion.js'
+import { completionsFor, expandCommand, inputClaimOf } from '@pneuma/commands-core/commands-completion.js'
 import type { CompletionItem } from '@pneuma/runtime/services/types.js'
 import {
   collectWorkspaceFiles,

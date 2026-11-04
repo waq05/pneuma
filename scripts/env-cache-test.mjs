@@ -114,7 +114,7 @@ async function serve() {
 const site = await serve()
 const { createKernel } = await import('../lib/host/kernel.js')
 const { serializeMessages, applyExplicitCache } = await import('../lib/core/llm.js')
-const { buildSystemPrompt, DEFAULT_INSTRUCTION_BUDGET } = await import('../lib/core/prompt.js')
+const { buildSystemPrompt, DEFAULT_INSTRUCTION_BUDGET } = await import('../lib/packages/session-core/prompt.js')
 
 const model = {
   id: 'm',

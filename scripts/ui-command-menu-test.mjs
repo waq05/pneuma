@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url'
 // 界面半的新旧根由 resolveUiHalf 判：transcript 已搬进宿主包，旧根那条只剩兜底。
 const UI = resolveUiHalf('transcript')
 
-const core = await import('../lib/core/commands-completion.js')
+const core = await import('../lib/packages/commands-core/commands-completion.js')
 const { shellCommands, shellCommandRejection, isShellCommand, addExtraSpec, removeExtraSpec, BUILT_IN_COMMANDS, expandCommand, shellHelpText } = core
 const { UI_METHODS, UI_EXCLUDED, UI_ARG_SPECS } = await import('../lib/core/ui-methods.js')
 const { INVOKABLE_METHODS } = await import('../lib/core/host-methods.js')
@@ -183,7 +183,7 @@ console.log('\n[3] 白名单与两侧接线')
   check('列表与派发共用一份 UI 回调（notice 落会话，壳直接读得到）', runtime.includes('function commandUi(') && runtime.includes('commandUi(true)'), '')
   check('壳这条通道给命令表打上 shell 标记（/help 据此只列能跑的）', runtime.includes('commandUi(true)') && runtime.includes('shell ? { shell: true }'), '')
   check('/help 按通道给文本', read('src/packages/commands/index.ts').includes('ui.shell === true ? shellHelpText()'), '')
-  const core = read('src/core/commands-completion.ts')
+  const core = read('src/packages/commands-core/commands-completion.ts')
   check('尺子写在命令表旁边（shell: true 那段注释在）', core.includes('shell: true') && core.includes('失败关闭'), '')
   const spec = read('src/services/types.ts')
   check('CommandSpec 有 shell 一位并写了失败关闭', /shell\?: boolean/.test(spec) && spec.includes('失败关闭'), '')

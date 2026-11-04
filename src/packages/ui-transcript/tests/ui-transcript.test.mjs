@@ -23,10 +23,10 @@ check('apply 是空实现：不吃参数、调用不做任何事', () => {
   assert.equal(mod.apply(), undefined)
 })
 check('package.json：order 368（界面段里 transcript 的位置）', () => assert.equal(manifest.pneuma.order, 368))
-check('界面半的声明在：./client 指到 ui/ui.tsx，dsh.client 写了平台与 API', () => {
+check('界面半的声明在：./client 指到 ui/ui.tsx，pneuma.client 写了平台与 API', () => {
   assert.equal(manifest.exports['./client'], './ui/ui.tsx')
-  assert.equal(manifest.dsh.client.platform, 'pneuma')
-  assert.equal(manifest.dsh.client.api, '^0.8.1')
+  assert.equal(manifest.pneuma.client.platform, 'pneuma')
+  assert.equal(manifest.pneuma.client.api, '^0.8.1')
 })
 check('行 id 与导出的 name 一致，行的 name 是这个包', () => {
   const rowId = /- id: (\S+)/.exec(patch)[1]

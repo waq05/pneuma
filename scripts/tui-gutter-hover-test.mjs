@@ -28,6 +28,7 @@ process.env.USERPROFILE = home
 process.env.DSC_HOME = join(home, '.dsc')
 
 const { App } = await import('../lib/packages/tui/app/App.js')
+import { dispatchCommand } from './_tui-commands.mjs'
 const { parseMouse } = await import('../lib/packages/tui/app/mouse.js')
 const { clearPointer, onGutter, publishPointer, readPointer } = await import('../lib/packages/tui/app/pointer.js')
 const { RAIL_WIDTH } = await import('../lib/packages/tui/app/scroll-model.js')
@@ -161,7 +162,7 @@ async function mountApp({ entries, columns = 100, rows = 40 }) {
   stdout.isTTY = false
   let output = ''
   stdout.on('data', (chunk) => { output += String(chunk) })
-  render(React.createElement(App, { runtime }), { stdin, stdout, exitOnCtrlC: false, patchConsole: false })
+  render(React.createElement(App, { runtime, dispatchCommand }), { stdin, stdout, exitOnCtrlC: false, patchConsole: false })
   await sleep(240)
   /** 最近一屏（非 TTY 时整帧追加，取尾部 rows − 1 行）。没有新帧就沿用上一屏。 */
   let lastScreen = []

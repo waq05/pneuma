@@ -3,7 +3,7 @@
  * 内置命令改为注册表条目，外部插件经 ctx.commands.register 注入新命令后
  * 自动进入 /help、补全与派发。
  *
- * spec 表与补全函数都在 core/commands-completion.ts（渲染层直接 import 那份；
+ * spec 表与补全函数都在 packages/commands-core/commands-completion.ts（渲染层直接 import 那份；
  * 本模块顶层的 node 内置模块会把渲染进程炸成白屏——取数走 core/git-info）。
  *
  * @module dsc/plugins/commands
@@ -28,7 +28,7 @@ import {
   reviewTaskText,
   type ReviewTarget,
 } from '@pneuma/runtime/core/git-info.js'
-import { estimateTokens } from '@pneuma/runtime/core/compact.js'
+import { estimateTokens } from '@pneuma/session-core/compact.js'
 import { exportSessionMarkdown } from './session-export.js'
 import { checkForUpdate } from '@pneuma/runtime/core/update-check.js'
 import { errText } from '@pneuma/runtime/core/err-text.js'
@@ -44,7 +44,7 @@ import {
   helpText,
   removeExtraSpec,
   shellHelpText,
-} from '@pneuma/runtime/core/commands-completion.js'
+} from '@pneuma/commands-core/commands-completion.js'
 
 /** 当前壳的 `@dsc/ui` 契约版本（内置清单顶层那个）；读不到就不设门（发现层会给出问题清单）。 */
 function shellApiVersionForTrust(): string | undefined {

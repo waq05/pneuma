@@ -161,14 +161,14 @@ lib/packages/<id>/package.json + cordis.patch.yml + index.js   # 构建产物
 pnpm run typecheck && pnpm --dir desktop typecheck
 pnpm run build && pnpm run build:ui
 pnpm run check:style --changed
-pnpm run check:plugin                # 模型检查 + 包标准六条 + 清单快照 + 加载器 92 条 + list 15 条 + 换包 e2e 17 条
+pnpm run check:plugin                # 模型检查 + 包标准七条 + 清单快照 + 加载器 92 条 + list 15 条 + 换包 e2e 17 条
 node scripts/check-core.mjs          # 97 套（hmr-dispose-test、plugin-hot-update-test 自动进来）
 node scripts/ops-test.mjs
 pnpm run check:dsh
 ```
 
 `check:plugin` 的五个脚本分工：`plugin-model-check --strict`（结构：包数 / 行数 / 内核行数 / 缺口）、
-`plugin-standard-check`（包标准六条硬项：清单字段 / exports 键集 / 行 / 入口导出 / 包间 import / order 撞号；另有 README、tests 两条待办只提示）、
+`plugin-standard-check`（包标准七条硬项：清单字段 / exports 键集 / 行 / 入口导出 / 包间 import / order 撞号；文档与测试两项已升为硬项；模块级可变状态仍只提示）、
 `plugin-inventory-check`（清单与该在的样子的逐项 diff）、`plugin-model-test`（加载器行为）、
 `plugin-list-test`（用户看得见的那一屏）、`plugin-swap-e2e`（真进程里换包 / 覆盖 / 删包）。
 
@@ -341,7 +341,7 @@ numa 对应：
 - **可变成插件**：`ui-layout`（先拆 `@dsc/ui` 的 static 转出，否则两份实现）、`ui-renderer` 的「取图 + 建会话」（前提是把 App 的 7 个 props 改成服务）；
 - **留在种子表**：`ui-slots`/`ui-primitives`/`ui-dockkit`；
 - **TUI**：dsh 没有对应物（无 ink 依赖、无 TUI 文档），拆包前要先做组件树分层、槽位表扩到 4–5 个、状态来源从「整份 DscRuntime 当 prop」改成服务订阅；
-- **CLI**：532 行，做成一个 `@pneuma/cli` 包 + 子命令注册表，保住 `bin/dsc.js` 零依赖保命设计。
+- **CLI**：435 行，已搬成 `@pneuma/cli` **库包**（`src/packages/cli/`）。为什么是库包：两个子命令在**内核起来之前**跑（`bin/dsc.js` 直接 spawn 产物），给它一行装配只会得到一个「开不开都一样」的开关。`index.ts` 导出 `CLI_ENTRIES`（子命令 → 产物文件名），`bin/dsc.js` 仍零依赖、只拼路径。
 
 ### 12.7 Q4 实现搬包：硬规则与分档（2026-11-04 勘查）
 
@@ -392,6 +392,12 @@ numa 对应：
 | 一 | sandbox 17 件、lsp 7 件、self-improve 3 件、computer-use / ops / approval-floor / lifecycle-hooks / microcompact / settings / commands / prompt / surfaces 各若干 | 见 §9–§11 |
 | 二 | `mcp.ts`→`mcp`、`memory.ts`/`memory-eval.ts`→`memory`、`tools/{bash,image-tool,search-tools}.ts`→`tools-default`、`call-meaning.ts`/`approval.ts`→`approval`、`agent-roles.ts`→`subagent` | 11 个文件 / 5,954 行，桩 11 行 |
 | 三 | `session-index.ts`→`session-search`、`tool-search.ts`→`tool-search` | 2 个文件 / 1,336 行 |
+| 四（Q4-b2） | `hooks`/`compact`/`prompt`/`loop`/`modes`→`session-core`；`permission-scope`/`permission-presets`→`permission-core`；`presets`/`market`→`config-core`；`commands-completion`→`commands-core` | 10 个文件 → 4 个库包，71 处说明符 |
+
+**第四批为什么可以直接搬（与第三批的硬规则不冲突）**： §12.7 挡的是「内核还 import 它」的模块——那种一搬就成两份实例。
+这 10 个逐个 grep 过：**没有任何 `src/core` 文件 import 它们**，引用方全在 `src/packages/*` 与 `src/services/*`。
+搬进库包后它们多了一个换代资格，而同一个库被所有引用方共读，换代时 `registerLibraryGenerationRoots` 会把这些行一起重挂，
+不存在「一半新一半旧」。**不留转发桩**：`src/core/<模块>.ts` 直接消失（桩只会留下一份不换代的老副本）。
 
 **为什么 `tools/command-runner.ts` 搬不走**：它有一张模块级 Map（正在跑的命令）。`bash.ts` 与 `sandbox/index.ts` 必须拿到**同一个**实例，而代数戳只打在 `lib/packages/**` 上——搬进包就等于给它换代资格，内核算旧表、包算新表，沙箱判定会 fail-open。所以 `bash.ts` 搬进包、`command-runner` 留在内核，包用相对路径 import 内核那一份（`packages/tools-default/bash.ts:18`）。
 
@@ -425,3 +431,24 @@ numa 对应：
 3. **26 支探针按路径读样式源码做断言**（`ui-attach-preview-test`、`ui-color-fallback-test` 等）。搬家必须同批改，否则断的是"断言读不到文件"，而不是样式回归。
 
 **`ui-shell/` 现在只剩构建装置**：`packages.json`（别名唯一真源）、`tsconfig.json`、`vite.config.ts`、`build-plugins.mjs`、`build-types.mjs`、`index.html`、`src/plugin-api.ts`（`@dsc/ui` 的类型面）、`src/slot-contract.typecheck.tsx`。这里不是"代码放错了地方"，是"壳的构建配方放这里"——产物落点、产物 id 换算、种子表都在其中。
+### 12.11 Q6 落地：七条硬项与两处故意不对齐（2026-11-04）
+
+**已升成硬项（不通过就退出 1）**：
+
+| 项 | 判据 | 现在 |
+|---|---|---|
+| 清单字段 | name / 0.0.0 / private / type:module / exports 两个基础键 / engines.pneuma / cordis peer | 81/81 |
+| exports 键集 | 只许 `.`、`./client`、`./package.json`、`./locale/*.json`；库包额外许 `./x.js`，且键与目标一字不差 | 81/81 |
+| 行 id 与 name | cordis.patch.yml 恰好一条 insert，行 id = 目录名，行 name = 包名 | 75/75 |
+| 入口导出 | index.ts 有 apply / default / 恰好一个带 apply 的插件对象 | 75/75 |
+| 依赖方向 | 功能→库允许；功能→功能、库→任何包、core→任何包都红（含 import type） | 81/81 |
+| order 撞号 | 每个功能包的 pneuma.order 唯一 | 75/75 |
+| 文档与测试 | README 有 Model Experience / Known Limitations 两节；tests/ 下至少一个 *.test.mjs | 86/86 |
+
+第 7 项这次从「待办只提示」升级成硬项。理由是这两件事都不是有空再补的装饰：README 两段是给**模型**看的（这段代码在什么场景下被用到、边界在哪），tests 是给**改这个包的人**看的护栏。只有目录没有文件的那种「看起来有测试」最坏，所以判据落在文件上，不看目录。
+
+**故意不对齐 dsh 的两处**（理由写在这，避免下次又被当成遗漏）：
+
+1. **源码清单的 version 固定 0.0.0，构建时改写成根版本**（`scripts/build-packages.mjs:136`）。dsh 有 370 个包、每个都维护真实版本号，因为它逐包发到 npm；numa 只发一个包（`files: [bin, lib, package.json]`），81 个包目录是构建期产物、从不单独发布。让 81 个文件跟着根版本走，只会在每次发版时制造 81 处可漂移的地方。单一版本源就是根 package.json，构建时注入；门禁要求源码期必须是 0.0.0，防手改。
+2. **写 pneuma.client，读 pneuma.client 与 dsh.client 两处**：我们自己那 19 个界面包写 pneuma.client（本项目命名空间），读的一侧同时认 dsh.client——真实 dsh 生态里有 90 个包写的是 dsh.client，那是别人发布的，不能要求他们改。读两处、写一处，兼容但不将就。
+

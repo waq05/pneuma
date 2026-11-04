@@ -310,7 +310,7 @@
 - 已知边界：审查面板纯只读（无部分行接受）；bash/sed 改的文件不进第一方归因卡（靠 git 页签兜底）
 
 ### 6. 命令系统 ——【完整】
-- 内置 **25 条**（`src/core/commands-completion.ts:32-78`，单一真源）：`/new` `/resume` `/agents` `/compact` `/model` `/policy` `/reviewer` `/permission` `/effort` `/thinking` `/fork` `/plugins` `/ui-trust` `/update` `/status` `/usage` `/diff` `/copy` `/export` `/review` `/review-status` `/review-cancel` `/settings` `/help` `/exit`
+- 内置 **25 条**（`src/packages/commands-core/commands-completion.ts:32-78`，单一真源）：`/new` `/resume` `/agents` `/compact` `/model` `/policy` `/reviewer` `/permission` `/effort` `/thinking` `/fork` `/plugins` `/ui-trust` `/update` `/status` `/usage` `/diff` `/copy` `/export` `/review` `/review-status` `/review-cancel` `/settings` `/help` `/exit`
 - **回合中可用性声明矩阵**：`duringTask: 'deny'` 的五条（`/new` `/resume` `/compact` `/fork` `/update`）在回合跑动时挡下，其余随时可用；壳的派发闸与菜单读同一份 spec
 - 插件注册约 21 条（`/search` `/plugins` `/floor` `/hooks` `/learn` `/learnings` `/lifecycle-hooks` `/memory` `/mode` `/sandbox` `/schedule` `/skills` `/skills-ledger` `/todo` `/goal` `/browser` 等）
 - 补全：命令前缀候选 + `/model` 参数级候选 + 唯一前缀自动展开（渲染层/TUI/插件共用同一纯模块）；菜单三列「中文名 + 英文名 + 说明」
@@ -318,8 +318,8 @@
 - 已知边界：无 `@session` 跨会话引用
 
 ### 7. 上下文工程 ——【完整】
-- system prompt 分段注册（稳定在前缓存友好）；AGENTS.md / CLAUDE.md 发现链：有 git 仓库时按 project root → cwd 有序发现，另有 `AGENTS.override.md` 与 `*.local.md` 覆盖层，20k 预算头尾保留（`src/core/prompt.ts:74,127-130,159`）
-- compact：手动 `/compact` + 自动阈值（80%×contextWindow，CJK 感知），保头折尾 + 锚点索引 + 用户原话逐字 + 细节找回指针；**压缩前先机械瘦身**（超长工具结果换指针、图像按预算卸载，`src/core/compact.ts:41-55,91-116`）
+- system prompt 分段注册（稳定在前缓存友好）；AGENTS.md / CLAUDE.md 发现链：有 git 仓库时按 project root → cwd 有序发现，另有 `AGENTS.override.md` 与 `*.local.md` 覆盖层，20k 预算头尾保留（`src/packages/session-core/prompt.ts:74,127-130,159`）
+- compact：手动 `/compact` + 自动阈值（80%×contextWindow，CJK 感知），保头折尾 + 锚点索引 + 用户原话逐字 + 细节找回指针；**压缩前先机械瘦身**（超长工具结果换指针、图像按预算卸载，`src/packages/session-core/compact.ts:41-55,91-116`）
 - 微压缩冻结到「轮」，前缀缓存命中从七成拉回约九成
 - 长期记忆三格 Markdown（global/USER/workspace）+ 轮尾自动复盘；todo 实时进度条；goal 跨轮续跑（带刹车）；技能（四层发现根 + 市场缓存）
 - 模式（Agent 预设）：标准/极简/创造/PTC 四内置 + 自定义 `presets/*.md`

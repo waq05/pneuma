@@ -9,7 +9,7 @@
  * 各登记一段文本，这个插件因此不认识任何具体功能。
  *
  * 摘要调用复用主对话前缀（2026-10-03）：系统提示词取自 prompt 服务、工具目录取自 tools 服务，
- * 摘要请求因此是上一次真实请求的前缀扩展，命中服务端 KV 缓存（见 core/compact.ts 的 context 参数）。
+ * 摘要请求因此是上一次真实请求的前缀扩展，命中服务端 KV 缓存（见 packages/session-core/compact.ts 的 context 参数）。
  *
  * 九个可调值（保留条数、保留尾部的窗口占比、自动压缩触发线、安全余量、压一次不够时最多再压几次、
  * 锚点索引字符预算、用户原话字符预算、read-state 文件数、read-state 字符预算）读自己的插件配置，
@@ -18,9 +18,9 @@
  * @module dsc/plugins/compact
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { compactSession, DEFAULT_KEEP_RECENT, DEFAULT_PRUNE_OPTIONS, estimateTokens } from '@pneuma/runtime/core/compact.js'
+import { compactSession, DEFAULT_KEEP_RECENT, DEFAULT_PRUNE_OPTIONS, estimateTokens } from '@pneuma/session-core/compact.js'
 import { estimateTextTokens } from '@pneuma/runtime/core/token-estimate.js'
-import type { CompactLimits, PruneOptions } from '@pneuma/runtime/core/compact.js'
+import type { CompactLimits, PruneOptions } from '@pneuma/session-core/compact.js'
 import type { ToolSchema } from '@pneuma/runtime/core/llm.js'
 import { readSpillConfig } from '@pneuma/runtime/core/spill.js'
 import { DEFAULT_ANCHOR_BUDGET_CHARS, DEFAULT_READ_STATE_BUDGET_CHARS, DEFAULT_READ_STATE_FILES, DEFAULT_USER_QUOTE_BUDGET_CHARS } from '@pneuma/runtime/core/compact-anchors.js'

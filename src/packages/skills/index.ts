@@ -28,7 +28,7 @@ import {
   installMarketEntry,
   toMarketSkillView,
   type MarketEntry,
-} from '@pneuma/runtime/core/market.js'
+} from '@pneuma/config-core/market.js'
 import { errText as err } from '@pneuma/runtime/core/err-text.js'
 import { readConfigDoc } from '@pneuma/runtime/core/config-store.js'
 import { readPrefs } from '@pneuma/runtime/core/prefs.js'

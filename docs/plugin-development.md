@@ -383,7 +383,7 @@ ctx.commands.register(
 **这条命令的动作别超出界面通道已有的权力面**——写文件、改权限旋钮、落信任、退出这类写完面
 一律在原生桥单开（与第三方界面插件的信任同一先例，见 §10.3），壳的菜单里只该出现
 「列出来也不多给任何东西」的命令。挑选尺子与内置那 25 条的清单（`BUILT_IN_COMMANDS`）写在
-`src/core/commands-completion.ts:32`。
+`src/packages/commands-core/commands-completion.ts:32`。
 
 ### 4.3 transcript —— 会话流（反馈用户的正道）
 
@@ -819,7 +819,7 @@ export function apply(ctx, config) {
 | 设置分区/技能来源没出现 | `inject` 里忘了声明 `settings` 或 `skills`；或分区 id 撞了内置的 `general/models/presets/skills/usage/archive/tui/about`（该分区被忽略，会话里有一行提示） |
 | 设置分区只在插件卡上、设置页左栏没有 | 没传第二参 `{ inSettings: true }`——壳只列 builtin 分区与显式声明进设置页的插件分区 |
 | 设置分区里控件点不动、值不回填 | `values()` 返回的 key 和 `fields()` 里的 `key` 对不上；或 `values()` 返回了不能 JSON 序列化的对象（函数、Date） |
-| 技能中心有条目但 `/名字` 调不动 | 条目 `userInvocable` 为 false，或名字撞了内置命令（内置命令 25 条，全表在 `src/core/commands-completion.ts` 的 `BUILT_IN_COMMANDS`，或直接敲 `/help` 看） |
+| 技能中心有条目但 `/名字` 调不动 | 条目 `userInvocable` 为 false，或名字撞了内置命令（内置命令 25 条，全表在 `src/packages/commands-core/commands-completion.ts` 的 `BUILT_IN_COMMANDS`，或直接敲 `/help` 看） |
 | 写入类工具绕过审批直接执行 | risk 误标为 `'read'`——写文件/执行命令必须是 `'write'`/`'exec'`（权限模式 readonly 下一律拒绝） |
 | 模型收到的工具结果是 `[object Object]` | `run` 返回了对象，改回字符串（或规范的 `{ text, images }`） |
 | 停用后功能还在 | 没保存退订函数，热卸载时旧监听没卸掉 |

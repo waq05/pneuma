@@ -179,7 +179,7 @@ numa config show              # 查看当前生效的端点/模型/key 来源（
 ```
 bin/dsc.js          启动器（零依赖）：--resume / config 子命令 → spawn node lib/boot.js
 src/boot.ts         进程入口：读配置 → createKernel()（按行挂载）→ 追加外部插件
-src/tools/config-cli.ts  numa config 命令行工具
+src/packages/cli/  numa config / numa plugin 两个子命令（库包 @pneuma/cli，内核起来之前跑）
 src/core/           自研引擎（零 UI 依赖）
   config.ts         读 ~/.dsc/config.yaml + key 来源链（env → 凭据文件）
   llm.ts            OpenAI chat-completions 流式客户端（SSE/reasoning/tool_calls/usage/重试）
@@ -192,7 +192,7 @@ src/adapter/        core 事件 → 快照投影（transcript 折叠 + core-runt
 src/contract.ts     UI ⇄ 运行时 的中性契约（DscRuntime）
 src/host/kernel.ts  内核装配器：建 Context、挂应用自带的行、挂外部插件（103 行）
 src/packages/       75 个包：56 个功能包 + 19 个界面单元（package.json + cordis.patch.yml + index.ts）
-src/app/            ink UI（App/ChatView/Composer/ToolCard/ApprovalCard/SessionPicker/StatusBar）
+src/packages/tui/app/  ink UI（App/ChatView/Composer/ToolCard/ApprovalCard/SessionPicker/StatusBar）
 desktop/            Electron 桌面端：主进程 + 独立运行时子进程；界面就是插件壳（旧渲染层已删除）
 ui-shell/           桌面与手机共用的界面壳（插件化：布局 + 基元 + 官方界面插件；产物落 lib/ui/assets）
 scripts/composer-test.mjs  候选面板/输入行的确定性测试（node scripts/composer-test.mjs，16 项断言）

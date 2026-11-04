@@ -418,7 +418,7 @@ export class Transcript {
           (last.images?.length ?? 0) === imageCount &&
           (last.files?.length ?? 0) === fileCount
         if (sameAsLast) return false
-        // 压缩摘要本身在内存里就是一条 role:'user' 的消息（core/compact.ts 造的），
+        // 压缩摘要本身在内存里就是一条 role:'user' 的消息（packages/session-core/compact.ts 造的），
         // 正文固定以 SUMMARY_BANNER 开头：这是它和真用户消息唯一的区别。
         // 老会话重放时系统提示不落进条目（日志里根本不存 system 行），全靠这个前缀
         // 才能认出「这里压过一次」，所以标记就打在摘要这条 user 条目上（kind 不动）。

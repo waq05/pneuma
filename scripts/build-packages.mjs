@@ -108,7 +108,7 @@ for (const pkg of packages) {
    * `lib/ui/plugins/<id>/client.js`，**不在包内**。照抄会留下一条
    * `import '@pneuma/<id>/client'` → ERR_MODULE_NOT_FOUND 的坏引用；
    * 内置界面半本来就不走 exports（走产物目录的 bundle.json），所以这里去掉它，
-   * 把「这个包有界面半」这件事留在 `dsh.client` / `pneuma.client` 声明里。
+   * 把「这个包有界面半」这件事留在 `pneuma.client` 声明里（dsh 生态那边叫 `dsh.client`）。
    */
   const existsInDest = (target) => typeof target === 'string' && existsSync(join(dest, target))
   // 基础两条永远在（`index.js` 是桩、`package.json` 还没写盘，别拿它们做过不过滤的判据）。
@@ -138,7 +138,7 @@ for (const pkg of packages) {
     type: 'module',
     exports,
     pneuma,
-    // dsh.client 也要带过去：它是「这个包有界面半」在产物里的唯一声明（内置界面半的
+    // pneuma.client 也要带过去：它是「这个包有界面半」在产物里的唯一声明（内置界面半的
     // 产物不在包内，exports 那条已被上面的过滤去掉）。
     ...(pkg.manifest.dsh === undefined ? {} : { dsh: pkg.manifest.dsh }),
     ...(pkg.manifest.engines === undefined ? {} : { engines: pkg.manifest.engines }),

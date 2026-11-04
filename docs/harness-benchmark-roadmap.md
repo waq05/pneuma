@@ -162,7 +162,7 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:93`，`KERNEL_API_VERSION 
 #### T1. 修压缩子系统（P0，纯内核）
 - **是什么**：先修 §3.1 的重放 bug；再借 hermes 的 lean 压缩提质——压缩时一次辅助模型调用同时产出：① 标识符保真的摘要、② 正则机械抽取的锚点索引（PR 号 / SHA / 路径 / 报错串，绝不让模型改写）、③ 真实用户消息逐字引用、④ 「去会话检索找回细节」的恢复指针。
 - **为什么**：dsc 的保头折尾摘要会把 SHA、PR 号、用户原话丢掉，导致压缩后模型自己编 SHA、忘了需求原话（参照 `hermes/agent/context_compressor.py:1072-1115`）。
-- **落点**：`src/core/compact.ts`（摘要逻辑）+ `src/core/session.ts`（重放折叠 + 可选 `compacted` 标记）。
+- **落点**：`src/packages/session-core/compact.ts`（摘要逻辑）+ `src/core/session.ts`（重放折叠 + 可选 `compacted` 标记）。
 - **动内核**：是（`Session` 读写两侧）。**难度**：bug 低；lean 提质低-中。
 - **风险**：改事件记录格式要同时改读写两侧；若引入 `compacted` 标记，要保证老会话读得回来。
 - **验收**：`/compact` 后立即续用与 `--resume` 后，送入模型的 token 都保持压缩后水平；含 SHA / 路径的关键事实不丢。
@@ -186,7 +186,7 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:93`，`KERNEL_API_VERSION 
 #### T4. 生命周期 hooks 插件（P1，映射到现有扩展点）
 - **是什么**：读一份 codex 形态的钩子配置，跑外部命令钩子，实现「工具前拦截 / 注入上下文 / 强制续跑」。codex 有 12 个生命周期事件（`codex/codex-rs/hooks/src/lib.rs:23-36`）：PreToolUse / PostToolUse / PreCompact / PostCompact / SessionStart / SessionEnd / UserPromptSubmit / SubagentStart / SubagentStop / Stop / Interrupt / PermissionRequest。
 - **为什么**：不动内核就扩展行为；dsc 已有 `ctx.guards.register`（动手前闸门，可返回拒）、`ctx.prompt.transformMessages`（改写请求）、`ctx.events.on`（回合 / 工具事件），正好覆盖主要子集。
-- **落点**：一个官方可开关插件，把 `PreToolUse` → `guards.register`、`PostToolUse` → `guards.registerObserver`、`SessionStart / UserPromptSubmit` → `prompt.transformMessages` 逐类映射。dsh 的 `hooks-codex` 直接跑现成 hooks.json，可作桥接蓝本。这一项**不是从零补 hooks**：dsc 当时已有自研的安全钩子（`src/core/hooks.ts` + `src/packages/hooks/index.ts`，四个 dsc 自己的事件，配置 `~/.dsc/hooks.json`，守卫 order 20），要加的是另一份事件名与配置格式都照 codex 的插件，两份配置各读各的（实际落地读 `~/.dsc/lifecycle-hooks.json`，见 §5.1）。
+- **落点**：一个官方可开关插件，把 `PreToolUse` → `guards.register`、`PostToolUse` → `guards.registerObserver`、`SessionStart / UserPromptSubmit` → `prompt.transformMessages` 逐类映射。dsh 的 `hooks-codex` 直接跑现成 hooks.json，可作桥接蓝本。这一项**不是从零补 hooks**：dsc 当时已有自研的安全钩子（`src/packages/session-core/hooks.ts` + `src/packages/hooks/index.ts`，四个 dsc 自己的事件，配置 `~/.dsc/hooks.json`，守卫 order 20），要加的是另一份事件名与配置格式都照 codex 的插件，两份配置各读各的（实际落地读 `~/.dsc/lifecycle-hooks.json`，见 §5.1）。
 - **动内核**：否。**难度**：低-中。
 - **风险**：外部命令的超时与失败处理；钩子输出进模型前要走 `untrusted` 围栏。
 - **验收**：配一个 PreToolUse 钩子能拦下指定工具并给出模型可见的拒绝理由。
@@ -253,7 +253,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。
 
 | 项 | 状态 | 落地与验收证据 |
 | --- | --- | --- |
-| T1 压缩子系统 | 已落地 | 重放折叠按 `keep` 字段接回尾部（`src/core/session.ts` 的 `case 'summary'`）、切点退到 `safeCut`（`src/core/compact.ts`）、锚点索引 / 用户原话 / 找回指针在 `src/core/compact-anchors.ts`、两个字符预算进 `compact` 设置分区。回归：`scripts/compact-readstate-test.mjs`、`compact-token-tail-test.mjs`、`microcompact-test.mjs`、`compacting-status-test.mjs` |
+| T1 压缩子系统 | 已落地 | 重放折叠按 `keep` 字段接回尾部（`src/core/session.ts` 的 `case 'summary'`）、切点退到 `safeCut`（`src/packages/session-core/compact.ts`）、锚点索引 / 用户原话 / 找回指针在 `src/core/compact-anchors.ts`、两个字符预算进 `compact` 设置分区。回归：`scripts/compact-readstate-test.mjs`、`compact-token-tail-test.mjs`、`microcompact-test.mjs`、`compacting-status-test.mjs` |
 | T2 审批灾难地板 | 已落地 | `approval-floor` 插件挂在守卫 order 5（`src/core/approval-floor.ts` + `src/packages/approval-floor/index.ts`），含命令白名单、deny glob 黑名单、熔断、无人值守；真守卫链上当场拒掉 `rm -rf /`、`format C:`、`cmd /c format C:`、`Format-Volume`、`Clear-Disk`、fork 炸弹与写 `/dev/sda`。回归：`scripts/floor-shell-and-budget-test.mjs`、`approval-review-fallback-test.mjs`。**第二轮补了五个漏**，见 §5.2 |
 | T3 spill | 已落地 | 观察者 order 50，落 `~/.dsc/spill/`，`read` 工具跳过，目录按 mtime 与总量清理；回归由 `check:core` 的溢出用例覆盖 |
 | T4 生命周期钩子 | 已落地（十四个事件里六个未接通） | `lifecycle-hooks` 插件读 `~/.dsc/lifecycle-hooks.json`：PreToolUse → 守卫 25、PostToolUse → 观察者 45，其余走事件与 `transformMessages`；PreModelRequest / PostModelRequest / PermissionRequest / PreCompact / SubagentStart / SubagentStop 没有可挂的扩展点，配了不执行并把理由写进报告（档位表在 `src/core/lifecycle-hooks.ts` 的 `LIFECYCLE_CAPABILITIES`：3 完整 / 5 部分 / 6 未接）。回归：`scripts/lifecycle-hook-default-test.mjs`、`hooks-test.mjs` |
@@ -308,7 +308,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。
 
 #### T14. 输入端 @ 文件提及补全（P1，不动内核）
 - **是什么**：输入框敲 `@` 弹出工作区文件路径候选，选中后按路径插进正文。dsh 有 `@file`（`context/file-reference-local` + `ui-reference` 统一选择器）；codex 有 `/mention` + 文件搜索弹窗（`file-search` crate）。
-- **dsc 现状**：输入端只有 `/` 命令补全（`src/core/commands-completion.ts`）；**输出端**的内联文件 chip 与 hover diff 已就位（0.6.25/26），`matchMentionPath` 已能把正文里的路径提及映射到改动卡——识别半边是现成的，缺的是输入半边。
+- **dsc 现状**：输入端只有 `/` 命令补全（`src/packages/commands-core/commands-completion.ts`）；**输出端**的内联文件 chip 与 hover diff 已就位（0.6.25/26），`matchMentionPath` 已能把正文里的路径提及映射到改动卡——识别半边是现成的，缺的是输入半边。
 - **落点**：渲染层 `Composer.tsx` 监听 `@` 触发候选面板；路径候选数据用 dock 已有的 `fs-list` 操作（或加一个 host 方法做前缀匹配，二选一先量成本）。TUI 侧同理可后补。
 - **验收**：`@` 后敲两三个字符出候选、键盘可选；选中的路径在发出后能被改动卡与正文 chip 识别。
 
@@ -339,7 +339,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。
 #### T19. 压缩前置裁剪 + 图像卸载（P1，不动内核）
 - **是什么**：压缩前先做一遍机械瘦身再请模型摘要。dsh：`compaction-tool-result-pruner`（超限工具输出先裁掉，留指针）、`compaction-image-offload`（历史图像按预算卸载）。收益：摘要输入更小（省 token）、摘要质量更高（不被日志噪音淹没）。
 - **dsc 现状**：compact 直接对全量消息摘要；`drop-images` 投影只在模型不支持图片时兜底换图。
-- **落点**：`src/core/compact.ts` 摘要前加一个前置 pass——超长 tool 结果替换为「已裁剪 + spill 路径」（spill 落盘与续读写法全是现成的）；图片按预算卸载留占位说明。
+- **落点**：`src/packages/session-core/compact.ts` 摘要前加一个前置 pass——超长 tool 结果替换为「已裁剪 + spill 路径」（spill 落盘与续读写法全是现成的）；图片按预算卸载留占位说明。
 - **验收**：同一段超长会话，裁剪后压缩的摘要输入 token 明显下降且关键事实（锚点索引断言）不丢。
 
 ### 7.2 中优先级（P2）
@@ -484,7 +484,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。
 | T24 MCP 扩展 | ✅ 0.6.33 | 协议升 2025-06-18；resources/prompts 客户端方法 + `mcp_resources`/`mcp_prompts` 工具（按 server 能力注册）；elicitation 接审批卡（stdio 通道声明能力，http 不声明） |
 | T20 持久终端 | ✅ 0.6.33 | 降级版五动作 `terminal` 工具（open/read/send/close/list）+ `TerminalTable`；无 PTY、无中途打断（披露）；**完整版已立项 T48（§7.8）** |
 | T27 检查更新 | ✅ 0.6.33 | 检查链路已备（0.6.18 起）+ `sourceUrl` 测试缝探针覆盖；`UPDATE_CHECK_URL` 后已指向 GitHub Releases；**不做自动安装**（用户只要检查），有新版给「立即更新」或打开发布页手动换包 |
-| T28 插件远程安装 | ✅ 0.6.33 | `plugin_manager` 加 `browse_remote`/`install_remote`；`core/market.ts` 插件市场两函数（GitHub 目录/索引 JSON 两类源）；必须 https，risk=write 装前过审批；**npm 包形态已立项 T49（§7.8）** |
+| T28 插件远程安装 | ✅ 0.6.33 | `plugin_manager` 加 `browse_remote`/`install_remote`；`packages/config-core/market.ts` 插件市场两函数（GitHub 目录/索引 JSON 两类源）；必须 https，risk=write 装前过审批；**npm 包形态已立项 T49（§7.8）** |
 | T26 回滚 / 部分行接受 | ▶ 已立项（T51，2026-10-03 用户裁决） | 见下方评估结论与 §7.8 |
 
 **T26 评估结论（2026-10-02）**：完整回滚语义暂不立项。理由：(1) dsc 的 write/edit 已带回合前全文基线（0.6.24 的 fileChanges pre-image），但只覆盖第一方工具——bash/sed 改的文件只有 git 状态码差集没有 pre-image，「回滚到回合前」在混合改动场景语义残缺；(2) 「回滚保手改」（hermes writer-ledger 的核心价值）需要 per-hunk 三方合并（基线 × 当前 × 手改），个人版没有这层算力与数据模型基建；(3) 有 git 的工作区，用户撤模型改动走 git checkout/恢复面板已是顺路动作，专属回滚 UI 的频次撑不起维护成本；(4) 部分行接受（codex apply_patch 语义）把 diff 审查面板从只读改成双向数据流，动审批模型与转录契约，与 checkpoint/rewind 同族的全部风险都要背。**2026-10-03 用户裁决：立项（T51），走 hermes shadow git 方向（checkpoint writer-ledger），不做反向 patch；动工前先补 per-hunk 三方合并的设计轮。**
@@ -554,7 +554,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。
 ## 附录 B：关键源码引用清单
 
 dsc（相对路径）：
-- 压缩：`src/core/compact.ts`（`safeCut` 切点 + 摘要拼装）、`src/core/compact-anchors.ts`（锚点索引 / 用户原话 / 找回指针）、重放折叠 `src/core/session.ts` 的 `case 'summary'`；会话列表读文件头前 200 行（`src/core/session.ts:1274`）
+- 压缩：`src/packages/session-core/compact.ts`（`safeCut` 切点 + 摘要拼装）、`src/core/compact-anchors.ts`（锚点索引 / 用户原话 / 找回指针）、重放折叠 `src/core/session.ts` 的 `case 'summary'`；会话列表读文件头前 200 行（`src/core/session.ts:1274`）
 - 灾难地板 `src/core/approval-floor.ts` + `src/packages/approval-floor/index.ts`；溢出 `src/core/spill.ts` + `src/packages/spill/index.ts`；MCP `src/core/mcp.ts` + `src/packages/mcp/index.ts`；渐进披露 `src/core/tool-search.ts` + `src/packages/tool-search/index.ts`；十二事件钩子 `src/core/lifecycle-hooks.ts`；会话检索 `src/core/session-index.ts` + `src/packages/session-search/index.ts`
 - 审批档位判定与审阅者复核（第 5.5 层）`src/packages/approval/index.ts`；守卫链刻度见 development.md §7
 - 扩展点与内核 API 版本 `src/core/plugin-registry.ts:93`；插件配置热生效 `src/core/plugin-registry.ts:246`

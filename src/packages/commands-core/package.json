@@ -1,0 +1,22 @@
+{
+  "name": "@pneuma/commands-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./commands-completion.js": "./commands-completion.js",
+    "./package.json": "./package.json"
+  },
+  "pneuma": {
+    "library": true,
+    "title": "命令补全库",
+    "description": "斜杠命令表、补全候选与唯一前缀展开的唯一一份实现；commands / runtime / tui 与界面输入框共用"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  }
+}

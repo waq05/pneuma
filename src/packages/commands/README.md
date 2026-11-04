@@ -15,7 +15,7 @@
 - 回合跑着的时候，标了 `duringTask: 'deny'` 的命令一律挡下：/new、/resume、/compact、/fork、/update（index.ts:114-122）。
 - 同名注册是 Map 覆盖语义：插件注册一个与内置同名的命令会把它顶掉，没有冲突报错（file-review 曾经劫走 /review，见 file-review/index.ts:429-432）。
 - 两处能跑的范围不同：桌面壳只列 `shell: true` 那批，终端列全量，`/help` 文本跟着走（index.ts:63-67）。
-- 命令说明只有一处真源：`/help` 与菜单的说明都取那张表的 description，改文案只有一处可改（core/commands-completion.ts:36-37）。
+- 命令说明只有一处真源：`/help` 与菜单的说明都取那张表的 description，改文案只有一处可改（packages/commands-core/commands-completion.ts:36-37）。
 - 要指挥界面的命令在壳不支持时只回一句人话，不报错（例如 `/thinking` 遇上没有 `toggleThinking` 的壳，index.ts:604-606）。
 
 ## 行与开关
@@ -24,4 +24,4 @@
 - resolution 是 pinned：profile 里的同名副本不生效（core/plugin-loader.ts:1503-1514）。
 - 默认开：cordis.patch.yml 里没有 `disabled`。
 - inject 两个服务：`session`、`llm`（index.ts:57）；provide 一个 `commands`（index.ts:58）。
-- 内置清单共 25 条（`core/commands-completion.ts:32-78`），其中本包注册 24 条、`/compact` 由 compact 包注册；外部插件用 `ctx.commands.register` 加进来的命令自动进 /help、补全与派发（index.ts:83-95）。
+- 内置清单共 25 条（`packages/commands-core/commands-completion.ts:32-78`），其中本包注册 24 条、`/compact` 由 compact 包注册；外部插件用 `ctx.commands.register` 加进来的命令自动进 /help、补全与派发（index.ts:83-95）。

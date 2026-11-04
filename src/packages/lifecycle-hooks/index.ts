@@ -24,7 +24,7 @@
  * @module dsc/plugins/lifecycle-hooks
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { HOOK_TIMEOUT_MAX, HOOK_TIMEOUT_MIN } from '@pneuma/runtime/core/hooks.js'
+import { HOOK_TIMEOUT_MAX, HOOK_TIMEOUT_MIN } from '@pneuma/session-core/hooks.js'
 import {
   commandAllowed,
   denyReasonFor,
@@ -43,7 +43,7 @@ import { contentText } from '@pneuma/runtime/core/llm.js'
 import type { ChatMessage } from '@pneuma/runtime/core/llm.js'
 import { writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import type { ToolGuard, ToolGuardInput, ToolObserver } from '@pneuma/runtime/core/tool-guards.js'
-import type { HookJudgement } from '@pneuma/runtime/core/hooks.js'
+import type { HookJudgement } from '@pneuma/session-core/hooks.js'
 import type { SettingsField, SettingsValue } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 

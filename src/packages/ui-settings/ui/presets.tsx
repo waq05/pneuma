@@ -27,7 +27,7 @@ import {
   type ToolEntryView,
 } from '@dsc/ui'
 
-/** 模式标识的形状，与 core/presets.ts 的 PRESET_NAME 同一张表（表单里先拦一道）。 */
+/** 模式标识的形状，与 packages/config-core/presets.ts 的 PRESET_NAME 同一张表（表单里先拦一道）。 */
 const PRESET_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/
 
 const RISK_LABELS: Record<ToolEntryView['risk'], string> = {

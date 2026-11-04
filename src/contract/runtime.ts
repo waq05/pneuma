@@ -184,7 +184,7 @@ export interface PresetSurface {
   /** 新会话默认用的模式名。 */
   defaultName: string
   options: PresetView[]
-  /** 允许模式去掉的骨架提示段（界面画勾选框）：名单只在 core/presets.ts 里有一份。 */
+  /** 允许模式去掉的骨架提示段（界面画勾选框）：名单只在 packages/config-core/presets.ts 里有一份。 */
   droppable: Array<{ id: string; label: string }>
 }
 

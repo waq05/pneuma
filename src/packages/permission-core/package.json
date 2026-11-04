@@ -1,0 +1,23 @@
+{
+  "name": "@pneuma/permission-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./permission-scope.js": "./permission-scope.js",
+    "./permission-presets.js": "./permission-presets.js",
+    "./package.json": "./package.json"
+  },
+  "pneuma": {
+    "library": true,
+    "title": "权限核心库",
+    "description": "会话级权限三项（沙箱档位 / 权限模式 / 审阅者）的读写与预设推导；approval / sandbox / settings / permission-presets 四个功能包共用"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  }
+}

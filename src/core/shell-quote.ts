@@ -5,7 +5,7 @@
  * 都在 Windows 上走 `shell: true`（命令由 cmd.exe 解析）；带空格或 `&|<>^` 的参数
  * 必须自己加双引号，否则会被 cmd 拆开。两处各写了一份逐字相同的实现，合并到这里。
  *
- * 顺带收着 `shellOf()`：两个跑钩子的模块（`core/hooks.ts`、`packages/lifecycle-hooks/lifecycle-hooks.ts`）
+ * 顺带收着 `shellOf()`：两个跑钩子的模块（`packages/session-core/hooks.ts`、`packages/lifecycle-hooks/lifecycle-hooks.ts`）
  * 也各写了一份「该用哪个 shell、带什么参数」的逐字相同实现，同属「起 shell」这件事。
  *
  * 只在 shell 模式用；直接 spawn（不经 cmd）的参数不要过这一道——会被多套一层引号。

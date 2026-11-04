@@ -15,9 +15,7 @@
     "order": 357,
     "resolution": "overridable",
     "title": "文件预览（界面）",
-    "description": "预览页签：markdown / PDF / 表格 / 代码 / 图片"
-  },
-  "dsh": {
+    "description": "预览页签：markdown / PDF / 表格 / 代码 / 图片",
     "client": {
       "platform": "pneuma",
       "api": "^0.8.1"

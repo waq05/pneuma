@@ -55,7 +55,7 @@ export interface BundleInfo {
   /** patch 层；包里没声明 patch 就是 null。 */
   patch: PatchLayer | null
   /**
-   * 包里 `dsh.client` 的原文（界面能力声明）。只读进来列给用户看，不加载——
+   * 包里 `pneuma.client` 的原文（界面能力声明）。只读进来列给用户看，不加载——
    * dsh 的界面插件要 dsh 自己的客户端运行时，Pneuma 的界面壳是另一套契约。
    */
   client?: unknown
@@ -156,9 +156,18 @@ export function readBundle(dir: string): BundleInfo | null {
   if (manifest === null || typeof manifest !== 'object') return null
   const name = typeof manifest.name === 'string' && manifest.name !== '' ? manifest.name : dir.split(/[\\/]/).pop() ?? dir
   const version = typeof manifest.version === 'string' ? manifest.version : '0.0.0'
-  // dsh 的字段形状是 dsh.bundle.patch = '相对路径'，界面声明在 dsh.client
-  const bundle = manifest.dsh as { bundle?: { patch?: unknown }; client?: unknown } | undefined
-  const patchPath = bundle?.bundle?.patch
+  // 两套字段都认：我们自己那族写 pneuma.bundle.patch / pneuma.client，真实 dsh 生态
+  // 写 dsh.bundle.patch / pneuma.client（别人发布的包改不了）。先 pneuma、再 dsh。
+  const sectionOf = (key: string): { bundle?: { patch?: unknown }; client?: unknown } | undefined => {
+    const value = (manifest as Record<string, unknown>)[key]
+    return value !== null && typeof value === 'object'
+      ? (value as { bundle?: { patch?: unknown }; client?: unknown })
+      : undefined
+  }
+  const own = sectionOf('pneuma')
+  const foreign = sectionOf('dsh')
+  const bundle = own?.client === undefined && own?.bundle === undefined ? foreign : own
+  const patchPath = own?.bundle?.patch ?? foreign?.bundle?.patch
   const patchFile = typeof patchPath === 'string' && patchPath !== '' ? resolve(dir, patchPath) : null
   let patch: PatchLayer | null = null
   if (patchFile !== null) {
@@ -169,10 +178,10 @@ export function readBundle(dir: string): BundleInfo | null {
       throw new Error(`${name} 的 patch 文件读不了：${error instanceof Error ? error.message : String(error)}`)
     }
     if (patch === null) {
-      throw new Error(`${name} 声明了 dsh.bundle.patch = ${patchPath}，但文件不存在`)
+      throw new Error(`${name} 声明了 pneuma.bundle.patch = ${patchPath}，但文件不存在`)
     }
   }
-  return { dir, name, version, patch, client: bundle?.client }
+  return { dir, name, version, patch, client: own?.client ?? foreign?.client }
 }
 
 /** profile 的读盘结果。 */

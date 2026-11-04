@@ -3,7 +3,7 @@
  *
  * 为什么单开一层：三根旋钮各自独立是对的，但用户要从「我打算让模型干多大的活」直接落到
  * 一组取值上——分开选就会出现「完全访问 + 沙箱仍工作区可写」这种自相矛盾的组合。
- * 预设把三根捆成一颗按钮：表是**纯表**（`src/core/permission-presets.ts`，零依赖），
+ * 预设把三根捆成一颗按钮：表是**纯表**（`src/packages/permission-core/permission-presets.ts`，零依赖），
  * 应用动作全在插件里（`src/plugins/permission-presets.ts`）。这两处正是本探针要钉的地方：
  * 纯逻辑按 Node 的类型擦除直读 `.ts`（同 `ui-paging-test.mjs` 的做法，不需要先 build），
  * 插件那半靠源码文本钉住结构约定（照 `ui-transcript-render-test.mjs` 的 `uiCode()` 去注释）。
@@ -27,7 +27,7 @@ import { readFileSync } from 'node:fs'
 import { readContractSource, resolveUiHalf } from './_check-runner.mjs'
 import { fileURLToPath } from 'node:url'
 
-const presets = await import(new URL('../src/core/permission-presets.ts', import.meta.url).href)
+const presets = await import(new URL('../src/packages/permission-core/permission-presets.ts', import.meta.url).href)
 const {
   BUILTIN_PERMISSION_PRESETS,
   DEFAULT_PERMISSION_PRESET,
@@ -131,7 +131,10 @@ console.log('[4] 形态钉：插件那半只做组合，不放宽安全（src/pl
   check('登记 surfaces.permissionPresets', code.includes("ctx.surfaces.register('permissionPresets'"))
   check('provide 的是 permissionPresets', code.includes("provide: 'permissionPresets'"))
   // 表来自纯表模块，不在插件里另抄一份（两边各写一份迟早会漂）。
-  check('预设表来自 core/permission-presets（不另抄一份）', code.includes('BUILTIN_PERMISSION_PRESETS') && code.includes("from '@pneuma/runtime/core/permission-presets.js'"))
+  check(
+    '预设表来自 permission-core（不另抄一份）',
+    code.includes('BUILTIN_PERMISSION_PRESETS') && code.includes("from '@pneuma/permission-core/permission-presets.js'"),
+  )
 }
 
 console.log('[5] 派生状态的显示名：命中预设留空，拼出来的组合读作「AI 审查」/「自定义」')

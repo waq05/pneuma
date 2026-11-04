@@ -1,7 +1,7 @@
 /**
  * 输入框 `/` 命令菜单的纯逻辑（候选表来自宿主，本文件不 import React / 宿主）。
  *
- * 与 TUI 的关系：壳里**不抄命令表**。宿主那份 `core/commands-completion.ts` 里标了
+ * 与 TUI 的关系：壳里**不抄命令表**。宿主那份 `packages/commands-core/commands-completion.ts` 里标了
  * `shell: true` 的命令，经界面通道 `listUiCommands` 读出来（名字 / 参数占位 / 说明 /
  * 回合中能否用），执行的原文再交回 `runUiCommand`——列出来的与真能跑的同一批，
  * 加一条新命令不会在壳里静默多出/少掉一条。
@@ -69,7 +69,7 @@ export function blockedNow(command: ShellCommandView, working: boolean): boolean
 /**
  * 这一行是不是「要收输入」的命令、且还没写参数；是就给出补全文本与提示语。
  *
- * 宿主那份命令表（`src/core/commands-completion.ts` 的 `inputClaimOf`）与这里同一条口径，
+ * 宿主那份命令表（`src/packages/commands-core/commands-completion.ts` 的 `inputClaimOf`）与这里同一条口径，
  * 但壳不能 import 宿主源码（两份产物各自打包），所以纯逻辑在这边留一份；真正的
  * `hint` 文案仍从宿主的 `listUiCommands` 读，壳不抄命令表。
  *

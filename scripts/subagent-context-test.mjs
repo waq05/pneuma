@@ -70,7 +70,7 @@ const until = async (fn, timeoutMs = 15000) => {
   }
 }
 
-const { subagentEnvironmentText } = await import('../lib/core/prompt.js')
+const { subagentEnvironmentText } = await import('../lib/packages/session-core/prompt.js')
 
 /** 平台文案与源码同款（探针独立算一遍，避免直接抄被测实现）。 */
 const expectedPlatform = process.platform === 'win32' ? 'Windows' : process.platform

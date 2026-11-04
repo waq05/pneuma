@@ -181,9 +181,9 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 这轮写文档时逐行核对发现的。台账保留原始观察，只在每条后面补上现在的状态：
 
 1. **压缩后的会话重新打开会变长**。压缩在内存里把历史换成「一条摘要 + 最近 20 条」
-   （`src/core/compact.ts:70-71`），但重新加载时 `Session.load` 碰到 `summary` 记录只是再
+   （`src/packages/session-core/compact.ts:70-71`），但重新加载时 `Session.load` 碰到 `summary` 记录只是再
    push 一条 user 消息，前面那批原始记录一条都没丢（`src/core/session.ts:120-122`）。
-   `src/core/compact.ts` 文件头写的「重放时等价折叠」当时没有对应实现。
+   `src/packages/session-core/compact.ts` 文件头写的「重放时等价折叠」当时没有对应实现。
    **已修（阶段 11）**：`summary` 记录加 `keep` 字段记「尾部保留了几条」，重放时按它接回。
 2. **网络错误不会重试**。`src/core/llm.ts` 的文件头注释说连接失败也重试，实际可重试条件
    要求错误带 HTTP 状态码且是 429 或 5xx；fetch 抛出的网络异常造出的 `LlmError` 不带
@@ -286,7 +286,7 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 | 摘要记录加 `keep` 字段记「尾部保留了几条」，重放时按它接回 | 日志是 append-only，摘要之前的原始记录一条都没删：只改成「遇到 `summary` 就把消息清空」的话，清空之后没法知道压缩当时留了哪几条尾部，最近几轮对话会被一起丢掉。`keep` 是唯一能从日志还原「摘要 + 保留尾部」的凭据；老日志没这个字段按 0 走，退化成「摘要 + 摘要之后的记录」，比把原文整段读回来（压缩等于白压）好 |
 | 压缩切点先退到安全边界（`safeCut`） | 协议要求每条 `tool` 消息紧跟在带同 id `tool_calls` 的 assistant 消息后面，从中间切开会让压缩后的第一次请求直接 HTTP 400；退到那条 assistant 上，工具调用与它的结果一起留在尾部 |
 | 锚点索引与用户原话直接附在摘要消息里 | 模型写的叙述会漏 SHA、文件路径、报错原文与用户原话，这三样换成正则抽取与逐字引用，不经模型改写。它们全是纯函数（`src/core/compact-anchors.ts`），可以脱开模型单独断言 |
-| 灾难地板排在守卫链 order 5（模式 10、安全钩子 20、审批 30 之前） | 守卫链是「第一位给出 deny 或 pass 的赢」：模式闸门对只读工具、只读命令与工作区内的写直接返回 pass（`src/core/modes.ts:104`、`:135`），它一返回 pass，后面的安全钩子与审批就再也拿不到发言权；权限模式的「完全访问」还会在审批层直接放行（`src/packages/approval/index.ts:334-337`）。所以「灾难命令连满权限也不许跑」只能由排在它们前面的一位自己完成 |
+| 灾难地板排在守卫链 order 5（模式 10、安全钩子 20、审批 30 之前） | 守卫链是「第一位给出 deny 或 pass 的赢」：模式闸门对只读工具、只读命令与工作区内的写直接返回 pass（`src/packages/session-core/modes.ts:104`、`:135`），它一返回 pass，后面的安全钩子与审批就再也拿不到发言权；权限模式的「完全访问」还会在审批层直接放行（`src/packages/approval/index.ts:334-337`）。所以「灾难命令连满权限也不许跑」只能由排在它们前面的一位自己完成 |
 | 地板自己判定，不注入 `mode` 服务；配置读不通时照样挂载却一律拒 | 注入会让地板在模式插件没挂时压根不 mount，挂不上等于链上根本没有地板（fail-open）；配置读坏的处置同理——全部拒掉让用户看见问题去改，比静默放过安全 |
 | 溢出观察者排在遮红之后（order 50 > 10） | 标记链按 order 从小到大加工，后一位看到前一位的输出：先遮红再落盘，磁盘上写的是脱敏文本。反序会把脱敏前的原文留在磁盘上，而回给模型的预览是脱敏的，泄漏悄无声息。`shots/spill-check.mjs` 把顺序故意反着挂了一次，断言原密钥真的会落进文件，证明验的是顺序不是巧合 |
 | 溢出跳过 `read` 工具 | read 的结果就是模型点名要的那一段，再落盘只会让它照预览里的续读写法再去 read 一次，又溢出、又落盘，形成活锁 |
@@ -359,7 +359,7 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 | 「纯 TS 做不了 Windows 受限令牌」的旧结论修正为「做得到但要 koffi」 | dsh 的实现桥是 koffi 3.1.1 FFI（runner 进程内直调 CreateProcessAsUserW，完全绕开 Node 的 spawn），移植约 1.5-2k 行、一个专项迭代；只做 ACL deny 半套证实要么无效要么全局自伤。移植列远景，本期不动 |
 | secrets 超 4MB 跳遮红改按行分段，不做偏移量拼接 | 密钥形状（sk-、JWT）不跨行、PEM 整块夹在相邻换行之间——切点落在换行上就不会把真密钥切成两半，比正则命中收集+绝对坐标替换的方案少一整类 bug |
 
-改动落在 `src/core/command-policy.ts`、`src/core/path-policy.ts`、`src/core/loop.ts`、`src/core/compact.ts`、`src/core/prompt.ts`、`src/core/llm.ts`、`src/core/tools/bash.ts`、`src/core/session.ts`、`src/core/secrets.ts`、`src/core/cdp/launch.ts`、`src/plugins/{compact,agent,desktop-dock}.ts`、`src/services/types.ts`。自检断言同步：modes-security 新增 17 条回归（切段、替换段、控制文件必问），browser-check 2.5 翻转为「不放开 --remote-allow-origins」。验收：全量回归 23 个脚本 0 FAIL（含 approval-floor 95、browser 210、sandbox 193、schedule 207、lsp 167、self-improve 181、compact 53）。
+改动落在 `src/core/command-policy.ts`、`src/core/path-policy.ts`、`src/packages/session-core/loop.ts`、`src/packages/session-core/compact.ts`、`src/packages/session-core/prompt.ts`、`src/core/llm.ts`、`src/core/tools/bash.ts`、`src/core/session.ts`、`src/core/secrets.ts`、`src/core/cdp/launch.ts`、`src/plugins/{compact,agent,desktop-dock}.ts`、`src/services/types.ts`。自检断言同步：modes-security 新增 17 条回归（切段、替换段、控制文件必问），browser-check 2.5 翻转为「不放开 --remote-allow-origins」。验收：全量回归 23 个脚本 0 FAIL（含 approval-floor 95、browser 210、sandbox 193、schedule 207、lsp 167、self-improve 181、compact 53）。
 
 ---
 
@@ -1028,7 +1028,7 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 
 **/review 审查命令（codex /review 的 v1）**：BUILT_IN_COMMANDS 加 `/review [关注点]`——handler 用 execFile 固定子命令收集工作区未提交改动（core/git-info.ts 的 `collectWorkingTree`：diff HEAD 全量 + untracked 只列名单，60k 字符预算尾部截断）→ `reviewMessage` 组装 → `runtime.submit` 发起审查轮（回复即审查意见，与用户贴 diff 问「帮我看看」同一条链路）。codex 的独立 review 子会话/findings 渲染不搬。
 
-**白屏教训（本次最重要的架构约束）**：commands 插件最初把 `import { execFile } from 'node:child_process'` 写在顶层——渲染层 Composer import `@dsc/runtime/plugins/commands.js` 拿补全函数，vite 对 node 内置模块是「externalize 即炸」（顶层 import 一求值就抛），整个渲染进程白屏、探针 sessions=0 三连扑空才抓到。修复：spec 表与补全函数（BUILT_IN_COMMANDS/helpText/commandCompletions/modelCompletions/completionsFor/expandCommand + extraSpecs 注册表）挪到 `core/commands-completion.ts`（**顶层零 node 模块**），git 收集挪 `core/git-info.ts`，渲染层与 TUI Composer 都改 import 纯模块；插件模块保留 handler 注册与派发。约束写进两个模块的头注释。
+**白屏教训（本次最重要的架构约束）**：commands 插件最初把 `import { execFile } from 'node:child_process'` 写在顶层——渲染层 Composer import `@dsc/runtime/plugins/commands.js` 拿补全函数，vite 对 node 内置模块是「externalize 即炸」（顶层 import 一求值就抛），整个渲染进程白屏、探针 sessions=0 三连扑空才抓到。修复：spec 表与补全函数（BUILT_IN_COMMANDS/helpText/commandCompletions/modelCompletions/completionsFor/expandCommand + extraSpecs 注册表）挪到 `packages/commands-core/commands-completion.ts`（**顶层零 node 模块**），git 收集挪 `core/git-info.ts`，渲染层与 TUI Composer 都改 import 纯模块；插件模块保留 handler 注册与派发。约束写进两个模块的头注释。
 
 验证：根 build + desktop typecheck 0 错；回归全绿（composer / remote-host 140 / trace-data / transcript-usage / turn-changes 14 / settings-sections）；新增 `scripts/review-approval-test.mjs` 27/27（approvalDiffOf：write 新建 fellBack/覆盖 modified/edit 替换/mismatch 两种/工作区外回落/密钥遮红；collectWorkingTree：非 git null/临时仓库 diff+untracked；reviewMessage 组装；parseUnifiedDiff/splitUnifiedDiffByFile——node 24 type stripping 直跑渲染层 TS 源）；/review 补全与 expandCommand('/rev') node 直测。实机探针两轮：d626（构造「只有调用没有结果」的会话重放 → running 卡 intended diff：折叠行相对路径 `shots/probe-626-intended.txt` + `+2 -1`、展开 5 行 diff 增删着色、轮尾卡行悬停出 diff `previewDiff=2`、Esc 关闭 `escClose=y`、提及 chip 悬停 `chipPreview=open/2`，截图目检轮尾卡新增徽标+相对路径+审查/打开按钮）；d626b（git 页签：全量 `files=4 lines=437 highlights=4082`、单文件 `rowLines=21` 行高亮、截图目检底部 diff 视图与行号/增删色）；探针会话与临时文件已清理。
 
@@ -1042,9 +1042,9 @@ Windows 桌面控制（PowerShell + Win32 API）。安全姿态和子智能体�
 
 - 新建 `docs/peer-feature-inventory.md`——dsh / codex / Muse Code 三家的**全面功能清单**，按能力域分组（会话、模型、工具、权限、diff 审查、命令、上下文、终端、UI、部署、杂项），每条带源码出处，每家末尾有招牌能力排序与「未见」清单。dsc 侧清单同时标注了实现深度与已知边界，并单列「独有/领先项」防止纯差距叙事。
 - `harness-benchmark-roadmap.md`：差距矩阵全面修订（沙箱从 ⊘ 改 ◐ 策略级、LSP/浏览器/定时任务/PTC 改 ●，新增 diff 审查链 / /review / @提及 / 后台任务 / 标题生成 / 占用表 / 会话导出 / 运行状态点 / 手机遥控九行；hermes 未重读，新行标「—」待核对）；新增 §7 差距登记 **T14–T28**（P1 六件：T14 输入端 @ 文件提及补全、T15 bash 后台任务、T16 会话标题自动生成、T17 上下文占用表 + /status、T18 /review 升级独立子代理与结构化 findings、T19 压缩前置裁剪 + 图像卸载；P2 九件：持久终端工具 / 侧栏运行状态 / 会话导出 / 在线模型发现 / MCP elicitation+resources / read 支持图片 / 部分行接受与回滚 / 检查更新落地 / 插件远程安装；P3 十三条登记免遗忘）；§7.4 单列 dsc 独有领先项、§7.5 给建议落地顺序。顺手修正附录 A 两处：codex 沙箱「fail-closed」表述与 §5.1 T9 落地记录矛盾（codex 降级同样不 fail-closed，dsc 照的是这个），并补 codex 新发现能力（review 子代理 / exec_command / backtrack / mention / request_permissions / Guardian）。
-- `development.md`：§13「命令与补全」刷成现状——单一真源是 `core/commands-completion.ts`（顶层零 node 依赖，渲染层 import 链白屏教训写明）、内置命令 7 条（/review 进表）、/effort 占位行号更新；导航表补 peer-feature-inventory 入口。
+- `development.md`：§13「命令与补全」刷成现状——单一真源是 `packages/commands-core/commands-completion.ts`（顶层零 node 依赖，渲染层 import 链白屏教训写明）、内置命令 7 条（/review 进表）、/effort 占位行号更新；导航表补 peer-feature-inventory 入口。
 
-**方法**：三路并行只读源码梳理（dsh 全仓 11 能力域、codex 全仓 10 能力域、dsc 代码 + 全部 44 阶段日志），不运行任何一家；dsc 侧另行查证了四个易错事实——内置命令现为 7 条（`src/core/commands-completion.ts:16-22`）、/effort 保留占位（`src/packages/commands/index.ts:118`）、read 工具不支持图片（`src/core/tools/fs-tools.ts` 无 mime 分流）、侧栏无会话运行状态（`desktop/src/renderer/Sidebar.tsx:671` 占位注释自证）；桌面端粘贴贴图已有（`Composer.tsx` 剪贴板图片 + modalities 检查），不算差距。
+**方法**：三路并行只读源码梳理（dsh 全仓 11 能力域、codex 全仓 10 能力域、dsc 代码 + 全部 44 阶段日志），不运行任何一家；dsc 侧另行查证了四个易错事实——内置命令现为 7 条（`src/packages/commands-core/commands-completion.ts:16-22`）、/effort 保留占位（`src/packages/commands/index.ts:118`）、read 工具不支持图片（`src/core/tools/fs-tools.ts` 无 mime 分流）、侧栏无会话运行状态（`desktop/src/renderer/Sidebar.tsx:671` 占位注释自证）；桌面端粘贴贴图已有（`Composer.tsx` 剪贴板图片 + modalities 检查），不算差距。
 
 **诚实边界**：① hermes 本轮未重读（矩阵新行 hermes 列标「—」），三家清单是 2026-10-02 的源码快照，上游会漂移；② codex 功能面按本地 `D:\codex\codex` 源码梳理，官方文档站未对照（附录 C 既有声明沿用）；③ 差距登记只做了「是什么/对标/落点/验收」级别的立项，P1 六件都还没做探索与排期，落地前各需一轮设计（尤其 T15 动内核、T26 依赖回滚语义要先单独立项）；④ T17 的 token 估算与 compact 触发线的「同源」验收要防止两套估算并存。
 
@@ -1220,7 +1220,7 @@ T15（对标 dsh tool-jobs）：长命令不占住回合。bash 工具新增 `ru
 
 **T27 检查更新**：检查链路 0.6.18 已备（版本比较 + GitHub Releases/简化 JSON 两种回包），本轮补 `sourceUrl` 参数测试缝（缺省仍读 `UPDATE_CHECK_URL` 常量，行为不变），探针起本地更新源覆盖三种回包与坏回包。**有意不做自动安装**（用户只要检查）：有新版时打开发布页手动换包；`UPDATE_CHECK_URL` 仍是空串占位——发布后填，是唯一的配置尾巴。
 
-**T28 插件远程安装**：`plugin_manager` 工具加 `browse_remote` / `install_remote` 两个动作；`core/market.ts` 加 `browsePluginMarketSource` / `installPluginMarketEntry`——机制照技能市场的两类源（GitHub 目录 trees API 里递归列 `*.js`；索引 JSON `[{name,file,description?,version?}]`），只拉单文件、1.5MB 上限。**安全姿势**：源与直链强制 https；远程插件是任意代码，工具 risk=write 弹审批卡（卡上带来源 URL），用户点头才落盘+热挂载。
+**T28 插件远程安装**：`plugin_manager` 工具加 `browse_remote` / `install_remote` 两个动作；`packages/config-core/market.ts` 加 `browsePluginMarketSource` / `installPluginMarketEntry`——机制照技能市场的两类源（GitHub 目录 trees API 里递归列 `*.js`；索引 JSON `[{name,file,description?,version?}]`），只拉单文件、1.5MB 上限。**安全姿势**：源与直链强制 https；远程插件是任意代码，工具 risk=write 弹审批卡（卡上带来源 URL），用户点头才落盘+热挂载。
 
 **T26 评估结论（roadmap §7.7）**：完整回滚语义暂不立项——混合改动场景（bash 改的文件无 pre-image）下「回滚到回合前」语义残缺、「保手改」需要 per-hunk 三方合并基建、有 git 的场景已有顺路动作、部分行接受要动审批模型与转录契约；重启条件与 shadow git 方向写进 §7.7。
 
@@ -1442,10 +1442,10 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 
 ### ② 五条（对照调研：dsh 的 system-prompt / agent-loop / compaction-basic 与 codex 的 WorldState / compact）
 
-1. **压缩调用复用主对话前缀**（`core/compact.ts`、`plugins/compact.ts`）：摘要请求从「独立 system + 转写文本」改成 `[真实系统提示词, ...被折区间的真实消息, 末尾压缩指令]`、工具目录照发——成为上一次真实请求的前缀扩展，命中服务端 KV 缓存；摘要模型看到的是对话原貌，不再截 120 字符参数。锚点索引/原话引用仍从原文机械抽取；模型不收图时区域图片全卸载（真实消息带 image_url 会被端点 400）。
+1. **压缩调用复用主对话前缀**（`packages/session-core/compact.ts`、`plugins/compact.ts`）：摘要请求从「独立 system + 转写文本」改成 `[真实系统提示词, ...被折区间的真实消息, 末尾压缩指令]`、工具目录照发——成为上一次真实请求的前缀扩展，命中服务端 KV 缓存；摘要模型看到的是对话原貌，不再截 120 字符参数。锚点索引/原话引用仍从原文机械抽取；模型不收图时区域图片全卸载（真实消息带 image_url 会被端点 400）。
 2. **瞬态注入不改写头部**（`plugins/lsp.ts`、`plugins/lifecycle-hooks.ts`）：诊断/钩子产出从 system 角色改为 user 角色追加——system 会被 fold-system 并进头部那条，头部字节一变、服务端前缀缓存从改写点之后整段失效（下一次请求诊断消失再来一次）；user 只往历史尾巴追加，前缀原样命中。LSP 诊断附「不是用户发言」出处句。
 3. **用量补前缀缓存明细**（`core/llm.ts` 解析 `prompt_cache_hit/miss_tokens`（OpenAI 系回落 `cached_tokens`）→ CoreEvent usage → usage.jsonl 的 `ch`/`cm` → 设置页「前缀缓存命中」卡）：命中率是「请求前缀有没有被改写」的直接读数。
-4. **环境事实搬出 system prompt**（`core/prompt.ts`、`plugins/prompt.ts`）：日期/平台/git 分支不再随提示词每天重写前缀，改由 env-facts 投影（order 600）作为请求末尾的 user 快照附上——每次请求都带当前值，模型手里没有过期环境；变化时写一条 hash 去重的 `env-facts` 状态留痕（Model-visible ⟺ logged，与 system-prompt 条目同套做法）。
+4. **环境事实搬出 system prompt**（`packages/session-core/prompt.ts`、`plugins/prompt.ts`）：日期/平台/git 分支不再随提示词每天重写前缀，改由 env-facts 投影（order 600）作为请求末尾的 user 快照附上——每次请求都带当前值，模型手里没有过期环境；变化时写一条 hash 去重的 `env-facts` 状态留痕（Model-visible ⟺ logged，与 system-prompt 条目同套做法）。
 5. **请求侧清洗出声**（`core/llm.ts` 的 `sanitizeToolOrphansWithReport`、`plugins/llm.ts`）：清洗带账并经 `dsc/notice` 报给用户（每会话同形状只报一次）——重放层修不掉的残留（孤儿结果等）从此可见，不再靠撞 400 才发现。
 
 **验证**：typecheck（根 + 桌面端）绿；`pnpm build` 绿。探针：prompt-projection 20/20（含 env-facts 快照与状态留痕）、lsp 167/167、lifecycle-hooks 81/81、llm-adapter 18/18、compact-check 56/56（含前缀三断言）、batch-b 12/12、preset-check / modes-security 全过（「环境事实垫在最后」两处断言随事实跟改）、session-dedupe 15/15、transcript-usage 全过、kernel-boot 绿。端到端冒烟（临时 HOME 真内核 + 假 SSE 端点）：损坏会话（重复 + 孤儿结果）过真请求 → 通知恰一条、同形状第二轮不重报；usage 记录带 `ch`/`cm`；`env-facts` 状态落盘且 system-prompt 不再含环境事实。bump 0.6.46。
@@ -1458,9 +1458,9 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 
 **修法（对齐 dsh 的 inbox，到达与入史拆成两段）**：
 1. **收件箱**（`core/session.ts`）：`enqueueAsync`/`takeAsyncInbox`——轮中途到达的输入写 `async-inbox` 状态条目排队（持久化，重启不丢），不入对话历史；`Session.load` 修复完中断后把遗债直接落库（dsh 收件箱的持久交货）。
-2. **followup 改道**（`core/loop.ts`）：`running` 时 followup（用户插话、作业完成通知、定时补投、goal 提醒——所有生产者都走这一个口）一律入箱；步骤边界（`executeToolCalls` 之后，对应 dsh preStep claim 的位置）和回合收尾各有一个出账点（`drainInbox`），收尾出账落库的消息挂 pendingTurn 补一轮——回合不许隔着未交货的收件箱收尾（dsh 原话 *the turn cannot close over*）。
+2. **followup 改道**（`packages/session-core/loop.ts`）：`running` 时 followup（用户插话、作业完成通知、定时补投、goal 提醒——所有生产者都走这一个口）一律入箱；步骤边界（`executeToolCalls` 之后，对应 dsh preStep claim 的位置）和回合收尾各有一个出账点（`drainInbox`），收尾出账落库的消息挂 pendingTurn 补一轮——回合不许隔着未交货的收件箱收尾（dsh 原话 *the turn cannot close over*）。
 3. **邻接重排兜底存量**（`core/llm.ts` `sanitizeToolOrphansWithReport`）：清洗后加一遍邻接整形——assistant(tool_calls) 与它的结果之间夹着的非 tool 消息整块后移到结果闭合之后（组间相对顺序不动），报告加 `reordered` 计数，notice 文案带上。dsh 靠 inbox 从源头不产生脏历史、serialize 只做校验；dsc 已经有一批脏日志（包括事故会话），请求侧重排能把它们全部治好——事故日志实测 `reordered=1`，接缝消失，无需手改。
-4. **关窗**（`core/loop.ts` enqueueTurn 外层 finally）：`turn/end` 事件发在 runTurn 内部、`running` 要等 finally 收尾才落假——事件监听里紧跟的 followup（界面解锁用户秒回）会入箱而上一轮的收尾出账已经跑过，输入从此无人出账（prompt-projection 探针第二连发轮当场抓住）。外层 finally 补一次 `drainInbox(false)` 关掉这个窗。
+4. **关窗**（`packages/session-core/loop.ts` enqueueTurn 外层 finally）：`turn/end` 事件发在 runTurn 内部、`running` 要等 finally 收尾才落假——事件监听里紧跟的 followup（界面解锁用户秒回）会入箱而上一轮的收尾出账已经跑过，输入从此无人出账（prompt-projection 探针第二连发轮当场抓住）。外层 finally 补一次 `drainInbox(false)` 关掉这个窗。
 
 **验证**：typecheck（根 + 桌面端）绿；`pnpm build` 绿。新回归 `scripts/async-inbox-test.mjs`（16 断言：工具执行期通知落在结果之后、出账后箱清空、user 事件只发一次且带 steering、收尾期插话补轮不丢、遗债加载自动落库、turn/end 后立刻 followup 补轮、存量夹层重排后接缝消失且条数不变）。既有电池：session-dedupe 15/15、prompt-projection 20/20（第二连发轮曾把竞态钉出来）、batch-b 12/12、compact-check 56/56、transcript-usage 全过。真实事故日志副本经 `shots/sandwich-probe.mjs` 断言转绿。bump 0.6.47。
 
@@ -1471,7 +1471,7 @@ V1 欠账（侧栏状态点 working/waiting 两档、T16 标题生成、/export 
 **修法（0.6.48 常驻多 agent，dsh 语义的个人版落地）**：
 1. **注册表**（`plugins/agent.ts` 重写）：`Map<sessionId, MiniAgent>` + `active` 指针。`dsc/session-open` 只换 active：目标会话有常驻 agent 就复用，没有就造；被切走的前一个**还有活（busy）就留后台继续跑**（这正是语义），闲着就地收摊（`disposeAgent`：close 释放写租约 + 清读取台账 + 记墓碑）。每个 agent 的 deps 闭包自持会话：systemPrompt/noteSystemPrompt、usage 记账（`sid` 用发起回合的会话，修掉原来 `ctx.session.current()` 的错位）、compact 目标、rewrite 会话、emit 归属。dsc/exit 收摊全部。
 2. **事件按会话路由**（`plugins/agent.ts`）：只有当前查看 agent 的事件进转录（后台 agent 的流式/工具卡留在各自 jsonl，切回按日志重放——污染从源头掐掉）；`dsc/turn-start` / `dsc/turn-end` 带 `TurnSignal{sessionId,sessionPath}` 载荷；新增 `dsc/agent-status{sessionId,path,state}` 广播 working/awaiting-approval/idle，转录插件据此维护 `backgroundStates` 喂进快照 `sessionStates`（T21 状态面复用，队友同管道）。idle 且当时没在看 → 转录层标 **just-finished**（「已完成未读」徽标，点开即熄）；被查看期间收工就不翻徽标（用户亲眼看着结束）。
-3. **switchSession 删除**（`core/loop.ts`）：agent 生死只认一个会话（`session` 改 readonly）；`runTurn` 的会话身份守卫随之拆掉；新增 `busy`（= turnActive || pendingTurn——`turnActive` 在 turn/end 发出即落假，收尾 git 聚合的尾段不算「在跑」，否则切走时会重发假 working、盖掉刚点的徽标，测试抓的）与 `dispose()`；`onIdle` 回调给注册表做收摊钩子。ToolContext / ToolGuardInput 带 `sessionId`/`sessionPath`（工具产物与审批归属的根）。
+3. **switchSession 删除**（`packages/session-core/loop.ts`）：agent 生死只认一个会话（`session` 改 readonly）；`runTurn` 的会话身份守卫随之拆掉；新增 `busy`（= turnActive || pendingTurn——`turnActive` 在 turn/end 发出即落假，收尾 git 聚合的尾段不算「在跑」，否则切走时会重发假 working、盖掉刚点的徽标，测试抓的）与 `dispose()`；`onIdle` 回调给注册表做收摊钩子。ToolContext / ToolGuardInput 带 `sessionId`/`sessionPath`（工具产物与审批归属的根）。
 4. **归属扩散**：`session.open` 复用常驻会话（`ctx.get('agent').sessionFor`——同文件不再造第二份内存副本、不再碰写租约）；compact 的 `check/forceCompact` 显式收目标会话、运行守卫按会话计数（后台回合不再挡当前会话 /compact）；审批 `pending` 单槽改 **多卡并存 Map**（旧代码两卡并发时第一张永远没人能答），授权记账/审计/卡片全按发起会话（`ApprovalRequest.sessionId/sessionPath`）；读取台账（path-policy）按会话键控，切会话不再清账（后台 agent 的「先读后写」状态不再被切换抹掉）；goal/memory/hooks/lifecycle-hooks/session-title 的 turn-end 监听按 sessionId 过滤（后台收工不偷跑目标续跑/记忆复盘/Stop 钩子/起标题），载荷缺省（老式直接 emit）回落当前会话兼容旧探针；JobTable 通知带 owner（按发起会话投递，合并桶按会话分）；subagent 汇报投给常驻父 agent（跑动中进收件箱，闲置唤起后台回合，收摊才写文件）；env-facts 投影经 `prompt.rewrite(messages, session)` 按请求会话取 cwd、落状态条目。
 5. **侧栏**（`desktop/renderer`）：`SessionRunState` 加 `just-finished`（绿色实心点，dsc-green 令牌），working/awaiting-approval 点自然覆盖后台 agent。
 
@@ -4987,7 +4987,7 @@ JSON 字符串里全是 `\n` 转义，读者要的是「改了哪几行」。
 审批」一对，dsc 在这一对之上再加审阅者这一轴。
 
 **落地。** 新插件 `src/packages/permission-presets/index.ts`（`provide: 'permissionPresets'`），
-**纯表在 `src/core/permission-presets.ts`**（零依赖，探针直读）。出厂四个：
+**纯表在 `src/packages/permission-core/permission-presets.ts`**（零依赖，探针直读）。出厂四个：
 `read-only`（只读：`read-only` 沙箱 + `readonly` + `user`）/ `workspace`（工作区可写：
 `workspace-write` + `auto-edit` + `user`，**默认**）/ `full-access`（完全访问：
 `danger-full-access` + `full-access` + `user`）/ `auto-review`（AI 复核：`danger-full-access`
@@ -5536,7 +5536,7 @@ kind、不说开哪个目录（`ui-shell/src/packages/ui-sessions/ui.tsx:1777` �
   session ID；「Known problematic clients」第一条就是 DeepSeek Harness，理由是「session 信息在部分
   模型路径上带、部分不带」）；
 - 建议改法也对：会话 id 在插件层拿得到（`src/packages/llm/index.ts:23`），但要先给 `StreamRequest` 加字段；
-  而**所有** LLM 流量（主循环 `src/core/loop.ts:390`、标题生成 `src/packages/session-title/index.ts:88`、
+  而**所有** LLM 流量（主循环 `src/packages/session-core/loop.ts:390`、标题生成 `src/packages/session-title/index.ts:88`、
   审批判官 `src/packages/approval/index.ts:388`、子智能体）都从 `src/packages/llm/index.ts:137` 那个 `stream()`
   汇聚点过，所以「在派发前把会话 id 塞进 request」这一处改动的覆盖面是对的（辅助请求不会漏——
   正好避开 dsh 那个「部分路径带、部分路径没带」的坑）；
@@ -5593,7 +5593,7 @@ Playwright 的 locator（`getByRole` / `locator().click()`）在这个页面里�
 | `src/core/request-attribution.ts`（新，纯模块） | 门控 `isOpenCodeGoBaseUrl`（host + path 一起判，大小写/尾斜杠宽容）；会话 id 合法性只放行 `[A-Za-z0-9._:-]{1,128}`，非法/超长/空一律**省略这个头**；`sessionAttributionHeaders` 出「自标识 UA + 命中才加会话头」 |
 | `src/core/llm.ts` | `StreamRequest` 加可选 `sessionId`；`streamOnce` 的 fetch 头展开归因头——不命中就是空表 |
 | `src/packages/llm/index.ts` | 派发口兜底 `request.sessionId ?? currentSessionId(ctx)`（所有 LLM 流量都从这条缝过） |
-| `src/core/loop.ts`、`core/compact.ts`、`plugins/session-title.ts`、`plugins/approval.ts` | 各带**自己那条会话**的 id（后台会话也在跑，不能填「当前查看的会话」） |
+| `src/packages/session-core/loop.ts`、`packages/session-core/compact.ts`、`plugins/session-title.ts`、`plugins/approval.ts` | 各带**自己那条会话**的 id（后台会话也在跑，不能填「当前查看的会话」） |
 
 **与上一批那份建议的一处偏离**：原提议「端点配置开个可选字段，让用户写 `config.yaml`」。
 最后改走 URL 门控——两份参考实现都这么判，而且「配置写不出来」正是这个报障的前提；
@@ -5913,7 +5913,7 @@ Playwright 的 locator（`getByRole` / `locator().click()`）在这个页面里�
 
 参考实现里**目录是会话的数据**（`SessionHeader.cwd`，创建时给 `cwd`/`workspaceId`；沙箱范围按
 会话取），工作区是「目录键的注册表记录」，多个并存——所以「在别的工作区新建会话」只是一次普通
-RPC，不重启任何进程。dsc 的运行时其实早就按会话取目录（`core/loop.ts` 的 `get cwd()` 读
+RPC，不重启任何进程。dsc 的运行时其实早就按会话取目录（`packages/session-core/loop.ts` 的 `get cwd()` 读
 `session.meta.cwd`；git / 记忆 / 指令文件 / 沙箱围栏 / dock 文件树都跟着会话走），**只有「新会话
 在哪个目录出生」这一处还钉在宿主进程的启动目录上**（`plugins/session.ts` 的 `Session.create(cwd)`）。
 所以这一刀不是大重构，而是把那一处改成「目录由调用方给」。
@@ -5995,7 +5995,7 @@ CDP 驱动真窗口里的真界面：当前工作区是 A，点**B 组**那颗 �
 ### ① 权限预设：拼出来的组合读作「AI 审查」并置灰只读
 
 **根因**：`permissionPreset` 是**派生量**——沙箱 + 权限模式 + 审阅者三项全等才命中出厂预设
-（`src/core/permission-presets.ts`），任一项被单独改动就落到推导态 `custom`。而壳的通用 select
+（`src/packages/permission-core/permission-presets.ts`），任一项被单独改动就落到推导态 `custom`。而壳的通用 select
 把「值不在选项表里」一律当成「宿主给了个认不出的值」，原样打印 + 贴「未识别」
 （`ui-shell/src/packages/ui-settings/ui.tsx`）→ `custom · 未识别`：既漏内部 id，又说了一句与事实
 相反的话。而且 `custom` 本来**就不是可选项**（宿主 `use('custom')` 当场拒），画成能点开的下拉
@@ -6848,7 +6848,7 @@ Tailwind 的 `h-8 rounded-lg`；dsh 的模型行是 grid 不是 flex。只看截
 ### ① 只取七条：两条尺子
 
 标了 `shell: true` 的才进壳：`/new` `/compact` `/status` `/usage` `/diff` `/review` `/help`。
-挑选尺子写在 `src/core/commands-completion.ts` 的命令表旁边，两条缺一不可：
+挑选尺子写在 `src/packages/commands-core/commands-completion.ts` 的命令表旁边，两条缺一不可：
 
 1. **动作不出界面通道已有的权力面**：`/new` ≈ `openSession`、`/compact` ≈ `compact`、
    `/review` ≈ `submit`、`/diff` ≈ `dock` 读类，其余三条（`/status` `/usage` `/help`）只往
@@ -6868,7 +6868,7 @@ Tailwind 的 `h-8 rounded-lg`；dsh 的模型行是 grid 不是 flex。只看截
 
 - `listUiCommands()`：只读，返回 `shellCommands()` 那份元数据（名字 / 参数占位 / 说明 /
   `duringTask`）——菜单与派发读同一份，所以「列出来的」与「能跑的」不可能各说各话；
-- `runUiCommand(input)`：先过纯函数 `shellCommandRejection`（在 `core/commands-completion.ts`，
+- `runUiCommand(input)`：先过纯函数 `shellCommandRejection`（在 `packages/commands-core/commands-completion.ts`，
   探针直测）——非 `/` 输入拦下、名字按全表唯一前缀展开后必须在 `shell: true` 清单里，否则抛一句
   能照着走的话；过了就走 `ctx.commands.run`，与 TUI 完全同一条注册表与 `duringTask` 闸。
   空名（单独一个 `/`）放行落到 `/help`，与 TUI 一致。
@@ -9294,7 +9294,7 @@ dsh。检查有没有逻辑错误或者越界风险。检查沙箱机制有没�
 | 极简模式 | 工具只有 `bash`；正文追加在骨架上 | `bash` + `read_image`；`replace: true` 用正文替换整个系统提示，只留 AGENTS.md 注入 |
 | 模式顺序 | 按名字字典序（创造排第一） | dsh 的 preset order：standard → ptc → minimal → maker |
 
-极简档的 `replace` 是这一批新加的字段（`core/presets.ts`）：`drop` 只够得到四段白名单，
+极简档的 `replace` 是这一批新加的字段（`packages/config-core/presets.ts`）：`drop` 只够得到四段白名单，
 够不到插件贡献段（沙箱说明、协作模式条款、技能目录…），所以单开一个开关。界面表单没有这项，
 保存时沿用文件里原来的值（`writePreset` 读旧文件），不会一保存就把内置档改回追加式。
 
@@ -10024,7 +10024,7 @@ display」留的护栏，上一次 `.ask-panel` 就是被自己的 `display:flex
 ### 三　一串「未知工具」的来历
 
 用户给了一个会话 id，说里面很多工具执行失败。翻日志：40 次工具调用里 6 次失败，**全是「未知工具」**
-（`src/core/loop.ts:582`），集中在 02:24 前后的六轮里：`run_code`、`glob`、`bash`、`grep`、
+（`src/packages/session-core/loop.ts:582`），集中在 02:24 前后的六轮里：`run_code`、`glob`、`bash`、`grep`、
 `read`、`bash`。同一段时间里这个会话的系统提示 fingerprint 变了两次又变回来
 （`state/system-prompt` 的 `eeecc → 1314c6 → eeecc`），差异整段就是 PTC 模式的说明。
 
@@ -10509,7 +10509,7 @@ const lastTab = surface.panes.reduce((count, pane) => count + pane.tabs.length, 
 
 ### 三　改法
 
-1. 新增 `src/core/permission-scope.ts`：三项值存在会话 `permissions` 状态条目；
+1. 新增 `src/packages/permission-core/permission-scope.ts`：三项值存在会话 `permissions` 状态条目；
    读取时缺哪项补哪项默认值并**钉住**（`permissionOf` / `resolvePermissions`），
    写入合并而不是整份替换，值没变不写日志。
 2. `SessionStateMap` 加 `permissions` 一条声明（`src/core/session.ts`），
@@ -10796,7 +10796,7 @@ B 的空白页上；某个会话的删除命令被钩子拦下，理由却是「
 
 行结构照 dsh 的输入提名菜单（`packages/client/ui-input-trigger/src/client/MenuView.tsx`）：图标 14px → 中文短名 → 英文名（灰）→ 说明右对齐；行高 34、间距 6、分组标题 11px。
 
-**文案只有一份**，住在宿主的命令表（`src/core/commands-completion.ts` 每条加 `label`），三端各取所需：
+**文案只有一份**，住在宿主的命令表（`src/packages/commands-core/commands-completion.ts` 每条加 `label`），三端各取所需：
 
 | 端 | 从哪拿 | 画法 |
 | --- | --- | --- |
@@ -11646,7 +11646,7 @@ PowerShell 5.1 / PowerShell 7.6.5 / Git Bash 5.3 / WSL（Ubuntu）都返回了�
 桥的 `run` 里不再有第二次判定。三处退回情况都是「按桥自己问一遍」，保证一次调用**恰好问一遍**：
 桥不认（名字拼错、参数坏掉）、桥抛错、以及 `tool_call` 之外没有 `gateAs` 的普通工具。
 
-代价与边界：桥的 `run` 现在不自判，所以只有循环（`src/core/loop.ts`）与 PTC
+代价与边界：桥的 `run` 现在不自判，所以只有循环（`src/packages/session-core/loop.ts`）与 PTC
 （`src/packages/ptc/index.ts`）两个入口执行工具——这两个入口都按真名过守卫链，已逐一核对
 （`grep 'entry.run|tool.run'` 只剩这两处执行点）。直接调 `tool_call.run` 的测试/脚本
 不再有内置审批，这是有意的：审批归循环管，工具层不该有两份裁决。
@@ -13167,7 +13167,83 @@ session-open-in 全绿、ui-status-panel 全部通过、readme 26 条断言）�
 
 - 剩下能搬的都在「解耦后可搬」那一档：内核还 import 它们（`hooks.ts`、`compact.ts`、`prompt.ts`、
   `modes.ts`、`permission-scope.ts`、`market.ts`、`loop.ts` 等 10 个被 2 个以上包共用）。
-  要搬得先把它们变成库包（Q4-b2），并给库包加 pinned 解析，否则 profile 覆盖场景会 `ERR_MODULE_NOT_FOUND`。
+  要搬得先把它们变成库包（Q4-b2），并给库包加 pinned 解析，否则 profile 覆盖场景会 `ERR_MODULE_NOT_FOUND`。  → 这 10 个已在 2026-11-04 晚搬进四个库包（`session-core` / `permission-core` / `config-core` /
+  `commands-core`），见下一条日志的 Q4-b2 一节。
+
+## 2026-11-04　壳层五层成库包、`pneuma.client`、CLI 成包、七条硬项与 86 个包的测试、Q4-b2 四库包
+
+### 做了什么
+
+1. **界面壳五层搬成库包**：`ui-layout` / `ui-primitives` / `ui-slots` / `ui-renderer` / `ui-dockkit`
+   各自 `src/packages/ui-<id>/`（包身份 `@pneuma/ui-<id>`、`pneuma.library: true`、无装配行），
+   作者面仍是 `@dsc/ui-<id>` 的构建期别名，落点必须正好是 `<包>/ui/index.ts`。
+   `ui-shell/` 只剩构建装置（`packages.json` / tsconfig / vite / build-plugins / build-types / index.html / plugin-api）。
+2. **样式跟着入口走**：四份 legacy 样式、补充层 `styles.css`、色板兜底生成物搬进
+   `src/packages/ui-renderer/ui/styles/`，色板生成脚本的读写路径同批改，26 支按路径读样式的探针一起改。
+3. **界面声明改写成 `pneuma.client`**：19 个界面包的清单从 `dsh.client` 迁到 `pneuma.client`；
+   读的一侧三处（`core/ui-bundles.ts` 的 `readClientDeclaration`、`core/plugin-bundle.ts` 的 `readBundle`、
+   `ui-shell/build-plugins.mjs` 的 `readMeta`）都是「先 pneuma、再 dsh」。
+4. **CLI 成包**：`numa config` / `numa plugin` 两个脚本（435 行）搬进 `@pneuma/cli` 库包；
+   `index.ts` 只导出 `CLI_ENTRIES` 入口表，`bin/dsc.js` 仍零依赖、只拼路径。
+5. **Q6 七条硬项 + 86 个包的测试**：`plugin-standard-check` 新增第 7 项「文档与测试」并由待办升为硬项；
+   55 个原本没有 `tests/` 的包补齐包级测试（86 个用例、426 条断言）。
+6. **Q4-b2 四个库包**：10 个「只被包引用、内核不 import」的 core 模块搬进
+   `session-core`（hooks/compact/prompt/loop/modes）、`permission-core`（permission-scope/permission-presets）、
+   `config-core`（presets/market）、`commands-core`（commands-completion），共改 71 处说明符。
+
+### 为什么（三个决定）
+
+- **壳层是库包，不是装配行**：numa 的界面是一个预构建 bundle，给壳层加一行只会得到一个「开不开都一样」的
+  开关；把 `ui-primitives` 拆成独立产物还会让 React context 在 19 个 bundle 里各内联一份。热更新不需要
+  「是不是行」——`registerLibraryGenerationRoots` 已经把库包目录登记成换代根。
+- **写 `pneuma.client`、读两处**：命名空间归自己，兼容归生态（真实 dsh 生态有 90 个包写 `dsh.client`，改不了别人）。
+- **源码版本号固定 `0.0.0`**：numa 只发一个包，86 个包目录是构建期产物、从不单独发布；
+  让它们各自维护版本号只会在每次发版时制造等量的可漂移点。dsh 逐包发布，所以它必须那么做——这是故意不对齐。
+
+### 踩到的坑
+
+1. **搬家改了深度，`APP_ROOT` 没跟着改**：`plugin-cli.ts` 从 `lib/tools/` 搬进 `lib/packages/cli/` 后仍按两层
+   往上找应用根，于是去 `lib/lib/node_modules/@pneuma/base` 找装配行，`numa plugin list` 列 0 行、
+   `plugin-list-test` 12 条断言一起红。改成三层（`../../..`）后恢复。教训：任何用 `import.meta.url` 推根的地方，
+   搬家时都是隐式契约，grep `fileURLToPath(new URL(` 比只看 import 更靠得住。
+2. **清单快照要在完整构建之后拍**：`rm -rf lib` 之后只跑 `pnpm run build`（不含 `build:ui`）就 `--write` 快照，
+   记下的是「0 个界面单元」；等界面产物重建完，闸立刻报 19 处「多了」。顺序应是 build → build:ui → inventory --write。
+3. **跨行正则误判类型引用**：判「层包有没有值 import `@dsc/ui`」时用一条跨行正则，会从上一条
+   `from '@dsc/ui-core'` 一路吃到下一条 `import type … from '@dsc/ui'`，把类型引用判成值引用。
+   改成按语句攒行再判，才稳。
+4. **探针的三种路径依赖要一起改**：①`src/core/<模块>.ts`（读源码文本 / 动态 import）、②`../lib/core/<模块>.js`
+   （import 产物）、③`ui-shell/src/ui-*`（读样式）。一次搬家要同时扫这三类，漏一类就是 ENOENT 而不是断言失败。
+5. **顶层单文件模块一直没有运行时桩**：`build-runtime-package.mjs` 只走目录（`ROOTS`），`src/contract.ts`
+   这种顶层文件从来没有 `@pneuma/runtime/contract.js`。TUI 还在 `src/app/` 时用相对路径 `../../contract.js`，
+   所以从没暴露；TUI 搬进 `src/packages/tui/app/` 后只能写裸说明符，`settings-test` / 七支 TUI 探针一起红在
+   `ERR_MODULE_NOT_FOUND`。补 `ROOT_FILES = ['contract.js', 'headless.js', 'boot.js']` 后 497 个桩。
+6. **App 的命令派发器从「直接 import」变成「宿主半传 prop」，探针没跟上**：`src/app/App.tsx` 原来直接
+   import core 的 `runCommand`；搬进包后不许功能包互相 import，改成宿主半每次派发时 `ctx.get('commands')`
+   并通过 `dispatchCommand` prop 传进来，缺省是 `() => false`。7 支只渲染 `<App runtime={…} />` 的探针于是
+   所有 `/settings` `/模型` 都被静默吃掉（浮层永远不弹，54 条断言一次全红）。修法是加 `scripts/_tui-commands.mjs`：
+   把**真的** commands 插件挂在一个最小假 ctx 上，探针传同一个派发器——走产品代码，不写桩。
+7. **`pnpm run build:types` 不是根脚本**：类型树由 `pnpm -C ui-shell build` 的第三步产出，根上没有这个命令，
+   照着旧笔记跑会得到 `ERR_PNPM_NO_SCRIPT`。
+
+### 数字
+
+- 包：**86 个目录 = 75 功能包 + 11 库包**（`build` 输出「75 个包 / 75 行，另有库包 11 个」）。
+- `pnpm run typecheck` 0；`pnpm run build` 0；`pnpm run build:ui` 0（19 份 `client.js` 字节未变）。
+- `check:plugin` 0：标准检查七项 86/86、`package-tests` 86 个用例 / 426 条断言 / 0 失败、换包 e2e 17 PASS。
+- `plugin-inventory-check`：74 个插件 / 24 个设置分区 / 19 个界面单元（快照 `docs/baseline/0.9.0/inventory.json`）。
+- `ui-plugin-test` 263 PASS / 0 FAIL；`ui-package-plugin-test` 0；`check:style` 1012 文件通过。
+- Q4-b2：10 个文件、71 处说明符（被搬文件自身 39 处 + 调用方 32 处 / 22 个文件）、0 个转发桩。
+
+### 还开着的
+
+- **`src/ui/`（`@dsc/ui-core`，2,868 行）仍是壳内的契约包**：它静态再导出 8 个 core 模块、约 90 个
+  `export type`，搬进 `src/packages/` 会立刻撞上「库包不许 import 包」的反向依赖。要搬得先拆契约面。
+- **D 档（解耦后可搬）还有 30 个 core 模块**：`dsh-compat/*`、`remote/*`、`ui-server.ts` / `ui-methods.ts` /
+  `ui-hmr.ts` 是加载器本体，留内核；其余要先断内核引用。
+- **`scripts/_tui-commands.mjs` 是新的探针夹具**：TUI 探针要派发命令就得挂一次 commands 插件；
+  它是「最小假 ctx + 真插件」，改 commands 的 apply 契约时要一起看。
+- **注释与文档里的 `:行号` 引用**在搬包后没有逐条复核（路径已改，行号可能偏）；下次动到那些文件时顺手核。
+- **`plugin-inventory` 数出 74 个插件**而功能包是 75 个：差的那一只还没查清，记在这里免得下次当成回归。
 - `src/core/dsh-compat/*`、`remote/*`、`ui-server.ts` / `ui-methods.ts` / `ui-hmr.ts` 是加载器本体，留内核。
 - 界面壳（`src/ui/index.ts` 静态再导出 8 个 core 模块）要先拆，才能把 `ui-layout` / `ui-renderer` 成包。
 

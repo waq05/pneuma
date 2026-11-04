@@ -60,7 +60,7 @@ export type UiTrustProblemKind = 'manifest' | 'clash' | 'version' | 'artifact'
  *   - `third-party`：`~/.dsc/plugins/<目录名>/{plugin.json, ui/client.js}`，手工放进去的，
  *     首次发现要用户在插件中心答一次信任（写 plugins.json 的 `uiTrust`）；
  *   - `package`：profile 里用 `numa plugin add` 装的组合包，`package.json` 的
- *     `dsh.client.platform = 'pneuma'` 声明界面半边——**装它那一步就是同意**，不再问。
+ *     `pneuma.client.platform = 'pneuma'` 声明界面半边——**装它那一步就是同意**，不再问。
  *     启停键是 `<包名>/client`。
  *
  * 与宿主插件（`PluginInfoView`）不是一回事：那些住 `~/.dsc/plugins/*.js`，这份是界面半边。
@@ -82,7 +82,7 @@ export interface UiTrustView {
   version?: string
   /** 装在哪个 profile（profile 目录名，如 `work`）。只有组合包行有；界面用它说清「来源」。 */
   profile?: string
-  /** plugin.json / `dsh.client` 声明的 `@dsc/ui` 版本区间；没写/读不到时 undefined。 */
+  /** plugin.json / `pneuma.client` 声明的 `@dsc/ui` 版本区间；没写/读不到时 undefined。 */
   api?: string
   /** 声明的载体（web/tui）；缺省 `['web']`。 */
   platforms: string[]

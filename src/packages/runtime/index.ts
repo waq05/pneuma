@@ -21,7 +21,7 @@ import {
 } from '@pneuma/runtime/core/ui-bundles.js'
 import { buildUsageStats } from '@pneuma/runtime/core/usage-log.js'
 import { sideAskOnce } from '@pneuma/runtime/core/side-ask.js'
-import { shellCommandRejection, shellCommands } from '@pneuma/runtime/core/commands-completion.js'
+import { shellCommandRejection, shellCommands } from '@pneuma/commands-core/commands-completion.js'
 import type { DscRuntime, SettingsMutation } from '@pneuma/runtime/contract.js'
 import type { UserFileAttachment } from '@pneuma/runtime/core/attachments.js'
 
@@ -374,7 +374,7 @@ export const runtimePlugin: Plugin.Object = {
 
       runUiCommand(input) {
         // 界面通道的命令面：只有标了 `shell: true` 的才派发（失败关闭，尺子写在
-        // core/commands-completion.ts）。判据是纯函数 `shellCommandRejection`——
+        // packages/commands-core/commands-completion.ts）。判据是纯函数 `shellCommandRejection`——
         // 壳能跑什么，探针直测那一份；这里只负责「不放行就抛、放行走同一条注册表」。
         const rejection = shellCommandRejection(input)
         if (rejection !== null) throw new Error(rejection)

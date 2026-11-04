@@ -42,7 +42,7 @@ const ws = join(home, 'ws')
 mkdirSync(ws, { recursive: true })
 
 const { Session, listSessions, sessionsRoot, slugCwd } = await import('../lib/core/session.js')
-const { resolvePermissions } = await import('../lib/core/permission-scope.js')
+const { resolvePermissions } = await import('../lib/packages/permission-core/permission-scope.js')
 
 const seedDir = join(sessionsRoot(), slugCwd(ws))
 mkdirSync(seedDir, { recursive: true })

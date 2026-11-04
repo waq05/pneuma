@@ -32,24 +32,24 @@ dsc 已经拿到最难的三块（前缀友好的尾部 env 快照、压缩的�
 
 ## 1. 现状锚点（施工前必读的具体位置）
 
-- 主循环请求组装：`src/core/loop.ts:374-469` `requestOnce`。组装式：
+- 主循环请求组装：`src/packages/session-core/loop.ts:374-469` `requestOnce`。组装式：
   `assembled = [{role:'system', content: deps.systemPrompt()}, ...deps.session.messages]`，
   再过 `deps.rewrite(assembled, session)`；再 `emit({type:'context', segments})` 后 `deps.stream(...)`。
 - 投影链：`src/plugins/prompt.ts:52-192`。`registerProjection(id, fn, {order})`；内置三条
   `fold-system`(500) / `env-facts`(600) / `drop-images`(900)。保留名
   `RESERVED_PROJECTIONS = {fold-system, drop-images}`（`plugins/prompt.ts:39`）。
-- 系统提示词装配：`src/core/prompt.ts:302-330` `buildSystemPrompt`；段顺序
+- 系统提示词装配：`src/packages/session-core/prompt.ts:302-330` `buildSystemPrompt`；段顺序
   identity(0)/behavior(10)/tool-rules(20)/插件贡献/# agentsMd(200)/skills(210)/model(890)。
-- 环境事实：`src/core/prompt.ts:258-276` `environmentText`（**30 秒 TTL 缓存**）；
+- 环境事实：`src/packages/session-core/prompt.ts:258-276` `environmentText`（**30 秒 TTL 缓存**）；
   投影 `plugins/prompt.ts:95-104`；落盘去重 `noteEnvFacts`（`plugins/prompt.ts:200-204`）。
-- 指令文件预算：`src/core/prompt.ts:49` `DEFAULT_INSTRUCTION_BUDGET = 20_000`（**字符**口径）。
+- 指令文件预算：`src/packages/session-core/prompt.ts:49` `DEFAULT_INSTRUCTION_BUDGET = 20_000`（**字符**口径）。
 - 协议发送：`src/core/llm.ts:405-470` `streamOnce`（`serializeMessages` 在 :588，
   headers 在 :445）；孤儿清洗与报告 `llm.ts:206`，已接线 `plugins/llm.ts:34` `noticeSanitize`。
-- 工具结果裁剪（现有，只在压缩时跑）：`src/core/compact.ts:69-117` `pruneRegion`
+- 工具结果裁剪（现有，只在压缩时跑）：`src/packages/session-core/compact.ts:69-117` `pruneRegion`
   （`toolResultChars` 默认 2000、`imageBudget` 默认 4）。
 - 图片卸载现有实现：`src/plugins/computer-use.ts:116-136` `dropStaleScreenshots`
   （投影名 `prune-stale-screenshots`，`computer-use.ts:491`）——**只镜像电脑控制自己的截图**。
-- 压缩：`src/core/compact.ts:206-272` `compactSession`，结束于 `session.replaceWithSummary`；
+- 压缩：`src/packages/session-core/compact.ts:206-272` `compactSession`，结束于 `session.replaceWithSummary`；
   机械产物 `src/core/compact-anchors.ts`（`buildAnchorIndex`/`collectVerbatimUserMessages`/
   `buildRecoveryFooter`/`SUMMARY_BANNER`）。
 - 子代理：`src/plugins/subagent.ts:400-410` `systemPrompt: () => input.role.prompt + "# 你在团队里的位置..."`；
@@ -137,7 +137,7 @@ dsc 已经拿到最难的三块（前缀友好的尾部 env 快照、压缩的�
 职责分开——本投影管「留着但太久/太多」，`drop-images` 管「模型根本不收图」。
 
 **落点**：
-- 纯函数建议放 `src/core/`（例：`src/core/image-diet.ts`），或扩展 `src/core/compact.ts` 的
+- 纯函数建议放 `src/core/`（例：`src/core/image-diet.ts`），或扩展 `src/packages/session-core/compact.ts` 的
   `pruneRegion` 里的图片段（**复用现有语义**：用户图按预算保留、其余卸载为占位文本
   `（图片已卸载，原文里这里是一张图）`）。
 - 注册成内置投影：与 WS3 共用 `src/plugins/prompt.ts`。**只做最小插入**（在 `drop-images` 之前加一条
@@ -196,7 +196,7 @@ dsc 已经拿到最难的三块（前缀友好的尾部 env 快照、压缩的�
   做法：新增一个能力探测（照 `src/core/model-caps.ts` 的形状）——只有端点声明支持显式
   cache 标记时才注入。给 `LlmRoute`/适配器加可选能力位，默认 false。
   **关键纪律：DeepSeek 请求体必须逐字节不变**（用探针钉死）。
-- (c) `src/core/prompt.ts:49`：把 `DEFAULT_INSTRUCTION_BUDGET` 的注释与文档口径讲清（字符 vs 字节），
+- (c) `src/packages/session-core/prompt.ts:49`：把 `DEFAULT_INSTRUCTION_BUDGET` 的注释与文档口径讲清（字符 vs 字节），
   或直接改成字节（`20_000` 字符 ≈ 中文 60KB 字节，改成字节口径要**同步调默认值**别把预算砍一半）。
   **建议**：保留字符口径（代码零风险），只在注释/`docs/` 里写明与其他三家的换算，并在设置分区
   help 文案里写「以字符计」。若改字节，必须重算默认值 + 探针覆盖。
@@ -229,7 +229,7 @@ dsc 目前只有 `sanitizeToolOrphans`（孤儿那半边，且已接 notice）�
 - 新文件 `src/core/request-invariant.ts`：纯函数
   `checkReconstructable(sent: ChatMessage[], derived: ChatMessage[]): InvariantReport`，
   返回 `{ ok, firstDiffIndex?, reason?, digest? }`；`derived` 由调用方按同一路径重新算出。
-- `src/core/loop.ts:383-391`：组装出 `messages` 后、`deps.stream` 前，调一次校验；
+- `src/packages/session-core/loop.ts:383-391`：组装出 `messages` 后、`deps.stream` 前，调一次校验；
   不一致 → `deps.emit({ type: 'error' | 'notice', ... })`（**不阻断请求**——照 dsh 是 fail，
   但 dsc 选择「报出但不杀会话」，因为报出后人类还能救；把这个取舍写进注释）。
 - 派生路径要**复用同一个纯函数**：把「`[system, ...session.messages]` → 投影链」抽成一个
@@ -271,7 +271,7 @@ dsc 目前只有 `sanitizeToolOrphans`（孤儿那半边，且已接 notice）�
 - `src/core/compact-anchors.ts`：加 `buildReadState(messages, budgetChars): string`——
   扫被折区间里的 tool 调用（`read` 的 args 含 path/offset/limit），按最后出现去重，
   保留最多 `readStateFiles`(默认 5) 个、每文件最多一行、总预算 `readStateChars`(默认 1500)。
-- `src/core/compact.ts:264-268`：把 `buildReadState(raw, ...)` 的产物拼进 `summary`
+- `src/packages/session-core/compact.ts:264-268`：把 `buildReadState(raw, ...)` 的产物拼进 `summary`
   （与 anchors / quotes 并列）。注意顺序：摘要正文 → carry → quotes → anchors → readState → recovery。
 - `src/plugins/compact.ts`：把 `readStateFiles`/`readStateChars` 加成可调值（照 anchorBudgetChars 的形状）。
 
@@ -304,7 +304,7 @@ dsc 目前只有 `sanitizeToolOrphans`（孤儿那半边，且已接 notice）�
 
 **落点**：
 - (a) `src/plugins/subagent.ts:400-410`：`systemPrompt` 文案里追加一段
-  （照 `src/core/prompt.ts:258` `environmentText` 的形状，但**给子代理用要按它自己的 cwd**——
+  （照 `src/packages/session-core/prompt.ts:258` `environmentText` 的形状，但**给子代理用要按它自己的 cwd**——
   `input.parentSession.meta.cwd`；模型名取 `teammate.badge.model ?? ctx.llm.model`）。
   也可以做成一个共享的纯函数 `subagentEnvironmentText(cwd, model)` 便于探针。
 - (b) `src/plugins/todo.ts`：注册一条投影 `ctx.prompt.registerProjection('todo-reminder', fn, { order: 800 })`。
@@ -362,10 +362,10 @@ dsc 目前只有 `sanitizeToolOrphans`（孤儿那半边，且已接 notice）�
 | --- | --- | --- | --- | --- |
 | WS1 | `feat/ctx-diet-tool-results` | `core/microcompact.ts`、`plugins/microcompact.ts`、kernel 挂载 | `microcompact-test.mjs` | 32 条绿 |
 | WS2 | `feat/ctx-diet-images` | `core/image-diet.ts`、`plugins/image-diet.ts`、prompt 投影、computer-use 降级 | `image-diet-test.mjs` | 42 条绿 |
-| WS3 | `feat/ctx-cache-and-budget` | `core/llm.ts`（`applyExplicitCache`）、`plugins/prompt.ts`（env 闸门）、`core/config.ts`/`migrate.ts`/`plugins/llm.ts`（端点能力位）、`core/prompt.ts`（口径注释） | `env-cache-test.mjs` | 31 条绿（含 DeepSeek 零漂移） |
-| WS4 | `feat/request-invariant` | `core/request-invariant.ts`、`core/loop.ts`、`plugins/agent.ts` | `request-invariant-test.mjs` | 37 条绿 |
-| WS5 | `feat/compact-readstate` | `core/compact-anchors.ts`（`buildReadState`）、`core/compact.ts`、`plugins/compact.ts` | `compact-readstate-test.mjs` | 31 条绿 |
-| WS6 | `feat/subagent-context-and-reminders` | `core/prompt.ts`（`subagentEnvironmentText`）、`plugins/subagent.ts`、`core/todo-reminder.ts`、`plugins/todo.ts` | `subagent-context-test.mjs` + `todo-reminder-test.mjs` | 46 条绿 |
+| WS3 | `feat/ctx-cache-and-budget` | `core/llm.ts`（`applyExplicitCache`）、`plugins/prompt.ts`（env 闸门）、`core/config.ts`/`migrate.ts`/`plugins/llm.ts`（端点能力位）、`packages/session-core/prompt.ts`（口径注释） | `env-cache-test.mjs` | 31 条绿（含 DeepSeek 零漂移） |
+| WS4 | `feat/request-invariant` | `core/request-invariant.ts`、`packages/session-core/loop.ts`、`plugins/agent.ts` | `request-invariant-test.mjs` | 37 条绿 |
+| WS5 | `feat/compact-readstate` | `core/compact-anchors.ts`（`buildReadState`）、`packages/session-core/compact.ts`、`plugins/compact.ts` | `compact-readstate-test.mjs` | 31 条绿 |
+| WS6 | `feat/subagent-context-and-reminders` | `packages/session-core/prompt.ts`（`subagentEnvironmentText`）、`plugins/subagent.ts`、`core/todo-reminder.ts`、`plugins/todo.ts` | `subagent-context-test.mjs` + `todo-reminder-test.mjs` | 46 条绿 |
 | 整合 | — | — | `context-pipeline-test.mjs` | 17 条绿（四层同链） |
 
 主控对每条线都做了**独立**负向验证（不看子智能体自述，自己改坏产物/源码跑一遍）：WS1 改 `minSaveTokens` 门槛 → 1 红；WS2 改缺省 `userImageBudget` → 8 红；WS3 把 env 闸门改恒真 → 3 红；WS4 让 `isRuntimeInjection` 恒真 → 8 红；WS5 改标题文案 → 1 红；WS6 剥掉子代理环境段 → 6 红。改回后全部归零。
@@ -373,7 +373,7 @@ dsc 目前只有 `sanitizeToolOrphans`（孤儿那半边，且已接 notice）�
 ### 合流时改的三处
 
 1. **image-diet 投影 order 700 → 550**（挪到 env-facts 600 之前）。原因：env-facts 会往请求末尾追加一条 user 环境快照，image-diet 按「最近几个用户回合」决定留哪些图——若跑在它之后，那条合成快照会白占一格，`keepRounds` 的口径凭空保守一格。改后 `context-pipeline-test` 的「第三轮的图仍在」成为判别断言（改回 700 恰好 1 条变红）。
-2. **`prompt.envRefreshMs` 缺省从 600000 改成 0（每轮都发）**。原因比「省几十 token」硬：dsc 的 env 快照是「平台：Windows（bash 跑的是 PowerShell）」这条事实的**唯一载体**（`core/prompt.ts` 的三个内置段里都没有，dsh 也没有平台注入）；跳过一轮 = 那一轮模型可能写 bash-ism。开关保留，>0 时退回「变了才发 + 到点重注」。
+2. **`prompt.envRefreshMs` 缺省从 600000 改成 0（每轮都发）**。原因比「省几十 token」硬：dsc 的 env 快照是「平台：Windows（bash 跑的是 PowerShell）」这条事实的**唯一载体**（`packages/session-core/prompt.ts` 的三个内置段里都没有，dsh 也没有平台注入）；跳过一轮 = 那一轮模型可能写 bash-ism。开关保留，>0 时退回「变了才发 + 到点重注」。
 3. **`plugins/microcompact.ts` 的注释改准**：原稿写「取错会话顶多漏保护一条，不会误清」，实际是「会误清」（漏保护就等于那条失败结果可能被当普通旧结果清掉）。如实标注为已知限制。
 
 ### 关键发现（留给以后）

@@ -31,6 +31,16 @@ const dest = join(lib, 'node_modules', '@pneuma', 'runtime')
  */
 const ROOTS = ['core', 'contract', 'services', 'adapter', 'ui']
 
+/**
+ * 顶层单文件模块：`src/contract.ts` / `src/headless.ts` / `src/boot.ts`。
+ *
+ * 为什么单独列：它们不是目录，`ROOTS` 的 walk 走不到，于是 `@pneuma/runtime/contract.js`
+ * 是个不存在的路径——包里的代码（`src/packages/tui/app/**` 从 `src/app/**` 搬过来之后）
+ * 只能写裸说明符，一 import 就 ERR_MODULE_NOT_FOUND。这批桩曾经漏掉过，靠「TUI 还在
+ * `src/app` 时用相对路径」掩盖着；TUI 搬进包的那天才暴露。
+ */
+const ROOT_FILES = ['contract.js', 'headless.js', 'boot.js']
+
 /** 界面构建产物目录不是模块，别给它们生成桩。 */
 const SKIP = ['/ui/plugins/', '/ui/assets/']
 
@@ -77,6 +87,26 @@ for (const name of ROOTS) {
     mkdirSync(dirname(target), { recursive: true })
     writeFileSync(target, stubBody(target, file), 'utf8')
     stubs += 1
+  }
+}
+
+// 顶层单文件的桩：与目录桩同一套写法，落在 dest 根上（`@pneuma/runtime/contract.js`）。
+for (const name of ROOT_FILES) {
+  const file = join(lib, name)
+  try {
+    statSync(file)
+  } catch {
+    continue
+  }
+  writeFileSync(join(dest, name), stubBody(join(dest, name), file), 'utf8')
+  stubs += 1
+  const types = file.replace(/\.js$/, '.d.ts')
+  try {
+    statSync(types)
+    writeFileSync(join(dest, name.replace(/\.js$/, '.d.ts')), stubBody(join(dest, name.replace(/\.js$/, '.d.ts')), types), 'utf8')
+    stubs += 1
+  } catch {
+    // 没有类型声明就只出 .js 桩。
   }
 }
 

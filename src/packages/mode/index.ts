@@ -3,7 +3,7 @@
  *
  * 模式这件事只干三件事，都在自己文件里：
  *   1. 往系统提示里换一段模式条款（提示词层，靠模型自觉）——登记进 prompt 服务的 order 30；
- *   2. 在工具执行前设一道闸门（这一层不依赖模型听话，判法在 `core/modes.ts`）
+ *   2. 在工具执行前设一道闸门（这一层不依赖模型听话，判法在 `packages/session-core/modes.ts`）
  *      ——注册成守卫链上 order 10 的那一位，排在审批（order 30）之前；
  *   3. 换档时广播 `dsc/mode-changed`，让想知道档位的别处（审批卡的说明文字）自己听。
  * 禁不禁写另有一根旋钮：权限模式（approval 插件）。两根旋钮互不越界，
@@ -17,7 +17,7 @@
 import type { Plugin } from '@deepseek-ai/cordis'
 import type { CollaborationMode, ModeSurface } from '@pneuma/runtime/contract.js'
 import type { ModeService } from '@pneuma/runtime/services/types.js'
-import { MODES, MODE_IDS, modeSpec, parseModeToken } from '@pneuma/runtime/core/modes.js'
+import { MODES, MODE_IDS, modeSpec, parseModeToken } from '@pneuma/session-core/modes.js'
 import { activeRules } from '@pneuma/runtime/core/command-policy.js'
 import { audit } from '@pneuma/runtime/core/audit.js'
 import type { ToolGuard } from '@pneuma/runtime/core/tool-guards.js'
@@ -89,7 +89,7 @@ export const modePlugin: Plugin.Object = {
     // 前缀原样复用，模型每轮照样读到当前模式的规则（plan 的禁令一个字都不少）。
     ctx.effect(() => ctx.prompt.registerEnvFacts('mode', (session) => modeSpec(modeFor(session?.meta.id)).prompt), 'mode: prompt.registerEnvFacts')
 
-    // 闸门：执行档一律交给后面的权限模式与审批卡；其余三档照 core/modes.ts 的判法说话。
+    // 闸门：执行档一律交给后面的权限模式与审批卡；其余三档照 packages/session-core/modes.ts 的判法说话。
     const modeGuard: ToolGuard = {
       id: 'mode',
       order: 10,

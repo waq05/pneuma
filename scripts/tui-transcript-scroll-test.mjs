@@ -31,6 +31,7 @@ process.env.USERPROFILE = home
 process.env.DSC_HOME = join(home, '.dsc')
 
 const { App } = await import('../lib/packages/tui/app/App.js')
+import { dispatchCommand } from './_tui-commands.mjs'
 const { commandsPlugin } = await import('../lib/packages/commands/index.js')
 const { railGeometry } = await import('../lib/packages/tui/app/scroll-model.js')
 const { TimelineRail } = await import('../lib/packages/tui/app/TimelineRail.js')
@@ -160,7 +161,7 @@ async function mountApp({ entries, peek, columns = 100, rows = 40, teammates = [
   stdout.on('data', (chunk) => {
     output += String(chunk)
   })
-  render(React.createElement(App, { runtime }), { stdin, stdout, exitOnCtrlC: false, patchConsole: false })
+  render(React.createElement(App, { runtime, dispatchCommand }), { stdin, stdout, exitOnCtrlC: false, patchConsole: false })
   await sleep(220)
 
   let lastFrame = ''

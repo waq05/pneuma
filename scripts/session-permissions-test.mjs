@@ -19,7 +19,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-const scope = await import(new URL('../src/core/permission-scope.ts', import.meta.url).href)
+const scope = await import(new URL('../src/packages/permission-core/permission-scope.ts', import.meta.url).href)
 const { storedPermissions, writePermissions, permissionOf, resolvePermissions, samePermissionKnobs } = scope
 const tokens = await import(new URL('../src/packages/ui-primitives/ui/tokens.ts', import.meta.url).href)
 const { formatTokens } = tokens

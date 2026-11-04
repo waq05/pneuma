@@ -15,9 +15,7 @@
     "order": 368,
     "resolution": "overridable",
     "title": "消息流（界面）",
-    "description": "对话页的消息流：一轮一个座位、一行一个条目，过程可整轮折叠或按阶段收组"
-  },
-  "dsh": {
+    "description": "对话页的消息流：一轮一个座位、一行一个条目，过程可整轮折叠或按阶段收组",
     "client": {
       "platform": "pneuma",
       "api": "^0.8.1"

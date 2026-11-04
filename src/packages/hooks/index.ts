@@ -44,8 +44,8 @@ import {
   trustOf,
   trustScript,
   untrustScript,
-} from '@pneuma/runtime/core/hooks.js'
-import type { HookEvent, HookJudgement, HookRuleAction, HookRuleField, HookScript } from '@pneuma/runtime/core/hooks.js'
+} from '@pneuma/session-core/hooks.js'
+import type { HookEvent, HookJudgement, HookRuleAction, HookRuleField, HookScript } from '@pneuma/session-core/hooks.js'
 import type { ToolGuard, ToolGuardInput } from '@pneuma/runtime/core/tool-guards.js'
 import { argsSummary } from '@pneuma/runtime/core/tools.js'
 import type { SettingsField, SettingsOption, SettingsValues } from '@pneuma/runtime/contract.js'
@@ -146,7 +146,7 @@ export const hooksPlugin: Plugin.Object = {
       event: HookEvent,
       input: { toolName: string; args: Record<string, unknown>; cwd: string; command: string; target: string },
       extra: Record<string, unknown>,
-    ): import('@pneuma/runtime/core/hooks.js').HookPayload => ({
+    ): import('@pneuma/session-core/hooks.js').HookPayload => ({
       hook_event_name: event,
       tool_name: input.toolName,
       tool_input: input.args,

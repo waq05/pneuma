@@ -51,7 +51,7 @@ const check = (label, condition, extra = '') => {
 }
 
 const { buildReadState, DEFAULT_READ_STATE_FILES, SUMMARY_BANNER } = await import('../lib/core/compact-anchors.js')
-const { compactSession } = await import('../lib/core/compact.js')
+const { compactSession } = await import('../lib/packages/session-core/compact.js')
 
 /** 造一条带 read 调用的 assistant 消息。 */
 const readAssistant = (id, path, offset, limit) => ({

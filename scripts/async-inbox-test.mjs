@@ -30,7 +30,7 @@ process.env.HOME = home
 process.env.USERPROFILE = home
 
 const { Session } = await import('../lib/core/session.js')
-const { MiniAgent } = await import('../lib/core/loop.js')
+const { MiniAgent } = await import('../lib/packages/session-core/loop.js')
 const { sanitizeToolOrphansWithReport } = await import('../lib/core/llm.js')
 
 let failures = 0

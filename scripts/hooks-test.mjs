@@ -25,7 +25,7 @@ process.env.USERPROFILE = home
 mkdirSync(join(home, '.dsc'), { recursive: true })
 
 const { scriptFileOf, scriptTokenOf, trustOf, judgeScriptRun } = await import(
-  new URL('../lib/core/hooks.js', import.meta.url).href
+  new URL('../lib/packages/session-core/hooks.js', import.meta.url).href
 )
 
 let failures = 0

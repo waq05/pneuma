@@ -5,7 +5,7 @@
 ## Model Experience（模型体验）
 
 - 不注册工具；它提供 `prompt` 服务，开放三类登记：提示段 `register`、环境事实 `registerEnvFacts`、命名投影 `registerProjection`，另加骨架过滤器 `registerSkeletonFilter`（index.ts:223-262）。
-- 系统提示由它组装：各插件登记的段按 order 排，拼上技能目录与「当前模型」那一行（order 890），指令文件按字符预算截断，默认 20000 字、可填 4000..200000（index.ts:282-291、53-58，core/prompt.ts:67）。
+- 系统提示由它组装：各插件登记的段按 order 排，拼上技能目录与「当前模型」那一行（order 890），指令文件按字符预算截断，默认 20000 字、可填 4000..200000（index.ts:282-291、53-58，packages/session-core/prompt.ts:67）。
 - 五条内置投影按固定次序串成链：fold-system（500）并 system、image-diet（550）卸载旧图、tool-result-prune（560）剪超长工具结果、env-facts（600）补环境快照、drop-images（900）剥图；插件投影插在中间（index.ts:137-221）。
 - 环境快照把日期、平台、工作目录与各插件登记的事实拼成一条 user 消息补在请求末尾，默认每轮都发——「平台是 Windows」只有这一个载体，跳过一轮模型就可能写出 bash-ism（index.ts:144-186、319-322）。
 - 投影是命名的纯函数，日志存原文、模型看投影结果，所以「模型看见了什么」可以从会话日志复算（文件头 15-16）。

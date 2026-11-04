@@ -1,6 +1,6 @@
 /**
  * permission-presets 插件：provide `permissionPresets` 服务——
- * 把沙箱档位、权限模式、审阅者三根旋钮捆成一颗按钮（表在 `core/permission-presets.ts`）。
+ * 把沙箱档位、权限模式、审阅者三根旋钮捆成一颗按钮（表在 `packages/permission-core/permission-presets.ts`）。
  *
  * 为什么单开一个插件而不是塞进 approval：这一层要同时写**两个**插件的地盘
  * （`sandbox.setMode` 与 `approval.setPolicy/setReviewer`），塞进任一边都是反向依赖。
@@ -25,8 +25,8 @@ import {
   findPermissionPreset,
   matchPermissionPreset,
   type PermissionPreset,
-} from '@pneuma/runtime/core/permission-presets.js'
-import { permissionOf, samePermissionKnobs, type PermissionKnobs } from '@pneuma/runtime/core/permission-scope.js'
+} from '@pneuma/permission-core/permission-presets.js'
+import { permissionOf, samePermissionKnobs, type PermissionKnobs } from '@pneuma/permission-core/permission-scope.js'
 import type { Session } from '@pneuma/runtime/core/session.js'
 import { audit } from '@pneuma/runtime/core/audit.js'
 

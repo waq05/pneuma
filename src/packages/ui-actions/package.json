@@ -15,9 +15,7 @@
     "order": 350,
     "resolution": "overridable",
     "title": "动作表（界面）",
-    "description": "全局动作的唯一登记处：按 owner 去重、变化时通知订阅者"
-  },
-  "dsh": {
+    "description": "全局动作的唯一登记处：按 owner 去重、变化时通知订阅者",
     "client": {
       "platform": "pneuma",
       "api": "^0.8.1"

@@ -13,7 +13,7 @@
  *  plugins 356、preview 357、prompt 358、sessions 359、settings 360、skills 361、
  *  status 362、statusbar 363、tasks 364、team 365、terminal 366、trace 367、transcript 368）；
  *  本包是 composer，order = 353。界面行不做任何事，order 只影响清单的可读性。
- * dsh.client.phase 原样保留 `early`（首屏批：装完壳才画第一帧）。
+ * pneuma.client.phase 原样保留 `early`（首屏批：装完壳才画第一帧）。
  *
  * @module pneuma/ui-composer
  */

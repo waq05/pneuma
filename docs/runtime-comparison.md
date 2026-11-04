@@ -21,7 +21,7 @@
 1. **三家的主循环骨架几乎一样**：`while(true) { 组装请求 → 流式调模型 → 没有工具调用就停 → 执行工具 → 再来一圈 }`，
    结束条件都是"这一轮没有工具调用"，都**没有步数上限**（dsh 明说不内置轮次预算，
    `dsh-agent-loop/README.zh.md:221`；codex 的注释把"只回消息就算一轮完"写在
-   `core/src/session/turn.rs:162-175`；Pneuma 的 `for(;;)` 里没有计数器，`src/core/loop.ts:344`）。
+   `core/src/session/turn.rs:162-175`；Pneuma 的 `for(;;)` 里没有计数器，`src/packages/session-core/loop.ts:344`）。
 2. **差别全在"每一轮请求里装什么、怎么装"**。三家都意识到前缀缓存才是成本大头，但做法分三派：
    dsh 把易变内容全挪出 system 节点、codex 给提示词算确定性 UUID、Pneuma 把易变内容做成
    请求**末尾**的一条投影消息。方向一致，代价不同。
@@ -39,7 +39,7 @@
 | 环节 | dsh | codex | Pneuma |
 |---|---|---|---|
 | 入口 | 从收件箱领活，`preStep` 组装 | `run_turn` 先做四件准备，再进循环 | `runTurn`：`beforeRequest` 后进 `for(;;)` |
-| 循环体 | `preStep → step/start → 请求 → assistant 落盘 → 有工具就执行 → step/end`（`dsh-agent-loop/lib/index.js:936-1000`） | 收插入输入 → 抓上下文快照 → 拼历史 → 采样 → 收口判断（`turn.rs:475-595`） | `requestOnce` → 无 tool_calls 就 break → `executeToolCalls` → 步骤边界出账（`src/core/loop.ts:344-363`） |
+| 循环体 | `preStep → step/start → 请求 → assistant 落盘 → 有工具就执行 → step/end`（`dsh-agent-loop/lib/index.js:936-1000`） | 收插入输入 → 抓上下文快照 → 拼历史 → 采样 → 收口判断（`turn.rs:475-595`） | `requestOnce` → 无 tool_calls 就 break → `executeToolCalls` → 步骤边界出账（`src/packages/session-core/loop.ts:344-363`） |
 | 结束条件 | 没有工具调用；`concludeTurn` 收口；`max-tokens` 截断**不**结束而是续写（`lib/index.js:1164`） | 没有工具调用；stop hook 要求继续则再跑（`turn.rs:761-778`） | 没有 tool_calls / 被 abort / 抛错 |
 | 步数上限 | 无 | 无 | 无（子代理才有 `maxTurns`） |
 | 计划阶段 | 不是阶段，是一段 plan mode 提示词 | 不是阶段，是提示词里的 `update_plan` 工具（`models-manager/prompt.md:52-60`） | 不是阶段，是模式条款（投影在请求末尾的 user 快照里，`src/packages/mode/index.ts:86-90`） |
@@ -59,7 +59,7 @@
 **Pneuma 的收件箱出账时机**是它跟另两家最不一样的地方：后台作业完成、子代理回话这些
 "插话"在**步骤边界**并进本轮（不多花一个回合），回合失败也在 `finally` 里补一次出账
 （不丢输入）。dsh 与 codex 都是"插话进下一轮的输入"，多花一轮往返。这个设计在常驻多 agent
-的场景里是省钱的（`src/core/loop.ts:309-323`）。
+的场景里是省钱的（`src/packages/session-core/loop.ts:309-323`）。
 
 ## 2 模型每一轮到底收到什么
 
@@ -67,7 +67,7 @@
 
 | | dsh | codex | Pneuma |
 |---|---|---|---|
-| 有无 `system` 字段 | **没有**，提示词是 `messages[0]` 的 `system/message`（`dsh-system-prompt/README.zh.md:141`） | 没有，提示词是 `input[0]` 的 `developer` 项（`core/src/client.rs:1052-1083`） | **有**，`[{role:'system'}, ...history]`（`src/core/loop.ts:419`） |
+| 有无 `system` 字段 | **没有**，提示词是 `messages[0]` 的 `system/message`（`dsh-system-prompt/README.zh.md:141`） | 没有，提示词是 `input[0]` 的 `developer` 项（`core/src/client.rs:1052-1083`） | **有**，`[{role:'system'}, ...history]`（`src/packages/session-core/loop.ts:419`） |
 | 历史 | `session.deriveMessages()` 全量 | `clone_history().for_prompt()` 全量 + `store:false`（`client.rs:1161`） | `session.messages` 全量 |
 | 工具定义 | 每轮全量重发 | 每轮重发，另有"增量工具"通道（`turn.rs:1709-1722`） | 每轮全量重发，取当轮快照 `requestTools`（`loop.ts:412-415`） |
 | 工具 schema 单独计量 | 有（`toolsTokens`） | 无（算在整体里） | **有**，单列一段（`core/token-estimate.ts:55-57`） |
@@ -89,7 +89,7 @@
 永远同一个 id，服务端缓存前缀就能命中；提示词一改 id 自动变，缓存自然失效。
 这是"用 id 表达缓存边界"，另外两家都没有。
 
-**Pneuma**：`src/core/prompt.ts:383-411` 按刻度拼（身份 0、做事方式 10、工具规范 20、
+**Pneuma**：`src/packages/session-core/prompt.ts:383-411` 按刻度拼（身份 0、做事方式 10、工具规范 20、
 agentsMd 200、技能 210、当前模型 890），排序原则写在 `prompt.ts:1-21`：稳定的在前、
 易变的在后。
 
@@ -102,7 +102,7 @@ agentsMd 200、技能 210、当前模型 890），排序原则写在 `prompt.ts:
 |---|---|---|
 | dsh | 投影成带 `source` 的 **user 消息**（工作目录、沙箱、审批、子代理身份…） | `dsh-system-prompt/lib/index.js:45-53`、`dsh-agent-loop/lib/index.js:910-920` |
 | codex | 做成 `<environment_context>` 片段，且**只发差异**（跟上次快照逐字段比） | `core/src/context/world_state/environment.rs:115-202`、`:263-330` |
-| Pneuma | 拼成一条 user 快照，**附在请求末尾**（每轮都发，缺省不跳过） | `src/core/prompt.ts:302-330`、`src/packages/prompt/index.ts:159-208` |
+| Pneuma | 拼成一条 user 快照，**附在请求末尾**（每轮都发，缺省不跳过） | `src/packages/session-core/prompt.ts:302-330`、`src/packages/prompt/index.ts:159-208` |
 
 三者代价不同，值得说清楚：
 
@@ -169,7 +169,7 @@ Pneuma 的"头 60% + 尾 40%"值得单独说：它是对一条真实报障的修
   tools: [...], reasoning: {effort, summary}, prompt_cache_key, text: {verbosity, format} }
 ```
 
-**Pneuma**（`src/core/loop.ts:419`，投影后）：
+**Pneuma**（`src/packages/session-core/loop.ts:419`，投影后）：
 
 ```
 [0] system     身份 + 做事方式 + 工具规范 + # agentsMd + 技能目录 + 当前模型
@@ -194,7 +194,7 @@ Pneuma 的"头 60% + 尾 40%"值得单独说：它是对一条真实报障的修
 
 - dsh 把**沙箱排最前**，因为它约束的是"文件能不能被写"，这是比"用户同不同意"更硬的边界。
 - Pneuma 把**灾难地板排最前**，理由写在文件头：模式闸门在若干情形直接 `pass`
-  （`core/modes.ts:104`、`:135`），一 pass 后面的钩子和审批就全失语了
+  （`packages/session-core/modes.ts:104`、`:135`），一 pass 后面的钩子和审批就全失语了
   （`approval-floor.ts:4-8`）。所以"灾难命令连满权限也不许跑"只能由排在最前面的那一位自己完成。
 - codex 没有独立的"地板"层，它靠审批档位 + 沙箱 + `safety.rs` 的路径判定，且允许
   "同意并写入 execpolicy 规则"沉淀成规则（`protocol/src/protocol.rs:4371-4391`）。
@@ -241,7 +241,7 @@ Pneuma 是"子进程环境脱敏 + 输出遮红（观察者链 order 10）→ sp
 |---|---|
 | dsh | `floor(min(W × 0.8, W − O − 65536))`，逐字保留 `(W − O) × 0.16`（`dsh-compaction-basic/README.zh.md:63`、`:67-77`） |
 | codex | 三条线同时算：模型目录的 `auto_compact_scope_limit`、`context_window × percent`、`scope + buffer`，任一命中就压（`core/src/session/context_window.rs:53-130`）；另有"收口时提前压"，把成本挪到用户读答案的空档 |
-| Pneuma | 估算 > `contextWindow × autoCompactPercent`（缺省 80，可调 50–95）；保留尾部按 **token 预算 16%** 算，条数只是下限（`src/packages/compact/index.ts:72,96`、`src/core/compact.ts:256-270`） |
+| Pneuma | 估算 > `contextWindow × autoCompactPercent`（缺省 80，可调 50–95）；保留尾部按 **token 预算 16%** 算，条数只是下限（`src/packages/compact/index.ts:72,96`、`src/packages/session-core/compact.ts:256-270`） |
 
 ### 4.2 压缩本身怎么省钱
 
@@ -254,7 +254,7 @@ Pneuma 是"子进程环境脱敏 + 输出遮红（观察者链 order 10）→ sp
   压缩提示词只有两句——写一份交接摘要（进度、约束、待办、关键数据），前面套固定前缀
   （`prompts/templates/compact/prompt.md`、`summary_prefix.md`）。压缩后历史重建为
   "窗口前缀 + 保留上下文 + 摘要"（`compact.rs:85-110`）。
-- **Pneuma**：摘要调用同样复用主对话前缀（`src/core/compact.ts:330`），但额外附三样
+- **Pneuma**：摘要调用同样复用主对话前缀（`src/packages/session-core/compact.ts:330`），但额外附三样
   **机械产物**：正则抽的锚点索引（PR 号/SHA/路径/报错原文）、用户原话逐字引用、
   read-state（压前读过哪几段）。理由是"模型写的摘要会漏掉 SHA 与报错"
   （`compact.ts:354-362`）。

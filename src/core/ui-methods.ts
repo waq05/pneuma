@@ -28,7 +28,7 @@
  *   - 队友：`listTeammates` / `stopTeammate` / `messageTeammate` / `removeTeammate`
  *   - 任务与目标：`clearTodos` / `goalAction`
  *   - 壳的 `/` 命令菜单：`listUiCommands`（只读元数据）+ `runUiCommand`——**只认
- *     `shell: true` 那批命令**（清单与挑选尺子在 `core/commands-completion.ts`：
+ *     `shell: true` 那批命令**（清单与挑选尺子在 `packages/commands-core/commands-completion.ts`：
  *     动作不出本清单已有的权力面，且壳里没有更顺手的替身）。它与被排除的 `runCommand`
  *     是两条路：那条能跑任意命令（含权限旋钮、写文件、落信任、退出），这条的名字面
  *     钉死在宿主那份表上，加一条新命令不会自动变可达。
@@ -169,7 +169,7 @@ export const UI_METHODS = [
   'clearTodos',
   'goalAction',
   // 壳的 `/` 命令菜单：元数据是只读的；派发那条的名字面钉在宿主那份
-  // `shell: true` 清单上（挑不出来的命令在宿主那侧直接报错，见 core/commands-completion.ts）。
+  // `shell: true` 清单上（挑不出来的命令在宿主那侧直接报错，见 packages/commands-core/commands-completion.ts）。
   'listUiCommands',
   'runUiCommand',
   // 工作区文件与 git（dock 通道的读 + 写两档；终端那档留在原生桥，见 core/dock-ops.ts）

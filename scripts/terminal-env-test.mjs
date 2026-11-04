@@ -32,7 +32,7 @@ writeFileSync(join(process.env.DSC_HOME, 'plugins.json'), JSON.stringify({ versi
 const env = await import('../lib/core/terminal-env.js')
 const bash = await import('../lib/core/tools/bash.js')
 const floorModule = await import('../lib/core/approval-floor.js')
-const prompt = await import('../lib/core/prompt.js')
+const prompt = await import('../lib/packages/session-core/prompt.js')
 const registry = await import('../lib/core/plugin-registry.js')
 
 let passed = 0

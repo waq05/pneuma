@@ -87,7 +87,7 @@ const DSC_SERVICE_NAMES = new Set([
 /**
  * 读插件声明的 dsh 客户端能力名（只读，不加载）。
  *
- * dsh 的 `dsh.client` 是个对象（platform / inject / modules…），我们把**键名**当能力列出来；
+ * dsh 的 `pneuma.client` 是个对象（platform / inject / modules…），我们把**键名**当能力列出来；
  * 数组就给里面的字符串；字符串原样。认不出给空数组（不猜）。
  * @param raw - 插件模块上的 client / dshClient 导出
  * @returns 能力名清单（去重、按出现顺序）
@@ -1006,7 +1006,7 @@ export async function mountBundlePlugins(
   const warnings: string[] = []
   /** 每一层是哪个包的（解析相对路径时按它来）。 */
   const layerOwner = new Map<string, string>()
-  /** 包名 → 读盘结果（挂上之后要拿它的 `dsh.client` 给插件中心看）。 */
+  /** 包名 → 读盘结果（挂上之后要拿它的 `pneuma.client` 给插件中心看）。 */
   const bundleInfoOf = new Map<string, BundleInfo>()
 
   for (const name of profile.bundles) {
@@ -1352,7 +1352,7 @@ async function mountRow(row: PluginRow, ctx: RowMountContext): Promise<PluginMou
     if (pneuma.description !== undefined) meta.description = pneuma.description
     if (pneuma.settingsSection !== undefined) meta.settingsSection = pneuma.settingsSection
     if (owner !== undefined) meta.bundle = owner
-    // 有的包把界面能力写在 package.json 的 dsh.client（不在模块导出里）。
+    // 有的包把界面能力写在 package.json 的 pneuma.client（不在模块导出里）。
     // 只列不加载，但要列得出来，否则用户在插件中心看不到「它还想改界面」。
     //
     // 例外：platform = 'pneuma' 的是**我们自己会加载**的界面半（见 core/ui-bundles 的

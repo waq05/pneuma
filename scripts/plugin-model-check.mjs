@@ -69,7 +69,7 @@ if (!existsSync(packagesDir)) {
 } else {
   for (const name of readdirSync(packagesDir).sort()) {
     // `ui-<id>` 是独立界面包：它有一行（空 apply 的宿主半），所以与功能包同一套检查走。
-    // 它的界面半边的门禁在 ui-shell 的构建里（build-plugins 读 dsh.client.api）。
+    // 它的界面半边的门禁在 ui-shell 的构建里（build-plugins 读 pneuma.client.api）。
     const dir = join(packagesDir, name)
     if (!statSync(dir).isDirectory()) continue
     const manifestFile = join(dir, 'package.json')

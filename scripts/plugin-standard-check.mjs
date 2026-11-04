@@ -86,12 +86,11 @@ const hard = new Map([
   [4, { title: '入口导出', issues: [], passed: 0 }],
   [5, { title: '依赖方向', issues: [], passed: 0 }],
   [6, { title: 'order 撞号', issues: [], passed: 0 }],
+  [7, { title: '文档与测试', issues: [], passed: 0 }],
 ])
 
 /** 待办清单（只打印）。 */
 const todo = {
-  readme: [],
-  tests: [],
   state: [],
 }
 
@@ -356,20 +355,32 @@ for (const id of ids) {
   }
   if (entryApplicable && entryOk) hard.get(4).passed += 1
 
-  // ── 待办：README / tests / 模块级可变状态 ────────────────────────────────
+  // ── 7. 文档与测试（库包也照要求：区分包的身份靠它们）─────────────────────
+  let docOk = true
+  const docFail = (detail) => {
+    docOk = false
+    fail(7, id, detail)
+  }
   const readmeFile = join(dir, 'README.md')
   if (!existsSync(readmeFile)) {
-    todo.readme.push(`${id}：缺 README.md`)
+    docFail('缺 README.md')
   } else {
     const readme = readText(readmeFile) ?? ''
     for (const section of ['Model Experience', 'Known Limitations']) {
       // 标题层级 1–3 都算：dsh 的写法是 ##，我们不强制。
       if (!new RegExp(`^#{1,3}\\s*${section}\\b`, 'mi').test(readme)) {
-        todo.readme.push(`${id}：README.md 缺「${section}」一节`)
+        docFail(`README.md 缺「${section}」一节`)
       }
     }
   }
-  if (!existsSync(join(dir, 'tests'))) todo.tests.push(`${id}：缺 tests/ 目录`)
+  // 包级测试的发现规则与 scripts/package-tests.mjs 一致：tests/ 下至少一个
+  // *.test.mjs。只有目录没有文件等于没测——那种"看起来有测试"的包最难发现。
+  const testsDir = join(dir, 'tests')
+  const testFiles = existsSync(testsDir)
+    ? readdirSync(testsDir).filter((name) => name.endsWith('.test.mjs'))
+    : []
+  if (testFiles.length === 0) docFail('tests/ 下没有 *.test.mjs（只有目录不算）')
+  if (docOk) hard.get(7).passed += 1
 
   // 库包的待办只保留 README 与 tests：模块级可变状态是功能包的装配隐患，
   // 而常量表 / 缓存本来就是库包的正常写法，列出来只是噪声。
@@ -463,6 +474,7 @@ const applicableOf = new Map([
   [4, featureTotal],
   [5, total],
   [6, featureTotal],
+  [7, total],
 ])
 const issues = [...hard.values()].flatMap((item) => item.issues)
 const summary = {
@@ -482,8 +494,6 @@ const summary = {
     issues: item.issues.length,
   })),
   todo: {
-    readme: todo.readme.length,
-    tests: todo.tests.length,
     state: todo.state.length,
   },
 }
@@ -516,8 +526,6 @@ for (const [index, item] of hard) {
 console.log(`  合计 ${issues.length} 条问题`)
 console.log('')
 console.log('待办（只提示，不阻塞合并）')
-console.log(`  README         ${todo.readme.length} 条`)
-console.log(`  tests/         ${todo.tests.length} 条`)
 console.log(`  模块级可变状态 ${todo.state.length} 条`)
 
 if (issues.length > 0) {
@@ -528,8 +536,8 @@ if (issues.length > 0) {
   }
 }
 
-// 待办清单只列前 20 条：75 个包全缺 README，全列出来会把终端刷没，统计在汇总里。
-const todoLines = [...todo.readme, ...todo.tests, ...todo.state]
+// 待办清单只列前 20 条：全列出来会把终端刷没，统计在汇总里。
+const todoLines = [...todo.state]
 if (todoLines.length > 0) {
   console.log('')
   console.log('待办明细（最多列 20 条）')

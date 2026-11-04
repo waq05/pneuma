@@ -15,9 +15,7 @@
     "order": 352,
     "resolution": "overridable",
     "title": "侧栏浏览器（界面）",
-    "description": "右侧栏给人用的浏览器页签：一张页签一台原生网页视图，可多开、不需要审批；模型那台受控 Chrome 在「受控浏览器」"
-  },
-  "dsh": {
+    "description": "右侧栏给人用的浏览器页签：一张页签一台原生网页视图，可多开、不需要审批；模型那台受控 Chrome 在「受控浏览器」",
     "client": {
       "platform": "pneuma",
       "api": "^0.8.1"

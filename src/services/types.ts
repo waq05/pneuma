@@ -15,7 +15,7 @@
  */
 import type { ApprovalDecision, ApprovalHandler, ApprovalRequest } from '../core/approval.js'
 import type { AuditRecord } from '../core/audit.js'
-import type { HookJudgement, HooksDoc, HookTrust } from '../core/hooks.js'
+import type { HookJudgement, HooksDoc, HookTrust } from '@pneuma/session-core/hooks.js'
 import type { HostBrowserLink } from '../core/host-browser-link.js'
 import type { MemoryCell, MemoryConfig, MemoryOperation, MemoryTarget, MemoryWriteResult, WriteOptions } from '../core/memory.js'
 import type { ProviderConfig } from '../core/config.js'
@@ -28,7 +28,7 @@ import type { CoreEvent } from '../core/events.js'
 import type { SkillDefinition, SkillSummary } from '../core/skills.js'
 import type { DscPrefs } from '../core/prefs.js'
 import type { ToolGuard, ToolGuardChain, ToolObserver } from '../core/tool-guards.js'
-import type { PromptContribution } from '../core/prompt.js'
+import type { PromptContribution } from '@pneuma/session-core/prompt.js'
 import type {
   ApprovalAnswer,
   ApprovalPolicy,
@@ -588,7 +588,7 @@ export interface CommandSpec {
    * 壳（桌面 / 手机那份插件化界面）的 `/` 菜单里列不列、能不能执行。
    *
    * 缺省 false 是**失败关闭**：外部插件注册的命令默认不进界面菜单，内置表里逐条标过才
-   * 放行（清单与理由在 `core/commands-completion.ts`）。界面通道（`core/ui-methods.ts`）
+   * 放行（清单与理由在 `packages/commands-core/commands-completion.ts`）。界面通道（`core/ui-methods.ts`）
    * 要的正是这一位：`runUiCommand` 只派发标了它的命令。
    */
   shell?: boolean
@@ -995,7 +995,7 @@ export interface SkillProvider {
   get(name: string): MaybePromise<SkillDefinition | undefined>
 }
 
-/** 技能市场提供方（外部插件可挂自己的源；内置实现见 core/market.ts）。 */
+/** 技能市场提供方（外部插件可挂自己的源；内置实现见 packages/config-core/market.ts）。 */
 export interface SkillMarketProvider {
   readonly name: string
   /** 浏览可安装条目（抛错 = 源不可用，错误原因会显示在技能中心）。 */
