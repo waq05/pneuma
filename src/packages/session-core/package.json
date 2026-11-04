@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/session-core",
-  "version": "0.0.0",
+  "version": "0.8.1",
   "private": true,
   "type": "module",
   "exports": {
@@ -10,7 +10,8 @@
     "./prompt.js": "./prompt.js",
     "./loop.js": "./loop.js",
     "./modes.js": "./modes.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
   },
   "pneuma": {
     "library": true,

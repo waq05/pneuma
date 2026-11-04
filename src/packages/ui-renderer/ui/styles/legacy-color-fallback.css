@@ -1,7 +1,7 @@
 /*
  * 老内核的调色板兜底（**生成物，别手改**）。
  *
- * 由 `ui-shell/scripts/build-color-fallback.mjs` 从 `src/legacy/tokens.css` 算出：
+ * 由 `ui-shell/scripts/build-color-fallback.mjs` 从 `src/packages/ui-renderer/ui/styles/legacy/tokens.css` 算出：
  * 把里面每个 `color-mix()` 令牌按 CSS 规范（预乘 alpha）求成实色，包在
  * `@supports not (color: color-mix(...))` 里。认不得 `color-mix()` 的内核
  * （Chromium < 111，手机上的老 WebView 常见）靠这一块拿到整套底色/文字色/描边；

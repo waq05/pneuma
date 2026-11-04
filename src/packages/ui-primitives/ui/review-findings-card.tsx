@@ -4,7 +4,7 @@
  * 说明、建议）。位置点开走右侧预览页签并定位到行。
  *
  * 解析在 `./review-findings`（零依赖纯模块，探针直测）；本组件只管画。
- * 样式全用 `ui-shell/src/legacy/views.css` 里已有的 `.review-findings*` / `.review-finding*`
+ * 样式全用 `src/packages/ui-renderer/ui/styles/legacy/views.css` 里已有的 `.review-findings*` / `.review-finding*`
  * 那一套（含 `data-priority='P0'…'P3'` 四档徽标），这里不新造样式。
  *
  * @module dsc-ui-shell/ui-primitives/review-findings-card

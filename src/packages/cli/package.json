@@ -1,13 +1,14 @@
 {
   "name": "@pneuma/cli",
-  "version": "0.0.0",
+  "version": "0.8.1",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./index.js",
     "./config-cli.js": "./config-cli.js",
     "./plugin-cli.js": "./plugin-cli.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
   },
   "pneuma": {
     "library": true,

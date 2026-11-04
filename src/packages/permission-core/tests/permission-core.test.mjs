@@ -15,7 +15,7 @@ let skipped = 0
 
 test('库包身份：private + pneuma.library，没有装配行', () => {
   assert.equal(pkg.name, '@pneuma/permission-core')
-  assert.equal(pkg.version, '0.0.0')
+  assert.equal(pkg.version, JSON.parse(read('../../../../package.json')).version)
   assert.equal(pkg.private, true)
   assert.equal(pkg.type, 'module')
   assert.equal(pkg.pneuma.library, true)

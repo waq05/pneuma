@@ -4,7 +4,7 @@
  * 为什么单开一份（而不是塞进 `ui-plugin-test.mjs`）：这一层出问题的形状都是「界面某个数字
  * 不动了，而且不报错」，只能靠钉死协议语义的断言来发现。断言钉在五件事上：
  *
- *   1. `lib/ui/frames.js` 的三条序号不变量：首帧必须全量、回退帧丢弃、增量跳号抛可识别错误；
+ *   1. `lib/packages/ui-core/frames.js` 的三条序号不变量：首帧必须全量、回退帧丢弃、增量跳号抛可识别错误；
  *   2. **断线期间的变化不能丢**：一条连接都没有时不造帧，重连时 `resume(after)` 返回的是
  *      空数组（不是 null），必须靠 `missedWhileIdle` 补一帧全量；
  *   3. **全量帧是全体共用的**：hub 的 diff 基准只有一份，新连接引发的全量帧若不广播给
@@ -33,7 +33,7 @@ delete process.env.DSC_UI_SERVER
 delete process.env.DSC_UI_ASSETS
 delete process.env.DSC_UI_PORT
 
-const { applyHostFrame, HostFrameError, HostFrameGapError } = await import('../lib/ui/frames.js')
+const { applyHostFrame, HostFrameError, HostFrameGapError } = await import('../lib/packages/ui-core/frames.js')
 const { RemoteFrameHub } = await import('../lib/core/remote/frames.js')
 const { createUiEvents } = await import('../lib/core/ui-events.js')
 const { createUiServer } = await import('../lib/core/ui-server.js')

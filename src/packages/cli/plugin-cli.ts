@@ -32,6 +32,7 @@ import {
 } from '@pneuma/runtime/core/plugin-bundle.js'
 import { dscPath } from '@pneuma/runtime/core/path-policy.js'
 import { activeConfigFile } from '@pneuma/runtime/core/config-store.js'
+import { pluginDisplayOf, languageOfConfigFile } from '@pneuma/runtime/core/plugin-locale.js'
 
 interface ProfileManifest {
   name?: string
@@ -201,14 +202,18 @@ interface RowPackage {
   engines: unknown
 }
 
-/** 读一个包目录的清单；目录不在给 null（显示成「缺件」）。 */
-function readRowPackage(dir: string): RowPackage | null {
+/**
+ * 读一个包目录的清单；目录不在给 null（显示成「缺件」）。
+ * @param dir - 包目录
+ * @param language - 显示语言：标题先查 `locale/<语言>.json`，没译过用清单原文
+ */
+function readRowPackage(dir: string, language: string): RowPackage | null {
   try {
     const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as Record<string, unknown>
     const pneuma = manifest['pneuma'] as { title?: unknown; resolution?: unknown } | undefined
     return {
       version: String(manifest['version'] ?? '?'),
-      title: typeof pneuma?.title === 'string' ? pneuma.title : '',
+      title: pluginDisplayOf(manifest, dir, language).title ?? '',
       pinned: pneuma?.resolution === 'pinned',
       engines: manifest['engines'],
     }
@@ -232,6 +237,8 @@ function listApplicationRows(profileDir: string, profileActive: boolean): void {
     return
   }
   const entries = readEntries()
+  // 语言只读一次：这一屏要读几十个包，逐包读配置没有意义。
+  const language = languageOfConfigFile(activeConfigFile())
   let rows: unknown
   try {
     rows = YAML.parse(readFileSync(basePatch, 'utf8'))
@@ -251,9 +258,11 @@ function listApplicationRows(profileDir: string, profileActive: boolean): void {
     const name = String((row as { name?: unknown }).name ?? '')
     const rowOff = (row as { disabled?: unknown }).disabled === true
     const parts = name.split('/')
-    const app = readRowPackage(join(APP_ROOT, 'lib', 'node_modules', ...parts))
+    const app = readRowPackage(join(APP_ROOT, 'lib', 'node_modules', ...parts), language)
     // 覆盖版只在这个 profile 真的生效时才算数（内核走的是 activeProfileDir 那一条）。
-    const profilePkg = profileActive ? readRowPackage(join(profileDir, 'node_modules', ...parts)) : null
+    const profilePkg = profileActive
+      ? readRowPackage(join(profileDir, 'node_modules', ...parts), language)
+      : null
     // pinned 的包不接受覆盖：profile 里有同名副本也不生效，照旧显示应用那份。
     const useProfile = profilePkg !== null && app?.pinned !== true
     if (useProfile) overridden += 1

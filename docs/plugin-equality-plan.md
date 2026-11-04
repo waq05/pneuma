@@ -161,14 +161,14 @@ lib/packages/<id>/package.json + cordis.patch.yml + index.js   # 构建产物
 pnpm run typecheck && pnpm --dir desktop typecheck
 pnpm run build && pnpm run build:ui
 pnpm run check:style --changed
-pnpm run check:plugin                # 模型检查 + 包标准七条 + 清单快照 + 加载器 92 条 + list 15 条 + 换包 e2e 17 条
+pnpm run check:plugin                # 模型检查 + 包标准八条 + 清单快照 + 加载器 92 条 + list 15 条 + 换包 e2e 17 条
 node scripts/check-core.mjs          # 97 套（hmr-dispose-test、plugin-hot-update-test 自动进来）
 node scripts/ops-test.mjs
 pnpm run check:dsh
 ```
 
 `check:plugin` 的五个脚本分工：`plugin-model-check --strict`（结构：包数 / 行数 / 内核行数 / 缺口）、
-`plugin-standard-check`（包标准七条硬项：清单字段 / exports 键集 / 行 / 入口导出 / 包间 import / order 撞号；文档与测试两项已升为硬项；模块级可变状态仍只提示）、
+`plugin-standard-check`（包标准八条硬项：清单字段 / exports 键集 / 清单本地化 / 行 / 入口导出 / 包间 import / order 撞号 / 文档与测试；模块级可变状态仍只提示）、
 `plugin-inventory-check`（清单与该在的样子的逐项 diff）、`plugin-model-test`（加载器行为）、
 `plugin-list-test`（用户看得见的那一屏）、`plugin-swap-e2e`（真进程里换包 / 覆盖 / 删包）。
 
@@ -431,7 +431,7 @@ numa 对应：
 3. **26 支探针按路径读样式源码做断言**（`ui-attach-preview-test`、`ui-color-fallback-test` 等）。搬家必须同批改，否则断的是"断言读不到文件"，而不是样式回归。
 
 **`ui-shell/` 现在只剩构建装置**：`packages.json`（别名唯一真源）、`tsconfig.json`、`vite.config.ts`、`build-plugins.mjs`、`build-types.mjs`、`index.html`、`src/plugin-api.ts`（`@dsc/ui` 的类型面）、`src/slot-contract.typecheck.tsx`。这里不是"代码放错了地方"，是"壳的构建配方放这里"——产物落点、产物 id 换算、种子表都在其中。
-### 12.11 Q6 落地：七条硬项与两处故意不对齐（2026-11-04）
+### 12.11 Q6 落地：八条硬项与一处故意不对齐（2026-11-04）
 
 **已升成硬项（不通过就退出 1）**：
 
@@ -443,12 +443,36 @@ numa 对应：
 | 入口导出 | index.ts 有 apply / default / 恰好一个带 apply 的插件对象 | 75/75 |
 | 依赖方向 | 功能→库允许；功能→功能、库→任何包、core→任何包都红（含 import type） | 81/81 |
 | order 撞号 | 每个功能包的 pneuma.order 唯一 | 75/75 |
-| 文档与测试 | README 有 Model Experience / Known Limitations 两节；tests/ 下至少一个 *.test.mjs | 86/86 |
+| 清单本地化 | 声明 `./locale/*.json` 就必须真有译本，且 title / description 非空 | 87/87 |
+| 文档与测试 | README 有 Model Experience / Known Limitations 两节；tests/ 下至少一个 *.test.mjs | 87/87 |
 
 第 7 项这次从「待办只提示」升级成硬项。理由是这两件事都不是有空再补的装饰：README 两段是给**模型**看的（这段代码在什么场景下被用到、边界在哪），tests 是给**改这个包的人**看的护栏。只有目录没有文件的那种「看起来有测试」最坏，所以判据落在文件上，不看目录。
 
 **故意不对齐 dsh 的两处**（理由写在这，避免下次又被当成遗漏）：
 
-1. **源码清单的 version 固定 0.0.0，构建时改写成根版本**（`scripts/build-packages.mjs:136`）。dsh 有 370 个包、每个都维护真实版本号，因为它逐包发到 npm；numa 只发一个包（`files: [bin, lib, package.json]`），81 个包目录是构建期产物、从不单独发布。让 81 个文件跟着根版本走，只会在每次发版时制造 81 处可漂移的地方。单一版本源就是根 package.json，构建时注入；门禁要求源码期必须是 0.0.0，防手改。
+1. ~~源码清单的 version 固定 0.0.0~~ → **2026-11-04 晚改为与 dsh 一致**：87 个包各写真实版本号（都等于根 `0.8.1`），发版时 `node scripts/sync-versions.mjs --write` 一起推，门禁只认「等于根」。当时判断「只有根一个版本源更省事」，用户裁决对齐 dsh；实际代价也就是一条命令，换来的是「随便打开哪个包，都看得出它属于哪一版」。
 2. **写 pneuma.client，读 pneuma.client 与 dsh.client 两处**：我们自己那 19 个界面包写 pneuma.client（本项目命名空间），读的一侧同时认 dsh.client——真实 dsh 生态里有 90 个包写的是 dsh.client，那是别人发布的，不能要求他们改。读两处、写一处，兼容但不将就。
+
+### 12.12 与 dsh 完全对齐的四件（2026-11-04 晚，用户裁决「全做」）
+
+| 项 | dsh 的做法 | numa 现在 | 代价 / 说明 |
+|---|---|---|---|
+| 界面契约包 | `ui-slots` / `ui-primitives` / `ui-dockkit` 是包不是插件；`ui-layout` / `ui-renderer` 是插件 | `src/ui/` 搬成 `@pneuma/ui-core` 库包（14 个文件），`manifest.ts` 下沉成 `src/core/ui-manifest.ts`；别名 `@dsc/ui-core` 落点改到包内 `index.ts` | core 要用 `manifest.ts`，而「core → 包」是禁的；把启动图那部分留在内核，才既包化又不反向依赖 |
+| 壳层是插件 | `ui-layout` 是普通客户端插件（inject 5、无 immediately）；`ui-renderer` 是 `immediately: true` 的引导 | `ui-layout` 去掉 `pneuma.library`，加 `cordis.patch.yml`（order 349、`phase: early`）与 `./client`；`ui-renderer` 声明 `pneuma.client.immediately`、**不占行** | 停用 layout 后壳画诊断页（说清哪一行没了、去哪打开），不白屏；骨架代码仍在壳的 app bundle 里，停用省的是「装这一行」而不是下载量 |
+| 逐包版本号 | 370 个包各写真实版本 | 87 个包全部写 `0.8.1`，`node scripts/sync-versions.mjs --write` 一起推，门禁只认「等于根」 | 发版时一条命令推 87 处，漏一个当场红 |
+| 清单本地化 | `locale/*.json` + `exports['./locale/*.json']` | 87 个包各有 `locale/en.json`（title / description），`config.yaml` 的 `language:` 决定读哪份，缺字段逐条回落中文 | 只到「清单两行字」；界面内文案仍是中文（写在各包 README 的 Known Limitations 里） |
+
+**为什么不把骨架实现也搬进 layout 的 bundle**：`@dsc/ui`（`ui-shell/src/plugin-api.ts`）把 layout 的读 hook 整包转出给插件用。bundle 若内联一份，插件的 `useHostSnapshot` 与 App 会落在两个 `RuntimeContext` 里，首渲染直接抛「必须在 RuntimeProvider 里用」。所以 layout 同时是**平台种子**（`platform-modules.json` + `boot.ts` 的 MODULES），bundle 只是薄入口（1.2 KB）。这与 dsh 把 `ui-slots` 列为种子包是同一个道理。
+
+**`ui-renderer` 为什么不给行**：它是 `index.html` 里唯一 parser-blocking 的脚本，与 dsh 的 `dsh-client-modules` 同位。给它一行，关掉的结果是整页白屏——那不是开关，是断电。
+
+### 12.13 数字对账（避免下次把正常差值当回归）
+
+| 数字 | 含义 |
+|---|---|
+| 87 | `src/packages/` 下的包目录（76 功能包 + 11 库包） |
+| 76 | 装配行数（= 功能包数；库包不占行） |
+| 75 | `plugin-inventory` 数出的插件数：headless 不挂 `tui` 那一行 |
+| 20 | `lib/ui/plugins/` 的界面产物（19 个单元 + layout） |
+
 

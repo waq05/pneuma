@@ -1,0 +1,4 @@
+{
+  "title": "Output spill",
+  "description": "Long tool output goes to a file; the model reads head, tail, then pages by path"
+}

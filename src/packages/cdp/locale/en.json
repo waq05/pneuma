@@ -1,0 +1,4 @@
+{
+  "title": "CDP core library",
+  "description": "CDP transport, actions, snapshots and launcher shared by three feature packages"
+}

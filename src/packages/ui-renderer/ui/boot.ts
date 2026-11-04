@@ -42,6 +42,11 @@ import * as xtermFit from '@xterm/addon-fit'
 import * as uiSlots from '@dsc/ui-slots'
 import * as uiPrimitives from '@dsc/ui-primitives'
 import * as uiDockkit from '@dsc/ui-dockkit'
+// 布局包也是平台种子——理由见 `ui/ui.tsx` 的抬头：`@dsc/ui`（`ui-shell/src/plugin-api.ts:298-323`）
+// 把它的读 hook 整包转出给插件，插件拿到的那几个 hook 与骨架里的 App 必须读同一份模块状态
+// （RuntimeContext、页 / 视图信号）。布局自己的 client.js 里 `require('@dsc/ui-layout')` 因此
+// 必须命中这里这一份：内联第二份的话，插件一渲染就抛「useHostChannel 必须在 RuntimeProvider 里用」。
+import * as uiLayout from '@dsc/ui-layout'
 import { UiArrivalLedger, type UiArrivalHost } from '@dsc/ui-core'
 import type {
   UiBootBatch,
@@ -85,9 +90,15 @@ export const BOOT_STATE_GLOBAL = '__DSC_UI_BOOT_STATE__'
  * 它被构建期保留成 require，所以真当值用了会得到一句明确的「白名单外的模块」）。
  *
  * `@dsc/ui-slots` / `@dsc/ui-primitives` / `@dsc/ui-dockkit` 在表里（E6 起的平台种子）：
- * 插件按包名 require 到的就是壳内部那一份实现，不必也不能各自内联。三者的值由上面的
+ * 插件按包名 require 到的就是壳内部那一份实现，不必也不能各自内联。它们的值由上面的
  * 静态 import 提供——与壳的同一个 vite 图，保证实例一致。TUI 壳是**另一张表**
- * （`src/ui/tui-plugins.ts`），这三条只对 web 值面成立。
+ * （`src/packages/ui-core/tui-plugins.ts`），这几条只对 web 值面成立。
+ *
+ * `@dsc/ui-layout` 也在表里，但它与那三个不是同一种：那三个是库包（没有 `./client`），
+ * 布局是**真的客户端插件**（有自己的行与 `lib/ui/plugins/layout/client.js`）。它进这张表
+ * 是因为 `@dsc/ui` 把它的读 hook 整包转出给插件——插件拿到的 hook 与骨架里的 App 必须
+ * 是同一份模块（条目的 `./client` 只是转出这一份，见 `src/packages/ui-layout/ui/ui.tsx`）。
+ * 不放进表里的话，插件 bundle 会各内联一份，RuntimeContext 分家、页与视图信号各写各的。
  *
  * `@xterm/xterm` 与 `@xterm/addon-fit` 在表里（2026-10-10 加的）：终端插件要用它们，
  * 而"每个插件自带一份 xterm"会让每个用到终端的插件都拖进 ~400KB。放进平台表之后
@@ -102,6 +113,8 @@ const MODULES: Readonly<Record<string, unknown>> = {
   '@dsc/ui-slots': uiSlots,
   '@dsc/ui-primitives': uiPrimitives,
   '@dsc/ui-dockkit': uiDockkit,
+  // 布局的 client.js 只转出这一份（它自己的骨架在壳的 app bundle 里，见 ui/ui.tsx 抬头）。
+  '@dsc/ui-layout': uiLayout,
   '@xterm/xterm': xterm,
   '@xterm/addon-fit': xtermFit,
 }
@@ -467,7 +480,7 @@ export async function createBootSession(
       await ledger.arrive({ id: entry.id, preferred, ...(fallback === undefined ? {} : { fallback }) }, arrivalHostFor(entry.id, phase))
       const factory = table[entry.id]
       if (typeof factory !== 'function') throw new Error(`插件 ${entry.id} 的脚本没有注册工厂（bundle 形状不对？）`)
-      const exported = instantiate(factory, entry.id)
+      const exported = instantiateOnce(factory, entry.id, entry.rev)
       const module_ = (exported as { default?: unknown } | null)?.default ?? exported
       const apply = (module_ as { apply?: unknown } | null)?.apply
       if (typeof apply !== 'function') throw new Error('插件没有导出 apply(ui)')
@@ -684,6 +697,8 @@ export async function createBootSession(
       installed.delete(id)
       // 工厂表是后写覆盖的：删掉这一条，HMR 重取时才知道新脚本真的注册了。
       delete table[id]
+      // 物化缓存同理：换装要拿到新模块实例，不能把旧的那份交给下一次 install。
+      modules.delete(id)
       removeOwnedStyles(id)
       reports.delete(id)
       setPlugin(id, { state: 'removed', at: Date.now(), error: undefined })
@@ -794,6 +809,44 @@ function instantiate(factory: Factory, id: string): unknown {
     // 失败路径也要认领：半截注入的样式不该在换装时留下脏标签。
     claimStyles(styleBefore, id)
   }
+}
+
+/**
+ * 物化缓存：一个插件的**一个 rev 只执行一次工厂**。
+ *
+ * 为什么需要它：页面入口（`main.tsx`）要在首帧之前先拿到布局插件的 `App`，而装载会话
+ * 得等通道建好才能起（通道又是骨架给的）——所以同一条 bundle 会被取两趟（入口一趟、
+ * early 批一趟）。没有这张表的话两趟各执行一次工厂，得到两份模块实例：React 组件身份、
+ * 模块级状态都分家。键带 rev：HMR 换了字节自然落空；`uninstall` 时连带删掉。
+ */
+const modules = new Map<string, { rev: string; exports: unknown }>()
+
+/** 按 id + rev 物化一次；同一代再来就交回同一份导出。 */
+function instantiateOnce(factory: Factory, id: string, rev: string): unknown {
+  const cached = modules.get(id)
+  if (cached !== undefined && cached.rev === rev) return cached.exports
+  const exported = instantiate(factory, id)
+  modules.set(id, { rev, exports: exported })
+  return exported
+}
+
+/**
+ * 从启动图取一条插件的产物并**物化**它——不 apply、不记账、不进安装队列。
+ *
+ * 唯一的消费方是页面入口：骨架（布局插件）必须在首帧前就位，而它同时又是通道的提供者，
+ * 先有鸡先有蛋的那一圈就靠这一份拆开。装载会话随后装同一条时走同一个物化缓存
+ * （{@link instantiateOnce}），工厂不会执行第二遍。
+ *
+ * @param entry - 启动图里的一条（`url` 是单资源地址，`url` 带 rev 的那一份）
+ * @returns 模块导出（插件 bundle 的 `module.exports`）
+ * @throws 取字节失败、或脚本没有注册工厂
+ */
+export async function loadPluginModule(entry: UiPluginEntry): Promise<unknown> {
+  const table = factoryTable()
+  if (typeof table[entry.id] !== 'function') await appendScript(entry.url, entry.id)
+  const factory = table[entry.id]
+  if (typeof factory !== 'function') throw new Error(`插件 ${entry.id} 的脚本没有注册工厂（bundle 形状不对？）`)
+  return instantiateOnce(factory, entry.id, entry.rev)
 }
 
 /** 插 `<script>` 并等它执行完。 */

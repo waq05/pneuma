@@ -47,7 +47,7 @@ export * from './snapshot'
 export * from './signal'
 
 export * from './humanize-error'
-// 载体基元：终端壳的同名基元在 `src/ui/tui-plugin-api.ts`（那里 Text 是 ink 的 <Text>）。
+// 载体基元：终端壳的同名基元在 `src/packages/ui-core/tui-plugin-api.ts`（那里 Text 是 ink 的 <Text>）。
 export * from './plugin-text'
 // 平台层（原 `src/platform/*`，全部与 React/DOM 打交道、不碰槽位与插件 API）。
 export * from './code-view'

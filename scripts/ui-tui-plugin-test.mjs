@@ -21,10 +21,10 @@ import React from 'react'
 import { render } from 'ink'
 
 process.env.DSC_HOME = mkdtempSync(join(tmpdir(), 'dsc-ui-tui-'))
-const { SlotRegistry } = await import('../lib/ui/slots.js')
-const { loadTuiPlugins } = await import('../lib/ui/tui-plugins.js')
-const { TUI_SLOTS } = await import('../lib/ui/tui-plugin-api.js')
-const { SlotOutlet } = await import('../lib/ui/slots-ink.js')
+const { SlotRegistry } = await import('../lib/packages/ui-core/slots.js')
+const { loadTuiPlugins } = await import('../lib/packages/ui-core/tui-plugins.js')
+const { TUI_SLOTS } = await import('../lib/packages/ui-core/tui-plugin-api.js')
+const { SlotOutlet } = await import('../lib/packages/ui-core/slots-ink.js')
 const { App } = await import('../lib/packages/tui/app/App.js')
 
 let failures = 0

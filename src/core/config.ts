@@ -23,6 +23,7 @@ import {
 } from './migrate.js'
 import { activeConfigFile } from './config-store.js'
 import { readModelCaps, type ModelCaps } from './model-caps.js'
+import { DEFAULT_LANGUAGE, languageOfConfig } from './plugin-locale.js'
 import { dscPath } from './path-policy.js'
 
 /** 一个可对话的模型（能力声明见 core/model-caps.ts）。 */
@@ -56,6 +57,13 @@ export interface DscCoreConfig {
   defaultModel: string
   /** 采样参数覆盖（缺省用端点默认）。 */
   temperature?: number
+  /**
+   * 界面语言（`config.yaml` 的 `language:`）。缺省 'zh-CN'。
+   *
+   * 现在只影响插件清单那两行字（`pneuma.title` / `pneuma.description` 的译本，
+   * 见 core/plugin-locale）：`en` 开头取 `locale/en.json`，其余用清单原文。
+   */
+  language?: string
 }
 
 const DSC_CONFIG_JSON = dscPath('config.json')
@@ -121,12 +129,15 @@ export function readConfig(): DscCoreConfig {
   let defaultProvider = ''
   let defaultModel = ''
   let temperature: number | undefined
+  // 语言没配就是中文：清单原文（pneuma.title/description）本来就是中文写的。
+  let language: string = DEFAULT_LANGUAGE
 
   if (existsSync(file)) {
     const doc = parseTolerantYaml(readFileSync(file, 'utf8')) as unknown as FileConfig
     if (typeof doc.default?.provider === 'string') defaultProvider = doc.default.provider
     if (typeof doc.default?.model === 'string') defaultModel = doc.default.model
     if (typeof doc.temperature === 'number') temperature = doc.temperature
+    language = languageOfConfig(doc)
     for (const [name, raw] of Object.entries(doc.providers ?? {})) {
       const provider = toProvider(name, raw)
       if (provider !== null) providers[name] = provider
@@ -162,6 +173,6 @@ export function readConfig(): DscCoreConfig {
     defaultModel = providers[defaultProvider].models[0]?.id ?? ''
   }
 
-  return { providers, defaultProvider, defaultModel, temperature }
+  return { providers, defaultProvider, defaultModel, temperature, language }
 }
 

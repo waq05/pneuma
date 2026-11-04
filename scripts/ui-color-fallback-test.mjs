@@ -155,11 +155,11 @@ console.log('[5] 主题门：浅色块必须与深色块不同')
 console.log('[6] 接线：引入次序 + 产物')
 {
   const entry = flat(read('src/packages/ui-renderer/ui/main.tsx'))
-  const stylesAt = entry.indexOf("import '../styles.css'")
-  const fallbackAt = entry.indexOf("import '../legacy-color-fallback.css'")
+  const stylesAt = entry.indexOf("import './styles/styles.css'")
+  const fallbackAt = entry.indexOf("import './styles/legacy-color-fallback.css'")
   check('入口引入了兜底 CSS', fallbackAt !== -1)
   check('它排在 styles.css 之后（同特异性靠源码序赢）', stylesAt !== -1 && fallbackAt > stylesAt, `styles=${String(stylesAt)} fallback=${String(fallbackAt)}`)
-  check('它排在 tokens.css 之后', entry.indexOf("import '../legacy/tokens.css'") < fallbackAt)
+  check('它排在 tokens.css 之后', entry.indexOf("import './styles/legacy/tokens.css'") < fallbackAt)
   const assetsDir = `${root}lib/ui/assets`
   if (existsSync(assetsDir)) {
     const cssFiles = readdirSync(assetsDir).filter((f) => f.endsWith('.css'))

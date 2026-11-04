@@ -127,7 +127,7 @@ await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
 const baseUrl = `http://127.0.0.1:${server.address().port}`
 
 const { createKernel } = await import('../lib/host/kernel.js')
-const { applyHostFrame } = await import('../lib/ui/frames.js')
+const { applyHostFrame } = await import('../lib/packages/ui-core/frames.js')
 const ctx = await createKernel({
   config: {
     providers: {

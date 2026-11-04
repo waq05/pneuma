@@ -1,0 +1,4 @@
+{
+  "title": "Session core",
+  "description": "Hooks, compaction, prompt assembly, ReAct loop and modes in one base"
+}

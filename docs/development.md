@@ -64,7 +64,7 @@
 | `src/contract/` | 10 个文件 ≈2279 行 | UI ⇄ 运行时的中性契约按域分家：`mode`（思考档位 / 权限 / 协作）、`task`（待办、计划、后台、定时、目标、提问）、`transcript`（工具卡、转录、差异）、`usage`（token 与用量）、`runtime`（状态行、预设面、git 读数、快照面）、`approval`（审批卡）、`session`（会话、归档、偏好）、`plugin`（插件、信任、队友、模型选择、技能、市场）、`settings`（设置、供应商、连接测试）、`snapshot`（运行时快照、`DscRuntime`、电脑操作）。每份 75–438 行 |
 | `src/services/types.ts` | 1608 行 | 服务面声明（`ctx.llm`、`ctx.mcp` 这些是什么类型） |
 | `src/adapter/transcript.ts` | 732 行 | 内核事件 → UI 快照的折叠投影 |
-| `src/app/` | 39 个文件 ≈7886 行 | ink 终端界面（与桌面端共用契约）；显示宽度（`display-width.ts`）是终端侧唯一一份 |
+| `src/packages/tui/app/` | 39 个文件 ≈7886 行 | ink 终端界面（与桌面端共用契约）；显示宽度（`display-width.ts`）是终端侧唯一一份 |
 | `desktop/electron/` | 7 个文件 ≈2945 行 | main + preload：窗口、托盘、运行时子进程、终端与浏览器 dock |
 | `ui-shell/` | 157 个文件 ≈60812 行（ts 79 / tsx 69 / css 6 / mjs 3） | 桌面与手机共用的界面壳（插件化：布局 + 基元 + 官方界面插件；产物落 `lib/ui/assets`）。**这是唯一的界面**——旧渲染层 21,035 行已于 2026-10-28 整体删除 |
 | `desktop/shots/` | 70 个 `.mjs` ≈11741 行（整个目录受跟踪 163 个文件） | 桌面端实拍与自检脚本（都在临时 HOME 上跑）。根 `shots/` 已不存在；`.gitignore` 先忽略整个目录，再用 13–18 行的反选规则把 `.ps1` / `.mjs` / `.py` / `.sh` / `.md` / `.json` 放回版本库——**脚本进库，只有截图产物被忽略** |
@@ -187,7 +187,7 @@ export const myPlugin: Plugin.Object = {
 `unmetDependencies` 管依赖、用 `UiBootPluginState.state` 管状态。那份与宿主内核的 cordis 语义各说
 各话——同一件事（装、等依赖、卸）在两边两套实现。
 
-现在壳里也有一个 cordis 根（`ui-shell/src/ui-renderer/cordis-host.ts`），装插件走 fiber：
+现在壳里也有一个 cordis 根（`src/packages/ui-renderer/ui/cordis-host.ts`），装插件走 fiber：
 
 | 旧账本 | 现在 |
 | --- | --- |
@@ -613,7 +613,7 @@ pnpm run check:ui                  # 54 条纯 Node 探针，40 秒（新探针�
 pnpm run check:ui:e2e              # 4 条要真 Chromium，61 秒（含 diff 卡、手机尺寸远程壳）
 pnpm run check:dsh                 # dsh 兼容层 + 组合包 + 真包挂载 + 会话桥 + 流/事件旁路 + 合成验收，176 条（新探针按命名自动进门禁，条数会涨）
 pnpm run check:core                # 94 条内核探针（协议 / TUI / 会话库 / LLM 适配 / 审批），约 12 分钟（新探针按命名自动进门禁，条数会涨）
-pnpm run check:plugin              # 插件闸（约 1 分钟）：模型检查（75 包/75 行/0 缺口）+ 包标准六条硬项 + 清单快照 + 92 条加载器探针 + 15 条 list 探针 + 17 条换包 e2e
+pnpm run check:plugin              # 插件闸（约 1 分钟）：模型检查（75 包/75 行/0 缺口）+ 包标准八条硬项 + 清单快照 + 92 条加载器探针 + 15 条 list 探针 + 17 条换包 e2e
 node scripts/plugin-inventory-check.mjs --write   # 确认插件清单的变化是有意的，重写 docs/baseline/0.9.0/inventory.json
 pnpm run check:style               # 排版闸门：制表符 / 行尾空白 / BOM / 混用行尾 / 末尾缺换行，2 秒
 pnpm run check:style -- --changed  # 只查本次改动的文件（提交前用这个）
@@ -650,9 +650,9 @@ cd D:\dsc\desktop && pnpm run dist:dir     # → dist/win-unpacked/Pneuma.exe
 exe 当**桌面端**跑的时候才要清掉它。
 
 界面参数想自动化，就加 `?xxx=1` 这类一次性钩子，现成的五个是：`skillstab`
-（`src/packages/ui-skills/ui/ui.tsx:121`）、`dock`（`ui-shell/src/ui-layout/app.tsx:231`）、
-`diag`（同文件 `:899`）、`theme`（`ui-shell/src/ui-layout/appearance.ts:221`）、
-`panels`（`ui-shell/src/ui-primitives/panels.ts:60`）；`theme` 取值 `dark` / `light` / `claude`，
+（`src/packages/ui-skills/ui/ui.tsx:121`）、`dock`（`src/packages/ui-layout/ui/app.tsx:231`）、
+`diag`（同文件 `:899`）、`theme`（`src/packages/ui-layout/ui/appearance.ts:221`）、
+`panels`（`src/packages/ui-primitives/ui/panels.ts:60`）；`theme` 取值 `dark` / `light` / `claude`，
 `panels` 形如 `sidebar:320,dock:640,collapsed:1`。别在自检脚本里手写点击。
 
 **审查台账**：2026-10-28 做过一次全仓代码审查（开发规范 / 格式统一 / 重复代码 / 架构），
@@ -731,7 +731,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
   「未知工具」就是这么来的（`src/packages/presets/index.ts` 的 `bySession`）。
 - **一轮之内工具目录只有一份**：`src/packages/session-core/loop.ts` 在发请求时取一次快照（`requestTools`），
   执行按它解析名字。执行时再取一次，会在「请求与执行之间注册表变过」时把合法调用判成未知工具。
-- **react-markdown 的 `components` 表必须是模块级常量**（`ui-shell/src/ui-primitives/markdown.tsx`）。
+- **react-markdown 的 `components` 表必须是模块级常量**（`src/packages/ui-primitives/ui/markdown.tsx`）。
   表里的函数一旦写在渲染函数里，每帧都是新引用；react-markdown 把函数当元素类型交给 React，
   类型一变整棵子树就重挂——流式输出时表现为全篇代码块反复卸载重建（字号、行号各闪一遍）。
   `remarkPlugins` 数组同理，提到模块级。
@@ -754,7 +754,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | 重新打开会话后上下文又变长了 | 不该再出现：`Session.load` 读到 `summary` 记录时把之前累积的消息换成「摘要 + 末尾 `keep` 条」（`src/core/session.ts` 的 `case 'summary'`）。老日志没有 `keep` 字段时只接回摘要之后的记录，摘要之前的原文一样不读回来 |
 | 网络断了却不重试 | 连接失败（`LlmError.retryable`，`src/core/llm.ts:199-205`）与 429 / 5xx 都会退避重试 2 次，判定在 `src/core/llm.ts:162-166`；流已开始或用户已取消则不重试 |
 | 截图后 token 暴涨 | 看是否启用了旧截图裁剪（`computer-use` 插件的 `transformMessages`） |
-| 流式输出时代码块抽搐／字号行号跳动 | `ui-shell/src/ui-primitives/markdown.tsx` 的 `components` 是否写成了内联箭头函数；代码块两态（纯文本 / 高亮）是否同一个 `pre.shiki > code > span.line` 骨架 |
+| 流式输出时代码块抽搐／字号行号跳动 | `src/packages/ui-primitives/ui/markdown.tsx` 的 `components` 是否写成了内联箭头函数；代码块两态（纯文本 / 高亮）是否同一个 `pre.shiki > code > span.line` 骨架 |
 | 流式时「回到底部」胶囊一闪一闪 | `src/packages/ui-transcript/ui/follow.ts` 的跟随判定：`onScroll` 有没有把「内容变矮、浏览器夹 scrollTop」当成读者滚动（看 `pinnedHeight`）；`settle` 会不会在跟随态下按距离重判 |
 | 工具回「未知工具：xxx」 | 先看这一轮的请求与执行是不是同一份目录（`src/packages/session-core/loop.ts` 的 `requestTools` 快照）；再看模式投影有没有按会话算（`ctx.tools.visible()` 必须带 `sessionId`，否则你在看别的会话时，后台那一轮的工具集跟着换） |
 | 切到别的会话后，后台那一轮的工具集／提示词变了 | 模式（预设）是不是又退回全局变量了：`src/packages/presets/index.ts` 的 `bySession` 按会话 id 存，`dsc/session-open` 只登记被打开的那一个会话；投影与提示段的回调必须把 `scope` 传进去 |
@@ -775,7 +775,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | --- | --- | --- |
 | 权限模式 `ApprovalPolicy` | `readonly`（只读，写和执行一律拒）/ `auto-edit`（工作区内写放行，执行命令仍要审批）/ `full-access`（全部自动放行，灾难地板仍然拒）。旧的 `ai-review` 已由偏好迁移展开成「`full-access` + 审阅者 `auto-review`」（见下）。**按会话存**，不是进程级：A 会话切只读不影响 B 会话 | `src/contract/mode.ts:45`，判读在 `src/packages/approval/index.ts`（沙箱边界第 4 层 → 权限模式 / 审阅者第 5 层），档位文案在 `approval.ts` |
 | 审阅者 `ApprovalReviewer` | `user`（本人点卡，默认）/ `auto-review`（先给模型判官，判不出来再落人工卡）——**与权限模式正交**的一根轴，决定「要问的事先给谁看」；复核排在自动放行**之前** | `src/contract/mode.ts:58`，复核在 `src/packages/approval/index.ts` 第 5 层内 |
-| 沙箱后端不可用姿态 `SandboxOnUnavailable` | `degrade`（默认，降级为策略围栏继续）/ `fail-closed`（写与执行一律拒，读照常）；只对 `docker` / `windows-token` 生效 | `src/core/sandbox/policy.ts:61` |
+| 沙箱后端不可用姿态 `SandboxOnUnavailable` | `degrade`（默认，降级为策略围栏继续）/ `fail-closed`（写与执行一律拒，读照常）；只对 `docker` / `windows-token` 生效 | `src/packages/sandbox/policy.ts:61` |
 | 思考强度 `EffortLevel` | `default` / `off` / `low` / `high` / `max` | `src/contract/mode.ts:14` |
 | 思考档位 `ThinkingLevel` | `off` / `low` / `high` / `max`（每个模型可只声明其中几档，`default` 不算模型能力） | `src/contract/mode.ts:17` |
 | 档位字段 `ThinkingParam` | `thinking`（发 `thinking:{type}`，只有开关）/ `reasoning-effort`（发 `reasoning_effort`，线上值见 `EffortMap`）/ `none`（不发思考字段）。缺省 `thinking` | `src/contract/mode.ts:25`，映射在 `src/core/model-caps.ts:201` |
@@ -794,7 +794,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | 审批卡等多久没人答 | 缺省 300 秒，夹在 10 秒~1 小时；可配 `approval.approvalTimeoutMs`，每次弹卡现读。**没人能应答时不等这个值**：没有 `interactive` 服务（tui / host-stdio 登记）且本进程不是终端直连时，直接按拒处理并写明理由 | `src/packages/approval/index.ts:42-56`、`:116-128` |
 | 模型一次最多问几题 / 每题几个选项 | 缺省 3 题 / 每题 4 项，都夹在 1~8；可配 `ask.maxQuestions` / `ask.maxOptions` | `src/packages/ask/index.ts` |
 | 提问卡等多久算没人答 | 缺省 900 秒（15 分钟），夹在 10 秒~1 小时；可配 `ask.waitMs`，每次挂卡现读。等满了卡片撤掉、模型拿到「用户没有回答」的实话接着走。**等人的这段时间不算 PTC 脚本的时限**（工具声明 `waitsForHuman`，`plugins/ptc.ts` 的停表只认它） | `src/packages/ask/index.ts`、`src/packages/ptc/index.ts` |
-| 会话目标缺省轮次上限 / 一次放宽几轮 | 缺省 24 轮 / 8 轮，夹在 1~256 / 1~64；可配 `goal.defaultMaxRounds` / `goal.extendRoundsBy`，设置「会话目标」分区就能改；256 这个硬顶不可配 | `src/packages/goal/index.ts:44`、`src/core/goal.ts:30` |
+| 会话目标缺省轮次上限 / 一次放宽几轮 | 缺省 24 轮 / 8 轮，夹在 1~256 / 1~64；可配 `goal.defaultMaxRounds` / `goal.extendRoundsBy`，设置「会话目标」分区就能改；256 这个硬顶不可配 | `src/packages/goal/index.ts:44`、`src/packages/goal/goal.ts:30` |
 | 说明书（AGENTS.md）字符预算 | 缺省 20000，夹在 4000~200000；可配 `prompt.instructionBudget` | `src/packages/prompt/index.ts`、`src/packages/session-core/prompt.ts:37` |
 | 快照推送节流 | 缺省 80 ms，夹在 16 ms~1 秒；可配 `host-stdio.snapshotThrottleMs` | `src/packages/host-stdio/index.ts` |
 | LLM 连接超时 / 流空闲超时 | 缺省 30 s / 180 s（流空闲：这么久一个字节都没到就判服务端挂起）；可用 `DSC_LLM_CONNECT_TIMEOUT_MS` / `DSC_LLM_STREAM_IDLE_MS` 覆盖（毫秒，夹在 1 秒~10 分钟，每次调用现读）。端点连不上时默认要等 30 s × 3 次重试 ≈ 90 s 才把失败浮上来，网络差的把它调小（如 8000） | `src/core/llm.ts` 的 `readTimeoutMs` |
@@ -802,18 +802,18 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | 压一次不够时最多再压几次 | 缺省 1 次，夹 0~3；可配 `compact.compactionRetries`。第一次压完复量，仍超阈值才补压；补压会绕开「历史太短」守卫，允许折进上一份摘要本身。手动 `/compact` 与爆窗强压都不循环 | `src/packages/compact/index.ts`（`check`）、`src/packages/session-core/compact.ts` |
 | 压缩摘要的锚点索引预算 | 缺省 6000 字符，夹在 1000~20000；可配 `compact.anchorBudgetChars` | `src/core/compact-anchors.ts:32`、`src/packages/compact/index.ts:46` |
 | 压缩摘要的用户原话预算 | 缺省 8000 字符，夹在 1000~40000；可配 `compact.userQuoteBudgetChars` | `src/core/compact-anchors.ts:35`、`src/packages/compact/index.ts:47` |
-| 灾难地板的命令长度上限 | 缺省 4000 字符，夹在 100~100000；更长的命令按「看不清要跑什么」拒；可配 `approval-floor.maxCommandLength` | `src/core/approval-floor.ts:34`、`:116` |
-| 灾难地板的熔断 | 连续被地板拒 5 次（1~100）后冷却 60000 毫秒（0~3600000），缺省开着；可配 `approval-floor.circuitBreakerThreshold` / `circuitBreakerCooldownMs` / `circuitBreakerEnabled` | `src/core/approval-floor.ts:35-36`、`:117-119` |
+| 灾难地板的命令长度上限 | 缺省 4000 字符，夹在 100~100000；更长的命令按「看不清要跑什么」拒；可配 `approval-floor.maxCommandLength` | `src/packages/approval-floor/approval-floor.ts:34`、`:116` |
+| 灾难地板的熔断 | 连续被地板拒 5 次（1~100）后冷却 60000 毫秒（0~3600000），缺省开着；可配 `approval-floor.circuitBreakerThreshold` / `circuitBreakerCooldownMs` / `circuitBreakerEnabled` | `src/packages/approval-floor/approval-floor.ts:35-36`、`:117-119` |
 | 「只读命令」的判据 | 不止「第一个词在只读名单里」：① 引号外的 `>`（`2>&1` 不算）算写盘，整段不算只读；② `node`/`python`/`perl` 这类解释器一律不算只读，python 只有 `-m pytest`/`-m unittest`/`-m json.tool` 例外；③ `env` 会被剥掉再看真正的命令；④ `find` 带 `-delete`/`-exec`/`-fprint` 不算；⑤ `sed` 的 `e`/`w`/`-i` 与 `awk` 的 `system(`/`popen(`/`>` 不算。只有 ① 是可配的（走白名单），其余是安全不变量 | `src/core/command-policy.ts:299-320`、`:506-563` |
 | 长输出转存阈值与预览 | 缺省超过 4000 字符就落盘（200~4000000），预览留前 30 行（1~500），续读一次 200 行（1~2000）；可配 `spill.thresholdChars` / `keepLines` / `readChunkLines` | `src/core/spill.ts:31-39`、`:65-73` |
 | 溢出的落盘与清理 | 单文件上限 1048576 字节（4096~268435456）、按 mtime 保留 7 天（1~3650）、目录总量上限 67108864 字节（65536~8589934592，超了从最旧的删）、目录 `~/.dsc/spill/`；可配 `spill.maxBytes` / `retentionDays` / `maxTotalBytes` / `dir` | `src/core/spill.ts:31-39`、`:65-73` |
-| 会话检索返回几条 | 缺省 20 条，夹在 1~200；可配 `session-search.defaultLimit` | `src/core/session-index.ts:70` |
-| 会话检索的片段与回填 | 命中片段 160 字符（40~2000）、回填每批 25 个文件（1~500）、单文件大小上限 8 MiB（4096~256 MiB，超了只记指纹）、索引目录 `~/.dsc/cache`；可配 `session-search.snippetLength` / `backfillBatch` / `maxFileBytes` / `indexDir` | `src/core/session-index.ts:51-56`、`:62-72` |
-| 生命周期钩子缺省超时 | 缺省 10000 毫秒，夹在 500~120000；钩子最多 50 条、单条命令 1000 字符、matcher 120 字符；可配 `lifecycle-hooks.timeoutMs` | `src/packages/session-core/hooks.ts:53`、`src/core/lifecycle-hooks.ts:168-170`、`:190-196` |
+| 会话检索返回几条 | 缺省 20 条，夹在 1~200；可配 `session-search.defaultLimit` | `src/packages/session-search/session-index.ts:70` |
+| 会话检索的片段与回填 | 命中片段 160 字符（40~2000）、回填每批 25 个文件（1~500）、单文件大小上限 8 MiB（4096~256 MiB，超了只记指纹）、索引目录 `~/.dsc/cache`；可配 `session-search.snippetLength` / `backfillBatch` / `maxFileBytes` / `indexDir` | `src/packages/session-search/session-index.ts:51-56`、`:62-72` |
+| 生命周期钩子缺省超时 | 缺省 10000 毫秒，夹在 500~120000；钩子最多 50 条、单条命令 1000 字符、matcher 120 字符；可配 `lifecycle-hooks.timeoutMs` | `src/packages/session-core/hooks.ts:53`、`src/packages/lifecycle-hooks/lifecycle-hooks.ts:168-170`、`:190-196` |
 | MCP 的调用与重连 | 单次调用超时 60000 毫秒、握手 20000 毫秒（都夹在 1000~600000）；重连退避 1000→30000 毫秒、连续失败 5 次放弃（1~50）；清单里没写 `defaultRisk` 的 server 缺省按 `exec` 算；可配 `mcp.*` | `src/packages/mcp/index.ts:53-62`、`:65-70` |
-| 工具按需加载 | 一次检索最多 5 条（1~20），档位缺省 2（1 = 只撤 MCP、2 = 再按 `deferRules` 撤、3 = 除 `keepTools` 外全撤）；可配 `tool-search.searchLimit` / `tier` | `src/core/tool-search.ts:24-29`、`:54-60` |
+| 工具按需加载 | 一次检索最多 5 条（1~20），档位缺省 2（1 = 只撤 MCP、2 = 再按 `deferRules` 撤、3 = 除 `keepTools` 外全撤）；可配 `tool-search.searchLimit` / `tier` | `src/packages/tool-search/tool-search.ts:24-29`、`:54-60` |
 | 历史里超长工具结果怎么切 | 超过 8192 字符切掉中间、留头 4096 + 尾 1024，中间写一句「省了多少字符、原文还在日志里」；**最近 4 条不动**（刚跑完就切等于逼模型重跑）。同一条消息永远切成同一段——前缀缓存只在它第一次越线那一轮失效一次 | `src/core/tool-result-prune.ts` 的 `DEFAULT_TOOL_RESULT_PRUNE`，投影挂在 `src/packages/prompt/index.ts` 的 `tool-result-prune`（order 560） |
-| 右侧栏最宽多少 | 配置上限 820px，实际还受「窗口宽 − 侧栏宽 − 正文保底 480px」约束：拖到极限是右栏停住、正文不再被压扁；窗口缩放时同样按这条夹回去（只夹内存，不改用户存档的宽度） | `ui-shell/src/ui-dockkit/dock.tsx` 的 `dockDragLimit`、`ui-shell/src/ui-layout/app.tsx` 的 resize 夹取、`ui-shell/src/legacy/views.css` 的 `.thread-main` min-width |
+| 右侧栏最宽多少 | 配置上限 820px，实际还受「窗口宽 − 侧栏宽 − 正文保底 480px」约束：拖到极限是右栏停住、正文不再被压扁；窗口缩放时同样按这条夹回去（只夹内存，不改用户存档的宽度） | `src/packages/ui-dockkit/ui/dock.tsx` 的 `dockDragLimit`、`src/packages/ui-layout/ui/app.tsx` 的 resize 夹取、`src/packages/ui-renderer/ui/styles/legacy/views.css` 的 `.thread-main` min-width |
 | 模型请求重试 | 最多 3 次，退避 500ms × 2^(n-1)；可重试的是连接失败（`LlmError.retryable`，一个字节都没收到时）与 HTTP 429 / 5xx | `src/core/llm.ts:152`、`:162-166` |
 | 同时在干的队友上限 | 4（收工的不占额度） | `src/packages/subagent/index.ts:68` |
 | 队友派活层数 | 1（只有 Lead 能派），0 = 彻底不派 | `src/packages/subagent/index.ts:69` |
@@ -827,8 +827,8 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | 最近工作目录记忆条数 | 12 | `desktop/electron/main/index.ts:146` |
 | 技能市场清单缓存 | 1 小时，落在 `~/.dsc/cache/` | `src/packages/config-core/market.ts:10` |
 | 截图识别标记 | 工具结果文字里含「屏幕物理分辨率」才认定是自己截的图，不误伤别的插件带的图 | `src/packages/computer-use/index.ts:72` |
-| 沙箱默认档 | workspace-write：可写根 = 会话 cwd + 沙箱私有临时目录，附加根默认空、网络默认关。这个值只是**新会话默认**（plugins.json 的 `sandbox.mode`）；每个会话自己的档位存在会话 `permissions` 状态里 | `src/core/sandbox/policy.ts:87-89`、`src/packages/permission-core/permission-scope.ts` |
-| 沙箱后端不可用姿态 | `degrade`（默认，降级为策略围栏继续，=旧行为）/ `fail-closed`（写与执行类一律拒、读照常，拒因规则名 `backend-unavailable`）；只对 `docker` / `windows-token` 生效，`policy` 后端的 `partial` 是预期状态、不触发 | `src/core/sandbox/policy.ts:61` |
+| 沙箱默认档 | workspace-write：可写根 = 会话 cwd + 沙箱私有临时目录，附加根默认空、网络默认关。这个值只是**新会话默认**（plugins.json 的 `sandbox.mode`）；每个会话自己的档位存在会话 `permissions` 状态里 | `src/packages/sandbox/policy.ts:87-89`、`src/packages/permission-core/permission-scope.ts` |
+| 沙箱后端不可用姿态 | `degrade`（默认，降级为策略围栏继续，=旧行为）/ `fail-closed`（写与执行类一律拒、读照常，拒因规则名 `backend-unavailable`）；只对 `docker` / `windows-token` 生效，`policy` 后端的 `partial` 是预期状态、不触发 | `src/packages/sandbox/policy.ts:61` |
 | 沙箱升权 | `sandbox_permissions` + `sandbox_scope`（`once` 默认 / `session`）+ `justification` **成对校验**（只给 scope 或半截 → 按拒处理）；`workspace-write` = 留在沙箱内、把这次目标并进可写根后**重判**，`danger-full-access` = 这一次跳过沙箱判定；「本会话允许」只对「留在沙箱内」这一类给会话档（命令类与出沙箱档只给这一次） | `src/core/tools/sandbox-args.ts`、`src/packages/sandbox/index.ts`（`grantSession` / `sessionGrants`） |
 | 沙箱越界的两条路 | **能问的**（`outside-writable-roots` / `mode-read-only`）沙箱只 defer，审批是最后一道，用户点「这一次允许」就执行（对齐 dsh 的 read-only + ask）；**不能问的**（NT 命名空间 / ADS / 短名 / 解析失败 / 受保护名 / 只读子路径 / 网络开关 / 后端 fail-closed）保持硬拒。审批缺场时沙箱自己硬拒，不会变成无人把关 | `src/packages/sandbox/index.ts`（`ASKABLE_RULES`）、`src/packages/approval/index.ts`（第 4 层 `sandbox.check`） |
 | 审批裁决顺序 | 硬地板 → 说明书类文件 → 已给授权 → **沙箱边界** → 权限模式 / 审阅者 → 人工卡。沙箱越界跳过所有自动放行（含完全访问），只给「这一次」；AI 复核排在自动放行之前，所以「完全访问 + AI 复核」每次调用都过判官 | `src/packages/approval/index.ts:494-660` |
@@ -847,22 +847,22 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | 会话目标的清空 | 目标存在会话日志的 `goal` 状态条目里，**清空也是一条记录**：用户点 ✕ 时追加 `goal = null` 盖掉上一条（日志 append-only、最后一条生效）。旧版见 null 就不写，重启重放又把旧目标带回来（2026-11-02 报障） | `src/packages/goal/index.ts`（`persist`）、`src/core/session.ts`（`SessionStateMap.goal`） |
 | 新会话在侧栏的回执 | 点「新建会话」当场在侧栏当前工作区顶部出一行「新会话」（`SessionSummary.unsaved = true` 的临时行，宿主 `refresh()` 给**当前**那条没落盘的会话补）。切到别的会话这行就消失（它没内容也没稳定身份），输入框里的半截话按工作区留着，再点「新会话」捡回来；这一行是只读回执——不给改名 / 置顶 / 归档 / 分叉 / 拖拽 / 右键菜单（文件还不存在）。发出第一条消息后宿主补刷一次，临时行换成扫盘出来的真行，不出重复行 | `src/packages/session/index.ts`（`refresh` 与 `dsc/changed` 守卫）、`src/contract/session.ts`（`SessionSummary.unsaved`）、`src/packages/ui-sessions/ui/ui.tsx`（`SessionRow` 的 `unsaved` 分支） |
 | 切会话的回执与成本 | 侧栏高亮**不等宿主那一帧**：点下去立刻把那一行画成当前（`pendingOpen`，快照对上了再交还宿主真值，4 秒兜底撤回），正文仍等真数据。宿主侧三条省钱：① 切走但空闲的 agent 留 3 个（`IDLE_KEEP`），切回去命中 `sessionFor` 不再读 jsonl；② 技能目录 / git 读数只在**工作目录真变了**时重扫重拍；③ `listSessions()` 按「文件 mtime + 大小 + 侧栏属性」缓存每一行（76 条会话从 120–150ms 降到 ~18ms）。快照推送改成 leading-edge：距上一帧超过节流窗口就立刻推，用户动作不再干等 60–80ms | `src/packages/ui-sessions/ui/ui.tsx`（`pendingOpen` / `shownPath`）、`src/packages/agent/index.ts`（`rememberIdle`）、`src/packages/skills/index.ts`、`src/packages/git/index.ts`（`cacheCwd`）、`src/core/session.ts`（`sessionRowCache`）、`src/packages/host-stdio/index.ts`（`lastSentAt`）、`src/packages/remote/index.ts`（`lastFrameAt`） |
-| 轮尾附注的显隐 | 「~N tok · 时刻」与复制 / 分叉同一套：默认 `opacity: 0`，鼠标压在**这一轮的输出**（非首块）上、或压页脚那一行、或键盘焦点进这一轮才浮现；`prefers-reduced-motion` 下不做过渡。保留版面（不 `display: none`）——隐着也占位，浮现时不跳版，键盘仍能聚焦 | `ui-shell/src/legacy/views.css`（「轮尾的复制 / 分叉 / 用量 · 时刻」段）、`src/packages/ui-transcript/ui/rows/foot.tsx` |
+| 轮尾附注的显隐 | 「~N tok · 时刻」与复制 / 分叉同一套：默认 `opacity: 0`，鼠标压在**这一轮的输出**（非首块）上、或压页脚那一行、或键盘焦点进这一轮才浮现；`prefers-reduced-motion` 下不做过渡。保留版面（不 `display: none`）——隐着也占位，浮现时不跳版，键盘仍能聚焦 | `src/packages/ui-renderer/ui/styles/legacy/views.css`（「轮尾的复制 / 分叉 / 用量 · 时刻」段）、`src/packages/ui-transcript/ui/rows/foot.tsx` |
 | 会话列表的「最近使用」时间 | 取「最后一条带 `ts` 的对话记录」的时刻，**不取文件 mtime**：打开老会话时，权限三项的默认值会补写 `state` 记账（没有 `ts`），mtime 被刷成现在，侧栏就跳「刚刚」——可它一个字都没多。`ts` 只扫文件尾部 512KB（append-only 的日志最后一条贴着尾巴）；老日志整份找不到 `ts` 时回落 mtime，mtime 仍当读盘缓存的键 | `src/core/session.ts`（`lastActivityAt` / `readSessionFileUncached`） |
 | 读路径补默认值不写盘 | 权限三项（沙箱 / 权限模式 / 审阅者）在读取时补钉：只记内存（`Session.setState` → `deferredState`），下一次真正写日志（用户说话、切档位）时跟着那一条一起落盘；用户真改了档位仍走 `appendState` 立刻写。好处是「只点开看一眼」不产生任何文件改动，mtime 不动 | `src/packages/permission-core/permission-scope.ts`（`pinPermission` / `permissionOf`）、`src/core/session.ts`（`setState` / `write` 里冲刷 `deferredState`） |
-| 行首置顶图钉 | 竖向推钉（顶帽 + 梯形钉身 + 针），14px：未置顶平时 `opacity: 0`、悬浮与键盘聚焦时浮出；已置顶常显、钉身填实（`IconPin` 的 `filled`）并染提示色。行首被状态点占用时整格让给状态点，图钉只剩右键菜单入口 | `ui-shell/src/ui-primitives/icons.tsx`（`IconPin`）、`src/packages/ui-sessions/ui/ui.tsx`（`SessionRow`）、`ui-shell/src/legacy/views.css`（`.lead-pin`） |
+| 行首置顶图钉 | 竖向推钉（顶帽 + 梯形钉身 + 针），14px：未置顶平时 `opacity: 0`、悬浮与键盘聚焦时浮出；已置顶常显、钉身填实（`IconPin` 的 `filled`）并染提示色。行首被状态点占用时整格让给状态点，图钉只剩右键菜单入口 | `src/packages/ui-primitives/ui/icons.tsx`（`IconPin`）、`src/packages/ui-sessions/ui/ui.tsx`（`SessionRow`）、`src/packages/ui-renderer/ui/styles/legacy/views.css`（`.lead-pin`） |
 | 编辑并重发（重新编辑） | **留在当前会话里**截断重来：宿主给日志追加一条 `rewind { keep }` 记录（`keep` = 保留几条**人打的**用户消息，机器的 `notice` 不算），内存里把第 keep 条及其之后的消息丢掉并清掉它们的工具派生状态，然后发 `dsc/session-open` 让转录层重放。日志仍 append-only——原文一条不删，重启按同一条规则重放；界面只调 `rewindSession`，不再 `forkSession` / `openSession`。改的是第一条时把改过的文字一起传上去，直接写成自动标题（否则侧栏一直显示被作废的原文）。读原文的那几条路（分叉 / 分叉菜单）先过 `applyRewinds()`，把 rewind 应用成「还剩哪些行」，免得列出、或复制走已作废的消息 | `src/core/session.ts`（`rewindToUser` / `cutIndexBeforeUser` / `case 'rewind'`）、`src/packages/session/index.ts`（`rewind`）、`src/core/ui-methods.ts`、`src/packages/ui-transcript/ui/ui.tsx`（`editAndResend`） |
 | 分支钮读数（输入框上方） | 快照面 `surfaces.git` = `repo` / `branch` / `detached` / `dirtyFileCount`（计数含未跟踪、只看会话 cwd 之内）；节奏 12s / 30s / 60s 三档 + 事件催拍（回合收工、换会话、写类 git op 落盘）；**没人读快照就不跑 git**（CLI / TUI 会话零开销） | `src/packages/git/index.ts`、`src/core/git-exec.ts` |
 | git 切 / 建分支 | `dock` 的写类 op（`git-checkout` / `git-branch-create`，**过审批**，卡片文案在 `DOCK_WRITE_LABEL`），执行用 `git switch --no-guess`（避开 `checkout <名字>` 的分支/路径歧义）；分支清单是读类 op `git-branches`（界面通道直接放行，当前分支排第一） | `src/core/dock-ops.ts`、`src/packages/desktop-dock/index.ts` |
-| 宿主方法调用的超时 | 默认 30 秒；**会挂起等人的方法**（写类 dock op = 过审批卡，卡自己等 5 分钟）给 5 分半——不然用户还在读卡，页面先报「调用宿主方法超时」 | `ui-shell/src/ui-layout/host-channel.ts`（`DEFAULT_INVOKE_TIMEOUT_MS` / `HUMAN_WAIT_TIMEOUT_MS`） |
+| 宿主方法调用的超时 | 默认 30 秒；**会挂起等人的方法**（写类 dock op = 过审批卡，卡自己等 5 分钟）给 5 分半——不然用户还在读卡，页面先报「调用宿主方法超时」 | `src/packages/ui-layout/ui/host-channel.ts`（`DEFAULT_INVOKE_TIMEOUT_MS` / `HUMAN_WAIT_TIMEOUT_MS`） |
 | schedule 最小间隔 | `every` 下限 60 秒 | `src/core/schedule/rule.ts:26` |
 | schedule catch-up 窗口 | 一次性 120 秒；循环取半周期夹在 120 秒 ~ 2 小时，超窗只跑一次不补积压 | `src/core/schedule/rule.ts:29-35` |
-| lsp idle 回收 | 600 秒（设置可调，下限 30 秒） | `src/core/lsp/client.ts:22` |
+| lsp idle 回收 | 600 秒（设置可调，下限 30 秒） | `src/packages/lsp/client.ts:22` |
 | lsp 结果上限 | 默认 100 条（可配 1~1000）+ 16000 字符双上限 | `src/packages/lsp/index.ts:71-76` |
 | browser 快照与缓冲 | 快照默认 15000 字符按行截断（不切碎元素）；控制台环形 200 条 | `src/packages/browser/index.ts:79,84` |
-| browser profile 清理 | 整树 taskkill 后等 300ms 再删自建 profile | `src/core/cdp/launch.ts:288,444` |
+| browser profile 清理 | 整树 taskkill 后等 300ms 再删自建 profile | `src/packages/cdp/launch.ts:288,444` |
 | self-improve 复盘触发 | 本轮工具迭代数 ≥ 12（对齐 hermes 用迭代数不用轮数） | `src/packages/self-improve/index.ts:115` |
-| self-improve 技能草稿 | description ≤60 字符（超了拒收不截断）；老化 14 天 stale / 30 天归档 | `src/core/learnings/skill-write.ts:61,866` |
+| self-improve 技能草稿 | description ≤60 字符（超了拒收不截断）；老化 14 天 stale / 30 天归档 | `src/packages/self-improve/skill-write.ts:61,866` |
 
 **队友的叫停与续跑**：`subagent` 的 `interrupt` 与 `stop` 都只停当前这一轮，队友**留在名册里**
 （对齐 dsh 的 `interrupt_agent`：之后能用 `send_message` 接着聊）；真正清掉走界面的「移除」
@@ -957,7 +957,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 留一半在宿主、一半在主进程，两边各存一份状态迟早对不上。所以**宿主侧只剩两个消费者**：
 设置「关于」那颗按钮（回执 `kind:'update'` 时界面给「立即更新」）与 `/update` 命令（只打印）。
 
-界面那侧：品牌行（`Pneuma` 右边）的更新按钮 `ui-shell/src/ui-layout/update-button.tsx` **只在
+界面那侧：品牌行（`Pneuma` 右边）的更新按钮 `src/packages/ui-layout/ui/update-button.tsx` **只在
 `status === 'available'` 时渲染**；挂载时 `checkUpdate` 问一次当前值、再订阅 `update-status`
 （**两件都要**——事件是「之后的变化」，错过开机那一次就再也没有了）。浏览器页签与远程页里没有
 原生桥，整块不渲染。
@@ -1021,7 +1021,7 @@ dock 的操作名：`term-spawn` / `term-input` / `term-kill` / `fs-list` / `fs-
 `Dock.tsx` 四个 tab（terminal / browser / files / git），宽度夹在 300~820，双击复位 420；
 shell 候选 5 个，选中的存 renderer 的 `localStorage['dsc.dockShell']`。
 
-**关掉整块栏最后一张页签才是收起侧栏**（`ui-shell/src/ui-dockkit/dock-model.ts` 的 `closeTab`）：
+**关掉整块栏最后一张页签才是收起侧栏**（`src/packages/ui-dockkit/ui/dock-model.ts` 的 `closeTab`）：
 以前格被清空只补一张新 guide，画出来一模一样，用户点「开始」旁边的 ✕ 就像没反应。
 判断口径是「关掉的这张是不是整块栏的最后一张」——是就收起（guide 的 ✕ 因此有反应），
 不是就只补门面、栏不动。**不能判「还剩不剩非门面页签」**：那样「旁问」+「开始」两张
@@ -1035,7 +1035,7 @@ shell 候选 5 个，选中的存 renderer 的 `localStorage['dsc.dockShell']`�
 
 规矩：
 
-- **界面里的链接一律新窗口**：`ui-shell/src/ui-primitives/markdown.tsx` 的组件表覆盖了 `a`，
+- **界面里的链接一律新窗口**：`src/packages/ui-primitives/ui/markdown.tsx` 的组件表覆盖了 `a`，
   统一加 `target="_blank" rel="noreferrer noopener"`；附件卡片（`user-row.tsx` 的
   `.user-file-card`）本来就是这么写的。
 - **原生侧两道闸**在 `desktop/electron/main/index.ts` 的 `createWindow` 里：
@@ -1061,7 +1061,7 @@ shell 候选 5 个，选中的存 renderer 的 `localStorage['dsc.dockShell']`�
 | `dsc.threadWidth` | 中间正文列宽 | 480 ~（可用宽 − 80），默认取样式表的 `--dsc-thread-max`（96ch） |
 | `dsc.statusPanel.pos` | 收起态状态胶囊的落点（相对默认落点的位移 `{x,y}`） | 拖动时夹在 `.main` 内、四边留 8px；离默认点 24px 内松手复位并删掉这条存档 |
 
-拖拽逻辑在壳自己的 `ui-shell/src/ui-layout/` 里（从旧渲染层的 `panels.ts` 搬来）：Pointer Capture 攥住指针
+拖拽逻辑在壳自己的 `src/packages/ui-layout/ui/` 里（从旧渲染层的 `panels.ts` 搬来）：Pointer Capture 攥住指针
 （拖出窗口外再回来还接着拖），移动按 `requestAnimationFrame` 合并，取消就退回原宽。
 **拖动中只改根元素上的 CSS 变量**（`--dsc-sidebar-w`、`--dsc-thread-max`），松手才写状态和
 localStorage——每帧 setState 会重渲染整棵对话树。复位（双击）就是撤掉行内变量，让 `:root`
@@ -1136,7 +1136,7 @@ Windows 的最小化/最大化/关闭三个按钮由系统画，样式表够不�
 所以看不见跳色——以前只有一份深色的 `DARK_CHROME`，选浅色的人每次开窗都先黑一下。
 
 **出厂主题是 claude（暖米白）**（2026-10-30 从 dark 改过来）。默认值一共三处，改一处必须改全：
-`src/core/prefs.ts` 的 `readPrefs`（真源，宿主回读走它）、`ui-shell/src/ui-layout/appearance.ts` 的
+`src/core/prefs.ts` 的 `readPrefs`（真源，宿主回读走它）、`src/packages/ui-layout/ui/appearance.ts` 的
 `DEFAULT_APPEARANCE` 与 `normalizeTheme`（宿主还没回读、或 localStorage 镜像为空时的那一帧）、
 `desktop/electron/main/index.ts` 的 `readUiTheme` 兜底（没 `settings.json` 时的首帧底色）。
 已经存过 `settings.json` 的用户不受影响：读档优先，默认值只服务于"从没选过"的情况。
@@ -1159,13 +1159,13 @@ Windows 的最小化/最大化/关闭三个按钮由系统画，样式表够不�
 
 三条规矩，新代码照这个走：
 
-1. **别用「太新」的标准方法**。禁用清单（要就加进 `ui-shell/src/ui-primitives/compat.ts`）：
+1. **别用「太新」的标准方法**。禁用清单（要就加进 `src/packages/ui-primitives/ui/compat.ts`）：
    `AbortSignal.timeout` / `AbortSignal.any`、`Array.prototype.findLast` / `findLastIndex`、
    `toSorted` / `toReversed` / `with`、`structuredClone`、`Object.groupBy`、
    `Promise.withResolvers`。`?.`/`??`、`String.replaceAll`、`Array.prototype.at`、
    `Intl.Segmenter`（在用的地方自带 `typeof` 兜底）算在底线之内。
    `scripts/ui-legacy-compat-test.mjs` 扫源码把这条钉住（带负向验证）。
-2. **`color-mix()` 的兜底是生成物**：`ui-shell/src/legacy-color-fallback.css`，由
+2. **`color-mix()` 的兜底是生成物**：`src/packages/ui-renderer/ui/styles/legacy-color-fallback.css`，由
    `node ui-shell/scripts/build-color-fallback.mjs` 从 `tokens.css` 算出实色（预乘 alpha，
    与浏览器同算法），包在 `@supports not (color: color-mix(...))` 里，入口在 `styles.css`
    **之后**引入（同特异性靠源码序压过令牌）。**改了 `tokens.css` 就要重跑生成器**——
@@ -1174,7 +1174,7 @@ Windows 的最小化/最大化/关闭三个按钮由系统画，样式表够不�
    `@supports not (inset: 0)` 点了五张遮罩（`.dsc-overlay` / `.menu-backdrop` / `.pop-mask` /
    `.git-dialog-backdrop` / `.overlay`）。遮罩失灵不是难看，是**点得到底下的东西**。
 
-窄屏（手机）那一档的口径写在 `ui-shell/src/styles.css` 的「窄屏」一节
+窄屏（手机）那一档的口径写在 `src/packages/ui-renderer/ui/styles/styles.css` 的「窄屏」一节
 （`@media (max-width: 860px)` 与 `(max-width: 560px)` 两条），2026-10-15 的手机报障后是：
 
 1. **左侧栏在手机上整条不给**（`[data-rail='1']` 时 `display: none`）——原来那条 56px
@@ -1211,7 +1211,7 @@ Windows 的最小化/最大化/关闭三个按钮由系统画，样式表够不�
 估算全仓只有一份：`estimateTextTokens` 把中文按 0.65、其余按 0.33（≈3 字符一个 token）累加，
 整体宁高不低——早压一次比爆窗便宜。压缩（`compact.ts`、`microcompact.ts`）、压缩插件的预算、
 请求分段（`loop.ts` 的 `estimateRequestSegments`）与壳的用量读数都走它。展示层的
-`formatTokens`（K/M 两级）在 `ui-shell/src/ui-primitives/tokens.ts`，只有这一份。
+`formatTokens`（K/M 两级）在 `src/packages/ui-primitives/ui/tokens.ts`，只有这一份。
 
 ### 命令与补全（`src/packages/commands-core/commands-completion.ts` + `src/packages/commands/index.ts`）
 

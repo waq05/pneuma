@@ -19,6 +19,7 @@
 - 文件复制成功但挂载失败时会留在磁盘上，只回一句「可修复后重新启用」（index.ts:91-96、135-138）。
 - 远程插件是任意代码：来源只摆在审批卡上说，代码层不做内容审查，装不装由用户点头（文件头 10-11）。
 - 没有设置分区与提示段：插件来源、白名单这类东西不在本包管（index.ts:41）。
+- 只本地化了清单里那两行字：`numa plugin list` 与插件中心按 `config.yaml` 的 `language` 显示 `pneuma.title` / `pneuma.description`（`en` 取 `locale/en.json`，其余用清单原文，见 core/plugin-locale.ts）；工具返回值里的中文（清单行格式、提示语）不跟语言走。
 
 ## 行与开关
 

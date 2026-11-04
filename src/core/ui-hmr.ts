@@ -24,7 +24,7 @@
  * @module dsc/core/ui-hmr
  */
 import { statSync } from 'node:fs'
-import type { UiBootGraph } from '../ui/manifest.js'
+import type { UiBootGraph } from './ui-manifest.js'
 
 /** 要轮询的一个文件。 */
 export interface UiHmrWatch {

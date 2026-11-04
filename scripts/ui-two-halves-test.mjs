@@ -37,7 +37,7 @@ const { mountBundlePlugins } = await import('../lib/core/plugin-loader.js')
 const { listPluginInfos } = await import('../lib/core/plugin-registry.js')
 const { collectUiArtifactsForPlatform } = await import('../lib/core/ui-bundles.js')
 const { resolveUiBundleRequest } = await import('../lib/core/ui-route.js')
-const { composeUiBootGraph } = await import('../lib/ui/manifest.js')
+const { composeUiBootGraph } = await import('../lib/core/ui-manifest.js')
 const { toUiPluginRows } = await import('../lib/core/ui-bundles.js')
 
 const ctx = await createKernel({

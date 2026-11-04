@@ -41,7 +41,7 @@
  * 记在 `./model-picker.ts` 的模块注释里。**所有判定都在那个纯模块里**，这里只画：
  * 探针读不了 `.tsx`，读得了那份零依赖的 `.ts`。
  *
- * 样式与 class 名照抄旧版（`ui-shell/src/legacy/views.css`，行号同旧 `styles.css`）：
+ * 样式与 class 名照抄旧版（`src/packages/ui-renderer/ui/styles/legacy/views.css`，行号同旧 `styles.css`）：
  * `.composer` 2225、`.composer-bar` 2259、`.bar-left/.bar-right` 2266/2301、`.model-anchor`
  * 2309、`.model-btn` 2314、`.model-pop` 2347、`.model-list/.pop-item` 2410-2464、
  * `.send-btn` 2468、`.queue-dock` 2519 起。两颗 chip 与两级菜单的新样式在壳的 `styles.css`

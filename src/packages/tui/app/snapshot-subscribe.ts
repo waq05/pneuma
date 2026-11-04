@@ -2,10 +2,10 @@
  * TUI 快照存储：把「上游每个 delta 一次」的通知折成「一个窗口一次」的**取值**。
  *
  * 为什么需要（两笔账）：
- * 1. `transcript.invalidate()`（src/plugins/transcript.ts:54）是同步通知，TUI 又直接
+ * 1. `transcript.invalidate()`（src/packages/transcript/index.ts:54）是同步通知，TUI 又直接
  *    `useSyncExternalStore(runtime.subscribe, ...)` —— 队友流式跑起来时每个 text/
  *    reasoning delta 都要走一次 `forwardSubagent → transcript.emit → invalidate`
- *    （src/plugins/subagent.ts:459），也就是**一次全树 React reconcile**。三个队友叠
+ *    （src/packages/subagent/index.ts:459），也就是**一次全树 React reconcile**。三个队友叠
  *    起来就是几十次/秒（ink 只把终端写入限在 30fps，CPU 是花在 React 上的，所以照样卡）。
  *    桌面/远程早就有这道闸（host-stdio / remote 的 80ms 合并），TUI 是唯一没有的消费者。
  * 2. 光节流通知还不够：上游每次 invalidate 都会把快照缓存清掉，`getSnapshot()` 于是

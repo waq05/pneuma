@@ -22,14 +22,14 @@ const dest = join(lib, 'node_modules', '@pneuma', 'runtime')
 /**
  * 收进运行时包的目录（与 src 下的目录名一致）。
  *
- * `ui` 是终端壳要用的：tui 插件搬进功能包之后不能再写 `../ui/slots.js`
- * （打包后那是 lib/node_modules/ui），只能走裸说明符。它不进浏览器产物，
- * 只在 Node 侧解析。
+ * `ui` 已不在名单里：界面契约包 2026-11-04 搬成 `@pneuma/ui-core`（`src/packages/ui-core/`），
+ * 终端壳直接 `import '@pneuma/ui-core/slots.js'`；再按目录出桩会指向 `lib/ui/**` 的旧代码，
+ * 造出第二份模块实例（槽注册表分家 = 订阅不触发）。
  *
  * 终端界面自己的组件树跟着 tui 包走了（`src/packages/tui/app/**`），产物在
  * `lib/packages/tui/app`，所以这里不再有 `app`。
  */
-const ROOTS = ['core', 'contract', 'services', 'adapter', 'ui']
+const ROOTS = ['core', 'contract', 'services', 'adapter']
 
 /**
  * 顶层单文件模块：`src/contract.ts` / `src/headless.ts` / `src/boot.ts`。

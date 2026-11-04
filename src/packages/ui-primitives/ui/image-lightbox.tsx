@@ -5,7 +5,7 @@
  * dataURL（`data:image/png;base64,…`）。浏览器禁止页面顶层导航到 `data:` 地址，所以
  * 「外面套一个 `<a target="_blank">` 点开」这条路走不通；dataURL 也没有文件路径，
  * 交给系统图片查看器同样没门。旧界面本来就有这个浮层，移植到壳的时候只把样式留下了
- * （`.img-lightbox`，见 `ui-shell/src/legacy/views.css`），组件本身没搬过来——所以缩略图
+ * （`.img-lightbox`，见 `src/packages/ui-renderer/ui/styles/legacy/views.css`），组件本身没搬过来——所以缩略图
  * 就只剩缩略图。这里把组件补回来，视觉仍用那一份现成样式，不新造一套。
  *
  * 已发消息里的贴图不走这里：那些是宿主的同源地址（`/api/attachments/<sha>`），

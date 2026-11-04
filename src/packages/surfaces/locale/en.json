@@ -1,0 +1,4 @@
+{
+  "title": "Snapshot surfaces",
+  "description": "Each feature registers its own slice of the UI snapshot projection"
+}

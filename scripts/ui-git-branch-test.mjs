@@ -117,7 +117,7 @@ console.log('[2] 输入框那颗钮的接线')
   check('新加的样式在壳的 styles.css 里（不是硬编码色值）', gitCss.includes('.composer-git') && gitCss.includes('.model-pop.git-pop'))
   // 令牌表在 legacy/tokens.css：把壳那一摞 CSS 合起来查，差集里的就是幽灵。
   const allCss = ['styles.css', 'legacy/tokens.css', 'legacy/base.css', 'legacy/primitives.css', 'legacy/views.css']
-    .map((file) => read(`ui-shell/src/${file}`))
+    .map((file) => read(`src/packages/ui-renderer/ui/styles/${file}`))
     .join('\n')
   const ghost = [...gitCss.matchAll(/var\((--dsc-[a-z0-9-]+)/g)]
     .map((match) => match[1])

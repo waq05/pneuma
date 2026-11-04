@@ -24,6 +24,7 @@
 - 运行内核组不可停、只读，默认只露 3 行，其余折叠（ui/ui.tsx:55、273、410-412）。
 - `clientCapabilities` 只列不加载：界面半进不进启动图由宿主按 `dsh.client` / `plugin.json` 判（ui/ui.tsx:71-72，core/ui-bundles.ts:1440-1470）。
 - 停用它就失去了给自己重新打开的开关：整页不再渲染，只能改 `plugins.json` 再重启（index.ts:7-9）。
+- 只有清单里那两行字（标题、说明）按语言显示：内核读 `pneuma.title` / `pneuma.description` 时先查该包 `locale/<语言>.json`，没有译本回落清单原文（core/plugin-locale.ts）；本页自己的界面文案、分组名与按钮仍是中文。
 
 ## 行与开关
 

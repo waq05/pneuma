@@ -1,0 +1,4 @@
+{
+  "title": "Git snapshot feed",
+  "description": "Branch and change counts for the UI; registers no tool, the model uses bash"
+}

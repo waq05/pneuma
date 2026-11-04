@@ -22,7 +22,7 @@
  *     preserve 口径把锚点拉回原视口位置（旧壳按轮分页、没有补偿，点一下会跳）；
  *   - 队友卡旧消息流里没有对应物，这一块是壳自己补的（`.shell-subagent`）。
  *
- * 样式与 class 名照抄旧版（`ui-shell/src/legacy/views.css`，行号同旧 `styles.css`）：
+ * 样式与 class 名照抄旧版（`src/packages/ui-renderer/ui/styles/legacy/views.css`，行号同旧 `styles.css`）：
  * `.chat-inner` 1297、`.turn-seat` 8466、`.entry-row` 6852、`.entry-user` 1307、
  * `.entry-text` 1319、`.think-block` 7208、`.entry.tool-card` 1832、`.entry-system` 1442、
  * `.plan-card` 6632、`.changes-card` 9469、`.round-foot` 7001、`.diff-*` 9762 起、

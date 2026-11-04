@@ -243,13 +243,15 @@ console.log('── 5. 依赖方向门禁：允许与禁止的文案 ──')
   /** 造一个「仓库根」：三个入口 + src/packages 下的若干包（清单字段按包标准闸的完整要求写）。 */
   const makeRoot = (name, packages) => {
     const dir = join(home, 'gate', name)
+    // 夹具根也要有 package.json：包标准闸的版本项是「等于根版本」，没有根就无从比较。
+    writeText(join(dir, 'package.json'), JSON.stringify({ name: 'gate-fixture', version: '0.0.0-fixture' }, null, 2) + '\n')
     writeText(join(dir, 'src', 'host', 'kernel.ts'), 'export const kernel = 1\n')
     writeText(join(dir, 'src', 'boot.ts'), 'export const boot = 1\n')
     writeText(join(dir, 'src', 'headless.ts'), 'export const headless = 1\n')
     for (const pkg of packages) {
       const manifest = {
         name: '@pneuma/' + pkg.id,
-        version: '0.0.0',
+        version: '0.0.0-fixture',
         private: true,
         type: 'module',
         exports: { '.': './index.js', './package.json': './package.json' },
@@ -259,7 +261,7 @@ console.log('── 5. 依赖方向门禁：允许与禁止的文案 ──')
       }
       writeText(join(dir, 'src', 'packages', pkg.id, 'package.json'), JSON.stringify(manifest, null, 2) + '\n')
       writeText(join(dir, 'src', 'packages', pkg.id, 'index.ts'), pkg.source)
-      // 第 7 项（文档与测试）是硬项：夹具包也得齐，否则「库包不红」那条会假红。
+      // 第 8 项（文档与测试）是硬项：夹具包也得齐，否则「库包不红」那条会假红。
       writeText(
         join(dir, 'src', 'packages', pkg.id, 'README.md'),
         '# ' + pkg.id + '\n\n## Model Experience\n\n夹具包。\n\n## Known Limitations\n\n只用于门禁夹具。\n',
@@ -312,15 +314,15 @@ console.log('── 5. 依赖方向门禁：允许与禁止的文案 ──')
     '包标准闸：库包的清单字段照要求，只豁免 行/入口导出/order',
     hardOf(okStandard, 1)?.passed === 2 &&
       hardOf(okStandard, 1)?.applicable === 2 &&
-      hardOf(okStandard, 3)?.passed === 1 &&
-      hardOf(okStandard, 3)?.exempt === 1 &&
       hardOf(okStandard, 4)?.passed === 1 &&
-      hardOf(okStandard, 4)?.exempt === 1,
+      hardOf(okStandard, 4)?.exempt === 1 &&
+      hardOf(okStandard, 5)?.passed === 1 &&
+      hardOf(okStandard, 5)?.exempt === 1,
     JSON.stringify(okStandard.parsed?.summary?.hard),
   )
   check(
     '包标准闸：库包没有行也不报错（不会拿空 patch 判失败）',
-    hardOf(okStandard, 3)?.issues === 0 && hardOf(okStandard, 6)?.passed === 1,
+    hardOf(okStandard, 4)?.issues === 0 && hardOf(okStandard, 7)?.passed === 1,
     JSON.stringify(okStandard.parsed?.hard),
   )
 

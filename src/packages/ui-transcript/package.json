@@ -1,12 +1,13 @@
 {
   "name": "@pneuma/ui-transcript",
-  "version": "0.0.0",
+  "version": "0.8.1",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./index.js",
     "./client": "./ui/ui.tsx",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
   },
   "pneuma": {
     "bundle": {

@@ -1,0 +1,4 @@
+{
+  "title": "Runtime introspection",
+  "description": "runtime_api: read-only kernel API, plugins, tools, prompt sections, guards"
+}

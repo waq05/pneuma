@@ -32,7 +32,7 @@ import { createHash } from 'node:crypto'
 import { basename, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { satisfies, validRange } from 'semver'
-import type { UiPlatform, UiPluginRow } from '../ui/manifest.js'
+import type { UiPlatform, UiPluginRow } from './ui-manifest.js'
 import { inside } from './web-static.js'
 import { activeProfileDir } from './profile-dir.js'
 

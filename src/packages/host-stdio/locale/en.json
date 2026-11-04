@@ -1,0 +1,4 @@
+{
+  "title": "Host protocol bridge",
+  "description": "Desktop shell to host protocol over stdio or parentPort, plus host services"
+}

@@ -277,8 +277,8 @@
 
 ### 3. 工具集 ——【完整，多为官方插件可开关】
 - 内置工具面：`bash`（含 `run_in_background`）、`job_output`/`job_list`/`job_kill`、`terminal`（open/read/send/close/list 五动作，无 PTY）、`read`/`read_image`/`write`/`edit`/`glob`/`grep`（`src/packages/tools-default/index.ts:197-205`）
-- **输出防线齐了**：`read` 有 16000 字符顶 + 2000 行长上限 + NUL 二进制检测（`src/core/tools/fs-tools.ts:19-24`）；`edit`/`write` 带 mtime 锚，读改写窗口内被别人改过会当场拒（`:176`、`:241`）；bash 超时走 SIGTERM → 3 秒宽限 → 杀进程树，已收输出保留（`src/core/tools/bash.ts:186-232`）；大输出溢出落盘（spill 插件，observer order 50）
-- MCP：stdio + streamable-http 手写 JSON-RPC，`mcp__服务器__工具`，环境变量白名单；**resources / prompts / elicitation 三类能力齐全**（`src/core/mcp.ts:128,150`），server instructions 进系统提示（`:183`）
+- **输出防线齐了**：`read` 有 16000 字符顶 + 2000 行长上限 + NUL 二进制检测（`src/core/tools/fs-tools.ts:19-24`）；`edit`/`write` 带 mtime 锚，读改写窗口内被别人改过会当场拒（`:176`、`:241`）；bash 超时走 SIGTERM → 3 秒宽限 → 杀进程树，已收输出保留（`src/packages/tools-default/bash.ts:186-232`）；大输出溢出落盘（spill 插件，observer order 50）
+- MCP：stdio + streamable-http 手写 JSON-RPC，`mcp__服务器__工具`，环境变量白名单；**resources / prompts / elicitation 三类能力齐全**（`src/packages/mcp/mcp.ts:128,150`），server instructions 进系统提示（`:183`）
 - 子代理（MiniAgent 队友，按会话隔离、审批意愿取全局∩角色）+ 智能体团队（共享任务看板 + `team_task`）；级联默认限 1 层
 - 电脑操作（PowerShell + user32，DPI 感知，每次审批）；浏览器自动化（CDP DOM 级，ref 代际校验，默认关）；侧栏浏览器页签
 - 网页搜索（tavily/bocha/serper，**域过滤 include/exclude_domains 直通**，`src/packages/web-search/index.ts:123-135`）；定时任务；LSP（定义/引用/实现/悬停 + 写后新引入报错）
@@ -289,13 +289,13 @@
 
 ### 4. 权限与审批 ——【完整，本仓库最重】
 - 双旋钮：协作模式四档（build/plan/explore/quiet）× 权限模式三档（readonly/auto-edit/full-access）+ 审阅者正交轴（user/auto-review）；打包权限预设四档（只读 / 工作区可写（默认）/ 完全访问 / AI 复核），三根一起写盘
-- **审批裁决四档**：allow-once（y）/ allow-session（a）/ allow-always（p）/ reject（n 或 Esc），另 `v` 切 diff；风险动态限档（`src/app/App.tsx:1241-1250`）
+- **审批裁决四档**：allow-once（y）/ allow-session（a）/ allow-always（p）/ reject（n 或 Esc），另 `v` 切 diff；风险动态限档（`src/packages/tui/app/App.tsx:1241-1250`）
 - 审批灾难地板（order 5 硬拒 + 命令白名单 + deny 黑名单 + 熔断 + 无人值守拒）；命令策略引擎（逐段判定 + 前缀 DSL 规则文件 + 加载期自检）
 - AI 复核轴（模型逐次判断，失败退人工卡，与权限模式正交）；安全钩子（规则 + 脚本，fail-closed，mtime 信任名单）；生命周期钩子（codex 十四事件名：3 个完整接通、5 个部分、6 个无挂点）
 - 守卫链固定刻度：5 地板 / 8 沙箱 / 10 模式 / 20 安全钩子 / 25 文件预览 / 30 审批（`src/core/tool-guards.ts:147`）
 - 审计日志 + 密钥遮红；**权限四项与模型、思考档位按会话隔离**，A 会话换档不影响 B 会话与后台子代理
-- 沙箱三档 + 可写根白名单 + 受保护路径 + 命令前缀策略 + 一次性升权（`sandbox_permissions` + `sandbox_scope`（once/session）+ `justification` 成对）；三个后端 `policy` / `docker` / `windows-token`（`src/core/sandbox/policy.ts:43`）
-- **Windows 受限令牌后端已实现**（`src/core/sandbox/win/`，ACL 能力 SID + WRITE_RESTRICTED pass-2 + 换执行体），并如实披露三个缺口：硬链接别名、读不受限、网络只有软墙（`src/core/sandbox/win/backend.ts:1-26`）；ACL 授权任一步失败就自废后端退回策略围栏，不搞半吊子强制
+- 沙箱三档 + 可写根白名单 + 受保护路径 + 命令前缀策略 + 一次性升权（`sandbox_permissions` + `sandbox_scope`（once/session）+ `justification` 成对）；三个后端 `policy` / `docker` / `windows-token`（`src/packages/sandbox/policy.ts:43`）
+- **Windows 受限令牌后端已实现**（`src/core/sandbox/win/`，ACL 能力 SID + WRITE_RESTRICTED pass-2 + 换执行体），并如实披露三个缺口：硬链接别名、读不受限、网络只有软墙（`src/packages/sandbox/win/backend.ts:1-26`）；ACL 授权任一步失败就自废后端退回策略围栏，不搞半吊子强制
 - 沙箱越界改成「拦下之后问一次」，不再静默失败
 
 ### 5. diff 与代码审查 ——【完整】

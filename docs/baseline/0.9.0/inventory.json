@@ -515,6 +515,15 @@
       "bundle": null
     },
     {
+      "file": "ui-layout",
+      "name": "界面骨架",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
       "file": "ui-palette",
       "name": "命令面板（界面）",
       "enabled": true,
@@ -837,6 +846,11 @@
     },
     {
       "id": "files",
+      "platform": "web",
+      "api": "^0.8.1"
+    },
+    {
+      "id": "layout",
       "platform": "web",
       "api": "^0.8.1"
     },

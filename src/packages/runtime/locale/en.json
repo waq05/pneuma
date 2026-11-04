@@ -1,0 +1,4 @@
+{
+  "title": "Runtime adapter",
+  "description": "Weave services into the DscRuntime the UI consumes"
+}

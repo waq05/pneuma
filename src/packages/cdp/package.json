@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/cdp",
-  "version": "0.0.0",
+  "version": "0.8.1",
   "private": true,
   "type": "module",
   "exports": {
@@ -12,7 +12,8 @@
     "./ring-buffer.js": "./ring-buffer.js",
     "./snapshot.js": "./snapshot.js",
     "./transport.js": "./transport.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
   },
   "pneuma": {
     "library": true,

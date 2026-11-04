@@ -10,7 +10,7 @@
  * @module @pneuma/ui-renderer/tests
  */
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { after, test } from 'node:test'
 
 /** 按相对本文件的路径读文本。 */
@@ -31,6 +31,18 @@ test('壳的落点表指到本包的 ui/index.ts', () => {
     typeof target === 'string' && target.endsWith('src/packages/ui-renderer/ui/index.ts'),
     `ui-shell/packages.json 里 @dsc/ui-renderer 指向 ${String(target)}，不是 src/packages/ui-renderer/ui/index.ts`,
   )
+  passed += 1
+})
+
+test('唯一的 parser-blocking 引导：声明 pneuma.client.immediately，但**没有**装配行', () => {
+  const pkg = JSON.parse(read('../package.json'))
+  assert.equal(pkg.pneuma.library, true, '它不是功能包：没有行、没有开关')
+  assert.equal(pkg.pneuma.bundle, undefined, '不该声明 bundle.patch——给它一行等于给一个「关掉就白屏」的假开关')
+  assert.equal(pkg.pneuma.client.platform, 'pneuma')
+  assert.equal(pkg.pneuma.client.api, '^0.8.1')
+  assert.equal(pkg.pneuma.client.immediately, true, '它是首帧之前必须先跑起来的那一个（与 dsh 的 bootstrapping module 同位）')
+  assert.equal(pkg.exports['./client'], undefined, '没有界面半：页面脚本自己就是入口')
+  assert.equal(existsSync(new URL('../cordis.patch.yml', import.meta.url)), false)
   passed += 1
 })
 

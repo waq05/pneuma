@@ -3,7 +3,7 @@
  *
  * 边界规则（对齐 dsh-TUI 的 adapter 边界实践）：
  *   - `src/adapter/**` 是唯一允许 import `@deepseek-ai/*` 运行期包的层；
- *   - UI 层（`src/app/**`、`src/state/**`、`src/commands.ts`）只依赖这里的
+ *   - UI 层（`src/packages/tui/app/**`、`src/state/**`、`src/commands.ts`）只依赖这里的
  *     中立类型，通过 DscRuntime 与宿主世界交互；
  *   - 本文件与 `src/contract/**` 自身不得 import 任何 `@deepseek-ai/*`。
  *

@@ -39,7 +39,7 @@ import {
 } from '@dsc/ui-dockkit'
 import { shellPage, subscribePage } from '@dsc/ui-layout'
 
-// 载体基元与槽名契约：终端壳的对应物在 `src/ui/tui-plugin-api.ts`。
+// 载体基元与槽名契约：终端壳的对应物在 `src/packages/ui-core/tui-plugin-api.ts`。
 // 槽名两边导出同名常量——插件 import 它写注册目标，字符串字面量不散落。
 export { Text } from '@dsc/ui-primitives'
 export const TUI_SLOTS = {
@@ -401,14 +401,14 @@ export type { SlotEntry, SlotKind, UiHostInfo, UiRuntimeApi, UiSlotApi, HostSnap
 export * from '@dsc/ui-primitives'
 // 彩色文件图标（vscode-icons 常用子集 + FileIcon 组件）与正文 token 粗估：
 // 前者轮尾「文件已更改」卡 / 悬停预览 / 审查面板 / 文件树共用一份，
-// 后者与宿主自动压缩同源（见 src/ui/index.ts 的说明）——都在壳里只有一份实现。
+// 后者与宿主自动压缩同源（见 src/packages/ui-core/index.ts 的说明）——都在壳里只有一份实现。
 export { FileIcon, fileIconName } from '@dsc/ui-primitives'
 export { estimateTextTokens } from '@dsc/ui-core'
 // 文本差异算法也转出去（工具卡的「将做的改动」要用；与宿主算轮尾差异同一份实现）。
 export { diffLines, type DiffResult } from '@dsc/ui-core'
 /**
  * 模型能力枚举与中文标签（设置 → 模型页的思考档位 / 档位字段 / 输入模态三组勾选读它）：
- * 与宿主发请求时用的 `core/model-caps.ts` 是**同一份文件**（见 src/ui/index.ts 的说明），
+ * 与宿主发请求时用的 `core/model-caps.ts` 是**同一份文件**（见 src/packages/ui-core/index.ts 的说明），
  * 界面上勾的四档与线上真发的字段不会各说各话。
  */
 export {

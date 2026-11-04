@@ -49,6 +49,8 @@ export interface FileProvider {
 export interface FileConfig {
   default?: { provider?: string; model?: string }
   temperature?: number
+  /** 界面语言；现在只影响插件清单那两行字（见 core/plugin-locale）。 */
+  language?: string
   providers: Record<string, FileProvider>
 }
 

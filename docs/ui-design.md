@@ -10,9 +10,9 @@
 | **界面长什么样、新控件往哪加** | **本文档** |
 | 为什么长成这样、踩过哪些坑 | [development-log.md](development-log.md) |
 
-改界面之前先读第 1 节和第 2 节；写完自查用第 13 节。终端界面（`src/app/`，ink）不在本文档范围。
+改界面之前先读第 1 节和第 2 节；写完自查用第 13 节。终端界面（`src/packages/tui/app/`，ink）不在本文档范围。
 
-桌面端默认界面已是 `ui-shell/` 的插件化界面壳，壳与旧渲染层共用同一套 `--dsc-*` 令牌（壳侧那一份在 `ui-shell/src/legacy/`），本文档讲的令牌与原语两处都适用。
+桌面端默认界面已是 `ui-shell/` 的插件化界面壳，壳与旧渲染层共用同一套 `--dsc-*` 令牌（壳侧那一份在 `src/packages/ui-renderer/ui/styles/legacy/`），本文档讲的令牌与原语两处都适用。
 
 ## 1. 七条设计原则
 
@@ -32,7 +32,7 @@ hermes 的 `DESIGN.md` 开头有七条，逐条换成 dsc 的说法：
 现在剩下的都是带注释故意留的几处。**新代码不要再写死**——颜色走令牌、圆角走 `--dsc-r-*`、层级走
 `--dsc-z-*`，拿不准就去 `tokens.css` 里找现成的。
 
-## 2. 令牌体系（`ui-shell/src/legacy/tokens.css`）
+## 2. 令牌体系（`src/packages/ui-renderer/ui/styles/legacy/tokens.css`）
 
 全部令牌在这一份文件里，**深色写在 `:root`，浅色写在 `[data-theme='light']`，密度写在
 `[data-density='compact'|'roomy']`**。样式表其余部分只引用，不定义。
@@ -72,7 +72,7 @@ hermes 的 `DESIGN.md` 开头有七条，逐条换成 dsc 的说法：
 用 `color-mix()` 从主题变量算出来，这样浅色主题会自己重算。新增派生色照这个写法。
 
 浅色主题的侧栏底色是**灰绿**（`--dsc-neutral-side` / `--dsc-seed-side` 都是 `#eef5f2`，在
-`ui-shell/src/legacy/tokens.css` 的 `[data-theme='light']` 块里；`styles.css` 里那段同名覆盖是旧值，
+`src/packages/ui-renderer/ui/styles/legacy/tokens.css` 的 `[data-theme='light']` 块里；`styles.css` 里那段同名覆盖是旧值，
 迟早并回去）：靠色相把侧栏与正文白分开，不用再画分隔线。改它只动这两个变量，别在组件里写死。
 
 **主色只干三件事**（2026-10-25 补，品牌声部的第一条规矩）：可交互（链接、主按钮）、选中（当前行、
@@ -84,7 +84,7 @@ hermes 的 `DESIGN.md` 开头有七条，逐条换成 dsc 的说法：
 
 | 组 | 令牌 | 取值 | 规矩 |
 | --- | --- | --- | --- |
-| 圆角 | `--dsc-r-control` `-badge` `-icon` `-block` `-row` `-overlay` `-card` `-composer` `-pill` | 2.5 / 3 / 4 / 5 / 6 / 8 / 10 / 8 / 999 px | 方角不做胶囊。**不许写圆角字面量**，没有合适的那一档再商量加一档。2026-10-24 外观档整档上调过一次（`ui-shell/src/styles.css` 末节）。 |
+| 圆角 | `--dsc-r-control` `-badge` `-icon` `-block` `-row` `-overlay` `-card` `-composer` `-pill` | 2.5 / 3 / 4 / 5 / 6 / 8 / 10 / 8 / 999 px | 方角不做胶囊。**不许写圆角字面量**，没有合适的那一档再商量加一档。2026-10-24 外观档整档上调过一次（`src/packages/ui-renderer/ui/styles/styles.css` 末节）。 |
 | 间距 | `--dsc-sp-0` … `--dsc-sp-8` | 2 / 4 / 6 / 8 / 10 / 12 / 16 / 20 / 24 px | 布局留白走这一套，别写 `gap: 13px` |
 | 行几何 | `--dsc-row-h` `--dsc-row-pad-x` `--dsc-row-gap` `--dsc-row-lead` | 26px×密度 / 8 / 6 / 14 | 所有列表行共用；过程行另用 `--dsc-process-row-h`（24px×密度） |
 | 控制尺寸 | `--dsc-ctl` `-sm` `-lg` `--dsc-send` `--dsc-input-min-h` `-max-h` | 24 / 20 / 32 / 26 / 26 / 150 px | 按钮与控制件对齐用 |
@@ -128,7 +128,7 @@ hermes 的 `DESIGN.md` 开头有七条，逐条换成 dsc 的说法：
 VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*` 只会让图标随主题跳色。别的地方出现 `#`
 开头的颜色就是漏网的。
 
-## 3. 原语层（`ui-shell/src/legacy/primitives.css`）
+## 3. 原语层（`src/packages/ui-renderer/ui/styles/legacy/primitives.css`）
 
 一个关注点一个原语，全部 `.dsc-` 前缀、全部用属性选档位。**调用点只给属性，不给尺寸。**
 
@@ -169,7 +169,7 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
 ## 4. 布局与几何
 
 - 三栏：56px 图标窄栏 → 可拖宽的侧栏（默认 237px）→ 正文列。侧栏和正文列两侧都能拖
-  （`ui-shell/src/ui-primitives/thread-resizer.tsx`，拖出来的宽度写成根元素上的 CSS 变量，
+  （`src/packages/ui-primitives/ui/thread-resizer.tsx`，拖出来的宽度写成根元素上的 CSS 变量，
   同时镜像进 `settings.json` 的 `ui.panelWidths`，换端口/换工作目录回来还是这个宽度）。
 - 页面左右留白用 `--dsc-page-inset`，内容最大宽度 `--dsc-page-max`；正文段落宽度 `--dsc-thread-max`（96ch，没拖过时的默认值）。
 - 列表行之间**默认不加分隔线**，用间距分开；确实需要时用一条 `--dsc-stroke-3` 发丝线。
@@ -387,7 +387,7 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
 - 焦环统一由 `base.css` 画（3px 强调色环），原语自己带，调用点不要另外加 `outline`。
 - 选中文本按主题分开，别统一成品牌蓝：深色是蓝 40%（`rgb(59 130 246 / .4)`），浅色用暖黄
   （`rgb(255 210 74 / .55)`），Claude 用陶土橙——都写在 `--dsc-selection-bg`，见
-  `ui-shell/src/legacy-color-fallback.css:36/89/139`。蓝底压白字在深色主题里会把字吃掉，所以才要分档。
+  `src/packages/ui-renderer/ui/styles/legacy-color-fallback.css:36/89/139`。蓝底压白字在深色主题里会把字吃掉，所以才要分档。
 - 一次取消只做一件事：取消当前交互，**或**关掉最上层可关的面，不许两个都做。
 - `Esc` 关掉所有可关的浮层；取消在界面上是同步的，哪怕清理是异步的。
 - **弹层焦点**：一律走 `useDialogFocus(active, onClose)`（`ui-primitives/dialog-focus.ts`）——打开记来源、
@@ -402,7 +402,7 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
 「外观」三项存在 `~/.dsc/settings.json` 的 `ui` 里（`themeMode` / `fontSize` / `density`），
 设置界面改完立刻生效并落盘。**「按钮大小」那条轴已经退场**：`--dsc-btn-scale` 不再写值，
 `styles.css` 用固定尺寸覆盖了旧的 `calc(Npx * var(--dsc-btn-scale))`；旧存档里存着 `buttonScale`
-的读得到就忽略（`ui-shell/src/ui-layout/appearance.ts:15-16,130`），照着它调不会有任何效果。
+的读得到就忽略（`src/packages/ui-layout/ui/appearance.ts:15-16,130`），照着它调不会有任何效果。
 
 1. `appearance.ts` 的 `applyAppearance()` 往 `<html>` 写 `data-theme` / `data-density` / `--dsc-font-scale`，
    样式表据此换色、换字号；
@@ -446,11 +446,11 @@ VS Code 蓝、复制蓝灰）。后一类跟主题明暗无关，换成 `--dsc-*
 落地要同步的六处（漏一处就有一套界面停在上一个主题里）：
 
 - `src/contract.ts` 的 `ThemeMode`、`src/core/prefs.ts` 的 `THEME_MODES`
-- 壳的归一化（`ui-shell/src/ui-layout/appearance.ts`）
+- 壳的归一化（`src/packages/ui-layout/ui/appearance.ts`）
 - 设置里的磁贴（`plugins/settings/ui.tsx` 的 `THEME_TILES`，四块一行：每块 76px，行宽 328px）
 - `desktop/electron/main/index.ts` 的 `applyThemeSource`：`claude` 报成 `light`，
   因为系统画的原生弹层只认深浅，透传会被 `nativeTheme` 拒掉
-- 令牌文件 `ui-shell/src/legacy/tokens.css`（壳只认这一份）
+- 令牌文件 `src/packages/ui-renderer/ui/styles/legacy/tokens.css`（壳只认这一份）
 - 兜底生成器 `ui-shell/scripts/build-color-fallback.mjs` 的 `THEMES`（加一行，再重跑生成）
 
 浅色专属的那些选择器（代码高亮、文件类型图标补色）要一起扩到 `[data-theme='claude']`，

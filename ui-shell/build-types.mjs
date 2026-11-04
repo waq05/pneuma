@@ -9,7 +9,7 @@
  * 产物形状（每个包一个真实的包目录）：
  *
  *   lib/ui/sdk/@dsc/ui/            package.json + index.d.ts（= plugin-api 那份声明）
- *   lib/ui/sdk/@dsc/ui-core/       package.json + ui/** + core/** + contract.d.ts
+ *   lib/ui/sdk/@dsc/ui-core/       package.json + packages/ui-core/** + core/** + contract.d.ts + contract/**
  *   lib/ui/sdk/@dsc/ui-slots/      package.json + *.d.ts
  *   …（ui-primitives / ui-dockkit / ui-layout / ui-renderer 同形）
  *
@@ -73,15 +73,17 @@ for (const [name, rel] of Object.entries(PACKAGES)) {
     }
     targets.set(`${name}/index.d.ts`, readFileSync(src, 'utf8'))
   } else if (name === '@dsc/ui-core') {
-    // 源码在 ../src/ui：连同它的传递依赖（src/ui/** + src/core/** + src/contract.d.ts）
-    // 一起按原相对结构搬走，包内相对 import（./x.js、../core/x.js、../contract.js）原样成立。
-    for (const sub of ['ui', 'core']) {
-      const abs = join(emitRoot, 'src', sub)
+    // 源码落点是 ../src/packages/ui-core/index.ts，包内文件 import 的是 ../../core/** 与
+    // ../../contract.js。SDK 里按仓库相对结构摆（packages/ui-core/** + core/** + contract.d.ts + contract/**），
+    // 四种相对写法（./x.js、../../core/x.js、../contract.js、./contract/x.js）原样成立；入口见下方 ENTRY。
+    // contract/** 也要带：contract.d.ts 只做转出，十个域的类型实体在对面的目录里。
+    for (const sub of ['packages/ui-core', 'core', 'contract']) {
+      const abs = join(emitRoot, 'src', ...sub.split('/'))
       if (!existsSync(abs)) {
         console.error(`[build-types] 找不到 ${name} 的依赖声明 src/${sub}——它少一棵包内解析就断`)
         process.exit(1)
       }
-      for (const rel of listFiles(abs)) targets.set(`${name}/${sub}/${rel}`, readFileSync(join(abs, rel), 'utf8'))
+      for (const file of listFiles(abs)) targets.set(`${name}/${sub}/${file}`, readFileSync(join(abs, file), 'utf8'))
     }
     const contract = join(emitRoot, 'src', 'contract.d.ts')
     if (existsSync(contract)) targets.set(`${name}/contract.d.ts`, readFileSync(contract, 'utf8'))
@@ -107,10 +109,10 @@ for (const [pathKey, body] of targets) {
 }
 
 // ── 3. 每个包一份 package.json：真实 name/version/types/exports/files ─────────────
-/** 各包入口（相对包目录）。@dsc/ui-core 的入口在 ui/ 子目录，其余都在根。 */
+/** 各包入口（相对包目录）。@dsc/ui-core 的入口在 packages/ui-core/ 子目录（落点保留仓库相对结构），其余都在根。 */
 const ENTRY = {
   '@dsc/ui': './index.d.ts',
-  '@dsc/ui-core': './ui/index.d.ts',
+  '@dsc/ui-core': './packages/ui-core/index.d.ts',
 }
 /** 源码包的 description（ui-* 各有），没有的给一句兜底。 */
 function describe(name, rel) {

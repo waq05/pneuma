@@ -1,0 +1,4 @@
+{
+  "title": "Action registry (UI)",
+  "description": "Single registry for global actions: dedupe by owner, notify on change"
+}

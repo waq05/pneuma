@@ -43,6 +43,7 @@ import { activeConfigFile } from './config-store.js'
 import { parseTolerantYaml } from './migrate.js'
 import { describeForeignServices } from './dsh-compat/service-map.js'
 import { compatServiceOf } from './dsh-compat/session-bridge.js'
+import { pluginDisplayOf, languageOfConfigFile } from './plugin-locale.js'
 import { applyPatchLayers, readPatchFile, type PatchDuplicate, type PatchLayer, type PluginRow } from './plugin-patch.js'
 import { bundleDirOf, enginesProblem, pneumaEnginesProblem, readBundle, readProfile, type BundleInfo } from './plugin-bundle.js'
 import { dscPath } from './path-policy.js'
@@ -1073,6 +1074,7 @@ export async function mountBundlePlugins(
     exemptions: profile.exemptions,
     warnings,
     root,
+    language: languageOfConfigFile(activeConfigFile()),
   }
   for (const row of applied.rows) {
     const failure = await mountRow(row, ctx)
@@ -1203,6 +1205,7 @@ export async function mountApplicationRows(
     exemptions: options.exemptions ?? profileExemptionsOf(overrideDir),
     warnings,
     root,
+    language: languageOfConfigFile(activeConfigFile()),
   }
   const failures: PluginMountFailure[] = []
   for (const row of applied.rows) {
@@ -1270,6 +1273,12 @@ interface RowMountContext {
   warnings: string[]
   /** 这份行属于哪个 root：已挂身份按 root 记（一个进程可以有多个内核）。 */
   root: Context
+  /**
+   * 显示语言（`config.yaml` 的 `language`）：插件中心那两行字按它取译本。
+   *
+   * 一批行只读一次配置：一次启动要挂几十行，逐行读盘没有意义。
+   */
+  language: string
 }
 
 /**
@@ -1304,9 +1313,12 @@ async function mountRow(row: PluginRow, ctx: RowMountContext): Promise<PluginMou
   // 幂等：已经挂上的身份直接返回（应用自带行重复调用不该再挂一份）
   if (mountedOf(ctx.root).has(rowId)) return null
   const owner = typeof row.id === 'string' ? ctx.ownerOf.get(row.id) : undefined
-  const manifest = manifestOfFile(file, ctx.profileDir)
+  const found = manifestOfFile(file, ctx.profileDir)
+  const manifest = found?.manifest ?? null
   const pneuma = pneumaFieldsOf(manifest)
-  const rowName = pneuma.title ?? basename(file).replace(/\.js$/, '')
+  // 给用户看的两行字走译本：locale/en.json 优先，没译过就回落 pneuma.title/description。
+  const display = pluginDisplayOf(manifest, found?.dir ?? dirname(file), ctx.language)
+  const rowName = display.title ?? basename(file).replace(/\.js$/, '')
   // 版本闸（契约 §7）：判的是**这一行实际解析到的包**，不是组合包自己写的要求——
   // overridable 的行会被 profile 里的副本换掉，换上来那份要求哪一代契约只有它自己知道。
   const engineProblem = pneumaEnginesProblem(manifest)
@@ -1319,7 +1331,7 @@ async function mountRow(row: PluginRow, ctx: RowMountContext): Promise<PluginMou
   registerPluginMeta({
     file: rowId,
     name: rowName,
-    description: pneuma.description ?? '',
+    description: display.description ?? '',
     source: 'external',
     ...(pneuma.settingsSection === undefined ? {} : { settingsSection: pneuma.settingsSection }),
     ...(row.disabled === true ? { defaultDisabled: true } : {}),
@@ -1348,8 +1360,9 @@ async function mountRow(row: PluginRow, ctx: RowMountContext): Promise<PluginMou
   const meta = getPluginMeta(rowId)
   if (meta !== undefined) {
     // package.json 是插件中心的显示口径；模块导出只作缺省（外部单文件插件没有清单）。
-    if (pneuma.title !== undefined) meta.name = pneuma.title
-    if (pneuma.description !== undefined) meta.description = pneuma.description
+    // 译本算在「清单」这一侧：它和清单同源，模块导出的那两行字不翻译。
+    if (display.title !== undefined) meta.name = display.title
+    if (display.description !== undefined) meta.description = display.description
     if (pneuma.settingsSection !== undefined) meta.settingsSection = pneuma.settingsSection
     if (owner !== undefined) meta.bundle = owner
     // 有的包把界面能力写在 package.json 的 pneuma.client（不在模块导出里）。
@@ -1622,13 +1635,15 @@ function pneumaFieldsOf(manifest: Record<string, unknown> | null): PneumaFields 
  * 从入口文件往上找它所属包的 package.json（最多 8 层，走到 profile 目录为止）。
  *
  * 绝对/相对路径的行没有包名可查，但它们的展示字段仍写在最近的 package.json 里。
+ * 目录一起返回：清单里的两行字要按**这个目录**去查 `locale/<语言>.json`。
+ * @returns `{ dir, manifest }`；没找到给 null
  */
-function manifestOfFile(file: string, stopAt: string): Record<string, unknown> | null {
+function manifestOfFile(file: string, stopAt: string): { dir: string; manifest: Record<string, unknown> } | null {
   let dir = dirname(file)
   const stop = resolve(stopAt)
   for (let depth = 0; depth < 8; depth += 1) {
     const manifest = readJsonObject(join(dir, 'package.json'))
-    if (manifest !== null) return manifest
+    if (manifest !== null) return { dir, manifest }
     if (resolve(dir) === stop) return null
     const parent = dirname(dir)
     if (parent === dir) return null

@@ -1035,11 +1035,11 @@ catch-all（priority 100）。想接管某类工具卡的渲染：往这个槽�
        "paths": {
          "@dsc/ui": ["<仓库>/ui-shell/src/plugin-api.ts"],
          "@dsc/ui-core": ["<仓库>/src/ui/index.ts"],
-         "@dsc/ui-slots": ["<仓库>/ui-shell/src/ui-slots/index.ts"],
-         "@dsc/ui-primitives": ["<仓库>/ui-shell/src/ui-primitives/index.ts"],
-         "@dsc/ui-dockkit": ["<仓库>/ui-shell/src/ui-dockkit/index.ts"],
-         "@dsc/ui-layout": ["<仓库>/ui-shell/src/ui-layout/index.ts"],
-         "@dsc/ui-renderer": ["<仓库>/ui-shell/src/ui-renderer/index.ts"]
+         "@dsc/ui-slots": ["<仓库>/src/packages/ui-slots/ui/index.ts"],
+         "@dsc/ui-primitives": ["<仓库>/src/packages/ui-primitives/ui/index.ts"],
+         "@dsc/ui-dockkit": ["<仓库>/src/packages/ui-dockkit/ui/index.ts"],
+         "@dsc/ui-layout": ["<仓库>/src/packages/ui-layout/ui/index.ts"],
+         "@dsc/ui-renderer": ["<仓库>/src/packages/ui-renderer/ui/index.ts"]
        }
      }
    }

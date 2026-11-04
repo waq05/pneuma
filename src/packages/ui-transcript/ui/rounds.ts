@@ -159,7 +159,7 @@ export interface TeammateReport {
 /**
  * 认出队友汇报并解出队友名 / 状态（纯函数，探针直读）。
  *
- * 正文形状（`src/plugins/subagent.ts:517` 造）：
+ * 正文形状（`src/packages/subagent/index.ts:517` 造）：
  * ```
  * <teammate-report from="mate-1" role="…" state="已完成">
  * 派给它的任务：…

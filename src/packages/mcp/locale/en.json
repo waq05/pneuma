@@ -1,0 +1,4 @@
+{
+  "title": "MCP tools",
+  "description": "Connect MCP servers over stdio or HTTP and give their tools to the model"
+}

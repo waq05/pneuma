@@ -91,7 +91,7 @@ console.log('[1] 标准方法底线：不许用「太新」的那几个')
     .map((entry) => join(root, 'src/packages', entry.name, 'ui'))
   const files = [
     ...collect(join(root, 'ui-shell/src')),
-    ...collect(join(root, 'src/ui')),
+    ...collect(join(root, 'src/packages/ui-core')),
     ...halves.flatMap((dir) => collect(dir)),
   ]
   check('扫到了源码（不是空目录）', files.length > 100, String(files.length))

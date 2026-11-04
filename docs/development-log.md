@@ -13199,6 +13199,64 @@ session-open-in 全绿、ui-status-panel 全部通过、readme 26 条断言）�
 - **写 `pneuma.client`、读两处**：命名空间归自己，兼容归生态（真实 dsh 生态有 90 个包写 `dsh.client`，改不了别人）。
 - **源码版本号固定 `0.0.0`**：numa 只发一个包，86 个包目录是构建期产物、从不单独发布；
   让它们各自维护版本号只会在每次发版时制造等量的可漂移点。dsh 逐包发布，所以它必须那么做——这是故意不对齐。
+  → 这一条**当晚就被用户推翻**（要求「完全对齐 dsh」）：87 个包改成各写真实版本号，见下面那条日志。
+
+## 2026-11-04　与 dsh 完全对齐：ui-core 成包、layout 成插件、逐包版本、清单本地化
+
+### 做了什么
+
+1. **界面契约包 `@pneuma/ui-core`**：`src/ui/` 的 14 个文件搬进 `src/packages/ui-core/`（库包，
+   别名 `@dsc/ui-core` 落点改到包内 `index.ts`）；`manifest.ts`（启动图的类型与排序）下沉成
+   `src/core/ui-manifest.ts`，因为 core 的 4 个文件要用它，而「core → 包」是禁的。
+2. **`ui-layout` 变成真正的客户端插件**：去掉 `pneuma.library`，加 `cordis.patch.yml`（order 349、
+   `phase: early`）与 `exports['./client']`；`ui-renderer/ui/main.tsx` 不再静态 import `App`，改成首帧前
+   `await loadPluginModule(layout)`，停用或加载失败时画**诊断页**（哪一行没了 / 为什么 / 去哪打开），不白屏。
+   `ui-renderer` 补 `pneuma.client.immediately: true`，**不占行**——它是唯一 parser-blocking 的引导。
+3. **逐包版本号**（用户裁决对齐 dsh）：87 个 `package.json` 的 `version` 全部写 `0.8.1`；新增
+   `scripts/sync-versions.mjs`（默认只报差异，`--write` 才改盘），门禁第 1 项改成「等于根」。
+4. **清单本地化**：87 个包各加 `exports['./locale/*.json']` 与 `locale/en.json`（`title` / `description`）；
+   新增 `src/core/plugin-locale.ts`（`languageOfConfig` / `localeOf` / `pluginDisplayOf`，按「包目录 + 语言」缓存），
+   `config.yaml` 的 `language:` 决定读哪份，缺字段逐条回落中文；`numa plugin list` 与插件中心都走同一条路径。
+   门禁新增第 3 项「清单本地化」（键在文件不在、坏 JSON、字段非空字符串——三种坏法都实测会红）。
+
+### 数字对账（这四个数以后别再当成回归）
+
+| 数字 | 含义 |
+|---|---|
+| 87 | `src/packages/` 的包目录（76 功能包 + 11 库包） |
+| 76 | 装配行数（库包不占行） |
+| 75 | `plugin-inventory` 数出的插件数：headless 不挂 `tui` 那一行 |
+| 20 | `lib/ui/plugins/` 的界面产物（19 个单元 + layout） |
+
+### 踩到的坑
+
+1. **`build-packages` 不复制 `locale/`，还会把通配符 exports 键当悬空删掉**：不补这两处，本地化只在源码里成立。
+   现在按目录原样抄进产物，exports 过滤认得 `./locale/*.json` 这种通配符。
+2. **探针里三处硬编码的 75 / 19**：`plugin-list-test`（行数与表头）、`ui-switch-check`（单元数、停一个少一个的
+   算术语）、`plugin-inventory` 的注释。加一行就是在三个地方各改一次——这种数字本该从「数一遍」来。
+3. **`lib/ui/*.js` 的模块路径全变了**：9 支探针仍 import `../lib/ui/slots.js` / `manifest.js`，改成
+   `lib/packages/ui-core/*.js` 与 `lib/core/ui-manifest.js`；`build-runtime-package` 的 `ROOTS` 里那个 `ui`
+   必须删掉（否则按旧目录出桩，槽注册表出现第二份实例）。
+4. **色板兜底是逐字节比对的生成物**：文件抬头的注释里带着自己的路径，路径一改，42 条的漂移门当场红。
+   搬家后要重跑 `node ui-shell/scripts/build-color-fallback.mjs`，不是改断言。
+5. **App 的派发器与静态 import 是两件事**：`main.tsx` 现在必须等 layout bundle 就位才能渲染；
+   这个「等」放在批调度之外（首帧前显式 await），否则会先画一帧空壳。
+
+### 数字
+
+- `pnpm run build` 0：**76 个功能包 / 76 行 + 11 个库包**，base patch 76 行，`lib/ui/plugins` 20 个目录。
+- `pnpm run typecheck` 0；`pnpm -C ui-shell typecheck` 0；`pnpm run build:ui` 0。
+- `check:plugin` 0（标准八项 87/87、package-tests 86/86、换包 e2e 17 PASS）。
+- `check:ui` 0（54 套）；`check:style` 0；`check:core` 98/99 → readme 的数字口径修完后单独复跑绿。
+- 本地化探针 38 条断言；`plugin-inventory` 74 个插件 → 75（含 layout 的界面半）、20 个界面单元。
+
+### 还开着的
+
+- **骨架实现仍在壳的 app bundle 里**（`@dsc/ui` 把 layout 的读 hook 整包转出给插件）。停用 layout 省的是
+  「装这一行」，不是下载量。真要搬进 bundle，得先拆 `@dsc/ui` 对 layout 的十余处转出——比这一轮大。
+- **界面内文案仍是中文**：本轮本地化只到清单两行字。
+- **D 档 30 个 core 模块**与 `src/contract.ts` 仍在内核（加载器本体与契约面）。
+- 浏览器 e2e（诊断页两种态）只做了构建 + 真实启动图层面的验证，没跑真窗口。
 
 ### 踩到的坑
 

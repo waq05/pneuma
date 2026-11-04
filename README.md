@@ -146,7 +146,7 @@ numa config show              # 查看当前生效的端点/模型/key 来源（
 
 ## 插件
 
-功能包共 **75 个**（默认关 13 个；其中 19 个是界面单元 `ui-<id>`，宿主半是空 `apply`）。每个功能是一个包，住在 `src/packages/<id>/`，构建后落到 `lib/node_modules/@pneuma/<id>`，由 `@pneuma/base` 的行清单按顺序挂载。**核心服务（模型路由、会话、工具注册表、审批…）与 19 个功能档没有区别**：都能在插件中心停用，停了以后依赖它的行会报出原因。
+功能包共 **76 个**（默认关 13 个；其中 19 个是界面单元 `ui-<id>`、1 个是界面骨架 `ui-layout`）。每个功能是一个包，住在 `src/packages/<id>/`，构建后落到 `lib/node_modules/@pneuma/<id>`，由 `@pneuma/base` 的行清单按顺序挂载。**核心服务（模型路由、会话、工具注册表、审批…）与 19 个功能档没有区别**：都能在插件中心停用，停了以后依赖它的行会报出原因。
 
 19 个功能档里，默认开 6 个（联网搜索、危险命令硬拦截、长输出转存、历史会话搜索、文件与命令围栏、改动前预览），默认关 13 个（子智能体、共享任务板、操作电脑桌面、外部命令钩子、MCP 外部工具、工具按需加载、定时任务、代码跳转与报错、受控浏览器、侧栏浏览器、经验沉淀、dsh 插件兼容、文档与批量读取）。完整清单与各自干什么见 [docs/development.md](docs/development.md) 第 4 节。
 
@@ -191,7 +191,7 @@ src/core/           自研引擎（零 UI 依赖）
 src/adapter/        core 事件 → 快照投影（transcript 折叠 + core-runtime）
 src/contract.ts     UI ⇄ 运行时 的中性契约（DscRuntime）
 src/host/kernel.ts  内核装配器：建 Context、挂应用自带的行、挂外部插件（103 行）
-src/packages/       75 个包：56 个功能包 + 19 个界面单元（package.json + cordis.patch.yml + index.ts）
+src/packages/       87 个包：76 个功能包（含 19 个界面单元与界面骨架）+ 11 个库包（package.json + cordis.patch.yml + index.ts）
 src/packages/tui/app/  ink UI（App/ChatView/Composer/ToolCard/ApprovalCard/SessionPicker/StatusBar）
 desktop/            Electron 桌面端：主进程 + 独立运行时子进程；界面就是插件壳（旧渲染层已删除）
 ui-shell/           桌面与手机共用的界面壳（插件化：布局 + 基元 + 官方界面插件；产物落 lib/ui/assets）

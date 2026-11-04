@@ -15,7 +15,7 @@
     "types": ["node"],
     "baseUrl": ".",
     "paths": {
-      "@dsc/ui-core": ["../src/ui/index.ts"],
+      "@dsc/ui-core": ["../src/packages/ui-core/index.ts"],
       "@dsc/ui": ["./src/plugin-api.ts"],
       "@dsc/ui-dockkit": ["../src/packages/ui-dockkit/ui/index.ts"],
       "@dsc/ui-layout": ["../src/packages/ui-layout/ui/index.ts"],
@@ -24,5 +24,5 @@
       "@dsc/ui-slots": ["../src/packages/ui-slots/ui/index.ts"]
     }
   },
-  "include": ["src", "../src/ui", "../src/packages/*/ui"]
+  "include": ["src", "../src/packages/ui-core", "../src/packages/*/ui"]
 }

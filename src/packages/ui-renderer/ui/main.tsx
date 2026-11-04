@@ -1,40 +1,45 @@
 /**
- * 界面壳入口：建通道 → 建注册表 → 声明槽 → 装插件 → 挂载。
+ * 界面壳入口：取启动图 → 取骨架 → 建通道 → 建注册表 → 声明槽 → 装插件 → 挂载。
  *
- * 顺序不能反：槽必须**先声明**再让插件注册（注册到未声明的槽当场报错，
- * 这是刻意设计的——拼错槽名不该静默丢掉一整块界面）。所以这里的次序是
- * 声明 → 加载 → 渲染，而不是先渲染再补插件。
+ * 顺序不能反，而且现在多了一环「骨架」：
+ *
+ *   1. **启动图**先取（骨架从图里拿，与其它插件同一条路）；
+ *   2. **骨架**（布局插件 `layout` 的产物）在首帧之前**显式 await**——它不是静态 import
+ *      进壳的，而是 `lib/ui/plugins/layout/client.js`，装载器那条 require 表交给它的还是
+ *      壳里那一份实例（`@dsc/ui` 已经把它的读 hook 转出给插件了，不能有第二份）；
+ *   3. 通道由骨架提供，所以通道只能排在建完骨架之后；
+ *   4. 槽必须**先声明**再让插件注册（注册到未声明的槽当场报错，这是刻意设计的——
+ *      拼错槽名不该静默丢掉一整块界面），所以整体次序是 声明 → 加载 → 渲染。
+ *
+ * 骨架缺席（被停用、产物没构建、取字节失败）时**不画白屏**：{@link LayoutUnavailable}
+ * 画一块诊断页，说清是哪一种、以及去哪把开关打开。
  *
  * 数据通道（SSE）与启动清单（`__DSC_BOOT__`）是两件事：清单决定装哪些插件，
  * 通道决定界面上显示什么状态。通道先建（它自己异步连），装插件时一并交给它们。
  *
  * @module dsc-ui-shell/ui-renderer/main
  */
-import { StrictMode } from 'react'
+import { StrictMode, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { SlotRegistry, ServiceRegistry, ServicesProvider, type UiBootGraph, type UiPrefsView } from '@dsc/ui-core'
 import { onAppearanceRequest, type SlotFactoryMap, type SlotMap } from '@dsc/ui'
-// 面板几何直接按包名取：App（@dsc/ui-layout）读的也是这个包，同一份模块实例才拿得到
-// 启动时灌进去的那份值。
+// 面板几何直接按包名取：骨架（布局插件里那份 @dsc/ui-layout）读的也是这个包，
+// 同一份模块实例才拿得到启动时灌进去的那份值。
 import { primePanelGeometry, setPanelGeometrySaver } from '@dsc/ui-primitives'
-import { ALLOWED_MODULES, createBootSession, readBootGraph, type UiBootSession } from './boot'
+import {
+  ALLOWED_MODULES,
+  createBootSession,
+  loadPluginModule,
+  readBootGraph,
+  type UiBootSession,
+} from './boot'
 import { startPluginHmr, type UiPluginHmr } from './hmr'
-// 骨架与运行时（App、宿主通道、外观落地）住 `@dsc/ui-layout`；槽位契约与出口住 `@dsc/ui-slots`。
-import { App, createHostChannel, RuntimeProvider } from '@dsc/ui-layout'
 import { SHELL_SLOTS, type ShellSlot } from '@dsc/ui-slots'
 import type { UiComponent, UiSlots } from '@dsc/ui'
-import {
-  applyAppearance,
-  appearanceFromPrefs,
-  DEFAULT_APPEARANCE,
-  loadCachedAppearance,
-  saveCachedAppearance,
-  type Appearance,
-} from '@dsc/ui-layout'
 // 顺序即层叠：令牌 → 全局基线 → 原语 → 各视图（从旧渲染层原样搬来的四份）
 // → 壳自己的补充。反了就会互相覆盖，与旧渲染层 main.tsx:6-9 同一套次序。
 // 样式随入口一起住本包的 `styles/`：`legacy/` 是从旧渲染层逐字节搬来的四份
-// （改它们等于改旧界面，走 `ui-shell/src/legacy/PROVENANCE.md` 的规矩），`styles.css`
+// （改它们等于改旧界面，走 `src/packages/ui-renderer/ui/styles/legacy/PROVENANCE.md` 的规矩），`styles.css`
 // 是壳新增的补充层。层叠顺序不能反，理由见 `styles/styles.css` 抬头。
 import './styles/legacy/tokens.css'
 import './styles/legacy/base.css'
@@ -58,6 +63,30 @@ const UNAVAILABLE_BOOT: UiBootGraph = {
 }
 
 /**
+ * 布局插件的**产物 id**（`lib/ui/plugins/layout/`）。
+ *
+ * 与行 id `ui-layout` 差一个 `ui-` 前缀：产物目录名 / 启动图条目用前者，插件开关用后者
+ * （换算只写在 `src/core/ui-bundles.ts` 的 `builtinSwitchKey`）。
+ */
+const LAYOUT_ID = 'layout'
+
+/**
+ * 布局产物的导出面：就是 `@dsc/ui-layout` 那棵树。
+ *
+ * 这里只借**类型**（`typeof import()` 在编译期擦除、运行期不产生 import）——实现必须来自
+ * 启动图里那一份，否则「停用就真的不装」这条开关就是假的。
+ */
+type LayoutSurface = typeof import('@dsc/ui-layout')
+
+/** 骨架缺席的三种来路（诊断页按它写标题与下一步）。 */
+interface LayoutFailure {
+  /** 一句话说清是哪一种。 */
+  reason: string
+  /** 更细的原因（错误原文 / 缺哪一条），没有就是 null。 */
+  detail: string | null
+}
+
+/**
  * 首帧先按上次的外观镜像上色，再向宿主问一次真值。
  *
  * 为什么要有镜像这一手：宿主回读是异步的，等它回来才上色的话，浅色主题的用户每次
@@ -65,14 +94,20 @@ const UNAVAILABLE_BOOT: UiBootGraph = {
  *
  * 为什么失败只告警不抛：外观拿不到顶多是配色不对，界面还能用；把启动卡死在这里
  * 才是真的用不了。
+ *
+ * @param layout - 启动图里取回来的骨架导出面（外观落地只有这一份实现）
+ * @param prefs - 已经发出去的那次 `getUiPrefs`
  */
-async function syncAppearance(prefs: Promise<UiPrefsView | null>): Promise<void> {
-  applyAppearance(loadCachedAppearance())
+async function syncAppearance(
+  layout: LayoutSurface,
+  prefs: Promise<UiPrefsView | null>,
+): Promise<void> {
+  layout.applyAppearance(layout.loadCachedAppearance())
   const loaded = await prefs
   if (loaded === null) return
-  appearance = appearanceFromPrefs(loaded)
-  applyAppearance(appearance)
-  saveCachedAppearance(appearance)
+  appearance = layout.appearanceFromPrefs(loaded)
+  layout.applyAppearance(appearance)
+  layout.saveCachedAppearance(appearance)
 }
 
 /**
@@ -92,8 +127,17 @@ async function within<T>(promise: Promise<T>, ms: number): Promise<T | null> {
   ])
 }
 
-/** 最后一次生效的外观：设置面板改一项时以它为底（见下面那个注册）。 */
-let appearance: Appearance = DEFAULT_APPEARANCE
+/**
+ * 最后一次生效的外观：设置面板改一项时以它为底。
+ *
+ * `null` = 骨架还没装上来（那时候也不该有插件在改外观）。类型按骨架导出的默认值取，
+ * 免得在这里另抄一份形状。
+ */
+type Appearance = LayoutSurface['DEFAULT_APPEARANCE']
+let appearance: Appearance | null = null
+
+/** 骨架装上来之后的导出面：外观落地与诊断两处都要按它走。 */
+let layoutSurface: LayoutSurface | null = null
 
 /**
  * 把「外观改动的请求」接到真正的那份实现上。
@@ -102,12 +146,16 @@ let appearance: Appearance = DEFAULT_APPEARANCE
  * （最近报出去的控件条颜色、跟随系统的监听），**只该有一份**。插件 bundle 里内联一份
  * 就会出现两个 applier；而外观又是"插件改、壳落地"的事，所以插件只发请求。
  *
+ * 这一条在模块加载时就注册（早于任何插件 apply），骨架还没取回来时是空操作。
+ *
  * 写盘由插件自己做（它调 `setUiPrefs`）——这里只负责让界面立刻跟上与记住镜像。
  */
 onAppearanceRequest((patch) => {
-  appearance = { ...appearance, ...patch }
-  applyAppearance(appearance)
-  saveCachedAppearance(appearance)
+  const layout = layoutSurface
+  if (layout === null) return
+  appearance = { ...(appearance ?? layout.DEFAULT_APPEARANCE), ...patch }
+  layout.applyAppearance(appearance)
+  layout.saveCachedAppearance(appearance)
 })
 
 /**
@@ -130,6 +178,77 @@ function dismissBootSplash(): void {
   })
 }
 
+/**
+ * 骨架缺席时的诊断页。
+ *
+ * 为什么一定要有它：`ui-layout` 现在是**能停用的插件**，开关的意义就在于关掉之后还能
+ * 看见东西——白屏会让人以为是壳坏了，而实际只是一行开关。这里给三样：哪一行没了、
+ * 为什么、去哪儿打开它。
+ *
+ * 样式全内联：这一页在骨架之外运行，不能依赖 `styles/` 里那套（那些类名是给 App 用的）。
+ */
+function LayoutUnavailable({ failure }: { failure: LayoutFailure }): ReactNode {
+  return (
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '48px 24px',
+        boxSizing: 'border-box',
+        background: '#1b1b1c',
+        color: '#e8e6e1',
+        font: '14px/1.7 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif',
+      }}
+    >
+      <div style={{ maxWidth: 640, width: '100%' }}>
+        <h1 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 600 }}>
+          界面布局（ui-layout）{failure.reason}
+        </h1>
+        <p style={{ margin: '0 0 12px', color: '#b9b5ad' }}>
+          整张页面只有骨架能画出来。骨架没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。
+        </p>
+        <p style={{ margin: '0 0 12px', color: '#b9b5ad' }}>
+          打开它的地方：编辑 <code style={{ color: '#e8e6e1' }}>~/.dsc/plugins.json</code>，找到{' '}
+          <code style={{ color: '#e8e6e1' }}>&quot;file&quot;: &quot;ui-layout&quot;</code> 那一条，
+          把 <code style={{ color: '#e8e6e1' }}>&quot;disabled&quot;</code> 改成{' '}
+          <code style={{ color: '#e8e6e1' }}>false</code>（或删掉那一条），然后刷新本页。
+          宿主重启后它也会回到插件中心的内置插件列表里。
+        </p>
+        {failure.detail === null ? null : (
+          <pre
+            style={{
+              margin: '16px 0 0',
+              padding: '12px 14px',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              background: '#232324',
+              border: '1px solid #343436',
+              borderRadius: 6,
+              color: '#d8d3c8',
+              fontSize: 12,
+              lineHeight: 1.6,
+            }}
+          >
+            {failure.detail}
+          </pre>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** 把诊断页画到 #root 上，并且让启动占位退场（否则它盖住诊断）。 */
+function renderLayoutUnavailable(container: HTMLElement, failure: LayoutFailure): void {
+  createRoot(container).render(
+    <StrictMode>
+      <LayoutUnavailable failure={failure} />
+    </StrictMode>,
+  )
+  dismissBootSplash()
+}
+
 async function bootstrap(): Promise<void> {
   const container = document.getElementById('root')
   if (container === null) throw new Error('页面里没有 #root')
@@ -141,27 +260,72 @@ async function bootstrap(): Promise<void> {
     slots.declare(slot, SHELL_SLOTS[slot]),
   )
 
-  // 2. 宿主数据通道（异步连，失败也会自己重连）+ 外观 + 面板几何。
+  // 2. 启动清单：骨架也从这里取（与其它插件同一条路，没有第二套地址）。
+  //    清单取不到也要起壳：诊断页会说明是哪一步断的，比白屏好查。
+  let boot: UiBootGraph = UNAVAILABLE_BOOT
+  let bootError: string | null = null
+  try {
+    boot = await readBootGraph()
+  } catch (error) {
+    bootError = error instanceof Error ? error.message : String(error)
+  }
+
+  // 3. 骨架：**首帧之前就位**（显式 await，不靠批调度）。取不到就不画 App——
+  //    白屏会让人以为壳坏了，而实际可能只是 `ui-layout` 那一行被停用了。
+  const layoutEntry = boot.entries.find((entry) => entry.id === LAYOUT_ID)
+  let layout: LayoutSurface | null = null
+  let failure: LayoutFailure | null =
+    layoutEntry === undefined
+      ? boot.disabled?.includes(LAYOUT_ID) === true
+        ? { reason: '已停用', detail: bootError }
+        : {
+            reason: '没有进启动清单',
+            detail:
+              bootError ??
+              `启动图里没有 ${LAYOUT_ID} 这一条：产物没构建，或被 API 门禁拦下了。` +
+                '跑 `pnpm -C ui-shell build` 后刷新本页；插件中心 → 内置插件里也能看到它的开关。',
+          }
+      : null
+  if (layoutEntry !== undefined) {
+    try {
+      const loaded = (await loadPluginModule(layoutEntry)) as LayoutSurface
+      if (typeof loaded.App !== 'function') {
+        throw new Error('产物里没有 App（client.js 的形状不对：期望导出 App 组件）')
+      }
+      layout = loaded
+    } catch (error) {
+      failure = {
+        reason: '加载失败',
+        detail: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
+  if (layout === null) {
+    renderLayoutUnavailable(container, failure ?? { reason: '加载失败', detail: null })
+    return
+  }
+  layoutSurface = layout
+  const { App, RuntimeProvider } = layout
+
+  // 4. 宿主数据通道（异步连，失败也会自己重连）+ 外观 + 面板几何。
   // 外观**不 await**：函数体在第一个 await 之前就把上次的镜像涂上去了，首帧已经是对的颜色，
   // 等宿主回读回来再覆盖一次。await 的话，宿主卡住时最坏要等一次 invoke 超时（30 秒）才出首帧。
   //
   // 同一次 getUiPrefs 也喂面板几何（侧栏宽 / 正文列宽 / 右侧栏宽 / 并排审查宽）：那几项
   // 只存在 localStorage 的话，宿主一换端口（每次启动、每次切工作目录都换）就全丢。几何
-  // 要赶在渲染前灌进面板模块（见下面第 4 步前那几行），否则用户先看到默认宽再跳一下。
-  const channel = createHostChannel()
+  // 要赶在渲染前灌进面板模块（见下面第 6 步前那几行），否则用户先看到默认宽再跳一下。
+  const channel = layout.createHostChannel()
   const prefs = channel.invoke<UiPrefsView>('getUiPrefs').catch((error: unknown) => {
     console.warn('[ui-shell] 读界面偏好失败，沿用上次的外观镜像与默认宽度', error)
     return null
   })
-  void syncAppearance(prefs)
+  void syncAppearance(layout, prefs)
 
-  // 3. 启动清单 + 装**第一批**（early）。清单取不到也要起壳：空壳 + 一条诊断，比白屏好查。
-  // 第二批（application）不在这里装：画完首帧后由 session.startApplication() 推到空闲时刻。
-  let boot: UiBootGraph = UNAVAILABLE_BOOT
+  // 5. 装**第一批**（early）。第二批（application）不在这里装：画完首帧后由
+  //    session.startApplication() 推到空闲时刻。骨架这一行也在第一批里（`phase: early`）——
+  //    它的产物刚才已经物化过一次，这里走同一个物化缓存，工厂不会再执行第二遍。
   let session: UiBootSession | null = null
-  let bootError: string | null = null
   try {
-    boot = await readBootGraph()
     session = await createBootSession(boot, { slots, host: boot.host, runtime: channel })
   } catch (error) {
     bootError = error instanceof Error ? error.message : String(error)
@@ -170,10 +334,10 @@ async function bootstrap(): Promise<void> {
 
   // 壳侧热更：连接上来之后宿主的 `plugins` 帧都会走对账（失败只记在页内诊断区）。
   const hmr: UiPluginHmr | null = session === null ? null : startPluginHmr({ channel, session })
-  // 服务表（A1）：会话里那份就是装载期真用的表；清单取不到时给一张空表（壳照样起）。
+  // 服务表（A1）：会话里那份就是装载期真用的表；装载失败时给一张空表（壳照样起）。
   const serviceRegistry = session?.services ?? new ServiceRegistry()
 
-  // 3.5 首帧的宽度：偏好通常在装插件这几百毫秒里就回来了，这里只是把它灌进面板模块。
+  // 6. 首帧的宽度：偏好通常在装插件这几百毫秒里就回来了，这里只是把它灌进面板模块。
   // 灌进去之后 `readStoredPx` / `readStoredFlag` 在 localStorage 空着时（换过端口）回落到这一份；
   // 再注册落盘出口，拖动松手时整份发给 `setUiPrefs`（见 ui-primitives/panels.ts）。
   const loaded = await within(prefs, 1500)
@@ -200,8 +364,9 @@ async function bootstrap(): Promise<void> {
     })
   }
 
-  // 4. 渲染。服务表经 context 交给条目组件（插件用 `useService` 读服务、跟着出现/消失换源）；
-  // 第一批已在注册表里，首帧就能画出它。
+  // 7. 渲染。服务表经 context 交给条目组件（插件用 `useService` 读服务、跟着出现/消失换源）；
+  // 第一批已在注册表里，首帧就能画出它。App 与 RuntimeProvider 必须来自**同一份**骨架导出
+  // （同一个模块实例）：插件的 `useHostSnapshot` 读的是那份 RuntimeContext。
   createRoot(container).render(
     <StrictMode>
       <RuntimeProvider channel={channel}>

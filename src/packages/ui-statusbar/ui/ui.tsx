@@ -5,7 +5,7 @@
  * 为什么 class 名逐字照搬旧版：旧样式表（`legacy/views.css`，旧渲染层 styles.css 的逐字节
  * 副本）整份搬进壳里，`.segments` / `.segment` / `.ctx-card` / `.ctx-bar` / `.ctx-legend`
  * 这一套选择器就是「状态栏长什么样」的唯一原件。三段的间距、留白与分隔交给
- * `ui-shell/src/styles.css` 的一组覆盖（对齐 dsh：`gap:12px`、段间没有分隔符）。
+ * `src/packages/ui-renderer/ui/styles/styles.css` 的一组覆盖（对齐 dsh：`gap:12px`、段间没有分隔符）。
  *
  * 三段与三张悬浮卡（与 dsh 一一对应）：
  *

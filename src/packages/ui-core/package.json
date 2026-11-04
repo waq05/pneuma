@@ -1,0 +1,26 @@
+{
+  "name": "@pneuma/ui-core",
+  "version": "0.8.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./slots.js": "./slots.js",
+    "./slots-ink.js": "./slots-ink.js",
+    "./tui-plugins.js": "./tui-plugins.js",
+    "./tui-plugin-api.js": "./tui-plugin-api.js"
+  },
+  "pneuma": {
+    "library": true,
+    "title": "界面共用核心",
+    "description": "插件版界面的共用核心：槽位注册表、服务表、席位、帧协议与两个壳的装载约定"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4"
+  }
+}

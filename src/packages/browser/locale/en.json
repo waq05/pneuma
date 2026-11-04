@@ -1,0 +1,4 @@
+{
+  "title": "Controlled browser",
+  "description": "Model drives an isolated Chrome by page elements; each action needs approval"
+}

@@ -10,7 +10,7 @@
  *      HEAD 无体/非 GET 405 都照单资源；错 rev 与未通告的组合 404；多段 id（`@scope/name`）
  *      能进批、能伺服；换代后旧批地址仍 200（上一代保留）。
  *   3. **请求数**：16 个插件只需要 2 条批请求（≤3）；「批 → 单资源」回退的请求算术用
- *      `lib/ui/arrival.js` 的到达协议逐分支数死（传输失败 3 次 / 执行过没注册 2 次 /
+ *      `lib/packages/ui-core/arrival.js` 的到达协议逐分支数死（传输失败 3 次 / 执行过没注册 2 次 /
  *      批已执行 1 次；同批其余条目不受影响、已执行的批绝不重放）。
  *
  * 用法：npx tsc -p tsconfig.json && node scripts/ui-batches-test.mjs
@@ -32,8 +32,8 @@ delete process.env.DSC_UI_ASSETS
 delete process.env.DSC_UI_PORT
 delete process.env.DSC_UI_HMR
 
-const { UiArrivalLedger } = await import('../lib/ui/arrival.js')
-const { uiComboBatchRev, uiComboBatchUrl } = await import('../lib/ui/manifest.js')
+const { UiArrivalLedger } = await import('../lib/packages/ui-core/arrival.js')
+const { uiComboBatchRev, uiComboBatchUrl } = await import('../lib/core/ui-manifest.js')
 const { createUiServer } = await import('../lib/core/ui-server.js')
 const { isUiComboRequest, resolveUiResourceRequest } = await import('../lib/core/ui-route.js')
 

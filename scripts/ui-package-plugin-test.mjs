@@ -20,7 +20,7 @@ const {
   scanThirdPartyUiTrusts,
 } = await import('../lib/core/ui-bundles.js')
 const { writePluginEnabled } = await import('../lib/core/plugin-registry.js')
-const { composeUiBootGraph } = await import('../lib/ui/manifest.js')
+const { composeUiBootGraph } = await import('../lib/core/ui-manifest.js')
 const { createUiBootSource } = await import('../lib/core/ui-boot-source.js')
 const { toUiPluginRows } = await import('../lib/core/ui-bundles.js')
 

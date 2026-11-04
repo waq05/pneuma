@@ -1,0 +1,4 @@
+{
+  "title": "Dangerous command floor",
+  "description": "Refuse shutdown, disk wipe, registry and key reads; allowlist common commands"
+}

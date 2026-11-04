@@ -4,9 +4,9 @@
  * 这一层是 C-真 路线的第一块拼图（宿主下发 bundle、界面壳按槽位拼装），
  * 出问题的形状都很像「界面上一块东西莫名不见了」，所以断言要钉在四个地方：
  *
- *   1. 槽位核心（`lib/ui/slots.js`）：声明/注册/排序/取赢家/引用稳定性/退订/报错；
+ *   1. 槽位核心（`lib/packages/ui-core/slots.js`）：声明/注册/排序/取赢家/引用稳定性/退订/报错；
  *      引用稳定性单独测——它挂了的表现是界面无限重渲染，最难查；
- *   2. 启动清单（`lib/ui/manifest.js`）：拓扑排序、成环报错、地址形状、版本指纹；
+ *   2. 启动清单（`lib/core/ui-manifest.js`）：拓扑排序、成环报错、地址形状、版本指纹；
  *   3. bundle 发现（`lib/core/ui-bundles.js`）：清单读写、缺文件要报出来、路径逃逸要挡住；
  *   4. 界面服务（`lib/core/ui-server.js`）：**真起一个服务**跑一遍
  *      没凭据 401 → 带令牌换 Cookie 302 → 取启动图 → 取 bundle（版本对得上/对不上）
@@ -45,8 +45,8 @@ const {
   SlotKindConflictError,
   KeyedSlotKeyError,
   ChainSlotSelectError,
-} = await import('../lib/ui/slots.js')
-const { artifactRev, composeUiBootGraph, orderUiPlugins, pluginBundleUrl, shortHash } = await import('../lib/ui/manifest.js')
+} = await import('../lib/packages/ui-core/slots.js')
+const { artifactRev, composeUiBootGraph, orderUiPlugins, pluginBundleUrl, shortHash } = await import('../lib/core/ui-manifest.js')
 const { collectUiPluginArtifacts, readUiPluginBundle, readUiPluginManifest, uiPluginsDir } = await import(
   '../lib/core/ui-bundles.js'
 )
@@ -837,7 +837,7 @@ console.log('\n[4c] 数据通道')
 console.log('\n[4d] 帧往返（宿主产 → 壳并）')
 {
   const hub = new RemoteFrameHub()
-  const applyHostFrame = (await import('../lib/ui/frames.js')).applyHostFrame
+  const applyHostFrame = (await import('../lib/packages/ui-core/frames.js')).applyHostFrame
 
   const snap = (text, live) => ({
     sessionId: 's-1',
@@ -989,14 +989,16 @@ console.log('\n[5b] 分包落点')
     mismatched.map((name) => `${name}: tsconfig=${JSON.stringify(paths[name])} packages=${packages[name]}`).join(' | '),
   )
 
-  // @dsc/ui-core 的边界锚：src/ui/package.json 是它的包身份，逻辑落点必须与它声明的入口一致；
-  // 版本与壳同源（契约版本纪律：@dsc/ui 的导出面变了，两处一起动）。
-  const corePackage = JSON.parse(readFileSync(join(uiShell, '..', 'src', 'ui', 'package.json'), 'utf8'))
-  check('src/ui/package.json 就是 @dsc/ui-core 的包身份', corePackage.name === '@dsc/ui-core', String(corePackage.name))
+  // @dsc/ui-core 的边界锚：2026-11-04 起它自己也是一个包（`@pneuma/ui-core`），
+  // `src/packages/ui-core/package.json` 是包身份，别名落点必须正好是它的入口。
+  // 名字有两套：包身份 `@pneuma/ui-core`，作者面别名 `@dsc/ui-core`（只活在 packages.json 与
+  // tsconfig 的 paths 里）。版本与壳同源（契约版本纪律：@dsc/ui 的导出面变了，两处一起动）。
+  const corePackage = JSON.parse(readFileSync(join(repoRoot, 'src', 'packages', 'ui-core', 'package.json'), 'utf8'))
+  check('src/packages/ui-core/package.json 就是 @pneuma/ui-core 的包身份', corePackage.name === '@pneuma/ui-core', String(corePackage.name))
   check(
-    '@dsc/ui-core 的落点 = 它声明的 types 入口',
-    resolve(uiShell, String(packages['@dsc/ui-core'])) === resolve(uiShell, '..', 'src', 'ui', String(corePackage.types)),
-    `${String(packages['@dsc/ui-core'])} ≠ src/ui/${String(corePackage.types)}`,
+    '@dsc/ui-core 的别名落点 = 包内 index.ts',
+    resolve(uiShell, String(packages['@dsc/ui-core'])) === join(repoRoot, 'src', 'packages', 'ui-core', 'index.ts'),
+    String(packages['@dsc/ui-core']),
   )
   check('@dsc/ui-core 的版本与壳 apiVersion 同源', corePackage.version === shellPackage.version, `${String(corePackage.version)} ≠ ${String(shellPackage.version)}`)
 
@@ -1074,23 +1076,45 @@ console.log('\n[5b] 分包落点')
     layerNames.every((name) => existsSync(join(layerDirs[name], 'index.ts'))),
     layerNames.filter((name) => !existsSync(join(layerDirs[name], 'index.ts'))).join(','),
   )
-  // 包身份按 dsh 的形状：目录 `src/packages/ui-<id>/` 对 `@pneuma/ui-<id>`，`private`，
-  // 且 `pneuma.library: true`（没有 cordis.patch.yml、没有装配行——它在构建期被打进壳，
-  // 不是一个可停用的功能单元）。作者侧的 `@dsc/ui-<id>` 只是构建期别名，不出现在任何
-  // package.json 里；两者必须一一对应，否则插件按别名引用时解析到的是另一份实现。
+  // 包身份按 dsh 的形状：目录 `src/packages/ui-<id>/` 对 `@pneuma/ui-<id>`、`private`。
+  // 作者侧的 `@dsc/ui-<id>` 只是构建期别名，不出现在任何 package.json 里；两者必须一一对应，
+  // 否则插件按别名引用时解析到的是另一份实现。
+  //
+  // 2026-11-04 起五个层分成两档，与 dsh 一致：
+  //   - slots / primitives / dockkit：**种子包**（`pneuma.library: true`、无行）——别人要 require
+  //     同一份实例，所以它们不能是可停用的功能单元。
+  //   - layout / renderer：**客户端插件**（有 `cordis.patch.yml` 与 `pneuma.client`）。
+  //     layout 是 `phase: early` 的普通插件（停用后壳画诊断页，不白屏）；renderer 是唯一
+  //     parser-blocking 的引导（与 dsh 的 `modules` 同位），声明了 `immediately` 但不占行。
+  const seedNames = ['@dsc/ui-slots', '@dsc/ui-primitives', '@dsc/ui-dockkit']
+  const manifestOf = (name) => JSON.parse(readFileSync(join(dirname(layerDirs[name]), 'package.json'), 'utf8'))
   const badIdentity = layerNames.filter((name) => {
     // 包身份在包根（`ui/` 的上一层），别名落点才是 `ui/index.ts`。
-    const pkg = JSON.parse(readFileSync(join(dirname(layerDirs[name]), 'package.json'), 'utf8'))
+    const pkg = manifestOf(name)
     // 作者侧 name 是 `@dsc/ui-<id>`，包身份是 `@pneuma/ui-<id>`：只换作用域前缀。
-    return (
-      pkg.name !== name.replace('@dsc/', '@pneuma/') ||
-      pkg.private !== true ||
-      pkg.pneuma?.library !== true ||
-      typeof pkg.version !== 'string' ||
-      pkg.version === ''
-    )
+    if (pkg.name !== name.replace('@dsc/', '@pneuma/') || pkg.private !== true) return true
+    if (typeof pkg.version !== 'string' || pkg.version === '') return true
+    if (seedNames.includes(name)) return pkg.pneuma?.library !== true || pkg.pneuma?.client !== undefined
+    return false
   })
-  check('五个逻辑包的包身份（@pneuma/ui-* / private / pneuma.library）', badIdentity.length === 0, badIdentity.join('、'))
+  check('三个种子包的包身份（library、无 client 声明）', badIdentity.length === 0, badIdentity.join('、'))
+
+  // 两档的差别正是 dsh 的差别：种子包「有包无插件」，layout 是插件，renderer 是引导。
+  const layoutPkg = manifestOf('@dsc/ui-layout')
+  check(
+    'ui-layout 是客户端插件（有行、有 ./client、有 pneuma.client，不再是库包）',
+    layoutPkg.pneuma?.library !== true &&
+      layoutPkg.pneuma?.bundle?.patch === './cordis.patch.yml' &&
+      layoutPkg.exports?.['./client'] !== undefined &&
+      layoutPkg.pneuma?.client?.platform === 'pneuma',
+    JSON.stringify(layoutPkg.pneuma),
+  )
+  const rendererPkg = manifestOf('@dsc/ui-renderer')
+  check(
+    'ui-renderer 是唯一 parser-blocking 引导（immediately: true、不占行）',
+    rendererPkg.pneuma?.client?.immediately === true && rendererPkg.pneuma?.bundle === undefined,
+    JSON.stringify(rendererPkg.pneuma),
+  )
 
   const upwardEdges = []
   const outsideEdges = []
@@ -1128,6 +1152,9 @@ console.log('\n[5b] 分包落点')
     // renderer 是链条顶端（启动图的持有者），它本来就该拿到聚合面的值；下面四层不许。
     if (name === '@dsc/ui-renderer') continue
     for (const file of sourceFilesOf(layerDirs[name])) {
+      // `ui/ui.tsx` 是**插件入口**，不是壳里的代码：它打包成 bundle 后 `@dsc/ui` 走 external，
+      // 由平台模块表提供壳里那一份，所以它写值 import 是正常的（反过来才内联）。
+      if (file.endsWith(join('ui', 'ui.tsx'))) continue
       const clean = readFileSync(file, 'utf8')
         .replace(/\/\*[\s\S]*?\*\//g, '')
         .replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1')
@@ -1231,8 +1258,8 @@ console.log('\n[5c] 槽位契约表')
 // ── 6. A1 服务注入（provide/consume + inject 硬依赖 + 冲突人话）─────────────────
 console.log('\n[6] A1 服务注入')
 {
-  const { loadTuiPlugins } = await import('../lib/ui/tui-plugins.js')
-  const { ServiceRegistry, ServiceConflictError, unmetDependencies } = await import('../lib/ui/services.js')
+  const { loadTuiPlugins } = await import('../lib/packages/ui-core/tui-plugins.js')
+  const { ServiceRegistry, ServiceConflictError, unmetDependencies } = await import('../lib/packages/ui-core/services.js')
 
   // 乱序清单：inject 指向提供者的插件 id，拓扑排序必须把提供者排前面。
   const ordered = orderUiPlugins([
@@ -1385,7 +1412,7 @@ console.log('\n[6] A1 服务注入')
 // ── 7. D3 席位（共享实例 / 懒建 / 释放 / 浅拷贝口径）─────────────────────────────
 console.log('\n[7] D3 席位')
 {
-  const { defineStore } = await import('../lib/ui/store.js')
+  const { defineStore } = await import('../lib/packages/ui-core/store.js')
 
   const slots = new SlotRegistry()
   slots.declare('probe.one', 'list')
@@ -1441,7 +1468,7 @@ console.log('\n[7] D3 席位')
 // ── 8. D2 Factory（注册表运行期：定义账 / children 进声明表 / 卸载 collapse / 故障记账）──
 console.log('\n[8] D2 Factory')
 {
-  const { SlotAssemblyError } = await import('../lib/ui/slots.js')
+  const { SlotAssemblyError } = await import('../lib/packages/ui-core/slots.js')
   const slots = new SlotRegistry()
   slots.declare('probe.main', 'list')
   const definition = () => slots.registerFactory(

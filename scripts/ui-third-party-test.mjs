@@ -26,9 +26,9 @@ const { resolveUiBundleRequest } = await import('../lib/core/ui-route.js')
 const { trustUiPlugin, readPluginEntries, writePluginEnabled, readUiPluginTrust } = await import(
   '../lib/core/plugin-registry.js'
 )
-const { SlotRegistry } = await import('../lib/ui/slots.js')
-const { loadTuiPlugins } = await import('../lib/ui/tui-plugins.js')
-const { TUI_SLOTS } = await import('../lib/ui/tui-plugin-api.js')
+const { SlotRegistry } = await import('../lib/packages/ui-core/slots.js')
+const { loadTuiPlugins } = await import('../lib/packages/ui-core/tui-plugins.js')
+const { TUI_SLOTS } = await import('../lib/packages/ui-core/tui-plugin-api.js')
 
 let failures = 0
 const check = (name, condition, detail = '') => {

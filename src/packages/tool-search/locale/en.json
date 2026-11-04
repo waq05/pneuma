@@ -1,0 +1,4 @@
+{
+  "title": "Tool search",
+  "description": "Send only the tool docs in use; withdrawn and MCP tools come via tool_search"
+}

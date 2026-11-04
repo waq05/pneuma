@@ -5,24 +5,27 @@
  * 「某个包的 exports 多一个键」「两个包 order 撞了」这种一眼看不出来的事。
  * plugin-model-check 管的是「有没有包、有没有行」，这个脚本管「包本身合不合规格」。
  *
- * 六条硬项（不通过退出 1，合并前必须全绿）：
+ * 八条硬项（不通过退出 1，合并前必须全绿）：
  *   1. package.json 的字段齐全（name / version / private / type / exports /
  *      engines.pneuma / cordis 对等依赖；功能包另有 pneuma.bundle.patch /
  *      pneuma.resolution / pneuma.order，库包不需要）；
  *   2. exports 的键集只许 .、./client、./package.json、./locale/*.json；
  *      库包另许模块子路径 ./<模块>.js（键与目标一字不差，功能包不给这条）；
- *   3. 功能包：cordis.patch.yml 能解析、恰好一条 insert 行，行 id 与目录名一致、
+ *   3. 清单本地化：声明了 ./locale/*.json 键，目标文件就必须在、必须是合法 JSON，
+ *      且 title / description 都是非空字符串（键在文件不在 = 插件中心少一行字的来源）；
+ *   4. 功能包：cordis.patch.yml 能解析、恰好一条 insert 行，行 id 与目录名一致、
  *      name 等于包名（库包没有行，不判）；
- *   4. 功能包：入口 index.ts 能导出一个插件（模块级 apply / default / 唯一带 apply 的
+ *   5. 功能包：入口 index.ts 能导出一个插件（模块级 apply / default / 唯一带 apply 的
  *      命名导出），名叫 name 的导出必须是字符串（库包不导出插件对象，不判）；
- *   5. 依赖方向：功能包 → 库包允许；功能包 → 功能包、库包 → 任何包、core → 任何包
+ *   6. 依赖方向：功能包 → 库包允许；功能包 → 功能包、库包 → 任何包、core → 任何包
  *      都算越界（判据与 plugin-model-check 共用 scripts/plugin-dep-graph.mjs）；
- *   6. order 不撞号（只数字功能包）。
+ *   7. order 不撞号（只数字功能包）；
+ *   8. 文档与测试：README 两段齐全、tests/ 下至少一个 *.test.mjs。
  *
  * 库包 = 没有 cordis.patch.yml、也没有 pneuma.bundle.patch 的包；清单里还要显式写
  * pneuma.library: true，否则第 1 项照报缺口——两个门禁对「忘了写 patch」的判断一致。
  * 库包没有行、不参与开关，所以豁免 patch / resolution / order / 行 / 入口导出这五项；
- * name、version 0.0.0、private、type module、exports、engines.pneuma、cordis 对等依赖照要求。
+ * name、version（与根一致）、private、type module、exports、engines.pneuma、cordis 对等依赖照要求。
  *
  * 三项待办（只打印清单，不影响退出码）：
  *   - 缺 README.md，或 README 里没有「Model Experience」「Known Limitations」两段；
@@ -38,7 +41,7 @@
  * @module scripts/plugin-standard-check
  */
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { join, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import YAML from 'yaml'
@@ -53,6 +56,8 @@ import {
 const root = resolve(process.env['PNEUMA_CHECK_ROOT'] ?? fileURLToPath(new URL('..', import.meta.url)))
 const asJson = new Set(process.argv.slice(2)).has('--json')
 const packagesDir = join(root, 'src', 'packages')
+/** 根 package.json 的版本：全部包清单必须与它一致（发版时用 sync-versions 一起推）。 */
+const rootVersion = JSON.parse(readText(join(root, 'package.json')) ?? '{}').version
 
 /**
  * exports 里允许出现的键。
@@ -82,11 +87,12 @@ const CORDIS_PEER = '@deepseek-ai/cordis'
 const hard = new Map([
   [1, { title: '清单字段', issues: [], passed: 0 }],
   [2, { title: 'exports 键集', issues: [], passed: 0 }],
-  [3, { title: '行 id 与 name', issues: [], passed: 0 }],
-  [4, { title: '入口导出', issues: [], passed: 0 }],
-  [5, { title: '依赖方向', issues: [], passed: 0 }],
-  [6, { title: 'order 撞号', issues: [], passed: 0 }],
-  [7, { title: '文档与测试', issues: [], passed: 0 }],
+  [3, { title: '清单本地化', issues: [], passed: 0 }],
+  [4, { title: '行 id 与 name', issues: [], passed: 0 }],
+  [5, { title: '入口导出', issues: [], passed: 0 }],
+  [6, { title: '依赖方向', issues: [], passed: 0 }],
+  [7, { title: 'order 撞号', issues: [], passed: 0 }],
+  [8, { title: '文档与测试', issues: [], passed: 0 }],
 ])
 
 /** 待办清单（只打印）。 */
@@ -217,7 +223,7 @@ for (const id of ids) {
     continue
   }
   // 库包判据：目录里没有 cordis.patch.yml，清单里也没有 pneuma.bundle.patch。
-  // 有其一的是功能包（缺哪样由第 1、3 项分别报）；两样都没有但没标 pneuma.library
+  // 有其一的是功能包（缺哪样由第 1、4 项分别报）；两样都没有但没标 pneuma.library
   // 的，按库包豁免其余四项，但第 1 项照红——与 plugin-model-check 的缺口同义。
   const declaredPatch =
     typeof manifest.pneuma?.bundle?.patch === 'string' && manifest.pneuma.bundle.patch !== ''
@@ -234,7 +240,12 @@ for (const id of ids) {
     }
   }
   want(typeof manifest.name === 'string' && manifest.name !== '', 'name 缺失或不是字符串')
-  want(manifest.version === '0.0.0', `version 是 ${JSON.stringify(manifest.version)}，源码期要求 "0.0.0"`)
+  // 版本与根对齐（dsh 的做法）：86 个包各自写真实版本号，发版时由 scripts/sync-versions.mjs 一起推，
+  // 门禁只认「等于根」——手改一个包的版本会当场红，而不是等到发版后才发现某个包还停在旧号。
+  want(
+    manifest.version === rootVersion,
+    `version 是 ${JSON.stringify(manifest.version)}，要求与根 package.json 一致（${rootVersion}）——跑 node scripts/sync-versions.mjs`,
+  )
   want(manifest.private === true, 'private 不是 true')
   want(manifest.type === 'module', `type 是 ${JSON.stringify(manifest.type)}，要求 "module"`)
   const exportsField = manifest.exports
@@ -279,12 +290,75 @@ for (const id of ids) {
   }
   if (keyOk) hard.get(2).passed += 1
 
-  // ── 3. 行（库包没有行，整项豁免、也不计入分母）──────────────────────────
+  // ── 3. 清单本地化 ────────────────────────────────────────────────────────
+  // 判据只对「声明了键」的包生效：没声明就是没本地化，不算红（还没翻译的包可以不加）。
+  // 但键一旦写了，文件就得在——键是给别人解析的承诺，缺文件等于承诺落空，
+  // 而插件中心读不到译本时会静默回落中文，这种半截状态最难发现。
+  let localeOk = true
+  const localeFail = (detail) => {
+    localeOk = false
+    fail(3, id, detail)
+  }
+  /** 一个译本文件必须有的两个字段：非空字符串，没有就红。 */
+  const checkLocaleFile = (file) => {
+    let doc = null
+    try {
+      doc = JSON.parse(readText(file) ?? '')
+    } catch (error) {
+      localeFail(`${rel(file)} 不是合法 JSON：${error instanceof Error ? error.message : String(error)}`)
+      return
+    }
+    if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) {
+      localeFail(`${rel(file)} 顶层不是 JSON 对象`)
+      return
+    }
+    for (const field of ['title', 'description']) {
+      if (typeof doc[field] !== 'string' || doc[field].trim() === '') {
+        localeFail(`${rel(file)} 的 ${field} 不是非空字符串`)
+      }
+    }
+  }
+  if (exportsField !== null && typeof exportsField === 'object') {
+    for (const key of Object.keys(exportsField)) {
+      if (!LOCALE_EXPORT_KEY.test(key)) continue
+      const target = exportsField[key]
+      if (typeof target !== 'string' || !target.startsWith('./')) {
+        localeFail(`exports 的「${key}」目标是 ${JSON.stringify(target)}，要求 ./ 开头的相对路径`)
+        continue
+      }
+      // 键与目标都带通配符（./locale/<语言>.json）：逐条枚举盘上真实存在的译本。
+      // 键写了却一个文件都没有 = 承诺落空，这一条照红。
+      if (target.includes('*')) {
+        const localeDir = join(dir, dirname(target))
+        const files = existsSync(localeDir)
+          ? readdirSync(localeDir)
+              .filter((name) => name.endsWith('.json'))
+              .map((name) => join(localeDir, name))
+              .filter((file) => statSync(file).isFile())
+          : []
+        if (files.length === 0) {
+          localeFail(`声明了「${key}」但 ${rel(localeDir)} 里没有任何 .json 译本`)
+          continue
+        }
+        for (const file of files) checkLocaleFile(file)
+        continue
+      }
+      const localeFile = join(dir, target)
+      if (!existsSync(localeFile)) {
+        localeFail(`声明了「${key}」但文件不在（${rel(localeFile)}）`)
+        continue
+      }
+      checkLocaleFile(localeFile)
+    }
+  }
+  if (localeOk) hard.get(3).passed += 1
+
+  // ── 4. 行（库包没有行，整项豁免、也不计入分母）──────────────────────────
   const rowApplicable = pkg.kind === 'feature'
   let rowOk = true
   const rowFail = (detail) => {
     rowOk = false
-    fail(3, id, detail)
+    fail(4, id, detail)
   }
   if (!rowApplicable) {
     // 库包没有 cordis.patch.yml：不判这一项。
@@ -325,16 +399,16 @@ for (const id of ids) {
       }
     }
   }
-  if (rowApplicable && rowOk) hard.get(3).passed += 1
+  if (rowApplicable && rowOk) hard.get(4).passed += 1
 
-  // ── 4. 入口导出（库包不导出插件对象，整项豁免）──────────────────────────
+  // ── 5. 入口导出（库包不导出插件对象，整项豁免）──────────────────────────
   const entryApplicable = pkg.kind === 'feature'
   let entryOk = true
   if (!entryApplicable) {
     // 库包导出的是函数/常量，不是 cordis 插件：不判这一项。
   } else if (!existsSync(entryFile)) {
     entryOk = false
-    fail(4, id, '缺 index.ts')
+    fail(5, id, '缺 index.ts')
   } else {
     const shape = analyzeEntry(readText(entryFile) ?? '')
     const hasPlugin =
@@ -343,23 +417,23 @@ for (const id of ids) {
       entryOk = false
       if (shape.plugins.length > 1) {
         const names = shape.plugins.map((item) => `${item.name}（第 ${item.line} 行）`).join('、')
-        fail(4, id, `有 ${shape.plugins.length} 个带 apply 的命名导出：${names}——加载器分不清用哪个`)
+        fail(5, id, `有 ${shape.plugins.length} 个带 apply 的命名导出：${names}——加载器分不清用哪个`)
       } else {
-        fail(4, id, 'index.ts 没有 apply 函数、没有 default、也没有带 apply 的插件对象导出')
+        fail(5, id, 'index.ts 没有 apply 函数、没有 default、也没有带 apply 的插件对象导出')
       }
     }
     if (shape.nameLine !== null && !shape.nameLine.ok) {
       entryOk = false
-      fail(4, id, `第 ${shape.nameLine.line} 行导出了 name，但不是字符串字面量`)
+      fail(5, id, `第 ${shape.nameLine.line} 行导出了 name，但不是字符串字面量`)
     }
   }
-  if (entryApplicable && entryOk) hard.get(4).passed += 1
+  if (entryApplicable && entryOk) hard.get(5).passed += 1
 
-  // ── 7. 文档与测试（库包也照要求：区分包的身份靠它们）─────────────────────
+  // ── 8. 文档与测试（库包也照要求：区分包的身份靠它们）─────────────────────
   let docOk = true
   const docFail = (detail) => {
     docOk = false
-    fail(7, id, detail)
+    fail(8, id, detail)
   }
   const readmeFile = join(dir, 'README.md')
   if (!existsSync(readmeFile)) {
@@ -380,7 +454,7 @@ for (const id of ids) {
     ? readdirSync(testsDir).filter((name) => name.endsWith('.test.mjs'))
     : []
   if (testFiles.length === 0) docFail('tests/ 下没有 *.test.mjs（只有目录不算）')
-  if (docOk) hard.get(7).passed += 1
+  if (docOk) hard.get(8).passed += 1
 
   // 库包的待办只保留 README 与 tests：模块级可变状态是功能包的装配隐患，
   // 而常量表 / 缓存本来就是库包的正常写法，列出来只是噪声。
@@ -410,7 +484,7 @@ for (const id of ids) {
   }
 }
 
-// ── 5. 依赖方向 ─────────────────────────────────────────────────────────────
+// ── 6. 依赖方向 ─────────────────────────────────────────────────────────────
 
 // 判据与 plugin-model-check 共用 scripts/plugin-dep-graph.mjs：功能包 → 库包允许；
 // 功能包 → 功能包、库包 → 任何包、core → 任何包都算越界（含 import type）。
@@ -428,18 +502,18 @@ for (const pkg of packages) {
     if (message === null) return
     crossOk = false
     // 文案自己带包名与位置：不再套一层「id：」，否则报错里同一个包名出现两次。
-    hard.get(5).issues.push(message)
+    hard.get(6).issues.push(message)
   })
-  if (crossOk) hard.get(5).passed += 1
+  if (crossOk) hard.get(6).passed += 1
 }
 
 // core → 包：内核文件（含 import type）不许碰 src/packages。
 const coreDir = join(root, 'src', 'core')
 if (existsSync(coreDir)) {
-  graph.scan(coreDir, (target, where) => hard.get(5).issues.push(coreDependencyProblem(target, where)))
+  graph.scan(coreDir, (target, where) => hard.get(6).issues.push(coreDependencyProblem(target, where)))
 }
 
-// ── 6. order 撞号 ───────────────────────────────────────────────────────────
+// ── 7. order 撞号 ───────────────────────────────────────────────────────────
 
 /** 功能包 / 库包各多少：库包没有行，第 3、4、6 项的分母只数功能包。 */
 const featureTotal = packages.filter((pkg) => pkg.kind === 'feature').length
@@ -459,9 +533,9 @@ const collided = new Set()
 for (const [order, group] of byOrder) {
   if (group.length < 2) continue
   for (const id of group) collided.add(id)
-  fail(6, group[0], `order ${order} 被 ${group.length} 个包共用：${group.join('、')}`)
+  fail(7, group[0], `order ${order} 被 ${group.length} 个包共用：${group.join('、')}`)
 }
-hard.get(6).passed = featureTotal - collided.size
+hard.get(7).passed = featureTotal - collided.size
 
 // ── 汇总 ────────────────────────────────────────────────────────────────────
 
@@ -470,11 +544,12 @@ const total = packages.length
 const applicableOf = new Map([
   [1, total],
   [2, total],
-  [3, featureTotal],
+  [3, total],
   [4, featureTotal],
-  [5, total],
-  [6, featureTotal],
-  [7, total],
+  [5, featureTotal],
+  [6, total],
+  [7, featureTotal],
+  [8, total],
 ])
 const issues = [...hard.values()].flatMap((item) => item.issues)
 const summary = {

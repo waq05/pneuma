@@ -1,0 +1,4 @@
+{
+  "title": "Image unloading",
+  "description": "Stop resending old images each turn; user and tool images keep separate budgets"
+}

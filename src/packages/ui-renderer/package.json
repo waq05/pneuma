@@ -1,16 +1,22 @@
 {
   "name": "@pneuma/ui-renderer",
-  "version": "0.0.0",
+  "version": "0.8.1",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./index.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
   },
   "pneuma": {
     "library": true,
     "title": "装载器",
-    "description": "界面壳的装载器与入口：启动图取回、分批装载、平台种子表、热更对账与页面入口"
+    "description": "界面壳的装载器与入口：启动图取回、分批装载、平台种子表、热更对账与页面入口",
+    "client": {
+      "platform": "pneuma",
+      "api": "^0.8.1",
+      "immediately": true
+    }
   },
   "engines": {
     "pneuma": ">=1.0.0 <2.0.0"

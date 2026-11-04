@@ -22,7 +22,7 @@
 | 包名 | 落点 | 构建期身份 |
 | --- | --- | --- |
 | `@dsc/ui` | `src/plugin-api.ts` | 下发给插件（平台种子，本包没有包帧——落点是单文件） |
-| `@dsc/ui-core` | `../src/ui/index.ts` | **只给壳**（`EXTERNAL` 里「故意不给」的那一格） |
+| `@dsc/ui-core` | `../src/packages/ui-core/index.ts` | **只给壳**（`EXTERNAL` 里「故意不给」的那一格） |
 | `@dsc/ui-primitives` / `@dsc/ui-slots` / `@dsc/ui-dockkit` | `../src/packages/ui-*/ui/index.ts` | 下发给插件（E6 起进 `platform-modules.json`） |
 | `@dsc/ui-layout` / `@dsc/ui-renderer` | `../src/packages/ui-*/ui/index.ts` | 只给壳（插件不该直接消费骨架与装载器） |
 

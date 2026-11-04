@@ -23,7 +23,7 @@ import {
   type UiArtifactDirs,
   type UiPluginArtifacts,
 } from './ui-bundles.js'
-import { composeUiBootGraph, type UiBootGraph } from '../ui/manifest.js'
+import { composeUiBootGraph, type UiBootGraph } from './ui-manifest.js'
 
 /** 一个批在磁盘上的现行位置（HMR 轮询按它 stat）。 */
 export interface UiBootWatchRow {

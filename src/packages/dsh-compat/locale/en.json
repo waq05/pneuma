@@ -1,0 +1,4 @@
+{
+  "title": "dsh plugin compat",
+  "description": "Run dsh-style plugins; fills logger, resolution and tool registration gaps"
+}

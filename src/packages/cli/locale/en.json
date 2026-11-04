@@ -1,0 +1,4 @@
+{
+  "title": "CLI subcommands",
+  "description": "numa config and numa plugin: run before the kernel boots, outside the graph"
+}

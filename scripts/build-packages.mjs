@@ -100,6 +100,20 @@ for (const pkg of packages) {
     mkdirSync(dirname(target), { recursive: true })
     writeFileSync(target, stubBody(target, file), 'utf8')
   }
+  /**
+   * 译本不是模块：tsc 只搬 `.ts`，`locale/<语言>.json` 要在这里原样抄进产物。
+   *
+   * 不抄的后果不是报错，而是插件中心与 `numa plugin list` 在成品里永远显示中文原文——
+   * 源码树里明明有 `locale/en.json`，装完就是没有，这种漂移最难查。
+   */
+  const localeSrc = join(pkg.dir, 'locale')
+  if (existsSync(localeSrc)) {
+    for (const file of walkFiles(localeSrc)) {
+      const target = join(dest, 'locale', relative(localeSrc, file))
+      mkdirSync(dirname(target), { recursive: true })
+      writeFileSync(target, readFileSync(file))
+    }
+  }
   const pneuma = pkg.manifest.pneuma ?? {}
   /**
    * 只保留产物里**真的存在**的入口。
@@ -109,8 +123,17 @@ for (const pkg of packages) {
    * `import '@pneuma/<id>/client'` → ERR_MODULE_NOT_FOUND 的坏引用；
    * 内置界面半本来就不走 exports（走产物目录的 bundle.json），所以这里去掉它，
    * 把「这个包有界面半」这件事留在 `pneuma.client` 声明里（dsh 生态那边叫 `dsh.client`）。
+   *
+   * 通配符导出（`./locale/*.json`）没有字面文件可判：按「产物目录里有没有匹配」算，
+   * 否则每条译本键都会被当成悬空引用删掉。
    */
-  const existsInDest = (target) => typeof target === 'string' && existsSync(join(dest, target))
+  const existsInDest = (target) => {
+    if (typeof target !== 'string') return false
+    if (!target.includes('*')) return existsSync(join(dest, target))
+    const dir = join(dest, dirname(target))
+    const suffix = target.slice(target.lastIndexOf('*') + 1)
+    return existsSync(dir) && readdirSync(dir).some((name) => name.endsWith(suffix))
+  }
   // 基础两条永远在（`index.js` 是桩、`package.json` 还没写盘，别拿它们做过不过滤的判据）。
   const exports = {
     '.': './index.js',

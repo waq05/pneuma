@@ -1,0 +1,4 @@
+{
+  "title": "Command completion lib",
+  "description": "Slash command table, completion candidates and unique-prefix expansion"
+}

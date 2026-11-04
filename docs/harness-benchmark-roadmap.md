@@ -85,7 +85,7 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:93`，`KERNEL_API_VERSION 
 | diff 审查链（轮尾聚合卡 / 右栏面板 / 悬停预览 / intended diff / 审批内嵌 / git 页签） | ● | ◐ | — | ● | 0.6.24–0.6.26 三连批补齐（development-log 阶段 42–44）；codex 的形态是 apply_patch diff 预览 + `/diff`，无轮尾聚合卡 |
 | /review 审查命令 | ● | ● | — | ○ | 已升级（T18，0.6.32）：四档范围 + 只读审查队友 + 结构化 findings 卡 + 行号跳转；codex 的形态是独立 review 子线程 |
 | 输入端 @ 文件提及 | ● | ● | — | ● | 已补（T14，0.6.29）：`src/core/mention.ts` 纯模块做定位/排序/插回，终端 TUI 与界面壳各接一层补全 |
-| bash 后台任务 | ● | ◐ | — | ● | 已补（T15，0.6.31）：`src/core/tools/bash.ts:496` 的 `run_in_background` + `job_output`/`job_list`/`job_kill` |
+| bash 后台任务 | ● | ◐ | — | ● | 已补（T15，0.6.31）：`src/packages/tools-default/bash.ts:496` 的 `run_in_background` + `job_output`/`job_list`/`job_kill` |
 | 会话标题自动生成 | ● | ◐ | — | ● | 已补（T16，0.6.29）：`src/packages/session-title/index.ts` 用独立小请求起名，autoTitle 与用户改名分家 |
 | 上下文占用表 / /status | ● | ● | — | ● | 已补（T17，0.6.29）：`src/packages/commands/index.ts:766` 的 `statusReport`，估算口径与自动压缩同源 |
 | 会话导出 | ● | ● | — | ● | 已补（T22，0.6.29）：`src/core/session-export.ts` 把会话消息序列化成 markdown |
@@ -121,7 +121,7 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:93`，`KERNEL_API_VERSION 
 
 **挂话不折整轮（已补齐）**：`hasSteering` —— 轮内插过话（`entry.steering === true`）的那一轮不给整轮折叠（`src/packages/ui-transcript/ui/round-fold.tsx:100`）。dsc 的转录条目补齐了 `steering?: boolean`（`src/contract/transcript.ts:137`），0.6.47 又把「轮中途输入」落成 async-inbox 收件箱、步骤边界写库，所以这条不再是「有意不做」。
 
-**顺手发现的一处不一致（未动）**：启动恢复历史会话走的是 `src/host/kernel.ts:478` 的重放分支，**没有发 `dsc/session-open`**，而切会话（`src/packages/session/index.ts:122`）会发。于是靠这个事件恢复自己状态的插件（plan / todo / goal / mode）在「冷启动恢复」这条路上不会被触发——计划卡因此不会出现在冷启动的会话流里（`src/packages/plan/index.ts:209`）。要让两条路一致，得把 kernel 的重放分支改成走 `session.open(resumePath)`，或者补发一次事件；那会影响 approval-floor 的 reset 与 agent 的 switchSession，属于内核改动，单独立项。
+**顺手发现的一处不一致（未动）**：启动恢复历史会话走的是 `src/packages/session/index.ts:57-68` 的重放分支（`Session.load`，不经过 `open()`），**没有发 `dsc/session-open`**，而切会话（`src/packages/session/index.ts:122`）会发。于是靠这个事件恢复自己状态的插件（plan / todo / goal / mode）在「冷启动恢复」这条路上不会被触发——计划卡因此不会出现在冷启动的会话流里（`src/packages/plan/index.ts:209`）。要让两条路一致，得把 kernel 的重放分支改成走 `session.open(resumePath)`，或者补发一次事件；那会影响 approval-floor 的 reset 与 agent 的 switchSession，属于内核改动，单独立项。
 
 ### 3.3 会话区继续对齐：剩余批次（用户裁决「完全对齐 dsh」）
 
@@ -314,7 +314,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。
 
 #### T15. bash 后台任务（P1，动内核或新官方插件）
 - **是什么**：长命令（构建 / 测试 / 起服务器）不占住回合：`bash` 工具加 `run_in_background` 参数立即返回，配 `job_output` / `job_list` / `job_kill` 三个工具（dsh `jobs/tool-jobs` 三工具 + 完成通知经 `agent.inject()` 注入的形态）。dsh 还有一条同族姿势：**超时不 kill 而是转后台 job**。
-- **dsc 现状**：`src/core/tools/bash.ts:20-27` 注释自认「更长的活该去后台跑」但未实现；桌面交互终端面板是人用的，模型够不着。
+- **dsc 现状**：`src/packages/tools-default/bash.ts:20-27` 注释自认「更长的活该去后台跑」但未实现；桌面交互终端面板是人用的，模型够不着。
 - **落点**：内核侧加一张后台作业表（进程句柄 + 输出环形缓冲），三个新工具走 `ctx.tools.register`；完成事件走 `agent.followup` 通知。
 - **风险**：作业生命周期归谁管（会话结束收不收）、输出上限（复用 spill）。**验收**：模型发一个 10 分钟的构建立即拿到 job id，稍后 `job_output` 能读到增量，完成时收到通知。
 

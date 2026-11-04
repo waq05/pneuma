@@ -390,7 +390,7 @@ console.log('[10] 样式门：新类名有规则、只用令牌、退役的那�
     return walk(`${root}/ui-shell/src`)
   })()
   const legacyCss = ['legacy/views.css', 'legacy/tokens.css', 'legacy/base.css', 'legacy/primitives.css']
-    .map((file) => flat(read(`ui-shell/src/${file}`)))
+    .map((file) => flat(read(`src/packages/ui-renderer/ui/styles/${file}`)))
     .join('\n')
   const collided = NEW_CLASSES.filter((name) => {
     if (new RegExp(`\\.${name}[\\s,{:]`).test(legacyCss)) return true
@@ -427,7 +427,7 @@ console.log('[10] 样式门：新类名有规则、只用令牌、退役的那�
   check('新类名一个硬编码色值都没有', painted.length === 0, painted.join(' | '))
 
   const allCss = ['styles.css', 'legacy/tokens.css', 'legacy/base.css', 'legacy/primitives.css', 'legacy/views.css']
-    .map((file) => read(`ui-shell/src/${file}`))
+    .map((file) => read(`src/packages/ui-renderer/ui/styles/${file}`))
     .join('\n')
   const slice = shellCss.slice(shellCss.indexOf('.model-btn.composer-model-chip'), shellCss.indexOf('.model-manage:hover'))
   const ghost = [...slice.matchAll(/var\((--dsc-[a-z0-9-]+)/g)]

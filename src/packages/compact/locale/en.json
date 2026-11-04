@@ -1,0 +1,4 @@
+{
+  "title": "Compaction",
+  "description": "Auto-compact the context when it exceeds the threshold"
+}

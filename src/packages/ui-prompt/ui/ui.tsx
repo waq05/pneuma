@@ -7,13 +7,13 @@
  * 布局关系不必由壳硬编码。
  *
  * 样式一行都不新写：class 名逐字照抄旧实现（`desktop/src/renderer/ApprovalCard.tsx` 与
- * `TaskDock.tsx` 的 PlanReview / AskCard 两段），规则体在 `ui-shell/src/legacy/views.css`
+ * `TaskDock.tsx` 的 PlanReview / AskCard 两段），规则体在 `src/packages/ui-renderer/ui/styles/legacy/views.css`
  * 里现成（行号同旧 `desktop/src/renderer/styles.css`）：审批卡 1955 起、内嵌差异 2028 起、
  * 四颗按钮与 `.btn-ghost`/`.btn-primary` 2098 起、计划卡 6632 起、提问卡 6698 起
  * （底栏与翻页器在 7997 起的补充段）、拒绝反馈框 9985、差异行 9762 起。
  * 本文件用到的 class 只有两个不在那份旧样式表里，而且都**不是我新造的**：
- * 交回宿主的失败提示用 `.shell-composer-fault`（`ui-shell/src/styles.css:179`），
- * 卡片渲染崩溃用 `.slot-crash`（`ui-shell/src/styles.css:25`）。
+ * 交回宿主的失败提示用 `.shell-composer-fault`（`src/packages/ui-renderer/ui/styles/styles.css:179`），
+ * 卡片渲染崩溃用 `.slot-crash`（`src/packages/ui-renderer/ui/styles/styles.css:25`）。
  *
  * 数据一律从宿主快照的 `surfaces` 里取（`pendingApproval` / `pendingPlan` /
  * `pendingQuestion`），销掉它们只走界面通道的三个方法（`answerApproval` / `answerPlan` /
@@ -117,7 +117,7 @@ function statusOf(snapshot: HostSnapshot | null): Record<string, unknown> | null
  * 挂起的审批请求。
  *
  * 为什么只挡「不是对象」这一种：壳与宿主永远同一次构建一起发（壳就是从宿主的 `/` 里取回来
- * 的），字段形状对不上的帧在通道层就被判成错误了（`src/ui/frames.ts` 是严格版）。
+ * 的），字段形状对不上的帧在通道层就被判成错误了（`src/packages/ui-core/frames.ts` 是严格版）。
  * 再抄一遍字段校验只会多一份要维护的口径。
  */
 function readApproval(snapshot: HostSnapshot | null): ApprovalRequestView | null {
@@ -398,7 +398,7 @@ const ApprovalCard = memo(function ApprovalCard({ request }: { request: Approval
    * 监听只注册一次（下面依赖数组是空的），每次渲染把最新的处理函数换进 ref：`busy`、
    * `scopes` 这些一变就是新闭包，而监听本身不必跟着重挂——`answer` 里那句 `if (busy) return`
    * 因此拦得住连按，档位变了也不用等一次重挂。这也是壳里既有的写法
-   * （`ui-shell/src/runtime-context.tsx:54-56` 同样在渲染期刷新 ref）。
+   * （`src/packages/ui-layout/ui/runtime-context.tsx:54-56` 同样在渲染期刷新 ref）。
    */
   const onKeyRef = useRef<(event: KeyboardEvent) => void>(() => undefined)
   onKeyRef.current = (event: KeyboardEvent): void => {

@@ -1,13 +1,14 @@
 {
   "name": "@pneuma/permission-core",
-  "version": "0.0.0",
+  "version": "0.8.1",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./index.js",
     "./permission-scope.js": "./permission-scope.js",
     "./permission-presets.js": "./permission-presets.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
   },
   "pneuma": {
     "library": true,

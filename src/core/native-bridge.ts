@@ -12,7 +12,7 @@
  *
  * 这一份**零依赖**（不 import 任何 node 内置模块、不 import electron），所以两侧共用：
  * 桌面主进程用它校验并分派，界面壳用它拿操作名与实参类型。宿主与壳读同一份源码，
- * 漂移在编译期就暴露——与 `src/ui/index.ts`（`@dsc/ui-core`）和
+ * 漂移在编译期就暴露——与 `src/packages/ui-core/index.ts`（`@dsc/ui-core`）和
  * `ui-shell/src/platform-modules.json` 是同一个套路。
  *
  * ## 边界（比"能少给就少给"更具体的三条）

@@ -245,22 +245,25 @@ lib/ui/plugins/<id>/client.js
 
 ## 15. 包标准（门禁）
 
-`scripts/plugin-standard-check.mjs` 进 `check:plugin`，对 `src/packages/*` 逐包判。**六条硬项不过就红**，三条待办只打印不挡合并（它们没有全绿之前，别对外说"标准齐了"）。
+`scripts/plugin-standard-check.mjs` 进 `check:plugin`，对 `src/packages/*` 逐包判。**八条硬项不过就红**，一条待办只打印不挡合并（它没有全绿之前，别对外说"标准齐了"）。
 
 | # | 硬项 | 判据 |
 |---|---|---|
-| 1 | 清单字段 | `name`、`version`（源码期一律 `0.0.0`）、`private`、`type`、`exports` 至少 `.` 与 `./package.json`、`pneuma.bundle.patch`、`pneuma.resolution`、`pneuma.order`、`engines.pneuma`、cordis 对等依赖 |
+| 1 | 清单字段 | `name`、`version`（**与根 package.json 一致**，发版用 `node scripts/sync-versions.mjs --write` 一起推）、`private`、`type`、`exports` 至少 `.` 与 `./package.json`、`pneuma.bundle.patch`、`pneuma.resolution`、`pneuma.order`、`engines.pneuma`、cordis 对等依赖 |
 | 2 | exports 键集 | 只许标准键：`.`、`./client`、`./package.json`、`./locale/*.json`；多一个就报出来由人决定 |
-| 3 | 行 | `cordis.patch.yml` 恰好一条 insert、一行；行 id 与目录约定一致（`ui-<id>` 目录 → `ui-<id>`，其余 → 目录名）；行 name 等于包名 |
-| 4 | 入口导出 | 能按 loader 的兜底规则拿到插件对象（用 TypeScript 语法树判，不用正则） |
-| 5 | 包间 import | 功能包之间零直接 import；功能包 → 库包允许；库包 → 任何包禁止；core → 包禁止（含 `import type`） |
-| 6 | order | 撞号即红（两个包同号） |
+| 3 | 清单本地化 | 声明了 `./locale/*.json` 就必须真有译本文件，且每个译本 `title` / `description` 都是非空字符串（坏 JSON、缺字段、只有键没有文件都红） |
+| 4 | 行 | `cordis.patch.yml` 恰好一条 insert、一行；行 id 与目录约定一致（`ui-<id>` 目录 → `ui-<id>`，其余 → 目录名）；行 name 等于包名 |
+| 5 | 入口导出 | 能按 loader 的兜底规则拿到插件对象（用 TypeScript 语法树判，不用正则） |
+| 6 | 包间 import | 功能包之间零直接 import；功能包 → 库包允许；库包 → 任何包禁止；core → 包禁止（含 `import type`） |
+| 7 | order | 撞号即红（两个包同号） |
+| 8 | 文档与测试 | README 两段（Model Experience / Known Limitations）+ `tests/` 下至少一个 `*.test.mjs`（只有目录不算） |
 
-待办三项：README 缺「Model Experience」「Known Limitations」两段、缺 `tests/` 目录、可疑的模块级可变状态。
+待办一项：可疑的模块级可变状态（只打印）。
 
-**现状（2026-11-04）**：README **76 篇全齐**（75 个功能包 + 库包 `@pneuma/cdp`），
-每篇两段标题齐全、26–34 行；`tests/` 仍 **75 个包全缺**，这是 Q6 剩下的主体工作；
-「模块级可变状态」那 19 条逐条看过全是导出的只读常量表，是规则噪声。
+**现状（2026-11-04 晚）**：**87 个包 = 75 功能包 + 12 库包**，八项全绿；
+87 篇 README 两段齐全、87 个包各有包级测试（86 个用例 / 426+ 条断言）；
+「模块级可变状态」30 条里绝大多数是导出的只读常量表，剩下几条要人逐条看。
+版本号已按 dsh 的做法写在每个包里（都与根 `0.8.1` 一致）。
 
 ### 15.0 README 与标题的写法约定
 
