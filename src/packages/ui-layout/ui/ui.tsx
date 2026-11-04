@@ -17,7 +17,14 @@
  */
 // 值引用 `@dsc/ui`：本文件是**插件入口**，与 19 个界面单元的写法一致——构建时它是
 // external，产物里留一条 `require("@dsc/ui")`，拿的是壳里那一份（不会把插件 API 内联进包）。
-import { defineUiPlugin } from '@dsc/ui'
+import { createT, defineUiPlugin } from '@dsc/ui'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /**
  * 整张页面只有这一个骨架：侧栏 / 主区 / 诊断区。
@@ -35,7 +42,7 @@ export { App } from './app'
  * （见 `cordis.patch.yml` 与 `ui-renderer/ui/ui.tsx`）。
  */
 export default defineUiPlugin({
-  name: '界面骨架',
+  name: t('layout.plugin.name'),
   apply() {
     // 没有要登记的东西：骨架不是「往槽里放一块」，它就是槽被放进的那张纸。
   },

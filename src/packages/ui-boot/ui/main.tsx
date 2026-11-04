@@ -22,6 +22,7 @@
 import { StrictMode, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
+  createT,
   ServiceRegistry,
   SlotRegistry,
   ServicesProvider,
@@ -55,12 +56,20 @@ import '../../ui-renderer/ui/styles/styles.css'
 // tokens.css 那批 color-mix 令牌（同特异性，后写的赢）；认得 color-mix 的内核整块不生效。
 import '../../ui-renderer/ui/styles/legacy-color-fallback.css'
 
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui-core` 的 `createT`）。 */
+const t = createT({ zh, en })
+
 /** 取不到清单时的启动图（空壳 + 一条诊断，比白屏好查）。 */
 const UNAVAILABLE_BOOT: UiBootGraph = {
   rev: 'unavailable',
   entries: [],
   batches: [],
-  host: { name: 'Pneuma', version: '未知版本' },
+  host: { name: 'Pneuma', version: t('boot.versionUnknown') },
 }
 
 /**
@@ -125,17 +134,15 @@ function RendererUnavailable({ failure }: { failure: RendererFailure }): ReactNo
     >
       <div style={{ maxWidth: 640, width: '100%' }}>
         <h1 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 600 }}>
-          界面渲染器（ui-renderer）{failure.reason}
+          {t('boot.diag.title')}{failure.reason}
         </h1>
+        <p style={{ margin: '0 0 12px', color: '#b9b5ad' }}>{t('boot.diag.lead')}</p>
         <p style={{ margin: '0 0 12px', color: '#b9b5ad' }}>
-          整张页面只有渲染器能启动。渲染器没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。
-        </p>
-        <p style={{ margin: '0 0 12px', color: '#b9b5ad' }}>
-          打开它的地方：编辑 <code style={{ color: '#e8e6e1' }}>~/.dsc/plugins.json</code>，找到{' '}
-          <code style={{ color: '#e8e6e1' }}>&quot;file&quot;: &quot;ui-renderer&quot;</code> 那一条，
-          把 <code style={{ color: '#e8e6e1' }}>&quot;disabled&quot;</code> 改成{' '}
-          <code style={{ color: '#e8e6e1' }}>false</code>（或删掉那一条），然后刷新本页。
-          宿主重启后它也会回到插件中心的内置插件列表里。
+          {t('boot.diag.where')} <code style={{ color: '#e8e6e1' }}>~/.dsc/plugins.json</code>
+          {t('boot.diag.find')} <code style={{ color: '#e8e6e1' }}>&quot;file&quot;: &quot;ui-renderer&quot;</code>{' '}
+          {t('boot.diag.andSet')} <code style={{ color: '#e8e6e1' }}>&quot;disabled&quot;</code>{' '}
+          {t('boot.diag.toFalse')} <code style={{ color: '#e8e6e1' }}>false</code>
+          {t('boot.diag.rest')}
         </p>
         {failure.detail === null ? null : (
           <pre
@@ -208,13 +215,10 @@ async function bootstrap(): Promise<void> {
   let failure: RendererFailure | null =
     rendererEntry === undefined
       ? boot.disabled?.includes(RENDERER_ID) === true
-        ? { reason: '已停用', detail: bootError }
+        ? { reason: t('boot.reason.disabled'), detail: bootError }
         : {
-            reason: '没有进启动清单',
-            detail:
-              bootError ??
-              `启动图里没有 ${RENDERER_ID} 这一条：产物没构建，或被 API 门禁拦下了。` +
-                '跑 `pnpm -C ui-shell build` 后刷新本页；插件中心 → 内置插件里也能看到它的开关。',
+            reason: t('boot.reason.missing'),
+            detail: bootError ?? t('boot.reason.missingDetail', { id: RENDERER_ID }),
           }
       : null
 
@@ -251,12 +255,12 @@ async function bootstrap(): Promise<void> {
       return
     } catch (error) {
       failure = {
-        reason: '加载失败',
+        reason: t('boot.reason.loadFailed'),
         detail: error instanceof Error ? error.message : String(error),
       }
     }
   }
-  renderRendererUnavailable(container, failure ?? { reason: '加载失败', detail: null })
+  renderRendererUnavailable(container, failure ?? { reason: t('boot.reason.loadFailed'), detail: null })
 }
 
 void bootstrap()

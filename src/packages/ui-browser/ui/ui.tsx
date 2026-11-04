@@ -25,6 +25,7 @@
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
+  createT,
   defineUiPlugin,
   dockActions,
   getHostNative,
@@ -35,6 +36,13 @@ import {
   type DockTabBodyProps,
 } from '@dsc/ui'
 import { normalizeAddress } from './address'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 这一台页签现在看到的页面状态（原生层推上来的那份）。 */
 interface PageState {
@@ -48,11 +56,11 @@ interface PageState {
 const NO_PAGE: PageState = { url: '', title: '', canGoBack: false, canGoForward: false, loading: false }
 
 export default defineUiPlugin({
-  name: '浏览器',
+  name: t('browser.plugin.name'),
   apply() {
     registerDockTab({
       kind: 'browser',
-      label: '浏览器',
+      label: t('browser.tab.label'),
       icon: <IconGlobe size={13} />,
       component: BrowserTab,
       // 切页签只藏不卸：视图留着，切回来页面还在（与终端同一条）
@@ -245,9 +253,7 @@ function BrowserTab({ tab, active, expanded }: DockTabBodyProps): ReactNode {
 
   if (!native.available) {
     return (
-      <p className="shell-term-empty">
-        内置浏览器来自桌面外壳的原生视图，浏览器里没有它。要用请打开桌面版（或者用「系统打开」跳出去看）。
-      </p>
+      <p className="shell-term-empty">{t('browser.noBridge')}</p>
     )
   }
 
@@ -255,7 +261,7 @@ function BrowserTab({ tab, active, expanded }: DockTabBodyProps): ReactNode {
     void native
       .invoke('browserNav', [action === 'load' ? (url ?? page.url) : page.url, action, viewId])
       .catch((reason: unknown) => {
-        setError(`浏览器：${reason instanceof Error ? reason.message : String(reason)}`)
+        setError(t('browser.errorPrefix', { message: reason instanceof Error ? reason.message : String(reason) }))
       })
   }
 
@@ -263,7 +269,7 @@ function BrowserTab({ tab, active, expanded }: DockTabBodyProps): ReactNode {
   const go = (): void => {
     const target = normalizeAddress(draft)
     if (target === null) {
-      setError(draft.trim() === '' ? '先输一个地址' : '只支持 http/https 地址')
+      setError(draft.trim() === '' ? t('browser.error.noAddress') : t('browser.error.badScheme'))
       return
     }
     setError('')
@@ -282,7 +288,7 @@ function BrowserTab({ tab, active, expanded }: DockTabBodyProps): ReactNode {
   const openOutside = (): void => {
     if (page.url === '') return
     void native.invoke('openExternal', [page.url]).catch((reason: unknown) => {
-      setError(`打开失败：${reason instanceof Error ? reason.message : String(reason)}`)
+      setError(t('browser.error.openFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
     })
   }
 
@@ -292,8 +298,8 @@ function BrowserTab({ tab, active, expanded }: DockTabBodyProps): ReactNode {
         <button
           type="button"
           className="icon-btn"
-          data-tip="后退"
-          aria-label="后退"
+          data-tip={t('browser.back')}
+          aria-label={t('browser.back')}
           disabled={!page.canGoBack}
           onClick={() => navigate('back')}
         >
@@ -302,8 +308,8 @@ function BrowserTab({ tab, active, expanded }: DockTabBodyProps): ReactNode {
         <button
           type="button"
           className="icon-btn"
-          data-tip="前进"
-          aria-label="前进"
+          data-tip={t('browser.forward')}
+          aria-label={t('browser.forward')}
           disabled={!page.canGoForward}
           onClick={() => navigate('forward')}
         >
@@ -313,8 +319,8 @@ function BrowserTab({ tab, active, expanded }: DockTabBodyProps): ReactNode {
           type="button"
           className="icon-btn"
           data-loading={page.loading ? '1' : undefined}
-          data-tip={page.loading ? '正在加载…' : '刷新'}
-          aria-label="刷新"
+          data-tip={page.loading ? t('browser.loading') : t('browser.reload')}
+          aria-label={t('browser.reload')}
           disabled={!started}
           onClick={() => navigate('reload')}
         >
@@ -333,15 +339,15 @@ function BrowserTab({ tab, active, expanded }: DockTabBodyProps): ReactNode {
           onKeyDown={(event) => {
             if (event.key === 'Enter') go()
           }}
-          placeholder="输入 HTTP(S) 地址，回车打开"
+          placeholder={t('browser.urlPlaceholder')}
           spellCheck={false}
-          aria-label="地址"
+          aria-label={t('browser.address')}
         />
         <button
           type="button"
           className="icon-btn"
-          data-tip="用系统浏览器打开"
-          aria-label="用系统浏览器打开"
+          data-tip={t('browser.openExternal')}
+          aria-label={t('browser.openExternal')}
           disabled={page.url === ''}
           onClick={openOutside}
         >
@@ -351,7 +357,7 @@ function BrowserTab({ tab, active, expanded }: DockTabBodyProps): ReactNode {
       {error === '' ? null : <div className="browser-error">{error}</div>}
       {/* WebContentsView 原生层渲染在这块区域之上 */}
       <div ref={holder} className="browser-holder" data-browser-view={viewId}>
-        {started ? null : <p className="browser-empty">输入 HTTP(S) 地址开始浏览</p>}
+        {started ? null : <p className="browser-empty">{t('browser.empty')}</p>}
       </div>
     </div>
   )

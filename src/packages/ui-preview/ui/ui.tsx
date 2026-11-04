@@ -24,6 +24,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import {
   CodeView,
+  createT,
   CsvView,
   DiffRows,
   FileIcon,
@@ -42,6 +43,13 @@ import {
   type DockTabBodyProps,
 } from '@dsc/ui'
 import { formatBytes, readCwd } from '@dsc/ui-primitives'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** `fs-read` 回来的形状（宿主 `desktop-dock` 插件的契约）。 */
 interface ReadResult {
@@ -55,15 +63,15 @@ interface ReadResult {
 }
 
 export default defineUiPlugin({
-  name: '文件预览',
+  name: t('preview.plugin.name'),
   apply() {
     // 报名一种页签界面（kind = 'preview'）：每张预览页签自带文件路径（tab.path）——
     // 「同文件去重、每格至多 10 张」这些规则在壳的布局模型里（旧桌面版同款）。
     // 不 keepMounted：切走不挂载、切回重读盘（旧桌面版同规则——省一份常驻监听）。
-    registerDockTab({ kind: 'preview', label: '预览', icon: <IconCode size={13} />, component: PreviewTab })
+    registerDockTab({ kind: 'preview', label: t('preview.tab.label'), icon: <IconCode size={13} />, component: PreviewTab })
     // 补丁页签（kind = 'patch'）：渲染某个文件某次 write / edit 的差异快照（unified hunks）。
     // 与 preview 是两条路——那份快照随工具结果来，不读盘；页签自带路径。
-    registerDockTab({ kind: 'patch', label: '补丁', component: PatchTab })
+    registerDockTab({ kind: 'patch', label: t('preview.tab.patch'), component: PatchTab })
   },
 })
 
@@ -72,7 +80,7 @@ function PreviewTab({ tab }: DockTabBodyProps): ReactNode {
   const cwd = useHostSelector(readCwd)
   const path = tab.path ?? ''
   if (path === '') {
-    return <div className="file-preview-empty">这张预览页签没有文件路径（关掉它，从文件树重新点一个）。</div>
+    return <div className="file-preview-empty">{t('preview.empty.noPath')}</div>
   }
   return <PreviewBody path={path} cwd={cwd ?? ''} />
 }
@@ -96,7 +104,7 @@ function PreviewBody({ path, cwd }: { path: string; cwd: string }): ReactNode {
         if (alive) setRead(result)
       })
       .catch((error: unknown) => {
-        if (alive) setNote(`读文件失败：${error instanceof Error ? error.message : String(error)}`)
+        if (alive) setNote(t('preview.readFailed', { message: error instanceof Error ? error.message : String(error) }))
       })
     return () => {
       alive = false
@@ -109,7 +117,7 @@ function PreviewBody({ path, cwd }: { path: string; cwd: string }): ReactNode {
   /** 用系统程序打开（原生桥；浏览器里没有桥，按钮禁用并说明原因）。 */
   const openWithSystem = (): void => {
     void native.invoke('openPath', [read?.path ?? path]).catch((error: unknown) => {
-      setNote(`打不开：${error instanceof Error ? error.message : String(error)}`)
+      setNote(t('preview.openFailed', { message: error instanceof Error ? error.message : String(error) }))
     })
   }
 
@@ -125,17 +133,17 @@ function PreviewBody({ path, cwd }: { path: string; cwd: string }): ReactNode {
           type="button"
           className="btn-ghost"
           disabled={!native.available}
-          title={native.available ? '用系统默认程序打开。' : '这条能力来自桌面外壳的原生桥，浏览器里没有它。'}
+          title={native.available ? t('preview.systemTip.on') : t('preview.systemTip.off')}
           onClick={openWithSystem}
         >
-          系统打开
+          {t('preview.systemOpen')}
         </button>
       </div>
       <div className="file-preview-body">
         {note === '' ? null : <div className="tree-note">{note}</div>}
         {read === null ? (
           note === '' ? (
-            <div className="file-preview-empty">读取中…</div>
+            <div className="file-preview-empty">{t('preview.reading')}</div>
           ) : null
         ) : (
           renderBody(read, fsRead)
@@ -152,7 +160,7 @@ function PatchTab({ tab }: DockTabBodyProps): ReactNode {
   // 补丁源只在内存（hunks 不落盘）：重启/换会话后这里会是 null，页签体给「已过期」的说明。
   const source = useDockPatchSource(path)
   if (path === '') {
-    return <div className="file-preview-empty">这张补丁页签没有文件路径（关掉它，从工具卡重新点一个）。</div>
+    return <div className="file-preview-empty">{t('preview.empty.noPatchPath')}</div>
   }
   return <PatchBody path={path} cwd={cwd ?? ''} source={source} />
 }
@@ -169,7 +177,7 @@ function PatchBody({ path, cwd, source }: { path: string; cwd: string; source: C
   const [note, setNote] = useState('')
   const openWithSystem = (): void => {
     void native.invoke('openPath', [path]).catch((error: unknown) => {
-      setNote(`打不开：${error instanceof Error ? error.message : String(error)}`)
+      setNote(t('preview.openFailed', { message: error instanceof Error ? error.message : String(error) }))
     })
   }
   return (
@@ -182,7 +190,7 @@ function PatchBody({ path, cwd, source }: { path: string; cwd: string; source: C
         </span>
         {source === null ? null : (
           <span className="changes-counts">
-            {source.status === 'added' && <span className="diff-badge">新增</span>}
+            {source.status === 'added' && <span className="diff-badge">{t('preview.patch.added')}</span>}
             <span className="changes-added">{`+${String(source.added)}`}</span>
             <span className="changes-removed">{`-${String(source.removed)}`}</span>
           </span>
@@ -190,31 +198,29 @@ function PatchBody({ path, cwd, source }: { path: string; cwd: string; source: C
         <button
           type="button"
           className="btn-ghost"
-          data-tip="在预览中打开当前文件（内容是修改时的快照）。"
+          data-tip={t('preview.patch.openTip')}
           onClick={() => setDockPreview({ path })}
         >
-          打开
+          {t('preview.patch.open')}
         </button>
         <button
           type="button"
           className="btn-ghost"
           disabled={!native.available}
-          title={native.available ? '用系统默认程序打开。' : '这条能力来自桌面外壳的原生桥，浏览器里没有它。'}
+          title={native.available ? t('preview.systemTip.on') : t('preview.systemTip.off')}
           onClick={openWithSystem}
         >
-          系统打开
+          {t('preview.systemOpen')}
         </button>
       </div>
       <div className="file-preview-body">
         {note === '' ? null : <div className="tree-note">{note}</div>}
         {source === null ? (
-          <div className="file-preview-empty">
-            这份补丁已经不在了（应用重启或切回会话后差异快照不再保留）。点「打开」看该文件的当前内容。
-          </div>
+          <div className="file-preview-empty">{t('preview.patch.gone')}</div>
         ) : (
           <>
             {source.truncated === true && (
-              <p className="diff-note">改动较大，这里只显示了前一部分（完整改动以文件当前内容为准）。</p>
+              <p className="diff-note">{t('preview.patch.truncated')}</p>
             )}
             <DiffRows hunks={source.hunks} path={path} />
           </>
@@ -228,9 +234,7 @@ function PatchBody({ path, cwd, source }: { path: string; cwd: string; source: C
 function renderBody(read: ReadResult, fsRead: (file: string) => Promise<unknown>): ReactNode {
   if (read.tooLarge) {
     return (
-      <div className="file-preview-empty">
-        文件过大（{formatBytes(read.size ?? 0)}），仅支持预览 10MB 以内的文件。
-      </div>
+      <div className="file-preview-empty">{t('preview.tooLarge', { size: formatBytes(read.size ?? 0) })}</div>
     )
   }
   if (read.kind === 'image') {
@@ -241,7 +245,7 @@ function renderBody(read: ReadResult, fsRead: (file: string) => Promise<unknown>
     )
   }
   if (read.kind === 'binary') {
-    return <div className="file-preview-empty">二进制文件（{formatBytes(read.size ?? 0)}），暂不支持预览。</div>
+    return <div className="file-preview-empty">{t('preview.binary', { size: formatBytes(read.size ?? 0) })}</div>
   }
   if (read.kind === 'bytes') {
     // bytes 只有两种宿主会给：application/pdf 走逐页渲染，其余（xlsx/xlsm）走
@@ -252,7 +256,7 @@ function renderBody(read: ReadResult, fsRead: (file: string) => Promise<unknown>
     if (read.base64 !== undefined) return <XlsxView base64={read.base64} />
     return (
       <div className="file-preview-empty">
-        这类文件（{read.mime ?? '未知类型'}，{formatBytes(read.size ?? 0)}）要看内容请用「系统打开」。
+        {t('preview.unknownType', { mime: read.mime ?? t('preview.unknownMime'), size: formatBytes(read.size ?? 0) })}
       </div>
     )
   }

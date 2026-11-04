@@ -1,0 +1,14 @@
+{
+  "renderer.plugin.name": "UI renderer",
+  "renderer.diag.title": "UI layout (ui-layout) — ",
+  "renderer.diag.lead": "Only the layout shell can draw this page, and it did not load. This note is all that is left — not a blank screen, the layout really is missing.",
+  "renderer.diag.where": "To open it, edit",
+  "renderer.diag.find": ", find the",
+  "renderer.diag.andSet": "entry and set",
+  "renderer.diag.toFalse": "to",
+  "renderer.diag.rest": " (or delete that entry), then refresh this page. After the host restarts it is also back in the plugin center's built-in plugin list.",
+  "renderer.reason.disabled": "Disabled",
+  "renderer.reason.missing": "Not in the boot graph",
+  "renderer.reason.loadFailed": "Failed to load",
+  "renderer.reason.missingDetail": "The boot graph has no {id} entry: the bundle was not built, or the API gate rejected it. Run `pnpm -C ui-shell build` then refresh this page; its switch is also in Plugin Center → Built-in plugins."
+}

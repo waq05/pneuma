@@ -8,7 +8,29 @@
  *
  * @module dsc-ui-shell/plugins/settings/heatmap
  */
-import type { UsageDayView } from '@dsc/ui'
+import { createT, type UsageDayView } from '@dsc/ui'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
+
+/** 月份标签（`getMonth()` 是 0 起，所以第 0 项就是 1 月）：中文写「3月」，英文写 `Mar`。 */
+const MONTH_LABELS: readonly string[] = [
+  t('settings.usage.month.1'),
+  t('settings.usage.month.2'),
+  t('settings.usage.month.3'),
+  t('settings.usage.month.4'),
+  t('settings.usage.month.5'),
+  t('settings.usage.month.6'),
+  t('settings.usage.month.7'),
+  t('settings.usage.month.8'),
+  t('settings.usage.month.9'),
+  t('settings.usage.month.10'),
+  t('settings.usage.month.11'),
+  t('settings.usage.month.12'),
+]
 
 /** 格子边长与间距（px）：设置面板正文宽度约 690px，53 列刚好放下。 */
 export const CELL = 10
@@ -54,7 +76,7 @@ export function buildCells(
       // 的话 `left` 完全相同，标签直接叠字（2026-10-27 报障「10和11月重叠」）。
       // 保留先到的那一个（占这列天数更多的那个月），跳过后来者。
       if (current.length < 7 && !months.some((month) => month.column === columns.length)) {
-        months.push({ column: columns.length, label: `${String(date.getMonth() + 1)}月` })
+        months.push({ column: columns.length, label: MONTH_LABELS[date.getMonth()] ?? '' })
       }
       lastMonth = date.getMonth()
     }

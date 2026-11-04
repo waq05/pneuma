@@ -179,7 +179,8 @@ console.log('[4] P1 三项')
   check('通道有手动重连入口', channel.includes('reconnect(): void') && channel.includes('reconnect() {'))
   check('壳里有断线条组件', app.includes('function ConnectionBanner(') && app.includes('<ConnectionBanner />'))
   check('延迟 3 秒才出（不闪）', /setTimeout\(\(\) => \{\s*setShown\(true\)\s*\}, 3000\)/.test(app))
-  check('断开态与重连态说清（给下一步）', app.includes('立即重连') && app.includes('浏览器每 3 秒重试一次'))
+  // 文案进 ui-layout 的字典：钉「这两句用了键」，中文原文由 ui-locale-test 判。
+  check('断开态与重连态说清（给下一步）', app.includes("t('layout.conn.reconnect')") && app.includes("t('layout.conn.retryHint')"))
   check('断线条有样式（警示黄，不是红）', /\.conn-banner \{[^}]*--dsc-yellow/.test(css))
 }
 
@@ -217,7 +218,7 @@ console.log('[5] 2026-10-26 四项')
   check('模式菜单宽度按内容（不再写死 300px）', /\.model-pop\.preset-pop \{[^}]*width: max-content/.test(css) && !/\.model-pop\.preset-pop \{\s*\n\s*width: 300px/.test(css))
 
   // ③ 入口搬家：旁问进右侧栏「开始」页，搜索进顶栏
-  check('旁问在右侧栏「开始」页（不是左侧栏导航）', /kind: 'ask', title: '旁问'/.test(read('src/packages/ui-dockkit/ui/dock.tsx')) && !sessions.includes('data-nav="ask"'))
+  check('旁问在右侧栏「开始」页（不是左侧栏导航）', /kind: 'ask', title: t\('dockkit.guide.ask.title'\)/.test(read('src/packages/ui-dockkit/ui/dock.tsx')) && !sessions.includes('data-nav="ask"'))
   check('页脚不再有旁问与搜索两行', !sessions.includes('row row-btn ask-entry') && !sessions.includes('shell.palette.open'))
   check('搜索挪到顶栏、压在「在资源管理器打开」左边', app.indexOf('topbar-search') > 0 && app.indexOf('topbar-search') < app.indexOf('slot={SLOT.header}'))
   check('搜索钮真会开命令面板', /className="icon-btn topbar-search"[\s\S]{0,400}?shell\.palette\.open/.test(app))
@@ -289,16 +290,16 @@ console.log('[7] 命令面板的滚动与翻页')
   check('Home / End 到头尾', palette.includes("event.key === 'Home' || event.key === 'End'"))
   check('一页几行按可视高算（窗口高低都合适）', /const pageRows = \(\): number => \{[\s\S]{0,420}?node\.clientHeight - rowHeight/.test(palette))
   check('高亮挪到框外时列表跟着滚', /querySelector<HTMLElement>\('\[data-active="1"\]'\)\?\.scrollIntoView\(\{ block: 'nearest' \}\)/.test(palette))
-  check('底栏把翻页键写给人看', palette.includes('PgUp / PgDn 翻页'))
+  check('底栏把翻页键写给人看', palette.includes("t('palette.foot.pages')"))
 
   // ④ 2026-10-27 第二轮报障的真原因：遮罩还留在窗口拖拽区里。
   //    Electron 的拖拽区按矩形做命中判定，面板 DOM 是 topbar 的子孙 → 真实鼠标的滚轮
   //    被当成「在标题栏上滚」直接丢掉；CDP 合成的输入绕过了操作系统那层，所以自检全绿。
   //    这条只能靠样式断言兜住（自动化探针在真机上复现不了）。
   check('遮罩自己豁免窗口拖拽区（否则真机滚轮/点击全被吞）', /\.palette-mask \{\s*-webkit-app-region: no-drag;/.test(css))
-  check('面板有看得见的关闭按钮（不只靠 Esc）', palette.includes('className="palette-close"') && palette.includes('关闭命令面板'))
+  check('面板有看得见的关闭按钮（不只靠 Esc）', palette.includes('className="palette-close"') && palette.includes("t('palette.close.aria')"))
   check('✕ 有 22px 点击区与悬停反馈', /\.palette-close \{[^}]*width: 22px;[^}]*height: 22px;/.test(css) && /\.palette-close:hover \{[^}]*background: var\(--dsc-row-hover-bg\)/.test(css))
-  check('键盘表那张也有 ✕', palette.includes('关闭键位表'))
+  check('键盘表那张也有 ✕', palette.includes("t('palette.shortcuts.closeAria')"))
 }
 
 // ── [8] 2026-10-27 第四轮：子智能体下拉出界 + 胶囊悬停分层 ──────────────────
@@ -333,19 +334,24 @@ console.log('[9] 这一轮的四条')
 
   // ① 行首标题照 dsh 的 tool.title.* 词表：名词短语，不拼「搜了 / 正在写」。
   //    用户 2026-10-27 的原话是「搜了、写了、跑了、思考过程，不舒服」。
+  // 2026-11-04 夜起词表进本包字典：中文原文在 locale/ui.zh.json，源码里是 `verb: t('...')`。
+  // 钉两件事——那七条中文仍在字典里、词表真的用了键（漏一条就是某个工具退化成泛称）。
+  const primitivesZh = JSON.parse(read('src/packages/ui-primitives/locale/ui.zh.json'))
+  const zhValues = Object.values(primitivesZh)
   for (const title of ['运行命令', '读取', '写入', '编辑', '查找文件', '搜索文件内容', '网页获取']) {
-    check(`词表里有「${title}」`, summary.includes(`verb: '${title}'`))
+    check(`词表里有「${title}」`, zhValues.includes(title) && /verb: t\('primitives\.tool\./.test(summary))
   }
   const verbSrc = summary.slice(summary.indexOf('export function toolVerb'))
   const verbBody = verbSrc.slice(0, verbSrc.indexOf('}'))
   check('标题不随状态变形（函数体只 return base，不拼 正在 / 准备 / 了）', /return base/.test(verbBody) && !verbBody.includes('${base}') && !verbBody.includes('了'), verbBody.trim())
-  check('认不出的工具用 dsh 的泛称「工具调用」', summary.includes("UNKNOWN_TOOL_TITLE = '工具调用'"))
+  check('认不出的工具用 dsh 的泛称「工具调用」', summary.includes("UNKNOWN_TOOL_TITLE = t('primitives.tool.unknown')") && zhValues.includes('工具调用'))
   // transcriptSrc 是整棵插件子树（tool-card/factory.tsx 已含在内），别再单独加 factorySrc。
   const named = (transcriptSrc + traceSrc).split('`· ${call.name}`').length - 1
   check('原名跟在「 · 」后面（对话页 / 轨迹页 / 工厂三处都改了）', named === 3, String(named))
 
   // ② 思考块标题照 dsh 的 message.think（「思考」两个字），不再写「思考过程」。
-  check('思考块标题是「思考」', transcriptSrc.includes('<span className="think-label">思考</span>'))
+  // 文案进本包字典：钉「标题用了那条键」，中文原文由 ui-locale-test 判。
+  check('思考块标题是「思考」', transcriptSrc.includes('<span className="think-label">{t(\'transcript.think.label\')}</span>'))
   check('没有残留的「思考过程」上屏文案', !/think-label">思考过程|think-bar-status">思考过程|收起这段思考过程/.test(transcriptSrc))
 
   // ③ 胶囊（以及它的分区头）不再报 ± 行数：那一格量的是整个工作区的差，不是某一次操作。

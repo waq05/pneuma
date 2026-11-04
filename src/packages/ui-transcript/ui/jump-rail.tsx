@@ -25,7 +25,14 @@
  */
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { createT } from '@dsc/ui'
 import { dedupeByRound, pickCurrentRound, type RailAnchor } from './rail-window'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 一枚刻度要的轮数据：题面与回复摘要（预览卡显示用，都已压平并截断）。 */
 export interface JumpRailRound {
@@ -246,7 +253,7 @@ export function JumpRail(props: {
     <div
       className="jump-rail"
       role="navigation"
-      aria-label="回合刻度条"
+      aria-label={t('transcript.rail.aria')}
       hidden={!visible}
       onPointerEnter={() => {
         pointerInside.current = true
@@ -274,9 +281,11 @@ export function JumpRail(props: {
                 busy === item.round ? ' is-busy' : ''
               }`}
               data-turn={item.round}
-              aria-label={`第 ${String(item.round + 1)} 轮${
-                unloaded ? '（还没画出来，点了先放出来）' : ''
-              }：${item.prompt}`}
+              aria-label={
+                unloaded
+                  ? t('transcript.rail.tickUnloaded', { round: item.round + 1, prompt: item.prompt })
+                  : t('transcript.rail.tick', { round: item.round + 1, prompt: item.prompt })
+              }
               aria-current={active ? 'true' : undefined}
               aria-busy={busy === item.round ? 'true' : undefined}
               onPointerEnter={() => setPreview(item.round)}
@@ -298,7 +307,7 @@ export function JumpRail(props: {
           style={{ '--jump-preview-center': `${String(previewCenter)}px` } as CSSProperties}
         >
           <div className="jump-preview-prompt">
-            {previewRound.prompt === '' ? `第 ${String(previewRound.round + 1)} 轮` : previewRound.prompt}
+            {previewRound.prompt === '' ? t('transcript.rail.roundOnly', { round: previewRound.round + 1 }) : previewRound.prompt}
           </div>
           {previewRound.response === '' ? null : (
             <div className="jump-preview-response">{previewRound.response}</div>

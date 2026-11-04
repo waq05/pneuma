@@ -19,6 +19,13 @@ import { useCallback, useEffect, useRef, useState, type JSX, type MouseEvent as 
 import { IconBranch, IconFolder, IconGlobe, IconSidebar, IconSpark, IconTerminal, IconTree, FileIcon } from '@dsc/ui-primitives'
 import { canAddTab, type DockPane, type DockSurface, type DockTab, type DockTabKind } from './dock-model'
 import { dockActions, dockTabMeta, useDockSurface } from './dock-state'
+import { createT } from '@dsc/ui-core'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui-core` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 窄视口自动全屏的阈值（对齐旧桌面版）。 */
 const NARROW_VIEWPORT = 768
@@ -54,16 +61,16 @@ const KIND_META: Record<
   Exclude<DockTabKind, 'preview' | 'patch'>,
   { title: string; icon: (props: { size: number }) => JSX.Element; titleFromPath?: boolean }
 > = {
-  guide: { title: '开始', icon: IconGlobe },
-  terminal: { title: '终端', icon: IconTerminal },
-  browser: { title: '浏览器', icon: IconGlobe },
-  files: { title: '文件', icon: IconFolder },
+  guide: { title: t('dockkit.kind.guide'), icon: IconGlobe },
+  terminal: { title: t('dockkit.kind.terminal'), icon: IconTerminal },
+  browser: { title: t('dockkit.kind.browser'), icon: IconGlobe },
+  files: { title: t('dockkit.kind.files'), icon: IconFolder },
   git: { title: 'Git', icon: IconBranch },
-  subagent: { title: '子智能体', icon: IconTree, titleFromPath: true },
+  subagent: { title: t('dockkit.kind.subagent'), icon: IconTree, titleFromPath: true },
   // 后台活输出面：标题由打开方带过来（work.title），缺省回落 work id；图标是终端。
-  'work-output': { title: '输出', icon: IconTerminal },
+  'work-output': { title: t('dockkit.kind.workOutput'), icon: IconTerminal },
   // 旁问：只读一次性问答（插件 ask 渲染）。
-  ask: { title: '旁问', icon: IconSpark },
+  ask: { title: t('dockkit.kind.ask'), icon: IconSpark },
 }
 
 /** 「开始」页的入口卡（旧桌面版同款，带描述与快捷键角标）。
@@ -71,11 +78,11 @@ const KIND_META: Record<
  * 旁问（2026-10-26 从左侧栏搬来）：它开的就是右侧栏的一个页签，摆在右侧栏自己的
  * 开始页上是它的本家——左侧栏那颗导航钮反而像另一个整页入口。 */
 const GUIDE_ENTRIES: { kind: DockTabKind; title: string; description: string; tone: string; shortcut?: string }[] = [
-  { kind: 'files', title: '工作区文件', description: '浏览会话工作区的文件', tone: 'tone-folder', shortcut: 'Ctrl + P' },
-  { kind: 'terminal', title: '新建终端', description: '在会话工作区运行命令', tone: 'tone-terminal', shortcut: 'Ctrl + `' },
-  { kind: 'browser', title: '浏览器', description: '浏览网页', tone: 'tone-browser', shortcut: 'Ctrl + T' },
-  { kind: 'git', title: 'Git 管理', description: '分支、暂存与提交', tone: 'tone-git' },
-  { kind: 'ask', title: '旁问', description: '只读问答，不写主会话', tone: 'tone-ask', shortcut: 'Ctrl + Shift + K' },
+  { kind: 'files', title: t('dockkit.guide.files.title'), description: t('dockkit.guide.files.desc'), tone: 'tone-folder', shortcut: 'Ctrl + P' },
+  { kind: 'terminal', title: t('dockkit.guide.terminal.title'), description: t('dockkit.guide.terminal.desc'), tone: 'tone-terminal', shortcut: 'Ctrl + `' },
+  { kind: 'browser', title: t('dockkit.guide.browser.title'), description: t('dockkit.guide.browser.desc'), tone: 'tone-browser', shortcut: 'Ctrl + T' },
+  { kind: 'git', title: t('dockkit.guide.git.title'), description: t('dockkit.guide.git.desc'), tone: 'tone-git' },
+  { kind: 'ask', title: t('dockkit.guide.ask.title'), description: t('dockkit.guide.ask.desc'), tone: 'tone-ask', shortcut: 'Ctrl + Shift + K' },
 ]
 
 /** 右侧栏组件：贴边/全屏两种展示，收起时整块滑出右缘（内容不卸载）。 */
@@ -151,7 +158,7 @@ export function Dock(props: {
       {!fullscreen && (
         <div
           className="dock-resizer"
-          data-tip="拖拽调整宽度，双击复位"
+          data-tip={t('dockkit.resizer.tip')}
           onMouseDown={startResize}
           onDoubleClick={() => props.onResize(420)}
         />
@@ -177,7 +184,7 @@ export function Dock(props: {
         {surface.panes.length === 2 && (
           <div
             className="dock-split"
-            data-tip="拖拽调整分栏，双击收回分栏"
+            data-tip={t('dockkit.split.tip')}
             onMouseDown={startSplit}
             onDoubleClick={actions.unsplit}
           />
@@ -202,7 +209,7 @@ export function Dock(props: {
               setMenu(null)
             }}
           >
-            向右分栏
+            {t('dockkit.menu.split')}
           </button>
           <button
             className="menu-item"
@@ -211,7 +218,7 @@ export function Dock(props: {
               setMenu(null)
             }}
           >
-            收回分栏
+            {t('dockkit.menu.unsplit')}
           </button>
           <div className="menu-sep" />
           <button
@@ -221,7 +228,7 @@ export function Dock(props: {
               setMenu(null)
             }}
           >
-            关闭页签
+            {t('dockkit.closeTab')}
           </button>
         </div>
       )}
@@ -272,7 +279,7 @@ function Pane(props: {
           />
         ))}
         {canAddTab(pane) && (
-          <button className="dock-add" data-tip="新标签页" onClick={() => actions.openTab('guide')}>
+          <button className="dock-add" data-tip={t('dockkit.add.tip')} onClick={() => actions.openTab('guide')}>
             +
           </button>
         )}
@@ -281,16 +288,16 @@ function Pane(props: {
           <>
             <button
               className="dock-chrome-btn"
-              data-tip={surface.mode === 'fullscreen' ? '退出全屏' : '全屏'}
-              aria-label={surface.mode === 'fullscreen' ? '退出全屏' : '全屏'}
+              data-tip={surface.mode === 'fullscreen' ? t('dockkit.chrome.exitFullscreen') : t('dockkit.chrome.fullscreen')}
+              aria-label={surface.mode === 'fullscreen' ? t('dockkit.chrome.exitFullscreen') : t('dockkit.chrome.fullscreen')}
               onClick={actions.toggleMode}
             >
               {surface.mode === 'fullscreen' ? <ExitFullscreenGlyph /> : <FullscreenGlyph />}
             </button>
             <button
               className="dock-chrome-btn"
-              data-tip="收起侧边栏"
-              aria-label="收起侧边栏"
+              data-tip={t('dockkit.chrome.collapse')}
+              aria-label={t('dockkit.chrome.collapse')}
               onClick={() => actions.setExpanded(false)}
             >
               <IconSidebar size={15} />
@@ -329,7 +336,7 @@ function TabBody(props: {
     // 未注册的 kind（比如那个插件没装上）：页签还在，画一句能读的占位，别给一张白板。
     return active && expanded ? (
       <div className="dock-tab-body">
-        <div className="trace-empty">这块面板的界面没有装上（kind：{tab.kind}）。</div>
+        <div className="trace-empty">{t('dockkit.missing', { kind: tab.kind })}</div>
       </div>
     ) : null
   }
@@ -389,7 +396,7 @@ function Chip(props: {
       <span className="dock-chip-label">{title}</span>
       <span
         className="dock-chip-close"
-        data-tip="关闭页签"
+        data-tip={t('dockkit.closeTab')}
         onClick={(event) => {
           event.stopPropagation()
           props.actions.closeTab(props.tab.id)

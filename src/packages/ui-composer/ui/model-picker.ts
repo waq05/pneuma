@@ -22,7 +22,15 @@
  *
  * @module dsc-ui-shell/plugins/composer/model-picker
  */
-import type { EffortLevel, ModelChoiceView, ThinkingLevel } from '@dsc/ui'
+import { createT, type EffortLevel, type ModelChoiceView, type ThinkingLevel } from '@dsc/ui'
+// 本包的中英对照：中文是语义真源（`locale/ui.zh.json`），英文是译本。
+// 本模块会被探针用 Node 类型擦除直读——那条路要靠 `scripts/_i18n-alias.mjs` 把
+// `@dsc/ui` 与 JSON 字典一起接上（见那个文件的抬头），取词器仍是**同一份实现**。
+import zhMessages from '../locale/ui.zh.json'
+import enMessages from '../locale/ui.en.json'
+
+/** 取词器：与全项目共用 `createT`（英文缺译回落中文，再缺返回键名并告警一次）。 */
+const t = createT({ zh: zhMessages, en: enMessages })
 
 /** 一级菜单一行：一个端点 + 它名下的模型（顺序照宿主给的清单，不重排）。 */
 export interface ProviderGroup {
@@ -38,12 +46,15 @@ export interface ProviderGroup {
  * （探针里对着宿主那份断言，别只改一边）：多出来的 `default` 是「不发思考字段」那一档。
  */
 export const EFFORT_LABELS: Readonly<Record<EffortLevel, string>> = {
-  default: '默认',
-  off: '关',
-  low: '低',
-  high: '高',
-  max: '最大',
+  default: t('effort.default'),
+  off: t('effort.off'),
+  low: t('effort.low'),
+  high: t('effort.high'),
+  max: t('effort.max'),
 }
+
+/** 清单里查不到、会话也还没选模型时 chip 上那两个字。 */
+const UNKNOWN_MODEL = t('model.unknown')
 
 /** 清单里查不到这个模型时给的兜底档位（不锁死用户：真发出去的东西由宿主校验）。 */
 export const EFFORT_FALLBACK: readonly EffortLevel[] = ['default', 'off', 'low', 'high', 'max']
@@ -129,10 +140,10 @@ export function modelChipText(
   model: string,
 ): ModelChipText {
   const current = findCurrent(groups, provider, model)
-  const name = current.entry?.model ?? (model === '' ? '未知模型' : model)
+  const name = current.entry?.model ?? (model === '' ? UNKNOWN_MODEL : model)
   const displayName =
     current.group?.displayName ?? groups.find((item) => item.provider === provider)?.displayName ?? provider
-  const usable = groups.length > 1 && displayName !== '' && name !== '未知模型'
+  const usable = groups.length > 1 && displayName !== '' && name !== UNKNOWN_MODEL
   const prefix = usable ? `${displayName}/` : ''
   return { prefix, name, full: `${prefix}${name}` }
 }
@@ -163,8 +174,8 @@ export function effortLabel(effort: string): string {
 /** 模型行右侧的能力徽标（文本不吃标：那是默认，标出来只添噪音）。 */
 export function modelBadges(entry: ModelChoiceView): string[] {
   const badges: string[] = []
-  if (entry.modalities.includes('image')) badges.push('图')
-  if (entry.modalities.includes('video')) badges.push('视频')
+  if (entry.modalities.includes('image')) badges.push(t('model.badge.image'))
+  if (entry.modalities.includes('video')) badges.push(t('model.badge.video'))
   return badges
 }
 

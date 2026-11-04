@@ -541,16 +541,29 @@ locale 服务与各包自带的字典。numa 照这个分两层：
 1. **清单两行**：已有（`plugin-locale.ts`，`locale/en.json`）。
 2. **界面内文案**：每个界面单元在 `locale/ui.zh.json` / `ui.en.json` 里放自己的键值，入口 `import` 这两个 JSON
    （vite 直接内联进 `client.js`，不需要宿主下发文件），语言由启动图的 `host.language` 决定（新增字段，
-   来源是 `config.yaml` 的 `language:`）。
-3. `@dsc/ui` 新增 `createT({ zh, en })`：返回 `t(key, params?)`，插值写 `{name}`；缺译回落中文原文，再缺给键名本身并
-   在控制台报一次——**不许静默变空白**。
-4. 门禁 `scripts/ui-locale-check.mjs`：扫 `src/packages/ui-*/ui/**`，剔注释后
-   - 字符串字面量与 JSX 文本里**不许再有汉字**（白名单：`locale/*.json`）；
-   - 每份 `ui.zh.json` 的每个键，`ui.en.json` 必须有且译文中不含汉字；
-   - 每个 `t('...')` 的键必须在该包的 zh 字典里。
-   这条闸把「译了一半」变成红，而不是靠人眼扫。
+   来源是 `config.yaml` 的 `language:`，由 `webserver` 经 `languageOfConfigFile(activeConfigFile())` 带下来）。
+3. `@dsc/ui-core` 新增 `i18n.ts`（`createT` / `uiLanguage` / `normalizeLanguage`），`@dsc/ui` 转出给插件：
+   `t(key, params?)`，插值写 `{name}`；英文缺译回落中文原文，中文也缺给键名并在控制台报一次——**不许静默变空白**。
+   语言只分两档（`en` 开头即英文），与内核 `plugin-locale.ts` 同一口径。
+4. 门禁 `scripts/ui-locale-test.mjs`（进 `check:ui`）：用 TypeScript 语法树扫 `src/packages/<包>/ui/`，
+   - 字符串字面量、模板串、JSX 文本里**不许再有汉字**（`console.*` 与 `throw` 里的开发面文案豁免）；
+   - 每份 `ui.zh.json` 的每个键，`ui.en.json` 必须有、译文不含汉字；英文多出的键也报；
+   - 每个 `t('...')` 的键必须在该包的 zh 字典里；字典里没人用的键也报（防止「改了没生效」）。
+   这条闸把「译了一半」变成红，而不是靠人眼扫。单包排查用 `--package <名字>`。
 
-**判据**：上述闸 0；`language: en` 时截图里界面是英文。
+**判据**：上述闸 0（26 个包 / 0 条硬编码 / 两份字典键集相同）；`language: en` 时真机截图里界面是英文。
+
+**结果（同夜完成）**：26 个界面包全部迁完——**1890 个键**（中英各一份）、**2135 处 `t()`**、
+**0 条硬编码中文**、**17 条协议豁免**（每一条都在行尾写了 `i18n-keep` 与理由）。真机 e2e 加了第四段
+`language: en`：启动图带 `host.language: en`、侧栏是 "New session / Skills / Plugins / Settings"、
+整页不再出现「新会话 / 设置」，截图 `desktop/shots/ui-boot-english.png`。
+
+**已知未覆盖的一层（新发现，单列下批）**：宿主机**声明的配置面**仍是中文——设置分区与字段
+（`pneuma.settingsSection` 的 `title` / `label` / `description`，分散在各宿主包里）、内置权限档位名
+（只读 / 工作区可写 / 完全访问 / AI 复核）、内置模式名（标准 / 极简 / 创造 / PTC）。它们由**宿主**拼好交给界面，
+不在 `src/packages/*/ui/` 里，所以这道闸管不到；英文界面下它们仍显示中文（截图里输入框上那两颗 chip 就是）。
+补法：让设置面按语言出两份（`getSettingsSections(language)`），各宿主包把自己的 `title/label/description`
+放进 `locale/ui.<语言>.json`——与界面那套用同一份文件、同一个 `createT`。这是下一批的活，不是这轮能顺手带掉的。
 
 
 

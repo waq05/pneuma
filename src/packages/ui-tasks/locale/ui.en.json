@@ -1,0 +1,22 @@
+{
+  "tasks.plugin.name": "Tasks & goals",
+  "tasks.goal.label": "Goal",
+  "tasks.state": "{phase} · {rounds}/{max} rounds",
+  "tasks.phase.armed": "Auto-continuing",
+  "tasks.phase.disarmed": "Created (not armed)",
+  "tasks.phase.paused": "Paused",
+  "tasks.phase.blocked": "Blocked",
+  "tasks.phase.complete": "Done",
+  "tasks.actionFailed": "Goal action failed: {message}",
+  "tasks.toast.paused": "Goal paused",
+  "tasks.tip.pause": "Pause auto-continue (the current round keeps running)",
+  "tasks.btn.pause": "Pause",
+  "tasks.toast.resumed": "Goal resumed",
+  "tasks.tip.resume": "Resume auto-continue",
+  "tasks.btn.resume": "Resume",
+  "tasks.toast.extended": "Round limit raised",
+  "tasks.tip.extend": "Add {count} more rounds",
+  "tasks.btn.extend": "Raise limit",
+  "tasks.toast.cleared": "Goal cleared",
+  "tasks.tip.clear": "Clear goal"
+}

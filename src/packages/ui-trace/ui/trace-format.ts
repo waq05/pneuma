@@ -15,9 +15,16 @@
  *
  * @module dsc-ui-shell/plugins/trace/trace-format
  */
-import type { TranscriptEntry } from '@dsc/ui'
+import { createT, type TranscriptEntry } from '@dsc/ui'
 // 时刻/耗时口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
 import { entryTs } from '@dsc/ui-primitives'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 // 时刻/耗时的格式化在平台种子库（对话页共用同一份）；轨迹页从这里取，调用点少一层相对路径。
 export { formatClockSeconds, formatTraceDuration } from '@dsc/ui-primitives'
@@ -100,18 +107,18 @@ export interface TraceModel {
 
 /** 步骤种类的中文名（检查器标题与时间条提示用）。 */
 export const KIND_LABEL: Record<TraceStepKind | 'user' | 'changes' | 'turnDiff', string> = {
-  tool: '工具调用',
-  thinking: '思考',
-  subagent: '子代理',
-  system: '系统事件',
-  plan: '计划卡',
-  'turn-end': '轮结束',
-  'turn-max-tokens': '长度上限',
-  'model-retry': '模型重试',
-  user: '用户消息',
+  tool: t('kind.tool'),
+  thinking: t('kind.thinking'),
+  subagent: t('kind.subagent'),
+  system: t('kind.system'),
+  plan: t('kind.plan'),
+  'turn-end': t('kind.turnEnd'),
+  'turn-max-tokens': t('kind.turnMaxTokens'),
+  'model-retry': t('kind.modelRetry'),
+  user: t('kind.user'),
   // 对话页轮尾卡的组成数据，轨迹页不渲染它；标签留给检查器兜底（类型上仍可能碰到）
-  changes: '文件已更改',
-  turnDiff: '回合文件更改',
+  changes: t('kind.changes'),
+  turnDiff: t('kind.turnDiff'),
 }
 
 /**
@@ -123,25 +130,25 @@ export function stepName(entry: TranscriptEntry): string {
     case 'tool':
       return entry.call.name
     case 'thinking':
-      return '思考'
+      return KIND_LABEL.thinking
     case 'system':
-      return '系统事件'
+      return KIND_LABEL.system
     case 'plan':
-      return '计划卡'
+      return KIND_LABEL.plan
     case 'turn-end':
       // 轮尾标记：轨迹页里它就是这一轮的收尾记录，名字直接用「为什么结束」
-      return entry.reason === 'aborted' ? '已停止' : '过程失败'
+      return entry.reason === 'aborted' ? t('turnEnd.aborted') : t('turnEnd.failed')
     case 'turn-max-tokens':
-      return '达到长度上限'
+      return t('maxTokens.label')
     case 'model-retry':
-      return `模型重试（第 ${String(entry.attempt)} 次）`
+      return t('retry.label', { n: entry.attempt })
     case 'subagent':
       // 任务是身份：时间条悬停与检查器标题都用它认卡；太长截断
       return entry.sub.task.length > 24 ? `${entry.sub.task.slice(0, 24)}…` : entry.sub.task
     case 'user':
-      return '用户消息'
+      return KIND_LABEL.user
     default:
-      return '正文'
+      return t('kind.text')
   }
 }
 
@@ -297,7 +304,7 @@ export function stepMatches(entry: TraceStepEntry, query: string): boolean {
       parts.push(entry.sub.task, entry.sub.name, entry.sub.state)
       break
     case 'model-retry':
-      parts.push(`第 ${String(entry.attempt)} 次`)
+      parts.push(t('retry.attempt', { n: entry.attempt }))
       break
     default:
       break

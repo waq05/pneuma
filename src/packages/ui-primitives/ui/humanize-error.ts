@@ -15,6 +15,13 @@
  *
  * @module dsc-ui-shell/ui-primitives/humanize-error
  */
+import { createT } from '@dsc/ui-core'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui-core` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 一条错误的三个面向。 */
 export interface HumanError {
@@ -53,55 +60,55 @@ const RULES: readonly { match: RegExp; title: string; hint: string }[] = [
   {
     // 本机界面走的是 http://127.0.0.1:<port> 的 SSE + invoke；宿主没起来或端口变了就撞这条。
     match: /econnrefused|econnreset|failed to fetch|fetch failed|networkerror|network error|load failed/,
-    title: '连不上宿主',
-    hint: '确认 Pneuma 还开着；宿主重启过就刷新这个页面。',
+    title: t('primitives.error.network.title'),
+    hint: t('primitives.error.network.hint'),
   },
   {
     match: /etimedout|timed? ?out|abort(ed)?|timeout/,
-    title: '等太久了，请求被掐断',
-    hint: '再试一次；一直这样的话把模型服务换一个再试。',
+    title: t('primitives.error.timeout.title'),
+    hint: t('primitives.error.timeout.hint'),
   },
   {
     // 原生桥（openWorkspace / openPath / pickDirectory）走的是 shell.openPath，路径不在就这条。
     match: /enoent|no such file|not exist|cannot find the path|找不到/,
-    title: '这个路径不存在了',
-    hint: '确认目录还在，或者重新选一次工作区。',
+    title: t('primitives.error.missing.title'),
+    hint: t('primitives.error.missing.hint'),
   },
   {
     match: /eacces|eperm|permission denied|access is denied|没有权限/,
-    title: '系统不允许这一步',
-    hint: '换个有写权限的目录，或者用管理员身份重开一次。',
+    title: t('primitives.error.permission.title'),
+    hint: t('primitives.error.permission.hint'),
   },
   {
     // 模型服务那几家在 key 不对时给的是 401/403，中文文案常常只剩一句"unauthorized"。
     match: /401|403|unauthorized|invalid api key|api key/,
-    title: '凭据不对或过期',
-    hint: '到设置 → 模型里重新填一次 key，再点"测试连接"。',
+    title: t('primitives.error.auth.title'),
+    hint: t('primitives.error.auth.hint'),
   },
   {
     match: /429|rate limit|too many requests|频繁/,
-    title: '请求太频繁，被服务方限流了',
-    hint: '等十几秒再发；连续撞就把并发降下来。',
+    title: t('primitives.error.rate.title'),
+    hint: t('primitives.error.rate.hint'),
   },
   {
     match: /404|not found|没有找到/,
-    title: '对方没有这个东西',
-    hint: '核对一下名字或地址；版本对不上时先在设置里刷新一次清单。',
+    title: t('primitives.error.notfound.title'),
+    hint: t('primitives.error.notfound.hint'),
   },
   {
     match: /413|too large|payload|超过(大小|上限)/,
-    title: '这一份太大了',
-    hint: '换小一点的文件，或者先压缩再试。',
+    title: t('primitives.error.toolarge.title'),
+    hint: t('primitives.error.toolarge.hint'),
   },
   {
     match: /500|502|503|504|internal server error|bad gateway/,
-    title: '对方服务自己出错了',
-    hint: '过一会儿再试；一直这样就是服务方的问题，不是你操作错了。',
+    title: t('primitives.error.server.title'),
+    hint: t('primitives.error.server.hint'),
   },
 ]
 
 /** 把一行错误翻成「发生了什么 / 下一步 / 原文」。 */
-export function humanizeError(input: unknown, fallback = '这一步没有完成'): HumanError {
+export function humanizeError(input: unknown, fallback = t('primitives.error.unknown.title')): HumanError {
   const detail = rawText(input)
   const lower = detail.toLowerCase()
   for (const rule of RULES) {
@@ -111,7 +118,7 @@ export function humanizeError(input: unknown, fallback = '这一步没有完成'
   const firstLine = (detail.split(/\r?\n/)[0] ?? '').replace(/^error:\s*/i, '').trim()
   return {
     title: firstLine === '' ? fallback : firstLine,
-    hint: '再试一次；还不行就把这段原文发出来，好定位。',
+    hint: t('primitives.error.unknown.hint'),
     detail,
   }
 }
@@ -119,11 +126,11 @@ export function humanizeError(input: unknown, fallback = '这一步没有完成'
 /** toast / 单行提示用：标题 + 下一步，一句话说完。 */
 export function humanErrorLine(input: unknown, fallback?: string): string {
   const { title, hint } = humanizeError(input, fallback)
-  return `${title}——${hint}`
+  return t('primitives.error.line', { title, hint })
 }
 
 /** 内联错误行用：标题 + 下一步，原文另外给 `detail`（调用方塞进 title 属性）。 */
 export function humanErrorText(input: unknown, fallback?: string): { text: string; detail: string } {
   const { title, hint, detail } = humanizeError(input, fallback)
-  return { text: `${title}。${hint}`, detail }
+  return { text: t('primitives.error.inline', { title, hint }), detail }
 }

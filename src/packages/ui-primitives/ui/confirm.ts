@@ -13,6 +13,13 @@
  *
  * @module dsc-ui-shell/platform/confirm
  */
+import { createT } from '@dsc/ui-core'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui-core` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 一张确认框的内容。危险操作把 danger 置 true，主按钮走 --dsc-red 档。 */
 export interface ConfirmSpec {
@@ -69,7 +76,7 @@ export function confirmAction(spec: ConfirmSpec): Promise<boolean> {
     cancel.type = 'button'
     cancel.dataset.variant = 'secondary'
     cancel.dataset.size = 'sm'
-    cancel.textContent = '取消'
+    cancel.textContent = t('primitives.confirm.cancel')
     const proceed = document.createElement('button')
     proceed.className = 'dsc-btn'
     proceed.type = 'button'

@@ -7,11 +7,17 @@
  * @module dsc-ui-shell/plugins/transcript/rows/user-row
  */
 import { useContext, useState, type ReactNode } from 'react'
-import { FileIcon, IconEdit, setDockPreview, type TranscriptEntry, type UserFileAttachment } from '@dsc/ui'
+import { FileIcon, IconEdit, createT, setDockPreview, type TranscriptEntry, type UserFileAttachment } from '@dsc/ui'
 // 体积读数与文件树、预览面板、输入区附件同一份实现（壳里唯一一份）。
 import { formatBytes, ImageLightbox, parseReviewFindings, ReviewFindingsCard } from '@dsc/ui-primitives'
 import { FlowActionsContext, ShellCwdContext } from '../shared'
 import { internalLabel } from '../rounds'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../../locale/ui.zh.json'
+import en from '../../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /**
  * 用户消息的附件条（贴图条之后、正文之前）：视频能就地播放，其余文件给一张可点开的文件卡。
@@ -110,13 +116,13 @@ export function UserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'us
                   key={index}
                   type="button"
                   className="entry-shot"
-                  data-tip="点开看原图"
-                  aria-label={`放大第 ${String(index + 1)} 张贴图`}
+                  data-tip={t('transcript.user.imageTip')}
+                  aria-label={t('transcript.user.zoom', { index: index + 1 })}
                   onClick={() => {
                     setZoom(url)
                   }}
                 >
-                  <img src={url} alt={`第 ${String(index + 1)} 张贴图`} />
+                  <img src={url} alt={t('transcript.user.imageAlt', { index: index + 1 })} />
                 </button>
               ))}
             </div>
@@ -131,7 +137,7 @@ export function UserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'us
                 value={draft}
                 autoFocus
                 rows={Math.min(10, Math.max(2, draft.split('\n').length))}
-                aria-label="编辑这条消息"
+                aria-label={t('transcript.user.editAria')}
                 onChange={(event) => {
                   setDraft(event.target.value)
                 }}
@@ -149,7 +155,7 @@ export function UserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'us
                   actions.editAndResend(entry, text)
                 }}
               />
-              <p className="user-edit-note">Enter 重发（这条之后的回答会作废，在当前会话里重来） · Shift+Enter 换行 · Esc 取消</p>
+              <p className="user-edit-note">{t('transcript.user.editNote')}</p>
               <div className="user-edit-actions">
                 <button
                   type="button"
@@ -160,7 +166,7 @@ export function UserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'us
                     setDraft(null)
                   }}
                 >
-                  取消
+                  {t('transcript.common.cancel')}
                 </button>
                 <button
                   type="button"
@@ -175,7 +181,7 @@ export function UserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'us
                     actions.editAndResend(entry, text)
                   }}
                 >
-                  重发
+                  {t('transcript.user.resend')}
                 </button>
               </div>
             </div>
@@ -186,8 +192,8 @@ export function UserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'us
             <button
               type="button"
               className="user-act"
-              title={actions.busy ? '这一轮还在跑，先等它结束或打断再编辑' : '编辑这条消息并重发（这条之后的回答会作废，在当前会话里重来）'}
-              aria-label="编辑并重发这条消息"
+              title={actions.busy ? t('transcript.user.editBusyTip') : t('transcript.user.editTip')}
+              aria-label={t('transcript.user.editResendAria')}
               disabled={actions.busy}
               onClick={() => {
                 setDraft(entry.text)
@@ -198,7 +204,7 @@ export function UserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'us
           </div>
         ) : null}
       </div>
-      {zoom === null ? null : <ImageLightbox src={zoom} alt="放大的贴图" onClose={() => { setZoom(null) }} />}
+      {zoom === null ? null : <ImageLightbox src={zoom} alt={t('transcript.user.lightboxAlt')} onClose={() => { setZoom(null) }} />}
     </>
   )
 }
@@ -230,13 +236,13 @@ export function ReadonlyUserRow({ entry }: { entry: Extract<TranscriptEntry, { k
                   key={index}
                   type="button"
                   className="entry-shot"
-                  data-tip="点开看原图"
-                  aria-label={`放大第 ${String(index + 1)} 张贴图`}
+                  data-tip={t('transcript.user.imageTip')}
+                  aria-label={t('transcript.user.zoom', { index: index + 1 })}
                   onClick={() => {
                     setZoom(url)
                   }}
                 >
-                  <img src={url} alt={`第 ${String(index + 1)} 张贴图`} />
+                  <img src={url} alt={t('transcript.user.imageAlt', { index: index + 1 })} />
                 </button>
               ))}
             </div>
@@ -245,7 +251,7 @@ export function ReadonlyUserRow({ entry }: { entry: Extract<TranscriptEntry, { k
           {entry.text}
         </div>
       </div>
-      {zoom === null ? null : <ImageLightbox src={zoom} alt="放大的贴图" onClose={() => { setZoom(null) }} />}
+      {zoom === null ? null : <ImageLightbox src={zoom} alt={t('transcript.user.lightboxAlt')} onClose={() => { setZoom(null) }} />}
     </>
   )
 }

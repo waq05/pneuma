@@ -33,6 +33,7 @@ import {
   IconFolder,
   IconFolderOpen,
   IconRefresh,
+  createT,
   defineUiPlugin,
   registerDockTab,
   setDockPreview,
@@ -52,6 +53,13 @@ import {
   toggleExpanded,
   type TreeEntry,
 } from './tree-store'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /**
  * 通道类型从 `useHostChannel()` 的返回推出来——插件不直接 import 壳内部模块
@@ -67,10 +75,10 @@ interface Listing {
 }
 
 export default defineUiPlugin({
-  name: '文件',
+  name: t('files.plugin.name'),
   apply() {
     // 报名两种页签界面：文件（工作区树）与 Git（变更面板）。开合/分栏归壳。
-    registerDockTab({ kind: 'files', label: '文件', icon: <IconFolder size={13} />, component: FilesTab })
+    registerDockTab({ kind: 'files', label: t('files.tab.files'), icon: <IconFolder size={13} />, component: FilesTab })
     registerDockTab({ kind: 'git', label: 'Git', icon: <IconBranch size={13} />, component: GitTab })
   },
 })
@@ -82,7 +90,7 @@ function FilesTab(): ReactNode {
     // 快照还没到（宿主刚起来）：给一句能读的状态，别画一棵空树。
     return (
       <div className="files-pane">
-        <div className="tree-note">读取中…</div>
+        <div className="tree-note">{t('files.state.loading')}</div>
       </div>
     )
   }
@@ -108,7 +116,14 @@ function loadLevel(channel: HostChannel, cwd: string, path: string): void {
 
 /** 树的状态行（加载中/为空/失败/截断），旧桌面版 `.tree-note` 同位。 */
 function TreeNote({ kind, message }: { kind: 'loading' | 'empty' | 'failed' | 'truncated'; message?: string }): ReactNode {
-  const text = kind === 'loading' ? '读取中…' : kind === 'empty' ? '（空目录）' : kind === 'truncated' ? '条目过多，已截断显示' : (message ?? '读取失败')
+  const text =
+    kind === 'loading'
+      ? t('files.state.loading')
+      : kind === 'empty'
+        ? t('files.state.empty')
+        : kind === 'truncated'
+          ? t('files.state.truncated')
+          : (message ?? t('files.state.failed'))
   return (
     <div className="tree-note" data-tree-note={kind}>
       {text}
@@ -213,9 +228,9 @@ function FilesPane({ cwd }: { cwd: string }): ReactNode {
     <div className="files-pane">
       <div className="files-bar">
         <span className="files-cwd" data-tip={tree.root} data-files-root title={tree.root}>
-          {relative === '' ? '工作区根目录' : relative}
+          {relative === '' ? t('files.bar.root') : relative}
         </span>
-        <button type="button" className="icon-btn" data-tip="刷新" aria-label="刷新文件树" onClick={loadAll}>
+        <button type="button" className="icon-btn" data-tip={t('files.bar.refreshTip')} aria-label={t('files.bar.refresh')} onClick={loadAll}>
           <IconRefresh size={13} />
         </button>
       </div>

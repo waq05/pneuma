@@ -7,7 +7,13 @@
  *
  * @module dsc-ui-shell/plugins/sessions/grouping
  */
-import type { SessionSummary } from '@dsc/ui'
+import { createT, type SessionSummary } from '@dsc/ui'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 分组方式：按工作区（平铺）/ 按工作区树（目录前缀挂层级）/ 单列表。 */
 export type GroupKey = 'workspace' | 'tree' | 'flat'
@@ -156,7 +162,7 @@ export function buildWorkGroups(input: GroupInput): WorkGroup[] {
   if (archived !== 'only') for (const dir of recentCwds) map.set(dir, [])
   for (const session of sessions) {
     if (!keepArchived(session, archived)) continue
-    const key = session.cwd || '(未指定)'
+    const key = session.cwd || t('group.unspecified')
     const list = map.get(key) ?? []
     list.push(session)
     map.set(key, list)
@@ -165,7 +171,7 @@ export function buildWorkGroups(input: GroupInput): WorkGroup[] {
     trimmed === '' ||
     displayName(dir, aliases).toLowerCase().includes(trimmed) ||
     dir.toLowerCase().includes(trimmed) ||
-    list.some((session) => (session.title ?? '新会话').toLowerCase().includes(trimmed))
+    list.some((session) => (session.title ?? t('session.new')).toLowerCase().includes(trimmed))
   const visible = [...map.entries()].filter(([dir, list]) => match(dir, list))
   const rank = (dir: string): number => order.indexOf(dir)
   const lastUsed = (list: SessionSummary[]): number => list.reduce((max, s) => Math.max(max, s.updatedAt), 0)

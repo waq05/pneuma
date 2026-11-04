@@ -20,16 +20,23 @@
  * @module dsc-ui-shell/ui-primitives/review-notice-card
  */
 import { useId, useState, type ReactNode } from 'react'
+import { createT } from '@dsc/ui-core'
 import { FileIcon } from './file-icons'
 import { IconChevronDown } from './icons'
 // 路径展示口径：与工具卡、悬停预览同一份实现（相对化 + 反斜杠统一成 /）。
 import { displayPathOf } from './paths'
 import type { ReviewNotice } from './review-notice'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui-core` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 动作词后面接的那个词：新建文件 / 编辑文件（与工具卡行头的「编辑文件」同一套说法）。 */
 const REVIEW_VERB_TEXT: Readonly<Record<'create' | 'update', string>> = {
-  create: '新建文件',
-  update: '编辑文件',
+  create: t('primitives.reviewNotice.create'),
+  update: t('primitives.reviewNotice.update'),
 }
 
 export function ReviewNoticeCard({ notice, cwd }: { notice: ReviewNotice; cwd: string }): ReactNode {
@@ -46,7 +53,7 @@ export function ReviewNoticeCard({ notice, cwd }: { notice: ReviewNotice; cwd: s
         className="entry-review-head"
         // 没有 diff 正文时头行不可点：点了也展不开，白给一个「点了没反应」。
         {...(hasBody ? { 'aria-expanded': open, 'aria-controls': bodyId } : { 'aria-expanded': false })}
-        data-tip={hasBody ? (open ? '收起这份改动' : '展开看改了什么') : undefined}
+        data-tip={hasBody ? (open ? t('primitives.reviewNotice.collapse') : t('primitives.reviewNotice.expand')) : undefined}
         onClick={() => {
           if (hasBody) setOpen((value) => !value)
         }}
@@ -60,8 +67,8 @@ export function ReviewNoticeCard({ notice, cwd }: { notice: ReviewNotice; cwd: s
         </span>
         {notice.counts !== null ? (
           <span className="changes-counts">
-            <span className="changes-added">{`+${String(notice.counts.added)} 行`}</span>
-            <span className="changes-removed">{`-${String(notice.counts.removed)} 行`}</span>
+            <span className="changes-added">{t('primitives.reviewNotice.added', { n: notice.counts.added })}</span>
+            <span className="changes-removed">{t('primitives.reviewNotice.removed', { n: notice.counts.removed })}</span>
           </span>
         ) : notice.countsText === null || notice.countsText === '' ? null : (
           // 算不出逐行 diff 时宿主写「逐行 diff 未给出」——中性一行，不装成计数。

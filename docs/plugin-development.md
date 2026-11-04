@@ -175,6 +175,23 @@ order 是刻度，数字小的先跑：灾难地板 5、沙箱 8、协作模式 
 - 首次安装要信任一次（`/ui-trust <插件目录名>`，或桌面端走原生桥的 `setUiTrust`），未信任不加载；
 - 每个产物带一个 `rev`（内容摘要），内容变了 rev 就变，用来判断要不要重新下发；
 - 具体契约（槽位、席位、服务面 `provide` / `consume`、平台种子包、分批与热更）见 §10。
+- **文案跟界面语言走**：插件里不要写死中文。`@dsc/ui` 导出一个取词器工厂，插件自己带两份字典：
+
+  ```ts
+  import { createT } from '@dsc/ui'
+  import zh from './locale/ui.zh.json'   // 中文原文：语义真源
+  import en from './locale/ui.en.json'   // 英文译本
+  const t = createT({ zh, en })
+
+  export function Button(): ReactNode {
+    return <button>{t('save')}</button>
+  }
+  ```
+
+  语言来自 `config.yaml` 的 `language:`（经启动图的 `host.language` 带到页面，`en` 开头即英文）。
+  插值写 `t('x', { name })` 配字典里的 `{name}`；英文缺某条会回落中文，不会显示键名。
+  自带插件里每个包都有一份 `locale/ui.zh.json` 与 `ui.en.json`，形状照
+  `src/packages/ui-terminal/` 抄即可。
 
 ### 0.5 参考
 

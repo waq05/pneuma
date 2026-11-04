@@ -45,6 +45,7 @@ import {
   IconLayers,
   IconPhone,
   IconSpark,
+  createT,
 } from '@dsc/ui'
 import {
   ACTIONS_SERVICE,
@@ -71,6 +72,12 @@ import { ArchiveGroup } from './archive'
 import { PairModal, type PairRegenerateResult } from './pair-modal'
 // 基元从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
 import { Select, Skeleton, SkeletonText, errText as text, humanErrorText, useDialogFocus } from '@dsc/ui-primitives'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 面板导航里的一项（宿主分区 + 壳自己那项插件，统一成同一个形状）。 */
 interface NavItem {
@@ -111,7 +118,7 @@ function setSettingsOpen(next: boolean): void {
 }
 
 export default defineUiPlugin({
-  name: '设置',
+  name: t('settings.app.title'),
   apply(ui) {
     // 只有面板：齿轮钮在旧界面顶栏并不存在（设置入口在侧栏底部），壳里对齐旧界面——
     // 展开侧栏时走底部「设置」行，收起后 Ctrl+B 展开即可。
@@ -197,10 +204,10 @@ function SettingsPanel(): ReactNode {
       'settings',
       nav.map((item) => ({
         id: `settings.${item.id}`,
-        label: `设置 · ${item.title}`,
+        label: t('settings.ui.jumpLabel', { title: item.title }),
         ...(item.subtitle === undefined ? {} : { hint: item.subtitle }),
-        group: '设置',
-        keywords: ['设置', 'settings', item.id],
+        group: t('settings.ui.group'),
+        keywords: [t('settings.app.title'), 'settings', item.id],
         run: () => {
           setActive(item.id)
           setSettingsOpen(true)
@@ -222,9 +229,9 @@ function SettingsPanel(): ReactNode {
         if (event.target === event.currentTarget) setSettingsOpen(false)
       }}
     >
-      <div className="settings" role="dialog" aria-modal="true" aria-label="Pneuma 设置" ref={dialog.ref}>
+      <div className="settings" role="dialog" aria-modal="true" aria-label={t('settings.ui.dialogAria')} ref={dialog.ref}>
         <nav className="settings-nav">
-          <div className="settings-nav-head">设置</div>
+          <div className="settings-nav-head">{t('settings.app.title')}</div>
           {nav.map((item) => (
             <button
               key={item.id}
@@ -240,21 +247,21 @@ function SettingsPanel(): ReactNode {
             </button>
           ))}
           {sections !== null && sections.length === 0 ? (
-            <div className="settings-nav-empty">{loadError === '' ? '宿主没有给出设置分区' : `读分区失败：${loadError}`}</div>
+            <div className="settings-nav-empty">{loadError === '' ? t('settings.ui.noSections') : t('settings.ui.sectionsFailed', { message: loadError })}</div>
           ) : null}
-          <div className="settings-nav-foot">设置</div>
+          <div className="settings-nav-foot">{t('settings.app.title')}</div>
         </nav>
         <div className="settings-main">
           <div className="settings-head">
             <div className="settings-head-text">
-              <h2>{head?.title ?? '设置'}</h2>
+              <h2>{head?.title ?? t('settings.app.title')}</h2>
               {head?.subtitle === undefined ? null : <p>{head.subtitle}</p>}
             </div>
             <button
               type="button"
               className="icon-btn"
-              title="关闭设置，快捷键 Esc"
-              aria-label="关闭设置"
+              title={t('settings.ui.closeTip')}
+              aria-label={t('settings.ui.close')}
               onClick={() => {
                 setSettingsOpen(false)
               }}
@@ -270,7 +277,7 @@ function SettingsPanel(): ReactNode {
               loadError === '' ? (
                 // 数据还没回来：画骨架而不是一行灰字（P0-2）。高度按真实分区估：
                 // 标题 + 一句副标题 + 两组字段，读完不会"先缩后弹"。
-                <div className="settings-loading" role="status" aria-label="正在读取设置分区">
+                <div className="settings-loading" role="status" aria-label={t('settings.ui.loadingAria')}>
                   <div className="settings-loading-head">
                     <Skeleton width={168} height={17} radius={5} />
                     <Skeleton width={300} height={11} />
@@ -279,10 +286,10 @@ function SettingsPanel(): ReactNode {
                   <SkeletonText lines={2} widths={['100%', '48%']} />
                 </div>
               ) : (
-                <div className="settings-empty">{`分区加载失败：${loadError}`}</div>
+                <div className="settings-empty">{t('settings.ui.sectionsFailed', { message: loadError })}</div>
               )
             ) : section === undefined ? (
-              <div className="settings-empty">分区加载失败：{loadError === '' ? '未知分区' : loadError}</div>
+              <div className="settings-empty">{t('settings.ui.sectionsFailed', { message: loadError === '' ? t('settings.ui.unknownSection') : loadError })}</div>
             ) : section.custom ? (
               section.id === 'presets' ? (
                 <PresetsGroup />
@@ -357,7 +364,7 @@ function GenericFields({
         if (alive) setValues(next)
       })
       .catch((error: unknown) => {
-        if (alive) setNote({ tone: 'error', text: `读取设置失败：${text(error)}` })
+        if (alive) setNote({ tone: 'error', text: t('settings.ui.loadFailed', { message: text(error) }) })
       })
     return () => {
       alive = false
@@ -378,14 +385,14 @@ function GenericFields({
       .invoke<SettingsMutation>('setSettingValue', [section.id, key, value])
       .then((result) => {
         if (!result.ok) {
-          setNote({ tone: 'error', text: `保存失败：${result.error}` })
+          setNote({ tone: 'error', text: t('settings.ui.saveFailed', { message: result.error }) })
           return
         }
         if (result.notice !== undefined) setNote({ tone: 'ok', text: result.notice })
         reload()
       })
       .catch((error: unknown) => {
-        setNote({ tone: 'error', text: `保存失败：${text(error)}` })
+        setNote({ tone: 'error', text: t('settings.ui.saveFailed', { message: text(error) }) })
       })
   }
 
@@ -396,11 +403,11 @@ function GenericFields({
   const openExternal = (url: string): void => {
     const native = getHostNative()
     if (!native.available) {
-      setNote({ tone: 'error', text: '打开链接要用系统浏览器，只在桌面版里有（浏览器页签里没有这条桥）' })
+      setNote({ tone: 'error', text: t('settings.ui.openLinkNoBridge') })
       return
     }
     void native.invoke('openExternal', [url]).catch((error: unknown) => {
-      setNote({ tone: 'error', text: `打开链接失败：${text(error)}` })
+      setNote({ tone: 'error', text: t('settings.ui.openLinkFailed', { message: text(error) }) })
     })
   }
 
@@ -411,7 +418,7 @@ function GenericFields({
       .invoke<SettingsMutation>('runSettingAction', [section.id, action])
       .then((result) => {
         if (!result.ok) {
-          setNote({ tone: 'error', text: `操作失败：${result.error}` })
+          setNote({ tone: 'error', text: t('settings.ui.opFailed', { message: result.error }) })
           return
         }
         // 回执除了 `notice` 还可能带一份结构化载荷，三种各走各的出口：
@@ -431,7 +438,7 @@ function GenericFields({
         reload()
       })
       .catch((error: unknown) => {
-        setNote({ tone: 'error', text: `操作失败：${text(error)}` })
+        setNote({ tone: 'error', text: t('settings.ui.opFailed', { message: text(error) }) })
       })
   }
 
@@ -448,7 +455,7 @@ function GenericFields({
   const switchConfigFile = async (reset: boolean): Promise<void> => {
     const native = getHostNative()
     if (!native.available) {
-      setNote({ tone: 'error', text: '换配置文件要在桌面版里做（浏览器里没有这条桥）' })
+      setNote({ tone: 'error', text: t('settings.ui.configNoBridge') })
       return
     }
     setNote(null)
@@ -460,13 +467,13 @@ function GenericFields({
       }
       const result = await native.invoke<SettingsMutation>('setConfigFile', [path])
       if (!result.ok) {
-        setNote({ tone: 'error', text: `换配置文件失败：${result.error ?? '未知原因'}` })
+        setNote({ tone: 'error', text: t('settings.ui.configFailed', { message: result.error ?? t('settings.ui.unknownReason') }) })
         return
       }
-      setNote({ tone: 'ok', text: result.notice ?? '已换配置文件' })
+      setNote({ tone: 'ok', text: result.notice ?? t('settings.ui.configSwitched') })
       onConfigFileChanged?.()
     } catch (error: unknown) {
-      setNote({ tone: 'error', text: `换配置文件失败：${text(error)}` })
+      setNote({ tone: 'error', text: t('settings.ui.configFailed', { message: text(error) }) })
     }
   }
 
@@ -484,12 +491,12 @@ function GenericFields({
       if (!result.ok) return { ok: false, error: result.error }
       const data = result.data
       if (data?.kind !== 'pair-code') {
-        return { ok: false, error: '这一版宿主没有返回配对码内容，请升级后再试' }
+        return { ok: false, error: t('settings.ui.pairUnavailable') }
       }
       reload()
       return { ok: true, data }
     } catch (error: unknown) {
-      return { ok: false, error: `操作失败：${text(error)}` }
+      return { ok: false, error: t('settings.ui.opFailed', { message: text(error) }) }
     }
   }
 
@@ -511,37 +518,37 @@ function GenericFields({
                   onClick={() => {
                     void navigator.clipboard.writeText(field.text).then(
                       () => {
-                        setNote({ tone: 'ok', text: '已复制' })
+                        setNote({ tone: 'ok', text: t('settings.ui.copied') })
                       },
                       () => {
-                        setNote({ tone: 'error', text: '复制失败，请手动选中' })
+                        setNote({ tone: 'error', text: t('settings.ui.copyFailed') })
                       },
                     )
                   }}
                 >
-                  复制
+                  {t('settings.ui.copy')}
                 </button>
                 <button
                   type="button"
                   className="text-btn"
-                  data-tip="在文件管理器中打开"
+                  data-tip={t('settings.ui.openInManager')}
                   onClick={() => {
                     const native = getHostNative()
                     if (!native.available) {
-                      setNote({ tone: 'error', text: '用系统程序打开只在桌面版里有（浏览器里没有这条桥）' })
+                      setNote({ tone: 'error', text: t('settings.ui.openPathNoBridge') })
                       return
                     }
                     void native
                       .invoke<string>('openPath', [field.text])
                       .then((problem) => {
-                        if (problem !== '') setNote({ tone: 'error', text: `打开失败：${problem}` })
+                        if (problem !== '') setNote({ tone: 'error', text: t('settings.ui.openFailed', { message: problem }) })
                       })
                       .catch((error: unknown) => {
-                        setNote({ tone: 'error', text: `打开失败：${text(error)}` })
+                        setNote({ tone: 'error', text: t('settings.ui.openFailed', { message: text(error) }) })
                       })
                   }}
                 >
-                  打开
+                  {t('settings.ui.open')}
                 </button>
                 {/*
                   宿主在信息行上声明的行内动作（现在只有「更换配置文件」与它的「恢复默认」）。
@@ -616,7 +623,7 @@ function GenericFields({
         )
       }
       // 宿主返回了选项外的值也要看得见，不能悄悄显示成第一项。
-      const options = listed ? field.options : [...field.options, { value: current, label: `${current} · 未识别` }]
+      const options = listed ? field.options : [...field.options, { value: current, label: t('settings.ui.unknownOption', { value: current }) }]
       return (
         <div className="setting-row" key={field.key}>
           <div className="setting-text">
@@ -702,7 +709,7 @@ function GenericFields({
 
   return (
     <div className="settings-fields">
-      {section.fields.length === 0 ? <div className="settings-empty">该分区没有可配置项。</div> : null}
+      {section.fields.length === 0 ? <div className="settings-empty">{t('settings.ui.emptySection')}</div> : null}
       {section.fields.map((field, index) => {
         const group = field.group
         return (
@@ -729,16 +736,16 @@ function GenericFields({
               setUpdateReady('')
               const native = getHostNative()
               if (!native.available) {
-                setNote({ tone: 'error', text: '就地更新要用桌面外壳的原生桥，浏览器页签里没有它' })
+                setNote({ tone: 'error', text: t('settings.ui.updateNoBridge') })
                 return
               }
-              setNote({ tone: 'ok', text: `正在下载 ${updateReady} 的安装包…下载完会启动安装程序并退出本应用` })
+              setNote({ tone: 'ok', text: t('settings.ui.updateDownloading', { version: updateReady }) })
               void native.invoke<{ ok: boolean; error?: string }>('installUpdate').then((result) => {
-                if (!result.ok) setNote({ tone: 'error', text: `更新失败：${result.error ?? '未知原因'}` })
+                if (!result.ok) setNote({ tone: 'error', text: t('settings.ui.updateFailed', { message: result.error ?? t('settings.ui.unknownReason') }) })
               })
             }}
           >
-            立即更新
+            {t('settings.ui.updateNow')}
           </button>
         </div>
       )}
@@ -763,10 +770,10 @@ function GenericFields({
  * 深色、跟随系统。
  */
 const THEME_TILES = [
-  { value: 'light', label: '浅色' },
+  { value: 'light', label: t('settings.ui.theme.light') },
   { value: 'claude', label: 'Claude' },
-  { value: 'dark', label: '深色' },
-  { value: 'system', label: '跟随系统' },
+  { value: 'dark', label: t('settings.ui.theme.dark') },
+  { value: 'system', label: t('settings.ui.theme.system') },
 ] as const
 
 /**
@@ -788,7 +795,7 @@ function AppearanceRows(): ReactNode {
         if (alive) setAppearance(normalizePrefs(prefs))
       })
       .catch((error: unknown) => {
-        if (alive) setNote(`读外观失败：${text(error)}`)
+        if (alive) setNote(t('settings.ui.appearanceFailed', { message: text(error) }))
       })
     return () => {
       alive = false
@@ -817,21 +824,21 @@ function AppearanceRows(): ReactNode {
       .catch((error: unknown) => {
         setAppearance(appearance)
         requestAppearance(appearance)
-        setNote(`没写进去：${text(error)}`)
+        setNote(t('settings.ui.writeFailed', { message: text(error) }))
       })
   }
 
-  if (appearance === null) return <div className="settings-empty">{note === '' ? '正在读外观…' : note}</div>
+  if (appearance === null) return <div className="settings-empty">{note === '' ? t('settings.ui.appearanceLoading') : note}</div>
   const fontPercent = Math.round(appearance.fontSize * 100)
   return (
     <div className="settings-appearance">
-      <div className="settings-group-title">外观</div>
+      <div className="settings-group-title">{t('settings.ui.appearance')}</div>
       <div className="setting-row">
         <div className="setting-text">
-          <div className="setting-label">主题</div>
-          <div className="setting-help">「Claude」是暖米白配色（Ivory + 陶土色），「跟随系统」随系统深浅自动切换。</div>
+          <div className="setting-label">{t('settings.ui.theme')}</div>
+          <div className="setting-help">{t('settings.ui.themeHelp')}</div>
         </div>
-        <div className="setting-control theme-tiles" role="radiogroup" aria-label="主题">
+        <div className="setting-control theme-tiles" role="radiogroup" aria-label={t('settings.ui.theme')}>
           {THEME_TILES.map((tile) => (
             <button
               key={tile.value}
@@ -850,14 +857,14 @@ function AppearanceRows(): ReactNode {
       </div>
       <div className="setting-row">
         <div className="setting-text">
-          <div className="setting-label">字号</div>
-          <div className="setting-help">正文 13px 为基准，可放大或缩小。</div>
+          <div className="setting-label">{t('settings.ui.fontSize')}</div>
+          <div className="setting-help">{t('settings.ui.fontSizeHelp')}</div>
         </div>
         <div className="setting-control">
           <input
             className="font-scale-range"
             type="range"
-            aria-label="字号"
+            aria-label={t('settings.ui.fontSize')}
             min={85}
             max={135}
             step={1}
@@ -871,18 +878,18 @@ function AppearanceRows(): ReactNode {
       </div>
       <div className="setting-row">
         <div className="setting-text">
-          <div className="setting-label">密度</div>
-          <div className="setting-help">行高与纵向间距的整体松紧。</div>
+          <div className="setting-label">{t('settings.ui.density')}</div>
+          <div className="setting-help">{t('settings.ui.densityHelp')}</div>
         </div>
         <div className="setting-control">
           <Select
             className="setting-select"
-            ariaLabel="密度"
+            ariaLabel={t('settings.ui.density')}
             value={appearance.density}
             options={[
-              { value: 'compact', label: '紧凑' },
-              { value: 'standard', label: '标准' },
-              { value: 'roomy', label: '宽松' },
+              { value: 'compact', label: t('settings.ui.option.compact') },
+              { value: 'standard', label: t('settings.ui.option.standard') },
+              { value: 'roomy', label: t('settings.ui.option.roomy') },
             ]}
             onPick={(next) => {
               change({ density: next })
@@ -890,24 +897,24 @@ function AppearanceRows(): ReactNode {
           />
         </div>
       </div>
-      <div className="settings-group-title">对话折叠</div>
+      <div className="settings-group-title">{t('settings.ui.foldTitle')}</div>
       <div className="setting-row">
         <div className="setting-text">
-          <div className="setting-label">过程折叠程度</div>
+          <div className="setting-label">{t('settings.ui.fold.label')}</div>
           <div className="setting-help">
-            定稿的回合收得多紧：紧凑＝只剩「用时」一行；标准＝跑动中报实时详情；详细＝跑动中的那一轮也摊开不分组（定稿的仍收）；完全展开＝定稿的回合也不收。四档的思考行都带首行摘要——摘要回答「这条思考讲了什么」，与整轮折不折是两件事。
+            {t('settings.ui.fold.help')}
           </div>
         </div>
         <div className="setting-control">
           <Select
             className="setting-select"
-            ariaLabel="过程折叠程度"
+            ariaLabel={t('settings.ui.fold.label')}
             value={appearance.processFold}
             options={[
-              { value: 'compact', label: '紧凑' },
-              { value: 'standard', label: '标准' },
-              { value: 'detailed', label: '详细' },
-              { value: 'verbose', label: '完全展开' },
+              { value: 'compact', label: t('settings.ui.option.compact') },
+              { value: 'standard', label: t('settings.ui.option.standard') },
+              { value: 'detailed', label: t('settings.ui.option.detailed') },
+              { value: 'verbose', label: t('settings.ui.option.verbose') },
             ]}
             onPick={(next) => {
               change({ processFold: next })
@@ -917,17 +924,17 @@ function AppearanceRows(): ReactNode {
       </div>
       <div className="setting-row">
         <div className="setting-text">
-          <div className="setting-label">定稿的思考行</div>
-          <div className="setting-help">跑动中的思考永远展开；这里管已经定稿的那些默认收起还是展开。</div>
+          <div className="setting-label">{t('settings.ui.reasoning.label')}</div>
+          <div className="setting-help">{t('settings.ui.reasoning.help')}</div>
         </div>
         <div className="setting-control">
           <Select
             className="setting-select"
-            ariaLabel="定稿的思考行默认态"
+            ariaLabel={t('settings.ui.reasoning.aria')}
             value={appearance.reasoningOpen ? 'open' : 'folded'}
             options={[
-              { value: 'folded', label: '默认收起' },
-              { value: 'open', label: '默认展开' },
+              { value: 'folded', label: t('settings.ui.option.folded') },
+              { value: 'open', label: t('settings.ui.option.open') },
             ]}
             onPick={(next) => {
               change({ reasoningDefaultOpen: next === 'open' })
@@ -937,17 +944,17 @@ function AppearanceRows(): ReactNode {
       </div>
       <div className="setting-row">
         <div className="setting-text">
-          <div className="setting-label">工具卡</div>
-          <div className="setting-help">工具调用的默认态：只显示一行摘要，还是连参数与结果一起摊开。</div>
+          <div className="setting-label">{t('settings.ui.tools.label')}</div>
+          <div className="setting-help">{t('settings.ui.tools.help')}</div>
         </div>
         <div className="setting-control">
           <Select
             className="setting-select"
-            ariaLabel="工具卡默认态"
+            ariaLabel={t('settings.ui.tools.aria')}
             value={appearance.toolOpen ? 'open' : 'folded'}
             options={[
-              { value: 'folded', label: '默认收起' },
-              { value: 'open', label: '默认展开' },
+              { value: 'folded', label: t('settings.ui.option.folded') },
+              { value: 'open', label: t('settings.ui.option.open') },
             ]}
             onPick={(next) => {
               change({ toolDefaultOpen: next === 'open' })
@@ -957,7 +964,7 @@ function AppearanceRows(): ReactNode {
       </div>
       {note === '' ? null : <div className="settings-note error">{note}</div>}
       <div className="settings-note">
-        「按钮大小」这条轴已经取消：按钮尺寸改为对齐参考实现的固定档位（见 docs/ui-plugin-parity-plan.md §6）。
+        {t('settings.ui.buttonSizeRetired')}
       </div>
     </div>
   )
@@ -1015,18 +1022,18 @@ function normalizePrefs(prefs: Partial<UiPrefsView> | null | undefined): Appeara
  * 一条都不在界面通道白名单里——远程是网络暴露面，这是有意收紧的结果，不是没做完。
  */
 const NOT_YET: Readonly<Record<string, string>> = {
-  remote: '远程与手机连接的面板还没搬（宿主方法不在界面通道白名单里，要接得先扩白名单）。',
+  remote: t('settings.ui.notYet.remote'),
 }
 
 /** 还没搬的结构化分区：标题 + 一条诚实的说明。 */
 function NotYetPanel({ section }: { section: SettingsSectionView }): ReactNode {
-  const reason = NOT_YET[section.id] ?? `「${section.title}」这个结构化分区还没在插件壳里搬过来。`
+  const reason = NOT_YET[section.id] ?? t('settings.ui.notYet.generic', { title: section.title })
   return (
     <div>
       <div className="settings-group-title">{section.title}</div>
       <div className="settings-note">{reason}</div>
       <div className="settings-note">
-        这是切换前还差的能力之一，记在 docs/ui-plugin-parity-plan.md 与 development-log 的诚实边界里。
+        {t('settings.ui.notYet.footer')}
       </div>
     </div>
   )

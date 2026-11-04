@@ -7,7 +7,14 @@
  * @module dsc-ui-shell/platform/code-view
  */
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { createT } from '@dsc/ui-core'
 import { highlightToHtml, langForPath } from './highlight'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui-core` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 预览代码块的截断线数（shiki 高亮大文本很贵，超限截断并提示）。 */
 const CODE_MAX_LINES = 5000
@@ -52,7 +59,7 @@ export function CodeView({ text, path, targetLine }: { text: string; path: strin
   const numbered = targetLine !== undefined
   return (
     <div className={numbered ? 'file-code file-code--numbered' : 'file-code'}>
-      {truncated && <div className="tree-note" data-tree-note="truncated">文件较大，仅高亮前 {CODE_MAX_LINES} 行</div>}
+      {truncated && <div className="tree-note" data-tree-note="truncated">{t('primitives.code.truncated', { n: CODE_MAX_LINES })}</div>}
       {html !== null ? (
         <div ref={(node) => { bodyRef.current = node }} className="file-code-body" dangerouslySetInnerHTML={{ __html: html }} />
       ) : (

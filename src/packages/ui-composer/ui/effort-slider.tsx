@@ -32,8 +32,14 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react'
-import type { EffortLevel } from '@dsc/ui'
+import { createT, type EffortLevel } from '@dsc/ui'
+// 本包自己的中英对照：中文原文是语义真源，英文是译本（构建时内联进插件 bundle）。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
 import { effortLabel } from './model-picker'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定。 */
+const t = createT({ zh, en })
 
 /** 一档在轨道上的百分比位置（第一档贴左、最后一档贴右）。 */
 function percentOf(index: number, count: number): number {
@@ -129,9 +135,9 @@ export function EffortSlider({
   return (
     <div className="effort-slider" data-effort-slider="">
       <div className="effort-slider-head">
-        <span className="effort-slider-title">思考强度</span>
+        <span className="effort-slider-title">{t('effort.title')}</span>
         <span className={'effort-now' + (unset ? ' unset' : '')} data-effort-now={unset ? 'unset' : value}>
-          {unset ? '未设置' : effortLabel(value)}
+          {unset ? t('effort.unset') : effortLabel(value)}
         </span>
       </div>
       {note === null ? null : <p className="effort-note">{note}</p>}
@@ -143,11 +149,11 @@ export function EffortSlider({
         data-effort-track=""
         role="slider"
         tabIndex={0}
-        aria-label="思考强度"
+        aria-label={t('effort.title')}
         aria-valuemin={0}
         aria-valuemax={Math.max(0, levels.length - 1)}
         aria-valuenow={unset ? 0 : index}
-        aria-valuetext={unset ? '未设置' : effortLabel(value)}
+        aria-valuetext={unset ? t('effort.unset') : effortLabel(value)}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={finish}

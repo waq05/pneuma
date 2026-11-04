@@ -67,8 +67,8 @@ const plugin = read(resolveUiHalf('browser') + '/ui.tsx')
 check('插件 import 的是这个纯函数', plugin.includes("import { normalizeAddress } from './address'"))
 check('回车走它（不是自己判 startsWith）', plugin.includes('const target = normalizeAddress(draft)'))
 check('插件里没有第二份协议判断', !/startsWith\(['"]https?:\/\//.test(plugin))
-check('非 http/https 给的是人话提示', plugin.includes("'只支持 http/https 地址'"))
-check('地址栏确实是「输入 HTTP(S) 地址」的空态（对齐 dsh）', plugin.includes('输入 HTTP(S) 地址开始浏览'))
+check('非 http/https 给的是人话提示', plugin.includes("t('browser.error.badScheme')"))
+check('地址栏确实是「输入 HTTP(S) 地址」的空态（对齐 dsh）', plugin.includes("t('browser.empty')"))
 check('isBrowsableUrl 只认 http/https', isBrowsableUrl('https://a.b') && isBrowsableUrl('HTTP://a.b') && !isBrowsableUrl('file:///x') && !isBrowsableUrl(' //a.b'))
 
 console.log(

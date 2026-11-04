@@ -12,9 +12,16 @@
  * @module dsc-ui-shell/platform/tool-summary
  */
 import type { ComponentType } from 'react'
+import { createT } from '@dsc/ui-core'
 import {
   IconCode, IconEdit, IconFolder, IconGlobe, IconInfo, IconQueue, IconSearch, IconSpark, IconTerminal, IconTree,
 } from './icons'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui-core` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 各工具的摘要字段；不在表里的走 {@link DEFAULT_FIELDS}。 */
 export const SUMMARY_FIELDS: Readonly<Record<string, readonly string[]>> = {
@@ -112,11 +119,11 @@ export function toolSummary(name: string, argsText: string): string {
 
 /** 工具状态词（旧界面同一套说法）。 */
 export const TOOL_STATUS_TEXT: Readonly<Record<string, string>> = {
-  preparing: '准备中',
-  running: '进行中',
-  done: '完成',
-  failed: '失败',
-  rejected: '被拒',
+  preparing: t('primitives.tool.status.preparing'),
+  running: t('primitives.tool.status.running'),
+  done: t('primitives.tool.status.done'),
+  failed: t('primitives.tool.status.failed'),
+  rejected: t('primitives.tool.status.rejected'),
 }
 
 /**
@@ -135,30 +142,30 @@ export const TOOL_STATUS_TEXT: Readonly<Record<string, string>> = {
 export const KNOWN_TOOLS: Readonly<
   Record<string, { verb: string; Icon: ComponentType<{ size?: number; className?: string }> }>
 > = {
-  bash: { verb: '运行命令', Icon: IconTerminal },
-  shell: { verb: '运行命令', Icon: IconTerminal },
+  bash: { verb: t('primitives.tool.bash'), Icon: IconTerminal },
+  shell: { verb: t('primitives.tool.bash'), Icon: IconTerminal },
   // 2026-10-30 补：这台机器的工具表里跑得最多的就是下面这几个，缺一个就退化成
   // 「工具调用 · run_code」——标题没信息，摘要也取不到字段，一屏十几次同样的行。
-  run_code: { verb: '运行代码', Icon: IconCode },
-  pwsh: { verb: '运行命令', Icon: IconTerminal },
-  read_image: { verb: '读取图片', Icon: IconFolder },
-  web_search: { verb: '搜索网页', Icon: IconGlobe },
-  session_search: { verb: '搜索会话', Icon: IconSearch },
-  todo_write: { verb: '更新计划', Icon: IconQueue },
-  ask_user: { verb: '提问', Icon: IconInfo },
-  ask_user_question: { verb: '提问', Icon: IconInfo },
-  skill: { verb: '读取技能', Icon: IconSpark },
-  subagent: { verb: '子智能体', Icon: IconTree },
-  exit_plan_mode: { verb: '提交计划', Icon: IconQueue },
-  read: { verb: '读取', Icon: IconFolder },
-  read_file: { verb: '读取', Icon: IconFolder },
-  write: { verb: '写入', Icon: IconEdit },
-  edit: { verb: '编辑', Icon: IconEdit },
-  glob: { verb: '查找文件', Icon: IconSearch },
-  grep: { verb: '搜索文件内容', Icon: IconSearch },
-  webfetch: { verb: '网页获取', Icon: IconSearch },
-  fetch: { verb: '网页获取', Icon: IconSearch },
-  task: { verb: '子智能体', Icon: IconSpark },
+  run_code: { verb: t('primitives.tool.runCode'), Icon: IconCode },
+  pwsh: { verb: t('primitives.tool.bash'), Icon: IconTerminal },
+  read_image: { verb: t('primitives.tool.readImage'), Icon: IconFolder },
+  web_search: { verb: t('primitives.tool.webSearch'), Icon: IconGlobe },
+  session_search: { verb: t('primitives.tool.sessionSearch'), Icon: IconSearch },
+  todo_write: { verb: t('primitives.tool.todoWrite'), Icon: IconQueue },
+  ask_user: { verb: t('primitives.tool.ask'), Icon: IconInfo },
+  ask_user_question: { verb: t('primitives.tool.ask'), Icon: IconInfo },
+  skill: { verb: t('primitives.tool.skill'), Icon: IconSpark },
+  subagent: { verb: t('primitives.tool.subagent'), Icon: IconTree },
+  exit_plan_mode: { verb: t('primitives.tool.exitPlan'), Icon: IconQueue },
+  read: { verb: t('primitives.tool.read'), Icon: IconFolder },
+  read_file: { verb: t('primitives.tool.read'), Icon: IconFolder },
+  write: { verb: t('primitives.tool.write'), Icon: IconEdit },
+  edit: { verb: t('primitives.tool.edit'), Icon: IconEdit },
+  glob: { verb: t('primitives.tool.glob'), Icon: IconSearch },
+  grep: { verb: t('primitives.tool.grep'), Icon: IconSearch },
+  webfetch: { verb: t('primitives.tool.fetch'), Icon: IconSearch },
+  fetch: { verb: t('primitives.tool.fetch'), Icon: IconSearch },
+  task: { verb: t('primitives.tool.subagent'), Icon: IconSpark },
 }
 
 /** 认不出的工具的图标。 */
@@ -171,7 +178,7 @@ export const UNKNOWN_TOOL_ICON = IconCode
  * （`mcp__foo__bar` 这类）不适合当标题的谓语；用一句泛称打头、原名跟在「 · 」后面，
  * 与 dsh 的 `工具调用 · <工具名>` 同一个读法。
  */
-export const UNKNOWN_TOOL_TITLE = '工具调用'
+export const UNKNOWN_TOOL_TITLE = t('primitives.tool.unknown')
 
 /** 一次工具匹配的结果：图标 + 基础动词 + 是不是知名工具（决定要不要印原名）。 */
 export interface ToolMatch {

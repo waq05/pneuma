@@ -26,7 +26,13 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import QRCode from 'qrcode'
-import { IconClose, readCssSolidColor, toastErr, toastOk, type PairShareData } from '@dsc/ui'
+import { IconClose, createT, readCssSolidColor, toastErr, toastOk, type PairShareData } from '@dsc/ui'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 重新生成的结果：要么一张新码，要么一句能直接显示在弹窗里的原因。 */
 export type PairRegenerateResult = { ok: true; data: PairShareData } | { ok: false; error: string }
@@ -173,8 +179,8 @@ export function PairModal(props: {
   /** 复制一段文本；回执与设置页 info 行的复制按钮同一套。 */
   const copy = (text: string): void => {
     void navigator.clipboard.writeText(text).then(
-      () => toastOk('已复制'),
-      () => toastErr('复制失败，请手动选中'),
+      () => toastOk(t('settings.pair.copied')),
+      () => toastErr(t('settings.pair.copyFailed')),
     )
   }
 
@@ -213,17 +219,17 @@ export function PairModal(props: {
         <div className="pair-head">
           <div className="pair-head-text">
             <h3 className="pair-title" id="pair-title">
-              手机连接
+              {t('settings.pair.title')}
             </h3>
             <p className="pair-sub" id="pair-sub">
-              同一 Wi-Fi 下，手机扫这个码（或输下面的配对码）即可连接
+              {t('settings.pair.subtitle')}
             </p>
           </div>
           <button
             type="button"
             className="icon-btn"
-            data-tip="关闭，快捷键 Esc"
-            aria-label="关闭"
+            data-tip={t('settings.pair.closeTip')}
+            aria-label={t('settings.pair.close')}
             onClick={props.onClose}
           >
             <IconClose size={16} />
@@ -231,17 +237,17 @@ export function PairModal(props: {
         </div>
 
         <div className={`pair-qr${expired ? ' expired' : ''}`}>
-          {qr !== null && <img className="pair-qr-img" src={qr} alt={`配对二维码，指向 ${share.url}`} />}
-          {qr === null && qrFailed === false && <div className="pair-qr-hold">正在生成二维码…</div>}
+          {qr !== null && <img className="pair-qr-img" src={qr} alt={t('settings.pair.qrAlt', { url: share.url })} />}
+          {qr === null && qrFailed === false && <div className="pair-qr-hold">{t('settings.pair.qrPending')}</div>}
           {qrFailed && (
-            <div className="pair-qr-hold">二维码没画出来（地址太长），照下面的配对码手动输入即可。</div>
+            <div className="pair-qr-hold">{t('settings.pair.qrFailed')}</div>
           )}
         </div>
 
         <div className={`pair-code-row${expired ? ' expired' : ''}`}>
           <span className="pair-code mono">{share.code}</span>
           <button type="button" className="text-btn" disabled={expired} onClick={() => copy(share.code)}>
-            复制
+            {t('settings.pair.copy')}
           </button>
         </div>
 
@@ -250,19 +256,19 @@ export function PairModal(props: {
         <div className="pair-url">
           <span className="mono pair-url-text">{share.url}</span>
           <button type="button" className="text-btn" disabled={expired} onClick={() => copy(share.url)}>
-            复制
+            {t('settings.pair.copy')}
           </button>
         </div>
 
         <div className={`pair-count${expired ? ' expired' : ''}`} role="status">
-          {expired ? '配对码已过期，请重新生成' : `剩余有效时间 ${clockText(remaining)}`}
+          {expired ? t('settings.pair.expired') : t('settings.pair.expiresIn', { time: clockText(remaining) })}
         </div>
 
         {error !== '' && <div className="settings-note error pair-error">{error}</div>}
 
         <div className="pair-actions">
           <button type="button" className="btn-primary" disabled={busy} onClick={regenerate}>
-            {busy ? '正在生成…' : '重新生成'}
+            {busy ? t('settings.pair.generating') : t('settings.pair.regenerate')}
           </button>
         </div>
       </div>

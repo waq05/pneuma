@@ -1,0 +1,9 @@
+{
+  "plugin.name": "终端",
+  "tab.label": "终端",
+  "empty.lead": "终端来自桌面外壳的原生桥，浏览器里没有它。要用终端请打开桌面版（或者在终端里跑",
+  "empty.tail": "）。",
+  "bar.aria": "终端 Shell",
+  "banner": "{label} · 管道模式：输入命令回车执行，不支持交互式全屏程序",
+  "start.failed": "{label} 启动失败：{message}"
+}

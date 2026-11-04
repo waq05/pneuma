@@ -23,7 +23,7 @@
  */
 import { StrictMode, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { defineUiPlugin, onAppearanceRequest } from '@dsc/ui'
+import { createT, defineUiPlugin, onAppearanceRequest } from '@dsc/ui'
 import type { UiPrefsView } from '@dsc/ui-core'
 import { primePanelGeometry, setPanelGeometrySaver } from '@dsc/ui-primitives'
 // 共享运行时（平台种子）：通道工厂、RuntimeProvider、外观落地。它们由 **shell** 提供，
@@ -42,6 +42,13 @@ import {
 // `start(api)` 的入参拿，插件 bundle 不 import 引导。
 import type { UiBootSession, UiRendererApi } from '@pneuma/ui-boot/boot.js'
 import type { UiPluginHmr } from '@pneuma/ui-boot/hmr.js'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /**
  * 布局插件的**产物 id**（`lib/ui/plugins/layout/`）。
@@ -182,17 +189,15 @@ function LayoutUnavailable({ failure }: { failure: LayoutFailure }): ReactNode {
     >
       <div style={{ maxWidth: 640, width: '100%' }}>
         <h1 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 600 }}>
-          界面布局（ui-layout）{failure.reason}
+          {t('renderer.diag.title')}{failure.reason}
         </h1>
+        <p style={{ margin: '0 0 12px', color: '#b9b5ad' }}>{t('renderer.diag.lead')}</p>
         <p style={{ margin: '0 0 12px', color: '#b9b5ad' }}>
-          整张页面只有骨架能画出来。骨架没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。
-        </p>
-        <p style={{ margin: '0 0 12px', color: '#b9b5ad' }}>
-          打开它的地方：编辑 <code style={{ color: '#e8e6e1' }}>~/.dsc/plugins.json</code>，找到{' '}
-          <code style={{ color: '#e8e6e1' }}>&quot;file&quot;: &quot;ui-layout&quot;</code> 那一条，
-          把 <code style={{ color: '#e8e6e1' }}>&quot;disabled&quot;</code> 改成{' '}
-          <code style={{ color: '#e8e6e1' }}>false</code>（或删掉那一条），然后刷新本页。
-          宿主重启后它也会回到插件中心的内置插件列表里。
+          {t('renderer.diag.where')} <code style={{ color: '#e8e6e1' }}>~/.dsc/plugins.json</code>
+          {t('renderer.diag.find')} <code style={{ color: '#e8e6e1' }}>&quot;file&quot;: &quot;ui-layout&quot;</code>{' '}
+          {t('renderer.diag.andSet')} <code style={{ color: '#e8e6e1' }}>&quot;disabled&quot;</code>{' '}
+          {t('renderer.diag.toFalse')} <code style={{ color: '#e8e6e1' }}>false</code>
+          {t('renderer.diag.rest')}
         </p>
         {failure.detail === null ? null : (
           <pre
@@ -242,13 +247,10 @@ export async function start(api: UiRendererApi): Promise<void> {
   let failure: LayoutFailure | null =
     layoutEntry === undefined
       ? boot.disabled?.includes(LAYOUT_ID) === true
-        ? { reason: '已停用', detail: api.bootError }
+        ? { reason: t('renderer.reason.disabled'), detail: api.bootError }
         : {
-            reason: '没有进启动清单',
-            detail:
-              api.bootError ??
-              `启动图里没有 ${LAYOUT_ID} 这一条：产物没构建，或被 API 门禁拦下了。` +
-                '跑 `pnpm -C ui-shell build` 后刷新本页；插件中心 → 内置插件里也能看到它的开关。',
+            reason: t('renderer.reason.missing'),
+            detail: api.bootError ?? t('renderer.reason.missingDetail', { id: LAYOUT_ID }),
           }
       : null
   if (layoutEntry !== undefined) {
@@ -260,13 +262,13 @@ export async function start(api: UiRendererApi): Promise<void> {
       layout = loaded
     } catch (error) {
       failure = {
-        reason: '加载失败',
+        reason: t('renderer.reason.loadFailed'),
         detail: error instanceof Error ? error.message : String(error),
       }
     }
   }
   if (layout === null) {
-    renderLayoutUnavailable(container, failure ?? { reason: '加载失败', detail: null })
+    renderLayoutUnavailable(container, failure ?? { reason: t('renderer.reason.loadFailed'), detail: null })
     return
   }
   layoutSurface = layout
@@ -370,7 +372,7 @@ export async function start(api: UiRendererApi): Promise<void> {
  * `cordis.patch.yml` 与 `ui-boot/ui/main.tsx`）。
  */
 export default defineUiPlugin({
-  name: '界面渲染器',
+  name: t('renderer.plugin.name'),
   apply() {
     // 没有要登记的东西：渲染器不是「往槽里放一块」，它就是画那张纸的手。
   },

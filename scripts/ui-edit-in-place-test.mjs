@@ -86,7 +86,9 @@ check(
 )
 
 // ── [5] 文案说实话 ──────────────────────────────────────────────────────────────
-const honest = (s) => !s.includes('分叉出新会话，原会话保留') && s.includes('这条之后的回答会作废')
+// 提示语 2026-11-04 夜进本包字典（rows/user-row.tsx 用 t('transcript.user.editTip')）。
+// 钉两件事：还在说「作废」、不再说「分叉」；具体措辞由 ui-locale-test 判。
+const honest = (s) => !s.includes('分叉出新会话，原会话保留') && s.includes("t('transcript.user.editTip')")
 check('[5] 编辑提示不再说会分叉', honest(row))
 check('[5] 文案判据对脏副本必须红', !honest(`${row}\n分叉出新会话，原会话保留`))
 

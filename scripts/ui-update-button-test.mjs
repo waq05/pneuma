@@ -61,7 +61,7 @@ console.log('[2] 只有真有新版才出现')
   check('非 available 一律不渲染（正向出口）', /status\.status !== 'available'[\s\S]{0,80}?return null/.test(button))
   check('桥缺席时也不渲染（浏览器页签 / 远程页没有它）', button.includes('!native.available'))
   check('按钮上带版本号（画得出「哪个版本」）', button.includes('data-update-version={version}'))
-  check('按钮文案就是「更新」', button.includes("'更新'"))
+  check('按钮文案就是「更新」', button.includes("t('layout.update.action')"))
 }
 
 console.log('[3] 两种取数都要：问一次 + 订阅')
@@ -77,7 +77,7 @@ console.log('[4] 点下去走 installUpdate，并画进度')
 {
   check('点击调 installUpdate', button.includes("invoke<{ ok: boolean; error?: string }>('installUpdate')"))
   check('失败退回可点并把原因挂上（不静默）', button.includes('setInstalling(false)') && button.includes('setFault('))
-  check('进度用百分比画（percent 为 null 时给「更新中」）', button.includes('${String(percent)}%') && button.includes("'更新中'"))
+  check('进度用百分比画（percent 为 null 时给「更新中」）', button.includes('${String(percent)}%') && button.includes("t('layout.update.busy')"))
 }
 
 console.log('[5] 设置页「关于」的 kind:update 分出口')
@@ -85,7 +85,7 @@ console.log('[5] 设置页「关于」的 kind:update 分出口')
   check('收到 kind:update 记下版本', /data\?\.kind === 'update'[\s\S]{0,40}?setUpdateReady\(data\.version\)/.test(settings))
   check('就地给一颗「立即更新」', settings.includes('立即更新'))
   check('那颗按钮走同一条 installUpdate', settings.includes("invoke<{ ok: boolean; error?: string }>('installUpdate')"))
-  check('无桥时如实说明去哪做（不静默）', settings.includes('就地更新要用桌面外壳的原生桥'))
+  check('无桥时如实说明去哪做（不静默）', settings.includes("t('settings.ui.updateNoBridge')"))
   check('有新版时不再打开发布页（两条出口互斥）', !/kind === 'update'[\s\S]{0,120}?openExternal/.test(settings))
 }
 

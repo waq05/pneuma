@@ -25,8 +25,15 @@
  * @module dsc-ui-shell/ui-renderer/cordis-host
  */
 import { Context, type Fiber } from '@deepseek-ai/cordis'
-import { createScopedSlotApi, type ServiceRegistry } from '@dsc/ui-core'
+import { createScopedSlotApi, createT, type ServiceRegistry } from '@dsc/ui-core'
 import type { UiHostInfo, UiPluginApi, UiRuntimeApi, UiSlots } from '@dsc/ui'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui-core` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /**
  * 壳提供的那三个服务声明进方 context 的接口。
@@ -74,19 +81,34 @@ export interface UiMountHooks {
   onState?: (state: number, missing: readonly string[]) => void
 }
 
-/** fiber 状态码 → 人话（诊断区与日志用）。 */
+/** fiber 状态码 → 人话（诊断区与日志用）。
+ *
+ * 每条值是一枚 getter 而不是字符串：键与译文都在本包字典里，语言在页面生命周期里定死，
+ * 但延到取词那一刻才拼字符串，模块加载时就不必先读启动图。 */
 export const FIBER_STATE_TEXT: Readonly<Record<number, string>> = {
-  0: '待装（还差依赖）',
-  1: '装载中',
-  2: '已生效',
-  3: '装载失败',
-  4: '已卸载',
-  5: '已卸载',
+  get 0() {
+    return t('boot.fiber.pending')
+  },
+  get 1() {
+    return t('boot.fiber.loading')
+  },
+  get 2() {
+    return t('boot.fiber.active')
+  },
+  get 3() {
+    return t('boot.fiber.failed')
+  },
+  get 4() {
+    return t('boot.fiber.disposed')
+  },
+  get 5() {
+    return t('boot.fiber.disposed')
+  },
 }
 
 /** 一份 fiber 状态的人话；读不到给 undefined。 */
 export function fiberStateText(state: number | undefined): string | undefined {
-  return state === undefined ? undefined : (FIBER_STATE_TEXT[state] ?? `状态 ${String(state)}`)
+  return state === undefined ? undefined : (FIBER_STATE_TEXT[state] ?? t('boot.fiber.number', { state }))
 }
 
 /** 壳里的 cordis 根：装、卸、查状态。 */

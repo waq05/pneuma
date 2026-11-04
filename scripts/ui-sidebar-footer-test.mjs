@@ -79,7 +79,8 @@ const src = read('src/packages/ui-sessions/ui/ui.tsx')
 // 2026-10-25：取数口径搬到共享 hook（ui-layout/usage-today.ts），页脚只消费它。
 // 判定因此拆两处：页脚「用没用共享 hook」、hook「怎么取、取哪一格、多久刷」。
 const hookSrc = read('src/packages/ui-runtime/ui/usage-today.ts')
-const labelOnce = (s) => s.split('<span>今日总用量</span>').length === 2
+// 文案 2026-11-04 夜进本包字典：钉「用了那个键且只画一处」，中文原文由 ui-locale-test 判。
+const labelOnce = (s) => s.split("<span>{t('footer.usage')}</span>").length === 2
 const usesSharedHook = (s) => s.includes('useTodayUsage(usage)')
 const channelCall = (s) => s.includes(".invoke<UsageStatsShape>('usageStats')")
 const lastDayCell = (s) => s.includes('stats.days[stats.days.length - 1]')
@@ -100,7 +101,7 @@ check('[2] 页脚只订不派 shell.session.new（选目录开会话归组头 �
 check('[2] 悬浮说明走原生 title（壳不渲染 data-tip）', tipReachable(src))
 
 // 弄脏副本各红（每条正判据一个专属脏法）
-check('[2] 文案判据对脏副本必须红', !labelOnce(dirtyAll(src, '今日总用量', '会话用量')))
+check('[2] 文案判据对脏副本必须红', !labelOnce(dirtyAll(src, "<span>{t('footer.usage')}</span>", '<span>会话用量</span>')))
 check('[2] 共享 hook 判据对脏副本必须红', !usesSharedHook(dirtyAll(src, 'useTodayUsage(usage)', 'useTodayUsage()')))
 check('[2] 通道判据对脏副本必须红', !channelCall(dirtyAll(hookSrc, "'usageStats'", "'usageStats2'")))
 check('[2] days 末位判据对脏副本必须红', !lastDayCell(dirtyAll(hookSrc, 'stats.days.length - 1', '0')))

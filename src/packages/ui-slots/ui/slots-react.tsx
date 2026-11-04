@@ -10,8 +10,14 @@
  * @module dsc-ui-shell/ui-slots/slots-react
  */
 import { Component, createContext, useCallback, useContext, useMemo, useSyncExternalStore, type ComponentType, type ReactNode } from 'react'
-import { SlotAssemblyError, useSeatProps, useSlot, type SlotEntry, type StoredFactory } from '@dsc/ui-core'
+import { createT, SlotAssemblyError, useSeatProps, useSlot, type SlotEntry, type StoredFactory } from '@dsc/ui-core'
 import type { SlotRenderApi, UiComponent, UiSlots } from '@dsc/ui'
+// 本包的中英对照：中文是语义真源（`locale/ui.zh.json`），英文是译本。
+// 崩溃视图是**用户唯一会看到它**的地方：插件渲染炸了，至少要知道炸的是哪一块。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+const t = createT({ zh, en })
 
 /** 渲染位置不关心 owner 值时共用这一个空对象。 */
 const NO_OWNER: Readonly<Record<string, never>> = Object.freeze({})
@@ -181,7 +187,8 @@ class SlotErrorBoundary extends Component<
     if (this.state.error !== null) {
       return (
         <div className="slot-crash" data-slot={this.props.slot} data-entry={this.props.id}>
-          界面块 {this.props.id} 渲染失败：{this.state.error}
+          {t('slot.crash', { id: this.props.id })}
+          {this.state.error}
         </div>
       )
     }
@@ -377,7 +384,8 @@ class FactoryErrorBoundary extends Component<
     if (this.state.error !== null) {
       return (
         <div className="factory-crash" data-factory={this.props.name} data-factory-slot={this.props.id}>
-          Factory {this.props.name} 的 {this.props.id} 渲染失败：{this.state.error}
+          {t('factory.crash', { name: this.props.name, id: this.props.id })}
+          {this.state.error}
         </div>
       )
     }

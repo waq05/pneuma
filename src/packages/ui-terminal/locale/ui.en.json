@@ -1,0 +1,9 @@
+{
+  "plugin.name": "Terminal",
+  "tab.label": "Terminal",
+  "empty.lead": "The terminal comes from the desktop shell's native bridge, which a browser does not have. Open the desktop app to use it (or run",
+  "empty.tail": " in a terminal).",
+  "bar.aria": "Terminal shell",
+  "banner": "{label} · Pipe mode: commands run on Enter; interactive full-screen programs are not supported",
+  "start.failed": "{label} failed to start: {message}"
+}

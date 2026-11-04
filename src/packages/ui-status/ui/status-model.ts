@@ -2,8 +2,9 @@
  * 状态面板的纯派生逻辑：进程聚焦窗口 / 折叠桶语义 / 胶囊摘要链 / 时间口径。
  *
  * 零 React、零 DOM——组件只做渲染，规则全在这里，`scripts/ui-status-panel-test.mjs`
- * 按 Node 的类型擦除直接 import 这个 .ts 逐条钉（所以这里只许 `import type`，
- * 不许引入任何运行期依赖）。
+ * 按 Node 的类型擦除直接 import 这个 .ts 逐条钉。运行期依赖只有取词器一个
+ * （`@dsc/ui` 的 `createT` + 本包的两份字典）：探针经 `scripts/_i18n-alias.mjs` 解析它，
+ * 没有启动图时按中文，正好是断言要的那一档。除它之外不许再引入运行期依赖。
  *
  * 规则对照 ZCode `packages/ui/src/v4/ConversationStatusPanel.tsx`（聚焦窗口
  * `getStatusPanelTodoFocusWindow`、折叠桶文案、`StatusSummaryRow` 的优先级链）。
@@ -13,6 +14,7 @@
  *
  * @module dsc-ui-shell/plugins/status/model
  */
+import { createT } from '@dsc/ui'
 import type {
   BackgroundWorkView,
   GoalView,
@@ -21,6 +23,12 @@ import type {
   TodoItemView,
   TodoView,
 } from '@dsc/ui'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 超过这个条数才启用聚焦窗口（0-6 条按原序全显）。 */
 export const TODO_COMPACT_THRESHOLD = 6
@@ -186,9 +194,9 @@ export function formatDuration(ms: number): string | null {
   const minutes = Math.floor(total / 60) % 60
   const hours = Math.floor(total / 3600)
   const pad = (value: number): string => String(value).padStart(2, '0')
-  if (hours > 0) return `${String(hours)}小时${pad(minutes)}分`
-  if (minutes > 0) return `${String(minutes)}分${String(seconds)}秒`
-  return `${String(seconds)}秒`
+  if (hours > 0) return t('status.duration.hms', { h: hours, m: pad(minutes) })
+  if (minutes > 0) return t('status.duration.ms', { m: minutes, s: seconds })
+  return t('status.duration.s', { s: seconds })
 }
 
 /**
@@ -198,9 +206,9 @@ export function formatDuration(ms: number): string | null {
 export function formatCountdown(nextAt: number | null, now: number): string | null {
   if (nextAt === null || !Number.isFinite(nextAt)) return null
   const diff = nextAt - now
-  if (diff <= 0) return '已到点'
+  if (diff <= 0) return t('status.countdown.due')
   const text = formatDuration(diff)
-  return text === null || diff < 1000 ? '即将' : `${text}后`
+  return text === null || diff < 1000 ? t('status.countdown.soon') : t('status.countdown.after', { text })
 }
 
 /** 一个过去时刻距今多久：不到一分钟给 `刚刚`（列表按分钟级刷新，不给秒级读数）。 */
@@ -208,9 +216,9 @@ export function formatAgo(at: number, now: number): string | null {
   if (!Number.isFinite(at) || at <= 0) return null
   const diff = now - at
   if (diff < 0) return null
-  if (diff < 60_000) return '刚刚'
+  if (diff < 60_000) return t('status.ago.justNow')
   const text = formatDuration(diff)
-  return text === null ? null : `${text}前`
+  return text === null ? null : t('status.ago.ago', { text })
 }
 
 /** 一条队友行的已运行毫秒（收工的按 finishedAt 冻结，在跑的跟 now 走）。 */

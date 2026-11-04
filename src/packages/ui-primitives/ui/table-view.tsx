@@ -9,6 +9,13 @@
  * @module dsc-ui-shell/platform/table-view
  */
 import { useEffect, useRef, useState, type JSX } from 'react'
+import { createT } from '@dsc/ui-core'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui-core` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 表格类预览的行 / 列截断。 */
 const TABLE_MAX_ROWS = 500
@@ -36,7 +43,7 @@ function TableBody({ rows, lead }: { rows: string[][]; lead?: JSX.Element }): JS
       {lead}
       {truncated && (
         <div className="tree-note" data-tree-note="truncated">
-          表格较大，仅显示前 {TABLE_MAX_ROWS} 行 × {TABLE_MAX_COLS} 列
+          {t('primitives.table.truncated', { rows: TABLE_MAX_ROWS, cols: TABLE_MAX_COLS })}
         </div>
       )}
       <table className="file-table">
@@ -85,8 +92,8 @@ export function CsvView({ text, path }: { text: string; path: string }): JSX.Ele
       on = false
     }
   }, [text, path])
-  if (failed !== '') return <NoticeLine message={`解析失败：${failed}`} />
-  if (rows === null) return <NoticeLine message="解析中…" />
+  if (failed !== '') return <NoticeLine message={t('primitives.table.failed', { message: failed })} />
+  if (rows === null) return <NoticeLine message={t('primitives.table.parsing')} />
   return <TableBody rows={rows} />
 }
 
@@ -139,8 +146,8 @@ export function XlsxView({ base64 }: { base64: string }): JSX.Element {
     setFailed('')
     showSheet(index)
   }
-  if (failed !== '') return <NoticeLine message={`解析失败：${failed}`} />
-  if (sheets === null) return <NoticeLine message="解析中…" />
+  if (failed !== '') return <NoticeLine message={t('primitives.table.failed', { message: failed })} />
+  if (sheets === null) return <NoticeLine message={t('primitives.table.parsing')} />
   const tabs =
     sheets.length > 1 ? (
       <div className="file-sheets">

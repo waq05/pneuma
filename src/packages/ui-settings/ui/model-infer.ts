@@ -24,7 +24,13 @@
  *
  * @module dsc-ui-shell/plugins/settings/model-infer
  */
-import type { EffortMap, Modality, ProviderModelView, ThinkingLevel, ThinkingParam } from '@dsc/ui'
+import { createT, type EffortMap, type Modality, type ProviderModelView, type ThinkingLevel, type ThinkingParam } from '@dsc/ui'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 与 `core/model-caps.ts` 的 `DEFAULT_THINKING_LEVELS` 同值（四档都在）。 */
 const DEFAULT_LEVELS: readonly ThinkingLevel[] = ['off', 'low', 'high', 'max']
@@ -66,25 +72,25 @@ interface FamilyRule {
  * 所以 `deepseek-v4` 必须排在 `deepseek` 前面）。
  */
 const FAMILIES: readonly FamilyRule[] = [
-  { key: 'deepseekv4', contextWindow: 1_000_000, maxTokens: 65_536, image: true, label: 'DeepSeek V4 家族' },
-  { key: 'deepseek', contextWindow: 128_000, maxTokens: 8_192, label: 'DeepSeek 家族' },
-  { key: 'claude', contextWindow: 200_000, maxTokens: 64_000, image: true, param: 'reasoning-effort', label: 'Claude 家族' },
-  { key: 'gemini', contextWindow: 1_000_000, maxTokens: 65_536, image: true, video: true, param: 'reasoning-effort', label: 'Gemini 家族' },
-  { key: 'gpt5', contextWindow: 400_000, maxTokens: 128_000, image: true, param: 'reasoning-effort', label: 'GPT-5 家族' },
-  { key: 'gpt4', contextWindow: 128_000, maxTokens: 16_384, image: true, param: 'reasoning-effort', label: 'GPT-4 家族' },
+  { key: 'deepseekv4', contextWindow: 1_000_000, maxTokens: 65_536, image: true, label: t('settings.infer.family.deepseekv4') },
+  { key: 'deepseek', contextWindow: 128_000, maxTokens: 8_192, label: t('settings.infer.family.deepseek') },
+  { key: 'claude', contextWindow: 200_000, maxTokens: 64_000, image: true, param: 'reasoning-effort', label: t('settings.infer.family.claude') },
+  { key: 'gemini', contextWindow: 1_000_000, maxTokens: 65_536, image: true, video: true, param: 'reasoning-effort', label: t('settings.infer.family.gemini') },
+  { key: 'gpt5', contextWindow: 400_000, maxTokens: 128_000, image: true, param: 'reasoning-effort', label: t('settings.infer.family.gpt5') },
+  { key: 'gpt4', contextWindow: 128_000, maxTokens: 16_384, image: true, param: 'reasoning-effort', label: t('settings.infer.family.gpt4') },
   { key: 'o1', contextWindow: 200_000, maxTokens: 100_000, image: true, param: 'reasoning-effort', label: 'o1' },
   { key: 'o3', contextWindow: 200_000, maxTokens: 100_000, image: true, param: 'reasoning-effort', label: 'o3' },
   { key: 'o4', contextWindow: 200_000, maxTokens: 100_000, image: true, param: 'reasoning-effort', label: 'o4' },
-  { key: 'glm', contextWindow: 200_000, maxTokens: 32_768, label: 'GLM 家族' },
-  { key: 'qwen', contextWindow: 128_000, maxTokens: 32_768, label: 'Qwen 家族' },
-  { key: 'moonshot', contextWindow: 256_000, maxTokens: 32_768, label: 'Kimi / Moonshot 家族' },
-  { key: 'kimi', contextWindow: 256_000, maxTokens: 32_768, label: 'Kimi 家族' },
-  { key: 'minimax', contextWindow: 1_000_000, maxTokens: 32_768, label: 'MiniMax 家族' },
-  { key: 'doubao', contextWindow: 256_000, maxTokens: 32_768, image: true, label: '豆包家族' },
-  { key: 'grok', contextWindow: 256_000, maxTokens: 32_768, image: true, param: 'reasoning-effort', label: 'Grok 家族' },
-  { key: 'mistral', contextWindow: 128_000, maxTokens: 8_192, label: 'Mistral 家族' },
-  { key: 'llama', contextWindow: 128_000, maxTokens: 8_192, label: 'Llama 家族' },
-  { key: 'step', contextWindow: 256_000, maxTokens: 32_768, label: 'Step 家族' },
+  { key: 'glm', contextWindow: 200_000, maxTokens: 32_768, label: t('settings.infer.family.glm') },
+  { key: 'qwen', contextWindow: 128_000, maxTokens: 32_768, label: t('settings.infer.family.qwen') },
+  { key: 'moonshot', contextWindow: 256_000, maxTokens: 32_768, label: t('settings.infer.family.moonshot') },
+  { key: 'kimi', contextWindow: 256_000, maxTokens: 32_768, label: t('settings.infer.family.kimi') },
+  { key: 'minimax', contextWindow: 1_000_000, maxTokens: 32_768, label: t('settings.infer.family.minimax') },
+  { key: 'doubao', contextWindow: 256_000, maxTokens: 32_768, image: true, label: t('settings.infer.family.doubao') },
+  { key: 'grok', contextWindow: 256_000, maxTokens: 32_768, image: true, param: 'reasoning-effort', label: t('settings.infer.family.grok') },
+  { key: 'mistral', contextWindow: 128_000, maxTokens: 8_192, label: t('settings.infer.family.mistral') },
+  { key: 'llama', contextWindow: 128_000, maxTokens: 8_192, label: t('settings.infer.family.llama') },
+  { key: 'step', contextWindow: 256_000, maxTokens: 32_768, label: t('settings.infer.family.step') },
 ]
 
 /** 归一化：大小写、点、下划线、空格都不算数（`DeepSeek V41 Flash` 与 `deepseek-v4.1-flash` 同一个键）。 */
@@ -173,7 +179,7 @@ export function buildKnownIndex(providers: readonly { name: string; displayName:
 export function inferModelCaps(id: string, known?: ReadonlyMap<string, KnownModel>): InferredCaps {
   const reused = known?.get(normalizeModelId(id))
   if (reused !== undefined) {
-    return fromModel(reused.model, 'known', `同一个 id 已在「${reused.provider}」里配过，照抄那份能力`)
+    return fromModel(reused.model, 'known', t('settings.infer.knownNote', { provider: reused.provider }))
   }
 
   const rule = familyRule(id)
@@ -188,9 +194,9 @@ export function inferModelCaps(id: string, known?: ReadonlyMap<string, KnownMode
 
   if (marker !== null || modal.image || modal.video) {
     const bits: string[] = []
-    if (marker !== null) bits.push(`id 里写着 ${String(Math.round(marker / 1000))}k`)
-    if (modal.image) bits.push('id 里有视觉词')
-    if (modal.video) bits.push('id 里有视频词')
+    if (marker !== null) bits.push(t('settings.infer.markerSize', { size: Math.round(marker / 1000) }))
+    if (modal.image) bits.push(t('settings.infer.markerImage'))
+    if (modal.video) bits.push(t('settings.infer.markerVideo'))
     return {
       contextWindow,
       maxTokens,
@@ -199,7 +205,7 @@ export function inferModelCaps(id: string, known?: ReadonlyMap<string, KnownMode
       effortMap: {},
       modalities,
       source: 'marker',
-      note: `按 ${bits.join('、')} 填的`,
+      note: t('settings.infer.markerNote', { basis: bits.join(t('settings.infer.separator')) }),
     }
   }
 
@@ -212,7 +218,7 @@ export function inferModelCaps(id: string, known?: ReadonlyMap<string, KnownMode
       effortMap: {},
       modalities,
       source: 'family',
-      note: `按家族猜的（${rule.label}）：数字是常见档位，拉进来后建议核一眼`,
+      note: t('settings.infer.familyNote', { family: rule.label }),
     }
   }
 
@@ -224,6 +230,6 @@ export function inferModelCaps(id: string, known?: ReadonlyMap<string, KnownMode
     effortMap: {},
     modalities: ['text'],
     source: 'default',
-    note: '没查到这个 id 的家族，按缺省填（128k / 8192 / 只吃文本），加完请自己核',
+    note: t('settings.infer.defaultNote'),
   }
 }

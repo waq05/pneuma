@@ -329,6 +329,24 @@ import { useService } from '@dsc/ui-core'
 export { useService }
 
 /**
+ * ── 界面文案（每个包自带中英对照）─────────────────────────────────────────────
+ *
+ * 语言从启动图的 `host.language` 读一次（`config.yaml` 的 `language:`，内核经启动图带下来），
+ * 每个包在 `locale/ui.zh.json` / `ui.en.json` 里放自己的键值，入口建一个取词器：
+ *
+ * ```ts
+ * import { createT } from '@dsc/ui'
+ * import zh from '../locale/ui.zh.json'
+ * import en from '../locale/ui.en.json'
+ * const t = createT({ zh, en })
+ * ```
+ *
+ * 中文是语义真源：英文缺某条回落中文，不会显示键名或空白。
+ */
+export { createT, normalizeLanguage, uiLanguage } from '@dsc/ui-core'
+export type { UiLanguage, UiMessages } from '@dsc/ui-core'
+
+/**
  * ── 动作表（A1）────────────────────────────────────────────────────────────────
  *
  * 全局、无参的动作只有一份登记处：命令面板、首屏能力卡、设置导航都从这里读。

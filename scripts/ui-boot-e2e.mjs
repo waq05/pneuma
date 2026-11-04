@@ -289,29 +289,41 @@ async function main() {
   process.env['HOME'] = home
   process.env['USERPROFILE'] = home
   process.env['DSC_HOME'] = dsc
+  /**
+   * 写临时配置：假 provider + 可选的语言。
+   *
+   * 语言是这一轮新增的一段要验的东西：`language: en` 经 `webserver` 进启动图的 `host.language`，
+   * 界面据此取英文文案。配置只影响**这一段**，所以每段开跑前按自己的需要重写一次。
+   * @param dir - 临时 DSC_HOME
+   * @param language - 给了就写一行 `language:`
+   */
+  const writeConfig = (dir, language) => {
+    writeFileSync(
+      join(dir, 'config.yaml'),
+      [
+        '# 自检专用：一个指向本机 discard 端口的假 provider（不联网、不花钱、不发请求）',
+        'default:',
+        '  provider: fake',
+        '  model: fake-chat',
+        ...(language === undefined ? [] : ['language: ' + language]),
+        'providers:',
+        '  fake:',
+        '    displayName: 自检假端点',
+        '    baseURL: http://127.0.0.1:9/v1',
+        '    apiKeyEnv: DSC_FAKE_KEY',
+        '    models:',
+        '      - id: fake-chat',
+        '        name: Fake Chat',
+        '        contextWindow: 128000',
+        '        maxTokens: 4096',
+        '',
+      ].join(String.fromCharCode(10)),
+      'utf8',
+    )
+  }
   // 给界面一个「有端点」的假 provider：本探针不发起对话，只是让正常态那张截图里
   // 不出现「没有可用的模型端点」的提示条（那是配置问题，不是本探针要证的事）。
-  writeFileSync(
-    join(dsc, 'config.yaml'),
-    [
-      '# 自检专用：一个指向本机 discard 端口的假 provider（不联网、不花钱、不发请求）',
-      'default:',
-      '  provider: fake',
-      '  model: fake-chat',
-      'providers:',
-      '  fake:',
-      '    displayName: 自检假端点',
-      '    baseURL: http://127.0.0.1:9/v1',
-      '    apiKeyEnv: DSC_FAKE_KEY',
-      '    models:',
-      '      - id: fake-chat',
-      '        name: Fake Chat',
-      '        contextWindow: 128000',
-      '        maxTokens: 4096',
-      '',
-    ].join(String.fromCharCode(10)),
-    'utf8',
-  )
+  writeConfig(dsc, undefined)
 
   const registry = await import(new URL('../lib/core/plugin-registry.js', import.meta.url).href)
   console.log('  临时 HOME：' + home)
@@ -396,11 +408,36 @@ async function main() {
         record('启动占位 #boot-splash 已退场（诊断页没被盖住）', probe.splash === false, String(probe.splash))
       },
     },
+    {
+      key: 'english',
+      title: '英文界面：language: en 时页面是英文',
+      home,
+      dsc,
+      disabled: [],
+      language: 'en',
+      shot: join(SHOTS, 'ui-boot-english.png'),
+      assert: (record, probe) => {
+        // 语言从 config.yaml 一路到页面：启动图带的 host.language 就是这一段要证的那一跳。
+        record(
+          '启动图 host.language 是 en',
+          probe.boot !== null && probe.boot.host !== null && probe.boot.host.language === 'en',
+          JSON.stringify(probe.boot === null ? null : probe.boot.host),
+        )
+        record('骨架 .app 在（英文界面不是白屏）', probe.app >= 1, '.app 个数=' + String(probe.app))
+        record('侧栏有「New session」（文案跟着语言走）', /New session/.test(probe.text || ''), textPeek(probe))
+        record('侧栏有「Settings」', /Settings/.test(probe.text || ''), textPeek(probe))
+        record('不再出现「新会话」', !/新会话/.test(probe.text || ''), textPeek(probe))
+        record('不再出现「设置」', !/设置/.test(probe.text || ''), textPeek(probe))
+        record('没有诊断文案（不是靠停用凑出来的英文）', probe.hasLayoutDiag === false && probe.hasRendererDiag === false, textPeek(probe))
+      },
+    },
   ]
 
   const startedAt = Date.now()
   const rows = []
   for (const scene of scenes) {
+    // 每段按自己的语言重写配置：`language` 经 webserver 进启动图，界面据此取文案。
+    if (scene.language !== undefined) writeConfig(scene.dsc, scene.language)
     const row = await runScene(registry, scene)
     // 截图单独断言：驱动写没写、写出来是不是一张有内容的图。
     const ok = shotOk(scene.shot)
@@ -431,7 +468,7 @@ function writeReport(rows, totalMs) {
         durationMs: totalMs,
         pass,
         fail: total - pass,
-        ok: total === pass && rows.length === 3,
+        ok: total === pass && rows.length === 4,
         scenes: rows.map((row) => ({
           ...row,
           shot: row.shot.startsWith(root) ? row.shot.slice(root.length + 1).replace(/\\/g, '/') : row.shot,

@@ -32,8 +32,15 @@
 import { createContext, Fragment, memo, useContext, useEffect, useMemo, useRef, useState, type JSX, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { createT } from '@dsc/ui-core'
 import { highlightToLines, type HighlightedCodeLine } from './highlight'
 import { joinPath } from './paths'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui-core` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 宿主 fs-read 回包里 markdown 图片消费的那几个字段（形状对就行，不引契约）。 */
 interface FsReadLike {
@@ -130,7 +137,7 @@ function MdImage({ src, alt }: { src: string; alt: string }): JSX.Element {
     }
   }, [external, abs, fsRead, resolved])
   if (failed || (!external && resolved === undefined)) {
-    return <span className="file-md-img-missing">[图片：{alt || src}]</span>
+    return <span className="file-md-img-missing">{t('primitives.markdown.imageMissingNamed', { label: alt || src })}</span>
   }
   return <img src={resolved} alt={alt} loading="lazy" />
 }
@@ -321,7 +328,7 @@ const MARKDOWN_COMPONENTS: Components = {
   img: ({ src, alt }) => {
     const source = typeof src === 'string' ? src : ''
     return source === '' ? (
-      <span className="file-md-img-missing">[图片]</span>
+      <span className="file-md-img-missing">{t('primitives.markdown.imageMissing')}</span>
     ) : (
       <MdImage src={source} alt={alt ?? ''} />
     )

@@ -14,7 +14,10 @@
  * @module dsc-ui-shell/plugins/composer/model-controls
  */
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react'
-import { IconBrain, IconCheck, IconChevronDown, IconChevronRight, IconPackage, useHostChannel, useHostSelector, type EffortLevel, type ModelChoiceView } from '@dsc/ui'
+import { createT, IconBrain, IconCheck, IconChevronDown, IconChevronRight, IconPackage, useHostChannel, useHostSelector, type EffortLevel, type ModelChoiceView } from '@dsc/ui'
+// 本包自己的中英对照：中文原文是语义真源，英文是译本（构建时内联进插件 bundle）。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
 import { EffortSlider } from './effort-slider'
 import {
   chooseFlyoutSide,
@@ -33,6 +36,9 @@ import {
   type FlyoutSide,
 } from './model-picker'
 import { readEffort, readModel, readProvider } from './surfaces'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定。 */
+const t = createT({ zh, en })
 
 /** DOM 原生键盘事件（`window.addEventListener` 用；React 的 KeyboardEvent 是另一个类型）。 */
 type WindowKeyboardEvent = globalThis.KeyboardEvent
@@ -356,7 +362,9 @@ export function useModelControls({ channel, onFault, onTakeOver }: ModelControls
     if (choices.length === 0) {
       return (
         <div className="pop-item">
-          <span className="name">{models.length === 0 ? '清单没取到' : '这个端点还没有模型'}</span>
+          <span className="name">
+            {models.length === 0 ? t('model.list.empty') : t('model.provider.empty')}
+          </span>
         </div>
       )
     }
@@ -450,10 +458,10 @@ export function useModelControls({ channel, onFault, onTakeOver }: ModelControls
                         type="button"
                         ref={modelChipRef}
                         className={`model-btn composer-model-chip${modelOpen ? ' open' : ''}`}
-                        title={`模型：${chip.full}（点开换）`}
+                        title={t('model.chip.title', { name: chip.full })}
                         aria-haspopup="menu"
                         aria-expanded={modelOpen}
-                        aria-label={`当前模型 ${chip.full}`}
+                        aria-label={t('model.chip.aria', { name: chip.full })}
                         data-composer-model={current.entry?.value ?? chip.full}
                         onClick={() => {
                           setModelOpen((open) => !open)
@@ -485,7 +493,7 @@ export function useModelControls({ channel, onFault, onTakeOver }: ModelControls
                           <div
                             className={`model-pop model-picker${twoLevel ? '' : ' flat'}`}
                             role="menu"
-                            aria-label="选择模型"
+                            aria-label={t('model.menu.aria')}
                             ref={modelPanelRef}
                             data-flyout-side={flyoutShown ? flyoutSide : undefined}
                             style={
@@ -502,7 +510,7 @@ export function useModelControls({ channel, onFault, onTakeOver }: ModelControls
                                 否则用户只看到一片「一条都不打勾」的清单，不知道是谁不对。 */}
                             {current.entry === undefined && model !== '' ? (
                               <div className="pop-item model-unknown" data-model-unknown="true">
-                                <span className="name">当前：{model} —— 清单里没有这个模型</span>
+                                <span className="name">{t('model.currentMissing', { model })}</span>
                               </div>
                             ) : null}
                             <div className="model-picker-body">
@@ -522,7 +530,7 @@ export function useModelControls({ channel, onFault, onTakeOver }: ModelControls
                                 >
                                   {groups.length === 0 ? (
                                     <div className="pop-item">
-                                      <span className="name">清单没取到</span>
+                                      <span className="name">{t('model.list.empty')}</span>
                                     </div>
                                   ) : (
                                     groups.map((group) => {
@@ -539,8 +547,11 @@ export function useModelControls({ channel, onFault, onTakeOver }: ModelControls
                                           data-provider-current={owns ? 'true' : undefined}
                                           title={
                                             hint === ''
-                                              ? `${group.displayName} · ${String(group.models.length)} 个模型`
-                                              : `${group.displayName} · 当前 ${hint}`
+                                              ? t('model.provider.count', {
+                                                  provider: group.displayName,
+                                                  count: group.models.length,
+                                                })
+                                              : t('model.provider.current', { provider: group.displayName, model: hint })
                                           }
                                           /* 悬浮即飞出（不延迟：一级就几个端点，抖动风险不值得一个计时器）；
                                              键盘 Tab 到与手指点一下都走同一条路——触摸屏没有悬浮，
@@ -590,7 +601,7 @@ export function useModelControls({ channel, onFault, onTakeOver }: ModelControls
                                 <div
                                   className="model-flyout-card"
                                   role="menu"
-                                  aria-label={`${hoveredGroup.displayName} 的模型`}
+                                  aria-label={t('model.flyout.aria', { provider: hoveredGroup.displayName })}
                                   ref={flyoutCardRef}
                                 >
                                   <div className="model-picker-rows" data-model-rows="" ref={modelRows}>
@@ -608,7 +619,7 @@ export function useModelControls({ channel, onFault, onTakeOver }: ModelControls
                                 openModelsSettings()
                               }}
                             >
-                              <span className="name">管理模型</span>
+                              <span className="name">{t('model.manage')}</span>
                             </button>
                           </div>
                         </>
@@ -624,10 +635,10 @@ export function useModelControls({ channel, onFault, onTakeOver }: ModelControls
                         <button
                           type="button"
                           className={`model-btn composer-effort-chip${effortOpen ? ' open' : ''}`}
-                          title={`思考强度：${effortText}（点开换档）`}
+                          title={t('model.effort.title', { level: effortText })}
                           aria-haspopup="menu"
                           aria-expanded={effortOpen}
-                          aria-label={`当前思考强度 ${effortText}`}
+                          aria-label={t('model.effort.aria', { level: effortText })}
                           data-composer-effort={shownEffort}
                           onClick={() => {
                             setEffortOpen((open) => !open)
@@ -650,13 +661,13 @@ export function useModelControls({ channel, onFault, onTakeOver }: ModelControls
                             />
                             {/* 滑杆卡（2026-10-26 换掉原来那一列按钮）：档位有顺序，滑杆把顺序画出来。
                                 选完不关卡片：拖着扫档时关掉，等于每试一档都要重开一次。 */}
-                            <div className="model-pop effort-pop" role="group" aria-label="思考强度">
+                            <div className="model-pop effort-pop" role="group" aria-label={t('model.effort.menu.aria')}>
                               <EffortSlider
                                 levels={sliderLevels}
                                 value={shownEffort}
                                 note={
                                   current.entry === undefined && model !== ''
-                                    ? '模型不在清单里，列的是它声明的全部档位'
+                                    ? t('model.effort.note')
                                     : null
                                 }
                                 onCommit={commitEffort}
@@ -668,7 +679,7 @@ export function useModelControls({ channel, onFault, onTakeOver }: ModelControls
                     ) : (
                       <span
                         className="model-btn composer-effort-chip fixed"
-                        title={`思考强度：${effortText}（这个模型没有可切换的档位）`}
+                        title={t('model.effort.fixed', { level: effortText })}
                         data-composer-effort={effort}
                       >
                         <IconBrain size={13} />

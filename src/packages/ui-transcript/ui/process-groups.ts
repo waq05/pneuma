@@ -36,8 +36,14 @@
  *
  * @module dsc-ui-shell/plugins/transcript/process-groups
  */
-import type { TranscriptEntry } from '@dsc/ui'
+import { createT, type TranscriptEntry } from '@dsc/ui'
 import type { RoundInfo } from './timing'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /**
  * 过程类别：把工具名归成十四个行为类（对照 dsh 的 process-activity.ts:7-21）。
@@ -364,22 +370,22 @@ export function reasoningDetail(text: string): string {
   return ''
 }
 
-/** 已结束组的类别文案（对照 dsh 的中文文案表 locale.ts:35-48）。 */
+/** 已结束组的类别文案（对照 dsh 的中文文案表 locale.ts:35-48；译文在本包字典里）。 */
 const DONE_LABEL: Record<ProcessActivity, string> = {
-  read: '已读取文件',
-  readImage: '已读取图片',
-  search: '已搜索代码',
-  write: '已写入文件',
-  edit: '修改了文件',
-  commands: '执行了命令',
-  code: '运行了代码',
-  webSearch: '已搜索网页',
-  webFetch: '已访问网页',
-  browser: '已浏览网页',
-  subagents: '已协调子智能体',
-  plan: '更新了计划',
-  questions: '向用户提出了问题',
-  tools: '已调用工具',
+  read: t('transcript.group.done.read'),
+  readImage: t('transcript.group.done.readImage'),
+  search: t('transcript.group.done.search'),
+  write: t('transcript.group.done.write'),
+  edit: t('transcript.group.done.edit'),
+  commands: t('transcript.group.done.commands'),
+  code: t('transcript.group.done.code'),
+  webSearch: t('transcript.group.done.webSearch'),
+  webFetch: t('transcript.group.done.webFetch'),
+  browser: t('transcript.group.done.browser'),
+  subagents: t('transcript.group.done.subagents'),
+  plan: t('transcript.group.done.plan'),
+  questions: t('transcript.group.done.questions'),
+  tools: t('transcript.group.done.tools'),
 }
 
 /** 组头的类别与详情之间的分隔点，两边各带一个空格（逐字照抄 dsh 的 message.turnProcess.separator）。 */
@@ -458,30 +464,30 @@ export function joinLiveDetail(label: string, detail: string): string {
   return detail === '' ? label : `${label}${STEP_TITLE_SEPARATOR}${detail}`
 }
 
-/** 未结束组的类别文案（对照 dsh 的 locale.ts:8-21）。 */
+/** 未结束组的类别文案（对照 dsh 的 locale.ts:8-21；译文在本包字典里）。 */
 const RUNNING_LABEL: Record<ProcessActivity, string> = {
-  read: '正在读取文件',
-  readImage: '正在读取图片',
-  search: '正在搜索代码',
-  write: '正在写入文件',
-  edit: '正在编辑文件',
-  commands: '正在运行命令',
-  code: '正在运行代码',
-  webSearch: '正在搜索网页',
-  webFetch: '正在访问网页',
-  browser: '正在浏览网页',
-  subagents: '正在协调子智能体',
-  plan: '正在更新计划',
-  questions: '等待你的操作',
-  tools: '正在调用工具',
+  read: t('transcript.group.running.read'),
+  readImage: t('transcript.group.running.readImage'),
+  search: t('transcript.group.running.search'),
+  write: t('transcript.group.running.write'),
+  edit: t('transcript.group.running.edit'),
+  commands: t('transcript.group.running.commands'),
+  code: t('transcript.group.running.code'),
+  webSearch: t('transcript.group.running.webSearch'),
+  webFetch: t('transcript.group.running.webFetch'),
+  browser: t('transcript.group.running.browser'),
+  subagents: t('transcript.group.running.subagents'),
+  plan: t('transcript.group.running.plan'),
+  questions: t('transcript.group.running.questions'),
+  tools: t('transcript.group.running.tools'),
 }
 
 /** 类别数为 0 时的两套兜底文案：一组只思考没调工具，就是「分析」。 */
-const DONE_THINKING = '已完成分析'
-const RUNNING_THINKING = '正在分析请求'
+const DONE_THINKING = t('transcript.group.doneThinking')
+const RUNNING_THINKING = t('transcript.activity.analyzing')
 
 /**
- * 准备中组的类别文案（逐项对照 dsh 的 locale.ts:22-34）。
+ * 准备中组的类别文案（逐项对照 dsh 的 locale.ts:22-34；译文在本包字典里）。
  *
  * 什么时候用：「模型已经吐了工具名、参数还没到齐」的那一瞬间（contract 的
  * `ToolStatus = 'preparing'`）。它与「正在…」是两件事——「正在读取文件」是工具真的在跑，
@@ -489,27 +495,33 @@ const RUNNING_THINKING = '正在分析请求'
  * 不给文案用户就只看到界面停着不动。
  */
 const PREPARE_LABEL: Record<ProcessActivity, string> = {
-  read: '准备读取文件',
-  readImage: '准备读取图片',
-  search: '准备搜索代码',
-  write: '准备写入文件',
-  edit: '准备编辑文件',
-  commands: '准备运行命令',
-  code: '准备运行代码',
-  webSearch: '准备搜索网页',
-  webFetch: '准备访问网页',
-  browser: '准备浏览网页',
-  subagents: '准备协调子智能体',
-  plan: '准备更新计划',
-  questions: '准备提问',
-  tools: '准备调用工具',
+  read: t('transcript.group.preparing.read'),
+  readImage: t('transcript.group.preparing.readImage'),
+  search: t('transcript.group.preparing.search'),
+  write: t('transcript.group.preparing.write'),
+  edit: t('transcript.group.preparing.edit'),
+  commands: t('transcript.group.preparing.commands'),
+  code: t('transcript.group.preparing.code'),
+  webSearch: t('transcript.group.preparing.webSearch'),
+  webFetch: t('transcript.group.preparing.webFetch'),
+  browser: t('transcript.group.preparing.browser'),
+  subagents: t('transcript.group.preparing.subagents'),
+  plan: t('transcript.group.preparing.plan'),
+  questions: t('transcript.group.preparing.questions'),
+  tools: t('transcript.group.preparing.tools'),
 }
 
-/** 拼接用的连接符（对照 dsh 的 message.stepProcess.comma / joinTwo / more）。 */
-const COMMA = '，'
-const JOIN_TWO = '并'
-const SHARED_PREFIX = '已'
-const MORE = '等'
+/**
+ * 拼接用的连接符（对照 dsh 的 message.stepProcess.comma / joinTwo / more）。
+ *
+ * 中文靠「已…并已…」这类黏着词接句，英文的类别标签是并列短语，改用「 · 」分段；
+ * SHARED_PREFIX 是「两项都以它开头就省掉第二项的它」用的前缀，英文标签不以它开头，
+ * 于是那条省略在英文下自然不生效（不会出现「Read files and Searched code」）。
+ */
+const COMMA = t('transcript.group.join.comma')
+const JOIN_TWO = t('transcript.group.join.and')
+const SHARED_PREFIX = t('transcript.group.join.sharedPrefix')
+const MORE = t('transcript.group.join.more')
 
 /** 最多列几个类别：dsh 取前三类，多出来的收进「等」（step-process.ts:15,27）。 */
 const TITLE_MAX_KINDS = 3

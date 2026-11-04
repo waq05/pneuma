@@ -70,9 +70,17 @@ import { getHostNative } from '@dsc/ui-primitives'
 // 路径跨不出包了，改走 `@dsc/ui`（别名落点就是那个文件，文件身份不变，合并照样成立）。
 // `import type` 编译期擦除、零运行期字节，包与包之间没有新增的运行时边。
 import type { UiSlots } from '@dsc/ui'
+// 取词器与字典：本文件随布局插件的 bundle 走，`@dsc/ui` 在那个 bundle 里是 external
+// （运行期拿壳里那一份），与 `ui.tsx` 同一理由——`@dsc/ui-core` 反而进不了插件 bundle。
+import { createT } from '@dsc/ui'
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
 // 画图的那三块留在这里（它们随布局插件的 bundle 走）；共享状态全在 @dsc/ui-runtime。
 import { UpdateButton } from './update-button'
 import { ReviewPane } from './review-pane'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /**
  * 骨架消费的装载会话份额（E4 起按结构定义在这里，不再反向 import 渲染器包）。
@@ -406,9 +414,9 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
             <button
               type="button"
               className="icon-btn rail-toggle"
-              data-tip="收起侧边栏，快捷键 Ctrl+B"
-              title="收起侧边栏（Ctrl+B）"
-              aria-label="收起侧边栏"
+              data-tip={t('layout.nav.collapseTip')}
+              title={t('layout.nav.collapseTitle')}
+              aria-label={t('layout.nav.collapse')}
               onClick={toggleSidebar}
             >
               <IconSidebar size={15} />
@@ -426,7 +434,7 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
           {sidebarCollapsed ? null : (
             <div
               className="sidebar-resizer"
-              data-tip="拖拽调整侧边栏宽度，双击复位"
+              data-tip={t('layout.nav.sidebarResizeTip')}
               onPointerDown={sidebarDrag.onPointerDown}
               onPointerMove={sidebarDrag.onPointerMove}
               onPointerUp={sidebarDrag.onPointerUp}
@@ -460,8 +468,8 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
                     <button
                       type="button"
                       className="icon-btn topbar-nav-btn"
-                      data-tip="会话"
-                      aria-label="会话"
+                      data-tip={t('layout.nav.sessions')}
+                      aria-label={t('layout.nav.sessions')}
                       onClick={toggleSidebar}
                     >
                       <IconSidebar size={16} />
@@ -484,8 +492,8 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
                   <button
                     type="button"
                     className="icon-btn topbar-search"
-                    data-tip="搜索动作、会话与设置（Ctrl K）"
-                    aria-label="搜索"
+                    data-tip={t('layout.nav.searchTip')}
+                    aria-label={t('layout.nav.search')}
                     onClick={() => {
                       window.dispatchEvent(new CustomEvent('shell.palette.open'))
                     }}
@@ -500,8 +508,8 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
                     <button
                       type="button"
                       className={`icon-btn topbar-nav-btn${page === 'plugins' ? ' on' : ''}`}
-                      data-tip="插件"
-                      aria-label="插件"
+                      data-tip={t('layout.nav.plugins')}
+                      aria-label={t('layout.nav.plugins')}
                       aria-pressed={page === 'plugins'}
                       onClick={() => {
                         setShellPage(page === 'plugins' ? null : 'plugins')
@@ -520,7 +528,7 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
                     这时那一行只画一颗「← 对话」。 */}
                 {narrow ? (
                   threadView === 'trace' ? (
-                    <nav className="tabs" aria-label="正文区视图">
+                    <nav className="tabs" aria-label={t('layout.nav.threadViewAria')}>
                       <button
                         type="button"
                         onClick={() => {
@@ -528,12 +536,12 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
                         }}
                       >
                         <IconChevronLeft size={14} />
-                        对话
+                        {t('layout.nav.chat')}
                       </button>
                     </nav>
                   ) : null
                 ) : (
-                  <nav className="tabs" role="tablist" aria-label="正文区视图">
+                  <nav className="tabs" role="tablist" aria-label={t('layout.nav.threadViewAria')}>
                     <button
                       type="button"
                       role="tab"
@@ -543,7 +551,7 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
                         setThreadView('chat')
                       }}
                     >
-                      对话
+                      {t('layout.nav.chat')}
                     </button>
                     <button
                       type="button"
@@ -554,7 +562,7 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
                         setThreadView('trace')
                       }}
                     >
-                      轨迹
+                      {t('layout.nav.trace')}
                     </button>
                   </nav>
                 )}
@@ -620,21 +628,23 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
                   <button
                     type="button"
                     className="icon-btn topbar-nav-btn"
-                    data-tip="返回对话"
-                    aria-label="返回对话"
+                    data-tip={t('layout.nav.backToChat')}
+                    aria-label={t('layout.nav.backToChat')}
                     onClick={() => {
                       setShellPage(null)
                     }}
                   >
                     <IconChevronLeft size={16} />
                   </button>
-                  <span className="title">{page === 'plugins' ? '插件' : '技能'}</span>
+                  <span className="title">
+                    {page === 'plugins' ? t('layout.nav.plugins') : t('layout.nav.skills')}
+                  </span>
                   <div className="drag-fill" />
                   <button
                     type="button"
                     className="icon-btn topbar-nav-btn"
-                    data-tip="会话"
-                    aria-label="会话"
+                    data-tip={t('layout.nav.sessions')}
+                    aria-label={t('layout.nav.sessions')}
                     onClick={toggleSidebar}
                   >
                     <IconSidebar size={16} />
@@ -695,8 +705,8 @@ function DockToggle(): ReactNode {
     <button
       type="button"
       className="icon-btn dock-toggle"
-      data-tip="工作区面板：开始、终端、浏览器、文件、Git"
-      aria-label="工作区面板"
+      data-tip={t('layout.nav.dockTip')}
+      aria-label={t('layout.nav.dock')}
       onClick={() => {
         dockActions.setExpanded(true)
       }}
@@ -743,11 +753,9 @@ function ConnectionBanner(): ReactNode {
   return (
     <div className="conn-banner" data-conn={status} role="status">
       <span className="conn-dot" aria-hidden="true" />
-      <span className="conn-text">{closed ? '连接已断开' : '连不上宿主'}</span>
+      <span className="conn-text">{closed ? t('layout.conn.closed') : t('layout.conn.failed')}</span>
       <span className="conn-hint">
-        {closed
-          ? '这个窗口的重连已经被浏览器放弃（凭据失效或宿主换了端口）。'
-          : '宿主可能正在重启，浏览器每 3 秒重试一次。'}
+        {closed ? t('layout.conn.closedHint') : t('layout.conn.retryHint')}
       </span>
       <button
         type="button"
@@ -756,7 +764,7 @@ function ConnectionBanner(): ReactNode {
           channel.reconnect()
         }}
       >
-        立即重连
+        {t('layout.conn.reconnect')}
       </button>
     </div>
   )
@@ -767,7 +775,7 @@ function HostErrorStrip(): ReactNode {
   if (error === null) return null
   return (
     <p className="host-error" data-host-error="1">
-      宿主状态异常：{error}
+      {t('layout.host.error', { message: error })}
     </p>
   )
 }
@@ -785,14 +793,21 @@ function SidebarRail({ onExpand }: { onExpand: () => void }): ReactNode {
   return (
     <>
       {/* 窄栏里 logo 就代表「点开侧栏」，不再另摆一颗开关（旧界面同款）。 */}
-      <button type="button" className="rail-logo" data-tip="展开侧边栏，快捷键 Ctrl+B" title="展开侧边栏（Ctrl+B）" aria-label="展开侧边栏" onClick={onExpand}>
+      <button
+        type="button"
+        className="rail-logo"
+        data-tip={t('layout.nav.expandTip')}
+        title={t('layout.nav.expandTitle')}
+        aria-label={t('layout.nav.expand')}
+        onClick={onExpand}
+      >
         <img src="icon.png" alt="Pneuma" draggable={false} />
       </button>
       <button
         type="button"
         className="rail-btn"
-        data-tip="新会话"
-        aria-label="新会话"
+        data-tip={t('layout.nav.newSession')}
+        aria-label={t('layout.nav.newSession')}
         onClick={() => {
           window.dispatchEvent(new CustomEvent('shell.session.new'))
         }}
@@ -803,8 +818,8 @@ function SidebarRail({ onExpand }: { onExpand: () => void }): ReactNode {
         <button
           type="button"
           className={`rail-btn${page === 'skills' ? ' on' : ''}`}
-          data-tip="技能"
-          aria-label="技能"
+          data-tip={t('layout.nav.skills')}
+          aria-label={t('layout.nav.skills')}
           aria-pressed={page === 'skills'}
           onClick={() => {
             setShellPage(page === 'skills' ? null : 'skills')
@@ -815,8 +830,8 @@ function SidebarRail({ onExpand }: { onExpand: () => void }): ReactNode {
         <button
           type="button"
           className={`rail-btn${page === 'plugins' ? ' on' : ''}`}
-          data-tip="插件"
-          aria-label="插件"
+          data-tip={t('layout.nav.plugins')}
+          aria-label={t('layout.nav.plugins')}
           aria-pressed={page === 'plugins'}
           onClick={() => {
             setShellPage(page === 'plugins' ? null : 'plugins')
@@ -829,8 +844,8 @@ function SidebarRail({ onExpand }: { onExpand: () => void }): ReactNode {
         <button
           type="button"
           className="rail-btn"
-          data-tip={cwd === null ? '展开侧边栏后可选择会话' : `工作目录 ${cwd}，展开侧边栏后可选择会话`}
-          aria-label="展开侧边栏（查看工作目录）"
+          data-tip={cwd === null ? t('layout.nav.cwdTip') : t('layout.nav.cwdTipAt', { cwd })}
+          aria-label={t('layout.nav.cwdAria')}
           onClick={onExpand}
         >
           <IconFolder size={18} />
@@ -839,8 +854,8 @@ function SidebarRail({ onExpand }: { onExpand: () => void }): ReactNode {
         <button
           type="button"
           className="rail-btn"
-          data-tip="设置：外观、模型、模式、技能、插件"
-          aria-label="设置"
+          data-tip={t('layout.nav.settingsTip')}
+          aria-label={t('layout.nav.settings')}
           onClick={() => {
             window.dispatchEvent(new CustomEvent('shell.settings.open'))
           }}
@@ -863,19 +878,23 @@ function readRailCwd(snapshot: Record<string, unknown> | null): string | null {
 /** 纤维状态码 → 人话（与 `ui-renderer/cordis-host.ts` 的 FIBER_STATE_TEXT 同口径）。
  *
  * 为什么在这里再写一份：诊断区住 `ui-layout`，装载器住 `ui-renderer`，后者 import 前者，
- * 反过来引就成环（E4 收尾时剪掉的那条边）。六行字，重复比成环便宜。 */
-const FIBER_TEXT: Readonly<Record<number, string>> = {
-  0: '待装',
-  1: '装载中',
-  2: '已生效',
-  3: '装载失败',
-  4: '已卸载',
-  5: '已卸载',
+ * 反过来引就成环（E4 收尾时剪掉的那条边）。六行字，重复比成环便宜。
+ *
+ * 每条值是一枚取词函数而不是字符串：键与译文都在本包字典里，语言在页面生命周期里定死，
+ * 但延到取词那一刻拼字符串，模块加载时就不必先读启动图。 */
+const FIBER_TEXT: Readonly<Record<number, () => string>> = {
+  0: () => t('layout.fiber.pending'),
+  1: () => t('layout.fiber.loading'),
+  2: () => t('layout.fiber.active'),
+  3: () => t('layout.fiber.failed'),
+  4: () => t('layout.fiber.disposed'),
+  5: () => t('layout.fiber.disposed'),
 }
 
 function fiberStateText(state: number | undefined): string {
-  if (state === undefined) return '状态未知'
-  return FIBER_TEXT[state] ?? `状态 ${String(state)}`
+  if (state === undefined) return t('layout.fiber.unknown')
+  const text = FIBER_TEXT[state]
+  return text === undefined ? t('layout.fiber.number', { state }) : text()
 }
 
 /** 诊断区：清单里有什么、谁装上了、谁没起来、哪一块崩了、壳放行的模块有哪些。
@@ -919,18 +938,26 @@ function Diagnostics({
   return (
     <details className="diagnostics">
       <summary>
-        诊断（{reports.length} 个插件 / {slots.slots.length} 个槽
-        {faults.length === 0 ? '' : ` / ${String(faults.length)} 处故障`}）
+        {t('layout.diag.summary', {
+          plugins: reports.length,
+          slots: slots.slots.length,
+          faults: faults.length === 0 ? '' : t('layout.diag.faults', { count: faults.length }),
+        })}
       </summary>
       <ul className="diag-plugins">
         {reports.map((report) => (
           <li key={report.id} className={report.ok ? 'ok' : 'bad'} data-plugin={report.id}>
-            <code>{report.id}</code> {report.ok ? '已装上' : `失败：${report.error ?? '未知原因'}`}
-            {report.name === undefined ? '' : `（${report.name}）`}
-            {report.provides === undefined ? '' : `（提供：${report.provides.join('、')}）`}
-            {report.ok && (report.attempts ?? 1) > 1 ? `（重试 ${String(report.attempts)} 次才成功）` : ''}
+            <code>{report.id}</code>{' '}
+            {report.ok
+              ? t('layout.diag.loaded')
+              : t('layout.diag.failed', { reason: report.error ?? t('layout.common.unknown') })}
+            {report.name === undefined ? '' : t('layout.diag.nameNote', { name: report.name })}
+            {report.provides === undefined
+              ? ''
+              : t('layout.diag.provides', { list: report.provides.join(t('layout.common.listSep')) })}
+            {report.ok && (report.attempts ?? 1) > 1 ? t('layout.diag.retries', { count: String(report.attempts) }) : ''}
             <span data-plugin-phase={ledger?.plugins[report.id]?.phase ?? ''}>
-              {' '}· {ledger?.plugins[report.id]?.phase === 'early' ? '首屏批' : '应用批'}
+              {' '}· {ledger?.plugins[report.id]?.phase === 'early' ? t('layout.diag.phaseEarly') : t('layout.diag.phaseApp')}
             </span>
             {/* 装配路径与纤维状态（2026-10-26 起：装插件走 cordis，旧账本是回滚面）。
                 两个 data 属性是探针的读面：隐藏的 DOM 照样命中。 */}
@@ -939,18 +966,18 @@ function Diagnostics({
               data-plugin-fiber={ledger?.plugins[report.id]?.fiber ?? ''}
             >
               {' '}· {ledger?.plugins[report.id]?.via === 'cordis'
-                ? `cordis（${fiberStateText(ledger?.plugins[report.id]?.fiber)}）`
-                : '退订账本'}
+                ? t('layout.diag.viaCordis', { state: fiberStateText(ledger?.plugins[report.id]?.fiber) })
+                : t('layout.diag.viaLedger')}
             </span>
           </li>
         ))}
-        {reports.length === 0 ? <li className="empty">启动清单里没有插件</li> : null}
+        {reports.length === 0 ? <li className="empty">{t('layout.diag.noPlugins')}</li> : null}
       </ul>
       {/* 批次读数（A2）：每批的状态、时刻与 rev。`data-batch*` 属性是探针的读面，
           桌面自检与浏览器走查都靠 querySelector 读它（隐藏的 DOM 照样命中）。 */}
       {ledger === null ? null : (
         <p className="diag-line diag-batches">
-          批次：
+          {t('layout.diag.batches')}
           {ledger.batches.map((batch) => {
             const loaded = batch.entries.filter((id) => ledger.plugins[id]?.state === 'loaded').length
             const at = batch.doneAt ?? batch.startedAt ?? batch.scheduledAt
@@ -963,10 +990,14 @@ function Diagnostics({
                 data-batch-rev={batchRev(batch.phase)}
                 style={{ marginRight: 10 }}
               >
-                {batch.phase === 'early' ? '首屏' : '应用'} {loaded}/{batch.entries.length}
-                {' '}（{batch.state}
-                {at === undefined ? '' : ` @${String(Math.round(at - ledger.startedAt))}ms`}
-                {batchRev(batch.phase) === '' ? '' : `，rev ${batchRev(batch.phase)}`}）
+                {t('layout.diag.batch', {
+                  phase: batch.phase === 'early' ? t('layout.diag.batchEarly') : t('layout.diag.batchApp'),
+                  loaded,
+                  total: batch.entries.length,
+                  state: batch.state,
+                  at: at === undefined ? '' : t('layout.diag.batchAt', { ms: Math.round(at - ledger.startedAt) }),
+                  rev: batchRev(batch.phase) === '' ? '' : t('layout.diag.rev', { rev: batchRev(batch.phase) }),
+                })}
               </span>
             )
           })}
@@ -977,7 +1008,7 @@ function Diagnostics({
         <ul className="diag-plugins">
           {syncFailures.map((failure) => (
             <li key={failure.id} className="bad" data-sync-failure={failure.id}>
-              <code>{failure.id}</code> 页内同步失败：{failure.message}
+              <code>{failure.id}</code> {t('layout.diag.syncFailed', { message: failure.message })}
             </li>
           ))}
         </ul>
@@ -985,7 +1016,7 @@ function Diagnostics({
       {onRetrySync === null ? null : (
         <p className="diag-line">
           <button type="button" data-sync-retry="1" onClick={onRetrySync}>
-            重试页内同步
+            {t('layout.diag.retrySync')}
           </button>
         </p>
       )}
@@ -994,42 +1025,74 @@ function Diagnostics({
           {faults.map((fault, index) => (
             <li key={`${fault.slot}|${fault.id}|${String(index)}`} className="bad" data-fault={fault.slot}>
               <code>{fault.slot}</code>
-              {fault.id === '' ? '' : ` / ${fault.id}`} 在
-              {fault.phase === 'render' ? '渲染' : fault.phase === 'contribute' ? '贡献槽位' : '卸载'}时出错：
-              {fault.error.message}
+              {fault.id === '' ? '' : ` / ${fault.id}`}
+              {t('layout.diag.fault', {
+                phase:
+                  fault.phase === 'render'
+                    ? t('layout.diag.phaseRender')
+                    : fault.phase === 'contribute'
+                      ? t('layout.diag.phaseContribute')
+                      : t('layout.diag.phaseUnmount'),
+                message: fault.error.message,
+              })}
             </li>
           ))}
         </ul>
       )}
       <p className="diag-line">
-        清单 {boot.rev}：{boot.entries.map((entry) => entry.id).join('、') || '空'}
+        {t('layout.diag.manifest', {
+          rev: boot.rev,
+          list: boot.entries.map((entry) => entry.id).join(t('layout.common.listSep')) || t('layout.common.empty'),
+        })}
       </p>
-      <p className="diag-line">槽：{slots.slots.join('、') || '无'}</p>
+      <p className="diag-line">
+        {t('layout.diag.slots', { list: slots.slots.join(t('layout.common.listSep')) || t('layout.common.none') })}
+      </p>
       {/* 服务表（A1）：谁提供了什么——插件之间协作出问题时第一时间看它。 */}
       <p className="diag-line" data-services={services.join(',')}>
-        服务：{services.join('、') || '无'}
+        {t('layout.diag.services', { list: services.join(t('layout.common.listSep')) || t('layout.common.none') })}
       </p>
-      <p className="diag-line">放行的模块：{allowedModules.join('、')}</p>
+      <p className="diag-line">
+        {t('layout.diag.modules', { list: allowedModules.join(t('layout.common.listSep')) })}
+      </p>
       {/* 数据通道在不在、通不通：断了要醒目（凭据失效后重连也回不来），
           所以这一行留在诊断区；排查「界面冻住」时第一时间看它。 */}
       <p className="diag-line diag-channel" data-channel={channel} data-protocol={hello?.protocolVersion ?? ''}>
-        数据通道：
-        {channel === 'open'
-          ? `已连接${hello === null ? '' : `（协议 v${String(hello.protocolVersion)}，放行 ${String(hello.methods.length)} 个方法）`}`
-          : channel === 'connecting'
-            ? '连接中…'
-            : '已断开（请用宿主新打印的地址重开）'}
+        {t('layout.diag.channel', {
+          state:
+            channel === 'open'
+              ? t('layout.diag.channelOpen', {
+                  detail:
+                    hello === null
+                      ? ''
+                      : t('layout.diag.channelOpenDetail', {
+                          version: String(hello.protocolVersion),
+                          count: hello.methods.length,
+                        }),
+                })
+              : channel === 'connecting'
+                ? t('layout.diag.channelConnecting')
+                : t('layout.diag.channelClosed'),
+        })}
       </p>
       {/* 原生桥在不在：桌面窗口里有（走 preload 的 window.dscNative），浏览器里没有。
           写在诊断区是因为它决定了插件能不能做"打开路径/系统通知"这类事，而这件事
           只看代码看不出来（同一个壳两种载体）。 */}
       <p className="diag-line" data-native={native.available ? 'on' : 'off'} data-native-probe={probe.state}>
-        原生桥：
-        {native.available
-          ? `v${String(native.version ?? '?')} 已就绪（${String(NATIVE_OPS.length)} 个操作：${NATIVE_OPS.join('、')}）`
-          : '浏览器里没有（桌面窗口才有）'}
+        {t('layout.diag.native', {
+          state: native.available
+            ? t('layout.diag.nativeReady', {
+                version: String(native.version ?? '?'),
+                count: NATIVE_OPS.length,
+                list: NATIVE_OPS.join(t('layout.common.listSep')),
+              })
+            : t('layout.diag.nativeAbsent'),
+        })}
         {native.available && native.version !== null && native.version !== NATIVE_BRIDGE_VERSION
-          ? ` ⚠ 版本对不上：这一版壳按 v${String(NATIVE_BRIDGE_VERSION)} 写，外壳的桥是 v${String(native.version)}（多半是壳产物没跟着外壳一起重建）`
+          ? t('layout.diag.nativeMismatch', {
+              expected: String(NATIVE_BRIDGE_VERSION),
+              actual: String(native.version),
+            })
           : ''}
         {probe.detail === '' ? '' : ` · ${probe.detail}`}
       </p>
@@ -1058,7 +1121,7 @@ function useNativeProbe(): { state: 'pending' | 'ok' | 'off' | 'error'; detail: 
         if (!alive) return
         setProbe({
           state: 'ok',
-          detail: `试点 recentCwds 回了 ${String(Array.isArray(list) ? list.length : 0)} 个最近工作区`,
+          detail: t('layout.diag.probeOk', { count: Array.isArray(list) ? list.length : 0 }),
         })
       })
       .catch((error: unknown) => {
@@ -1067,8 +1130,8 @@ function useNativeProbe(): { state: 'pending' | 'ok' | 'off' | 'error'; detail: 
         // 桥本来就不在（浏览器 / 远程壳）——那是**预期**，不是故障：降级路径就该长这样。
         setProbe(
           native.available
-            ? { state: 'error', detail: `试点未通过：${message}` }
-            : { state: 'off', detail: `降级正常：${message}` },
+            ? { state: 'error', detail: t('layout.diag.probeFailed', { message }) }
+            : { state: 'off', detail: t('layout.diag.probeDegraded', { message }) },
         )
       })
     return () => {
@@ -1082,17 +1145,17 @@ function useNativeProbe(): { state: 'pending' | 'ok' | 'off' | 'error'; detail: 
 function readSessionTitle(snapshot: Record<string, unknown> | null): string {
   const status = snapshot?.['status']
   const sessions = snapshot?.['sessions']
-  if (typeof status !== 'object' || status === null || !Array.isArray(sessions)) return '新会话'
+  if (typeof status !== 'object' || status === null || !Array.isArray(sessions)) return t('layout.nav.newSession')
   const path = (status as Record<string, unknown>)['sessionPath']
-  if (typeof path !== 'string') return '新会话'
+  if (typeof path !== 'string') return t('layout.nav.newSession')
   for (const item of sessions) {
     if (typeof item !== 'object' || item === null) continue
     const record = item as Record<string, unknown>
     if (record['id'] !== path) continue
     const title = record['title']
-    return typeof title === 'string' && title !== '' ? title : '新会话'
+    return typeof title === 'string' && title !== '' ? title : t('layout.nav.newSession')
   }
-  return '新会话'
+  return t('layout.nav.newSession')
 }
 
 /** 消息流里有没有**对话内容**（含直播尾）：空会话的居中欢迎态靠它切换。

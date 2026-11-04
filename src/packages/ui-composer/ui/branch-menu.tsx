@@ -13,7 +13,14 @@
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { HUMAN_WAIT_TIMEOUT_MS, IconBranch, IconCheck, IconChevronDown, IconPlus, IconSearch, toastOk, useHostChannel, type GitSurface } from '@dsc/ui'
+import { createT } from '@dsc/ui'
+// 本包自己的中英对照：中文原文是语义真源，英文是译本（构建时内联进插件 bundle）。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
 import { filteredBranches, wouldOverwrite, type GitBranchRow } from './git-branch'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定。 */
+const t = createT({ zh, en })
 
 /** `dock git-branches` 的回包（宿主 desktop-dock 的形状）。 */
 interface GitBranchList {
@@ -63,7 +70,7 @@ export function BranchMenu({ open, onOpenChange, git, channel, onFault }: Branch
       .catch((reason: unknown) => {
         if (!alive) return
         setBranchList(null)
-        onFault(`读分支清单失败：${reason instanceof Error ? reason.message : String(reason)}`)
+        onFault(t('branch.readFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
       })
     return () => {
       alive = false
@@ -95,11 +102,11 @@ export function BranchMenu({ open, onOpenChange, git, channel, onFault }: Branch
     void channel
       .invoke('dock', ['git-checkout', { branch: name }], { timeoutMs: HUMAN_WAIT_TIMEOUT_MS })
       .then(() => {
-        toastOk(`已切到分支「${name}」`)
+        toastOk(t('branch.switched', { name }))
       })
       .catch((reason: unknown) => {
         const text = reason instanceof Error ? reason.message : String(reason)
-        onFault(wouldOverwrite(text) ? `${text}（先提交或暂存这些改动再切：右侧边栏「变更」页签可以提交）` : text)
+        onFault(wouldOverwrite(text) ? t('branch.overwrite', { message: text }) : text)
       })
       .finally(() => {
         setBranchBusy(false)
@@ -118,7 +125,7 @@ export function BranchMenu({ open, onOpenChange, git, channel, onFault }: Branch
       .then(() => {
         setBranchCreateOpen(false)
         setNewBranchName('')
-        toastOk(`已新建并切到分支「${name}」`)
+        toastOk(t('branch.created', { name }))
       })
       .catch((reason: unknown) => {
         onFault(reason instanceof Error ? reason.message : String(reason))
@@ -136,7 +143,11 @@ export function BranchMenu({ open, onOpenChange, git, channel, onFault }: Branch
         <button
           type="button"
           className={`model-btn git-btn${open ? ' open' : ''}`}
-          data-tip={git.detached ? 'HEAD 已分离（不在任何分支上）；点开可以切回一个分支' : `当前分支：${git.branch}`}
+          data-tip={
+            git.detached
+              ? t('branch.tip.detached')
+              : t('branch.tip.current', { branch: git.branch })
+          }
           aria-haspopup="menu"
           aria-expanded={open}
           onClick={() => {
@@ -156,12 +167,14 @@ export function BranchMenu({ open, onOpenChange, git, channel, onFault }: Branch
                 onOpenChange(false)
               }}
             />
-            <div className="model-pop git-pop" role="menu" aria-label="切换分支">
+            <div className="model-pop git-pop" role="menu" aria-label={t('branch.menu.aria')}>
               <div className="pop-label">
-                切换分支
+                {t('branch.menu.label')}
                 <span className="pop-note">
-                  {branchList?.detached === true ? 'HEAD 已分离' : `当前 ${branchList?.current ?? git.branch}`}
-                  {git.dirtyFileCount > 0 ? ` · ${String(git.dirtyFileCount)} 个文件已更改` : ''}
+                  {branchList?.detached === true
+                    ? t('branch.note.detached')
+                    : t('branch.note.current', { branch: branchList?.current ?? git.branch })}
+                  {git.dirtyFileCount > 0 ? t('branch.note.dirty', { count: git.dirtyFileCount }) : ''}
                 </span>
               </div>
               <div className="git-search">
@@ -169,8 +182,8 @@ export function BranchMenu({ open, onOpenChange, git, channel, onFault }: Branch
                 <input
                   type="text"
                   value={branchQuery}
-                  placeholder="搜索分支…"
-                  aria-label="搜索分支"
+                  placeholder={t('branch.search.placeholder')}
+                  aria-label={t('branch.search.aria')}
                   autoFocus
                   onChange={(event) => {
                     setBranchQuery(event.target.value)
@@ -180,11 +193,13 @@ export function BranchMenu({ open, onOpenChange, git, channel, onFault }: Branch
               <div className="model-list git-branch-list" ref={branchRows}>
                 {branchList === null ? (
                   <div className="pop-item">
-                    <span className="name">正在读取分支…</span>
+                    <span className="name">{t('branch.loading')}</span>
                   </div>
                 ) : filteredBranches(branchList.branches, branchQuery).length === 0 ? (
                   <div className="pop-item">
-                    <span className="name">{branchQuery.trim() === '' ? '这个仓库还没有分支' : '没有匹配的分支'}</span>
+                    <span className="name">
+                      {branchQuery.trim() === '' ? t('branch.empty') : t('branch.noMatch')}
+                    </span>
                   </div>
                 ) : (
                   filteredBranches(branchList.branches, branchQuery).map((row) => (
@@ -194,7 +209,9 @@ export function BranchMenu({ open, onOpenChange, git, channel, onFault }: Branch
                       aria-checked={row.current}
                       key={row.name}
                       className={`pop-item${row.current ? ' on' : ''}`}
-                      title={row.current ? `${row.name}（当前分支）` : `切到 ${row.name}`}
+                      title={
+                        row.current ? t('branch.row.current', { name: row.name }) : t('branch.row.switch', { name: row.name })
+                      }
                       disabled={row.current || branchBusy}
                       {...(row.current ? { 'data-branch-current': 'true' } : {})}
                       onClick={() => {
@@ -220,8 +237,8 @@ export function BranchMenu({ open, onOpenChange, git, channel, onFault }: Branch
                     <input
                       type="text"
                       value={newBranchName}
-                      placeholder="新分支名，如 feat/xxx"
-                      aria-label="新分支名"
+                      placeholder={t('branch.create.placeholder')}
+                      aria-label={t('branch.create.aria')}
                       autoFocus
                       disabled={branchBusy}
                       onChange={(event) => {
@@ -235,7 +252,7 @@ export function BranchMenu({ open, onOpenChange, git, channel, onFault }: Branch
                       }}
                     />
                     <button type="submit" disabled={branchBusy || newBranchName.trim() === ''}>
-                      创建并切换
+                      {t('branch.create.submit')}
                     </button>
                   </form>
                 ) : (
@@ -248,7 +265,7 @@ export function BranchMenu({ open, onOpenChange, git, channel, onFault }: Branch
                     }}
                   >
                     <IconPlus size={13} />
-                    新建分支…
+                    {t('branch.create.open')}
                   </button>
                 )}
               </div>

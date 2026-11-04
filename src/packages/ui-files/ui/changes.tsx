@@ -13,13 +13,20 @@
  * @module dsc-ui-shell/plugins/files/changes
  */
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { DiffRows, HUMAN_WAIT_TIMEOUT_MS, IconChevronDown, IconChevronRight, toastErr, toastOk, useHostChannel } from '@dsc/ui'
+import { DiffRows, HUMAN_WAIT_TIMEOUT_MS, IconChevronDown, IconChevronRight, createT, toastErr, toastOk, useHostChannel } from '@dsc/ui'
 import {
   parseUnifiedDiff,
   splitUnifiedDiffByFile,
   useDialogFocus,
   type UnifiedFileDiff,
 } from '@dsc/ui-primitives'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 单文件的增删行数（`git-status` 的 stats 档按 cwd 相对路径给）。 */
 interface GitFileStat {
@@ -151,7 +158,14 @@ export function ChangesPanel(): ReactNode {
         // 暂存状态变了，刚展开的 diff 已经过期，收掉它免得误导。
         setExpanded(null)
       })
-      .catch((cause: unknown) => toastErr(`${op === 'git-stage' ? '暂存' : '取消暂存'}失败：${cause instanceof Error ? cause.message : String(cause)}`))
+      .catch((cause: unknown) =>
+        toastErr(
+          t('files.toast.opFailed', {
+            action: op === 'git-stage' ? t('files.action.stage') : t('files.action.unstage'),
+            message: cause instanceof Error ? cause.message : String(cause),
+          }),
+        ),
+      )
   }
 
   /**
@@ -167,12 +181,12 @@ export function ChangesPanel(): ReactNode {
     return channel
       .invoke<{ output: string }>('dock', ['git-commit', payload], { timeoutMs: HUMAN_WAIT_TIMEOUT_MS })
       .then(() => {
-        toastOk('已提交')
+        toastOk(t('files.commit.done'))
         setCommitOpen(false)
         refresh()
         setExpanded(null)
       })
-      .catch((cause: unknown) => toastErr(`提交失败：${cause instanceof Error ? cause.message : String(cause)}`))
+      .catch((cause: unknown) => toastErr(t('files.commit.failed', { message: cause instanceof Error ? cause.message : String(cause) })))
       .finally(() => setCommitting(false))
   }
 
@@ -180,11 +194,11 @@ export function ChangesPanel(): ReactNode {
     return (
       <div className="git-pane">
         {error === '' ? (
-          <div className="trace-empty">读取中…</div>
+          <div className="trace-empty">{t('files.state.loading')}</div>
         ) : (
           <>
             <div className="notice">{error}</div>
-            <div className="trace-empty">此目录不是 git 仓库，或读取失败。</div>
+            <div className="trace-empty">{t('files.git.notRepo')}</div>
           </>
         )}
       </div>
@@ -196,22 +210,22 @@ export function ChangesPanel(): ReactNode {
     <div className="git-pane">
       <div className="git-branch">
         <span className="round-no">{status.branch}</span>
-        <span className="git-count">{String(total)} 处更改</span>
+        <span className="git-count">{t('files.git.changes', { count: total })}</span>
         <button
           type="button"
           className="icon-btn git-diff-all"
-          data-tip="查看全部改动"
+          data-tip={t('files.git.allDiffTip')}
           onClick={() => {
             toggleDiff('all', null)
           }}
         >
-          全部改动
+          {t('files.git.allDiff')}
         </button>
         <button
           type="button"
           className="icon-btn"
-          data-tip="刷新状态"
-          aria-label="刷新状态"
+          data-tip={t('files.git.refresh')}
+          aria-label={t('files.git.refresh')}
           onClick={refresh}
         >
           ↻
@@ -220,29 +234,29 @@ export function ChangesPanel(): ReactNode {
       {error === '' ? null : <div className="notice">{error}</div>}
       <GitGroup
         id="staged"
-        title={`已暂存（${String(status.staged.length)}）`}
+        title={t('files.group.staged', { count: status.staged.length })}
         files={status.staged}
         stats={status.stagedStats}
         expanded={expanded}
         diffData={diffData}
         onShowDiff={(file) => toggleDiff('staged', file)}
-        onStage={(files) => stage('git-unstage', files, '已取消暂存')}
-        stageTip="取消暂存"
+        onStage={(files) => stage('git-unstage', files, t('files.toast.unstaged'))}
+        stageTip={t('files.action.unstage')}
       />
       <GitGroup
         id="unstaged"
-        title={`未暂存（${String(status.unstaged.length)}）`}
+        title={t('files.group.unstaged', { count: status.unstaged.length })}
         files={status.unstaged}
         stats={status.unstagedStats}
         expanded={expanded}
         diffData={diffData}
         onShowDiff={(file) => toggleDiff('unstaged', file)}
-        onStage={(files) => stage('git-stage', files, '已暂存')}
-        stageTip="暂存"
+        onStage={(files) => stage('git-stage', files, t('files.toast.staged'))}
+        stageTip={t('files.action.stage')}
       />
       <GitGroup
         id="untracked"
-        title={`未跟踪（${String(status.untracked.length)}）`}
+        title={t('files.group.untracked', { count: status.untracked.length })}
         files={status.untracked}
         stats={status.untrackedStats}
         expanded={expanded}
@@ -253,7 +267,7 @@ export function ChangesPanel(): ReactNode {
       {/* 提交区：打开提交对话框（列出将提交的文件 = 已暂存 + 可选未暂存，走写类 op 的审批）。 */}
       <div className="git-commit">
         <span className="git-commit-hint">
-          {status.staged.length === 0 ? '尚无已暂存的改动' : `已暂存 ${String(status.staged.length)} 个文件`}
+          {status.staged.length === 0 ? t('files.commit.none') : t('files.commit.stagedCount', { count: status.staged.length })}
         </span>
         <button
           type="button"
@@ -261,7 +275,7 @@ export function ChangesPanel(): ReactNode {
           disabled={committing || (status.staged.length === 0 && status.unstaged.length === 0)}
           onClick={() => setCommitOpen(true)}
         >
-          提交…
+          {t('files.commit.open')}
         </button>
       </div>
       {/* 提交历史：hash + 信息 + 作者 · 日期（旧界面同一行结构）。 */}
@@ -281,7 +295,7 @@ export function ChangesPanel(): ReactNode {
       {/* 「全部改动」的 diff 落在面板底部；单文件的 diff 就地展开在各自分组里。 */}
       {expanded !== null && expanded.file === null ? (
         <GitDiffView
-          title="全部未提交改动"
+          title={t('files.diff.allTitle')}
           all
           diff={diffData}
           onClose={() => setExpanded(null)}
@@ -365,7 +379,7 @@ function GitGroup(props: {
                     aria-label={`${String(props.stageTip)} ${path}`}
                     onClick={() => props.onStage?.([path])}
                   >
-                    {props.stageTip === '暂存' ? '+' : '−'}
+                    {props.stageTip === t('files.action.stage') ? '+' : '−'}
                   </button>
                 )}
               </div>
@@ -425,13 +439,13 @@ function CommitDialog(props: {
         className="git-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label="提交"
+        aria-label={t('files.commit.title')}
         ref={dialog.ref}
         onClick={(event) => {
           event.stopPropagation()
         }}
       >
-        <div className="git-dialog-head">提交</div>
+        <div className="git-dialog-head">{t('files.commit.title')}</div>
         <div className="git-dialog-files">
           <label className="git-dialog-include">
             <input
@@ -440,14 +454,14 @@ function CommitDialog(props: {
               disabled={props.unstaged.length === 0}
               onChange={(event) => toggleUnstagedAll(event.target.checked)}
             />
-            包含未暂存（{String(props.unstaged.length)}）
+            {t('files.commit.include', { count: props.unstaged.length })}
           </label>
           {props.staged.map((file) => {
             const path = fileOf(file)
             const stat = props.stagedStats?.[path]
             return (
               <div className="git-dialog-file" key={`staged:${file}`}>
-                <input type="checkbox" checked disabled readOnly aria-label={`将提交 ${path}`} />
+                <input type="checkbox" checked disabled readOnly aria-label={t('files.commit.fileAria', { path })} />
                 <span className="git-dialog-file-name" data-tip={file}>
                   {file}
                 </span>
@@ -469,7 +483,7 @@ function CommitDialog(props: {
                   type="checkbox"
                   checked={selected.includes(path)}
                   onChange={() => toggleOne(path)}
-                  aria-label={`包含 ${path}`}
+                  aria-label={t('files.commit.includeAria', { path })}
                 />
                 <span className="git-dialog-file-name" data-tip={file}>
                   {file}
@@ -484,24 +498,24 @@ function CommitDialog(props: {
             )
           })}
           {props.staged.length === 0 && props.unstaged.length === 0 ? (
-            <div className="trace-empty">没有可提交的改动。</div>
+            <div className="trace-empty">{t('files.commit.nothing')}</div>
           ) : null}
         </div>
         <textarea
           className="git-dialog-message"
           data-autofocus
           rows={3}
-          placeholder="遵循 feat:/fix:/chore: 规范"
+          placeholder={t('files.commit.placeholder')}
           value={message}
-          aria-label="提交信息"
+          aria-label={t('files.commit.messageLabel')}
           onChange={(event) => setMessage(event.target.value)}
         />
         <div className="git-dialog-foot">
           <button type="button" className="icon-btn" onClick={props.onClose} disabled={props.busy}>
-            取消
+            {t('files.common.cancel')}
           </button>
           <button type="button" className="btn-primary" disabled={!canSubmit} onClick={submit}>
-            {props.busy ? '提交中…' : '提交'}
+            {props.busy ? t('files.commit.busy') : t('files.commit.submit')}
           </button>
         </div>
       </div>
@@ -536,20 +550,20 @@ function GitDiffView(props: {
         <button
           type="button"
           className="icon-btn"
-          data-tip="关闭"
-          aria-label="关闭 diff 视图"
+          data-tip={t('files.diff.closeTip')}
+          aria-label={t('files.diff.close')}
           onClick={props.onClose}
         >
           ×
         </button>
       </div>
       {props.diff.loading ? (
-        <div className="trace-empty">读取中…</div>
+        <div className="trace-empty">{t('files.state.loading')}</div>
       ) : (
         <>
           {props.diff.note === '' ? null : <div className="trace-empty">{props.diff.note}</div>}
           {sections.length === 0 ? (
-            props.diff.note === '' ? <div className="trace-empty">没有可显示的改动。</div> : null
+            props.diff.note === '' ? <div className="trace-empty">{t('files.diff.empty')}</div> : null
           ) : (
             <div className="git-diff-body">
               {sections.map((section) => (

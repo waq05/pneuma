@@ -76,9 +76,9 @@ console.log('\n[1] 热力图：自己横向滚 + 四档时间窗')
     '四档：今天 / 近 7 天 / 近 30 天 / 近一年',
     usage.includes('type HeatRange = 1 | 7 | 30 | 364') &&
       usage.includes('[1, 7, 30, 364] as HeatRange[]') &&
-      usage.includes("'今天'") && usage.includes("'近一年'"),
+      usage.includes("t('settings.usage.range.today')") && usage.includes("t('settings.usage.range.year')"),
   )
-  check('分段控件挂的是既有的 dsc-segmented 口径（不新造一种按钮）', usage.includes('className="dsc-segmented" role="group" aria-label="热力图时间范围"'), '')
+  check('分段控件挂的是既有的 dsc-segmented 口径（不新造一种按钮）', usage.includes('className="dsc-segmented" role="group" aria-label={t(\'settings.usage.heat.rangeAria\')}'), '')
   check('热力图是唯一的横向滚动容器（.hm-scroll > .hm-canvas）', /className="hm-scroll">\s*<div className="hm-canvas">/.test(usage.replace(/\n\s*/g, '\n')), '')
   check('画布跟着网格走（月份标签的定位基准是整张网格）', usage.includes('className="hm-canvas"'), '')
   check('heatDays 按档位截取（不是把一年全画出来再靠滑）', usage.includes('const heatDays = stats.days.slice(-heatRange)'), '')

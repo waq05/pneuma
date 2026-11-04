@@ -115,7 +115,8 @@ console.log('[3] 壳侧接线（设置 → 模型页）')
   check('推断的入口是 buildKnownIndex + inferModelCaps（用的是整份端点清单）', models.includes('buildKnownIndex(config?.providers ?? [])') && models.includes('inferModelCaps(id, known)'))
   check('弹窗每行画的是推断出来的能力（窗口 + 图/视频 + 无思考）', models.includes('data-discover-source={caps.source}') && models.includes('{contextLabel(caps.contextWindow)}'))
   check('上下文读数只有一份实现（1M / 256K / 128K），弹窗与模型行共用', models.includes('function contextLabel(tokens: number): string') && models.includes('{contextLabel(caps.contextWindow)}') && /contextLabel\(shown\.contextWindow\)/.test(models))
-  check('每行的提示写着这份能力从哪来', models.includes('`${caps.note}${on ? \' · 点一下取消\' : \' · 点一下勾上\'}`'))
+  // 文案进本包字典（2026-11-04 夜）：钉「用了那条带 note/on 的键」，中文原文由 ui-locale-test 判。
+  check('每行的提示写着这份能力从哪来', models.includes("t('settings.models.discover.itemTip'"))
   check('旧的「一律按缺省能力加入」那句已经不在', !models.includes('按缺省能力加入'))
 }
 

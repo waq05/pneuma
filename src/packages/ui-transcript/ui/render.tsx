@@ -6,7 +6,7 @@
  * @module dsc-ui-shell/plugins/transcript/render
  */
 import { Component, useContext, type ReactNode } from 'react'
-import { MarkdownView, estimateTextTokens, type TranscriptEntry } from '@dsc/ui'
+import { MarkdownView, createT, estimateTextTokens, type TranscriptEntry } from '@dsc/ui'
 import { ReviewNoticeCard, findLast, parseReviewNotice, toolSummary } from '@dsc/ui-primitives'
 import { FoldPrefsContext, ShellCwdContext, ShellSessionContext, TOOLVIEW_SLOT, TURN_INDEPENDENT, keyOf, type Row, type Seat, type ToolViewRender } from './shared'
 import { stepGroupFoldKey, turnFoldKey } from './fold-state'
@@ -20,6 +20,12 @@ import { ThinkRow } from './rows/think-row'
 import { SubagentRow, ToolRow } from './rows/tool-row'
 import { ChangesCard } from './rows/changes-card'
 import { RoundFoot } from './rows/foot'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /**
  * 已定稿的阶段组：给组头补一句「这一段具体干了什么」。
@@ -297,27 +303,31 @@ export function RowBody({
     case 'turn-max-tokens':
       return (
         <div className="entry-system" data-turn-notice="max-tokens">
-          这一轮的输出达到长度上限，已被截断
+          {t('transcript.entry.maxTokens')}
         </div>
       )
     case 'model-retry':
       return (
         <div className="entry-system" data-turn-notice="model-retry">
-          模型请求失败，正在重试（第 {entry.attempt} 次）：{entry.text}
+          {t('transcript.entry.modelRetry', { attempt: entry.attempt, message: entry.text })}
         </div>
       )
     case 'turn-end':
       // 旧界面这一条不上屏（结束状态写在整轮开关那一行）。我们还没有那一行，
       // 于是只把「没好好答完」的两种原因显出来——正常结束保持安静。
       if (entry.reason === 'completed') return null
-      return <div className="entry-system">{entry.reason === 'aborted' ? '这一轮被中断' : '这一轮过程失败'}</div>
+      return <div className="entry-system">{entry.reason === 'aborted' ? t('transcript.entry.aborted') : t('transcript.entry.failed')}</div>
     case 'plan':
       return (
         <div className={`plan-card ${entry.plan.decision === 'pending' ? 'pending' : 'settled'}`}>
           <div className="plan-head">
             <span className="plan-title">{entry.plan.title}</span>
             <span className="plan-verdict">
-              {entry.plan.decision === 'pending' ? '等你批' : entry.plan.decision === 'approved' ? '已批准' : '未批准'}
+              {entry.plan.decision === 'pending'
+                ? t('transcript.plan.pending')
+                : entry.plan.decision === 'approved'
+                  ? t('transcript.plan.approved')
+                  : t('transcript.plan.rejected')}
             </span>
           </div>
           <pre className="plan-body">{entry.plan.text}</pre>
@@ -337,7 +347,7 @@ export function RowBody({
     default: {
       // 宿主加了新种类而壳还没跟上时，显式说一句，不要静悄悄地少一块。
       const kind = (entry as { kind?: unknown }).kind
-      return <div className="entry-system">认不出的条目：{String(kind)}</div>
+      return <div className="entry-system">{t('transcript.entry.unknownKind', { kind: String(kind) })}</div>
     }
   }
 }
@@ -364,7 +374,7 @@ export class RowBoundary extends Component<{ entry: TranscriptEntry; children: R
 
   render(): ReactNode {
     if (this.state.error !== null) {
-      return <div className="entry-system">这一条没画出来：{this.state.error.message}</div>
+      return <div className="entry-system">{t('transcript.entry.renderFailed', { message: this.state.error.message })}</div>
     }
     return this.props.children
   }

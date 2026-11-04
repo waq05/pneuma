@@ -6,10 +6,16 @@
  * @module dsc-ui-shell/plugins/transcript/rows/think-row
  */
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
-import { IconChevronDown, IconChevronUp, IconSpark, type TranscriptEntry } from '@dsc/ui'
+import { IconChevronDown, IconChevronUp, IconSpark, createT, type TranscriptEntry } from '@dsc/ui'
 import { useFoldState } from '../fold-hook'
 import { BAR_MIN_CONTENT_H, expandedContentHeight } from './fold-body'
 import { FoldPrefsContext } from '../shared'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../../locale/ui.zh.json'
+import en from '../../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 function firstLine(text: string): string {
   const newline = text.indexOf('\n')
@@ -148,13 +154,13 @@ export function ThinkRow({
       data-preview={preview ? '1' : undefined}
     >
       {/* 跑动这一态在视觉上是扫光 + 品牌色，读屏读不到「扫光」，所以补一句只给读屏的说明。 */}
-      {live ? <span className="think-sr">正在思考</span> : null}
+      {live ? <span className="think-sr">{t('transcript.think.live')}</span> : null}
       <div
         className="think-head"
         role="button"
         tabIndex={0}
         aria-expanded={open}
-        data-tip={open ? '收起这段思考' : '展开这段思考'}
+        data-tip={open ? t('transcript.think.collapseTip') : t('transcript.think.expandTip')}
         onClick={toggle}
         onKeyDown={(event) => {
           if (event.key !== 'Enter' && event.key !== ' ') return
@@ -171,7 +177,7 @@ export function ThinkRow({
         {/* 标题照 dsh 的 `message.think`（两个字「思考」）：2026-10-27 之前是「思考过程」，
             多出来的两个字在窄栏里会被浏览器按字断行（见 views.css 里标题防竖排那条），
             而且同一件事工具行说「读取」、这行说「思考过程」，字数与词性都对不齐。 */}
-        <span className="think-label">思考</span>
+        <span className="think-label">{t('transcript.think.label')}</span>
         {/* 分隔点：只在真有摘要时画（紧凑档的定稿条不画，箭头因此紧跟在标题右边）。 */}
         {preview ? <span className="think-dot" aria-hidden="true" /> : null}
         {preview ? (
@@ -189,16 +195,16 @@ export function ThinkRow({
           放心用 overflow 裁剪做高度过渡，sticky 的参照系仍是滚动容器 .chat。 */}
       {open && barVisible ? (
         <div className="think-bar" data-think-chrome="1">
-          <span className="think-bar-status">思考 · {live ? '进行中' : '已完成'}</span>
+          <span className="think-bar-status">{live ? t('transcript.think.barRunning') : t('transcript.think.barDone')}</span>
           <button
             type="button"
             className="think-collapse"
-            title="收起这段思考"
+            title={t('transcript.think.collapseTip')}
             onClick={() => {
               setOpenPersisted(false)
             }}
           >
-            收起
+            {t('transcript.common.collapse')}
             <IconChevronUp size={11} />
           </button>
         </div>

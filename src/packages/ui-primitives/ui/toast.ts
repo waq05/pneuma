@@ -10,6 +10,13 @@
  *
  * @module dsc-ui-shell/platform/toast
  */
+import { createT } from '@dsc/ui-core'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui-core` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 成功提示停留时长：短到不打断操作，长到能读完一句中文。 */
 const OK_MS = 2200
@@ -67,8 +74,8 @@ function push(tone: 'success' | 'danger', text: string, ms: number, closable: bo
     const close = document.createElement('button')
     close.className = 'dsc-toast__close'
     close.type = 'button'
-    close.setAttribute('data-tip', '关闭这条提示')
-    close.setAttribute('aria-label', '关闭这条提示')
+    close.setAttribute('data-tip', t('primitives.toast.close'))
+    close.setAttribute('aria-label', t('primitives.toast.close'))
     close.innerHTML =
       '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4.5 4.5 11.5 11.5"/><path d="M11.5 4.5 4.5 11.5"/></svg>'
     close.addEventListener('click', () => dismiss(node))

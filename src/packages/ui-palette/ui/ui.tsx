@@ -21,6 +21,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode, type WheelEvent }
 import {
   IconClose,
   IconSearch,
+  createT,
   defineUiPlugin,
   useActions,
   useHostChannel,
@@ -28,6 +29,12 @@ import {
   type UiAction,
 } from '@dsc/ui'
 import { readSessions } from '@dsc/ui-primitives'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 面板打开的事件名（别处想给面板加入口时发它，不需要 import 本插件）。 */
 const OPEN_EVENT = 'shell.palette.open'
@@ -47,7 +54,7 @@ interface PaletteItem {
 }
 
 export default defineUiPlugin({
-  name: '命令面板',
+  name: t('palette.plugin.name'),
   apply(ui) {
     // order 70：排在设置面板（31）之后，两个都常挂载、互不遮挡。
     ui.slots.register('shell.header', { id: 'palette.panel', order: 70 }, PalettePanel)
@@ -132,7 +139,7 @@ function PalettePanel(): ReactNode {
         id: action.id,
         label: action.label,
         hint: action.hint ?? '',
-        group: action.group ?? '动作',
+        group: action.group ?? t('palette.group.actions'),
         ...(action.shortcut === undefined ? {} : { shortcut: action.shortcut }),
         keywords: action.keywords ?? [],
         run: action.run,
@@ -146,9 +153,9 @@ function PalettePanel(): ReactNode {
     for (const session of recent) {
       list.push({
         id: `session.${session.id}`,
-        label: session.title ?? '新会话',
+        label: session.title ?? t('palette.session.untitled'),
         hint: session.cwd,
-        group: '最近会话',
+        group: t('palette.group.recent'),
         keywords: [],
         run: () => {
           void channel.invoke('openSession', [session.id])
@@ -224,7 +231,7 @@ function PalettePanel(): ReactNode {
         className="palette"
         role="dialog"
         aria-modal="true"
-        aria-label="命令面板"
+        aria-label={t('palette.dialog.aria')}
         onMouseDown={(event) => {
           event.stopPropagation()
         }}
@@ -234,8 +241,8 @@ function PalettePanel(): ReactNode {
           <input
             ref={input}
             value={query}
-            placeholder="搜索动作、会话或设置…"
-            aria-label="搜索动作、会话或设置"
+            placeholder={t('palette.search.placeholder')}
+            aria-label={t('palette.search.aria')}
             onChange={(event) => {
               setQuery(event.target.value)
             }}
@@ -270,8 +277,8 @@ function PalettePanel(): ReactNode {
           <button
             type="button"
             className="palette-close"
-            title="关闭，快捷键 Esc"
-            aria-label="关闭命令面板"
+            title={t('palette.close.title')}
+            aria-label={t('palette.close.aria')}
             onClick={() => {
               setOpen(false)
             }}
@@ -279,8 +286,8 @@ function PalettePanel(): ReactNode {
             <IconClose size={15} />
           </button>
         </div>
-        <div className="palette-list" ref={list} role="listbox" aria-label="匹配项">
-          {shown.length === 0 ? <div className="palette-empty">没有匹配项</div> : null}
+        <div className="palette-list" ref={list} role="listbox" aria-label={t('palette.list.aria')}>
+          {shown.length === 0 ? <div className="palette-empty">{t('palette.empty')}</div> : null}
           {shown.map((item, index) => (
             <ItemRow
               key={item.id}
@@ -298,10 +305,10 @@ function PalettePanel(): ReactNode {
           ))}
         </div>
         <div className="palette-foot">
-          <span>上下键选择</span>
-          <span>PgUp / PgDn 翻页</span>
-          <span>回车打开</span>
-          <span>Esc 关闭</span>
+          <span>{t('palette.foot.arrows')}</span>
+          <span>{t('palette.foot.pages')}</span>
+          <span>{t('palette.foot.enter')}</span>
+          <span>{t('palette.foot.esc')}</span>
           <button
             type="button"
             className="palette-foot-link"
@@ -310,7 +317,7 @@ function PalettePanel(): ReactNode {
               setHelp(true)
             }}
           >
-            键盘快捷键 <kbd className="palette-key">?</kbd>
+            {t('palette.foot.shortcuts')} <kbd className="palette-key">?</kbd>
           </button>
         </div>
       </div>
@@ -326,16 +333,16 @@ function PalettePanel(): ReactNode {
  * 行尾的「焦点」说明哪些键只在特定位置上生效，免得读者在任意位置按了没反应。
  */
 const SHORTCUTS: ReadonlyArray<{ keys: string; label: string; note?: string }> = [
-  { keys: 'Ctrl K', label: '命令面板', note: '搜动作、会话与设置' },
-  { keys: 'Ctrl B', label: '收起 / 展开侧栏' },
-  { keys: 'Ctrl P', label: '文件页签' },
-  { keys: 'Ctrl `', label: '终端页签' },
-  { keys: 'Ctrl T', label: '浏览器页签' },
-  { keys: 'Ctrl Enter', label: '插话', note: '回合进行中补一句' },
-  { keys: 'Ctrl Alt R', label: '重命名会话', note: '焦点在会话行上' },
-  { keys: 'Ctrl Alt F', label: '分叉会话', note: '焦点在会话行上' },
-  { keys: 'Ctrl Shift A', label: '归档会话', note: '焦点在会话行上' },
-  { keys: 'Esc', label: '关闭浮层' },
+  { keys: 'Ctrl K', label: t('palette.shortcuts.palette'), note: t('palette.shortcuts.paletteNote') },
+  { keys: 'Ctrl B', label: t('palette.shortcuts.sidebar') },
+  { keys: 'Ctrl P', label: t('palette.shortcuts.files') },
+  { keys: 'Ctrl `', label: t('palette.shortcuts.terminal') },
+  { keys: 'Ctrl T', label: t('palette.shortcuts.browser') },
+  { keys: 'Ctrl Enter', label: t('palette.shortcuts.steer'), note: t('palette.shortcuts.steerNote') },
+  { keys: 'Ctrl Alt R', label: t('palette.shortcuts.rename'), note: t('palette.shortcuts.focusNote') },
+  { keys: 'Ctrl Alt F', label: t('palette.shortcuts.fork'), note: t('palette.shortcuts.focusNote') },
+  { keys: 'Ctrl Shift A', label: t('palette.shortcuts.archive'), note: t('palette.shortcuts.focusNote') },
+  { keys: 'Esc', label: t('palette.shortcuts.closeLayer') },
 ]
 
 /** 键位表面板：与命令面板同一种遮罩和浮层几何，只是内容换成一张表。 */
@@ -353,19 +360,19 @@ function ShortcutSheet({ onClose }: { onClose: () => void }): ReactNode {
         className="palette shortcut-sheet"
         role="dialog"
         aria-modal="true"
-        aria-label="键盘快捷键"
+        aria-label={t('palette.shortcuts.aria')}
         onMouseDown={(event) => {
           event.stopPropagation()
         }}
       >
         <div className="shortcut-head">
-          <span>键盘快捷键</span>
+          <span>{t('palette.shortcuts.title')}</span>
           <kbd className="palette-key">Esc</kbd>
           <button
             type="button"
             className="palette-close"
-            title="关闭，快捷键 Esc"
-            aria-label="关闭键位表"
+            title={t('palette.close.title')}
+            aria-label={t('palette.shortcuts.closeAria')}
             onClick={onClose}
           >
             <IconClose size={15} />
@@ -382,7 +389,7 @@ function ShortcutSheet({ onClose }: { onClose: () => void }): ReactNode {
             </div>
           ))}
         </div>
-        <div className="shortcut-foot">按 ? 随时打开这张表</div>
+        <div className="shortcut-foot">{t('palette.shortcuts.foot')}</div>
       </div>
     </div>
   )

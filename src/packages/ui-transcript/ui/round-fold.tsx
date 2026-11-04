@@ -8,10 +8,16 @@
  * @module dsc-ui-shell/plugins/transcript/round-fold
  */
 import { useCallback, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
-import type { TranscriptEntry } from '@dsc/ui'
+import { createT, type TranscriptEntry } from '@dsc/ui'
 import { IconChevronDown } from '@dsc/ui'
 import { formatDuration, roundDuration, type RoundInfo } from './timing'
 import { readFold, writeFold } from './fold-state'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 过程折叠程度（UiProcessFold 的四档；契约里定义，这里本地复述一份取值）。 */
 export type ProcessFold = 'compact' | 'standard' | 'detailed' | 'verbose'
@@ -145,7 +151,13 @@ export function TurnFoldRow(props: {
 }): ReactNode {
   const used = formatDuration(roundDuration(props.round))
   const label =
-    props.endReason === 'aborted' ? '已停止' : props.endReason === 'error' ? '过程失败' : used === null ? '已完成' : `用时 ${used}`
+    props.endReason === 'aborted'
+      ? t('transcript.fold.stopped')
+      : props.endReason === 'error'
+        ? t('transcript.fold.failed')
+        : used === null
+          ? t('transcript.fold.done')
+          : t('transcript.fold.duration', { duration: used })
   const toggle = (event: ReactKeyboardEvent<HTMLButtonElement>): void => {
     if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
@@ -165,13 +177,13 @@ export function TurnFoldRow(props: {
       data-tip={
         props.disabled
           ? props.endReason === 'aborted'
-            ? '这一轮被中断，过程保持展开'
+            ? t('transcript.fold.tipAborted')
             : props.endReason === 'error'
-              ? '这一轮跑挂了，过程保持展开'
-              : '这一轮没有可折叠的过程内容'
+              ? t('transcript.fold.tipError')
+              : t('transcript.fold.tipEmpty')
           : props.open
-            ? '收起这一轮的过程（思考与工具调用）'
-            : '展开这一轮的过程（思考与工具调用）'
+            ? t('transcript.fold.tipCollapse')
+            : t('transcript.fold.tipExpand')
       }
       onClick={props.onToggle}
       onKeyDown={toggle}

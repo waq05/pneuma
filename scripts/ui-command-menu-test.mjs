@@ -261,7 +261,8 @@ console.log('\n[5] 壳侧接线')
   check('只打一个 / 时不采纳（原文落到 /help）', composer.includes("command.open && typed !== '/'"), '')
   check('按键归属：↑↓/Tab/Esc 先归菜单', composer.includes('command.move(event.key === ' + "'ArrowDown'" + ' ? 1 : -1)') && composer.includes('command.pick()'), '')
   check('命令位里不提文件（@ 面板让位）', composer.includes('if (commandQuery(value, caret) === null) mention.track(value, caret)'), '')
-  check('面板画出来了（role=listbox + 类名）', composer.includes('aria-label="命令候选"') && composer.includes('className={`slash-item'), '')
+  // 文案进本包字典（2026-11-04 夜）：钉「用了那条键」，译文本身由 ui-locale-test 判。
+  check('面板画出来了（role=listbox + 类名）', composer.includes("aria-label={t('slash.aria')}") && composer.includes('className={`slash-item'), '')
   const styles = read('src/packages/ui-renderer/ui/styles/styles.css')
   check(
     '样式类齐（面板 / 分组标题 / 行 / 图标格 / 中文名 / 英文名 / 说明 / 提示）',
@@ -288,7 +289,7 @@ console.log('\n[5] 壳侧接线')
   check('手机菜单有分组标题与图标格', read('remote-web/src/components/CommandMenu.tsx').includes('cmd-section') && read('remote-web/src/components/CommandMenu.tsx').includes('cmd-icon'), '')
   const menu = read('src/packages/ui-composer/ui/command-menu.ts')
   check('清单一次取、模块级缓存（打字每一拍不问宿主）', menu.includes('let cache: ShellCommandView[] | null = null') && menu.includes('if (cache !== null)'), '')
-  check('取不到时整会话不反复问（并给一句提示）', menu.includes('let unavailable = false') && composer.includes('没接“/”命令通道'), '')
+  check('取不到时整会话不反复问（并给一句提示）', menu.includes('let unavailable = false') && composer.includes("t('error.commandChannel')"), '')
   check('纯模块零依赖（不 import React / 宿主）', !/^import /m.test(read('src/packages/ui-composer/ui/commands.ts')), '')
 
   // 2026-10-27 报障第一条：回车跑完命令，候选面板还挂在输入框上方不收。

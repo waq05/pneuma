@@ -1,0 +1,17 @@
+{
+  "browser.plugin.name": "浏览器",
+  "browser.tab.label": "浏览器",
+  "browser.noBridge": "内置浏览器来自桌面外壳的原生视图，浏览器里没有它。要用请打开桌面版（或者用「系统打开」跳出去看）。",
+  "browser.errorPrefix": "浏览器：{message}",
+  "browser.error.noAddress": "先输一个地址",
+  "browser.error.badScheme": "只支持 http/https 地址",
+  "browser.error.openFailed": "打开失败：{message}",
+  "browser.back": "后退",
+  "browser.forward": "前进",
+  "browser.loading": "正在加载…",
+  "browser.reload": "刷新",
+  "browser.urlPlaceholder": "输入 HTTP(S) 地址，回车打开",
+  "browser.address": "地址",
+  "browser.openExternal": "用系统浏览器打开",
+  "browser.empty": "输入 HTTP(S) 地址开始浏览"
+}

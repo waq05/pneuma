@@ -8,7 +8,13 @@
  * 文案只有一个方向（对照 dsh 的 stepProcess 组头）：**一句话**。
  * @module dsc-ui-shell/plugins/transcript/activity
  */
-import type { TranscriptEntry } from '@dsc/ui'
+import { createT, type TranscriptEntry } from '@dsc/ui'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 进行中状态行的一句话（对照 dsh 的 stepProcess 组头：类别 + 详情，只有一行）。 */
 export interface LiveActivity {
@@ -35,14 +41,14 @@ export function liveActivity(
 ): LiveActivity | null {
   if (turnState === 'idle') return null
   if (turnState === 'awaiting-approval') {
-    return { text: '等待你的确认', covered: false }
+    return { text: t('transcript.activity.approval'), covered: false }
   }
   const tail = entries[entries.length - 1]
   if (tail !== undefined && tail.id < 0 && tail.kind === 'thinking') {
-    return { text: '正在分析请求', covered: false }
+    return { text: t('transcript.activity.analyzing'), covered: false }
   }
   if (tail !== undefined && tail.id < 0 && tail.kind === 'text') {
-    return { text: '正在整理回复', covered: false }
+    return { text: t('transcript.activity.answering'), covered: false }
   }
   const running = [...entries]
     .reverse()
@@ -53,14 +59,14 @@ export function liveActivity(
   if (running !== undefined) {
     // 名字可能为空：模型偶尔发出一条没有名字的工具调用（网关把它回成 null，
     // 见 core/llm.ts 的 applyToolCallDelta）。空名字时别画出「正在调用 」这种半句话。
-    const name = typeof running.call.name === 'string' && running.call.name !== '' ? running.call.name : '未知工具'
+    const name = typeof running.call.name === 'string' && running.call.name !== '' ? running.call.name : t('transcript.activity.unknownTool')
     return {
       // 「准备中」是模型还在吐参数、「正在调用」是工具真的开跑了——两句话不同
-      text: running.call.status === 'preparing' ? `正在准备 ${name}` : `正在调用 ${name}`,
+      text: running.call.status === 'preparing' ? t('transcript.activity.preparing', { name }) : t('transcript.activity.calling', { name }),
       // 工具在跑 = 过程组头正在画同一件事（除非用户把过程折叠关成了竖排）
       covered: true,
     }
   }
-  if (turnState === 'working') return { text: '正在执行工具', covered: false }
-  return { text: '正在分析请求', covered: false }
+  if (turnState === 'working') return { text: t('transcript.activity.working'), covered: false }
+  return { text: t('transcript.activity.analyzing'), covered: false }
 }

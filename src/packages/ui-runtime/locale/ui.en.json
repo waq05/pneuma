@@ -1,0 +1,5 @@
+{
+  "invoke.timeout": "Host method call timed out ({ms} ms)",
+  "invoke.aborted": "Host method call was aborted",
+  "auth.expired": "UI credential expired — reopen the address the host just printed"
+}

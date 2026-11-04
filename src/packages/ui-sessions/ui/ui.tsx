@@ -61,6 +61,7 @@ import {
 import {
   ACTIONS_SERVICE,
   confirmAction,
+  createT,
   defineUiPlugin,
   getHostNative,
   openTrace,
@@ -79,17 +80,23 @@ import {
 } from '@dsc/ui'
 import { formatCostCny, formatTokens, humanErrorLine, readCwd, readSessions } from '@dsc/ui-primitives'
 import { buildWorkGroups, displayName, lastSegment, moveToEnd, moveWithin, orderedSessions, type ArchivedFilter, type GroupKey, type SortKey } from './grouping'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 空的会话列表常量：没拿到快照时共用一份，省得每帧新建数组。 */
 /** 每组默认露几条（旧界面同款），「展开剩余」按这个数加量。 */
 const PREVIEW_COUNT = 5
 
 /** 归档确认框的说明文案（旧界面同款：把去向说清楚，不写「确定吗」）。 */
-const ARCHIVE_DETAIL_ONE =
-  '会话会离开侧边栏，移进「设置 → 归档」的归档区；消息一个字不删，想回来去归档里点「恢复会话」。'
+const ARCHIVE_DETAIL_ONE = t('archive.detail')
 
 export default defineUiPlugin({
-  name: '会话列表',
+  name: t('plugin.name'),
   apply(ui) {
     // 顶栏的工作区打开组（旧界面同款：主钮开资源管理器，下拉里还有终端 / VS Code / 复制路径）。
     ui.slots.register('shell.header', { id: 'sessions.workspace-open', order: 10 }, WorkspaceOpenGroup)
@@ -108,11 +115,11 @@ function relativeTime(at: number): string {
   const delta = Date.now() - at
   if (!Number.isFinite(delta) || delta < 0) return ''
   const minutes = Math.floor(delta / 60_000)
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${String(minutes)}分钟`
+  if (minutes < 1) return t('time.justNow')
+  if (minutes < 60) return t('time.minutes', { n: minutes })
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${String(hours)}小时`
-  return `${String(Math.floor(hours / 24))}天`
+  if (hours < 24) return t('time.hours', { n: hours })
+  return t('time.days', { n: Math.floor(hours / 24) })
 }
 
 /** 运行状态 → `.session-dot` 上的 class（旧版也是 class，不是 data 属性）。 */
@@ -124,9 +131,9 @@ const DOT_CLASS: Readonly<Record<SessionRunState, string>> = {
 
 /** 运行状态 → 悬浮说明（旧界面同一套说法）。 */
 const DOT_LABEL: Readonly<Record<SessionRunState, string>> = {
-  working: '这个会话正在跑',
-  'awaiting-approval': '挂着等你审批',
-  'just-finished': '后台已完成（点开查看）',
+  working: t('dot.working'),
+  'awaiting-approval': t('dot.awaiting'),
+  'just-finished': t('dot.finished'),
 }
 
 /** 侧栏本地的界面偏好副本（读写都走宿主 `getUiPrefs` / `setUiPrefs`）。 */
@@ -254,10 +261,10 @@ function SessionList() {
       if (result !== null && typeof result === 'object' && typeof (result as { ok?: unknown }).ok === 'boolean') {
         const reply = result as { ok: boolean; error?: unknown; notice?: unknown }
         if (!reply.ok) {
-          toastErr(`操作失败：${typeof reply.error === 'string' ? reply.error : '宿主没说什么原因'}`)
+          toastErr(t('toast.opFailed', { message: typeof reply.error === 'string' ? reply.error : t('toast.noReason') }))
           return
         }
-        toastOk(typeof reply.notice === 'string' && reply.notice !== '' ? reply.notice : '已完成')
+        toastOk(typeof reply.notice === 'string' && reply.notice !== '' ? reply.notice : t('toast.done'))
         await channel.invoke('refreshSessions', [])
         then?.()
       }
@@ -282,7 +289,7 @@ function SessionList() {
         await channel.invoke('setUiPrefs', [body])
       } catch (reason) {
         setPrefs((current) => ({ ...current, ...patchOfUndo(patch) }))
-        toastErr(`界面偏好没写成功：${reason instanceof Error ? reason.message : String(reason)}`)
+        toastErr(t('toast.prefsFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
       }
     })()
   }
@@ -356,7 +363,7 @@ function SessionList() {
         void getHostNative().invoke('rememberCwd', [target]).catch(() => undefined)
         await run('refreshSessions', [])
       } catch (reason) {
-        toastErr(`新建会话失败：${reason instanceof Error ? reason.message : String(reason)}`)
+        toastErr(t('toast.newSessionFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
       }
     })()
   }
@@ -378,13 +385,13 @@ function SessionList() {
       const count = real.length
       const detail =
         count > 0
-          ? `其下 ${String(count)} 个会话会全部归档（移进「设置 → 归档」，消息一个字不删，可恢复），工作区从侧边栏移除。`
-          : '该工作区还没有会话，将从侧边栏移除。'
-      const current = target === (cwd ?? '') ? '它仍是当前目录，新建会话后会重新出现在侧边栏。' : ''
+          ? t('workspace.deleteDetail', { count })
+          : t('workspace.deleteEmpty')
+      const current = target === (cwd ?? '') ? t('workspace.deleteCurrent') : ''
       const ok = await confirmAction({
-        title: `删除工作区「${displayName(target, prefs.aliases)}」？`,
+        title: t('workspace.deleteTitle', { name: displayName(target, prefs.aliases) }),
         detail: detail + current,
-        confirmLabel: '删除',
+        confirmLabel: t('common.delete'),
       })
       if (!ok) return
       setRecentCwds((list) => list.filter((item) => item !== target))
@@ -393,15 +400,15 @@ function SessionList() {
         void native.invoke('removeRecentCwd', [target]).catch(() => undefined)
       }
       if (count === 0) {
-        toastOk('已从侧边栏移除该工作区')
+        toastOk(t('toast.workspaceRemoved'))
         return
       }
       try {
         await channel.invoke('archiveSessions', [real.map((session) => session.id)])
         await run('refreshSessions', [])
-        toastOk(`工作区已删除，${String(count)} 个会话已归档`)
+        toastOk(t('toast.workspaceDeleted', { count }))
       } catch {
-        toastErr('会话归档失败，工作区随会话保留在侧边栏')
+        toastErr(t('toast.archiveFailed'))
       }
     })()
   }
@@ -432,10 +439,10 @@ function SessionList() {
     return actions.register('sessions', [
       {
         id: 'session.new',
-        label: '新会话',
-        hint: '在当前工作区开一条空会话',
-        group: '会话',
-        keywords: ['新建', 'new', 'chat'],
+        label: t('session.new'),
+        hint: t('action.newSessionHint'),
+        group: t('action.group'),
+        keywords: [t('action.keyword'), 'new', 'chat'],
         run: () => {
           newRef.current()
         },
@@ -455,7 +462,7 @@ function SessionList() {
       try {
         const messages = await channel.invoke<string[]>('listUserMessages', [id])
         if (messages.length < 2) {
-          toastErr('可分叉的位置不足，至少需要两条用户消息')
+          toastErr(t('fork.tooFew'))
           return
         }
         setForking({ id, messages })
@@ -473,12 +480,12 @@ function SessionList() {
       try {
         const result = await channel.invoke<{ ok: boolean; path?: string; error?: string }>('forkSession', [id, index])
         if (result.ok !== true) {
-          setFault(result.error ?? '分叉失败')
+          setFault(result.error ?? t('fork.failed'))
           return
         }
         await run('openSession', result.path === undefined ? [] : [result.path])
         await run('refreshSessions', [])
-        toastOk(`已分叉出新会话，包含第 ${String(index + 1)} 条消息之前的内容`)
+        toastOk(t('fork.done', { n: index + 1 }))
       } catch (reason) {
         setFault(reason instanceof Error ? reason.message : String(reason))
       }
@@ -489,9 +496,9 @@ function SessionList() {
   const archive = (id: string, title: string): void => {
     void (async () => {
       const ok = await confirmAction({
-        title: `归档会话「${title}」？`,
+        title: t('archive.title', { title }),
         detail: ARCHIVE_DETAIL_ONE,
-        confirmLabel: '归档',
+        confirmLabel: t('common.archive'),
       })
       if (!ok) return
       await run('archiveSessions', [[id]])
@@ -513,8 +520,8 @@ function SessionList() {
     const uuid = lastSegment(id).replace(/\.jsonl$/, '')
     void navigator.clipboard
       .writeText(uuid)
-      .then(() => toastOk('已复制会话 ID'))
-      .catch((reason: unknown) => toastErr(`复制失败：${reason instanceof Error ? reason.message : String(reason)}`))
+      .then(() => toastOk(t('toast.idCopied')))
+      .catch((reason: unknown) => toastErr(t('toast.copyFailed', { message: reason instanceof Error ? reason.message : String(reason) })))
   }
 
   /** 改工作区显示名（别名写回 uiPrefs；空串 = 撤销别名，恢复真实目录名）。 */
@@ -716,7 +723,7 @@ function SessionList() {
         // 节点必须真在文档里才能被 setDragImage 截图，截完立刻摘掉。
         const ghost = document.createElement('div')
         ghost.className = 'dsc-drag-ghost'
-        ghost.textContent = session.title ?? '新会话'
+        ghost.textContent = session.title ?? t('session.new')
         document.body.appendChild(ghost)
         event.dataTransfer.setDragImage(ghost, 12, 16)
         window.setTimeout(() => {
@@ -750,7 +757,7 @@ function SessionList() {
     <>
       <button type="button" className="btn-new" data-action="new-session" onClick={() => open()}>
         <IconPlus size={15} />
-        新会话
+        {t('session.new')}
       </button>
 
       {/* 技能/插件一级入口（旧界面侧栏同位）：两个都是**主区独立整页**（旧界面同款），
@@ -764,7 +771,7 @@ function SessionList() {
             setShellPage(page === 'skills' ? null : 'skills')
           }}
         >
-          <IconBolt size={15} /> 技能
+          <IconBolt size={15} /> {t('nav.skills')}
         </button>
         <button
           type="button"
@@ -774,7 +781,7 @@ function SessionList() {
             setShellPage(page === 'plugins' ? null : 'plugins')
           }}
         >
-          <IconPuzzle size={15} /> 插件
+          <IconPuzzle size={15} /> {t('nav.plugins')}
         </button>
         {/* 旁问不在这儿（2026-10-26 第二轮）：它开的是右侧栏的页签，入口放在右侧栏
             自己的「开始」页上（ui-dockkit/dock.tsx 的 GUIDE_ENTRIES）。摆在这一列里，
@@ -783,13 +790,13 @@ function SessionList() {
 
       <div className="sidebar-scroll">
         <div className="section-head">
-          <span className="side-title">{prefs.group === 'flat' ? '会话' : '工作区'}</span>
+          <span className="side-title">{prefs.group === 'flat' ? t('head.sessions') : t('head.workspaces')}</span>
           <span className="head-actions">
             <button
               type="button"
               className={`icon-btn${searching ? ' on' : ''}`}
-              data-tip="搜索会话"
-              aria-label="搜索会话"
+              data-tip={t('search.tip')}
+              aria-label={t('search.tip')}
               onClick={() => {
                 setSearching((current) => !current)
                 setQuery('')
@@ -800,8 +807,8 @@ function SessionList() {
             <button
               type="button"
               className={`icon-btn${viewMenu !== null ? ' on' : ''}`}
-              data-tip="视图选项：分组方式、排序方式、筛选会话"
-              aria-label="视图选项"
+              data-tip={t('view.tip')}
+              aria-label={t('view.label')}
               onClick={(event) => {
                 if (viewMenu !== null) {
                   setViewMenu(null)
@@ -825,7 +832,7 @@ function SessionList() {
             <IconSearch size={14} />
             <input
               autoFocus
-              placeholder="按会话名或目录名过滤"
+              placeholder={t('search.placeholder')}
               value={query}
               onChange={(event) => {
                 setQuery(event.target.value)
@@ -840,8 +847,8 @@ function SessionList() {
             <button
               type="button"
               className="icon-btn"
-              data-tip="清除搜索"
-              aria-label="清除搜索"
+              data-tip={t('search.clear')}
+              aria-label={t('search.clear')}
               onClick={() => setSearching(false)}
             >
               <IconClose size={14} />
@@ -849,23 +856,23 @@ function SessionList() {
           </div>
         ) : null}
 
-        {fault === null ? null : <div className="sidebar-empty">列表没读出来：{fault}</div>}
+        {fault === null ? null : <div className="sidebar-empty">{t('list.fault', { message: fault })}</div>}
 
         {sessions.length === 0 && recentCwds.length === 0 ? (
           <div className="sidebar-empty">
             <IconQueue size={24} />
-            <div>{loading ? '正在读会话列表…' : '还没有历史会话。'}</div>
-            {loading ? null : <div>发送第一条消息开始。</div>}
+            <div>{loading ? t('list.loading') : t('list.empty')}</div>
+            {loading ? null : <div>{t('list.emptyHint')}</div>}
           </div>
         ) : groups.length === 0 ? (
           <div className="sidebar-empty">
             <IconQueue size={24} />
             <div>
               {trimmed !== ''
-                ? `没有匹配「${query.trim()}」的会话。`
+                ? t('list.noMatch', { query: query.trim() })
                 : prefs.archived === 'only'
-                  ? '还没有已归档的会话。'
-                  : '活动区没有会话了：归档的那些在「视图选项 → 仅显示已归档」里。'}
+                  ? t('list.noArchived')
+                  : t('list.allArchived')}
             </div>
           </div>
         ) : prefs.group === 'flat' ? (
@@ -879,7 +886,7 @@ function SessionList() {
               renameRequest={renaming === session.id}
               onOpen={open}
               onPin={(pinned) => run('setSessionPinned', [session.id, pinned])}
-              onArchive={() => archive(session.id, session.title ?? '新会话')}
+              onArchive={() => archive(session.id, session.title ?? t('session.new'))}
               onRename={(name) => rename(session.id, name)}
               onRenameDone={() => setRenaming(null)}
               onFork={() => startFork(session.id)}
@@ -911,7 +918,7 @@ function SessionList() {
                   role="button"
                   tabIndex={0}
                   aria-expanded={expanded}
-                  data-tip={`${group.cwd} · ${group.sessions.length} 个会话，展开/收起${sortable ? '，拖动排序' : ''}`}
+                  data-tip={t('group.tip', { path: group.cwd, count: group.sessions.length }) + (sortable ? t('group.tipSort') : '')}
                   draggable={sortable}
                   onClick={() => clickGroup(key)}
                   onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
@@ -984,8 +991,8 @@ function SessionList() {
                       <button
                         type="button"
                         className="icon-btn"
-                        data-tip="把这个工作区的会话全部恢复"
-                        aria-label="全部恢复"
+                        data-tip={t('group.restoreAllTip')}
+                        aria-label={t('group.restoreAll')}
                         onClick={() => {
                           void run('restoreSessions', [group.sessions.map((session) => session.id)])
                         }}
@@ -996,8 +1003,8 @@ function SessionList() {
                     <button
                       type="button"
                       className={`icon-btn${menu?.kind === 'group' && menu.id === key ? ' on' : ''}`}
-                      data-tip="更多操作"
-                      aria-label="工作区更多操作"
+                      data-tip={t('group.moreTip')}
+                      aria-label={t('group.more')}
                       onClick={(event) => {
                         // fixed 贴按钮：默认在按钮下方 6px；底部空间放不下（菜单最高约
                         // 5 项 ≈ 180px，留余量判 240）就翻到按钮上方 6px 向上伸展
@@ -1014,8 +1021,8 @@ function SessionList() {
                     <button
                       type="button"
                       className="icon-btn"
-                      data-tip={`在 ${displayName(group.cwd, prefs.aliases)} 新建会话`}
-                      aria-label="在此工作区新建会话"
+                      data-tip={t('group.newIn', { name: displayName(group.cwd, prefs.aliases) })}
+                      aria-label={t('group.newInLabel')}
                       onClick={() => {
                         newSessionIn(group.cwd)
                       }}
@@ -1036,7 +1043,7 @@ function SessionList() {
                         drag={dragFor(group.cwd, session)}
                         onOpen={open}
                         onPin={(pinned) => run('setSessionPinned', [session.id, pinned])}
-                        onArchive={() => archive(session.id, session.title ?? '新会话')}
+                        onArchive={() => archive(session.id, session.title ?? t('session.new'))}
                         onRename={(name) => rename(session.id, name)}
                         onRenameDone={() => setRenaming(null)}
                         onFork={() => startFork(session.id)}
@@ -1062,7 +1069,7 @@ function SessionList() {
                       }))
                     }}
                   >
-                    {rest === 0 ? '收起' : `展开剩余 ${String(rest)} 个会话`}
+                    {rest === 0 ? t('group.collapse') : t('group.expandMore', { count: rest })}
                   </button>
                 ) : null}
               </div>
@@ -1084,7 +1091,7 @@ function SessionList() {
                   endDrag()
                 }}
               >
-                放到最后
+                {t('group.dropEnd')}
               </div>
             ) : null}
           </>
@@ -1101,34 +1108,34 @@ function SessionList() {
             role="menu"
             style={{ position: 'fixed', top: `${String(viewMenu.top)}px`, right: `${String(viewMenu.right)}px` }}
           >
-            <div className="menu-label">分组方式</div>
+            <div className="menu-label">{t('menu.groupBy')}</div>
             {(
               [
-                ['workspace', '按工作区', <IconFolder key="i" size={15} />],
-                ['tree', '按工作区树', <IconTree key="i" size={15} />],
-                ['flat', '单列表', <IconFlatList key="i" size={15} />],
+                ['workspace', t('groupBy.workspace'), <IconFolder key="i" size={15} />],
+                ['tree', t('groupBy.tree'), <IconTree key="i" size={15} />],
+                ['flat', t('groupBy.flat'), <IconFlatList key="i" size={15} />],
               ] as const
             ).map(([id, text, icon]) => (
               <MenuRadio key={id} active={prefs.group === id} text={text} icon={icon} onPick={() => patchPrefs({ group: id })} />
             ))}
             <div className="menu-sep" />
-            <div className="menu-label">排序方式</div>
+            <div className="menu-label">{t('menu.sortBy')}</div>
             {(
               [
-                ['manual', '手动排序', <IconSwap key="i" size={15} />],
-                ['recent', '最近更新', <IconClock key="i" size={15} />],
-                ['created', '创建时间', <IconCalendar key="i" size={15} />],
+                ['manual', t('sortBy.manual'), <IconSwap key="i" size={15} />],
+                ['recent', t('sortBy.recent'), <IconClock key="i" size={15} />],
+                ['created', t('sortBy.created'), <IconCalendar key="i" size={15} />],
               ] as const
             ).map(([id, text, icon]) => (
               <MenuRadio key={id} active={prefs.sort === id} text={text} icon={icon} onPick={() => patchPrefs({ sort: id })} />
             ))}
             <div className="menu-sep" />
-            <div className="menu-label">筛选会话</div>
+            <div className="menu-label">{t('menu.filter')}</div>
             {(
               [
-                ['hide', '隐藏已归档', <IconArchiveOff key="i" size={15} />],
-                ['show', '全部对话（显示已归档）', <IconQueue key="i" size={15} />],
-                ['only', '仅显示已归档', <IconArchive key="i" size={15} />],
+                ['hide', t('filter.hide'), <IconArchiveOff key="i" size={15} />],
+                ['show', t('filter.show'), <IconQueue key="i" size={15} />],
+                ['only', t('filter.only'), <IconArchive key="i" size={15} />],
               ] as const
             ).map(([id, text, icon]) => (
               <MenuRadio
@@ -1168,7 +1175,7 @@ function SessionList() {
                         只是最后一组换成「恢复会话」而不是「归档会话」。 */}
                     <MenuItem
                       icon={<IconPin size={15} />}
-                      text={session.pinnedAt !== undefined ? '取消置顶' : '置顶会话'}
+                      text={session.pinnedAt !== undefined ? t('menu.unpin') : t('menu.pin')}
                       onClick={() => {
                         setMenu(null)
                         void run('setSessionPinned', [session.id, session.pinnedAt === undefined])
@@ -1176,7 +1183,7 @@ function SessionList() {
                     />
                     <MenuItem
                       icon={<IconEdit size={15} />}
-                      text="重命名"
+                      text={t('menu.rename')}
                       hint="Ctrl+Alt+R"
                       onClick={() => {
                         setMenu(null)
@@ -1185,7 +1192,7 @@ function SessionList() {
                     />
                     <MenuItem
                       icon={<IconSwap size={15} />}
-                      text="分叉会话"
+                      text={t('menu.fork')}
                       hint="Ctrl+Alt+F"
                       onClick={() => {
                         setMenu(null)
@@ -1194,7 +1201,7 @@ function SessionList() {
                     />
                     <MenuItem
                       icon={<IconCopy size={15} />}
-                      text="复制会话 ID"
+                      text={t('menu.copyId')}
                       onClick={() => {
                         setMenu(null)
                         copyId(session.id)
@@ -1203,8 +1210,8 @@ function SessionList() {
                     {/* 查看轨迹：打开这条会话并把正文区切到轨迹页（顶栏页签的同一个去处）。 */}
                     <MenuItem
                       icon={<IconActivity size={15} />}
-                      text="查看轨迹"
-                      hint="执行过程与耗时"
+                      text={t('menu.trace')}
+                      hint={t('menu.traceHint')}
                       onClick={() => {
                         setMenu(null)
                         showTrace(session.id)
@@ -1213,7 +1220,7 @@ function SessionList() {
                     {!archived && stoppable ? (
                       <MenuItem
                         icon={<IconStop size={15} />}
-                        text="停止运行"
+                        text={t('menu.stop')}
                         onClick={() => {
                           setMenu(null)
                           void run('interrupt', [session.id])
@@ -1224,7 +1231,7 @@ function SessionList() {
                     {archived ? (
                       <MenuItem
                         icon={<IconRefresh size={15} />}
-                        text="恢复会话"
+                        text={t('menu.restore')}
                         onClick={() => {
                           setMenu(null)
                           restore(session.id)
@@ -1233,12 +1240,12 @@ function SessionList() {
                     ) : (
                       <MenuItem
                         icon={<IconArchive size={15} />}
-                        text="归档会话"
+                        text={t('menu.archive')}
                         hint="Ctrl+Shift+A"
                         danger
                         onClick={() => {
                           setMenu(null)
-                          archive(session.id, session.title ?? '新会话')
+                          archive(session.id, session.title ?? t('session.new'))
                         }}
                       />
                     )}
@@ -1260,22 +1267,22 @@ function SessionList() {
                   >
                     <MenuItem
                       icon={<IconFolderOpenColor size={15} />}
-                      text="在资源管理器中打开"
+                      text={t('menu.openExplorer')}
                       onClick={() => {
                         setMenu(null)
                         const native = getHostNative()
                         if (!native.available) {
-                          toastErr('在资源管理器中打开要用桌面版（浏览器里没有原生桥）')
+                          toastErr(t('toast.explorerNeedsDesktop'))
                           return
                         }
                         void native.invoke('openPath', [cwdOf]).catch((reason: unknown) => {
-                          toastErr(`打开失败：${humanErrorLine(reason)}`)
+                          toastErr(t('toast.openFailed', { message: humanErrorLine(reason) }))
                         })
                       }}
                     />
                     <MenuItem
                       icon={<IconEdit size={15} />}
-                      text="重命名显示名"
+                      text={t('menu.renameGroup')}
                       onClick={() => {
                         setMenu(null)
                         setGroupRenaming({ cwd: cwdOf, value: displayName(cwdOf, prefs.aliases) })
@@ -1284,7 +1291,7 @@ function SessionList() {
                     {prefs.aliases[cwdOf] !== undefined ? (
                       <MenuItem
                         icon={<IconClose size={15} />}
-                        text="恢复真实目录名"
+                        text={t('menu.resetAlias')}
                         onClick={() => {
                           setMenu(null)
                           renameGroup(cwdOf, '')
@@ -1297,7 +1304,7 @@ function SessionList() {
                           <div className="menu-sep" />
                           <MenuItem
                             icon={<IconRefresh size={15} />}
-                            text={`恢复这 ${String(group.sessions.length)} 个会话`}
+                            text={t('menu.restoreCount', { count: group.sessions.length })}
                             onClick={() => {
                               setMenu(null)
                               void run('restoreSessions', [group.sessions.map((session) => session.id)])
@@ -1312,7 +1319,7 @@ function SessionList() {
                             还没发消息的工作区删不掉（旧界面 0.6.45 报障后统一成这一个入口）。 */}
                         <MenuItem
                           icon={<IconTrash size={15} />}
-                          text="删除工作区"
+                          text={t('menu.deleteWorkspace')}
                           danger
                           onClick={() => {
                             setMenu(null)
@@ -1336,7 +1343,7 @@ function SessionList() {
             }}
           />
           <div className="fork-picker">
-            <div className="fork-head">分叉到第几条消息之前？</div>
+            <div className="fork-head">{t('fork.pick')}</div>
             <div className="fork-list">
               {forking.messages.map((text, index) => (
                 <button key={`${String(index)}-${text}`} type="button" className="fork-item" onClick={() => doFork(forking.id, index)}>
@@ -1345,7 +1352,7 @@ function SessionList() {
                 </button>
               ))}
             </div>
-            <p className="fork-note">新会话包含这个位置之前的全部消息，原会话不变。</p>
+            <p className="fork-note">{t('fork.note')}</p>
           </div>
         </>
       )}
@@ -1399,7 +1406,7 @@ function MenuItem({
 }
 
 /** 用量行的悬浮说明：壳不渲染 data-tip（悬浮可达的那份走原生 title），两处用同一句防漂。 */
-const FOOTER_USAGE_TIP = '今天所有会话累计用量（输入 + 输出）与估算花费，每分钟自动刷新'
+const FOOTER_USAGE_TIP = t('footer.usageTip')
 
 /**
  * 侧栏底部（旧界面同位）：今天所有会话的累计用量 + 设置入口。
@@ -1418,7 +1425,7 @@ function SidebarFooter(): ReactNode {
           「不知道」与「真是 0」在这里是一回事——这是今天的账，包含其他窗口里跑的会话。 */}
       <div className="row" data-tip={FOOTER_USAGE_TIP} title={FOOTER_USAGE_TIP}>
         <IconCoins size={14} />
-        <span>今日总用量</span>
+        <span>{t('footer.usage')}</span>
         <span className="num">
           {formatTokens(today.tokens)} tok
           {today.cost === null ? null : ` · ${formatCostCny(today.cost)}`}
@@ -1428,11 +1435,11 @@ function SidebarFooter(): ReactNode {
       <button
         type="button"
         className="row row-btn"
-        data-tip="设置：模型、权限、技能源"
+        data-tip={t('footer.settingsTip')}
         onClick={() => window.dispatchEvent(new CustomEvent('shell.settings.open'))}
       >
         <IconGear size={14} />
-        <span>设置</span>
+        <span>{t('footer.settings')}</span>
       </button>
     </div>
   )
@@ -1560,7 +1567,7 @@ function SessionRow({
    * 发第一条消息之后它就会换成扫盘出来的真行，那时什么都恢复了。
    */
   const unsaved = session.unsaved === true
-  const title = session.title ?? '新会话'
+  const title = session.title ?? t('session.new')
   const dot = state === undefined ? undefined : DOT_CLASS[state]
   const dotLabel = state === undefined ? '' : DOT_LABEL[state]
   /**
@@ -1587,7 +1594,7 @@ function SessionRow({
   /** 打开一条会话；归档行先拦下（旧界面同款回执：先恢复再打开）。 */
   const openRow = (): void => {
     if (archived) {
-      toastErr('这个会话已归档：先点行尾的「恢复」再打开')
+      toastErr(t('row.archivedOpen'))
       return
     }
     onOpen(session.id)
@@ -1643,10 +1650,10 @@ function SessionRow({
       tabIndex={0}
       data-tip={
         unsaved
-          ? `${title}：还没发过消息，发出第一条后才会存进磁盘`
+          ? t('row.tipUnsaved', { title })
           : archived
-            ? `${title}（已归档）；恢复后才能在对话里打开`
-            : `${title}；双击标题改名 · Ctrl+Alt+F 分叉 · Ctrl+Shift+A 归档`
+            ? t('row.tipArchived', { title })
+            : t('row.tip', { title })
       }
       // 改名中不拖行（旧界面 editing === null 的守卫）：输入框里选字别把整行拎起来。
       draggable={drag?.enabled === true && draft === null}
@@ -1679,8 +1686,8 @@ function SessionRow({
             <button
               type="button"
               className={`lead-pin${pinned ? ' pinned' : ''}`}
-              data-tip={pinned ? '取消置顶' : '置顶会话'}
-              aria-label={pinned ? '取消置顶' : '置顶会话'}
+              data-tip={pinned ? t('menu.unpin') : t('menu.pin')}
+              aria-label={pinned ? t('menu.unpin') : t('menu.pin')}
               onClick={(event) => {
                 stop(event)
                 onPin(!pinned)
@@ -1722,7 +1729,7 @@ function SessionRow({
           className="row-rename"
           autoFocus
           value={draft}
-          aria-label="会话名"
+          aria-label={t('row.renameLabel')}
           onClick={stop}
           onChange={(event) => {
             setDraft(event.target.value)
@@ -1755,8 +1762,8 @@ function SessionRow({
           <button
             type="button"
             className="icon-btn"
-            data-tip="恢复会话（移回活动区）"
-            aria-label="恢复会话"
+            data-tip={t('row.restoreTip')}
+            aria-label={t('menu.restore')}
             onClick={() => onRestore()}
           >
             <IconRefresh size={14} />
@@ -1765,8 +1772,8 @@ function SessionRow({
           <button
             type="button"
             className="icon-btn"
-            data-tip="归档会话"
-            aria-label="归档会话"
+            data-tip={t('menu.archive')}
+            aria-label={t('menu.archive')}
             onClick={onArchive}
           >
             <IconArchive size={14} />
@@ -1827,7 +1834,7 @@ function AddWorkspaceButton({ onCreated }: { onCreated: (dir: string) => void })
   const native = getHostNative()
   const pick = (): void => {
     if (!native.available) {
-      toastErr('添加工作区要用桌面版（浏览器里没有选目录的原生桥）')
+      toastErr(t('toast.addWorkspaceNeedsDesktop'))
       return
     }
     void (async () => {
@@ -1836,7 +1843,7 @@ function AddWorkspaceButton({ onCreated }: { onCreated: (dir: string) => void })
         if (typeof dir !== 'string' || dir === '') return
         onCreated(dir)
       } catch (reason) {
-        toastErr(`打开工作区失败：${reason instanceof Error ? reason.message : String(reason)}`)
+        toastErr(t('toast.openWorkspaceFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
       }
     })()
   }
@@ -1844,8 +1851,8 @@ function AddWorkspaceButton({ onCreated }: { onCreated: (dir: string) => void })
     <button
       type="button"
       className="icon-btn"
-      data-tip="添加工作区（选择目录）"
-      aria-label="添加工作区"
+      data-tip={t('addWorkspace.tip')}
+      aria-label={t('addWorkspace.label')}
       onClick={pick}
     >
       <IconPlus size={15} />
@@ -1895,11 +1902,11 @@ function WorkspaceOpenGroup(): ReactNode {
   const open = (kind: 'terminal' | 'explorer' | 'vscode'): void => {
     setMenuOpen(false)
     if (cwd === null) {
-      toastErr('还没有工作目录（先开一个会话或添加工作区）')
+      toastErr(t('toast.noCwd'))
       return
     }
     if (!native.available) {
-      toastErr('这条能力来自桌面外壳的原生桥，浏览器里没有它')
+      toastErr(t('toast.needsDesktop'))
       return
     }
     void native
@@ -1909,11 +1916,11 @@ function WorkspaceOpenGroup(): ReactNode {
       .invoke<{ ok: boolean; error?: string }>('openWorkspace', [kind, cwd])
       .then((result) => {
         if (result !== null && typeof result === 'object' && result.ok === false) {
-          toastErr(`打开失败：${humanErrorLine(result.error ?? '宿主没说什么原因')}`)
+          toastErr(t('toast.openFailed', { message: humanErrorLine(result.error ?? t('toast.noReason')) }))
         }
       })
       .catch((reason: unknown) => {
-        toastErr(`打开失败：${humanErrorLine(reason)}`)
+        toastErr(t('toast.openFailed', { message: humanErrorLine(reason) }))
       })
   }
 
@@ -1922,10 +1929,10 @@ function WorkspaceOpenGroup(): ReactNode {
     if (cwd === null) return
     void navigator.clipboard.writeText(cwd).then(
       () => {
-        toastOk('工作区路径已复制')
+        toastOk(t('toast.pathCopied'))
       },
       () => {
-        toastErr('复制失败，请手动选中')
+        toastErr(t('toast.copyManual'))
       },
     )
   }
@@ -1935,8 +1942,8 @@ function WorkspaceOpenGroup(): ReactNode {
       <button
         type="button"
         className="ws-open-main"
-        data-tip="在文件管理器中打开"
-        aria-label="在文件管理器中打开"
+        data-tip={t('ws.explorer')}
+        aria-label={t('ws.explorer')}
         onClick={() => {
           open('explorer')
         }}
@@ -1946,8 +1953,8 @@ function WorkspaceOpenGroup(): ReactNode {
       <button
         type="button"
         className={`ws-open-caret${menuOpen ? ' on' : ''}`}
-        data-tip="更多打开方式"
-        aria-label="更多打开方式"
+        data-tip={t('ws.more')}
+        aria-label={t('ws.more')}
         aria-expanded={menuOpen}
         onClick={() => {
           setMenuOpen((current) => !current)
@@ -1964,7 +1971,7 @@ function WorkspaceOpenGroup(): ReactNode {
               open('terminal')
             }}
           >
-            <IconTerminalColor size={15} /> 在终端中打开
+            <IconTerminalColor size={15} /> {t('ws.terminal')}
           </button>
           <button
             type="button"
@@ -1973,7 +1980,7 @@ function WorkspaceOpenGroup(): ReactNode {
               open('explorer')
             }}
           >
-            <IconFolderOpenColor size={15} /> 在文件管理器中打开
+            <IconFolderOpenColor size={15} /> {t('ws.explorer')}
           </button>
           <button
             type="button"
@@ -1982,11 +1989,11 @@ function WorkspaceOpenGroup(): ReactNode {
               open('vscode')
             }}
           >
-            <IconVSCodeColor size={15} /> 在 VS Code 中打开
+            <IconVSCodeColor size={15} /> {t('ws.vscode')}
           </button>
           <div className="menu-sep" />
           <button type="button" className="menu-item" onClick={copyPath}>
-            <IconCopyColor size={15} /> 复制工作区路径
+            <IconCopyColor size={15} /> {t('ws.copyPath')}
           </button>
         </div>
       ) : null}

@@ -7,9 +7,15 @@
  */
 import { useEffect, useState, type ReactNode } from 'react'
 import { IconArrowUp, IconCheck, IconChevronDown, IconClose, IconEdit, IconQueue, IconTrash } from '@dsc/ui'
-import { useHostChannel, useHostSelector } from '@dsc/ui'
+import { createT, useHostChannel, useHostSelector } from '@dsc/ui'
 import { readTurnState } from '@dsc/ui-primitives'
+// 本包自己的中英对照：中文原文是语义真源，英文是译本（构建时内联进插件 bundle）。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
 import { readQueued, sameQueued } from './surfaces'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定。 */
+const t = createT({ zh, en })
 
 /** 排队消息摘要的字数上限（旧界面的 PREVIEW_CHARS）。 */
 const PREVIEW_CHARS = 200
@@ -63,7 +69,7 @@ export function QueueDock(): ReactNode {
     try {
       return (await work()) ? 'ok' : 'rejected'
     } catch (error) {
-      setFault(`${failure}：${error instanceof Error ? error.message : String(error)}`)
+      setFault(t('queue.fault', { label: failure, message: error instanceof Error ? error.message : String(error) }))
       return 'failed'
     } finally {
       setBusy(false)
@@ -73,17 +79,17 @@ export function QueueDock(): ReactNode {
   const save = async (index: number): Promise<void> => {
     const value = editing?.text.trim() ?? ''
     if (value === '') return
-    const outcome = await act(() => channel.invoke<boolean>('editQueued', [index, value]), '编辑失败')
+    const outcome = await act(() => channel.invoke<boolean>('editQueued', [index, value]), t('queue.editFailed'))
     if (outcome === 'ok') {
       setEditing(null)
       return
     }
-    if (outcome === 'rejected') setFault('编辑失败：这条已经开始发送了')
+    if (outcome === 'rejected') setFault(t('queue.editStarted'))
   }
 
   const remove = async (index: number): Promise<void> => {
-    const outcome = await act(() => channel.invoke<boolean>('removeQueued', [index]), '撤掉失败')
-    if (outcome === 'rejected') setFault('撤掉失败：这条已经开始发送了')
+    const outcome = await act(() => channel.invoke<boolean>('removeQueued', [index]), t('queue.removeFailed'))
+    if (outcome === 'rejected') setFault(t('queue.removeStarted'))
   }
 
   /**
@@ -95,13 +101,10 @@ export function QueueDock(): ReactNode {
    */
   const steer = async (index: number): Promise<void> => {
     const ahead = index
-    const detail =
-      ahead > 0
-        ? `会打断模型当前的输出，让这条以及排在它前面的 ${String(ahead)} 条立刻作为新一轮发出去（模型已经说出的半截会保留）。`
-        : '会打断模型当前的输出，让这条立刻作为新一轮发出去（模型已经说出的半截会保留）。'
-    if (!window.confirm(`打断并插话？\n\n${detail}`)) return
-    const outcome = await act(() => channel.invoke<boolean>('steerQueued', [index]), '插话失败')
-    if (outcome === 'rejected') setFault('插话没赶上：这一轮刚结束，排队消息会自己发出去')
+    const detail = ahead > 0 ? t('queue.steer.detailMany', { count: ahead }) : t('queue.steer.detailOne')
+    if (!window.confirm(t('queue.steer.confirm', { detail }))) return
+    const outcome = await act(() => channel.invoke<boolean>('steerQueued', [index]), t('queue.steerFailed'))
+    if (outcome === 'rejected') setFault(t('queue.steerMissed'))
   }
 
   return (
@@ -113,7 +116,7 @@ export function QueueDock(): ReactNode {
             className="queue-head"
             aria-expanded={expanded}
             disabled={busy || editing !== null}
-            data-tip={expanded ? '收起排队消息' : '展开排队消息'}
+            data-tip={expanded ? t('queue.collapse') : t('queue.expand')}
             onClick={() => {
               setCollapsed((current) => !current)
             }}
@@ -121,8 +124,8 @@ export function QueueDock(): ReactNode {
             <span className="queue-lead" aria-hidden="true">
               <IconQueue size={13} />
             </span>
-            <span className="queue-count">{count} 条排队消息</span>
-            <span className="queue-note">这一轮跑完自动发出</span>
+            <span className="queue-count">{t('queue.count', { count })}</span>
+            <span className="queue-note">{t('queue.note')}</span>
             <span className="queue-caret" aria-hidden="true">
               <IconChevronDown size={13} />
             </span>
@@ -141,7 +144,7 @@ export function QueueDock(): ReactNode {
                       value={editing.text}
                       autoFocus
                       rows={Math.min(8, Math.max(1, editing.text.split('\n').length))}
-                      aria-label="编辑排队消息"
+                      aria-label={t('queue.edit.aria')}
                       onChange={(event) => {
                         setEditing({ index: item.index, text: event.target.value })
                       }}
@@ -160,8 +163,8 @@ export function QueueDock(): ReactNode {
                     <button
                       type="button"
                       className="queue-act"
-                      aria-label="保存排队消息"
-                      data-tip="保存（回车）"
+                      aria-label={t('queue.save.aria')}
+                      data-tip={t('queue.save.tip')}
                       disabled={busy || editing.text.trim() === ''}
                       onClick={() => void save(item.index)}
                     >
@@ -170,8 +173,8 @@ export function QueueDock(): ReactNode {
                     <button
                       type="button"
                       className="queue-act"
-                      aria-label="取消编辑"
-                      data-tip="取消（Esc）"
+                      aria-label={t('queue.cancel.aria')}
+                      data-tip={t('queue.cancel.tip')}
                       disabled={busy}
                       onClick={() => {
                         setEditing(null)
@@ -191,16 +194,16 @@ export function QueueDock(): ReactNode {
                       {previewOf(item.text)}
                     </span>
                     {item.images === undefined || item.images.length === 0 ? null : (
-                      <span className="queue-badge" data-tip={`随这条一起排队的 ${String(item.images.length)} 张图`}>
-                        +{item.images.length} 图
+                      <span className="queue-badge" data-tip={t('queue.images.tip', { count: item.images.length })}>
+                        {t('queue.images.badge', { count: item.images.length })}
                       </span>
                     )}
                     <div className="queue-acts">
                       <button
                         type="button"
                         className="queue-act"
-                        aria-label="编辑排队消息"
-                        data-tip="改这条排队消息"
+                        aria-label={t('queue.edit.aria')}
+                        data-tip={t('queue.edit.tip')}
                         disabled={busy}
                         onClick={() => {
                           setEditing({ index: item.index, text: item.text })
@@ -211,8 +214,8 @@ export function QueueDock(): ReactNode {
                       <button
                         type="button"
                         className="queue-act"
-                        aria-label="撤回排队消息"
-                        data-tip="撤掉这条（还没发出去）"
+                        aria-label={t('queue.remove.aria')}
+                        data-tip={t('queue.remove.tip')}
                         disabled={busy}
                         onClick={() => void remove(item.index)}
                       >
@@ -221,12 +224,8 @@ export function QueueDock(): ReactNode {
                       <button
                         type="button"
                         className="queue-act"
-                        aria-label="插话发送"
-                        data-tip={
-                          running
-                            ? '打断当前输出，让这条立刻发出去（模型已说出的半截保留）'
-                            : '这一轮已经跑完，排队消息会自己发出去'
-                        }
+                        aria-label={t('queue.steer.aria')}
+                        data-tip={running ? t('queue.steer.tip') : t('queue.steer.tipIdle')}
                         disabled={busy || !running}
                         onClick={() => void steer(item.index)}
                       >

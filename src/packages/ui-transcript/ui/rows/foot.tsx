@@ -6,9 +6,15 @@
  * @module dsc-ui-shell/plugins/transcript/rows/foot
  */
 import type { ReactNode } from 'react'
-import { IconBranch, IconCopy } from '@dsc/ui'
+import { IconBranch, IconCopy, createT } from '@dsc/ui'
 import { formatTokens } from '@dsc/ui-primitives'
 import { formatClock, formatDuration, roundDuration, type RoundInfo } from '../timing'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../../locale/ui.zh.json'
+import en from '../../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /**
  * 轮尾一行（桌面端 `TurnFooter.tsx` 的同构移植）：复制 · 分叉 · 用量 · 时刻，
@@ -69,17 +75,15 @@ export function RoundFoot(props: {
       className="round-foot"
       // 「用时」不占行面，放在整行的悬停提示里（口径与旧界面一致）。
       title={
-        used === null
-          ? undefined
-          : `用时 ${used}（从发出这条消息到这一轮最后一次写入，中间的工具调用与思考都算在内）`
+        used === null ? undefined : t('transcript.foot.durationTip', { duration: used })
       }
     >
       {copy ? (
         <button
           type="button"
           className="round-act"
-          title="复制这条回复的原文"
-          aria-label="复制这条回复的原文"
+          title={t('transcript.foot.copy')}
+          aria-label={t('transcript.foot.copy')}
           onClick={() => {
             // 剪贴板被浏览器拒绝（非安全上下文）时不给假反馈，所以 .catch 里什么都不做。
             void navigator.clipboard.writeText(props.copyText ?? '').catch(() => undefined)
@@ -92,8 +96,8 @@ export function RoundFoot(props: {
         <button
           type="button"
           className="user-act"
-          title="以这条消息为界分叉出新会话"
-          aria-label="以这条消息为界分叉出新会话"
+          title={t('transcript.foot.fork')}
+          aria-label={t('transcript.foot.fork')}
           onClick={props.onFork}
         >
           {/* 图标 15px：方向性动作用小图标（与旧界面同一档），读数（用量、时刻）才用大的。 */}
@@ -103,15 +107,15 @@ export function RoundFoot(props: {
       {real !== null ? (
         <span
           className="round-tokens"
-          title="这一轮所有模型请求的 prompt 与 completion 之和（宿主上报的真实用量）"
+          title={t('transcript.foot.usageTip')}
         >
-          用量 {formatTokens(real)} tok
+          {t('transcript.foot.usage', { count: formatTokens(real) })}
         </span>
       ) : null}
       {estimated !== null ? (
         <span
           className="round-tokens"
-          title="助手正文的 token 估算值（老会话无宿主上报用量）"
+          title={t('transcript.foot.estimateTip')}
         >
           ~{formatTokens(estimated)} tok
         </span>
@@ -122,7 +126,7 @@ export function RoundFoot(props: {
         </span>
       ) : null}
       {clock !== null ? (
-        <span className="round-clock" title="这条消息发出的时刻（本机时区）">
+        <span className="round-clock" title={t('transcript.foot.clockTip')}>
           {clock}
         </span>
       ) : null}

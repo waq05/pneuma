@@ -29,6 +29,7 @@ import {
   IconSearch,
   SLOT,
   clearTraceFocus,
+  createT,
   defineUiPlugin,
   useHostSelector,
   useTraceFocus,
@@ -43,6 +44,13 @@ import { ReviewNoticeCard, TOOL_STATUS_TEXT, formatClock, formatTokens, matchToo
 import { buildTraceModel, entryUsage, formatTraceDuration, rangeHits, stepMatches, type TraceRange, type TraceRound, type TraceStepEntry } from './trace-format'
 import { TraceTimeline } from './timeline'
 import { TraceInspector } from './inspector'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 折叠态里的思考摘要长度：一行放不下就省略号，展开才看全文。 */
 const THINK_PREVIEW_LIMIT = 90
@@ -65,7 +73,7 @@ function summarize(text: string): string {
 }
 
 export default defineUiPlugin({
-  name: '执行轨迹',
+  name: t('plugin.name'),
   apply(ui) {
     // 轨迹页住在正文区的「另一张脸」槽里（`thread-view` 切到 trace 时壳才渲染它）。
     ui.slots.register(SLOT.thread, { id: 'trace.view', order: 1 }, TraceView)
@@ -304,7 +312,7 @@ function TraceView(props: SlotComponentProps): ReactNode {
       <div className="trace-page">
         <div className="chat" ref={scroller}>
           <div className="chat-inner trace">
-            <div className="trace-empty">本会话还没有执行轨迹。发送消息或使用工具后，这里会显示执行过程。</div>
+            <div className="trace-empty">{t('empty.body')}</div>
           </div>
         </div>
       </div>
@@ -343,8 +351,8 @@ function TraceView(props: SlotComponentProps): ReactNode {
             />
 
             <div className="trace-stats" data-trace-query={search === null ? undefined : '1'}>
-              <span>{rounds.length} 轮</span>
-              <span>{toolCount} 次工具调用</span>
+              <span>{t('stats.rounds', { count: rounds.length })}</span>
+              <span>{t('stats.toolCalls', { count: toolCount })}</span>
               {usage !== null && (
                 <span>
                   <IconCoins size={12} /> {formatTokens(usage)} tok
@@ -352,16 +360,16 @@ function TraceView(props: SlotComponentProps): ReactNode {
               )}
               {selected !== null && (
                 <span className="trace-focus-chip" data-trace-focus="1">
-                  已聚焦区间内 {hitIds.size} 步
+                  {t('stats.focusChip', { count: hitIds.size })}
                 </span>
               )}
               {search !== null && (
                 <span className="trace-focus-chip" data-trace-search-count="1">
-                  搜索命中 {search.count} 步
+                  {t('stats.searchChip', { count: search.count })}
                 </span>
               )}
               <button className="text-btn trace-toggle-all" onClick={toggleAll}>
-                {allOpen ? '全部折叠' : '全部展开'}
+                {allOpen ? t('stats.collapseAll') : t('stats.expandAll')}
               </button>
               {/* 搜索（对照 dsh 的工具栏搜索框）：命中步骤高亮，未命中的轮先收起来。 */}
               <span className="trace-search">
@@ -370,8 +378,8 @@ function TraceView(props: SlotComponentProps): ReactNode {
                   type="search"
                   className="trace-search-input"
                   data-trace-search="1"
-                  placeholder="搜索步骤（工具名、参数、输出…）"
-                  aria-label="搜索轨迹里的步骤"
+                  placeholder={t('search.placeholder')}
+                  aria-label={t('search.aria')}
                   value={query}
                   onChange={(event) => {
                     setQuery(event.currentTarget.value)
@@ -387,8 +395,8 @@ function TraceView(props: SlotComponentProps): ReactNode {
                     type="button"
                     className="trace-search-clear"
                     data-trace-search-clear="1"
-                    data-tip="清空搜索（Esc 也行）"
-                    aria-label="清空搜索"
+                    data-tip={t('search.clearTip')}
+                    aria-label={t('search.clear')}
                     onClick={() => {
                       setQuery('')
                     }}
@@ -402,7 +410,7 @@ function TraceView(props: SlotComponentProps): ReactNode {
 
           {search !== null && search.count === 0 ? (
             <div className="trace-empty" data-trace-search-empty="1">
-              没有匹配「{query.trim()}」的步骤。
+              {t('search.noMatch', { query: query.trim() })}
             </div>
           ) : null}
 
@@ -415,10 +423,10 @@ function TraceView(props: SlotComponentProps): ReactNode {
                   className="trace-compact"
                   key={`compact-${String(segment.entry.id)}`}
                   data-trace-compaction={String(segment.count)}
-                  data-tip="从这一刻起，模型看到的历史已经是压缩后的摘要"
+                  data-tip={t('compaction.tip')}
                 >
                   <span className="trace-compact-rule" />
-                  <span className="trace-compact-tag">已压缩历史 · 第 {segment.count} 次</span>
+                  <span className="trace-compact-tag">{t('compaction.tag', { count: segment.count })}</span>
                   <span className="trace-compact-rule" />
                 </div>
               )
@@ -511,22 +519,24 @@ function RoundBlock({
           className="round-head"
           data-round-index={String(round.index)}
           aria-expanded={open}
-          data-tip={open ? '折叠这一轮' : '展开这一轮的执行步骤'}
+          data-tip={open ? t('round.collapseTip') : t('round.expandTip')}
           onClick={onToggle}
         >
           <span className="round-caret">
             {open ? <IconChevronDown size={13} /> : <IconChevronRight size={13} />}
           </span>
-          <span className="round-no">第 {round.index + 1} 轮</span>
+          <span className="round-no">{t('round.title', { n: round.index + 1 })}</span>
           {user !== null && <span className="round-user">{user.text}</span>}
-          {images > 0 && <span className="round-attach">{images} 张附件</span>}
+          {images > 0 && <span className="round-attach">{t('round.attachments', { count: images })}</span>}
           <span className="round-meta">
-            {round.steps.length === 0 ? '无步骤' : `${round.steps.length} 步 · ${tools} 次工具`}
+            {round.steps.length === 0
+              ? t('round.noSteps')
+              : t('round.summary', { steps: round.steps.length, tools })}
           </span>
           {usage !== null && (
             <span
               className="round-tok"
-              data-tip="这一轮所有模型请求的 prompt + completion 之和（宿主上报的真值）"
+              data-tip={t('round.usageTip')}
             >
               {formatTokens(usage.total)} tok
             </span>
@@ -537,8 +547,8 @@ function RoundBlock({
             type="button"
             className="round-open"
             data-trace-open={String(user.id)}
-            data-tip="查看这条用户消息与附件"
-            aria-label="查看这条用户消息与附件"
+            data-tip={t('round.open')}
+            aria-label={t('round.open')}
             onClick={() => onOpenInspector(user.id)}
           >
             <IconChevronRight size={12} />
@@ -547,7 +557,7 @@ function RoundBlock({
       </div>
       {open &&
         (round.steps.length === 0 ? (
-          <div className="round-none">无工具调用与系统事件</div>
+          <div className="round-none">{t('round.none')}</div>
         ) : (
           <div className="round-steps">
             {round.steps.map((step) => (
@@ -640,8 +650,8 @@ function StepRow({
           )}
         {step.kind === 'thinking' && (
           <details className="trace-think">
-            <summary data-tip="展开思考全文">
-              <span className="th-label">思考</span>
+            <summary data-tip={t('think.expandTip')}>
+              <span className="th-label">{t('kind.thinking')}</span>
               <span className="th-preview">{summarize(step.text)}</span>
               <IconChevronDown size={13} className="th-chevron" />
             </summary>
@@ -651,7 +661,7 @@ function StepRow({
         {step.kind === 'system' && <TraceSystemStep text={step.text} />}
         {step.kind === 'plan' && (
           <div className="trace-plan" data-tip={step.plan.text}>
-            <span className="th-label">计划</span>
+            <span className="th-label">{t('plan.label')}</span>
             <span className="plan-title">{step.plan.title}</span>
             <span className="plan-file">{step.plan.file}</span>
           </div>
@@ -659,40 +669,40 @@ function StepRow({
         {/* 四类轮级/旁路事件（旧版这四类会画成空行；dsh 里各有自己的行样式）。 */}
         {step.kind === 'subagent' && (
           <div className="trace-sys trace-event" data-tip={step.sub.task}>
-            <span className="th-label">子代理</span>
+            <span className="th-label">{t('kind.subagent')}</span>
             <span className="event-text">{step.sub.name}</span>
             <span className="event-state">{step.sub.state}</span>
           </div>
         )}
         {step.kind === 'turn-end' && (
-          <div className="trace-sys trace-event" data-tip="这一轮没有正常结束">
-            <span className="th-label">{step.reason === 'aborted' ? '已停止' : '过程失败'}</span>
+          <div className="trace-sys trace-event" data-tip={t('turnEnd.tip')}>
+            <span className="th-label">{step.reason === 'aborted' ? t('turnEnd.aborted') : t('turnEnd.failed')}</span>
           </div>
         )}
         {step.kind === 'turn-max-tokens' && (
-          <div className="trace-sys trace-event" data-tip="这次输出撞上了长度上限">
-            <span className="th-label">达到长度上限</span>
+          <div className="trace-sys trace-event" data-tip={t('maxTokens.tip')}>
+            <span className="th-label">{t('maxTokens.label')}</span>
           </div>
         )}
         {step.kind === 'model-retry' && (
-          <div className="trace-sys trace-event" data-tip="同一个请求重试了">
-            <span className="th-label">{`模型重试（第 ${String(step.attempt)} 次）`}</span>
+          <div className="trace-sys trace-event" data-tip={t('retry.tip')}>
+            <span className="th-label">{t('retry.label', { n: step.attempt })}</span>
           </div>
         )}
       </div>
       <div className="trace-meta">
         {clock !== null && (
-          <span className="tmeta-clock" data-tip="这条记录最后写入的时刻（本机时区）">
+          <span className="tmeta-clock" data-tip={t('meta.clockTip')}>
             {clock}
           </span>
         )}
         {duration !== null && (
-          <span className="tmeta-dur" data-tip="这次工具调用从发起到结果回来的耗时">
+          <span className="tmeta-dur" data-tip={t('meta.durationTip')}>
             {duration}
           </span>
         )}
         {usageTotal !== null && (
-          <span className="tmeta-tok" data-tip="这一轮所有模型请求的 prompt + completion 之和">
+          <span className="tmeta-tok" data-tip={t('meta.usageTip')}>
             {formatTokens(usageTotal)} tok
           </span>
         )}
@@ -700,8 +710,8 @@ function StepRow({
           type="button"
           className="tmeta-open"
           data-trace-open={String(step.id)}
-          data-tip="打开检查器：输入、输出、思考全文、计时与用量"
-          aria-label="打开检查器"
+          data-tip={t('meta.openTip')}
+          aria-label={t('meta.open')}
           onClick={() => onOpenInspector(step.id)}
         >
           <IconChevronRight size={12} />
@@ -747,7 +757,7 @@ function TraceStatus(props: FactoryLocalProps<'transcript.tool-card', 'statusDet
       {call.status === 'running' ? <i className="tc-spin" aria-hidden="true" /> : null}
       {/* 定稿不说「完成」：状态点已经绿了，再印一遍是噪声。 */}
       {call.status === 'done' ? '' : statusText}
-      {call.status === 'done' ? (duration ?? '') : duration === null ? '' : ` · 用时 ${duration}`}
+      {call.status === 'done' ? (duration ?? '') : duration === null ? '' : t('status.elapsed', { duration })}
     </span>
   )
 }
@@ -778,7 +788,7 @@ function TraceToolRow({ entry }: { entry: Extract<TraceStepEntry, { kind: 'tool'
         role="button"
         tabIndex={expandable ? 0 : -1}
         {...(expandable ? { 'aria-expanded': bodyOpen } : {})}
-        data-tip={expandable ? (bodyOpen ? '收起参数与结果' : '展开参数与结果') : '正在准备参数'}
+        data-tip={expandable ? (bodyOpen ? t('tool.collapse') : t('tool.expand')) : t('tool.preparing')}
         onClick={() => {
           if (expandable) setOpen(!open)
         }}
@@ -799,17 +809,23 @@ function TraceToolRow({ entry }: { entry: Extract<TraceStepEntry, { kind: 'tool'
           {call.status === 'running' ? <i className="tc-spin" aria-hidden="true" /> : null}
           {/* 定稿不说「完成」：状态点已经绿了，再印一遍是噪声。 */}
           {call.status === 'done' ? '' : statusText}
-          {call.status === 'done' ? (duration === null ? '' : duration) : duration === null ? '' : ` · 用时 ${duration}`}
+          {call.status === 'done'
+            ? duration === null
+              ? ''
+              : duration
+            : duration === null
+              ? ''
+              : t('status.elapsed', { duration })}
         </span>
         {expandable ? <IconChevronDown size={11} className="tc-chevron" /> : null}
       </div>
       {bodyOpen ? (
         <div className="tool-body">
-          <div className="label">参数</div>
+          <div className="label">{t('tool.args')}</div>
           <div className="args">{prettyJson(call.argsText)}</div>
           {call.resultText === undefined || call.resultText === '' ? null : (
             <>
-              <div className="label">结果</div>
+              <div className="label">{t('tool.result')}</div>
               <div className="result">{call.resultText}</div>
             </>
           )}

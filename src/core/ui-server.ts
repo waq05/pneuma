@@ -99,8 +99,8 @@ const UNAUTHORIZED_HTML = `<!doctype html>
 
 /** 造服务时要给的参数。 */
 export interface UiServerOptions {
-  /** 宿主身份（页面上要显示产品名与版本）。 */
-  host: { name: string; version: string }
+  /** 宿主身份（页面上要显示产品名与版本）与界面语言（进启动图，界面据此选文案）。 */
+  host: { name: string; version: string; language?: string }
   /** 界面产物目录，缺省 `lib/ui/assets`。 */
   assetsDir?: string
   /** 插件目录，缺省 `lib/ui/plugins`。 */

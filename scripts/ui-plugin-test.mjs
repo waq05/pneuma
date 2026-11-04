@@ -1170,8 +1170,11 @@ console.log('\n[5b] 分包落点')
   // '@dsc/ui'` 粘在一起，类型引用被误判成值引用（本检查第一版就这么错过）。
   const valueUiImports = []
   for (const name of layerNames) {
-    // renderer 是链条顶端（启动图的持有者），它本来就该拿到聚合面的值；下面四层不许。
-    if (name === '@dsc/ui-renderer') continue
+    // 只有**会被编进壳的 app bundle** 的那几层受这条约束（primitives / slots / dockkit / runtime）。
+    // renderer 是链条顶端（启动图的持有者），本来就该拿到聚合面的值；
+    // layout 与 renderer 同档：它是**插件**，源码只进 `lib/ui/plugins/layout/client.js`，
+    // 那份 bundle 里 `@dsc/ui` 是 external（平台种子里那份），取 `createT` 只能从它拿。
+    if (name === '@dsc/ui-renderer' || name === '@dsc/ui-layout') continue
     for (const file of sourceFilesOf(layerDirs[name])) {
       // `ui/ui.tsx` 是**插件入口**，不是壳里的代码：它打包成 bundle 后 `@dsc/ui` 走 external，
       // 由平台模块表提供壳里那一份，所以它写值 import 是正常的（反过来才内联）。

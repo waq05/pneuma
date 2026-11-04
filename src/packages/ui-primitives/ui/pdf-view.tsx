@@ -7,6 +7,13 @@
  * @module dsc-ui-shell/platform/pdf-view
  */
 import { useEffect, useRef, useState, type JSX } from 'react'
+import { createT } from '@dsc/ui-core'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui-core` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** PDF 最多渲染的页数（pdfjs 逐页渲染，页数多时提示截断）。 */
 const PDF_MAX_PAGES = 50
@@ -51,15 +58,15 @@ export function PdfView({ base64 }: { base64: string }): JSX.Element {
       on = false
     }
   }, [base64])
-  if (failed !== '') return <div className="file-preview-empty">{`PDF 解析失败：${failed}`}</div>
+  if (failed !== '') return <div className="file-preview-empty">{t('primitives.pdf.failed', { message: failed })}</div>
   return (
     <div className="file-pdf">
-      {pages.length === 0 && <div className="file-preview-empty">渲染中…</div>}
+      {pages.length === 0 && <div className="file-preview-empty">{t('primitives.pdf.rendering')}</div>}
       {pages.map((url, index) => (
-        <img key={index} className="file-pdf-page" src={url} alt={`第 ${index + 1} 页`} />
+        <img key={index} className="file-pdf-page" src={url} alt={t('primitives.pdf.pageAlt', { n: index + 1 })} />
       ))}
       {total > PDF_MAX_PAGES && (
-        <div className="tree-note" data-tree-note="truncated">共 {total} 页，仅渲染前 {PDF_MAX_PAGES} 页</div>
+        <div className="tree-note" data-tree-note="truncated">{t('primitives.pdf.truncated', { total, shown: PDF_MAX_PAGES })}</div>
       )}
     </div>
   )

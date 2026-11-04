@@ -151,18 +151,21 @@ export function parseReviewFindings(text: string): ReviewFindingsView | null {
     for (let index = start; index < end; index += 1) {
       const rawLine = lines[index] ?? ''
       const field = fieldOf(rawLine)
-      if (field !== null && field.key === '位置') {
+      // 字段标签是审查队友按提示词写进会话的协议词（见模块头的条目格式），翻成英文就再也认不出这一行。
+      if (field !== null && field.key === '位置') { // i18n-keep
         const location = parseLocation(field.value)
         if (location !== undefined) finding.location = location
         section = null
         continue
       }
-      if (field !== null && field.key === '说明') {
+      // 同上：协议字段名，不是界面文案。
+      if (field !== null && field.key === '说明') { // i18n-keep
         section = 'detail'
         finding.detail = appendLine(finding.detail, field.value)
         continue
       }
-      if (field !== null && field.key === '建议') {
+      // 同上：协议字段名，不是界面文案。
+      if (field !== null && field.key === '建议') { // i18n-keep
         section = 'suggestion'
         finding.suggestion = appendLine(finding.suggestion ?? '', field.value)
         continue

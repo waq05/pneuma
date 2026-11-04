@@ -420,7 +420,7 @@ console.log('[8] 收起态的结果与失败数（对照 codex 的活动流）')
 
   // ── 渲染与样式的接线 ──
   check('组头把失败数画出来（data-step-failures）', row.includes('step-fold-fail') && row.includes('data-step-failures={props.group.failures}'))
-  check('失败数也进开合提示（不点开就知道里面有没有坑）', row.includes('其中 ${String(props.group.failures)} 项失败'))
+  check('失败数也进开合提示（不点开就知道里面有没有坑）', row.includes("t('transcript.group.failNote', { count: props.group.failures })"))
   check('工具卡收起态不再渲染结果尾巴（只留头行）', factory.includes('resultTail(call.resultText)') && !factory.includes('className="tool-tail"'))
   check('展开态 / 轨迹页照旧不重复摊', factory.includes("bodyOpen || variant !== 'chat' || running ? null : resultTail"))
   check('被截断的行数写在头行（tc-more）', factory.includes('tc-more') && factory.includes('tail.hidden > 0'))
@@ -516,7 +516,7 @@ console.log('[12] 机器投递的消息画成触发行，不是用户气泡（20
 
   check('内部行按类型给标签（不再一律说「子任务汇报」）', userRow.includes('{internalLabel(entry.text)}'))
   check('刻度条悬停卡与触发行共用同一句', uiSrc.includes("? internalLabel(user.text)"))
-  check('标签函数认得队友汇报 / 后台作业 / 其它三种', ['teammateReportLabel(text)', '后台作业', "'运行时通知'"].every((piece) => rounds.includes(piece)))
+  check('标签函数认得队友汇报 / 后台作业 / 其它三种', ['teammateReportLabel(text)', "'transcript.internal.jobFailed'", "'transcript.internal.runtimeNotice'"].every((piece) => rounds.includes(piece)))
   check('适配器：前缀命中 **或** origin === notice', /event\.origin === 'notice'/.test(adapter) && adapter.includes('startsWith(TEAMMATE_REPORT_OPEN)'))
   check('落库：机器投递才写 origin（人打的字不写）', /appendUser\([^)]*origin: InboxOrigin = 'user'/.test(session) && /origin === 'notice' \? \{ origin \}/.test(session))
   check('出账两条路都把来源带上（空闲直落 + 收件箱出账）', (loop.match(/appendUser\([^)]*origin\)/g) ?? []).length === 2)

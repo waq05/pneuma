@@ -19,6 +19,14 @@
  */
 import { useEffect, useState, type ReactNode } from 'react'
 import { useHostNative } from '@dsc/ui-primitives'
+// 取词器与字典：本文件随布局插件的 bundle 走，`@dsc/ui` 在那个 bundle 里是 external
+// （运行期拿壳里那一份），与 `ui.tsx` 同一理由。
+import { createT } from '@dsc/ui'
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 主进程推上来的更新状态（形状与 `NATIVE_EVENTS` 的 `update-status` 一致）。 */
 interface UpdateStatusView {
@@ -87,9 +95,12 @@ export function UpdateButton(): ReactNode {
       ? fault
       : installing
         ? percent === null
-          ? '正在下载安装包…'
-          : `正在下载安装包… ${String(percent)}%`
-        : `发现新版本${version === '' ? '' : ` ${version}`}${size === '' ? '' : `（${size}）`}，点击下载并安装。`
+          ? t('layout.update.downloading')
+          : t('layout.update.downloadingPercent', { percent })
+        : t('layout.update.available', {
+            version: version === '' ? '' : ` ${version}`,
+            size: size === '' ? '' : t('layout.update.size', { size }),
+          })
 
   return (
     <button
@@ -107,16 +118,16 @@ export function UpdateButton(): ReactNode {
           .then((result) => {
             if (result.ok) return
             // 下载或起安装程序失败：按钮退回可点，并把原因挂在 tooltip 上（这一行没有放提示条的地方）。
-            setFault(result.error ?? '更新失败')
+            setFault(result.error ?? t('layout.update.failed'))
             setInstalling(false)
           })
           .catch((error: unknown) => {
-            setFault(`更新失败：${error instanceof Error ? error.message : String(error)}`)
+            setFault(t('layout.update.failedDetail', { message: error instanceof Error ? error.message : String(error) }))
             setInstalling(false)
           })
       }}
     >
-      {installing ? (percent === null ? '更新中' : `${String(percent)}%`) : '更新'}
+      {installing ? (percent === null ? t('layout.update.busy') : `${String(percent)}%`) : t('layout.update.action')}
     </button>
   )
 }

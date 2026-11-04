@@ -6,13 +6,19 @@
  * @module dsc-ui-shell/plugins/transcript/rows/tool-row
  */
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
-import { DiffRows, IconChevronDown, IconChevronUp, openTrace, type SlotComponentProps, type SlotMatchedOf, type SlotOwnerOf, type TranscriptEntry } from '@dsc/ui'
+import { DiffRows, IconChevronDown, IconChevronUp, createT, openTrace, type SlotComponentProps, type SlotMatchedOf, type SlotOwnerOf, type TranscriptEntry } from '@dsc/ui'
 import { TOOL_STATUS_TEXT, formatDuration, formatTokens, matchTool, oneLine, prettyJson, toolSummary, toolVerb, type ToolMatch } from '@dsc/ui-primitives'
 import { useFoldState } from '../fold-hook'
 import { BAR_MIN_CONTENT_H, expandedContentHeight } from './fold-body'
 import { useIntendedDiff } from '../intended-diff'
 import { FoldPrefsContext, ShellCwdContext, TOOLVIEW_SLOT, type ToolEntry } from '../shared'
 import { ChatStatus, IntendedBody, IntendedPreview, OpenPathButton, TOOLCARD_FACTORY, TraceJumpButton, fileTargetOf } from '../tool-card/factory'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../../locale/ui.zh.json'
+import en from '../../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /**
  * 内置当选者：选举把 matched（图标 + 动词）算好交过来；渲染的是一个 **Factory occurrence**
@@ -137,7 +143,9 @@ export function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matche
   // 用时口径：优先宿主上报的本次调用耗时（ToolCallView.durationMs），没有就不印。
   const duration = formatDuration(call.durationMs ?? null)
   const barStatus =
-    running || duration === null ? (TOOL_STATUS_TEXT[call.status] ?? call.status) : `${TOOL_STATUS_TEXT[call.status] ?? call.status} · 用时 ${duration}`
+    running || duration === null
+      ? (TOOL_STATUS_TEXT[call.status] ?? call.status)
+      : t('transcript.tool.statusWithTime', { status: TOOL_STATUS_TEXT[call.status] ?? call.status, duration })
 
   return (
     <div className={`entry tool-card status-${call.status}${bodyOpen ? ' open' : ''}`}>
@@ -146,7 +154,7 @@ export function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matche
         role="button"
         tabIndex={expandable ? 0 : -1}
         {...(expandable ? { 'aria-expanded': bodyOpen } : {})}
-        data-tip={expandable ? (bodyOpen ? '收起参数与结果' : '展开参数与结果') : '正在准备参数'}
+        data-tip={expandable ? (bodyOpen ? t('transcript.tool.tipCollapse') : t('transcript.tool.tipExpand')) : t('transcript.tool.tipPreparing')}
         onClick={toggle}
         onKeyDown={(event) => {
           if (event.key !== 'Enter' && event.key !== ' ') return
@@ -169,13 +177,13 @@ export function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matche
               <OpenPathButton absPath={intended.absPath} cwd={cwd} patch={intended.file ?? call.change ?? null} />
               {intended.file !== null && (
                 <span className="changes-counts">
-                  {intended.file.status === 'added' && <span className="diff-badge">新增</span>}
+                  {intended.file.status === 'added' && <span className="diff-badge">{t('transcript.common.added')}</span>}
                   <span className="changes-added">{`+${String(intended.file.added)}`}</span>
                   <span className="changes-removed">{`-${String(intended.file.removed)}`}</span>
                 </span>
               )}
-              {intended.mismatch === 'missing' && <span className="tc-warn">old 不在当前文件里</span>}
-              {intended.mismatch === 'ambiguous' && <span className="tc-warn">old 匹配多处</span>}
+              {intended.mismatch === 'missing' && <span className="tc-warn">{t('transcript.tool.mismatchMissing')}</span>}
+              {intended.mismatch === 'ambiguous' && <span className="tc-warn">{t('transcript.tool.mismatchAmbiguous')}</span>}
             </>
           ) : targetPath !== null ? (
             <OpenPathButton absPath={targetPath} cwd={cwd} patch={call.change ?? null} />
@@ -187,7 +195,7 @@ export function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matche
           {call.status === 'running' ? <i className="tc-spin" aria-hidden="true" /> : null}
           {/* 定稿不说「完成」：状态点已经绿了，再印一遍是噪声（codex 也只留圆点）。 */}
           {call.status === 'done' ? '' : (TOOL_STATUS_TEXT[call.status] ?? call.status)}
-          {duration === null || call.status === 'done' ? '' : ` · 用时 ${duration}`}
+          {duration === null || call.status === 'done' ? '' : t('transcript.tool.timeSuffix', { duration })}
         </span>
         {/* 「在轨迹中查看」（对照 dsh 工具行 hover 的药丸）：切到轨迹页并聚焦这一条。
             默认透明（不抢行内的注意力），悬停/键盘聚焦才浮出来。 */}
@@ -195,14 +203,14 @@ export function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matche
           type="button"
           className="tc-trace"
           data-trace-jump={String(entry.id)}
-          data-tip="在轨迹页查看这条调用的时刻与耗时"
-          aria-label="在轨迹中查看"
+          data-tip={t('transcript.tool.traceTip')}
+          aria-label={t('transcript.tool.trace')}
           onClick={(event) => {
             event.stopPropagation()
             openTrace(entry.id)
           }}
         >
-          在轨迹中查看
+          {t('transcript.tool.trace')}
         </button>
         {expandable ? <IconChevronDown size={11} className="tc-chevron" /> : null}
       </div>
@@ -216,12 +224,12 @@ export function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matche
                 <button
                   type="button"
                   className="tc-collapse"
-                  title="收起这张工具卡"
+                  title={t('transcript.tool.collapseCardTip')}
                   onClick={() => {
                     setOpenPersisted(false)
                   }}
                 >
-                  收起
+                  {t('transcript.common.collapse')}
                   <IconChevronUp size={11} />
                 </button>
               )}
@@ -230,13 +238,13 @@ export function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matche
           {intended !== null ? (
             <div className="tc-intended">
               <div className="tc-intended-head">
-                <span className="tc-intended-title">将做的改动</span>
-                {intended.fellBack && <span className="tc-warn">读不到文件当前内容，以下按参数推算</span>}
-                {intended.mismatch === 'missing' && <span className="tc-warn">old 在文件中不存在，执行会失败</span>}
-                {intended.mismatch === 'ambiguous' && <span className="tc-warn">old 匹配多处，执行会失败</span>}
+                <span className="tc-intended-title">{t('transcript.tool.intendedTitle')}</span>
+                {intended.fellBack && <span className="tc-warn">{t('transcript.tool.intendedFallback')}</span>}
+                {intended.mismatch === 'missing' && <span className="tc-warn">{t('transcript.tool.intendedMissing')}</span>}
+                {intended.mismatch === 'ambiguous' && <span className="tc-warn">{t('transcript.tool.intendedAmbiguous')}</span>}
               </div>
               {intended.file === null ? (
-                <p className="tc-intended-note">两段内容一致，不会有实际改动。</p>
+                <p className="tc-intended-note">{t('transcript.tool.intendedIdentical')}</p>
               ) : (
                 <div className="tc-intended-diff">
                   <DiffRows hunks={intended.file.hunks} path={intended.absPath} />
@@ -244,11 +252,11 @@ export function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matche
               )}
             </div>
           ) : null}
-          <div className="label">参数</div>
+          <div className="label">{t('transcript.tool.args')}</div>
           <div className="args">{prettyJson(call.argsText)}</div>
           {call.resultText === undefined || call.resultText === '' ? null : (
             <>
-              <div className="label">结果</div>
+              <div className="label">{t('transcript.tool.result')}</div>
               <div className="result">{call.resultText}</div>
             </>
           )}
@@ -260,10 +268,10 @@ export function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matche
 
 /** 队友卡的状态词。 */
 const SUB_STATE_TEXT: Readonly<Record<string, string>> = {
-  working: '干活中',
-  idle: '已收工',
-  stopped: '被打断',
-  failed: '过程失败',
+  working: t('transcript.sub.working'),
+  idle: t('transcript.sub.idle'),
+  stopped: t('transcript.sub.stopped'),
+  failed: t('transcript.sub.failed'),
 }
 
 /** 队友卡：旧消息流里没有对应物，这一块是壳自己补的（属于已知的样式增量）。 */
@@ -278,9 +286,9 @@ export function SubagentRow({ entry }: { entry: Extract<TranscriptEntry, { kind:
       </div>
       <p className="shell-subagent-task">{oneLine(sub.task, 160)}</p>
       <p className="shell-subagent-meta">
-        {sub.rounds} 轮 · {sub.toolCalls} 次工具
+        {t('transcript.sub.meta', { rounds: sub.rounds, tools: sub.toolCalls })}
         {sub.tokens === undefined ? '' : ` · ${formatTokens(sub.tokens)} tok`}
-        {sub.lastTool === undefined ? '' : ` · 当前 ${sub.lastTool.name}`}
+        {sub.lastTool === undefined ? '' : t('transcript.sub.currentTool', { name: sub.lastTool.name })}
       </p>
       {sub.error === undefined ? null : <p className="shell-subagent-error">{sub.error}</p>}
     </div>

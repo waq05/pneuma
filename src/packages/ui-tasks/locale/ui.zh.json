@@ -1,0 +1,22 @@
+{
+  "tasks.plugin.name": "任务与目标",
+  "tasks.goal.label": "目标",
+  "tasks.state": "{phase} · {rounds}/{max} 轮",
+  "tasks.phase.armed": "自动续跑中",
+  "tasks.phase.disarmed": "已建立（未上膛）",
+  "tasks.phase.paused": "已暂停",
+  "tasks.phase.blocked": "已阻塞",
+  "tasks.phase.complete": "已完成",
+  "tasks.actionFailed": "目标操作失败：{message}",
+  "tasks.toast.paused": "目标已暂停",
+  "tasks.tip.pause": "暂停自动续跑（不会打断当前这一轮）",
+  "tasks.btn.pause": "暂停",
+  "tasks.toast.resumed": "目标已继续",
+  "tasks.tip.resume": "继续自动续跑",
+  "tasks.btn.resume": "继续",
+  "tasks.toast.extended": "已放宽轮次",
+  "tasks.tip.extend": "再加 {count} 轮",
+  "tasks.btn.extend": "放宽轮次",
+  "tasks.toast.cleared": "目标已清除",
+  "tasks.tip.clear": "清空目标"
+}

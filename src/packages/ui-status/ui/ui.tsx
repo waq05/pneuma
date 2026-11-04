@@ -77,6 +77,7 @@ import {
   IconTerminal,
   IconTree,
   SLOT,
+  createT,
   defineUiPlugin,
   openDockTab,
   registerDockTab,
@@ -118,6 +119,12 @@ import {
   type CapsuleSummary,
   type FoldBucketKind,
 } from './status-model'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 轮询间隔（毫秒）：队友名册在快照里没有，只能问通道。 */
 const POLL_MS = 5000
@@ -177,9 +184,9 @@ const PREVIEW_CLOSE_MS = 80
 type DisplayMode = 'auto' | 'panel' | 'mini'
 
 const MODE_LABEL: Readonly<Record<DisplayMode, string>> = {
-  auto: '自动展开',
-  panel: '始终展开',
-  mini: '始终收起',
+  auto: t('status.mode.auto'),
+  panel: t('status.mode.panel'),
+  mini: t('status.mode.mini'),
 }
 
 const MODE_ORDER: readonly DisplayMode[] = ['auto', 'panel', 'mini']
@@ -300,10 +307,10 @@ const MATE_TONE: Readonly<Record<TeammateView['state'], string>> = {
 
 /** 折叠桶的文案（状态语义，禁止用位置切片虚报状态）。 */
 const FOLD_LABEL: Readonly<Record<FoldBucketKind, (count: number) => string>> = {
-  completed: (count) => `已完成 ${String(count)} 项`,
-  waiting: (count) => `待处理 ${String(count)} 项`,
-  earlier: (count) => `前面 ${String(count)} 项`,
-  later: (count) => `后面 ${String(count)} 项`,
+  completed: (count) => t('status.fold.completed', { n: count }),
+  waiting: (count) => t('status.fold.waiting', { n: count }),
+  earlier: (count) => t('status.fold.earlier', { n: count }),
+  later: (count) => t('status.fold.later', { n: count }),
 }
 
 /**
@@ -328,7 +335,7 @@ interface TeamPanelService {
 }
 
 export default defineUiPlugin({
-  name: '状态面板',
+  name: t('status.plugin.name'),
   apply(ui) {
     // order 5：排在消息流（order 1）之后。它是浮层，排在哪一位都不进文档流，
     // 但排后面一点可以让它在 DOM 里晚于正文出现（自检按选择器取它更省事）。
@@ -342,7 +349,7 @@ export default defineUiPlugin({
     // 「用户自己开的 shell」（terminal 页签）是两套东西，别混。
     registerDockTab({
       kind: 'work-output',
-      label: '输出',
+      label: t('status.tab.output'),
       icon: <IconTerminal size={13} />,
       component: WorkOutputTab,
     })
@@ -977,8 +984,8 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
   const stopMate = (mate: TeammateView): void => {
     void channel
       .invoke('stopTeammate', [mate.name])
-      .then(() => toastOk(`已叫停 ${mate.name}`))
-      .catch((reason: unknown) => toastErr(`叫停失败：${reason instanceof Error ? reason.message : String(reason)}`))
+      .then(() => toastOk(t('status.toast.mateStopped', { name: mate.name })))
+      .catch((reason: unknown) => toastErr(t('status.toast.mateStopFailed', { message: reason instanceof Error ? reason.message : String(reason) })))
   }
 
   /** 收掉一个正在跑的后台作业 / 终端会话（「终端」区行尾的停止钮）。 */
@@ -986,10 +993,10 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
     void channel
       .invoke<string>('stopBackground', [work.id])
       .then((text) => {
-        toastOk(typeof text === 'string' && text.trim() !== '' ? text : `已收掉 ${work.id}`)
+        toastOk(typeof text === 'string' && text.trim() !== '' ? text : t('status.toast.workStopped', { id: work.id }))
       })
       .catch((reason: unknown) => {
-        toastErr(`收不掉：${reason instanceof Error ? reason.message : String(reason)}`)
+        toastErr(t('status.toast.workStopFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
       })
   }
 
@@ -1003,10 +1010,10 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
     void channel
       .invoke('clearTodos', [])
       .then(() => {
-        toastOk('任务清单已清空')
+        toastOk(t('status.toast.todosCleared'))
       })
       .catch((reason: unknown) => {
-        toastErr(`清空失败：${reason instanceof Error ? reason.message : String(reason)}`)
+        toastErr(t('status.toast.todosClearFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
       })
   }
 
@@ -1014,7 +1021,7 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
     void channel
       .invoke('goalAction', [name])
       .then(() => toastOk(tip))
-      .catch((reason: unknown) => toastErr(`目标操作失败：${reason instanceof Error ? reason.message : String(reason)}`))
+      .catch((reason: unknown) => toastErr(t('status.toast.goalFailed', { message: reason instanceof Error ? reason.message : String(reason) })))
   }
 
   const chooseMode = (next: DisplayMode): void => {
@@ -1071,7 +1078,7 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
           className="sp"
           data-display-mode={mode}
           data-expanded={expanded ? '1' : '0'}
-          aria-label="状态"
+          aria-label={t('status.panel.aria')}
         >
           {/* 收起态：一颗药丸。同一棵 DOM 里常驻，展开时靠 CSS 藏起来（过渡不断）。
               展开态没有这颗按钮，所以「按住拖动」天然只在收起态生效。 */}
@@ -1079,11 +1086,11 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
             type="button"
             className="sp-mini"
             data-sp-mini="1"
-            aria-label="展开状态面板"
+            aria-label={t('status.capsule.expandAria')}
             aria-hidden={expanded}
             tabIndex={expanded ? -1 : 0}
             inert={expanded}
-            data-tip="展开状态面板（按住可以拖动）"
+            data-tip={t('status.capsule.expandTip')}
             onPointerDown={onMiniPointerDown}
             onPointerMove={onMiniPointerMove}
             onPointerUp={onMiniPointerUp}
@@ -1105,8 +1112,8 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
               <button
                 type="button"
                 className="sp-icon-btn"
-                aria-label="展开策略"
-                data-tip={`状态面板展开策略：${MODE_LABEL[mode]}`}
+                aria-label={t('status.modeMenu.aria')}
+                data-tip={t('status.modeMenu.tip', { mode: MODE_LABEL[mode] })}
                 aria-expanded={menuOpen}
                 onClick={() => {
                   setMenuOpen((open) => !open)
@@ -1117,8 +1124,8 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
               <button
                 type="button"
                 className="sp-icon-btn"
-                aria-label="收起为胶囊"
-                data-tip="收起为胶囊"
+                aria-label={t('status.collapse')}
+                data-tip={t('status.collapse')}
                 onClick={() => {
                   chooseMode('mini')
                 }}
@@ -1133,7 +1140,7 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
                       setMenuOpen(false)
                     }}
                   />
-                  <div className="sp-menu" role="menu" aria-label="展开策略">
+                  <div className="sp-menu" role="menu" aria-label={t('status.modeMenu.aria')}>
                     {MODE_ORDER.map((item) => (
                       <button
                         type="button"
@@ -1286,7 +1293,7 @@ function MiniSummary({ summary }: { summary: CapsuleSummary | null }): ReactNode
     text = summary.text
   } else if (summary.kind === 'git') {
     icon = <IconDiff size={13} />
-    text = '更改'
+    text = t('status.changes')
     // 胶囊不再报增删行数（2026-10-27 用户：+/- 行数只在「编辑文件」的操作上显示）。
     // 原因是这一格量的是**整个工作区**相对 HEAD 的差（含不是这次会话改的、含还没提交的），
     // 挂在常驻胶囊上就是一个一直在跳、又对不上任何一次操作的读数；真要按行数看改动，
@@ -1300,7 +1307,7 @@ function MiniSummary({ summary }: { summary: CapsuleSummary | null }): ReactNode
     text = summary.text
   } else if (summary.kind === 'progress') {
     icon = <IconFlatList size={13} />
-    text = '进程'
+    text = t('status.section.todo')
     trail = `${String(summary.done)}/${String(summary.total)}`
   } else if (summary.kind === 'plan') {
     icon = <IconFlatList size={13} />
@@ -1309,17 +1316,17 @@ function MiniSummary({ summary }: { summary: CapsuleSummary | null }): ReactNode
     // 混合（队友 + 后台活）给「都算上」的总数，单一种类给各自的说法（照 ZCode 的兜底档）。
     if (summary.mates > 0 && summary.works > 0) {
       icon = <IconActivity size={13} />
-      text = `${String(summary.mates + summary.works)} 项在跑`
+      text = t('status.capsule.running', { n: summary.mates + summary.works })
     } else if (summary.works > 0) {
       icon = <IconTerminal size={13} />
-      text = `${String(summary.works)} 个后台任务`
+      text = t('status.capsule.works', { n: summary.works })
     } else {
       icon = <IconTree size={13} />
-      text = `${String(summary.mates)} 个智能体在跑`
+      text = t('status.capsule.mates', { n: summary.mates })
     }
   } else {
     icon = <IconTree size={13} />
-    text = `已结束 ${String(summary.count)} 个智能体`
+    text = t('status.capsule.matesEnded', { n: summary.count })
   }
   return (
     <>
@@ -1401,21 +1408,21 @@ function GoalSection({
   const phaseText =
     goal.phase === 'active'
       ? goal.armed
-        ? '自动续跑中'
-        : '已建立（未上膛）'
+        ? t('status.goal.phaseArmed')
+        : t('status.goal.phaseUnarmed')
       : goal.phase === 'paused'
-        ? '已暂停'
+        ? t('status.goal.phasePaused')
         : goal.phase === 'blocked'
-          ? '已阻塞'
-          : '已完成'
+          ? t('status.goal.phaseBlocked')
+          : t('status.goal.phaseComplete')
   return (
     <StatusSectionBlock
       id="goal"
-      title="目标"
+      title={t('status.section.goal')}
       open={open}
       separated={separated}
       onToggle={onToggle}
-      trail={`${String(goal.rounds)}/${String(goal.maxRounds)} 轮`}
+      trail={t('status.goal.rounds', { done: goal.rounds, total: goal.maxRounds })}
     >
       <div className="sp-goal" data-goal-phase={goal.phase}>
         <IconTarget size={14} className="sp-icon sp-icon-goal" />
@@ -1426,28 +1433,28 @@ function GoalSection({
           <button
             type="button"
             className="sp-goal-btn"
-            data-tip="暂停自动续跑（不会打断当前这一轮）"
+            data-tip={t('status.goal.pauseTip')}
             onClick={() => {
-              onAction('pause', '目标已暂停')
+              onAction('pause', t('status.goal.pauseDone'))
             }}
           >
-            暂停
+            {t('status.goal.pause')}
           </button>
         ) : goal.phase !== 'complete' ? (
           <button
             type="button"
             className="sp-goal-btn"
-            data-tip="继续自动续跑"
+            data-tip={t('status.goal.resumeTip')}
             onClick={() => {
-              onAction('resume', '目标已继续')
+              onAction('resume', t('status.goal.resumeDone'))
             }}
           >
-            继续
+            {t('status.goal.resume')}
           </button>
         ) : null}
       </div>
       <p className="sp-goal-state">
-        {phaseText} · {String(goal.rounds)}/{String(goal.maxRounds)} 轮
+        {phaseText} · {t('status.goal.rounds', { done: goal.rounds, total: goal.maxRounds })}
       </p>
     </StatusSectionBlock>
   )
@@ -1461,7 +1468,7 @@ const TodoRow = memo(function TodoRow({ item }: { item: TodoItemView }): ReactNo
       <span className="sp-row-text" title={item.content}>
         {item.content}
       </span>
-      {item.parent === undefined ? null : <span className="sp-row-note">子任务</span>}
+      {item.parent === undefined ? null : <span className="sp-row-note">{t('status.todo.subtask')}</span>}
     </li>
   )
 })
@@ -1507,7 +1514,7 @@ function TodoSection({
   return (
     <StatusSectionBlock
       id="todo"
-      title="进程"
+      title={t('status.section.todo')}
       open={open}
       separated={separated}
       onToggle={onToggle}
@@ -1556,10 +1563,10 @@ function TodoSection({
             type="button"
             className="sp-clear"
             data-sp-clear="1"
-            data-tip="清空任务清单（模型下一次更新清单会重建它）"
+            data-tip={t('status.todo.clearTip')}
             onClick={onClear}
           >
-            清空清单
+            {t('status.todo.clear')}
           </button>
         </div>
       ) : null}
@@ -1677,9 +1684,9 @@ function AgentSection({
   const ordered = [...running].sort((left, right) => left.startedAt - right.startedAt)
   const longest = formatDuration(longestElapsedMs(running, now))
   const trail =
-    running.length === 0 ? '' : open ? `${String(running.length)} 运行` : `${longest ?? ''} · ${String(running.length)} 运行`
+    running.length === 0 ? '' : open ? t('status.agent.runningCount', { n: running.length }) : `${longest ?? ''} · ${t('status.agent.runningCount', { n: running.length })}`
   return (
-    <StatusSectionBlock id="agent" title="智能体" open={open} separated={separated} onToggle={onToggle} trail={trail}>
+    <StatusSectionBlock id="agent" title={t('status.section.agent')} open={open} separated={separated} onToggle={onToggle} trail={trail}>
       <ul className="sp-list">
         {ordered.map((mate) => {
           const elapsed = formatDuration(mateElapsedMs(mate, now))
@@ -1689,9 +1696,9 @@ function AgentSection({
               <button
                 type="button"
                 className="sp-row-open"
-                aria-label={`打开 ${mate.name} 的运行记录`}
+                aria-label={t('status.agent.openAria', { name: mate.name })}
                 data-sp-agent={mate.name}
-                data-tip={`${mate.role} · ${mate.task}\n点开在右侧边栏看它的运行记录（只读）`}
+                data-tip={t('status.agent.rowTip', { role: mate.role, task: mate.task })}
                 onClick={() => {
                   onOpen(mate)
                 }}
@@ -1705,8 +1712,8 @@ function AgentSection({
               <button
                 type="button"
                 className="sp-row-stop"
-                aria-label={`停掉 ${mate.name}`}
-                data-tip="停掉这个队友（尽力而为，已跑完的改不了结果）"
+                aria-label={t('status.agent.stopAria', { name: mate.name })}
+                data-tip={t('status.agent.stopTip')}
                 onClick={(event) => {
                   event.stopPropagation()
                   onStop(mate)
@@ -1721,7 +1728,7 @@ function AgentSection({
       {endedCount > 0 && onOpenDirectory !== undefined ? (
         <button type="button" className="sp-ended" data-sp-ended={String(endedCount)} onClick={onOpenDirectory}>
           <IconCheck size={13} className="sp-icon" />
-          <span>已结束</span>
+          <span>{t('status.agent.ended')}</span>
           <span className="sp-ended-count">{endedCount}</span>
           <IconChevronRight size={12} className="sp-ended-go" />
         </button>
@@ -1751,7 +1758,7 @@ function GitSection({
   return (
     <StatusSectionBlock
       id="git"
-      title="Git 工具"
+      title={t('status.section.git')}
       open={open}
       separated={separated}
       onToggle={onToggle}
@@ -1765,19 +1772,19 @@ function GitSection({
             type="button"
             className="sp-row-open"
             data-sp-git-changes={String(git.files)}
-            aria-label="打开 Git 页签"
-            data-tip="在右侧边栏打开 Git"
+            aria-label={t('status.git.openAria')}
+            data-tip={t('status.git.openTip')}
             onClick={() => {
               openDockTab('git')
             }}
           >
             <IconDiff size={13} className="sp-icon sp-icon-run" />
-            <span className="sp-row-text">更改</span>
-            <span className="sp-row-time">{`${String(git.files)} 个文件`}</span>
+            <span className="sp-row-text">{t('status.changes')}</span>
+            <span className="sp-row-time">{t('status.git.files', { n: git.files })}</span>
           </button>
         </li>
         <li className="sp-row">
-          <span className="sp-row-open sp-row-static" data-sp-git-branch={git.branch} data-tip="当前分支">
+          <span className="sp-row-open sp-row-static" data-sp-git-branch={git.branch} data-tip={t('status.git.branchTip')}>
             <IconBranch size={13} className="sp-icon" />
             <span className="sp-row-text" title={git.branch}>
               {git.branch}
@@ -1809,11 +1816,11 @@ function PlanSection({
   return (
     <StatusSectionBlock
       id="plan"
-      title="计划"
+      title={t('status.section.plan')}
       open={open}
       separated={separated}
       onToggle={onToggle}
-      trail={`${String(plans.length)} 份`}
+      trail={t('status.plan.count', { n: plans.length })}
     >
       <ul className="sp-list">
         {plans.map((plan) => {
@@ -1824,7 +1831,7 @@ function PlanSection({
                 type="button"
                 className="sp-row-open"
                 data-sp-plan={plan.file}
-                aria-label={`打开计划：${plan.title}`}
+                aria-label={t('status.plan.openAria', { title: plan.title })}
                 data-tip={`${plan.title}\n${plan.file}`}
                 onClick={() => {
                   setDockPreview({ path: plan.file })
@@ -1872,9 +1879,9 @@ function WorkSection({
 }): ReactNode {
   const longest = formatDuration(longestWorkElapsedMs(works, now))
   const trail =
-    open ? `${String(works.length)} 个后台运行` : `${longest ?? ''} · ${String(works.length)} 后台`
+    open ? t('status.terminal.trailOpen', { n: works.length }) : t('status.terminal.trailClosed', { elapsed: longest ?? '', n: works.length })
   return (
-    <StatusSectionBlock id="terminal" title="终端" open={open} separated={separated} onToggle={onToggle} trail={trail}>
+    <StatusSectionBlock id="terminal" title={t('status.section.terminal')} open={open} separated={separated} onToggle={onToggle} trail={trail}>
       <ul className="sp-list">
         {works.map((work) => {
           const elapsed = formatDuration(Math.max(0, now - work.startedAt))
@@ -1884,9 +1891,13 @@ function WorkSection({
               <button
                 type="button"
                 className="sp-row-open"
-                aria-label={`查看 ${work.id} 的输出`}
+                aria-label={t('status.work.openAria', { id: work.id })}
                 data-sp-work={work.id}
-                data-tip={`${work.kind === 'job' ? '后台作业' : '终端会话'} ${work.id}\n${work.title}\n点开在右侧边栏看输出（只读）`}
+                data-tip={t('status.work.rowTip', {
+                  kind: work.kind === 'job' ? t('status.work.kindJob') : t('status.work.kindTerminal'),
+                  id: work.id,
+                  title: work.title,
+                })}
                 onClick={() => {
                   onOpen(work)
                 }}
@@ -1900,8 +1911,8 @@ function WorkSection({
               <button
                 type="button"
                 className="sp-row-stop"
-                aria-label={`停止 ${work.id}`}
-                data-tip="停止任务"
+                aria-label={t('status.work.stopAria', { id: work.id })}
+                data-tip={t('status.work.stopTip')}
                 onClick={(event) => {
                   event.stopPropagation()
                   onStop(work)
@@ -1997,15 +2008,15 @@ function WorkOutputTab({ tab, active, expanded }: DockTabBodyProps): ReactNode {
           {outputStatusLabel(display?.status)}
         </span>
       </div>
-      {error === '' ? null : <div className="work-out-note">{`读不了输出：${error}`}</div>}
+      {error === '' ? null : <div className="work-out-note">{t('status.output.failed', { message: error })}</div>}
       {display !== null && display.droppedChars > 0 ? (
         <div className="work-out-note" data-sp-output-dropped={String(display.droppedChars)}>
-          {`头部已丢弃 ${String(display.droppedChars)} 字符（缓冲超上限，较早的输出不再保留）`}
+          {t('status.output.dropped', { n: display.droppedChars })}
         </div>
       ) : null}
       <div className="work-out-scroll" ref={scrollRef} onScroll={onScroll}>
         <pre className="work-out-text" data-sp-output-text>
-          {display === null ? '正在读输出…' : display.text === '' ? '（还没有输出）' : display.text}
+          {display === null ? t('status.output.reading') : display.text === '' ? t('status.output.empty') : display.text}
         </pre>
       </div>
       {following ? null : (
@@ -2013,13 +2024,13 @@ function WorkOutputTab({ tab, active, expanded }: DockTabBodyProps): ReactNode {
           type="button"
           className="work-out-resume"
           data-sp-output-resume="1"
-          data-tip="恢复跟随（新输出自动滚到底）"
+          data-tip={t('status.output.resumeTip')}
           onClick={() => {
             setFrozen(null)
           }}
         >
           <IconChevronDown size={13} />
-          回到底部
+          {t('status.output.resume')}
         </button>
       )}
     </div>
@@ -2030,28 +2041,28 @@ function WorkOutputTab({ tab, active, expanded }: DockTabBodyProps): ReactNode {
 function outputStatusLabel(status: string | undefined): string {
   switch (status) {
     case 'running':
-      return '运行中'
+      return t('status.workStatus.running')
     case 'completed':
-      return '已完成'
+      return t('status.workStatus.completed')
     case 'failed':
-      return '失败'
+      return t('status.workStatus.failed')
     case 'killed':
-      return '已终止'
+      return t('status.workStatus.killed')
     case 'closed':
-      return '已结束'
+      return t('status.workStatus.closed')
     default:
-      return '读取中'
+      return t('status.workStatus.loading')
   }
 }
 
 /** 定点任务一行右侧的读数：异常态报状态，正常报「还有多久」（照 ZCode 行二「在做什么」位）。 */
 function taskState(task: ScheduledTaskView, now: number): { text: string; tone: string } {
-  if (!task.enabled) return { text: task.nextRunAt === null ? '已停用' : '已暂停', tone: 'muted' }
-  if (task.lastStatus === 'running') return { text: '运行中', tone: 'run' }
-  if (task.lastStatus === 'failed') return { text: '上次失败', tone: 'danger' }
-  if (task.lastStatus === 'blocked') return { text: '已阻塞', tone: 'danger' }
+  if (!task.enabled) return { text: task.nextRunAt === null ? t('status.task.disabled') : t('status.task.paused'), tone: 'muted' }
+  if (task.lastStatus === 'running') return { text: t('status.workStatus.running'), tone: 'run' }
+  if (task.lastStatus === 'failed') return { text: t('status.task.lastFailed'), tone: 'danger' }
+  if (task.lastStatus === 'blocked') return { text: t('status.task.blocked'), tone: 'danger' }
   const countdown = formatCountdown(task.nextRunAt, now)
-  return countdown === null ? { text: '未排期', tone: 'muted' } : { text: countdown, tone: 'plain' }
+  return countdown === null ? { text: t('status.task.unscheduled'), tone: 'muted' } : { text: countdown, tone: 'plain' }
 }
 
 /**
@@ -2073,9 +2084,9 @@ function WorkflowSection({
   onToggle(): void
 }): ReactNode {
   const running = tasks.filter((task) => task.lastStatus === 'running').length
-  const trail = running > 0 ? `${String(running)} 个运行中` : `${String(tasks.length)} 条`
+  const trail = running > 0 ? t('status.workflow.trailRunning', { n: running }) : t('status.workflow.trailCount', { n: tasks.length })
   return (
-    <StatusSectionBlock id="workflow" title="工作流" open={open} separated={separated} onToggle={onToggle} trail={trail}>
+    <StatusSectionBlock id="workflow" title={t('status.section.workflow')} open={open} separated={separated} onToggle={onToggle} trail={trail}>
       <ul className="sp-list">
         {tasks.map((task) => {
           const state = taskState(task, now)
@@ -2089,7 +2100,7 @@ function WorkflowSection({
               <span
                 className="sp-row-open sp-row-static"
                 data-sp-task={task.id}
-                data-tip={task.lastError === null ? task.title : `${task.title}\n上次失败：${task.lastError}`}
+                data-tip={task.lastError === null ? task.title : t('status.task.tipLastError', { title: task.title, error: task.lastError })}
               >
                 <IconCalendar
                   size={13}

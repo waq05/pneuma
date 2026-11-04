@@ -10,7 +10,7 @@
 import { spawn } from 'node:child_process'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 /**
  * 契约源码的全文：入口 `src/contract.ts` 加上 `src/contract/` 下按域拆开的每一份。
@@ -103,11 +103,19 @@ export function discover(patterns, exclude = []) {
 function runOne(file, timeoutMs) {
   return new Promise((done) => {
     const startedAt = Date.now()
-    const child = spawn(process.execPath, [join(root, 'scripts', file)], {
-      cwd: root,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
-    })
+    // `--import`：界面模块现在会取词（`@dsc/ui` 别名 + 字典 JSON），而 Node 两样都解析不了。
+    // 钩子挂在子进程启动时，对**所有**探针生效，不必每条自己加一行；单跑某条探针时按
+    // `node --import ./scripts/_i18n-alias.mjs scripts/ui-x-test.mjs` 跑（见那个文件的抬头）。
+    const child = spawn(
+      // `--import` 要 file:// URL：Windows 的绝对路径在这里会被当成协议 `d:`。
+      process.execPath,
+      ['--import', pathToFileURL(join(root, 'scripts', '_i18n-alias.mjs')).href, join(root, 'scripts', file)],
+      {
+        cwd: root,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
+      },
+    )
     let out = ''
     child.stdout.on('data', (chunk) => (out += chunk))
     child.stderr.on('data', (chunk) => (out += chunk))

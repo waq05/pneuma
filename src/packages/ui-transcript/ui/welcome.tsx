@@ -6,9 +6,15 @@
  * @module dsc-ui-shell/plugins/transcript/welcome
  */
 import type { ReactNode } from 'react'
-import { IconClock, IconCode, IconDiff, IconSpark, IconTarget } from '@dsc/ui'
+import { IconClock, IconCode, IconDiff, IconSpark, IconTarget, createT } from '@dsc/ui'
 import { ReviewNoticeCard, parseReviewNotice } from '@dsc/ui-primitives'
 import { keyOf, type Row } from './shared'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /**
  * 首屏四张能力卡（对照 Codex UI 的 home cards）：点一下把提示词写进输入框，不直接发送——
@@ -24,16 +30,34 @@ export const WELCOME_CARDS: ReadonlyArray<{
   hint: string
   prompt: string
 }> = [
-  { id: 'read', Icon: IconCode, title: '看懂代码', hint: '解释一处实现的来龙去脉', prompt: '帮我讲清楚这段代码在做什么：\n' },
-  { id: 'build', Icon: IconSpark, title: '做点东西', hint: '从需求一路写到能跑', prompt: '帮我实现：' },
+  {
+    id: 'read',
+    Icon: IconCode,
+    title: t('transcript.welcome.read.title'),
+    hint: t('transcript.welcome.read.hint'),
+    prompt: t('transcript.welcome.read.prompt'),
+  },
+  {
+    id: 'build',
+    Icon: IconSpark,
+    title: t('transcript.welcome.build.title'),
+    hint: t('transcript.welcome.build.hint'),
+    prompt: t('transcript.welcome.build.prompt'),
+  },
   {
     id: 'review',
     Icon: IconDiff,
-    title: '审查改动',
-    hint: '看未提交的改动有没有坑',
-    prompt: '审查当前未提交的改动，指出风险、遗漏和可以简化的地方。',
+    title: t('transcript.welcome.review.title'),
+    hint: t('transcript.welcome.review.hint'),
+    prompt: t('transcript.welcome.review.prompt'),
   },
-  { id: 'fix', Icon: IconTarget, title: '排查问题', hint: '从一个报错查到根因', prompt: '帮我排查一下这个问题：\n' },
+  {
+    id: 'fix',
+    Icon: IconTarget,
+    title: t('transcript.welcome.fix.title'),
+    hint: t('transcript.welcome.fix.hint'),
+    prompt: t('transcript.welcome.fix.prompt'),
+  },
 ]
 
 /** 动作 id → 图标：动作表里只存文案与动作，图标是转录插件自己的资产（见下面的登记）。 */
@@ -45,11 +69,11 @@ export const WELCOME_ICON_BY_ID: ReadonlyMap<string, (props: { size?: number }) 
 /** 相对时间（分钟 / 小时 / 天）：首屏那一行只需要「多久以前」，精确到秒没有意义。 */
 export function elapsedLabel(at: number): string {
   const minutes = Math.max(Math.round((Date.now() - at) / 60_000), 0)
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${String(minutes)} 分钟前`
+  if (minutes < 1) return t('transcript.time.justNow')
+  if (minutes < 60) return t('transcript.time.minutesAgo', { count: minutes })
   const hours = Math.round(minutes / 60)
-  if (hours < 24) return `${String(hours)} 小时前`
-  return `${String(Math.round(hours / 24))} 天前`
+  if (hours < 24) return t('transcript.time.hoursAgo', { count: hours })
+  return t('transcript.time.daysAgo', { count: Math.round(hours / 24) })
 }
 
 /** 首屏卡片的一格（内置清单与动作表两种来源在这里合成同一种形状）。 */
@@ -92,9 +116,9 @@ export interface WelcomeStateProps {
 export function WelcomeState({ cards, resume, leading, sessionKey, cwd, composerReady, onResume }: WelcomeStateProps): ReactNode {
   return (
     <div className="welcome">
-      <h1>有什么可以帮忙的？</h1>
+      <h1>{t('transcript.welcome.title')}</h1>
       <p>
-        输入 <code>/</code> 查看可用指令 · 消息会携带当前工作目录上下文
+        {t('transcript.welcome.lead')} <code>/</code> {t('transcript.welcome.leadTail')}
       </p>
       <div className="welcome-cards">
         {cards.map((card) => (
@@ -116,7 +140,7 @@ export function WelcomeState({ cards, resume, leading, sessionKey, cwd, composer
       {resume === null ? null : (
         <button type="button" className="welcome-resume" onClick={() => onResume(resume.id)}>
           <IconClock size={13} />
-          <span className="welcome-resume-title">接着上次：{resume.title}</span>
+          <span className="welcome-resume-title">{t('transcript.welcome.resume', { title: resume.title ?? '' })}</span>
           <span className="welcome-resume-time">{elapsedLabel(resume.updatedAt)}</span>
         </button>
       )}

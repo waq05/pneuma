@@ -15,7 +15,7 @@
  * @module dsc-ui-shell/plugins/settings/presets
  */
 import { useEffect, useState, type ReactNode } from 'react'
-import { IconPlus, IconRefresh } from '@dsc/ui'
+import { IconPlus, IconRefresh, createT } from '@dsc/ui'
 import { errText as text, humanErrorText } from '@dsc/ui-primitives'
 import {
   useHostChannel,
@@ -26,14 +26,20 @@ import {
   type SettingsMutation,
   type ToolEntryView,
 } from '@dsc/ui'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 模式标识的形状，与 packages/config-core/presets.ts 的 PRESET_NAME 同一张表（表单里先拦一道）。 */
 const PRESET_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/
 
 const RISK_LABELS: Record<ToolEntryView['risk'], string> = {
-  read: '只读',
-  write: '写入',
-  exec: '执行',
+  read: t('settings.presets.risk.read'),
+  write: t('settings.presets.risk.write'),
+  exec: t('settings.presets.risk.exec'),
 }
 
 export function PresetsGroup(): ReactNode {
@@ -52,7 +58,7 @@ export function PresetsGroup(): ReactNode {
       .invoke<PresetSurface>('listPresets')
       .then(setSurface)
       .catch((error: unknown) => {
-        setNote({ tone: 'error', text: `读取模式清单失败：${text(error)}` })
+        setNote({ tone: 'error', text: t('settings.presets.loadFailed', { message: text(error) }) })
       })
     void channel
       .invoke<ToolEntryView[]>('listTools')
@@ -60,7 +66,7 @@ export function PresetsGroup(): ReactNode {
       // 读不到工具目录时说清（空着会让人以为「一个工具都没有」，那不是同一件事）。
       .catch((error: unknown) => {
         setTools([])
-        setNote({ tone: 'error', text: `读取工具目录失败，工具多选这一块是空的：${text(error)}` })
+        setNote({ tone: 'error', text: t('settings.presets.toolsFailed', { message: text(error) }) })
       })
   }
   useEffect(reload, [channel])
@@ -72,24 +78,24 @@ export function PresetsGroup(): ReactNode {
       .invoke<SettingsMutation>(method, args)
       .then((result) => {
         if (!result.ok) {
-          setNote({ tone: 'error', text: `操作失败：${result.error}` })
+          setNote({ tone: 'error', text: t('settings.presets.opFailed', { message: result.error }) })
           return
         }
-        setNote({ tone: 'ok', text: result.notice ?? okText ?? '已保存' })
+        setNote({ tone: 'ok', text: result.notice ?? okText ?? t('settings.presets.saved') })
         reload()
       })
       .catch((error: unknown) => {
-        setNote({ tone: 'error', text: `操作失败：${text(error)}` })
+        setNote({ tone: 'error', text: t('settings.presets.opFailed', { message: text(error) }) })
       })
   }
 
   /** 表单保存：失败留在表单里让用户改，成功就收起并重取。 */
   const finishDraft = (result: SettingsMutation): void => {
     if (!result.ok) {
-      setNote({ tone: 'error', text: `保存失败：${result.error}` })
+      setNote({ tone: 'error', text: t('settings.presets.saveFailed', { message: result.error }) })
       return
     }
-    setNote({ tone: 'ok', text: result.notice ?? '模式已保存' })
+    setNote({ tone: 'ok', text: result.notice ?? t('settings.presets.presetSaved') })
     setDraft(null)
     reload()
   }
@@ -101,17 +107,17 @@ export function PresetsGroup(): ReactNode {
       .invoke<PresetFileView>('readPreset', [name])
       .then((result) => {
         if (!result.ok) {
-          setNote({ tone: 'error', text: `读取失败：${humanErrorText(result.error).text}` })
+          setNote({ tone: 'error', text: t('settings.presets.readFailed', { message: humanErrorText(result.error).text }) })
           return
         }
         setPeek({ name, text: result.text })
       })
       .catch((error: unknown) => {
-        setNote({ tone: 'error', text: `读取失败：${humanErrorText(error).text}` })
+        setNote({ tone: 'error', text: t('settings.presets.readFailed', { message: humanErrorText(error).text }) })
       })
   }
 
-  if (surface === null) return <div className="settings-empty">正在读取模式…</div>
+  if (surface === null) return <div className="settings-empty">{t('settings.presets.loading')}</div>
 
   const builtin = surface.options.filter((item) => item.builtin)
   const custom = surface.options.filter((item) => !item.builtin)
@@ -154,10 +160,8 @@ export function PresetsGroup(): ReactNode {
   return (
     <div className="settings-fields presets">
       <div className="preset-intro">
-        模式决定<strong>模型是谁、手上有什么、被叮嘱了什么</strong>（提示词 + 工具目录）。
-        它与权限模式（问出来之后怎么裁）、协作模式（这一轮能把手伸多远）是三根独立旋钮：
-        模式只做减法，工具白名单只能是全量的子集，所以任何模式都放宽不了安全。
-        切档也可以直接敲 <span className="mono">/preset {'<'}名字{'>'}</span>。
+        {t('settings.presets.intro.a')}<strong>{t('settings.presets.intro.strong')}</strong>{t('settings.presets.intro.b')}
+        <span className="mono">/preset {'<'}{t('settings.presets.namePlaceholder')}{'>'}</span>{t('settings.presets.intro.c')}
       </div>
 
       {note === null ? null : (
@@ -165,31 +169,31 @@ export function PresetsGroup(): ReactNode {
       )}
 
       <div className="models-head">
-        <span>内置</span>
+        <span>{t('settings.presets.builtin')}</span>
         <span className="count">{builtin.length}</span>
-        <button className="btn-ghost presets-refresh" data-tip="重新读取模式文件" onClick={reload}>
-          <IconRefresh size={14} /> 刷新
+        <button className="btn-ghost presets-refresh" data-tip={t('settings.presets.reloadTip')} onClick={reload}>
+          <IconRefresh size={14} /> {t('settings.presets.refresh')}
         </button>
       </div>
       {builtin.map(card)}
 
       <div className="models-head">
-        <span>自定义</span>
+        <span>{t('settings.presets.custom')}</span>
         <span className="count">{custom.length}</span>
         <button
           className="btn-primary models-add"
-          data-tip="新建模式文件"
+          data-tip={t('settings.presets.newTip')}
           onClick={() => {
             setDraft(blankDraft())
           }}
         >
-          <IconPlus size={14} /> 新建模式
+          <IconPlus size={14} /> {t('settings.presets.new')}
         </button>
       </div>
       {custom.length === 0 ? (
         <div className="settings-empty">
-          还没有自定义模式。点「新建模式」在这里建一个，或者直接在 <span className="mono">~/.dsc/presets/</span>{' '}
-          里手写一个 <span className="mono">{'<名字>'}.md</span>（frontmatter + 正文，形状跟队友角色一样）。
+          {t('settings.presets.empty.lead')}<span className="mono">~/.dsc/presets/</span>{t('settings.presets.empty.mid')}
+          <span className="mono">{'<'}{t('settings.presets.namePlaceholder')}{'>'}.md</span>{t('settings.presets.empty.tail')}
         </div>
       ) : null}
       {custom.map(card)}
@@ -198,7 +202,7 @@ export function PresetsGroup(): ReactNode {
         <div className="preset-raw">
           <div className="preset-raw-head">
             <span className="mono">{peek.name}.md</span>
-            <span className="preset-raw-hint">文件原文（只读）：frontmatter 里的键就是这张卡片的全部设置</span>
+            <span className="preset-raw-hint">{t('settings.presets.rawHint')}</span>
             <button
               type="button"
               className="text-btn"
@@ -206,7 +210,7 @@ export function PresetsGroup(): ReactNode {
                 setPeek(null)
               }}
             >
-              关闭
+              {t('settings.presets.close')}
             </button>
           </div>
           <pre>{peek.text}</pre>
@@ -232,9 +236,9 @@ export function PresetsGroup(): ReactNode {
       )}
 
       <div className="settings-paths">
-        <span>模式文件 </span>
+        <span>{t('settings.presets.pathLabel')}</span>
         <span className="mono">~/.dsc/presets/</span>
-        <span>共 {surface.options.length} 个</span>
+        <span>{t('settings.presets.pathCount', { count: surface.options.length })}</span>
       </div>
     </div>
   )
@@ -263,22 +267,22 @@ function PresetCard(props: {
           <div className="preset-name">
             {item.label}
             <span className="mono preset-id">{item.name}</span>
-            {isCurrent ? <span className="tag">当前</span> : null}
-            {isDefault ? <span className="tag dim">新会话默认</span> : null}
+            {isCurrent ? <span className="tag">{t('settings.presets.current')}</span> : null}
+            {isDefault ? <span className="tag dim">{t('settings.presets.defaultTag')}</span> : null}
           </div>
-          <div className="preset-sub">{item.description === '' ? '没有写说明' : item.description}</div>
+          <div className="preset-sub">{item.description === '' ? t('settings.presets.noDescription') : item.description}</div>
           <div className="preset-badge-line">
             <span className="preset-badge">
-              工具：
+              {t('settings.presets.toolsLabel')}
               {item.tools === null
-                ? '全量（跟随当前挂载的插件）'
+                ? t('settings.presets.toolsAll')
                 : item.tools.length === 0
-                  ? '一个都不给'
-                  : item.tools.join('、')}
+                  ? t('settings.presets.toolsNone')
+                  : item.tools.join(t('settings.presets.listSeparator'))}
             </span>
-            {item.drop.length > 0 ? <span className="preset-badge warn">去掉提示段：{item.drop.join('、')}</span> : null}
+            {item.drop.length > 0 ? <span className="preset-badge warn">{t('settings.presets.dropLabel')}{item.drop.join(t('settings.presets.listSeparator'))}</span> : null}
             {item.prompt.trim() !== '' ? (
-              <span className="preset-badge">带 {item.prompt.trim().length} 字提示词</span>
+              <span className="preset-badge">{t('settings.presets.promptBadge', { count: item.prompt.trim().length })}</span>
             ) : null}
           </div>
           {item.problem === undefined ? null : <div className="preset-problem">{item.problem}</div>}
@@ -289,13 +293,13 @@ function PresetCard(props: {
               <button
                 type="button"
                 className="text-btn danger"
-                data-tip="删除模式文件"
+                data-tip={t('settings.presets.deleteTip')}
                 onClick={props.onRemoveConfirm}
               >
-                确认删除
+                {t('settings.presets.confirmDelete')}
               </button>
               <button type="button" className="text-btn" onClick={props.onRemoveCancel}>
-                取消
+                {t('settings.presets.cancel')}
               </button>
             </>
           ) : (
@@ -304,29 +308,29 @@ function PresetCard(props: {
                 type="button"
                 className={isCurrent ? 'text-btn preset-use' : 'btn-ghost preset-use'}
                 disabled={isCurrent}
-                data-tip={isCurrent ? '当前会话已经在用这个模式' : '把当前会话切到这个模式（写进会话记录）'}
+                data-tip={isCurrent ? t('settings.presets.inUseTip') : t('settings.presets.useTip')}
                 onClick={props.onUse}
               >
-                {isCurrent ? '使用中' : '用这个'}
+                {isCurrent ? t('settings.presets.inUse') : t('settings.presets.use')}
               </button>
               <button
                 type="button"
                 className="text-btn"
                 disabled={isDefault}
-                data-tip={isDefault ? '新会话已经默认用这个模式' : '新开的会话默认用这个模式（当前会话不变）'}
+                data-tip={isDefault ? t('settings.presets.defaultTip') : t('settings.presets.setDefaultTip')}
                 onClick={props.onDefault}
               >
-                {isDefault ? '已是默认' : '设为默认'}
+                {isDefault ? t('settings.presets.isDefault') : t('settings.presets.setDefault')}
               </button>
-              <button type="button" className="text-btn" data-tip="改名字、说明、工具白名单与提示词" onClick={props.onEdit}>
-                编辑
+              <button type="button" className="text-btn" data-tip={t('settings.presets.editTip')} onClick={props.onEdit}>
+                {t('settings.presets.edit')}
               </button>
-              <button type="button" className="text-btn" data-tip="只读查看模式文件原文" onClick={props.onPeek}>
-                查看配置
+              <button type="button" className="text-btn" data-tip={t('settings.presets.peekTip')} onClick={props.onPeek}>
+                {t('settings.presets.peek')}
               </button>
               {props.onAskRemove === undefined ? null : (
-                <button type="button" className="text-btn danger" data-tip="删掉这个模式文件" onClick={props.onAskRemove}>
-                  删除
+                <button type="button" className="text-btn danger" data-tip={t('settings.presets.removeTip')} onClick={props.onAskRemove}>
+                  {t('settings.presets.remove')}
                 </button>
               )}
             </>
@@ -368,36 +372,36 @@ function PresetForm(props: {
 
   return (
     <div className="provider-form preset-form">
-      <div className="provider-form-title">{isNew ? '新建模式' : `编辑模式「${draft.oldName}」`}</div>
+      <div className="provider-form-title">{isNew ? t('settings.presets.form.new') : t('settings.presets.form.edit', { name: String(draft.oldName) })}</div>
       <div className="provider-form-grid">
         <label className="preset-field">
-          <span>标识</span>
+          <span>{t('settings.presets.form.nameLabel')}</span>
           <input
             className="setting-input mono"
             value={draft.name}
-            placeholder="review（小写字母、数字、连字符）"
+            placeholder={t('settings.presets.form.namePlaceholder')}
             onChange={(event) => {
               patch({ name: event.target.value.trim() })
             }}
           />
         </label>
         <label className="preset-field">
-          <span>显示名</span>
+          <span>{t('settings.presets.form.displayName')}</span>
           <input
             className="setting-input"
             value={draft.label}
-            placeholder="代码审查模式"
+            placeholder={t('settings.presets.form.labelPlaceholder')}
             onChange={(event) => {
               patch({ label: event.target.value })
             }}
           />
         </label>
         <label className="preset-field preset-field-wide">
-          <span>说明</span>
+          <span>{t('settings.presets.form.description')}</span>
           <input
             className="setting-input"
             value={draft.description}
-            placeholder="一句话说清这个模式是干什么的（切档时会给用户看）"
+            placeholder={t('settings.presets.form.descriptionPlaceholder')}
             onChange={(event) => {
               patch({ description: event.target.value })
             }}
@@ -406,14 +410,16 @@ function PresetForm(props: {
       </div>
       {nameOk ? null : (
         <div className="preset-problem">
-          标识只能用小写字母、数字、连字符，且不能以连字符开头（当前：{draft.name === '' ? '空' : draft.name}）
+          {t('settings.presets.form.nameProblem.lead')}
+          {draft.name === '' ? t('settings.presets.form.nameProblem.empty') : draft.name}
+          {t('settings.presets.form.nameProblem.tail')}
         </div>
       )}
-      {renameClash ? <div className="preset-problem">已经有一个叫「{draft.name}」的模式了，换个名字</div> : null}
+      {renameClash ? <div className="preset-problem">{t('settings.presets.form.nameClash', { name: draft.name })}</div> : null}
 
       <div className="preset-field-block">
         <div className="preset-field-head">
-          <span>工具白名单</span>
+          <span>{t('settings.presets.form.toolsTitle')}</span>
           <label className="preset-switch">
             <input
               type="checkbox"
@@ -422,7 +428,7 @@ function PresetForm(props: {
                 patch({ tools: event.target.checked ? null : [] })
               }}
             />
-            全量（跟随当前挂载的插件，将来装的新工具也自动有）
+            {t('settings.presets.form.toolsAll')}
           </label>
         </div>
         {draft.tools === null ? null : (
@@ -440,14 +446,13 @@ function PresetForm(props: {
                   <span className="mono">{tool.name}</span>
                   <span className={`preset-risk ${tool.risk}`}>{RISK_LABELS[tool.risk]}</span>
                   {tool.presets === undefined ? null : (
-                    <span className="preset-risk mode">仅 {tool.presets.join('/')}</span>
+                    <span className="preset-risk mode">{t('settings.presets.form.onlyIn', { presets: tool.presets.join('/') })}</span>
                   )}
                 </label>
               ))}
             </div>
             <div className="setting-help">
-              一个都不勾 = 这个模式不给模型任何工具（连读文件都不行）。工具名写错的不会报错：
-              生效的是「白名单 ∩ 当前注册表」。
+              {t('settings.presets.form.toolsHint')}
             </div>
           </>
         )}
@@ -455,8 +460,8 @@ function PresetForm(props: {
 
       <div className="preset-field-block">
         <div className="preset-field-head">
-          <span>去掉的提示段</span>
-          <span className="setting-help">去掉的只是叮嘱，代码里的守卫不受影响</span>
+          <span>{t('settings.presets.form.dropTitle')}</span>
+          <span className="setting-help">{t('settings.presets.form.dropHint')}</span>
         </div>
         <div className="preset-drop-list">
           {props.droppable.map((section) => (
@@ -478,11 +483,11 @@ function PresetForm(props: {
       </div>
 
       <label className="preset-field preset-field-block">
-        <span>提示词（追加进系统提示，排在「做事方式」之后）</span>
+        <span>{t('settings.presets.form.promptLabel')}</span>
         <textarea
           className="preset-prompt"
           value={draft.prompt}
-          placeholder={'你专门找问题，不夸方案。每条结论给「文件名:行号」。'}
+          placeholder={t('settings.presets.form.promptPlaceholder')}
           onChange={(event) => {
             patch({ prompt: event.target.value })
           }}
@@ -491,12 +496,12 @@ function PresetForm(props: {
 
       <div className="provider-form-actions">
         <button type="button" className="btn-primary" disabled={!nameOk || renameClash} onClick={save}>
-          {isNew ? '创建' : '保存'}
+          {isNew ? t('settings.presets.form.create') : t('settings.presets.form.save')}
         </button>
         <button type="button" className="btn-ghost" onClick={props.onCancel}>
-          取消
+          {t('settings.presets.cancel')}
         </button>
-        <span className="provider-form-hint">保存即写文件，当前会话下一次请求生效</span>
+        <span className="provider-form-hint">{t('settings.presets.form.hint')}</span>
       </div>
     </div>
   )

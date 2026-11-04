@@ -29,6 +29,14 @@ import {
 // 宿主桥从基元包取（E4 收尾从 `@dsc/ui` 沉下去，见 native.ts 的文件头）。
 import { getHostNative } from '@dsc/ui-primitives'
 import { dockActions, setDockReview, useDockReview } from '@dsc/ui-dockkit'
+// 取词器与字典：本文件随布局插件的 bundle 走，`@dsc/ui` 在那个 bundle 里是 external
+// （运行期拿壳里那一份），与 `ui.tsx` 同一理由。
+import { createT } from '@dsc/ui'
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 视图 / 换行 / 宽度的键与变量名（与旧界面同一份，两个界面共享用户习惯）。 */
 const VIEW_KEY = 'dsc.diffView'
@@ -106,14 +114,14 @@ export function ReviewPane(): ReactNode {
         className="diff-resizer"
         {...drag}
         onDoubleClick={resetWidth}
-        data-tip="拖拽调宽 · 双击复位"
-        aria-label="调整审查面板宽度"
+        data-tip={t('layout.review.resizeTip')}
+        aria-label={t('layout.review.resizeAria')}
       />
       <div className="diff-head">
         {review.files.length > 1 ? (
           <Select
             className="diff-file-select"
-            ariaLabel="选择要审查的文件"
+            ariaLabel={t('layout.review.pickFile')}
             value={String(index)}
             options={review.files.map((entry, at) => ({
               value: String(at),
@@ -132,17 +140,17 @@ export function ReviewPane(): ReactNode {
         )}
         {file !== undefined && (
           <span className="changes-counts">
-            {file.status === 'added' && <span className="diff-badge">新增</span>}
+            {file.status === 'added' && <span className="diff-badge">{t('layout.review.added')}</span>}
             <span className="changes-added">{`+${String(file.added)}`}</span>
             <span className="changes-removed">{`-${String(file.removed)}`}</span>
           </span>
         )}
         <span className="diff-tools">
-          <button type="button" className="diff-tool" aria-pressed={split} data-tip="分栏 / 合并视图" onClick={toggleSplit}>
-            {split ? '合并' : '分栏'}
+          <button type="button" className="diff-tool" aria-pressed={split} data-tip={t('layout.review.viewTip')} onClick={toggleSplit}>
+            {split ? t('layout.review.unified') : t('layout.review.split')}
           </button>
-          <button type="button" className="diff-tool" aria-pressed={wrap} data-tip="长行自动换行" onClick={toggleWrap}>
-            换行
+          <button type="button" className="diff-tool" aria-pressed={wrap} data-tip={t('layout.review.wrapTip')} onClick={toggleWrap}>
+            {t('layout.review.wrap')}
           </button>
           {file !== undefined && (
             <>
@@ -151,42 +159,42 @@ export function ReviewPane(): ReactNode {
                 <button
                   type="button"
                   className="diff-tool"
-                  data-tip="用系统默认程序打开。"
+                  data-tip={t('layout.review.openSystemTip')}
                   onClick={() => {
                     void native.invoke('openPath', [file.path]).catch((reason: unknown) => {
-                      toastErr(`系统打开失败：${reason instanceof Error ? reason.message : String(reason)}`)
+                      toastErr(t('layout.review.openSystemFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
                     })
                   }}
                 >
-                  系统打开
+                  {t('layout.review.openSystem')}
                 </button>
               ) : null}
               <button
                 type="button"
                 className="diff-tool"
-                data-tip="在预览中打开当前文件（内容是修改时的快照）。"
+                data-tip={t('layout.review.openPreviewTip')}
                 onClick={() => {
                   dockActions.openPreview(file.path)
                 }}
               >
-                打开
+                {t('layout.review.open')}
               </button>
             </>
           )}
           <button
             type="button"
             className="diff-tool"
-            data-tip="关闭审查"
+            data-tip={t('layout.review.closeTip')}
             onClick={() => {
               setDockReview(null)
             }}
           >
-            关闭
+            {t('layout.review.close')}
           </button>
         </span>
       </div>
       {file === undefined ? (
-        <p className="diff-note">这一轮没有可审查的改动。</p>
+        <p className="diff-note">{t('layout.review.empty')}</p>
       ) : (
         <FileDiff file={file} split={split} wrap={wrap} />
       )}
@@ -199,7 +207,7 @@ function FileDiff({ file, split, wrap }: { file: ChangedFileView; split: boolean
   return (
     <>
       {file.truncated === true && (
-        <p className="diff-note">改动较大，这里只显示了前一部分（完整改动以文件当前内容为准）。</p>
+        <p className="diff-note">{t('layout.review.truncated')}</p>
       )}
       <DiffRows hunks={file.hunks} path={file.path} split={split} wrap={wrap} />
     </>

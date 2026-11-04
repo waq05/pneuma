@@ -9,6 +9,13 @@
  *
  * @module dsc-ui-shell/platform/completion-sound
  */
+import { createT } from '@dsc/ui-core'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui-core` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 线性起音进指数衰减的振荡器 voice：尾巴平滑，不会像直接拉到 0 那样「咔」一声。 */
 function voice(ac: AudioContext, master: GainNode, t0: number, spec: ToneSpec): void {
@@ -220,7 +227,7 @@ const C6 = 1046.5
 export const COMPLETION_SOUND_VARIANTS: readonly CompletionSoundVariant[] = [
   {
     id: 1,
-    name: '双音轻抚',
+    name: t('primitives.sound.1'),
     play: (ac, master, t0) => {
       voice(ac, master, t0, { freq: E4, dur: 0.22, gain: 0.05, attack: 0.03, type: 'sine' })
       voice(ac, master, t0 + 0.08, { freq: C4, dur: 0.52, gain: 0.07, attack: 0.08, type: 'sine' })
@@ -229,7 +236,7 @@ export const COMPLETION_SOUND_VARIANTS: readonly CompletionSoundVariant[] = [
   },
   {
     id: 2,
-    name: '玻璃清鸣',
+    name: t('primitives.sound.2'),
     play: (ac, master, t0) => {
       voice(ac, master, t0, { freq: C6, dur: 0.55, gain: 0.032, attack: 0.002, type: 'sine' })
       voice(ac, master, t0 + 0.01, { freq: E5, dur: 0.42, gain: 0.018, attack: 0.004, type: 'sine' })
@@ -238,7 +245,7 @@ export const COMPLETION_SOUND_VARIANTS: readonly CompletionSoundVariant[] = [
   },
   {
     id: 3,
-    name: '柔木琴',
+    name: t('primitives.sound.3'),
     play: (ac, master, t0) => {
       pluckVoice(ac, master, t0, { freqFrom: E5, freqTo: G5, gain: 0.03, decay: 0.14, glide: 0.08 })
       bloomVoice(ac, master, t0 + 0.04, { freq: C5, gain: 0.028, attack: 0.08, hold: 0.04, decay: 0.62 })
@@ -247,7 +254,7 @@ export const COMPLETION_SOUND_VARIANTS: readonly CompletionSoundVariant[] = [
   },
   {
     id: 4,
-    name: '三音讯号',
+    name: t('primitives.sound.4'),
     play: (ac, master, t0) => {
       voice(ac, master, t0, { freq: C6, dur: 0.14, gain: 0.045, attack: 0.004, type: 'sine' })
       voice(ac, master, t0 + 0.1, { freq: A5, dur: 0.16, gain: 0.04, attack: 0.004, type: 'sine' })
@@ -256,7 +263,7 @@ export const COMPLETION_SOUND_VARIANTS: readonly CompletionSoundVariant[] = [
   },
   {
     id: 5,
-    name: '风声掠过',
+    name: t('primitives.sound.5'),
     play: (ac, master, t0) => {
       whooshVoice(ac, master, t0, { freqFrom: 4200, freqTo: 900, gain: 0.022, decay: 0.28, q: 0.7 })
       voice(ac, master, t0 + 0.12, { freq: A5, dur: 0.35, gain: 0.02, attack: 0.02, type: 'sine' })
@@ -264,7 +271,7 @@ export const COMPLETION_SOUND_VARIANTS: readonly CompletionSoundVariant[] = [
   },
   {
     id: 6,
-    name: '发现之簇',
+    name: t('primitives.sound.6'),
     play: (ac, master, t0) => {
       const clusterDetunes = [-14, -5, 0, 7, 12]
 
@@ -283,7 +290,7 @@ export const COMPLETION_SOUND_VARIANTS: readonly CompletionSoundVariant[] = [
   },
   {
     id: 7,
-    name: '系统上线',
+    name: t('primitives.sound.7'),
     play: (ac, master, t0) => {
       voice(ac, master, t0, { freq: C5, dur: 0.16, gain: 0.04, attack: 0.006, type: 'sine' })
       voice(ac, master, t0 + 0.09, { freq: G5, dur: 0.28, gain: 0.042, attack: 0.008, type: 'sine' })
@@ -292,7 +299,7 @@ export const COMPLETION_SOUND_VARIANTS: readonly CompletionSoundVariant[] = [
   },
   {
     id: 8,
-    name: '老式终端',
+    name: t('primitives.sound.8'),
     play: (ac, master, t0) => {
       voice(ac, master, t0, { freq: B5, dur: 0.12, gain: 0.038, attack: 0.002, type: 'square' })
       voice(ac, master, t0 + 0.14, { freq: E5, dur: 0.1, gain: 0.028, attack: 0.002, type: 'square' })
@@ -300,7 +307,7 @@ export const COMPLETION_SOUND_VARIANTS: readonly CompletionSoundVariant[] = [
   },
   {
     id: 9,
-    name: '调制解调',
+    name: t('primitives.sound.9'),
     play: (ac, master, t0) => {
       sweepVoice(ac, master, t0, { freqFrom: 320, freqTo: 2200, gain: 0.024, decay: 0.16, type: 'triangle' })
       sweepVoice(ac, master, t0 + 0.1, { freqFrom: 480, freqTo: 1400, gain: 0.014, decay: 0.12, type: 'sine' })
@@ -308,7 +315,7 @@ export const COMPLETION_SOUND_VARIANTS: readonly CompletionSoundVariant[] = [
   },
   {
     id: 10,
-    name: '风铃',
+    name: t('primitives.sound.10'),
     play: (ac, master, t0) => {
       const chimes = [G5, C6, E5, A5]
 
@@ -325,7 +332,7 @@ export const COMPLETION_SOUND_VARIANTS: readonly CompletionSoundVariant[] = [
   },
   {
     id: 11,
-    name: '颂钵',
+    name: t('primitives.sound.11'),
     play: (ac, master, t0) => {
       bloomVoice(ac, master, t0, { freq: A3, gain: 0.022, attack: 0.58, hold: 0.16, decay: 1.35 })
       bloomVoice(ac, master, t0 + 0.08, { freq: E4, gain: 0.01, attack: 0.62, hold: 0.12, decay: 1.2, detune: 4 })
@@ -334,7 +341,7 @@ export const COMPLETION_SOUND_VARIANTS: readonly CompletionSoundVariant[] = [
   },
   {
     id: 12,
-    name: '竖琴拾音',
+    name: t('primitives.sound.12'),
     play: (ac, master, t0) => {
       const notes = [C5, E5, G5, C6]
 
@@ -353,7 +360,7 @@ export const COMPLETION_SOUND_VARIANTS: readonly CompletionSoundVariant[] = [
   },
   {
     id: 13,
-    name: '声呐',
+    name: t('primitives.sound.13'),
     play: (ac, master, t0) => {
       voice(ac, master, t0, { freq: A2, dur: 0.95, gain: 0.036, attack: 0.008, type: 'sine' })
       voice(ac, master, t0 + 0.42, { freq: A3, dur: 0.55, gain: 0.014, attack: 0.01, type: 'sine' })
@@ -362,7 +369,7 @@ export const COMPLETION_SOUND_VARIANTS: readonly CompletionSoundVariant[] = [
   },
   {
     id: 14,
-    name: '八音盒',
+    name: t('primitives.sound.14'),
     play: (ac, master, t0) => {
       const notes = [E6, C6, G5, E5]
 

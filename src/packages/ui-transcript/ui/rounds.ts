@@ -18,14 +18,19 @@
  *        {@link teammateReportLabel}）。
  *      这条区分与 dsh 的 turn-trigger 一致：非人来源的轮有刻度、但不提供题面预览。
  *
- * 零依赖 / 只许 `import type`：`scripts/ui-transcript-render-test.mjs` 按 Node 的类型擦除
- * 直读本 .ts 逐条钉（同 `paging.ts` 与 `scripts/ui-paging-test.mjs` 的口径），所以这里
- * **不能有任何运行期 import**——时间戳的读法就地内联一份（等价于 `@dsc/ui-primitives`
- * 的 `entryTs`：有限正数才认）。
+ * 时间戳的读法就地内联一份（等价于 `@dsc/ui-primitives` 的 `entryTs`：有限正数才认），
+ * 但**文案走本包字典**（`locale/ui.zh.json` + `createT`）——于是本文件有了运行期 import，
+ * 不再能被 Node 的类型擦除直读（`scripts/ui-transcript-render-test.mjs` 那一段要改走产物）。
  *
  * @module dsc-ui-shell/plugins/transcript/rounds
  */
-import type { TranscriptEntry } from '@dsc/ui'
+import { createT, type TranscriptEntry } from '@dsc/ui'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /**
  * 一轮对话：一条用户消息 → 模型回复结束（中间的工具调用也算这一轮）。
@@ -188,10 +193,20 @@ export function teammateReport(text: string): TeammateReport | null {
  */
 export function teammateReportLabel(text: string): string {
   const report = teammateReport(text)
-  if (report === null) return '子任务汇报'
-  const who = report.from === null || report.from === '' ? '队友' : `队友 ${report.from}`
+  if (report === null) return t('transcript.internal.subtaskReport')
+  const who =
+    report.from === null || report.from === ''
+      ? t('transcript.internal.teammate')
+      : t('transcript.internal.teammateNamed', { name: report.from })
+  // i18n-keep：这两个值是**宿主写进汇报头的协议值**（src/packages/subagent/index.ts 的
+  // '已完成' / '已停止' / '已失败'），不是界面文案——翻成英文就和宿主对不上，动词会永远落到
+  // 「汇报了运行结果」。要它们跟着语言走，得先让宿主发机器可读的 state。
   const verb =
-    report.state === '已失败' ? '失败了' : report.state === '已停止' ? '停了下来' : '汇报了运行结果'
+    report.state === '已失败' // i18n-keep
+      ? t('transcript.internal.failed')
+      : report.state === '已停止' // i18n-keep
+        ? t('transcript.internal.stopped')
+        : t('transcript.internal.reported')
   return `${who} ${verb}`
 }
 
@@ -217,8 +232,11 @@ export function internalLabel(text: string): string {
   const job = /^后台作业\s+(\S+?)\s*(（|\(|启动失败|成功|失败)/.exec(text)
   if (job !== null) {
     const id = job[1] ?? ''
-    const failed = text.includes('失败')
-    return failed ? `后台作业 ${id} 失败了` : `后台作业 ${id} 完成了`
+    // i18n-keep：判的是宿主后台作业通知的中文正文（core/tools/bash.ts 拼的原文），同上。
+    const failed = text.includes('失败') // i18n-keep
+    return failed
+      ? t('transcript.internal.jobFailed', { id })
+      : t('transcript.internal.jobDone', { id })
   }
-  return '运行时通知'
+  return t('transcript.internal.runtimeNotice')
 }

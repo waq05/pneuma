@@ -12,7 +12,14 @@
  * @module dsc-ui-shell/platform/thread-resizer
  */
 import { useCallback, useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react'
+import { createT } from '@dsc/ui-core'
 import { THREAD_EDGE_BUDGET, THREAD_MIN, readRightRailPx, setRootVar, useWidthDrag } from './panels'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui-core` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 正文列左右缘相对本层左缘的像素，写进这两个变量（见文件头：量出来比算出来稳）。 */
 const COL_START_VAR = '--dsc-thread-col-start'
@@ -97,7 +104,7 @@ export function ThreadResizer(props: {
         ref={leftRef}
         className="thread-handle"
         data-side="left"
-        data-tip="拖拽调整正文宽度，双击复位"
+        data-tip={t('primitives.thread.handleTip')}
         onPointerDown={left.onPointerDown}
         onPointerMove={left.onPointerMove}
         onPointerUp={left.onPointerUp}
@@ -107,7 +114,7 @@ export function ThreadResizer(props: {
       <div
         className="thread-handle"
         data-side="right"
-        data-tip="拖拽调整正文宽度，双击复位"
+        data-tip={t('primitives.thread.handleTip')}
         onPointerDown={right.onPointerDown}
         onPointerMove={right.onPointerMove}
         onPointerUp={right.onPointerUp}

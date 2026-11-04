@@ -35,6 +35,7 @@ import {
   type ReactNode,
 } from 'react'
 import {
+  createT,
   defineUiPlugin,
   useHostChannel,
   useHostSelector,
@@ -55,9 +56,16 @@ import {
   type SessionSummary,
   type TierOption,
 } from '@dsc/ui'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 export default defineUiPlugin({
-  name: '等待用户决定的卡',
+  name: t('plugin.name'),
   apply(ui) {
     // order 10：三张卡都排在输入框上方（composer.box 是 50、composer.queue 是 60）。
     ui.slots.register('shell.composer', { id: 'prompt.cards', order: 10 }, PromptCards)
@@ -80,18 +88,18 @@ function PromptCards(): ReactNode {
       {approval === null ? null : (
         // key 跟着请求 id 走：挂起的请求换了（上一张答完、下一张顶上来）就整块重挂，
         // 「差异展开没展开」「上一次交失败的原因」这些本地状态自然归零，不会串到新卡上。
-        <CardBoundary key={`approval:${approval.id}`} label="审批卡">
+        <CardBoundary key={`approval:${approval.id}`} label={t('card.approval')}>
           <ApprovalCard request={approval} />
         </CardBoundary>
       )}
       {plan === null ? null : (
         // 同旧界面：计划换了文件就重挂，拒绝框里没提交的反馈不留给下一份计划。
-        <CardBoundary key={`plan:${plan.file}`} label="计划审阅卡">
+        <CardBoundary key={`plan:${plan.file}`} label={t('card.plan')}>
           <PlanReview plan={plan} />
         </CardBoundary>
       )}
       {question === null ? null : (
-        <CardBoundary key={`ask:${question.id}`} label="提问卡">
+        <CardBoundary key={`ask:${question.id}`} label={t('card.ask')}>
           <AskCard question={question} />
         </CardBoundary>
       )}
@@ -187,7 +195,7 @@ class CardBoundary extends Component<{ label: string; children: ReactNode }, { e
     if (this.state.error !== null) {
       return (
         <div className="slot-crash" data-card-crash={this.props.label}>
-          {this.props.label}渲染失败：{this.state.error}
+          {t('card.crash', { label: this.props.label, error: this.state.error })}
         </div>
       )
     }
@@ -240,10 +248,10 @@ function reasonOf(reason: unknown): string {
 
 /** 风险档位对应的中文与配色档位（critical 借 high 那套红样式，旧实现就是这么映射的）。 */
 const RISK: Readonly<Record<ApprovalRequestView['risk'], { label: string; tone: string }>> = {
-  low: { label: '低风险', tone: 'low' },
-  medium: { label: '中风险', tone: 'medium' },
-  high: { label: '高风险', tone: 'high' },
-  critical: { label: '极高风险', tone: 'high' },
+  low: { label: t('risk.low'), tone: 'low' },
+  medium: { label: t('risk.medium'), tone: 'medium' },
+  high: { label: t('risk.high'), tone: 'high' },
+  critical: { label: t('risk.critical'), tone: 'high' },
 }
 
 /**
@@ -253,15 +261,15 @@ const RISK: Readonly<Record<ApprovalRequestView['risk'], { label: string; tone: 
  * 不在这张表里；这张表只管「自动放行集」那三档，缺了会编译期报错。
  */
 const POLICY_TEXT: Readonly<Record<ApprovalPolicy, string>> = {
-  readonly: '仅查看',
-  'auto-edit': '工作区自动',
-  'full-access': '完全访问',
+  readonly: t('policy.readonly'),
+  'auto-edit': t('policy.autoEdit'),
+  'full-access': t('policy.fullAccess'),
 }
 const MODE_TEXT: Readonly<Record<CollaborationMode, string>> = {
-  build: '执行',
-  plan: '计划',
-  explore: '探索',
-  quiet: '免打扰',
+  build: t('mode.build'),
+  plan: t('mode.plan'),
+  explore: t('mode.explore'),
+  quiet: t('mode.quiet'),
 }
 
 /**
@@ -308,13 +316,15 @@ function readModeLine(snapshot: HostSnapshot | null): string {
   const mode = modeSurface(snapshot)
   const policyName =
     (policy === null ? null : optionLabel(policy.options, request.policy)) ??
-    fixedText(POLICY_TEXT, request.policy, '未知档位')
+    fixedText(POLICY_TEXT, request.policy, t('policy.unknown'))
   // 审阅者与档位同一个口径：取请求里的那一份、名字优先用宿主表里的 label。
   // 它是本版拆出来的正交轴（谁在裁要问的事），卡上不写会让用户以为「谁问」就等于「谁裁」。
-  const reviewerName = optionLabel(policy?.reviewerOptions ?? [], request.reviewer) ?? (request.reviewer === 'auto-review' ? 'AI 复核' : '本人审阅')
+  const reviewerName =
+    optionLabel(policy?.reviewerOptions ?? [], request.reviewer) ??
+    (request.reviewer === 'auto-review' ? t('reviewer.auto') : t('reviewer.user'))
   const modeName =
-    (mode === null ? null : optionLabel(mode.options, request.mode)) ?? fixedText(MODE_TEXT, request.mode, '执行')
-  return `权限 ${policyName} · 审阅 ${reviewerName} · 模式 ${modeName}`
+    (mode === null ? null : optionLabel(mode.options, request.mode)) ?? fixedText(MODE_TEXT, request.mode, t('mode.build'))
+  return t('modeLine', { policy: policyName, reviewer: reviewerName, mode: modeName })
 }
 
 /**
@@ -332,8 +342,8 @@ function readOwnerLabel(snapshot: HostSnapshot | null): string | null {
   const current = statusOf(snapshot)?.['sessionPath']
   if (typeof current === 'string' && request.sessionPath === current) return null
   const sessions = snapshot?.['sessions']
-  if (!Array.isArray(sessions)) return '后台会话'
-  return (sessions as SessionSummary[]).find((item) => item.id === request.sessionPath)?.title ?? '后台会话'
+  if (!Array.isArray(sessions)) return t('owner.background')
+  return (sessions as SessionSummary[]).find((item) => item.id === request.sessionPath)?.title ?? t('owner.background')
 }
 
 /**
@@ -343,7 +353,13 @@ function readOwnerLabel(snapshot: HostSnapshot | null): string | null {
  * 有一张就是这两句，念三遍等于没念。真正有话说的是复核否决、沙箱边界、安全钩子
  * 这类具体原因，那些照原样留在卡上。
  */
-const GENERIC_REASONS = new Set(['需要授权', '工作区内的改动需要确认'])
+const GENERIC_REASONS = new Set([
+  t('reason.auth'),
+  t('reason.workspace'),
+  // 宿主发的是中文原文（与界面语言无关），所以两种写法都收：英文界面下 `t()` 给的是译文。
+  zh['reason.auth'],
+  zh['reason.workspace'],
+])
 
 /** 这句话是不是通用兜底（是就不画：省一行，也省得用户去猜它是什么意思）。 */
 function isGenericReason(reason: string): boolean {
@@ -436,23 +452,29 @@ const ApprovalCard = memo(function ApprovalCard({ request }: { request: Approval
     key: string
     title: string
   }> = [
-    { scope: 'once', answer: 'allow-once', label: '这次允许', key: 'y', title: '只放过这一次，下次同类操作还会问' },
+    {
+      scope: 'once',
+      answer: 'allow-once',
+      label: t('allow.once'),
+      key: 'y',
+      title: t('allow.once.tip'),
+    },
     {
       scope: 'session',
       answer: 'allow-session',
-      label: '本会话允许',
+      label: t('allow.session'),
       key: 's',
-      title: '这个会话里同类操作不再问；换会话就失效',
+      title: t('allow.session.tip'),
     },
     {
       scope: 'always',
       answer: 'allow-always',
-      label: '永久允许',
+      label: t('allow.always'),
       key: 'a',
       title:
         request.suggestedRule === null
-          ? '这类动作不给持久化'
-          : `往规则文件写一条：${request.suggestedRule.join(' ')}… 以后照它自动放行`,
+          ? t('allow.always.noRule')
+          : t('allow.always.rule', { rule: request.suggestedRule.join(' ') }),
     },
   ]
 
@@ -477,23 +499,36 @@ const ApprovalCard = memo(function ApprovalCard({ request }: { request: Approval
       {request.escalation === undefined ? null : (
         <div className="approval-escalation" data-approval-escalation="">
           <div className="approval-escalation-line">
-            {`模型请求放宽沙箱：${request.escalation.effect}${request.escalation.scope === 'session' ? '（它想要本会话一直放宽）' : ''}`}
+            {t('escalation.line', { effect: request.escalation.effect })}
+            {request.escalation.scope === 'session' ? t('escalation.sessionNote') : ''}
           </div>
-          <div className="approval-escalation-why">{`理由：${request.escalation.justification}`}</div>
+          <div className="approval-escalation-why">
+            {t('escalation.why', { justification: request.escalation.justification })}
+          </div>
         </div>
       )}
-      {owner === null || owner === '' ? null : <div className="approval-owner">来自会话「{owner}」</div>}
+      {owner === null || owner === '' ? null : (
+        <div className="approval-owner">{t('owner.label', { owner })}</div>
+      )}
       {request.diff === undefined ? null : (
         <div className="approval-diff">
           <div className="approval-diff-head">
             <span className="approval-diff-path" title={request.diff.path}>
               {`${
-                request.diff.status === 'added' ? '将写入' : request.diff.status === 'deleted' ? '将删除' : '将修改'
+                request.diff.status === 'added'
+                  ? t('diff.write')
+                  : request.diff.status === 'deleted'
+                    ? t('diff.delete')
+                    : t('diff.modify')
               } ${displayPathOf(request.diff.path, cwd)}`}
             </span>
             <span className="changes-counts">
-              {request.diff.status === 'added' ? <span className="diff-badge">新增</span> : null}
-              {request.diff.status === 'deleted' ? <span className="diff-badge">删除</span> : null}
+              {request.diff.status === 'added' ? (
+                <span className="diff-badge">{t('diff.badge.added')}</span>
+              ) : null}
+              {request.diff.status === 'deleted' ? (
+                <span className="diff-badge">{t('diff.badge.deleted')}</span>
+              ) : null}
               <span className="changes-added">{`+${String(request.diff.added)}`}</span>
               <span className="changes-removed">{`-${String(request.diff.removed)}`}</span>
             </span>
@@ -505,19 +540,19 @@ const ApprovalCard = memo(function ApprovalCard({ request }: { request: Approval
                 setDiffOpen((value) => !value)
               }}
             >
-              {diffOpen ? '收起改动' : '查看改动'}
+              {diffOpen ? t('diff.collapse') : t('diff.expand')}
             </button>
           </div>
           {/* 这两条是「照参数执行会失败」的预告：宿主读盘比对不出来才给，看到就别点允许。 */}
-          {request.diff.mismatch === 'missing' ? <div className="tc-warn">old 在文件中不存在，执行会失败</div> : null}
-          {request.diff.mismatch === 'ambiguous' ? <div className="tc-warn">old 匹配多处，执行会失败</div> : null}
+          {request.diff.mismatch === 'missing' ? <div className="tc-warn">{t('diff.missing')}</div> : null}
+          {request.diff.mismatch === 'ambiguous' ? <div className="tc-warn">{t('diff.ambiguous')}</div> : null}
           {request.diff.fellBack === true ? (
-            <div className="approval-diff-note">读不到文件当前内容，以下按参数推算</div>
+            <div className="approval-diff-note">{t('diff.fellBack')}</div>
           ) : null}
           {diffOpen ? (
             <div className="approval-diff-body">
               {request.diff.hunks.length === 0 ? (
-                <p className="tc-intended-note">不会有实际改动。</p>
+                <p className="tc-intended-note">{t('diff.noChange')}</p>
               ) : (
                 <DiffRows hunks={request.diff.hunks} />
               )}
@@ -527,7 +562,7 @@ const ApprovalCard = memo(function ApprovalCard({ request }: { request: Approval
       )}
       {isGenericReason(request.reason) ? null : <div className="approval-reason">{request.reason}</div>}
       {request.hardline ? (
-        <div className="approval-hardline">这一步被安全策略判为不可放行，只能拒绝。</div>
+        <div className="approval-hardline">{t('hardline')}</div>
       ) : (
         <div className="approval-actions">
           {keys
@@ -550,18 +585,18 @@ const ApprovalCard = memo(function ApprovalCard({ request }: { request: Approval
           <button
             type="button"
             className="btn danger"
-            title="不执行这一步，并把拒绝原因回给模型；5 分钟没人答也按拒绝处理"
+            title={t('reject.tip')}
             disabled={busy}
             onClick={() => {
               answer('reject')
             }}
           >
-            拒绝
+            {t('reject')}
             <kbd>n</kbd>
           </button>
         </div>
       )}
-      {fault === null ? null : <div className="shell-composer-fault">没交上去：{fault}</div>}
+      {fault === null ? null : <div className="shell-composer-fault">{t('fault', { message: fault })}</div>}
     </div>
   )
 })
@@ -638,7 +673,7 @@ const PlanReview = memo(function PlanReview({ plan }: { plan: PlanView }): React
       <div className="plan-head">
         <span className="plan-title">{plan.title}</span>
         <span className="plan-verdict">
-          {pending ? '等你批' : plan.decision === 'approved' ? '已批准' : '未批准'}
+          {pending ? t('plan.pending') : plan.decision === 'approved' ? t('plan.approved') : t('plan.rejected')}
         </span>
       </div>
       <pre className="plan-body">{plan.text}</pre>
@@ -649,7 +684,7 @@ const PlanReview = memo(function PlanReview({ plan }: { plan: PlanView }): React
           onChange={(event) => {
             setFeedback(event.target.value)
           }}
-          placeholder="想让模型改什么？写在这里（可留空），会原样带给模型"
+          placeholder={t('plan.feedback')}
           rows={3}
           autoFocus
         />
@@ -666,9 +701,9 @@ const PlanReview = memo(function PlanReview({ plan }: { plan: PlanView }): React
                 className="btn-primary plan-btn"
                 disabled={busy}
                 onClick={sendReject}
-                title="把反馈带给模型，留在计划模式改方案"
+                title={t('plan.reject.tip')}
               >
-                带反馈退回
+                {t('plan.reject')}
               </button>
               <button
                 type="button"
@@ -678,7 +713,7 @@ const PlanReview = memo(function PlanReview({ plan }: { plan: PlanView }): React
                   setRejecting(false)
                 }}
               >
-                取消
+                {t('cancel')}
               </button>
             </>
           ) : (
@@ -690,9 +725,9 @@ const PlanReview = memo(function PlanReview({ plan }: { plan: PlanView }): React
                 onClick={() => {
                   answer('approved')
                 }}
-                title="批准并切回执行模式开始实现"
+                title={t('plan.approve.tip')}
               >
-                批准开工
+                {t('plan.approve')}
               </button>
               <button
                 type="button"
@@ -701,15 +736,15 @@ const PlanReview = memo(function PlanReview({ plan }: { plan: PlanView }): React
                 onClick={() => {
                   setRejecting(true)
                 }}
-                title="留在计划模式；可附一句反馈让模型照着改"
+                title={t('plan.revise.tip')}
               >
-                还要改
+                {t('plan.revise')}
               </button>
             </>
           )
         ) : null}
       </div>
-      {fault === null ? null : <div className="shell-composer-fault">没交上去：{fault}</div>}
+      {fault === null ? null : <div className="shell-composer-fault">{t('fault', { message: fault })}</div>}
     </div>
   )
 })
@@ -790,7 +825,7 @@ function askItems(view: AskUserView): AskItem[] {
  * 一题交回宿主的答案文本：跳过写一句实话，写了自由文本就优先用它（与旧实现同一口径）。
  */
 function answerOf(draft: AskDraft): string {
-  if (draft.skipped) return '（用户跳过了这一题）'
+  if (draft.skipped) return t('ask.skipped')
   const free = draft.free.trim()
   return free === '' ? draft.picked.join('、') : free
 }
@@ -881,7 +916,7 @@ function AskComposer({ items }: { items: AskItem[] }): ReactNode {
     const missing = items.findIndex((target) => !completed(draftOf(target, values)))
     if (missing >= 0) {
       setFocus(missing)
-      setHint('还有题目没答')
+      setHint(t('ask.missing'))
       return
     }
     void (async () => {
@@ -951,7 +986,7 @@ function AskComposer({ items }: { items: AskItem[] }): ReactNode {
           aria-expanded={open}
           aria-controls={bodyId}
           disabled={busy}
-          title={open ? '收起提问卡' : '展开提问卡'}
+          title={open ? t('ask.collapse') : t('ask.expand')}
           onClick={() => {
             setOpen(!open)
           }}
@@ -1007,7 +1042,7 @@ function AskComposer({ items }: { items: AskItem[] }): ReactNode {
               className="ask-input"
               data-ask-input={index}
               autoFocus={item.options.length === 0}
-              placeholder={item.multiSelect ? '可以多选，或在这里直接写答案' : '也可以直接写答案'}
+              placeholder={item.multiSelect ? t('ask.placeholder.multi') : t('ask.placeholder.single')}
               value={draft.free}
               disabled={busy}
               onChange={(event) => {
@@ -1026,7 +1061,7 @@ function AskComposer({ items }: { items: AskItem[] }): ReactNode {
               className="ask-page"
               data-ask-page="prev"
               disabled={index === 0 || busy}
-              title="上一题"
+              title={t('ask.prev')}
               onClick={() => {
                 setFocus(index - 1)
                 setHint('')
@@ -1042,7 +1077,7 @@ function AskComposer({ items }: { items: AskItem[] }): ReactNode {
               className="ask-page"
               data-ask-page="next"
               disabled={isLast || busy}
-              title="下一题"
+              title={t('ask.next')}
               onClick={() => {
                 setFocus(index + 1)
                 setHint('')
@@ -1060,9 +1095,9 @@ function AskComposer({ items }: { items: AskItem[] }): ReactNode {
           className="btn-ghost ask-skip"
           disabled={busy}
           onClick={skipCurrent}
-          title="这题不答，问下一题"
+          title={t('ask.skip.tip')}
         >
-          跳过
+          {t('ask.skip')}
         </button>
         <button
           type="button"
@@ -1071,10 +1106,10 @@ function AskComposer({ items }: { items: AskItem[] }): ReactNode {
           disabled={!answered(draft) || busy}
           onClick={continueFlow}
         >
-          {isLast ? '提交' : '下一题'}
+          {isLast ? t('ask.submit') : t('ask.next')}
         </button>
       </div>
-      {fault === null ? null : <div className="shell-composer-fault">没交上去：{fault}</div>}
+      {fault === null ? null : <div className="shell-composer-fault">{t('fault', { message: fault })}</div>}
     </div>
   )
 }

@@ -1,0 +1,14 @@
+{
+  "renderer.plugin.name": "界面渲染器",
+  "renderer.diag.title": "界面布局（ui-layout）",
+  "renderer.diag.lead": "整张页面只有骨架能画出来。骨架没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。",
+  "renderer.diag.where": "打开它的地方：编辑",
+  "renderer.diag.find": "，找到",
+  "renderer.diag.andSet": "那一条，把",
+  "renderer.diag.toFalse": "改成",
+  "renderer.diag.rest": "（或删掉那一条），然后刷新本页。 宿主重启后它也会回到插件中心的内置插件列表里。",
+  "renderer.reason.disabled": "已停用",
+  "renderer.reason.missing": "没有进启动清单",
+  "renderer.reason.loadFailed": "加载失败",
+  "renderer.reason.missingDetail": "启动图里没有 {id} 这一条：产物没构建，或被 API 门禁拦下了。跑 `pnpm -C ui-shell build` 后刷新本页；插件中心 → 内置插件里也能看到它的开关。"
+}

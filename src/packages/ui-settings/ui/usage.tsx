@@ -13,9 +13,15 @@
  * @module dsc-ui-shell/plugins/settings/usage
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { IconChart, IconRefresh, useHostChannel, type UsageDayView, type UsageModelView, type UsageStatsView } from '@dsc/ui'
+import { IconChart, IconRefresh, createT, useHostChannel, type UsageDayView, type UsageModelView, type UsageStatsView } from '@dsc/ui'
 import { Skeleton, SkeletonText, errText as text, humanErrorText } from '@dsc/ui-primitives'
 import { CELL, GAP, buildCells } from './heatmap'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 折线与环形的取色顺序：品牌蓝打头，后面用语义色顶上。
  *  深色主题的 --dsc-purple 本身是蓝（#7aaaff，见 tokens.css），排第三会和品牌蓝撞色，
@@ -29,14 +35,14 @@ const SERIES_COLORS = [
 
 /** 数字压成中文习惯的「万 / 亿」。 */
 function fmtTokens(value: number): string {
-  if (value >= 1e8) return `${(value / 1e8).toFixed(value >= 1e9 ? 1 : 2)} 亿`
-  if (value >= 1e4) return `${(value / 1e4).toFixed(1)} 万`
+  if (value >= 1e8) return t('settings.usage.tokens.billions', { value: (value / 1e8).toFixed(value >= 1e9 ? 1 : 2) })
+  if (value >= 1e4) return t('settings.usage.tokens.tenThousands', { value: (value / 1e4).toFixed(1) })
   return String(value)
 }
 
 function fmtDate(dateKey: string): string {
   const [, month, day] = dateKey.split('-')
-  return `${String(Number(month))} 月 ${String(Number(day))} 日`
+  return t('settings.usage.date', { month: Number(month), day: Number(day) })
 }
 
 // ── 热力图 ────────────────────────────────────────────────────────────────────
@@ -44,7 +50,7 @@ function fmtDate(dateKey: string): string {
 function Heatmap(props: { days: UsageDayView[]; windowDays: number }): ReactNode {
   const { columns, months } = useMemo(() => buildCells(props.days, props.windowDays), [props.days, props.windowDays])
   // days 为空时宿主的聚合层就不该给出 sinceTs 以外的数据；这里防御一下不画格子。
-  if (props.days.length === 0) return <div className="settings-empty">还没有逐日记录。</div>
+  if (props.days.length === 0) return <div className="settings-empty">{t('settings.usage.heat.empty')}</div>
   return (
     <div className="hm">
       {/* 只有这一块自己横向滚：格子在手机上一定比卡片宽（一年 53 列 × 13px = 686px），
@@ -60,11 +66,11 @@ function Heatmap(props: { days: UsageDayView[]; windowDays: number }): ReactNode
           </div>
           <div className="hm-body">
             <div className="hm-weekdays">
-              <span style={{ gridRow: 2 }}>一</span>
-              <span style={{ gridRow: 4 }}>三</span>
-              <span style={{ gridRow: 6 }}>五</span>
+              <span style={{ gridRow: 2 }}>{t('settings.usage.weekday.mon')}</span>
+              <span style={{ gridRow: 4 }}>{t('settings.usage.weekday.wed')}</span>
+              <span style={{ gridRow: 6 }}>{t('settings.usage.weekday.fri')}</span>
             </div>
-            <div className="hm-grid" role="img" aria-label="Token 活动热力图">
+            <div className="hm-grid" role="img" aria-label={t('settings.usage.heat.aria')}>
               {columns.map((column, columnIndex) =>
                 column.map((cell, rowIndex) => {
                   if (cell === null) {
@@ -75,7 +81,7 @@ function Heatmap(props: { days: UsageDayView[]; windowDays: number }): ReactNode
                     <span
                       key={`${String(columnIndex)}-${String(rowIndex)}`}
                       className={`hm-cell hm-l${String(cell.level)}`}
-                      title={`${cell.day.date} · ${fmtTokens(tokens)} tokens · ${String(cell.day.turns)} 轮`}
+                      title={t('settings.usage.pointTitle', { date: cell.day.date, tokens: fmtTokens(tokens), turns: cell.day.turns })}
                     />
                   )
                 }),
@@ -85,11 +91,11 @@ function Heatmap(props: { days: UsageDayView[]; windowDays: number }): ReactNode
         </div>
       </div>
       <div className="hm-legend">
-        <span>少</span>
+        <span>{t('settings.usage.heat.less')}</span>
         {[0, 1, 2, 3, 4].map((level) => (
           <span key={level} className={`hm-cell hm-l${String(level)}`} />
         ))}
-        <span>多</span>
+        <span>{t('settings.usage.heat.more')}</span>
       </div>
     </div>
   )
@@ -133,9 +139,9 @@ function TrendChart(props: { days: UsageDayView[]; models: UsageModelView[] }): 
             {model.key.split('/').pop()}
           </span>
         ))}
-        {shown.length === 0 && <span className="trend-legend-item">这段时间没有请求</span>}
+        {shown.length === 0 && <span className="trend-legend-item">{t('settings.usage.trend.empty')}</span>}
       </div>
-      <svg viewBox={`0 0 ${String(CHART_W)} ${String(CHART_H)}`} className="trend-svg" role="img" aria-label="每日 Token 趋势">
+      <svg viewBox={`0 0 ${String(CHART_W)} ${String(CHART_H)}`} className="trend-svg" role="img" aria-label={t('settings.usage.trend.aria')}>
         {[0.25, 0.5, 0.75, 1].map((ratio) => (
           <g key={ratio}>
             <line
@@ -169,7 +175,7 @@ function TrendChart(props: { days: UsageDayView[]; models: UsageModelView[] }): 
                 r="5"
                 fill="transparent"
               >
-                <title>{`${fmtDate(day.date)} · ${fmtTokens(day.inputTokens + day.outputTokens)} tokens · ${String(day.turns)} 轮`}</title>
+                <title>{t('settings.usage.pointTitle', { date: fmtDate(day.date), tokens: fmtTokens(day.inputTokens + day.outputTokens), turns: day.turns })}</title>
               </circle>
             </g>
           )
@@ -183,13 +189,13 @@ function TrendChart(props: { days: UsageDayView[]; models: UsageModelView[] }): 
 
 function Donut(props: { models: UsageModelView[] }): ReactNode {
   const total = props.models.reduce((sum, model) => sum + model.inputTokens + model.outputTokens, 0)
-  if (total <= 0) return <div className="settings-empty">还没有模型用量。</div>
+  if (total <= 0) return <div className="settings-empty">{t('settings.usage.donut.empty')}</div>
   const radius = 66
   const circumference = 2 * Math.PI * radius
   let offset = 0
   return (
     <div className="donut-row">
-      <svg viewBox="0 0 170 170" className="donut-svg" role="img" aria-label="模型用量占比">
+      <svg viewBox="0 0 170 170" className="donut-svg" role="img" aria-label={t('settings.usage.donut.aria')}>
         <circle cx="85" cy="85" r={radius} className="donut-track" />
         {props.models.map((model, index) => {
           const share = (model.inputTokens + model.outputTokens) / total
@@ -228,7 +234,7 @@ function Donut(props: { models: UsageModelView[] }): ReactNode {
               <div className="donut-legend-text">
                 <span className="donut-legend-name">{model.key.split('/').pop()}</span>
                 <span className="donut-legend-sub">
-                  {fmtTokens(tokens)} tokens · {String(model.turns)} 轮
+                  {t('settings.usage.donut.rowSub', { tokens: fmtTokens(tokens), turns: model.turns })}
                 </span>
               </div>
               <span className="donut-legend-pct">{`${String(Math.round(share * 100))}%`}</span>
@@ -274,9 +280,9 @@ export function UsageGroup(): ReactNode {
   if (error !== '') {
     return (
       <div className="settings-empty">
-        用量统计读取失败：{humanErrorText(error).text}
+        {t('settings.usage.loadFailed', { message: humanErrorText(error).text })}
         <button className="text-btn" onClick={reload} style={{ marginLeft: 8 }}>
-          重试
+          {t('settings.usage.retry')}
         </button>
       </div>
     )
@@ -284,7 +290,7 @@ export function UsageGroup(): ReactNode {
   if (stats === null) {
     // 用量是几张汇总卡 + 一条趋势：先把这两块的形状画出来，比一行灰字更像"马上就来"。
     return (
-      <div className="settings-loading" role="status" aria-label="正在读取用量记录">
+      <div className="settings-loading" role="status" aria-label={t('settings.usage.loadingAria')}>
         <div className="settings-loading-cards">
           {Array.from({ length: 4 }, (_, index) => (
             <Skeleton key={index} height={62} radius={12} />
@@ -299,34 +305,34 @@ export function UsageGroup(): ReactNode {
     return (
       <div className="settings-empty usage-empty">
         <IconChart size={22} />
-        还没有任何用量记录。
-        <p>使用后将显示统计。</p>
+        {t('settings.usage.empty.title')}
+        <p>{t('settings.usage.empty.hint')}</p>
       </div>
     )
   }
   const firstDay = stats.days[0]
   if (firstDay === undefined) {
-    return <div className="settings-empty">用量记录存在，但没有逐日数据（记录文件可能损坏）。</div>
+    return <div className="settings-empty">{t('settings.usage.broken')}</div>
   }
 
   const total = stats.totalInputTokens + stats.totalOutputTokens
   const trendDays = stats.days.slice(-range)
   const heatDays = stats.days.slice(-heatRange)
   const cards: { label: string; value: string }[] = [
-    { label: '累计 Token', value: fmtTokens(total) },
+    { label: t('settings.usage.card.total'), value: fmtTokens(total) },
     {
-      label: '单日峰值 Token',
+      label: t('settings.usage.card.peak'),
       value: stats.peakDay === null ? '—' : fmtTokens(stats.peakDay.inputTokens + stats.peakDay.outputTokens),
     },
-    { label: '活跃天数', value: `${String(stats.activeDays)} 天` },
-    { label: '当前连续', value: `${String(stats.currentStreakDays)} 天` },
-    { label: '最长连续', value: `${String(stats.longestStreakDays)} 天` },
+    { label: t('settings.usage.card.activeDays'), value: t('settings.usage.days', { count: stats.activeDays }) },
+    { label: t('settings.usage.card.currentStreak'), value: t('settings.usage.days', { count: stats.currentStreakDays }) },
+    { label: t('settings.usage.card.longestStreak'), value: t('settings.usage.days', { count: stats.longestStreakDays }) },
   ]
   // 前缀缓存明细（端点上报过才有）：命中率 = 命中 /（命中 + 未命中），只统计上报了的请求
   const cacheReported = stats.totalCacheHitTokens + stats.totalCacheMissTokens
   if (cacheReported > 0) {
     cards.push({
-      label: '前缀缓存命中',
+      label: t('settings.usage.card.cacheHit'),
       value: `${String(Math.round((stats.totalCacheHitTokens / cacheReported) * 100))}%`,
     })
   }
@@ -344,20 +350,20 @@ export function UsageGroup(): ReactNode {
 
       <section className="usage-block">
         <div className="usage-block-head">
-          <h3>Token 活动</h3>
-          <div className="dsc-segmented" role="group" aria-label="热力图时间范围">
+          <h3>{t('settings.usage.block.activity')}</h3>
+          <div className="dsc-segmented" role="group" aria-label={t('settings.usage.heat.rangeAria')}>
             {([1, 7, 30, 364] as HeatRange[]).map((value) => (
               <button
                 key={value}
                 type="button"
                 className="dsc-segmented__btn"
                 aria-selected={heatRange === value}
-                title={`${fmtDate(firstDay.date)} 至今 · 累计 ${fmtTokens(total)} tokens`}
+                title={t('settings.usage.heat.rangeTip', { since: fmtDate(firstDay.date), total: fmtTokens(total) })}
                 onClick={() => {
                   setHeatRange(value)
                 }}
               >
-                {value === 1 ? '今天' : value === 364 ? '近一年' : `近 ${String(value)} 天`}
+                {value === 1 ? t('settings.usage.range.today') : value === 364 ? t('settings.usage.range.year') : t('settings.usage.range.days', { count: value })}
               </button>
             ))}
           </div>
@@ -367,7 +373,7 @@ export function UsageGroup(): ReactNode {
 
       <section className="usage-block">
         <div className="usage-block-head">
-          <h3>每日 Token 趋势</h3>
+          <h3>{t('settings.usage.block.trend')}</h3>
           <div className="dsc-segmented" role="group">
             {([7, 30] as Range[]).map((value) => (
               <button
@@ -377,7 +383,7 @@ export function UsageGroup(): ReactNode {
                 aria-selected={range === value}
                 onClick={() => setRange(value)}
               >
-                {value === 7 ? '近 7 日' : '近 30 日'}
+                {value === 7 ? t('settings.usage.range.last7') : t('settings.usage.range.last30')}
               </button>
             ))}
           </div>
@@ -387,17 +393,17 @@ export function UsageGroup(): ReactNode {
 
       <section className="usage-block">
         <div className="usage-block-head">
-          <h3>模型用量</h3>
+          <h3>{t('settings.usage.block.models')}</h3>
         </div>
         <Donut models={stats.models} />
       </section>
 
       <div className="usage-foot">
         <span>
-          自 {fmtDate(firstDay.date)} 起记录 · 共 {String(stats.totalTurns)} 轮请求 · 记录在 ~/.dsc/usage/usage.jsonl
+          {t('settings.usage.foot', { since: fmtDate(firstDay.date), turns: stats.totalTurns })}
         </span>
         <button className="text-btn" onClick={reload}>
-          <IconRefresh size={13} /> 刷新
+          <IconRefresh size={13} /> {t('settings.usage.refresh')}
         </button>
       </div>
     </div>

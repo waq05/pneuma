@@ -288,3 +288,75 @@ dsh 要求函数插件命名导出 `name`/`inject`/`Config`/`apply`，服务插�
 2. 动态拼出来的说明符（`import('@pneuma/' + name)`）与绕相对路径跨包。
 3. README 的内容质量（门禁只判两段标题在不在）。
 
+## 16. 界面文案：每个包自带中英对照
+
+清单那两行字（`pneuma.title` / `description`）走 `locale/<语言>.json`，由内核按
+`config.yaml` 的 `language:` 现读（见 `src/core/plugin-locale.ts`）。**界面里的文案**是另一件事：
+按钮、占位符、空态、错误提示多到几百条，跟着组件树走，必须在打包时就进 bundle。
+
+**现状（2026-11-05 凌晨）**：26 个界面包全部迁完，**1890 个键**（中英各一份）、**2135 处 `t()`**、
+`scripts/ui-locale-test.mjs` 0 条硬编码、17 条协议豁免（每条都在行尾写 `i18n-keep` 与理由）。
+**还没覆盖**：宿主机声明的配置面（设置分区 / 字段、内置权限档位名、内置模式名）——那是宿主拼好交给界面的，
+不在这道闸的扫描范围里，见 §16.5。
+
+### 16.1 约定
+
+| 文件 | 内容 | 谁读 |
+|---|---|---|
+| `locale/en.json` | 清单两行字：`title` / `description` | 内核（插件中心、`numa plugin list`） |
+| `locale/ui.zh.json` | 本包界面文案的中文原文（**语义真源**） | 构建时内联进 bundle |
+| `locale/ui.en.json` | 同一批键的英文译本 | 同上 |
+
+`exports` 里的 `./locale/*.json` 一个键覆盖两种文件；包标准第 3 项（清单本地化）只判
+`locale/<语言>.json`，界面字典由 `scripts/ui-locale-test.mjs` 单独判——两者判据不同，不能混。
+
+### 16.2 取词
+
+```ts
+import { createT } from '@dsc/ui'      // 库包写 '@dsc/ui-core'
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+const t = createT({ zh, en })
+```
+
+- 语言只分两档：`en` 开头读英文，其余读中文（与内核 `plugin-locale.ts` 同一口径）。
+- 语言来自启动图的 `host.language`（`webserver` 用 `languageOfConfigFile(activeConfigFile())` 带下去），
+  页面生命周期内不变，所以不需要订阅、不会闪。
+- 插值：`t('x', { n })` 配字典里的 `{n}`；英文缺译回落中文；中文也缺会显示键名并在控制台告警一次。
+- 键名点号分层、只在本包内唯一（`composer.send`、`settings.model.title`）。包与包之间不共享键表。
+
+### 16.3 闸
+
+`scripts/ui-locale-test.mjs`（进 `check:ui`，单包排查加 `--package <名字>`）用 TypeScript 语法树判三件事：
+
+1. `src/packages/<包>/ui/` 下的字符串字面量、模板串、JSX 文本里**不许有汉字**
+   （`console.*` 与 `throw` 里的开发面文案豁免——那些不该跟着界面语言变）；
+2. `ui.zh.json` 与 `ui.en.json` **键集相同**、英文值不含汉字、中文值非空；
+3. 每个 `t('...')` 的键都在本包字典里，且字典里没有被冷落的键（改了不生效是最难查的一类）。
+
+### 16.4 协议文案不译（`i18n-keep`）
+
+有一类中文**不能**翻：宿主写进协议字段的值、界面拿来比对宿主原文的前缀/正则。
+例如队友汇报头里的 `'已失败'`（`src/packages/subagent/index.ts` 写的），翻成英文就再也对不上，
+动词会永远落到「汇报了运行结果」。这类行在**行尾**写 `// i18n-keep` 加一句为什么，闸门跳过它并在汇总里
+报出豁免条数（现在是 17 条）——豁免是可见的，不会悄悄长大。
+
+### 16.5 还没覆盖的一层：宿主声明的配置面
+
+设置页的分区标题与字段（`pneuma.settingsSection` 里的 `title` / `label` / `description`）、
+内置权限档位名（只读 / 工作区可写 / 完全访问 / AI 复核）、内置模式名（标准 / 极简 / 创造 / PTC），
+都是**宿主包**拼好后经界面通道交给壳的，不在 `src/packages/*/ui/` 里，所以 `ui-locale-test` 扫不到。
+英文界面下它们仍显示中文。
+
+要补得让设置面按语言出两份：`getSettingsSections(language)`，各宿主包把自己的三段文案放进
+`locale/ui.<语言>.json`，与界面用同一个 `createT`。这需要一个独立的批次（涉及十来个宿主包与设置面的组装点），
+不能顺手带掉——记在这里，别当成已完成。
+
+### 16.6 为什么不是 dsh 那种运行期 locale 服务
+
+dsh 有一个 `dsh-client-locale` 插件，各包在运行期 `ctx.locale.register()` 注册字典，还能切语言不刷新。
+numa 的界面语言只在启动时定一次（`config.yaml`），因此不需要那套运行期注册：每个包在构建时带上
+两份字典，`createT` 按语言取一条，代码路径短、没有额外的服务依赖，也就没有「插件没装 locale 服务
+就崩」这种耦合。代价是切语言要刷新页面——这与「语言是配置文件里的值」是同一个取舍。
+
+

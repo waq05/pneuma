@@ -39,6 +39,7 @@ import {
   trimZero,
 } from '@dsc/ui-primitives'
 import {
+  createT,
   defineUiPlugin,
   getHostNative,
   IconActivity,
@@ -48,9 +49,15 @@ import {
   type HostSnapshot,
   type StatusView,
 } from '@dsc/ui'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 export default defineUiPlugin({
-  name: '状态栏',
+  name: t('statusbar.plugin.name'),
   apply(ui) {
     ui.slots.register('shell.statusbar', { id: 'statusbar.readout', order: 1 }, StatusSegments)
   },
@@ -64,10 +71,10 @@ const TURN_STATES: readonly TurnState[] = ['idle', 'thinking', 'working', 'await
 
 /** 状态文案：与旧 StatusBar.tsx 一字不差。 */
 const TURN_TEXT: Record<TurnState, string> = {
-  idle: '空闲',
-  thinking: '思考中',
-  working: '执行中',
-  'awaiting-approval': '等待审批',
+  idle: t('statusbar.turn.idle'),
+  thinking: t('statusbar.turn.thinking'),
+  working: t('statusbar.turn.working'),
+  'awaiting-approval': t('statusbar.turn.awaitingApproval'),
 }
 
 /**
@@ -228,39 +235,39 @@ function TurnSegment(props: {
   const toolText = logged === null || logged.toolCalls === 0 ? null : formatTraceDuration(logged.toolMs)
   const llmText = logged === null || !(logged.llmMs > 0) ? null : formatTraceDuration(logged.llmMs)
   const hint = [
-    `当前状态：${stateText}`,
-    props.sessionId === null ? null : `会话 ${props.sessionId.slice(0, 8)}`,
-    props.model === '' ? null : `模型 ${props.model}`,
+    t('statusbar.turnHint.state', { state: stateText }),
+    props.sessionId === null ? null : t('statusbar.turnHint.session', { id: props.sessionId.slice(0, 8) }),
+    props.model === '' ? null : t('statusbar.turnHint.model', { model: props.model }),
   ]
     .filter((part) => part !== null)
     .join(' · ')
   return (
     <span className="segment seg-turn seg-hover">
-      <button type="button" className="ctx-trigger" title={`${hint}；点开看轮次、步骤、速度与时间`}>
+      <button type="button" className="ctx-trigger" title={t('statusbar.turnHint.title', { hint })}>
         <span className={`seg-icon state-${props.turnState}`}>
           <IconActivity size={12} />
         </span>
         {/* 第一轮进行中时 steps 还是 0：那一档只报用时，不摆「0 轮 0 步」这种假读数 */}
-        {props.steps > 0 ? `${String(props.rounds)} 轮 ${String(props.steps)} 步` : null}
+        {props.steps > 0 ? t('statusbar.turn.counts', { rounds: props.rounds, steps: props.steps }) : null}
         {elapsed !== null && (
-          <span className="seg-dim">{props.steps > 0 ? ' · ' : ''}用时 {elapsed}</span>
+          <span className="seg-dim">{props.steps > 0 ? ' · ' : ''}{t('statusbar.turn.elapsed', { duration: elapsed })}</span>
         )}
         {props.speed !== null && <span className="seg-dim"> · {formatTokensPerSecond(props.speed)} tok/s</span>}
       </button>
       <div className="ctx-card" role="note">
         <div className="ctx-head">
-          <span className="ctx-title">会话统计</span>
+          <span className="ctx-title">{t('statusbar.turn.cardTitle')}</span>
           <span className="ctx-numbers">
-            {props.rounds} 轮 · {props.steps} 步
+            {t('statusbar.turn.cardCounts', { rounds: props.rounds, steps: props.steps })}
           </span>
         </div>
         <div className="ctx-rule" />
         <div className="ctx-rows">
-          {elapsed !== null && <CardRow label="本轮用时（进行中）" value={elapsed} />}
-          {llmText !== null && <CardRow label="模型用时" value={llmText} />}
-          {toolText !== null && <CardRow label="工具调用用时" value={toolText} />}
-          {ttftText !== null && <CardRow label="首 token 平均（TTFT）" value={ttftText} />}
-          {props.speed !== null && <CardRow label="输出速度（TPS）" value={`${formatTokensPerSecond(props.speed)} tok/s`} />}
+          {elapsed !== null && <CardRow label={t('statusbar.card.elapsedRunning')} value={elapsed} />}
+          {llmText !== null && <CardRow label={t('statusbar.card.modelTime')} value={llmText} />}
+          {toolText !== null && <CardRow label={t('statusbar.card.toolTime')} value={toolText} />}
+          {ttftText !== null && <CardRow label={t('statusbar.card.ttft')} value={ttftText} />}
+          {props.speed !== null && <CardRow label={t('statusbar.card.tps')} value={`${formatTokensPerSecond(props.speed)} tok/s`} />}
         </div>
       </div>
     </span>
@@ -290,8 +297,8 @@ function TokenSegment(props: {
   const cachePrompt = cacheHit === null || cacheMiss === null ? 0 : cacheHit + cacheMiss
   const hitPercent = formatCacheHitPercent(cacheHit ?? 0, cachePrompt)
   const hint = hitPercent === null
-    ? `这个会话累计 ${formatExactTokens(props.total)} tok；点开看输入/输出明细`
-    : `这个会话累计 ${formatExactTokens(props.total)} tok，前缀缓存命中 ${hitPercent}%；点开看输入/输出明细`
+    ? t('statusbar.tokens.hint', { tokens: formatExactTokens(props.total) })
+    : t('statusbar.tokens.hintCache', { tokens: formatExactTokens(props.total), percent: hitPercent })
   return (
     <span className="segment seg-tokens seg-hover">
       <button type="button" className="ctx-trigger" title={hint}>
@@ -299,25 +306,25 @@ function TokenSegment(props: {
           <IconDatabase size={12} />
         </span>
         {formatTokens(props.total)} tok
-        {hitPercent !== null && <span className="seg-dim"> · 缓存命中 {hitPercent}%</span>}
+        {hitPercent !== null && <span className="seg-dim"> · {t('statusbar.tokens.cacheHit', { percent: hitPercent })}</span>}
       </button>
       <div className="ctx-card" role="note">
         <div className="ctx-head">
-          <span className="ctx-title">Token 用量</span>
+          <span className="ctx-title">{t('statusbar.tokens.cardTitle')}</span>
           <span className="ctx-numbers" title={`${formatExactTokens(props.total)} tok`}>
             {formatTokens(props.total)} tok
           </span>
         </div>
         <div className="ctx-rule" />
         <div className="ctx-rows">
-          {hitPercent !== null && <CardRow label="缓存命中" value={`${hitPercent}%`} />}
+          {hitPercent !== null && <CardRow label={t('statusbar.tokens.cacheHitLabel')} value={`${hitPercent}%`} />}
           {cacheMiss !== null ? (
-            <CardRow label="未缓存输入" value={formatTokens(cacheMiss)} title={`${formatExactTokens(cacheMiss)} tok`} />
+            <CardRow label={t('statusbar.tokens.cacheMiss')} value={formatTokens(cacheMiss)} title={`${formatExactTokens(cacheMiss)} tok`} />
           ) : (
-            <CardRow label="输入" value={formatTokens(input)} title={`${formatExactTokens(input)} tok`} />
+            <CardRow label={t('statusbar.tokens.input')} value={formatTokens(input)} title={`${formatExactTokens(input)} tok`} />
           )}
-          {cacheHit !== null && <CardRow label="缓存读取" value={formatTokens(cacheHit)} title={`${formatExactTokens(cacheHit)} tok`} />}
-          <CardRow label="输出" value={formatTokens(output)} title={`${formatExactTokens(output)} tok`} />
+          {cacheHit !== null && <CardRow label={t('statusbar.tokens.cacheRead')} value={formatTokens(cacheHit)} title={`${formatExactTokens(cacheHit)} tok`} />}
+          <CardRow label={t('statusbar.tokens.output')} value={formatTokens(output)} title={`${formatExactTokens(output)} tok`} />
         </div>
       </div>
     </span>
@@ -357,13 +364,13 @@ function ContextSegment(props: {
     `${((Math.min(tokens, props.windowTokens) / props.windowTokens) * 100).toFixed(2)}%`
   return (
     <span className="segment seg-context seg-hover">
-      <button type="button" className="ctx-trigger" aria-label={`上下文已用 ${String(percent)}%`}>
+      <button type="button" className="ctx-trigger" aria-label={t('statusbar.context.aria', { percent })}>
         <ContextRing percent={shown} />
         {percent}%
       </button>
       <div className="ctx-card" role="note">
         <div className="ctx-head">
-          <span className="ctx-title">上下文已用 {percent}%</span>
+          <span className="ctx-title">{t('statusbar.context.title', { percent })}</span>
           <span className="ctx-numbers">
             ~{formatTokens(props.used)} / {formatTokens(props.windowTokens)}
           </span>
@@ -384,22 +391,22 @@ function ContextSegment(props: {
           <div className="ctx-legend">
             <div className="ctx-legend-row">
               <i className="ctx-dot ctx-dot-system" />
-              <span className="ctx-legend-label">系统提示词</span>
+              <span className="ctx-legend-label">{t('statusbar.context.system')}</span>
               <span className="ctx-legend-value">~{formatTokens(system)}</span>
             </div>
             <div className="ctx-legend-row">
               <i className="ctx-dot ctx-dot-schema" />
-              <span className="ctx-legend-label">工具定义</span>
+              <span className="ctx-legend-label">{t('statusbar.context.schema')}</span>
               <span className="ctx-legend-value">~{formatTokens(schema)}</span>
             </div>
             <div className="ctx-legend-row">
               <i className="ctx-dot ctx-dot-tools" />
-              <span className="ctx-legend-label">工具结果</span>
+              <span className="ctx-legend-label">{t('statusbar.context.tools')}</span>
               <span className="ctx-legend-value">~{formatTokens(tools)}</span>
             </div>
             <div className="ctx-legend-row">
               <i className="ctx-dot ctx-dot-messages" />
-              <span className="ctx-legend-label">对话消息</span>
+              <span className="ctx-legend-label">{t('statusbar.context.messages')}</span>
               <span className="ctx-legend-value">~{formatTokens(messages)}</span>
             </div>
           </div>

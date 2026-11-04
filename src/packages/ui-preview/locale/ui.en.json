@@ -1,0 +1,22 @@
+{
+  "preview.plugin.name": "File preview",
+  "preview.tab.label": "Preview",
+  "preview.tab.patch": "Patch",
+  "preview.empty.noPath": "This preview tab has no file path (close it and pick a file from the tree again).",
+  "preview.empty.noPatchPath": "This patch tab has no file path (close it and click again from the tool card).",
+  "preview.readFailed": "Couldn't read the file: {message}",
+  "preview.openFailed": "Couldn't open: {message}",
+  "preview.systemTip.on": "Open with the system default app.",
+  "preview.systemTip.off": "This comes from the desktop shell's native bridge; browsers don't have it.",
+  "preview.systemOpen": "Open externally",
+  "preview.reading": "Loading…",
+  "preview.patch.added": "Added",
+  "preview.patch.openTip": "Open the current file in preview (content is the snapshot at edit time).",
+  "preview.patch.open": "Open",
+  "preview.patch.gone": "This patch is gone (diff snapshots do not survive an app restart or session switch). Click \"Open\" to see the file's current content.",
+  "preview.patch.truncated": "Large change: only the first part is shown (the file's current content is authoritative).",
+  "preview.tooLarge": "File too large ({size}); only files under 10MB can be previewed.",
+  "preview.binary": "Binary file ({size}); preview is not supported.",
+  "preview.unknownType": "Files like this ({mime}, {size}) cannot be previewed here; use \"Open externally\" to view them.",
+  "preview.unknownMime": "unknown type"
+}

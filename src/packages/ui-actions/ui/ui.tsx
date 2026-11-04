@@ -10,7 +10,13 @@
  *
  * @module dsc-ui-shell/plugins/actions
  */
-import { ACTIONS_SERVICE, createSignal, defineUiPlugin, type ActionsHandle, type UiAction } from '@dsc/ui'
+import { ACTIONS_SERVICE, createSignal, createT, defineUiPlugin, type ActionsHandle, type UiAction } from '@dsc/ui'
+// 本包的中英对照：中文是语义真源（`locale/ui.zh.json`），英文是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** owner → 它登记的那组动作（同一个 owner 再登记就整组换掉）。 */
 const byOwner = new Map<string, readonly UiAction[]>()
@@ -53,7 +59,7 @@ const handle: ActionsHandle = {
 }
 
 export default defineUiPlugin({
-  name: '动作表',
+  name: t('plugin.name'),
   apply(ui) {
     ui.provide<ActionsHandle>(ACTIONS_SERVICE, handle)
   },

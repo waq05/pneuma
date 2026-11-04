@@ -44,11 +44,9 @@ import {
   IconSwap,
   IconTrash,
   MODALITIES,
-  MODALITY_LABELS,
   THINKING_LEVELS,
-  THINKING_LEVEL_LABELS,
   THINKING_PARAMS,
-  THINKING_PARAM_LABELS,
+  createT,
   confirmAction,
   getHostNative,
   toastErr,
@@ -63,10 +61,43 @@ import {
   type ProviderView,
   type SettingsMutation,
   type ThinkingLevel,
+  type ThinkingParam,
 } from '@dsc/ui'
 // 基元从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
 import { Select, errText as text, useDialogFocus } from '@dsc/ui-primitives'
 import { buildKnownIndex, inferModelCaps, type InferredCaps, type KnownModel } from './model-infer'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
+
+/**
+ * 模型能力的显示文案：思考档位 / 输入模态 / 档位字段。
+ *
+ * 为什么不用 `@dsc/ui`（内核 `core/model-caps.ts`）转出的那几张标签表：它们只有中文，
+ * 英文界面下会露出「关 / 低 / 文本 / 照片」。这里按 id 建一份本包自己的对照——**id 一个都
+ * 不动**（写回 config.yaml 的仍是 `off` / `image` / `reasoning-effort`），只有显示文案随语言走。
+ */
+const LEVEL_LABELS: Record<ThinkingLevel, string> = {
+  off: t('settings.thinking.off'),
+  low: t('settings.thinking.low'),
+  high: t('settings.thinking.high'),
+  max: t('settings.thinking.max'),
+}
+
+const INPUT_LABELS: Record<Modality, string> = {
+  text: t('settings.modality.text'),
+  image: t('settings.modality.image'),
+  video: t('settings.modality.video'),
+}
+
+const PARAM_LABELS: Record<ThinkingParam, string> = {
+  thinking: t('settings.thinkingParam.thinking'),
+  'reasoning-effort': t('settings.thinkingParam.reasoningEffort'),
+  none: t('settings.thinkingParam.none'),
+}
 
 /** 左栏那条「新增端点」伪条目的键（表单占着右栏时，左栏也得有它的位置）。 */
 const NEW_PROVIDER_KEY = '__new__'
@@ -92,9 +123,9 @@ function scopedMap<T>(source: ReadonlyMap<string, T>, provider: string): Readonl
 
 /** 一次连接测试结论的悬浮说明（图标钮与结论点共用一句话）。 */
 function probeTip(result: ConnectionTestView): string {
-  if (!result.ok) return `没通：${result.error ?? '未知原因'}`
-  const said = result.reply === '' ? '没回正文但流正常收尾' : `回了「${result.reply}」`
-  return `通了 · ${result.model} · ${String(result.ms)} ms · ${said}`
+  if (!result.ok) return t('settings.models.probe.failed', { message: result.error ?? t('settings.models.unknownReason') })
+  const said = result.reply === '' ? t('settings.models.probe.noReply') : t('settings.models.probe.replied', { reply: result.reply })
+  return t('settings.models.probe.passed', { model: result.model, ms: result.ms, said })
 }
 
 /** token 数输入：认 `128k` / `1m` / 裸数字；认不出给 NaN（调用点按「没填」处理）。 */
@@ -188,34 +219,36 @@ const URL_PATTERN = /^https?:\/\/\S+$/
  */
 function validateDraft(draft: ProviderDraft, others: readonly ProviderView[]): string | null {
   const name = draft.name.trim()
-  if (name === '') return '端点名不能为空（它是 config.yaml 里的键）。'
-  if (!/^[a-z0-9_-]+$/.test(name)) return '端点名只能用小写字母、数字、- 或 _。'
-  if (draft.baseUrl.trim() === '') return 'Base URL 不能为空。'
-  if (!URL_PATTERN.test(draft.baseUrl.trim())) return 'Base URL 要写成完整的 http(s) 地址，中间不能有空格。'
+  if (name === '') return t('settings.models.validate.nameEmpty')
+  if (!/^[a-z0-9_-]+$/.test(name)) return t('settings.models.validate.nameChars')
+  if (draft.baseUrl.trim() === '') return t('settings.models.validate.urlEmpty')
+  if (!URL_PATTERN.test(draft.baseUrl.trim())) return t('settings.models.validate.urlForm')
   if (others.some((entry) => entry.name === name && entry.name !== draft.oldName)) {
-    return `已经有一个叫 ${name} 的端点了。`
+    return t('settings.models.validate.nameTaken', { name })
   }
-  if (draft.models.length === 0) return '至少要有一个模型（模型 id 就是请求里发的名字）。'
+  if (draft.models.length === 0) return t('settings.models.validate.noModels')
   const seen = new Set<string>()
   for (const model of draft.models) {
     const id = model.id.trim()
-    if (id === '') return '每个模型都要填 id（请求里发的就是它）。'
-    if (seen.has(id)) return `模型 id 重复了：${id}`
+    if (id === '') return t('settings.models.validate.modelId')
+    if (seen.has(id)) return t('settings.models.validate.duplicateId', { id })
     if (!Number.isInteger(model.contextWindow) || model.contextWindow <= 0) {
-      return `${id} 的上下文窗口要填正整数（不知道就填 128000）。`
+      return t('settings.models.validate.context', { id })
     }
-    if (model.maxTokens < 0 || !Number.isInteger(model.maxTokens)) return `${id} 的最大输出要填正整数。`
+    if (model.maxTokens < 0 || !Number.isInteger(model.maxTokens)) return t('settings.models.validate.maxTokens', { id })
   }
   return null
 }
 
 /** 一个模型的能力摘要（模型行上那些徽标的悬浮提示）。 */
 function modelCapsSummary(model: ProviderModelView): string {
-  const ctx = model.contextWindow > 0 ? `${contextLabel(model.contextWindow)} 上下文` : '上下文窗口没填'
+  const ctx = model.contextWindow > 0 ? t('settings.models.caps.context', { window: contextLabel(model.contextWindow) }) : t('settings.models.caps.noContext')
   const thinking =
-    model.thinkingLevels.length === 0 ? '没有思考档位' : `思考档位 ${String(model.thinkingLevels.length)} 档`
-  const inputs = model.modalities.map((entry) => MODALITY_LABELS[entry]).join('/')
-  return [ctx, thinking, `输入 ${inputs}`].join(' · ')
+    model.thinkingLevels.length === 0
+      ? t('settings.models.caps.noThinking')
+      : t('settings.models.caps.thinking', { count: model.thinkingLevels.length })
+  const inputs = model.modalities.map((entry) => INPUT_LABELS[entry]).join('/')
+  return [ctx, thinking, t('settings.models.caps.inputs', { inputs })].join(' · ')
 }
 
 /** 批量文本：一行一个 `id, 显示名, 上下文窗口, 最大输出`；空列从尾部省掉。 */
@@ -346,7 +379,7 @@ export function ModelsGroup(): ReactNode {
         setConfig(value)
       })
       .catch((error: unknown) => {
-        toastErr(`读取模型配置失败：${text(error)}`)
+        toastErr(t('settings.models.loadFailed', { message: text(error) }))
       })
   }
   useEffect(reload, [channel])
@@ -357,15 +390,15 @@ export function ModelsGroup(): ReactNode {
       .invoke<SettingsMutation>('setDefaultModel', [provider, model])
       .then((result) => {
         if (!result.ok) {
-          toastErr(`操作失败：${result.error}`)
+          toastErr(t('settings.models.opFailed', { message: result.error }))
           reload()
           return
         }
-        toastOk(result.notice ?? '默认模型已更新')
+        toastOk(result.notice ?? t('settings.models.defaultUpdated'))
         reload()
       })
       .catch((error: unknown) => {
-        toastErr(`操作失败：${text(error)}`)
+        toastErr(t('settings.models.opFailed', { message: text(error) }))
         reload()
       })
   }
@@ -385,7 +418,7 @@ export function ModelsGroup(): ReactNode {
       .invoke<SettingsMutation>(op, args)
       .then((result) => {
         if (!result.ok) {
-          toastErr(`操作失败：${result.error}`)
+          toastErr(t('settings.models.opFailed', { message: result.error }))
           reload()
           return false
         }
@@ -394,7 +427,7 @@ export function ModelsGroup(): ReactNode {
         return true
       })
       .catch((error: unknown) => {
-        toastErr(`操作失败：${text(error)}`)
+        toastErr(t('settings.models.opFailed', { message: text(error) }))
         reload()
         return false
       })
@@ -408,7 +441,7 @@ export function ModelsGroup(): ReactNode {
         setDiscovered({ provider, models })
       })
       .catch((error: unknown) => {
-        toastErr(`拉取失败：${text(error)}`)
+        toastErr(t('settings.models.discoverFailed', { message: text(error) }))
       })
       .finally(() => {
         setDiscovering((current) => {
@@ -433,16 +466,18 @@ export function ModelsGroup(): ReactNode {
       .then((result) => {
         setProbed((current) => new Map(current).set(key, result))
         if (result.ok) {
-          const said = result.reply === '' ? '没回正文但流正常收尾' : `回了「${result.reply}」`
-          toastOk(`${provider}/${model} 通了：${said}（${String(result.ms)} ms）`)
+          const said = result.reply === '' ? t('settings.models.probe.noReply') : t('settings.models.probe.replied', { reply: result.reply })
+          toastOk(t('settings.models.probe.okToast', { target: `${provider}/${model}`, said, ms: result.ms }))
         } else {
-          toastErr(`${provider}/${model} 没通：${result.error ?? '未知原因'}`)
+          toastErr(
+            t('settings.models.probe.failToast', { target: `${provider}/${model}`, message: result.error ?? t('settings.models.unknownReason') }),
+          )
         }
       })
       .catch((error: unknown) => {
         // reject = 连请求都没发出去（端点没了 / 没模型 / 没 key）：也留在那个模型后面，别只闪一条提示
         setProbed((current) => new Map(current).set(key, { ok: false, model, ms: 0, reply: '', error: text(error) }))
-        toastErr(`测试失败：${text(error)}`)
+        toastErr(t('settings.models.testFailed', { message: text(error) }))
       })
       .finally(() => {
         setTesting((current) => {
@@ -456,7 +491,7 @@ export function ModelsGroup(): ReactNode {
   /** 一个 id 的能力：先看别的端点配过没有，再按 id 里写的 / 家族表推断（见 model-infer.ts）。 */
   const infer = (id: string): InferredCaps => inferModelCaps(id, known)
 
-  if (config === null) return <div className="settings-empty">正在读取模型配置…</div>
+  if (config === null) return <div className="settings-empty">{t('settings.models.loading')}</div>
 
   const providers = config.providers
   /** 选中的那一个：选过就认；没选过（或被删了）落到默认端点，再落到第一个。 */
@@ -513,7 +548,7 @@ export function ModelsGroup(): ReactNode {
       try {
         const result = await native.invoke<SettingsMutation>('saveProvider', [payload])
         if (!result.ok) {
-          toastErr(`保存失败：${result.error}`)
+          toastErr(t('settings.models.saveFailed', { message: result.error }))
           return
         }
         setDraft(null)
@@ -522,17 +557,17 @@ export function ModelsGroup(): ReactNode {
         if (apiKey.trim() !== '') {
           const keyResult = await native.invoke<SettingsMutation>('setProviderKey', [payload.name, apiKey.trim()])
           if (!keyResult.ok) {
-            toastErr(`端点已保存，但密钥没写成功：${keyResult.error}`)
+            toastErr(t('settings.models.savedKeyFailed', { message: keyResult.error }))
             reload()
             return
           }
-          toastOk(`${result.notice ?? '端点已保存'}；API key 已写进凭据库`)
+          toastOk(t('settings.models.savedWithKey', { notice: result.notice ?? t('settings.models.providerSaved') }))
         } else {
-          toastOk(result.notice ?? '端点已保存')
+          toastOk(result.notice ?? t('settings.models.providerSaved'))
         }
         reload()
       } catch (error: unknown) {
-        toastErr(`保存失败：${text(error)}`)
+        toastErr(t('settings.models.saveFailed', { message: text(error) }))
       }
     })()
   }
@@ -556,7 +591,7 @@ export function ModelsGroup(): ReactNode {
     void bridgeWrite(
       'saveProvider',
       [payload],
-      index === null ? `已加入模型 ${one.id}` : `模型 ${one.id} 已保存`,
+      index === null ? t('settings.models.modelAdded', { id: one.id }) : t('settings.models.modelSaved', { id: one.id }),
     ).then((ok) => {
       if (ok) setModelDraft(null)
     })
@@ -570,19 +605,19 @@ export function ModelsGroup(): ReactNode {
     const wasDefault = config.defaultProvider === provider.name && config.defaultModel === model.id
     const next = rest[0]
     void confirmAction({
-      title: `删除模型「${model.id}」？`,
+      title: t('settings.models.removeModel.title', { id: model.id }),
       detail:
-        `将从 ${config.configFile} 的这个端点里删掉它。` +
+        t('settings.models.removeModel.detail', { file: config.configFile }) +
         (wasDefault
           ? next === undefined
-            ? '它是当前默认模型；这是这个端点最后一个模型，删完该端点的模型清单就空了。'
-            : `它是当前默认模型，删完会把默认模型改成 ${next.id}。`
+            ? t('settings.models.removeModel.lastDefault')
+            : t('settings.models.removeModel.defaultMoved', { id: next.id })
           : ''),
-      confirmLabel: '删除模型',
+      confirmLabel: t('settings.models.removeModel.confirm'),
       danger: true,
     }).then((yes) => {
       if (!yes) return
-      void bridgeWrite('saveProvider', [draftOf(provider, rest)], `已删除模型 ${model.id}`).then((ok) => {
+      void bridgeWrite('saveProvider', [draftOf(provider, rest)], t('settings.models.removeModel.done', { id: model.id })).then((ok) => {
         if (!ok || !wasDefault || next === undefined) return
         setDefault(provider.name, next.id)
       })
@@ -597,7 +632,7 @@ export function ModelsGroup(): ReactNode {
       toastErr(problem)
       return
     }
-    void bridgeWrite('saveProvider', [payload], `已按批量文本更新 ${provider.name} 的模型清单`).then((ok) => {
+    void bridgeWrite('saveProvider', [payload], t('settings.models.bulk.done', { name: provider.name })).then((ok) => {
       if (ok) setBulk(null)
     })
   }
@@ -607,11 +642,11 @@ export function ModelsGroup(): ReactNode {
     const next = value.trim().replace(/\/+$/, '')
     if (next === provider.baseUrl) return
     if (!URL_PATTERN.test(next)) {
-      toastErr('Base URL 要写成完整的 http(s) 地址，中间不能有空格。')
+      toastErr(t('settings.models.validate.urlForm'))
       reload()
       return
     }
-    void bridgeWrite('saveProvider', [{ ...draftOf(provider, provider.models), baseUrl: next }], 'Base URL 已保存')
+    void bridgeWrite('saveProvider', [{ ...draftOf(provider, provider.models), baseUrl: next }], t('settings.models.baseUrlSaved'))
   }
 
   /** 写密钥（保存 / 清除）。 */
@@ -628,23 +663,23 @@ export function ModelsGroup(): ReactNode {
     <div className="settings-fields models models-page">
       <div className="setting-row">
         <div className="setting-text">
-          <div className="setting-label">默认模型</div>
-          <div className="setting-help">当前会话的下一次请求就用新值。</div>
+          <div className="setting-label">{t('settings.models.default.label')}</div>
+          <div className="setting-help">{t('settings.models.default.help')}</div>
         </div>
         <div className="setting-control">
           <div className="model-default">
             <Select
               className="setting-select"
-              ariaLabel="默认端点"
+              ariaLabel={t('settings.models.default.providerAria')}
               value={config.defaultProvider}
               options={
                 providers.length === 0
-                  ? [{ value: '', label: '暂无端点' }]
+                  ? [{ value: '', label: t('settings.models.noProviders') }]
                   : providers.map((entry) => ({
                       value: entry.name,
                       label:
                         (entry.displayName === '' ? entry.name : entry.displayName) +
-                        (entry.keyConfigured ? '' : '（无密钥）'),
+                        (entry.keyConfigured ? '' : t('settings.models.noKeyTag')),
                     }))
               }
               onPick={(next) => {
@@ -655,7 +690,7 @@ export function ModelsGroup(): ReactNode {
             />
             <Select
               className="setting-select"
-              ariaLabel="默认模型"
+              ariaLabel={t('settings.models.default.modelAria')}
               value={config.defaultModel}
               disabled={defaultProvider === undefined || !defaultProvider.keyConfigured || defaultProvider.models.length === 0}
               options={(defaultProvider?.models ?? []).map((model) => ({
@@ -672,21 +707,20 @@ export function ModelsGroup(): ReactNode {
 
       {!editable ? (
         <div className="settings-note" data-models-readonly="1">
-          浏览器里只能看：增删端点与填写密钥要写 config.yaml 与凭据库，走的是桌面窗口的原生桥
-          （界面通道有意没放行这几个方法）。要改配置请用桌面版。
+          {t('settings.models.readOnly')}
         </div>
       ) : null}
 
       <div className="models-panes">
-        <aside className="models-rail" aria-label="端点列表">
+        <aside className="models-rail" aria-label={t('settings.models.rail.aria')}>
           <div className="models-rail-head">
-            <span className="models-rail-title">端点</span>
+            <span className="models-rail-title">{t('settings.models.rail.title')}</span>
             <span className="count">{providers.length}</span>
             <button
               type="button"
               className="icon-btn models-refresh"
-              title="重新读一遍 config.yaml（外部改过文件时用）"
-              aria-label="重新读取模型配置"
+              title={t('settings.models.rail.reloadTip')}
+              aria-label={t('settings.models.rail.reloadAria')}
               onClick={reload}
             >
               <IconRefresh size={14} />
@@ -705,7 +739,7 @@ export function ModelsGroup(): ReactNode {
                 <span className="provider-avatar lg av-new" aria-hidden="true">
                   <IconPlus size={13} />
                 </span>
-                <span className="models-rail-name">新增端点</span>
+                <span className="models-rail-name">{t('settings.models.rail.newProvider')}</span>
               </button>
             ) : null}
             {providers.map((provider) => (
@@ -720,23 +754,23 @@ export function ModelsGroup(): ReactNode {
                 }}
               />
             ))}
-            {providers.length === 0 && draft === null ? <div className="models-rail-empty">还没有端点</div> : null}
+            {providers.length === 0 && draft === null ? <div className="models-rail-empty">{t('settings.models.rail.empty')}</div> : null}
           </div>
           <div className="models-rail-foot">
             {editable && (draft === null || draft.oldName !== null) ? (
               <button type="button" className="models-add-card" data-provider-add="1" data-models-add="1" onClick={startNew}>
-                <IconPlus size={14} /> 添加端点
+                <IconPlus size={14} /> {t('settings.models.addProvider')}
               </button>
             ) : null}
             <div className="models-paths">
               <span className="models-path">
-                <span className="models-path-label">配置文件</span>
+                <span className="models-path-label">{t('settings.models.rail.configFile')}</span>
                 <span className="mono" title={config.configFile}>
                   {baseName(config.configFile)}
                 </span>
               </span>
               <span className="models-path">
-                <span className="models-path-label">凭据</span>
+                <span className="models-path-label">{t('settings.models.rail.credentials')}</span>
                 <span className="mono" title={config.credentialsFile}>
                   {baseName(config.credentialsFile)}
                 </span>
@@ -759,11 +793,8 @@ export function ModelsGroup(): ReactNode {
             />
           ) : current === null ? (
             <div className="models-detail-empty">
-              <div className="models-detail-empty-title">还没有端点</div>
-              <p className="models-detail-empty-hint">
-                点左下角的「添加端点」建第一个：填上名字、地址与一个模型，建好之后可以用「拉取清单」
-                把线上模型一次挑进来，再逐个调能力。
-              </p>
+              <div className="models-detail-empty-title">{t('settings.models.detail.emptyTitle')}</div>
+              <p className="models-detail-empty-hint">{t('settings.models.detail.emptyHint')}</p>
             </div>
           ) : (
             <ProviderDetail
@@ -829,16 +860,16 @@ export function ModelsGroup(): ReactNode {
               onRemoveProvider={() => {
                 const isDefault = config.defaultProvider === current.name
                 void confirmAction({
-                  title: `删除端点「${current.displayName === '' ? current.name : current.displayName}」？`,
+                  title: t('settings.models.removeProvider.title', { name: current.displayName === '' ? current.name : current.displayName }),
                   detail:
-                    `将从 ${config.configFile} 删除该端点，使用它的会话在下次请求时才会发现不可用；` +
-                    `其 API key 仍保留在凭据库中，重新添加同名端点后可继续使用。` +
-                    `${isDefault ? '该端点是当前默认端点，删除后默认端点将自动改为第一个可用端点。' : ''}`,
-                  confirmLabel: '删除端点',
+                    t('settings.models.removeProvider.detail', { file: config.configFile }) +
+                    t('settings.models.removeProvider.keyKept') +
+                    (isDefault ? t('settings.models.removeProvider.defaultMoved') : ''),
+                  confirmLabel: t('settings.models.removeProvider.confirm'),
                   danger: true,
                 }).then((yes) => {
                   if (!yes) return
-                  void bridgeWrite('removeProvider', [current.name], `已删除端点「${current.name}」`).then(() => {
+                  void bridgeWrite('removeProvider', [current.name], t('settings.models.removeProvider.done', { name: current.name })).then(() => {
                     setModelDraft(null)
                     setBulk(null)
                   })
@@ -859,17 +890,17 @@ export function ModelsGroup(): ReactNode {
               onSaveKey={() => {
                 const value = keyValue.trim()
                 if (value === '') return
-                writeKey(current, value, 'API key 已写进凭据库')
+                writeKey(current, value, t('settings.models.key.saved'))
               }}
               onClearKey={() => {
                 void confirmAction({
-                  title: `清除 ${current.keyRef}？`,
-                  detail: `将从凭据库里删掉这个 key（端点与模型清单都不动）。环境变量若仍提供同名 key，运行期照旧可用。`,
-                  confirmLabel: '清除密钥',
+                  title: t('settings.models.key.clearTitle', { ref: current.keyRef }),
+                  detail: t('settings.models.key.clearDetail'),
+                  confirmLabel: t('settings.models.key.clearConfirm'),
                   danger: true,
                 }).then((yes) => {
                   if (!yes) return
-                  writeKey(current, null, 'API key 已从凭据库移除')
+                  writeKey(current, null, t('settings.models.key.cleared'))
                 })
               }}
             />
@@ -892,7 +923,7 @@ export function ModelsGroup(): ReactNode {
               return
             }
             const models = [...provider.models, ...ids.map((id) => discoveredModel(id, infer(id)))]
-            void bridgeWrite('saveProvider', [draftOf(provider, models)], `已加入 ${String(ids.length)} 个模型`).then(() => {
+            void bridgeWrite('saveProvider', [draftOf(provider, models)], t('settings.models.discover.adopted', { count: ids.length })).then(() => {
               setDiscovered(null)
             })
           }}
@@ -919,8 +950,8 @@ function ProviderRailItem(props: {
   const provider = props.provider
   const label = provider.displayName === '' ? provider.name : provider.displayName
   const keyTip = provider.keyConfigured
-    ? `${provider.keyRef} 已就绪（环境变量或凭据库）`
-    : `${provider.keyRef} 还没配：这个端点暂时用不了`
+    ? t('settings.models.rail.keyReady', { ref: provider.keyRef })
+    : t('settings.models.rail.keyMissing', { ref: provider.keyRef })
   return (
     <button
       type="button"
@@ -934,8 +965,8 @@ function ProviderRailItem(props: {
         {initialOf(label)}
       </span>
       <span className="models-rail-name">{label}</span>
-      {props.editing ? <span className="models-rail-editing" title="这个端点有没保存的改动" /> : null}
-      {props.isDefault ? <span className="tag">默认</span> : null}
+      {props.editing ? <span className="models-rail-editing" title={t('settings.models.rail.editingTip')} /> : null}
+      {props.isDefault ? <span className="tag">{t('settings.models.defaultTag')}</span> : null}
       <span className={`provider-dot${provider.keyConfigured ? ' ok' : ' warn'}`} title={keyTip} />
     </button>
   )
@@ -994,8 +1025,8 @@ function ProviderDetail(props: {
   // 免得用户点了才吃一句奇怪的报错；如实画成不可用，悬浮说明里讲清为什么。
   const usable = provider.keyConfigured
   const keyStatusTip = provider.keyConfigured
-    ? `${provider.keyRef} 已就绪，来自环境变量或凭据库`
-    : `${provider.keyRef} 尚未配置，该端点暂不可用`
+    ? t('settings.models.keyStatus.ready', { ref: provider.keyRef })
+    : t('settings.models.keyStatus.missing', { ref: provider.keyRef })
   const draft = props.modelDraft
 
   return (
@@ -1007,14 +1038,14 @@ function ProviderDetail(props: {
         <div className="provider-title">
           <span className="provider-title-name">{label}</span>
           <span className="mono provider-id">{provider.name}</span>
-          {props.isDefault ? <span className="tag">默认</span> : null}
+          {props.isDefault ? <span className="tag">{t('settings.models.defaultTag')}</span> : null}
         </div>
         {props.editable ? (
           <div className="provider-head-acts">
-            <button type="button" className="icon-btn" data-provider-edit="1" title="改名字与显示名" onClick={props.onEditProvider}>
+            <button type="button" className="icon-btn" data-provider-edit="1" title={t('settings.models.head.editTip')} onClick={props.onEditProvider}>
               <IconEdit size={14} />
             </button>
-            <button type="button" className="icon-btn danger" data-provider-remove="1" title="删除这个端点" onClick={props.onRemoveProvider}>
+            <button type="button" className="icon-btn danger" data-provider-remove="1" title={t('settings.models.head.removeTip')} onClick={props.onRemoveProvider}>
               <IconTrash size={14} />
             </button>
           </div>
@@ -1041,7 +1072,7 @@ function ProviderDetail(props: {
                 type="password"
                 autoFocus
                 autoComplete="off"
-                placeholder={`粘贴 ${provider.keyRef} 的值`}
+                placeholder={t('settings.models.key.placeholder', { ref: provider.keyRef })}
                 aria-label="API key"
                 value={props.keyValue}
                 onChange={(event) => {
@@ -1053,26 +1084,26 @@ function ProviderDetail(props: {
                 }}
               />
               <button type="button" className="btn-ghost" disabled={props.keyValue.trim() === ''} onClick={props.onSaveKey}>
-                保存
+                {t('settings.models.key.save')}
               </button>
               <button type="button" className="text-btn" onClick={props.onCancelKeyEdit}>
-                取消
+                {t('settings.models.key.cancel')}
               </button>
             </div>
           ) : (
             <div className="conn-key" title={keyStatusTip}>
               <span className={`conn-dot${provider.keyConfigured ? ' ok' : ' warn'}`} aria-hidden="true" />
               <span className="conn-key-text">
-                {provider.keyConfigured ? '已配置' : '未配置'} · <span className="mono">{provider.keyRef}</span>
+                {provider.keyConfigured ? t('settings.models.key.configured') : t('settings.models.key.notConfigured')} · <span className="mono">{provider.keyRef}</span>
               </span>
               {props.editable ? (
                 <>
-                  <button type="button" className="text-btn" data-key-edit="1" title="写一个新值覆盖它" onClick={props.onStartKeyEdit}>
-                    {provider.keyConfigured ? '替换' : '填写'}
+                  <button type="button" className="text-btn" data-key-edit="1" title={t('settings.models.key.overwriteTip')} onClick={props.onStartKeyEdit}>
+                    {provider.keyConfigured ? t('settings.models.key.replace') : t('settings.models.key.fill')}
                   </button>
                   {provider.keyConfigured ? (
-                    <button type="button" className="text-btn danger" data-key-clear="1" title="从凭据库里删掉这个 key" onClick={props.onClearKey}>
-                      清除
+                    <button type="button" className="text-btn danger" data-key-clear="1" title={t('settings.models.key.clearTip')} onClick={props.onClearKey}>
+                      {t('settings.models.key.clear')}
                     </button>
                   ) : null}
                 </>
@@ -1084,15 +1115,15 @@ function ProviderDetail(props: {
 
       <div className="model-block">
         <div className="model-block-head">
-          <span className="model-block-title">模型</span>
+          <span className="model-block-title">{t('settings.models.block.title')}</span>
           <span className="count">{provider.models.length}</span>
           <div className="model-block-tools">
             <button
               type="button"
               className="icon-btn"
               data-model-bulk="1"
-              title="批量文本 · 一行一个模型，一次改一批"
-              aria-label="批量文本"
+              title={t('settings.models.bulk.openTip')}
+              aria-label={t('settings.models.bulk.aria')}
               onClick={props.onOpenBulk}
             >
               <IconSwap size={14} />
@@ -1102,14 +1133,14 @@ function ProviderDetail(props: {
               className="btn-ghost"
               data-model-discover="1"
               disabled={props.discovering}
-              title="拉取清单 · 从端点拉取线上可用模型清单"
+              title={t('settings.models.discover.openTip')}
               onClick={props.onDiscover}
             >
-              <IconRefresh size={13} className={props.discovering ? 'spin' : undefined} /> 拉取清单
+              <IconRefresh size={13} className={props.discovering ? 'spin' : undefined} /> {t('settings.models.discover.open')}
             </button>
             {props.editable ? (
               <button type="button" className="btn-ghost" data-model-add="1" onClick={props.onAddModel}>
-                <IconPlus size={13} /> 添加模型
+                <IconPlus size={13} /> {t('settings.models.addModel')}
               </button>
             ) : null}
           </div>
@@ -1120,7 +1151,7 @@ function ProviderDetail(props: {
             <textarea
               className="setting-input mono tall"
               autoFocus
-              aria-label="批量文本：一行一个模型"
+              aria-label={t('settings.models.bulk.ariaLong')}
               rows={Math.max(4, provider.models.length + 1)}
               value={props.bulkText}
               placeholder={'deepseek-chat, DeepSeek Chat, 64000, 8192\ndeepseek-reasoner, DeepSeek R1, 64000'}
@@ -1130,12 +1161,12 @@ function ProviderDetail(props: {
             />
             <div className="model-edit-acts">
               <button type="button" className="btn-primary" data-model-bulk-save="1" onClick={() => props.onBulkSave(props.bulkText ?? '')}>
-                保存
+                {t('settings.models.bulk.save')}
               </button>
               <button type="button" className="btn-ghost" onClick={props.onCloseBulk}>
-                取消
+                {t('settings.models.bulk.cancel')}
               </button>
-              <span className="model-edit-hint">一行一个：id, 显示名, 上下文, 最大输出；思考档位与输入类型按原样保留</span>
+              <span className="model-edit-hint">{t('settings.models.bulk.hint')}</span>
             </div>
           </div>
         ) : null}
@@ -1167,9 +1198,9 @@ function ProviderDetail(props: {
                     title={
                       usable
                         ? isDefault
-                          ? `${model.id} 是当前默认模型`
-                          : `设为默认模型（${model.id}）`
-                        : `该端点没配密钥（${provider.keyRef}），暂不能设为默认`
+                          ? t('settings.models.pick.isDefault', { id: model.id })
+                          : t('settings.models.pick.setDefault', { id: model.id })
+                        : t('settings.models.pick.noKey', { ref: provider.keyRef })
                     }
                     onClick={() => {
                       props.onSelectModelDefault(model.id)
@@ -1181,15 +1212,15 @@ function ProviderDetail(props: {
                   {shown.name !== '' && shown.name !== shown.id ? <span className="model-id mono">{shown.id}</span> : null}
                   <span className="model-caps-line">
                     {ctx === '' ? null : (
-                      <span className="model-ctx mono" title={`上下文窗口 ${String(shown.contextWindow)}`}>
+                      <span className="model-ctx mono" title={t('settings.models.pick.contextTip', { tokens: shown.contextWindow })}>
                         {ctx}
                       </span>
                     )}
-                    {shown.modalities.includes('image') ? <span className="cap-badge">图</span> : null}
-                    {shown.modalities.includes('video') ? <span className="cap-badge">视频</span> : null}
-                    {shown.thinkingLevels.length === 0 ? <span className="cap-badge dim">无思考</span> : null}
+                    {shown.modalities.includes('image') ? <span className="cap-badge">{t('settings.models.cap.image')}</span> : null}
+                    {shown.modalities.includes('video') ? <span className="cap-badge">{t('settings.models.cap.video')}</span> : null}
+                    {shown.thinkingLevels.length === 0 ? <span className="cap-badge dim">{t('settings.models.cap.noThinking')}</span> : null}
                   </span>
-                  {isDefault ? <span className="tag">默认</span> : null}
+                  {isDefault ? <span className="tag">{t('settings.models.defaultTag')}</span> : null}
                   <span className="model-item-acts">
                     {/* 测试连接挂在**这个模型**后面（不是端点那排动作里）：用户要知道的是「这一条路
                         能不能通」。与「拉取清单」的分工：那个只证明地址可达，这个证明 key / 模型 /
@@ -1201,10 +1232,10 @@ function ProviderDetail(props: {
                       disabled={!usable || busy}
                       title={
                         !usable
-                          ? `该端点没配密钥（${provider.keyRef}），测不了`
+                          ? t('settings.models.probe.noKey', { ref: provider.keyRef })
                           : busy
-                            ? `正在测 ${model.id}…`
-                            : `测试连接 · 拿 ${model.id} 真发一次最小请求（与正常对话同一条链路）`
+                            ? t('settings.models.probe.testing', { id: model.id })
+                            : t('settings.models.probe.tip', { id: model.id })
                       }
                       onClick={() => {
                         props.onProbe(model.id)
@@ -1229,7 +1260,7 @@ function ProviderDetail(props: {
                           className={`icon-btn${editing ? ' on' : ''}`}
                           data-model-edit={model.id}
                           aria-pressed={editing}
-                          title={editing ? '收起编辑器' : `编辑 ${model.id} 的能力`}
+                          title={editing ? t('settings.models.edit.collapse') : t('settings.models.edit.open', { id: model.id })}
                           onClick={() => {
                             if (editing) {
                               props.onModelCancel()
@@ -1244,7 +1275,7 @@ function ProviderDetail(props: {
                           type="button"
                           className="icon-btn danger"
                           data-model-remove={model.id}
-                          title={`删除模型 ${model.id}`}
+                          title={t('settings.models.removeModel.tip', { id: model.id })}
                           onClick={() => {
                             props.onRemoveModel(index)
                           }}
@@ -1276,10 +1307,10 @@ function ProviderDetail(props: {
                           props.onModelSave(rowDraft.index, rowDraft.model)
                         }}
                       >
-                        保存
+                        {t('settings.models.modelForm.save')}
                       </button>
                       <button type="button" className="btn-ghost" onClick={props.onModelCancel}>
-                        取消
+                        {t('settings.models.modelForm.cancel')}
                       </button>
                       <span className="model-edit-hint">{modelCapsSummary(rowDraft.model)}</span>
                     </div>
@@ -1291,7 +1322,9 @@ function ProviderDetail(props: {
 
           {provider.models.length === 0 ? (
             <div className="model-list-empty">
-              这个端点还没有模型{props.editable ? '：点「添加模型」手填一个，或「拉取清单」从线上挑' : ''}。
+              {t('settings.models.list.empty')}
+              {props.editable ? t('settings.models.list.emptyTip') : ''}
+              {t('settings.models.list.tail')}
             </div>
           ) : null}
 
@@ -1310,12 +1343,12 @@ function ProviderDetail(props: {
                 />
                 <div className="model-edit-acts">
                   <button type="button" className="btn-primary" data-model-save="new" onClick={() => props.onModelSave(null, draft.model)}>
-                    保存
+                    {t('settings.models.modelForm.save')}
                   </button>
                   <button type="button" className="btn-ghost" onClick={props.onModelCancel}>
-                    取消
+                    {t('settings.models.modelForm.cancel')}
                   </button>
-                  <span className="model-edit-hint">模型 id 就是请求里发的名字</span>
+                  <span className="model-edit-hint">{t('settings.models.modelForm.idHint')}</span>
                 </div>
               </div>
             </div>
@@ -1340,7 +1373,7 @@ function BaseUrlInput(props: { value: string; onSave(value: string): void }): Re
       spellCheck={false}
       autoComplete="off"
       aria-label="Base URL"
-      title="失焦或回车保存"
+      title={t('settings.models.baseUrl.tip')}
       onChange={(event) => {
         setValue(event.target.value)
       }}
@@ -1406,15 +1439,13 @@ function PaneForm(props: {
 
   return (
     <div className="pane-form" data-provider-form={isNew ? 'new' : String(props.draft.oldName)}>
-      <div className="pane-form-title">{isNew ? '新增端点' : `编辑端点「${String(props.draft.oldName)}」`}</div>
+      <div className="pane-form-title">{isNew ? t('settings.models.form.new') : t('settings.models.form.edit', { name: String(props.draft.oldName) })}</div>
       <p className="pane-form-lead">
-        {isNew
-          ? '端点名是 config.yaml 里的键；至少要填一个模型，建好之后可以「拉取清单」把线上模型一次挑进来。'
-          : '这里只改名字与显示名。地址与密钥在上一条详情的连接行里就地改。'}
+        {isNew ? t('settings.models.form.leadNew') : t('settings.models.form.leadEdit')}
       </p>
       <div className="pane-form-grid">
         <label className="field">
-          <span>名字：小写字母、数字、- 或 _，作为 config.yaml 的键</span>
+          <span>{t('settings.models.form.nameLabel')}</span>
           <input
             className="setting-input mono"
             value={props.draft.name}
@@ -1426,7 +1457,7 @@ function PaneForm(props: {
           />
         </label>
         <label className="field">
-          <span>显示名</span>
+          <span>{t('settings.models.form.displayName')}</span>
           <input
             className="setting-input"
             value={props.draft.displayName}
@@ -1451,7 +1482,7 @@ function PaneForm(props: {
               />
             </label>
             <label className="field wide">
-              <span>API key（可留空：留空 = 不写凭据库，之后在详情里填）</span>
+              <span>{t('settings.models.form.apiKeyLabel')}</span>
               <input
                 className="setting-input mono"
                 type="password"
@@ -1467,21 +1498,21 @@ function PaneForm(props: {
         ) : null}
         <div className="field wide">
           <div className="model-rows-head">
-            <span>模型：id 是请求里发的名字，上下文窗口必填（不知道就填 128000）</span>
+            <span>{t('settings.models.form.modelsLabel')}</span>
             <div className="model-rows-tools">
-              <button type="button" className="text-btn" data-form-bulk="1" title="批量编辑：一行一个模型" onClick={switchBulk}>
-                <IconSwap size={13} /> {bulk ? '回到表格' : '批量文本'}
+              <button type="button" className="text-btn" data-form-bulk="1" title={t('settings.models.form.bulkTip')} onClick={switchBulk}>
+                <IconSwap size={13} /> {bulk ? t('settings.models.form.backToTable') : t('settings.models.bulk.aria')}
               </button>
               <button
                 type="button"
                 className="text-btn"
                 data-form-model-add="1"
-                title="再加一个模型"
+                title={t('settings.models.form.addModelTip')}
                 onClick={() => {
                   props.onChange({ ...props.draft, models: [...props.draft.models, blankModel()] })
                 }}
               >
-                <IconPlus size={13} /> 加模型
+                <IconPlus size={13} /> {t('settings.models.form.addModel')}
               </button>
             </div>
           </div>
@@ -1512,7 +1543,7 @@ function PaneForm(props: {
                 </div>
               ))}
               {props.draft.models.length === 0 ? (
-                <div className="model-rows-empty">这个端点还没有模型，点「加模型」填第一个（模型 id 就是请求里发的名字）。</div>
+                <div className="model-rows-empty">{t('settings.models.form.emptyModels')}</div>
               ) : null}
             </>
           )}
@@ -1520,12 +1551,12 @@ function PaneForm(props: {
       </div>
       <div className="pane-form-actions">
         <button type="button" className="btn-primary" data-provider-save="1" onClick={save}>
-          {isNew ? '创建端点' : '保存'}
+          {isNew ? t('settings.models.form.create') : t('settings.models.modelForm.save')}
         </button>
         <button type="button" className="btn-ghost" onClick={props.onCancel}>
-          取消
+          {t('settings.models.form.cancel')}
         </button>
-        <span className="pane-form-hint">API key 只写进凭据库，不进配置文件</span>
+        <span className="pane-form-hint">{t('settings.models.form.keyHint')}</span>
       </div>
     </div>
   )
@@ -1597,10 +1628,10 @@ function ModelFields(props: {
     <>
       <div className="model-row-main">
         <label className="model-row-field">
-          <span>模型 id</span>
+          <span>{t('settings.models.field.id')}</span>
           <input
             className="setting-input mono"
-            placeholder="请求里发的名字"
+            placeholder={t('settings.models.field.idPlaceholder')}
             value={model.id}
             spellCheck={false}
             onChange={(event) => {
@@ -1609,10 +1640,10 @@ function ModelFields(props: {
           />
         </label>
         <label className="model-row-field">
-          <span>显示名</span>
+          <span>{t('settings.models.field.displayName')}</span>
           <input
             className="setting-input"
-            placeholder="留空 = 用 id"
+            placeholder={t('settings.models.field.displayNamePlaceholder')}
             value={model.name === model.id ? '' : model.name}
             onChange={(event) => {
               props.onChange({ name: event.target.value })
@@ -1620,7 +1651,7 @@ function ModelFields(props: {
           />
         </label>
         <label className="model-row-field">
-          <span>上下文</span>
+          <span>{t('settings.models.field.context')}</span>
           <input
             className="setting-input mono"
             inputMode="numeric"
@@ -1635,7 +1666,7 @@ function ModelFields(props: {
           />
         </label>
         <label className="model-row-field">
-          <span>最大输出</span>
+          <span>{t('settings.models.field.maxTokens')}</span>
           <input
             className="setting-input mono"
             inputMode="numeric"
@@ -1650,14 +1681,14 @@ function ModelFields(props: {
           />
         </label>
         {props.onRemove !== undefined ? (
-          <button type="button" className="text-btn danger" data-model-remove-row="1" title="删掉这个模型" onClick={props.onRemove}>
+          <button type="button" className="text-btn danger" data-model-remove-row="1" title={t('settings.models.field.removeTip')} onClick={props.onRemove}>
             <IconTrash size={13} />
           </button>
         ) : null}
       </div>
       <div className="model-row-caps">
-        <span className="cap-label" title="这个模型支持的思考档位；没勾的档位在聊天里不会出现">
-          思考档位
+        <span className="cap-label" title={t('settings.models.field.thinkingTip')}>
+          {t('settings.models.field.thinking')}
         </span>
         <span className="cap-group">
           {THINKING_LEVELS.map((level) => (
@@ -1667,39 +1698,42 @@ function ModelFields(props: {
               className={`cap-chip${model.thinkingLevels.includes(level) ? ' on' : ''}`}
               data-cap-level={level}
               aria-pressed={model.thinkingLevels.includes(level)}
-              title={`思考档位「${THINKING_LEVEL_LABELS[level]}」${model.thinkingLevels.includes(level) ? '，已勾选' : '，没勾选'}`}
+              title={t('settings.models.field.levelTip', {
+                level: LEVEL_LABELS[level],
+                state: model.thinkingLevels.includes(level) ? t('settings.models.field.checked') : t('settings.models.field.unchecked'),
+              })}
               onClick={() => {
                 toggleLevel(level)
               }}
             >
-              {THINKING_LEVEL_LABELS[level]}
+              {LEVEL_LABELS[level]}
             </button>
           ))}
         </span>
         <Select
           className="setting-select cap-param"
           value={model.thinkingParam}
-          options={THINKING_PARAMS.map((param) => ({ value: param, label: THINKING_PARAM_LABELS[param].label }))}
+          options={THINKING_PARAMS.map((param) => ({ value: param, label: PARAM_LABELS[param] }))}
           onPick={(next) => {
             props.onChange({ thinkingParam: next })
           }}
-          ariaLabel="思考档位字段"
+          ariaLabel={t('settings.models.field.paramAria')}
         />
         {model.thinkingParam === 'reasoning-effort' ? (
           <span className="cap-wire">
-            <span className="cap-label" title="发给端点的档位值；留空 = 用内置值">
-              线上值
+            <span className="cap-label" title={t('settings.models.field.wireTip')}>
+              {t('settings.models.field.wire')}
             </span>
             {THINKING_LEVELS.filter((level) => model.thinkingLevels.includes(level)).map((level) => (
               <label className="cap-wire-field" key={level}>
-                <span>{THINKING_LEVEL_LABELS[level]}</span>
+                <span>{LEVEL_LABELS[level]}</span>
                 <input
                   className="setting-input mono cap-wire-input"
                   placeholder={EFFORT_WIRE_HINT[level]}
                   value={model.effortMap[level] ?? ''}
                   data-cap-wire={level}
                   spellCheck={false}
-                  title={`发给端点的 ${THINKING_LEVEL_LABELS[level]} 档写这个值；留空 = ${EFFORT_WIRE_HINT[level]}`}
+                  title={t('settings.models.field.wireFieldTip', { level: LEVEL_LABELS[level], hint: EFFORT_WIRE_HINT[level] })}
                   onChange={(event) => {
                     patchWire(level, event.target.value)
                   }}
@@ -1708,8 +1742,8 @@ function ModelFields(props: {
             ))}
           </span>
         ) : null}
-        <span className="cap-label" title="模型可接收的输入类型；没勾照片就发不出图片">
-          输入
+        <span className="cap-label" title={t('settings.models.field.modalityTip')}>
+          {t('settings.models.field.inputs')}
         </span>
         <span className="cap-group">
           {MODALITIES.map((modality) => (
@@ -1722,14 +1756,19 @@ function ModelFields(props: {
               aria-pressed={model.modalities.includes(modality)}
               title={
                 modality === 'text'
-                  ? '文本永远要勾（协议里没有文本就发不出消息）'
-                  : `${MODALITY_LABELS[modality]}输入${model.modalities.includes(modality) ? '，点一下取消' : '，点一下勾上'}`
+                  ? t('settings.models.field.textAlways')
+                  : t('settings.models.field.modality', {
+                      label: INPUT_LABELS[modality],
+                      state: model.modalities.includes(modality)
+                        ? t('settings.models.field.uncheck')
+                        : t('settings.models.field.check'),
+                    })
               }
               onClick={() => {
                 toggleModality(modality)
               }}
             >
-              {MODALITY_LABELS[modality]}
+              {INPUT_LABELS[modality]}
             </button>
           ))}
         </span>
@@ -1801,7 +1840,7 @@ function DiscoverDialog(props: {
       data-models-discover="1"
       role="dialog"
       aria-modal="true"
-      aria-label="拉取线上模型清单"
+      aria-label={t('settings.models.discover.aria')}
       onClick={(event) => {
         if (event.target === event.currentTarget) props.onClose()
       }}
@@ -1809,13 +1848,13 @@ function DiscoverDialog(props: {
       <div className="dsc-overlay__card models-discover-card" ref={dialog.ref}>
         <div className="models-discover-head">
           <span className="models-discover-title">
-            线上模型清单 · {provider.displayName === '' ? provider.name : provider.displayName}
+            {t('settings.models.discover.title', { name: provider.displayName === '' ? provider.name : provider.displayName })}
           </span>
           <span className="models-discover-count">
-            {props.models.length} 个，已加 {existing.size} 个
+            {t('settings.models.discover.count', { total: props.models.length, existing: existing.size })}
           </span>
           <button type="button" className="text-btn" data-models-discover-close="1" onClick={props.onClose}>
-            关闭
+            {t('settings.models.discover.close')}
           </button>
         </div>
         <div className="models-discover-search">
@@ -1824,15 +1863,15 @@ function DiscoverDialog(props: {
             className="setting-input"
             type="search"
             autoFocus
-            placeholder="按 id 过滤…"
-            aria-label="过滤线上模型"
+            placeholder={t('settings.models.discover.filterPlaceholder')}
+            aria-label={t('settings.models.discover.filterAria')}
             value={query}
             onChange={(event) => {
               setQuery(event.currentTarget.value)
             }}
           />
           <button type="button" className="text-btn" data-models-discover-all="1" onClick={toggleAllVisible}>
-            {chosenVisible === selectable.length && selectable.length > 0 ? '全不选' : '全选'}
+            {chosenVisible === selectable.length && selectable.length > 0 ? t('settings.models.discover.none') : t('settings.models.discover.all')}
           </button>
         </div>
         <ul className="models-discover-list">
@@ -1851,8 +1890,11 @@ function DiscoverDialog(props: {
                   aria-pressed={on}
                   title={
                     has
-                      ? '已经在端点里了（重复 id 保存会被拒）'
-                      : `${caps.note}${on ? ' · 点一下取消' : ' · 点一下勾上'}`
+                      ? t('settings.models.discover.exists')
+                      : t('settings.models.discover.itemTip', {
+                          note: caps.note,
+                          state: on ? t('settings.models.discover.uncheck') : t('settings.models.discover.check'),
+                        })
                   }
                   onClick={() => {
                     toggle(id)
@@ -1862,16 +1904,16 @@ function DiscoverDialog(props: {
                   <span className="mono">{id}</span>
                   <span className="models-discover-caps">
                     <span className="ctx">{contextLabel(caps.contextWindow)}</span>
-                    {caps.modalities.includes('image') ? <span className="cap-badge">图</span> : null}
-                    {caps.modalities.includes('video') ? <span className="cap-badge">视频</span> : null}
-                    {caps.thinkingLevels.length === 0 ? <span className="cap-badge dim">无思考</span> : null}
+                    {caps.modalities.includes('image') ? <span className="cap-badge">{t('settings.models.cap.image')}</span> : null}
+                    {caps.modalities.includes('video') ? <span className="cap-badge">{t('settings.models.cap.video')}</span> : null}
+                    {caps.thinkingLevels.length === 0 ? <span className="cap-badge dim">{t('settings.models.cap.noThinking')}</span> : null}
                   </span>
-                  {has ? <span className="models-discover-tag">已有</span> : null}
+                  {has ? <span className="models-discover-tag">{t('settings.models.discover.existing')}</span> : null}
                 </button>
               </li>
             )
           })}
-          {filtered.length === 0 ? <li className="models-discover-none">没有匹配「{query.trim()}」的模型。</li> : null}
+          {filtered.length === 0 ? <li className="models-discover-none">{t('settings.models.discover.noMatch', { query: query.trim() })}</li> : null}
         </ul>
         <div className="models-discover-actions">
           <button
@@ -1883,11 +1925,9 @@ function DiscoverDialog(props: {
               props.onAdopt(props.models.filter((id) => chosen.has(id)))
             }}
           >
-            采用选中的 {chosen.size} 个
+            {t('settings.models.discover.adopt', { count: chosen.size })}
           </button>
-          <span className="pane-form-hint">
-            每行的窗口 / 图片 / 视频都是推断出来的（停上去看依据），加完可在列表里逐项改。
-          </span>
+          <span className="pane-form-hint">{t('settings.models.discover.footer')}</span>
         </div>
       </div>
     </div>

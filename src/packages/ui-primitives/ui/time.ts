@@ -12,7 +12,13 @@
  *
  * @module dsc-ui-shell/platform/time
  */
-import type { TranscriptEntry } from '@dsc/ui-core'
+import { createT, type TranscriptEntry } from '@dsc/ui-core'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui-core` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 取出条目上可信的时间戳；没有或不是有限正数就是 null。 */
 export function entryTs(entry: TranscriptEntry | undefined): number | null {
@@ -49,9 +55,9 @@ export function formatDuration(ms: number | null): string | null {
   const minutes = Math.floor(total / 60) % 60
   const hours = Math.floor(total / 3600)
   const pad = (value: number): string => String(value).padStart(2, '0')
-  if (hours > 0) return `${String(hours)}时${pad(minutes)}分${pad(seconds)}秒`
-  if (minutes > 0) return `${String(minutes)}分${String(seconds)}秒`
-  return `${String(seconds)}秒`
+  if (hours > 0) return t('primitives.duration.hms', { h: hours, m: pad(minutes), s: pad(seconds) })
+  if (minutes > 0) return t('primitives.duration.ms', { m: minutes, s: seconds })
+  return t('primitives.duration.s', { s: seconds })
 }
 
 /**

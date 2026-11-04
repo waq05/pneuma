@@ -15,8 +15,14 @@
  *
  * @module dsc-ui-shell/plugins/composer/attachments
  */
-import type { UserFileAttachment } from '@dsc/ui'
+import { createT, type UserFileAttachment } from '@dsc/ui'
+// 本包自己的中英对照：中文原文是语义真源，英文是译本（构建时内联进插件 bundle）。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
 import type { AttachmentMeta, DraftAttachment } from './draft'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定。 */
+const t = createT({ zh, en })
 
 // 附件的两个类型定义在 `./draft.ts`（那边必须零 import，探针直读它）；这里只转发，
 // 免得两处各抄一份。语义与字段说明看 `draft.ts`。
@@ -43,8 +49,8 @@ const FRAME_TOTAL_TIMEOUT_MS = 45_000
 /** 允许的图片类型与扩展名（宿主只认这四类，界面先挡一道）。 */
 const IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'])
 const IMAGE_EXT = /\.(png|jpe?g|webp|gif)$/i
-const IMAGE_FORMAT_ERROR = '仅支持 PNG、JPG、WebP、GIF 格式的图片'
-const IMAGE_TOO_LARGE_ERROR = '单张图片超过 20 MB，先缩小一点'
+const IMAGE_FORMAT_ERROR = t('attach.error.format')
+const IMAGE_TOO_LARGE_ERROR = t('attach.error.tooLarge')
 
 /** 本地附件 id 的自增计数（同一毫秒内加多个文件也不会撞）。 */
 let nextId = 0
@@ -58,9 +64,9 @@ export function newAttachmentId(): string {
 /** 文件名兜底：剪贴板里的截图常常没有名字。 */
 export function displayNameOf(file: File, kind: AttachmentKind): string {
   if (file.name !== '') return file.name
-  if (kind === 'image') return '粘贴的图片.png'
-  if (kind === 'video') return '粘贴的视频.mp4'
-  return '附件'
+  if (kind === 'image') return t('attach.name.image')
+  if (kind === 'video') return t('attach.name.video')
+  return t('attach.name.file')
 }
 
 /** 按 MIME 粗分附件类型（宿主会按魔数再判一次）。 */
@@ -100,16 +106,16 @@ export function uploadFile(
         resolve(parsed.meta)
         return
       }
-      reject(new Error(parsed.error !== '' ? parsed.error : `上传失败（HTTP ${String(xhr.status)}）`))
+      reject(new Error(parsed.error !== '' ? parsed.error : t('attach.error.http', { status: xhr.status })))
     }
     xhr.onerror = () => {
-      reject(new Error('上传失败：网络连接中断'))
+      reject(new Error(t('attach.error.network')))
     }
     xhr.ontimeout = () => {
-      reject(new Error('上传失败：等宿主响应超时'))
+      reject(new Error(t('attach.error.timeout')))
     }
     xhr.onabort = () => {
-      reject(new Error('上传已取消'))
+      reject(new Error(t('attach.error.cancelled')))
     }
     xhr.send(file)
   })
@@ -195,23 +201,23 @@ export async function normalizeImage(file: File): Promise<Blob> {
     canvas.width = width
     canvas.height = height
     const context = canvas.getContext('2d')
-    if (context === null) throw new Error('图片处理失败：浏览器画布不可用')
+    if (context === null) throw new Error(t('attach.error.canvas'))
     context.drawImage(bitmap, 0, 0, width, height)
 
     const hasAlpha = mayHaveAlpha(mime, file.name) && canvasHasTransparency(context, width, height)
     if (hasAlpha) {
       const webp = await canvasToBlob(canvas, 'image/webp', 0.85)
-      if (webp === null) throw new Error('图片处理失败：无法编码 WebP')
-      if (webp.size > TARGET_IMAGE_BYTES) throw new Error('图片压缩后仍超过 4 MB，先换一张小一点的')
+      if (webp === null) throw new Error(t('attach.error.webp'))
+      if (webp.size > TARGET_IMAGE_BYTES) throw new Error(t('attach.error.compressed'))
       return webp
     }
 
     for (const quality of [0.85, 0.75, 0.6]) {
       const jpeg = await canvasToBlob(canvas, 'image/jpeg', quality)
-      if (jpeg === null) throw new Error('图片处理失败：无法编码 JPEG')
+      if (jpeg === null) throw new Error(t('attach.error.jpeg'))
       if (jpeg.size <= TARGET_IMAGE_BYTES) return jpeg
     }
-    throw new Error('图片压缩后仍超过 4 MB，先换一张小一点的')
+    throw new Error(t('attach.error.compressed'))
   } finally {
     bitmap.close()
   }

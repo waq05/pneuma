@@ -17,8 +17,16 @@
  * @module dsc-ui-shell/plugins/trace/timeline
  */
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { createT } from '@dsc/ui'
 import { formatClockSeconds, formatTraceDuration } from './trace-format'
 import type { TraceBoundary, TraceMark, TraceRange } from './trace-format'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 悬停多久才弹提示：500ms 是「停下来看」与「扫过去」的分界（需求指定）。 */
 const HOVER_DELAY_MS = 500
@@ -228,13 +236,16 @@ export function TraceTimeline(props: {
   const rangeLabel =
     range === null
       ? null
-      : `${formatTraceDuration(range.end - range.start) ?? '0.0s'} · ${String(props.selectedCount)} 步`
+      : t('timeline.range', {
+          duration: formatTraceDuration(range.end - range.start) ?? '0.0s',
+          count: props.selectedCount,
+        })
 
   if (props.spanStart === null || props.spanEnd === null) {
     return (
       <div className="trace-timeline is-empty" data-trace-timeline="empty">
-        <span className="ttl-title">时间概览</span>
-        <span className="ttl-note">本会话没有记录时间戳（2026-09 之前的老会话），时间条不画。</span>
+        <span className="ttl-title">{t('timeline.title')}</span>
+        <span className="ttl-note">{t('timeline.emptyNote')}</span>
       </div>
     )
   }
@@ -252,22 +263,25 @@ export function TraceTimeline(props: {
   return (
     <div className="trace-timeline" data-trace-timeline="1" data-marks={String(props.marks.length)}>
       <div className="ttl-head">
-        <span className="ttl-title">时间概览</span>
+        <span className="ttl-title">{t('timeline.title')}</span>
         <span className="ttl-range">
-          {formatClockSeconds(props.spanStart)} → {formatClockSeconds(props.spanEnd)} ·{' '}
-          {formatTraceDuration(fullSpan) ?? '不足 0.1s'}
+          {t('timeline.span', {
+            start: formatClockSeconds(props.spanStart) ?? '',
+            end: formatClockSeconds(props.spanEnd) ?? '',
+            duration: formatTraceDuration(fullSpan) ?? t('timeline.underTenth'),
+          })}
         </span>
         {viewport !== null && (
           <button
             type="button"
             className="ttl-chip ttl-zoom-reset"
             data-trace-zoom-reset="1"
-            data-tip="回到全览（滚轮缩放、右键拖动平移）"
+            data-tip={t('timeline.zoomResetTip')}
             onClick={() => {
               setViewport(null)
             }}
           >
-            已缩放 {formatTraceDuration(domainSpan) ?? ''} · 全览
+            {t('timeline.zoomReset', { duration: formatTraceDuration(domainSpan) ?? '' })}
           </button>
         )}
         {rangeLabel !== null && props.selected !== null && (
@@ -275,10 +289,10 @@ export function TraceTimeline(props: {
             type="button"
             className="ttl-chip"
             data-trace-selection-chip="1"
-            data-tip="清除选中的区间。轨道上单击或右键也可以清除。"
+            data-tip={t('timeline.clearTip')}
             onClick={() => props.onSelect(null)}
           >
-            已选 {rangeLabel} · 清除
+            {t('timeline.clearChip', { label: rangeLabel })}
           </button>
         )}
       </div>
@@ -289,7 +303,7 @@ export function TraceTimeline(props: {
         data-projectable={projectable ? '1' : '0'}
         data-zoomed={viewport === null ? undefined : '1'}
         role="group"
-        aria-label="会话时间概览：横向为时间，拖选一段区间可聚焦下方记录；滚轮缩放，右键拖动平移"
+        aria-label={t('timeline.trackAria')}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -319,7 +333,7 @@ export function TraceTimeline(props: {
               className="ttl-sep"
               data-trace-boundary={String(boundary.round)}
               style={{ left: `${String(spot.left)}%` }}
-              data-tip={`第 ${String(boundary.round + 1)} 轮从这里开始`}
+              data-tip={t('timeline.boundary', { n: boundary.round + 1 })}
             />
           )
         })}
@@ -369,11 +383,13 @@ export function TraceTimeline(props: {
             }}
           >
             <b>{hover.name}</b>
-            <span>{formatClockSeconds(hover.ts ?? hover.start) ?? '时刻未记录'}</span>
+            <span>{formatClockSeconds(hover.ts ?? hover.start) ?? t('timeline.timeMissing')}</span>
             <span>
               {hover.durationMs === null
-                ? '耗时未记录'
-                : `耗时 ${formatTraceDuration(hover.durationMs) ?? '未记录'}`}
+                ? t('timeline.durationMissing')
+                : t('timeline.duration', {
+                    duration: formatTraceDuration(hover.durationMs) ?? t('common.notRecorded'),
+                  })}
             </span>
           </span>
         )}

@@ -85,6 +85,12 @@ export * from '../../core/unified-diff.js'
 export * from './signal.js'
 
 /**
+ * 界面语言与取词（`i18n.ts`）：语言从启动图的 `host.language` 读一次，每包自建 `createT`。
+ * 内核对「清单两行字」的本地化在 `src/core/plugin-locale.ts`，两处口径一致（`en` 开头即英文）。
+ */
+export * from './i18n.js'
+
+/**
  * 宿主那些**界面要读的**视图类型的再导出。
  *
  * 为什么全是 `export type`：编译期就擦掉了，浏览器壳不会因为这一行把 `contract.ts`

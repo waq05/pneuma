@@ -1,0 +1,4 @@
+{
+  "slot.crash": "界面块 {id} 渲染失败：",
+  "factory.crash": "Factory {name} 的 {id} 渲染失败："
+}

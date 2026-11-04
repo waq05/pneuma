@@ -22,6 +22,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } fro
 import { createPortal } from 'react-dom'
 import {
   ACTIONS_SERVICE,
+  createT,
   defineUiPlugin,
   IconClose,
   IconCopy,
@@ -53,6 +54,12 @@ import {
   takePendingQuote,
   type AskBubble,
 } from './store'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 宿主 `sideAsk` 的回包形状（与 contract.ts 的 SideAskView 一致）。 */
 /** listModels 回来的一项（与 contract.ts 的 ModelChoiceView 同形，只取用得到的列）。 */
@@ -98,11 +105,11 @@ function openAsk(quote?: string): void {
 }
 
 export default defineUiPlugin({
-  name: '旁问',
+  name: t('ask.plugin.name'),
   apply(ui) {
     registerDockTab({
       kind: 'ask',
-      label: '旁问',
+      label: t('ask.tab.label'),
       icon: <IconSpark size={13} />,
       component: AskTab,
       // 切页签只藏不卸：正在回答的那条不该被切走打断（答案回来时还要写进气泡）。
@@ -122,10 +129,10 @@ function AskTriggers(): ReactNode {
     return actions.register('ask', [
       {
         id: 'ask.open',
-        label: '打开旁问',
-        hint: '在右侧栏问一句，不动主会话',
-        group: '旁问',
-        keywords: ['btw', 'side', 'ask', '问', '旁问'],
+        label: t('ask.action.open'),
+        hint: t('ask.action.openHint'),
+        group: t('ask.action.group'),
+        keywords: ['btw', 'side', 'ask', '问', '旁问'], // i18n-keep 搜索关键词：用户按中文输入匹配这条动作，翻译后中文就搜不到了
         shortcut: 'Ctrl+Shift+K',
         run: () => {
           openAsk()
@@ -133,10 +140,10 @@ function AskTriggers(): ReactNode {
       },
       {
         id: 'ask.selection',
-        label: '就选中内容旁问',
-        hint: '把正文里选中的文字带进旁问',
-        group: '旁问',
-        keywords: ['选中', 'selection', 'explain', '解释'],
+        label: t('ask.action.selection'),
+        hint: t('ask.action.selectionHint'),
+        group: t('ask.action.group'),
+        keywords: ['选中', 'selection', 'explain', '解释'], // i18n-keep 搜索关键词：用户按中文输入匹配这条动作，翻译后中文就搜不到了
         run: () => {
           const quote = currentSelection()
           if (quote === null) {
@@ -235,7 +242,7 @@ function SelectionBubble(): ReactNode {
       }}
     >
       <IconSpark size={13} />
-      问 AI
+      {t('ask.selectionBubble')}
     </button>,
     document.body,
   )
@@ -329,11 +336,8 @@ function AskTab({ active }: DockTabBodyProps): ReactNode {
             <span className="ask-empty-icon">
               <IconSpark size={18} />
             </span>
-            <p className="ask-empty-title">只回答，不动手</p>
-            <p className="ask-empty-desc">
-              在左边正文里选中一段文字，点浮出的「问 AI」；也可以直接在下面提问。
-              旁问不会执行工具、不会写进主会话，答案只留在这个面板里。
-            </p>
+            <p className="ask-empty-title">{t('ask.empty.title')}</p>
+            <p className="ask-empty-desc">{t('ask.empty.desc')}</p>
           </div>
         ) : (
           bubbles.map((bubble) => (
@@ -352,13 +356,13 @@ function AskTab({ active }: DockTabBodyProps): ReactNode {
       </div>
       <div className="ask-composer">
         <div className="ask-model">
-          <span className="ask-model-label">模型</span>
+          <span className="ask-model-label">{t('ask.model.label')}</span>
           <Select
             value={picked}
-            ariaLabel="旁问使用的模型"
+            ariaLabel={t('ask.model.aria')}
             className="ask-model-select"
             options={[
-              { value: '', label: '跟随主会话' },
+              { value: '', label: t('ask.model.follow') },
               ...models.map((item) => ({ value: item.value, label: item.providerDisplayName + ' · ' + item.model })),
             ]}
             onPick={(value) => {
@@ -373,7 +377,7 @@ function AskTab({ active }: DockTabBodyProps): ReactNode {
             <button
               type="button"
               className="ask-quote-drop"
-              aria-label="去掉这段引用"
+              aria-label={t('ask.quote.removeAria')}
               onClick={() => {
                 setQuote('')
               }}
@@ -387,8 +391,8 @@ function AskTab({ active }: DockTabBodyProps): ReactNode {
           className="ask-input"
           rows={2}
           value={question}
-          placeholder="问点什么（Enter 发送，Shift+Enter 换行）"
-          aria-label="旁问的问题"
+          placeholder={t('ask.input.placeholder')}
+          aria-label={t('ask.input.aria')}
           onChange={(event) => {
             setQuestion(event.target.value)
           }}
@@ -403,7 +407,7 @@ function AskTab({ active }: DockTabBodyProps): ReactNode {
           type="button"
           className="ask-send"
           disabled={question.trim() === ''}
-          aria-label="发送旁问"
+          aria-label={t('ask.send.aria')}
           onClick={send}
         >
           <IconArrowUp size={14} />
@@ -428,7 +432,7 @@ function AskCard(props: {
         <p className="ask-error">{bubble.error}</p>
       ) : bubble.status === 'running' && bubble.answer === '' ? (
         // 还没吐第一个字：三点呼吸占位。
-        <div className="ask-typing" role="status" aria-label="正在回答">
+        <div className="ask-typing" role="status" aria-label={t('ask.typing.aria')}>
           <span />
           <span />
           <span />
@@ -443,37 +447,37 @@ function AskCard(props: {
       <div className="ask-foot">
         <span className="ask-meta">
           {bubble.status === 'running'
-            ? '正在回答…'
+            ? t('ask.meta.running')
             : bubble.status === 'stopped'
-              ? '已停止'
+              ? t('ask.meta.stopped')
               : bubble.model === undefined
                 ? ''
                 : bubble.model + (bubble.ms === undefined ? '' : ' · ' + (bubble.ms / 1000).toFixed(1) + 's')}
         </span>
         {bubble.status === 'running' ? (
           <button type="button" className="ask-stop" onClick={props.onStop}>
-            停止
+            {t('ask.stop')}
           </button>
         ) : null}
         <button
           type="button"
           className="ask-icon-btn"
-          aria-label="复制这条答案"
+          aria-label={t('ask.copy.aria')}
           disabled={bubble.answer === ''}
           onClick={() => {
             void navigator.clipboard.writeText(bubble.answer).then(
               () => {
-                toastOk('答案已复制')
+                toastOk(t('ask.copy.ok'))
               },
               () => {
-                toastOk('复制失败，请手动选中')
+                toastOk(t('ask.copy.failed'))
               },
             )
           }}
         >
           <IconCopy size={13} />
         </button>
-        <button type="button" className="ask-icon-btn" aria-label="删掉这条" onClick={props.onRemove}>
+        <button type="button" className="ask-icon-btn" aria-label={t('ask.remove.aria')} onClick={props.onRemove}>
           <IconClose size={13} />
         </button>
       </div>

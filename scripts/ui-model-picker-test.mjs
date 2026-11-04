@@ -335,7 +335,11 @@ console.log('[8] 界面接线（ui.tsx）')
   check('指针离开面板就收起飞出卡（卡片是面板的子节点，所以移进卡片不算离开）', /onMouseLeave=\{\(\) => \{[\s\S]{0,200}?setHoverProvider\(null\)[\s\S]{0,80}?setFlyout\(null\)/.test(ui))
   check('端点列表滚过之后重量一次（卡片还贴着那一行）', ui.includes('onScroll={() =>') && ui.includes("querySelector<HTMLElement>(") && ui.includes('[data-model-provider='))
   check('量完再画：卡片渲染出来之后用 useLayoutEffect 拿自然高修正一次（不然靠近底部的行会盖住输入框）', ui.includes('useLayoutEffect(') && ui.includes('card.scrollHeight') && ui.includes('setFlyout((prev) =>'))
-  check('当前模型不在清单里时有一条说明（不是一片「一条都不打勾」）', ui.includes('data-model-unknown="true"') && ui.includes('清单里没有这个模型'))
+  // 2026-11-04 夜起文案进本包字典：这里钉「用了那条键」，译文本身由 ui-locale-test 判。
+  check(
+    '当前模型不在清单里时有一条说明（不是一片「一条都不打勾」）',
+    ui.includes('data-model-unknown="true"') && ui.includes("t('model.currentMissing'"),
+  )
   check('展开时把当前模型滚进视野（勾在滚动区外等于没打勾）', (ui.match(/scrollIntoView\(\{ block: 'nearest' \}\)/g) ?? []).length >= 1 && ui.includes('[data-model-current="true"]'))
   check('底部「管理模型」跳到设置的模型分区', ui.includes('data-model-manage=') && ui.includes("new CustomEvent('shell.settings.open', { detail: { section: 'models' } })"))
   check('清单每次展开重取（挂载取一次那条旧口径的修法）', /'listModels'\)[\s\S]{0,400}?\}, \[channel, modelOpen\]\)/.test(ui))
@@ -345,7 +349,10 @@ console.log('[8] 界面接线（ui.tsx）')
   check('当前端点来自快照（`status.provider`），壳不猜', ui.includes('function readProvider(') && ui.includes("['provider']"))
   check('四张浮层两两互斥（开一颗收掉其余三颗）', (ui.match(/setEffortOpen\(false\)/g) ?? []).length >= 4 && (ui.match(/setModelOpen\(false\)/g) ?? []).length >= 4)
   check('两颗新图标来自基元库（`@dsc/ui` 整包转出）', ui.includes('IconPackage') && ui.includes('IconBrain') && read('ui-shell/src/plugin-api.ts').includes("export * from '@dsc/ui-primitives'"))
-  check('死的 `data-tip` 换成真 `title`（壳里 data-tip 是不渲染的死属性）', !ui.includes('data-tip="模型与思考强度"') && ui.includes('title={`模型：${chip.full}（点开换）`}'))
+  check(
+    '死的 `data-tip` 换成真 `title`（壳里 data-tip 是不渲染的死属性）',
+    !ui.includes('data-tip="模型与思考强度"') && ui.includes("title={t('model.chip.title', { name: chip.full })}"),
+  )
   const icons = flat(read('src/packages/ui-primitives/ui/icons.tsx'))
   check('两颗图标真定义了（细线风格，currentColor）', icons.includes('export function IconPackage(') && icons.includes('export function IconBrain('))
 }

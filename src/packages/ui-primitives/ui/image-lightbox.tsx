@@ -15,6 +15,14 @@
  */
 import { useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { createT } from '@dsc/ui-core'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui-core` 的 `createT`）。 */
+const t = createT({ zh, en })
+
 
 export function ImageLightbox(props: { src: string; alt: string; onClose(): void }): ReactNode {
   const { onClose } = props
@@ -50,7 +58,7 @@ export function ImageLightbox(props: { src: string; alt: string; onClose(): void
       className="img-lightbox"
       role="dialog"
       aria-modal="true"
-      aria-label="放大查看贴图"
+      aria-label={t('primitives.lightbox.aria')}
       onClick={onClose}
     >
       {/* 图片本身不拦事件：点图、点遮罩都关（与旧界面「点任意处关」一致）。 */}

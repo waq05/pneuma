@@ -190,7 +190,8 @@ console.log('7c. 单条工具组放平（2026-10-31：屏幕上「所有都是�
   const row = read(UI + '/step-group-row.tsx')
   check('纯函数 needsGroupHeader 只认两条以上', /export function needsGroupHeader\(group: StepGroup\): boolean \{\s*return group\.size >= 2/.test(groups))
   check('渲染层对单条组直接摆那一行（不再套组头）', render.includes('needsGroupHeader(head)') && /if \(!needsGroupHeader\(head\)\)/.test(render))
-  check('开合提示只数工具调用（思考不在组里）', row.includes('次工具调用') && !row.includes('项思考与工具调用'))
+  // 文案进本包字典：钉「用了带 count 的那条键」，中文原文由 ui-locale-test 判。
+  check('开合提示只数工具调用（思考不在组里）', row.includes("t('transcript.group.collapseTip', { count:") && !row.includes('项思考与工具调用'))
 }
 
 console.log('8. 思考标头是正体（用户 2026-10-30：「换成正的，别斜体」）')

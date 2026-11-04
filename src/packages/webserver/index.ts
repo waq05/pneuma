@@ -22,6 +22,10 @@
 import type { Plugin } from '@deepseek-ai/cordis'
 import { join } from 'node:path'
 import { bootNoticeOnce } from '@pneuma/runtime/core/boot-notices.js'
+// 界面语言：与插件中心读清单译本同一个来源（`config.yaml` 的 `language:`）。
+// 只读一个字段、不碰 readConfig()（它会顺带做凭据注入与 dsh 迁移，挂个界面服务不值得）。
+import { languageOfConfigFile } from '@pneuma/runtime/core/plugin-locale.js'
+import { activeConfigFile } from '@pneuma/runtime/core/config-store.js'
 import { attachmentStore, sanitizeFileRefs } from '@pneuma/runtime/core/attachments.js'
 import { resolvePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { createUiEvents, type UiEventsHandle } from '@pneuma/runtime/core/ui-events.js'
@@ -223,7 +227,8 @@ export const webserverPlugin: Plugin.Object = {
         },
       })
       const server = await createUiServer({
-        host: { name: 'Pneuma', version: DSC_VERSION },
+        // 语言随宿主身份进启动图：界面在首帧之前就要用它选文案，不能等一次异步回读。
+        host: { name: 'Pneuma', version: DSC_VERSION, language: languageOfConfigFile(activeConfigFile()) },
         port: config.port,
         events: channel,
         attachments: attachmentStore(),

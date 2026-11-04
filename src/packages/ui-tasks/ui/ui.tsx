@@ -15,10 +15,17 @@
  */
 import { type ReactNode } from 'react'
 import { toastErr, toastOk, useHostChannel, useHostSelector, type GoalView } from '@dsc/ui'
-import { defineUiPlugin } from '@dsc/ui'
+import { createT, defineUiPlugin } from '@dsc/ui'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 export default defineUiPlugin({
-  name: '任务与目标',
+  name: t('tasks.plugin.name'),
   apply(ui) {
     // order 22：排在审批/计划/提问卡（prompt，order 10）之后、输入框（composer，order 50）之前。
     ui.slots.register('shell.composer', { id: 'tasks.goal', order: 22 }, GoalBarSlot)
@@ -41,49 +48,49 @@ function GoalBarSlot(): ReactNode {
   const phase =
     goal.phase === 'active'
       ? goal.armed
-        ? '自动续跑中'
-        : '已建立（未上膛）'
+        ? t('tasks.phase.armed')
+        : t('tasks.phase.disarmed')
       : goal.phase === 'paused'
-        ? '已暂停'
+        ? t('tasks.phase.paused')
         : goal.phase === 'blocked'
-          ? '已阻塞'
-          : '已完成'
+          ? t('tasks.phase.blocked')
+          : t('tasks.phase.complete')
   const action = (name: 'pause' | 'resume' | 'clear' | 'extend', tip: string): void => {
     void channel
       .invoke('goalAction', [name])
       .then(() => toastOk(tip))
-      .catch((reason: unknown) => toastErr(`目标操作失败：${reason instanceof Error ? reason.message : String(reason)}`))
+      .catch((reason: unknown) =>
+        toastErr(t('tasks.actionFailed', { message: reason instanceof Error ? reason.message : String(reason) })),
+      )
   }
   return (
     <div className="entry-row">
       <div className={`goal-bar phase-${goal.phase}`}>
-        <span className="goal-label">目标</span>
+        <span className="goal-label">{t('tasks.goal.label')}</span>
         <span className="goal-text" title={goal.blockedReason ?? goal.objective}>
           {goal.objective}
         </span>
-        <span className="goal-state">
-          {phase} · {goal.rounds}/{goal.maxRounds} 轮
-        </span>
+        <span className="goal-state">{t('tasks.state', { phase, rounds: goal.rounds, max: goal.maxRounds })}</span>
         {goal.phase === 'active' ? (
           <button
             type="button"
             className="goal-btn"
-            onClick={() => action('pause', '目标已暂停')}
-            title="暂停自动续跑（不会打断当前这一轮）"
+            onClick={() => action('pause', t('tasks.toast.paused'))}
+            title={t('tasks.tip.pause')}
           >
-            暂停
+            {t('tasks.btn.pause')}
           </button>
         ) : goal.phase !== 'complete' ? (
-          <button type="button" className="goal-btn" onClick={() => action('resume', '目标已继续')} title="继续自动续跑">
-            继续
+          <button type="button" className="goal-btn" onClick={() => action('resume', t('tasks.toast.resumed'))} title={t('tasks.tip.resume')}>
+            {t('tasks.btn.resume')}
           </button>
         ) : null}
-        {goal.phase === 'blocked' && goal.blockedReason?.startsWith('轮次已达上限') === true ? (
-          <button type="button" className="goal-btn" onClick={() => action('extend', '已放宽轮次')} title="再加 8 轮">
-            放宽轮次
+        {goal.phase === 'blocked' && goal.blockedReason?.startsWith('轮次已达上限') === true ? ( // i18n-keep 宿主写进 blockedReason 的中文前缀，用来认「轮次已达上限」这一种阻塞，不能跟着界面语言变
+          <button type="button" className="goal-btn" onClick={() => action('extend', t('tasks.toast.extended'))} title={t('tasks.tip.extend', { count: 8 })}>
+            {t('tasks.btn.extend')}
           </button>
         ) : null}
-        <button type="button" className="goal-btn ghost" onClick={() => action('clear', '目标已清除')} title="清空目标">
+        <button type="button" className="goal-btn ghost" onClick={() => action('clear', t('tasks.toast.cleared'))} title={t('tasks.tip.clear')}>
           ✕
         </button>
       </div>

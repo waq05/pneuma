@@ -25,6 +25,7 @@ import {
   IconRefresh,
   IconSearch,
   IconStore,
+  createT,
   defineUiPlugin,
   getHostNative,
   toastErr,
@@ -33,6 +34,13 @@ import {
   useShellPage,
 } from '@dsc/ui'
 import { SkeletonText, errText as text, humanErrorText } from '@dsc/ui-primitives'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 这一页在 page-state 里的 id（侧栏入口与页条目约定同一个值）。 */
 const PAGE = 'skills'
@@ -42,12 +50,12 @@ const PAGE = 'skills'
  * `user-dsh` 是 dsh 自己的全局技能目录，`user-agents` 是公共 Agent 目录（`~/.agents/skills`）。
  */
 const SOURCE_LABELS: Record<string, string> = {
-  'project-dsc': '本项目 .dsc/skills',
-  'project-agents': '本项目 .agents/skills',
-  custom: '自定义目录',
-  'user-agents': '公共 Agent',
-  'user-dsc': '用户技能 ~/.dsc/skills',
-  'user-dsh': 'DSH 全局技能',
+  'project-dsc': t('source.projectDsc'),
+  'project-agents': t('source.projectAgents'),
+  custom: t('source.custom'),
+  'user-agents': t('source.userAgents'),
+  'user-dsc': t('source.userDsc'),
+  'user-dsh': t('source.userDsh'),
 }
 
 /** 分组的先后：项目在前（它们压过同名的全局技能），再按全局目录的优先级。 */
@@ -103,7 +111,7 @@ interface MarketBrowseResult {
 }
 
 export default defineUiPlugin({
-  name: '技能中心',
+  name: t('plugin.name'),
   apply(ui) {
     ui.slots.register('shell.page', { id: 'skills.page', order: 20 }, SkillsPage)
   },
@@ -158,12 +166,12 @@ function SkillsView(): ReactNode {
         setMarket(result)
         setMarketSource(result.source)
         // 抓取失败的原因挂在面板里（带重试按钮）；手动刷新额外补一条 Toast 回执。
-        if (result.error !== undefined && refresh) toastErr(`获取失败：${result.error}`)
-        else if (refresh) toastOk(`已从 ${result.source} 获取 ${String(result.items.length)} 个技能`)
+        if (result.error !== undefined && refresh) toastErr(t('toast.fetchFailed', { error: result.error }))
+        else if (refresh) toastOk(t('toast.fetched', { source: result.source, count: result.items.length }))
         maybeAutoInstall()
       })
       .catch((error: unknown) => {
-        toastErr(`获取失败：${text(error)}`)
+        toastErr(t('toast.fetchFailed', { error: text(error) }))
       })
       .finally(() => {
         setMarketLoading(false)
@@ -215,7 +223,7 @@ function SkillsView(): ReactNode {
       if (group === undefined) {
         group = {
           key,
-          label: SOURCE_LABELS[skill.source] ?? '插件提供',
+          label: SOURCE_LABELS[skill.source] ?? t('group.provider'),
           root: skill.root,
           order: SOURCE_ORDER.indexOf(skill.source) === -1 ? SOURCE_ORDER.length : SOURCE_ORDER.indexOf(skill.source),
           items: [],
@@ -242,12 +250,12 @@ function SkillsView(): ReactNode {
     void channel
       .invoke<{ ok: boolean; error?: string; notice?: string }>('setSkillEnabled', [skill.name, next])
       .then((result) => {
-        if (!result.ok) toastErr(`操作失败：${result.error ?? '未知原因'}`)
+        if (!result.ok) toastErr(t('toast.actionFailed', { error: result.error ?? t('common.unknownReason') }))
         else if (result.notice !== undefined) toastOk(result.notice)
         reloadSkills()
       })
       .catch((error: unknown) => {
-        toastErr(`操作失败：${text(error)}`)
+        toastErr(t('toast.actionFailed', { error: text(error) }))
         reloadSkills()
       })
   }
@@ -260,11 +268,11 @@ function SkillsView(): ReactNode {
     void channel
       .invoke<{ ok: boolean; skill?: SkillDetail; error?: string }>('readSkill', [skill.name])
       .then((result) => {
-        if (!result.ok || result.skill === undefined) toastErr(`读取正文失败：${result.error ?? '未知原因'}`)
+        if (!result.ok || result.skill === undefined) toastErr(t('toast.readFailed', { error: result.error ?? t('common.unknownReason') }))
         else setDetail(result.skill)
       })
       .catch((error: unknown) => {
-        toastErr(`读取正文失败：${text(error)}`)
+        toastErr(t('toast.readFailed', { error: text(error) }))
       })
   }
 
@@ -272,11 +280,11 @@ function SkillsView(): ReactNode {
   const openFolder = (path: string): void => {
     const native = getHostNative()
     if (!native.available) {
-      toastErr('用系统程序打开只在桌面版里有（浏览器里没有这条桥）')
+      toastErr(t('toast.openFolderDesktopOnly'))
       return
     }
     void native.invoke<string>('openPath', [path]).then((problem) => {
-      if (problem !== '') toastErr(`打开失败：${problem}`)
+      if (problem !== '') toastErr(t('toast.openFailed', { error: problem }))
     })
   }
 
@@ -287,18 +295,18 @@ function SkillsView(): ReactNode {
   const importSkill = (): void => {
     const native = getHostNative()
     if (!native.available) {
-      toastErr('导入技能来自桌面外壳的文件选择器，浏览器里没有它')
+      toastErr(t('toast.importDesktopOnly'))
       return
     }
     void native
       .invoke<string[]>('installSkill')
       .then((names) => {
         if (!Array.isArray(names) || names.length === 0) return
-        toastOk(`已导入 ${names.join('、')}`)
+        toastOk(t('toast.imported', { names: names.join(t('common.listSep')) }))
         reloadSkills()
       })
       .catch((error: unknown) => {
-        toastErr(`导入失败：${text(error)}`)
+        toastErr(t('toast.importFailed', { error: text(error) }))
       })
   }
 
@@ -306,7 +314,7 @@ function SkillsView(): ReactNode {
   const install = (item: MarketSkillView): void => {
     const native = getHostNative()
     if (!native.available) {
-      toastErr('安装技能要往 ~/.dsc/skills 写文件，只桌面版能做（浏览器里没有这条桥）')
+      toastErr(t('toast.installDesktopOnly'))
       return
     }
     setInstalling(`${item.source}/${item.name}`)
@@ -314,10 +322,10 @@ function SkillsView(): ReactNode {
       .invoke<{ ok: boolean; notice?: string; error?: string }>('installMarketSkill', [item.source, item.name])
       .then((result) => {
         if (!result.ok) {
-          toastErr(`安装失败：${result.error ?? '未知原因'}`)
+          toastErr(t('toast.installFailed', { error: result.error ?? t('common.unknownReason') }))
           return
         }
-        toastOk(result.notice ?? `已安装 ${item.name}`)
+        toastOk(result.notice ?? t('toast.installed', { name: item.name }))
         reloadSkills()
         setMarket((current) =>
           current === null
@@ -331,7 +339,7 @@ function SkillsView(): ReactNode {
         )
       })
       .catch((error: unknown) => {
-        toastErr(`安装失败：${text(error)}`)
+        toastErr(t('toast.installFailed', { error: text(error) }))
       })
       .finally(() => {
         setInstalling('')
@@ -353,12 +361,12 @@ function SkillsView(): ReactNode {
       })
       .filter((source) => source.name !== '' && source.url !== '')
     if (sources.length === 0) {
-      toastErr('请按格式填写，一行一个源：名字, 仓库地址')
+      toastErr(t('toast.sourceFormat'))
       return
     }
     const native = getHostNative()
     if (!native.available) {
-      toastErr('改市场源要写 ~/.dsc 里的设置，只桌面版能做（浏览器里没有这条桥）')
+      toastErr(t('toast.sourcesDesktopOnly'))
       return
     }
     setSavingSources(true)
@@ -366,16 +374,16 @@ function SkillsView(): ReactNode {
       .invoke<{ ok: boolean; notice?: string; error?: string }>('setMarketSources', [sources])
       .then((result) => {
         if (!result.ok) {
-          toastErr(`保存失败：${result.error ?? '未知原因'}`)
+          toastErr(t('toast.saveFailed', { error: result.error ?? t('common.unknownReason') }))
           return
         }
-        toastOk(result.notice ?? '市场源已保存')
+        toastOk(result.notice ?? t('toast.sourcesSaved'))
         setSourcesOpen(false)
         setMarket(null)
         browse(sources[0]?.name ?? '', false)
       })
       .catch((error: unknown) => {
-        toastErr(`保存失败：${text(error)}`)
+        toastErr(t('toast.saveFailed', { error: text(error) }))
       })
       .finally(() => {
         setSavingSources(false)
@@ -400,20 +408,20 @@ function SkillsView(): ReactNode {
     <div className="skills">
       <div className="skills-head">
         <div>
-          <h1>技能</h1>
-          <p>可复用的操作手册：模型按需读取，用户用 /技能名 直接调用</p>
+          <h1>{t('page.title')}</h1>
+          <p>{t('page.desc')}</p>
         </div>
         <div className="skills-actions">
-          <button type="button" className="icon-btn" data-tip="重新扫描技能目录" aria-label="重新扫描技能目录" onClick={reloadSkills}>
+          <button type="button" className="icon-btn" data-tip={t('action.rescan')} aria-label={t('action.rescan')} onClick={reloadSkills}>
             <IconRefresh size={16} />
           </button>
           <button
             type="button"
             className="btn-primary"
-            data-tip="导入技能（选含 SKILL.md 的目录或 .md 文件）"
+            data-tip={t('action.importTip')}
             onClick={importSkill}
           >
-            <IconPlus size={14} /> 导入技能
+            <IconPlus size={14} /> {t('action.import')}
           </button>
         </div>
       </div>
@@ -426,7 +434,7 @@ function SkillsView(): ReactNode {
             setTab('installed')
           }}
         >
-          <IconBolt size={14} /> 已安装 <span className="count">{skills?.length ?? 0}</span>
+          <IconBolt size={14} /> {t('tab.installed')} <span className="count">{skills?.length ?? 0}</span>
         </button>
         <button
           type="button"
@@ -435,12 +443,12 @@ function SkillsView(): ReactNode {
             setTab('market')
           }}
         >
-          <IconStore size={14} /> 市场 <span className="count">{market?.items.length ?? 0}</span>
+          <IconStore size={14} /> {t('tab.market')} <span className="count">{market?.items.length ?? 0}</span>
         </button>
         <div className="skills-search">
           <IconSearch size={14} />
           <input
-            placeholder={tab === 'installed' ? '搜索本机技能' : '搜索市场技能'}
+            placeholder={tab === 'installed' ? t('search.installed') : t('search.market')}
             value={query}
             onChange={(event) => {
               setQuery(event.target.value)
@@ -451,11 +459,11 @@ function SkillsView(): ReactNode {
 
       {/* 作用域：全局（公共 Agent / ~/.dsc / DSH / 自定义目录）与项目分开看，与 dsh 同口径。 */}
       {tab === 'installed' ? (
-        <div className="skills-scope" role="group" aria-label="技能作用域">
+        <div className="skills-scope" role="group" aria-label={t('scope.aria')}>
           {([
-            { value: 'all', label: '全部', count: scopeCounts.all },
-            { value: 'global', label: '全局', count: scopeCounts.global },
-            { value: 'project', label: '项目', count: scopeCounts.project },
+            { value: 'all', label: t('scope.all'), count: scopeCounts.all },
+            { value: 'global', label: t('scope.global'), count: scopeCounts.global },
+            { value: 'project', label: t('scope.project'), count: scopeCounts.project },
           ] as const).map((chip) => (
             <button
               key={chip.value}
@@ -474,9 +482,11 @@ function SkillsView(): ReactNode {
 
       {tab === 'installed' ? (
         <div className="skills-list">
-          {skillsError !== '' && <div className="settings-note error">扫描失败：{humanErrorText(skillsError).text}</div>}
+          {skillsError !== '' && (
+            <div className="settings-note error">{t('list.scanFailed', { message: humanErrorText(skillsError).text })}</div>
+          )}
           {skills === null && skillsError === '' && (
-            <div className="settings-loading" role="status" aria-label="正在扫描技能目录">
+            <div className="settings-loading" role="status" aria-label={t('list.scanning')}>
               <SkeletonText lines={4} />
               <SkeletonText lines={3} widths={['100%', '100%', '54%']} />
             </div>
@@ -486,15 +496,23 @@ function SkillsView(): ReactNode {
               <span className="empty-card-icon">
                 <IconBolt size={18} />
               </span>
-              <div className="empty-card-title">还没有技能</div>
+              <div className="empty-card-title">{t('empty.title')}</div>
               <p className="empty-card-desc">
-                把 <code>&lt;名字&gt;/SKILL.md</code> 放进 <code>~/.dsc/skills/</code>、
-                <code>~/.agents/skills/</code>（公共 Agent）、<code>~/.dsh/skills/</code>（DSH 全局）
-                或项目的 <code>.dsc/skills</code>，也可以直接导入一个目录。
+                {t('empty.lead')}
+                <code>{t('empty.pattern')}</code>
+                {t('empty.into')}
+                <code>~/.dsc/skills/</code>
+                {t('empty.sep')}
+                <code>~/.agents/skills/</code>
+                {t('empty.sharedAgent')}
+                <code>~/.dsh/skills/</code>
+                {t('empty.dshGlobal')}
+                <code>.dsc/skills</code>
+                {t('empty.tail')}
               </p>
               <div className="empty-card-actions">
                 <button type="button" className="btn-primary" onClick={importSkill}>
-                  导入技能
+                  {t('action.import')}
                 </button>
                 <button
                   type="button"
@@ -503,7 +521,7 @@ function SkillsView(): ReactNode {
                     setTab('market')
                   }}
                 >
-                  去市场看看
+                  {t('empty.toMarket')}
                 </button>
               </div>
             </div>
@@ -512,7 +530,7 @@ function SkillsView(): ReactNode {
             <div className="skills-group" key={group.key}>
               <div className="skills-group-head">
                 <span className="skills-group-title">{group.label}</span>
-                <span className="skills-group-count">{group.items.length} 个技能</span>
+                <span className="skills-group-count">{t('group.count', { count: group.items.length })}</span>
                 {group.root === undefined ? null : (
                   <span className="mono skills-group-path" data-tip={group.root}>{group.root}</span>
                 )}
@@ -529,12 +547,14 @@ function SkillsView(): ReactNode {
                     {skill.name}
                   </span>
                   {/* 来源不再逐行打标：组头已经写了「来自哪个目录」，一行两个徽章反而更吵。 */}
-                  {!skill.modelInvocable && <span className="tag">仅手动</span>}
+                  {!skill.modelInvocable && <span className="tag">{t('row.manualOnly')}</span>}
                 </div>
                 <div className={`skill-desc${skill.problem !== undefined ? ' problem' : ''}`}>
                   {skill.problem !== undefined ? `⚠ ${skill.problem}` : skill.description}
                 </div>
-                {skill.whenToUse !== undefined && <div className="skill-when">何时用：{skill.whenToUse}</div>}
+                {skill.whenToUse !== undefined && (
+                  <div className="skill-when">{t('row.whenToUse', { text: skill.whenToUse })}</div>
+                )}
                 <div className="skill-links">
                   <button
                     type="button"
@@ -543,7 +563,7 @@ function SkillsView(): ReactNode {
                       openDetail(skill)
                     }}
                   >
-                    {detail?.name === skill.name ? '收起正文' : '查看正文'}
+                    {detail?.name === skill.name ? t('row.hideBody') : t('row.showBody')}
                   </button>
                   {skill.path !== undefined && (
                     <>
@@ -555,7 +575,7 @@ function SkillsView(): ReactNode {
                           openFolder(skill.path ?? '')
                         }}
                       >
-                        <IconFolder size={13} /> 打开所在目录
+                        <IconFolder size={13} /> {t('row.openFolder')}
                       </button>
                       <span className="mono skill-path">{skill.path}</span>
                     </>
@@ -568,13 +588,13 @@ function SkillsView(): ReactNode {
                 className={`switch${skill.enabled ? ' on' : ''}${skill.toggleable ? '' : ' locked'}`}
                 role="switch"
                 aria-checked={skill.enabled}
-                aria-label={`${skill.name} 开关`}
+                aria-label={t('row.toggleAria', { name: skill.name })}
                 data-tip={
                   skill.toggleable
                     ? skill.enabled
-                      ? '停用，不再进入模型目录并移除命令'
-                      : '启用'
-                    : '由插件提供，不能在技能中心启停'
+                      ? t('row.toggleOff')
+                      : t('row.toggleOn')
+                    : t('row.toggleLocked')
                 }
                 onClick={() => {
                   if (skill.toggleable) toggle(skill)
@@ -585,7 +605,7 @@ function SkillsView(): ReactNode {
             </div>
           ))}
           {skills !== null && skills.length > 0 && filtered.length === 0 && (
-            <div className="plugins-empty">没有匹配「{query}」的技能。</div>
+            <div className="plugins-empty">{t('list.noMatch', { query })}</div>
           )}
         </div>
       ) : (
@@ -617,7 +637,7 @@ function SkillsView(): ReactNode {
                 setSourcesOpen(true)
               }}
             >
-              {sourcesOpen ? '收起' : '编辑源'}
+              {sourcesOpen ? t('market.collapse') : t('market.editSources')}
             </button>
             <button
               type="button"
@@ -627,18 +647,18 @@ function SkillsView(): ReactNode {
               }}
               disabled={marketLoading}
             >
-              <IconRefresh size={13} /> {marketLoading ? '抓取中…' : '刷新'}
+              <IconRefresh size={13} /> {marketLoading ? t('market.fetching') : t('market.refresh')}
             </button>
           </div>
 
           {sourcesOpen && (
             <div className="market-edit">
-              <div className="market-edit-hint">一行一个源：名字, 仓库地址（GitHub 仓库或 index.json）。保存即覆盖整份清单。</div>
+              <div className="market-edit-hint">{t('market.hint')}</div>
               <textarea
                 className="setting-input mono tall"
                 value={sourcesText}
-                placeholder={'名字, https://github.com/…'}
-                aria-label="市场源清单"
+                placeholder={t('market.placeholder')}
+                aria-label={t('market.sourcesAria')}
                 onChange={(event) => {
                   setSourcesText(event.target.value)
                 }}
@@ -649,12 +669,12 @@ function SkillsView(): ReactNode {
                 disabled={savingSources}
                 onClick={saveSources}
               >
-                {savingSources ? '保存中…' : '保存市场源'}
+                {savingSources ? t('market.saving') : t('market.save')}
               </button>
             </div>
           )}
 
-          {marketLoading && market === null && <div className="settings-empty">正在获取市场清单…</div>}
+          {marketLoading && market === null && <div className="settings-empty">{t('market.loading')}</div>}
           {market?.error !== undefined && market.items.length === 0 && (
             <div className="settings-note error">
               {market.error}
@@ -665,7 +685,7 @@ function SkillsView(): ReactNode {
                   browse(marketSource, true)
                 }}
               >
-                重试
+                {t('market.retry')}
               </button>
             </div>
           )}
@@ -685,26 +705,30 @@ function SkillsView(): ReactNode {
               <button
                 type="button"
                 className={`btn-primary market-install${item.installed ? ' done' : ''}`}
-                data-tip={item.installed ? '本地已有同名技能' : '安装技能'}
+                data-tip={item.installed ? t('market.installedTip') : t('market.installTip')}
                 disabled={installing === `${item.source}/${item.name}`}
                 onClick={() => {
                   if (!item.installed) install(item)
                 }}
               >
-                {installing === `${item.source}/${item.name}` ? '安装中…' : item.installed ? '已安装' : '安装'}
+                {installing === `${item.source}/${item.name}`
+                  ? t('market.installing')
+                  : item.installed
+                    ? t('market.installed')
+                    : t('market.install')}
               </button>
             </div>
           ))}
           {(market?.items.length ?? 0) > 0 && marketFiltered.length === 0 && (
-            <div className="plugins-empty">这个源里没有匹配「{query}」的技能。</div>
+            <div className="plugins-empty">{t('market.noMatch', { query })}</div>
           )}
           {(market?.items.length ?? 0) === 0 && market?.error === undefined && !marketLoading && market !== null && (
-            <div className="plugins-empty">这个源没有解析出技能。检查地址是否指向一个 GitHub 仓库或 index.json。</div>
+            <div className="plugins-empty">{t('market.empty')}</div>
           )}
         </div>
       )}
 
-      <div className="skills-foot">模型仅能看到技能名称与一句话说明；正文按需读取，不常驻上下文。</div>
+      <div className="skills-foot">{t('page.foot')}</div>
     </div>
   )
 }

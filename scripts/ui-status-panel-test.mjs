@@ -219,7 +219,7 @@ console.log('[5] 形态钉（结构约定）')
   check('输出面是只读等宽 <pre>（不引 xterm）', status.includes('data-sp-output-text') && status.includes('<pre') && !stripComments(status).includes('@xterm'))
   check('输出面按 1s 轮询、只在 running 续拉', status.includes('WORK_POLL_MS = 1000') && /status === 'running'[\s\S]{0,80}setTimeout\(poll, WORK_POLL_MS\)/.test(status))
   check('输出面跟随滚动（滚离线底冻结 + 回底恢复）', status.includes('FOLLOW_BOTTOM_PX') && status.includes('data-sp-output-resume') && status.includes('setFrozen(null)'))
-  check('输出面显式报头部丢字（droppedChars）', status.includes('data-sp-output-dropped') && status.includes('头部已丢弃'))
+  check('输出面显式报头部丢字（droppedChars）', status.includes('data-sp-output-dropped') && status.includes("t('status.output.dropped'"))
   check('新区都有限高（计划 / 终端 / 工作流）', css.includes("data-sp-section='plan'") && css.includes("data-sp-section='terminal'") && css.includes("data-sp-section='workflow'"))
   check('只读行不给悬停底（.sp-row-static）', css.includes('.sp-row-static') && css.includes('.sp-row:has(.sp-row-static):hover'))
   check('增删读数用设计令牌上色', css.includes('.sp-add') && css.includes('.sp-del') && /\.sp-add\s*\{[^}]*--dsc-green/.test(css) && /\.sp-del\s*\{[^}]*--dsc-red/.test(css))
@@ -379,7 +379,7 @@ console.log('[7] Git 页签（空仓库不报错 + 未跟踪可预览 + 每文�
   check(
     '⑤ 提交对话框：列将提交的文件（staged 恒选 + 可选 unstaged），提交仍走 git-commit 审批',
     changes.includes('function CommitDialog') &&
-      changes.includes('包含未暂存') &&
+      changes.includes("t('files.commit.include'") &&
       changes.includes("['git-commit', payload]"),
   )
   check(

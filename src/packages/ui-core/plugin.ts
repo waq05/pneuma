@@ -39,6 +39,13 @@ export interface UiHostInfo {
    * 缺省当 `web`（清单里 platform 缺省也是这个语义）。
    */
   platform?: UiPlatform
+  /**
+   * 界面语言（`config.yaml` 的 `language:`，例如 `zh-CN` / `en`）。
+   *
+   * 为什么放在宿主身份里：界面文案在**首帧之前**就要用，而启动图是页面打开时就有的静态
+   * 数据；插件再单独问一次宿主只会让首屏先闪一段中文。缺省当中文（中文是原文）。
+   */
+  language?: string
 }
 
 /**

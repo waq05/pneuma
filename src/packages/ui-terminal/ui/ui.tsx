@@ -28,6 +28,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import {
+  createT,
   defineUiPlugin,
   getHostNative,
   IconTerminal,
@@ -39,6 +40,13 @@ import {
 } from '@dsc/ui'
 // 基元从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
 import { Select, readCwd } from '@dsc/ui-primitives'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 终端 shell 候选：与宿主 `spawnShell` 的白名单一致（对不上会被宿主回落成 PowerShell）。 */
 const SHELL_OPTIONS = [
@@ -55,14 +63,14 @@ type ShellValue = (typeof SHELL_OPTIONS)[number]['value']
 const SHELL_KEY = 'dsc.dockShell'
 
 export default defineUiPlugin({
-  name: '终端',
+  name: t('plugin.name'),
   apply() {
     // 报名一种页签界面（kind = 'terminal'）：壳的页签条与页签体照它画，多开由壳
     // 按页签各挂一个实例（旧桌面版「终端可无限多开」同款）。keepMounted：切页签 /
     // 切窗格 / 收起侧栏都只藏不卸，spawn 出来的 shell 与输出缓冲都活着。
     registerDockTab({
       kind: 'terminal',
-      label: '终端',
+      label: t('tab.label'),
       icon: <IconTerminal size={13} />,
       component: TerminalTab,
       keepMounted: true,
@@ -92,8 +100,9 @@ function TerminalTab({ active }: DockTabBodyProps): ReactNode {
   if (!native.available) {
     return (
       <p className="shell-term-empty">
-        终端来自桌面外壳的原生桥，浏览器里没有它。要用终端请打开桌面版（或者在终端里跑
-        <code> numa</code>）。
+        {t('empty.lead')}
+        <code> numa</code>
+        {t('empty.tail')}
       </p>
     )
   }
@@ -225,7 +234,7 @@ function TerminalPane({ shell, visible, onShell }: { shell: ShellValue; visible:
     if (previous !== '') void native.invoke('terminal', ['term-kill', { id: previous }]).catch(() => undefined)
     setError('')
     const meta = SHELL_OPTIONS.find((option) => option.value === shell) ?? SHELL_OPTIONS[0]
-    term.writeln(`\x1b[90m${meta.label} · 管道模式：输入命令回车执行，不支持交互式全屏程序\x1b[0m\r\n`)
+    term.writeln(`\x1b[90m${t('banner', { label: meta.label })}\x1b[0m\r\n`)
     void native
       .invoke<{ id: string }>('terminal', ['term-spawn', { cwd, shell }])
       .then((spawned) => {
@@ -240,8 +249,9 @@ function TerminalPane({ shell, visible, onShell }: { shell: ShellValue; visible:
       .catch((reason: unknown) => {
         // 常见失败：目标 shell 没装（pwsh 未装、Git Bash 不在 PATH）
         const message = reason instanceof Error ? reason.message : String(reason)
-        setError(`${meta.label} 启动失败：${message}`)
-        term.write(`\r\n\x1b[31m${meta.label} 启动失败：${message}\x1b[0m\r\n`)
+        const failure = t('start.failed', { label: meta.label, message })
+        setError(failure)
+        term.write(`\r\n\x1b[31m${failure}\x1b[0m\r\n`)
       })
     // cwd 只在切工作区时变（那时旧 shell 的目录已经不对了，重开一个在新目录）。
   }, [booted, cwd, shell, native])
@@ -275,7 +285,7 @@ function TerminalPane({ shell, visible, onShell }: { shell: ShellValue; visible:
           options={SHELL_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
           onPick={pickShell}
           className="term-select"
-          ariaLabel="终端 Shell"
+          ariaLabel={t('bar.aria')}
         />
       </div>
       <div className="term-host" ref={hostRef} />

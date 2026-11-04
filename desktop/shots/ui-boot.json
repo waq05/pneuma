@@ -1,9 +1,9 @@
 {
-  "generatedAt": "2026-11-04T14:43:45.148Z",
+  "generatedAt": "2026-11-04T16:22:02.178Z",
   "electron": "D:\\dsc\\desktop\\node_modules\\electron\\dist\\electron.exe",
   "driver": "D:\\dsc\\scripts\\_ui-boot-e2e-main.cjs",
-  "durationMs": 63294,
-  "pass": 24,
+  "durationMs": 68247,
+  "pass": 32,
   "fail": 0,
   "ok": true,
   "scenes": [
@@ -11,7 +11,7 @@
       "key": "normal",
       "title": "正常态：骨架画出来了，没有诊断文案",
       "shot": "desktop/shots/ui-boot-normal.png",
-      "durationMs": 22022,
+      "durationMs": 17189,
       "assertions": [
         {
           "name": "页面里有骨架根节点 .app",
@@ -26,12 +26,12 @@
         {
           "name": "没有渲染器诊断文案（「界面渲染器」）",
           "ok": true,
-          "detail": "Pneuma 新会话 技能 插件 工作区 dsc 新会话 刚刚 今日总用量 0 tok 设置 新会话 对话 轨迹 有什么可以帮忙的？ 输入 / 查看可用指令 · 消息会携带当前工作目录上下文 看懂代码 解释一处实现的来龙去脉 做点东西 从需求一路写到能跑 审查改动 看未提交的改动有没有坑 排查问题 从一个报错查到根因 feat/pluginization + 工作区可写 标准模式 fake-chat 默认"
+          "detail": "Pneuma 新会话 技能 插件 工作区 dsc 新会话 刚刚 今日总用量 0 tok 设置 新会话 对话 轨迹 更改 有什么可以帮忙的？ 输入 / 查看可用指令 · 消息会携带当前工作目录上下文 看懂代码 解释一处实现的来龙去脉 做点东西 从需求一路写到能跑 审查改动 看未提交的改动有没有坑 排查问题 从一个报错查到根因 feat/pluginization + 工作区可写 标准模式 fake-chat 默认"
         },
         {
           "name": "没有布局诊断文案（「界面布局」）",
           "ok": true,
-          "detail": "Pneuma 新会话 技能 插件 工作区 dsc 新会话 刚刚 今日总用量 0 tok 设置 新会话 对话 轨迹 有什么可以帮忙的？ 输入 / 查看可用指令 · 消息会携带当前工作目录上下文 看懂代码 解释一处实现的来龙去脉 做点东西 从需求一路写到能跑 审查改动 看未提交的改动有没有坑 排查问题 从一个报错查到根因 feat/pluginization + 工作区可写 标准模式 fake-chat 默认"
+          "detail": "Pneuma 新会话 技能 插件 工作区 dsc 新会话 刚刚 今日总用量 0 tok 设置 新会话 对话 轨迹 更改 有什么可以帮忙的？ 输入 / 查看可用指令 · 消息会携带当前工作目录上下文 看懂代码 解释一处实现的来龙去脉 做点东西 从需求一路写到能跑 审查改动 看未提交的改动有没有坑 排查问题 从一个报错查到根因 feat/pluginization + 工作区可写 标准模式 fake-chat 默认"
         },
         {
           "name": "启动图里有 layout 与 renderer 两条",
@@ -64,7 +64,7 @@
         "hasRendererDiag": false,
         "hasLayoutDiag": false,
         "boot": {
-          "rev": "b88f6038ff28",
+          "rev": "66047db0af79",
           "entries": [
             "actions",
             "ask",
@@ -91,7 +91,8 @@
           "disabled": [],
           "host": {
             "name": "Pneuma",
-            "version": "0.8.1"
+            "version": "0.8.1",
+            "language": "zh-CN"
           },
           "batches": [
             {
@@ -150,25 +151,25 @@
           "transcript": "loaded",
           "trace": "loaded"
         },
-        "firstFrameAt": 1793803370356,
-        "text": "Pneuma 新会话 技能 插件 工作区 dsc 新会话 刚刚 今日总用量 0 tok 设置 新会话 对话 轨迹 有什么可以帮忙的？ 输入 / 查看可用指令 · 消息会携带当前工作目录上下文 看懂代码 解释一处实现的来龙去脉 做点东西 从需求一路写到能跑 审查改动 看未提交的改动有没有坑 排查问题 从一个报错查到根因 feat/pluginization + 工作区可写 标准模式 fake-chat 默认"
+        "firstFrameAt": 1793809257864,
+        "text": "Pneuma 新会话 技能 插件 工作区 dsc 新会话 刚刚 今日总用量 0 tok 设置 新会话 对话 轨迹 更改 有什么可以帮忙的？ 输入 / 查看可用指令 · 消息会携带当前工作目录上下文 看懂代码 解释一处实现的来龙去脉 做点东西 从需求一路写到能跑 审查改动 看未提交的改动有没有坑 排查问题 从一个报错查到根因 feat/pluginization + 工作区可写 标准模式 fake-chat 默认"
       }
     },
     {
       "key": "layout-off",
       "title": "停用骨架：画布局诊断页，没有 .app",
       "shot": "desktop/shots/ui-boot-layout-off.png",
-      "durationMs": 21581,
+      "durationMs": 16961,
       "assertions": [
         {
           "name": "页面文字里有「界面布局」",
           "ok": true,
-          "detail": "界面布局（ui-layout）已停用 整张页面只有骨架能画出来。骨架没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。 打开它的地方：编辑 ~/.dsc/plugins.json，找到 \"file\": \"ui-layout\" 那一条， 把 \"disabled\" 改成 false（或删掉那一条），然后刷新本页。 宿主重启后它也会回到插件中心的内置插件列表里。"
+          "detail": "界面布局（ui-layout）已停用 整张页面只有骨架能画出来。骨架没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。 打开它的地方：编辑 ~/.dsc/plugins.json，找到 \"file\": \"ui-layout\" 那一条，把 \"disabled\" 改成 false（或删掉那一条），然后刷新本页。 宿主重启后它也会回到插件中心的内置插件列表里。"
         },
         {
           "name": "页面文字里有「ui-layout」",
           "ok": true,
-          "detail": "界面布局（ui-layout）已停用 整张页面只有骨架能画出来。骨架没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。 打开它的地方：编辑 ~/.dsc/plugins.json，找到 \"file\": \"ui-layout\" 那一条， 把 \"disabled\" 改成 false（或删掉那一条），然后刷新本页。 宿主重启后它也会回到插件中心的内置插件列表里。"
+          "detail": "界面布局（ui-layout）已停用 整张页面只有骨架能画出来。骨架没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。 打开它的地方：编辑 ~/.dsc/plugins.json，找到 \"file\": \"ui-layout\" 那一条，把 \"disabled\" 改成 false（或删掉那一条），然后刷新本页。 宿主重启后它也会回到插件中心的内置插件列表里。"
         },
         {
           "name": "页面里没有骨架根节点 .app",
@@ -188,7 +189,7 @@
         {
           "name": "诊断页不是空白（正文长度 > 40）",
           "ok": true,
-          "detail": "长度=185"
+          "detail": "长度=184"
         },
         {
           "name": "启动占位 #boot-splash 已退场（诊断页没被盖住）",
@@ -208,7 +209,7 @@
         "hasRendererDiag": false,
         "hasLayoutDiag": true,
         "boot": {
-          "rev": "7bf6e081d771",
+          "rev": "a4dd27f16c11",
           "entries": [
             "actions",
             "ask",
@@ -236,7 +237,8 @@
           ],
           "host": {
             "name": "Pneuma",
-            "version": "0.8.1"
+            "version": "0.8.1",
+            "language": "zh-CN"
           },
           "batches": [
             {
@@ -273,24 +275,24 @@
         },
         "bootPlugins": null,
         "firstFrameAt": null,
-        "text": "界面布局（ui-layout）已停用 整张页面只有骨架能画出来。骨架没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。 打开它的地方：编辑 ~/.dsc/plugins.json，找到 \"file\": \"ui-layout\" 那一条， 把 \"disabled\" 改成 false（或删掉那一条），然后刷新本页。 宿主重启后它也会回到插件中心的内置插件列表里。"
+        "text": "界面布局（ui-layout）已停用 整张页面只有骨架能画出来。骨架没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。 打开它的地方：编辑 ~/.dsc/plugins.json，找到 \"file\": \"ui-layout\" 那一条，把 \"disabled\" 改成 false（或删掉那一条），然后刷新本页。 宿主重启后它也会回到插件中心的内置插件列表里。"
       }
     },
     {
       "key": "renderer-off",
       "title": "停用渲染器：画渲染器诊断页",
       "shot": "desktop/shots/ui-boot-renderer-off.png",
-      "durationMs": 19686,
+      "durationMs": 16907,
       "assertions": [
         {
           "name": "页面文字里有「界面渲染器」",
           "ok": true,
-          "detail": "界面渲染器（ui-renderer）已停用 整张页面只有渲染器能启动。渲染器没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。 打开它的地方：编辑 ~/.dsc/plugins.json，找到 \"file\": \"ui-renderer\" 那一条， 把 \"disabled\" 改成 false（或删掉那一条），然后刷新本页。 宿主重启后它也会回到插件中心的内置插件列表里。"
+          "detail": "界面渲染器（ui-renderer）已停用 整张页面只有渲染器能启动。渲染器没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。 打开它的地方：编辑 ~/.dsc/plugins.json，找到 \"file\": \"ui-renderer\" 那一条，把 \"disabled\" 改成 false（或删掉那一条），然后刷新本页。 宿主重启后它也会回到插件中心的内置插件列表里。"
         },
         {
           "name": "页面文字里有「ui-renderer」",
           "ok": true,
-          "detail": "界面渲染器（ui-renderer）已停用 整张页面只有渲染器能启动。渲染器没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。 打开它的地方：编辑 ~/.dsc/plugins.json，找到 \"file\": \"ui-renderer\" 那一条， 把 \"disabled\" 改成 false（或删掉那一条），然后刷新本页。 宿主重启后它也会回到插件中心的内置插件列表里。"
+          "detail": "界面渲染器（ui-renderer）已停用 整张页面只有渲染器能启动。渲染器没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。 打开它的地方：编辑 ~/.dsc/plugins.json，找到 \"file\": \"ui-renderer\" 那一条，把 \"disabled\" 改成 false（或删掉那一条），然后刷新本页。 宿主重启后它也会回到插件中心的内置插件列表里。"
         },
         {
           "name": "页面里没有骨架根节点 .app",
@@ -310,7 +312,7 @@
         {
           "name": "诊断页不是空白（正文长度 > 40）",
           "ok": true,
-          "detail": "长度=191"
+          "detail": "长度=190"
         },
         {
           "name": "启动占位 #boot-splash 已退场（诊断页没被盖住）",
@@ -330,7 +332,7 @@
         "hasRendererDiag": true,
         "hasLayoutDiag": false,
         "boot": {
-          "rev": "8214cbdcffc8",
+          "rev": "8d88cf0a574e",
           "entries": [
             "actions",
             "ask",
@@ -358,7 +360,8 @@
           ],
           "host": {
             "name": "Pneuma",
-            "version": "0.8.1"
+            "version": "0.8.1",
+            "language": "zh-CN"
           },
           "batches": [
             {
@@ -395,7 +398,155 @@
         },
         "bootPlugins": null,
         "firstFrameAt": null,
-        "text": "界面渲染器（ui-renderer）已停用 整张页面只有渲染器能启动。渲染器没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。 打开它的地方：编辑 ~/.dsc/plugins.json，找到 \"file\": \"ui-renderer\" 那一条， 把 \"disabled\" 改成 false（或删掉那一条），然后刷新本页。 宿主重启后它也会回到插件中心的内置插件列表里。"
+        "text": "界面渲染器（ui-renderer）已停用 整张页面只有渲染器能启动。渲染器没装上来，所以这里只剩这条说明——不是白屏，是它真的不在。 打开它的地方：编辑 ~/.dsc/plugins.json，找到 \"file\": \"ui-renderer\" 那一条，把 \"disabled\" 改成 false（或删掉那一条），然后刷新本页。 宿主重启后它也会回到插件中心的内置插件列表里。"
+      }
+    },
+    {
+      "key": "english",
+      "title": "英文界面：language: en 时页面是英文",
+      "shot": "desktop/shots/ui-boot-english.png",
+      "durationMs": 17186,
+      "assertions": [
+        {
+          "name": "启动图 host.language 是 en",
+          "ok": true,
+          "detail": "{\"name\":\"Pneuma\",\"version\":\"0.8.1\",\"language\":\"en\"}"
+        },
+        {
+          "name": "骨架 .app 在（英文界面不是白屏）",
+          "ok": true,
+          "detail": ".app 个数=1"
+        },
+        {
+          "name": "侧栏有「New session」（文案跟着语言走）",
+          "ok": true,
+          "detail": "Pneuma New session Skills Plugins Workspaces dsc New session Just now Today's usage 0 tok Settings New session Chat Trace Changes What can I help with? Type / to see available commands · messages carry the current working directory context Understand code Explain how a piece of code works Build something Take a requirement all the way to working code Review changes Check uncommitted changes for pitfalls Debug an issue Trace an error to its root cause feat/pluginization + 工作区可写 标准模式 fake-chat Default"
+        },
+        {
+          "name": "侧栏有「Settings」",
+          "ok": true,
+          "detail": "Pneuma New session Skills Plugins Workspaces dsc New session Just now Today's usage 0 tok Settings New session Chat Trace Changes What can I help with? Type / to see available commands · messages carry the current working directory context Understand code Explain how a piece of code works Build something Take a requirement all the way to working code Review changes Check uncommitted changes for pitfalls Debug an issue Trace an error to its root cause feat/pluginization + 工作区可写 标准模式 fake-chat Default"
+        },
+        {
+          "name": "不再出现「新会话」",
+          "ok": true,
+          "detail": "Pneuma New session Skills Plugins Workspaces dsc New session Just now Today's usage 0 tok Settings New session Chat Trace Changes What can I help with? Type / to see available commands · messages carry the current working directory context Understand code Explain how a piece of code works Build something Take a requirement all the way to working code Review changes Check uncommitted changes for pitfalls Debug an issue Trace an error to its root cause feat/pluginization + 工作区可写 标准模式 fake-chat Default"
+        },
+        {
+          "name": "不再出现「设置」",
+          "ok": true,
+          "detail": "Pneuma New session Skills Plugins Workspaces dsc New session Just now Today's usage 0 tok Settings New session Chat Trace Changes What can I help with? Type / to see available commands · messages carry the current working directory context Understand code Explain how a piece of code works Build something Take a requirement all the way to working code Review changes Check uncommitted changes for pitfalls Debug an issue Trace an error to its root cause feat/pluginization + 工作区可写 标准模式 fake-chat Default"
+        },
+        {
+          "name": "没有诊断文案（不是靠停用凑出来的英文）",
+          "ok": true,
+          "detail": "Pneuma New session Skills Plugins Workspaces dsc New session Just now Today's usage 0 tok Settings New session Chat Trace Changes What can I help with? Type / to see available commands · messages carry the current working directory context Understand code Explain how a piece of code works Build something Take a requirement all the way to working code Review changes Check uncommitted changes for pitfalls Debug an issue Trace an error to its root cause feat/pluginization + 工作区可写 标准模式 fake-chat Default"
+        },
+        {
+          "name": "截图在且不是空帧",
+          "ok": true,
+          "detail": "D:\\dsc\\desktop\\shots\\ui-boot-english.png"
+        }
+      ],
+      "probe": {
+        "app": 1,
+        "appBox": {
+          "width": 1266,
+          "height": 797
+        },
+        "splash": false,
+        "hasRendererDiag": false,
+        "hasLayoutDiag": false,
+        "boot": {
+          "rev": "66047db0af79",
+          "entries": [
+            "actions",
+            "ask",
+            "browser",
+            "composer",
+            "files",
+            "layout",
+            "palette",
+            "plugins",
+            "preview",
+            "prompt",
+            "renderer",
+            "sessions",
+            "settings",
+            "skills",
+            "status",
+            "statusbar",
+            "tasks",
+            "team",
+            "terminal",
+            "transcript",
+            "trace"
+          ],
+          "disabled": [],
+          "host": {
+            "name": "Pneuma",
+            "version": "0.8.1",
+            "language": "en"
+          },
+          "batches": [
+            {
+              "phase": "early",
+              "entries": [
+                "composer",
+                "layout",
+                "renderer",
+                "statusbar"
+              ]
+            },
+            {
+              "phase": "application",
+              "entries": [
+                "actions",
+                "ask",
+                "browser",
+                "files",
+                "palette",
+                "plugins",
+                "preview",
+                "prompt",
+                "sessions",
+                "settings",
+                "skills",
+                "status",
+                "tasks",
+                "team",
+                "terminal",
+                "transcript",
+                "trace"
+              ]
+            }
+          ]
+        },
+        "bootPlugins": {
+          "actions": "loaded",
+          "ask": "loaded",
+          "browser": "loaded",
+          "composer": "loaded",
+          "files": "loaded",
+          "layout": "loaded",
+          "palette": "loaded",
+          "plugins": "loaded",
+          "preview": "loaded",
+          "prompt": "loaded",
+          "renderer": "loaded",
+          "sessions": "loaded",
+          "settings": "loaded",
+          "skills": "loaded",
+          "status": "loaded",
+          "statusbar": "loaded",
+          "tasks": "loaded",
+          "team": "loaded",
+          "terminal": "loaded",
+          "transcript": "loaded",
+          "trace": "loaded"
+        },
+        "firstFrameAt": 1793809308730,
+        "text": "Pneuma New session Skills Plugins Workspaces dsc New session Just now Today's usage 0 tok Settings New session Chat Trace Changes What can I help with? Type / to see available commands · messages carry the current working directory context Understand code Explain how a piece of code works Build something Take a requirement all the way to working code Review changes Check uncommitted changes for pitfalls Debug an issue Trace an error to its root cause feat/pluginization + 工作区可写 标准模式 fake-chat Default"
       }
     }
   ]

@@ -17,7 +17,13 @@
  *
  * @module dsc-ui-shell/host-channel
  */
-import { applyHostFrame, HostFrameGapError, type HostSnapshot, type UiBootGraph } from '@dsc/ui-core'
+import { applyHostFrame, createT, HostFrameGapError, type HostSnapshot, type UiBootGraph } from '@dsc/ui-core'
+// 本包的中英对照：中文是语义真源（`locale/ui.zh.json`），英文是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui-core` 的 `i18n.ts`）。 */
+const t = createT({ zh, en })
 
 /**
  * 连接状态。
@@ -88,7 +94,7 @@ export class HostInvokeAbortedError extends Error {
   readonly reason: 'timeout' | 'aborted'
 
   constructor(reason: 'timeout' | 'aborted', timeoutMs: number) {
-    super(reason === 'timeout' ? `调用宿主方法超时（${String(timeoutMs)} 毫秒）` : '调用宿主方法已被中止')
+    super(reason === 'timeout' ? t('invoke.timeout', { ms: String(timeoutMs) }) : t('invoke.aborted'))
     this.name = 'HostInvokeAbortedError'
     this.reason = reason
   }
@@ -366,7 +372,7 @@ export function createHostChannel(): HostChannel {
           | null
         if (response.status === 401) {
           // 凭据已经过期：SSE 那边同样会走到 closed（重连也是 401），这里同步把状态说出来。
-          hostError = payload?.error ?? '界面凭据已失效，请用宿主新打印的地址重开'
+          hostError = payload?.error ?? t('auth.expired')
           setStatus('closed')
         }
         if (!response.ok) throw new Error(payload?.error ?? `HTTP ${String(response.status)}`)

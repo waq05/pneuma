@@ -105,8 +105,8 @@ export interface UiBootGraph {
    * 没有 `phase` 声明的条目全部进 application 批——零声明的现状就是单批一行。
    */
   batches: UiBootBatch[]
-  /** 界面壳要显示的宿主身份（哪台机器、哪个版本）。 */
-  host: { name: string; version: string }
+  /** 界面壳要显示的宿主身份（哪台机器、哪个版本）与界面语言（`config.yaml` 的 `language:`）。 */
+  host: { name: string; version: string; language?: string }
   /**
    * 声明了、装得上、但被用户停用的插件 id（不在这张图里）。
    *
@@ -252,7 +252,7 @@ export function orderUiPlugins<T extends UiPluginRow>(rows: readonly T[]): T[] {
  * @param disabled - 声明了但被停用的 id（只随图带出去，不参与组图与 rev）
  */
 export function composeUiBootGraph(
-  host: { name: string; version: string },
+  host: { name: string; version: string; language?: string },
   artifacts: readonly (UiPluginRow & { rev: string })[],
   disabled: readonly string[] = [],
 ): UiBootGraph {

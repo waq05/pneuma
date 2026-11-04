@@ -13,10 +13,16 @@
  * @module dsc-ui-shell/ui-primitives/native
  */
 import { useMemo } from 'react'
-import { NATIVE_BRIDGE_VERSION, type NativeEvent, type NativeOp } from '@dsc/ui-core'
+import { NATIVE_BRIDGE_VERSION, createT, type NativeEvent, type NativeOp } from '@dsc/ui-core'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui-core` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 桥缺席时给插件的一句话（浏览器里就是这样：没有 Electron，也就没有原生桥）。 */
-export const NATIVE_UNAVAILABLE = '这条能力来自桌面外壳的原生桥，浏览器里没有它'
+export const NATIVE_UNAVAILABLE = t('primitives.native.unavailable')
 
 /** 原生桥的调用面。 */
 export interface HostNative {

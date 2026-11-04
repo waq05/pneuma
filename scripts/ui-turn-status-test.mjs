@@ -88,9 +88,9 @@ console.log('\n[4] 用时在底部状态栏')
   check('状态栏读 turnStartedAt', statusbar.includes('readTurnStartedAt'))
   // 第一轮进行中时 steps 还是 0，此时不再摆「0 轮 0 步」，只报用时——分隔符是条件渲染的，
   // 所以断「用时 {elapsed}」这个本体，外加「steps 为 0 也画」这条行为。
-  check('主文案里有「用时」', /用时 \{elapsed\}/.test(statusbar))
+  check('主文案里有「用时」', /t\('statusbar\.turn\.elapsed', \{ duration: elapsed \}\)/.test(statusbar))
   check('第一轮（steps 为 0）也报用时', statusbar.includes('props.steps > 0'))
-  check('悬浮卡里有本轮用时一行', statusbar.includes('本轮用时（进行中）'))
+  check('悬浮卡里有本轮用时一行', statusbar.includes("t('statusbar.card.elapsedRunning')"))
   const contract = read('../src/contract/runtime.ts')
   check('契约里有 turnStartedAt 字段', contract.includes('turnStartedAt?: number'))
   const host = read('../src/packages/transcript/index.ts')

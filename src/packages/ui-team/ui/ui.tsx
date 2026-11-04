@@ -26,6 +26,7 @@ import {
   IconTree,
   confirmAction,
   createSignal,
+  createT,
   defineStore,
   defineUiPlugin,
   registerDockTab,
@@ -45,13 +46,20 @@ import {
   type TeammateView,
   type UiPluginApi,
 } from '@dsc/ui'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 队友状态词（旧界面 TEAMMATE_STATE_LABEL 同款）。 */
 const STATE_LABEL: Readonly<Record<string, string>> = {
-  working: '运行中',
-  idle: '已完成',
-  stopped: '已停止',
-  failed: '已失败',
+  working: t('team.state.working'),
+  idle: t('team.state.idle'),
+  stopped: t('team.state.stopped'),
+  failed: t('team.state.failed'),
 }
 
 /** 本会话派出的队友（旧界面 matesOf 同款：没 sessionId 的老名册行不归任何会话）。 */
@@ -130,7 +138,7 @@ interface MateSeatRead {
 }
 
 export default defineUiPlugin({
-  name: '智能体团队',
+  name: t('team.plugin.name'),
   apply(ui) {
     // 席位：本插件两处登记共享同一个 handle；跨插件共享经服务表传 handle（不认字符串键）。
     const mates = makeMateSeat()
@@ -152,7 +160,7 @@ export default defineUiPlugin({
     // 「队友」这件事，所以页签在这里报名，打开动作由任何一处发起（队友行 / 状态面板）。
     registerDockTab({
       kind: 'subagent',
-      label: '子智能体',
+      label: t('team.tab.subagent'),
       icon: <IconTree size={13} />,
       // 页签体额外拿到「本插件的名册席位面」：头部要按 `tab.path` 匹配出队友元信息（角色 /
       // 状态 / 轮数 / 时长），并且要据此判断「还在 working → 轮询刷新运行记录」。席位的读法
@@ -240,12 +248,12 @@ function SubagentMenu(props: SlotComponentProps<Record<never, never>, never, nev
             type="button"
             className={`sub-btn${menuOpen ? ' on' : ''}`}
             aria-expanded={menuOpen}
-            data-tip="本会话派出的子智能体：状态、耗时，点一行看运行记录"
+            data-tip={t('team.menu.tip')}
             onClick={() => {
               setMenuOpen((current) => !current)
             }}
           >
-            {mine.length} 个子智能体
+            {t('team.menu.count', { count: mine.length })}
             <IconChevronDown size={13} />
           </button>
           {menuOpen ? (
@@ -256,7 +264,7 @@ function SubagentMenu(props: SlotComponentProps<Record<never, never>, never, nev
                   setMenuOpen(false)
                 }}
               />
-              <div className="row-menu sub-menu" role="menu" aria-label="本会话的子智能体" ref={menuRef}>
+              <div className="row-menu sub-menu" role="menu" aria-label={t('team.menu.aria')} ref={menuRef}>
                 {mine.map((mate) => (
                   <TeamRow
                     key={mate.file}
@@ -279,11 +287,9 @@ function SubagentMenu(props: SlotComponentProps<Record<never, never>, never, nev
                     setPanelOpen(true, null)
                   }}
                 >
-                  打开团队面板（发话 / 移除 / 其它会话的队友）
+                  {t('team.menu.openPanel')}
                 </button>
-                <p className="team-hint">
-                  点一行看它的运行记录（只读）；「停止」是尽力而为，「发话」由宿主转交，收工的可以移除。
-                </p>
+                <p className="team-hint">{t('team.menu.hint')}</p>
               </div>
             </>
           ) : null}
@@ -327,22 +333,20 @@ function TeamPanel({ useStore }: MateSeatRead): ReactNode {
         if (event.target === event.currentTarget) setPanelOpen(false)
       }}
     >
-      <div className="settings team-panel" role="dialog" aria-modal="true" aria-label="智能体团队" ref={dialog.ref}>
+      <div className="settings team-panel" role="dialog" aria-modal="true" aria-label={t('team.panel.aria')} ref={dialog.ref}>
         <div className="settings-main">
           <div className="settings-head">
             <div className="settings-head-text">
-              <h2>{peeking === null ? '智能体团队' : `队友 ${peeking.name} 的运行记录`}</h2>
+              <h2>{peeking === null ? t('team.panel.title') : t('team.panel.peekTitle', { name: peeking.name })}</h2>
               <p>
-                {peeking === null
-                  ? '这里是本会话派出的队伍，切到别的会话就是另一支；其它会话的队友在底部列出，可点开记录或移除。'
-                  : '运行记录只读；「回到名单」可以回到队伍列表。'}
+                {peeking === null ? t('team.panel.desc') : t('team.panel.peekDesc')}
               </p>
             </div>
             <button
               type="button"
               className="icon-btn"
               autoFocus
-              data-tip={peeking === null ? '关闭，快捷键 Esc' : '回到名单'}
+              data-tip={peeking === null ? t('team.panel.closeTip') : t('team.panel.backTip')}
               onClick={() => {
                 if (peeking !== null) setPeeking(null)
                 else setPanelOpen(false)
@@ -356,13 +360,11 @@ function TeamPanel({ useStore }: MateSeatRead): ReactNode {
             {peeking !== null ? (
               <PeekView file={peeking.file} />
             ) : mates === null ? (
-              <div className="settings-empty">正在读名单…</div>
+              <div className="settings-empty">{t('team.panel.loading')}</div>
             ) : (
               <>
                 {mine.length === 0 ? (
-                  <div className="settings-empty">
-                    本会话还没有队友：「子智能体」插件开着时，模型用 subagent 工具派活，会在这里出现。
-                  </div>
+                  <div className="settings-empty">{t('team.panel.empty')}</div>
                 ) : (
                   <div className="team-list">
                     {mine.map((mate) => (
@@ -387,7 +389,7 @@ function TeamPanel({ useStore }: MateSeatRead): ReactNode {
                       }}
                     >
                       <IconChevronDown size={13} />
-                      其它会话的队友（{others.length}）
+                      {t('team.panel.others', { count: others.length })}
                     </button>
                     {othersOpen ? (
                       <div className="team-list team-others">
@@ -400,10 +402,7 @@ function TeamPanel({ useStore }: MateSeatRead): ReactNode {
                             }}
                           />
                         ))}
-                        <p className="team-hint">
-                          这些队友是别的会话（或更早的版本）派出的：点一行看运行记录，收工的可以移除；
-                          正在干活的请切回派出它的会话再管。
-                        </p>
+                        <p className="team-hint">{t('team.panel.othersHint')}</p>
                       </div>
                     ) : null}
                   </>
@@ -438,7 +437,7 @@ function TeamRow({
       await channel.invoke(method, args)
       toastOk(tip)
     } catch (reason) {
-      toastErr(`${tip}失败：${reason instanceof Error ? reason.message : String(reason)}`)
+      toastErr(t('team.toast.failed', { tip, message: reason instanceof Error ? reason.message : String(reason) }))
     }
   }
 
@@ -450,7 +449,7 @@ function TeamRow({
       <span className="team-task" title={mate.task}>
         {mate.task}
       </span>
-      <span className="team-round">第 {mate.rounds} 轮</span>
+      <span className="team-round">{t('team.row.rounds', { count: mate.rounds })}</span>
       {compact ? null : <UsedTime mate={mate} />}
       <span className="tm-state">{STATE_LABEL[mate.state] ?? mate.state}</span>
       <span className="team-acts" onClick={(event) => event.stopPropagation()}>
@@ -458,44 +457,44 @@ function TeamRow({
           <button
             type="button"
             className="text-btn danger"
-            data-tip="叫停这个队友（停当前这一轮，保留可续：传话就能接着干；要清掉用「移除」）"
+            data-tip={t('team.row.stopTip')}
             onClick={() => {
-              void act('stopTeammate', [mate.name], `已叫停 ${mate.name}`)
+              void act('stopTeammate', [mate.name], t('team.row.stopped', { name: mate.name }))
             }}
           >
-            停止
+            {t('team.row.stop')}
           </button>
         ) : null}
         <button
           type="button"
           className="text-btn"
           aria-pressed={writing}
-          data-tip="给这个队友发一句话（走宿主转发）"
+          data-tip={t('team.row.messageTip')}
           onClick={() => {
             setWriting((current) => !current)
           }}
         >
-          发话
+          {t('team.row.message')}
         </button>
         {busy ? null : (
           <button
             type="button"
             className="text-btn danger"
-            data-tip="从名册移除，运行记录一并删除（不进回收站）"
+            data-tip={t('team.row.removeTip')}
             onClick={() => {
               void (async () => {
                 const ok = await confirmAction({
-                  title: `移除队友「${mate.name}」？`,
-                  detail: '会删掉它的名册记录与运行记录文件；正在干活的先叫停再移除。',
-                  confirmLabel: '移除',
+                  title: t('team.row.removeTitle', { name: mate.name }),
+                  detail: t('team.row.removeDetail'),
+                  confirmLabel: t('team.row.remove'),
                   danger: true,
                 })
                 if (!ok) return
-                void act('removeTeammate', [mate.name], `已移除 ${mate.name}`)
+                void act('removeTeammate', [mate.name], t('team.row.removed', { name: mate.name }))
               })()
             }}
           >
-            移除
+            {t('team.row.remove')}
           </button>
         )}
       </span>
@@ -505,8 +504,8 @@ function TeamRow({
             <input
               autoFocus
               value={draft}
-              placeholder={`给 ${mate.name} 带句话…`}
-              aria-label={`给 ${mate.name} 发消息`}
+              placeholder={t('team.row.writePlaceholder', { name: mate.name })}
+              aria-label={t('team.row.writeLabel', { name: mate.name })}
               onChange={(event) => {
                 setDraft(event.target.value)
               }}
@@ -514,7 +513,7 @@ function TeamRow({
                 if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
                 const text = draft.trim()
                 if (text === '') return
-                void act('messageTeammate', [mate.name, text], `话已带给 ${mate.name}`)
+                void act('messageTeammate', [mate.name, text], t('team.row.sent', { name: mate.name }))
                 setDraft('')
                 setWriting(false)
               }}
@@ -526,12 +525,12 @@ function TeamRow({
               onClick={() => {
                 const text = draft.trim()
                 if (text === '') return
-                void act('messageTeammate', [mate.name, text], `话已带给 ${mate.name}`)
+                void act('messageTeammate', [mate.name, text], t('team.row.sent', { name: mate.name }))
                 setDraft('')
                 setWriting(false)
               }}
             >
-              发送
+              {t('team.row.send')}
             </button>
           </span>
         </span>
@@ -558,7 +557,7 @@ function UsedTime({ mate }: { mate: TeammateView }): ReactNode {
       ? formatDuration((running ? now : (mate.finishedAt ?? mate.startedAt)) - mate.startedAt)
       : null
   return (
-    <span className="tm-time" data-tip={running ? '已经跑了多久（每秒刷新）' : '从派活到收工的总耗时'}>
+    <span className="tm-time" data-tip={running ? t('team.time.runningTip') : t('team.time.totalTip')}>
       {used ?? ''}
     </span>
   )
@@ -623,15 +622,15 @@ function usePeekTranscript(file: string, working: boolean): { entries: Transcrip
 function PeekView({ file, working = false }: { file: string; working?: boolean }): ReactNode {
   const { entries, error } = usePeekTranscript(file, working)
 
-  if (error !== '') return <div className="settings-empty">读不了运行记录：{error}</div>
+  if (error !== '') return <div className="settings-empty">{t('team.peek.error', { message: error })}</div>
   if (entries === null) {
     return (
-      <div className="settings-loading" role="status" aria-label="正在读运行记录">
+      <div className="settings-loading" role="status" aria-label={t('team.peek.loading')}>
         <SkeletonText lines={5} />
       </div>
     )
   }
-  if (entries.length === 0) return <div className="settings-empty">它还没开始干活。</div>
+  if (entries.length === 0) return <div className="settings-empty">{t('team.peek.empty')}</div>
   return (
     <div className="peek-flow">
       {entries.map((entry) => {
@@ -646,7 +645,7 @@ function PeekView({ file, working = false }: { file: string; working?: boolean }
           return (
             <p className="peek-tool" key={entry.id}>
               <code>{entry.call.name}</code> {oneLine(entry.call.argsText, 60)}
-              {entry.call.status === 'failed' ? ' · 失败' : ''}
+              {entry.call.status === 'failed' ? t('team.peek.failed') : ''}
             </p>
           )
         }
@@ -677,15 +676,15 @@ function PeekView({ file, working = false }: { file: string; working?: boolean }
  */
 function FlowHost({ flow, file, working }: { flow: TranscriptFlowService; file: string; working: boolean }): ReactNode {
   const { entries, error } = usePeekTranscript(file, working)
-  if (error !== '') return <div className="settings-empty">读不了运行记录：{error}</div>
+  if (error !== '') return <div className="settings-empty">{t('team.peek.error', { message: error })}</div>
   if (entries === null) {
     return (
-      <div className="settings-loading" role="status" aria-label="正在读运行记录">
+      <div className="settings-loading" role="status" aria-label={t('team.peek.loading')}>
         <SkeletonText lines={5} />
       </div>
     )
   }
-  if (entries.length === 0) return <div className="settings-empty">它还没开始干活。</div>
+  if (entries.length === 0) return <div className="settings-empty">{t('team.peek.empty')}</div>
   return <flow.Component entries={entries} sessionKey={file} />
 }
 
@@ -733,13 +732,13 @@ function SubagentTabBody({
           <>
             <span className="sub-tab-role">{mate.role}</span>
             <span className={`sub-tab-state ${mate.state}`}>{STATE_LABEL[mate.state] ?? mate.state}</span>
-            <span className="sub-tab-round" data-tip="它已经发起的模型请求轮数">
-              第 {mate.rounds} 轮
+            <span className="sub-tab-round" data-tip={t('team.tab.roundsTip')}>
+              {t('team.row.rounds', { count: mate.rounds })}
             </span>
             <UsedTime mate={mate} />
           </>
         )}
-        <span className="sub-tab-note">只读运行记录</span>
+        <span className="sub-tab-note">{t('team.tab.readonly')}</span>
       </div>
       <div className="sub-tab-body">
         {flow === undefined ? <PeekView file={file} working={working} /> : <FlowHost flow={flow} file={file} working={working} />}

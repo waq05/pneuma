@@ -33,6 +33,7 @@ import {
   IconPuzzle,
   IconRefresh,
   IconRestart,
+  createT,
   defineUiPlugin,
   getHostNative,
   toastErr,
@@ -47,6 +48,13 @@ import {
 } from '@dsc/ui'
 // 基元从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
 import { Select, Skeleton, SkeletonText, errText as text, humanErrorLine, humanErrorText } from '@dsc/ui-primitives'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 这一页在 page-state 里的 id（侧栏入口与页条目约定同一个值）。 */
 const PAGE = 'plugins'
@@ -106,7 +114,7 @@ function keyOf(row: TrustRow): string {
 }
 
 export default defineUiPlugin({
-  name: '插件中心',
+  name: t('plugins.plugin.name'),
   apply(ui) {
     ui.slots.register('shell.page', { id: 'plugins.page', order: 10 }, PluginsPage)
   },
@@ -144,7 +152,7 @@ function PluginsView(): ReactNode {
       })
       .catch((error: unknown) => {
         // 说人话 + 给下一步（P0-3）：原文里是 ECONNREFUSED 还是 ENOENT，用户不关心。
-        setNote(`读插件失败：${humanErrorText(error).text}`)
+        setNote(t('plugins.err.readPlugins', { message: humanErrorText(error).text }))
       })
   }
 
@@ -163,7 +171,7 @@ function PluginsView(): ReactNode {
         setTrustNote('')
       })
       .catch((error: unknown) => {
-        setTrustNote(`读第三方界面插件状态失败：${humanErrorText(error).text}`)
+        setTrustNote(t('plugins.err.readTrust', { message: humanErrorText(error).text }))
       })
   }
 
@@ -173,7 +181,7 @@ function PluginsView(): ReactNode {
    */
   const confirmTrust = (row: TrustRow): void => {
     if (!native.available) {
-      toastErr('信任确认要写 ~/.dsc/plugins.json，只桌面版能做（浏览器里没有这条桥）')
+      toastErr(t('plugins.err.trustDesktopOnly'))
       return
     }
     setTrustBusy(true)
@@ -181,15 +189,15 @@ function PluginsView(): ReactNode {
       .invoke<{ ok: boolean; notice?: string; error?: string }>('setUiTrust', [row.name])
       .then((result) => {
         if (!result.ok) {
-          toastErr(`确认失败：${humanErrorLine(result.error ?? '未知原因')}`)
+          toastErr(t('plugins.err.confirm', { message: humanErrorLine(result.error ?? t('plugins.common.unknown')) }))
           return
         }
-        toastOk(result.notice ?? `已信任「${row.name}」`)
+        toastOk(result.notice ?? t('plugins.trust.done', { name: row.name }))
         setTrustOpen(null)
         loadTrusts()
       })
       .catch((error: unknown) => {
-        toastErr(`确认失败：${humanErrorLine(error)}`)
+        toastErr(t('plugins.err.confirm', { message: humanErrorLine(error) }))
       })
       .finally(() => {
         setTrustBusy(false)
@@ -205,12 +213,14 @@ function PluginsView(): ReactNode {
     void channel
       .invoke('setPluginEnabled', [keyOf(row), next])
       .then(() => {
-        toastOk(`已${next ? '启用' : '停用'}界面插件「${row.name}」，刷新页面（或重启宿主）后生效`)
+        toastOk(
+          next ? t('plugins.trust.enabledToast', { name: row.name }) : t('plugins.trust.disabledToast', { name: row.name }),
+        )
         setTimeout(loadTrusts, 600)
       })
       .catch((error: unknown) => {
         setTrusts((current) => current.map((item) => (item.name === row.name ? { ...item, enabled: !next } : item)))
-        toastErr(`没改成功：${text(error)}`)
+        toastErr(t('plugins.err.toggleFailed', { message: text(error) }))
       })
   }
 
@@ -219,23 +229,25 @@ function PluginsView(): ReactNode {
     void channel
       .invoke('setPluginEnabled', [row.file, next])
       .then(() => {
-        toastOk(`已${next ? '启用' : '停用'}插件 ${row.name}，即时生效`)
+        toastOk(
+          next ? t('plugins.toggle.enabledToast', { name: row.name }) : t('plugins.toggle.disabledToast', { name: row.name }),
+        )
         // 热挂载的结果（成功/回滚）随 system 条目与下一次清单刷新回来。
         setTimeout(refresh, 600)
       })
       .catch((error: unknown) => {
         setRows((current) => current?.map((item) => (item.file === row.file ? { ...item, enabled: !next } : item)) ?? null)
-        setNote(`没改成功：${error instanceof Error ? error.message : String(error)}`)
+        setNote(t('plugins.err.toggleFailed', { message: error instanceof Error ? error.message : String(error) }))
       })
   }
 
   const restartHost = (): void => {
     if (!native.available) {
-      toastErr('重启宿主来自桌面外壳的原生桥，浏览器里没有它')
+      toastErr(t('plugins.err.restartDesktopOnly'))
       return
     }
     void native.invoke('restartHost').catch((reason: unknown) => {
-      toastErr(`重启失败：${humanErrorLine(reason)}`)
+      toastErr(t('plugins.err.restart', { message: humanErrorLine(reason) }))
     })
   }
 
@@ -245,18 +257,18 @@ function PluginsView(): ReactNode {
    */
   const installPlugin = (): void => {
     if (!native.available) {
-      toastErr('装插件来自桌面外壳的文件选择器，浏览器里没有它')
+      toastErr(t('plugins.err.installDesktopOnly'))
       return
     }
     void native
       .invoke<string[]>('installPlugin')
       .then((installed) => {
         if (!Array.isArray(installed) || installed.length === 0) return
-        toastOk(`已安装 ${installed.join('、')}，即时生效`)
+        toastOk(t('plugins.install.done', { list: installed.join(t('plugins.common.listSep')) }))
         setTimeout(refresh, 600)
       })
       .catch((reason: unknown) => {
-        toastErr(`安装失败：${humanErrorLine(reason)}`)
+        toastErr(t('plugins.err.install', { message: humanErrorLine(reason) }))
       })
   }
 
@@ -288,18 +300,24 @@ function PluginsView(): ReactNode {
       <div className="plugins-inner">
         <div className="plugins-head">
           <div>
-            <h1>插件</h1>
-            <p>管理插件，点击卡片查看详情与配置</p>
+            <h1>{t('plugins.page.title')}</h1>
+            <p>{t('plugins.page.lead')}</p>
           </div>
           <div className="plugins-actions">
-            <button type="button" className="icon-btn" data-tip="刷新列表" aria-label="刷新列表" onClick={refresh}>
+            <button
+              type="button"
+              className="icon-btn"
+              data-tip={t('plugins.action.refresh')}
+              aria-label={t('plugins.action.refresh')}
+              onClick={refresh}
+            >
               <IconRefresh size={16} />
             </button>
             <button
               type="button"
               className="icon-btn"
-              data-tip={native.available ? '重启宿主，重新加载插件目录' : '重启宿主只在桌面版里有'}
-              aria-label="重启宿主"
+              data-tip={native.available ? t('plugins.action.restartTip') : t('plugins.action.restartTipBrowser')}
+              aria-label={t('plugins.action.restart')}
               disabled={!native.available}
               onClick={restartHost}
             >
@@ -308,20 +326,20 @@ function PluginsView(): ReactNode {
             <button
               type="button"
               className="btn-primary plugins-add"
-              data-tip="安装本地插件"
+              data-tip={t('plugins.action.installTip')}
               onClick={installPlugin}
             >
-              + 添加插件
+              {t('plugins.action.add')}
             </button>
           </div>
         </div>
 
-        {rows === null ? <div className="plugins-empty">{note === '' ? '正在读插件…' : note}</div> : null}
+        {rows === null ? <div className="plugins-empty">{note === '' ? t('plugins.page.loading') : note}</div> : null}
 
         {rows !== null ? (
           <>
             <div className="plugin-group-label">
-              <IconPuzzle size={13} /> 自定义 <span className="count">{custom.length}</span>
+              <IconPuzzle size={13} /> {t('plugins.group.custom')} <span className="count">{custom.length}</span>
               <span className="group-hint">~/.dsc/plugins/*.js</span>
             </div>
             {custom.map((row) => (
@@ -332,9 +350,9 @@ function PluginsView(): ReactNode {
                 <span className="empty-card-icon">
                   <IconPuzzle size={18} />
                 </span>
-                <div className="empty-card-title">还没有外部插件</div>
+                <div className="empty-card-title">{t('plugins.empty.customTitle')}</div>
                 <p className="empty-card-desc">
-                  点右上角「+ 添加插件」选一个 .js 文件，或把它放进 <code>~/.dsc/plugins/</code> 后重启宿主。
+                  {t('plugins.empty.lead')} <code>~/.dsc/plugins/</code> {t('plugins.empty.tail')}
                 </p>
               </div>
             )}
@@ -342,8 +360,9 @@ function PluginsView(): ReactNode {
             {thirdParty.length > 0 ? (
               <>
                 <div className="plugin-group-label">
-                  <IconPuzzle size={13} /> 第三方界面插件 <span className="count">{thirdParty.length}</span>
-                  <span className="group-hint">~/.dsc/plugins/&lt;目录名&gt;/ui/client.js（信任一次后才装载）</span>
+                  <IconPuzzle size={13} /> {t('plugins.group.thirdParty')}{' '}
+                  <span className="count">{thirdParty.length}</span>
+                  <span className="group-hint">{t('plugins.group.thirdPartyHint')}</span>
                 </div>
                 {thirdParty.map((row) => (
                   <TrustCard
@@ -368,10 +387,12 @@ function PluginsView(): ReactNode {
             {packages.length > 0 ? (
               <>
                 <div className="plugin-group-label">
-                  <IconPuzzle size={13} /> 组合包界面 <span className="count">{packages.length}</span>
+                  <IconPuzzle size={13} /> {t('plugins.group.packages')} <span className="count">{packages.length}</span>
                   <span className="group-hint">
-                    {packageProfiles.length === 0 ? '' : `profile ${packageProfiles.join('、')} · `}
-                    profile 里装的包（package.json 的 pneuma.client.platform = pneuma）；装了就算同意，这里只开关
+                    {packageProfiles.length === 0
+                      ? ''
+                      : t('plugins.group.profiles', { list: packageProfiles.join(t('plugins.common.listSep')) })}
+                    {t('plugins.group.packagesHint')}
                   </span>
                 </div>
                 {packages.map((row) => (
@@ -393,23 +414,25 @@ function PluginsView(): ReactNode {
             {trustNote === '' ? null : <div className="plugins-empty">{trustNote}</div>}
 
             <div className="plugin-group-label">
-              官方可开关 <span className="count">{official.length}</span>
-              <span className="group-hint">随包发布，按需开关，点击卡片进入详情配置</span>
+              {t('plugins.group.official')} <span className="count">{official.length}</span>
+              <span className="group-hint">{t('plugins.group.officialHint')}</span>
             </div>
             {official.map((row) => (
               <PluginCard key={row.file} row={row} onToggle={toggle} onOpen={setDetailFile} />
             ))}
 
             <div className="plugin-group-label">
-              运行内核 <span className="count">{kernel.length}</span>
-              <span className="group-hint">构成 Pneuma 本身，不可停用</span>
+              {t('plugins.group.kernel')} <span className="count">{kernel.length}</span>
+              <span className="group-hint">{t('plugins.group.kernelHint')}</span>
             </div>
             {kernelShown.map((row) => (
               <PluginCard key={row.file} row={row} onToggle={toggle} onOpen={setDetailFile} />
             ))}
             {kernel.length > KERNEL_PREVIEW && (
               <button type="button" className="plugin-more" onClick={() => setKernelOpen((open) => !open)}>
-                {kernelOpen ? '收起' : `展开其余 ${String(kernel.length - KERNEL_PREVIEW)} 个`}
+                {kernelOpen
+                  ? t('plugins.action.collapse')
+                  : t('plugins.action.expandMore', { count: kernel.length - KERNEL_PREVIEW })}
               </button>
             )}
           </>
@@ -440,7 +463,7 @@ function PluginCard({
     <div
       className={`plugin-row${row.enabled ? '' : ' off'}`}
       data-plugin={row.file}
-      data-tip="查看详情与配置"
+      data-tip={t('plugins.card.tip')}
       onClick={() => {
         onOpen(row.file)
       }}
@@ -453,18 +476,22 @@ function PluginCard({
           {row.name}
           {row.apiVersion !== undefined && <span className="plugin-apiver">API v{String(row.apiVersion)}</span>}
           {/* 组合包来源：让用户知道该去哪卸载（组合包不是单个文件，不能在这里停用）。 */}
-          {row.bundle !== undefined && <span className="plugin-apiver" data-bundle={row.bundle}>组合包 {row.bundle}</span>}
+          {row.bundle !== undefined && (
+            <span className="plugin-apiver" data-bundle={row.bundle}>
+              {t('plugins.card.bundle', { name: row.bundle })}
+            </span>
+          )}
         </div>
         <div className={`plugin-desc${row.problem !== undefined ? ' problem' : ''}`}>
           {row.problem !== undefined
             ? `⚠ ${row.problem}`
             : row.description === ''
-              ? `${row.file} · 无描述`
+              ? t('plugins.card.noDescription', { file: row.file })
               : row.description}
           {/* dsh 客户端能力：只列不加载（见 PluginInfoView.clientCapabilities 的说明）。 */}
           {row.clientCapabilities !== undefined && row.clientCapabilities.length > 0 ? (
             <div className="plugin-desc" data-client-capabilities={row.clientCapabilities.join(',')}>
-              界面能力（dsh 客户端插件）：{row.clientCapabilities.join('、')} · 只列不加载
+              {t('plugins.card.capabilities', { list: row.clientCapabilities.join(t('plugins.common.listSep')) })}
             </div>
           ) : null}
         </div>
@@ -473,8 +500,8 @@ function PluginCard({
         <button
           type="button"
           className="icon-btn"
-          data-tip="打开配置"
-          aria-label={`配置 ${row.name}`}
+          data-tip={t('plugins.card.openConfig')}
+          aria-label={t('plugins.card.configAria', { name: row.name })}
           onClick={(event) => {
             event.stopPropagation()
             onOpen(row.file)
@@ -488,8 +515,14 @@ function PluginCard({
         className={`switch${row.enabled ? ' on' : ''}${row.toggleable ? '' : ' locked'}`}
         role="switch"
         aria-checked={row.enabled}
-        aria-label={`${row.name} 开关`}
-        data-tip={row.toggleable ? (row.enabled ? '停用（即时生效）' : '启用（即时生效）') : '运行内核的一部分，不可停用'}
+        aria-label={t('plugins.card.switchAria', { name: row.name })}
+        data-tip={
+          row.toggleable
+            ? row.enabled
+              ? t('plugins.card.disableNow')
+              : t('plugins.card.enableNow')
+            : t('plugins.card.locked')
+        }
         disabled={!row.toggleable}
         onClick={(event) => {
           event.stopPropagation()
@@ -510,20 +543,20 @@ function PluginCard({
  */
 const TRUST_PROBLEM_TIERS = {
   version: {
-    label: '版本不满足',
-    next: '升级宿主（壳）到满足插件声明的 @dsc/ui 区间，或请插件作者把 plugin.json 的 api 改成当前壳支持的区间。',
+    label: t('plugins.problem.version.label'),
+    next: t('plugins.problem.version.next'),
   },
   artifact: {
-    label: '读不到产物',
-    next: '检查 ~/.dsc/plugins/<目录名>/ui/client.js 是否在位、可读（目录名与文件名大小写要一字不差），缺了就重新安装这份插件。',
+    label: t('plugins.problem.artifact.label'),
+    next: t('plugins.problem.artifact.next'),
   },
   manifest: {
-    label: '清单缺声明',
-    next: '检查 ~/.dsc/plugins/<目录名>/plugin.json：文件要在，且写 api（如 "^1.0.0" 的 @dsc/ui 区间）。',
+    label: t('plugins.problem.manifest.label'),
+    next: t('plugins.problem.manifest.next'),
   },
   clash: {
-    label: '与内置插件撞名',
-    next: '把插件目录改名，不要与内置插件的 id 相同。',
+    label: t('plugins.problem.clash.label'),
+    next: t('plugins.problem.clash.next'),
   },
 } as const satisfies Record<NonNullable<TrustRow['problemKind']>, { label: string; next: string }>
 
@@ -533,32 +566,32 @@ const TRUST_PROBLEM_TIERS = {
  */
 const PACKAGE_PROBLEM_TIERS = {
   version: {
-    label: '版本不满足',
-    next: '升级宿主（壳）到满足这个包声明的 @dsc/ui 区间，或把这个包装成支持当前壳的版本。',
+    label: t('plugins.problem.packageVersion.label'),
+    next: t('plugins.problem.packageVersion.next'),
   },
   artifact: {
-    label: '读不到入口',
-    next: '检查这个包的 package.json：exports["./client"] 要指向包内真实存在的文件（装坏了就重装这个包）。',
+    label: t('plugins.problem.packageArtifact.label'),
+    next: t('plugins.problem.packageArtifact.next'),
   },
   manifest: {
-    label: '清单缺声明',
-    next: '检查这个包的 package.json：pneuma.client.platform 要是 "pneuma"，pneuma.client.api 要写（如 "^2.0.0"）。',
+    label: t('plugins.problem.packageManifest.label'),
+    next: t('plugins.problem.packageManifest.next'),
   },
   clash: {
-    label: '与已有插件撞名',
-    next: '这个包名与内置插件（或另一个界面插件）的 id 相同，装不进启动图；换个包名，或先停用撞名的那个。',
+    label: t('plugins.problem.packageClash.label'),
+    next: t('plugins.problem.packageClash.next'),
   },
 } as const satisfies Record<NonNullable<TrustRow['problemKind']>, { label: string; next: string }>
 
 /** 宿主没标档（更老的宿主）时的兜底：不猜，照原文让用户自己去看目录。 */
 const UNKNOWN_TRUST_PROBLEM = {
-  label: '装不上',
-  next: '照上面的原因检查 ~/.dsc/plugins/<目录名>/ 里的 plugin.json 与 ui/client.js。',
+  label: t('plugins.problem.unknownTrust.label'),
+  next: t('plugins.problem.unknownTrust.next'),
 } as const
 
 const UNKNOWN_PACKAGE_PROBLEM = {
-  label: '装不上',
-  next: '照上面的原因检查这个包的 package.json（`pneuma.client` 段）与 exports["./client"]。',
+  label: t('plugins.problem.unknownPackage.label'),
+  next: t('plugins.problem.unknownPackage.next'),
 } as const
 
 /** 一行问题的档：有标用标，没标给兜底；「下一步去哪儿看」按来源分。 */
@@ -592,17 +625,18 @@ function TrustCard({
 }): ReactNode {
   const hello = useHostChannel().getHello()
   const fromPackage = isPackageRow(row)
-  const trustedAt = row.trustedAt === undefined ? '' : `（${new Date(row.trustedAt).toLocaleDateString()}）`
+  const trustedAt =
+    row.trustedAt === undefined ? '' : t('plugins.trust.trustedAt', { date: new Date(row.trustedAt).toLocaleDateString() })
   // 装不上的档（problem 才存在）：行里放档名 + 判定依据，行下常驻下一步。
   const tier = row.problem === undefined ? null : trustProblemTier(row.problemKind, row.origin)
   const desc =
     row.problem !== undefined && tier !== null
-      ? `⚠ ${tier.label}：${row.problem}`
+      ? t('plugins.trust.problem', { label: tier.label, detail: row.problem })
       : row.trusted
         ? fromPackage
-          ? '组合包自带界面半，装进 profile 就算同意——这里只开关，刷新页面后生效'
-          : '已确认信任，可以启停（停用或启用都在刷新页面后生效）'
-        : '未信任：还没有信任记录——首次安装需要在插件中心确认一次（它将能调用宿主的界面方法）'
+          ? t('plugins.trust.packageDesc')
+          : t('plugins.trust.trustedDesc')
+        : t('plugins.trust.untrustedDesc')
   return (
     <div className="trust-card" data-trust={row.name}>
       <div className={`plugin-row${row.enabled ? '' : ' off'}`}>
@@ -625,16 +659,20 @@ function TrustCard({
                 profile {row.profile}
               </span>
             ) : null}
-            {row.trusted ? <span className="plugin-apiver">已信任{trustedAt}</span> : null}
-            {row.trusted && !row.enabled ? <span className="plugin-apiver">已停用</span> : null}
+            {row.trusted ? <span className="plugin-apiver">{t('plugins.trust.badge', { date: trustedAt })}</span> : null}
+            {row.trusted && !row.enabled ? (
+              <span className="plugin-apiver">{t('plugins.trust.disabledBadge')}</span>
+            ) : null}
           </div>
           <div className={`plugin-desc${row.problem !== undefined ? ' problem' : ''}`}>{desc}</div>
-          {tier !== null ? <div className="trust-next">下一步：{tier.next}</div> : null}
+          {tier !== null ? (
+            <div className="trust-next">{t('plugins.trust.next', { next: tier.next })}</div>
+          ) : null}
         </div>
         {/* 「查看并信任」只对第三方：组合包没有要答的问题，装上就是同意。 */}
         {!fromPackage && row.problem === undefined && !row.trusted ? (
           <button type="button" className="btn-primary" onClick={onOpen}>
-            {open ? '收起' : '查看并信任'}
+            {open ? t('plugins.action.collapse') : t('plugins.trust.review')}
           </button>
         ) : null}
         {row.trusted ? (
@@ -643,8 +681,8 @@ function TrustCard({
             className={`switch${row.enabled ? ' on' : ''}`}
             role="switch"
             aria-checked={row.enabled}
-            aria-label={`${row.name} 开关`}
-            data-tip={row.enabled ? '停用（刷新页面后生效）' : '启用（刷新页面后生效）'}
+            aria-label={t('plugins.card.switchAria', { name: row.name })}
+            data-tip={row.enabled ? t('plugins.card.disableReload') : t('plugins.card.enableReload')}
             onClick={() => {
               onToggle(!row.enabled)
             }}
@@ -653,22 +691,22 @@ function TrustCard({
       </div>
       {open ? (
         <div className="trust-disclosure">
-          <div className="settings-group-title">信任后它能做什么</div>
+          <div className="settings-group-title">{t('plugins.trust.disclosureTitle')}</div>
           <ul>
             <li>
-              @dsc/ui 区间：{row.api ?? '(没写)'}
-              {hello === null ? '' : `（当前壳 v${hello.host.version}，不满足会被门禁拦下并说明）`}
+              {t('plugins.trust.apiRange', { range: row.api ?? t('plugins.common.notSet') })}
+              {hello === null ? '' : t('plugins.trust.currentHost', { version: hello.host.version })}
             </li>
-            <li>载体：{row.platforms.join('/')}</li>
-            <li>能力：调用宿主界面通道的白名单方法；桌面窗口里可用原生桥（打开目录、终端等操作）</li>
-            <li>生效：重启宿主（或刷新页面）后装载；停用与启用都走这张卡上的开关</li>
+            <li>{t('plugins.trust.platforms', { list: row.platforms.join('/') })}</li>
+            <li>{t('plugins.trust.capabilities')}</li>
+            <li>{t('plugins.trust.effect')}</li>
           </ul>
           <div className="trust-actions">
             <button type="button" className="btn-primary" disabled={busy} onClick={onConfirm}>
-              {busy ? '正在写…' : '确认信任'}
+              {busy ? t('plugins.trust.writing') : t('plugins.trust.confirm')}
             </button>
             <button type="button" className="btn-ghost" onClick={onOpen}>
-              取消
+              {t('plugins.common.cancel')}
             </button>
           </div>
         </div>
@@ -718,13 +756,18 @@ function PluginDetail({
     // 只认这三样：loadSection 每次渲染都是新函数。
   }, [channel, plugin.enabled, plugin.settingsSection])
 
-  const sourceLabel = plugin.source === 'external' ? '自定义' : plugin.toggleable ? '官方' : '运行内核'
+  const sourceLabel =
+    plugin.source === 'external'
+      ? t('plugins.group.custom')
+      : plugin.toggleable
+        ? t('plugins.source.official')
+        : t('plugins.group.kernel')
   return (
     <div className="plugin-detail">
       <div className="plugin-detail-top">
-        <button type="button" className="plugin-back" data-tip="返回插件列表" onClick={onBack}>
+        <button type="button" className="plugin-back" data-tip={t('plugins.detail.backTip')} onClick={onBack}>
           <IconChevronRight size={14} />
-          插件
+          {t('plugins.page.title')}
         </button>
       </div>
       <div className={`plugin-detail-head${plugin.enabled ? '' : ' off'}`}>
@@ -737,7 +780,11 @@ function PluginDetail({
             {plugin.apiVersion !== undefined && <span className="plugin-apiver">API v{String(plugin.apiVersion)}</span>}
           </div>
           <div className={`plugin-detail-desc${plugin.problem !== undefined ? ' problem' : ''}`}>
-            {plugin.problem !== undefined ? `⚠ ${plugin.problem}` : plugin.description === '' ? '无描述' : plugin.description}
+            {plugin.problem !== undefined
+              ? `⚠ ${plugin.problem}`
+              : plugin.description === ''
+                ? t('plugins.detail.noDescription')
+                : plugin.description}
           </div>
         </div>
         {plugin.toggleable && (
@@ -746,8 +793,8 @@ function PluginDetail({
             className={`switch${plugin.enabled ? ' on' : ''}`}
             role="switch"
             aria-checked={plugin.enabled}
-            aria-label={`${plugin.name} 开关`}
-            data-tip={plugin.enabled ? '停用（即时生效）' : '启用（即时生效）'}
+            aria-label={t('plugins.card.switchAria', { name: plugin.name })}
+            data-tip={plugin.enabled ? t('plugins.card.disableNow') : t('plugins.card.enableNow')}
             onClick={() => {
               onToggle(plugin, !plugin.enabled)
             }}
@@ -759,17 +806,17 @@ function PluginDetail({
         <span className="plugin-detail-src">{sourceLabel}</span>
       </div>
       <div className="plugin-detail-config">
-        <div className="settings-group-title">配置</div>
+        <div className="settings-group-title">{t('plugins.detail.config')}</div>
         {section === undefined ? (
-          <div className="settings-loading" role="status" aria-label="正在读取插件配置">
+          <div className="settings-loading" role="status" aria-label={t('plugins.detail.loadingConfig')}>
             <SkeletonText lines={3} />
             <Skeleton width={132} height={30} radius={8} />
           </div>
         ) : section === null ? (
           plugin.enabled ? (
-            <div className="settings-empty">该插件没有可配置项。</div>
+            <div className="settings-empty">{t('plugins.detail.noConfig')}</div>
           ) : (
-            <div className="settings-empty">插件已停用，启用后才能配置。</div>
+            <div className="settings-empty">{t('plugins.detail.disabledConfig')}</div>
           )
         ) : (
           <ConfigFields section={section} onAction={loadSection} />
@@ -804,7 +851,7 @@ function ConfigFields({ section, onAction }: { section: SettingsSectionView; onA
         if (alive) setValues(next)
       })
       .catch((error: unknown) => {
-        if (alive) setNote({ tone: 'error', text: `读取设置失败：${humanErrorText(error).text}` })
+        if (alive) setNote({ tone: 'error', text: t('plugins.err.readSettings', { message: humanErrorText(error).text }) })
       })
     return () => {
       alive = false
@@ -825,14 +872,14 @@ function ConfigFields({ section, onAction }: { section: SettingsSectionView; onA
       .invoke<SettingsMutation>('setSettingValue', [section.id, key, value])
       .then((result) => {
         if (!result.ok) {
-          setNote({ tone: 'error', text: `保存失败：${humanErrorText(result.error).text}` })
+          setNote({ tone: 'error', text: t('plugins.err.save', { message: humanErrorText(result.error).text }) })
           return
         }
         if (result.notice !== undefined) setNote({ tone: 'ok', text: result.notice })
         reload()
       })
       .catch((error: unknown) => {
-        setNote({ tone: 'error', text: `保存失败：${humanErrorText(error).text}` })
+        setNote({ tone: 'error', text: t('plugins.err.save', { message: humanErrorText(error).text }) })
       })
   }
 
@@ -842,7 +889,7 @@ function ConfigFields({ section, onAction }: { section: SettingsSectionView; onA
       .invoke<SettingsMutation>('runSettingAction', [section.id, action])
       .then((result) => {
         if (!result.ok) {
-          setNote({ tone: 'error', text: `操作失败：${humanErrorText(result.error).text}` })
+          setNote({ tone: 'error', text: t('plugins.err.action', { message: humanErrorText(result.error).text }) })
           return
         }
         if (result.notice !== undefined) setNote({ tone: 'ok', text: result.notice })
@@ -851,7 +898,7 @@ function ConfigFields({ section, onAction }: { section: SettingsSectionView; onA
         onAction()
       })
       .catch((error: unknown) => {
-        setNote({ tone: 'error', text: `操作失败：${humanErrorText(error).text}` })
+        setNote({ tone: 'error', text: t('plugins.err.action', { message: humanErrorText(error).text }) })
       })
   }
 
@@ -873,37 +920,37 @@ function ConfigFields({ section, onAction }: { section: SettingsSectionView; onA
                   onClick={() => {
                     void navigator.clipboard.writeText(field.text).then(
                       () => {
-                        setNote({ tone: 'ok', text: '已复制' })
+                        setNote({ tone: 'ok', text: t('plugins.config.copied') })
                       },
                       () => {
-                        setNote({ tone: 'error', text: '复制失败，请手动选中' })
+                        setNote({ tone: 'error', text: t('plugins.config.copyFailed') })
                       },
                     )
                   }}
                 >
-                  复制
+                  {t('plugins.config.copy')}
                 </button>
                 <button
                   type="button"
                   className="text-btn"
-                  data-tip="在文件管理器中打开"
+                  data-tip={t('plugins.config.revealTip')}
                   onClick={() => {
                     const native = getHostNative()
                     if (!native.available) {
-                      setNote({ tone: 'error', text: '用系统程序打开只在桌面版里有（浏览器里没有这条桥）' })
+                      setNote({ tone: 'error', text: t('plugins.err.openDesktopOnly') })
                       return
                     }
                     void native
                       .invoke<string>('openPath', [field.text])
                       .then((problem) => {
-                        if (problem !== '') setNote({ tone: 'error', text: `打开失败：${problem}` })
+                        if (problem !== '') setNote({ tone: 'error', text: t('plugins.err.open', { message: problem }) })
                       })
                       .catch((error: unknown) => {
-                        setNote({ tone: 'error', text: `打开失败：${text(error)}` })
+                        setNote({ tone: 'error', text: t('plugins.err.open', { message: text(error) }) })
                       })
                   }}
                 >
-                  打开
+                  {t('plugins.config.open')}
                 </button>
               </span>
             ) : null}
@@ -956,7 +1003,9 @@ function ConfigFields({ section, onAction }: { section: SettingsSectionView; onA
         )
       }
       // 宿主返回了选项外的值也要看得见，不能悄悄显示成第一项。
-      const options = listed ? field.options : [...field.options, { value: current, label: `${current} · 未识别` }]
+      const options = listed
+        ? field.options
+        : [...field.options, { value: current, label: t('plugins.config.unrecognized', { value: current }) }]
       return (
         <div className="setting-row" key={field.key}>
           <div className="setting-text">
@@ -1040,7 +1089,7 @@ function ConfigFields({ section, onAction }: { section: SettingsSectionView; onA
 
   return (
     <div className="settings-fields">
-      {section.fields.length === 0 ? <div className="settings-empty">该分区没有可配置项。</div> : null}
+      {section.fields.length === 0 ? <div className="settings-empty">{t('plugins.detail.noSectionConfig')}</div> : null}
       {section.fields.map((field, index) => {
         const group = field.group
         return (

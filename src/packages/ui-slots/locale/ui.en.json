@@ -1,0 +1,4 @@
+{
+  "slot.crash": "Block {id} failed to render: ",
+  "factory.crash": "Factory {name} slot {id} failed to render: "
+}

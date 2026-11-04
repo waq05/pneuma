@@ -54,6 +54,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { IconArrowUp, IconCheck, IconChevronDown, IconClose, IconLayers, IconPackage, IconShield, IconStop } from '@dsc/ui'
 import {
+  createT,
   defineUiPlugin,
   getHostNative,
   toastErr,
@@ -61,6 +62,10 @@ import {
   useHostChannel,
   useHostSelector,
 } from '@dsc/ui'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
 import { formatBytes, ImageLightbox, readTurnState, sameGitSurface as sameGit } from '@dsc/ui-primitives'
 import { useMention } from './mention'
 import { useCommandMenu } from './command-menu'
@@ -84,6 +89,17 @@ import { useModelControls } from './model-controls'
 import { NoticeStrip } from './notice-strip'
 import { QueueDock } from './queue-dock'
 import { readDraftCwd, readGit, readHasApproval, readInboxCount, readPermissionPresets, readPresetSurface, readSessionId, readSessionPath, readSessionUnsaved, samePermissionPresets, samePresetSurface } from './surfaces'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
+
+/**
+ * 宿主说「这个界面方法不在放行表里」时用的原话。
+ *
+ * 这是**数据比对**，不是界面文案：宿主发的是中文原文，与界面语言无关，所以两种写法都认
+ * （英文界面下 `t()` 给的是译文，对不上宿主那一句）。
+ */
+const PROTOCOL_DENIED_MARKS: readonly string[] = [t('error.protocolDenied'), zh['error.protocolDenied']]
 
 /** 输入框自动增高的上限（旧界面同一个值：200px）。 */
 const MAX_INPUT_HEIGHT = 200
@@ -111,7 +127,7 @@ let insertDraft: ((text: string) => void) | null = null
 const DRAFT_STORE = new Map<string, ComposerDraft>()
 
 export default defineUiPlugin({
-  name: '输入区',
+  name: t('plugin.name'),
   apply(ui) {
     // 首屏能力卡的落点：只做「写字 + 聚焦」，不发送——发不发送仍由用户按回车决定。
     ui.provide('composerDraft', {
@@ -360,8 +376,8 @@ function ComposerBox(): ReactNode {
         .catch((reason: unknown) => {
           const message = reason instanceof Error ? reason.message : String(reason)
           setFault(
-            message.includes('协议不允许调用的方法')
-              ? '“/” 命令要宿主支持：当前宿主没把这条路接到界面通道，请在桌面端或终端里执行'
+            PROTOCOL_DENIED_MARKS.some((mark) => message.includes(mark))
+              ? t('error.commandUnsupported')
               : message,
           )
         })
@@ -369,7 +385,7 @@ function ComposerBox(): ReactNode {
     }
     // 还有附件在传：这一刻发出去只能发个半成品，明确拦下。
     if (attachments.some((item) => item.uploading !== null)) {
-      setFault('附件还在上传，请等上传完成后再发送')
+      setFault(t('error.uploading'))
       return
     }
     const payload = composeSubmit(attachments)
@@ -395,12 +411,12 @@ function ComposerBox(): ReactNode {
         void channel.invoke('refreshSessions').catch(() => undefined)
         if (steerIndex !== null) {
           const done = await channel.invoke<boolean>('steerQueued', [steerIndex])
-          if (done !== true) setFault('插话没赶上：这一轮刚结束，这条消息会自己发出去')
+          if (done !== true) setFault(t('error.steerMissed'))
         }
         setText('')
         clearDraftAttachments()
         if (payload.dropped > 0) {
-          setFault(`图片最多 ${String(MAX_IMAGES)} 张，已发送前 ${String(MAX_IMAGES)} 张（${String(payload.dropped)} 张未发送）`)
+          setFault(t('error.imageLimit', { max: MAX_IMAGES, dropped: payload.dropped }))
         }
       } catch (reason) {
         setFault(reason instanceof Error ? reason.message : String(reason))
@@ -428,16 +444,16 @@ function ComposerBox(): ReactNode {
     setFault(null)
     const native = getHostNative()
     if (!native.available) {
-      setFault('切权限预设这条口子只在桌面窗口里开（浏览器页签与远程页面够不着），请用桌面端或终端改')
+      setFault(t('error.presetNativeOnly'))
       return
     }
     void native
       .invoke('usePermissionPreset', [name])
       .then(() => {
-        toastOk(`权限预设已切到「${label}」`)
+        toastOk(t('toast.presetSwitched', { label }))
       })
       .catch((reason: unknown) => {
-        setFault(`切权限预设失败：${reason instanceof Error ? reason.message : String(reason)}`)
+        setFault(t('error.presetFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
       })
   }
 
@@ -451,10 +467,10 @@ function ComposerBox(): ReactNode {
     void channel
       .invoke('usePreset', [name])
       .then(() => {
-        toastOk(`已切到「${label}」模式`)
+        toastOk(t('toast.modeSwitched', { label }))
       })
       .catch((reason: unknown) => {
-        toastErr(`切换失败：${reason instanceof Error ? reason.message : String(reason)}`)
+        toastErr(t('error.modeFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
       })
   }
 
@@ -484,7 +500,7 @@ function ComposerBox(): ReactNode {
     },
     onUnavailable: () => {
       // 宿主没接这条路（老版本 / 远程档没放行）：说一句，别让「打了 / 什么都没发生」。
-      setFault('当前宿主没接“/”命令通道：菜单不可用，请用桌面端或终端执行（升级宿主后自动可用）')
+      setFault(t('error.commandChannel'))
     },
   })
 
@@ -623,7 +639,7 @@ function ComposerBox(): ReactNode {
       const urls: string[] = []
       for (const [index, frame] of frames.entries()) {
         try {
-          const frameMeta = await uploadFile(frame, `${base}-帧${String(index + 1)}.jpg`)
+          const frameMeta = await uploadFile(frame, t('attach.frameName', { base, index: index + 1 }))
           urls.push(frameMeta.url)
           updateAttachment(id, { frames: [...urls] })
         } catch {
@@ -634,7 +650,7 @@ function ComposerBox(): ReactNode {
       URL.revokeObjectURL(localUrl)
       setAttachments((list) => list.filter((item) => item.id !== id))
       patchDraftsAttachment(id, null)
-      setFault(`上传失败：${reason instanceof Error ? reason.message : String(reason)}`)
+      setFault(t('error.uploadFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
     }
   }
 
@@ -654,14 +670,14 @@ function ComposerBox(): ReactNode {
       }
       void addOneFile(file, kind)
     }
-    if (rejected) setFault('当前模型不支持图片，请切换支持图片的模型')
+    if (rejected) setFault(t('error.imageUnsupported'))
   }
 
   const placeholder = blocked
-    ? '等待审批…'
+    ? t('placeholder.blocked')
     : working
-      ? '回合进行中：回车把消息排进队里，Ctrl+Enter 插话（打断当前输出）'
-      : '发消息，@ 引用文件，可贴图 / 拖图片、视频或文件进来，回车发送，Ctrl+Enter 插话'
+      ? t('placeholder.working')
+      : t('placeholder.idle')
 
   return (
     // 这一层是「输入框外面那一列」：分支行在上、输入框在下，各占一行、各带自己的边。
@@ -735,7 +751,7 @@ function ComposerBox(): ReactNode {
         {/* 待发附件：贴在 textarea 上方、`/` 与 `@` 浮层下方的一条横向滚动卡片。
             只写结构，尺寸 / 间距 / 圆角归壳的 `styles.css`（主控统一写）。 */}
         {attachments.length === 0 ? null : (
-          <div className="composer-attachments" aria-label="待发送的附件">
+          <div className="composer-attachments" aria-label={t('attach.pending.aria')}>
             {attachments.map((item) => (
               <div
                 className="attach-item"
@@ -760,8 +776,8 @@ function ComposerBox(): ReactNode {
                         <button
                           type="button"
                           className="attach-zoom"
-                          data-tip="点开看大图"
-                          aria-label={`预览 ${item.name}`}
+                          data-tip={t('attach.zoom.tip')}
+                          aria-label={t('attach.preview.aria', { name: item.name })}
                           onClick={() => {
                             setZoom({ src: item.previewUrl, alt: item.name })
                           }}
@@ -783,7 +799,7 @@ function ComposerBox(): ReactNode {
                     </span>
                     <span className="attach-bytes">{formatBytes(item.bytes)}</span>
                     {item.frames.length === 0 ? null : (
-                      <span className="attach-hint">{item.frames.length} 帧</span>
+                      <span className="attach-hint">{t('attach.frames', { count: item.frames.length })}</span>
                     )}
                   </>
                 )}
@@ -795,8 +811,8 @@ function ComposerBox(): ReactNode {
                 <button
                   type="button"
                   className="attach-remove"
-                  aria-label={`移除 ${item.name}`}
-                  title={`移除 ${item.name}`}
+                  aria-label={t('attach.remove.aria', { name: item.name })}
+                  title={t('attach.remove.aria', { name: item.name })}
                   onClick={() => {
                     removeAttachment(item.id)
                   }}
@@ -814,7 +830,7 @@ function ComposerBox(): ReactNode {
           value={text}
           placeholder={placeholder}
           disabled={blocked}
-          aria-label="消息输入框"
+          aria-label={t('input.aria')}
           onChange={(event) => {
             onTextChange(event.target.value, event.target.selectionStart ?? event.target.value.length)
           }}
@@ -823,21 +839,21 @@ function ComposerBox(): ReactNode {
 
         {/* `/` 命令候选面板：与 @ 提及同一块位置（输入框上方），两者不会同时开。 */}
         {command.open ? (
-          <div className="slash-pop" role="listbox" aria-label="命令候选">
+          <div className="slash-pop" role="listbox" aria-label={t('slash.aria')}>
             {command.loading ? (
               <div className="slash-item" data-loading="1">
-                正在读取命令清单…
+                {t('slash.loading')}
               </div>
             ) : command.rows.length === 0 ? (
               <div className="slash-item" data-empty="1">
-                没有匹配的命令
+                {t('slash.empty')}
               </div>
             ) : (
               <>
                 {/* 分组标题：壳的菜单只列命令这一类（dsh 那张菜单分「添加 / 指令 / 技能」，
                     我们这边没有另外两类，标题照它留一个，行才不会被当成无主的一串）。 */}
                 <div className="slash-section" role="presentation">
-                  指令
+                  {t('slash.section')}
                 </div>
                 {command.rows.map((row, index) => {
                   const off = blockedNow(row, working)
@@ -862,27 +878,27 @@ function ComposerBox(): ReactNode {
                       </span>
                       <span className="slash-label">{row.label ?? `/${row.name}`}</span>
                       {row.label === undefined ? null : <span className="slash-name">{row.name}</span>}
-                      {off ? <span className="slash-flag">回合中不可用</span> : null}
+                      {off ? <span className="slash-flag">{t('slash.blocked')}</span> : null}
                       <span className="slash-desc">{row.description}</span>
                     </button>
                   )
                 })}
               </>
             )}
-            <div className="slash-hint">↑↓ 选 · Tab 补全 · Enter 执行 · Esc 关闭</div>
+            <div className="slash-hint">{t('slash.hint')}</div>
           </div>
         ) : null}
 
         {/* @ 文件提及的候选面板：贴在输入框上方（textarea 是 relative 容器的兄弟）。 */}
         {mention.open ? (
-          <div className="mention-pop" role="listbox" aria-label="文件提及候选">
+          <div className="mention-pop" role="listbox" aria-label={t('mention.aria')}>
             {mention.loading ? (
               <div className="mention-item" data-loading="1">
-                正在读取工作区文件…
+                {t('mention.loading')}
               </div>
             ) : mention.items.length === 0 ? (
               <div className="mention-item" data-empty="1">
-                没有匹配的文件
+                {t('mention.empty')}
               </div>
             ) : (
               mention.items.map((path, index) => (
@@ -903,7 +919,7 @@ function ComposerBox(): ReactNode {
                 </button>
               ))
             )}
-            <div className="mention-hint">↑↓ 选 · Tab/Enter 补全 · Esc 关闭</div>
+            <div className="mention-hint">{t('mention.hint')}</div>
           </div>
         ) : null}
 
@@ -913,8 +929,8 @@ function ComposerBox(): ReactNode {
             <button
               type="button"
               className="icon-btn"
-              data-tip="插入指令（/）"
-              aria-label="插入指令"
+              data-tip={t('insert.tip')}
+              aria-label={t('insert.aria')}
               onClick={() => {
                 if (text.trim() !== '') return
                 setText('/')
@@ -938,14 +954,12 @@ function ComposerBox(): ReactNode {
               <button
                 type="button"
                 className={`model-btn${permOpen ? ' open' : ''}`}
-                data-tip={
-                  permOption?.description ?? '当前三项旋钮的组合不匹配任何预设；在设置里逐格改出来的状态'
-                }
+                data-tip={permOption?.description ?? t('preset.unknown')}
                 aria-haspopup="menu"
                 aria-expanded={permOpen}
                 /* 手机档只画图标（styles.css ≤560 把文字藏掉），所以当前档位读什么要靠这条：
                    文字被 CSS 藏起来之后，读屏与 aria-label 是仅剩的两条解释。 */
-                aria-label={`权限预设：${permOption?.label ?? '自定义'}`}
+                aria-label={t('preset.aria', { label: permOption?.label ?? t('preset.custom') })}
                 onClick={() => {
                   setPermOpen((open) => !open)
                   setPresetOpen(false)
@@ -954,7 +968,7 @@ function ComposerBox(): ReactNode {
                 }}
               >
                 <IconShield size={13} />
-                <span className="chip-label">{permOption?.label ?? '自定义'}</span>
+                <span className="chip-label">{permOption?.label ?? t('preset.custom')}</span>
                 <IconChevronDown size={12} />
               </button>
               {permOpen ? (
@@ -965,14 +979,14 @@ function ComposerBox(): ReactNode {
                       setPermOpen(false)
                     }}
                   />
-                  <div className="model-pop policy-pop" role="menu" aria-label="权限预设">
+                  <div className="model-pop policy-pop" role="menu" aria-label={t('preset.menu.aria')}>
                     <div className="pop-label">
-                      权限预设
-                      <span className="pop-note">沙箱 + 权限 + 审阅者 三合一</span>
+                      {t('preset.label')}
+                      <span className="pop-note">{t('preset.note')}</span>
                     </div>
                     {permissionPresets.options.length === 0 ? (
                       <div className="pop-item">
-                        <span className="name">清单没取到</span>
+                        <span className="name">{t('list.empty')}</span>
                       </div>
                     ) : (
                       permissionPresets.options.map((item) => (
@@ -1003,10 +1017,10 @@ function ComposerBox(): ReactNode {
               <button
                 type="button"
                 className={`model-btn${presetOpen ? ' open' : ''}`}
-                data-tip={presetOption?.problem ?? presetOption?.description ?? '模式：模型是谁、手上有什么、被叮嘱了什么'}
+                data-tip={presetOption?.problem ?? presetOption?.description ?? t('mode.tip')}
                 aria-haspopup="menu"
                 aria-expanded={presetOpen}
-                aria-label={`模式：${presetOption?.label ?? preset.current}`}
+                aria-label={t('mode.aria', { label: presetOption?.label ?? preset.current })}
                 onClick={() => {
                   setPresetOpen((open) => !open)
                   setPermOpen(false)
@@ -1026,14 +1040,14 @@ function ComposerBox(): ReactNode {
                       setPresetOpen(false)
                     }}
                   />
-                  <div className="model-pop preset-pop" role="menu" aria-label="模式">
+                  <div className="model-pop preset-pop" role="menu" aria-label={t('mode.menu.aria')}>
                     {/* 这里原来挂着「新建/编辑：设置 → 模式」——一句话把菜单顶行撑满，又
                         让读者以为要跳去设置页才改得动。删掉：新建/编辑模式本来就是设置页的事，
                         菜单只回答「现在用哪一档」。 */}
-                    <div className="pop-label">模式</div>
+                    <div className="pop-label">{t('mode.label')}</div>
                     {preset.options.length === 0 ? (
                       <div className="pop-item">
-                        <span className="name">清单没取到</span>
+                        <span className="name">{t('list.empty')}</span>
                       </div>
                     ) : (
                       preset.options.map((item) => (
@@ -1051,8 +1065,10 @@ function ComposerBox(): ReactNode {
                         >
                           <span className="name">
                             {item.label}
-                            {item.name === preset.defaultName && <span className="pop-badge">默认</span>}
-                            {item.problem !== undefined && <span className="pop-badge warn">有问题</span>}
+                            {item.name === preset.defaultName && (
+                              <span className="pop-badge">{t('preset.defaultBadge')}</span>
+                            )}
+                            {item.problem !== undefined && <span className="pop-badge warn">{t('preset.problem')}</span>}
                           </span>
                           {item.name === preset.current ? <IconCheck size={14} className="check" /> : null}
                         </button>
@@ -1071,8 +1087,8 @@ function ComposerBox(): ReactNode {
               <button
                 type="button"
                 className={`send-btn stop${queueing ? ' dim' : ''}`}
-                aria-label="停止生成"
-                data-tip="停止生成"
+                aria-label={t('stop.aria')}
+                data-tip={t('stop.tip')}
                 onClick={interrupt}
               >
                 <IconStop size={16} />
@@ -1082,13 +1098,9 @@ function ComposerBox(): ReactNode {
               <button
                 type="button"
                 className="send-btn"
-                aria-label={working ? '排队发送' : '发送'}
+                aria-label={working ? t('send.queueAria') : t('send.aria')}
                 disabled={!sendable || blocked || sending}
-                data-tip={
-                  working
-                    ? '排队发送：这一轮跑完立刻发出（Ctrl+Enter 插话：打断当前输出先发这条）'
-                    : '发送，快捷键 Enter'
-                }
+                data-tip={working ? t('send.queueTip') : t('send.tip')}
                 onClick={() => {
                   send(false)
                 }}

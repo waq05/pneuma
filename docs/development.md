@@ -1106,6 +1106,34 @@ Windows 的最小化/最大化/关闭三个按钮由系统画，样式表够不�
 3. 主进程收到后调 `setTitleBarOverlay` 改控件条、`setBackgroundColor` 改窗口底色。
    只收 `#rrggbb`，其它格式直接拒收。
 
+### 界面文案改在哪（2026-11-04 夜起）
+
+界面里给用户看的字**不再写死在组件里**，每个包自带一份中英对照：
+
+| 文件 | 放什么 |
+|---|---|
+| `src/packages/<包>/locale/en.json` | 清单两行字（`title` / `description`），插件中心与 `numa plugin list` 读它 |
+| `src/packages/<包>/locale/ui.zh.json` | 本包界面文案的中文原文（**语义真源**，改文案改这里） |
+| `src/packages/<包>/locale/ui.en.json` | 同一批键的英文译本 |
+
+组件里的写法：`const t = createT({ zh, en })`（`createT` 从 `@dsc/ui` 取），然后把字面量换成
+`t('composer.send')`。插值写 `t('x', { n })`，字典里写 `"{n} 分钟前"`。
+
+语言来自 `config.yaml` 的 `language:`：`webserver` 用 `languageOfConfigFile(activeConfigFile())` 读出来，
+放进启动图的 `host.language`，`@dsc/ui-core` 的 `i18n.ts` 在首次取词时读一次。`en` 开头即英文，其余中文。
+
+改完跑 `node scripts/ui-locale-test.mjs --package <包>`：它用语法树判「源码里还有没有中文」、
+「两份字典键集是否相同」、「`t()` 的键是否存在」。这条闸在 `check:ui` 里，不需要单独记。
+
+现状（2026-11-05）：26 个界面包全部迁完，1890 个键、2135 处 `t()`、0 条硬编码；另有 17 条
+**协议豁免**——宿主写进协议字段的中文（队友汇报头的 `已失败` 之类）翻了就对不上，那些行在行尾写
+`// i18n-keep` 并给一句理由，闸门会跳过它们、但把豁免条数报出来。
+
+**还没覆盖的一层**：设置页的分区标题与字段、内置权限档位名（只读 / 工作区可写…）、内置模式名
+（标准 / 极简…）。它们由宿主包（`pneuma.settingsSection` 的声明方）拼好交给界面，不在
+`src/packages/*/ui/` 里，这道闸扫不到，英文界面下仍显示中文。补法见
+[docs/plugin-model.md](plugin-model.md) §16.5（要单独一批）。
+
 ### 启动这几秒：过渡页、失败页、首帧底色
 
 一次冷启动的时间线（打包版实测，机器一般）：窗口创建约 0.5 秒 → 过渡页画出、窗口显示约 0.9 秒 →

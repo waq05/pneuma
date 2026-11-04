@@ -13401,4 +13401,59 @@ session-open-in 全绿、ui-status-panel 全部通过、readme 26 条断言）�
 4. **产物钉要跟着归属走**：更新钮的产物断言原来读壳的 `lib/ui/assets`，按钮搬进布局 bundle 后那条必然红。
    判据应是「真打进了哪份产物」，不是「以前在哪份」。
 
+## 2026-11-05 凌晨：界面文案全部走字典（③ 收尾）
+
+### 为什么动这一刀
+
+上一轮留下的 ③ 是：locale 只覆盖清单两行字（插件中心与 `numa plugin list` 看到的标题/描述），
+**界面里的按钮、空态、错误提示全是硬编码中文**——用户把 `config.yaml` 的 `language:` 改成 `en`，
+插件列表变英文，点进去还是中文。dsh 那边每个包都带 `locale/*.json` 且有运行期 locale 服务，
+差距就在这里。
+
+### 机制（这轮定下的形状）
+
+- `@dsc/ui-core/i18n.ts`：`createT({ zh, en })` 返回 `t(key, params?)`；语言读启动图的 `host.language`
+  （`webserver` 用 `languageOfConfigFile(activeConfigFile())` 带下去），首次取词定一次；
+  英文缺译回落中文，中文也缺显示键名并告警一次。
+- 每个界面包自带 `locale/ui.zh.json`（语义真源）与 `ui.en.json`（译本），构建时内联进 `client.js`——
+  不需要宿主下发文件，也不需要运行期注册。
+- 闸 `scripts/ui-locale-test.mjs`（进 `check:ui`，可 `--package` 单查）：用 TypeScript 语法树扫
+  `src/packages/<包>/ui/`，字符串字面量 / 模板串 / JSX 文本里不许有汉字（`console.*` 与 `throw` 豁免）；
+  两份字典键集必须一致、英文里不许有汉字、`t('…')` 的键必须在字典里、字典里不许有没人用的键。
+
+### 数字
+
+- **26 个界面包全部迁移**：1890 个键（中英各一份）、2135 处 `t()`、0 条硬编码、**17 条协议豁免**。
+- 分 8 批派子代理完成（transcript / composer+prompt / trace+skills / sessions+team+files / layout+plugins /
+  primitives+status / settings / statusbar+palette+dockkit+ask / boot+preview+tasks+browser+renderer），
+  主控只做验收与跨批修补（探针文本钉 30 余处、`ui-plugin-test` 的层规则、e2e 第四段）。
+
+### 验证
+
+- `node scripts/ui-locale-test.mjs` → 26 个包 / 0 条硬编码 / 17 条协议豁免 / 1890 键 / 2135 处 `t()`。
+- `pnpm run typecheck` 0；`pnpm run build` 0（77 功能包 / 77 行 + 12 库包）；`pnpm -C ui-shell build` 0（21 份产物）。
+- `pnpm run check:ui` **55/55**；`pnpm run check:plugin` 89/89 用例、92 PASS、换包 e2e 17 PASS；
+  `pnpm run check:style` 1178 文件。
+- `node scripts/ui-boot-e2e.mjs` **四段全绿**（新加 `language: en` 那一段）：启动图 `host.language=en`、
+  侧栏是 New session / Skills / Plugins / Settings、整页没有「新会话 / 设置」，截图
+  `desktop/shots/ui-boot-english.png`。
+
+### 踩到的坑
+
+1. **协议值不是文案**：队友汇报头的 `'已失败'` / `'已停止'`、后台作业通知里的 `'失败'`、审查队友写的
+   字段名、宿主通知的中文前缀——翻了对不上，功能会静默坏掉。给闸门加了行尾 `// i18n-keep` 标记：
+   跳过该条、但汇总里报出豁免条数，评审时看得见。
+2. **探针用 Node 直读纯 `.ts` 模块，而它们现在要取词**：`@dsc/ui` 是构建期别名、字典是 JSON，
+   Node 两样都解析不了。加 `scripts/_i18n-alias.mjs`（`registerHooks` 把 `@dsc/ui` 指到真实现、
+   `.json` 按 JSON 载入），由 `_check-runner` 用 `--import` 统一挂上——**必须传 `file://` URL**，
+   Windows 绝对路径会被当成协议 `d:`（第一次挂上去全部探针 73ms 就红）。
+3. **「源码文本钉」是翻译的重灾区**：30 多条断言直接咬中文源码。改法是钉 `t('键')`，必要时连字典一起读
+   （例如工具词表那七条：先确认中文还在字典里，再确认词表用的是键）。
+4. **宿主声明的配置面是另一层**：设置分区与字段、内置权限档位名、内置模式名由**宿主包**拼好交给界面，
+   不在这道闸的扫描范围里。英文界面下它们仍是中文（截图里输入框上那两颗 chip）。补法写在
+   `docs/plugin-model.md` §16.5，需要单独一批，没有在这轮假装做完。
+5. **大文件别「整份读回再整份写」**：`ui-sessions/ui.tsx` 1995 行，read 有输出上限，一次回写把它截成 1093 行；
+   子代理当场 `git checkout` 还原重做。逐条 `edit`（每条断言唯一）或读改写后校验匹配次数，是唯一稳的写法。
+
+
 

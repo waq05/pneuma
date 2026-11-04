@@ -9,10 +9,17 @@
  * 壳按正文前缀认，压成给人看的一句话。认不出的通知退回一句中性话 + 扁平正文，
  * 绝不把原始标记当正文摆出来。
  *
- * 零 React、零 DOM：探针可按 Node 的类型擦除直接 import（所以只许 `import type`）。
+ * 零 React、零 DOM：探针可按 Node 的类型擦除直接 import。那条路要靠
+ * `scripts/_i18n-alias.mjs` 把 `@dsc/ui` 与 JSON 字典一起接上（探针批跑时由
+ * `scripts/_check-runner.mjs` 统一挂），取词器仍是全项目共用的那一份。
  *
  * @module dsc-ui-shell/plugins/composer/notice-summary
  */
+import { createT } from '@dsc/ui'
+import zhMessages from '../locale/ui.zh.json'
+import enMessages from '../locale/ui.en.json'
+
+const t = createT({ zh: zhMessages, en: enMessages })
 
 /** 队友汇报的前缀（宿主 `core/team-board.ts` 的 `TEAMMATE_REPORT_OPEN`）。 */
 const TEAMMATE_REPORT_OPEN = '<teammate-report '
@@ -20,6 +27,12 @@ const TEAMMATE_REPORT_OPEN = '<teammate-report '
 const REVIEW_FINDINGS_OPEN = '<review-findings '
 /** 队友间传话的前缀（宿主 subagent 插件拼的 `<message from="…">`）。 */
 const MESSAGE_OPEN = '<message '
+
+/**
+ * 汇报正文的起点标记。宿主拼的是**中文原文**（与界面语言无关），所以两种写法都认：
+ * 英文界面下 `t()` 给的是译文，对不上宿主那句话，得回落中文原文。
+ */
+const REPORT_MARKS: readonly string[] = [t('notice.reportMark'), zhMessages['notice.reportMark']]
 
 /** 摘要正文的字数上限。 */
 const DETAIL_CHARS = 120
@@ -56,37 +69,37 @@ export function summarizeNotice(text: string): NoticeSummary {
   if (text.startsWith(TEAMMATE_REPORT_OPEN)) {
     const name = attrOf(text, 'from')
     const state = attrOf(text, 'state')
-    const who = name === '' ? '一个队友' : `队友 ${name}`
+    const who = name === '' ? t('notice.teammate.one') : t('notice.teammate.named', { name })
     // 正文：`派给它的任务：…\n它的汇报：…` 之后那段；取不到就整段扁平。
-    const reportAt = text.indexOf('它的汇报：')
-    const body = reportAt === -1 ? text : text.slice(reportAt + '它的汇报：'.length)
+    const mark = REPORT_MARKS.find((item) => text.includes(item))
+    const body = mark === undefined ? text : text.slice(text.indexOf(mark) + mark.length)
     return {
-      label: `${who}${state === '' ? '' : ` ${state}`}，汇报了，本步结束会交给模型`,
+      label: t('notice.teammate.label', { who: state === '' ? who : `${who} ${state}` }),
       detail: flatten(body),
     }
   }
   if (text.startsWith(REVIEW_FINDINGS_OPEN)) {
     const name = attrOf(text, 'teammate')
     const state = attrOf(text, 'state')
-    const who = name === '' ? '审查队友' : `审查队友 ${name}`
+    const who = name === '' ? t('notice.review.who') : t('notice.review.named', { name })
     const open = text.indexOf('>')
     const close = text.lastIndexOf('</review-findings>')
     const body = open === -1 ? text : close === -1 ? text.slice(open + 1) : text.slice(open + 1, close)
     return {
-      label: `${who}${state === '' ? '' : ` ${state}`}，交回了 findings，本步结束会交给模型`,
+      label: t('notice.review.label', { who: state === '' ? who : `${who} ${state}` }),
       detail: flatten(body),
     }
   }
   if (text.startsWith(MESSAGE_OPEN)) {
     const from = attrOf(text, 'from')
-    const who = from === '' || from === 'user' ? '队友' : `队友 ${from}`
+    const who = from === '' || from === 'user' ? t('notice.message.who') : t('notice.message.named', { name: from })
     const open = text.indexOf('>')
     const close = text.lastIndexOf('</message>')
     const body = open === -1 ? text : close === -1 ? text.slice(open + 1) : text.slice(open + 1, close)
     return {
-      label: `${who} 传来一条消息，本步结束会交给模型`,
+      label: t('notice.message.label', { who }),
       detail: flatten(body),
     }
   }
-  return { label: '有一条待投递通知，本步结束会交给模型', detail: flatten(text) }
+  return { label: t('notice.fallback'), detail: flatten(text) }
 }

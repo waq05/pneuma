@@ -78,11 +78,11 @@ console.log('[2] 兜底仍在：服务缺席退回 PeekView（不白屏、不删
   check('PeekView 组件还在', team.includes('function PeekView('))
   check(
     'PeekView 的错误与空态人话没被删',
-    team.includes('读不了运行记录：') && team.includes('它还没开始干活。'),
+    team.includes("t('team.peek.error'") && team.includes("t('team.peek.empty')"),
   )
   check(
     'PeekView 的加载态改画骨架（2026-10-25，不再是一行「正在读运行记录…」）',
-    team.includes('aria-label="正在读运行记录"') && !team.includes('正在读运行记录…'),
+    team.includes("aria-label={t('team.peek.loading')}") && !team.includes('正在读运行记录…'),
   )
   check(
     '服务缺席时确实是 PeekView 出口（flow === undefined ? PeekView : FlowHost）',
@@ -113,7 +113,7 @@ console.log('[4] 页签头部不再只画文件名（角色 / 状态 / 轮数 / 
   check('头部标题：页签名 → 名册名 → 文件名三级回落', team.includes('const title = tab.label ?? mate?.name ?? basename(file)'))
   check('头部画角色（sub-tab-role）', team.includes('className="sub-tab-role"') && team.includes('{mate.role}'))
   check('头部画状态（sub-tab-state，带状态类）', team.includes('sub-tab-state') && team.includes('STATE_LABEL[mate.state]'))
-  check('头部画轮数', team.includes('第 {mate.rounds} 轮'))
+  check('头部画轮数', team.includes("t('team.row.rounds', { count: mate.rounds })"))
   check('头部画时长（复用 UsedTime）', /<UsedTime mate=\{mate\} \/>/.test(team))
   // 名册行匹配不到时（mate === undefined）整块元信息不画——不许编造。
   check('匹配不到名册行时元信息整块不画', team.includes('{mate === undefined ? null : ('))

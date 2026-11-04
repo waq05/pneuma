@@ -46,7 +46,8 @@ export interface UiBootRequestStats {
 
 /** 造快照要给的几样东西。 */
 export interface UiBootSourceOptions {
-  host: { name: string; version: string }
+  /** 宿主身份；`language` 会原样进启动图，界面据此选文案（见 `@dsc/ui-core` 的 `i18n.ts`）。 */
+  host: { name: string; version: string; language?: string }
   /** 内置插件目录。 */
   builtinDir: string
   /** 第三方插件根目录；不给用标准落点。 */

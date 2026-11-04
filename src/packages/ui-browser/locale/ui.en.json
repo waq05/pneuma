@@ -1,0 +1,17 @@
+{
+  "browser.plugin.name": "Browser",
+  "browser.tab.label": "Browser",
+  "browser.noBridge": "The built-in browser is a native view from the desktop shell, which a browser does not have. Open the desktop app to use it (or use \"Open externally\" to jump out).",
+  "browser.errorPrefix": "Browser: {message}",
+  "browser.error.noAddress": "Enter an address first",
+  "browser.error.badScheme": "Only http/https addresses are supported",
+  "browser.error.openFailed": "Couldn't open: {message}",
+  "browser.back": "Back",
+  "browser.forward": "Forward",
+  "browser.loading": "Loading…",
+  "browser.reload": "Reload",
+  "browser.urlPlaceholder": "Enter an HTTP(S) address, press Enter",
+  "browser.address": "Address",
+  "browser.openExternal": "Open in system browser",
+  "browser.empty": "Enter an HTTP(S) address to start browsing"
+}

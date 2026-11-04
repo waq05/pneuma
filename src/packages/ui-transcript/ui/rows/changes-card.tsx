@@ -7,9 +7,15 @@
  */
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { DiffRows, FileIcon, setDockPreview, setDockReview, type ChangedFileView } from '@dsc/ui'
+import { DiffRows, FileIcon, createT, setDockPreview, setDockReview, type ChangedFileView } from '@dsc/ui'
 import { baseNameOf, displayPathOf, findLast, useHoverDelay } from '@dsc/ui-primitives'
 import type { Row } from '../shared'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../../locale/ui.zh.json'
+import en from '../../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /**
  * 把本轮改动合成一份清单。
@@ -107,7 +113,7 @@ export function DiffHoverCard({
           {displayPathOf(file.path, cwd)}
         </span>
         <span className="hover-preview-stat">
-          {file.status === 'added' && <span className="diff-badge">新增</span>}
+          {file.status === 'added' && <span className="diff-badge">{t('transcript.common.added')}</span>}
           <span className="changes-added">{`+${String(file.added)}`}</span>
           <span className="changes-removed">{`-${String(file.removed)}`}</span>
         </span>
@@ -175,10 +181,10 @@ export function ChangesCard({ rows, cwd }: { rows: readonly Row[]; cwd: string }
           </span>
           <span className="changes-titles">
             {/* 措辞照 dsh 的「已编辑 N 个文件」：这一轮的动作是编辑，不是「文件自己变了」。 */}
-            <span className="changes-title">{single === undefined ? `已编辑 ${String(files.length)} 个文件` : baseNameOf(single.path)}</span>
+            <span className="changes-title">{single === undefined ? t('transcript.changes.title', { count: files.length }) : baseNameOf(single.path)}</span>
             <span className="changes-stat">
               <Counts added={totalAdded} removed={totalRemoved} />
-              <span className="changes-hint">点击审查改动</span>
+              <span className="changes-hint">{t('transcript.changes.reviewHint')}</span>
             </span>
           </span>
         </button>
@@ -199,7 +205,7 @@ export function ChangesCard({ rows, cwd }: { rows: readonly Row[]; cwd: string }
                   }}
                 >
                   <span className="changes-path" title={file.path}>
-                    {file.status === 'added' && <span className="changes-badge">新增</span>}
+                    {file.status === 'added' && <span className="changes-badge">{t('transcript.common.added')}</span>}
                     {displayPathOf(file.path, cwd)}
                   </span>
                   <Counts added={file.added} removed={file.removed} />
@@ -212,7 +218,7 @@ export function ChangesCard({ rows, cwd }: { rows: readonly Row[]; cwd: string }
                       reviewAt(files.indexOf(file))
                     }}
                   >
-                    审查
+                    {t('transcript.changes.review')}
                   </button>
                   <button
                     type="button"
@@ -221,7 +227,7 @@ export function ChangesCard({ rows, cwd }: { rows: readonly Row[]; cwd: string }
                       openAt(file.path)
                     }}
                   >
-                    打开
+                    {t('transcript.changes.open')}
                   </button>
                 </span>
               </li>
@@ -236,7 +242,7 @@ export function ChangesCard({ rows, cwd }: { rows: readonly Row[]; cwd: string }
               setExpanded((value) => !value)
             }}
           >
-            {expanded ? '收起' : `展开全部 ${String(files.length)} 个文件`}
+            {expanded ? t('transcript.common.collapse') : t('transcript.changes.expandAll', { count: files.length })}
           </button>
         ) : null}
         {single !== undefined ? (
@@ -248,7 +254,7 @@ export function ChangesCard({ rows, cwd }: { rows: readonly Row[]; cwd: string }
                 reviewAt(0)
               }}
             >
-              审查
+              {t('transcript.changes.review')}
             </button>
             <button
               type="button"
@@ -257,7 +263,7 @@ export function ChangesCard({ rows, cwd }: { rows: readonly Row[]; cwd: string }
                 openAt(single.path)
               }}
             >
-              打开
+              {t('transcript.changes.open')}
             </button>
           </div>
         ) : null}

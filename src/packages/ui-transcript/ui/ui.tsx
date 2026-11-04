@@ -31,7 +31,7 @@
  * @module dsc-ui-shell/plugins/transcript
  */
 import { Component, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { IconSpark, defineUiPlugin, getHostNative, toastErr, toastOk, useActions, useHostChannel, useHostSelector, useService, ACTIONS_SERVICE, type ActionsHandle, type HostSnapshot, type SlotComponentProps, type TranscriptEntry } from '@dsc/ui'
+import { IconSpark, createT, defineUiPlugin, getHostNative, toastErr, toastOk, useActions, useHostChannel, useHostSelector, useService, ACTIONS_SERVICE, type ActionsHandle, type HostSnapshot, type SlotComponentProps, type TranscriptEntry } from '@dsc/ui'
 import { buildRoundFolds, processFoldPolicy, useFoldMemory, type ProcessFold } from './round-fold'
 import { liveActivity } from './timing'
 import { internalLabel, splitRounds } from './rounds'
@@ -48,6 +48,13 @@ import { TurnStatusLine } from './rows/foot'
 import { BuiltinToolView } from './rows/tool-row'
 import { WELCOME_CARDS, WELCOME_ICON_BY_ID, WelcomeState } from './welcome'
 import { SUBAGENT_FLOW_SLOT, SubagentFlow, type TranscriptFlowService } from './subagent-flow'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 // 本插件对外交出去的那几样仍从 `ui.tsx` 出（槽名、服务形状、行/渲染形状）：
 // 拆分只改文件位置，不动对外面。
@@ -57,7 +64,7 @@ export { SUBAGENT_FLOW_SLOT, type TranscriptFlowProps, type TranscriptFlowServic
 const BUILTIN_TOOLVIEW_PRIORITY = 100
 
 export default defineUiPlugin({
-  name: '消息流',
+  name: t('transcript.plugin.name'),
   apply(ui) {
     // 工具卡的装配定义（D2）：定义在这里注册，对话页与轨迹页各自渲染——两个父位置
     // 选不同的局部组件（对话页选 intended 预览等四件；轨迹页只选轨迹口径的耗时）。
@@ -174,9 +181,9 @@ function TranscriptFlow({
       const body =
         last !== undefined && last.kind === 'text'
           ? last.text.replace(/\s+/g, ' ').trim().slice(0, 120)
-          : '任务完成'
+          : t('transcript.notify.done')
       void native
-        .invoke('notify', [{ title: '任务完成', body }])
+        .invoke('notify', [{ title: t('transcript.notify.done'), body }])
         .catch(() => undefined)
     }
   }, [turnState, sessionPath, entries])
@@ -322,14 +329,14 @@ function TranscriptFlow({
       try {
         const result = await channel.invoke<{ ok: boolean; path?: string; error?: string }>('forkSession', [sessionPath, roundNo])
         if (result.ok !== true) {
-          toastErr(result.error ?? '分叉失败')
+          toastErr(result.error ?? t('transcript.fork.failed'))
           return
         }
         await channel.invoke('openSession', result.path === undefined ? [] : [result.path])
         await channel.invoke('refreshSessions', [])
-        toastOk('已从这一轮分叉出新会话')
+        toastOk(t('transcript.fork.ok'))
       } catch (reason) {
-        toastErr(`分叉失败：${reason instanceof Error ? reason.message : String(reason)}`)
+        toastErr(t('transcript.fork.failedDetail', { message: reason instanceof Error ? reason.message : String(reason) }))
       }
     })()
   }
@@ -350,7 +357,7 @@ function TranscriptFlow({
     const all = [...entries, ...live]
     const at = all.findIndex((item) => item.id === entry.id)
     if (at < 0) {
-      toastErr('这条消息已经不在会话里了，刷新后再试')
+      toastErr(t('transcript.edit.gone'))
       return
     }
     // 保留几条 = 这条之前**人打的**用户消息条数。这里不能拿 `rounds` 数：rounds.ts 的规则 3
@@ -359,7 +366,7 @@ function TranscriptFlow({
     // （界面上就是 `internal !== true`：机器投递的通知、队友汇报、审查结论都带这个标记）。
     const keep = all.slice(0, at).filter((item) => item.kind === 'user' && item.internal !== true).length
     if (sessionPath === null) {
-      toastErr('这条会话还没落盘，先发一条消息再编辑')
+      toastErr(t('transcript.edit.notSaved'))
       return
     }
     void (async () => {
@@ -367,14 +374,14 @@ function TranscriptFlow({
         // 第三个参数是改过的正文：作废的是第一条消息时，宿主拿它当新的侧栏标题
         const result = await channel.invoke<{ ok: boolean; error?: string }>('rewindSession', [sessionPath, keep, text])
         if (result?.ok !== true) {
-          toastErr(result?.error ?? '编辑失败')
+          toastErr(result?.error ?? t('transcript.edit.failed'))
           return
         }
         await channel.invoke('submit', [text])
         // 标题、排序都跟最后一条消息走：改完重扫一次，侧栏立刻对上（现在这一步是缓存命中）。
         await channel.invoke('refreshSessions', [])
       } catch (reason) {
-        toastErr(`重发失败：${reason instanceof Error ? reason.message : String(reason)}`)
+        toastErr(t('transcript.edit.resendFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
       }
     })()
   }
@@ -433,8 +440,8 @@ function TranscriptFlow({
         id: `welcome.${card.id}`,
         label: card.title,
         hint: card.hint,
-        group: '提示词',
-        keywords: ['提示词', 'prompt'],
+        group: t('transcript.action.group'),
+        keywords: [t('transcript.action.group'), 'prompt'],
         run: () => {
           composerDraft?.insert(card.prompt)
         },
@@ -463,7 +470,7 @@ function TranscriptFlow({
   // 首屏卡片的两种来源：动作表（常驻，含命令面板里的那几条），或动作表缺席时的内置清单。
   const registeredActions = useActions()
   const promptActions = useMemo(
-    () => registeredActions.filter((action) => action.group === '提示词'),
+    () => registeredActions.filter((action) => action.group === t('transcript.action.group')),
     [registeredActions],
   )
   const welcomeCards = useMemo(() => {
@@ -495,7 +502,7 @@ function TranscriptFlow({
   useEffect(() => {
     if (bootError === null) return
     // 只弹第一行：后面几行是命令示例，弹窗里放不下，也不该抢视线。
-    toastErr(bootError.text.split('\n')[0] ?? '启动时有问题需要处理')
+    toastErr(bootError.text.split('\n')[0] ?? t('transcript.boot.failed'))
   }, [bootError?.id, sessionKey])
 
   // 空会话欢迎态（与旧桌面界面同一份文案）。
@@ -535,12 +542,12 @@ function TranscriptFlow({
           className="chat-earlier"
           ref={earlierRef}
           data-earlier-rounds={firstVisible}
-          data-tip="把更早的几轮画出来（一页至少 50 条且 2 轮），你现在看的位置不会动"
+          data-tip={t('transcript.earlier.tip')}
           onClick={() => {
             release(firstVisible - earlierRounds)
           }}
         >
-          {`加载更早的 ${String(earlierRounds)} 轮（上面还有 ${String(firstVisible)} 轮）`}
+          {t('transcript.earlier.label', { shown: earlierRounds, total: firstVisible })}
         </button>
       ) : null}
       {seats.leading.map((row) => (
@@ -570,7 +577,7 @@ function TranscriptFlow({
       {/* 压缩进行中：与回合状态行同一个位置、同一套动画（0.7.2）。
           压完这条行消失，宿主紧接着写一条「上下文已压缩」的通知，底部的占用百分比也一起刷新。 */}
       {compactingSince !== null ? (
-        <TurnStatusLine text="正在压缩上下文" />
+        <TurnStatusLine text={t('transcript.status.compacting')} />
       ) : null}
       {/* 回合进行中：流末尾一行状态（一句话 + 转圈 + 三点动画），用时在底部状态栏。
           两种情况不画这条：
@@ -587,10 +594,10 @@ function TranscriptFlow({
         <button
           type="button"
           className="chat-to-bottom"
-          title="回到最新一条（自动跟随会重新打开）"
+          title={t('transcript.toBottom.tip')}
           onClick={follow.resume}
         >
-          回到底部
+          {t('transcript.toBottom.label')}
         </button>
       ) : null}
       </FlowActionsContext.Provider>

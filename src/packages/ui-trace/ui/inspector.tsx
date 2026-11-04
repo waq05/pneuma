@@ -14,10 +14,17 @@
  * @module dsc-ui-shell/plugins/trace/inspector
  */
 import { useEffect, useState, type ReactNode } from 'react'
-import { IconClose, IconCopy, toastErr, toastOk, type TranscriptEntry } from '@dsc/ui'
+import { IconClose, IconCopy, createT, toastErr, toastOk, type TranscriptEntry } from '@dsc/ui'
 // 时刻/用量口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
 import { formatClock, formatTokens, useDialogFocus } from '@dsc/ui-primitives'
 import { KIND_LABEL, entryUsage, formatClockSeconds, formatTraceDuration, prettyMaybeJson } from './trace-format'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 export function TraceInspector(props: {
   entry: TranscriptEntry
@@ -45,9 +52,11 @@ export function TraceInspector(props: {
 
   const title =
     entry.kind === 'tool'
-      ? `${entry.call.name}${props.round === null ? '' : ` · 第 ${String(props.round + 1)} 轮`}`
+      ? props.round === null
+        ? entry.call.name
+        : t('inspector.titleWithRound', { name: entry.call.name, n: props.round + 1 })
       : entry.kind === 'user' && props.round !== null
-        ? `第 ${String(props.round + 1)} 轮`
+        ? t('round.title', { n: props.round + 1 })
         : entry.kind === 'plan'
           ? entry.plan.title
           : ''
@@ -59,18 +68,18 @@ export function TraceInspector(props: {
       data-kind={entry.kind}
       role="dialog"
       aria-modal="true"
-      aria-label="这一条记录的检查器"
+      aria-label={t('inspector.aria')}
       ref={dialog.ref}
     >
       <div className="ti-head">
-        <span className="ti-kind">{entry.kind === 'text' ? '正文' : KIND_LABEL[entry.kind]}</span>
+        <span className="ti-kind">{entry.kind === 'text' ? t('kind.text') : KIND_LABEL[entry.kind]}</span>
         {title !== '' && <span className="ti-title">{title}</span>}
         <button
           type="button"
           className="ti-close"
           data-trace-inspector-close="1"
-          data-tip="关闭检查器（Esc）"
-          aria-label="关闭检查器"
+          data-tip={t('inspector.closeTip')}
+          aria-label={t('inspector.close')}
           onClick={props.onClose}
         >
           <IconClose size={14} />
@@ -79,7 +88,7 @@ export function TraceInspector(props: {
 
       <div className="ti-body">
         {entry.kind === 'user' && (
-          <Section label="消息原文">
+          <Section label={t('sec.message')}>
             <pre className="ti-code" data-trace-code="user-text">
               {entry.text}
             </pre>
@@ -87,9 +96,15 @@ export function TraceInspector(props: {
         )}
 
         {entry.kind === 'user' && (
-          <Section label={`附件${entry.images === undefined ? '' : `（${String(entry.images.length)}）`}`}>
+          <Section
+            label={
+              entry.images === undefined
+                ? t('sec.attachments')
+                : t('sec.attachmentsCount', { count: entry.images.length })
+            }
+          >
             {entry.images === undefined || entry.images.length === 0 ? (
-              <div className="ti-empty">这条消息没有附件。</div>
+              <div className="ti-empty">{t('sec.noAttachments')}</div>
             ) : (
               <Attachments images={entry.images} onZoom={setZoom} />
             )}
@@ -99,14 +114,14 @@ export function TraceInspector(props: {
         {entry.kind === 'tool' && <ArgsSection argsText={entry.call.argsText} />}
 
         {entry.kind === 'tool' && (
-          <Section label="输出">
+          <Section label={t('sec.output')}>
             {entry.call.resultText === undefined || entry.call.resultText === '' ? (
               <div className="ti-empty">
                 {entry.call.status === 'running'
-                  ? '这次调用还在跑，结果还没回来。'
+                  ? t('out.running')
                   : entry.call.status === 'preparing'
-                    ? '这次调用还在准备中（参数没到齐），结果还没回来。'
-                    : '这次调用没有输出。'}
+                    ? t('out.preparing')
+                    : t('out.empty')}
               </div>
             ) : (
               <Block text={entry.call.resultText} marker="result" />
@@ -115,7 +130,7 @@ export function TraceInspector(props: {
         )}
 
         {entry.kind === 'thinking' && (
-          <Section label="思考全文">
+          <Section label={t('sec.thinking')}>
             <pre className="ti-code" data-trace-code="thinking">
               {entry.text}
             </pre>
@@ -123,21 +138,21 @@ export function TraceInspector(props: {
         )}
 
         {entry.kind === 'subagent' && (
-          <Section label="子代理">
+          <Section label={t('kind.subagent')}>
             <dl className="ti-facts">
-              <Fact label="任务" value={entry.sub.task} />
-              <Fact label="名称" value={entry.sub.name} />
-              <Fact label="状态" value={entry.sub.state} />
-              {entry.sub.model !== undefined && <Fact label="模型" value={entry.sub.model} />}
-              <Fact label="轮数" value={String(entry.sub.rounds)} />
-              <Fact label="工具调用" value={String(entry.sub.toolCalls)} />
+              <Fact label={t('fact.task')} value={entry.sub.task} />
+              <Fact label={t('fact.name')} value={entry.sub.name} />
+              <Fact label={t('fact.state')} value={entry.sub.state} />
+              {entry.sub.model !== undefined && <Fact label={t('fact.model')} value={entry.sub.model} />}
+              <Fact label={t('fact.rounds')} value={String(entry.sub.rounds)} />
+              <Fact label={t('fact.toolCalls')} value={String(entry.sub.toolCalls)} />
               {entry.sub.tokens !== undefined && <Fact label="Token" value={String(entry.sub.tokens)} />}
             </dl>
           </Section>
         )}
 
         {entry.kind === 'system' && (
-          <Section label="通知原文">
+          <Section label={t('sec.notice')}>
             <pre className="ti-code" data-trace-code="system">
               {entry.text}
             </pre>
@@ -145,62 +160,58 @@ export function TraceInspector(props: {
         )}
 
         {entry.kind === 'plan' && (
-          <Section label="计划全文">
+          <Section label={t('sec.plan')}>
             <pre className="ti-code" data-trace-code="plan">
               {entry.plan.text}
             </pre>
           </Section>
         )}
 
-        <Section label="计时">
+        <Section label={t('sec.timing')}>
           <dl className="ti-facts">
             {entry.kind === 'tool' ? (
               <Fact
-                label="发起时刻"
-                value={formatClockSeconds(entry.call.startedAt ?? null) ?? '未记录'}
-                title="宿主收到 tool/call 那一刻；老会话没有这个字段"
+                label={t('fact.startedAt')}
+                value={formatClockSeconds(entry.call.startedAt ?? null) ?? t('common.notRecorded')}
+                title={t('fact.startedAtTip')}
               />
             ) : (
               <Fact
-                label="记录时刻"
-                value={formatClockSeconds(entry.ts === undefined ? null : entry.ts) ?? '未记录'}
-                title="这条条目最后一次写入的时刻（HH:mm:ss）"
+                label={t('fact.recordedAt')}
+                value={formatClockSeconds(entry.ts === undefined ? null : entry.ts) ?? t('common.notRecorded')}
+                title={t('fact.recordedAtTip')}
               />
             )}
             <Fact
-              label="耗时"
+              label={t('fact.duration')}
               value={
                 entry.kind === 'tool'
-                  ? (formatTraceDuration(entry.call.durationMs ?? null) ?? '未记录')
-                  : '未记录'
+                  ? (formatTraceDuration(entry.call.durationMs ?? null) ?? t('common.notRecorded'))
+                  : t('common.notRecorded')
               }
-              title="工具调用耗时（结果到达 − 发起）；未记录时显示「未记录」"
+              title={t('fact.durationTip')}
             />
             {entry.kind === 'tool' && (
               <Fact
-                label="结果时刻"
-                value={formatClock(entry.ts === undefined ? null : entry.ts) ?? '未记录'}
-                title="条目 ts：拿到结果那一刻刷新的最后写入时刻"
+                label={t('fact.resultAt')}
+                value={formatClock(entry.ts === undefined ? null : entry.ts) ?? t('common.notRecorded')}
+                title={t('fact.resultAtTip')}
               />
             )}
           </dl>
         </Section>
 
-        <Section label="用量">
+        <Section label={t('sec.usage')}>
           {usage === null ? (
-            <div className="ti-empty">未记录（老会话或重放路径没有用量事件）。</div>
+            <div className="ti-empty">{t('usage.missing')}</div>
           ) : (
             <dl className="ti-facts">
-              <Fact label="输入" value={`${formatTokens(usage.inputTokens)} tok`} />
-              <Fact label="输出" value={`${formatTokens(usage.outputTokens)} tok`} />
+              <Fact label={t('sec.input')} value={`${formatTokens(usage.inputTokens)} tok`} />
+              <Fact label={t('sec.output')} value={`${formatTokens(usage.outputTokens)} tok`} />
               <Fact
-                label="合计"
+                label={t('fact.total')}
                 value={`${formatTokens(usageTotal ?? 0)} tok`}
-                title={
-                  props.usageIsRoundTotal
-                    ? '本轮的整轮真值：这一轮所有模型请求的 prompt + completion 之和'
-                    : '这是本轮累计到这条为止的值，整轮真值落在本轮最后一条带用量的记录上'
-                }
+                title={props.usageIsRoundTotal ? t('fact.totalRoundTip') : t('fact.totalPartialTip')}
               />
             </dl>
           )}
@@ -213,15 +224,15 @@ export function TraceInspector(props: {
           data-trace-lightbox="1"
           role="dialog"
           aria-modal="true"
-          aria-label="放大查看贴图"
+          aria-label={t('lightbox.aria')}
           onClick={() => setZoom(null)}
         >
-          <img src={zoom} alt="放大的贴图" />
+          <img src={zoom} alt={t('lightbox.alt')} />
           <button
             type="button"
             className="ti-close lightbox-close"
-            data-tip="关闭放大视图"
-            aria-label="关闭放大视图"
+            data-tip={t('lightbox.close')}
+            aria-label={t('lightbox.close')}
             onClick={(event) => {
               event.stopPropagation()
               setZoom(null)
@@ -282,17 +293,17 @@ function ArgsSection({ argsText }: { argsText: string }): ReactNode {
     // 复制的是**原文**：JSON 美化过的那份带缩进，粘到别处反而多出空白。
     void navigator.clipboard.writeText(argsText).then(
       () => {
-        toastOk('已复制参数原文')
+        toastOk(t('toast.copied'))
       },
       () => {
-        toastErr('复制失败：剪贴板不可用')
+        toastErr(t('toast.copyFailed'))
       },
     )
   }
 
   return (
     <Section
-      label="输入"
+      label={t('sec.input')}
       extra={
         <span className="ti-tools">
           {pretty.formatted && (
@@ -301,23 +312,23 @@ function ArgsSection({ argsText }: { argsText: string }): ReactNode {
               className="ti-btn"
               data-trace-format-toggle="args"
               data-state={formatted ? 'pretty' : 'raw'}
-              data-tip="在原文与缩进美化之间切换（原文才是模型真正发出的那串）"
+              data-tip={t('args.formatTip')}
               onClick={() => {
                 setFormatted((current) => !current)
               }}
             >
-              {formatted ? '原文' : '格式化'}
+              {formatted ? t('args.raw') : t('args.format')}
             </button>
           )}
           <button
             type="button"
             className="ti-btn"
             data-trace-copy-args="1"
-            data-tip="复制参数"
+            data-tip={t('args.copy')}
             onClick={copy}
           >
             <IconCopy size={12} />
-            复制参数
+            {t('args.copy')}
           </button>
         </span>
       }
@@ -361,10 +372,10 @@ function Attachments({
           type="button"
           className="ti-shot"
           data-trace-shot={String(index)}
-          data-tip="点开看原图"
+          data-tip={t('attach.openTip')}
           onClick={() => onZoom(url)}
         >
-          <img src={url} alt={`第 ${String(index + 1)} 张贴图`} />
+          <img src={url} alt={t('attach.alt', { n: index + 1 })} />
         </button>
       ))}
     </div>

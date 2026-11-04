@@ -1,0 +1,22 @@
+{
+  "preview.plugin.name": "文件预览",
+  "preview.tab.label": "预览",
+  "preview.tab.patch": "补丁",
+  "preview.empty.noPath": "这张预览页签没有文件路径（关掉它，从文件树重新点一个）。",
+  "preview.empty.noPatchPath": "这张补丁页签没有文件路径（关掉它，从工具卡重新点一个）。",
+  "preview.readFailed": "读文件失败：{message}",
+  "preview.openFailed": "打不开：{message}",
+  "preview.systemTip.on": "用系统默认程序打开。",
+  "preview.systemTip.off": "这条能力来自桌面外壳的原生桥，浏览器里没有它。",
+  "preview.systemOpen": "系统打开",
+  "preview.reading": "读取中…",
+  "preview.patch.added": "新增",
+  "preview.patch.openTip": "在预览中打开当前文件（内容是修改时的快照）。",
+  "preview.patch.open": "打开",
+  "preview.patch.gone": "这份补丁已经不在了（应用重启或切回会话后差异快照不再保留）。点「打开」看该文件的当前内容。",
+  "preview.patch.truncated": "改动较大，这里只显示了前一部分（完整改动以文件当前内容为准）。",
+  "preview.tooLarge": "文件过大（{size}），仅支持预览 10MB 以内的文件。",
+  "preview.binary": "二进制文件（{size}），暂不支持预览。",
+  "preview.unknownType": "这类文件（{mime}，{size}）要看内容请用「系统打开」。",
+  "preview.unknownMime": "未知类型"
+}

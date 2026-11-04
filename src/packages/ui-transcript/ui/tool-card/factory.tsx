@@ -19,6 +19,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   diffLines,
   DiffRows,
+  createT,
   IconChevronDown,
   IconChevronUp,
   openTrace,
@@ -34,6 +35,12 @@ import { TOOL_STATUS_TEXT, displayPathOf, formatDuration, matchTool, prettyJson,
 import { useFoldState } from '../fold-hook'
 import { resultTail } from './result-tail'
 import { useIntendedDiff, type IntendedDiff } from '../intended-diff'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../../locale/ui.zh.json'
+import en from '../../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 /**
  * 类型只从 ui.tsx 借（`import type` 编译期擦掉，不形成运行期循环：ui.tsx 会 import 本文件）。
  */
@@ -261,13 +268,13 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
   const barStatus =
     running || duration === null
       ? (TOOL_STATUS_TEXT[call.status] ?? call.status)
-      : `${TOOL_STATUS_TEXT[call.status] ?? call.status} · 用时 ${duration}`
+      : t('transcript.tool.statusWithTime', { status: TOOL_STATUS_TEXT[call.status] ?? call.status, duration })
 
   return (
     <div className={`entry tool-card status-${call.status}${bodyOpen ? ' open' : ''}`}>
       <div
         className="tool-head"
-        data-tip={expandable ? (bodyOpen ? '收起参数与结果' : '展开参数与结果') : '正在准备参数'}
+        data-tip={expandable ? (bodyOpen ? t('transcript.tool.tipCollapse') : t('transcript.tool.tipExpand')) : t('transcript.tool.tipPreparing')}
       >
         {/* 只有这一段文字可点：状态点 + 图标 + 动词 + 未知名 + 摘要。
             行尾的「+N 行」、状态词、「在轨迹中查看」药丸与箭头都留在外面，
@@ -300,8 +307,8 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
         {/* 还有几行没摊出来：把「点开能看到更多」写在明面上（codex 的「+ N lines」）。
             只在收起态、且确实有截断时出现；不占焦点，点整行照旧是展开。 */}
         {tail !== null && tail.hidden > 0 ? (
-          <span className="tc-more" title={`结果还有 ${String(tail.hidden)} 行，点开看全部`}>
-            {`+${String(tail.hidden)} 行`}
+          <span className="tc-more" title={t('transcript.tool.moreTip', { count: tail.hidden })}>
+            {t('transcript.tool.moreLines', { count: tail.hidden })}
           </span>
         ) : null}
         <StatusDetail call={call} />
@@ -320,12 +327,12 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
                 <button
                   type="button"
                   className="tc-collapse"
-                  title="收起这张工具卡"
+                  title={t('transcript.tool.collapseCardTip')}
                   onClick={() => {
                     setOpenPersisted(false)
                   }}
                 >
-                  收起
+                  {t('transcript.common.collapse')}
                   <IconChevronUp size={11} />
                 </button>
               )}
@@ -335,7 +342,7 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
               真实改动），于是一张只有 `presentation` 的卡在展开后是空的——数据到了卡上，
               却没接到渲染位置。这里把它并进同一个入口，两种来源同形（都是 ChangedFileView）。 */}
           <BodyExtra intended={intended} change={call.change ?? dshPatch} />
-          <div className="label">参数</div>
+          <div className="label">{t('transcript.tool.args')}</div>
           {paramsAsFields ? (
             /* 会改文件的工具：正文已经在上面那块 diff 里，这里只列剩下的字段。
                dsh 对 write / edit 干脆一个参数字段都不印，壳多留一栏是因为
@@ -354,7 +361,7 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
           )}
           {call.resultText === undefined || call.resultText === '' ? null : (
             <>
-              <div className="label">结果</div>
+              <div className="label">{t('transcript.tool.result')}</div>
               <div className="result">{call.resultText}</div>
             </>
           )}
@@ -381,7 +388,7 @@ export function ChatStatus(props: FactoryLocalProps<typeof TOOLCARD_FACTORY, 'st
     <span className="status">
       {call.status === 'running' ? <i className="tc-spin" aria-hidden="true" /> : null}
       {call.status === 'done' ? '' : (TOOL_STATUS_TEXT[call.status] ?? call.status)}
-      {duration === null || call.status === 'done' ? '' : ` · 用时 ${duration}`}
+      {duration === null || call.status === 'done' ? '' : t('transcript.tool.timeSuffix', { duration })}
     </span>
   )
 }
@@ -442,7 +449,7 @@ export function OpenPathButton({
       className="tc-path tc-path-btn"
       data-tc-open={absPath}
       data-tc-source={opensPatch ? 'patch' : 'file'}
-      title={opensPatch ? `${absPath}（在右侧边栏看这次改动）` : `${absPath}（在右侧边栏预览）`}
+      title={opensPatch ? t('transcript.tool.openPatchTip', { path: absPath }) : t('transcript.tool.openFileTip', { path: absPath })}
       onClick={(event) => {
         event.stopPropagation()
         setDockPreview(opensPatch ? { path: absPath, cwd, patch } : { path: absPath, cwd })
@@ -475,13 +482,13 @@ export function IntendedPreview(props: FactoryLocalProps<typeof TOOLCARD_FACTORY
           <OpenPathButton absPath={absPath} cwd={cwd} patch={patch} />
           {patch !== null && (
             <span className="changes-counts">
-              {patch.status === 'added' && <span className="diff-badge">新增</span>}
+              {patch.status === 'added' && <span className="diff-badge">{t('transcript.common.added')}</span>}
               <span className="changes-added">{`+${String(patch.added)}`}</span>
               <span className="changes-removed">{`-${String(patch.removed)}`}</span>
             </span>
           )}
-          {intended?.mismatch === 'missing' && <span className="tc-warn">old 不在当前文件里</span>}
-          {intended?.mismatch === 'ambiguous' && <span className="tc-warn">old 匹配多处</span>}
+          {intended?.mismatch === 'missing' && <span className="tc-warn">{t('transcript.tool.mismatchMissing')}</span>}
+          {intended?.mismatch === 'ambiguous' && <span className="tc-warn">{t('transcript.tool.mismatchAmbiguous')}</span>}
         </>
       ) : (
         summary
@@ -508,13 +515,13 @@ export function IntendedBody(props: FactoryLocalProps<typeof TOOLCARD_FACTORY, '
     return (
       <div className="tc-intended">
         <div className="tc-intended-head">
-          <span className="tc-intended-title">将做的改动</span>
-          {intended.fellBack && <span className="tc-warn">读不到文件当前内容，以下按参数推算</span>}
-          {intended.mismatch === 'missing' && <span className="tc-warn">old 在文件中不存在，执行会失败</span>}
-          {intended.mismatch === 'ambiguous' && <span className="tc-warn">old 匹配多处，执行会失败</span>}
+          <span className="tc-intended-title">{t('transcript.tool.intendedTitle')}</span>
+          {intended.fellBack && <span className="tc-warn">{t('transcript.tool.intendedFallback')}</span>}
+          {intended.mismatch === 'missing' && <span className="tc-warn">{t('transcript.tool.intendedMissing')}</span>}
+          {intended.mismatch === 'ambiguous' && <span className="tc-warn">{t('transcript.tool.intendedAmbiguous')}</span>}
         </div>
         {intended.file === null ? (
-          <p className="tc-intended-note">两段内容一致，不会有实际改动。</p>
+          <p className="tc-intended-note">{t('transcript.tool.intendedIdentical')}</p>
         ) : (
           <div className="tc-intended-diff">
             <DiffRows hunks={intended.file.hunks} path={intended.absPath} />
@@ -527,8 +534,8 @@ export function IntendedBody(props: FactoryLocalProps<typeof TOOLCARD_FACTORY, '
   return (
     <div className="tc-intended" data-tc-change="">
       <div className="tc-intended-head">
-        <span className="tc-intended-title">这次改动</span>
-        {change.truncated === true && <span className="tc-warn">改动较大，这里只显示了前一部分</span>}
+        <span className="tc-intended-title">{t('transcript.tool.changeTitle')}</span>
+        {change.truncated === true && <span className="tc-warn">{t('transcript.tool.truncated')}</span>}
       </div>
       <div className="tc-intended-diff">
         <DiffRows hunks={change.hunks} path={change.path} />
@@ -544,8 +551,8 @@ export function TraceJumpButton(props: FactoryLocalProps<typeof TOOLCARD_FACTORY
       type="button"
       className="tc-trace"
       data-trace-jump={String(props.entry.id)}
-      data-tip="在轨迹页查看这条调用的时刻与耗时"
-      aria-label="在轨迹中查看"
+      data-tip={t('transcript.tool.traceTip')}
+      aria-label={t('transcript.tool.trace')}
       onClick={(event) => {
         event.stopPropagation()
         openTrace(props.entry.id)
@@ -555,7 +562,7 @@ export function TraceJumpButton(props: FactoryLocalProps<typeof TOOLCARD_FACTORY
         event.stopPropagation()
       }}
     >
-      在轨迹中查看
+      {t('transcript.tool.trace')}
     </button>
   )
 }

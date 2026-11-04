@@ -166,7 +166,12 @@ console.log('[5] 派生状态的显示名：命中预设留空，拼出来的组
   check('插件中心那份也置灰只读并给显示名', derivedOutlet.test(shellPlugins))
   check('两处都靠「不在选项表里 + 宿主给了名字」这一条判据', count(shell, "!listed && derivedLabel !== ''") === 1 && count(shellPlugins, "!listed && derivedLabel !== ''") === 1)
   // 负向：真正的脏值仍然要照实显示（别把「认不出」这条路一并删掉）。
-  check('认不出的值仍走「· 未识别」那条（两条路都在）', shell.includes('· 未识别') && shellPlugins.includes('· 未识别'))
+  // 文案进各自包的字典（2026-11-04 夜）：设置页与插件中心各有一份 `{value} · 未识别`，
+  // 中文原文由 ui-locale-test 判；这里钉「两处都还给了这条兜底」。
+  check(
+    '认不出的值仍走「· 未识别」那条（两条路都在）',
+    shell.includes("t('settings.ui.unknownOption'") && shellPlugins.includes("t('plugins.config.unrecognized'"),
+  )
   check('两处渲染各只有一条派生出口', count(shell, 'displayLabel={derivedLabel}') === 1 && count(shellPlugins, 'displayLabel={derivedLabel}') === 1)
 }
 

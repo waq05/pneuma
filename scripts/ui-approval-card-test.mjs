@@ -60,7 +60,7 @@ for (const [name, source] of [['插件壳', shell]]) {
   check(`${name}：通用兜底理由不占版面`, source.includes('isGenericReason(request.reason)'))
   check(`${name}：档位行收进悬浮提示`, source.includes('title={modeLine}'))
   check(`${name}：不再常驻「5 分钟没人答」`, !source.includes('<span className="hint">5 分钟没人答'))
-  check(`${name}：拒绝按钮上写明清超时`, source.includes('5 分钟没人答也按拒绝处理'))
+  check(`${name}：拒绝按钮上写明清超时`, source.includes("t('reject.tip')"))
 }
 
 // 含义行必须排在命令原文之前：先给结论（它要干什么），再给原文（它到底怎么写的）。

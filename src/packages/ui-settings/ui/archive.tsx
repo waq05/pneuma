@@ -17,6 +17,7 @@ import {
   IconArchive,
   IconRefresh,
   IconRestart,
+  createT,
   getHostNative,
   useHostChannel,
   type ArchivedPage,
@@ -24,6 +25,12 @@ import {
   type SettingsMutation,
 } from '@dsc/ui'
 import { errText as text, humanErrorText } from '@dsc/ui-primitives'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 按工作区分组：组内按归档时间倒序，组之间按各自最新的归档时间倒序。 */
 function groupByWorkspace(items: ArchivedSessionView[]): Array<{ cwd: string; items: ArchivedSessionView[] }> {
@@ -44,12 +51,12 @@ function lastSegment(path: string): string {
 
 function ago(ts: number): string {
   const minutes = Math.floor((Date.now() - ts) / 60000)
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${String(minutes)} 分钟前`
+  if (minutes < 1) return t('settings.archive.time.justNow')
+  if (minutes < 60) return t('settings.archive.time.minutesAgo', { count: minutes })
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${String(hours)} 小时前`
+  if (hours < 24) return t('settings.archive.time.hoursAgo', { count: hours })
   const days = Math.floor(hours / 24)
-  if (days < 30) return `${String(days)} 天前`
+  if (days < 30) return t('settings.archive.time.daysAgo', { count: days })
   return new Date(ts).toLocaleDateString()
 }
 
@@ -63,7 +70,7 @@ export function ArchiveGroup(): ReactNode {
     void channel
       .invoke<ArchivedPage>('listArchivedSessions')
       .then(setPage)
-      .catch((error: unknown) => setNote({ tone: 'error', text: `读取归档失败：${humanErrorText(error).text}` }))
+      .catch((error: unknown) => setNote({ tone: 'error', text: t('settings.archive.loadFailed', { message: humanErrorText(error).text }) }))
   }
   const reload = (): void => {
     setNote(null)
@@ -78,13 +85,13 @@ export function ArchiveGroup(): ReactNode {
       .invoke<SettingsMutation>('restoreSessions', [paths])
       .then((result) => {
         if (!result.ok) {
-          setNote({ tone: 'error', text: `操作失败：${result.error}` })
+          setNote({ tone: 'error', text: t('settings.archive.opFailed', { message: result.error }) })
           return
         }
         setNote({ tone: 'ok', text: result.notice ?? fallbackNotice })
         load()
       })
-      .catch((error: unknown) => setNote({ tone: 'error', text: `操作失败：${humanErrorText(error).text}` }))
+      .catch((error: unknown) => setNote({ tone: 'error', text: t('settings.archive.opFailed', { message: humanErrorText(error).text }) }))
   }
 
   /** 用原生桥在文件管理器里打开回收站；桥缺席（浏览器）时说清而不是崩。 */
@@ -93,11 +100,11 @@ export function ArchiveGroup(): ReactNode {
     void getHostNative()
       .invoke<string>('openPath', [trashDir])
       .then((problem) => {
-        if (problem === '') setNote({ tone: 'ok', text: '已在文件管理器中打开回收站' })
-        else setNote({ tone: 'error', text: `打开失败：${problem}` })
+        if (problem === '') setNote({ tone: 'ok', text: t('settings.archive.trashOpened') })
+        else setNote({ tone: 'error', text: t('settings.archive.openFailed', { message: problem }) })
       })
       .catch((error: unknown) =>
-        setNote({ tone: 'error', text: `这个窗口里没有原生桥，打不开目录（桌面窗口可用）：${text(error)}` }),
+        setNote({ tone: 'error', text: t('settings.archive.noBridge', { message: text(error) }) }),
       )
   }
 
@@ -108,16 +115,17 @@ export function ArchiveGroup(): ReactNode {
       {note === null ? null : <div className={`settings-note${note.tone === 'error' ? ' error' : ''}`}>{note.text}</div>}
       {page === null ? (
         note === null ? (
-          <div className="settings-empty">正在读取归档会话…</div>
+          <div className="settings-empty">{t('settings.archive.loading')}</div>
         ) : null
       ) : (
         <>
           <div className="arch-head">
             <span>
-              已归档会话 <span className="count">{String(page.items.length)}</span> 个
+              {t('settings.archive.head.lead')} <span className="count">{String(page.items.length)}</span>{' '}
+              {t('settings.archive.head.tail')}
             </span>
-            <button className="btn-ghost" data-tip="重新读取归档区" onClick={reload}>
-              <IconRefresh size={14} /> 刷新
+            <button className="btn-ghost" data-tip={t('settings.archive.reloadTip')} onClick={reload}>
+              <IconRefresh size={14} /> {t('settings.archive.refresh')}
             </button>
           </div>
 
@@ -126,9 +134,9 @@ export function ArchiveGroup(): ReactNode {
               <span className="empty-card-icon">
                 <IconArchive size={18} />
               </span>
-              <div className="empty-card-title">归档区是空的</div>
+              <div className="empty-card-title">{t('settings.archive.empty.title')}</div>
               <p className="empty-card-desc">
-                侧栏会话行的归档按钮收单个会话，工作区行的归档按钮收整组。放这儿的东西 30 天后自动清理。
+                {t('settings.archive.empty.desc')}
               </p>
             </div>
           )}
@@ -143,30 +151,30 @@ export function ArchiveGroup(): ReactNode {
                 <span className="count">{String(group.items.length)}</span>
                 <button
                   className="text-btn"
-                  data-tip={`恢复这个工作区里的 ${String(group.items.length)} 个会话`}
+                  data-tip={t('settings.archive.restoreGroupTip', { count: group.items.length })}
                   onClick={() =>
                     restore(
                       group.items.map((item) => item.path),
-                      `已恢复这个工作区的 ${String(group.items.length)} 个会话`,
+                      t('settings.archive.restoreGroupNotice', { count: group.items.length }),
                     )
                   }
                 >
-                  <IconRestart size={13} /> 全部恢复
+                  <IconRestart size={13} /> {t('settings.archive.restoreAll')}
                 </button>
               </div>
               {group.items.map((item) => (
                 <div className="arch-row" key={item.path} data-tip={item.path}>
-                  <span className="title">{item.title ?? '未命名会话'}</span>
-                  <span className="when" data-tip={`${new Date(item.archivedAt).toLocaleString()} 归档`}>
-                    归档于 {ago(item.archivedAt)}
+                  <span className="title">{item.title ?? t('settings.archive.untitled')}</span>
+                  <span className="when" data-tip={t('settings.archive.archivedTip', { time: new Date(item.archivedAt).toLocaleString() })}>
+                    {t('settings.archive.archivedAt')} {ago(item.archivedAt)}
                   </span>
                   <span className="arch-actions">
                     <button
                       className="text-btn"
-                      data-tip="放回会话列表，回到原工作区"
-                      onClick={() => restore([item.path], '已恢复到会话列表')}
+                      data-tip={t('settings.archive.restoreTip')}
+                      onClick={() => restore([item.path], t('settings.archive.restoreNotice'))}
                     >
-                      <IconRestart size={13} /> 恢复
+                      <IconRestart size={13} /> {t('settings.archive.restore')}
                     </button>
                   </span>
                 </div>
@@ -175,11 +183,9 @@ export function ArchiveGroup(): ReactNode {
           ))}
 
           <div className="arch-foot">
-            <span>
-              回收站保留 30 天后自动清空，现有 {String(page.trashCount)} 个文件。
-            </span>
-            <button className="text-btn" data-tip="打开回收站" onClick={() => openTrash(page.trashDir)}>
-              打开回收站
+            <span>{t('settings.archive.trashFoot', { count: page.trashCount })}</span>
+            <button className="text-btn" data-tip={t('settings.archive.openTrashTip')} onClick={() => openTrash(page.trashDir)}>
+              {t('settings.archive.openTrash')}
             </button>
           </div>
         </>

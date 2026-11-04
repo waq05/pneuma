@@ -24,15 +24,15 @@
  * 这条通知的正文前缀（宿主 `src/plugins/file-review.ts` 里头行的起头字面量）。
  * 认通知、切头行都从这里出发：壳与宿主各持一份时，探针比对两处，漂了要红。
  */
-export const REVIEW_NOTICE_BANNER = '【改动前预览·尚未落盘】'
+export const REVIEW_NOTICE_BANNER = '【改动前预览·尚未落盘】' // i18n-keep 宿主 file-review 拼的正文前缀，翻一个字符就认不出这条通知
 
 /** 头行里的动作词：新建（文件原先不存在）与修改（定点改动）。 */
 export type ReviewAction = 'create' | 'update'
 
 /** 动作词的两档文案（徽章用；别处再抄一份就迟早对不上）。 */
 export const REVIEW_ACTION_TEXT: Readonly<Record<ReviewAction, string>> = {
-  create: '新建',
-  update: '修改',
+  create: '新建', // i18n-keep 动作词与宿主头行逐字一致，探针 ui-review-notice-test 也钉着这两条原文
+  update: '修改', // i18n-keep 同上
 }
 
 /** 计数：`+N 行 / -M 行` 里那两个数；宿主没给出逐行 diff 时是 null（此时看 countsText）。 */
@@ -80,7 +80,7 @@ function escapeRegExp(text: string): string {
  * 头行形状：`【文件更改预览·尚未落盘】新建 E:/a.md（+76 行 / -0 行）`。
  * `.+` 是贪心的，会找到**最后一个** `（…）`——路径里带全角括号（罕见但合法）也拆不错。
  */
-const HEAD_PATTERN = new RegExp(`^${escapeRegExp(REVIEW_NOTICE_BANNER)}(新建|修改) (.+)（([^（）]*)）$`)
+const HEAD_PATTERN = new RegExp(`^${escapeRegExp(REVIEW_NOTICE_BANNER)}(新建|修改) (.+)（([^（）]*)）$`) // i18n-keep 解析宿主原文用的正则，不是界面文案
 
 /** `+76 行 / -0 行` → 两个数；对不上（「逐行 diff 未给出」等）返回 null。 */
 function parseCounts(text: string): ReviewCounts | null {
@@ -93,8 +93,8 @@ function parseCounts(text: string): ReviewCounts | null {
 
 /** 动作词 → 语义档；认不出给 null（头行不拆，整行摆出来）。 */
 function parseAction(verb: string): ReviewAction | null {
-  if (verb === '新建') return 'create'
-  if (verb === '修改') return 'update'
+  if (verb === '新建') return 'create' // i18n-keep 与宿主头行的动作词比对，不是界面文案
+  if (verb === '修改') return 'update' // i18n-keep 同上
   return null
 }
 

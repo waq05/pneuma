@@ -63,6 +63,7 @@ import type {
 import {
   createScopedSlotApi,
   createSignal,
+  createT,
   ServiceRegistry,
   ServicesProvider,
   unmetDependencies,
@@ -80,6 +81,13 @@ import type { UiPluginHmr } from './hmr'
 import * as pluginApi from '@dsc/ui'
 import platformModules from './platform-modules.json'
 import type { UiComponent, UiPluginApi, UiSlots } from '@dsc/ui'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+// 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui-core` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /** 启动图注入页面时用的全局名（宿主 `core/ui-server.ts` 里同一个名字）。 */
 const BOOT_GLOBAL = '__DSC_BOOT__'
@@ -538,7 +546,7 @@ export async function createBootSession(
       new Set(graph.disabled ?? []),
     )
     if (unmet.length > 0) {
-      const reason = `等待：${unmet.join('；')}`
+      const reason = t('boot.waitingPlugins', { list: unmet.join(t('boot.pluginListSep')) })
       reports.set(entry.id, { id: entry.id, ok: false, error: reason, attempts: attempt })
       setPlugin(entry.id, { state: 'failed', at: Date.now(), attempts: attempt, error: reason })
       return reason
@@ -582,7 +590,7 @@ export async function createBootSession(
               return
             }
             if (state === 3) {
-              const reason = 'cordis 纤维装载失败（细节见控制台）'
+              const reason = t('boot.fiberFailed')
               reports.set(entry.id, { id: entry.id, ok: false, error: reason, attempts: attempt })
               setPlugin(entry.id, { fiber: 3, state: 'failed', error: reason, at: Date.now() })
               return
@@ -590,7 +598,7 @@ export async function createBootSession(
             // 0 待装 / 1 装载中 / 4 已卸：账本只记状态码，别把「还差哪个服务」吞掉。
             setPlugin(entry.id, {
               fiber: state,
-              ...(missing.length === 0 ? {} : { error: `等待服务：${missing.join('、')}` }),
+              ...(missing.length === 0 ? {} : { error: t('boot.waitingServices', { list: missing.join(t('boot.serviceListSep')) }) }),
             })
           },
         })
@@ -599,7 +607,10 @@ export async function createBootSession(
         // 中文原因、挂进账本，等 onState 把状态翻成「生效」。
         const waiting = cordis.missingOf(entry.id)
         if (fiber.state !== 2) {
-          const reason = waiting.length === 0 ? '等待依赖就绪' : `等待服务：${waiting.join('、')}`
+          const reason =
+            waiting.length === 0
+              ? t('boot.waitingReady')
+              : t('boot.waitingServices', { list: waiting.join(t('boot.serviceListSep')) })
           reports.set(entry.id, { id: entry.id, ok: false, error: reason, attempts: attempt })
           setPlugin(entry.id, { via: 'cordis', fiber: fiber.state, state: 'loading', error: reason })
           disposers.set(entry.id, rollback)
@@ -941,7 +952,7 @@ function appendScript(url: string, id: string): Promise<void> {
     })
     script.addEventListener('error', () => {
       script.remove()
-      reject(new Error(`取 bundle 失败：${url}`))
+      reject(new Error(t('boot.bundleFetchFailed', { url })))
     })
     document.head.append(script)
   })

@@ -10,19 +10,26 @@
  * @module dsc-ui-shell/ui-primitives/review-findings-card
  */
 import type { ReactNode } from 'react'
+import { createT } from '@dsc/ui-core'
 import { IconSearch } from './icons'
 import { joinPath } from './paths'
 import type { ReviewFinding, ReviewFindingPriority, ReviewFindingsView } from './review-findings'
+// 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
+import zh from '../locale/ui.zh.json'
+import en from '../locale/ui.en.json'
+
+/** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui-core` 的 `createT`）。 */
+const t = createT({ zh, en })
 
 /**
  * 徽标文案：档位越靠前越重。
  * 写中文短名而不是光一个 `P0`：审查结论是给人看的，光看 P 几还得回查一遍约定。
  */
 const PRIORITY_LABEL: Readonly<Record<ReviewFindingPriority, string>> = {
-  0: 'P0 必须修',
-  1: 'P1 重要',
-  2: 'P2 建议',
-  3: 'P3 可选',
+  0: t('primitives.priority.p0'),
+  1: t('primitives.priority.p1'),
+  2: t('primitives.priority.p2'),
+  3: t('primitives.priority.p3'),
 }
 
 /**
@@ -64,8 +71,8 @@ function FindingRow({ finding, cwd, onOpenLocation }: {
             onOpenLocation === undefined
               ? `${location.path}${location.line === undefined ? '' : `:${String(location.line)}`}`
               : location.line === undefined
-                ? '在预览里打开这个文件'
-                : `在预览里打开 ${location.path}:${String(location.line)}`
+                ? t('primitives.review.openFile')
+                : t('primitives.review.openAt', { path: location.path, line: String(location.line) })
           }
           onClick={open}
         >
@@ -75,7 +82,7 @@ function FindingRow({ finding, cwd, onOpenLocation }: {
       )}
       {finding.detail === '' ? null : <p className="review-finding-detail">{finding.detail}</p>}
       {finding.suggestion === undefined || finding.suggestion === '' ? null : (
-        <p className="review-finding-suggest">建议：{finding.suggestion}</p>
+        <p className="review-finding-suggest">{t('primitives.review.suggestion', { text: finding.suggestion })}</p>
       )}
     </li>
   )
@@ -97,9 +104,9 @@ export function ReviewFindingsCard({ doc, cwd = '', onOpenLocation }: {
     <div className="review-findings" data-review-findings="">
       <div className="review-findings-head">
         <IconSearch size={14} />
-        <span className="review-findings-title">代码审查 · {doc.teammate === '' ? '审查队友' : doc.teammate}</span>
+        <span className="review-findings-title">{t('primitives.review.title', { teammate: doc.teammate === '' ? t('primitives.review.teammate') : doc.teammate })}</span>
         {doc.state === undefined ? null : <span className="review-findings-state">{doc.state}</span>}
-        {doc.findings.length === 0 ? null : <span>{`${String(doc.findings.length)} 条`}</span>}
+        {doc.findings.length === 0 ? null : <span>{t('primitives.review.count', { n: doc.findings.length })}</span>}
       </div>
       {doc.note === '' ? null : <p className="review-findings-note">{doc.note}</p>}
       {doc.findings.length === 0 ? null : (

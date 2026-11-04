@@ -1,0 +1,5 @@
+{
+  "invoke.timeout": "调用宿主方法超时（{ms} 毫秒）",
+  "invoke.aborted": "调用宿主方法已被中止",
+  "auth.expired": "界面凭据已失效，请用宿主新打印的地址重开"
+}

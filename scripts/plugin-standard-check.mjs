@@ -70,6 +70,16 @@ const ALLOWED_EXPORT_KEYS = new Set(['.', './client', './package.json'])
 /** 本地化文件是允许的第二类键：./locale/<语言>.json。 */
 const LOCALE_EXPORT_KEY = /^\.\/locale\/[^/]+\.json$/
 /**
+ * 界面文案字典（`locale/ui.<语言>.json`）：**不是**清单译本，不归第 3 项管。
+ *
+ * 清单译本（`locale/en.json`）只有 `title` / `description` 两行字，是插件中心与
+ * `numa plugin list` 显示的东西；界面里的文案（按钮、空态、错误提示）是另一件事：
+ * 键多、跟着界面走、由每个包自己带进 bundle。两者用同一套 `./locale/*.json` 导出、
+ * 同一个目录，但判据不同，所以这里按文件名把后者摘出去——它由
+ * `scripts/ui-locale-test.mjs` 那套闸单独判（键集一致、译文无汉字、引用不悬空）。
+ */
+const INTERFACE_LOCALE_FILE = /^ui\.[a-z]{2}(?:-[A-Za-z]{2,4})?\.json$/
+/**
  * 库包的第三类键：模块子路径（`./actions.js` → `./actions.js`）。
  *
  * 为什么只给库包开：库包是被功能包 import 的一侧，源码里就有好几个模块
@@ -333,6 +343,8 @@ for (const id of ids) {
         const files = existsSync(localeDir)
           ? readdirSync(localeDir)
               .filter((name) => name.endsWith('.json'))
+              // 界面文案字典不是清单译本（见 INTERFACE_LOCALE_FILE）：它没有 title/description。
+              .filter((name) => !INTERFACE_LOCALE_FILE.test(name))
               .map((name) => join(localeDir, name))
               .filter((file) => statSync(file).isFile())
           : []
