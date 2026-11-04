@@ -1540,6 +1540,14 @@ declare module '@deepseek-ai/cordis' {
     /** 技能清单或启停状态变化（agent 据此重算模型可见目录）。 */
     'dsc/skills-changed'(): void
     /**
+     * 某个界面半边的启停变了（runtime 的 `setPluginEnabled` 发出）。
+     *
+     * 订阅者是 webserver：它换一份启动图、推一帧 `plugins`，页面据此卸载或装载那一条。
+     * 为什么走事件而不是直接调用：通道是 webserver 的，runtime 是界面方法层，
+     * 它不该认识 SSE；没有界面服务时（TUI）也没人订阅，发出去等于无事发生。
+     */
+    'dsc/ui-plugins-changed'(payload: { file: string; enabled: boolean }): void
+    /**
      * 协作模式换了档位（mode 插件发出）。
      * 审批插件听这个把档位留在审批卡与审计记录里——它因此不必反过来依赖模式服务
      * （mode 已经依赖 approval，反向再依赖一次就是环）。
