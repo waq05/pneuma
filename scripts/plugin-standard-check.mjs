@@ -7,14 +7,21 @@
  *
  * 六条硬项（不通过退出 1，合并前必须全绿）：
  *   1. package.json 的字段齐全（name / version / private / type / exports /
- *      pneuma.bundle.patch / pneuma.resolution / pneuma.order / engines.pneuma /
- *      cordis 对等依赖）；
+ *      engines.pneuma / cordis 对等依赖；功能包另有 pneuma.bundle.patch /
+ *      pneuma.resolution / pneuma.order，库包不需要）；
  *   2. exports 的键集只许 .、./client、./package.json、./locale/*.json；
- *   3. cordis.patch.yml 能解析、恰好一条 insert 行，行 id 与目录名一致、name 等于包名；
- *   4. 入口 index.ts 能导出一个插件（模块级 apply / default / 唯一带 apply 的命名导出），
- *      名叫 name 的导出必须是字符串；
- *   5. 包与包之间零直接 import（@pneuma/runtime 除外）；
- *   6. order 不撞号。
+ *   3. 功能包：cordis.patch.yml 能解析、恰好一条 insert 行，行 id 与目录名一致、
+ *      name 等于包名（库包没有行，不判）；
+ *   4. 功能包：入口 index.ts 能导出一个插件（模块级 apply / default / 唯一带 apply 的
+ *      命名导出），名叫 name 的导出必须是字符串（库包不导出插件对象，不判）；
+ *   5. 依赖方向：功能包 → 库包允许；功能包 → 功能包、库包 → 任何包、core → 任何包
+ *      都算越界（判据与 plugin-model-check 共用 scripts/plugin-dep-graph.mjs）；
+ *   6. order 不撞号（只数字功能包）。
+ *
+ * 库包 = 没有 cordis.patch.yml、也没有 pneuma.bundle.patch 的包；清单里还要显式写
+ * pneuma.library: true，否则第 1 项照报缺口——两个门禁对「忘了写 patch」的判断一致。
+ * 库包没有行、不参与开关，所以豁免 patch / resolution / order / 行 / 入口导出这五项；
+ * name、version 0.0.0、private、type module、exports、engines.pneuma、cordis 对等依赖照要求。
  *
  * 三项待办（只打印清单，不影响退出码）：
  *   - 缺 README.md，或 README 里没有「Model Experience」「Known Limitations」两段；
@@ -25,6 +32,8 @@
  *   node scripts/plugin-standard-check.mjs          # 人看
  *   node scripts/plugin-standard-check.mjs --json   # 机器读
  *
+ * 自检要造夹具时用 PNEUMA_CHECK_ROOT=<目录> 换一个仓库根（缺省是本仓库）。
+ *
  * @module scripts/plugin-standard-check
  */
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
@@ -32,8 +41,15 @@ import { join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import YAML from 'yaml'
+import {
+  coreDependencyProblem,
+  createPackageGraph,
+  dependencyProblem,
+  SOURCE_ALL,
+  walkSources,
+} from './plugin-dep-graph.mjs'
 
-const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
+const root = resolve(process.env['PNEUMA_CHECK_ROOT'] ?? fileURLToPath(new URL('..', import.meta.url)))
 const asJson = new Set(process.argv.slice(2)).has('--json')
 const packagesDir = join(root, 'src', 'packages')
 
@@ -57,7 +73,7 @@ const hard = new Map([
   [2, { title: 'exports 键集', issues: [], passed: 0 }],
   [3, { title: '行 id 与 name', issues: [], passed: 0 }],
   [4, { title: '入口导出', issues: [], passed: 0 }],
-  [5, { title: '包间零 import', issues: [], passed: 0 }],
+  [5, { title: '依赖方向', issues: [], passed: 0 }],
   [6, { title: 'order 撞号', issues: [], passed: 0 }],
 ])
 
@@ -80,13 +96,6 @@ function readText(file) {
   } catch {
     return null
   }
-}
-
-/** 从一段文本的字符下标算出 1 起的行号。 */
-function lineAt(text, index) {
-  let line = 1
-  for (let i = 0; i < index && i < text.length; i += 1) if (text[i] === '\n') line += 1
-  return line
 }
 
 /** 这个语句上有 export 修饰符吗。 */
@@ -170,18 +179,6 @@ function analyzeEntry(text) {
   return result
 }
 
-/** 递归列出目录里的源文件（跳过 node_modules 与构建产物）。 */
-function walkSources(dir) {
-  const out = []
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name === 'node_modules' || entry.name === 'lib') continue
-    const path = join(dir, entry.name)
-    if (entry.isDirectory()) out.push(...walkSources(path))
-    else if (/\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/.test(entry.name)) out.push(path)
-  }
-  return out
-}
-
 // ── 逐个包 ──────────────────────────────────────────────────────────────────
 
 const ids = existsSync(packagesDir)
@@ -209,7 +206,13 @@ for (const id of ids) {
     fail(1, id, `package.json 不是合法 JSON：${error instanceof Error ? error.message : String(error)}`)
     continue
   }
-  const pkg = { id, dir, manifest, entryFile, patchFile, rel }
+  // 库包判据：目录里没有 cordis.patch.yml，清单里也没有 pneuma.bundle.patch。
+  // 有其一的是功能包（缺哪样由第 1、3 项分别报）；两样都没有但没标 pneuma.library
+  // 的，按库包豁免其余四项，但第 1 项照红——与 plugin-model-check 的缺口同义。
+  const declaredPatch =
+    typeof manifest.pneuma?.bundle?.patch === 'string' && manifest.pneuma.bundle.patch !== ''
+  const kind = !existsSync(patchFile) && !declaredPatch ? 'library' : 'feature'
+  const pkg = { id, dir, manifest, entryFile, patchFile, rel, kind }
   packages.push(pkg)
 
   // ── 1. 清单字段 ──────────────────────────────────────────────────────────
@@ -230,18 +233,21 @@ for (const id of ids) {
     want(exportsField['.'] === './index.js', `exports["."] 是 ${JSON.stringify(exportsField['.'])}，要求 "./index.js"`)
     want(exportsField['./package.json'] === './package.json', 'exports 缺 "./package.json": "./package.json"')
   }
-  want(
-    typeof manifest.pneuma?.bundle?.patch === 'string' && manifest.pneuma.bundle.patch !== '',
-    'pneuma.bundle.patch 缺失',
-  )
-  want(
-    manifest.pneuma?.resolution === 'pinned' || manifest.pneuma?.resolution === 'overridable',
-    `pneuma.resolution 是 ${JSON.stringify(manifest.pneuma?.resolution)}，只允许 pinned / overridable`,
-  )
-  want(
-    typeof manifest.pneuma?.order === 'number' && Number.isFinite(manifest.pneuma.order),
-    'pneuma.order 缺失或不是数字',
-  )
+  if (pkg.kind === 'feature') {
+    want(declaredPatch, 'pneuma.bundle.patch 缺失')
+    want(
+      manifest.pneuma?.resolution === 'pinned' || manifest.pneuma?.resolution === 'overridable',
+      `pneuma.resolution 是 ${JSON.stringify(manifest.pneuma?.resolution)}，只允许 pinned / overridable`,
+    )
+    want(
+      typeof manifest.pneuma?.order === 'number' && Number.isFinite(manifest.pneuma.order),
+      'pneuma.order 缺失或不是数字',
+    )
+  } else if (manifest.pneuma?.library !== true) {
+    // 没有 patch、也没标库包：按库包放行其余四项，但这一条必须红——与
+    // plugin-model-check 的「没声明 patch 也没标 library」是同一个缺口。
+    want(false, '没有 cordis.patch.yml，也没标 pneuma.library = true（功能包要有 patch，库包要显式声明）')
+  }
   want(typeof manifest.engines?.pneuma === 'string' && manifest.engines.pneuma !== '', 'engines.pneuma 缺失')
   want(
     typeof manifest.peerDependencies?.[CORDIS_PEER] === 'string' &&
@@ -261,13 +267,16 @@ for (const id of ids) {
   }
   if (keyOk) hard.get(2).passed += 1
 
-  // ── 3. 行 ────────────────────────────────────────────────────────────────
+  // ── 3. 行（库包没有行，整项豁免、也不计入分母）──────────────────────────
+  const rowApplicable = pkg.kind === 'feature'
   let rowOk = true
   const rowFail = (detail) => {
     rowOk = false
     fail(3, id, detail)
   }
-  if (!existsSync(patchFile)) {
+  if (!rowApplicable) {
+    // 库包没有 cordis.patch.yml：不判这一项。
+  } else if (!existsSync(patchFile)) {
     rowFail('缺 cordis.patch.yml')
   } else {
     let parsed = null
@@ -304,11 +313,14 @@ for (const id of ids) {
       }
     }
   }
-  if (rowOk) hard.get(3).passed += 1
+  if (rowApplicable && rowOk) hard.get(3).passed += 1
 
-  // ── 4. 入口导出 ──────────────────────────────────────────────────────────
+  // ── 4. 入口导出（库包不导出插件对象，整项豁免）──────────────────────────
+  const entryApplicable = pkg.kind === 'feature'
   let entryOk = true
-  if (!existsSync(entryFile)) {
+  if (!entryApplicable) {
+    // 库包导出的是函数/常量，不是 cordis 插件：不判这一项。
+  } else if (!existsSync(entryFile)) {
     entryOk = false
     fail(4, id, '缺 index.ts')
   } else {
@@ -329,7 +341,7 @@ for (const id of ids) {
       fail(4, id, `第 ${shape.nameLine.line} 行导出了 name，但不是字符串字面量`)
     }
   }
-  if (entryOk) hard.get(4).passed += 1
+  if (entryApplicable && entryOk) hard.get(4).passed += 1
 
   // ── 待办：README / tests / 模块级可变状态 ────────────────────────────────
   const readmeFile = join(dir, 'README.md')
@@ -346,7 +358,10 @@ for (const id of ids) {
   }
   if (!existsSync(join(dir, 'tests'))) todo.tests.push(`${id}：缺 tests/ 目录`)
 
-  for (const file of walkSources(dir)) {
+  // 库包的待办只保留 README 与 tests：模块级可变状态是功能包的装配隐患，
+  // 而常量表 / 缓存本来就是库包的正常写法，列出来只是噪声。
+  const stateFiles = pkg.kind === 'feature' ? walkSources(dir, SOURCE_ALL) : []
+  for (const file of stateFiles) {
     const source = readText(file) ?? ''
     const lines = source.split(/\r?\n/)
     lines.forEach((line, index) => {
@@ -371,44 +386,44 @@ for (const id of ids) {
   }
 }
 
-// ── 5. 包间零直接 import ────────────────────────────────────────────────────
+// ── 5. 依赖方向 ─────────────────────────────────────────────────────────────
 
-/** 行包的名字（不含构建生成的 @pneuma/runtime 运行时适配包）。 */
-const rowPackageNames = new Set(packages.map((pkg) => pkg.manifest.name))
-rowPackageNames.delete('@pneuma/runtime')
-
-const importPatterns = [
-  /(?:^|\s)(?:import|export)\b[^\n]*?from\s*['"](@pneuma\/[^'"]+)['"]/g,
-  /\bimport\s*\(\s*['"](@pneuma\/[^'"]+)['"]/g,
-  /^\s*import\s+['"](@pneuma\/[^'"]+)['"]/gm,
-  /\brequire\s*\(\s*['"](@pneuma\/[^'"]+)['"]/g,
-]
+// 判据与 plugin-model-check 共用 scripts/plugin-dep-graph.mjs：功能包 → 库包允许；
+// 功能包 → 功能包、库包 → 任何包、core → 任何包都算越界（含 import type）。
+// 库包与功能包都在这张图里：库包自己 import 了包同样要报。
+const graph = createPackageGraph({
+  root,
+  packages: packages.filter((pkg) => pkg.kind === 'feature'),
+  libraries: packages.filter((pkg) => pkg.kind === 'library'),
+})
 
 for (const pkg of packages) {
   let crossOk = true
-  for (const file of walkSources(pkg.dir)) {
-    const source = readText(file) ?? ''
-    for (const pattern of importPatterns) {
-      pattern.lastIndex = 0
-      for (const match of source.matchAll(pattern)) {
-        const specifier = match[1]
-        const target = specifier.slice('@pneuma/'.length).split('/')[0]
-        // 运行时适配包是公共设施：所有包都可以 import 它，它是「内核 API」那一侧。
-        if (target === 'runtime') continue
-        if (!rowPackageNames.has('@pneuma/' + target)) continue
-        if (target === pkg.manifest.name.slice('@pneuma/'.length)) continue
-        crossOk = false
-        fail(5, pkg.id, `${pkg.rel(file)}:${lineAt(source, match.index)} 直接 import 了 ${specifier}`)
-      }
-    }
-  }
+  graph.scan(pkg.dir, (target, where) => {
+    const message = dependencyProblem({ id: pkg.id, kind: pkg.kind }, target, where)
+    if (message === null) return
+    crossOk = false
+    // 文案自己带包名与位置：不再套一层「id：」，否则报错里同一个包名出现两次。
+    hard.get(5).issues.push(message)
+  })
   if (crossOk) hard.get(5).passed += 1
+}
+
+// core → 包：内核文件（含 import type）不许碰 src/packages。
+const coreDir = join(root, 'src', 'core')
+if (existsSync(coreDir)) {
+  graph.scan(coreDir, (target, where) => hard.get(5).issues.push(coreDependencyProblem(target, where)))
 }
 
 // ── 6. order 撞号 ───────────────────────────────────────────────────────────
 
+/** 功能包 / 库包各多少：库包没有行，第 3、4、6 项的分母只数功能包。 */
+const featureTotal = packages.filter((pkg) => pkg.kind === 'feature').length
+const libraryTotal = packages.length - featureTotal
+
 const byOrder = new Map()
 for (const pkg of packages) {
+  if (pkg.kind !== 'feature') continue
   const order = pkg.manifest.pneuma?.order
   if (typeof order !== 'number') continue
   const key = String(order)
@@ -422,20 +437,35 @@ for (const [order, group] of byOrder) {
   for (const id of group) collided.add(id)
   fail(6, group[0], `order ${order} 被 ${group.length} 个包共用：${group.join('、')}`)
 }
-hard.get(6).passed = packages.length - collided.size
+hard.get(6).passed = featureTotal - collided.size
 
 // ── 汇总 ────────────────────────────────────────────────────────────────────
 
 const total = packages.length
+/** 每一项的分母：库包不适用「行 / 入口导出 / order」三项，分母只数功能包。 */
+const applicableOf = new Map([
+  [1, total],
+  [2, total],
+  [3, featureTotal],
+  [4, featureTotal],
+  [5, total],
+  [6, featureTotal],
+])
 const issues = [...hard.values()].flatMap((item) => item.issues)
 const summary = {
+  // packages 仍是「src/packages 下的目录数」，features / libraries 是拆开的两半。
   packages: total,
-  rows: total,
+  features: featureTotal,
+  libraries: libraryTotal,
+  // rows 只数功能包：库包没有行（契约：一个功能包恰好一行）。
+  rows: featureTotal,
   hard: [...hard.entries()].map(([index, item]) => ({
     item: index,
     title: item.title,
     passed: item.passed,
+    applicable: applicableOf.get(index) ?? total,
     total,
+    exempt: total - (applicableOf.get(index) ?? total),
     issues: item.issues.length,
   })),
   todo: {
@@ -460,12 +490,15 @@ if (asJson) {
   process.exit(issues.length === 0 ? 0 : 1)
 }
 
-console.log(`包标准检查（${total} 个包）`)
+console.log(`包标准检查（${total} 个包：${featureTotal} 功能包 + ${libraryTotal} 库包）`)
 console.log('')
 console.log('硬项（不通过退出 1）')
 for (const [index, item] of hard) {
   const mark = item.issues.length === 0 ? '通过' : `${item.issues.length} 条问题`
-  console.log(`  ${index} ${item.title.padEnd(12)} ${item.passed}/${total} 包  ${mark}`)
+  const applicable = applicableOf.get(index) ?? total
+  const exempt = total - applicable
+  const tail = exempt > 0 ? `（库包豁免 ${exempt}）` : ''
+  console.log(`  ${index} ${item.title.padEnd(12)} ${item.passed}/${applicable} 包  ${mark}${tail}`)
 }
 console.log(`  合计 ${issues.length} 条问题`)
 console.log('')

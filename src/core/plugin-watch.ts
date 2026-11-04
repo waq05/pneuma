@@ -13,6 +13,11 @@
  * （`lib/node_modules/@pneuma/<id>/index.js`），改真实代码时桩的 mtime 永远不变。
  * 所以要盯「包目录下所有 .js/.json」+ 桩指回的真实目录（见 {@link watchDirsOf}）。
  *
+ * **库包没有行，但改它也得让引用它的行换新代码**：所以这里多盯一层「库包目录」，
+ * 并维护一张「库包 → 引用它的行」的图（扫各包构建产物里的静态 import 得到）。库包
+ * 变了就把引用它的行合并成一批重挂，一次只换一代；没有引用方的库包不盯、不重挂、
+ * 不写日志。
+ *
  * 与 ui-hmr 的另两处同构：
  *
  *   - 单个文件读不到（构建 swap 的中间态）**不放弃整轮**，下一轮照常比；
@@ -27,8 +32,10 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import {
+  APP_INSTALL_DIR,
   listMountedPluginSources,
   pluginPackageDirOf,
+  remountExternalPlugins,
   remountExternalPlugin,
   type RemountResult,
 } from './plugin-loader.js'
@@ -53,6 +60,20 @@ export interface PluginWatchOptions {
   dirsOf?(file: string): string[]
   /** 重挂一行（缺省走 plugin-loader 的 remountExternalPlugin）。 */
   remount?(identity: string): Promise<RemountResult>
+  /**
+   * 批量重挂（缺省走 plugin-loader 的 remountExternalPlugins：同一批只换一代）。
+   *
+   * 库包变更一次可能命中多行，逐行重挂会各换一代、同一个库被解析成两份实例；
+   * 所以这一路必须能批量。自检换了 {@link remount} 又没给这一项时，退化成逐行调用。
+   */
+  remountMany?(identities: readonly string[]): Promise<RemountResult[]>
+  /**
+   * 应用安装目录（缺省 {@link APP_INSTALL_DIR}）。
+   *
+   * 库包清单与真实代码目录都从这里推：`<appDir>/lib/node_modules/@pneuma/*` 的清单
+   * 说哪些是库包，再导出桩指回 `<appDir>/lib/packages/<id>`。
+   */
+  appDir?: string
   /** 轮询间隔（毫秒），缺省 1000。 */
   pollIntervalMs?: number
   /** 去抖窗口（毫秒），缺省 200。 */
@@ -171,12 +192,129 @@ function sameStamps(left: Map<string, FileStamp>, right: Map<string, FileStamp>)
   return true
 }
 
+/** 一张库包依赖图：哪一行 import 了哪个库包、库包要盯哪些目录。 */
+interface LibraryGraph {
+  /** 行身份 → 它 import 的库包名。 */
+  rows: Map<string, Set<string>>
+  /** 库包名 → 引用它的行身份。 */
+  referrers: Map<string, Set<string>>
+  /** 库包名 → 要盯的目录（真实代码目录 + 再导出桩目录）。 */
+  dirs: Map<string, string[]>
+}
+
+/** 应用里没有库包时的空图：省掉扫全部包内容的开销。 */
+function emptyLibraryGraph(): LibraryGraph {
+  return { rows: new Map(), referrers: new Map(), dirs: new Map() }
+}
+
 /**
- * 造一个功能包轮询器。
+ * 应用里哪些包是库包（清单里 `pneuma.library === true`），以及各自要盯的目录。
+ *
+ * 从 `lib/node_modules/@pneuma/*` 读：这是构建产物里包名的权威来源（源目录名可能
+ * 与包名不一致，例如 runtime），解析钩子判「是不是库包」也用同一份清单。
+ * @param appDir - 应用安装目录
+ */
+function libraryEntriesOf(appDir: string): Map<string, string[]> {
+  const out = new Map<string, string[]>()
+  const scopeDir = join(appDir, 'lib', 'node_modules', '@pneuma')
+  let entries
+  try {
+    entries = readdirSync(scopeDir, { withFileTypes: true })
+  } catch {
+    // 还没构建（没有 lib/node_modules）：没有库包可盯。
+    return out
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    let manifest: { pneuma?: { library?: unknown } }
+    try {
+      manifest = JSON.parse(readFileSync(join(scopeDir, entry.name, 'package.json'), 'utf8')) as typeof manifest
+    } catch {
+      continue
+    }
+    if (manifest?.pneuma?.library !== true) continue
+    // 库包的真实代码在再导出桩指回的那一层；watchDirsOf 两处都收。
+    out.set(entry.name, watchDirsOf(join(scopeDir, entry.name, 'index.js')))
+  }
+  return out
+}
+
+/** 构建产物里认这四种静态依赖写法（与 scripts/plugin-dep-graph.mjs 同一套口径）。 */
+const LIB_IMPORT_PATTERNS = [
+  /(?:^|\s)(?:import|export)\b[^\n]*?from\s*['"](@pneuma\/[^'"]+)['"]/g,
+  /\bimport\s*\(\s*['"](@pneuma\/[^'"]+)['"]/g,
+  /^\s*import\s+['"](@pneuma\/[^'"]+)['"]/gm,
+  /\brequire\s*\(\s*['"](@pneuma\/[^'"]+)['"]/g,
+]
+
+/** 一段构建产物里静态 import 的 `@pneuma/<name>`（运行时包不算包依赖）。 */
+function importedPneumaNames(source: string): string[] {
+  const names: string[] = []
+  for (const pattern of LIB_IMPORT_PATTERNS) {
+    pattern.lastIndex = 0
+    for (const match of source.matchAll(pattern)) {
+      const name = match[1].slice('@pneuma/'.length).split('/')[0]
+      if (name !== undefined && name !== '' && name !== 'runtime') names.push(name)
+    }
+  }
+  return names
+}
+
+/**
+ * 建「库包 → 引用它的行」的图。
+ *
+ * 扫的是**行自己的构建产物**（不是 lib/packages 全量）：行入口经过再导出桩指回
+ * `lib/packages/<id>`，与用户 profile 里装的覆盖版包也走同一条路。这样不用假设
+ * 「行来自应用自带包」，外部插件 import 库包同样算得出来。
+ * @param targets - 当前挂载的行
+ * @param dirsOf - 入口 → 要扫的目录
+ * @param appDir - 应用安装目录（读库包清单）
+ */
+function buildLibraryGraph(
+  targets: readonly PluginWatchTarget[],
+  dirsOf: (file: string) => string[],
+  appDir: string,
+): LibraryGraph {
+  const libraries = libraryEntriesOf(appDir)
+  if (libraries.size === 0) return emptyLibraryGraph()
+  const graph = emptyLibraryGraph()
+  for (const target of targets) {
+    const found = new Set<string>()
+    for (const dir of dirsOf(target.file)) {
+      for (const file of listSourceFiles(dir)) {
+        // 只读 .js：package.json 里没有 import 语句，读它只是白花钱。
+        if (!file.endsWith('.js')) continue
+        let source
+        try {
+          source = readFileSync(file, 'utf8')
+        } catch {
+          continue
+        }
+        for (const name of importedPneumaNames(source)) if (libraries.has(name)) found.add(name)
+      }
+    }
+    if (found.size === 0) continue
+    graph.rows.set(target.identity, found)
+    for (const name of found) {
+      const referrers = graph.referrers.get(name) ?? new Set<string>()
+      referrers.add(target.identity)
+      graph.referrers.set(name, referrers)
+      const dirs = libraries.get(name)
+      if (dirs !== undefined) graph.dirs.set(name, dirs)
+    }
+  }
+  return graph
+}
+
+/**
+ * 造一个功能包 / 库包轮询器。
  *
  * 生命周期：`createPluginWatch` 立刻做一轮基线扫描（启动前就改过的文件不会被当成
  * 「刚刚变了」），之后按 `pollIntervalMs` 轮询；发现变化先攒进待办，去抖窗口结束
  * 才重挂（同一轮构建写多个文件只换一次）。
+ *
+ * 两类变更分开记：行自己的目录变了 → 逐行重挂；库包目录变了 → 把引用它的行合并成
+ * 一批重挂（一次换代）。两类在同一窗口命中同一行时只重挂一次。
  */
 export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatchHandle {
   const pollIntervalMs = options.pollIntervalMs ?? 1000
@@ -185,20 +323,52 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
   const targets = options.targets ?? listMountedPluginSources
   const dirsOf = options.dirsOf ?? watchDirsOf
   const remount = options.remount ?? remountExternalPlugin
+  // 批量重挂缺省走 loader 的批量实现（同一批只换一代）；自检换了 remount 又没给
+  // remountMany 时退化成逐行调用，别让库包这一路偷偷用真实 loader。
+  const remountMany =
+    options.remountMany ??
+    (options.remount === undefined
+      ? remountExternalPlugins
+      : async (ids: readonly string[]): Promise<RemountResult[]> => {
+          const results: RemountResult[] = []
+          for (const id of ids) results.push(await remount(id))
+          return results
+        })
+  const appDir = options.appDir ?? APP_INSTALL_DIR
   /** 上一轮的指纹（行 id → 文件 → 指纹）。 */
   let baseline = new Map<string, TargetState>()
-  /** 攒着等去抖结束的行 id。 */
+  /** 库包上一轮的指纹（库包名 → 文件 → 指纹）。 */
+  let libraryBaseline = new Map<string, Map<string, FileStamp>>()
+  /** 攒着等去抖结束的行 id（行自己改代码的那些）。 */
   const pending = new Set<string>()
+  /** 攒着等去抖结束的库包（库包名 → 受影响的行）。 */
+  const pendingByLibrary = new Map<string, Set<string>>()
+  /** 库包 → 行 的依赖图：启动时建一次，行集合或行代码变了才重建。 */
+  let graph: LibraryGraph | null = null
+  let graphSignature = ''
+  let graphDirty = true
   let timer: NodeJS.Timeout | null = null
   let stopped = false
   let flushing = false
   let running = true
 
-  /** 扫一轮，返回「相对上一轮变了」的行 id；顺带把基线换成这一轮。 */
-  const scan = (): string[] => {
-    const changed: string[] = []
+  /** 按需建图：行集合变了、或上一次重挂改过行代码，就重扫一遍 import。 */
+  const ensureGraph = (list: readonly PluginWatchTarget[]): LibraryGraph => {
+    const signature = list.map((target) => target.identity + '\u0000' + target.file).join('\n')
+    if (graph !== null && !graphDirty && signature === graphSignature) return graph
+    graph = buildLibraryGraph(list, dirsOf, appDir)
+    graphSignature = signature
+    graphDirty = false
+    return graph
+  }
+
+  /** 扫一轮，返回「相对上一轮变了」的行与库包；顺带把基线换成这一轮。 */
+  const scan = (): { rows: string[]; libraries: Array<{ name: string; rows: string[] }> } => {
+    const list = targets()
+    const currentGraph = ensureGraph(list)
+    const changedRows: string[] = []
     const next = new Map<string, TargetState>()
-    for (const target of targets()) {
+    for (const target of list) {
       const dirs = dirsOf(target.file)
       const files = new Set<string>([target.file])
       for (const dir of dirs) for (const file of listSourceFiles(dir)) files.add(file)
@@ -210,25 +380,102 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
       const previous = baseline.get(target.identity)
       // 第一次见到的行只建立基线，不算变更（否则每挂一个新行都要白重挂一次）。
       if (previous !== undefined && previous.file === target.file && !sameStamps(previous.stamps, stamps)) {
-        changed.push(target.identity)
+        changedRows.push(target.identity)
       }
       next.set(target.identity, { file: target.file, stamps })
     }
     baseline = next
-    return changed
+
+    // 库包：只盯「至少有一行引用它」的那些。没有引用方的库包改了也不该重挂，
+    // 所以它们连目录都不进图，不会产生事件。
+    const changedLibraries: Array<{ name: string; rows: string[] }> = []
+    const nextLibrary = new Map<string, Map<string, FileStamp>>()
+    for (const [name, dirs] of currentGraph.dirs) {
+      const stamps = new Map<string, FileStamp>()
+      for (const dir of dirs) {
+        for (const file of listSourceFiles(dir)) {
+          const stamp = stampOf(file)
+          if (stamp !== null) stamps.set(file, stamp)
+        }
+      }
+      const previousStamps = libraryBaseline.get(name)
+      // 第一次见到的库包也只立基线：否则刚启动就会因为「库包已经在这」白重挂一轮。
+      if (previousStamps !== undefined && !sameStamps(previousStamps, stamps)) {
+        const referrers = currentGraph.referrers.get(name)
+        if (referrers !== undefined && referrers.size > 0) {
+          changedLibraries.push({ name, rows: [...referrers] })
+        }
+      }
+      nextLibrary.set(name, stamps)
+    }
+    libraryBaseline = nextLibrary
+    return { rows: changedRows, libraries: changedLibraries }
+  }
+
+  /** 库包变更命中的行：合并成一批，一次换代。 */
+  const flushLibraryRows = async (
+    rows: string[],
+    namesByRow: Map<string, Set<string>>,
+  ): Promise<void> => {
+    let results: RemountResult[]
+    try {
+      // 走 loader 的批量重挂：同一批只 bump 一次代数。
+      results = await remountMany(rows)
+    } catch (error) {
+      logger.warn(
+        `[plugin-watch] 库包变更后重挂出错：${error instanceof Error ? error.message : String(error)}`,
+      )
+      return
+    }
+    let okCount = 0
+    rows.forEach((identity, index) => {
+      const result = results[index]
+      if (result === undefined) return
+      if (result.ok) {
+        okCount += 1
+        return
+      }
+      // meta.problem 由 remountExternalPlugin 写；这里补一行日志，保证「失败看得见」。
+      logger.warn(`[plugin-watch] ${identity} 热重挂失败，旧版本继续运行：${result.problem ?? '原因不明'}`)
+    })
+    if (okCount === 0) return
+    const names = [...new Set(rows.flatMap((identity) => [...(namesByRow.get(identity) ?? [])]))]
+    const generation = results.find((result) => result.ok)?.generation ?? 0
+    // 一次库变更只写一行 info：命中两行时写两行日志只会把「到底换了几代」淹掉。
+    logger.info(
+      `[plugin-watch] 库包 ${names.join('、')} 变了：已重挂 ${okCount} 行（代数 ${String(generation)}）`,
+    )
   }
 
   /** 去抖结束：把攒着的行真的重挂掉。 */
   const flush = async (): Promise<void> => {
     if (stopped || flushing) return
     flushing = true
-    const ids = [...pending]
+    const direct = [...pending]
+    const byLibrary = new Map(pendingByLibrary)
     pending.clear()
+    pendingByLibrary.clear()
     try {
       // 去抖窗口里可能已经卸载：只重挂现在还挂着的行。
       const alive = new Set(targets().map((target) => target.identity))
-      for (const identity of ids) {
-        if (!alive.has(identity)) continue
+      // 库包命中的行先去重再合成一批：同一行被两个库包同时命中，也只换一次。
+      const libraryRows = new Set<string>()
+      const namesByRow = new Map<string, Set<string>>()
+      for (const [name, rows] of byLibrary) {
+        for (const identity of rows) {
+          if (!alive.has(identity)) continue
+          libraryRows.add(identity)
+          const names = namesByRow.get(identity) ?? new Set<string>()
+          names.add(name)
+          namesByRow.set(identity, names)
+        }
+      }
+      if (libraryRows.size > 0) await flushLibraryRows([...libraryRows], namesByRow)
+      // 行自己的代码变了，它 import 了哪些库包可能也变了：下一轮重建依赖图。
+      if (direct.length > 0) graphDirty = true
+      for (const identity of direct) {
+        // 同一行已经按「库包变更」重挂过就不再重挂第二次（一次变更只换一次）。
+        if (!alive.has(identity) || libraryRows.has(identity)) continue
         // 单个行出事不拖累其余行：一行抛了，后面的还是要换上新代码。
         try {
           const result = await remount(identity)
@@ -249,19 +496,28 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
     }
   }
 
+  /** 把一轮扫描结果记进待办（行与库包分开记，flush 时分别处理）。 */
+  const applyChanges = (outcome: {
+    rows: string[]
+    libraries: Array<{ name: string; rows: string[] }>
+  }): void => {
+    for (const identity of outcome.rows) pending.add(identity)
+    for (const item of outcome.libraries) pendingByLibrary.set(item.name, new Set(item.rows))
+  }
+
   /** 扫一轮；有变化就进待办并重排去抖定时器。 */
   const poll = (): void => {
     if (stopped || flushing) return
-    let changed: string[]
+    let outcome: { rows: string[]; libraries: Array<{ name: string; rows: string[] }> }
     try {
-      changed = scan()
+      outcome = scan()
     } catch (error) {
       // 一轮读盘出错（权限、构建删目录）不该打死轮询：记一行，下一轮继续。
       logger.warn(`[plugin-watch] 轮询出错：${error instanceof Error ? error.message : String(error)}`)
       return
     }
-    if (changed.length === 0) return
-    for (const identity of changed) pending.add(identity)
+    if (outcome.rows.length === 0 && outcome.libraries.length === 0) return
+    applyChanges(outcome)
     // 同一文件连续变化合并成一次：每有新变更就重置去抖窗口。
     if (timer !== null) clearTimeout(timer)
     timer = setTimeout(() => {
@@ -285,14 +541,14 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
   return {
     async pollNow() {
       if (stopped) return
-      let changed: string[]
+      let outcome: { rows: string[]; libraries: Array<{ name: string; rows: string[] }> }
       try {
-        changed = scan()
+        outcome = scan()
       } catch (error) {
         logger.warn(`[plugin-watch] 轮询出错：${error instanceof Error ? error.message : String(error)}`)
         return
       }
-      for (const identity of changed) pending.add(identity)
+      applyChanges(outcome)
       if (timer !== null) {
         clearTimeout(timer)
         timer = null
@@ -310,7 +566,12 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
       timer = null
       clearInterval(ticker)
       pending.clear()
+      pendingByLibrary.clear()
       baseline = new Map()
+      libraryBaseline = new Map()
+      graph = null
+      graphSignature = ''
+      graphDirty = true
     },
     get running() {
       return running
@@ -351,18 +612,26 @@ function loggerOf(root: Context): PluginWatchLogger {
 }
 
 /**
- * 启动功能包热更轮询（幂等；`DSC_HOT=0` 关闭，默认开）。
+ * 启动功能包 / 库包热更轮询（幂等；`DSC_HOT=0` 关闭，默认开）。
  *
  * 由 plugin-loader 在 {@link mountApplicationRows} 末尾拉起，宿主不必再调；手工调用
  * 也安全（同一个进程只会有一个轮询器）。
+ * @param root - 内核 root
+ * @param options.appDir - 应用安装目录（缺省 {@link APP_INSTALL_DIR}）；库包清单从这里读
  */
-export function startPluginWatch(root: Context): PluginWatchHandle {
+export function startPluginWatch(
+  root: Context,
+  options: { appDir?: string } = {},
+): PluginWatchHandle {
   if (shared !== null) return shared
   if (process.env['DSC_HOT'] === '0') return inertHandle()
   const logger = loggerOf(root)
-  const handle = createPluginWatch({ logger })
+  const handle = createPluginWatch({
+    logger,
+    ...(options.appDir === undefined ? {} : { appDir: options.appDir }),
+  })
   shared = handle
-  logger.info('[plugin-watch] 功能包热更已开（轮询 1000ms，去抖 200ms；DSC_HOT=0 可关）')
+  logger.info('[plugin-watch] 功能包与库包热更已开（轮询 1000ms，去抖 200ms；DSC_HOT=0 可关）')
   return handle
 }
 

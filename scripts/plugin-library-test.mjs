@@ -15,7 +15,11 @@
  *      并且重定向结果照样打代数戳，换代后拿到新库。
  *
  * 第五段是门禁的夹具：功能包 → 库包允许；功能包 → 功能包、库包 → 任何包、core → 包
- * 都记 gap，断言的是**文案**。
+ * 都记 gap，断言的是**文案**；包标准闸也跑同一批夹具，确认两个门禁给出同一句判定。
+ *
+ * 第六段是库包热更：只改库包、不碰引用方，轮询要把引用它的行重挂并拿到新库；库包写坏
+ * 时旧版本继续跑且只有一条 warn；没有引用方的库包改了不重挂、不写日志；一次变更命中
+ * 两行时只换代一次，两行拿到同一个库实例。
  *
  * 夹具全部造在临时目录（HOME / DSC_HOME 都指过去），不碰真实的 ~/.dsc。
  * 运行：pnpm build && node scripts/plugin-library-test.mjs
@@ -64,6 +68,7 @@ const writeText = (file, text) => {
   writeFileSync(file, text, 'utf8')
 }
 const libUrl = (relative) => pathToFileURL(join(libDir, relative)).href
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms))
 
 /** 全局观察点：模块顶层与 apply 都往这里写，跑完从它身上读「哪一份真的在跑」。 */
 globalThis.__LIB_TEST = {}
@@ -146,6 +151,7 @@ const { Context } = await import('@deepseek-ai/cordis')
 const loader = await import(libUrl('core/plugin-loader.js'))
 const registry = await import(libUrl('core/plugin-registry.js'))
 const resolveHook = await import(libUrl('core/dsh-compat/resolve-hook.js'))
+const watchModule = await import(libUrl('core/plugin-watch.js'))
 
 // 解析钩子先登记，应用根 = 夹具应用：库包重定向查的就是这个根。
 // （钩子是进程级单例，第一次登记的根说了算，所以必须在任何挂载之前。）
@@ -234,14 +240,23 @@ console.log('── 4. 覆盖版包 import 库包：解析到应用内那一份 
 // ── 5. 依赖方向门禁：功能包→库包允许，其余记 gap ──────────────────────────────
 console.log('── 5. 依赖方向门禁：允许与禁止的文案 ──')
 {
-  /** 造一个「仓库根」：三个入口 + src/packages 下的若干包。 */
+  /** 造一个「仓库根」：三个入口 + src/packages 下的若干包（清单字段按包标准闸的完整要求写）。 */
   const makeRoot = (name, packages) => {
     const dir = join(home, 'gate', name)
     writeText(join(dir, 'src', 'host', 'kernel.ts'), 'export const kernel = 1\n')
     writeText(join(dir, 'src', 'boot.ts'), 'export const boot = 1\n')
     writeText(join(dir, 'src', 'headless.ts'), 'export const headless = 1\n')
     for (const pkg of packages) {
-      const manifest = { name: '@pneuma/' + pkg.id, version: '0.0.0', private: true, type: 'module', exports: { '.': './index.js' }, pneuma: pkg.pneuma }
+      const manifest = {
+        name: '@pneuma/' + pkg.id,
+        version: '0.0.0',
+        private: true,
+        type: 'module',
+        exports: { '.': './index.js', './package.json': './package.json' },
+        engines: { pneuma: '>=1.0.0 <2.0.0' },
+        peerDependencies: { '@deepseek-ai/cordis': '^4.0.4' },
+        pneuma: pkg.pneuma,
+      }
       writeText(join(dir, 'src', 'packages', pkg.id, 'package.json'), JSON.stringify(manifest, null, 2) + '\n')
       writeText(join(dir, 'src', 'packages', pkg.id, 'index.ts'), pkg.source)
       if (pkg.patch !== true) continue
@@ -250,9 +265,9 @@ console.log('── 5. 依赖方向门禁：允许与禁止的文案 ──')
     return dir
   }
 
-  /** 跑一次真门禁，拿它打印的 JSON。 */
-  const runCheck = (dir) => {
-    const result = spawnSync(process.execPath, [join(repoRoot, 'scripts', 'plugin-model-check.mjs'), '--json'], {
+  /** 跑一次真门禁（两个脚本都认 PNEUMA_CHECK_ROOT），拿它打印的 JSON。 */
+  const runCheck = (script, dir) => {
+    const result = spawnSync(process.execPath, [join(repoRoot, 'scripts', script), '--json'], {
       cwd: repoRoot,
       encoding: 'utf8',
       env: { ...process.env, PNEUMA_CHECK_ROOT: dir },
@@ -265,35 +280,81 @@ console.log('── 5. 依赖方向门禁：允许与禁止的文案 ──')
     }
     return { status: result.status, parsed, stdout: result.stdout, stderr: result.stderr }
   }
+  const runModel = (dir) => runCheck('plugin-model-check.mjs', dir)
+  const runStandard = (dir) => runCheck('plugin-standard-check.mjs', dir)
+  /** 拿包标准闸某一项的汇总行（passed / applicable / exempt 在 summary.hard 里）。 */
+  const hardOf = (run, item) => (run.parsed?.summary?.hard ?? []).find((entry) => entry.item === item)
 
   // 5a：功能包 import 库包 = 允许，一条缺口都不该有
   const okDir = makeRoot('ok', [
     { id: 'liba', pneuma: { library: true }, source: 'export const LIB = 1\n' },
     {
       id: 'feat-ok',
-      pneuma: { bundle: { patch: './cordis.patch.yml' } },
+      pneuma: { bundle: { patch: './cordis.patch.yml' }, resolution: 'overridable', order: 100 },
       patch: true,
-      source: "import { LIB } from '@pneuma/liba/index.js'\nexport const ok = LIB\n",
+      source: "import { LIB } from '@pneuma/liba/index.js'\nexport function apply() { return LIB }\n",
     },
   ])
-  const okRun = runCheck(okDir)
+  const okRun = runModel(okDir)
   check('功能包 → 库包不记缺口', okRun.status === 0 && okRun.parsed?.summary.gaps === 0, JSON.stringify(okRun.parsed?.gaps))
   check('库包单独计数（不算功能包）', okRun.parsed?.summary.libraries === 1 && okRun.parsed?.summary.packages === 1, JSON.stringify(okRun.parsed?.summary))
 
-  // 5b：功能包 import 功能包、库包 import 任何包、core import 包 = 三条缺口
+  // 5b：包标准闸也认库包：豁免 patch / 行 / 入口导出，其余照要求
+  const okStandard = runStandard(okDir)
+  check('包标准闸：库包不红（exit 0）', okStandard.status === 0, okStandard.stdout + okStandard.stderr)
+  check(
+    '包标准闸：库包的清单字段照要求，只豁免 行/入口导出/order',
+    hardOf(okStandard, 1)?.passed === 2 &&
+      hardOf(okStandard, 1)?.applicable === 2 &&
+      hardOf(okStandard, 3)?.passed === 1 &&
+      hardOf(okStandard, 3)?.exempt === 1 &&
+      hardOf(okStandard, 4)?.passed === 1 &&
+      hardOf(okStandard, 4)?.exempt === 1,
+    JSON.stringify(okStandard.parsed?.summary?.hard),
+  )
+  check(
+    '包标准闸：库包没有行也不报错（不会拿空 patch 判失败）',
+    hardOf(okStandard, 3)?.issues === 0 && hardOf(okStandard, 6)?.passed === 1,
+    JSON.stringify(okStandard.parsed?.hard),
+  )
+
+  // 5c：没 patch、也没标 pneuma.library 的包：两个门禁都该红
+  const noFlagDir = makeRoot('no-flag', [
+    { id: 'forgot', pneuma: {}, source: 'export const value = 1\n' },
+  ])
+  const noFlagModel = runModel(noFlagDir)
+  const noFlagStandard = runStandard(noFlagDir)
+  const noFlagIssues = (noFlagStandard.parsed?.hard ?? []).flatMap((entry) => entry.issues).join('\n')
+  check(
+    '忘写 patch 又没标库包：model-check 记缺口',
+    (noFlagModel.parsed?.gaps ?? []).some((item) => item.detail.includes('没标 pneuma.library')),
+    JSON.stringify(noFlagModel.parsed?.gaps),
+  )
+  check(
+    '忘写 patch 又没标库包：standard-check 第 1 项也红',
+    noFlagStandard.status === 1 && noFlagIssues.includes('pneuma.library = true'),
+    noFlagIssues,
+  )
+
+  // 5d：功能包 import 功能包、库包 import 任何包、core import 包 = 三条缺口
   const badDir = makeRoot('bad', [
     { id: 'liba', pneuma: { library: true }, source: 'export const LIB = 1\n' },
-    { id: 'feat-a', pneuma: { bundle: { patch: './cordis.patch.yml' } }, patch: true, source: 'export const a = 1\n' },
+    {
+      id: 'feat-a',
+      pneuma: { bundle: { patch: './cordis.patch.yml' }, resolution: 'overridable', order: 100 },
+      patch: true,
+      source: 'export function apply() {}\n',
+    },
     {
       id: 'feat-b',
-      pneuma: { bundle: { patch: './cordis.patch.yml' } },
+      pneuma: { bundle: { patch: './cordis.patch.yml' }, resolution: 'overridable', order: 110 },
       patch: true,
-      source: "import { a } from '@pneuma/feat-a/index.js'\nexport const b = a\n",
+      source: "import { a } from '@pneuma/feat-a/index.js'\nexport function apply() { return a }\n",
     },
     { id: 'lib-bad', pneuma: { library: true }, source: "import { a } from '@pneuma/feat-a/index.js'\nexport const c = a\n" },
   ])
   writeText(join(badDir, 'src', 'core', 'leak.ts'), "import type { LIB } from '@pneuma/liba/index.js'\nexport type L = typeof LIB\n")
-  const badRun = runCheck(badDir)
+  const badRun = runModel(badDir)
   const gapText = (badRun.parsed?.gaps ?? []).map((item) => item.detail).join('\n')
   check('有缺口时 --strict 退出 1', spawnSync(process.execPath, [join(repoRoot, 'scripts', 'plugin-model-check.mjs'), '--strict'], {
     cwd: repoRoot,
@@ -316,6 +377,180 @@ console.log('── 5. 依赖方向门禁：允许与禁止的文案 ──')
     gapText,
   )
   check('三条缺口全是 dep-direction', (badRun.parsed?.gaps ?? []).every((item) => item.kind === 'dep-direction'), JSON.stringify(badRun.parsed?.gaps))
+
+  // 5e：同一批越界，包标准闸给出同一句判定（判据共用 plugin-dep-graph）
+  const badStandard = runStandard(badDir)
+  const standardIssues = (badStandard.parsed?.hard ?? []).flatMap((entry) => entry.issues).join('\n')
+  check(
+    '包标准闸：功能包 → 功能包同样红',
+    badStandard.status === 1 && standardIssues.includes('功能包「feat-b」直接 import 了功能包「feat-a」'),
+    standardIssues,
+  )
+  check(
+    '包标准闸：库包 → 功能包同样红（两处文案一致）',
+    standardIssues.includes('库包「lib-bad」直接 import 了功能包「feat-a」'),
+    standardIssues,
+  )
+  check(
+    '包标准闸：core → 包同样红（含 import type）',
+    standardIssues.includes('src/core/leak.ts') && standardIssues.includes('含 import type'),
+    standardIssues,
+  )
+}
+
+// ── 6. 库包热更：只改库包，引用它的行自动换代 ────────────────────────────────
+console.log('── 6. 库包热更：轮询盯库包，改库即重挂引用方 ──')
+{
+  // 复用第 1 段的 appDir（libx + 引用它的 feat 都在）。再放一个没有引用方的库包 liby，
+  // 用来验「改了也不重挂、不刷日志」。
+  const lonely = makePackage(appDir, 'liby', libSource('y1'), { library: true })
+
+  /** 新开一个 root 重挂应用自带行：plugin-watch 的默认 targets 读当前 root 上的行。 */
+  const mountWatched = async () => {
+    const root = new Context()
+    const failures = await loader.mountApplicationRows(root, { appDir, surface: 'none' })
+    return { root, failures }
+  }
+
+  const first = await mountWatched()
+  check(
+    '热更夹具挂上了（基线拿到 v3）',
+    first.failures.length === 0 && globalThis.__LIB_TEST.seen?.version === 'v3',
+    JSON.stringify(first.failures) + ' / ' + String(globalThis.__LIB_TEST.seen?.version),
+  )
+
+  const logs = { info: [], warn: [] }
+  const watch = watchModule.createPluginWatch({
+    appDir,
+    pollIntervalMs: 20,
+    debounceMs: 50,
+    logger: {
+      info: (line) => logs.info.push(line),
+      warn: (line) => logs.warn.push(line),
+    },
+  })
+  try {
+    // a) 只改库包文件（引用方一个字节不碰）→ 轮询发现、重挂引用方、拿到新库。
+    const featBefore = readFileSync(feat.realFile, 'utf8')
+    const generationBefore = loader.currentGeneration()
+    writeText(lib.realFile, libSource('v4'))
+    await sleep(400)
+
+    check('只改库包就重挂了引用行', globalThis.__LIB_TEST.seen?.version === 'v4', String(globalThis.__LIB_TEST.seen?.version))
+    check('引用方文件一个字节没动', readFileSync(feat.realFile, 'utf8') === featBefore)
+    check(
+      '一次库包变更只换代一次',
+      loader.currentGeneration() === generationBefore + 1,
+      String(generationBefore) + ' -> ' + String(loader.currentGeneration()),
+    )
+    check(
+      '日志点名是库包变更（不是行自己改了）',
+      logs.info.length === 1 && logs.info[0].includes('库包 libx'),
+      logs.info.join(' | '),
+    )
+
+    // b) 库包写成语法错误：重挂失败，旧版本继续工作，正好一条 warn。
+    logs.info.length = 0
+    logs.warn.length = 0
+    writeText(lib.realFile, 'export const OOPS = \n')
+    await sleep(400)
+
+    check('库包写坏后旧版本继续工作', globalThis.__LIB_TEST.seen?.version === 'v4', String(globalThis.__LIB_TEST.seen?.version))
+    check(
+      '失败只有一条 warn（说明旧版本继续运行）',
+      logs.warn.length === 1 && logs.warn[0].includes('旧版本继续运行'),
+      logs.warn.join(' | '),
+    )
+
+    // c) 没有引用方的库包：改了不重挂、不写日志。
+    logs.info.length = 0
+    logs.warn.length = 0
+    const generationBeforeLonely = loader.currentGeneration()
+    writeText(lonely.realFile, libSource('y2'))
+    await sleep(300)
+
+    check(
+      '无引用方的库包改动不重挂',
+      loader.currentGeneration() === generationBeforeLonely,
+      String(generationBeforeLonely) + ' -> ' + String(loader.currentGeneration()),
+    )
+    check(
+      '无引用方的库包改动不写日志',
+      logs.info.length === 0 && logs.warn.length === 0,
+      logs.info.concat(logs.warn).join(' | '),
+    )
+  } finally {
+    watch.stop()
+  }
+
+  // d) 一次库变更命中两行：合并成一批、只换代一次，两行拿到同一个库实例。
+  writeText(lib.realFile, libSource('v5'))
+  // b 的失败已经在当前代数上留下一条「求值失败」的模块记录；同一个 URL 再 import 会
+  // 直接拿到那条缓存错误。换一代再挂——与真实场景里「修好后轮询再重挂」走的是同一条路。
+  loader.bumpGeneration()
+  const feat2Source = `import { LIB_VERSION, LIB_TOKEN } from '@pneuma/libx'
+export const name = 'feat2'
+export const inject = []
+export function apply() {
+  globalThis.__LIB_TEST.seen2 = { version: LIB_VERSION, token: LIB_TOKEN }
+}
+`
+  makePackage(appDir, 'feat2', feat2Source, { title: '第二个引用库包的功能包' })
+  makeBase(appDir, [
+    { id: 'feat', name: '@pneuma/feat' },
+    { id: 'feat2', name: '@pneuma/feat2' },
+  ])
+  const second = await mountWatched()
+  check(
+    '两行都挂上了（基线都拿到 v5）',
+    second.failures.length === 0 &&
+      globalThis.__LIB_TEST.seen?.version === 'v5' &&
+      globalThis.__LIB_TEST.seen2?.version === 'v5',
+    JSON.stringify(second.failures) +
+      ' / ' +
+      String(globalThis.__LIB_TEST.seen?.version) +
+      ' / ' +
+      String(globalThis.__LIB_TEST.seen2?.version),
+  )
+
+  const pairLogs = { info: [], warn: [] }
+  const pairWatch = watchModule.createPluginWatch({
+    appDir,
+    pollIntervalMs: 20,
+    debounceMs: 50,
+    logger: {
+      info: (line) => pairLogs.info.push(line),
+      warn: (line) => pairLogs.warn.push(line),
+    },
+  })
+  try {
+    const generationBeforePair = loader.currentGeneration()
+    writeText(lib.realFile, libSource('v6'))
+    await sleep(500)
+
+    check(
+      '一次库变更命中两行：两行都换了新库',
+      globalThis.__LIB_TEST.seen?.version === 'v6' && globalThis.__LIB_TEST.seen2?.version === 'v6',
+      String(globalThis.__LIB_TEST.seen?.version) + ' / ' + String(globalThis.__LIB_TEST.seen2?.version),
+    )
+    check(
+      '两行拿到的是同一个库实例（同一代只解析一份）',
+      globalThis.__LIB_TEST.seen?.token === globalThis.__LIB_TEST.seen2?.token,
+      '两行拿到的是不同对象',
+    )
+    check(
+      '两行一起重挂也只换代一次',
+      loader.currentGeneration() === generationBeforePair + 1,
+      String(generationBeforePair) + ' -> ' + String(loader.currentGeneration()),
+    )
+    check(
+      '两行只写一行 info（不刷屏）',
+      pairLogs.info.length === 1 && pairLogs.info[0].includes('已重挂 2 行'),
+      pairLogs.info.join(' | '),
+    )
+  } finally {
+    pairWatch.stop()
+  }
 }
 
 console.log('')

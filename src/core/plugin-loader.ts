@@ -605,27 +605,110 @@ export interface RemountResult {
  *
  * 任何一步失败都**不碰** `plugins.json`（不 disableSilently）：用户装的东西不能被
  * 一次手滑的语法错误停掉。失败只写 meta.problem 并返回 false。
+ *
+ * 一次要换多行时走 {@link remountExternalPlugins}：它保证同一批只换一代。
  * @param identity - 行 id（首次挂载时的身份；不是文件路径）
  */
 export async function remountExternalPlugin(identity: string): Promise<RemountResult> {
+  const [result] = await remountExternalPlugins([identity])
+  return result ?? { ok: false, generation: currentGeneration(), problem: '没有可重挂的行' }
+}
+
+/**
+ * 批量重挂一组行：**一次调用只换代一次**（库包变更命中多行时用）。
+ *
+ * 为什么必须批量换一代：代数戳是解析结果的一部分，同一个库包在同一代里只解析出
+ * 一个实例。如果两行各换各的代，它们会各自 import 一份新的库对象——模块级单例
+ * （计数器、缓存、注册表）当场裂成两份。一次库变更命中两行时，两行必须落在同一个
+ * 代数上，才能拿到同一个库。
+ *
+ * 失败语义与单行重挂完全一致（复用 {@link remountOne}）：
+ *   - 先做前置检查（没挂载 / 内置 / 文件不在）——这些行不参与换代，返回失败；
+ *   - 有任何一行值得重挂才 bump 一次，再逐行导入、校验、换 fiber；
+ *   - 单行导入失败或挂载失败不拖累同批其余行，失败的行保留旧 fiber 与旧元数据。
+ * @param identities - 行 id 列表（重复项自动去重；结果按入参顺序返回）
+ * @returns 与 identities 一一对应的结果
+ */
+export async function remountExternalPlugins(
+  identities: readonly string[],
+): Promise<RemountResult[]> {
   const root = rootRef
-  if (root === null) return { ok: false, generation: currentGeneration(), problem: '插件运行时还没初始化' }
+  const unique: string[] = []
+  for (const identity of identities) if (!unique.includes(identity)) unique.push(identity)
+  /** 身份 → 结果；最后按入参顺序摊平，重复项拿到同一份。 */
+  const results = new Map<string, RemountResult>()
+  if (root === null) {
+    for (const identity of unique) {
+      results.set(identity, { ok: false, generation: currentGeneration(), problem: '插件运行时还没初始化' })
+    }
+    return identities.map((identity) => results.get(identity)!)
+  }
+
   const table = mountedOf(root)
-  // 幂等判断（mountRow 用的那一处）只拦「首次挂载」；热重挂走的正是「已经挂上了」这一支。
-  if (!table.has(identity)) {
-    return { ok: false, generation: currentGeneration(), problem: '这一行当前没有挂载，热重挂只对已挂载的行生效' }
+  /** 过了前置检查、真的需要重挂的行。 */
+  const queue: Array<{ identity: string; file: string }> = []
+  for (const identity of unique) {
+    // 幂等判断（mountRow 用的那一处）只拦「首次挂载」；热重挂走的正是「已经挂上了」这一支。
+    if (!table.has(identity)) {
+      results.set(identity, {
+        ok: false,
+        generation: currentGeneration(),
+        problem: '这一行当前没有挂载，热重挂只对已挂载的行生效',
+      })
+      continue
+    }
+    // 内置官方插件的对象随内核编译，磁盘上没有它的产物：没有新旧版本可言。
+    if (builtinMounts.has(identity)) {
+      results.set(identity, {
+        ok: false,
+        generation: currentGeneration(),
+        problem: '内置插件随内核编译，没有可重挂的磁盘产物',
+      })
+      continue
+    }
+    const file = pluginSources.get(identity) ?? resolveEntryPath(identity)
+    if (file === null || !existsSync(file)) {
+      const problem = `找不到这一行的入口文件（${identity}），无法热重挂`
+      const missing = getPluginMeta(identity)
+      if (missing !== undefined) missing.problem = problem
+      results.set(identity, { ok: false, generation: currentGeneration(), problem })
+      continue
+    }
+    queue.push({ identity, file })
   }
-  // 内置官方插件的对象随内核编译，磁盘上没有它的产物：没有新旧版本可言。
-  if (builtinMounts.has(identity)) {
-    return { ok: false, generation: currentGeneration(), problem: '内置插件随内核编译，没有可重挂的磁盘产物' }
+
+  // 换代只做一次：同一批（例如一次库包变更命中的两行）落在同一个代数上。
+  const generation = queue.length > 0 ? bumpGeneration() : currentGeneration()
+  for (const item of queue) {
+    try {
+      results.set(item.identity, await remountOne(root, item.identity, item.file, generation))
+    } catch (error) {
+      // 单行出事不拖累同批其余行：记下这一行的失败，后面的照常换新。
+      results.set(item.identity, {
+        ok: false,
+        generation,
+        problem: `热重挂出错：${err(error)}（旧版本继续运行）`,
+      })
+    }
   }
-  const file = pluginSources.get(identity) ?? resolveEntryPath(identity)
-  if (file === null || !existsSync(file)) {
-    const problem = `找不到这一行的入口文件（${identity}），无法热重挂`
-    const missing = getPluginMeta(identity)
-    if (missing !== undefined) missing.problem = problem
-    return { ok: false, generation: currentGeneration(), problem }
-  }
+  return identities.map((identity) => results.get(identity)!)
+}
+
+/**
+ * 重挂一行（单行与批量路径共用）。代数由调用方给：这里不再自己 bump，
+ * 否则批量重挂会变成「几行几个代」。
+ * @param root - 内核 root
+ * @param identity - 行 id
+ * @param file - 已确认存在的入口文件
+ * @param generation - 这一批用的代数
+ */
+async function remountOne(
+  root: Context,
+  identity: string,
+  file: string,
+  generation: number,
+): Promise<RemountResult> {
+  const table = mountedOf(root)
   const meta: PluginMeta = getPluginMeta(identity) ?? {
     file: identity,
     name: identity.replace(/\.js$/, ''),
@@ -636,7 +719,6 @@ export async function remountExternalPlugin(identity: string): Promise<RemountRe
   const previous = details.get(identity)
   // 失败时连元数据一起还原：新模块可能已经把 name/apiVersion 改成新值，旧 fiber 却还在跑。
   const metaBefore: PluginMeta = { ...meta }
-  const generation = bumpGeneration()
   // 行级 inject / 宿主配置沿用首次挂载那一份（重挂不是重新装配）。
   const inspected = await inspectPluginModule(file, identity, previous?.options ?? {}, meta)
   if (!inspected.ok) {
@@ -1131,7 +1213,7 @@ export async function mountApplicationRows(
   for (const warning of warnings) warnApplicationRow(root, `应用自带行：${warning}`)
   // 热更轮询在这里拉起：内核装配每次都走这个入口，「默认开」不必宿主再记一条调用。
   // 失败不影响启动（探针/自检里通常是空转：夹具文件在挂载后不再变化）。
-  await startPluginHotUpdate(root)
+  await startPluginHotUpdate(root, appDir)
   return failures
 }
 
@@ -1142,14 +1224,17 @@ export async function mountApplicationRows(
  * 的必经之路（连探针都走它），默认开就落在这一处；宿主想自己控制时调
  * `plugin-watch` 的 `startPluginWatch` 也是幂等的。
  *
+ * `appDir` 要跟着传下去：轮询器要靠它读「哪些是库包」（`<appDir>/lib/node_modules/@pneuma`），
+ * 自检把应用指到临时目录时不能去扫真实安装目录。
+ *
  * 动态 import 而不是静态：plugin-watch 反过来要用本模块的
  * `listMountedPluginSources` / `remountExternalPlugin`，静态 import 会成环。
  */
-async function startPluginHotUpdate(root: Context): Promise<void> {
+async function startPluginHotUpdate(root: Context, appDir: string): Promise<void> {
   if (process.env['DSC_HOT'] === '0') return
   try {
     const watch = await import('./plugin-watch.js')
-    watch.startPluginWatch(root)
+    watch.startPluginWatch(root, { appDir })
   } catch (error) {
     warnApplicationRow(root, `功能包热更没起来：${err(error)}（不影响启动）`)
   }
