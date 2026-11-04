@@ -197,7 +197,8 @@ console.log('[5] 偏好：updateCheck 的读档归一')
 console.log('[6] 形态钉：宿主分出口 / 桌面接线 / 契约载荷')
 {
   const settings = read('src/packages/settings/index.ts')
-  check('关于分区有 updateCheck 这个 select', settings.includes("key: 'updateCheck'") && settings.includes('UPDATE_CHECK_OPTIONS'))
+  // 选项表 2026-11-05 起是工厂函数（模块导入时配置还没落盘，早调 t() 会把语言钉死）。
+  check('关于分区有 updateCheck 这个 select', settings.includes("key: 'updateCheck'") && settings.includes('updateCheckOptions()'))
   check('关于分区回读 updateCheck 当前值', /values: \(\) => \(\{ updateCheck: prefs\.updateCheck \}\)/.test(settings))
   check('写入走 savePrefs 落 settings.json', /savePrefs\(\{ updateCheck: mode \}\)/.test(settings))
   check('检查更新按钮用 fetchLatestRelease + pickInstaller 分出口', settings.includes('fetchLatestRelease()') && settings.includes('pickInstaller(result.info.assets'))

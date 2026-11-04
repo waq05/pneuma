@@ -54,6 +54,21 @@ test('服务名：provide 是 permissionPresets，依赖审批/模式/快照那�
   passed += 1
 })
 
+
+test('字典：出厂四档的标签与描述，中英各一份，英文里没有汉字', () => {
+  const zh = JSON.parse(read('../locale/ui.zh.json'))
+  const en = JSON.parse(read('../locale/ui.en.json'))
+  for (const name of ['read-only', 'workspace', 'full-access', 'auto-review']) {
+    for (const field of ['label', 'description']) {
+      const key = 'preset.' + name + '.' + field
+      assert.equal(typeof zh[key], 'string', key + ' 中文缺')
+      assert.equal(typeof en[key], 'string', key + ' 英文缺')
+      assert.ok(!/[\u4e00-\u9fff]/.test(en[key]), key + ' 英文里还有汉字')
+    }
+  }
+  passed += 1
+})
+
 after(() => {
   console.log(`通过 ${String(passed)} 项`)
 })

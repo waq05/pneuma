@@ -1,0 +1,10 @@
+{
+  "section.title": "会话目标",
+  "section.subtitle": "一轮干净结束后自动往下推的轮次预算",
+  "field.defaultMaxRounds.label": "新目标缺省给多少轮自动续跑",
+  "field.defaultMaxRounds.help": "一次自动续跑算一轮。用户点目标条上的「加轮次」是在这个数往上加；256 是硬顶，改不掉。",
+  "field.extendRoundsBy.label": "点一次「加轮次」加多少轮",
+  "field.extendRoundsBy.help": "轮次用完后由用户决定要不要继续，每次点按钮就按这个数放宽。",
+  "save.notNumber": "这里要填一个数字",
+  "save.unknownKey": "这个分区没有这项：{key}"
+}

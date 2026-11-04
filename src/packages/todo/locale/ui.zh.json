@@ -1,0 +1,11 @@
+{
+  "section.title": "任务清单",
+  "section.subtitle": "未完成任务的节流提醒",
+  "field.enabled.label": "每过若干轮提醒一次未完成任务",
+  "field.enabled.help": "开启后，距上次更新任务清单超过设定轮数、且清单里还有未完成项时，往请求末尾补一条提醒。默认开（长任务里模型最容易忘掉这一步）。",
+  "field.everyRounds.label": "每隔几轮提醒一次",
+  "field.everyRounds.help": "一轮 = 一次模型请求。数值越小提醒越勤、token 花得越多；只在上面那条开着时生效。",
+  "save.notNumber": "这里要填一个数字",
+  "save.outOfRange": "间隔要在 1 到 100 之间",
+  "save.unknownKey": "这个分区没有这项：{key}"
+}

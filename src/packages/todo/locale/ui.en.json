@@ -1,0 +1,11 @@
+{
+  "section.title": "Todo list",
+  "section.subtitle": "A throttled reminder about open tasks",
+  "field.enabled.label": "Remind me about open tasks every so many rounds",
+  "field.enabled.help": "When on, once the todo list has not been updated for the set number of rounds and still has open items, a reminder is appended to the request. On by default (in long tasks this is the step models forget most often).",
+  "field.everyRounds.label": "Rounds between reminders",
+  "field.everyRounds.help": "One round = one model request. Smaller values remind more often and cost more tokens; it only takes effect while the switch above is on.",
+  "save.notNumber": "Enter a number here.",
+  "save.outOfRange": "The interval must be between 1 and 100.",
+  "save.unknownKey": "This section has no such setting: {key}"
+}

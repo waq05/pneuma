@@ -1,0 +1,21 @@
+{
+  "section.title": "Documents and bulk reads",
+  "section.subtitle": "Read PDF / Word / CSV, read several file ranges at once, dry-run edits; the backend is dsh-ops, a Rust worker",
+  "field.status.label": "Current status",
+  "field.status.available": "Available · from {source}",
+  "field.status.unavailable": "Unavailable: {reason}",
+  "field.status.help": "Registers thirteen tools: seven read-only (documents, spreadsheets, bulk read, diff, file check, hex view) and six write tools (whole-file write, multi-edit, copy, move, remove, whole-directory replace). Every write goes through approval.",
+  "field.workerResolved.label": "Worker path",
+  "field.workerPath.label": "Worker path (leave empty to auto-detect)",
+  "field.workerPath.placeholder": "Auto-detect dsh-ops' dsh-ops-worker",
+  "field.workerPath.help": "The search order is ~/.dsc/plugins/node_modules/dsh-ops, then ~/.dsh/profiles/*/node_modules/dsh-ops; the DSC_OPS_WORKER environment variable is also read. Installing dsh-ops once is enough for it to be found.",
+  "field.timeoutMs.label": "Time limit per call (ms)",
+  "field.timeoutMs.help": "Reading one big document can take a few seconds; past this limit the call gives up and reports an error instead of stalling the whole turn.",
+  "field.toolsInfo.label": "What these tools do",
+  "field.missing.label": "No dsh-ops installed?",
+  "field.missing.text": "Run npm install dsh-ops in ~/.dsc/plugins and reopen this plugin; or put the absolute path of dsh-ops-worker in the field above.",
+  "save.workerPathSaved": "Path saved, but no worker was found: {reason}. The thirteen tools stay as they are; nothing was removed.",
+  "save.workerPathUpdated": "Path updated and all thirteen tools are registered (from {source}).",
+  "save.badTimeout": "The time limit must be a number.",
+  "save.unknownKey": "This section has no such setting: {key}"
+}

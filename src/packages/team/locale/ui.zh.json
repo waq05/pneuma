@@ -1,0 +1,9 @@
+{
+  "section.title": "共享任务板",
+  "section.subtitle": "登记、认领、结项都在本会话的任务板上；成员名单由「子智能体」提供",
+  "field.boardDir.label": "任务板目录",
+  "field.boardDir.help": "每个会话各一块板（<会话 id>.json），切会话就是另一块板。",
+  "field.clearBoard.label": "清空本会话任务板",
+  "field.clearBoard.help": "仅清空当前会话的任务条目，不影响其他会话与队友运行记录。",
+  "action.clearBoard": "本会话的任务板清空了（去掉 {count} 条）"
+}

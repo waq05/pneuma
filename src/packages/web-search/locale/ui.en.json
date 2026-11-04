@@ -1,0 +1,23 @@
+{
+  "section.title": "Web search",
+  "section.subtitle": "Pick a search service and add a key; your query is sent to that service",
+  "field.provider.label": "Search service",
+  "field.provider.option.tavily": "Tavily (abroad, tavily.com)",
+  "field.provider.option.bocha": "Bocha (direct from China, bochaai.com)",
+  "field.provider.option.serper": "Serper (Google results, serper.dev)",
+  "field.apiKeyEnv.label": "API key environment variable",
+  "field.apiKeyEnv.placeholder": "For example TAVILY_API_KEY",
+  "field.apiKeyEnv.help": "Recommended: store the API key in a system environment variable and put only the variable name here, so the key never touches disk.",
+  "field.apiKey.label": "Or paste the key directly (optional)",
+  "field.apiKey.placeholder": "sk-…, stored in plain text in ~/.dsc/plugins.json",
+  "field.apiKey.help": "The quick route; when the environment variable has a value it wins. The key stays on this machine.",
+  "field.maxResults.label": "Results per search",
+  "field.maxResults.help": "More results take more context; 5 is usually enough.",
+  "field.test.label": "Test search for “Pneuma”",
+  "field.test.help": "Runs one real search with the current provider and key; the reply shows how many results came back, or why it failed.",
+  "save.unknownProvider": "Unknown provider: {provider}",
+  "save.badResults": "The result count must be a number.",
+  "save.unknownKey": "This section has no such setting: {key}",
+  "action.empty": "The search went out but returned 0 results (the key may be invalid or out of quota).",
+  "action.ok": "It works: {provider} returned {count} results; the first is “{title}”."
+}

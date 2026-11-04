@@ -16,6 +16,13 @@ import { wrapUntrusted } from '@pneuma/runtime/core/untrusted.js'
 import type { SettingsField, SettingsValue } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 支持的搜索提供方。 */
 const PROVIDERS = ['tavily', 'bocha', 'serper'] as const
@@ -260,35 +267,35 @@ export const webSearchPlugin: Plugin.Object = {
       {
         type: 'select',
         key: 'provider',
-        label: '搜索服务',
+        label: t('field.provider.label'),
         options: [
-          { value: 'tavily', label: 'Tavily（国外，tavily.com）' },
-          { value: 'bocha', label: '博查（国内直连，bochaai.com）' },
-          { value: 'serper', label: 'Serper（Google 结果，serper.dev）' },
+          { value: 'tavily', label: t('field.provider.option.tavily') },
+          { value: 'bocha', label: t('field.provider.option.bocha') },
+          { value: 'serper', label: t('field.provider.option.serper') },
         ],
       },
       {
         type: 'text',
         key: 'apiKeyEnv',
-        label: 'API key 环境变量名',
-        placeholder: '例如 TAVILY_API_KEY',
-        help: '推荐方式：将 API key 存入系统环境变量，此处只填变量名，key 不落盘。',
+        label: t('field.apiKeyEnv.label'),
+        placeholder: t('field.apiKeyEnv.placeholder'),
+        help: t('field.apiKeyEnv.help'),
       },
       {
         type: 'text',
         key: 'apiKey',
-        label: '直接填写 key，可选',
-        placeholder: 'sk-…，明文存于 ~/.dsc/plugins.json',
-        help: '便捷方式；环境变量有值时优先使用环境变量。key 仅存本机。',
+        label: t('field.apiKey.label'),
+        placeholder: t('field.apiKey.placeholder'),
+        help: t('field.apiKey.help'),
       },
-      { type: 'number', key: 'maxResults', label: '每次返回条数', min: 1, max: 20, step: 1, help: '条数越多占用上下文越多，5 条通常够用。' },
-      { type: 'button', action: 'test', label: '测试搜索「Pneuma」', style: 'ghost', help: '用当前提供方与 key 发一次真实搜索，回执会显示结果条数或失败原因。' },
+      { type: 'number', key: 'maxResults', label: t('field.maxResults.label'), min: 1, max: 20, step: 1, help: t('field.maxResults.help') },
+      { type: 'button', action: 'test', label: t('field.test.label'), style: 'ghost', help: t('field.test.help') },
     ]
 
     const section: SettingsSectionSpec = {
       id: 'web-search',
-      title: '联网搜索',
-      subtitle: '选一家搜索服务并填 key；搜索词会发给这家服务',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: 46,
       fields,
       values: (): Record<string, SettingsValue> => ({
@@ -300,7 +307,7 @@ export const webSearchPlugin: Plugin.Object = {
       save: (key, value): string | void => {
         switch (key) {
           case 'provider':
-            if (!(PROVIDERS as readonly string[]).includes(String(value))) return `不认识的提供方：${String(value)}`
+            if (!(PROVIDERS as readonly string[]).includes(String(value))) return t('save.unknownProvider', { provider: String(value) })
             writePluginConfig(CONFIG_KEY, { provider: String(value) })
             break
           case 'apiKeyEnv':
@@ -311,12 +318,12 @@ export const webSearchPlugin: Plugin.Object = {
             break
           case 'maxResults': {
             const num = Number(value)
-            if (!Number.isFinite(num)) return '条数要填数字'
+            if (!Number.isFinite(num)) return t('save.badResults')
             writePluginConfig(CONFIG_KEY, { maxResults: Math.min(Math.max(Math.round(num), 1), 20) })
             break
           }
           default:
-            return `这个分区没有这项：${key}`
+            return t('save.unknownKey', { key })
         }
         config = readConfig()
         offTool()
@@ -328,8 +335,8 @@ export const webSearchPlugin: Plugin.Object = {
           if (key === '') throw new Error('还没有可用的 key：先填 apiKeyEnv 或直接填 key')
           const hits = await search(config.provider, 'Pneuma', 3, new AbortController().signal)
           return hits.length === 0
-            ? '搜索发出去了，但 0 条结果（key 可能无效或额度用完）。'
-            : `通了：${config.provider} 返回 ${String(hits.length)} 条结果，第一条「${hits[0]!.title}」。`
+            ? t('action.empty')
+            : t('action.ok', { provider: config.provider, count: String(hits.length), title: hits[0]!.title })
         }
         throw new Error(`这个分区没有这个按钮：${name}`)
       },

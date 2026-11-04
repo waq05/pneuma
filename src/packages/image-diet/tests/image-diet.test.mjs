@@ -2,6 +2,8 @@
  * 读 lib/ 产物（先 pnpm run build）；单独跑：node src/packages/image-diet/tests/image-diet.test.mjs
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8')
 const { imageDietPlugin } = await import(new URL('../../../../lib/packages/image-diet/index.js', import.meta.url).href)
 const core = await import(new URL('../../../../lib/core/image-diet.js', import.meta.url).href)
 let section
@@ -13,9 +15,12 @@ const check = (label, fn) => {
   try { fn(); pass += 1; console.log(`PASS  ${label}`) } catch (error) { fail += 1; console.log(`FAIL  ${label} → ${error.message}`) }
 }
 
-check('分区身份：id image-diet、标题「图片卸载」、order 38', () => {
+check('分区身份：id image-diet、标题走 t(\'section.title\')、order 38', () => {
   assert.equal(section.id, 'image-diet')
-  assert.equal(section.title, '图片卸载')
+  // 标题文案的原文在 locale/ui.zh.json：这里钉「用了哪个键」+「键在字典里」，
+  // 不再钉某一句中文——否则一换语言这条断言就替文案做主了。
+  assert.match(read('../index.ts'), /title: t\('section\.title'\)/)
+  assert.ok(Object.hasOwn(JSON.parse(read('../locale/ui.zh.json')), 'section.title'))
   assert.equal(section.order, 38)
 })
 check('四个控件：总开关 + 三个数字预算', () => {

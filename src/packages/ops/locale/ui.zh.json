@@ -1,0 +1,21 @@
+{
+  "section.title": "文档与批量读取",
+  "section.subtitle": "读 PDF / Word / CSV，一次读多段文件，预演改动；内核是 dsh-ops 的 Rust worker",
+  "field.status.label": "当前状态",
+  "field.status.available": "可用 · 来自：{source}",
+  "field.status.unavailable": "不可用：{reason}",
+  "field.status.help": "注册了十三个工具：七个只读（文档、表格、批量读、差异、体检、16 进制），六个写类（整写、多处替换、复制、移动、删除、整目录替换）。写类每次都要审批。",
+  "field.workerResolved.label": "worker 路径",
+  "field.workerPath.label": "worker 路径（留空自动找）",
+  "field.workerPath.placeholder": "自动查找 dsh-ops 的 dsh-ops-worker",
+  "field.workerPath.help": "自动找的顺序：~/.dsc/plugins/node_modules/dsh-ops，再是 ~/.dsh/profiles/*/node_modules/dsh-ops；也认环境变量 DSC_OPS_WORKER。装一次 dsh-ops 就能自动命中。",
+  "field.timeoutMs.label": "单次调用时限（毫秒）",
+  "field.timeoutMs.help": "读完一份大文档可能要几秒；超过这个时限就放弃这次调用并报错，不会卡住整轮。",
+  "field.toolsInfo.label": "这些工具做什么",
+  "field.missing.label": "没装 dsh-ops？",
+  "field.missing.text": "在 ~/.dsc/plugins 里执行 npm install dsh-ops 后重开本插件；也可以在上面直接填 dsh-ops-worker 的绝对路径。",
+  "save.workerPathSaved": "路径已保存，但没找到 worker：{reason}。现在这十三个工具照旧，没有撤",
+  "save.workerPathUpdated": "路径已更新，十三个工具都注册好了（来自：{source}）",
+  "save.badTimeout": "时限要是一个数字",
+  "save.unknownKey": "这个分区没有这项：{key}"
+}

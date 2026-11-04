@@ -32,6 +32,13 @@ import type { SettingsField, SettingsValue, SettingsValues } from '@pneuma/runti
 import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { dscPath } from '@pneuma/runtime/core/path-policy.js'
 import { readShellChoice, shellFlavor } from '@pneuma/runtime/core/terminal-env.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 配置与设置提示里要写清的来源文件（手改它同样生效）。 */
 const PLUGINS_FILE = dscPath('plugins.json')
@@ -44,8 +51,8 @@ function prefixText(config: FloorConfig): string {
 /** 一份数值字段的区间校验，失败返回给用户看的原因。 */
 function checkInt(value: SettingsValue, limits: { min: number; max: number }, label: string): string | null {
   const num = Number(value)
-  if (!Number.isFinite(num) || !Number.isInteger(num)) return `${label}要填一个整数`
-  if (num < limits.min || num > limits.max) return `${label}要在 ${limits.min}~${limits.max} 之间`
+  if (!Number.isFinite(num) || !Number.isInteger(num)) return t('save.notInteger', { label })
+  if (num < limits.min || num > limits.max) return t('save.outOfRange', { label, min: limits.min, max: limits.max })
   return null
 }
 
@@ -109,81 +116,81 @@ export const approvalFloorPlugin: Plugin.Object = {
 
     const section: SettingsSectionSpec = {
       id: FLOOR_CONFIG_KEY,
-      title: '危险命令硬拦截',
-      subtitle: '比权限模式和审批卡都早一步的硬拦截：危险命令、黑名单、无人值守',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: 33,
       fields(): SettingsField[] {
         const { config, problems } = readConfig()
         const list: SettingsField[] = [
           {
             type: 'info',
-            label: '它在链上的位置',
-            text: 'order 5：模式闸门（10）、安全钩子（20）、审批（30）之前。所以它说拒的时候，任何权限模式都救不回来；它说放行的时候，模式该拒的还是照拒。',
+            label: t('field.chain.label'),
+            text: t('field.chain.text'),
           },
           {
             type: 'info',
-            label: '求值顺序',
-            text: '结构不可验证 → 灾难地板 → 用户 deny 黑名单 → 危险模式（无人值守才拒）→ 命令白名单 → 交给后面的守卫。',
+            label: t('field.order.label'),
+            text: t('field.order.text'),
           },
           {
             type: 'text',
             key: 'allowPrefixes',
-            label: '命令白名单（一行一条，逗号也行）',
+            label: t('field.allowPrefixes.label'),
             placeholder: 'pnpm run build',
             mono: true,
-            help: '命中就不弹审批卡。按空格切词、从头逐词比，`*` 只能放末尾。命令里有管道、分号、子 shell、变量、重定向、引号时一律不走白名单。',
+            help: t('field.allowPrefixes.help'),
           },
           {
             type: 'text',
             key: 'denyGlobs',
-            label: '命令黑名单（一行一条，通配符）',
+            label: t('field.denyGlobs.label'),
             placeholder: '*etc/passwd*',
             mono: true,
-            help: '出现在命令的参数词或写目标路径里就拒，先于「完全访问」生效。`*` 配任意字符，`?` 配一个字符。',
+            help: t('field.denyGlobs.help'),
           },
           {
             type: 'number',
             key: 'maxCommandLength',
-            label: '命令长度上限（字符）',
+            label: t('field.maxCommandLength.label'),
             min: FLOOR_LIMITS.maxCommandLength.min,
             max: FLOOR_LIMITS.maxCommandLength.max,
             step: 500,
-            help: `更长的命令按「看不清要跑什么」拒。范围 ${FLOOR_LIMITS.maxCommandLength.min}~${FLOOR_LIMITS.maxCommandLength.max}。`,
+            help: t('field.maxCommandLength.help', { min: FLOOR_LIMITS.maxCommandLength.min, max: FLOOR_LIMITS.maxCommandLength.max }),
           },
           {
             type: 'switch',
             key: 'unattended',
-            label: '无人值守',
-            help: '定时任务、脚本这类没人点卡的场景打开：ask 级命令与工作区外的写一律拒，不再指望有人来回答。桌面端没有可靠的交互信号，所以这一项只能手开。',
+            label: t('field.unattended.label'),
+            help: t('field.unattended.help'),
           },
-          { type: 'switch', key: 'circuitBreakerEnabled', label: '连续被拒就熔断' },
+          { type: 'switch', key: 'circuitBreakerEnabled', label: t('field.circuitBreakerEnabled.label') },
           {
             type: 'number',
             key: 'circuitBreakerThreshold',
-            label: '熔断阈值（连续被拒几次）',
+            label: t('field.circuitBreakerThreshold.label'),
             min: FLOOR_LIMITS.circuitBreakerThreshold.min,
             max: FLOOR_LIMITS.circuitBreakerThreshold.max,
             step: 1,
-            help: '只统计地板自己的拒：审批最后怎么裁，地板看不到。',
+            help: t('field.circuitBreakerThreshold.help'),
           },
           {
             type: 'number',
             key: 'circuitBreakerCooldownMs',
-            label: '熔断冷却（毫秒）',
+            label: t('field.circuitBreakerCooldownMs.label'),
             min: FLOOR_LIMITS.circuitBreakerCooldownMs.min,
             max: FLOOR_LIMITS.circuitBreakerCooldownMs.max,
             step: 1000,
-            help: '冷却过后自动恢复判定；恢复不是放宽规则，只是让模型有机会换个做法。',
+            help: t('field.circuitBreakerCooldownMs.help'),
           },
-          { type: 'info', label: '当前白名单条数', text: String(config.allowPrefixes.length) },
-          { type: 'info', label: '当前黑名单条数', text: String(config.denyGlobs.length) },
+          { type: 'info', label: t('field.allowCount.label'), text: String(config.allowPrefixes.length) },
+          { type: 'info', label: t('field.denyCount.label'), text: String(config.denyGlobs.length) },
         ]
         if (problems.length > 0) {
           list.push({
             type: 'info',
-            label: '配置有问题，现在一律拒',
+            label: t('field.problems.label'),
             text: problems.join('；'),
-            help: '改好上面的控件（或手改配置文件）立刻恢复。地板读不到配置时不会静默放过。',
+            help: t('field.problems.help'),
           })
         }
         return list
@@ -215,19 +222,19 @@ export const approvalFloorPlugin: Plugin.Object = {
             break
           }
           case 'maxCommandLength': {
-            const problem = checkInt(value, FLOOR_LIMITS.maxCommandLength, '命令长度上限')
+            const problem = checkInt(value, FLOOR_LIMITS.maxCommandLength, t('field.maxCommandLength.label'))
             if (problem !== null) return problem
             writePluginConfig(FLOOR_CONFIG_KEY, { maxCommandLength: Number(value) })
             break
           }
           case 'circuitBreakerThreshold': {
-            const problem = checkInt(value, FLOOR_LIMITS.circuitBreakerThreshold, '熔断阈值')
+            const problem = checkInt(value, FLOOR_LIMITS.circuitBreakerThreshold, t('field.circuitBreakerThreshold.label'))
             if (problem !== null) return problem
             writePluginConfig(FLOOR_CONFIG_KEY, { circuitBreakerThreshold: Number(value) })
             break
           }
           case 'circuitBreakerCooldownMs': {
-            const problem = checkInt(value, FLOOR_LIMITS.circuitBreakerCooldownMs, '熔断冷却')
+            const problem = checkInt(value, FLOOR_LIMITS.circuitBreakerCooldownMs, t('field.circuitBreakerCooldownMs.label'))
             if (problem !== null) return problem
             writePluginConfig(FLOOR_CONFIG_KEY, { circuitBreakerCooldownMs: Number(value) })
             break
@@ -239,7 +246,7 @@ export const approvalFloorPlugin: Plugin.Object = {
             writePluginConfig(FLOOR_CONFIG_KEY, { circuitBreakerEnabled: value === true })
             break
           default:
-            return `这个分区没有这项：${key}`
+            return t('save.unknownKey', { key })
         }
         // 值改完可能把熔断打开或关掉，顺手清一次计数，让新配置从干净状态开始。
         floor.reset()

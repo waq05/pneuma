@@ -22,6 +22,13 @@ import { TodoStore } from './todo.js'
 import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
 import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec, TodoService } from '@pneuma/runtime/services/types.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'todo'
@@ -164,23 +171,23 @@ export const todoPlugin: Plugin.Object = {
       {
         type: 'switch',
         key: 'enabled',
-        label: '每过若干轮提醒一次未完成任务',
-        help: '开启后，距上次更新任务清单超过设定轮数、且清单里还有未完成项时，往请求末尾补一条提醒。默认开（长任务里模型最容易忘掉这一步）。',
+        label: t('field.enabled.label'),
+        help: t('field.enabled.help'),
       },
       {
         type: 'number',
         key: 'everyRounds',
-        label: '每隔几轮提醒一次',
+        label: t('field.everyRounds.label'),
         min: 1,
         max: 100,
         step: 1,
-        help: '一轮 = 一次模型请求。数值越小提醒越勤、token 花得越多；只在上面那条开着时生效。',
+        help: t('field.everyRounds.help'),
       },
     ]
     const reminderSection: SettingsSectionSpec = {
       id: CONFIG_KEY,
-      title: '任务清单',
-      subtitle: '未完成任务的节流提醒',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: 45,
       fields: () => reminderFields,
       // 每次打开都现读磁盘：手改 plugins.json 也能看到真值。
@@ -195,12 +202,12 @@ export const todoPlugin: Plugin.Object = {
         }
         if (key === 'everyRounds') {
           const num = Number(value)
-          if (!Number.isFinite(num)) return '这里要填一个数字'
-          if (num < 1 || num > 100) return '间隔要在 1 到 100 之间'
+          if (!Number.isFinite(num)) return t('save.notNumber')
+          if (num < 1 || num > 100) return t('save.outOfRange')
           applyReminder({ everyRounds: Math.round(num) })
           return
         }
-        return `这个分区没有这项：${key}`
+        return t('save.unknownKey', { key })
       },
     }
     const offReminderSection = ctx.settings.registerSection(reminderSection)

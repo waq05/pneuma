@@ -30,6 +30,7 @@ import { attachmentStore, sanitizeFileRefs } from '@pneuma/runtime/core/attachme
 import { resolvePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { createUiEvents, type UiEventsHandle } from '@pneuma/runtime/core/ui-events.js'
 import { createUiHmr, type UiHmrFrame, type UiHmrHandle } from '@pneuma/runtime/core/ui-hmr.js'
+import type { UiBootGraph } from '@pneuma/runtime/core/ui-manifest.js'
 import { UI_PLUGIN_MANIFEST, uiPluginsDir } from '@pneuma/runtime/core/ui-bundles.js'
 import { isUiMethod, UI_METHODS, validateUiArgs } from '@pneuma/runtime/core/ui-methods.js'
 import { createUiServer, type UiServerHandle } from '@pneuma/runtime/core/ui-server.js'
@@ -119,6 +120,8 @@ export const webserverPlugin: Plugin.Object = {
     let handle: UiServerHandle | null = null
     let events: UiEventsHandle | null = null
     let hmr: UiHmrHandle | null = null
+    /** 界面半边启停的订阅（与 hmr 一起在卸载时退订）。 */
+    let offToggle: (() => void) | null = null
     let starting: Promise<UiServerHandle> | null = null
 
     const start = async (): Promise<UiServerHandle> => {
@@ -226,6 +229,40 @@ export const webserverPlugin: Plugin.Object = {
           ctx.logger.warn(line)
         },
       })
+      /**
+       * 界面半边启停：宿主换图再推一帧（与产物热更同一条通道、同一种帧）。
+       *
+       * 为什么由这里转发而不是 runtime 自己推：通道是 webserver 的，runtime 是界面方法层，
+       * 它不该认识 SSE——它只发 `dsc/ui-plugins-changed`，谁有通道谁订阅。
+       *
+       * 帧里的 `changed`/`removed` 只作说明用（壳的核对以 `graph` 为准，见 ui-boot 的 hmr）；
+       * 但**只在图真的变了**时推：关一个没有界面半边的插件也推一帧，会让页面白对账一遍。
+       */
+      offToggle = ctx.on('dsc/ui-plugins-changed', (payload) => {
+        void payload
+        if (handle === null) return
+        /**
+         * 换图之后**一定推一帧**，不拿「图变没变」当下推条件。
+         *
+         * 为什么：换图不只有这里——页面任何一个请求都会走到 `source.graph()`，它自己就会
+         * 把这一刻的图算出来。等这条事件到的时候，宿主这份图可能**已经是新的**了，于是
+         * 「前后一比对没变化」→ 不推 → 页面永远停在旧图（实测：停用界面插件后宿主已经少
+         * 一条，页面还挂着它）。页面那边的核对本来就是幂等的（同 rev 跳过、按图卸载），
+         * 多推一帧的代价只有一次空对账。
+         */
+        handle.refresh()
+        const graph = currentGraph().graph as UiBootGraph | null
+        if (graph === null) return
+        const beforeIds = new Set((pluginFrames.current?.graph.entries ?? []).map((entry) => entry.id))
+        const afterIds = new Set(graph.entries.map((entry) => entry.id))
+        pushPlugins({
+          rev: graph.rev,
+          changed: [],
+          // 上一帧给页面的图里还有、新图里没有的那些：只作说明用（页面按 graph 核对）。
+          removed: beforeIds.size === 0 ? [] : [...beforeIds].filter((id) => !afterIds.has(id)),
+          graph,
+        })
+      })
       const server = await createUiServer({
         // 语言随宿主身份进启动图：界面在首帧之前就要用它选文案，不能等一次异步回读。
         host: { name: 'Pneuma', version: DSC_VERSION, language: languageOfConfigFile(activeConfigFile()) },
@@ -293,10 +330,13 @@ export const webserverPlugin: Plugin.Object = {
       const channel = events
       const server = handle
       const watcher = hmr
+      const unsubscribeToggle = offToggle
       handle = null
       events = null
       hmr = null
+      offToggle = null
       starting = null
+      if (unsubscribeToggle !== null) unsubscribeToggle()
       if (watcher !== null) watcher.stop()
       if (channel !== null) channel.stop()
       if (server !== null) void server.close()

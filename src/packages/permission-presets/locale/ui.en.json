@@ -1,0 +1,10 @@
+{
+  "preset.read-only.label": "Read-only",
+  "preset.read-only.description": "Reading files and checking state go straight through; writes, commands and machine changes ask you first and only proceed once you allow that one",
+  "preset.workspace.label": "Workspace write",
+  "preset.workspace.description": "File changes inside the workspace are allowed; writes outside it and commands go through the approval card (the default)",
+  "preset.full-access.label": "Full access",
+  "preset.full-access.description": "Nothing is asked: edits anywhere and commands run directly (catastrophic commands are still refused)",
+  "preset.auto-review.label": "AI review",
+  "preset.auto-review.description": "Every call is shown to a model judge first: an allow goes through, a high-risk or unclear verdict falls back to your approval card"
+}

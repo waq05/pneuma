@@ -90,6 +90,13 @@ import {
 import { lastAssistantText, lastUserText, previousUserText } from '@pneuma/runtime/core/transcript-text.js'
 import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
 import { existsSync } from 'node:fs'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 配置键（`~/.dsc/plugins.json` 里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'self-improve'
@@ -963,76 +970,77 @@ export const selfImprovePlugin: Plugin.Object = {
         {
           type: 'switch',
           key: 'enabled',
-          label: '启用经验沉淀',
-          help: '关掉之后：不再捕获纠正候选、不再自动复盘、两个工具也不再写盘。已经写在盘上的候选与技能原样留着。',
+          label: t('field.enabled.label'),
+          help: t('field.enabled.help'),
         },
         {
           type: 'number',
           key: 'reviewMinIterations',
-          label: '一轮里工具调用超过多少次才自动复盘',
+          label: t('field.reviewMinIterations.label'),
           min: 0,
           max: 200,
           step: 1,
-          help: `按「本轮工具调用的次数」算，不按用户轮数（对齐 hermes 的口径）。填 0 等于不自动复盘。默认 ${String(DEFAULT_CONFIG.reviewMinIterations)}。`,
+          help: t('field.reviewMinIterations.help', { count: DEFAULT_CONFIG.reviewMinIterations }),
         },
         {
           type: 'switch',
           key: 'requireApproval',
-          label: '技能写入要我点一次头',
-          help: '开了之后模型每次新建/改写技能都要弹一张审批卡；没人能回答时按拒处理，草稿会存进候选清单等你 promote。',
+          label: t('field.requireApproval.label'),
+          help: t('field.requireApproval.help'),
         },
         {
           type: 'number',
           key: 'retentionDays',
-          label: '候选保留天数',
+          label: t('field.retentionDays.label'),
           min: 1,
           max: 365,
           step: 1,
-          help: `超过这个天数的候选在下次写入时被裁掉。默认 ${String(DEFAULT_CONFIG.retentionDays)} 天。`,
+          help: t('field.retentionDays.help', { count: DEFAULT_CONFIG.retentionDays }),
         },
         {
           type: 'number',
           key: 'maxCandidates',
-          label: '候选条数上限',
+          label: t('field.maxCandidates.label'),
           min: 10,
           max: 2000,
           step: 10,
-          help: `超了先裁最老的。默认 ${String(DEFAULT_CONFIG.maxCandidates)} 条。`,
+          help: t('field.maxCandidates.help', { count: DEFAULT_CONFIG.maxCandidates }),
         },
         {
           type: 'info',
-          label: '技能目录',
+          label: t('field.skillsRoot.label'),
           text: skillsRoot(),
           mono: true,
           copyable: true,
-          help: `技能写在这里（归档区 ${archiveRoot()}，现在堆了 ${String(archivedCount())} 个，只进不出）；路径可以点一下复制。`,
+          help: t('field.skillsRoot.help', { archive: archiveRoot(), count: archivedCount() }),
         },
         {
           type: 'info',
-          label: '候选与台账',
-          text: [
-            `候选清单：${candidatesFile(cwd())}`,
-            `使用台账：${usageFile()}`,
-            `变更台账：${ledgerFile()}（${usage.length === 0 ? '还没有记录' : `最近一条 ${usage[0]?.id ?? ''}`}）`,
-          ].join('\n'),
+          label: t('field.paths.label'),
+          text: t('field.paths.text', {
+            candidates: candidatesFile(cwd()),
+            usage: usageFile(),
+            ledger: ledgerFile(),
+            last: usage.length === 0 ? t('field.paths.noUsage') : t('field.paths.lastUsage', { id: usage[0]?.id ?? '' }),
+          }),
           mono: true,
           copyable: true,
-          help: `只写这两个根，别的什么都不碰：${TARGET_ROOTS()}。`,
+          help: t('field.paths.help', { roots: TARGET_ROOTS() }),
         },
         {
           type: 'info',
-          label: '技能现状',
-          text: `本地技能 ${String(local.length)} 个：${local.slice(0, 12).join('、')}${local.length > 12 ? ' …' : ''}`,
-          help: '老化是 active → stale（14 天没命中）→ archived（30 天，只搬不删）；只动 created_by: agent 且没钉住的技能。',
+          label: t('field.skills.label'),
+          text: t('field.skills.text', { count: local.length, names: local.slice(0, 12).join('、') }) + (local.length > 12 ? ' …' : ''),
+          help: t('field.skills.help'),
         },
-        { type: 'button', action: 'curate', label: '立即整理', style: 'ghost', help: '马上跑一次老化分级与归档，不用等下一次触发。' },
+        { type: 'button', action: 'curate', label: t('field.curate.label'), style: 'ghost', help: t('field.curate.help') },
       ]
     }
 
     const section: SettingsSectionSpec = {
       id: 'self-improve',
-      title: '经验沉淀',
-      subtitle: '从纠正与复盘里沉淀经验：候选、技能草稿、技能自修与回滚',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: 35,
       fields: sectionFields,
       values(): SettingsValues {
@@ -1054,28 +1062,28 @@ export const selfImprovePlugin: Plugin.Object = {
             return
           case 'reviewMinIterations': {
             const num = Number(value)
-            if (!Number.isFinite(num) || num < 0 || num > 200) return '这里要填 0 到 200 之间的整数（0 = 不自动复盘）'
+            if (!Number.isFinite(num) || num < 0 || num > 200) return t('save.badReview')
             applyConfig({ reviewMinIterations: Math.trunc(num) })
             return
           }
           case 'retentionDays': {
             const num = Number(value)
-            if (!Number.isFinite(num) || num < 1 || num > 365) return '保留天数要填 1 到 365 之间的整数'
+            if (!Number.isFinite(num) || num < 1 || num > 365) return t('save.badRetention')
             applyConfig({ retentionDays: Math.trunc(num) })
             return
           }
           case 'maxCandidates': {
             const num = Number(value)
-            if (!Number.isFinite(num) || num < 10 || num > 2000) return '条数上限要填 10 到 2000 之间的整数'
+            if (!Number.isFinite(num) || num < 10 || num > 2000) return t('save.badMaxCandidates')
             applyConfig({ maxCandidates: Math.trunc(num) })
             return
           }
           default:
-            return `这个分区没有这项：${key}`
+            return t('save.unknownKey', { key })
         }
       },
       action(name): string | void {
-        if (name !== 'curate') return `这个分区没有这个按钮：${name}`
+        if (name !== 'curate') return t('action.unknown', { name })
         const message = runCurate()
         ctx.emit('dsc/skills-changed')
         return message

@@ -39,6 +39,13 @@ import {
 import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { McpService, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { dscPath } from '@pneuma/runtime/core/path-policy.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 三个桥接工具的固定名字（它们自己不许被撤下，也不许再经 tool_call 包一层）。 */
 const BRIDGE_TOOL_NAMES = new Set(['tool_search', 'tool_describe', 'tool_call'])
@@ -366,83 +373,96 @@ export const toolSearchPlugin: Plugin.Object = {
       const mcpNames = config.deferMcpSchemas && mcp !== undefined ? mcp.tools().map((tool) => tool.name).sort() : []
       const heldNames = [...held.keys()].sort()
       if (mcpNames.length === 0 && heldNames.length === 0) {
-        const mcpNote = config.deferMcpSchemas ? '' : '（MCP 那把开关关着，MCP 工具的 schema 没撤）'
-        return `现在没有撤下任何工具：台面上就是注册表里的全部工具。${mcpNote}`
+        const note = config.deferMcpSchemas ? '' : t('field.withheld.emptyNote')
+        return t('field.withheld.empty', { note })
       }
       const lines: string[] = []
       if (config.deferMcpSchemas) {
-        lines.push(`MCP 工具 ${String(mcpNames.length)} 条${mcpNames.length === 0 ? '' : `：${mcpNames.join('、')}`}`)
+        lines.push(
+          mcpNames.length === 0
+            ? t('field.withheld.mcpEmpty', { count: mcpNames.length })
+            : t('field.withheld.mcp', { count: mcpNames.length, names: mcpNames.join('、') }),
+        )
       } else {
-        lines.push('MCP 工具的 schema 没撤（开关关着）')
+        lines.push(t('field.withheld.mcpOff'))
       }
-      lines.push(`注册表工具 ${String(heldNames.length)} 条${heldNames.length === 0 ? '' : `：${heldNames.join('、')}`}`)
-      lines.push('read 工具不会出现在这两行里：撤了每次读都要先搜再调、多两次往返，省不下多少 token。')
+      lines.push(
+        heldNames.length === 0
+          ? t('field.withheld.registryEmpty', { count: heldNames.length })
+          : t('field.withheld.registry', { count: heldNames.length, names: heldNames.join('、') }),
+      )
+      lines.push(t('field.withheld.keepRead'))
       return lines.join('\n')
     }
 
     const section: SettingsSectionSpec = {
       id: TOOL_SEARCH_CONFIG_KEY,
-      title: '工具按需加载',
-      subtitle: '只为用得上的工具付说明文字：动手类与 MCP 工具撤下，read 工具仍常驻',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: 47,
       fields(): SettingsField[] {
         const config = readConfig()
         return [
           {
             type: 'info',
-            label: '常驻台面的三个工具',
-            text:
-              'tool_search：按关键词（中文按相邻两字切，英文按单词）在撤下的目录里检索；\n' +
-              'tool_describe：取某条工具的完整参数 JSON Schema；\n' +
-              'tool_call：按真名调用它；审批与安全钩子按真名的真实风险判定，一次调用只弹一张卡。',
+            label: t('field.persistent.label'),
+            text: t('field.persistent.text'),
           },
           {
             type: 'switch',
             key: 'deferMcpSchemas',
-            label: '把 MCP 工具也收进按需加载',
-            help: 'MCP 一接进来就是几十个工具的参数表，收进来收益最大。关掉后动手类工具会立刻挂回台面，不用重启宿主。',
+            label: t('field.deferMcpSchemas.label'),
+            help: t('field.deferMcpSchemas.help'),
           },
           {
             type: 'select',
             key: 'tier',
-            label: '按需加载档位',
+            label: t('field.tier.label'),
             options: [
-              { value: '1', label: '1：只撤 MCP 工具' },
-              { value: '2', label: '2：再撤下面规则命中的工具（缺省）' },
-              { value: '3', label: '3：除保留名单外，会改东西的工具全撤' },
+              { value: '1', label: t('field.tier.option.1') },
+              { value: '2', label: t('field.tier.option.2') },
+              { value: '3', label: t('field.tier.option.3') },
             ],
-            help: '只有 write / exec 风险的工具会被撤下；read 工具一律留在台面上。',
+            help: t('field.tier.help'),
           },
           {
             type: 'text',
             key: 'deferRules',
-            label: '延后规则（一行一条，支持 *）',
+            label: t('field.deferRules.label'),
             placeholder: 'mcp__github__*\nedit',
             mono: true,
-            help: '只在档位 2 生效。命中的工具被撤下后要用 tool_call 调，每次调用都按那条工具的真名问一次审批。',
+            help: t('field.deferRules.help'),
           },
           {
             type: 'text',
             key: 'keepTools',
-            label: '永远留在台面上的工具（一行一条）',
+            label: t('field.keepTools.label'),
             placeholder: 'bash',
             mono: true,
-            help: '档位 2、3 都生效。常用且不想每次都过 tool_call 的工具写在这里。',
+            help: t('field.keepTools.help'),
           },
           {
             type: 'number',
             key: 'searchLimit',
-            label: '一次检索最多返回几条',
+            label: t('field.searchLimit.label'),
             min: TOOL_SEARCH_LIMITS.searchLimit.min,
             max: TOOL_SEARCH_LIMITS.searchLimit.max,
             step: 1,
-            help: '模型调 tool_search 时也能自己指定，上限就是这里。',
+            help: t('field.searchLimit.help'),
           },
-          { type: 'info', label: '现在撤下了这些', text: withheldText(config), help: `配置存在 ${PLUGINS_FILE} 的 ${TOOL_SEARCH_CONFIG_KEY} 条目里，手改同样生效。` },
           {
             type: 'info',
-            label: '当前配置',
-            text: `规则 ${config.deferRules.length === 0 ? '（空）' : config.deferRules.join('、')}｜保留 ${config.keepTools.length === 0 ? '（空）' : config.keepTools.join('、')}`,
+            label: t('field.withheld.label'),
+            text: withheldText(config),
+            help: t('field.withheld.help', { file: PLUGINS_FILE, key: TOOL_SEARCH_CONFIG_KEY }),
+          },
+          {
+            type: 'info',
+            label: t('field.current.label'),
+            text: t('field.current.text', {
+              rules: config.deferRules.length === 0 ? t('field.current.empty') : config.deferRules.join('、'),
+              keep: config.keepTools.length === 0 ? t('field.current.empty') : config.keepTools.join('、'),
+            }),
           },
         ]
       },
@@ -461,14 +481,14 @@ export const toolSearchPlugin: Plugin.Object = {
         try {
           switch (key) {
             case 'deferMcpSchemas': {
-              if (typeof value !== 'boolean') return '这个开关只能是开或关'
+              if (typeof value !== 'boolean') return t('save.badSwitch')
               writePluginConfig(TOOL_SEARCH_CONFIG_KEY, { deferMcpSchemas: value })
               break
             }
             case 'tier': {
               const tier = Number(value)
               if (!Number.isInteger(tier) || tier < TOOL_SEARCH_LIMITS.tier.min || tier > TOOL_SEARCH_LIMITS.tier.max) {
-                return `档位只能是 1、2 或 3，收到 ${String(value)}`
+                return t('save.badTier', { value: String(value) })
               }
               writePluginConfig(TOOL_SEARCH_CONFIG_KEY, { tier })
               break
@@ -484,13 +504,17 @@ export const toolSearchPlugin: Plugin.Object = {
             case 'searchLimit': {
               const limit = Number(value)
               if (!Number.isInteger(limit) || limit < TOOL_SEARCH_LIMITS.searchLimit.min || limit > TOOL_SEARCH_LIMITS.searchLimit.max) {
-                return `条数要在 ${TOOL_SEARCH_LIMITS.searchLimit.min}~${TOOL_SEARCH_LIMITS.searchLimit.max} 之间，收到 ${String(value)}`
+                return t('save.badLimit', {
+                  min: TOOL_SEARCH_LIMITS.searchLimit.min,
+                  max: TOOL_SEARCH_LIMITS.searchLimit.max,
+                  value: String(value),
+                })
               }
               writePluginConfig(TOOL_SEARCH_CONFIG_KEY, { searchLimit: limit })
               break
             }
             default:
-              return `这个分区没有这项：${key}`
+              return t('save.unknownKey', { key })
           }
         } catch (error) {
           // parseNameListText 会为「名字里带空格」抛错：这类输入是用户填错了，把原因回显给他改

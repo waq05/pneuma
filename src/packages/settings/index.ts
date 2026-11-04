@@ -56,43 +56,50 @@ import { DSC_PLUGINS_DIR } from '@pneuma/runtime/core/plugin-loader.js'
 import { DSC_VERSION } from '@pneuma/runtime/core/version.js'
 import type { SettingsSectionSpec, SettingsService } from '@pneuma/runtime/services/types.js'
 import { dscPath } from '@pneuma/runtime/core/path-policy.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 分区 id → 值。空对象 = 该分区没有控件值。 */
 type Values = SettingsValues
 
 /** 温度下拉（避免自由输入数字，也覆盖常见用法）。 */
-const TEMPERATURE_OPTIONS = [
-  { value: 'follow', label: '跟随端点默认' },
-  { value: '0', label: '0，稳定复现' },
-  { value: '0.3', label: '0.3，偏严谨' },
-  { value: '0.7', label: '0.7，常用' },
-  { value: '1', label: '1，偏发散' },
+const temperatureOptions = () => [
+  { value: 'follow', label: t('option.follow') },
+  { value: '0', label: t('option.temperature.0') },
+  { value: '0.3', label: t('option.temperature.0.3') },
+  { value: '0.7', label: t('option.temperature.0.7') },
+  { value: '1', label: t('option.temperature.1') },
 ]
 
-const POLICY_OPTIONS = [
-  { value: 'readonly', label: '只读（都要批准）' },
-  { value: 'auto-edit', label: '自动编辑（命令要批准）' },
-  { value: 'full-access', label: '完全访问（不再询问）' },
+const policyOptions = () => [
+  { value: 'readonly', label: t('option.policy.readonly') },
+  { value: 'auto-edit', label: t('option.policy.auto-edit') },
+  { value: 'full-access', label: t('option.policy.full-access') },
 ]
 
-const REVIEWER_OPTIONS = [
-  { value: 'user', label: '本人审阅，弹卡等你点' },
-  { value: 'auto-review', label: 'AI 复核，不确定时再问你' },
+const reviewerOptions = () => [
+  { value: 'user', label: t('option.reviewer.user') },
+  { value: 'auto-review', label: t('option.reviewer.auto-review') },
 ]
 
 /** 检查更新时机的三档文案（值表与读档归一在 core/prefs 的 UPDATE_CHECK_MODES）。 */
-const UPDATE_CHECK_OPTIONS = [
-  { value: 'launch', label: '每次启动' },
-  { value: 'daily', label: '每天一次' },
-  { value: 'off', label: '不检查' },
+const updateCheckOptions = () => [
+  { value: 'launch', label: t('option.updateCheck.launch') },
+  { value: 'daily', label: t('option.updateCheck.daily') },
+  { value: 'off', label: t('option.updateCheck.off') },
 ]
 
-const EFFORT_OPTIONS = [
-  { value: 'default', label: '跟随端点默认' },
-  { value: 'off', label: '关闭思考' },
-  { value: 'low', label: '低' },
-  { value: 'high', label: '高' },
-  { value: 'max', label: '最高' },
+const effortOptions = () => [
+  { value: 'default', label: t('option.follow') },
+  { value: 'off', label: t('option.effort.off') },
+  { value: 'low', label: t('option.effort.low') },
+  { value: 'high', label: t('option.effort.high') },
+  { value: 'max', label: t('option.effort.max') },
 ]
 
 /** dsc 的家目录（关于分区）。 */
@@ -209,8 +216,8 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
     // ── 内置分区：通用 ────────────────────────────────────────────────────────
     const general: SettingsSectionSpec = {
       id: 'general',
-      title: '通用',
-      subtitle: '权限模式、审阅者、思考强度与采样温度',
+      title: t('section.general.title'),
+      subtitle: t('section.general.subtitle'),
       order: 0,
       fields(): SettingsField[] {
         return [
@@ -219,34 +226,34 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
           {
             type: 'select',
             key: 'permissionPreset',
-            label: '权限预设',
+            label: t('field.permissionPreset.label'),
             options: ctx.get('permissionPresets')?.surface().options.map((item) => ({ value: item.name, label: item.label })) ?? [],
             // 三项拼不成任何预设时是派生值 `custom`：它不是可选项，这一行会置灰只读，
             // 显示名由 values 的 permissionPresetName 给（AI 复核 → 「AI 审查」，其余 → 「自定义」）。
             derivedLabelKey: 'permissionPresetName',
-            help: '三项捆成一个快捷档；改动下面任一项就离开预设档（这一行会置灰只读）',
+            help: t('field.permissionPreset.help'),
           },
-          { type: 'select', key: 'policy', label: '当前会话权限模式', options: POLICY_OPTIONS, help: '要不要问：哪些操作必须先经你同意。只改当前会话；新会话默认值见权限预设' },
-          { type: 'select', key: 'reviewer', label: '当前会话审阅者', options: REVIEWER_OPTIONS, help: '谁来裁：要问的事先给本人，还是先给模型判官（判不出来仍会问你）。只改当前会话' },
-          { type: 'select', key: 'effort', label: '当前会话思考强度', options: EFFORT_OPTIONS, help: '越高思考越深，耗时与用量也越大。只改当前会话，同时记成新会话默认' },
-          { type: 'select', key: 'temperature', label: '采样温度', options: TEMPERATURE_OPTIONS, help: '越高越发散，越低越稳定' },
+          { type: 'select', key: 'policy', label: t('field.policy.label'), options: policyOptions(), help: t('field.policy.help') },
+          { type: 'select', key: 'reviewer', label: t('field.reviewer.label'), options: reviewerOptions(), help: t('field.reviewer.help') },
+          { type: 'select', key: 'effort', label: t('field.effort.label'), options: effortOptions(), help: t('field.effort.help') },
+          { type: 'select', key: 'temperature', label: t('field.temperature.label'), options: temperatureOptions(), help: t('field.temperature.help') },
           {
             type: 'switch',
             key: 'closeToTray',
-            label: '关窗缩到托盘',
-            help: '点关闭按钮只隐藏窗口，应用留在托盘；关闭后点关闭即退出',
+            label: t('field.closeToTray.label'),
+            help: t('field.closeToTray.help'),
           },
           {
             type: 'info',
-            label: '配置文件',
+            label: t('field.configFile.label'),
             text: activeConfigFile(),
             mono: true,
             copyable: true,
-            help: '端点与默认模型都写在这一份里；「更换」可以换成你自己那份（原文件不动）',
+            help: t('field.configFile.help'),
             actions: [
-              { id: 'switch-config-file', label: '更换', tip: '选一份 YAML 当活动配置，端点清单会立刻按它重读' },
+              { id: 'switch-config-file', label: t('field.configFile.switch.label'), tip: t('field.configFile.switch.tip') },
               // 只有换过之后才给「恢复默认」：没换过时那条路等于原地不动，画出来只会让人多点一下
-              ...(readPrefs().configFile === '' ? [] : [{ id: 'reset-config-file', label: '恢复默认', tip: `改回出厂的 ${DEFAULT_CONFIG_FILE}` }]),
+              ...(readPrefs().configFile === '' ? [] : [{ id: 'reset-config-file', label: t('field.configFile.reset.label'), tip: t('field.configFile.reset.tip', { file: DEFAULT_CONFIG_FILE }) }]),
             ],
           },
         ]
@@ -273,36 +280,36 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
         }
         if (key === 'policy') {
           const policy = String(value) as ApprovalPolicy
-          if (!POLICY_OPTIONS.some((option) => option.value === policy)) throw new Error(`未知的权限模式 ${value}`)
+          if (!policyOptions().some((option) => option.value === policy)) throw new Error(`未知的权限模式 ${value}`)
           // 只改当前会话（2026-10-28）：新会话默认值由「权限预设」的默认档决定。
           ctx.approval.setPolicy(policy)
-          return { notice: `当前会话权限模式已设为「${POLICY_OPTIONS.find((option) => option.value === policy)?.label ?? policy}」` }
+          return { notice: t('save.policy', { label: policyOptions().find((option) => option.value === policy)?.label ?? policy }) }
         }
         if (key === 'reviewer') {
           const reviewer = String(value) as ApprovalReviewer
-          if (!REVIEWER_OPTIONS.some((option) => option.value === reviewer)) throw new Error(`未知的审阅者 ${value}`)
+          if (!reviewerOptions().some((option) => option.value === reviewer)) throw new Error(`未知的审阅者 ${value}`)
           ctx.approval.setReviewer(reviewer)
-          return { notice: `当前会话审阅者已设为「${REVIEWER_OPTIONS.find((option) => option.value === reviewer)?.label ?? reviewer}」` }
+          return { notice: t('save.reviewer', { label: reviewerOptions().find((option) => option.value === reviewer)?.label ?? reviewer }) }
         }
         if (key === 'effort') {
           const effort = String(value) as EffortLevel
-          if (!EFFORT_OPTIONS.some((option) => option.value === effort)) throw new Error(`未知的思考强度 ${value}`)
+          if (!effortOptions().some((option) => option.value === effort)) throw new Error(`未知的思考强度 ${value}`)
           // 只改当前会话；同时记成「新会话默认」（setPrefs 只写偏好，不动当前会话）。
           ctx.llm.setEffort(effort)
           savePrefs({ defaultEffort: effort })
-          return { notice: `当前会话思考强度已设为「${EFFORT_OPTIONS.find((option) => option.value === effort)?.label ?? effort}」` }
+          return { notice: t('save.effort', { label: effortOptions().find((option) => option.value === effort)?.label ?? effort }) }
         }
         if (key === 'temperature') {
           writeTemperature(value === 'follow' ? null : Number(value))
           reloadLive()
-          return { notice: value === 'follow' ? '已改为跟随端点默认' : `温度已设为 ${value}` }
+          return { notice: value === 'follow' ? t('save.temperatureFollow') : t('save.temperature', { value: String(value) }) }
         }
         if (key === 'closeToTray') {
           savePrefs({ closeToTray: value === true })
           return {
             notice: value === true
-              ? '已设为关窗缩到托盘，托盘图标可以唤起或退出'
-              : '已设为关窗直接退出（宿主收尾最多 2 秒）',
+              ? t('save.closeToTrayOn')
+              : t('save.closeToTrayOff'),
           }
         }
         throw new Error(`未知的设置项 ${key}`)
@@ -312,8 +319,8 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
     // ── 内置分区：模型（结构化界面由桌面端画） ─────────────────────────────────
     const models: SettingsSectionSpec = {
       id: 'models',
-      title: '模型',
-      subtitle: '端点、默认模型与 API key',
+      title: t('section.models.title'),
+      subtitle: t('section.models.subtitle'),
       order: 10,
       custom: true,
       fields: () => [],
@@ -323,8 +330,8 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
     // ── 内置分区：模式（卡片列表与编辑弹窗由桌面端画，数据走 listPresets 等方法） ──
     const presetsSection: SettingsSectionSpec = {
       id: 'presets',
-      title: '模式',
-      subtitle: '模型是谁、手上有什么、被叮嘱了什么',
+      title: t('section.presets.title'),
+      subtitle: t('section.presets.subtitle'),
       order: 15,
       custom: true,
       fields: () => [],
@@ -334,8 +341,8 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
     // ── 内置分区：技能（同上，数据走 SkillService） ────────────────────────────
     const skillsSection: SettingsSectionSpec = {
       id: 'skills',
-      title: '技能',
-      subtitle: '技能开关与市场源',
+      title: t('section.skills.title'),
+      subtitle: t('section.skills.subtitle'),
       order: 20,
       custom: true,
       fields: () => [],
@@ -345,8 +352,8 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
     // ── 内置分区：归档（会话恢复与永久删除由桌面端画，数据走 session 服务） ────
     const archiveSection: SettingsSectionSpec = {
       id: 'archive',
-      title: '归档',
-      subtitle: '已归档会话的恢复与永久删除',
+      title: t('section.archive.title'),
+      subtitle: t('section.archive.subtitle'),
       order: 30,
       custom: true,
       fields: () => [],
@@ -356,8 +363,8 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
     // ── 内置分区：用量统计（热力图 / 趋势 / 模型占比由桌面端画，数据走 usageStats） ──
     const usageSection: SettingsSectionSpec = {
       id: 'usage',
-      title: '用量统计',
-      subtitle: 'Token 活动热力图、趋势与模型占比',
+      title: t('section.usage.title'),
+      subtitle: t('section.usage.subtitle'),
       order: 25,
       custom: true,
       fields: () => [],
@@ -367,28 +374,28 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
     // ── 内置分区：终端界面（TUI 自己的显示偏好；桌面端不消费这些键） ────────────
     /** 状态栏段开关的声明表：key 即 prefs.ui.statusBar 的键（0.6.62）。 */
     const STATUS_BAR_TOGGLE_META: { key: keyof StatusBarPrefsView; label: string; help?: string }[] = [
-      { key: 'model', label: '显示模型' },
-      { key: 'effort', label: '显示思考强度', help: 'default / low / high 这类思考档位' },
-      { key: 'cache', label: '显示缓存命中率' },
-      { key: 'tokens', label: '显示 Token 用量', help: '本会话累计的输入/输出 token' },
-      { key: 'cost', label: '显示会话费用', help: '仅 DeepSeek 官方端点有估算数据' },
-      { key: 'mode', label: '显示会话模式' },
-      { key: 'policy', label: '显示权限模式' },
-      { key: 'ctx', label: '显示上下文用量' },
-      { key: 'cwd', label: '显示工作目录' },
-      { key: 'session', label: '显示会话 ID' },
+      { key: 'model', label: t('field.statusBar.model.label') },
+      { key: 'effort', label: t('field.statusBar.effort.label'), help: t('field.statusBar.effort.help') },
+      { key: 'cache', label: t('field.statusBar.cache.label') },
+      { key: 'tokens', label: t('field.statusBar.tokens.label'), help: t('field.statusBar.tokens.help') },
+      { key: 'cost', label: t('field.statusBar.cost.label'), help: t('field.statusBar.cost.help') },
+      { key: 'mode', label: t('field.statusBar.mode.label') },
+      { key: 'policy', label: t('field.statusBar.policy.label') },
+      { key: 'ctx', label: t('field.statusBar.ctx.label') },
+      { key: 'cwd', label: t('field.statusBar.cwd.label') },
+      { key: 'session', label: t('field.statusBar.session.label') },
     ]
 
     const tuiSection: SettingsSectionSpec = {
       id: 'tui',
-      title: '终端界面',
-      subtitle: '终端版（TUI）自己的显示偏好',
+      title: t('section.tui.title'),
+      subtitle: t('section.tui.subtitle'),
       order: 35,
       groups: [
         {
           id: 'status-bar',
-          title: '状态栏',
-          description: '选择底部状态栏显示哪些信息，改动即时生效',
+          title: t('group.statusBar.title'),
+          description: t('group.statusBar.description'),
         },
       ],
       fields(): SettingsField[] {
@@ -396,8 +403,8 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
           {
             type: 'switch',
             key: 'reasoningDefaultOpen',
-            label: '思考块默认展开',
-            help: '新会话的思考块默认摊开；会话内 Ctrl+T 随时切换',
+            label: t('field.reasoningDefaultOpen.label'),
+            help: t('field.reasoningDefaultOpen.help'),
           },
           // 状态栏段开关用 statusBar.<段> 点号键：SettingsValues 本就是 Record，
           // 组只是展示层收拢（TUI 子页 / 桌面组头），保存链路与顶层字段零差别。
@@ -425,7 +432,7 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
           // 老契约里返回字符串是失败原因，不能拿来当提示文案）。
           savePrefs({ ui: { ...prefs.ui, reasoningDefaultOpen: value === true } })
           return {
-            notice: value === true ? '思考块已设为默认展开，新会话生效' : '思考块已设为默认折叠，新会话生效',
+            notice: value === true ? t('save.reasoningOpen') : t('save.reasoningClosed'),
           }
         }
         if (key.startsWith('statusBar.')) {
@@ -446,39 +453,39 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
     // ── 内置分区：关于 ────────────────────────────────────────────────────────
     const about: SettingsSectionSpec = {
       id: 'about',
-      title: '关于',
-      subtitle: '版本与本机路径',
+      title: t('section.about.title'),
+      subtitle: t('section.about.subtitle'),
       order: 900,
       fields(): SettingsField[] {
         return [
-          { type: 'info', label: 'Pneuma 版本', text: packageVersion() },
+          { type: 'info', label: t('field.version.label'), text: packageVersion() },
           {
             type: 'button',
-            label: '检查更新',
-            help: '对比更新源上的最新版本；能就地装就给「立即更新」，否则打开发布页',
+            label: t('field.checkUpdate.label'),
+            help: t('field.checkUpdate.help'),
             action: 'check-update',
           },
           {
             type: 'select',
             key: 'updateCheck',
-            label: '自动检查',
-            options: UPDATE_CHECK_OPTIONS,
-            help: '什么时候自动去问更新源；桌面端在启动后按这一档排期',
+            label: t('field.updateCheck.label'),
+            options: updateCheckOptions(),
+            help: t('field.updateCheck.help'),
           },
           {
             type: 'info',
-            label: '更新源',
+            label: t('field.updateSource.label'),
             text: UPDATE_CHECK_URL,
             mono: true,
             copyable: true,
-            help: 'GitHub Releases API；换自托管时改 src/core/update-check.ts（认 {version, url} JSON 回包）',
+            help: t('field.updateSource.help'),
           },
-          { type: 'info', label: '内核 API 版本', text: String(KERNEL_API_VERSION), help: '外部插件声明的 apiVersion 高于此值时会被自动停用' },
-          { type: 'info', label: '配置目录', text: DSC_HOME, mono: true, copyable: true },
-          { type: 'info', label: '模型配置', text: activeConfigFile(), mono: true, copyable: true },
-          { type: 'info', label: '凭据库', text: CREDENTIALS_FILE, mono: true, copyable: true, help: 'API key 仅存储于此，界面不回显' },
-          { type: 'info', label: '技能目录', text: DSC_SKILLS_DIR, mono: true, copyable: true },
-          { type: 'info', label: '插件目录', text: DSC_PLUGINS_DIR, mono: true, copyable: true },
+          { type: 'info', label: t('field.kernelApiVersion.label'), text: String(KERNEL_API_VERSION), help: t('field.kernelApiVersion.help') },
+          { type: 'info', label: t('field.configDir.label'), text: DSC_HOME, mono: true, copyable: true },
+          { type: 'info', label: t('field.modelConfig.label'), text: activeConfigFile(), mono: true, copyable: true },
+          { type: 'info', label: t('field.credentials.label'), text: CREDENTIALS_FILE, mono: true, copyable: true, help: t('field.credentials.help') },
+          { type: 'info', label: t('field.skillsDir.label'), text: DSC_SKILLS_DIR, mono: true, copyable: true },
+          { type: 'info', label: t('field.pluginsDir.label'), text: DSC_PLUGINS_DIR, mono: true, copyable: true },
         ]
       },
       values: () => ({ updateCheck: prefs.updateCheck }),
@@ -488,15 +495,15 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
         if (!UPDATE_CHECK_MODES.includes(mode)) throw new Error(`未知的检查时机 ${value}`)
         savePrefs({ updateCheck: mode })
         // 桌面主进程每次排期都现读这个文件，所以这里不用通知它——改完下一拍就生效。
-        return { notice: mode === 'off' ? '已停止自动检查更新' : `已设为${UPDATE_CHECK_OPTIONS.find((option) => option.value === mode)?.label ?? mode}检查` }
+        return { notice: mode === 'off' ? t('save.updateCheckOff') : t('save.updateCheckOn', { label: updateCheckOptions().find((option) => option.value === mode)?.label ?? mode }) }
       },
       async action(name) {
         // 口径照其它分区：失败抛错（mutate 接住变成 { ok:false, error }），成功返回文案 + 可选载荷。
         if (name !== 'check-update') throw new Error(`关于分区没有动作 ${name}`)
         const result = await fetchLatestRelease()
         if (!result.ok) throw new Error(result.error)
-        if (!result.update) return { notice: `已是最新（${DSC_VERSION}）` }
-        const notice = `发现新版 ${result.info.version}（当前 ${DSC_VERSION}）`
+        if (!result.update) return { notice: t('action.latest', { version: DSC_VERSION }) }
+        const notice = t('action.newVersion', { version: result.info.version, current: DSC_VERSION })
         // 挑得出安装器就让界面给「立即更新」；挑不出（自托管源没有 assets、或资产名不合规）
         // 才退回打开发布页——别给一颗按下去没反应的按钮。
         const installer = pickInstaller(result.info.assets, result.info.version)

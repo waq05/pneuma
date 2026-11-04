@@ -25,6 +25,13 @@ import {
 import type { ToolContext, ToolEntry } from '@pneuma/runtime/core/tools.js'
 import type { SettingsField, SettingsValue } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 主会话这一方在任务板上的名字。 */
 const LEAD = 'lead'
@@ -157,19 +164,19 @@ ${lines.length === 0 ? '板上还没有任务。' : `板上的任务：\n${lines
 
     // ── 设置分区 ────────────────────────────────────────────────────────────
     const fields = (): SettingsField[] => [
-      { type: 'info', label: '任务板目录', text: BOARDS_DIR, mono: true, copyable: true, help: '每个会话各一块板（<会话 id>.json），切会话就是另一块板。' },
-      { type: 'button', action: 'clear-board', label: '清空本会话任务板', style: 'ghost', help: '仅清空当前会话的任务条目，不影响其他会话与队友运行记录。' },
+      { type: 'info', label: t('field.boardDir.label'), text: BOARDS_DIR, mono: true, copyable: true, help: t('field.boardDir.help') },
+      { type: 'button', action: 'clear-board', label: t('field.clearBoard.label'), style: 'ghost', help: t('field.clearBoard.help') },
     ]
 
     const section: SettingsSectionSpec = {
       id: 'team',
-      title: '共享任务板',
-      subtitle: '登记、认领、结项都在本会话的任务板上；成员名单由「子智能体」提供',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       fields,
       values: (): Record<string, SettingsValue> => ({}),
       action: (name): string => {
         if (name === 'clear-board') {
-          return `本会话的任务板清空了（去掉 ${resetBoard(ctx.session.current().meta.id)} 条）`
+          return t('action.clearBoard', { count: resetBoard(ctx.session.current().meta.id) })
         }
         throw new Error(`这个分区没有这个按钮：${name}`)
       },

@@ -20,6 +20,8 @@ import type { PresetDraft, PresetSurface, PresetView } from '@pneuma/runtime/con
 import type { AgentScope, PresetService } from '@pneuma/runtime/services/types.js'
 import type { Session } from '@pneuma/runtime/core/session.js'
 import {
+  BUILTIN_PRESET_DESCRIPTIONS,
+  BUILTIN_PRESET_LABELS,
   DROPPABLE_LABELS,
   DROPPABLE_SECTIONS,
   STANDARD_PRESET,
@@ -33,13 +35,39 @@ import {
   type Preset,
 } from '@pneuma/config-core/presets.js'
 import { audit } from '@pneuma/runtime/core/audit.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
+
+/**
+ * 取一条词；字典里没有就给原文。
+ *
+ * 为什么需要「有就换、没有就留」：出厂四个模式的标签是**用户可改的文件内容**，
+ * 只有它仍然是出厂默认值时才能换译本——用户改过的话，那是他自己的措辞。
+ * @param key - 字典键
+ * @param fallback - 原文
+ */
+function text(key: string, fallback: string): string {
+  const value = t(key)
+  return value === key ? fallback : value
+}
 
 /** 模式 → 界面投影（IPC 只带这些字段）。 */
 function toView(preset: Preset): PresetView {
+  const defaultLabel = preset.builtin ? BUILTIN_PRESET_LABELS[preset.name] : undefined
+  const defaultDescription = preset.builtin ? BUILTIN_PRESET_DESCRIPTIONS[preset.name] : undefined
   return {
     name: preset.name,
-    label: preset.label,
-    description: preset.description,
+    // 只换「还是出厂默认值」的那两个字段（用户改过的保留原话）。
+    label: defaultLabel !== undefined && preset.label === defaultLabel ? text('builtin.' + preset.name + '.label', preset.label) : preset.label,
+    description:
+      defaultDescription !== undefined && preset.description === defaultDescription
+        ? text('builtin.' + preset.name + '.description', preset.description)
+        : preset.description,
     tools: preset.tools,
     drop: preset.drop,
     replace: preset.replace,

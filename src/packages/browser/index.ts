@@ -48,6 +48,13 @@ import {
   type ConsoleEntry,
   type NetworkEntry,
 } from '@pneuma/cdp/report.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 设置页「看当前标签页」的等待上限：浏览器没起来或页面卡住时，15 秒给结论。 */
 const LOOK_TAB_TIMEOUT_MS = 15_000
@@ -598,7 +605,7 @@ export const browserPlugin: Plugin.Object = {
         `[... 还有 ${remaining} 行没显示：加 maxChars 可以放大上限，或先缩小范围再快照；更长的输出 spill 插件会自动落盘，用 read 工具翻]`
       const truncated = truncateByLines(`${header}\n${body}`, options.maxChars, note)
       return {
-        text: `${wrapUntrusted('browser', truncated.text)}\n（本页共 ${serialized.lineCount} 行树，显示了前 ${truncated.shownLines} 行${truncated.truncated ? '，后面截断了' : ''}）`,
+        text: `${wrapUntrusted('browser', truncated.text)}\n（本页共 ${serialized.lineCount} 行树，显示了前 ${truncated.shownLines} 行${truncated.truncated ? '，后面截断了' : ''}）`, // i18n-keep 工具返回给模型的页面快照说明，不是设置面文案
         url: state.url,
         title: state.title,
         interactiveCount: serialized.interactiveCount,
@@ -1267,70 +1274,70 @@ export const browserPlugin: Plugin.Object = {
       })
       const running = launcher !== null && launcher.alive
       return [
-        { type: 'switch', key: 'headless', label: '无窗口运行', group: 'startup', help: '开着看不到浏览器窗口，适合无人值守；要看它到底在点什么就关掉它（重启浏览器后生效）。' },
+        { type: 'switch', key: 'headless', label: t('field.headless.label'), group: 'startup', help: t('field.headless.help') },
         {
           type: 'text',
           key: 'executablePath',
-          label: '浏览器可执行文件',
-          placeholder: '留空 = 自动探测 Chrome / Edge',
+          label: t('field.executablePath.label'),
+          placeholder: t('field.executablePath.placeholder'),
           mono: true,
           group: 'startup',
-          help: '探测顺序：Program Files 的 Chrome → Program Files(x86) 的 Edge → Program Files 的 Edge → %LOCALAPPDATA% 的 Chrome / Edge。',
+          help: t('field.executablePath.help'),
         },
-        { type: 'info', label: '当前探测结果', text: probe ?? '没找到 Chrome 或 Edge（请填上面的路径）', mono: true, copyable: true, group: 'startup' },
+        { type: 'info', label: t('field.probe.label'), text: probe ?? t('field.probe.missing'), mono: true, copyable: true, group: 'startup' },
         {
           type: 'text',
           key: 'profileDir',
-          label: 'profile 目录',
-          placeholder: '留空 = 每次启动自建临时目录，退出时删掉',
+          label: t('field.profileDir.label'),
+          placeholder: t('field.profileDir.placeholder'),
           mono: true,
           group: 'startup',
-          help: '留空最干净。填了固定目录就由你负责清理；绝不要填日常浏览器的 profile（Chrome 136+ 会静默忽略远程调试）。',
+          help: t('field.profileDir.help'),
         },
         {
           type: 'text',
           key: 'allowedDomains',
-          label: '域名名单（允许项 / !拒绝项）',
-          placeholder: '留空 = 不限制；例如 example.com,*.internal.example.com',
+          label: t('field.allowedDomains.label'),
+          placeholder: t('field.allowedDomains.placeholder'),
           group: 'safety',
-          help: '逗号分隔。普通项是允许名单（填了就只有它们能打开），`!` 开头是拒绝名单（例如 !bad.com）。云元数据与私网地址无条件拒。',
+          help: t('field.allowedDomains.help'),
         },
-        { type: 'number', key: 'maxSnapshotChars', label: '快照字符上限', min: 500, max: 200000, step: 500, group: 'runtime', help: '按行截断，绝不会把一行元素切一半；更长的输出由 spill 插件落盘。' },
+        { type: 'number', key: 'maxSnapshotChars', label: t('field.maxSnapshotChars.label'), min: 500, max: 200000, step: 500, group: 'runtime', help: t('field.maxSnapshotChars.help') },
         {
           type: 'select',
           key: 'dialogPolicy',
-          label: '对话框策略',
+          label: t('field.dialogPolicy.label'),
           options: [
-            { value: 'must_respond', label: '报给模型，等它处理（默认）' },
-            { value: 'auto_dismiss', label: '一律自动关掉' },
-            { value: 'auto_accept', label: '一律自动接受' },
+            { value: 'must_respond', label: t('option.dialog.must-respond') },
+            { value: 'auto_dismiss', label: t('option.dialog.auto-dismiss') },
+            { value: 'auto_accept', label: t('option.dialog.auto-accept') },
           ],
           group: 'safety',
-          help: '页面弹 alert/confirm/prompt 时怎么办。must_respond 下挂着不管会阻塞这个页面的命令，300 秒后自动关掉。',
+          help: t('field.dialogPolicy.help'),
         },
-        { type: 'switch', key: 'enableEvaluate', label: '允许在页面里跑 JS', group: 'safety', help: '打开后模型能在页面里执行任意 JS 表达式（敏感原语与内嵌地址仍会被拦）。关掉后 browser action=evaluate 与守卫都会拒绝；快照、点击、输入不受影响。' },
-        { type: 'text', key: 'downloadDir', label: '下载目录', placeholder: '留空 = 浏览器默认下载目录', mono: true, group: 'startup', help: '下载的文件落在这里；留空的话文件会跑到临时 profile 里，关掉浏览器就没了。' },
-        { type: 'number', key: 'waitTimeoutMs', label: '可交互等待上限', min: 500, max: 60000, step: 500, group: 'runtime', help: '以毫秒为单位。这是简化版等待（只看框算不算得出来），不是 Playwright 级的 actionability。' },
-        { type: 'number', key: 'consoleBuffer', label: '控制台缓冲条数', min: 0, max: 2000, step: 20, group: 'runtime' },
-        { type: 'number', key: 'networkBuffer', label: '网络缓冲条数', min: 0, max: 2000, step: 10, group: 'runtime' },
-        { type: 'info', label: '当前状态', text: running ? `运行中：pid ${launcher?.pid ?? '?'}，profile ${launcher?.profileDir ?? '?'}，快照代际 ${generation}` : '未启动（第一次调用工具时自动拉起）', mono: true, group: 'status' },
-        { type: 'button', action: 'look-tab', label: '看当前标签页', style: 'ghost', group: 'status', help: '读当前标签页的地址与标题；浏览器没启动会顺手启动它。' },
-        { type: 'button', action: 'close-browser', label: '关闭浏览器', style: 'ghost', group: 'status', help: '整棵进程树杀掉，并删掉自建 profile（你配置的 profile 目录不删）。' },
+        { type: 'switch', key: 'enableEvaluate', label: t('field.enableEvaluate.label'), group: 'safety', help: t('field.enableEvaluate.help') },
+        { type: 'text', key: 'downloadDir', label: t('field.downloadDir.label'), placeholder: t('field.downloadDir.placeholder'), mono: true, group: 'startup', help: t('field.downloadDir.help') },
+        { type: 'number', key: 'waitTimeoutMs', label: t('field.waitTimeoutMs.label'), min: 500, max: 60000, step: 500, group: 'runtime', help: t('field.waitTimeoutMs.help') },
+        { type: 'number', key: 'consoleBuffer', label: t('field.consoleBuffer.label'), min: 0, max: 2000, step: 20, group: 'runtime' },
+        { type: 'number', key: 'networkBuffer', label: t('field.networkBuffer.label'), min: 0, max: 2000, step: 10, group: 'runtime' },
+        { type: 'info', label: t('field.state.label'), text: running ? t('field.state.running', { pid: launcher?.pid ?? '?', profile: launcher?.profileDir ?? '?', generation }) : t('field.state.stopped'), mono: true, group: 'status' },
+        { type: 'button', action: 'look-tab', label: t('field.lookTab.label'), style: 'ghost', group: 'status', help: t('field.lookTab.help') },
+        { type: 'button', action: 'close-browser', label: t('field.closeBrowser.label'), style: 'ghost', group: 'status', help: t('field.closeBrowser.help') },
       ]
     }
 
     const section: SettingsSectionSpec = {
       id: 'browser',
-      title: '受控浏览器',
-      subtitle: '打开与控制一台隔离的浏览器：按页面元素操作，不靠截图比坐标',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: 34,
       // 15 个字段全平铺会把设置页撑爆（0.6.62 起）：TUI 根页只画 4 行组导航，
       // Enter 进子页；桌面端在插件中心详情页里按组头收拢。
       groups: [
-        { id: 'startup', title: '启动与实例', description: '浏览器从哪启动、用什么 profile、下载到哪' },
-        { id: 'safety', title: '安全策略', description: '域名名单、页面弹窗与 JS 求值的放行口径' },
-        { id: 'runtime', title: '运行与缓冲', description: '快照长度、等待上限与控制台/网络缓冲' },
-        { id: 'status', title: '运行状态', description: '当前实例状态与两个即时动作' },
+        { id: 'startup', title: t('group.startup.title'), description: t('group.startup.description') },
+        { id: 'safety', title: t('group.safety.title'), description: t('group.safety.description') },
+        { id: 'runtime', title: t('group.runtime.title'), description: t('group.runtime.description') },
+        { id: 'status', title: t('group.status.title'), description: t('group.status.description') },
       ],
       fields,
       values: (): Record<string, SettingsValue> => ({
@@ -1363,11 +1370,11 @@ export const browserPlugin: Plugin.Object = {
             patch.allowedDomains = String(value).trim()
             break
           case 'maxSnapshotChars':
-            if (!Number.isFinite(Number(value))) return '快照字符上限要填数字'
+            if (!Number.isFinite(Number(value))) return t('save.notNumberSnapshot')
             patch.maxSnapshotChars = clamp(value, 500, 200_000, DEFAULTS.maxSnapshotChars)
             break
           case 'dialogPolicy':
-            if (!['must_respond', 'auto_dismiss', 'auto_accept'].includes(String(value))) return '对话框策略只能是 must_respond / auto_dismiss / auto_accept'
+            if (!['must_respond', 'auto_dismiss', 'auto_accept'].includes(String(value))) return t('save.badDialogPolicy')
             patch.dialogPolicy = String(value)
             break
           case 'enableEvaluate':
@@ -1377,19 +1384,19 @@ export const browserPlugin: Plugin.Object = {
             patch.downloadDir = String(value).trim()
             break
           case 'waitTimeoutMs':
-            if (!Number.isFinite(Number(value))) return '可交互等待上限要填数字'
+            if (!Number.isFinite(Number(value))) return t('save.notNumberWait')
             patch.waitTimeoutMs = clamp(value, 500, 60_000, DEFAULTS.waitTimeoutMs)
             break
           case 'consoleBuffer':
-            if (!Number.isFinite(Number(value))) return '控制台缓冲条数要填数字'
+            if (!Number.isFinite(Number(value))) return t('save.notNumberConsole')
             patch.consoleBuffer = clamp(value, 0, 2000, DEFAULTS.consoleBuffer)
             break
           case 'networkBuffer':
-            if (!Number.isFinite(Number(value))) return '网络缓冲条数要填数字'
+            if (!Number.isFinite(Number(value))) return t('save.notNumberNetwork')
             patch.networkBuffer = clamp(value, 0, 2000, DEFAULTS.networkBuffer)
             break
           default:
-            return `这个分区没有这项：${key}`
+            return t('save.unknownKey', { key })
         }
         writePluginConfig(CONFIG_KEY, patch)
         const before = config
@@ -1409,12 +1416,12 @@ export const browserPlugin: Plugin.Object = {
       action: async (name): Promise<string> => {
         if (name === 'close-browser') {
           const proc = launcher
-          if (proc === null || !proc.alive) return '受控浏览器本来就没在运行。'
+          if (proc === null || !proc.alive) return t('action.notRunning')
           const profile = proc.profileDir ?? ''
           closeAttachments()
           invalidateRefs('浏览器被关掉了')
           proc.close()
-          return `已关闭受控浏览器（整棵进程树杀掉${profile === '' ? '' : `，自建 profile ${profile} 已删除`}）。`
+          return profile === '' ? t('action.closed') : t('action.closedProfile', { profile })
         }
         if (name === 'look-tab') {
           // 设置页点一下不该无限等（2026-10-30）：浏览器没起来、页面卡在加载时给 15 秒结论。
@@ -1424,13 +1431,14 @@ export const browserPlugin: Plugin.Object = {
           try {
             const session = await ensurePage(controller.signal)
             const state = await actions.readDocumentState(session)
-            return (
-              `当前标签页：${neutralizeInline(state.url, 300) || '（拿不到地址）'}` +
-              `${state.title === '' ? '' : `（标题「${neutralizeInline(state.title, 120)}」）`}，加载状态 ${state.readyState}。`
-            )
+            return t('action.tabInfo', {
+              url: neutralizeInline(state.url, 300) || t('action.tabNoUrl'),
+              title: state.title === '' ? '' : t('action.tabTitle', { title: neutralizeInline(state.title, 120) }),
+              ready: state.readyState,
+            })
           } catch (error) {
             // 设置页的按钮只回一句话：抛出去界面只会显示「操作失败」，看不出卡在哪一步
-            return '看当前标签页没成功：' + (error instanceof Error ? error.message : String(error))
+            return t('action.lookFailed', { message: error instanceof Error ? error.message : String(error) })
           } finally {
             clearTimeout(timer)
           }

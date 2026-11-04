@@ -30,6 +30,13 @@ import type { Session } from '@pneuma/runtime/core/session.js'
 import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { CompactService, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'compact'
@@ -450,90 +457,90 @@ export const compactPlugin: Plugin.Object = {
       {
         type: 'number',
         key: 'keepRecent',
-        label: '压缩后保留最近多少条',
+        label: t('field.keepRecent.label'),
         min: 5,
         max: 200,
         step: 5,
-        help: '更早的历史折进摘要，这些条原样留着：数值越大，压缩后模型能看到的原文越多，省出来的上下文越少。',
+        help: t('field.keepRecent.help'),
       },
       {
         type: 'number',
         key: 'autoCompactPercent',
-        label: '自动压缩触发线（占模型上下文窗口的百分比）',
+        label: t('field.autoCompactPercent.label'),
         min: 50,
         max: 95,
         step: 5,
-        help: '估算用量超过这个比例就自动压缩；/compact 手动压缩不受这条线限制。阈值还会被「窗口减去输出预留与安全余量」压低，取两者中较小的那个。',
+        help: t('field.autoCompactPercent.help'),
       },
       {
         type: 'number',
         key: 'headroomTokens',
-        label: '安全余量（token，0 = 按窗口自动）',
+        label: t('field.headroomTokens.label'),
         min: HEADROOM_RANGE.min,
         max: HEADROOM_RANGE.max,
         step: 1024,
-        help: '压到多早才开始动手：阈值会给输出预留（模型的 maxTokens 上限）再加这么多 token 的安全余量。0 = 自动（窗口的 6.4%，最多 65536）。调大 = 更早压缩、留给这一轮的空间更多；调小 = 压得更晚、更省历史。',
+        help: t('field.headroomTokens.help'),
       },
       {
         type: 'number',
         key: 'compactionRetries',
-        label: '压一次还不够时最多再压几次',
+        label: t('field.compactionRetries.label'),
         min: COMPACTION_RETRIES_RANGE.min,
         max: COMPACTION_RETRIES_RANGE.max,
         step: 1,
-        help: '自动压缩后若估算用量仍在阈值之上，会再压一次，最多补这么多次。代价：每多压一次就多一次摘要模型调用（要等它写完才发真实请求），并且每次都把更早的原文折成摘要，细节会再丢一层。0 = 只压一次。',
+        help: t('field.compactionRetries.help'),
       },
       {
         type: 'number',
         key: 'retainPercent',
-        label: '保留尾部（占模型窗口的百分比）',
+        label: t('field.retainPercent.label'),
         min: RETAIN_PERCENT_RANGE.min,
         max: RETAIN_PERCENT_RANGE.max,
         step: 1,
-        help: '压缩后原样保留最近这些对话，按模型窗口折算成 token 预算，再退到「工具调用与结果不拆开」的安全边界；「压缩后保留最近多少条」仍是条数下限。为什么按 token 算：一条工具结果就可能几十万字符，只按条数留会在这种会话里压不动。调大 = 原文留得更多、省出的空间更少。',
+        help: t('field.retainPercent.help'),
       },
       {
         type: 'number',
         key: 'anchorBudgetChars',
-        label: '锚点索引字符预算',
+        label: t('field.anchorBudgetChars.label'),
         min: ANCHOR_BUDGET_RANGE.min,
         max: ANCHOR_BUDGET_RANGE.max,
         step: 500,
-        help: '摘要里附一份正则抽出来的 PR 号 / SHA / 文件路径 / 报错原文清单，这些标识符不经模型改写。数值越大列得越全，摘要占的上下文越多。',
+        help: t('field.anchorBudgetChars.help'),
       },
       {
         type: 'number',
         key: 'userQuoteBudgetChars',
-        label: '用户原话引用字符预算',
+        label: t('field.userQuoteBudgetChars.label'),
         min: USER_QUOTE_BUDGET_RANGE.min,
         max: USER_QUOTE_BUDGET_RANGE.max,
         step: 500,
-        help: '压缩会把最近若干条真实用户消息逐字抄进摘要，模型改写过的转述可能与原话走样。数值越大抄得越多，摘要占的上下文越多。',
+        help: t('field.userQuoteBudgetChars.help'),
       },
       {
         type: 'number',
         key: 'readStateFiles',
-        label: 'read-state 文件数',
+        label: t('field.readStateFiles.label'),
         min: READ_STATE_FILES_RANGE.min,
         max: READ_STATE_FILES_RANGE.max,
         step: 1,
-        help: '摘要里附一份「压缩前最后读过哪些文件、读到哪一段」的清单，接手时不用重读。这里是最多列几个文件（0 = 不产出这段）。',
+        help: t('field.readStateFiles.help'),
       },
       {
         type: 'number',
         key: 'readStateChars',
-        label: 'read-state 字符预算',
+        label: t('field.readStateChars.label'),
         min: READ_STATE_BUDGET_RANGE.min,
         max: READ_STATE_BUDGET_RANGE.max,
         step: 100,
-        help: 'read-state 清单整段的字符上限；装不下的文件丢掉并补省略标记。清单只带路径与行范围，不带文件内容。',
+        help: t('field.readStateChars.help'),
       },
     ]
 
     const section: SettingsSectionSpec = {
       id: 'compact',
-      title: '上下文压缩',
-      subtitle: '历史太长时把更早的部分折成一条摘要',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: 35,
       fields: () => fields,
       // 每次打开分区都现读磁盘：手改 plugins.json 也能看到真值。
@@ -554,7 +561,7 @@ export const compactPlugin: Plugin.Object = {
       // 契约：save 返回字符串 = 失败原因。
       save: (key, value): string | void => {
         const num = Number(value)
-        if (!Number.isFinite(num)) return '这里要填一个数字'
+        if (!Number.isFinite(num)) return t('save.notNumber')
         if (key === 'keepRecent') applyConfig({ keepRecent: num })
         else if (key === 'autoCompactPercent') applyConfig({ autoCompactPercent: num })
         else if (key === 'headroomTokens') applyConfig({ headroomTokens: num })
@@ -564,7 +571,7 @@ export const compactPlugin: Plugin.Object = {
         else if (key === 'userQuoteBudgetChars') applyConfig({ userQuoteBudgetChars: num })
         else if (key === 'readStateFiles') applyConfig({ readStateFiles: num })
         else if (key === 'readStateChars') applyConfig({ readStateChars: num })
-        else return `这个分区没有这项：${key}`
+        else return t('save.unknownKey', { key })
       },
     }
     const offSection = ctx.settings.registerSection(section)

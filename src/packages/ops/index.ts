@@ -22,6 +22,13 @@ import type { OpsWorkerLookup } from './worker.js'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 插件在条目树里的键，也是设置分区 id。 */
 const CONFIG_KEY = 'ops'
@@ -139,47 +146,50 @@ export const opsPlugin: Plugin.Object = {
       return [
         {
           type: 'info',
-          label: '当前状态',
-          text: lookup.ok ? `可用 · 来自：${lookup.source}` : `不可用：${lookup.reason}`,
-          help: '注册了十三个工具：七个只读（文档、表格、批量读、差异、体检、16 进制），六个写类（整写、多处替换、复制、移动、删除、整目录替换）。写类每次都要审批。',
+          label: t('field.status.label'),
+          text: lookup.ok
+            ? t('field.status.available', { source: lookup.source })
+            : t('field.status.unavailable', { reason: lookup.reason }),
+          help: t('field.status.help'),
         },
         ...(lookup.ok
-          ? [{ type: 'info' as const, label: 'worker 路径', text: lookup.file, mono: true, copyable: true }]
+          ? [{ type: 'info' as const, label: t('field.workerResolved.label'), text: lookup.file, mono: true, copyable: true }]
           : []),
         {
           type: 'text',
           key: 'workerPath',
-          label: 'worker 路径（留空自动找）',
-          placeholder: '自动查找 dsh-ops 的 dsh-ops-worker',
+          label: t('field.workerPath.label'),
+          placeholder: t('field.workerPath.placeholder'),
           mono: true,
-          help: '自动找的顺序：~/.dsc/plugins/node_modules/dsh-ops，再是 ~/.dsh/profiles/*/node_modules/dsh-ops；也认环境变量 DSC_OPS_WORKER。装一次 dsh-ops 就能自动命中。',
+          help: t('field.workerPath.help'),
         },
         {
           type: 'number',
           key: 'timeoutMs',
-          label: '单次调用时限（毫秒）',
+          label: t('field.timeoutMs.label'),
           min: OPS_TIMEOUT_RANGE.min,
           max: OPS_TIMEOUT_RANGE.max,
           step: 1000,
-          help: '读完一份大文档可能要几秒；超过这个时限就放弃这次调用并报错，不会卡住整轮。',
+          help: t('field.timeoutMs.help'),
         },
         {
           type: 'info',
-          label: '这些工具做什么',
+          label: t('field.toolsInfo.label'),
+          // i18n-keep 这一句与系统提示共用（TOOL_SUMMARY），翻了两处说法会不一致
           text: TOOL_SUMMARY,
         },
         {
           type: 'info',
-          label: '没装 dsh-ops？',
-          text: '在 ~/.dsc/plugins 里执行 npm install dsh-ops 后重开本插件；也可以在上面直接填 dsh-ops-worker 的绝对路径。',
+          label: t('field.missing.label'),
+          text: t('field.missing.text'),
         },
       ]
     }
 
     const section: SettingsSectionSpec = {
       id: 'ops',
-      title: '文档与批量读取',
-      subtitle: '读 PDF / Word / CSV，一次读多段文件，预演改动；内核是 dsh-ops 的 Rust worker',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: 48,
       fields,
       values(): SettingsValues {
@@ -193,19 +203,19 @@ export const opsPlugin: Plugin.Object = {
             writePluginConfig(CONFIG_KEY, { workerPath: text === '' ? null : text })
             const found = swap(text)
             if (!found.ok) {
-              return `路径已保存，但没找到 worker：${found.reason}。现在这十三个工具照旧，没有撤`
+              return t('save.workerPathSaved', { reason: found.reason })
             }
-            return `路径已更新，十三个工具都注册好了（来自：${found.source}）`
+            return t('save.workerPathUpdated', { source: found.source })
           }
           case 'timeoutMs': {
             const number = Number(value)
-            if (!Number.isFinite(number)) return '时限要是一个数字'
+            if (!Number.isFinite(number)) return t('save.badTimeout')
             writePluginConfig(CONFIG_KEY, { timeoutMs: clamp(number, OPS_TIMEOUT_RANGE, OPS_TIMEOUT_MS) })
             mount()
             return
           }
           default:
-            return `这个分区没有这项：${key}`
+            return t('save.unknownKey', { key })
         }
       },
     }

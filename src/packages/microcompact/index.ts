@@ -34,6 +34,13 @@ import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plu
 import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { MicrocompactService, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'microcompact'
@@ -184,56 +191,52 @@ export const microcompactPlugin: Plugin.Object = {
       {
         type: 'switch',
         key: 'enabled',
-        label: '清理旧工具结果',
-        help: '开着时把较旧的工具结果正文换成一句占位符（会话日志里的原文不动）。关掉则原样发送。',
+        label: t('field.enabled.label'),
+        help: t('field.enabled.help'),
       },
       {
         type: 'select',
         key: 'refresh',
-        label: '清理时机',
+        label: t('field.refresh.label'),
         options: [
-          { value: 'round', label: '每轮开始清一次（默认，缓存命中高）' },
-          { value: 'request', label: '每次请求都清（省上下文，前缀常失效）' },
+          { value: 'round', label: t('field.refresh.option.round') },
+          { value: 'request', label: t('field.refresh.option.request') },
         ],
-        help:
-          '一轮 = 你发一句话之后模型连着跑的那几十步。每轮只清一次时，同一轮内的请求前缀不变，' +
-          '服务端前缀缓存能一直命中；每次请求都清会让刚滑出窗口的那条被改写，从那里往后整段不命中。',
+        help: t('field.refresh.help'),
       },
       {
         type: 'number',
         key: 'keepRecent',
-        label: '最近保留几条工具结果',
+        label: t('field.keepRecent.label'),
         min: KEEP_RECENT_RANGE.min,
         max: KEEP_RECENT_RANGE.max,
         step: 1,
-        help: '这几条原样留着，更早的才清。数值越大，模型回头能查的原文越多，省出来的上下文越少。',
+        help: t('field.keepRecent.help'),
       },
       {
         type: 'number',
         key: 'minSaveTokens',
-        label: '单条最少省多少 token 才清',
+        label: t('field.minSaveTokens.label'),
         min: MIN_SAVE_RANGE.min,
         max: MIN_SAVE_RANGE.max,
         step: 64,
-        help: '清一条短的省不出多少，还白丢证据，所以不到这个门槛就不清。填 0 表示只要能省就清。',
+        help: t('field.minSaveTokens.help'),
       },
       {
         type: 'number',
         key: 'minFreePercent',
-        label: '总共至少省下几成才清（%）',
+        label: t('field.minFreePercent.label'),
         min: MIN_FREE_RANGE.min,
         max: MIN_FREE_RANGE.max,
         step: 5,
-        help:
-          '一轮里能清掉的字符占整段提示词的百分比，达不到就一条都不清。命中的 token 只按约 1/10 价收，' +
-          '没命中的整段按全价重读，清得太少反而亏。默认 25，填 0 表示只要能省就清。',
+        help: t('field.minFreePercent.help'),
       },
     ]
 
     const section: SettingsSectionSpec = {
       id: CONFIG_KEY,
-      title: '旧工具结果清理',
-      subtitle: '把较旧的工具结果换成占位符：只动请求体、不改会话日志，默认每轮只清一次',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       // 紧挨压缩（35）之后：两者都是省上下文的手段，用户找起来是同一类东西。
       order: 36,
       fields: () => fields,
@@ -256,16 +259,16 @@ export const microcompactPlugin: Plugin.Object = {
         }
         if (key === 'refresh') {
           const next = String(value)
-          if (next !== 'round' && next !== 'request') return '清理时机只能是 round（每轮一次）或 request（每次请求）'
+          if (next !== 'round' && next !== 'request') return t('save.badRefresh')
           applyConfig({ refresh: next })
           return
         }
         const num = Number(value)
-        if (!Number.isFinite(num)) return '这里要填一个数字'
+        if (!Number.isFinite(num)) return t('save.notNumber')
         if (key === 'keepRecent') applyConfig({ keepRecent: num })
         else if (key === 'minSaveTokens') applyConfig({ minSaveTokens: num })
         else if (key === 'minFreePercent') applyConfig({ minFreePercent: num })
-        else return `这个分区没有这项：${key}`
+        else return t('save.unknownKey', { key })
       },
     }
     const offSection = ctx.settings.registerSection(section)

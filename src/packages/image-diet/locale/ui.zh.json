@@ -1,0 +1,14 @@
+{
+  "section.title": "图片卸载",
+  "section.subtitle": "历史里太久/太多的图不再随每轮请求重发",
+  "field.enabled.label": "每轮按龄卸载图片",
+  "field.enabled.help": "开着时，更早回合的图与超预算的图不再随每轮请求重发；关掉则历史里的图原样保留（费 token）。",
+  "field.userImageBudget.label": "用户图保留张数",
+  "field.userImageBudget.help": "最近几个回合里你贴的图最多留几张，更早的卸载；贴图多又怕丢就调大。",
+  "field.toolImageBudget.label": "工具结果图保留张数",
+  "field.toolImageBudget.help": "工具结果（例如截图）里的图最多留最近几张；电脑控制正在跑时最新那张一定在保留范围内。",
+  "field.keepRounds.label": "保留最近几个回合的图",
+  "field.keepRounds.help": "更早的回合里的图全部卸载（不看来源）；0 表示只留最后一轮。",
+  "save.notNumber": "这里要填一个数字",
+  "save.unknownKey": "这个分区没有这项：{key}"
+}

@@ -21,6 +21,13 @@ import { writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import type { ToolObserver } from '@pneuma/runtime/core/tool-guards.js'
 import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 插件在条目树里的键，也是设置分区 id。 */
 const CONFIG_KEY = 'spill'
@@ -93,85 +100,85 @@ export const spillPlugin: Plugin.Object = {
         {
           type: 'number',
           key: 'thresholdChars',
-          label: '超过多少字符就落盘',
+          label: t('field.thresholdChars.label'),
           min: SPILL_RANGES.thresholdChars.min,
           max: SPILL_RANGES.thresholdChars.max,
           step: 500,
-          help: '工具输出长于这个数就写进文件，回给模型的只有前几行加一句续读写法。小输出原样通过。',
+          help: t('field.thresholdChars.help'),
         },
         {
           type: 'number',
           key: 'keepLines',
-          label: '预览保留前几行',
+          label: t('field.keepLines.label'),
           min: SPILL_RANGES.keepLines.min,
           max: SPILL_RANGES.keepLines.max,
           step: 1,
-          help: '头尾各留几行：开头能看出这是什么输出，结尾常带错误与汇总；中间省略，模型需要时再按路径续读。',
+          help: t('field.keepLines.help'),
         },
         {
           type: 'number',
           key: 'readChunkLines',
-          label: '续读一次读几行',
+          label: t('field.readChunkLines.label'),
           min: SPILL_RANGES.readChunkLines.min,
           max: SPILL_RANGES.readChunkLines.max,
           step: 50,
-          help: '预览里那句 read(path=…, offset=…, limit=…) 的 limit 就是它。',
+          help: t('field.readChunkLines.help'),
         },
         {
           type: 'number',
           key: 'maxBytes',
-          label: '单个文件字节上限',
+          label: t('field.maxBytes.label'),
           min: SPILL_RANGES.maxBytes.min,
           max: SPILL_RANGES.maxBytes.max,
           step: 65_536,
-          help: '超了按整行截断，并在文件末尾写明第几行起没写进来。',
+          help: t('field.maxBytes.help'),
         },
         {
           type: 'number',
           key: 'retentionDays',
-          label: '保留多少天',
+          label: t('field.retentionDays.label'),
           min: SPILL_RANGES.retentionDays.min,
           max: SPILL_RANGES.retentionDays.max,
           step: 1,
-          help: '按文件最后修改时间算；到点的在下一次清理时删掉。',
+          help: t('field.retentionDays.help'),
         },
         {
           type: 'number',
           key: 'maxTotalBytes',
-          label: '目录总字节上限',
+          label: t('field.maxTotalBytes.label'),
           min: SPILL_RANGES.maxTotalBytes.min,
           max: SPILL_RANGES.maxTotalBytes.max,
           step: 1_048_576,
-          help: '超过就按时间从最旧的开始删，刚落盘的那份不删。',
+          help: t('field.maxTotalBytes.help'),
         },
         {
           type: 'text',
           key: 'dir',
-          label: '溢出目录',
+          label: t('field.dir.label'),
           mono: true,
-          placeholder: '留空 = ~/.dsc/spill（DSC_HOME/spill）',
-          help: '目录权限 0700、文件 0600。换成别的盘符也行，目录会在第一次落盘时自动建。',
+          placeholder: t('field.dir.placeholder'),
+          help: t('field.dir.help'),
         },
         {
           type: 'info',
-          label: '目录现状',
+          label: t('field.usage.label'),
           mono: true,
-          text: `${cfg.dir}\n${String(now.files)} 个文件，共 ${formatBytes(now.bytes)}`,
+          text: `${cfg.dir}\n${t('field.usage.text', { files: now.files, bytes: formatBytes(now.bytes) })}`,
         },
         {
           type: 'button',
           action: 'cleanup',
-          label: '立刻清理溢出目录',
+          label: t('field.cleanup.label'),
           style: 'ghost',
-          help: '按上面的两条策略清一遍：先删过期的，再从最旧的删到总量落回上限内。',
+          help: t('field.cleanup.help'),
         },
       ]
     }
 
     const section: SettingsSectionSpec = {
       id: CONFIG_KEY,
-      title: '长输出转存',
-      subtitle: '超过阈值就存文件，模型先看头尾几行，需要时再续读',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: 37,
       fields,
       values(): SettingsValues {
@@ -195,30 +202,38 @@ export const spillPlugin: Plugin.Object = {
           case 'retentionDays':
           case 'maxTotalBytes': {
             const num = Number(value)
-            if (!Number.isFinite(num)) return '这里要填一个数字'
+            if (!Number.isFinite(num)) return t('save.notNumber')
             // 越界的值写进去也没关系：用的时候会被夹回区间（parseSpillConfig）
             writePluginConfig(CONFIG_KEY, { [key]: Math.round(num) })
             return
           }
           case 'dir': {
             const text = String(value).trim()
-            if (text === '') return '溢出目录不能空着'
+            if (text === '') return t('save.dirEmpty')
             writePluginConfig(CONFIG_KEY, { dir: text })
             return
           }
           default:
-            return `这个分区没有这项：${key}`
+            return t('save.unknownKey', { key })
         }
       },
       action(name): string | void {
-        if (name !== 'cleanup') return `这个分区没有这个按钮：${name}`
+        if (name !== 'cleanup') return t('action.unknownName', { name })
         lastSweepAt = Date.now()
         const result = sweepSpillDir(config(), lastSpilled)
-        const kept = `还剩 ${String(result.keptFiles)} 个（${formatBytes(result.keptBytes)}）`
-        if (result.failed.length > 0) {
-          return `清掉 ${String(result.removed.length)} 个（${formatBytes(result.removedBytes)}），${kept}；${String(result.failed.length)} 个没删掉：${result.failed.map((item) => `${item.path}（${item.reason}）`).join('、')}`
+        const summary = {
+          removed: result.removed.length,
+          removedBytes: formatBytes(result.removedBytes),
+          kept: result.keptFiles,
+          keptBytes: formatBytes(result.keptBytes),
         }
-        return `清掉 ${String(result.removed.length)} 个（${formatBytes(result.removedBytes)}），${kept}`
+        if (result.failed.length > 0) {
+          const items = result.failed
+            .map((item) => t('action.cleanupItem', { path: item.path, reason: item.reason }))
+            .join(t('action.cleanupSeparator'))
+          return t('action.cleanupPartial', { ...summary, failed: result.failed.length, items })
+        }
+        return t('action.cleanupDone', summary)
       },
     }
     const offSection = ctx.settings.registerSection(section)

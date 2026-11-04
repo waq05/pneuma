@@ -50,36 +50,43 @@ import type { ToolGuard, ToolGuardInput } from '@pneuma/runtime/core/tool-guards
 import { argsSummary } from '@pneuma/runtime/core/tools.js'
 import type { SettingsField, SettingsOption, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { HookService, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
 
-/** 事件名 → 界面上的中文说法（下拉与详情行都用它，两处不会写岔）。 */
-const EVENT_LABELS: Record<HookEvent, string> = {
-  'pre-tool': '工具动手之前（能拦）',
-  'post-tool': '工具干完之后（只观察）',
-  'session-start': '会话开始（只观察）',
-  'turn-end': '一轮结束（只观察）',
-}
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
+
+/** 事件名 → 界面上的说法（下拉与详情行都用它，两处不会写岔）。 */
+const eventLabels = (): Record<HookEvent, string> => ({
+  'pre-tool': t('field.scriptEvent.option.pre-tool'),
+  'post-tool': t('field.scriptEvent.option.post-tool'),
+  'session-start': t('field.scriptEvent.option.session-start'),
+  'turn-end': t('field.scriptEvent.option.turn-end'),
+})
 
 /** 规则要比对的字段 → 界面说法。 */
-const FIELD_LABELS: Record<HookRuleField, string> = {
-  command: '命令原文（bash 跑的那句话）',
-  target: '要动的文件路径',
-  args: '工具参数（整个 JSON）',
-  any: '上面三样都看',
-}
+const fieldLabels = (): Record<HookRuleField, string> => ({
+  command: t('field.ruleField.option.command'),
+  target: t('field.ruleField.option.target'),
+  args: t('field.ruleField.option.args'),
+  any: t('field.ruleField.option.any'),
+})
 
 /** 规则动作 → 界面说法。 */
-const ACTION_LABELS: Record<HookRuleAction, string> = {
-  deny: '直接拦下',
-  ask: '弹审批卡问人',
-}
+const actionLabels = (): Record<HookRuleAction, string> => ({
+  deny: t('field.ruleAction.option.deny'),
+  ask: t('field.ruleAction.option.ask'),
+})
 
-const FIELD_OPTIONS: SettingsOption[] = optionsOf(['command', 'target', 'args', 'any'] as const, (field) => FIELD_LABELS[field])
+const fieldOptions = (): SettingsOption[] => optionsOf(['command', 'target', 'args', 'any'] as const, (field) => fieldLabels()[field])
 
-const ACTION_OPTIONS: SettingsOption[] = optionsOf(['deny', 'ask'] as const, (action) => ACTION_LABELS[action])
+const actionOptions = (): SettingsOption[] => optionsOf(['deny', 'ask'] as const, (action) => actionLabels()[action])
 
-const EVENT_OPTIONS: SettingsOption[] = optionsOf(
+const eventOptions = (): SettingsOption[] => optionsOf(
   ['pre-tool', 'post-tool', 'session-start', 'turn-end'] as const,
-  (event) => EVENT_LABELS[event],
+  (event) => eventLabels()[event],
 )
 
 /** 设置页表单里那些「还没提交」的输入框的内容（存内存，不落盘）。 */
@@ -196,7 +203,7 @@ export const hooksPlugin: Plugin.Object = {
               cwd: input.cwd,
             })
             if (judgement.action === 'note' && judgement.message !== '') {
-              ctx.emit('dsc/notice', `钩子（${EVENT_LABELS[event]}）：${judgement.message}`)
+              ctx.emit('dsc/notice', `钩子（${eventLabels()[event]}）：${judgement.message}`)
             } else if (judgement.problem !== '') {
               ctx.emit('dsc/notice', `钩子脚本没跑好：${judgement.problem}`)
             }
@@ -329,7 +336,7 @@ export const hooksPlugin: Plugin.Object = {
       lines.push(`安全钩子：${doc.settings.enabled ? '开着' : '关着'}｜规则 ${doc.rules.length} 条（启用 ${doc.rules.filter((rule) => rule.enabled).length}）｜脚本 ${doc.scripts.length} 条`)
       for (const script of doc.scripts) {
         const trust = trustOf(script, doc.settings.autoAccept)
-        lines.push(`  脚本[${EVENT_LABELS[script.event]}] ${script.command.slice(0, 60)} —— ${script.enabled ? trust.detail : '已停用'}`)
+        lines.push(`  脚本[${eventLabels()[script.event]}] ${script.command.slice(0, 60)} —— ${script.enabled ? trust.detail : '已停用'}`)
       }
       for (const problem of doc.problems) lines.push(`  ⚠ ${problem}`)
       ui.notice(lines.join('\n'))
@@ -359,37 +366,37 @@ export const hooksPlugin: Plugin.Object = {
         {
           type: 'switch',
           key: 'enabled',
-          label: '启用安全钩子',
-          help: '关掉之后规则和脚本都不再执行（配置保留着，随时能开回来）。',
+          label: t('field.enabled.label'),
+          help: t('field.enabled.help'),
         },
         {
           type: 'switch',
           key: 'scriptFailClosed',
-          label: '脚本没跑成就算拦',
-          help: '脚本超时、命令起不来、输出看不懂时按「拦下来」处理。关掉就退回「跑不成当没这条钩子」——出了事更难查，建议留着。',
+          label: t('field.scriptFailClosed.label'),
+          help: t('field.scriptFailClosed.help'),
         },
         {
           type: 'number',
           key: 'scriptTimeoutMs',
-          label: '脚本缺省超时（毫秒）',
+          label: t('field.scriptTimeoutMs.label'),
           min: HOOK_TIMEOUT_MIN,
           max: HOOK_TIMEOUT_MAX,
           step: 500,
-          help: `钩子脚本是闸门不是后台任务，超过这个时间就被杀掉。范围 ${HOOK_TIMEOUT_MIN}~${HOOK_TIMEOUT_MAX} 毫秒。`,
+          help: t('field.scriptTimeoutMs.help', { min: HOOK_TIMEOUT_MIN, max: HOOK_TIMEOUT_MAX }),
         },
         {
           type: 'switch',
           key: 'autoAccept',
-          label: '新加的脚本不再询问就执行',
-          help: '等于把一个「执行任意代码」的入口完全交给这个配置文件。除非你在自动化里用，否则别开。',
+          label: t('field.autoAccept.label'),
+          help: t('field.autoAccept.help'),
         },
       ]
       if (doc.problems.length > 0) {
         list.push({
           type: 'info',
-          label: '配置有问题',
+          label: t('field.problems.label'),
           text: doc.problems.join('；'),
-          help: '坏掉的条目被跳过了，其余规则照样生效。',
+          help: t('field.problems.help'),
         })
       }
 
@@ -397,53 +404,53 @@ export const hooksPlugin: Plugin.Object = {
       list.push(
         {
           type: 'info',
-          label: '界面规则',
-          text: `已登记 ${doc.rules.length} 条（最多 200 条）。规则只看「哪个工具、哪个字段、命中什么模式」，不启动任何进程。`,
+          label: t('field.rules.label'),
+          text: t('field.rules.text', { count: doc.rules.length }),
         },
         {
           type: 'select',
           key: 'ruleId',
-          label: '选一条规则',
+          label: t('field.ruleId.label'),
           options:
             doc.rules.length === 0
-              ? [{ value: '', label: '（还没有规则，用下面四个框加一条）' }]
+              ? [{ value: '', label: t('field.ruleId.option.none') }]
               : doc.rules.map((item) => ({
                   value: item.id,
-                  label: `${item.enabled ? '' : '［已停用］'}${ACTION_LABELS[item.action]}｜${item.tool} /${item.pattern}/`,
+                  label: `${item.enabled ? '' : t('field.ruleId.option.disabled')}${actionLabels()[item.action]}｜${item.tool} /${item.pattern}/`,
                 })),
         },
-        { type: 'switch', key: 'ruleEnabled', label: '启用选中的这条规则' },
-        { type: 'button', action: 'ruleDelete', label: '删除选中的这条规则', style: 'ghost' },
+        { type: 'switch', key: 'ruleEnabled', label: t('field.ruleEnabled.label') },
+        { type: 'button', action: 'ruleDelete', label: t('field.ruleDelete.label'), style: 'ghost' },
         {
           type: 'text',
           key: 'ruleTool',
-          label: '新规则：管哪些工具',
-          placeholder: '* 或 bash 或 bash|write|edit',
+          label: t('field.ruleTool.label'),
+          placeholder: t('field.ruleTool.placeholder'),
           mono: true,
-          help: '填 * 管所有工具；多个工具用竖线或逗号隔开，工具名不区分大小写。',
+          help: t('field.ruleTool.help'),
         },
-        { type: 'select', key: 'ruleField', label: '新规则：看哪个字段', options: FIELD_OPTIONS },
+        { type: 'select', key: 'ruleField', label: t('field.ruleField.label'), options: fieldOptions() },
         {
           type: 'text',
           key: 'rulePattern',
-          label: '新规则：命中什么算（正则，不区分大小写）',
+          label: t('field.rulePattern.label'),
           placeholder: 'git\\s+push.*(-f|--force)|\\.env$',
           mono: true,
-          help: `按正则的一部分匹配（不用整串吻合）。最长 ${HOOK_PATTERN_MAX} 字，写错正则会当场告诉你。`,
+          help: t('field.rulePattern.help', { max: HOOK_PATTERN_MAX }),
         },
-        { type: 'select', key: 'ruleAction', label: '新规则：命中之后怎么办', options: ACTION_OPTIONS },
+        { type: 'select', key: 'ruleAction', label: t('field.ruleAction.label'), options: actionOptions() },
         {
           type: 'text',
           key: 'ruleReason',
-          label: '新规则：说给模型和用户的理由',
-          placeholder: '强推会覆盖别人的提交，必须用户本人确认',
-          help: `这句话会原样出现在被拦下的那次工具结果里，模型就靠它改道。最长 ${HOOK_REASON_MAX} 字。`,
+          label: t('field.ruleReason.label'),
+          placeholder: t('field.ruleReason.placeholder'),
+          help: t('field.ruleReason.help', { max: HOOK_REASON_MAX }),
         },
-        { type: 'button', action: 'ruleAdd', label: '加进规则表', style: 'primary' },
+        { type: 'button', action: 'ruleAdd', label: t('field.ruleAdd.label'), style: 'primary' },
         {
           type: 'info',
-          label: '选哪条',
-          text: `${rule === undefined || rule === null ? '规则表还是空的' : `${ACTION_LABELS[rule.action]}｜${rule.tool}｜${FIELD_LABELS[rule.field]}｜/${rule.pattern}/｜${rule.reason === '' ? '（没写理由）' : rule.reason}`}`,
+          label: t('field.selectedRule.label'),
+          text: `${rule === undefined || rule === null ? t('field.selectedRule.text.empty') : `${actionLabels()[rule.action]}｜${rule.tool}｜${fieldLabels()[rule.field]}｜/${rule.pattern}/｜${rule.reason === '' ? t('field.selectedRule.text.noReason') : rule.reason}`}`,
         },
       )
 
@@ -452,63 +459,63 @@ export const hooksPlugin: Plugin.Object = {
       list.push(
         {
           type: 'info',
-          label: '脚本钩子',
-          text: `已登记 ${doc.scripts.length} 条（最多 50 条）。脚本的 stdin 会收到这次调用的 JSON，用退出码 2 或 stdout 的 JSON 回话。`,
+          label: t('field.scripts.label'),
+          text: t('field.scripts.text', { count: doc.scripts.length }),
         },
         {
           type: 'select',
           key: 'scriptId',
-          label: '选一条脚本',
+          label: t('field.scriptId.label'),
           options:
             doc.scripts.length === 0
-              ? [{ value: '', label: '（还没有脚本，用下面三个框加一条）' }]
+              ? [{ value: '', label: t('field.scriptId.option.none') }]
               : doc.scripts.map((item) => ({
                   value: item.id,
-                  label: `${item.enabled ? '' : '［已停用］'}[${EVENT_LABELS[item.event]}] ${item.command.slice(0, 48)}`,
+                  label: `${item.enabled ? '' : t('field.scriptId.option.disabled')}[${eventLabels()[item.event]}] ${item.command.slice(0, 48)}`,
                 })),
         },
-        { type: 'switch', key: 'scriptEnabled', label: '启用选中的这条脚本' },
+        { type: 'switch', key: 'scriptEnabled', label: t('field.scriptEnabled.label') },
         {
           type: 'info',
-          label: '这条脚本现在的状态',
-          text: scriptTrust === null ? '（没选中脚本）' : scriptTrust.detail,
+          label: t('field.scriptState.label'),
+          text: scriptTrust === null ? t('field.scriptState.text.none') : scriptTrust.detail,
         },
         {
           type: 'button',
           action: 'scriptTrust',
-          label: scriptTrust !== null && scriptTrust.state === 'trusted' ? '照现在的脚本内容重新批准一次' : '批准这条脚本',
+          label: scriptTrust !== null && scriptTrust.state === 'trusted' ? t('field.scriptTrust.renew.label') : t('field.scriptTrust.label'),
           style: scriptTrust !== null && scriptTrust.state === 'trusted' ? 'ghost' : 'primary',
-          help: '批准之后会记住脚本文件当时的修改时间：脚本内容一改，这条钩子就停止执行并要求重新批准。',
+          help: t('field.scriptTrust.help'),
         },
-        { type: 'button', action: 'scriptUntrust', label: '撤销批准', style: 'ghost' },
-        { type: 'button', action: 'scriptDelete', label: '删除选中的这条脚本', style: 'ghost' },
-        { type: 'select', key: 'scriptEvent', label: '新脚本：挂在哪个事件上', options: EVENT_OPTIONS },
+        { type: 'button', action: 'scriptUntrust', label: t('field.scriptUntrust.label'), style: 'ghost' },
+        { type: 'button', action: 'scriptDelete', label: t('field.scriptDelete.label'), style: 'ghost' },
+        { type: 'select', key: 'scriptEvent', label: t('field.scriptEvent.label'), options: eventOptions() },
         {
           type: 'text',
           key: 'scriptMatcher',
-          label: '新脚本：只管哪些工具（正则）',
-          placeholder: '* 或 bash|write',
+          label: t('field.scriptMatcher.label'),
+          placeholder: t('field.scriptMatcher.placeholder'),
           mono: true,
-          help: '只有「工具动手之前」和「工具干完之后」两个事件看这个框，其余事件每次都跑。',
+          help: t('field.scriptMatcher.help'),
         },
         {
           type: 'text',
           key: 'scriptCommand',
-          label: '新脚本：命令',
+          label: t('field.scriptCommand.label'),
           placeholder: 'node C:\\Users\\me\\.dsc\\hooks\\guard.js',
           mono: true,
-          help: '交给 shell 执行，所以带参数、带管道都能写。子进程环境里的凭据已被剥掉。',
+          help: t('field.scriptCommand.help'),
         },
-        { type: 'button', action: 'scriptAdd', label: '加进脚本表', style: 'primary' },
+        { type: 'button', action: 'scriptAdd', label: t('field.scriptAdd.label'), style: 'primary' },
       )
 
       const recent = service.recent(5)
       list.push({
         type: 'info',
-        label: '最近命中',
+        label: t('field.recent.label'),
         text:
           recent.length === 0
-            ? '还没有钩子说过话。'
+            ? t('field.recent.text.none')
             : recent
                 .map((record) => `${new Date(record.ts).toLocaleTimeString()} ${record.tool ?? ''} ${record.reason ?? ''}`)
                 .join('\n'),
@@ -516,20 +523,20 @@ export const hooksPlugin: Plugin.Object = {
       list.push(
         {
           type: 'info',
-          label: '配置文件',
+          label: t('field.configFile.label'),
           text: HOOKS_FILE,
           mono: true,
           copyable: true,
-          help: '规则与脚本都存在这里；手改这个文件也生效，下一次工具调用就用新内容。',
+          help: t('field.configFile.help'),
         },
-        { type: 'info', label: '脚本批准名单', text: HOOK_TRUST_FILE, mono: true, copyable: true },
+        { type: 'info', label: t('field.trustFile.label'), text: HOOK_TRUST_FILE, mono: true, copyable: true },
         {
           type: 'info',
-          label: '跟命令危险等级规则的分工',
+          label: t('field.policyFile.label'),
           text: POLICY_RULES_FILE,
           mono: true,
           copyable: true,
-          help: '那份文件管「某条命令算几危险」（只认 bash 的命令文本，能写允许）；这里的钩子管所有工具，且只能加严不能放宽。要放宽请去那份文件写前缀规则。',
+          help: t('field.policyFile.help'),
         },
       )
       return list
@@ -537,8 +544,8 @@ export const hooksPlugin: Plugin.Object = {
 
     const section: SettingsSectionSpec = {
       id: 'hooks',
-      title: '安全钩子',
-      subtitle: '工具动手之前按你自己定的规矩拦一道',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: 34,
       fields,
       values(): SettingsValues {
@@ -578,7 +585,7 @@ export const hooksPlugin: Plugin.Object = {
             return
           case 'scriptTimeoutMs': {
             const num = Number(value)
-            if (!Number.isFinite(num)) return '这里要填一个数字（毫秒）'
+            if (!Number.isFinite(num)) return t('save.notNumberMs')
             patchHookSettings({ scriptTimeoutMs: num })
             return
           }
@@ -590,13 +597,13 @@ export const hooksPlugin: Plugin.Object = {
             return
           case 'ruleEnabled': {
             const rule = currentRule()
-            if (rule === null) return '规则表是空的，没有可启停的规则'
+            if (rule === null) return t('save.ruleEmpty')
             setRuleEnabled(rule.id, value === true)
             return
           }
           case 'scriptEnabled': {
             const script = currentScript()
-            if (script === null) return '脚本表是空的，没有可启停的脚本'
+            if (script === null) return t('save.scriptEmpty')
             setScriptEnabled(script.id, value === true)
             return
           }
@@ -629,7 +636,7 @@ export const hooksPlugin: Plugin.Object = {
             form.scriptCommand = text
             return
           default:
-            return `这个分区没有这项：${key}`
+            return t('save.unknownKey', { key })
         }
       },
       action(name): string | void {
@@ -647,15 +654,15 @@ export const hooksPlugin: Plugin.Object = {
             form.rulePattern = ''
             form.ruleReason = ''
             ctx.emit('dsc/changed')
-            return '规则已加进表里（默认启用）'
+            return t('action.ruleAdded')
           }
           case 'ruleDelete': {
             const rule = currentRule()
-            if (rule === null) return '规则表是空的'
+            if (rule === null) return t('action.ruleEmpty')
             removeRule(rule.id)
             form.ruleId = ''
             ctx.emit('dsc/changed')
-            return '规则已删除'
+            return t('action.ruleDeleted')
           }
           case 'scriptAdd': {
             const result = addScript({
@@ -667,32 +674,30 @@ export const hooksPlugin: Plugin.Object = {
             form.scriptId = result.id
             form.scriptCommand = ''
             ctx.emit('dsc/changed')
-            return readHooks().settings.autoAccept
-              ? '脚本已加入。因为开着「新脚本不再询问」，它会直接执行'
-              : '脚本已加入，但还没执行过：在详情里点一次「批准这条脚本」才会生效'
+            return readHooks().settings.autoAccept ? t('action.scriptAddedAuto') : t('action.scriptAdded')
           }
           case 'scriptDelete': {
             const script = currentScript()
-            if (script === null) return '脚本表是空的'
+            if (script === null) return t('action.scriptEmpty')
             removeScript(script.id)
             untrustScript(script.id)
             form.scriptId = ''
             ctx.emit('dsc/changed')
-            return '脚本已删除，批准记录也一并撤掉了'
+            return t('action.scriptDeleted')
           }
           case 'scriptTrust': {
             const script = currentScript()
-            if (script === null) return '脚本表是空的'
-            return trustScript(script.id) ?? '已批准，这条脚本现在会执行'
+            if (script === null) return t('action.scriptEmpty')
+            return trustScript(script.id) ?? t('action.scriptTrusted')
           }
           case 'scriptUntrust': {
             const script = currentScript()
-            if (script === null) return '脚本表是空的'
+            if (script === null) return t('action.scriptEmpty')
             untrustScript(script.id)
-            return '已撤销批准：这条脚本在重新批准之前不会执行'
+            return t('action.scriptUntrusted')
           }
           default:
-            return `这个分区没有这个按钮：${name}`
+            return t('action.unknownName', { name })
         }
       },
     }

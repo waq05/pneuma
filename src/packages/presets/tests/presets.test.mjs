@@ -54,6 +54,21 @@ test('服务名：provide 是 presets，装配依赖含 prompt/tools/approval/mo
   passed += 1
 })
 
+
+test('字典：出厂四个模式的标签与描述，中英各一份，英文里没有汉字', () => {
+  const zh = JSON.parse(read('../locale/ui.zh.json'))
+  const en = JSON.parse(read('../locale/ui.en.json'))
+  for (const name of ['standard', 'minimal', 'maker', 'ptc']) {
+    for (const field of ['label', 'description']) {
+      const key = 'builtin.' + name + '.' + field
+      assert.equal(typeof zh[key], 'string', key + ' 中文缺')
+      assert.equal(typeof en[key], 'string', key + ' 英文缺')
+      assert.ok(!/[\u4e00-\u9fff]/.test(en[key]), key + ' 英文里还有汉字')
+    }
+  }
+  passed += 1
+})
+
 after(() => {
   console.log(`通过 ${String(passed)} 项`)
 })

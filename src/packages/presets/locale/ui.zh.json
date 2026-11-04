@@ -1,0 +1,10 @@
+{
+  "builtin.standard.label": "标准模式",
+  "builtin.standard.description": "处理代码、文件和资料，适合大多数任务；工具按需使用，提示词与出厂完全一致",
+  "builtin.minimal.label": "极简模式",
+  "builtin.minimal.description": "只给一条 shell（PowerShell）与读图，提示词只有这一句；用来对照模型的基础表现",
+  "builtin.maker.label": "创造模式",
+  "builtin.maker.description": "在标准能力之上加运行时只读查询：给自己加模式、给 dsc 写插件",
+  "builtin.ptc.label": "PTC 模式",
+  "builtin.ptc.description": "在标准能力之上加 run_code：批量任务写一段脚本调工具，在代码里筛选汇总"
+}

@@ -46,12 +46,30 @@ import type { ToolGuard, ToolGuardInput, ToolObserver } from '@pneuma/runtime/co
 import type { HookJudgement } from '@pneuma/session-core/hooks.js'
 import type { SettingsField, SettingsValue } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 插件在条目树里的键，也是设置分区 id。 */
 const CONFIG_KEY = 'lifecycle-hooks'
 
+// i18n-keep 这份只给 /lifecycle-hooks 命令的输出用，命令面按批次约定不翻译。
 /** 事件档位在界面上的说法。 */
 const TIER_LABELS = { wired: '已接通', partial: '部分接通', unwired: '未接通' } as const
+
+/**
+ * 事件档位在设置分区里的说法。
+ * 模块导入时取词会把语言钉死，所以是函数；斜杠命令那份仍是 {@link TIER_LABELS}。
+ */
+const tierLabels = (): Record<keyof typeof TIER_LABELS, string> => ({
+  wired: t('tier.wired'),
+  partial: t('tier.partial'),
+  unwired: t('tier.unwired'),
+})
 
 /** 载荷里除公共字段之外、由各事件自己补的那部分。 */
 type PayloadExtra = Omit<
@@ -276,79 +294,80 @@ export const lifecycleHooksPlugin: Plugin.Object = {
       const report = lifecycleReport(cfg.configPath)
       // 未接通的条数现数，不写死：事件表一加，这里的标题跟着变，免得跟下面那张清单打架。
       const unwired = report.capabilities.filter((item) => item.tier === 'unwired').length
+      const labels = tierLabels()
       const list: SettingsField[] = [
         {
           type: 'switch',
           key: 'enabled',
-          label: '启用生命周期钩子',
-          help: '关掉之后一个钩子都不跑（配置文件留着，随时开回来）。',
+          label: t('field.enabled.label'),
+          help: t('field.enabled.help'),
         },
         {
           type: 'text',
           key: 'configPath',
-          label: '钩子配置文件',
+          label: t('field.configPath.label'),
           mono: true,
           placeholder: 'C:\\Users\\me\\.dsc\\lifecycle-hooks.json',
-          help: 'codex 形态的 JSON：`{ "hooks": { "PreToolUse": [{ "matcher": "bash", "hooks": [{ "type": "command", "command": "node guard.js", "timeout": 5 }] }] } }`。timeout 按秒算。',
+          help: t('field.configPath.help'),
         },
         {
           type: 'number',
           key: 'timeoutMs',
-          label: '钩子缺省超时（毫秒）',
+          label: t('field.timeoutMs.label'),
           min: HOOK_TIMEOUT_MIN,
           max: HOOK_TIMEOUT_MAX,
           step: 500,
-          help: `钩子自己没写 timeout 时给多少。范围 ${HOOK_TIMEOUT_MIN}~${HOOK_TIMEOUT_MAX} 毫秒。`,
+          help: t('field.timeoutMs.help', { min: HOOK_TIMEOUT_MIN, max: HOOK_TIMEOUT_MAX }),
         },
         {
           type: 'switch',
           key: 'failClosed',
-          label: '钩子没跑成就算拦',
-          help: '默认关，与 codex 一致：钩子只有明确用退出码 2（并在 stderr 写原因）才挡下本次操作；超时、起不来、退出码非 0 只记一条提示。打开后这些情况也一律拦——脚本有个小毛病就会把整轮工具调用掐死，只在你确定钩子稳的时候开。',
+          label: t('field.failClosed.label'),
+          help: t('field.failClosed.help'),
         },
         {
           type: 'text',
           key: 'commandAllowlist',
-          label: '命令白名单',
+          label: t('field.commandAllowlist.label'),
           mono: true,
-          placeholder: '留空 = 不限制；例如 node, uv',
-          help: '填了之后只有入口在白名单里的钩子会执行，按命令的第一个词比（`node` 放行 `node guard.js`，不放行 `nodejs-evil`）。被挡下的钩子算「没跑成」，拦不拦由上面那个开关决定。',
+          placeholder: t('field.commandAllowlist.placeholder'),
+          help: t('field.commandAllowlist.help'),
         },
         {
           type: 'info',
-          label: `十四个事件的接通情况（${String(unwired)} 个未接通）`,
+          label: t('field.capabilities.label', { unwired }),
           mono: true,
-          text: report.capabilities.map((item) => `${item.event}｜${TIER_LABELS[item.tier]}｜${item.extension}`).join('\n'),
-          help: '「未接通」的事件 dsc 现在没有可挂的扩展点，配了钩子也不会执行，原因见下面那条。',
+          text: report.capabilities.map((item) => `${item.event}｜${labels[item.tier]}｜${item.extension}`).join('\n'),
+          help: t('field.capabilities.help'),
         },
         {
           type: 'info',
-          label: '已加载的钩子',
+          label: t('field.loaded.label'),
           mono: true,
           text:
             report.hooks.length === 0
-              ? '（配置文件里还没有钩子）'
+              ? t('field.loaded.empty')
               : report.hooks
-                  .map((hook) => `[${hook.event}]${hook.enabled ? '' : '［已停用］'} ${hook.command.slice(0, 60)}`)
+                  .map((hook) => `[${hook.event}]${hook.enabled ? '' : t('field.loaded.disabled')} ${hook.command.slice(0, 60)}`)
                   .join('\n'),
         },
       ]
       if (report.problems.length > 0) {
         list.push({
           type: 'info',
-          label: '没接通与没生效的部分',
+          label: t('field.problems.label'),
           text: report.problems.join('\n'),
-          help: '坏掉的条目被跳过了，其余钩子照样生效。',
+          help: t('field.problems.help'),
         })
       }
-      list.push({ type: 'info', label: '配置文件', text: cfg.configPath, mono: true, copyable: true })
+      list.push({ type: 'info', label: t('field.file.label'), text: cfg.configPath, mono: true, copyable: true })
       return list
     }
 
     const section: SettingsSectionSpec = {
       id: CONFIG_KEY,
-      title: '外部命令钩子',
-      subtitle: '模型动手前后运行你的脚本（沿用 codex 的事件名）',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: 36,
       fields,
       values(): Record<string, SettingsValue> {
@@ -371,13 +390,13 @@ export const lifecycleHooksPlugin: Plugin.Object = {
             return
           case 'timeoutMs': {
             const num = Number(value)
-            if (!Number.isFinite(num)) return '这里要填一个数字（毫秒）'
+            if (!Number.isFinite(num)) return t('save.notNumber')
             writePluginConfig(CONFIG_KEY, { timeoutMs: Math.min(Math.max(Math.round(num), HOOK_TIMEOUT_MIN), HOOK_TIMEOUT_MAX) })
             return
           }
           case 'configPath': {
             const text = String(value).trim()
-            if (text === '') return '钩子配置文件路径不能空着'
+            if (text === '') return t('save.pathEmpty')
             writePluginConfig(CONFIG_KEY, { configPath: text })
             return
           }
@@ -385,7 +404,7 @@ export const lifecycleHooksPlugin: Plugin.Object = {
             writePluginConfig(CONFIG_KEY, { commandAllowlist: String(value).trim() })
             return
           default:
-            return `这个分区没有这项：${key}`
+            return t('save.unknownKey', { key })
         }
       },
     }

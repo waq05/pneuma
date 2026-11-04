@@ -23,6 +23,13 @@ import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
 import type { GoalService, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'goal'
@@ -244,27 +251,27 @@ export const goalPlugin: Plugin.Object = {
       {
         type: 'number',
         key: 'defaultMaxRounds',
-        label: '新目标缺省给多少轮自动续跑',
+        label: t('field.defaultMaxRounds.label'),
         min: 1,
         max: 256,
         step: 1,
-        help: '一次自动续跑算一轮。用户点目标条上的「加轮次」是在这个数往上加；256 是硬顶，改不掉。',
+        help: t('field.defaultMaxRounds.help'),
       },
       {
         type: 'number',
         key: 'extendRoundsBy',
-        label: '点一次「加轮次」加多少轮',
+        label: t('field.extendRoundsBy.label'),
         min: 1,
         max: 64,
         step: 1,
-        help: '轮次用完后由用户决定要不要继续，每次点按钮就按这个数放宽。',
+        help: t('field.extendRoundsBy.help'),
       },
     ]
 
     const section: SettingsSectionSpec = {
       id: 'goal',
-      title: '会话目标',
-      subtitle: '一轮干净结束后自动往下推的轮次预算',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: 36,
       fields: () => fields,
       // 每次打开分区现读磁盘：手改 plugins.json 也能看到真值。
@@ -275,10 +282,10 @@ export const goalPlugin: Plugin.Object = {
       // 契约：save 返回字符串 = 失败原因。
       save: (key, value): string | void => {
         const num = Number(value)
-        if (!Number.isFinite(num)) return '这里要填一个数字'
+        if (!Number.isFinite(num)) return t('save.notNumber')
         if (key === 'defaultMaxRounds') applyConfig({ defaultMaxRounds: num })
         else if (key === 'extendRoundsBy') applyConfig({ extendRoundsBy: num })
-        else return `这个分区没有这项：${key}`
+        else return t('save.unknownKey', { key })
       },
     }
     const offSection = ctx.settings.registerSection(section)

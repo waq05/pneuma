@@ -41,6 +41,13 @@ import { errText as errorText } from '@pneuma/runtime/core/err-text.js'
 import { clampInt as clampNumber } from '@pneuma/runtime/core/clamp.js'
 import type { ScheduledTaskView, SettingsField, SettingsValue, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'schedule'
@@ -469,8 +476,8 @@ export const schedulePlugin: Plugin.Object = {
     // ── 设置分区 ──────────────────────────────────────────────────────────────
     const section: SettingsSectionSpec = {
       id: 'schedule',
-      title: '定时任务',
-      subtitle: '六种时间选择器 + 时区；到点把任务投回建它的会话',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: 32,
       fields(): SettingsField[] {
         const current = readConfig(passed)
@@ -481,47 +488,47 @@ export const schedulePlugin: Plugin.Object = {
         const list: SettingsField[] = [
           {
             type: 'info',
-            label: '这套东西怎么跑',
-            text: '到点后把「任务描述」当成一条消息投给模型，跑一次完整回合。投递文本里会写明这是定时触发、不是用户指令、也不构成授权；需要授权的动作照常走审批卡。',
+            label: t('field.howItWorks.label'),
+            text: t('field.howItWorks.text'),
           },
-          { type: 'switch', key: 'enabled', label: '启用定时任务', help: '关掉后到点不投递（任务定义与台账都留着）。插件本身的开关在「插件」页。' },
+          { type: 'switch', key: 'enabled', label: t('field.enabled.label'), help: t('field.enabled.help') },
           {
             type: 'text',
             key: 'timeZone',
-            label: '默认时区',
+            label: t('field.timeZone.label'),
             placeholder: 'Asia/Shanghai',
             mono: true,
-            help: 'IANA 时区名。daily / weekly / cron 这些墙上时刻都按它换算；DST 跳表那一小时里的时刻会被跳过。',
+            help: t('field.timeZone.help'),
           },
           {
             type: 'number',
             key: 'maxRunSeconds',
-            label: '单次最长运行秒数',
+            label: t('field.maxRunSeconds.label'),
             min: 30,
             max: 7_200,
             step: 30,
-            help: '投出去之后等这一回合结束的上限。超时只影响「失败计数怎么记」，不会去打断正在跑的回合。',
+            help: t('field.maxRunSeconds.help'),
           },
           {
             type: 'number',
             key: 'historyLimit',
-            label: '历史保留条数',
+            label: t('field.historyLimit.label'),
             min: 20,
             max: 1_000,
             step: 20,
-            help: '执行台账（runs.jsonl）与每条任务的投递历史各留多少条；投递历史另有 30 天上限。',
+            help: t('field.historyLimit.help'),
           },
           {
             type: 'info',
-            label: `任务清单（${tasks.length} 条）`,
-            text: tasks.length === 0 ? '现在没有定时任务。用 /schedule add every:30m 起来喝水 建一个。' : tasks.map((task) => renderTaskLine(task)).join('\n'),
+            label: t('field.tasks.label', { count: tasks.length }),
+            text: tasks.length === 0 ? t('field.tasks.empty') : tasks.map((task) => renderTaskLine(task)).join('\n'),
             mono: true,
             copyable: true,
           },
-          { type: 'button', action: 'check', label: '立即检查一次', style: 'ghost', help: '立刻跑一遍到点判定（补投悬空槽位、处理错过的排期），并把结果打回会话。' },
-          { type: 'info', label: '状态', text: runner.describeState() },
-          { type: 'info', label: '数据目录', text: store.dir, mono: true, copyable: true, help: 'tasks.json 是任务定义，runs.jsonl 是执行台账，.lock 是跨进程的调度锁。' },
-          { type: 'info', label: '做不到的事', text: scheduleLimitsNote() },
+          { type: 'button', action: 'check', label: t('field.check.label'), style: 'ghost', help: t('field.check.help') },
+          { type: 'info', label: t('field.state.label'), text: runner.describeState() },
+          { type: 'info', label: t('field.dataDir.label'), text: store.dir, mono: true, copyable: true, help: t('field.dataDir.help') },
+          { type: 'info', label: t('field.limits.label'), text: scheduleLimitsNote() },
         ]
         return list
       },
@@ -543,31 +550,31 @@ export const schedulePlugin: Plugin.Object = {
             break
           case 'timeZone': {
             const zone = String(value).trim()
-            if (!isValidTimeZone(zone)) return `时区「${zone}」不认识，请写 IANA 名字，例如 Asia/Shanghai`
+            if (!isValidTimeZone(zone)) return t('save.unknownTimeZone', { zone })
             applyConfig({ timeZone: zone })
             break
           }
           case 'maxRunSeconds': {
             const num = Number(value)
-            if (!Number.isFinite(num) || !Number.isInteger(num)) return '单次最长运行秒数要填一个整数'
-            if (num < 30 || num > 7_200) return '单次最长运行秒数要在 30~7200 之间'
+            if (!Number.isFinite(num) || !Number.isInteger(num)) return t('save.notIntegerMaxRun')
+            if (num < 30 || num > 7_200) return t('save.rangeMaxRun', { min: 30, max: 7_200 })
             applyConfig({ maxRunSeconds: num })
             break
           }
           case 'historyLimit': {
             const num = Number(value)
-            if (!Number.isFinite(num) || !Number.isInteger(num)) return '历史保留条数要填一个整数'
-            if (num < 20 || num > 1_000) return '历史保留条数要在 20~1000 之间'
+            if (!Number.isFinite(num) || !Number.isInteger(num)) return t('save.notIntegerHistory')
+            if (num < 20 || num > 1_000) return t('save.rangeHistory', { min: 20, max: 1_000 })
             applyConfig({ historyLimit: num })
             store.setLimits({ runLimit: num, historyLimit: num })
             break
           }
           default:
-            return `这个分区没有这项：${key}`
+            return t('save.unknownKey', { key })
         }
       },
       action(name: string): string | Promise<string> {
-        if (name !== 'check') return `没有这个按钮：${name}`
+        if (name !== 'check') return t('action.unknownName', { name })
         config = readConfig(passed)
         return runner.checkNow()
       },

@@ -95,19 +95,40 @@ export interface Preset {
   problem?: string
 }
 
+/**
+ * 出厂四个模式的**默认中文字面**（名字 → 标签）。
+ *
+ * 两处用它：写出厂 `.md` 时填 `label:`；显示时判断「用户改过没有」——只有标签仍等于这里的
+ * 默认值，才按语言换成译本（改了就是用户自己的话，宿主不该替他翻译）。描述同理。
+ */
+export const BUILTIN_PRESET_LABELS: Readonly<Record<string, string>> = {
+  [STANDARD_PRESET]: '标准模式',
+  [MINIMAL_PRESET]: '极简模式',
+  [MAKER_PRESET]: '创造模式',
+  [PTC_PRESET]: 'PTC 模式',
+}
+
+/** 出厂四个模式的默认中文描述（与 {@link BUILTIN_PRESET_LABELS} 同一个用途：判断用户改过没有）。 */
+export const BUILTIN_PRESET_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  [STANDARD_PRESET]: '处理代码、文件和资料，适合大多数任务；工具按需使用，提示词与出厂完全一致',
+  [MINIMAL_PRESET]: '只给一条 shell（PowerShell）与读图，提示词只有这一句；用来对照模型的基础表现',
+  [MAKER_PRESET]: '在标准能力之上加运行时只读查询：给自己加模式、给 dsc 写插件',
+  [PTC_PRESET]: '在标准能力之上加 run_code：批量任务写一段脚本调工具，在代码里筛选汇总',
+}
+
 /** 出厂模式：名字 → 文件内容。第一次用到时写出去，之后用户随便改（不覆盖）。 */
 const BUILTIN_FILES: Readonly<Record<string, string>> = {
   [STANDARD_PRESET]: `---
 name: ${STANDARD_PRESET}
-label: 标准模式
-description: 处理代码、文件和资料，适合大多数任务；工具按需使用，提示词与出厂完全一致
+label: ${BUILTIN_PRESET_LABELS[STANDARD_PRESET]}
+description: ${BUILTIN_PRESET_DESCRIPTIONS[STANDARD_PRESET]}
 ---
 
 `,
   [MINIMAL_PRESET]: `---
 name: ${MINIMAL_PRESET}
-label: 极简模式
-description: 只给一条 shell（PowerShell）与读图，提示词只有这一句；用来对照模型的基础表现
+label: ${BUILTIN_PRESET_LABELS[MINIMAL_PRESET]}
+description: ${BUILTIN_PRESET_DESCRIPTIONS[MINIMAL_PRESET]}
 tools: bash, read_image
 replace: true
 ---
@@ -119,8 +140,8 @@ replace: true
 `,
   [MAKER_PRESET]: `---
 name: ${MAKER_PRESET}
-label: 创造模式
-description: 在标准能力之上加运行时只读查询：给自己加模式、给 dsc 写插件
+label: ${BUILTIN_PRESET_LABELS[MAKER_PRESET]}
+description: ${BUILTIN_PRESET_DESCRIPTIONS[MAKER_PRESET]}
 ---
 
 你可以给自己加模式，也可以写插件。两件事都有现成的落点：
@@ -140,8 +161,8 @@ plugin_manager 装进 ~/.dsc/plugins/。插件能拿到哪些服务、扩展点�
 `,
   [PTC_PRESET]: `---
 name: ${PTC_PRESET}
-label: PTC 模式
-description: 在标准能力之上加 run_code：批量任务写一段脚本调工具，在代码里筛选汇总
+label: ${BUILTIN_PRESET_LABELS[PTC_PRESET]}
+description: ${BUILTIN_PRESET_DESCRIPTIONS[PTC_PRESET]}
 ---
 
 这一轮你多了 run_code：写一段 JavaScript，在程序里批量调工具（sdk.grep / sdk.read / sdk.bash…），

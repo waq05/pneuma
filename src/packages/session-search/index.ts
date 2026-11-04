@@ -22,6 +22,13 @@ import { wrapUntrusted } from '@pneuma/runtime/core/untrusted.js'
 import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec, SessionSearchService } from '@pneuma/runtime/services/types.js'
 import { clampIntIn as clamp } from '@pneuma/runtime/core/clamp.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 配置键（`~/.dsc/plugins.json` 里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'session-search'
@@ -207,89 +214,90 @@ export const sessionSearchPlugin: Plugin.Object = {
       return [
         {
           type: 'info',
-          label: '索引文件',
+          label: t('field.indexFile.label'),
           text: index.indexPath(),
           mono: true,
           copyable: true,
-          help: '旁路缓存：删掉它只会让下一次检索重新回填，会话历史一个字节都不动。',
+          help: t('field.indexFile.help'),
         },
         {
           type: 'text',
           key: 'indexDir',
-          label: '索引目录',
+          label: t('field.indexDir.label'),
           placeholder: defaultSessionIndexOptions().indexDir,
           mono: true,
-          help: '索引文件放在这个目录下的 ' + SESSION_INDEX_FILE + '；换目录会整表重建一次。',
+          help: t('field.indexDir.help', { file: SESSION_INDEX_FILE }),
         },
         {
           type: 'switch',
           key: 'includeArchived',
-          label: '把归档会话也收进索引',
-          help: '关着时归档区（sessions/.archived）不进索引，检索也搜不到；打开后回填一次即可检索到。',
+          label: t('field.includeArchived.label'),
+          help: t('field.includeArchived.help'),
         },
         {
           type: 'switch',
           key: 'includeHiddenDirs',
-          label: '连回收站与队友日志一起收',
-          help: '回收站（.trash，30 天后清理）与队友日志（.teammates）默认不进索引，免得把子智能体的运行记录也翻出来。',
+          label: t('field.includeHiddenDirs.label'),
+          help: t('field.includeHiddenDirs.help'),
         },
         {
           type: 'number',
           key: 'maxFileBytes',
-          label: '单个会话文件大小上限（字节）',
+          label: t('field.maxFileBytes.label'),
           min: bounds.maxFileBytes.min,
           max: bounds.maxFileBytes.max,
           step: 1024,
-          help: '超过上限的会话只记 mtime 与大小，不解析正文；下次内容变了会再试。',
+          help: t('field.maxFileBytes.help'),
         },
         {
           type: 'number',
           key: 'snippetLength',
-          label: '命中片段长度（字符）',
+          label: t('field.snippetLength.label'),
           min: bounds.snippetLength.min,
           max: bounds.snippetLength.max,
           step: 20,
-          help: '片段以第一个命中的词为中心截取；太长会把上下文挤掉。',
+          help: t('field.snippetLength.help'),
         },
         {
           type: 'number',
           key: 'backfillBatch',
-          label: '一次处理多少个会话文件',
+          label: t('field.backfillBatch.label'),
           min: bounds.backfillBatch.min,
           max: bounds.backfillBatch.max,
           step: 1,
-          help: '每一批之间让出一次事件循环：数字大回填快，宿主在回填时卡顿更明显。',
+          help: t('field.backfillBatch.help'),
         },
         {
           type: 'number',
           key: 'defaultLimit',
-          label: '每次检索返回条数上限',
+          label: t('field.defaultLimit.label'),
           min: bounds.defaultLimit.min,
           max: bounds.defaultLimit.max,
           step: 1,
-          help: '工具与 /search 不另外指定条数时用它。',
+          help: t('field.defaultLimit.help'),
         },
         {
           type: 'info',
-          label: '索引现状',
+          label: t('field.indexState.label'),
           text:
-            `${String(stats.files)} 个会话文件 · ${String(stats.terms)} 个词项 · ` +
-            (stats.updatedAt > 0 ? `最后更新 ${formatTime(stats.updatedAt)}` : '还没落盘过'),
+            stats.updatedAt > 0
+              ? t('field.indexState.text', { files: stats.files, terms: stats.terms, time: formatTime(stats.updatedAt) })
+              : t('field.indexState.never', { files: stats.files, terms: stats.terms }),
         },
         {
           type: 'button',
           action: 'rebuild',
-          label: '重建索引',
+          label: t('field.rebuild.label'),
           style: 'ghost',
-          help: '丢掉整张索引重新回填：换过索引目录、或怀疑索引过期时点它，进度写在会话流里。',
+          help: t('field.rebuild.help'),
         },
       ]
     }
 
     const section: SettingsSectionSpec = {
       id: 'session-search',
-      title: '历史会话搜索',
-      subtitle: '跨会话搜索：中文按相邻两字切词，一两个字也能命中',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: 47,
       fields,
       values(): SettingsValues {
@@ -307,7 +315,7 @@ export const sessionSearchPlugin: Plugin.Object = {
         switch (key) {
           case 'indexDir': {
             const dir = String(value).trim()
-            if (dir === '') return '索引目录不能空着'
+            if (dir === '') return t('save.indexDirEmpty')
             applyIndexConfig({ indexDir: dir })
             return
           }
@@ -330,18 +338,18 @@ export const sessionSearchPlugin: Plugin.Object = {
             applyIndexConfig({ defaultLimit: Number(value) })
             return
           default:
-            return `这个分区没有这项：${key}`
+            return t('save.unknownKey', { key })
         }
       },
       action(name): string | void {
-        if (name !== 'rebuild') return `这个分区没有这个按钮：${name}`
+        if (name !== 'rebuild') return t('action.unknownName', { name })
         // 重建同样静默（0.6.67 起不再往对话中间写进度）：跟回填走同一条后台通道，
         // 只在真失败时由 runTask 报一条错
         runTask(async () => {
           await index.rebuild()
           return index.stats().files
         })
-        return '已经开始重建索引（后台进行，重建完搜索结果就是新的）'
+        return t('action.rebuildStarted')
       },
     }
     const offSection = ctx.settings.registerSection(section)

@@ -25,6 +25,13 @@ import {
   shellChoiceLabel,
   SHELL_CHOICES,
 } from '@pneuma/runtime/core/terminal-env.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'tools-default'
@@ -217,45 +224,45 @@ export const toolsDefaultPlugin: Plugin.Object = {
       {
         type: 'number',
         key: 'bashTimeoutMs',
-        label: '命令缺省超时（毫秒）',
+        label: t('field.bashTimeoutMs.label'),
         min: TIMEOUT_RANGE.min,
         max: TIMEOUT_RANGE.max,
         step: 5000,
-        help: 'bash 不带 timeoutMs 参数时按这个值收进程树。模型自己给了 timeoutMs 就用模型的，但仍受下面那条上限管着。',
+        help: t('field.bashTimeoutMs.help'),
       },
       {
         type: 'number',
         key: 'bashMaxTimeoutMs',
-        label: '命令超时上限（毫秒）',
+        label: t('field.bashMaxTimeoutMs.label'),
         min: TIMEOUT_RANGE.min,
         max: TIMEOUT_RANGE.max,
         step: 5000,
-        help: '模型要再久也不放：比这更长的活该拆开跑。改大前想清楚愿不愿意让一轮对话卡这么久。',
+        help: t('field.bashMaxTimeoutMs.help'),
       },
       {
         type: 'number',
         key: 'bashOutputChars',
-        label: '命令输出封顶（字符）',
+        label: t('field.bashOutputChars.label'),
         min: OUTPUT_RANGE.min,
         max: OUTPUT_RANGE.max,
         step: 1000,
-        help: '超出就截断并注明。长输出转存插件开着时，超过它的阈值会先落盘只回头尾几行，这条是没开插件时的兜底。',
+        help: t('field.bashOutputChars.help'),
       },
       {
         type: 'number',
         key: 'readLineLimit',
-        label: 'read 缺省行数',
+        label: t('field.readLineLimit.label'),
         min: LINE_RANGE.min,
         max: LINE_RANGE.max,
         step: 100,
-        help: 'read 工具一次读多少行；文件更长时模型可以用 offset/limit 续读。',
+        help: t('field.readLineLimit.help'),
       },
     ]
 
     const section: SettingsSectionSpec = {
       id: CONFIG_KEY,
-      title: '工具预算',
-      subtitle: '内置工具的超时、输出封顶与读取行数',
+      title: t('section.budget.title'),
+      subtitle: t('section.budget.subtitle'),
       order: 36,
       fields: () => fields,
       // 每次打开分区都现读磁盘：手改 plugins.json 也能看到真值。
@@ -271,12 +278,12 @@ export const toolsDefaultPlugin: Plugin.Object = {
       // 契约：save 返回字符串 = 失败原因。
       save: (key, value): string | void => {
         const num = Number(value)
-        if (!Number.isFinite(num)) return '这里要填一个数字'
+        if (!Number.isFinite(num)) return t('save.notNumber')
         if (key === 'bashTimeoutMs') applyConfig({ bashTimeoutMs: num })
         else if (key === 'bashMaxTimeoutMs') applyConfig({ bashMaxTimeoutMs: num })
         else if (key === 'bashOutputChars') applyConfig({ bashOutputChars: num })
         else if (key === 'readLineLimit') applyConfig({ readLineLimit: num })
-        else return `这个分区没有这项：${key}`
+        else return t('save.unknownKey', { key })
       },
     }
     const offSection = ctx.settings.registerSection(section)
@@ -289,8 +296,8 @@ export const toolsDefaultPlugin: Plugin.Object = {
     // 界面上挨着预算摆，用户会以为是同一类旋钮。
     const shellSection: SettingsSectionSpec = {
       id: 'terminal-env',
-      title: '终端环境',
-      subtitle: '这台机器上有哪些 shell 能执行命令，以及 bash 工具默认用哪一个',
+      title: t('section.shell.title'),
+      subtitle: t('section.shell.subtitle'),
       order: 6,
       fields(): SettingsField[] {
         // 每次打开分区都现探一次（10 秒缓存）：刚装好 PowerShell 7 再打开就能看见。
@@ -302,7 +309,7 @@ export const toolsDefaultPlugin: Plugin.Object = {
         // 选过但现在已经不可用（卸载了 Git / 关掉了 WSL）：仍要能显示当前值，
         // 否则下拉会显示成第一项，用户以为已经跟着改了。
         if (!options.some((option) => option.value === current)) {
-          options.push({ value: current, label: `${current}（当前不可用，实际回落平台默认）` })
+          options.push({ value: current, label: t('field.bashShell.option.missing', { shell: current }) })
         }
         const summary = detected
           .map((item) => `${item.available ? '✓' : '✗'} ${item.label}`)
@@ -311,19 +318,17 @@ export const toolsDefaultPlugin: Plugin.Object = {
           {
             type: 'select',
             key: 'bashShell',
-            label: '默认终端',
+            label: t('field.bashShell.label'),
             options,
-            help:
-              'bash 工具与终端会话都从这里起进程。切了之后模型看到的工具说明也会跟着改，' +
-              '它会按新终端的语法写命令。只列出这台机器上真检测到的；没检测到的不会出现在选项里。',
+            help: t('field.bashShell.help'),
           },
-          { type: 'info', label: '检测结果', text: summary },
+          { type: 'info', label: t('field.detected.label'), text: summary },
           {
             type: 'button',
             action: 'redetect',
-            label: '重新检测',
+            label: t('field.redetect.label'),
             style: 'ghost',
-            help: '刚装完 PowerShell 7 / Git / WSL 时点一下，不用重启。',
+            help: t('field.redetect.help'),
           },
         ]
       },
@@ -331,20 +336,20 @@ export const toolsDefaultPlugin: Plugin.Object = {
       // 契约：save 返回字符串 = 失败原因，返回对象 = 成功（`notice` 是给用户看的回执）。
       // 这里成功必须走对象——返回字符串会被当成「失败原因」摆到界面上（2026-10-30 自查发现）。
       save: (key, value): string | SettingsMutationOk => {
-        if (key !== 'bashShell') return `这个分区没有这项：${key}`
+        if (key !== 'bashShell') return t('save.unknownKey', { key })
         if (typeof value !== 'string' || !(SHELL_CHOICES as readonly string[]).includes(value)) {
-          return `不认识的终端：${String(value)}`
+          return t('save.unknownShell', { shell: String(value) })
         }
         const choice = parseShellChoice(value)
         const detected = detectShells()
         const hit = detected.find((item) => item.value === choice)
         if (choice !== 'auto' && hit !== undefined && !hit.available) {
-          return `这台机器上没检测到 ${hit.label}，先装好（或点「重新检测」）再选`
+          return t('save.shellMissing', { shell: hit.label })
         }
         // 走 applyConfig：写 plugins.json 之后重注册工具——工具说明里的终端名要跟着换。
         applyConfig({ bashShell: choice })
         forgetShellDetection()
-        return { notice: `已切到 ${shellChoiceLabel(choice)}；下一条命令起生效` }
+        return { notice: t('save.shellSwitched', { shell: shellChoiceLabel(choice) }) }
       },
       action: (name): string | void => {
         // 动作的契约与 save 不同：字符串是**成功**的提示文案，失败要抛错。
@@ -352,7 +357,7 @@ export const toolsDefaultPlugin: Plugin.Object = {
         forgetShellDetection()
         const detected = detectShells(true)
         const available = detected.filter((item) => item.available).map((item) => item.label)
-        return `重新检测完成：${available.join('、')}`
+        return t('action.redetect', { shells: available.join('、') })
       },
     }
     const offShellSection = ctx.settings.registerSection(shellSection, { inSettings: true })

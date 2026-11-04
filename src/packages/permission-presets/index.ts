@@ -29,16 +29,39 @@ import {
 import { permissionOf, samePermissionKnobs, type PermissionKnobs } from '@pneuma/permission-core/permission-scope.js'
 import type { Session } from '@pneuma/runtime/core/session.js'
 import { audit } from '@pneuma/runtime/core/audit.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
+
+/**
+ * 取一条词；字典里没有就给原文。
+ *
+ * 出厂四档的名字是**取值**（`read-only` 这些），标签与说明才是给人看的文字，
+ * 所以只在投影这一步换，内核里那份常量留中文原文作语义真源。
+ * @param key - 字典键
+ * @param fallback - 原文
+ */
+function text(key: string, fallback: string): string {
+  const value = t(key)
+  return value === key ? fallback : value
+}
 
 /** 沙箱服务缺席时（插件被停用）读作哪一档：与沙箱插件自己的出厂默认一致。 */
 const SANDBOX_FALLBACK = 'workspace-write' as const
 
 /** 预设 → 界面投影（只带界面要画的字段）。 */
 function toView(preset: PermissionPreset): PermissionPresetView {
+  // 出厂四档的标签由常量给、用户改不了，所以按语言换；自定义档（custom）原样。
+  const label = preset.builtin ? text('preset.' + preset.name + '.label', preset.label) : preset.label
+  const description = preset.builtin ? text('preset.' + preset.name + '.description', preset.description) : preset.description
   return {
     name: preset.name,
-    label: preset.label,
-    description: preset.description,
+    label,
+    description,
     sandbox: preset.sandbox,
     policy: preset.policy,
     reviewer: preset.reviewer,

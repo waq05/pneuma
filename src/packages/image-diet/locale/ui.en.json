@@ -1,0 +1,14 @@
+{
+  "section.title": "Image offloading",
+  "section.subtitle": "Images that are too old or too many stop being resent every turn",
+  "field.enabled.label": "Offload images by age each turn",
+  "field.enabled.help": "When on, images from earlier turns and images over budget are no longer resent every turn; when off, the images in your history stay as they are (and cost tokens).",
+  "field.userImageBudget.label": "User images kept",
+  "field.userImageBudget.help": "How many images you pasted across recent turns are kept at most; older ones are offloaded. Raise it if you paste a lot and do not want to lose them.",
+  "field.toolImageBudget.label": "Tool result images kept",
+  "field.toolImageBudget.help": "How many images from tool results (screenshots, for example) are kept at most; while computer use is running, the newest one always stays.",
+  "field.keepRounds.label": "Turns of images to keep",
+  "field.keepRounds.help": "Images from earlier turns are all offloaded, whatever their origin; 0 keeps only the last turn.",
+  "save.notNumber": "Enter a number here.",
+  "save.unknownKey": "This section has no such setting: {key}"
+}

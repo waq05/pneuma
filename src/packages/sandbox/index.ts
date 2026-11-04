@@ -73,6 +73,13 @@ import type {
   SandboxVerdict,
   SettingsSectionSpec,
 } from '@pneuma/runtime/services/types.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 守卫刻度：灾难地板 5 < 沙箱 8 < 协作模式 10 < 安全钩子 20 < 审批 30。 */
 const GUARD_ORDER = 8
@@ -574,10 +581,20 @@ export const sandboxPlugin: Plugin.Object = {
       return lines.join('\n')
     }
 
+    /**
+     * 沙箱三档的下拉项：本会话档位与「新会话默认」两组共用同一份文案，
+     * 所以写成工厂——模块导入时求值会把语言钉死在导入那一刻。
+     */
+    const modeOptions = (): Array<{ value: SandboxMode; label: string }> => [
+      { value: 'read-only', label: t('field.mode.option.read-only') },
+      { value: 'workspace-write', label: t('field.mode.option.workspace-write') },
+      { value: 'danger-full-access', label: t('field.mode.option.danger-full-access') },
+    ]
+
     const section: SettingsSectionSpec = {
       id: SANDBOX_CONFIG_KEY,
-      title: '文件与命令围栏',
-      subtitle: '限定能写哪里：可写目录、受保护路径、联网开关与强制执行后端',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: SECTION_ORDER,
       fields(): SettingsField[] {
         const { config, policy, problems } = snapshot()
@@ -585,130 +602,118 @@ export const sandboxPlugin: Plugin.Object = {
           {
             type: 'select',
             key: 'mode',
-            label: '这个会话允许写哪里',
-            options: [
-              { value: 'read-only', label: '只读（任何写盘都拒）' },
-              { value: 'workspace-write', label: '工作区可写（默认）' },
-              { value: 'danger-full-access', label: '不设围栏（等同关掉这层保护）' },
-            ],
-            help: '只改当前打开的会话，换会话各用各的档位。平时保持这一档就行：正常的工作区读写与命令不会被拦，只有越界写、改受保护文件、关网时联网会被拒。',
+            label: t('field.mode.label'),
+            options: modeOptions(),
+            help: t('field.mode.help'),
           },
           {
             type: 'select',
             key: 'defaultMode',
-            label: '以后新开的会话默认写哪里',
-            options: [
-              { value: 'read-only', label: '只读（任何写盘都拒）' },
-              { value: 'workspace-write', label: '工作区可写（默认）' },
-              { value: 'danger-full-access', label: '不设围栏（等同关掉这层保护）' },
-            ],
-            help: '只影响之后新建的会话；已经打开的会话保留自己的档位。',
+            label: t('field.defaultMode.label'),
+            options: modeOptions(),
+            help: t('field.defaultMode.help'),
           },
           {
             type: 'select',
             key: 'onUnavailable',
-            label: '后端建不起来时',
+            label: t('field.onUnavailable.label'),
             options: [
-              { value: 'degrade', label: '降级为策略围栏（照常干，审批卡兜底）' },
-              { value: 'fail-closed', label: '拒绝：写与执行类一律拒（读照常）' },
+              { value: 'degrade', label: t('field.onUnavailable.option.degrade') },
+              { value: 'fail-closed', label: t('field.onUnavailable.option.fail-closed') },
             ],
-            help: '只对 docker 与 Windows 受限令牌这两个真隔离后端生效：它们建不起来时，是降级为进程内策略围栏照常干，还是拒绝写与执行。进程内策略围栏的 partial 是预期状态，不受这一项影响。',
+            help: t('field.onUnavailable.help'),
           },
           {
             type: 'switch',
             key: 'networkAccess',
-            label: '网络访问',
-            help: '关时命中网络命令一律拒（curl / wget / npm install / git pull 这类）。开关只拦「写在命令里的」网络动作，脚本内部的请求拦不住。',
+            label: t('field.networkAccess.label'),
+            help: t('field.networkAccess.help'),
           },
           {
             type: 'text',
             key: 'networkAllowlist',
-            label: '出网白名单（分号分隔域名）',
+            label: t('field.networkAllowlist.label'),
             mono: true,
             placeholder: 'registry.npmjs.org; *.example.com',
-            help: 'windows-token 后端第二级（提权 setup 后）的代理按这份清单放行；*.example.com 匹配子域，精确域不含子域。清单为空 = 开着网也没放任何域名。',
+            help: t('field.networkAllowlist.help'),
           },
           {
             type: 'text',
             key: 'extraWritableRoots',
-            label: '附加可写根（分号分隔）',
+            label: t('field.extraWritableRoots.label'),
             mono: true,
             placeholder: 'D:\\shared; /srv/cache',
-            help: '在工作区与私有临时目录之外再放行几个目录。相对路径按会话工作目录展开。',
+            help: t('field.extraWritableRoots.help'),
           },
           {
             type: 'text',
             key: 'readOnlySubpaths',
-            label: '只读子路径（分号分隔）',
+            label: t('field.readOnlySubpaths.label'),
             mono: true,
             placeholder: 'D:\\proj\\generated',
-            help: '可写根内部的例外：这些子树即使落在可写根里也不许写。',
+            help: t('field.readOnlySubpaths.help'),
           },
           {
             type: 'select',
             key: 'backend',
-            label: '强制后端',
+            label: t('field.backend.label'),
             options: [
-              { value: 'policy', label: '进程内策略围栏（默认，强制执行 partial）' },
-              { value: 'windows-token', label: 'Windows 受限令牌（仅 Windows，越界写系统层拦截）' },
-              { value: 'docker', label: '容器（需要本机 docker，强制执行 full）' },
+              { value: 'policy', label: t('field.backend.option.policy') },
+              { value: 'windows-token', label: t('field.backend.option.windows-token') },
+              { value: 'docker', label: t('field.backend.option.docker') },
             ],
-            help:
-              '受限令牌后端把命令换进「受限令牌 + 工作区 ACL」的 runner 子进程里跑（无需 docker，命令内部的越界写会被系统直接拒绝；' +
-              '已知缺口：硬链接别名、读不受限、网络真管控需一次性提权 setup）。' +
-              '容器后端把命令换进 docker 里跑（只挂工作区，网络按上面的开关），适合跨平台构建命令。' +
-              '认不出 shell 形态的命令不会被换执行体，那一句仍会在宿主上跑。',
+            help: t('field.backend.help'),
           },
           {
             type: 'text',
             key: 'image',
-            label: '容器镜像',
+            label: t('field.image.label'),
             mono: true,
             placeholder: DEFAULT_SANDBOX_IMAGE,
-            help: `容器后端用的镜像，默认 ${DEFAULT_SANDBOX_IMAGE}。镜像里得有你那条命令要用的工具（例如 node:20-alpine）。`,
+            help: t('field.image.help', { image: DEFAULT_SANDBOX_IMAGE }),
           },
-          { type: 'info', label: '当前会话强制执行等级', text: enforcementNote(modeOf(ctx.session.current())) },
-          { type: 'info', label: '后端现状', text: backendDetail },
-          { type: 'info', label: '沙箱私有临时目录', mono: true, copyable: true, text: policy.tmpDir },
-          { type: 'info', label: '当前生效', text: describePolicy(policy) },
+          { type: 'info', label: t('field.enforcement.label'), text: enforcementNote(modeOf(ctx.session.current())) },
+          { type: 'info', label: t('field.backendStatus.label'), text: backendDetail },
+          { type: 'info', label: t('field.tmpDir.label'), mono: true, copyable: true, text: policy.tmpDir },
+          { type: 'info', label: t('field.effective.label'), text: describePolicy(policy) },
           {
             type: 'info',
-            label: '最近 3 次拒绝',
-            text: denials.length === 0 ? '（还没有）' : denials.map((one) => `[${clockText(one.at)}] ${one.tool} · ${one.rule} —— ${one.why}`).join('\n'),
+            label: t('field.denials.label'),
+            text: denials.length === 0 ? t('field.denials.empty') : denials.map((one) => `[${clockText(one.at)}] ${one.tool} · ${one.rule} —— ${one.why}`).join('\n'),
           },
           {
             type: 'button',
             action: 'probe',
-            label: '立即探测后端',
+            label: t('field.probe.label'),
             style: 'ghost',
-            help: '按上面的后端选项现探一次：容器可不可用、降级到哪一档，结果就在按钮下面那句提示里。',
+            help: t('field.probe.help'),
           },
         ]
         if (process.platform === 'win32') {
           list.push(
-            { type: 'info', label: '网络第二级（提权布防）', text: `${networkTier} —— ${networkTierDetail}` },
+            { type: 'info', label: t('field.networkTier.label'), text: `${networkTier} —— ${networkTierDetail}` },
             {
               type: 'button',
               action: 'setup',
-              label: '提权安装网络管控（UAC 一次）',
+              label: t('field.setup.label'),
               style: 'ghost',
-              help: '创建专用离线账号、按账号 SID 出网阻断（防火墙 5 规则 + WFP 12 条持久 filter）、密码 DPAPI 落盘；账号先禁用、布防全部成功才解禁。需要你在 UAC 弹窗点一次允许。',
+              help: t('field.setup.help'),
             },
             {
               type: 'button',
               action: 'doctor',
-              label: '体检网络第二级',
+              label: t('field.doctor.label'),
               style: 'ghost',
-              help: '逐项核对：FFI、状态文件、账号、密码可解、防火墙规则、WFP 子层；全绿即 full。',
+              help: t('field.doctor.help'),
             },
           )
         }
         if (problems.length > 0) {
           list.push({
             type: 'info',
-            label: '配置有问题（已按默认值兜底）',
+            label: t('field.problems.label'),
             text: problems.join('；'),
-            help: '沙箱的坏配置不会把工作区写全禁掉——它只是少了一层围栏，所以这里回落默认值并如实列出来。',
+            help: t('field.problems.help'),
           })
         }
         return list
@@ -731,13 +736,13 @@ export const sandboxPlugin: Plugin.Object = {
         switch (key) {
           case 'mode': {
             const mode = String(value)
-            if (!(SANDBOX_MODES as readonly string[]).includes(mode)) return `档位只能是 ${SANDBOX_MODES.join(' / ')}`
+            if (!(SANDBOX_MODES as readonly string[]).includes(mode)) return t('save.badMode', { modes: SANDBOX_MODES.join(' / ') })
             writePermissions(ctx.session.current(), { sandbox: mode as SandboxMode })
             break
           }
           case 'defaultMode': {
             const mode = String(value)
-            if (!(SANDBOX_MODES as readonly string[]).includes(mode)) return `档位只能是 ${SANDBOX_MODES.join(' / ')}`
+            if (!(SANDBOX_MODES as readonly string[]).includes(mode)) return t('save.badMode', { modes: SANDBOX_MODES.join(' / ') })
             writePluginConfig(SANDBOX_CONFIG_KEY, { mode })
             break
           }
@@ -746,13 +751,13 @@ export const sandboxPlugin: Plugin.Object = {
             break
           case 'networkAllowlist': {
             const { domains, bad } = parseAllowlistText(typeof value === 'string' ? value : String(value))
-            if (bad.length > 0) return `白名单里有不像域名的项：${bad.join('；')}`
+            if (bad.length > 0) return t('save.badAllowlist', { bad: bad.join('；') })
             writePluginConfig(SANDBOX_CONFIG_KEY, { networkAllowlist: domains })
             break
           }
           case 'onUnavailable': {
             const mode = String(value)
-            if (mode !== 'degrade' && mode !== 'fail-closed') return '「后端建不起来时」只能是 degrade（降级继续）或 fail-closed（写与执行一律拒）'
+            if (mode !== 'degrade' && mode !== 'fail-closed') return t('save.badOnUnavailable')
             writePluginConfig(SANDBOX_CONFIG_KEY, { onUnavailable: mode })
             break
           }
@@ -765,20 +770,20 @@ export const sandboxPlugin: Plugin.Object = {
           case 'backend': {
             const backend = String(value)
             if (backend !== 'policy' && backend !== 'docker' && backend !== 'windows-token') {
-              return '后端只能是 policy（策略围栏）/ docker（容器）/ windows-token（Windows 受限令牌）'
+              return t('save.badBackend')
             }
             writePluginConfig(SANDBOX_CONFIG_KEY, { backend })
             break
           }
           case 'image': {
             const image = String(value).trim()
-            if (image === '') return '镜像名不能空着（要恢复默认就填 ' + DEFAULT_SANDBOX_IMAGE + '）'
-            if (/\s/.test(image)) return '镜像名不能带空格'
+            if (image === '') return t('save.emptyImage', { image: DEFAULT_SANDBOX_IMAGE })
+            if (/\s/.test(image)) return t('save.imageSpace')
             writePluginConfig(SANDBOX_CONFIG_KEY, { image })
             break
           }
           default:
-            return `这个分区没有这项：${key}`
+            return t('save.unknownKey', { key })
         }
         // 档位/后端/网络都可能改变强制等级，改完立刻重算一次
         await refreshBackend()
@@ -788,16 +793,16 @@ export const sandboxPlugin: Plugin.Object = {
         if (name === 'probe') return await refreshBackend()
         if (name === 'doctor') {
           await refreshNetworkTier()
-          return `网络第二级：${networkTier} —— ${networkTierDetail}`
+          return t('action.doctor', { tier: networkTier, detail: networkTierDetail })
         }
         if (name === 'setup') {
-          if (process.platform !== 'win32') return '网络第二级只适用于 Windows'
+          if (process.platform !== 'win32') return t('action.windowsOnly')
           const result = await runSetupElevated(DSC_HOME)
           await refreshNetworkTier()
-          const verdict = result.ok ? '提权 setup 完成' : '提权 setup 未完成'
-          return `${verdict}：${result.detail}｜体检：${networkTier} —— ${networkTierDetail}`
+          const verdict = result.ok ? t('action.setupDone') : t('action.setupFailed')
+          return t('action.setup', { verdict, detail: result.detail, tier: networkTier, findings: networkTierDetail })
         }
-        return `这个分区没有这个按钮：${name}`
+        return t('action.unknown', { name })
       },
     }
     const offSection = ctx.settings.registerSection(section)

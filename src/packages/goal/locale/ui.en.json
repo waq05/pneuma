@@ -1,0 +1,10 @@
+{
+  "section.title": "Session goal",
+  "section.subtitle": "Round budget for pushing on after a clean turn ends",
+  "field.defaultMaxRounds.label": "Rounds a new goal gets by default",
+  "field.defaultMaxRounds.help": "One automatic continuation counts as one round. The “Add rounds” button on the goal bar adds to this number; 256 is a hard cap you cannot change.",
+  "field.extendRoundsBy.label": "Rounds each “Add rounds” click adds",
+  "field.extendRoundsBy.help": "When the budget runs out the user decides whether to go on; each click extends it by this many rounds.",
+  "save.notNumber": "Enter a number here.",
+  "save.unknownKey": "This section has no such setting: {key}"
+}

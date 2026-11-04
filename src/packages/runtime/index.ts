@@ -181,18 +181,30 @@ export const runtimePlugin: Plugin.Object = {
           ctx.transcript.touch()
           return
         }
-        // 第三方界面插件（<目录名>/ui/client.js）没有宿主半边可挂：到处热路径不适用，
-        // 写盘即完事，生效在页面下一次加载（启停现场合成进启动图）。
+        /**
+         * 页面的根：骨架与渲染器。
+         *
+         * 别的界面单元是往槽里挂一块，换掉它只是重装一条；这两个换掉等于换整页
+         * （渲染器在首帧之前就把骨架取出来画上了），所以它们仍然提示刷新。
+         * 判据用启停键——它们是内置界面单元，键是 `ui-<产物 id>`。
+         */
+        const rootEntry = file === 'ui-layout' || file === 'ui-renderer'
+        // 第三方界面插件（<目录名>/ui/client.js）没有宿主半边可挂：写盘之后由 webserver
+        // 换图并推一帧，页面按那一帧卸载/装载这一条（与产物热更同一条通道）。
         if (isThirdPartyUiEntry(file)) {
           const name = file.split('/')[0] ?? file
-          ctx.transcript.system(`已${enabled ? '启用' : '停用'}第三方界面插件「${name}」，刷新页面（或重启宿主）后生效`)
+          if (!rootEntry) ctx.emit('dsc/ui-plugins-changed', { file, enabled })
+          ctx.transcript.system(
+            `已${enabled ? '启用' : '停用'}第三方界面插件「${name}」，${rootEntry ? '刷新页面（或重启宿主）后生效' : '即时生效'}`,
+          )
           ctx.transcript.touch()
           return
         }
         // 组合包的界面半边（<包名>/client）同一条理由：没有宿主半边可热挂。
         if (isPackageUiEntry(file)) {
           const name = file.slice(0, -'/client'.length)
-          ctx.transcript.system(`已${enabled ? '启用' : '停用'}组合包的界面半「${name}」，刷新页面（或重启宿主）后生效`)
+          ctx.transcript.system(`已${enabled ? '启用' : '停用'}组合包的界面半「${name}」，即时生效`)
+          ctx.emit('dsc/ui-plugins-changed', { file, enabled })
           ctx.transcript.touch()
           return
         }
@@ -202,6 +214,9 @@ export const runtimePlugin: Plugin.Object = {
         if (!outcome.ok) {
           ctx.transcript.system(`插件「${shown}」没能启用：${outcome.problem ?? '未知原因'}（已经退回停用状态）`)
         } else {
+          // 带界面半边的插件（19 个界面单元都是）启停之后，页面那一份启动图跟着换：
+          // 不推这一下的话，宿主这边已经停了、页面还挂着这块界面，要刷新才对齐。
+          if (!rootEntry) ctx.emit('dsc/ui-plugins-changed', { file, enabled })
           ctx.transcript.system(`已${enabled ? '启用' : '停用'}插件「${shown}」，即时生效`)
         }
         ctx.transcript.touch()

@@ -60,6 +60,13 @@ import {
   type ConsoleEntry,
   type NetworkEntry,
 } from '@pneuma/cdp/report.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 const CONFIG_KEY = 'dock-browser'
 /** 设置分区 id：与配置键同名，元数据 `settingsSection` 指向它。 */
@@ -406,7 +413,7 @@ export const dockBrowserPlugin: Plugin.Object = {
         `[... 还有 ${remaining} 行没显示：加 maxChars 可以放大上限，或先缩小范围再快照；更长的输出 spill 插件会自动落盘，用 read 工具翻]`
       const truncated = truncateByLines(`${header}\n${body}`, options.maxChars, note)
       return {
-        text: `${wrapUntrusted('browser', truncated.text)}\n（本页共 ${serialized.lineCount} 行树，显示了前 ${truncated.shownLines} 行${truncated.truncated ? '，后面截断了' : ''}）`,
+        text: `${wrapUntrusted('browser', truncated.text)}\n（本页共 ${serialized.lineCount} 行树，显示了前 ${truncated.shownLines} 行${truncated.truncated ? '，后面截断了' : ''}）`, // i18n-keep 工具结果给模型看，不属设置面文案
         url: doc.url,
         title: doc.title,
         interactiveCount: serialized.interactiveCount,
@@ -836,29 +843,26 @@ export const dockBrowserPlugin: Plugin.Object = {
 
     const section: SettingsSectionSpec = {
       id: SECTION_ID,
-      title: '侧栏浏览器',
-      subtitle: '驱动桌面端侧栏那台浏览器（你的持久登录会话，不是自管的一次性 Chrome）',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: 35,
       fields: (): SettingsField[] => [
         {
           type: 'switch',
           key: 'lookWithoutApproval',
-          label: '看侧栏浏览器免审批',
-          help:
-            '打开后「看一眼」的工具（列视图、快照、截图、看控制台与网络、等文本出现）不再逐次弹审批卡。' +
-            '注意它看的是**你自己登录着的那台浏览器**，页面上可能有登录态与隐私内容，按需打开。' +
-            '点击、输入、求值这些动手动作仍每次要确认。',
+          label: t('field.lookWithoutApproval.label'),
+          help: t('field.lookWithoutApproval.help'),
         },
         {
           type: 'info',
-          label: '说明',
-          text: '这一档只决定「看」的工具是否注册；动手工具恒为每次审批。',
+          label: t('field.about.label'),
+          text: t('field.about.text'),
         },
       ],
       values: (): Record<string, SettingsValue> => ({ lookWithoutApproval: config.lookWithoutApproval }),
       // 契约：返回字符串 = 失败原因；void = 成功
       save: (key, value): string | void => {
-        if (key !== 'lookWithoutApproval') return `这个分区没有这项：${key}`
+        if (key !== 'lookWithoutApproval') return t('save.unknownKey', { key })
         writePluginConfig(CONFIG_KEY, { lookWithoutApproval: value === true || value === 'true' })
         config = readConfig()
         syncTools()

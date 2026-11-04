@@ -1,0 +1,16 @@
+{
+  "section.title": "Preview before edit",
+  "section.subtitle": "See which lines change before a file is written or edited",
+  "field.enabled.label": "Enable preview before edit",
+  "field.enabled.help": "When off, no diff is posted into the conversation; tools still run and approvals are still asked.",
+  "field.maxLines.label": "Lines shown per preview",
+  "field.maxLines.help": "Anything past this many lines is not shown; the end states how many lines are left (default {lines}).",
+  "field.contextLines.label": "Context lines around each change",
+  "field.contextLines.help": "Same idea as -U in `diff -u`: 0 shows only the change itself, 3 is the default. Those context lines are what tell you which function changed.",
+  "field.chain.label": "Where it sits in the chain",
+  "field.chain.text": "order 25: earlier than the approval card (30), so you already see what will change before you click Allow; it never blocks and never clears other guards (it always defers).",
+  "field.stats.label": "This mount's counter",
+  "field.stats.text": "{emitted} previews sent, {truncated} of them cut off by the line limit.",
+  "save.notNumber": "Enter a number here (lines).",
+  "save.unknownKey": "This section has no such setting: {key}"
+}

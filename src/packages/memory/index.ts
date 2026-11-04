@@ -46,6 +46,13 @@ import { argsSummary } from '@pneuma/runtime/core/tools.js'
 import type { SettingsField, SettingsOption, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { MemoryService, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 配置键（`~/.dsc/plugins.json` 里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'memory'
@@ -63,8 +70,15 @@ const PROMPT_HEADER = [
   '重算时机：写入后立刻换新（本会话下一次请求就是最新的），不必等新会话。',
 ].join('')
 
+/** 三格在设置页上的叫法（工具输出仍用 TARGET_LABELS，那份是给模型看的）。 */
+const cellLabels = (): Record<MemoryTarget, string> => ({
+  global: t('field.cell.option.global'),
+  user: t('field.cell.option.user'),
+  workspace: t('field.cell.option.workspace'),
+})
+
 /** 三格下拉的选项。 */
-const CELL_OPTIONS: SettingsOption[] = MEMORY_TARGETS.map((target) => ({ value: target, label: TARGET_LABELS[target] }))
+const cellOptions = (): SettingsOption[] => MEMORY_TARGETS.map((target) => ({ value: target, label: cellLabels()[target] }))
 
 /** 取配置：区间外的值夹回来，写错类型就用默认值，不抛错。 */
 function readConfig(): MemoryConfig {
@@ -262,12 +276,12 @@ export const memoryPlugin: Plugin.Object = {
       const result = pruneCells(cwd(), config.limits, picked, { afterDays: config.pruneAfterDays })
       const touched = MEMORY_TARGETS.filter((item) => result.moved[item].length > 0)
       rebuild()
-      if (touched.length === 0) return '没有需要整理的条目'
+      if (touched.length === 0) return t('action.nothingToPrune')
       staleNote = STALE_NOTE
       const detail = touched
-        .map((item) => `${TARGET_LABELS[item]}移走 ${String(result.moved[item].length)} 条（${result.archivePaths[item]}）`)
-        .join('；')
-      return `整理完成：${detail}`
+        .map((item) => t('action.pruneItem', { cell: cellLabels()[item], count: result.moved[item].length, path: result.archivePaths[item] }))
+        .join(t('action.pruneSeparator'))
+      return t('action.pruned', { detail })
     }
 
     const memoryTool: ToolEntry = {
@@ -465,7 +479,7 @@ export const memoryPlugin: Plugin.Object = {
       const hits = cell.entries
         .map((entry, index) => ({ entry, index }))
         .filter((item) => keyword === '' || item.entry.toLowerCase().includes(keyword))
-      if (hits.length === 0) return [{ value: '', label: cell.entries.length === 0 ? '（这一格还空着）' : '（没有命中这个搜索词的条目）' }]
+      if (hits.length === 0) return [{ value: '', label: cell.entries.length === 0 ? t('field.entry.option.empty') : t('field.entry.option.noMatch') }]
       return hits.map((item) => ({ value: String(item.index), label: entryLabel(item.entry, item.index) }))
     }
 
@@ -475,43 +489,43 @@ export const memoryPlugin: Plugin.Object = {
         {
           type: 'switch',
           key: 'enabled',
-          label: '启用长期记忆',
-          help: '关掉之后不再往提示词里注入记忆，也不许写入；盘上的文件原样留着。',
+          label: t('field.enabled.label'),
+          help: t('field.enabled.help'),
         },
         {
           type: 'switch',
           key: 'userProfile',
-          label: '记用户本人的偏好（USER.md）',
-          help: '关掉之后模型就不再生成「这个用户喜欢什么」那一格，只留项目事实。',
+          label: t('field.userProfile.label'),
+          help: t('field.userProfile.help'),
         },
         {
           type: 'switch',
           key: 'workspace',
-          label: '记只属于当前仓库的事实',
-          help: '每个工作目录单独一份，换仓库就是另一份。关掉之后三格变两格。',
+          label: t('field.workspace.label'),
+          help: t('field.workspace.help'),
         },
         {
           type: 'number',
           key: 'globalLimit',
-          label: '全局事实的字数上限',
+          label: t('field.globalLimit.label'),
           min: 60,
           max: 20000,
           step: 50,
-          help: '算的是条目加 `§` 分隔符的总字数。写满之后记忆工具会拒绝写入并把现状回吐给模型去合并。',
+          help: t('field.globalLimit.help'),
         },
         {
           type: 'number',
           key: 'userLimit',
-          label: '用户偏好的字数上限',
+          label: t('field.userLimit.label'),
           min: 60,
           max: 20000,
           step: 50,
-          help: '这一格默认比事实格小：偏好就那么几条，写得越长越没人翻。',
+          help: t('field.userLimit.help'),
         },
         {
           type: 'number',
           key: 'workspaceLimit',
-          label: '本工作区事实的字数上限',
+          label: t('field.workspaceLimit.label'),
           min: 60,
           max: 20000,
           step: 50,
@@ -519,84 +533,84 @@ export const memoryPlugin: Plugin.Object = {
         {
           type: 'switch',
           key: 'writeApproval',
-          label: '每次写入都要我点头',
-          help: '开了之后模型每记一条都要弹一张审批卡。记忆这东西一被打断就不记了，默认关。',
+          label: t('field.writeApproval.label'),
+          help: t('field.writeApproval.help'),
         },
         {
           type: 'switch',
           key: 'reviewEnabled',
-          label: '每隔几轮自动做一次记忆复盘',
-          help: '复盘那一轮模型只准新增记忆，不许删改。觉得吵就关掉，靠自己说「记一下」。',
+          label: t('field.reviewEnabled.label'),
+          help: t('field.reviewEnabled.help'),
         },
         {
           type: 'number',
           key: 'reviewEveryTurns',
-          label: '每隔多少轮用户发言复盘一次',
+          label: t('field.reviewEveryTurns.label'),
           min: 0,
           max: 200,
           step: 1,
-          help: '填 0 等于不自动复盘。太小会一直在复盘，正常干活反倒被抢话。',
+          help: t('field.reviewEveryTurns.help'),
         },
         {
           type: 'switch',
           key: 'pruneEnabled',
-          label: '会话打开时自动整理一次',
-          help: '把从没被引用过、又已经陈旧（默认 60 天）的条目移进归档文件，只移不删。',
+          label: t('field.pruneEnabled.label'),
+          help: t('field.pruneEnabled.help'),
         },
         {
           type: 'number',
           key: 'pruneAfterDays',
-          label: '多久没被引用算陈旧（天）',
+          label: t('field.pruneAfterDays.label'),
           min: 0,
           max: 3650,
           step: 1,
-          help: '0 = 只要从没被引用过就移；填很大等于不按时间整理。',
+          help: t('field.pruneAfterDays.help'),
         },
-        { type: 'button', action: 'pruneNow', label: '现在整理一次（只移不删）', style: 'ghost' },
+        { type: 'button', action: 'pruneNow', label: t('field.pruneNow.label'), style: 'ghost' },
         {
           type: 'info',
-          label: '使用评估（注入 / 引用 / 死重）',
+          label: t('field.eval.label'),
           text: evalSummary(),
-          help: '对齐 codex 的记忆使用账：注入 = 条目真的进过提示词的轮数，引用 = 回话里复述到条目的次数。死重 = 注入过 ≥3 轮却一次没被引用的条目（清理首选）。',
+          help: t('field.eval.help'),
         },
-        { type: 'button', action: 'evalReport', label: '看评估报告', style: 'ghost' },
+        { type: 'button', action: 'evalReport', label: t('field.evalReport.label'), style: 'ghost' },
         {
           type: 'info',
-          label: '三格文件',
-          text: MEMORY_TARGETS.map((target) => `${TARGET_LABELS[target]}：${memoryFileOf(target, cwd())}`).join('\n'),
+          label: t('field.files.label'),
+          text: MEMORY_TARGETS.map((target) => t('field.files.line', { cell: cellLabels()[target], path: memoryFileOf(target, cwd()) })).join('\n'),
           mono: true,
-          help: '就是三个 Markdown 文件，条目之间用单独一行的 § 隔开；非「事实」类型在条目前面加 [feedback] / [reference]。直接拿编辑器改也认，改完下一份快照就是新内容。',
+          help: t('field.files.help'),
         },
-        { type: 'select', key: 'cell', label: '看哪一格', options: CELL_OPTIONS },
+        { type: 'select', key: 'cell', label: t('field.cell.label'), options: cellOptions() },
         {
           type: 'info',
-          label: '这一格的现状',
-          text: `${String(cell.entries.length)} 条 · ${String(cell.used)}/${String(cell.limit)} 字${cell.problem === '' ? '' : ` · ⚠ ${cell.problem}`}`,
+          label: t('field.cellState.label'),
+          text: t('field.cellState.text', { entries: cell.entries.length, used: cell.used, limit: cell.limit }) + (cell.problem === '' ? '' : ` · ⚠ ${cell.problem}`),
         },
         {
           type: 'text',
           key: 'search',
-          label: '搜条目（输入完点别处就生效）',
-          placeholder: '关键词，留空看全部',
+          label: t('field.search.label'),
+          placeholder: t('field.search.placeholder'),
         },
-        { type: 'select', key: 'entry', label: '选一条条目', options: entryOptions(cell) },
-        { type: 'button', action: 'entryDelete', label: '删掉选中的这条条目', style: 'ghost' },
+        { type: 'select', key: 'entry', label: t('field.entry.label'), options: entryOptions(cell) },
+        { type: 'button', action: 'entryDelete', label: t('field.entryDelete.label'), style: 'ghost' },
         {
           type: 'switch',
           key: 'clearArmed',
-          label: '我已确认要清空整格',
-          help: '不勾这个，下面那个清空按钮点了也只是提醒；勾上再点才真清。清空前会先留一份副本。',
+          label: t('field.clearArmed.label'),
+          help: t('field.clearArmed.help'),
         },
-        { type: 'button', action: 'cellClear', label: `清空「${TARGET_LABELS[form.cell]}」这一格`, style: 'ghost' },
-        { type: 'button', action: 'refresh', label: '让注入的那一栏立刻换新的一份' },
+        { type: 'button', action: 'cellClear', label: t('field.cellClear.label', { cell: cellLabels()[form.cell] }), style: 'ghost' },
+        { type: 'button', action: 'refresh', label: t('field.refresh.label') },
       ]
       return list
     }
 
     const section: SettingsSectionSpec = {
       id: 'memory',
-      title: '长期记忆',
-      subtitle: '跨会话留下的事实：项目、用户、当前仓库各一格',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: 35,
       fields,
       values(): SettingsValues {
@@ -656,7 +670,7 @@ export const memoryPlugin: Plugin.Object = {
             return
           case 'reviewEveryTurns': {
             const num = Number(value)
-            if (!Number.isFinite(num)) return '这里要填一个整数（多少轮一次）'
+            if (!Number.isFinite(num)) return t('save.notIntegerTurns')
             applyConfig({ reviewEveryTurns: num })
             return
           }
@@ -665,13 +679,13 @@ export const memoryPlugin: Plugin.Object = {
             return
           case 'pruneAfterDays': {
             const num = Number(value)
-            if (!Number.isFinite(num)) return '这里要填一个整数（多少天算陈旧）'
+            if (!Number.isFinite(num)) return t('save.notIntegerDays')
             applyConfig({ pruneAfterDays: num })
             return
           }
           case 'cell': {
             const target = aliasOf(value) as MemoryTarget
-            if (!MEMORY_TARGETS.includes(target)) return '不认识这一格'
+            if (!MEMORY_TARGETS.includes(target)) return t('save.unknownCell')
             form.cell = target
             form.entry = ''
             form.clearArmed = false
@@ -688,14 +702,14 @@ export const memoryPlugin: Plugin.Object = {
             form.clearArmed = value === true
             return
           default:
-            return `这个分区没有这项：${key}`
+            return t('save.unknownKey', { key })
         }
       },
       action(name): string | void {
         switch (name) {
           case 'entryDelete': {
             const index = form.entry === '' ? Number.NaN : Number(form.entry)
-            if (!Number.isFinite(index)) return '先在上面的下拉里选中要删的那条'
+            if (!Number.isFinite(index)) return t('action.noEntrySelected')
             const result = applyMemoryOperations([{ target: form.cell, action: 'remove', oldText: selectedCell().entries[index] }], cwd(), {
               limits: config.limits,
             })
@@ -703,11 +717,11 @@ export const memoryPlugin: Plugin.Object = {
             form.entry = ''
             rebuild()
             ctx.emit('dsc/changed')
-            return '已删掉这条记忆'
+            return t('action.entryDeleted')
           }
           case 'cellClear': {
             if (!form.clearArmed) {
-              return `要清空「${TARGET_LABELS[form.cell]}」这一格，先把上面那个确认开关打开再点一次（会先留一份副本）`
+              return t('action.clearArmedNeeded', { cell: cellLabels()[form.cell] })
             }
             const result = clearCell(form.cell, cwd(), config.limits)
             form.clearArmed = false
@@ -715,7 +729,9 @@ export const memoryPlugin: Plugin.Object = {
             rebuild()
             if (!result.ok) return result.error
             ctx.emit('dsc/changed')
-            return `已清空「${TARGET_LABELS[form.cell]}」${result.backup === '' ? '' : `，清空前的内容在副本 ${result.backup} 里`}`
+            return result.backup === ''
+              ? t('action.cellCleared', { cell: cellLabels()[form.cell] })
+              : t('action.cellClearedBackup', { cell: cellLabels()[form.cell], backup: result.backup })
           }
           case 'pruneNow':
             return pruneAndReport(form.cell)
@@ -726,9 +742,9 @@ export const memoryPlugin: Plugin.Object = {
           }
           case 'refresh':
             rebuild()
-            return `注入用的那一栏已重算（${String(snapshot.length)} 字，额度合计 ${String(usedChars(cells().flatMap((cell) => cell.entries)))} 字）`
+            return t('action.refreshed', { chars: snapshot.length, budget: usedChars(cells().flatMap((cell) => cell.entries)) })
           default:
-            return `这个分区没有这个按钮：${name}`
+            return t('action.unknownName', { name })
         }
       },
     }
@@ -825,8 +841,20 @@ export const memoryPlugin: Plugin.Object = {
     /** 设置页那一行只读统计：一句话读数。 */
     function evalSummary(): string {
       const report = evaluateMemory(evalInput())
-      const grade = report.grade === 'healthy' ? '健康' : report.grade === 'watch' ? '留意' : '偏差'
-      return `条目 ${String(report.entries)} · 注入 ${String(report.injectedEntries)} · 引用 ${String(report.citedEntries)} · 引用率 ${String(Math.round(report.citationRate * 100))}% · 死重 ${String(report.deadWeight.length)} · ${grade}`
+      const grade =
+        report.grade === 'healthy'
+          ? t('field.eval.grade.healthy')
+          : report.grade === 'watch'
+            ? t('field.eval.grade.watch')
+            : t('field.eval.grade.deviating')
+      return t('field.eval.text', {
+        entries: report.entries,
+        injected: report.injectedEntries,
+        cited: report.citedEntries,
+        rate: Math.round(report.citationRate * 100),
+        dead: report.deadWeight.length,
+        grade,
+      })
     }
 
     // 新会话：重算快照；开了自动整理就先做一次保守整理（只移不删）。
@@ -838,7 +866,7 @@ export const memoryPlugin: Plugin.Object = {
       injectedThisTurn.clear()
       if (config.enabled && config.pruneEnabled) {
         const message = pruneAndReport()
-        if (message !== '没有需要整理的条目') ctx.emit('dsc/notice', `长期记忆${message}`)
+        if (message !== t('action.nothingToPrune')) ctx.emit('dsc/notice', `长期记忆${message}`)
       } else {
         rebuild()
       }

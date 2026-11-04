@@ -18,6 +18,13 @@ import { IMAGE_DIET_RANGES, readImageDietConfig } from '@pneuma/runtime/core/ima
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'image-diet'
@@ -33,42 +40,42 @@ export const imageDietPlugin: Plugin.Object = {
       {
         type: 'switch',
         key: 'enabled',
-        label: '每轮按龄卸载图片',
-        help: '开着时，更早回合的图与超预算的图不再随每轮请求重发；关掉则历史里的图原样保留（费 token）。',
+        label: t('field.enabled.label'),
+        help: t('field.enabled.help'),
       },
       {
         type: 'number',
         key: 'userImageBudget',
-        label: '用户图保留张数',
+        label: t('field.userImageBudget.label'),
         min: IMAGE_DIET_RANGES.userImageBudget.min,
         max: IMAGE_DIET_RANGES.userImageBudget.max,
         step: 1,
-        help: '最近几个回合里你贴的图最多留几张，更早的卸载；贴图多又怕丢就调大。',
+        help: t('field.userImageBudget.help'),
       },
       {
         type: 'number',
         key: 'toolImageBudget',
-        label: '工具结果图保留张数',
+        label: t('field.toolImageBudget.label'),
         min: IMAGE_DIET_RANGES.toolImageBudget.min,
         max: IMAGE_DIET_RANGES.toolImageBudget.max,
         step: 1,
-        help: '工具结果（例如截图）里的图最多留最近几张；电脑控制正在跑时最新那张一定在保留范围内。',
+        help: t('field.toolImageBudget.help'),
       },
       {
         type: 'number',
         key: 'keepRounds',
-        label: '保留最近几个回合的图',
+        label: t('field.keepRounds.label'),
         min: IMAGE_DIET_RANGES.keepRounds.min,
         max: IMAGE_DIET_RANGES.keepRounds.max,
         step: 1,
-        help: '更早的回合里的图全部卸载（不看来源）；0 表示只留最后一轮。',
+        help: t('field.keepRounds.help'),
       },
     ]
 
     const section: SettingsSectionSpec = {
       id: CONFIG_KEY,
-      title: '图片卸载',
-      subtitle: '历史里太久/太多的图不再随每轮请求重发',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: 38,
       fields: () => fields,
       values: (): SettingsValues => {
@@ -94,9 +101,9 @@ export const imageDietPlugin: Plugin.Object = {
               : key === 'keepRounds'
                 ? IMAGE_DIET_RANGES.keepRounds
                 : null
-        if (range === null) return `这个分区没有这项：${key}`
+        if (range === null) return t('save.unknownKey', { key })
         const num = Number(value)
-        if (!Number.isFinite(num)) return '这里要填一个数字'
+        if (!Number.isFinite(num)) return t('save.notNumber')
         writePluginConfig(CONFIG_KEY, { [key]: Math.min(Math.max(Math.round(num), range.min), range.max) })
       },
     }

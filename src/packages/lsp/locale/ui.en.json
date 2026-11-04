@@ -1,0 +1,17 @@
+{
+  "section.title": "Code navigation and errors",
+  "section.subtitle": "Definitions, references, implementations and hover; errors introduced by an edit are reported to the model",
+  "field.enabled.label": "Enable code navigation and errors",
+  "field.enabled.help": "When off, the lsp tool only returns a note and no diagnostics are injected after edits (no need to disable the whole plugin).",
+  "field.servers.label": "Server list (one line of JSON)",
+  "field.servers.help": "Leave it empty to use the built-in table (typescript / pyright / rust / go / clangd / json / yaml). One server per entry: id and command are required, extensions is required (the file types it claims), args / markers / languageId are optional. The same id overrides a built-in entry; a new id goes before the built-ins (it claims those extensions first).",
+  "field.servers.problem": "This list cannot be read right now: {problem}",
+  "field.idleSeconds.label": "Shut down an idle language server after (seconds)",
+  "field.idleSeconds.help": "The floor is 30 seconds: anything shorter would kill a query that is still running.",
+  "field.diagnostics.label": "Report newly introduced errors after an edit",
+  "field.diagnostics.help": "One baseline before the write, one after it, and only the ERRORs introduced this time are reported (details come with the next request).",
+  "field.maxLocations.label": "Results per query",
+  "field.maxLocations.help": "Anything beyond is cut off with a note saying how many are not listed; the result is then cut again at 16,000 characters.",
+  "field.statusButton.label": "Show server status",
+  "field.status.label": "Right now"
+}

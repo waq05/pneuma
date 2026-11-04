@@ -47,6 +47,13 @@ import type { EffortLevel, SettingsField, SettingsValue, TeammateView, Transcrip
 import type { ReviewService, ReviewSpawnRequest, ReviewSpawnResult, SettingsSectionSpec, TeamService } from '@pneuma/runtime/services/types.js'
 import { reviewTaskText, ReviewJournal, REVIEW_CANCELED_TEXT } from '@pneuma/runtime/core/git-info.js'
 import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 插件配置（存 `~/.dsc/plugins.json` 条目树的 config 里）。 */
 interface SubagentConfig {
@@ -1113,49 +1120,49 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
       {
         type: 'switch',
         key: 'allowDelegation',
-        label: '允许模型自主分派任务给队友',
-        help: '关闭后 subagent 工具连同提示词一并撤下；已经在跑的队友会把当前这轮跑完。',
+        label: t('field.allowDelegation.label'),
+        help: t('field.allowDelegation.help'),
       },
-      { type: 'number', key: 'maxTeammates', label: '每个会话同时几个队友', min: 1, max: 8, step: 1, help: '每个会话各自的同时干活上限；已完成的队友不占额度，满了再派会被直接拒绝，不排队。' },
-      { type: 'number', key: 'maxDepth', label: '递归层级', min: 0, max: 2, step: 1, help: '0 = 仅主会话可派队友，Lead 不可再下派；1 = Lead 可派队友，队友不可再下派。' },
+      { type: 'number', key: 'maxTeammates', label: t('field.maxTeammates.label'), min: 1, max: 8, step: 1, help: t('field.maxTeammates.help') },
+      { type: 'number', key: 'maxDepth', label: t('field.maxDepth.label'), min: 0, max: 2, step: 1, help: t('field.maxDepth.help') },
       {
         type: 'number',
         key: 'maxTurns',
-        label: '轮次上限',
+        label: t('field.maxTurns.label'),
         min: 0,
         max: 200,
         step: 1,
-        help: '0 = 不限，队友自己决定跑几轮（默认）。填了就与角色文件的 max-turns 取更小的那个，角色写 0 也视为不限。设限后最后一轮不再给工具，只让它直接交结论。',
+        help: t('field.maxTurns.help'),
       },
       {
         type: 'select',
         key: 'approval',
-        label: '队友是否可以请求授权',
+        label: t('field.approval.label'),
         options: [
-          { value: 'forbid', label: '不允许，需要授权的操作直接失败并写入汇报' },
-          { value: 'foreground', label: '仅前台队友，即正在等待结果的队友' },
-          { value: 'ask', label: '允许，审批卡片标明请求的队友' },
+          { value: 'forbid', label: t('option.approval.forbid') },
+          { value: 'foreground', label: t('option.approval.foreground') },
+          { value: 'ask', label: t('option.approval.ask') },
         ],
-        help: '此为上限：角色文件中声明的 approval 只会更严，不会更松。',
+        help: t('field.approval.help'),
       },
       {
         type: 'select',
         key: 'notify',
-        label: '后台队友完成后的汇报方式',
+        label: t('field.notify.label'),
         options: [
-          { value: 'auto', label: '汇报自动并入 Lead 的下一轮' },
-          { value: 'quiet', label: '仅写入会话，下次对话时模型可见' },
+          { value: 'auto', label: t('option.notify.auto') },
+          { value: 'quiet', label: t('option.notify.quiet') },
         ],
       },
-      { type: 'text', key: 'defaultModel', label: '队友默认模型', placeholder: '留空 = 跟随当前模型；形如 deepseek/deepseek-chat', help: '角色文件里写了 model 的角色用它自己的。' },
-      { type: 'info', label: '角色目录', text: DSC_AGENTS_DIR, mono: true, copyable: true, help: `内置角色：${builtinRoleNames().join('、')}。修改文件仅影响之后创建的队友。` },
-      { type: 'button', action: 'new-role', label: '新建示例角色', style: 'ghost', help: '在角色目录创建 starter.md 供参考修改。' },
+      { type: 'text', key: 'defaultModel', label: t('field.defaultModel.label'), placeholder: t('field.defaultModel.placeholder'), help: t('field.defaultModel.help') },
+      { type: 'info', label: t('field.rolesDir.label'), text: DSC_AGENTS_DIR, mono: true, copyable: true, help: t('field.rolesDir.help', { names: builtinRoleNames().join(t('field.rolesDir.separator')) }) },
+      { type: 'button', action: 'new-role', label: t('field.newRole.label'), style: 'ghost', help: t('field.newRole.help') },
     ]
 
     const section: SettingsSectionSpec = {
       id: 'subagent',
-      title: '子智能体',
-      subtitle: '队友最多几层、同时几个、各跑几轮、要不要向你申请授权',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: 40,
       fields,
       values: (): Record<string, SettingsValue> => ({
@@ -1185,7 +1192,7 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
           case 'approval': {
             const next = String(value) as TeammateApproval
             if (next !== 'forbid' && next !== 'ask' && next !== 'foreground') {
-              return `不认识的值 ${String(value)}`
+              return t('save.badValue', { value: String(value) })
             }
             applyConfig({ approval: next })
             break
@@ -1196,13 +1203,13 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
           case 'defaultModel': {
             const text = String(value).trim()
             if (text !== '' && !text.includes('/')) {
-              return '要写成「端点名/模型名」，例如 deepseek/deepseek-chat；留空表示跟随当前模型'
+              return t('save.badModelFormat')
             }
             applyConfig({ defaultModel: text })
             break
           }
           default:
-            return `这个分区没有这项：${key}`
+            return t('save.unknownKey', { key })
         }
         // 开关会影响工具与名册提示在不在场，改完立刻重挂一次
         syncTools()
@@ -1213,7 +1220,7 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
             description: '我在这个角色里干什么（一句话，模型据此决定要不要派它）',
             prompt: '把这一段改成这个角色的职责与做事步骤。它是模型看到的唯一说明书。',
           })
-          return `已写好 ${file}，改完保存就能被派活`
+          return t('action.roleWritten', { file })
         }
         throw new Error(`这个分区没有这个按钮：${name}`)
       },

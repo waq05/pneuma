@@ -1,0 +1,16 @@
+{
+  "section.title": "改动前预览",
+  "section.subtitle": "写文件、改文件之前，先把改哪几行摆出来",
+  "field.enabled.label": "启用改动前预览",
+  "field.enabled.help": "关掉之后不再往对话流贴 diff，工具照常执行、审批照常问。",
+  "field.maxLines.label": "一条预览最多显示几行",
+  "field.maxLines.help": "超过这个行数的部分不显示，末尾写明还剩多少行（默认 {lines}）。",
+  "field.contextLines.label": "改动前后各留几行上下文",
+  "field.contextLines.help": "跟 `diff -u` 的 -U 一个意思：0 = 只看改动本身，3 = 默认。留几行上下文才看得出改在哪个函数里。",
+  "field.chain.label": "它在链上的位置",
+  "field.chain.text": "order 25：比审批卡（30）早，所以点「允许」之前就已经看见要改什么；它自己永远不拦、不替别的守卫放行（一律 defer）。",
+  "field.stats.label": "这次挂载的统计",
+  "field.stats.text": "发过 {emitted} 条预览，其中 {truncated} 条因为超过行数上限被截断。",
+  "save.notNumber": "这里要填一个数字（行）",
+  "save.unknownKey": "这个分区没有这项：{key}"
+}

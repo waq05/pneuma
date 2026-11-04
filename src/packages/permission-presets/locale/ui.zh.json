@@ -1,0 +1,10 @@
+{
+  "preset.read-only.label": "只读",
+  "preset.read-only.description": "读文件、查状态直接过；写盘、执行命令、改机器先问你，允许这一次才动手",
+  "preset.workspace.label": "工作区可写",
+  "preset.workspace.description": "工作区内的文件改动自动放行；区外写入与命令走审批卡（默认档）",
+  "preset.full-access.label": "完全访问",
+  "preset.full-access.description": "什么都不问，工作区内外都能改、命令直接跑（灾难性命令仍然拒）",
+  "preset.auto-review.label": "AI 复核",
+  "preset.auto-review.description": "每一次调用先给模型判官看：判放行就直接过，判高风险或判不出来才落到你的审批卡"
+}

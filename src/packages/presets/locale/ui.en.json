@@ -1,0 +1,10 @@
+{
+  "builtin.standard.label": "Standard mode",
+  "builtin.standard.description": "Handles code, files and documents; tools on demand, prompt identical to the factory one — the right default for most work",
+  "builtin.minimal.label": "Minimal mode",
+  "builtin.minimal.description": "Only a shell (PowerShell) and image reading, with a one-line prompt; use it to compare the model's baseline behaviour",
+  "builtin.maker.label": "Maker mode",
+  "builtin.maker.description": "Standard abilities plus read-only runtime queries: add modes for yourself, write plugins for dsc",
+  "builtin.ptc.label": "PTC mode",
+  "builtin.ptc.description": "Standard abilities plus run_code: script tool calls in bulk and filter the results in code"
+}

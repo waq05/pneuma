@@ -33,6 +33,13 @@ import { wrapUntrusted } from '@pneuma/runtime/core/untrusted.js'
 import { argsSummary, type ToolEntry } from '@pneuma/runtime/core/tools.js'
 import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { McpServerInfo, McpService, McpToolInfo, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 插件在 `~/.dsc/plugins.json` 条目树里的键（设置分区 id 也是它）。 */
 const CONFIG_KEY = 'mcp'
@@ -95,12 +102,15 @@ interface ServerState {
   closed: boolean
 }
 
-/** 状态灯的中文说法（设置分区的「现在的状态」那一行）。 */
-const STATE_LABELS: Record<McpServerInfo['state'], string> = {
-  ready: '已连上',
-  connecting: '正在连',
-  failed: '没连上',
-}
+/**
+ * 状态灯的说法（设置分区的「现在的状态」那一行）。
+ * 模块导入时就取词会把语言钉死，所以是函数。
+ */
+const stateLabels = (): Record<McpServerInfo['state'], string> => ({
+  ready: t('state.ready'),
+  connecting: t('state.connecting'),
+  failed: t('state.failed'),
+})
 
 /** 读配置：装配时传进来的那份作底，磁盘上那份覆盖它（改完设置不必重启宿主）。 */
 function readConfig(passed?: unknown): McpPluginConfig {
@@ -645,15 +655,16 @@ export const mcpPlugin: Plugin.Object = {
     function statusText(): string {
       const parsed = parseConfig()
       const lines: string[] = []
-      if (parsed.problem !== null) lines.push(`清单有问题：${parsed.problem}`)
+      const labels = stateLabels()
+      if (parsed.problem !== null) lines.push(t('field.status.broken', { problem: parsed.problem }))
       for (const state of states.values()) {
         const info = state.info
         lines.push(
-          `${info.name}（${info.transport}）：${STATE_LABELS[info.state]}，${info.tools} 个工具` +
-            `${info.problem === undefined ? '' : `，${info.problem}`}`,
+          t('field.status.line', { name: info.name, transport: info.transport, state: labels[info.state], count: info.tools }) +
+            (info.problem === undefined ? '' : t('field.status.problem', { problem: info.problem })),
         )
       }
-      if (lines.length === 0) lines.push('还没有配 server')
+      if (lines.length === 0) lines.push(t('field.status.empty'))
       return lines.join('\n')
     }
 
@@ -662,41 +673,36 @@ export const mcpPlugin: Plugin.Object = {
         {
           type: 'text',
           key: 'servers',
-          label: '服务器清单（一行 JSON）',
+          label: t('field.servers.label'),
           mono: true,
           placeholder: '[{"name":"github","command":"npx","args":["-y","@modelcontextprotocol/server-github"],"env":{"GITHUB_TOKEN":""}}]',
-          help:
-            '一个数组，一项一个 server。stdio 写 name + command（+ args/cwd/env），' +
-            'http 写 name + transport:"http" + url（+ headers）。' +
-            'env 里的变量名会原样传进子进程；值留空串就从宿主环境取同名变量。' +
-            '想给某个工具单独定风险等级，加 "risk":{"工具名":"read"}；' +
-            '整个 server 的缺省档是 "defaultRisk"。保存时会整份校验。',
+          help: t('field.servers.help'),
         },
         {
           type: 'select',
           key: 'defaultRisk',
-          label: '没写 defaultRisk 的 server 用哪一档',
+          label: t('field.defaultRisk.label'),
           options: [
-            { value: 'exec', label: 'exec，每次都弹审批卡（推荐）' },
-            { value: 'write', label: 'write，写类操作弹审批卡' },
-            { value: 'read', label: 'read，直接放行（只读的 server 才选）' },
+            { value: 'exec', label: t('field.defaultRisk.option.exec') },
+            { value: 'write', label: t('field.defaultRisk.option.write') },
+            { value: 'read', label: t('field.defaultRisk.option.read') },
           ],
-          help: 'MCP 工具是外面来的程序，拿不准它会做什么时保守一点。',
+          help: t('field.defaultRisk.help'),
         },
-        { type: 'number', key: 'callTimeoutMs', label: '单次调用超时（毫秒）', min: TIMEOUT_MIN_MS, max: TIMEOUT_MAX_MS, step: 1000 },
-        { type: 'number', key: 'connectTimeoutMs', label: '握手超时（毫秒）', min: TIMEOUT_MIN_MS, max: TIMEOUT_MAX_MS, step: 1000 },
-        { type: 'switch', key: 'reconnect', label: '掉线后自动重连' },
-        { type: 'number', key: 'reconnectInitialDelayMs', label: '重连首次等待（毫秒）', min: 1, max: TIMEOUT_MAX_MS, step: 100 },
-        { type: 'number', key: 'reconnectMaxDelayMs', label: '重连最长等待（毫秒）', min: 1, max: TIMEOUT_MAX_MS, step: 1000 },
-        { type: 'number', key: 'reconnectMaxAttempts', label: '连续失败几次后放弃', min: ATTEMPTS_MIN, max: ATTEMPTS_MAX, step: 1 },
-        { type: 'button', action: 'reload', label: '重连全部服务器', style: 'ghost', help: '断开现有连接重新连一遍，状态看下一行。' },
-        { type: 'info', label: '现在的状态', text: statusText(), mono: true, copyable: true },
+        { type: 'number', key: 'callTimeoutMs', label: t('field.callTimeoutMs.label'), min: TIMEOUT_MIN_MS, max: TIMEOUT_MAX_MS, step: 1000 },
+        { type: 'number', key: 'connectTimeoutMs', label: t('field.connectTimeoutMs.label'), min: TIMEOUT_MIN_MS, max: TIMEOUT_MAX_MS, step: 1000 },
+        { type: 'switch', key: 'reconnect', label: t('field.reconnect.label') },
+        { type: 'number', key: 'reconnectInitialDelayMs', label: t('field.reconnectInitialDelayMs.label'), min: 1, max: TIMEOUT_MAX_MS, step: 100 },
+        { type: 'number', key: 'reconnectMaxDelayMs', label: t('field.reconnectMaxDelayMs.label'), min: 1, max: TIMEOUT_MAX_MS, step: 1000 },
+        { type: 'number', key: 'reconnectMaxAttempts', label: t('field.reconnectMaxAttempts.label'), min: ATTEMPTS_MIN, max: ATTEMPTS_MAX, step: 1 },
+        { type: 'button', action: 'reload', label: t('field.reload.label'), style: 'ghost', help: t('field.reload.help') },
+        { type: 'info', label: t('field.status.label'), text: statusText(), mono: true, copyable: true },
       ]
 
       return {
         id: CONFIG_KEY,
-        title: 'MCP 外部工具',
-        subtitle: '连接 MCP 服务器，把外部工具接进来给模型用',
+        title: t('section.title'),
+        subtitle: t('section.subtitle'),
         order: 47,
         fields,
         values: (): SettingsValues => {
@@ -755,7 +761,7 @@ export const mcpPlugin: Plugin.Object = {
           const parsed = parseConfig()
           if (parsed.problem !== null) throw new Error(parsed.problem)
           for (const server of parsed.servers) startServer(server)
-          return `已按配置重新发起连接：${parsed.servers.length} 个 server（连没连上看下一行）`
+          return t('action.reload', { count: parsed.servers.length })
         },
       }
     }

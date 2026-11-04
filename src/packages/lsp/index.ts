@@ -64,6 +64,13 @@ import {
 import { displayPath, toDisplayCharacter, toDisplayLine, toProtocolPosition } from './uri.js'
 import type { SettingsField, SettingsValue } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 插件在条目树里的键（设置分区 id 也是它）。 */
 const CONFIG_KEY = 'lsp'
@@ -537,54 +544,52 @@ export const lspPlugin: Plugin.Object = {
           {
             type: 'switch',
             key: 'enabled',
-            label: '启用代码跳转与报错',
-            help: '关掉之后 lsp 工具只回一句说明，也不做编辑后诊断注入（不必停用整个插件）。',
+            label: t('field.enabled.label'),
+            help: t('field.enabled.help'),
           },
           {
             type: 'text',
             key: 'servers',
-            label: '服务器清单（一行 JSON）',
+            label: t('field.servers.label'),
             mono: true,
             placeholder: '[{"id":"python","command":"pylsp","extensions":[".py"],"markers":["pyproject.toml"]}]',
             help:
-              '留空就用内置表（typescript / pyright / rust / go / clangd / json / yaml）。' +
-              '一项一个服务器：id + command 必填，extensions 必填（认领的扩展名），' +
-              'args / markers / languageId 可省。同 id 覆盖内置项，新 id 排在内置项前面（先认领扩展名）。' +
-              (problem === null ? '' : ` 现在这份读不了：${problem}`),
+              t('field.servers.help') +
+              (problem === null ? '' : ' ' + t('field.servers.problem', { problem })),
           },
           {
             type: 'number',
             key: 'idleSeconds',
-            label: '多久不用就关掉语言服务器（秒）',
+            label: t('field.idleSeconds.label'),
             min: IDLE_SECONDS_MIN,
             max: IDLE_SECONDS_MAX,
             step: 30,
-            help: '下限 30 秒：比单次请求预算还短的话会杀到正在跑的查询。',
+            help: t('field.idleSeconds.help'),
           },
           {
             type: 'switch',
             key: 'diagnostics',
-            label: '编辑后注入新引入的报错',
-            help: '写文件前取一次基线，写后再取一次，只报本次新引入的 ERROR（明细附在下一次请求里）。',
+            label: t('field.diagnostics.label'),
+            help: t('field.diagnostics.help'),
           },
           {
             type: 'number',
             key: 'maxLocations',
-            label: '单次结果条数上限',
+            label: t('field.maxLocations.label'),
             min: MAX_LOCATIONS_MIN,
             max: MAX_LOCATIONS_MAX,
             step: 10,
-            help: '超过就截断并注明「还有 N 条未列出」；之后还会按 16000 字符再截一次。',
+            help: t('field.maxLocations.help'),
           },
-          { type: 'button', action: 'status', label: '看服务器状态', style: 'ghost' },
-          { type: 'info', label: '现在的情况', text: statusText(), mono: true, copyable: true },
+          { type: 'button', action: 'status', label: t('field.statusButton.label'), style: 'ghost' },
+          { type: 'info', label: t('field.status.label'), text: statusText(), mono: true, copyable: true },
         ]
       }
 
       return {
         id: CONFIG_KEY,
-        title: '代码跳转与报错',
-        subtitle: '查定义、引用、实现与悬停；编辑后新出现的报错会提醒模型',
+        title: t('section.title'),
+        subtitle: t('section.subtitle'),
         order: 33,
         fields,
         values: (): Record<string, SettingsValue> => {

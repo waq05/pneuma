@@ -109,9 +109,18 @@ for (const pkg of packages) {
   const localeSrc = join(pkg.dir, 'locale')
   if (existsSync(localeSrc)) {
     for (const file of walkFiles(localeSrc)) {
-      const target = join(dest, 'locale', relative(localeSrc, file))
-      mkdirSync(dirname(target), { recursive: true })
-      writeFileSync(target, readFileSync(file))
+      const rel = relative(localeSrc, file)
+      // 两个落点都要有：
+      //   - 适配包目录（`lib/node_modules/@pneuma/<id>/locale`）：插件中心与 `numa plugin list` 从
+      //     包元数据那一侧按目录找译本；
+      //   - 真实模块目录（`lib/packages/<id>/locale`）：包自己的取词器按 `import.meta.dirname`
+      //     找界面字典（`src/core/i18n.ts` 的 `hostT`）。少了这一份，运行期第一句话就是
+      //     「缺 locale/ui.zh.json」——源码树里明明有，产物里没有，最难查。
+      for (const base of [dest, srcPkgDir]) {
+        const target = join(base, 'locale', rel)
+        mkdirSync(dirname(target), { recursive: true })
+        writeFileSync(target, readFileSync(file))
+      }
     }
   }
   const pneuma = pkg.manifest.pneuma ?? {}

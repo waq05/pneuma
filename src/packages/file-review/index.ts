@@ -37,6 +37,13 @@ import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { callFacts } from '@pneuma/runtime/core/tools.js'
 import { clampIntIn as clampInt } from '@pneuma/runtime/core/clamp.js'
 import { readBlockReason } from '@pneuma/runtime/core/path-policy.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 插件在条目树（`~/.dsc/plugins.json`）里的键；同时是设置分区 id。 */
 export const FILE_REVIEW_CONFIG_KEY = 'file-review'
@@ -437,8 +444,8 @@ export const fileReviewPlugin: Plugin.Object = {
     // ── 设置分区 ──────────────────────────────────────────────────────────────
     const section: SettingsSectionSpec = {
       id: FILE_REVIEW_CONFIG_KEY,
-      title: '改动前预览',
-      subtitle: '写文件、改文件之前，先把改哪几行摆出来',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       // 排在大输出溢出（37）前面：这一档管的是「改之前看见」，比事后截断更靠前
       order: 36,
       fields(): SettingsField[] {
@@ -447,36 +454,36 @@ export const fileReviewPlugin: Plugin.Object = {
           {
             type: 'switch',
             key: 'enabled',
-            label: '启用改动前预览',
-            help: '关掉之后不再往对话流贴 diff，工具照常执行、审批照常问。',
+            label: t('field.enabled.label'),
+            help: t('field.enabled.help'),
           },
           {
             type: 'number',
             key: 'maxLines',
-            label: '一条预览最多显示几行',
+            label: t('field.maxLines.label'),
             min: FILE_REVIEW_RANGES.maxLines.min,
             max: FILE_REVIEW_RANGES.maxLines.max,
             step: 10,
-            help: `超过这个行数的部分不显示，末尾写明还剩多少行（默认 ${String(FILE_REVIEW_DEFAULTS.maxLines)}）。`,
+            help: t('field.maxLines.help', { lines: String(FILE_REVIEW_DEFAULTS.maxLines) }),
           },
           {
             type: 'number',
             key: 'contextLines',
-            label: '改动前后各留几行上下文',
+            label: t('field.contextLines.label'),
             min: FILE_REVIEW_RANGES.contextLines.min,
             max: FILE_REVIEW_RANGES.contextLines.max,
             step: 1,
-            help: '跟 `diff -u` 的 -U 一个意思：0 = 只看改动本身，3 = 默认。留几行上下文才看得出改在哪个函数里。',
+            help: t('field.contextLines.help'),
           },
           {
             type: 'info',
-            label: '它在链上的位置',
-            text: 'order 25：比审批卡（30）早，所以点「允许」之前就已经看见要改什么；它自己永远不拦、不替别的守卫放行（一律 defer）。',
+            label: t('field.chain.label'),
+            text: t('field.chain.text'),
           },
           {
             type: 'info',
-            label: '这次挂载的统计',
-            text: `发过 ${String(emitted)} 条预览，其中 ${String(truncated)} 条因为超过行数上限被截断。`,
+            label: t('field.stats.label'),
+            text: t('field.stats.text', { emitted: String(emitted), truncated: String(truncated) }),
           },
         ]
       },
@@ -491,19 +498,19 @@ export const fileReviewPlugin: Plugin.Object = {
             break
           case 'maxLines': {
             const num = Number(value)
-            if (!Number.isFinite(num)) return '这里要填一个数字（行）'
+            if (!Number.isFinite(num)) return t('save.notNumber')
             // 越界的值写进去也没关系：用的时候会被夹回区间（parseFileReviewConfig）
             writePluginConfig(FILE_REVIEW_CONFIG_KEY, { maxLines: Math.round(num) })
             break
           }
           case 'contextLines': {
             const num = Number(value)
-            if (!Number.isFinite(num)) return '这里要填一个数字（行）'
+            if (!Number.isFinite(num)) return t('save.notNumber')
             writePluginConfig(FILE_REVIEW_CONFIG_KEY, { contextLines: Math.round(num) })
             break
           }
           default:
-            return `这个分区没有这项：${key}`
+            return t('save.unknownKey', { key })
         }
         ctx.emit('dsc/changed')
       },

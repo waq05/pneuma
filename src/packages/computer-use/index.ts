@@ -47,6 +47,13 @@ import type { SettingsField, SettingsValue } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
 import { splitList } from '@pneuma/runtime/core/strings.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 插件配置（存 `~/.dsc/plugins.json` 条目树的 config 里）。 */
 interface ComputerUseConfig {
@@ -124,7 +131,7 @@ export function dropStaleScreenshots(messages: ChatMessage[]): ChatMessage[] {
       .join('\n')
     return {
       ...message,
-      content: [{ type: 'text', text: `${text}\n（这张截图的画面已被更新的截图取代，图像本身不再随请求发送）` }],
+      content: [{ type: 'text', text: `${text}\n（这张截图的画面已被更新的截图取代，图像本身不再随请求发送）` }], // i18n-keep 给模型看的占位说明，不属设置面文案
     }
   })
 }
@@ -509,32 +516,32 @@ export const computerUsePlugin: Plugin.Object = {
     // dropStaleScreenshots 本体留着：它的文案更贴电脑控制语境，外部复用随时能捡起来。
 
     const fields = (): SettingsField[] => [
-      { type: 'number', key: 'maxEdge', label: '截图最长边', min: 640, max: 3840, step: 64, help: '以像素为单位；超长屏幕会等比缩小，数值越小越省 token，但文字可能不清晰。' },
+      { type: 'number', key: 'maxEdge', label: t('field.maxEdge.label'), min: 640, max: 3840, step: 64, help: t('field.maxEdge.help') },
       {
         type: 'select',
         key: 'format',
-        label: '截图编码',
+        label: t('field.format.label'),
         options: [
-          { value: 'jpeg', label: 'JPEG，省 token，默认' },
-          { value: 'png', label: 'PNG，无损，文件更大' },
+          { value: 'jpeg', label: t('field.format.option.jpeg') },
+          { value: 'png', label: t('field.format.option.png') },
         ],
       },
-      { type: 'number', key: 'quality', label: 'JPEG 质量', min: 30, max: 100, step: 5, help: '仅在编码选择 JPEG 时生效。' },
-      { type: 'number', key: 'actionDelayMs', label: '动作间隔', min: 0, max: 2000, step: 20, help: '以毫秒为单位；给目标程序留出反应时间，减少其输入合并。' },
-      { type: 'number', key: 'actionsPerScreenshot', label: '自上次截屏以来的动作上限', min: 0, max: 200, step: 1, help: '0 为不限制；超限后会要求重新截屏，因为界面可能已经变化。' },
-      { type: 'text', key: 'allowedApps', label: '应用白名单', placeholder: '留空 = 不限；例如 chrome,Code,腾讯会议', help: '按前台窗口的进程名或标题包含匹配，多个用逗号分隔；对名单之外应用的操作会被直接拦下。' },
-      { type: 'text', key: 'disabledActions', label: '禁用动作', placeholder: '例如 click,type', help: `可选值：${DESKTOP_ACTIONS.join(' / ')}。` },
-      { type: 'switch', key: 'lookWithoutApproval', label: '看屏幕免审批', help: '开启后截屏、无障碍观察、查鼠标、列窗口/应用/显示器走只读工具，不弹出审批卡；点击、输入、按键、滚动等动手动作仍每次需要确认。' },
-      { type: 'switch', key: 'auditEnabled', label: '独立审计日志', help: '每次动作写一行到 ~/.dsc/audit/computer-use.jsonl（时刻/动作/目标/结果/是否审批过）。' },
-      { type: 'button', action: 'who-is-front', label: '查看当前前台窗口', style: 'ghost', help: '用于验证白名单应填写的内容。' },
-      { type: 'button', action: 'stop-computer', label: '急停电脑操作', style: 'ghost', help: `杀掉所有在跑的界面子进程并暂停动作面，等同于模型的 stop 动作。` },
-      { type: 'button', action: 'resume-computer', label: '恢复电脑操作', style: 'ghost', help: '急停之后用它恢复；下一次动手照常要审批。' },
+      { type: 'number', key: 'quality', label: t('field.quality.label'), min: 30, max: 100, step: 5, help: t('field.quality.help') },
+      { type: 'number', key: 'actionDelayMs', label: t('field.actionDelayMs.label'), min: 0, max: 2000, step: 20, help: t('field.actionDelayMs.help') },
+      { type: 'number', key: 'actionsPerScreenshot', label: t('field.actionsPerScreenshot.label'), min: 0, max: 200, step: 1, help: t('field.actionsPerScreenshot.help') },
+      { type: 'text', key: 'allowedApps', label: t('field.allowedApps.label'), placeholder: t('field.allowedApps.placeholder'), help: t('field.allowedApps.help') },
+      { type: 'text', key: 'disabledActions', label: t('field.disabledActions.label'), placeholder: t('field.disabledActions.placeholder'), help: t('field.disabledActions.help', { actions: DESKTOP_ACTIONS.join(' / ') }) },
+      { type: 'switch', key: 'lookWithoutApproval', label: t('field.lookWithoutApproval.label'), help: t('field.lookWithoutApproval.help') },
+      { type: 'switch', key: 'auditEnabled', label: t('field.auditEnabled.label'), help: t('field.auditEnabled.help') },
+      { type: 'button', action: 'who-is-front', label: t('field.whoIsFront.label'), style: 'ghost', help: t('field.whoIsFront.help') },
+      { type: 'button', action: 'stop-computer', label: t('field.stop.label'), style: 'ghost', help: t('field.stop.help') },
+      { type: 'button', action: 'resume-computer', label: t('field.resume.label'), style: 'ghost', help: t('field.resume.help') },
     ]
 
     const section: SettingsSectionSpec = {
       id: 'computer-use',
-      title: '操作电脑桌面',
-      subtitle: '看屏幕、点按钮、输入文字来操作 Windows 桌面；看可免审批，动手每次要确认',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: 45,
       fields,
       values: (): Record<string, SettingsValue> => ({
@@ -553,22 +560,22 @@ export const computerUsePlugin: Plugin.Object = {
         const clamp = (num: number, min: number, max: number): number => Math.min(Math.max(Math.round(num), min), max)
         switch (key) {
           case 'maxEdge':
-            if (!Number.isFinite(Number(value))) return '截图最长边要填数字'
+            if (!Number.isFinite(Number(value))) return t('save.maxEdgeNumber')
             writePluginConfig(CONFIG_KEY, { maxEdge: clamp(Number(value), 640, 3840) })
             break
           case 'format':
             writePluginConfig(CONFIG_KEY, { format: value === 'png' ? 'png' : 'jpeg' })
             break
           case 'quality':
-            if (!Number.isFinite(Number(value))) return 'JPEG 质量要填数字'
+            if (!Number.isFinite(Number(value))) return t('save.qualityNumber')
             writePluginConfig(CONFIG_KEY, { quality: clamp(Number(value), 30, 100) })
             break
           case 'actionDelayMs':
-            if (!Number.isFinite(Number(value))) return '动作间隔要填数字'
+            if (!Number.isFinite(Number(value))) return t('save.actionDelayNumber')
             writePluginConfig(CONFIG_KEY, { actionDelayMs: clamp(Number(value), 0, 2000) })
             break
           case 'actionsPerScreenshot':
-            if (!Number.isFinite(Number(value))) return '动作上限要填数字'
+            if (!Number.isFinite(Number(value))) return t('save.actionsPerScreenshotNumber')
             writePluginConfig(CONFIG_KEY, { actionsPerScreenshot: clamp(Number(value), 0, 200) })
             break
           case 'allowedApps':
@@ -577,7 +584,7 @@ export const computerUsePlugin: Plugin.Object = {
           case 'disabledActions': {
             const list = splitList(String(value))
             const bad = list.filter((entry) => canonicalAction(entry) === null)
-            if (bad.length > 0) return `不认识的动作：${bad.join('、')}。可选：${DESKTOP_ACTIONS.join(' / ')}`
+            if (bad.length > 0) return t('save.unknownActions', { actions: bad.join('、'), options: DESKTOP_ACTIONS.join(' / ') })
             writePluginConfig(CONFIG_KEY, { disabledActions: list.map((entry) => canonicalAction(entry) ?? entry).join(',') })
             break
           }
@@ -588,7 +595,7 @@ export const computerUsePlugin: Plugin.Object = {
             writePluginConfig(CONFIG_KEY, { auditEnabled: value === true || value === 'true' })
             break
           default:
-            return `这个分区没有这项：${key}`
+            return t('save.unknownKey', { key })
         }
         config = readConfig()
         sinceScreenshot = 0
@@ -599,17 +606,18 @@ export const computerUsePlugin: Plugin.Object = {
         if (name === 'who-is-front') {
           const front = await foregroundWindow()
           const [processName = '', ...titleParts] = front.split('|')
-          return `前台窗口：进程 ${processName}，标题「${titleParts.join('|') || '（无标题）'}」。白名单填进程名或标题片段都能命中。`
+          const title = titleParts.join('|') || t('action.whoIsFront.untitled')
+          return t('action.whoIsFront', { process: processName, title })
         }
         if (name === 'stop-computer') {
           const killed = killAllPowerShell()
           stopped = true
           audit('stop', 'system', '设置页急停', 'ok', true)
-          return `已急停：杀掉 ${killed} 个在跑的界面子进程，并暂停电脑操作动作面。`
+          return t('action.stopped', { count: killed })
         }
         if (name === 'resume-computer') {
           stopped = false
-          return '已恢复电脑操作；下一次动手照常会弹审批卡。'
+          return t('action.resumed')
         }
         throw new Error(`这个分区没有这个按钮：${name}`)
       },

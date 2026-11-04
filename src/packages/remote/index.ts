@@ -88,6 +88,13 @@ import {
   type RemoteSnapshot,
 } from './types.js'
 import { UI_EVENTS_PROTOCOL_VERSION } from '@pneuma/runtime/contract/remote.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
+ */
+const t = hostT(import.meta.dirname)
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'remote'
@@ -656,12 +663,12 @@ export const remotePlugin: Plugin.Object = {
     /** 当前快照里「等人的卡」（审批 → 计划评审 → 模型提问，同一时刻至多一张在前面挡着）。 */
     function waitingCardOf(current: RuntimeSnapshot): { key: string; title: string; headline: string } | null {
       const approval = current.surfaces.pendingApproval
-      if (approval !== null) return { key: `approval:${approval.id}`, title: 'Pneuma 等待审批', headline: approvalHeadline(approval) }
+      if (approval !== null) return { key: `approval:${approval.id}`, title: t('notify.waitApproval'), headline: approvalHeadline(approval) }
       const plan = current.surfaces.pendingPlan
-      if (plan !== null) return { key: `plan:${plan.file}`, title: 'Pneuma 等待计划评审', headline: plan.title }
+      if (plan !== null) return { key: `plan:${plan.file}`, title: t('notify.waitPlan'), headline: plan.title }
       const question = current.surfaces.pendingQuestion
       if (question !== null) {
-        return { key: `ask:${question.id}`, title: 'Pneuma 在向你提问', headline: question.header ?? question.question }
+        return { key: `ask:${question.id}`, title: t('notify.question'), headline: question.header ?? question.question }
       }
       return null
     }
@@ -681,7 +688,7 @@ export const remotePlugin: Plugin.Object = {
         if (still === null || still.key !== key || escalateCount > ESCALATE_MAX) return
         void notify(
           `escalate:${key}`,
-          { title: 'Pneuma 还在等人', body: `已等 ${String(Math.round((ESCALATE_WAIT_MS * escalateCount) / 1000))} 秒：${headline}`, url: addressText() },
+          { title: t('notify.stillWaiting.title'), body: t('notify.stillWaiting.body', { seconds: Math.round((ESCALATE_WAIT_MS * escalateCount) / 1000), headline }), url: addressText() },
           false,
         )
         armEscalation(key, headline)
@@ -721,7 +728,7 @@ export const remotePlugin: Plugin.Object = {
       turnHadWaitingCard = false
       if (elapsedMs < TURN_NOTIFY_MIN_MS && !hadWaitingCard) return
       const seconds = Math.max(0, Math.round(elapsedMs / 1000))
-      void notify('turn-end', { title: 'Pneuma 轮完成', body: `用时 ${String(seconds)}s`, url: addressText() }, true)
+      void notify('turn-end', { title: t('notify.turnEnd.title'), body: t('notify.turnEnd.body', { seconds }), url: addressText() }, true)
     }
     ctx.on('dsc/turn-end', onTurnEnd)
 
@@ -806,37 +813,37 @@ export const remotePlugin: Plugin.Object = {
 
     const statusText = (): string => {
       const prefs = ctx.settings.prefs().remote
-      if (!prefs.enabled) return '已关闭'
+      if (!prefs.enabled) return t('status.off')
       if (server !== null) {
-        return `运行中 · ${server.lan ? '0.0.0.0' : '127.0.0.1'}:${String(server.port)}`
+        return t('status.running', { host: server.lan ? '0.0.0.0' : '127.0.0.1', port: server.port })
       }
       const info = owner.peek()
       if (info !== null && info.pid !== process.pid) {
-        return `由另一个 Pneuma 进程（pid ${String(info.pid)}）接管`
+        return t('status.taken', { pid: info.pid })
       }
-      return yielded ? '已让出主控位，重新开关「开启远程控制」拿回' : '等待主控位空出（每 30 秒重试）'
+      return yielded ? t('status.yielded') : t('status.waiting')
     }
 
     /** 时间戳给设置页看的样子；0（没记过）说「未知」。 */
-    const timeText = (at: number): string => (at > 0 ? new Date(at).toLocaleString('zh-CN') : '未知')
+    const timeText = (at: number): string => (at > 0 ? new Date(at).toLocaleString('zh-CN') : t('time.unknown'))
 
     const pushStatusText = (): string => {
       const prefs = ctx.settings.prefs().remote
-      if (!prefs.push) return '没开'
+      if (!prefs.push) return t('pushStatus.off')
       const key = pushPublicKey()
-      return key === null ? '开着，但 VAPID 密钥不可用' : `开着，已订阅 ${String(pushStore.count())} 台`
+      return key === null ? t('pushStatus.noKey') : t('pushStatus.count', { count: pushStore.count() })
     }
 
     const webhookStatusText = (): string => {
       const raw = ctx.settings.prefs().remote.notifyWebhook.trim()
-      if (raw === '') return '没配'
-      return raw.includes('{') && webhookHasPlaceholder(raw) ? `${raw}（GET）` : `${raw}（POST JSON）`
+      if (raw === '') return t('webhookStatus.off')
+      return raw.includes('{') && webhookHasPlaceholder(raw) ? t('webhookStatus.get', { url: raw }) : t('webhookStatus.post', { url: raw })
     }
 
     const section: SettingsSectionSpec = {
       id: 'remote',
-      title: '远程控制',
-      subtitle: '把会话开给同一局域网里的手机浏览器',
+      title: t('section.title'),
+      subtitle: t('section.subtitle'),
       order: 40,
       fields(): SettingsField[] {
         const prefs = ctx.settings.prefs().remote
@@ -845,51 +852,53 @@ export const remotePlugin: Plugin.Object = {
           {
             type: 'switch',
             key: 'enabled',
-            label: '开启远程控制',
-            help: '打开后监听端口等待手机接入；关闭立即断开所有连接',
+            label: t('field.enabled.label'),
+            help: t('field.enabled.help'),
           },
           {
             type: 'number',
             key: 'port',
-            label: '监听端口',
+            label: t('field.port.label'),
             min: REMOTE_PORT_MIN,
             max: REMOTE_PORT_MAX,
-            help: '改端口会重启监听，已配对的设备不受影响',
+            help: t('field.port.help'),
           },
           {
             type: 'switch',
             key: 'lan',
-            label: '允许局域网访问',
-            help: '打开后同一 Wi-Fi 下的手机可以连入；关闭仅本机可用',
+            label: t('field.lan.label'),
+            help: t('field.lan.help'),
           },
-          { type: 'info', label: '运行状态', text: statusText() },
-          { type: 'info', label: '访问地址', text: addressText(), mono: true, copyable: true },
+          { type: 'info', label: t('field.status.label'), text: statusText() },
+          { type: 'info', label: t('field.address.label'), text: addressText(), mono: true, copyable: true },
           {
             type: 'switch',
             key: 'push',
-            label: '浏览器推送（Web Push）',
-            help: '手机先把本页「添加到主屏幕」，才能收到系统通知；关闭时不订阅、不推送',
+            label: t('field.push.label'),
+            help: t('field.push.help'),
           },
-          { type: 'info', label: '推送状态', text: pushStatusText() },
+          { type: 'info', label: t('field.pushStatus.label'), text: pushStatusText() },
           {
             type: 'text',
             key: 'notifyWebhook',
-            label: '通知 Webhook',
-            placeholder: 'https://api.day.app/你的KEY/{title}/{body}',
-            help: '留空 = 关。带 {title}/{body}/{url} 占位符的地址按 GET 发（Bark），不带的按 POST JSON 发（ntfy）',
+            label: t('field.webhook.label'),
+            placeholder: t('field.webhook.placeholder'),
+            help: t('field.webhook.help'),
           },
-          { type: 'info', label: 'Webhook 状态', text: webhookStatusText(), mono: true },
+          { type: 'info', label: t('field.webhookStatus.label'), text: webhookStatusText(), mono: true },
           {
             type: 'button',
             action: 'test-push',
-            label: '发送测试推送',
+            label: t('field.testPush.label'),
             style: 'primary',
-            help: '浏览器推送与 Webhook 各发一条，结果以右下角通知弹出',
+            help: t('field.testPush.help'),
           },
           {
             type: 'info',
-            label: '已配对设备',
-            text: devices.length === 0 ? '还没有设备' : `${String(devices.length)} 台：${devices.map((item) => item.name).join('、')}`,
+            label: t('field.devices.label'),
+            text: devices.length === 0
+              ? t('field.devices.empty')
+              : t('field.devices.count', { count: devices.length, names: devices.map((item) => item.name).join(t('field.devices.separator')) }),
           },
         ]
         // 每台设备两行：一行身份（名字 + 最近活跃 + 创建时间），一行「吊销」按钮。
@@ -898,31 +907,31 @@ export const remotePlugin: Plugin.Object = {
           rows.push({
             type: 'info',
             label: device.name,
-            text: `最近活跃 ${timeText(device.lastSeenAt)}`,
+            text: t('field.device.lastSeen', { time: timeText(device.lastSeenAt) }),
           })
           rows.push({
             type: 'button',
             action: `revoke-device:${device.deviceId}`,
-            label: '吊销',
+            label: t('field.device.revoke.label'),
             style: 'ghost',
-            help: `断开「${device.name}」的连接并作废它的凭据，重新配对后才能连回`,
+            help: t('field.device.revoke.help', { name: device.name }),
           })
         }
         rows.push(
           {
             type: 'button',
             action: 'regenerate-code',
-            label: '连接手机',
+            label: t('field.connect.label'),
             style: 'primary',
-            help: '打开连接弹窗，手机扫码或输码即可配对；配对码半小时内有效',
+            help: t('field.connect.help'),
           },
-          { type: 'button', action: 'revoke-all', label: '吊销全部设备', style: 'ghost', help: '所有手机立刻失效，需要重新配对' },
+          { type: 'button', action: 'revoke-all', label: t('field.revokeAll.label'), style: 'ghost', help: t('field.revokeAll.help') },
           {
             type: 'button',
             action: 'release-owner',
-            label: '退出主控',
+            label: t('field.releaseOwner.label'),
             style: 'ghost',
-            help: '多开时把监听让给别的 Pneuma 进程，重新开关远程控制可拿回来',
+            help: t('field.releaseOwner.help'),
           },
         )
         return rows
@@ -979,13 +988,13 @@ export const remotePlugin: Plugin.Object = {
           const issued = pairing.issueCode({ replace: true })
           if (issued === null) {
             // 理论到不了这里（replace 一定发得出来），留着当兜底
-            return '配对码签发失败，请稍后重试'
+            return t('action.codeFailed')
           }
           // 码只从这里出去（桌面的「连接手机」弹窗）：绝不写进 transcript，会话 jsonl 是会被翻出来的。
           // 所以 notice 只说「生成了、半小时内有效」，码本体与可扫地址放 data，由界面画在弹窗里。
           // addressText() 已经给的是带协议的完整地址（末尾一个斜杠），直接接查询串即可。
           return {
-            notice: '配对码已生成（半小时内有效）',
+            notice: t('action.codeIssued'),
             data: {
               kind: 'pair-code',
               code: issued.code,
@@ -998,59 +1007,67 @@ export const remotePlugin: Plugin.Object = {
           const count = pairing.revokeAll()
           // 已经在线的手机当场断线，不是等它们下次重连才发现凭据没了
           server?.closeDevices()
-          return count === 0 ? '本来就没有已经配对的设备' : `已吊销 ${String(count)} 台设备，手机需要重新配对`
+          return count === 0 ? t('action.revokedNone') : t('action.revokedAll', { count })
         }
         if (name.startsWith('revoke-device:')) {
           const deviceId = name.slice('revoke-device:'.length)
           const revoked = pairing.revokeDevice(deviceId)
-          if (revoked === null) return '这台设备已经不在了（可能刚被别的地方吊销掉）'
+          if (revoked === null) return t('action.deviceGone')
           const closed = server?.closeDevices(deviceId) ?? 0
-          return `已吊销「${revoked.name}」${closed > 0 ? `，断开 ${String(closed)} 条连接` : ''}`
+          return t('action.deviceRevoked', {
+            name: revoked.name,
+            disconnected: closed > 0 ? t('action.deviceDisconnected', { count: closed }) : '',
+          })
         }
         if (name === 'test-push') {
           const prefs = ctx.settings.prefs().remote
           const message: WebhookMessage = {
-            title: 'Pneuma 测试推送',
-            body: '这条消息来自电脑上「设置 → 远程控制」的测试按钮',
+            title: t('action.testPush.title'),
+            body: t('action.testPush.body'),
             url: addressText(),
           }
           const lines: string[] = []
           if (prefs.push) {
             try {
               const result = await pushStore.send({ ...message })
-              if (result.attempted === 0) lines.push('浏览器推送：库里还没有订阅的设备（手机要先把页面加到主屏幕）')
+              if (result.attempted === 0) lines.push(t('action.testPush.pushNoSubs'))
               else {
                 lines.push(
-                  `浏览器推送：${String(result.sent)}/${String(result.attempted)} 台成功` +
-                    (result.dropped > 0 ? `，${String(result.dropped)} 台订阅已失效（已清理）` : '') +
-                    (result.errors.length > 0 ? `，失败原因：${result.errors.join('；')}` : ''),
+                  t('action.testPush.pushResult', {
+                    sent: result.sent,
+                    attempted: result.attempted,
+                    dropped: result.dropped > 0 ? t('action.testPush.pushDropped', { count: result.dropped }) : '',
+                    errors: result.errors.length > 0
+                      ? t('action.testPush.pushErrors', { errors: result.errors.join(t('action.testPush.separator')) })
+                      : '',
+                  }),
                 )
               }
             } catch (error) {
-              lines.push(`浏览器推送：失败（${errText(error)}）`)
+              lines.push(t('action.testPush.pushFailed', { message: errText(error) }))
             }
           } else {
-            lines.push('浏览器推送：没开（开关关着，一条都没发）')
+            lines.push(t('action.testPush.pushOff'))
           }
           const webhook = prefs.notifyWebhook.trim()
           if (webhook === '') {
-            lines.push('通知 Webhook：没配（留空 = 关）')
+            lines.push(t('action.testPush.webhookOff'))
           } else {
             const result = await sendWebhook(webhook, message)
             lines.push(
               result.ok
-                ? `通知 Webhook：已发送（${result.mode === 'get' ? 'GET' : 'POST JSON'}）`
-                : `通知 Webhook：失败（${result.error}）`,
+                ? t('action.testPush.webhookOk', { mode: result.mode === 'get' ? 'GET' : 'POST JSON' })
+                : t('action.testPush.webhookFailed', { message: result.error }),
             )
           }
-          return lines.join('；')
+          return lines.join(t('action.testPush.separator'))
         }
         if (name === 'release-owner') {
           yielded = true
           clearRetry()
           stopServer()
           owner.release()
-          return '已让出主控位；重新开关「开启远程控制」可拿回来'
+          return t('action.released')
         }
         throw new Error(`这个分区没有动作 ${name}`)
       },

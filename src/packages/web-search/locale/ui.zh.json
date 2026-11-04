@@ -1,0 +1,23 @@
+{
+  "section.title": "联网搜索",
+  "section.subtitle": "选一家搜索服务并填 key；搜索词会发给这家服务",
+  "field.provider.label": "搜索服务",
+  "field.provider.option.tavily": "Tavily（国外，tavily.com）",
+  "field.provider.option.bocha": "博查（国内直连，bochaai.com）",
+  "field.provider.option.serper": "Serper（Google 结果，serper.dev）",
+  "field.apiKeyEnv.label": "API key 环境变量名",
+  "field.apiKeyEnv.placeholder": "例如 TAVILY_API_KEY",
+  "field.apiKeyEnv.help": "推荐方式：将 API key 存入系统环境变量，此处只填变量名，key 不落盘。",
+  "field.apiKey.label": "直接填写 key，可选",
+  "field.apiKey.placeholder": "sk-…，明文存于 ~/.dsc/plugins.json",
+  "field.apiKey.help": "便捷方式；环境变量有值时优先使用环境变量。key 仅存本机。",
+  "field.maxResults.label": "每次返回条数",
+  "field.maxResults.help": "条数越多占用上下文越多，5 条通常够用。",
+  "field.test.label": "测试搜索「Pneuma」",
+  "field.test.help": "用当前提供方与 key 发一次真实搜索，回执会显示结果条数或失败原因。",
+  "save.unknownProvider": "不认识的提供方：{provider}",
+  "save.badResults": "条数要填数字",
+  "save.unknownKey": "这个分区没有这项：{key}",
+  "action.empty": "搜索发出去了，但 0 条结果（key 可能无效或额度用完）。",
+  "action.ok": "通了：{provider} 返回 {count} 条结果，第一条「{title}」。"
+}
