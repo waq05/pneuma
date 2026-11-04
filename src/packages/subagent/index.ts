@@ -1084,9 +1084,9 @@ ${body}
       for (const off of disposers) off()
       disposers = []
       if (!config.allowDelegation) return
-      disposers.push(ctx.tools.register(subagentTool()))
+      disposers.push(ctx.effect(() => ctx.tools.register(subagentTool()), 'subagent: tools.register'))
       disposers.push(
-        ctx.prompt.register('subagent', () => {
+        ctx.effect(() => ctx.prompt.register('subagent', () => {
           const roles = listRoles().filter((role) => role.enabled)
           const lines = roles.map((role) => {
             const tools = role.tools === null ? '不限工具' : role.tools.length === 0 ? '不带工具' : role.tools.join('/')
@@ -1103,7 +1103,7 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
 2. 本会话同时干活上限 ${config.maxTeammates} 个（收工的不占额度）。后台队友干完后汇报会自己接进你的下一轮，不要反复去问它好了没。
 3. 只读角色改不了文件；要落地代码用 writer 或者你自己动手。
 4. 派完活自己接着干别的，别闲着等。`
-        }),
+        }), 'subagent: prompt.register'),
       )
     }
     syncTools()
@@ -1219,6 +1219,7 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
       },
     }
     const offSection = ctx.settings.registerSection(section)
+    ctx.effect(() => offSection, 'subagent: settings.registerSection')
 
     // ── 卸载 ────────────────────────────────────────────────────────────────
     return () => {

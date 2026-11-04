@@ -218,6 +218,7 @@ export const lifecycleHooksPlugin: Plugin.Object = {
       ctx.session.current().appendNote('lifecycle-hooks', blocks.join('\n\n'))
       return [...messages, { role: 'user', content: blocks.join('\n\n') }]
     })
+    ctx.effect(() => offProjection, 'lifecycle-hooks: prompt.registerProjection')
 
     /** 认出这次请求里新的那条用户消息，跑一遍 UserPromptSubmit（只能把话留到下一次请求）。 */
     function submitIfNewPrompt(messages: readonly ChatMessage[]): void {
@@ -236,7 +237,7 @@ export const lifecycleHooksPlugin: Plugin.Object = {
 
     // ── 事件监听 ─────────────────────────────────────────────────────────────
 
-    const offs: Array<() => void> = [ctx.guards.register(guard), ctx.guards.registerObserver(observer), offProjection]
+    const offs: Array<() => void> = [ctx.effect(() => ctx.guards.register(guard), 'lifecycle-hooks: guards.register'), ctx.effect(() => ctx.guards.registerObserver(observer), 'lifecycle-hooks: guards.registerObserver'), offProjection]
 
     offs.push(
       ctx.on('dsc/session-open', ({ session, filePath }) => {
@@ -388,12 +389,12 @@ export const lifecycleHooksPlugin: Plugin.Object = {
         }
       },
     }
-    offs.push(ctx.settings.registerSection(section))
+    offs.push(ctx.effect(() => ctx.settings.registerSection(section), 'lifecycle-hooks: settings.registerSection'))
 
     // ── /lifecycle-hooks 命令 ────────────────────────────────────────────────
 
     offs.push(
-      ctx.commands.register(
+      ctx.effect(() => ctx.commands.register(
         { name: 'lifecycle-hooks', args: '', description: '看生命周期钩子的能力清单与已加载的钩子' },
         ({ ui }) => {
           const cfg = config()
@@ -411,7 +412,7 @@ export const lifecycleHooksPlugin: Plugin.Object = {
           for (const problem of report.problems) lines.push(`  ⚠ ${problem}`)
           ui.notice(lines.join('\n'))
         },
-      ),
+      ), 'lifecycle-hooks: commands.register'),
     )
 
     return () => {

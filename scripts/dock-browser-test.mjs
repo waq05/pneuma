@@ -130,6 +130,11 @@ function mountDock(withLook, link) {
       },
     },
     get: (name) => (name === HOST_BROWSER_SERVICE ? link : undefined),
+    // 2026-11-04：插件的注册改成 ctx.effect 了（停用即注销）。桩 ctx 跟着 cordis。
+    effect: (execute) => {
+      const off = execute()
+      return typeof off === 'function' ? off : () => {}
+    },
   }
   const off = dockBrowserPlugin.apply(ctx, withLook ? { lookWithoutApproval: true } : {})
   return { tools, sections, off }
@@ -471,6 +476,12 @@ console.log('\n[5] 没有桌面壳时的语义：立刻抛人话，不等超时'
       return () => set.delete(handler)
     },
     logger: { warn: () => {}, info: () => {}, error: () => {} },
+    // 2026-11-04：插件的注册改成 ctx.effect 了（停用即注销）。桩 ctx 跟着 cordis：
+    // effect 跑一遍回调、返回它给的退订函数。
+    effect: (execute) => {
+      const off = execute()
+      return typeof off === 'function' ? off : () => {}
+    },
   }
 
   // host-stdio 的 stdio 传输就是把 JSON 行写进 process.stdout（这是它的协议面）。

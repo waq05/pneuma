@@ -235,8 +235,8 @@ export const askPlugin: Plugin.Object = {
       },
     }
     ctx.provide('ask', service)
-    ctx.surfaces.register('pendingQuestion', () => service.pendingQuestion())
-    ctx.waiting.register('ask', () => pendings.size > 0)
+    ctx.effect(() => ctx.surfaces.register('pendingQuestion', () => service.pendingQuestion()), 'ask: surfaces.register')
+    ctx.effect(() => ctx.waiting.register('ask', () => pendings.size > 0), 'ask: waiting.register')
 
     const askUserTool: ToolEntry = {
       name: 'ask_user',
@@ -323,7 +323,7 @@ export const askPlugin: Plugin.Object = {
           .join('\n\n')
       },
     }
-    ctx.tools.register(askUserTool)
+    ctx.effect(() => ctx.tools.register(askUserTool), 'ask: tools.register')
 
     ctx.on('dsc/exit', () => {
       for (const card of [...pendings.values()]) {

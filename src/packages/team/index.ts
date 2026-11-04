@@ -138,6 +138,7 @@ export const teamPlugin: Plugin.Object = {
     })
 
     const offTool = ctx.tools.register(teamTaskTool())
+    ctx.effect(() => offTool, 'team: tools.register')
     const offPrompt = ctx.prompt.register('team', () => {
       const board = readBoard(ctx.session.current().meta.id)
       const lines = board.tasks.slice(0, 20).map((task) => {
@@ -152,6 +153,7 @@ ${lines.length === 0 ? '板上还没有任务。' : `板上的任务：\n${lines
 1. 多人协作先上任务板：create 时写清 write_scopes（打算改哪些路径），别人 claim 时才抢不过你；改状态要带 expected_revision。
 2. 认领前先 list：依赖没完成的任务开不了工；完成一条，等它的人就能开工。`
     })
+    ctx.effect(() => offPrompt, 'team: prompt.register')
 
     // ── 设置分区 ────────────────────────────────────────────────────────────
     const fields = (): SettingsField[] => [
@@ -173,6 +175,7 @@ ${lines.length === 0 ? '板上还没有任务。' : `板上的任务：\n${lines
       },
     }
     const offSection = ctx.settings.registerSection(section)
+    ctx.effect(() => offSection, 'team: settings.registerSection')
 
     // ── 卸载 ────────────────────────────────────────────────────────────────
     return () => {

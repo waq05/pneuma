@@ -413,6 +413,7 @@ export const fileReviewPlugin: Plugin.Object = {
       },
     }
     const offGuard = ctx.guards.register(guard)
+    ctx.effect(() => offGuard, 'file-review: guards.register')
 
     // ── /review 命令：不经模型就能确认这一位在不在链上、配置是什么 ────────────────
     const describe = (): string => {
@@ -431,6 +432,7 @@ export const fileReviewPlugin: Plugin.Object = {
       { name: 'file-review', args: '', description: '看改动前预览的状态与最近几次预览' },
       ({ ui }) => ui.notice(describe()),
     )
+    ctx.effect(() => offCommand, 'file-review: commands.register')
 
     // ── 设置分区 ──────────────────────────────────────────────────────────────
     const section: SettingsSectionSpec = {
@@ -507,6 +509,7 @@ export const fileReviewPlugin: Plugin.Object = {
       },
     }
     const offSection = ctx.settings.registerSection(section)
+    ctx.effect(() => offSection, 'file-review: settings.registerSection')
 
     ctx.on('dsc/session-open', () => {
       // 换会话清一次统计：上一个会话的预览数跟新会话没关系

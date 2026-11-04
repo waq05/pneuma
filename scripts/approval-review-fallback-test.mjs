@@ -90,6 +90,12 @@ function mount(reply, options = {}) {
       if (name === 'interactive') return { reachable: () => true }
       return undefined
     },
+    // 2026-11-04：插件的注册改成 ctx.effect 了（停用即注销）。桩 ctx 跟着 cordis：
+    // effect 跑一遍回调、返回它给的退订函数。
+    effect: (execute) => {
+      const off = execute()
+      return typeof off === 'function' ? off : () => {}
+    },
   }
   approvalPlugin.apply(ctx, undefined)
   const approval = services['approval']

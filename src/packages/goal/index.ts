@@ -129,7 +129,7 @@ export const goalPlugin: Plugin.Object = {
       },
     }
     ctx.provide('goal', service)
-    ctx.surfaces.register('goal', () => service.goalView())
+    ctx.effect(() => ctx.surfaces.register('goal', () => service.goalView()), 'goal: surfaces.register')
 
     const goalTool: ToolEntry = {
       name: 'goal',
@@ -178,17 +178,17 @@ export const goalPlugin: Plugin.Object = {
         throw new Error('action 只能是 create / complete / blocked（暂停恢复由用户用 /goal 命令做）')
       },
     }
-    ctx.tools.register(goalTool)
+    ctx.effect(() => ctx.tools.register(goalTool), 'goal: tools.register')
 
     // 摘要模型会把目标改写成另一句话，所以目标原文要原样带进压缩后的上下文。
-    ctx.compact.registerCarry(() => {
+    ctx.effect(() => ctx.compact.registerCarry(() => {
       const view = service.goalView()
       if (view === null) return ''
       return `会话目标：${view.objective}（已跑 ${view.rounds}/${view.maxRounds} 轮，阶段 ${view.phase}）`
-    })
+    }), 'goal: compact.registerCarry')
 
     // /goal：用户侧的目标操作（模型不能自己续命）。
-    ctx.commands.register(
+    ctx.effect(() => ctx.commands.register(
       { name: 'goal', args: '<目标 | pause | resume | clear | rounds>', description: '设置或控制会话目标（跨轮自动续跑）' },
       ({ args, ui }) => {
         const head = args[0] ?? ''
@@ -214,7 +214,7 @@ export const goalPlugin: Plugin.Object = {
         persist()
         ui.notice(`目标已建立：${result.snapshot.objective}（上限 ${result.snapshot.maxRounds} 轮）`)
       },
-    )
+    ), 'goal: commands.register')
 
     /**
      * 目标自动续跑：本轮干净结束后，目标还开着就自己补一条消息接着跑。
@@ -282,6 +282,7 @@ export const goalPlugin: Plugin.Object = {
       },
     }
     const offSection = ctx.settings.registerSection(section)
+    ctx.effect(() => offSection, 'goal: settings.registerSection')
 
     return () => offSection()
   },

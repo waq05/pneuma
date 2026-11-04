@@ -95,6 +95,11 @@ function mount(withLook) {
       registerSection: (section) => (sections.push(section), () => {}),
       about: () => ({ version: '0', apiVersion: 0, home, skillsDir: '', pluginsDir: '' }),
     },
+    // 2026-11-04：插件的注册改成 ctx.effect 了（停用即注销）。桩 ctx 跟着 cordis。
+    effect: (execute) => {
+      const off = execute()
+      return typeof off === 'function' ? off : () => {}
+    },
   }
   computerUsePlugin.apply(ctx, withLook ? { lookWithoutApproval: true } : {})
   return { tools, sections, guards }

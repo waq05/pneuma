@@ -91,7 +91,7 @@ export const opsPlugin: Plugin.Object = {
       if (!found.ok) return
       for (const off of offTools.splice(0)) off()
       for (const tool of createTools(found.file)) {
-        offTools.push(ctx.tools.register(tool))
+        offTools.push(ctx.effect(() => ctx.tools.register(tool), 'ops: tools.register'))
       }
     }
 
@@ -106,7 +106,7 @@ export const opsPlugin: Plugin.Object = {
       if (!found.ok) return found
       for (const off of offTools.splice(0)) off()
       for (const tool of createTools(found.file)) {
-        offTools.push(ctx.tools.register(tool))
+        offTools.push(ctx.effect(() => ctx.tools.register(tool), 'ops: tools.register #2'))
       }
       lookup = found
       return found
@@ -130,6 +130,7 @@ export const opsPlugin: Plugin.Object = {
           : '',
       { order: 60 },
     )
+    ctx.effect(() => offPrompt, 'ops: prompt.register')
 
     // ── 设置分区 ─────────────────────────────────────────────────────────────
 
@@ -209,6 +210,7 @@ export const opsPlugin: Plugin.Object = {
       },
     }
     const offSection = ctx.settings.registerSection(section)
+    ctx.effect(() => offSection, 'ops: settings.registerSection')
 
     return () => {
       offSection()

@@ -333,6 +333,7 @@ export const sandboxPlugin: Plugin.Object = {
       },
     }
     const offGuard = ctx.guards.register(guard)
+    ctx.effect(() => offGuard, 'sandbox: guards.register')
 
     // ── 系统提示段（降级必须可见）─────────────────────────────────────────────
 
@@ -404,6 +405,7 @@ export const sandboxPlugin: Plugin.Object = {
     const offPrompt = ctx.prompt.registerEnvFacts('sandbox', (session) =>
       promptText({ sessionId: session?.meta.id, cwd: session?.meta.cwd }),
     )
+    ctx.effect(() => offPrompt, 'sandbox: prompt.registerEnvFacts')
 
     // ── 后端探测与降级 ────────────────────────────────────────────────────────
 
@@ -799,6 +801,7 @@ export const sandboxPlugin: Plugin.Object = {
       },
     }
     const offSection = ctx.settings.registerSection(section)
+    ctx.effect(() => offSection, 'sandbox: settings.registerSection')
 
     // ── /sandbox 命令 ─────────────────────────────────────────────────────────
 
@@ -808,6 +811,7 @@ export const sandboxPlugin: Plugin.Object = {
         ui.notice(report())
       },
     )
+    ctx.effect(() => offCommand, 'sandbox: commands.register')
 
     // ── 对外服务 ─────────────────────────────────────────────────────────────
 

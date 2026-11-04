@@ -359,7 +359,7 @@ export const ptcPlugin: Plugin.Object = {
       return changesList.length === 0 ? { text } : { text, changesList }
     }
 
-    ctx.tools.register({
+    ctx.effect(() => ctx.tools.register({
       name: 'run_code',
       description: RUN_CODE_DESCRIPTION(deadlineMs()),
       parameters: {
@@ -381,7 +381,7 @@ export const ptcPlugin: Plugin.Object = {
           id: runCtx.sessionId,
           path: runCtx.sessionPath,
         }),
-    })
+    }), 'ptc: tools.register')
   },
 }
 

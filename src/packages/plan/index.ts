@@ -146,8 +146,8 @@ export const planPlugin: Plugin.Object = {
       },
     }
     ctx.provide('plan', service)
-    ctx.surfaces.register('pendingPlan', () => service.pendingPlan())
-    ctx.waiting.register('plan', () => pendings.size > 0 || restored !== null)
+    ctx.effect(() => ctx.surfaces.register('pendingPlan', () => service.pendingPlan()), 'plan: surfaces.register')
+    ctx.effect(() => ctx.waiting.register('plan', () => pendings.size > 0 || restored !== null), 'plan: waiting.register')
 
     // ── 「计划」区（状态面板）：本会话提交过的计划目录 ──────────────────────────
     //
@@ -158,14 +158,14 @@ export const planPlugin: Plugin.Object = {
     // 归属，扫盘分不出哪份是谁交的，所以面板不拿它当数据源。
     // 待批的那张不进目录（只有终结时才入账；挂着的那张在输入框上方的评审卡里）。
     // 引入这份账之前的老会话没有它——目录空着，不回溯（要翻文件用右侧栏文件树）。
-    ctx.surfaces.register('planDirectory', (): PlanEntryView[] => {
+    ctx.effect(() => ctx.surfaces.register('planDirectory', (): PlanEntryView[] => {
       const items = ctx.session.current().state('plans')?.items ?? []
       return items
         .slice()
         .sort((left, right) => right.at - left.at)
         .slice(0, PLAN_DIRECTORY_LIMIT)
         .map(({ file, title, at }) => ({ file, title, at }))
-    })
+    }), 'plan: surfaces.register #2')
 
     const exitPlanTool: ToolEntry = {
       name: 'exit_plan_mode',
@@ -204,7 +204,7 @@ export const planPlugin: Plugin.Object = {
         return `用户没有批准这份计划（${file}）。${feedback}留在计划模式：把用户的反馈吸收进方案，改完再交一份完整的新计划。`
       },
     }
-    ctx.tools.register(exitPlanTool)
+    ctx.effect(() => ctx.tools.register(exitPlanTool), 'plan: tools.register')
 
     ctx.on('dsc/session-open', ({ session, filePath }) => {
       // 0.6.49 常驻模型：切会话不再收尾挂起的评审（后台会话的卡继续等它的用户，

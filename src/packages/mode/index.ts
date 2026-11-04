@@ -87,7 +87,7 @@ export const modePlugin: Plugin.Object = {
     // 原来它是一段 order 30 的系统提示段，换一次模式系统提示词就从头不同，服务端前缀
     // 缓存整段失效——一次 /plan 就能把几十 K 的命中打成未命中。挪到快照之后：
     // 前缀原样复用，模型每轮照样读到当前模式的规则（plan 的禁令一个字都不少）。
-    ctx.prompt.registerEnvFacts('mode', (session) => modeSpec(modeFor(session?.meta.id)).prompt)
+    ctx.effect(() => ctx.prompt.registerEnvFacts('mode', (session) => modeSpec(modeFor(session?.meta.id)).prompt), 'mode: prompt.registerEnvFacts')
 
     // 闸门：执行档一律交给后面的权限模式与审批卡；其余三档照 core/modes.ts 的判法说话。
     const modeGuard: ToolGuard = {
@@ -116,8 +116,8 @@ export const modePlugin: Plugin.Object = {
         return gate.action === 'pass' ? { action: 'pass' } : { action: 'defer' }
       },
     }
-    ctx.guards.register(modeGuard)
-    ctx.surfaces.register('mode', () => service.surface())
+    ctx.effect(() => ctx.guards.register(modeGuard), 'mode: guards.register')
+    ctx.effect(() => ctx.surfaces.register('mode', () => service.surface()), 'mode: surfaces.register')
 
     // 恢复历史会话：模式跟着回来（不重复写记录，也不重复播报切换）。
     ctx.on('dsc/session-open', ({ session }) => {
@@ -128,7 +128,7 @@ export const modePlugin: Plugin.Object = {
     ctx.emit('dsc/mode-changed', modeOf(ctx.session.current()))
 
     /** `/mode <档位>`：支持中文别名（计划 / 探索 / 免打扰 / 执行）。 */
-    ctx.commands.register(
+    ctx.effect(() => ctx.commands.register(
       { name: 'mode', args: '<执行|计划|探索|免打扰>', description: '切换协作模式（写进会话记录，恢复会话时一起恢复）' },
       ({ args, ui }) => {
         const token = args[0] ?? ''
@@ -139,12 +139,12 @@ export const modePlugin: Plugin.Object = {
         }
         apply(next)
       },
-    )
+    ), 'mode: commands.register')
 
     // `/plan`、`/explore`、`/quiet`、`/build`：切档 + 把带进来的那句话照常发出去。
     for (const [name, target] of Object.entries(COMMAND_MODES)) {
       if (name === 'mode') continue
-      ctx.commands.register(
+      ctx.effect(() => ctx.commands.register(
         {
           name,
           args: '[要处理的事]',
@@ -163,7 +163,7 @@ export const modePlugin: Plugin.Object = {
           // 带着话进来的时候顺手把它发出去：`/plan 给审批层加四档授权` 一句话就开工。
           if (rest !== '') runtime.submit(rest)
         },
-      )
+      ), 'mode: commands.register #2')
     }
   },
 }

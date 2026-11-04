@@ -484,9 +484,9 @@ export const computerUsePlugin: Plugin.Object = {
     const syncTools = (): void => {
       for (const off of disposers) off()
       disposers = []
-      disposers.push(ctx.tools.register(buildActTool()))
-      if (config.lookWithoutApproval) disposers.push(ctx.tools.register(buildLookTool()))
-      disposers.push(ctx.prompt.register('computer-use', promptText))
+      disposers.push(ctx.effect(() => ctx.tools.register(buildActTool()), 'computer-use: tools.register'))
+      if (config.lookWithoutApproval) disposers.push(ctx.effect(() => ctx.tools.register(buildLookTool()), 'computer-use: tools.register #2'))
+      disposers.push(ctx.effect(() => ctx.prompt.register('computer-use', promptText), 'computer-use: prompt.register'))
     }
     syncTools()
 
@@ -500,6 +500,7 @@ export const computerUsePlugin: Plugin.Object = {
         return canonicalAction(String(input.args.action ?? '')) === 'stop' ? { action: 'pass' } : { action: 'defer' }
       },
     })
+    ctx.effect(() => offStopGuard, 'computer-use: guards.register')
 
     // 旧截图的图像卸载交给内核通用的 image-diet 投影（plugins/prompt.ts，order 550）：
     // 它按 toolImageBudget 保留最近 N 张工具结果图，电脑控制的截图与别的工具结果同一口径。
@@ -614,6 +615,7 @@ export const computerUsePlugin: Plugin.Object = {
       },
     }
     const offSection = ctx.settings.registerSection(section)
+    ctx.effect(() => offSection, 'computer-use: settings.registerSection')
 
     return () => {
       offSection()

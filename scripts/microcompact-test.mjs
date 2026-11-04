@@ -347,6 +347,12 @@ console.log('[1c] 插件策略：清理量不到门槛不清 / 队友汇报不�
         provided = service
         return () => {}
       },
+      // 2026-11-04：插件的注册改成 ctx.effect 了（停用即注销）。桩 ctx 跟着 cordis：
+      // effect 跑一遍回调、返回它给的退订函数，桩里的行为与真内核一致。
+      effect: (execute) => {
+        const off = execute()
+        return typeof off === 'function' ? off : () => {}
+      },
     }
     microcompactPlugin.apply(ctx, {})
     return { projection, section, provided }

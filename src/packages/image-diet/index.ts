@@ -101,6 +101,7 @@ export const imageDietPlugin: Plugin.Object = {
       },
     }
     const offSection = ctx.settings.registerSection(section)
+    ctx.effect(() => offSection, 'image-diet: settings.registerSection')
 
     return () => offSection()
   },

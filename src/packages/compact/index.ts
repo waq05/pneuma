@@ -433,7 +433,7 @@ export const compactPlugin: Plugin.Object = {
       },
     }
 
-    ctx.commands.register(
+    ctx.effect(() => ctx.commands.register(
       { name: 'compact', args: '', description: '压缩上下文' },
       ({ args, runtime, ui }) => {
         // 与 dsh 同一条口径：这条命令不吃参数，多打的字是被截断的误操作，直说用法
@@ -443,7 +443,7 @@ export const compactPlugin: Plugin.Object = {
         }
         void runtime.compact()
       },
-    )
+    ), 'compact: commands.register')
     ctx.provide('compact', service)
 
     const fields: SettingsField[] = [
@@ -568,6 +568,7 @@ export const compactPlugin: Plugin.Object = {
       },
     }
     const offSection = ctx.settings.registerSection(section)
+    ctx.effect(() => offSection, 'compact: settings.registerSection')
 
     return () => offSection()
   },

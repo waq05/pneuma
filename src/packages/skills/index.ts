@@ -143,12 +143,12 @@ export const skillsPlugin: Plugin.Object = {
         if (commandDisposers.has(name)) continue
         commandDisposers.set(
           name,
-          ctx.commands.register(
+          ctx.effect(() => ctx.commands.register(
             { name, args: '[需求]', description: `技能：${definition.description.slice(0, 36)}` },
             ({ args, runtime, ui }) => {
               void runSkillCommand(name, args.join(' '), runtime, ui)
             },
-          ),
+          ), 'skills: commands.register'),
         )
       }
     }
@@ -348,7 +348,7 @@ export const skillsPlugin: Plugin.Object = {
     }
 
     // ── `skill` 工具：模型按名字取正文 ──
-    ctx.tools.register({
+    ctx.effect(() => ctx.tools.register({
       name: 'skill',
       description:
         '按名字加载一个技能的完整正文（正文里通常包含步骤、脚本路径与注意事项）。' +
@@ -370,10 +370,10 @@ export const skillsPlugin: Plugin.Object = {
         const location = loaded.skill.path === undefined ? '' : `\n<skill_location>${loaded.skill.path}</skill_location>`
         return `<skill_content name="${name}">\n${loaded.skill.content}\n</skill_content>${location}`
       },
-    })
+    }), 'skills: tools.register')
 
     // ── /skills：清单与用法（有选择器的端开浮层，没接的端 notice 清单）──
-    ctx.commands.register({ name: 'skills', args: '', description: '查看技能清单，可在技能中心启停' }, ({ ui }) => {
+    ctx.effect(() => ctx.commands.register({ name: 'skills', args: '', description: '查看技能清单，可在技能中心启停' }, ({ ui }) => {
       if (ui.openSkills !== undefined) {
         ui.openSkills()
         return
@@ -391,7 +391,7 @@ export const skillsPlugin: Plugin.Object = {
         return `/${item.name}\t${item.description.slice(0, 46)}${flags === '' ? '' : `（${flags}）`}`
       })
       ui.notice(`技能（${items.length} 个，主目录 ${DSC_SKILLS_DIR}）\n${lines.join('\n')}`)
-    })
+    }), 'skills: commands.register #2')
 
     ctx.on('dsc/session-open', () => {
       // 同一个工作区内换会话：技能目录（含工作区里的定制目录）一个字节都没变，重扫一遍

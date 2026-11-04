@@ -355,7 +355,7 @@ export const toolSearchPlugin: Plugin.Object = {
       },
     }
 
-    for (const tool of [searchTool, describeTool, callTool]) disposers.push(ctx.tools.register(tool))
+    for (const tool of [searchTool, describeTool, callTool]) disposers.push(ctx.effect(() => ctx.tools.register(tool), 'tool-search: tools.register'))
 
     // ── 设置分区 ──────────────────────────────────────────────────────────────
 
@@ -502,6 +502,7 @@ export const toolSearchPlugin: Plugin.Object = {
       },
     }
     const offSection = ctx.settings.registerSection(section)
+    ctx.effect(() => offSection, 'tool-search: settings.registerSection')
     disposers.push(offSection)
 
     // 三个桥接工具已经挂上，现在按配置撤一轮

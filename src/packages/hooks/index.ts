@@ -318,10 +318,12 @@ export const hooksPlugin: Plugin.Object = {
     }
 
     const offGuard = ctx.guards.register(guard)
+    ctx.effect(() => offGuard, 'hooks: guards.register')
     const offObserver = ctx.guards.registerObserver(observer)
+    ctx.effect(() => offObserver, 'hooks: guards.registerObserver')
     ctx.provide('hooks', service)
 
-    ctx.commands.register({ name: 'hooks', args: '', description: '看安全钩子的状态（规则、脚本、批准情况）' }, ({ ui }) => {
+    ctx.effect(() => ctx.commands.register({ name: 'hooks', args: '', description: '看安全钩子的状态（规则、脚本、批准情况）' }, ({ ui }) => {
       const doc = readHooks()
       const lines: string[] = []
       lines.push(`安全钩子：${doc.settings.enabled ? '开着' : '关着'}｜规则 ${doc.rules.length} 条（启用 ${doc.rules.filter((rule) => rule.enabled).length}）｜脚本 ${doc.scripts.length} 条`)
@@ -331,7 +333,7 @@ export const hooksPlugin: Plugin.Object = {
       }
       for (const problem of doc.problems) lines.push(`  ⚠ ${problem}`)
       ui.notice(lines.join('\n'))
-    })
+    }), 'hooks: commands.register')
 
     // ── 设置分区 ──────────────────────────────────────────────────────────────
 
@@ -695,6 +697,7 @@ export const hooksPlugin: Plugin.Object = {
       },
     }
     const offSection = ctx.settings.registerSection(section)
+    ctx.effect(() => offSection, 'hooks: settings.registerSection')
 
     ctx.on('dsc/session-open', ({ session }) => {
       warned.clear()

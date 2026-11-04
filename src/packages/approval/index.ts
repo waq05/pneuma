@@ -1010,7 +1010,7 @@ function firstSentence(text: string): string {
     ctx.provide('approval', service)
 
     // 这套裁决挂在守卫链上（模式那道闸门在先，审批在後），循环因此不认识「审批」这个功能。
-    ctx.guards.register(
+    ctx.effect(() => ctx.guards.register(
       toolApprovalGuard({
         id: 'approval',
         approve: (input) =>
@@ -1031,14 +1031,14 @@ function firstSentence(text: string): string {
         // 用户点「拒绝」时回给模型的原话：老会话日志按这句话认「被拒」，不能改。
         deniedReason: REJECTED_TOOL_TEXT,
       }),
-    )
+    ), 'approval: guards.register')
     // 工具结果里的密钥形状字符串不落盘、不进上下文：遮红挂在结果观察者链上。
     const redactObserver: ToolObserver = { id: 'approval', order: 10, observe: (_toolName, text) => redact(text) }
-    ctx.guards.registerObserver(redactObserver)
+    ctx.effect(() => ctx.guards.registerObserver(redactObserver), 'approval: guards.registerObserver')
 
-    ctx.surfaces.register('policy', () => service.surface())
-    ctx.surfaces.register('pendingApproval', () => service.pendingView())
-    ctx.waiting.register('approval', () => pendings.size > 0)
+    ctx.effect(() => ctx.surfaces.register('policy', () => service.surface()), 'approval: surfaces.register')
+    ctx.effect(() => ctx.surfaces.register('pendingApproval', () => service.pendingView()), 'approval: surfaces.register #2')
+    ctx.effect(() => ctx.waiting.register('approval', () => pendings.size > 0), 'approval: waiting.register')
 
     ctx.on('dsc/mode-changed', (mode) => {
       modeForCard = mode

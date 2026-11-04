@@ -825,10 +825,10 @@ export const dockBrowserPlugin: Plugin.Object = {
     const syncTools = (): void => {
       for (const off of toolOffs) off()
       toolOffs = []
-      toolOffs.push(ctx.tools.register(actTool))
+      toolOffs.push(ctx.effect(() => ctx.tools.register(actTool), 'dock-browser: tools.register'))
       // 只读工具默认不注册：dock 视图跑在用户自己的持久分区里（带登录态），
       // 只有显式打开 lookWithoutApproval 才以 read 档放行（照 computer-use.ts 的先例）。
-      if (config.lookWithoutApproval) toolOffs.push(ctx.tools.register(lookTool))
+      if (config.lookWithoutApproval) toolOffs.push(ctx.effect(() => ctx.tools.register(lookTool), 'dock-browser: tools.register #2'))
     }
     syncTools()
 
@@ -865,6 +865,7 @@ export const dockBrowserPlugin: Plugin.Object = {
       },
     }
     const offSection = ctx.settings.registerSection(section)
+    ctx.effect(() => offSection, 'dock-browser: settings.registerSection')
 
     // ── 收尾 ────────────────────────────────────────────────────────────────
 

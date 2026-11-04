@@ -365,9 +365,11 @@ export const memoryPlugin: Plugin.Object = {
     }
 
     const offTool = ctx.tools.register(memoryTool)
+    ctx.effect(() => offTool, 'memory: tools.register')
     // 并进 `# agentsMd` 块（与 AGENTS.md 同一块）；每次组装请求时取一次文本，
     // 所以写入后 rebuild 的当轮效果 = 「同一个会话的下一次请求就带新的记忆」。
     const offPrompt = ctx.prompt.register('memory', () => promptText(), { order: 60, block: 'agents-md' })
+    ctx.effect(() => offPrompt, 'memory: prompt.register')
 
     // ── 服务 ────────────────────────────────────────────────────────────────
 
@@ -388,7 +390,7 @@ export const memoryPlugin: Plugin.Object = {
 
     // ── /memory ────────────────────────────────────────────────────────────
 
-    ctx.commands.register(
+    ctx.effect(() => ctx.commands.register(
       { name: 'memory', args: '[show | eval | refresh | prune [global|user|workspace] | clear <global|user|workspace>]', description: '看长期记忆：额度、条目、文件位置、使用评估' },
       ({ args, ui }) => {
         const sub = (args[0] ?? 'show').toLowerCase()
@@ -439,7 +441,7 @@ export const memoryPlugin: Plugin.Object = {
         })
         ui.notice(`长期记忆（注入给模型的栏位 ${String(snapshot.length)} 字；写入后本会话下一次请求就用最新的）：\n${lines.join('\n')}`)
       },
-    )
+    ), 'memory: commands.register')
 
     // ── 设置分区 ─────────────────────────────────────────────────────────────
 
@@ -731,6 +733,7 @@ export const memoryPlugin: Plugin.Object = {
       },
     }
     const offSection = ctx.settings.registerSection(section)
+    ctx.effect(() => offSection, 'memory: settings.registerSection')
 
     // ── 生命周期 ─────────────────────────────────────────────────────────────
 

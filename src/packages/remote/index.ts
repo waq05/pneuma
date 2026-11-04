@@ -711,6 +711,7 @@ export const remotePlugin: Plugin.Object = {
       prevCardKey = card?.key ?? null
     }
     const offTransitions = ctx.transcript.subscribe(watchTransitions)
+    ctx.effect(() => offTransitions, 'remote: transcript.subscribe')
 
     /** 一轮结束：用过 15 秒以上、或者这一轮出现过等人的卡，才值得推一条。 */
     const onTurnEnd = (): void => {
@@ -1057,11 +1058,13 @@ export const remotePlugin: Plugin.Object = {
     // 远程控制是内核级功能：桌面端设置页只列 builtin 分区，这里声明 inSettings
     // 让它进设置页（插件中心那张卡照旧不放它，避免同一处配置两个入口）。
     const offSection = ctx.settings.registerSection(section, { inSettings: true })
+    ctx.effect(() => offSection, 'remote: settings.registerSection')
 
     // 设置页改开关 / 改端口都走 settings.setPrefs，写盘那一刻就会回调到这里
     const offPrefs = ctx.settings.watchPrefs(() => {
       applyPrefs()
     })
+    ctx.effect(() => offPrefs, 'remote: settings.watchPrefs')
 
     // 宿主请求打开会话选择面板：转给手机上那张界面（批 B 会切到会话列表页）
     ctx.on('dsc/open-picker', () => {
@@ -1074,7 +1077,16 @@ export const remotePlugin: Plugin.Object = {
     }
     process.once('exit', onProcessExit)
 
-    ctx.on('dsc/exit', () => {
+    /**
+     * 收尾：退登记、退订阅、关监听端口、放掉主控位。
+     *
+     * 宿主退出（dsc/exit）与插件热停用共用这一份——热停用不会触发 dsc/exit，
+     * 只在那边收的话，停用之后分区、订阅与端口都留在原地。
+     */
+    let disposed = false
+    const dispose = (): void => {
+      if (disposed) return
+      disposed = true
       process.removeListener('exit', onProcessExit)
       offSection()
       offPrefs()
@@ -1083,7 +1095,9 @@ export const remotePlugin: Plugin.Object = {
       clearRetry()
       stopServer()
       owner.release()
-    })
+    }
+    ctx.effect(() => () => dispose(), 'remote: 停用即关掉远程控制')
+    ctx.on('dsc/exit', dispose)
 
     applyPrefs()
   },

@@ -82,6 +82,7 @@ export const spillPlugin: Plugin.Object = {
       },
     }
     const offObserver = ctx.guards.registerObserver(observer)
+    ctx.effect(() => offObserver, 'spill: guards.registerObserver')
 
     // ── 设置分区 ─────────────────────────────────────────────────────────────
 
@@ -221,6 +222,7 @@ export const spillPlugin: Plugin.Object = {
       },
     }
     const offSection = ctx.settings.registerSection(section)
+    ctx.effect(() => offSection, 'spill: settings.registerSection')
 
     return () => {
       offObserver()

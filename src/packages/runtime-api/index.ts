@@ -83,7 +83,7 @@ export const runtimeApiPlugin: Plugin.Object = {
       presets: describePresets,
     }
 
-    ctx.tools.register({
+    ctx.effect(() => ctx.tools.register({
       name: 'runtime_api',
       description: `只读查询当前运行时的真状态：内核 API 版本、已挂插件、工具目录、系统提示段、守卫链、快照片段、模式清单。
 
@@ -122,6 +122,6 @@ export const runtimeApiPlugin: Plugin.Object = {
             : TOPICS.map((name) => `## ${name}\n${BUILDERS[name]()}`).join('\n\n')
         return `${header}\n\n${body}`
       },
-    })
+    }), 'runtime-api: tools.register')
   },
 }

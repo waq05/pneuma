@@ -151,13 +151,13 @@ export const gitPlugin: Plugin.Object = {
     //      就是「打开窗口后半天没有这颗钮」（实机走查抓到的正是这一条）；
     //   2. 读数已经过期（停过一阵又有人来读）：慢档那一档（30s）之后回来的一帧说明
     //      「界面又来要了」，此刻手上的值已经过时。
-    ctx.surfaces.register('git', (): GitSurface => {
+    ctx.effect(() => ctx.surfaces.register('git', (): GitSurface => {
       const now = Date.now()
       const first = lastReadAt === 0
       lastReadAt = now
       if (first || now - fetchedAt > POLL_CLEAN_MS) schedule(0)
       return cache
-    })
+    }), 'git: surfaces.register')
 
     // 三处催拍：回合收工（这一轮可能落了文件/切了分支）、换会话（换了工作区）、
     // 以及写类 git op 自己调 refresh()（那条在 desktop-dock 里）。

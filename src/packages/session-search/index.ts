@@ -164,6 +164,7 @@ export const sessionSearchPlugin: Plugin.Object = {
       },
     }
     const offTool = ctx.tools.register(tool)
+    ctx.effect(() => offTool, 'session-search: tools.register')
 
     // ── /search ──────────────────────────────────────────────────────────────
 
@@ -196,6 +197,7 @@ export const sessionSearchPlugin: Plugin.Object = {
           })
       },
     )
+    ctx.effect(() => offCommand, 'session-search: commands.register')
 
     // ── 设置分区 ─────────────────────────────────────────────────────────────
 
@@ -343,6 +345,7 @@ export const sessionSearchPlugin: Plugin.Object = {
       },
     }
     const offSection = ctx.settings.registerSection(section)
+    ctx.effect(() => offSection, 'session-search: settings.registerSection')
 
     return () => {
       disposed = true

@@ -187,13 +187,16 @@ export const lspPlugin: Plugin.Object = {
       manager.dispose()
     })
     const offTool = ctx.tools.register(buildTool())
+    ctx.effect(() => offTool, 'lsp: tools.register')
     const offGuard = ctx.guards.register({
       id: 'lsp-observe',
       // 排在协作模式（10）与审批（30）之前：这里只记一份写前留底，不做任何拦阻。
       order: 7,
       decide: (input) => captureBaseline(input),
     })
+    ctx.effect(() => offGuard, 'lsp: guards.register')
     const offObserver = ctx.guards.registerObserver(buildObserver())
+    ctx.effect(() => offObserver, 'lsp: guards.registerObserver')
     // 诊断不在会话日志里，塞进请求的同时必须落一条 note（Model-visible ⟺ logged）：
     // 按请求所属会话取自己那份——后台会话的写诊断不能补进你正在看的会话。
     const offProjection = ctx.prompt.registerProjection('lsp-write-diagnostics', (messages: ChatMessage[], session): ChatMessage[] => {
@@ -209,7 +212,9 @@ export const lspPlugin: Plugin.Object = {
       target.appendNote('lsp-write-diagnostics', text)
       return [...messages, { role: 'user', content: text }]
     })
+    ctx.effect(() => offProjection, 'lsp: prompt.registerProjection')
     const offSection = ctx.settings.registerSection(buildSection())
+    ctx.effect(() => offSection, 'lsp: settings.registerSection')
     const offPrompt = ctx.prompt.register(
       'lsp',
       () => {
@@ -218,6 +223,7 @@ export const lspPlugin: Plugin.Object = {
       },
       { order: 42 },
     )
+    ctx.effect(() => offPrompt, 'lsp: prompt.register')
     // 服务先挂上：晚一步就有人会读到 undefined。
     const offService = ctx.provide('lsp', buildService())
 

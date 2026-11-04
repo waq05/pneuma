@@ -132,11 +132,11 @@ export const todoPlugin: Plugin.Object = {
     }
     ctx.provide('todo', service)
 
-    ctx.tools.register(todoTool(todos, () => ctx.emit('dsc/changed')))
+    ctx.effect(() => ctx.tools.register(todoTool(todos, () => ctx.emit('dsc/changed'))), 'todo: tools.register')
 
-    ctx.surfaces.register('todos', () => service.todoView())
+    ctx.effect(() => ctx.surfaces.register('todos', () => service.todoView()), 'todo: surfaces.register')
     // 压缩摘要会把清单改写走样，所以整表要原样带过去（压缩插件只问注册表要文本）。
-    ctx.compact.registerCarry(() => service.todoPrompt())
+    ctx.effect(() => ctx.compact.registerCarry(() => service.todoPrompt()), 'todo: compact.registerCarry')
 
     // ── 节流提醒投影（默认开）──────────────────────────────────────────────
     // 长会话里模型会把「做完一步就改状态」忘掉，光靠工具说明里的静态叮嘱拉不回来。
@@ -158,6 +158,7 @@ export const todoPlugin: Plugin.Object = {
       // order 800：排在 env-facts(600) 之后（提醒要落在环境快照之后，也在 drop-images(900) 之前）
       { order: 800 },
     )
+    ctx.effect(() => offReminder, 'todo: prompt.registerProjection')
 
     const reminderFields: SettingsField[] = [
       {
@@ -203,8 +204,9 @@ export const todoPlugin: Plugin.Object = {
       },
     }
     const offReminderSection = ctx.settings.registerSection(reminderSection)
+    ctx.effect(() => offReminderSection, 'todo: settings.registerSection')
 
-    ctx.commands.register(
+    ctx.effect(() => ctx.commands.register(
       { name: 'todo', args: '[clear]', description: '查看或清空本次任务清单' },
       ({ args, ui }) => {
         if (args[0] === 'clear') {
@@ -214,7 +216,7 @@ export const todoPlugin: Plugin.Object = {
         const text = todos.formatForPrompt()
         ui.notice(text === '' ? '当前没有任务清单。' : text)
       },
-    )
+    ), 'todo: commands.register')
 
     ctx.on('dsc/session-open', ({ session }) => {
       const items = session.state('todos')

@@ -153,6 +153,7 @@ export const microcompactPlugin: Plugin.Object = {
       },
       { order: PROJECTION_ORDER },
     )
+    ctx.effect(() => offProjection, 'microcompact: prompt.registerProjection')
 
     /**
      * 投影估算服务（2026-11-02）：把旧工具结果换成占位符之后，整段消息的估算 token 数。
@@ -268,6 +269,7 @@ export const microcompactPlugin: Plugin.Object = {
       },
     }
     const offSection = ctx.settings.registerSection(section)
+    ctx.effect(() => offSection, 'microcompact: settings.registerSection')
 
     return () => {
       offService()

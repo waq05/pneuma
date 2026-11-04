@@ -379,7 +379,17 @@ export const hostStdioPlugin: Plugin.Object = {
       }
     })
 
-    ctx.on('dsc/exit', () => {
+    /**
+     * 收尾：退订阅、清定时器、关传输。
+     *
+     * 宿主退出（dsc/exit）与插件热停用共用这一份——热停用不会触发 dsc/exit，
+     * 只在那边收的话，节流定时器会在 fiber 卸掉之后照常触发，读快照时撞上已失效的
+     * ctx（cannot get required service … in inactive context），把宿主进程整个掀翻。
+     */
+    let disposed = false
+    const dispose = (): void => {
+      if (disposed) return
+      disposed = true
       // 进程要退了：把还挂着等桌面壳应答的请求全部拒掉，别留下悬着的 Promise。
       // 桌面壳不会再有机会回这些 id（它那边也在收尾），照「正在退出」说明白。
       for (const pending of [...browserPending.values()]) {
@@ -388,9 +398,14 @@ export const hostStdioPlugin: Plugin.Object = {
       unsubscribe()
       offBrowser()
       offInteractive()
-      if (timer !== null) clearTimeout(timer)
+      if (timer !== null) {
+        clearTimeout(timer)
+        timer = null
+      }
       transport.dispose()
-    })
+    }
+    ctx.effect(() => () => dispose(), 'host-stdio: 停用即关传输')
+    ctx.on('dsc/exit', dispose)
 
     // 命令 handler 请求打开 UI 面板（如 /resume）——转发给宿主壳
     ctx.on('dsc/open-picker', () => {

@@ -155,6 +155,7 @@ export const mcpPlugin: Plugin.Object = {
     // 先把服务挂上再连：晚一步就有人会读到 undefined
     const offService = ctx.provide('mcp', buildService())
     const offSection = ctx.settings.registerSection(buildSection())
+    ctx.effect(() => offSection, 'mcp: settings.registerSection')
     // 宿主退出时只发事件就退进程，不走 cordis 卸载：子进程得在这一步收掉，
     // 否则每退一次 Pneuma 就留一群 MCP server 在后台
     const offExit = ctx.on('dsc/exit', () => {
@@ -245,11 +246,11 @@ export const mcpPlugin: Plugin.Object = {
         declared.length > INSTRUCTIONS_CAP ? `${declared.slice(0, INSTRUCTIONS_CAP)}…（说明过长已截断）` : declared
       instructionDisposers.set(
         state.config.name,
-        ctx.prompt.register(
+        ctx.effect(() => ctx.prompt.register(
           `mcp-instructions-${state.config.name}`,
           () => `MCP 服务器「${state.config.name}」对自己工具的用法交代：\n${clipped}`,
           { order: 55 },
-        ),
+        ), 'mcp: prompt.register'),
       )
     }
 

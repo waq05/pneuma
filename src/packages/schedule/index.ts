@@ -225,7 +225,7 @@ export const schedulePlugin: Plugin.Object = {
     // dsc 没有工作流引擎；这一区绑的是最接近的「按规则自动跑一轮」——定时任务。
     // 投影只读（暂停 / 恢复 / 立即跑仍走工具与 /schedule 命令那一套）；插件关着时
     // 整份投影缺席（`RuntimeSurfaces.scheduled` 可选），界面按「没有这一区」处理。
-    ctx.surfaces.register('scheduled', (): ScheduledTaskView[] =>
+    ctx.effect(() => ctx.surfaces.register('scheduled', (): ScheduledTaskView[] =>
       store.list().map((task) => ({
         id: task.id,
         title: task.title,
@@ -234,7 +234,7 @@ export const schedulePlugin: Plugin.Object = {
         lastStatus: task.lastStatus,
         lastError: task.lastError,
       })),
-    )
+    ), 'schedule: surfaces.register')
 
     // ── 工具：schedule（单工具按 action 分发）──────────────────────────────────
     const toolDisposer = ctx.tools.register({
@@ -351,6 +351,7 @@ export const schedulePlugin: Plugin.Object = {
         }
       },
     })
+    ctx.effect(() => toolDisposer, 'schedule: tools.register')
 
     // ── 命令：/schedule ────────────────────────────────────────────────────────
     const commandDisposer = ctx.commands.register(
@@ -433,6 +434,7 @@ export const schedulePlugin: Plugin.Object = {
         ui.notice(usage)
       },
     )
+    ctx.effect(() => commandDisposer, 'schedule: commands.register')
 
     // ── 系统提示：只在「总开关开着且有启用的任务」时注入 ────────────────────────
     const promptDisposer = ctx.prompt.register(
@@ -456,6 +458,7 @@ export const schedulePlugin: Plugin.Object = {
       },
       { order: 41 },
     )
+    ctx.effect(() => promptDisposer, 'schedule: prompt.register')
 
     // ── 会话结束对账：把「投出去了但回合失败」接回到重试策略上 ───────────────────
     const turnEndDisposer = ctx.on('dsc/turn-end', (reason, signal) => {
@@ -570,6 +573,7 @@ export const schedulePlugin: Plugin.Object = {
       },
     }
     const sectionDisposer = ctx.settings.registerSection(section)
+    ctx.effect(() => sectionDisposer, 'schedule: settings.registerSection')
 
     // 启动：拿锁 + 先跑一次 catch-up + 排下一次唤醒（内部是 unref 的单个定时器）。
     runner.start()

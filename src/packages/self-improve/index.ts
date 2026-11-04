@@ -681,7 +681,7 @@ export const selfImprovePlugin: Plugin.Object = {
         return result.ok ? result.notice : result.error
       },
     }
-    disposers.push(ctx.tools.register(skillWriteTool))
+    disposers.push(ctx.effect(() => ctx.tools.register(skillWriteTool), 'self-improve: tools.register'))
 
     // 审批只问一次（2026-10-30 修）：skill_write 是 write 档，循环先按它问一遍审批卡（通用卡，
     // 只说「工作区外的改动」），工具自己执行前又按「create 哪个技能」问一遍——同一个动作两张卡。
@@ -689,14 +689,14 @@ export const selfImprovePlugin: Plugin.Object = {
     // 只跳过审批这一格，模式闸门（10）、沙箱（8）、安全钩子（20）与生命周期钩子（25）照问。
     // 关掉 requireApproval 时不跳过，退回「由通用审批卡把关」的老行为。
     disposers.push(
-      ctx.guards.register({
+      ctx.effect(() => ctx.guards.register({
         id: 'self-improve',
         order: 29,
         decide(input: ToolGuardInput) {
           if (input.toolName !== 'skill_write') return { action: 'defer' }
           return config.requireApproval ? { action: 'pass' } : { action: 'defer' }
         },
-      }),
+      }), 'self-improve: guards.register'),
     )
 
     // ── L1/L3：learning 工具（候选清单）────────────────────────────────────────
@@ -800,12 +800,12 @@ export const selfImprovePlugin: Plugin.Object = {
         return 'action 只能是 propose / list / promote / drop'
       },
     }
-    disposers.push(ctx.tools.register(learningTool))
+    disposers.push(ctx.effect(() => ctx.tools.register(learningTool), 'self-improve: tools.register #2'))
 
     // ── 命令 ────────────────────────────────────────────────────────────────────
 
     disposers.push(
-      ctx.commands.register(
+      ctx.effect(() => ctx.commands.register(
         { name: 'learn', args: '[目标]', description: '把刚才这件事（或指定目标）沉淀成一个技能草稿' },
         ({ args, ui }) => {
           if (!config.enabled) {
@@ -815,11 +815,11 @@ export const selfImprovePlugin: Plugin.Object = {
           const goal = args.join(' ').trim()
           ui.notice(startPluginTurn(authorPrompt(goal, '', limits.descriptionMax), { mode: 'learn', actor: 'user' }))
         },
-      ),
+      ), 'self-improve: commands.register'),
     )
 
     disposers.push(
-      ctx.commands.register(
+      ctx.effect(() => ctx.commands.register(
         { name: 'learnings', args: '[list | promote <id> [memory|skill] | drop <id> | clean]', description: '看纠正候选清单：候选不进模型上下文，promote 才生效' },
         ({ args, ui }) => {
           const sub = (args[0] ?? 'list').toLowerCase()
@@ -859,7 +859,7 @@ export const selfImprovePlugin: Plugin.Object = {
             `纠正候选（${String(all.length)} 条；文件 ${candidatesFile(cwd())}；不进模型上下文，promote 才生效；保留 ${String(config.retentionDays)} 天、最多 ${String(config.maxCandidates)} 条）\n${lines.join('\n')}\n用法：/learnings promote <id> [memory|skill]、/learnings drop <id>`,
           )
         },
-      ),
+      ), 'self-improve: commands.register #2'),
     )
 
     /** 整理一次并回一句话（命令与设置按钮共用）。 */
@@ -874,7 +874,7 @@ export const selfImprovePlugin: Plugin.Object = {
     }
 
     disposers.push(
-      ctx.commands.register(
+      ctx.effect(() => ctx.commands.register(
         { name: 'skills-ledger', args: '[n | rollback <id> | pin <name> | unpin <name> | curate]', description: '技能变更台账：看最近几条、按 id 回滚、钉住技能、立刻整理' },
         ({ args, ui }) => {
           const sub = (args[0] ?? '').toLowerCase()
@@ -917,7 +917,7 @@ export const selfImprovePlugin: Plugin.Object = {
             `技能变更台账（最近 ${String(entries.length)} 条，共 ${String(ledgerSize())} 字符；回滚用 /skills-ledger rollback <id>）\n${entries.map(formatLedgerEntry).join('\n')}`,
           )
         },
-      ),
+      ), 'self-improve: commands.register #3'),
     )
 
     // ── 系统提示 ────────────────────────────────────────────────────────────────
@@ -952,7 +952,7 @@ export const selfImprovePlugin: Plugin.Object = {
       return `【经验沉淀】${lines.join('')}`
     }
 
-    disposers.push(ctx.prompt.register('self-improve', promptText, { order: 43 }))
+    disposers.push(ctx.effect(() => ctx.prompt.register('self-improve', promptText, { order: 43 }), 'self-improve: prompt.register'))
 
     // ── 设置分区 ────────────────────────────────────────────────────────────────
 
@@ -1081,7 +1081,7 @@ export const selfImprovePlugin: Plugin.Object = {
         return message
       },
     }
-    disposers.push(ctx.settings.registerSection(section))
+    disposers.push(ctx.effect(() => ctx.settings.registerSection(section), 'self-improve: settings.registerSection'))
 
     // ── 收尾 ────────────────────────────────────────────────────────────────────
 

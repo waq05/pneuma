@@ -173,7 +173,7 @@ export const permissionPresetsPlugin: Plugin.Object = {
     }
     ctx.provide('permissionPresets', service)
 
-    ctx.surfaces.register('permissionPresets', () => service.surface())
+    ctx.effect(() => ctx.surfaces.register('permissionPresets', () => service.surface()), 'permission-presets: surfaces.register')
 
     // 启动时只把当前会话缺失的权限项钉住（不应用默认预设、不写对话）：
     // 老会话第一次打开时用当时生效的值，新会话按偏好默认值；钉住之后改偏好不影响它。

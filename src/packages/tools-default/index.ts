@@ -120,7 +120,7 @@ export const toolsDefaultPlugin: Plugin.Object = {
     // 会话快照上、按会话寻址，切会话互不可见）。收工的由完成通知与台账负责，面板摆的是
     // 现场不是历史；不知道归属的调用方（脚本 / 老探针）起的那几条也不出——面板只画会话
     // 自己的活，归属在 JobRecord / TerminalRecord 的 owner 上（起活时由工具调用身份写入）。
-    ctx.surfaces.register('backgroundWorks', (): BackgroundWorkView[] => {
+    ctx.effect(() => ctx.surfaces.register('backgroundWorks', (): BackgroundWorkView[] => {
       const sid = ctx.session.current().meta.id
       const works: BackgroundWorkView[] = []
       for (const job of table.list()) {
@@ -138,7 +138,7 @@ export const toolsDefaultPlugin: Plugin.Object = {
         })
       }
       return works.sort((left, right) => left.startedAt - right.startedAt)
-    })
+    }), 'tools-default: surfaces.register')
     // 「收掉一个」的入口（状态面板的停止钮）：归属校验按当前查看会话做（参考实现的
     // 取消也以会话寻址）——面板只列当前会话的活，收也只收它的；开工的路仍在工具面
     // 与桌面原生桥，这里只有收（与 stopTeammate 同一档，界面通道直接放行）。
@@ -194,15 +194,15 @@ export const toolsDefaultPlugin: Plugin.Object = {
     const syncTools = (): void => {
       for (const off of disposers) off()
       disposers = [
-        ctx.tools.register(createBashTool(budgets, table)),
-        ...createJobTools(table).map((entry) => ctx.tools.register(entry)),
-        ctx.tools.register(createTerminalTool(terminals)),
-        ctx.tools.register(createReadTool(budgets.readLineLimit)),
-        ctx.tools.register(readImageTool),
-        ctx.tools.register(writeTool),
-        ctx.tools.register(editTool),
-        ctx.tools.register(globTool),
-        ctx.tools.register(grepTool),
+        ctx.effect(() => ctx.tools.register(createBashTool(budgets, table)), 'tools-default: tools.register'),
+        ...createJobTools(table).map((entry) => ctx.effect(() => ctx.tools.register(entry), 'tools-default: tools.register #2')),
+        ctx.effect(() => ctx.tools.register(createTerminalTool(terminals)), 'tools-default: tools.register #3'),
+        ctx.effect(() => ctx.tools.register(createReadTool(budgets.readLineLimit)), 'tools-default: tools.register #4'),
+        ctx.effect(() => ctx.tools.register(readImageTool), 'tools-default: tools.register #5'),
+        ctx.effect(() => ctx.tools.register(writeTool), 'tools-default: tools.register #6'),
+        ctx.effect(() => ctx.tools.register(editTool), 'tools-default: tools.register #7'),
+        ctx.effect(() => ctx.tools.register(globTool), 'tools-default: tools.register #8'),
+        ctx.effect(() => ctx.tools.register(grepTool), 'tools-default: tools.register #9'),
       ]
     }
     syncTools()
@@ -280,6 +280,7 @@ export const toolsDefaultPlugin: Plugin.Object = {
       },
     }
     const offSection = ctx.settings.registerSection(section)
+    ctx.effect(() => offSection, 'tools-default: settings.registerSection')
 
     // ---- 终端环境（2026-10-30）：探出这台机器上有哪几个 shell，让用户选默认执行器 ----
     //
@@ -355,6 +356,7 @@ export const toolsDefaultPlugin: Plugin.Object = {
       },
     }
     const offShellSection = ctx.settings.registerSection(shellSection, { inSettings: true })
+    ctx.effect(() => offShellSection, 'tools-default: settings.registerSection #2')
 
     // 后台预热一次探测（挂载 50ms 之后，不占启动关键路径）：设置页第一次打开时下拉里就该
     // 已经有选项。不预热的话，`sections()` 会同步跑一次冷探测（四个子进程约 2.5 秒），

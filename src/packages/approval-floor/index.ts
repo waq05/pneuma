@@ -62,6 +62,7 @@ export const approvalFloorPlugin: Plugin.Object = {
       shell: () => shellFlavor(readShellChoice()),
     })
     const offGuard = ctx.guards.register(floor.guard)
+    ctx.effect(() => offGuard, 'approval-floor: guards.register')
 
     // 白名单的结论交给审批层执行：地板不自己 pass，因此排在中间的钩子照常被问到。
     const offService = ctx.provide('approvalFloor', {
@@ -102,6 +103,7 @@ export const approvalFloorPlugin: Plugin.Object = {
         ui.notice(describe())
       },
     )
+    ctx.effect(() => offCommand, 'approval-floor: commands.register')
 
     // ── 设置分区 ──────────────────────────────────────────────────────────────
 
@@ -245,6 +247,7 @@ export const approvalFloorPlugin: Plugin.Object = {
       },
     }
     const offSection = ctx.settings.registerSection(section)
+    ctx.effect(() => offSection, 'approval-floor: settings.registerSection')
 
     // 配置坏掉时说一次：地板会一律拒，用户得知道去改哪儿。
     const problems = readConfig().problems

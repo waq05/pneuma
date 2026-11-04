@@ -165,11 +165,11 @@ export const presetsPlugin: Plugin.Object = {
 
     // 1. 模式自己那段话：排在做事方式（10）之后、工具规范（20）之前。
     // 空正文（标准档）会被 composePrompt 滤掉，所以默认档的系统提示逐字节不变。
-    ctx.prompt.register('preset:persona', (scope) => specOf(scope).prompt, { order: 15 })
+    ctx.effect(() => ctx.prompt.register('preset:persona', (scope) => specOf(scope).prompt, { order: 15 }), 'presets: prompt.register')
 
     // 2. 骨架取舍：drop 里那几段整段不进提示词。
     // 只碰提示词文本——审批硬地板、命令策略、路径策略都在代码里，少几段叮嘱不等于放宽安全。
-    ctx.prompt.registerSkeletonFilter('preset', (ids, scope) => {
+    ctx.effect(() => ctx.prompt.registerSkeletonFilter('preset', (ids, scope) => {
       // 替换式模式（极简档）：只留模式自己的正文与 AGENTS.md 注入。插件贡献段
       // （沙箱说明、协作模式条款、技能目录…）全部不进——参考实现的 minimal 就是这样，
       // 它的 persona 是 complete + 不给运行时上下文。
@@ -177,11 +177,11 @@ export const presetsPlugin: Plugin.Object = {
       if (preset.replace) return ids.filter((id) => id === 'preset:persona' || id === 'instructions')
       const drop = preset.drop
       return drop.length === 0 ? ids : ids.filter((id) => !drop.includes(id))
-    })
+    }), 'presets: prompt.registerSkeletonFilter')
 
     // 3. 工具目录投影：白名单取交集；带 presets 标签的工具只在它列出的模式里露面。
     // 直接写进白名单的工具名也算「露面」（用户的显式意图优先于标签）。
-    ctx.tools.project('preset', (tools, scope) => {
+    ctx.effect(() => ctx.tools.project('preset', (tools, scope) => {
       const allowed = specOf(scope).tools
       // 标签比对认**这个会话**的档，不是「你此刻在看的那一档」
       const tag = presetIdOf(scope)
@@ -190,9 +190,9 @@ export const presetsPlugin: Plugin.Object = {
         if (entry.presets !== undefined && !entry.presets.includes(tag) && !explicit) return false
         return allowed === null || explicit
       })
-    })
+    }), 'presets: tools.project')
 
-    ctx.surfaces.register('preset', () => service.surface())
+    ctx.effect(() => ctx.surfaces.register('preset', () => service.surface()), 'presets: surfaces.register')
 
     // 恢复历史会话：模式跟着回来（不重复写记录，也不重复播报切换）。
     // 只登记**这一个**会话（打开它才会走到这里），别的会话各记各的——后台跑着的那一轮
@@ -206,7 +206,7 @@ export const presetsPlugin: Plugin.Object = {
     ctx.emit('dsc/preset-changed', presetIdOf())
 
     /** `/preset <名字>`：支持中文别名（标准 / 极简 / 创造 / 代码）。 */
-    ctx.commands.register(
+    ctx.effect(() => ctx.commands.register(
       {
         name: 'preset',
         args: '<名字>',
@@ -230,6 +230,6 @@ export const presetsPlugin: Plugin.Object = {
         }
         service.use(target)
       },
-    )
+    ), 'presets: commands.register')
   },
 }
