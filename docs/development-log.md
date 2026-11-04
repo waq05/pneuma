@@ -12923,3 +12923,70 @@ exe 的协议按 dsh-ops 0.4.x 钉住，上游改字段就得跟着改；二进�
 - 界面包的源码仍跟壳走（React / xterm 的依赖与构建都在壳里），不单独发 npm 包；
 - `pinned` 的判定以**应用侧清单**为准：应用那份没写 `resolution` 时，profile 副本自己写 `pinned` 也拦不住
   覆盖（`appManifest ?? profileManifest` 的顺序）。这是有意的：口径该由应用声明，不由装进来的包自己宣称。
+
+## 2026-11-04　第二波开局：销毁即注销 + 代码热更新（Q0–Q2）
+
+**用户裁决**：不设「明确不做」，目标是**完全对齐 dsh 的插件结构，功能上只能超越**；热更失败要保留旧版本、不能因更新卡死。所以这一批先打两块地基：停用插件必须真的撤干净，改包代码必须不重启就生效。
+
+### Q1　停用插件不撤注册：两个根因，不是一个
+
+现场：停用「任务清单」后，模型那边 `todo_write` 还在，设置面板点开直接抛
+`cannot get required service "settings" in inactive context`。
+
+- **根因一（主因）**：注册即忘。AST 盘出 147 个「返回退订函数」的调用点，只有 2 处原本用了 `ctx.effect`。
+  服务方法返回的删除函数没人接，条目就永远留在服务自己的 Map 里。
+- **根因二（扳机）**：依赖级联。`ui-runtime` 的 `inject` 里带 `todo/plan/ask/goal` 并 `provide ui`；
+  停 `todo` → `ui-runtime` 转 PENDING → `ui` 服务消失 → 依赖它的 `webserver`/`host-stdio`/`remote`
+  一起挂起。挂起后 fiber 的 ctx 失效，可 `remote` 的设置分区还留在 Map 里，`fields()` 第一行就撞死上下文。
+  **这就是「停 todo 却炸在 remote」的原因**——我一开始按单点泄漏查、方向错了，是子代理用 fiber 状态表
+  （`root.registry` 里 2(ACTIVE) → 0(PENDING)）把链条钉死才转对。**教训：报错位置不等于责任位置。**
+- 另外两个包（`remote`、`host-stdio`）的清理只挂在 `dsc/exit` 上，热停用不触发；`host-stdio` 的快照节流
+  定时器还会在 fiber 卸掉后读快照、把进程掀翻（第一版探针就是被它打死的）。两处改成幂等 `dispose()`，
+  fiber disposer 与 `dsc/exit` 共用。
+
+改法：139 个注册点包进 `ctx.effect(() => 注册, '行: 服务.方法')`，分布在 38 个 `src/packages/**/index.ts`；
+返回值后面还要用的保留 `const off = ...` 再跟一行 `ctx.effect(() => off, ...)`。8 处**故意跳过**并写明理由
+（`tool-search` 的即时撤下与 `restoreHeld`、`mcp` 三个动态工具、`remote`/`runtime` 的 `subscribe` 透传——
+退订权在调用方，不在插件生命周期里）。
+
+**为什么不是给清理函数逐个加 try**：每处注册现在是独立 effect，cordis 对每个 disposer 单独兜错
+（`cordis/lib/index.js:1372-1383`），「一条清理抛错把后面全跳过」这种失效模式被结构性消掉了。
+
+**连带修的**：4 个探针手搓的假 ctx 没有 `effect`（`approval-review-fallback`、`computer-use`、
+`dock-browser` 两处、`microcompact`），全被这次改动打红。修法是给桩 ctx 补一个与 cordis 同语义的
+`effect`（跑回调、返回它给的退订函数），**不给生产代码加「没有 effect 就降级」的兜底**——测试双应该
+贴着真实行为，不是让产品向测试让步。
+
+### Q2　改包代码不重启：先证明旧的为什么不行
+
+- **旧的 `?t=mtime` 是假的**：包入口是一层再导出桩，戳打在桩上，桩背后的真实文件 URL 不变。
+  最小探针：同一个桩用两个不同 `?t` 导入，拿到的值**完全相同**。
+- **改用解析钩子的代数戳**：`registerHooks` 的 resolve 能看到包内部的相对 import（实测 `./real.mjs` 会进来），
+  给落在 `lib/packages/**`（与登记过的 profile 包目录）的解析结果追加 `?g=<代数>`。
+  代数 0 = 启动态、一个戳都不加——启动路径与探针裸 import 命中同一物理实例，`@pneuma/runtime` 的
+  单实例约定不破。`lib/core/**` 与 `@pneuma/runtime/**` **永远不戳**：戳了就是第二份内核状态，
+  模块级注册表会落空、沙箱 fail-open。
+- **重挂时序**：换代 → 导入新模块并跑全套校验（与首次挂载共用同一判定）→ 全过才停旧 fiber → 挂新对象。
+  导入/校验失败：旧 fiber 原样继续跑，只记 `meta.problem`。挂新对象失败：用首次挂载留存的对象与配置
+  **回滚**。比 dsh 更保守——dsh 是逐出后失败即失败、旧代码不回来。
+- **为什么轮询**：与 `ui-hmr` 同一个结论（网络盘没有 inotify、Windows 上 `fs.watch` 不可靠、构建是
+  「写临时文件再 rename」）。默认 1000ms、200ms 去抖，同一轮构建写多个文件只重挂一次；`DSC_HOT=0` 关。
+  监视范围是「包目录下的 .js/.json」+「桩指回的真实目录」，只盯入口文件会漏掉最常见的改动。
+
+### 数字
+
+`typecheck` 0；`build` 0（581 个桩 / 56 包 / 基础包 56 行）；`hmr-dispose-test` **34 PASS**；
+`plugin-hot-update-test` **40 PASS**；`check:plugin` 全绿（92 / 15 / 换包 e2e 17 / 清单 55-24-19 一致）；
+`check:style --changed` 44 个文件全过；`check-core` 97 套（修完 4 个桩 ctx 之后重跑的结果见提交说明）。
+
+**一次自己踩的坑**：后台跑门禁时写成 `node scripts/check-core.mjs | tail -20`，管道把退出码换成了
+`tail` 的 0，于是「4 条失败」被我读成绿的。**门禁命令不许进管道**，要看尾巴就重定向到文件再读。
+
+### 还开着的
+
+- **依赖级联本身没改**：停一个功能行会顺带暂停 `ui`/`webserver`/`host-stdio`/`remote`，再启用会恢复。
+  要改得动 `inject` 语义（把「必需依赖」与「可选依赖」分开表达），单独一批。
+- **provider 级行停用后重挂不完整**：例如 `skills` 停用再启用，注册数回不到原值。既有问题，本批没引入也没修。
+- 每换代一次，旧 URL 的模块实例留在进程里直到退出；开发态可接受，重启即清。
+- 包间零 import 是现状（0 处）：一旦引入包间 import，`pneuma.order` 就会变成隐式依赖。
+

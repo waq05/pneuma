@@ -874,9 +874,12 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 
 ### 内核装配顺序
 
-`createKernel()` 依次挂 34 个内核插件：`llm` → `session` → `guards` → `surfaces` → `waiting` → `approval` → `tools` → `tools-default` → `transcript` → `commands` → `skills` → `prompt` → `mode` → `presets` → `ptc` → `settings` → `image-diet` → `permission-presets` → `hooks` → `compact` → `microcompact` → `session-title` → `todo` → `plan` → `ask` → `agent` → `goal` → `memory` → `runtime` → `webserver` → `desktop-dock` → `git` → `plugin-manager` → `runtime-api`；末尾把十九个官方可开关插件登记进热挂载表（`registerBuiltinMount`），再按 `plugins.json` 的条目决定本次挂不挂（`src/host/kernel.ts`）。
-这个顺序里有两处是必须的，不只是好看：`approval` 早于 `mode`，因为换档广播 `dsc/mode-changed` 而审批要听（审批卡上得写当前档位）；`transcript` 早于 `plan`，因为恢复会话时要先把会话流清空，计划卡那条条目才不会被清掉。
-官方可开关插件之间还有一条硬约束：`tool-search` 必须排在 `mcp` 之后，否则它 apply 时 `ctx.get('mcp')` 是 `undefined`，MCP 工具的 schema 永远不会被撤下。
+`createKernel()` 不再自己排顺序：它建 Context、铺默认 profile，然后调 `mountApplicationRows` 读 `@pneuma/base` 的 `cordis.patch.yml`（56 行，由各包的 `pneuma.order` 合成）。行序**不是加载序**——依赖关系由行上或模块导出的 `inject` 表达，行序只在「同一批依赖都就绪」时提供稳定次序（契约见 `docs/plugin-model.md` §3）。
+三条曾靠手写顺序保证的约束，现在各有出处：
+
+- `approval` 早于 `mode`、`plan` 晚于 `mode`：由 `mode` 的 `inject`（含 `approval`）与 `plan` 的 `inject: ['mode']` 表达，不靠数字。
+- `transcript` 早于 `plan`：恢复会话要先把会话流清空，计划卡那条才不会被清掉；靠 `plan` 的 `inject` 含 `session`/`surfaces` + 行序兜底。
+- `tool-search` 晚于 `mcp`：**目前只靠 `pneuma.order`（3690 对 3680）**，没写进 `inject`——mcp 默认关，写进 `inject` 会让 tool-search 一直等它。这条是 Q6 要收的债：要么给「可选依赖」一个显式写法，要么把这层依赖在代码注释里钉死。
 
 **自检脚本同进程起多个内核时要先停再验**：命令补全面（`src/packages/commands/index.ts` 的模块级 `extraSpecs`）与插件元数据一样是进程级共享——不先停掉前面的内核，后起内核的 `specs()` 会看见前几份注册，验「关掉后消失」全是假阳性。cordis 的 `Context` 本身没有 dispose，fiber 在 `ctx.fiber` 上，停整棵内核是 `await ctx.fiber.dispose()`（m5 集成自检踩过这个坑）。
 0.9 起没有「运行内核」这一档：`permission-presets`、`desktop-dock`、`git`、`plugin-manager` 都有了包与行，和其余 52 个一样可在插件中心停用。

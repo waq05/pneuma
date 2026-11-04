@@ -162,7 +162,7 @@ pnpm run typecheck && pnpm --dir desktop typecheck
 pnpm run build && pnpm run build:ui
 pnpm run check:style --changed
 pnpm run check:plugin                # 模型检查 + 清单快照 + 加载器 92 条 + list 15 条 + 换包 e2e 17 条
-node scripts/check-core.mjs          # 94 套（plugin-list-test 自动进来）
+node scripts/check-core.mjs          # 97 套（hmr-dispose-test、plugin-hot-update-test 自动进来）
 node scripts/ops-test.mjs
 pnpm run check:dsh
 ```
@@ -171,12 +171,16 @@ pnpm run check:dsh
 `plugin-inventory-check`（清单与该在的样子的逐项 diff）、`plugin-model-test`（加载器行为）、
 `plugin-list-test`（用户看得见的那一屏）、`plugin-swap-e2e`（真进程里换包 / 覆盖 / 删包）。
 
-## 8. 范围外
+## 8. 已裁决的偏差（不再当"范围外"用）
 
-- 不发布第二个 npm 包，不建运行时工作区包。
-- 不实现 `!!js` 表达式。
-- 不做插件市场安装 UI。
-- 不改界面信息架构，只换归属。
+早期这份计划写过一版"范围外"清单，2026-11-04 用户裁决：**不设"明确不做"，目标是完全对齐 dsh 的插件结构，功能只增不减。** 下面四条因此改成"现状 + 差距 + 归到哪一期"，而不是"永不做"。
+
+| 原"范围外" | 现状 | 归到哪期 |
+|---|---|---|
+| 不发布第二个 npm 包、不建运行时工作区包 | `@pneuma/runtime` 仍是构建生成的单实例适配包（`docs/plugin-model.md:97`） | Q6：包形态对齐（各包可独立发布的字段齐全）；运行时适配包是否保留，看 Q4 搬完之后 `lib/core` 还剩多少共享模块 |
+| 不实现 `!!js` 表达式 | loader 读 patch 时一律拒绝（`plugin-model.md:68`） | **待用户裁决**：dsh 会求值（`vendor/include/src/index.ts:9-23`）。这是"插件包能在宿主进程里执行任意表达式"的安全边界，不对齐会缺一块能力，对齐会把安全模型打开一个口子 |
+| 不做插件市场安装 UI | 只有 `numa plugin` 命令行 | Q6 之后单独立项（dsh 有 `apps/plugin-market-generator` + `plugin-manager` 的安装/卸载/升级） |
+| 不改界面信息架构，只换归属 | 19 个界面包在 `ui-shell/src/packages/` | Q3 改成"一个包两半边"，信息架构不动、归属动 |
 
 ## 9. 进度（2026-11-03）
 
@@ -234,4 +238,119 @@ P5 交付后复核出来的四件事，全部有现场证据，逐条修完：
 24 设置分区 / 19 界面单元与快照一致；加载器 92 PASS；list 15 PASS；换包 e2e 17 PASS。
 
 **这次算不算「完」**：判定标准 1–5 现在都有可复核的证据（第 5 条的两个方向都在真进程里跑了）。
-仍然明确不做、并写进契约的：进程内换 profile（解析表不重置）、界面包单独发 npm 包、热换包。
+
+---
+
+## 12. 第二波（0.9.x）：完全对齐 dsh 的插件结构
+
+第一波把"装配行"包化了，第二波解决三件没做完的事：**实现还在 core、界面半边不在包里、代码不能热更**。
+
+### 12.1 目标（四条，逐条可验收）
+
+| # | 目标 | 现在的反证 |
+|---|---|---|
+| 1 | **一个功能 = 一个包**，宿主半边与界面半边住同一个包 | 56 个宿主包里 0 个声明 `pneuma.client`；19 个界面包在 `ui-shell/src/packages/`，是另一份 `package.json` |
+| 2 | **功能实现在包里**，core 只留内核 | 55/56 个包 `import '@pneuma/runtime/core/*'`，共 363 处；core 52,813 行 vs 包 25,908 行 |
+| 3 | **改包代码不重启即生效**，失败保留旧版本 | `?t=mtime` 打在桩上被架空（`lib/node_modules/@pneuma/<id>/index.js` 只有一行 `export *`）；`mountRow` 幂等（`plugin-loader.ts:924`） |
+| 4 | **开发标准与 dsh 一致** | 0 个包有 README、0 个包有包内测试；停用插件不注销注册（40 处 `ctx.tools.register` 仅 2 处 `ctx.effect`） |
+
+### 12.2 目标包形态（镜像 dsh `packages/client/ui-layout`）
+
+```
+src/packages/<id>/
+  package.json          # exports: "." 宿主半、"./client" 界面半、"./locale/*.json"
+  cordis.patch.yml      # 行（不变）
+  index.ts              # 宿主半边
+  client/               # 界面半边（React），产物仍落 lib/ui/plugins/<id>/client.js
+  locale/en.json        # 界面文案（dsh 同款）
+  README.md             # 两段：Model Experience / Known Limitations
+  tests/                # 包级测试（走真实组合，不只手搓 ctx.plugin）
+```
+
+`package.json` 关键字段（对齐 dsh `package-surface.md:79` 的标准键集）：
+
+| 字段 | dsh | numa 目标 |
+|---|---|---|
+| `exports["."]` | `{types, default}` | 同 |
+| `exports["./client"]` | `{types, default}` | 新增（界面半边的唯一入口） |
+| `exports["./locale/*.json"]` | 有 | 新增 |
+| `dsh.client` / `pneuma.client` | `{platform, inject, immediately}` | 统一写 `pneuma.client`（`dsh.client` 继续兼容读） |
+| `engines` | `engines.dsh` | `engines.pneuma`（已有） |
+| `private` / `version` | `private:true` + 与根同版本 | 同（当前 `0.0.0` 是构建期改写，要改成与根一致） |
+
+### 12.3 分期
+
+| 期 | 内容 | 验收（可复核） |
+|---|---|---|
+| **Q0** | 契约与计划改写：删掉"不承诺热换""明确不做"；补壳层口径 | 文档与代码一致，无自相矛盾条目 |
+| **Q1** | 销毁即注销：所有注册经 `ctx.effect`；新增"停用后必须消失"的探针 | 停用 `todo` 后 `todo_write` 不在 `visible()`；`settings.sections()` 不抛错；停用 `goal/plan/ask` 同理 |
+| **Q2** | 代码热更新：解析钩子代数戳 + 文件监听（去抖）+ 单行重挂；**先导入新的成功再停旧的，失败保留旧版本** | 改 `lib/packages/todo/index.js` 不重启即生效；故意写坏语法后旧版本继续工作且报一条失败 |
+| **Q3** | 一个包两半边：19 个界面包并入宿主包 | 插件清单从 19 份并到 56 份；界面产物逐字节不变 |
+| **Q4** | 实现搬包：core 的实现按域搬进对应包 | core 行数降到内核线；搬完的包能单独替换（不再依赖 core 里的同名实现） |
+| **Q5** | 壳层包化：`ui-layout`/`ui-primitives`/`ui-slots`/`ui-dockkit`/`ui-renderer`、TUI 组件树、CLI 子命令 | 每件都有 `package.json` + 行 + 可停用；壳只剩引导 |
+| **Q6** | 包形态与开发标准：README 两段、包级 `tests/`、`exports` 标准键集、导出形状、可发布字段 | 新包缺项即红（门禁）；20 条检查清单全绿 |
+
+### 12.4 热更新的实现路线（与 dsh 的差异）
+
+dsh 走 Node 内部接口（`loadCache` / `require.cache` / `ResolveCache` 打补丁），代价是要 `--expose-internals`、要对 Node 版本敏感。numa 走另一条：
+
+1. `registerHooks` 的 resolve 钩子已经能看到包内部的相对 `import`（实测：`./real.mjs` 会进来）；
+2. 给 `lib/packages/**` 打**代数戳** `?g=N`：`N=0` 不打（启动时与探针共享同一实例，保住 `@pneuma/runtime` 单实例约定），换代时 `N+1`；
+3. 桩 `export * from '...?g=N'` 重新求值 → 拿到新代码，不碰任何 Node 内部接口。
+
+失败语义按用户 2026-11-04 裁决：**先导入新模块成功，再停旧 fiber；失败保留旧版本**（dsh 是逐出后失败即失败，旧代码不回来）。
+
+### 12.5 Q3 界面半边归位：施工序列（2026-11-04 勘查）
+
+**便宜的根因**：内置界面插件的 id 由**产物目录名**决定（`src/core/ui-bundles.ts:355`），不由包名决定。所以「并包」不必改名：源码搬进 `src/packages/<id>/ui/`，产物仍落 `lib/ui/plugins/<旧 id>/client.js`，启动图、HMR、`plugins.json` 开关键、探针全都不用动。
+
+现状与依赖（实测）：
+- 19 个界面包只 import `@dsc/ui`（69 处）与 `@dsc/ui-primitives`（35 处）；跨插件边只有 `ui-trace/package.json` 的 `inject:["transcript"]`。
+- React 在构建期就在 externals 里（`ui-shell/build-plugins.mjs:61`），搬源码不影响实例。
+- **真代价在 typecheck**：根 `tsconfig.json:20` 是 `include:["src"]` 且 `lib:["ES2023"]`（无 DOM），界面代码一进 `src/` 就会被当 Node 侧编译，DOM 全局与 jsx 立红。
+- 19 个 id 与 56 个宿主包：7 个同名（ask/browser/prompt/settings/skills/team/transcript），8 个可归并（trace→transcript、tasks→todo、terminal→tui、sessions→session、plugins→plugin-manager、palette→commands、preview→file-review、files→git），4 个宿主里没有对应物（actions、composer、status、statusbar）。
+
+施工序列（每步可独立验收）：
+
+| 步 | 内容 | 验收 |
+|---|---|---|
+| 1 | 试点 transcript：源码搬进 `src/packages/transcript/ui/`，宿主 `package.json` 补 `dsh.client` 与 `exports["./client"]`，`build-plugins.mjs` 加第二个扫描根，根 tsconfig 排除 `src/packages/*/ui/**` | 该 `client.js` 与旧产物**字节一致**（rev 不变）；`ui-plugin-test` 全绿 |
+| 2 | 双根并存，逐个迁其余 18 个，id 用映射表钉死等于旧 id | `lib/ui/plugins` 仍 19 个目录；`client.js` 无字节变化 |
+| 3 | 7 个同名包补 `dsh.client.api`（构建期改写为根版本） | `plugin-inventory-check` 只差预期字段 |
+| 4 | 4 个无对应物的包：新建宿主包（56→60）或写清归属 | 快照 `--write` 后插件数变化被审 |
+| 5 | 收口：删空目录、`ui-shell` 的 build 只留壳 | `build` + `check:all` |
+
+**产物目录暂不动**：动它要同时改内容摘要 rev、combo 批地址、HMR 监听行、清单快照四处，收益小、风险大。
+
+### 12.6 Q5 壳层包化：边界
+
+dsh 的答案分三层：页面内核 → 模块系统（唯一 bootstrap，只有 `dsh-client-modules` 一个包是 parser-blocking）→ 其余全是插件（`ui-renderer` 声明 `immediately:true`，`ui-layout` 带 5 条 inject）。种子包 `ui-slots`/`ui-primitives`/`ui-dockkit` **是包但不当插件**——别人要 require 同一份实例。
+
+numa 对应：
+- **必须留在壳里**：`boot.ts` 的 MODULES 表与取启动图那一段（必须在第一个 bundle 执行前存在）；
+- **可变成插件**：`ui-layout`（先拆 `@dsc/ui` 的 static 转出，否则两份实现）、`ui-renderer` 的「取图 + 建会话」（前提是把 App 的 7 个 props 改成服务）；
+- **留在种子表**：`ui-slots`/`ui-primitives`/`ui-dockkit`；
+- **TUI**：dsh 没有对应物（无 ink 依赖、无 TUI 文档），拆包前要先做组件树分层、槽位表扩到 4–5 个、状态来源从「整份 DscRuntime 当 prop」改成服务订阅；
+- **CLI**：532 行，做成一个 `@pneuma/cli` 包 + 子命令注册表，保住 `bin/dsc.js` 零依赖保命设计。
+
+### 12.7 Q4 实现搬包：硬规则与分档（2026-11-04 勘查）
+
+实测口径：`src/core` 170 个 `.ts`、53,586 行；55 个包 import `@pneuma/runtime/core/*` 共 375 处（134 个不同模块）。
+
+**硬规则（比 import 路径重要得多）**：§14 的代数戳只给 `lib/packages/**` 打，`lib/core/**` 与 `@pneuma/runtime/**` 永不打。所以**模块一旦搬进包，它就成了热更换代对象**；只要内核还 import 它，换代后内核握着旧实例、包拿到新实例。`core/tools/command-runner.ts:75` 的模块级 Map 不会「自然消失」，会变成两份——`bash.ts:18` 与 `sandbox/index.ts:40` 分居两侧，就是沙箱 fail-open。
+
+因此：**只先搬「零内核引用」的那一档**；「解耦后可搬」的那一档必须先让内核不再 import 它，再搬。
+
+| 档 | 文件 / 行数 | 判据 |
+|---|---|---|
+| 可直接搬 | 39 个 / 14,920 行 | 零内核引用（sandbox 17、lsp 7、self-improve 3、computer-use 1、ops 3、approval-floor 1、lifecycle-hooks 1、microcompact 1、settings 2、commands 1、prompt 1、surfaces 1） |
+| 解耦后可搬 | 40 个 / 13,044 行 | 内核有引用，要先断（browser/cdp 7、dsh-compat 9、schedule 3、tools-default 4、remote 8、memory 2、mcp 1、approval 2、todo 1、goal 1、git 2） |
+| 留内核 | 91 个 / 25,792 行 | 加载器、事件总线、路径策略、工具注册表、会话、压缩、UI 装载等 |
+
+**说明符处置**：直接改 import 要动约 620 处（包 375 + ui/services/boot 63 + 探针 185），还得扩 `build-runtime-package.mjs` 的 ROOTS。推荐**留一行转发桩**：`src/core/x.ts` = `export * from '../packages/<id>/x.js'`，0 处调用方改动——但要注意：转发桩本身在 `lib/core`（不戳），所以被转发模块的**换代可见性**只对包侧生效，内核侧仍是旧实例。这正是上面那条硬规则要挡住的情形。
+
+**只用环**：3 个 2-环（git-info↔services/types、learnings/skill-write↔learnings/ledger、lsp/normalize↔lsp/client）。真正的耦合是内核单点入口：`path-policy.ts` 被 41 个 core 文件引用、`tools.ts` 16 个、`llm.ts` 14 个。
+
+**反面案例（看着能搬其实不能）**：`dsh-compat/resolve-hook.ts`（plugin-loader 直接 import，是加载器本体）、`cdp/transport.ts`（dock-session、host-browser-link 直接 import）、`tools/command-runner.ts`（注册表本体）、`goal.ts`（session.ts 与 services/types 引它）、`memory.ts`（类型被 services/types 引用且带跨会话缓存）。
+
+**第一批**：sandbox（17 文件 5,755 行，占 core 的 10.7%，7 处包引用、2 个探针、零内核引用）。它同时验证「内核注册表 + 包实现」这条缝。
