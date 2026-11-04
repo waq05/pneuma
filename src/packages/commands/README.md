@@ -1,6 +1,6 @@
 # commands（斜杠命令）
 
-一句话：commands 包提供 `commands` 服务，把 25 条内置斜杠命令与外部插件注册的命令放进同一张表，负责补全、派发与 `/help` 文本。
+一句话：commands 包提供 `commands` 服务，把内置斜杠命令与外部插件注册的命令放进同一张表，负责补全、派发与 `/help` 文本。它自己注册 24 条；第 25 条 `/compact` 由 compact 包注册，运行时表一共 25 条。
 
 ## Model Experience（模型体验）
 
@@ -24,4 +24,4 @@
 - resolution 是 pinned：profile 里的同名副本不生效（core/plugin-loader.ts:1503-1514）。
 - 默认开：cordis.patch.yml 里没有 `disabled`。
 - inject 两个服务：`session`、`llm`（index.ts:57）；provide 一个 `commands`（index.ts:58）。
-- 内置清单 25 条在 `core/commands-completion.ts:32-78`；外部插件用 `ctx.commands.register` 加进来的命令自动进 /help、补全与派发（index.ts:83-95）。
+- 内置清单共 25 条（`core/commands-completion.ts:32-78`），其中本包注册 24 条、`/compact` 由 compact 包注册；外部插件用 `ctx.commands.register` 加进来的命令自动进 /help、补全与派发（index.ts:83-95）。
