@@ -6,25 +6,31 @@
  * --strict 模式有任何缺口就退出 1，进 check:all。
  *
  * 检查项：
- *   1. src/packages/<id>/package.json 存在，且 pneuma.bundle.patch 指向存在的文件；
+ *   1. src/packages/<id>/package.json 存在，且 pneuma.bundle.patch 指向存在的文件。
+ *      没有 patch 但标了 pneuma.library = true 的是**库包**：单独计数，不算缺口；
+ *      既没有 patch 也没标 library 才是缺口。
  *   2. 所有 patch 里的行 id 全局唯一，name 非空；
  *   3. src/host/kernel.ts 行数 ≤ 120，且不再 import src/plugins/*；
- *   4. 每个功能包都有 lib 产物（只在 --built 下查，源码期跳过）；
- *   5. profile 模板存在（只在 --built 下查）。
+ *   4. 依赖方向（静态扫源码）：功能包 → 库包允许；功能包 → 功能包、库包 → 任何包、
+ *      core → 任何包都记缺口（含 import type）；
+ *   5. 每个功能包都有 lib 产物（只在 --built 下查，源码期跳过）；
+ *   6. profile 模板存在（只在 --built 下查）。
  *
  * 用法：
  *   node scripts/plugin-model-check.mjs            # 报告模式
  *   node scripts/plugin-model-check.mjs --strict   # 有缺口即失败
  *   node scripts/plugin-model-check.mjs --json     # 机器可读
  *
+ * 自检要造夹具时用 PNEUMA_CHECK_ROOT=<目录> 换一个仓库根（缺省是本仓库）。
+ *
  * @module scripts/plugin-model-check
  */
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
 
-const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
+const root = resolve(process.env['PNEUMA_CHECK_ROOT'] ?? fileURLToPath(new URL('..', import.meta.url)))
 const args = new Set(process.argv.slice(2))
 const strict = args.has('--strict')
 const asJson = args.has('--json')
@@ -35,6 +41,8 @@ const KERNEL_MAX_LINES = 120
 
 const gaps = []
 const notes = []
+/** 库包：没有 patch、但显式标了 pneuma.library = true 的包（不参与开关、没有行）。 */
+const libraries = []
 
 /** 记一条缺口：kind 用于分组，detail 给人看。 */
 function gap(kind, detail) {
@@ -49,6 +57,36 @@ function readJson(file, kind) {
     gap(kind, `${file} 读不了：${error instanceof Error ? error.message : String(error)}`)
     return null
   }
+}
+
+/** 相对仓库根的路径（统一用 /，报告里可点）。 */
+function repoPath(file) {
+  return relative(root, file).split('\\').join('/')
+}
+
+/** 从一段文本的字符下标算出 1 起的行号。 */
+function lineAt(text, index) {
+  let line = 1
+  for (let i = 0; i < index && i < text.length; i += 1) if (text[i] === '\n') line += 1
+  return line
+}
+
+/** 递归列出包目录里的源码（跳过 node_modules 与构建产物；界面半也算，它同样是包里的代码）。 */
+function walkSources(dir) {
+  const out = []
+  let entries
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return out
+  }
+  for (const entry of entries) {
+    if (entry.name === 'node_modules' || entry.name === 'lib' || entry.name === '.git') continue
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) out.push(...walkSources(path))
+    else if (/\.(?:ts|tsx|mts|cts)$/.test(entry.name)) out.push(path)
+  }
+  return out
 }
 
 // ── 1. 包与 patch ────────────────────────────────────────────────────────────
@@ -72,7 +110,13 @@ if (!existsSync(packagesDir)) {
     if (manifest === null) continue
     const declared = manifest.pneuma?.bundle?.patch ?? manifest.dsh?.bundle?.patch
     if (typeof declared !== 'string' || declared === '') {
-      gap('packages', `${name} 没声明 pneuma.bundle.patch`)
+      // 三分支：有 patch = 功能包（走下面的原逻辑）；没 patch 但标了 library = 库包；
+      // 两样都没有才是缺口。库包没有行、不进插件清单，所以不读 patch、不数行。
+      if (manifest.pneuma?.library === true) {
+        libraries.push({ name, dir, manifest })
+        continue
+      }
+      gap('packages', `${name} 没声明 pneuma.bundle.patch，也没标 pneuma.library = true`)
       continue
     }
     const patchFile = join(dir, declared)
@@ -159,7 +203,112 @@ for (const entry of ['src/host/kernel.ts', 'src/boot.ts', 'src/headless.ts']) {
   }
 }
 
-// ── 4. 构建产物（可选） ──────────────────────────────────────────────────────
+// ── 4. 依赖方向 ──────────────────────────────────────────────────────────────
+//
+// 判据按「目标包有没有 patch」分类：有 patch 的是功能包，标了 library 的是库包。
+// 允许的只有一条：功能包 → 库包。其余三条都记缺口——
+//
+//   - 功能包 → 功能包：两个带行的包互相 import，装配顺序与开关语义都会打架；
+//   - 库包 → 功能包 / 库包：库包是被 import 的一侧，它再往下 import 包就成了环的起点；
+//   - core → 包：内核只许用 src/* 自己的东西，包反过来依赖内核没问题。
+//
+// 只扫源码（.ts/.tsx/.mts/.cts），四种写法都认（import / export from / 动态 import /
+// require）；import type 也是静态依赖，一并算。
+
+/** 包名 → 源包（含它是功能包还是库包）。 */
+const packageByName = new Map()
+for (const pkg of packages) {
+  const declared = typeof pkg.manifest.name === 'string' && pkg.manifest.name !== '' ? pkg.manifest.name : null
+  packageByName.set(declared ?? '@pneuma/' + pkg.name, { ...pkg, kind: 'feature' })
+}
+for (const pkg of libraries) {
+  const declared = typeof pkg.manifest.name === 'string' && pkg.manifest.name !== '' ? pkg.manifest.name : null
+  packageByName.set(declared ?? '@pneuma/' + pkg.name, { ...pkg, kind: 'library' })
+}
+/** 目录名兜底：清单里 name 与目录名不一致的包（现在只有 runtime-adapter）也能被认出来。 */
+for (const pkg of [...packages, ...libraries]) {
+  const fallback = '@pneuma/' + pkg.name
+  if (!packageByName.has(fallback)) {
+    packageByName.set(fallback, { ...pkg, kind: packages.includes(pkg) ? 'feature' : 'library' })
+  }
+}
+
+/**
+ * 一个说明符指向哪个源包。
+ *
+ * @pneuma/runtime/* 是构建生成的适配包名（映射到 src/*），不是 src/packages/runtime，
+ * 所以先排掉；其余按 scope 后的第一段找包。
+ */
+function packageTargetOf(specifier) {
+  if (!specifier.startsWith('@pneuma/')) return null
+  if (specifier === '@pneuma/runtime' || specifier.startsWith('@pneuma/runtime/')) return null
+  const parts = specifier.split('/')
+  if (parts.length < 2 || parts[1] === '') return null
+  return packageByName.get('@pneuma/' + parts[1]) ?? null
+}
+
+/** 四种静态依赖写法。 */
+const IMPORT_PATTERNS = [
+  /(?:^|\s)(?:import|export)\b[^\n]*?from\s*['"](@pneuma\/[^'"]+)['"]/g,
+  /\bimport\s*\(\s*['"](@pneuma\/[^'"]+)['"]/g,
+  /^\s*import\s+['"](@pneuma\/[^'"]+)['"]/gm,
+  /\brequire\s*\(\s*['"](@pneuma\/[^'"]+)['"]/g,
+]
+
+/**
+ * 扫一个目录，把每条 @pneuma/<包> 依赖交给 judge 判。
+ * @param dir - 目录
+ * @param judge - (target, where) => void
+ */
+function scanImports(dir, judge) {
+  for (const file of walkSources(dir)) {
+    let source
+    try {
+      source = readFileSync(file, 'utf8')
+    } catch {
+      continue
+    }
+    for (const pattern of IMPORT_PATTERNS) {
+      pattern.lastIndex = 0
+      for (const match of source.matchAll(pattern)) {
+        const target = packageTargetOf(match[1])
+        if (target !== null) judge(target, `${repoPath(file)}:${lineAt(source, match.index)}`)
+      }
+    }
+  }
+}
+
+const kindLabel = (kind) => (kind === 'library' ? '库包' : '功能包')
+
+for (const pkg of [...packages.map((item) => ({ ...item, kind: 'feature' })), ...libraries.map((item) => ({ ...item, kind: 'library' }))]) {
+  scanImports(pkg.dir, (target, where) => {
+    // 自己 import 自己不算跨包依赖（包内相对路径本来就不在这里）。
+    if (target.name === pkg.name) return
+    if (pkg.kind === 'feature') {
+      if (target.kind === 'feature') {
+        gap(
+          'dep-direction',
+          `${where} 功能包「${pkg.name}」直接 import 了功能包「${target.name}」：功能包只许 import 库包与 @pneuma/runtime/*`,
+        )
+      }
+      return
+    }
+    gap(
+      'dep-direction',
+      `${where} 库包「${pkg.name}」直接 import 了${kindLabel(target.kind)}「${target.name}」：库包只许用 node 内置与 @pneuma/runtime/*`,
+    )
+  })
+}
+
+// core → 包：内核文件（含 import type）不许碰 src/packages。
+const coreDir = join(root, 'src', 'core')
+if (existsSync(coreDir)) {
+  scanImports(coreDir, (target, where) => {
+    gap('dep-direction', `${where} 内核直接 import 了${kindLabel(target.kind)}「${target.name}」：src/core 不许 import src/packages（含 import type）`)
+  })
+}
+
+// ── 5. 构建产物（可选） ──────────────────────────────────────────────────────
 
 if (checkBuilt) {
   for (const pkg of packages) {
@@ -177,6 +326,7 @@ if (checkBuilt) {
 const summary = {
   packages: packages.length,
   rows: seen.size,
+  libraries: libraries.length,
   kernelLines,
   gaps: gaps.length,
 }
@@ -187,6 +337,7 @@ if (asJson) {
   console.log('插件模型检查')
   console.log(`  功能包        ${summary.packages}`)
   console.log(`  行            ${summary.rows}`)
+  console.log(`  库包          ${summary.libraries}`)
   console.log(`  kernel.ts     ${summary.kernelLines} 行（上限 ${KERNEL_MAX_LINES}）`)
   if (gaps.length === 0) {
     console.log('  缺口          0')

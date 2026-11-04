@@ -16,6 +16,9 @@
  *   4. 功能包的解析结果追加**代数戳**（`?g=<代数>`，见 {@link bumpGeneration}）。
  *      `lib/packages/<id>/index.js` 被一层再导出桩（`lib/node_modules/@pneuma/<id>/index.js`）
  *      挡着，改真实文件不会变 URL；戳在解析结果上，热重挂才能拿到新模块。
+ *   5. `@pneuma/<库包>` 按 pinned 解析到应用内那一份（库包清单里 `pneuma.library === true`）。
+ *      profile 里装的覆盖版包 import 库包时，从它自己的 node_modules 往上找不到应用那份，
+ *      会 ERR_MODULE_NOT_FOUND；库包跟着应用走，所以这里重定向。
  *
  * 为什么用 `registerHooks`（同步、本线程）而不是 `register`（异步、hooks 线程）：
  * 注册完成即可生效，挂载路径不必等钩子线程就绪，也没有跨线程状态要传。
@@ -25,6 +28,7 @@
  *
  * @module dsc/core/dsh-compat/resolve-hook
  */
+import { readFileSync } from 'node:fs'
 import { registerHooks, createRequire } from 'node:module'
 import { join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -159,6 +163,9 @@ export function ensureResolveHook(pluginRoots: readonly string[], appDir?: strin
   // 应用侧的包统一住在 <应用根>/lib/node_modules/ 下（运行时适配包与功能包同一层）。
   const appNodeModules = join(appRoot, 'lib', 'node_modules')
   const runtimeDir = join(appNodeModules, '@pneuma', 'runtime')
+  // 库包与应用自带的 @pneuma/* 同住一层；解析基点借用这一层（createRequire 只要目录）。
+  const appScopeDir = join(appNodeModules, '@pneuma')
+  const appScopeRequire = createRequire(join(appNodeModules, '_.js'))
   // 解析基点：应用根（直接依赖：cordis、dsh-tools）；dsh-tools 的真实目录
   // （它的传递依赖 schemastery、dsh-brand、dsh-util-values 住在 pnpm 布局的兄弟位）。
   const bases = [appRoot]
@@ -190,6 +197,12 @@ export function ensureResolveHook(pluginRoots: readonly string[], appDir?: strin
       const runtime = runtimeSpecifierUrl(specifier, runtimeDir)
       if (runtime !== null) return { url: runtime, shortCircuit: true }
 
+      // 库包按 pinned 解析：库包跟着应用走，profile 里的覆盖版包 import 它时也要命中
+      // 应用内那一份（它自己的 node_modules 里没有）。与运行时包的差别只有一处：
+      // 库包属于功能包一族，**代数戳照打**——否则覆盖版包换代重挂后拿到的还是旧库。
+      const library = librarySpecifierUrl(specifier, appScopeDir, appScopeRequire)
+      if (library !== null) return withGeneration({ url: library, shortCircuit: true })
+
       if (compatEnabled && specifier.startsWith('@deepseek-ai/')) {
         for (const base of bases) {
           try {
@@ -220,6 +233,60 @@ function runtimeSpecifierUrl(specifier: string, runtimeDir: string): string | nu
   const prefix = '@pneuma/runtime/'
   if (!specifier.startsWith(prefix) || specifier.length === prefix.length) return null
   return pathToFileURL(join(runtimeDir, specifier.slice(prefix.length))).href
+}
+
+/**
+ * 包目录 → 是不是库包（有 package.json 且 `pneuma.library === true`）。
+ *
+ * 缓存是必须的：解析钩子在每一次 import 都会问一遍，而“读一个 JSON”在热重挂风暴里
+ * 会被放大。进程内包清单不会变，一份缓存就够。
+ */
+const libraryFlags = new Map<string, boolean>()
+
+/** 这个目录里的包是不是库包；没清单或清单坏了按“不是”处理（走默认解析，缺包会响亮失败）。 */
+function isLibraryPackageDir(dir: string): boolean {
+  const cached = libraryFlags.get(dir)
+  if (cached !== undefined) return cached
+  let flag = false
+  try {
+    const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
+      pneuma?: { library?: unknown }
+    }
+    flag = manifest.pneuma?.library === true
+  } catch {
+    // 读不到就按非库包处理：默认解析会给出 ERR_MODULE_NOT_FOUND，那正是该有的报错。
+  }
+  libraryFlags.set(dir, flag)
+  return flag
+}
+
+/**
+ * `@pneuma/<库包>` 说明符 → 应用内那一份的解析结果。
+ *
+ * 只处理**库包**：功能包有覆盖机制（pinned / overridable），不能在这里一律钉死。
+ * `@pneuma/runtime` 走 {@link runtimeSpecifierUrl} 那条更早的短路，这里显式排掉，
+ * 免得同一个说明符有两条重定向。
+ * @param specifier - 被 import 的说明符
+ * @param appScopeDir - 应用内 `lib/node_modules/@pneuma` 的绝对路径
+ * @param appRequire - 以 `lib/node_modules` 为基点的解析器（走包自己的 exports）
+ * @returns 目标文件 URL；不是库包或解析不出来给 null（交回默认解析）
+ */
+function librarySpecifierUrl(
+  specifier: string,
+  appScopeDir: string,
+  appRequire: ReturnType<typeof createRequire>,
+): string | null {
+  if (!specifier.startsWith('@pneuma/')) return null
+  const rest = specifier.slice('@pneuma/'.length)
+  if (rest === '' || rest === 'runtime' || rest.startsWith('runtime/')) return null
+  const name = rest.split('/')[0]
+  if (name === undefined || name === '') return null
+  if (!isLibraryPackageDir(join(appScopeDir, name))) return null
+  try {
+    return pathToFileURL(appRequire.resolve(specifier)).href
+  } catch {
+    return null
+  }
 }
 
 /**

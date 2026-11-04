@@ -191,6 +191,34 @@ function registerPackageGenerationRoot(file: string): void {
 }
 
 /**
+ * 把应用自带的 `@pneuma` 包目录逐个登记成「功能包路径」。
+ *
+ * 功能包挂载时会顺带登记自己的桩目录（{@link registerPackageGenerationRoot}），
+ * **库包没有行、永远不走挂载**，所以它的再导出桩
+ * （`lib/node_modules/@pneuma/<id>/index.js`）会一直停在 0 代：引用它的插件换代重挂后，
+ * 解析到的仍是第一次加载的那份旧库。这里在装配时把整层 `@pneuma/*` 一次登记完，
+ * 库包换代就与功能包走同一套机制。
+ *
+ * 重复登记由 registerGenerationRoot 自己去重；`@pneuma/runtime` 与 `lib/core` 也在那边
+ * 排掉（运行时包一个戳都不许有）。
+ * @param appDir - 应用安装目录（自检会指到临时目录）
+ */
+function registerLibraryGenerationRoots(appDir: string): void {
+  const scopeDir = join(appDir, 'lib', 'node_modules', '@pneuma')
+  let entries
+  try {
+    entries = readdirSync(scopeDir, { withFileTypes: true })
+  } catch {
+    // 还没构建（没有 lib/node_modules）：没有可登记的，照常启动。
+    return
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    registerGenerationRoot(join(scopeDir, entry.name))
+  }
+}
+
+/**
  * 已挂载插件的那一份对象与参数：热重挂失败时用它把旧版本原样放回去。
  *
  * 为什么不能只留 Fiber：Fiber 只能 dispose，不能「重新启用」；要回滚就得留住
@@ -1055,6 +1083,8 @@ export async function mountApplicationRows(
   // 也能推出来，但自检把 appDir 指到临时目录时它推不到——显式登记一次，两条路都成立。
   const appPackagesDir = join(appDir, 'lib', 'packages')
   if (existsSync(appPackagesDir)) registerGenerationRoot(appPackagesDir)
+  // 库包没有行、不会走 mountRow，它的桩目录也就没人登记——单独补一遍。
+  registerLibraryGenerationRoots(appDir)
   const baseDir = join(appDir, 'lib', 'node_modules', '@pneuma', 'base')
   const patchFile = join(baseDir, 'cordis.patch.yml')
   if (!existsSync(patchFile)) {

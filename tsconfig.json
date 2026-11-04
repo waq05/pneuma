@@ -9,7 +9,15 @@
     "outDir": "lib",
     "rootDir": "src",
     "baseUrl": ".",
-    "paths": { "@pneuma/runtime/*": ["src/*"] },
+    // 两条映射：@pneuma/runtime/* 是**构建生成的适配包名**（不是 src/packages/runtime），
+    // 它必须继续落到 src/*；@pneuma/<id> 才是 src/packages/<id>/。
+    // TypeScript 按「前缀最长的先匹配」，所以 runtime 那条永远优先，不会被下面吞掉。
+    // 第二条给两个替换：裸包名（@pneuma/<id>）在 NodeNext 下不认目录入口，退回 index.ts；
+    // 带子路径的写法（@pneuma/<id>/x.js）走第一项，仍是 .js→.ts 的正常替换。
+    "paths": {
+      "@pneuma/runtime/*": ["src/*"],
+      "@pneuma/*": ["src/packages/*", "src/packages/*/index.ts"]
+    },
     "declaration": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
