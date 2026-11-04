@@ -24,7 +24,7 @@
  * @module dsc/scripts/permission-presets-test
  */
 import { readFileSync } from 'node:fs'
-import { readContractSource } from './_check-runner.mjs'
+import { readContractSource, resolveUiHalf } from './_check-runner.mjs'
 import { fileURLToPath } from 'node:url'
 
 const presets = await import(new URL('../src/core/permission-presets.ts', import.meta.url).href)
@@ -155,7 +155,7 @@ console.log('[5] 派生状态的显示名：命中预设留空，拼出来的组
   const flat = (text) => text.replace(/\r\n/g, '\n')
   /** 派生那一支的形状：置灰的 Select + 直接给显示名 + 选项表原样传（不塞假选项）。 */
   const derivedOutlet = /displayLabel=\{derivedLabel\}\s+disabled\s+options=\{field\.options\}/
-  const shell = flat(read('ui-shell/src/packages/ui-settings/ui.tsx'))
+  const shell = flat(read(resolveUiHalf('settings') + '/ui.tsx'))
   const shellPlugins = flat(read('ui-shell/src/packages/ui-plugins/ui.tsx'))
   check('设置面板读 field.derivedLabelKey（判据 + 取值两处都在）', count(shell, 'field.derivedLabelKey') === 2, String(count(shell, 'field.derivedLabelKey')))
   check('设置面板派生时置灰只读并给显示名', derivedOutlet.test(shell))

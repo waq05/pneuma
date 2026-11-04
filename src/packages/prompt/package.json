@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./index.js"
+    ".": "./index.js",
+    "./client": "./ui/ui.tsx",
+    "./package.json": "./package.json"
   },
   "pneuma": {
     "bundle": {
@@ -14,6 +16,12 @@
     "resolution": "pinned",
     "title": "提示词组装",
     "description": "系统提示词分段注册表与请求体改写链"
+  },
+  "dsh": {
+    "client": {
+      "platform": "pneuma",
+      "api": "^0.8.1"
+    }
   },
   "engines": {
     "pneuma": ">=1.0.0 <2.0.0"

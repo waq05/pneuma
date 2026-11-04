@@ -19,6 +19,10 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveUiHalf } from './_check-runner.mjs'
+
+// 界面半的新旧根由 resolveUiHalf 判：transcript 已搬进宿主包，旧根那条只剩兜底。
+const UI = resolveUiHalf('transcript')
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 let failures = 0
@@ -33,7 +37,7 @@ const read = (part) => readFileSync(join(root, part), 'utf8')
 const dirty = (hay, from, to) => hay.split(from).join(to)
 
 const css = read('ui-shell/src/legacy/views.css')
-const foot = read('src/packages/transcript/ui/rows/foot.tsx')
+const foot = read(UI + '/rows/foot.tsx')
 
 /**
  * 只看这一段的样式（视图里还有别的 `.round-foot` 规则，从全文里找第一个会认错）：

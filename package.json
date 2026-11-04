@@ -52,11 +52,15 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/semver": "^7.8.0",
     "@types/web-push": "^3.6.4",
     "@types/ws": "^8.18.2",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "qrcode": "^1.5.4",
     "typescript": "^5.9.0"
   },
   "pnpm": {

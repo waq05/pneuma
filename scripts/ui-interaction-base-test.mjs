@@ -18,7 +18,10 @@
 import { readFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { readPluginSource } from './_check-runner.mjs'
+import { readPluginSource, resolveUiHalf } from './_check-runner.mjs'
+
+// 界面半的新旧根由 resolveUiHalf 判：transcript 已搬进宿主包，旧根那条只剩兜底。
+const UI = resolveUiHalf('transcript')
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (rel) => readFileSync(join(root, rel), 'utf8')
@@ -95,9 +98,9 @@ console.log('[2] 弹层焦点管理')
   check('回调走 ref（内联箭头不会让 effect 每次重跑）', hook.includes('const close = useRef(onClose)') && hook.includes('}, [active])'))
 
   const wiring = [
-    ['ui-shell/src/packages/ui-settings/ui.tsx', 'settings', '设置面板'],
-    ['ui-shell/src/packages/ui-settings/models.tsx', 'models-discover-card', '模型清单弹窗'],
-    ['ui-shell/src/packages/ui-team/ui.tsx', 'team-panel', '智能体团队'],
+    [resolveUiHalf('settings') + '/ui.tsx', 'settings', '设置面板'],
+    [resolveUiHalf('settings') + '/models.tsx', 'models-discover-card', '模型清单弹窗'],
+    [resolveUiHalf('team') + '/ui.tsx', 'team-panel', '智能体团队'],
     ['ui-shell/src/packages/ui-trace/inspector.tsx', 'trace-inspector', '轨迹检查器'],
   ]
   for (const [file, marker, label] of wiring) {
@@ -105,9 +108,9 @@ console.log('[2] 弹层焦点管理')
     check(`${label}接上了 hook`, src.includes('useDialogFocus(') && src.includes('ref={dialog.ref}'), file)
     check(`${label}的 hook 挂在弹层根上`, src.includes(marker), marker)
   }
-  const settings = read('ui-shell/src/packages/ui-settings/ui.tsx')
+  const settings = read(resolveUiHalf('settings') + '/ui.tsx')
   check('设置面板撤掉了原来的 window 级 Esc（不与 hook 双触发）', !settings.includes("window.addEventListener('keydown', onKey)"))
-  const team = read('ui-shell/src/packages/ui-team/ui.tsx')
+  const team = read(resolveUiHalf('team') + '/ui.tsx')
   check('团队面板的 Esc 仍分两层（先退出运行记录）', team.includes('if (peeking !== null) setPeeking(null)'))
 }
 
@@ -126,11 +129,11 @@ console.log('[3] 骨架屏')
   check('占位块不进可达树（aria-hidden）', comp.includes('aria-hidden="true"'))
 
   const sites = [
-    ['ui-shell/src/packages/ui-settings/ui.tsx', '正在读取分区…', '设置分区'],
-    ['ui-shell/src/packages/ui-settings/usage.tsx', '正在读取用量记录…', '用量页'],
+    [resolveUiHalf('settings') + '/ui.tsx', '正在读取分区…', '设置分区'],
+    [resolveUiHalf('settings') + '/usage.tsx', '正在读取用量记录…', '用量页'],
     ['ui-shell/src/packages/ui-plugins/ui.tsx', '正在读取配置…', '插件配置'],
-    ['ui-shell/src/packages/ui-skills/ui.tsx', '正在扫描技能目录…', '技能页'],
-    ['ui-shell/src/packages/ui-team/ui.tsx', '正在读运行记录…', '团队运行记录'],
+    [resolveUiHalf('skills') + '/ui.tsx', '正在扫描技能目录…', '技能页'],
+    [resolveUiHalf('team') + '/ui.tsx', '正在读运行记录…', '团队运行记录'],
   ]
   for (const [file, oldText, label] of sites) {
     const src = read(file)
@@ -153,7 +156,7 @@ console.log('[4] P1 三项')
   const app = read('ui-shell/src/ui-layout/app.tsx')
   const statusbar = read('ui-shell/src/packages/ui-statusbar/ui.tsx')
   const sessions = read('ui-shell/src/packages/ui-sessions/ui.tsx')
-  const transcript = readPluginSource('src/packages/transcript/ui')
+  const transcript = readPluginSource(UI)
   const channel = read('ui-shell/src/ui-layout/host-channel.ts')
 
   // 品牌两档：侧栏 20 / 窄栏 22，全部走变量。空态那档 2026-10-27 撤掉（用户说图标突兀）。
@@ -303,7 +306,7 @@ console.log('[7] 命令面板的滚动与翻页')
 console.log('[8] 子智能体下拉与状态胶囊的悬停')
 {
   const css = read('ui-shell/src/styles.css')
-  const team = read('ui-shell/src/packages/ui-team/ui.tsx')
+  const team = read(resolveUiHalf('team') + '/ui.tsx')
 
   // ① 下拉贴着按钮左下展开，按钮被长标题推到右边时会出界（用户看到的是「被遮挡」）。
   //    打开时量一次、窗口改尺寸再量一次：右边超多少往左挪多少，下边不够就把高度收到窗口底。
@@ -323,9 +326,9 @@ console.log('[9] 这一轮的四条')
 {
   const css = read('ui-shell/src/styles.css')
   const summary = read('ui-shell/src/ui-primitives/tool-summary.ts')
-  const transcriptSrc = readPluginSource('src/packages/transcript/ui')
+  const transcriptSrc = readPluginSource(UI)
   const statusSrc = read('ui-shell/src/packages/ui-status/ui.tsx')
-  const factorySrc = read('src/packages/transcript/ui/tool-card/factory.tsx')
+  const factorySrc = read(UI + '/tool-card/factory.tsx')
   const traceSrc = read('ui-shell/src/packages/ui-trace/ui.tsx')
 
   // ① 行首标题照 dsh 的 tool.title.* 词表：名词短语，不拼「搜了 / 正在写」。
@@ -386,8 +389,8 @@ console.log('[10] 会话行标题的悬停滚动')
 
 console.log('[11] 跟到底部的滚动逻辑')
 {
-  const transcriptSrc = readPluginSource('src/packages/transcript/ui')
-  const seatsSrc = read('src/packages/transcript/ui/fold-seats.tsx')
+  const transcriptSrc = readPluginSource(UI)
+  const seatsSrc = read(UI + '/fold-seats.tsx')
 
   // ① 外层：贴底门槛照 dsh 的 25px（壳取 24），旧的 160px 必须没有了——
   //    往上滚 100px 仍算「在底部」，下一口内容一到就拽回去，就是用户说的粘滞。

@@ -22,10 +22,13 @@
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { readPluginSource } from './_check-runner.mjs'
+import { readPluginSource, resolveUiHalf } from './_check-runner.mjs'
+
+// 界面半的新旧根由 resolveUiHalf 判：transcript 已搬进宿主包，旧根那条只剩兜底。
+const UI = resolveUiHalf('transcript')
 
 const paging = await import(
-  new URL('../src/packages/transcript/ui/paging.ts', import.meta.url).href
+  new URL('../' + UI + '/paging.ts', import.meta.url).href
 )
 const { PAGE_MIN_ENTRIES, PAGE_MIN_ROUNDS, PAGE_MAX_ENTRIES, pageStartRound } = paging
 
@@ -183,8 +186,8 @@ console.log('[6] 到顶与连点两下（从中间边界继续往前攒）')
 
 console.log('[7] 形态钉（ui.tsx 里的结构约定）')
 {
-  const ui = readPluginSource('src/packages/transcript/ui')
-  const source = read('src/packages/transcript/ui/paging.ts')
+  const ui = readPluginSource(UI)
+  const source = read(UI + '/paging.ts')
 
   check('paging.ts 是纯逻辑（不引 React / 任何运行期依赖）', !/from 'react'/.test(source) && !/from '\.\//.test(source))
   check('ui.tsx 的口径来自 paging.ts，按轮写死的 PAGE_ROUNDS 已撤', ui.includes("from './paging'") && !ui.includes('PAGE_ROUNDS'))

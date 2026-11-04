@@ -16,6 +16,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveUiHalf } from './_check-runner.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (rel) => readFileSync(join(root, rel), 'utf8')
@@ -29,7 +30,7 @@ const check = (name, condition, detail = '') => {
   }
 }
 
-const select = await import(new URL('../ui-shell/src/packages/ui-ask/select.ts', import.meta.url).href)
+const select = await import(new URL('../' + resolveUiHalf('ask') + '/select.ts', import.meta.url).href)
 const sideAsk = await import(new URL('../src/core/side-ask.ts', import.meta.url).href)
 const uiMethods = await import(new URL('../lib/core/ui-methods.js', import.meta.url).href)
 
@@ -138,7 +139,7 @@ console.log('[4] 接线与产物')
   check('runtime 支持指定模型（空串则跟随主会话）', runtime.includes("ctx.llm.routeTo(provider, model, 'default')") && runtime.includes('ctx.llm.route()'))
   check('runtime 把增量经事件发出去', runtime.includes("ctx.emit('dsc/side-ask-chunk', { id: requestId, delta })"))
   check('runtime 维护取消票据表', runtime.includes('const sideAsks = new Map<string, AbortController>()'))
-  const plugin = read('ui-shell/src/packages/ui-ask/ui.tsx')
+  const plugin = read(resolveUiHalf('ask') + '/ui.tsx')
   check('插件注册 ask 页签（keepMounted）', plugin.includes("kind: 'ask'") && plugin.includes('keepMounted: true'))
   check('两条命令面板动作', plugin.includes("id: 'ask.open'") && plugin.includes("id: 'ask.selection'"))
   check('快捷键 Ctrl+Shift+K', plugin.includes("event.key.toLowerCase() !== 'k'") && plugin.includes('event.shiftKey'))
@@ -162,8 +163,8 @@ console.log('[5] 流式与模型选择')
   const webserver = read('src/packages/webserver/index.ts')
   const channel = read('ui-shell/src/ui-layout/host-channel.ts')
   const api = read('ui-shell/src/plugin-api.ts')
-  const store = read('ui-shell/src/packages/ui-ask/store.ts')
-  const plugin = read('ui-shell/src/packages/ui-ask/ui.tsx')
+  const store = read(resolveUiHalf('ask') + '/store.ts')
+  const plugin = read(resolveUiHalf('ask') + '/ui.tsx')
   const sessions = read('ui-shell/src/packages/ui-sessions/ui.tsx')
 
   check('通道另有 ask 事件（与 plugins 同级，不进帧 hub）', events.includes("writeEvent(res, 'ask', data)") && events.includes("subscribe((chunk) => {"))

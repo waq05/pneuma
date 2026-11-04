@@ -20,6 +20,10 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { resolveUiHalf } from './_check-runner.mjs'
+
+// 界面半的新旧根由 resolveUiHalf 判：transcript 已搬进宿主包，旧根那条只剩兜底。
+const UI = resolveUiHalf('transcript')
 
 const home = mkdtempSync(join(tmpdir(), 'dsc-compacting-'))
 process.env.HOME = home
@@ -129,7 +133,7 @@ console.log('[5] 接线还在（压缩插件发、转录插件收、壳画）')
   const { readFileSync } = await import('node:fs')
   const compactSource = readFileSync(new URL('../src/packages/compact/index.ts', import.meta.url), 'utf8')
   const transcriptSource = readFileSync(new URL('../src/packages/transcript/index.ts', import.meta.url), 'utf8')
-  const shellSource = readFileSync(new URL('../src/packages/transcript/ui/ui.tsx', import.meta.url), 'utf8')
+  const shellSource = readFileSync(new URL('../' + UI + '/ui.tsx', import.meta.url), 'utf8')
   check('压缩插件在 finally 里清状态', /whileCompacting[\s\S]*?finally[\s\S]*?'dsc\/compacting', false/.test(compactSource))
   check('压完发一次估算读数', /'dsc\/context-used'/.test(compactSource))
   check('转录插件收这两个事件', /'dsc\/compacting'/.test(transcriptSource) && /'dsc\/context-used'/.test(transcriptSource))

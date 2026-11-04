@@ -17,8 +17,11 @@
  * @module dsc/scripts/ui-status-panel-test
  */
 import { readFileSync } from 'node:fs'
-import { readContractSource } from './_check-runner.mjs'
+import { readContractSource, resolveUiHalf } from './_check-runner.mjs'
 import { fileURLToPath } from 'node:url'
+
+// 界面半的新旧根由 resolveUiHalf 判：transcript 已搬进宿主包，旧根那条只剩兜底。
+const UI = resolveUiHalf('transcript')
 
 const model = await import(
   new URL('../ui-shell/src/packages/ui-status/status-model.ts', import.meta.url).href
@@ -181,7 +184,7 @@ console.log('[5] 形态钉（结构约定）')
 {
   const status = read('ui-shell/src/packages/ui-status/ui.tsx')
   const css = read('ui-shell/src/styles.css')
-  const team = read('ui-shell/src/packages/ui-team/ui.tsx')
+  const team = read(resolveUiHalf('team') + '/ui.tsx')
   const tasks = read('ui-shell/src/packages/ui-tasks/ui.tsx')
   /** 去掉注释再查「不许出现」的东西：注释里提到 window.innerWidth 是在解释为什么不用它。 */
   const stripComments = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
@@ -388,7 +391,7 @@ console.log('[8] 工具卡补丁视图（读 / 写 / 改三类分流）')
   const dockModel = read('ui-shell/src/ui-dockkit/dock-model.ts')
   const dockState = read('ui-shell/src/ui-dockkit/dock-state.ts')
   const dock = read('ui-shell/src/ui-dockkit/dock.tsx')
-  const factory = read('src/packages/transcript/ui/tool-card/factory.tsx')
+  const factory = read(UI + '/tool-card/factory.tsx')
   const preview = read('ui-shell/src/packages/ui-preview/ui.tsx')
   const contract = readContractSource()
   const adapter = read('src/adapter/transcript.ts')

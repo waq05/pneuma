@@ -19,10 +19,11 @@
  * @module dsc/scripts/connection-test-test
  */
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { readContractSource } from './_check-runner.mjs'
+import { readContractSource, resolveUiHalf } from './_check-runner.mjs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
 
 // config 模块在 import 时就固定了 ~/.dsc 路径：临时 HOME 必须先于一切 lib 导入
 const home = mkdtempSync(join(tmpdir(), 'dsc-conn-test-home-'))
@@ -160,7 +161,7 @@ console.log('\n[5] 接线钉（源码）')
   const settings = read('src/packages/settings/index.ts')
   const runtime = read('src/packages/runtime/index.ts')
   const contract = readContractSource()
-  const models = read('ui-shell/src/packages/ui-settings/models.tsx')
+  const models = read(resolveUiHalf('settings') + '/models.tsx')
   const views = read('ui-shell/src/legacy/views.css')
 
   check('界面白名单放了它（放行的理由写在文件头的注释里）', UI_METHODS.includes('testConnection'))

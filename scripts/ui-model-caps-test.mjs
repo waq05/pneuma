@@ -18,6 +18,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { resolveUiHalf } from './_check-runner.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const read = (rel) => readFileSync(`${root}${rel}`, 'utf8')
@@ -32,7 +33,7 @@ const check = (name, condition, detail) => {
   console.log(`FAIL  ${name}${detail === undefined ? '' : `  <- ${detail}`}`)
 }
 
-const infer = await import(new URL('../ui-shell/src/packages/ui-settings/model-infer.ts', import.meta.url).href)
+const infer = await import(new URL('../' + resolveUiHalf('settings') + '/model-infer.ts', import.meta.url).href)
 const { normalizeModelId, readSizeMarker, readModalityMarkers, buildKnownIndex, inferModelCaps, FALLBACK_CONTEXT, FALLBACK_OUTPUT } = infer
 
 /** 造一份「已经配过的模型」。 */
@@ -101,12 +102,12 @@ console.log('[2] 缺省值与宿主同源')
   check('缺省档位字段与宿主一致（thinking 开关）', caps.DEFAULT_THINKING_PARAM === 'thinking')
   check('缺省上下文 128000 与宿主 config.ts 的缺省一致', FALLBACK_CONTEXT === 128_000 && read('src/core/config.ts').includes('128_000'))
   check('缺省最大输出 8192 与宿主 config.ts 的缺省一致', FALLBACK_OUTPUT === 8_192 && read('src/core/config.ts').includes('8_192'))
-  check('推断只改「填错也不致命」的字段：档位字段只在有公开惯例的家族里给', read('ui-shell/src/packages/ui-settings/model-infer.ts').includes('param?: ThinkingParam'))
+  check('推断只改「填错也不致命」的字段：档位字段只在有公开惯例的家族里给', read(resolveUiHalf('settings') + '/model-infer.ts').includes('param?: ThinkingParam'))
 }
 
 console.log('[3] 壳侧接线（设置 → 模型页）')
 {
-  const models = read('ui-shell/src/packages/ui-settings/models.tsx')
+  const models = read(resolveUiHalf('settings') + '/models.tsx')
   check('忙碌态是「按端点记的集合」，不是一个全局布尔', models.includes('useState<ReadonlySet<string>>(() => new Set())'))
   check('右栏只认自己那一位（拉一个端点别的端点不跟着转）', /\bdiscovering=\{discovering\.has\(current\.name\)\}/.test(models))
   check('拉到之后逐个从集合里摘掉自己', /next\.delete\(provider\)/.test(models))
@@ -129,9 +130,9 @@ console.log('[4] 模型行的窄格（重叠那个 bug）')
 
 console.log('[5] 形状钉：来源标签')
 {
-  const models = read('ui-shell/src/packages/ui-settings/models.tsx')
+  const models = read(resolveUiHalf('settings') + '/models.tsx')
   for (const source of ['known', 'marker', 'family', 'default']) {
-    check(`来源 ${source} 在推断模块里存在`, read('ui-shell/src/packages/ui-settings/model-infer.ts').includes(`'${source}'`))
+    check(`来源 ${source} 在推断模块里存在`, read(resolveUiHalf('settings') + '/model-infer.ts').includes(`'${source}'`))
   }
   check('弹窗把来源打到 DOM 上（自检/探针认得出走了哪一档）', models.includes("data-discover-source={caps.source}"))
   check('能力摘要与端点卡片上那颗钮同一套写法（ctx + cap-badge）', models.includes('className="models-discover-caps"') && read('ui-shell/src/legacy/views.css').includes('.models-discover-caps'))

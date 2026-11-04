@@ -18,7 +18,7 @@
  * @module dsc/scripts/config-file-switch-test
  */
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
-import { readContractSource } from './_check-runner.mjs'
+import { readContractSource, resolveUiHalf } from './_check-runner.mjs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -149,7 +149,7 @@ console.log('[4] 接线钉：原生桥 / 界面通道 / 壳那一行')
   const plugin = read('src/packages/settings/index.ts')
   check('通用分区那一行声明了「更换」动作', /id: 'switch-config-file'/.test(plugin) && /id: 'reset-config-file'/.test(plugin), '')
   check('那一行显示的是活动路径（不是写死的常量）', /label: '配置文件',\r?\n\s*text: activeConfigFile\(\)/.test(plugin), '')
-  const shell = read('ui-shell/src/packages/ui-settings/ui.tsx')
+  const shell = read(resolveUiHalf('settings') + '/ui.tsx')
   check('壳画信息行的行内动作', /field\.actions\?\.map\(/.test(shell), '')
   check('壳只认这两个 id（认不出的整条跳过）', /action\.id !== 'switch-config-file' && action\.id !== 'reset-config-file'/.test(shell), '')
   check('壳的流程：先取路径（取消就什么都不做）再让宿主换', /pickConfigFile/.test(shell) && /invoke<SettingsMutation>\('setConfigFile'/.test(shell), '')

@@ -25,11 +25,14 @@
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { readPluginSource } from './_check-runner.mjs'
+import { readPluginSource, resolveUiHalf } from './_check-runner.mjs'
+
+// 界面半的新旧根由 resolveUiHalf 判：transcript 已搬进宿主包，旧根那条只剩兜底。
+const UI = resolveUiHalf('transcript')
 
 // 零依赖直读一个 `.ts`（Node 类型擦除），证明本探针走的就是模板那条路。
 const { seatPlan } = await import(
-  new URL('../src/packages/transcript/ui/process-groups.ts', import.meta.url).href
+  new URL('../' + UI + '/process-groups.ts', import.meta.url).href
 )
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -47,8 +50,8 @@ const check = (name, condition, detail) => {
   }
 }
 
-const transcript = readPluginSource('src/packages/transcript/ui')
-const team = read('ui-shell/src/packages/ui-team/ui.tsx')
+const transcript = readPluginSource(UI)
+const team = read(resolveUiHalf('team') + '/ui.tsx')
 
 // 模板那条零依赖 .ts 导入确实可用（本探针只拿它做一次存在性自检，不重复测它的语义）。
 check('零依赖 .ts 可直读（process-groups.ts 的 seatPlan 是个函数）', typeof seatPlan === 'function')

@@ -18,6 +18,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveUiHalf } from './_check-runner.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const read = (rel) => readFileSync(join(root, rel), 'utf8')
@@ -39,7 +40,7 @@ const count = (text, piece) => text.split(piece).length - 1
 
 const button = read('ui-shell/src/ui-layout/update-button.tsx')
 const app = read('ui-shell/src/ui-layout/app.tsx')
-const settings = read('ui-shell/src/packages/ui-settings/ui.tsx')
+const settings = read(resolveUiHalf('settings') + '/ui.tsx')
 const css = read('ui-shell/src/styles.css')
 
 console.log('[1] 挂在品牌行：Pneuma 右边、收起钮左边')

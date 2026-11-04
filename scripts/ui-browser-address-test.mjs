@@ -19,8 +19,9 @@
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { resolveUiHalf } from './_check-runner.mjs'
 
-const address = await import(new URL('../ui-shell/src/packages/ui-browser/address.ts', import.meta.url).href)
+const address = await import(new URL('../' + resolveUiHalf('browser') + '/address.ts', import.meta.url).href)
 const { normalizeAddress, isBrowsableUrl } = address
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -62,7 +63,7 @@ check('只有协议、没有主机', normalizeAddress('https://') === null)
 check('超长地址', normalizeAddress(`https://example.com/${'x'.repeat(5000)}`) === null)
 
 console.log('\n[3] 形态钉：插件只有这一个入口')
-const plugin = read('ui-shell/src/packages/ui-browser/ui.tsx')
+const plugin = read(resolveUiHalf('browser') + '/ui.tsx')
 check('插件 import 的是这个纯函数', plugin.includes("import { normalizeAddress } from './address'"))
 check('回车走它（不是自己判 startsWith）', plugin.includes('const target = normalizeAddress(draft)'))
 check('插件里没有第二份协议判断', !/startsWith\(['"]https?:\/\//.test(plugin))

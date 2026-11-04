@@ -15,11 +15,12 @@
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { resolveUiHalf } from './_check-runner.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const read = (rel) => readFileSync(new URL(rel, `file://${root.replace(/\\/g, '/')}/`), 'utf8')
 /** 热力图的纯布局（拆出来就能直接跑，不必把 React 文件拖进 Node）。 */
-const { buildCells, CELL, GAP } = await import(new URL('../ui-shell/src/packages/ui-settings/heatmap.ts', import.meta.url).href)
+const { buildCells, CELL, GAP } = await import(new URL('../' + resolveUiHalf('settings') + '/heatmap.ts', import.meta.url).href)
 
 let passed = 0
 let failures = 0
@@ -62,8 +63,8 @@ function hasStyle(css, selector, pattern) {
 
 console.log('\n[1] 热力图：自己横向滚 + 四档时间窗')
 {
-  const usage = read('ui-shell/src/packages/ui-settings/usage.tsx')
-  const heatmap = read('ui-shell/src/packages/ui-settings/heatmap.ts')
+  const usage = read(resolveUiHalf('settings') + '/usage.tsx')
+  const heatmap = read(resolveUiHalf('settings') + '/heatmap.ts')
   check('一格宽度只写一份（CELL / GAP 常量）', heatmap.includes('const CELL = 10') && heatmap.includes('const GAP = 3') && usage.includes("from './heatmap'"), '')
   check(
     '窗口长度是参数（buildCells 收 windowDays，不再钉死 52 周）',

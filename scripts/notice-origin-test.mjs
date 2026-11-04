@@ -28,6 +28,10 @@
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { resolveUiHalf } from './_check-runner.mjs'
+
+// 界面半的新旧根由 resolveUiHalf 判：transcript 已搬进宿主包，旧根那条只剩兜底。
+const UI = resolveUiHalf('transcript')
 
 const home = mkdtempSync(join(tmpdir(), 'dsc-notice-origin-home-'))
 process.env.HOME = home
@@ -37,7 +41,7 @@ const { Session } = await import('../lib/core/session.js')
 const { Transcript } = await import('../lib/adapter/transcript.js')
 const { serializeMessages } = await import('../lib/core/llm.js')
 const { internalLabel } = await import(
-  new URL('../src/packages/transcript/ui/rounds.ts', import.meta.url).href
+  new URL('../' + UI + '/rounds.ts', import.meta.url).href
 )
 
 let passed = 0

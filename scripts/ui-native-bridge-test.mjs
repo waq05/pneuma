@@ -22,6 +22,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveUiHalf } from './_check-runner.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const {
@@ -269,7 +270,7 @@ check(
 )
 
 console.log('\n── 浏览器可多开：壳与原生两侧都按 id 走（2026-10 对齐 dsh 的浏览器侧边栏）──')
-const shellBrowser = readFileSync(join(root, 'ui-shell', 'src', 'packages', 'ui-browser', 'ui.tsx'), 'utf8')
+const shellBrowser = readFileSync(join(root, resolveUiHalf('browser'), 'ui.tsx'), 'utf8')
 const nativeDock = readFileSync(join(root, 'desktop', 'electron', 'main', 'dock.ts'), 'utf8')
 check('壳拿页签 id 当视图 id', shellBrowser.includes('const viewId = tab.id'))
 check('壳藏起来时只摘下来（不带 rect 的那条）', shellBrowser.includes("('dockBrowser', [viewId, false])"))

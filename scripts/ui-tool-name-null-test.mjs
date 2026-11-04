@@ -24,6 +24,10 @@
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { resolveUiHalf } from './_check-runner.mjs'
+
+// 界面半的新旧根由 resolveUiHalf 判：transcript 已搬进宿主包，旧根那条只剩兜底。
+const UI = resolveUiHalf('transcript')
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const read = (rel) => readFileSync(`${root}${rel}`, 'utf8')
@@ -51,7 +55,7 @@ const throws = (fn) => {
 
 const llm = await import('../lib/core/llm.js')
 const { Transcript } = await import('../lib/adapter/transcript.js')
-const groups = await import(new URL('../src/packages/transcript/ui/process-groups.ts', import.meta.url).href)
+const groups = await import(new URL('../' + UI + '/process-groups.ts', import.meta.url).href)
 const argsMod = await import(new URL('../ui-shell/src/ui-primitives/tool-args.ts', import.meta.url).href)
 
 // ── [1] 合并层 ────────────────────────────────────────────────────────────────
@@ -139,7 +143,7 @@ const argsMod = await import(new URL('../ui-shell/src/ui-primitives/tool-args.ts
   check('回放路径收窄名字类型', adapterSource.includes("typeof call.function.name === 'string'"))
   check('实时事件收窄名字类型', adapterSource.includes("typeof event.name === 'string'"))
 
-  const groupsSource = read('src/packages/transcript/ui/process-groups.ts')
+  const groupsSource = read(UI + '/process-groups.ts')
   check('activityOf 收 null/undefined', groupsSource.includes('name: string | null | undefined'))
   const argsSource = read('ui-shell/src/ui-primitives/tool-args.ts')
   check('toolArgFields 收 null/undefined', argsSource.includes('name: string | null | undefined'))

@@ -20,6 +20,10 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveUiHalf } from './_check-runner.mjs'
+
+// 界面半的新旧根由 resolveUiHalf 判：transcript 已搬进宿主包，旧根那条只剩兜底。
+const UI = resolveUiHalf('transcript')
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 let failures = 0
@@ -36,9 +40,9 @@ const dirty = (hay, from, to) => hay.split(from).join(to)
 const core = read('src/core/session.ts')
 const host = read('src/packages/session/index.ts')
 const runtime = read('src/packages/runtime/index.ts')
-const flow = read('src/packages/transcript/ui/ui.tsx')
-const row = read('src/packages/transcript/ui/rows/user-row.tsx')
-const shared = read('src/packages/transcript/ui/shared.ts')
+const flow = read(UI + '/ui.tsx')
+const row = read(UI + '/rows/user-row.tsx')
+const shared = read(UI + '/shared.ts')
 
 // ── [1] 内核：记录类型 + 截断实现 ────────────────────────────────────────────────
 const recordType = (s) => s.includes("type: 'rewind'")

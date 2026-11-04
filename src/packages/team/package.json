@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./index.js"
+    ".": "./index.js",
+    "./client": "./ui/ui.tsx",
+    "./package.json": "./package.json"
   },
   "pneuma": {
     "bundle": {
@@ -15,6 +17,12 @@
     "title": "共享任务板",
     "description": "一块按会话分开的任务板：登记、认领、结项，队友和你看到同一块；成员名单在「子智能体」里",
     "settingsSection": "team"
+  },
+  "dsh": {
+    "client": {
+      "platform": "pneuma",
+      "api": "^0.8.1"
+    }
   },
   "engines": {
     "pneuma": ">=1.0.0 <2.0.0"

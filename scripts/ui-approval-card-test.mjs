@@ -16,6 +16,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveUiHalf } from './_check-runner.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (rel) => readFileSync(join(root, rel), 'utf8')
@@ -34,7 +35,7 @@ const check = (name, condition, detail = '') => {
 const contract = read('src/contract/approval.ts')
 const contractBarrel = read('src/contract.ts')
 const plugin = read('src/packages/approval/index.ts')
-const shell = read('ui-shell/src/packages/ui-prompt/ui.tsx')
+const shell = read(resolveUiHalf('prompt') + '/ui.tsx')
 const tui = read('src/app/ApprovalCard.tsx')
 const shellCss = read('ui-shell/src/legacy/views.css')
 

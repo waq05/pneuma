@@ -20,7 +20,7 @@
  * @module dsc/scripts/ui-color-fallback-test
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import { readContractSource } from './_check-runner.mjs'
+import { readContractSource, resolveUiHalf } from './_check-runner.mjs'
 import { fileURLToPath } from 'node:url'
 
 const generator = await import(new URL('../ui-shell/scripts/build-color-fallback.mjs', import.meta.url).href)
@@ -175,7 +175,7 @@ console.log('[7] 档门：Claude 档在四处开关与两份令牌里都接上')
   const contract = flat(readContractSource())
   const prefs = flat(read('/src/core/prefs.ts'))
   const shellAppearance = flat(read('/ui-shell/src/ui-layout/appearance.ts'))
-  const settingsUi = flat(read('/ui-shell/src/packages/ui-settings/ui.tsx'))
+  const settingsUi = flat(read('/' + resolveUiHalf('settings') + '/ui.tsx'))
   const electronMain = flat(read('/desktop/electron/main/index.ts'))
   check('内核类型里有 claude', contract.includes("export type ThemeMode = 'dark' | 'light' | 'claude' | 'system'"))
   check('偏好白名单放行 claude（不然存了也会被读回 dark）', prefs.includes("['dark', 'light', 'claude', 'system']"))

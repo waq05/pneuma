@@ -22,7 +22,7 @@
  * @module dsc/scripts/ui-plugin-test
  */
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
-import { readContractSource } from './_check-runner.mjs'
+import { readContractSource, resolveUiHalf } from './_check-runner.mjs'
 import { request } from 'node:http'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -1475,7 +1475,8 @@ console.log('\n[9] 设置回执的结构化载荷')
     JSON.stringify(kinds),
   )
 
-  const settingsDir = join(repoRoot, 'ui-shell', 'src', 'packages', 'ui-settings')
+  // 设置界面半已搬进宿主包：源码根由 resolveUiHalf 判（新旧根都认）。
+  const settingsDir = join(repoRoot, resolveUiHalf('settings'))
   const sources = readdirSync(settingsDir)
     .filter((file) => file.endsWith('.tsx'))
     .map((file) => readFileSync(join(settingsDir, file), 'utf8'))

@@ -23,6 +23,10 @@
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { resolveUiHalf } from './_check-runner.mjs'
+
+// 界面半的新旧根由 resolveUiHalf 判：transcript 已搬进宿主包，旧根那条只剩兜底。
+const UI = resolveUiHalf('transcript')
 
 const root = new URL('../', import.meta.url)
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, root)), 'utf8').replace(/\r\n/g, '\n')
@@ -30,7 +34,7 @@ const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s
 
 const views = stripComments(read('ui-shell/src/legacy/views.css'))
 const styles = stripComments(read('ui-shell/src/styles.css'))
-const factory = read('src/packages/transcript/ui/tool-card/factory.tsx')
+const factory = read(UI + '/tool-card/factory.tsx')
 
 let failures = 0
 let passes = 0

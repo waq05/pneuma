@@ -24,6 +24,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { resolveUiHalf } from './_check-runner.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const read = (rel) => readFileSync(`${root}${rel}`, 'utf8')
@@ -40,8 +41,8 @@ const check = (name, condition, detail) => {
   console.log(`FAIL  ${name}${detail === undefined ? '' : `  <- ${detail}`}`)
 }
 
-const models = flat(read('ui-shell/src/packages/ui-settings/models.tsx'))
-const panel = flat(read('ui-shell/src/packages/ui-settings/ui.tsx'))
+const models = flat(read(resolveUiHalf('settings') + '/models.tsx'))
+const panel = flat(read(resolveUiHalf('settings') + '/ui.tsx'))
 const views = flat(read('ui-shell/src/legacy/views.css'))
 const shellStyles = flat(read('ui-shell/src/styles.css'))
 

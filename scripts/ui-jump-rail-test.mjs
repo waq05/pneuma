@@ -22,9 +22,13 @@
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { resolveUiHalf } from './_check-runner.mjs'
+
+// 界面半的新旧根由 resolveUiHalf 判：transcript 已搬进宿主包，旧根那条只剩兜底。
+const UI = resolveUiHalf('transcript')
 
 const rail = await import(
-  new URL('../src/packages/transcript/ui/rail-window.ts', import.meta.url).href
+  new URL('../' + UI + '/rail-window.ts', import.meta.url).href
 )
 const { dedupeByRound, pickCurrentRound } = rail
 
@@ -127,9 +131,9 @@ console.log('[3] 锚点去重：同一轮多行只留第一行')
   )
 }
 
-console.log('[4] 接线形态（src/packages/transcript/ui/jump-rail.tsx）')
+console.log(`[4] 接线形态（${UI}/jump-rail.tsx）`)
 {
-  const src = flat(read('src/packages/transcript/ui/jump-rail.tsx'))
+  const src = flat(read(UI + '/jump-rail.tsx'))
   check('判定从纯模块来（pickCurrentRound / dedupeByRound）', src.includes('pickCurrentRound(') && src.includes('dedupeByRound('))
   check('不再拿 .entry-user 当锚点（子代理那一轮没有气泡）', !src.includes("querySelectorAll<HTMLElement>('.entry-user')"))
   check('锚点按 [data-round] 收', src.includes("querySelectorAll<HTMLElement>('[data-round]')"))

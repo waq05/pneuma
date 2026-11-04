@@ -18,6 +18,10 @@
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { resolveUiHalf } from './_check-runner.mjs'
+
+// 界面半的新旧根由 resolveUiHalf 判：transcript 已搬进宿主包，旧根那条只剩兜底。
+const UI = resolveUiHalf('transcript')
 
 const root = new URL('../', import.meta.url)
 // 源码统一换成 LF：仓库里部分文件是 CRLF，逐字比对不能因为换行符误报。
@@ -26,7 +30,7 @@ const read = (rel) => readFileSync(fileURLToPath(new URL(rel, root)), 'utf8').re
 const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 const modUrl = (rel) => new URL(rel, root).href
 
-const foldState = await import(modUrl('src/packages/transcript/ui/fold-state.ts'))
+const foldState = await import(modUrl(UI + '/fold-state.ts'))
 const { readFold, writeFold, hasFold, foldStateOf, followFallback } = foldState
 
 let failures = 0
@@ -113,9 +117,9 @@ console.log('4. 纯逻辑：钩子的生命周期（用同一份 followFallback 
 console.log('5. 源码钉：三处消费点改用钩子')
 {
   const consumers = [
-    ['src/packages/transcript/ui/tool-card/factory.tsx', 'persistKey'],
-    ['src/packages/transcript/ui/rows/tool-row.tsx', 'storeKey'],
-    ['src/packages/transcript/ui/rows/think-row.tsx', 'storeKey'],
+    [UI + '/tool-card/factory.tsx', 'persistKey'],
+    [UI + '/rows/tool-row.tsx', 'storeKey'],
+    [UI + '/rows/think-row.tsx', 'storeKey'],
   ]
   for (const [rel, keyName] of consumers) {
     const src = read(rel)
@@ -125,9 +129,9 @@ console.log('5. 源码钉：三处消费点改用钩子')
     check(rel + ' 不再直接写存档（写存档归钩子）', !/writeFold\(/.test(src))
   }
 
-  const factory = read('src/packages/transcript/ui/tool-card/factory.tsx')
-  const toolRow = read('src/packages/transcript/ui/rows/tool-row.tsx')
-  const thinkRow = read('src/packages/transcript/ui/rows/think-row.tsx')
+  const factory = read(UI + '/tool-card/factory.tsx')
+  const toolRow = read(UI + '/rows/tool-row.tsx')
+  const thinkRow = read(UI + '/rows/think-row.tsx')
   check('工具卡 preparing 仍不可展开（factory）', /call\.status !== 'preparing'/.test(factory) && /open && expandable/.test(factory))
   check('工具行 preparing 仍不可展开（tool-row）', /call\.status !== 'preparing'/.test(toolRow) && /open && expandable/.test(toolRow))
   // 注释里保留着「以前写成 live || prefs.reasoningOpen」的来历说明，所以只看代码本身。
@@ -138,15 +142,15 @@ console.log('5. 源码钉：三处消费点改用钩子')
 
 console.log('6. 源码钉：钩子本身与设置下发链路')
 {
-  const hook = read('src/packages/transcript/ui/fold-hook.ts')
-  const state = read('src/packages/transcript/ui/fold-state.ts')
+  const hook = read(UI + '/fold-hook.ts')
+  const state = read(UI + '/fold-state.ts')
   check('钩子复用 followFallback（判断不另写一份）', /followFallback\(current, storeKey, fallback\)/.test(hook))
   check('钩子写存档走 writeFold', /writeFold\(storeKey, next\)/.test(hook))
   check('钩子只依赖 React 基础 hook（无 JSX）', /from 'react'/.test(hook) && !/<[A-Za-z][^>]*>/.test(hook))
   check('纯模块导出 hasFold / foldStateOf / followFallback', ['hasFold', 'foldStateOf', 'followFallback'].every((name) => state.includes('export function ' + name + '(')))
   check('纯模块零 React 依赖（Node 可直接 import）', !/from 'react'/.test(state))
 
-  const ui = read('src/packages/transcript/ui/ui.tsx')
+  const ui = read(UI + '/ui.tsx')
   check('设置变化仍经 shell.uiprefs 事件同步进壳', /addEventListener\('shell.uiprefs', read\)/.test(ui) && /invoke<Record<string, unknown>>\('getUiPrefs'/.test(ui))
   check('工具卡默认态来自 toolDefaultOpen', /toolOpen: value\['toolDefaultOpen'\] === true/.test(ui))
   check('思考行默认态来自 reasoningDefaultOpen', /reasoningOpen: value\['reasoningDefaultOpen'\] === true/.test(ui))
@@ -154,7 +158,7 @@ console.log('6. 源码钉：钩子本身与设置下发链路')
 
 console.log('7. 源码钉：四档 policy 表逐字未变')
 {
-  const roundFold = read('src/packages/transcript/ui/round-fold.tsx')
+  const roundFold = read(UI + '/round-fold.tsx')
   // 2026-10-30：compact 的 reasoningPreview 由 false 改成 true（用户拍板「紧凑档也保留摘要」）。
   // 这一档管的是「整轮折不折」，不该连行内摘要一起删——理由写在 round-fold.tsx 那条注释里。
   const expected = [
