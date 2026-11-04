@@ -55,8 +55,9 @@ const problems = []
 
 if (existsSync(srcDir)) {
   for (const name of readdirSync(srcDir).sort()) {
-    // ui-* 是界面包（只有界面半边，由 ui-shell 的构建产出），不参与 @pneuma/base 的行清单。
-    if (name.startsWith('ui-')) continue
+    // `ui-<id>` 是独立界面包：**它有自己的一行**（宿主半是空 apply，只为进 Loader 拿开关），
+    // 所以照常参与 @pneuma/base 的行清单。它的界面产物不在这里构建——那是 ui-shell 的
+    // build-plugins 打的 `lib/ui/plugins/<id>/client.js`，与宿主包的产物同一个目录。
     const dir = join(srcDir, name)
     if (!statSync(dir).isDirectory()) continue
     if (!existsSync(join(dir, 'package.json'))) {

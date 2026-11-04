@@ -54,30 +54,35 @@ export function readPluginSource(relDir) {
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 /**
- * 一个界面半的源码目录，两个扫描根里**存在**的那一个。
+ * 一个界面单元的源码目录：三个落点里**存在**的那一个。
  *
- * 2026-11-04 起界面半按包搬迁：一个宿主包带两半边，界面源码落 `src/packages/<id>/ui/`；
- * 还没搬的仍留在 `ui-shell/src/packages/ui-<id>/`。探针不该各自写死一边——写死新根，
- * 没迁的包当场读不到；写死旧根，迁完的包当场读不到。
+ * 顺序（先新后旧，越靠前越「目标形态」）：
+ *   1. `src/packages/<id>/ui`       —— 一个宿主包带两半边（界面半与宿主半共用一个包）
+ *   2. `src/packages/ui-<id>/ui`    —— 独立界面包（纯界面单元，宿主半是空 apply；目标形态）
+ *   3. `ui-shell/src/packages/ui-<id>` —— 旧根兜底（还没搬的包）
  *
- * 返回**相对仓库根的 posix 路径**（如 `src/packages/transcript/ui`），不带前导 `./`
+ * 第 2 条写在第 1 条之后、旧根之前：两者都是「新根」，同一个 id 同时存在时说明旧形态
+ * 还没删干净，此时按目标形态（独立包）取；而只要新根有一份，就不该再回落到旧根。
+ * 探针不该各自写死一边——写死新根，没迁的包当场读不到；写死旧根，迁完的包当场读不到。
+ *
+ * 返回**相对仓库根的 posix 路径**（如 `src/packages/ui-transcript/ui`），不带前导 `./`
  * 也不带结尾斜杠：这个形状可以直接喂给 `join(root, rel)`、`new URL(rel, rootUrl)`
  * 与 `readPluginSource(rel)`，三种探针写法都不用再各转一次。要拼单文件就
  * `resolveUiHalf(id) + '/ui.tsx'`。
  *
- * @param id - 宿主包 id（不带 `ui-` 前缀，例如 `transcript`）
+ * @param id - 界面单元的 id（不带 `ui-` 前缀，例如 `transcript`）
  * @returns 相对仓库根的路径（posix 分隔符）
- * @throws 两个根都不存在时抛出，报错里列出试过的两条路径与仓库根
+ * @throws 三个落点都不存在时抛出，报错里列出试过的路径与仓库根
  */
 export function resolveUiHalf(id) {
-  const candidates = [`src/packages/${id}/ui`, `ui-shell/src/packages/ui-${id}`]
+  const candidates = [`src/packages/${id}/ui`, `src/packages/ui-${id}/ui`, `ui-shell/src/packages/ui-${id}`]
   for (const rel of candidates) {
     const stat = statSync(join(root, rel), { throwIfNoEntry: false })
     if (stat?.isDirectory() === true) return rel
   }
   throw new Error(
     `找不到界面包「${id}」的源码目录：试过 ${candidates.map((rel) => join(root, rel)).join(' 与 ')}` +
-      '（新根 `src/packages/<id>/ui` 与旧根 `ui-shell/src/packages/ui-<id>` 都没有）',
+      '（`src/packages/<id>/ui`、`src/packages/ui-<id>/ui` 与旧根 `ui-shell/src/packages/ui-<id>` 都没有）',
   )
 }
 

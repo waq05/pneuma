@@ -26,10 +26,13 @@ import { build } from 'vite'
 
 const root = dirname(fileURLToPath(import.meta.url))
 // 界面半边的源码有两个扫描根，新根优先、旧根兜底：
-//   新：src/packages/<id>/ui/           —— 一个包两半边，界面半与宿主半共用一个 package.json
+//   新：src/packages/<目录>/ui/          —— 目录名有两种形状，都算新根：
+//       · <id>      宿主包自带界面半（一个包两半边，共用一个 package.json）
+//       · ui-<id>   独立界面包（纯界面单元，宿主半是空 apply）
 //   旧：ui-shell/src/packages/ui-<id>/  —— 还没迁的包仍在这里
 // **产物目录与 id 一律不动**：id 决定 lib/ui/plugins/<id>，也是启动图条目与停用记录里的身份。
-// 搬源码只搬源码，产物路径一改等于换了个插件。
+// 搬源码只搬源码，产物路径一改等于换了个插件——所以 ui-transcript 的产物仍是
+// lib/ui/plugins/transcript/client.js，与它当宿主包半边时逐字节相同。
 const repoRoot = resolve(root, '..')
 const hostPackagesDir = join(repoRoot, 'src', 'packages')
 const legacyPackagesDir = join(root, 'src', 'packages')
@@ -81,9 +84,10 @@ const FACTORY_GLOBAL = '__DSC_UI_FACTORIES__'
  * 读一个界面半的元数据：界面契约区间 → 清单 `api`，载体声明 → inject / phase / …
  *
  * 声明有两处来源，按源码落点选：
- *   - 宿主包（`src/packages/<id>/`，一个包两半边）：读包自己的 package.json，
- *     `dsh.client` 是唯一声明处，`api` 从 `dsh.client.api` 读（与组合包、第三方同一套字段）；
- *     `peerDependencies['@dsc/ui']` 可写可不写，写了就必须与它一致。
+ *   - 新根（`src/packages/<id>/` 一个包两半边，或 `src/packages/ui-<id>/` 独立界面包）：
+ *     读包自己的 package.json，`dsh.client` 是唯一声明处，`api` 从 `dsh.client.api` 读
+ *     （与组合包、第三方同一套字段）；`peerDependencies['@dsc/ui']` 可写可不写，
+ *     写了就必须与它一致。
  *   - 旧界面包（`ui-shell/src/packages/ui-<id>/`）：仍按 2.0 的读法，
  *     `peerDependencies['@dsc/ui']` 是 api 区间，`dsh.client` 可选。
  *
@@ -248,14 +252,25 @@ function applyExtraFields(meta, doc, where) {
 /**
  * 宿主包目录名 → 产物 id 的映射口子。
  *
- * 内置这批（含已迁的 transcript）旧 id 与宿主包目录同名，所以表是空的。将来若出现
- * 「旧 id ≠ 包名」的包，在这里登记一行：id 一改，产物目录、启动图条目、用户停用记录
- * 全部跟着变，所以只许显式登记，不许按命名规则猜。
+ * 内置这批的旧 id 与宿主包目录同名，所以表里只登记「名字实在对不上」的例外。将来若出现
+ * 这种包，在这里登记一行：id 一改，产物目录、启动图条目、用户停用记录全部跟着变，
+ * 所以只许显式登记，不许按命名规则猜。
  */
 const HOST_ID_OVERRIDES = new Map()
 
 /** 旧界面包目录名 → 产物 id：ui-browser → browser（清单 id 与 0.8 一致，宿主不用改发现逻辑）。 */
 const dirToId = (name) => name.slice('ui-'.length)
+
+/**
+ * 新根里一个**目录名** → 产物 id。
+ *
+ * 新根现在收两种目录：宿主包自带的 `<id>`（id 就是目录名）与独立界面包 `ui-<id>`
+ * （id 要剥掉 `ui-` 前缀）。两者共用同一个「id ≠ 目录名」的换算口子——独立界面包与旧根
+ * 的 ui-<id> 是同一条规则，不另造一套，否则同一个界面单元会因为源码住在哪个根而改名，
+ * 产物目录、启动图条目与用户的停用记录会跟着一起换。
+ * @param name - `src/packages/` 下的目录名
+ */
+const hostIdOf = (name) => HOST_ID_OVERRIDES.get(name) ?? (name.startsWith('ui-') ? dirToId(name) : name)
 
 /**
  * 扫两个根，得到「这次要构建哪些界面半」。
@@ -267,16 +282,30 @@ const dirToId = (name) => name.slice('ui-'.length)
  */
 function discover() {
   const found = new Map()
-  // 1) 新根：src/packages/<id>/ui/ui.tsx —— 宿主包里长出来的界面半边。
-  //    宿主包没有 ui/ 是常态（37 个包只有宿主半），所以这里不看目录名开头，只看有没有入口。
+  // 1) 新根：src/packages/<目录>/ui/ui.tsx —— 两种目录都在这里认：
+  //    <id>（宿主包自带的界面半边）与 ui-<id>（独立界面包）。
+  //    宿主包没有 ui/ 是常态（五十多个包只有宿主半），所以这里不看目录名开头，只看有没有入口；
+  //    id 由 hostIdOf 换算，与旧根同一条 `ui-` 剥离规则。
   if (existsSync(hostPackagesDir)) {
-    for (const entry of readdirSync(hostPackagesDir, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue
-      const uiDir = join(hostPackagesDir, entry.name, 'ui')
-      const entryFile = join(uiDir, 'ui.tsx')
+    const names = readdirSync(hostPackagesDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort()
+    for (const name of names) {
+      const entryFile = join(hostPackagesDir, name, 'ui', 'ui.tsx')
       if (!existsSync(entryFile)) continue
-      const id = HOST_ID_OVERRIDES.get(entry.name) ?? entry.name
-      found.set(id, { id, entry: entryFile, metaDir: join(hostPackagesDir, entry.name), hostHalf: true })
+      const id = hostIdOf(name)
+      const existing = found.get(id)
+      if (existing !== undefined) {
+        // 同一个 id 在新根里有两份源码（`<id>/ui` 与 `ui-<id>/ui`）：那是搬完没删旧的一边。
+        // 取排序在前的那份并当场报出来——静默二选一，作者会对着没生效的那份改半天。
+        console.log(
+          `[build-plugins] ${id}：新根里有两份源码 ${relative(repoRoot, existing.entry).split('\\').join('/')} 与 `
+            + `${relative(repoRoot, entryFile).split('\\').join('/')}，用前者（另一个该删掉）`,
+        )
+        continue
+      }
+      found.set(id, { id, entry: entryFile, metaDir: join(hostPackagesDir, name), hostHalf: true })
     }
   }
   // 2) 旧根兜底：ui-shell/src/packages/ui-<id>/ui.tsx。

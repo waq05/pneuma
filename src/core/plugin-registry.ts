@@ -352,14 +352,32 @@ export function resolvePluginConfig(file: string, passed?: unknown): Record<stri
 }
 
 /**
+ * 一批插件的开关快照：只读一次 `plugins.json`，返回其中**处于启用**的那些 file。
+ *
+ * 为什么要有批版：界面产物表每次重建都要问一遍内置界面单元（19 个）的开关，
+ * 逐个调 {@link isPluginEnabled} 会把同一份 JSON 读 19 遍、解析 19 遍。
+ *
+ * 判定口径与单条版逐字相同（同走 {@link entryIndexOf}，0.8.1 的旧键别名照样认）。
+ * @param files - 要问的插件 file（行 id）
+ * @returns 处于启用的 file 集合
+ */
+export function readEnabledPlugins(files: readonly string[]): Set<string> {
+  const entries = readPluginEntries()
+  const enabled = new Set<string>()
+  for (const file of files) {
+    const index = entryIndexOf(entries, file)
+    const on = index < 0 ? catalog.get(file)?.defaultDisabled !== true : !entries[index]!.disabled
+    if (on) enabled.add(file)
+  }
+  return enabled
+}
+
+/**
  * 这个插件该不该挂载。条目树没记录时回落到元数据声明的默认值
  * （`defaultDisabled` 为 true 的官方插件在用户主动打开之前不挂载）。
  */
 export function isPluginEnabled(file: string): boolean {
-  const entries = readPluginEntries()
-  const index = entryIndexOf(entries, file)
-  if (index < 0) return catalog.get(file)?.defaultDisabled !== true
-  return !entries[index]!.disabled
+  return readEnabledPlugins([file]).has(file)
 }
 
 /**

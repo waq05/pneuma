@@ -1,7 +1,7 @@
 /**
  * cmd.exe 那条路上的参数加引号（全仓库唯一一份）。
  *
- * 为什么单独一个模块：`core/mcp.ts` 起 MCP server、`core/lsp/client.ts` 起语言服务器，
+ * 为什么单独一个模块：`core/mcp.ts` 起 MCP server、`packages/lsp/client.ts` 起语言服务器，
  * 都在 Windows 上走 `shell: true`（命令由 cmd.exe 解析）；带空格或 `&|<>^` 的参数
  * 必须自己加双引号，否则会被 cmd 拆开。两处各写了一份逐字相同的实现，合并到这里。
  *

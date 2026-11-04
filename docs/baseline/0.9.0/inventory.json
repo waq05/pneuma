@@ -470,6 +470,15 @@
       "bundle": null
     },
     {
+      "file": "ui-transcript",
+      "name": "会话流（界面）",
+      "enabled": true,
+      "toggleable": true,
+      "source": "external",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
       "file": "waiting",
       "name": "等人登记表",
       "enabled": true,

@@ -384,7 +384,7 @@ export interface DscRuntime {
 
 // ── 电脑操作（Computer Use）的跨层契约（0.6.68 补 parity 时追加；只追加、不重排上文） ──
 //
-// 这些类型原先只在 `src/core/desktop-control.ts` 里，模型可见的工具 schema、
+// 这些类型原先只在 `src/packages/computer-use/desktop-control.ts` 里，模型可见的工具 schema、
 // 无障碍观察结果、审计行都要用到同一份形状，故提升到这里做单一真源。
 // 桌面端界面（若将来展示这些）与内核工具层都按这份形状对齐。
 

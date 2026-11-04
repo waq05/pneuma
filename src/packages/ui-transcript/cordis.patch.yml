@@ -1,0 +1,4 @@
+# 会话流的界面单元：纯界面插件，宿主半是空 apply（进 Loader 只为拿到开关）
+- insert:
+    - id: ui-transcript
+      name: '@pneuma/ui-transcript'

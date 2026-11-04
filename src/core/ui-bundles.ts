@@ -86,6 +86,18 @@ function builtinContentRev(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex').slice(0, 12)
 }
 
+/**
+ * 内置界面单元的启停键：产物 id 前面加 `ui-`（`transcript` → `ui-transcript`）。
+ *
+ * 为什么不是 id 本身：产物 id 是历史约定（`lib/ui/plugins/<id>` 目录名、启动图条目、
+ * 用户的停用记录都用它），而开关要落在**插件行**上——每一行有自己的 id，界面单元的行
+ * 是 `ui-<id>`（见 `src/packages/ui-<id>/cordis.patch.yml`）。两者差一个前缀，
+ * 换算只在这一处写，别处照抄迟早抄出两个键。
+ */
+function builtinSwitchKey(id: string): string {
+  return `ui-${id}`
+}
+
 /** 插件 bundle 目录。 */
 export function uiPluginsDir(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), '..', 'ui', 'plugins')
@@ -623,15 +635,34 @@ class UiArtifactCache {
     }
   }
 
-  /** 现在的产物表（清单没换就不重算）。 */
+  /**
+   * 现在的产物表（清单没换就不重算）。
+   *
+   * 2.0 起内置界面单元也有开关：每个单元有一行（`ui-<id>`），停用它就不该进启动图。
+   * 过滤放在**取表这一步**、不放进 {@link rebuild}：
+   *   - 放进 rebuild 而开关不进指纹（`fingerprint()` 只看 manifest.json 与各 bundle.json），
+   *     开关一变就永远读到旧值——`plugins.json` 不是这份缓存的钥匙；
+   *   - 把开关并进指纹，又等于每扳一次开关都整表重建、重新读 19 份 client.js 算 rev。
+   * 表本身照旧缓存，这里每次只按开关切一刀（`readEnabledPlugins` 一次读盘）。
+   */
   table(): UiPluginArtifacts {
     this.rebuild(false)
-    // 内置清单没有逐条启停（它们随壳一起发布），被停用的只有第三方与组合包——
-    // 那两个来源在 collect 那层合并进来，这里给空。
+    const enabled = readEnabledPlugins(this.entries.map((entry) => builtinSwitchKey(entry.id)))
+    const entries: (UiPluginManifestEntry & { rev: string })[] = []
+    const disabled: string[] = []
+    for (const entry of this.entries) {
+      // 停用不是问题（启停是用户的开关），但要能报「它被停用了」——与第三方、组合包
+      // 同一句话（`collectUiArtifactsForPlatform` 把三份 disabled 并成一份给装载器）。
+      if (!enabled.has(builtinSwitchKey(entry.id))) {
+        disabled.push(entry.id)
+        continue
+      }
+      entries.push(entry)
+    }
     return {
-      entries: [...this.entries],
+      entries,
       problems: [...this.problems],
-      disabled: [],
+      disabled,
       ...(this.apiVersion === undefined ? {} : { apiVersion: this.apiVersion }),
     }
   }
@@ -751,7 +782,7 @@ export function readUiPluginBundle(
 import { readdirSync } from 'node:fs'
 import type { UiTrustProblemKind, UiTrustView } from '../contract.js'
 import { dscPath } from './path-policy.js'
-import { isPluginEnabled, isUiPluginTrusted, readUiPluginTrust, trustUiPlugin } from './plugin-registry.js'
+import { isPluginEnabled, isUiPluginTrusted, readEnabledPlugins, readUiPluginTrust, trustUiPlugin } from './plugin-registry.js'
 
 /** 第三方 bundle 的 rev：**内容摘要**（sha256 前 16 位）。与内置档同一套语义（见
  *  `builtinContentRev`），只是长度不同：第三方的字节是「别人放进来的一份代码」，
@@ -1621,7 +1652,9 @@ export function collectUiArtifactsForPlatform(
   ]
   const problems = [...builtin.problems, ...third.problems, ...fromPackages.problems]
   // 被停用的 id 并成一份（同一份清单给装载器报「被停用」用；重复的去一次）。
-  const disabled = [...new Set([...third.disabled, ...fromPackages.disabled])]
+  // 三个来源都要并：内置界面单元（2.0 起每个单元一行 `ui-<id>`）与第三方、组合包一样，
+  // 停用之后要被报成「它被停用了」，不能只是悄悄少一条——否则用户翻遍界面也找不到原因。
+  const disabled = [...new Set([...builtin.disabled, ...third.disabled, ...fromPackages.disabled])]
   return {
     entries,
     problems,
