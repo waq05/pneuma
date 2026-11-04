@@ -11,7 +11,7 @@
 
 ## Known Limitations（已知限制）
 
-- 只有查询没有事件：`register` 返回注销函数，但没有「有人开始或停止等」的通知（index.ts:20-25；core/lifecycle-hooks.ts:152）。
+- 只有查询没有事件：`register` 返回注销函数，但没有「有人开始或停止等」的通知（index.ts:20-25；packages/lifecycle-hooks/lifecycle-hooks.ts:152）。
 - 登记表在内存里，进程重启即空，卡片恢复后要重新登记（index.ts:18、plan/index.ts:150）。
 - 某个 pending 回调抛错按「没在等」处理，以免把续跑永久钉死（index.ts:30-37）。
 - 同一 id 重复登记会覆盖前一条，先前那次登记的注销函数随即失效（index.ts:21-24）。

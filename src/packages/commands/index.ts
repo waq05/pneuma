@@ -29,7 +29,7 @@ import {
   type ReviewTarget,
 } from '@pneuma/runtime/core/git-info.js'
 import { estimateTokens } from '@pneuma/runtime/core/compact.js'
-import { exportSessionMarkdown } from '@pneuma/runtime/core/session-export.js'
+import { exportSessionMarkdown } from './session-export.js'
 import { checkForUpdate } from '@pneuma/runtime/core/update-check.js'
 import { errText } from '@pneuma/runtime/core/err-text.js'
 import { discoverThirdPartyUiArtifacts, readUiPluginManifestReport } from '@pneuma/runtime/core/ui-bundles.js'

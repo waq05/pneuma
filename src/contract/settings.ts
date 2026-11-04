@@ -205,7 +205,7 @@ export interface ModelConfigView {
 /**
  * 一次端点连接测试的结果（设置 → 模型每张卡上的「测试连接」）。
  *
- * 判定口径在 core/connection-test：**流正常收尾即通**；失败一律带一句可直接展示的
+ * 判定口径在 packages/settings/connection-test.ts：**流正常收尾即通**；失败一律带一句可直接展示的
  * 说明（永不包含 key）。
  */
 export interface ConnectionTestOutcome {

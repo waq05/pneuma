@@ -1,7 +1,7 @@
 /**
  * approval-floor 插件：把审批灾难地板挂到守卫链的 order 5 上（官方可开关插件）。
  *
- * 判定逻辑全在 `core/approval-floor.ts`，这个文件只做四件装配的事：
+ * 判定逻辑全在 `approval-floor.ts`，这个文件只做四件装配的事：
  *   1. 把守卫注册进守卫链；
  *   2. 把白名单的结论以 `approvalFloor` 服务交出去，由审批层免卡放行（地板自己不 return pass，
  *      否则排在 order 20 / 25 的安全钩子会被一起跳掉）；
@@ -25,7 +25,7 @@ import {
   parsePrefixListText,
   resolveFloorConfig,
   type FloorConfig,
-} from '@pneuma/runtime/core/approval-floor.js'
+} from './approval-floor.js'
 import { activeRules } from '@pneuma/runtime/core/command-policy.js'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import type { SettingsField, SettingsValue, SettingsValues } from '@pneuma/runtime/contract.js'

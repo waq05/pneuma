@@ -134,7 +134,7 @@ export function firstMutatedIndex(before: readonly ChatMessage[], after: readonl
  * 标记与来源一一对应（新增一类尾部注入时要往这里补一行）：
  *   - env-facts：`plugins/prompt.ts` 的 environmentSnapshot
  *   - lsp-write-diagnostics：`plugins/lsp.ts`
- *   - user-prompt-submit：`plugins/lifecycle-hooks.ts`
+ *   - user-prompt-submit：`packages/lifecycle-hooks/index.ts`
  */
 const RUNTIME_INJECTION_MARKERS = [
   '本条是程序在每次请求时自动附上的当前环境快照',

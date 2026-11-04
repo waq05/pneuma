@@ -6,7 +6,7 @@
  *   1. 它必须早于审批卡（30），用户点「允许」之前就已经看见要改什么；
  *   2. 它必须晚于模式闸门与安全钩子，这一位只听「参数里写了什么」，不需要跟它们抢裁决权；
  *   3. 它永远 defer，从不 deny、从不 pass——一条纯观察的守卫返回 pass 会把后面的审批卡
- *      一起跳掉（`plugins/approval-floor.ts:19` 记着这个坑），所以这里只表态「我没意见」。
+ *      一起跳掉（`packages/approval-floor/index.ts:6-7` 记着这个坑），所以这里只表态「我没意见」。
  * 这跟 Codex 的做法同构：Codex 在执行前算出 unified diff，把它挂在审批请求
  * （`ApplyPatchApprovalRequestEvent.changes`，`protocol/src/approvals.rs:471-487`）与会话流
  * （`PatchHistoryCell`，`tui/src/history_cell/patches.rs:44-50`）上。

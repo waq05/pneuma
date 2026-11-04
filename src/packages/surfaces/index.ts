@@ -3,12 +3,12 @@
  *
  * 每个功能点把自己那块状态投影登记进来（模式登记模式、清单登记清单……），
  * 装配快照的那一层（transcript 插件）只问注册表要全部片段，不认识任何具体功能。
- * 注册表本体在 core/surface-registry.ts，这里挂成服务。
+ * 注册表本体在 surface-registry.ts，这里挂成服务。
  *
  * @module dsc/plugins/surfaces
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { SurfaceRegistry } from '@pneuma/runtime/core/surface-registry.js'
+import { SurfaceRegistry } from './surface-registry.js'
 import type { RuntimeSurfaces } from '@pneuma/runtime/contract.js'
 import type { SurfaceService } from '@pneuma/runtime/services/types.js'
 

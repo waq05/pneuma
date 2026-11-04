@@ -33,8 +33,8 @@ import type { DscCoreConfig } from '@pneuma/runtime/core/config.js'
 import { errText as err } from '@pneuma/runtime/core/err-text.js'
 import { readConfig } from '@pneuma/runtime/core/config.js'
 import { parseTolerantYaml } from '@pneuma/runtime/core/migrate.js'
-import { pickProbeModel, testConnection } from '@pneuma/runtime/core/connection-test.js'
-import { discoverModels } from '@pneuma/runtime/core/model-discovery.js'
+import { pickProbeModel, testConnection } from './connection-test.js'
+import { discoverModels } from './model-discovery.js'
 import {
   activeConfigFile,
   CREDENTIALS_FILE,

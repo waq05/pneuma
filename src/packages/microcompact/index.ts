@@ -1,6 +1,6 @@
 /**
  * microcompact 插件：一个纯投影贡献者，把每轮请求里**较旧的**工具结果正文换成占位符
- * （算法与跳过规则见 core/microcompact.ts 的模块注释）。
+ * （算法与跳过规则见 microcompact.ts 的模块注释）。
  *
  * 为什么单列一条内置插件、而不塞进 prompt 插件：它是可配、可关的一层**策略**
  * （keepRecent / minSaveTokens / minFreePercent / enabled），跟内核那三条协议护栏（fold-system /
@@ -26,7 +26,7 @@ import {
   planWorthApplying,
   roundKeyOf,
   type MicrocompactPlan,
-} from '@pneuma/runtime/core/microcompact.js'
+} from './microcompact.js'
 import { estimateTokens } from '@pneuma/runtime/core/compact.js'
 import type { ChatMessage } from '@pneuma/runtime/core/llm.js'
 import type { Session } from '@pneuma/runtime/core/session.js'

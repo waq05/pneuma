@@ -17,7 +17,7 @@
  * 观察者的签名是 `observe(toolName, text) => text`，**同步**——它没法在里面等一次 LSP 往返
  * （等不了，也没法把结果塞回这次的工具输出）。所以本插件用的是内核另一条现成通道：
  * 观察者只负责把「写后诊断」挂到后台，算完攒进 `pending`，由 `ctx.prompt.transformMessages`
- * 在下一次请求的末尾补一条 system 段（`core/lifecycle-hooks.ts` 的 PostToolUse 走的是同一条路）。
+ * 在下一次请求的末尾补一条 system 段（`packages/lifecycle-hooks/lifecycle-hooks.ts` 的 PostToolUse 走的是同一条路）。
  * 于是：写前基线由守卫 order 7 同步排队（`decide` 只做「读盘 + 入队」，**不阻塞这一次写**），
  * 写后诊断由观察者 order 46 入队；两侧都排在同一个 (server, root) 串行队列上，
  * 顺序天然是「写前 → 写后」。判定用**行位移映射**（`buildLineShift`）后的集合差，

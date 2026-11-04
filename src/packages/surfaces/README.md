@@ -10,11 +10,11 @@
 
 ## Known Limitations（已知限制）
 
-- 同 id 后注册者顶掉先注册者，退订只撤自己这一份（core/surface-registry.ts:36-49）。
-- 某个投影抛错时沿用上一次的值；从没成功过就整键缺席（core/surface-registry.ts:56-74）。
-- 每次装配都同步调用所有 read；某个 read 很慢会拖慢整帧（core/surface-registry.ts:15-19、60-63）。
-- 片段顺序按注册顺序，不按 id 排序（core/surface-registry.ts:23-25）。
-- 没有生命周期钩子：注册了就一直在，直到退订（core/surface-registry.ts:40-49）。
+- 同 id 后注册者顶掉先注册者，退订只撤自己这一份（surface-registry.ts:36-49）。
+- 某个投影抛错时沿用上一次的值；从没成功过就整键缺席（surface-registry.ts:56-74）。
+- 每次装配都同步调用所有 read；某个 read 很慢会拖慢整帧（surface-registry.ts:15-19、60-63）。
+- 片段顺序按注册顺序，不按 id 排序（surface-registry.ts:23-25）。
+- 没有生命周期钩子：注册了就一直在，直到退订（surface-registry.ts:40-49）。
 
 ## 行与开关
 

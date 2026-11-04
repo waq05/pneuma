@@ -27,7 +27,7 @@ import { resolvePluginConfig } from './plugin-registry.js'
 /** 可选的命令执行终端。`auto` = 跟平台默认（Windows PowerShell 5.1 / POSIX sh）。 */
 export type ShellChoice = 'auto' | 'powershell' | 'pwsh' | 'gitbash' | 'wsl' | 'sh'
 
-/** 结构扫描认的两种语法家族（见 core/approval-floor.ts 的 inspectStructure）。 */
+/** 结构扫描认的两种语法家族（见 packages/approval-floor/approval-floor.ts 的 inspectStructure）。 */
 export type ShellFlavor = 'powershell' | 'posix'
 
 /** 一台机器上一个可用的终端。 */

@@ -6,7 +6,7 @@
  * `~/.dsc/lifecycle-hooks.json`，**两份配置各读各的**。两者会同时挂在守卫链上（安全钩子 20、
  * 这里 25，都在审批 30 之前），互不认识。
  *
- * 挂法（每条事件为什么只能做到这个档，见 `core/lifecycle-hooks.ts` 的能力表）：
+ * 挂法（每条事件为什么只能做到这个档，见 `lifecycle-hooks.ts` 的能力表）：
  *   PreToolUse       → 守卫 order 25，可 deny；
  *   PostToolUse      → 观察者 order 45（同步点，钩子挂后台跑，话进下一次请求）；
  *   SessionStart     → `dsc/session-open` + 请求末尾补 system；
@@ -36,9 +36,9 @@ import {
   runLifecycleCommand,
   subjectHits,
   wrapHookOutput,
-} from '@pneuma/runtime/core/lifecycle-hooks.js'
+} from './lifecycle-hooks.js'
 import { errText } from '@pneuma/runtime/core/err-text.js'
-import type { LifecycleEvent, LifecycleHooksConfig, LifecyclePayload } from '@pneuma/runtime/core/lifecycle-hooks.js'
+import type { LifecycleEvent, LifecycleHooksConfig, LifecyclePayload } from './lifecycle-hooks.js'
 import { contentText } from '@pneuma/runtime/core/llm.js'
 import type { ChatMessage } from '@pneuma/runtime/core/llm.js'
 import { writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
