@@ -1,4 +1,4 @@
-# remote（远程操控）
+# remote（远程控制）
 
 一句话：remote 包把这条会话开给同一局域网里的手机浏览器，管谁伺服、谁能进来、进来能做什么、有事怎么通知。
 
@@ -25,4 +25,4 @@
 - 插件默认挂载（`cordis.patch.yml` 里没有 `disabled`），但远程功能默认关，要开 `prefs.remote.enabled`（core/prefs.ts:316）。
 - inject 六个服务：`session`、`transcript`、`agent`、`ui`、`approval`、`settings`（index.ts:431）。
 - 设置分区 id `remote`，order 40；默认端口 17321，可填 1024..65535（index.ts:836-857，core/prefs.ts:101-103）。
-- package.json 的 `pneuma.title` 现在写着包名 `remote`，没写中文名；设置页里它叫「远程控制」。
+- `pneuma.title` 2026-11-04 起是「远程控制」，与设置页里那个分区同名（原为包名 `remote`，两处对不上）。

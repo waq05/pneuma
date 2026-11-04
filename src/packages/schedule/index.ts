@@ -11,8 +11,8 @@
  *   - 投递文本写明「这是定时触发，不是用户指令，不构成授权」；投递前问 `ctx.waiting.any`；
  *   - 不改 goal 的 rounds、不给 goal 上膛（`src/core/goal.ts:230-242`、`:96-97`）——
  *     定时任务跑一次就收，会话目标是「用户在场时跑到完」；给 goal 上膛等于让无人值守的链
- *     自己点火，所以这个插件全程不碰 `ctx.goal`，只提供 `ctx.provide('schedule', …)` 之外没有的
- *     两样东西都不做。
+ *     自己点火。所以这个插件全程不碰 `ctx.goal`：goal 的 rounds 与上膛这两样都不做。
+ *     它对外的面只有五处：快照面 `scheduled`、一个工具、一个命令、一段提示词、一个设置分区。
  *
  * 这个文件只做装配：规则算法在 `core/schedule/rule.ts`、落盘在 `store.ts`、调度在 `runner.ts`。
  *

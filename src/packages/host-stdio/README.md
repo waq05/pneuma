@@ -1,4 +1,4 @@
-# host-stdio（host-stdio）
+# host-stdio（宿主协议桥）
 
 一句话：host-stdio 包把 `ui` 服务（DscRuntime）暴露成宿主协议，桌面 Electron 壳拉起这个无头进程后靠它双向通信。
 

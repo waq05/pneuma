@@ -75,7 +75,7 @@
     },
     {
       "file": "desktop-dock",
-      "name": "desktop-dock",
+      "name": "桌面能力桥",
       "enabled": true,
       "toggleable": true,
       "source": "external",
@@ -111,7 +111,7 @@
     },
     {
       "file": "git",
-      "name": "git",
+      "name": "Git 只读快照面",
       "enabled": true,
       "toggleable": true,
       "source": "external",
@@ -147,7 +147,7 @@
     },
     {
       "file": "host-stdio",
-      "name": "host-stdio",
+      "name": "宿主协议桥",
       "enabled": true,
       "toggleable": true,
       "source": "external",
@@ -237,7 +237,7 @@
     },
     {
       "file": "permission-presets",
-      "name": "permission-presets",
+      "name": "权限预设",
       "enabled": true,
       "toggleable": true,
       "source": "external",
@@ -255,7 +255,7 @@
     },
     {
       "file": "plugin-manager",
-      "name": "plugin-manager",
+      "name": "插件管理",
       "enabled": true,
       "toggleable": true,
       "source": "external",
@@ -264,7 +264,7 @@
     },
     {
       "file": "presets",
-      "name": "模式",
+      "name": "模式预设",
       "enabled": true,
       "toggleable": true,
       "source": "external",
@@ -291,7 +291,7 @@
     },
     {
       "file": "remote",
-      "name": "remote",
+      "name": "远程控制",
       "enabled": true,
       "toggleable": true,
       "source": "external",
@@ -480,7 +480,7 @@
     },
     {
       "file": "ui-ask",
-      "name": "模型提问（界面）",
+      "name": "旁问（界面）",
       "enabled": true,
       "toggleable": true,
       "source": "external",
@@ -489,7 +489,7 @@
     },
     {
       "file": "ui-browser",
-      "name": "受控浏览器（界面）",
+      "name": "侧栏浏览器（界面）",
       "enabled": true,
       "toggleable": true,
       "source": "external",
@@ -543,7 +543,7 @@
     },
     {
       "file": "ui-prompt",
-      "name": "提示词组装（界面）",
+      "name": "等待用户决定的卡（界面）",
       "enabled": true,
       "toggleable": true,
       "source": "external",
@@ -606,7 +606,7 @@
     },
     {
       "file": "ui-team",
-      "name": "共享任务板（界面）",
+      "name": "智能体团队（界面）",
       "enabled": true,
       "toggleable": true,
       "source": "external",
@@ -633,7 +633,7 @@
     },
     {
       "file": "ui-transcript",
-      "name": "会话流（界面）",
+      "name": "消息流（界面）",
       "enabled": true,
       "toggleable": true,
       "source": "external",

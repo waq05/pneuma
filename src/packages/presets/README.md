@@ -1,4 +1,4 @@
-# presets（模式）
+# presets（模式预设）
 
 一句话：presets 包管「模型是谁、手上有什么、被叮嘱了什么」——按会话换一段模式正文、收窄工具目录、按名单摘掉骨架提示段。
 
@@ -26,5 +26,5 @@
 - resolution 是 pinned（package.json 的 `pneuma.resolution`），profile 里的同名版本换不掉它。
 - 默认开：`cordis.patch.yml` 里没有 `disabled`。
 - inject 八个服务：`session`、`commands`、`prompt`、`tools`、`settings`、`surfaces`、`approval`、`mode`，并 provide `presets`（index.ts:54-55）。
-- `pneuma.title` 是「模式」，与 mode 包的「协作模式」只差两个字：本包管人格 + 工具集 + 提示词，不碰权限与闸门（core/presets.ts:6-8）。
+- `pneuma.title` 2026-11-04 起是「模式预设」（原为「模式」，与 mode 包的「协作模式」只差两个字，容易点错）：本包管人格 + 工具集 + 提示词，不碰权限与闸门（core/presets.ts:6-8）。
 - 没有设置分区：入口是 `/preset` 命令与快照 `preset`（index.ts:195）。

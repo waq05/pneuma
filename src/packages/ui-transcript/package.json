@@ -14,8 +14,8 @@
     },
     "order": 368,
     "resolution": "overridable",
-    "title": "会话流（界面）",
-    "description": "事件折叠成对话条目与快照"
+    "title": "消息流（界面）",
+    "description": "对话页的消息流：一轮一个座位、一行一个条目，过程可整轮折叠或按阶段收组"
   },
   "dsh": {
     "client": {

@@ -24,5 +24,5 @@
 - resolution 是 overridable（package.json 的 `pneuma.resolution`）。
 - 默认开：`cordis.patch.yml` 里没有 `disabled`。
 - inject 六个服务：`approval`、`settings`、`surfaces`、`mode`、`session`、`transcript`，并 provide `permissionPresets`（index.ts:51-52）。
-- package.json 的 `pneuma.title` 现在写着包名 `permission-presets`，没写中文名；插件中心会照它显示。
+- `pneuma.title` 2026-11-04 起是「权限预设」（原为包名，插件中心里等于没有标题）。
 - 没有设置分区：入口只有那颗权限旋钮与设置页里逐格改的沙箱 / 审批项（index.ts:176）。

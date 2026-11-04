@@ -1,4 +1,4 @@
-# tui（tui）
+# tui（终端界面）
 
 一句话：终端界面插件，把 runtime 服务挂到 ink，并把 `platform: 'tui'` 的界面插件装进通知盒下方的槽。
 

@@ -1,6 +1,6 @@
-# ui-ask（模型提问（界面））
+# ui-ask（旁问）
 
-一句话：标题叫「模型提问」，这一版画的其实是「旁问」——只读的一次性问答；`ask_user` 的选项卡在 `ui-prompt`。
+一句话：右侧栏的「旁问」——基于当前上下文只读地问答一次；`ask_user` 的选项卡不在这里，在 `ui-prompt`。
 
 ## Model Experience（模型体验）
 
@@ -30,4 +30,4 @@
 - resolution 是 overridable；默认开（cordis.patch.yml 里没有 `disabled`）。
 - dsh.client：platform `pneuma`、api `^0.8.1`，没有 phase / inject（package.json:20-25）。
 - 宿主半 inject 无、provide 无（index.ts:15-31）。
-- title「模型提问（界面）」与 description「ask_user 工具与它的选项卡」都和本包职责不符（package.json:17-18）。
+- title 曾是「模型提问（界面）」、与宿主包 `ask` 重名，2026-11-04 已改成「旁问（界面）」；若看到旧界面截图里的名字，是那之前的（package.json:17-18）。

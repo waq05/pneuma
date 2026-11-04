@@ -5,7 +5,6 @@
   "type": "module",
   "exports": {
     ".": "./index.js",
-    "./client": "./ui/ui.tsx",
     "./package.json": "./package.json"
   },
   "pneuma": {
@@ -16,12 +15,6 @@
     "resolution": "pinned",
     "title": "会话流",
     "description": "事件折叠成对话条目与快照"
-  },
-  "dsh": {
-    "client": {
-      "platform": "pneuma",
-      "api": "^0.8.1"
-    }
   },
   "engines": {
     "pneuma": ">=1.0.0 <2.0.0"

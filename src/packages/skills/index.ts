@@ -2,7 +2,7 @@
  * skills 插件：provide `skills` 服务——技能发现、启停、市场浏览与安装，
  * 外加两个消费端：`skill` 工具（模型按需取正文）与 `/技能名` 命令（用户直接调用）。
  *
- * 模型可见目录（`<available_skills>`）由 agent 插件拼进系统提示词，
+ * 模型可见目录（`<available_skills>`）由 prompt 插件拼进系统提示词（src/packages/prompt/index.ts:283），
  * 这里只维护文本缓存：目录里只有名字和一句话说明，技能正文不进上下文。
  *
  * 扩展点：外部插件用 `ctx.skills.registerProvider` 挂远端技能源

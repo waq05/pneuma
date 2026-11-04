@@ -13,7 +13,8 @@
     },
     "order": 9020,
     "resolution": "overridable",
-    "title": "remote"
+    "title": "远程控制",
+    "description": "把当前会话开给局域网里的手机浏览器：8 位配对码换设备令牌，只放行白名单方法，审批与轮次结束会推送通知"
   },
   "engines": {
     "pneuma": ">=1.0.0 <2.0.0"

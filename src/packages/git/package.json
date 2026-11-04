@@ -13,7 +13,8 @@
     },
     "order": 320,
     "resolution": "overridable",
-    "title": "git"
+    "title": "Git 只读快照面",
+    "description": "只给界面读的分支名与改动条数：不注册任何 git 工具，模型要跑 git 只能走 bash"
   },
   "engines": {
     "pneuma": ">=1.0.0 <2.0.0"

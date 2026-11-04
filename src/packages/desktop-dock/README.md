@@ -1,4 +1,4 @@
-# desktop-dock（desktop-dock）
+# desktop-dock（桌面能力桥）
 
 一句话：desktop-dock 包提供 `dock` 服务，把当前会话工作目录内的文件系统、git 与终端三档能力开给桌面端的 dock 面板。
 

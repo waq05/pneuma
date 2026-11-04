@@ -13,7 +13,8 @@
     },
     "order": 330,
     "resolution": "overridable",
-    "title": "plugin-manager"
+    "title": "插件管理",
+    "description": "让模型列出、开关、安装本地或远程插件；写操作先过审批，远程插件装之前把来源写进审批卡"
   },
   "engines": {
     "pneuma": ">=1.0.0 <2.0.0"

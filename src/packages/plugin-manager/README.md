@@ -26,4 +26,4 @@
 - resolution 是 overridable（package.json 的 `pneuma.resolution`）。
 - 默认开：`cordis.patch.yml` 里没有 `disabled`。
 - inject 两个服务：`tools`、`commands`（index.ts:41）；但本包不注册任何命令，命令面只有那个工具。
-- package.json 的 `pneuma.title` 现在写着包名 `plugin-manager`，没写中文名；插件中心会照它显示。
+- `pneuma.title` 2026-11-04 起是「插件管理」（原为包名，插件中心里等于没有标题）。

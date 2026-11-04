@@ -14,8 +14,8 @@
     },
     "order": 358,
     "resolution": "overridable",
-    "title": "提示词组装（界面）",
-    "description": "系统提示词分段注册表与请求体改写链"
+    "title": "等待用户决定的卡（界面）",
+    "description": "输入框上方那三张卡：审批卡、计划审阅卡、提问卡；数据读快照里的 pendingApproval / pendingPlan / pendingQuestion"
   },
   "dsh": {
     "client": {

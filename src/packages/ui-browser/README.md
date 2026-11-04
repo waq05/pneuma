@@ -1,6 +1,6 @@
-# ui-browser（受控浏览器（界面））
+# ui-browser（侧栏浏览器）
 
-一句话：标题写「受控浏览器」，实际是右侧栏里给人用的浏览器页签（Electron 的原生网页视图）；模型那台受控 Chrome 在 `@pneuma/browser`。
+一句话：右侧栏里给人用的浏览器页签（Electron 的原生网页视图）；模型那台受控 Chrome 在 `@pneuma/browser`，是两回事。
 
 ## Model Experience（模型体验）
 

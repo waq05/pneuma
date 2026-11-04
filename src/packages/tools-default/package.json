@@ -14,7 +14,7 @@
     "order": 80,
     "resolution": "pinned",
     "title": "内置工具",
-    "description": "bash / read / write / edit / glob / grep",
+    "description": "注册 bash、job_output / job_list / job_kill、terminal、read、read_image、write、edit、glob、grep 共 11 件，并把超时、输出与终端选择放进设置",
     "settingsSection": "tools-default"
   },
   "engines": {

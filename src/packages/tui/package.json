@@ -13,7 +13,8 @@
     },
     "order": 9000,
     "resolution": "overridable",
-    "title": "tui"
+    "title": "终端界面",
+    "description": "把同一套运行时挂到 ink 终端：整屏跑在备用屏里，声明 platform 为 tui 的界面插件渲染在通知盒下方"
   },
   "engines": {
     "pneuma": ">=1.0.0 <2.0.0"
