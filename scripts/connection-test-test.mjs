@@ -195,11 +195,12 @@ console.log('\n[5] 接线钉（源码）')
       /<IconTrash size=\{14\} \/>/.test(models) &&
       /<IconTrash size=\{13\} \/>/.test(models) &&
       /<IconBolt size=\{12\} \/>/.test(models))
+  // 文案 2026-11-05 进 ui-settings 的字典：钉「每颗钮都挂了对应的 title 键」。
   check('界面：那几颗钮的名字都进了 title',
-    models.includes('title="改名字与显示名"') &&
-      models.includes('title="删除这个端点"') &&
-      models.includes('拉取清单 · 从端点拉取线上可用模型清单') &&
-      models.includes("{provider.keyConfigured ? '替换' : '填写'}"))
+    models.includes("title={t('settings.models.head.editTip')}") &&
+      models.includes("title={t('settings.models.head.removeTip')}") &&
+      models.includes("title={t('settings.models.discover.openTip')}") &&
+      models.includes("title={t('settings.models.key.overwriteTip')}"))
   check('界面：旧的带字动作按钮已经不画了（拉取中… / 编辑 / 删除 这些字不再出现在按钮里）',
     !models.includes("'拉取中…' : '拉取清单'") && !models.includes('<IconEdit size={13} /> 编辑') && !models.includes('<IconTrash size={13} /> 删除'))
   check('界面：模型后面那颗钮没密钥/正在测时按不动', models.includes('disabled={!usable || busy}'))
