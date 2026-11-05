@@ -14041,3 +14041,104 @@ body——两件都生效。于是只迁一处：`changes-card.tsx` 的悬停 di
 **文档**：`plugin-model.md` §14 补「扫描边界」一段；`CHANGELOG` 的 0.9.0 记一条用户可见的启动改善；
 `plugin-equality-plan.md` 在 0.9.0 之后已经没有待办（五条判定全部交付、§12 是进度流水），按用户要求删除，
 它的结论已经落在本文各条与 `plugin-model.md` 里。
+
+## 2026-11-06 凌晨：回车排队、后台作业的「一轮」、插件中心折叠，以及启动到底慢在哪
+
+用户一次报了四条，加上一条补充。前四条里两条是真 bug，一条是界面缺个折叠，一条是「启动有点慢，分析能否优化」；
+补充那条说的是「后台作业不应该视为一轮，只有用户发出的消息才算新一轮」。
+
+### 1. 回车排队被当成「插话」当场吃掉（真 bug）
+
+现象：回合进行中，输入框占位符写着「回车把消息排队进队列，Ctrl+Enter 插话」，但回车之后那条消息没有出现在
+输入框下方的排队条里，而是直接进了对话正文。
+
+链路本身是通的（起真内核实测：`submit` → `followup` → `enqueueAsync` → 快照 `queued` 一直是那条）。问题在出账时机：
+`src/packages/session-core/loop.ts:365` 每个**步骤边界**都调 `drainInbox(true)`，而 `drainInbox`（同文件 :298-329）
+把收件箱里的**全部**条目一次取走、并只因 `midTurn === true` 就统通标成 `steering: true`。于是「回车排队」与
+「Ctrl+Enter 插话」在宿主里变成了同一件事，用户那条在下一个工具步就被并进本轮；排队条（`ui-composer/ui/queue-dock.tsx:56`，
+队列空即不渲染）连一帧都没活到。
+
+修法按来源分道：`src/core/session.ts:1036-1053` 新增 `takeNoticeInbox()`，只取 `origin === 'notice'` 的条目（后台作业
+通知这类机器投递），用户来源的留在原处、顺序不变；`drainInbox` 在步骤边界改用它，回合收尾仍整箱出账
+（`loop.ts:314-315`）。Ctrl+Enter 那条路一个字没动——它先打断当前回合，收尾出账时自然先落库。
+
+判据：`scripts/async-inbox-test.mjs` 新增第 7 层 5 条（边界后用户条目仍在箱且仍在队首、同一次边界通知已落库并带
+steering、收尾才落库且顺序在后、收尾那条不带 steering、队列清空）；全量跑 1 遍，58 条全过。
+
+### 2. 后台作业完成被当成「一轮」（真 bug）
+
+`src/packages/ui-transcript/ui/rounds.ts` 的 `splitRounds` 只认 `kind === 'user'` 开新轮；而机器投递的通知在
+`src/adapter/transcript.ts:436-449` 被折成 `kind: 'user' + internal: true`（界面拿不到 `origin`），于是一条
+「后台作业 job-3 完成了」就单独成了一段，还挂一行「用时 1分17秒」。
+
+改成 `internal === true` **从不开新轮**：前面已有轮就并进当前轮（推进 `endIndex` / `endTs`），前面没有轮
+（会话第一条就是通知）就归 opening/leading 段，不造空轮——座位是从轮起点到下一条轮起点之前的连续切片，
+凭空插一轮会让后面每个座位整体错位（`rounds.ts:100-113`）。
+
+**这是有意与 dsh 不同**：dsh 给非人来源的轮一枚刻度，我们按用户口径不给。这条差别写进了 `rounds.ts` 头部与
+`scripts/ui-transcript-render-test.mjs` 的说明里，免得后来人当成回归改回去。「用时」口径不变，仍是整轮墙钟
+（用户拍板），所以并进去之后那一轮的用时会把等作业的时间算在内。
+
+判据：`ui-transcript-render-test` 的 [7] 段重写，134/134（新增 3 条：endTs 推进、末条 internal 的 endTs、首条通知进
+leading 且座位接缝不错位）。
+
+### 3. 插件中心：每档超过 10 条折叠 + 「重启宿主」改「重启内核」并加确认
+
+`src/packages/ui-plugins/ui/ui.tsx`：`KERNEL_PREVIEW = 3` 换成 `GROUP_PREVIEW = 10`，一个 `kernelOpen` 换成
+六档各自的 `openGroups`；六段末各挂一颗 `GroupMore`（复用 `.plugin-more` 与现成文案，条数 ≤10 时不渲染）。
+标题上的总数照旧是整档条数，折叠不改计数。
+
+电源键那颗：它调的是原生桥 `restartHost`。今天插件都 1 秒热挂、装插件也自动挂上，这颗键 95% 的场景是冗余的，
+但换配置文件 / 换界面语言 / 宿主卡死时没有替代品，所以**保留**——按用户要求加二次确认：点击先弹
+`ui-primitives/ui/confirm.ts` 的 `confirmAction`（「重启内核？」+ 说明「正在跑的回合会被打断」），取消不动任何状态。
+文案、`aria-label`、提示全部从「重启宿主」改成「重启内核」。
+
+真机核对：`plugin-center.png` 里官方可开关 19 条 → 露 10 条 + 「展开其余 9 个」；界面单元 21 → 「展开其余 11 个」；
+运行内核 36 → 「展开其余 26 个」。点开一档后卡片数 30 → 39、按钮变「收起」，别的档不受影响。确认框文案与 Esc
+关闭也在这张截图那次里核过。
+
+### 4. 启动慢在哪：先量，别猜
+
+`desktop/electron/main/index.ts` 补了三处 `bootNote`（拉起宿主 / 宿主报地址 / 页面加载完成），都只写 origin 与
+`~` 化后的路径，token 与环境变量值一律不落日志。补完立刻有了分段时间（dev 实跑一次）：
+
+| 时刻 | 读数 |
+|---|---|
+| +305 ms | 拉起宿主（窗口此前已建好） |
+| +4425 ms | 宿主报来界面地址 |
+| +7263 ms | 真正开始加载界面（中间 2.8 秒在换票） |
+| +7705 ms | 真界面加载完成，首帧已画出 |
+
+再往下量，三个数把责任分清了：
+
+1. **宿主内核装配 1.5 秒**：`createKernel` 占 1527 ms（导入 165 ms、读配置 8 ms、外部插件 4 ms）。CPU 采样里前几名
+   全是文件系统：`lstat` 309 ms、模块 `stat` 262 ms、读文件 232 ms、`existsSync` 181 ms、`readdir` 130 ms——**1.5 秒里
+   1.3 秒花在按包名逐个解析 91 个插件包、读 package.json**，插件自己的 `apply` 只有几十毫秒。
+2. **宿主在报出地址之后还忙 1.8 秒**：独立跑宿主并盯事件循环，地址在 1.6 秒打印，紧接着一次 **1789 ms** 的同步停顿
+   ——那时剩下的行还在挂。桌面这侧拿到地址就去换票（`authenticateUiServer`），请求正好排在这次停顿后面，
+   于是看起来像「换票慢」。
+3. **不是网络栈、也不是渲染层**：同一次实验里，冷启动后的第一个请求打宿主 URL 要 1842 ms，打一个本地小服务器只要
+   9 ms，第二个请求 208 ms；渲染器侧导航 182 ms、首次绘制 464 ms、首包 1.27 MB / 23 个资源。
+
+结论：能优化，但**要动的是宿主装配的模块解析**，不是界面。下一步（还没做，等用户点头）是两件事之一：把「应用自带行」
+改成构建期生成的静态入口/单文件 bundle（预计省 0.8–1.2 秒，1–2 天，风险中等）；或者把首屏不需要的行延后挂载（更省但碰
+装配语义）。这次只交了打点与数据，代码优化另开一批。
+
+### 验证
+
+| 门禁 | 结果 |
+|---|---|
+| `pnpm run typecheck` / `pnpm -C ui-shell typecheck` / `pnpm --dir desktop typecheck` | 通过 |
+| `async-inbox-test`（含新增 5 条） | 全过 |
+| `ui-transcript-render-test` | 134/134 |
+| `teammate-notice-test` | 全过 |
+| `check:ui`（57 条） | 57/57，55.7 s |
+| `check:ui:e2e`（7 条真 Chromium） | 7/7，181.5 s |
+| `check:style` | 1252 个文件通过 |
+| `plugin-model-check --strict` / `package-tests` / `plugin-inventory-check` | 89 包 467 断言 / 76 插件 21 单元 |
+| `check:core` 全量 | **100/100**，769.8 s |
+
+真机截图：`desktop/shots/plugin-center.png`（折叠态 + 「展开其余 N 个」）。
+
+**顺带发现**：`desktop/shots/_plugin-center.mjs` 不会先删旧产物，旧 `plugin-center.png/json` 在的话它直接读旧文件
+秒退——第一次跑我拿到的是 20:52 的旧图，白等一场。这条没改（它不在本批范围），下次谁动这个脚本顺手加上删除。
