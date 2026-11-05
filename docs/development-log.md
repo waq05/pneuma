@@ -13895,3 +13895,31 @@ body——两件都生效。于是只迁一处：`changes-card.tsx` 的悬停 di
 **验证**：`ui-third-party-hot-mount-e2e` 22/22；`ui-anchored-test` 19 条（+8 条源码钉）；`ui-anchor-e2e`
 17 条（+3 条真机：贴上方间距 6px ±1、左缘夹取 ±1、滚动后仍贴锚点）；`check:ui` / `check:ui:e2e` 见提交说明；
 `pnpm run typecheck` 0 错。
+
+### 2026-11-05 深夜（二）：契约版本升过之后，旧豁免要能说清「为什么失效、怎么重按」
+
+**问题**：`DSH_CONTRACT_VERSION` 从 0.2.1 升到 0.2.2，判定口径也换成区间交集。豁免账本
+（`profile/compatibility.json`）里按旧版本记的 `{ version, dshVersion }` 于是整体失配——但它是**静默**失配的：
+`exemptionAllows()` 只回答放不放行，加载器拿到 `false` 就走「版本闸没过，去 compatibility.json 登记豁免」这条
+常规文案。用户明明登记过，却被指去再登记一次；真正的动作（换运行时重新同意）一个字都没说。
+
+**改法**：把「登记过但对不上」与「压根没登记」分开答。
+`exemptionMissProblem()`（`src/core/plugin-bundle.ts`）在放行判定失败后回查同一个包名的记录，分两种口径说话：
+
+- 记录按别的运行时记的 → `compatibility.json 里「X」那条豁免是按 dsh 插件契约 0.2.1 登记的，当前运行时是 0.2.2，换了运行时就要重新同意…重按一次：numa plugin allow-version X@版本 --dsh-version 0.2.2 --accept-risk`；
+- 记录按别的包版本记的 → 点出「登记的是 v1.2.2，这一份是 v1.2.3」。
+
+两处调用：行级闸（`plugin-loader.ts` 的 `mountRow`，失败清单与告警都走它）与整包闸（`mountBundlePlugins`）。
+`numa plugin version-exemptions` 也补一行「重按」命令：原来只说「这条授权现在不起作用」，
+说了症状没给动作。加载器里那个只回答布尔的 `isEngineExempt()` 换成 `exemptionTargetOf()`——
+判豁免与解释失效都要「包名 + 版本」，同一个推算不该写两遍。
+
+**为什么不做成自动迁移**（把 0.2.1 的记录直接改写成 0.2.2）：那等于替用户补一次「我知道了，风险我担」。
+授权要可追溯，就不许程序自己续期——只把命令递到手上，跑不跑由人决定。这也是 dsh 「一次点头只对一个版本组合有效」的原意。
+
+**验证**：`plugin-model-test.mjs` 加 8 条（旧运行时记录不放行 / 文案点出两个版本 / 命令带全三样 /
+不再劝「去登记豁免」/ 重按后当场放行 / 换包版本要另说），100 PASS；`cli.test.mjs` 加 1 条
+（`version-exemptions` 打出可复制的重按命令），20/20。
+
+**这台机器上其实没有要重按的记录**：`~/.dsc/profiles/default/package.json` 的 `bundles` 为空、
+目录里没有 `compatibility.json`，所以「重按一次」是改机制 + 造夹具验证，不是去改某个真实文件。

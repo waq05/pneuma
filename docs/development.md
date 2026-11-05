@@ -269,6 +269,11 @@ dsh 那边是把这些名字记进它 profile 的 `allowBuilds`（`packages/boot
 除非在 `compatibility.json` 里登记豁免。比交集而不是比某个点，是因为 dsh 自己的包在 `peerDependencies` 里
 写的是精确版本（`0.2.1-rc.3` 与 `0.2.2-rc.1` 各是一个点），点判断升一次就换一批包被拒。
 
+**契约版本涨一次，按旧版本登记的豁免整体失效**（0.2.1 → 0.2.2 这一跳就是如此）。失效要说清原因，
+不然用户会被指去重复一遍已经做过的动作：加载告警与 `numa plugin version-exemptions` 会打出「这条按
+dsh 插件契约 0.2.1 登记，当前是 0.2.2」以及重按命令（`numa plugin allow-version <包@版本>
+--dsh-version 0.2.2 --accept-risk`）。重按就是复制那一条跑一次，包本身不用动。
+
 编码上的落点：`src/core/plugin-patch.ts`（层算法）、`src/core/plugin-bundle.ts`（读包与版本闸）、
 `src/core/plugin-loader.ts` 的 `mountBundlePlugins`、`src/packages/cli/plugin-cli.ts`（CLI，库包 `@pneuma/cli`）。
 没配 profile 的用户启动路径完全不变（`activeProfileDir()` 返回 null 就整条路径不碰）。

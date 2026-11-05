@@ -121,10 +121,14 @@ lib/ui/plugins/<id>/client.js
      profile 里的副本换掉，换上来那份要求哪一代契约只有它自己知道。
 - 行级闸不满足 → 目录里登记该行并带 `problem`（插件中心看得见），挂载跳过，其余行照常。
   profile 的 `compatibility.json` 里登记过就照挂，并在告警里说明是豁免放行的。
-- **豁免精确到版本**：`{ "exemptions": [{ "package": "@acme/x", "version": "1.2.3", "dshVersion": "0.2.1" }] }`，
+- **豁免精确到版本**：`{ "exemptions": [{ "package": "@acme/x", "version": "1.2.3", "dshVersion": "0.2.2" }] }`，
   只有包名、包版本、运行时版本三者都对得上才放行——换个版本就得重新同意（dsh 同一个口径）。
   只写 `package` 的老记录仍按包名通配（给 0.8.x 写下的文件留的路）；记录带版本而这一行的版本读不到时按「对不上」处理。
   写这两个版本只有一条入口：`numa plugin allow-version <包@版本> --dsh-version <运行时> --accept-risk`。
+- **契约版本涨一次，旧记录整体失效**：`dshVersion` 记的是登记那一刻的运行时，0.2.1 升到 0.2.2 以后，
+  按 0.2.1 记的那批豁免一条都不再放行（这就是「换版本重新同意」的同一个规矩，不是 bug）。
+  失效不能是无声的：加载时的告警与 `numa plugin version-exemptions` 都会点出「哪一条、按哪个运行时记的」，
+  并把重按命令原样打出来（`exemptionMissProblem()`，`src/core/plugin-bundle.ts`）——用户复制那一条跑一次即可。
 - dsh 包的 `engines.dsh` 只在整包那一次判：行级只看 `engines.pneuma`，否则老插件的
   `peerDependencies: @deepseek-ai/dsh ^0.1` 会在行级被误杀。
 
