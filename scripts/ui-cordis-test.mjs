@@ -188,7 +188,10 @@ async function main() {
     check('其余 ' + String(others.length) + ' 条也走 cordis（via=cordis）', others.every((id) => first.rows[id].via === 'cordis'), others.filter((id) => first.rows[id].via !== 'cordis').map((id) => id + '=' + String(first.rows[id].via)).join('、'))
     check('全部纤维都生效（fiber=2）', ids.every((id) => first.rows[id].fiber === 2), ids.filter((id) => first.rows[id].fiber !== 2).map((id) => id + '=' + String(first.rows[id].fiber)).join('、'))
     check('状态栏在 DOM 里只有 1 份', first.statusbarEntries === 1, String(first.statusbarEntries))
-    check('状态栏有内容', typeof first.statusbarText === 'string' && first.statusbarText.length > 0, String(first.statusbarText))
+    // 状态栏在空会话里**按设计留空**：步数为 0 时整段不画（2026-10-30 的决定，与 dsh 的
+    // ActivityPill 同款：空会话里「0 轮 0 步」不是读数）。这里钉住这条设计，别让它退回去画假零。
+    // 真读数由带一轮对话的探针负责：ui-dsh-card-e2e 的「状态栏出了这一轮的读数」。
+    check('空会话里状态栏不画假读数（按设计留空）', first.statusbarText === '', JSON.stringify(first.statusbarText))
     if (first.viaAttrs !== undefined && first.viaAttrs.length > 0) {
       check('诊断区每行都写着装配路径（' + String(first.viaAttrs.length) + ' 行）', first.viaAttrs.length === ids.length && first.viaAttrs.every((v) => v === 'cordis'), JSON.stringify(first.viaAttrs))
       check('诊断区每行的纤维状态都是 2', first.fiberAttrs.every((v) => v === '2'), JSON.stringify(first.fiberAttrs))

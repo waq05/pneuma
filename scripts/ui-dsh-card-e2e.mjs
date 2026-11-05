@@ -179,6 +179,8 @@ async function main() {
       check('展开体里画出了 diff（.diff-body）', probe.hasDiffBody === true, JSON.stringify(probe.hasDiffBody))
       check('diff 有新增行', Number(probe.diffAdded ?? 0) >= 2, String(probe.diffAdded))
       check('结果里有插件的投影文字', String(probe.resultText ?? '').includes('已写入'), String(probe.resultText))
+      // 这一轮真的跑过了，状态栏就该给出读数（0 轮 0 步是「没有样本」时才留空的）。
+      check('状态栏出了这一轮的读数', /1 轮/.test(String(probe.statusbarText ?? '')), String(probe.statusbarText))
       check('截图在', existsSync(SHOT), SHOT)
       check('文件真的被写了（卡片不是假的）', existsSync(noteFile) && readFileSync(noteFile, 'utf8').includes('第二行'), noteFile)
     }

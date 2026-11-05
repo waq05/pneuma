@@ -103,11 +103,19 @@ const PROBE = `(() => {
   }
 })()`
 
-async function waitSettled(win, timeoutMs) {
+/**
+ * 等装配落定。
+ *
+ * `requireBatches` 打开时还要求两批都 done：插件行是一条条进 `state.plugins` 的，只判「现有的都落定」，
+ * 会在一批刚跑完、下一批还没登记的瞬间提前返回（真机上见过 19 条的读数）。首帧那条断言的就是
+ * 「21 条全在」，所以它必须等批次收尾；换装后的读数不需要。
+ */
+async function waitSettled(win, timeoutMs, { requireBatches = false } = {}) {
   const startedAt = Date.now()
   for (;;) {
     const probe = await win.webContents.executeJavaScript(PROBE)
-    if (probe.settled) return probe
+    const batchesDone = !requireBatches || (probe.batches.length >= 2 && probe.batches.every((b) => b.state === 'done'))
+    if (probe.settled && batchesDone) return probe
     if (Date.now() - startedAt > timeoutMs) return probe
     await sleep(200)
   }
@@ -149,7 +157,7 @@ app.whenReady().then(async () => {
       stage('diag-loaded')
     }
     stage('loaded')
-    const base = await waitSettled(win, 40000)
+    const base = await waitSettled(win, 40000, { requireBatches: true })
     // 页内网络自检：/api/boot 与一条 bundle 请求各打一次，看宿主到底答不答。
     base.net = await win.webContents.executeJavaScript(`(async () => {
       const out = {}

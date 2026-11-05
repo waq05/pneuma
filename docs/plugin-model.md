@@ -52,7 +52,7 @@ lib/ui/plugins/<id>/client.js
     }
   },
   "engines": { "pneuma": ">=1.0.0 <2.0.0" },
-  "peerDependencies": { "@deepseek-ai/cordis": "^4.0.4" }
+  "peerDependencies": { "@deepseek-ai/cordis": "^4.1.0" }
 }
 ```
 

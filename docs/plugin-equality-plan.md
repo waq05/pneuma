@@ -778,3 +778,37 @@ dsh 的 Web 组合默认就带着 `client-hmr`，代价是「原地升级一个�
 
 **没做的（记着，不装做完）**：手机端（`remote`）没有帧通道，刷新页面才看到新插件——dsh 没有这个载体，
 无从对照；要补就是给远程也接一条推送，属于另一项工程。
+
+### 12.24 跟上 dsh 0.2.2-rc.1：依赖层升上去，插件内核一行没动（2026-11-05 傍晚）
+
+用户把 dsh 源码从 `8bd073392e` 拉到 `fcc0ad4621`（260 个提交、1665 个文件），其中包括
+`release(dsh): 0.2.2-rc.1` 与 `release(vendor): cordis 4.1.0, hmr 1.1.0, loader 1.1.0, …`。
+先判一件事：**这 260 个提交有没有动插件内核**。逐个文件 diff 的结果是没有——
+`packages/boot/app-boot/src/index.ts`、`packages/boot/plugin-manager/src/{index,build-approval}.ts`、
+`packages/client/modules/src/index.ts`、`packages/client/hmr/src/index.ts`、
+`packages/host/plugin-inventory/src/index.ts`、`packages/client/web/src/platform.ts` 全部**无改动**；
+变的是版本号、界面组件（菜单锚点、鲸鱼、HOC 插槽）与桌面打包。所以这一轮对齐落在依赖层。
+
+**cordis 4.0.4 → 4.1.0 到底改了什么**（拿 npm 包源码与 dsh vendor 源码逐文件 diff）：
+
+| 变化 | 含义 | 我们受不受影响 |
+|---|---|---|
+| `fiber.store` → `fiber.committed` | 装载时定格的依赖快照改由 `committed` 持有，另加 `provisions`（本纤维提供的服务，带 `uid` 与 `dependents`） | **受影响一处**：界面壳算「还差哪些服务」读的就是它 |
+| 卸载等依赖先走 | 服务提供者卸载时先等持有者卸完，再释放自己的副作用 | 对我们有利（热重挂顺序更稳），无代码改动 |
+| 配置解析分两步 | `internal/config` 变成 `(fiber, next)`，`internal/update` 变成 `(resolved, next)`（去掉 `noSave`），新增 `internal/commit`；`update()` 返回可等的 promise 而不是吞掉 | **不受影响**：全仓 0 处 `internal/update` / `internal/config` / `fiber.update(` |
+| `LoggerLevel` 重排（WARN=1、INFO=2） | 级别数值换了序 | **不受影响**：全仓 0 处引用 |
+
+改法只有三步：三处依赖拉上去（cordis `^4.1.0`、loader `^1.1.0`、dsh-tools `0.2.2-rc.1`）；
+界面壳那一处读 `fiber.store` 改成 `fiber.committed`；89 个包 manifest 的 peer 一起写 `^4.1.0`。
+
+**顺手对齐的一处语义**：`DSH_CONTRACT_VERSION` 从 `0.2.1` 到 `0.2.2`，而且**判定方式一起换了**。
+dsh 自己的包在 `peerDependencies` 里写的是**精确版本**（`@deepseek-ai/dsh-llm: 0.2.2-rc.1`），我们原来
+拿常量去 `satisfies` 这个范围——点判断一次只放行一个点：常量停在 0.2.1 时 0.2.2 的包被拒；
+就算升到 0.2.2，`satisfies('0.2.2', '0.2.2-rc.1')` 仍然是 false（预发布比正式版小），照样拒。
+改成**比区间交集**（`>=0.2.0-0 <=0.2.2`），两代精确 pin 都装得上，要求 `>=0.2.3` 的仍被挡下。
+代价写清楚：`compatibility.json` 里按 `dshVersion: 0.2.1` 记的豁免会失配（授权只对当时的运行时有效，
+重按一次才作数）。
+判据：`scripts/dsh-bundle-check.mjs` **18 条**（新增 3 条：上一代 pin 照装、当前代 rc pin 照装、两代都不报警告）。
+
+**判据**：`check:core` 100/100（916.1 秒）、`check:plugin` 89 包 / 466 条断言、清单 76/24/21、
+`check:ui` 55/55、`check:dsh` 170 PASS / 0 FAIL、`check:style` 1245 文件、`check:ui:e2e` 5/5（187.2 秒）。

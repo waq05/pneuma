@@ -99,6 +99,16 @@ async function main() {
   // 等那张卡出现、并且这一轮跑完（卡不再是 running）。
   await waitFor(win, "document.querySelector('.tool-card') !== null", 120000, '工具卡出现')
   await waitFor(win, "document.querySelector('.tool-card.status-running') === null", 120000, '工具跑完')
+  // 先把卡点开，再等结果文字：收起态的卡不再摊结果行（2026-10-27 的决定），
+  // 投影文字只住在展开体里（.result）。所以「等结果」必须排在「点开」之后。
+  await inPage(
+    win,
+    'const cards = Array.from(document.querySelectorAll(".tool-card"));' +
+      ' const last = cards[cards.length - 1] || null;' +
+      ' const trigger = last === null ? null : last.querySelector(".tool-click");' +
+      ' if (last !== null && !last.classList.contains("open") && trigger !== null) trigger.click();' +
+      ' return true;',
+  )
   // 工具名不一定画在卡上（头上是中文动词），所以按结果的投影文字认这一次真的跑到了。
   if (expectText !== '') {
     try {
@@ -153,6 +163,7 @@ async function main() {
       '   diffRemoved: own(".diff-line.diff-del").length,' +
       '   diffLines: own(".diff-line").map(textOf).slice(0, 12),' +
       '   resultText: textOf(target.querySelector(".result")),' +
+      '   statusbarText: textOf(document.querySelector(\'[data-slot="shell.statusbar"]\')),' +
       ' };',
   )
 

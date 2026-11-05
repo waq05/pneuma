@@ -264,9 +264,10 @@ pnpm 10 起默认**不执行**第三方包的安装脚本。`add` 装完会问�
 dsh 那边是把这些名字记进它 profile 的 `allowBuilds`（`packages/boot/plugin-manager/src/build-approval.ts`），
 而本仓这一版 pnpm（10.x）的授权入口就是 `approve-builds`——照它的原文来，免得写一份两边不认的策略。
 
-版本闸比的是 **dsh 的插件契约版本**（`DSH_CONTRACT_VERSION = 0.2.1`），不是 Pneuma 自己的
-0.7.x：包的 `engines.dsh` 或 `@deepseek-ai/dsh*` 的 peer 范围不满足就不装，除非在
-`compatibility.json` 里登记豁免。
+版本闸比的是 **dsh 的插件契约版本**（`DSH_CONTRACT_VERSION = 0.2.2`，跟 `@deepseek-ai/dsh-tools` 0.2.2-rc.1 同一条线），不是 Pneuma 自己的
+0.7.x：包的 `engines.dsh` 或 `@deepseek-ai/dsh*` 的 peer 范围与「0.2.0 起到 0.2.2」这段区间**没有交集**就不装，
+除非在 `compatibility.json` 里登记豁免。比交集而不是比某个点，是因为 dsh 自己的包在 `peerDependencies` 里
+写的是精确版本（`0.2.1-rc.3` 与 `0.2.2-rc.1` 各是一个点），点判断升一次就换一批包被拒。
 
 编码上的落点：`src/core/plugin-patch.ts`（层算法）、`src/core/plugin-bundle.ts`（读包与版本闸）、
 `src/core/plugin-loader.ts` 的 `mountBundlePlugins`、`src/packages/cli/plugin-cli.ts`（CLI，库包 `@pneuma/cli`）。

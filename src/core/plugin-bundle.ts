@@ -28,11 +28,21 @@ import { readPatchFile, type PatchLayer } from './plugin-patch.js'
  * 为什么是 0.2.x：dsh 的插件契约（ToolDefinition 的 output/output.schema、presentCall /
  * presentResult、bundle patch 语义）在 0.2 定型。装一个要求 `^0.3` 的包，它的契约我们
  * 没实现过，装进来只会在运行深处炸。
+ *
+ * 小版本号跟的是**我们这份兼容层实现到哪一版 dsh**（2026-11-05 从 0.2.1 到 0.2.2，与随包发布的
+ * `@deepseek-ai/dsh-tools` 0.2.2-rc.1 同一条线）。这个数字是**上界**，不是等号——见下一条。
  */
-export const DSH_CONTRACT_VERSION = '0.2.1'
+export const DSH_CONTRACT_VERSION = '0.2.2'
 
-/** 默认接受的 dsh 版本范围（含预发布：dsh 自己就是 rc 版在跑）。 */
-export const DSH_CONTRACT_RANGE = '>=0.2.0-0 <0.3.0'
+/**
+ * 版本闸实际比的那段区间：0.2.0 起（含预发布，dsh 自己就是 rc 版在跑），到我们实现的最高版为止。
+ *
+ * 为什么比「区间有没有交集」而不是「某个点满不满足」：dsh 自己的包在 `peerDependencies` 里写的是
+ * **精确版本**，`@deepseek-ai/dsh-llm: 0.2.2-rc.1` 与 `0.2.1-rc.3` 是两个不同的点，点判断（拿一个常量
+ * 去 `satisfies`）只能过一个，升一次就换一批包被拒。而这两个写法描述的都是 0.2.x 这条契约线，我们都
+ * 实现——包要求的范围与我们这段区间有交集就装。要求 `>=0.2.3` 的包会被这条挡下：交集是空的。
+ */
+export const DSH_ACCEPTED_CONTRACT = `>=0.2.0-0 <=${DSH_CONTRACT_VERSION}`
 
 /**
  * Pneuma 自己的插件契约版本（与产品版本号分开走）。
@@ -143,13 +153,13 @@ export function enginesProblem(manifest: BundleManifest): string | null {
   if (typeof raw !== 'string' || raw.trim() === '') return null
   let ok = false
   try {
-    ok = semver.satisfies(DSH_CONTRACT_VERSION, raw, { includePrerelease: true })
+    ok = semver.intersects(raw, DSH_ACCEPTED_CONTRACT, { includePrerelease: true })
   } catch {
     return `版本范围写得不对（${raw}），没法判断能不能装`
   }
   if (ok) return null
   return (
-    `这个包要求 dsh ${raw}，Pneuma 对齐的插件契约是 dsh ${DSH_CONTRACT_VERSION}（${DSH_CONTRACT_RANGE}）` +
+    `这个包要求 dsh ${raw}，Pneuma 实现的插件契约到 dsh ${DSH_CONTRACT_VERSION}（收整个 0.2.x）` +
     '。装进来它用到的新契约 Pneuma 没有，会在运行深处出错，所以先不装。' +
     '如果你确认能用，在 profile 目录的 compatibility.json 里登记豁免。'
   )

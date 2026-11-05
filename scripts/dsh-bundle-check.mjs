@@ -91,10 +91,45 @@ writeFileSync(
 )
 writeFileSync(join(badDir, 'cordis.patch.yml'), '- insert:\n    - id: nope\n      name: ./nope.js\n', 'utf8')
 
+// 两个「精确 pin 到某一代」的包：dsh 自己的包在 peerDependencies 里就是这种写法
+// （`0.2.1-rc.3` 与 `0.2.2-rc.1` 各是一个点）。版本闸比的是区间交集，两代都该装得上。
+function makePinnedBundle(name, dshRange, toolName) {
+  const dir = join(profileDir, 'node_modules', name)
+  mkdirSync(join(dir, 'plugins'), { recursive: true })
+  writeFileSync(
+    join(dir, 'package.json'),
+    JSON.stringify({ name, version: '1.0.0', engines: { dsh: dshRange }, dsh: { bundle: { patch: './cordis.patch.yml' } } }, null, 2),
+    'utf8',
+  )
+  writeFileSync(
+    join(dir, 'cordis.patch.yml'),
+    '- insert:\n    - id: ' + name + '-row\n      name: ./plugins/' + name + '.js\n',
+    'utf8',
+  )
+  writeFileSync(
+    join(dir, 'plugins', name + '.js'),
+    `export const name = '${name}-plugin'
+export const inject = ['tools']
+export function apply(ctx) {
+  const off = ctx.tools.register({
+    name: '${toolName}',
+    description: 'From a pinned bundle.',
+    parameters: { type: 'object', properties: {} },
+    risk: 'read',
+    run: async () => '${toolName}',
+  })
+  return () => off()
+}
+`,
+    'utf8',
+  )
+}
+makePinnedBundle('pinned-old', '0.2.1-rc.3', 'pinned_old')
+makePinnedBundle('pinned-rc', '0.2.2-rc.1', 'pinned_rc')
 // profile：包序 + 自己的一层 patch
 writeFileSync(
   join(profileDir, 'package.json'),
-  JSON.stringify({ name: 'test-profile', dsh: { profile: { bundles: ['demo-bundle', 'too-new'] } } }, null, 2),
+  JSON.stringify({ name: 'test-profile', dsh: { profile: { bundles: ['demo-bundle', 'too-new', 'pinned-old', 'pinned-rc'] } } }, null, 2),
   'utf8',
 )
 
@@ -138,6 +173,10 @@ console.log('组合包：层序、insert、版本闸')
   const row = listPluginInfos().find((item) => item.name === 'bundle-hello')
   check('插件中心能看出它来自哪个组合包', row?.bundle === 'demo-bundle', JSON.stringify(row?.bundle))
   check('版本不满足的包被拦下并说清原因', warnings.includes('too-new') && warnings.includes('0.3'), warnings)
+  // 精确 pin 的两种写法都要装得上：点判断只能过一个，升一次就换一批包被拒。
+  check('精确 pin 到上一代（0.2.1-rc.3）的包照装', names.includes('pinned_old'), JSON.stringify(names))
+  check('精确 pin 到当前代（0.2.2-rc.1）的包照装', names.includes('pinned_rc'), JSON.stringify(names))
+  check('两代都被放行，没有多出来的警告', !warnings.includes('pinned-'), warnings)
   check('后一层 patch 改到了前一层 insert 的行（不报「找不到」）', !warnings.includes('demo-hello'), warnings)
   await stop(ctx)
 }

@@ -39,9 +39,9 @@
     "ui:serve": "node scripts/_ui-shell-serve.mjs"
   },
   "dependencies": {
-    "@deepseek-ai/cordis": "^4.0.4",
-    "@deepseek-ai/cordis-plugin-loader": "^1.0.5",
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.3",
+    "@deepseek-ai/cordis": "^4.1.0",
+    "@deepseek-ai/cordis-plugin-loader": "^1.1.0",
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.1",
     "ink": "^6.0.0",
     "koffi": "3.1.1",
     "react": "^19.2.0",

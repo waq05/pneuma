@@ -868,11 +868,11 @@ cordis 版本一致，所以**一部分 dsh 插件可以直接挂到 dsc 上跑*
 | `ctx.get('sessionPersistence')` / `ctx.get('sessions')`（读历史） | 只读桥：`list` / `stat` / `open(id,'read')` 与 `list` / `get` / `has`；事件已是 dsh 类型（`user/message` / `assistant/message` / `tool/result`），用量挂在助手消息的 `usage` 上。写方法一律抛中文错误。**这两个名字别写进 `inject`**（不是 cordis 服务） |
 
 `defineTool`、`z`、`@deepseek-ai/cordis` 这些 `@deepseek-ai/*` 导入不用装——兼容层把插件
-目录里的这类导入重定向到 dsc 自带的 `@deepseek-ai/dsh-tools`（精确 pin 的 0.2.1-rc.3，与
+目录里的这类导入重定向到 dsc 自带的 `@deepseek-ai/dsh-tools`（精确 pin 的 0.2.2-rc.1，与
 基准源码同一个发布标签）与 cordis（保证单实例）。**cordis 版本必须两边一致**，升级 dsc 依赖时留意：
-`dsh-tools` 的 peer 声明写的是 `cordis ~4.0.5`，而 dsc 现在是 4.0.4——实测 `dsh-tools` 只用到
-`Service` 与 `symbols.original`，4.0.4 两者都有，所以运行时不受影响；真要跟它一起升，得连界面壳的
-装配层一起验证，那是另一批。
+`dsh-tools` 的 peer 声明写的是 `cordis ~4.1.0`，dsc 现在也是 4.1.0，两边对齐了。
+2026-11-05 那次从 0.2.1-rc.3 / cordis 4.0.4 一起升上来：cordis 4.1 把「装载时定格的依赖快照」
+由 `fiber.store` 改名成 `fiber.committed`，界面壳里读它的那一处已跟着改（`ui-boot/ui/cordis-host.ts`）。
 
 用量口径的坑（2026-10-26 修）：dsc 的 `inputTokens` 是 `prompt_tokens` 总量、缓存命中**含在
 内**；dsh 的 `TokenUsage` 分项互斥（命中单列在 `cacheReadTokens`，计费三项相加）。兼容层在

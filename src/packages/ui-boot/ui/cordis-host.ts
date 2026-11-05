@@ -181,9 +181,14 @@ export function createCordisRoot(options: UiCordisRootOptions): UiCordisRoot {
   /** 卸载进行中的承诺：cordis 的卸载是异步的，重复调用要等同一次。 */
   const unmounting = new Map<string, Promise<void>>()
 
-  /** 一条纤维还差哪些服务（服务名来自它声明的 inject；没就绪的读不到实现）。 */
+  /**
+   * 一条纤维还差哪些服务（服务名来自它声明的 inject；没就绪的读不到实现）。
+   *
+   * 读的是 `fiber.committed`：cordis 4.1 把「装载时定格的依赖快照」从 `store` 改名成
+   * `committed`（`store` 只剩私有的 `_store`，装的是本轮实时实现，卸载途中会变空）。
+   */
   const missingOfFiber = (fiber: Fiber): string[] =>
-    Object.keys(fiber.inject ?? {}).filter((name) => fiber.store?.[name] === undefined)
+    Object.keys(fiber.inject ?? {}).filter((name) => fiber.committed?.[name] === undefined)
 
   const unmountNow = (id: string): Promise<void> => {
     const running = unmounting.get(id)
