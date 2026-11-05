@@ -97,6 +97,28 @@ app.whenReady().then(async () => {
       "trigger.click();",
       "return { trigger: { left: a.left, right: a.right, top: a.top, bottom: a.bottom, width: a.width }, pop: { left: b.left, top: b.top, width: b.width, height: b.height }, anchorName, positionAnchor, visibility, tryFallbacks, viewport: { w: window.innerWidth, h: window.innerHeight } };",
     ].join('\n'))
+    // 第二段：单独验「下方放不下就翻上去」这条机制——在窗口底部粘一个锚点、配一个 120 高的浮层，
+    // 用的就是 Select 那几条同样的 CSS 属性。为什么不在设置页里找：设置页里没有哪个下拉真的贴着
+    // 窗口底边，硬凑会变成在测布局而不是在测翻向。
+    out.flip = await inPage(win, [
+      "const host = document.createElement('div');",
+      "host.style.cssText = 'position:fixed;left:40px;bottom:8px;width:120px;height:24px;background:#ccc;z-index:99999';",
+      "host.style.anchorName = '--dsc-flip-probe';",
+      "const panel = document.createElement('div');",
+      "panel.style.cssText = 'position:fixed;width:120px;height:120px;background:#eee;z-index:99999';",
+      "panel.style.positionAnchor = '--dsc-flip-probe';",
+      "panel.style.top = 'calc(anchor(bottom) + 4px)';",
+      "panel.style.left = 'anchor(left)';",
+      "panel.style.positionTryFallbacks = 'flip-block';",
+      "document.body.appendChild(host);",
+      "document.body.appendChild(panel);",
+      "await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));",
+      "const a = host.getBoundingClientRect();",
+      "const b = panel.getBoundingClientRect();",
+      "host.remove();",
+      "panel.remove();",
+      "return { trigger: { top: a.top, bottom: a.bottom }, pop: { top: b.top, bottom: b.bottom, height: b.height }, viewport: window.innerHeight };",
+    ].join('\n'))
     if (shotPath !== '') {
       // 截图时把浮层重新打开：证据图要看得见「贴在哪」，只留读数看不出位置感。
       await inPage(win, [

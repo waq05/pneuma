@@ -831,5 +831,5 @@ dsh 自己的包在 `peerDependencies` 里写的是**精确版本**（`@deepseek
 `ui-*`），而且有两条一直是红的（设备清单两行、第二宿主休眠）。在 HEAD 上复跑报错逐字相同，不是本轮
 弄坏的；这轮只把新加的三条挂进去跑通，那两条没动。
 
-**判据**：`ui-graph-frames-test` 18 条、`ui-anchored-test` 11 条、`ui-anchor-e2e` 真机 11 条、
+**判据**：`ui-graph-frames-test` 18 条、`ui-anchored-test` 11 条、`ui-anchor-e2e` 真机 15 条、
 `remote-e2e` 新增 3 条；`check:ui` 57/57、`check:ui:e2e` 6/6、`check:dsh` 170 PASS。

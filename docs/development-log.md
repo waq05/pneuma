@@ -13754,3 +13754,59 @@ dsh 自己的包在 `peerDependencies` 里写的是**精确版本**（`@deepseek
 - 探针「插件全部装上（19 条）」偶发过一次：插件行是一条条进启动图的，`waitSettled` 只判「现有的都落定」，
   正好卡在一批跑完、下一批没登记的瞬间就会提前返回。首帧那条断言要的是「21 条全在」，所以给它加了
   「两批都 done」这个条件（换装后的读数不加，那一轮不必等批次）。
+## 2026-11-05 傍晚二：手机端接上启动图推帧，下拉浮层改用 CSS 锚点定位
+
+上一轮报告末尾留了两件「要不要往下走」的事，用户说「1 和 2 做，做完审查」。
+
+### 1. 手机端（remote）接上 `event: plugins`
+
+先纠正上一轮我自己的说法：诊断是「手机端没有帧通道」，**不准确**——通道是有的（`/api/events` 走
+同一套 `createUiEvents`，客户端那半也在监听 `event: plugins`），**缺的是宿主那侧没往里塞这一路**：
+`src/packages/remote/index.ts` 装配 `createUiEvents` 时只传了 snapshot/invoke/hello/subscribe/log。
+所以手机页面永远收不到「图变了」，只能靠刷新页面重新拉 `/boot.js`。
+
+补法分三步：
+
+1. 把帧的组装与扇出抽成 `src/core/ui-graph-frames.ts`：`graphFrameOf(graph, previous)` 算一帧
+   （`removed` 是前后两帧的 id 差），`createUiGraphFrames()` 管当前值 + 订阅者。本地壳（webserver）
+   也换过来用——两边各写一份迟早一边忘了 `removed`。
+2. remote 给数据通道加 `plugins: { initial, subscribe }`，并订 `dsc/ui-plugins-changed` 与
+   `dsc/ui-graph-dirty` 两条事件；退订挂在 `ctx.effect` 上，插件卸载不留监听。
+3. `initial` 那一帧要 **`remember`**（记下当基准、不广播）：不记的话第一次推帧只知道「没有上一帧」，
+   `removed` 永远是空的——第一版就是这么写错的，真机断言当场红（`removed:[]`）。
+
+判据：`ui-graph-frames-test.mjs` **18 条**（帧组装 8 条、通道 6 条、remote 接线 4 条）；
+`remote-e2e.mjs` 新增 3 条真机断言（连上就有一帧 / 翻开关当场推一帧且少一条 / 恢复再推一帧），
+全部在真端口、真配对、真 SSE 上跑。
+
+### 2. 下拉浮层改用 CSS 锚点定位
+
+dsh 这轮把 `useAnchoredPosition` 整个删了，25 个文件改成 `anchor-name` / `position-anchor`。我们的
+对应物是 `Select`（6 个包在用：设置、模型、终端、插件、审阅面板、旁问）——原来是「打开后先画在默认位置、
+量一次触发钮与自身高度、绘制前改坐标」，量得对，但打开那一拍有错位置，滚动缩放还得自己重算。
+
+做法：`ui-primitives/ui/anchored.ts` 出两份样式（锚点写 `anchor-name`，浮层写 `position-anchor` +
+`anchor(bottom)` / `anchor(left)` / `anchor-size(width)` / `position-try-fallbacks: flip-block`），
+`Select` 在支持锚点定位时直接用它，**不支持就退回原来的测量**（`anchorPositioningSupported()`）。
+为什么保留两条路：锚点定位要 Chromium 125+，桌面 Electron 44 没问题，手机端浏览器版本参差，
+一刀切会让老手机上的下拉跑到屏幕左上角。
+
+审查时补的第二段断言：光验「属性在」不够——React 认不认 `positionTryFallbacks`、以及翻向到底有没有
+真的发生，都得量。所以在窗口底边粘一个锚点、配一个 120 高的浮层（同一组 CSS 属性），量到它真的翻到上方。
+
+判据：`ui-anchored-test.mjs` **11 条**（名字合法、四条样式、宽度策略）；新增 `ui-anchor-e2e.mjs`
+在真 Chromium 里量终态 **15 条**——左缘对齐 ±1px、间距 4px ±2、不窄于触发钮、打开当帧不隐藏、
+确认 `anchor-name` / `position-anchor` 真的生效（不是悄悄走了回退）、翻向真的翻上去了。
+
+### 顺手查出来的一件事：`remote-e2e.mjs` 不在任何门禁里，而且有两条红的
+
+跑它的时候发现两条断言一直是红的：`每台设备两行`（设置里的设备清单行）与
+`第二宿主 等不到：第二宿主发现自己只能休眠`。**在 HEAD 上重跑同一脚本，报错逐字相同**——
+不是这一轮弄坏的。它不进任何门禁的原因很直接：`check:core` 只发现 `-test.mjs`，`check:ui` 只发现
+`ui-*`，而它叫 `remote-e2e.mjs`。这一轮只把我新加的三条挂上去跑通了，那两条没动（先记着）。
+
+### 判据
+
+- `check:ui` **57/57**（+2：帧电池、锚点电池）；`check:ui:e2e` **6/6**（+1：锚点真机）。
+- `check:core` **100/100**（957.4 秒）；`check:dsh` 170 PASS / 0 FAIL；`check:style` 1251 文件。
+- `remote-e2e.mjs` 新增 3 条真机断言全过。

@@ -109,6 +109,15 @@ async function main() {
       // 放不下要往上翻：这条靠 position-try-fallbacks。它要是被 React 丢了，翻向就静默失效。
       check('放不下时的翻向真的生效（position-try-fallbacks 含 flip-block）', String(measured.tryFallbacks ?? '').includes('flip-block'), String(measured.tryFallbacks))
     }
+    // 翻向机制：窗口底部粘一个锚点 + 120 高的浮层，下方放不下时必须翻到上方。
+    const flip = parsed.flip ?? {}
+    const flipTrigger = flip.trigger ?? {}
+    const flipPop = flip.pop ?? {}
+    check('翻向探针量到了（锚点与浮层都在）', Number(flipPop.height) > 0, JSON.stringify(flip))
+    if (Number(flipPop.height) > 0) {
+      check('下方放不下时翻到锚点上方', Number(flipPop.bottom) <= Number(flipTrigger.top) + 1, `浮层底 ${String(flipPop.bottom)} vs 锚点顶 ${String(flipTrigger.top)}`)
+      check('翻上去之后仍在窗口里', Number(flipPop.top) >= -1, `${String(flipPop.top)} / 窗口 ${String(flip.viewport)}`)
+    }
     check('截图在', existsSync(SHOT), SHOT)
   }
   electron.kill()
