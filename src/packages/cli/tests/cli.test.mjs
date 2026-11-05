@@ -137,6 +137,28 @@ test('version-exemptions：列出包名、版本与当前运行时', () => {
   passed += 1
 })
 
+test('version-exemptions：按旧运行时登记的授权标「不起作用」并给出重按命令', () => {
+  // 单独一个 profile：上一个用例的账本还要留给 revoke-version。
+  const staleProfile = join(cliHome, 'profiles', 'stale')
+  mkdirSync(staleProfile, { recursive: true })
+  writeFileSync(
+    join(staleProfile, 'compatibility.json'),
+    JSON.stringify({ exemptions: [{ package: '@acme/plug-b', version: '2.0.1', dshVersion: '0.2.1' }] }, null, 2) + '\n',
+    'utf8',
+  )
+  const result = runCli(['version-exemptions', '--profile', 'stale'])
+  assert.equal(result.code, 0, result.out)
+  assert.match(result.out, /不是当前运行时，这条授权现在不起作用/)
+  // 重按命令必须能原样复制：包名@版本、当前运行时、风险确认，一样都不能少。
+  assert.ok(
+    result.out.includes(
+      `numa plugin allow-version @acme/plug-b@2.0.1 --dsh-version ${runtimeVersion} --accept-risk`,
+    ),
+    result.out,
+  )
+  passed += 1
+})
+
 test('revoke-version：删掉那一条；再撤一次只说「没有这条授权」', () => {
   const first = runCli(['revoke-version', '@acme/plug-a@1.2.3', '--dsh-version', runtimeVersion, '--profile', 'probe'])
   assert.equal(first.code, 0, first.out)

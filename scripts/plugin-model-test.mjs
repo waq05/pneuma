@@ -180,6 +180,7 @@ function insertRows(rows) {
 const { Context } = await import('@deepseek-ai/cordis')
 const loader = await import(libUrl('core/plugin-loader.js'))
 const registry = await import(libUrl('core/plugin-registry.js'))
+const bundleApi = await import(libUrl('core/plugin-bundle.js'))
 
 /** 一个裸 cordis 根（自检不装内核，只验加载器）。 */
 const newContext = () => new Context()
@@ -383,6 +384,60 @@ console.log('── 行级版本闸：engines.pneuma ──')
   check('登记豁免后照常挂上', globalThis.__P2.mounted.includes('gate-exempt'), JSON.stringify(result.failures))
   check('豁免过的行不算失败', result.failures.length === 0, JSON.stringify(result.failures))
   check('告警说明是豁免放行的', result.warnings.join(' | ').includes('豁免'), result.warnings.join(' | '))
+}
+
+{
+  // 豁免登记过、但按旧运行时记的：契约从 0.2.1 升到 0.2.2 以后这类记录会静默失效。
+  // 这里盯的是「用户能不能看懂为什么会失效、下一步按哪条命令」，而不是再劝他登记一次。
+  const current = bundleApi.DSH_CONTRACT_VERSION
+  const profileDir = makeProfile('engines-stale')
+  makePackage(profileDir, '@p2/gate-stale', {
+    version: '1.2.3',
+    entries: { 'index.js': 'gate-stale' },
+    extra: { engines: { pneuma: '>=2.0.0' } },
+  })
+  writeText(
+    join(profileDir, 'compatibility.json'),
+    JSON.stringify({ exemptions: [{ package: '@p2/gate-stale', version: '1.2.3', dshVersion: '0.2.1' }] }),
+  )
+  writeText(join(profileDir, 'cordis.patch.yml'), insertRows([{ id: 'gate-stale', name: '@p2/gate-stale' }]))
+
+  const stale = await mountProfile(profileDir)
+  const text = stale.result.failures.map((item) => String(item.problem)).join(' | ')
+  check('按旧运行时登记的豁免不再放行', !globalThis.__P2.mounted.includes('gate-stale'), text)
+  check('失败文案点出旧记录按哪个运行时登记、当前是哪个', text.includes('0.2.1') && text.includes(current), text)
+  check(
+    '失败文案给出重按命令（包名@版本 × 当前运行时 × 风险确认）',
+    text.includes(`numa plugin allow-version @p2/gate-stale@1.2.3 --dsh-version ${current} --accept-risk`),
+    text,
+  )
+  check('不再让用户「去登记豁免」（他已经登记过）', !text.includes('登记豁免可以强行启用'), text)
+
+  // 重按一次（同样的包与版本，换成当前运行时）就当场放行，不需要改包。
+  writeText(
+    join(profileDir, 'compatibility.json'),
+    JSON.stringify({ exemptions: [{ package: '@p2/gate-stale', version: '1.2.3', dshVersion: current }] }),
+  )
+  const renewed = await mountProfile(profileDir)
+  check('重按后照常挂上', globalThis.__P2.mounted.includes('gate-stale'), JSON.stringify(renewed.result.failures))
+  check('重按后不算失败', renewed.result.failures.length === 0, JSON.stringify(renewed.result.failures))
+
+  // 同一个包换了版本：登记的是上一版，文案要说清「登记的是 v1.2.2」，别只说对不上。
+  const movedProfile = makeProfile('engines-moved')
+  makePackage(movedProfile, '@p2/gate-moved', {
+    version: '1.2.3',
+    entries: { 'index.js': 'gate-moved' },
+    extra: { engines: { pneuma: '>=2.0.0' } },
+  })
+  writeText(
+    join(movedProfile, 'compatibility.json'),
+    JSON.stringify({ exemptions: [{ package: '@p2/gate-moved', version: '1.2.2', dshVersion: current }] }),
+  )
+  writeText(join(movedProfile, 'cordis.patch.yml'), insertRows([{ id: 'gate-moved', name: '@p2/gate-moved' }]))
+  const moved = await mountProfile(movedProfile)
+  const movedText = moved.result.failures.map((item) => String(item.problem)).join(' | ')
+  check('换了包版本的豁免不算数', !globalThis.__P2.mounted.includes('gate-moved'), movedText)
+  check('文案说清登记的是哪一版、这一份是哪一版', movedText.includes('v1.2.2') && movedText.includes('v1.2.3'), movedText)
 }
 
 // ── 4. plugins.json 迁移：旧键双查 + 惰性写回 + 未知键保留 ─────────────────────

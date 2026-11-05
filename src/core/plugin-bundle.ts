@@ -289,6 +289,54 @@ export function exemptionAllows(
   })
 }
 
+/**
+ * 重新授权的命令原文（告警与 CLI 打的是同一条，用户复制就能用）。
+ * @param name - 包名
+ * @param version - 包版本；读不到时留占位，别拼出一条跑不通的命令
+ */
+function allowCommand(name: string, version: string | undefined): string {
+  return `numa plugin allow-version ${name}@${version ?? '<包版本>'} --dsh-version ${DSH_CONTRACT_VERSION} --accept-risk`
+}
+
+/**
+ * 这个包登记过豁免、但这一份对不上——把「为什么对不上、怎么重按」说清楚。
+ *
+ * 为什么要单独答这一句：`exemptionAllows` 只回答放不放行。契约版本从 0.2.1 升到 0.2.2 以后，
+ * 按旧版本登记的豁免会静默失效，用户看到的是「版本闸没过、去登记豁免」，而他明明登记过——
+ * 等于让人对着一条已经做过的动作打转。这里把旧记录、当前版本、重按命令一起说清楚。
+ * @param exemptions - 豁免名单
+ * @param name - 包名
+ * @param version - 这一行的包版本
+ * @returns 人话原因（带上重按命令）；这个包根本没登记过给 null（那就走「去登记豁免」的常规文案）
+ */
+export function exemptionMissProblem(
+  exemptions: readonly Exemption[],
+  name: string,
+  version: string | undefined,
+): string | null {
+  const same = exemptions.filter((entry) => entry.package === name)
+  if (same.length === 0) return null
+  const staleRuntime = same.find(
+    (entry) => entry.dshVersion !== undefined && entry.dshVersion !== DSH_CONTRACT_VERSION,
+  )
+  if (staleRuntime !== undefined) {
+    return (
+      `compatibility.json 里「${name}」那条豁免是按 dsh 插件契约 ${String(staleRuntime.dshVersion)} 登记的，` +
+      `当前运行时是 ${DSH_CONTRACT_VERSION}，换了运行时就要重新同意，所以这条不再放行。` +
+      `确认这一版没问题就重按一次：${allowCommand(name, version)}`
+    )
+  }
+  const recorded = same.find((entry) => entry.version !== undefined && entry.version !== version)
+  if (recorded !== undefined) {
+    return (
+      `compatibility.json 里「${name}」的豁免登记的是 v${String(recorded.version)}，这一份是 ` +
+      `${version === undefined ? '（读不到版本号）' : `v${version}`}，按版本对不上。` +
+      `确认这一版没问题就重按一次：${allowCommand(name, version)}`
+    )
+  }
+  return null
+}
+
 /** profile 的读盘结果。 */
 export interface ProfileInfo {
   /** profile 目录（绝对路径）。 */

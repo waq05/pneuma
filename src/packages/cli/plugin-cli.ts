@@ -466,6 +466,19 @@ function runVersionExemptions(args: readonly string[]): number {
           ? '  ← 对当前运行时有效'
           : '  ← 不是当前运行时，这条授权现在不起作用'
     console.log('  ' + record.package + '@' + version + '  dsh ' + dshVersion + note)
+    // 契约版本换过以后，旧记录不能靠改一个数字续命：要用户再点一次风险确认。
+    // 把命令原样打出来，重按就是复制粘贴，不用回文档里翻参数。
+    if (record.dshVersion !== undefined && record.dshVersion !== DSH_CONTRACT_VERSION) {
+      console.log(
+        '        重按  numa plugin allow-version ' +
+          record.package +
+          '@' +
+          (record.version ?? '<包版本>') +
+          ' --dsh-version ' +
+          DSH_CONTRACT_VERSION +
+          ' --accept-risk',
+      )
+    }
   }
   return 0
 }

@@ -50,6 +50,7 @@ import {
   bundleDirOf,
   enginesProblem,
   exemptionAllows,
+  exemptionMissProblem,
   pneumaEnginesProblem,
   readBundle,
   readProfile,
@@ -1102,7 +1103,9 @@ export async function mountBundlePlugins(
     const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as Record<string, unknown>
     const engineProblem = enginesProblem(manifest)
     if (engineProblem !== null && !exemptionAllows(profile.exemptions, info.name, info.version)) {
-      warnings.push(`${info.name}：${engineProblem}`)
+      // 登记过但版本对不上时要说清是哪一条对不上，并给出重按命令（见 exemptionMissProblem）。
+      const missed = exemptionMissProblem(profile.exemptions, info.name, info.version)
+      warnings.push(missed === null ? `${info.name}：${engineProblem}` : `${info.name}：${engineProblem} ${missed}`)
       continue
     }
     // 一个包可以声明多份 patch（dsh 的字符串数组写法）：按声明顺序逐层叠，
@@ -1520,7 +1523,15 @@ async function mountRow(row: PluginRow, ctx: RowMountContext): Promise<PluginMou
   // 版本闸（契约 §7）：判的是**这一行实际解析到的包**，不是组合包自己写的要求——
   // overridable 的行会被 profile 里的副本换掉，换上来那份要求哪一代契约只有它自己知道。
   const engineProblem = pneumaEnginesProblem(manifest)
-  const exempt = engineProblem !== null && isEngineExempt(manifest, target, ctx.exemptions)
+  // 豁免按「包名 × 包版本 × 运行时版本」判；判不过时再问一次「是不是登记过、但版本对不上」，
+  // 否则契约升一次，用户会被指去重复一遍他已经做过的动作。
+  const exemptTarget = engineProblem === null ? null : exemptionTargetOf(manifest, target)
+  const exempt =
+    exemptTarget !== null && exemptionAllows(ctx.exemptions, exemptTarget.name, exemptTarget.version)
+  const missed =
+    exemptTarget !== null && !exempt
+      ? exemptionMissProblem(ctx.exemptions, exemptTarget.name, exemptTarget.version)
+      : null
   const skippedByGate = engineProblem !== null && !exempt
   registerPluginSource(rowId, file)
   // 旧键（= 文件名）登记进来：0.8.1 的 plugins.json 按文件名写，双查才读得到老配置。
@@ -1541,7 +1552,10 @@ async function mountRow(row: PluginRow, ctx: RowMountContext): Promise<PluginMou
   // 闸放在开关之后：用户已经关掉的行不该每次启动都报一条失败。
   if (exempt) ctx.warnings.push(`${ctx.where}：「${rowName}」的版本闸没过（${engineProblem}），已在 compatibility.json 登记豁免，照常挂载`)
   if (skippedByGate) {
-    const problem = `${engineProblem}；这一行已跳过（在 profile 的 compatibility.json 里登记豁免可以强行启用）`
+    const problem =
+      missed === null
+        ? `${engineProblem}；这一行已跳过（在 profile 的 compatibility.json 里登记豁免可以强行启用）`
+        : `${engineProblem}；这一行已跳过。${missed}`
     ctx.warnings.push(`${ctx.where}：「${rowName}」的版本闸没过：${problem}`)
     return { file: rowId, name: rowName, problem }
   }
@@ -1791,7 +1805,7 @@ function resolutionOf(manifest: Record<string, unknown> | null): ResolutionPolic
 }
 
 /**
- * 这一行的包在不在版本闸豁免里（profile 的 `compatibility.json`）。
+ * 这一行的包在豁免账本里叫什么、是哪一版（判豁免与解释「为什么对不上」都要它）。
  *
  * 判据是 dsh 的口径：**精确 包@版本 ↔ 精确 运行时版本**。只写包名的老记录仍然放行
  * （向 0.8.x 写下的文件让一步），但新写入的记录由 `numa plugin allow-version` 带上两个版本，
@@ -1801,19 +1815,17 @@ function resolutionOf(manifest: Record<string, unknown> | null): ResolutionPolic
  * 退回它自己 package.json 的 `name`。
  * @param manifest - 行的包清单（可能没有）
  * @param target - 行上的 name
- * @param exemptions - 豁免名单（已规范化）
+ * @returns 包名与版本；包名都推不出来给 null
  */
-function isEngineExempt(
+function exemptionTargetOf(
   manifest: Record<string, unknown> | null,
   target: string,
-  exemptions: readonly Exemption[],
-): boolean {
-  if (exemptions.length === 0) return false
+): { name: string; version: string | undefined } | null {
   const declared = manifest?.['name']
   const pkgName = packageNameOf(target) ?? (typeof declared === 'string' && declared !== '' ? declared : null)
-  if (pkgName === null) return false
+  if (pkgName === null) return null
   const version = typeof manifest?.['version'] === 'string' ? (manifest['version'] as string) : undefined
-  return exemptionAllows(exemptions, pkgName, version)
+  return { name: pkgName, version }
 }
 
 /** 把 `string | Exemption` 统一成豁免记录（自检与宿主传字符串的老调用点还用得上）。 */

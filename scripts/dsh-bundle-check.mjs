@@ -311,5 +311,86 @@ console.log('组合包：启动链路（没配 profile 时完全不碰）')
   await stop(ctx)
 }
 
+console.log('组合包：豁免登记过、但按旧运行时记的（要能说清为什么失效）')
+{
+  // 一个要求 ^0.3.0 的包：版本闸必然不过，正好用来看「登记过但对不上」时说什么。
+  const staleDir = join(profileDir, 'node_modules', 'stale-bundle')
+  mkdirSync(join(staleDir, 'plugins'), { recursive: true })
+  writeFileSync(
+    join(staleDir, 'package.json'),
+    JSON.stringify(
+      {
+        name: 'stale-bundle',
+        version: '1.0.0',
+        engines: { dsh: '^0.3.0' },
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  )
+  writeFileSync(join(staleDir, 'cordis.patch.yml'), '- insert:\n    - id: stale-row\n      name: ./plugins/stale.js\n', 'utf8')
+  writeFileSync(
+    join(staleDir, 'plugins', 'stale.js'),
+    `export const name = 'stale-plugin'
+export const inject = ['tools']
+export function apply(ctx) {
+  const off = ctx.tools.register({
+    name: 'stale_tool',
+    description: 'From a stale bundle.',
+    parameters: { type: 'object', properties: {} },
+    risk: 'read',
+    run: async () => 'stale',
+  })
+  return () => off()
+}
+`,
+    'utf8',
+  )
+  writeFileSync(
+    join(profileDir, 'package.json'),
+    JSON.stringify({ name: 'test-profile', dsh: { profile: { bundles: ['stale-bundle'] } } }, null, 2),
+    'utf8',
+  )
+  const current = (await import('../lib/core/plugin-bundle.js')).DSH_CONTRACT_VERSION
+  const writeExemptions = (dshVersion) =>
+    writeFileSync(
+      join(profileDir, 'compatibility.json'),
+      JSON.stringify({ exemptions: [{ package: 'stale-bundle', version: '1.0.0', dshVersion }] }, null, 2),
+      'utf8',
+    )
+
+  writePluginEnabled('dsh-compat', false)
+  writeExemptions('0.2.1')
+  {
+    const ctx = await boot()
+    const result = await mountBundlePlugins(ctx, profileDir)
+    const warnings = result.warnings.join('；')
+    check('按旧运行时登记的豁免不再放行这个包', !ctx.tools.list().some((tool) => tool.name === 'stale_tool'), warnings)
+    check('告警点出旧记录按哪个运行时登记、当前是哪个', warnings.includes('0.2.1') && warnings.includes(current), warnings)
+    check(
+      '告警给出重按命令（复制就能跑）',
+      warnings.includes(`numa plugin allow-version stale-bundle@1.0.0 --dsh-version ${current} --accept-risk`),
+      warnings,
+    )
+    await stop(ctx)
+  }
+  // 重按一次：同样的包与版本，只把运行时换成当前这一代，就照常装上。
+  writeExemptions(current)
+  {
+    const ctx = await boot()
+    const result = await mountBundlePlugins(ctx, profileDir)
+    check('重按后这个包照常挂上', ctx.tools.list().some((tool) => tool.name === 'stale_tool'), result.warnings.join('；'))
+    await stop(ctx)
+  }
+  // 收尾：把 profile 放回 demo-bundle，别把后面的用例带进这个包。
+  writeFileSync(
+    join(profileDir, 'package.json'),
+    JSON.stringify({ name: 'test-profile', dsh: { profile: { bundles: ['demo-bundle'] } } }, null, 2),
+    'utf8',
+  )
+}
+
 console.log(`\n${pass} PASS / ${fail} FAIL`)
 process.exit(fail === 0 ? 0 : 1)
