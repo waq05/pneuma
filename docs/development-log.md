@@ -13843,3 +13843,27 @@ label 是设备名、text 以『最近活跃 』开头、且不是『未知』�
 判据：`check:remote` **102/102**（exit 0，11 秒）；`check:style`、`typecheck` 见提交说明；
 文档四处同步（`docs/development.md` 门禁清单、本日志、`docs/plugin-equality-plan.md` §12.26、
 交接文档 §5 第 1 项）。
+
+### 2026-11-05 夜（续）：打包目录重打，快捷方式恢复可用
+
+交接文档记的现场是**一次中断的重新打包**留下的残局：`dist/win-unpacked` 只剩 7 个文件，
+`icudtl.dat` / `resources.pak` / `snapshot_blob.bin` / `vulkan-1.dll` 全缺，`resources/dsc-core`
+只剩 1 个文件——所以快捷方式点开只会撞 `Invalid file descriptor to ICU data received` 然后静默退出。
+electron-builder 是「先清空目标目录再拷」，跑到一半被杀就是这个样子。
+
+重跑三步：根 `pnpm run build`（tsc + 运行时适配包 362 桩 + 77 个功能包）→
+`desktop && pnpm --dir desktop typecheck`（0 错）→ `desktop && pnpm run dist:dir`（27 秒）。
+产物核对全齐：`icudtl.dat` 11M、`resources.pak` 12M、`snapshot_blob.bin` 364K、
+`v8_context_snapshot.bin` 728K、`vulkan-1.dll` 920K、`chrome_100_percent.pak` 704K、
+`locales/`（en-US、zh-CN 两份，配置里裁过语言）、`resources/dsc-core` 3734 个文件 / 30 MB，
+`dsc-core/package.json` 版本 0.8.1（与根、桌面端一致）。
+
+真起一遍才算数：`desktop/shots/pkg-smoke.ps1` 起 `win-unpacked/Pneuma.exe`（隔离 HOME 与
+userData、假端点），拿到 `rendered: true`、`hasApp / hasComposer / hasSidebar` 全真、
+侧栏与欢迎页都画出来了；截图 `desktop/shots/pkg-smoke-0634.png`（被 .gitignore 忽略）。
+快捷方式目标 `D:\dsc\desktop\dist\win-unpacked\Pneuma.exe` 存在，所以它现在能用了。
+
+**版本差**：`dist` 里那两份安装包仍是 0.8.0（11-03 12:45 打的），而 `v0.8.0..v0.8.1` 之间有
+24 个提交（插件热生效、dsh 0.2.2-rc.1、手机端推帧、锚点定位等）。也就是说：**目录形态已经是最新源码，
+安装包形态还落后一个版本**。要不要重打 `pnpm run dist` 出 0.8.1 安装包，留待用户决定——
+那一步等于走发版流程的一半，tag 与推送都不在本次范围内。
