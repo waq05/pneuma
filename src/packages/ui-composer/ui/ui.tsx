@@ -144,8 +144,9 @@ export default defineUiPlugin({
     ui.slots.register('shell.composer', { id: 'composer.queue', order: 45 }, QueueDock)
     ui.slots.register('shell.composer', { id: 'composer.box', order: 50 }, ComposerBox)
     // 模式（预设）那颗 2026-11-06 从输入区底栏搬到**会话标题旁**（用户指定）：底栏让给「输入」
-    // 这件事本身。order 20——10 是同一个槽里子智能体那一簇的位置，别再往后挤。
-    ui.slots.register('shell.header.lead', { id: 'composer.preset', order: 20 }, PresetChip)
+    // 这件事本身。order 10——排在「智能体团队」钮（同槽 order 20）前面：标题旁从左到右读作
+    // 「新会话 · 标准模式 · 智能体团队」，模式贴着会话名，团队靠着右缘（用户 2026-11-06 指定）。
+    ui.slots.register('shell.header.lead', { id: 'composer.preset', order: 10 }, PresetChip)
   },
 })
 

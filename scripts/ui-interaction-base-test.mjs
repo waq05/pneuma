@@ -316,8 +316,15 @@ console.log('[8] 智能体团队入口与正文区只读层')
 {
   const css = read('src/packages/ui-renderer/ui/styles/styles.css')
   const team = read(resolveUiHalf('team') + '/ui.tsx')
+  const composer = read(resolveUiHalf('composer') + '/ui.tsx')
 
   check('标题旁是常挂载的团队入口（名册 3 秒轮询跟着它）', /function TeamEntry[\s\S]{0,800}?setInterval\(poll, 3000\)/.test(team))
+  // 标题旁从左到右：新会话 · 标准模式 · 智能体团队（用户 2026-11-06 定的顺序）。
+  // 两个包各自往同一个槽报名，先后只由 order 决定——所以这里量的是两个注册点的数字大小，
+  // 不是 DOM（源码探针量不到真机，这条防的是「哪天有人顺手把某个 order 改成 30」）。
+  const presetOrder = Number(/shell\.header\.lead', \{ id: 'composer\.preset', order: (\d+)/.exec(composer)?.[1])
+  const teamOrder = Number(/shell\.header\.lead', \{ id: 'team\.entry', order: (\d+)/.exec(team)?.[1])
+  check('模式钮排在团队钮前面（order 10 < 20）', presetOrder === 10 && teamOrder === 20, `${presetOrder} / ${teamOrder}`)
   check('团队面板是模态 dialog（role + aria-modal + 标签）', team.includes('role="dialog"') && team.includes('aria-modal="true"') && team.includes("t('team.panel.aria')"))
   check('只读层落在正文区（createPortal 到 [data-thread-area]）', team.includes('THREAD_AREA_SELECTOR') && team.includes('createPortal('))
   check('还在跑的队友不许打开（走一句人话，不静默）', team.includes("t('team.reader.busy'"))

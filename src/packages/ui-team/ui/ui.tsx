@@ -3,7 +3,7 @@
  *
  * | 在哪 | 是什么 |
  * | --- | --- |
- * | 会话标题旁（`shell.header.lead`，order 10） | **「智能体团队」入口**：点开 {@link TeamPanel}（名册：发话 / 停止 / 移除），有队友时带数量 |
+ * | 会话标题旁（`shell.header.lead`，order 20） | **「智能体团队」入口**：点开 {@link TeamPanel}（名册：发话 / 停止 / 移除），有队友时带数量 |
  * | 状态面板的「智能体」区 | **子智能体列表**（一行一个：名字 / 角色 / 状态），点一行在正文区只读打开它的完整会话 |
  * | 正文区 | {@link TeammateReader} 的只读视图：`peekTranscript` + 消息流插件的同款行渲染 |
  *
@@ -205,7 +205,7 @@ export default defineUiPlugin({
     // 标题旁的一簇：**「智能体团队」入口**（2026-11-06 与状态面板对调：单个队友的行搬进
     // 状态面板的「智能体」区）。这条目录常挂载——名册轮询、团队面板本体、正文区只读层
     // 都住在这里；没有任何队友时它照样在（轮询与「派出第一个队友」的入口都靠它）。
-    ui.slots.register('shell.header.lead', { id: 'team.entry', order: 10, store: mates }, TeamEntry)
+    ui.slots.register('shell.header.lead', { id: 'team.entry', order: 20, store: mates }, TeamEntry)
     // 子智能体的运行记录仍可落**右侧栏**（一种 dock 页签，给工具卡里的子代理卡用）：
     // 正文区那条只读视图是「点状态面板一行」的主路，右栏这条是伴读面的旁路，两条共用
     // 同一份 `peekTranscript` 读法与同一套行渲染。名册与运行记录同属「队友」这件事。

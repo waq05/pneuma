@@ -11,7 +11,7 @@
 
 ## 面板与数据
 
-- 四个槽：通知条 order 40、排队条 order 45、输入框 order 50，排队条紧贴在输入框**上面**（ui/ui.tsx:142-144）；模式（预设）钮单独挂顶栏标题旁 `shell.header.lead`、order 20（ui/ui.tsx:148）。
+- 四个槽：通知条 order 40、排队条 order 45、输入框 order 50，排队条紧贴在输入框**上面**（ui/ui.tsx:142-144）；模式（预设）钮单独挂顶栏标题旁 `shell.header.lead`、order 10（ui/ui.tsx:148），排在「智能体团队」钮（order 20）前面。
 - 模型与推理等级是**同一颗** chip：两个读数写在一颗钮上，点开是两行卡（模型 / 推理等级），点某一行才进各自的二级面板（ui/model-controls.tsx:555、573；三页互斥见 :254、:264）。
 - 数据来自快照：`turnState`、`hasApproval`、`inboxCount`、`permissionPresets`、`preset`、`git`、`sessionPath`（ui/ui.tsx:152-157）。
 - 发送走 `submit`，插话走 `steerQueued`，打断走 `interrupt`（ui/ui.tsx:383、397、415）。

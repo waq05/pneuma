@@ -24,5 +24,5 @@
 - resolution 是 overridable（package.json:16）；默认开，cordis.patch.yml 里没有 `disabled`。
 - `dsh.client`：platform `pneuma`、api `^0.9.0`，没有 phase 与 inject（package.json:20-24）。
 - 宿主半 inject 零个服务（index.ts:31）。
-- 槽条目 `shell.header.lead`、order 10（「智能体团队」入口，有队友时带数量）；另报名一个 `subagent` dock 页签。
+- 槽条目 `shell.header.lead`、order 20（「智能体团队」入口，有队友时带数量；order 10 是模式钮，标题旁读作「新会话 · 标准模式 · 智能体团队」）；另报名一个 `subagent` dock 页签。
 - 停用后标题旁的入口、团队面板、正文区只读层与队友页签一起消失；状态面板「智能体」区退回它自己的 5 秒轮询，点行的动作退回右侧栏页签（`teammateReader` 服务缺席时）。
