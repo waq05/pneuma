@@ -2,9 +2,18 @@
  * 内置插件：插件中心（主区**独立整页**，对照旧桌面界面 `PluginsView.tsx`）。
  *
  * 形态对齐旧界面：侧栏「插件」入口把主区整页切成这一页（顶栏与正文一起让位，
- * 再点一次侧栏入口回对话页）。三组列表与旧界面同款——自定义（external）、
- * 官方可开关（builtin + toggleable）、运行内核（builtin 不可停）；组标签带数量与
- * 说明；运行内核默认只露 3 行，其余折叠在最底部。
+ * 再点一次侧栏入口回对话页）。列表按**来源**分档，一行只属于一档：
+ *
+ * | 组 | 判定 | 说明 |
+ * |---|---|---|
+ * | 自定义 | `source = external` | `~/.dsc/plugins/*.js` 与 profile 里装的组合包（用户自装） |
+ * | 第三方界面插件 | 信任卡 | `~/.dsc/plugins/<目录名>/ui/client.js`，信任一次后才装载 |
+ * | 组合包界面 | 信任卡 | profile 里 `pneuma.client.platform = pneuma` 的界面半 |
+ * | 官方可开关 | `source = builtin` 且 `toggleable`，行 id 不带 `ui-` | 随包发布的功能插件 |
+ * | 界面单元 | 同上，但行 id 带 `ui-` | 页面里的一块；21 个面板单独一档，免得把功能插件顶下去 |
+ * | 运行内核 | `source = builtin` 且不可停 | 构成 Pneuma 本身，默认只露 3 行，其余折叠 |
+ *
+ * `source` 与 `toggleable` 都由宿主给（`pneuma.toggleable` 写在包的清单里），界面不自己猜。
  *
  * **整卡可点**：点开是这个插件自己的详情页（面包屑返回 + 头部 + 配置），配置表单
  * 就地画在详情页里——对照旧界面「插件注册的配置页在插件中心里编辑，设置面板不收录
@@ -280,7 +289,11 @@ function PluginsView(): ReactNode {
   // 组合包装在哪个 profile：一行里已经有徽标，但组的标题上先说一句更有用——
   // 装了多个 profile 时，用户第一眼要确认的是「这一组属于哪一层」。
   const packageProfiles = [...new Set(packages.map((row) => row.profile).filter((v): v is string => v !== undefined))]
-  const official = (rows ?? []).filter((row) => row.source === 'builtin' && row.toggleable)
+  // 内置行再分两类：界面单元（行 id 带 `ui-` 前缀，产物是页面里的一块）与功能插件。
+  // 混在一组里，21 个面板会把 19 个功能插件顶到看不见的地方。
+  const builtinToggleable = (rows ?? []).filter((row) => row.source === 'builtin' && row.toggleable)
+  const uiUnits = builtinToggleable.filter((row) => row.file.startsWith('ui-'))
+  const official = builtinToggleable.filter((row) => !row.file.startsWith('ui-'))
   const kernel = (rows ?? []).filter((row) => row.source === 'builtin' && !row.toggleable)
   const kernelShown = kernelOpen ? kernel : kernel.slice(0, KERNEL_PREVIEW)
 
@@ -340,11 +353,13 @@ function PluginsView(): ReactNode {
           <>
             <div className="plugin-group-label">
               <IconPuzzle size={13} /> {t('plugins.group.custom')} <span className="count">{custom.length}</span>
-              <span className="group-hint">~/.dsc/plugins/*.js</span>
+              <span className="group-hint">{t('plugins.group.customHint')}</span>
             </div>
-            {custom.map((row) => (
-              <PluginCard key={row.file} row={row} onToggle={toggle} onOpen={setDetailFile} />
-            ))}
+            <div className="plugin-grid">
+              {custom.map((row) => (
+                <PluginCard key={row.file} row={row} onToggle={toggle} onOpen={setDetailFile} />
+              ))}
+            </div>
             {custom.length === 0 && (
               <div className="empty-card compact">
                 <span className="empty-card-icon">
@@ -417,17 +432,35 @@ function PluginsView(): ReactNode {
               {t('plugins.group.official')} <span className="count">{official.length}</span>
               <span className="group-hint">{t('plugins.group.officialHint')}</span>
             </div>
-            {official.map((row) => (
-              <PluginCard key={row.file} row={row} onToggle={toggle} onOpen={setDetailFile} />
-            ))}
+            <div className="plugin-grid">
+              {official.map((row) => (
+                <PluginCard key={row.file} row={row} onToggle={toggle} onOpen={setDetailFile} />
+              ))}
+            </div>
+
+            {uiUnits.length > 0 ? (
+              <>
+                <div className="plugin-group-label">
+                  {t('plugins.group.uiUnits')} <span className="count">{uiUnits.length}</span>
+                  <span className="group-hint">{t('plugins.group.uiUnitsHint')}</span>
+                </div>
+                <div className="plugin-grid">
+                  {uiUnits.map((row) => (
+                    <PluginCard key={row.file} row={row} onToggle={toggle} onOpen={setDetailFile} />
+                  ))}
+                </div>
+              </>
+            ) : null}
 
             <div className="plugin-group-label">
               {t('plugins.group.kernel')} <span className="count">{kernel.length}</span>
               <span className="group-hint">{t('plugins.group.kernelHint')}</span>
             </div>
-            {kernelShown.map((row) => (
-              <PluginCard key={row.file} row={row} onToggle={toggle} onOpen={setDetailFile} />
-            ))}
+            <div className="plugin-grid">
+              {kernelShown.map((row) => (
+                <PluginCard key={row.file} row={row} onToggle={toggle} onOpen={setDetailFile} />
+              ))}
+            </div>
             {kernel.length > KERNEL_PREVIEW && (
               <button type="button" className="plugin-more" onClick={() => setKernelOpen((open) => !open)}>
                 {kernelOpen

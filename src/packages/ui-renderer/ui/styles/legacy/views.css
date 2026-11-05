@@ -3120,7 +3120,8 @@
 }
 
 .plugins-inner {
-  max-width: 860px;
+  /* 两列卡片：860 太挤（一列 424px，描述只剩半句），放宽到 1080，两列各约 530px。 */
+  max-width: 1080px;
   margin: 0 auto;
 }
 
@@ -3184,6 +3185,20 @@
   font-weight: 400;
   letter-spacing: 0;
   margin-left: 6px;
+}
+
+/* 插件卡两列：窄窗口退成一列，别把描述和开关挤在一起。
+   第三方界面插件与组合包那两组不用它——那两种卡片会展开能力面，整行宽才好读。 */
+.plugin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 10px;
+}
+
+@media (max-width: 1024px) {
+  .plugin-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* 插件行：行高压到约 52px，圆角用小圆角档，hover 只提一层底色。
