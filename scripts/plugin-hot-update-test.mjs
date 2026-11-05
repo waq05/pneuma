@@ -17,6 +17,8 @@
  *      与行/库包两路共用同一个去抖窗口；不传 profileDir 时这一路不启用。
  *   8. **外部插件目录这一路**：手工往 ~/.dsc/plugins/ 丢一个 .js，连续两轮指纹没变才挂
  *      （半个文件不挂），删掉立刻卸；这一路不传 installDir 时不启用。
+ *   9. **散装插件只盯自己**：上层恰好有 package.json 时也不把那片目录拖进每秒一次的递归
+ *      扫描（2026-11-05 的启动卡顿就是这么来的）；真包（pneuma / dsh 清单）照旧盯。
  *
  * 全部夹具造在临时目录（HOME / DSC_HOME 都指过去），不碰真实的 ~/.dsc。
  * 运行：pnpm build && node scripts/plugin-hot-update-test.mjs
@@ -479,6 +481,35 @@ console.log('── 8. 外部插件目录：新出现的 .js 挂上、删掉就�
   } finally {
     handle.stop()
   }
+}
+
+// ── 9. 散装插件只盯自己：上层那个「恰好有 package.json」的目录不进来 ────────────
+//
+// 2026-11-05 查到的启动卡顿：`~/.dsc/plugins/x.js` 往上找到的「包目录」可能是 `%TEMP%` 根
+// （那里躺着一份别人的 package.json），轮询于是每轮把整片目录递归扫一遍——实测十万个文件、
+// 事件循环被按住四十多秒，首页请求全在排队。散装插件没有包边界，只该盯它自己这个文件。
+console.log('── 9. 散装插件：不把上层目录拖进每秒扫描 ──')
+{
+  const outside = join(home, 'outside')
+  writeText(join(outside, 'package.json'), JSON.stringify({ name: 'somebody-elses-project', version: '1.0.0' }))
+  const loose = join(outside, 'plugins', 'loose.js')
+  writeText(loose, 'export function apply() {}\n')
+  const looseDirs = watchModule.watchDirsOf(loose)
+  check('上层有 package.json 也不算这个文件自己的包（不递归扫那一层）', looseDirs.length === 0, JSON.stringify(looseDirs))
+
+  const own = join(outside, 'owned')
+  writeText(join(own, 'package.json'), JSON.stringify({ name: 'owned-plugin', pneuma: { bundled: {} } }))
+  const entry = join(own, 'index.js')
+  writeText(entry, 'export function apply() {}\n')
+  const ownDirs = watchModule.watchDirsOf(entry)
+  check('包清单声明了 pneuma 的目录照旧盯（热更没有退化）', JSON.stringify(ownDirs) === JSON.stringify([own]), JSON.stringify(ownDirs))
+
+  const bundled = join(outside, 'bundle')
+  writeText(join(bundled, 'package.json'), JSON.stringify({ name: 'bundle-plugin', dsh: { bundle: { patch: './cordis.patch.yml' } } }))
+  const bundleEntry = join(bundled, 'index.js')
+  writeText(bundleEntry, 'export function apply() {}\n')
+  const bundleDirs = watchModule.watchDirsOf(bundleEntry)
+  check('组合包（清单里有 dsh）同样照旧盯', JSON.stringify(bundleDirs) === JSON.stringify([bundled]), JSON.stringify(bundleDirs))
 }
 
 console.log('')

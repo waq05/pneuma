@@ -162,11 +162,40 @@ const stderrLogger: PluginWatchLogger = {
  */
 export function watchDirsOf(file: string): string[] {
   const dirs = new Set<string>()
-  const pkgDir = pluginPackageDirOf(file)
-  if (pkgDir !== null) dirs.add(pkgDir)
   const target = reexportTargetOf(file)
-  if (target !== null) dirs.add(dirname(target))
+  if (target !== null) {
+    // 应用自带包：桩指回真实代码目录，包目录本身也一起盯（清单与 patch 在那一层）。
+    dirs.add(dirname(target))
+    const pkgDir = pluginPackageDirOf(file)
+    if (pkgDir !== null) dirs.add(pkgDir)
+    return [...dirs]
+  }
+  // 散装插件（`~/.dsc/plugins/x.js`）：入口文件本身每轮都会被 stat，**不再**把「往上找到的
+  // 那个含 package.json 的目录」整个递归扫一遍。那个目录不一定是插件自己的包——实测有人把
+  // 一份 package.json 落在 `%TEMP%` 根上，向上查找就命中它，于是每秒递归扫十万个文件，
+  // 事件循环被按住四十多秒，首页请求全在排队（2026-11-05 查到的启动卡顿）。
+  const pkgDir = pluginPackageDirOf(file)
+  if (pkgDir !== null && isOwnPackageDir(pkgDir, file)) dirs.add(pkgDir)
   return [...dirs]
+}
+
+/**
+ * 向上找到的那个目录，是不是「这个入口自己的包」。
+ *
+ * 判据是包清单里的身份段：`pneuma`（应用自带包）或 `dsh`（profile 里的组合包）。用户自己的
+ * 项目根、`%TEMP%` 那种恰好放着 package.json 的目录都没有这两段，不算——宁可少盯一层，
+ * 也不把整片目录拖进每秒一次的递归扫描（那一层的改动本来也不归这个插件管）。
+ */
+function isOwnPackageDir(dir: string, file: string): boolean {
+  // 入口不在包目录顶层时，这个目录只是它的某个上级：不算这个入口的包边界。
+  if (resolve(dirname(file)) !== resolve(dir)) return false
+  try {
+    const manifest: unknown = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
+    if (manifest === null || typeof manifest !== 'object') return false
+    return 'pneuma' in manifest || 'dsh' in manifest
+  } catch {
+    return false
+  }
 }
 
 /**
