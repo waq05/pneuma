@@ -968,6 +968,62 @@ export async function mountAllExternalPlugins(
   return failures
 }
 
+/** 目录热扫的结果：这一次装上了谁、卸了谁、谁没装上。 */
+export interface PluginAdoptResult {
+  mounted: string[]
+  unmounted: string[]
+  failures: PluginMountFailure[]
+}
+
+/**
+ * 扫一遍外部插件目录：把**盘上新出现的** `.js` 挂上，把**已经不在盘上的**卸掉。
+ *
+ * 为什么需要：{@link mountAllExternalPlugins} 只在启动时扫一次，用户手工把文件拷进
+ * `~/.dsc/plugins/`（不走插件工具的安装动作）在加这一路之前只能重启宿主才挂上。热更轮询发现
+ * 目录变了就调这里一次；「该不该挂」的规则仍只有这一份：plugins.json 里停用过的跳过、
+ * 已经挂着的不重挂。
+ *
+ * 为什么收 `only`：刚拷进来的文件可能还没写完，挂一个半截文件会失败、而失败路径会把
+ * 它写盘停用（用户刚装的插件被永久关掉）。轮询器因此只把「连续两轮指纹没变」的名字
+ * 交进来，其余留在下一轮。省略这个参数 = 盘上有几个就挂几个（启动路径的语义）。
+ * @param only - 只考虑这些文件名（省略 = 全部）
+ * @returns 装上的行 id、卸掉的行 id、失败清单（与启动路径同形）
+ */
+export async function adoptPluginsFromDisk(only?: ReadonlySet<string>): Promise<PluginAdoptResult> {
+  const root = rootRef
+  const result: PluginAdoptResult = { mounted: [], unmounted: [], failures: [] }
+  if (root === null) return result
+  const dir = DSC_PLUGINS_DIR
+  let names: string[] = []
+  try {
+    names = readdirSync(dir).filter((name) => name.endsWith('.js')).sort()
+  } catch {
+    // 目录不在：没有可挂的。已经挂着的文件被删那一种，下面那一半照样能处理。
+  }
+  const present = new Set(names)
+  // 先卸「文件已经不在了」的：先让 disposer 跑完，后来的挂载不会与它争同一个服务名。
+  for (const [identity, file] of [...pluginSources]) {
+    if (dirname(file) !== dir) continue
+    if (present.has(basename(file))) continue
+    if (!mountedOf(root).has(identity)) continue
+    await unmountExternalPlugin(identity)
+    result.unmounted.push(identity)
+  }
+  for (const name of names) {
+    if (only !== undefined && !only.has(name)) continue
+    if (isDisabledByEntry(name)) continue
+    if (mountedOf(root).has(name)) continue
+    const ok = await mountExternalPlugin(join(dir, name))
+    if (ok) {
+      result.mounted.push(name)
+      continue
+    }
+    const meta = getPluginMeta(name)
+    if (meta?.problem !== undefined) result.failures.push({ file: name, name: meta.name, problem: meta.problem })
+  }
+  return result
+}
+
 /**
  * 当前生效的 profile 目录（没配就是 null = 不加载组合包）。
  *

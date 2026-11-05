@@ -15,6 +15,8 @@
  */
 import React from 'react'
 import * as jsxRuntime from 'react/jsx-runtime'
+import * as Cordis from '@deepseek-ai/cordis'
+import * as zod from 'zod'
 import {
   collectUiArtifactsForPlatform,
   readThirdPartyUiPluginBundle,
@@ -22,6 +24,7 @@ import {
   readUiPluginBundle,
   type UiPluginManifestEntry,
 } from '../../core/ui-bundles.js'
+import { stripClientSuffix } from '../../core/ui-manifest.js'
 import { isUiMethod, validateUiArgs } from '../../core/ui-methods.js'
 import type { DscRuntime } from '../../contract.js'
 import { SlotRegistry } from './slots.js'
@@ -37,11 +40,24 @@ export type InkComponent = React.ComponentType<Record<string, unknown>>
 /** 工厂注册用的全局名（与浏览器壳、构建包装同一个名字）。 */
 const FACTORY_GLOBAL = '__DSC_UI_FACTORIES__'
 
-/** 终端壳的 require 白名单：与 `tui-plugin-api.ts` 的值面一一对应。 */
+/**
+ * 终端壳的 require 白名单。
+ *
+ * 前两项与最后一项与 `tui-plugin-api.ts` 的值面一一对应；`cordis` 与 `zod` 是
+ * **跨载体共用的平台种子**（浏览器壳的种子表里也有这两项，见
+ * `ui-boot/ui/platform-modules.json`）：一个插件两份产物都能 require 到同一份，
+ * 不必各自内联一份实例。
+ *
+ * 为什么终端壳**不**收齐浏览器那 14 项：`react-dom` / `@tanstack/react-virtual` /
+ * `@xterm/*` 这些要么要 DOM、要么是浏览器渲染专用的东西，终端里根本没有对应物；
+ * 摆进来只会让插件以为自己拿到了能用的模块，apply 时炸在更远的地方。
+ */
 const MODULES: Readonly<Record<string, unknown>> = {
   react: React,
   'react/jsx-runtime': jsxRuntime,
   '@dsc/ui': tuiPluginApi,
+  '@deepseek-ai/cordis': Cordis,
+  zod,
 }
 
 /** 白名单里的模块名（失败报告里给全，省得插件作者翻代码）。 */
@@ -88,11 +104,35 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
     options.onReport?.({ id: problem, ok: false, error: problem })
   }
 
-  const require_ = (spec: string): unknown => {
-    if (!(spec in MODULES)) {
-      throw new Error(`插件请求了白名单外的模块「${spec}」（允许：${ALLOWED_MODULES.join('、')}）`)
+  /** 本图里另一条插件**已经装好**的导出（`external` 指向插件时 require 到这里）。 */
+  const installedModules = new Map<string, unknown>()
+  /** 本图的插件 id 集：`external` 的第二类合法取值（与浏览器壳的 `graphIds` 同一个口径）。 */
+  const graphIds = new Set(artifacts.entries.map((entry) => entry.id))
+  /** 这个壳能满足的外部模块名：平台表里的，或本图里另一条插件（`/client` 算同一条）。 */
+  const isKnownExternal = (name: string): boolean => name in MODULES || graphIds.has(stripClientSuffix(name))
+  /** 报错时把「你还能拿到什么」一次列全，省得作者来回试。 */
+  const knownNames = (): string => [...ALLOWED_MODULES, ...graphIds].join('、')
+  /**
+   * 一个插件的 require：平台表 → 本图里已装好的插件 → 报错。
+   *
+   * 为什么按条目现造：`external` 是逐条声明的，报错要能说「你声明的这个我给不了」，
+   * 而不是笼统的「白名单外」。指向另一条插件的那一类只认**已经物化**的导出——工厂是
+   * 同步跑的，这里等不了一次异步装载；顺序由两轮装载兜底（第一轮没就绪，第二轮再来）。
+   */
+  const requireFor = (entry: UiPluginManifestEntry): ((spec: string) => unknown) => (spec: string): unknown => {
+    if (spec in MODULES) return MODULES[spec]
+    const target = stripClientSuffix(spec)
+    const settled = installedModules.get(target)
+    if (settled !== undefined) return settled
+    if (graphIds.has(target)) {
+      // 在图里但还没装好（它自己失败了、或排在后面）：说清是「等」而不是「没有」，
+      // 否则作者会去翻模块表，而问题在另一条插件的报告里。
+      throw new Error(`插件 ${entry.id} 依赖的插件 ${target} 还没装好（看它自己的装载报告）`)
     }
-    return MODULES[spec]
+    if ((entry.external ?? []).includes(spec) || (entry.external ?? []).includes(target)) {
+      throw new Error(`插件 ${entry.id} 声明的外部模块「${spec}」终端壳给不了（可用的：${knownNames()}）`)
+    }
+    throw new Error(`插件请求了白名单外的模块「${spec}」（允许：${ALLOWED_MODULES.join('、')}）`)
   }
 
   /** 按条目的来源去读它的字节（内置在产物目录、第三方在 ~/.dsc/plugins、组合包在包自己的路径）。 */
@@ -141,6 +181,15 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
     }
     // 硬依赖先解析：插件 id 与服务名各查各的（2.0 起不再双关）；
     // 被停用的依赖要说「被停用了」，不能说「不在清单里」——后者会把人指去重装。
+    // `external` 先验：声明了一个终端壳给不了的模块，与其等 apply 时炸在更远的地方，
+    // 不如在这里说清「哪几个给不了、我这儿有什么」（与浏览器壳 boot.ts 的装载前校验同形）。
+    const unknownExternal = (entry.external ?? []).filter((name) => !isKnownExternal(name))
+    if (unknownExternal.length > 0) {
+      const listed = unknownExternal.map((name) => '"' + name + '"').join('、')
+      const reason = `插件 ${id} 声明的外部模块 ${listed} 终端壳给不了（可用的：${knownNames()}）`
+      reportById.set(id, { id, ok: false, error: reason, attempts: attempt })
+      return reason
+    }
     const unmet = unmetDependencies(deps, (name) => reportById.get(name), services, new Set(artifacts.disabled))
     if (unmet.length > 0) {
       const reason = `等待：${unmet.join('；')}`
@@ -148,7 +197,7 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
       return reason
     }
     try {
-      const exported = instantiate(factoryOf(entry), require_)
+      const exported = instantiate(factoryOf(entry), requireFor(entry))
       // vite 的 cjs 产物把 `export default` 放在 `.default` 上（与浏览器壳 boot.ts 同一处理）。
       const module_ = (exported as { default?: unknown } | null)?.default ?? exported
       const apply = (module_ as { apply?: unknown } | null)?.apply
@@ -171,6 +220,8 @@ export function loadTuiPlugins(options: TuiPluginLoadOptions): UiPluginLoadResul
       const dispose = (apply as (api: unknown) => void | (() => void))(ui)
       if (typeof dispose === 'function') ledger.push(dispose)
       disposers.set(id, rollback)
+      // 装好了才进「可供别人 require」的表：半截的导出交给下一条插件只会更难查。
+      installedModules.set(id, module_)
       const name = (module_ as { name?: unknown } | null)?.name
       reportById.set(id, {
         id,

@@ -190,7 +190,8 @@ console.log('\n[2] 界面通道（真装配）')
         listeners.delete(name)
       }
     },
-    logger: { warn: () => {} },
+    // info 也要给：界面产物热更默认开（2026-11-05 起），启动那一刻会打一行 info。
+    logger: { info: () => {}, warn: () => {} },
   }
   webserverPlugin.apply(ctx, { enabled: true, port: 0, assetsDir: assets })
   const service = provided['webServer']

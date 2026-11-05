@@ -157,14 +157,26 @@ numa config show              # 查看当前生效的端点/模型/key 来源（
 
 首启会在 `~/.dsc/profiles/default/` 铺一份 profile（已有就不动）。把一个改过的功能包放进
 `~/.dsc/profiles/default/node_modules/@pneuma/<id>` 再重启，就顶替应用里那份，不用重新打包：
-56 个功能包支持这样覆盖；`llm` / `session` / `tools` / `approval` 这 19 个核心包声明为 pinned，
+58 个功能包支持这样覆盖；`llm` / `session` / `tools` / `approval` 这 19 个核心包声明为 pinned，
 不认覆盖，profile 里放同名副本时会告警并写清哪一份不生效。核心契约包 `@pneuma/runtime` 同样跟应用走。
 `numa plugin list` 的每一行会标出现在到底用的是谁：`← profile 覆盖`，或者 pinned 让路时那句说明。
 删掉一个可选包后应用照常启动，插件中心把那一行标成缺包。
 
 `numa plugin add` / `remove` 之后**不用重启宿主**：宿主在跑的时候，热更轮询盯着 profile 的三份清单
 （`package.json`、`compatibility.json`、`cordis.patch.yml`），变了就重算一次组合包——新包的行挂上、
-删掉的包的行卸下（约 1 秒）。宿主没开就下次启动装配。
+删掉的包的行卸下（约 1 秒）。**带界面半边的包连页面也不用刷新**：宿主换完图会推一帧，界面当场多出（或少掉）那一块。
+宿主没开就下次启动装配。
+
+三件相关的事同样不用重启：
+
+- **手工往 `~/.dsc/plugins/` 丢一个 `.js`**：连续两轮扫描（约 2 秒）指纹没变就挂上；删掉就卸下。
+  走插件中心或工具安装的则当场挂载。
+- **原地升级一个装好的包**：它 `client.js` 的字节变了，页面按新产物换装（界面产物热更默认开，
+  `DSC_UI_HMR=0` 可关）。
+- **信任一份第三方界面插件**：写盘之后立刻推帧装载，不用再按 F5。
+
+装完想看「哪个包的安装脚本被 pnpm 跳过了」（它默认不跑第三方脚本）：`numa plugin builds`，
+要跑就在那个 profile 里 `pnpm approve-builds` 勾选、再 `pnpm rebuild`。`add` 那一步也会把这个提示打出来。
 
 版本闸拦下的包（包的 `engines.pneuma` 对不上当前运行时）可以精确授权，授权**只对这一个版本组合有效**：
 

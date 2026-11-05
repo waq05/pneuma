@@ -1124,11 +1124,11 @@ export function trustThirdPartyUiPlugin(
     // plugins.json 坏了：拒绝写盘（不覆盖用户配过的东西），把原因原样交回调用方
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
-  if (alreadyTrusted) return { ok: true, notice: `「${name}」早就信任过了——重启宿主（或刷新页面）后装载` }
+  if (alreadyTrusted) return { ok: true, notice: `「${name}」早就信任过了——界面收到通知就装载它` }
   if (previous !== undefined) {
-    return { ok: true, notice: `「${name}」${TRUST_STALE_TEXT}，已按当前这份重新确认——重启宿主（或刷新页面）后装载` }
+    return { ok: true, notice: `「${name}」${TRUST_STALE_TEXT}，已按当前这份重新确认——界面收到通知就装载它` }
   }
-  return { ok: true, notice: `已信任「${name}」——重启宿主（或刷新页面）后装载` }
+  return { ok: true, notice: `已信任「${name}」——界面收到通知就装载它` }
 }
 
 function readFileSyncSafe(path: string): Buffer | null {

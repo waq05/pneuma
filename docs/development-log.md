@@ -13600,3 +13600,85 @@ dsh 的 `dsh.bundle.patch` 可以写字符串数组（web-app 一次列五个文
 - 契约加 `'stale'`；判定在 `scanThirdPartyUiTrusts` 的兜底位置（别的档都没话说时才归它）；
 - 界面两张档表各加一条，中英各两份文案；
 - 判据 `ui-third-party-test` 三条（改字节 → stale + trusted=false；没换过的不沾；文案说清重新确认）。
+
+## 2026-11-05 深夜二：把「热生效」补到 dsh 的水准
+
+用户问「现在能做到插件热生效了吗、把没完成的汇总一下」。逐条查代码之后，**宿主那半边是热的**
+（改包代码换代重挂、装/卸组合包重算行、翻开关即时挂卸），但**界面那半边有三处要人动手**，
+另有一条终端壳的不一致和若干文档旧数字。先派一个只读子代理回 dsh 源码核了五个问题，再动手。
+
+### dsh 的做法（子代理核的，行号原样）
+
+profile 重算之后**有推送**：`recomposeProfile` → 宿主 `ClientModuleRegistry` 标脏重算图 →
+`client-hmr` 写 SSE 帧 → 浏览器 `entries.sync(graph)` 增删条目，**不刷新页面**（只有流断了才要求刷新）。
+运行时装包同理（install 走 `hmr.reconcileProfile`）。dsh **没有**插件目录发现（只盯 profile 的三份清单，
+手工丢目录不装载）；启动图是宿主算好注入 `index.html`，`rev` 只作一致性锚。dsh 只有 Web 载体，
+`external` 只在浏览器模块表那一条路解析。
+
+### 补的六条
+
+1. **装/卸组合包 → 界面换图**。新增事件 `dsc/ui-graph-dirty`；`plugin-watch` 重算完且行集合真的变了才发；
+   webserver 与「翻开关」共用同一个推帧函数。原来页面只能靠 F5——它不轮询图。
+2. **信任第三方界面插件 → 当场装载**。`setUiTrust` 与 `/ui-trust` 落盘成功后发同一条事件；
+   三条提示文案从「重启宿主（或刷新页面）后装载」改成「界面收到通知就装载它」。
+3. **手工丢 `.js` 也会挂**。轮询加第四路：比 `~/.dsc/plugins` 的文件名集合；新名字**连续两轮指纹不变**
+   才挂——这一条不是洁癖：挂载失败会把它写盘停用，抢在半截文件上等于把用户刚拷进来的东西永久关掉。
+   判断「该不该挂」仍只在 `adoptPluginsFromDisk` 一处，与启动路径同规则。
+4. **终端壳补种子与 external**。`ui-core/tui-plugins.ts` 的表加了 `cordis` / `zod`（浏览器种子表里也有），
+   `external` 按条目解析：平台表 → 本图已装好的插件 → 报错。声明了终端给不了的模块（`react-virtual`
+   这类要 DOM 的）**装载前**就拒，并把「我这儿有什么」列全——同浏览器壳的装载前校验。
+5. **界面产物热更改成默认开**。原来是「打包态默认关」，代价是「原地升级一个装好的包，页面不换装」。
+   dsh 的 Web 组合默认带着 `client-hmr`（500ms stat），这一条按它对齐；`DSC_UI_HMR=0` 或 `hmr: false` 关。
+6. **文档三处旧数字 + 一处说错的话**：56→77 功能包、37→58 overridable；§16.6 原来写「切语言要刷新页面」，
+   实际要重启宿主（语言在建界面服务时进启动图，刷新只是重取同一张图）。
+
+### 踩的坑
+
+- 第一版把「等指纹稳定」写在「新出现」那一支里，第二个轮次名字已经不算新，永远等不到第二圈，
+  自检当场红（49 PASS / 5 FAIL）。改成每一轮拿 `settle` 表里的旧指纹比，并且**本轮刚记下指纹的名字不判**
+  （同一轮读两次当然一样，闸就白设了）。
+- 自检里写夹具时用模板字符串塞 `\n`，直接写成了真换行，把生成脚本写坏（`SyntaxError: Invalid token`）。
+
+### 判据
+
+- `profile-hot-mount-test` **36 条**（新增第 6 段 4 条：不动不发 / 装包发一次 / 卸包再发一次 / 没变化不再打扰）。
+- `plugin-hot-update-test` **54 条**（新增第 8 段 8 条，含「刚出现的不挂」）。
+- `ui-tui-plugin-test` 用例四 3 条（cordis/zod 拿得到、external 指向本图插件能取到导出、终端给不了的被拒）。
+- 全量门禁见提交前的报告。
+
+### 同一轮的第二次对照：安装脚本没人提
+
+补完之后又对着 dsh 过了一遍，发现一件真空白：**pnpm 10 起默认不执行第三方包的安装脚本**。
+dsh 会把被拦下的名字记进 profile 的 `allowBuilds` 让人逐个点头
+（`packages/boot/plugin-manager/src/build-approval.ts`）；我们是装完打一句「装上了」就完事，
+依赖原生编译的插件要到用时才炸，而人根本不知道是这一步欠的。
+
+补法刻意保守：**不另造一份策略文件**。授权仍走 pnpm 自己的 `approve-builds`（本仓 pnpm 10.15 的入口），
+我们只做「知情」这一半：
+
+- `numa plugin add` 成功后问一次 `pnpm ignored-builds`，有就打印名单、影响（照样能装载、用到才报错）
+  与授权命令；
+- 新增 `numa plugin builds [--profile 名字]`，过几天再查也查得到；
+- 解析单独放进 `src/packages/cli/pnpm-builds.ts`：`plugin-cli.ts` 顶层就 `process.exit`，
+  当库 import 跑不起来，放里面就没法被包级测试钉住。
+
+两个小坑：`spawnSync('pnpm', …)` 在 Windows 上要 `shell: true`（装出来的是 `pnpm.cmd`，直接 spawn 是 ENOENT）；
+列表解析不能拿「带不带 @ 或 /」当判据——没写版本的裸包名（`esbuild`）也是合法的，
+改成用「说明句首是大写字母」分界。
+
+判据：`node --test src/packages/cli/tests/cli.test.mjs` 19 项（新增 7 项）。
+
+**还记着一条**：手机端（`remote`）没有帧通道，刷新页面才看到新插件（`src/packages/remote/index.ts:565`
+的注释写明「手机端没有 HMR 推帧」）。dsh 没有这个载体，无从对照；要补是另一项工程。
+
+### 顺带查清的：两条 e2e 本来就红（不是这一轮弄坏的）
+
+`pnpm run check:ui:e2e` 这一轮 **3/5** 通过：`ui-boot-e2e`、`ui-remote-web-e2e`、`ui-two-halves-e2e` 绿；
+`ui-cordis-test`（「状态栏有内容」空）与 `ui-dsh-card-e2e`（「等不到 结果文字 已写入」）红。
+**先把改动 stash 掉、在 HEAD 上重跑了一遍**，两条照样红、报错逐字相同——所以不是这一轮的回归。
+
+现场（`desktop/shots/cordis-probe.png` + 读数）：页面其实已经装配完成（21 条全 loaded、两批 batch 都是 done），
+但启动占位 `#boot-splash` 还盖在上面，状态栏 `[data-slot="shell.statusbar"]` 的 innerText 是空串，
+会话流里有一句「Pneuma：没有可用的模型端点。」。两条探针都在隔离 HOME 里起宿主，那份 HOME 没有模型端点；
+需要模型把一轮跑完的探针（状态栏读数、工具卡结果文字）因此拿不到内容。
+要修的话是修夹具（给探针灌一个假端点的模型配置），不是修产品——记在这里，下一轮做。

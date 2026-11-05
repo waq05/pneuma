@@ -705,3 +705,76 @@ dsh 的 locale 服务只在浏览器里（`packages/client/locale`，`ctx.locale
   中英各两份）。
 - 判据：`scripts/ui-third-party-test.mjs` 加三条——改字节后那一行 `problemKind === 'stale'` 且 `trusted === false`；
   没被换过内容的插件不沾 stale；说明里说清要重新确认。
+
+### 12.22 热生效补齐（2026-11-05 深夜，用户问「现在能做到插件热生效了吗」）
+
+那一问逼出六条真缺口。先回 dsh 源码核了一遍「它怎么做的」，再逐条补。**dsh 的答案**（一个只读子代理在
+`D:\deepseek-harness\deepseek-harness` 里核的，行号是他报的原样）：
+
+1. profile 重算之后**有推送**，SSE：`recomposeProfile`（`packages/boot/app-boot/src/index.ts:305`）→
+   宿主 `ClientModuleRegistry` 标脏重算图（`packages/client/modules/src/index.ts:680、1158`）→
+   `client-hmr` 宿主半写 graph 帧（`packages/client/hmr/src/index.ts:195、162`）→ 浏览器半
+   `entries.sync(graph)`（`packages/client/hmr/src/client/index.ts:83`、`.../client/entries.ts:111`），**不刷新**。
+   只有流断了才要求刷新（`.../client/index.ts:41`）。
+2. 运行时装包之后界面半边**会**出现，前提是这个 profile 开了 HMR：install 走
+   `hmr.reconcileProfile`（`packages/boot/plugin-manager/src/index.ts:1254`），结果 `applied`，再走第 1 条。
+   Web 组合默认挂 `client-hmr`（`packages/bundle/web-app/cordis.patch.yml:222`），关掉它的 `sdk-app`
+   只报 restart-required（`packages/bundle/sdk-app/cordis.patch.yml:23`）。
+3. dsh **没有**插件目录发现：只盯 profile 的 `package.json` 与两份 patch（`packages/boot/hmr/src/index.ts:384、406`），
+   manifest 只在 `dsh.profile.bundles` 变了才重载；手工丢目录不写进 bundles/patch 不装载
+   （`packages/boot/hmr/README.md:73`）。
+4. 启动图标在宿主组合时算好并缓存，`rev = hash(entries+batches)`，**注入 index.html** 下发，每次页面请求现渲染；
+   之后的变更靠 SSE。rev 只是一致性锚与 URL 缓存键。
+5. dsh 只有 Web 载体（`dsh.client` 只认 `platform === 'web'`），没有终端壳的客户端装载器；
+   唯一的 require 白名单在浏览器模块表（13 项种子，`packages/client/web/src/platform.ts:8`）。
+
+**这一轮补的六条**：
+
+| # | 缺口 | 做法 | 判据 |
+|---|---|---|---|
+| A | 装/卸组合包之后界面不换图（要 F5） | 新增事件 `dsc/ui-graph-dirty`（`services/types.ts`）；`plugin-watch` 重算完且行集合真的变了就发（`core/plugin-watch.ts` 的 `announceGraphDirty`）；webserver 与开关事件**共用同一个推帧函数**，并在卸载时退订 | `profile-hot-mount-test` 第 6 段 4 条：不动不发、装包发一次、卸包再发一次、两轮没变化不再打扰 |
+| B | 信任第三方界面插件之后要人按 F5 | `runtime.setUiTrust` 与 `/ui-trust` 命令在落盘成功后发同一条事件；三条提示文案从「重启宿主（或刷新页面）后装载」改成「界面收到通知就装载它」 | 与 A 同一条链路（事件 → 换图 → 推帧），命令侧由 `cli`/命令测试覆盖 |
+| C | 手工往 `~/.dsc/plugins/` 丢 `.js` 永远不挂 | 轮询加第四路：比文件名集合；新名字**连续两轮指纹不变**才挂（半个文件挂失败会被写盘停用，必须躲开），删掉立刻卸；挂/卸的判断仍只在 `adoptPluginsFromDisk` 一处（`core/plugin-loader.ts`），与启动路径同规则（`plugins.json` 停用过的跳过） | `plugin-hot-update-test` 第 8 段 8 条：基线不扫、刚出现不挂、第二轮才交出、不重复挂、删掉立刻扫、两组日志、无告警 |
+| D | 终端壳的 require 表没跟上平台种子，也没有 external | `ui-core/tui-plugins.ts`：种子加 `cordis` / `zod`（浏览器种子表里也有这两项）；`external` 按条目解析——平台表 → 本图已装好的插件 → 报错；声明了终端给不了的模块（`react-virtual` 这类要 DOM 的）**装载前**就拒并列全可用的 | `ui-tui-plugin-test` 用例四 3 条：cordis/zod 都拿得到、external 指向本图插件能取到导出、声明终端给不了的模块被拒且报错列出 cordis |
+| E | 文档里三个旧数字（56 / 37 / 19） | 77 功能包、58 overridable、19 pinned（实际枚举过 `src/packages/*/package.json`）；界面单元 19 + 骨架/渲染器 2 = 21 个产物，原文那两处「19 个界面单元」本身是对的，不动 | 数字由脚本枚举得出，不是照抄 |
+| F | §16.6 说「切语言要刷新页面」，实际要重启宿主 | 改成「重启宿主」并写清原因（语言在建服务时进启动图）；顺手把 `plugin-model.md` §12/§14 的 56 也改掉 | 代码位置：`webserver/index.ts` 的 `host.language` |
+
+**顺手改的一处对齐**：界面产物热更原来是「打包态默认关」，理由写的是「只读产物白烧轮询」。
+dsh 的 Web 组合默认就带着 `client-hmr`，代价是「原地升级一个装好的包之后页面不换装」。
+已改成**默认开**（`webserver/index.ts` 的 `pickHmr`，`DSC_UI_HMR=0` 或 `hmr: false` 关），
+这样「包的界面半边被换掉」与「包被卸掉」一样是当场生效。
+
+**没做的、以及为什么不假装做完**：
+
+- dsh 把客户端包**构建产物缺失**报成 `MissingClientBundleError`（`packages/client/modules/src/index.ts:1017`）。
+  我们对应的是 `exports["./client"] 指向的 <路径> 读不到`（`core/ui-bundles.ts:1512`），同样带包名与
+  缺的那个路径——这一条是**等价**的，不是缺口（写这段时没回代码核，补正）。
+- dsh 的 SSE 断线要求刷新页面；我们的壳在断线重连时会重取 `plugins.initial`（`webserver/index.ts:205-209`），
+  语义等价，没有额外做「断线提示」。
+- dsh 没有插件目录发现，我们这条（C）是**多做**的一步，不是对齐项。
+
+### 12.23 第二轮对照：安装脚本的知情（2026-11-05 深夜，用户要求「对比 dsh，再查未做之事」）
+
+补完 12.22 后又对着 dsh 过了一遍，剩下的差异逐条判：
+
+| 差异 | dsh | 我们 | 判 |
+|---|---|---|---|
+| 客户端产物缺失的报错 | `MissingClientBundleError`，说清包名与缺哪个入口 | `exports["./client"] 指向的 <路径> 读不到`，同样带包名与路径 | 等价，见上一条的补正 |
+| 安装脚本（postinstall 这类） | 把被拦下的名字记进 profile 的 `allowBuilds`，逐个点头（`packages/boot/plugin-manager/src/build-approval.ts`） | 原来**完全没提**：pnpm 10 起默认不跑第三方脚本，装完只看到「装上了」 | **补了**，见下 |
+| SSE 断线 | 要求刷新页面 | 壳重连时重取 `plugins.initial` | 等价 |
+| 插件目录发现 | 没有 | 有（12.22 的 C） | 多做 |
+| 手机端（远程壳） | 没有这个载体 | 不推帧，每次请求强制重收图（`src/packages/remote/index.ts:565` 的注释） | 记着，见文末 |
+
+**安装脚本这一条怎么补的**：不另造策略文件——授权仍走 pnpm 自己的 `approve-builds`（本仓 pnpm 10.15
+的入口），我们只负责「把被跳过的名字摆到人面前」：
+
+- `numa plugin add` 装完问一次 `pnpm ignored-builds`，有就打印名单 + 影响 + 授权命令；
+- 新增 `numa plugin builds [--profile 名字]`，装了几个包之后再确认也查得到；
+- 解析放在 `src/packages/cli/pnpm-builds.ts`（`plugin-cli.ts` 顶层就 `process.exit`，当库 import 跑不起来），
+  包级测试直接钉它：`pnpm ignored-builds` 的列表、`pnpm add` 的单行摘要、裸包名与带版本都认、
+  「没有 node_modules」那句说明不能被当成一堆包名。
+
+**判据**：`node --test src/packages/cli/tests/cli.test.mjs` 19 项（新增 7 项）。
+
+**没做的（记着，不装做完）**：手机端（`remote`）没有帧通道，刷新页面才看到新插件——dsh 没有这个载体，
+无从对照；要补就是给远程也接一条推送，属于另一项工程。

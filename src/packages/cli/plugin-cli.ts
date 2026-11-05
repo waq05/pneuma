@@ -4,6 +4,7 @@
  *   numa plugin add <包名|tarball|本地路径> [--profile 名字]
  *   numa plugin remove <包名> [--profile 名字]
  *   numa plugin list [--profile 名字]
+ *   numa plugin builds [--profile 名字]
  *   numa plugin version-exemptions [--profile 名字]
  *   numa plugin allow-version <包名@版本> --dsh-version <运行时版本> [--accept-risk]
  *   numa plugin revoke-version <包名@版本> --dsh-version <运行时版本>
@@ -17,6 +18,10 @@
  *   2. 失败场景给人话（没装 pnpm / 装不上 / 包里没有 dsh.bundle.patch）；
  *   3. 装完不用重启：宿主开着就把 `dsc/ui-plugins-changed` 那一类路径走完——热更轮询盯 profile 清单，
  *      变了就重算组合包（挂新行、卸删掉的包的行）。没开宿主时下次启动照常装配。
+ *
+ * 还有一件容易漏的：pnpm 10 起默认**不执行**第三方包的安装脚本。装完之后这里会问一次
+ * pnpm（`ignored-builds`），把被跳过的名字与授权命令（`pnpm approve-builds`）打出来——
+ * 否则「装上了」之后要到插件用时才因为没编译而报错。
  *
  * 版本豁免的三个子命令读写 profile 目录里的 `compatibility.json`：版本闸（包的 engines
  * 对不上当前运行时）不满足的包，这是唯一的入口。授权必须带 `--accept-risk`，不带就拒绝
@@ -42,6 +47,7 @@ import {
 import { dscPath } from '@pneuma/runtime/core/path-policy.js'
 import { activeConfigFile } from '@pneuma/runtime/core/config-store.js'
 import { pluginDisplayOf, languageOfConfigFile } from '@pneuma/runtime/core/plugin-locale.js'
+import { ignoredBuildsOf, installScriptsAdvice } from './pnpm-builds.js'
 
 interface ProfileManifest {
   name?: string
@@ -86,6 +92,23 @@ function pnpm(args: string[], cwd: string): number {
     return 1
   }
   return result.status
+}
+
+/**
+ * 装完/授权之后问一次 pnpm：有哪些安装脚本被跳过了。
+ *
+ * 为什么问 pnpm 而不是自己扫包：pnpm 自己知道这棵树里哪些包带脚本、哪些被策略放过，
+ * 抄一遍只会漂移。读不到（pnpm 不在、老版本没有这个子命令）就静默跳过——
+ * 这一步是提示，不该让安装本身失败。
+ * @param dir - profile 目录
+ */
+function reportIgnoredBuilds(dir: string): void {
+  // shell: true 是 Windows 上必须的：pnpm 装出来的是 pnpm.cmd，直接 spawn 会 ENOENT。
+  const probe = spawnSync('pnpm', ['ignored-builds'], { cwd: dir, encoding: 'utf8', shell: true })
+  if (probe.error !== undefined && probe.error !== null) return
+  const names = ignoredBuildsOf(String(probe.stdout ?? ''))
+  if (names.length === 0) return
+  console.log(installScriptsAdvice(names, dir))
 }
 
 function ensureProfile(dir: string): ProfileManifest {
@@ -267,6 +290,7 @@ function runAdd(target: string | undefined, args: readonly string[]): number {
   }
   // 0.9 起宿主开着就能挂上（core/plugin-watch 盯 profile 清单），别再让人白重启一次。
   console.log('宿主开着的话下一轮轮询就挂上（约 1 秒）；没开则下次启动装配。')
+  reportIgnoredBuilds(dir)
   return 0
 }
 
@@ -598,6 +622,29 @@ function runList(args: readonly string[]): number {
   return 0
 }
 
+/**
+ * `numa plugin builds`：看这个 profile 里有哪些安装脚本被 pnpm 跳过了。
+ *
+ * 为什么要一个读口：`add` 那一次会提示，但提示是会滚走的；装了几个包之后再想知道
+ * 「哪个包的脚本还没跑」只能靠它。判断仍是 pnpm 的判断，这里只负责把命令摆到人面前。
+ * @param args - 子命令之后的参数（只认 --profile）
+ */
+function runBuilds(args: readonly string[]): number {
+  const dir = resolveProfileDir(args)
+  if (!existsSync(join(dir, 'package.json'))) {
+    console.log('（还没建这个 profile；首次启动会自动铺默认 profile）')
+    return 0
+  }
+  console.log('这个 profile 里被跳过的安装脚本（pnpm ignored-builds）：')
+  const probe = spawnSync('pnpm', ['ignored-builds'], { cwd: dir, stdio: 'inherit', shell: true })
+  if (probe.error !== undefined && probe.error !== null) {
+    console.error('没能启动 pnpm。请先装 pnpm（npm i -g pnpm）。')
+    return 1
+  }
+  console.log('要跑：cd ' + dir + ' && pnpm approve-builds（交互式勾选），然后 pnpm rebuild。')
+  return 0
+}
+
 const [, , sub, ...rest] = process.argv
 const positional = positionalsOf(rest)
 let code = 1
@@ -607,11 +654,13 @@ else if (sub === 'list') code = runList(rest)
 else if (sub === 'version-exemptions') code = runVersionExemptions(rest)
 else if (sub === 'allow-version') code = runAllowVersion(positional[0], rest)
 else if (sub === 'revoke-version') code = runRevokeVersion(positional[0], rest)
+else if (sub === 'builds') code = runBuilds(rest)
 else {
-  console.error('用法：numa plugin <add|remove|list|version-exemptions|allow-version|revoke-version> ...')
+  console.error('用法：numa plugin <add|remove|list|builds|version-exemptions|allow-version|revoke-version> ...')
   console.error('  add <包名|tarball|本地路径> [--profile 名字]')
   console.error('  remove <包名> [--profile 名字]')
   console.error('  list [--profile 名字]')
+  console.error('  builds [--profile 名字]          看哪些安装脚本被 pnpm 跳过了')
   console.error('  version-exemptions [--profile 名字]')
   console.error('  allow-version <包名@版本> --dsh-version <运行时版本> --accept-risk')
   console.error('  revoke-version <包名@版本> --dsh-version <运行时版本>')

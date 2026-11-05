@@ -1548,6 +1548,14 @@ declare module '@deepseek-ai/cordis' {
      */
     'dsc/ui-plugins-changed'(payload: { file: string; enabled: boolean }): void
     /**
+     * 启动图的**成员集合**可能变了（装/卸组合包、确认一份第三方界面插件时发）。
+     *
+     * 与上一条的区别只有「为什么变」：那一条是某个开关翻了、带 file/enabled；这一条是
+     * 盘上多了或少了一个插件，没有什么可带的信息。订阅者仍是 webserver——它换一份启动图
+     * 推一帧，页面据此装载或卸载那一条。没有界面服务时（TUI）没人订阅，等于无事发生。
+     */
+    'dsc/ui-graph-dirty'(): void
+    /**
      * 协作模式换了档位（mode 插件发出）。
      * 审批插件听这个把档位留在审批卡与审计记录里——它因此不必反过来依赖模式服务
      * （mode 已经依赖 approval，反向再依赖一次就是环）。

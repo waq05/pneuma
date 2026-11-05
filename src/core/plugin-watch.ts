@@ -33,10 +33,12 @@ import { dirname, join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import {
   APP_INSTALL_DIR,
+  DSC_PLUGINS_DIR,
   listMountedPluginSources,
   pluginPackageDirOf,
   remountExternalPlugins,
   remountExternalPlugin,
+  type PluginAdoptResult,
   type ProfileReconcileResult,
   type RemountResult,
 } from './plugin-loader.js'
@@ -100,6 +102,19 @@ export interface PluginWatchOptions {
    * 缺省的重算实现靠它调加载器。
    */
   root?: Context
+  /**
+   * 外部插件目录（`~/.dsc/plugins`）：这里**新出现**一个 `.js` 就挂上，删掉就卸下。
+   *
+   * 不传 = 这一路不启用（只有启动时扫一遍的老语义）。为什么单独一路而不是并进
+   * profile：单文件插件根本不进 profile 的清单，用户是直接往目录里拷文件的。
+   */
+  installDir?: string
+  /**
+   * 扫一遍目录并把该挂的挂上（缺省动态 import loader 的 adoptPluginsFromDisk）。
+   *
+   * 参数是「可以挂的名字」：轮询器只交出连续两轮指纹没变的那些，半个文件留在下一轮。
+   */
+  adopt?(only: ReadonlySet<string>): Promise<PluginAdoptResult>
   logger?: PluginWatchLogger
 }
 
@@ -411,6 +426,45 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
       const loader = await import('./plugin-loader.js')
       return loader.reconcileProfileBundles(kernelRoot, dir)
     })
+  /**
+   * 告诉有通道的那一端「启动图的成员变了」。
+   *
+   * 为什么由这里发：装/卸包这件事没有一个人从头看到尾——盘上是 `numa` 改的、图是
+   * webserver 算的，这里是唯一「发现变了」的那只眼睛。没有界面服务时（TUI、自检）
+   * 没人订阅，cordis 的 emit 等于无事发生。
+   */
+  const announceGraphDirty = (): void => {
+    const root = options.root
+    if (root === undefined) return
+    try {
+      root.emit('dsc/ui-graph-dirty')
+    } catch (error) {
+      // 通知失败不该影响已经挂上的行：记一行，别让整轮重算因为一次 emit 报错作废。
+      logger.warn(
+        `[plugin-watch] 通知界面换图失败：${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
+  /**
+   * 外部插件目录这一路：目录（null = 不启用）、上一轮的文件名集合、等指纹稳定的文件。
+   *
+   * `settle` 是「别挂半个文件」的闸：刚出现的名字先记指纹，下一轮指纹没变才算写完。
+   * 没有这道闸的话，拷一个 2 MB 的插件会在中途被当成「已就绪」去挂——挂载失败会把
+   * 它写盘停用，用户刚拷进来的东西就永久关掉了。
+   */
+  let installDir = options.installDir ?? null
+  let installBaseline: Set<string> | null = null
+  const settle = new Map<string, FileStamp>()
+  /** 攒着等去抖结束的「可以挂」的文件名。 */
+  const pendingAdopt = new Set<string>()
+  /** 这一轮目录里少了文件，要立刻扫一遍卸掉（不等指纹稳定）。 */
+  let pendingSweep = false
+  const adopt =
+    options.adopt ??
+    (async (only: ReadonlySet<string>): Promise<PluginAdoptResult> => {
+      const loader = await import('./plugin-loader.js')
+      return loader.adoptPluginsFromDisk(only)
+    })
   /** 上一轮的指纹（行 id → 文件 → 指纹）。 */
   let baseline = new Map<string, TargetState>()
   /** 库包上一轮的指纹（库包名 → 文件 → 指纹）。 */
@@ -451,11 +505,76 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
     return previous !== null && !sameProfileStamps(previous, stamps)
   }
 
-  /** 扫一轮，返回「相对上一轮变了」的行、库包与 profile 清单；顺带把基线换成这一轮。 */
+  /**
+   * 外部插件目录这一路：比名字集合，返回「这一轮要不要扫一遍目录」。
+   *
+   * 两个方向的口径不同：
+   *   - **多了文件**：先记指纹，下一轮指纹没变才算写完（半个文件不挂，见 settle 的说明）；
+   *   - **少了文件**：立刻扫（卸行没有副作用，晚一轮只是让那一行多活一秒）。
+   *
+   * 名字集合而不是目录 mtime：mtime 在同一个文件被覆盖时不一定会变（Windows 上精度
+   * 也糙），而我们关心的正是「哪几个名字在」。
+   */
+  const scanInstallDir = (): boolean => {
+    if (installDir === null) return false
+    let names: string[]
+    try {
+      names = readdirSync(installDir).filter((name) => name.endsWith('.js')).sort()
+    } catch {
+      names = []
+    }
+    const current = new Set(names)
+    const previous = installBaseline
+    installBaseline = current
+    // 第一次只立基线：启动路径刚把目录里的文件都挂过了，别当成「刚出现」再挂一遍。
+    if (previous === null) return false
+    let sweep = pendingSweep
+    // 少了文件：立刻扫一遍（卸行没有副作用；晚一轮只是让那一行多活一秒）。
+    for (const name of previous) {
+      if (current.has(name)) continue
+      settle.delete(name)
+      pendingAdopt.delete(name)
+      sweep = true
+    }
+    // 这一轮刚出现、只记了指纹的名字：**本轮不判**（否则同一轮读两次指纹当然一样，
+    // 闸就白设了）。
+    const fresh = new Set<string>()
+    for (const name of current) {
+      if (previous.has(name)) continue
+      const stamp = stampOf(join(installDir, name))
+      if (stamp === null) continue
+      settle.set(name, stamp)
+      fresh.add(name)
+    }
+    // 还在等指纹的那几个：这一轮和上一轮一模一样才算写完。
+    //
+    // 为什么放在这里比而不是在「新出现」那一支里比：比的是**相邻两轮**的指纹，而名字
+    // 从第二圈起就不再是「新出现」了——放在那一支里等于永远等不到第二圈。
+    for (const [name, before] of [...settle]) {
+      if (fresh.has(name)) continue
+      if (!current.has(name)) {
+        settle.delete(name)
+        continue
+      }
+      const stamp = stampOf(join(installDir, name))
+      if (stamp === null) continue
+      if (stamp.mtimeMs === before.mtimeMs && stamp.size === before.size) {
+        settle.delete(name)
+        pendingAdopt.add(name)
+        sweep = true
+        continue
+      }
+      settle.set(name, stamp)
+    }
+    return sweep
+  }
+
+  /** 扫一轮，返回「相对上一轮变了」的行、库包、profile 清单与外部目录；顺带把基线换成这一轮。 */
   const scan = (): {
     rows: string[]
     libraries: Array<{ name: string; rows: string[] }>
     profile: boolean
+    install: boolean
   } => {
     const list = targets()
     const currentGraph = ensureGraph(list)
@@ -502,7 +621,12 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
       nextLibrary.set(name, stamps)
     }
     libraryBaseline = nextLibrary
-    return { rows: changedRows, libraries: changedLibraries, profile: scanProfile() }
+    return {
+      rows: changedRows,
+      libraries: changedLibraries,
+      profile: scanProfile(),
+      install: scanInstallDir(),
+    }
   }
 
   /** 库包变更命中的行：合并成一批，一次换代。 */
@@ -561,23 +685,63 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
     }
     for (const warning of result.warnings) logger.warn(`[plugin-watch] 组合包：${warning}`)
     logger.info(`[plugin-watch] 挂了 ${String(result.mounted.length)} 行 / 卸了 ${String(result.unmounted.length)} 行`)
-    // 行集合变了，库包依赖图要重扫（新挂的行可能 import 了别的库包）。
-    if (result.mounted.length > 0 || result.unmounted.length > 0) graphDirty = true
+    // 行集合变了，库包依赖图要重扫（新挂的行可能 import 了别的库包）；**界面那一份启动图
+    // 也跟着变**——组合包可能带界面半边，卸掉的包可能本来就挂着一块界面。页面不自己轮询
+    // 图，所以这里得说一声（没有订阅者时等于无事发生，见 announceGraphDirty）。
+    if (result.mounted.length > 0 || result.unmounted.length > 0) {
+      graphDirty = true
+      announceGraphDirty()
+    }
   }
 
-  /** 去抖结束：把攒着的行真的重挂掉，顺带重算组合包。 */
+  /**
+   * 外部插件目录变了：扫一遍，把该挂的挂上、该卸的卸掉。
+   *
+   * 与组合包那一路同样的纪律：一出事只写日志，不打断同一窗口里的其它活；挂上的行会让
+   * 库包依赖图作废（新插件可能 import 了别的库包）。
+   */
+  const adoptFiles = async (only: ReadonlySet<string>): Promise<void> => {
+    let result: PluginAdoptResult
+    try {
+      result = await adopt(only)
+    } catch (error) {
+      logger.warn(
+        `[plugin-watch] 扫外部插件目录出错：${error instanceof Error ? error.message : String(error)}`,
+      )
+      return
+    }
+    for (const failure of result.failures) {
+      logger.warn(`[plugin-watch] ${failure.name} 没挂上：${failure.problem}`)
+    }
+    if (result.unmounted.length > 0) {
+      logger.info(`[plugin-watch] 盘上没了，已卸 ${String(result.unmounted.length)} 个：${result.unmounted.join('、')}`)
+    }
+    if (result.mounted.length > 0) {
+      logger.info(`[plugin-watch] 目录里新出现的插件已挂上 ${String(result.mounted.length)} 个：${result.mounted.join('、')}`)
+      // 新行可能 import 了别的库包：下一轮把依赖图重扫一遍。
+      graphDirty = true
+    }
+  }
+
+  /** 去抖结束：把攒着的行真的重挂掉，顺带重算组合包、扫外部目录。 */
   const flush = async (): Promise<void> => {
     if (stopped || flushing) return
     flushing = true
     const direct = [...pending]
     const byLibrary = new Map(pendingByLibrary)
     const profileToReconcile = pendingProfileDir
+    const installSweep = pendingSweep
+    const adoptable = new Set(pendingAdopt)
     pending.clear()
     pendingByLibrary.clear()
     pendingProfileDir = null
+    pendingSweep = false
+    pendingAdopt.clear()
     try {
       // 先重算组合包：它会挂上新行、卸掉删掉的包的行，活跃集合要在它之后取。
       if (profileToReconcile !== null) await reconcileProfile(profileToReconcile)
+      // 再扫外部目录：只交「这一轮已经判过指纹」的名字，没稳定的留在下一轮。
+      if (installSweep || adoptable.size > 0) await adoptFiles(adoptable)
       // 去抖窗口里可能已经卸载：只重挂现在还挂着的行。
       const alive = new Set(targets().map((target) => target.identity))
       // 库包命中的行先去重再合成一批：同一行被两个库包同时命中，也只换一次。
@@ -618,15 +782,17 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
     }
   }
 
-  /** 把一轮扫描结果记进待办（行、库包、profile 清单分开记，flush 时分别处理）。 */
+  /** 把一轮扫描结果记进待办（行、库包、profile 清单、外部目录分开记，flush 时分别处理）。 */
   const applyChanges = (outcome: {
     rows: string[]
     libraries: Array<{ name: string; rows: string[] }>
     profile: boolean
+    install: boolean
   }): void => {
     for (const identity of outcome.rows) pending.add(identity)
     for (const item of outcome.libraries) pendingByLibrary.set(item.name, new Set(item.rows))
     if (outcome.profile && profileDir !== null) pendingProfileDir = profileDir
+    if (outcome.install) pendingSweep = true
   }
 
   /** 扫一轮；有变化就进待办并重排去抖定时器。 */
@@ -636,6 +802,7 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
       rows: string[]
       libraries: Array<{ name: string; rows: string[] }>
       profile: boolean
+      install: boolean
     }
     try {
       outcome = scan()
@@ -644,7 +811,7 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
       logger.warn(`[plugin-watch] 轮询出错：${error instanceof Error ? error.message : String(error)}`)
       return
     }
-    if (outcome.rows.length === 0 && outcome.libraries.length === 0 && !outcome.profile) return
+    if (outcome.rows.length === 0 && outcome.libraries.length === 0 && !outcome.profile && !outcome.install) return
     applyChanges(outcome)
     // 同一文件连续变化合并成一次：每有新变更就重置去抖窗口。
     if (timer !== null) clearTimeout(timer)
@@ -673,6 +840,7 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
         rows: string[]
         libraries: Array<{ name: string; rows: string[] }>
         profile: boolean
+        install: boolean
       }
       try {
         outcome = scan()
@@ -703,6 +871,10 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
       baseline = new Map()
       libraryBaseline = new Map()
       profileBaseline = null
+      installBaseline = null
+      settle.clear()
+      pendingAdopt.clear()
+      pendingSweep = false
       graph = null
       graphSignature = ''
       graphDirty = true
@@ -757,7 +929,7 @@ function loggerOf(root: Context): PluginWatchLogger {
 }
 
 /**
- * 启动功能包 / 库包 / profile 清单热更轮询（幂等；`DSC_HOT=0` 关闭，默认开）。
+ * 启动功能包 / 库包 / profile 清单 / 外部插件目录热更轮询（幂等；`DSC_HOT=0` 关闭，默认开）。
  *
  * 由 plugin-loader 在 {@link mountApplicationRows} 末尾与 `mountAllExternalPlugins`
  * 里拉起，宿主不必再调；手工调用也安全（同一个进程只会有一个轮询器）。
@@ -782,6 +954,9 @@ export function startPluginWatch(
   const handle = createPluginWatch({
     root,
     logger,
+    // 第四路：用户直接往 `~/.dsc/plugins` 拷一个 .js（不走插件工具）也要挂上。
+    // 自检不传 installDir 时这一路不启用，探针的时序才可复现。
+    installDir: DSC_PLUGINS_DIR,
     ...(options.appDir === undefined ? {} : { appDir: options.appDir }),
     ...(options.profileDir === undefined ? {} : { profileDir: options.profileDir }),
   })

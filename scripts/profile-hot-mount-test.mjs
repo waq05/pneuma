@@ -311,6 +311,48 @@ check('补上的那一路上真的在跑：新包装上了', mountedIds().includ
 check('新行也 apply 过', (globalThis.__PROFILE_HOT?.applied?.['probe-e'] ?? 0) === 1, JSON.stringify(globalThis.__PROFILE_HOT))
 watchModule.stopPluginWatch()
 
+// ── 6. 装/卸包之后通知界面换图（dsc/ui-graph-dirty）────────────────────────
+console.log('── 6. 装包/卸包时通知界面换图 ──')
+// 为什么单列一段：页面不自己轮询启动图，装上一个带界面半边的包之后如果没人说一声，
+// 用户得手动按 F5 才看得见（dsh 的做法是宿主推一帧，见 packages/client/hmr）。
+// 这里断言的是「谁改了成员集合就发这一条」，发出去之后由 webserver 换图推帧。
+{
+  makePackage('probe-f')
+  writeBundle('@probe/five', {
+    'package.json': bundleManifest('@probe/five', './cordis.patch.yml'),
+    'cordis.patch.yml': "- insert:\n    - id: probe-f\n      name: '@pneuma/probe-f'\n",
+  })
+  writeProfile(['@probe/three', '@probe/four'])
+  const root3 = new Context()
+  try {
+    Object.defineProperty(root3, 'transcript', { value: { system() {} }, configurable: true })
+  } catch {
+    // 同第 1 段：夹具干净时用不到。
+  }
+  const signals = []
+  root3.on('dsc/ui-graph-dirty', () => signals.push(1))
+  await loader.mountAllExternalPlugins(root3, [])
+  const watch3 = watchModule.startPluginWatch(root3, { appDir })
+  try {
+    await watch3.pollNow()
+    check('清单没动时不发换图通知', signals.length === 0, String(signals.length))
+
+    writeProfile(['@probe/three', '@probe/four', '@probe/five'])
+    await watch3.pollNow()
+    check('装上带界面半边的包之后通知了一次', signals.length === 1 && mountedIds().includes('probe-f'), JSON.stringify({ signals: signals.length, mounted: mountedIds() }))
+
+    writeProfile(['@probe/three', '@probe/four'])
+    await watch3.pollNow()
+    check('卸包之后又通知了一次', signals.length === 2 && !mountedIds().includes('probe-f'), JSON.stringify({ signals: signals.length, mounted: mountedIds() }))
+
+    await watch3.pollNow()
+    check('两轮都没变化就不再打扰界面', signals.length === 2, String(signals.length))
+  } finally {
+    watch3.stop()
+    watchModule.stopPluginWatch()
+  }
+}
+
 console.log('')
 console.log(pass + ' PASS / ' + fail + ' FAIL')
 process.exit(fail === 0 ? 0 : 1)

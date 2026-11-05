@@ -688,13 +688,15 @@ export const commandsPlugin: Plugin.Object = {
           return
         }
         trustUiPlugin(fileKey)
+        // 信任落盘之后它就能进启动图了：立刻让有通道的那一端换图推帧，页面当场装上。
+        ctx.emit('dsc/ui-graph-dirty')
         ui.notice(
           [
             `已信任第三方界面插件「${name}」`,
             `  @dsc/ui 区间：${api}（当前壳 ${DSC_VERSION}，不满足会被门禁拦下并说明）`,
             `  载体：${platforms}`,
             '  能力：调用宿主界面通道的白名单方法；桌面窗口里可用原生桥（打开目录、终端等 14 个操作）',
-            '  生效：重启宿主（或刷新浏览器页面）后装载；停用走 plugins.json 的启停或插件中心',
+            '  生效：即时装载（界面收到通知就换图）；停用走 plugins.json 的启停或插件中心',
           ].join('\n'),
         )
       },

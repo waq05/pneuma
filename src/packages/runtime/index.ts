@@ -235,7 +235,11 @@ export const runtimePlugin: Plugin.Object = {
 
       setUiTrust(name) {
         const report = readUiPluginManifestReport()
-        return trustThirdPartyUiPlugin(name, report.apiVersion, new Set(report.entries.map((entry) => entry.id)))
+        const outcome = trustThirdPartyUiPlugin(name, report.apiVersion, new Set(report.entries.map((entry) => entry.id)))
+        // 信任落盘之后它的界面半边就**可以**进启动图了：立刻告诉有通道的那一端换图推帧，
+        // 页面当场把它装上，不用人按 F5。失败（名字写错、没写 api）什么都不发。
+        if (outcome.ok) ctx.emit('dsc/ui-graph-dirty')
+        return outcome
       },
 
       listTeammates() {

@@ -8,7 +8,7 @@
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
@@ -145,6 +145,70 @@ test('revoke-version：删掉那一条；再撤一次只说「没有这条授权
   const second = runCli(['revoke-version', '@acme/plug-a@1.2.3', '--dsh-version', runtimeVersion, '--profile', 'probe'])
   assert.equal(second.code, 0, second.out)
   assert.match(second.out, /没有这条授权/)
+  passed += 1
+})
+
+// ── 安装脚本被跳过：读 pnpm 的输出，并把下一步摆到人面前 ────────────────────────
+// pnpm 10 起默认不跑第三方包的安装脚本。没有这一层的话，装完只看到「装上了」，
+// 依赖原生编译的插件要到用时才炸。授权本身交给 pnpm（approve-builds），这里只钉「读得准、说得清」。
+test('ignoredBuildsOf：读 pnpm ignored-builds 的列表', async () => {
+  const { ignoredBuildsOf } = await import('../../../../lib/packages/cli/pnpm-builds.js')
+  const text = [
+    'Automatically ignored builds during installation:',
+    '  esbuild@0.21.5',
+    '  sharp@0.33.0',
+    '',
+  ].join('\n')
+  assert.deepEqual(ignoredBuildsOf(text), ['esbuild@0.21.5', 'sharp@0.33.0'])
+  passed += 1
+})
+
+test('ignoredBuildsOf：读 pnpm add 那一行摘要，容忍句末的点', async () => {
+  const { ignoredBuildsOf } = await import('../../../../lib/packages/cli/pnpm-builds.js')
+  assert.deepEqual(ignoredBuildsOf('Ignored build scripts: esbuild@0.21.5, sharp@0.33.0.\n'), ['esbuild@0.21.5', 'sharp@0.33.0'])
+  passed += 1
+})
+
+test('ignoredBuildsOf：没写版本的裸包名也认（别拿 @ 或 / 当判据）', async () => {
+  const { ignoredBuildsOf } = await import('../../../../lib/packages/cli/pnpm-builds.js')
+  const text = ['Automatically ignored builds during installation:', '  esbuild', '  @scope/thing@1.0.0', ''].join('\n')
+  assert.deepEqual(ignoredBuildsOf(text), ['esbuild', '@scope/thing@1.0.0'])
+  passed += 1
+})
+
+test('ignoredBuildsOf：没有 node_modules 时不当成一堆包名', async () => {
+  const { ignoredBuildsOf } = await import('../../../../lib/packages/cli/pnpm-builds.js')
+  assert.deepEqual(ignoredBuildsOf('Automatically ignored builds during installation:\n  Cannot identify as no node_modules found\n'), [])
+  assert.deepEqual(ignoredBuildsOf(''), [])
+  passed += 1
+})
+
+test('installScriptsAdvice：说清跳过了谁、不影响装载、以及在哪授权', async () => {
+  const { installScriptsAdvice } = await import('../../../../lib/packages/cli/pnpm-builds.js')
+  const advice = installScriptsAdvice(['esbuild@0.21.5'], profileDir)
+  assert.match(advice, /esbuild@0\.21\.5/)
+  assert.match(advice, /照样能装载/)
+  assert.ok(advice.includes('pnpm approve-builds'), advice)
+  assert.ok(advice.includes(profileDir), advice)
+  passed += 1
+})
+
+test('builds：列这个 profile 被跳过的脚本，并给出授权命令', () => {
+  // 先把 profile 的清单铺出来（跑过一次 add 的 profile 一定有它）；没有清单时那句
+  // 「还没建这个 profile」是另一条分支，这里顺手一起钉住。
+  mkdirSync(profileDir, { recursive: true })
+  writeFileSync(join(profileDir, 'package.json'), '{"name":"probe","private":true}\n', 'utf8')
+  const result = runCli(['builds', '--profile', 'probe'])
+  assert.equal(result.code, 0, result.out)
+  assert.match(result.out, /被跳过的安装脚本/)
+  assert.match(result.out, /pnpm approve-builds/)
+  passed += 1
+})
+
+test('用法里列出了 builds', () => {
+  const result = runCli(['no-such-subcommand'])
+  assert.equal(result.code, 1)
+  assert.match(result.out, /builds/)
   passed += 1
 })
 

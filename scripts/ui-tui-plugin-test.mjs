@@ -356,6 +356,85 @@ async function renderFrame(registry, slot) {
   else process.env.DSC_PROFILE = earlier
 }
 
+// ── 用例四：平台种子与 external（与浏览器壳同一套声明，终端壳给不了的要说清）──────
+// 2.0 之后：cordis / zod 是**两份产物共用**的种子；`external` 指向本图另一条插件时，
+// 终端壳按「已经装好的导出」解析；声明了终端根本没有的东西（react-virtual 要 DOM），
+// 装载前就拒，并把「我这儿有什么」列全。
+{
+  const extDir = join(work, 'ext')
+  mkdirSync(join(extDir, 'seed'), { recursive: true })
+  mkdirSync(join(extDir, 'provider'), { recursive: true })
+  mkdirSync(join(extDir, 'consumer'), { recursive: true })
+  mkdirSync(join(extDir, 'domexternal'), { recursive: true })
+  writeFileSync(
+    join(extDir, 'seed', 'client.js'),
+    [
+      `(globalThis.__DSC_UI_FACTORIES__ ??= {})['seed'] = function (require, module, exports) {`,
+      `  const zod = require('zod');`,
+      `  const cordis = require('@deepseek-ai/cordis');`,
+      `  module.exports = { apply() {`,
+      `    globalThis.__PROBE_SEED = (typeof zod.z?.object === 'function' ? 'zod' : 'no-zod') + '/' + (typeof cordis.Context === 'function' ? 'cordis' : 'no-cordis');`,
+      `  } };`,
+      `};`,
+      '',
+    ].join('\n'),
+    'utf8',
+  )
+  writeFileSync(
+    join(extDir, 'provider', 'client.js'),
+    `(globalThis.__DSC_UI_FACTORIES__ ??= {})['provider'] = function (require, module, exports) {\nmodule.exports = { name: '供方', marker: 'provider-value', apply() {} };\n};\n`,
+    'utf8',
+  )
+  writeFileSync(
+    join(extDir, 'consumer', 'client.js'),
+    [
+      `(globalThis.__DSC_UI_FACTORIES__ ??= {})['consumer'] = function (require, module, exports) {`,
+      `  const provider = require('provider');`,
+      `  module.exports = { apply() { globalThis.__PROBE_PROVIDER = provider.marker } };`,
+      `};`,
+      '',
+    ].join('\n'),
+    'utf8',
+  )
+  writeFileSync(
+    join(extDir, 'domexternal', 'client.js'),
+    `(globalThis.__DSC_UI_FACTORIES__ ??= {})['domexternal'] = function (require, module, exports) {\nmodule.exports = { apply() {} };\n};\n`,
+    'utf8',
+  )
+  writeFileSync(
+    join(extDir, 'manifest.json'),
+    JSON.stringify({
+      version: 1,
+      apiVersion: '2.0.0',
+      plugins: [
+        { id: 'seed', file: 'client.js', platform: 'tui' },
+        { id: 'provider', file: 'client.js', platform: 'tui' },
+        { id: 'consumer', file: 'client.js', platform: 'tui', external: ['provider'] },
+        { id: 'domexternal', file: 'client.js', platform: 'tui', external: ['@tanstack/react-virtual'] },
+      ],
+    }),
+    'utf8',
+  )
+  const registry = new SlotRegistry()
+  const load = loadTuiPlugins({
+    registry,
+    runtime,
+    host: { name: 'Pneuma', version: '0.0.0-probe', platform: 'tui' },
+    pluginsDir: extDir,
+  })
+  const seed = load.reports.find((r) => r.id === 'seed')
+  check('种子 cordis / zod 在终端壳里都拿得到', seed?.ok === true && globalThis.__PROBE_SEED === 'zod/cordis', String(globalThis.__PROBE_SEED))
+  const consumer = load.reports.find((r) => r.id === 'consumer')
+  check('external 指向本图另一条插件时能取到它的导出', consumer?.ok === true && globalThis.__PROBE_PROVIDER === 'provider-value', JSON.stringify(consumer) + '/' + String(globalThis.__PROBE_PROVIDER))
+  const domexternal = load.reports.find((r) => r.id === 'domexternal')
+  check(
+    '声明了终端给不了的模块时装载前就拒，并列出可用的',
+    domexternal?.ok === false && String(domexternal.error).includes('终端壳给不了') && String(domexternal.error).includes('cordis'),
+    String(domexternal?.error),
+  )
+  load.disposeAll()
+}
+
 rmSync(work, { recursive: true, force: true })
 if (failures > 0) {
   console.log(`\n${String(failures)} 条断言未过`)

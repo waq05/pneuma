@@ -1,7 +1,7 @@
 /**
  * 功能包热更自检：改代码不重启即生效，失败保旧版本。
  *
- * 七段，各验一条：
+ * 八段，各验一条：
  *
  *   1. **桩穿透**：应用自带包的入口是 `lib/node_modules/@pneuma/<id>/index.js` 这层
  *      再导出桩，真实代码在 `lib/packages/<id>/index.js`。改真实文件后换代重挂，
@@ -15,6 +15,8 @@
  *   6. **默认开**：不设 DSC_HOT 时，mountApplicationRows 自己拉起轮询，改文件即生效。
  *   7. **profile 清单这一路**：profile 的 package.json 变了才重算组合包（不动不重算），
  *      与行/库包两路共用同一个去抖窗口；不传 profileDir 时这一路不启用。
+ *   8. **外部插件目录这一路**：手工往 ~/.dsc/plugins/ 丢一个 .js，连续两轮指纹没变才挂
+ *      （半个文件不挂），删掉立刻卸；这一路不传 installDir 时不启用。
  *
  * 全部夹具造在临时目录（HOME / DSC_HOME 都指过去），不碰真实的 ~/.dsc。
  * 运行：pnpm build && node scripts/plugin-hot-update-test.mjs
@@ -23,7 +25,7 @@
  *
  * @module dsc/scripts/plugin-hot-update-test
  */
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -426,6 +428,56 @@ console.log('── 7. profile 清单：与行 / 库包共用定时器与去抖 
     check('不传 profileDir 时这一路不启用', inactive === 0, String(inactive))
   } finally {
     off.stop()
+  }
+}
+
+// ── 8. 外部插件目录：手工丢进来一个 .js 也要挂上（删掉就卸）────────────────────
+console.log('── 8. 外部插件目录：新出现的 .js 挂上、删掉就卸 ──')
+// 为什么单列一段：前面几路都只盯「已经挂上的行」与「profile 清单」，用户直接往
+// ~/.dsc/plugins/ 拷一个文件不经过任何清单，谁也不会发现它。这一路比 dsh 多做了一件事
+// （dsh 没有插件目录发现），但语义与启动路径共用同一个判断（plugins.json 停用过的跳过）。
+{
+  const installDir = join(home, 'plugins-drop')
+  mkdirSync(installDir, { recursive: true })
+  const adopted = []
+  const infos = []
+  const warns = []
+  const handle = watchModule.createPluginWatch({
+    // 行、库包、profile 三路都关掉，只留目录这一路。
+    targets: () => [],
+    installDir,
+    adopt: async (only) => {
+      adopted.push([...only].sort())
+      // 夹具按盘上真实情况回答：文件还在就是「挂上」，不在了就是「卸掉」。
+      if (!existsSync(join(installDir, 'drop.js'))) return { mounted: [], unmounted: ['drop.js'], failures: [] }
+      return { mounted: [...only], unmounted: [], failures: [] }
+    },
+    pollIntervalMs: 30,
+    debounceMs: 100,
+    logger: { info: (line) => infos.push(line), warn: (line) => warns.push(line) },
+  })
+  try {
+    await handle.pollNow()
+    check('基线那一轮不扫目录（启动路径已经挂过了）', adopted.length === 0, JSON.stringify(adopted))
+
+    writeText(join(installDir, 'drop.js'), 'export function apply() {}\n')
+    await handle.pollNow()
+    check('刚出现的文件先只记指纹，不当场挂（半个文件不挂）', adopted.length === 0, JSON.stringify(adopted))
+
+    await handle.pollNow()
+    check('第二轮指纹没变才算写完，交出这个名字', JSON.stringify(adopted) === '[["drop.js"]]', JSON.stringify(adopted))
+    check('挂上之后写了日志', infos.some((line) => line.includes('目录里新出现的插件已挂上 1 个')), infos.join(' | '))
+
+    await handle.pollNow()
+    check('再扫一轮不重复挂（目录没变，压根不调 adopt）', adopted.length === 1, JSON.stringify(adopted))
+
+    rmSync(join(installDir, 'drop.js'))
+    await handle.pollNow()
+    check('文件被删之后立刻扫一遍（交给 adopt 的集合为空）', adopted.length === 2 && adopted[1].length === 0, JSON.stringify(adopted))
+    check('卸的时候写了日志', infos.some((line) => line.includes('盘上没了')), infos.join(' | '))
+    check('这一路没有告警', warns.length === 0, warns.join(' | '))
+  } finally {
+    handle.stop()
   }
 }
 

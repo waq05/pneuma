@@ -255,7 +255,14 @@ dsh 的安装单位不是文件，是「bundle + profile + pnpm」：
 numa plugin add <包名|tarball|本地路径> [--profile 名字]
 numa plugin remove <包名> [--profile 名字]
 numa plugin list [--profile 名字]
+numa plugin builds [--profile 名字]     # 哪些安装脚本被 pnpm 跳过了
 ```
+
+pnpm 10 起默认**不执行**第三方包的安装脚本。`add` 装完会问一次 pnpm（`ignored-builds`），
+把被跳过的名字与授权命令打出来；装了几个包之后想再确认，就用 `numa plugin builds`。
+授权走 pnpm 自己的 `approve-builds`（写进这个 profile 的策略），我们不再造一份名单：
+dsh 那边是把这些名字记进它 profile 的 `allowBuilds`（`packages/boot/plugin-manager/src/build-approval.ts`），
+而本仓这一版 pnpm（10.x）的授权入口就是 `approve-builds`——照它的原文来，免得写一份两边不认的策略。
 
 版本闸比的是 **dsh 的插件契约版本**（`DSH_CONTRACT_VERSION = 0.2.1`），不是 Pneuma 自己的
 0.7.x：包的 `engines.dsh` 或 `@deepseek-ai/dsh*` 的 peer 范围不满足就不装，除非在

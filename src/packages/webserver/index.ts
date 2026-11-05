@@ -76,11 +76,19 @@ function pickHmrInterval(value: unknown): number {
 }
 
 /**
- * 热更开不开：环境变量 `DSC_UI_HMR` 优先（`1` 强开 / `0` 强关，多探针并行时互不打扰），
- * 否则跟着**既有开发态语义**走——`DSC_UI_SERVER=1` 就是 `_ui-shell-serve.mjs` 那条
- * 「本地起宿主伺服界面」的开发/自检轨（`readUiServerConfig` 的 enabled 同源），
- * 插件配置里写 `hmr: true` 也可显式打开。打包态默认关：`lib/ui/plugins` 是 extraResources
- * 里的只读产物，常驻 500ms 轮询白烧且不该有「手改安装目录当场换装」这种行为。
+ * 热更开不开：`DSC_UI_HMR` 环境变量优先（`1` 强开 / `0` 强关，多探针并行时互不打扰），
+ * 插件配置写 `hmr: false` 也能关；其余情况**默认开**。
+ *
+ * 为什么默认开（2026-11-05 改，对齐 dsh）：dsh 的 Web 组合自带 `client-hmr`
+ * （`packages/bundle/web-app/cordis.patch.yml:222`），它对已挂载的客户端产物做 500ms
+ * stat 轮询（`packages/client/hmr/src/index.ts:149`）——也就是说**升级一个装好的包、
+ * 它的界面半边文件被换掉时，页面当场换装**，不需要人刷新；只有关掉 HMR 的载体
+ * （`sdk-app`）才报 restart-required。我们原来是「打包态默认关」，代价是这种
+ * 「原地升级」要手动刷新页面。轮询成本是 500ms 一次 stat（本机 21 个产物 + 清单），
+ * 换来的是与 dsh 同一条语义，值。
+ *
+ * 打包态 `lib/ui/plugins` 是 extraResources 里的只读产物，轮询只会空转——但空转的代价
+ * 就是那几次 stat；真正会变的是 profile 里装的包。
  */
 function pickHmr(raw: Record<string, unknown>): { enabled: boolean; pollIntervalMs: number } {
   const env = process.env['DSC_UI_HMR']
@@ -88,7 +96,7 @@ function pickHmr(raw: Record<string, unknown>): { enabled: boolean; pollInterval
     ? true
     : env === '0' || env === 'false'
       ? false
-      : raw.hmr === true || process.env['DSC_UI_SERVER'] === '1'
+      : raw.hmr !== false
   return { enabled, pollIntervalMs: pickHmrInterval(process.env['DSC_UI_HMR_POLL_MS'] ?? raw.hmrPollIntervalMs) }
 }
 
@@ -122,6 +130,8 @@ export const webserverPlugin: Plugin.Object = {
     let hmr: UiHmrHandle | null = null
     /** 界面半边启停的订阅（与 hmr 一起在卸载时退订）。 */
     let offToggle: (() => void) | null = null
+    /** 「盘上的插件集合变了」的订阅（重算组合包、确认第三方界面插件时有人发）。 */
+    let offGraphDirty: (() => void) | null = null
     let starting: Promise<UiServerHandle> | null = null
 
     const start = async (): Promise<UiServerHandle> => {
@@ -230,16 +240,18 @@ export const webserverPlugin: Plugin.Object = {
         },
       })
       /**
-       * 界面半边启停：宿主换图再推一帧（与产物热更同一条通道、同一种帧）。
+       * 启动图的成员变了：换一份图、推一帧（与产物热更同一条通道、同一种帧）。
        *
-       * 为什么由这里转发而不是 runtime 自己推：通道是 webserver 的，runtime 是界面方法层，
-       * 它不该认识 SSE——它只发 `dsc/ui-plugins-changed`，谁有通道谁订阅。
+       * 两个入口共用这一份动作，因为要做的事完全相同：翻开关是「某一条的启停变了」，
+       * 装/卸组合包与确认第三方界面插件是「盘上的集合变了」——对页面来说都是「照这张新图
+       * 对账」。分成两条事件只是为了发的人说得清自己在发什么，不是为了收的人写两遍。
        *
-       * 帧里的 `changed`/`removed` 只作说明用（壳的核对以 `graph` 为准，见 ui-boot 的 hmr）；
-       * 但**只在图真的变了**时推：关一个没有界面半边的插件也推一帧，会让页面白对账一遍。
+       * 为什么由这里转发而不是 runtime / 加载器自己推：通道是 webserver 的，它们不该认识
+       * SSE——它们只发事件，谁有通道谁订阅。
+       *
+       * 帧里的 `changed`/`removed` 只作说明用（壳的核对以 `graph` 为准，见 ui-boot 的 hmr）。
        */
-      offToggle = ctx.on('dsc/ui-plugins-changed', (payload) => {
-        void payload
+      const pushGraphFrame = (): void => {
         if (handle === null) return
         /**
          * 换图之后**一定推一帧**，不拿「图变没变」当下推条件。
@@ -262,6 +274,13 @@ export const webserverPlugin: Plugin.Object = {
           removed: beforeIds.size === 0 ? [] : [...beforeIds].filter((id) => !afterIds.has(id)),
           graph,
         })
+      }
+      offToggle = ctx.on('dsc/ui-plugins-changed', () => {
+        pushGraphFrame()
+      })
+      // 装/卸组合包、确认第三方界面插件：盘上的集合变了，页面得知道——不然得靠人按 F5。
+      offGraphDirty = ctx.on('dsc/ui-graph-dirty', () => {
+        pushGraphFrame()
       })
       const server = await createUiServer({
         // 语言随宿主身份进启动图：界面在首帧之前就要用它选文案，不能等一次异步回读。
@@ -331,12 +350,15 @@ export const webserverPlugin: Plugin.Object = {
       const server = handle
       const watcher = hmr
       const unsubscribeToggle = offToggle
+      const unsubscribeGraph = offGraphDirty
       handle = null
       events = null
       hmr = null
       offToggle = null
+      offGraphDirty = null
       starting = null
       if (unsubscribeToggle !== null) unsubscribeToggle()
+      if (unsubscribeGraph !== null) unsubscribeGraph()
       if (watcher !== null) watcher.stop()
       if (channel !== null) channel.stop()
       if (server !== null) void server.close()
