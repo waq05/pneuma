@@ -35,12 +35,14 @@
 import { spawn } from 'node:child_process'
 import { createServer as createHttpServer, request as httpRequest } from 'node:http'
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { WebSocket } from 'ws'
 
+/** 仓库根：按脚本自己所在的位置往上推一层，换机器、换检出目录都照跑（脚本进了门禁就必须能搬家）。 */
+const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 /** 隔离的家目录：用户真实的 ~/.dsc 一个字节都不写（惯例照 desktop/shots/*-seed.mjs）。 */
-const home = 'D:\\dsc\\scripts\\.remote-e2e-home'
-const repo = 'D:\\dsc'
+const home = join(repo, 'scripts', '.remote-e2e-home')
 
 let total = 0
 let failures = 0
@@ -1178,11 +1180,16 @@ try {
     JSON.stringify(fieldsBefore.map((field) => field.action ?? field.key ?? field.label)),
   )
   check(
-    '每台设备两行：info（设备名 + 最近活跃/创建时间）+ revoke-device:<id> 吊销按钮',
+    '每台设备两行：info（设备名 + 最近活跃时间）+ revoke-device:<id> 吊销按钮',
     fieldsBefore.some(
-      (field) => field.type === 'info' && field.label === '第二台手机' && String(field.text).includes('最近活跃') && String(field.text).includes('创建于'),
+      (field) =>
+        field.type === 'info' &&
+        field.label === '第二台手机' &&
+        String(field.text).startsWith('最近活跃 ') &&
+        // 刚配对完的设备必然有活跃时间；落到「未知」说明时间字段没接上
+        !String(field.text).includes('未知'),
     ) && fieldsBefore.some((field) => field.type === 'button' && field.action === `revoke-device:${deviceId2}`),
-    JSON.stringify(fieldsBefore.map((field) => field.action ?? field.label)),
+    JSON.stringify(fieldsBefore.filter((field) => field.label === '第二台手机' || String(field.action ?? '').startsWith('revoke-device'))),
   )
   const testPush = await hostInvoke(host, 'runSettingAction', ['remote', 'test-push'])
   check(
@@ -1248,11 +1255,16 @@ try {
   // ── 14. 主控位：第二个宿主只能休眠 ─────────────────────────────────────────
   console.log('主控位仲裁')
   secondHost = startHost('第二宿主')
+  // 文案是「远程控制由另一个 Pneuma 进程（pid N）接管，本进程待命」（0.6.x 那轮把「主控位」
+  // 这种内部叫法改成了人话）。断言钉「接管」与「待命」两个关键词，不钉整句，措辞再润色也不会误杀。
   const dormant = await waitMessage(
     secondHost,
     (item) =>
       item.type === 'snapshot' &&
-      item.snapshot?.entries?.some((entry) => entry.kind === 'system' && String(entry.text).includes('主控位')),
+      item.snapshot?.entries?.some(
+        (entry) =>
+          entry.kind === 'system' && String(entry.text).includes('接管') && String(entry.text).includes('待命'),
+      ),
     '第二宿主发现自己只能休眠',
     20_000,
   )

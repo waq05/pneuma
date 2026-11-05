@@ -930,7 +930,8 @@ export const remotePlugin: Plugin.Object = {
               : t('field.devices.count', { count: devices.length, names: devices.map((item) => item.name).join(t('field.devices.separator')) }),
           },
         ]
-        // 每台设备两行：一行身份（名字 + 最近活跃 + 创建时间），一行「吊销」按钮。
+        // 每台设备两行：一行身份（名字 + 最近活跃时间；创建时间在 0.6.x 的设置页文案压短
+        // 那一轮里拿掉了，别再写回去），一行「吊销」按钮。
         // fields() 是每次刷新都重新调的，所以吊销完下一刷就少一台，不用自己再通知界面。
         for (const device of devices) {
           rows.push({
