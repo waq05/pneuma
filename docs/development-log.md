@@ -13959,3 +13959,37 @@ body——两件都生效。于是只迁一处：`changes-card.tsx` 的悬停 di
 `467.167px` 轨道（真的两列），截图 `desktop/shots/plugin-center.png`。
 驱动顺手加了两项读数（分组标题、网格轨道），并修掉一个只在复用旧结果时才出现的假绿：
 它等 `DSC_RESULT` 文件出现就返回，文件是上一轮留下的就会立刻收工、截图是旧的。
+
+### 2026-11-05 深夜（四）：版本号抬到 0.9.0
+
+**用户要求**：把版本号更新为 0.9.0，先不推送更新。这一版的功能在上一批就进去了（内核插件化、
+热生效、插件中心分档），这次只动号；但「动号」在这套仓库里不是改一个字段：
+
+1. **三份清单必须同版**。根 `package.json`（npm 包的 `numa`）、`desktop/package.json`
+   （Electron 安装器）、`ui-shell/package.json`（界面契约版本）三处，`release.yml` 的 verify
+   作业拿 tag 跟它们四方对账，差一个就停在发版第一步。所以三处一起改。
+2. **界面契约区间要跟着抬**。`ui-shell` 的 `version` 同时是插件清单里的 `apiVersion`，22 个界面包
+   的 `pneuma.client.api` 写着 `^0.8.1` 这样的区间，构建期 `build-plugins.mjs` 拿壳版本做
+   `satisfies(壳版本, 区间)` 逐个校验。只抬壳不抬区间，`^0.8.1` 不认 0.9.0，22 个包当场全被点名拒掉。
+   这就是 `development.md` 里写的那句「每次改版本号，区间要一起改」的现场。
+3. **快照跟着重生成**。`docs/baseline/0.9.0/inventory.json` 里每个插件带 `api` 字段，
+   抬完号它就该变成 `^0.9.0`；不重生成，`check:plugin` 的清单闸会报一片差异。
+
+**顺手拆掉的四处硬编码**（不改它们，抬号那天测试先红）：
+
+- `scripts/plugin-list-test.mjs`：pinned 行显示的是**应用版本**，原来写死 `v0.8.1`；改成读根
+  `package.json`。这类断言写在测试里，抬号时必须跟着改，忘一次就红一次。
+- 四个界面包的包级测试（`ui-layout` / `ui-renderer` / `ui-plugins` / `ui-statusbar`）：
+  原来断言 `api === '^0.8.1'`，改成 `'^' + 壳包版本`。测试的本意是「区间对着壳写」，
+  不是「区间是 0.8.1 这个字面量」——钉字面量等于每次发版都要改五处。
+- `scripts/ui-third-party-hot-mount-e2e.mjs`：样例插件的 `plugin.json` 写的 `api: '^0.8.0'`，
+  壳还在 0.8.x 时成立；抬到 0.9.0 后这个区间不满足，插件会被门禁跳过，探针会红在
+  「信任之后被装上」那一条。改成按壳版本拼 `'^' + SHELL_VERSION`。
+
+**没动的**：`docs/baseline/0.8.1/` 是改造前的对照快照，原样留着；`docs/development-log.md`
+里历史段落的 0.8.1 与代码注释里「0.8.1 的 plugins.json 按文件名写」这类**历史口径**也不动——
+改它们等于篡改当时的记录。文档里只改「当前版本是多少」的地方：`development.md` 的版本表、
+`plugin-development.md` 的契约版本与示例区间、`plugin-model.md` 的包版本现状。
+
+**没做的**：没打 tag、没推分支、没发 npm；`desktop/dist` 里的安装包还是 0.8.0。
+要不要出 0.9.0 的安装包、要不要推，等用户发话。

@@ -167,7 +167,7 @@ order 是刻度，数字小的先跑：灾难地板 5、沙箱 8、协作模式 
 
 ### 0.4 写界面插件（简版）
 
-界面插件的契约版本就是 `ui-shell/package.json` 的 `version`（当前 **0.8.1**），壳与插件之间
+界面插件的契约版本就是 `ui-shell/package.json` 的 `version`（当前 **0.9.0**），壳与插件之间
 靠 semver 区间对账。
 
 - 目录形状：`~/.dsc/plugins/<名字>/` 下放 `plugin.json` 与 `ui/client.js`，`plugin.json` 的
@@ -922,11 +922,11 @@ cd ~/.dsc/plugins && npm install <dsh 插件包>
 ### 10.1 契约版本与门禁
 
 - 界面插件面对的契约是 **`@dsc/ui`**（壳的导出面 + 槽位语义 + 清单字段含义），契约版本就是
-  `ui-shell/package.json` 的 `version`（当前 **0.8.1**，构建时写进 `lib/ui/plugins/manifest.json`
+  `ui-shell/package.json` 的 `version`（当前 **0.9.0**，构建时写进 `lib/ui/plugins/manifest.json`
   顶层 `apiVersion`）。
 - 第三方界面插件**必须**声明自己对着哪个区间（`plugin.json` 的 `api` 字段，semver，如
-  `^0.8.1`）。宿主在组启动图时做 `satisfies(壳版本, 区间)` 判定：不满足就**不进启动图**，
-  原因（「插件 X 要求 @dsc/ui ^0.9.0，当前壳 0.8.1，已跳过加载」）进诊断区。判定在宿主侧，
+  `^0.9.0`）。宿主在组启动图时做 `satisfies(壳版本, 区间)` 判定：不满足就**不进启动图**，
+  原因（「插件 X 要求 @dsc/ui ^0.10.0，当前壳 0.9.0，已跳过加载」）进诊断区。判定在宿主侧，
   浏览器产物里没有 semver。
 - `workspace:` 前缀与非法区间一律拒绝——**请写具体版本区间**，没有「等于当前」的猜法。
 - 豁免通道第一期不做。
@@ -939,7 +939,7 @@ cd ~/.dsc/plugins && npm install <dsh 插件包>
 | 纯增量（新导出、新槽、新可选字段） | 次版本 +1 |
 | 修 bug 不改形状 | 补丁 +1 |
 
-插件作者按此写区间：只用旧能力写 `^0.8.1`；用上新能力再抬下限。区间写宽了在语义变更的
+插件作者按此写区间：只用旧能力写 `^0.9.0`；用上新能力再抬下限。区间写宽了在语义变更的
 大版本里会「加载成功但行为不对」——这正是门禁防的事，区间别写宽。
 
 ### 10.3 第三方界面插件：目录形状、信任与 rev
@@ -948,7 +948,7 @@ cd ~/.dsc/plugins && npm install <dsh 插件包>
 
 ```
 ~/.dsc/plugins/demo-greeter/
-  plugin.json     ← { "api": "^0.8.1", "platforms": ["web", "tui"], "phase": "early" }（api 必填）
+  plugin.json     ← { "api": "^0.9.0", "platforms": ["web", "tui"], "phase": "early" }（api 必填）
   ui/client.js    ← 界面半边（CJS 工厂，注册名必须等于目录 id）
 ```
 
@@ -1153,7 +1153,7 @@ dsh 的构造单位是**一个 npm 包两半**，现在的 Pneuma 照同一份�
     "bundle": { "patch": "./cordis.patch.yml" },   // 宿主行（可选）
     "client": {
       "platform": "pneuma",            // 我们的壳只认这个值
-      "api": "^0.8.1",                 // @dsc/ui 的版本区间（必填）
+      "api": "^0.9.0",                 // @dsc/ui 的版本区间（必填）
       "platforms": ["web", "tui"],     // 服务哪些载体（可选，缺省 ["web"]）
       "inject": ["trace"],             // 依赖的插件 id（可选）
       "services": ["teammates"],       // 依赖的服务名（可选）
