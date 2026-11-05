@@ -10,18 +10,18 @@
 
 ## 面板与数据
 
-- 三组插件清单：自定义（external）、官方可开关（builtin + toggleable）、运行内核（builtin 不可停）；内核默认只露 3 行（ui/ui.tsx:55、264-273、410-412）。
+- 六组插件清单：自定义（external）、第三方界面插件、组合包界面、官方可开关、界面单元、运行内核；每段超过 10 条就折起来，末尾给「展开其余 N 个 / 收起」，六段各记各的展开状态（ui/ui.tsx:84、163、333-348、571-588）。
 - 数据全走界面通道：`listPlugins` / `setPluginEnabled` / `listUiTrust` / `getSettingsSections` / `getSectionValues` / `setSettingValue` / `runSettingAction`（ui/ui.tsx:140、160、206、220、707、802、825、842）。
-- 桌面专属写口走原生桥：重启宿主 `restartHost`、装本地插件 `installPlugin`、写信任 `setUiTrust`；浏览器里前两个禁用并说明原因（ui/ui.tsx:172-181、232-261、301-303）。
+- 桌面专属写口走原生桥：重启内核 `restartHost`（点击先弹确认框，说明正在跑的回合会被打断）、装本地插件 `installPlugin`、写信任 `setUiTrust`；浏览器里前两个禁用并说明原因（ui/ui.tsx:210-233、276-296、301-316）。
 - 详情页的配置表单与设置面板同源（同一张宿主声明表），控件是 `GenericFields` 的同构移植（ui/ui.tsx:12-14、783-789）。
 - 第三方界面插件首见不加载，先摊开能力面让人答一次「我信任」（ui/ui.tsx:571-668）。
 
 ## Known Limitations（已知限制）
 
 - 配置表单不共用实现（插件 bundle 之间不能互相 import），字段与 class 的漂移要两边一起改（ui/ui.tsx:783-789）。
-- 重启宿主与添加插件只在桌面窗口的原生桥里有；浏览器页签里按钮禁用或给一句说明（ui/ui.tsx:232-250、301-303）。
+- 重启内核与添加插件只在桌面窗口的原生桥里有；浏览器页签里按钮禁用或给一句说明（ui/ui.tsx:276-296、301-316）。
 - 第三方界面插件的信任写口同样只在桌面桥，浏览器里只能看不能答（ui/ui.tsx:172-181）。
-- 运行内核组不可停、只读，默认只露 3 行，其余折叠（ui/ui.tsx:55、273、410-412）。
+- 每段默认只露 10 条，其余折叠；运行内核组同时不可停、只读（ui/ui.tsx:84、333-348、571-588）。
 - `clientCapabilities` 只列不加载：界面半进不进启动图由宿主按 `dsh.client` / `plugin.json` 判（ui/ui.tsx:71-72，core/ui-bundles.ts:1440-1470）。
 - 停用它就失去了给自己重新打开的开关：整页不再渲染，只能改 `plugins.json` 再重启（index.ts:7-9）。
 - 只有清单里那两行字（标题、说明）按语言显示：内核读 `pneuma.title` / `pneuma.description` 时先查该包 `locale/<语言>.json`，没有译本回落清单原文（core/plugin-locale.ts）；本页自己的界面文案、分组名与按钮仍是中文。

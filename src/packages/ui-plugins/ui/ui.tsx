@@ -11,7 +11,7 @@
  * | 组合包界面 | 信任卡 | profile 里 `pneuma.client.platform = pneuma` 的界面半 |
  * | 官方可开关 | `source = builtin` 且 `toggleable`，行 id 不带 `ui-` | 随包发布的功能插件 |
  * | 界面单元 | 同上，但行 id 带 `ui-` | 页面里的一块；21 个面板单独一档，免得把功能插件顶下去 |
- * | 运行内核 | `source = builtin` 且不可停 | 构成 Pneuma 本身，默认只露 3 行，其余折叠 |
+ * | 运行内核 | `source = builtin` 且不可停 | 构成 Pneuma 本身，默认只露 10 行，其余折叠 |
  *
  * `source` 与 `toggleable` 都由宿主给（`pneuma.toggleable` 写在包的清单里），界面不自己猜。
  *
@@ -23,8 +23,9 @@
  * 移植（插件 bundle 之间不能互相 import，这点重复是刻意的）。
  *
  * 数据走 `listPlugins` / `setPluginEnabled`（都在界面通道放行面上）。页头三颗钮
- * 与旧界面同构：刷新（重取清单）、重启宿主（原生桥 `restartHost`；浏览器里禁用并
- * 说明）、+ 添加插件（原生桥 `installPlugin`：系统文件选择器把 .js 复制进
+ * 与旧界面同构：刷新（重取清单）、重启内核（原生桥 `restartHost`；点击先弹确认框，
+ * 说明正在跑的回合会被打断；浏览器里禁用并说明）、+ 添加插件（原生桥 `installPlugin`：
+ * 系统文件选择器把 .js 复制进
  * `~/.dsc/plugins/`——供应链写入口走桥不走界面通道，浏览器里给一句诚实的说明）。
  *
  * 第四组「第三方界面插件」是**信任卡**（计划 §7 的桌面入口）：`~/.dsc/plugins/<目录名>/
@@ -56,7 +57,15 @@ import {
   type SettingsValues,
 } from '@dsc/ui'
 // 基元从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
-import { Select, Skeleton, SkeletonText, errText as text, humanErrorLine, humanErrorText } from '@dsc/ui-primitives'
+import {
+  Select,
+  Skeleton,
+  SkeletonText,
+  confirmAction,
+  errText as text,
+  humanErrorLine,
+  humanErrorText,
+} from '@dsc/ui-primitives'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 // 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
 import zh from '../locale/ui.zh.json'
@@ -68,8 +77,14 @@ const t = createT({ zh, en })
 /** 这一页在 page-state 里的 id（侧栏入口与页条目约定同一个值）。 */
 const PAGE = 'plugins'
 
-/** 运行内核默认露几行（其余折叠，这一档本来就少有人翻，旧界面同款）。 */
-const KERNEL_PREVIEW = 3
+/**
+ * 每一段默认露几行（其余折叠）。六段同一口径：10 条以内一眼扫完，超过就把尾巴收起来，
+ * 免得「界面单元」这种二十来条的一档把后面的组顶出屏幕。
+ */
+const GROUP_PREVIEW = 10
+
+/** 清单里的六段。展开状态一段一个键，翻一段不影响别的段。 */
+type PluginGroupKey = 'custom' | 'thirdParty' | 'packages' | 'official' | 'uiUnits' | 'kernel'
 
 /** `listPlugins` 回来的形状（宿主契约 `PluginInfoView`）。 */
 interface PluginRow {
@@ -141,7 +156,11 @@ function PluginsView(): ReactNode {
   const native = getHostNative()
   const [rows, setRows] = useState<PluginRow[] | null>(null)
   const [note, setNote] = useState('')
-  const [kernelOpen, setKernelOpen] = useState(false)
+  /**
+   * 六段各自的展开状态：一段一个键（默认都没有键 = 都只露前 10 条）。
+   * 不合成一个 boolean——展开「界面单元」不该把「运行内核」也拉开。
+   */
+  const [openGroups, setOpenGroups] = useState<Partial<Record<PluginGroupKey, boolean>>>({})
   // 详情页选中的插件：存 file 键，渲染时回 rows 里取最新值——开关一翻列表就换成
   // 新数组，存对象会让详情页看到过期的 enabled（旧界面同款的处理）。
   const [detailFile, setDetailFile] = useState<string | null>(null)
@@ -250,14 +269,29 @@ function PluginsView(): ReactNode {
       })
   }
 
+  /**
+   * 重启内核（原生桥 `restartHost`）：先弹确认框再说后果——正在跑的回合会被打断，
+   * 误点一下代价不小。取消（含 Esc、点遮罩）什么都不动，也不调桥。
+   */
   const restartHost = (): void => {
     if (!native.available) {
       toastErr(t('plugins.err.restartDesktopOnly'))
       return
     }
-    void native.invoke('restartHost').catch((reason: unknown) => {
-      toastErr(t('plugins.err.restart', { message: humanErrorLine(reason) }))
-    })
+    void (async () => {
+      const ok = await confirmAction({
+        title: t('plugins.action.restartConfirmTitle'),
+        detail: t('plugins.action.restartConfirmDetail'),
+        confirmLabel: t('plugins.action.restartConfirm'),
+        danger: true,
+      })
+      if (!ok) return
+      try {
+        await native.invoke('restartHost')
+      } catch (reason: unknown) {
+        toastErr(t('plugins.err.restart', { message: humanErrorLine(reason) }))
+      }
+    })()
   }
 
   /**
@@ -295,7 +329,23 @@ function PluginsView(): ReactNode {
   const uiUnits = builtinToggleable.filter((row) => row.file.startsWith('ui-'))
   const official = builtinToggleable.filter((row) => !row.file.startsWith('ui-'))
   const kernel = (rows ?? []).filter((row) => row.source === 'builtin' && !row.toggleable)
-  const kernelShown = kernelOpen ? kernel : kernel.slice(0, KERNEL_PREVIEW)
+
+  /** 这一段展开着没有（一段一个键；没点过就是收起）。 */
+  const isGroupOpen = (key: PluginGroupKey): boolean => openGroups[key] === true
+  /** 翻这一段：只写自己那个键，别的段保持原样。 */
+  const toggleGroup = (key: PluginGroupKey): void => {
+    setOpenGroups((current) => ({ ...current, [key]: current[key] !== true }))
+  }
+  /** 这一段实际画的行：收起时只给前 10 条，展开时全给（计数仍用整段长度）。 */
+  function shownOf<T>(key: PluginGroupKey, list: readonly T[]): readonly T[] {
+    return isGroupOpen(key) ? list : list.slice(0, GROUP_PREVIEW)
+  }
+  const customShown = shownOf('custom', custom)
+  const thirdPartyShown = shownOf('thirdParty', thirdParty)
+  const packagesShown = shownOf('packages', packages)
+  const officialShown = shownOf('official', official)
+  const uiUnitsShown = shownOf('uiUnits', uiUnits)
+  const kernelShown = shownOf('kernel', kernel)
 
   // 插件被卸载/改名后 detail 找不到了，落回列表——详情态不用单独清理（旧界面同款）。
   if (detail !== null) {
@@ -356,10 +406,17 @@ function PluginsView(): ReactNode {
               <span className="group-hint">{t('plugins.group.customHint')}</span>
             </div>
             <div className="plugin-grid">
-              {custom.map((row) => (
+              {customShown.map((row) => (
                 <PluginCard key={row.file} row={row} onToggle={toggle} onOpen={setDetailFile} />
               ))}
             </div>
+            <GroupMore
+              count={custom.length}
+              open={isGroupOpen('custom')}
+              onToggle={() => {
+                toggleGroup('custom')
+              }}
+            />
             {custom.length === 0 && (
               <div className="empty-card compact">
                 <span className="empty-card-icon">
@@ -379,7 +436,7 @@ function PluginsView(): ReactNode {
                   <span className="count">{thirdParty.length}</span>
                   <span className="group-hint">{t('plugins.group.thirdPartyHint')}</span>
                 </div>
-                {thirdParty.map((row) => (
+                {thirdPartyShown.map((row) => (
                   <TrustCard
                     key={row.name}
                     row={row}
@@ -396,6 +453,13 @@ function PluginsView(): ReactNode {
                     }}
                   />
                 ))}
+                <GroupMore
+                  count={thirdParty.length}
+                  open={isGroupOpen('thirdParty')}
+                  onToggle={() => {
+                    toggleGroup('thirdParty')
+                  }}
+                />
               </>
             ) : null}
 
@@ -410,7 +474,7 @@ function PluginsView(): ReactNode {
                     {t('plugins.group.packagesHint')}
                   </span>
                 </div>
-                {packages.map((row) => (
+                {packagesShown.map((row) => (
                   <TrustCard
                     key={row.name}
                     row={row}
@@ -423,6 +487,13 @@ function PluginsView(): ReactNode {
                     }}
                   />
                 ))}
+                <GroupMore
+                  count={packages.length}
+                  open={isGroupOpen('packages')}
+                  onToggle={() => {
+                    toggleGroup('packages')
+                  }}
+                />
               </>
             ) : null}
             {/* 读失败要说出来：没有这一行，invoke 出错时这一组会「静默消失」。 */}
@@ -433,10 +504,17 @@ function PluginsView(): ReactNode {
               <span className="group-hint">{t('plugins.group.officialHint')}</span>
             </div>
             <div className="plugin-grid">
-              {official.map((row) => (
+              {officialShown.map((row) => (
                 <PluginCard key={row.file} row={row} onToggle={toggle} onOpen={setDetailFile} />
               ))}
             </div>
+            <GroupMore
+              count={official.length}
+              open={isGroupOpen('official')}
+              onToggle={() => {
+                toggleGroup('official')
+              }}
+            />
 
             {uiUnits.length > 0 ? (
               <>
@@ -445,10 +523,17 @@ function PluginsView(): ReactNode {
                   <span className="group-hint">{t('plugins.group.uiUnitsHint')}</span>
                 </div>
                 <div className="plugin-grid">
-                  {uiUnits.map((row) => (
+                  {uiUnitsShown.map((row) => (
                     <PluginCard key={row.file} row={row} onToggle={toggle} onOpen={setDetailFile} />
                   ))}
                 </div>
+                <GroupMore
+                  count={uiUnits.length}
+                  open={isGroupOpen('uiUnits')}
+                  onToggle={() => {
+                    toggleGroup('uiUnits')
+                  }}
+                />
               </>
             ) : null}
 
@@ -461,19 +546,44 @@ function PluginsView(): ReactNode {
                 <PluginCard key={row.file} row={row} onToggle={toggle} onOpen={setDetailFile} />
               ))}
             </div>
-            {kernel.length > KERNEL_PREVIEW && (
-              <button type="button" className="plugin-more" onClick={() => setKernelOpen((open) => !open)}>
-                {kernelOpen
-                  ? t('plugins.action.collapse')
-                  : t('plugins.action.expandMore', { count: kernel.length - KERNEL_PREVIEW })}
-              </button>
-            )}
+            <GroupMore
+              count={kernel.length}
+              open={isGroupOpen('kernel')}
+              onToggle={() => {
+                toggleGroup('kernel')
+              }}
+            />
           </>
         ) : null}
 
         {note === '' ? null : <div className="plugins-empty">{note}</div>}
       </div>
     </div>
+  )
+}
+
+/**
+ * 一段末尾的「展开其余 N 个 / 收起」。
+ *
+ * 为什么收在组件里：六段各挂一颗，条数不超过阈值时直接不渲染（不留空壳），
+ * 文案与类名（`.plugin-more`）也只有这一处来源。
+ */
+function GroupMore({
+  count,
+  open,
+  onToggle,
+}: {
+  /** 整段的条数（不是这一屏画出来的条数）。 */
+  count: number
+  /** 这一段现在是否展开。 */
+  open: boolean
+  onToggle: () => void
+}): ReactNode {
+  if (count <= GROUP_PREVIEW) return null
+  return (
+    <button type="button" className="plugin-more" onClick={onToggle}>
+      {open ? t('plugins.action.collapse') : t('plugins.action.expandMore', { count: count - GROUP_PREVIEW })}
+    </button>
   )
 }
 
