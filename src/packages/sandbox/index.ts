@@ -19,12 +19,14 @@
  *
  * 挂载点：
  *   - 守卫链 order 8（早于协作模式 10）：越界 deny，范围内 defer 让别人照常判；
+ *   - 守卫链 order 25（改动前预览，守卫 id 仍是 `file-review`）：先把 diff 摆进对话流，
+ *     审批卡（30）随后才问——这一位永远 defer，从不拦（0.9.0 从 `@pneuma/file-review` 并进来）；
  *   - 命令执行器缝（`src/core/tools/command-runner.ts`）：只有「容器后端」用它；
  *   - `ctx.provide('sandbox', …)` 对外给查询与路径判定；
  *   - `ctx.prompt.register` 把当前档位与强制执行等级写进系统提示（降级必须可见）；
- *   - 设置分区 id 'sandbox' 与 `/sandbox` 命令。
+ *   - 设置分区 id 'sandbox'（预览的几项在同一分区里，归「改动预览」组）与 `/sandbox`、`/file-review` 命令。
  *
- * 支撑模块（本插件独占，别的插件不碰）：`src/packages/sandbox/{policy,execpolicy,backends}.ts`
+ * 支撑模块（本插件独占，别的插件不碰）：`src/packages/sandbox/{policy,execpolicy,backends,review}.ts`
  *
  * @module dsc/plugins/sandbox
  */
@@ -48,6 +50,13 @@ import { readSetupState } from './win/account.js'
 import { runSetupElevated } from './win/setup.js'
 import { doctorWindowsNetwork } from './win/doctor.js'
 import { evaluateCommand } from './execpolicy.js'
+import {
+  createReviewGuard,
+  readReviewConfig,
+  REVIEW_DEFAULTS,
+  REVIEW_RANGES,
+  type ReviewConfig,
+} from './review.js'
 import {
   checkWrite,
   createPolicy,
@@ -89,6 +98,8 @@ const PROMPT_ORDER = 40
 const SECTION_ORDER = 31
 /** 内存里留最近几次拒绝给 `/sandbox` 看。 */
 const DENY_BUFFER = 3
+/** 设置分区里「改动预览」这一组的 id（预览的几个字段用 `group: REVIEW_GROUP` 归进来）。 */
+const REVIEW_GROUP = 'review'
 
 /** 一条拒绝记录（内存环形缓冲，不落盘：它是给人当场看的，不是审计——审计在 core/audit.ts）。 */
 interface DenialRecord {
@@ -341,6 +352,21 @@ export const sandboxPlugin: Plugin.Object = {
     }
     const offGuard = ctx.guards.register(guard)
     ctx.effect(() => offGuard, 'sandbox: guards.register')
+
+    // ── 改动前预览守卫（order 25，原 @pneuma/file-review）────────────────────
+
+    /**
+     * 预览的配置与沙箱同一份：插件行少了 `file-review` 那一条，配置就得落在 `sandbox` 条目下，
+     * 否则设置页写进去没人读。守卫 id 与 order 都不动，链上的位置与合包之前逐字一致。
+     */
+    const reviewConfig = (): ReviewConfig => readReviewConfig(passed)
+    const review = createReviewGuard({
+      config: reviewConfig,
+      // 带会话归属：后台 agent 写文件时，diff 预览不该画到用户正在看的会话里（0.6.68）
+      emit: (text, sessionPath) => ctx.emit('dsc/notice', text, undefined, sessionPath),
+    })
+    const offReviewGuard = ctx.guards.register(review.guard)
+    ctx.effect(() => offReviewGuard, 'sandbox: guards.register（改动前预览）')
 
     // ── 系统提示段（降级必须可见）─────────────────────────────────────────────
 
@@ -596,8 +622,11 @@ export const sandboxPlugin: Plugin.Object = {
       title: t('section.title'),
       subtitle: t('section.subtitle'),
       order: SECTION_ORDER,
+      // 预览那几个字段跟围栏是两件事，收进一组：桌面上是组头，TUI 是一行「改动预览 ›」。
+      groups: [{ id: REVIEW_GROUP, title: t('review.group.title'), description: t('review.group.description') }],
       fields(): SettingsField[] {
         const { config, policy, problems } = snapshot()
+        const reviewStats = review.stats()
         const list: SettingsField[] = [
           {
             type: 'select',
@@ -708,6 +737,48 @@ export const sandboxPlugin: Plugin.Object = {
             },
           )
         }
+        // ── 改动预览（原 @pneuma/file-review 的设置分区，0.9.0 并进这一分区的「改动预览」组）
+        // 字段 key 与从前的设置分区一致（enabled / maxLines / contextLines），落盘仍在
+        // ~/.dsc/plugins.json 的 sandbox 条目下——插件行少了一条，配置不能跟着丢。
+        list.push(
+          {
+            type: 'switch',
+            key: 'enabled',
+            group: REVIEW_GROUP,
+            label: t('review.field.enabled.label'),
+            help: t('review.field.enabled.help'),
+          },
+          {
+            type: 'number',
+            key: 'maxLines',
+            group: REVIEW_GROUP,
+            label: t('review.field.maxLines.label'),
+            min: REVIEW_RANGES.maxLines.min,
+            max: REVIEW_RANGES.maxLines.max,
+            step: 10,
+            help: t('review.field.maxLines.help', { lines: String(REVIEW_DEFAULTS.maxLines) }),
+          },
+          {
+            type: 'number',
+            key: 'contextLines',
+            group: REVIEW_GROUP,
+            label: t('review.field.contextLines.label'),
+            min: REVIEW_RANGES.contextLines.min,
+            max: REVIEW_RANGES.contextLines.max,
+            step: 1,
+            help: t('review.field.contextLines.help'),
+          },
+          { type: 'info', group: REVIEW_GROUP, label: t('review.field.chain.label'), text: t('review.field.chain.text') },
+          {
+            type: 'info',
+            group: REVIEW_GROUP,
+            label: t('review.field.stats.label'),
+            text: t('review.field.stats.text', {
+              emitted: String(reviewStats.emitted),
+              truncated: String(reviewStats.truncated),
+            }),
+          },
+        )
         if (problems.length > 0) {
           list.push({
             type: 'info',
@@ -720,6 +791,7 @@ export const sandboxPlugin: Plugin.Object = {
       },
       values(): SettingsValues {
         const { config } = readConfig()
+        const reviewCfg = reviewConfig()
         return {
           mode: modeOf(ctx.session.current()),
           defaultMode: config.mode,
@@ -730,6 +802,10 @@ export const sandboxPlugin: Plugin.Object = {
           backend: config.backend,
           image: config.image,
           onUnavailable: config.onUnavailable,
+          // 预览三项：与围栏共用一张值表，所以 key 不能与上面任何一个重名
+          enabled: reviewCfg.enabled,
+          maxLines: reviewCfg.maxLines,
+          contextLines: reviewCfg.contextLines,
         }
       },
       async save(key, value): Promise<string | void> {
@@ -782,6 +858,28 @@ export const sandboxPlugin: Plugin.Object = {
             writePluginConfig(SANDBOX_CONFIG_KEY, { image })
             break
           }
+          // ── 改动预览三项：写完就收工，不重算后端 ────────────────────────────
+          // 这三项不影响强制执行等级，走下面那次 refreshBackend() 会白白拆一次容器/受限令牌
+          // 后端（还会往会话流里补一行「沙箱已就绪」），所以每条都提前 return。
+          case 'enabled':
+            writePluginConfig(SANDBOX_CONFIG_KEY, { enabled: value === true })
+            ctx.emit('dsc/changed')
+            return
+          case 'maxLines': {
+            const num = Number(value)
+            if (!Number.isFinite(num)) return t('review.save.notNumber')
+            // 越界的值写进去也没关系：用的时候会被夹回区间（parseReviewConfig）
+            writePluginConfig(SANDBOX_CONFIG_KEY, { maxLines: Math.round(num) })
+            ctx.emit('dsc/changed')
+            return
+          }
+          case 'contextLines': {
+            const num = Number(value)
+            if (!Number.isFinite(num)) return t('review.save.notNumber')
+            writePluginConfig(SANDBOX_CONFIG_KEY, { contextLines: Math.round(num) })
+            ctx.emit('dsc/changed')
+            return
+          }
           default:
             return t('save.unknownKey', { key })
         }
@@ -817,6 +915,28 @@ export const sandboxPlugin: Plugin.Object = {
       },
     )
     ctx.effect(() => offCommand, 'sandbox: commands.register')
+
+    // ── /file-review 命令（预览的诊断口，0.9.0 跟着并进来）────────────────────
+
+    /** 不经模型就能确认这一位在不在链上、配置是什么。 */
+    const describeReview = (): string => {
+      const cfg = reviewConfig()
+      const { emitted, truncated, recent } = review.stats()
+      const lines: string[] = []
+      lines.push(`改动前预览：${cfg.enabled ? '开着' : '关着'}｜守卫链 order 25（模式 10、安全钩子 20、改动前预览 25、审批 30）`)
+      lines.push(`一条预览最多显示 ${String(cfg.maxLines)} 行｜每个 hunk 前后留 ${String(cfg.contextLines)} 行上下文`)
+      lines.push(`这次挂载以来发过 ${String(emitted)} 条预览（其中 ${String(truncated)} 条被截断）`)
+      lines.push('开关与配额在设置页「文件与命令围栏 → 改动预览」组里（落盘是 ~/.dsc/plugins.json 的 sandbox 条目）')
+      lines.push(recent.length === 0 ? '最近还没有预览过。' : `最近预览：\n${recent.map((line) => `  ${line}`).join('\n')}`)
+      return lines.join('\n')
+    }
+    const offReviewCommand = ctx.commands.register(
+      // 不叫 /review：那是内置的「审查工作区未提交改动」命令，同名注册会把它顶掉
+      // （registry 是 Map.set 覆盖语义，预览默认开着，曾把 /review 劫走）。
+      { name: 'file-review', args: '', description: '看改动前预览的状态与最近几次预览' },
+      ({ ui }) => ui.notice(describeReview()),
+    )
+    ctx.effect(() => offReviewCommand, 'sandbox: commands.register（改动前预览）')
 
     // ── 对外服务 ─────────────────────────────────────────────────────────────
 
@@ -923,6 +1043,8 @@ export const sandboxPlugin: Plugin.Object = {
       void refreshBackend().catch(() => {
         // 重建失败维持现状：下一次 plan() 会在授权失败时自己降级并如实上报
       })
+      // 换会话清一次预览统计：上一个会话的预览数跟新会话没关系
+      review.reset()
       ctx.emit('dsc/changed')
     })
 
@@ -949,9 +1071,11 @@ export const sandboxPlugin: Plugin.Object = {
       offWinDispose = null
       offSession()
       offService()
+      offReviewCommand()
       offCommand()
       offSection()
       offPrompt()
+      offReviewGuard()
       offGuard()
     }
   },

@@ -1,5 +1,5 @@
 /**
- * `numa plugin list` 自检：应用自带的 77 行（58 个功能包 + 19 个界面单元）、开关、
+ * `numa plugin list` 自检：应用自带的 76 行（57 个功能包 + 19 个界面单元）、开关、
  * 以及「这一行现在到底用的是哪份代码」。
  *
  * 为什么要单独一条：这一屏是用户唯一能看见「应用里装了什么、哪一行停了、哪一行被我换过」
@@ -68,15 +68,15 @@ const active = makeProfile('default')
 putPackage(active, '@pneuma/todo', { version: '9.9.9', pneuma: { title: '待办清单（我改过的）' } })
 // waiting 是 pinned：profile 里的同名副本不生效，显示应用那份
 putPackage(active, '@pneuma/waiting', { version: '8.8.8', pneuma: { title: '不该出现' } })
-// file-review 的覆盖版要求下一代契约：这一行启动时会被版本闸跳过，列表要如实说
-putPackage(active, '@pneuma/file-review', { version: '6.6.6', engines: { pneuma: '>=2.0.0' }, pneuma: { title: '要求下一代契约的改动前预览' } })
+// spill 的覆盖版要求下一代契约：这一行启动时会被版本闸跳过，列表要如实说
+putPackage(active, '@pneuma/spill', { version: '6.6.6', engines: { pneuma: '>=2.0.0' }, pneuma: { title: '要求下一代契约的长输出转存' } })
 
 const run = list([])
 check('命令正常退出', run.status === 0, 'exit ' + String(run.status) + ' / ' + run.stderr.slice(0, 200))
 const lines = run.stdout.split('\n')
 const rows = lines.filter((line) => /^ {2}\S+ {2,}v\S+ +(开|关) /.test(line))
-check('列出了 77 行（应用自带的全部功能与界面单元）', rows.length === 77, String(rows.length))
-check('表头写了行数', /（77 行）/.test(run.stdout), lines[0])
+check('列出了 76 行（应用自带的全部功能与界面单元）', rows.length === 76, String(rows.length))
+check('表头写了行数', /（76 行）/.test(run.stdout), lines[0])
 const rowOf = (id) => rows.find((line) => line.trimStart().startsWith(id + ' ')) ?? ''
 check('每一行都带开关', rows.every((line) => / (开|关) /.test(line)), JSON.stringify(rows.filter((line) => !/ (开|关) /.test(line)).slice(0, 3)))
 check('默认关的行显示为关', / 开 /.test(rowOf('browser')) === false && / 关 /.test(rowOf('browser')), rowOf('browser'))
@@ -85,7 +85,7 @@ check('overridable 的行显示 profile 那份的版本', rowOf('todo').includes
 check('overridable 的行标了「profile 覆盖」', rowOf('todo').includes('← profile 覆盖'), rowOf('todo'))
 check('pinned 的行仍显示应用的版本', rowOf('waiting').includes('v' + appVersion) && !rowOf('waiting').includes('v8.8.8'), rowOf('waiting'))
 check('pinned 的行说明了副本为什么不生效', /pinned 不生效/.test(rowOf('waiting')), rowOf('waiting'))
-check('版本闸不过的行标出来了', /版本闸不过/.test(rowOf('file-review')) && rowOf('file-review').includes('>=2.0.0'), rowOf('file-review'))
+check('版本闸不过的行标出来了', /版本闸不过/.test(rowOf('spill')) && rowOf('spill').includes('>=2.0.0'), rowOf('spill'))
 check('汇总行数对得上', /其中 2 行用的是 profile 里的覆盖版/.test(run.stdout), lines.filter((line) => line.includes('其中')).join(' | '))
 
 // --profile 指到别的目录：只列那个目录，但覆盖不算数（内核不会用它）
@@ -94,7 +94,7 @@ putPackage(other, '@pneuma/todo', { version: '7.7.7', pneuma: { title: '别的 p
 const otherRun = list(['--profile', 'other'])
 const otherRows = otherRun.stdout.split('\n').filter((line) => /^ {2}\S+ {2,}v\S+ +(开|关) /.test(line))
 const otherTodo = otherRows.find((line) => line.trimStart().startsWith('todo ')) ?? ''
-check('--profile 指到别处时仍列出 77 行', otherRows.length === 77, String(otherRows.length))
+check('--profile 指到别处时仍列出 76 行', otherRows.length === 76, String(otherRows.length))
 check('--profile 指到别处时不算覆盖（仍显示应用版本）', otherTodo.includes('v' + appVersion), otherTodo)
 check('--profile 指到别处时不打「profile 覆盖」', !otherRun.stdout.includes('← profile 覆盖'), otherTodo)
 

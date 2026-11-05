@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "count": 56,
+  "count": 55,
   "packages": [
     {
       "id": "llm",
@@ -750,7 +750,7 @@
       "id": "sandbox",
       "package": "@pneuma/sandbox",
       "title": "文件与命令围栏",
-      "description": "限定模型能写哪里：越界写、关网时联网当场拒；要破例得带理由弹审批卡",
+      "description": "限定模型能写哪里：越界写、关网时联网当场拒；改动前先把 diff 给你看",
       "order": 3700,
       "resolution": "overridable",
       "inject": [
@@ -762,22 +762,6 @@
         "session"
       ],
       "settingsSection": "sandbox",
-      "defaultDisabled": false,
-      "toggleable": true
-    },
-    {
-      "id": "file-review",
-      "package": "@pneuma/file-review",
-      "title": "改动前预览",
-      "description": "写文件或改文件之前，先把要改的几行贴进对话；长改动按行截断，看得见改在哪",
-      "order": 3710,
-      "resolution": "overridable",
-      "inject": [
-        "guards",
-        "settings",
-        "commands"
-      ],
-      "settingsSection": "file-review",
       "defaultDisabled": false,
       "toggleable": true
     },

@@ -101,15 +101,6 @@
       "bundle": null
     },
     {
-      "file": "file-review",
-      "name": "改动前预览",
-      "enabled": true,
-      "toggleable": true,
-      "source": "builtin",
-      "settingsSection": "file-review",
-      "bundle": null
-    },
-    {
       "file": "git",
       "name": "Git 只读快照面",
       "enabled": true,
@@ -709,12 +700,6 @@
       "id": "compact",
       "title": "上下文压缩",
       "order": 35,
-      "builtin": false
-    },
-    {
-      "id": "file-review",
-      "title": "改动前预览",
-      "order": 36,
       "builtin": false
     },
     {

@@ -1,7 +1,11 @@
 /**
- * file-review 插件：edit / write 动手之前，把「改了哪几行」算成 unified diff 摆给用户看。
+ * 改动前预览：`edit` / `write` 动手之前，把「改了哪几行」算成 unified diff 摆给用户看。
  *
- * **挂在哪一环**：守卫链 order 25——真实刻度是灾难地板 5、模式闸门 10、安全钩子 20、
+ * 这一位原先是独立插件 `@pneuma/file-review`（0.9.0 并进沙箱包）：两者本来就盯同一件事
+ * ——沙箱管「能不能写」，预览管「写之前先让你看见」，合在一起用户只需要开关一次。
+ * 守卫 id 仍是 `file-review`、order 仍是 25，所以链上的位置与从前逐字一致。
+ *
+ * **挂在哪一环**：守卫链 order 25——真实刻度是灾难地板 5、沙箱 8、模式闸门 10、安全钩子 20、
  * **文件预览 25**、审批 30（`core/tool-guards.ts:43` 写着内置刻度）。摆这个位置的理由：
  *   1. 它必须早于审批卡（30），用户点「允许」之前就已经看见要改什么；
  *   2. 它必须晚于模式闸门与安全钩子，这一位只听「参数里写了什么」，不需要跟它们抢裁决权；
@@ -20,33 +24,24 @@
  * 最坏情况就是多出一段没被采纳的预览文字。算不动（超大改动区间）时退回摘要，而不是抛错——
  * 守卫链上抛错按拒处理（`core/tool-guards.ts:104-109`），预览这种锦上添花的东西没有资格拦下写操作。
  *
- * @module dsc/plugins/file-review
+ * **配置住在哪**：沙箱的设置分区（id `sandbox`）里，键 `enabled` / `maxLines` / `contextLines`，
+ * 落在 `~/.dsc/plugins.json` 的 `sandbox` 条目下——插件行没了，配置不能跟着没。
+ *
+ * @module dsc/plugins/sandbox/review
  */
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
 import { relative } from 'node:path'
-import type { Plugin } from '@deepseek-ai/cordis'
 import {
   diffLines,
   renderHunk,
   type DiffResult,
 } from '@pneuma/runtime/core/diff-text.js'
-import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import { resolvePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import type { ToolGuard, ToolGuardInput } from '@pneuma/runtime/core/tool-guards.js'
-import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
-import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { callFacts } from '@pneuma/runtime/core/tools.js'
 import { clampIntIn as clampInt } from '@pneuma/runtime/core/clamp.js'
 import { readBlockReason } from '@pneuma/runtime/core/path-policy.js'
-import { hostT } from '@pneuma/runtime/core/i18n.js'
-
-/**
- * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
- * `locale/ui.zh.json` / `ui.en.json`（与界面半用同一份文件、同一条判定）。
- */
-const t = hostT(import.meta.dirname)
-
-/** 插件在条目树（`~/.dsc/plugins.json`）里的键；同时是设置分区 id。 */
-export const FILE_REVIEW_CONFIG_KEY = 'file-review'
+import { SANDBOX_CONFIG_KEY } from './policy.js'
 
 /** 走这套预览的工具：只认会落盘的那两个（bash 里的写没法在动手前知道结果，不在这一位管）。 */
 const REVIEWED_TOOLS: ReadonlySet<string> = new Set(['write', 'edit'])
@@ -58,7 +53,7 @@ const MAX_PREVIEW_BYTES = 2 * 1024 * 1024
 const BINARY_SNIFF_BYTES = 8192
 
 /** 可调值的区间：设置页的 min/max 与这里的夹取共用一份，免得两处对不上。 */
-export const FILE_REVIEW_RANGES = {
+export const REVIEW_RANGES = {
   /** diff 最多显示几行（含 hunk 头）。 */
   maxLines: { min: 5, max: 2000 },
   /** 每个 hunk 前后各留几行上下文。 */
@@ -69,14 +64,14 @@ export const FILE_REVIEW_RANGES = {
  * 缺省值。取 120 行：一次正常的定点编辑通常几十行就够，
  * 120 行既能把「改了哪些地方」说全，又不会让一条预览挤掉半屏对话。
  */
-export const FILE_REVIEW_DEFAULTS = {
+export const REVIEW_DEFAULTS = {
   enabled: true,
   maxLines: 120,
   contextLines: 3,
 } as const
 
-/** 这个插件的可调值。 */
-export interface FileReviewConfig {
+/** 这个分区的可调值。 */
+export interface ReviewConfig {
   /** 关掉之后一次预览都不发（审批照常问，只是不会再先贴 diff）。 */
   enabled: boolean
   /** 一条预览最多显示几行 diff（含 hunk 头）；超出的在末尾写明还剩多少行。 */
@@ -86,24 +81,27 @@ export interface FileReviewConfig {
 }
 
 /**
- * 逐项夹到 {@link FILE_REVIEW_RANGES} 的范围里，写错类型就用缺省值。
+ * 逐项夹到 {@link REVIEW_RANGES} 的范围里，写错类型就用缺省值。
  * 单个值越界不该让整条工具链停下，所以这里不抛错；真有问题在设置页上看得见。
  */
-export function parseFileReviewConfig(raw: Record<string, unknown>): FileReviewConfig {
+export function parseReviewConfig(raw: Record<string, unknown>): ReviewConfig {
   return {
     // 只有显式写了 false 才算关：没配过（缺键）时保持默认开着
     enabled: raw.enabled !== false,
-    maxLines: clampInt(raw.maxLines, FILE_REVIEW_RANGES.maxLines, FILE_REVIEW_DEFAULTS.maxLines),
-    contextLines: clampInt(raw.contextLines, FILE_REVIEW_RANGES.contextLines, FILE_REVIEW_DEFAULTS.contextLines),
+    maxLines: clampInt(raw.maxLines, REVIEW_RANGES.maxLines, REVIEW_DEFAULTS.maxLines),
+    contextLines: clampInt(raw.contextLines, REVIEW_RANGES.contextLines, REVIEW_DEFAULTS.contextLines),
   }
 }
 
 /**
- * 取这个插件此刻该用的配置：装配时传进来的那份作底，磁盘上那份覆盖它。
+ * 取预览此刻该用的配置：装配时传进来的那份作底，磁盘上那份覆盖它。
  * 每次判定现读（不是挂载时读一次），所以设置里改完立刻生效。
+ *
+ * 读的是**沙箱**的配置条目：预览并进沙箱之后插件行少了 `file-review` 这一条，
+ * 再往旧键写就等于写进一个没人读的角落。
  */
-export function readFileReviewConfig(passed?: unknown): FileReviewConfig {
-  return parseFileReviewConfig(resolvePluginConfig(FILE_REVIEW_CONFIG_KEY, passed))
+export function readReviewConfig(passed?: unknown): ReviewConfig {
+  return parseReviewConfig(resolvePluginConfig(SANDBOX_CONFIG_KEY, passed))
 }
 
 /** 一次预览的全部素材（纯数据，渲染与自检脚本都从这里出发）。 */
@@ -132,7 +130,7 @@ export interface FileReviewPreview {
    */
   before: string
   after: string
-  /** 单行摘要（`/review` 的最近几次预览用它）。 */
+  /** 单行摘要（`/file-review` 的最近几次预览用它）。 */
   summary: string
 }
 
@@ -205,7 +203,7 @@ function readBefore(path: string): { text: string; missing: boolean; problem: st
  * @param config - 当前配置（决定上下文行数）。
  * @returns 预览素材；这次调用不该预览时返回 null。
  */
-export function buildPreview(input: ToolGuardInput, config: FileReviewConfig): FileReviewPreview | null {
+export function buildPreview(input: ToolGuardInput, config: ReviewConfig): FileReviewPreview | null {
   if (!REVIEWED_TOOLS.has(input.toolName.toLowerCase())) return null
   const path = targetPathOf(input)
   if (path === null) return null
@@ -337,7 +335,7 @@ function summarize(preview: PreviewDraft, problem: string | null): string {
  * @param config - 当前配置（决定显示上限）。
  * @param note - 额外要说明的一句话（例如审批策略是「仅查看」，这次根本不会落盘）。
  */
-export function renderReview(preview: FileReviewPreview, config: FileReviewConfig, note?: string): RenderedReview {
+export function renderReview(preview: FileReviewPreview, config: ReviewConfig, note?: string): RenderedReview {
   const verb = preview.action === 'create' ? '新建' : '修改'
   // 按当下这份配置重切一次 hunk：用户在设置页改了上下文行数，也不该等下一次工具调用才生效
   const diff = preview.diff.ok ? diffLines(preview.before, preview.after, config.contextLines) : preview.diff
@@ -366,169 +364,96 @@ export function renderReview(preview: FileReviewPreview, config: FileReviewConfi
   return { text: [...head, ...body.slice(0, shown), ...tail].join('\n'), omitted, shown }
 }
 
-export const fileReviewPlugin: Plugin.Object = {
-  name: 'file-review',
-  inject: ['guards', 'settings', 'commands'],
-  apply(ctx, passed) {
-    /** 每次都现读：设置里改完立刻生效，不必重启宿主。 */
-    const config = (): FileReviewConfig => readFileReviewConfig(passed)
-    /** 最近几次预览的摘要（`/review` 命令用；只留摘要不留正文，免得白占内存）。 */
-    const recent: string[] = []
-    /** 本会话发过多少条预览、其中多少条被截断（`/review` 一眼看出它有没有在工作）。 */
-    let emitted = 0
-    let truncated = 0
+// ── 守卫 ────────────────────────────────────────────────────────────────────
 
-    const remember = (line: string): void => {
-      recent.unshift(line)
-      if (recent.length > 8) recent.length = 8
-    }
+/** 守卫要的两件外力：现读配置、往对话流发一句话（会话归属由调用方拼）。 */
+export interface ReviewGuardOptions {
+  /** 当前配置（每次判定现读，改完设置立刻生效）。 */
+  config(): ReviewConfig
+  /**
+   * 把一段纯文本摆进对话流（宿主里是 `ctx.emit('dsc/notice', …, sessionPath)`）。
+   * @param text - 预览正文或一句说明
+   * @param sessionPath - 这次调用属于哪个会话；后台 agent 写文件时不该画到用户正看的会话里
+   */
+  emit(text: string, sessionPath: string): void
+}
 
-    const guard: ToolGuard = {
-      id: 'file-review',
-      // 真实刻度：地板 5、模式 10、安全钩子 20、本插件 25、审批 30（core/tool-guards.ts:43）
-      order: 25,
-      decide(input: ToolGuardInput) {
-        const cfg = config()
-        if (!cfg.enabled) return { action: 'defer' }
-        // 只读工具不预览；bash 之类的执行类工具没法在动手前知道它写了什么，也不预览
-        if (input.risk === 'read') return { action: 'defer' }
+/** 这个守卫挂载以来的计数（设置分区与 `/file-review` 都读它）。 */
+export interface ReviewStats {
+  /** 本会话发过多少条预览。 */
+  emitted: number
+  /** 其中多少条因为超过行数上限被截断。 */
+  truncated: number
+  /** 最近几次预览的摘要（只留摘要不留正文，免得白占内存）。 */
+  recent: readonly string[]
+}
 
-        let preview: FileReviewPreview | null
-        try {
-          preview = buildPreview(input, cfg)
-        } catch (error) {
-          // 守卫链上抛错按拒处理（core/tool-guards.ts:104-109）。预览是锦上添花的东西，
-          // 没有资格因为自己算不动就把一次写操作拦下来，所以这里自己吞掉，只留一句提示。
-          ctx.emit(
-            'dsc/notice',
-            `改动前预览算不出来（不影响这次调用）：${error instanceof Error ? error.message : String(error)}`,
-            undefined,
-            input.sessionPath,
-          )
-          return { action: 'defer' }
-        }
-        if (preview === null) return { action: 'defer' }
+/** 装配好的预览守卫与它的统计口。 */
+export interface ReviewGuardHandle {
+  guard: ToolGuard
+  /** 当下计数（只读快照）。 */
+  stats(): ReviewStats
+  /** 换会话时清一次：上一个会话的预览数跟新会话没关系。 */
+  reset(): void
+}
 
-        const rendered = renderReview(preview, cfg)
-        emitted += 1
-        if (rendered.omitted > 0) truncated += 1
-        remember(preview.summary)
-        // 先落进对话流：审批卡（order 30）随即会弹在它下面，用户是先看见改动、再决定放不放行。
-        // 带会话归属：后台 agent 写文件时，diff 预览不该画到用户正在看的会话里（0.6.68）。
-        ctx.emit('dsc/notice', rendered.text, undefined, input.sessionPath)
+/**
+ * 造那一位 order 25 的守卫（id 仍是 `file-review`）。
+ *
+ * 除 `emit` 外不碰宿主：这一位不落盘、不改参数、不拦调用，所以只要两件外力就够。
+ */
+export function createReviewGuard(options: ReviewGuardOptions): ReviewGuardHandle {
+  /** 最近几次预览的摘要（`/file-review` 命令用）。 */
+  const recent: string[] = []
+  let emitted = 0
+  let truncated = 0
+
+  const remember = (line: string): void => {
+    recent.unshift(line)
+    if (recent.length > 8) recent.length = 8
+  }
+
+  const guard: ToolGuard = {
+    id: 'file-review',
+    // 真实刻度：地板 5、沙箱 8、模式 10、安全钩子 20、本插件 25、审批 30（core/tool-guards.ts:43）
+    order: 25,
+    decide(input: ToolGuardInput) {
+      const cfg = options.config()
+      if (!cfg.enabled) return { action: 'defer' }
+      // 只读工具不预览；bash 之类的执行类工具没法在动手前知道它写了什么，也不预览
+      if (input.risk === 'read') return { action: 'defer' }
+
+      let preview: FileReviewPreview | null
+      try {
+        preview = buildPreview(input, cfg)
+      } catch (error) {
+        // 守卫链上抛错按拒处理（core/tool-guards.ts:104-109）。预览是锦上添花的东西，
+        // 没有资格因为自己算不动就把一次写操作拦下来，所以这里自己吞掉，只留一句提示。
+        options.emit(
+          `改动前预览算不出来（不影响这次调用）：${error instanceof Error ? error.message : String(error)}`,
+          input.sessionPath,
+        )
         return { action: 'defer' }
-      },
-    }
-    const offGuard = ctx.guards.register(guard)
-    ctx.effect(() => offGuard, 'file-review: guards.register')
+      }
+      if (preview === null) return { action: 'defer' }
 
-    // ── /review 命令：不经模型就能确认这一位在不在链上、配置是什么 ────────────────
-    const describe = (): string => {
-      const cfg = config()
-      const lines: string[] = []
-      lines.push(`改动前预览：${cfg.enabled ? '开着' : '关着'}｜守卫链 order 25（模式 10、安全钩子 20、本插件 25、审批 30）`)
-      lines.push(`一条预览最多显示 ${String(cfg.maxLines)} 行｜每个 hunk 前后留 ${String(cfg.contextLines)} 行上下文`)
-      lines.push(`这次挂载以来发过 ${String(emitted)} 条预览（其中 ${String(truncated)} 条被截断）`)
-      lines.push('配置文件：~/.dsc/plugins.json 的 file-review 条目（设置页也能改）')
-      lines.push(recent.length === 0 ? '最近还没有预览过。' : `最近预览：\n${recent.map((line) => `  ${line}`).join('\n')}`)
-      return lines.join('\n')
-    }
-    const offCommand = ctx.commands.register(
-      // 不叫 /review：那是内置的「审查工作区未提交改动」命令，同名注册会把它顶掉
-      // （registry 是 Map.set 覆盖语义，file-review 默认启用，曾把 /review 劫走）。
-      { name: 'file-review', args: '', description: '看改动前预览的状态与最近几次预览' },
-      ({ ui }) => ui.notice(describe()),
-    )
-    ctx.effect(() => offCommand, 'file-review: commands.register')
+      const rendered = renderReview(preview, cfg)
+      emitted += 1
+      if (rendered.omitted > 0) truncated += 1
+      remember(preview.summary)
+      // 先落进对话流：审批卡（order 30）随即会弹在它下面，用户是先看见改动、再决定放不放行。
+      options.emit(rendered.text, input.sessionPath)
+      return { action: 'defer' }
+    },
+  }
 
-    // ── 设置分区 ──────────────────────────────────────────────────────────────
-    const section: SettingsSectionSpec = {
-      id: FILE_REVIEW_CONFIG_KEY,
-      title: t('section.title'),
-      subtitle: t('section.subtitle'),
-      // 排在大输出溢出（37）前面：这一档管的是「改之前看见」，比事后截断更靠前
-      order: 36,
-      fields(): SettingsField[] {
-        const cfg = config()
-        return [
-          {
-            type: 'switch',
-            key: 'enabled',
-            label: t('field.enabled.label'),
-            help: t('field.enabled.help'),
-          },
-          {
-            type: 'number',
-            key: 'maxLines',
-            label: t('field.maxLines.label'),
-            min: FILE_REVIEW_RANGES.maxLines.min,
-            max: FILE_REVIEW_RANGES.maxLines.max,
-            step: 10,
-            help: t('field.maxLines.help', { lines: String(FILE_REVIEW_DEFAULTS.maxLines) }),
-          },
-          {
-            type: 'number',
-            key: 'contextLines',
-            label: t('field.contextLines.label'),
-            min: FILE_REVIEW_RANGES.contextLines.min,
-            max: FILE_REVIEW_RANGES.contextLines.max,
-            step: 1,
-            help: t('field.contextLines.help'),
-          },
-          {
-            type: 'info',
-            label: t('field.chain.label'),
-            text: t('field.chain.text'),
-          },
-          {
-            type: 'info',
-            label: t('field.stats.label'),
-            text: t('field.stats.text', { emitted: String(emitted), truncated: String(truncated) }),
-          },
-        ]
-      },
-      values(): SettingsValues {
-        const cfg = config()
-        return { enabled: cfg.enabled, maxLines: cfg.maxLines, contextLines: cfg.contextLines }
-      },
-      save(key, value): string | void {
-        switch (key) {
-          case 'enabled':
-            writePluginConfig(FILE_REVIEW_CONFIG_KEY, { enabled: value === true })
-            break
-          case 'maxLines': {
-            const num = Number(value)
-            if (!Number.isFinite(num)) return t('save.notNumber')
-            // 越界的值写进去也没关系：用的时候会被夹回区间（parseFileReviewConfig）
-            writePluginConfig(FILE_REVIEW_CONFIG_KEY, { maxLines: Math.round(num) })
-            break
-          }
-          case 'contextLines': {
-            const num = Number(value)
-            if (!Number.isFinite(num)) return t('save.notNumber')
-            writePluginConfig(FILE_REVIEW_CONFIG_KEY, { contextLines: Math.round(num) })
-            break
-          }
-          default:
-            return t('save.unknownKey', { key })
-        }
-        ctx.emit('dsc/changed')
-      },
-    }
-    const offSection = ctx.settings.registerSection(section)
-    ctx.effect(() => offSection, 'file-review: settings.registerSection')
-
-    ctx.on('dsc/session-open', () => {
-      // 换会话清一次统计：上一个会话的预览数跟新会话没关系
+  return {
+    guard,
+    stats: () => ({ emitted, truncated, recent: [...recent] }),
+    reset: () => {
       recent.length = 0
       emitted = 0
       truncated = 0
-    })
-
-    return () => {
-      offSection()
-      offCommand()
-      offGuard()
-    }
-  },
+    },
+  }
 }

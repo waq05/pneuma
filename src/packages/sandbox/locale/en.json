@@ -1,4 +1,4 @@
 {
   "title": "File & command fence",
-  "description": "Limit where the model writes; out-of-bounds or offline network is refused"
+  "description": "Fence writes and network; shows the diff before each write or edit"
 }

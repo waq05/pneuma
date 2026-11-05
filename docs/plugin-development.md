@@ -271,7 +271,7 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 - `config`：**透传给 `apply(ctx, config)` 第二参**——插件用它读自己的配置，不必再自建
   配置文件。取值统一走 `resolvePluginConfig('<file>', passed)`（`src/core/plugin-registry.ts:246`）：
   装配时那份作底，磁盘上这份覆盖它，所以设置分区保存后正在跑的插件下一次用值就是新值，不用重启宿主。
-  读它的内置插件有 `compact`、`approval`、`ask`、`goal`、`prompt`、`host-stdio`，取值范围都带上下限夹取；十九个官方可开关插件（`subagent`、`team`、`computer-use`、`web-search`、`approval-floor`、`spill`、`session-search`、`lifecycle-hooks`、`mcp`、`tool-search`、`sandbox`、`file-review`、`schedule`、`lsp`、`browser`、`dock-browser`、`self-improve`、`dsh-compat`、`ops`）里有可调项的那些也照这条路读，并把可调值挂进自己的设置分区；`team`、`spill`、`lifecycle-hooks`、`dsh-compat` 四个没有可调项，不读配置。
+  读它的内置插件有 `compact`、`approval`、`ask`、`goal`、`prompt`、`host-stdio`，取值范围都带上下限夹取；十八个官方可开关插件（`subagent`、`team`、`computer-use`、`web-search`、`approval-floor`、`spill`、`session-search`、`lifecycle-hooks`、`mcp`、`tool-search`、`sandbox`、`schedule`、`lsp`、`browser`、`dock-browser`、`self-improve`、`dsh-compat`、`ops`）里有可调项的那些也照这条路读，并把可调值挂进自己的设置分区；`team`、`spill`、`lifecycle-hooks`、`dsh-compat` 四个没有可调项，不读配置。
 - **启停热生效**：切换开关 → 内核卸载（调用 disposer）或重新挂载插件，无需重启宿主；
   文件内容变更后重新启用也会加载新代码（按 mtime 破坏模块缓存）。
 
@@ -325,7 +325,7 @@ profile 的 `compatibility.json` 里登记「包名 × 包版本 × 运行时版
 见 `numa plugin allow-version`）。豁免记的是登记那一刻的运行时：契约版本涨一次（0.2.1 → 0.2.2 就是一次），
 旧记录不再放行，加载告警与 `numa plugin version-exemptions` 会把重按命令打出来，照抄跑一次即可。
 
-现有的十九个官方可开关插件：默认开的六个是 `web-search`（联网搜索）、`approval-floor`（危险命令硬拦截）、`spill`（长输出转存）、`session-search`（历史会话搜索）、`sandbox`（文件与命令围栏——不配就没有外部进程与外部服务器，且默认档 workspace-write 不挡正常的工作区读写）、`file-review`（改动前预览——写文件、改文件前把 diff 摆进对话流）；默认关的十三个是 `subagent`（子智能体）、`team`（共享任务板）、`computer-use`（操作电脑桌面）、`lifecycle-hooks`（外部命令钩子）、`mcp`（MCP 外部工具）、`tool-search`（工具按需加载）、`schedule`（定时任务，到点会自己跑模型）、`lsp`（代码跳转与报错）、`browser`（受控浏览器，拉起独立 Chrome）、`dock-browser`（侧栏浏览器）、`self-improve`（经验沉淀，会写技能文件）、`dsh-compat`（dsh 插件兼容）、`ops`（文档与批量读取，要先装 dsh-ops）。各自干什么、默认开关按什么规矩定，见 development.md §4 那张表。
+现有的十八个官方可开关插件：默认开的五个是 `web-search`（联网搜索）、`approval-floor`（危险命令硬拦截）、`spill`（长输出转存）、`session-search`（历史会话搜索）、`sandbox`（文件与命令围栏——不配就没有外部进程与外部服务器，且默认档 workspace-write 不挡正常的工作区读写；0.9.0 起连「改动前预览」一起管：写文件、改文件前把 diff 摆进对话流）；默认关的十三个是 `subagent`（子智能体）、`team`（共享任务板）、`computer-use`（操作电脑桌面）、`lifecycle-hooks`（外部命令钩子）、`mcp`（MCP 外部工具）、`tool-search`（工具按需加载）、`schedule`（定时任务，到点会自己跑模型）、`lsp`（代码跳转与报错）、`browser`（受控浏览器，拉起独立 Chrome）、`dock-browser`（侧栏浏览器）、`self-improve`（经验沉淀，会写技能文件）、`dsh-compat`（dsh 插件兼容）、`ops`（文档与批量读取，要先装 dsh-ops）。各自干什么、默认开关按什么规矩定，见 development.md §4 那张表。
 
 新增一个功能包要做的三件事：
 

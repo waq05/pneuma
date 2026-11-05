@@ -28,7 +28,7 @@ const { listPluginInfos } = await import('../lib/core/plugin-registry.js')
 const realWrite = process.stdout.write.bind(process.stdout)
 process.stdout.write = () => true
 // headless：不挂 tui 那一行（整屏横幅）。
-// 因此清单里的 plugins 数**比功能包少 1**（76 vs 77）：tui 是唯一按 surface 跳过的行，
+// 因此清单里的 plugins 数**比功能包少 1**（75 vs 76）：tui 是唯一按 surface 跳过的行，
 // 不是少了一个包。对着这个数字判断「有没有包掉队」时先减掉它。
 const root = await createKernel({ config: readConfig(), resumeSessionPath: null, surface: 'headless' })
 process.stdout.write = realWrite

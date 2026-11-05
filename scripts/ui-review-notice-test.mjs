@@ -157,9 +157,10 @@ console.log('[4] 说明行不当作 diff（不染红/绿）')
   check('`-（旧）` / `+（新）` 按前缀判成 remove/add（不因为正文是括号就变说明行）', parenAdd.lines.map((line) => line.kind).join(',') === 'remove,add', parenAdd.lines.map((line) => line.kind).join(','))
 }
 
-console.log('[5] 契约漂移钉：壳常量 == 宿主 src/plugins/file-review.ts 的字面量')
+console.log('[5] 契约漂移钉：壳常量 == 宿主 src/packages/sandbox/review.ts 的字面量')
 {
-  const host = read('src/packages/file-review/index.ts')
+  // 0.9.0 起预览并进沙箱包（守卫 id 仍是 file-review），宿主那段拼文本的代码在 review.ts。
+  const host = read('src/packages/sandbox/review.ts')
   check('宿主里存在壳认的那个前缀', host.includes(REVIEW_NOTICE_BANNER), `宿主里找不到 ${REVIEW_NOTICE_BANNER}`)
   // 头行模板：`${前缀}${verb} ${displayPath}（${counts}）`——壳的解析正则按这个形状写
   const headTemplate = '`' + REVIEW_NOTICE_BANNER + '${verb} ${preview.displayPath}（${counts}）`'
