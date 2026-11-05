@@ -243,10 +243,10 @@ export class MiniAgent {
    * 插话（对照 dsh 的 steer）：把要插的那条提到队首，并打断当前回合——回合收尾
    * 出账时它先落库，紧接着自动补一轮，模型下一句话就先看它。
    *
-   * 为什么要打断：dsc 的收件箱本来就在**下一个步骤边界**自动并进当前回合
-   * （见 runTurn 里的 drainInbox(true)），所以「排在后面等」与「插话」的差别只剩
-   * 「模型现在正在吐的这段话要不要说完」。要更快，只能打断——半截回复按 T33 的
-   * 规矩保留为截断的 assistant 记录，输入一条不丢。
+   * 为什么要打断：排队中的用户消息本来要等**回合收尾**才出账（步骤边界只并通知，
+   * 见 runTurn 里的 drainInbox(true)），所以「排队等」与「现在就说」的差别是整段回合的
+   * 剩余时间。要更快，只能打断——半截回复按 T33 的规矩保留为截断的 assistant 记录，
+   * 输入一条不丢。
    *
    * @param index - 提到队首的那一条；省略则保持原顺序把整队送进去。
    * @returns 是否真的插上了；agent 没在跑（队列马上就会自己出账）时返回 false。
@@ -299,10 +299,12 @@ export class MiniAgent {
    * 收件箱出账：把排队中的异步输入落到对话历史。
    *
    * 两个调用点（对照 dsh 的 claim 时机）：
-   * - **步骤边界**（`midTurn = true`）：工具结果已闭合，消息以 steering 身份并入本轮，
-   *   下一轮请求自然带上——不多花回合。
-   * - **回合收尾**（`midTurn = false`）：消息悬在最后一条 assistant 之后，挂起
-   *   pendingTurn 让模型接话；正在跑的回合收不了尾时输入也不会丢。
+   * - **步骤边界**（`midTurn = true`）：工具结果已闭合，**只**把机器来源的通知
+   *   （`origin === 'notice'`）以 steering 身份并入本轮，下一轮请求自然带上——不多花回合。
+   *   用户排队的那条留在收件箱（见 {@link Session.takeNoticeInbox}）：回车排队与 Ctrl+Enter
+   *   插话必须是两件事，前者要等回合收尾出账。
+   * - **回合收尾**（`midTurn = false`）：整箱出账（通知 + 用户来源），消息悬在最后一条
+   *   assistant 之后，挂起 pendingTurn 让模型接话；正在跑的回合收不了尾时输入也不会丢。
    *
    * 0.6.67 起 user 事件在这里发（而不是入箱时）：排队的消息在这一刻才真正进对话，
    * 界面上也就这一刻才画气泡——入箱期间它是输入框下方的队列条（快照的 `queued`）。
@@ -310,7 +312,7 @@ export class MiniAgent {
    * 收尾出账的那批属于下一轮，不是插话。
    */
   private drainInbox(midTurn: boolean): void {
-    const items = this.session.takeAsyncInbox()
+    const items = midTurn ? this.session.takeNoticeInbox() : this.session.takeAsyncInbox()
     if (items.length === 0) return
     for (const item of items) {
       this.session.appendUser(item.text, item.images, item.files, item.origin)
@@ -360,8 +362,9 @@ export class MiniAgent {
         if (abort.signal.aborted) break
         if (result.toolCalls.length === 0) break
         await this.executeToolCalls(result, abort.signal)
-        // 步骤边界（对照 dsh 的 preStep claim）：上一步的结果已闭合，收件箱此刻出账
-        // 落库，下一轮请求自然带上——作业通知合并进本轮，不多花一个回合。
+        // 步骤边界（对照 dsh 的 preStep claim）：上一步的结果已闭合，机器来源的通知
+        // 此刻出账落库，下一轮请求自然带上——作业通知合并进本轮，不多花一个回合。
+        // 用户排队的消息不在这里出账（留给回合收尾），见 drainInbox。
         this.drainInbox(true)
       }
       this.deps.emit({ type: 'turn/end', reason: abort.signal.aborted ? 'aborted' : 'completed' })

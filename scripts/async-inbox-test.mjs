@@ -7,13 +7,17 @@
  * 这条会话之后每轮请求都被拒（卡死）。修法：followup 跑动中改入箱（state 条目
  * 持久化），步骤边界/回合收尾才落库；加载时清遗债；请求侧邻接重排兜底存量。
  *
- * 断言六层：
- *   1. 工具执行期间 followup（等价作业完成通知）→ 落库位置在 tool 结果之后，不在中间；
+ * 断言七层：
+ *   1. 工具执行期间 followup（等价作业完成通知，来源 `'notice'`）→ 落库位置在 tool 结果之后，
+ *      不在中间；
  *   2. 入箱期间不发 user 事件（只有一条 inbox 事件）、快照队列能读到它；出账才发一次；
  *   3. 模型收尾流式期间到达的插话：回合结束后补一轮，模型看得到，输入不丢；
  *   4. 入箱后没出账就重开日志：遗债在加载时自动落库（dsh 收件箱的持久性）；
  *   5. 存量夹层日志：sanitize 邻接重排后 assistant(tool_calls) 紧跟的必是 tool 结果；
- *   6. 队列条的三动作：编辑/删除改的是收件箱、插话提到队首并打断当前回合（0.6.67）。
+ *   6. 队列条的三动作：编辑/删除改的是收件箱、插话提到队首并打断当前回合（0.6.67）；
+ *   7. 步骤边界只出账机器通知：同一次边界上用户排队的那条仍在收件箱（下标与正文不变），
+ *      通知已落库并进本轮；收尾才把用户那条出账、且不标 steering（2026-11 报障：回车
+ *      排队的消息被当成插话当场吃掉）。
  *
  * 全部跑在临时 HOME 上，真实 ~/.dsc 一个字节都不动。
  *
@@ -70,8 +74,9 @@ const textsOf = (session, role) => session.messages.filter((m) => m.role === rol
           parameters: { type: 'object', properties: {} },
           risk: 'read',
           run: async () => {
-            // 工具还在跑（等价于调用在等审批）：此刻作业完成通知到达
-            agent.followup('后台作业 job-1 成功完成。')
+            // 工具还在跑（等价于调用正等审批）：此刻作业完成通知到达。
+            // 必须带 'notice'：只有机器来源才会在步骤边界出账，见第 7 层。
+            agent.followup('后台作业 job-1 成功完成。', undefined, 'notice')
             duringTool = {
               userEvents: events.filter((e) => e.type === 'user').length,
               inboxEvents: events.filter((e) => e.type === 'inbox').length,
@@ -103,7 +108,7 @@ const textsOf = (session, role) => session.messages.filter((m) => m.role === rol
   check('入箱发了 inbox 事件（快照据此重画队列条）', duringTool?.inboxEvents === 1, JSON.stringify(duringTool))
   const userEvents = events.filter((e) => e.type === 'user')
   check('user 事件每条消息只发一次（都在出账时发）', userEvents.length === 2, JSON.stringify(userEvents.map((e) => e.text)))
-  check('步骤边界出账的插话带 steering 标记', userEvents[1]?.steering === true)
+  check('步骤边界出账的通知带 steering 标记（并进本轮）', userEvents[1]?.steering === true)
 }
 
 // ── 3：模型收尾流式期间到达的插话 → 收尾出账 + 补一轮 ─────────────────────────
@@ -257,6 +262,76 @@ const textsOf = (session, role) => session.messages.filter((m) => m.role === rol
   const steered = events.filter((e) => e.type === 'user').at(-1)
   check('插话那条是收尾出账（属于新一轮，不带 steering）', steered?.text === '第三条（改过）' && steered?.steering === undefined, JSON.stringify(steered))
   check('回合没在跑时插话是空操作', agent.steerQueued() === false)
+}
+
+// ── 7：步骤边界只出账通知，用户排队的留在收件箱里（2026-11 回车排队被当成插话吃掉）──
+{
+  const work = mkdtempSync(join(tmpdir(), 'dsc-async-inbox-work7-'))
+  const session = Session.create(work, join(work, 's7.jsonl'))
+  const events = []
+  let modelCalls = 0
+  /** 通知在步骤边界出账的那一刻拍下的现场。 */
+  let boundary = null
+  const agent = new MiniAgent(
+    {
+      route: () => ({ api: 'test', baseUrl: 'http://localhost:0', apiKey: 'k', model: 'm' }),
+      systemPrompt: () => '',
+      tools: () => [
+        {
+          name: 'slow_thing',
+          description: '',
+          parameters: { type: 'object', properties: {} },
+          risk: 'read',
+          run: async () => {
+            // 同一次工具执行里：用户回车排队（来源缺省 'user'）+ 后台作业完成通知
+            agent.followup('我排队的这句')
+            agent.followup('后台作业 job-7 成功完成。', undefined, 'notice')
+            return 'ok'
+          },
+        },
+      ],
+      guards: { gate: async () => ({ action: 'pass' }), observe: (_name, text) => text },
+      emit: (event) => {
+        events.push(event)
+        if (event.type === 'user' && event.origin === 'notice') {
+          boundary = {
+            inbox: session.asyncInbox().map((item) => item.text),
+            steering: event.steering === true,
+            inMessages: textsOf(session, 'user'),
+          }
+        }
+      },
+      stream: async () => {
+        modelCalls += 1
+        if (modelCalls === 1) {
+          return { text: '', reasoning: '', toolCalls: [{ id: 't7', name: 'slow_thing', arguments: '{}' }], usage: null, finishReason: 'tool_calls' }
+        }
+        return { text: `答${String(modelCalls)}`, reasoning: '', toolCalls: [], usage: null, finishReason: 'stop' }
+      },
+    },
+    session,
+  )
+  agent.followup('开跑')
+  while (agent.isRunning) await sleep(20)
+  await sleep(50)
+  check(
+    '步骤边界出账后用户那条仍在收件箱里（长度不变、位置仍是队首）',
+    boundary?.inbox.join('|') === '我排队的这句',
+    JSON.stringify(boundary?.inbox),
+  )
+  check(
+    '同一次边界上作业通知已经落库并进本轮（带 steering）',
+    boundary?.inMessages.join('|') === '开跑|后台作业 job-7 成功完成。' && boundary?.steering === true,
+    JSON.stringify(boundary),
+  )
+  check(
+    '收尾才出账用户那条：顺序在通知之后',
+    textsOf(session, 'user').join('|') === '开跑|后台作业 job-7 成功完成。|我排队的这句',
+    textsOf(session, 'user').join('|'),
+  )
+  const tail = events.filter((event) => event.type === 'user').at(-1)
+  check('收尾出账的用户条目不带 steering（属于下一轮，不是插话）', tail?.text === '我排队的这句' && tail?.steering === undefined, JSON.stringify(tail))
+  check('收尾出账后队列清空', session.asyncInbox().length === 0)
 }
 
 console.log(failures === 0 ? '\n全部通过' : `\n${String(failures)} 项失败`)

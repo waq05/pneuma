@@ -1032,6 +1032,24 @@ export class Session {
     return items
   }
 
+  /**
+   * 按来源出账：只取走机器投递的通知（`origin === 'notice'`），用户来源的条目留在原处。
+   *
+   * 为什么按来源而不是按到达时间取：步骤边界把通知并进本轮是设计意图（后台作业完成不必
+   * 多花一个回合），但用户回车排的那条必须留在队列里等回合收尾——否则界面下方的排队条
+   * 还没画出来就被并进对话，等于把用户说的「排队」偷偷改成了「插话」（2026-11 报障）。
+   *
+   * 取走后收件箱里仍是**原有先后顺序**的用户条目，`asyncInbox` 的下标即队列条用的下标，
+   * 编辑 / 撤掉 / 插话照旧按它定位。空箱与「只剩用户条目」都是常见路径，不动日志。
+   */
+  takeNoticeInbox(): AsyncInboxItem[] {
+    const items = this.state('async-inbox')?.items ?? []
+    const notices = items.filter((item) => item.origin === 'notice')
+    if (notices.length === 0) return []
+    this.appendState('async-inbox', { items: items.filter((item) => item.origin !== 'notice') })
+    return notices
+  }
+
   /** 已记录的请求注入备忘（note 记录），按写入顺序；恢复会话时从日志重放回来。 */
   notes(): readonly SessionNote[] {
     return this.noteLog
