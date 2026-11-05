@@ -548,7 +548,16 @@ export async function mountExternalPlugin(
     }
   }
 
-  const meta: PluginMeta = { file: base, name: base.replace(/\.js$/, ''), description: '', source: 'external' }
+  // 已经登记过（应用自带行在挂之前先登记了来源与展示文案）就沿用那一份：
+  // 覆盖成 external 会把内置包全赶到插件中心的「自定义」组里，连能不能停用也一并丢掉。
+  const previous = getPluginMeta(base)
+  const meta: PluginMeta = {
+    file: base,
+    name: previous?.name ?? base.replace(/\.js$/, ''),
+    description: previous?.description ?? '',
+    source: previous?.source ?? 'external',
+    ...(previous?.toggleable === true ? { toggleable: true } : {}),
+  }
   registerPluginMeta(meta)
 
   // 导入 + 校验：与热重挂（remountExternalPlugin）共用同一套判定，避免两条路径各判一遍。
@@ -1533,6 +1542,10 @@ async function mountRow(row: PluginRow, ctx: RowMountContext): Promise<PluginMou
       ? exemptionMissProblem(ctx.exemptions, exemptTarget.name, exemptTarget.version)
       : null
   const skippedByGate = engineProblem !== null && !exempt
+  // 来源决定插件中心分到哪一组，也决定能不能停用：应用自带包（base 层合出来的行）是内置，
+  // 内置里只有标了 `pneuma.toggleable` 的才给开关，其余是运行内核（停掉就没有对话能力了）。
+  // profile 里装的组合包与 `~/.dsc/plugins` 下的单文件都是用户自装，一律算自定义。
+  const builtin = ctx.where === '应用自带行'
   registerPluginSource(rowId, file)
   // 旧键（= 文件名）登记进来：0.8.1 的 plugins.json 按文件名写，双查才读得到老配置。
   registerPluginAlias(rowId, basename(file))
@@ -1541,7 +1554,8 @@ async function mountRow(row: PluginRow, ctx: RowMountContext): Promise<PluginMou
     file: rowId,
     name: rowName,
     description: display.description ?? '',
-    source: 'external',
+    source: builtin ? 'builtin' : 'external',
+    ...(builtin && pneuma.toggleable === true ? { toggleable: true } : {}),
     ...(pneuma.settingsSection === undefined ? {} : { settingsSection: pneuma.settingsSection }),
     ...(row.disabled === true ? { defaultDisabled: true } : {}),
     ...(owner === undefined ? {} : { bundle: owner }),
@@ -1838,6 +1852,8 @@ interface PneumaFields {
   title?: string
   description?: string
   settingsSection?: string
+  /** 这一行允许用户停用（`pneuma.toggleable`）；缺省 = 属于运行内核，不给开关。 */
+  toggleable?: boolean
 }
 
 /** 读包清单里的 `pneuma` 展示字段（不加载代码也能列进插件中心）。 */
@@ -1849,7 +1865,12 @@ function pneumaFieldsOf(manifest: Record<string, unknown> | null): PneumaFields 
     const value = record[key]
     return typeof value === 'string' && value !== '' ? value : undefined
   }
-  return { title: pick('title'), description: pick('description'), settingsSection: pick('settingsSection') }
+  return {
+    title: pick('title'),
+    description: pick('description'),
+    settingsSection: pick('settingsSection'),
+    ...(record['toggleable'] === true ? { toggleable: true } : {}),
+  }
 }
 
 /**

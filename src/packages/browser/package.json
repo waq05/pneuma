@@ -29,7 +29,8 @@
     "resolution": "overridable",
     "title": "受控浏览器",
     "description": "模型自己开一台隔离 Chrome，按页面元素点击输入；动作每次审批，可设域名黑白名单",
-    "settingsSection": "browser"
+    "settingsSection": "browser",
+    "toggleable": true
   },
   "engines": {
     "pneuma": ">=1.0.0 <2.0.0"

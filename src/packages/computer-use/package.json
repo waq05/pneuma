@@ -29,7 +29,8 @@
     "resolution": "overridable",
     "title": "操作电脑桌面",
     "description": "看屏幕、点按钮、输入文字来操作 Windows 桌面；看可免审批，动手每次要确认",
-    "settingsSection": "computer-use"
+    "settingsSection": "computer-use",
+    "toggleable": true
   },
   "engines": {
     "pneuma": ">=1.0.0 <2.0.0"

@@ -29,7 +29,8 @@
     "resolution": "overridable",
     "title": "长输出转存",
     "description": "工具输出太长就存成文件，模型先看头尾几行；需要细节时按路径续读，上下文不会被日志撑爆",
-    "settingsSection": "spill"
+    "settingsSection": "spill",
+    "toggleable": true
   },
   "engines": {
     "pneuma": ">=1.0.0 <2.0.0"

@@ -672,6 +672,43 @@ console.log('── 应用自带行：解析、身份、surface、幂等、hostC
 }
 
 {
+  // 来源与可否停用：插件中心按这两项分档。判错了，内置的几十个插件会全掉进「自定义」，
+  // 而且每个都冒出一个「可以停掉」的开关（内核行本该没有开关）。
+  const appDir = makeApp('rows-source', [
+    { id: 'src-plain', name: '@p3/src-plain', tag: 'src-plain' },
+    { id: 'src-switch', name: '@p3/src-switch', tag: 'src-switch', pneuma: { toggleable: true } },
+    { id: 'ui-demo', name: '@p3/ui-demo', tag: 'ui-demo', pneuma: { toggleable: true } },
+  ])
+  const failures = await loader.mountApplicationRows(newContext(), { appDir, surface: 'none' })
+  check('来源判定的用例没有失败', failures.length === 0, JSON.stringify(failures))
+  check('应用自带行算内置', infoOf('src-plain')?.source === 'builtin', JSON.stringify(infoOf('src-plain')))
+  check(
+    '没声明 pneuma.toggleable 的内置行不可停用（运行内核）',
+    infoOf('src-plain')?.toggleable === false,
+    JSON.stringify(infoOf('src-plain')),
+  )
+  check(
+    '声明了 pneuma.toggleable 的内置行可停用（官方可开关）',
+    infoOf('src-switch')?.toggleable === true && infoOf('src-switch')?.source === 'builtin',
+    JSON.stringify(infoOf('src-switch')),
+  )
+  check(
+    '界面单元按同一份声明判',
+    infoOf('ui-demo')?.toggleable === true && infoOf('ui-demo')?.source === 'builtin',
+    JSON.stringify(infoOf('ui-demo')),
+  )
+  for (const id of ['src-plain', 'src-switch', 'ui-demo']) await loader.unmountExternalPlugin(id)
+
+  // profile 里装的组合包是用户自装，来源不能被「内置」污染。
+  const profileDir = makeProfile('source-bundle')
+  makePackage(profileDir, '@p3/bundled', { entries: { 'index.js': 'bundled' } })
+  writeText(join(profileDir, 'cordis.patch.yml'), insertRows([{ id: 'bundled-row', name: '@p3/bundled' }]))
+  await loader.mountBundlePlugins(newContext(), profileDir)
+  check('组合包的行算自定义', infoOf('bundled-row')?.source === 'external', JSON.stringify(infoOf('bundled-row')))
+}
+
+
+{
   // 应用自带行的包级覆盖：overridable 用 profile 那份，pinned 仍用应用那份。
   // 这是「官方功能包与第三方包一视同仁」的落点：用户装一份改过的 @pneuma/ops 才真的生效。
   const appDir = makeApp('rows-override', [

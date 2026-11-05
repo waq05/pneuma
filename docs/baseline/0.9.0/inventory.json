@@ -5,8 +5,8 @@
       "file": "agent",
       "name": "Agent 循环",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -14,8 +14,8 @@
       "file": "approval",
       "name": "审批",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -24,7 +24,7 @@
       "name": "危险命令硬拦截",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": "approval-floor",
       "bundle": null
     },
@@ -32,8 +32,8 @@
       "file": "ask",
       "name": "模型提问",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -42,7 +42,7 @@
       "name": "受控浏览器",
       "enabled": false,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": "browser",
       "bundle": null
     },
@@ -50,8 +50,8 @@
       "file": "commands",
       "name": "斜杠命令",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -59,8 +59,8 @@
       "file": "compact",
       "name": "压缩",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": "compact",
       "bundle": null
     },
@@ -69,7 +69,7 @@
       "name": "操作电脑桌面",
       "enabled": false,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": "computer-use",
       "bundle": null
     },
@@ -77,8 +77,8 @@
       "file": "desktop-dock",
       "name": "桌面能力桥",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -87,7 +87,7 @@
       "name": "侧栏浏览器",
       "enabled": false,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": "dock-browser",
       "bundle": null
     },
@@ -96,7 +96,7 @@
       "name": "dsh 插件兼容",
       "enabled": false,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -105,7 +105,7 @@
       "name": "改动前预览",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": "file-review",
       "bundle": null
     },
@@ -113,8 +113,8 @@
       "file": "git",
       "name": "Git 只读快照面",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -122,8 +122,8 @@
       "file": "goal",
       "name": "会话目标",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": "goal",
       "bundle": null
     },
@@ -131,8 +131,8 @@
       "file": "guards",
       "name": "工具守卫链",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -140,8 +140,8 @@
       "file": "hooks",
       "name": "安全钩子",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": "hooks",
       "bundle": null
     },
@@ -149,8 +149,8 @@
       "file": "host-stdio",
       "name": "宿主协议桥",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -158,8 +158,8 @@
       "file": "image-diet",
       "name": "图片卸载",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": "image-diet",
       "bundle": null
     },
@@ -168,7 +168,7 @@
       "name": "外部命令钩子",
       "enabled": false,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": "lifecycle-hooks",
       "bundle": null
     },
@@ -176,8 +176,8 @@
       "file": "llm",
       "name": "模型路由",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -186,7 +186,7 @@
       "name": "代码跳转与报错",
       "enabled": false,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": "lsp",
       "bundle": null
     },
@@ -195,7 +195,7 @@
       "name": "MCP 外部工具",
       "enabled": false,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": "mcp",
       "bundle": null
     },
@@ -203,8 +203,8 @@
       "file": "memory",
       "name": "长期记忆",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": "memory",
       "bundle": null
     },
@@ -212,8 +212,8 @@
       "file": "microcompact",
       "name": "旧工具结果清理",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": "microcompact",
       "bundle": null
     },
@@ -221,8 +221,8 @@
       "file": "mode",
       "name": "协作模式",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -231,7 +231,7 @@
       "name": "文档与批量读取",
       "enabled": false,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": "ops",
       "bundle": null
     },
@@ -239,8 +239,8 @@
       "file": "permission-presets",
       "name": "权限预设",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -248,8 +248,8 @@
       "file": "plan",
       "name": "计划交付",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -257,8 +257,8 @@
       "file": "plugin-manager",
       "name": "插件管理",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -266,8 +266,8 @@
       "file": "presets",
       "name": "模式预设",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -275,8 +275,8 @@
       "file": "prompt",
       "name": "提示词组装",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -284,8 +284,8 @@
       "file": "ptc",
       "name": "PTC 代码调用",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -293,8 +293,8 @@
       "file": "remote",
       "name": "远程控制",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -302,8 +302,8 @@
       "file": "runtime",
       "name": "运行时适配器",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -311,8 +311,8 @@
       "file": "runtime-api",
       "name": "运行时查询",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -321,7 +321,7 @@
       "name": "文件与命令围栏",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": "sandbox",
       "bundle": null
     },
@@ -330,7 +330,7 @@
       "name": "定时任务",
       "enabled": false,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": "schedule",
       "bundle": null
     },
@@ -339,7 +339,7 @@
       "name": "经验沉淀",
       "enabled": false,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": "self-improve",
       "bundle": null
     },
@@ -347,8 +347,8 @@
       "file": "session",
       "name": "会话",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -357,7 +357,7 @@
       "name": "历史会话搜索",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": "session-search",
       "bundle": null
     },
@@ -365,8 +365,8 @@
       "file": "session-title",
       "name": "会话标题",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -374,8 +374,8 @@
       "file": "settings",
       "name": "设置",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -383,8 +383,8 @@
       "file": "skills",
       "name": "技能",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -393,7 +393,7 @@
       "name": "长输出转存",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": "spill",
       "bundle": null
     },
@@ -402,7 +402,7 @@
       "name": "子智能体",
       "enabled": false,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": "subagent",
       "bundle": null
     },
@@ -410,8 +410,8 @@
       "file": "surfaces",
       "name": "快照片段注册表",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -420,7 +420,7 @@
       "name": "共享任务板",
       "enabled": false,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": "team",
       "bundle": null
     },
@@ -428,8 +428,8 @@
       "file": "todo",
       "name": "任务清单",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": "todo",
       "bundle": null
     },
@@ -438,7 +438,7 @@
       "name": "工具按需加载",
       "enabled": false,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": "tool-search",
       "bundle": null
     },
@@ -446,8 +446,8 @@
       "file": "tools",
       "name": "工具注册表",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -455,8 +455,8 @@
       "file": "tools-default",
       "name": "内置工具",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": "tools-default",
       "bundle": null
     },
@@ -464,8 +464,8 @@
       "file": "transcript",
       "name": "会话流",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -474,7 +474,7 @@
       "name": "动作表（界面）",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -483,7 +483,7 @@
       "name": "旁问（界面）",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -492,7 +492,7 @@
       "name": "侧栏浏览器（界面）",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -501,7 +501,7 @@
       "name": "输入区（界面）",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -510,7 +510,7 @@
       "name": "文件（界面）",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -519,7 +519,7 @@
       "name": "界面骨架",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -528,7 +528,7 @@
       "name": "命令面板（界面）",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -537,7 +537,7 @@
       "name": "插件中心（界面）",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -546,7 +546,7 @@
       "name": "文件预览（界面）",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -555,7 +555,7 @@
       "name": "等待用户决定的卡（界面）",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -564,7 +564,7 @@
       "name": "界面渲染器",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -573,7 +573,7 @@
       "name": "会话列表（界面）",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -582,7 +582,7 @@
       "name": "设置（界面）",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -591,7 +591,7 @@
       "name": "技能（界面）",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -600,7 +600,7 @@
       "name": "状态面板（界面）",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -609,7 +609,7 @@
       "name": "状态栏（界面）",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -618,7 +618,7 @@
       "name": "任务与目标（界面）",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -627,7 +627,7 @@
       "name": "智能体团队（界面）",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -636,7 +636,7 @@
       "name": "终端（界面）",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -645,7 +645,7 @@
       "name": "执行轨迹（界面）",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -654,7 +654,7 @@
       "name": "消息流（界面）",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -662,8 +662,8 @@
       "file": "waiting",
       "name": "等人登记表",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     },
@@ -672,7 +672,7 @@
       "name": "联网搜索",
       "enabled": true,
       "toggleable": true,
-      "source": "external",
+      "source": "builtin",
       "settingsSection": "web-search",
       "bundle": null
     },
@@ -680,8 +680,8 @@
       "file": "webserver",
       "name": "本机界面服务",
       "enabled": true,
-      "toggleable": true,
-      "source": "external",
+      "toggleable": false,
+      "source": "builtin",
       "settingsSection": null,
       "bundle": null
     }

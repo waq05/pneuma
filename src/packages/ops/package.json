@@ -29,7 +29,8 @@
     "resolution": "overridable",
     "title": "文档与批量读取",
     "description": "读 PDF / Word / CSV、一次读多段文件、改之前先看差异；引擎来自 dsh-ops 的 Rust worker，要先装 dsh-ops",
-    "settingsSection": "ops"
+    "settingsSection": "ops",
+    "toggleable": true
   },
   "engines": {
     "pneuma": ">=1.0.0 <2.0.0"

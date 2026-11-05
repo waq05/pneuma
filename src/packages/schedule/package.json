@@ -29,7 +29,8 @@
     "resolution": "overridable",
     "title": "定时任务",
     "description": "到点把任务描述投回建它的会话并跑一轮；支持六种时间选择器和时区",
-    "settingsSection": "schedule"
+    "settingsSection": "schedule",
+    "toggleable": true
   },
   "engines": {
     "pneuma": ">=1.0.0 <2.0.0"

@@ -29,7 +29,8 @@
     "resolution": "overridable",
     "title": "文件与命令围栏",
     "description": "限定模型能写哪里：越界写、关网时联网当场拒；要破例得带理由弹审批卡",
-    "settingsSection": "sandbox"
+    "settingsSection": "sandbox",
+    "toggleable": true
   },
   "engines": {
     "pneuma": ">=1.0.0 <2.0.0"

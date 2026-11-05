@@ -29,7 +29,8 @@
     "resolution": "overridable",
     "title": "工具按需加载",
     "description": "只把用得上的工具说明发给模型；撤下的动手类工具与 MCP 工具用 tool_search 查、tool_call 调",
-    "settingsSection": "tool-search"
+    "settingsSection": "tool-search",
+    "toggleable": true
   },
   "engines": {
     "pneuma": ">=1.0.0 <2.0.0"

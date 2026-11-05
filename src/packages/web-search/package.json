@@ -29,7 +29,8 @@
     "resolution": "overridable",
     "title": "联网搜索",
     "description": "让模型上网查资料并附来源链接；先选一家搜索服务（Tavily / 博查 / Serper）并填 key",
-    "settingsSection": "web-search"
+    "settingsSection": "web-search",
+    "toggleable": true
   },
   "engines": {
     "pneuma": ">=1.0.0 <2.0.0"

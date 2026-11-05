@@ -35,7 +35,8 @@
       "api": "^0.8.1",
       "immediately": true,
       "phase": "early"
-    }
+    },
+    "toggleable": true
   },
   "engines": {
     "pneuma": ">=1.0.0 <2.0.0"
