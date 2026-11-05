@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/approval-floor",
   "description": "关机、删盘、改注册表、读密钥这类命令一律拒绝，完全访问也救不回来；常用命令可加白名单",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

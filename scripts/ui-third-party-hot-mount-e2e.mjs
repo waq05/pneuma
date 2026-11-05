@@ -18,7 +18,7 @@
  * 留下：desktop/shots/third-party-hot-mount.png
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { connect, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -30,6 +30,8 @@ const DRIVER = join(root, 'scripts', '_ui-hmr-machine-main.cjs')
 const SHOT = join(root, 'desktop', 'shots', 'third-party-hot-mount.png')
 /** 第三方界面插件的目录名（也是它的 id）。 */
 const PLUGIN = 'demo-hot'
+/** 壳的界面契约版本（`ui-shell/package.json` 的 version）：样板的 `api` 区间要对着它写。 */
+const SHELL_VERSION = JSON.parse(readFileSync(join(root, 'ui-shell', 'package.json'), 'utf8')).version
 
 let total = 0
 const failures = []
@@ -338,9 +340,10 @@ async function main() {
     // 1. 装目录（还没信任）：图里不该有它——第三方界面插件进图的前提是「信任这一份字节」。
     const pluginDir = join(home, '.dsc', 'plugins', PLUGIN)
     mkdirSync(join(pluginDir, 'ui'), { recursive: true })
-    // api 写的是对「壳的 @dsc/ui 契约版本」的区间（产物清单顶层 apiVersion，当前 0.8.1），
-    // 不是 pneuma 自己的版本号；写错区间会被门禁当场拒（失败关闭），这里顺手把那句报错也验了。
-    writeFileSync(join(pluginDir, 'plugin.json'), `${JSON.stringify({ api: '^0.8.0', platforms: ['web'] }, null, 2)}\n`, 'utf8')
+    // api 写的是对「壳的 @dsc/ui 契约版本」的区间（产物清单顶层 apiVersion，当前就是
+    // SHELL_VERSION），不是 pneuma 自己的版本号。写死一个旧区间，抬版本号那天这里会被门禁
+    // 当场拒掉（失败关闭），所以按壳版本拼；区间判定本身由 ui-api-gate-test 覆盖。
+    writeFileSync(join(pluginDir, 'plugin.json'), `${JSON.stringify({ api: '^' + SHELL_VERSION, platforms: ['web'] }, null, 2)}\n`, 'utf8')
     writeFileSync(
       join(pluginDir, 'ui', 'client.js'),
       [

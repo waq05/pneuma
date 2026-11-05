@@ -22,7 +22,7 @@
 
 - 行 id `ui-sessions`，包名 `@pneuma/ui-sessions`，order 359（package.json:2、15）。
 - resolution 是 overridable（package.json:16）；默认开，cordis.patch.yml 里没有 `disabled`。
-- `dsh.client`：platform `pneuma`、api `^0.8.1`，没有 phase 与 inject（package.json:20-24）。
+- `dsh.client`：platform `pneuma`、api `^0.9.0`，没有 phase 与 inject（package.json:20-24）。
 - 宿主半 inject 零个服务（index.ts:29）。
 - 两个槽条目：`shell.header` 的「添加工作区」（order 10）与 `shell.sidebar` 的会话列表（order 1）（ui/ui.tsx:95-97）。
 - 停用后内置产物被滤掉，左侧栏不再有会话列表（index.ts:7-9）。

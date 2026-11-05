@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/ui-dockkit",
   "description": "界面壳右侧栏的那一套：分栏模型、会话级状态与 React 画法",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

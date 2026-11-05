@@ -21,7 +21,7 @@
 
 - 行 id `ui-prompt`，包名 `@pneuma/ui-prompt`，order 358（package.json:2、15）。
 - resolution 是 overridable（package.json:16）；默认开，cordis.patch.yml 里没有 `disabled`。
-- `dsh.client`：platform `pneuma`、api `^0.8.1`，没有 phase 与 inject（package.json:20-24）。
+- `dsh.client`：platform `pneuma`、api `^0.9.0`，没有 phase 与 inject（package.json:20-24）。
 - 宿主半 inject 零个服务（index.ts:31）。
 - 槽条目 `shell.composer`、order 10，排在输入框（50）与排队条（60）之前（ui/ui.tsx:62-63）。
 - 停用后这三张卡不出现；宿主侧那三份挂起状态还在，只是网页界面里没有地方应答（index.ts:7-9）。

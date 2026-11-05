@@ -21,6 +21,6 @@
 
 - 行 id `ui-preview`，包名 `@pneuma/ui-preview`，order 357（package.json:2、15）。
 - resolution 是 overridable（package.json:16）；默认开，cordis.patch.yml 里没有 `disabled`。
-- `dsh.client`：platform `pneuma`、api `^0.8.1`，没有 phase 与 inject（package.json:20-24）。
+- `dsh.client`：platform `pneuma`、api `^0.9.0`，没有 phase 与 inject（package.json:20-24）。
 - 宿主半 inject 零个服务：`apply` 不碰 `ctx`（index.ts:29）。
 - 停用后在插件中心少这一行，内置产物按 `isPluginEnabled('ui-preview')` 被滤掉（index.ts:7-9，core/ui-bundles.ts:903）。

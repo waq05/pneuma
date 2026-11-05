@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/schedule",
   "description": "到点把任务描述投回建它的会话并跑一轮；支持六种时间选择器和时区",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

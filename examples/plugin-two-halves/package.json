@@ -22,7 +22,7 @@
     },
     "client": {
       "platform": "pneuma",
-      "api": "^0.8.0"
+      "api": "^0.9.0"
     }
   }
 }

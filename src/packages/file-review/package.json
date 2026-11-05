@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/file-review",
   "description": "写文件或改文件之前，先把要改的几行贴进对话；长改动按行截断，看得见改在哪",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

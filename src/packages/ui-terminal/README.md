@@ -21,7 +21,7 @@
 
 - 行 id `ui-terminal`，包名 `@pneuma/ui-terminal`，order 366（package.json:2、15）。
 - resolution 是 overridable（package.json:16）；默认开，cordis.patch.yml 里没有 `disabled`。
-- `dsh.client`：platform `pneuma`、api `^0.8.1`，没有 phase 与 inject（package.json:20-24）。
+- `dsh.client`：platform `pneuma`、api `^0.9.0`，没有 phase 与 inject（package.json:20-24）。
 - 宿主半 inject 零个服务（index.ts:29）。
 - dock 页签 kind `terminal`、`keepMounted: true`，可以多开（ui/ui.tsx:63-69）。
 - 停用后终端页签不出现，已经在跑的 shell 由壳卸载时收掉（index.ts:7-9）。

@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/mcp",
   "description": "连上 MCP 服务器，把它们的工具接进来给模型用；支持本机命令（stdio）与 HTTP 两种连法",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

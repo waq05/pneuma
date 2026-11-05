@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/config-core",
   "description": "用户级模式（preset）文件的读写与技能市场条目的浏览安装；presets / runtime-api / skills / plugin-manager 四个功能包共用",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

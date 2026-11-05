@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/hooks",
   "description": "工具动手之前按用户自己登记的规则与脚本拦一道，能直接拦下或强制问人",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

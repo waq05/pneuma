@@ -22,7 +22,7 @@
 
 - 行 id `ui-status`，包名 `@pneuma/ui-status`，order 362（package.json:2、15）。
 - resolution 是 overridable（package.json:16）；默认开，cordis.patch.yml 里没有 `disabled`。
-- `dsh.client`：platform `pneuma`、api `^0.8.1`，没有 phase 与 inject（package.json:20-24）。
+- `dsh.client`：platform `pneuma`、api `^0.9.0`，没有 phase 与 inject（package.json:20-24）。
 - 宿主半 inject 零个服务（index.ts:29）。
 - 槽条目 `shell.main`、order 5；浮层 portal 到顶栏页签行（ui/ui.tsx:339、28-35）。
 - 停用后内置产物被滤掉，这块总览连同「已结束 · N ›」入口一起消失（index.ts:7-9）。

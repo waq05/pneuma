@@ -29,6 +29,6 @@
 
 - 行 id `ui-browser`，包名 `@pneuma/ui-browser`，order 352（package.json:10-18）。
 - resolution 是 overridable；默认开（cordis.patch.yml 里没有 `disabled`）。
-- dsh.client：platform `pneuma`、api `^0.8.1`，没有 phase / inject（package.json:20-25）。
+- dsh.client：platform `pneuma`、api `^0.9.0`，没有 phase / inject（package.json:20-25）。
 - 宿主半 inject 无、provide 无（index.ts:15-31）。
 - title / description 抄的是宿主包 `browser` 的，与界面职责不符（package.json:17-18）。

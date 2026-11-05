@@ -1,7 +1,7 @@
 {
   "name": "@dsc/ui-runtime",
   "private": true,
-  "version": "0.8.1",
+  "version": "0.9.0",
   "type": "module",
   "description": "界面壳的共享运行时（宿主通道 + RuntimeContext + 页/视图信号 + 外观落地 + 今日用量）：平台种子，壳与插件读同一份。",
   "sideEffects": false,

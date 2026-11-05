@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/web-search",
   "description": "让模型上网查资料并附来源链接；先选一家搜索服务（Tavily / 博查 / Serper）并填 key",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

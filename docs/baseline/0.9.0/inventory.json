@@ -836,107 +836,107 @@
     {
       "id": "actions",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     {
       "id": "ask",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     {
       "id": "browser",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     {
       "id": "composer",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     {
       "id": "files",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     {
       "id": "layout",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     {
       "id": "palette",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     {
       "id": "plugins",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     {
       "id": "preview",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     {
       "id": "prompt",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     {
       "id": "renderer",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     {
       "id": "sessions",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     {
       "id": "settings",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     {
       "id": "skills",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     {
       "id": "status",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     {
       "id": "statusbar",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     {
       "id": "tasks",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     {
       "id": "team",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     {
       "id": "terminal",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     {
       "id": "trace",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     {
       "id": "transcript",
       "platform": "web",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     }
   ]
 }

@@ -30,6 +30,6 @@
 
 - 行 id `ui-plugins`，包名 `@pneuma/ui-plugins`，order 356（package.json:2、15）。
 - resolution 是 overridable（package.json:16）；默认开，cordis.patch.yml 里没有 `disabled`。
-- `dsh.client`：platform `pneuma`、api `^0.8.1`，没有 phase 与 inject（package.json:20-25）。
+- `dsh.client`：platform `pneuma`、api `^0.9.0`，没有 phase 与 inject（package.json:20-25）。
 - 宿主半 inject 零个服务：`apply` 不碰 `ctx`（index.ts:29）。
 - 停用后内置产物按启停记录被滤掉，界面单元不进启动图（index.ts:7-9，core/ui-bundles.ts:1468-1470）。

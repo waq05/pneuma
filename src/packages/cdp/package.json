@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/cdp",
   "description": "Chrome DevTools Protocol 的传输、动作、快照与启动器；browser / dock-browser / host-stdio 三个功能包共用同一份实例",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

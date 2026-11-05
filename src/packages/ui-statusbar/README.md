@@ -20,7 +20,7 @@
 
 - 行 id `ui-statusbar`，包名 `@pneuma/ui-statusbar`，order 363（package.json:2、15）。
 - resolution 是 overridable（package.json:16）；默认开，cordis.patch.yml 里没有 `disabled`。
-- `dsh.client`：platform `pneuma`、api `^0.8.1`，phase `early`（package.json:20-25）。
+- `dsh.client`：platform `pneuma`、api `^0.9.0`，phase `early`（package.json:20-25）。
 - 宿主半 inject 零个服务（index.ts:30）。
 - 槽条目 `shell.statusbar`、order 1（ui/ui.tsx:55）。
 - 停用后底部状态栏整条消失，模型侧不受影响（index.ts:7-9）。

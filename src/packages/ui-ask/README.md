@@ -28,6 +28,6 @@
 
 - 行 id `ui-ask`，包名 `@pneuma/ui-ask`，order 351（package.json:10-18）。
 - resolution 是 overridable；默认开（cordis.patch.yml 里没有 `disabled`）。
-- dsh.client：platform `pneuma`、api `^0.8.1`，没有 phase / inject（package.json:20-25）。
+- dsh.client：platform `pneuma`、api `^0.9.0`，没有 phase / inject（package.json:20-25）。
 - 宿主半 inject 无、provide 无（index.ts:15-31）。
 - title 曾是「模型提问（界面）」、与宿主包 `ask` 重名，2026-11-04 已改成「旁问（界面）」；若看到旧界面截图里的名字，是那之前的（package.json:17-18）。

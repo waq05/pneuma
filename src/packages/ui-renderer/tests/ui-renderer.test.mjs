@@ -17,6 +17,9 @@ import { after, test } from 'node:test'
 /** 按相对本文件的路径读文本。 */
 const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8')
 
+/** 界面契约版本 = 壳包的 version。不写死：抬产品号时这份测试不用跟着改。 */
+const shellVersion = JSON.parse(read('../../../../ui-shell/package.json')).version
+
 let passed = 0
 
 test('界面半的出口还在：ui/index.ts 转出 start 与默认插件', () => {
@@ -33,7 +36,7 @@ test('package.json：客户端插件的身份（去 library、有 patch / order 
   assert.equal(pkg.pneuma.resolution, 'overridable')
   assert.equal(pkg.exports['./client'], './ui/ui.tsx', './client 要指到界面半的入口')
   assert.equal(pkg.pneuma.client.platform, 'pneuma')
-  assert.equal(pkg.pneuma.client.api, '^0.8.1')
+  assert.equal(pkg.pneuma.client.api, '^' + shellVersion)
   assert.equal(pkg.pneuma.client.immediately, true)
   assert.equal(pkg.pneuma.client.phase, 'early', '首屏批：引导要先物化它才能画首帧')
   passed += 1

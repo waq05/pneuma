@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/ui-settings",
   "description": "设置分区注册表、模型配置与偏好",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",
@@ -32,7 +32,7 @@
     "description": "设置分区注册表、模型配置与偏好",
     "client": {
       "platform": "pneuma",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     "toggleable": true
   },

@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/spill",
   "description": "工具输出太长就存成文件，模型先看头尾几行；需要细节时按路径续读，上下文不会被日志撑爆",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

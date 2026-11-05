@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/todo",
   "description": "模型自己维护的清单与实时进度条",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

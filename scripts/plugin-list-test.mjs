@@ -13,7 +13,7 @@
  *
  * @module dsc/scripts/plugin-list-test
  */
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -21,6 +21,9 @@ import { spawnSync } from 'node:child_process'
 
 const repo = fileURLToPath(new URL('..', import.meta.url))
 const home = mkdtempSync(join(tmpdir(), 'numa-list-'))
+
+/** 应用版本：pinned 的行显示的是它（不是包自己的版本）。读清单，改版本号时这里不用跟着改。 */
+const appVersion = JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8')).version
 
 let pass = 0
 let fail = 0
@@ -80,7 +83,7 @@ check('默认关的行显示为关', / 开 /.test(rowOf('browser')) === false &&
 check('默认开的行显示为开', / 开 /.test(rowOf('todo')), rowOf('todo'))
 check('overridable 的行显示 profile 那份的版本', rowOf('todo').includes('v9.9.9'), rowOf('todo'))
 check('overridable 的行标了「profile 覆盖」', rowOf('todo').includes('← profile 覆盖'), rowOf('todo'))
-check('pinned 的行仍显示应用的版本', rowOf('waiting').includes('v0.8.1') && !rowOf('waiting').includes('v8.8.8'), rowOf('waiting'))
+check('pinned 的行仍显示应用的版本', rowOf('waiting').includes('v' + appVersion) && !rowOf('waiting').includes('v8.8.8'), rowOf('waiting'))
 check('pinned 的行说明了副本为什么不生效', /pinned 不生效/.test(rowOf('waiting')), rowOf('waiting'))
 check('版本闸不过的行标出来了', /版本闸不过/.test(rowOf('file-review')) && rowOf('file-review').includes('>=2.0.0'), rowOf('file-review'))
 check('汇总行数对得上', /其中 2 行用的是 profile 里的覆盖版/.test(run.stdout), lines.filter((line) => line.includes('其中')).join(' | '))
@@ -92,7 +95,7 @@ const otherRun = list(['--profile', 'other'])
 const otherRows = otherRun.stdout.split('\n').filter((line) => /^ {2}\S+ {2,}v\S+ +(开|关) /.test(line))
 const otherTodo = otherRows.find((line) => line.trimStart().startsWith('todo ')) ?? ''
 check('--profile 指到别处时仍列出 77 行', otherRows.length === 77, String(otherRows.length))
-check('--profile 指到别处时不算覆盖（仍显示应用版本）', otherTodo.includes('v0.8.1'), otherTodo)
+check('--profile 指到别处时不算覆盖（仍显示应用版本）', otherTodo.includes('v' + appVersion), otherTodo)
 check('--profile 指到别处时不打「profile 覆盖」', !otherRun.stdout.includes('← profile 覆盖'), otherTodo)
 
 console.log('')

@@ -29,5 +29,5 @@
 
 - 行 id `ui-composer`，包名 `@pneuma/ui-composer`，order 353（package.json:10-18）。
 - resolution 是 overridable；默认开（cordis.patch.yml 里没有 `disabled`）。
-- dsh.client：platform `pneuma`、api `^0.8.1`、phase `early`，没有 inject（package.json:20-26）。
+- dsh.client：platform `pneuma`、api `^0.9.0`、phase `early`，没有 inject（package.json:20-26）。
 - 宿主半 inject 无；界面半 provide `composerDraft`（index.ts:15-30；ui/ui.tsx:117-121）。

@@ -21,7 +21,7 @@
 
 - 行 id `ui-skills`，包名 `@pneuma/ui-skills`，order 361（package.json:2、15）。
 - resolution 是 overridable（package.json:16）；默认开，cordis.patch.yml 里没有 `disabled`。
-- `dsh.client`：platform `pneuma`、api `^0.8.1`，没有 phase 与 inject（package.json:20-24）。
+- `dsh.client`：platform `pneuma`、api `^0.9.0`，没有 phase 与 inject（package.json:20-24）。
 - 宿主半 inject 零个服务（index.ts:31）。
 - 槽条目 `shell.page`、order 20，页面 id `skills`（ui/ui.tsx:38、108）。
 - 停用后整页不出现；宿主 skills 包仍照常发现与启停技能（index.ts:7-9）。

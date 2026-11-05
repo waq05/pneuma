@@ -23,7 +23,7 @@
 
 - 行 id `ui-settings`，包名 `@pneuma/ui-settings`，order 360（package.json:2、15）。
 - resolution 是 overridable（package.json:16）；默认开，cordis.patch.yml 里没有 `disabled`。
-- `dsh.client`：platform `pneuma`、api `^0.8.1`，没有 phase 与 inject（package.json:20-24）。
+- `dsh.client`：platform `pneuma`、api `^0.9.0`，没有 phase 与 inject（package.json:20-24）。
 - 宿主半 inject 零个服务（index.ts:31）。
 - 槽条目 `shell.header`、order 31，入口是顶栏那颗齿轮钮（ui/ui.tsx:118）。
 - 停用后设置面板打不开，模型与宿主设置本身不受影响（index.ts:7-9）。

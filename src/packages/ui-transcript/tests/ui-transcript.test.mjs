@@ -11,6 +11,8 @@ import { readFileSync } from 'node:fs'
 const mod = await import(new URL('../../../../lib/packages/ui-transcript/index.js', import.meta.url).href)
 const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 const patch = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
+/** 界面契约版本 = 壳包的 version。不写死：抬产品号时这份测试不用跟着改。 */
+const shellVersion = JSON.parse(readFileSync(new URL('../../../../ui-shell/package.json', import.meta.url), 'utf8')).version
 
 let pass = 0, fail = 0
 const check = (label, fn) => {
@@ -26,7 +28,7 @@ check('package.json：order 368（界面段里 transcript 的位置）', () => a
 check('界面半的声明在：./client 指到 ui/ui.tsx，pneuma.client 写了平台与 API', () => {
   assert.equal(manifest.exports['./client'], './ui/ui.tsx')
   assert.equal(manifest.pneuma.client.platform, 'pneuma')
-  assert.equal(manifest.pneuma.client.api, '^0.8.1')
+  assert.equal(manifest.pneuma.client.api, '^' + shellVersion)
 })
 check('行 id 与导出的 name 一致，行的 name 是这个包', () => {
   const rowId = /- id: (\S+)/.exec(patch)[1]

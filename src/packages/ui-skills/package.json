@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/ui-skills",
   "description": "SKILL.md 发现、开关、市场与 skill 工具",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",
@@ -32,7 +32,7 @@
     "description": "SKILL.md 发现、开关、市场与 skill 工具",
     "client": {
       "platform": "pneuma",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     "toggleable": true
   },

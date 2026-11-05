@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/mode",
   "description": "执行 / 计划 / 探索 / 免打扰四档与工具闸门",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

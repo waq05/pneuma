@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/ui-slots",
   "description": "界面壳的槽位契约与 React 渲染出口：槽名表、SlotMap 并表与三个出口",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

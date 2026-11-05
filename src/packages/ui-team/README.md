@@ -22,7 +22,7 @@
 
 - 行 id `ui-team`，包名 `@pneuma/ui-team`，order 365（package.json:2、15）。
 - resolution 是 overridable（package.json:16）；默认开，cordis.patch.yml 里没有 `disabled`。
-- `dsh.client`：platform `pneuma`、api `^0.8.1`，没有 phase 与 inject（package.json:20-24）。
+- `dsh.client`：platform `pneuma`、api `^0.9.0`，没有 phase 与 inject（package.json:20-24）。
 - 宿主半 inject 零个服务（index.ts:31）。
 - 槽条目 `shell.header.lead`、order 10；另报名一个 `subagent` dock 页签（ui/ui.tsx:148、153-161）。
 - 停用后下拉、面板与队友页签一起消失，状态面板的「已结束 · N ›」行也随之不渲染（index.ts:7-9、ui/ui.tsx:141-145）。

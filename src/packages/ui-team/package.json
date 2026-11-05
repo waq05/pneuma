@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/ui-team",
   "description": "标题旁「N 个子智能体」下拉与队友运行记录：名册每 3 秒刷新，点一行看队友的只读会话；共享任务板不在这里，在「共享任务板」",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",
@@ -32,7 +32,7 @@
     "description": "标题旁「N 个子智能体」下拉与队友运行记录：名册每 3 秒刷新，点一行看队友的只读会话；共享任务板不在这里，在「共享任务板」",
     "client": {
       "platform": "pneuma",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     "toggleable": true
   },

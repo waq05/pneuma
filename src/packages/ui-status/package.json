@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/ui-status",
   "description": "可收成胶囊的多分区总览浮层",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",
@@ -32,7 +32,7 @@
     "description": "可收成胶囊的多分区总览浮层",
     "client": {
       "platform": "pneuma",
-      "api": "^0.8.1"
+      "api": "^0.9.0"
     },
     "toggleable": true
   },

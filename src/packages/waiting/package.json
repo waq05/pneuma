@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/waiting",
   "description": "哪张卡片正挂着等用户做决定，一问就知道",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

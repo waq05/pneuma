@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/lifecycle-hooks",
   "description": "在模型动手前后跑你的脚本，脚本可以拦下这次操作；事件名沿用 codex 的写法",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

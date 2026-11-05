@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/ops",
   "description": "读 PDF / Word / CSV、一次读多段文件、改之前先看差异；引擎来自 dsh-ops 的 Rust worker，要先装 dsh-ops",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

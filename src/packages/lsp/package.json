@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/lsp",
   "description": "查定义、引用、实现，并把这次编辑新引入的报错提醒给模型",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

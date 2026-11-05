@@ -29,6 +29,6 @@
 
 - 行 id `ui-transcript`，包名 `@pneuma/ui-transcript`，order 368（package.json:2、15）。
 - resolution 是 overridable（package.json:16）；默认开，cordis.patch.yml 里没有 `disabled`。
-- `dsh.client`：platform `pneuma`、api `^0.8.1`，没有 phase 与 inject（package.json:20-25）。
+- `dsh.client`：platform `pneuma`、api `^0.9.0`，没有 phase 与 inject（package.json:20-25）。
 - 宿主半 inject 零个服务：`apply` 是空的（index.ts:32）。
 - 停用后对话主区不再画会话流，输入区仍在；团队右栏的 `transcriptFlow` 缺席，退回简版 PeekView（ui/ui.tsx:83-86，ui-team/ui/ui.tsx:745）。
