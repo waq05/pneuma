@@ -861,3 +861,61 @@ headless 宿主进程、真听端口、真连假模型端点，判据里有「20
 `pnpm run typecheck` 0 错；`check:core` / `check:ui` / `check:dsh` 未在本轮重跑（本轮没动它们的那两面
 代码，工作树只改了 `scripts/remote-e2e.mjs`、`package.json`、`src/packages/remote/index.ts` 的一行
 注释、四份文档）。
+
+### 12.27 第三方界面插件装完就出现（真机 e2e）+ 锚点迁移的最后一轮（2026-11-05 深夜）
+
+用户点两件事：「补一条『装包装信任界面出现』的端到端探针」与「交接文档 §5 第 3 项（锚点迁移）也做」。
+
+**A. 第三方界面插件「安装 → 信任 → 界面出现」端到端（新探针 `ui-third-party-hot-mount-e2e.mjs`）**
+
+之前这条用户路只有两段间接证据（装包发事件、壳侧对账各绿），现在一次走通：
+往 `~/.dsc/plugins/demo-hot/` 写一份合法的第三方界面插件 → 断言未信任时**图里没有、账本没有、
+它的代码一行没执行** → 经宿主 stdio 调 `setUiTrust('demo-hot')` → 断言哨兵没丢、`timeOrigin` 未变
+（真没刷新）、账本 `loaded`、DOM 有装载行、它 `apply()` 写下的 `data-demo-hot` 在 → 删掉目录 →
+断言图少一条、账本 `removed`、DOM 行消失。**22/22 通过**。
+
+写这条探针时踩到并修掉一个真 bug：壳的 `setPlugin` 只更新**已存在**的账本行（找不到静默返回），
+而 HMR 新装一条插件时没有任何人先建行——于是「apply 跑了、单资源请求 200、账本与诊断区里查无此条」，
+删掉文件也等不到 `removed`。修在 `src/packages/ui-boot/ui/boot.ts` 的 `reload()` 开头：新 id 先补
+一行 pending 再卸装。这条 bug 首装路径看不出来（首装时图里的行都建过），只有「装完热更加一条」才现形。
+
+顺带给真机驱动 `scripts/_ui-hmr-machine-main.cjs` 加了一条通用 `attr` 命令（读任意元素属性）：
+插件自己 `apply()` 写的标记不在 `DESCRIBE` 的固定字段里，而它正是「代码真的执行了」的硬证据。
+
+**B. 锚点迁移：先做能力实验，再决定迁哪几处**
+
+真 Chromium（Electron 44 / Chromium 152）里量了三个用法：
+
+| 用法 | 结果 | 结论 |
+|---|---|---|
+| `anchor()` 用在 `width` / `min()` | **不生效**，`width: min(300px, calc(anchor(left) - 48px))` 算出 `0px` | 把手宽度没法交给浏览器 |
+| `position: fixed` 浮层贴锚点 | 生效（`top = anchor(bottom) + 4`，左缘对齐） | 悬停卡可迁 |
+| 锚点在深层 DOM、浮层 portal 到 body | 生效（跨层锚定） | 悬停卡可迁 |
+
+据此**只迁一处**：`ui-transcript/ui/rows/changes-card.tsx` 的悬停 diff 卡。它原来是
+`createPortal` 到 body + 视口坐标上下二选一 + 横向夹取——**聊天区一滚，卡就留在原地、行滚走了**。
+现在支持锚点时：行元素挂 `anchor-name`、浮层 `position-anchor` + `bottom: calc(anchor(top) + 6px)` +
+`flip-block`，滚动时浏览器自己跟着算；不支持锚点仍走原回退。宽度 320/卡宽−48 与上限 420 两条路
+共用（产品口径，不是定位）。**符号坑**：`bottom` 量的是「距包含块底边」，要贴锚点上方得写 `+6px`
+（写 `−6px` 会让卡底落在锚点顶下方 6px）——这正是真机断言抓出来的。
+
+**不迁的，逐条写清理由**（避免下一个人再来试一遍）：
+
+| 位置 | 不迁的理由 |
+|---|---|
+| `thread-resizer.tsx` 两条把手 | 位置能交给锚点，但把手**宽度**要用 `anchor()` 算（窄窗口时收窄），实测不支持；宽度算不出来就得留着测量，迁一半只剩两条路并存 |
+| `model-controls.tsx` 模型飞出卡 | 选边要按「第一个 `overflow-x` 非 visible 的祖先盒」，限高要按卡片自然高（`scrollHeight`）；CSS 锚点两样都给不了 |
+| `ui-status` 状态胶囊拖动 / `ui-sessions` 行上下半段 / `dock.tsx` 分割条 / `palette` 行高 / `timeline` 比例 / `effort-slider` | 全是指针坐标换算与拖动夹取，不是浮层贴合 |
+| `ui-browser` 原生视图矩形 | 要拿像素交给主进程摆 `WebContentsView` |
+| `ui-transcript` 的 jump-rail | 滚动度量 + `elementFromPoint` |
+| `ui-ask` 选区气泡 | 锚的是 Range 不是元素（交接文档已写明） |
+
+**判据**：`ui-third-party-hot-mount-e2e` **22/22**；`ui-anchored-test` **19 条**（新增 8 条源码钉：
+position-anchor / 贴上方 / flip-block / 左缘 clamp / 行锚点 / 回退分支 / anchorName 字段 / arm 第四参）；
+`ui-anchor-e2e` **17 条**（新增「悬停卡贴上方间距 6px ±1」「左缘夹取 ±1」「滚动后仍贴锚点」三条真机断言）；
+`check:ui` **57/57**（41.3 秒）、`check:ui:e2e` **7/7**（167.5 秒）、`ui-hmr-machine` 全部通过（57 条真机断言，
+两轮换代）；`typecheck` 0 错、`check:style` 22 个改动文件通过。
+
+**顺手治的一个老坑**：六个真机驱动往 `desktop/shots/*.json` 写报告时没带末尾换行，每跑一次报告就把
+排版闸弄红（历史日志里没记过这条，因为它只在「跑完探针马上提交」时出现）。现在写入统一带 `'\n'`，
+把已经入库的五份报告也补齐了。

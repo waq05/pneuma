@@ -618,7 +618,7 @@ cd D:\dsc\desktop && pnpm run typecheck
 # 自检脚本：全部在临时 HOME 上跑，不碰真实 ~/.dsc
 # 三条汇总入口都按文件名自动发现，新探针不用回来登记：
 pnpm run check:ui                  # 55 条纯 Node 探针，41 秒（新探针按文件名自动进门禁，条数会涨）
-pnpm run check:ui:e2e              # 4 条要真 Chromium，61 秒（含 diff 卡、手机尺寸远程壳）
+pnpm run check:ui:e2e              # 7 条要真 Chromium，约 170 秒（含 diff 卡、手机尺寸远程壳、第三方界面插件装包装信任）
 pnpm run check:dsh                 # dsh 兼容层 + 组合包 + 真包挂载 + 会话桥 + 流/事件旁路 + 合成验收，176 条（新探针按命名自动进门禁，条数会涨）
 pnpm run check:core                # 100 条内核探针（协议 / TUI / 会话库 / LLM 适配 / 审批 / 插件热更），约 12 分钟（新探针按命名自动进门禁，条数会涨）
 pnpm run check:remote              # 远程控制全链（真起 headless 宿主 + 假模型端点，约 10 秒，102 条）：配对/票据/WS 帧/断线补帧/上传/推送/审批来源/设备吊销/双宿主主控位/开关关停。它不按文件名自动发现，新断言直接写在 scripts/remote-e2e.mjs 里
