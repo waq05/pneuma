@@ -37,6 +37,7 @@ import {
   pluginPackageDirOf,
   remountExternalPlugins,
   remountExternalPlugin,
+  type ProfileReconcileResult,
   type RemountResult,
 } from './plugin-loader.js'
 
@@ -78,6 +79,27 @@ export interface PluginWatchOptions {
   pollIntervalMs?: number
   /** 去抖窗口（毫秒），缺省 200。 */
   debounceMs?: number
+  /**
+   * profile 目录：这里的三份清单（package.json / compatibility.json /
+   * cordis.patch.yml）变了就重算组合包，装包/卸包不必重启宿主。
+   *
+   * 不传 = 这一路不启用（探针/自检不受影响）；与行、库包两路共用同一个定时器
+   * 与去抖窗口，不另起 setInterval。
+   */
+  profileDir?: string
+  /**
+   * 重算组合包（缺省动态 import plugin-loader 的 reconcileProfileBundles）。
+   *
+   * 自检注入它就能只验「清单变了 → 重算一次」，不必真铺一套能挂上的组合包。
+   */
+  reconcile?(profileDir: string): Promise<ProfileReconcileResult>
+  /**
+   * 组合包重算挂在哪个内核上（只有 profileDir 这一路用）。
+   *
+   * 轮询器自己不知道内核是哪一个：{@link startPluginWatch} 把 root 传进来，
+   * 缺省的重算实现靠它调加载器。
+   */
+  root?: Context
   logger?: PluginWatchLogger
 }
 
@@ -88,6 +110,13 @@ export interface PluginWatchHandle {
   stop(): void
   /** 还在跑（被 DSC_HOT=0 关掉时是 false）。 */
   readonly running: boolean
+  /**
+   * 换/补 profile 这一路（null = 关掉）。
+   *
+   * 为什么需要：轮询器可能由装配路径先拉起，宿主启动路径后到，那时才知道 profile
+   * 在哪。补这一路不能重启轮询器——基线一丢，已挂的行会被当成「刚刚变了」。
+   */
+  setProfileDir(profileDir: string | null): void
 }
 
 /** 一个文件的指纹：只取「改了才会变」的两项。 */
@@ -180,6 +209,37 @@ function stampOf(file: string): FileStamp | null {
   } catch {
     return null
   }
+}
+
+/** profile 目录里要盯的三份清单：任何一份变了，行集合都可能跟着变。 */
+const PROFILE_FILES = ['package.json', 'compatibility.json', 'cordis.patch.yml'] as const
+
+/** profile 清单的指纹：文件 → 指纹；读不到给 null（删掉了也算「变了」）。 */
+function profileStampsOf(dir: string): Map<string, FileStamp | null> {
+  const stamps = new Map<string, FileStamp | null>()
+  for (const name of PROFILE_FILES) {
+    const file = join(dir, name)
+    stamps.set(file, stampOf(file))
+  }
+  return stamps
+}
+
+/** 两张 profile 指纹表是否一样（文件出现/消失也算变）。 */
+function sameProfileStamps(
+  left: Map<string, FileStamp | null>,
+  right: Map<string, FileStamp | null>,
+): boolean {
+  if (left.size !== right.size) return false
+  for (const [file, stamp] of left) {
+    const other = right.get(file)
+    if (other === undefined) return false
+    if (stamp === null || other === null) {
+      if (stamp !== other) return false
+      continue
+    }
+    if (stamp.mtimeMs !== other.mtimeMs || stamp.size !== other.size) return false
+  }
+  return true
 }
 
 /** 两份指纹表是否一模一样（少了文件也算变）。 */
@@ -313,8 +373,9 @@ function buildLibraryGraph(
  * 「刚刚变了」），之后按 `pollIntervalMs` 轮询；发现变化先攒进待办，去抖窗口结束
  * 才重挂（同一轮构建写多个文件只换一次）。
  *
- * 两类变更分开记：行自己的目录变了 → 逐行重挂；库包目录变了 → 把引用它的行合并成
- * 一批重挂（一次换代）。两类在同一窗口命中同一行时只重挂一次。
+ * 三类变更分开记：行自己的目录变了 → 逐行重挂；库包目录变了 → 把引用它的行合并成
+ * 一批重挂（一次换代）；profile 清单变了 → 重算组合包（挂新行、卸删掉的包的行）。
+ * 三类共用同一个定时器与去抖窗口，同一窗口里命中同一行时只处理一次。
  */
 export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatchHandle {
   const pollIntervalMs = options.pollIntervalMs ?? 1000
@@ -335,6 +396,21 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
           return results
         })
   const appDir = options.appDir ?? APP_INSTALL_DIR
+  /** profile 清单这一路：目录（null = 不启用）。 */
+  let profileDir = options.profileDir ?? null
+  /** profile 清单上一轮的指纹（null = 还没立过基线）。 */
+  let profileBaseline: Map<string, FileStamp | null> | null = null
+  /** 攒着等去抖结束的 profile 目录（null = 这一轮没有清单变更）。 */
+  let pendingProfileDir: string | null = null
+  // 缺省的重算实现：动态 import 加载器（静态 import 会成环），挂到调用方给的内核上。
+  const reconcile =
+    options.reconcile ??
+    (async (dir: string): Promise<ProfileReconcileResult> => {
+      const kernelRoot = options.root
+      if (kernelRoot === undefined) throw new Error('没有内核 root，组合包重算无从下手')
+      const loader = await import('./plugin-loader.js')
+      return loader.reconcileProfileBundles(kernelRoot, dir)
+    })
   /** 上一轮的指纹（行 id → 文件 → 指纹）。 */
   let baseline = new Map<string, TargetState>()
   /** 库包上一轮的指纹（库包名 → 文件 → 指纹）。 */
@@ -362,8 +438,25 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
     return graph
   }
 
-  /** 扫一轮，返回「相对上一轮变了」的行与库包；顺带把基线换成这一轮。 */
-  const scan = (): { rows: string[]; libraries: Array<{ name: string; rows: string[] }> } => {
+  /**
+   * profile 清单比上一轮：变了返回 true。
+   *
+   * 第一次只立基线——启动前就装好的包不该被当成「刚刚装了包」再重算一遍。
+   */
+  const scanProfile = (): boolean => {
+    if (profileDir === null) return false
+    const stamps = profileStampsOf(profileDir)
+    const previous = profileBaseline
+    profileBaseline = stamps
+    return previous !== null && !sameProfileStamps(previous, stamps)
+  }
+
+  /** 扫一轮，返回「相对上一轮变了」的行、库包与 profile 清单；顺带把基线换成这一轮。 */
+  const scan = (): {
+    rows: string[]
+    libraries: Array<{ name: string; rows: string[] }>
+    profile: boolean
+  } => {
     const list = targets()
     const currentGraph = ensureGraph(list)
     const changedRows: string[] = []
@@ -409,7 +502,7 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
       nextLibrary.set(name, stamps)
     }
     libraryBaseline = nextLibrary
-    return { rows: changedRows, libraries: changedLibraries }
+    return { rows: changedRows, libraries: changedLibraries, profile: scanProfile() }
   }
 
   /** 库包变更命中的行：合并成一批，一次换代。 */
@@ -447,15 +540,44 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
     )
   }
 
-  /** 去抖结束：把攒着的行真的重挂掉。 */
+  /**
+   * 重算组合包：清单变了才走这一支。
+   *
+   * 这里只写日志，不抛：一个包装不上（缺依赖、版本闸没过）不该让轮询停掉，
+   * 也不该连累同一窗口里那些纯粹改代码的行。
+   */
+  const reconcileProfile = async (dir: string): Promise<void> => {
+    logger.info('[plugin-watch] profile 清单变了，重算组合包')
+    let result: ProfileReconcileResult
+    try {
+      result = await reconcile(dir)
+    } catch (error) {
+      // 行 id 重复、同名包解析出两个目录这类配置错误会从这里抛：原文照写，别让「装不上」变成谜。
+      logger.warn(`[plugin-watch] 重算组合包出错：${error instanceof Error ? error.message : String(error)}`)
+      return
+    }
+    for (const failure of result.failures) {
+      logger.warn(`[plugin-watch] ${failure.name} 没挂上：${failure.problem}`)
+    }
+    for (const warning of result.warnings) logger.warn(`[plugin-watch] 组合包：${warning}`)
+    logger.info(`[plugin-watch] 挂了 ${String(result.mounted.length)} 行 / 卸了 ${String(result.unmounted.length)} 行`)
+    // 行集合变了，库包依赖图要重扫（新挂的行可能 import 了别的库包）。
+    if (result.mounted.length > 0 || result.unmounted.length > 0) graphDirty = true
+  }
+
+  /** 去抖结束：把攒着的行真的重挂掉，顺带重算组合包。 */
   const flush = async (): Promise<void> => {
     if (stopped || flushing) return
     flushing = true
     const direct = [...pending]
     const byLibrary = new Map(pendingByLibrary)
+    const profileToReconcile = pendingProfileDir
     pending.clear()
     pendingByLibrary.clear()
+    pendingProfileDir = null
     try {
+      // 先重算组合包：它会挂上新行、卸掉删掉的包的行，活跃集合要在它之后取。
+      if (profileToReconcile !== null) await reconcileProfile(profileToReconcile)
       // 去抖窗口里可能已经卸载：只重挂现在还挂着的行。
       const alive = new Set(targets().map((target) => target.identity))
       // 库包命中的行先去重再合成一批：同一行被两个库包同时命中，也只换一次。
@@ -496,19 +618,25 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
     }
   }
 
-  /** 把一轮扫描结果记进待办（行与库包分开记，flush 时分别处理）。 */
+  /** 把一轮扫描结果记进待办（行、库包、profile 清单分开记，flush 时分别处理）。 */
   const applyChanges = (outcome: {
     rows: string[]
     libraries: Array<{ name: string; rows: string[] }>
+    profile: boolean
   }): void => {
     for (const identity of outcome.rows) pending.add(identity)
     for (const item of outcome.libraries) pendingByLibrary.set(item.name, new Set(item.rows))
+    if (outcome.profile && profileDir !== null) pendingProfileDir = profileDir
   }
 
   /** 扫一轮；有变化就进待办并重排去抖定时器。 */
   const poll = (): void => {
     if (stopped || flushing) return
-    let outcome: { rows: string[]; libraries: Array<{ name: string; rows: string[] }> }
+    let outcome: {
+      rows: string[]
+      libraries: Array<{ name: string; rows: string[] }>
+      profile: boolean
+    }
     try {
       outcome = scan()
     } catch (error) {
@@ -516,7 +644,7 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
       logger.warn(`[plugin-watch] 轮询出错：${error instanceof Error ? error.message : String(error)}`)
       return
     }
-    if (outcome.rows.length === 0 && outcome.libraries.length === 0) return
+    if (outcome.rows.length === 0 && outcome.libraries.length === 0 && !outcome.profile) return
     applyChanges(outcome)
     // 同一文件连续变化合并成一次：每有新变更就重置去抖窗口。
     if (timer !== null) clearTimeout(timer)
@@ -541,7 +669,11 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
   return {
     async pollNow() {
       if (stopped) return
-      let outcome: { rows: string[]; libraries: Array<{ name: string; rows: string[] }> }
+      let outcome: {
+        rows: string[]
+        libraries: Array<{ name: string; rows: string[] }>
+        profile: boolean
+      }
       try {
         outcome = scan()
       } catch (error) {
@@ -567,14 +699,24 @@ export function createPluginWatch(options: PluginWatchOptions = {}): PluginWatch
       clearInterval(ticker)
       pending.clear()
       pendingByLibrary.clear()
+      pendingProfileDir = null
       baseline = new Map()
       libraryBaseline = new Map()
+      profileBaseline = null
       graph = null
       graphSignature = ''
       graphDirty = true
     },
     get running() {
       return running
+    },
+    setProfileDir(dir) {
+      if (stopped || dir === profileDir) return
+      profileDir = dir
+      // 基线**当场**立：刚接上就重算等于把「已经在这」当成「刚刚变了」，但拖到下一轮
+      // 再立也不行——这一秒里装好的包会被当成「启动前就在」，白白漏掉一次重算。
+      profileBaseline = dir === null ? null : profileStampsOf(dir)
+      pendingProfileDir = null
     },
   }
 }
@@ -592,6 +734,9 @@ function inertHandle(): PluginWatchHandle {
       // 没有东西可停。
     },
     running: false,
+    setProfileDir() {
+      // 关着就是关着：profile 清单这一路也不启用。
+    },
   }
 }
 
@@ -612,26 +757,36 @@ function loggerOf(root: Context): PluginWatchLogger {
 }
 
 /**
- * 启动功能包 / 库包热更轮询（幂等；`DSC_HOT=0` 关闭，默认开）。
+ * 启动功能包 / 库包 / profile 清单热更轮询（幂等；`DSC_HOT=0` 关闭，默认开）。
  *
- * 由 plugin-loader 在 {@link mountApplicationRows} 末尾拉起，宿主不必再调；手工调用
- * 也安全（同一个进程只会有一个轮询器）。
- * @param root - 内核 root
+ * 由 plugin-loader 在 {@link mountApplicationRows} 末尾与 `mountAllExternalPlugins`
+ * 里拉起，宿主不必再调；手工调用也安全（同一个进程只会有一个轮询器）。
+ *
+ * 两条启动路径的先后不保证：先到的那次只带 appDir，后到的带 profileDir 时
+ * 这里不重建轮询器，只把「profile 清单」这一路补上（`setProfileDir` 会重立基线）。
+ * @param root - 内核 root（组合包重算要用它）
  * @param options.appDir - 应用安装目录（缺省 {@link APP_INSTALL_DIR}）；库包清单从这里读
+ * @param options.profileDir - profile 目录；不传 = 清单这一路不启用
  */
 export function startPluginWatch(
   root: Context,
-  options: { appDir?: string } = {},
+  options: { appDir?: string; profileDir?: string } = {},
 ): PluginWatchHandle {
-  if (shared !== null) return shared
+  if (shared !== null) {
+    // 第二次调用只补 profile 这一路：已有轮询器的定时器与基线都不动。
+    if (options.profileDir !== undefined) shared.setProfileDir(options.profileDir)
+    return shared
+  }
   if (process.env['DSC_HOT'] === '0') return inertHandle()
   const logger = loggerOf(root)
   const handle = createPluginWatch({
+    root,
     logger,
     ...(options.appDir === undefined ? {} : { appDir: options.appDir }),
+    ...(options.profileDir === undefined ? {} : { profileDir: options.profileDir }),
   })
   shared = handle
-  logger.info('[plugin-watch] 功能包与库包热更已开（轮询 1000ms，去抖 200ms；DSC_HOT=0 可关）')
+  logger.info('[plugin-watch] 功能包 / 库包 / profile 清单热更已开（轮询 1000ms，去抖 200ms；DSC_HOT=0 可关）')
   return handle
 }
 

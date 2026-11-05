@@ -13,7 +13,7 @@
  */
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import type { Context, Fiber, Plugin } from '@deepseek-ai/cordis'
@@ -45,7 +45,17 @@ import { describeForeignServices } from './dsh-compat/service-map.js'
 import { compatServiceOf } from './dsh-compat/session-bridge.js'
 import { pluginDisplayOf, languageOfConfigFile } from './plugin-locale.js'
 import { applyPatchLayers, readPatchFile, type PatchDuplicate, type PatchLayer, type PluginRow } from './plugin-patch.js'
-import { bundleDirOf, enginesProblem, pneumaEnginesProblem, readBundle, readProfile, type BundleInfo } from './plugin-bundle.js'
+import {
+  DSH_CONTRACT_VERSION,
+  bundleDirOf,
+  enginesProblem,
+  exemptionAllows,
+  pneumaEnginesProblem,
+  readBundle,
+  readProfile,
+  type BundleInfo,
+  type Exemption,
+} from './plugin-bundle.js'
 import { dscPath } from './path-policy.js'
 import { activeProfileDir } from './profile-dir.js'
 
@@ -951,6 +961,9 @@ export async function mountAllExternalPlugins(
     for (const warning of bundles.warnings) {
       root.transcript.system(`组合包：${warning}`, 'error')
     }
+    // 装包不重启：把「profile 清单」这一路接进热更轮询。startPluginHotUpdate 是幂等的——
+    // 装配路径（mountApplicationRows）可能已经先拉起过轮询器，第二次调用只补上这一路。
+    await startPluginHotUpdate(root, APP_INSTALL_DIR, profileDir)
   }
   return failures
 }
@@ -1028,15 +1041,19 @@ export async function mountBundlePlugins(
       continue
     }
     bundleInfoOf.set(info.name, info)
+    // 读包时发现的问题（patch 数组里有非文件项之类）照样要传到用户眼前。
+    warnings.push(...info.warnings)
     const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as Record<string, unknown>
     const engineProblem = enginesProblem(manifest)
-    if (engineProblem !== null && !profile.exemptions.includes(info.name)) {
+    if (engineProblem !== null && !exemptionAllows(profile.exemptions, info.name, info.version)) {
       warnings.push(`${info.name}：${engineProblem}`)
       continue
     }
-    if (info.patch !== null) {
-      layers.push(info.patch)
-      layerOwner.set(info.patch.label, dir)
+    // 一个包可以声明多份 patch（dsh 的字符串数组写法）：按声明顺序逐层叠，
+    // 后面的层看得见前面层 insert 的行，也盖前面的配置。
+    for (const layer of info.patch) {
+      layers.push(layer)
+      layerOwner.set(layer.label, dir)
     }
   }
   if (profile.patch !== null) layers.push(profile.patch)
@@ -1081,6 +1098,99 @@ export async function mountBundlePlugins(
     if (failure !== null) failures.push(failure)
   }
   return { failures, warnings }
+}
+
+/** 一次 profile 重算的结果（热更轮询拿它写日志，自检拿它做断言）。 */
+export interface ProfileReconcileResult {
+  /** 这一轮新挂上的行 id。 */
+  mounted: string[]
+  /** 这一轮卸掉的行 id。 */
+  unmounted: string[]
+  /** 挂不上的行（与 {@link mountAllExternalPlugins} 同形）。 */
+  failures: PluginMountFailure[]
+  /** 不影响继续的告警（缺包、版本闸没过、patch 写坏了之类）。 */
+  warnings: string[]
+}
+
+/**
+ * 按 profile 清单重算组合包：新加的行挂上，清单里已经删掉的包的行卸掉。
+ *
+ * 为什么要有它：{@link mountBundlePlugins} 只在宿主启动时跑一次，所以 `numa plugin add`
+ * 之后必须重启。这里把「清单说了算」做成一次可以反复做的计算——热更轮询发现 profile
+ * 清单变了就调它（见 `core/plugin-watch`），装包因此不用重启宿主。
+ *
+ * 卸载按**身份**（行 id）走，不按文件路径：一个包可以给多行，行 id 与文件名也不是一回事，
+ * {@link unmountExternalPlugin} 认的正是身份。
+ *
+ * 两类行都要能卸：
+ *   - 组合包 patch 插进来的行：`meta.bundle` 记着它来自哪个包（{@link mountRow} 写的）；
+ *   - profile 自己那层 patch 插的行：没有 `meta.bundle`，只能按「入口文件在 profile 里」认。
+ *
+ * profile 目录里的 package.json 不在了（用户删了 profile）不抛错：当成「清单为空」，
+ * 把这一份 profile 挂的行全部卸掉。
+ * @param root - 内核 root（组合包走同一条热挂载路径）
+ * @param profileDir - profile 目录
+ * @param options - 应用锚点（自检把应用指到临时目录时用）
+ * @returns 这一轮挂了哪些、卸了哪些、哪些没挂上、有哪些告警
+ * @throws {Error} 行 id 重复、同一包名解析出两个物理目录（配置错误，跟启动时一样响亮）
+ */
+export async function reconcileProfileBundles(
+  root: Context,
+  profileDir: string,
+  options: BundleMountOptions = {},
+): Promise<ProfileReconcileResult> {
+  initPluginRuntime(root)
+  const profileExists = existsSync(join(profileDir, 'package.json'))
+  // 清单用「包目录名」比对而不是包名：mountBundlePlugins 写 meta.bundle 时用的就是
+  // bundleDirOf 的最后一段（@scope/foo 取 foo）。两边口径必须一致，否则每轮都误卸。
+  const wanted = new Set<string>()
+  if (profileExists) {
+    for (const name of readProfile(profileDir).bundles) wanted.add(basename(bundleDirOf(profileDir, name)))
+  }
+  const table = mountedOf(root)
+  const before = new Set(table.keys())
+  let failures: PluginMountFailure[] = []
+  const warnings: string[] = []
+  if (profileExists) {
+    // 已经挂上的行由 mountRow 自己跳过（幂等），这里只负责把新加的行挂上。
+    const mountedNow = await mountBundlePlugins(root, profileDir, options)
+    failures = mountedNow.failures
+    warnings.push(...mountedNow.warnings)
+  }
+  const unmounted: string[] = []
+  for (const identity of [...table.keys()]) {
+    const bundle = getPluginMeta(identity)?.bundle
+    if (bundle !== undefined) {
+      if (wanted.has(bundle)) continue
+    } else if (profileExists || !fileUnderProfile(identity, profileDir)) {
+      // 没有 bundle 归属的行只可能是 profile 自己那层 patch 插的：清单还在就留着
+      // （我们没记「它由哪一条 insert 挂上来」，无从判断这一条是否被删掉）。
+      continue
+    }
+    await unmountExternalPlugin(identity)
+    unmounted.push(identity)
+  }
+  return {
+    // 卸载之后再算「新挂上的」：同一轮里被挂上又立刻卸掉的行不该报成成功。
+    mounted: [...table.keys()].filter((identity) => !before.has(identity)),
+    unmounted,
+    failures,
+    warnings,
+  }
+}
+
+/** 这一行的入口是不是从 profile 目录里加载的（profile 被删时用来认领它挂过的行）。 */
+function fileUnderProfile(identity: string, profileDir: string): boolean {
+  const file = pluginSources.get(identity)
+  if (file === undefined) return false
+  const target = physicalDir(file)
+  return [resolve(profileDir), physicalDir(profileDir)].some((dir) => isInside(dir, target))
+}
+
+/** target 落在 dir 里面吗（相对路径以两个点开头就说明在外面）。 */
+function isInside(dir: string, target: string): boolean {
+  const rel = relative(dir, target)
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
 }
 
 /** 本进程的界面形态。 */
@@ -1129,7 +1239,7 @@ export interface ApplicationRowsOptions {
    *
    * 自检要造「要求下一代契约的包」又不想铺 profile，所以留了这个入口。
    */
-  exemptions?: readonly string[]
+  exemptions?: readonly (string | Exemption)[]
 }
 
 /**
@@ -1139,7 +1249,7 @@ export interface ApplicationRowsOptions {
  * `numa plugin add` 刚写完的 compatibility.json 漂移。
  * @param dir - profile 目录（null = 没有 profile）
  */
-function profileExemptionsOf(dir: string | null): readonly string[] {
+function profileExemptionsOf(dir: string | null): readonly Exemption[] {
   if (dir === null || !existsSync(join(dir, 'package.json'))) return []
   return readProfile(dir).exemptions
 }
@@ -1202,7 +1312,7 @@ export async function mountApplicationRows(
     bundleInfoOf: new Map(),
     hostConfig: options.hostConfig,
     // 覆盖版是 profile 给的，豁免名单也读同一份 profile（不能各读一个目录）。
-    exemptions: options.exemptions ?? profileExemptionsOf(overrideDir),
+    exemptions: (options.exemptions ?? profileExemptionsOf(overrideDir)).map(exemptionNormalized),
     warnings,
     root,
     language: languageOfConfigFile(activeConfigFile()),
@@ -1230,14 +1340,21 @@ export async function mountApplicationRows(
  * `appDir` 要跟着传下去：轮询器要靠它读「哪些是库包」（`<appDir>/lib/node_modules/@pneuma`），
  * 自检把应用指到临时目录时不能去扫真实安装目录。
  *
+ * `profileDir` 是第二条路：传了就让轮询器盯 profile 清单，`numa plugin add/remove`
+ * 之后不用重启。装配路径与宿主启动路径的先后不保证，所以本函数允许被调两次：
+ * 已经有一个轮询器时，第二次只把 profile 这一路补上（基线重新立，不立刻重算）。
+ *
  * 动态 import 而不是静态：plugin-watch 反过来要用本模块的
  * `listMountedPluginSources` / `remountExternalPlugin`，静态 import 会成环。
  */
-async function startPluginHotUpdate(root: Context, appDir: string): Promise<void> {
+async function startPluginHotUpdate(root: Context, appDir: string, profileDir?: string): Promise<void> {
   if (process.env['DSC_HOT'] === '0') return
   try {
     const watch = await import('./plugin-watch.js')
-    watch.startPluginWatch(root, { appDir })
+    watch.startPluginWatch(root, {
+      appDir,
+      ...(profileDir === undefined ? {} : { profileDir }),
+    })
   } catch (error) {
     warnApplicationRow(root, `功能包热更没起来：${err(error)}（不影响启动）`)
   }
@@ -1267,8 +1384,8 @@ interface RowMountContext {
   bundleInfoOf: ReadonlyMap<string, BundleInfo>
   /** 宿主直给的配置（键是行 id）；没命中就走 plugins.json。 */
   hostConfig: Readonly<Record<string, unknown>> | undefined
-  /** compatibility.json 里登记过豁免的包名（版本闸不满足也照挂）。 */
-  exemptions: readonly string[]
+  /** compatibility.json 里登记过的豁免（版本闸不满足也照挂；带版本的只对得上那一个版本才放行）。 */
+  exemptions: readonly Exemption[]
   /** 收集要写进对话流的告警。 */
   warnings: string[]
   /** 这份行属于哪个 root：已挂身份按 root 记（一个进程可以有多个内核）。 */
@@ -1593,23 +1710,34 @@ function resolutionOf(manifest: Record<string, unknown> | null): ResolutionPolic
 }
 
 /**
- * 这一行的包名在不在版本闸豁免名单里（profile 的 `compatibility.json`）。
+ * 这一行的包在不在版本闸豁免里（profile 的 `compatibility.json`）。
+ *
+ * 判据是 dsh 的口径：**精确 包@版本 ↔ 精确 运行时版本**。只写包名的老记录仍然放行
+ * （向 0.8.x 写下的文件让一步），但新写入的记录由 `numa plugin allow-version` 带上两个版本，
+ * 换个版本就得重新同意——一次点头不该永久有效。
  *
  * 包名优先取行目标（`@p2/foo/sub` → `@p2/foo`）；相对路径的行没有包名，
  * 退回它自己 package.json 的 `name`。
  * @param manifest - 行的包清单（可能没有）
  * @param target - 行上的 name
- * @param exemptions - 豁免包名
+ * @param exemptions - 豁免名单（已规范化）
  */
 function isEngineExempt(
   manifest: Record<string, unknown> | null,
   target: string,
-  exemptions: readonly string[],
+  exemptions: readonly Exemption[],
 ): boolean {
   if (exemptions.length === 0) return false
   const declared = manifest?.['name']
   const pkgName = packageNameOf(target) ?? (typeof declared === 'string' && declared !== '' ? declared : null)
-  return pkgName !== null && exemptions.includes(pkgName)
+  if (pkgName === null) return false
+  const version = typeof manifest?.['version'] === 'string' ? (manifest['version'] as string) : undefined
+  return exemptionAllows(exemptions, pkgName, version)
+}
+
+/** 把 `string | Exemption` 统一成豁免记录（自检与宿主传字符串的老调用点还用得上）。 */
+function exemptionNormalized(entry: string | Exemption): Exemption {
+  return typeof entry === 'string' ? { package: entry } : entry
 }
 
 /** 插件中心要显示的那几项（`pneuma.title/description/settingsSection`）。 */

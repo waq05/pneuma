@@ -1,7 +1,7 @@
 /**
  * 功能包热更自检：改代码不重启即生效，失败保旧版本。
  *
- * 五段，各验一条：
+ * 七段，各验一条：
  *
  *   1. **桩穿透**：应用自带包的入口是 `lib/node_modules/@pneuma/<id>/index.js` 这层
  *      再导出桩，真实代码在 `lib/packages/<id>/index.js`。改真实文件后换代重挂，
@@ -13,6 +13,8 @@
  *      并且仍是同一个模块实例（戳到 core 会出现第二份内核状态，沙箱会 fail-open）。
  *   5. **轮询去抖**：plugin-watch 按 mtime+size 发现变更，连续两次写只触发一次重挂。
  *   6. **默认开**：不设 DSC_HOT 时，mountApplicationRows 自己拉起轮询，改文件即生效。
+ *   7. **profile 清单这一路**：profile 的 package.json 变了才重算组合包（不动不重算），
+ *      与行/库包两路共用同一个去抖窗口；不传 profileDir 时这一路不启用。
  *
  * 全部夹具造在临时目录（HOME / DSC_HOME 都指过去），不碰真实的 ~/.dsc。
  * 运行：pnpm build && node scripts/plugin-hot-update-test.mjs
@@ -363,6 +365,68 @@ console.log('── 6. 默认开：mountApplicationRows 自己拉起轮询 ─�
     String(globalThis.__HOT.autoLoaded) + '/' + String(globalThis.__HOT.autoApplied),
   )
   watchModule.stopPluginWatch()
+}
+
+
+// ── 7. profile 清单这一路：不动不重算，动了才重算 ─────────────────────────────
+console.log('── 7. profile 清单：与行 / 库包共用定时器与去抖 ──')
+{
+  const profileDir = join(home, 'profile-watch')
+  writeText(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: [] } } }) + '\n')
+
+  let reconciles = 0
+  const infos = []
+  const warns = []
+  const handle = watchModule.createPluginWatch({
+    // 只看 profile 这一路：行集合空着，免得前面几段的夹具行再来抢事件。
+    targets: () => [],
+    profileDir,
+    reconcile: async () => {
+      reconciles += 1
+      return { mounted: ['x'], unmounted: [], failures: [], warnings: [] }
+    },
+    pollIntervalMs: 30,
+    debounceMs: 150,
+    logger: { info: (line) => infos.push(line), warn: (line) => warns.push(line) },
+  })
+  try {
+    await handle.pollNow()
+    check('清单没动时不重算', reconciles === 0, String(reconciles))
+
+    // 两份清单在同一个去抖窗口里连着改：只该重算一次。
+    writeText(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['a'] } } }) + '\n')
+    await sleep(40)
+    writeText(join(profileDir, 'compatibility.json'), JSON.stringify({ exemptions: [] }) + '\n')
+    await sleep(600)
+
+    check('清单变了触发重算（且只一次）', reconciles === 1, String(reconciles))
+    check('日志写了「profile 清单变了，重算组合包」', infos.includes('[plugin-watch] profile 清单变了，重算组合包'), infos.join(' | '))
+    check('日志写了「挂了 1 行 / 卸了 0 行」', infos.includes('[plugin-watch] 挂了 1 行 / 卸了 0 行'), infos.join(' | '))
+    check('这一路没有告警', warns.length === 0, warns.join(' | '))
+  } finally {
+    handle.stop()
+  }
+
+  // 不传 profileDir：这一路不启用，改清单也不该调 reconcile。
+  let inactive = 0
+  const off = watchModule.createPluginWatch({
+    targets: () => [],
+    reconcile: async () => {
+      inactive += 1
+      return { mounted: [], unmounted: [], failures: [], warnings: [] }
+    },
+    pollIntervalMs: 30,
+    debounceMs: 100,
+    logger: { info: () => {}, warn: () => {} },
+  })
+  try {
+    writeText(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['a', 'b'] } } }) + '\n')
+    await off.pollNow()
+    await sleep(200)
+    check('不传 profileDir 时这一路不启用', inactive === 0, String(inactive))
+  } finally {
+    off.stop()
+  }
 }
 
 console.log('')

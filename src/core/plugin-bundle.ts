@@ -2,9 +2,10 @@
  * 插件组合包（bundle）与 profile：dsh 的安装形态。
  *
  * dsh 一个「包」不是一个文件，而是一个目录：目录里的 `package.json` 用
- * `dsh.bundle.patch` 指向自己的 patch 文件（告诉宿主「我要往哪些行改配置、插几行」），
- * 真正要装的插件代码在它自己的 `node_modules` 里。多个包按 profile 的
- * `dsh.profile.bundles` 顺序叠起来，后面的层盖前面的。
+ * `dsh.bundle.patch` 指向自己的 patch 文件（可以是一个，也可以是一组，按顺序叠），
+ * 告诉宿主「我要往哪些行改配置、插几行」；真正要装的插件代码在它自己的
+ * `node_modules` 里。多个包按 profile 的 `dsh.profile.bundles` 顺序叠起来，
+ * 后面的层盖前面的。
  *
  * 这一层只负责**读**：把目录读成「层」（{@link PatchLayer}）与告警。合成与挂载在
  * `core/plugin-loader` 里做（它才知道现在的行长什么样）。
@@ -52,8 +53,16 @@ export interface BundleInfo {
   name: string
   /** 包版本。 */
   version: string
-  /** patch 层；包里没声明 patch 就是 null。 */
-  patch: PatchLayer | null
+  /**
+   * patch 层，按声明顺序（空数组 = 没声明）。
+   *
+   * 为什么是数组：dsh 的 `dsh.bundle.patch` 允许写字符串数组，一个包一次列好几份
+   * patch 文件（dsh 自己的 web-app 就是这么写的）。多层按数组顺序叠，后面的层看得见
+   * 前面层 insert 的行，也盖前面的配置——与 dsh 同一个口径。
+   */
+  patch: readonly PatchLayer[]
+  /** 读包时发现、但不影响继续的问题（数组里有非字符串项之类）。 */
+  warnings: readonly string[]
   /**
    * 包里 `pneuma.client` 的原文（界面能力声明）。只读进来列给用户看，不加载——
    * dsh 的界面插件要 dsh 自己的客户端运行时，Pneuma 的界面壳是另一套契约。
@@ -148,6 +157,9 @@ export function enginesProblem(manifest: BundleManifest): string | null {
 
 /**
  * 读一个组合包目录。
+ *
+ * `bundle.patch` 两种写法都认：一个字符串（一份文件），或字符串数组（多份，按数组
+ * 顺序叠）。数组里的空串与非字符串项跳过并记一条 warning，不让整份声明作废。
  * @param dir - 包目录
  * @returns 读到的信息；目录里没有 package.json 给 null
  */
@@ -167,21 +179,104 @@ export function readBundle(dir: string): BundleInfo | null {
   const own = sectionOf('pneuma')
   const foreign = sectionOf('dsh')
   const bundle = own?.client === undefined && own?.bundle === undefined ? foreign : own
-  const patchPath = own?.bundle?.patch ?? foreign?.bundle?.patch
-  const patchFile = typeof patchPath === 'string' && patchPath !== '' ? resolve(dir, patchPath) : null
-  let patch: PatchLayer | null = null
-  if (patchFile !== null) {
+  const declared = own?.bundle?.patch ?? foreign?.bundle?.patch
+  /** 声明写在哪一族字段里（告警要说清是 pneuma 还是 dsh 的那一项）。 */
+  const patchField = own?.bundle?.patch !== undefined ? 'pneuma' : 'dsh'
+  /** 声明的 patch 文件（写字符串就是一份；写数组就按顺序全收）。 */
+  const patchFiles: string[] = []
+  const warnings: string[] = []
+  if (typeof declared === 'string') {
+    if (declared !== '') patchFiles.push(declared)
+  } else if (Array.isArray(declared)) {
+    declared.forEach((item, index) => {
+      if (typeof item === 'string' && item !== '') {
+        patchFiles.push(item)
+        return
+      }
+      // 不是文件路径的项不猜：记一条告警跳过，别让整份声明作废。
+      warnings.push(
+        `${name} 的 ${patchField}.bundle.patch 第 ${String(index + 1)} 项不是文件路径（${typeof item}），已跳过`,
+      )
+    })
+  }
+  const patch: PatchLayer[] = []
+  for (const relativePath of patchFiles) {
+    const file = resolve(dir, relativePath)
+    if (!existsSync(file)) {
+      throw new Error(`${name} 声明了 pneuma.bundle.patch = ${relativePath}，但文件不存在`)
+    }
+    // 只有一份文件时标签保持原样（老告警文案不变）；多份时带上文件名，
+    // 否则「第 N 条」这种诊断说不清是哪一份 patch 里的。
+    const label = patchFiles.length > 1 ? `${name} v${version} 的 ${relativePath}` : `${name} v${version}`
     try {
-      patch = readPatchFile(patchFile, `${name} v${version}`)
+      const layer = readPatchFile(file, label)
+      if (layer !== null) patch.push(layer)
     } catch (error) {
       // 读失败要带着「哪个包」一起抛给调用方，由它折成一条告警。
       throw new Error(`${name} 的 patch 文件读不了：${error instanceof Error ? error.message : String(error)}`)
     }
-    if (patch === null) {
-      throw new Error(`${name} 声明了 pneuma.bundle.patch = ${patchPath}，但文件不存在`)
-    }
   }
-  return { dir, name, version, patch, client: own?.client ?? foreign?.client }
+  return { dir, name, version, patch, warnings, client: own?.client ?? foreign?.client }
+}
+
+/**
+ * 一条版本闸豁免（profile 的 `compatibility.json`）。
+ *
+ * 为什么带版本：dsh 的授权是「精确包@版本 ↔ 精确运行时版本」，换一个版本就得重新同意。
+ * 只按包名放行等于一次点头永久生效——用户装 1.2 时同意的风险，1.3 装上来就不用再问了。
+ *
+ * 两个版本字段都可缺省：老写法的 `{ "package": "名字" }` 仍然放行（按包名通配），
+ * 这是给 0.8.x 写下的文件留的路；新写入的记录由 `numa plugin allow-version` 带上两个版本。
+ */
+export interface Exemption {
+  /** 包名（与 `bundleDirOf` 的包名同形，含 scope）。 */
+  package: string
+  /** 精确的包版本；缺省 = 不按版本判（老写法）。 */
+  version?: string
+  /** 精确的运行时（dsh 插件契约）版本；缺省 = 不按运行时判。 */
+  dshVersion?: string
+}
+
+/**
+ * 读一条 compatibility.json 的豁免项。
+ * @param entry - 原始项（字符串或对象）
+ * @returns 规范化后的豁免；认不出给 null
+ */
+function exemptionOf(entry: unknown): Exemption | null {
+  if (typeof entry === 'string') return entry === '' ? null : { package: entry }
+  if (entry === null || typeof entry !== 'object') return null
+  const record = entry as { package?: unknown; name?: unknown; version?: unknown; dshVersion?: unknown }
+  const name = typeof record.package === 'string' ? record.package : record.name
+  if (typeof name !== 'string' || name === '') return null
+  return {
+    package: name,
+    ...(typeof record.version === 'string' && record.version !== '' ? { version: record.version } : {}),
+    ...(typeof record.dshVersion === 'string' && record.dshVersion !== '' ? { dshVersion: record.dshVersion } : {}),
+  }
+}
+
+/**
+ * 豁免名单放不放行这一个「包@版本」。
+ *
+ * 版本缺省 = 按包名通配（0.8.x 写下的老记录）；运行时版本缺省 = 不按运行时判。
+ * 新记录由 `numa plugin allow-version` 写入，两个版本都带上，换版本必须重新同意；
+ * 记录带了版本而这一行的版本读不到时，按「对不上」处理（失败关闭）。
+ * @param exemptions - 豁免名单
+ * @param name - 包名
+ * @param version - 这一行的包版本
+ */
+export function exemptionAllows(
+  exemptions: readonly Exemption[],
+  name: string,
+  version: string | undefined,
+): boolean {
+  return exemptions.some((entry) => {
+    if (entry.package !== name) return false
+    // 版本读不到也不放行：拿不准就等于对不上（失败关闭）。
+    if (entry.version !== undefined && entry.version !== version) return false
+    if (entry.dshVersion !== undefined && entry.dshVersion !== DSH_CONTRACT_VERSION) return false
+    return true
+  })
 }
 
 /** profile 的读盘结果。 */
@@ -192,8 +287,8 @@ export interface ProfileInfo {
   bundles: string[]
   /** profile 自己的 patch 层（目录里的 cordis.patch.yml）。 */
   patch: PatchLayer | null
-  /** compatibility.json 里登记豁免的包名。 */
-  exemptions: string[]
+  /** compatibility.json 里登记的豁免（精确到版本的那几条才算数，见 {@link Exemption}）。 */
+  exemptions: Exemption[]
 }
 
 /**
@@ -221,9 +316,7 @@ export function readProfile(dir: string): ProfileInfo {
   const patch = readPatchFile(join(dir, 'cordis.patch.yml'), `profile ${dir.split(/[\\/]/).pop() ?? dir}`)
   const compat = readJson(join(dir, 'compatibility.json')) as { exemptions?: unknown } | null
   const exemptions = Array.isArray(compat?.exemptions)
-    ? compat.exemptions
-        .map((entry) => (entry !== null && typeof entry === 'object' ? (entry as { package?: unknown }).package : undefined))
-        .filter((name): name is string => typeof name === 'string' && name !== '')
+    ? compat.exemptions.map(exemptionOf).filter((entry): entry is Exemption => entry !== null)
     : []
   return { dir, bundles, patch, exemptions }
 }

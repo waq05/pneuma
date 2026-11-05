@@ -49,6 +49,21 @@ function hostConfigOf(options: KernelOptions): Record<string, unknown> {
   }
 }
 
+/**
+ * 最近一次 {@link createKernel} 的挂载失败清单（只读快照）。
+ *
+ * 为什么要留一个取值口：失败被 {@link reportFailures} 写进 transcript 之后就没人拿得到了，
+ * 而「功能包是不是真的都装上了」需要一条机器判据（scripts/plugin-compose-check.mjs）。
+ * 让脚本自己再装配一遍会悄悄测成另一条路，所以这里存最近一次、只读地交出来。
+ * 一个进程只会建一个内核，不按 root 分开存。
+ */
+let lastApplicationRowFailures: readonly PluginMountFailure[] = []
+
+/** 最近一次 {@link createKernel} 的挂载失败（只读；没建过内核时是空数组）。 */
+export function applicationRowFailures(): readonly PluginMountFailure[] {
+  return lastApplicationRowFailures
+}
+
 /** 把挂载失败写成一条人能看懂的话；transcript 还没起来时退到 stderr。 */
 function reportFailures(root: Context, failures: readonly PluginMountFailure[]): void {
   if (failures.length === 0) return
@@ -73,6 +88,7 @@ export async function createKernel(options: KernelOptions): Promise<Context> {
     ...(options.surface === undefined ? {} : { surface: options.surface }),
     hostConfig: hostConfigOf(options),
   })
+  lastApplicationRowFailures = failures
   reportFailures(root, failures)
   return root
 }
