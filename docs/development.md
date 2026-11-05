@@ -621,11 +621,12 @@ pnpm run check:ui                  # 55 条纯 Node 探针，41 秒（新探针�
 pnpm run check:ui:e2e              # 4 条要真 Chromium，61 秒（含 diff 卡、手机尺寸远程壳）
 pnpm run check:dsh                 # dsh 兼容层 + 组合包 + 真包挂载 + 会话桥 + 流/事件旁路 + 合成验收，176 条（新探针按命名自动进门禁，条数会涨）
 pnpm run check:core                # 100 条内核探针（协议 / TUI / 会话库 / LLM 适配 / 审批 / 插件热更），约 12 分钟（新探针按命名自动进门禁，条数会涨）
+pnpm run check:remote              # 远程控制全链（真起 headless 宿主 + 假模型端点，约 10 秒，102 条）：配对/票据/WS 帧/断线补帧/上传/推送/审批来源/设备吊销/双宿主主控位/开关关停。它不按文件名自动发现，新断言直接写在 scripts/remote-e2e.mjs 里
 pnpm run check:plugin              # 插件闸（约 20 秒）：模型检查（77 包/77 行/0 缺口）+ 包标准八条硬项 + 89 个包用例 + 清单快照 + 92 条加载器探针 + 15 条 list 探针 + 组合门禁（77 包/63 实挂/0 失败）+ 17 条换包 e2e
 node scripts/plugin-inventory-check.mjs --write   # 确认插件清单的变化是有意的，重写 docs/baseline/0.9.0/inventory.json
 pnpm run check:style               # 排版闸门：制表符 / 行尾空白 / BOM / 混用行尾 / 末尾缺换行，2 秒
 pnpm run check:style -- --changed  # 只查本次改动的文件（提交前用这个）
-pnpm run check:all                 # style + plugin + ui + dsh + core 串起来（不含 ui:e2e）
+pnpm run check:all                 # style + plugin + ui + dsh + core + remote 串起来（不含 ui:e2e）
 node scripts/dsh-real-package-e2e.mjs  # 真包验收（要联网：numa plugin add dsh-cost-meter）
 # 老探针已按 scripts/<话题>-test.mjs 命名统一收进门禁（check:ui / check:core / check:dsh
 # 都按文件名自动发现，新探针不用回来登记）。desktop/shots/ 只剩桌面端实拍脚本
@@ -693,7 +694,8 @@ TUI 浮层外框收成一份，提交对话框补上焦点管理，仓库地图�
 **自动门禁**：每次推与每个 PR 由 `.github/workflows/verify.yml` 跑三处 typecheck 加排版检查
 （`check:style`）；夜跑（每天 02:00）与手动触发再跑两套探针——内核 `check:core`、界面
 `check:ui`（各自先 build，探针读的是编译产物）。`release.yml` 只在推 tag 时跑。所以"本地绿"
-不算数，以这两条工作流的结论为准。
+不算数，以这两条工作流的结论为准。远程控制全链 `check:remote` 目前只在本地 `check:all` 里跑，
+没进这两条工作流：它要真起宿主进程、真听端口，CI 的端口与时序都比本机不稳。
 
 **编辑器口径**：仓库根有一份 `.editorconfig`（UTF-8 / LF / 末尾换行 / 2 空格缩进，markdown
 保留行尾空格，`.ps1` 走 CRLF）。它不管重排——为什么不引 Prettier / ESLint 见

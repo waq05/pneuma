@@ -833,3 +833,31 @@ dsh 自己的包在 `peerDependencies` 里写的是**精确版本**（`@deepseek
 
 **判据**：`ui-graph-frames-test` 18 条、`ui-anchored-test` 11 条、`ui-anchor-e2e` 真机 15 条、
 `remote-e2e` 新增 3 条；`check:ui` 57/57、`check:ui:e2e` 6/6、`check:dsh` 170 PASS。
+
+### 12.26 远程全链探针收进闸门，两条历史红断言修绿（2026-11-05 夜，用户点了「接着第 1 项做」）
+
+这一轮只做交接文档 §5 的第 1 项：`scripts/remote-e2e.mjs` 不在门禁里、两条断言一直红。
+
+**两条红的根因都是文案改过、断言没跟上，不是功能坏了**：
+
+| 断言 | 现状 | 根因 |
+|---|---|---|
+| 设备清单两行 | `src/packages/remote/index.ts:939` 的身份行只给「最近活跃 {time}」 | `dedfde0`（设置页文案压短那一轮）把「最近活跃 X · 创建于 Y」压成只剩最近活跃；`i18n` 迁移（`691baef`）照这个短版抽词条，行尾注释 `:933` 却还写着「+ 创建时间」，断言也还在找「创建于」 |
+| 第二宿主休眠 | `src/packages/remote/index.ts:775` 的提示是「远程控制由另一个 Pneuma 进程（pid N）接管，本进程待命」 | 同一轮把「主控位」这种内部叫法改成了人话，断言还在找「主控位」三个字。起两个宿主实测确认：休眠条目照常出现在第二宿主的快照里（`kind: 'system'`，id 2），机制没坏 |
+
+**修法**：只改断言与注释，不把文案改回黑话。
+- 设备行断言改成「info 行的 label 是设备名、text 以『最近活跃 』开头、且不是『未知』」——
+  钉住「时间字段接上了」，不再钉被有意删掉的创建时间；
+- 第二宿主断言改成「text 同时含『接管』与『待命』」，不钉整句，措辞再润色也不会误杀；
+- 行尾注释 `:933` 同步成实际行为，并注明创建时间是在压短那一轮拿掉的，别照旧注释写回去。
+
+**进门方式**：新挂一条独立门禁 `pnpm run check:remote`（`node scripts/remote-e2e.mjs`），
+并加进 `check:all` 末尾。没改名成 `remote-e2e-test.mjs` 塞进 `check:core`，理由：它真起
+headless 宿主进程、真听端口、真连假模型端点，判据里有「20 秒内等到某一帧」这类时序断言——
+塞进内核闸，一次抖动就会连累 100 条单测的结论。实测跑一轮 **11 秒**（102 条），成本很低，
+独立一条反而更清楚。
+
+**判据**：`check:remote` **102/102**（exit 0，10–11 秒，实跑两次）；`check:style` 1251 文件通过、
+`pnpm run typecheck` 0 错；`check:core` / `check:ui` / `check:dsh` 未在本轮重跑（本轮没动它们的那两面
+代码，工作树只改了 `scripts/remote-e2e.mjs`、`package.json`、`src/packages/remote/index.ts` 的一行
+注释、四份文档）。
