@@ -1,12 +1,18 @@
 /**
- * `@pneuma/cli` 的包级测试：钉入口表与产物对得上。
- * 为什么只钉这些：真正的行为要 spawn 子进程、动用户 profile，属于仓库级探针的活；
- * 这里只保证「表里写的文件真的在」——写错了就是 `numa plugin` 直接 ENOENT。
+ * `@pneuma/cli` 的包级测试：钉入口表、产物与版本豁免三个子命令。
+ *
+ * 为什么子命令要真 spawn：这层逻辑住在「内核起来之前」的脚本里（顶层读 argv、process.exit），
+ * 当函数 import 根本跑不起来；而版本豁免的要点恰恰是**退出码与写盘副作用**（不给
+ * --accept-risk 就不许写盘），只能对着子进程验。HOME 用临时目录，不碰真实 ~/.dsc。
  * @module @pneuma/cli/tests
  */
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { after, test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8')
 const pkg = JSON.parse(read('../package.json'))
@@ -50,6 +56,100 @@ test('README 两段都在', () => {
   passed += 1
 })
 
+// ── 版本豁免三个子命令：真 spawn 一次编译产物 ────────────────────────────────────
+//
+// 用临时 DSC_HOME + 临时 profile：断言的是「退出码 + 写盘形状」，不碰用户真实的 ~/.dsc。
+const CLI_FILE = fileURLToPath(new URL('../../../../lib/packages/cli/plugin-cli.js', import.meta.url))
+const cliHome = mkdtempSync(join(tmpdir(), 'numa-cli-test-'))
+const profileDir = join(cliHome, 'profiles', 'probe')
+const compatibilityFile = join(profileDir, 'compatibility.json')
+const runtimeVersion = (await import('../../../../lib/core/plugin-bundle.js')).DSH_CONTRACT_VERSION
+
+/** 跑一次编译后的 `numa plugin`；stdout/stderr 一起回来看。 */
+const runCli = (args) => {
+  const result = spawnSync(process.execPath, [CLI_FILE, ...args], {
+    cwd: fileURLToPath(new URL('../../../../', import.meta.url)),
+    encoding: 'utf8',
+    env: { ...process.env, DSC_HOME: cliHome, DSC_UI_SERVER: '0', DSC_PROFILE: '' },
+  })
+  return { code: result.status, out: result.stdout + result.stderr }
+}
+
+/** 读 profile 的 compatibility.json（还没写过给 null）。 */
+const readCompatibility = () => (existsSync(compatibilityFile) ? JSON.parse(readFileSync(compatibilityFile, 'utf8')) : null)
+
+test('version-exemptions：没有登记时明说没有豁免', () => {
+  const result = runCli(['version-exemptions', '--profile', 'probe'])
+  assert.equal(result.code, 0, result.out)
+  assert.match(result.out, /没有登记豁免/)
+  passed += 1
+})
+
+test('allow-version：不给 --accept-risk 就拒绝写盘，并打印风险原文', () => {
+  const result = runCli(['allow-version', '@acme/plug-a@1.2.3', '--dsh-version', runtimeVersion, '--profile', 'probe'])
+  assert.equal(result.code, 1, result.out)
+  assert.match(result.out, /不兼容插件可能崩溃或丢数据/)
+  assert.match(result.out, /只对这一个版本组合有效/)
+  assert.equal(existsSync(compatibilityFile), false, '没授权也写了盘')
+  passed += 1
+})
+
+test('allow-version：运行时版本对不上时拒绝', () => {
+  const result = runCli(['allow-version', '@acme/plug-a@1.2.3', '--dsh-version', '9.9.9', '--accept-risk', '--profile', 'probe'])
+  assert.equal(result.code, 1, result.out)
+  assert.match(result.out, /运行时对不上/)
+  assert.equal(existsSync(compatibilityFile), false)
+  passed += 1
+})
+
+test('allow-version：区间版本不收（豁免只对确定的版本有意义）', () => {
+  const result = runCli(['allow-version', '@acme/plug-a@^1.2.0', '--dsh-version', runtimeVersion, '--accept-risk', '--profile', 'probe'])
+  assert.equal(result.code, 1, result.out)
+  assert.match(result.out, /精确版本/)
+  passed += 1
+})
+
+test('allow-version：带 --accept-risk 才写，形状与 readProfile 的解析兼容', async () => {
+  const result = runCli(['allow-version', '@acme/plug-a@1.2.3', '--dsh-version', runtimeVersion, '--accept-risk', '--profile', 'probe'])
+  assert.equal(result.code, 0, result.out)
+  assert.match(result.out, /已登记豁免/)
+  const doc = readCompatibility()
+  assert.equal(doc.exemptions.length, 1)
+  assert.deepEqual(doc.exemptions[0], { package: '@acme/plug-a', version: '1.2.3', dshVersion: runtimeVersion })
+  // 版本闸读的就是 readProfile().exemptions：这条记录必须原样出现在里面，否则等于没登记。
+  const { readProfile, exemptionAllows } = await import('../../../../lib/core/plugin-bundle.js')
+  const exemptions = readProfile(profileDir).exemptions
+  assert.deepEqual(exemptions, [{ package: '@acme/plug-a', version: '1.2.3', dshVersion: runtimeVersion }])
+  // 精确到版本：同一个包换个版本就不放行（一次点头不该永久有效）。
+  assert.equal(exemptionAllows(exemptions, '@acme/plug-a', '1.2.3'), true)
+  assert.equal(exemptionAllows(exemptions, '@acme/plug-a', '1.2.4'), false)
+  assert.equal(exemptionAllows(exemptions, '@acme/plug-b', '1.2.3'), false)
+  assert.equal(exemptionAllows(exemptions, '@acme/plug-a', undefined), false)
+  passed += 1
+})
+
+test('version-exemptions：列出包名、版本与当前运行时', () => {
+  const result = runCli(['version-exemptions', '--profile', 'probe'])
+  assert.equal(result.code, 0, result.out)
+  assert.match(result.out, /@acme\/plug-a@1\.2\.3/)
+  assert.ok(result.out.includes(runtimeVersion), result.out)
+  assert.match(result.out, /对当前运行时有效/)
+  passed += 1
+})
+
+test('revoke-version：删掉那一条；再撤一次只说「没有这条授权」', () => {
+  const first = runCli(['revoke-version', '@acme/plug-a@1.2.3', '--dsh-version', runtimeVersion, '--profile', 'probe'])
+  assert.equal(first.code, 0, first.out)
+  assert.match(first.out, /已撤销/)
+  assert.deepEqual(readCompatibility().exemptions, [])
+  const second = runCli(['revoke-version', '@acme/plug-a@1.2.3', '--dsh-version', runtimeVersion, '--profile', 'probe'])
+  assert.equal(second.code, 0, second.out)
+  assert.match(second.out, /没有这条授权/)
+  passed += 1
+})
+
 after(() => {
   console.log(`通过 ${String(passed)} 项`)
+  // 临时 HOME 用完就删：里面只有这轮造出来的 profile，不留尾巴。
+  rmSync(cliHome, { recursive: true, force: true })
 })
