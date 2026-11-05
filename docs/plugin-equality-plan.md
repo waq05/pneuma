@@ -658,5 +658,36 @@ scripts/_ui-sweep-main.cjs（按清单点/断言/截图）。69 步覆盖启动�
 **复审时自己修掉两处**：① 豁免「包版本读不到就跳过比对」是失败开放，改成对不上就拒绝；
 ② 装载期 external 报错直接写在 `boot.ts` 里被 `ui-locale-test` 拦下，改成走本包字典 `boot.external.unknown`。
 
-**仍然记着的边界**（不假装做完）：只删 profile 自己那层 patch 的某一条 insert 时那一行不会卸；
-TUI 的 require 表没跟着扩三项；信任摘要不符没有单独的问题类别，按「未信任」档渲染。
+**仍然记着的边界**（不假装做完）：TUI 的 require 表没跟着扩三项；信任摘要不符没有单独的问题类别，
+按「未信任」档渲染（dsh 没有这层信任，见 §12.20）。
+
+（原文还记着「只删 profile 自己那层 patch 的某一条 insert 时那一行不会卸」——已按 dsh 的做法改成
+行 id 集合的差，见 §12.20，这条边界作废。）
+
+### 12.20 三条边界的对照（2026-11-05 深夜）
+
+用户问「三条边界 dsh 怎么做的、会话流文案 dsh 怎么做的」，回源码核了一遍，结论如下。
+
+**① 只删 profile 自己那层 patch 的一条 insert，那一行会不会卸 —— dsh 会卸，我们原来不会（已修）。**
+dsh 的 `recomposeProfile` 比的是**行 id 集合**：`listed`（新 patch 列表）与 `composed`（旧 patch 列表），
+不在 `listed` 里的行先停掉、等释放完成，失败则把停掉的行放回原位重启
+（`packages/boot/app-boot/src/index.ts:350-373`；README 那句「removes the rows the generation no longer lists」）。
+它不看「这一行是哪个包给的」——profile 自己那层 patch 插的行因此同样会下线。
+我们的 `reconcileProfileBundles` 原来只按 `meta.bundle` 认领，profile 自己那层 patch 插的行没有归属，
+所以留着。现已改成同一口径：属于这份 profile 的行（`meta.bundle` 有值，或入口文件在 profile 目录里）
+里，id 不在这一代组合中的就卸掉；`mountBundlePlugins` 新增返回这一代的行 id 全集（含 group 子行）。
+判据：`scripts/profile-hot-mount-test.mjs` 第 3b 段四条（挂上 → 删 insert → 下线 → 别的行不受影响），32 条全过。
+
+**② 信任摘要不符按哪一档渲染 —— dsh 没有这一层，无从对照。**
+dsh 没有「界面插件内容信任」这种记录：profile 里装上的客户端插件下次启动就装载，不问也不记录摘要。
+它只有三道别的闸：`allowBuilds` 对安装脚本逐个点头（`packages/boot/plugin-manager/src/build-approval.ts`）、
+版本豁免要 `--accept-risk`（`plugin-compatibility.ts`）、Web 端的 `--trusted-host` 围栏。
+所以「摘要不符算不算单独一类问题」是我们自己的界面粒度，不是对齐项。
+
+**③ 会话流里的宿主提示与斜杠命令输出 —— dsh 不翻译，写源语言。**
+dsh 的 locale 服务只在浏览器里（`packages/client/locale`，`ctx.locale.register` 注册命名空间），
+宿主侧没有任何调用点（全仓 `ctx.locale` 的命中都在 `src/client/` 下）。命令输出是宿主写死的英文，
+例如 `/compact` 的 `Compacted ${n} history items (~${n} tokens).`（`packages/compaction/command-compact/src/index.ts:71`），
+客户端把 `result.text` 原样画进会话（`packages/client/ui-commands/src/client/service.ts:430`）。
+也就是说：**界面文案随语言变，写进会话记录的内容不随语言变**，中文界面里看到的是英文提示。
+我们是同一条口径，只是源语言是中文——中文记录在任何界面语言下都保持中文。这一条按 dsh 的做法定案，不再作为待决项。

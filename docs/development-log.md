@@ -13570,3 +13570,25 @@ dsh 的 `dsh.bundle.patch` 可以写字符串数组（web-app 一次列五个文
 - 只删 profile 自己那层 patch 里的某一条 insert、而 profile 还在时，那一行不会被卸（没记「行由哪条 insert 挂上来」）。
 - TUI 那张 require 表（`ui-core/tui-plugins.ts`）没跟着扩三项；本次 external 的装载期校验只做浏览器壳。
 - 界面插件信任摘要不符时按现有「未信任」档渲染，没有为它单造一个 problem 类别。
+
+## 2026-11-05 深夜：三条边界逐条对照 dsh
+
+上一轮报告末尾留了三条边界，用户问「dsh 是怎么做的、和咱们一样吗」。逐条回源码核：
+
+1. **删掉 profile 自己那层 patch 的一条 insert，行会不会卸** —— dsh **会卸**，我们原来不会，已修。
+   dsh 的 `recomposeProfile` 比的是行 id 集合（`packages/boot/app-boot/src/index.ts:350-373`：
+   `listed` 与 `composed`，不在前者里的行先停、等释放，失败再放回原位重启），不看这一行由哪个包给的。
+   我们只按 `meta.bundle` 认领，profile 自己那层 patch 插的行没有归属就漏了。
+   改成同一口径：`mountBundlePlugins` 返回这一代的行 id 全集（含 group 子行），重算时对
+   「属于这份 profile 的行」（`meta.bundle` 有值，或入口文件在 profile 目录里）取差集卸载。
+   注意归属**不能**拿新清单的包名判——包刚被删掉时它已经不在清单里了，那样会漏卸（第一版就踩了，
+   自检第 3 段的四条断言当场红）。
+2. **信任摘要不符按哪一档渲染** —— dsh 没有这一层，无从对照。它没有「客户端插件内容信任」记录：
+   装上的客户端插件下次启动就装载。它只有 `allowBuilds`（安装脚本逐个点头）、
+   版本豁免的 `--accept-risk`、Web 端的 `--trusted-host` 三道别的闸。所以这是我们的界面粒度问题，不是对齐项。
+3. **会话流里的宿主提示与命令输出要不要翻** —— dsh **不翻**。locale 只在浏览器（`packages/client/locale`），
+   宿主侧没有调用点；`/compact` 的输出是写死英文（`command-compact/src/index.ts:71`），
+   客户端把 `result.text` 原样画进会话。定案：界面文案随语言变，会话记录按源语言定格（我们是中文）。
+
+判据：`scripts/profile-hot-mount-test.mjs` 新增第 3b 段四条（profile 自己的 patch 删 insert → 行下线 →
+别的行不受影响），32 条全过；`plugin-hot-update-test` 46 条无回归。

@@ -204,9 +204,10 @@ lib/ui/plugins/<id>/client.js
   19 个 `pinned` 的包不认覆盖，profile 里有同名副本时告警并写清哪份不生效。
 - 换包分两种：
   - **装包 / 卸包不用重启**（2026-11-05 起）：热更轮询同时盯 profile 的三份清单（`package.json` /
-  `compatibility.json` / `cordis.patch.yml`），指纹变了就重算组合包——新加的行挂上，
-  清单里删掉的包按 `meta.bundle` 认领并卸掉（`reconcileProfileBundles`）。
-  已知边界：只删 profile 自己那层 patch 里的某一条 insert、而 profile 还在时，那一行不会被卸（没记它由哪条 insert 挂上来）。
+  `compatibility.json` / `cordis.patch.yml`），指纹变了就重算组合包（`reconcileProfileBundles`）。
+  判据是**行 id 集合的差**（与 dsh 的 `recomposeProfile` 同一个做法）：属于这份 profile 的行
+  （`meta.bundle` 有值，或入口文件落在 profile 目录里）里，id 不在这一代组合中的就卸掉。
+  所以从 profile 自己的 `cordis.patch.yml` 删掉一条 insert，那一行也会跟着下线。
 - **换目录**（把包装到另一个物理目录）仍需重启：解析表在启动时建一次，同一包名两个目录是启动失败（见 §5）。
   - **改代码**（同一个包目录里文件变了）**不重启就生效**：监视器发现变化 → 换代 → 重挂那一行，见 §14。
 - 验收脚本 `scripts/plugin-swap-e2e.mjs`（进 `check:plugin`）：把 `lib/` 拷到临时目录、
@@ -376,10 +377,12 @@ const t = createT({ zh, en })
 | 用户改过的模式 | 只换「仍然是出厂默认值」的标签与描述（与 `BUILTIN_PRESET_LABELS` / `BUILTIN_PRESET_DESCRIPTIONS` 比）。用户改过的措辞是用户自己的话，宿主不该替他翻译 |
 | 闸 | `scripts/ui-locale-test.mjs` 现在两半都扫：界面半判全量中文字面量；宿主半只判「长得像设置分区」的对象里的八个键（`title/subtitle/label/help/tip/placeholder/text` 与字段形对象里的 `description`），外加 `save`/`action` 的 `return` 文案——工具说明与日志不算。当前 **54 个包 / 2790 个键 / 0 条硬编码** |
 
-**还没翻的一层（有意留下，要拍板）**：会话流里的宿主系统提示（`ctx.transcript.system`，例如
-「已启用插件 X，即时生效」）与斜杠命令的输出仍是中文。它们是**写进会话记录**的内容：
-翻了会让同一条会话在中英之间混排（旧记录还是中文），不翻则在英文界面里露出一句中文。
-这属于产品口径，不是漏做。
+**会话流里的内容不翻（2026-11-05 定案，与 dsh 同一条口径）**：宿主系统提示（`ctx.transcript.system`，
+例如「已启用插件 X，即时生效」）与斜杠命令的输出仍写中文。理由是它们**写进会话记录**，
+按当时的源语言定格；dsh 也是这么做的——它的 locale 只在浏览器里（`packages/client/locale`，
+宿主侧没有调用点），`/compact` 的输出是写死的英文（`packages/compaction/command-compact/src/index.ts:71`），
+客户端把 `result.text` 原样画进会话（`packages/client/ui-commands/src/client/service.ts:430`），
+所以中文界面里看到的是英文提示。**界面文案随语言变，会话记录不随语言变**；只是我们的源语言是中文。
 
 ### 16.6 为什么不是 dsh 那种运行期 locale 服务
 

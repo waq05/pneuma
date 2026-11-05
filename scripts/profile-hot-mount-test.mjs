@@ -119,7 +119,12 @@ const profileDir = join(process.env.DSC_HOME, 'profiles', 'test')
 
 /** 写 profile 清单（bundles 就是 `numa plugin add/remove` 改的那一行）。 */
 function writeProfile(bundles) {
-  writeText(join(profileDir, 'package.json'), JSON.stringify({ name: 'test-profile', dsh: { profile: { bundles } } }, null, 2) + '\n')
+  // `type: module` 是夹具自己用的：profile 目录里的临时插件是 ESM，不写它 Node 会先按
+  // CommonJS 解析一遍再回头，多一条 MODULE_TYPELESS 警告，淹掉真正的失败。
+  writeText(
+    join(profileDir, 'package.json'),
+    JSON.stringify({ name: 'test-profile', type: 'module', dsh: { profile: { bundles } } }, null, 2) + '\n',
+  )
 }
 
 /** 一个组合包的清单：`pneuma.bundle.patch` 写字符串或字符串数组。 */
@@ -214,6 +219,22 @@ try {
 check('profile 整个被删也不抛错', threw === null, String(threw))
 check('profile 挂过的行全卸掉', !mountedIds().includes('probe-b'), JSON.stringify(mountedIds()))
 
+// ── 3b. profile 自己那层 patch 删掉一条 insert ────────────────────────────
+console.log('── 3b. profile 自己那层 patch：删掉一条 insert，那一行也下来 ──')
+// 这一类行没有包归属（不是哪个组合包给的），只能按行 id 判「还在不在这一代里」。
+writeText(
+  join(profileDir, 'extra', 'plugin.js'),
+  "export function apply() { const g = (globalThis.__PROFILE_HOT ??= {}); (g.applied ??= {})['probe-patch'] = (g.applied['probe-patch'] ?? 0) + 1 }\n",
+)
+writeProfile(['@probe/two'])
+writeText(join(profileDir, 'cordis.patch.yml'), "- insert:\n    - id: probe-patch\n      name: ./extra/plugin.js\n")
+await handle.pollNow()
+check('profile 自己那层 patch 插的行挂上了', mountedIds().includes('probe-patch'), JSON.stringify(mountedIds()))
+check('它没有包归属（meta.bundle 为空）', infoOf('probe-patch')?.bundle === undefined, JSON.stringify(infoOf('probe-patch')))
+rmSync(join(profileDir, 'cordis.patch.yml'))
+await handle.pollNow()
+check('删掉那条 insert 后那一行也下来', !mountedIds().includes('probe-patch'), JSON.stringify(mountedIds()))
+check('同一份 profile 里别的行不受影响', mountedIds().includes('probe-b'), JSON.stringify(mountedIds()))
 // ── 4. patch 字符串数组：多层按顺序叠 ──────────────────────────────────────
 console.log('── 4. patch 数组：一个包声明两份 patch 文件 ──')
 makePackage('probe-c')

@@ -1006,7 +1006,7 @@ export async function mountBundlePlugins(
   root: Context,
   profileDir: string,
   options: BundleMountOptions = {},
-): Promise<{ failures: PluginMountFailure[]; warnings: string[] }> {
+): Promise<{ failures: PluginMountFailure[]; warnings: string[]; rows: string[] }> {
   initPluginRuntime(root)
   const appDir = options.appDir ?? APP_INSTALL_DIR
   // 组合包的插件代码在 profile 自己的 node_modules 里，它们 import @pneuma/runtime 与
@@ -1078,6 +1078,10 @@ export async function mountBundlePlugins(
   // 行 id 重复是配置错误：dsh 那边静默让后写覆盖前写，两个来源抢一个身份，出问题查不出来。
   if (applied.duplicates.length > 0) throw duplicateRowsError(applied.duplicates, '组合包')
 
+  // 这一代组合出的**行 id 全集**（含 group 的子行）：重算时按它判「哪一行还在」。
+  // 按 id 判而不是按「哪个包给的」，是因为 profile 自己那层 patch 插的行没有包归属——
+  // dsh 也是这么判的（packages/boot/app-boot/src/index.ts:350-355 比 listed 与 composed）。
+  const composedIds = collectRowIds(applied.rows)
   const failures: PluginMountFailure[] = []
   const ctx: RowMountContext = {
     profileDir,
@@ -1097,7 +1101,27 @@ export async function mountBundlePlugins(
     const failure = await mountRow(row, ctx)
     if (failure !== null) failures.push(failure)
   }
-  return { failures, warnings }
+  return { failures, warnings, rows: composedIds }
+}
+
+/**
+ * 一层行（含 group 的子行）里所有稳定的行 id。
+ *
+ * 只认写了 id 的行：没 id 的行按文件名当身份（见 `mountRow`），文件名不在这一层决定得了，
+ * 所以它们不参与「这一代还剩哪些行」的判断——那种行只有装包/卸包（`meta.bundle`）能认领。
+ * @param rows - 一层的行
+ */
+function collectRowIds(rows: readonly PluginRow[]): string[] {
+  const ids: string[] = []
+  const walk = (list: readonly PluginRow[]): void => {
+    for (const row of list) {
+      if (typeof row.id === 'string' && row.id !== '') ids.push(row.id)
+      // group 行：`config` 就是子行数组（见 docs/plugin-model.md §3 第 6 条）。
+      if (Array.isArray(row.config)) walk(row.config as PluginRow[])
+    }
+  }
+  walk(rows)
+  return ids
 }
 
 /** 一次 profile 重算的结果（热更轮询拿它写日志，自检拿它做断言）。 */
@@ -1122,9 +1146,11 @@ export interface ProfileReconcileResult {
  * 卸载按**身份**（行 id）走，不按文件路径：一个包可以给多行，行 id 与文件名也不是一回事，
  * {@link unmountExternalPlugin} 认的正是身份。
  *
- * 两类行都要能卸：
- *   - 组合包 patch 插进来的行：`meta.bundle` 记着它来自哪个包（{@link mountRow} 写的）；
- *   - profile 自己那层 patch 插的行：没有 `meta.bundle`，只能按「入口文件在 profile 里」认。
+ * 判据是**行 id 集合的差**（与 dsh 的 `recomposeProfile` 同一个做法：比 listed 与 composed）：
+ *   - 属于这份 profile 的行：组合包给的行（`meta.bundle` 有值）与 profile 自己那层
+ *     patch 插的行（入口文件落在 profile 目录里）；
+ *   - 还在这一代的行 id 里就留着，否则卸掉——所以从 profile 的 `cordis.patch.yml` 里删掉
+ *     一条 insert，那一行也会跟着下线。
  *
  * profile 目录里的 package.json 不在了（用户删了 profile）不抛错：当成「清单为空」，
  * 把这一份 profile 挂的行全部卸掉。
@@ -1141,32 +1167,31 @@ export async function reconcileProfileBundles(
 ): Promise<ProfileReconcileResult> {
   initPluginRuntime(root)
   const profileExists = existsSync(join(profileDir, 'package.json'))
-  // 清单用「包目录名」比对而不是包名：mountBundlePlugins 写 meta.bundle 时用的就是
-  // bundleDirOf 的最后一段（@scope/foo 取 foo）。两边口径必须一致，否则每轮都误卸。
-  const wanted = new Set<string>()
-  if (profileExists) {
-    for (const name of readProfile(profileDir).bundles) wanted.add(basename(bundleDirOf(profileDir, name)))
-  }
+
   const table = mountedOf(root)
   const before = new Set(table.keys())
   let failures: PluginMountFailure[] = []
   const warnings: string[] = []
+  /** 这一代组合出的行 id 全集；profile 不在时是空集（整份都算被删）。 */
+  let listed = new Set<string>()
   if (profileExists) {
     // 已经挂上的行由 mountRow 自己跳过（幂等），这里只负责把新加的行挂上。
     const mountedNow = await mountBundlePlugins(root, profileDir, options)
     failures = mountedNow.failures
     warnings.push(...mountedNow.warnings)
+    listed = new Set(mountedNow.rows)
   }
   const unmounted: string[] = []
   for (const identity of [...table.keys()]) {
+    // 属于这份 profile 的行才算：组合包给的行（meta.bundle 有值）与 profile 自己那层 patch 插的行
+    // （入口文件落在 profile 目录里）。应用自带行与 ~/.dsc/plugins/*.js 两样都不占，一律不动。
+    // 注意**不能**拿新清单的包名判归属：包刚被删掉，它已经不在这份清单里了，那样会漏卸。
     const bundle = getPluginMeta(identity)?.bundle
-    if (bundle !== undefined) {
-      if (wanted.has(bundle)) continue
-    } else if (profileExists || !fileUnderProfile(identity, profileDir)) {
-      // 没有 bundle 归属的行只可能是 profile 自己那层 patch 插的：清单还在就留着
-      // （我们没记「它由哪一条 insert 挂上来」，无从判断这一条是否被删掉）。
-      continue
-    }
+    const owned = bundle !== undefined || fileUnderProfile(identity, profileDir)
+    if (!owned) continue
+    // 还在这一代的行 id 里就留着。按 id 判，不看它由哪个包给的——profile 自己那层 patch
+    // 删掉一条 insert 时，那一行没有包归属，只有 id 能证明它已经不在了。
+    if (listed.has(identity)) continue
     await unmountExternalPlugin(identity)
     unmounted.push(identity)
   }
