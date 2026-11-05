@@ -385,6 +385,85 @@ function sseProbe(cookie) {
   })
 }
 
+
+/**
+ * 开一条长连接 SSE，按事件名取帧（启动图推帧要看好几帧，`sseProbe` 收到 hello 就断了）。
+ *
+ * 返回 `{ next(event, timeoutMs), close() }`：`next` 取队列里第一条该事件的帧（已 JSON.parse），
+ * 超时给 null。SSE 的块用空行分隔，块里 `event:` 行是名字、`data:` 行是载荷。
+ */
+function openSse(cookie) {
+  const queue = [];
+  const waiters = [];
+  let buffer = '';
+  let closed = false;
+  const req = httpRequest(
+    {
+      host: '127.0.0.1',
+      port: remotePort,
+      path: '/api/events',
+      method: 'GET',
+      headers: { accept: 'text/event-stream', ...(cookie === '' ? {} : { cookie }) },
+    },
+    (res) => {
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        buffer += chunk;
+        for (;;) {
+          const end = buffer.indexOf(String.fromCharCode(10) + String.fromCharCode(10));
+          if (end < 0) break;
+          const block = buffer.slice(0, end);
+          buffer = buffer.slice(end + 2);
+          const lines = block.split(String.fromCharCode(10));
+          const name = lines.find((line) => line.startsWith('event: '));
+          const data = lines.filter((line) => line.startsWith('data: ')).map((line) => line.slice(6)).join(String.fromCharCode(10));
+          if (name === undefined) continue;
+          let parsed = null;
+          try {
+            parsed = data === '' ? null : JSON.parse(data);
+          } catch {
+            parsed = null;
+          }
+          queue.push({ event: name.slice(7), payload: parsed });
+        }
+        for (const waiter of [...waiters]) waiter();
+      });
+      res.on('end', () => {
+        closed = true;
+        for (const waiter of [...waiters]) waiter();
+      });
+    },
+  );
+  req.on('error', () => {
+    closed = true;
+  });
+  req.end();
+  return {
+    request: req,
+    async next(event, timeoutMs = 8000) {
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        const index = queue.findIndex((item) => item.event === event);
+        if (index >= 0) return queue.splice(index, 1)[0].payload;
+        if (closed || Date.now() > deadline) return null;
+        await new Promise((resolve) => {
+          const timer = setTimeout(resolve, 100);
+          waiters.push(() => {
+            clearTimeout(timer);
+            resolve();
+          });
+        });
+      }
+    },
+    close() {
+      try {
+        req.destroy();
+      } catch {
+        // 可能已经断了
+      }
+    },
+  };
+}
 /** 开一条 WS：攒下每条帧的原文与解析结果，并把它们喂给一个重放视图。 */
 function openSocket(ticketOrUrl, wsOptions = {}) {
   const url = ticketOrUrl.startsWith('ws:')
@@ -697,6 +776,40 @@ try {
       sseAnon.status === 200 && sseAnon.type.includes('text/html'),
       `${String(sseAnon.status)} ${sseAnon.type}`,
     )
+    // 启动图推帧：手机壳与本地壳同一种帧（`event: plugins`）。以前手机端这一路没接，
+    // 装完插件要人下拉刷新才看得到——这里钉住「连上就有一帧、翻开关就再推一帧」。
+    const graphStream = openSse(cookie)
+    try {
+      const initialFrame = await graphStream.next('plugins', 10_000)
+      const beforeCount = Number(initialFrame?.graph?.entries?.length ?? 0)
+      check(
+        '紧跟 hello 就有一帧启动图（initial，条目数与图里的插件对得上）',
+        initialFrame !== null && beforeCount >= 19 && Array.isArray(initialFrame.graph.batches),
+        JSON.stringify({ rev: initialFrame?.rev, entries: beforeCount }),
+      )
+      const disabled = await hostInvoke(host, 'setPluginEnabled', ['ui-status', false])
+      const pushed = await graphStream.next('plugins', 10_000)
+      const afterCount = Number(pushed?.graph?.entries?.length ?? 0)
+      check(
+        '翻开关之后手机端当场收到新图（不用刷新，少一条）',
+        disabled.ok === true && pushed !== null && afterCount === beforeCount - 1,
+        JSON.stringify({ ok: disabled.ok, before: beforeCount, after: afterCount, error: disabled.value?.error }),
+      )
+      check(
+        '新帧的 rev 变了，且 removed 里点出少的那一条（只作说明，页面按 graph 核对）',
+        pushed !== null && pushed.rev !== initialFrame?.rev && (pushed.removed ?? []).includes('status'),
+        JSON.stringify({ rev: pushed?.rev, removed: pushed?.removed }),
+      )
+      const restoredToggle = await hostInvoke(host, 'setPluginEnabled', ['ui-status', true])
+      const restored = await graphStream.next('plugins', 10_000)
+      check(
+        '恢复开关又推一帧，条目回到原来的数量',
+        restoredToggle.ok === true && Number(restored?.graph?.entries?.length ?? -1) === beforeCount,
+        JSON.stringify({ ok: restoredToggle.ok, entries: restored?.graph?.entries?.length }),
+      )
+    } finally {
+      graphStream.close()
+    }
   }
 
   // ── 3. 票据 ────────────────────────────────────────────────────────────────

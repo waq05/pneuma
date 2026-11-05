@@ -763,7 +763,7 @@ dsh 的 Web 组合默认就带着 `client-hmr`，代价是「原地升级一个�
 | 安装脚本（postinstall 这类） | 把被拦下的名字记进 profile 的 `allowBuilds`，逐个点头（`packages/boot/plugin-manager/src/build-approval.ts`） | 原来**完全没提**：pnpm 10 起默认不跑第三方脚本，装完只看到「装上了」 | **补了**，见下 |
 | SSE 断线 | 要求刷新页面 | 壳重连时重取 `plugins.initial` | 等价 |
 | 插件目录发现 | 没有 | 有（12.22 的 C） | 多做 |
-| 手机端（远程壳） | 没有这个载体 | 不推帧，每次请求强制重收图（`src/packages/remote/index.ts:565` 的注释） | 记着，见文末 |
+| 手机端（远程壳） | 没有这个载体 | 原来不推帧、只能刷新；**已补**，与本地共用 `core/ui-graph-frames.ts`（见 12.25） | 齐 |
 
 **安装脚本这一条怎么补的**：不另造策略文件——授权仍走 pnpm 自己的 `approve-builds`（本仓 pnpm 10.15
 的入口），我们只负责「把被跳过的名字摆到人面前」：
@@ -778,6 +778,8 @@ dsh 的 Web 组合默认就带着 `client-hmr`，代价是「原地升级一个�
 
 **没做的（记着，不装做完）**：手机端（`remote`）没有帧通道，刷新页面才看到新插件——dsh 没有这个载体，
 无从对照；要补就是给远程也接一条推送，属于另一项工程。
+
+> 这条已经在 12.25 里做掉了（见文末）。
 
 ### 12.24 跟上 dsh 0.2.2-rc.1：依赖层升上去，插件内核一行没动（2026-11-05 傍晚）
 
@@ -812,3 +814,22 @@ dsh 自己的包在 `peerDependencies` 里写的是**精确版本**（`@deepseek
 
 **判据**：`check:core` 100/100（916.1 秒）、`check:plugin` 89 包 / 466 条断言、清单 76/24/21、
 `check:ui` 55/55、`check:dsh` 170 PASS / 0 FAIL、`check:style` 1245 文件、`check:ui:e2e` 5/5（187.2 秒）。
+
+### 12.25 手机端推帧 + 下拉浮层改锚点定位（2026-11-05 傍晚，用户点了「1 和 2」）
+
+**手机端**：上一轮判成「没有帧通道」，复核后是「通道有、宿主没接」。`remote` 装配 `createUiEvents`
+时补上 `plugins` 源，并订 `dsc/ui-plugins-changed` / `dsc/ui-graph-dirty`；帧的组装与扇出抽到
+`core/ui-graph-frames.ts`，本地壳与手机壳共用（`removed` 由前后两帧 id 差算，`initial` 那一帧要
+`remember` 当基准，否则第一次推帧的 `removed` 永远空——这条路是自检抓出来的）。
+
+**锚点定位**：`Select`（6 个包在用）从「打开后量一次再改坐标」改成 CSS 锚点定位
+（`anchor-name` / `position-anchor` / `anchor()` / `position-try-fallbacks: flip-block`），
+不支持锚点的浏览器仍走原来的测量。dsh 这轮删掉 `useAnchoredPosition`、25 个文件改成同一种写法，
+我们这边对应的是这一个共享组件加一个工具模块（`ui-primitives/ui/anchored.ts`）。
+
+**顺带发现**：`scripts/remote-e2e.mjs` 不在任何门禁里（`check:core` 只收 `-test.mjs`、`check:ui` 只收
+`ui-*`），而且有两条一直是红的（设备清单两行、第二宿主休眠）。在 HEAD 上复跑报错逐字相同，不是本轮
+弄坏的；这轮只把新加的三条挂进去跑通，那两条没动。
+
+**判据**：`ui-graph-frames-test` 18 条、`ui-anchored-test` 11 条、`ui-anchor-e2e` 真机 11 条、
+`remote-e2e` 新增 3 条；`check:ui` 57/57、`check:ui:e2e` 6/6、`check:dsh` 170 PASS。

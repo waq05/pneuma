@@ -11,9 +11,10 @@
  *
  * @module dsc-ui-shell/platform/select
  */
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { IconCheck, IconChevronDown } from './icons'
+import { anchorNameOf, anchorPositioningSupported, anchoredStyles } from './anchored'
 
 /** 一个候选项：值 + 展示文字。 */
 export interface SelectOption<T extends string> {
@@ -49,6 +50,15 @@ export function Select<T extends string>(props: {
   /** 浮层坐标与测量宽度：打开后一帧内量好再上屏，避免先画错位置闪一下。 */
   const [place, setPlace] = useState<{ left: number; top: number; width: number } | null>(null)
   const listId = useId()
+  /**
+   * 锚点定位这条路：浏览器认 `anchor-name` 就把位置交给它（打开即到位，没有「先画错再挪」那一拍），
+   * 不认就走下面的测量。两条路的位置口径一样（贴下缘、对齐左缘、不窄于触发钮、放不下翻上去）。
+   */
+  const cssAnchor = useMemo(() => anchorPositioningSupported(), [])
+  const anchored = useMemo(
+    () => (cssAnchor ? anchoredStyles(anchorNameOf(listId), { gap: POP_GAP, width: 'anchor' }) : null),
+    [cssAnchor, listId],
+  )
 
   const current = options.find((option) => option.value === value)
   const label = displayLabel ?? current?.label ?? ''
@@ -71,6 +81,8 @@ export function Select<T extends string>(props: {
   // 打开后量触发钮与浮层的实际尺寸定坐标：先按默认位置画出来才量得到高度，
   // 量完在浏览器绘制前改坐标（useLayoutEffect），屏幕上看不到中间态。
   useLayoutEffect(() => {
+    // 浏览器自己会贴（CSS 锚点定位）：不量、不设坐标，打开就是终态。
+    if (cssAnchor) return
     if (!open) {
       setPlace(null)
       return
@@ -84,7 +96,7 @@ export function Select<T extends string>(props: {
     const top = below ? rect.bottom + POP_GAP : Math.max(4, rect.top - POP_GAP - height)
     setPlace({ left: rect.left, top, width: rect.width })
     // place 变化不重量：宽度只跟触发钮走，位置只在开合时定一次。
-  }, [open])
+  }, [open, cssAnchor])
 
   // 点在浮层和触发钮外面就收起；滚轮滚页面时跟着触发钮走会穿帮，直接收。
   useEffect(() => {
@@ -177,6 +189,8 @@ export function Select<T extends string>(props: {
         data-tip={label}
         onClick={() => (open ? close() : openPop())}
         onKeyDown={onButtonKey}
+        // 锚点定位这条路：触发钮自己就是锚点，浮层用 position-anchor 贴上来。
+        {...(anchored === null ? {} : { style: anchored.anchor })}
       >
         <span className="select-value">{label}</span>
         <IconChevronDown size={14} className="select-chevron" />
@@ -189,9 +203,11 @@ export function Select<T extends string>(props: {
             className="select-pop"
             role="listbox"
             style={
-              place === null
-                ? { visibility: 'hidden' }
-                : { left: `${String(place.left)}px`, top: `${String(place.top)}px`, minWidth: `${String(place.width)}px` }
+              anchored !== null
+                ? anchored.panel
+                : place === null
+                  ? { visibility: 'hidden' }
+                  : { left: `${String(place.left)}px`, top: `${String(place.top)}px`, minWidth: `${String(place.width)}px` }
             }
           >
             {options.map((option, index) => {

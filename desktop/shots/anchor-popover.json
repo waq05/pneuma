@@ -1,0 +1,28 @@
+{
+  "console": [],
+  "found": "通用",
+  "measure": {
+    "trigger": {
+      "left": 851.7899780273438,
+      "right": 1069.5900268554688,
+      "top": 168.10104370117188,
+      "bottom": 199.78104782104492,
+      "width": 217.800048828125
+    },
+    "pop": {
+      "left": 851.78125,
+      "top": 203.78125,
+      "width": 217.8125,
+      "height": 145.33334350585938
+    },
+    "anchorName": "--dsc-anchor-_r_0_",
+    "positionAnchor": "--dsc-anchor-_r_0_",
+    "visibility": "visible",
+    "tryFallbacks": "flip-block",
+    "viewport": {
+      "w": 1266,
+      "h": 797
+    }
+  },
+  "shot": "D:\\dsc\\desktop\\shots\\anchor-popover.png"
+}

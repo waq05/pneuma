@@ -13671,6 +13671,9 @@ dsh 会把被拦下的名字记进 profile 的 `allowBuilds` 让人逐个点头
 **还记着一条**：手机端（`remote`）没有帧通道，刷新页面才看到新插件（`src/packages/remote/index.ts:565`
 的注释写明「手机端没有 HMR 推帧」）。dsh 没有这个载体，无从对照；要补是另一项工程。
 
+> 补记（同一天傍晚）：这条已经补了，见下面那一节。原注释说得也不准——通道是通的，是宿主那侧
+> 没把启动图这一路接上。
+
 ### 顺带查清的：两条 e2e 本来就红（不是这一轮弄坏的）
 
 `pnpm run check:ui:e2e` 这一轮 **3/5** 通过：`ui-boot-e2e`、`ui-remote-web-e2e`、`ui-two-halves-e2e` 绿；

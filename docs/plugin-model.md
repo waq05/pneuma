@@ -293,6 +293,12 @@ lib/ui/plugins/<id>/client.js
 发起者发 `dsc/ui-graph-dirty`，界面服务订阅后换图并推帧。为什么不让页面自己轮询图：
 每次请求都重算图，页面手里那份只会停在加载时的那一刻。
 
+**同一个通道手机端也接上了（2026-11-05）**：远程壳的数据通道与本地是同一套 `createUiEvents`，
+客户端也是同一份壳产物，所以 `event: plugins` 这一路只要宿主那侧接上就通。原来 `remote` 装配时
+没传 `plugins` 源，手机页面永远收不到「图变了」，只能靠刷新。现在两处共用 `core/ui-graph-frames.ts`：
+本地推的是 `webserver` 算的那张图，手机推的是 `remote` 自己那份 `bootSource`（同一份代码，两边各取
+自己当前的图）。帧的形状与语义完全一致（`{rev, changed, removed, graph}`，页面按 `graph` 对账）。
+
 **③ 单文件插件进目录 → 挂上**。见 §12 那条：轮询顺带盯 `~/.dsc/plugins` 的文件名集合。
 
 **边界**：`ui-layout` / `ui-renderer` 是页面骨架与渲染器，换掉等于换整页，启停仍提示刷新；

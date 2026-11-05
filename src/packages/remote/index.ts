@@ -67,6 +67,7 @@ import { activeProfileDir } from '@pneuma/runtime/core/profile-dir.js'
 import { uiAssetsDir, uiPluginsDir } from '@pneuma/runtime/core/ui-bundles.js'
 import { createUiBootSource } from '@pneuma/runtime/core/ui-boot-source.js'
 import { createUiEvents } from '@pneuma/runtime/core/ui-events.js'
+import { createUiGraphFrames, graphFrameOf } from '@pneuma/runtime/core/ui-graph-frames.js'
 import { validateUiArgs, type UiMethod } from '@pneuma/runtime/core/ui-methods.js'
 import { DSC_VERSION } from '@pneuma/runtime/core/version.js'
 import { readCookie } from '@pneuma/runtime/core/web-http.js'
@@ -542,6 +543,30 @@ export const remotePlugin: Plugin.Object = {
         shellUiBuilt = null
         return shellUiBuilt
       }
+      // 与本地界面服务同一份当前代快照（图 + 批 combo 一起换代）；手机壳取的
+      // `/plugins/??…` 因此与图里的批地址严格同代。
+      //
+      // **每次取向都强制重收**：页面任何一个请求都会走到这里（`/boot.js`、刷新），带内容
+      // 摘要的 rev 让强制重收也不会误换代（字节没变 combo/上一代都原地不动）。
+      const bootSource = createUiBootSource({
+        host: { name: 'Pneuma', version: DSC_VERSION },
+        builtinDir: uiPluginsDir(),
+        // profile 里装的组合包界面半也进手机端那张图：手机跑的是同一份壳产物，本机与手机
+        // 看同一张图才不会「桌面有、手机没有」。写出来而不是靠缺省，是为了这行能被人看见。
+        packageDir: activeProfileDir(),
+      })
+      const freshGraph = (): UiBootGraph => {
+        bootSource.refresh()
+        return bootSource.graph()
+      }
+      /**
+       * 启动图帧：与本地壳同一套（`event: plugins`）。
+       *
+       * 手机壳跑的是同一份壳产物，客户端那半已经在监听这个事件（`ui-runtime/ui/host-channel.ts`）；
+       * 宿主这侧原来没接这一路，于是「桌面装个插件、手机开着页面看不到」——要人下拉刷新。
+       * 现在两处变化都推：翻开关（`dsc/ui-plugins-changed`）与盘上集合变了（`dsc/ui-graph-dirty`）。
+       */
+      const graphFrames = createUiGraphFrames()
       const events = createUiEvents({
         snapshot: () => ({ ...snapshot() }),
         invoke: async (method, args) => {
@@ -557,25 +582,29 @@ export const remotePlugin: Plugin.Object = {
           host: { name: 'Pneuma', version: DSC_VERSION },
         }),
         subscribe: (listener) => ctx.transcript.subscribe(listener),
+        // 紧跟 hello 发一帧当前图，之后有变化再推。
+        //
+        // initial 也要「记下」这一帧（`remember`，不广播）：下一帧的 `removed` 拿它当基准，
+        // 不记的话第一次推帧只知道「没有上一帧」，少掉的那一条永远点不出来。
+        plugins: {
+          initial: () => {
+            const frame = graphFrameOf(freshGraph(), graphFrames.current)
+            graphFrames.remember(frame)
+            return frame
+          },
+          subscribe: (listener) => graphFrames.listen(listener),
+        },
         log: (line) => ctx.logger.warn(line),
       })
-      // 与本地界面服务同一份当前代快照（图 + 批 combo 一起换代）；手机壳取的
-      // `/plugins/??…` 因此与图里的批地址严格同代。
-      //
-      // 远程这一侧**每次取向都强制重收**：手机端没有 HMR 推帧（SSE 只服务本地壳），
-      // 而「宿主重建插件后手机刷新能看到新界面」是壳档的既有承诺；带内容摘要的 rev
-      // 让强制重收也不会误换代（字节没变 combo/上一代都原地不动）。
-      const bootSource = createUiBootSource({
-        host: { name: 'Pneuma', version: DSC_VERSION },
-        builtinDir: uiPluginsDir(),
-        // profile 里装的组合包界面半也进手机端那张图：手机跑的是同一份壳产物，本机与手机
-        // 看同一张图才不会「桌面有、手机没有」。写出来而不是靠缺省，是为了这行能被人看见。
-        packageDir: activeProfileDir(),
-      })
-      const freshGraph = (): UiBootGraph => {
-        bootSource.refresh()
-        return bootSource.graph()
+      const pushGraphFrame = (): void => {
+        graphFrames.push(graphFrameOf(freshGraph(), graphFrames.current))
       }
+      const offToggle = ctx.on('dsc/ui-plugins-changed', pushGraphFrame)
+      const offGraphDirty = ctx.on('dsc/ui-graph-dirty', pushGraphFrame)
+      ctx.effect(() => () => {
+        offToggle()
+        offGraphDirty()
+      }, 'remote: 退订启动图帧')
       shellUiBuilt = {
         assetsDir,
         boot: freshGraph,

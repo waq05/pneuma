@@ -30,6 +30,7 @@ import { attachmentStore, sanitizeFileRefs } from '@pneuma/runtime/core/attachme
 import { resolvePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { createUiEvents, type UiEventsHandle } from '@pneuma/runtime/core/ui-events.js'
 import { createUiHmr, type UiHmrFrame, type UiHmrHandle } from '@pneuma/runtime/core/ui-hmr.js'
+import { createUiGraphFrames, graphFrameOf } from '@pneuma/runtime/core/ui-graph-frames.js'
 import type { UiBootGraph } from '@pneuma/runtime/core/ui-manifest.js'
 import { UI_PLUGIN_MANIFEST, uiPluginsDir } from '@pneuma/runtime/core/ui-bundles.js'
 import { isUiMethod, UI_METHODS, validateUiArgs } from '@pneuma/runtime/core/ui-methods.js'
@@ -139,10 +140,8 @@ export const webserverPlugin: Plugin.Object = {
        * 启动图帧的当前值 + 订阅者。通道先建、轮询器后建，中间用这个盒子接上：
        * 连接建立时先发 `current ?? 现取一份图`，之后轮询器推一帧就广播一帧。
        */
-      const pluginFrames: {
-        current: UiHmrFrame | null
-        listeners: Set<(frame: UiHmrFrame) => void>
-      } = { current: null, listeners: new Set() }
+      // 当前值 + 订阅者放在 core 的共用盒子里：手机壳（remote）从那侧喂同一套帧。
+      const graphFrames = createUiGraphFrames()
       /**
        * 旁问增量帧的扇出（2026-10-25）。
        *
@@ -160,14 +159,7 @@ export const webserverPlugin: Plugin.Object = {
         }
       })
       const pushPlugins = (frame: UiHmrFrame): void => {
-        pluginFrames.current = frame
-        for (const listener of [...pluginFrames.listeners]) {
-          try {
-            listener(frame)
-          } catch {
-            // 一个订阅者炸了不该拖垮别的（与通道里其他 fan-out 同一条纪律）
-          }
-        }
+        graphFrames.push(frame)
       }
       const currentGraph = (): { rev: string; graph: unknown } => {
         const graph = handle?.boot()
@@ -217,12 +209,7 @@ export const webserverPlugin: Plugin.Object = {
             const { rev, graph } = currentGraph()
             return { rev, changed: [], removed: [], graph }
           },
-          subscribe: (listener) => {
-            pluginFrames.listeners.add(listener)
-            return () => {
-              pluginFrames.listeners.delete(listener)
-            }
-          },
+          subscribe: (listener) => graphFrames.listen(listener),
         },
         // 旁问增量：`event: ask`（同样不进帧 hub——丢一段没关系，最终答案由 invoke 补齐）。
         ask: {
@@ -265,15 +252,8 @@ export const webserverPlugin: Plugin.Object = {
         handle.refresh()
         const graph = currentGraph().graph as UiBootGraph | null
         if (graph === null) return
-        const beforeIds = new Set((pluginFrames.current?.graph.entries ?? []).map((entry) => entry.id))
-        const afterIds = new Set(graph.entries.map((entry) => entry.id))
-        pushPlugins({
-          rev: graph.rev,
-          changed: [],
-          // 上一帧给页面的图里还有、新图里没有的那些：只作说明用（页面按 graph 核对）。
-          removed: beforeIds.size === 0 ? [] : [...beforeIds].filter((id) => !afterIds.has(id)),
-          graph,
-        })
+        // removed 由「上一帧 vs 这一帧」的 id 差算，与手机壳走同一个函数（core/ui-graph-frames）。
+        pushPlugins(graphFrameOf(graph, graphFrames.current))
       }
       offToggle = ctx.on('dsc/ui-plugins-changed', () => {
         pushGraphFrame()
