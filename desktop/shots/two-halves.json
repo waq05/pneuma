@@ -10,133 +10,147 @@
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "64e68068157a"
+            "rev": "2b19173508f4"
           },
           "ask": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "a2692ebb8b01"
+            "rev": "3048ebf989d2"
           },
           "browser": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "3b69fdf8df91"
+            "rev": "643bc10e7587"
           },
           "composer": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "7d95a9ff5244"
+            "rev": "46d6bf87aff1"
           },
           "files": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "8717a1709a7e"
+            "rev": "eb69a87f31d1"
+          },
+          "layout": {
+            "state": "loaded",
+            "via": "cordis",
+            "fiber": 2,
+            "error": null,
+            "rev": "008cc8cbcc3a"
           },
           "palette": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "786fa420ea49"
+            "rev": "b5f2fab9c679"
           },
           "plugins": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "24f67f99680a"
+            "rev": "557ba1e2ab80"
           },
           "preview": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "4250718e417d"
+            "rev": "d718a3a6a9f5"
           },
           "prompt": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "ca3169d7b732"
+            "rev": "8016fb78edec"
+          },
+          "renderer": {
+            "state": "loaded",
+            "via": "cordis",
+            "fiber": 2,
+            "error": null,
+            "rev": "ecaf049fb708"
           },
           "sessions": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "0074e28f2b12"
+            "rev": "b8820be9524f"
           },
           "settings": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "6d3c7e18f57d"
+            "rev": "b461ba07fa01"
           },
           "skills": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "a06086a1ef62"
+            "rev": "7c8fc66809e8"
           },
           "status": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "b20641f77b5b"
+            "rev": "cb66b929616a"
           },
           "statusbar": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "2914b626da32"
+            "rev": "bd08d04f0241"
           },
           "tasks": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "aa57e8242900"
+            "rev": "a2cc55ebcf28"
           },
           "team": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "0e6e4bb0397b"
+            "rev": "eee99f2645e6"
           },
           "terminal": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "d0d2c5aaabac"
+            "rev": "a1049f11e0ef"
           },
           "transcript": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "d685058a2059"
+            "rev": "ff3b687bdd4d"
           },
           "trace": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "3e4e37035a8d"
+            "rev": "1249c023fe64"
           },
           "dsc-demo-two-halves": {
             "state": "loaded",
@@ -157,14 +171,14 @@
           }
         ],
         "statusbarEntries": 2,
-        "statusbarText": "0 轮 0 步\n0%",
+        "statusbarText": "",
         "faults": [],
         "syncFailures": [],
         "services": null,
         "channel": null,
         "hmrMark": null,
         "diagnostics": false,
-        "bodyText": "Pneuma\n新会话\n技能\n插件\n工作区\ndsc\n新会话\n刚刚\n今日总用量\n0 tok\n设置\n新会话\n对话\n轨迹\n有什么可以帮忙的？\n\n输入 / 查看可用指令 · 消息会携带当前工作目录上下文\n\n看懂代码\n解释一处实现的来龙去脉\n做点东西\n从需求一路写到能跑\n审查改动\n看未提交的改动有没有坑\n排查问题\n从一个报错查到根因\nfeat/dock-browser\n+\n工作区可写\n标准模式\n未知模型\n默认\n0 轮 0 步\n0%\n两半示例\nPneuma：没有可用的模型端点。",
+        "bodyText": "Pneuma\n新会话\n技能\n插件\n工作区\ndsc\n新会话\n刚刚\n今日总用量\n0 tok\n设置\n新会话\n对话\n轨迹\n有什么可以帮忙的？\n\n输入 / 查看可用指令 · 消息会携带当前工作目录上下文\n\n看懂代码\n解释一处实现的来龙去脉\n做点东西\n从需求一路写到能跑\n审查改动\n看未提交的改动有没有坑\n排查问题\n从一个报错查到根因\nfeat/pluginization\n+\n工作区可写\n标准模式\n未知模型\n默认\n两半示例\nPNEUMA\n正在启动…\nPneuma：没有可用的模型端点。",
         "bootErrorText": [],
         "cookie": "",
         "viaAttrs": [],
@@ -175,7 +189,7 @@
         "net": {
           "/api/boot": {
             "status": 200,
-            "ms": 8
+            "ms": 7
           },
           "/plugins/??rev=1": {
             "status": 404,
@@ -194,133 +208,147 @@
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "64e68068157a"
+            "rev": "2b19173508f4"
           },
           "ask": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "a2692ebb8b01"
+            "rev": "3048ebf989d2"
           },
           "browser": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "3b69fdf8df91"
+            "rev": "643bc10e7587"
           },
           "composer": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "7d95a9ff5244"
+            "rev": "46d6bf87aff1"
           },
           "files": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "8717a1709a7e"
+            "rev": "eb69a87f31d1"
+          },
+          "layout": {
+            "state": "loaded",
+            "via": "cordis",
+            "fiber": 2,
+            "error": null,
+            "rev": "008cc8cbcc3a"
           },
           "palette": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "786fa420ea49"
+            "rev": "b5f2fab9c679"
           },
           "plugins": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "24f67f99680a"
+            "rev": "557ba1e2ab80"
           },
           "preview": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "4250718e417d"
+            "rev": "d718a3a6a9f5"
           },
           "prompt": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "ca3169d7b732"
+            "rev": "8016fb78edec"
+          },
+          "renderer": {
+            "state": "loaded",
+            "via": "cordis",
+            "fiber": 2,
+            "error": null,
+            "rev": "ecaf049fb708"
           },
           "sessions": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "0074e28f2b12"
+            "rev": "b8820be9524f"
           },
           "settings": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "6d3c7e18f57d"
+            "rev": "b461ba07fa01"
           },
           "skills": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "a06086a1ef62"
+            "rev": "7c8fc66809e8"
           },
           "status": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "b20641f77b5b"
+            "rev": "cb66b929616a"
           },
           "statusbar": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "2914b626da32"
+            "rev": "bd08d04f0241"
           },
           "tasks": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "aa57e8242900"
+            "rev": "a2cc55ebcf28"
           },
           "team": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "0e6e4bb0397b"
+            "rev": "eee99f2645e6"
           },
           "terminal": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "d0d2c5aaabac"
+            "rev": "a1049f11e0ef"
           },
           "transcript": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "d685058a2059"
+            "rev": "ff3b687bdd4d"
           },
           "trace": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "3e4e37035a8d"
+            "rev": "1249c023fe64"
           },
           "dsc-demo-two-halves": {
             "state": "loaded",
@@ -341,14 +369,14 @@
           }
         ],
         "statusbarEntries": 2,
-        "statusbarText": "0 轮 0 步\n0%",
+        "statusbarText": "",
         "faults": [],
         "syncFailures": [],
         "services": null,
         "channel": null,
         "hmrMark": null,
         "diagnostics": false,
-        "bodyText": "Pneuma\n新会话\n技能\n插件\n工作区\ndsc\n新会话\n刚刚\n今日总用量\n0 tok\n设置\n新会话\n对话\n轨迹\n有什么可以帮忙的？\n\n输入 / 查看可用指令 · 消息会携带当前工作目录上下文\n\n看懂代码\n解释一处实现的来龙去脉\n做点东西\n从需求一路写到能跑\n审查改动\n看未提交的改动有没有坑\n排查问题\n从一个报错查到根因\nfeat/dock-browser\n+\n工作区可写\n标准模式\n未知模型\n默认\n更改\n+0\n−0\n0 轮 0 步\n0%\n两半示例",
+        "bodyText": "Pneuma\n新会话\n技能\n插件\n工作区\ndsc\n新会话\n刚刚\n今日总用量\n0 tok\n设置\n新会话\n对话\n轨迹\n更改\n有什么可以帮忙的？\n\n输入 / 查看可用指令 · 消息会携带当前工作目录上下文\n\n看懂代码\n解释一处实现的来龙去脉\n做点东西\n从需求一路写到能跑\n审查改动\n看未提交的改动有没有坑\n排查问题\n从一个报错查到根因\nfeat/pluginization\n+\n工作区可写\n标准模式\n未知模型\n默认\n两半示例",
         "bootErrorText": [],
         "cookie": "",
         "viaAttrs": [],
@@ -357,7 +385,7 @@
         "entryCount": 15,
         "twoHalves": 1
       },
-      "nonce": "09b1c725"
+      "nonce": "7ebfffac"
     },
     {
       "label": "还原轮",
@@ -369,133 +397,147 @@
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "64e68068157a"
+            "rev": "2b19173508f4"
           },
           "ask": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "a2692ebb8b01"
+            "rev": "3048ebf989d2"
           },
           "browser": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "3b69fdf8df91"
+            "rev": "643bc10e7587"
           },
           "composer": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "7d95a9ff5244"
+            "rev": "46d6bf87aff1"
           },
           "files": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "8717a1709a7e"
+            "rev": "eb69a87f31d1"
+          },
+          "layout": {
+            "state": "loaded",
+            "via": "cordis",
+            "fiber": 2,
+            "error": null,
+            "rev": "008cc8cbcc3a"
           },
           "palette": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "786fa420ea49"
+            "rev": "b5f2fab9c679"
           },
           "plugins": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "24f67f99680a"
+            "rev": "557ba1e2ab80"
           },
           "preview": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "4250718e417d"
+            "rev": "d718a3a6a9f5"
           },
           "prompt": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "ca3169d7b732"
+            "rev": "8016fb78edec"
+          },
+          "renderer": {
+            "state": "loaded",
+            "via": "cordis",
+            "fiber": 2,
+            "error": null,
+            "rev": "ecaf049fb708"
           },
           "sessions": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "0074e28f2b12"
+            "rev": "b8820be9524f"
           },
           "settings": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "6d3c7e18f57d"
+            "rev": "b461ba07fa01"
           },
           "skills": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "a06086a1ef62"
+            "rev": "7c8fc66809e8"
           },
           "status": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "b20641f77b5b"
+            "rev": "cb66b929616a"
           },
           "statusbar": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "2914b626da32"
+            "rev": "bd08d04f0241"
           },
           "tasks": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "aa57e8242900"
+            "rev": "a2cc55ebcf28"
           },
           "team": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "0e6e4bb0397b"
+            "rev": "eee99f2645e6"
           },
           "terminal": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "d0d2c5aaabac"
+            "rev": "a1049f11e0ef"
           },
           "transcript": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "d685058a2059"
+            "rev": "ff3b687bdd4d"
           },
           "trace": {
             "state": "loaded",
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "3e4e37035a8d"
+            "rev": "1249c023fe64"
           },
           "dsc-demo-two-halves": {
             "state": "loaded",
@@ -516,14 +558,14 @@
           }
         ],
         "statusbarEntries": 2,
-        "statusbarText": "0 轮 0 步\n0%",
+        "statusbarText": "",
         "faults": [],
         "syncFailures": [],
         "services": null,
         "channel": null,
         "hmrMark": null,
         "diagnostics": false,
-        "bodyText": "Pneuma\n新会话\n技能\n插件\n工作区\ndsc\n新会话\n刚刚\n今日总用量\n0 tok\n设置\n新会话\n对话\n轨迹\n有什么可以帮忙的？\n\n输入 / 查看可用指令 · 消息会携带当前工作目录上下文\n\n看懂代码\n解释一处实现的来龙去脉\n做点东西\n从需求一路写到能跑\n审查改动\n看未提交的改动有没有坑\n排查问题\n从一个报错查到根因\nfeat/dock-browser\n+\n工作区可写\n标准模式\n未知模型\n默认\n更改\n+0\n−0\n0 轮 0 步\n0%\n两半示例",
+        "bodyText": "Pneuma\n新会话\n技能\n插件\n工作区\ndsc\n新会话\n刚刚\n今日总用量\n0 tok\n设置\n新会话\n对话\n轨迹\n更改\n有什么可以帮忙的？\n\n输入 / 查看可用指令 · 消息会携带当前工作目录上下文\n\n看懂代码\n解释一处实现的来龙去脉\n做点东西\n从需求一路写到能跑\n审查改动\n看未提交的改动有没有坑\n排查问题\n从一个报错查到根因\nfeat/pluginization\n+\n工作区可写\n标准模式\n未知模型\n默认\n两半示例",
         "bootErrorText": [],
         "cookie": "",
         "viaAttrs": [],

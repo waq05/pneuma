@@ -1,7 +1,44 @@
 {
-  "startedAt": 1792994945862,
-  "port": 60588,
-  "rounds": [],
+  "startedAt": 1793875622909,
+  "port": 65440,
+  "rounds": [
+    {
+      "label": "第一轮",
+      "build": {
+        "written": "1",
+        "kept": "20"
+      },
+      "rev": "b6e530615ffd",
+      "probe": "552b3d45",
+      "waitedMs": 164
+    },
+    {
+      "label": "第二轮",
+      "build": {
+        "written": "1",
+        "kept": "20"
+      },
+      "rev": "510d720c1ef6",
+      "probe": "f1b951fd",
+      "waitedMs": 313
+    },
+    {
+      "label": "还原轮",
+      "build": {
+        "written": "1",
+        "kept": "20"
+      },
+      "rev": "bd08d04f0241",
+      "probe": "f1b951fd",
+      "waitedMs": 309
+    }
+  ],
+  "baseline": {
+    "rev": "bd08d04f0241",
+    "requests": 2,
+    "timeOrigin": 1793875626555.7,
+    "loaded": 21
+  },
   "failures": 0,
   "console": []
 }

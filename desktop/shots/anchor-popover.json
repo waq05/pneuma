@@ -24,5 +24,35 @@
       "h": 797
     }
   },
+  "flip": {
+    "trigger": {
+      "top": 765.3333740234375,
+      "bottom": 789.3333740234375
+    },
+    "pop": {
+      "top": 641.3333740234375,
+      "bottom": 761.3333740234375,
+      "height": 120
+    },
+    "viewport": 797
+  },
+  "hover": {
+    "before": {
+      "anchorTop": 502.4895935058594,
+      "anchorLeft": 237,
+      "cardBottom": 496.4895935058594,
+      "cardLeft": 213,
+      "cardWidth": 340
+    },
+    "after": {
+      "anchorTop": 429.82293701171875,
+      "cardBottom": 423.82293701171875
+    },
+    "scrolled": 72.66666412353516,
+    "viewport": {
+      "w": 1266,
+      "h": 797
+    }
+  },
   "shot": "D:\\dsc\\desktop\\shots\\anchor-popover.png"
 }

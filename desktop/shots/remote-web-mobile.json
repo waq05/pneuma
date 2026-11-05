@@ -1,9 +1,9 @@
 {
   "probe": {
     "width": 376,
-    "height": 782,
-    "plugins": 19,
-    "loaded": 19,
+    "height": 781,
+    "plugins": 21,
+    "loaded": 21,
     "failed": [],
     "faults": 0,
     "overflow": 0,

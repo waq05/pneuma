@@ -2,7 +2,7 @@
   "probe": {
     "cards": 1,
     "opened": true,
-    "head": "调用了dsh_write_noteC:\\Users\\waq\\AppData\\Local\\Temp\\dsc-dsh-card-xIX…在轨迹中查看",
+    "head": "工具调用· dsh_write_noteC:\\Users\\waq\\AppData\\Local\\Temp\\dsc-dsh-card-ouw…在轨迹中查看",
     "status": "entry tool-card status-done open",
     "hasChangeBlock": true,
     "hasDiffBody": true,
@@ -14,25 +14,26 @@
       "1+第一行：这条备注由 dsh 风格插件写入",
       "2+第二行：它带着一张 diff 卡片"
     ],
-    "resultText": "已写入 C:\\Users\\waq\\AppData\\Local\\Temp\\dsc-dsh-card-xIXksO\\.dsc\\dsh-note.txt"
+    "resultText": "已写入 C:\\Users\\waq\\AppData\\Local\\Temp\\dsc-dsh-card-ouwv6e\\.dsc\\dsh-note.txt",
+    "statusbarText": "1 轮 2 步会话统计1 轮 · 2 步115 tokToken 用量115 tok输入80输出350%上下文已用 0%~50 / 128K系统提示词~1.9K工具定义~5.1K工具结果~26对话消息~468"
   },
   "shotProbe": {
-    "groups": 1,
+    "groups": 0,
     "rect": {
-      "top": 180,
-      "height": 374
+      "top": 211,
+      "height": 317
     },
     "opened": true,
     "chain": [
-      "entry tool-card status-done open | display=block h=374",
+      "entry tool-card status-done open | display=block h=317",
       "slot-entry | display=contents h=0",
-      "entry-row | display=flex h=374",
-      "step-content | display=flex h=374",
-      "step-body | display=block h=374",
-      "step-seat | display=flex h=402",
-      "turn-process-body | display=flex h=402",
-      "turn-process | display=grid h=402",
-      "turn-seat | display=flex h=617"
+      "entry-row | display=flex h=317",
+      "turn-process-body | display=flex h=317",
+      "turn-process | display=grid h=317",
+      "turn-seat | display=flex h=529",
+      "slot-entry | display=contents h=0",
+      "chat-inner | display=flex h=711",
+      "chat | display=block h=521"
     ]
   },
   "shot": true
