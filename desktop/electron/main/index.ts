@@ -443,6 +443,16 @@ function startHost(cwd: string): void {
   selfcheckNote(
     `[dsc-desktop] 界面形态=${uiProfile()}，宿主伺服 ${assetsDir}（产物存在=${existsSync(assetsDir)}）\n`,
   )
+  // 启动读数：宿主进程真正被拉起的时刻（只写真入口与工作目录，环境变量的值一律不落日志）。
+  // cwd 会把用户主目录带出来：首次启动还没有上次目录，调用点给的就是 app.getPath('home')。
+  // 所以只遮主目录这一段，按目录边界判断——不然 C:\Users\foo2 会被 C:\Users\foo 一起遮掉。
+  const home = app.getPath('home').replace(/[\\/]+$/, '')
+  const homeRest = cwd.slice(home.length)
+  const underHome =
+    cwd.slice(0, home.length).toLowerCase() === home.toLowerCase() &&
+    (homeRest === '' || homeRest.startsWith('\\') || homeRest.startsWith('/'))
+  const cwdShown = underHome ? `~${homeRest}` : cwd
+  bootNote(`拉起宿主：${entry}（cwd=${cwdShown}）`)
   protocol = new HostProtocol(entry, cwd, hostEnv(assetsDir))
 
   protocol.onSnapshot((snapshot) => {
@@ -461,6 +471,10 @@ function startHost(cwd: string): void {
   })
   protocol.onUiUrl((info) => {
     process.stderr.write(`[dsc-desktop] 宿主报来界面地址 ${info.origin}（窗口${mainWindow === null ? '未就绪' : '在'}）\n`)
+    // 只记 origin：url 带一次性令牌，落日志等于把凭据写进文件。
+    bootNote(
+      `[dsc-desktop] 宿主报来界面地址 ${info.origin}（窗口${mainWindow === null ? '未就绪' : '在'}）`,
+    )
     void adoptUiServer(info)
   })
   protocol.onClose(({ code }) => {
@@ -1382,6 +1396,16 @@ function createWindow(): void {
   }
   mainWindow.webContents.on('will-navigate', blockNavigation)
   mainWindow.webContents.on('will-redirect', blockNavigation)
+
+  // 启动读数：每份文档加载完记一行（过渡页、宿主伺服页、宿主重启后的重载各一条）。
+  // 挂在这里而不是自检截图那段里：那段只在 DSC_DESKTOP_SHOT 有值时才注册，正常启动会漏。
+  // 用 on 不用 once：正常启动的第一份文档是过渡页，真正要量的是随后那份真界面。
+  mainWindow.webContents.on('did-finish-load', () => {
+    // 一次启动会加载不止一份文档，光看时间分不清是哪一份，改成看来源：过渡页与提示页都是
+    // 内联的 data: URL，只有宿主伺服（或开发态的 vite）才给真界面一个 http 地址。
+    const url = mainWindow?.webContents.getURL() ?? ''
+    bootNote(url === '' || url.startsWith('data:') ? '过渡页加载完成' : '真界面加载完成')
+  })
 
   // 首帧：页面画出第一帧再显示窗口（配合上面的 show: false）。
   mainWindow.once('ready-to-show', () => {
