@@ -50,6 +50,14 @@ import * as uiDockkit from '@dsc/ui-dockkit'
 // `require('@dsc/ui-runtime')` 因此必须命中这里这一份：内联第二份的话，插件一渲染就抛
 // 「useHostChannel 必须在 RuntimeProvider 里用」。
 import * as uiRuntime from '@dsc/ui-runtime'
+// 2026-11-05 补上 dsh 种子表里也有的三样基础设施：cordis（装配框架，宿主内核用的是同一套）、
+// zod（schema，插件校验宿主快照 / 配置时不必各带一份）、@tanstack/react-virtual（长列表虚拟化）。
+// 与上面三个 @dsc 包同一个理由：它们要么是**带状态的实例**（cordis 的 Context 子类、zod 的
+// schema 类），两份就互相不认；要么会让每个用到它的插件各内联一份。静态 import 进壳的同一个
+// vite 图，插件 require 到的就是壳里这一份。
+import * as Cordis from '@deepseek-ai/cordis'
+import * as Zod from 'zod'
+import * as ReactVirtual from '@tanstack/react-virtual'
 import { UiArrivalLedger, type UiArrivalHost } from '@dsc/ui-core'
 import type {
   UiBootBatch,
@@ -66,6 +74,9 @@ import {
   createT,
   ServiceRegistry,
   ServicesProvider,
+  // `external` 的两种写法（`<包名>` 与 `<包名>/client`）归一：与组图那一侧同一份实现，
+  // 免得「图里认、装的时候不认」这种只在某一条路径上冒出来的偏差。
+  stripClientSuffix,
   unmetDependencies,
 } from '@dsc/ui-core'
 // 装配交给 cordis（与宿主内核同一套）。这一层不改插件写法，只换「谁管生命周期」：
@@ -123,6 +134,11 @@ export const BOOT_STATE_GLOBAL = '__DSC_UI_BOOT_STATE__'
  * `client.js` 走；一旦有 bundle 把 `@dsc/ui-layout` 留成 require，运行期会撞「白名单外的模块」，
  * 构建脚本因此加了一条「产物里不许出现 @dsc/ui-core / @dsc/ui-layout 的 require」的硬断言。
  *
+ * `@deepseek-ai/cordis` / `zod` / `@tanstack/react-virtual` 2026-11-05 进表（位置在
+ * `@dsc/ui-runtime` 之后、xterm 之前）：前两者是 dsh 的种子表里同样有的基础设施，后者是长列表
+ * 虚拟化。它们都不是本仓库的源码：类型面由 `ui-shell/build-types.mjs` 从 node_modules 的 .d.ts
+ * 直接转出到 `lib/ui/sdk/`，作者按包名就能拿到与壳里同一份类型。
+ *
  * `@xterm/xterm` 与 `@xterm/addon-fit` 在表里（2026-10-10 加的）：终端插件要用它们，
  * 而"每个插件自带一份 xterm"会让每个用到终端的插件都拖进 ~400KB。放进平台表之后
  * 只有壳带一份（xterm 的 CSS 也由壳在 `main.tsx` 里静态 import，插件拿不到样式文件）。
@@ -138,6 +154,10 @@ const MODULES: Readonly<Record<string, unknown>> = {
   '@dsc/ui-dockkit': uiDockkit,
   // 布局插件的 bundle 与 19 个界面单元都按包名 require 到这一份（同一份状态）。
   '@dsc/ui-runtime': uiRuntime,
+  // 三样基础设施（2026-11-05）：键顺序与 platform-modules.json 全等，探针逐位比对。
+  '@deepseek-ai/cordis': Cordis,
+  zod: Zod,
+  '@tanstack/react-virtual': ReactVirtual,
   '@xterm/xterm': xterm,
   '@xterm/addon-fit': xtermFit,
 }
@@ -479,6 +499,15 @@ export async function createBootSession(
   const reports = new Map<string, UiPluginLoadReport>()
   const installed = new Map<string, string>()
   /**
+   * 本图的插件 id 集：`external` 声明的第二类合法取值（第一类是平台种子）。
+   *
+   * 为什么在装载会话里算而不是在组图时算：HMR 可以把一条不在原图里的插件装进来，
+   * 它会带着自己的 `external` 声明——校验的口径必须是「这一刻的图」，不是组图那一刻的。
+   */
+  const graphIds = new Set(graph.entries.map((entry) => entry.id))
+  /** 一条 `external` 声明能不能被这个壳满足：平台种子，或本图里另一条插件（`/client` 算同一条）。 */
+  const isKnownExternal = (name: string): boolean => name in MODULES || graphIds.has(stripClientSuffix(name))
+  /**
    * 报告的展示顺序：首装时 = 图里的顺序；HMR 新装的插件（不在原图里）追到末尾，
    * 否则诊断区会漏掉「刚被宿主加进来」的那几条。
    */
@@ -521,6 +550,18 @@ export async function createBootSession(
     // 幂等闸：同一条同 rev 已经装上就当作成功，不再 apply 一遍。重复请求来自队列里两件任务
     // （批安装 + 帧对账），参考实现的说法是 "identical targets share pending loads"。
     if (installed.get(entry.id) === entry.rev && reports.get(entry.id)?.ok === true) return null
+    // `pneuma.client.external` 的声明语义：每一项要么是平台种子，要么是本图里另一条插件。
+    // 两头都不是，说明插件把一份依赖留成了 require，而壳与本图都没有它——构建期
+    // （`ui-shell/build-plugins.mjs`）对内置插件拦过一次，这里兜第三方与组合包：
+    // 一份写错的声明不该等到 apply 才炸，报错时也要直接说清两条出路。
+    const unknownExternal = (entry.external ?? []).filter((name) => !isKnownExternal(name))
+    if (unknownExternal.length > 0) {
+      const listed = unknownExternal.map((name) => `"${name}"`).join('、')
+      const reason = t('boot.external.unknown', { plugin: entry.id, list: listed })
+      reports.set(entry.id, { id: entry.id, ok: false, error: reason, attempts: attempt })
+      setPlugin(entry.id, { state: 'failed', at: Date.now(), attempts: attempt, error: reason })
+      return reason
+    }
     const batch = batchByEntry.get(entry.id)
     const phase = batch?.phase ?? 'application'
     // 这个插件的登记账本：中途抛错时按它回滚，重试才不会撞「id 已被占用」。
@@ -566,7 +607,8 @@ export async function createBootSession(
       await ledger.arrive({ id: entry.id, preferred, ...(fallback === undefined ? {} : { fallback }) }, arrivalHostFor(entry.id, phase))
       const factory = table[entry.id]
       if (typeof factory !== 'function') throw new Error(`插件 ${entry.id} 的脚本没有注册工厂（bundle 形状不对？）`)
-      const exported = instantiateOnce(factory, entry.id, entry.rev)
+      // 带上插件间 require 的解析器：声明过 external 的 bundle 要能取到本图那一条的导出。
+      const exported = instantiateOnce(factory, entry.id, entry.rev, pluginExternal)
       const module_ = (exported as { default?: unknown } | null)?.default ?? exported
       const apply = (module_ as { apply?: unknown } | null)?.apply
       if (typeof apply !== 'function') throw new Error('插件没有导出 apply(ui)')
@@ -881,15 +923,38 @@ function removeOwnedStyles(id: string): void {
   }
 }
 
-/** 跑一个工厂拿到它导出的东西（require 只认白名单）。 */
-function instantiate(factory: Factory, id: string): unknown {
+/** 插件间 require 的解析结果：`found` 与 `value` 分开，才分得清「没有这条」与「导出恰好是 undefined」。 */
+interface ExternalLookup {
+  found: boolean
+  value?: unknown
+}
+
+/** `external` 指向本图另一条插件时，从哪拿它的导出。 */
+type ExternalResolver = (spec: string) => ExternalLookup
+
+/**
+ * 跑一个工厂拿到它导出的东西（require 只认白名单）。
+ *
+ * 白名单有两档：**平台种子**（{@link MODULES} 里那一份实例）与**本图另一条插件**（插件在
+ * `pneuma.client.external` 里声明过、并且它已经先装好）。后者与 dsh 的 require 同一个口径：
+ * bundle 就是包的界面半，所以 `<包名>/client` 与 `<包名>` 指回同一条。
+ *
+ * @param factory - 插件 bundle 注册的工厂
+ * @param id - 这条插件的 id（报错里点名用）
+ * @param resolveExternal - 插件间 require 的解析器；不传时只认平台种子（入口物化那条路径）
+ */
+function instantiate(factory: Factory, id: string, resolveExternal?: ExternalResolver): unknown {
   const styleBefore = untaggedStyles()
   const module_ = { exports: {} as unknown }
   const require_ = (spec: string): unknown => {
-    if (!(spec in MODULES)) {
-      throw new Error(`插件 ${id} 请求了白名单外的模块「${spec}」（允许：${ALLOWED_MODULES.join('、')}）`)
-    }
-    return MODULES[spec]
+    if (spec in MODULES) return MODULES[spec]
+    const resolved = resolveExternal?.(spec)
+    if (resolved !== undefined && resolved.found) return resolved.value
+    // 两档都不成立时把话说全：作者要么把依赖内联进自己的 bundle，要么改用种子里的模块。
+    throw new Error(
+      `插件 ${id} 请求了模块「${spec}」：既不是平台种子，也不是本图已装好的插件` +
+        `（平台种子：${ALLOWED_MODULES.join('、')}）——插件打包时把它内联进来，或改用种子里的模块`,
+    )
   }
   try {
     factory(require_, module_, module_.exports)
@@ -910,11 +975,22 @@ function instantiate(factory: Factory, id: string): unknown {
  */
 const modules = new Map<string, { rev: string; exports: unknown }>()
 
+/**
+ * 插件间 require（`external` 指向本图另一条插件）：取那条**已物化**的导出。
+ *
+ * 为什么只认已物化的：工厂是同步执行的，这里不能等一次异步装载。顺序由启动图的排序保证——
+ * `composeUiBootGraph` 把 `external` 边算进拓扑，提供者一定排在消费者前面装。
+ */
+function pluginExternal(spec: string): ExternalLookup {
+  const cached = modules.get(stripClientSuffix(spec))
+  return cached === undefined ? { found: false } : { found: true, value: cached.exports }
+}
+
 /** 按 id + rev 物化一次；同一代再来就交回同一份导出。 */
-function instantiateOnce(factory: Factory, id: string, rev: string): unknown {
+function instantiateOnce(factory: Factory, id: string, rev: string, resolveExternal?: ExternalResolver): unknown {
   const cached = modules.get(id)
   if (cached !== undefined && cached.rev === rev) return cached.exports
-  const exported = instantiate(factory, id)
+  const exported = instantiate(factory, id, resolveExternal)
   modules.set(id, { rev, exports: exported })
   return exported
 }
@@ -935,7 +1011,7 @@ export async function loadPluginModule(entry: UiPluginEntry): Promise<unknown> {
   if (typeof table[entry.id] !== 'function') await appendScript(entry.url, entry.id)
   const factory = table[entry.id]
   if (typeof factory !== 'function') throw new Error(`插件 ${entry.id} 的脚本没有注册工厂（bundle 形状不对？）`)
-  return instantiateOnce(factory, entry.id, entry.rev)
+  return instantiateOnce(factory, entry.id, entry.rev, pluginExternal)
 }
 
 /** 插 `<script>` 并等它执行完。 */

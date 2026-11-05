@@ -23,5 +23,6 @@
   "boot.reason.disabled": "已停用",
   "boot.reason.missing": "没有进启动清单",
   "boot.reason.loadFailed": "加载失败",
-  "boot.reason.missingDetail": "启动图里没有 {id} 这一条：产物没构建，或被 API 门禁拦下了。跑 `pnpm -C ui-shell build` 后刷新本页；插件中心 → 内置插件里也能看到它的开关。"
+  "boot.reason.missingDetail": "启动图里没有 {id} 这一条：产物没构建，或被 API 门禁拦下了。跑 `pnpm -C ui-shell build` 后刷新本页；插件中心 → 内置插件里也能看到它的开关。",
+  "boot.external.unknown": "{plugin}: pneuma.client.external 里的 {list} 既不是平台种子，也不是本图的插件——插件打包时把它内联进来，或改用种子里的模块"
 }

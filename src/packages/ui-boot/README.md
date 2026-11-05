@@ -7,6 +7,7 @@
 - 页面刚打开时是空的，引导先把启动图取回来，再交给渲染器的 `start(api)`；模型看到的第一屏延迟由这条链决定。
 - 平台种子表 `MODULES` 决定插件能 require 到哪些模块；少一条，插件那句 require 当场抛，界面上就少一块。
 - 种子表的键集与顺序必须和 `ui/platform-modules.json` 全等，不等就报 `MODULE_DRIFT`，不靠人眼比对。
+- 2026-11-05 起种子表多了 `@deepseek-ai/cordis` / `zod` / `@tanstack/react-virtual` 三项：插件按包名 require 到的是壳里那一份，类型随 `lib/ui/sdk/` 发布。
 - 热更（`hmr.ts`）只对账「哪些插件变了」，不重装整页：改一个插件不用把整个会话的界面重来一遍。
 
 ## Known Limitations（已知限制）

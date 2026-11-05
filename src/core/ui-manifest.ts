@@ -47,7 +47,18 @@ export interface UiBootBatch {
 export interface UiPluginRow {
   /** 稳定 id，也是 /plugins/<id>/client.js 里的那一段。 */
   id: string
-  /** 允许它 import 的额外模块名；其余一律拒绝（白名单，见界面壳的加载器）。 */
+  /**
+   * 这个 bundle 会 require 的**基线之外**的模块（对齐 dsh 的 `dsh.client.external`）。
+   *
+   * 每一项只有两种合法来历：
+   *   - 平台种子（`src/packages/ui-boot/ui/platform-modules.json` 里的名字）；
+   *   - **同一张启动图里另一条插件的 id**——bundle 就是包的界面半，所以 `<包名>/client`
+   *     与 `<包名>` 算同一个（见 {@link stripClientSuffix}）。
+   *
+   * 两档都不成立就是声明写错了：构建期（`ui-shell/build-plugins.mjs`）报错退出，装载期
+   * （`ui-boot` 的 `boot.ts`）把这一条装失败并给出同一句话。它**不是**插件之间传值的
+   * 主路——那该走 `inject` + 槽位 / 服务表；这里只解决「基建或工具包由提供方带一份」的情形。
+   */
   external?: string[]
   /**
    * 依赖的**插件 id**（拓扑排序用的就是它）。
@@ -91,6 +102,7 @@ export interface UiPluginEntry {
   inject?: string[]
   /** 依赖的服务名（见 {@link UiPluginRow.services}）。 */
   services?: string[]
+  /** 会 require 的基线外模块（见 {@link UiPluginRow.external}）。 */
   external?: string[]
   immediately?: boolean
 }
@@ -121,6 +133,18 @@ const HASH_LENGTH = 12
 
 /** 摘要函数：把若干字段拼成一个短哈希。默认那份不依赖 node，浏览器壳也能算。 */
 export type HashFn = (...parts: readonly string[]) => string
+
+/**
+ * `<包名>/client` 与 `<包名>` 是同一条插件：bundle 就是包的界面半，作者两种写法都见过。
+ * 与 dsh 的 `stripClientSuffix` 同一个口径（packages/client/modules/src/client/manifest.ts:218）——
+ * `external` 的校验、组图的排序与装载器的 require 都先过这一道，三处才认同一个名字。
+ *
+ * @param spec - 模块名或插件 id
+ * @returns 去掉尾部 `/client` 的名字
+ */
+export function stripClientSuffix(spec: string): string {
+  return spec.endsWith('/client') ? spec.slice(0, -'/client'.length) : spec
+}
 
 /**
  * 一个插件包的地址。相对路径：页面挂在 `/` 或子路径下都成立。
@@ -198,6 +222,9 @@ export function artifactRev(stat: ArtifactStat, hash: HashFn = shortHash): strin
  * 顺序只是**优化**不是正确性前提：插件要往别人声明的槽里放东西，用
  * `slots.injectSlot` 等声明出现即可，排不排都能成。
  *
+ * 唯一的例外是 `external` 指向本图另一条插件的情形：消费者的工厂是同步执行的，
+ * `require` 要从物化缓存里直接取提供者的导出，所以那条边必须真的先后有序。
+ *
  * @param rows - 宿主发现的插件包
  * @returns 排好序的一份新数组
  * @throws {Error} 成环或 id 重复时抛出（后者会让界面静默少一块，不能放过）
@@ -227,6 +254,14 @@ export function orderUiPlugins<T extends UiPluginRow>(rows: readonly T[]): T[] {
       if (name === row.id) throw new Error(`界面插件 ${row.id} 把自己写进了 inject`)
       const dependency = byId.get(name)
       if (dependency !== undefined) visit(dependency)
+    }
+    // `external` 里指向本图另一条插件的那些，也是「提供者在先」的边：消费者的工厂是**同步**
+    // 执行的，物化时要直接从缓存里取提供者的导出（见 ui-boot 的 pluginExternal），顺序错了
+    // 就取不到。指向平台种子的名字在图里查不到，自然跳过——种子实例由壳静态持有。
+    for (const name of row.external ?? []) {
+      const dependency = byId.get(stripClientSuffix(name))
+      if (dependency === undefined || dependency.id === row.id) continue
+      visit(dependency)
     }
     open.pop()
     placed.add(row.id)

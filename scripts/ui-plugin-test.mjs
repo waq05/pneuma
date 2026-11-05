@@ -24,9 +24,10 @@
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { readContractSource, resolveUiHalf } from './_check-runner.mjs'
 import { request } from 'node:http'
+import { createRequire } from 'node:module'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 // 隔离 HOME / DSC_HOME：这个探针会读插件的条目树（`~/.dsc/plugins.json`）来验配置解析，
 // 不隔离就会读到使用者真实的那份，断言随环境飘。
@@ -47,9 +48,8 @@ const {
   ChainSlotSelectError,
 } = await import('../lib/packages/ui-core/slots.js')
 const { artifactRev, composeUiBootGraph, orderUiPlugins, pluginBundleUrl, shortHash } = await import('../lib/core/ui-manifest.js')
-const { collectUiPluginArtifacts, readUiPluginBundle, readUiPluginManifest, uiPluginsDir } = await import(
-  '../lib/core/ui-bundles.js'
-)
+const { collectUiPluginArtifacts, discoverPackageUiArtifacts, readUiPluginBundle, readUiPluginManifest, uiPluginsDir } =
+  await import('../lib/core/ui-bundles.js')
 const { inside } = await import('../lib/core/web-static.js')
 const { readUiServerConfig } = await import('../lib/packages/webserver/index.js')
 const { isUiBundleRequest, resolveUiBundleRequest } = await import('../lib/core/ui-route.js')
@@ -426,6 +426,22 @@ console.log('\n[2] 启动清单')
     composeUiBootGraph({ name: 'x', version: 'y' }, [{ id: 'a', rev: 'r', external: ['react-dom'] }]).rev
       !== composeUiBootGraph({ name: 'x', version: 'y' }, [{ id: 'a', rev: 'r' }]).rev,
   )
+  // external 指向**本图另一条插件**时，那条边也是排序依据：消费者的工厂同步 require
+  // 提供者的导出，提供者必须已经物化。`/client` 后缀与包名是同一条（bundle 就是界面半）。
+  check(
+    'external 指向图里另一条插件时，提供者排在消费者前面',
+    orderUiPlugins([
+      { id: 'consumer', rev: 'r', external: ['provider/client'] },
+      { id: 'provider', rev: 'r' },
+    ]).map((row) => row.id).join(',') === 'provider,consumer',
+  )
+  check(
+    'external 指向平台种子（图里没有这条）不影响排序',
+    orderUiPlugins([
+      { id: 'a', rev: 'r', external: ['react'] },
+      { id: 'b', rev: 'r' },
+    ]).map((row) => row.id).join(',') === 'a,b',
+  )
 }
 
 // ── 3. bundle 发现 ─────────────────────────────────────────────────────────────
@@ -538,6 +554,62 @@ console.log('\n[3] bundle 发现')
   check('目录外的 id 404', resolveUiBundleRequest('/plugins/%2E%2E/manifest.json', null, dir).status === 404)
   check('文件名带斜杠 404', resolveUiBundleRequest('/plugins/demo/a/b.js', null, dir).status === 404)
   check('未知插件 404', resolveUiBundleRequest('/plugins/nope/client.js', null, dir).status === 404)
+}
+
+// ── 3b. 组合包声明 external（pneuma.client.external）─────────────────────────────
+// 一个组合包的界面半可以把「我会 require 哪些基线之外的模块」写在 `pneuma.client.external`。
+// 合法取值只有两种：平台种子（platform-modules.json 里的名字）与本图另一条插件的 id
+// （`/client` 后缀算同一个）。这里钉三件事：读得出来、进得了启动图、写明坏了记一条问题。
+console.log('\n[3b] 组合包的 external 声明')
+{
+  const profileDir = join(work, 'profile-external')
+  /** 造一个已装进 profile 的组合包（一个包两半：package.json 的 pneuma.client 是声明处）。 */
+  const makePackage = (name, client) => {
+    const pkgDir = join(profileDir, 'node_modules', ...name.split('/'))
+    mkdirSync(pkgDir, { recursive: true })
+    writeFileSync(join(pkgDir, 'client.js'), 'module.exports={apply(){}}', 'utf8')
+    writeFileSync(
+      join(pkgDir, 'package.json'),
+      JSON.stringify({
+        name,
+        version: '1.0.0',
+        exports: { './client': './client.js' },
+        pneuma: { client: { platform: 'pneuma', api: '^2.0.0', ...client } },
+      }),
+      'utf8',
+    )
+    return pkgDir
+  }
+  makePackage('@demo/two-halves', { external: ['@tanstack/react-virtual', '@demo/provider/client'] })
+  makePackage('@demo/provider', {})
+  makePackage('@demo/bad-external', { external: 'react' })
+  makePackage('@demo/mixed-external', { external: ['react', 42] })
+  const report = discoverPackageUiArtifacts(profileDir, '2.0.0', new Set())
+  const row = report.entries.find((entry) => entry.id === '@demo/two-halves')
+  check(
+    '声明了 external 的组合包，行上带着这个字段',
+    row !== undefined && JSON.stringify(row.external) === JSON.stringify(['@tanstack/react-virtual', '@demo/provider/client']),
+    JSON.stringify(row?.external),
+  )
+  // 启动图必须带着它：装载器（ui-boot 的 boot.ts）就是在图里按这一项校验「种子或本图插件」。
+  const graph = composeUiBootGraph({ name: 'Pneuma', version: '0.0.0-probe' }, report.entries)
+  const entry = graph.entries.find((item) => item.id === '@demo/two-halves')
+  check(
+    '启动图条目带着 external（校验在装载器那一侧做）',
+    entry !== undefined && entry.external?.includes('@tanstack/react-virtual') === true,
+    JSON.stringify(entry?.external),
+  )
+  check(
+    'external 不是数组：记一条问题、当没声明处理',
+    report.entries.find((item) => item.id === '@demo/bad-external')?.external === undefined
+      && report.problems.some((line) => line.includes('@demo/bad-external') && line.includes('pneuma.client.external')),
+    report.problems.join(' | '),
+  )
+  check(
+    'external 里混了非字符串：留下合法的、丢掉坏的',
+    JSON.stringify(report.entries.find((item) => item.id === '@demo/mixed-external')?.external) === JSON.stringify(['react']),
+    JSON.stringify(report.entries.find((item) => item.id === '@demo/mixed-external')?.external),
+  )
 }
 
 // ── 4. 界面服务（真起一个） ─────────────────────────────────────────────────────
@@ -1276,6 +1348,67 @@ console.log('\n[5c] 槽位契约表')
   check(
     'preview 产物含 patch 页签与 DiffRows 渲染',
     /kind:\s*["']patch["']/.test(readBundle('preview')) && readBundle('preview').includes('DiffRows'),
+  )
+}
+
+// ── 5d. 种子表 ↔ 壳的实现（运行期真能 require 到，且不是空壳）────────────────────
+// 种子表不是一份愿望清单：往里加一个名字，壳里就必须真有那一份实现。三种失败形态各有一条
+// 断言盯着——
+//   1. 表里有、boot.ts 的 MODULES 没有：构建期 external 与运行期 require 对不上（MODULE_DRIFT，
+//      只在 console 里喊一声，所以这里才是闸门）；
+//   2. MODULES 有、却没有同名的静态 import：那一格是 undefined，插件 require 回来是空；
+//   3. 包解析不到、或导出是空的：壳的 vendor 里其实没有这份实现。
+// 为什么 npm 包要真 import 一遍：`require.resolve` 只证明路径在，不证明取值非空。
+console.log('\n[5d] 种子表 ↔ 壳实现')
+{
+  const repoRoot = fileURLToPath(new URL('../', import.meta.url))
+  const seedFile = join(repoRoot, 'src', 'packages', 'ui-boot', 'ui', 'platform-modules.json')
+  const platformModules = JSON.parse(readFileSync(seedFile, 'utf8'))
+  const bootSource = readFileSync(join(repoRoot, 'src', 'packages', 'ui-boot', 'ui', 'boot.ts'), 'utf8')
+  const shellPackages = JSON.parse(readFileSync(join(repoRoot, 'ui-shell', 'packages.json'), 'utf8'))
+  const shellRequire = createRequire(join(repoRoot, 'ui-shell', 'package.json'))
+  const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const missing = []
+  const empty = []
+  for (const seed of platformModules) {
+    const spec = escape(seed)
+    const imported = new RegExp(`^import \\* as ([A-Za-z_$][\\w$]*) from '${spec}'$`, 'm').exec(bootSource)
+    if (imported === null) {
+      missing.push(`${seed}（没有 import * as）`)
+      continue
+    }
+    const binding = imported[1]
+    if (!new RegExp(`^\\s{2}'?${spec}'?: ${binding},$`, 'm').test(bootSource)) {
+      missing.push(`${seed}（MODULES 没挂 ${binding}）`)
+      continue
+    }
+    if (seed.startsWith('@dsc/')) {
+      // 壳内别名：运行期拿到的是源码模块的命名空间，Node 里 import 不了 .ts（包里是 TS 源码）。
+      // 所以判据是「落点文件在、并且真导出东西」——空文件也算没实现。
+      const target = shellPackages[seed]
+      const file = target === undefined ? undefined : resolve(repoRoot, 'ui-shell', target)
+      if (file === undefined || !existsSync(file) || !/\bexport\b/.test(readFileSync(file, 'utf8'))) empty.push(seed)
+      continue
+    }
+    try {
+      const resolved = shellRequire.resolve(seed)
+      const mod = await import(pathToFileURL(resolved).href)
+      if (Object.keys(mod).length === 0) empty.push(`${seed}（导出为空）`)
+    } catch (error) {
+      empty.push(`${seed}（${error instanceof Error ? error.message : String(error)}）`)
+    }
+  }
+  check(`种子表 ${String(platformModules.length)} 项都挂在 boot.ts 的 MODULES 上`, missing.length === 0, missing.join('；'))
+  check('每个种子 require 回来的东西非空', empty.length === 0, empty.join('；'))
+  for (const name of ['@deepseek-ai/cordis', 'zod', '@tanstack/react-virtual']) {
+    check(`种子表含 ${name}（2026-11-05 补齐）`, platformModules.includes(name))
+  }
+  // 构建期那一头必须读**同一份** JSON：这里多一个新种子，插件 bundle 才会把它留成 require。
+  const buildPlugins = readFileSync(join(repoRoot, 'ui-shell', 'build-plugins.mjs'), 'utf8')
+  check(
+    'build-plugins.mjs 从同一份 platform-modules.json 生成 external',
+    buildPlugins.includes("platform-modules.json") && buildPlugins.includes('const EXTERNAL = [...PLATFORM_MODULES'),
+    buildPlugins.slice(0, 80),
   )
 }
 

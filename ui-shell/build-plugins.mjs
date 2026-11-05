@@ -74,6 +74,13 @@ const PLATFORM_MODULES = JSON.parse(
 const EXTERNAL = [...PLATFORM_MODULES, '@dsc/ui-core']
 
 /**
+ * `<包名>/client` 与 `<包名>` 是同一条插件：bundle 就是包的界面半（与 dsh 的
+ * `stripClientSuffix` 同口径，运行期 `src/packages/ui-boot/ui/boot.ts` 用同一份实现）。
+ * @param spec - 模块名或插件 id
+ */
+const stripClientSuffix = (spec) => (spec.endsWith('/client') ? spec.slice(0, -'/client'.length) : spec)
+
+/**
  * 每个插件实际的外部化清单：只有**一个例外**——布局插件（id `layout`）要把
  * `@dsc/ui-layout` 的实现内联进自己的 bundle，那正是它的产物存在的意义（停用就真的省掉
  * 那块代码）。其余插件若引用 `@dsc/ui-layout`，留成 require 会在运行期撞「白名单外的模块」，
@@ -122,6 +129,8 @@ function readMeta(dir, hostHalf) {
     throw new Error(`${pkgFile} 不是合法 JSON（${error instanceof Error ? error.message : String(error)}）`)
   }
   const record = pkg !== null && typeof pkg === 'object' ? pkg : {}
+  /** 报错里点名的那个名字：包名优先，没写就退回落点目录（不会指到别人头上）。 */
+  const owner = typeof record.name === 'string' && record.name !== '' ? record.name : dir
   const rawPeer = (record.peerDependencies ?? {})['@dsc/ui']
   // 两处都认：我们自己那 19 个界面包写 pneuma.client，真实 dsh 生态写 pneuma.client。
   const declaredClient = record.pneuma?.client ?? record.dsh?.client
@@ -190,7 +199,7 @@ function readMeta(dir, hostHalf) {
     if (existsSync(legacy)) {
       throw new Error(`${dir}: 同时有 pneuma.client 与 plugin.json——2.0 起只认 package.json 里那一处声明`)
     }
-    return applyExtraFields(meta, client, pkgFile)
+    return applyExtraFields(meta, client, pkgFile, owner)
   }
   // 2.0 起一个插件只许有一处声明。19 个内置插件已全部迁进 package.json 的 pneuma.client，
   // 再见到 plugin.json 就是没迁干净（或者有人照着旧文档加回来的）。
@@ -211,8 +220,9 @@ function readMeta(dir, hostHalf) {
  * @param meta - 已经带 api 的条目
  * @param doc - 声明来源
  * @param where - 报错里写的位置（文件路径）
+ * @param owner - 报错里点名的包名（external 那一句要写清是谁声明错了）
  */
-function applyExtraFields(meta, doc, where) {
+function applyExtraFields(meta, doc, where, owner) {
   // inject = 依赖的**插件 id**；services = 依赖的**服务名**（2.0 起分开，不再双关）。
   if (doc.inject !== undefined) {
     if (!Array.isArray(doc.inject) || doc.inject.some((v) => typeof v !== 'string')) {
@@ -230,11 +240,20 @@ function applyExtraFields(meta, doc, where) {
     if (!Array.isArray(doc.external) || doc.external.some((v) => typeof v !== 'string')) {
       throw new Error(`${where} 的 external 必须是字符串数组`)
     }
-    const unknown = doc.external.filter((name) => !PLATFORM_MODULES.includes(name))
+    // 合法来历只有两种：平台种子（壳里静态持有那一份实例），或本图里另一条插件（它的 bundle
+    // 就是包的界面半，运行期 require 到的是那条已物化的导出）。两档都不是，说明作者把一份依赖
+    // 留成了 require 而没人提供——当场失败，别等运行期那句「既不是平台种子，也不是本图的插件」。
+    const allowed = new Set([...PLATFORM_MODULES, ...ids])
+    const unknown = doc.external.filter((name) => !allowed.has(name) && !allowed.has(stripClientSuffix(name)))
     if (unknown.length > 0) {
       throw new Error(
-        `${where} 声明了壳不提供的模块：${unknown.join('、')}` +
-          `（壳提供的只有：${PLATFORM_MODULES.join('、')}）`,
+        unknown
+          .map(
+            (name) =>
+              `${owner}: pneuma.client.external 里的 "${name}" 既不是平台种子，也不是本图的插件` +
+                '——插件打包时把它内联进来，或改用种子里的模块',
+          )
+          .join('；'),
       )
     }
     meta.external = doc.external

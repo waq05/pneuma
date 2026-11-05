@@ -8,6 +8,9 @@
   "@dsc/ui-primitives",
   "@dsc/ui-dockkit",
   "@dsc/ui-runtime",
+  "@deepseek-ai/cordis",
+  "zod",
+  "@tanstack/react-virtual",
   "@xterm/xterm",
   "@xterm/addon-fit"
 ]

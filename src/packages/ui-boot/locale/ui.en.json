@@ -23,5 +23,6 @@
   "boot.reason.disabled": "Disabled",
   "boot.reason.missing": "Not in the boot graph",
   "boot.reason.loadFailed": "Failed to load",
-  "boot.reason.missingDetail": "The boot graph has no {id} entry: the bundle was not built, or the API gate rejected it. Run `pnpm -C ui-shell build` then refresh this page; its switch is also in Plugin Center → Built-in plugins."
+  "boot.reason.missingDetail": "The boot graph has no {id} entry: the bundle was not built, or the API gate rejected it. Run `pnpm -C ui-shell build` then refresh this page; its switch is also in Plugin Center → Built-in plugins.",
+  "boot.external.unknown": "{plugin}: {list} in pneuma.client.external is neither a platform seed nor a plugin in this graph — inline it when bundling the plugin, or use a module from the seeds"
 }

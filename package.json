@@ -53,6 +53,7 @@
   "devDependencies": {
     "@shikijs/langs": "^4.5.0",
     "@shikijs/themes": "^4.5.0",
+    "@tanstack/react-virtual": "3.14.10",
     "@types/node": "^24.0.0",
     "@types/papaparse": "^5.3.16",
     "@types/qrcode": "^1.5.6",
@@ -70,7 +71,8 @@
     "remark-gfm": "^4.0.0",
     "shiki": "^4.5.0",
     "typescript": "^5.9.0",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "zod": "4.4.3"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
