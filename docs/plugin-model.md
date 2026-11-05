@@ -24,13 +24,19 @@ lib/ui/plugins/<id>/client.js
 ```jsonc
 {
   "name": "@pneuma/ops",
+  "description": "文档与批量读取",        // 发版面：与 pneuma.description 同一句
   "version": "1.2.0",
+  "private": true,
   "type": "module",
+  "main": "./index.js",                 // 旧解析器找入口用
+  "types": "./index.d.ts",              // 编辑器找类型用（产物里有这一份）
   "exports": {
-    ".": "./index.js",
-    "./panel": "./panel.js",          // 子路径行要用它
+    ".": { "types": "./index.d.ts", "default": "./index.js" },
+    "./panel": "./panel.js",            // 子路径行要用它
+    "./cordis.patch.yml": "./cordis.patch.yml",  // 功能包必导出：读 patch 的人按它取
     "./package.json": "./package.json"
   },
+  "files": ["index.js", "index.d.ts", "cordis.patch.yml", "locale/**"],
   "pneuma": {
     "bundle": { "patch": "./cordis.patch.yml" },
     "resolution": "overridable",       // pinned | overridable
@@ -38,7 +44,12 @@ lib/ui/plugins/<id>/client.js
     "title": "文档与批量读取",          // 插件中心显示名（不加载代码也能列出来）
     "description": "读 PDF / Word / CSV……",
     "settingsSection": "ops",          // 可选：插件中心齿轮跳转的分区 id
-    "client": { "platform": "pneuma", "api": "^2.0.0", "inject": ["settings"] }
+    "client": {
+      "platform": "pneuma",
+      "api": "^2.0.0",
+      "inject": ["settings"],           // 先等这些插件装好
+      "external": ["zod"]               // 这个 bundle 会 require 的非基线模块（平台种子或本图另一条插件）
+    }
   },
   "engines": { "pneuma": ">=1.0.0 <2.0.0" },
   "peerDependencies": { "@deepseek-ai/cordis": "^4.0.4" }
@@ -109,7 +120,11 @@ lib/ui/plugins/<id>/client.js
   2. **挂每一行之前再判一次 `engines.pneuma`**，判的是这一行实际解析到的包——`overridable` 的行会被
      profile 里的副本换掉，换上来那份要求哪一代契约只有它自己知道。
 - 行级闸不满足 → 目录里登记该行并带 `problem`（插件中心看得见），挂载跳过，其余行照常。
-  `profile 的 compatibility.json` 里登记过包名就照挂，并在告警里说明是豁免放行的。
+  profile 的 `compatibility.json` 里登记过就照挂，并在告警里说明是豁免放行的。
+- **豁免精确到版本**：`{ "exemptions": [{ "package": "@acme/x", "version": "1.2.3", "dshVersion": "0.2.1" }] }`，
+  只有包名、包版本、运行时版本三者都对得上才放行——换个版本就得重新同意（dsh 同一个口径）。
+  只写 `package` 的老记录仍按包名通配（给 0.8.x 写下的文件留的路）；记录带版本而这一行的版本读不到时按「对不上」处理。
+  写这两个版本只有一条入口：`numa plugin allow-version <包@版本> --dsh-version <运行时> --accept-risk`。
 - dsh 包的 `engines.dsh` 只在整包那一次判：行级只看 `engines.pneuma`，否则老插件的
   `peerDependencies: @deepseek-ai/dsh ^0.1` 会在行级被误杀。
 
@@ -188,7 +203,11 @@ lib/ui/plugins/<id>/client.js
   就顶替应用那份（`numa plugin list` 会在那一行标「← profile 覆盖」，版本显示 profile 那份）；
   19 个 `pinned` 的包不认覆盖，profile 里有同名副本时告警并写清哪份不生效。
 - 换包分两种：
-  - **换目录**（把包装到另一个物理目录）仍需重启：解析表在启动时建一次，同一包名两个目录是启动失败（见 §5）。
+  - **装包 / 卸包不用重启**（2026-11-05 起）：热更轮询同时盯 profile 的三份清单（`package.json` /
+  `compatibility.json` / `cordis.patch.yml`），指纹变了就重算组合包——新加的行挂上，
+  清单里删掉的包按 `meta.bundle` 认领并卸掉（`reconcileProfileBundles`）。
+  已知边界：只删 profile 自己那层 patch 里的某一条 insert、而 profile 还在时，那一行不会被卸（没记它由哪条 insert 挂上来）。
+- **换目录**（把包装到另一个物理目录）仍需重启：解析表在启动时建一次，同一包名两个目录是启动失败（见 §5）。
   - **改代码**（同一个包目录里文件变了）**不重启就生效**：监视器发现变化 → 换代 → 重挂那一行，见 §14。
 - 验收脚本 `scripts/plugin-swap-e2e.mjs`（进 `check:plugin`）：把 `lib/` 拷到临时目录、
   家目录也指到副本里，一个字节不碰真实的 `~/.dsc`；五件事——换包验行为变化、
@@ -249,19 +268,19 @@ lib/ui/plugins/<id>/client.js
 
 | # | 硬项 | 判据 |
 |---|---|---|
-| 1 | 清单字段 | `name`、`version`（**与根 package.json 一致**，发版用 `node scripts/sync-versions.mjs --write` 一起推）、`private`、`type`、`exports` 至少 `.` 与 `./package.json`、`pneuma.bundle.patch`、`pneuma.resolution`、`pneuma.order`、`engines.pneuma`、cordis 对等依赖 |
-| 2 | exports 键集 | 只许标准键：`.`、`./client`、`./package.json`、`./locale/*.json`；多一个就报出来由人决定 |
+| 1 | 清单字段 | `name`、`description`、`version`（**与根 package.json 一致**，发版用 `node scripts/sync-versions.mjs --write` 一起推）、`private`、`type`、`main`、`types`、`exports`（根入口是 `{types, default}` 条件对象）、`files`、`pneuma.bundle.patch`、`pneuma.resolution`、`pneuma.order`、`engines.pneuma`、cordis 对等依赖；功能包还要导出 `./cordis.patch.yml` |
+| 2 | exports 键集 | 只许标准键：`.`、`./client`、`./cordis.patch.yml`、`./package.json`、`./locale/*.json`；多一个就报出来由人决定 |
 | 3 | 清单本地化 | 声明了 `./locale/*.json` 就必须真有译本文件，且每个译本 `title` / `description` 都是非空字符串（坏 JSON、缺字段、只有键没有文件都红） |
 | 4 | 行 | `cordis.patch.yml` 恰好一条 insert、一行；行 id 与目录约定一致（`ui-<id>` 目录 → `ui-<id>`，其余 → 目录名）；行 name 等于包名 |
 | 5 | 入口导出 | 能按 loader 的兜底规则拿到插件对象（用 TypeScript 语法树判，不用正则） |
 | 6 | 包间 import | 功能包之间零直接 import；功能包 → 库包允许；库包 → 任何包禁止；core → 包禁止（含 `import type`） |
 | 7 | order | 撞号即红（两个包同号） |
-| 8 | 文档与测试 | README 两段（Model Experience / Known Limitations）+ `tests/` 下至少一个 `*.test.mjs`（只有目录不算） |
+| 8 | 文档与测试 | README 要有 H1 后的一句话摘要、`Model Experience` 一节有正文、`Known Limitations` 一节至少一条顶格 `- ` 且同类标题只许一个；`tests/` 下至少一个 `*.test.mjs`（只有目录不算） |
 
 待办一项：可疑的模块级可变状态（只打印）。
 
-**现状（2026-11-04 夜）**：**89 个包 = 77 功能包 + 12 库包**，八项全绿；
-89 篇 README 两段齐全、89 个包各有包级测试（89 个用例 / 447 条断言）；
+**现状（2026-11-05 晚）**：**89 个包 = 77 功能包 + 12 库包**，八项全绿；
+89 篇 README 两段齐全（摘要 + 正文 + 至少一条限制）、89 个包各有包级测试（89 个用例 / 459 条断言）；
 「模块级可变状态」30 条里绝大多数是导出的只读常量表，剩下几条要人逐条看。
 版本号已按 dsh 的做法写在每个包里（都与根 `0.8.1` 一致）。
 

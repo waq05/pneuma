@@ -13515,3 +13515,58 @@ session-open-in 全绿、ui-status-panel 全部通过、readme 26 条断言）�
   它顺手抓出了上面那条热更缺陷——单元测试不可能发现「点了开关页面没变」。
 - `pnpm run typecheck` / `pnpm run build` / `check:plugin` / `check:ui` / `check:core` / `check:style`
   全绿；`ui-boot-e2e` 四段仍绿。
+
+## 2026-11-05 晚：八项对账全部补齐（另查出第九项）
+
+上一轮结尾留了一张「仍未对齐的八项」表（`docs/plugin-equality-plan.md` §12.17）。用户要求
+「先把这几项实际考察一遍，看有没有缺漏，再补齐，补齐完复审，不要留尾巴」。这一轮按这四步做完。
+
+### 核查：八项都成立，另有一项当时漏了
+
+逐项回源码找证据（表在 §12.18）。八项全部成立；新增第九项：**组合包的 patch 不支持数组**。
+dsh 的 `dsh.bundle.patch` 可以写字符串数组（web-app 一次列五个文件），我们只认字符串——
+第三方包写数组会被整份当成「没声明 patch」，装进去只剩空壳。
+
+### 九项怎么补
+
+1. **装包即生效**：热更轮询加第三路——盯 profile 的 `package.json` / `compatibility.json` /
+   `cordis.patch.yml` 三个指纹，变了就调 `reconcileProfileBundles`：先挂新行（`mountRow` 按身份幂等），
+   再按 `meta.bundle` 卸掉清单里已经没有的包。同一个定时器、同一个去抖窗口，不另起一路轮询。
+   `numa plugin add/remove` 的提示也从「重启宿主后生效」改成「下一轮轮询就生效」。
+2. **平台种子补三样**：`@deepseek-ai/cordis`、`zod`、`@tanstack/react-virtual` 进种子表（14 项），
+   `boot.ts` 的 MODULES 同序同键，构建期 external 由同一份 JSON 派生，类型面从 node_modules 逐字节转出。
+3. **发版字段**：89 个包补 `description` / `main` / `types` / `files`，根入口改成 `{types, default}` 条件对象。
+   构建产物清单跟着带（少了这层就会出现「源码里有 main，装上去那份没有」）。
+4. **导出 `./cordis.patch.yml`**：77 个功能包各加一行，门禁从「不许有此键」改成「功能包必须有」。
+5. **`pneuma.client.external`**：声明、行、启动图三段打通；合法值只有「平台种子」与「本图另一条插件」
+   （`/client` 归一），构建期与装载期说同一句话。require 因此从「只认白名单」扩成「种子 → 本图插件」。
+6. **README 内容闸**：从「两个标题在不在」升级到「H1 后要有摘要、Model Experience 要有正文、
+   Known Limitations 至少一条顶格 `- `、同类标题只许一个」。89 篇本来就达标，闸变严后仍全绿。
+7. **真实组合门禁**：新脚本 `scripts/plugin-compose-check.mjs` 走 `createKernel` 真启动路径
+   （`kernel.ts` 新增只读取值口把挂载失败交出来），断言挂载失败为 0、没有带 problem 的条目、
+   实挂行数与清单推导值一致、声明了设置分区的包分区都在、界面 21 个 id 与 21 行 `ui-*` 一一对应。
+8. **第三方入口与信任**：CLI 补 `version-exemptions` / `allow-version` / `revoke-version`（`--accept-risk`
+   不给就拒绝写盘）；豁免判定改成**精确到包版本与运行时版本**（老记录按包名通配，失败关闭）；
+   界面插件信任记录绑定产物 sha256，内容换了旧信任自动失效、要重新确认。
+9. **patch 数组**：`readBundle` 返回 `PatchLayer[]`，多层按声明顺序叠，层标签带文件名。
+
+### 复审时自己抓到并修掉的两处
+
+1. **豁免「算不出版本就放行」是失败开放**：第一版写成 `version === undefined` 时跳过版本比对，
+   等于包版本读不到时精确授权退化成包名通配。改成「记录带版本、这一行版本读不到」按对不上处理。
+2. **装载期那句报错直接写在 `boot.ts` 里**，被 `ui-locale-test` 当场拦下（界面半不许有硬编码中文）。
+   改成走本包字典 `boot.external.unknown`，并让包级测试改判「boot.ts 用了这个键 + 字典正文与构建期同口径」。
+
+### 数字
+
+- 包：89 个 = 77 功能包 + 12 库包；行 77 条；headless 注册 76 条；默认关 13 条 → 实挂 63 条。
+- 组合门禁：设置分区声明 26 个 / 挂上的 14 个全在；界面 21 个 id ↔ 21 行；挂载失败 0。
+- 包测试：89 个用例 / **459 条断言**；`check:plugin` 全绿（含新组合门禁与换包 e2e 17 条）。
+- 平台种子 14 项；类型面 8 个第三方种子包逐字节转出。
+- 走查：中文 69/69、英文 69/69。
+
+### 没做到 / 明确记下来
+
+- 只删 profile 自己那层 patch 里的某一条 insert、而 profile 还在时，那一行不会被卸（没记「行由哪条 insert 挂上来」）。
+- TUI 那张 require 表（`ui-core/tui-plugins.ts`）没跟着扩三项；本次 external 的装载期校验只做浏览器壳。
+- 界面插件信任摘要不符时按现有「未信任」档渲染，没有为它单造一个 problem 类别。

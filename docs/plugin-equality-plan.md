@@ -588,7 +588,7 @@ scripts/_ui-sweep-main.cjs（按清单点/断言/截图）。69 步覆盖启动�
 底栏三颗 chip、斜杠与 @ 菜单、技能页、插件页、界面插件热更、轨迹页、设置七个分区、命令面板；
 中文 69/69、英文 69/69。
 
-### 12.17 第三轮对账后**仍未对齐**的项（按影响排序，未做，别当成已完成）
+### 12.17 第三轮对账后**仍未对齐**的项（按影响排序）——2026-11-05 晚全部关闭，见 12.19
 
 | 优先级 | 项 | dsh | numa 现状 | 代价 |
 |---|---|---|---|---|
@@ -603,3 +603,60 @@ scripts/_ui-sweep-main.cjs（按清单点/断言/截图）。69 步覆盖启动�
 
 **会话流文案**（transcript.system 与命令输出）仍中文，属于**产品口径**而不是漏做：它们是写进会话记录的
 内容，翻了新旧记录会混排。要翻得先定「记录按当时语言还是按当前语言显示」。
+
+
+### 12.18 第四轮：八项逐条核查（查出一项漏记，共九项）
+
+**做法**：不照抄 12.17 的结论，逐项回源码找证据，判「成立 / 描述有偏差 / 不成立」。
+
+| # | 项 | 证据（文件:行号） | 判定 |
+|---|---|---|---|
+| 1 | 装包即生效 | `mountBundlePlugins` 只在启动时由 `mountAllExternalPlugins` 调一次（src/core/plugin-loader.ts:949）；热更轮询只盯**已挂载行**的目录与库包（src/core/plugin-watch.ts:319、:283）；CLI 明说「重启宿主后生效」（src/packages/cli/plugin-cli.ts:145、:164） | 成立 |
+| 2 | 平台种子缺 cordis / zod / react-virtual | src/packages/ui-boot/ui/platform-modules.json 只有 11 项自家模块；dsh 的种子表 11 项里有 `cordis` / `zod` / `@tanstack/react-virtual`（packages/client/web/src/seed.ts:30-42） | 成立 |
+| 3 | 包的 npm 发布字段 | src/packages/ui-palette/package.json:1-31 无 `description` / `main` / `types` / `files`，exports 是纯字符串；dsh 每个包都带（packages/client/ui-renderer/package.json:17-44） | 成立（但包标了 `private: true`，不单独上 npm，价值低） |
+| 4 | `cordis.patch.yml` 的导出键 | dsh 的 web-app 导出 `"./cordis.patch.yml"`（packages/bundle/web-app/package.json:25）；numa 的白名单只有 `.` / `./client` / `./package.json`（scripts/plugin-standard-check.mjs:69） | 成立 |
+| 5 | `dsh.client.external` | dsh 解析它并写进启动图行（packages/client/modules/src/client/manifest.ts:183、:67）；numa 的 `pneuma.client` 收了 platform / platforms / api / inject / services / phase / immediately，**独缺 external**（src/core/ui-bundles.ts:1471-1500） | 成立 |
+| 6 | README 内容闸 | numa 只判两个标题在不在（scripts/plugin-standard-check.mjs:455-460），标题下一行没有也过；dsh 三条闸：Summary 字数上限 100 词、Model Experience 一节、Known Limitations 必须有一条顶格 `- ` 且标题唯一规范（scripts/verify-package-readme-summaries.ts:42、verify-package-readme-limitations.ts:75-86） | 成立 |
+| 7 | 真实组合测试 | 清单脚本真起内核（scripts/plugin-inventory.mjs:33），但 `createKernel` 返回的挂载失败**被丢掉**——一个包挂不上、meta 记了 problem，快照照样收下它，门禁看不出来 | 成立 |
+| 8 | 第三方入口 / 豁免 / 信任 | CLI 只有 add / remove / list（src/packages/cli/plugin-cli.ts:4-6）；dsh 有 `--accept-risk` 与 `allow-version` / `revoke-version` / `version-exemptions`（packages/boot/plugin-manager/README.md:83）；numa 的豁免只能手改 profile 的 compatibility.json（src/core/plugin-bundle.ts:222-227）；信任记录只存 `trustedAt`（src/core/plugin-registry.ts 的 `trustUiPlugin`） | 成立 |
+| **9** | **组合包的 patch 不支持数组**（漏记） | dsh 的 `dsh.bundle.patch` 可以是字符串数组（packages/bundle/web-app/package.json:47-55）；numa 只认字符串（src/core/plugin-bundle.ts:171），第三方包写数组会**整份当成没声明 patch**，装进去只剩空壳 | 成立，新增 |
+
+**结论**：12.17 的八项都成立，另有一项当时漏了（第 9 项）。九项都不涉及「做不做」的口径问题，全部补齐。
+
+#### 补齐方案
+
+| 项 | 做法 | 验收 |
+|---|---|---|
+| 1 | 热更轮询加一路「profile 清单」：盯 `<profile>/package.json` 与 `compatibility.json` 的指纹，变了就重跑 `mountBundlePlugins`（`mountRow` 按身份幂等，已在的行不会重挂），并卸掉已经不是这个 profile 成员的行 | 夹具：运行中往 profile 清单加一个包 → 下一轮它的行挂上、服务可用；删掉 → 行下线；`numa plugin add` 的提示改成「宿主在跑就即时生效」 |
+| 2 | 种子表加 `zod` / `@tanstack/react-virtual` / `cordis`：`build-plugins.mjs` 的 external、`boot.ts` 的 MODULES、类型面一份；壳真的 import 这三样，插件 bundle 里因此不再内联自己的那份 | `ui-sdk-types-test` 的「种子 ↔ 类型面一一对应」照过；新增一条「种子表每一项都能在壳里被 require 到」的探针 |
+| 3 | 89 个包补 `description` / `main` / `types` / `files`，`exports["."]` 改成带 `types` 条件的对象 | 标准闸第 1、2 项按新形状判；`node --input-type=module -e "import('@pneuma/ui-palette')"` 在 lib 下解得开 |
+| 4 | `exports` 允许 `./cordis.patch.yml`；77 个功能包各加一行；标准闸加判「声明了 patch 就必须导出它」 | 标准闸红→绿，且反向夹具（删掉某包的导出键）会红 |
+| 5 | `pneuma.client.external` 进声明、进行、进启动图；装载前校验「声明的每个外部模块要么是种子、要么是同一张图里的另一个包」，不满足就明确报错不静默 | 夹具：一个声明 `external: ['zod']` 的包能 require 到壳那份；声明一个表外模块时构建/装载期给人话 |
+| 6 | 标准闸第 8 项升级：`## Model Experience` 标题下必须有正文、`## Known Limitations` 下必须有顶格 `- ` 且同类标题只许一个、H1 下要有一句话摘要 | 89 个包照旧全绿；反向夹具（删掉一节正文）会红 |
+| 7 | 新脚本 `scripts/plugin-compose-check.mjs`：真起内核（headless），断言挂载失败为 0、没有带 problem 的条目、77 行全在（headless 少 tui 一行）、每个包声明的设置分区都注册上了、界面清单里每条都有对应的宿主行 | 进 `check:plugin`；人为把某包的入口改坏 → 脚本红 |
+| 8 | CLI 补 `version-exemptions` / `allow-version <包@版本> --dsh-version <运行时> --accept-risk` / `revoke-version`；信任记录加内容摘要（`bytes` 的 sha256），摘要变了重新征得同意 | CLI 夹具：不加 `--accept-risk` 拒绝写入；改插件内容后信任失效一条新记录 |
+| 9 | `readBundle` 接受字符串或字符串数组，按顺序叠成多层；标准闸允许数组 | 夹具：一个包声明两个 patch 文件，两层都生效 |
+
+**共同验收**：`typecheck` / `build` / `check:plugin` / `check:ui` / `check:core` / `check:style` / `locale` 全绿，中英各走一遍 69 步真机清单。
+
+### 12.19 九项全部补齐（2026-11-05 晚），12.17 那张表关闭
+
+12.17 的八项 + 12.18 查出的第九项，这一轮全部落地。逐项的做法与证据：
+
+| # | 项 | 落地 | 判据（跑过的） |
+|---|---|---|---|
+| 1 | 装包即生效 | `core/plugin-watch` 加 profile 清单一路（三份文件指纹，同一去抖窗口）→ `reconcileProfileBundles`：挂新行、按 `meta.bundle` 卸删掉的包 | `scripts/profile-hot-mount-test.mjs` 28 条；`plugin-hot-update-test` 第 7 段 6 条 |
+| 2 | 平台种子 | 种子表 14 项（cordis / zod / react-virtual），MODULES 同序，构建期 external 同源，类型面逐字节转出 | `ui-sdk-types-test` 92 条、`ui-plugin-test` 279 条、`ui-boot` 包测试 4 条 |
+| 3 | 发版字段 | 89 个包补 description / main / types / files，根入口 `{types,default}`；产物清单跟带 | 标准闸第 1、2 项 89/89 |
+| 4 | patch 导出键 | 77 个功能包导出 `./cordis.patch.yml`，白名单放行 | 标准闸 89/89 + 反向夹具（删键即红） |
+| 5 | `pneuma.client.external` | 声明 → 行 → 启动图；合法值 = 种子 ∪ 本图插件；构建期与装载期同一句话 | `ui-plugin-test` [3b]、排序断言、`ui-third-party-test` 28 条 |
+| 6 | README 内容闸 | 摘要 + Model Experience 正文 + Known Limitations 至少一条顶格条目 + 同类标题唯一 | 标准闸第 8 项 89/89 + 反向夹具（只有标题即红） |
+| 7 | 真实组合测试 | `scripts/plugin-compose-check.mjs` 走 `createKernel` 真路径，`kernel.ts` 交出挂载失败 | 77 包 / 76 注册 / 63 实挂 / 0 失败 / 26 分区 / 21 界面 id |
+| 8 | 第三方入口 / 豁免 / 信任 | CLI 三个子命令 + `--accept-risk`；豁免精确到包版本 × 运行时版本；信任绑产物 sha256 | `cli.test.mjs` 12 条（含不给 --accept-risk 不写盘）、`ui-third-party-test` 改字节后要求重新确认 |
+| 9 | patch 数组 | `readBundle` 返回 `PatchLayer[]`，多层按声明顺序叠 | `profile-hot-mount-test` 第 4 段（两层都挂上、标签带文件名） |
+
+**复审时自己修掉两处**：① 豁免「包版本读不到就跳过比对」是失败开放，改成对不上就拒绝；
+② 装载期 external 报错直接写在 `boot.ts` 里被 `ui-locale-test` 拦下，改成走本包字典 `boot.external.unknown`。
+
+**仍然记着的边界**（不假装做完）：只删 profile 自己那层 patch 的某一条 insert 时那一行不会卸；
+TUI 的 require 表没跟着扩三项；信任摘要不符没有单独的问题类别，按「未信任」档渲染。

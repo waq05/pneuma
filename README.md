@@ -162,13 +162,28 @@ numa config show              # 查看当前生效的端点/模型/key 来源（
 `numa plugin list` 的每一行会标出现在到底用的是谁：`← profile 覆盖`，或者 pinned 让路时那句说明。
 删掉一个可选包后应用照常启动，插件中心把那一行标成缺包。
 
+`numa plugin add` / `remove` 之后**不用重启宿主**：宿主在跑的时候，热更轮询盯着 profile 的三份清单
+（`package.json`、`compatibility.json`、`cordis.patch.yml`），变了就重算一次组合包——新包的行挂上、
+删掉的包的行卸下（约 1 秒）。宿主没开就下次启动装配。
+
+版本闸拦下的包（包的 `engines.pneuma` 对不上当前运行时）可以精确授权，授权**只对这一个版本组合有效**：
+
+```
+numa plugin version-exemptions                    # 看已经授权了哪些，第一行会打出当前运行时版本
+numa plugin allow-version @acme/x@1.2.3 --dsh-version <运行时版本> --accept-risk
+numa plugin revoke-version @acme/x@1.2.3 --dsh-version <运行时版本>
+```
+
+不给 `--accept-risk` 就不写盘（不兼容插件可能崩溃或丢数据）。换个版本、或者换了运行时版本，都要重新授权。
+
 界面包（19 个）是独立包，源码住在 `src/packages/` 下的 `ui-<id>` 目录（每个单元一个包，`index.ts` 是空 `apply` 的宿主半，界面半在 `ui/`），产物落 `lib/ui/plugins/`，id 与 0.8.1 一致。
 
 「文档与批量读取」要先用一次 `npm install dsh-ops`（装在 `~/.dsc/plugins` 下即可），插件默认关，装好后在插件中心打开；没装时会一个工具都不注册，设置页写清找过哪些位置。
 
 界面那一半（含 dsh 组合包自带的界面半）也在插件中心里管：手工放进 `~/.dsc/plugins/<目录>/` 的
 要先点一次「确认信任」，用 `numa plugin add` 装进 profile 的组合包装了就算同意，直接在
-「组合包界面」那一组里开关。
+「组合包界面」那一组里开关。信任**绑着当时那份产物**：插件内容换了（升级、重装、手改），
+旧信任不再成立，卡片会要求重新确认——换过一次内容的插件不该沿用上一次的点头。
 
 外部插件 = 单个 ESM `.js` 文件放进 `~/.dsc/plugins/`，可注册工具、命令、监听事件，
 桌面端「插件」页可视化管理。完整 API、上手路径与扩展点速查见 **[docs/plugin-development.md](docs/plugin-development.md)**（§0 快速上手，§1–§10 完整规格）；可运行示例见 `examples/plugins/ping.js`。
