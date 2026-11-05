@@ -23,9 +23,10 @@
  *       且卡片自己挂着 mouseleave（只挂 keep 会让卡粘住不走）
  *   [8] 收起态的结果与失败数（对照 codex 的活动流）：工具卡摊 3 行结果尾巴、
  *       组头报失败条数——两条都是「不点开也能读到结果」的同一件事
- *   [7] 分轮口径单点 + internal 条目对齐 dsh（右侧刻度条 `.jump-rail` 错位 / 多刻度报障）：
+ *   [7] 分轮口径单点 + internal 条目不再另起一轮（右侧刻度条 `.jump-rail` 错位 / 多刻度报障）：
  *       座位切分与轮元信息同源（rounds.ts 的 `splitRounds`）、steering 不另起一轮、
- *       回合中途并进的 internal 不增刻度而回合收尾的增一枚、internal 题面预览不出现原文
+ *       internal 从不另起一轮（有轮就并进、没轮进 leading，都不增刻度；2026-11 用户报障，
+ *       与 dsh 给非人来源一枚刻度的做法有意不同）、internal 题面预览不出现原文
  *   [13] 已发送消息的贴图也收进浮层（2026-11-02）：可编辑行与只读出口都从 `<a>` 换成
  *       `<button className="entry-shot">`，点开共用同一个 `ImageLightbox`，不再另开窗口
  *
@@ -313,7 +314,7 @@ console.log('[7] 分轮口径单点 + internal 条目对齐 dsh（0.6.67 右侧�
     timing.includes("from './rounds'") && timing.includes('export { roundInfos, type RoundInfo }') && !timing.includes('current = {'),
   )
 
-  // ── ② 两种 internal：回合中途并进本轮（steering）不增刻度；回合收尾出账（非 steering）增一枚 ──
+  // ── ② internal 从不另起一轮：有轮就并进当前轮，没轮就归 leading（两种都不增刻度） ──
   const midSteer = [
     e('user', { text: 'A', ts: 1 }),
     e('text', { text: 'r1', ts: 2 }),
@@ -326,17 +327,48 @@ console.log('[7] 分轮口径单点 + internal 条目对齐 dsh（0.6.67 右侧�
     e('user', { text: teammateBody, internal: true, ts: 3 }),
     e('text', { text: 'r2', ts: 4 }),
   ]
+  const leadInternal = [
+    e('system', { text: '开场提示', ts: 1 }),
+    e('user', { text: '后台作业 job-1 成功完成。', internal: true, ts: 2 }),
+    e('user', { text: 'A', ts: 3 }),
+    e('text', { text: 'r1', ts: 4 }),
+  ]
   const mid = splitRounds(midSteer)
   const end = splitRounds(endInternal)
+  const lead = splitRounds(leadInternal)
   check(
     '② 回合中途并进本轮的 internal（steering+internal）不增刻度：仍 1 轮 1 座位',
     mid.rounds.length === 1 && mid.seats.length === 1 && mid.seats[0].indices.length === 4,
     JSON.stringify(mid.seats),
   )
   check(
-    '② 回合收尾出账的 internal（非 steering，宿主置了 pendingTurn）增一枚刻度：2 轮 2 座位',
-    end.rounds.length === 2 && end.seats.length === 2 && end.rounds[1].startIndex === 2,
+    '② 收尾出账的 internal（非 steering）不开新轮、并进上一轮：仍 1 轮 1 座位，round0 覆盖 0..3',
+    end.rounds.length === 1 &&
+      end.seats.length === 1 &&
+      end.rounds[0].startIndex === 0 &&
+      end.rounds[0].endIndex === 3 &&
+      end.seats[0].indices.join(',') === '0,1,2,3',
     JSON.stringify(end.rounds),
+  )
+  check(
+    '② 并进上一轮时 endTs 跟着推进（internal 之后还有条目就用后者的时刻）',
+    end.rounds[0].endTs === 4,
+    JSON.stringify(end.rounds[0]),
+  )
+  const endTail = splitRounds(endInternal.slice(0, 3))
+  check(
+    '② internal 是本轮最后一条时也算进 endTs（「用时」仍是整轮墙钟）',
+    endTail.rounds.length === 1 && endTail.rounds[0].endIndex === 2 && endTail.rounds[0].endTs === 3,
+    JSON.stringify(endTail.rounds),
+  )
+  check(
+    '② 会话第一条就是通知：不造空轮、归 leading 开场段，座位接缝不错位',
+    lead.rounds.length === 1 &&
+      lead.rounds[0].startIndex === 2 &&
+      lead.seats.length === 1 &&
+      lead.seats[0].indices.join(',') === '2,3' &&
+      lead.leading.join(',') === '0,1',
+    JSON.stringify({ rounds: lead.rounds, seats: lead.seats, leading: lead.leading }),
   )
 
   // ── ③ internal 的题面预览不出现原文：给一句人话（队友名 / 状态从 body 头解出来） ──

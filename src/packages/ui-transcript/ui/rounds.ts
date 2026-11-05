@@ -8,15 +8,16 @@
  * 拿座位序号去索引 `roundInfos`（`rounds[seat.round]`）就整体错开——每轮的用时 / 折叠 /
  * 「进行中」判定全偏移，右侧刻度条也多出一枚刻度。现在两边都改为调本模块，一份口径只有一处。
  *
- * 规则（与 dsh 对齐）：
- *   1. **只有 `kind === 'user'` 才可能开新轮**（这条决定刻度数）；
+ * 规则（1、2 与 dsh 对齐；3 是 2026-11 用户拍板的口径，比 dsh 少一枚刻度）：
+ *   1. **只有人发的 `kind === 'user'` 才可能开新轮**（这条决定刻度数）；
  *   2. `steering === true` 且已有当前轮 → 归入当前轮，**不开新座位**；
- *   3. `internal === true`（非人发起的唤醒，如队友 `<teammate-report>` 汇报）**照常算数**：
- *      - 它是回合**中途**并进来的（`steering: true` + `internal: true`）→ 不开新轮（走规则 2）；
- *      - 它是回合**收尾**出账、宿主拿它开了一轮（`drainInbox(false)` → `loop.ts` 置 pendingTurn，
- *        `steering` 缺省）→ **要有一枚刻度**，只是题面预览不给原文（见
- *        {@link teammateReportLabel}）。
- *      这条区分与 dsh 的 turn-trigger 一致：非人来源的轮有刻度、但不提供题面预览。
+ *   3. `internal === true`（非人发起的唤醒，如队友 `<teammate-report>` 汇报、后台作业完成
+ *      通知）**从不开新轮**——它是机器代投的一段话，不是人起的一轮，单独成轮会在刻度条上
+ *      多一枚、还挂一行「用时」：
+ *      - 前面已有轮 → 并进当前轮（与规则 2 同一套处理：推进 `endIndex` / `endTs`）；
+ *      - 前面没有任何轮（会话第一条就是通知）→ 归 leading 开场段，不造空轮，
+ *        否则座位切片会整体错位（座位是从轮起点到下一条轮起点之前的连续区间）。
+ *      题面预览仍不给原文（见 {@link teammateReportLabel}）。
  *
  * 时间戳的读法就地内联一份（等价于 `@dsc/ui-primitives` 的 `entryTs`：有限正数才认），
  * 但**文案走本包字典**（`locale/ui.zh.json` + `createT`）——于是本文件有了运行期 import，
@@ -90,21 +91,25 @@ function tsOf(entry: TranscriptEntry): number | null {
  * 于是座位序号与 `RoundInfo` 下标**结构上不可能错开**。
  *
  * 两类条目不参与「这一轮有几条、到哪结束」：开场那条 system 提示、轮次之后冒出来的
- * system 条目（错误、宿主通知）。**轮中途插话**（steering）不另起一轮，留在原轮里。
+ * system 条目（错误、宿主通知）。**轮中途插话**（steering）与**机器投递的条目**（internal）
+ * 都不另起一轮，留在原轮里。
  */
 export function splitRounds(entries: readonly TranscriptEntry[]): RoundSplit {
   const rounds: RoundInfo[] = []
   entries.forEach((entry, index) => {
     if (entry.kind === 'user') {
       const current = rounds[rounds.length - 1]
-      // 插话且已在某一轮里：并进当前轮，不新开座位（规则 2）。
-      if (entry.steering === true && current !== undefined) {
+      // 插话、以及机器投递的条目（internal）并进当前轮，不新开座位（规则 2 / 3）。
+      if ((entry.steering === true || entry.internal === true) && current !== undefined) {
         current.endIndex = index
-        const steeringTs = tsOf(entry)
-        if (steeringTs !== null) current.endTs = steeringTs
+        const mergedTs = tsOf(entry)
+        if (mergedTs !== null) current.endTs = mergedTs
         return
       }
-      // 其余 user 条目——包括回合收尾出账的 internal 汇报——都开新轮（规则 1 / 3）。
+      // 机器投递的条目前面还没有任何一轮（会话第一条就是通知）：留给 leading 开场段，
+      // 不造空轮——座位是连续切片，凭空插一轮会让后面每个座位的下标整体错位。
+      if (entry.internal === true) return
+      // 其余人发的 user 条目都开新轮（规则 1）。
       rounds.push({
         index: rounds.length,
         startIndex: index,

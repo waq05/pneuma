@@ -404,8 +404,9 @@ function TranscriptFlow({
         return {
           round: seat.round,
           // 题面预览只在来源是**人**时才填（对照 dsh 的 turnOutline：非 user 来源不留题面）。
-          // internal 消息（队友汇报、后台作业通知……）有刻度但不给原文，改给一句人话——
-          // 绝不把 `<teammate-report …>` 或作业通知原文当题面塞进悬停卡。
+          // internal 消息（队友汇报、后台作业通知……）根本不另起一轮（rounds.ts 规则 3）；
+          // 万一它落在某轮里，也不给原文、改给一句人话——绝不把 `<teammate-report …>` 或
+          // 作业通知原文当题面塞进悬停卡。
           prompt:
             user?.kind !== 'user'
               ? ''
