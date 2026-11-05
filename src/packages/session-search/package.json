@@ -1,13 +1,26 @@
 {
   "name": "@pneuma/session-search",
+  "description": "按关键词翻以前聊过的会话，中文一两个字也能搜到；提供 session_search 工具与 /search 命令",
   "version": "0.8.1",
   "private": true,
   "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
   "exports": {
-    ".": "./index.js",
-    "./package.json": "./package.json",
-    "./locale/*.json": "./locale/*.json"
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./locale/*.json": "./locale/*.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
   },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "cordis.patch.yml",
+    "locale/**"
+  ],
   "pneuma": {
     "bundle": {
       "patch": "./cordis.patch.yml"

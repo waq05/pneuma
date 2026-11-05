@@ -1,15 +1,26 @@
 {
   "name": "@pneuma/ui-boot",
+  "description": "界面壳的引导：启动图取回、平台种子表、cordis 根、分批装载会话与热更对账",
   "version": "0.8.1",
   "private": true,
   "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
   "exports": {
-    ".": "./index.js",
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
     "./boot.js": "./boot.js",
     "./hmr.js": "./hmr.js",
-    "./package.json": "./package.json",
-    "./locale/*.json": "./locale/*.json"
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
   },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "locale/**"
+  ],
   "pneuma": {
     "library": true,
     "title": "界面引导",

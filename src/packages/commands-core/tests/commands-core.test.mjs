@@ -25,7 +25,7 @@ test('库包身份：private + pneuma.library，没有装配行', () => {
 })
 
 test('exports 的模块子路径键与目标一字不差', () => {
-  assert.equal(pkg.exports['.'], './index.js')
+  assert.equal(pkg.exports['.'].default, './index.js')
   assert.equal(pkg.exports['./package.json'], './package.json')
   for (const name of MODULES) assert.equal(pkg.exports[`./${name}.js`], `./${name}.js`)
   passed += 1

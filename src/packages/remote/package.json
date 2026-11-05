@@ -1,13 +1,26 @@
 {
   "name": "@pneuma/remote",
+  "description": "把当前会话开给局域网里的手机浏览器：8 位配对码换设备令牌，只放行白名单方法，审批与轮次结束会推送通知",
   "version": "0.8.1",
   "private": true,
   "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
   "exports": {
-    ".": "./index.js",
-    "./package.json": "./package.json",
-    "./locale/*.json": "./locale/*.json"
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./locale/*.json": "./locale/*.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
   },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "cordis.patch.yml",
+    "locale/**"
+  ],
   "pneuma": {
     "bundle": {
       "patch": "./cordis.patch.yml"

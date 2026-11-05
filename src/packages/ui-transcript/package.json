@@ -1,14 +1,27 @@
 {
   "name": "@pneuma/ui-transcript",
+  "description": "对话页的消息流：一轮一个座位、一行一个条目，过程可整轮折叠或按阶段收组",
   "version": "0.8.1",
   "private": true,
   "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
   "exports": {
-    ".": "./index.js",
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
     "./client": "./ui/ui.tsx",
-    "./package.json": "./package.json",
-    "./locale/*.json": "./locale/*.json"
+    "./locale/*.json": "./locale/*.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
   },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "cordis.patch.yml",
+    "locale/**"
+  ],
   "pneuma": {
     "bundle": {
       "patch": "./cordis.patch.yml"

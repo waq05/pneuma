@@ -163,12 +163,33 @@ for (const pkg of packages) {
       delete exports[key]
     }
   }
+  /**
+   * 产物清单的字段与源清单一一对应：**发版面（description / main / types / files）
+   * 不许在构建这一步丢掉**。
+   *
+   * 为什么要在产物里也留一份：源清单是给门禁与作者看的，装到 node_modules 里的那份
+   * 才是别人 import、编辑器找类型、npm 打包时真正读的。dsh 的包两边同形，我们少了这层
+   * 就会出现「源码里 main 写着 index.js，装上去那份没有 main」——发行版解析落回默认，
+   * 类型在编辑器里全丢，而且看不出来。
+   *
+   * files 只列产物里真的有的：README 不进包（它留在源码树），locale 有才列。
+   */
+  const outFiles = [
+    'index.js',
+    'index.d.ts',
+    ...(existsSync(pkg.patchFile) ? ['cordis.patch.yml'] : []),
+    ...(existsSync(localeSrc) ? ['locale/**'] : []),
+  ]
   const outManifest = {
     name: pkg.manifest.name ?? `@pneuma/${pkg.id}`,
+    description: pkg.manifest.description ?? '',
     version: rootManifest.version,
     private: true,
     type: 'module',
+    main: './index.js',
+    types: './index.d.ts',
     exports,
+    files: outFiles,
     pneuma,
     // pneuma.client 也要带过去：它是「这个包有界面半」在产物里的唯一声明（内置界面半的
     // 产物不在包内，exports 那条已被上面的过滤去掉）。

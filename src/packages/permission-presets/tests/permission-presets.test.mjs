@@ -22,7 +22,7 @@ test('清单与装配行：cordis.patch.yml 的 id 与包名对得上', () => {
 
 test('包形态：ESM、两个导出子路径、patch 声明自洽', () => {
   assert.equal(pkg.type, 'module')
-  assert.ok(pkg.exports['.'])
+  assert.ok(pkg.exports['.'].default)
   assert.ok(pkg.exports['./package.json'])
   if (pkg.pneuma?.library === true) {
     assert.equal(pkg.pneuma?.bundle, undefined)

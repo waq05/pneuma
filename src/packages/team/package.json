@@ -1,13 +1,26 @@
 {
   "name": "@pneuma/team",
+  "description": "一块按会话分开的任务板：登记、认领、结项，队友和你看到同一块；成员名单在「子智能体」里",
   "version": "0.8.1",
   "private": true,
   "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
   "exports": {
-    ".": "./index.js",
-    "./package.json": "./package.json",
-    "./locale/*.json": "./locale/*.json"
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./locale/*.json": "./locale/*.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
   },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "cordis.patch.yml",
+    "locale/**"
+  ],
   "pneuma": {
     "bundle": {
       "patch": "./cordis.patch.yml"

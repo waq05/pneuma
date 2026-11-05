@@ -53,7 +53,7 @@ test('cordis.patch.yml 的装配行认的是 @pneuma/team', () => {
 // 包形态：ESM + 两个导出入口 + 装配指向本目录的 cordis.patch.yml（库包则相反）。
 test('package.json 是 ESM 功能包，装配指向 cordis.patch.yml', () => {
   assert.equal(pkg.type, 'module')
-  assert.ok(pkg.exports['.'], 'exports 必须有 "."')
+  assert.ok(pkg.exports['.'].default, 'exports 必须有 "."')
   assert.ok(pkg.exports['./package.json'], 'exports 必须有 "./package.json"')
   if (pkg.pneuma.library === true) {
     assert.equal(pkg.pneuma.bundle, undefined, '库包不该有 bundle.patch')

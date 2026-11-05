@@ -1,13 +1,26 @@
 {
   "name": "@pneuma/tui",
+  "description": "把同一套运行时挂到 ink 终端：整屏跑在备用屏里，声明 platform 为 tui 的界面插件渲染在通知盒下方",
   "version": "0.8.1",
   "private": true,
   "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
   "exports": {
-    ".": "./index.js",
-    "./package.json": "./package.json",
-    "./locale/*.json": "./locale/*.json"
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./locale/*.json": "./locale/*.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
   },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "cordis.patch.yml",
+    "locale/**"
+  ],
   "pneuma": {
     "bundle": {
       "patch": "./cordis.patch.yml"

@@ -24,7 +24,7 @@ test('package.json 是 ESM 功能包，装配指向 cordis.patch.yml', () => {
   const pkg = JSON.parse(read('../package.json'))
   assert.equal(pkg.name, '@pneuma/mode')
   assert.equal(pkg.type, 'module')
-  assert.ok(pkg.exports['.'], 'exports 必须有 "."')
+  assert.ok(pkg.exports['.'].default, 'exports 必须有 "."')
   assert.ok(pkg.exports['./package.json'], 'exports 必须有 "./package.json"')
   assert.equal(pkg.pneuma.bundle.patch, './cordis.patch.yml')
   assert.notEqual(pkg.pneuma.library, true, '功能包不该标成库包')

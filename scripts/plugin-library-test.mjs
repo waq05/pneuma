@@ -249,12 +249,22 @@ console.log('── 5. 依赖方向门禁：允许与禁止的文案 ──')
     writeText(join(dir, 'src', 'boot.ts'), 'export const boot = 1\n')
     writeText(join(dir, 'src', 'headless.ts'), 'export const headless = 1\n')
     for (const pkg of packages) {
+      // 清单形状与真包一致（含发版四个字段与条件导出的根入口）：门禁第 1、2 项按它判，
+      // 夹具少一行就会假红，那种红最费时间。
       const manifest = {
         name: '@pneuma/' + pkg.id,
+        description: '门禁夹具包',
         version: '0.0.0-fixture',
         private: true,
         type: 'module',
-        exports: { '.': './index.js', './package.json': './package.json' },
+        main: './index.js',
+        types: './index.d.ts',
+        exports: {
+          '.': { types: './index.d.ts', default: './index.js' },
+          ...(pkg.patch === true ? { './cordis.patch.yml': './cordis.patch.yml' } : {}),
+          './package.json': './package.json',
+        },
+        files: ['index.js', 'index.d.ts'],
         engines: { pneuma: '>=1.0.0 <2.0.0' },
         peerDependencies: { '@deepseek-ai/cordis': '^4.0.4' },
         pneuma: pkg.pneuma,
@@ -264,7 +274,7 @@ console.log('── 5. 依赖方向门禁：允许与禁止的文案 ──')
       // 第 8 项（文档与测试）是硬项：夹具包也得齐，否则「库包不红」那条会假红。
       writeText(
         join(dir, 'src', 'packages', pkg.id, 'README.md'),
-        '# ' + pkg.id + '\n\n## Model Experience\n\n夹具包。\n\n## Known Limitations\n\n只用于门禁夹具。\n',
+        '# ' + pkg.id + '\n\n夹具包。\n\n## Model Experience\n\n夹具包。\n\n## Known Limitations\n\n- 只用于门禁夹具。\n',
       )
       writeText(join(dir, 'src', 'packages', pkg.id, 'tests', pkg.id + '.test.mjs'), 'export {}\n')
       if (pkg.patch !== true) continue
@@ -403,6 +413,48 @@ console.log('── 5. 依赖方向门禁：允许与禁止的文案 ──')
     '包标准闸：core → 包同样红（含 import type）',
     standardIssues.includes('src/core/leak.ts') && standardIssues.includes('含 import type'),
     standardIssues,
+  )
+
+  // 5f：这一轮新加的两条 —— 功能包不导出 patch 文件、README 的限制一节只有标题没有条目。
+  // 反向夹具必须有：一条闸只要没被人故意弄红过，就不知道它到底在不在判。
+  const missingExportDir = makeRoot('missing-patch-export', [
+    {
+      id: 'feat-noexport',
+      pneuma: { bundle: { patch: './cordis.patch.yml' }, resolution: 'overridable', order: 100 },
+      patch: true,
+      source: 'export function apply() {}\n',
+    },
+  ])
+  const manifestFile = join(missingExportDir, 'src', 'packages', 'feat-noexport', 'package.json')
+  const shape = JSON.parse(readFileSync(manifestFile, 'utf8'))
+  delete shape.exports['./cordis.patch.yml']
+  writeText(manifestFile, JSON.stringify(shape, null, 2) + '\n')
+  const noExportRun = runStandard(missingExportDir)
+  const noExportIssues = (noExportRun.parsed?.hard ?? []).flatMap((entry) => entry.issues).join('\n')
+  check(
+    '功能包不导出 ./cordis.patch.yml：包标准闸第 1 项红',
+    noExportRun.status === 1 && noExportIssues.includes('cordis.patch.yml'),
+    noExportIssues,
+  )
+
+  const thinReadmeDir = makeRoot('thin-readme', [
+    {
+      id: 'feat-thin',
+      pneuma: { bundle: { patch: './cordis.patch.yml' }, resolution: 'overridable', order: 100 },
+      patch: true,
+      source: 'export function apply() {}\n',
+    },
+  ])
+  writeText(
+    join(thinReadmeDir, 'src', 'packages', 'feat-thin', 'README.md'),
+    '# feat-thin\n\n夹具包。\n\n## Model Experience\n\n## Known Limitations\n\n- 只用于门禁夹具。\n',
+  )
+  const thinRun = runStandard(thinReadmeDir)
+  const thinIssues = (thinRun.parsed?.hard ?? []).flatMap((entry) => entry.issues).join('\n')
+  check(
+    'Model Experience 只有标题没有正文：包标准闸第 8 项红',
+    thinRun.status === 1 && thinIssues.includes('Model Experience'),
+    thinIssues,
   )
 }
 

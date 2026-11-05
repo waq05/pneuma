@@ -1,13 +1,24 @@
 {
   "name": "@pneuma/ui-runtime",
+  "description": "界面壳的共享运行时：宿主通道、React 上下文与读数 hook、页与视图信号、外观落地、今日用量；作为平台种子下发给界面插件",
   "version": "0.8.1",
   "private": true,
   "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
   "exports": {
-    ".": "./index.js",
-    "./package.json": "./package.json",
-    "./locale/*.json": "./locale/*.json"
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
   },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "locale/**"
+  ],
   "pneuma": {
     "library": true,
     "title": "界面运行时",

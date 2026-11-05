@@ -32,7 +32,7 @@ test('包形态：ESM、两个出口、功能包声明 bundle.patch', () => {
   const pkg = JSON.parse(read('../package.json'))
   // 为什么钉：包级产物按 ESM 加载，出口少了壳就 import 不到；patch 声明丢了装配行不生效。
   assert.equal(pkg.type, 'module')
-  assert.equal(pkg.exports['.'], './index.js', '缺少 exports["."]')
+  assert.equal(pkg.exports['.'].default, './index.js', '缺少 exports["."]')
   assert.equal(pkg.exports['./package.json'], './package.json', '缺少 exports["./package.json"]')
   assert.equal(pkg.pneuma.bundle.patch, './cordis.patch.yml')
   passed += 1

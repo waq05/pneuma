@@ -1,18 +1,29 @@
 {
   "name": "@pneuma/session-core",
+  "description": "钩子、上下文压缩、系统提示词装配、ReAct 循环与协作模式五块会话底座；被 hooks / compact / prompt / agent / mode / plan 等功能包共用同一份实现",
   "version": "0.8.1",
   "private": true,
   "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
   "exports": {
-    ".": "./index.js",
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
     "./hooks.js": "./hooks.js",
     "./compact.js": "./compact.js",
     "./prompt.js": "./prompt.js",
     "./loop.js": "./loop.js",
     "./modes.js": "./modes.js",
-    "./package.json": "./package.json",
-    "./locale/*.json": "./locale/*.json"
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
   },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "locale/**"
+  ],
   "pneuma": {
     "library": true,
     "title": "会话核心库",

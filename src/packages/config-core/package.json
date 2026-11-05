@@ -1,15 +1,26 @@
 {
   "name": "@pneuma/config-core",
+  "description": "用户级模式（preset）文件的读写与技能市场条目的浏览安装；presets / runtime-api / skills / plugin-manager 四个功能包共用",
   "version": "0.8.1",
   "private": true,
   "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
   "exports": {
-    ".": "./index.js",
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
     "./presets.js": "./presets.js",
     "./market.js": "./market.js",
-    "./package.json": "./package.json",
-    "./locale/*.json": "./locale/*.json"
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
   },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "locale/**"
+  ],
   "pneuma": {
     "library": true,
     "title": "配置核心库",

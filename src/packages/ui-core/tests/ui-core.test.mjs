@@ -28,7 +28,7 @@ test('库包身份：private + pneuma.library，没有装配行', () => {
 })
 
 test('exports：根入口、package.json 与终端壳要的四个模块子路径', () => {
-  assert.equal(pkg.exports['.'], './index.js')
+  assert.equal(pkg.exports['.'].default, './index.js')
   assert.equal(pkg.exports['./package.json'], './package.json')
   // 终端壳（@pneuma/tui）按裸说明符取这一半：键与目标必须一字不差。
   for (const name of ['slots', 'slots-ink', 'tui-plugins', 'tui-plugin-api']) {

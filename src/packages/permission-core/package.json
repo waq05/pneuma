@@ -1,15 +1,26 @@
 {
   "name": "@pneuma/permission-core",
+  "description": "会话级权限三项（沙箱档位 / 权限模式 / 审阅者）的读写与预设推导；approval / sandbox / settings / permission-presets 四个功能包共用",
   "version": "0.8.1",
   "private": true,
   "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
   "exports": {
-    ".": "./index.js",
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
     "./permission-scope.js": "./permission-scope.js",
     "./permission-presets.js": "./permission-presets.js",
-    "./package.json": "./package.json",
-    "./locale/*.json": "./locale/*.json"
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
   },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "locale/**"
+  ],
   "pneuma": {
     "library": true,
     "title": "权限核心库",

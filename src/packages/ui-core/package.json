@@ -1,17 +1,28 @@
 {
   "name": "@pneuma/ui-core",
+  "description": "插件版界面的共用核心：槽位注册表、服务表、席位、帧协议与两个壳的装载约定",
   "version": "0.8.1",
   "private": true,
   "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
   "exports": {
-    ".": "./index.js",
-    "./package.json": "./package.json",
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
     "./locale/*.json": "./locale/*.json",
     "./slots.js": "./slots.js",
     "./slots-ink.js": "./slots-ink.js",
     "./tui-plugins.js": "./tui-plugins.js",
-    "./tui-plugin-api.js": "./tui-plugin-api.js"
+    "./tui-plugin-api.js": "./tui-plugin-api.js",
+    "./package.json": "./package.json"
   },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "locale/**"
+  ],
   "pneuma": {
     "library": true,
     "title": "界面共用核心",

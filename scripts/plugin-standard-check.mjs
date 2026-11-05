@@ -6,10 +6,11 @@
  * plugin-model-check 管的是「有没有包、有没有行」，这个脚本管「包本身合不合规格」。
  *
  * 八条硬项（不通过退出 1，合并前必须全绿）：
- *   1. package.json 的字段齐全（name / version / private / type / exports /
+ *   1. package.json 的字段齐全（name / description / version / private / type / main / types /
+ *      exports / files /
  *      engines.pneuma / cordis 对等依赖；功能包另有 pneuma.bundle.patch /
  *      pneuma.resolution / pneuma.order，库包不需要）；
- *   2. exports 的键集只许 .、./client、./package.json、./locale/*.json；
+ *   2. exports 的键集只许 .、./client、./cordis.patch.yml、./package.json、./locale/*.json；
  *      库包另许模块子路径 ./<模块>.js（键与目标一字不差，功能包不给这条）；
  *   3. 清单本地化：声明了 ./locale/*.json 键，目标文件就必须在、必须是合法 JSON，
  *      且 title / description 都是非空字符串（键在文件不在 = 插件中心少一行字的来源）；
@@ -66,7 +67,7 @@ const rootVersion = JSON.parse(readText(join(root, 'package.json')) ?? '{}').ver
  * 多出来的键没人用，还会让产物里出现指向不存在文件的路径。哪天真要用，往这里加一行，
  * 别在包里偷偷加——这个闸会把「包里冒出计划外的键」报出来，由主控决定收不收。
  */
-const ALLOWED_EXPORT_KEYS = new Set(['.', './client', './package.json'])
+const ALLOWED_EXPORT_KEYS = new Set(['.', './client', './cordis.patch.yml', './package.json'])
 /** 本地化文件是允许的第二类键：./locale/<语言>.json。 */
 const LOCALE_EXPORT_KEY = /^\.\/locale\/[^/]+\.json$/
 /**
@@ -258,14 +259,35 @@ for (const id of ids) {
   )
   want(manifest.private === true, 'private 不是 true')
   want(manifest.type === 'module', `type 是 ${JSON.stringify(manifest.type)}，要求 "module"`)
+  // 发版面四个字段与 dsh 同形：描述、入口、类型、打包清单。
+  // 为什么门禁要管它们：按包名导入时编辑器找类型靠 types、旧解析器找入口靠 main，
+  // 少一行不会报错，只会让第三方插件作者在编辑器里看到一屏 any。
+  want(typeof manifest.description === 'string' && manifest.description.trim() !== '', 'description 缺失或为空')
+  want(manifest.main === './index.js', `main 是 ${JSON.stringify(manifest.main)}，要求 "./index.js"`)
+  want(manifest.types === './index.d.ts', `types 是 ${JSON.stringify(manifest.types)}，要求 "./index.d.ts"`)
+  want(
+    Array.isArray(manifest.files) && manifest.files.includes('index.js') && manifest.files.includes('index.d.ts'),
+    `files 要列出 index.js 与 index.d.ts（现在是 ${JSON.stringify(manifest.files)}）`,
+  )
   const exportsField = manifest.exports
   want(exportsField !== null && typeof exportsField === 'object', 'exports 缺失或不是对象')
   if (exportsField !== null && typeof exportsField === 'object') {
-    want(exportsField['.'] === './index.js', `exports["."] 是 ${JSON.stringify(exportsField['.'])}，要求 "./index.js"`)
+    // 根入口是条件对象而不是裸字符串：`types` 那一支让编辑器和 node16 解析找到 .d.ts，
+    // `default` 才是运行期入口。裸字符串也能跑，但类型全丢——这是 dsh 包的标准形状。
+    const rootEntry = exportsField['.']
+    const rootOk =
+      rootEntry !== null && typeof rootEntry === 'object' && rootEntry.types === './index.d.ts' && rootEntry.default === './index.js'
+    want(rootOk, `exports["."] 是 ${JSON.stringify(rootEntry)}，要求 { types: "./index.d.ts", default: "./index.js" }`)
     want(exportsField['./package.json'] === './package.json', 'exports 缺 "./package.json": "./package.json"')
   }
   if (pkg.kind === 'feature') {
     want(declaredPatch, 'pneuma.bundle.patch 缺失')
+    // 声明了 patch 文件就得能被按包名解析：dsh 的组合包都导出这一路，读 patch 组合行的人按它取，
+    // 不导出等于把文件藏起来（文件在、键不在，只有人眼能发现）。
+    want(
+      exportsField?.['./cordis.patch.yml'] === './cordis.patch.yml',
+      '功能包要导出 "./cordis.patch.yml": "./cordis.patch.yml"（dsh 的组合包都这么写）',
+    )
     want(
       manifest.pneuma?.resolution === 'pinned' || manifest.pneuma?.resolution === 'overridable',
       `pneuma.resolution 是 ${JSON.stringify(manifest.pneuma?.resolution)}，只允许 pinned / overridable`,
@@ -451,12 +473,45 @@ for (const id of ids) {
   if (!existsSync(readmeFile)) {
     docFail('缺 README.md')
   } else {
-    const readme = readText(readmeFile) ?? ''
-    for (const section of ['Model Experience', 'Known Limitations']) {
-      // 标题层级 1–3 都算：dsh 的写法是 ##，我们不强制。
-      if (!new RegExp(`^#{1,3}\\s*${section}\\b`, 'mi').test(readme)) {
-        docFail(`README.md 缺「${section}」一节`)
-      }
+    const readme = (readText(readmeFile) ?? '').replace(/\r\n/g, '\n')
+    const readmeLines = readme.split('\n')
+    // 标题位置一览（层级 + 文本）：判「一节有没有正文」要按层级找下一节，
+    // 不能简单地取「下一个标题」——H3 子标题不该把 H2 的正文切断。
+    const headings = []
+    readmeLines.forEach((line, index) => {
+      const matched = /^(#{1,6})\s+(.*)$/.exec(line)
+      if (matched !== null) headings.push({ index, level: matched[1].length, text: matched[2].trim() })
+    })
+    /** 一节从标题下一行到「下一个同级或更高级标题」之间的行。 */
+    const bodyOf = (heading) => {
+      const next = headings.find((item) => item.index > heading.index && item.level <= heading.level)
+      const stop = next === undefined ? readmeLines.length : next.index
+      return readmeLines.slice(heading.index + 1, stop)
+    }
+    const nonEmpty = (body) => body.filter((line) => line.trim() !== '')
+    /** 同类标题只许一个：两份「已知限制」读的人不知道该信哪份。 */
+    const sectionOf = (pattern) => headings.filter((item) => pattern.test(item.text))
+    // 摘要：H1 与第一个 H2 之间要有一句话。dsh 用 `## Summary`（限 100 词），
+    // 我们的写法是一行「一句话：…」——判「有没有」比判排版有用，别为了对齐去改 89 份文件的版式。
+    const firstH1 = headings.find((item) => item.level === 1)
+    const firstH2 = headings.find((item) => item.level === 2)
+    const summaryStart = firstH1 === undefined ? 0 : firstH1.index + 1
+    const summaryEnd = firstH2 === undefined ? readmeLines.length : firstH2.index
+    const summary = nonEmpty(readmeLines.slice(summaryStart, summaryEnd)).filter((line) => !line.startsWith('#'))
+    if (firstH1 === undefined) docFail('README.md 没有一级标题')
+    else if (summary.length === 0) docFail('README.md 的 H1 之后缺一句话摘要（正文第一段）')
+    const model = sectionOf(/^Model Experience\b/i)
+    if (model.length === 0) docFail('README.md 缺「Model Experience」一节')
+    else if (model.length > 1) docFail('README.md 有 ' + String(model.length) + ' 个「Model Experience」标题，只许一个')
+    else if (nonEmpty(bodyOf(model[0])).length === 0) docFail('README.md 的「Model Experience」一节没有正文（只有标题）')
+    const limits = sectionOf(/^Known Limitations\b/i)
+    if (limits.length === 0) docFail('README.md 缺「Known Limitations」一节')
+    else if (limits.length > 1) docFail('README.md 有 ' + String(limits.length) + ' 个「Known Limitations」标题，只许一个')
+    else {
+      const body = bodyOf(limits[0])
+      // 一条顶格 '- ' 是最低要求：限制不是「我们以后可能考虑」，要能逐条读、逐条对。
+      const bullets = body.filter((line) => /^-\s+\S/.test(line))
+      if (bullets.length === 0) docFail('README.md 的「Known Limitations」一节没有一条顶格「- 」条目')
     }
   }
   // 包级测试的发现规则与 scripts/package-tests.mjs 一致：tests/ 下至少一个
