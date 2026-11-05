@@ -305,13 +305,18 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 
 ### 3.4 插件从哪来：应用自带包 / profile 组合包 / 自定义单文件
 
-桌面端「插件」页按来源分档，但**每一行都能停用**（0.9 起没有「运行内核」这一档）：
+桌面端「插件」页按**来源**分档，档由宿主判（`plugin-loader.ts` 的 `mountRow`），界面只照着分组：
 
 | 来源 | 判定 | 开关 |
 |---|---|---|
-| 应用自带包 | 行来自 `@pneuma/base`（构建产物 `lib/node_modules/@pneuma/base/cordis.patch.yml`） | 可拨，默认由行的 `disabled` 定 |
-| profile 组合包 | profile `node_modules` 里带 `pneuma.bundle.patch` / `dsh.bundle.patch` 的包 | 可拨，默认由行的 `disabled` 定 |
-| 自定义单文件 | `source: 'external'`（`~/.dsc/plugins/*.js`） | 可拨，默认开 |
+| 应用自带包 | 行来自 `@pneuma/base`（构建产物 `lib/node_modules/@pneuma/base/cordis.patch.yml`），`source = builtin` | 包清单写了 `pneuma.toggleable: true` 才有开关，默认由行的 `disabled` 定 |
+| profile 组合包 | profile `node_modules` 里带 `pneuma.bundle.patch` / `dsh.bundle.patch` 的包，`source = external` | 可拨，默认由行的 `disabled` 定 |
+| 自定义单文件 | `~/.dsc/plugins/*.js`，`source = external` | 可拨，默认开 |
+
+内置行里没写 `pneuma.toggleable` 的是**运行内核**（36 行：`llm`/`session`/`tools`/`transcript` 这些构成 Pneuma 本身的东西），
+不给开关——停掉它就没有对话能力了，`setPluginEnabled` 会当场回一句「这一档属于运行内核」。
+有开关的内置行再按行 id 分两档：`ui-*` 是**界面单元**（21 个，页面里的一块），其余是**官方可开关**（19 个功能插件）。
+这两档分开画，是因为 21 个界面单元会把 19 个功能插件顶到一屏之外。
 
 `resolution` 决定用户能不能拿 profile 里的同名副本顶替应用那份：`overridable`（缺省）能，`pinned` 不能
 （`llm`/`session`/`tools`/`approval` 这 19 个核心包都是 `pinned`）。`engines.pneuma` 判两次——读整包时
@@ -325,10 +330,11 @@ profile 的 `compatibility.json` 里登记「包名 × 包版本 × 运行时版
 新增一个功能包要做的三件事：
 
 1. 建 `dsc/src/packages/<id>/`：`package.json`（`pneuma` 段写 `bundle.patch`、`order`、
-   `title`、`description`、`resolution`、可选的 `settingsSection` 与 `engines.pneuma`）、
+   `title`、`description`、`resolution`、可选的 `settingsSection`、`toggleable` 与 `engines.pneuma`）、
    `cordis.patch.yml`（`insert` 一行 `{ id, name: '@pneuma/<id>' }`，默认关就加
    `disabled: true`）、`index.ts`（导出插件对象）。`pnpm build` 会把它打进
    `lib/node_modules/@pneuma/<id>`，并按 `order` 合成进 `@pneuma/base`；
+   想让用户在插件中心停用它，就在 `pneuma` 段写 `"toggleable": true`——不写等于宣布它是运行内核；
 2. 插件如果要对外提供服务，在 `apply()` 末尾 `ctx.provide('<服务名>', {...})`；
    没有对外服务的（例如 `approval-floor`、`spill`）跳过这一步；
 3. **不要**把这个可选服务写进 `inject`：插件关着时它不存在，写了 `inject` 会让整个挂载失败。

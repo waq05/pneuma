@@ -44,6 +44,7 @@ lib/ui/plugins/<id>/client.js
     "title": "文档与批量读取",          // 插件中心显示名（不加载代码也能列出来）
     "description": "读 PDF / Word / CSV……",
     "settingsSection": "ops",          // 可选：插件中心齿轮跳转的分区 id
+    "toggleable": true,                // 可选：这一行允许用户停用（不写 = 运行内核，不给开关）
     "client": {
       "platform": "pneuma",
       "api": "^2.0.0",
@@ -77,6 +78,32 @@ lib/ui/plugins/<id>/client.js
 5. 行 `config` 是默认值，`plugins.json` 的 config 逐键覆盖。
 6. 行支持 `group`（`config` 即子行数组，子行 id 用 `组id:子id` 前缀，避免撞名）、`isolate`、`intercept`，原样透传给 cordis；不理解的行字段保留，不吞。
 7. `!!js` 一律拒绝（dsh 会求值，等于让插件包在宿主进程里执行任意表达式）。这是有意偏离，写在文档里，不静默跳过。
+
+### 3.1 来源与「能不能停用」：插件中心那几档按什么分
+
+两个字段都由**宿主**判、界面不猜：
+
+| 字段 | 怎么定 | 影响 |
+|---|---|---|
+| `source` | 行来自应用自带清单（`<应用>/lib/node_modules/@pneuma/base/cordis.patch.yml`）= `builtin`；其余（profile 里装的组合包、`~/.dsc/plugins/*.js`）= `external` | 决定分到「官方/界面/内核」还是「自定义」 |
+| `toggleable` | 内置行看包的 `pneuma.toggleable === true`；外部行一律可停 | 决定卡片上有没有开关、`setPluginEnabled` 认不认这一档 |
+
+判据只有一处（`plugin-loader.ts` 的 `mountRow`）：先登记来源与可否停用，挂载时**沿用**这份元数据。
+踩过的坑：挂载入口原先无条件覆盖成 `source: 'external'`，于是 76 个内置插件全掉进「自定义」，
+内核行也一并冒出了开关。
+
+据此分档（`ui-plugins/ui/ui.tsx`）：
+
+| 组 | 条件 | 现在的数量 |
+|---|---|---|
+| 自定义 | `external` 且是单文件插件/组合包 | 取决于用户装了什么 |
+| 官方可开关 | `builtin` + `toggleable`，行 id 不带 `ui-` | 19 |
+| 界面单元 | `builtin` + `toggleable`，行 id 带 `ui-` | 21 |
+| 运行内核 | `builtin` 且不可停 | 36 |
+
+默认开关跟 v0.8.1 一致：13 个功能插件默认关（`browser`、`computer-use`、`dock-browser`、`dsh-compat`、
+`lifecycle-hooks`、`lsp`、`mcp`、`ops`、`schedule`、`self-improve`、`subagent`、`team`、`tool-search`），
+其余内置行默认开；界面单元默认全开。
 
 ## 4. 身份
 

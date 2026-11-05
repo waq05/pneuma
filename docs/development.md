@@ -899,7 +899,10 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 - `tool-search` 晚于 `mcp`：**目前只靠 `pneuma.order`（3690 对 3680）**，没写进 `inject`——mcp 默认关，写进 `inject` 会让 tool-search 一直等它。这条是 Q6 要收的债：要么给「可选依赖」一个显式写法，要么把这层依赖在代码注释里钉死。
 
 **自检脚本同进程起多个内核时要先停再验**：命令补全面（`src/packages/commands/index.ts` 的模块级 `extraSpecs`）与插件元数据一样是进程级共享——不先停掉前面的内核，后起内核的 `specs()` 会看见前几份注册，验「关掉后消失」全是假阳性。cordis 的 `Context` 本身没有 dispose，fiber 在 `ctx.fiber` 上，停整棵内核是 `await ctx.fiber.dispose()`（m5 集成自检踩过这个坑）。
-0.9 起没有「运行内核」这一档：`permission-presets`、`desktop-dock`、`git`、`plugin-manager` 都有了包与行，和其余 52 个一样可在插件中心停用。
+「运行内核」这一档还在，但它的成员只剩**构成 Pneuma 本身**的行（36 行：`llm`/`session`/`tools`/`transcript`……）：
+`permission-presets`、`desktop-dock`、`git`、`plugin-manager` 也已经有了包与行，只是包清单没声明
+`pneuma.toggleable`，所以归在内核档、不给开关。要让它可停用，改包清单加一行声明即可（P2 时写的
+「0.9 起没有运行内核这一档」说的是内核退化为装配器，不是取消这层保护——2026-11-05 按 v0.8.1 的实际行为改回文字口径）。
 把 `tools-default` 剔掉就得到一个只有对话、没有工具的 harness（`src/packages/tools-default/index.ts:3`）。
 
 ### core 层
