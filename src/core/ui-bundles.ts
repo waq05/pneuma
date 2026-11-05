@@ -782,13 +782,33 @@ export function readUiPluginBundle(
 import { readdirSync } from 'node:fs'
 import type { UiTrustProblemKind, UiTrustView } from '../contract.js'
 import { dscPath } from './path-policy.js'
-import { isPluginEnabled, isUiPluginTrusted, readEnabledPlugins, readUiPluginTrust, trustUiPlugin } from './plugin-registry.js'
+import { isPluginEnabled, readEnabledPlugins, readUiPluginTrust, trustUiPlugin, type UiPluginTrustEntry } from './plugin-registry.js'
 
 /** 第三方 bundle 的 rev：**内容摘要**（sha256 前 16 位）。与内置档同一套语义（见
  *  `builtinContentRev`），只是长度不同：第三方的字节是「别人放进来的一份代码」，
  *  rev 一直按 16 位落盘并进了既有断言，不动。 */
 function contentRev(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex').slice(0, 16)
+}
+
+/** 信任记录里存的摘要：sha256 全文（rev 是给 URL 用的 16 位截断，两者不能混用）。 */
+function sha256Hex(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex')
+}
+
+/** 内容与当初同意的那一份对不上时的人话（发现层、信任卡、信任动作三处共用一份）。 */
+const TRUST_STALE_TEXT = '这个插件的内容和当初同意加载时不一样了，需要重新确认'
+
+/**
+ * 这条信任记录还认不认当前这份字节。
+ *
+ * 老记录没有 digest（只记了 trustedAt）：**不静默信任**，按过期处理——没有摘要就无法证明
+ * 「马上要跑的就是当初同意的那一份」，让用户再答一次，比默认放行安全。
+ * @param trust - 信任记录；没有记录就是没信任
+ * @param bytes - 当前界面产物（`ui/client.js`）的字节
+ */
+function trustMatchesArtifact(trust: UiPluginTrustEntry | undefined, bytes: Buffer): boolean {
+  return trust !== undefined && trust.digest !== undefined && trust.digest === sha256Hex(bytes)
 }
 
 /** 第三方插件目录（宿主插件与界面半边同住 `~/.dsc/plugins/`）。 */
@@ -913,6 +933,12 @@ export function discoverThirdPartyUiArtifacts(
       problems.push(`${where}: plugin.json 在，但 ui/client.js 读不到`)
       continue
     }
+    // 信任跟着内容走：摘要对不上（或老记录没有摘要）就当没信任，绝不装载。
+    // 为什么拦在装载之前：插件跑的是当前这份代码，用户当初同意的却是另一份。
+    if (!trustMatchesArtifact(trusted[fileKey], bytes)) {
+      problems.push(`${where}: ${TRUST_STALE_TEXT}——在插件中心重新确认一次才会装载`)
+      continue
+    }
     const rev = contentRev(bytes)
     const cached = cache.get(fileKey)
     const fingerprint = `${rev}`
@@ -1002,12 +1028,15 @@ export function scanThirdPartyUiTrusts(
     if (doc === null && !hasClient) continue
     const fileKey = `${name}/ui/client.js`
     const trust = trusted[fileKey]
+    // 「信没信」按内容算：记录在、但摘要对不上当前这份字节，就是没信——卡上要让人重新确认。
+    const clientBytes = trust === undefined || !hasClient ? null : readFileSyncSafe(resolve(dir, name, 'ui', 'client.js'))
+    const trustedNow = clientBytes !== null && trustMatchesArtifact(trust, clientBytes)
     const row: UiTrustView = {
       name,
       key: fileKey,
       origin: 'third-party',
       platforms: ['web'],
-      trusted: trust !== undefined,
+      trusted: trustedNow,
       enabled: isPluginEnabled(fileKey),
       ...(trust === undefined ? {} : { trustedAt: trust.trustedAt }),
     }
@@ -1040,6 +1069,11 @@ export function scanThirdPartyUiTrusts(
         row.problem = 'plugin.json 在，但 ui/client.js 读不到'
         row.problemKind = 'artifact'
       }
+    }
+    // 摘要对不上与上面几档并列：只有别的档都没话说时才由它来解释「为什么还不装载」。
+    // 不新造 problemKind：这一档的动作与「没信任」相同（重新确认），界面不必分叉。
+    if (trust !== undefined && !trustedNow && row.problem === undefined) {
+      row.problem = `${TRUST_STALE_TEXT}——在插件中心重新确认一次才会装载`
     }
     out.push(row)
   }
@@ -1075,15 +1109,22 @@ export function trustThirdPartyUiPlugin(
   if (builtinIds.has(name)) return { ok: false, error: `${name}: id 与内置插件撞名，这份会被跳过` }
   const gate = evaluateUiApiGate(api, shellApiVersion)
   if (gate !== null) return { ok: false, error: `${name}: ${gate}` }
-  if (!existsClient(dir, name)) return { ok: false, error: `${name}: ui/client.js 读不到，装不上` }
-  if (isUiPluginTrusted(`${name}/ui/client.js`)) {
-    return { ok: true, notice: `「${name}」早就信任过了——重启宿主（或刷新页面）后装载` }
-  }
+  const bytes = readFileSyncSafe(resolve(dir, name, 'ui', 'client.js'))
+  if (bytes === null) return { ok: false, error: `${name}: ui/client.js 读不到，装不上` }
+  const fileKey = `${name}/ui/client.js`
+  const previous = readUiPluginTrust()[fileKey]
+  const digest = sha256Hex(bytes)
+  // 认的是「这一份字节」，不是「这个名字答应过」：内容换过就再落一次，摘要随之更新。
+  const alreadyTrusted = trustMatchesArtifact(previous, bytes)
   try {
-    trustUiPlugin(`${name}/ui/client.js`)
+    trustUiPlugin(fileKey, digest)
   } catch (error) {
     // plugins.json 坏了：拒绝写盘（不覆盖用户配过的东西），把原因原样交回调用方
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+  if (alreadyTrusted) return { ok: true, notice: `「${name}」早就信任过了——重启宿主（或刷新页面）后装载` }
+  if (previous !== undefined) {
+    return { ok: true, notice: `「${name}」${TRUST_STALE_TEXT}，已按当前这份重新确认——重启宿主（或刷新页面）后装载` }
   }
   return { ok: true, notice: `已信任「${name}」——重启宿主（或刷新页面）后装载` }
 }
@@ -1199,6 +1240,8 @@ function readClientDeclaration(dir: string): {
   api?: unknown
   inject?: unknown
   services?: unknown
+  /** 这个 bundle 会 require 的基线外模块（平台种子或本图另一条插件；见 UiPluginRow.external）。 */
+  external?: unknown
   phase?: unknown
   immediately?: unknown
   /** 包的版本号（`package.json` 的 `version`）；没写或不是字符串时 undefined。 */
@@ -1224,6 +1267,7 @@ function readClientDeclaration(dir: string): {
     api: decl['api'],
     inject: decl['inject'],
     services: decl['services'],
+    external: decl['external'],
     phase: decl['phase'],
     immediately: decl['immediately'],
     version: typeof manifest['version'] === 'string' ? manifest['version'] : undefined,
@@ -1466,9 +1510,13 @@ export function discoverPackageUiArtifacts(
       problems.push(`${where}: exports["./client"] 指向的 ${judged.clientPath ?? '(没写)'} 读不到`)
       continue
     }
-    // services / phase / inject 与内置产物、第三方同一套词表与校验口径：坏值记一条问题、
-    // 当没声明处理（丢一个依赖等于让插件少等一件事；拼错的 phase 会静默落进 application）。
+    // services / external / phase / inject 与内置产物、第三方同一套词表与校验口径：坏值记一条
+    // 问题、当没声明处理（丢一个依赖等于让插件少等一件事；拼错的 phase 会静默落进 application）。
     const services = readNameList(decl.services, name, 'pneuma.client.services', problems)
+    // external = 这个 bundle 会 require 的基线外模块（平台种子或本图另一条插件）。
+    // 合法性的终审在装载器（`ui-boot` 的 boot.ts）：它手里才有「本图有哪些插件」这张表；
+    // 这里只按 inject/services 同一口径把声明读出来，写坏的那一项记问题、丢一项。
+    const external = readNameList(decl.external, name, 'pneuma.client.external', problems)
     const rawPhase = decl.phase
     const phase = rawPhase === 'early' || rawPhase === 'application' ? rawPhase : undefined
     if (rawPhase !== undefined && phase === undefined) {
@@ -1495,6 +1543,7 @@ export function discoverPackageUiArtifacts(
         ? { inject: decl.inject.filter((value): value is string => typeof value === 'string') }
         : {}),
       ...(services === undefined ? {} : { services }),
+      ...(external === undefined ? {} : { external }),
       ...(phase === undefined ? {} : { phase }),
       ...(decl.immediately === true ? { immediately: true } : {}),
     }

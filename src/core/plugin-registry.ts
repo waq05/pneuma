@@ -10,6 +10,7 @@
  *
  * @module dsc/core/plugin-registry
  */
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -195,6 +196,14 @@ const PLUGINS_JSON = dscPath('plugins.json')
 export interface UiPluginTrustEntry {
   /** 答应的时刻（毫秒）。 */
   trustedAt: number
+  /**
+   * 答应时那份界面产物（`ui/client.js`）的 sha256 全文。
+   *
+   * 为什么要有它：只记「答应过」挡不住「内容换了」——文件被替换以后旧信任仍然成立，等于
+   * 用户当初同意的是一份代码、跑起来的却是另一份。加载判定要把这份摘要与当前字节比一遍。
+   * 老记录没有这一项（读出来是 undefined），按过期处理（见 core/ui-bundles）。
+   */
+  digest?: string
 }
 
 /** 读全部界面插件信任记录（文件缺失/损坏/形状不对按空处理）。 */
@@ -207,7 +216,12 @@ export function readUiPluginTrust(): Record<string, UiPluginTrustEntry> {
     for (const [key, value] of Object.entries(doc.uiTrust as Record<string, unknown>)) {
       if (typeof value !== 'object' || value === null) continue
       const trustedAt = (value as { trustedAt?: unknown }).trustedAt
-      if (typeof trustedAt === 'number') out[key] = { trustedAt }
+      if (typeof trustedAt !== 'number') continue
+      const digest = (value as { digest?: unknown }).digest
+      out[key] = {
+        trustedAt,
+        ...(typeof digest === 'string' && digest !== '' ? { digest } : {}),
+      }
     }
     return out
   } catch {
@@ -215,18 +229,39 @@ export function readUiPluginTrust(): Record<string, UiPluginTrustEntry> {
   }
 }
 
-/** 查一个第三方界面插件有没有被信任过。 */
-export function isUiPluginTrusted(fileKey: string): boolean {
-  return readUiPluginTrust()[fileKey] !== undefined
-}
-
-/** 落一条信任记录（信任确认动作的终点；重复信任无害）。 */
-export function trustUiPlugin(fileKey: string): void {
+/**
+ * 落一条信任记录（信任确认动作的终点；重复信任无害）。
+ * @param fileKey - 启停键形状的信任键（`<目录名>/ui/client.js`）
+ * @param digest - 这次答应的是哪一份字节（sha256 全文）；不传就按信任键去读产物补算
+ */
+export function trustUiPlugin(fileKey: string, digest?: string): void {
   // 与条目树共用同一份读写：坏文件在这里会抛错，而不是把别人的段覆盖掉。
   const doc = readPluginsDoc() ?? {}
   const uiTrust = isPlainObject(doc.uiTrust) ? doc.uiTrust : {}
-  uiTrust[fileKey] = { trustedAt: Date.now() }
+  // 不传 digest 的调用点只知道键（命令 /ui-trust 就是这样）：按同一形状把那份产物读出来补算。
+  // 不补的话会写出一条「没有摘要、永远过期」的记录，信任按钮等于失效。
+  const resolved = digest !== undefined && digest !== '' ? digest : digestOfUiArtifact(fileKey)
+  uiTrust[fileKey] = {
+    trustedAt: Date.now(),
+    ...(resolved === undefined ? {} : { digest: resolved }),
+  }
   writePluginsDoc({ ...doc, version: 1, uiTrust })
+}
+
+/**
+ * 信任键 → 产物字节的 sha256（`<目录名>/ui/client.js` 按 `~/.dsc/plugins/` 定位）。
+ *
+ * 只服务「调用点拿不到字节」的那一种；读不到给 undefined——宁可留一条没有摘要的记录，
+ * 也不伪造一个和内容对不上的摘要（那会让判定层直接把这份信任当过期）。
+ */
+function digestOfUiArtifact(fileKey: string): string | undefined {
+  if (!fileKey.endsWith('/ui/client.js') || fileKey.includes('..') || fileKey.includes('\\')) return undefined
+  try {
+    const file = join(dscPath('plugins'), ...fileKey.split('/'))
+    return createHash('sha256').update(readFileSync(file)).digest('hex')
+  } catch {
+    return undefined
+  }
 }
 
 /** 判断一个值是不是普通对象（数组也算不是）。 */

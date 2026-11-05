@@ -148,7 +148,11 @@ check('信任记录落盘 plugins.json 顶层 uiTrust', Object.keys(readUiPlugin
     !afterDisable.problems.some((line) => line.includes('good-ui')))
   writePluginEnabled('good-ui/ui/client.js', true)
 
-  // 内容摘要 rev：同一份字节跨 collect 同 rev；换字节 rev 必变
+  // 内容摘要 rev：同一份字节跨 collect 同 rev；换字节 rev 必变。
+  //
+  // 有意收紧（信任强度）：信任记录现在带内容摘要，换了字节旧信任就不算数。所以这里先断言
+  // 「被拦下、要求重新确认」，再走一次确认动作——不这么做的话后面几条合成断言会误以为
+  // 「插件自己消失了」，把一条安全改进读成回归。
   const first = discoverThirdPartyUiArtifacts('1.0.0', new Set())
   const revA = first.entries.find((entry) => entry.id === 'both-platforms')?.rev
   check('rev 是 16 位内容摘要', typeof revA === 'string' && revA.length === 16, String(revA))
@@ -156,8 +160,17 @@ check('信任记录落盘 plugins.json 顶层 uiTrust', Object.keys(readUiPlugin
   check('同一份字节 rev 稳定', second.entries.find((entry) => entry.id === 'both-platforms')?.rev === revA)
   const bundle = join(thirdRoot, 'both-platforms', 'ui', 'client.js')
   writeFileSync(bundle, readFileSync(bundle, 'utf8') + '\n// touched\n', 'utf8')
+  const touched = discoverThirdPartyUiArtifacts('1.0.0', new Set())
+  check(
+    '换了字节：旧信任不再算数（内容变了要重新确认）',
+    !touched.entries.some((entry) => entry.id === 'both-platforms') &&
+      touched.problems.some((line) => line.includes('both-platforms') && line.includes('需要重新确认')),
+    JSON.stringify(touched.problems),
+  )
+  // 重新确认一次（界面上是同一张信任卡的动作），摘要随之更新到当前这份字节。
+  trustUiPlugin('both-platforms/ui/client.js')
   const third = discoverThirdPartyUiArtifacts('1.0.0', new Set())
-  check('换了字节 rev 跟着变', third.entries.find((entry) => entry.id === 'both-platforms')?.rev !== revA)
+  check('换了字节 rev 跟着变（重新确认后可装载）', third.entries.find((entry) => entry.id === 'both-platforms')?.rev !== revA)
 
   // 与内置撞名：第三方让路
   mkThird('builtin-one', '^1.0.0')
