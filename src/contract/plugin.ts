@@ -45,12 +45,15 @@ export interface PluginInfoView {
  *   - `manifest`：plugin.json 缺失、或没写 api（第三方必须声明区间）；
  *   - `clash`：id 与内置插件撞名（第三方这份让路）；
  *   - `version`：api 区间与当前壳不符（含 workspace: 前缀与非法区间）；
- *   - `artifact`：plugin.json 声明齐了，但 ui/client.js 读不到。
+ *   - `artifact`：plugin.json 声明齐了，但 ui/client.js 读不到；
+ *   - `stale`：信任记录在，但产物字节与当初同意的那份对不上（升级、重装或手改过），
+ *     或者记录来自没有摘要的老版本——这一档的动作是「重新确认」，与「从没信任过」不同：
+ *     用户曾经点过头，界面该说清是哪一份变了，而不是让他从头再读一遍披露。
  *
  * 为什么要有这一项：`problem` 是给人看的句子，界面按档画「下一步做什么」时**不许去猜
  * 句子里有没有某个词**——档位在判定现场就知道，由判定的人标出来，两处文案才不互相绑架。
  */
-export type UiTrustProblemKind = 'manifest' | 'clash' | 'version' | 'artifact'
+export type UiTrustProblemKind = 'manifest' | 'clash' | 'version' | 'artifact' | 'stale'
 
 /**
  * 界面插件的一条状态（插件中心「第三方界面插件」与「组合包界面」两张卡的数据源）。

@@ -167,6 +167,21 @@ check('信任记录落盘 plugins.json 顶层 uiTrust', Object.keys(readUiPlugin
       touched.problems.some((line) => line.includes('both-platforms') && line.includes('需要重新确认')),
     JSON.stringify(touched.problems),
   )
+  // 单列一档（stale）：用户曾经点过头，界面要说清「你同意的那份被换掉了」，
+  // 而不是并进「从没信任过」——两者下一步动作不同（前者只要再确认一次）。
+  const staleViews = scanThirdPartyUiTrusts('1.0.0', new Set())
+  const staleRow = staleViews.find((view) => view.name === 'both-platforms')
+  check(
+    '内容变了单列一档（problemKind = stale，trusted = false）',
+    staleRow?.problemKind === 'stale' && staleRow?.trusted === false,
+    JSON.stringify([staleRow?.problemKind, staleRow?.trusted]),
+  )
+  check(
+    '没被换过内容的插件不会沾上 stale',
+    staleViews.find((view) => view.name === 'good-ui')?.problemKind === undefined,
+    JSON.stringify(staleViews.map((view) => [view.name, view.problemKind])),
+  )
+  check('stale 的说明说清是「同意之后被换过」', (staleRow?.problem ?? '').includes('重新确认'), staleRow?.problem ?? ''),
   // 重新确认一次（界面上是同一张信任卡的动作），摘要随之更新到当前这份字节。
   trustUiPlugin('both-platforms/ui/client.js')
   const third = discoverThirdPartyUiArtifacts('1.0.0', new Set())

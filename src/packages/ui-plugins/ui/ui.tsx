@@ -100,7 +100,7 @@ interface TrustRow {
   enabled: boolean
   problem?: string
   /** `problem` 属于哪一档（宿主 `problemKind`）：界面按档说「没加载的原因 + 下一步」。 */
-  problemKind?: 'manifest' | 'clash' | 'version' | 'artifact'
+  problemKind?: 'manifest' | 'clash' | 'version' | 'artifact' | 'stale'
 }
 
 /** 一行是不是组合包带来的界面半边（宿主老版本没有 `origin` 字段，一律当第三方）。 */
@@ -538,7 +538,7 @@ function PluginCard({
  *
  * 为什么档位由宿主标、动作写在界面：判定（api 区间对不上 / client.js 读不到…）在宿主侧
  * 现场就知道档位，界面不该去猜那句人话里有没有某个词；而「下一步做什么」是界面文案，
- * 换宿主版本不该牵动它。三档各有出口：版本→升壳或改区间、产物→查产物路径、
+ * 换宿主版本不该牵动它。各有出口：版本→升壳或改区间、产物→查产物路径、内容变了→在这张卡上重新确认、
  * 未信任→卡片上的「查看并信任」（另走 `trusted` 字段，不是 problem 的一种）。
  */
 const TRUST_PROBLEM_TIERS = {
@@ -557,6 +557,10 @@ const TRUST_PROBLEM_TIERS = {
   clash: {
     label: t('plugins.problem.clash.label'),
     next: t('plugins.problem.clash.next'),
+  },
+  stale: {
+    label: t('plugins.problem.stale.label'),
+    next: t('plugins.problem.stale.next'),
   },
 } as const satisfies Record<NonNullable<TrustRow['problemKind']>, { label: string; next: string }>
 
@@ -580,6 +584,12 @@ const PACKAGE_PROBLEM_TIERS = {
   clash: {
     label: t('plugins.problem.packageClash.label'),
     next: t('plugins.problem.packageClash.next'),
+  },
+  // 组合包这一档实际走不到（装进 profile 就是同意；摘要判定只对第三方目录做），
+  // 但表必须同构——`satisfies` 逼着每个档都有话说，漏一个就是编译错。
+  stale: {
+    label: t('plugins.problem.packageStale.label'),
+    next: t('plugins.problem.packageStale.next'),
   },
 } as const satisfies Record<NonNullable<TrustRow['problemKind']>, { label: string; next: string }>
 

@@ -13592,3 +13592,11 @@ dsh 的 `dsh.bundle.patch` 可以写字符串数组（web-app 一次列五个文
 
 判据：`scripts/profile-hot-mount-test.mjs` 新增第 3b 段四条（profile 自己的 patch 删 insert → 行下线 →
 别的行不受影响），32 条全过；`plugin-hot-update-test` 46 条无回归。
+### 补一条：信任「内容变了」单列一档
+
+上一轮把「摘要不符」并进「未信任」档渲染，理由是动作一样（重新确认）。用户同意单列，理由是信息不一样：
+前者是「你同意的那份被换掉了」，后者是「你从没同意过」——让人重新读一遍完整披露，是把两件事混成一件。
+
+- 契约加 `'stale'`；判定在 `scanThirdPartyUiTrusts` 的兜底位置（别的档都没话说时才归它）；
+- 界面两张档表各加一条，中英各两份文案；
+- 判据 `ui-third-party-test` 三条（改字节 → stale + trusted=false；没换过的不沾；文案说清重新确认）。

@@ -1071,9 +1071,11 @@ export function scanThirdPartyUiTrusts(
       }
     }
     // 摘要对不上与上面几档并列：只有别的档都没话说时才由它来解释「为什么还不装载」。
-    // 不新造 problemKind：这一档的动作与「没信任」相同（重新确认），界面不必分叉。
+    // 单列一档（而不是并进「未信任」）：用户曾经点过头，界面要能说清「是你同意的那份被换掉了」，
+    // 这与「从来没信任过」是两件事，下一步动作也不一样（后者要读完整披露，前者只需再确认一次）。
     if (trust !== undefined && !trustedNow && row.problem === undefined) {
       row.problem = `${TRUST_STALE_TEXT}——在插件中心重新确认一次才会装载`
+      row.problemKind = 'stale'
     }
     out.push(row)
   }

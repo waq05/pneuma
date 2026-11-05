@@ -691,3 +691,17 @@ dsh 的 locale 服务只在浏览器里（`packages/client/locale`，`ctx.locale
 客户端把 `result.text` 原样画进会话（`packages/client/ui-commands/src/client/service.ts:430`）。
 也就是说：**界面文案随语言变，写进会话记录的内容不随语言变**，中文界面里看到的是英文提示。
 我们是同一条口径，只是源语言是中文——中文记录在任何界面语言下都保持中文。这一条按 dsh 的做法定案，不再作为待决项。
+
+### 12.21 信任「内容变了」单列一档（2026-11-05 深夜，用户点头后做）
+
+上一轮说过：摘要不符时按现有「未信任」档渲染，没有单独的问题类别。用户同意单列，已改。
+
+- 契约：`UiTrustProblemKind` 加 `'stale'`（src/contract/plugin.ts:53 附近的四条说明补第五条）。
+  语义是「信任记录在，但产物字节与当初同意的那份对不上（或记录来自没有摘要的老版本）」——
+  用户曾经点过头，下一步只要再确认一次，不用从头读一遍披露。
+- 判定：`scanThirdPartyUiTrusts` 在别的档都没话说时标 `problemKind = 'stale'`（core/ui-bundles.ts）。
+  组合包那一档走不到（装进 profile 就是同意），但界面两张档位表必须同构，所以也给了文案。
+- 界面：`ui-plugins` 的两张档表各加一条（`plugins.problem.stale.*` 与 `plugins.problem.packageStale.*`，
+  中英各两份）。
+- 判据：`scripts/ui-third-party-test.mjs` 加三条——改字节后那一行 `problemKind === 'stale'` 且 `trusted === false`；
+  没被换过内容的插件不沾 stale；说明里说清要重新确认。
