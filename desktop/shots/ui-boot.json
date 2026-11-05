@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-11-05T15:14:00.293Z",
+  "generatedAt": "2026-11-05T16:17:11.935Z",
   "electron": "D:\\dsc\\desktop\\node_modules\\electron\\dist\\electron.exe",
   "driver": "D:\\dsc\\scripts\\_ui-boot-e2e-main.cjs",
-  "durationMs": 73555,
+  "durationMs": 79405,
   "pass": 32,
   "fail": 0,
   "ok": true,
@@ -11,7 +11,7 @@
       "key": "normal",
       "title": "正常态：骨架画出来了，没有诊断文案",
       "shot": "desktop/shots/ui-boot-normal.png",
-      "durationMs": 18797,
+      "durationMs": 20691,
       "assertions": [
         {
           "name": "页面里有骨架根节点 .app",
@@ -64,7 +64,7 @@
         "hasRendererDiag": false,
         "hasLayoutDiag": false,
         "boot": {
-          "rev": "49c3d80a78c8",
+          "rev": "a30cb618405a",
           "entries": [
             "actions",
             "ask",
@@ -151,7 +151,7 @@
           "transcript": "loaded",
           "trace": "loaded"
         },
-        "firstFrameAt": 1793891570387,
+        "firstFrameAt": 1793895357966,
         "text": "Pneuma 新会话 技能 插件 工作区 dsc 新会话 刚刚 今日总用量 0 tok 设置 新会话 对话 轨迹 更改 有什么可以帮忙的？ 输入 / 查看可用指令 · 消息会携带当前工作目录上下文 看懂代码 解释一处实现的来龙去脉 做点东西 从需求一路写到能跑 审查改动 看未提交的改动有没有坑 排查问题 从一个报错查到根因 feat/pluginization + 工作区可写 标准模式 fake-chat 默认"
       }
     },
@@ -159,7 +159,7 @@
       "key": "layout-off",
       "title": "停用骨架：画布局诊断页，没有 .app",
       "shot": "desktop/shots/ui-boot-layout-off.png",
-      "durationMs": 17710,
+      "durationMs": 19290,
       "assertions": [
         {
           "name": "页面文字里有「界面布局」",
@@ -209,7 +209,7 @@
         "hasRendererDiag": false,
         "hasLayoutDiag": true,
         "boot": {
-          "rev": "ea0ff8a32bc9",
+          "rev": "bf2c89d1e78e",
           "entries": [
             "actions",
             "ask",
@@ -282,7 +282,7 @@
       "key": "renderer-off",
       "title": "停用渲染器：画渲染器诊断页",
       "shot": "desktop/shots/ui-boot-renderer-off.png",
-      "durationMs": 17980,
+      "durationMs": 19324,
       "assertions": [
         {
           "name": "页面文字里有「界面渲染器」",
@@ -332,7 +332,7 @@
         "hasRendererDiag": true,
         "hasLayoutDiag": false,
         "boot": {
-          "rev": "ce7804a404a9",
+          "rev": "dcca11ee9063",
           "entries": [
             "actions",
             "ask",
@@ -405,7 +405,7 @@
       "key": "english",
       "title": "英文界面：language: en 时页面是英文",
       "shot": "desktop/shots/ui-boot-english.png",
-      "durationMs": 19063,
+      "durationMs": 20094,
       "assertions": [
         {
           "name": "启动图 host.language 是 en",
@@ -458,7 +458,7 @@
         "hasRendererDiag": false,
         "hasLayoutDiag": false,
         "boot": {
-          "rev": "49c3d80a78c8",
+          "rev": "a30cb618405a",
           "entries": [
             "actions",
             "ask",
@@ -545,7 +545,7 @@
           "transcript": "loaded",
           "trace": "loaded"
         },
-        "firstFrameAt": 1793891625074,
+        "firstFrameAt": 1793895416742,
         "text": "Pneuma New session Skills Plugins Workspaces dsc New session Just now Today's usage 0 tok Settings New session Chat Trace Changes What can I help with? Type / to see available commands · messages carry the current working directory context Understand code Explain how a piece of code works Build something Take a requirement all the way to working code Review changes Check uncommitted changes for pitfalls Debug an issue Trace an error to its root cause feat/pluginization + Workspace write Standard mode fake-chat Default"
       }
     }

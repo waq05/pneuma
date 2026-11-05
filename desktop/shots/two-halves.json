@@ -59,7 +59,7 @@
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "9a557a731f4c"
+            "rev": "cd3f5a025a3b"
           },
           "preview": {
             "state": "loaded",
@@ -143,7 +143,7 @@
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "ff3b687bdd4d"
+            "rev": "7527fed662aa"
           },
           "trace": {
             "state": "loaded",
@@ -189,11 +189,11 @@
         "net": {
           "/api/boot": {
             "status": 200,
-            "ms": 8
+            "ms": 9
           },
           "/plugins/??rev=1": {
             "status": 404,
-            "ms": 1
+            "ms": 2
           }
         }
       }
@@ -257,7 +257,7 @@
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "9a557a731f4c"
+            "rev": "cd3f5a025a3b"
           },
           "preview": {
             "state": "loaded",
@@ -341,7 +341,7 @@
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "ff3b687bdd4d"
+            "rev": "7527fed662aa"
           },
           "trace": {
             "state": "loaded",
@@ -385,7 +385,7 @@
         "entryCount": 15,
         "twoHalves": 1
       },
-      "nonce": "c9621149"
+      "nonce": "12f2b376"
     },
     {
       "label": "还原轮",
@@ -446,7 +446,7 @@
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "9a557a731f4c"
+            "rev": "cd3f5a025a3b"
           },
           "preview": {
             "state": "loaded",
@@ -530,7 +530,7 @@
             "via": "cordis",
             "fiber": 2,
             "error": null,
-            "rev": "ff3b687bdd4d"
+            "rev": "7527fed662aa"
           },
           "trace": {
             "state": "loaded",
