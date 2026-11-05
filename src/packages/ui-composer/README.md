@@ -11,7 +11,7 @@
 
 ## 面板与数据
 
-- 三个槽：通知条 order 40、输入框 order 50、排队条 order 60，排队条排在输入框下面（ui/ui.tsx:122-127）。
+- 三个槽：通知条 order 40、排队条 order 45、输入框 order 50，排队条紧贴在输入框**上面**（ui/ui.tsx:139-145）。
 - 数据来自快照：`turnState`、`hasApproval`、`inboxCount`、`permissionPresets`、`preset`、`git`、`sessionPath`（ui/ui.tsx:132-139）。
 - 发送走 `submit`，插话走 `steerQueued`，打断走 `interrupt`（ui/ui.tsx:383、397、415）。
 - 队列条用 `editQueued` / `removeQueued` / `steerQueued` 改收件箱（ui/queue-dock.tsx:76-103）。

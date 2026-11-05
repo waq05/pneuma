@@ -2,8 +2,9 @@
  * 内置插件：输入区（对照旧桌面界面 `Composer.tsx` + `queue-dock.tsx`）。
  *
  * 一个插件注册两个条目，因为旧界面里它们本来就是兄弟节点、只是上下相邻：
- *   - `composer.box`（order 50）：输入框 + 底栏旋钮 + 发送/打断；
- *   - `composer.queue`（order 60）：排队消息条，排在输入框**下面**。
+ *   - `composer.queue`（order 45）：排队消息条，排在输入框**上面**（用户 2026-11-06 指定：
+ *     排队是「还没发出去的草稿」，要贴着输入框、在它上沿，不能压到下面去）；
+ *   - `composer.box`（order 50）：输入框 + 底栏旋钮 + 发送/打断。
  * 壳把槽条目渲染成 `display:contents`，所以这两块在布局上就是 `.composer-zone` 的直接子节点。
  * 但那一层对**选择器**不透明：`.composer-zone > *` 那条「与正文同宽」（`legacy/views.css:2165`）
  * 打在槽条目上，`max-width` 与 `margin: auto` 都不生效——同一条规则由壳在 `styles.css` 里
@@ -135,12 +136,12 @@ export default defineUiPlugin({
         insertDraft?.(text)
       },
     })
-    // order 50 = 排在各种卡（审批/提问/计划，order 10-40）下面、排队条（60）上面。
-    // order 40 = 待投递通知条，与三张卡同一条带（输入框上方）；order 60 = 用户排队条，
-    // 在输入框**下面**。
+    // 一条带从下往上排：输入框（50）在最底，排队条（45）紧贴它上沿，待投递通知条（40）再往上；
+    // 审批/提问/计划三张卡（10-40）在最上面。排队条必须在输入框上面（用户 2026-11-06 指定），
+    // 否则「还没发出去的草稿」被压到输入框下方，看着像已经发出去了。
     ui.slots.register('shell.composer', { id: 'composer.notices', order: 40 }, NoticeStrip)
+    ui.slots.register('shell.composer', { id: 'composer.queue', order: 45 }, QueueDock)
     ui.slots.register('shell.composer', { id: 'composer.box', order: 50 }, ComposerBox)
-    ui.slots.register('shell.composer', { id: 'composer.queue', order: 60 }, QueueDock)
   },
 })
 
