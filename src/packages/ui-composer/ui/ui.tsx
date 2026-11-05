@@ -35,20 +35,21 @@
  * 权限那一颗从「模式」改成了「预设」（`surfaces.permissionPresets`）：沙箱 + 权限模式 +
  * 审阅者捆成一颗，分开选会出现「完全访问 + 沙箱仍工作区可写」这种自相矛盾的组合。
  *
- * **模型与思考强度是两颗 chip、两张浮层**（0.6.71 起，对照 ZCode composer 的
- * `V4ComposerToolbar`：模型一颗、档位一颗）。旧版是一颗 + 一张浮层，上半排档位按钮、
- * 下半是模型平铺清单——用户报「看不出来当前选的是哪个模型、哪一档」，底下压着三处真错
- * （档位漏了「默认」那档、打勾拿 `value === 裸模型名` 判、清单只在挂载时取一次），逐条
- * 记在 `./model-picker.ts` 的模块注释里。**所有判定都在那个纯模块里**，这里只画：
- * 探针读不了 `.tsx`，读得了那份零依赖的 `.ts`。
+ * **模型与思考强度是同一颗 chip + 一张两行卡**（2026-11-06 用户指定，照 dsh 的 composer）。
+ * 0.6.71 那一版是两颗各自弹浮层（对照 ZCode 的 `V4ComposerToolbar`）；再往前是一颗带合并浮层，
+ * 上半排档位按钮、下半模型平铺清单——用户报「看不出来当前选的是哪个模型、哪一档」，底下压着
+ * 三处真错（档位漏了「默认」那档、打勾拿 `value === 裸模型名` 判、清单只在挂载时取一次），
+ * 逐条记在 `./model-picker.ts` 的模块注释里。合并之后 chip 读两个读数（`模型名  档位 ⌄`），
+ * 点开是两行卡：点「模型」进两级菜单、点「推理等级」进档位滑杆——二级一个没少，底栏只占一格。
+ * **所有判定都在那个纯模块里**，这里只画：探针读不了 `.tsx`，读得了那份零依赖的 `.ts`。
  *
  * 样式与 class 名照抄旧版（`src/packages/ui-renderer/ui/styles/legacy/views.css`，行号同旧 `styles.css`）：
  * `.composer` 2225、`.composer-bar` 2259、`.bar-left/.bar-right` 2266/2301、`.model-anchor`
  * 2309、`.model-btn` 2314、`.model-pop` 2347、`.model-list/.pop-item` 2410-2464、
- * `.send-btn` 2468、`.queue-dock` 2519 起。两颗 chip 与两级菜单的新样式在壳的 `styles.css`
- * 里（`styles.css` 打的是 `.composer-model-chip` / `.model-picker` / `.model-providers` /
- * `.model-flyout` … 那几个新类名；**别复用已经退役的 `.model-chip`**——那是模型设置页上一版
- * 端点卡里的东西，`scripts/ui-models-page-test.mjs` 有一条闸不许它回来）。
+ * `.send-btn` 2468、`.queue-dock` 2519 起。合并 chip、两行卡与两级菜单的新样式在壳的 `styles.css`
+ * 里（`styles.css` 打的是 `.composer-model-chip` / `.model-sheet` / `.model-picker` /
+ * `.model-providers` / `.model-flyout` … 那几个新类名；**别复用已经退役的 `.model-chip`**——那是
+ * 模型设置页上一版端点卡里的东西，`scripts/ui-models-page-test.mjs` 有一条闸不许它回来）。
  *
  * @module dsc-ui-shell/plugins/composer
  */
@@ -142,6 +143,9 @@ export default defineUiPlugin({
     ui.slots.register('shell.composer', { id: 'composer.notices', order: 40 }, NoticeStrip)
     ui.slots.register('shell.composer', { id: 'composer.queue', order: 45 }, QueueDock)
     ui.slots.register('shell.composer', { id: 'composer.box', order: 50 }, ComposerBox)
+    // 模式（预设）那颗 2026-11-06 从输入区底栏搬到**会话标题旁**（用户指定）：底栏让给「输入」
+    // 这件事本身。order 20——10 是同一个槽里子智能体那一簇的位置，别再往后挤。
+    ui.slots.register('shell.header.lead', { id: 'composer.preset', order: 20 }, PresetChip)
   },
 })
 
@@ -151,7 +155,6 @@ function ComposerBox(): ReactNode {
   const blocked = useHostSelector(readHasApproval)
   const queuedCount = useHostSelector(readInboxCount)
   const permissionPresets = useHostSelector(readPermissionPresets, samePermissionPresets)
-  const preset = useHostSelector(readPresetSurface, samePresetSurface)
   const git = useHostSelector(readGit, sameGit)
   const draftKey = useHostSelector(readSessionPath)
 
@@ -167,22 +170,44 @@ function ComposerBox(): ReactNode {
    * 所以只能自己开浮层——组件在 `ui-primitives/image-lightbox`。
    */
   const [zoom, setZoom] = useState<{ src: string; alt: string } | null>(null)
-  // 权限预设与模式（预设）两根旋钮各自的浮层：三者互斥（开一根把另两根收掉，旧界面同款）。
+  // 权限预设这根旋钮的浮层：与模型/档位合体的那一张、分支菜单互斥（开一根把其余的收掉，旧界面同款）。
   const [permOpen, setPermOpen] = useState(false)
-  const [presetOpen, setPresetOpen] = useState(false)
-  // 分支菜单（输入框上方那一行那颗钮）：与上面三根旋钮的浮层互斥，同一时刻只开一个。
+  // 分支菜单（输入框上方那一行那颗钮）：与上面两根旋钮的浮层互斥，同一时刻只开一个。
   const [branchOpen, setBranchOpen] = useState(false)
 
-  // 模型 / 思考档位（两颗 chip + 两张浮层）：状态仍住在这个组件里，代码在 model-controls.tsx。
+  // 模型 / 思考档位（一颗合并 chip + 三层浮层）：状态仍住在这个组件里，代码在 model-controls.tsx。
   const controls = useModelControls({
     channel,
     onFault: setFault,
     onTakeOver: () => {
       setPermOpen(false)
-      setPresetOpen(false)
       setBranchOpen(false)
     },
   })
+
+  /**
+   * 顶栏那颗模式（预设）钮不在这个组件里：它打开时要收掉输入区这几张浮层——「同一时刻只开
+   * 一张」这条口径跨了组件，只能走窗口事件（与 `shell.settings.open` 同一条先例）。
+   *
+   * 监听只挂一次，回调经 ref 取最新一版（首帧的闭包会把当时的 state 钉死）。
+   */
+  const closePops = useRef<() => void>(() => undefined)
+  useEffect(() => {
+    closePops.current = (): void => {
+      setPermOpen(false)
+      setBranchOpen(false)
+      controls.close()
+    }
+  })
+  useEffect(() => {
+    const onPresetOpen = (): void => {
+      closePops.current()
+    }
+    window.addEventListener('shell.preset.open', onPresetOpen)
+    return () => {
+      window.removeEventListener('shell.preset.open', onPresetOpen)
+    }
+  }, [])
 
   const area = useRef<HTMLTextAreaElement | null>(null)
   // 把「写字 + 聚焦」挂到模块级口子上（服务表在 apply 阶段已经提供出去，见文件头）。
@@ -460,20 +485,9 @@ function ComposerBox(): ReactNode {
 
   /**
    * 切模式（预设）：走界面通道的 `usePreset`（它在放行面里——切模式不碰安全闸门，
-   * 只换提示词与工具白名单）。宿主回执后立刻刷一次会话性子面跟着变。
+   * 只换提示词与工具白名单）。**2026-11-06 起这段搬进顶栏那颗 `PresetChip`**：
+   * 钮已经不在这个组件里，浮层与写口跟着它走（同一个写口、同一句回执）。
    */
-  const choosePreset = (name: string, label: string): void => {
-    setPresetOpen(false)
-    setFault(null)
-    void channel
-      .invoke('usePreset', [name])
-      .then(() => {
-        toastOk(t('toast.modeSwitched', { label }))
-      })
-      .catch((reason: unknown) => {
-        toastErr(t('error.modeFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
-      })
-  }
 
 
   /** 上下键翻本机历史；翻到底回到草稿。 */
@@ -600,7 +614,6 @@ function ComposerBox(): ReactNode {
   const queueing = working && sendable
   /** 当前预设那一项（拿它的 label / description）；`custom`（旋钮拼不出任何预设）或清单缺了时为 undefined。 */
   const permOption = permissionPresets.options.find((item) => item.name === permissionPresets.current)
-  const presetOption = preset.options.find((item) => item.name === preset.current)
 
 
   /**
@@ -693,9 +706,8 @@ function ComposerBox(): ReactNode {
         onOpenChange={(open) => {
           setBranchOpen(open)
           if (!open) return
-          // 四张浮层互斥：开这一张就把别的收掉（旧界面同款）。
+          // 浮层互斥：开这一张就把输入区里别的收掉（旧界面同款）。
           setPermOpen(false)
-          setPresetOpen(false)
           controls.close()
         }}
         git={git}
@@ -947,10 +959,10 @@ function ComposerBox(): ReactNode {
                 surfaces.permissionPresets，写口走原生桥（见 choosePermissionPreset 的注释）。
                 一颗管三件事（沙箱 + 权限模式 + 审阅者）：分开选会出现「完全访问 + 沙箱仍工作区可写」
                 这种自相矛盾的组合。 */}
-            {/* 权限 / 模式 / 档位三颗的浮层在手机上是一块**贴住输入卡片**的面板（`model-anchor-sheet`，
-                见 styles.css 的窄屏段）：它们原来锚在自己那颗 chip 上（右缘对齐），手机上 chip 排在
-                行中间，300/320px 的面板会探出屏幕左缘、行文字被裁成只剩尾字。模型那颗不挂这个类——
-                它有自己一套窄面板 + 悬浮飞出。 */}
+            {/* 权限那颗的浮层在手机上是一块**贴住输入卡片**的面板（`model-anchor-sheet`，
+                见 styles.css 的窄屏段）：它原来锚在自己那颗 chip 上（右缘对齐），手机上 chip 排在
+                行中间，300/320px 的面板会探出屏幕左缘、行文字被裁成只剩尾字。合并后的模型 chip
+                不挂这个类——它有自己一套窄面板 + 悬浮飞出。 */}
             <div className="model-anchor model-anchor-sheet">
               <button
                 type="button"
@@ -963,7 +975,6 @@ function ComposerBox(): ReactNode {
                 aria-label={t('preset.aria', { label: permOption?.label ?? t('preset.custom') })}
                 onClick={() => {
                   setPermOpen((open) => !open)
-                  setPresetOpen(false)
                   controls.close()
                   setBranchOpen(false)
                 }}
@@ -1012,73 +1023,8 @@ function ComposerBox(): ReactNode {
                 </>
               ) : null}
             </div>
-            {/* 模式（预设）旋钮：与权限旋钮并排。清单同样来自快照（surfaces.preset.options），
-                点选即 usePreset；「默认」标跟随 preset.defaultName（新会话用的那一档）。 */}
-            <div className="model-anchor model-anchor-sheet">
-              <button
-                type="button"
-                className={`model-btn${presetOpen ? ' open' : ''}`}
-                data-tip={presetOption?.problem ?? presetOption?.description ?? t('mode.tip')}
-                aria-haspopup="menu"
-                aria-expanded={presetOpen}
-                aria-label={t('mode.aria', { label: presetOption?.label ?? preset.current })}
-                onClick={() => {
-                  setPresetOpen((open) => !open)
-                  setPermOpen(false)
-                  controls.close()
-                  setBranchOpen(false)
-                }}
-              >
-                <IconLayers size={13} />
-                <span className="chip-label">{presetOption?.label ?? preset.current}</span>
-                <IconChevronDown size={12} />
-              </button>
-              {presetOpen ? (
-                <>
-                  <div
-                    className="pop-mask"
-                    onClick={() => {
-                      setPresetOpen(false)
-                    }}
-                  />
-                  <div className="model-pop preset-pop" role="menu" aria-label={t('mode.menu.aria')}>
-                    {/* 这里原来挂着「新建/编辑：设置 → 模式」——一句话把菜单顶行撑满，又
-                        让读者以为要跳去设置页才改得动。删掉：新建/编辑模式本来就是设置页的事，
-                        菜单只回答「现在用哪一档」。 */}
-                    <div className="pop-label">{t('mode.label')}</div>
-                    {preset.options.length === 0 ? (
-                      <div className="pop-item">
-                        <span className="name">{t('list.empty')}</span>
-                      </div>
-                    ) : (
-                      preset.options.map((item) => (
-                        <button
-                          type="button"
-                          role="menuitemradio"
-                          aria-checked={item.name === preset.current}
-                          key={item.name}
-                          className={`pop-item${item.name === preset.current ? ' on' : ''}`}
-                          title={item.problem ?? item.description}
-                          disabled={item.name === preset.current}
-                          onClick={() => {
-                            choosePreset(item.name, item.label)
-                          }}
-                        >
-                          <span className="name">
-                            {item.label}
-                            {item.name === preset.defaultName && (
-                              <span className="pop-badge">{t('preset.defaultBadge')}</span>
-                            )}
-                            {item.problem !== undefined && <span className="pop-badge warn">{t('preset.problem')}</span>}
-                          </span>
-                          {item.name === preset.current ? <IconCheck size={14} className="check" /> : null}
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </>
-              ) : null}
-            </div>
+            {/* 模式（预设）旋钮 2026-11-06 搬到顶栏标题旁（`PresetChip`，走 `shell.header.lead`
+                槽 order 20）：底栏这一格留给输入本身。见文件头与那一段的注释。 */}
           </div>
 
           <div className="bar-right">
@@ -1126,6 +1072,132 @@ function ComposerBox(): ReactNode {
           }}
         />
       )}
+    </div>
+  )
+}
+
+/**
+ * 模式（预设）那颗胶囊：2026-11-06 从输入区底栏搬到**顶栏标题旁**（槽 `shell.header.lead`，order 20）。
+ *
+ * 为什么抽成独立组件：它的状态（菜单开合）与写口（`usePreset`）原本住在 `ComposerBox` 里，
+ * 钮搬走之后两边就隔了两个槽——再靠 props 穿线要跨整棵树。独立组件自己读快照、自己发写口，
+ * 回执（toastOk / toastErr）与降级话术一字未改。
+ *
+ * 三条与顶栏有关的约束（样式在 `legacy/views.css` 的 `.preset-header` 一节）：
+ *   - 顶栏整条是窗口拖拽区，钮自己声明 `no-drag`，否则点下去被当成拖窗口（`.topbar-search` 同款）；
+ *   - 与标题旁其他钮同高（24px），`flex: none` 不换行，名字长了省略；
+ *   - 面板**向下**开（`.model-pop` 的默认锚法是向上——那是输入区底栏的用法）。
+ *
+ * 打开时发一条 `shell.preset.open`：输入区那几张浮层收到就收掉（同一时刻只开一张，跨组件只能
+ * 走窗口事件）。
+ */
+function PresetChip(): ReactNode {
+  const channel = useHostChannel()
+  const preset = useHostSelector(readPresetSurface, samePresetSurface)
+  const [open, setOpen] = useState(false)
+  /** 当前预设那一项（拿它的 label / description）；清单缺了这项时为 undefined。 */
+  const option = preset.options.find((item) => item.name === preset.current)
+
+  // Esc 关（与遮罩点击同效）：这张浮层挂在顶栏，别的浮层各管各的，谁开着归谁。
+  useEffect(() => {
+    if (!open) return undefined
+    // 注意类型：`KeyboardEvent` 这个名字在本文件里指向 React 合成事件（见顶部 import），
+    // 而这里是 `window` 上的原生事件，得显式写 DOM 那个类型。
+    const onKey = (event: globalThis.KeyboardEvent): void => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      event.preventDefault()
+      setOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  /**
+   * 切模式：走界面通道的 `usePreset`（它在放行面里——切模式不碰安全闸门，只换提示词与
+   * 工具白名单）。宿主回执后立刻刷一次会话性子面跟着变；失败按原样报（浏览器页签里没有
+   * 原生桥时也是这条路：宿主不受理就弹 `error.modeFailed`，不静默吞掉）。
+   */
+  const choose = (name: string, label: string): void => {
+    setOpen(false)
+    void channel
+      .invoke('usePreset', [name])
+      .then(() => {
+        toastOk(t('toast.modeSwitched', { label }))
+      })
+      .catch((reason: unknown) => {
+        toastErr(t('error.modeFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
+      })
+  }
+
+  return (
+    <div className="model-anchor preset-header">
+      <button
+        type="button"
+        className={`preset-chip${open ? ' open' : ''}`}
+        /* 壳里的 `data-tip` 气泡层 0.6.37 起就下线了（见 legacy/primitives.css 的注释），
+           悬停说明一律走原生 `title`——搬过来时顺手把它换成真能看见的那一条。 */
+        title={option?.problem ?? option?.description ?? t('mode.tip')}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={t('mode.aria', { label: option?.label ?? preset.current })}
+        onClick={() => {
+          const opening = !open
+          setOpen(opening)
+          // 开这一刻先让输入区把它的浮层收掉（同一条互斥口径跨了两个槽）。
+          if (opening) window.dispatchEvent(new CustomEvent('shell.preset.open'))
+        }}
+      >
+        <IconLayers size={13} />
+        <span className="chip-label">{option?.label ?? preset.current}</span>
+        <IconChevronDown size={12} />
+      </button>
+      {open ? (
+        <>
+          <div
+            className="pop-mask"
+            onClick={() => {
+              setOpen(false)
+            }}
+          />
+          <div className="model-pop preset-pop" role="menu" aria-label={t('mode.menu.aria')}>
+            {/* 这里原来挂着「新建/编辑：设置 → 模式」——一句话把菜单顶行撑满，又让读者以为
+                要跳去设置页才改得动。删掉：新建/编辑模式本来就是设置页的事，菜单只回答
+                「现在用哪一档」。 */}
+            <div className="pop-label">{t('mode.label')}</div>
+            {preset.options.length === 0 ? (
+              <div className="pop-item">
+                <span className="name">{t('list.empty')}</span>
+              </div>
+            ) : (
+              preset.options.map((item) => (
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={item.name === preset.current}
+                  key={item.name}
+                  className={`pop-item${item.name === preset.current ? ' on' : ''}`}
+                  title={item.problem ?? item.description}
+                  disabled={item.name === preset.current}
+                  onClick={() => {
+                    choose(item.name, item.label)
+                  }}
+                >
+                  <span className="name">
+                    {item.label}
+                    {item.name === preset.defaultName && (
+                      <span className="pop-badge">{t('preset.defaultBadge')}</span>
+                    )}
+                    {item.problem !== undefined && <span className="pop-badge warn">{t('preset.problem')}</span>}
+                  </span>
+                  {item.name === preset.current ? <IconCheck size={14} className="check" /> : null}
+                </button>
+              ))
+            )}
+          </div>
+        </>
+      ) : null}
     </div>
   )
 }

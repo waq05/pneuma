@@ -1,4 +1,4 @@
 {
   "title": "Agent team (UI)",
-  "description": "Subagent roster dropdown and run log; the shared task board lives elsewhere"
+  "description": "Agent-team entry next to the session title plus the team panel: roster refreshed every 3s, click a row to read that teammate's full session (read-only) in the main area; the subagent list lives in the status panel, and the shared task board lives elsewhere"
 }

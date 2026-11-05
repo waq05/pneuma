@@ -1,5 +1,10 @@
 /**
- * 模型 / 思考档位：底栏那两颗 chip 与它们各自的浮层（模型两级菜单、档位滑杆）。
+ * 模型 / 思考档位：底栏那**一颗** chip 与它的三层浮层（两行卡 → 模型两级菜单 / 档位滑杆）。
+ *
+ * 2026-11-06 起两颗合并成一颗（用户指定的形态，照 dsh 的 composer）：底栏只占一格，
+ * 文案是 `模型名  档位 ⌄`；点开是一张**两行卡**（模型 / 推理等级），点某一行才翻到那一页
+ * 的二级面板。原来两颗各自弹一张浮层，底栏要占掉两格宽度，窄屏上第二颗还得靠 `flex: none`
+ * 硬撑；合并之后腾出来的宽度留给模型名，二级面板一个也没少。
  *
  * 为什么是 hook 而不是组件：这两颗 chip 与输入行本身咬着三处——底栏的 `barRef`（量栏宽决定
  * 端点前缀收不收）、附件的能力门（当前模型吃不吃图片）、错误行 `fault`。做成组件就得把这三样
@@ -13,7 +18,7 @@
  *
  * @module dsc-ui-shell/plugins/composer/model-controls
  */
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { createT, IconBrain, IconCheck, IconChevronDown, IconChevronRight, IconPackage, useHostChannel, useHostSelector, type EffortLevel, type ModelChoiceView } from '@dsc/ui'
 // 本包自己的中英对照：中文原文是语义真源，英文是译本（构建时内联进插件 bundle）。
 import zh from '../locale/ui.zh.json'
@@ -45,7 +50,7 @@ type WindowKeyboardEvent = globalThis.KeyboardEvent
 
 /** 这颗 hook 交回给输入区的东西。 */
 export interface ModelControlsApi {
-  /** 两颗 chip 与两张浮层（原样插在底栏 `.bar-right` 的开头）。 */
+  /** 那一颗合并 chip 与它的三层浮层（原样插在底栏 `.bar-right` 的开头）。 */
   node: ReactNode
   /** 当前模型吃不吃图片：附件那边的能力门。 */
   allowImage: boolean
@@ -88,9 +93,15 @@ export function useModelControls({ channel, onFault, onTakeOver }: ModelControls
   }, [pendingEffort])
 
   const [models, setModels] = useState<readonly ModelChoiceView[]>([])
+  /**
+   * 两行卡（根页）开没开。合并之后 chip 只有一颗，它先翻根页，根页里点某一行才进二级：
+   * 「模型」→ `modelOpen`，「推理等级」→ `effortOpen`。三页同一时刻最多开一页——它们共用
+   * 一个锚点、一套位置，同时开就是三张浮层叠在同一个坐标上。
+   */
+  const [sheetOpen, setSheetOpen] = useState(false)
   /** 模型菜单（两级：端点 → 悬浮飞出的模型列表）开没开。 */
   const [modelOpen, setModelOpen] = useState(false)
-  /** 思考档位菜单开没开（与模型菜单是**两颗** chip、两张浮层，见 bar-right 的注释）。 */
+  /** 思考档位菜单开没开（档位滑杆那一页，从根页第二行进去）。 */
   const [effortOpen, setEffortOpen] = useState(false)
   /**
    * 一级列表上**鼠标停着（或键盘焦点落着、或手指点过）的那个端点**：它决定飞出卡画谁家的
@@ -140,18 +151,30 @@ export function useModelControls({ channel, onFault, onTakeOver }: ModelControls
   }, [])
   /** 模型 chip 本体（量端点前缀放不放得下用）。 */
   const modelChipRef = useRef<HTMLButtonElement | null>(null)
-  // Esc 关这两张浮层（与遮罩点击同效；设置面板、确认框各自也拦 Esc，谁开着归谁）。
+  /** 两行卡本体（开的时候把焦点送到第一行，↑↓ 才有起点）。 */
+  const sheetRef = useRef<HTMLDivElement | null>(null)
+  // Esc 关这三页浮层（与遮罩点击同效；设置面板、确认框各自也拦 Esc，谁开着归谁）。
   useEffect(() => {
-    if (!modelOpen && !effortOpen) return undefined
+    if (!modelOpen && !effortOpen && !sheetOpen) return undefined
     const onKey = (event: WindowKeyboardEvent): void => {
       if (event.key !== 'Escape' || event.defaultPrevented) return
       event.preventDefault()
       setModelOpen(false)
       setEffortOpen(false)
+      setSheetOpen(false)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [modelOpen, effortOpen])
+  }, [modelOpen, effortOpen, sheetOpen])
+
+  /**
+   * 根页开出来的时候把焦点送到第一行：`↑↓` 走两行、`Enter` 进二级，都从「焦点在卡里」起步，
+   * 而刚点完 chip 时焦点在 chip 上（那是另一颗钮，方向键不会落到卡里的行上）。
+   */
+  useEffect(() => {
+    if (!sheetOpen) return
+    sheetRef.current?.querySelector<HTMLElement>('[data-sheet-row]')?.focus()
+  }, [sheetOpen])
 
   /**
    * 模型清单：挂载时取一次，**每次展开菜单再取一次**。
@@ -225,6 +248,46 @@ export function useModelControls({ channel, onFault, onTakeOver }: ModelControls
       setPendingEffort(null)
       onFault(reason instanceof Error ? reason.message : String(reason))
     })
+  }
+
+  /** 三页同一时刻只开一页（它们共用一个锚点，叠在一起就是三张卡压同一个坐标）。 */
+  const closePanes = (): void => {
+    setSheetOpen(false)
+    setModelOpen(false)
+    setEffortOpen(false)
+  }
+
+  /**
+   * 从根页那一行翻进二级：根页收起、目标页打开，锚点不动（看起来是同一张卡换了内容）。
+   * 别的旋钮在这一下顺手收掉——用户点的是「换模型 / 换档」，不是同时开两张浮层。
+   */
+  const openPane = (pane: 'model' | 'effort'): void => {
+    setSheetOpen(false)
+    setModelOpen(pane === 'model')
+    setEffortOpen(pane === 'effort')
+    onTakeOver()
+  }
+
+  /** 二级页的「返回」：翻回根页（不是收起浮层，用户还要选另一行）。 */
+  const backToSheet = (): void => {
+    setModelOpen(false)
+    setEffortOpen(false)
+    setSheetOpen(true)
+  }
+
+  /**
+   * 根页两行的键盘：↑↓ 在两行之间搬焦点（首尾回环），Enter 走浏览器对 `<button>` 的原生语义，
+   * Esc 由上面那个 window 监听收掉整张浮层。
+   */
+  const onSheetKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+    const rows = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('[data-sheet-row]'))
+    if (rows.length === 0) return
+    event.preventDefault()
+    const at = rows.indexOf(document.activeElement as HTMLElement)
+    const step = event.key === 'ArrowDown' ? 1 : -1
+    const next = at < 0 ? 0 : (at + step + rows.length) % rows.length
+    rows[next]?.focus()
   }
 
   /**
@@ -448,30 +511,43 @@ export function useModelControls({ channel, onFault, onTakeOver }: ModelControls
   return {
     node: (
       <>
-                    {/* 模型 chip（对照 ZCode 的模型选择器）：只回答「用哪个模型」，点开是**两级**菜单
-                        （一级端点、二级该端点的模型，两级各自给当前项打勾）。思考强度是它右边
-                        **另一颗** chip——旧版把两件事塞进同一张浮层，于是「当前选的是哪个模型、
-                        哪一档」都得点开才知道（0.6.71 报障）。两颗各带自己的浮层，与另三根旋钮
-                        同一套互斥口径（开一根把其余全收掉）。 */}
-                    <div className="model-anchor">
+                    {/* 一颗合并 chip（2026-11-06，用户指定的形态）：左边模型、右边推理等级，只占
+                        底栏一格。点开是一张**两行卡**（根页），点某一行才翻到那一页的二级：
+                          · 模型 → 现有两级菜单（一级端点、二级悬浮飞出的该端点模型，各自打勾）；
+                          · 推理等级 → 现有档位滑杆。
+                        三页共用一个锚点、同一套「同时只开一张」的互斥口径（开一根把其余全收掉）。 */}
+                    <div
+                      className="model-anchor"
+                      /* 焦点离开这颗 chip 与它那几张浮层（Tab 走出去、点到别处）就收起来：
+                         `relatedTarget` 还在锚点里说明是卡内部在搬焦点（chip → 根页第一行、
+                         行 → 行），那不算离开。 */
+                      onBlur={(event) => {
+                        const next = event.relatedTarget
+                        if (next instanceof Node && event.currentTarget.contains(next)) return
+                        closePanes()
+                      }}
+                    >
                       <button
                         type="button"
                         ref={modelChipRef}
-                        className={`model-btn composer-model-chip${modelOpen ? ' open' : ''}`}
+                        className={`model-btn composer-model-chip${sheetOpen || modelOpen || effortOpen ? ' open' : ''}`}
                         title={t('model.chip.title', { name: chip.full })}
                         aria-haspopup="menu"
-                        aria-expanded={modelOpen}
+                        aria-expanded={sheetOpen || modelOpen || effortOpen}
                         aria-label={t('model.chip.aria', { name: chip.full })}
                         data-composer-model={current.entry?.value ?? chip.full}
+                        data-composer-effort={shownEffort}
                         onClick={() => {
-                          setModelOpen((open) => !open)
+                          // 三页里只要有一页开着，这一下就是「收起」；全关着才展开根页。
+                          const opening = !(sheetOpen || modelOpen || effortOpen)
+                          closePanes()
+                          setSheetOpen(opening)
                           // 每次开都是「只有一级那一列」的干净态（上次悬浮停在哪家不该带过来）。
                           setHoverProvider(null)
                           setFlyout(null)
                           shiftRef.current = 0
                           setPanelShift(0)
-                          setEffortOpen(false)
-                          // 另外三根旋钮交给父组件收（互斥）。
+                          // 另外几根旋钮交给父组件收（互斥）。
                           onTakeOver()
                         }}
                       >
@@ -480,8 +556,98 @@ export function useModelControls({ channel, onFault, onTakeOver }: ModelControls
                           <span className="composer-model-provider">{chip.prefix}</span>
                         )}
                         <span className="model-name">{chip.name}</span>
+                        {/* 推理等级也写在这颗 chip 上（用户指定的形态：一颗读完两个读数）。
+                            `key` 跟着档位走：换档时这个 span 重挂一次，CSS 那条 200ms 的
+                            「落位」动效因此每次都播（纯 CSS，靠重挂重放，不引动画库）。
+                            手机档 `.model-name` 被藏掉，两个读数都靠 aria-label 与卡里的行。 */}
+                        <span
+                          key={shownEffort}
+                          className={`model-name composer-effort-chip${switchEffort ? '' : ' fixed'}`}
+                          title={switchEffort ? t('model.effort.title', { level: effortText }) : t('model.effort.fixed', { level: effortText })}
+                        >
+                          {effortText}
+                        </span>
                         <IconChevronDown size={12} />
                       </button>
+                      {/* ── 根页：两行卡 ─────────────────────────────────────────── */}
+                      {sheetOpen ? (
+                        <>
+                          <div
+                            className="pop-mask"
+                            onClick={() => {
+                              setSheetOpen(false)
+                            }}
+                          />
+                          <div
+                            className="model-pop model-sheet"
+                            role="menu"
+                            aria-label={t('model.sheet.aria')}
+                            ref={sheetRef}
+                            onKeyDown={onSheetKeyDown}
+                          >
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="model-sheet-row"
+                              data-sheet-row=""
+                              onClick={() => {
+                                openPane('model')
+                              }}
+                            >
+                              <span className="model-sheet-key">{t('model.sheet.model')}</span>
+                              <span className="model-sheet-value">
+                                <span className="model-sheet-name">{chip.name}</span>
+                                {chip.prefix === '' ? null : (
+                                  <span className="model-sheet-sub">{chip.prefix.replace(/\/$/, '')}</span>
+                                )}
+                              </span>
+                              <IconChevronRight size={12} className="model-sheet-arrow" />
+                            </button>
+                            {switchEffort ? (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="model-sheet-row"
+                                data-sheet-row=""
+                                title={t('model.effort.title', { level: effortText })}
+                                aria-label={t('model.effort.aria', { level: effortText })}
+                                onClick={() => {
+                                  openPane('effort')
+                                }}
+                              >
+                                <span className="model-sheet-key">
+                                  <IconBrain size={12} className="model-sheet-key-icon" />
+                                  {t('model.sheet.effort')}
+                                </span>
+                                <span className="model-sheet-value">
+                                  <span className="model-sheet-name">{effortText}</span>
+                                  {/* 档位刻度：几档、当前哪档在卡里就看得见（不必翻进滑杆那一页）。
+                                      纯展示，读屏走 aria-label 那一句。 */}
+                                  <span className="model-sheet-scale" aria-hidden="true">
+                                    {sliderLevels.map((level, at) => (
+                                      <span
+                                        key={level}
+                                        className="model-sheet-dot"
+                                        data-level={level}
+                                        data-current={level === shownEffort ? 'true' : undefined}
+                                        data-lit={at <= sliderLevels.indexOf(shownEffort as EffortLevel) ? 'true' : undefined}
+                                      />
+                                    ))}
+                                  </span>
+                                </span>
+                                <IconChevronRight size={12} className="model-sheet-arrow" />
+                              </button>
+                            ) : (
+                              <div className="model-sheet-row static" title={t('model.effort.fixed', { level: effortText })}>
+                                <span className="model-sheet-key">{t('model.sheet.effort')}</span>
+                                <span className="model-sheet-value">
+                                  <span className="model-sheet-name">{effortText}</span>
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      ) : null}
                       {modelOpen ? (
                         <>
                           <div
@@ -506,6 +672,21 @@ export function useModelControls({ channel, onFault, onTakeOver }: ModelControls
                               setFlyout(null)
                             }}
                           >
+                            {/* 二级页的「返回」：合并之后模型菜单不再是 chip 的第一页，
+                                点错了（想换档却进了模型）不必整张收掉重开。 */}
+                            <div className="model-pane-head">
+                              <button
+                                type="button"
+                                className="model-pane-back"
+                                title={t('model.sheet.back')}
+                                aria-label={t('model.sheet.back')}
+                                onClick={backToSheet}
+                              >
+                                <IconChevronRight size={12} className="model-pane-back-icon" />
+                                <span>{t('model.sheet.back')}</span>
+                              </button>
+                              <span className="model-pane-title">{t('model.sheet.model')}</span>
+                            </div>
                             {/* 当前模型不在清单里时先说清楚（端点配置改过、或这条会话记住的模型下线了）：
                                 否则用户只看到一片「一条都不打勾」的清单，不知道是谁不对。 */}
                             {current.entry === undefined && model !== '' ? (
@@ -624,74 +805,52 @@ export function useModelControls({ channel, onFault, onTakeOver }: ModelControls
                           </div>
                         </>
                       ) : null}
-                    </div>
-
-                    {/* 思考档位 chip：读数取 status.effort（**不依赖模型清单**），所以清单过期也不会
-                        显示错；刚点下去那一小段用乐观值顶（见 pendingEffort），免得数字先弹回去再跳过来。
-                        档位清单里不再摆「默认」（它不是刻度上的位置，见 ./effort-slider 的文件头）。
-                        单档模型不给浮层、也不给箭头。 */}
-                    {switchEffort ? (
-                      <div className="model-anchor model-anchor-sheet">
-                        <button
-                          type="button"
-                          className={`model-btn composer-effort-chip${effortOpen ? ' open' : ''}`}
-                          title={t('model.effort.title', { level: effortText })}
-                          aria-haspopup="menu"
-                          aria-expanded={effortOpen}
-                          aria-label={t('model.effort.aria', { level: effortText })}
-                          data-composer-effort={shownEffort}
-                          onClick={() => {
-                            setEffortOpen((open) => !open)
-                            setModelOpen(false)
-                            // 另外三根旋钮交给父组件收（互斥）。
-                            onTakeOver()
-                          }}
-                        >
-                          <IconBrain size={13} />
-                          <span className="model-name">{effortText}</span>
-                          <IconChevronDown size={12} />
-                        </button>
-                        {effortOpen ? (
-                          <>
-                            <div
-                              className="pop-mask"
-                              onClick={() => {
-                                setEffortOpen(false)
-                              }}
-                            />
-                            {/* 滑杆卡（2026-10-26 换掉原来那一列按钮）：档位有顺序，滑杆把顺序画出来。
-                                选完不关卡片：拖着扫档时关掉，等于每试一档都要重开一次。 */}
-                            <div className="model-pop effort-pop" role="group" aria-label={t('model.effort.menu.aria')}>
-                              <EffortSlider
-                                levels={sliderLevels}
-                                value={shownEffort}
-                                note={
-                                  current.entry === undefined && model !== ''
-                                    ? t('model.effort.note')
-                                    : null
-                                }
-                                onCommit={commitEffort}
-                              />
+                      {/* ── 第二页：思考档位（从根页第二行翻进来）────────────────────
+                          读数取 status.effort（**不依赖模型清单**），清单过期也不会显示错；刚点下去
+                          那一小段用乐观值顶（见 pendingEffort），免得数字先弹回去再跳过来。
+                          档位清单里不再摆「默认」（它不是刻度上的位置，见 ./effort-slider 的文件头）。 */}
+                      {effortOpen ? (
+                        <>
+                          <div
+                            className="pop-mask"
+                            onClick={() => {
+                              setEffortOpen(false)
+                            }}
+                          />
+                          {/* 滑杆卡（2026-10-26 换掉原来那一列按钮）：档位有顺序，滑杆把顺序画出来。
+                              选完不关卡片：拖着扫档时关掉，等于每试一档都要重开一次。 */}
+                          <div className="model-pop effort-pop" role="group" aria-label={t('model.effort.menu.aria')}>
+                            <div className="model-pane-head">
+                              <button
+                                type="button"
+                                className="model-pane-back"
+                                title={t('model.sheet.back')}
+                                aria-label={t('model.sheet.back')}
+                                onClick={backToSheet}
+                              >
+                                <IconChevronRight size={12} className="model-pane-back-icon" />
+                                <span>{t('model.sheet.back')}</span>
+                              </button>
                             </div>
-                          </>
-                        ) : null}
-                      </div>
-                    ) : (
-                      <span
-                        className="model-btn composer-effort-chip fixed"
-                        title={t('model.effort.fixed', { level: effortText })}
-                        data-composer-effort={effort}
-                      >
-                        <IconBrain size={13} />
-                        <span className="model-name">{effortText}</span>
-                      </span>
-                    )}
+                            <EffortSlider
+                              levels={sliderLevels}
+                              value={shownEffort}
+                              note={
+                                current.entry === undefined && model !== ''
+                                  ? t('model.effort.note')
+                                  : null
+                              }
+                              onCommit={commitEffort}
+                            />
+                          </div>
+                        </>
+                      ) : null}
+                    </div>
       </>
     ),
     allowImage: imageInputAllowed,
     close: () => {
-      setModelOpen(false)
-      setEffortOpen(false)
+      closePanes()
     },
     barRef,
   }

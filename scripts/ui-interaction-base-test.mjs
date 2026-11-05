@@ -111,7 +111,10 @@ console.log('[2] 弹层焦点管理')
   const settings = read(resolveUiHalf('settings') + '/ui.tsx')
   check('设置面板撤掉了原来的 window 级 Esc（不与 hook 双触发）', !settings.includes("window.addEventListener('keydown', onKey)"))
   const team = read(resolveUiHalf('team') + '/ui.tsx')
-  check('团队面板的 Esc 仍分两层（先退出运行记录）', team.includes('if (peeking !== null) setPeeking(null)'))
+  check(
+    '团队面板的 Esc 仍分两层（只读层先退，面板自己那层由 dialog 基元收）',
+    team.includes("if (event.key === 'Escape') closeReader()") && team.includes('role="dialog"'),
+  )
 }
 
 // ── [3] 骨架屏 ────────────────────────────────────────────────────────────────
@@ -257,7 +260,10 @@ console.log('[6] 调档手感')
   check('松手读的是 ref、不是 state', /const at = dragRef\.current[\s\S]{0,520}?onCommit\(level\)/.test(slider))
 
   // ③ 过渡：滑钮滑过去、拖动中跟手
-  check('滑钮有 left 过渡（档位之间滑过去）', /\.effort-knob \{[^}]*transition: left 140ms/.test(css))
+  check(
+    '滑钮有 left 过渡（档位之间滑过去，200ms 弹簧曲线，位置与缩放同一曲线）',
+    /\.effort-knob \{[^}]*left 200ms var\(--effort-spring\)[^}]*transform 200ms var\(--effort-spring\)/.test(css),
+  )
   check('拖动中取消过渡（跟手，不落后于指针）', /\.effort-track\[data-dragging='1'\] \.effort-knob \{[^}]*transition: none/.test(css))
 
   // ④ 不往对话里写「思考强度设为…」：一次调档一行 system 记录，又占正文又多推一帧
@@ -303,18 +309,19 @@ console.log('[7] 命令面板的滚动与翻页')
 }
 
 // ── [8] 2026-10-27 第四轮：子智能体下拉出界 + 胶囊悬停分层 ──────────────────
+// 2026-11-06 起标题旁的下拉撤了（换成「智能体团队」入口），出界那套测量随之下线；
+// 这一节改成钉「入口 / 团队面板 / 正文区只读层」的结构与边界。
 
-console.log('[8] 子智能体下拉与状态胶囊的悬停')
+console.log('[8] 智能体团队入口与正文区只读层')
 {
   const css = read('src/packages/ui-renderer/ui/styles/styles.css')
   const team = read(resolveUiHalf('team') + '/ui.tsx')
 
-  // ① 下拉贴着按钮左下展开，按钮被长标题推到右边时会出界（用户看到的是「被遮挡」）。
-  //    打开时量一次、窗口改尺寸再量一次：右边超多少往左挪多少，下边不够就把高度收到窗口底。
-  check('下拉有定位引用（ref 挂到 .sub-menu 上）', team.includes('const menuRef = useRef<HTMLDivElement | null>(null)') && /className="row-menu sub-menu"[^>]*ref=\{menuRef\}/.test(team))
-  check('打开时先量右边越界再左移', team.includes('const overflowRight = rect.right - (window.innerWidth - margin)') && team.includes('el.style.left = '))
-  check('下方空间不够时把高度收到窗口底边', team.includes('el.style.maxHeight = '))
-  check('窗口改尺寸重算（开着菜单拉窗口也要跟）', team.includes("window.addEventListener('resize', place)") && team.includes("window.removeEventListener('resize', place)"))
+  check('标题旁是常挂载的团队入口（名册 3 秒轮询跟着它）', /function TeamEntry[\s\S]{0,800}?setInterval\(poll, 3000\)/.test(team))
+  check('团队面板是模态 dialog（role + aria-modal + 标签）', team.includes('role="dialog"') && team.includes('aria-modal="true"') && team.includes("t('team.panel.aria')"))
+  check('只读层落在正文区（createPortal 到 [data-thread-area]）', team.includes('THREAD_AREA_SELECTOR') && team.includes('createPortal('))
+  check('还在跑的队友不许打开（走一句人话，不静默）', team.includes("t('team.reader.busy'"))
+  check('换会话自动关掉只读层', /openedFor\.current !== sessionId[\s\S]{0,60}?closeReader\(\)/.test(team))
 
   // ② 行内按钮不再铺第二层底色：整行已经由 .sp-row:hover 上底，叠起来就是「没盖满 / 分层」。
   check('可点行体自己不上底（交给整行）', /\.sp-row-open:hover \{[^}]*background: none;/.test(css))

@@ -1,6 +1,6 @@
 # ui-team（智能体团队）
 
-一句话：标题旁「N 个子智能体」下拉与右侧栏的队友运行记录；共享任务板是宿主包 `team` 的事，不在这里。
+一句话：标题旁的「智能体团队」入口 + 团队面板 + 正文区的只读运行记录（子智能体列表住在 `ui-status` 的「智能体」区）；共享任务板是宿主包 `team` 的事，不在这里。
 
 ## Model Experience（模型体验）
 
@@ -13,10 +13,10 @@
 ## Known Limitations（已知限制）
 
 - title 与职责不符：清单写「共享任务板」，界面半画的是子智能体名册，没有登记、认领、结项（package.json:17-18 对照 ui/ui.tsx:1-17）。
-- 老名册行没有 `sessionId`，不归任何会话，只进底部折叠组（ui/ui.tsx:10-11、58-60）。
-- 运行记录是简版直排，没有完整的座位与折叠体系（ui/ui.tsx:13）。
-- 标题栏那颗「智能体团队」文字钮已撤，面板入口只剩状态面板的目录行与这个下拉（ui/ui.tsx:15-17）。
-- 名册靠 3 秒轮询，页面不可见时停发，回来可能看到过期名单（ui/ui.tsx:5-6、189）。
+- 老名册行没有 `sessionId`，不归任何会话，只进底部折叠组。
+- 点队友一行不切会话：正文区是盖在 `[data-thread-area]` 上的只读层（`peekTranscript` + 消息流插件的同款行渲染），底下的会话原样开着。**不走 `openSession(队友日志)`**——那条路会用日志里的 `meta.id` 重算落盘路径（`core/session.ts:670`），把当前会话换成一个不存在的路径，输入框还能往里写；原因写在 `ui/ui.tsx` 的文件头。
+- 还在跑的队友不给看：`teammateReader.open` 当场回绝并给一句人话（那份日志正被它写）。
+- 名册靠 3 秒轮询，页面不可见时停发，回来可能看到过期名单。
 
 ## 行与开关
 
@@ -24,5 +24,5 @@
 - resolution 是 overridable（package.json:16）；默认开，cordis.patch.yml 里没有 `disabled`。
 - `dsh.client`：platform `pneuma`、api `^0.9.0`，没有 phase 与 inject（package.json:20-24）。
 - 宿主半 inject 零个服务（index.ts:31）。
-- 槽条目 `shell.header.lead`、order 10；另报名一个 `subagent` dock 页签（ui/ui.tsx:148、153-161）。
-- 停用后下拉、面板与队友页签一起消失，状态面板的「已结束 · N ›」行也随之不渲染（index.ts:7-9、ui/ui.tsx:141-145）。
+- 槽条目 `shell.header.lead`、order 10（「智能体团队」入口，有队友时带数量）；另报名一个 `subagent` dock 页签。
+- 停用后标题旁的入口、团队面板、正文区只读层与队友页签一起消失；状态面板「智能体」区退回它自己的 5 秒轮询，点行的动作退回右侧栏页签（`teammateReader` 服务缺席时）。

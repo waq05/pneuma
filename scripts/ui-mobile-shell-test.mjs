@@ -296,15 +296,15 @@ console.log('[10] 手机上权限/模式/档位三颗的浮层：贴住输入卡
   const spotsOf = (text) => [...text.matchAll(/model-anchor model-anchor-sheet/g)].map((match) => match.index ?? -1)
   const viewSpots = spotsOf(view)
   const ctrlSpots = spotsOf(controls)
-  check('三颗旋钮的锚点各挂一次 sheet 类（不是同一处挂三遍）', viewSpots.length === 2 && ctrlSpots.length === 1)
+  // 2026-11-06：「标准模式」搬去会话标题旁（不再挂 sheet），模型与档位合并成一颗 chip
+  // 后那张卡也不走 sheet（它有自己的窄面板 + 悬浮飞出）。输入区里只剩权限一颗需要 sheet。
+  check('旋钮的锚点各挂一次 sheet 类：只剩权限那颗（模式搬走、合并卡不挂 sheet）', viewSpots.length === 1 && ctrlSpots.length === 0)
   check(
-    '三处 sheet 与三张浮层一一对应（权限 → 模式，各在自己的浮层之前）',
-    viewSpots[0] < view.indexOf('policy-pop') &&
-      viewSpots[1] > view.indexOf('policy-pop') &&
-      viewSpots[1] < view.indexOf('preset-pop'),
+    '权限那张 sheet 在自己的浮层之前（模式那颗已不在输入区）',
+    viewSpots[0] >= 0 && viewSpots[0] < view.indexOf('policy-pop'),
     JSON.stringify({ viewSpots, pops: [view.indexOf('policy-pop'), view.indexOf('preset-pop')] }),
   )
-  check('档位那张 sheet 在自己的浮层之前', ctrlSpots[0] >= 0 && ctrlSpots[0] < controls.indexOf('effort-pop'))
+  check('合并后的模型卡有自己的锚点、不挂 sheet 类', ctrlSpots.length === 0 && controls.includes('className="model-anchor"'))
   check('模型那颗的锚点**没**挂（它有自己一套窄面板 + 悬浮飞出）', (controls.match(/className="model-anchor"/g) ?? []).length === 1)
   check('CSS：锚点交回输入卡片（position: static）', block560 !== null && /\.composer-bar \.model-anchor-sheet \{[\s\S]*?position: static;/.test(block560))
   check(

@@ -1,25 +1,40 @@
 /**
- * 内置插件：智能体团队（对照旧桌面界面 TeamPanel.tsx 的两种面：标题旁的
- * 「N 个子智能体」下拉 + 团队面板，共用一份名册行）。
+ * 内置插件：智能体团队（2026-11-06 对调后的三处入口）。
+ *
+ * | 在哪 | 是什么 |
+ * | --- | --- |
+ * | 会话标题旁（`shell.header.lead`，order 10） | **「智能体团队」入口**：点开 {@link TeamPanel}（名册：发话 / 停止 / 移除），有队友时带数量 |
+ * | 状态面板的「智能体」区 | **子智能体列表**（一行一个：名字 / 角色 / 状态），点一行在正文区只读打开它的完整会话 |
+ * | 正文区 | {@link TeammateReader} 的只读视图：`peekTranscript` + 消息流插件的同款行渲染 |
  *
  * 数据走界面通道的 `listTeammates`（常挂载的那条轮询每 3 秒写进共享席位；
  * 页面不可见时轮询停了不发），动作走 `stopTeammate` / `messageTeammate` /
  * `removeTeammate`——四个方法都在放行面上（白名单见 `src/core/ui-methods.ts`）。
- * 点一行看运行记录走 `peekTranscript`（队友会话的只读条目流，简版渲染）。
+ *
+ * **为什么点开队友不是 `openSession(队友日志)`**（2026-11-06 核实）：
+ * `Session.load` 用日志里的 `meta.id` 重算落盘路径（`src/core/session.ts:670` 的
+ * `keepPath=false` 分支），而队友日志的 meta.id 与文件名是两个 uuid（`src/packages/
+ * subagent/index.ts:469,471`）。那一步会把「当前会话」换成一个磁盘上不存在的路径：
+ * 输入框仍在（`ui-composer` 这一侧没有只读档），一提交就往假路径里写一份没有 meta
+ * 首行的半截会话，`saveLastSession` 还会把假路径记成「上次会话」。所以这里走
+ * 宿主的**只读入口** `peekTranscript`（没有租约、不动文件），正文区整层由只读视图接管。
  *
  * 本会话的队伍按 `mate.sessionId === 当前会话` 过滤（老名册行没有 sessionId，
  * 不归任何会话）；其它会话的收进底部折叠组，只读列出（对照旧界面 matesOf）。
  *
- * 与桌面端的差异（精简边界）：没有运行记录里的完整座位/折叠体系——只读流按行直排。
- *
- * **标题栏那颗「智能体团队」文字钮已撤**（与状态面板的「智能体」区重复）：名册轮询、
- * 面板开合与面板本体都搬进下面常挂载的 {@link SubagentMenu}；团队面板现在的入口是
- * 状态面板的「已结束 · N ›」目录行（经 `teamPanel` 服务）与这里的下拉。
- *
  * @module dsc-ui-shell/plugins/team
  */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { SkeletonText, formatDuration, oneLine, readSessionId, useDialogFocus } from '@dsc/ui-primitives'
+import { createPortal } from 'react-dom'
+import {
+  SkeletonText,
+  formatDuration,
+  oneLine,
+  readSessionId,
+  readSessionPath,
+  readSessions,
+  useDialogFocus,
+} from '@dsc/ui-primitives'
 import {
   IconChevronDown,
   IconClose,
@@ -30,7 +45,6 @@ import {
   defineStore,
   defineUiPlugin,
   registerDockTab,
-  setDockSubagent,
   toastErr,
   toastOk,
   useHostChannel,
@@ -39,6 +53,7 @@ import {
   useService,
   type BakedActions,
   type DockTabBodyProps,
+  type SessionSummary,
   type SlotComponentProps,
   type SnapshotSelectorHook,
   type StoreHandle,
@@ -68,32 +83,14 @@ function matesOf(mates: readonly TeammateView[], sessionId: string | null): Team
   return mates.filter((mate) => mate.sessionId === sessionId)
 }
 
-// ── 面板开合（模块级：子智能体菜单与团队钮是两个槽条目，共享同一份）────────────
+// ── 面板开合（模块级：标题旁的入口与正文区的只读层共用同一份）────────────────
 
-/**
- * 开合 + 「点名要看谁」是**同一份状态**：点菜单里的一行会同时开面板并指定要看的队友，
- * 分两次写会让面板先按名单形态渲染一帧、再切到运行记录。
- */
-interface TeamPanelState {
-  open: boolean
-  /** 点名要看的队友名（一次性：面板读到就清，见 `takePeekWant`）。 */
-  peek: string | null
-}
+/** 团队面板开没开（Modal 本体挂在标题旁那个常挂载的条目里，见 {@link TeamEntry}）。 */
+const panel = createSignal<boolean>(false)
 
-const panel = createSignal<TeamPanelState>({ open: false, peek: null })
-
-function setPanelOpen(next: boolean, peek: string | null = null): void {
-  const current = panel.get()
-  if (next === current.open && peek === current.peek) return
-  panel.set({ open: next, peek })
-}
-
-/** 读走并清空「点名要看谁」（`useSyncExternalStore` 的订阅值没变，清它不会触发重画）。 */
-function takePeekWant(): string | null {
-  const current = panel.get()
-  if (current.peek === null) return null
-  panel.set({ open: current.open, peek: null })
-  return current.peek
+function setPanelOpen(next: boolean): void {
+  if (panel.get() === next) return
+  panel.set(next)
 }
 
 /** 订阅函数提到模块级：`useSyncExternalStore` 要求它的引用稳定（内联箭头会反复重订阅）。 */
@@ -102,8 +99,49 @@ function subscribePanelOpen(listener: () => void): () => void {
 }
 
 function usePanelOpen(): boolean {
-  return useSyncExternalStore(subscribePanelOpen, () => panel.get().open, () => false)
+  return useSyncExternalStore(subscribePanelOpen, () => panel.get(), () => false)
 }
+
+// ── 正文区的只读运行记录（任务 3）──────────────────────────────────────────
+/**
+ * 正文区正在看的那位队友的运行记录。`null` = 正文区还是普通会话。
+ *
+ * **不切会话**：只读层盖在正文区上（`[data-thread-area]` 自带 `position: relative`），
+ * 底下的会话原样开着——所以「回到原会话」只是关掉这一层（顶栏那一段仍走
+ * `openSession(父会话路径)`，当前本来就是它时宿主会短路）。
+ */
+interface ReaderState {
+  mate: TeammateView
+}
+
+const reader = createSignal<ReaderState | null>(null)
+
+/** 打开 / 关闭只读运行记录（两条都是幂等的：同一份状态重复写不发通知）。 */
+function openReader(mate: TeammateView): void {
+  const current = reader.get()
+  if (current !== null && current.mate.file === mate.file) return
+  reader.set({ mate })
+}
+
+function closeReader(): void {
+  if (reader.get() === null) return
+  reader.set(null)
+}
+
+/** 顶栏面包屑要的那一点东西（跨包只走 window 事件，与 `shell.palette.open` 同一条路）。 */
+interface ReaderHint {
+  /** 队友名（面包屑右段）。 */
+  name: string
+  /** 派它的会话标题（面包屑左段，可点回原会话）。 */
+  parentTitle: string
+  /** 派它的会话 jsonl 绝对路径；查不到给当前会话路径，给不了就 null（只关层不切会话）。 */
+  parentPath: string | null
+}
+
+/** 面包屑出现 / 消失（`ui-layout` 的顶栏听它）。 */
+const READER_HINT_EVENT = 'shell.teammate.view'
+/** 顶栏请这层关掉（父会话那一节点一下就是它）。 */
+const READER_EXIT_EVENT = 'shell.teammate.exit'
 
 // ── 名册席位（D3）──────────────────────────────────────────────────────────
 /**
@@ -143,21 +181,34 @@ export default defineUiPlugin({
     // 席位：本插件两处登记共享同一个 handle；跨插件共享经服务表传 handle（不认字符串键）。
     const mates = makeMateSeat()
     ui.provide('teammates', mates)
-    // 智能体目录的口子：状态面板那条「已结束 · N ›」经它打开团队面板（模态的开合仍归
-    // 本插件自己管；服务缺席时状态面板那一行整行不渲染——点了没反应的入口比没有更糟）。
-    // 与「页签在这里报名、打开动作由任何一处发起」是同一条思路。
+    // 团队面板的口子：状态面板的「智能体」区与别的插件都能经它开面板（模态的开合仍归
+    // 本插件自己管；服务缺席时消费方整行不渲染——点了没反应的入口比没有更糟）。
     ui.provide('teamPanel', {
       open: (): void => {
-        setPanelOpen(true, null)
+        setPanelOpen(true)
       },
     })
-    // 标题旁的一簇：子智能体下拉（名册轮询、团队面板开合与面板本体都住在这个常挂载的
-    // 条目里——原来在「智能体团队」钮里，那颗钮撤掉后并到这里）。
-    ui.slots.register('shell.header.lead', { id: 'team.subagents', order: 10, store: mates }, SubagentMenu)
-    // 子智能体的运行记录落**右侧栏**（一种 dock 页签）：点队友那一行不该弹模态框盖住
-    // 正在跑的会话——右侧栏是只读的伴读面，可以与主会话并排看（照 dsh 的
-    // `sidebarRight.openResource(..., {kind:'subagentchat'})`）。名册与运行记录同属
-    // 「队友」这件事，所以页签在这里报名，打开动作由任何一处发起（队友行 / 状态面板）。
+    // 正文区只读运行记录的口子：状态面板 / 团队面板点一行都走它。`working` 的队友在这里
+    // 直接回绝（不弹窗、不切会话）——它还在写自己那份日志，不能同时被当成一条会话打开。
+    ui.provide('teammateReader', {
+      open: (mate: TeammateView): void => {
+        if (mate.state === 'working') {
+          toastErr(t('team.reader.busy', { name: mate.name }))
+          return
+        }
+        openReader(mate)
+      },
+      close: (): void => {
+        closeReader()
+      },
+    })
+    // 标题旁的一簇：**「智能体团队」入口**（2026-11-06 与状态面板对调：单个队友的行搬进
+    // 状态面板的「智能体」区）。这条目录常挂载——名册轮询、团队面板本体、正文区只读层
+    // 都住在这里；没有任何队友时它照样在（轮询与「派出第一个队友」的入口都靠它）。
+    ui.slots.register('shell.header.lead', { id: 'team.entry', order: 10, store: mates }, TeamEntry)
+    // 子智能体的运行记录仍可落**右侧栏**（一种 dock 页签，给工具卡里的子代理卡用）：
+    // 正文区那条只读视图是「点状态面板一行」的主路，右栏这条是伴读面的旁路，两条共用
+    // 同一份 `peekTranscript` 读法与同一套行渲染。名册与运行记录同属「队友」这件事。
     registerDockTab({
       kind: 'subagent',
       label: t('team.tab.subagent'),
@@ -171,12 +222,12 @@ export default defineUiPlugin({
 })
 
 /**
- * 「N 个子智能体」下拉（标题旁唯一的一簇）：本会话派出的队友，一行一个；数量为 0 时
- * 整颗不渲染——但**组件本身常挂载**：名册轮询、团队面板的开合与面板本体都住在这里
- * （原来是「智能体团队」文字钮的活，那颗钮撤掉之后并了过来；轮询 3 秒一次写进共享席位，
- * 状态面板与这个下拉读的是同一份，全壳只有这一条 interval）。
+ * 标题旁的「智能体团队」入口：**一个按钮**（有队友时带数量），点开 {@link TeamPanel}。
+ *
+ * 组件本身常挂载：名册轮询（3 秒一次写进共享席位，全壳只有这一条 interval）、团队面板
+ * 本体与正文区只读层都住在这里——所以它自己哪怕没有任何队友也照常渲染（只是数量不显示）。
  */
-function SubagentMenu(props: SlotComponentProps<Record<never, never>, never, never, MateSeatHandle>): ReactNode {
+function TeamEntry(props: SlotComponentProps<Record<never, never>, never, never, MateSeatHandle>): ReactNode {
   const teamOpen = usePanelOpen()
   const channel = useHostChannel()
   const { actions } = props
@@ -202,125 +253,50 @@ function SubagentMenu(props: SlotComponentProps<Record<never, never>, never, nev
   }, [channel, actions])
   const mates = props.useStore((state) => state.list)
   const sessionId = useHostSelector(readSessionId)
-  const [menuOpen, setMenuOpen] = useState(false)
   const mine = matesOf(mates, sessionId)
-  const menuRef = useRef<HTMLDivElement | null>(null)
-
-  /**
-   * 下拉贴着按钮左下展开（CSS 的 left: 0）——按钮在标题后面，标题一长它就被推到
-   * 窗口右边，菜单再往外铺就出界（用户报「展开后不能自适应窗口大小，被遮挡了」）。
-   *
-   * 所以打开时量一次：右边越界多少就往左挪多少（最多挪到左边缘留 12px），
-   * 下方不够高就把 max-height 收到窗口底边。窗口尺寸变了再量一次——菜单开着的时候
-   * 用户照样会去拉窗口。
-   */
-  useEffect(() => {
-    if (!menuOpen) return undefined
-    const el = menuRef.current
-    if (el === null) return undefined
-    const place = (): void => {
-      el.style.left = '0px'
-      el.style.maxHeight = ''
-      const margin = 12
-      const rect = el.getBoundingClientRect()
-      const overflowRight = rect.right - (window.innerWidth - margin)
-      if (overflowRight > 0) {
-        const shift = Math.min(overflowRight, Math.max(0, rect.left - margin))
-        el.style.left = `${String(-shift)}px`
-      }
-      const after = el.getBoundingClientRect()
-      const room = window.innerHeight - margin - after.top
-      if (after.bottom > window.innerHeight - margin && room > 120) {
-        el.style.maxHeight = `${String(Math.round(room))}px`
-      }
-    }
-    place()
-    window.addEventListener('resize', place)
-    return () => {
-      window.removeEventListener('resize', place)
-    }
-  }, [menuOpen, mine.length])
   return (
     <>
-      {mine.length === 0 ? null : (
-        <div className="sub-open">
-          <button
-            type="button"
-            className={`sub-btn${menuOpen ? ' on' : ''}`}
-            aria-expanded={menuOpen}
-            data-tip={t('team.menu.tip')}
-            onClick={() => {
-              setMenuOpen((current) => !current)
-            }}
-          >
-            {t('team.menu.count', { count: mine.length })}
-            <IconChevronDown size={13} />
-          </button>
-          {menuOpen ? (
-            <>
-              <div
-                className="menu-backdrop"
-                onClick={() => {
-                  setMenuOpen(false)
-                }}
-              />
-              <div className="row-menu sub-menu" role="menu" aria-label={t('team.menu.aria')} ref={menuRef}>
-                {mine.map((mate) => (
-                  <TeamRow
-                    key={mate.file}
-                    mate={mate}
-                    compact
-                    onOpen={() => {
-                      setMenuOpen(false)
-                      // 名字一并交过去：页签标题要显示「哪个队友」，而会话文件名是 uuid。
-                      setDockSubagent({ path: mate.file, label: mate.name })
-                    }}
-                  />
-                ))}
-                {/* 团队面板的入口（「智能体团队」钮撤掉之后的常驻入口；另一个入口是
-                    状态面板的「已结束 · N ›」目录行——只在有队友时才有）。 */}
-                <button
-                  type="button"
-                  className="sub-panel-link"
-                  onClick={() => {
-                    setMenuOpen(false)
-                    setPanelOpen(true, null)
-                  }}
-                >
-                  {t('team.menu.openPanel')}
-                </button>
-                <p className="team-hint">{t('team.menu.hint')}</p>
-              </div>
-            </>
-          ) : null}
-        </div>
-      )}
+      <button
+        type="button"
+        className={`team-btn${teamOpen ? ' on' : ''}`}
+        data-team-count={mine.length}
+        aria-expanded={teamOpen}
+        aria-label={t('team.panel.aria')}
+        data-tip={t('team.entry.tip')}
+        onClick={() => {
+          setPanelOpen(!teamOpen)
+        }}
+      >
+        <IconTree size={13} />
+        {mine.length === 0 ? t('team.entry.label') : t('team.entry.count', { count: mine.length })}
+      </button>
       {teamOpen ? <TeamPanel useStore={props.useStore} /> : null}
+      <TeammateReader />
     </>
   )
 }
 
 /** 「智能体团队」面板：本会话的队伍为主；其它会话派出的收进底部折叠组，只读。
- *  层级照设置面板那一档（.settings-mask + .settings），Esc 与点遮罩都关。 */
+ *  层级照设置面板那一档（.settings-mask + .settings），Esc 与点遮罩都关。
+ *  点一行 = 关掉面板、在正文区只读打开它的运行记录（任务 3；还在跑的当场回绝）。 */
 function TeamPanel({ useStore }: MateSeatRead): ReactNode {
   const mates = useStore((state) => state.list)
   const sessionId = useHostSelector(readSessionId)
   const [othersOpen, setOthersOpen] = useState(false)
-  /** 正在看运行记录的队友（file 路径）；null = 名单形态。 */
-  const [peeking, setPeeking] = useState<{ name: string; file: string } | null>(null)
 
-  // 子智能体菜单点一行要直接看记录：一次性交接（读完即清）。
-  useEffect(() => {
-    const want = takePeekWant()
-    if (want === null) return
-    const wanted = mates.find((mate) => mate.name === want)
-    if (wanted !== undefined) setPeeking({ name: wanted.name, file: wanted.file })
-  }, [mates])
+  /** 点一行：收工的开正文区只读视图，还在跑的给一句人话（不切会话、不动文件）。 */
+  const openMate = (mate: TeammateView): void => {
+    if (mate.state === 'working') {
+      toastErr(t('team.reader.busy', { name: mate.name }))
+      return
+    }
+    setPanelOpen(false)
+    openReader(mate)
+  }
 
-  // Esc 与焦点走基元：先退出「看运行记录」那一层，再关面板；关掉把焦点还给来源。
+  // Esc 与焦点走基元：关面板，焦点还给来源。
   const dialog = useDialogFocus(true, () => {
-    if (peeking !== null) setPeeking(null)
-    else setPanelOpen(false)
+    setPanelOpen(false)
   })
 
   const mine = matesOf(mates, sessionId)
@@ -337,19 +313,16 @@ function TeamPanel({ useStore }: MateSeatRead): ReactNode {
         <div className="settings-main">
           <div className="settings-head">
             <div className="settings-head-text">
-              <h2>{peeking === null ? t('team.panel.title') : t('team.panel.peekTitle', { name: peeking.name })}</h2>
-              <p>
-                {peeking === null ? t('team.panel.desc') : t('team.panel.peekDesc')}
-              </p>
+              <h2>{t('team.panel.title')}</h2>
+              <p>{t('team.panel.desc')}</p>
             </div>
             <button
               type="button"
               className="icon-btn"
               autoFocus
-              data-tip={peeking === null ? t('team.panel.closeTip') : t('team.panel.backTip')}
+              data-tip={t('team.panel.closeTip')}
               onClick={() => {
-                if (peeking !== null) setPeeking(null)
-                else setPanelOpen(false)
+                setPanelOpen(false)
               }}
             >
               <IconClose size={16} />
@@ -357,9 +330,7 @@ function TeamPanel({ useStore }: MateSeatRead): ReactNode {
           </div>
 
           <div className="settings-body">
-            {peeking !== null ? (
-              <PeekView file={peeking.file} />
-            ) : mates === null ? (
+            {mates === null ? (
               <div className="settings-empty">{t('team.panel.loading')}</div>
             ) : (
               <>
@@ -372,7 +343,7 @@ function TeamPanel({ useStore }: MateSeatRead): ReactNode {
                         key={mate.file}
                         mate={mate}
                         onOpen={() => {
-                          setPeeking({ name: mate.name, file: mate.file })
+                          openMate(mate)
                         }}
                       />
                     ))}
@@ -398,7 +369,7 @@ function TeamPanel({ useStore }: MateSeatRead): ReactNode {
                             key={mate.file}
                             mate={mate}
                             onOpen={() => {
-                              setPeeking({ name: mate.name, file: mate.file })
+                              openMate(mate)
                             }}
                           />
                         ))}
@@ -413,6 +384,159 @@ function TeamPanel({ useStore }: MateSeatRead): ReactNode {
         </div>
       </div>
     </div>
+  )
+}
+
+/** 订阅函数提到模块级（`useSyncExternalStore` 要求引用稳定）。 */
+function subscribeReader(listener: () => void): () => void {
+  return reader.subscribe(listener)
+}
+
+function useReader(): ReaderState | null {
+  return useSyncExternalStore(subscribeReader, () => reader.get(), () => null)
+}
+
+/**
+ * 正文区那一格的定位锚：壳打在 `.thread-main` / `.thread-main-empty` 上，`styles.css` 给它
+ * `position: relative`（绝对定位浮层要的定位父级，与状态面板同一个锚）。
+ */
+const THREAD_AREA_SELECTOR = '[data-thread-area]'
+
+/**
+ * 面包屑的左段：派它的那个会话。
+ *
+ * `SessionSummary.id` 就是 jsonl 的绝对路径，出生会话 id 是那条会话的 `meta.id`
+ * （= 文件名去 `.jsonl`，与 `readSessionId` 同一口径），所以按文件名对一遍即可。
+ * 查不到（老名册行没有 `sessionId`、或那条会话已经归档/删除进了别的地方）退回
+ * 「原会话」+ 当前会话路径——点了就是「关掉这层、哪儿也不去」，不静默无反应。
+ */
+function parentOf(
+  sessions: readonly SessionSummary[],
+  mate: TeammateView,
+  currentPath: string | null,
+): { title: string; path: string | null } {
+  const birth = mate.sessionId
+  if (birth !== undefined && birth !== '') {
+    const match = sessions.find((session) => basename(session.id) === birth)
+    if (match !== undefined && match.title !== undefined && match.title !== '') {
+      return { title: match.title, path: match.id }
+    }
+  }
+  return { title: t('team.reader.parentFallback'), path: currentPath }
+}
+
+/**
+ * 正文区的只读运行记录（任务 3）：盖在 `[data-thread-area]` 上的一层，里面铺**完整消息流**。
+ *
+ * 三条边界：
+ *  - **只读**：动作 context 由消息流插件那条只读出口（`transcriptFlow`）给 `NO_ACTIONS`，
+ *    用户消息走只读气泡；整层还盖掉了输入区——这里根本没有可写的地方；
+ *  - **不切会话**：只读视图是 `peekTranscript`（无租约、不动文件）读出来的，底下的会话
+ *    原样开着，所以关掉这层就回到原会话；
+ *  - **换会话自动关**：别让别人的正文上面顶着一层「上一个会话的队友」。
+ */
+function TeammateReader(): ReactNode {
+  const state = useReader()
+  const sessions = useHostSelector(readSessions)
+  const currentPath = useHostSelector(readSessionPath)
+  const sessionId = useHostSelector(readSessionId)
+  // 消息流插件经服务表交出来的同款行渲染（markdown / 思考 / 工具卡 / 计划卡）；缺席时
+  // 退回下面那套简版直排（`PeekView` 不许删——它就是兜底出口）。
+  const flow = useService<TranscriptFlowService>(TRANSCRIPT_FLOW_SERVICE)
+  const [host, setHost] = useState<HTMLElement | null>(null)
+  const mate = state === null ? null : state.mate
+  const file = mate === null ? '' : mate.file
+
+  // 落点每次打开现取：换会话 / 换视图会换掉正文区那个元素。
+  useEffect(() => {
+    if (file === '') {
+      setHost(null)
+      return
+    }
+    const el = document.querySelector(THREAD_AREA_SELECTOR)
+    setHost(el instanceof HTMLElement ? el : null)
+  }, [file])
+
+  // 换会话就关（打开时的会话短 id 记在 ref 里，第一帧只记账）。
+  const openedFor = useRef<string | null>(null)
+  useEffect(() => {
+    if (file === '') {
+      openedFor.current = null
+      return
+    }
+    if (openedFor.current === null) {
+      openedFor.current = sessionId
+      return
+    }
+    if (openedFor.current !== sessionId) closeReader()
+  }, [file, sessionId])
+
+  // 顶栏「父会话」那一节点的是「关掉这层」（父会话本来就是当前会话；顶栏那边仍会调
+  // `openSession(父会话路径)`，宿主对「已经在看这条会话」直接短路）。
+  useEffect(() => {
+    const onExit = (): void => {
+      closeReader()
+    }
+    window.addEventListener(READER_EXIT_EVENT, onExit)
+    return () => {
+      window.removeEventListener(READER_EXIT_EVENT, onExit)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (file === '') return undefined
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') closeReader()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [file])
+
+  // 面包屑的两段交给顶栏（跨包只走 window 事件）；关掉时发一条 null 让标题还原。
+  const parent = mate === null ? null : parentOf(sessions, mate, currentPath)
+  const parentTitle = parent === null ? '' : parent.title
+  const parentPath = parent === null ? null : parent.path
+  const readerName = mate === null ? '' : mate.name
+  useEffect(() => {
+    if (readerName === '') return undefined
+    const detail: ReaderHint = { name: readerName, parentTitle, parentPath }
+    window.dispatchEvent(new CustomEvent<ReaderHint | null>(READER_HINT_EVENT, { detail }))
+    return () => {
+      window.dispatchEvent(new CustomEvent<ReaderHint | null>(READER_HINT_EVENT, { detail: null }))
+    }
+  }, [readerName, parentTitle, parentPath])
+
+  if (mate === null || host === null) return null
+  return createPortal(
+    <div className="team-reader" role="region" aria-label={t('team.reader.aria', { name: mate.name })}>
+      <div className="team-reader-head">
+        <IconTree size={13} />
+        <span className="team-reader-name">{mate.name}</span>
+        <span className="team-reader-role">{mate.role}</span>
+        <span className={`sub-tab-state ${mate.state}`}>{STATE_LABEL[mate.state] ?? mate.state}</span>
+        <span className="team-reader-note">{t('team.reader.note')}</span>
+        <button
+          type="button"
+          className="text-btn"
+          data-tip={t('team.reader.backTip')}
+          onClick={() => {
+            closeReader()
+          }}
+        >
+          {t('team.reader.back')}
+        </button>
+      </div>
+      <div className="team-reader-body">
+        {flow === undefined ? (
+          <PeekView file={mate.file} />
+        ) : (
+          <FlowHost flow={flow} file={mate.file} working={false} />
+        )}
+      </div>
+    </div>,
+    host,
   )
 }
 

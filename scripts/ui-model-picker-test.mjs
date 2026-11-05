@@ -252,7 +252,7 @@ console.log('[8] 界面接线（ui.tsx）')
     '档位 chip 的读数取宿主快照（不靠模型清单，清单过期也不会显示错）',
     ui.includes('readEffort)') && ui.includes('const shownEffort = pendingEffort ?? effort') && ui.includes('const effortText = effortLabel(shownEffort)'),
   )
-  check('档位 chip 分成「可切」与「单档」两条路（单档不给浮层、不给箭头）', ui.includes('{switchEffort ? (') && ui.includes('className="model-btn composer-effort-chip fixed"'))
+  check('档位读数分成「可切」与「单档」两条路（单档不给浮层、不给箭头）', ui.includes('{switchEffort ? (') && ui.includes("composer-effort-chip${switchEffort ? '' : ' fixed'}"))
   check('当前模型与档位都走纯模块判定（不是就地拍脑袋）', ui.includes('findCurrent(groups, provider, model)') && ui.includes('effortChoices(current.entry)'))
   // 负向断言只扫视图（ui.tsx）：`=== model` 这些比较本来就该在纯模块 `model-picker.ts` 里。
   const view = flat(read('src/packages/ui-composer/ui/ui.tsx'))
@@ -343,7 +343,12 @@ console.log('[8] 界面接线（ui.tsx）')
   check('展开时把当前模型滚进视野（勾在滚动区外等于没打勾）', (ui.match(/scrollIntoView\(\{ block: 'nearest' \}\)/g) ?? []).length >= 1 && ui.includes('[data-model-current="true"]'))
   check('底部「管理模型」跳到设置的模型分区', ui.includes('data-model-manage=') && ui.includes("new CustomEvent('shell.settings.open', { detail: { section: 'models' } })"))
   check('清单每次展开重取（挂载取一次那条旧口径的修法）', /'listModels'\)[\s\S]{0,400}?\}, \[channel, modelOpen\]\)/.test(ui))
-  check('每次展开都是干净态（上次悬浮停在哪家不带过来）', /setModelOpen\(\(open\) => !open\)[\s\S]{0,200}?setHoverProvider\(null\)/.test(ui))
+  // 2026-11-06：模型与档位合并成一颗 chip，点开先落「两行卡」；每次开卡都从根页起步，
+  // 上次悬浮停在哪家也一并清掉。
+  check(
+    '每次展开都是干净态（从根页起步，上次悬浮停在哪家不带过来）',
+    /const opening = !\(sheetOpen \|\| modelOpen \|\| effortOpen\)[\s\S]{0,160}?setSheetOpen\(opening\)[\s\S]{0,160}?setHoverProvider\(null\)/.test(ui),
+  )
   check('省掉头部那行标题（ZCode 没有，它也是白白的高度开销）', !panel.includes('pop-label'), panel.slice(0, 120))
   check('退役类名一个都不许回来（并排两栏那一版）', ['pop-rail', 'pop-models', 'rail-item', 'rail-arrow', 'two-level'].every((name) => !ui.includes(name)))
   check('当前端点来自快照（`status.provider`），壳不猜', ui.includes('function readProvider(') && ui.includes("['provider']"))

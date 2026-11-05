@@ -446,9 +446,193 @@
   flex: none;
 }
 
-/* 单档 / 无档位模型：这是个 `<span>` 不是钮（没有可点的东西就别长成能点的样子）。 */
+/* 单档 / 无档位模型：这一段只是读数、不是旋钮，弱到第四档（合并之后它就在 chip 里，
+   没有单独的钮可点，所以只压颜色，不再改光标）。 */
 .composer-effort-chip.fixed {
+  color: var(--dsc-text-quaternary);
+}
+
+/* ── 合并后的第二段读数（推理等级，2026-11-06）────────────────────────────────
+   模型与思考强度合成一颗 chip（用户指定，照 dsh 的 composer）：底栏只占一格，读数分两段
+   `模型名  档位 ⌄`。两段之间一道发丝分隔——不加分隔的话「DeepSeek V4.1 Flash High」读起来
+   像模型名的一部分（模型名里本来就带 Flash 这种词）。
+   收缩顺序：档位那段 `flex: none` 不参与收缩（它只有两个字，收就没了），收的是模型名
+   （`.model-btn .model-name` 的 ellipsis）。 */
+.composer-model-chip .composer-effort-chip {
+  border-left: 1px solid var(--dsc-stroke-3);
+  color: var(--dsc-text-tertiary);
+  margin-left: 3px;
+  padding-left: 7px;
+}
+
+/* 换档时这一段「落位」一下：`key` 跟着档位走（见 composer/model-controls.tsx），节点重挂，
+   这段动画因此每次都重播——纯 CSS 拿到「值变了」的时机，不引动画库。
+   只动 transform / opacity，200ms、末端过冲（y=1.56 就是那一下回弹）。 */
+.composer-model-chip .composer-effort-chip {
+  animation: effort-chip-land 200ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes effort-chip-land {
+  from {
+    opacity: 0.55;
+    transform: translateY(2px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── 两行卡：合并 chip 的第一页（模型 / 推理等级）──────────────────────────────
+   行里三格：键（模型 / 推理等级）、当前值、末尾 `›`（表示「点进去还有一页」）。这是用户
+   给的形态——先看清「现在用谁、想多深」，再决定改哪一项；档位那行右侧另有一排刻度点，
+   所以「几档、当前哪档」不用翻页也读得到。 */
+.model-pop.model-sheet {
+  gap: 2px;
+  max-width: calc(100vw - 24px);
+  padding: 6px;
+  width: 268px;
+}
+
+.model-sheet-row {
+  align-items: center;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-secondary);
+  display: flex;
+  font-size: var(--dsc-fs-body);
+  gap: 8px;
+  outline: none;
+  padding: 8px;
+  text-align: left;
+  transition: background var(--dsc-dur) var(--dsc-ease);
+  width: 100%;
+}
+
+.model-sheet-row:hover,
+.model-sheet-row:focus-visible {
+  background: var(--dsc-row-hover-bg);
+}
+
+/* 不换档的模型：那一条只是读数，不是钮（没有可点的东西就别长成能点的样子）。 */
+.model-sheet-row.static {
   cursor: default;
+}
+
+.model-sheet-key {
+  align-items: center;
+  color: var(--dsc-text-quaternary);
+  display: flex;
+  flex: none;
+  font-size: var(--dsc-fs-tool);
+  gap: 4px;
+  /* 68px 装得下「推理等级」四个字 + 那枚脑子图标；两行的键因此左缘对齐、值也左缘对齐。 */
+  width: 68px;
+  white-space: nowrap;
+}
+
+.model-sheet-key-icon {
+  flex: none;
+}
+
+.model-sheet-value {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  min-width: 0;
+}
+
+.model-sheet-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 端点名跟在模型名后面，弱一档：模型名是身份、端点是出处。 */
+.model-sheet-sub {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  font-size: var(--dsc-fs-tool);
+}
+
+.model-sheet-arrow {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  margin-left: auto;
+}
+
+/* 档位刻度：点亮到当前档，当前那颗有重量（加深 + 内阴影 + 外描边 + 放大一档）。
+   换档靠 transition 走弹簧曲线（与滑杆同一条 200ms），不是跳过去。 */
+.model-sheet-scale {
+  align-items: center;
+  display: flex;
+  flex: none;
+  gap: 3px;
+  margin-left: auto;
+}
+
+.model-sheet-dot {
+  background: color-mix(in srgb, var(--dsc-text-quaternary) 38%, transparent);
+  border-radius: var(--dsc-r-pill);
+  display: block;
+  height: 4px;
+  transition:
+    background-color 160ms var(--dsc-ease),
+    box-shadow 160ms var(--dsc-ease),
+    transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  width: 9px;
+}
+
+.model-sheet-dot[data-lit='true'] {
+  background: color-mix(in srgb, var(--dsc-accent) 62%, var(--dsc-text-quaternary));
+}
+
+.model-sheet-dot[data-current='true'] {
+  background: var(--dsc-accent);
+  box-shadow:
+    inset 0 1px 2px color-mix(in srgb, var(--dsc-text-primary) 30%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--dsc-accent) 55%, transparent);
+  transform: scale(1.35);
+}
+
+/* ── 二级页顶部那行「‹ 返回」（模型 / 档位两页共用）──────────────────────────
+   合并之后模型菜单不再是 chip 的第一页，点错了（想换档却进了模型）不必整张收掉重开。 */
+.model-pane-head {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  justify-content: space-between;
+  padding: 0 2px 6px;
+}
+
+.model-pane-back {
+  align-items: center;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  display: inline-flex;
+  font-size: var(--dsc-fs-tool);
+  gap: 2px;
+  padding: 2px 6px 2px 2px;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+}
+
+.model-pane-back:hover {
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+/* 图标本来是 `›`（往右），转半圈当成「往左返回」用——不为一颗箭头再引一枚图标。 */
+.model-pane-back-icon {
+  transform: rotate(180deg);
+}
+
+.model-pane-title {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+  letter-spacing: 0.04em;
 }
 
 .bar-left,
@@ -537,6 +721,9 @@
 
 .effort-track {
   --effort-ramp: linear-gradient(90deg, var(--dsc-green), var(--dsc-cyan) 55%, var(--dsc-purple));
+  /* 换档的「力量感」全在这一条曲线上：末端过冲约 6%（y 超过 1 就是回弹那一下），
+     200ms 收住。数值放在这里而不是令牌表（令牌表是全站的，这条只服务档位条）。 */
+  --effort-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   cursor: pointer;
   outline: none;
   /* 上下留白给滑钮的投影与光环；左右留 9px 让两端的停点不被切边。 */
@@ -569,7 +756,9 @@
   position: absolute;
 }
 
-/* 点亮段：与轨道同一条渐变（同一根坐标），用 clip-path 裁出左边那段。 */
+/* 点亮段：与轨道同一条渐变（同一根坐标），用 clip-path 裁出左边那段。
+   位移走「快起慢收」200ms（`cubic-bezier(0.22,1,0.36,1)`）：这一段是「点亮到哪」的读数，
+   过冲会让人误读成「超过了当前档」，所以它只收尾、不弹。 */
 .effort-rail-fill {
   background-image: var(--effort-ramp);
   border-radius: inherit;
@@ -577,7 +766,7 @@
   inset: 0;
   overflow: hidden;
   position: absolute;
-  transition: clip-path var(--dsc-dur) var(--dsc-ease);
+  transition: clip-path 200ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* 停点：轨道上一个 6px 小圆，压过的那几颗点亮。 */
@@ -590,11 +779,20 @@
   margin-top: -3px;
   position: absolute;
   top: 50%;
+  transition:
+    background-color 160ms var(--dsc-ease),
+    box-shadow 160ms var(--dsc-ease),
+    transform 200ms var(--effort-spring);
   width: 6px;
 }
 
+/* 压过去的停点有重量：纯白底 + 一圈深色内影（内影让白点看着是「嵌」在轨道里，
+   只换颜色会像一块贴纸）。当前那一颗另外在滑钮底下，所以不再单独放大。 */
 .effort-dot[data-lit] {
   background: #fff;
+  box-shadow:
+    inset 0 1px 2px rgb(0 0 0 / 30%),
+    0 0 0 1px color-mix(in srgb, #fff 28%, transparent);
 }
 
 /* 滑钮：白钮压彩条，深浅两个主题都读得清（彩条本身是饱和色，钮不能再用令牌灰）。 */
@@ -608,8 +806,13 @@
   position: absolute;
   top: 50%;
   width: 18px;
-  /* 档位之间滑过去，不是跳过去（2026-10-26 第二轮：用户说换档"卡顿"）。 */
-  transition: left 140ms var(--dsc-ease);
+  /* 档位之间是「带重量落位」而不是匀速滑过去（2026-11-06 用户点名要更有力量感）：
+     位置与缩放都走 200ms 的过冲曲线，阴影单独走 200ms 的缓出——阴影跟着弹会糊。
+     拖动中关掉（下面那条），跟手比好看重要。 */
+  transition:
+    left 200ms var(--effort-spring),
+    transform 200ms var(--effort-spring),
+    box-shadow 200ms var(--dsc-ease);
 }
 
 /* 拖动中跟手：带过渡会落在指针后面，反而更顿。 */
@@ -661,6 +864,34 @@
   position: absolute;
 }
 
+/* 档位越深，滑钮越「沉」：放大一档、内影加深、外圈描边压上去（不是一个只会换色的白点）。
+   这几条排在下面那四套轨道动效**之后**——先立「各档怎么动」，再立「滑钮各自多重」，
+   读起来是一条线；用 transform 放大而不是改宽高：宽高改的是布局，轨道上的停点会跟着挪位。 */
+.effort-track[data-level='off'] .effort-knob {
+  filter: saturate(0.6);
+  transform: scale(0.88);
+}
+
+.effort-track[data-level='low'] .effort-knob {
+  transform: scale(1);
+}
+
+.effort-track[data-level='high'] .effort-knob {
+  box-shadow:
+    0 1px 4px rgb(0 0 0 / 38%),
+    inset 0 -1.5px 2px rgb(0 0 0 / 26%),
+    0 0 0 1.5px color-mix(in srgb, #fff 72%, transparent);
+  transform: scale(1.08);
+}
+
+.effort-track[data-level='max'] .effort-knob {
+  box-shadow:
+    0 2px 7px rgb(0 0 0 / 42%),
+    inset 0 -2px 3px rgb(0 0 0 / 32%),
+    0 0 0 2px color-mix(in srgb, #fff 84%, transparent);
+  transform: scale(1.16);
+}
+
 @keyframes effort-breathe {
   0%,
   100% {
@@ -696,6 +927,25 @@
   .effort-track .effort-rail-fill::after,
   .effort-track .effort-knob::after {
     animation: none;
+  }
+  /* 减动效：位移与缩放全停，只留颜色与阴影——「换档了」这件事仍然看得出来，只是不弹。
+     这条要压过上面那几条按档位写的 transform（同档特异性 + 位置在后）。 */
+  .effort-track .effort-knob,
+  .effort-track .effort-dot,
+  .effort-track .effort-rail-fill,
+  .composer-effort-chip,
+  .model-sheet-dot {
+    animation: none;
+    transition:
+      background-color 120ms linear,
+      color 120ms linear,
+      box-shadow 120ms linear;
+  }
+  .effort-track[data-level] .effort-knob {
+    transform: none;
+  }
+  .model-sheet-dot[data-current] {
+    transform: none;
   }
 }
 
@@ -1865,6 +2115,11 @@
     overflow: hidden;
     white-space: nowrap;
   }
+  /* 顶栏那颗模式钮在窄屏再收一档：标题行里还要放下子智能体那簇、搜索与页签，
+     180px 会把旁边的钮挤到 0 宽（那等于点不到）。名字照旧省略，图标与箭头不动。 */
+  .preset-chip {
+    max-width: 104px;
+  }
   /* 手机上收掉端点前缀：390px 里「端点/模型」两段字轮流被截，结果两段都读不全；
      模型名是主信息，前缀悬停（`title`）看得到——与 ZCode 在窄容器里藏 provider 前缀同款。 */
   .composer-model-provider {
@@ -2675,6 +2930,20 @@
 
 .sp-row-agent {
   padding-right: var(--dsc-sp-1);
+}
+
+/* 「智能体」区的队友状态点（`.tm-dot`，与团队面板同一颗）：这一行是 flex-start 排版
+   （图标靠 `margin-top: 3px` 对齐首行），7px 的点要再往下挪一点才和文字齐。 */
+.sp-row-agent .tm-dot {
+  margin-top: 5px;
+}
+
+/* 分区空态（「智能体」区没有队友时那一句人话）：一行灰字，跟同区其它行的行高对齐——
+   别用 `.settings-empty`（那是整页空态，上下各 30px 留白，塞进面板里太占地方）。 */
+.sp-empty {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+  padding: 2px var(--dsc-sp-3);
 }
 
 /* 整行可点的那一层：铺满整个药丸，行内按钮再叠在它上面。 */

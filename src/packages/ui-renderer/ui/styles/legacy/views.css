@@ -166,6 +166,13 @@
   -webkit-app-region: no-drag;
 }
 
+/* 通用豁免类（2026-11-06）：窗口拖拽区（品牌行 `.sidebar-header`、顶栏 `.topbar`）里的
+   按钮要自己声明 no-drag，否则点击被当成「拖窗口」吞掉。只声明这一条属性，布局仍由
+   各自的容器规则说了算——侧栏品牌行那颗搜索钮就按这个类摘出来。 */
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
 /* 侧栏唯一的主行动：对照 hermes 的「New session」——它就是列表里的第一行
    （同样的行高、同样的 hover 底色、行首一枚小图标），不是一块带描边的浅蓝大砖。
    所以这里跟 .nav-item 共用几何，只留两处区别：图标走品牌色、文字走一级色，
@@ -2710,6 +2717,64 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* ── 顶栏标题旁的模式（预设）胶囊（2026-11-06 从输入区底栏搬上来）──────────────
+   三条硬约束，都来自「顶栏与底栏不是同一块地方」：
+   1. 顶栏整条是窗口拖拽区（legacy `.topbar` 的 `-webkit-app-region: drag`），钮不自己
+      声明 no-drag 就会被当成拖窗口——点下去什么都没发生（`.topbar-search` / `.ws-open`
+      同款豁免）。声明写在锚点上，浮层里的选项也因此可点；
+   2. 与标题旁其他钮同高（24px，对照 `.sub-btn`），`flex: none` 不换行，名字长了省略；
+   3. 面板要**向下**开：`.model-pop` 的默认锚法是「贴着锚点往上 10px」，那是输入区底栏
+      的用法，搬到顶栏之后那个方向在屏幕外（这条只覆盖方向，宽度仍按内容）。 */
+.preset-header {
+  -webkit-app-region: no-drag;
+  flex: none;
+}
+
+.preset-chip {
+  align-items: center;
+  /* 底色与描边照 `.sub-btn`（同一个槽、同一条标题行里的另一颗钮）：两颗并排时如果一颗
+     有框一颗没有，看着像「一个是钮、一个是标签」。 */
+  background: var(--dsc-fill-quinary);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  display: inline-flex;
+  font-size: var(--dsc-fs-caption);
+  gap: 5px;
+  height: 24px;
+  max-width: 180px;
+  padding: 0 8px;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+  white-space: nowrap;
+}
+
+.preset-chip:hover,
+.preset-chip.open {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+.preset-chip svg {
+  flex: none;
+}
+
+/* 省略的是名字（「标准模式」四个字，自定义名还可能更长），图标与箭头不动。 */
+.preset-chip .chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preset-header .model-pop.preset-pop {
+  bottom: auto;
+  left: 0;
+  max-height: min(60vh, 420px);
+  right: auto;
+  top: calc(100% + 6px);
 }
 
 .plugin-apiver {
@@ -7157,12 +7222,19 @@ body.resizing iframe {
   width: min(520px, calc(100vw - 48px));
 }
 
-/* 标题旁的「智能体团队」按钮：纯文字，与胶囊同高 */
+/* 标题旁的「智能体团队」入口（2026-11-06 与状态面板对调：单个队友的行搬进状态面板）。
+   与胶囊同高、同一套描边；有队友时文案后面带数量。 */
 .team-btn {
+  align-items: center;
+  background: var(--dsc-fill-quinary);
+  border: 1px solid var(--dsc-stroke-3);
   border-radius: var(--dsc-r-control);
   color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  display: inline-flex;
   flex-shrink: 0;
   font-size: var(--dsc-fs-caption);
+  gap: 4px;
   height: 24px;
   padding: 0 8px;
   transition:
@@ -7171,9 +7243,65 @@ body.resizing iframe {
   -webkit-app-region: no-drag;
 }
 
-.team-btn:hover {
+.team-btn:hover,
+.team-btn.on {
   background: var(--dsc-control-hover-bg);
   color: var(--dsc-text-primary);
+}
+
+/* ── 正文区的只读运行记录（任务 3）──
+   盖在 `[data-thread-area]`（它在 styles.css 里自带 position: relative）上层：
+   消息流 + 输入区 + 状态栏整格由这一层接管，所以底下的会话不会有可写的地方。
+   层级压在浮层菜单之下（`--dsc-z-menu` − 2）：状态胶囊（− 1）与团队面板（menu）都还
+   浮得在它上面，不会出现「模态被这层盖住」的死路。 */
+.team-reader {
+  background: var(--dsc-bg-page);
+  display: flex;
+  flex-direction: column;
+  inset: 0;
+  min-height: 0;
+  position: absolute;
+  z-index: calc(var(--dsc-z-menu) - 2);
+}
+
+/* 头一行：谁是它 + 状态 + 只读那句人话 + 返回。贴着顶，正文自己滚。 */
+.team-reader-head {
+  align-items: center;
+  border-bottom: 1px solid var(--dsc-stroke-3);
+  color: var(--dsc-text-tertiary);
+  display: flex;
+  flex-shrink: 0;
+  font-size: var(--dsc-fs-caption);
+  gap: 8px;
+  padding: 8px 16px;
+}
+
+.team-reader-name {
+  color: var(--dsc-text-primary);
+  font-weight: 600;
+}
+
+.team-reader-role {
+  color: var(--dsc-text-quaternary);
+}
+
+/* 「只读」这一句吃掉剩余宽度并右对齐：返回钮贴着右缘，说明文字在它左边。 */
+.team-reader-note {
+  color: var(--dsc-text-quaternary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding-left: 8px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-reader-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 0 20px;
 }
 
 /* 团队面板：与设置面板同档浮层（.settings-mask + .settings），尺寸小一号——里面只有一列名册 */

@@ -22,8 +22,10 @@
  * - **分区七个**（顺序照 ZCode 的 Git 工具 / 目标 / 计划 / 进程 / 终端 / 工作流 / 智能体），
  *   各自可折叠、各自限高滚动；进程区超过 6 条启用聚焦窗口（当前项 ±1 连续 3 条，
  *   前后折成折叠桶，hover 出预览卡）。
- * - **智能体区只列在跑的**；收工的折成一条「已结束 · N ›」目录行，经 team 插件的
- *   `teamPanel` 服务打开团队面板（缺这个服务时整行不渲染——点了没反应的入口比没有更糟）。
+ * - **智能体区是「子智能体列表」**（2026-11-06 与标题旁对调：标题旁那颗现在是「智能体团队」
+ *   入口）：一行一个队友（名字 / 角色 / 状态），点一行在**正文区**只读打开它的完整运行记录
+ *   （经 team 插件的 `teammateReader` 服务；还在跑的队友由那个服务当场回绝并给人话）。
+ *   空列表给一句人话，不留一张空表。
  *
  * ## 为什么挂在 `shell.main` 槽里却画到顶栏页签行
  *
@@ -47,7 +49,8 @@
  *   停止走 `stopBackground`（等价 job_kill / terminal close 的簿记，放行面上）。
  * - **工作流**：快照的 `surfaces.scheduled`。dsc 没有工作流引擎，这一区绑的是最接近的
  *   「按规则自动跑一轮」——定点任务；schedule 插件默认关着，关着时整区不渲染。
- * - **智能体**：`listTeammates`（team 插件开着时经共享席位读，缺席才回落到 5 秒轮询）。
+ * - **智能体**：`listTeammates`（team 插件开着时经共享席位读，缺席才回落到 5 秒轮询）；
+ *   点一行由 `teammateReader` 服务在正文区打开它的只读运行记录。
  *
  * 纯派生规则（聚焦窗口 / 折叠桶 / 胶囊优先级链 / 时长与倒计时）在 `./status-model.ts`，
  * 由 `scripts/ui-status-panel-test.mjs` 逐条钉住。
@@ -64,7 +67,6 @@ import {
   IconCheck,
   IconChevronDown,
   IconChevronLeft,
-  IconChevronRight,
   IconChevronUp,
   IconCircle,
   IconClose,
@@ -112,9 +114,7 @@ import {
   formatAgo,
   formatCountdown,
   formatDuration,
-  longestElapsedMs,
   longestWorkElapsedMs,
-  mateElapsedMs,
   todoFocusWindow,
   type CapsuleSummary,
   type FoldBucketKind,
@@ -305,6 +305,14 @@ const MATE_TONE: Readonly<Record<TeammateView['state'], string>> = {
   failed: 'failed',
 }
 
+/** 队友状态的显示词（子智能体列表那一行行尾的读数）。 */
+const MATE_STATE_LABEL: Readonly<Record<TeammateView['state'], string>> = {
+  working: t('status.agent.stateWorking'),
+  idle: t('status.agent.stateIdle'),
+  stopped: t('status.agent.stateStopped'),
+  failed: t('status.agent.stateFailed'),
+}
+
 /** 折叠桶的文案（状态语义，禁止用位置切片虚报状态）。 */
 const FOLD_LABEL: Readonly<Record<FoldBucketKind, (count: number) => string>> = {
   completed: (count) => t('status.fold.completed', { n: count }),
@@ -326,12 +334,17 @@ type MateSeatHandle = StoreHandle<MateSeatState, ActionsDecl<MateSeatState>>
 
 /** 服务名（provider 是 team 插件；缺席时回落到本地轮询）。 */
 const TEAMMATES_SERVICE = 'teammates'
-/** 「智能体目录在哪」的服务名（provider 是 team 插件：打开智能体团队面板）。 */
-const TEAM_PANEL_SERVICE = 'teamPanel'
+/** 服务名（provider 是 team 插件：在正文区只读打开一位队友的运行记录）。 */
+const TEAMMATE_READER_SERVICE = 'teammateReader'
 
-/** team 插件经服务表给出去的目录口子（已结束行点开团队面板）。 */
-interface TeamPanelService {
-  open(): void
+/**
+ * team 插件经服务表给出去的「看运行记录」口子。
+ *
+ * `open` 自己做「还在跑就不能看」的裁定并给一句人话（那份日志正被写，宿主也不许
+ * 同一条日志挂两个会话），所以状态面板这边只管点一下就叫它。
+ */
+interface TeammateReaderService {
+  open(mate: TeammateView): void
 }
 
 export default defineUiPlugin({
@@ -570,8 +583,9 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
   //   没席位（team 没装/被停用）→ 保留本地轮询（下面那段 effect）。
   // `useService` 订阅服务表的出现/消失，所以 team 启停后自动切源，不需要刷新页面。
   const seat = useService<MateSeatHandle>(TEAMMATES_SERVICE)
-  // 智能体目录（团队面板）的口子：ended 行点它；服务缺席时那一行整行不渲染。
-  const teamPanel = useService<TeamPanelService>(TEAM_PANEL_SERVICE)
+  // 正文区只读运行记录的口子（team 插件提供）：点一行队友就打开它；服务缺席时退回右栏
+  // 页签（老路，仍是只读面）——绝不出现「点了没反应」。
+  const mateReader = useService<TeammateReaderService>(TEAMMATE_READER_SERVICE)
   const instance = useMemo(
     () => (seat === undefined ? undefined : slots.seat(seat)),
     [slots, seat],
@@ -1035,8 +1049,8 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
   }
 
   // 七处都空时整块不画：浮层不该在无事可报时占着右上角。
-  // 与 ZCode 的一处**有意偏离**：已结束的队友也算「有事」——标题栏那颗「智能体团队」
-  // 钮撤掉之后，本会话的队伍只剩这一区的「已结束 · N ›」目录行一个入口，全空就真进不去了
+  // 与 ZCode 的一处**有意偏离**：有队友就算「有事」——「智能体」区是子智能体唯一的列表，
+  // 一条队友都没有时它只剩一句人话，没什么可看；有队友（含收工的）才值得露出来
   // （胶囊链最后那一档 mates-ended 也是为它留的）。
   const hasData =
     todos !== null ||
@@ -1234,9 +1248,8 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
                 />
               ) : null}
               <AgentSection
-                running={running}
-                endedCount={ended.length}
-                now={now}
+                mates={mine}
+                runningCount={running.length}
                 open={sectionOpen.agent}
                 separated={sepAgent}
                 onToggle={() => {
@@ -1244,10 +1257,10 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
                 }}
                 onStop={stopMate}
                 onOpen={(mate) => {
-                  setDockSubagent({ path: mate.file, label: mate.name })
-                }}
-                onOpenDirectory={teamPanel === undefined ? undefined : () => {
-                  teamPanel.open()
+                  // 主路：正文区只读打开（team 插件的 `teammateReader`）。服务缺席（team 没装 /
+                  // 被停用）时退回右栏页签——那条也是只读面，比点了没反应强。
+                  if (mateReader === undefined) setDockSubagent({ path: mate.file, label: mate.name })
+                  else mateReader.open(mate)
                 }}
               />
             </div>
@@ -1655,44 +1668,52 @@ function FoldPreviewCard({
 }
 
 /**
- * 智能体节：只列**在跑的**（两行行：名字 + 已运行 + 停止；点行落右侧栏看运行记录）；
- * 收工的折成「已结束 · N ›」一条目录行——点开团队面板（team 插件的 `teamPanel` 服务），
- * 服务缺席（team 没装）时整行不渲染。折叠态读数 = 最长运行时长 · N 运行。
+ * 智能体节（2026-11-06 起是**子智能体列表**，与标题旁那颗「智能体团队」入口对调）：
+ * 一行一个队友——状态点 + 名字 + 角色 + 状态词，整行可点。
+ *
+ * 点一行在**正文区**只读打开它的完整运行记录（`teammateReader` 服务；还在跑的由那个
+ * 服务当场回绝并给一句人话）。行尾仍留一颗停止钮（在跑的才有），各自 stopPropagation。
+ * 一条队友都没有时给一句人话，不留空表：面板在别处有数据时会露出来。
  */
 function AgentSection({
-  running,
-  endedCount,
-  now,
+  mates,
+  runningCount,
   open,
   separated,
   onToggle,
   onStop,
   onOpen,
-  onOpenDirectory,
 }: {
-  running: readonly TeammateView[]
-  endedCount: number
-  now: number
+  mates: readonly TeammateView[]
+  runningCount: number
   open: boolean
   separated: boolean
   onToggle(): void
   onStop(mate: TeammateView): void
   onOpen(mate: TeammateView): void
-  onOpenDirectory?: () => void
 }): ReactNode {
-  if (running.length === 0 && endedCount === 0) return null
-  const ordered = [...running].sort((left, right) => left.startedAt - right.startedAt)
-  const longest = formatDuration(longestElapsedMs(running, now))
+  // 在跑的排前面（点开要给提示的那几条不该被收工的一堆压到下面），同档按派活先后。
+  const ordered = [...mates].sort((left, right) => {
+    const rank = (mate: TeammateView): number => (mate.state === 'working' ? 0 : 1)
+    return rank(left) - rank(right) || left.startedAt - right.startedAt
+  })
   const trail =
-    running.length === 0 ? '' : open ? t('status.agent.runningCount', { n: running.length }) : `${longest ?? ''} · ${t('status.agent.runningCount', { n: running.length })}`
+    mates.length === 0
+      ? ''
+      : runningCount > 0
+        ? t('status.agent.trailRunning', { n: runningCount, total: mates.length })
+        : t('status.agent.trailCount', { n: mates.length })
   return (
     <StatusSectionBlock id="agent" title={t('status.section.agent')} open={open} separated={separated} onToggle={onToggle} trail={trail}>
-      <ul className="sp-list">
-        {ordered.map((mate) => {
-          const elapsed = formatDuration(mateElapsedMs(mate, now))
-          return (
-            <li className="sp-row sp-row-agent" data-state={MATE_TONE[mate.state]} key={mate.file}>
-              {/* 整行可点：落到右侧栏看它的运行记录（行内按钮各自 stopPropagation）。 */}
+      {mates.length === 0 ? (
+        <div className="sp-empty" data-sp-agent-empty="1">
+          {t('status.agent.empty')}
+        </div>
+      ) : (
+        <ul className="sp-list">
+          {ordered.map((mate) => (
+            <li className="sp-row sp-row-agent" data-state={MATE_TONE[mate.state]} data-sp-agent-state={mate.state} key={mate.file}>
+              {/* 整行可点：正文区只读打开它的运行记录（行内按钮各自 stopPropagation）。 */}
               <button
                 type="button"
                 className="sp-row-open"
@@ -1703,36 +1724,33 @@ function AgentSection({
                   onOpen(mate)
                 }}
               >
-                <IconTree size={13} className="sp-icon sp-icon-run" />
+                <span className={`tm-dot ${mate.state}`} aria-hidden="true" />
                 <span className="sp-row-text" title={mate.task}>
                   {mate.name}
                 </span>
-                {elapsed === null ? null : <span className="sp-row-time">{elapsed}</span>}
+                <span className="sp-row-note">{mate.role}</span>
+                <span className="sp-row-time" data-tone={mate.state === 'failed' ? 'danger' : 'plain'}>
+                  {MATE_STATE_LABEL[mate.state]}
+                </span>
               </button>
-              <button
-                type="button"
-                className="sp-row-stop"
-                aria-label={t('status.agent.stopAria', { name: mate.name })}
-                data-tip={t('status.agent.stopTip')}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onStop(mate)
-                }}
-              >
-                <IconStop size={12} />
-              </button>
+              {mate.state === 'working' ? (
+                <button
+                  type="button"
+                  className="sp-row-stop"
+                  aria-label={t('status.agent.stopAria', { name: mate.name })}
+                  data-tip={t('status.agent.stopTip')}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onStop(mate)
+                  }}
+                >
+                  <IconStop size={12} />
+                </button>
+              ) : null}
             </li>
-          )
-        })}
-      </ul>
-      {endedCount > 0 && onOpenDirectory !== undefined ? (
-        <button type="button" className="sp-ended" data-sp-ended={String(endedCount)} onClick={onOpenDirectory}>
-          <IconCheck size={13} className="sp-icon" />
-          <span>{t('status.agent.ended')}</span>
-          <span className="sp-ended-count">{endedCount}</span>
-          <IconChevronRight size={12} className="sp-ended-go" />
-        </button>
-      ) : null}
+          ))}
+        </ul>
+      )}
     </StatusSectionBlock>
   )
 }

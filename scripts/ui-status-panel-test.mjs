@@ -196,7 +196,7 @@ console.log('[5] 形态钉（结构约定）')
   check('少动模式下停掉收展过渡', /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,200}\.sp/.test(css))
   check('预览卡开合有延迟（120/80ms）', status.includes('PREVIEW_OPEN_MS') && status.includes('PREVIEW_CLOSE_MS'))
   check('折叠桶行带 data-sp-fold 钩子', status.includes('data-sp-fold'))
-  check('已结束目录行经 teamPanel 服务且缺服务不渲染', status.includes("'teamPanel'") && status.includes('data-sp-ended'))
+  check('子智能体行经 teammateReader 服务（缺服务退回右栏页签）', status.includes("'teammateReader'") && status.includes('data-sp-agent') && status.includes('data-sp-agent-state'))
   check('team 插件把 teamPanel 服务 provide 出来', team.includes("ui.provide('teamPanel'"))
   check('进程行三态图标（进行中/办完/待办）', status.includes('sp-icon-run') && status.includes('sp-icon-done') && status.includes('sp-icon-wait'))
 
@@ -227,7 +227,7 @@ console.log('[5] 形态钉（结构约定）')
   check('任务条已撤（tasks 插件里没有 TaskDock / tasks.dock）', !stripComments(tasks).includes('TaskDock') && !tasks.includes('tasks.dock'))
   check('清空清单搬进进程区', status.includes('data-sp-clear') && status.includes("invoke('clearTodos'"))
   check('团队钮已撤（team 插件里没有 TeamButton / team.toggle）', !stripComments(team).includes('TeamButton') && !team.includes('team.toggle'))
-  check('名册轮询仍在（移进子智能体下拉）', team.includes("invoke<TeammateView[]>('listTeammates'") && /function SubagentMenu[\s\S]*?setInterval/.test(team))
+  check('名册轮询仍在（跟着标题旁那颗团队入口常挂载）', team.includes("invoke<TeammateView[]>('listTeammates'") && /function TeamEntry[\s\S]*?setInterval\(poll, 3000\)/.test(team))
   check('团队面板仍由常挂载的那一簇渲染', team.includes('{teamOpen ? <TeamPanel'))
 }
 

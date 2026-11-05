@@ -236,6 +236,9 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
   const sessionId = useHostSelector(readDockSessionId)
   // 主区整页（插件中心这类）：非 null 时顶栏与正文整块换成那一页（旧界面同构）。
   const page = useShellPage()
+  // 正文区正在看队友的运行记录时，标题换成层级面包屑（`父会话标题 / 队友名` + 只读标）：
+  // 两段由 team 插件经 window 事件递上来（`shell.teammate.view`，关掉时 detail 给 null）。
+  const teammateView = useTeammateCrumbs()
   // 正文区的两张脸：对话（消息流）/ 轨迹（执行过程）。轨迹激活时 `.chat-wrap` 整块
   // 换成 `shell.thread` 槽（输入区与状态栏照旧，旧界面同构）。
   const threadView = useThreadView()
@@ -411,6 +414,20 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
             <span className="brand">{boot.host.name}</span>
             {/* 有新版时才出现（自己判空：没新版时它渲染 null）。名字右边、收起钮左边。 */}
             <UpdateButton />
+            {/* 搜索（命令面板）入口：2026-11-06 从顶栏搬到品牌行——顶栏那颗只在手机档留
+                （手机上整条侧栏不画，删了就再也点不到搜索）。整行是窗口拖拽区，按钮必须
+                自己带 `no-drag`，否则点击会被当成「拖窗口」吞掉。 */}
+            <button
+              type="button"
+              className="icon-btn no-drag"
+              data-tip={t('layout.nav.searchTip')}
+              aria-label={t('layout.nav.search')}
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('shell.palette.open'))
+              }}
+            >
+              <IconSearch size={15} />
+            </button>
             <button
               type="button"
               className="icon-btn rail-toggle"
@@ -477,29 +494,33 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
                   ) : null}
                   {/* 侧栏收起时不在这里放展开钮（旧界面顶栏没有它）：窄栏顶上那颗
                       logo 就是展开入口，Ctrl+B 也照旧。 */}
-                  <span className="title">
-                    <SessionTitle />
-                  </span>
-                  {/* 左簇：子智能体、智能体团队——旧界面它们跟在标题后面，与右侧的操作组隔一根弹性填充 */}
+                  {teammateView === null ? (
+                    <span className="title">
+                      <SessionTitle />
+                    </span>
+                  ) : (
+                    <TeammateCrumbs view={teammateView} />
+                  )}
+                  {/* 左簇：智能体团队（order 10）——旧界面它跟在标题后面，与右侧的操作组隔一根弹性填充 */}
                   <div className="topbar-cluster">
                     <SlotOutlet slots={slots} slot={SLOT.headerLead} />
                   </div>
                   <div className="drag-fill" />
-                  {/* 搜索（命令面板）的可见入口（2026-10-26 从左下角页脚搬上来，压在
-                      「在资源管理器打开」那组左边）：Ctrl+K 之外得有个点得到的东西，
-                      不然这个功能只有知道键的人能用。手机上照旧留着——它是个点得到的钮，
-                      不靠键。 */}
-                  <button
-                    type="button"
-                    className="icon-btn topbar-search"
-                    data-tip={t('layout.nav.searchTip')}
-                    aria-label={t('layout.nav.search')}
-                    onClick={() => {
-                      window.dispatchEvent(new CustomEvent('shell.palette.open'))
-                    }}
-                  >
-                    <IconSearch size={15} />
-                  </button>
+                  {/* 搜索（命令面板）入口的**手机档**那一份（2026-11-06 起桌面档搬进侧栏
+                      品牌行）：手机上整条侧栏不画，删了这颗就再也点不到搜索。 */}
+                  {narrow ? (
+                    <button
+                      type="button"
+                      className="icon-btn topbar-search"
+                      data-tip={t('layout.nav.searchTip')}
+                      aria-label={t('layout.nav.search')}
+                      onClick={() => {
+                        window.dispatchEvent(new CustomEvent('shell.palette.open'))
+                      }}
+                    >
+                      <IconSearch size={15} />
+                    </button>
+                  ) : null}
                   {/* 右簇：工作区打开组（在资源管理器打开 + 更多打开方式）。手机档由 CSS 藏掉
                       （没有原生桥，点了只会报「这条能力来自桌面外壳」）。 */}
                   <SlotOutlet slots={slots} slot={SLOT.header} />
@@ -694,6 +715,96 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
 function SessionTitle(): ReactNode {
   const title = useHostSelector(readSessionTitle)
   return <>{title}</>
+}
+
+/**
+ * 正文区正在看队友运行记录时，顶栏要的那两段（team 插件经 `window` 事件递上来）。
+ *
+ * 为什么走 window 事件而不是服务表：布局这层不是插件（它拿不到 `ui.provide` 的消费面），
+ * 而壳里跨「插件 ↔ 外壳」的既有通路就是 `window` 事件（`shell.palette.open` /
+ * `shell.sidebar.toggle` / `shell.session.new` 都是这条）。数据本身在界面侧推导
+ * （team 插件用名册 + 会话清单算父会话标题），不新增快照字段、不改宿主契约。
+ */
+interface TeammateCrumbsView {
+  /** 队友名（右段，纯文本）。 */
+  name: string
+  /** 派它的会话标题（左段，点一下回原会话）。 */
+  parentTitle: string
+  /** 派它的会话 jsonl 绝对路径；查不到时 null（那时点左段只关掉只读层）。 */
+  parentPath: string | null
+}
+
+/** 面包屑的出现 / 消失（detail 为 null 表示「正文区回到普通会话」）。 */
+const TEAMMATE_HINT_EVENT = 'shell.teammate.view'
+/** 请正文区那层只读视图关掉（顶栏左段点一下就发它）。 */
+const TEAMMATE_EXIT_EVENT = 'shell.teammate.exit'
+
+/**
+ * 订阅「正文区正在看谁的运行记录」。
+ *
+ * 逐字段比对再落状态：事件可能每几秒来一次（名册轮询刷新父会话标题），值没变就别
+ * 重画顶栏。事件 detail 给 null 就还原成普通标题。
+ */
+function useTeammateCrumbs(): TeammateCrumbsView | null {
+  const [view, setView] = useState<TeammateCrumbsView | null>(null)
+  useEffect(() => {
+    const onView = (event: Event): void => {
+      const detail = (event as CustomEvent<TeammateCrumbsView | null>).detail ?? null
+      setView((current) => {
+        if (detail === null) return current === null ? current : null
+        if (
+          current !== null &&
+          current.name === detail.name &&
+          current.parentTitle === detail.parentTitle &&
+          current.parentPath === detail.parentPath
+        ) {
+          return current
+        }
+        return detail
+      })
+    }
+    window.addEventListener(TEAMMATE_HINT_EVENT, onView)
+    return () => {
+      window.removeEventListener(TEAMMATE_HINT_EVENT, onView)
+    }
+  }, [])
+  return view
+}
+
+/**
+ * 顶栏的层级面包屑（对照 dsh 的 `nav.crumbs`）：`父会话标题 / 队友名` + 一枚「只读」小标。
+ *
+ * 左边那节是**回原会话**的唯一出口（正文区被只读层盖住了，输入区也在盖子下面）：
+ * 点它先请 team 插件关掉那层，再 `openSession(父会话路径)`——当前本来就是父会话时
+ * 宿主对「已经在看这条」直接短路（`plugins/session` 的 open 首行），所以这一步是无害的
+ * 兜底（用户在看队友记录时从侧栏切去了别的会话，只读层会自动关，那时这一步才真切）。
+ * 右边那节不可点：它就是「现在在哪」。
+ */
+function TeammateCrumbs({ view }: { view: TeammateCrumbsView }): ReactNode {
+  const channel = useHostChannel()
+  return (
+    <span className="crumbs" role="navigation" aria-label={t('layout.crumb.aria')}>
+      <button
+        type="button"
+        className="crumb crumb-link"
+        data-tip={t('layout.crumb.parentTip')}
+        onClick={() => {
+          window.dispatchEvent(new CustomEvent(TEAMMATE_EXIT_EVENT))
+          if (view.parentPath === null) return
+          void channel.invoke('openSession', [view.parentPath]).catch(() => undefined)
+        }}
+      >
+        {view.parentTitle}
+      </button>
+      <span className="crumb-sep" aria-hidden="true">
+        /
+      </span>
+      <span className="crumb crumb-current" aria-current="page">
+        {view.name}
+      </span>
+      <span className="crumb-badge">{t('layout.crumb.readonly')}</span>
+    </span>
+  )
 }
 
 /** 顶栏的「工作区面板」开合钮：只在收起时出现（旧桌面版同款——展开时由页签条尾的

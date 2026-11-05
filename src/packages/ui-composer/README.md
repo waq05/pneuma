@@ -1,6 +1,6 @@
 # ui-composer（输入区）
 
-一句话：输入区界面单元——输入框、模型与思考两颗粒、权限预设、附件与排队消息条。
+一句话：输入区界面单元——输入框、模型与推理等级合一的一颗胶囊、权限预设、附件与排队消息条；模式（预设）钮挂在顶栏标题旁。
 
 ## Model Experience（模型体验）
 
@@ -11,11 +11,12 @@
 
 ## 面板与数据
 
-- 三个槽：通知条 order 40、排队条 order 45、输入框 order 50，排队条紧贴在输入框**上面**（ui/ui.tsx:139-145）。
-- 数据来自快照：`turnState`、`hasApproval`、`inboxCount`、`permissionPresets`、`preset`、`git`、`sessionPath`（ui/ui.tsx:132-139）。
+- 四个槽：通知条 order 40、排队条 order 45、输入框 order 50，排队条紧贴在输入框**上面**（ui/ui.tsx:142-144）；模式（预设）钮单独挂顶栏标题旁 `shell.header.lead`、order 20（ui/ui.tsx:148）。
+- 模型与推理等级是**同一颗** chip：两个读数写在一颗钮上，点开是两行卡（模型 / 推理等级），点某一行才进各自的二级面板（ui/model-controls.tsx:555、573；三页互斥见 :254、:264）。
+- 数据来自快照：`turnState`、`hasApproval`、`inboxCount`、`permissionPresets`、`preset`、`git`、`sessionPath`（ui/ui.tsx:152-157）。
 - 发送走 `submit`，插话走 `steerQueued`，打断走 `interrupt`（ui/ui.tsx:383、397、415）。
 - 队列条用 `editQueued` / `removeQueued` / `steerQueued` 改收件箱（ui/queue-dock.tsx:76-103）。
-- 停用后：输入框、模型与档位旋钮、附件、排队条一起消失；首屏能力卡的 `composerDraft` 写入服务也没了（ui/ui.tsx:113-127）。
+- 停用后：输入框、模型与档位胶囊、附件、排队条、顶栏那颗模式钮一起消失；首屏能力卡的 `composerDraft` 写入服务也没了（ui/ui.tsx:111-125）。
 
 ## Known Limitations（已知限制）
 
