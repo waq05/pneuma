@@ -807,6 +807,19 @@ export async function createBootSession(
       else setTimeout(run, 0)
     },
     reload: async (entry) => {
+      // HMR 新加的插件不在原图的条目表里：账本里也还没有这一行。先补一行再卸装——
+      // `setPlugin` 只更新已有行（找不到就静默返回），不补的话新插件会「装上了但账本
+      // 与诊断区里查无此条」：apply 跑了、请求也是 200，删掉文件却等不到 `removed`。
+      // 这是 `ui-third-party-hot-mount-e2e` 抓出来的（信任第三方界面插件那条路）。
+      if (state.plugins[entry.id] === undefined) {
+        state.plugins[entry.id] = {
+          id: entry.id,
+          phase: batchByEntry.get(entry.id)?.phase ?? 'application',
+          rev: entry.rev,
+          state: 'pending',
+          attempts: 0,
+        }
+      }
       // HMR 新加的插件不在原图的条目表里：补进报告顺序（换装的则原位不动）。
       if (!entryOrder.some((candidate) => candidate.id === entry.id)) entryOrder.push(entry)
       session.uninstall(entry.id)
