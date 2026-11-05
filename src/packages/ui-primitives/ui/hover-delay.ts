@@ -22,12 +22,17 @@ export interface HoverState<T> {
   item: T
   anchor: DOMRect
   cardWidth: number
+  /**
+   * 触发元素的锚点名（支持 CSS 锚点定位时才有）：浮层拿它贴位置，滚动/缩放由浏览器跟着算；
+   * 不支持时是 undefined，浮层退回用 `anchor` 矩形自己算（两条路都在，见"文件已更改"的悬停卡）。
+   */
+  anchorName?: string
 }
 
 export function useHoverDelay<T>(): {
   hover: HoverState<T> | null
   /** 元素上停下来了：起出卡计时（已有的收卡倒计时一并取消）。 */
-  arm: (item: T, anchor: DOMRect, cardWidth?: number) => void
+  arm: (item: T, anchor: DOMRect, cardWidth?: number, anchorName?: string) => void
   /** 鼠标移开：起收卡倒计时（行上移开、鼠标离开卡，都走这一条）。 */
   disarm: () => void
   /** 鼠标进了卡里：取消收卡倒计时。 */
@@ -57,10 +62,13 @@ export function useHoverDelay<T>(): {
     },
     [],
   )
-  const arm = (item: T, anchor: DOMRect, cardWidth = 520): void => {
+  const arm = (item: T, anchor: DOMRect, cardWidth = 520, anchorName?: string): void => {
     clearArm()
     clearClose()
-    armRef.current = window.setTimeout(() => setHover({ item, anchor, cardWidth }), HOVER_DELAY_MS)
+    armRef.current = window.setTimeout(
+      () => setHover({ item, anchor, cardWidth, ...(anchorName === undefined ? {} : { anchorName }) }),
+      HOVER_DELAY_MS,
+    )
   }
   const disarm = (): void => {
     clearArm()

@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { DiffRows, FileIcon, createT, setDockPreview, setDockReview, type ChangedFileView } from '@dsc/ui'
-import { baseNameOf, displayPathOf, findLast, useHoverDelay } from '@dsc/ui-primitives'
+import { baseNameOf, displayPathOf, findLast, useHoverDelay, anchorNameOf, anchorPositioningSupported } from '@dsc/ui-primitives'
 import type { Row } from '../shared'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 import zh from '../../locale/ui.zh.json'
@@ -16,6 +16,14 @@ import en from '../../locale/ui.en.json'
 
 /** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
 const t = createT({ zh, en })
+
+/**
+ * 当前载体支不支持 CSS 锚点定位（Chromium 125+ 有）。
+ *
+ * 为什么在模块级算一次：这是浏览器能力，装一次页面不变；放进组件体里每帧算一次没有意义。
+ * 不支持时走原来那套「量 rect、上下二选一、横向夹取」——老浏览器上预览卡照样能看。
+ */
+const ANCHORED = anchorPositioningSupported()
 
 /**
  * 把本轮改动合成一份清单。
@@ -74,6 +82,7 @@ export function DiffHoverCard({
   anchor,
   cardWidth,
   cwd,
+  anchorName,
   onKeep,
   onLeave,
   onClose,
@@ -82,6 +91,8 @@ export function DiffHoverCard({
   anchor: DOMRect
   cardWidth: number
   cwd: string
+  /** 支持锚点定位时，触发行的锚点名；undefined = 走「量 rect 自己算」的回退路。 */
+  anchorName?: string
   /** 鼠标移进卡里：取消「移开后收卡」的倒计时，用户能与卡内容交互。 */
   onKeep: () => void
   /** 鼠标离开卡：起收卡倒计时（与「从行上移开」同一条，1s 后收）。 */
@@ -99,12 +110,33 @@ export function DiffHoverCard({
   }, [onClose])
   const width = Math.max(320, Math.min(cardWidth - 48, window.innerWidth - 16))
   const maxHeight = Math.min(420, window.innerHeight - 24)
-  // 上方放得下（按上限估）就贴行上方，否则落行下方；横向夹进视口。
-  const left = Math.min(Math.max(8, anchor.left - 24), Math.max(8, window.innerWidth - width - 8))
+  /**
+   * 两条定位路，宽度与高度上限两条共用（它们是产品口径：320 起、卡宽 − 48、上限 420，
+   * 不是定位问题）：
+   *
+   *   - **支持锚点**（`anchorName` 有值）：位置交给浏览器——贴触发行上方 6px，上方放不下
+   *     自动翻到下方（`flip-block`），左缘按行左缘 −24px 再夹进视口（`clamp`）。
+   *     卡是 `position: fixed` 挂在 body 下、锚点在聊天区深处，跨层锚定照样生效；
+   *     聊天区滚动时卡跟着行走——旧写法用视口坐标，一滚卡就留在原地、行滚走了。
+   *   - **不支持**：退回原来那套「按 rect 估上方放不放得下、横向夹取」。
+   */
   const style: CSSProperties =
-    anchor.top - 12 >= maxHeight
-      ? { left: `${String(left)}px`, bottom: `${String(window.innerHeight - anchor.top + 6)}px`, width: `${String(width)}px`, maxHeight: `${String(maxHeight)}px` }
-      : { left: `${String(left)}px`, top: `${String(anchor.bottom + 6)}px`, width: `${String(width)}px`, maxHeight: `${String(maxHeight)}px` }
+    anchorName === undefined
+      ? anchor.top - 12 >= maxHeight
+        ? { left: `${String(Math.min(Math.max(8, anchor.left - 24), Math.max(8, window.innerWidth - width - 8)))}px`, bottom: `${String(window.innerHeight - anchor.top + 6)}px`, width: `${String(width)}px`, maxHeight: `${String(maxHeight)}px` }
+        : { left: `${String(Math.min(Math.max(8, anchor.left - 24), Math.max(8, window.innerWidth - width - 8)))}px`, top: `${String(anchor.bottom + 6)}px`, width: `${String(width)}px`, maxHeight: `${String(maxHeight)}px` }
+      : ({
+          ['--dsc-hover-w' as keyof CSSProperties]: `${String(width)}px`,
+          ['positionAnchor' as keyof CSSProperties]: anchorName,
+          // `bottom` 量的是「浮层底边到包含块底边」，与视口顶是反方向：要贴在锚点顶上方
+          // 6px，这里得 `+ 6px`。符号写反的后果是真机实测抓出来的——卡底落在锚点顶下方 6px
+          // （`ui-anchor-e2e` 的「卡片贴锚点上方、间距 6px」那条断言）。
+          bottom: 'calc(anchor(top) + 6px)',
+          left: 'clamp(8px, calc(anchor(left) - 24px), calc(100vw - var(--dsc-hover-w) - 8px))',
+          width: 'var(--dsc-hover-w)',
+          maxHeight: 'min(420px, calc(100vh - 24px))',
+          positionTryFallbacks: 'flip-block',
+        } as CSSProperties)
   return createPortal(
     <div className="hover-preview" style={style} onMouseEnter={onKeep} onMouseLeave={onLeave}>
       <div className="hover-preview-head">
@@ -161,8 +193,15 @@ export function ChangesCard({ rows, cwd }: { rows: readonly Row[]; cwd: string }
   const openAt = (path: string): void => {
     setDockPreview({ path, cwd })
   }
-  const armHover = (file: ChangedFileView, anchor: DOMRect): void => {
-    hoverDelay.arm(file, anchor, cardRef.current?.offsetWidth ?? 480)
+  /** 触发行的锚点名：一行一个（带上序号，路径清洗后撞名也不会互相顶掉）。 */
+  const anchorNameFor = (file: ChangedFileView, index: number): string => anchorNameOf(`hover-${String(index)}-${file.path}`)
+  const armHover = (file: ChangedFileView, anchor: DOMRect, index: number): void => {
+    hoverDelay.arm(
+      file,
+      anchor,
+      cardRef.current?.offsetWidth ?? 480,
+      ANCHORED ? anchorNameFor(file, index) : undefined,
+    )
   }
   return (
     // 不再包 `.entry-row`：旧版里 `.changes-card` 是 `.turn-seat` 的直接子项，间距靠
@@ -190,11 +229,13 @@ export function ChangesCard({ rows, cwd }: { rows: readonly Row[]; cwd: string }
         </button>
         {single === undefined ? (
           <ul className="changes-list">
-            {visible.map((file) => (
+            {visible.map((file, index) => (
               <li
                 className="changes-row-wrap"
                 key={file.path}
-                onMouseEnter={(event) => armHover(file, event.currentTarget.getBoundingClientRect())}
+                // 支持锚点定位时这一行就是锚点：浮层按它贴上方，滚动/缩放由浏览器跟着算。
+                style={ANCHORED ? ({ ['anchorName' as keyof CSSProperties]: anchorNameFor(file, index) } as CSSProperties) : undefined}
+                onMouseEnter={(event) => armHover(file, event.currentTarget.getBoundingClientRect(), index)}
                 onMouseLeave={hoverDelay.disarm}
               >
                 <button
@@ -273,6 +314,7 @@ export function ChangesCard({ rows, cwd }: { rows: readonly Row[]; cwd: string }
             anchor={hover.anchor}
             cardWidth={hover.cardWidth}
             cwd={cwd}
+            {...(hover.anchorName === undefined ? {} : { anchorName: hover.anchorName })}
             onKeep={hoverDelay.keep}
             onLeave={hoverDelay.disarm}
             onClose={hoverDelay.close}

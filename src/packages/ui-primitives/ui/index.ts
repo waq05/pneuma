@@ -64,6 +64,8 @@ export * from './file-type-icon'
 export * from './file-icons'
 export * from './highlight'
 export * from './hover-delay'
+// 浮层锚定（CSS 锚点定位 + 不支持时的回退判定）：`Select` 与「文件已更改」的悬停卡共用。
+export * from './anchored'
 // 贴图放大浮层（待发附件栏里点缩略图看大图）。
 export * from './image-lightbox'
 export * from './lang-table'
