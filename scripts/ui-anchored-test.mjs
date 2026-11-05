@@ -8,6 +8,7 @@
  *
  * @module dsc/scripts/ui-anchored-test
  */
+import { readFileSync } from 'node:fs'
 import { anchorNameOf, anchoredStyles } from '../src/packages/ui-primitives/ui/anchored.ts'
 
 let pass = 0
@@ -45,6 +46,24 @@ console.log('[2] 两份样式')
   const auto = anchoredStyles('--dsc-anchor-y', { gap: 6, width: 'auto' }).panel
   check('width=auto 时不写 min-width（浮层自己定宽）', auto['minWidth'] === undefined, String(auto['minWidth']))
   check('gap 跟着参数走', auto['top'] === 'calc(anchor(bottom) + 6px)', String(auto['top']))
+}
+
+console.log('[3] 悬停卡的两条定位路（源码钉）')
+{
+  const source = readFileSync(new URL('../src/packages/ui-transcript/ui/rows/changes-card.tsx', import.meta.url), 'utf8')
+  const hoverDelay = readFileSync(new URL('../src/packages/ui-primitives/ui/hover-delay.ts', import.meta.url), 'utf8')
+  check('支持锚点时写 position-anchor', source.includes("['positionAnchor' as keyof CSSProperties]"))
+  check('贴锚点上方 6px（bottom 量距底边，所以要 +6）', source.includes('calc(anchor(top) + 6px)'))
+  check('上方放不下自动翻到下方（flip-block）', source.includes("positionTryFallbacks: 'flip-block'"))
+  check('左缘按锚点算再夹进视口（clamp + anchor(left)）', source.includes('clamp(8px, calc(anchor(left) - 24px)'))
+  check('行元素挂 anchor-name（悬停的那一行才是锚点）', source.includes("['anchorName' as keyof CSSProperties]"))
+  check(
+    '不支持锚点时保留「量 rect 上下二选一」的回退',
+    source.includes('anchor.top - 12 >= maxHeight'),
+    '回退分支被删了：老浏览器上预览卡会没位置',
+  )
+  check('锚点名从悬停状态传给浮层（anchorName 字段在）', hoverDelay.includes('anchorName?: string'))
+  check('arm() 能带上锚点名（第四参）', hoverDelay.includes('anchorName?: string) => void'))
 }
 
 console.log('')

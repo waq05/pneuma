@@ -364,9 +364,13 @@ async function main() {
     const url = await host.waitUrl
     check(`宿主报出界面地址（:${String(port)}）`, url.includes(`:${String(port)}/`), url)
 
+    // 环境里可能带着 ELECTRON_RUN_AS_NODE=1（某些 Electron 宿主派生的终端会带，见
+    // 交接文档 §0）：带着它起的 Electron 是「纯 Node」，窗口还没建就退出了。
+    const electronEnv = { ...process.env, DSC_UI_HMR_USER_DATA: join(home, 'electron-user-data') }
+    delete electronEnv['ELECTRON_RUN_AS_NODE']
     const child = spawn(ELECTRON, [DRIVER, url], {
       cwd: root,
-      env: { ...process.env, DSC_UI_HMR_USER_DATA: join(home, 'electron-user-data') },
+      env: electronEnv,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     driver = new Driver(child)

@@ -42,7 +42,7 @@ const fail = (stage, error) => {
   try {
     if (resultPath !== '') {
       mkdirSync(dirname(resultPath), { recursive: true })
-      writeFileSync(resultPath, JSON.stringify({ error: text, stage }, null, 2), 'utf8')
+      writeFileSync(resultPath, JSON.stringify({ error: text, stage }, null, 2) + '\n', 'utf8')
     }
   } catch {}
   app.exit(3)

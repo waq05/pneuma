@@ -42,7 +42,7 @@ const fail = (stage, error) => {
   try {
     if (resultPath !== '') {
       mkdirSync(dirname(resultPath), { recursive: true })
-      writeFileSync(resultPath, JSON.stringify({ error: text, stage }, null, 2), 'utf8')
+      writeFileSync(resultPath, JSON.stringify({ error: text, stage }, null, 2) + '\n', 'utf8')
     }
   } catch {}
   app.exit(3)
@@ -133,7 +133,7 @@ async function main() {
       if (resultPath !== '') {
         mkdirSync(dirname(resultPath), { recursive: true })
         // 写到旁支文件：fail() 还会往正牌读数里写一条错误摘要，别互相覆盖。
-        writeFileSync(resultPath + '.dump.json', JSON.stringify({ error: String(error && error.message), dump }, null, 2), 'utf8')
+        writeFileSync(resultPath + '.dump.json', JSON.stringify({ error: String(error && error.message), dump }, null, 2) + '\n', 'utf8')
       }
       throw error
     }
@@ -212,7 +212,7 @@ async function main() {
 
   if (resultPath !== '') {
     mkdirSync(dirname(resultPath), { recursive: true })
-    writeFileSync(resultPath, JSON.stringify({ probe, shotProbe, shot }, null, 2), 'utf8')
+    writeFileSync(resultPath, JSON.stringify({ probe, shotProbe, shot }, null, 2) + '\n', 'utf8')
   }
   app.exit(0)
 }

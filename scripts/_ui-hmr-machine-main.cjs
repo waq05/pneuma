@@ -14,6 +14,7 @@
  *   {"id":1,"cmd":"describe"}                         → 账本 + DOM 探针读数
  *   {"id":2,"cmd":"graph"}                            → 页内 fetch('/api/boot')（宿主当下那一份图）
  *   {"id":3,"cmd":"mark","value":"..."}               → 在页里放一枚哨兵（刷新就丢，用来证明没刷新）
+ *   {"id":3,"cmd":"attr","selector":"html","name":"data-x"} → 读任意元素的属性（插件自己的装载标记）
  *   {"id":4,"cmd":"wait-boot","timeoutMs":30000}      → 等到所有批落定、所有插件停止 pending/loading
  *   {"id":5,"cmd":"wait-change","plugin":"statusbar","from":"abc","timeoutMs":25000}
  *                                                     → 等到该插件"已装上且 rev 不再是 from"
@@ -215,6 +216,15 @@ async function handle(command) {
     if (command.cmd === 'mark') {
       await win.webContents.executeJavaScript(`globalThis.__hmrSentinel = ${JSON.stringify(command.value)}; true`)
       reply(true)
+      return
+    }
+    if (command.cmd === 'attr') {
+      // 通用读属性：插件自己的装载标记（例如第三方界面插件 apply() 写的 data-*）不在 DESCRIBE 的
+      // 固定字段里，而这类标记正是「它的代码真的执行了」的硬证据。
+      const value = await win.webContents.executeJavaScript(
+        `(() => { const el = document.querySelector(${JSON.stringify(String(command.selector ?? 'html'))}); return el === null ? null : el.getAttribute(${JSON.stringify(String(command.name ?? ''))}); })()`,
+      )
+      reply(value)
       return
     }
     if (command.cmd === 'wait-boot') {

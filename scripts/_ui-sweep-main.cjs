@@ -86,7 +86,7 @@ true`
 const fail = (stage, error) => {
   const text = error && error.stack ? error.stack : String(error)
   try {
-    writeFileSync(outPath, JSON.stringify({ error: text, stage }, null, 2), 'utf8')
+    writeFileSync(outPath, JSON.stringify({ error: text, stage }, null, 2) + '\n', 'utf8')
   } catch {}
   app.exit(3)
 }
@@ -177,7 +177,7 @@ async function main() {
   }
 
   const pass = results.filter((row) => row.ok).length
-  writeFileSync(outPath, JSON.stringify({ total: results.length, pass, fail: results.length - pass, results, console: consoleRows }, null, 2), 'utf8')
+  writeFileSync(outPath, JSON.stringify({ total: results.length, pass, fail: results.length - pass, results, console: consoleRows }, null, 2) + '\n', 'utf8')
   await sleep(200)
   app.exit(pass === results.length ? 0 : 1)
 }

@@ -46,7 +46,7 @@ const writeCrash = (stage, error) => {
   if (crashFile === '') return
   try {
     mkdirSync(dirname(crashFile), { recursive: true })
-    writeFileSync(crashFile, JSON.stringify({ error: String(error), stage }, null, 2), 'utf8')
+    writeFileSync(crashFile, JSON.stringify({ error: String(error), stage }, null, 2) + '\n', 'utf8')
   } catch {}
 }
 process.on('uncaughtException', (error) => {
@@ -206,7 +206,7 @@ app.whenReady().then(async () => {
   if (resultPath !== '') {
     try {
       mkdirSync(dirname(resultPath), { recursive: true })
-      writeFileSync(resultPath, JSON.stringify(result, null, 2), 'utf8')
+      writeFileSync(resultPath, JSON.stringify(result, null, 2) + '\n', 'utf8')
     } catch (error) {
       process.stderr.write('[cordis-probe] 写读数失败：' + String(error) + '\n')
     }

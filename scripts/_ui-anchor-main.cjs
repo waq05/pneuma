@@ -25,7 +25,7 @@ function writeResult(value) {
   if (resultPath === '') return
   try {
     mkdirSync(dirname(resultPath), { recursive: true })
-    writeFileSync(resultPath, JSON.stringify(value, null, 2), 'utf8')
+    writeFileSync(resultPath, JSON.stringify(value, null, 2) + '\n', 'utf8')
   } catch {}
 }
 
@@ -118,6 +118,39 @@ app.whenReady().then(async () => {
       "host.remove();",
       "panel.remove();",
       "return { trigger: { top: a.top, bottom: a.bottom }, pop: { top: b.top, bottom: b.bottom, height: b.height }, viewport: window.innerHeight };",
+    ].join('\n'))
+    // 第三段：「文件已更改」悬停卡那套定位（锚点在聊天区深处、卡片是 body 下的 fixed 浮层）。
+    // 为什么用合成元素而不是真去悬停一行改动卡：那条路要先造一轮改动数据、再等 500ms 悬停，
+    // 而这里要验的是**这套 CSS 在真实滚动下跟不跟**——合成的两个元素用的是同一串属性。
+    out.hover = await inPage(win, [
+      "const chat = document.querySelector('.chat') ?? document.body",
+      "const filler = document.createElement('div')",
+      "filler.style.cssText = 'height:800px'",
+      "const anchorEl = document.createElement('div')",
+      "anchorEl.style.cssText = 'height:40px;background:#ddd'",
+      "anchorEl.style.anchorName = '--dsc-hover-probe'",
+      'chat.insertBefore(anchorEl, chat.firstChild)',
+      'chat.insertBefore(filler, anchorEl)',
+      "const card = document.createElement('div')",
+      "card.style.cssText = 'position:fixed;height:80px;background:#eee;z-index:99999'",
+      "card.style.positionAnchor = '--dsc-hover-probe'",
+      "card.style.bottom = 'calc(anchor(top) + 6px)'",
+      "card.style.left = 'clamp(8px, calc(anchor(left) - 24px), calc(100vw - 340px - 8px))'",
+      "card.style.width = '340px'",
+      "card.style.positionTryFallbacks = 'flip-block'",
+      'document.body.appendChild(card)',
+      'await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))',
+      'const a = anchorEl.getBoundingClientRect()',
+      'const c = card.getBoundingClientRect()',
+      'const before = { anchorTop: a.top, anchorLeft: a.left, cardBottom: c.bottom, cardLeft: c.left, cardWidth: c.width }',
+      'const fromTop = chat.scrollTop',
+      'chat.scrollTop = fromTop + 200',
+      'await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))',
+      'const a2 = anchorEl.getBoundingClientRect()',
+      'const c2 = card.getBoundingClientRect()',
+      'const scrolled = chat.scrollTop - fromTop',
+      'anchorEl.remove(); filler.remove(); card.remove()',
+      'return { before, after: { anchorTop: a2.top, cardBottom: c2.bottom }, scrolled, viewport: { w: window.innerWidth, h: window.innerHeight } }',
     ].join('\n'))
     if (shotPath !== '') {
       // 截图时把浮层重新打开：证据图要看得见「贴在哪」，只留读数看不出位置感。

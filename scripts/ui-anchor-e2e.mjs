@@ -118,6 +118,33 @@ async function main() {
       check('下方放不下时翻到锚点上方', Number(flipPop.bottom) <= Number(flipTrigger.top) + 1, `浮层底 ${String(flipPop.bottom)} vs 锚点顶 ${String(flipTrigger.top)}`)
       check('翻上去之后仍在窗口里', Number(flipPop.top) >= -1, `${String(flipPop.top)} / 窗口 ${String(flip.viewport)}`)
     }
+    // 「文件已更改」悬停卡那套定位：锚点在聊天区深处、卡片是 body 下的 fixed 浮层。
+    const hover = parsed.hover ?? {}
+    const hoverBefore = hover.before ?? {}
+    const hoverAfter = hover.after ?? {}
+    check('悬停卡定位量到了（锚点与固定浮层都在）', Number(hoverBefore.cardWidth) > 0, JSON.stringify(hover))
+    if (Number(hoverBefore.cardWidth) > 0) {
+      check(
+        '卡片贴锚点上方、间距 6px（±1）',
+        Math.abs(Number(hoverBefore.anchorTop) - Number(hoverBefore.cardBottom) - 6) <= 1,
+        `卡底 ${String(hoverBefore.cardBottom)} / 锚点顶 ${String(hoverBefore.anchorTop)}`,
+      )
+      const expectedLeft = Math.max(
+        8,
+        Math.min(Number(hoverBefore.anchorLeft) - 24, Number(hover.viewport?.w ?? 1280) - 340 - 8),
+      )
+      check(
+        '左缘 = 锚点左缘 − 24 后夹进视口（±1）',
+        Math.abs(Number(hoverBefore.cardLeft) - expectedLeft) <= 1,
+        `${String(hoverBefore.cardLeft)} vs ${String(expectedLeft)}`,
+      )
+      check('聊天区真的滚动了（跟随断言的前提）', Number(hover.scrolled) > 0, String(hover.scrolled))
+      check(
+        '滚动之后卡片仍贴着锚点（差 ≤1px，fixed 浮层跟着行走）',
+        Math.abs(Number(hoverAfter.anchorTop) - Number(hoverAfter.cardBottom) - 6) <= 1,
+        `卡底 ${String(hoverAfter.cardBottom)} / 锚点顶 ${String(hoverAfter.anchorTop)}`,
+      )
+    }
     check('截图在', existsSync(SHOT), SHOT)
   }
   electron.kill()
