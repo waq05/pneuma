@@ -130,6 +130,42 @@ const surfaces = () => {
   return kernel.transcript.getSnapshot().surfaces
 }
 
+/**
+ * 快照面「跟上」的上限（毫秒）：大于一次 `git` 读取，小于一个巡检周期。
+ *
+ * 这个数是有来历的。2026-11-06 查到的真 bug：`src/packages/git/index.ts` 的 `tick` 在**读取
+ * 途中**收到催拍会直接 `return`，那一拍就丢了；读完由 `read()` 末尾按档位重排下一拍
+ * （有改动 12s / 干净 30s），于是快照面会停在**上一个工作区**的读数上整整一个巡检周期——
+ * 真内核量到 13.2–13.5 秒。批跑时上一批探针还占着 CPU，一拍拖得更久、窗口更宽，所以
+ * 这条红只在 `check:ui` 里偶发，单跑十几遍都绿。
+ *
+ * 现在 `tick` 会记住读取途中的催拍、收尾立刻补一拍，正常几百毫秒就到位。预算因此取
+ * **5 秒**：比「一拍读取 + 补拍」宽得多（慢机器也过得去），又明显短于 12 秒的巡检档——
+ * 哪天这个 bug 回来了，13 秒的回填会被这条断言当场抓住，而不是被放宽的等待掩盖过去。
+ */
+const SURFACE_CATCHUP_MS = 5_000
+
+/**
+ * 把快照面催到「当前工作区的读数」，再等一拍读的时间，让它进入 12 秒的安静期。
+ *
+ * 用途只有一个：紧接着要发一个**写类 op**（切分支 / 建分支 / 换到非仓库目录），并断言
+ * 「它落盘后自己催的那一拍被接住了」——那几条的预算只有 8 秒（要证明不必等下一个
+ * 12 秒的巡检）。起点落在一拍读取里，催拍就会被吞（见上），8 秒内看不到结果。
+ * 先安静下来，写类 op 的催拍就一定落在窗口外。
+ *
+ * @param matches - 判定「已是当前工作区的读数」的条件
+ * @returns 安静之后条件是否仍成立（不成立时后面那条断言自己会红）
+ */
+const quietSurface = async (matches) => {
+  const settled = await pollUntil(() => {
+    kernel.get('git')?.refresh()
+    return matches(surfaces().git)
+  }, SURFACE_CATCHUP_MS)
+  if (!settled) return false
+  await new Promise((resolve) => setTimeout(resolve, 1200))
+  return matches(surfaces().git)
+}
+
 console.log('[1] Git 读数（dock git-status 的 stats 档）')
 {
   const full = await kernel.get('dock').handle('git-status', { stats: true })
@@ -479,6 +515,9 @@ console.log('[8] git 快照面（surfaces.git）+ 分支清单 / 切分支 / 建
   await session.open(sessionFile)
   const policy0 = approval.policy
   const branch0 = gitHead()
+  // 先让快照面安静地停在「当前工作区」的读数上：下面几条断言的是写类 op 自己催的那一拍
+  // （8 秒预算），起点若落在一拍读取里就会被吞掉（见 quietSurface）。
+  await quietSurface((git) => git.repo === true && git.branch === branch0)
 
   // 「有界面才拍」那条链：第一次读这一片只顺手催一拍（界面刚连上的那一拍），
   // 所以首读拿到的是空读数，几拍之后才是真读数——这条断言钉的就是这个行为。
@@ -488,7 +527,7 @@ console.log('[8] git 快照面（surfaces.git）+ 分支清单 / 切分支 / 建
     typeof first.git === 'object' && first.git !== null && typeof first.git.repo === 'boolean',
     JSON.stringify(first.git),
   )
-  const arrived = await pollUntil(() => surfaces().git.repo === true, 2500)
+  const arrived = await pollUntil(() => surfaces().git.repo === true, 4000)
   check('界面一读就催一拍：读数立刻到位（不是等 5 秒的巡检那一档）', arrived, JSON.stringify(surfaces().git))
 
   const mine = surfaces().git
@@ -499,7 +538,9 @@ console.log('[8] git 快照面（surfaces.git）+ 分支清单 / 切分支 / 建
   // 快照面是**按拍缓存的读数**（git 插件每隔一两秒读一次），工作区刚变过的那一下它会落后
   // 一拍；这一步之前刚切过会话、写计划文件，所以不能拿「同一瞬间的两次读」硬比。
   // 等两拍再比：等不到才是真口径不一致（慢不算错，错才算错）。
-  const sameCount = await pollUntil(() => surfaces().git.dirtyFileCount === status.dirtyFileCount, 4000)
+  // 「两拍」按 SURFACE_CATCHUP_MS 给：切会话那一拍若正好落在读取途中会被吞，快照面要等
+  // 下一个巡检周期才回来（实测 13.2–13.5 秒），给 4 秒就把它打成偶发红。
+  const sameCount = await pollUntil(() => surfaces().git.dirtyFileCount === status.dirtyFileCount, SURFACE_CATCHUP_MS)
   check(
     '改动计数与 git-status 同一口径（含未跟踪，且只看 cwd 之内）',
     sameCount,
@@ -556,6 +597,8 @@ console.log('[8] git 快照面（surfaces.git）+ 分支清单 / 切分支 / 建
   approval.setPolicy(policy0)
 
   // 不是仓库的工作目录：面回 repo:false（界面据此整行不画），清单给空表而不是抛错
+  // 换会话那一拍同样要先落进安静期，否则 8 秒里看不到 repo:false（时间要等下一个巡检）。
+  await quietSurface((git) => git.repo === true && git.branch === branch0)
   await session.open(sessionPlain)
   await pollUntil(() => surfaces().git.repo === false, 8000)
   check('非仓库：面里 repo = false（界面整行不画）', surfaces().git.repo === false, JSON.stringify(surfaces().git))

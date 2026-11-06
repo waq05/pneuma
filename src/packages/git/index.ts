@@ -60,6 +60,15 @@ export const gitPlugin: Plugin.Object = {
     /** 一拍还在跑时不再起第二拍（git 慢的时候）。 */
     let busy = false
     /**
+     * 这一拍跑着的时候又有人催拍：等它收尾立刻补一拍。
+     *
+     * 为什么不能直接丢掉：`read()` 收尾会按新读数重排下一拍（干净 30s / 有改动 12s），
+     * 而催拍偏偏都落在**读数刚过期**的时刻（写类 op 落盘、回合收工、换工作区）。丢掉
+     * 这一次，界面就得拿着上一个工作区的读数等整整一个巡检周期——实测切会话撞进一次
+     * 读取里，状态面板要 13.2–13.5 秒才回到当前工作区（2026-11-06 用真内核量过）。
+     */
+    let pendingRefresh = false
+    /**
      * 手上这份 {@link cache} 属于哪个工作目录（null = 还没读过）。
      *
      * 用来回答「这次换会话要不要重拍」：读数只有一份、跟着当前会话的目录走，
@@ -118,7 +127,10 @@ export const gitPlugin: Plugin.Object = {
     }
 
     const tick = async (): Promise<void> => {
-      if (busy) return
+      if (busy) {
+        pendingRefresh = true
+        return
+      }
       // 没人读过这一片（没有界面连着）：只留一条便宜的巡检，不跑 git。
       if (Date.now() - lastReadAt > INTEREST_MS) {
         schedule(IDLE_TICK_MS)
@@ -129,6 +141,12 @@ export const gitPlugin: Plugin.Object = {
         await read()
       } finally {
         busy = false
+        // 读的这段时间里有人催过拍：这一份可能是催拍之前的读数，立刻补一拍（幂等，
+        // 顶多白拉三个 git 子进程，比让界面停在旧读数上便宜得多）。
+        if (pendingRefresh) {
+          pendingRefresh = false
+          schedule(0)
+        }
       }
     }
 
