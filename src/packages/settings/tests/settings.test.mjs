@@ -26,9 +26,9 @@ check('分区 id 与 order 对得上（通用 0 到关于 900）', () => {
   }
   assert.deepEqual(['general', 'models', 'presets', 'skills', 'usage', 'archive', 'tui', 'about'].map(orderOf), [0, 10, 15, 20, 25, 30, 35, 900])
 })
-check('通用分区的六个字段按顺序：预设、权限、审阅者、思考、温度、托盘', () => {
+check('通用分区的四个字段按顺序：预设、思考、温度、托盘', () => {
   const block = source.slice(source.indexOf("id: 'general'"), source.indexOf("id: 'models'"))
-  assert.deepEqual([...block.matchAll(/key: '(\w+)'/g)].map((match) => match[1]), ['permissionPreset', 'policy', 'reviewer', 'effort', 'temperature', 'closeToTray'])
+  assert.deepEqual([...block.matchAll(/key: '(\w+)'/g)].map((match) => match[1]), ['permissionPreset', 'effort', 'temperature', 'closeToTray'])
 })
 check('五个分区由桌面端自画（custom），关于分区有检查更新', () => {
   assert.equal((source.match(/custom: true/g) ?? []).length, 5)
