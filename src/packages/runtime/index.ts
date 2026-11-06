@@ -609,13 +609,21 @@ export const runtimePlugin: Plugin.Object = {
                           ? patch.toolDefaultOpen
                             ? '工具卡默认展开'
                             : '工具卡默认收起'
-                          : patch.turnCompleteSound !== undefined ||
-                              patch.turnCompleteSoundVariant !== undefined ||
-                              patch.turnCompleteNotify !== undefined
-                            ? '已保存任务完成提醒设置'
-                            : patch.statusBar !== undefined
-                              ? '已保存状态栏显示设置'
-                              : '已保存工作区名字'
+                          : patch.collapseTiming !== undefined
+                            ? patch.collapseTiming === 'next-input'
+                              ? '折叠时机改为下次发言时收起：一轮跑完先在屏幕上摊着，等你下次发言、它不再是最后一轮了才收起'
+                              : '折叠时机改为立即收起：一轮跑完当场收起'
+                            : patch.foldedReplies !== undefined
+                              ? patch.foldedReplies === 'final'
+                                ? '收起后只留最终回答：过程中的阶段性回复一并收进折叠区'
+                                : '收起后保留全部回复：过程中的阶段性回复留在屏幕上'
+                              : patch.turnCompleteSound !== undefined ||
+                                  patch.turnCompleteSoundVariant !== undefined ||
+                                  patch.turnCompleteNotify !== undefined
+                                ? '已保存任务完成提醒设置'
+                                : patch.statusBar !== undefined
+                                  ? '已保存状态栏显示设置'
+                                  : '已保存工作区名字'
         return Promise.resolve({ ok: true, notice })
       },
 

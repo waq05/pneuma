@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { DEFAULT_STATUS_BAR_PREFS, normalizeStatusBarPrefs } from '../contract.js'
-import type { ApprovalPolicy, ApprovalReviewer, ArchivedFilter, EffortLevel, MarketSource, PanelWidthsView, SessionGroupKey, SessionSortKey, ThemeMode, UiDensity, UiPrefsView, UiProcessFold } from '../contract.js'
+import type { ApprovalPolicy, ApprovalReviewer, ArchivedFilter, EffortLevel, MarketSource, PanelWidthsView, SessionGroupKey, SessionSortKey, ThemeMode, UiCollapseTiming, UiDensity, UiFoldedReplies, UiPrefsView, UiProcessFold } from '../contract.js'
 import { isHttpUrl } from './remote/notify.js'
 import { dscPath } from './path-policy.js'
 
@@ -126,6 +126,23 @@ const PROCESS_FOLDS = ['compact', 'standard', 'detailed', 'verbose'] as const sa
 const PROCESS_FOLD_DEFAULT: UiProcessFold = 'standard'
 
 /**
+ * 折叠时机两档（桌面端「通用 → 对话折叠 → 折叠时机」）。
+ * 认不出的值回落 {@link COLLAPSE_TIMING_DEFAULT}。参考实现的同名取值表见
+ * packages/client/ui-chat/src/chat-settings.ts:15-21。
+ */
+const COLLAPSE_TIMINGS = ['completion', 'next-input'] as const satisfies readonly UiCollapseTiming[]
+/** 读不出折叠时机时的默认档：跑完当场收起（与既有观感一致）。 */
+const COLLAPSE_TIMING_DEFAULT: UiCollapseTiming = 'completion'
+
+/**
+ * 收起后显示的回复两档（桌面端「通用 → 对话折叠 → 收起后显示的回复」）。
+ * 参考实现同名取值表见 packages/client/ui-chat/src/chat-settings.ts:27-33。
+ */
+const FOLDED_REPLIES = ['all', 'final'] as const satisfies readonly UiFoldedReplies[]
+/** 读不出时的默认档：全部回复（参考实现的默认就是 all，不因「少变观感」改成 final）。 */
+const FOLDED_REPLIES_DEFAULT: UiFoldedReplies = 'all'
+
+/**
  * 旧存档里的三档字号：0.6 之前 `ui.fontSize` 存的是字符串，读到时按这张表
  * 换成倍率，之后的存档只存数字。
  */
@@ -206,6 +223,36 @@ function readProcessFold(value: unknown): UiProcessFold {
   return typeof value === 'string' && PROCESS_FOLDS.includes(value as UiProcessFold)
     ? (value as UiProcessFold)
     : PROCESS_FOLD_DEFAULT
+}
+
+/**
+ * 把存档里的折叠时机读成两档之一。
+ *
+ * 认不出的值（手改坏的 `"later"`、null、数字、布尔）一律回落 `completion`，
+ * 绝不让存档把启动拦下来；老 settings.json 里没有这一项，走的也是这条回落。
+ *
+ * @param value settings.json 里 `ui.collapseTiming` 的原始值
+ * @returns 可直接交给渲染层的时机
+ */
+function readCollapseTiming(value: unknown): UiCollapseTiming {
+  return typeof value === 'string' && COLLAPSE_TIMINGS.includes(value as UiCollapseTiming)
+    ? (value as UiCollapseTiming)
+    : COLLAPSE_TIMING_DEFAULT
+}
+
+/**
+ * 把存档里的「收起后显示的回复」读成两档之一。
+ *
+ * 认不出的值一律回落 `all`（参考实现的默认值），绝不抬杠拦启动；
+ * 老 settings.json 里没有这一项，走的也是这条回落。
+ *
+ * @param value settings.json 里 `ui.foldedReplies` 的原始值
+ * @returns 可直接交给渲染层的档位
+ */
+function readFoldedReplies(value: unknown): UiFoldedReplies {
+  return typeof value === 'string' && FOLDED_REPLIES.includes(value as UiFoldedReplies)
+    ? (value as UiFoldedReplies)
+    : FOLDED_REPLIES_DEFAULT
 }
 
 /**
@@ -298,6 +345,10 @@ export function readPrefs(): DscPrefs {
       buttonScale: BUTTON_SCALE_DEFAULT,
       density: 'standard',
       processFold: PROCESS_FOLD_DEFAULT,
+      // 折叠时机与收起后显示的回复：出厂口径对齐参考实现（completion / all）。
+      // 注意 all 是**有意**的默认值：折叠后屏幕上会多出阶段性回复，不要为了「保持现状」改成 final。
+      collapseTiming: COLLAPSE_TIMING_DEFAULT,
+      foldedReplies: FOLDED_REPLIES_DEFAULT,
       // 两个「默认态」开关：出厂都是折叠（与 0.6.3 的实际观感一致，升级不改变现状）。
       reasoningDefaultOpen: false,
       toolDefaultOpen: false,
@@ -368,6 +419,14 @@ export function readPrefs(): DscPrefs {
       // 认不出的值由 readProcessFold 回落 standard（老档里没这一项也是这条路）。
       if (ui.processFold !== undefined) {
         prefs.ui.processFold = readProcessFold(ui.processFold)
+      }
+      // 折叠时机与收起后显示的回复：认不出的值分别由 readCollapseTiming / readFoldedReplies
+      // 回落 completion / all（老档里没这两项也是这条路），绝不因为坏值拦启动。
+      if (ui.collapseTiming !== undefined) {
+        prefs.ui.collapseTiming = readCollapseTiming(ui.collapseTiming)
+      }
+      if (ui.foldedReplies !== undefined) {
+        prefs.ui.foldedReplies = readFoldedReplies(ui.foldedReplies)
       }
       // 两个默认态开关：老 settings.json 里没有，读不到就保持上面的 false。
       if (typeof ui.reasoningDefaultOpen === 'boolean') {

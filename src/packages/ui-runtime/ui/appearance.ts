@@ -36,11 +36,24 @@ export const FONT_SCALE_DEFAULT = 1
 /** 旧存档里的三档字号（0.6 之前存的是字符串），迁移成倍率。 */
 const LEGACY_FONT_SCALES: Record<string, number> = { sm: 0.92, md: 1, lg: 1.12 }
 
-/** 一项外观设置。按钮大小不在这里——那条轴已经退场（见文件头第 3 条）。 */
+/** 折叠时机（'completion' 跑完立刻收起 / 'next-input' 等下次发言再收起）。 */
+export type CollapseTiming = UiPrefsView['collapseTiming']
+/** 收起后显示哪些助手回复（'all' 全部 / 'final' 只留最终回答）。 */
+export type FoldedReplies = UiPrefsView['foldedReplies']
+
+/**
+ * 一项外观设置。按钮大小不在这里——那条轴已经退场（见文件头第 3 条）。
+ *
+ * collapseTiming / foldedReplies 严格说不是「外观」（不碰配色与字号），但它们和外观一样
+ * 是壳读一次、多处消费的界面偏好，所以搭这一趟归一化的车：这里接住并原样带出去，
+ * 免得被下面只挑三项的归一化吃掉（消费方仍可直接读 getUiPrefs 的原值）。
+ */
 export interface Appearance {
   themeMode: ThemeMode
   fontSize: UiFontSize
   density: UiDensity
+  collapseTiming: CollapseTiming
+  foldedReplies: FoldedReplies
 }
 
 /**
@@ -53,6 +66,9 @@ export const DEFAULT_APPEARANCE: Appearance = {
   themeMode: 'claude',
   fontSize: FONT_SCALE_DEFAULT,
   density: 'standard',
+  // 与 core/prefs.ts 同口径：时机默认跑完立刻收起，收起后默认保留全部回复。
+  collapseTiming: 'completion',
+  foldedReplies: 'all',
 }
 
 /**
@@ -87,6 +103,24 @@ function normalizeTheme(value: unknown): ThemeMode {
 }
 
 /**
+ * 折叠时机两档；认不出的值回落 'completion'（与 core/prefs.ts 的默认同一档）。
+ *
+ * @param value 宿主回读或 localStorage 镜像里的原始值
+ */
+function normalizeCollapseTiming(value: unknown): CollapseTiming {
+  return value === 'next-input' ? 'next-input' : 'completion'
+}
+
+/**
+ * 收起后显示的回复两档；认不出的值回落 'all'（参考实现的默认值，不是 'final'）。
+ *
+ * @param value 宿主回读或 localStorage 镜像里的原始值
+ */
+function normalizeFoldedReplies(value: unknown): FoldedReplies {
+  return value === 'final' ? 'final' : 'all'
+}
+
+/**
  * 把宿主 `getUiPrefs` 的返回值（或 localStorage 镜像）归一成渲染层能直接用的外观。
  *
  * @param prefs 宿主原样返回的界面偏好，或解析出来的镜像
@@ -96,6 +130,9 @@ export function appearanceFromPrefs(prefs: Partial<UiPrefsView> | null | undefin
     themeMode: normalizeTheme(prefs?.themeMode),
     fontSize: normalizeFontScale(prefs?.fontSize),
     density: normalizeDensity(prefs?.density),
+    // 这两项只做取值收窄、不参与上色：带出去是为了不让它们在中途被丢掉。
+    collapseTiming: normalizeCollapseTiming(prefs?.collapseTiming),
+    foldedReplies: normalizeFoldedReplies(prefs?.foldedReplies),
   }
 }
 

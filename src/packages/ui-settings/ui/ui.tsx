@@ -1024,6 +1024,46 @@ function AppearanceRows(): ReactNode {
       </div>
       <div className="setting-row">
         <div className="setting-text">
+          <div className="setting-label">{t('settings.ui.collapseTiming.label')}</div>
+          <div className="setting-help">{t('settings.ui.collapseTiming.help')}</div>
+        </div>
+        <div className="setting-control">
+          <Select
+            className="setting-select"
+            ariaLabel={t('settings.ui.collapseTiming.label')}
+            value={appearance.collapseTiming}
+            options={[
+              { value: 'completion', label: t('settings.ui.collapseTiming.option.completion') },
+              { value: 'next-input', label: t('settings.ui.collapseTiming.option.nextInput') },
+            ]}
+            onPick={(next) => {
+              change({ collapseTiming: next })
+            }}
+          />
+        </div>
+      </div>
+      <div className="setting-row">
+        <div className="setting-text">
+          <div className="setting-label">{t('settings.ui.foldedReplies.label')}</div>
+          <div className="setting-help">{t('settings.ui.foldedReplies.help')}</div>
+        </div>
+        <div className="setting-control">
+          <Select
+            className="setting-select"
+            ariaLabel={t('settings.ui.foldedReplies.label')}
+            value={appearance.foldedReplies}
+            options={[
+              { value: 'all', label: t('settings.ui.foldedReplies.option.all') },
+              { value: 'final', label: t('settings.ui.foldedReplies.option.final') },
+            ]}
+            onPick={(next) => {
+              change({ foldedReplies: next })
+            }}
+          />
+        </div>
+      </div>
+      <div className="setting-row">
+        <div className="setting-text">
           <div className="setting-label">{t('settings.ui.reasoning.label')}</div>
           <div className="setting-help">{t('settings.ui.reasoning.help')}</div>
         </div>
@@ -1077,6 +1117,10 @@ interface Appearance {
   density: 'compact' | 'standard' | 'roomy'
   /** 过程折叠程度（紧凑/标准/详细/完全展开）——消息流整轮折叠的能力表。 */
   processFold: 'compact' | 'standard' | 'detailed' | 'verbose'
+  /** 折叠时机：跑完立刻收起，还是等下次发言、它不再是最后一轮时才收起。 */
+  collapseTiming: UiPrefsView['collapseTiming']
+  /** 收起后还显示哪些助手回复：全部，还是只留这一轮的最终回答。 */
+  foldedReplies: UiPrefsView['foldedReplies']
   /** 定稿的思考行默认展开吗。 */
   reasoningOpen: boolean
   /** 工具卡默认展开吗。 */
@@ -1107,6 +1151,9 @@ function normalizePrefs(prefs: Partial<UiPrefsView> | null | undefined): Appeara
       prefs?.processFold === 'compact' || prefs?.processFold === 'detailed' || prefs?.processFold === 'verbose'
         ? prefs.processFold
         : 'standard',
+    // 兜底口径与宿主一致：时机回落 completion，收起后回落 all（不是 final）。
+    collapseTiming: prefs?.collapseTiming === 'next-input' ? 'next-input' : 'completion',
+    foldedReplies: prefs?.foldedReplies === 'final' ? 'final' : 'all',
     reasoningOpen: prefs?.reasoningDefaultOpen === true,
     toolOpen: prefs?.toolDefaultOpen === true,
   }

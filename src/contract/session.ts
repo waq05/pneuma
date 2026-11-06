@@ -96,6 +96,25 @@ export type UiDensity = 'compact' | 'standard' | 'roomy'
 export type UiProcessFold = 'compact' | 'standard' | 'detailed' | 'verbose'
 
 /**
+ * 折叠时机：一轮跑完之后，过程那一块什么时候从「摊开」变成「收起」。
+ *
+ * 与 {@link UiProcessFold} 正交：档位管的是「折不折、怎么分阶段」，这一项只管
+ * 「什么时候折」。默认 'completion'（跑完当场收起），与既有观感一致。
+ *
+ * - `completion`：一轮跑完立刻收起；
+ * - `next-input`：跑完先在屏幕上摊着，等用户下一次发言、它不再是最后一轮了才收起。
+ */
+export type UiCollapseTiming = 'completion' | 'next-input'
+
+/**
+ * 收起后还显示哪些助手回复（默认 'all'，与参考实现 ui-chat 的 foldedReplies 默认一致）。
+ *
+ * - `all`：每一段助手回复都留在屏幕上；
+ * - `final`：只留这一轮的最终回答，过程中的阶段性回复一起收进折叠区。
+ */
+export type UiFoldedReplies = 'all' | 'final'
+
+/**
  * TUI 底部状态栏各段的显隐（存在 `~/.dsc/settings.json` 的 `ui.statusBar`）。
  * 全部必填：读档由 {@link normalizeStatusBarPrefs} 补齐，消费方不需要判缺。
  * 出厂口径对齐 dsh 底栏设置的默认——只留「身份 + 在看什么」，effort/模式/
@@ -146,6 +165,16 @@ export interface UiPrefsView {
   density: UiDensity
   /** 过程折叠程度（紧凑 / 标准 / 详细 / 逐条摊开），默认 standard。 */
   processFold: UiProcessFold
+  /**
+   * 折叠时机（默认 'completion'）：一轮跑完当场收起，还是等下次发言、它不再是
+   * 最后一轮了才收起（'next-input'）。与 {@link processFold} 正交，只管时机。
+   */
+  collapseTiming: UiCollapseTiming
+  /**
+   * 收起后仍显示哪些助手回复（默认 'all' = 全部回复都留着；'final' = 只留最终回答）。
+   * 默认 'all' 与参考实现一致：折叠后屏幕上会保留阶段性回复，这是有意的观感变化。
+   */
+  foldedReplies: UiFoldedReplies
   /**
    * 定稿的思考行默认展开吗（默认 false = 折叠成一行「思考过程」）。
    *
