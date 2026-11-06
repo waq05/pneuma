@@ -200,7 +200,7 @@ function instructionChunks(cwd: string, budget: number): string {
 const INSTRUCTION_LEAD = '以下是用户与项目给的工作指令，属于必须遵守的约定（其中的安全要求是底线，不是建议）。'
 
 /** 指令文件正文 + 围栏（没有指令文件时为空串）。 */
-function instructionsText(cwd: string, budget: number): string {
+export function instructionsText(cwd: string, budget: number): string {
   const body = instructionChunks(cwd, budget)
   if (body === '') return ''
   return wrapUntrusted('agents-md', `${INSTRUCTION_LEAD}\n\n${body}`)

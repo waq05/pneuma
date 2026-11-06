@@ -1,5 +1,5 @@
 /**
- * `numa plugin list` 自检：应用自带的 76 行（57 个功能包 + 19 个界面单元）、开关、
+ * `numa plugin list` 自检：应用自带的 75 行（54 个功能包 + 21 个界面单元）、开关、
  * 以及「这一行现在到底用的是哪份代码」。
  *
  * 为什么要单独一条：这一屏是用户唯一能看见「应用里装了什么、哪一行停了、哪一行被我换过」
@@ -75,8 +75,8 @@ const run = list([])
 check('命令正常退出', run.status === 0, 'exit ' + String(run.status) + ' / ' + run.stderr.slice(0, 200))
 const lines = run.stdout.split('\n')
 const rows = lines.filter((line) => /^ {2}\S+ {2,}v\S+ +(开|关) /.test(line))
-check('列出了 76 行（应用自带的全部功能与界面单元）', rows.length === 76, String(rows.length))
-check('表头写了行数', /（76 行）/.test(run.stdout), lines[0])
+check('列出了 75 行（应用自带的全部功能与界面单元）', rows.length === 75, String(rows.length))
+check('表头写了行数', /（75 行）/.test(run.stdout), lines[0])
 const rowOf = (id) => rows.find((line) => line.trimStart().startsWith(id + ' ')) ?? ''
 check('每一行都带开关', rows.every((line) => / (开|关) /.test(line)), JSON.stringify(rows.filter((line) => !/ (开|关) /.test(line)).slice(0, 3)))
 check('默认关的行显示为关', / 开 /.test(rowOf('browser')) === false && / 关 /.test(rowOf('browser')), rowOf('browser'))
@@ -94,7 +94,7 @@ putPackage(other, '@pneuma/todo', { version: '7.7.7', pneuma: { title: '别的 p
 const otherRun = list(['--profile', 'other'])
 const otherRows = otherRun.stdout.split('\n').filter((line) => /^ {2}\S+ {2,}v\S+ +(开|关) /.test(line))
 const otherTodo = otherRows.find((line) => line.trimStart().startsWith('todo ')) ?? ''
-check('--profile 指到别处时仍列出 76 行', otherRows.length === 76, String(otherRows.length))
+check('--profile 指到别处时仍列出 75 行', otherRows.length === 75, String(otherRows.length))
 check('--profile 指到别处时不算覆盖（仍显示应用版本）', otherTodo.includes('v' + appVersion), otherTodo)
 check('--profile 指到别处时不打「profile 覆盖」', !otherRun.stdout.includes('← profile 覆盖'), otherTodo)
 

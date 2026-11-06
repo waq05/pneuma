@@ -6,8 +6,9 @@
  * 「另一个 MiniAgent 实例 + 它自己的会话文件 + 一张冻结的工牌」。
  *
  * 队友按会话隔离（对照 dsh 的 parentSession 过滤）：每个会话各自一份在队名单与
- * 并发额度，`subagent list` 只报本会话派出的队友；共享任务看板在「共享任务板」
- * 插件里，那是叠在这一层之上的协作层。
+ * 并发额度，`subagent list` 只报本会话派出的队友。包里另带一块按会话分开的共享
+ * 任务板（`team_task`）：板子可以在设置里单独关（「任务板」分组），关掉只是模型看
+ * 不到这个工具与提示段，名册与派活照常——只想要一块共享待办的人可以这么用。
  *
  * 工牌（工具白名单 / 审批意愿 / 轮次预算 / 模型）在队友开工那一刻从角色文件复制进
  * 运行时并冻结，所以中途改角色文件只影响下一个新队友，也堵住了「队友跑一半给自己提权」。
@@ -42,7 +43,18 @@ import { REJECTED_TOOL_TEXT, Session, teammateRoot } from '@pneuma/runtime/core/
 import { redact } from '@pneuma/runtime/core/secrets.js'
 import { argsSummary, type ToolContext, type ToolEntry } from '@pneuma/runtime/core/tools.js'
 import { ToolGuardRegistry, toolApprovalGuard } from '@pneuma/runtime/core/tool-guards.js'
-import { inboxAppend, REVIEW_FINDINGS_OPEN, TEAMMATE_REPORT_OPEN } from '@pneuma/runtime/core/team-board.js'
+import {
+  BOARDS_DIR,
+  boardCreate,
+  boardUpdate,
+  inboxAppend,
+  isReady,
+  readBoard,
+  resetBoard,
+  REVIEW_FINDINGS_OPEN,
+  TEAMMATE_REPORT_OPEN,
+  type BoardAction,
+} from '@pneuma/runtime/core/team-board.js'
 import type { EffortLevel, SettingsField, SettingsValue, TeammateView, TranscriptEntry } from '@pneuma/runtime/contract.js'
 import type { ReviewService, ReviewSpawnRequest, ReviewSpawnResult, SettingsSectionSpec, TeamService } from '@pneuma/runtime/services/types.js'
 import { reviewTaskText, ReviewJournal, REVIEW_CANCELED_TEXT } from '@pneuma/runtime/core/git-info.js'
@@ -76,6 +88,13 @@ interface SubagentConfig {
    * 留给汇报：先提醒它交结论，再把工具表收成空，逼它用正文收尾。
    */
   maxTurns: number
+  /**
+   * 共享任务板：true = 注册 `team_task` 并注入板子提示段。
+   *
+   * 关掉只是模型看不到这块板；名册、派活、汇报都不受影响——留着「只想要一块共享
+   * 待办」的用法。板子按会话各一块，数据在 `~/.dsc/team/boards/<会话 id>.json`。
+   */
+  board: boolean
 }
 
 const CONFIG_KEY = 'subagent'
@@ -88,6 +107,7 @@ const DEFAULTS: SubagentConfig = {
   notify: 'auto',
   defaultModel: '',
   maxTurns: 0,
+  board: true,
 }
 
 const APPROVAL_RANK: Record<TeammateApproval, number> = { forbid: 0, foreground: 1, ask: 2 }
@@ -255,6 +275,7 @@ export const subagentPlugin: Plugin.Object = {
         notify: raw.notify === 'quiet' ? 'quiet' : 'auto',
         defaultModel: typeof raw.defaultModel === 'string' ? raw.defaultModel.trim() : '',
         maxTurns: clamp(raw.maxTurns, 0, 200, DEFAULTS.maxTurns),
+        board: raw.board !== false && raw.board !== 'false',
       }
     }
     let config = readConfig()
@@ -380,8 +401,8 @@ export const subagentPlugin: Plugin.Object = {
       }
     }
 
-    /** 队友的工具表：按工牌白名单筛。subagent 换成它自己的署名；team_task（智能体团队
-     * 插件注册的）保留原实现，只把自己的身份塞进上下文，看板认领人才不会都算成 lead。 */
+    /** 队友的工具表：按工牌白名单筛。subagent 换成它自己的署名；team_task（本包注册的
+     * 共享任务板）保留原实现，只把自己的身份塞进上下文，看板认领人才不会都算成 lead。 */
     const toolsFor = (teammate: Teammate): ToolEntry[] => {
       const all = ctx.tools.list()
       const allowed = teammate.badge.tools === null ? all : all.filter((entry) => teammate.badge.tools!.includes(entry.name))
@@ -1085,22 +1106,153 @@ ${body}
       run: (args, runCtx) => runSubagent(args, runCtx, { name: LEAD, depth: 0, background: false }),
     })
 
-    /** 委派开关注释：关掉时工具和名册提示一起撤下，模型看不到子智能体这件事。 */
+    // ── 共享任务板（原「智能体团队」插件，2026-11-06 并入本包）───────────────
+    // 板子按会话各一块（`~/.dsc/team/boards/<会话 id>.json`）：切到别的会话就是另一块
+    // 板。只开板子不开派活也能用——一块只有 lead 在写的看板就是一份共享 todo。
+    // 两个都开时，队友的工具表把 team_task 转发时塞了自己的名字（见 `toolsFor`），
+    // 看板认领人才不会都算成 lead。
+    async function runTeamTask(args: Record<string, unknown>, runCtx: ToolContext): Promise<string> {
+      const sessionId = ctx.session.current().meta.id
+      const caller = runCtx.caller?.name ?? LEAD
+      const action = String(args.action ?? '')
+      const board = readBoard(sessionId)
+      const id = String(args.id ?? '')
+      const revision = Number(args.expected_revision)
+      // 改状态必须带版本号：不传就默认「当前版本」等于把并发冲突检测关掉，
+      // 两个队友同时认领同一条时后到的会悄悄覆盖先到的。
+      const MUTATING_ACTIONS = new Set(['claim', 'release', 'complete', 'reopen', 'delete', 'set_dependencies'])
+      if (MUTATING_ACTIONS.has(action) && !Number.isInteger(revision)) {
+        return `改任务板状态要带 expected_revision（你上次 list/create 看到的版本号，当前第 ${board.revision} 版）。`
+      }
+      const ownerDefault = caller
+      try {
+        switch (action) {
+          case 'create': {
+            const scopes = Array.isArray(args.write_scopes) ? args.write_scopes.map(String) : []
+            const blocked = Array.isArray(args.blocked_by) ? args.blocked_by.map(String) : []
+            const created = boardCreate(sessionId, {
+              subject: String(args.subject ?? ''),
+              description: String(args.description ?? ''),
+              blockedBy: blocked,
+              writeScopes: scopes,
+            })
+            const warnings = created.warnings.length === 0 ? '' : `\n提醒（不拦你，最后看 diff 裁决）：\n${created.warnings.map((line) => `- ${line}`).join('\n')}`
+            if (args.claim_now !== true) return `已建 ${created.task.id}：${created.task.subject}${warnings}`
+            // 认领走正常的 claim：依赖没做完一样会被拦下，正好复用同一套校验
+            try {
+              boardUpdate(sessionId, created.task.id, created.board.revision, 'claim', { owner: ownerDefault })
+            } catch (error) {
+              return `已建 ${created.task.id}：${created.task.subject}，但没能认领：${error instanceof Error ? error.message : String(error)}${warnings}`
+            }
+            return `已建 ${created.task.id}：${created.task.subject}，状态直接进 in_progress（认领人 ${ownerDefault}）${warnings}`
+          }
+          case 'list': {
+            if (board.tasks.length === 0) return '本会话的任务板是空的（team_task action=create 建第一条）'
+            const lines = board.tasks.map((task) => {
+              const ready = isReady(board, task)
+              return `- ${task.id} [${task.status}${ready ? ' · 可开工' : ''}] ${task.subject}${task.owner === null ? '' : ` @${task.owner}`}${task.blockedBy.length === 0 ? '' : ` 依赖 ${task.blockedBy.join('、')}`}${task.writeScopes.length === 0 ? '' : ` 作用域 ${task.writeScopes.join(', ')}`}`
+            })
+            return `本会话任务板第 ${board.revision} 版：\n${lines.join('\n')}\n（改状态要带 expected_revision=${board.revision}）`
+          }
+          case 'get': {
+            const task = board.tasks.find((entry) => entry.id === id)
+            if (task === undefined) return `任务板上没有 ${id}`
+            return `第 ${board.revision} 版里的 ${task.id}：\n标题：${task.subject}\n说明：${task.description || '（空）'}\n状态：${task.status}，认领人 ${task.owner ?? '（无）'}\n依赖：${task.blockedBy.join('、') || '（无）'}\n作用域：${task.writeScopes.join(', ') || '（未声明）'}`
+          }
+          case 'claim':
+          case 'release':
+          case 'complete':
+          case 'reopen':
+          case 'delete':
+          case 'set_dependencies': {
+            const payload: { owner?: string; blockedBy?: string[] } = {}
+            if (action === 'claim') payload.owner = String(args.owner ?? ownerDefault)
+            if (action === 'set_dependencies') {
+              payload.blockedBy = Array.isArray(args.blocked_by) ? args.blocked_by.map(String) : []
+            }
+            const result = boardUpdate(sessionId, id, revision, action as BoardAction, payload)
+            const ready = result.board.tasks.filter((task) => isReady(result.board, task)).map((task) => task.id)
+            return `${id} → ${result.task.status}${result.task.owner === null ? '' : `（${result.task.owner}）`}，任务板第 ${result.board.revision} 版。现在可开工：${ready.join('、') || '（无）'}`
+          }
+          default:
+            return `不认识的 action「${action}」。要用的值：create / list / get / claim / release / complete / reopen / set_dependencies / delete`
+        }
+      } catch (error) {
+        return `任务板操作没做成：${error instanceof Error ? error.message : String(error)}`
+      }
+    }
+
+    const teamTaskTool = (): ToolEntry => ({
+      name: 'team_task',
+      description:
+        '共享任务板（本会话）：登记要做的事、看谁在做什么、认领和结项。' +
+        '改状态要带 expected_revision（list 返回的那一版），别人抢先改过就会失败，重来一次即可。',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: ['create', 'list', 'get', 'claim', 'release', 'complete', 'reopen', 'set_dependencies', 'delete'],
+            description: '要做什么',
+          },
+          subject: { type: 'string', description: 'create 必填：任务标题' },
+          description: { type: 'string', description: 'create：任务的详细说明（背景、验收口径）' },
+          id: { type: 'string', description: '除 create/list 外必填：任务 id，例如 t3' },
+          expected_revision: { type: 'number', description: '改状态（claim/release/complete/reopen/delete/set_dependencies）必填：你上次 list/create 看到的版本号' },
+          owner: { type: 'string', description: 'claim 时的认领人；不填就是你自己' },
+          claim_now: { type: 'boolean', description: 'create：true = 建完直接算你认领（状态直接进 in_progress）' },
+          write_scopes: { type: 'array', items: { type: 'string' }, description: 'create：这个任务打算改的路径前缀，用于提醒别人别撞车' },
+          blocked_by: { type: 'array', items: { type: 'string' }, description: 'create/set_dependencies：依赖哪些任务 id' },
+        },
+        required: ['action'],
+      },
+      risk: 'read',
+      run: (args, runCtx) => runTeamTask(args, runCtx),
+    })
+
+    /** 板子提示段：只有板上真开了才注册；关掉时模型不该看到这个工具的任何说明。 */
+    const boardPromptText = (): string => {
+      const board = readBoard(ctx.session.current().meta.id)
+      const lines = board.tasks.slice(0, 20).map((task) => {
+        const ready = isReady(board, task)
+        return `- ${task.id} [${task.status}${ready ? ' · 可开工' : ''}] ${task.subject}${task.owner === null ? '' : ` @${task.owner}`}`
+      })
+      return `# 共享任务板
+本会话有一块共享任务板，你可以用 team_task 工具登记要做的事、认领和结项；队友和你看到的是同一块板。
+${lines.length === 0 ? '板上还没有任务。' : `板上的任务：\n${lines.join('\n')}`}
+
+任务板的规矩：
+1. 多人协作先上任务板：create 时写清 write_scopes（打算改哪些路径），别人 claim 时才抢不过你；改状态要带 expected_revision。
+2. 认领前先 list：依赖没完成的任务开不了工；完成一条，等它的人就能开工。`
+    }
+
+    /**
+     * 两个开关各管一半：
+     * - `allowDelegation` 管 `subagent` 工具与名册提示；
+     * - `board` 管 `team_task` 与板子提示段。
+     * 两边独立，所以「只要共享待办、不要派活」与「只要派活、不要板子」都能表达。
+     */
     let disposers: Array<() => void> = []
     const syncTools = (): void => {
       for (const off of disposers) off()
       disposers = []
-      if (!config.allowDelegation) return
-      disposers.push(ctx.effect(() => ctx.tools.register(subagentTool()), 'subagent: tools.register'))
-      disposers.push(
-        ctx.effect(() => ctx.prompt.register('subagent', () => {
-          const roles = listRoles().filter((role) => role.enabled)
-          const lines = roles.map((role) => {
-            const tools = role.tools === null ? '不限工具' : role.tools.length === 0 ? '不带工具' : role.tools.join('/')
-            const turns = effectiveMaxTurns(role.maxTurns, config.maxTurns)
-            return `- ${role.name}：${role.description || '（没写 description）'}（${tools}，${turns === 0 ? '轮次不限' : `最多 ${turns} 轮`}）`
-          })
-          return `# 子智能体
+      if (config.allowDelegation) {
+        disposers.push(ctx.effect(() => ctx.tools.register(subagentTool()), 'subagent: tools.register'))
+        disposers.push(
+          ctx.effect(() => ctx.prompt.register('subagent', () => {
+            const roles = listRoles().filter((role) => role.enabled)
+            const lines = roles.map((role) => {
+              const tools = role.tools === null ? '不限工具' : role.tools.length === 0 ? '不带工具' : role.tools.join('/')
+              const turns = effectiveMaxTurns(role.maxTurns, config.maxTurns)
+              return `- ${role.name}：${role.description || '（没写 description）'}（${tools}，${turns === 0 ? '轮次不限' : `最多 ${turns} 轮`}）`
+            })
+            // 板子与派活是同一层的协作：分开成两个包时，子智能体提示里不提板子，
+            // 模型就永远不会用 team_task（旧决策见 docs/development-log.md:848）；
+            // 现在同一包里，必须提一句，否则板子等于没有。
+            const boardRule = config.board
+              ? '\n5. 多人协作还有一块共享任务板：用 team_task 登记、认领、结项，队友看到的是同一块板；改状态要带 expected_revision。'
+              : ''
+            return `# 子智能体
 你可以用 subagent 工具把能独立完成的活派给队友。
 可用角色（文件在 ${DSC_AGENTS_DIR}，用户可以自己加）：
 ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能体」里打开或新建）'}
@@ -1109,9 +1261,14 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
 1. 队友看不到你和用户的对话（context="fork" 只能带到上一个完整回合为止），所以任务描述里必须写清背景、目标、交付格式。
 2. 本会话同时干活上限 ${config.maxTeammates} 个（收工的不占额度）。后台队友干完后汇报会自己接进你的下一轮，不要反复去问它好了没。
 3. 只读角色改不了文件；要落地代码用 writer 或者你自己动手。
-4. 派完活自己接着干别的，别闲着等。`
-        }), 'subagent: prompt.register'),
-      )
+4. 派完活自己接着干别的，别闲着等。${boardRule}`
+          }), 'subagent: prompt.register'),
+        )
+      }
+      if (config.board) {
+        disposers.push(ctx.effect(() => ctx.tools.register(teamTaskTool()), 'subagent: team_task.register'))
+        disposers.push(ctx.effect(() => ctx.prompt.register('team', boardPromptText), 'subagent: board prompt.register'))
+      }
     }
     syncTools()
 
@@ -1157,6 +1314,16 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
       { type: 'text', key: 'defaultModel', label: t('field.defaultModel.label'), placeholder: t('field.defaultModel.placeholder'), help: t('field.defaultModel.help') },
       { type: 'info', label: t('field.rolesDir.label'), text: DSC_AGENTS_DIR, mono: true, copyable: true, help: t('field.rolesDir.help', { names: builtinRoleNames().join(t('field.rolesDir.separator')) }) },
       { type: 'button', action: 'new-role', label: t('field.newRole.label'), style: 'ghost', help: t('field.newRole.help') },
+      // ── 任务板（原「共享任务板」插件的设置，并进同一分区）───────────────
+      {
+        type: 'switch',
+        key: 'board',
+        label: t('field.board.label'),
+        help: t('field.board.help'),
+        group: 'board',
+      },
+      { type: 'info', label: t('field.boardDir.label'), text: BOARDS_DIR, mono: true, copyable: true, help: t('field.boardDir.help'), group: 'board' },
+      { type: 'button', action: 'clear-board', label: t('field.clearBoard.label'), style: 'ghost', help: t('field.clearBoard.help'), group: 'board' },
     ]
 
     const section: SettingsSectionSpec = {
@@ -1164,6 +1331,7 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
       title: t('section.title'),
       subtitle: t('section.subtitle'),
       order: 40,
+      groups: [{ id: 'board', title: t('group.board.title'), description: t('group.board.description') }],
       fields,
       values: (): Record<string, SettingsValue> => ({
         allowDelegation: config.allowDelegation,
@@ -1173,6 +1341,7 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
         approval: config.approval,
         notify: config.notify,
         defaultModel: config.defaultModel,
+        board: config.board,
       }),
       // 契约：save 返回字符串 = 失败原因；action 返回字符串 = 完成后的提示文案，失败直接抛
       save: (key, value): string | void => {
@@ -1208,10 +1377,13 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
             applyConfig({ defaultModel: text })
             break
           }
+          case 'board':
+            applyConfig({ board: value === true || value === 'true' })
+            break
           default:
             return t('save.unknownKey', { key })
         }
-        // 开关会影响工具与名册提示在不在场，改完立刻重挂一次
+        // 开关会影响工具与提示段在不在场（派活与板子各管一半），改完立刻重挂一次
         syncTools()
       },
       action: (name): string => {
@@ -1221,6 +1393,9 @@ ${lines.join('\n') || '- （没有启用中的角色，先在设置「子智能�
             prompt: '把这一段改成这个角色的职责与做事步骤。它是模型看到的唯一说明书。',
           })
           return t('action.roleWritten', { file })
+        }
+        if (name === 'clear-board') {
+          return t('action.clearBoard', { count: resetBoard(ctx.session.current().meta.id) })
         }
         throw new Error(`这个分区没有这个按钮：${name}`)
       },

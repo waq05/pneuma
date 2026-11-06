@@ -390,7 +390,7 @@
     },
     {
       "file": "subagent",
-      "name": "子智能体",
+      "name": "子智能体与任务板",
       "enabled": false,
       "toggleable": true,
       "source": "builtin",
@@ -404,15 +404,6 @@
       "toggleable": false,
       "source": "builtin",
       "settingsSection": null,
-      "bundle": null
-    },
-    {
-      "file": "team",
-      "name": "共享任务板",
-      "enabled": false,
-      "toggleable": true,
-      "source": "builtin",
-      "settingsSection": "team",
       "bundle": null
     },
     {

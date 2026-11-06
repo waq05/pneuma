@@ -1,9 +1,0 @@
-{
-  "section.title": "Shared task board",
-  "section.subtitle": "Register, claim and close on this session's own board; the member list comes from the Sub-agents feature",
-  "field.boardDir.label": "Board folder",
-  "field.boardDir.help": "One board per session (<session id>.json), so switching sessions switches boards.",
-  "field.clearBoard.label": "Clear this session's board",
-  "field.clearBoard.help": "Clears only the tasks of the current session; other sessions and teammate run records are untouched.",
-  "action.clearBoard": "Cleared this session's board ({count} entries removed)"
-}

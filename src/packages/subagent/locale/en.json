@@ -1,4 +1,4 @@
 {
-  "title": "Subagents",
-  "description": "Hand independent work to teammates; task-only context, tiers, count and model"
+  "title": "Subagents & task board",
+  "description": "Teammates plus a shared per-session task board; either half can be switched off"
 }

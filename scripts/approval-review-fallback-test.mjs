@@ -91,6 +91,8 @@ function mount(reply, options = {}) {
     emit() {},
     get(name) {
       if (name === 'interactive') return { reachable: () => true }
+      if (name === 'tools') return { list: () => options.tools ?? [] }
+      if (name === 'subagent') return options.subagent
       return undefined
     },
     effect: (execute) => {
@@ -98,7 +100,7 @@ function mount(reply, options = {}) {
       return typeof off === 'function' ? off : () => {}
     },
   }
-  approvalPlugin.apply(ctx, undefined)
+  approvalPlugin.apply(ctx, options.config)
   const approval = services['approval']
   approval.setPolicy('auto-edit')
   approval.setReviewer('auto-review')
@@ -306,6 +308,42 @@ console.log('[5] 任务状态也进历史')
   const trimmed = mount('{"risk":"low","decision":"allow"}', { messages: many })
   const run2 = await decide(trimmed, writeRequest(join(cwd, 'l.txt')), new AbortController().signal)
   check('历史裁剪后仍带最早的用户指令', run2.settled() === 'allow-once' && reviewText().includes('这是最早的需求'))
+}
+
+console.log('[6] 判官看得见项目规则、工具定义与子代理身份')
+{
+  const { writeFileSync } = await import('node:fs')
+  writeFileSync(join(cwd, 'AGENTS.md'), '# 约定\n改代码前先读文件；不要动 dist/。')
+  const approval = mount('{"risk":"low","decision":"allow"}', {
+    tools: [{ name: 'write', description: '写文件到工作区', parameters: { type: 'object', properties: { path: { type: 'string' } } }, risk: 'write' }],
+  })
+  const run = await decide(approval, writeRequest(join(cwd, 'm.txt')), new AbortController().signal)
+  check('判官放行', run.settled() === 'allow-once', String(run.settled()))
+  const text = reviewText()
+  check('历史里有项目规则（constraint）', text.includes('"role": "constraint"') && text.includes('改代码前先读文件'))
+  check('历史里有工具定义（tool-schema）', text.includes('"kind": "tool-schema"') && text.includes('写文件到工作区'))
+}
+
+{
+  // 子代理会话：同样一条用户消息，角色要降成「父级指令」，不能当成面前的用户。
+  const approval = mount('{"risk":"low","decision":"allow"}', {
+    subagent: { list: () => [{ file: join(cwd, 'sess.jsonl') }] },
+  })
+  const run = await decide(approval, writeRequest(join(cwd, 'n.txt')), new AbortController().signal)
+  check('判官放行', run.settled() === 'allow-once', String(run.settled()))
+  const text = reviewText()
+  check('子代理会话：用户消息标成父级指令', text.includes('"role": "direct-parent-instruction"'))
+  check('父级指令带来源说明', text.includes('来自派发这个子代理的父代理'))
+}
+
+console.log('[7] 失败即拒绝（approval.failClosed）')
+{
+  const approval = mount(new Error('fetch failed'), { config: { failClosed: true } })
+  const run = await decide(approval, writeRequest(join(cwd, 'o.txt')), new AbortController().signal)
+  check('打开后：判官没跑完弹卡，不回落', run.settled() === null && approval.pendingView() !== null, String(run.settled()))
+  check('卡上写明「失败即拒绝」', (approval.pendingView()?.reason ?? '').includes('失败即拒绝'))
+  approval.answer('reject')
+  await run.pending
 }
 
 if (failures > 0) {

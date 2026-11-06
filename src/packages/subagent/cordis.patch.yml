@@ -1,4 +1,4 @@
-# 子智能体
+# 子智能体与任务板
 - insert:
     - id: subagent
       name: '@pneuma/subagent'

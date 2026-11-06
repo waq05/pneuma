@@ -492,7 +492,7 @@ for (const id of ids) {
     /** 同类标题只许一个：两份「已知限制」读的人不知道该信哪份。 */
     const sectionOf = (pattern) => headings.filter((item) => pattern.test(item.text))
     // 摘要：H1 与第一个 H2 之间要有一句话。dsh 用 `## Summary`（限 100 词），
-    // 我们的写法是一行「一句话：…」——判「有没有」比判排版有用，别为了对齐去改 88 份文件的版式。
+    // 我们的写法是一行「一句话：…」——判「有没有」比判排版有用，别为了对齐去改 87 份文件的版式。
     const firstH1 = headings.find((item) => item.level === 1)
     const firstH2 = headings.find((item) => item.level === 2)
     const summaryStart = firstH1 === undefined ? 0 : firstH1.index + 1

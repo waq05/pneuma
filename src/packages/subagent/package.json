@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/subagent",
-  "description": "让模型把能独立完成的活交给队友并行做；队友只看任务说明，可设层级、人数、轮次与模型",
+  "description": "让模型把能独立完成的活交给队友并行做；队友只看任务说明，可设层级、人数、轮次与模型；另带一块按会话分开的共享任务板",
   "version": "0.9.0",
   "private": true,
   "type": "module",
@@ -27,8 +27,8 @@
     },
     "order": 3600,
     "resolution": "overridable",
-    "title": "子智能体",
-    "description": "让模型把能独立完成的活交给队友并行做；队友只看任务说明，可设层级、人数、轮次与模型",
+    "title": "子智能体与任务板",
+    "description": "让模型把能独立完成的活交给队友并行做；队友只看任务说明，可设层级、人数、轮次与模型；另带一块按会话分开的共享任务板",
     "settingsSection": "subagent",
     "toggleable": true
   },

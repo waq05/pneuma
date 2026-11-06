@@ -14338,3 +14338,69 @@ medium 要求「动作 + 目标 + 范围」被明确覆盖；输出是闭集，�
 **验收**：`approval-review-fallback-test` 全过（新增「完全访问档下协议错也弹卡」「任务状态
 声明不是用户原话」「历史裁剪后仍带最早用户指令」三条）、包内测试 8/8、
 `async-inbox` / `resident-agents` / `session-permissions` 全过、`typecheck` 与 `build` 通过。
+
+## 2026-11-06（补）：持久 shell 与三轮对照的结论
+
+### 补了什么
+
+- 新增 `shell` 工具（`src/packages/tools-default/persistent-shell.ts`）：每个会话一条常驻 shell，状态（cwd、变量、函数）跨调用保留；只挂极简档（`presets: ['minimal']`），极简档的 `tools` 从 `bash, read_image` 改成 `shell, read_image`。
+- 命令结束靠哨兵判定：每条命令后面跟一行 `__DSC_<tag>__<exit>`，哨兵字面量拆开拼（shell 会把输入行回显到输出流，整段写死会先命中回显——实测踩过）。
+- 命令体走 base64 单行传输，执行用 `Invoke-Expression`（`& ([scriptblock]::Create(...))` 会开子作用域，变量留不下来——实测踩过）。
+- 输出按块解码：`isUtf8` 判整块，合法按 UTF-8、否则按 GBK。中文 Windows 的 PowerShell 写 stdout 用 GBK，`[Console]::OutputEncoding` 在管道模式下改不掉（实测无效）。
+- 抛错兜住并仍然打哨兵；超时收掉 shell、下次重建（与 dsh 的约定一致）。
+
+### 三处对照的结论
+
+- **PTC**：口径与 dsh 一致（全量 − 插件管理 + `run_code`、正文为空），但工具面不完全一样——dsh 的 ptc 声明里只有它自己那套（bash/pwsh、fs、fs-search、jobs、schedule、skill、goal、plan、compaction、subagent、ask、todo、web、run_code、present、session-query、terminal），dsc 的全量还含 browser、computer_use、lsp、mcp、team、memory、tool_search、ops；dsh 禁掉的 workflow 在 dsc 里没有对应物。
+- **创造**：dsh 的 `tool-cordis` 实际是**只读运行时查询**（`cordis_inspect_list` / `cordis_inspect_query`），编辑组合归 Plugin Manager。dsc 的 `runtime_api` 就是它的对应物，所以不用新建工具；差距只在查询范围（dsh 能查 Service/Event 的方法与类型，dsc 查插件/工具/提示/守卫/快照/模式）。
+- **极简**：持久 shell 已补；剩下的差距是 dsh 用 PTY（有提示符事件、能跑全屏程序），dsc 是管道模式（哨兵判定、无 tty）。
+
+### 验收
+
+| 项 | 结果 |
+| --- | --- |
+| `pnpm run typecheck` | 通过 |
+| `pnpm run build` | 通过 |
+| `node scripts/persistent-shell-test.mjs` | 16 项全过（含真实会话：变量与 cwd 跨调用、中文不乱码、抛错带退出码、超时重建） |
+| `node scripts/sandbox-parity-test.mjs` | 46 通过 / 0 失败 |
+
+## 2026-11-06（再补）：runtime_api 加 services / events
+
+### 为什么
+
+dsh 的 `tool-cordis` 能查 Cordis 的 Service 方法与 Event 模式，写插件之前不用猜；dsc 的 `runtime_api` 只查插件/工具/提示/守卫/快照/模式，服务名与事件名只能靠翻源码或照文档——文档会过时。
+
+### 做法
+
+- `TOPICS` 加 `services`、`events`；`describeServices` / `describeEvents` 接进 `BUILDERS`。
+- 反射逻辑抽到 `src/packages/runtime-api/inspect.ts` 两个纯函数（`listServices` / `listEvents`）：内部结构写在闭包里就只能起真宿主验证，抽出来能用假表钉口径。
+- services：读 `ctx.reflect.store`，按 isolation 去重（同一服务取方法最多的那份），只列方法名（自有 + 两层原型，止步于 `Object.prototype`），getter 一律跳过。
+- events：读 `ctx.events._hooks`，跳过框架内部的 `internal/*`、跳过没有监听者的，字符串键与符号键都列。
+- 工具说明补了这两行；`topic=presets` 的字段清单同步成六个键（新增 `deny`）。
+
+### 极简的 PTY 差距（结论：不补）
+
+dsh 的 persistent-pwsh 走 PTY：有真正的提示符事件、能跑全屏程序。dsc 这一版是管道模式 + 哨兵判定。要补 PTY 得引原生模块（node-pty / ConPTY），涉及 Electron 重编译与打包，代价与收益不成比例；状态保留这个核心差距已经由持久 shell 覆盖，剩下的只是「全屏程序跑不了」，而那件事本来就有 `terminal` 工具兜着。
+
+### 验收
+
+| 项 | 结果 |
+| --- | --- |
+| `pnpm run typecheck` | 通过 |
+| `pnpm run build` | 通过 |
+| `node scripts/runtime-api-test.mjs` | 15 项全过（含假表：去重、过滤原型方法、跳过 internal、符号事件） |
+| `node scripts/persistent-shell-test.mjs` | 16 项全过 |
+| `node scripts/sandbox-parity-test.mjs` | 46 通过 / 0 失败 |
+
+### 2026-11-06 补：判官的视野齐了（工具定义 / 项目规则 / 子代理身份 / 失败开关）
+
+对照 dsh 那四条差距，一次补齐。
+
+1. **工具定义（tool-schema）**：`buildReviewHistory` 现在收 `tools` 与 `cwd`，在每个工具第一次出现的调用之前插一条定义（描述 + 参数 schema，截 2000 字）。判官因此看得懂 `edit` 的 `old`/`new`、`ops_*` 那批工具的参数各是什么意思，不必从键名猜。
+2. **项目规则（constraint）**：新增 `projectRulesOf(cwd)`，复用系统提示那条读取链（`instructionsText`，用户级 + 工作区级、按 mtime 缓存），截 4000 字，作为最前面的 `constraint` 条目。判官知道仓库有什么约定，但它只能收窄动作。
+3. **子代理身份（direct-parent-instruction）**：`isChildAgent` 用 `subagent.list()` 的 `file` 比对会话路径；命中时该会话的用户消息一律降成 `direct-parent-instruction`，正文加一句「来自派发这个子代理的父代理」。父级能定义/调整子任务、能授权 medium，但不能覆盖用户限制。
+4. **失败即拒绝开关（`approval.failClosed`）**：默认 false 保持原行为（判官超时/断网回到用户选的权限档，但**发一条 `dsc/notice`** 说明「这次是按权限档放行的」，不再静默）；打开后一律弹卡。这一项是产品取舍，所以做成配置而不是改默认。
+
+`instructionsText` 从 `session-core/prompt.ts` 导出（原来私有），审批层直接复用，不另写一份「去哪找 AGENTS.md」的规则。
+
+**验收**：`approval-review-fallback-test` 37 条全过（新增 9 条：项目规则、工具定义、子代理降级、failClosed）；包内测试 8/8；`async-inbox` / `resident-agents` / `permission-presets` 全过；`typecheck` 与 `build` 通过。

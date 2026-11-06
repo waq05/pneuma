@@ -97,12 +97,12 @@ lib/ui/plugins/<id>/client.js
 | 组 | 条件 | 现在的数量 |
 |---|---|---|
 | 自定义 | `external` 且是单文件插件/组合包 | 取决于用户装了什么 |
-| 官方可开关 | `builtin` + `toggleable`，行 id 不带 `ui-` | 19 |
+| 官方可开关 | `builtin` + `toggleable`，行 id 不带 `ui-` | 17 |
 | 界面单元 | `builtin` + `toggleable`，行 id 带 `ui-` | 21 |
 | 运行内核 | `builtin` 且不可停 | 36 |
 
-默认开关跟 v0.8.1 一致：13 个功能插件默认关（`browser`、`computer-use`、`dock-browser`、`dsh-compat`、
-`lifecycle-hooks`、`lsp`、`mcp`、`ops`、`schedule`、`self-improve`、`subagent`、`team`、`tool-search`），
+默认开关跟 v0.8.1 一致：12 个功能插件默认关（`browser`、`computer-use`、`dock-browser`、`dsh-compat`、
+`lifecycle-hooks`、`lsp`、`mcp`、`ops`、`schedule`、`self-improve`、`subagent`、`tool-search`），
 其余内置行默认开；界面单元默认全开。
 
 ## 4. 身份

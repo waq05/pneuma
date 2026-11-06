@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "count": 55,
+  "count": 54,
   "packages": [
     {
       "id": "llm",
@@ -573,8 +573,8 @@
     {
       "id": "subagent",
       "package": "@pneuma/subagent",
-      "title": "子智能体",
-      "description": "让模型把能独立完成的活交给队友并行做；队友只看任务说明，可设层级、人数、轮次与模型",
+      "title": "子智能体与任务板",
+      "description": "让模型把能独立完成的活交给队友并行做；队友只看任务说明，可设层级、人数、轮次与模型；另带一块按会话分开的共享任务板",
       "order": 3600,
       "resolution": "overridable",
       "inject": [
@@ -588,23 +588,6 @@
         "agent"
       ],
       "settingsSection": "subagent",
-      "defaultDisabled": true,
-      "toggleable": true
-    },
-    {
-      "id": "team",
-      "package": "@pneuma/team",
-      "title": "共享任务板",
-      "description": "一块按会话分开的任务板：登记、认领、结项，队友和你看到同一块；成员名单在「子智能体」里",
-      "order": 3610,
-      "resolution": "overridable",
-      "inject": [
-        "session",
-        "tools",
-        "prompt",
-        "settings"
-      ],
-      "settingsSection": "team",
       "defaultDisabled": true,
       "toggleable": true
     },

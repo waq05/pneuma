@@ -430,17 +430,24 @@ export function writePluginEnabled(file: string, enabled: boolean): boolean {
 }
 
 /**
- * 一次性迁移（0.6.17 拆分）：原来的「智能体团队」插件拆成「子智能体」（subagent）+
- * 「智能体团队」（team）两档。已在用团队的用户（subagent 开着、team 开关从未动过）
- * 自动把 team 也打开，否则升级后他们的 team_task 工具会凭空消失。
- * 用户明确关过 team（条目树里有记录）就尊重那个选择，不再多事。
+ * 一次性迁移（2026-11-06 合并）：「子智能体」（subagent）与「共享任务板」（team）
+ * 合成一个包，行 id 仍是 `subagent`，`team` 那一行已从 base 清单里消失。
+ *
+ * 条目树里 `team` 明确开着（`disabled === false`）的用户，升级后要在 `subagent` 上拿到
+ * 同样的「派活 + 团队」能力，所以把 `subagent` 写成启用；`team` 条目原样留着——回滚到
+ * 旧版本时那份开关还在，用户的选择不会丢。条目树里没有 `team`、或 `team` 是关着的，
+ * 就尊重那个选择，一个字都不写。
+ *
+ * 幂等：`subagent` 已经启用时不写盘；`team` 条目永不删除。
  */
-export function migrateTeamSplit(): void {
+export function migrateTeamMerge(): void {
   const entries = readPluginEntries()
-  if (entries.some((entry) => entry.file === 'team')) return
+  const team = entries.find((entry) => entry.file === 'team')
+  if (team === undefined || team.disabled !== false) return
   const subagent = entries.find((entry) => entry.file === 'subagent')
-  if (subagent === undefined || subagent.disabled) return
-  writePluginEnabled('team', true)
+  // subagent 默认关：条目缺失时它仍是关着的，所以这里只认显式的 disabled === false。
+  if (subagent !== undefined && subagent.disabled === false) return
+  writePluginEnabled('subagent', true)
 }
 
 /**

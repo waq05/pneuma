@@ -15,7 +15,7 @@ import { dirname, isAbsolute, resolve } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import type { DscCoreConfig } from '../core/config.js'
 import { activeConfigFile } from '../core/config-store.js'
-import { migrateTeamSplit } from '../core/plugin-registry.js'
+import { migrateTeamMerge } from '../core/plugin-registry.js'
 import { ensureDefaultProfile } from '../core/profile-bootstrap.js'
 import {
   initPluginRuntime,
@@ -82,8 +82,9 @@ export async function createKernel(options: KernelOptions): Promise<Context> {
   // 首启铺默认 profile：用户装的包与覆盖版官方包都住这里，解析顺序才有落点。
   // 已有清单时一个字节都不动。
   ensureDefaultProfile()
-  // 老版本把「团队」拆成两个开关，这里把旧的启用状态迁到新键上（幂等）。
-  migrateTeamSplit()
+  // 老版本把「团队」拆成两个开关，2026-11-06 又合回一个包：把 team 的开着的状态
+  // 迁到 subagent 上（幂等，team 条目保留不删，回滚读得到）。
+  migrateTeamMerge()
   const failures = await mountApplicationRows(root, {
     ...(options.surface === undefined ? {} : { surface: options.surface }),
     hostConfig: hostConfigOf(options),
