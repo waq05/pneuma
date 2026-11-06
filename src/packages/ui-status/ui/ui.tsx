@@ -360,7 +360,8 @@ export default defineUiPlugin({
     // 报名一种页签界面（kind = 'work-output'）：「终端」区点一行把那个后台活的**只读输出面**
     // 开到右侧栏（等宽 <pre> + 按秒轮询快照，不是交互式终端那条可写通道）。文本面与
     // 「用户自己开的 shell」（terminal 页签）是两套东西，别混。
-    registerDockTab({
+    // 停用本插件时把后台活输出面这一种页签的报名退掉（壳据此清掉已开的输出页签）。
+    return registerDockTab({
       kind: 'work-output',
       label: t('status.tab.output'),
       icon: <IconTerminal size={13} />,

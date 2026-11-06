@@ -68,7 +68,7 @@ export default defineUiPlugin({
     // 报名一种页签界面（kind = 'terminal'）：壳的页签条与页签体照它画，多开由壳
     // 按页签各挂一个实例（旧桌面版「终端可无限多开」同款）。keepMounted：切页签 /
     // 切窗格 / 收起侧栏都只藏不卸，spawn 出来的 shell 与输出缓冲都活着。
-    registerDockTab({
+    return registerDockTab({
       kind: 'terminal',
       label: t('tab.label'),
       icon: <IconTerminal size={13} />,

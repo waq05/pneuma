@@ -8,7 +8,8 @@
  *   1. 会话区选中文字 → 浮出「问 AI」→ 开页签并带上引用；
  *   2. `Ctrl+Shift+K` → 开页签（有选区就一起带上）；
  *   3. 命令面板两条动作（打开旁问 / 就选中内容旁问）；
- *   4. 右侧栏「开始」页的「旁问」卡（壳的 `GUIDE_ENTRIES` 里那一条，开的是同一张页签）。
+ *   4. 右侧栏「开始」页的「旁问」卡（**本插件报名页签时一并交上去的**，
+ *      见下面的 `guide` 字段；插件停用后壳里不会留下这张卡）。
  *
  * 为什么不再留 `shell.ask.open` 事件：左侧栏那颗钮 2026-10-26 搬进右侧栏开始页之后，
  * 没人再发这个事件了；留着监听器就是死代码。
@@ -107,16 +108,28 @@ function openAsk(quote?: string): void {
 export default defineUiPlugin({
   name: t('ask.plugin.name'),
   apply(ui) {
-    registerDockTab({
+    // 页签元数据与「开始」页入口卡一起报：卡归插件说，壳只负责画。旁问在壳里
+    // 硬编码过一张卡与一档 chip 元数据，停用插件后那两处还留着（2026-11-06 报障）。
+    const offTab = registerDockTab({
       kind: 'ask',
       label: t('ask.tab.label'),
       icon: <IconSpark size={13} />,
       component: AskTab,
       // 切页签只藏不卸：正在回答的那条不该被切走打断（答案回来时还要写进气泡）。
       keepMounted: true,
+      guide: {
+        title: t('ask.tab.label'),
+        description: t('ask.guide.desc'),
+        tone: 'tone-ask',
+        shortcut: 'Ctrl + Shift + K',
+        icon: <IconSpark size={17} />,
+      },
     })
     // 浮钮 / 快捷键 / 动作表都挂在 header 槽：它常驻（设置面板与命令面板也住这儿）。
+    // 槽位登记的回收归装载器的账本（cordis 的 effect），这里只把页签报名交回去：
+    // 停用后 kind 元数据、开始页入口卡、已经开着的旁问页签一起消失。
     ui.slots.register('shell.header', { id: 'ask.triggers', order: 80 }, AskTriggers)
+    return offTab
   },
 })
 

@@ -1,6 +1,7 @@
 {
   "ask.plugin.name": "Side ask",
   "ask.tab.label": "Ask",
+  "ask.guide.desc": "Read-only Q&A, not written to the main session",
   "ask.action.open": "Open side ask",
   "ask.action.openHint": "Ask a question in the sidebar without touching the main session",
   "ask.action.group": "Side ask",

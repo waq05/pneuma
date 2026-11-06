@@ -1,6 +1,7 @@
 {
   "ask.plugin.name": "旁问",
   "ask.tab.label": "旁问",
+  "ask.guide.desc": "只读问答，不写主会话",
   "ask.action.open": "打开旁问",
   "ask.action.openHint": "在右侧栏问一句，不动主会话",
   "ask.action.group": "旁问",

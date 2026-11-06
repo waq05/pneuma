@@ -22,8 +22,17 @@
  *   - 关掉激活页签自动聚焦邻位；格被清空自动补一张 guide；
  *   - activePaneId / activeTabId 永远指向存在的对象。
  *
+ * ## 页签种类从哪来
+ *
+ * 内置那几种（guide / terminal / browser / files / git / preview / patch / subagent /
+ * work-output）是壳与内置界面单元的既有落点；**除此之外的种类由插件报名**
+ * （{@link registerDockTab}）。所以 {@link DockTabKind} 留了开口：停用一个界面插件之后，
+ * 它的 kind 不该再出现在任何枚举里——把 kind 写成闭集合，壳就永远「认得」一个已经不存在的
+ * 页面（2026-11-06 的「停用旁问后开始页仍有入口」正是这么来的）。
+ *
  * @module dsc-ui-shell/dock-model
  */
+import type { ComponentType, ReactNode } from 'react'
 
 export type DockTabKind =
   | 'guide' | 'terminal' | 'browser' | 'files' | 'git' | 'preview'
@@ -57,13 +66,13 @@ export type DockTabKind =
    */
   | 'work-output'
   /**
-   * 旁问（只读一次性问答，一整个会话一张）。
+   * 插件报名的种类（任意字符串，例如旁问的 `ask`）。
    *
-   * 为什么单开一种 kind：它既不是文件（preview），也不是某个子智能体的记录——
-   * 内容是「问题 + 引用 + 答案」的气泡列表，状态按会话记在插件里（不落盘）。
-   * 右侧栏本来就是「伴读面」，旁问与它同一条语义。
+   * 为什么留这个开口而不是继续往联合类型里加字面量：页签种类归**报名它的插件**。
+   * 旁问的画面与文案都在 `ui-ask` 里，壳（ui-dockkit）不该替它记住「有个 ask」——
+   * 一旦写进壳的联合类型与图标表，插件停用之后那张入口卡与页签元数据仍然在。
    */
-  | 'ask'
+  | (string & {})
 
 /** 一张页签：id 是毫秒 + 随机尾巴，进程内唯一即可（持久化恢复后也不与现存冲突）。 */
 export interface DockTab {
@@ -103,6 +112,140 @@ export interface DockSurface {
 
 /** 每个会话一份布局（持久化的键就是会话 id）。 */
 export type DockSurfaces = Record<string, DockSurface>
+
+/**
+ * 页签体的 props：布局对象 + 这一张现在的可见性。
+ *
+ * 为什么住在纯模型里：插件报名的 `component` 也要收它，而报名表就在本文件；
+ * 放去 `dock-state` 会让纯模型反过来依赖 React 状态层（成环）。
+ */
+export interface DockTabBodyProps {
+  /** 这张页签（preview 用 tab.path / tab.line）。 */
+  tab: DockTab
+  /** 这一张是不是它窗格的激活页签。 */
+  active: boolean
+  /** dock 整块展开着没有（收起 = 滑出右缘；keepMounted 的终端这时仍活着）。 */
+  expanded: boolean
+}
+
+/**
+ * 「开始」页的一张入口卡（由报名那种页签的插件一并给出）。
+ *
+ * 为什么跟页签元数据绑在一起：入口卡与页签是**同一件事的两个入口**（点卡就是
+ * `openTab(kind, { replaceGuide: true })`）。卡归插件说、壳只负责画，插件停用后
+ * 卡才会跟着消失——旧实现把这张卡硬编码在 `dock.tsx` 的 `GUIDE_ENTRIES` 里，
+ * 于是「停用旁问，开始页还留着旁问卡」。
+ */
+export interface DockGuideEntry {
+  /** 卡片标题（与 chip 标题不一定是同一句：入口卡可以写得更像动作）。 */
+  title: string
+  /** 一行说明。 */
+  description: string
+  /** 图标底色的类名（样式表里既有的 `tone-*`）。 */
+  tone: string
+  /** 快捷键角标（只用于展示）。 */
+  shortcut?: string
+  /** 卡片图标（壳按 17px 画；不给就只画色块）。 */
+  icon?: ReactNode
+}
+
+/** 一种页签的界面（插件经 {@link registerDockTab} 报名）。 */
+export interface DockTabKindMeta {
+  kind: DockTabKind
+  /** chip 上的短标题（preview 不用——标题取文件名）。 */
+  label: string
+  /** chip 上的小图标（不给就用文件彩色图标）。 */
+  icon?: ReactNode
+  /** 内容组件。 */
+  component: ComponentType<DockTabBodyProps>
+  /**
+   * 切走只藏不卸（终端的进程与输出活着）。
+   * 为假时只在「激活且展开」挂载——重挂无副作用的页面（文件 / Git / 预览）省一份常驻监听。
+   */
+  keepMounted?: boolean
+  /** chip 标题取页签路径的文件名（子智能体那种「标签名不可读」的页签）。 */
+  titleFromPath?: boolean
+  /** 「开始」页的入口卡：不报名就没有入口。 */
+  guide?: DockGuideEntry
+}
+
+/** 报名表：kind → 界面。壳画页签、画开始页入口卡都只读这一份。 */
+const kindMetas = new Map<DockTabKind, DockTabKindMeta>()
+let kindSnapshot: readonly DockTabKindMeta[] = []
+let guideSnapshot: readonly DockGuideEntry[] = []
+const kindListeners = new Set<(removed?: DockTabKind) => void>()
+
+function rebuildKinds(): void {
+  kindSnapshot = [...kindMetas.values()]
+  guideSnapshot = kindSnapshot.flatMap((meta) => (meta.guide === undefined ? [] : [meta.guide]))
+}
+
+/**
+ * 报名一种页签的界面（插件 `apply` 里调一次）。
+ *
+ * 返回撤销函数：插件卸载时调用（`ui-ask` 在 `apply` 末尾把它交回去）。撤掉之后
+ * {@link dockTabKinds} / {@link dockGuideEntries} 立刻两份都不再有它，
+ * `dock-state` 还据此把已经开着的同类页签一并关掉（不留渲染不出内容的空壳）。
+ */
+export function registerDockTab(meta: DockTabKindMeta): () => void {
+  kindMetas.set(meta.kind, meta)
+  rebuildKinds()
+  for (const listener of [...kindListeners]) listener()
+  return () => {
+    // 只撤自己这一份：同一个 kind 已被更新的一份覆盖时（重装 / 热更），别把新的删掉。
+    if (kindMetas.get(meta.kind) !== meta) return
+    kindMetas.delete(meta.kind)
+    rebuildKinds()
+    for (const listener of [...kindListeners]) listener(meta.kind)
+  }
+}
+
+/** 订阅报名表变化；`removed` 只在撤回时给出（布局层据此关掉同类页签）。 */
+export function subscribeDockKinds(listener: (removed?: DockTabKind) => void): () => void {
+  kindListeners.add(listener)
+  return () => {
+    kindListeners.delete(listener)
+  }
+}
+
+/** 已报名的页签界面（壳的页签条与页签体都按它画）。 */
+export function dockTabKinds(): readonly DockTabKindMeta[] {
+  return kindSnapshot
+}
+
+/** 某种 kind 的界面（没报名给 undefined——页签体画占位、按钮不再开它）。 */
+export function dockTabMeta(kind: DockTabKind): DockTabKindMeta | undefined {
+  return kindMetas.get(kind)
+}
+
+/** 已报名的「开始」页入口卡（没报名就没有入口）。 */
+export function dockGuideEntries(): readonly DockGuideEntry[] {
+  return guideSnapshot
+}
+
+/**
+ * 把一个会话里某个 kind 的页签全部撤掉（插件停用时调）。
+ *
+ * 与 {@link closeTab} 的区别：这里不是用户关了一张，而是「这一类页面已经不存在了」。
+ * 所以**只补门面、不收起**：用户刚在插件中心扳了一个开关，右栏不该跟着整块滑走——
+ * 停用之后停在「开始」页（其余入口还在）比收起更好懂，也更方便他接着开别的页。
+ */
+export function removeKindTabs(surface: DockSurface, kind: DockTabKind): DockSurface {
+  let removed = 0
+  const panes = surface.panes.map((pane) => {
+    const tabs = pane.tabs.filter((tab) => tab.kind !== kind)
+    if (tabs.length === pane.tabs.length) return pane
+    removed += pane.tabs.length - tabs.length
+    if (tabs.length === 0) {
+      const guide = makeTab('guide')
+      return { ...pane, tabs: [guide], activeTabId: guide.id }
+    }
+    const activeTabId = tabs.some((tab) => tab.id === pane.activeTabId) ? pane.activeTabId : tabs[tabs.length - 1]!.id
+    return { ...pane, tabs, activeTabId }
+  })
+  if (removed === 0) return surface
+  return { ...surface, panes }
+}
 
 /**
  * Dock 组件的动作面：App 用 dock-model 的 reducer 实现，Dock 只管调。
@@ -207,6 +350,9 @@ export function canAddTab(pane: DockPane): boolean {
  * guide（开始页入口卡的路径）。返回新 surface；无可替换的 guide 时原样返回。
  */
 export function openTab(surface: DockSurface, kind: DockTabKind, options?: { paneId?: string; replaceGuide?: boolean }): DockSurface {
+  // 没报名的 kind 不开：插件停用之后，壳里那些还按 id 张罗「开它的页签」的入口
+  // （Ctrl+P、命令面板、桌面侧事件）不该再开出一张渲染不出内容的空壳。
+  if (kind !== 'guide' && dockTabMeta(kind) === undefined) return surface
   const pane = paneOf(surface, options?.paneId ?? surface.activePaneId) ?? activePane(surface)
   // 单例页签：布局里已有（任何格）就聚焦过去，不再开第二张
   if (SINGLETON_KINDS.includes(kind)) {
@@ -546,8 +692,10 @@ function parseSurface(value: unknown): DockSurface | null {
     const tabs: DockTab[] = []
     for (const item of pane.tabs) {
       const entry = item as Partial<DockTab>
-      if (typeof entry?.id !== 'string' || typeof entry?.kind !== 'string') return null
-      if (!['guide', 'terminal', 'browser', 'files', 'git', 'preview', 'patch', 'subagent', 'work-output'].includes(entry.kind)) return null
+      // kind 是开放集合（插件报名的种类也在里面）：这里只校验形状，不校验「认不认识」——
+      // 存档是在插件装载**之前**读的，那一刻报名表还是空的，按报名表判会把整份布局误杀。
+      // 真停用过的种类不会落到存档里：撤销报名时 dock-state 已经把它开着的页签清掉并重存。
+      if (typeof entry?.id !== 'string' || typeof entry?.kind !== 'string' || entry.kind === '') return null
       // preview / patch 页签落盘要带路径；路径丢了这张页签就没有内容，整格作废重画。
       // patch 只存路径，差异快照（hunks）不落盘——启动后回到该页签会提示补丁已过期。
       if (entry.kind === 'preview') {

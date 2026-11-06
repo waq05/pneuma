@@ -78,8 +78,14 @@ export default defineUiPlugin({
   name: t('files.plugin.name'),
   apply() {
     // 报名两种页签界面：文件（工作区树）与 Git（变更面板）。开合/分栏归壳。
-    registerDockTab({ kind: 'files', label: t('files.tab.files'), icon: <IconFolder size={13} />, component: FilesTab })
-    registerDockTab({ kind: 'git', label: 'Git', icon: <IconBranch size={13} />, component: GitTab })
+    const offFiles = registerDockTab({ kind: 'files', label: t('files.tab.files'), icon: <IconFolder size={13} />, component: FilesTab })
+    const offGit = registerDockTab({ kind: 'git', label: 'Git', icon: <IconBranch size={13} />, component: GitTab })
+    // 停用本插件时把**两种**页签的报名一起退掉：壳据此清掉已经开着的文件/Git 页签与
+    // 开始页那两张卡（漏退任何一个，停用后都会留一张渲染着已停用插件的页签）。
+    return () => {
+      offFiles()
+      offGit()
+    }
   },
 })
 

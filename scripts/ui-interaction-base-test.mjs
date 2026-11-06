@@ -221,7 +221,11 @@ console.log('[5] 2026-10-26 四项')
   check('模式菜单宽度按内容（不再写死 300px）', /\.model-pop\.preset-pop \{[^}]*width: max-content/.test(css) && !/\.model-pop\.preset-pop \{\s*\n\s*width: 300px/.test(css))
 
   // ③ 入口搬家：旁问进右侧栏「开始」页，搜索进顶栏
-  check('旁问在右侧栏「开始」页（不是左侧栏导航）', /kind: 'ask', title: t\('dockkit.guide.ask.title'\)/.test(read('src/packages/ui-dockkit/ui/dock.tsx')) && !sessions.includes('data-nav="ask"'))
+  // 2026-11-06：这张卡改成由 ui-ask 报名时交上来（壳里不再硬编码 ask）。
+  check(
+    '旁问在右侧栏「开始」页（由 ui-ask 报名，不是左侧栏导航）',
+    /kind: 'ask'[\s\S]{0,400}?guide: \{/.test(read('src/packages/ui-ask/ui/ui.tsx')) && !sessions.includes('data-nav="ask"'),
+  )
   check('页脚不再有旁问与搜索两行', !sessions.includes('row row-btn ask-entry') && !sessions.includes('shell.palette.open'))
   check('搜索挪到顶栏、压在「在资源管理器打开」左边', app.indexOf('topbar-search') > 0 && app.indexOf('topbar-search') < app.indexOf('slot={SLOT.header}'))
   check('搜索钮真会开命令面板', /className="icon-btn topbar-search"[\s\S]{0,400}?shell\.palette\.open/.test(app))

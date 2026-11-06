@@ -68,10 +68,28 @@ export default defineUiPlugin({
     // 报名一种页签界面（kind = 'preview'）：每张预览页签自带文件路径（tab.path）——
     // 「同文件去重、每格至多 10 张」这些规则在壳的布局模型里（旧桌面版同款）。
     // 不 keepMounted：切走不挂载、切回重读盘（旧桌面版同规则——省一份常驻监听）。
-    registerDockTab({ kind: 'preview', label: t('preview.tab.label'), icon: <IconCode size={13} />, component: PreviewTab })
+    const offPreview = registerDockTab({
+      kind: 'preview',
+      label: t('preview.tab.label'),
+      icon: <IconCode size={13} />,
+      component: PreviewTab,
+      // chip 上要看到「这是哪个文件」：标题取页签自己那个路径的文件名（旧口径，别丢）。
+      titleFromPath: true,
+    })
     // 补丁页签（kind = 'patch'）：渲染某个文件某次 write / edit 的差异快照（unified hunks）。
     // 与 preview 是两条路——那份快照随工具结果来，不读盘；页签自带路径。
-    registerDockTab({ kind: 'patch', label: t('preview.tab.patch'), component: PatchTab })
+    const offPatch = registerDockTab({
+      kind: 'patch',
+      label: t('preview.tab.patch'),
+      component: PatchTab,
+      titleFromPath: true,
+    })
+    // 两种页签一起退：只退一个的话，停用预览插件后另一半还会留着（文件预览与补丁预览
+    // 是同一份代码的两个视图，生命周期必须同进同出）。
+    return () => {
+      offPreview()
+      offPatch()
+    }
   },
 })
 

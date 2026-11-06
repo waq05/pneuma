@@ -58,7 +58,7 @@ const NO_PAGE: PageState = { url: '', title: '', canGoBack: false, canGoForward:
 export default defineUiPlugin({
   name: t('browser.plugin.name'),
   apply() {
-    registerDockTab({
+    const offTab = registerDockTab({
       kind: 'browser',
       label: t('browser.tab.label'),
       icon: <IconGlobe size={13} />,
@@ -94,9 +94,12 @@ export default defineUiPlugin({
       dockActions.closeTab(id)
     })
     // 退订交回装载器（`apply` 的返回值就是「卸载这个插件时调」的清理函数，见 UiPluginModule）。
+    // 三条都要退：两条原生事件 + 页签报名。漏掉页签那条，停用浏览器插件后已开的页签
+    // 会继续渲染（壳认不出这是「已经不存在的那一种」）。
     return () => {
       offOpen()
       offClose()
+      offTab()
     }
   },
 })

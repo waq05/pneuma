@@ -418,7 +418,7 @@ console.log('[8] 工具卡补丁视图（读 / 写 / 改三类分流）')
   check('chip 挡冒泡（鼠标 + 键盘两路）', /onClick=\{\(event\) => \{\s*event\.stopPropagation\(\)\s*setDockPreview/.test(factory) && factory.includes('event.stopPropagation()'))
 
   // ── preview 插件：patch 页签渲染 unified diff + 「打开原文件」──
-  check('preview 插件报名 patch 页签', preview.includes("registerDockTab({ kind: 'patch'"))
+  check('preview 插件报名 patch 页签', /registerDockTab\(\{\s*kind: 'patch'/.test(preview))
   check('patch 页签用既有 DiffRows 渲染（不引新依赖）', preview.includes('<DiffRows hunks={source.hunks} path={path} />'))
   check('patch 页签不再读盘：走 useDockPatchSource 拿快照', preview.includes('const source = useDockPatchSource(path)') && !/PatchTab[\s\S]{0,800}?fs-read/.test(preview))
   check('补丁视图另给「打开原文件」出口（开的是当前内容预览）', preview.includes('打开原文件') && preview.includes('onClick={() => setDockPreview({ path })}'))

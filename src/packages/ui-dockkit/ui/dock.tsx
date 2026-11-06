@@ -16,9 +16,19 @@
  * @module dsc-ui-shell/dock
  */
 import { useCallback, useEffect, useRef, useState, type JSX, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
-import { IconBranch, IconFolder, IconGlobe, IconSidebar, IconSpark, IconTerminal, IconTree, FileIcon } from '@dsc/ui-primitives'
-import { canAddTab, type DockPane, type DockSurface, type DockTab, type DockTabKind } from './dock-model'
-import { dockActions, dockTabMeta, useDockSurface } from './dock-state'
+import { IconBranch, IconFolder, IconGlobe, IconSidebar, IconTerminal, FileIcon } from '@dsc/ui-primitives'
+import {
+  canAddTab,
+  dockTabMeta,
+  registerDockTab,
+  type DockGuideEntry,
+  type DockPane,
+  type DockSurface,
+  type DockTab,
+  type DockTabBodyProps,
+  type DockTabKind,
+} from './dock-model'
+import { dockActions, useDockGuideEntries, useDockSurface, useDockTabKinds } from './dock-state'
 import { createT } from '@dsc/ui-core'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 import zh from '../locale/ui.zh.json'
@@ -52,38 +62,64 @@ function dockDragLimit(): number {
 }
 
 /**
- * 页签 chip 上的图标与标题；preview / patch 的 chip 用文件自己的彩色图标，见 Chip。
+ * 「开始」页的**壳自带**入口卡：文件 / 终端 / 浏览器 / Git 这四张。
  *
- * `titleFromPath`：标题取页签自己那个路径的文件名（子智能体页签用它——chip 上要看到
- * 「这是哪个队友」，一堆都写「子智能体」就分不出来了）。图标仍是这一档的类别图标。
+ * 为什么这四张留在壳里而不是各家插件自己报：它们开的是壳自己的四种内置页面
+ * （kind 久已在 `DockTabKind` 的闭集合里），文案也一直住在 dockkit 的字典里。
+ * 但「留在壳里」不等于「一直画」——下面按报名表过滤：**那种页签没报名（插件停用）
+ * 就不画它这张卡**，与插件自己报名的入口卡同一条规矩。
+ *
+ * 旁问（2026-10-26 从左侧栏搬来）不在这张表里：它归 `ui-ask`，由插件报名时一并
+ * 交上来（见 `DockTabKindMeta.guide`）——它在壳里硬编码过一份，插件停用后那张卡
+ * 还留在开始页上（2026-11-06 报障）。
  */
-const KIND_META: Record<
-  Exclude<DockTabKind, 'preview' | 'patch'>,
-  { title: string; icon: (props: { size: number }) => JSX.Element; titleFromPath?: boolean }
-> = {
-  guide: { title: t('dockkit.kind.guide'), icon: IconGlobe },
-  terminal: { title: t('dockkit.kind.terminal'), icon: IconTerminal },
-  browser: { title: t('dockkit.kind.browser'), icon: IconGlobe },
-  files: { title: t('dockkit.kind.files'), icon: IconFolder },
-  git: { title: 'Git', icon: IconBranch },
-  subagent: { title: t('dockkit.kind.subagent'), icon: IconTree, titleFromPath: true },
-  // 后台活输出面：标题由打开方带过来（work.title），缺省回落 work id；图标是终端。
-  'work-output': { title: t('dockkit.kind.workOutput'), icon: IconTerminal },
-  // 旁问：只读一次性问答（插件 ask 渲染）。
-  ask: { title: t('dockkit.kind.ask'), icon: IconSpark },
-}
-
-/** 「开始」页的入口卡（旧桌面版同款，带描述与快捷键角标）。
- *
- * 旁问（2026-10-26 从左侧栏搬来）：它开的就是右侧栏的一个页签，摆在右侧栏自己的
- * 开始页上是它的本家——左侧栏那颗导航钮反而像另一个整页入口。 */
-const GUIDE_ENTRIES: { kind: DockTabKind; title: string; description: string; tone: string; shortcut?: string }[] = [
-  { kind: 'files', title: t('dockkit.guide.files.title'), description: t('dockkit.guide.files.desc'), tone: 'tone-folder', shortcut: 'Ctrl + P' },
-  { kind: 'terminal', title: t('dockkit.guide.terminal.title'), description: t('dockkit.guide.terminal.desc'), tone: 'tone-terminal', shortcut: 'Ctrl + `' },
-  { kind: 'browser', title: t('dockkit.guide.browser.title'), description: t('dockkit.guide.browser.desc'), tone: 'tone-browser', shortcut: 'Ctrl + T' },
-  { kind: 'git', title: t('dockkit.guide.git.title'), description: t('dockkit.guide.git.desc'), tone: 'tone-git' },
-  { kind: 'ask', title: t('dockkit.guide.ask.title'), description: t('dockkit.guide.ask.desc'), tone: 'tone-ask', shortcut: 'Ctrl + Shift + K' },
+const GUIDE_DEFAULTS: ReadonlyArray<DockGuideEntry & { kind: DockTabKind }> = [
+  {
+    kind: 'files',
+    title: t('dockkit.guide.files.title'),
+    description: t('dockkit.guide.files.desc'),
+    tone: 'tone-folder',
+    shortcut: 'Ctrl + P',
+    icon: <IconFolder size={17} />,
+  },
+  {
+    kind: 'terminal',
+    title: t('dockkit.guide.terminal.title'),
+    description: t('dockkit.guide.terminal.desc'),
+    tone: 'tone-terminal',
+    shortcut: 'Ctrl + `',
+    icon: <IconTerminal size={17} />,
+  },
+  {
+    kind: 'browser',
+    title: t('dockkit.guide.browser.title'),
+    description: t('dockkit.guide.browser.desc'),
+    tone: 'tone-browser',
+    shortcut: 'Ctrl + T',
+    icon: <IconGlobe size={17} />,
+  },
+  {
+    kind: 'git',
+    title: t('dockkit.guide.git.title'),
+    description: t('dockkit.guide.git.desc'),
+    tone: 'tone-git',
+    icon: <IconBranch size={17} />,
+  },
 ]
+
+/**
+ * 「开始」页自己也是一种报名的页签（壳自带的那一种）。
+ *
+ * 为什么把 guide 也塞进报名表：页签条画 chip 时要属于它的标题与图标，页签体要它的
+ * 组件。旧写法在 `KIND_META` 里给 guide 单开一格、在 `TabBody` 里单开一个 if——
+ * 两处都可能漏改，而「漏掉的那种 kind 在插件停用后还留着」正是这次要根治的形态。
+ */
+registerDockTab({
+  kind: 'guide',
+  label: t('dockkit.kind.guide'),
+  icon: <IconGlobe size={13} />,
+  component: GuideBody,
+})
 
 /** 右侧栏组件：贴边/全屏两种展示，收起时整块滑出右缘（内容不卸载）。 */
 export function Dock(props: {
@@ -312,7 +348,6 @@ function Pane(props: {
             tab={tab}
             active={props.active && pane.activeTabId === tab.id}
             expanded={surface.expanded}
-            actions={actions}
           />
         ))}
       </div>
@@ -320,17 +355,15 @@ function Pane(props: {
   )
 }
 
-/** 一张页签的体：guide 门面 / 注册的 kind 组件（keepMounted 藏而不卸）/ 未装占位。 */
-function TabBody(props: {
-  tab: DockTab
-  active: boolean
-  expanded: boolean
-  actions: typeof dockActions
-}): ReactNode {
+/**
+ * 一张页签的体：报名的组件（keepMounted 藏而不卸）/ 未报名占位。
+ *
+ * 「开始」页也是报名进来的一种 kind（见文件尾的 `registerDockTab`），这里不再有
+ * 「guide 特殊、其余走报名表」的分叉——分叉漏一条，被漏的那条就会在插件停用后
+ * 继续画出来。
+ */
+function TabBody(props: DockTabBodyProps): ReactNode {
   const { tab, active, expanded } = props
-  if (tab.kind === 'guide') {
-    return active ? <GuideBody actions={props.actions} /> : null
-  }
   const meta = dockTabMeta(tab.kind)
   if (meta === undefined) {
     // 未注册的 kind（比如那个插件没装上）：页签还在，画一句能读的占位，别给一张白板。
@@ -340,7 +373,6 @@ function TabBody(props: {
       </div>
     ) : null
   }
-  const visible = active && expanded
   if (meta.keepMounted === true) {
     // 终端：藏起来不卸载，进程与输出都活着
     return (
@@ -364,15 +396,16 @@ function Chip(props: {
   onMenu(tabId: string | null, x: number, y: number): void
   menuOpen: boolean
 }): JSX.Element {
-  // preview / patch 页签：图标是文件自己的彩色图标，标题是文件名（其它的走 KIND_META）
-  const meta = props.tab.kind === 'preview' || props.tab.kind === 'patch' ? undefined : KIND_META[props.tab.kind]
+  // 标题与图标都从报名表来（谁报名谁负责）。preview / patch 例外：图标用文件自己的彩色图标。
+  const meta = dockTabMeta(props.tab.kind)
+  const fileIcon = props.tab.kind === 'preview' || props.tab.kind === 'patch'
   // 标题来源三档：页签自带的 label（子智能体那种「文件名不可读」的页签）→ 类别名 → 路径尾段。
   const title =
     props.tab.label !== undefined && props.tab.label !== ''
       ? props.tab.label
       : meta === undefined || meta.titleFromPath === true
         ? basenameOf(props.tab.path ?? '')
-        : meta.title
+        : meta.label
   return (
     <button
       className={`dock-chip${props.on ? ' on' : ''}${props.menuOpen ? ' menu' : ''}`}
@@ -388,10 +421,10 @@ function Chip(props: {
       onDragStart={(event) => event.dataTransfer.setData('text/plain', props.tab.id)}
       title={title}
     >
-      {meta !== undefined ? (
-        <meta.icon size={13} />
-      ) : (
+      {fileIcon || meta?.icon === undefined ? (
         <FileIcon name={title} size={13} className="dock-chip-fileicon" />
+      ) : (
+        meta.icon
       )}
       <span className="dock-chip-label">{title}</span>
       <span
@@ -408,32 +441,46 @@ function Chip(props: {
   )
 }
 
-/** 「开始」页：罗盘 + 入口卡；选一项就地替换这张 guide（旧桌面版的 replaceTab 路径）。 */
-function GuideBody(props: { actions: typeof dockActions }): JSX.Element {
+/**
+ * 「开始」页：罗盘 + 入口卡；选一项就地替换这张 guide（旧桌面版的 replaceTab 路径）。
+ *
+ * 卡的来源只有两处：壳自带的四张（按报名表过滤）与插件报名时交上来的（`guide`
+ * 字段）。**没有第三处**——硬编码一张属于插件的卡，就等于给「停用后仍显示」留了后门。
+ */
+function GuideBody(): JSX.Element {
+  const kinds = useDockTabKinds()
+  const contributed = useDockGuideEntries()
+  // 两张来源合成一张表，每项都带着「点它开哪种页签」：
+  //   - 壳自带的四张：只在那种页签报名着的时候画（插件停用 → 卡消失）；
+  //   - 插件报名的：报名表里 `guide` 与 kind 本来就绑在同一个 meta 上，按身份反查。
+  const entries: { kind: DockTabKind; card: DockGuideEntry }[] = [
+    ...GUIDE_DEFAULTS.filter((item) => kinds.some((meta) => meta.kind === item.kind)).map((item) => ({
+      kind: item.kind,
+      card: item,
+    })),
+    ...contributed.flatMap((card) => {
+      const meta = kinds.find((item) => item.guide === card)
+      return meta === undefined ? [] : [{ kind: meta.kind, card }]
+    }),
+  ]
   return (
     <div className="dock-guide">
       <span className="dock-guide-hero" aria-hidden="true">
         <CompassGlyph />
       </span>
       <div className="dock-guide-cards">
-        {GUIDE_ENTRIES.map((entry) => (
+        {entries.map(({ kind, card }) => (
           <button
-            key={entry.kind}
+            key={kind}
             className="dock-guide-entry"
-            onClick={() => props.actions.openTab(entry.kind, { replaceGuide: true })}
+            onClick={() => dockActions.openTab(kind, { replaceGuide: true })}
           >
-            <span className={`dock-guide-icon ${entry.tone}`}>
-              {entry.kind === 'files' && <IconFolder size={17} />}
-              {entry.kind === 'terminal' && <IconTerminal size={17} />}
-              {entry.kind === 'browser' && <IconGlobe size={17} />}
-              {entry.kind === 'git' && <IconBranch size={17} />}
-              {entry.kind === 'ask' && <IconSpark size={17} />}
-            </span>
+            <span className={`dock-guide-icon ${card.tone}`}>{card.icon}</span>
             <span className="dock-guide-text">
-              <span className="dock-guide-title">{entry.title}</span>
-              <span className="dock-guide-desc">{entry.description}</span>
+              <span className="dock-guide-title">{card.title}</span>
+              <span className="dock-guide-desc">{card.description}</span>
             </span>
-            {entry.shortcut !== undefined && <kbd className="dock-guide-key">{entry.shortcut}</kbd>}
+            {card.shortcut !== undefined && <kbd className="dock-guide-key">{card.shortcut}</kbd>}
           </button>
         ))}
       </div>

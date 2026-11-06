@@ -159,6 +159,31 @@ const DEFAULT_PREFS: SidebarPrefs = {
   sessionOrder: {},
 }
 
+/**
+ * 主区某个整页现在还有没有人报名（= 启动图里还有没有那条界面插件）。
+ *
+ * 为什么用启动图帧而不是另记一套开关：停用 ui-plugins 之后，侧栏那颗「插件」钮点进去
+ * 只剩一片空白主区——那是死钮。判据与插件中心那份开关是**同一份事实**（宿主推来的
+ * 启动图帧），不必再存一份会过期的布尔值。
+ */
+function usePageEntryAvailable(entryId: string): boolean {
+  const channel = useHostChannel()
+  const read = (): boolean => {
+    const frame = channel.getPluginsFrame()
+    // 还没收到第一帧：先当作「在」，免得首帧之前那颗钮闪一下消失。
+    return frame === null ? true : frame.graph.entries.some((entry) => entry.id === entryId)
+  }
+  const [available, setAvailable] = useState<boolean>(read)
+  useEffect(() => {
+    setAvailable(read())
+    return channel.onPlugins(() => {
+      setAvailable(read())
+    })
+    // read 每次渲染都是新函数，只认通道与 entryId。
+  }, [channel, entryId])
+  return available
+}
+
 function SessionList() {
   const channel = useHostChannel()
   const sessions = useHostSelector(readSessions)
@@ -182,6 +207,12 @@ function SessionList() {
   const cwd = useHostSelector(readCwd)
   /** 主区是不是顶在插件页上（侧栏「插件」入口的点亮态与再点回退）。 */
   const page = useShellPage()
+  /** 「插件」整页还有人报名没有：停用 ui-plugins 之后这颗钮不能再留着（点进去是空白主区）。 */
+  const pluginPage = usePageEntryAvailable('plugins')
+  useEffect(() => {
+    // 正停在这一页上时插件被停用：退回对话页，别把用户留在空白主区里。
+    if (!pluginPage && page === 'plugins') setShellPage(null)
+  }, [pluginPage, page])
   const [fault, setFault] = useState<string | null>(null)
   /** 正在挑"从哪条消息分叉"（null = 没在挑）。 */
   const [forking, setForking] = useState<{ id: string; messages: string[] } | null>(null)
@@ -773,18 +804,23 @@ function SessionList() {
         >
           <IconBolt size={15} /> {t('nav.skills')}
         </button>
-        <button
-          type="button"
-          className={`nav-item${page === 'plugins' ? ' on' : ''}`}
-          aria-pressed={page === 'plugins'}
-          onClick={() => {
-            setShellPage(page === 'plugins' ? null : 'plugins')
-          }}
-        >
-          <IconPuzzle size={15} /> {t('nav.plugins')}
-        </button>
+        {/* 插件整页的那个插件被停用之后，这颗钮不再画：页没了，钮留着就是一颗
+            点进去只有空白主区的死钮（2026-11-06）。判据是宿主推来的启动图帧，
+            与插件中心里那份开关同一份事实。 */}
+        {pluginPage ? (
+          <button
+            type="button"
+            className={`nav-item${page === 'plugins' ? ' on' : ''}`}
+            aria-pressed={page === 'plugins'}
+            onClick={() => {
+              setShellPage(page === 'plugins' ? null : 'plugins')
+            }}
+          >
+            <IconPuzzle size={15} /> {t('nav.plugins')}
+          </button>
+        ) : null}
         {/* 旁问不在这儿（2026-10-26 第二轮）：它开的是右侧栏的页签，入口放在右侧栏
-            自己的「开始」页上（ui-dockkit/dock.tsx 的 GUIDE_ENTRIES）。摆在这一列里，
+            自己的「开始」页上（ui-ask 报名时交上来的入口卡）。摆在这一列里，
             它跟「技能 / 插件」两个整页入口长得一样，点了却只在右边开一张页签。 */}
       </nav>
 

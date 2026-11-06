@@ -21,11 +21,14 @@
  *
  * @module dsc-ui-shell/dock-state
  */
-import { useSyncExternalStore, type ComponentType, type ReactNode } from 'react'
+import { useSyncExternalStore } from 'react'
 import { createSignal, type ChangedFileView } from '@dsc/ui-core'
 import {
   closeTab as modelCloseTab,
   defaultSurface,
+  dockGuideEntries,
+  dockTabKinds,
+  dockTabMeta,
   focusPane as modelFocusPane,
   focusTab as modelFocusTab,
   loadSurfaces,
@@ -36,21 +39,25 @@ import {
   openTab as modelOpenTab,
   openWorkOutput as modelOpenWorkOutput,
   placeTab as modelPlaceTab,
+  removeKindTabs,
   saveSurfaces,
   setExpanded as modelSetExpanded,
   setFraction as modelSetFraction,
   setTabInfo as modelSetTabInfo,
   splitPane as modelSplitPane,
+  subscribeDockKinds,
   toggleMode as modelToggleMode,
   unsplitPane as modelUnsplitPane,
   type DockActions,
+  type DockGuideEntry,
   type DockSurface,
   type DockSurfaces,
   type DockTab,
   type DockTabKind,
+  type DockTabKindMeta,
 } from './dock-model'
 
-export type { DockActions, DockPane, DockSurface, DockTab, DockTabKind } from './dock-model'
+export type { DockActions, DockGuideEntry, DockPane, DockSurface, DockTab, DockTabBodyProps, DockTabKind, DockTabKindMeta } from './dock-model'
 
 // ── 布局状态（每会话一份） ────────────────────────────────────────────────────
 
@@ -100,18 +107,32 @@ export function dockSurface(): DockSurface {
 }
 
 /**
+ * 这个 kind 现在有没有界面（guide 是壳自己的门面，永远有）。
+ *
+ * 停用一个界面插件之后，别处那些「按 id 张罗开页签」的入口（Ctrl+P、桌面侧事件、
+ * 工具卡的「打开」）会继续被触发；这里统一挡掉，免得开出一张渲染不出内容的空壳，
+ * 也免得顺手把右栏展开成一片空白。
+ */
+function hasDockKind(kind: DockTabKind): boolean {
+  return kind === 'guide' || dockTabMeta(kind) !== undefined
+}
+
+/**
  * 布局动作表（旧桌面版 App 里的同一套接线：开预览顺手展开侧栏）。
  *
  * 做常量而不是工厂：动作全是 `mutate` 的薄包装，没有闭包状态，引用天然稳定。
  */
 export const dockActions: DockActions = {
   openTab: (kind, options) => {
+    if (!hasDockKind(kind)) return
     mutate((s) => modelOpenTab(s, kind, options))
   },
   openPreview: (path, line) => {
+    if (!hasDockKind('preview')) return
     mutate((s) => modelSetExpanded(modelOpenPreview(s, path, line), true))
   },
   openBrowserTab: (url, label, id) => {
+    if (!hasDockKind('browser')) return
     mutate((s) => modelSetExpanded(modelOpenBrowserTab(s, url, label, id), true))
   },
   setTabInfo: (tabId, patch) => {
@@ -119,12 +140,15 @@ export const dockActions: DockActions = {
     mutate((s) => modelSetTabInfo(s, tabId, patch))
   },
   openPatch: (path) => {
+    if (!hasDockKind('patch')) return
     mutate((s) => modelSetExpanded(modelOpenPatch(s, path), true))
   },
   openSubagent: (path, label) => {
+    if (!hasDockKind('subagent')) return
     mutate((s) => modelSetExpanded(modelOpenSubagent(s, path, label), true))
   },
   openWorkOutput: (id, label) => {
+    if (!hasDockKind('work-output')) return
     mutate((s) => modelSetExpanded(modelOpenWorkOutput(s, id, label), true))
   },
   closeTab: (tabId) => {
@@ -158,6 +182,8 @@ export const dockActions: DockActions = {
 
 /** 展开右侧栏并就地替换「开始」页（开始页入口卡与快捷键的路径，旧界面同款）。 */
 export function openDockTab(kind: DockTabKind): void {
+  // 没报名的 kind 连栏都不展开：Ctrl+P 打在已停用的文件插件上时，用户不该看见一片空白。
+  if (!hasDockKind(kind)) return
   mutate((s) => modelSetExpanded(modelOpenTab(s, kind, { replaceGuide: true }), true))
 }
 
@@ -179,65 +205,42 @@ export function openDockBrowserTab(url?: string, viewId?: string): void {
   dockActions.openBrowserTab(url, undefined, viewId)
 }
 
-// ── 页签内容注册表（kind → 渲染组件） ────────────────────────────────────────
-
-/** 页签体的 props：布局对象 + 这一张现在的可见性。 */
-export interface DockTabBodyProps {
-  /** 这张页签（preview 用 tab.path / tab.line）。 */
-  tab: DockTab
-  /** 这一张是不是它窗格的激活页签。 */
-  active: boolean
-  /** dock 整块展开着没有（收起 = 滑出右缘；keepMounted 的终端这时仍活着）。 */
-  expanded: boolean
-}
-
-/** 一种页签的界面（插件经 {@link registerDockTab} 报名）。 */
-export interface DockTabKindMeta {
-  kind: DockTabKind
-  /** chip 上的短标题（preview 不用——标题取文件名）。 */
-  label: string
-  /** chip 上的小图标。 */
-  icon?: ReactNode
-  /** 内容组件。 */
-  component: ComponentType<DockTabBodyProps>
-  /**
-   * 切走只藏不卸（终端的进程与输出活着）。
-   * 为假时只在「激活且展开」挂载——重挂无副作用的页面（文件 / Git / 预览）省一份常驻监听。
-   */
-  keepMounted?: boolean
-}
-
-const kindMetas = new Map<DockTabKind, DockTabKindMeta>()
-let kindSnapshot: readonly DockTabKindMeta[] = []
-
-function rebuildKinds(): void {
-  kindSnapshot = [...kindMetas.values()]
-}
+// ── 页签内容注册表：谁改谁喊（报名表本体在 dock-model） ────────────────────────
 
 /**
- * 报名一种页签的界面（插件 `apply` 里调一次）。
- *
- * 返回撤销函数；重复 kind 覆盖——同一个插件重装时不该在注册表里留下两份。
+ * 报名表变化 → 布局层做两件事：
+ *   1. 某个 kind 被撤销（插件停用）时，把它**已经开着**的页签全部关掉——不然页签条上
+ *      留一张点开只有「界面没装上」的壳，或者更糟：组件还活着、看着像插件没停。
+ *   2. 通知订阅者重画：开始页入口卡与 chip 的标题图标都从报名表来，表变了界面就得变。
  */
-export function registerDockTab(meta: DockTabKindMeta): () => void {
-  kindMetas.set(meta.kind, meta)
-  rebuildKinds()
+subscribeDockKinds((removed) => {
+  if (removed !== undefined) pruneDockKind(removed)
   dockChannel.notify()
-  return () => {
-    kindMetas.delete(meta.kind)
-    rebuildKinds()
-    dockChannel.notify()
+})
+
+/**
+ * 把一个 kind 已开着的页签从**每个会话**的布局里撤掉，并重新落盘。
+ *
+ * 为什么要扫全部会话而不是当前那个：布局是按会话存的，A 会话开着旁问、切到 B 会话
+ * 停用插件，A 的存档里那张页签不能留着——下次切回去就是一张空壳。
+ */
+function pruneDockKind(kind: DockTabKind): void {
+  let changed = false
+  const next: DockSurfaces = {}
+  const current = removeKindTabs(surface, kind)
+  if (current !== surface) {
+    surface = current
+    changed = true
   }
-}
-
-/** 已报名的页签界面（壳的页签条与页签体都按它画）。 */
-export function dockTabKinds(): readonly DockTabKindMeta[] {
-  return kindSnapshot
-}
-
-/** 某种 kind 的界面（没报名给 undefined——页签体画占位）。 */
-export function dockTabMeta(kind: DockTabKind): DockTabKindMeta | undefined {
-  return kindMetas.get(kind)
+  for (const [id, stored] of Object.entries(surfaces)) {
+    const pruned = id === sessionId ? surface : removeKindTabs(stored, kind)
+    if (pruned !== stored) changed = true
+    next[id] = pruned
+  }
+  next[sessionId] = surface
+  surfaces = next
+  if (!changed) return
+  saveSurfaces(surfaces)
 }
 
 // ── 预览 / 审查目标 ──────────────────────────────────────────────────────────
@@ -336,6 +339,21 @@ export function setDockReview(next: DockReview | null): void {
 /** 当前会话的布局（组件里读它画页签条与页签体）。 */
 export function useDockSurface(): DockSurface {
   return useSyncExternalStore(subscribeDock, dockSurface, dockSurface)
+}
+
+/**
+ * 现在报名的页签种类（页签条与开始页入口卡都按它画）。
+ *
+ * 与 {@link subscribeDockKinds} 走同一条通道（报名表变化时 dock-state 也 notify 一次），
+ * 所以插件装/卸那一帧界面就会跟上，不必刷新页面。
+ */
+export function useDockTabKinds(): readonly DockTabKindMeta[] {
+  return useSyncExternalStore(subscribeDock, dockTabKinds, dockTabKinds)
+}
+
+/** 现在报名的「开始」页入口卡（没插件报名就是空数组）。 */
+export function useDockGuideEntries(): readonly DockGuideEntry[] {
+  return useSyncExternalStore(subscribeDock, dockGuideEntries, dockGuideEntries)
 }
 
 /** 现在要审查哪一轮的哪些文件（并排面板读它；没点过是 null）。 */

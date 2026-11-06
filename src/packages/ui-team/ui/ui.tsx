@@ -209,15 +209,19 @@ export default defineUiPlugin({
     // 子智能体的运行记录仍可落**右侧栏**（一种 dock 页签，给工具卡里的子代理卡用）：
     // 正文区那条只读视图是「点状态面板一行」的主路，右栏这条是伴读面的旁路，两条共用
     // 同一份 `peekTranscript` 读法与同一套行渲染。名册与运行记录同属「队友」这件事。
-    registerDockTab({
+    const offSubagentTab = registerDockTab({
       kind: 'subagent',
       label: t('team.tab.subagent'),
       icon: <IconTree size={13} />,
+      // 会话文件名是 uuid：标题回落时取路径尾段（有 label 时优先 label，见 Chip 的三档）。
+      titleFromPath: true,
       // 页签体额外拿到「本插件的名册席位面」：头部要按 `tab.path` 匹配出队友元信息（角色 /
       // 状态 / 轮数 / 时长），并且要据此判断「还在 working → 轮询刷新运行记录」。席位的读法
       // 与 status 面板同一条（`ui.slots.seat(handle)`——`ui` 只在 apply 里拿得到，用闭包交进去）。
       component: (props) => <SubagentTabBody {...props} slots={ui.slots} handle={mates} />,
     })
+    // 子智能体页签也报名在 apply 里：停用团队插件时一道退掉（已开的运行记录页签由壳清）。
+    return offSubagentTab
   },
 })
 
