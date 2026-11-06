@@ -88,9 +88,28 @@ export const gitPlugin: Plugin.Object = {
       }, ms)
     }
 
+    /**
+     * 这一拍该读哪个工作目录；没有活动会话时返回 null。
+     *
+     * 定时器是后台轮询：宿主收摊（或页面已经关掉）之后它还会被排到一次，这时
+     * ctx.session 已经是 inactive context，取 current() 会抛
+     * 「cannot get required service "session" in inactive context」。
+     * 那不是错误，是「没活可干」的正常状态（收摊）——所以这里吞掉，让这一拍安静收尾，
+     * 绝不把异常从异步 tick 里抛出去：那里的 rejection 没有任何人接，会把整个宿主进程带崩。
+     */
+    const readCwd = (): string | null => {
+      try {
+        return ctx.session.current().meta.cwd
+      } catch {
+        return null
+      }
+    }
+
     /** 读一拍：分支名 + 改动条数。读不动（不是仓库 / git 不在 / 目录没了）按空读数记。 */
     const read = async (): Promise<void> => {
-      const cwd = ctx.session.current().meta.cwd
+      // 没有活动会话（宿主正在收摊）：这一拍直接收尾，不读、也不再排下一拍。
+      const cwd = readCwd()
+      if (cwd === null) return
       cacheCwd = cwd
       let next: GitSurface
       try {
