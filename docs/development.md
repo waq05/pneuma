@@ -144,8 +144,7 @@ export const myPlugin: Plugin.Object = {
 
 | 插件 | 默认 | 设置分区 | 干什么 |
 | --- | --- | --- | --- |
-| `subagent` 子智能体 | 关 | `subagent` | 把能独立完成的活派给队友并行做（`subagent` 工具）；可设层级、人数、轮次与模型，队友按会话隔离 |
-| `team` 共享任务板 | 关 | `team` | 共享任务看板（`team_task` 工具），看板按会话各一块；已启用 `subagent` 而没动过它时自动跟着打开 |
+| `subagent` 子智能体与任务板 | 关 | `subagent` | 把能独立完成的活派给队友并行做（`subagent` 工具）；可设层级、人数、轮次与模型，队友按会话隔离。同包还带共享任务看板（`team_task` 工具，看板按会话各一块），设置里可单独关掉 |
 | `computer-use` 操作电脑桌面 | 关 | `computer-use` | 看屏幕可免审批；点击、输入、按键每次都要确认，动作留审计 |
 | `web-search` 联网搜索 | 开 | `web-search` | 提供 `web_search` 工具，经 Tavily / 博查 / Serper 检索网页并附来源 |
 | `approval-floor` 危险命令硬拦截 | 开 | `approval-floor` | 守卫链 order 5 的硬闸：灾难命令、命令黑名单、命令白名单、无人值守 |
@@ -164,7 +163,7 @@ export const myPlugin: Plugin.Object = {
 | `dsh-compat` dsh 插件兼容 | 关 | — | 挂载 dsh（DeepSeek Harness）外部插件：`logger` 服务、模块解析钩子、dsh 风格工具注册的形状适配 |
 | `ops` 文档与批量读取 | 关 | `ops` | 十三个工具：七个只读（`ops_read_pdf` / `ops_read_docx` / `ops_read_table` / `ops_read_files` / `ops_diff` / `ops_stat` / `ops_inspect_local_file`）+ 六个写类（`ops_write_file` / `ops_edit_file` / `ops_copy` / `ops_move` / `ops_remove` / `ops_replace`，都带 SHA-256 修订锚；整写、多处替换、整目录替换三件另有 `dryRun`）。写类不自己判沙箱档位，授权统一走守卫链与审批卡；审批卡会按工具语义推演「将做的改动」（整写、多处替换、单文件替换、复制/移动的目标、整篇删除），目录替换退回参数摘要。内核是 dsh-ops 的 Rust worker（独立进程、JSON 进 JSON 出），装一次 `dsh-ops` 就有；没装就一个工具都不注册，设置页写清找过哪些位置 |
 
-默认开关按一条规矩定：会拉起外部进程、连外部服务器、动用户的桌面或改写每轮请求工具面的那几档默认关，共 13 个：`subagent`、`team`、`computer-use`、`lifecycle-hooks`、`mcp`、`tool-search`、`schedule`、`lsp`、`browser`、`dock-browser`、`self-improve`、`dsh-compat`、`ops`；提升安全与本地便利、且不配就完全无副作用的那几档默认开。文件与命令围栏是唯一的例外档：它默认开——不配就没有外部进程与外部服务器，开着的收益（越界写入当场拒）大于打扰，且默认档 workspace-write 不挡正常的工作区读写。
+默认开关按一条规矩定：会拉起外部进程、连外部服务器、动用户的桌面或改写每轮请求工具面的那几档默认关，共 12 个：`subagent`（含任务板）、`computer-use`、`lifecycle-hooks`、`mcp`、`tool-search`、`schedule`、`lsp`、`browser`、`dock-browser`、`self-improve`、`dsh-compat`、`ops`；提升安全与本地便利、且不配就完全无副作用的那几档默认开。文件与命令围栏是唯一的例外档：它默认开——不配就没有外部进程与外部服务器，开着的收益（越界写入当场拒）大于打扰，且默认档 workspace-write 不挡正常的工作区读写。
 
 行清单在 `src/packages/<id>/cordis.patch.yml`，包元数据（标题、描述、默认关、设置分区、行序）在同一个目录的 `package.json` 的 `pneuma` 段。新增一个功能包的三步写在 [plugin-development.md §3.4](plugin-development.md)。
 
@@ -469,7 +468,7 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 | `.trash/<工作区名>/` | 会话库（「永久删除」） | 其实是回收站：按 mtime 超过 30 天才扫掉（`src/core/session.ts:1151`、`:1431`），删错了还能手工捞回来 |
 | `sessions/.teammates/<cwd>/<id>.jsonl` | 子智能体插件 | 队友运行记录。目录以点开头 ⇒ 会话列表扫不到 |
 | `team/roster.json` | 子智能体插件 | 队友名册（收工的队友靠它出现在侧栏） |
-| `team/boards/<会话 id>.json` | 共享任务板插件 | 共享任务板，每个会话各一块（0.6.16 及以前是全局的 `team/board.json`，不再读写） |
+| `team/boards/<会话 id>.json` | 子智能体插件（任务板） | 共享任务板，每个会话各一块（0.6.16 及以前是全局的 `team/board.json`，不再读写） |
 | `team/inbox/<队友名>.jsonl` | 子智能体插件 | 给队友的留言（追加写，队友在回合边界读） |
 | `agents/<角色名>.md` | 用户 / 子智能体设置分区 | 队友角色文件，一个角色一个文件 |
 | `presets/` | 预设（模式）插件（`src/packages/config-core/presets.ts:41`） | 自定义模式，一份 `<名字>.md`（frontmatter + 提示词正文）；出厂四个模式首次启动会各写一份到这里，之后读盘，用户改过的不覆盖 |
