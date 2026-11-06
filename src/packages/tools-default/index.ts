@@ -10,6 +10,7 @@
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import { createBashTool, BASH_DEFAULT_BUDGETS, createJobTools, createTerminalTool, JobTable, stopAllBackgroundChildren, stopBackgroundChild, TerminalTable, type BashBudgets } from './bash.js'
+import { createPersistentShellTool, PERSISTENT_TIMEOUT_MS, PersistentShellTable } from './persistent-shell.js'
 import { createReadTool, editTool, READ_DEFAULT_LINE_LIMIT, writeTool } from '@pneuma/runtime/core/tools/fs-tools.js'
 import { readImageTool } from './image-tool.js'
 import { globTool, grepTool } from './search-tools.js'
@@ -23,6 +24,7 @@ import {
   parseShellChoice,
   readShellChoice,
   shellChoiceLabel,
+  shellLabel,
   SHELL_CHOICES,
 } from '@pneuma/runtime/core/terminal-env.js'
 import { hostT } from '@pneuma/runtime/core/i18n.js'
@@ -117,6 +119,10 @@ export const toolsDefaultPlugin: Plugin.Object = {
     // onExit 与作业的完成通知同一条理由：进程自己退出也要把面板那一行撤掉。
     const terminals = new TerminalTable({ onExit: () => ctx.emit('dsc/changed') })
 
+    // ---- 持久 shell 表（极简档的 `shell` 工具）----
+    // 每个会话一条常驻 shell，状态跨调用保留；进程同样进后台登记表，收摊时一并收掉。
+    const shells = new PersistentShellTable()
+
     // ---- 状态面板「终端」区的数据面与停止动作 ----
     /** 一行标题：取首行、压到 max 字（面板行只有一行）。 */
     const workTitle = (text: string, max: number): string => {
@@ -204,6 +210,10 @@ export const toolsDefaultPlugin: Plugin.Object = {
         ctx.effect(() => ctx.tools.register(createBashTool(budgets, table)), 'tools-default: tools.register'),
         ...createJobTools(table).map((entry) => ctx.effect(() => ctx.tools.register(entry), 'tools-default: tools.register #2')),
         ctx.effect(() => ctx.tools.register(createTerminalTool(terminals)), 'tools-default: tools.register #3'),
+        ctx.effect(
+          () => ctx.tools.register(createPersistentShellTool(shells, { timeoutMs: PERSISTENT_TIMEOUT_MS }, shellLabel(readShellChoice()))),
+          'tools-default: tools.register #10',
+        ),
         ctx.effect(() => ctx.tools.register(createReadTool(budgets.readLineLimit)), 'tools-default: tools.register #4'),
         ctx.effect(() => ctx.tools.register(readImageTool), 'tools-default: tools.register #5'),
         ctx.effect(() => ctx.tools.register(writeTool), 'tools-default: tools.register #6'),
@@ -377,6 +387,7 @@ export const toolsDefaultPlugin: Plugin.Object = {
       // T15：内核收摊收掉还在跑的后台作业（跨会话存活的另一面是进程得有人收）
       for (const timer of noticeTimers.values()) clearTimeout(timer)
       noticeTimers.clear()
+      shells.closeAll()
       stopAllBackgroundChildren()
       clearTimeout(primeTimer)
       offSection()
