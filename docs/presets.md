@@ -12,6 +12,7 @@ name: review                    # 模式标识，小写字母数字连字符（�
 label: 代码审查模式               # 界面上的显示名（缺省取 name）
 description: 只读地找漏洞与测试缺口，每条结论给「文件名:行号」
 tools: read, glob, grep, bash   # 工具白名单（不写 = 全量；写 none = 一个工具都不给）
+deny: plugin_manager            # 工具黑名单（可选：列出来的工具这个模式看不见）
 drop: tool-rules                # 要去掉的骨架提示段（可选，名单见下）
 ---
 
@@ -25,8 +26,8 @@ drop: tool-rules                # 要去掉的骨架提示段（可选，名单�
 | 标识 | 界面名 | 工具 | 一句话 |
 |---|---|---|---|
 | `standard` | 标准模式 | 全量 | 处理代码、文件和资料；提示词与出厂完全一致（默认档） |
-| `ptc` | PTC 模式 | 全量 + `run_code` | 在标准能力之上加 `run_code`：批量任务写一段脚本调工具，在代码里筛选汇总（原生工具照旧可用） |
-| `minimal` | 极简模式 | `bash` + `read_image` | 只给一条 shell（Windows 上是 PowerShell）与读图；`replace: true`，系统提示里只有这一段正文 + AGENTS.md，用来对照模型的基础表现 |
+| `ptc` | PTC 模式 | 全量 − `plugin_manager` + `run_code` | 在标准能力之上加 `run_code`：批量任务写一段脚本调工具，在代码里筛选汇总（原生工具照旧可用） |
+| `minimal` | 极简模式 | `shell` + `read_image` | 只给一条常驻 shell（Windows 上是 PowerShell，状态跨调用保留，对齐 dsh 的 persistent-pwsh）与读图；`replace: true`，系统提示里只有这一段正文（AGENTS.md 也不进），用来对照模型的基础表现 |
 | `maker` | 创造模式 | 全量 + `runtime_api` | 在标准能力之上加运行时只读查询：给自己加模式、给 dsc 写插件 |
 
 四个档的顺序跟 dsh 的 preset order 一致（standard → ptc → minimal → maker，`cordis` 是 `maker` 的别名），自定义档排在后面。
@@ -49,9 +50,17 @@ drop: tool-rules                # 要去掉的骨架提示段（可选，名单�
 前者是产品约定，后者是事实，都不该被一个模式抹掉。
 
 要去掉 `identity` 和**全部插件贡献段**（沙箱说明、协作模式条款、技能目录…），用
-`replace: true`：正文替换整个系统提示，只留这段正文与 AGENTS.md 注入。极简档走的就是这条路
-（对齐 dsh `minimal` 的 `complete: true` + `includeRuntimeContext: false`）。
+`replace: true`：正文替换整个系统提示，只留这段正文——**AGENTS.md 也不进**。极简档走的就是这条路
+（对齐 dsh `minimal` 的 `complete: true` + `includeRuntimeContext: false`，它连 agent-instructions 插件都没挂）。
 界面表单还没有这个开关，手写 frontmatter 即可；表单保存时会沿用文件里原来的值，不会把它抹掉。
+
+## 工具黑名单 deny
+
+`tools` 是白名单，`deny` 是它对面的一半：全量减去 deny 里的名字。为什么不都写成白名单——
+PTC 档的真实口径是「全量减去插件管理」，而全量清单随插件增减一直在变，写死一份白名单第二天就漏工具。
+
+`deny` 判在白名单之前，而且盖得住白名单：显式写进 `tools` 也照样被它挡掉。
+它只做减法，不放宽任何东西——审批灾难地板、命令策略、路径策略都不看它。
 
 ## 四条硬规矩（改代码时别破）
 
@@ -94,7 +103,9 @@ drop: tool-rules                # 要去掉的骨架提示段（可选，名单�
 
 ## PTC 模式的诚实说明
 
-PTC 档对齐 dsh 的做法：**原生工具全部保留**，只是在标准能力之上多给一个 `run_code`。
+PTC 档对齐 dsh 的做法：**原生工具全部保留**，只是在标准能力之上多给一个 `run_code`，
+并用 `deny: plugin_manager` 关掉插件管理工具（dsh 的 `ptc.patch.yml` 里 `tool-plugin-manager` 也是 `disabled`）。
+正文为空——用法全在 `run_code` 的工具描述里，与 dsh 一样不额外写提示词。
 （2026-10-28 之前是「只有 `run_code`」，与 dsh 的 `ptc.patch.yml` 不一致。）
 
 `run_code` 里的脚本跑在**同进程的 `node:vm` 上下文**里：拿不到 `process` / `require` / 文件系统，

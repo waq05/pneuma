@@ -74,6 +74,8 @@ export interface Preset {
   description: string
   /** 工具白名单；null = 全量，空数组 = 一个工具都不给。 */
   tools: string[] | null
+  /** 工具黑名单：白名单之外的另一半（全量减去它）。写在这里的工具在任何白名单下都不露面。 */
+  deny: string[]
   /** 要去掉的骨架提示段 id（只认 {@link DROPPABLE_SECTIONS} 里的）。 */
   drop: string[]
   /**
@@ -129,14 +131,11 @@ description: ${BUILTIN_PRESET_DESCRIPTIONS[STANDARD_PRESET]}
 name: ${MINIMAL_PRESET}
 label: ${BUILTIN_PRESET_LABELS[MINIMAL_PRESET]}
 description: ${BUILTIN_PRESET_DESCRIPTIONS[MINIMAL_PRESET]}
-tools: bash, read_image
+tools: shell, read_image
 replace: true
 ---
 
-你是一个乐于助人的软件工程师助手。手上的工具只有一条 shell（这台机器上是 PowerShell）与 read_image。
-读文件、找文件、改文件、跑测试、构建、git 全部用 shell 命令完成；只看图片时用 read_image。
-一条命令只做一件事；输出会被原样收进上下文，先用 Select-Object -First 之类的办法收窄。
-最后用一小段话交回：做了什么、结果是什么、哪里还没查清。
+You are a helpful software engineer assistant.
 `,
   [MAKER_PRESET]: `---
 name: ${MAKER_PRESET}
@@ -147,8 +146,9 @@ description: ${BUILTIN_PRESET_DESCRIPTIONS[MAKER_PRESET]}
 你可以给自己加模式，也可以写插件。两件事都有现成的落点：
 
 加一个模式：在 ~/.dsc/presets/ 下新建 <名字>.md（小写字母数字连字符）。frontmatter 认
-name / label / description / tools / drop 五个键，正文就是追加进系统提示的那段话；
-tools 是工具白名单（不写 = 全量），drop 只能去掉行为规范那几段（完整名单见 docs/presets.md）。
+name / label / description / tools / deny / drop 六个键，正文就是追加进系统提示的那段话；
+tools 是工具白名单（不写 = 全量），deny 是黑名单（列出来的工具这个模式看不见），
+drop 只能去掉行为规范那几段（完整名单见 docs/presets.md）。
 写完让用户切过去试：/preset <名字>，或者在设置 → 模式里点一下。
 
 写一个插件：先读 docs/dsh-plugin-porting.md 与 examples/plugins/ 里的例子，再用
@@ -163,26 +163,8 @@ plugin_manager 装进 ~/.dsc/plugins/。插件能拿到哪些服务、扩展点�
 name: ${PTC_PRESET}
 label: ${BUILTIN_PRESET_LABELS[PTC_PRESET]}
 description: ${BUILTIN_PRESET_DESCRIPTIONS[PTC_PRESET]}
+deny: plugin_manager
 ---
-
-这一轮你多了 run_code：写一段 JavaScript，在程序里批量调工具（sdk.grep / sdk.read / sdk.bash…），
-在代码里筛选、去重、统计、汇总，只把结论 return 回上下文。原生工具照旧可用，适合单件小事。
-
-什么时候用：一次要看好几个文件、要跨多个结果做统计/去重、或者输出会很长时，用 run_code
-收窄；只读一两个文件、改一处代码，直接用原生工具更快。
-
-怎么写：run_code 的 code 参数是一段 JavaScript（顶层可以直接 await），
-里面用 sdk 调工具——每个工具是一个函数，参数就是它原来的参数，返回它原来的输出文本：
-
-    const found = await sdk.grep({ pattern: 'TODO', path: 'src' })
-    const hits = found.split('\\n').filter((line) => line.includes('core'))
-    return hits.slice(0, 20).join('\\n')
-
-为什么这么做：工具的原始输出先进你的程序，你在程序里筛选、去重、统计、汇总，
-只把结论交回上下文；批量任务因此不会被几十条工具输出撑爆。
-
-每次 sdk.xxx 调用都照旧过审批与安全钩子，也照旧记进会话记录里。
-直接 return 的就是要交回的内容——太长会被截断，自己先压到一两百行以内。
 `,
 }
 
@@ -274,6 +256,7 @@ const FALLBACK_PRESET: Preset = {
   label: '标准模式',
   description: '',
   tools: null,
+  deny: [],
   drop: [],
   replace: false,
   prompt: '',
@@ -301,6 +284,7 @@ function parsePreset(text: string, base: string, file: string, builtin: boolean)
       label: base,
       description: '',
       tools: null,
+      deny: [],
       drop: [],
       replace: false,
       prompt: '',
@@ -318,6 +302,9 @@ function parsePreset(text: string, base: string, file: string, builtin: boolean)
   }
 
   // drop 只认名单里的段：写错的当场说清，别让用户对着「提示词没变」猜半天
+  // deny 是工具名清单：只收「像工具名」的（小写字母数字下划线），写错的当场忽略——
+  // 黑名单写错不该让模式加载失败，但也不该让一个带空格的怪名字混进过滤表。
+  const deny = readList(doc.deny).filter((name) => /^[a-zA-Z0-9_-]+$/.test(name))
   const rawDrop = readList(doc.drop)
   const unknownDrop = rawDrop.filter((id) => !DROPPABLE_SECTIONS.includes(id))
   if (unknownDrop.length > 0) {
@@ -332,6 +319,7 @@ function parsePreset(text: string, base: string, file: string, builtin: boolean)
     label,
     description: typeof doc.description === 'string' ? doc.description.trim() : '',
     tools,
+    deny,
     drop,
     replace: doc.replace === true,
     prompt: body.trim(),
@@ -358,6 +346,7 @@ export function listPresets(): Preset[] {
         name: basename(entry, '.md'),
         label: `${preset.label}（未生效）`,
         tools: [],
+        deny: [],
         drop: [],
         replace: false,
         prompt: '',
@@ -394,11 +383,13 @@ function presetFileText(draft: {
   description: string
   tools: string[] | null
   drop: string[]
+  deny?: string[]
   replace?: boolean
   prompt: string
 }): string {
   const front: Record<string, unknown> = { name: draft.name, label: draft.label, description: draft.description }
   if (draft.tools !== null) front.tools = draft.tools.length === 0 ? 'none' : draft.tools.join(', ')
+  if (draft.deny !== undefined && draft.deny.length > 0) front.deny = draft.deny.join(', ')
   if (draft.drop.length > 0) front.drop = draft.drop.join(', ')
   if (draft.replace === true) front.replace = true
   return `---\n${YAML.stringify(front).trimEnd()}\n---\n\n${draft.prompt.trim()}\n`
@@ -418,6 +409,8 @@ export function writePreset(draft: {
   tools: string[] | null
   drop: string[]
   /** 省略 = 沿用旧文件里的值（界面表单还没有这一项，保存不该把它抹掉）。 */
+  deny?: string[]
+  /** 省略 = 沿用旧文件里的值（界面表单还没有这一项，保存不该把它抹掉）。 */
   replace?: boolean
   prompt: string
 }): Preset {
@@ -426,7 +419,10 @@ export function writePreset(draft: {
     throw new Error(`模式名「${name}」不合法：只能用小写字母、数字、连字符，且不能以连字符开头`)
   }
   const oldFile = draft.oldName === null ? join(DSC_PRESETS_DIR, `${name}.md`) : join(DSC_PRESETS_DIR, `${draft.oldName}.md`)
-  const replace = draft.replace ?? (existsSync(oldFile) ? readPreset(oldFile)?.replace === true : false)
+  const previous = existsSync(oldFile) ? readPreset(oldFile) : null
+  const replace = draft.replace ?? previous?.replace === true
+  // deny 与 replace 同一条规矩：表单还没暴露它，保存时沿用旧文件里的值，别把用户手写的黑名单抹掉。
+  const deny = draft.deny ?? previous?.deny ?? []
   const drop = draft.drop.filter((id) => DROPPABLE_SECTIONS.includes(id))
   const label = draft.label.trim() === '' ? name : draft.label.trim()
   mkdirSync(DSC_PRESETS_DIR, { recursive: true })
@@ -434,7 +430,7 @@ export function writePreset(draft: {
   if (draft.oldName !== null && draft.oldName !== name) {
     if (existsSync(oldFile) && !existsSync(file)) rmSync(oldFile, { force: true })
   }
-  writeFileSync(file, presetFileText({ ...draft, name, label, drop, replace }), 'utf8')
+  writeFileSync(file, presetFileText({ ...draft, name, label, drop, deny, replace }), 'utf8')
   const written = readPreset(file)
   if (written === null) throw new Error(`模式 ${name} 写下去了却读不回来，检查一下 ${file}`)
   return written

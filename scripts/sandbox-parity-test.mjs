@@ -112,15 +112,28 @@ console.log('[4] 模式四档对齐 dsh')
 
   const byName = Object.fromEntries(list.map((item) => [item.name, item]))
   check('标准档是全量工具', byName.standard.tools === null)
-  check('PTC 档是全量工具 + run_code（不再只有 run_code）', byName.ptc.tools === null && byName.ptc.prompt.includes('run_code'), JSON.stringify(byName.ptc.tools))
-  check('极简档只有 shell 与 read_image', JSON.stringify(byName.minimal.tools) === JSON.stringify(['bash', 'read_image']), JSON.stringify(byName.minimal.tools))
+  // 2026-11-06 按 dsh 的 ptc.patch.yml 对齐：正文为空（用法在 run_code 的工具描述里），
+  // 并用 deny 关掉插件管理工具——dsh 那一档也是 `tool-plugin-manager: disabled`。
+  check('PTC 档是全量工具 + run_code + 禁插件管理', byName.ptc.tools === null && byName.ptc.deny.includes('plugin_manager'), JSON.stringify(byName.ptc.deny))
+  check('PTC 档正文为空（与 dsh 一致：用法在工具描述里）', byName.ptc.prompt === '', JSON.stringify(byName.ptc.prompt))
+  // 2026-11-06：极简档从一次性 bash 换成持久 shell（对齐 dsh 的 persistent-pwsh：状态跨调用保留）。
+  check('极简档只有 shell 与 read_image', JSON.stringify(byName.minimal.tools) === JSON.stringify(['shell', 'read_image']), JSON.stringify(byName.minimal.tools))
   check('极简档是替换式人格', byName.minimal.replace === true)
-  check('极简档保留 AGENTS.md 注入（drop 里没有 instructions）', !byName.minimal.drop.includes('instructions'), JSON.stringify(byName.minimal.drop))
+  check('极简档只有一句人格（dsh 的 persona 同款）', byName.minimal.prompt === 'You are a helpful software engineer assistant.', JSON.stringify(byName.minimal.prompt))
+  // dsh 的 minimal 根本没挂 agent-instructions：AGENTS.md 也不进提示词。
+  // 这条钉骨架过滤器本身，而不只是「drop 里没写 instructions」。
+  const filterCode = strip(read('src/packages/presets/index.ts'))
+  check('替换式只留模式正文（AGENTS.md 不进）', filterCode.includes("if (preset.replace) return ids.filter((id) => id === 'preset:persona')"))
   check('标准档不替换人格', byName.standard.replace === false)
 
   const imageTools = await import(new URL('../lib/core/tools/image-tool.js', import.meta.url).href)
   check('read_image 工具存在且只挂极简档', imageTools.readImageTool.name === 'read_image' && JSON.stringify(imageTools.readImageTool.presets) === JSON.stringify(['minimal']))
   check('read_image 是只读风险', imageTools.readImageTool.risk === 'read')
+
+  const shellSrc = read('src/packages/tools-default/persistent-shell.ts')
+  check('持久 shell 只挂极简档', shellSrc.includes("presets: ['minimal']"))
+  check('持久 shell 用哨兵判定命令结束（哨兵字面量拆开拼）', shellSrc.includes("'__DS' + 'C_") && shellSrc.includes('Invoke-Expression'))
+  check('持久 shell 按块解码（GBK / UTF-8 自适应）', shellSrc.includes('isUtf8(chunk)') && shellSrc.includes("new TextDecoder('gbk')"))
 }
 
 console.log('[5] 权限预设：切当前会话 + 默认值只给新会话')

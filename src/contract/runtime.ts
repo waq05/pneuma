@@ -164,7 +164,13 @@ export interface PresetView {
   tools: string[] | null
   /** 要去掉的骨架提示段 id。 */
   drop: string[]
-  /** true = 正文替换整个系统提示（只留正文与 AGENTS.md 注入）。 */
+  /**
+   * 工具黑名单：列在这里的工具**不**进这个模式的工具目录（白名单之外的另一半）。
+   * 为什么要有它：白名单只能表达「只给这几件」，而 PTC 档的真实口径是「全量减去插件管理」——
+   * 全量清单会随插件增减而漂，写死一份白名单第二天就漏工具。
+   */
+  deny: string[]
+  /** true = 正文替换整个系统提示（只留正文；AGENTS.md 与插件贡献段都不进）。 */
   replace: boolean
   /** 正文 = 这个模式追加给模型的提示词（编辑表单要拿它当初始值）。 */
   prompt: string
@@ -211,6 +217,8 @@ export interface PresetDraft {
   /** 工具白名单；null = 全量。 */
   tools: string[] | null
   drop: string[]
+  /** 工具黑名单；省略 = 沿用旧文件里的值（表单还没暴露这一项）。 */
+  deny?: string[]
   /** 省略 = 沿用旧文件里的值（表单还没暴露这一项）。 */
   replace?: boolean
   /** 正文 = 这个模式追加给模型的提示词。 */

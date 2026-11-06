@@ -518,6 +518,7 @@ function toDraft(preset: PresetView): PresetDraft {
     label: preset.label,
     description: preset.description,
     tools: preset.tools === null ? null : [...preset.tools],
+    deny: [...preset.deny],
     drop: [...preset.drop],
     prompt: preset.prompt,
   }

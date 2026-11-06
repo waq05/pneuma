@@ -69,6 +69,7 @@ function toView(preset: Preset): PresetView {
         ? text('builtin.' + preset.name + '.description', preset.description)
         : preset.description,
     tools: preset.tools,
+    deny: preset.deny,
     drop: preset.drop,
     replace: preset.replace,
     prompt: preset.prompt,
@@ -198,11 +199,13 @@ export const presetsPlugin: Plugin.Object = {
     // 2. 骨架取舍：drop 里那几段整段不进提示词。
     // 只碰提示词文本——审批硬地板、命令策略、路径策略都在代码里，少几段叮嘱不等于放宽安全。
     ctx.effect(() => ctx.prompt.registerSkeletonFilter('preset', (ids, scope) => {
-      // 替换式模式（极简档）：只留模式自己的正文与 AGENTS.md 注入。插件贡献段
-      // （沙箱说明、协作模式条款、技能目录…）全部不进——参考实现的 minimal 就是这样，
-      // 它的 persona 是 complete + 不给运行时上下文。
+      // 替换式模式（极简档）：只留模式自己的正文——AGENTS.md 与插件贡献段
+      // （沙箱说明、协作模式条款、技能目录…）全部不进。
+      // 2026-11-06 按 dsh 的 minimal 对齐：它的 persona 是 complete + includeRuntimeContext:false，
+      // 而且根本没挂 agent-instructions 插件——项目说明书也不进提示词。以前这里留了 instructions，
+      // 结果极简档还能读到整套 AGENTS.md，「只有一条 shell」的对照前提被悄悄破了。
       const preset = specOf(scope)
-      if (preset.replace) return ids.filter((id) => id === 'preset:persona' || id === 'instructions')
+      if (preset.replace) return ids.filter((id) => id === 'preset:persona')
       const drop = preset.drop
       return drop.length === 0 ? ids : ids.filter((id) => !drop.includes(id))
     }), 'presets: prompt.registerSkeletonFilter')
@@ -210,10 +213,15 @@ export const presetsPlugin: Plugin.Object = {
     // 3. 工具目录投影：白名单取交集；带 presets 标签的工具只在它列出的模式里露面。
     // 直接写进白名单的工具名也算「露面」（用户的显式意图优先于标签）。
     ctx.effect(() => ctx.tools.project('preset', (tools, scope) => {
-      const allowed = specOf(scope).tools
+      const spec = specOf(scope)
+      const allowed = spec.tools
+      const deny = spec.deny
       // 标签比对认**这个会话**的档，不是「你此刻在看的那一档」
       const tag = presetIdOf(scope)
       return tools.filter((entry) => {
+        // 黑名单先判，而且盖得住白名单：它是这个模式的硬边界（PTC 档的插件管理工具就靠它关掉）。
+        // 为什么不用白名单写死全量：全量清单随插件增减漂，第二天就漏工具。
+        if (deny.includes(entry.name)) return false
         const explicit = allowed !== null && allowed.includes(entry.name)
         if (entry.presets !== undefined && !entry.presets.includes(tag) && !explicit) return false
         return allowed === null || explicit

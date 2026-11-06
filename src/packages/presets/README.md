@@ -5,8 +5,8 @@
 ## Model Experience（模型体验）
 
 - 不注册工具；注册一段系统提示，order 15，排在做事方式（10）之后、工具规范（20）之前，正文就是这个模式的提示词（index.ts:166-168）。
-- 骨架取舍有两档手段：按 `drop` 名单整段去掉提示词（名单只有 behavior / tool-rules / instructions / skills 四段）；极简档用 `replace: true` 只留模式正文与 AGENTS.md 注入，插件贡献段全不进（packages/config-core/presets.ts:55-63、index.ts:172-180）。
-- 工具目录投影 `ctx.tools.project`：白名单只能从全量里取子集，带 `presets` 标签的工具只在列出的档里露面；极简档因此只剩 bash 与 read_image（index.ts:184-193、packages/config-core/presets.ts:107-119）。
+- 骨架取舍有两档手段：按 `drop` 名单整段去掉提示词（名单只有 behavior / tool-rules / instructions / skills 四段）；极简档用 `replace: true` 只留模式正文（AGENTS.md 也不进，对齐 dsh 的 minimal），插件贡献段全不进（packages/config-core/presets.ts:55-63、index.ts:172-180）。
+- 工具目录投影 `ctx.tools.project`：白名单（`tools`）从全量里取子集、黑名单（`deny`）从全量里减法且盖得住白名单，带 `presets` 标签的工具只在列出的档里露面；极简档因此只剩 bash 与 read_image（index.ts:184-193、packages/config-core/presets.ts:107-119）。
 - 出厂四档：标准、极简、创造、PTC；第一次用到时写出文件，已存在的一律不覆盖（packages/config-core/presets.ts:99-165、172-186）。
 - 命令 `/preset <名字>` 支持中文别名；接了浮层的端开选择器，没接的端回一份清单（index.ts:208-233）。
 - 停用之后，模型侧少掉模式正文与工具收窄：所有会话都回到全量工具与出厂提示词（index.ts:52-55）。
