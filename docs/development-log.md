@@ -14505,3 +14505,20 @@ dsh 的 persistent-pwsh 走 PTY：有真正的提示符事件、能跑全屏程�
   补一句「2026-11-06 起并进 `@pneuma/hooks`，配置键不变，不再是一个独立开关」。
 - 仓库根那个 `%SystemDrive%\` 目录删了：某次探针把环境变量当字面量拼路径，在仓库里造了一份 Windows 缓存
   副本（4 个文件、约 1 MB）。
+
+### 9. 验收
+
+| 项 | 结果 |
+| --- | --- |
+| `pnpm run typecheck` / `pnpm -C ui-shell typecheck` | 通过 |
+| `pnpm run build` | 74 个功能包 74 行 / 12 库包 |
+| `node scripts/package-tests.mjs` | 86 包 86 用例 464 断言，0 失败 |
+| `node scripts/plugin-standard-check.mjs` | 86 包，八项硬项 0 问题 |
+| `node scripts/plugin-inventory-check.mjs` | 73 插件 / 23 分区 / 21 界面单元，一致 |
+| `pnpm run check:plugin`（含换包 e2e） | 通过，换包 e2e 17/17 |
+| `pnpm run check:ui` | 57/57（首跑 56/57，重跑全绿：那一条时序敏感，不是本批改出来的） |
+| `pnpm run check:style` | 1235 个文件通过 |
+| `pnpm run check:core` | **102/102**，784.7 s |
+| `readme-test` / `ui-locale-test` / `plugin-locale-test` / `plugin-model-test` | 26/26 / 2835 键 / 38/38 / 121 |
+| 真机插件中心（七档） | 自定义 1、官方可开关 13、实验 3、界面单元 21、运行内核 36；截图 `desktop/shots/plugin-center.png` |
+| 打包件冒烟（`desktop/dist/win-unpacked/Pneuma.exe`） | `rendered=true`、有输入框与侧栏，主题 claude，正文 406 字 |
