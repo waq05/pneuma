@@ -24,6 +24,13 @@
  * 与旧桌面端的 `SkillsView` 同构），设置里再摆一份开关是同一个功能的第二个入口（用户要求去掉）。
  * 宿主那份分区留着有据——TUI 的设置浮层与冻结的旧桌面版还在消费同一张分区表。
  *
+ * ## 并进别的页的分区（{@link EmbeddedSection} 与分区的 `parent`）
+ *
+ * 分区声明了 `parent` 就**不单独占导航**：父页末尾按 order 把它整块画出来，自带标题与
+ * 说明，与父页原本的内容用一条发丝线隔开（「终端环境」并进「通用」就是这么来的）。
+ * 判定只认宿主给的声明和父分区是否存在，壳里不出现「终端环境」「tools-default」这类
+ * 具体名字；读、写、按钮动作仍按子分区自己的 id 走，所以与它单独成页逐项等价。
+ *
  * ## 壳自己加的一项：插件
  *
  * 旧桌面端把插件启停放在**独立的插件中心**（不在设置模态里）。壳里还没有插件中心，这一版
@@ -94,6 +101,40 @@ interface NavItem {
  * 旧桌面版消费的是同一张表，宿主少一个分区等于悄悄改了另外两个界面。
  */
 const HIDDEN_SECTIONS: ReadonlySet<string> = new Set(['skills'])
+
+/**
+ * 被并进父页的分区（父页 id → 子分区，按宿主给的 order 先后）。
+ *
+ * 只认两件事：分区声明了 `parent`、且那个父分区确实在清单里。父分区不存在（被停用或删掉）
+ * 就退回独立分区——不能因为一条悬空的 parent 把内容藏进一个不存在的页。成环（A→B→A）
+ * 同样退回独立分区：宁可多一格导航，也不让内容消失。
+ */
+function embeddedByPage(all: SettingsSectionView[]): Map<string, SettingsSectionView[]> {
+  const byId = new Map(all.map((section) => [section.id, section]))
+  const pages = new Map<string, SettingsSectionView[]>()
+  for (const section of all) {
+    if (section.parent === undefined) continue
+    const page = pageOf(byId, section.id)
+    if (page === section.id) continue
+    const list = pages.get(page)
+    if (list === undefined) pages.set(page, [section])
+    else list.push(section)
+  }
+  return pages
+}
+
+/** 沿 parent 链走到最上面那一页；链断了或成环就停住（停在谁身上就由谁显示）。 */
+function pageOf(byId: ReadonlyMap<string, SettingsSectionView>, id: string): string {
+  let current = byId.get(id)
+  const seen = new Set<string>()
+  while (current !== undefined && current.parent !== undefined && !seen.has(current.id)) {
+    seen.add(current.id)
+    const parent = byId.get(current.parent)
+    if (parent === undefined) break
+    current = parent
+  }
+  return current?.id ?? id
+}
 
 /**
  * 导航图标：照旧桌面端 `SettingsModal.sectionIcon` 的映射，没列的落回齿轮。
@@ -184,15 +225,20 @@ function SettingsPanel(): ReactNode {
     if (sections === null) loadSections()
   }, [sections, loadSections])
 
-  // 导航 = 宿主内置分区（按 order 排好序，宿主已排）**减去 HIDDEN_SECTIONS**。
+  const byId = useMemo(() => new Map((sections ?? []).map((section) => [section.id, section])), [sections])
+  // 并进父页的分区不再单独占导航：它们的内容由父页那一段整块画出来。
+  const pages = useMemo(() => embeddedByPage(sections ?? []), [sections])
+  // 导航 = 宿主内置分区（按 order 排好序，宿主已排）**减去 HIDDEN_SECTIONS**，
+  // 再减去「并进父页」的分区（parent 指的页不存在时它仍算独立分区，不会被藏掉）。
   // 插件启停不在这里：它是主区的独立整页（侧栏「插件」入口），旧界面同款——设置里不再有合成的插件分区。
   // 提到提前 return 之前：命令面板的动作登记也用这份清单，两处共用一个口径。
   const nav = useMemo<NavItem[]>(
     () =>
       (sections ?? [])
         .filter((section) => !HIDDEN_SECTIONS.has(section.id))
+        .filter((section) => pageOf(byId, section.id) === section.id)
         .map((section) => ({ id: section.id, title: section.title, subtitle: section.subtitle })),
-    [sections],
+    [byId, sections],
   )
 
   // 每个分区登记一条动作（动作表见 @dsc/ui 的 UiAction）：设置页的跳转目标由设置自己
@@ -218,8 +264,12 @@ function SettingsPanel(): ReactNode {
 
   if (!open) return null
 
-  const section = (sections ?? []).find((item) => item.id === active && !HIDDEN_SECTIONS.has(item.id))
-  const head = nav.find((item) => item.id === active)
+  // active 可能指到一个「并进父页」的分区（命令面板或侧栏事件带过来的历史 id）：
+  // 先按清单找到它，再沿 parent 链落到真正要画的那一页。
+  const picked = (sections ?? []).find((item) => item.id === active && !HIDDEN_SECTIONS.has(item.id))
+  const pageId = picked === undefined ? '' : pageOf(byId, picked.id)
+  const section = picked === undefined ? undefined : byId.get(pageId)
+  const head = nav.find((item) => item.id === pageId)
 
   return (
     <div
@@ -236,7 +286,7 @@ function SettingsPanel(): ReactNode {
             <button
               key={item.id}
               type="button"
-              className={`settings-nav-item${item.id === active ? ' on' : ''}`}
+              className={`settings-nav-item${item.id === pageId ? ' on' : ''}`}
               data-tip={item.subtitle ?? item.title}
               onClick={() => {
                 setActive(item.id)
@@ -272,7 +322,7 @@ function SettingsPanel(): ReactNode {
           {/* 模型分区要的是「两栏各自滚」（左端点列表 + 右详情，见 legacy/views.css 的
               模型分区那一段）：给正文加一个 fill 类，取消整页滚动、让子元素吃满高度。
               其余分区照旧从上往下堆、整页滚。 */}
-          <div className={`settings-body${active === 'models' ? ' settings-body-fill' : ''}`}>
+          <div className={`settings-body${pageId === 'models' ? ' settings-body-fill' : ''}`}>
             {active === '' ? (
               loadError === '' ? (
                 // 数据还没回来：画骨架而不是一行灰字（P0-2）。高度按真实分区估：
@@ -310,8 +360,17 @@ function SettingsPanel(): ReactNode {
                 key={section.id}
                 section={section}
                 onConfigFileChanged={loadSections}
-                // 外观只有渲染层消费，宿主没有这个分区——照旧桌面端追加在「通用」分区末尾。
-                extra={section.id === 'general' ? <AppearanceRows /> : undefined}
+                extra={
+                  <>
+                    {/* 外观只有渲染层消费，宿主没有这个分区——照旧桌面端追加在「通用」分区末尾。 */}
+                    {section.id === 'general' ? <AppearanceRows /> : null}
+                    {/* 并进这一页的分区：壳只认宿主声明，不认得具体是哪个插件。
+                        写回之后重取一次分区清单——检测结果这类由 fields() 现算的内容要跟着刷新。 */}
+                    {(pages.get(section.id) ?? []).map((child) => (
+                      <EmbeddedSection key={child.id} section={child} onChanged={loadSections} />
+                    ))}
+                  </>
+                }
               />
             )}
           </div>
@@ -332,10 +391,16 @@ function SettingsPanel(): ReactNode {
 function GenericFields({
   section,
   extra,
+  onChanged,
   onConfigFileChanged,
 }: {
   section: SettingsSectionView
   extra?: ReactNode
+  /**
+   * 保存或按钮动作成功后调一次。并进父页的分区用它重取分区清单：
+   * 「检测结果」这类内容住在 fields() 里（每次投影现算），不重取就还是旧的那一行。
+   */
+  onChanged?(): void
   /** 换过配置文件之后调一次：那一行的路径与「恢复默认」按钮都随活动配置变，得重取分区清单。 */
   onConfigFileChanged?(): void
 }): ReactNode {
@@ -390,6 +455,7 @@ function GenericFields({
         }
         if (result.notice !== undefined) setNote({ tone: 'ok', text: result.notice })
         reload()
+        onChanged?.()
       })
       .catch((error: unknown) => {
         setNote({ tone: 'error', text: t('settings.ui.saveFailed', { message: text(error) }) })
@@ -436,6 +502,7 @@ function GenericFields({
           if (data?.kind === 'update') setUpdateReady(data.version)
         }
         reload()
+        onChanged?.()
       })
       .catch((error: unknown) => {
         setNote({ tone: 'error', text: t('settings.ui.opFailed', { message: text(error) }) })
@@ -761,6 +828,39 @@ function GenericFields({
         />
       )}
       {extra}
+    </div>
+  )
+}
+
+/**
+ * 并进父页的一个分区（分区的 `parent` 指名）：小标题 + 一句说明 + 它自己的全部控件。
+ *
+ * 为什么要它：「终端环境」这类只有三两个控件的分区没必要单占一格左导航，但内容不能缩水。
+ * 这一块与它单独成页时逐项等价——读、写、按钮动作都按**子分区自己的 id** 走
+ * （getSectionValues / setSettingValue / runSettingAction），父页不必知道是哪个插件贡献的，
+ * 壳里也没有「终端环境」「tools-default」这类硬编分支。
+ */
+function EmbeddedSection({ section, onChanged }: { section: SettingsSectionView; onChanged(): void }): ReactNode {
+  return (
+    <div
+      className="settings-embedded"
+      data-section={section.id}
+      /* 一条发丝线把这一节与父页原本的内容分开。样式表归渲染层，这里就地用同一套主题变量。 */
+      style={{ borderTop: '1px solid var(--dsc-stroke-4)', marginTop: 12, paddingTop: 2 }}
+    >
+      <div className="settings-group-title">{section.title}</div>
+      {section.subtitle === undefined ? null : (
+        <p
+          style={{
+            color: 'var(--dsc-text-tertiary)',
+            fontSize: 'var(--dsc-fs-caption)',
+            margin: '0 2px 6px',
+          }}
+        >
+          {section.subtitle}
+        </p>
+      )}
+      <GenericFields section={section} onChanged={onChanged} />
     </div>
   )
 }

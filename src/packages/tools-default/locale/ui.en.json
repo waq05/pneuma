@@ -17,6 +17,7 @@
   "field.bashShell.help": "The bash tool and terminal sessions both start processes from here. Switching also changes the tool description the model sees, so it writes commands in the new terminal's syntax. Only shells actually detected on this machine are listed.",
   "field.bashShell.option.missing": "{shell} (not available now; falls back to the platform default)",
   "field.detected.label": "Detected",
+  "field.detected.currentValue": "Current: {shell}",
   "field.redetect.label": "Detect again",
   "field.redetect.help": "Click after installing PowerShell 7 / Git / WSL; no restart needed.",
   "save.unknownShell": "Unknown terminal: {shell}",

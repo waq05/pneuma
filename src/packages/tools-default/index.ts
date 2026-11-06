@@ -301,13 +301,19 @@ export const toolsDefaultPlugin: Plugin.Object = {
 
     // ---- 终端环境（2026-10-30）：探出这台机器上有哪几个 shell，让用户选默认执行器 ----
     //
-    // 为什么单开一个分区、而不是塞进「工具预算」：这一项改的不是预算而是**命令怎么写**。
+    // 为什么并进「通用」、而不是塞进「工具预算」：这一项改的不是预算而是**命令怎么写**。
     // 选了 Git Bash，模型该写 `ls -la`；选了 PowerShell，该写 `Get-ChildItem`。
-    // 界面上挨着预算摆，用户会以为是同一类旋钮。
+    // 挨着预算摆，用户会以为是同一类旋钮。
+    //
+    // 为什么不单开一页（2026-11-06 用户要求）：它只有三个控件，单独占一格左导航太重。
+    // 具名插槽走注册契约的 `parent`——这边声明「并进 general」，界面壳把它整块画在
+    // 「通用」页末尾（标题、说明、控件都是这份声明自己的，读写仍按 terminal-env 走），
+    // 壳里没有「如果是 tools-default 就画终端环境」这种硬编。
     const shellSection: SettingsSectionSpec = {
       id: 'terminal-env',
       title: t('section.shell.title'),
       subtitle: t('section.shell.subtitle'),
+      parent: 'general',
       order: 6,
       fields(): SettingsField[] {
         // 每次打开分区都现探一次（10 秒缓存）：刚装好 PowerShell 7 再打开就能看见。
@@ -321,9 +327,16 @@ export const toolsDefaultPlugin: Plugin.Object = {
         if (!options.some((option) => option.value === current)) {
           options.push({ value: current, label: t('field.bashShell.option.missing', { shell: current }) })
         }
-        const summary = detected
-          .map((item) => `${item.available ? '✓' : '✗'} ${item.label}`)
-          .join('　')
+        // 检测结果拆成两半，各说一件事，不互相复述：
+        //   左栏 help：这台机器上有哪几个 shell 可用（完整 ✓/✗ 列表，可折行）；
+        //   右栏 text：当前选的是哪一个（「当前：Git Bash 5.3.15」，不带 ✓、不重复标「当前」）。
+        // 为什么不全塞右侧：设置页的 .setting-info 是单行省略（max-width 60% + nowrap），
+        // 五个 shell 连版本号排一行必然被截掉一半——并进「通用」页后右侧更窄，更不能赌。
+        const markOf = (item: { available: boolean }): string => (item.available ? '✓' : '✗')
+        // 标记与名字之间用不换行空格：折行只发生在两个 shell 之间，不会把「✓」单独留在行尾。
+        const summary = detected.map((item) => `${markOf(item)}\u00A0${item.label}`).join('　')
+        const hit = detected.find((item) => item.value === current)
+        const currentText = t('field.detected.currentValue', { shell: hit === undefined ? current : hit.label })
         return [
           {
             type: 'select',
@@ -332,7 +345,7 @@ export const toolsDefaultPlugin: Plugin.Object = {
             options,
             help: t('field.bashShell.help'),
           },
-          { type: 'info', label: t('field.detected.label'), text: summary },
+          { type: 'info', label: t('field.detected.label'), text: currentText, help: summary },
           {
             type: 'button',
             action: 'redetect',

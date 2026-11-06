@@ -68,7 +68,9 @@ console.log('[1] 骨架：两栏卡 + 正文填满高度')
 {
   check('两栏卡在源码里（左栏 + 右栏 + 详情区）', models.includes('className="models-panes"') && models.includes('className="models-rail"') && models.includes('className="models-detail"'))
   check('页面根上带着 `.models` 与 `.models-page`（设置面板按分区挂它）', models.includes('className="settings-fields models models-page"'))
-  check('设置面板在 models 分区给正文加 fill 类（其余分区照旧整页滚）', panel.includes("active === 'models' ? ' settings-body-fill' : ''"))
+  // 只钉「按分区 id 判断 models 才加 fill 类」这件事，不钉变量名：这份状态从 active 改成
+  // pageId（分区并进父页后要解析真正的页）就是一次真实重构，把 active 写死会让它误报。
+  check('设置面板在 models 分区给正文加 fill 类（其余分区照旧整页滚）', /=== 'models' \? ' settings-body-fill' : ''/.test(panel))
   check('fill 类取消正文滚动、让子元素吃满高度', /\.settings-body-fill \{[^}]*overflow: hidden;/.test(views) && /\.settings-body-fill > \.models-page \{[^}]*flex: 1;[^}]*min-height: 0;/.test(views))
   check('左栏 + 右栏各滚各的（两处 overflow-y: auto）', /\.models-rail-list \{[^}]*overflow-y: auto;/.test(views) && /\.models-detail \{[^}]*overflow-y: auto;/.test(views))
   check('默认模型那一行在页面顶部（全局旋钮，与选中的端点无关）', models.indexOf('className="setting-row"') < models.indexOf('className="models-panes"'))

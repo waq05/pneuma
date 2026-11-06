@@ -105,6 +105,15 @@ export interface SettingsSectionView {
    */
   custom: boolean
   fields: SettingsField[]
+  /**
+   * 并进哪一页（2026-11-06 的「终端环境」）：声明了 parent 的分区**不单独占导航**，
+   * 父页在末尾按 order 把它整块画出来（自带标题与说明，与父页原本的内容分开）。
+   *
+   * 控件的读、写、按钮动作仍走**这个子分区自己的 id**（getSectionValues /
+   * setSettingValue / runSettingAction 都按它调），所以并在父页里与单独成页逐项等价。
+   * 只在父分区确实存在时才并入；父分区没了就当独立分区，内容不会凭空消失。
+   */
+  parent?: string
 }
 
 /** 分区控件的值表。 */

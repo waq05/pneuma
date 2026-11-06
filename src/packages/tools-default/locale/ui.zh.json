@@ -17,6 +17,7 @@
   "field.bashShell.help": "bash 工具与终端会话都从这里起进程。切了之后模型看到的工具说明也会跟着改，它会按新终端的语法写命令。只列出这台机器上真检测到的；没检测到的不会出现在选项里。",
   "field.bashShell.option.missing": "{shell}（当前不可用，实际回落平台默认）",
   "field.detected.label": "检测结果",
+  "field.detected.currentValue": "当前：{shell}",
   "field.redetect.label": "重新检测",
   "field.redetect.help": "刚装完 PowerShell 7 / Git / WSL 时点一下，不用重启。",
   "save.unknownShell": "不认识的终端：{shell}",

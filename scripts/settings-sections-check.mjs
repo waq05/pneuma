@@ -40,8 +40,18 @@ function check(label, condition, extra = '') {
   console.log(`FAIL  ${label}${extra === '' ? '' : ` → ${extra}`}`)
 }
 
-/** 分区投影的字段是 IPC 契约，多一个字段就等于改了协议——这里按名单核对。 */
+/**
+ * 分区投影的字段是 IPC 契约，多一个字段就等于改了协议——这里按名单核对。
+ *
+ * 2026-11-06：终端环境并进「通用」页，投影多了一个 `parent` 位。它**只在分区
+ * 声明了「并进哪一页」时出现**，其余分区的投影形状一位不多（不让所有分区白背一个键）。
+ */
 const VIEW_KEYS = 'builtin,custom,fields,groups,id,order,subtitle,title'
+const EMBEDDED_VIEW_KEYS = 'builtin,custom,fields,groups,id,order,parent,subtitle,title'
+
+/** 一个分区投影的键名落在允许的两张名单里（带 parent 的只可能是并进某页的那种）。 */
+const viewKeysOk = (section) =>
+  Object.keys(section).sort().join(',') === (section.parent === undefined ? VIEW_KEYS : EMBEDDED_VIEW_KEYS)
 
 const kernel = await createKernel({ config: {}, resumeSessionPath: undefined })
 const pluginsBefore = kernel.ui.listPlugins()
@@ -53,10 +63,37 @@ for (const id of ['general', 'models', 'skills', 'archive', 'usage', 'about']) {
   check(`${id} 仍在设置页（builtin=true）`, view !== undefined && view.builtin === true, JSON.stringify(view?.builtin))
 }
 check(
-  '分区投影的字段名一份不多（inSettings 不进 IPC）',
-  sectionsBefore.every((section) => Object.keys(section).sort().join(',') === VIEW_KEYS),
+  '分区投影的字段名一份不多（inSettings 不进 IPC；parent 只在并进某页时出现）',
+  sectionsBefore.every(viewKeysOk),
   JSON.stringify(Object.keys(sectionsBefore[0] ?? {}).sort().join(',')),
 )
+check(
+  '没有 parent 的分区，投影形状与改之前逐键一致（八个键，一个不多一个不少）',
+  sectionsBefore
+    .filter((section) => section.parent === undefined)
+    .every((section) => Object.keys(section).sort().join(',') === VIEW_KEYS),
+  JSON.stringify(
+    sectionsBefore
+      .filter((section) => section.parent === undefined)
+      .map((section) => `${section.id}:${Object.keys(section).sort().join(',')}`)
+      .filter((entry) => entry.split(':')[1] !== VIEW_KEYS),
+  ),
+)
+
+console.log('\n── 终端环境并进「通用」页（parent） ──')
+const terminalView = sectionsBefore.find((section) => section.id === 'terminal-env')
+const generalView = sectionsBefore.find((section) => section.id === 'general')
+check('终端环境仍注册着（内容没被删）', terminalView !== undefined, JSON.stringify(sectionsBefore.map((section) => section.id)))
+check('终端环境声明了 parent=general（不再单开一页）', terminalView?.parent === 'general', String(terminalView?.parent))
+check('「通用」自己不在任何页里', generalView?.parent === undefined, String(generalView?.parent))
+check(
+  '其余分区都没有 parent（没有第二个被误并的）',
+  sectionsBefore.every((section) => section.id === 'terminal-env' || section.parent === undefined),
+  JSON.stringify(sectionsBefore.filter((section) => section.parent !== undefined).map((section) => section.id)),
+)
+const visibleSections = sectionsBefore.filter((section) => section.parent === undefined).map((section) => section.id)
+check('按壳的规则算导航：没有 terminal-env', !visibleSections.includes('terminal-env'), JSON.stringify(visibleSections))
+check('按壳的规则算导航：general 还在', visibleSections.includes('general'))
 
 console.log('\n── 远程控制：插件代管，但要进设置页 ──')
 const beforeMount = kernel.ui.listPlugins()
@@ -143,8 +180,8 @@ check(
   `${pluginsBefore.length} → ${kernel.ui.listPlugins().length}`,
 )
 check(
-  '新注册的分区投影同样只有那八个字段',
-  withProbes.every((section) => Object.keys(section).sort().join(',') === VIEW_KEYS),
+  '新注册的分区投影仍只有原来的字段（没声明 parent 就不多键）',
+  withProbes.every(viewKeysOk),
   JSON.stringify(Object.keys(declared ?? {}).sort().join(',')),
 )
 check(

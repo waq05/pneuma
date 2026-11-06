@@ -551,6 +551,9 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
             builtin: section.inSettings === true || builtinIds.has(section.id),
             custom: section.custom === true,
             fields: section.fields(),
+            // 并进父页的分区（终端环境）：只在声明了 parent 时才多这一位，其余分区的
+            // 投影形状不变（界面通道的字段表是按名单核对的，不能给所有分区无谓加键）。
+            ...(section.parent === undefined ? {} : { parent: section.parent }),
           }))
       },
       async values(id) {
