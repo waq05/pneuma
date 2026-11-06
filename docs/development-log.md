@@ -14404,3 +14404,11 @@ dsh 的 persistent-pwsh 走 PTY：有真正的提示符事件、能跑全屏程�
 `instructionsText` 从 `session-core/prompt.ts` 导出（原来私有），审批层直接复用，不另写一份「去哪找 AGENTS.md」的规则。
 
 **验收**：`approval-review-fallback-test` 37 条全过（新增 9 条：项目规则、工具定义、子代理降级、failClosed）；包内测试 8/8；`async-inbox` / `resident-agents` / `permission-presets` 全过；`typecheck` 与 `build` 通过。
+
+### 2026-11-06 补：对齐最后两处结构差异（schema 记忆、外层 run_code 不审）
+
+**工具定义的会话内记忆**：新增 `schemaMemory`（WeakMap<会话, Map<工具名, 文本>>）。工具定义第一次算出来就固定，之后同一会话的每次评审复用同一份文本——这样后一次评审的消息是前一次的超集，插件热更新改了工具描述也不会把整段前缀缓存打断。dsh 的 `ShownSchemas` 是同一思路（它按 mode + scoped call key 记，dsc 按工具名记，粒度更粗但够用）。
+
+**外层 run_code 不再单独审**：`decide()` 在沙箱边界之后加了一层判断（第 4.5 层）——`run_code` 直接放行，不过判官、不弹卡。依据是它跑在 vm 里，拿不到 process / require / 文件系统，唯一出口是 sdk；脚本里每一次真实工具调用都在 PTC 里过 `guards.gate`（`ptc/index.ts:249-260`），该问的卡一张不少。在这里再判一次，判官只能看到整段脚本源码，看不出实际效果，还平白多付一次请求。边界保留三条：`readonly` 仍拒、沙箱越界（`fenced`）仍走原路、模型在参数里请求升权（`escalation`）仍弹卡。
+
+**验收**：`approval-review-fallback-test` 40 条全过（新增「auto-edit 下 run_code 直接放行」「没有调用判官」「仅查看仍拒」三条）；包内 8/8；`ptc-changes` / `sandbox-parity` / `batch3` / `escalation-scope` / `floor-shell-and-budget` 全过；`typecheck` 与 `build` 通过。

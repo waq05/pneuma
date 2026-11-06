@@ -303,6 +303,17 @@ interface ReviewEntry {
 
 /** 一次复核最多带多少条历史：再长就只留最近的一截（前缀缓存也因此保持有界）。 */
 const REVIEW_MAX_ENTRIES = 60
+/** 沙箱外层的 run_code：脚本本身没有 IO 出口，审它等于审一段看不懂的源码（对齐 dsh）。 */
+const RUN_CODE_NAME = 'run_code'
+
+/**
+ * 每个会话已经展示过的工具定义文本（会话对象 → 工具名 → 文本）。
+ *
+ * 为什么要记：判官的消息要「一次评审是上一次的超集」才吃得到前缀缓存。工具定义如果
+ * 每次都从注册表现算，插件热更新改了描述，前面整段历史就跟着变，缓存全断。第一眼
+ * 算出来的那份固定下来，之后再评审都用它（dsh 的 `ShownSchemas` 是同一思路）。
+ */
+const schemaMemory = new WeakMap<object, Map<string, string>>()
 /** 工具定义的文本上限：描述 + 参数 schema 给判官看，不必整份塞进去。 */
 const REVIEW_SCHEMA_CHARS = 2000
 /** 项目规则的文本上限：判官只需要知道「这个仓库有什么约定」。 */
@@ -430,7 +441,7 @@ function projectRulesOf(cwd: string): string {
 function buildReviewHistory(
   session: Session,
   request: ApprovalRequest,
-  context: { tools: readonly ToolEntry[]; cwd: string; childAgent: boolean },
+  context: { cwd: string; childAgent: boolean; schemaOf: (name: string) => string | null },
 ): ReviewEntry[] {
   const entries: ReviewEntry[] = []
 
@@ -438,20 +449,14 @@ function buildReviewHistory(
   const rules = projectRulesOf(context.cwd)
   if (rules !== '') entries.push({ role: 'constraint', kind: 'project-rules', text: rules })
 
-  const schemas = new Map(context.tools.map((tool) => [tool.name, tool]))
   const emittedSchemas = new Set<string>()
   /** 首次用到某个工具之前放一条定义：判官才看得懂参数各字段是什么意思。 */
   const pushSchema = (name: string): void => {
     if (emittedSchemas.has(name)) return
-    const tool = schemas.get(name)
-    if (tool === undefined) return
+    const text = context.schemaOf(name)
+    if (text === null) return
     emittedSchemas.add(name)
-    entries.push({
-      role: 'fact',
-      kind: 'tool-schema',
-      name,
-      text: clipReviewText(`${tool.description}\n参数：${JSON.stringify(tool.parameters)}`, REVIEW_SCHEMA_CHARS),
-    })
+    entries.push({ role: 'fact', kind: 'tool-schema', name, text })
   }
 
   const messages = session.messages
@@ -1022,11 +1027,26 @@ function firstSentence(text: string): string {
         // 判官要判断这次调用是不是在推进任务，只给工具名与参数只能猜：把保留的历史
         // （用户指令、历史调用）按来源角色逐条带上，规则见 REVIEW_POLICY。任务状态
         // 单独放在末尾——它每步都可能变，放在最前会让整段前缀缓存失效。
+        const byName = new Map((ctx.get('tools')?.list() ?? []).map((tool) => [tool.name, tool]))
+        let memo = schemaMemory.get(reviewSession)
+        if (memo === undefined) {
+          memo = new Map()
+          schemaMemory.set(reviewSession, memo)
+        }
+        const schemaOf = (name: string): string | null => {
+          const hit = memo.get(name)
+          if (hit !== undefined) return hit
+          const tool = byName.get(name)
+          if (tool === undefined) return null
+          const text = clipReviewText(`${tool.description}\n参数：${JSON.stringify(tool.parameters)}`, REVIEW_SCHEMA_CHARS)
+          memo.set(name, text)
+          return text
+        }
         const history = trimReviewBudget(
           buildReviewHistory(reviewSession, request, {
-            tools: ctx.get('tools')?.list() ?? [],
             cwd: baseCwd(request),
             childAgent: isChildAgent(request),
+            schemaOf,
           }),
         )
         const taskState = taskStateEntry(reviewSession)
@@ -1276,6 +1296,22 @@ function firstSentence(text: string): string {
         let reviewNote: string | null = null
         /** 判官这次给的风险档：否决时卡面按它上色，不再一律按「工作区外 = medium」猜。 */
         let reviewRisk: RiskLevel | null = null
+
+        // 第 4.5 层：外层 run_code 不单独审（对齐 dsh）。脚本在 vm 里拿不到 process / require /
+        // 文件系统，唯一出口是 sdk；它调起的每一次工具都在 PTC 里逐个过守卫与审批。
+        // 在这里再判一次只能看到整段脚本源码，判不出实际效果，还平白多一次判官请求。
+        // 「仅查看」仍拒它：那个模式的字面意思就是什么都别执行。
+        if (
+          request.toolName === RUN_CODE_NAME &&
+          escalation === null &&
+          forced === '' &&
+          protectedWhy === null &&
+          !fenced &&
+          policy !== 'readonly'
+        ) {
+          autoLog('auto-allow', request, '外层 run_code 不单独审：脚本里的每次工具调用在 PTC 里逐个过守卫')
+          return 'allow-once'
+        }
 
         // 第 5 层：权限模式自己的裁决（protected 文件不参与，强制走人工卡）。
         if (protectedWhy === null && forced === '' && !fenced) {

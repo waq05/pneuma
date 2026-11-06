@@ -346,6 +346,34 @@ console.log('[7] 失败即拒绝（approval.failClosed）')
   await run.pending
 }
 
+console.log('[8] 外层 run_code 不单独审')
+{
+  const approval = mount('{"risk":"low","decision":"allow"}')
+  const run = await decide(approval, {
+    toolName: 'run_code',
+    argsSummary: '{"code":"…"}',
+    args: { code: 'return 1' },
+    cwd,
+    sessionId: 'sess-1',
+    sessionPath: join(cwd, 'sess.jsonl'),
+  }, new AbortController().signal)
+  check('auto-edit 下直接放行，不弹卡', run.settled() === 'allow-once' && approval.pendingView() === null, String(run.settled()))
+  check('没有调用判官（省一次请求）', reviewRequests.length === 0, String(reviewRequests.length))
+}
+{
+  const approval = mount('{"risk":"low","decision":"allow"}')
+  approval.setPolicy('readonly')
+  const run = await decide(approval, {
+    toolName: 'run_code',
+    argsSummary: '{"code":"…"}',
+    args: { code: 'return 1' },
+    cwd,
+    sessionId: 'sess-1',
+    sessionPath: join(cwd, 'sess.jsonl'),
+  }, new AbortController().signal)
+  check('仅查看模式仍然拒绝', run.settled() === 'reject', String(run.settled()))
+}
+
 if (failures > 0) {
   console.log(`\n${String(failures)} 项不通过`)
   process.exit(1)
