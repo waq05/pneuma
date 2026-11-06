@@ -1,10 +1,12 @@
 # runtime-api（运行时查询）
 
-一句话：runtime-api 包注册只读工具 `runtime_api`，把运行期的真状态（内核版本、插件、工具、提示段、守卫链、快照、模式）报给模型。
+一句话：runtime-api 包注册只读工具 `runtime_api`，把运行期的真状态（内核版本、插件、工具、提示段、守卫链、快照、模式、服务、事件）报给模型。
 
 ## Model Experience（模型体验）
 
-- 注册工具 `runtime_api`：可选 `topic` 六选一（plugins / tools / prompt / guards / surfaces / presets），省略就六块全报；risk 标 read，不进审批卡（index.ts:86-124）。
+- 注册工具 `runtime_api`：可选 `topic` 八选一（plugins / tools / prompt / guards / surfaces / presets / services / events），省略就八块全报；risk 标 read，不进审批卡（index.ts:86-124）。
+- `topic=services`：从 cordis 的 `ctx.reflect.store` 抽服务清单，每个服务只列**方法名**（自有 + 两层原型，止步于 Object.prototype），同一服务的多份 isolation 实现取方法最多的那份（inspect.ts:11-42）。写插件时要注入的服务名与能调的方法都在这里。
+- `topic=events`：从 `ctx.events._hooks` 抽此刻**至少有一个监听者**的事件名与监听数，跳过框架内部的 `internal/*`（inspect.ts:49-84）。插件的挂钩点按这一份挑，别照文档里的旧事件名猜。
 - 只在创造模式下露面：工具条目带 `presets: ['maker']`，别的模式里连那段 schema 都不占（index.ts:8-9、112）。
 - 提示词贡献：不注册提示段；工具说明本身约十行，教模型「写插件或加模式之前先问这里，别照文档里的旧说法猜」（index.ts:88-98）。
 - 报的是运行期真值：开头两句给内核 API 版本、已挂插件数、工具数与模式数，并说明外部插件声明的 apiVersion 高于内核会被自动停用（index.ts:115-118）。
@@ -14,7 +16,8 @@
 ## Known Limitations（已知限制）
 
 - 只读：不改任何状态，也不会替模型验证它写下的插件或模式能不能挂上（index.ts:11）。
-- 省略 topic 会把六块拼成一份长文本，说明里自己写明「只在需要通盘了解时用」（index.ts:98）。
+- 省略 topic 会把八块拼成一份长文本，说明里自己写明「只在需要通盘了解时用」（index.ts:98）。
+- services 只列方法名，不列参数与返回类型（那要读 SDK 类型树）；events 只列已经有人监听的事件，没被监听的不会冒出来。
 - 工具那一块只给名字、风险档与截到 90 字的说明开头，不报实现文件或调用示例，细节仍要回源码看（index.ts:29-36）。
 
 ## 行与开关

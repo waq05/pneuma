@@ -15,9 +15,10 @@
 import type { Plugin } from '@deepseek-ai/cordis'
 import { KERNEL_API_VERSION, listPluginInfos } from '@pneuma/runtime/core/plugin-registry.js'
 import { DROPPABLE_SECTIONS, DSC_PRESETS_DIR } from '@pneuma/config-core/presets.js'
+import { listEvents, listServices } from './inspect.js'
 
 /** 能单独问的主题（省略 = 全都要）。 */
-const TOPICS = ['plugins', 'tools', 'prompt', 'guards', 'surfaces', 'presets'] as const
+const TOPICS = ['plugins', 'tools', 'prompt', 'guards', 'surfaces', 'presets', 'services', 'events'] as const
 
 /** 创造模式的模式名（与 packages/config-core/presets.ts 的 MAKER_PRESET 同一个值）。 */
 const MAKER_PRESET = 'maker'
@@ -70,10 +71,35 @@ export const runtimeApiPlugin: Plugin.Object = {
       })
       return [
         `模式 ${surface.options.length} 个（当前 ${surface.current}，新会话默认 ${surface.defaultName}）：\n${rows.join('\n')}`,
-        `模式文件目录：${DSC_PRESETS_DIR}（一个模式一个 .md，frontmatter 认 name/label/description/tools/drop，正文就是提示词）`,
+        `模式文件目录：${DSC_PRESETS_DIR}（一个模式一个 .md，frontmatter 认 name/label/description/tools/deny/drop，正文就是提示词）`,
       ].join('\n')
     }
 
+    /**
+     * 列出运行期真正注册的服务（cordis 的 `ctx.reflect.store`，按 isolation 去重）。
+     *
+     * 为什么需要它：写插件要注入某个服务、调它的方法，文档里的接口名会过时——
+     * 这里报的是这一刻注册表里的真值。只列**方法名**，不读值、不调用（getter 一律跳过）。
+     */
+    const describeServices = (): string => {
+      const reflect = (ctx as unknown as { reflect?: { store?: Record<symbol, unknown> } }).reflect
+      const rows = listServices(reflect?.store).map(
+        (item) => '- ' + item.name + '（' + String(item.methods.length) + ' 个方法）' + item.methods.slice(0, 12).join(', '),
+      )
+      return '服务 ' + String(rows.length) + ' 个（写插件的 inject 用这些名字）：\n' + rows.join('\n')
+    }
+
+    /**
+     * 列出运行期挂着监听者的事件（cordis 的 `ctx.events._hooks`）。
+     *
+     * 事件名是插件之间唯一的耦合面，文档里通常只写一半；这里报此刻的事件名与监听数，
+     * 写插件时能判断「该在哪个事件上挂钩」。
+     */
+    const describeEvents = (): string => {
+      const hooks = (ctx as unknown as { events?: { _hooks?: Record<string, unknown> } }).events?._hooks
+      const rows = listEvents(hooks).map((item) => '- ' + item.name + '｜' + String(item.listeners) + ' 个监听')
+      return '事件 ' + String(rows.length) + ' 个（此刻至少有一个监听者；插件的挂钩点在这里挑）：\n' + rows.join('\n')
+    }
     const BUILDERS: Record<(typeof TOPICS)[number], () => string> = {
       plugins: describePlugins,
       tools: describeTools,
@@ -81,6 +107,8 @@ export const runtimeApiPlugin: Plugin.Object = {
       guards: describeGuards,
       surfaces: describeSurfaces,
       presets: describePresets,
+      services: describeServices,
+      events: describeEvents,
     }
 
     ctx.effect(() => ctx.tools.register({
@@ -93,7 +121,9 @@ export const runtimeApiPlugin: Plugin.Object = {
 - topic=prompt 看系统提示是哪些段拼的、模式能去掉哪几段；
 - topic=guards 看守卫链上坐着谁、谁先说话；
 - topic=surfaces 看界面快照有哪些片段；
-- topic=presets 看现有的模式与模式文件目录。
+- topic=presets 看现有的模式与模式文件目录；
+- topic=services 看运行期注册了哪些服务、每个服务有哪些方法（写插件 inject 用这些名字）；
+- topic=events 看此刻有哪些事件挂着监听者（插件的挂钩点在这里挑）。
 
 省略 topic = 全套都报（内容较长，只在需要通盘了解时用）。`,
       parameters: {
