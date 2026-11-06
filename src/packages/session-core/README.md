@@ -23,7 +23,7 @@
 ## 谁在用它
 
 - `agent`、`subagent`：loop 的 MiniAgent；`subagent` 另用 prompt 与 modes。
-- `hooks`、`lifecycle-hooks`：钩子引擎；`lifecycle-hooks` 另用超时上下限常量。
+- `hooks`：钩子引擎（dsc 自己的规则与脚本；0.9.0 起 codex 事件名的外部命令钩子也并在这个包里，另用超时上下限常量）。
 - `compact`、`microcompact`：compactSession / DEFAULT_KEEP_RECENT / estimateTokens。
 - `prompt`：buildSystemPrompt / composePrompt / environmentText 等。
 - `mode`、`plan`：MODES / modeSpec / planFilePath。

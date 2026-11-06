@@ -329,6 +329,10 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 注意凭据在用户那一侧：`overridable` 的包被 profile 里的同名副本顶替时，判据读的是**副本**的清单——
 副本没写这一笔，它就回到官方档，这是有意的（分档跟着实际生效的那份代码走）。
 
+包清单没有单独的 JSON 镜像：曾有一份 `docs/plugin-packages.json`，靠手改维护，包一增一减就漂，2026-11-06
+删了。要一份完整清单就跑 `numa plugin list`（带每行现在用的哪份代码），或者看
+[development.md §4](development.md) 那张功能档表。
+
 `resolution` 决定用户能不能拿 profile 里的同名副本顶替应用那份：`overridable`（缺省）能，`pinned` 不能
 （`llm`/`session`/`tools`/`approval` 这 19 个核心包都是 `pinned`）。`engines.pneuma` 判两次——读整包时
 一次，挂每一行之前再一次（覆盖版的要求可能与整包不同）；不满足就跳过该行，插件中心把它标成带 problem 的那行，
