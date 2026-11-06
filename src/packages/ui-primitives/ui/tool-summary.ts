@@ -14,7 +14,9 @@
 import type { ComponentType } from 'react'
 import { createT } from '@dsc/ui-core'
 import {
-  IconCode, IconEdit, IconFolder, IconGlobe, IconInfo, IconQueue, IconSearch, IconSpark, IconTerminal, IconTree,
+  IconActivity, IconBolt, IconBrain, IconCalendar, IconCode, IconDatabase, IconEdit, IconFolder, IconGear, IconGlobe,
+  IconInfo, IconLayers, IconPackage, IconPuzzle, IconQueue, IconSearch, IconSpark, IconStop, IconTarget, IconTerminal,
+  IconTree,
 } from './icons'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 import zh from '../locale/ui.zh.json'
@@ -46,6 +48,35 @@ export const SUMMARY_FIELDS: Readonly<Record<string, readonly string[]>> = {
   skill: ['name'],
   task: ['description', 'prompt'],
   subagent: ['description', 'prompt'],
+  // 后台作业与终端：作业号是这张卡唯一能说清「这一次读了哪个作业」的字段——
+  // 2026-11-06 之前它不在表里，未知工具只认固定字段，于是整行只剩「工具调用 · job_output」。
+  job_output: ['job_id', 'id', 'jobId', 'job'],
+  job_list: ['session', 'status'],
+  job_kill: ['job_id', 'id', 'jobId', 'job'],
+  terminal: ['command', 'action', 'session'],
+  // 定时任务 / 目标 / 团队：动作词与标题各取一个，读作「定时任务 · 创建 · 每日巡检」。
+  schedule: ['title', 'action', 'id'],
+  goal: ['objective', 'action'],
+  team_task: ['task', 'name', 'title'],
+  // 工具检索与插件管理：query 先说「找什么」，name 再说「哪个」。
+  tool_search: ['query', 'name'],
+  tool_describe: ['name', 'tool'],
+  tool_call: ['name', 'tool'],
+  plugin_manager: ['action', 'name', 'plugin'],
+  // 交付 / 记忆 / 技能与经验。
+  present: ['path', 'file', 'name'],
+  memory: ['query', 'content', 'name'],
+  skill_write: ['name'],
+  learning: ['title', 'content'],
+  // 浏览器 / 电脑 / MCP / 代码符号。
+  browser: ['action', 'url', 'ref'],
+  browser_look: ['action', 'url'],
+  computer: ['action', 'app', 'title'],
+  computer_look: ['app', 'title'],
+  mcp: ['uri', 'name', 'server'],
+  mcp_resources: ['uri', 'server'],
+  mcp_prompts: ['name', 'server'],
+  lsp: ['symbol', 'query', 'path'],
 }
 
 /** 不认识的工具：只挑最像「目标」的几个字段。 */
@@ -114,6 +145,18 @@ export function toolSummary(name: string, argsText: string): string {
     parts.push(oneLine(text, 48))
     if (parts.length === 2) break
   }
+  // 表里那两三个字段都没命中（插件工具、MCP 工具、临时加的工具）时，别再交回空串——
+  // 空摘要的那一行只剩「工具调用 · 名字」，正是用户截图里那串说不出干了什么的行。
+  // 兜底取参数里第一个短字符串：作业号、查询词、URL 都在这条路上被捡起来。
+  if (parts.length === 0) {
+    for (const value of Object.values(record)) {
+      if (typeof value !== 'string') continue
+      const text = oneLine(value, 48)
+      if (text === '') continue
+      parts.push(text)
+      break
+    }
+  }
   return oneLine(parts.join(' · '), 72)
 }
 
@@ -166,10 +209,42 @@ export const KNOWN_TOOLS: Readonly<
   webfetch: { verb: t('primitives.tool.fetch'), Icon: IconSearch },
   fetch: { verb: t('primitives.tool.fetch'), Icon: IconSearch },
   task: { verb: t('primitives.tool.subagent'), Icon: IconSpark },
+  // ── 2026-11-06 补齐：dsh 的 tool.title.* 词表覆盖后台作业、终端、定时、目标、团队、
+  //    工具检索、插件、交付、记忆、浏览器、电脑、MCP、代码符号这一整片。这里按同一口径
+  //    补上，免得它们全退回「工具调用 · <原名>」——用户截图里那串重复行就是这么来的。
+  // 后台作业与终端（dsh 的 listJobs / readJob / killJob / openTerminal）。
+  job_output: { verb: t('primitives.tool.jobOutput'), Icon: IconActivity },
+  job_list: { verb: t('primitives.tool.jobList'), Icon: IconActivity },
+  job_kill: { verb: t('primitives.tool.jobKill'), Icon: IconStop },
+  terminal: { verb: t('primitives.tool.terminal'), Icon: IconTerminal },
+  // 定时任务、会话目标、团队任务。
+  schedule: { verb: t('primitives.tool.schedule'), Icon: IconCalendar },
+  goal: { verb: t('primitives.tool.goal'), Icon: IconTarget },
+  team_task: { verb: t('primitives.tool.teamTask'), Icon: IconTree },
+  // 工具检索与插件管理。
+  tool_search: { verb: t('primitives.tool.toolSearch'), Icon: IconSearch },
+  tool_describe: { verb: t('primitives.tool.toolDescribe'), Icon: IconInfo },
+  tool_call: { verb: t('primitives.tool.toolCall'), Icon: IconBolt },
+  plugin_manager: { verb: t('primitives.tool.pluginManager'), Icon: IconPuzzle },
+  // 交付文件、记忆、写技能、记录经验。
+  present: { verb: t('primitives.tool.present'), Icon: IconPackage },
+  memory: { verb: t('primitives.tool.memory'), Icon: IconDatabase },
+  skill_write: { verb: t('primitives.tool.skillWrite'), Icon: IconSpark },
+  learning: { verb: t('primitives.tool.learning'), Icon: IconBrain },
+  // 浏览器与电脑操作：动作用 IconGlobe / IconBolt，看图用同族（不另造图形）。
+  browser: { verb: t('primitives.tool.browser'), Icon: IconGlobe },
+  browser_look: { verb: t('primitives.tool.browserLook'), Icon: IconGlobe },
+  computer: { verb: t('primitives.tool.computer'), Icon: IconBolt },
+  computer_look: { verb: t('primitives.tool.computerLook'), Icon: IconBolt },
+  // MCP 资源与代码符号：MCP 走分层图标，LSP 走代码图标。
+  mcp: { verb: t('primitives.tool.mcp'), Icon: IconLayers },
+  mcp_resources: { verb: t('primitives.tool.mcpResources'), Icon: IconLayers },
+  mcp_prompts: { verb: t('primitives.tool.mcpPrompts'), Icon: IconLayers },
+  lsp: { verb: t('primitives.tool.lsp'), Icon: IconCode },
 }
 
 /** 认不出的工具的图标。 */
-export const UNKNOWN_TOOL_ICON = IconCode
+export const UNKNOWN_TOOL_ICON = IconGear
 
 /**
  * 认不出的工具的行首标题（dsh 的 `tool.title.generic`）。
@@ -187,12 +262,28 @@ export interface ToolMatch {
   base: string
 }
 
-/** 按工具名配「图标 + 动词」；认不出的回落到通用图标与「调用」。 */
+/**
+ * 按名字前缀归类的工具族：精确表没命中时先看它。
+ *
+ * 为什么按前缀而不是逐个登记：ops_ 这一族在桌面上有十三个动作（读文件 / 读表格 /
+ * 读 docx / 复制 / 移动 / 删除…），逐个列一遍既读不完也维护不动；归成「文件操作」
+ * 一族、原名仍跟在「 · 」后面，读作「文件操作 · ops_read_table」，比「工具调用 · …」清楚。
+ * 同一条理由给 MCP 兜底（mcp__<server>__<tool> 这类名字）。
+ */
+const TOOL_PREFIXES: Readonly<Record<string, { verb: string; Icon: ComponentType<{ size?: number; className?: string }> }>> = {
+  ops_: { verb: t('primitives.tool.ops'), Icon: IconFolder },
+  mcp_: { verb: t('primitives.tool.mcp'), Icon: IconLayers },
+}
+
+/** 按工具名配「图标 + 动词」；认不出的回落到通用图标与「工具调用」。 */
 export function matchTool(name: string): ToolMatch {
   const known = KNOWN_TOOLS[name]
-  return known !== undefined
-    ? { Icon: known.Icon, known: true, base: known.verb }
-    : { Icon: UNKNOWN_TOOL_ICON, known: false, base: UNKNOWN_TOOL_TITLE }
+  if (known !== undefined) return { Icon: known.Icon, known: true, base: known.verb }
+  // 前缀族照旧 known: false：标题是族名，原名得留在后面，否则分不清是读还是删。
+  for (const [prefix, entry] of Object.entries(TOOL_PREFIXES)) {
+    if (name.startsWith(prefix)) return { Icon: entry.Icon, known: false, base: entry.verb }
+  }
+  return { Icon: UNKNOWN_TOOL_ICON, known: false, base: UNKNOWN_TOOL_TITLE }
 }
 
 /**
