@@ -15,7 +15,7 @@ import { useCallback, useMemo, useState, type KeyboardEvent as ReactKeyboardEven
 import { createT, type TranscriptEntry } from '@dsc/ui'
 import { IconChevronDown } from '@dsc/ui'
 import { formatDuration, roundDuration, type RoundInfo } from './timing'
-import { readFold, writeFold } from './fold-state'
+import { clearFold, readFold, writeFold } from './fold-state'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 import zh from '../locale/ui.zh.json'
 import en from '../locale/ui.en.json'
@@ -25,6 +25,22 @@ const t = createT({ zh, en })
 
 /** 过程折叠程度（UiProcessFold 的四档；契约里定义，这里本地复述一份取值）。 */
 export type ProcessFold = 'compact' | 'standard' | 'detailed' | 'verbose'
+
+/**
+ * 折叠时机（设置 `ui.collapseTiming`；契约里定义，这里本地复述一份取值）。
+ *
+ * - `completion`（默认）：这一轮跑完就收起；
+ * - `next-input`：跑完的**最后一轮**先摊着，等下一轮进来、它不再是最后一轮，才收起。
+ */
+export type CollapseTiming = 'completion' | 'next-input'
+
+/**
+ * 收起之后显示哪些回复（设置 `ui.foldedReplies`；契约里定义，这里本地复述一份取值）。
+ *
+ * - `all`（默认）：有正文的助手步骤不算过程，留在屏幕上；它里面的思考与工具仍算过程；
+ * - `final`：中间夹着的阶段性正文跟着过程一起藏，只留这一轮最后那条正文。
+ */
+export type FoldedReplies = 'all' | 'final'
 
 /** 一个档位开启哪几项能力。 */
 export interface ProcessFoldPolicy {
@@ -58,24 +74,47 @@ export function processFoldPolicy(fold: ProcessFold | undefined): ProcessFoldPol
   return PROCESS_FOLD_POLICIES[fold ?? 'standard']
 }
 
+/** 独立条目（不进过程区、收起整轮也不许藏的类型；对照 dsh 的 TURN_PROCESS_INDEPENDENT_KINDS）。 */
+export const TURN_INDEPENDENT: ReadonlySet<TranscriptEntry['kind']> = new Set([
+  'user',
+  'plan',
+  'system',
+  'turn-end',
+  'turn-max-tokens',
+])
+
 /**
  * 一轮过程区的折叠情况。
  */
 export interface RoundFold {
   /** 轮次序号（0 基）：存展开态时要用它拼键。 */
   roundIndex: number
-  /** 总开关行画在这一条前面（= 组内第一条可折叠条目）；-1 = 这一轮没有过程内容。 */
+  /**
+   * 过程区的起点（读数，不是藏不藏的判据）。
+   *
+   * 这一条是「过程区从哪一行开始」的读数：它可能是一条最终被留在外面的正文
+   * （foldedReplies=all），所以不能拿它当「从这里开始藏」用——那件事看 {@link hidden}。
+   * -1 = 这一轮没有过程内容。
+   */
   startIndex: number
   /**
-   * 组内最后一条可折叠条目的下标（含）。
+   * 过程区的终点（读数，含）。
    *
    * 终点认「这一轮最后一个过程条目（thinking / tool）」，不是「最后一条正文之前」：
    * 正文之后还有工具调用时，那句正文只是过程中的交代，后面那一段同样要收起来。
    */
   endIndex: number
-  /** 过程区里有没有可折的内容。没有时照样画总开关，只是画成不可点的。 */
+  /**
+   * 收起后**真正要藏起来**的下标集合（含）。
+   *
+   * 为什么从「连续区间」改成「集合」（2026-11-06）：foldedReplies=all 时中间那几段正文
+   * 要留在屏幕上，藏起来的行于是被正文切成好几段——一段连续区间表达不了这件事。
+   * 区间（startIndex / endIndex）保留下来当过程区的读数，藏不藏一律以这个集合为准。
+   */
+  hidden: ReadonlySet<number>
+  /** 过程区里有没有可折的内容（= {@link hidden} 非空）。没有时照样画总开关，只是画成不可点的。 */
   hasContent: boolean
-  /** 这一轮可不可以折整轮（= 有过程内容）。 */
+  /** 这一轮可不可以折整轮（= 这一档允许整轮折叠）。 */
   foldable: boolean
   /** 跑动中：整组强制展开、连总开关都不画。 */
   running: boolean
@@ -86,6 +125,8 @@ export interface RoundFold {
   blocked: boolean
   /** 让这一轮不能折的那个原因；正常结束或还在跑的轮是 undefined。 */
   endReason: string | undefined
+  /** 这是不是最新一轮（collapseTiming=next-input 的默认展开就认它，见 {@link turnDefaultOpen}）。 */
+  latest: boolean
 }
 
 /**
@@ -96,9 +137,17 @@ export interface RoundFold {
 export function buildRoundFolds(
   entries: readonly TranscriptEntry[],
   rounds: readonly RoundInfo[],
-  options: { foldTurns: boolean; live: boolean; lastRoundIndex: number },
+  options: {
+    foldTurns: boolean
+    live: boolean
+    lastRoundIndex: number
+    /** 收起之后显示哪些回复（默认 all，与 settings 的出厂口径一致）。 */
+    foldedReplies?: FoldedReplies
+  },
 ): Map<number, RoundFold> {
   const out = new Map<number, RoundFold>()
+  // 「有正文的助手步骤不算过程」是 all 档的定义；final 档里它跟着过程一起藏。
+  const keepReplies = (options.foldedReplies ?? 'all') === 'all'
   for (const round of rounds) {
     // 本轮最后一条定稿正文（从后往前找，找到就走）：**只有它后面再没有过程行时**，
     // 它才是最终回答。
@@ -145,21 +194,55 @@ export function buildRoundFolds(
       if (startIndex < 0) startIndex = at
       endIndex = at
     }
-    const hasContent = startIndex >= 0
+    /**
+     * 收起后要藏的下标：过程区范围内、且不是独立条目的行。
+     *
+     * foldedReplies=all 时正文不进集合——有正文的助手步骤是给用户看的话，哪怕它后面
+     * 紧跟着工具调用也不藏（它只是「过程里的一句交代」，但仍然是话）；这一轮**最后一条**
+     * 正文本来就在范围之外（见上面的 endLimit），一个字都不藏。
+     */
+    const hidden = new Set<number>()
+    if (startIndex >= 0) {
+      for (let at = startIndex; at <= endIndex; at += 1) {
+        const entry = entries[at]
+        if (entry === undefined) continue
+        if (TURN_INDEPENDENT.has(entry.kind)) continue
+        if (keepReplies && entry.kind === 'text') continue
+        hidden.add(at)
+      }
+    }
     out.set(round.index, {
       roundIndex: round.index,
       startIndex,
       endIndex,
-      hasContent,
+      hidden,
+      // 有正文可留的 all 档里，「这一轮只有正文」就没什么可折的：照样画总开关，画成不可点。
+      hasContent: hidden.size > 0,
       foldable: options.foldTurns,
       // 跑动中的两种形态都算「这一轮还没收尾」：出现了直播条目（id<0），或者这就是最后一轮
       // 而回合还没结束，或者用户刚发完消息、助手一个字都还没回（answered 为假）。
       running: hasLiveEntry || (options.live && round.index === options.lastRoundIndex) || !round.answered,
       blocked: hasSteering || endReason === 'aborted' || endReason === 'error',
       endReason,
+      latest: round.index === options.lastRoundIndex,
     })
   }
   return out
+}
+
+/**
+ * 收起整轮的默认展开态（render.tsx 的兜底值来源，**不做定时器**）。
+ *
+ * 参考实现（dsh 的 `ChatNodeSeat.tsx:61-72` 与 `stores.ts:36-44` 的 turnProcessOpen）：
+ * 用户手点过的选择优先；没点过时，只有「最新一轮 + collapseTiming=next-input」默认展开。
+ * 于是跑完的最后一轮先摊着，下一轮一进来它不再是最后一轮，兜底当场翻成收起——不需要
+ * 「等下一轮再发一个定时器去收」那一步。
+ *
+ * @param collapseTiming 设置里的折叠时机
+ * @param latest 这一轮是不是最新一轮（{@link RoundFold.latest}）
+ */
+export function turnDefaultOpen(collapseTiming: CollapseTiming, latest: boolean): boolean {
+  return collapseTiming === 'next-input' && latest
 }
 
 /**
@@ -233,6 +316,7 @@ export function useFoldMemory(): {
   open(key: string, fallback: boolean): boolean
   set(key: string, open: boolean): void
   reset(keys: readonly string[]): void
+  clear(keys: readonly string[]): void
 } {
   const [map, setMap] = useState<Record<string, boolean>>({})
   const open = useCallback(
@@ -256,5 +340,25 @@ export function useFoldMemory(): {
       return next
     })
   }, [])
-  return useMemo(() => ({ open, set, reset }), [open, set, reset])
+  /**
+   * 抹掉存档而不是写一个值：抹掉之后这一条重新由兜底（设置里的默认态）决定。
+   *
+   * 为什么收起时机要它：next-input 下跑完的最后一轮该**默认摊着**，那是兜底算出来的；
+   * 收尾复位如果照 completion 档写一个 false，就等于替用户做了「手动收起」的选择，
+   * 之后下一轮进来它也不会再回到兜底。抹掉之后兜底随「是不是最新一轮」自然翻面。
+   */
+  const clear = useCallback((keys: readonly string[]): void => {
+    if (keys.length === 0) return
+    for (const key of keys) clearFold(key)
+    setMap((current) => {
+      let next = current
+      for (const key of keys) {
+        if (next[key] === undefined) continue
+        if (next === current) next = { ...current }
+        delete next[key]
+      }
+      return next
+    })
+  }, [])
+  return useMemo(() => ({ open, set, reset, clear }), [open, set, reset, clear])
 }

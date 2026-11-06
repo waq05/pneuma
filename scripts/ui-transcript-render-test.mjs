@@ -201,9 +201,20 @@ console.log('[5] 整轮过程区的开合动画（0.6.69 第四轮报障）')
   const css = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
   const tokens = read('src/packages/ui-renderer/ui/styles/legacy/tokens.css')
 
-  // 结构：过程区必须**包一层**才能整片一起动（平铺时收起的行不占位，flex gap 会留下一堆空档）
-  check('过程区包进 .turn-process + .turn-process-body 两层', /<div className="turn-process" data-fold=\{collapsed \? 'closed' : 'open'\}>/.test(ui) && ui.includes('<div className="turn-process-body">{processBlocks}</div>'))
-  check('没有过程行时不画这一层（不可折的档位连开关行都没有）', ui.includes('{processBlocks.length === 0 ? null : ('))
+  // 结构：过程区必须**包一层**才能整片一起动（平铺时收起的行不占位，flex gap 会留下一堆空档）。
+  // 2026-11-06：foldedReplies=all 要留下中间那几段话，所以这一层改成**按段**包——
+  // 连续的「要藏」行合成一段 .turn-process，留在屏幕上的正文不进任何一段。
+  check(
+    '过程区包进 .turn-process + .turn-process-body 两层（按段包，带 data-fold）',
+    /<div className="turn-process" data-fold=\{collapsed \? 'closed' : 'open'\}/.test(ui) && ui.includes('<div className="turn-process-body">{segment}</div>'),
+  )
+  check('没有过程行时不画这一层（foldBlocks 为空就整块不画）', ui.includes('{foldBlocks.length === 0 ? null : <>{foldBlocks}</>}'))
+  // 「藏不藏」查的是预算器给的集合，不是 start/end 区间：区间读数还在，但只当过程范围用。
+  check('藏不藏查 fold.hidden 集合（区间只当读数）', /const inFold = \(row: Row\): boolean =>\s*\n\s*fold !== undefined && fold\.foldable && fold\.hidden\.has\(row\.at\)/.test(ui))
+  check('留在外面的正文走 keptReply（不进 .turn-process）', /const keptReply = \(row: Row\): boolean =>[\s\S]{0,220}?!fold\.hidden\.has\(row\.at\)/.test(ui) && /keptReply\(row\)\) middle\.push\(\{ node: seatRow\(row, false\), fold: false \}\)/.test(ui))
+  check('分段：连续的藏行攒进 segment，遇到留下的正文先 flush', /if \(block\.fold\) \{\s*\n\s*segment\.push\(block\.node\)/.test(ui) && /flushSegment\(\)\s*\n\s*foldBlocks\.push\(block\.node\)/.test(ui))
+  // 折叠时机：最新一轮的兜底展开来自 turnDefaultOpen，用户手点过的存档仍优先。
+  check('兜底默认态 = turnDefaultOpen(collapseTiming, latest)', /turnDefaultOpen\(foldPrefs\.collapseTiming, fold\?\.latest === true\)/.test(ui) && /foldMemory\.open\(turnKey, defaultOpen\)/.test(ui))
 
   // CSS：高度动画走 grid-template-rows 0fr↔1fr（不预先量高度），内层 min-height:0 + overflow:hidden
   check('高度动画是 grid-template-rows 的两头（0fr ↔ 1fr）', /\.turn-process \{[\s\S]{0,200}grid-template-rows: 1fr/.test(css) && /\.turn-process\[data-fold='closed'\] \{[\s\S]{0,120}grid-template-rows: 0fr/.test(css))

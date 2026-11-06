@@ -10,7 +10,7 @@ import { MarkdownView, createT, estimateTextTokens, type TranscriptEntry } from 
 import { ReviewNoticeCard, findLast, parseReviewNotice, toolSummary } from '@dsc/ui-primitives'
 import { FoldPrefsContext, ShellCwdContext, ShellSessionContext, TOOLVIEW_SLOT, TURN_INDEPENDENT, keyOf, type Row, type Seat, type ToolViewRender } from './shared'
 import { stepGroupFoldKey, turnFoldKey } from './fold-state'
-import { useFoldMemory } from './round-fold'
+import { turnDefaultOpen, useFoldMemory } from './round-fold'
 import { RowSeat, StepGroupSeat } from './fold-seats'
 import { TurnFoldRow } from './round-fold'
 import { needsGroupHeader, seatPlan, type StepGroup, type StepGrouping } from './process-groups'
@@ -45,6 +45,15 @@ function groupTask(members: readonly Row[]): string {
     if (text !== '') return text
   }
   return ''
+}
+
+/**
+ * 过程区里的一段排布：`fold` 的行会被包进 `.turn-process`（收起时整段缩回 0），
+ * 其余（foldedReplies=all 留在屏幕上的正文）直接排在座位上。
+ */
+interface MiddleBlock {
+  node: ReactNode
+  fold: boolean
 }
 
 export function SeatBody({
@@ -84,13 +93,20 @@ export function SeatBody({
   /** 页脚「分叉这一轮」；undefined = 分不了（没在会话里 / 第 1 轮）。 */
   onFork?: () => void
 }): ReactNode {
+  const foldPrefs = useContext(FoldPrefsContext)
   const fold = roundFolds.get(seat.round)
   // 跑动中的轮连总开关都不画（永远展开）；可折的定稿轮才有开合。
   const foldRunning = fold?.running === true
   const foldable = fold !== undefined && fold.foldable && fold.hasContent && !foldRunning && !fold.blocked
   const turnKey = turnFoldKey(sessionId, seat.round)
-  const turnOpen = foldMemory.open(turnKey, false)
-  /** 整轮收起来没有：可折 + 有内容 + 已收尾 + 用户没收起来（默认就是收起）。 */
+  /**
+   * 兜底默认态（collapseTiming，口径见 round-fold.tsx 的 turnDefaultOpen）：next-input
+   * 下最新一轮先摊着，等下一轮进来它不再是最新，兜底当场翻成收起——不做定时器。
+   * 用户手点过一下之后走存档（foldMemory），兜底不再生效。
+   */
+  const defaultOpen = turnDefaultOpen(foldPrefs.collapseTiming, fold?.latest === true)
+  const turnOpen = foldMemory.open(turnKey, defaultOpen)
+  /** 整轮收起来没有：可折 + 有内容 + 已收尾 + 没被展开（默认收起；next-input 的最新一轮默认展开）。 */
   const collapsed = foldable && !turnOpen
   /** 把整轮放出来（座位被 Ctrl+F 命中、或焦点落在收起的内容里时由座位自己调）。 */
   const reveal = (): void => {
@@ -145,7 +161,7 @@ export function SeatBody({
   const toggleGroup = (group: StepGroup): void => {
     foldMemory.set(stepGroupFoldKey(sessionId, group.roundIndex, group.seq), !groupOpen(group))
   }
-  const liveDetail = useContext(FoldPrefsContext).policy.liveDetail
+  const liveDetail = foldPrefs.policy.liveDetail
   // 过程区分块：连续的过程条目收进阶段组（组体是「真盒子」，才有自己的限高与滚动），
   // 其余按「过程 / 之后」两档摆——独立节点（计划卡、system、轮尾标记）永远在「之后」，
   // 收起整轮不把它们一起藏掉。
@@ -155,15 +171,29 @@ export function SeatBody({
   // 维护，漏掉一次就是「一条思考栏出现两次」（0.6.67 报障）；搬出去之后它由
   // `scripts/ui-transcript-render-test.mjs` 直接断言。
   const rowByAt = new Map(seat.rows.map((row) => [row.at, row]))
-  const processBlocks: ReactNode[] = []
-  const afterBlocks: ReactNode[] = []
-  /** 这一行落在整轮过程区里（才吃整轮收起的 `hidden`）。 */
-  const inProcessOf = (row: Row): boolean =>
-    fold !== undefined && fold.foldable && fold.hasContent
+  /**
+   * 收起后要藏的行：判据是预算器给的**下标集合**（foldedReplies=all 时正文不在集合里）。
+   * 2026-11-06 由「落在过程区区间里就藏」改成查集合：all 档要留下中间那几段话，
+   * 一段连续区间表达不了「藏、留、藏」这种形状。
+   */
+  const inFold = (row: Row): boolean =>
+    fold !== undefined && fold.foldable && fold.hidden.has(row.at) && !TURN_INDEPENDENT.has(row.entry.kind)
+  /**
+   * 落在过程区里、但这一档（foldedReplies=all）要求留在屏幕上的正文。
+   *
+   * 它不能塞进 `.turn-process` 那一格：整轮收起是「这一格高度缩回 0」，塞进去连正文
+   * 一起消失。所以它和过程段并列排在座位上，按原顺序夹在几段过程之间（见下面的分段）。
+   */
+  const keptReply = (row: Row): boolean =>
+    fold !== undefined && fold.foldable
     && row.at >= fold.startIndex && row.at <= fold.endIndex
-  /** 按「过程 / 之后」两档摆一行（组员与单独行共用这一条，别在别处再写一遍）。 */
+    && !TURN_INDEPENDENT.has(row.entry.kind) && !fold.hidden.has(row.at)
+  /** 按「藏 / 留 / 之后」三档摆一行（组员与单独行共用这一条，别在别处再写一遍）。 */
+  const middle: MiddleBlock[] = []
+  const afterBlocks: ReactNode[] = []
   const pushRow = (row: Row): void => {
-    if (inProcessOf(row) && !TURN_INDEPENDENT.has(row.entry.kind)) processBlocks.push(seatRow(row, collapsed))
+    if (inFold(row)) middle.push({ node: seatRow(row, collapsed), fold: true })
+    else if (keptReply(row)) middle.push({ node: seatRow(row, false), fold: false })
     else afterBlocks.push(seatRow(row, false))
   }
   for (const item of seatPlan(seat.rows.slice(1).map((row) => row.at), stepGrouping)) {
@@ -179,26 +209,59 @@ export function SeatBody({
         if (only !== undefined) pushRow(only)
         continue
       }
-      processBlocks.push(
-        <StepGroupSeat
-          key={`step-${String(head.roundIndex)}-${String(head.seq)}`}
-          group={head}
-          turnCollapsed={collapsed}
-          open={groupOpen(head)}
-          showDetail={liveDetail}
-          task={head.closed ? groupTask(members) : ''}
-          onToggle={() => toggleGroup(head)}
-          onRevealTurn={reveal}
-        >
-          {members.map((member) => seatRow(member, false))}
-        </StepGroupSeat>,
-      )
+      middle.push({
+        fold: true,
+        node: (
+          <StepGroupSeat
+            key={`step-${String(head.roundIndex)}-${String(head.seq)}`}
+            group={head}
+            turnCollapsed={collapsed}
+            open={groupOpen(head)}
+            showDetail={liveDetail}
+            task={head.closed ? groupTask(members) : ''}
+            onToggle={() => toggleGroup(head)}
+            onRevealTurn={reveal}
+          >
+            {members.map((member) => seatRow(member, false))}
+          </StepGroupSeat>
+        ),
+      })
       continue
     }
     const row = rowByAt.get(item.at)
     if (row === undefined) continue
     pushRow(row)
   }
+  /**
+   * 过程区**分段**包一层再折：连续的「要藏」行合成一段 `.turn-process`，收起时这一片
+   * 高度从 0 长回来 / 缩回 0，一段一起动；留在屏幕上的正文不进任何一段，按原顺序夹在
+   * 几段之间（foldedReplies=all 的「中间留几段话在外面」就是这么落地的）。
+   *
+   * 为什么必须包一层：平铺在座位上折不了——收起的行是 `hidden`（不产生盒子），夹在它们
+   * 之间的 6px flex gap 会留下来，几十行的轮收起来就是一片空白的间隙堆。包进一格之后，
+   * 座位的 gap 只算这一格。高度动画本身在 CSS：`.turn-process` 的 grid-template-rows
+   * 0fr↔1fr（不需要 JS 量高度）。
+   */
+  const foldBlocks: ReactNode[] = []
+  let segment: ReactNode[] = []
+  const flushSegment = (): void => {
+    if (segment.length === 0) return
+    foldBlocks.push(
+      <div className="turn-process" data-fold={collapsed ? 'closed' : 'open'} key={`process-${String(foldBlocks.length)}`}>
+        <div className="turn-process-body">{segment}</div>
+      </div>,
+    )
+    segment = []
+  }
+  for (const block of middle) {
+    if (block.fold) {
+      segment.push(block.node)
+      continue
+    }
+    flushSegment()
+    foldBlocks.push(block.node)
+  }
+  flushSegment()
   return (
     <>
       {seat.rows.length === 0 ? null : seatRow(seat.rows[0]!, false)}
@@ -217,15 +280,7 @@ export function SeatBody({
           />
         </div>
       ) : null}
-      {processBlocks.length === 0 ? null : (
-        // 过程区**包一层**再折：整轮收起是「这一片高度从 0 长回来 / 缩回 0」，一片一起动才行。
-        // 平铺在座位上折不了——收起的行是 `hidden`（不产生盒子），夹在它们之间的 6px flex gap
-        // 会留下来，几十行的轮收起来就是一片空白的间隙堆。包进一格之后，座位的 gap 只算这一格。
-        // 高度动画本身在 CSS：`.turn-process` 的 grid-template-rows 0fr↔1fr（不需要 JS 量高度）。
-        <div className="turn-process" data-fold={collapsed ? 'closed' : 'open'}>
-          <div className="turn-process-body">{processBlocks}</div>
-        </div>
-      )}
+      {foldBlocks.length === 0 ? null : <>{foldBlocks}</>}
       {afterBlocks}
       {/* 「已编辑 N 个文件」是**轮尾**卡：这一轮还在跑时不画。
           0.8.0 之前它一出现第一条 changes 条目就上屏，于是「正在运行命令」的转圈下面

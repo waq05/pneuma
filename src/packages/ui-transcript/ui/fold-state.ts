@@ -64,6 +64,18 @@ export function writeFold(key: string | undefined, open: boolean): void {
 }
 
 /**
+ * 抹掉一条存档（undefined 键空操作）。
+ *
+ * 与 writeFold(key, false) 的差别是「用户手动收起」与「没调过、按默认来」：
+ * 抹掉之后 readFold 回到调用方给的兜底值，收起时机（next-input 的最后一轮默认摊着）
+ * 才有机会生效；写成 false 会把它钉成手动收起。
+ */
+export function clearFold(key: string | undefined): void {
+  if (key === undefined) return
+  folds.delete(key)
+}
+
+/**
  * 整轮折叠的存档键（旧桌面渲染层同款）：`会话id:turn:轮序号`。
  *
  * 会话 id 可能在宿主落盘前缺席（null）——归一成空串，同一次进程里键仍然唯一。

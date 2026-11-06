@@ -144,6 +144,10 @@ function TranscriptFlow({
         .then((value) => {
           setPrefs({
             policy: processFoldPolicy(readFoldValue(value['processFold'])),
+            // 两项新偏好（契约里已冻结的取值）：认不出的值各自回落出厂口径
+            // （跑完立刻收起 / 收起后正文照留）。
+            collapseTiming: value['collapseTiming'] === 'next-input' ? 'next-input' : 'completion',
+            foldedReplies: value['foldedReplies'] === 'final' ? 'final' : 'all',
             reasoningOpen: value['reasoningDefaultOpen'] === true,
             toolOpen: value['toolDefaultOpen'] === true,
           })
@@ -280,8 +284,13 @@ function TranscriptFlow({
   const rounds = seats.infos
   const liveRoundIndex = rounds.length - 1
   const roundFolds = useMemo(
-    () => buildRoundFolds([...entries, ...live], rounds, { foldTurns: prefs.policy.foldTurns, live: turnState !== 'idle', lastRoundIndex: liveRoundIndex }),
-    [entries, live, rounds, prefs.policy.foldTurns, turnState, liveRoundIndex],
+    () => buildRoundFolds([...entries, ...live], rounds, {
+      foldTurns: prefs.policy.foldTurns,
+      live: turnState !== 'idle',
+      lastRoundIndex: liveRoundIndex,
+      foldedReplies: prefs.foldedReplies,
+    }),
+    [entries, live, rounds, prefs.policy.foldTurns, prefs.foldedReplies, turnState, liveRoundIndex],
   )
   // 阶段分组（档位表能力之一）：一轮里连续的过程条目按「正文 / 计划卡 / 独立条目」封组，
   // 组头只说「这一阶段干了哪类事」。none 档给空表（引用稳定的常量），整轮折叠不依赖它。
@@ -308,17 +317,24 @@ function TranscriptFlow({
   const prevRunningRounds = useRef<Set<number>>(new Set())
   useEffect(() => {
     const settled: string[] = []
+    /** 刚收尾的最新一轮（next-input）：抹掉存档回兜底，下一次渲染它就默认摊着。 */
+    const reopened: string[] = []
+    const deferLatest = prefs.collapseTiming === 'next-input'
     for (const roundIndex of prevRunningRounds.current) {
       if (runningRounds.has(roundIndex)) continue
-      settled.push(turnFoldKey(sessionId, roundIndex))
+      // 复位写的是什么很关键：completion 档写「收起」，next-input 档的最新一轮**抹掉**存档
+      // ——写 false 等于替用户做了「手动收起」，兜底的「最新一轮摊着」就再也不会生效。
+      if (deferLatest && roundIndex === liveRoundIndex) reopened.push(turnFoldKey(sessionId, roundIndex))
+      else settled.push(turnFoldKey(sessionId, roundIndex))
       for (const group of stepGrouping.groups) {
         if (group.roundIndex === roundIndex) settled.push(stepGroupFoldKey(sessionId, roundIndex, group.seq))
       }
     }
+    foldMemory.clear(reopened)
     foldMemory.reset(settled)
     prevRunningRounds.current = runningRounds
-    // foldMemory.reset 是稳定引用（useFoldMemory 里 useCallback 包过），不进依赖清单。
-  }, [runningRounds, stepGrouping, sessionId])
+    // foldMemory.clear / reset 是稳定引用（useFoldMemory 里 useCallback 包过），不进依赖清单。
+  }, [runningRounds, stepGrouping, sessionId, prefs.collapseTiming, liveRoundIndex])
 
   // 页脚「分叉这一轮」：保留到本轮用户消息（含），从这一轮的回答重来——旧界面同一语义。
   // 第 1 轮不给分（分完还是这一轮，没有意义）。

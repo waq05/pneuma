@@ -9,19 +9,33 @@
 import { createContext, type ReactNode } from 'react'
 import type { TranscriptEntry } from '@dsc/ui'
 import type { ToolMatch } from '@dsc/ui-primitives'
-import { processFoldPolicy } from './round-fold'
+import { processFoldPolicy, type CollapseTiming, type FoldedReplies } from './round-fold'
 import { splitRounds } from './rounds'
 import type { StepGrouping } from './process-groups'
 import type { RoundInfo } from './timing'
 
 export interface FoldPrefs {
   policy: ReturnType<typeof processFoldPolicy>
+  /**
+   * 折叠时机（uiPrefs.collapseTiming）：跑完立刻收起，还是最后一轮摊到下一句话进来。
+   * 界面侧只把它转成「最新一轮的默认展开态」（见 round-fold.tsx 的 turnDefaultOpen）。
+   */
+  collapseTiming: CollapseTiming
+  /** 收起后显示哪些回复（uiPrefs.foldedReplies）：正文留在屏幕上，还是跟着过程一起藏。 */
+  foldedReplies: FoldedReplies
   /** 定稿的思考行默认展开吗（uiPrefs.reasoningDefaultOpen）。 */
   reasoningOpen: boolean
   /** 工具卡默认展开吗（uiPrefs.toolDefaultOpen）。 */
   toolOpen: boolean
 }
-export const FOLD_PREFS: FoldPrefs = { policy: processFoldPolicy('standard'), reasoningOpen: false, toolOpen: false }
+/** 出厂口径：跑完立刻收起、正文留在屏幕上（与契约里的默认值一致）。 */
+export const FOLD_PREFS: FoldPrefs = {
+  policy: processFoldPolicy('standard'),
+  collapseTiming: 'completion',
+  foldedReplies: 'all',
+  reasoningOpen: false,
+  toolOpen: false,
+}
 export const FoldPrefsContext = createContext<FoldPrefs>(FOLD_PREFS)
 
 /**
@@ -110,8 +124,13 @@ export interface Seat {
   rows: Row[]
 }
 
-/** 独立条目（不进过程区）：收起整轮不能把「等你点批准」「结束标记」也一起藏掉。 */
-export const TURN_INDEPENDENT: ReadonlySet<string> = new Set(['user', 'plan', 'system', 'turn-end', 'turn-max-tokens'])
+/**
+ * 独立条目（不进过程区）：收起整轮不能把「等你点批准」「结束标记」也一起藏掉。
+ *
+ * 表本体住在 round-fold.tsx（折叠预算器自己要用它来算隐藏集合，两处各写一份会漂），
+ * 这里只为渲染层保持原来的导入位置。
+ */
+export { TURN_INDEPENDENT } from './round-fold'
 
 /** 空的分组结果（verbose 档共用一份，引用稳定，不给每帧新建空 Map）。 */
 export const EMPTY_STEP_GROUPING: StepGrouping = { groups: [], headAt: new Map(), at: new Map() }
