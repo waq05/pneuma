@@ -1,5 +1,6 @@
 /**
- * 生命周期钩子的失败方向自检：**钩子没跑成不拦路**，只有明确的退出码 2 才挡工具。
+ * 外部命令钩子（codex 事件名）的失败方向与配置读迁移自检：
+ * **钩子没跑成不拦路**，只有明确的退出码 2 才挡工具。
  *
  * 为什么单开一条（2026-10-30 用户拍板）：以前默认 `failClosed: true`，脚本有个小毛病
  * （路径写错、超时、非 0 退出）就把**所有**工具调用一起掐死，而 codex 的语义是
@@ -10,15 +11,30 @@
  *   [2] 超时、起不来、退出码非 0、输出看不懂：默认只留一条提示，形态是 `pass` + problem；
  *   [3] 退出码 2（带 stderr 或不带）在任何配置下都拦，理由是 stderr 原文；
  *   [4] 钩子自己写的 `failClosed` 覆盖全局开关（codex 没有这一层，是 dsc 自己的扩展）；
- *   [5] JSON 结论照旧生效（放行 / 拦下 / 要人确认）——失败方向的改动不动它们。
+ *   [5] JSON 结论照旧生效（放行 / 拦下 / 要人确认）——失败方向的改动不动它们；
+ *   [6] 配置读迁移（0.9.0 合并进 `@pneuma/hooks`）：`hooks` 条目缺的项沿用旧条目
+ *       `lifecycle-hooks` 的同名项、旧条目被停用过就按关处理，全程只读、幂等、不删旧条目。
  *
- * 纯函数，不用临时 HOME、不起内核。用法：pnpm build && node scripts/lifecycle-hook-default-test.mjs
+ * 引擎在合并后住 `lib/packages/hooks/lifecycle-hooks.js`（原 `lib/core/lifecycle-hooks.js`）。
+ * 纯函数，起临时 HOME（不碰真实 `~/.dsc`）、不起内核。
+ * 用法：pnpm build && node scripts/lifecycle-hook-default-test.mjs
  *
  * @module dsc/scripts/lifecycle-hook-default-test
  */
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+
+/** 临时 HOME：`dscPath` 在模块导入时读它，`plugins.json` 也就落在临时目录里。 */
+const home = mkdtempSync(join(tmpdir(), 'dsc-lifecycle-hooks-'))
+process.env.HOME = home
+process.env.USERPROFILE = home
+process.env.DSC_HOME = join(home, '.dsc')
+mkdirSync(process.env.DSC_HOME, { recursive: true })
+const pluginsJson = join(process.env.DSC_HOME, 'plugins.json')
 
 const { LIFECYCLE_DEFAULTS, judgeBlockedByAllowlist, judgeLifecycleRun, resolveLifecycleConfig } = await import(
-  '../lib/core/lifecycle-hooks.js'
+  '../lib/packages/hooks/lifecycle-hooks.js'
 )
 
 let failures = 0
@@ -31,6 +47,15 @@ const check = (name, condition, detail = '') => {
     failures += 1
     console.log(`  FAIL  ${name}${detail === '' ? '' : ` — ${detail}`}`)
   }
+}
+
+/** 写一份条目树（`null` = 干脆没有这个文件）。 */
+const writeEntries = (entries) => {
+  if (entries === null) {
+    writeFileSync(pluginsJson, '', 'utf8')
+    return
+  }
+  writeFileSync(pluginsJson, `${JSON.stringify({ version: 1, entries }, null, 2)}\n`, 'utf8')
 }
 
 /** 一条 PreToolUse 钩子（`failClosed` 不写 = 跟全局开关走）。 */
@@ -57,13 +82,15 @@ const run = (patch = {}) => ({
   ...patch,
 })
 
-console.log('生命周期钩子失败方向测试')
+writeEntries(null)
+console.log('外部命令钩子失败方向测试')
 
 // ── [1] 缺省值与显式开关 ──────────────────────────────────────────────────────
 {
   const cfg = resolveLifecycleConfig({})
   check('LIFECYCLE_DEFAULTS.failClosed 是 false', LIFECYCLE_DEFAULTS.failClosed === false, String(LIFECYCLE_DEFAULTS.failClosed))
   check('什么都不配时 failClosed=false（与 codex 一致）', cfg.failClosed === false, String(cfg.failClosed))
+  check('什么都不配时默认开着（没有钩子可跑 = 空转）', cfg.enabled === true, String(cfg.enabled))
   check('显式写 true 才打开', resolveLifecycleConfig({ failClosed: true }).failClosed === true)
   check('字符串 "true" 也认（手改 plugins.json 会写成串）', resolveLifecycleConfig({ failClosed: 'true' }).failClosed === true)
   check('字符串 "false" 不会误开', resolveLifecycleConfig({ failClosed: 'false' }).failClosed === false)
@@ -123,5 +150,57 @@ console.log('生命周期钩子失败方向测试')
   check('退出码 2 与 JSON 都拦时理由取 JSON', exit2ok.message === '脚本自己要拦', exit2ok.message)
 }
 
-console.log(`生命周期钩子失败方向电池：${passes} PASS / ${failures} FAIL`)
+// ── [6] 配置读迁移：`hooks` 缺的项沿用旧 `lifecycle-hooks` 条目 ───────────────
+console.log('\n── 合并后的配置读迁移（只读回落，不写不删） ──')
+{
+  /** 旧条目：用户在 lifecycle-hooks 设置里改过四项、没动开关。 */
+  const legacyOnly = [
+    {
+      file: 'lifecycle-hooks',
+      disabled: false,
+      config: { failClosed: true, timeoutMs: 7000, configPath: 'C:\\me\\lc.json', commandAllowlist: 'node' },
+    },
+  ]
+  writeEntries(legacyOnly)
+  const before = readFileSync(pluginsJson, 'utf8')
+  const migrated = resolveLifecycleConfig({})
+  check('旧条目的 failClosed 沿用了', migrated.failClosed === true, String(migrated.failClosed))
+  check('旧条目的 timeoutMs 沿用了', migrated.timeoutMs === 7000, String(migrated.timeoutMs))
+  check('旧条目的 configPath 沿用了', migrated.configPath.endsWith('lc.json'), migrated.configPath)
+  check('旧条目的 commandAllowlist 沿用了', migrated.commandAllowlist === 'node', migrated.commandAllowlist)
+  check('旧条目没写 enabled、又没被停用过 → 仍默认开', migrated.enabled === true, String(migrated.enabled))
+  check('读一次不写盘：plugins.json 逐字节没变', readFileSync(pluginsJson, 'utf8') === before)
+  const again = resolveLifecycleConfig({})
+  check('再读一次结果一样（幂等）', JSON.stringify(again) === JSON.stringify(migrated), JSON.stringify(again))
+  check('读两次之后旧条目还在（不删）', JSON.parse(readFileSync(pluginsJson, 'utf8')).entries.some((entry) => entry.file === 'lifecycle-hooks'))
+}
+{
+  // 旧条目在插件中心被关过（disabled: true）：合并后这条 codex 事件链常驻，不能因此悄悄开起来。
+  // 停用标记排在旧配置的 enabled 前面——配置里还留着 true 也一样按关处理。
+  writeEntries([{ file: 'lifecycle-hooks', disabled: true, config: {} }])
+  const off = resolveLifecycleConfig({})
+  check('旧条目被停用过 → 外部命令钩子按关处理', off.enabled === false, String(off.enabled))
+  writeEntries([{ file: 'lifecycle-hooks', disabled: true, config: { enabled: true } }])
+  check('旧条目被停用过，配置里留着 enabled:true 也按关处理', resolveLifecycleConfig({}).enabled === false)
+  writeEntries([{ file: 'lifecycle-hooks', disabled: false, config: { enabled: false } }])
+  check('旧条目配置里显式 enabled:false 也认', resolveLifecycleConfig({}).enabled === false)
+  writeEntries([{ file: 'lifecycle-hooks', disabled: false, config: { enabled: true } }])
+  check('旧条目配置里显式 enabled:true 认', resolveLifecycleConfig({}).enabled === true)
+}
+{
+  // 新条目写过的值一律优先（用户在合并后的设置页改过）
+  writeEntries([
+    { file: 'hooks', disabled: false, config: { enabled: true, failClosed: false, timeoutMs: 5000, commandAllowlist: '' } },
+    { file: 'lifecycle-hooks', disabled: true, config: { failClosed: true, timeoutMs: 9000, commandAllowlist: 'node' } },
+  ])
+  const merged = resolveLifecycleConfig({})
+  check('新条目的 failClosed 压过旧条目', merged.failClosed === false, String(merged.failClosed))
+  check('新条目的 timeoutMs 压过旧条目', merged.timeoutMs === 5000, String(merged.timeoutMs))
+  check('新条目把白名单清空也算「写过」（空串优先级高于旧值）', merged.commandAllowlist === '', JSON.stringify(merged.commandAllowlist))
+  check('新条目的 enabled 压过旧条目的停用标记', merged.enabled === true, String(merged.enabled))
+  const saved = readFileSync(pluginsJson, 'utf8')
+  check('合并读取之后两份条目都还在（旧条目留给回滚）', saved.includes('"lifecycle-hooks"') && saved.includes('"hooks"'))
+}
+
+console.log(`\n外部命令钩子失败方向与读迁移电池：${passes} PASS / ${failures} FAIL`)
 process.exit(failures === 0 ? 0 : 1)

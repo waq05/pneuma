@@ -97,13 +97,15 @@ lib/ui/plugins/<id>/client.js
 | 组 | 条件 | 现在的数量 |
 |---|---|---|
 | 自定义 | `external` 且是单文件插件/组合包 | 取决于用户装了什么 |
-| 官方可开关 | `builtin` + `toggleable`，行 id 不带 `ui-` | 17 |
+| 官方可开关 | `builtin` + `toggleable`，行 id 不带 `ui-`，且没写 `pneuma.experimental` | 13 |
+| 实验 | `builtin` + `toggleable` + `pneuma.experimental` | 3 |
 | 界面单元 | `builtin` + `toggleable`，行 id 带 `ui-` | 21 |
 | 运行内核 | `builtin` 且不可停 | 36 |
 
-默认开关跟 v0.8.1 一致：12 个功能插件默认关（`browser`、`computer-use`、`dock-browser`、`dsh-compat`、
-`lifecycle-hooks`、`lsp`、`mcp`、`ops`、`schedule`、`self-improve`、`subagent`、`tool-search`），
-其余内置行默认开；界面单元默认全开。
+默认开关跟 v0.8.1 一致：11 个功能插件默认关（`browser`、`computer-use`、`dock-browser`、`dsh-compat`、
+`lsp`、`mcp`、`ops`、`schedule`、`self-improve`、`subagent`、`tool-search`），
+其余内置行默认开；界面单元默认全开。外部命令钩子（codex 事件名）0.9.0 起并进 `hooks` 包：
+它本来默认关、可停用，合并后那一行消失，设置收进 `hooks` 分区的「外部命令（codex 事件名）」组。
 
 ## 4. 身份
 

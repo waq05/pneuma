@@ -10,10 +10,12 @@
  * | 第三方界面插件 | 信任卡 | `~/.dsc/plugins/<目录名>/ui/client.js`，信任一次后才装载 |
  * | 组合包界面 | 信任卡 | profile 里 `pneuma.client.platform = pneuma` 的界面半 |
  * | 官方可开关 | `source = builtin` 且 `toggleable`，行 id 不带 `ui-` | 随包发布的功能插件 |
+ * | 实验 | `source = builtin` 且 `toggleable` 且清单标了 `pneuma.experimental` | 能用但还粗糙的官方插件；照样可拨，只是单独一档 |
  * | 界面单元 | 同上，但行 id 带 `ui-` | 页面里的一块；21 个面板单独一档，免得把功能插件顶下去 |
  * | 运行内核 | `source = builtin` 且不可停 | 构成 Pneuma 本身，默认只露 10 行，其余折叠 |
  *
  * `source` 与 `toggleable` 都由宿主给（`pneuma.toggleable` 写在包的清单里），界面不自己猜。
+ * 「实验」的判据是 `pneuma.experimental`，优先级高于界面单元的 `ui-` 前缀判据。
  *
  * **整卡可点**：点开是这个插件自己的详情页（面包屑返回 + 头部 + 配置），配置表单
  * 就地画在详情页里——对照旧界面「插件注册的配置页在插件中心里编辑，设置面板不收录
@@ -78,13 +80,13 @@ const t = createT({ zh, en })
 const PAGE = 'plugins'
 
 /**
- * 每一段默认露几行（其余折叠）。六段同一口径：10 条以内一眼扫完，超过就把尾巴收起来，
+ * 每一段默认露几行（其余折叠）。七段同一口径：10 条以内一眼扫完，超过就把尾巴收起来，
  * 免得「界面单元」这种二十来条的一档把后面的组顶出屏幕。
  */
 const GROUP_PREVIEW = 10
 
-/** 清单里的六段。展开状态一段一个键，翻一段不影响别的段。 */
-type PluginGroupKey = 'custom' | 'thirdParty' | 'packages' | 'official' | 'uiUnits' | 'kernel'
+/** 清单里的七段。展开状态一段一个键，翻一段不影响别的段。 */
+type PluginGroupKey = 'custom' | 'thirdParty' | 'packages' | 'experimental' | 'official' | 'uiUnits' | 'kernel'
 
 /** `listPlugins` 回来的形状（宿主契约 `PluginInfoView`）。 */
 interface PluginRow {
@@ -94,6 +96,8 @@ interface PluginRow {
   enabled: boolean
   source: 'builtin' | 'external'
   toggleable: boolean
+  /** true = 清单标了 `pneuma.experimental`：归「实验」档（仍是可拨的官方插件）。 */
+  experimental?: boolean
   /** 这个插件贡献的设置分区 id；undefined = 没有可配置项，详情页不画配置表单。 */
   settingsSection?: string
   /** 插件声明的内核 API 版本；未声明时 undefined。 */
@@ -323,11 +327,14 @@ function PluginsView(): ReactNode {
   // 组合包装在哪个 profile：一行里已经有徽标，但组的标题上先说一句更有用——
   // 装了多个 profile 时，用户第一眼要确认的是「这一组属于哪一层」。
   const packageProfiles = [...new Set(packages.map((row) => row.profile).filter((v): v is string => v !== undefined))]
-  // 内置行再分两类：界面单元（行 id 带 `ui-` 前缀，产物是页面里的一块）与功能插件。
-  // 混在一组里，21 个面板会把 19 个功能插件顶到看不见的地方。
+  // 内置行再分三类：实验（清单标了 `pneuma.experimental`）、界面单元（行 id 带 `ui-` 前缀，
+  // 产物是页面里的一块）与功能插件。混在一组里，21 个面板会把 19 个功能插件顶到看不见的地方。
+  // 实验优先判：这些包也带 `ui-` 前缀时不该被界面单元那一档吃掉。
   const builtinToggleable = (rows ?? []).filter((row) => row.source === 'builtin' && row.toggleable)
-  const uiUnits = builtinToggleable.filter((row) => row.file.startsWith('ui-'))
-  const official = builtinToggleable.filter((row) => !row.file.startsWith('ui-'))
+  const experimental = builtinToggleable.filter((row) => row.experimental === true)
+  const regular = builtinToggleable.filter((row) => row.experimental !== true)
+  const uiUnits = regular.filter((row) => row.file.startsWith('ui-'))
+  const official = regular.filter((row) => !row.file.startsWith('ui-'))
   const kernel = (rows ?? []).filter((row) => row.source === 'builtin' && !row.toggleable)
 
   /** 这一段展开着没有（一段一个键；没点过就是收起）。 */
@@ -343,6 +350,7 @@ function PluginsView(): ReactNode {
   const customShown = shownOf('custom', custom)
   const thirdPartyShown = shownOf('thirdParty', thirdParty)
   const packagesShown = shownOf('packages', packages)
+  const experimentalShown = shownOf('experimental', experimental)
   const officialShown = shownOf('official', official)
   const uiUnitsShown = shownOf('uiUnits', uiUnits)
   const kernelShown = shownOf('kernel', kernel)
@@ -515,6 +523,29 @@ function PluginsView(): ReactNode {
                 toggleGroup('official')
               }}
             />
+
+            {/* 实验档：包清单标了 `pneuma.experimental` 的官方插件。没有就不画这一档，
+                免得用户对着一个空标题猜「实验是什么」。开关与详情页跟官方插件同款。 */}
+            {experimental.length > 0 ? (
+              <>
+                <div className="plugin-group-label">
+                  {t('plugins.group.experimental')} <span className="count">{experimental.length}</span>
+                  <span className="group-hint">{t('plugins.group.experimentalHint')}</span>
+                </div>
+                <div className="plugin-grid">
+                  {experimentalShown.map((row) => (
+                    <PluginCard key={row.file} row={row} onToggle={toggle} onOpen={setDetailFile} />
+                  ))}
+                </div>
+                <GroupMore
+                  count={experimental.length}
+                  open={isGroupOpen('experimental')}
+                  onToggle={() => {
+                    toggleGroup('experimental')
+                  }}
+                />
+              </>
+            ) : null}
 
             {uiUnits.length > 0 ? (
               <>

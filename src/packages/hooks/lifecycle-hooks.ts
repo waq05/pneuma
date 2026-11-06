@@ -1,9 +1,15 @@
 /**
  * 生命周期钩子引擎：按 codex 的事件名读一份外部配置，跑外部命令，把结论交回插件落位。
  *
- * 与 `packages/session-core/hooks.ts`（安全钩子）的分工：那个管 dsc 自己的四个事件、配置在
- * `~/.dsc/hooks.json`；这一份管 codex 那十四个事件名、配置在
- * `~/.dsc/lifecycle-hooks.json`。**两份配置各读各的**，不共用文件，免得两个插件抢同一份配置。
+ * 0.9.0 起并进 `@pneuma/hooks`（设置分区 id 仍是 `hooks`，外部命令那一组在同一个页面里），
+ * 这一份只留引擎：事件能力表、codex 形态配置的解析、跑外部命令、按失败方向给裁决。
+ *
+ * 与同目录 `@pneuma/session-core/hooks.ts`（安全钩子的规则与脚本）的分工：那个管 dsc 自己的
+ * 四个事件、配置在 `~/.dsc/hooks.json`；这一份管 codex 那十四个事件名、钩子清单在
+ * `~/.dsc/lifecycle-hooks.json`。**配置各读各的**，只是挂同一个插件的同一条守卫链上。
+ * 插件自己的可调项（开关、配置文件路径、超时、失败方向、命令白名单）存在
+ * `~/.dsc/plugins.json` 的 `hooks` 条目里；合并前那一行 `lifecycle-hooks` 的同名键**只读回落**，
+ * 见 {@link resolveLifecycleConfig}。
  *
  * 三件事在这里定死，插件那边只负责挂扩展点：
  *   1. 十四个事件各自的档位（wired / partial / unwired）与不能接通的理由，见
@@ -14,9 +20,9 @@
  *   3. 钩子说的话进模型之前一律过 `wrapUntrusted`，来源写 `hook:<事件名>`。
  *
  * 复用的是判定那一半：`matcherHits` 匹配工具名、`judgeScriptRun` 折裁决与失败方向、
- * 超时下限上限沿用 `HOOK_TIMEOUT_*`，这样两个钩子插件的失败语义不会各说各话。
+ * 超时下限上限沿用 `HOOK_TIMEOUT_*`，这样两套钩子的失败语义不会各说各话。
  *
- * @module dsc/core/lifecycle-hooks
+ * @module dsc/packages/hooks/lifecycle-hooks
  */
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
@@ -31,7 +37,7 @@ import {
 } from '@pneuma/session-core/hooks.js'
 import { errText } from '../../core/err-text.js'
 import type { HookJudgement, HookRun, HookScript } from '@pneuma/session-core/hooks.js'
-import { resolvePluginConfig } from '../../core/plugin-registry.js'
+import { readPluginEntries, resolvePluginConfig } from '../../core/plugin-registry.js'
 import { scrubChildEnv, redact } from '../../core/secrets.js'
 import { wrapUntrusted } from '../../core/untrusted.js'
 import { dscPath, expandHome } from '../../core/path-policy.js'
@@ -227,15 +233,52 @@ function asText(value: unknown, fallback: string): string {
 }
 
 /**
- * 取这个插件此刻该用的配置：装配时传进来的那份作底，`~/.dsc/plugins.json` 上那份覆盖它。
+ * 合并后这个插件在条目树里的键（`~/.dsc/plugins.json` 的 `hooks` 条目）。
+ * 设置分区 id 仍是 `hooks`，外部命令那一组与规则、脚本同一页。
+ */
+export const LIFECYCLE_CONFIG_KEY = 'hooks'
+
+/**
+ * 合并前那一行在条目树里的键。**只读**：用来回落老配置，永不删除、永不改写。
+ * 回滚到旧版本时那一行还得读得到自己的开关与配置。
+ */
+export const LIFECYCLE_LEGACY_KEY = 'lifecycle-hooks'
+
+/** 把配置里的布林写成三种状态：没写 = undefined（好让回落继续往下找）。 */
+function asBoolOrUndefined(value: unknown): boolean | undefined {
+  if (value === true || value === 'true') return true
+  if (value === false || value === 'false') return false
+  return undefined
+}
+
+/**
+ * 取这个插件此刻该用的配置：装配时传进来的那份作底，`~/.dsc/plugins.json` 的 `hooks` 条目覆盖它。
  * 每次用值都现调，所以设置里改完不必重启宿主。
+ *
+ * **读迁移（只读回落）**：合并前这里叫 `lifecycle-hooks`，配置也写在那个条目下。合并后先看
+ * `hooks` 条目，某项缺着就沿用 `lifecycle-hooks` 条目的同名项——老用户升级后开关、配置文件路径、
+ * 超时、失败方向、命令白名单一个都不丢，回到旧版本也照旧读得到（旧条目一个字节都不动）。
+ *
+ * 优先级（高 → 低）：`hooks` 条目的同名项 → `lifecycle-hooks` 条目的同名项 → 缺省值。
+ * `enabled` 单独一条链：`hooks.enabled` → 旧条目在插件中心被停用过（按关）→ 旧条目
+ * `config.enabled` → 缺省开。**停用标记排在旧配置前面**：合并后这条 codex 事件链常驻，
+ * 用户把那一行关掉过，就不该因为配置里还留着 `enabled: true` 就把外部命令悄悄跑起来。
+ * **全程只读**：不进写盘、不清旧条目，所以读多少次结果都一样（幂等）。
  *
  * @param passed - 插件 `apply(ctx, passed)` 的第二参数；不是对象就当没给。
  */
 export function resolveLifecycleConfig(passed?: unknown): LifecycleHooksConfig {
-  const raw = resolvePluginConfig('lifecycle-hooks', passed)
+  const entries = readPluginEntries()
+  const merged = resolvePluginConfig(LIFECYCLE_CONFIG_KEY, passed)
+  const legacyEntry = entries.find((entry) => entry.file === LIFECYCLE_LEGACY_KEY)
+  const legacy = legacyEntry?.config ?? {}
+  // 缺的键才回落：`hooks` 里写过的值（哪怕是 false / 空串）一律优先，保存过就立刻生效
+  const raw: Record<string, unknown> = { ...legacy, ...merged }
+  const enabled =
+    asBoolOrUndefined(merged.enabled) ??
+    (legacyEntry?.disabled === true ? false : asBoolOrUndefined(legacy.enabled) ?? LIFECYCLE_DEFAULTS.enabled)
   return {
-    enabled: raw.enabled !== false && raw.enabled !== 'false',
+    enabled,
     configPath: expandHome(asText(raw.configPath, LIFECYCLE_DEFAULTS.configPath)),
     timeoutMs: clampNumber(raw.timeoutMs, HOOK_TIMEOUT_MIN, HOOK_TIMEOUT_MAX, LIFECYCLE_DEFAULTS.timeoutMs),
     // 默认不拦（与 codex 一致）：只有明确写 true 才把「钩子没跑成」当成拦
@@ -612,8 +655,8 @@ export function hookLabel(hook: LifecycleHook): string {
  * 把一条生命周期钩子折成 `judgeScriptRun` 认的形状。
  *
  * 那个函数只读 `command`（拼来源名）与 `failClosed`（失败方向），事件名与 matcher 不参与判定，
- * 所以事件位填 dsc 事件表里的占位值，判定结果不受影响。这么做是为了让两个钩子插件的
- * 失败语义（超时/起不来/输出看不懂/退出码非 0 一律按拒）只有一份实现。
+ * 所以事件位填 dsc 事件表里的占位值，判定结果不受影响。这么做是为了让规则脚本与外部命令
+ * 这两套钩子的失败语义（超时/起不来/输出看不懂/退出码非 0 一律按拒）只有一份实现。
  */
 function asJudgeScript(hook: LifecycleHook, config: LifecycleHooksConfig): HookScript {
   return {

@@ -1,11 +1,12 @@
 /**
- * @pneuma/hooks 的包级测试：钉 4 条不变量。
- * 为什么只钉这些：这个包对外只有插件对象，规则解析要真读磁盘配置才跑得起来，代价不划算，所以只钉装配面与入口。
+ * @pneuma/hooks 的包级测试：钉 6 条不变量。
+ * 为什么只钉这些：这个包对外只有插件对象，规则解析要真读磁盘配置才跑得起来，代价不划算，所以只钉装配面与入口；
+ * 0.9.0 把外部命令钩子（原 @pneuma/lifecycle-hooks）并了进来，事件表与命令白名单是纯函数、写错等于让拦截
+ * 形同虚设，所以把原包那两条断言一起搬到这里，并钉住十四个事件的接通档位。
  * @module @pneuma/hooks/tests
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { after, test } from 'node:test'
 
 const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8')
@@ -16,6 +17,7 @@ test('cordis.patch.yml 的装配行认的是 @pneuma/hooks', () => {
   const patch = read('../cordis.patch.yml')
   assert.match(patch, /^\s*-\s*id: hooks\s*$/m, '装配行的 id 必须正好是 hooks')
   assert.ok(patch.includes("name: '@pneuma/hooks'"), "装配行的 name 必须是 '@pneuma/hooks'")
+  assert.ok(!/lifecycle-hooks/.test(patch), '合并后装配行里不该再有 lifecycle-hooks')
   passed += 1
 })
 
@@ -28,6 +30,7 @@ test('package.json 是 ESM 功能包，装配指向 cordis.patch.yml', () => {
   assert.ok(pkg.exports['./package.json'], 'exports 必须有 "./package.json"')
   assert.equal(pkg.pneuma.bundle.patch, './cordis.patch.yml')
   assert.notEqual(pkg.pneuma.library, true, '功能包不该标成库包')
+  assert.equal(pkg.pneuma.settingsSection, 'hooks', '合并后设置分区仍是 hooks（外部命令那一组在同一页）')
   passed += 1
 })
 
@@ -44,6 +47,10 @@ test('lib 入口能加载，插件名与 apply 对得上', async () => {
   assert.equal(plugin.name, pkg.name.slice('@pneuma/'.length))
   assert.equal(plugin.name, 'hooks')
   assert.equal(typeof plugin.apply, 'function')
+  // 外部命令钩子的两个服务并进来之后，注入表要带 llm 与 prompt（投影挂在这两个上）。
+  for (const service of ['llm', 'prompt', 'guards', 'settings']) {
+    assert.ok(plugin.inject.includes(service), `inject 缺 ${service}`)
+  }
   passed += 1
 })
 
@@ -52,6 +59,29 @@ test('README 的 Model Experience 与 Known Limitations 两段都在', () => {
   const readme = read('../README.md')
   assert.ok(readme.includes('## Model Experience'), '缺 ## Model Experience')
   assert.ok(readme.includes('## Known Limitations'), '缺 ## Known Limitations')
+  passed += 1
+})
+
+const lifecycle = await import('../../../../lib/packages/hooks/lifecycle-hooks.js')
+
+test('事件名沿用 codex 写法，只有三个事件支持 matcher，档位仍是 3/5/6', () => {
+  for (const event of ['PreToolUse', 'PostToolUse', 'SessionStart', 'Stop']) {
+    assert.ok(lifecycle.LIFECYCLE_EVENTS.includes(event), '事件表缺 ' + event)
+  }
+  assert.equal(lifecycle.LIFECYCLE_EVENTS.length, 14, '十四个事件名')
+  assert.deepEqual(lifecycle.LIFECYCLE_MATCHER_EVENTS, ['PreToolUse', 'PostToolUse', 'SessionStart'])
+  assert.equal(lifecycle.matcherSupported('PreToolUse'), true)
+  assert.equal(lifecycle.matcherSupported('Stop'), false)
+  const tiers = lifecycle.LIFECYCLE_CAPABILITIES.map((item) => item.tier)
+  assert.equal(tiers.filter((tier) => tier === 'wired').length, 3, '完整接通 3 个')
+  assert.equal(tiers.filter((tier) => tier === 'partial').length, 5, '部分接通 5 个')
+  assert.equal(tiers.filter((tier) => tier === 'unwired').length, 6, '未接通 6 个')
+  passed += 1
+})
+
+test('命令白名单：空名单只放行空命令，写了名单才放行别的', () => {
+  assert.equal(lifecycle.commandAllowed('echo hi', ''), true)
+  assert.equal(lifecycle.commandAllowed('echo hi', 'node *'), false)
   passed += 1
 })
 

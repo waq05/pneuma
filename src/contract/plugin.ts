@@ -22,6 +22,14 @@ export interface PluginInfoView {
   source: 'builtin' | 'external'
   /** true = 有开关可拨（外部插件 + 官方可开关插件）；false = 运行内核，不可停用。 */
   toggleable: boolean
+  /**
+   * true = 包清单声明了 `pneuma.experimental`，插件中心据此归到「实验」档。
+   *
+   * 实验档仍是可拨的（`toggleable` 照旧为 true、默认关），只是换个位置：这些包能用，
+   * 但还粗糙，不跟常规官方插件混在一组。界面判档时还要看 `source` 与 `toggleable`，
+   * 所以这一项只在「内置且可停用」的包上真正起作用。
+   */
+  experimental?: boolean
   /** 这个插件贡献的设置分区 id；undefined = 没有可配置项，详情页不画配置表单。 */
   settingsSection?: string
   /** 插件声明的内核 API 版本；未声明时 undefined。 */

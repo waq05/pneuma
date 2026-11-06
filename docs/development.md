@@ -138,9 +138,9 @@ export const myPlugin: Plugin.Object = {
 | 自定义单文件 | `~/.dsc/plugins/*.js` | 可拨，默认开 | dsh 风格插件（走兼容层） |
 
 「运行内核」这一档不再存在：每个包都能停用，停了以后依赖它的行会挂不上并逐个报出原因。
-默认关的仍是那 13 个（见下），只是判据从元数据表换成了行上的 `disabled: true`。
+默认关的仍是那 11 个（见下），只是判据从元数据表换成了行上的 `disabled: true`。
 
-功能档一览（56 个包里默认关/开各半，这里是 19 个功能档）：
+功能档一览（55 个包里默认关/开各半，这里是 16 个功能档（最后三个收在「实验」档，不在官方档里），钩子只占一个包与一个设置页）：
 
 | 插件 | 默认 | 设置分区 | 干什么 |
 | --- | --- | --- | --- |
@@ -150,24 +150,22 @@ export const myPlugin: Plugin.Object = {
 | `approval-floor` 危险命令硬拦截 | 开 | `approval-floor` | 守卫链 order 5 的硬闸：灾难命令、命令黑名单、命令白名单、无人值守 |
 | `spill` 长输出转存 | 开 | `spill` | 工具输出超阈值就存成文件，回给模型的是头尾几行与续读写法 |
 | `session-search` 历史会话搜索 | 开 | `session-search` | 历史会话的中文全文索引，提供 `session_search` 工具与 `/search` 命令 |
-| `lifecycle-hooks` 外部命令钩子 | 关 | `lifecycle-hooks` | 读 `~/.dsc/lifecycle-hooks.json`，按 codex 的事件名在模型动手前后跑外部命令；钩子只有退出码 2 才拦，超时/起不来/非 0 退出默认只提示（与 codex 同口径，可开 `failClosed` 改回「没跑成也算拦」） |
 | `mcp` MCP 外部工具 | 关 | `mcp` | 连 stdio 或 streamable-http 的 MCP server，工具挂成 `mcp__服务器__工具` |
 | `tool-search` 工具按需加载 | 关 | `tool-search` | 用 `tool_search` / `tool_describe` / `tool_call` 把动手类与 MCP 工具的说明收进按需检索；read 工具常驻；`tool_call` 用 `gateAs` 交出被调工具的真名与真实风险，一次动作只问一遍守卫链、只弹一张卡 |
 | `sandbox` 文件与命令围栏 | 开 | `sandbox` | 守卫链 order 8 的策略围栏（codex 路线）：三档模式、可写根白名单、受保护路径、命令前缀策略、一次性升权（`sandbox_permissions` + `justification` 成对）；容器后端可换真隔离，降级时照常执行 + 审批兜底并如实上报 |
 | `schedule` 定时任务 | 关 | `schedule` | `after`/`at`/`every`/`daily`/`weekly`/`cron` 六种选择器，到点把任务投回建它的会话；至多一次、catch-up 补投、pre-dispatch 校验 |
 | `lsp` 代码跳转与报错 | 关 | `lsp` | 连语言服务器查定义/引用/实现/悬停，并提醒本次编辑新引入的报错 |
 | `browser` 受控浏览器 | 关 | `browser` | 开一台隔离 Chrome：无障碍快照 + ref 定位点击输入（`browser_look` 只读 / `browser` 动手），不是截图比坐标 |
-| `file-review` 改动前预览 | 开 | `file-review` | 写文件、改文件之前把 unified diff 摆进对话流，改哪几行看得见，超长按行截断 |
 | `dock-browser` 侧栏浏览器 | 关 | `dock-browser` | 驱动桌面端侧栏那台浏览器（用户的持久登录会话）：无障碍快照 + ref 定位，动手动作每次审批 |
-| `self-improve` 经验沉淀 | 关 | `self-improve` | 三条闭环：纠正捕获候选、复盘产技能草稿（默认停用待人启用）、技能自修 + 台账回滚；`skill_write` 写入只问一次审批（卡上是技能名与动作） |
-| `dsh-compat` dsh 插件兼容 | 关 | — | 挂载 dsh（DeepSeek Harness）外部插件：`logger` 服务、模块解析钩子、dsh 风格工具注册的形状适配 |
-| `ops` 文档与批量读取 | 关 | `ops` | 十三个工具：七个只读（`ops_read_pdf` / `ops_read_docx` / `ops_read_table` / `ops_read_files` / `ops_diff` / `ops_stat` / `ops_inspect_local_file`）+ 六个写类（`ops_write_file` / `ops_edit_file` / `ops_copy` / `ops_move` / `ops_remove` / `ops_replace`，都带 SHA-256 修订锚；整写、多处替换、整目录替换三件另有 `dryRun`）。写类不自己判沙箱档位，授权统一走守卫链与审批卡；审批卡会按工具语义推演「将做的改动」（整写、多处替换、单文件替换、复制/移动的目标、整篇删除），目录替换退回参数摘要。内核是 dsh-ops 的 Rust worker（独立进程、JSON 进 JSON 出），装一次 `dsh-ops` 就有；没装就一个工具都不注册，设置页写清找过哪些位置 |
+| `self-improve` 经验沉淀 | 关（实验） | `self-improve` | 三条闭环：纠正捕获候选、复盘产技能草稿（默认停用待人启用）、技能自修 + 台账回滚；`skill_write` 写入只问一次审批（卡上是技能名与动作） |
+| `dsh-compat` dsh 插件兼容 | 关（实验） | — | 挂载 dsh（DeepSeek Harness）外部插件：`logger` 服务、模块解析钩子、dsh 风格工具注册的形状适配 |
+| `ops` 文档与批量读取 | 关（实验） | `ops` | 十三个工具：七个只读（`ops_read_pdf` / `ops_read_docx` / `ops_read_table` / `ops_read_files` / `ops_diff` / `ops_stat` / `ops_inspect_local_file`）+ 六个写类（`ops_write_file` / `ops_edit_file` / `ops_copy` / `ops_move` / `ops_remove` / `ops_replace`，都带 SHA-256 修订锚；整写、多处替换、整目录替换三件另有 `dryRun`）。写类不自己判沙箱档位，授权统一走守卫链与审批卡；审批卡会按工具语义推演「将做的改动」（整写、多处替换、单文件替换、复制/移动的目标、整篇删除），目录替换退回参数摘要。内核是 dsh-ops 的 Rust worker（独立进程、JSON 进 JSON 出），装一次 `dsh-ops` 就有；没装就一个工具都不注册，设置页写清找过哪些位置 |
 
-默认开关按一条规矩定：会拉起外部进程、连外部服务器、动用户的桌面或改写每轮请求工具面的那几档默认关，共 12 个：`subagent`（含任务板）、`computer-use`、`lifecycle-hooks`、`mcp`、`tool-search`、`schedule`、`lsp`、`browser`、`dock-browser`、`self-improve`、`dsh-compat`、`ops`；提升安全与本地便利、且不配就完全无副作用的那几档默认开。文件与命令围栏是唯一的例外档：它默认开——不配就没有外部进程与外部服务器，开着的收益（越界写入当场拒）大于打扰，且默认档 workspace-write 不挡正常的工作区读写。
+默认开关按一条规矩定：会拉起外部进程、连外部服务器、动用户的桌面或改写每轮请求工具面的那几档默认关，共 11 个：`subagent`（含任务板）、`computer-use`、`mcp`、`tool-search`、`schedule`、`lsp`、`browser`、`dock-browser`、`self-improve`、`dsh-compat`、`ops`；提升安全与本地便利、且不配就完全无副作用的那几档默认开。文件与命令围栏是唯一的例外档：它默认开——不配就没有外部进程与外部服务器，开着的收益（越界写入当场拒）大于打扰，且默认档 workspace-write 不挡正常的工作区读写。外部命令钩子（codex 事件名）0.9.0 起不再单独成档：它是 `hooks` 包设置里的「外部命令（codex 事件名）」组，配了才有外部命令可跑。
 
 行清单在 `src/packages/<id>/cordis.patch.yml`，包元数据（标题、描述、默认关、设置分区、行序）在同一个目录的 `package.json` 的 `pneuma` 段。新增一个功能包的三步写在 [plugin-development.md §3.4](plugin-development.md)。
 
-**换掉一个自带包**：37 个包的 `pneuma.resolution` 是 `overridable`，把改过的同名包放进
+**换掉一个自带包**：55 个包的 `pneuma.resolution` 是 `overridable`，把改过的同名包放进
 `~/.dsc/profiles/default/node_modules/@pneuma/<id>/` 就顶替应用那份，重启生效；19 个 `pinned` 包
 （`llm`/`session`/`tools`/`approval` 这些核心服务）不认覆盖，profile 里有同名副本时告警并写清哪份不生效。
 `numa plugin list` 每行末尾标的就是这件事：`← profile 覆盖`，或者 pinned 让路那句说明。
@@ -477,7 +475,7 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 | `cache/` | 技能市场（`src/packages/config-core/market.ts:10`） | 市场条目清单，缓存 1 小时 |
 | `cache/session-index.json` | session-search 插件（`src/core/session-index.ts`） | 历史会话搜索的倒排索引，带 `version`；是旁路缓存，删掉只会让下次检索重新回填 |
 | `spill/` | spill 插件（`src/core/spill.ts`） | 工具输出超阈值时落盘的文件，目录 0700、文件 0600；按 mtime 保留 7 天、目录总量超上限从最旧的删 |
-| `lifecycle-hooks.json` | 用户 | codex 形态的十四事件外部命令钩子配置（其中六个在 Pneuma 未接通）（lifecycle-hooks 插件读它，与安全钩子的 `hooks.json` 各读各的） |
+| `lifecycle-hooks.json` | 用户 | codex 形态的十四事件外部命令钩子配置（其中六个在 Pneuma 未接通）（0.9.0 起并进 hooks 插件的「外部命令（codex 事件名）」组，与安全钩子的 `hooks.json` 各读各的） |
 | `audit.jsonl` | 审批 / 钩子 / 模式切换 / 计划 / 预设（`src/core/audit.ts:18` 的 `audit()`） | 审批与授权审计：一次决定一行 JSON，`asked` 与 `decided` 用同一个 id 串起来；审计开关在设置里 |
 | `hooks-trusted.json` | 安全钩子（`src/packages/session-core/hooks.ts:38`） | 脚本钩子的批准名单，与 `hooks.json` 分开存（批准不该跟着配置一起被覆盖） |
 | `policy.rules` | 用户 / 审批卡追加（`src/core/command-policy.ts:26`） | 命令前缀规则的 JSON：`{ rules: [{ pattern, decision, justification? }] }`，`decision` 取 `allow` / `ask` / `deny`；能手改，审批卡也能往里追加 |
@@ -510,7 +508,7 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 `writePluginConfig` 写它，插件取值走 `resolvePluginConfig(file, passed)`
 （`src/core/plugin-registry.ts:168`）——装配时传进来的那份作底，磁盘上那份覆盖它，
 插件每次用值时现调这个函数，所以改完不必重启宿主。
-界面上就能改的：`compact`（压缩保留条数、自动压缩触发线、锚点索引与用户原话两个字符预算）、`goal`（缺省轮次、一次加几轮）、`approval-floor`、`spill`、`session-search`、`lifecycle-hooks`、`mcp`、`tool-search`、`subagent`、`computer-use`、`web-search`——插件贡献的分区都排在**插件中心**那个插件的详情页里（功能包在 `package.json` 的 `pneuma.settingsSection` 声明分区 id），设置面板只列内核自己的六个分区。
+界面上就能改的：`compact`（压缩保留条数、自动压缩触发线、锚点索引与用户原话两个字符预算）、`goal`（缺省轮次、一次加几轮）、`approval-floor`、`spill`、`session-search`、`hooks`（外部命令那一组）、`mcp`、`tool-search`、`subagent`、`computer-use`、`web-search`——插件贡献的分区都排在**插件中心**那个插件的详情页里（功能包在 `package.json` 的 `pneuma.settingsSection` 声明分区 id），设置面板只列内核自己的六个分区。
 只能手写这个文件的：`approval.approvalTimeoutMs`（每次弹卡现读，改完下一张卡生效）、
 `ask.maxQuestions` / `ask.maxOptions`（每次提问现读）、`prompt.instructionBudget`（每次拼提示词现读）、
 `host-stdio.snapshotThrottleMs`（只在挂载时读一次，改完要重启）。
@@ -824,7 +822,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | 溢出的落盘与清理 | 单文件上限 1048576 字节（4096~268435456）、按 mtime 保留 7 天（1~3650）、目录总量上限 67108864 字节（65536~8589934592，超了从最旧的删）、目录 `~/.dsc/spill/`；可配 `spill.maxBytes` / `retentionDays` / `maxTotalBytes` / `dir` | `src/core/spill.ts:31-39`、`:65-73` |
 | 会话检索返回几条 | 缺省 20 条，夹在 1~200；可配 `session-search.defaultLimit` | `src/packages/session-search/session-index.ts:70` |
 | 会话检索的片段与回填 | 命中片段 160 字符（40~2000）、回填每批 25 个文件（1~500）、单文件大小上限 8 MiB（4096~256 MiB，超了只记指纹）、索引目录 `~/.dsc/cache`；可配 `session-search.snippetLength` / `backfillBatch` / `maxFileBytes` / `indexDir` | `src/packages/session-search/session-index.ts:51-56`、`:62-72` |
-| 生命周期钩子缺省超时 | 缺省 10000 毫秒，夹在 500~120000；钩子最多 50 条、单条命令 1000 字符、matcher 120 字符；可配 `lifecycle-hooks.timeoutMs` | `src/packages/session-core/hooks.ts:53`、`src/packages/lifecycle-hooks/lifecycle-hooks.ts:168-170`、`:190-196` |
+| 生命周期钩子缺省超时 | 缺省 10000 毫秒，夹在 500~120000；钩子最多 50 条、单条命令 1000 字符、matcher 120 字符；可配 `hooks.timeoutMs`（合并前的 `lifecycle-hooks.timeoutMs` 只读回落） | `src/packages/session-core/hooks.ts:56-58`、`src/packages/hooks/lifecycle-hooks.ts:193-196`、`:222-228` |
 | MCP 的调用与重连 | 单次调用超时 60000 毫秒、握手 20000 毫秒（都夹在 1000~600000）；重连退避 1000→30000 毫秒、连续失败 5 次放弃（1~50）；清单里没写 `defaultRisk` 的 server 缺省按 `exec` 算；可配 `mcp.*` | `src/packages/mcp/index.ts:53-62`、`:65-70` |
 | 工具按需加载 | 一次检索最多 5 条（1~20），档位缺省 2（1 = 只撤 MCP、2 = 再按 `deferRules` 撤、3 = 除 `keepTools` 外全撤）；可配 `tool-search.searchLimit` / `tier` | `src/packages/tool-search/tool-search.ts:24-29`、`:54-60` |
 | 历史里超长工具结果怎么切 | 超过 8192 字符切掉中间、留头 4096 + 尾 1024，中间写一句「省了多少字符、原文还在日志里」；**最近 4 条不动**（刚跑完就切等于逼模型重跑）。同一条消息永远切成同一段——前缀缓存只在它第一次越线那一轮失效一次 | `src/core/tool-result-prune.ts` 的 `DEFAULT_TOOL_RESULT_PRUNE`，投影挂在 `src/packages/prompt/index.ts` 的 `tool-result-prune`（order 560） |
@@ -936,7 +934,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | `session-index.ts` | 会话检索的旁路倒排索引：中文按 1-gram + 2-gram（所以「内存」这种 2 字词能命中），英文按整词小写；严格查询（相邻两字全部命中）一条都没有时，按「每组过半两字词」再做一次宽松召回（`queryGroups` + `relaxedHits`，结果带 `fuzzy: true`，`fuzzy: false` 可关）；按 mtime + size 增量维护，落 `cache/session-index.json`，版本对不上就整表重建 |
 | `mcp.ts` | MCP 外部工具底座：stdio 与 streamable-http 两种传输上的 JSON-RPC、`mcp__服务器__工具` 命名（片段被清洗过时补 8 位短哈希，`a.b` 与 `a_b` 不撞名）、子进程环境白名单筛选、Windows 上按 PATH + PATHEXT 解析启动命令 |
 | `tool-search.ts` | 工具按需加载的纯逻辑：分词（中文按相邻两字）、手写 BM25 索引、延后判定（read 一律不许撤）、配置校验 |
-| `lifecycle-hooks.ts` | codex 十四事件的钩子引擎：事件能力清单（wired / partial / unwired 与理由）、codex 形态配置的解析、跑外部命令、按失败方向给裁决 |
+| `lifecycle-hooks.ts` | codex 十四事件的钩子引擎（`src/packages/hooks/` 里，0.9.0 从独立包并进 hooks）：事件能力清单（wired / partial / unwired 与理由）、codex 形态配置的解析、跑外部命令、按失败方向给裁决、`hooks` 条目对旧 `lifecycle-hooks` 条目的只读回落 |
 | `approval.ts` | 只有审批通道**接口**，判读在 `src/packages/approval/index.ts` |
 | `tools/` | `bash` 缺省 30 秒、最多 120 秒，输出超 8000 字符截断（累积到 16000 就不再收）——三个值都由 tools-default 插件配置下发（`bashTimeoutMs` / `bashMaxTimeoutMs` / `bashOutputChars`，设置分区「工具预算」可改），代码里的常量只是缺省。Windows 缺省走 `powershell -NoProfile -Command`（`-NoProfile` + UTF-8 输出前置 + 末尾补 `exit $LASTEXITCODE` 带回原生命令退出码），超时和取消都收进程树。**执行器可在「设置 → 终端环境」里换**（2026-10-30）：`bashShell` 存在 `plugins.json` 的 tools-default 条目里，取 `powershell` / `pwsh` / `gitbash` / `wsl` / `sh` / `auto`；四档折成四套 spawn 参数（见 `core/tools/bash.ts` 的 `shellPlan`），工具说明与环境快照里的终端名跟着换，审批地板的结构扫描也按同一条口径切 PowerShell / POSIX 语法（`core/terminal-env.ts` 的 `shellFlavor`）。`wsl` 会用 `-d <发行版>` 钉住探测时挑的那只（跳过 `docker-desktop` 这类没有 bash 的管理发行版）。`read` 单次缺省 2000 行（`tools-default.readLineLimit`）。`glob` / `grep` **边遍历边匹配**：按 `.gitignore`（从 git 根逐层读到搜索根，子目录的规则在进入它时生效，`!` 否定按「后出现的赢」）加内置大目录表（`node_modules`、`.git`、`dist`、`build`、`coverage`、`__pycache__`、`.venv`、`site-packages` 等）跳过，命中够 `limit` 就停，截断时明说「还有更多」；不再有「先收 1 万 / 2 万条再过滤」的全局额度——那会让 `.venv` 吃光额度、把真实结果挤成「无匹配」。`grep` 另外跳过 1 MiB 以上的文件。**没有目录白名单**——路径只按会话工作目录解析 |
 | `skills.ts` | 只认顶层 `<目录>/SKILL.md` 与顶层 `<名字>.md`，不递归（`:165-178`）。`name` 要 kebab-case，非法就退回文件名并记一条问题 |

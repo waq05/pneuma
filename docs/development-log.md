@@ -14412,3 +14412,96 @@ dsh 的 persistent-pwsh 走 PTY：有真正的提示符事件、能跑全屏程�
 **外层 run_code 不再单独审**：`decide()` 在沙箱边界之后加了一层判断（第 4.5 层）——`run_code` 直接放行，不过判官、不弹卡。依据是它跑在 vm 里，拿不到 process / require / 文件系统，唯一出口是 sdk；脚本里每一次真实工具调用都在 PTC 里过 `guards.gate`（`ptc/index.ts:249-260`），该问的卡一张不少。在这里再判一次，判官只能看到整段脚本源码，看不出实际效果，还平白多付一次请求。边界保留三条：`readonly` 仍拒、沙箱越界（`fenced`）仍走原路、模型在参数里请求升权（`escalation`）仍弹卡。
 
 **验收**：`approval-review-fallback-test` 40 条全过（新增「auto-edit 下 run_code 直接放行」「没有调用判官」「仅查看仍拒」三条）；包内 8/8；`ptc-changes` / `sandbox-parity` / `batch3` / `escalation-scope` / `floor-shell-and-budget` 全过；`typecheck` 与 `build` 通过。
+
+## 2026-11-06 上午：插件取舍——两处合并、一档「实验」、两处看着该合但没合
+
+用户问「可开关的插件里，哪些用处不大可以去掉、哪些能合并、哪些要优化」。26 个官方可开关的包，先派四路
+只读调研（浏览器两件、子智能体+团队、围栏三件套、四个冷门包），再按证据决定，不按直觉合并。
+
+### 1. 合了：改动前预览 → 文件与命令围栏（`f660ed3`）
+
+`file-review` 从不拒绝，只是站在审批前面（守卫 order 25）把 diff 发进对话流，恒 `defer`；沙箱本来就 inject
+了 transcript，把它搬进去的接缝最小。守卫 **id 与 order 都不改**，`src/core/tool-guards.ts:70-72` 按 order→id
+排序，所以链上顺序仍是 5 地板 → 8 沙箱 → 10 模式 → 20 钩子 → 25 预览 → 30 审批，真起内核抓了一遍
+`guards` 的 `inspect()` 逐字核对。
+
+设置并进「文件与命令围栏」分区的「改动预览」组（分区 id 仍是 `sandbox`），少一个设置分区、少一个包。
+两处细节值得记：改预览的行数**不再**触发 `refreshBackend()`（原来改「最多显示几行」会顺带拆一次容器后端、
+往会话流补一句「沙箱已就绪」，没道理）；`/file-review` 命令保留，输出的配置文件路径改指 `sandbox` 条目。
+
+代价写在 CHANGELOG 里：要彻底关预览得关沙箱，只想留围栏就在那一组里关「启用改动前预览」。旧 `file-review`
+条目成了孤儿——没有迁移，理由是它唯一能表达的「预览开/关」现在由 `sandbox` 那一项承接，而默认都是开。
+
+### 2. 合了：共享任务板 → 子智能体（`e68cc5a`，提交错位见 §6）
+
+`team` 只有 194 行、不注册任何服务：名册本来就在 `subagent` 的 `team` 服务里（`subagent/index.ts:739-820`），
+板子文件也在同一个 `~/.dsc/team/` 目录下。两个开关管一件事，用户得拨两次。合并后行 id 仍是 `subagent`，
+显示名「子智能体与任务板」，`syncTools` 拆成两个独立开关（`allowDelegation` 管派活与角色提示、`board` 管
+`team_task` 与板子提示），保住「只想要一块共享待办」的用法。
+
+迁移写成 `migrateTeamMerge`（`src/core/plugin-registry.ts`，调用点在 `src/host/kernel.ts` 挂载之前）：
+条目树里 `team` 显式开着、而 `subagent` 没显式开过，就把 `subagent` 写成启用；`team` 条目留着不删，回滚读得到。
+子智能体的提示段补了第 5 条提 `team_task`——两包分开时那条旧决策（提示不提板子）合并后必须反转，否则模型
+不会用板子。
+
+### 3. 合了：外部命令钩子 → 安全钩子
+
+`lifecycle-hooks` 把 codex 的 14 个事件名映射到 dsc 扩展点：PreToolUse → 守卫 order 25、PostToolUse →
+观察者 45、提交提示词 → 投影，其中 6 个事件配了也不执行，PreToolUse 想「问人」只能回拒绝。它与 pinned 的
+`hooks` 同挂守卫链、同一套 matcher / allowlist / failClosed 概念，用户面前只该有一个「钩子」概念。
+
+并进 `hooks` 之后它变成常驻（`hooks` 是 pinned，没有开关），没有配置时空转。**唯一要小心的是升级**：原来在
+插件中心把这一行关掉过的人，不该在升级后突然开始跑外部命令——所以读取配置时做一次**只读回落**：`hooks`
+条目里没有对应项、而条目树里有 `lifecycle-hooks` 条目且它是 `disabled: true`，就按关着处理；旧条目一个字节
+都不删、不写。
+
+### 4. 没合：两个浏览器（`browser` + `dock-browser`）
+
+硬理由两条，都不是「懒得改」：内核一个模块只认一个插件对象（`src/core/plugin-loader.ts:326-338`，默认导出或
+恰好一个带 `apply` 的命名导出），而 `settingsSection` 是**清单级单值**（`plugin-loader.ts:1559`）——两行共用
+一个包时，侧栏浏览器那行的齿轮会跳进受控浏览器的设置页。
+
+产品上也说不通：一个自己拉一次性隔离 Chrome、每次动手要审批、有域名黑白名单；一个操作桌面壳里那台你已
+登录的，看页面免审批、动手才确认。信任模型相反，合成一个开关只会让人误以为能一起关。真正重复的只是三段
+小函数（`consoleLineText`、`typedTextBlockScore`、快照截断），正解是下沉到 `src/packages/cdp/`——这条记在
+待办里，不在本批。
+
+### 5. 没合：危险命令地板 + 文件与命令围栏
+
+两者都是「动手之前」，但失效姿态相反：地板是 fail-closed（命中就一律拒，没有商量），围栏是可降级、可一次性
+升权（拒了还能点「这一次允许」）。合成一页、一个开关，用户会以为一件事。真正重复的只有两处切词
+（包装词与命令头解析），值不上动包。
+
+### 6. 提交错位：`e68cc5a` 里其实装着第 2 件
+
+并行窗口的 agent 用 `git add -A` 提交，把当时已暂存的「任务板并子智能体」整批卷进了它那笔
+`feat(approval): 判官补工具定义…`。内容没丢（`git show --stat e68cc5a` 能看到 `src/packages/team/` 的删除与
+`subagent` 的改动），但提交信息里一个字没提。用户决定不改写历史（并发写者还在提交，改写风险更大），
+所以这件事记在这里：**读历史时，`e68cc5a` 同时是「任务板并子智能体」的落地提交。**
+
+同源的第二个坑：那一批之后 `check:plugin` 一直红在 `src/packages/settings/tests/settings.test.mjs`——另一个
+窗口删掉「权限」「审阅者」两个下拉时漏了这个包测试，期望里还留着 `policy` / `reviewer` 两个键。已按现状
+改回四个字段（`fb98af7`）。
+
+### 7. 新的一档：实验
+
+三个包（`dsh-compat`、`ops`、`self-improve`）留在官方可开关里没有意义，删掉又各有代价：`dsh-compat` 是给 dsh
+插件用的开关与 logger 桥，加载器有 5 处提示点名它，删了那句「先启用 dsh-compat」就指向一个不存在的包；
+`ops` 的 13 个工具里只有 PDF/Word/CSV 读取不可替代，但必须外装 Rust worker；`self-improve` 会自己写技能
+文件、带改前备份与台账回滚，功能最厚也最危险。
+
+做法是加一档：包清单 `pneuma.experimental: true` → `PluginMeta` → `PluginInfoView` → 插件中心第七档。
+开关、默认关、详情页配置与官方插件完全一样，只是换个位置摆，不跟「装了就基本能用」的那些混排。三条实验包
+仍然默认关。这一档「有包才画」，零实验包时不留空标题。
+
+链路里有一处必须补的接线：外部插件挂载后会用模块导出重建元数据（`plugin-loader.ts` 只保留 previous 的
+`toggleable`），不把 `experimental` 像 `settingsSection` 那样补回来，三个包一挂上就丢档。
+
+### 8. 顺带
+
+- `README.md` 的功能包/总包/功能档/默认关/可覆盖数字跟上两次合并（77→75、89→87、19→17、13→12、58→56），
+  随后又跟第三件（→74 / 86 / 13 官方 + 3 实验 / 12→8 官方默认关 / 55）。
+- `docs/harness-benchmark-roadmap.md:53` 的「十八个官方可开关插件、默认开六个」改成十三加三档实验；T4 那节
+  补一句「2026-11-06 起并进 `@pneuma/hooks`，配置键不变，不再是一个独立开关」。
+- 仓库根那个 `%SystemDrive%\` 目录删了：某次探针把环境变量当字面量拼路径，在仓库里造了一份 Windows 缓存
+  副本（4 个文件、约 1 MB）。

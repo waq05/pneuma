@@ -7,7 +7,7 @@
  * 只分 `en` 与「其余（含中文）」两档。
  *
  * 五段：
- *   [1] 87 个包都声明了 `./locale/*.json` 键，且都有 `locale/en.json`：title / description
+ *   [1] 86 个包都声明了 `./locale/*.json` 键，且都有 `locale/en.json`：title / description
  *       非空、键集恰好这两个（多一个字段就是没人读的死键）；
  *   [2] 语言从临时 `config.yaml` 读：缺省 / en / en-US / zh-CN / fr / 空串；
  *   [3] 同一条链读真包：切成 en 读英文，切回默认读中文；
@@ -80,13 +80,13 @@ const { pluginDisplayOf, languageOfConfig, languageOfConfigFile, pluginLocaleOf 
 /** 读一个真包的清单（与内核用的就是同一份文件）。 */
 const manifestOf = (id) => JSON.parse(readFileSync(join(packagesDir, id, 'package.json'), 'utf8'))
 
-// ── 1. 87 个包都有译本，且译本只有两行 ───────────────────────────────────────
+// ── 1. 86 个包都有译本，且译本只有两行 ───────────────────────────────────────
 console.log('[1] 每个包都声明了 ./locale/*.json，且 locale/en.json 齐全')
 {
   const ids = readdirSync(packagesDir)
     .filter((name) => existsSync(join(packagesDir, name, 'package.json')))
     .sort()
-  check('包目录数与门禁口径一致（87）', ids.length === 87, String(ids.length))
+  check('包目录数与门禁口径一致（86）', ids.length === 86, String(ids.length))
   const problems = []
   let declared = 0
   for (const id of ids) {

@@ -154,7 +154,7 @@ function hasApplyMember(object) {
  * 就这么被误判过），而「这个对象有没有 apply 成员」恰恰是加载器挑插件的唯一依据。
  *
  * 三套写法都收：dsh 的模块级 `export function apply`、`export default class`，
- * 以及我们 56 个宿主包在用的 `export const xxxPlugin = { name, apply }`。
+ * 以及我们 55 个宿主包在用的 `export const xxxPlugin = { name, apply }`。
  * 最后一种不是 dsh 的字面写法，但它是加载器真正认的形状（构建产物是 `export *` 桩，
  * default 过不去），所以这里按加载器的规则判，并在报告里说明这条靠约定。
  */
@@ -492,7 +492,7 @@ for (const id of ids) {
     /** 同类标题只许一个：两份「已知限制」读的人不知道该信哪份。 */
     const sectionOf = (pattern) => headings.filter((item) => pattern.test(item.text))
     // 摘要：H1 与第一个 H2 之间要有一句话。dsh 用 `## Summary`（限 100 词），
-    // 我们的写法是一行「一句话：…」——判「有没有」比判排版有用，别为了对齐去改 87 份文件的版式。
+    // 我们的写法是一行「一句话：…」——判「有没有」比判排版有用，别为了对齐去改 86 份文件的版式。
     const firstH1 = headings.find((item) => item.level === 1)
     const firstH2 = headings.find((item) => item.level === 2)
     const summaryStart = firstH1 === undefined ? 0 : firstH1.index + 1
@@ -595,7 +595,7 @@ for (const pkg of packages) {
   if (!byOrder.has(key)) byOrder.set(key, [])
   byOrder.get(key).push(pkg.id)
 }
-// 撞号的包都不算通过，其余照常通过：这样 74/75 能说清「只有一对撞了」。
+// 撞号的包都不算通过，其余照常通过：这样 73/74 能说清「只有一对撞了」。
 const collided = new Set()
 for (const [order, group] of byOrder) {
   if (group.length < 2) continue

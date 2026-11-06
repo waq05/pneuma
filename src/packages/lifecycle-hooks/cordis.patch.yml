@@ -1,5 +1,0 @@
-# 外部命令钩子
-- insert:
-    - id: lifecycle-hooks
-      name: '@pneuma/lifecycle-hooks'
-      disabled: true

@@ -23,6 +23,8 @@
   "plugins.group.packagesHint": "packages installed in the profile (package.json pneuma.client.platform = pneuma); installing means consent, so this only toggles them",
   "plugins.group.official": "Official, switchable",
   "plugins.group.officialHint": "Shipped with the app; turn on demand, click a card to configure",
+  "plugins.group.experimental": "Experimental",
+  "plugins.group.experimentalHint": "Usable but still rough, off by default; turn one on to see whether it fits",
   "plugins.group.uiUnits": "UI units",
   "plugins.group.uiUnitsHint": "One piece of the page; turning it off removes it immediately, but swapping the shell or renderer needs a refresh",
   "plugins.group.kernel": "Runtime kernel",

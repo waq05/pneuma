@@ -23,6 +23,8 @@
   "plugins.group.packagesHint": "profile 里装的包（package.json 的 pneuma.client.platform = pneuma）；装了就算同意，这里只开关",
   "plugins.group.official": "官方可开关",
   "plugins.group.officialHint": "随包发布，按需开关，点击卡片进入详情配置",
+  "plugins.group.experimental": "实验",
+  "plugins.group.experimentalHint": "能用但还粗糙，默认关着；开了才知道合不合用",
   "plugins.group.uiUnits": "界面单元",
   "plugins.group.uiUnitsHint": "页面里的一块；停用它就从界面撤掉，骨架与渲染器换掉要刷新",
   "plugins.group.kernel": "运行内核",

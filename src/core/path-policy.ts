@@ -319,7 +319,7 @@ export function clearReadLedger(sessionId: string): void {
 
 /** `~` 开头展开成用户目录；其余原样返回（相对路径交给后续文件操作按 cwd 解析）。
  *
- * 为什么放这里：此前 `core/spill.ts` 与 `packages/lifecycle-hooks/lifecycle-hooks.ts` 各写了一份逐字相同的
+ * 为什么放这里：此前 `core/spill.ts` 与 `packages/hooks/lifecycle-hooks.ts` 各写了一份逐字相同的
  * `expandHome` / `expandPath`，而「用户写的路径怎么解释」本来就是本模块的事。
  */
 export function expandHome(text: string): string {

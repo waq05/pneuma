@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "count": 54,
+  "count": 53,
   "packages": [
     {
       "id": "llm",
@@ -285,13 +285,15 @@
       "id": "hooks",
       "package": "@pneuma/hooks",
       "title": "安全钩子",
-      "description": "工具动手之前按用户自己登记的规则与脚本拦一道，能直接拦下或强制问人",
+      "description": "工具动手之前按你自己登记的规则与脚本拦一道；也能按 codex 事件名跑外部命令钩子",
       "order": 190,
       "resolution": "pinned",
       "inject": [
         "session",
+        "llm",
         "approval",
         "guards",
+        "prompt",
         "settings",
         "transcript",
         "commands"
@@ -673,26 +675,6 @@
       ],
       "settingsSection": "session-search",
       "defaultDisabled": false,
-      "toggleable": true
-    },
-    {
-      "id": "lifecycle-hooks",
-      "package": "@pneuma/lifecycle-hooks",
-      "title": "外部命令钩子",
-      "description": "在模型动手前后跑你的脚本，脚本可以拦下这次操作；事件名沿用 codex 的写法",
-      "order": 3670,
-      "resolution": "overridable",
-      "inject": [
-        "session",
-        "llm",
-        "approval",
-        "guards",
-        "prompt",
-        "settings",
-        "commands"
-      ],
-      "settingsSection": "lifecycle-hooks",
-      "defaultDisabled": true,
       "toggleable": true
     },
     {

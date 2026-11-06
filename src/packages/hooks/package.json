@@ -1,6 +1,6 @@
 {
   "name": "@pneuma/hooks",
-  "description": "工具动手之前按用户自己登记的规则与脚本拦一道，能直接拦下或强制问人",
+  "description": "工具动手之前按你自己登记的规则与脚本拦一道；也能按 codex 事件名跑外部命令钩子",
   "version": "0.9.0",
   "private": true,
   "type": "module",
@@ -28,7 +28,7 @@
     "order": 190,
     "resolution": "pinned",
     "title": "安全钩子",
-    "description": "工具动手之前按用户自己登记的规则与脚本拦一道，能直接拦下或强制问人",
+    "description": "工具动手之前按你自己登记的规则与脚本拦一道；也能按 codex 事件名跑外部命令钩子",
     "settingsSection": "hooks"
   },
   "engines": {

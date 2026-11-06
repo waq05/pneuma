@@ -1,4 +1,4 @@
 {
   "title": "Safety hooks",
-  "description": "User rules and scripts run before a tool acts; they can block or force a prompt"
+  "description": "Your rules and scripts gate tool calls; also codex-named external hooks"
 }

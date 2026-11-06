@@ -707,6 +707,86 @@ console.log('── 应用自带行：解析、身份、surface、幂等、hostC
   check('组合包的行算自定义', infoOf('bundled-row')?.source === 'external', JSON.stringify(infoOf('bundled-row')))
 }
 
+{
+  // 实验档：清单标了 `pneuma.experimental` 的内置可拨行归「实验」，不再落进「官方可开关」。
+  // 判档规则住在界面（`ui-plugins/ui/ui.tsx`），探针按同一套判据走一遍——两边判据分家时，
+  // 这条会红；顺手核对三个真实包的清单确实带了这一笔。
+  const appDir = makeApp('rows-experimental', [
+    {
+      id: 'src-experimental',
+      name: '@p3/src-experimental',
+      tag: 'src-experimental',
+      pneuma: { toggleable: true, experimental: true },
+    },
+    {
+      id: 'ui-experimental',
+      name: '@p3/ui-experimental',
+      tag: 'ui-experimental',
+      pneuma: { toggleable: true, experimental: true },
+    },
+    { id: 'src-regular', name: '@p3/src-regular', tag: 'src-regular', pneuma: { toggleable: true } },
+    { id: 'src-kernel-marks', name: '@p3/src-kernel-marks', tag: 'src-kernel-marks', pneuma: { experimental: true } },
+  ])
+  const failures = await loader.mountApplicationRows(newContext(), { appDir, surface: 'none' })
+  check('实验档的用例没有失败', failures.length === 0, JSON.stringify(failures))
+  check(
+    'meta 带上了 experimental',
+    registry.getPluginMeta('src-experimental')?.experimental === true,
+    JSON.stringify(registry.getPluginMeta('src-experimental')),
+  )
+  check(
+    'PluginInfoView 透传了 experimental（界面拿得到才分得出档）',
+    infoOf('src-experimental')?.experimental === true,
+    JSON.stringify(infoOf('src-experimental')),
+  )
+  check(
+    '没标的行不会凭空多出 experimental',
+    infoOf('src-regular')?.experimental === undefined,
+    JSON.stringify(infoOf('src-regular')),
+  )
+
+  /** 插件中心的分档判据（与 ui.tsx 的过滤顺序一致：实验优先于 `ui-` 前缀）。 */
+  const groupOf = (row) => {
+    if (row === undefined) return 'missing'
+    if (row.source === 'external') return 'custom'
+    if (!row.toggleable) return 'kernel'
+    if (row.experimental === true) return 'experimental'
+    return row.file.startsWith('ui-') ? 'uiUnits' : 'official'
+  }
+  check('标了 experimental 的内置可拨行落在实验档', groupOf(infoOf('src-experimental')) === 'experimental', groupOf(infoOf('src-experimental')))
+  check(
+    '带 ui- 前缀也先进实验档（实验判据优先）',
+    groupOf(infoOf('ui-experimental')) === 'experimental',
+    groupOf(infoOf('ui-experimental')),
+  )
+  check('没标的可拨行仍在官方可开关档', groupOf(infoOf('src-regular')) === 'official', groupOf(infoOf('src-regular')))
+  check(
+    '不可停用的行即使标了 experimental 也不进实验档',
+    groupOf(infoOf('src-kernel-marks')) === 'kernel',
+    groupOf(infoOf('src-kernel-marks')),
+  )
+
+  for (const name of ['dsh-compat', 'ops', 'self-improve']) {
+    const manifest = readJson(join(repoRoot, 'src', 'packages', name, 'package.json'))
+    const marked = manifest.pneuma?.experimental === true && manifest.pneuma?.toggleable === true
+    check(`${name} 清单标了 pneuma.experimental 且仍可拨`, marked, JSON.stringify(manifest.pneuma))
+    // 真实包在插件中心里的那一行：内置、可拨、带标 → 实验档（不是官方可开关）。
+    const row = { file: name, source: 'builtin', toggleable: true, experimental: manifest.pneuma?.experimental === true }
+    check(`${name} 落在实验档、不在官方可开关档`, groupOf(row) === 'experimental', groupOf(row))
+  }
+
+  // 接线钉：界面确实按这个字段分档，而不是只在契约里写了个没人读的字段。
+  const uiSource = readFileSync(join(repoRoot, 'src', 'packages', 'ui-plugins', 'ui', 'ui.tsx'), 'utf8')
+  check(
+    'ui.tsx 按 row.experimental 分出实验档并渲染它',
+    uiSource.includes('row.experimental === true') && uiSource.includes("t('plugins.group.experimental')"),
+    '找不到分档或渲染的痕迹',
+  )
+  for (const id of ['src-experimental', 'ui-experimental', 'src-regular', 'src-kernel-marks']) {
+    await loader.unmountExternalPlugin(id)
+  }
+}
+
 
 {
   // 应用自带行的包级覆盖：overridable 用 profile 那份，pinned 仍用应用那份。

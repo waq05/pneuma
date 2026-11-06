@@ -34,6 +34,11 @@ export interface PluginMeta {
    */
   toggleable?: boolean
   /**
+   * true = 包清单声明了 `pneuma.experimental`：插件中心把它归到「实验」档。
+   * 只在 `toggleable` 的包上有意义（实验档也照样能拨开关，只是换个位置）。
+   */
+  experimental?: boolean
+  /**
    * 这个插件贡献的设置分区 id；插件中心据此在详情页渲染它的配置表单。
    * 内置插件在 kernel 清单里声明；外部插件用 `export const settingsSection` 声明。
    */
@@ -482,6 +487,7 @@ export function listPluginInfos(): PluginInfoView[] {
       enabled: !disabled,
       source: meta.source,
       toggleable: canToggle,
+      ...(meta.experimental === true ? { experimental: true } : {}),
       settingsSection: meta.settingsSection,
       apiVersion: meta.apiVersion,
       problem: meta.problem,

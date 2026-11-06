@@ -1,4 +1,0 @@
-{
-  "title": "Lifecycle hooks",
-  "description": "Run your scripts around model actions; a script can block; codex event names"
-}

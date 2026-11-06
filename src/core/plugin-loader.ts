@@ -1556,6 +1556,7 @@ async function mountRow(row: PluginRow, ctx: RowMountContext): Promise<PluginMou
     description: display.description ?? '',
     source: builtin ? 'builtin' : 'external',
     ...(builtin && pneuma.toggleable === true ? { toggleable: true } : {}),
+    ...(pneuma.experimental === true ? { experimental: true } : {}),
     ...(pneuma.settingsSection === undefined ? {} : { settingsSection: pneuma.settingsSection }),
     ...(row.disabled === true ? { defaultDisabled: true } : {}),
     ...(owner === undefined ? {} : { bundle: owner }),
@@ -1590,6 +1591,8 @@ async function mountRow(row: PluginRow, ctx: RowMountContext): Promise<PluginMou
     if (display.title !== undefined) meta.name = display.title
     if (display.description !== undefined) meta.description = display.description
     if (pneuma.settingsSection !== undefined) meta.settingsSection = pneuma.settingsSection
+    // 挂载那一趟会用模块导出重建 meta（见 mountExternalPlugin），实验标记得在这里补回来。
+    if (pneuma.experimental === true) meta.experimental = true
     if (owner !== undefined) meta.bundle = owner
     // 有的包把界面能力写在 package.json 的 pneuma.client（不在模块导出里）。
     // 只列不加载，但要列得出来，否则用户在插件中心看不到「它还想改界面」。
@@ -1854,6 +1857,8 @@ interface PneumaFields {
   settingsSection?: string
   /** 这一行允许用户停用（`pneuma.toggleable`）；缺省 = 属于运行内核，不给开关。 */
   toggleable?: boolean
+  /** 归到插件中心「实验」档（`pneuma.experimental`），见 `PluginMeta.experimental`。 */
+  experimental?: boolean
 }
 
 /** 读包清单里的 `pneuma` 展示字段（不加载代码也能列进插件中心）。 */
@@ -1870,6 +1875,7 @@ function pneumaFieldsOf(manifest: Record<string, unknown> | null): PneumaFields 
     description: pick('description'),
     settingsSection: pick('settingsSection'),
     ...(record['toggleable'] === true ? { toggleable: true } : {}),
+    ...(record['experimental'] === true ? { experimental: true } : {}),
   }
 }
 

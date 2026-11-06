@@ -155,15 +155,6 @@
       "bundle": null
     },
     {
-      "file": "lifecycle-hooks",
-      "name": "外部命令钩子",
-      "enabled": false,
-      "toggleable": true,
-      "source": "builtin",
-      "settingsSection": "lifecycle-hooks",
-      "bundle": null
-    },
-    {
       "file": "llm",
       "name": "模型路由",
       "enabled": true,

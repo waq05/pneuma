@@ -315,8 +315,19 @@ export function apply(ctx, config) {     // config = 条目树里该条目的 co
 
 内置行里没写 `pneuma.toggleable` 的是**运行内核**（36 行：`llm`/`session`/`tools`/`transcript` 这些构成 Pneuma 本身的东西），
 不给开关——停掉它就没有对话能力了，`setPluginEnabled` 会当场回一句「这一档属于运行内核」。
-有开关的内置行再按行 id 分两档：`ui-*` 是**界面单元**（21 个，页面里的一块），其余是**官方可开关**（19 个功能插件）。
-这两档分开画，是因为 21 个界面单元会把 19 个功能插件顶到一屏之外。
+有开关的内置行再分三档：`ui-*` 是**界面单元**（21 个，页面里的一块），标了 `pneuma.experimental` 的是**实验**
+（3 个），其余是**官方可开关**（13 个功能插件）。这三档分开画，是因为 21 个界面单元会把功能插件顶到一屏之外，
+而实验档里的几件还粗糙、不该和「装了就基本能用」的官方插件混排。
+
+想让一个官方插件先落到「实验」档，在包清单的 `pneuma` 段再写一行 `"experimental": true`。插件中心
+（`src/packages/ui-plugins/ui/ui.tsx`）把 `source = builtin`、`toggleable = true` 且带这一笔的行归到
+「实验」，不再进「官方可开关」；开关、默认关、详情页配置跟官方插件完全一样，只是换个位置摆。
+这一项只在 `toggleable` 的包上有意义：没写 `toggleable` 的包属于运行内核，标了也留在内核档。
+链路是清单的 `pneuma.experimental` → `PluginMeta.experimental`（`src/core/plugin-registry.ts`）→
+`PluginInfoView.experimental`（`src/contract/plugin.ts`）→ 界面的 `PluginRow.experimental`。
+现在标了它的有三个：`dsh-compat`、`ops`、`self-improve`。
+注意凭据在用户那一侧：`overridable` 的包被 profile 里的同名副本顶替时，判据读的是**副本**的清单——
+副本没写这一笔，它就回到官方档，这是有意的（分档跟着实际生效的那份代码走）。
 
 `resolution` 决定用户能不能拿 profile 里的同名副本顶替应用那份：`overridable`（缺省）能，`pinned` 不能
 （`llm`/`session`/`tools`/`approval` 这 19 个核心包都是 `pinned`）。`engines.pneuma` 判两次——读整包时
@@ -325,12 +336,12 @@ profile 的 `compatibility.json` 里登记「包名 × 包版本 × 运行时版
 见 `numa plugin allow-version`）。豁免记的是登记那一刻的运行时：契约版本涨一次（0.2.1 → 0.2.2 就是一次），
 旧记录不再放行，加载告警与 `numa plugin version-exemptions` 会把重按命令打出来，照抄跑一次即可。
 
-现有的十七个官方可开关插件：默认开的五个是 `web-search`（联网搜索）、`approval-floor`（危险命令硬拦截）、`spill`（长输出转存）、`session-search`（历史会话搜索）、`sandbox`（文件与命令围栏——不配就没有外部进程与外部服务器，且默认档 workspace-write 不挡正常的工作区读写；0.9.0 起连「改动前预览」一起管：写文件、改文件前把 diff 摆进对话流）；默认关的十二个是 `subagent`（子智能体与任务板）、`computer-use`（操作电脑桌面）、`lifecycle-hooks`（外部命令钩子）、`mcp`（MCP 外部工具）、`tool-search`（工具按需加载）、`schedule`（定时任务，到点会自己跑模型）、`lsp`（代码跳转与报错）、`browser`（受控浏览器，拉起独立 Chrome）、`dock-browser`（侧栏浏览器）、`self-improve`（经验沉淀，会写技能文件）、`dsh-compat`（dsh 插件兼容）、`ops`（文档与批量读取，要先装 dsh-ops）。各自干什么、默认开关按什么规矩定，见 development.md §4 那张表。
+现有的十三个官方可开关插件：默认开的五个是 `web-search`（联网搜索）、`approval-floor`（危险命令硬拦截）、`spill`（长输出转存）、`session-search`（历史会话搜索）、`sandbox`（文件与命令围栏——不配就没有外部进程与外部服务器，且默认档 workspace-write 不挡正常的工作区读写；0.9.0 起连「改动前预览」一起管：写文件、改文件前把 diff 摆进对话流）；默认关的八个是 `subagent`（子智能体与任务板）、`computer-use`（操作电脑桌面）、`mcp`（MCP 外部工具）、`tool-search`（工具按需加载）、`schedule`（定时任务，到点会自己跑模型）、`lsp`（代码跳转与报错）、`browser`（受控浏览器，拉起独立 Chrome）、`dock-browser`（侧栏浏览器）。另有实验档三个，全部默认关：`self-improve`（经验沉淀，会写技能文件）、`dsh-compat`（dsh 插件兼容）、`ops`（文档与批量读取，要先装 dsh-ops）。各自干什么、默认开关按什么规矩定，见 development.md §4 那张表。
 
 新增一个功能包要做的三件事：
 
 1. 建 `dsc/src/packages/<id>/`：`package.json`（`pneuma` 段写 `bundle.patch`、`order`、
-   `title`、`description`、`resolution`、可选的 `settingsSection`、`toggleable` 与 `engines.pneuma`）、
+   `title`、`description`、`resolution`、可选的 `settingsSection`、`toggleable`、`experimental` 与 `engines.pneuma`）、
    `cordis.patch.yml`（`insert` 一行 `{ id, name: '@pneuma/<id>' }`，默认关就加
    `disabled: true`）、`index.ts`（导出插件对象）。`pnpm build` 会把它打进
    `lib/node_modules/@pneuma/<id>`，并按 `order` 合成进 `@pneuma/base`；

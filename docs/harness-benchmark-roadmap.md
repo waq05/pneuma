@@ -50,7 +50,7 @@
 
 ## 2. dsc 现状（一句话，细节见 development.md）
 
-dsc 已具备：自研 ReAct 循环、OpenAI 兼容流式客户端（reasoning / tool_calls / usage / 重试）、会话 JSONL 落盘与重放恢复（含跨进程写租约与中断回合自愈）、会话库（归档 / 置顶 / 改名 / 分叉 / 回收站 / 重新编辑）、工具面（核心六件套 bash / read / write / edit / glob / grep + read_image，另有后台作业三件套与 terminal 五动作工具）、三档权限模式（readonly / auto-edit / full-access）+ 审阅者正交轴（user / auto-review）+ 打包权限预设（沙箱 + 权限模式 + 审阅者三合一：只读 / 工作区可写 / 完全访问 / AI 复核）、保头折尾摘要压缩（含重放折叠与锚点加固）、todo / plan / ask / goal、十八个官方可开关插件（默认开六个：网页搜索、审批灾难地板、大输出溢出、会话全文检索、沙箱、文件更改预览）、安全钩子（用户自登记的规则与脚本，四个事件）、技能系统与技能市场、外部单文件插件系统、界面插件契约 2.0、Electron 桌面端（终端 / 浏览器 / 文件 / git dock）、主题引擎、模型能力字段、AGENTS.md 说明书预算注入。
+dsc 已具备：自研 ReAct 循环、OpenAI 兼容流式客户端（reasoning / tool_calls / usage / 重试）、会话 JSONL 落盘与重放恢复（含跨进程写租约与中断回合自愈）、会话库（归档 / 置顶 / 改名 / 分叉 / 回收站 / 重新编辑）、工具面（核心六件套 bash / read / write / edit / glob / grep + read_image，另有后台作业三件套与 terminal 五动作工具）、三档权限模式（readonly / auto-edit / full-access）+ 审阅者正交轴（user / auto-review）+ 打包权限预设（沙箱 + 权限模式 + 审阅者三合一：只读 / 工作区可写 / 完全访问 / AI 复核）、保头折尾摘要压缩（含重放折叠与锚点加固）、todo / plan / ask / goal、十三个官方可开关插件（默认开五个：网页搜索、审批灾难地板、大输出溢出、会话全文检索、沙箱）+ 三档实验（dsh 插件兼容、文档与批量读取、经验沉淀）、安全钩子（用户自登记的规则与脚本，四个事件）、技能系统与技能市场、外部单文件插件系统、界面插件契约 2.0、Electron 桌面端（终端 / 浏览器 / 文件 / git dock）、主题引擎、模型能力字段、AGENTS.md 说明书预算注入。
 
 dsc 的插件扩展点（`src/core/plugin-registry.ts:93`，`KERNEL_API_VERSION = 6`）已经很够用：`tools.register`、`commands.register`、`prompt.register + registerProjection`、`guards.register + registerObserver`、`surfaces.register`、`waiting.register`、`session.current().appendState / state`、`events.on`、`settings.registerSection`、`skills.source`、`transcript.system`。这份清单决定了「哪些能力不改内核就能挂」。
 
@@ -186,7 +186,7 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:93`，`KERNEL_API_VERSION 
 #### T4. 生命周期 hooks 插件（P1，映射到现有扩展点）
 - **是什么**：读一份 codex 形态的钩子配置，跑外部命令钩子，实现「工具前拦截 / 注入上下文 / 强制续跑」。codex 有 12 个生命周期事件（`codex/codex-rs/hooks/src/lib.rs:23-36`）：PreToolUse / PostToolUse / PreCompact / PostCompact / SessionStart / SessionEnd / UserPromptSubmit / SubagentStart / SubagentStop / Stop / Interrupt / PermissionRequest。
 - **为什么**：不动内核就扩展行为；dsc 已有 `ctx.guards.register`（动手前闸门，可返回拒）、`ctx.prompt.transformMessages`（改写请求）、`ctx.events.on`（回合 / 工具事件），正好覆盖主要子集。
-- **落点**：一个官方可开关插件，把 `PreToolUse` → `guards.register`、`PostToolUse` → `guards.registerObserver`、`SessionStart / UserPromptSubmit` → `prompt.transformMessages` 逐类映射。dsh 的 `hooks-codex` 直接跑现成 hooks.json，可作桥接蓝本。这一项**不是从零补 hooks**：dsc 当时已有自研的安全钩子（`src/packages/session-core/hooks.ts` + `src/packages/hooks/index.ts`，四个 dsc 自己的事件，配置 `~/.dsc/hooks.json`，守卫 order 20），要加的是另一份事件名与配置格式都照 codex 的插件，两份配置各读各的（实际落地读 `~/.dsc/lifecycle-hooks.json`，见 §5.1）。
+- **落点**：一个官方可开关插件，把 `PreToolUse` → `guards.register`、`PostToolUse` → `guards.registerObserver`、`SessionStart / UserPromptSubmit` → `prompt.transformMessages` 逐类映射。dsh 的 `hooks-codex` 直接跑现成 hooks.json，可作桥接蓝本。这一项**不是从零补 hooks**：dsc 当时已有自研的安全钩子（`src/packages/session-core/hooks.ts` + `src/packages/hooks/index.ts`，四个 dsc 自己的事件，配置 `~/.dsc/hooks.json`，守卫 order 20），要加的是另一份事件名与配置格式都照 codex 的插件，两份配置各读各的（实际落地读 `~/.dsc/lifecycle-hooks.json`，见 §5.1；2026-11-06 起并进安全钩子包 `@pneuma/hooks`，配置键不变，不再是一个独立开关）。
 - **动内核**：否。**难度**：低-中。
 - **风险**：外部命令的超时与失败处理；钩子输出进模型前要走 `untrusted` 围栏。
 - **验收**：配一个 PreToolUse 钩子能拦下指定工具并给出模型可见的拒绝理由。
