@@ -14151,3 +14151,190 @@ leading 且座位接缝不错位）。
 
 真机验证（隔离 HOME + 慢速假模型）：回合在跑时按回车，排队条出现在输入框上方（DOM 里 top 614 < 输入框 728），
 文案就是刚提交的那句；截图留在 `%TEMP%`（一次性的，没进仓库）。
+## 2026-11-06 AI 复核换输入：从「最后一句用户原话」到「保留历史 + 来源角色」
+
+### 起因
+
+用户报了一个很具体的现象：安全上没出问题，但一轮里步数一多、任务推进到中后段，
+AI 复核就开始频繁要求手动审批，而且理由是错的。
+
+翻审计（`~/.dsc/audit.jsonl`，2026-09-29 至 11-06）：104 条 `auto-deny` 里，
+**44 条**判官看到的「用户这一轮的原话」根本不是用户说的——是后台作业完成通知。
+以会话 `9bfa89eb`（D:\code\quiz-master）为例：16:02 用户提了大任务（按教师隔离文档），
+16:13 起后台作业陆续完成，notice 消息刷屏；16:44 判官否决一次 edit，理由写的是
+「用户本轮原话是查看后台作业输出」——它说的没错，它看到的就是 16:43 那条通知。
+
+### 两条根因
+
+1. **来源判据只认文本前缀，不认 `origin`**（`src/packages/approval/index.ts` 的 `lastUserWords`）。
+   后台作业完成、定时投补、目标续跑都是 `role: 'user'`，正文和用户打字一样；旧代码只按
+   环境快照 / todo 提醒 / 钩子产出 / 队友汇报 / 压缩摘要这五个前缀过滤，漏了 `origin: 'notice'`。
+2. **判官只看最后一句，没有任务上下文**。它的请求只有两条消息（system + 工具名/参数/原话），
+   看不到这一轮已经做了什么、当前目标是什么、这是第几次改同一个文件。长任务里用户中途说
+   「继续」，判官拿这一句去审第 40 步的 edit，答案只能是「未授权」。
+
+### 参考实现
+
+dsh 0.2.2-rc.1 的 `packages/experimental/auto-review`（默认关闭的实验层）：
+判官看整段保留历史，每条历史带来源角色（user-instruction / direct-parent-instruction /
+constraint / checkpoint / fact），只有 user-instruction 能授权；风险按实际效果分三档，
+medium 要求「动作 + 目标 + 范围」被明确覆盖；输出是闭集，越界算失败；消息逐条排列，
+让每次评审的消息成为上一次的超集，从而命中前缀缓存。
+
+### 本批的三步
+
+1. **换输入**：新增 `buildReviewHistory`（`:358`）与 `taskStateEntry`。历史由会话消息生成：
+   user 消息按来源标角色（`origin: 'notice'`、环境快照、钩子、队友汇报、todo 提醒 → `fact`；
+   压缩摘要 → `checkpoint`；其余 → `user-instruction`）；assistant 只留 `tool_calls` 的名称与参数；
+   tool 结果不进；最后一条 assistant 里与本次同名的调用从历史剔掉（避免同一调用出现两次）。
+   任务状态（会话目标 + 未完成清单）作为一条 `fact` 放在最前，被 60 条上限裁掉时补回。
+2. **换判据**：`REVIEW_POLICY`（`:437`）改成三档效果分类 + 四类来源角色 + 闭集输出；
+   `parseReviewOutput`（`:481`）严格校验，只接受 `low+allow`、`medium+allow`、
+   `medium+deny`、`high+deny`（deny 可带 reason）。多余字段、`low+deny`、`high+allow`、
+   `allow` 带 reason，全部算「没跑完」。请求加 `temperature: 0`（同一历史每次同结论），
+   maxTokens 300 → 400。
+3. **换失败语义**：判官否决与判官没给合法结论在审计、卡面、风险档上彻底分开。
+   自相矛盾的组合按保守方向落地：`high+allow` 改成否决（risk 保持 high），`low+deny` 改成否决（risk 抬到 medium）。
+   这两条不能走「没跑完」的回落路径——那在 full-access 下等于放行。
+   `ReviewVerdict` 多带 `risk`，卡的风险色取判官的实际结论（不再一律按「工作区外 = medium」猜）；
+   `failed` 仍回到用户自己选的那一档（dsh 是 fail-closed，这里保留 dsc 的既有取舍：
+   判官网络抖一下不该让任务停摆）。
+
+### 与 dsh 的有意差异
+
+- 没有 direct-parent 与完整 checkpoint 事件模型，角色只分四档；项目规则在 dsc 里由
+  环境快照的约束段承担，暂以 `user-instruction` 之外的文本处理。
+- 多写了一句「属于当前任务合理推进的连续改动按 low 判」。dsh 的 low 定义本就包含
+  ordinary project-local writes；dsc 的主场景是多步长任务，逐字点名每个文件不是人说话的方式。
+- 保留「判官没跑完就回到权限档」，没有改成 fail-closed。
+
+### 验收
+
+| 项 | 结果 |
+| --- | --- |
+| `pnpm run typecheck` | 通过 |
+| `pnpm --dir desktop typecheck` | 通过 |
+| `pnpm run build` | 通过（77 个功能包重写） |
+| `node scripts/approval-review-fallback-test.mjs` | 全部通过（33 条，含新增的「历史与来源角色」「任务状态」「闭集越界」三组） |
+| `node src/packages/approval/tests/approval.test.mjs` | 7/7 |
+| `node scripts/ui-approval-card-test.mjs` | 全部通过 |
+| `pnpm run check:style` | 1252 个文件通过 |
+| `pnpm run check:core` | 见下 |
+
+**一处操作记录**：本批开工期间工作区有另一个进程在并发写文件，`approval/index.ts` 的
+编辑被覆盖过两次（第一次大块替换后只剩引用、定义丢失）。最终改成「读全文 → 内存里组装 →
+一次写入」才稳定；同一批的 ui-composer 改动属于别人的在途工作，没有碰。
+
+## 2026-11-06 设置页去掉两个与「权限预设」重复的下拉
+
+### 起因
+
+用户对着设置 → 通用截图问：「当前会话权限模式」和「当前会话审阅者」和「权限预设」重复了吧。
+
+### 判断
+
+是重复。出厂四个预设（只读 / 工作区可写 / 完全访问 / AI 复核）每一个都已经把
+**沙箱 + 权限模式 + 审阅者** 三根旋钮捆成一组；下面再摆两个单旋钮，等于同一件事的
+第二种说法。而且它们只在「拼预设外的组合」时才有用，一旦改了，上面那行预设就变成
+派生值「自定义」并置灰只读——用户看到的是一行能点但点了会变灰的东西，比重复更绕。
+
+### 做法
+
+- `src/packages/settings/index.ts`：通用分区删掉 `policy` 与 `reviewer` 两个 select
+  字段，`values()` 同步去掉这两个键；`save()` 的两个分支**保留**——旧版界面或脚本
+  仍可能按 key 调过来，入口收了，底层能力（`approval.setPolicy` / `setReviewer`）不动。
+- 预设那一行的说明改写成「沙箱、权限模式、审阅者捆成一个快捷档；要拼预设外的组合，
+  用 /policy 与 /reviewer 命令」。原来写的是「改动下面任一项就离开预设档」，现在已经没有
+  「下面任一项」了。
+- `scripts/permission-presets-test.mjs` 补一条源码断言，钉住这两个下拉不再回来。
+
+能力没有丢：`/policy` 与 `/reviewer` 命令仍在，预设外的组合（例如「工作区 + AI 复核」）
+还能用命令拼出来，只是不再占设置页两行。
+
+字段文案 `field.policy.*` / `field.reviewer.*` 一并删掉（`check:ui` 的「没人用的键」检查会拦）；
+`save.policy` / `save.reviewer` 留着——保留的保存分支还在用。
+
+### 验收
+
+| 项 | 结果 |
+| --- | --- |
+| `pnpm run typecheck` | 通过 |
+| `pnpm run build` | 通过 |
+| `node scripts/permission-presets-test.mjs` | 63/63（含新增那条） |
+| `node scripts/settings-test.mjs` | 全部通过 |
+
+**一处环境记录**：验证期间工作区里有另一个进程在重构（`src/packages/file-review` 整包删除、
+新增 `src/packages/sandbox/review.ts`），功能包计数从 77 变 76 就是它造成的，与本批无关，
+没有碰。
+
+## 2026-11-06：工具行词表补全与三个模式按 dsh 复刻
+
+### 现场
+
+用户截图里一屏十几行「工具调用 · job_output」，行首图标全是同一枚代码括号，摘要位空着。
+
+### 为什么
+
+- `KNOWN_TOOLS` 只有 20 条，`job_output` / `terminal` / `goal` / `schedule` / `plugin_manager` / `tool_search` / `ops_*` / `mcp_*` 全走泛称兜底；
+- 兜底图标是 `IconCode`，与工具语义无关，认不出的工具长得一模一样；
+- `SUMMARY_FIELDS` 只认固定字段，`job_output` 的 `job_id` 不在表里，摘要为空——整行只剩标题，说不出这一次干了什么。
+
+### 做法
+
+1. 词表按 dsh 的 `tool.title.*` 口径补 25 条（读取作业输出 / 列出后台作业 / 取消后台作业 / 交互终端 / 定时任务 / 会话目标 / 团队任务 / 搜索工具 / 管理插件 / 交付文件 / 记忆 / 写技能 / 浏览器 / 电脑 / MCP / 代码符号…），中文原文进 `ui-primitives/locale/ui.zh.json`，英文同步。
+2. 图标按类分配（作业 = 活动、终端 = 终端、定时 = 日历、目标 = 靶心、插件 = 拼图、MCP = 分层、记忆 = 数据库…），兜底从 `IconCode` 换成 `IconGear`。
+3. `ops_*` 与 `mcp_*` 走前缀族（读作「文件操作 · ops_read_table」），不逐个登记。
+4. 摘要兜底：表里字段全没命中时，取参数里第一个短字符串——作业号、查询词都在这条路上被捡起来。
+5. 三个模式按 dsh 复刻：
+   - 极简：正文换成 dsh 那句英文，`replace` 分支改为只留 `preset:persona`——AGENTS.md 也不进（dsh 的 minimal 没挂 agent-instructions）；
+   - PTC：正文清空（用法在 `run_code` 的工具描述里），新增 `deny: plugin_manager`（dsh 的 ptc 同样 disabled 插件管理）；
+   - 创造：frontmatter 说明补 `deny` 字段（提示词其余不动）。
+6. 新增 frontmatter 字段 `deny`：工具黑名单，判在白名单之前、可盖住显式白名单；契约、解析、写出、工具投影、界面草稿全链路。
+
+### 验收
+
+| 项 | 结果 |
+| --- | --- |
+| `pnpm run typecheck` | 通过 |
+| `pnpm run build` | 通过 |
+| `node scripts/sandbox-parity-test.mjs` | 43 通过 / 0 失败 |
+| `node scripts/ui-process-grid-test.mjs` | 50 PASS / 0 FAIL |
+| `node scripts/ui-tool-row-flat-test.mjs` | 51/51 |
+| 本机 `~/.dsc/presets/{minimal,ptc,maker}.md` | 已备份到 `presets/backup-20261106-0235/` 后写入新版 |
+
+### 与 dsh 仍差的两处
+
+- 极简档的 shell 仍是一次性 `bash`，dsh 是持久 shell（pty + persistent-pwsh）；dsc 的持久会话是 `terminal` 工具（五动作），不在极简白名单里。
+- 创造模式没有 dsh 的 `tool-cordis`（直接编辑 cordis 组合），只有 `plugin_manager` + `runtime_api`。
+
+### 2026-11-06 补：复审抓出的两个洞与五处收口
+
+三步改完先跑了一轮只读复审（子代理独立上下文，不看我的结论）。它给出的结论是「不能合入」，
+我核实后同意，按下面的顺序修完才敢收尾。
+
+**洞 1：协议错走了 fail-open。** 判官输出不合协议时 `parseReviewOutput` 抛错，被
+`aiReview` 的外层 catch 记成 `failed:true`；调用方对「没跑完」的处理是回到用户选的权限档，
+而「AI 复核」预设正是 `danger-full-access + full-access`——回落等于直接放行。
+修法：解析单独 try/catch，协议错返回 `failed:false`，落回第 6 层人工卡；只有超时、断网、
+这一轮被中止才走 `failed:true` 的回落路径。
+
+**洞 2：机器通知丢了 `origin` 就重新变成授权。** `deliverToDormant`（
+`src/packages/agent/index.ts`）把通知写进休眠会话时没传 `origin`，落进 jsonl 就是一条普通
+用户消息；判官只认 `origin === 'notice'`，于是后台作业完成通知又变回 `user-instruction`。
+修法两件：投递时透传 `origin`；判官侧补一层按固定开头识别（`后台作业 `、`（目标自动续跑：`），
+挡老日志和别的漏传路径。
+
+**收口五处**（都来自复审的「一般」档）：
+
+1. 裁剪钉住最近 3 条 `user-instruction`：60 条上限按条裁，长任务里最早那句需求会先被挤掉，
+   后面的 medium 动作全被判「找不到授权」——正是这次报障的形状。
+2. 任务状态加身份前缀与限长（800 字）：`goal.objective` 与 `todo.content` 都是模型写的，
+   贴着待审调用摊给判官等于开一条注入通道。
+3. 待审调用的剔除改成「先按参数认、认不出再按名字」：`tool_call` 桥会改写工具名，
+   只按名字认会漏，那个调用就会在历史里重复出现一次。
+4. 判官请求透传 `cacheControl`（端点声明支持时）：逐条消息的排法本来就是为了命中前缀缓存。
+5. 历史加总字数上限 48k：单条截断挡不住 60 条短历史叠出来的量。
+
+**验收**：`approval-review-fallback-test` 全过（新增「完全访问档下协议错也弹卡」「任务状态
+声明不是用户原话」「历史裁剪后仍带最早用户指令」三条）、包内测试 8/8、
+`async-inbox` / `resident-agents` / `session-permissions` 全过、`typecheck` 与 `build` 通过。
