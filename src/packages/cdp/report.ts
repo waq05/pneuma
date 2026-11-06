@@ -64,6 +64,33 @@ export function consoleLine(entry: ConsoleEntry): string {
   return `[${clockText(entry.ts)}] ${entry.level}: ${entry.text}`
 }
 
+/**
+ * 控制台一行文本的上限（字符）。
+ *
+ * 为什么定在这里：它约束的是「CDP 事件折成一行」这件事，而两只浏览器（自拉 Chrome 的
+ * `browser` 与操作侧栏那台的 `dock-browser`）订阅的是同一份 `consoleAPICalled` 事件，
+ * 原来各自抄了一份 400。
+ */
+export const CONSOLE_LINE_MAX = 400
+
+/**
+ * `consoleAPICalled` 的参数折成一行文本。
+ *
+ * 事件形状由 CDP 定，与「谁在操作浏览器」无关，所以两个包共用这一份；参数里有原始值就用
+ * 原始值（对象走 `safeStringify`），没有才退回描述或类型。
+ */
+export function consoleLineTextOf(params: Record<string, unknown>): string {
+  const list = Array.isArray(params.args) ? params.args : []
+  return list
+    .map((arg) => {
+      const record = arg as { value?: unknown; description?: string; type?: string }
+      if (record.value !== undefined) return safeStringify(record.value)
+      return record.description ?? record.type ?? '?'
+    })
+    .join(' ')
+    .slice(0, CONSOLE_LINE_MAX)
+}
+
 /** 网络条目 → 一行 `[时间] 方法 状态 mime 地址`（地址过 neutralizer 防注入）。 */
 export function networkLine(entry: NetworkEntry): string {
   const status = entry.failed === '' ? String(entry.status === 0 ? '进行中' : entry.status) : `失败：${entry.failed}`

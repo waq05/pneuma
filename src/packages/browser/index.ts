@@ -45,6 +45,8 @@ import {
   networkLine,
   report,
   safeStringify,
+  CONSOLE_LINE_MAX,
+  consoleLineTextOf,
   type ConsoleEntry,
   type NetworkEntry,
 } from '@pneuma/cdp/report.js'
@@ -112,8 +114,6 @@ const DEFAULTS: BrowserConfig = {
 const DIALOG_TIMEOUT_MS = 300_000
 /** 等页面加载完的上限。 */
 const NAVIGATE_TIMEOUT_MS = 20_000
-/** 短快照/控制台输出一条最多多少字符（控制台一整段堆栈会很长）。 */
-const CONSOLE_LINE_MAX = 400
 
 // ── 地址策略（守卫与本插件共用；纯函数，便于自检）─────────────────────────────
 
@@ -405,19 +405,6 @@ export const browserPlugin: Plugin.Object = {
 
     // ── 事件接线 ────────────────────────────────────────────────────────────
 
-    /** 控制台参数 → 一行文本。 */
-    function consoleLineText(params: Record<string, unknown>): string {
-      const list = Array.isArray(params.args) ? params.args : []
-      return list
-        .map((arg) => {
-          const record = arg as { value?: unknown; description?: string; type?: string }
-          if (record.value !== undefined) return safeStringify(record.value)
-          return record.description ?? record.type ?? '?'
-        })
-        .join(' ')
-        .slice(0, CONSOLE_LINE_MAX)
-    }
-
     /** 对话框三策略的落点。 */
     function onDialogOpening(session: CdpSessionView, params: Record<string, unknown>): void {
       const type = String(params.type ?? 'alert')
@@ -456,7 +443,7 @@ export const browserPlugin: Plugin.Object = {
           consoleRing.push({
             ts: Date.now(),
             level: String(params.type ?? 'log'),
-            text: consoleLineText(params),
+            text: consoleLineTextOf(params),
           })
         }),
       )

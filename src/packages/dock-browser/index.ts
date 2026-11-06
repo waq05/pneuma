@@ -57,6 +57,8 @@ import {
   networkLine,
   report,
   safeStringify,
+  CONSOLE_LINE_MAX,
+  consoleLineTextOf,
   type ConsoleEntry,
   type NetworkEntry,
 } from '@pneuma/cdp/report.js'
@@ -76,8 +78,6 @@ const TOOL_LOOK = 'browser_dock_look'
 
 /** 等页面加载完的上限（与 browser.ts 同量级）。 */
 const NAVIGATE_TIMEOUT_MS = 20_000
-/** 控制台一条最长多少字符（整段堆栈会很长）。 */
-const CONSOLE_LINE_MAX = 400
 
 /** 插件配置（存 `~/.dsc/plugins.json` 的 `dock-browser` 条目 config 里）。 */
 interface DockBrowserConfig {
@@ -226,19 +226,6 @@ export const dockBrowserPlugin: Plugin.Object = {
       state.refsInvalidReason = reason
     }
 
-    /** 控制台参数 → 一行文本。 */
-    function consoleLineText(params: Record<string, unknown>): string {
-      const list = Array.isArray(params.args) ? params.args : []
-      return list
-        .map((arg) => {
-          const record = arg as { value?: unknown; description?: string; type?: string }
-          if (record.value !== undefined) return safeStringify(record.value)
-          return record.description ?? record.type ?? '?'
-        })
-        .join(' ')
-        .slice(0, CONSOLE_LINE_MAX)
-    }
-
     /** 订 CDP 事件推送：控制台 / 异常 / 网络进环形缓冲，跳转与文档被换作废 ref。 */
     function ensureEvents(link: HostBrowserLink): void {
       if (subscribed === link) return
@@ -254,7 +241,7 @@ export const dockBrowserPlugin: Plugin.Object = {
         const bucket = ringsFor(event.viewId)
         switch (event.method) {
           case 'Runtime.consoleAPICalled':
-            bucket.console.push({ ts: Date.now(), level: String(event.params.type ?? 'log'), text: consoleLineText(event.params) })
+            bucket.console.push({ ts: Date.now(), level: String(event.params.type ?? 'log'), text: consoleLineTextOf(event.params) })
             break
           case 'Runtime.exceptionThrown': {
             const details = event.params.exceptionDetails as { text?: string; exception?: { description?: string } } | undefined
