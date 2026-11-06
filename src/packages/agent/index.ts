@@ -262,8 +262,14 @@ export const agentPlugin: Plugin.Object = {
       agents.clear()
     })
 
-    /** 把一条输入写进没有常驻 agent 的休眠会话（等用户回去自己看到，不起回合）。 */
-    const deliverToDormant = (sessionId: string, text: string, images?: string[], files?: UserFileAttachment[]): void => {
+    /**
+     * 把一条输入写进没有常驻 agent 的休眠会话（等用户回去自己看到，不起回合）。
+     *
+     * `origin` 必须透传（2026-11-06 复审）：机器投递（后台作业完成、定时补投、目标续跑）
+     * 丢了它，落进 jsonl 就成了一条普通用户消息；审批判官按 `origin === 'notice'` 区分
+     * 「能不能授权」，丢一次就等于把系统通知升级成用户授权。
+     */
+    const deliverToDormant = (sessionId: string, text: string, images?: string[], files?: UserFileAttachment[], origin: InboxOrigin = 'user'): void => {
       const path = tombstones.get(sessionId)
       if (path === undefined) {
         ctx.emit('dsc/notice', `一条通知没能投递：会话 ${sessionId.slice(0, 8)} 不在本窗口的名册里`)
@@ -271,7 +277,7 @@ export const agentPlugin: Plugin.Object = {
       }
       try {
         const dormant = Session.load(path, true)
-        dormant.appendUser(text, images, files)
+        dormant.appendUser(text, images, files, origin)
         dormant.close()
       } catch (error) {
         ctx.emit('dsc/notice', `一条通知没能写进会话 ${sessionId.slice(0, 8)}：${errText(error)}`)
@@ -289,7 +295,7 @@ export const agentPlugin: Plugin.Object = {
           agent.followup(text, images, origin, files)
           return
         }
-        deliverToDormant(sessionId, text, images, files)
+        deliverToDormant(sessionId, text, images, files, origin)
       },
       interrupt(filePath?: string) {
         if (filePath === undefined) {
