@@ -95,6 +95,12 @@ export class Transcript {
   inTurn = false
 
   /**
+   * 重放期间被暂定成中止态的工具条目下标：宿主说「这一轮还在跑」时要放回执行中
+   * （见 seedTurnState；重放只看得见「没有结果」，看不见「还在跑」）。
+   */
+  private replayedSettled: number[] = []
+
+  /**
    * 切回到一个回合还在跑的会话时补「回合中」状态（0.6.48 常驻多 agent）。
    * 那一轮的 turn/start 发生在你切走的期间，转录层没收到，重放日志也补不出
    * 这个纯内存状态——只能由转录插件按 agent 注册表的实时状态种回来。
@@ -103,7 +109,21 @@ export class Transcript {
    */
   seedTurnState(running: boolean): void {
     this.inTurn = running
-    if (!running) this.working = false
+    if (running) {
+      // 重放时只能按「没有结果就是没跑完」暂定为中止态；宿主说这一轮还在跑，说明那几条
+      // 只是结果还没回来（切回一个正在跑工具的会话就是这种情形）——放回执行中。
+      for (const index of this.replayedSettled) {
+        const entry = this.list[index]
+        if (entry === undefined || entry.kind !== 'tool') continue
+        this.list[index] = { ...entry, call: { ...entry.call, status: 'running' } }
+      }
+    } else {
+      this.working = false
+      // 宿主说这一轮不在跑 ⇒ 还挂着「没有结果」的工具行永远不会再等到结果，落成中止态。
+      // 与 replayHistory 结尾那次判定是同一份（settleUnfinishedTools），这里只是把
+      // 「重放之后才拿到」的宿主真值再对一次：session-open 必然走到这里（transcript 插件）。
+      this.settleUnfinishedTools()
+    }
   }
   /**
    * 会话重新打开时把「最近一次请求的上下文占用」种回来。
@@ -228,6 +248,7 @@ export class Transcript {
     this.costBuckets = new Map()
     this.working = false
     this.inTurn = false
+    this.replayedSettled = []
     this.compactionCount = 0
   }
 
@@ -322,7 +343,42 @@ export class Transcript {
     }
     // 工具卡配对完成后不留在执行态（reduce 的 tool/call 会置 working）
     this.working = false
+    // 重放结束时还停在 running 的工具行，是「日志里有发起、没有结果」的那些：日志不记录
+    // 「这一轮为什么结束」，同一份形状既可能是被中断的，也可能是还在跑的。这里先按
+    // 「没结果 = 没跑完」落定（启动恢复只走重放，没人再送回合状态）；宿主随后调
+    // seedTurnState 说这一轮还在跑时，会把这批放回执行中。
+    this.replayedSettled = this.settleUnfinishedTools()
     return changed
+  }
+
+  /**
+   * 把「已经不可能再有结果」的工具行落到中止态。
+   *
+   * 什么时候会有这种行：一轮以中断 / 失败收尾时（turn/end 的 reason 不是 completed），
+   * 发出去却始终没收到 tool/result 的调用就此悬在半空——以前它们一直停在 status: 'running'，
+   * 界面上的转圈与「进行中」常驻下去（2026-11-06 报障：被中断的 bash 重开多少次还是进行中）。
+   *
+   * 为什么落成 aborted 而不是 failed：用户按停止、或者这一轮被放弃，与「工具真的跑挂了」
+   * 是两件事——后者要排查日志，前者不用管，混成同一个状态会让用户以为出了 bug。契约里
+   * aborted 的语义就是「没跑完，但不是工具的错」（src/contract/transcript.ts:18），
+   * 状态词与配色也随之走中性那一档（已中断，不是红字）。
+   *
+   * 扫全表而不是只扫本轮：轮一收尾，这个会话里就不可能有任何一个工具还在跑（loop 是等工具
+   * 跑完才进下一跳），所以「此刻还挂着 running」的每一条都等不到结果了。
+   *
+   * @returns 被改动条目的下标（升序），给调用方留个对账口子。
+   */
+  private settleUnfinishedTools(): number[] {
+    const settled: number[] = []
+    for (let index = this.list.length - 1; index >= 0; index -= 1) {
+      const entry = this.list[index]
+      if (entry === undefined || entry.kind !== 'tool') continue
+      const status = entry.call.status
+      if (status !== 'running' && status !== 'preparing') continue
+      this.list[index] = { ...entry, call: { ...entry.call, status: 'aborted' } }
+      settled.push(index)
+    }
+    return settled.reverse()
   }
 
   /** 给新条目盖时间戳；重放老日志（eventTs 为 null）时不盖。 */
@@ -662,6 +718,10 @@ export class Transcript {
         // 正常结束（completed）不落条目：那时渲染层没什么可判的，多一条只会让订阅者白重算。
         if (event.reason !== 'completed') {
           this.list.push(this.stamp({ kind: 'turn-end', id: this.seq++, reason: event.reason }))
+          // 这一轮以中断 / 失败收尾：还没拿到结果的工具行不会再等到结果了，落成中止态
+          // （界面不再一直显示「进行中」）。正常结束（completed）一个都不动——那时每一条
+          // 都已经配上了结果，本来就没有可落的行。
+          this.settleUnfinishedTools()
         }
         // 到这里这一轮所有 tool/call 都已经发过了（loop 是等工具跑完才进下一跳），
         // 还挂在「准备中」的就是「吐了名字、最后没调」的那些，清掉。

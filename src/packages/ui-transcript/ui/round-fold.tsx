@@ -2,8 +2,12 @@
  * 整轮过程折叠（桌面渲染层 `round-fold.tsx` + `fold-policy.ts` 的同构移植）：
  * 每一轮「哪些条目算过程、能不能折、收尾状态」的一次性预算、总开关行组件、四档能力表。
  *
- * 「过程区」是「用户消息之后、这一轮最后一条定稿正文之前」的那段。三类条目不进组：
- * plan（审批流的一部分）、本轮最后一条定稿 text（最终回答）、直播轮里的直播尾。
+ * 「过程区」是「用户消息之后、这一轮最后一个过程条目（thinking / tool）」的那段。
+ * 终点为什么不取「最后一条定稿正文」：最后一条正文之后再出现工具调用，说明那句正文只是
+ * 过程中的一句交代，不是最终回答——拿它当终点会把后面真正的过程漏在折叠区间之外
+ * （2026-11-06 报障：收起态下「用时 36 秒」下面还挂着 4 条思考与一条进行中的命令）。
+ * 只有「最后一条正文之后没有任何过程行」时，终点才退回那条正文之前，最终回答永不被藏。
+ * 三类条目不进组：plan（审批流的一部分）、最终回答（区间之外）、直播轮里的直播尾。
  *
  * @module dsc-ui-shell/plugins/transcript/round-fold
  */
@@ -62,7 +66,12 @@ export interface RoundFold {
   roundIndex: number
   /** 总开关行画在这一条前面（= 组内第一条可折叠条目）；-1 = 这一轮没有过程内容。 */
   startIndex: number
-  /** 组内最后一条可折叠条目的下标（含）。 */
+  /**
+   * 组内最后一条可折叠条目的下标（含）。
+   *
+   * 终点认「这一轮最后一个过程条目（thinking / tool）」，不是「最后一条正文之前」：
+   * 正文之后还有工具调用时，那句正文只是过程中的交代，后面那一段同样要收起来。
+   */
   endIndex: number
   /** 过程区里有没有可折的内容。没有时照样画总开关，只是画成不可点的。 */
   hasContent: boolean
@@ -91,15 +100,32 @@ export function buildRoundFolds(
 ): Map<number, RoundFold> {
   const out = new Map<number, RoundFold>()
   for (const round of rounds) {
-    // 本轮最后一条定稿正文（从后往前找，找到就走）；它之后（含它自己）都不折叠。
+    // 本轮最后一条定稿正文（从后往前找，找到就走）：**只有它后面再没有过程行时**，
+    // 它才是最终回答。
     let answerIndex = -1
+    // 本轮最后一个过程条目（thinking / tool）：过程区真正的终点。
+    let lastProcessIndex = -1
     for (let at = round.endIndex; at > round.startIndex; at -= 1) {
       const entry = entries[at]
-      if (entry !== undefined && entry.kind === 'text' && entry.id >= 0) {
-        answerIndex = at
-        break
-      }
+      if (entry === undefined) continue
+      if (lastProcessIndex < 0 && (entry.kind === 'thinking' || entry.kind === 'tool')) lastProcessIndex = at
+      if (answerIndex < 0 && entry.kind === 'text' && entry.id >= 0) answerIndex = at
+      if (answerIndex >= 0 && lastProcessIndex >= 0) break
     }
+    /**
+     * 折叠区间的终点（含）。
+     *
+     * 正文之后还有过程行（lastProcessIndex > answerIndex）⇒ 那条正文不是最终回答，
+     * 终点就取最后那条过程行——中间夹着的阶段性正文也一起算过程，跟着整轮收起。
+     * 正文之后没有过程行 ⇒ 退回旧口径：终点停在最后一条正文之前，最终回答一个字都不藏。
+     * 一轮里没有定稿正文（answerIndex < 0）⇒ 整轮都是过程，终点取轮末。
+     */
+    const endLimit =
+      lastProcessIndex > answerIndex
+        ? lastProcessIndex
+        : answerIndex >= 0
+          ? answerIndex - 1
+          : round.endIndex
     let startIndex = -1
     let endIndex = -1
     let hasLiveEntry = false
@@ -114,7 +140,8 @@ export function buildRoundFolds(
       if (entry.kind === 'user' && entry.steering === true) hasSteering = true
       if (entry.kind === 'turn-end') endReason = entry.reason
       if (entry.kind !== 'thinking' && entry.kind !== 'tool' && entry.kind !== 'text') continue
-      if (answerIndex >= 0 && at >= answerIndex) continue
+      // 只算到 endLimit（见上面那段）：最终回答排在最后一条过程之后时，这里天然把它排除在外。
+      if (at > endLimit) continue
       if (startIndex < 0) startIndex = at
       endIndex = at
     }

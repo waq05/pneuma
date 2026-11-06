@@ -166,6 +166,8 @@ export const TOOL_STATUS_TEXT: Readonly<Record<string, string>> = {
   running: t('primitives.tool.status.running'),
   done: t('primitives.tool.status.done'),
   failed: t('primitives.tool.status.failed'),
+  // 与 failed 分开：用户按停止不是「工具失败」，文案与配色都不该走错误那一档。
+  aborted: t('primitives.tool.status.aborted'),
   rejected: t('primitives.tool.status.rejected'),
 }
 

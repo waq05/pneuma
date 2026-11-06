@@ -33,7 +33,8 @@ import {
 // 路径/时刻/工具摘要口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
 import { TOOL_STATUS_TEXT, displayPathOf, formatDuration, matchTool, prettyJson, toolArgFields, toolSummary, toolVerb, type ToolMatch } from '@dsc/ui-primitives'
 import { useFoldState } from '../fold-hook'
-import { resultTail } from './result-tail'
+import { resultHead, resultRest, resultTail } from './result-tail'
+import { firstLineOf, flatValueOf, toolDetailArgs } from './tool-detail'
 import { useIntendedDiff, type IntendedDiff } from '../intended-diff'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 import zh from '../../locale/ui.zh.json'
@@ -206,6 +207,28 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
   const argView = toolArgFields(call.name, call.argsText)
   const paramsAsFields = patch !== null && argView.mutating
   /**
+   * 对话页展开体的输入视图（见 tool-detail.ts）：一行一字段，没有可展示的字段就是空表。
+   * 会改文件的工具还要剔除正文字段——正文已经在上面那块 diff 里，再摆一遍是同一段文字。
+   */
+  const detail = toolDetailArgs(call.argsText, argView.omitted)
+  /** 这次调用有没有可展示的输入字段：没有就整段不画（连「输入」标题也不留）。 */
+  const hasInput = (paramsAsFields && argView.fields.length > 0) || detail.fields.length > 0
+  /** 展开体的「展开更多」是否已经摊开（只影响对话页；轨迹页没有这一层）。 */
+  const [resultOpen, setResultOpen] = useState(false)
+  /**
+   * 输出区的首行摘要：resultHead 与收起态的 resultTail 共用同一套压平/截断口径，
+   * 只是取头不取尾。轨迹页不画它——那边整段原文就是它的呈现。
+   */
+  const output = useMemo(
+    () => (variant === 'chat' ? resultHead(call.resultText, 1) : null),
+    [variant, call.resultText],
+  )
+  /** 首行之外的原文（「展开更多」摊开的正是这一段）。 */
+  const outputRest = useMemo(
+    () => (variant === 'chat' ? resultRest(call.resultText) : ''),
+    [variant, call.resultText],
+  )
+  /**
    * 收起态的结果尾巴（见 result-tail.ts）：只给对话页、只给没展开的卡。
    *
    * 为什么展开态不给：那一份结果本来就在展开体里，再摊一遍是同一段文字出现两次。
@@ -216,6 +239,11 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
     () => (bodyOpen || variant !== 'chat' || running ? null : resultTail(call.resultText)),
     [bodyOpen, variant, running, call.resultText],
   )
+
+  // 卡合上就把「展开更多」收回：再点开时应该从首行摘要重新读起，而不是接着上次的滚动位置。
+  useEffect(() => {
+    if (!bodyOpen) setResultOpen(false)
+  }, [bodyOpen])
 
   const toggle = (): void => {
     if (expandable) setOpenPersisted(!open)
@@ -342,27 +370,102 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
               真实改动），于是一张只有 `presentation` 的卡在展开后是空的——数据到了卡上，
               却没接到渲染位置。这里把它并进同一个入口，两种来源同形（都是 ChangedFileView）。 */}
           <BodyExtra intended={intended} change={call.change ?? dshPatch} />
-          <div className="label">{t('transcript.tool.args')}</div>
-          {paramsAsFields ? (
-            /* 会改文件的工具：正文已经在上面那块 diff 里，这里只列剩下的字段。
-               dsh 对 write / edit 干脆一个参数字段都不印，壳多留一栏是因为
-               dsc 的 write / edit 还带 justification / sandbox_permissions 这类
-               「这次为什么这么写」的元信息，扔掉可惜；形状仍是一行一字段，不是 JSON。 */
-            <div className="args arg-fields" data-tc-argfields="">
-              {argView.fields.map((field) => (
-                <div className="arg-field" key={field.key}>
-                  <span className="arg-key">{field.key}</span>
-                  <span className="arg-value">{field.value}</span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="args">{prettyJson(call.argsText)}</div>
-          )}
-          {call.resultText === undefined || call.resultText === '' ? null : (
+          {variant === 'trace' ? (
+            /* 轨迹页看的是**原始参数与原始结果**（它的职责是取证，不是速读）：这一支
+               与改造前逐字一致——标签 + prettyJson + 结果原文。别把对话页那张
+               「动作 / 输入 / 输出」的脸搬过来，那会把轨迹页的判读口径改掉。 */
             <>
-              <div className="label">{t('transcript.tool.result')}</div>
-              <div className="result">{call.resultText}</div>
+              <div className="label">{t('transcript.tool.args')}</div>
+              {paramsAsFields ? (
+                /* 会改文件的工具：正文已经在上面那块 diff 里，这里只列剩下的字段。
+                   dsh 对 write / edit 干脆一个参数字段都不印，壳多留一栏是因为
+                   dsc 的 write / edit 还带 justification / sandbox_permissions 这类
+                   「这次为什么这么写」的元信息，扔掉可惜；形状仍是一行一字段，不是 JSON。 */
+                <div className="args arg-fields" data-tc-argfields="">
+                  {argView.fields.map((field) => (
+                    <div className="arg-field" key={field.key}>
+                      <span className="arg-key">{field.key}</span>
+                      <span className="arg-value">{field.value}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="args">{prettyJson(call.argsText)}</div>
+              )}
+              {call.resultText === undefined || call.resultText === '' ? null : (
+                <>
+                  <div className="label">{t('transcript.tool.result')}</div>
+                  <div className="result">{call.resultText}</div>
+                </>
+              )}
+            </>
+          ) : (
+            /* 对话页：头行已经说了「动词 · 摘要」，展开体不再重复一遍动作，直接从输入开始。
+               输入一行一字段；没有字段就整段不画，也不留「输入」空标题。输出只露首行，
+               其余收进「展开更多」；只有输出没有参数时连「输出」标题也不画。 */
+            <>
+              {paramsAsFields && argView.fields.length > 0 ? (
+                <>
+                  <div className="label">{t('transcript.tool.input')}</div>
+                  <div className="args arg-fields" data-tc-argfields="">
+                    {argView.fields.map((field) => (
+                      <div className="arg-field" key={field.key}>
+                        <span className="arg-key">{field.key}</span>
+                        <span className="arg-value tc-clip" title={field.value}>
+                          {field.value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : detail.fields.length > 0 ? (
+                <>
+                  <div className="label">{t('transcript.tool.input')}</div>
+                  <div className="args arg-fields" data-tc-detail-fields="">
+                    {detail.fields.map((field) => (
+                      <div className="arg-field" key={field.key} data-multiline={field.multiline ? '1' : undefined}>
+                        <span className="arg-key">{field.key}</span>
+                        {/* 单行值走 CSS 截断（悬停看全文）；多行值只留首行，并标一个省略号。 */}
+                        <span className="arg-value tc-clip" title={field.value}>
+                          {flatValueOf(field)}
+                          {field.multiline ? (
+                            <span className="tc-fold-mark" aria-hidden="true">
+                              {' …'}
+                            </span>
+                          ) : null}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+              {output === null ? null : (
+                <>
+                  {hasInput ? <div className="label">{t('transcript.tool.output')}</div> : null}
+                  <div className="result tc-result">
+                    <div className="tc-result-first" title={firstLineOf(call.resultText ?? '')}>
+                      {output.lines[0] ?? ''}
+                    </div>
+                    {outputRest.trim() === '' ? null : (
+                      <>
+                        {resultOpen ? <div className="tc-result-rest">{outputRest}</div> : null}
+                        <button
+                          type="button"
+                          className="tc-result-more"
+                          aria-expanded={resultOpen}
+                          onClick={() => {
+                            setResultOpen(!resultOpen)
+                          }}
+                        >
+                          {resultOpen
+                            ? t('transcript.tool.showLess')
+                            : t('transcript.tool.showMore', { count: output.hidden })}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
             </>
           )}
           {/* Factory 的 children 仍是普通槽：第三方在这里给所有工具卡加行。 */}

@@ -30,6 +30,8 @@ const STATUS_LABEL: Record<ToolCallView['status'], { text: string; color: string
   running: { text: '◐ 执行中', color: STATUS_COLOR.pending },
   done: { text: '✓ 完成', color: STATUS_COLOR.done },
   failed: { text: '✗ 失败', color: STATUS_COLOR.failed },
+  // 用户按停止 / 这一轮被放弃：不是失败，也不该拿错误色（中性暗淡即可）。
+  aborted: { text: '■ 已中断', color: STATUS_COLOR.idle },
   rejected: { text: '⊘ 已拒绝', color: STATUS_COLOR.failed },
 }
 

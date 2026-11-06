@@ -8769,6 +8769,11 @@ body.resizing iframe {
   color: color-mix(in srgb, var(--dsc-red) 68%, var(--dsc-base));
 }
 
+/* 中断不是错误：字色走中性一档（与状态点同一口径），不与 failed 同红。 */
+.tool-card.status-aborted .tool-head .status {
+  color: var(--dsc-text-tertiary);
+}
+
 .tool-card.status-rejected .tool-head .status {
   color: color-mix(in srgb, var(--dsc-yellow) 74%, var(--dsc-base));
 }

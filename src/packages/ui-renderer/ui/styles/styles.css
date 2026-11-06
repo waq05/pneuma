@@ -1154,6 +1154,10 @@
 .tool-card.status-failed .tool-dot {
   background: var(--dsc-red);
 }
+/* 中断不是错误：用户按了停止、这一轮被放弃，不该在状态点上显示成红色告警。 */
+.tool-card.status-aborted .tool-dot {
+  background: var(--dsc-text-tertiary);
+}
 .tool-card.status-rejected .tool-dot {
   background: var(--dsc-yellow);
 }
@@ -1182,6 +1186,64 @@
    legacy 里 `.args` 与 `.result` 共用一条规则、同一个颜色，这里把结果压下一档。 */
 .tool-body .result {
   color: var(--dsc-text-tertiary);
+}
+
+/* ── 工具卡展开体的新形态（2026-11-06）：输入字段表 + 输出首行 ──────────
+ *
+ * 头行只读「动词 · 摘要」，展开体不再重复一遍动作，直接回答两个问题：
+ * **具体用了什么参数、回来的是什么**。
+ *   1. 输入：一行一字段，长值单行截断（title 里有全文），多行值只留首行；
+ *      没有可展示的字段就整段不画，也不留孤零零的「输入」标题；
+ *   2. 输出：首行摘要 + 「展开更多」，其余原文默认收起（与收起态 resultTail 同一套口径）。
+ * 只有输出、没有参数的工具连「输出」标题也不画：结果块直接贴着头行，
+ * 否则会读成「一个标题 + 一块空白」，像渲染坏了。
+ * 轨迹页不走这一套：那边要的是原始参数与原始结果（factory.tsx 的 trace 分支）。
+ */
+/* 输入字段的值：单行截断（悬停看 title 里的全文）。 */
+.tool-body .arg-field .arg-value.tc-clip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 多行值被折成首行时补的省略号：让「后面还有」看得出来（全文在悬停里）。 */
+.tc-fold-mark {
+  color: var(--dsc-text-quaternary);
+}
+
+/* 输出首行：一行读完这次调用给了什么；整块仍受 --dsc-tool-detail-max-h 限高。 */
+.tc-result-first {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 「展开更多」摊开的其余原文：保留原样的换行与缩进（预览是压平的，这里不是）。 */
+.tc-result-rest {
+  border-top: 1px dashed var(--dsc-stroke-3);
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  padding-top: 4px;
+  white-space: pre-wrap;
+}
+
+.tc-result-more {
+  background: none;
+  border: 0;
+  color: var(--dsc-text-quaternary);
+  cursor: pointer;
+  font-size: var(--dsc-fs-tool);
+  margin-top: 4px;
+  padding: 0;
+}
+
+.tc-result-more:hover {
+  color: var(--dsc-text-primary);
+}
+
+.tc-result-more:focus-visible {
+  outline: 1px solid var(--dsc-accent);
+  outline-offset: 2px;
 }
 
 /* 思考行收起态更安静：低对比（codex 的思考行默认 dim）。

@@ -73,6 +73,7 @@
   "primitives.tool.status.running": "进行中",
   "primitives.tool.status.done": "完成",
   "primitives.tool.status.failed": "失败",
+  "primitives.tool.status.aborted": "已中断",
   "primitives.tool.status.rejected": "被拒",
   "primitives.tool.bash": "运行命令",
   "primitives.tool.runCode": "运行代码",

@@ -73,6 +73,7 @@
   "primitives.tool.status.running": "Running",
   "primitives.tool.status.done": "Done",
   "primitives.tool.status.failed": "Failed",
+  "primitives.tool.status.aborted": "Stopped",
   "primitives.tool.status.rejected": "Rejected",
   "primitives.tool.bash": "Run command",
   "primitives.tool.runCode": "Run code",

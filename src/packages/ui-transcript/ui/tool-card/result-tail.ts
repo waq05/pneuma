@@ -46,21 +46,70 @@ export interface ResultTail {
  * @returns 预览；结果为空白时返回 null（这时候摊出来的只会是一条空行，不如不画）
  */
 export function resultTail(text: string | undefined, limit = RESULT_TAIL_LINES): ResultTail | null {
-  if (text === undefined || text.trim() === '') return null
-  const all = text.replace(/\r\n?/g, '\n').split('\n')
-  // 末尾的空行是工具输出常见的收尾（每行都以换行结束），不该占掉一行预览。
-  let end = all.length
-  while (end > 0 && (all[end - 1] ?? '').trim() === '') end -= 1
-  const kept: string[] = []
-  for (let index = 0; index < end; index += 1) {
-    const line = (all[index] ?? '').replace(/[ \t]+$/, '')
-    if (line.trim() === '') continue
-    kept.push(clipLine(line))
-  }
-  if (kept.length === 0) return null
+  const kept = contentLines(text)
+  if (kept === null) return null
   const cap = Math.max(0, limit)
   const lines = cap === 0 ? [] : kept.slice(-cap)
   return { lines, hidden: kept.length - lines.length }
+}
+
+/**
+ * 展开体输出区的「首行摘要」：取第一行有内容的文字，其余行数进 hidden。
+ *
+ * 与 {@link resultTail} 同一套口径（同一份压平、去空行、单行截断），只是取**头**不取尾：
+ * 命令输出的表头、读取结果的第一行、搜索的第一处命中都在开头；展开体的第一段回答的是
+ * 「这次调用回来的是什么」，不是「最后一行说了什么」。
+ *
+ * @param text 工具结果原文
+ * @param limit 最多摊几行（缺省 1：只露首行）
+ */
+export function resultHead(text: string | undefined, limit = 1): ResultTail | null {
+  const kept = contentLines(text)
+  if (kept === null) return null
+  const cap = Math.max(0, limit)
+  const lines = cap === 0 ? [] : kept.slice(0, cap)
+  return { lines, hidden: kept.length - lines.length }
+}
+
+/**
+ * 结果原文 → 预览行：换行归一、去空行、行尾空白剪掉、单行截断。
+ *
+ * 两条预览（收起态取尾巴 / 展开体取头）都从这里拿，避免两边对「什么算一行」各写一套。
+ * 末尾的空行是工具输出常见的收尾（每行都以换行结束），空白行不占预览额度。
+ */
+function contentLines(text: string | undefined): string[] | null {
+  if (text === undefined || text.trim() === '') return null
+  const kept: string[] = []
+  for (const raw of text.replace(/\r\n?/g, '\n').split('\n')) {
+    const line = raw.replace(/[ \t]+$/, '')
+    if (line.trim() === '') continue
+    kept.push(clipLine(line))
+  }
+  return kept.length === 0 ? null : kept
+}
+
+/**
+ * 首行之外还剩下的原文（展开体「展开更多」用）。
+ *
+ * 为什么单独给一份原文而不是复用 {@link resultTail}：预览要的是「压平、截断、只留几行」，
+ * 展开要看的是**原样**——多行的缩进、空行都该在。所以这里只做一件事：跳过前导空行，
+ * 从第一个有内容的行之后原样切出去。
+ *
+ * @param text 工具结果原文
+ * @returns 首行之后的原文；只有一行、或没有内容时给空串
+ */
+export function resultRest(text: string | undefined): string {
+  if (text === undefined || text.trim() === '') return ''
+  const lines = text.replace(/\r\n?/g, '\n').split('\n')
+  let first = -1
+  for (let index = 0; index < lines.length; index += 1) {
+    if ((lines[index] ?? '').trim() !== '') {
+      first = index
+      break
+    }
+  }
+  if (first < 0) return ''
+  return lines.slice(first + 1).join('\n')
 }
 
 /** 单行截断：按码点切，不切出半个代理对；截断点补一个省略号。 */

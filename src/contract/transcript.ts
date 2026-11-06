@@ -14,8 +14,11 @@ import type { PlanView } from './task.js'
  *
  * `preparing` = 模型已经开始吐这个工具的名字、参数还没到齐（对照 dsh 的 `preparing` 阶段）。
  * 那一行不解析参数、不可展开，只是告诉用户「接下来要干这件事」。它随后会被升级成 `running`。
+ *
+ * `failed` 与 `aborted` 是两件事：前者是工具真的跑挂了（异常、超时、参数坏掉），要排查；
+ * 后者是用户按了停止、或者这一轮被放弃——调用根本没跑完，但不是工具的错，用户不必去查日志。
  */
-export type ToolStatus = 'preparing' | 'running' | 'done' | 'failed' | 'rejected'
+export type ToolStatus = 'preparing' | 'running' | 'done' | 'failed' | 'aborted' | 'rejected'
 
 /** 工具卡片视图：参数原文 +（完成后的）结果摘要。 */
 export interface ToolCallView {
