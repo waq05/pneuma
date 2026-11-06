@@ -221,8 +221,9 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
       order: 0,
       fields(): SettingsField[] {
         return [
-          // 打包预设排在两个单旋钮之前：它是「一次定三个」的快捷方式，
-          // 下面的权限模式 / 审阅者 / 设置→沙箱的档位是逐格的细调（拼出非预设组合时上面读作派生值）。
+          // 打包预设是「一次定三个」的唯一入口（2026-11-06 用户要求）：它已经把沙箱、
+          // 权限模式、审阅者捆在一起，下面再摆两个单旋钮只是同一件事的第二种说法。
+          // 要拼预设外的组合，走 /policy 与 /reviewer 命令（能力没丢，入口收了）。
           {
             type: 'select',
             key: 'permissionPreset',
@@ -233,8 +234,6 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
             derivedLabelKey: 'permissionPresetName',
             help: t('field.permissionPreset.help'),
           },
-          { type: 'select', key: 'policy', label: t('field.policy.label'), options: policyOptions(), help: t('field.policy.help') },
-          { type: 'select', key: 'reviewer', label: t('field.reviewer.label'), options: reviewerOptions(), help: t('field.reviewer.help') },
           { type: 'select', key: 'effort', label: t('field.effort.label'), options: effortOptions(), help: t('field.effort.help') },
           { type: 'select', key: 'temperature', label: t('field.temperature.label'), options: temperatureOptions(), help: t('field.temperature.help') },
           {
@@ -265,8 +264,6 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
           // 派生状态的显示名：命中出厂预设时留空（下拉照常显示预设名）；没命中时给个人话名字
           // （审阅者是 AI 复核 → 「AI 审查」，其余 → 「自定义」；规则住在预设表那边）。
           permissionPresetName: presetName === 'custom' ? derivedPresetLabel(ctx.approval.reviewer) : '',
-          policy: ctx.approval.policy,
-          reviewer: ctx.approval.reviewer,
           effort: ctx.llm.effort,
           temperature: config.temperature === undefined ? 'follow' : String(config.temperature),
           closeToTray: prefs.closeToTray,
@@ -278,6 +275,8 @@ export const settingsPlugin: Plugin.Object<DscCoreConfig> = {
           if (presets === undefined) throw new Error('打包权限预设服务不在（permission-presets 插件没挂）')
           return { notice: presets.use(String(value)) }
         }
+        // policy / reviewer 两个分支保留：设置页已没有这两个控件，但旧版界面或脚本
+        // 仍可能按 key 调过来。入口收了，底层能力（approval.setPolicy / setReviewer）不动。
         if (key === 'policy') {
           const policy = String(value) as ApprovalPolicy
           if (!policyOptions().some((option) => option.value === policy)) throw new Error(`未知的权限模式 ${value}`)

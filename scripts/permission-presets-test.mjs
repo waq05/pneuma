@@ -152,6 +152,11 @@ console.log('[5] 派生状态的显示名：命中预设留空，拼出来的组
   const host = read('src/packages/settings/index.ts')
   check('宿主把派生显示名挂在 permissionPresetName 上', host.includes("derivedLabelKey: 'permissionPresetName'"))
   check('宿主用 derivedPresetLabel 算这个名字（不另写一份规则）', host.includes('derivedPresetLabel(ctx.approval.reviewer)'))
+  // 2026-11-06：两个单旋钮与「权限预设」重复，从设置页移除；要拼预设外组合走命令。
+  check(
+    '设置页不再给权限模式 / 审阅者两个重复下拉',
+    !host.includes("key: 'policy', label: t('field.policy.label')") && !host.includes("key: 'reviewer', label: t('field.reviewer.label')"),
+  )
 
   // 壳那两份同构渲染都要有这条出口：值不在选项表里 + 宿主给了名字 → 置灰只读 + 显示那个名字。
   // 跨行匹配前先把 CRLF 压平（本仓工作区是 CRLF，直接 includes 多行文本永远匹配不上）。
