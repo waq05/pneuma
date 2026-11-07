@@ -14711,3 +14711,39 @@ bash 展开看到的是 `{"command": "..."}` 一整坨。
 验证：`ui-collapse-prefs-test` 54 项（默认值、坏值回落、往返、回执、源码钉）、
 `ui-fold-combo-test` 112 项（四档 × 两种回复档 × 两种时机 16 格，逐格断言藏了哪些
 下标、哪轮默认展开）、尾部探针 33 项按集合口径重写、渲染探针 138 项（原 134，未放宽）。
+
+## 2026-11-07：阶段组把思考收回来，「运行了代码」这一层才立得住
+
+用户报障（附了 dsh 与 Numa 的对照图）：dsh 的一段过程能展开成「运行了代码」下面一串思考与代码行，
+Numa 那边同样的内容是一列平铺的行，没有那个层级。
+
+### 根因
+
+分组器 2026-10-30 起在遇到思考行时**封组**（`process-groups.ts:697-710`）：组里只装工具调用，思考
+行作为「组头同级」独立成行。dsh 的分组器正好相反，推理节点进 step run
+（`conversation-nodes/process-groups.ts:157-158`）。差别在模型最常见的节奏上被放大：想一句、调一次、
+再想一句，于是每一组只剩 1~2 条工具。
+
+组头又挂着「· 文件路径」（`render.tsx` 的 `groupTask`）与行尾「N 项」，读者看到的是
+「已读取文件 · D:\...\market.ts 2 项」——这句话本身就是一条操作的写法，谁也读不出它收着五项内容。
+
+### 改法
+
+- **思考进组**：`groupSteps` 把 `thinking` 与 `tool` 一同收进 pending；组员按实际收进组的条目结算
+  （新增 `StepGroup.members`），不再用 `[startIndex, endIndex]` 区间——区间会把夹在中间的 system 行
+  一起算成组员、随组头收起，而「出错了」恰恰不该被折起来。system 因此改为封组。
+- **组头只报类别**：删掉 `groupTask` 与「· 任务」「N 项」两处读数，开合提示也不再报条数。
+- **取消单条放平**：删掉 `needsGroupHeader`，每组都画组头。放平的前提（组里只有一条工具）不成立了。
+- **紧凑档不再单独露思考摘要**（`reasoningPreview: false`，回到 dsh 的 `settledReasoningPreview`）：
+  思考行进组之后，组头收起时摘要本来也看不见，这一格只剩「组展开后要不要预览首行」的意思，dsh
+  的紧凑档不给。这条回滚只动这一格，标准 / 详细 / 完全展开三档不变。
+- **底部状态行**的判据从「任意一组存在」改成「有未结束的组」：前者只要历史里折过一段就永远成立，
+  会把这一轮的状态行一直压掉；`closed=false` 只由运行中那一轮的尾组产生，口径才对得上
+  「组头此刻画着」。
+
+### 验证
+
+`ui-transcript-render-test` 139 条（思考在组里、system 不被裹进组、每条行恰好一次）、
+`ui-step-group-live-test` 29 条（思考 + 调用两条就成组、组头画在第一条）、`ui-process-grid-test`
+51 条（组头不再有任务段与项数、放平规则已删）、`ui-fold-prefs-test` 50 条（四档表 compact 一格改回
+false），`node scripts/check-ui.mjs` 62 份探针全过。实拍 `desktop/shots/fold-group-expanded.png`。
