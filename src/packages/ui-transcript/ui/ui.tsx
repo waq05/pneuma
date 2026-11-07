@@ -600,9 +600,12 @@ function TranscriptFlow({
           两种情况不画这条：
           1. 正在压缩——压缩发生在回合起点（beforeRequest），那一刻 turnState 已经是 thinking，
              两条都画就是两个转圈，压缩优先；
-          2. 有工具在跑且过程组头此刻画着——组头已经在说「正在运行命令 · bash」，
-             这条再说一遍就是同一件事说两次（见 timing.liveActivity 的 covered）。 */}
-      {activity !== null && compactingSince === null && !(activity.covered && stepGrouping.groups.length > 0) ? (
+          2. 过程区此刻画着一个**未结束**的阶段组头——组头已经在说「正在运行命令 · bash」
+             或「正在分析请求」，这条再说一遍就是同一件事说两次。
+             判据从「任意一组存在」改成「有未结束的组」：前者只要历史里折叠过一段就永远成立，
+             会把这一轮的状态行一直压掉；未结束的组只可能出现在正在跑的那一轮（closed=false
+             只由尾组产生），口径才对得上「组头此刻画着」这件事。 */}
+      {activity !== null && compactingSince === null && !stepGrouping.groups.some((group) => !group.closed) ? (
         <TurnStatusLine text={activity.text} />
       ) : null}
       <div ref={follow.setEnd} />

@@ -16,11 +16,12 @@
  *   process-groups.ts:159-162）——一条正文就是「上一阶段干完了」的信号。dsc 的 transcript
  *   里思考与正文本来就是两条独立条目（adapter/transcript.ts:284-298 的 message 分支），
  *   所以这条规则不用解析 assistant-step 就能照搬；
- * - **只有工具调用进组**（2026-10-30 改）：思考行是模型的自述，与组头同级、单独成行，
- *   不再被收进组体。这不是随手改的版式偏好——dsh 那边（ChatGroupSeat / ReasoningRow）
- *   思考与组头落在同一条轴、工具才是缩进的子项；之前把思考塞进组里，导致同一条流里
- *   思考行跟着工具一起缩进，读起来像「思考是这一组干的活」，而不是「模型在执行前想了什么」。
- *   连带效果：只思考没调工具的一段不再有「已完成分析」组头，思考行自己就是那一行；
+ * - **思考与工具都进组**（2026-11-07 改回 dsh 口径）：思考是这一段过程的一部分，
+ *   与它后面的工具调用同属一个阶段。10-30 到 11-06 这段时间里思考行不进组、且遇思考即封组，
+ *   于是模型最常见的「想一句、调一次」被切成一条一组的碎片——组头退化成「已读取文件 ·
+ *   某个路径」，和单条工具行没有区别，读者看不出层级（用户报障原话：「没有『运行了代码』
+ *   这一个层级」）。dsh 的分组器一直把推理放进 step run（process-groups.ts:157-158）。
+ *   代价：思考摘要随组体一起收起，紧凑档不再单独露出思考预览——与 dsh 同口径；
  * - **计划卡单独成界**：封掉前面的组，自己也不进组。它是审批流的一部分（「等你点批准」），
  *   跟过程内容不是一回事；dsh 里 exit_plan_mode 走审批，同属过程之外的一类；
  * - **system 提示既不进组也不封组**：dsc 的 system 混了错误提示、宿主通知、「已恢复会话」
@@ -64,9 +65,11 @@ export interface ActivityCount {
 }
 
 /**
- * 一个阶段组：一轮里相邻的**工具调用**，被一条定稿正文（或计划卡、轮末、思考行）收口。
+ * 一个阶段组：一轮里相邻的**过程内容**（思考 + 工具调用），被一条定稿正文
+ * （或计划卡、轮末、插话）收口。
  *
- * 组里只有工具调用：思考行不进组，作为组头同级的独立行渲染（2026-10-30，理由见模块头）。
+ * 思考行与工具行都在组里（2026-11-07 起，理由见模块头）：一个阶段本来就是「想了什么、
+ * 干了什么」两件事交替，组头说的是这一阶段整体干了哪类活。
  * 中间那些「阶段性正文」不进组，但仍属于整轮过程范围（整轮收起时它们一起消失）。
  */
 export interface StepGroup {
@@ -85,12 +88,22 @@ export interface StepGroup {
   /** 组内最后一条可折叠条目在 entries 里的下标（含）。 */
   endIndex: number
   /**
-   * 组里收着几条**工具调用**（2026-10-30 起不再把思考段算进来：思考行不在组里了）。
+   * 这一组的**成员条数**（思考行与工具行都算一条）。
    *
-   * 为什么单独给一个字段而不是让界面自己减下标：下标之差在「组里有不渲染的条目」时是错的，
-   * 而组头要把「点开会放出几项」写在明面上（`.step-fold-count`）。
+   * 为什么单独给一个字段而不是让界面自己减下标：组里可能夹着不进组的 system 行，
+   * 下标之差会把它们也算进来（见 {@link StepGroup.members}）。
+   * 组头不再显示这个读数（2026-11-07，与 dsh 一致），它留着给自检断言与提示语用。
    */
   size: number
+  /**
+   * 组员的 entries 下标，按出现顺序。
+   *
+   * 为什么不直接用 `[startIndex, endIndex]` 这个区间：区间会把中间那条 **system**
+   * 行（错误提示、宿主通知、「已恢复会话」）一起算成组员，结果是被收进组体、随组体一起
+   * 藏起来——而 system 恰恰是不该被折叠藏掉的那类（见 {@link TURN_PROCESS_INDEPENDENT}）。
+   * 现在由分组时实际收进组的条目决定，区间只作为读位置用。
+   */
+  members: readonly number[]
   /** 这一组的工具调用按类别计数，按次数降序、同数按首次出现顺序。 */
   counts: ActivityCount[]
   /**
@@ -174,32 +187,13 @@ export function seatPlan(ats: readonly number[], grouping: StepGrouping): SeatPl
   for (const at of ats) {
     const head = grouping.headAt.get(at)
     if (head !== undefined) {
-      const members: number[] = []
-      for (let index = head.startIndex; index <= head.endIndex; index += 1) members.push(index)
-      items.push({ kind: 'group', group: head, members })
+      items.push({ kind: 'group', group: head, members: head.members })
       continue
     }
     if (grouping.at.has(at)) continue
     items.push({ kind: 'row', at })
   }
   return items
-}
-
-/**
- * 这一组值不值当画组头（2026-10-31）。
- *
- * 只有一次工具调用的组不该画：组头那半句「类别 · 参数摘要」与组里那条工具行一字不差，
- * 多出来的缩进与「1 项」读数一个东西也没压缩掉。实测一条长会话（43 组）里 26 组是单条——
- * 思考行会把组切开，模型最常见的节奏就是「想一句、调一次、再想一句」，于是屏幕上几乎
- * 每条工具都套着一个「1 项」的壳。
- *
- * 所以渲染层对单条组**放平**：那条工具行直接摆在思考行同一层，不缩进、不画组头。
- * 两次以上才出现组头与缩进——层级只在真的藏了东西时才出现。
- *
- * @param group {@link groupSteps} 切出来的组
- */
-export function needsGroupHeader(group: StepGroup): boolean {
-  return group.size >= 2
 }
 
 /**
@@ -676,6 +670,7 @@ export function groupSteps(
         startIndex: first,
         endIndex: last,
         size: pending.length,
+        members: [...pending],
         counts: countActivities(entries, pending),
         failures: countFailures(entries, pending),
         closed,
@@ -697,15 +692,10 @@ export function groupSteps(
     for (let at = round.startIndex + 1; at <= round.endIndex; at += 1) {
       const entry = entries[at]
       if (entry === undefined) continue
-      if (entry.kind === 'tool') {
+      // 思考与工具都是这一阶段的内容，一起进组（2026-11-07 改回 dsh 口径，见模块头）。
+      // 两者顺序按出现顺序原样保留：模型先想、再调，组体展开时读到的也是这个顺序。
+      if (entry.kind === 'tool' || entry.kind === 'thinking') {
         pending.push(at)
-        continue
-      }
-      // 思考行不进组（2026-10-30）：它是模型的自述，与组头同级单独成行（见模块头的切分规则）。
-      // 这里必须**封组**：组体的成员是 `[startIndex, endIndex]` 这个连续区间，中间夹一条
-      // 不进组的行，区间就会把它一起算进 members，等于同一个思考渲染两次。
-      if (entry.kind === 'thinking') {
-        flush(true)
         continue
       }
       // 下面这几种都是**独立节点**：封掉前面的组，自己不进组。
@@ -728,7 +718,17 @@ export function groupSteps(
         flush(true)
         continue
       }
-      // system：既不进组也不封组（见模块注释）
+      // system：**封组**，自己不进组。
+      //
+      // 原来这里既不进组也不封组（「拿它当边界会切出莫名其妙的空组」）——但空组本来就不会
+      // 产生（flush 在 pending 为空时直接返回）。不封组的真实代价是：组员一旦按 entries 区间
+      // 取，夹在中间的 system 行会被算进组体、随组头一起收起，而错误提示恰恰是最不该折的。
+      // 现在组员按实际收进组的条目结算（见 StepGroup.members），封组是为了让这些独立行
+      // 待在原来的位置上，不被排到整组之后。
+      if (entry.kind === 'system') {
+        flush(true)
+        continue
+      }
     }
     // 尾组：这一轮收尾了才成「已结束」的组；还在跑的那一轮尾组照样成组，但 closed=false。
     //
@@ -737,12 +737,12 @@ export function groupSteps(
     // closed=false 时被 step-group-row 画出来。以前这里一律丢弃尾组，于是「跑动中的组」
     // 根本不存在，liveDetail 这个档位开关没有任何可见效果。
     //
-    // 为什么单条不成组：单条组本来就会被 render 放平成一行（needsGroupHeader），成组不会
-    // 多出任何东西，却会让底部状态行误以为「组头已经在说这件事」（ui.tsx 的 covered 判据
-    // 是 groups.length > 0）而闭嘴——那才是同一件事没人说。
+    // 为什么只有一条不成组：一轮刚开始时只有一条思考行在长。它单独成组的话，组头
+    // 「正在分析请求」会把唯一一行内容一起收起来，屏幕上一时间只剩一句空话；两条以上
+    // 才有「藏起来的东西」可言。dsh 那边是首条过程节点就建组，这里保留一条的差异。
     //
     // 0.6.50 撤掉的那个「未收口组头」与这里不同：那一条说的是「正在分析请求 + 最新思考摘录」，
-    // 与状态行重复；这里只在真有一组工具要收（size ≥ 2）时才成组，组头说的是这一组此刻在
+    // 与状态行重复；这里只在真有两行以上内容要收时才成组，组头说的是这一组此刻在
     // 干什么，正文一来就收口（下一次渲染就 closed=true，改报聚合文案）。
     if (isRunning(round.index)) {
       if (pending.length >= 2) flush(false)
@@ -755,8 +755,10 @@ export function groupSteps(
   const headAt = new Map<number, StepGroup>()
   const at = new Map<number, StepGroup>()
   for (const group of groups) {
-    headAt.set(group.startIndex, group)
-    for (let index = group.startIndex; index <= group.endIndex; index += 1) at.set(index, group)
+    const head = group.members[0]
+    if (head === undefined) continue
+    headAt.set(head, group)
+    for (const index of group.members) at.set(index, group)
   }
   return { groups, headAt, at }
 }

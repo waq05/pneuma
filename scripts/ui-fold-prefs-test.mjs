@@ -159,10 +159,11 @@ console.log('6. 源码钉：钩子本身与设置下发链路')
 console.log('7. 源码钉：四档 policy 表逐字未变')
 {
   const roundFold = read(UI + '/round-fold.tsx')
-  // 2026-10-30：compact 的 reasoningPreview 由 false 改成 true（用户拍板「紧凑档也保留摘要」）。
-  // 这一档管的是「整轮折不折」，不该连行内摘要一起删——理由写在 round-fold.tsx 那条注释里。
+  // 2026-11-07：compact 的 reasoningPreview 改回 false（回到 dsh 的 settledReasoningPreview=false）。
+  // 思考行现在收在阶段组里，组头收起时摘要本来也看不见；这一格管的是「组展开后那条思考行
+  // 要不要预览首行」，dsh 的紧凑档不给预览。理由写在 round-fold.tsx 那条注释里。
   const expected = [
-    "compact: { foldTurns: true, stepGrouping: 'collapsed', liveDetail: false, reasoningPreview: true },",
+    "compact: { foldTurns: true, stepGrouping: 'collapsed', liveDetail: false, reasoningPreview: false },",
     "standard: { foldTurns: true, stepGrouping: 'collapsed', liveDetail: true, reasoningPreview: true },",
     "detailed: { foldTurns: true, stepGrouping: 'history', liveDetail: true, reasoningPreview: true },",
     "verbose: { foldTurns: false, stepGrouping: 'none', liveDetail: false, reasoningPreview: true },",

@@ -21,17 +21,16 @@
  * 三者在对话流里是紧挨着的「过程」条目，命中区不一样的话，扫视时要重新认一遍哪里能点
  * （对照 dsh 的 DisclosureRow expandOnRowClick，ReasoningRow.tsx:95）。
  *
- * 行尾两格是 0.6.68 加的：**「N 项」+ 常显箭头**。原来箭头只在悬停时顶替类别图标
- * （照 dsh 的叠放互换），静息看就是「图标 + 一句话」，像状态说明而不像控件；同一条流里
- * 高一层的整轮总开关（`.turn-fold`）却是常显箭头，两行长相不一致，语义也就读不出来。
- * 现在统一成「左边类别、右边 N 项 + 箭头」；codex 的 `+ Show details` / `+ N lines`
- * （transcript_view/layout.rs:24-58）是同一思路——把开合这件事写在明面上。
+ * 行尾原来是「N 项 + 常显箭头」两格（0.6.68）：本意是把「点开能放出几项」写在明面上。
+ * 2026-11-07 去掉读数，只留箭头——条数说不出这一阶段干了什么，还把读者的注意力从类别
+ * 拉到计数上；dsh 的组头也只有类别与箭头。箭头保留常显：同一条流里高一层的整轮总开关
+ * （`.turn-fold`）也是常显箭头，两种折叠行用同一种语言。
  *
  * 「正在… / 已…」两套文案由 group.closed 决定（见 process-groups.ts 的 stepGroupTitle）。
  *
- * **只有两次以上工具调用的组才走到这里**（2026-10-31）：单条组由 render.tsx 放平成一行
- * 工具行，组头与那条工具行说的是同一句话，再套一层缩进与「1 项」不压缩任何东西。
- * 「已完成分析」那条文案因此成了死分支（组里只装工具，没有「只思考」的组了）。
+ * 现在**每个组都画组头**（2026-11-07 撤掉 10-31 的单条放平）：组里既有思考又有工具，
+ * 一条思考 + 一次调用就是一个完整阶段，放平会把这层结构重新摊回平铺。
+ * 「已完成分析」因此重新可达（组里只有思考、没有工具的那些阶段）。
  *
  * @module dsc-ui-shell/plugins/transcript/step-group-row
  */
@@ -133,8 +132,6 @@ export function StepGroupRow(props: {
   open: boolean
   /** 这一档要不要在组头里显示实时详情（dsh 的 liveProcessDetail：紧凑档为假）。 */
   showDetail: boolean
-  /** 已定稿的组：组头「类别 · 任务」的后半句（见 render.tsx 的 groupTask；空串不画）。 */
-  task: string
   onToggle(): void
 }): JSX.Element {
   const closed = props.group.closed
@@ -154,11 +151,12 @@ export function StepGroupRow(props: {
   const detail = closed || !props.showDetail ? '' : live.detail
   // 次数与实时详情不上面面，但要留在 DOM 上：截图用例与探针靠它断言「这一组收进去几条什么类别的调用」
   const counts = props.group.counts.map((item) => `${item.kind}=${String(item.count)}`).join(',')
-  // 提示语带上条数与失败数：点一下会发生什么、里面有没有坑，读提示就能答（不必先点一次试）。
+  // 提示语带上失败数：点一下会发生什么、里面有没有坑，读提示就能答（不必先点一次试）。
+  // 条数不再进提示（2026-11-07）：组头与提示都不报「几项」，读数让位给「这一阶段干了什么」。
   const failNote = props.group.failures > 0 ? t('transcript.group.failNote', { count: props.group.failures }) : ''
   const tip = props.open
-    ? t('transcript.group.collapseTip', { count: props.group.size, failNote })
-    : t('transcript.group.expandTip', { count: props.group.size, failNote })
+    ? t('transcript.group.collapseTip', { failNote })
+    : t('transcript.group.expandTip', { failNote })
   return (
     <button
       type="button"
@@ -169,6 +167,7 @@ export function StepGroupRow(props: {
       data-step-activity={activity}
       data-step-closed={closed ? '1' : undefined}
       data-step-counts={counts}
+      data-step-size={props.group.size}
       data-step-detail={detail === '' ? undefined : detail}
       aria-expanded={props.open}
       data-tip={tip}
@@ -192,8 +191,11 @@ export function StepGroupRow(props: {
           直播思考一长（上限 160 字）就把整行撑出会话（0.6.46 报障）——换行后详情在
           柱内单行截断，截断宽度是组头自己的宽度，永远出不了会话。 */}
       <span className="step-fold-text">
-        {/* 标题行：类别 + 「· 具体任务」（2026-10-30 补）。后半句照 dsh 的组头读法
-            「类别 · 任务」，只给已定稿的组——跑动中那半句由下面的实时详情占着。 */}
+        {/* 标题行：只报类别（2026-11-07 起，与 dsh 一致）。
+            10-30 到 11-06 期间这里还挂一句「· 文件路径」，本意是补一句「具体干了什么」，
+            实际上把组头读成了一条操作：读者看到「已读取文件 · D:\\...\\market.ts」，
+            不会再往下找「这一组还收了什么」。收起态的组头要回答的是「这一阶段干过哪类活」，
+            具体是哪个文件，点开就看得到。 */}
         <span className="step-fold-line">
           <span
             className="step-fold-label"
@@ -203,14 +205,6 @@ export function StepGroupRow(props: {
           >
             {label}
           </span>
-          {props.task === '' ? null : (
-            <>
-              <span className="step-fold-dot" aria-hidden="true" />
-              <span className="step-fold-task" title={props.task}>
-                {props.task}
-              </span>
-            </>
-          )}
         </span>
         {detail !== '' && (
           <span className="step-fold-detail" data-shimmer={detail}>
@@ -226,11 +220,9 @@ export function StepGroupRow(props: {
           {t('transcript.group.failures', { count: props.group.failures })}
         </span>
       ) : null}
-      {/* 「点开会得到什么」写在明面上：这一组收着几次工具调用（思考行不在组里，
-          所以这里只数工具）。用户在长会话里看到的是一列组头，光看标题猜不出里面有多少东西。 */}
-      <span className="step-fold-count" data-step-size={props.group.size}>
-        {t('transcript.group.items', { count: props.group.size })}
-      </span>
+      {/* 行尾只留箭头（2026-11-07 去掉「N 项」读数）：
+          条数是个说不出内容的读数，放在组头右侧把读者的注意力从「干了哪类活」拉到计数上；
+          dsh 的组头也只有类别与箭头。条数仍在 DOM 上（data-step-size），供自检断言使用。 */}
       <span className="step-fold-chevron" data-step-chevron>
         <IconChevronDown size={12} />
       </span>

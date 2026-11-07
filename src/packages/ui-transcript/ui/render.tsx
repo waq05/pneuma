@@ -7,13 +7,13 @@
  */
 import { Component, useContext, type ReactNode } from 'react'
 import { MarkdownView, createT, estimateTextTokens, type TranscriptEntry } from '@dsc/ui'
-import { ReviewNoticeCard, findLast, parseReviewNotice, toolSummary } from '@dsc/ui-primitives'
+import { ReviewNoticeCard, findLast, parseReviewNotice } from '@dsc/ui-primitives'
 import { FoldPrefsContext, ShellCwdContext, ShellSessionContext, TOOLVIEW_SLOT, TURN_INDEPENDENT, keyOf, type Row, type Seat, type ToolViewRender } from './shared'
 import { stepGroupFoldKey, turnFoldKey } from './fold-state'
 import { turnDefaultOpen, useFoldMemory } from './round-fold'
 import { RowSeat, StepGroupSeat } from './fold-seats'
 import { TurnFoldRow } from './round-fold'
-import { needsGroupHeader, seatPlan, type StepGroup, type StepGrouping } from './process-groups'
+import { seatPlan, type StepGroup, type StepGrouping } from './process-groups'
 import type { RoundInfo } from './timing'
 import { UserRow } from './rows/user-row'
 import { ThinkRow } from './rows/think-row'
@@ -26,26 +26,6 @@ import en from '../locale/ui.en.json'
 
 /** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
 const t = createT({ zh, en })
-
-/**
- * 已定稿的阶段组：给组头补一句「这一段具体干了什么」。
- *
- * 组头原来只有聚合类别（「运行了代码」+「5 项」），配上 N 项读数只能说「这一阶段跑过几次」，
- * 说不出「跑的是什么」。参考实现（dsh）的组头是「类别 · 具体任务」——后半句才是人看的那半。
- *
- * 取法：组里第一条工具调用的参数摘要。组里只装工具（思考行不在组里，2026-10-30），
- * 原来那条「没有工具就用第一段思考的首行」的兜底已经没有触发条件，删掉了。
- * 只给已定稿的组用：跑动中那半句由组头的实时详情占着，两个都画会打架。
- */
-function groupTask(members: readonly Row[]): string {
-  for (const member of members) {
-    const entry = member.entry
-    if (entry.kind !== 'tool') continue
-    const text = toolSummary(entry.call.name, entry.call.argsText)
-    if (text !== '') return text
-  }
-  return ''
-}
 
 /**
  * 过程区里的一段排布：`fold` 的行会被包进 `.turn-process`（收起时整段缩回 0），
@@ -202,13 +182,10 @@ export function SeatBody({
       const members = item.members
         .map((at) => rowByAt.get(at))
         .filter((member): member is Row => member !== undefined)
-      // 单条工具组放平（2026-10-31）：组头与那条工具行说的是同一句话，再套一层缩进与
-      // 「1 项」不压缩任何东西。实测长会话里过半的组是单条，等于每条工具都顶一个空壳。
-      if (!needsGroupHeader(head)) {
-        const only = members[0]
-        if (only !== undefined) pushRow(only)
-        continue
-      }
+      // 组一律画组头，不按成员条数放平（2026-11-07 撤掉 10-31 的放平规则）：
+      // 放平的前提是「组里只有一条工具」，而那时组头说的是和工具行同一句话。现在思考也在
+      // 组里，一条思考 + 一次调用就是一个完整的阶段，放平等于把这层结构重新摊回平铺——
+      // 正是用户报障时看到的画面。dsh 也不按条数放平（ChatGroupSeat 对每个组都画头）。
       middle.push({
         fold: true,
         node: (
@@ -218,7 +195,6 @@ export function SeatBody({
             turnCollapsed={collapsed}
             open={groupOpen(head)}
             showDetail={liveDetail}
-            task={head.closed ? groupTask(members) : ''}
             onToggle={() => toggleGroup(head)}
             onRevealTurn={reveal}
           >

@@ -45,7 +45,7 @@ const groups = await import(
   new URL('../' + UI + '/process-groups.ts', import.meta.url).href
 )
 const args = await import(new URL('../src/packages/ui-primitives/ui/tool-args.ts', import.meta.url).href)
-const { seatPlan, groupSteps, needsGroupHeader } = groups
+const { seatPlan, groupSteps } = groups
 const { toolArgFields, MUTATION_CONTENT_FIELDS } = args
 const roundsMod = await import(
   new URL('../' + UI + '/rounds.ts', import.meta.url).href
@@ -73,8 +73,8 @@ const entry = (kind, extra = {}) => ({ kind, id: Math.floor(Math.random() * 1000
 console.log('[1] seatPlan：每条行恰好出现一次')
 {
   // 一轮：[user, thinking, tool, text, thinking, tool]
-  // 2026-10-30 起只有工具进组、思考行是组外的同级行（对齐 dsh 的版式），所以这里是两个
-  // 各装一条工具的组，外加两条独立的思考行与一条正文。
+  // 2026-11-07 起思考与工具一起进组（回到 dsh 的分组口径）：定稿正文是唯一的边界，
+  // 所以这里是两个各装「一条思考 + 一次调用」的组，外加一条独立的正文档位。
   const entries = [
     entry('user', { text: '题面' }),
     entry('thinking', { text: '想一' }),
@@ -86,8 +86,8 @@ console.log('[1] seatPlan：每条行恰好出现一次')
   const rounds = [{ index: 0, startIndex: 0, endIndex: 5, startTs: 1, endTs: 2, answered: true }]
   const grouping = groupSteps(entries, rounds, () => false)
   check('分组器切出两个组', grouping.groups.length === 2, String(grouping.groups.length))
-  check('每组只装工具调用（思考不进组）', grouping.groups.every((group) => group.size === 1))
-  check('思考行不在任何组的成员区间里', !grouping.at.has(1) && !grouping.at.has(4), JSON.stringify([...grouping.at.keys()]))
+  check('每组装着思考与工具两条', grouping.groups.every((group) => group.size === 2 && group.members.length === 2))
+  check('思考行也在组里（不再是组外的独立行）', grouping.at.has(1) && grouping.at.has(4), JSON.stringify([...grouping.at.keys()]))
 
   const ats = entries.map((_, index) => index).slice(1)
   const items = seatPlan(ats, grouping)
@@ -98,8 +98,8 @@ console.log('[1] seatPlan：每条行恰好出现一次')
   }
   check('每条行恰好出现一次（0.6.67 的重复就是这么来的）', seen.length === ats.length && new Set(seen).size === ats.length, JSON.stringify(seen))
   check('顺序与出现顺序一致', JSON.stringify(seen) === JSON.stringify([...seen].sort((a, b) => a - b)))
-  check('两个组块 + 三条单独行（思考 ×2 + 正文 ×1）', items.filter((item) => item.kind === 'group').length === 2 && items.filter((item) => item.kind === 'row').length === 3)
-  check('思考行进 row 项（与组头同级渲染）', items.filter((item) => item.kind === 'row').some((item) => item.at === 1) && items.filter((item) => item.kind === 'row').some((item) => item.at === 4))
+  check('两个组块 + 一条单独行（正文）', items.filter((item) => item.kind === 'group').length === 2 && items.filter((item) => item.kind === 'row').length === 1)
+  check('单独成行的是正文，思考不再单列', items.filter((item) => item.kind === 'row').every((item) => item.at === 3))
   check('组员绝不出现在 row 项里（组体铺过就不再单独铺）', items.filter((item) => item.kind === 'row').every((item) => !grouping.at.has(item.at)))
   check('组块带全成员（升序）', items.filter((item) => item.kind === 'group').every((item) => JSON.stringify(item.members) === JSON.stringify([...item.members].sort((a, b) => a - b))))
   check('空表进空表出', seatPlan([], grouping).length === 0)
@@ -107,18 +107,33 @@ console.log('[1] seatPlan：每条行恰好出现一次')
   const running = groupSteps(entries, rounds, () => true, true)
   check('没有分组的轮（detailed 档的运行中轮）全出 row 项', running.groups.length === 0 && seatPlan(ats, running).every((item) => item.kind === 'row'))
 
-  // 单条组不画组头（2026-10-31）：分组器照样切出这一组，但渲染层要把它放平成一行。
-  check('单条组判为「不必画组头」', needsGroupHeader(grouping.groups[0]) === false && grouping.groups[0].size === 1)
-  const twoTools = groupSteps(
+  // 单条组也画组头（2026-11-07 撤掉 10-31 的放平）：一条思考 + 一次调用就是一个完整阶段，
+  // 放平会把这层结构摊回平铺——那正是用户报障时看到的画面。
+  const single = groupSteps(
     [
       entry('user', { text: '题面' }),
+      entry('thinking', { text: '想' }),
       entry('tool', { call: { callId: 'a', name: 'read', argsText: '{}', status: 'done' } }),
-      entry('tool', { call: { callId: 'b', name: 'read', argsText: '{}', status: 'done' } }),
     ],
     [{ index: 0, startIndex: 0, endIndex: 2, startTs: 1, endTs: 2, answered: true }],
     () => false,
   )
-  check('两条同行工具照旧成组（层级只在真压缩时出现）', twoTools.groups.length === 1 && twoTools.groups[0].size === 2 && needsGroupHeader(twoTools.groups[0]) === true)
+  check('一条思考 + 一次调用就是一个组（不再拆散）', single.groups.length === 1 && single.groups[0].members.join(',') === '1,2')
+
+  // system 是边界：它自己不进组，也不许被组员区间连带收进去（那是「错误提示被折叠」的来源）。
+  const withSystem = groupSteps(
+    [
+      entry('user', { text: '题面' }),
+      entry('tool', { call: { callId: 'a', name: 'read', argsText: '{}', status: 'done' } }),
+      entry('system', { text: '出错了' }),
+      entry('tool', { call: { callId: 'b', name: 'read', argsText: '{}', status: 'done' } }),
+    ],
+    [{ index: 0, startIndex: 0, endIndex: 3, startTs: 1, endTs: 2, answered: true }],
+    () => false,
+  )
+  check('system 不进组，且把前后的工具切成两组', withSystem.groups.length === 2 && withSystem.groups.every((group) => group.members.length === 1))
+  const systemSeat = seatPlan([1, 2, 3], withSystem)
+  check('system 行原样留在座位里（不被折叠吞掉）', systemSeat.some((item) => item.kind === 'row' && item.at === 2))
 }
 
 console.log('[2] toolArgFields：会改文件的工具走参数表')

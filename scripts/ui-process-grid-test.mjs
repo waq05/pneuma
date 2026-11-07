@@ -166,9 +166,11 @@ console.log('7. 内容：组头后半句与工具摘要表')
   check('run_code 的摘要取 code 字段', /run_code: \['code'\]/.test(summary))
   check('code 字段取第一行（不把整段脚本压成一行）', summary.includes('function firstCodeLine') && summary.includes("field === 'code' ? firstCodeLine(value)"))
 
-  check('组头画「类别 · 任务」的分隔点与任务段', row.includes('step-fold-task') && row.includes('step-fold-dot'))
-  check('任务段只在已定稿的组出现（跑动中由实时详情占位）', render.includes('task={head.closed ? groupTask(members) : \'\'}'))
-  check('任务取法：组里第一条工具的参数摘要', /function groupTask/.test(render) && render.includes('toolSummary(entry.call.name, entry.call.argsText)'))
+  // 2026-11-07 撤掉组头后半句：已结束的组只报类别（与 dsh 的组头一致）。挂着文件路径时，
+  // 组头读起来就是「一条操作」，读者不会把它当成收着多项的层级——那是用户报障的直接原因。
+  check('组头不再画任务段（分隔点与任务段都已删）', !row.includes('step-fold-task') && !row.includes('step-fold-dot'))
+  check('渲染层不再给组头算任务摘要', !render.includes('groupTask'))
+  check('样式里任务段与「N 项」读数都已删干净', !views.includes('.step-fold-task') && !views.includes('.step-fold-count'))
 }
 
 console.log('7b. 组头字号与思考行同档（用户 2026-10-31：「运行了代码字体应该和思考一样大吧」）')
@@ -181,17 +183,18 @@ console.log('7b. 组头字号与思考行同档（用户 2026-10-31：「运行�
   check('行高仍比过程行高一档（28 / 24）', /--proc-head-h: calc\(28px/.test(tokens) && /--dsc-process-row-h: calc\(24px/.test(tokens))
 }
 
-console.log('7c. 单条工具组放平（2026-10-31：屏幕上「所有都是一项」）')
+console.log('7c. 单条组也画组头（2026-11-07 撤掉 10-31 的放平）')
 {
-  // 思考行会把组切开，模型最常见的节奏是「想一句、调一次、再想一句」——实测一条长会话
-  // 43 个组里 26 个只装一次调用。给它套组头 + 缩进 + 「1 项」不压缩任何东西。
+  // 放平的前提是「组里只有一次工具调用」。现在思考与工具同组，「一条思考 + 一次调用」
+  // 就是一个完整阶段——放平会把这层结构摊回平铺，正是用户报障时看到的画面。
   const groups = read(UI + '/process-groups.ts')
   const render = read(UI + '/render.tsx')
   const row = read(UI + '/step-group-row.tsx')
-  check('纯函数 needsGroupHeader 只认两条以上', /export function needsGroupHeader\(group: StepGroup\): boolean \{\s*return group\.size >= 2/.test(groups))
-  check('渲染层对单条组直接摆那一行（不再套组头）', render.includes('needsGroupHeader(head)') && /if \(!needsGroupHeader\(head\)\)/.test(render))
-  // 文案进本包字典：钉「用了带 count 的那条键」，中文原文由 ui-locale-test 判。
-  check('开合提示只数工具调用（思考不在组里）', row.includes("t('transcript.group.collapseTip', { count:") && !row.includes('项思考与工具调用'))
+  check('分组器不再有 needsGroupHeader 这条规则', !groups.includes('needsGroupHeader'))
+  check('渲染层不再按条数放平（组一律画组头）', !render.includes('needsGroupHeader'))
+  check('思考与工具一起进组（回到 dsh 的分组口径）', /entry\.kind === 'tool' \|\| entry\.kind === 'thinking'/.test(groups))
+  // 文案进本包字典：钉「提示里不再带条数」，中文原文由 ui-locale-test 判。
+  check('开合提示不再报条数（只带失败数）', row.includes("t('transcript.group.collapseTip', { failNote })") && row.includes("t('transcript.group.expandTip', { failNote })"))
 }
 
 console.log('8. 思考标头是正体（用户 2026-10-30：「换成正的，别斜体」）')

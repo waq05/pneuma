@@ -10082,11 +10082,9 @@ body.resizing iframe {
    作用是什么？逻辑怪异」。同一条会话里，它的上一行（整轮总开关「用时 18秒」）却是
    **行尾常显箭头**，两种折叠行两种长相，语义自然对不上。
 
-   现在两条折叠行统一成一种视觉语言：**左边类别/时长，右边「N 项 + 箭头」**——
-   类别标记在左（这一组属于哪类活），可比的东西在右（点开会放出几项；箭头指向开合态）。
-   dsh 那边确实是叠放互换（ChatGroupSeat.tsx:117-121），但 codex 的对应控件（`+ Show details`
-   / `− Show less`，transcript_view/layout.rs:24-58）是**把开合这件事写在明面上**的——
-   我们取后者：隐式箭头在长会话里太容易被当成装饰。 */
+   现在两条折叠行统一成一种视觉语言：**左边类别/时长，右边箭头**。
+   0.6.68 到 11-06 之间箭头左边还挂着一个「N 项」读数，2026-11-07 去掉了：条数说不出这一
+   阶段干了什么，反而把注意力从类别上拉走；组头回到 dsh 的「类别 + 箭头」两件东西。 */
 .step-fold-leading {
   align-items: center;
   display: inline-flex;
@@ -10124,18 +10122,6 @@ body.resizing iframe {
   transform: rotate(180deg);
 }
 
-/* 组内条目数：把「点开会得到什么」写在明面上（codex 的 `+ N lines` 就是这个意思）。
-   吃掉剩余宽度把自己推到行尾（`.step-fold-text` 是 flex:1，余量本来就归它，这里只要
-   把它推过去）。数字用等宽 + tabular-nums：组头是一列竖排的读数，不等宽会看歪。 */
-.step-fold-count {
-  color: var(--dsc-text-quaternary);
-  flex: none;
-  font-family: var(--dsc-font-mono);
-  font-size: var(--dsc-fs-tool);
-  font-variant-numeric: tabular-nums;
-  margin-left: auto;
-}
-
 /* 组头的文本柱：类别标题一行、实时详情一行（0.6.46 起分开——详情原来用「 · 」接在标题后，
    直播思考一长就把整行撑出会话）。柱自己放开收缩下限，详情才能截在组头的宽度里。 */
 .step-fold-text {
@@ -10162,33 +10148,14 @@ body.resizing iframe {
   white-space: nowrap;
 }
 
-/* 标题行：类别 + 分隔点 + 具体任务（2026-10-30 补的后半句，照 dsh 的「类别 · 任务」读法）。
-   标题 flex: none、任务段可缩——两者挤在同一行时，先牺牲任务。 */
+/* 标题行：现在只装类别标题（2026-11-07 去掉了「· 具体任务」那半句）。
+   留这一层而不是把标题直接放进 .step-fold-text：它是 flex 行，塞得下以后的标记，
+   也是 min-width: 0 的那一层（标题的省略号要靠它才生效）。 */
 .step-fold-line {
   align-items: center;
   display: flex;
   gap: 6px;
   min-width: 0;
-}
-
-/* 类别与任务之间的分隔点：2px 见方，与思考行标题后面那枚同款（两边各 6px 靠 flex gap）。 */
-.step-fold-dot {
-  background: var(--dsc-text-quaternary);
-  border-radius: 1px;
-  flex: none;
-  height: 2px;
-  width: 2px;
-}
-
-/* 具体任务：比标题暗一档、字号取工具行那一档——它是补充说明，不是第二个标题。 */
-.step-fold-task {
-  color: var(--dsc-text-quaternary);
-  flex: 0 1 auto;
-  font-size: var(--dsc-fs-tool);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .step-fold:hover .step-fold-label {

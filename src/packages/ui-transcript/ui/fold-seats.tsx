@@ -320,8 +320,6 @@ export function StepGroupSeat(props: {
   turnCollapsed: boolean
   open: boolean
   showDetail: boolean
-  /** 已定稿的组：组头「类别 · 任务」的后半句（空串 = 不画）。 */
-  task: string
   onToggle(): void
   /** 整轮被收起时，浏览器查找命中要把它放出来的动作。 */
   onRevealTurn(): void
@@ -346,7 +344,6 @@ export function StepGroupSeat(props: {
         group={props.group}
         open={props.open}
         showDetail={props.showDetail}
-        task={props.task}
         onToggle={props.onToggle}
       />
       <div

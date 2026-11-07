@@ -25,7 +25,7 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 const read = (rel) => readFileSync(root + rel, 'utf8')
 
 const {
-  groupSteps, needsGroupHeader, stepGroupTitle, liveTitleOf, STEP_TITLE_SEPARATOR,
+  groupSteps, stepGroupTitle, liveTitleOf, STEP_TITLE_SEPARATOR,
 } = await import(new URL('../src/packages/ui-transcript/ui/process-groups.ts', import.meta.url).href)
 
 let passed = 0
@@ -84,10 +84,11 @@ console.log('[1] 跑动中：组是 open 的，实时类别与详情都在')
   check('跑动中的尾组成组（不再是 pending = [] 丢掉）', running.groups.length === 1, String(running.groups.length))
   const group = running.groups[0]
   check('这一组 closed = false', group !== undefined && group.closed === false, JSON.stringify(group?.closed))
-  check('组里收着两条工具', group !== undefined && group.size === 2, JSON.stringify(group?.size))
+  check('组里收着思考 + 两条工具（3 条成员）', group !== undefined && group.size === 3, JSON.stringify(group?.size))
+  check('成员按出现顺序：思考在前、工具在后', group?.members.join(',') === '1,2,3', JSON.stringify(group?.members))
+  check('类别计数只数工具（思考不占类别）', group?.counts.reduce((sum, item) => sum + item.count, 0) === 2, JSON.stringify(group?.counts))
   check('实时类别 = 命令（最后那条运行中的工具）', group?.running === 'commands', String(group?.running))
   check('实时详情 = 那条命令本身', group?.runningDetail === 'pnpm build', String(group?.runningDetail))
-  check('两条工具才画组头（单条会被放平，见第 4 段）', group !== undefined && needsGroupHeader(group) === true)
 }
 
 console.log('[2] 同一份「还在跑」：标准档与紧凑档的组头文案必须不同')
@@ -114,7 +115,7 @@ console.log('[3] 同一份「已定稿」：两档必须完全相同，且照旧
   check('聚合文案与 stepGroupTitle 的旧口径一致', standard === stepGroupTitle(group.counts, true), standard)
 }
 
-console.log('[4] 单条工具的跑动组不成组（放平由 render 负责，别让底部状态行误以为组头在说话）')
+console.log('[4] 只有一条内容时不建组（一轮刚起步，唯一的行不该被组头收走）')
 {
   const single = [
     entry('user', { text: '读一眼' }),
@@ -127,6 +128,21 @@ console.log('[4] 单条工具的跑动组不成组（放平由 render 负责，�
   )
   check('单条运行中的工具不单独成组', grouping.groups.length === 0, String(grouping.groups.length))
   check('但它仍是一条可渲染的行（不在任何组里）', grouping.at.size === 0)
+
+  // 一条思考 + 一次调用就必须成组：这是「想一句、调一次」最常见的节奏，也是用户报障里
+  // 「每行平铺、没有『运行了代码』这一层」的根源。
+  const thinkThenCall = [
+    entry('user', { text: '跑一下' }),
+    entry('thinking', { text: '先看看。' }),
+    tool('bash', 'running', { command: 'pnpm build' }),
+  ]
+  const grouped = groupSteps(
+    thinkThenCall,
+    [{ index: 0, startIndex: 0, endIndex: 2, startTs: 1, endTs: null, answered: true }],
+    () => true,
+  )
+  check('思考 + 调用两条就成组（不再按「工具条数」判）', grouped.groups.length === 1 && grouped.groups[0].size === 2, String(grouped.groups.length))
+  check('组头画在第一条（思考行）的位置上', grouped.headAt.has(1) === true && grouped.headAt.has(2) === false)
 }
 
 console.log('[5] 源码钉：渲染体与分组器的接线')
@@ -143,6 +159,9 @@ console.log('[5] 源码钉：渲染体与分组器的接线')
     '分组器：跑动中的尾组以 closed=false 收口',
     /if \(isRunning\(round\.index\)\) \{\s*\n\s*if \(pending\.length >= 2\) flush\(false\)/.test(groups),
   )
+  check('分组器：思考与工具同组（不再遇思考就封组）', /entry\.kind === 'tool' \|\| entry\.kind === 'thinking'/.test(groups))
+  check('分组器：system 是边界（不把错误提示裹进组体）', /if \(entry\.kind === 'system'\) \{\s*\n\s*flush\(true\)/.test(groups))
+  check('小组按 members 结算，不再用下标区间铺组员', groups.includes('items.push({ kind: \'group\', group: head, members: head.members })'))
   check('分组器：定稿的轮照旧 flush(true)', /\} else \{\s*\n\s*\/\/ 定稿的轮[\s\S]{0,120}?flush\(true\)/.test(groups))
 }
 
