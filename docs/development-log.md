@@ -14832,3 +14832,55 @@ dsh 切组的三条规则（`conversation-nodes/process-groups.ts:147-165`）：
 
 `node scripts/check-ui.mjs` 62/62。实拍 `desktop/shots/group-head-inline.png`（隔离 HOME 起真宿主，
 标准档、展开一轮）：组头是「图标 + 标题 + 箭头」一行，不再拖出半屏。
+## 2026-11-07 下午（四）：模型重试不再频繁报错，重试提示刷新后还在
+
+用户连着报两件事，同一张图：会话里频繁出现「模型请求失败，正在重试（第 2 次）：HTTP 429 
+[prefill_cap_refused] the cell is at capacity; retry shortly (after 30 s)」，而同一个模型在 dsh
+里跑得好好的；另外这条提示刷新一下就没了，事后查不到。随后又补了一张 dsh 的截图：那边是
+「已重试模型请求（3/5） · 2s」，点开是「重试延迟：1847 毫秒 / 失败原因：…」。
+
+### 先摸清 dsh 的机制（两个包，各管一半）
+
+- **重试策略在提供方上**（packages/llm/llm-retry/src/index.ts）：normal 档默认 **5 次重试**，
+  退避 initialDelayMs 500、每失败一次翻倍、maxDelayMs 10000、±10% 抖动（localDelay，:59-64）。
+- **先持久、后等待**（同文件 :146-188）：退避开始**之前**就往会话日志追加一条 llm/retry 事件
+  （带 retry / maxRetries / delayMs / failure），等完再追加 llm/retry-started。这两条是非表层
+  事件，界面重放时按它们重建那行提示——所以刷新之后提示还在。
+
+两张图对得上：dsh 那张截图里「重试延迟 1847 毫秒」正是 500×2²×0.923 的结果（第 3 次重试、
+抖动取下沿），说明它**也撞了同一个 429**，只是扛过去了。
+
+### Numa 这边差在哪
+
+1. **预算只有 1.5 秒**：core/llm.ts 的 MAX_ATTEMPTS 是 3（首试 + 2 次重试），退避固定
+   500 × 2^(n-1)，两次加起来 1.5 秒。上游的容量窗口是「十几秒」量级（服务端原话说 30 秒），
+   1.5 秒撞不出去，于是重试两次照样报错——这就是「dsh 正常、Numa 经常报」的全部原因。
+2. **提示没落盘**：model/retry 只在内核事件流里过一次（session-core/loop.ts），会话日志是纯消息
+   日志，重放只从消息重建（adapter/transcript.ts 的 replayHistory），所以刷新即消失。
+3. **提示只占一行灰字**：模型请求失败，正在重试（第 N 次）：<整段上游报文>。一次连着重试四次
+   就是四行 JSON，把会话流糊满。
+
+### 改法
+
+- **预算与退避**（src/core/llm.ts）：MAX_ATTEMPTS 提到 6（首试 + 5 次重试），退避 500 → 1000 →
+  2000 → 4000 → 8000 毫秒、封顶 10 秒、±10% 抖动（retryDelayMs），总窗口从 1.5 秒变成 15.5 秒。
+  Retry-After 头只在 ≤10 秒时照等（服务端说 30 秒就按本地退避重试，别僵在那儿）。次数可用
+  DSC_LLM_RETRY_ATTEMPTS 覆盖（夹在 1~20），慢端点与自检都要这个旋钮。
+- **提示落盘**（src/core/session.ts）：新增 notice 记录，appendNotice() 在退避**之前**写；记录带
+  after（写它时日志里已有几条消息），重放靠它把提示插回原位，不靠时间戳——同一毫秒写下的几条
+  分不出先后（自检里重试提示与随后的答案就会撞上）。这一轮最终的失败原因走同一个记录
+  （kind 为 turn-error），刷新后同样读得到。
+- **重放**（src/adapter/transcript.ts）：replayHistory 多收一份 notices，按 after 逐条喂回 reduce
+  （重试折 model-retry 条目、失败折 error 条目），所以恢复出来的形状与现场一致。
+- **界面**（ui-transcript/ui/rows/retry-row.tsx）：换成可展开的折叠条「已重试模型请求（3/5） · 2s」，
+  点开两行明细「重试延迟：1847 毫秒」「失败原因：…」，与 dsh 的 ModelRetryItem 同形。倒计时靠
+  entry.ts + delayMs 自己算（到点自动变「已重试」），不用宿主另外喂 active 状态。
+
+### 验证
+
+- scripts/llm-timeout-test.mjs 33 条（新增 [4] 节 19 条：退避曲线、预算夹取、两次 429 后成功、
+  预算用完如实报错）。原来 [2][3] 两个超时用例把预算压到 1 次，否则退避会把「6 秒内掐断」撑爆。
+- 新增 scripts/transcript-notice-replay-test.mjs 11 条：落盘字段、读回、锚点归位
+  （问 → 重试 → 答案 → 失败原因）、老日志不产出空提示。
+- node scripts/check-ui.mjs 62/62；pnpm run typecheck 与 pnpm run build 干净。
+

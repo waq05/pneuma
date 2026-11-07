@@ -9574,13 +9574,15 @@ body.resizing iframe {
    于是只看得到那一道从左扫到右的亮带。
    最底层仍是那行真文字：可选中、读屏读得到，扫光过去时也不会消失。
 
-   两处挂点共用这一套（dsh 那边两处都套 TextShimmer）：
+   三处挂点共用这一套（dsh 那边都套 TextShimmer）：
    - 思考行的摘要（.think-summary-text，跑动中「正在想什么」的那句）；
    - 阶段组头的标题与实时详情（.step-fold-label / .step-fold-detail，跑动中「正在干什么」
-     的那两行）。 */
+     的那两行）；
+   - 模型重试行的倒计时（.retry-text，正在退避的那几秒）。 */
 .think-summary-text[data-shimmer]::after,
 .step-fold-label[data-shimmer]::after,
-.step-fold-detail[data-shimmer]::after {
+.step-fold-detail[data-shimmer]::after,
+.retry-text[data-shimmer]::after {
   animation: dsc-think-shimmer 1.5s steps(48, end) 0.3s infinite;
   background-clip: text;
   -webkit-background-clip: text;
@@ -9650,7 +9652,8 @@ body.resizing iframe {
 
   .think-summary-text[data-shimmer]::after,
   .step-fold-label[data-shimmer]::after,
-  .step-fold-detail[data-shimmer]::after {
+  .step-fold-detail[data-shimmer]::after,
+  .retry-text[data-shimmer]::after {
     animation: none;
     opacity: 0;
   }

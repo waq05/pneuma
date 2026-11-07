@@ -17,6 +17,7 @@ import { seatPlan, type StepGroup, type StepGrouping } from './process-groups'
 import type { RoundInfo } from './timing'
 import { UserRow } from './rows/user-row'
 import { ThinkRow } from './rows/think-row'
+import { RetryRow } from './rows/retry-row'
 import { SubagentRow, ToolRow } from './rows/tool-row'
 import { ChangesCard } from './rows/changes-card'
 import { RoundFoot } from './rows/foot'
@@ -333,11 +334,9 @@ export function RowBody({
         </div>
       )
     case 'model-retry':
-      return (
-        <div className="entry-system" data-turn-notice="model-retry">
-          {t('transcript.entry.modelRetry', { attempt: entry.attempt, message: entry.text })}
-        </div>
-      )
+      // 从一行灰字换成可展开的折叠条（2026-11-07）：收起时只说「第几次 / 还剩几次 / 等了
+      // 多久」，失败原因要点开——一次限流连着重试四五次时，原文摊在会话里会糊满屏。
+      return <RetryRow entry={entry} />
     case 'turn-end':
       // 旧界面这一条不上屏（结束状态写在整轮开关那一行）。我们还没有那一行，
       // 于是只把「没好好答完」的两种原因显出来——正常结束保持安静。

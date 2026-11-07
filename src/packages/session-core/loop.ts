@@ -372,7 +372,11 @@ export class MiniAgent {
       if (abort.signal.aborted) {
         this.deps.emit({ type: 'turn/end', reason: 'aborted' })
       } else {
-        this.deps.emit({ type: 'error', message: errText(error) })
+        const message = errText(error)
+        // 失败原因同样落盘：不落的话，刷新一下这一轮就只剩空荡荡的问句，
+        // 用户再也查不到「刚才到底是为什么没答」。
+        this.session.appendNotice({ kind: 'turn-error', text: message })
+        this.deps.emit({ type: 'error', message })
         this.deps.emit({ type: 'turn/end', reason: 'error' })
       }
     } finally {
@@ -479,8 +483,25 @@ export class MiniAgent {
               if (firstTokenAt === null) firstTokenAt = Date.now()
               this.deps.emit({ type: 'tool/prepare', name })
             },
-            // 重试发生在 llm 层内部，不透出来用户只会觉得界面莫名卡了几秒
-            onRetry: (attempt, reason) => this.deps.emit({ type: 'model/retry', attempt, reason }),
+            // 重试发生在 llm 层内部，不透出来用户只会觉得界面莫名卡了几秒。
+            // 先落盘再报到界面（dsh 的「先持久、后等待」）：重试提示是这一轮发生过的事，
+            // 刷新或重开这一轮时它必须还在原位，所以 `notice` 记录写在退避之前。
+            onRetry: (retry, reason, info) => {
+              this.session.appendNotice({
+                kind: 'model-retry',
+                attempt: retry,
+                maxRetries: info.maxRetries,
+                delayMs: info.delayMs,
+                text: reason,
+              })
+              this.deps.emit({
+                type: 'model/retry',
+                attempt: retry,
+                maxRetries: info.maxRetries,
+                delayMs: info.delayMs,
+                reason,
+              })
+            },
           },
         )
         this.session.appendAssistant(result.text, result.reasoning, result.toolCalls)
@@ -509,10 +530,21 @@ export class MiniAgent {
       } catch (error) {
         if (!(error instanceof StreamInterruptedError) || signal.aborted || attempt > STREAM_RECOVERY_ATTEMPTS) throw error
         this.persistPartial(error.partial)
+        // 这一条是「流断了、马上重试」：没有退避，所以延迟如实记 0。
+        const retryNotice = {
+          kind: 'model-retry' as const,
+          attempt: attempt + 1,
+          maxRetries: STREAM_RECOVERY_ATTEMPTS,
+          delayMs: 0,
+          text: `流中断，已保留半截回复并重试：${error.message}`,
+        }
+        this.session.appendNotice(retryNotice)
         this.deps.emit({
           type: 'model/retry',
-          attempt: attempt + 1,
-          reason: `流中断，已保留半截回复并重试：${error.message}`,
+          attempt: retryNotice.attempt,
+          maxRetries: retryNotice.maxRetries,
+          delayMs: retryNotice.delayMs,
+          reason: retryNotice.text,
         })
       }
     }

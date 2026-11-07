@@ -173,7 +173,13 @@ export const transcriptPlugin: Plugin.Object = {
       const current = ctx.session.current()
       if (current.messages.length === 0) return false
       const probe = new Transcript()
-      probe.replayHistory(current.messages, current.toolErrors, current.fileChanges, current.presentations)
+      probe.replayHistory(
+        current.messages,
+        current.toolErrors,
+        current.fileChanges,
+        current.presentations,
+        current.notices(),
+      )
       return sameEntries(
         probe.entries.filter((entry) => entry.kind !== 'system' && entry.kind !== 'subagent'),
         transcript.entries.filter((entry) => entry.kind !== 'system' && entry.kind !== 'subagent'),
@@ -229,6 +235,7 @@ export const transcriptPlugin: Plugin.Object = {
           current.toolErrors,
           current.fileChanges,
           current.presentations,
+          current.notices(),
         )
         // clear() 会把 contextUsed 归零，而重放不重放 usage；不从这里补回来，
         // 每切一次会话状态栏的上下文就掉成 0%。用量日志按会话记着最后一条请求的
@@ -278,8 +285,8 @@ export const transcriptPlugin: Plugin.Object = {
         transcript.plan(view)
         invalidate()
       },
-      replayHistory(messages, toolErrors, fileChanges, presentations) {
-        const changed = transcript.replayHistory(messages, toolErrors, fileChanges, presentations)
+      replayHistory(messages, toolErrors, fileChanges, presentations, notices) {
+        const changed = transcript.replayHistory(messages, toolErrors, fileChanges, presentations, notices)
         if (changed) invalidate()
         return changed
       },

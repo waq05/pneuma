@@ -4812,6 +4812,92 @@
   align-self: stretch;
 }
 
+/* ── 模型重试行（对照 dsh 的 ModelRetryItem，MessageItem.tsx:63-129） ──
+ *
+ * 收起时一行小字：「已重试模型请求（3/5） · 2s」；点开是两行明细——重试延迟与失败原因。
+ * 它是**过程记录**，不是系统通知：左对齐（.entry-system 那种居中灰字是「宿主说话」，
+ * 这一条是「这一轮里发生过的事」），字距与过程区同档。箭头跟着文字走，与
+ * .step-fold / .turn-fold 同一种折叠语言。
+ *
+ * 为什么收起：一次限流常连着重试四五次，每条都把上游报文摊开，会话流会被十几行 JSON
+ * 糊满。收起态只答三个问题：第几次、最多几次、等了多久；原因点一下就有。 */
+.retry-row {
+  align-self: stretch;
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-caption);
+  margin: 2px 0;
+  padding: 0 var(--proc-pad, 0);
+}
+
+.retry-summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  gap: 6px;
+  list-style: none;
+  max-width: 100%;
+  width: fit-content;
+}
+
+/* 原生三角换自己的箭头（与 .step-fold 一致），否则 Chrome 会画出两枚 */
+.retry-summary::-webkit-details-marker {
+  display: none;
+}
+
+.retry-text {
+  overflow: hidden;
+  /* 跑动中的扫光是 ::after 绝对定位叠在字形上（见 views.css 那条共用规则），要定位父级 */
+  position: relative;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.retry-chevron {
+  color: var(--dsc-text-quaternary);
+  display: inline-flex;
+  flex: none;
+  transition: transform var(--dsc-dur) var(--dsc-ease);
+}
+
+.retry-row[open] .retry-chevron {
+  transform: rotate(180deg);
+}
+
+.retry-summary:hover .retry-text,
+.retry-summary:hover .retry-chevron {
+  color: var(--dsc-text-secondary);
+}
+
+/* 明细：一条细竖线划出「这些是那行字的注解」，缩进与思考行正文同档。 */
+.retry-details {
+  border-left: 1px solid var(--dsc-stroke-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 2px 5px;
+  padding-left: 10px;
+}
+
+.retry-detail {
+  align-items: baseline;
+  display: flex;
+  gap: 4px;
+}
+
+.retry-detail-label {
+  color: var(--dsc-text-secondary);
+  flex: none;
+}
+
+.retry-detail-value {
+  color: var(--dsc-text-tertiary);
+  /* 上游报文里有长 URL / 长 JSON，不许把会话撑出横向滚动条 */
+  overflow-wrap: anywhere;
+}
+
+
+
+
 /* ══════════ 底部三段：对齐 dsh 的 composer dock（2026-10-28） ══════════
  *
  * dsh 的同一排是 `display:flex; justify-content:center; align-items:center; gap:12px;

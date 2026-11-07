@@ -628,6 +628,32 @@ cd D:\dsc\desktop && pnpm run dist:dir     # → dist/win-unpacked/Pneuma.exe
 诊断口径：转写 DOM 里 `.step-seat` 与 `[data-review-notice]` 应当交替出现，而不是先一串座位、
 再一串预览卡。
 
+
+### 15.3.2 模型重试行：一行小字 + 两行明细（2026-11-07）
+
+模型请求失败重试时，会话里出现的是一张**折叠条**（`rows/retry-row.tsx`），不是一行灰字：
+
+```
+已重试模型请求（3/5） · 2s
+  重试延迟：1847 毫秒
+  失败原因：429: {"type":"server_error","message":"Upstream request failed: ..."}
+```
+
+四条规矩：
+
+1. **收起态只答三件事**：第几次、最多几次、等了多久（`transcript.retry.status` 的
+   `{label}（{retry}/{maximum}） · {seconds}s`）。上游报文只在展开后出现——一次限流常连着
+   重试四五回，全摊开会话流会被十几行 JSON 糊满。
+2. **左对齐，贴过程区左缘**（`padding: 0 var(--proc-pad)`）。它是一条过程记录，不是
+   `.entry-system` 那种「宿主说话」的居中灰字。
+3. **两种状态靠 `entry.ts + delayMs` 自己算**：还没到点就是「正在重试模型请求」（带倒计时与
+   扫光，同 `.step-fold-label[data-shimmer]` 那一套），到点就是「已重试模型请求」+ 固定的秒数。
+   刷新后重放出来的条目一律是后一种——那一次等待确实已经结束了。
+4. **它照旧是二级分组的边界**（`process-groups.ts` 的 `isGroupBoundary`），但整轮折叠包含它：
+   收起一轮时它跟着过程区一起藏，展开才看得到。
+
+数据侧的前提：这条提示必须**落盘**（会话日志的 `notice` 记录）并且能重放回原位，否则刷新后
+就只剩一段凭空冒出来的答案。落盘与重放的口径见 `docs/development-log.md` 同日那节。
 ### 15.4 验收
 
 ```sh

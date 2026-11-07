@@ -258,6 +258,8 @@ const harness = (() => {
     toolErrors: new Map(),
     // 快照组装会读收件箱（0.6.67 的排队消息条）：这个假会话按「没有排队输入」给。
     asyncInbox: () => [],
+    // 重放要读回合提示（notice 记录）来重建重试行：这个假会话没有提示。
+    notices: () => [],
     meta: { id: 'aaaaaaaabbbbcccc' },
   }
   const handlers = new Map()

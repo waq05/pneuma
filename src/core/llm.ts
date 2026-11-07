@@ -5,7 +5,9 @@
  * `stream_options.include_usage` 末块 usage；assistant 重放时回传
  * `reasoning_content`。
  *
- * 重试策略（T33 修订）：连接/HTTP 失败在**尚未收到任何流数据**前指数退避重试 2 次，
+ * 重试策略（T33 修订，2026-11-07 放宽）：连接/HTTP 失败在**尚未收到任何流数据**前指数退避重试 5 次
+ * （500 → 1000 → 2000 → 4000 → 8000 毫秒，封顶 10 秒，±10% 抖动；次数可用
+ * `DSC_LLM_RETRY_ATTEMPTS` 覆盖），
  * 可重试的：fetch 抛出的连接失败（`LlmError.retryable`）、429 / 408 / 5xx 的 HTTP 响应、
  * 以及「流已开始但一个字节都没到」的中断（同样归一成 retryable）。已经收到内容的流中断
  * 打包成 {@link StreamInterruptedError} 交上层落库，不在这一层自动重试（重发是另一条新流，
@@ -303,6 +305,19 @@ export function sanitizeToolOrphansWithReport(messages: ChatMessage[]): { messag
   return { messages: aligned, report }
 }
 
+/**
+ * 一次重试的两笔账。
+ *
+ * 为什么要往上送：界面上那行「已重试模型请求（3/5） · 2s」的三个数全在这里——
+ * 分子是第几次、分母是允许几次、秒数是这次等了多久。llm 层自己知道，往上抬眼一看也有。
+ */
+export interface RetryInfo {
+  /** 这条请求最多重试几次（不含首试）。 */
+  maxRetries: number
+  /** 这次重试前实际等了多少毫秒（退避与 Retry-After 取过的那个值）。 */
+  delayMs: number
+}
+
 export interface StreamHandlers {
   /** 增量回调（思考/正文二选一到达）。 */
   onDelta(kind: 'text' | 'reasoning', text: string): void
@@ -323,10 +338,11 @@ export interface StreamHandlers {
    * 对照 dsh 的 `model-retry` 节点：它让用户看得见「模型刚重试了一次」。不报的话，
    * 一次 429 之后用户只会觉得界面卡了几秒，然后答案莫名其妙冒出来。
    *
-   * @param nextAttempt 即将进行的第几次尝试（2 起）
+   * @param retry 这是第几次重试（1 起；界面上那行「（3/5）」的分子就是它）
    * @param reason 触发重试的原因（错误原文，界面上只作说明）
+   * @param info 这次重试的账：允许几次、等多久
    */
-  onRetry?(nextAttempt: number, reason: string): void
+  onRetry?(retry: number, reason: string, info: RetryInfo): void
   /**
    * 发请求前发现历史里有协议残留（重复/孤儿的工具消息），已自动清洗：这里报一声剔了什么。
    * 有它，「日志有病、请求侧兜底」才不是静默修补（2026-10-03 那次 400 事故就是没人知道）。
@@ -409,7 +425,48 @@ export class StreamInterruptedError extends LlmError {
   }
 }
 
-const MAX_ATTEMPTS = 3
+/**
+ * 一条请求最多发起几次（首试 + 重试）。
+ *
+ * 6 = 首试 + 5 次重试。这个数不是拍脑袋：限流类失败（429 / 5xx）通常几秒就恢复，而上游
+ * 的容量窗口以十几秒为单位——服务端给的话术就是「retry shortly (after 30 s)」。只给 2 次
+ * 重试（加起来等 1.5 秒）时，一次车队式限流就整轮报错；给到 5 次、退避跨到 8 秒那一档，
+ * 能扛的窗口就从 1.5 秒变成 15.5 秒，限流才不会变成用户看得见的失败。
+ */
+const MAX_ATTEMPTS = 6
+/** 退避起点：第一次重试等 500 毫秒（每失败一次翻倍）。 */
+const RETRY_INITIAL_DELAY_MS = 500
+/** 退避上限：再慢也不超过 10 秒——等太久用户会以为卡死。 */
+const RETRY_MAX_DELAY_MS = 10_000
+/** 抖动幅度 ±10%：几个会话同时被限流时，别让它们整齐地在同一毫秒再撞一次。 */
+const RETRY_JITTER_RATIO = 0.1
+
+/**
+ * 第 retry 次重试（1 起）等多久：500 → 1000 → 2000 → 4000 → 8000，封顶 10 秒，带 ±10% 抖动。
+ *
+ * 为什么要有抖动：退了不一定代表上游缓过来，同一时刻只按倍数退，多个会话会永远踩着
+ * 同一个节拍去撞同一台机器。
+ *
+ * @param random - 抖动取样（0~1）；自检用它把时序钉死
+ */
+/**
+ * 最多重试几次可覆盖：`DSC_LLM_RETRY_ATTEMPTS`（总尝试次数，1 = 不重试）。
+ *
+ * 为什么留这个旋钮：默认 5 次重试配 500ms~8s 退避，遇到端点彻底连不上时要等二十多秒
+ * 才浮出错误。自检要跑得快，内网慢端点或专线用户也不需要这么多次——两头都靠它调。
+ * 一律夹在 1 ~ 20 之间：写成 0 或负数不会把重试关掉，写成 1000 也不会把会话卡死。
+ */
+export function readRetryAttempts(): number {
+  const raw = Number(process.env.DSC_LLM_RETRY_ATTEMPTS ?? '')
+  if (!Number.isFinite(raw) || raw <= 0) return MAX_ATTEMPTS
+  return Math.min(Math.max(Math.round(raw), 1), 20)
+}
+
+export function retryDelayMs(retry: number, random: () => number = Math.random): number {
+  const exponential = Math.min(RETRY_INITIAL_DELAY_MS * 2 ** (retry - 1), RETRY_MAX_DELAY_MS)
+  const jitter = 1 - RETRY_JITTER_RATIO + 2 * RETRY_JITTER_RATIO * random()
+  return Math.round(Math.min(exponential * jitter, RETRY_MAX_DELAY_MS))
+}
 
 /** 一条流式工具调用增量：除了 `index`，其余字段网关都可能不给，甚至给成 `null`。 */
 export interface ToolCallDelta {
@@ -458,6 +515,7 @@ export function applyToolCallDelta(
 
 /** 发起一次流式对话（openai-completions 适配器的实现；经 LlmService.stream 派发）。 */
 export async function streamChat(request: StreamRequest, handlers: StreamHandlers): Promise<StreamResult> {
+  const attempts = readRetryAttempts()
   let attempt = 0
   for (;;) {
     attempt += 1
@@ -465,15 +523,21 @@ export async function streamChat(request: StreamRequest, handlers: StreamHandler
       return await streamOnce(request, handlers)
     } catch (error) {
       const retryable =
-        attempt < MAX_ATTEMPTS &&
+        attempt < attempts &&
         request.signal?.aborted !== true &&
         error instanceof LlmError &&
         // 408 = 请求超时（服务端排队没排上），与 429/5xx 一样值得再试（T33 纳入可重试清单）
         (error.retryable || (error.status !== undefined && (error.status === 408 || error.status === 429 || error.status >= 500)))
       if (!retryable) throw error
-      handlers.onRetry?.(attempt + 1, error instanceof Error ? error.message : String(error))
-      // 服务端明确要求等多久（Retry-After）就至少等那么久；没有才用指数退避。
-      await delay(Math.max(500 * 2 ** (attempt - 1), error.retryAfterMs ?? 0), request.signal)
+      // Retry-After 只在合理区间内作数：服务端说「30 秒后再来」时照等，这一轮就僵在那里
+      // 十几秒没有任何反馈；按本地退避重试反而通常更快撞上已经空出来的容量。
+      const asked = error.retryAfterMs
+      const waitMs = asked !== undefined && asked > 0 && asked <= RETRY_MAX_DELAY_MS ? asked : retryDelayMs(attempt)
+      handlers.onRetry?.(attempt, error instanceof Error ? error.message : String(error), {
+        maxRetries: attempts - 1,
+        delayMs: waitMs,
+      })
+      await delay(waitMs, request.signal)
     }
   }
 }

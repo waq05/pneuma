@@ -14,6 +14,7 @@
  * @module dsc/adapter/transcript
  */
 import type { CoreEvent } from '../core/events.js'
+import type { SessionNotice } from '../core/session.js'
 import { contentImages, contentText, type ChatMessage } from '../core/llm.js'
 import type { FileChangeSummary } from '../core/tools.js'
 import type { ToolPresentationView } from '../contract.js'
@@ -38,6 +39,27 @@ interface LiveSegment {
 }
 
 const RESULT_TEXT_LIMIT = 1500
+
+/**
+ * notice 记录 → 转录事件：重试折回 model-retry 条目，失败原因折回 error。
+ *
+ * 为什么重放要借道 reduce 而不是直接 push 条目：同一条记录在现场是事件、恢复时也必须是
+ * 事件，两条路才会得到同一个形状（id 发号、ts、二级分组边界全一致）。
+ *
+ * @param notice - 日志里读回来的回合提示
+ */
+export function noticeEvent(notice: SessionNotice): CoreEvent {
+  if (notice.kind === 'model-retry') {
+    return {
+      type: 'model/retry',
+      attempt: notice.attempt,
+      maxRetries: notice.maxRetries,
+      delayMs: notice.delayMs,
+      reason: notice.text,
+    }
+  }
+  return { type: 'error', message: notice.text }
+}
 
 /** 把会话事件流折叠成有序 transcript。 */
 export class Transcript {
@@ -266,10 +288,30 @@ export class Transcript {
     toolErrors?: ReadonlyMap<string, string>,
     fileChanges?: ReadonlyMap<string, readonly FileChangeSummary[]>,
     presentations?: ReadonlyMap<string, ToolPresentationView>,
+    notices?: readonly SessionNotice[],
   ): boolean {
     let changed = false
-    for (const message of messages) {
+    // 回合提示（重试 / 失败原因）与消息在日志里是两个流，在界面上是一条线：按 notice 记录的
+    // `after`（写它时日志里有几条消息）插回原位——重试一定排在它促成的回答之前。
+    // 为什么不按时间戳：同一毫秒里写下的几条分不出先后（重试提示与紧接着写的答案就会撞上），
+    // 「先持久、后等待」写下的顺序才是真相。没有锚点的老记录落到末尾，宁可位置粗一点也不丢。
+    const anchored = (notices ?? []).filter((notice) => typeof notice.after === 'number')
+    const trailing = (notices ?? []).filter((notice) => typeof notice.after !== 'number')
+    let noticeAt = 0
+    const flushNotices = (index: number | null): boolean => {
+      let flushed = false
+      while (noticeAt < anchored.length) {
+        const notice = anchored[noticeAt]!
+        if (index !== null && (notice.after ?? 0) > index) break
+        flushed = this.reduce(noticeEvent(notice), notice.ts ?? null) || flushed
+        noticeAt += 1
+      }
+      return flushed
+    }
+    for (let index = 0; index < messages.length; index += 1) {
+      const message = messages[index]!
       const ts = message.ts ?? null
+      changed = flushNotices(index) || changed
       switch (message.role) {
         case 'user': {
           const images = contentImages(message.content)
@@ -340,6 +382,11 @@ export class Transcript {
           break
         }
       }
+    }
+    // 剩下的提示（还没有下文的那几条）落到末尾：宁可排在最后，也不能丢。
+    changed = flushNotices(null) || changed
+    for (const notice of trailing) {
+      changed = this.reduce(noticeEvent(notice), notice.ts ?? null) || changed
     }
     // 工具卡配对完成后不留在执行态（reduce 的 tool/call 会置 working）
     this.working = false
@@ -558,6 +605,8 @@ export class Transcript {
           kind: 'model-retry',
           id: this.seq++,
           attempt: event.attempt,
+          maxRetries: event.maxRetries,
+          delayMs: event.delayMs,
           text: event.reason,
         }))
         return true

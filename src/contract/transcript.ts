@@ -187,7 +187,19 @@ export type TranscriptEntry =
    * 它是二级分组的**边界**（前后两段过程被它切开），但**不属于**整轮折叠要放过的那些
    * 独立节点——dsh 的规矩是「二级分组把模型重试视为分隔节点，但整轮折叠仍包含重试行」。
    */
-  | { kind: 'model-retry'; id: number; attempt: number; text: string; ts?: number }
+  | {
+      kind: 'model-retry'
+      id: number
+      /** 第几次重试（1 起；界面上「（3/5）」的分子）。 */
+      attempt: number
+      /** 这条请求最多重试几次（界面上「3/5」的分母）。 */
+      maxRetries: number
+      /** 这次重试前等了多久（毫秒，界面上换算成秒）。 */
+      delayMs: number
+      /** 失败原因原文（HTTP 状态与上游报文）。 */
+      text: string
+      ts?: number
+    }
   /**
    * 一次成功的 write / edit 落盘后的实际改动（对照 dsh deliverables 的 produced 文件）。
    * 界面把同一轮里的这些条目聚合成轮尾一张「文件已更改」卡；`hunks` 是算好的

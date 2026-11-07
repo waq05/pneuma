@@ -38,6 +38,39 @@ export interface SessionNote {
 }
 
 /**
+ * 会留在会话记录里的回合提示（`notice` 记录）：模型重试、这一轮为什么失败。
+ *
+ * 为什么要落盘：这些提示原先只活在内核事件流里，界面刷新或重开这一轮就没影了——
+ * 用户明明刚看见「模型请求失败，正在重试」，回头再点进来却什么都找不到（2026-11-07 报障）。
+ * dsh 的重试记录同样先写日志再等（llm-retry 的「先持久、后等待」），这里跟它一个口径：
+ * 提示与它说明的那次请求必须能从日志重建。
+ *
+ * 老构建读到 `notice` 记录会静默跳过（load 的 switch 没有 default 分支），只是少一行提示。
+ */
+export type TurnNotice =
+  | {
+      kind: 'model-retry'
+      /** 第几次重试（1 起；界面上「（3/5）」的分子）。 */
+      attempt: number
+      /** 这条请求最多重试几次。 */
+      maxRetries: number
+      /** 这次重试前等了多少毫秒。 */
+      delayMs: number
+      /** 失败原因原文。 */
+      text: string
+    }
+  | { kind: 'turn-error'; text: string }
+
+/**
+ * `notice` 记录的内存形状：提示本体 + 写入时刻 + 归位锚点。
+ *
+ * `after` = 写这条提示时日志里已经有几条消息。重放靠它把提示插回原位，不靠 `ts`：
+ * 同一毫秒里写下的几条（重试提示与它促成的答案在自检里就会撞在同一毫秒）分不出先后。
+ * 老日志没有这个字段，重放时落在末尾。
+ */
+export type SessionNotice = TurnNotice & { ts?: number; after?: number }
+
+/**
  * 收件箱条目的来源（对照 dsh 的「用户消息 vs 带来源的持久消息」）。
  *
  *   - `'user'`：用户亲手打的字（含界面提交、老调用点缺省）——出账前画输入框下方的
@@ -174,6 +207,14 @@ type SessionRecord =
    * 日志完整重建。老构建读到此类型会静默跳过（load 的 switch 没有 default）。
    */
   | { type: 'note'; id: string; text: string; ts?: number }
+  /**
+   * 回合提示（2026-11-07）：模型重试、这一轮为什么失败。
+   *
+   * 与 note 的区别在「谁要看」：note 是给模型侧留底、界面不显示；notice 是给**人**看的，
+   * 刷新或重开这一轮时必须还原到原位，所以 load 把它读进 {@link Session.notices}，
+   * 由转录层按 `ts` 插回消息之间（见 adapter/transcript 的 replayHistory）。
+   */
+  | { type: 'notice'; notice: TurnNotice; ts?: number; after?: number }
   /**
    * 下面四种是早先「一种功能一条记录」的写法，已经不再写入，
    * 只为读得回老会话日志而留着（{@link Session.load} 的兼容分支）。
@@ -488,6 +529,8 @@ export class Session {
   private readonly stateById = new Map<string, unknown>()
   /** 请求注入备忘（note 记录）；恢复会话时从日志重放回来，经 {@link notes} 读出。 */
   private readonly noteLog: SessionNote[] = []
+  /** 回合提示（notice 记录）：模型重试、失败原因；恢复会话时重放回来，经 {@link notices} 读出。 */
+  private readonly noticeLog: SessionNotice[] = []
 
   private constructor(
     meta: SessionMeta,
@@ -497,6 +540,7 @@ export class Session {
     state?: ReadonlyMap<string, unknown>,
     initialNotes: SessionNote[] = [],
     lease: FileLock | null = null,
+    initialNotices: SessionNotice[] = [],
   ) {
     this.meta = meta
     this.file = file
@@ -505,6 +549,7 @@ export class Session {
     this.lease = lease
     if (state !== undefined) for (const [id, payload] of state) this.stateById.set(id, payload)
     this.noteLog.push(...initialNotes)
+    this.noticeLog.push(...initialNotices)
   }
 
   /**
@@ -547,6 +592,7 @@ export class Session {
     const repliedCalls = new Set<string>()
     const state = new Map<string, unknown>()
     const notes: SessionNote[] = []
+    const notices: SessionNotice[] = []
     for (const line of lines) {
       let record: SessionRecord
       try {
@@ -647,6 +693,13 @@ export class Session {
         case 'note':
           notes.push({ id: record.id, text: record.text, ts: record.ts })
           break
+        case 'notice':
+          notices.push({
+            ...record.notice,
+            ...(record.ts === undefined ? {} : { ts: record.ts }),
+            ...(record.after === undefined ? {} : { after: record.after }),
+          })
+          break
         // ↓ 老会话日志的兼容分支（这四种记录已不再写入），按现在的条目名归位
         case 'mode':
           state.set('mode', record.mode)
@@ -673,6 +726,7 @@ export class Session {
       state,
       notes,
       lease,
+      notices,
     )
     for (const [callId, error] of toolErrors) session.toolErrors.set(callId, error)
     for (const [callId, change] of fileChanges) session.fileChanges.set(callId, change)
@@ -1053,6 +1107,27 @@ export class Session {
   /** 已记录的请求注入备忘（note 记录），按写入顺序；恢复会话时从日志重放回来。 */
   notes(): readonly SessionNote[] {
     return this.noteLog
+  }
+
+  /** 已记录的回合提示（notice 记录），按写入顺序；恢复会话时从日志重放回来。 */
+  notices(): readonly SessionNotice[] {
+    return this.noticeLog
+  }
+
+  /**
+   * 记一条回合提示（`notice` 记录）：模型重试、这一轮为什么失败。
+   *
+   * 写盘时机照 dsh 的「先持久、后等待」：重试提示在退避开始**之前**就落下去，
+   * 这样界面刷新、进程重启都不会把「刚刚在重试」这件事抹掉。
+   * @param notice - 提示本体（形状见 {@link TurnNotice}）
+   */
+  appendNotice(notice: TurnNotice): void {
+    const ts = Date.now()
+    // 锚点 = 此刻日志里有几条消息：重放时这条提示就排在第 after 条消息之前。
+    // 按序号而不是按时间戳归位，是因为同一毫秒里写下的几条分不出先后。
+    const after = this.messages.length
+    this.noticeLog.push({ ...notice, ts, after })
+    this.write({ type: 'notice', notice, ts, after })
   }
 
   /**

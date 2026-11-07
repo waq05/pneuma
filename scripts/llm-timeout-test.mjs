@@ -1,7 +1,7 @@
 /**
  * LLM 超时可配（用户报「子代理很慢」查出来的那笔账）：
  *
- * 端点连不上时，默认要等**连接超时 30 秒 × 3 次重试 ≈ 90 秒**失败才浮到界面上——慢的不是
+ * 端点连不上时，默认要等**连接超时 30 秒 × 6 次尝试 ≈ 3 分钟**失败才浮到界面上——慢的不是
  * 界面，是这个等待。这一批把两个超时做成环境变量可覆盖：
  *
  *   - `DSC_LLM_CONNECT_TIMEOUT_MS`：建连 + 响应头（默认 30s）；
@@ -23,7 +23,7 @@ const home = mkdtempSync(join(tmpdir(), 'dsc-timeout-home-'))
 process.env.HOME = home
 process.env.USERPROFILE = home
 
-const { LlmError, readTimeoutMs, streamChat } = await import('../lib/core/llm.js')
+const { LlmError, readRetryAttempts, readTimeoutMs, retryDelayMs, streamChat } = await import('../lib/core/llm.js')
 
 let failures = 0
 const check = (name, condition, detail = '') => {
@@ -65,6 +65,9 @@ console.log('LLM 超时可配测试')
       init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true })
     })
   process.env.DSC_LLM_CONNECT_TIMEOUT_MS = '1200'
+  // 这一节测的是「超时怎么掐断」，不是「重试怎么退避」：把预算压到 1 次，别让退避把
+  // 断言里的 6 秒上限撑爆（退避本身在第 [4] 节单独测）。
+  process.env.DSC_LLM_RETRY_ATTEMPTS = '1'
   const started = Date.now()
   let error = null
   try {
@@ -85,6 +88,7 @@ console.log('LLM 超时可配测试')
     JSON.stringify(error instanceof LlmError ? { retryable: error.retryable } : error),
   )
   delete process.env.DSC_LLM_CONNECT_TIMEOUT_MS
+  delete process.env.DSC_LLM_RETRY_ATTEMPTS
   globalThis.fetch = realFetch
 }
 
@@ -95,6 +99,7 @@ console.log('LLM 超时可配测试')
   globalThis.fetch = () =>
     Promise.resolve(new Response(new ReadableStream({ start() {} }), { status: 200, headers: { 'content-type': 'text/event-stream' } }))
   process.env.DSC_LLM_STREAM_IDLE_MS = '1200'
+  process.env.DSC_LLM_RETRY_ATTEMPTS = '1'
   const started = Date.now()
   let error = null
   try {
@@ -117,7 +122,112 @@ console.log('LLM 超时可配测试')
     JSON.stringify(error instanceof LlmError ? { retryable: error.retryable } : error),
   )
   delete process.env.DSC_LLM_STREAM_IDLE_MS
+  delete process.env.DSC_LLM_RETRY_ATTEMPTS
   globalThis.fetch = realFetch
 }
 
+
+// ── [4] 退避曲线与重试预算（2026-11-07：429 频繁报错的根因） ───────────────
+//
+// 报障现场：同一模型在 dsh 里正常，在 dsc 里频繁报「HTTP 429 … the cell is at capacity;
+// retry shortly (after 30 s)」。差别全在预算上——dsh 的 normal 档给 5 次重试、退避 500ms→10s，
+// 总窗口 15.5 秒；dsc 原来只给 2 次、加起来 1.5 秒，一次车队式限流就整轮报错。
+{
+  // 纯函数：倍数退避 + ±10% 抖动（random 传 0.5 就是中线，钉死期望值）
+  check('第 1 次重试等 500 毫秒', retryDelayMs(1, () => 0.5) === 500, String(retryDelayMs(1, () => 0.5)))
+  check('第 2 次重试等 1000 毫秒', retryDelayMs(2, () => 0.5) === 1000, String(retryDelayMs(2, () => 0.5)))
+  check('第 5 次重试等 8000 毫秒', retryDelayMs(5, () => 0.5) === 8000, String(retryDelayMs(5, () => 0.5)))
+  check('再往后封顶 10 秒（不许无限翻倍）', retryDelayMs(9, () => 0.5) === 10_000, String(retryDelayMs(9, () => 0.5)))
+  check('抖动下限 −10%', retryDelayMs(1, () => 0) === 450, String(retryDelayMs(1, () => 0)))
+  check('抖动上限 +10%', retryDelayMs(1, () => 1) === 550, String(retryDelayMs(1, () => 1)))
+  // 预算：默认 6 次尝试（首试 + 5 次重试）；环境变量可覆盖，且夹在 1~20
+  delete process.env.DSC_LLM_RETRY_ATTEMPTS
+  check('缺省预算 = 6 次尝试', readRetryAttempts() === 6, String(readRetryAttempts()))
+  process.env.DSC_LLM_RETRY_ATTEMPTS = '3'
+  check('覆盖成 3 次尝试', readRetryAttempts() === 3, String(readRetryAttempts()))
+  process.env.DSC_LLM_RETRY_ATTEMPTS = '0'
+  check('0 回落默认（关不掉重试）', readRetryAttempts() === 6, String(readRetryAttempts()))
+  process.env.DSC_LLM_RETRY_ATTEMPTS = '999'
+  check('上界夹到 20', readRetryAttempts() === 20, String(readRetryAttempts()))
+  delete process.env.DSC_LLM_RETRY_ATTEMPTS
+
+  // 真 wire：连续两次 429 之后成功——每次重试都要报一次「第几次 / 允许几次 / 等多久」
+  const realFetch = globalThis.fetch
+  /** 一条最小的合法 SSE 响应（正文「收到」+ [DONE]）。 */
+  const okStream = () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          const encoder = new TextEncoder()
+          const chunk = JSON.stringify({ choices: [{ delta: { content: '收到' }, finish_reason: 'stop' }] })
+          controller.enqueue(encoder.encode(`data: ${chunk}\n\ndata: [DONE]\n\n`))
+          controller.close()
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    )
+  let calls = 0
+  globalThis.fetch = async () => {
+    calls += 1
+    if (calls < 3) {
+      return new Response(JSON.stringify({ error: { message: 'the cell is at capacity' } }), {
+        status: 429,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    return okStream()
+  }
+  process.env.DSC_LLM_RETRY_ATTEMPTS = '3'
+  const retries = []
+  const result = await streamChat(
+    { apiKey: 'k', model: 'm', baseUrl: 'https://example.invalid/v1', messages: [{ role: 'user', content: 'hi' }] },
+    { onDelta() {}, onRetry: (attempt, reason, info) => retries.push({ attempt, reason, ...info }) },
+  )
+  check('两次 429 之后真的重发了（三次物理请求）', calls === 3, String(calls))
+  check('重试报了两条', retries.length === 2, JSON.stringify(retries.map((r) => r.attempt)))
+  check(
+    '报的是「第几次重试」（1、2，界面上的分子）',
+    retries[0]?.attempt === 1 && retries[1]?.attempt === 2,
+    JSON.stringify(retries.map((r) => r.attempt)),
+  )
+  check(
+    '分母是允许的重试次数（预算 3 = 最多重试 2 次）',
+    retries.every((r) => r.maxRetries === 2),
+    JSON.stringify(retries.map((r) => r.maxRetries)),
+  )
+  check(
+    '退避按 500 → 1000 走（含 ±10% 抖动）',
+    retries[0]?.delayMs >= 450 && retries[0]?.delayMs <= 550 && retries[1]?.delayMs >= 900 && retries[1]?.delayMs <= 1100,
+    JSON.stringify(retries.map((r) => r.delayMs)),
+  )
+  check('重试后这一轮照样收下', result.text === '收到', JSON.stringify(result.text))
+  check('失败原因带着上游报文', String(retries[0]?.reason).includes('429'), String(retries[0]?.reason))
+
+  // 预算用完就如实报错，不许假装还在重试
+  let alwaysCalls = 0
+  globalThis.fetch = async () => {
+    alwaysCalls += 1
+    return new Response(JSON.stringify({ error: { message: 'capacity' } }), { status: 429 })
+  }
+  process.env.DSC_LLM_RETRY_ATTEMPTS = '2'
+  const exhaustedRetries = []
+  let exhausted = null
+  try {
+    await streamChat(
+      { apiKey: 'k', model: 'm', baseUrl: 'https://example.invalid/v1', messages: [{ role: 'user', content: 'hi' }] },
+      { onDelta() {}, onRetry: (attempt, reason, info) => exhaustedRetries.push({ attempt, ...info }) },
+    )
+  } catch (caught) {
+    exhausted = caught
+  }
+  check('预算 2 = 首试 + 1 次重试', alwaysCalls === 2, String(alwaysCalls))
+  check('只报了一条重试', exhaustedRetries.length === 1, String(exhaustedRetries.length))
+  check(
+    '用完就报错，错误里带着状态码',
+    exhausted instanceof LlmError && exhausted.message.includes('HTTP 429'),
+    exhausted instanceof Error ? exhausted.message : String(exhausted),
+  )
+  delete process.env.DSC_LLM_RETRY_ATTEMPTS
+  globalThis.fetch = realFetch
+}
 process.exit(failures === 0 ? 0 : 1)

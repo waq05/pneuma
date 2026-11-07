@@ -90,8 +90,17 @@ export type CoreEvent =
    * 不落盘——重启恢复后界面回退逐刀合并显示。
    */
   | { type: 'turn/diff'; files: FileChangeSummary[] }
-  /** 这次模型请求失败、正要重试（对照 dsh 的 `model-retry` 节点）。 */
-  | { type: 'model/retry'; attempt: number; reason: string }
+  /**
+   * 这次模型请求失败、正要重试（对照 dsh 的 `model-retry` 节点）。
+   *
+   * `attempt` 是第几次重试（1 起）；`maxRetries` 是这条请求最多重试几次，
+   * `delayMs` 是这次退避等了多少——界面上那行「已重试模型请求（3/5） · 2s」三个数全部
+   * 读这三个字段，界面不再自己猜预算。
+   *
+   * 这条事件同时落进会话日志（见 Session.appendNotice）：刷新或重开这一轮时，
+   * 用户还能看见「刚才重试过、为什么重试」，而不是一段凭空冒出来的答案。
+   */
+  | { type: 'model/retry'; attempt: number; maxRetries: number; delayMs: number; reason: string }
   /**
    * 一次请求的用量。cacheHit/cacheMiss 是输入里的前缀缓存明细（端点上报时才有）：
    * 命中率是「请求前缀有没有被改写」的直接读数——改一个字节就会让整段历史全价重读，

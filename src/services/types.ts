@@ -19,7 +19,7 @@ import type { HookJudgement, HooksDoc, HookTrust } from '@pneuma/session-core/ho
 import type { HostBrowserLink } from '../core/host-browser-link.js'
 import type { MemoryCell, MemoryConfig, MemoryOperation, MemoryTarget, MemoryWriteResult, WriteOptions } from '../core/memory.js'
 import type { ProviderConfig } from '../core/config.js'
-import type { Session, InboxOrigin } from '../core/session.js'
+import type { Session, InboxOrigin, SessionNotice } from '../core/session.js'
 import type { UserFileAttachment } from '../core/attachments.js'
 import type { ChatMessage, LlmAdapter, LlmRoute, StreamHandlers, StreamRequest, StreamResult } from '../core/llm.js'
 import type { FileChangeSummary, ToolEntry } from '../core/tools.js'
@@ -707,6 +707,8 @@ export interface TranscriptService {
     fileChanges?: ReadonlyMap<string, readonly FileChangeSummary[]>,
     /** dsh 插件的卡片数据（Session.presentations），重放时缝回工具卡。 */
     presentations?: ReadonlyMap<string, ToolPresentationView>,
+    /** 回合提示（Session.notices）：模型重试、失败原因，按 ts 插回消息之间。 */
+    notices?: readonly SessionNotice[],
   ): boolean
   subscribe(listener: () => void): () => void
   getSnapshot(): RuntimeSnapshot
