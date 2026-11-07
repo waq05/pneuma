@@ -158,23 +158,19 @@ export function SeatBody({
    */
   const inFold = (row: Row): boolean =>
     fold !== undefined && fold.foldable && fold.hidden.has(row.at) && !TURN_INDEPENDENT.has(row.entry.kind)
-  /**
-   * 落在过程区里、但这一档（foldedReplies=all）要求留在屏幕上的正文。
-   *
-   * 它不能塞进 `.turn-process` 那一格：整轮收起是「这一格高度缩回 0」，塞进去连正文
-   * 一起消失。所以它和过程段并列排在座位上，按原顺序夹在几段过程之间（见下面的分段）。
-   */
-  const keptReply = (row: Row): boolean =>
-    fold !== undefined && fold.foldable
-    && row.at >= fold.startIndex && row.at <= fold.endIndex
-    && !TURN_INDEPENDENT.has(row.entry.kind) && !fold.hidden.has(row.at)
-  /** 按「藏 / 留 / 之后」三档摆一行（组员与单独行共用这一条，别在别处再写一遍）。 */
+
+  /** 按「藏 / 留」两档摆一行（组员与单独行共用这一条，别在别处再写一遍）。 */
   const middle: MiddleBlock[] = []
-  const afterBlocks: ReactNode[] = []
   const pushRow = (row: Row): void => {
+    // **一条行要么进「要藏的一段」，要么原地摆着，绝不能被挪到队尾**（2026-11-07 报障：
+    // 「任务中的更改文件一直堆积在底部，没有保持原位」）。原来这里有个 else 分支把
+    // 「不折、也不是留在屏幕上的正文」的行丢进 afterBlocks，而 afterBlocks 是整段过程区
+    // **之后**才渲染的——写前预览卡（system 条目）、计划卡、轮尾标记这些独立行于是全部
+    // 排到一轮的末尾。写前预览一次编辑一张，一个任务里改十几次文件就是十几张卡摞在底部。
+    // 分段机制（下面那个循环）本来就能在原地夹住这些行：它们作为 fold: false 的块把
+    // 过程区分成几段，收起时只有段落收起来，它们留在原地。
     if (inFold(row)) middle.push({ node: seatRow(row, collapsed), fold: true })
-    else if (keptReply(row)) middle.push({ node: seatRow(row, false), fold: false })
-    else afterBlocks.push(seatRow(row, false))
+    else middle.push({ node: seatRow(row, false), fold: false })
   }
   for (const item of seatPlan(seat.rows.slice(1).map((row) => row.at), stepGrouping)) {
     if (item.kind === 'group') {
@@ -257,7 +253,6 @@ export function SeatBody({
         </div>
       ) : null}
       {foldBlocks.length === 0 ? null : <>{foldBlocks}</>}
-      {afterBlocks}
       {/* 「已编辑 N 个文件」是**轮尾**卡：这一轮还在跑时不画。
           0.8.0 之前它一出现第一条 changes 条目就上屏，于是「正在运行命令」的转圈下面
           先挂出一份只算了一半的清单——用户看到的是「这一轮改了 5 个文件」，

@@ -226,7 +226,9 @@ console.log('[5] 整轮过程区的开合动画（0.6.69 第四轮报障）')
   check('没有过程行时不画这一层（foldBlocks 为空就整块不画）', ui.includes('{foldBlocks.length === 0 ? null : <>{foldBlocks}</>}'))
   // 「藏不藏」查的是预算器给的集合，不是 start/end 区间：区间读数还在，但只当过程范围用。
   check('藏不藏查 fold.hidden 集合（区间只当读数）', /const inFold = \(row: Row\): boolean =>\s*\n\s*fold !== undefined && fold\.foldable && fold\.hidden\.has\(row\.at\)/.test(ui))
-  check('留在外面的正文走 keptReply（不进 .turn-process）', /const keptReply = \(row: Row\): boolean =>[\s\S]{0,220}?!fold\.hidden\.has\(row\.at\)/.test(ui) && /keptReply\(row\)\) middle\.push\(\{ node: seatRow\(row, false\), fold: false \}\)/.test(ui))
+  // 2026-11-07 起不再有 keptReply 这个专门的判据：不折的行（留在外面的正文、写前预览卡、
+  // 计划卡这类独立条目）统一走「fold: false 进 middle」，由分段循环原地夹住。
+  check('不折的行走 fold: false 进 middle（不进 .turn-process、也不挪到队尾）', /else middle\.push\(\{ node: seatRow\(row, false\), fold: false \}\)/.test(ui) && !/afterBlocks\.push|\{afterBlocks\}/.test(ui))
   check('分段：连续的藏行攒进 segment，遇到留下的正文先 flush', /if \(block\.fold\) \{\s*\n\s*segment\.push\(block\.node\)/.test(ui) && /flushSegment\(\)\s*\n\s*foldBlocks\.push\(block\.node\)/.test(ui))
   // 折叠时机：最新一轮的兜底展开来自 turnDefaultOpen，用户手点过的存档仍优先。
   check('兜底默认态 = turnDefaultOpen(collapseTiming, latest)', /turnDefaultOpen\(foldPrefs\.collapseTiming, fold\?\.latest === true\)/.test(ui) && /foldMemory\.open\(turnKey, defaultOpen\)/.test(ui))
@@ -489,6 +491,18 @@ console.log('[8] 收起态的结果与失败数（对照 codex 的活动流）')
   check('组体缩进 + 竖线（层级在版面上看得见）', /\.step-body \{[^}]*border-left: 1px solid var\(--dsc-stroke-1\)[^}]*margin-left: var\(--proc-pad\)[^}]*padding-left: calc\(var\(--proc-indent\)/.test(viewsCss))
   check('组体的缩进只剩一处（styles.css 里没有第二份 .step-body）', !/\.step-body\s*\{/.test(css))
   check('失败数在窄屏也不隐藏（它是读数，不是装饰）', !/\.step-fold-fail[^{}]*\{[^}]*display: none/.test(css))
+}
+
+console.log('[8b] 独立行原地摆，不被兜底挪到一轮末尾（2026-11-07 报障）')
+{
+  // 报障原话：「任务中的更改文件一直堆积在底部，没有保持原位」。写前预览卡是 system 条目，
+  // 原来 pushRow 有个 else 分支把这些「不折、也不是留在屏幕上的正文」的行丢进 afterBlocks，
+  // 而 afterBlocks 在整段过程区之后才渲染——一次编辑一张卡，十几张摞在轮尾。
+  // 现在独立行也进 middle（fold: false），由分段循环把它们原地夹在几段过程之间。
+  const renderSrc = read(UI + '/render.tsx')
+  check('没有 afterBlocks 这条兜底队尾的出路', !/afterBlocks\.push|\{afterBlocks\}/.test(renderSrc) && !renderSrc.includes('const afterBlocks'))
+  check('不折的行走原地摆放（fold: false 进 middle）', renderSrc.includes('else middle.push({ node: seatRow(row, false), fold: false })'))
+  check('分段循环照旧把非折块原地接上（flushSegment 后再 push）', /flushSegment\(\)\s*\n\s*foldBlocks\.push\(block\.node\)/.test(renderSrc))
 }
 
 console.log('[9] 轮尾「已编辑 N 个文件」卡只在一轮收口之后出现')

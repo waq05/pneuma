@@ -14747,3 +14747,34 @@ Numa 那边同样的内容是一列平铺的行，没有那个层级。
 `ui-step-group-live-test` 29 条（思考 + 调用两条就成组、组头画在第一条）、`ui-process-grid-test`
 51 条（组头不再有任务段与项数、放平规则已删）、`ui-fold-prefs-test` 50 条（四档表 compact 一格改回
 false），`node scripts/check-ui.mjs` 62 份探针全过。实拍 `desktop/shots/fold-group-expanded.png`。
+
+## 2026-11-07 下午：写前预览卡不再堆到一轮末尾
+
+用户报障：「任务中的更改文件一直堆积在底部，没有保持原位」。
+
+### 根因
+
+写前预览（宿主 file-review 守卫，order 25）在每次 edit / write 动手之前把 diff 拼成一条 `system`
+条目（`src/plugins/file-review.ts` 的 `renderReview`）。渲染层 `render.tsx` 的 `pushRow` 当时分三支：
+要藏的行进过程段；折叠时仍要留在屏幕上的正文也进过程段但不藏；**其余一律丢进 `afterBlocks`**——
+而 `afterBlocks` 是在整段过程区**之后**才渲染的一格。
+
+写前预览卡正好落在第三支：它不参与折叠（`TURN_INDEPENDENT` 里有 `system`），既不是要藏的、也不是
+「留在屏幕上的正文」，于是每一张都被排到一轮的末尾。一个任务里改十几次文件，十几张卡就摞在底部。
+
+### 改法
+
+删掉 `afterBlocks` 这条出路：所有行都进同一个 `middle` 序列，要藏的标 `fold: true`，不藏的标
+`fold: false`；下面的分段循环本来就会把不藏的块当作边界，把过程区切成几段。一行落在哪里只由它
+的出现顺序决定，和「折不折」无关。
+
+顺带删掉 `keptReply`：它只回答「这条正文要不要留在屏幕上」，而现在「不藏」就等于「留在屏幕上且
+原地摆」，不需要第二个判据。
+
+### 验证
+
+`node scripts/check-ui.mjs` 62/62。新增回归断言（`ui-transcript-render-test.mjs` 的 [8b] 段、
+`ui-fold-combo-test.mjs` 的接线钉）：渲染层不许再有 `afterBlocks`、不折的行必须 `fold: false`
+进 middle。实拍用隔离 HOME 起真宿主加假端点（一步发六次 edit）：`desktop/shots/bug-review-stack.png`
+是修前（六张预览卡摞在底部、组头全在前面），`desktop/shots/fix-review-inplace.png` 是修后
+（座位与预览卡交替出现）。

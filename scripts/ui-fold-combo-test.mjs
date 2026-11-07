@@ -170,7 +170,7 @@ console.log('[3] 源码钉：渲染层确实按这两个返回值走')
   check('藏不藏查集合（不再按 startIndex..endIndex 区间判）', /const inFold = \(row: Row\): boolean =>\s*\n\s*fold !== undefined && fold\.foldable && fold\.hidden\.has\(row\.at\)/.test(render))
   check('默认展开来自 turnDefaultOpen(collapseTiming, latest)', /turnDefaultOpen\(foldPrefs\.collapseTiming, fold\?\.latest === true\)/.test(render))
   check('兜底只交给 foldMemory.open（用户手点过的存档仍优先）', /const turnOpen = foldMemory\.open\(turnKey, defaultOpen\)/.test(render))
-  check('留在外面的正文不进 .turn-process（否则收起时被一起缩掉）', /keptReply\(row\)\) middle\.push\(\{ node: seatRow\(row, false\)/.test(render))
+  check('留在外面的正文不进 .turn-process（否则收起时被一起缩掉）', /else middle\.push\(\{ node: seatRow\(row, false\), fold: false \}\)/.test(render))
   check('过程区按段落包层（每段各缩各的）', /if \(block\.fold\) \{\s*\n\s*segment\.push\(block\.node\)/.test(render) && /flushSegment\(\)\s*\n\s*foldBlocks\.push\(block\.node\)/.test(render))
 
   const ui = readFileSync(new URL('../src/packages/ui-transcript/ui/ui.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
