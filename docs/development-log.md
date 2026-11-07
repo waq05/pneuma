@@ -14807,3 +14807,28 @@ false），`node scripts/check-ui.mjs` 62 份探针全过。实拍 `desktop/shot
 `node scripts/check-ui.mjs` 62/62；`ui-collapse-prefs-test` 54 条（缺键、坏值、往返、源码钉全部按
 final 重写）。实拍（隔离 HOME）：`desktop/shots/fold-final-only.png` 与
 `desktop/shots/fold-final-collapsed2.png`——收起后只有「已完成，用时 1秒」加最终回答。
+
+## 2026-11-07 下午（三）：组头的开合箭头从行尾收回标题行
+
+用户把两边并排看：「这还是没 dsh 看着舒服」。
+
+### 核对结果：分组机制一样，差在组头那一行怎么摆
+
+dsh 切组的三条规则（`conversation-nodes/process-groups.ts:147-165`）：思考进组、回复封组后自己
+出去、轮末收口。Numa 现在的分组规则与它逐条对应，所以「一个阶段一个组头」这件事两边是一致的——
+同一段数据在 dsh 里也是组头与回复交替。
+
+真正的差别在组头这一行：0.6.68 起 Numa 把箭头放在**行尾**（当时是为了让「能点开」写在明面上）。
+去掉「N 项」读数之后，行尾只剩一枚孤零零的箭头：一条六个字的小组头会拖出半屏空白，一屏六条
+读起来就是六道表格行。dsh 的组头把图标与箭头都放在文字这一侧（`ChatGroupSeat.tsx:117-121`），
+整行贴着文字，读起来是一句话而不是一行表格。
+
+### 改法
+
+- 箭头从行尾挪进标题行：`◇ 已完成分析 ⌄`，与文字同一条基线。
+- 行尾只留失败数（`.step-fold-fail` 改 `margin-left: auto`），没有失败数时行尾什么都不画。
+
+### 验证
+
+`node scripts/check-ui.mjs` 62/62。实拍 `desktop/shots/group-head-inline.png`（隔离 HOME 起真宿主，
+标准档、展开一轮）：组头是「图标 + 标题 + 箭头」一行，不再拖出半屏。

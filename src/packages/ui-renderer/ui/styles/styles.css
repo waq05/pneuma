@@ -4587,8 +4587,9 @@
   font-family: var(--dsc-font-mono);
   font-size: var(--dsc-fs-tool);
   font-variant-numeric: tabular-nums;
-  /* 与行尾「N 项」之间留 8px：两个都是读数，靠太近会读成一串数字。 */
-  margin-right: 8px;
+  /* 箭头收进标题行之后（2026-11-07），这一格改成靠右：它是唯一还住在行尾的读数。 */
+  margin-left: auto;
+  margin-right: 2px;
 }
 
 /* ── 头行的两格读数不再被那颗隐身药丸挤走 ──

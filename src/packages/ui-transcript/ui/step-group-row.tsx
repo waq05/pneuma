@@ -205,6 +205,12 @@ export function StepGroupRow(props: {
           >
             {label}
           </span>
+          {/* 箭头跟着标题走（2026-11-07 从行尾挪过来）：dsh 的组头就是把开合标记放在文字这一侧
+              （ChatGroupSeat.tsx:117-121 的 .leading 里叠着图标与箭头）。挂在行尾时，一条
+              只有六个字的小组头会拖出半屏空白，一屏六条就是六道「表格行」——用户说看着比 dsh 吵。 */}
+          <span className="step-fold-chevron" data-step-chevron>
+            <IconChevronDown size={12} />
+          </span>
         </span>
         {detail !== '' && (
           <span className="step-fold-detail" data-shimmer={detail}>
@@ -220,12 +226,7 @@ export function StepGroupRow(props: {
           {t('transcript.group.failures', { count: props.group.failures })}
         </span>
       ) : null}
-      {/* 行尾只留箭头（2026-11-07 去掉「N 项」读数）：
-          条数是个说不出内容的读数，放在组头右侧把读者的注意力从「干了哪类活」拉到计数上；
-          dsh 的组头也只有类别与箭头。条数仍在 DOM 上（data-step-size），供自检断言使用。 */}
-      <span className="step-fold-chevron" data-step-chevron>
-        <IconChevronDown size={12} />
-      </span>
+
     </button>
   )
 }
