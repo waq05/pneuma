@@ -138,7 +138,7 @@
   "transcript.fold.stopped": "Stopped",
   "transcript.fold.failed": "Failed",
   "transcript.fold.done": "Done",
-  "transcript.fold.duration": "{duration}",
+  "transcript.fold.duration": "Completed in {duration}",
   "transcript.fold.tipAborted": "This turn was interrupted; the process stays expanded",
   "transcript.fold.tipError": "This turn failed; the process stays expanded",
   "transcript.fold.tipEmpty": "This turn has no process content to fold",

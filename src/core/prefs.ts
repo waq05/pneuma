@@ -17,14 +17,47 @@ import { dscPath } from './path-policy.js'
 
 export const DSC_SETTINGS_JSON = dscPath('settings.json')
 
-/** 预置市场源：Anthropic 官方技能库 + dsh 仓库自带的 .agents/skills。 */
+/**
+ * 预置市场源：Anthropic 官方技能库 + dsh 仓库自带的 .agents/skills
+ * + ClawHub 下载榜 + skills.sh（搜索型）。
+ *
+ * 后两个是 2026-11 加的：ClawHub 有官方榜单（源地址填 API 路径）；
+ * skills.sh 只有搜索接口，面板里要输入关键词才查。
+ */
 export const DEFAULT_MARKET_SOURCES: readonly MarketSource[] = [
   { name: 'anthropics', url: 'https://github.com/anthropics/skills/tree/main/skills' },
   {
     name: 'dsh',
     url: 'https://github.com/deepseek-ai/deepseek-harness/tree/master/.agents/skills',
   },
+  { name: 'ClawHub', url: 'https://clawhub.ai/api/v1/skills?sort=downloads&limit=100' },
+  { name: 'skills.sh', url: 'https://skills.sh/api/search' },
 ]
+
+/**
+ * 加 ClawHub / skills.sh 之前的默认清单。
+ *
+ * 老用户 settings.json 里存的就是这**一模一样的两条**：读到它才升级成新默认，
+ * 这样「没动过源清单的人」能自动看到新源，而「删掉或增补过源的人」不会被改回去。
+ */
+const LEGACY_DEFAULT_MARKET_SOURCES: readonly MarketSource[] = [
+  { name: 'anthropics', url: 'https://github.com/anthropics/skills/tree/main/skills' },
+  {
+    name: 'dsh',
+    url: 'https://github.com/deepseek-ai/deepseek-harness/tree/master/.agents/skills',
+  },
+]
+
+/** 一份源清单是不是「加新源之前的那份出厂默认」。 */
+function isLegacyDefaultSources(sources: readonly MarketSource[]): boolean {
+  return (
+    sources.length === LEGACY_DEFAULT_MARKET_SOURCES.length &&
+    sources.every((source, index) => {
+      const legacy = LEGACY_DEFAULT_MARKET_SOURCES[index]
+      return legacy !== undefined && source.name === legacy.name && source.url === legacy.url
+    })
+  )
+}
 
 /** 界面层偏好。null = 未设置（保持内核默认，不覆盖）。 */
 export interface DscPrefs {
@@ -139,8 +172,14 @@ const COLLAPSE_TIMING_DEFAULT: UiCollapseTiming = 'completion'
  * 参考实现同名取值表见 packages/client/ui-chat/src/chat-settings.ts:27-33。
  */
 const FOLDED_REPLIES = ['all', 'final'] as const satisfies readonly UiFoldedReplies[]
-/** 读不出时的默认档：全部回复（参考实现的默认就是 all，不因「少变观感」改成 final）。 */
-const FOLDED_REPLIES_DEFAULT: UiFoldedReplies = 'all'
+/**
+ * 读不出时的默认档：只留最终回答（2026-11-07 改）。
+ *
+ * 参考实现的出厂值是 all，但用户实际那台 dsh 收起一轮后只剩一行「已完成，用时 X」——
+ * 阶段回复跟着过程一起收起来了。Numa 这边「全部回复」会把十几段中途的话全摊在屏幕上，
+ * 收起等于没收，所以默认按用户实际看到的形态走 final；想要旧观感在设置里切回「全部回复」。
+ */
+const FOLDED_REPLIES_DEFAULT: UiFoldedReplies = 'final'
 
 /**
  * 旧存档里的三档字号：0.6 之前 `ui.fontSize` 存的是字符串，读到时按这张表
@@ -500,7 +539,9 @@ export function readPrefs(): DscPrefs {
         .filter((entry): entry is Record<string, unknown> => entry !== null && typeof entry === 'object')
         .map((entry) => ({ name: String(entry.name ?? ''), url: String(entry.url ?? '') }))
         .filter((entry) => entry.name !== '' && entry.url !== '')
-      prefs.marketSources = sources
+      // 源清单还是「加 ClawHub / skills.sh 之前的那份出厂默认」就升级成新默认；
+      // 用户自己动过（删、改、补）就一个字节都不碰。
+      prefs.marketSources = isLegacyDefaultSources(sources) ? [...DEFAULT_MARKET_SOURCES] : sources
     }
     // 远程控制：老 settings.json 里没有这一段，读不到就保持上面的默认值（关着）；
     // 认不出的键一律不认（不往 prefs 里搬），坏值由 readRemotePort 夹回范围。

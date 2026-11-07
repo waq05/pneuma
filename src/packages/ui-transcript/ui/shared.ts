@@ -32,7 +32,7 @@ export interface FoldPrefs {
 export const FOLD_PREFS: FoldPrefs = {
   policy: processFoldPolicy('standard'),
   collapseTiming: 'completion',
-  foldedReplies: 'all',
+  foldedReplies: 'final',
   reasoningOpen: false,
   toolOpen: false,
 }

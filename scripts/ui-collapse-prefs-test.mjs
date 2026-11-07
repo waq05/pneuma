@@ -82,12 +82,13 @@ function bootRuntime() {
   return service
 }
 
-console.log('\n[1] 读档：没这两项时给参考实现的默认值')
+console.log('\n[1] 读档：没这两项时给默认值')
 {
   writeSettings({})
   const ui = readPrefs().ui
   check('缺键时 collapseTiming = completion', ui.collapseTiming === 'completion', String(ui.collapseTiming))
-  check('缺键时 foldedReplies = all（不是 final）', ui.foldedReplies === 'all', String(ui.foldedReplies))
+  // 2026-11-07 默认改成 final：与用户实际那台 dsh 的收起形态一致（收起后只剩最终回答）。
+  check('缺键时 foldedReplies = final', ui.foldedReplies === 'final', String(ui.foldedReplies))
 }
 
 console.log('\n[2] 读档：好值原样读回')
@@ -116,15 +117,15 @@ console.log('\n[3] 读档：坏值一律回落默认，绝不拦启动')
     writeSettings({ ui: { collapseTiming: value, foldedReplies: value } })
     const ui = readPrefs().ui
     check(
-      label + ' → completion / all',
-      ui.collapseTiming === 'completion' && ui.foldedReplies === 'all',
+      label + ' → completion / final',
+      ui.collapseTiming === 'completion' && ui.foldedReplies === 'final',
       JSON.stringify({ collapseTiming: ui.collapseTiming, foldedReplies: ui.foldedReplies }),
     )
   }
   // 一项坏不影响另一项。
   writeSettings({ ui: { collapseTiming: 'next-input', foldedReplies: 'nope' } })
   const mixed = readPrefs().ui
-  check('好的那项照读，坏的那项回落', mixed.collapseTiming === 'next-input' && mixed.foldedReplies === 'all', JSON.stringify(mixed))
+  check('好的那项照读，坏的那项回落', mixed.collapseTiming === 'next-input' && mixed.foldedReplies === 'final', JSON.stringify(mixed))
   // 整份坏 JSON：读档走 catch，给默认值。
   writeFileSync(DSC_SETTINGS_JSON, '{ this is not json', 'utf8')
   let threw = null
@@ -137,7 +138,7 @@ console.log('\n[3] 读档：坏值一律回落默认，绝不拦启动')
   check('坏 JSON 不抛', threw === null, threw === null ? '' : String(threw))
   check(
     '坏 JSON 时两项仍是默认值',
-    broken.collapseTiming === 'completion' && broken.foldedReplies === 'all',
+    broken.collapseTiming === 'completion' && broken.foldedReplies === 'final',
     JSON.stringify(broken),
   )
 }
@@ -150,7 +151,7 @@ console.log('\n[4] setUiPrefs → getUiPrefs 往返：两项都带出来，且�
   // 先读一次：默认值也在。
   const before = service.getUiPrefs()
   check('getUiPrefs 带出 collapseTiming', before.collapseTiming === 'completion', String(before.collapseTiming))
-  check('getUiPrefs 带出 foldedReplies', before.foldedReplies === 'all', String(before.foldedReplies))
+  check('getUiPrefs 带出 foldedReplies', before.foldedReplies === 'final', String(before.foldedReplies))
 
   const reply = await service.setUiPrefs({ collapseTiming: 'next-input', foldedReplies: 'final' })
   check('setUiPrefs 返回 ok', reply.ok === true, JSON.stringify(reply))
@@ -195,14 +196,15 @@ console.log('\n[6] 源码钉：契约 / 归一 / 设置页 / 词典')
   check('读档表含 completion / next-input', /\['completion', 'next-input'\]/.test(prefs))
   check('读档表含 all / final', /\['all', 'final'\]/.test(prefs))
   check('默认时机是 completion', /COLLAPSE_TIMING_DEFAULT: UiCollapseTiming = 'completion'/.test(prefs))
-  check('默认回复档是 all（不是 final）', /FOLDED_REPLIES_DEFAULT: UiFoldedReplies = 'all'/.test(prefs))
+  // 2026-11-07：默认从 all 收紧成 final（长任务里「全部回复」等于没收起）。
+  check('默认回复档是 final', /FOLDED_REPLIES_DEFAULT: UiFoldedReplies = 'final'/.test(prefs))
   check('readPrefs 读 collapseTiming', /ui\.collapseTiming !== undefined/.test(prefs))
   check('readPrefs 读 foldedReplies', /ui\.foldedReplies !== undefined/.test(prefs))
 
   const appearance = read('src/packages/ui-runtime/ui/appearance.ts')
   check('壳的归一化接住 collapseTiming', /collapseTiming: normalizeCollapseTiming\(prefs\?\.collapseTiming\)/.test(appearance))
   check('壳的归一化接住 foldedReplies', /foldedReplies: normalizeFoldedReplies\(prefs\?\.foldedReplies\)/.test(appearance))
-  check('壳的默认外观也带这两项', /collapseTiming: 'completion'/.test(appearance) && /foldedReplies: 'all'/.test(appearance))
+  check('壳的默认外观也带这两项', /collapseTiming: 'completion'/.test(appearance) && /foldedReplies: 'final'/.test(appearance))
 
   const settingsUi = read('src/packages/ui-settings/ui/ui.tsx')
   check('设置页有折叠时机下拉', /settings\.ui\.collapseTiming\.label/.test(settingsUi))

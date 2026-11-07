@@ -68,7 +68,7 @@ export const DEFAULT_APPEARANCE: Appearance = {
   density: 'standard',
   // 与 core/prefs.ts 同口径：时机默认跑完立刻收起，收起后默认保留全部回复。
   collapseTiming: 'completion',
-  foldedReplies: 'all',
+  foldedReplies: 'final',
 }
 
 /**

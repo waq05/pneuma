@@ -107,7 +107,7 @@ export type UiProcessFold = 'compact' | 'standard' | 'detailed' | 'verbose'
 export type UiCollapseTiming = 'completion' | 'next-input'
 
 /**
- * 收起后还显示哪些助手回复（默认 'all'，与参考实现 ui-chat 的 foldedReplies 默认一致）。
+ * 收起后还显示哪些助手回复（默认 'final'：一轮收起后只剩最终回答，见 core/prefs.ts 的说明）。
  *
  * - `all`：每一段助手回复都留在屏幕上；
  * - `final`：只留这一轮的最终回答，过程中的阶段性回复一起收进折叠区。

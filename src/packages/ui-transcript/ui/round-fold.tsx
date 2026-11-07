@@ -37,8 +37,9 @@ export type CollapseTiming = 'completion' | 'next-input'
 /**
  * 收起之后显示哪些回复（设置 `ui.foldedReplies`；契约里定义，这里本地复述一份取值）。
  *
- * - `all`（默认）：有正文的助手步骤不算过程，留在屏幕上；它里面的思考与工具仍算过程；
- * - `final`：中间夹着的阶段性正文跟着过程一起藏，只留这一轮最后那条正文。
+ * - `all`：有正文的助手步骤不算过程，留在屏幕上；它里面的思考与工具仍算过程；
+ * - `final`（默认，2026-11-07 起）：中间夹着的阶段性正文跟着过程一起藏，只留这一轮最后那条正文。
+ *   收紧成这个默认，是因为「全部回复」下一个长任务的十几段中途说明会全摊在屏幕上，收起等于没收。
  */
 export type FoldedReplies = 'all' | 'final'
 
@@ -142,13 +143,13 @@ export function buildRoundFolds(
     foldTurns: boolean
     live: boolean
     lastRoundIndex: number
-    /** 收起之后显示哪些回复（默认 all，与 settings 的出厂口径一致）。 */
+    /** 收起之后显示哪些回复（默认 final，与 settings 的出厂口径一致）。 */
     foldedReplies?: FoldedReplies
   },
 ): Map<number, RoundFold> {
   const out = new Map<number, RoundFold>()
   // 「有正文的助手步骤不算过程」是 all 档的定义；final 档里它跟着过程一起藏。
-  const keepReplies = (options.foldedReplies ?? 'all') === 'all'
+  const keepReplies = (options.foldedReplies ?? 'final') === 'all'
   for (const round of rounds) {
     // 本轮最后一条定稿正文（从后往前找，找到就走）：**只有它后面再没有过程行时**，
     // 它才是最终回答。

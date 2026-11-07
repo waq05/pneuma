@@ -138,7 +138,7 @@
   "transcript.fold.stopped": "已停止",
   "transcript.fold.failed": "过程失败",
   "transcript.fold.done": "已完成",
-  "transcript.fold.duration": "用时 {duration}",
+  "transcript.fold.duration": "已完成，用时 {duration}",
   "transcript.fold.tipAborted": "这一轮被中断，过程保持展开",
   "transcript.fold.tipError": "这一轮执行失败，过程保持展开",
   "transcript.fold.tipEmpty": "这一轮没有可折叠的过程内容",

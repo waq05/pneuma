@@ -14778,3 +14778,32 @@ false），`node scripts/check-ui.mjs` 62 份探针全过。实拍 `desktop/shot
 进 middle。实拍用隔离 HOME 起真宿主加假端点（一步发六次 edit）：`desktop/shots/bug-review-stack.png`
 是修前（六张预览卡摞在底部、组头全在前面），`desktop/shots/fix-review-inplace.png` 是修后
 （座位与预览卡交替出现）。
+
+## 2026-11-07 下午（二）：收起后只剩最终回答，与 dsh 的收起形态对齐
+
+用户报障：整轮收起后屏幕上是一长串阶段回复（连续六段「兄弟，…」），和 dsh 收起后的一行不一样。
+
+### dsh 的收起形态（按源码与实拍核对）
+
+层级是四级：整轮控件「已完成，用时 X」→ 组头（类别聚合）→ 组内过程行 → 单个工具/思考正文。
+收起整轮时，组头与组体一起隐藏（`ChatGroupSeat.tsx:157-158` 的 `outerHidden`、
+`ChatNodeSeat.tsx:117` 的 `processHidden`），屏幕上只剩输入、用时行、**留下的回复**、最终回答、
+页脚（`conversation-nodes/README.zh.md:58`）。
+
+所以差别不在组头，而在「留下哪些回复」：dsh 那台机器收起后一段回复都没留——它按「仅最终回答」
+的规则走（最终回答必须是最后一个 Step 的回复且该 Step 没有工具调用块，
+`README.zh.md:98`）；那个长任务最后一步还在调工具，没有合格最终回答，于是全收。
+
+### 改法
+
+- **默认回复档从 all 收紧成 final**（`core/prefs.ts` 的 `FOLDED_REPLIES_DEFAULT`、
+  `ui-runtime/appearance.ts`、`ui-transcript/shared.ts`、`round-fold.tsx` 的兜底同批改）。
+  长任务里「全部回复」会让十几段中途说明全摊在屏幕上，收起等于没收。设置里仍可切回「全部回复」。
+- **用时行文案对齐**：`transcript.fold.duration` 从「用时 {duration}」改成「已完成，用时 {duration}」
+  （dsh 的 `message.turnProcess.took` 就是这句）。
+
+### 验证
+
+`node scripts/check-ui.mjs` 62/62；`ui-collapse-prefs-test` 54 条（缺键、坏值、往返、源码钉全部按
+final 重写）。实拍（隔离 HOME）：`desktop/shots/fold-final-only.png` 与
+`desktop/shots/fold-final-collapsed2.png`——收起后只有「已完成，用时 1秒」加最终回答。
