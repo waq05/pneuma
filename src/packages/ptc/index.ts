@@ -156,6 +156,7 @@ export const ptcPlugin: Plugin.Object = {
       cwd: string,
       signal: AbortSignal,
       session: { id: string; path: string },
+      parentCallId: string | undefined,
     ): Promise<{ text: string; changesList?: FileChangeSummary[] }> => {
       // 注册表在这一刻快照：脚本跑的过程中插件热挂载不会让 SDK 中途变样
       const registry = new Map<string, ToolEntry>(
@@ -242,7 +243,18 @@ export const ptcPlugin: Plugin.Object = {
         // 界面上的实时卡片：让用户看见脚本正在调什么（这一条不进会话日志，
         // 原因见文件头第 2 条；日志靠结果正文里的调用清单留底）。
         // 带归属：脚本可能是后台会话在跑，卡片只能落在它自己的视图里（切走了就不画）。
-        ctx.transcript.emit({ type: 'tool/call', callId, name, args: JSON.stringify(args) }, session.id)
+        // 带父指针：界面把这次调用收进 run_code 那张卡（见 contract 的 ToolCallView.subCalls）。
+        // 不带的话一段脚本会平铺成十几行独立工具卡，组头也只能数到一次「代码」。
+        ctx.transcript.emit(
+          {
+            type: 'tool/call',
+            callId,
+            name,
+            args: JSON.stringify(args),
+            ...(parentCallId === undefined ? {} : { parentCallId }),
+          },
+          session.id,
+        )
         // 守卫链可能弹审批卡：等人点卡的时间同样不算脚本时间。
         // 桥接工具（tool_call）在这里同样交出被调工具的真名与真实风险，免得脚本里多弹一张卡。
         const gateInput = gateIdentity(entry, args, cwd)
@@ -380,7 +392,7 @@ export const ptcPlugin: Plugin.Object = {
         runScript(String(args.code ?? ''), runCtx.cwd, runCtx.signal, {
           id: runCtx.sessionId,
           path: runCtx.sessionPath,
-        }),
+        }, runCtx.callId),
     }), 'ptc: tools.register')
   },
 }

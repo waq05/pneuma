@@ -14,7 +14,7 @@
 import type { ComponentType } from 'react'
 import { createT } from '@dsc/ui-core'
 import {
-  IconActivity, IconBolt, IconBrain, IconCalendar, IconCode, IconDatabase, IconEdit, IconFolder, IconGear, IconGlobe,
+  IconActivity, IconBolt, IconBrain, IconBranch, IconCalendar, IconClock, IconCode, IconDatabase, IconEdit, IconFolder, IconGear, IconGlobe,
   IconInfo, IconLayers, IconPackage, IconPuzzle, IconQueue, IconSearch, IconSpark, IconStop, IconTarget, IconTerminal,
   IconTree,
 } from './icons'
@@ -243,6 +243,54 @@ export const KNOWN_TOOLS: Readonly<
   mcp_resources: { verb: t('primitives.tool.mcpResources'), Icon: IconLayers },
   mcp_prompts: { verb: t('primitives.tool.mcpPrompts'), Icon: IconLayers },
   lsp: { verb: t('primitives.tool.lsp'), Icon: IconCode },
+  // ── 2026-11-07：补齐 dsh 的 tool.title.* 词表里剩下没登记的那批名字（dsh 的
+  //    ui-tool/src/client/tool/models/tool-call-model.ts 是那张表的正本）。这些名字
+  //    多半来自 dsh 兼容层加载的插件工具：不登记就退化成「工具调用 · <原名>」，
+  //    一屏十几行同样的字，读者认不出这是哪一类操作。词与图标都照 dsh 的对照关系走。
+  apply_patch: { verb: t('primitives.tool.applyPatch'), Icon: IconEdit },
+  subagent_fork: { verb: t('primitives.tool.subagentFork'), Icon: IconTree },
+  list_agents: { verb: t('primitives.tool.listAgents'), Icon: IconTree },
+  send_message: { verb: t('primitives.tool.sendMessage'), Icon: IconTree },
+  interrupt_agent: { verb: t('primitives.tool.interruptAgent'), Icon: IconTree },
+  list_subagent_models: { verb: t('primitives.tool.listModels'), Icon: IconInfo },
+  wait_agent: { verb: t('primitives.tool.waitAgent'), Icon: IconTree },
+  session_trace: { verb: t('primitives.tool.sessionTrace'), Icon: IconSearch },
+  session_event_read: { verb: t('primitives.tool.sessionEventRead'), Icon: IconQueue },
+  session_event_search: { verb: t('primitives.tool.sessionEventSearch'), Icon: IconSearch },
+  session_event_trace: { verb: t('primitives.tool.sessionEventTrace'), Icon: IconSearch },
+  terminal_open: { verb: t('primitives.tool.terminalOpen'), Icon: IconCode },
+  terminal_read: { verb: t('primitives.tool.terminalRead'), Icon: IconCode },
+  terminal_list: { verb: t('primitives.tool.terminalList'), Icon: IconCode },
+  terminal_signal: { verb: t('primitives.tool.terminalSignal'), Icon: IconCode },
+  terminal_close: { verb: t('primitives.tool.terminalClose'), Icon: IconCode },
+  schedule_create: { verb: t('primitives.tool.scheduleCreate'), Icon: IconClock },
+  schedule_list: { verb: t('primitives.tool.scheduleList'), Icon: IconClock },
+  schedule_view: { verb: t('primitives.tool.scheduleView'), Icon: IconClock },
+  schedule_edit: { verb: t('primitives.tool.scheduleEdit'), Icon: IconClock },
+  schedule_delete: { verb: t('primitives.tool.scheduleDelete'), Icon: IconClock },
+  schedule_update: { verb: t('primitives.tool.scheduleUpdate'), Icon: IconClock },
+  create_goal: { verb: t('primitives.tool.goalCreate'), Icon: IconTarget },
+  get_goal: { verb: t('primitives.tool.goalGet'), Icon: IconTarget },
+  update_goal: { verb: t('primitives.tool.goalUpdate'), Icon: IconTarget },
+  team_task_create: { verb: t('primitives.tool.teamTaskCreate'), Icon: IconQueue },
+  team_task_get: { verb: t('primitives.tool.teamTaskGet'), Icon: IconQueue },
+  team_task_update: { verb: t('primitives.tool.teamTaskUpdate'), Icon: IconQueue },
+  team_task_list: { verb: t('primitives.tool.teamTaskList'), Icon: IconQueue },
+  spawn_teammate: { verb: t('primitives.tool.spawnTeammate'), Icon: IconTree },
+  find_definition: { verb: t('primitives.tool.findDefinition'), Icon: IconCode },
+  find_references: { verb: t('primitives.tool.findReferences'), Icon: IconCode },
+  find_implementation: { verb: t('primitives.tool.findImplementation'), Icon: IconCode },
+  hover_symbol: { verb: t('primitives.tool.hoverSymbol'), Icon: IconInfo },
+  cordis_package_inspect: { verb: t('primitives.tool.cordisInspect'), Icon: IconPuzzle },
+  cordis_inspect_list: { verb: t('primitives.tool.cordisInspectList'), Icon: IconPuzzle },
+  cordis_inspect_query: { verb: t('primitives.tool.cordisInspectQuery'), Icon: IconPuzzle },
+  cordis_inspect_self: { verb: t('primitives.tool.cordisInspectSelf'), Icon: IconPuzzle },
+  cordis_runtime_inspect: { verb: t('primitives.tool.cordisInspect'), Icon: IconPuzzle },
+  cordis_run: { verb: t('primitives.tool.cordisRun'), Icon: IconPuzzle },
+  cordis_stop: { verb: t('primitives.tool.cordisStop'), Icon: IconPuzzle },
+  cordis_undefine: { verb: t('primitives.tool.cordisRemove'), Icon: IconPuzzle },
+  workflow: { verb: t('primitives.tool.workflow'), Icon: IconBranch },
+  ralph: { verb: t('primitives.tool.ralph'), Icon: IconBranch },
 }
 
 /** 认不出的工具的图标。 */

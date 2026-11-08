@@ -70,6 +70,16 @@ export interface ToolCallView {
    * （数据不丢，只是没画成专用形态）。Pneuma 自己的工具没有这一项。
    */
   presentation?: ToolPresentationView
+  /**
+   * 这张卡**内部**发生的调用（PTC 的 run_code：一段脚本里调了几次 sdk.xxx()）。
+   *
+   * 口径对着 dsh 的 run_code 卡：脚本里的调用不各自成为顶层工具行，而是这张卡里的嵌套行；
+   * 组头的类别计数也把它们按自己的类别算进去（一段脚本 read+grep+bash 就是读、搜、命令各一次）。
+   *
+   * 为什么存完整的 ToolCallView 而不是只存名字：每行要画自己的参数摘要与成败状态，
+   * 而子调用的这些字段随结果回来会更新（见 adapter 的 tool/result 分支）。
+   */
+  subCalls?: ToolCallView[]
 }
 
 /** 一张卡片视图的界面镜像（字段宽收：认得 `card` 就够挑形态了）。 */
@@ -149,8 +159,26 @@ export type TranscriptEntry =
    * 同名原位更新（React key 不换，卡片就地刷新）。
    */
   | { kind: 'subagent'; id: number; sub: SubagentCardView; ts?: number }
-  /** usage 是整轮累计口径，见本类型头部的说明。 */
-  | { kind: 'text'; id: number; text: string; ts?: number; usage?: { inputTokens: number; outputTokens: number } }
+  /**
+   * usage 是整轮累计口径，见本类型头部的说明。
+   *
+   * `process` 标的是：「这句正文是同一步里**调工具之前**的那前言」，不是阶段收尾
+   * （「安装完成，启动做最后实测：」这种）。判据在 adapter 的 `tool/call` 分支——只有
+   * 工具调用真的发出来了，回头看列表尾、把刚定稿的那条正文补上这个标记；模型只写话没
+   * 动手的那一步不会有它，那种正文仍然是正文。
+   *
+   * 为什么要这个标记（2026-11-07 报障）：dsh 的模型把这类话写在 reasoning 通道，屏幕上
+   * 是一行「思考 · …」；numa 的模型写在正文通道，不区分就会变成「调一次工具接一段大字
+   * 正文」。界面据此把它按过程行画（小字灰行）、留在阶段组里、不封组。
+   */
+  | {
+      kind: 'text'
+      id: number
+      text: string
+      ts?: number
+      usage?: { inputTokens: number; outputTokens: number }
+      process?: true
+    }
   /** usage 同上（一轮以工具结果收尾、没有最终正文时，数字落在这张卡上）。 */
   | { kind: 'tool'; id: number; call: ToolCallView; ts?: number; usage?: { inputTokens: number; outputTokens: number } }
   /** 计划卡：exit_plan_mode 交上来的计划，带用户批没批。 */

@@ -339,6 +339,8 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
             {t('transcript.tool.moreLines', { count: tail.hidden })}
           </span>
         ) : null}
+        {/* PTC 的卡里压着几次子调用：行头先说一声，展开或不展开都读得到「里面还有活」。 */}
+        <SubCallCount call={call} />
         <StatusDetail call={call} />
         <Trailing entry={entry} />
         {expandable ? <IconChevronDown size={11} className="tc-chevron" /> : null}
@@ -370,6 +372,8 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
               真实改动），于是一张只有 `presentation` 的卡在展开后是空的——数据到了卡上，
               却没接到渲染位置。这里把它并进同一个入口，两种来源同形（都是 ChangedFileView）。 */}
           <BodyExtra intended={intended} change={call.change ?? dshPatch} />
+          {/* 卡内调用排在输入/输出之前：这几行是「这张卡到底干了什么」，先读它再读参数。 */}
+          <SubCallList call={call} />
           {variant === 'trace' ? (
             /* 轨迹页看的是**原始参数与原始结果**（它的职责是取证，不是速读）：这一支
                与改造前逐字一致——标签 + prettyJson + 结果原文。别把对话页那张
@@ -473,6 +477,54 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
         </div>
       ) : null}
     </div>
+  )
+}
+
+/**
+ * 卡内调用（PTC）：脚本里每调一次 `sdk.xxx()` 就是这里的一行。
+ *
+ * 为什么抽成两个组件而不是各画一遍：对话页的卡走 Factory（{@link ToolCard}），插件没注册
+ * Factory 时才落到 `rows/tool-row` 的兜底。同一份数据必须在这两处长得一样——各写一遍的话，
+ * 用户在界面上看到什么就取决于「这次是谁画的卡」，改一处漏一处根本看不出来。
+ */
+export function SubCallCount({ call }: { call: ToolCallView }): ReactNode {
+  const count = call.subCalls?.length ?? 0
+  if (count === 0) return null
+  return <span className="sub-call-count">{t('transcript.tool.subCallCount', { count })}</span>
+}
+
+/** 卡内调用清单（展开体里）：图标 + 名字 + 参数摘要 + 成败，与头行的动词口径同源。 */
+export function SubCallList({ call }: { call: ToolCallView }): ReactNode {
+  const subs = call.subCalls ?? []
+  if (subs.length === 0) return null
+  return (
+    <>
+      <div className="label">{t('transcript.tool.subCalls')}</div>
+      <ul className="sub-calls">
+        {subs.map((sub, at) => {
+          // 子调用视图是宿主交来的数据：字段缺了就当空串，别让一张卡把整页渲染带崩。
+          const name = typeof sub.name === 'string' ? sub.name : ''
+          const argsText = typeof sub.argsText === 'string' ? sub.argsText : ''
+          const subMatch = matchTool(name)
+          const SubIcon = subMatch.Icon
+          return (
+            <li key={`${sub.callId}:${String(at)}`} className={`sub-call status-${sub.status}`}>
+              <span className="sub-call-leading" aria-hidden="true">
+                <SubIcon size={11} />
+              </span>
+              <span className="sub-call-verb">{subMatch.known ? subMatch.base : name}</span>
+              <span className="sub-call-summary">{toolSummary(name, argsText)}</span>
+              <span className="sub-call-status">
+                {sub.status === 'running' ? <i className="tc-spin" aria-hidden="true" /> : null}
+                {sub.status === 'running' || sub.status === 'done'
+                  ? ''
+                  : (TOOL_STATUS_TEXT[sub.status] ?? sub.status)}
+              </span>
+            </li>
+          )
+        })}
+      </ul>
+    </>
   )
 }
 

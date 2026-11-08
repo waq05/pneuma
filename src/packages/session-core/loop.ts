@@ -704,6 +704,8 @@ export class MiniAgent {
         // 工具生成的后续产物（后台作业完成通知等）按会话归属投递（0.6.48）
         sessionId: this.session.meta.id,
         sessionPath: this.session.filePath,
+        // 顶层调用自己的 id：会「在内部再调工具」的工具拿它当父指针（PTC 的嵌套调用）
+        callId: call.id,
       })
       const rawText = typeof output === 'string' ? output : output.text
       // 工具结果里的密钥形状字符串不进会话日志，也不回显给模型（遮红挂在观察者链上）。

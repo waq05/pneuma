@@ -59,7 +59,13 @@ export type CoreEvent =
     }
   /** 流式增量（直播尾）。 */
   | { type: 'delta'; kind: 'text' | 'reasoning'; text: string }
-  | { type: 'tool/call'; callId: string; name: string; args: string }
+  /**
+   * 一次工具调用开始。
+   *
+   * \`parentCallId\` 只在「这次调用发生在另一个工具内部」时出现（PTC 的 run_code：脚本里
+   * 每调一次 sdk.xxx() 就是一次带父指针的调用）。界面据此把它收进父卡，而不是平铺成一行。
+   */
+  | { type: 'tool/call'; callId: string; name: string; args: string; parentCallId?: string }
   /**
    * 模型开始吐某个工具调用的名字，参数还没到齐（对照 dsh 的 `preparing` 节点）。
    * 它计一次调用、不解析参数，界面上只渲染成不可展开的一行。
