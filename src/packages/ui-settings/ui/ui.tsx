@@ -78,7 +78,16 @@ import { UsageGroup } from './usage'
 import { ArchiveGroup } from './archive'
 import { PairModal, type PairRegenerateResult } from './pair-modal'
 // 基元从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
-import { Select, Skeleton, SkeletonText, errText as text, humanErrorText, useDialogFocus } from '@dsc/ui-primitives'
+import {
+  COMPLETION_SOUND_VARIANTS,
+  Select,
+  Skeleton,
+  SkeletonText,
+  errText as text,
+  humanErrorText,
+  playCompletionSound,
+  useDialogFocus,
+} from '@dsc/ui-primitives'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 import zh from '../locale/ui.zh.json'
 import en from '../locale/ui.en.json'
@@ -877,6 +886,15 @@ const THEME_TILES = [
 ] as const
 
 /**
+ * 提醒音的音色下拉：名字直接取发声参数表那一份（`COMPLETION_SOUND_VARIANTS` 的 `name`），
+ * 不另抄一张表——加一个音色只改发声模块，设置页跟着多一项。
+ */
+const SOUND_VARIANT_OPTIONS = COMPLETION_SOUND_VARIANTS.map((variant) => ({
+  value: String(variant.id),
+  label: variant.name,
+}))
+
+/**
  * 外观：主题 / 字号 / 密度三行（改完即时落到 `<html>` 上，与旧界面同一套）。
  *
  * 「按钮大小」那条轴在阶段 5.5 取消了：按钮尺寸改成对齐参考实现的固定档位，
@@ -1102,10 +1120,68 @@ function AppearanceRows(): ReactNode {
           />
         </div>
       </div>
-      {note === '' ? null : <div className="settings-note error">{note}</div>}
       <div className="settings-note">
         {t('settings.ui.buttonSizeRetired')}
       </div>
+      <div className="settings-group-title">{t('settings.ui.notifyTitle')}</div>
+      <div className="setting-row">
+        <div className="setting-text">
+          <div className="setting-label">{t('settings.ui.notifySound.label')}</div>
+          <div className="setting-help">{t('settings.ui.notifySound.help')}</div>
+        </div>
+        <div className="setting-control">
+          <button
+            type="button"
+            className={`switch${appearance.turnCompleteSound ? ' on' : ''}`}
+            role="switch"
+            aria-checked={appearance.turnCompleteSound}
+            aria-label={t('settings.ui.notifySound.label')}
+            onClick={() => {
+              change({ turnCompleteSound: !appearance.turnCompleteSound })
+            }}
+          />
+        </div>
+      </div>
+      <div className="setting-row">
+        <div className="setting-text">
+          <div className="setting-label">{t('settings.ui.notifyVariant.label')}</div>
+          <div className="setting-help">{t('settings.ui.notifyVariant.help')}</div>
+        </div>
+        <div className="setting-control">
+          <Select
+            className="setting-select"
+            ariaLabel={t('settings.ui.notifyVariant.aria')}
+            value={String(appearance.turnCompleteSoundVariant)}
+            options={SOUND_VARIANT_OPTIONS}
+            onPick={(next) => {
+              const id = Number(next)
+              // 选中即试听：先响一声，再写偏好。不受上面那个开关管——关掉提醒音时也要能
+              // 挑音色（发声模块照响，开关判断在播放方，见 playCompletionSound 的注释）。
+              playCompletionSound(id)
+              change({ turnCompleteSoundVariant: id })
+            }}
+          />
+        </div>
+      </div>
+      <div className="setting-row">
+        <div className="setting-text">
+          <div className="setting-label">{t('settings.ui.notifyBackground.label')}</div>
+          <div className="setting-help">{t('settings.ui.notifyBackground.help')}</div>
+        </div>
+        <div className="setting-control">
+          <button
+            type="button"
+            className={`switch${appearance.turnCompleteNotify ? ' on' : ''}`}
+            role="switch"
+            aria-checked={appearance.turnCompleteNotify}
+            aria-label={t('settings.ui.notifyBackground.label')}
+            onClick={() => {
+              change({ turnCompleteNotify: !appearance.turnCompleteNotify })
+            }}
+          />
+        </div>
+      </div>
+      {note === '' ? null : <div className="settings-note error">{note}</div>}
     </div>
   )
 }
@@ -1125,6 +1201,12 @@ interface Appearance {
   reasoningOpen: boolean
   /** 工具卡默认展开吗。 */
   toolOpen: boolean
+  /** 一轮结束（完成 / 失败 / 停下来等人）响一声提示音吗。 */
+  turnCompleteSound: boolean
+  /** 提示音的音色编号（下拉选项来自发声表的 `COMPLETION_SOUND_VARIANTS`）。 */
+  turnCompleteSoundVariant: number
+  /** 窗口不在前台时，一轮结束弹一条系统通知吗。 */
+  turnCompleteNotify: boolean
 }
 
 /**
@@ -1156,6 +1238,14 @@ function normalizePrefs(prefs: Partial<UiPrefsView> | null | undefined): Appeara
     foldedReplies: prefs?.foldedReplies === 'final' ? 'final' : 'all',
     reasoningOpen: prefs?.reasoningDefaultOpen === true,
     toolOpen: prefs?.toolDefaultOpen === true,
+    // 任务提醒三项：兜底口径与宿主（core/prefs.ts）一致——两个开关默认开、音色回落 1；
+    // 音色只认有限的数字，坏值（NaN / Infinity / 字符串）一律回落 1。
+    turnCompleteSound: prefs?.turnCompleteSound !== false,
+    turnCompleteSoundVariant:
+      typeof prefs?.turnCompleteSoundVariant === 'number' && Number.isFinite(prefs.turnCompleteSoundVariant)
+        ? prefs.turnCompleteSoundVariant
+        : 1,
+    turnCompleteNotify: prefs?.turnCompleteNotify !== false,
   }
 }
 

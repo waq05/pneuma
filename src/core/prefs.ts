@@ -394,7 +394,7 @@ export function readPrefs(): DscPrefs {
       // 侧栏分组展开态与会话手动顺序：出厂都是空表（全部用默认行为）。
       sessionExpansion: {},
       sessionOrder: {},
-      // 任务完成提醒三项：提示音默认开（合成音，音量压得很低），后台系统通知默认开。
+      // 任务提醒三项：提醒音默认开（合成音，音量压得很低），后台系统通知默认开。
       turnCompleteSound: true,
       turnCompleteSoundVariant: 1,
       turnCompleteNotify: true,
@@ -494,7 +494,7 @@ export function readPrefs(): DscPrefs {
         }
         prefs.ui.sessionOrder = order
       }
-      // 任务完成提醒三项：老 settings.json 里没有，读不到就保持上面的默认值（都开、1 号音色）；
+      // 任务提醒三项：老 settings.json 里没有，读不到就保持上面的默认值（都开、1 号音色）；
       // 音色编号由 readSoundVariant 夹回 1–14，坏值回落 1。
       if (typeof ui.turnCompleteSound === 'boolean') {
         prefs.ui.turnCompleteSound = ui.turnCompleteSound
