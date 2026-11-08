@@ -109,7 +109,7 @@ export interface UiTrustView {
   problemKind?: UiTrustProblemKind
 }
 
-/** 一个队友（智能体团队派出去的子智能体）；侧栏「队友」这一档看到的行。 */
+/** 一个队友（子智能体插件派出去的子智能体）；侧栏「队友」这一档看到的行。 */
 export interface TeammateView {
   /** 队友名，例如 writer-1。 */
   name: string
@@ -137,7 +137,7 @@ export interface TeammateView {
 }
 
 /**
- * 共享任务板上的一个任务（状态面板「智能体团队」区只读展示）。
+ * 共享任务板上的一个任务（状态面板「共享任务」区只读展示）。
  *
  * 与「子智能体」分区严格分工（对照 dsh：成员树归 subagent 导航，任务板只画任务）：
  * 这里只说「有哪些事、谁负责、做到哪一步」，不掺队友的运行状态。

@@ -54,7 +54,7 @@
   "status.agent.rowTip": "{role} · {task}\nOpens its full read-only run log in the main area (wait for a running one to finish)",
   "status.agent.stopAria": "Stop {name}",
   "status.agent.stopTip": "Stop this teammate (best effort; finished runs keep their result)",
-  "status.section.team": "Agent team",
+  "status.section.team": "Shared tasks",
   "status.team.trail": "{n} open · {total} total",
   "status.team.trailDone": "All {n} done",
   "status.team.statePending": "Ready",

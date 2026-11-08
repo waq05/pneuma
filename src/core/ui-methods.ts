@@ -158,7 +158,7 @@ export const UI_METHODS = [
   'runSettingAction',
   // 队友
   'listTeammates',
-  // 任务板（状态面板「智能体团队」分区）：只读；改任务仍旧只走模型的 team_task 工具
+  // 任务板（状态面板「共享任务」分区）：只读；改任务仍旧只走模型的 team_task 工具
   'listTeamBoard',
   'stopTeammate',
   'messageTeammate',

@@ -283,13 +283,13 @@ function dragBounds(hostEl: HTMLElement, applied: CapsulePos): DragBounds | null
 
 /**
  * 八个分区各自的开合（顺序照 ZCode：Git 工具 / 目标 / 计划 / 进程 / 终端 / 工作流 / 子智能体 /
- * 智能体团队）。
+ * 共享任务）。
  *
- * 「子智能体」与「智能体团队」是两件事（对照 dsh：成员树归 subagent 导航，共享任务板只画
+ * 「子智能体」与「共享任务」是两件事（对照 dsh：成员树归 subagent 导航，共享任务板只画
  * 任务）：前者一行一个队友，后者一行一条任务。两区各按自己的数据有无决定画不画，
  * 不互相顶替，也不重复列同一批人。
  *
- * 默认：Git 工具 / 目标 / 进程展开；计划、终端、工作流、子智能体、智能体团队收起——照 ZCode
+ * 默认：Git 工具 / 目标 / 进程展开；计划、终端、工作流、子智能体、共享任务收起——照 ZCode
  * 「活动列表默认收起」，回看性的目录（计划）也收起。
  */
 type SectionId = 'git' | 'goal' | 'plan' | 'todo' | 'terminal' | 'workflow' | 'agent' | 'team'
@@ -826,7 +826,7 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
   }, [channel, usingShared])
 
   /**
-   * 任务板（只读）：状态面板「智能体团队」分区的数据源。
+   * 任务板（只读）：状态面板「共享任务」分区的数据源。
    *
    * 与名册分开取：名册说「谁在跑」，任务板说「哪些事、谁负责、可不可以开工」——两件事，
    * 两处数据，也各自决定画不画（对照 dsh：成员树归子智能体导航，共享任务只画任务）。
@@ -1124,7 +1124,7 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
     works.length > 0 ||
     scheduled.length > 0
   // 分区可见性（渲染顺序照 ZCode：Git 工具 / 目标 / 计划 / 进程 / 终端 / 工作流 / 子智能体 /
-  // 智能体团队）。两区各自按数据有无出现：没派子智能体就不画成员区，没任务就不画任务区
+  // 共享任务）。两区各自按数据有无出现：没派子智能体就不画成员区，没任务就不画任务区
   // （2026-11-08 需求：没用到就隐藏，等用到再展示）。
   const showGit = git !== null
   const showGoal = goal !== null
@@ -1754,7 +1754,7 @@ function FoldPreviewCard({
  * 服务当场回绝并给一句人话）。行尾仍留一颗停止钮（在跑的才有），各自 stopPropagation。
  *
  * 一条队友都没有时**整区不画**（判在 StatusPanel 那一层）：没有空态文案，也不留空表——
- * 2026-11-08 需求「没派就隐藏，等用到再展示」。与「智能体团队」区是两件事：这里说
+ * 2026-11-08 需求「没派就隐藏，等用到再展示」。与「共享任务」区是两件事：这里说
  * 「谁在跑」，那里说「哪些事、谁负责」。
  */
 function AgentSection({
@@ -1830,7 +1830,7 @@ function AgentSection({
 }
 
 /**
- * 任务状态 → 显示词（智能体团队分区那一行行尾的读数）。
+ * 任务状态 → 显示词（共享任务分区那一行行尾的读数）。
  *
  * pending 再分两档：依赖没做完的是「等依赖」，否则是「可开工」——这两件事对用户是
  * 完全不同的下一步（一个要等，一个可以派活）。
@@ -1842,7 +1842,7 @@ const TASK_STATE_LABEL: Readonly<Record<TeamBoardView['tasks'][number]['status']
 }
 
 /**
- * 智能体团队区（共享任务板，只读）。
+ * 共享任务区（任务板，只读）。
  *
  * 与「子智能体」区严格分工（对照 dsh：成员树归子智能体导航，共享任务只画任务）：
  * 这一区只说「有哪些事、谁负责、做到哪一步」，行里不掺队友的运行状态；没有任务时
