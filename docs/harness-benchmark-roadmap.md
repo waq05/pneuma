@@ -485,6 +485,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。
 | T20 持久终端 | ✅ 0.6.33 | 降级版五动作 `terminal` 工具（open/read/send/close/list）+ `TerminalTable`；无 PTY、无中途打断（披露）；**完整版已立项 T48（§7.8）** |
 | T27 检查更新 | ✅ 0.6.33 | 检查链路已备（0.6.18 起）+ `sourceUrl` 测试缝探针覆盖；`UPDATE_CHECK_URL` 后已指向 GitHub Releases；**不做自动安装**（用户只要检查），有新版给「立即更新」或打开发布页手动换包 |
 | T28 插件远程安装 | ✅ 0.6.33 | `plugin_manager` 加 `browse_remote`/`install_remote`；`packages/config-core/market.ts` 插件市场两函数（GitHub 目录/索引 JSON 两类源）；必须 https，risk=write 装前过审批；**npm 包形态已立项 T49（§7.8）** |
+| 智能体团队与子智能体分工（2026-11-08） | ✅ 0.9.0 | dsh 的分法：成员树与共享任务板是两件事（`client/ui-agent-team` 只画任务，成员归 subagent 导航）。dsc 落成状态面板两区——「子智能体」一行一个、按需隐藏；「智能体团队」只读任务板、没任务不画；标题旁那颗重复的入口撤掉。数据面同一批修：协作工具 `team_task` 不受角色白名单限制（`COLLAB_TOOL_NAMES`），板子归属按派它的会话（不再看「当前会话」），跨会话队友不列 |
 | T26 回滚 / 部分行接受 | ▶ 已立项（T51，2026-10-03 用户裁决） | 见下方评估结论与 §7.8 |
 
 **T26 评估结论（2026-10-02）**：完整回滚语义暂不立项。理由：(1) dsc 的 write/edit 已带回合前全文基线（0.6.24 的 fileChanges pre-image），但只覆盖第一方工具——bash/sed 改的文件只有 git 状态码差集没有 pre-image，「回滚到回合前」在混合改动场景语义残缺；(2) 「回滚保手改」（hermes writer-ledger 的核心价值）需要 per-hunk 三方合并（基线 × 当前 × 手改），个人版没有这层算力与数据模型基建；(3) 有 git 的工作区，用户撤模型改动走 git checkout/恢复面板已是顺路动作，专属回滚 UI 的频次撑不起维护成本；(4) 部分行接受（codex apply_patch 语义）把 diff 审查面板从只读改成双向数据流，动审批模型与转录契约，与 checkpoint/rewind 同族的全部风险都要背。**2026-10-03 用户裁决：立项（T51），走 hermes shadow git 方向（checkpoint writer-ledger），不做反向 patch；动工前先补 per-hunk 三方合并的设计轮。**

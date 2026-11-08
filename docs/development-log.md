@@ -14555,6 +14555,41 @@ dsh 的 persistent-pwsh 走 PTY：有真正的提示符事件、能跑全屏程�
 A/B 证据：同一份探针副本里人为把「切会话」压进读取窗口，旧预算下 `exit 1` 且报 `2 vs 3`（正是上一
 个工作区的读数），修完 `exit 0`。全量复跑 5 次 57/57（45.6–52.3 s）。
 
+## 2026-11-06 下午：会话标题在任务中途就不再是「第一句话」
+
+内置 `session-title` 只在首回合**正常结束**后起一次名，写 `autoTitle` 就定型
+（`src/packages/session-title/index.ts:57-78`）。长任务跑到一半方向已经变了，侧栏还停在
+用户第一句话上。这轮做了个外部插件补「过程」这一段：`examples/plugins/session-title-live.js`。
+
+### 做法
+
+- 跟踪回合：`dsc/turn-start` 记下会话路径，按 15 秒节拍巡检它的 `messages` 增长；
+- 有实质进展（至少一条助手消息，且比上次起名后消息数又涨了）才发一次小请求，单回合最多 8 次；
+- 请求材料 = 首条用户消息 + 最近 8 条进展摘要 + 当前标题（没变就要求原样返回），
+  输出照样清洗成 14 字内的中文标题；
+- 只写 `autoTitle`，且**用户改过名（`meta.title` 存在）的会话立刻收摊**、一个字节都不碰；
+- 新标题与旧的一样就不写盘、不刷新；失败静默，回合结束（含 `agent-status → idle` 兜底）就停。
+
+为什么不监听工具结果：内核对外的回合事件只有 `turn-start` / `turn-end` / `agent-status`，
+工具观察者（`ctx.guards.registerObserver`）的签名是 `(toolName, text)`，拿不到会话归属，
+多会话并行时会把标题写到别人头上。回合进行中唯一权威的进展读数就是会话自己的 `messages`
+（常驻 agent 的内存会话最新，收摊了的只读重放磁盘）。
+
+### 与内置插件的关系
+
+本插件在回合中间先写了 `autoTitle`，内置插件在 `turn-end` 时见到已有 `autoTitle` 就跳过
+（`src/packages/session-title/index.ts:76-78`），所以最终留下的是过程里最后一次按最新进展起的
+标题；本插件一次都没写成功时，内置的兜底照常工作。
+
+### 验证
+
+- `node scripts/session-title-live-test.mjs`：12 项全过（只有用户一句话不请求、有进展请求一次、
+  标题清洗、写 `autoTitle`、按会话取路由、列表刷新、同状态不重复请求、用户改名后不再请求且不
+  覆盖、回合结束收摊、停用后事件不再生效、监听已退订）。
+- `node --check examples/plugins/session-title-live.js` 通过；`plugin_manager install` 后清单里
+  出现「会话标题·动态」，`inject: ['session','llm']` 正常。
+
+
 ## 2026-11-06 晚：设置归并、插件停用、折叠档位与工具行
 
 这一批全是界面上的收口，来源是五条用户反馈。逐条记为什么这么做。
@@ -14711,6 +14746,52 @@ bash 展开看到的是 `{"command": "..."}` 一整坨。
 验证：`ui-collapse-prefs-test` 54 项（默认值、坏值回落、往返、回执、源码钉）、
 `ui-fold-combo-test` 112 项（四档 × 两种回复档 × 两种时机 16 格，逐格断言藏了哪些
 下标、哪轮默认展开）、尾部探针 33 项按集合口径重写、渲染探针 138 项（原 134，未放宽）。
+
+## 技能市场接两个公开注册中心：ClawHub 与 skills.sh（2026-11-07）
+
+技能市场原来只认两类源（GitHub 目录链接、索引 JSON，见 `market.ts:1-15`）。这次把两个
+公开注册中心接进来。它们都不是这两种形状，各自加了一条适配器。
+
+**ClawHub**（下载榜排在第一位）。榜单接口 `/api/v1/skills?sort=downloads&limit=100`
+一次给齐名字、描述、版本与下载/安装/星标读数，浏览阶段不必逐条再拉。安装走它自己的
+归档流程：先 `GET /api/v1/skills/<slug>/install?owner=<handle>&version=<v>` 换一个 zip
+下载地址，再把整包解开写进 `~/.dsc/skills/<slug>/`。实测 `self-improving-agent` 一包
+17 个文件（`SKILL.md` 加 `references/`、`scripts/`），所以不能只拉主文件——那样正文里
+引用的脚本与参考文档全是缺的。
+
+解 zip 没有引第三方依赖：Node 的 `zlib.inflateRawSync` 已经给了 deflate 那一层，剩下的
+只是读中央目录这层壳（`readZip`，约 40 行）。两条安全线：路径带 `..`、绝对路径、盘符
+一律当场报错；单文件超过 1.5 MB 不写。
+
+**skills.sh**（搜索驱动）。它**没有榜单接口**：`/api/skills` 是 404，`/api/v1/skills`
+要鉴权（401），只有 `/api/search?q=` 且 `q` 少于 2 字符返回 400。所以这个源做成
+**搜索驱动**：市场页切到它时，搜索框输入关键词才查；空查询直接报「它没有榜单接口」，
+不拿空结果冒充「这个源里没有技能」。搜索框停手 350 ms 才发请求，否则敲十个字就是
+十次网络请求。
+
+搜索结果只给「仓库 + 技能名」，安装时对仓库做一次递归 trees，取以 `<技能名>/SKILL.md`
+结尾的那条路径当技能目录。技能在仓库里的位置不固定（`skills/<名>`、`skills/misc/<名>`
+都见过），不能硬拼路径。
+
+**安装时的搜索词**：`installMarketSkill` 只带「源名 + 技能名」，搜索型源没有关键词就
+回查不到条目。做法是服务里记一份「每个源最近一次的搜索词」（`lastQuery`），安装复用
+它——用户点安装前必然刚浏览过。缓存键也跟着分两套：搜索型源按「源 + 关键词」各存一份，
+否则换个词查到的还是上一个词的结果。
+
+**默认源**：出厂清单改成四条（anthropics / dsh / ClawHub / skills.sh）。老用户的
+`settings.json` 里存的还是旧的两条，所以读档时加一条判定：清单**逐项等于旧默认值**
+才升级成新默认；用户自己删过、改过、补过的清单一律不动。
+
+**已安装列表按目录折叠**。全局技能来自四个目录，平铺一屏几十行，找某一组要一路滚。
+组头改成可点的开关（手型光标、`aria-expanded`、回车与空格也能切），收起后只留组头。
+
+**验证**：`pnpm run typecheck`（根）、`pnpm --dir desktop typecheck`、`pnpm run build`、
+`scripts/package-tests.mjs` 86/86 全绿。另写了 `scripts/_market-source-check.mjs` 做真
+链路自检：ClawHub 各项全过（99 条榜单、zip 解出 17 个文件、`SKILL.md` 带 frontmatter）；
+skills.sh 搜到 100 条、空查询按预期报错、条目定位到目录也正常。skills.sh 的**安装**那
+一步卡在 `raw.githubusercontent.com` 整个域名 502（连 anthropics 仓库的 README 都挂），
+属外部故障；它证明的是「取文件」那一跳失败，定位逻辑与新代码路径本身是通的。
+
 
 ## 2026-11-07：阶段组把思考收回来，「运行了代码」这一层才立得住
 
@@ -14883,14 +14964,634 @@ dsh 切组的三条规则（`conversation-nodes/process-groups.ts:147-165`）：
 - 新增 scripts/transcript-notice-replay-test.mjs 11 条：落盘字段、读回、锚点归位
   （问 → 重试 → 答案 → 失败原因）、老日志不产出空提示。
 - node scripts/check-ui.mjs 62/62；pnpm run typecheck 与 pnpm run build 干净。
-## 2026-11-08 上午：连着重试只留一行，重试提示不再摞成一摞
 
-用户拿一张图来：一次 429 连锁重试，会话里立着四行「已重试模型请求（1/5）…（4/5）」。
-口径改成：**同一次请求的连续重试，更新同一条行**，变的只有数据（第几次、等了多久、失败原因）。
+## 2026-11-07 傍晚：工具行与组头的文案、图标，与 dsh 逐条对表
 
-判据只看「上一条是不是重试行」——重试之间不会插进别的事件；真插了（流中断后先落半截回复、
-或者下一步请求又失败）那本来就是新的一段，另起一行才对。原地更新还顺手保住了条目的 id：
-行 key 不变，用户点开的那条不会因为下一次重试被重挂成收起。
+用户要求：先把 dsh 的工具调用文案和图标核对一遍，缺的补进 Numa。
 
-探针 scripts/transcript-notice-replay-test.mjs 加三问：三次重试只剩一行、留下来的那行是最新
-数据、中间隔了正文就另起一行。
+### 怎么核对的
+
+- **dsh 的组头词表**：`packages/client/ui-chat/src/client/locale.ts` 的 `message.stepProcess.*`
+  （运行中 / 准备中 / 已完成三套，加 joinTwo / comma / more 三个拼接词）。
+- **dsh 的组头图标**：`chat/ChatGroupSeat.tsx:38-54` 的 `PROCESS_ICONS`。
+- **dsh 的工具行词表**：`ui-conversation/src/client/locales.ts` 的 `tool.title.*`（64 条），
+  配上 `ui-tool/src/client/tool/models/tool-call-model.ts` 的 `TOOL_VARIANTS` / `TOOL_TITLE_KEYS`
+  ——那两张表才说明「哪个工具名用哪句话」。
+- **dsh 的工具行图标**：`ui-tool/.../toolviews/details-row.tsx:29-39` 的 `detailIcon`
+  （智能体族 / 定时 / 目标 / cordis / 终端 / 会话 / 作业 / 团队任务 / 工作流各有自己的图标），
+  加上几个专用 toolview（read / search / web / bash / todo / ask）。
+- **Numa 这一侧**：`ui-transcript/locale/ui.zh.json` 的 `transcript.group.*`、
+  `ui-transcript/ui/step-group-row.tsx` 的 `ACTIVITY_ICON`、
+  `ui-primitives/ui/tool-summary.ts` 的 `KNOWN_TOOLS` 与 `ui-primitives/locale/ui.zh.json`。
+
+### 核对结果
+
+- **组头文案**：十四类逐条比对，只有一处不同——「提问」的完成态 Numa 写「提出了问题」，
+  dsh 写「向用户提出了问题」。其余（读取 / 图片 / 搜索 / 写入 / 编辑 / 命令 / 代码 / 网页搜索 /
+  网页访问 / 子智能体 / 计划 / 工具 / 分析）一字不差，准备态也一致。
+- **组头图标**：dsh 一类一个图形，Numa 的 `ACTIVITY_ICON` 已经一类一条。两边图标库不是同一套
+  （dsh 有 Api / Browse / Checklist / Question / Users，Numa 只有 Terminal / Folder / Queue / Info / Tree），
+  取的是最近形，没有缺项。
+- **工具行文案**：dsh 有标题的工具名 48 个，Numa 当时登记 46 个名字，其中 7 处用词不同：
+  `job_output` / `job_list` / `job_kill`（作业→任务）、`todo_write`（更新计划→更新任务清单）、
+  `subagent`（子智能体→创建子智能体）、`web_search`（搜索网页→网页搜索）、
+  `lsp`（代码符号→查询代码符号）。另有 42 个 dsh 名字完全没登记，会退化成「工具调用 · <原名>」：
+  `apply_patch`、子智能体协作族（fork / list_agents / send_message / interrupt / list_models / wait）、
+  会话事件族（trace / event_read / event_search / event_trace）、终端动作族（open / read / list /
+  signal / close）、自动化任务六件、目标三件、团队任务四件、LSP 四个动作、cordis 四次检查、
+  `workflow` / `ralph`。
+- **工具行图标**：按 dsh 的 `detailIcon` 规则逐族对上（智能体→树、定时→钟、目标→靶、cordis→拼图、
+  终端→代码、会话→放大镜、团队任务→清单、工作流→分支）。
+
+### 改法
+
+- `ui-primitives/ui/tool-summary.ts`：`KNOWN_TOOLS` 补 42 条，图标按上表的族归；顺带补
+  `IconClock`、`IconBranch` 两个 import。
+- `ui-primitives/locale/ui.zh.json` / `ui.en.json`：补 42 个 `primitives.tool.*` 键（中英各一份），
+  并改掉上面那 7 处用词——词面照 dsh，不另造。
+- `ui-transcript/locale/ui.zh.json` / `ui.en.json`：「提出了问题」改成「向用户提出了问题」
+  （英文 `Asked a question` → `Asked questions`）。
+
+### 没动的两处（都不是漏）
+
+- **`context`（已注入上下文）**：dsh 有这个类别，因为它把上下文注入做成了一种过程节点；
+  Numa 的转录里没有这类条目（system 条目是独立节点，不进组），加一个没人喂的类别只是死代码。
+- **`browser`**：Numa 自有类别（dsh 没有），保留。
+
+### 验证
+
+- `ui-primitives/locale/ui.zh.json` 与 `ui.en.json` 各 160 键，无缺键、无多键。
+- 复核脚本：dsh 的 48 个工具名现在 Numa 全部有标题，共有名字的文案零差异（唯一剩下的是
+  dsh 的兜底项 `others`，它不是一个工具名）。
+- `pnpm run typecheck` 0 错；`node scripts/check-ui.mjs` 62/62。
+
+## 2026-11-07 晚：同一步里的那句前言降成过程行，不再「调一次工具接一段大字正文」
+
+用户报障（附 dsh 与 Numa 两张对照图）：dsh 完成一段操作后只露一次正文；Numa 每调一次工具
+就接一段大字正文，整轮像一串「组头 + 正文」的节拍器。
+
+### 根因
+
+分组规则两边其实一致（回复封组、思考与工具进组）。差别在**那句话落在哪个通道**：
+
+- dsh 的模型把「接下来要干什么」写进 reasoning 通道，屏幕上是组里一行「思考 · …」；
+- Numa 的模型写进正文通道，而正文按「阶段收尾」处理：既按正文的量级排版，又当场封组。
+  于是每步的工具各自成组，一组只有一条调用。
+
+查证：Numa 的会话日志里一步就是「30~90 字正文 + 一个工具」；dsh 那台 71 条 assistant 消息
+正文块 0 条，解说全在 reasoning 里。
+
+### 改法（判据只依赖数据，不猜）
+
+- **标记**（`contract/transcript.ts` 的 text 条目加 `process?: true` + `adapter/transcript.ts`
+  的 `tool/call` 分支）：工具调用真的发出来时，回头看列表尾；上一条正是刚定稿的正文，就补上
+  这个标记。只说话没动手的那一步不会被标——那种正文仍然是正文。
+- **直播提前降级**（`tool/prepare`）：模型开始吐工具名就把直播尾那段正文标成过程行，定稿时
+  不会出现「大字忽然缩成小字」的换挡。
+- **分组**（`process-groups.ts`）：带标记的正文和思考一样进组、不封组；不带标记的照旧封组。
+- **渲染**（`render.tsx`）：过程正文走 `.entry-note` —— 12px、tertiary 灰、markdown 的段距与
+  标题量级都压到过程行的档位。
+- **整轮折叠**（`round-fold.tsx`）：「全部回复」档留下的是**回复**，过程正文不算，收起整轮时
+  跟思考、工具一起藏。同一处口径还改了 `render.tsx` 的 `answer`（复制与评价只认真正的回答）。
+
+### 验证
+
+- `ui-step-group-live-test.mjs` 29 → 44 条：新增 `[6]` 行为断言（前言不封组、成员顺序、
+  真正文仍在组外、每条行恰好一次）与 `[7]` 源码钉（adapter 两处标记、分组、渲染、折叠、样式）。
+- `ui-process-grid-test.mjs` 51 条；`node scripts/check-ui.mjs` 62/62；`pnpm run typecheck` 0 错；
+  `pnpm run build` 与 `pnpm run build:ui` 干净。
+- 实拍（隔离 HOME + 真宿主 + 界面服务）：`desktop/shots/note-group-open.png`。同一轮里两段
+  「说一句再调工具」现在收在一个「执行了命令」组里，正文是 12px 的灰行（实测 computedStyle
+  12px / tertiary），最终回答保持原字号；组收起时这些行跟着藏。
+
+### 已知边界
+
+- 老会话重放同样生效（标记在 `tool/call` 时由「上一条是不是正文」推出，日志里没存标记也能算）。
+- 「一步两句话 + 工具」时两条会按原来的合并规则并成一条条目，标记打在合并后的那条上——
+  与真实发生的事一致（都是这一步的前言）。
+
+## 2026-11-07 晚（二）：PTC 的卡内调用——脚本里调过的工具收进 run_code 那一张卡
+
+用户要求：PTC 模式向 dsh 靠，但要看得出它和标准模式的差别。
+
+### 现状与缺口
+
+numa 早就有 `ptc` 模式与 `run_code`（`packages/ptc/index.ts`），但转录层没有父子关系：
+
+- 脚本里每次 `sdk.xxx()` 各发一条 `tool/call` / `tool/result`，callId 是 `ptc-<时间>-<序号>`，
+  和外面那次 `run_code` 没有任何关联字段；
+- `ToolCallView` 没有子调用字段；
+- 结果：一段脚本调 4 次工具，屏幕上是 5 条平铺的工具行；dsh 是一张「代码」卡里嵌 4 行；
+- 组头也只把 `run_code` 记成「代码」一次，脚本里的 read / grep / bash 全没算进摘要。
+
+### 改法
+
+- **父指针**（`core/tools.ts`）：`ToolContext` 加 `callId`；循环在 `runTool` 里填进去。
+  `packages/ptc/index.ts` 把 `runCtx.callId` 交给脚本，子调用的 `tool/call` 带上 `parentCallId`
+  （`core/events.ts` 加这个可选字段）。
+- **收进父卡**（`adapter/transcript.ts`）：带父指针的调用不 push 顶层条目，而是挂进父条目的
+  `subCalls`；`subCallIndex` 记住「父条目下标 + 数组位置」，结果回来改那一格。父卡找不到
+  （老日志、父还没落、父条目被换掉）就退回一条普通工具行——宁可平铺，也不吞调用。
+  中断收尾时卡里还在跑的子调用一并落成 `aborted`，不留永远转圈的嵌套行。
+- **组头按子调用分类**（`process-groups.ts`）：`callsOf` 把「卡自己 + 卡内子调用」摊平，
+  计数、失败数、实时类别与详情都走它。一段 read+grep+bash 的脚本，组头报
+  「已读取文件并搜索代码」这类聚合，而不是永远「运行了代码」。
+- **卡片内嵌行**（`rows/tool-row.tsx`）：卡里多一块「卡内调用」，每行是图标 + 名字 + 参数摘要 +
+  成败；行头加一句「N 次调用」。样式 `.sub-calls` 走 tool 档小字（11px），失败整行语义红。
+
+### 模式差异（用户要的那条）
+
+| | 标准模式 | PTC 模式 |
+|---|---|---|
+| 一步调几次工具 | 1 次 | 一段脚本 N 次 |
+| 卡的形态 | 组头 + 每条工具一行 | 组头 + 一张 run_code 卡，卡里嵌 N 行 |
+| 组头计数 | 按工具名分类 | run_code 记「代码」，子调用各按自己类别 |
+| 过程正文 | 小字灰行 | 同左 |
+
+### 验证
+
+- `ui-step-group-live-test.mjs` 55 → 62 条：新增 `[8]`（适配器真跑：子调用不进顶层、
+  父卡收两次、结果改父卡那一格、孤儿回落、组头计数含子调用、失败数、实时类别与详情取子调用）
+  与 `[7]` 的源码钉（事件字段、契约字段、PTC 父指针、渲染块、样式）。
+- `scripts/ptc-changes-test.mjs` 全过（PTC 真实链路没被父指针改动带坏）。
+- `node scripts/check-ui.mjs` 62/62；`pnpm run typecheck` 0 错；`pnpm run build` + `build:ui` 干净。
+
+### 没做到的
+
+实拍没成：用自己的假端点跑一轮 PTC，模型端反复收到「最后一跳」的判定失败，跑成了 100 多步
+的循环，没出可看的截图（截图与临时 HOME 都已删除）。卡内调用的数据与渲染目前由
+`[8]` 的行为断言 + 源码钉保证；等桌面上真跑一次 PTC，再补一张实拍。
+
+## 2026-11-07 深夜（三）：真机跑一次 PTC——「卡内调用」原来画在了兜底卡上
+
+上一节写的是「实拍没成」。这一节是补拍成功之后发现的问题：数据链路是对的，**画的地方是错的**。
+
+### 怎么拍的
+
+- 种子 `desktop/shots/_ptc-run-seed.mjs`：临时 HOME 只从真实 `~/.dsc` 复制三样**配置**
+  （`config.yaml` 端点、`credentials.yaml` key、`presets/` 用户模式文件），会话、审计、
+  缓存、插件清单一概不复制；`settings.json` 自己造，把「模式 = ptc」「权限 = 完全访问」定死
+  （`run_code` 的风险是 exec，只读档会弹审批卡把人停在半路）。
+- 拍照脚本 `desktop/shots/ptc-run-shots.ps1`：起 electron、提交一句「用一次 run_code 同时读
+  package.json / README.md / 数 ptc/index.ts 行数」、等这一轮定稿、把三层（整轮、过程组、
+  工具卡）按回打开态、滚到那张卡、冻住滚动、到点截图。
+- 真模型是用户自己配的 `opencode / deepseek-v4.1-flash`。
+
+### 三次失败与原因
+
+1. **连接超时（30 秒无响应）× 5**：`core/llm.ts` 的 `CONNECT_TIMEOUT_MS` 只管「建连 + 响应头」，
+   ptc 的系统提示比标准模式长得多，网关要等上游模型起完才吐响应头。脚本里把
+   `DSC_LLM_CONNECT_TIMEOUT_MS` 放到 180 秒。
+2. **HTTP 429 `[overloaded]`**：网关上游过载，默认 5 次重试、间隔 2 秒几乎必然连着失败。
+   脚本里把 `DSC_LLM_RETRY_ATTEMPTS` 给到 12。
+3. **预跑脚本自己崩**：`waitFor` 放行的是真值，写成 `() => runCard() !== null` 只会拿回
+   `true`，后面 `appeared.textContent.trim()` 就炸了。改成 `waitFor(runCard, …)`。
+
+### 真正的发现：对话页的卡不是 `rows/tool-row.tsx`
+
+实拍里卡上一直不出现「N 次调用」，而组头已经按子调用数出了 `read=3,code=1`——数据到了，
+只是没画。原因是渲染有两条路：
+
+- 对话页的卡是 **Factory 里的 `ToolCard`**（`ui-transcript/ui/tool-card/factory.tsx`，
+  `TOOLCARD_FACTORY` 由插件注册）；
+- `ui-transcript/ui/rows/tool-row.tsx` 是**没注册 Factory 时的兜底**（`BuiltinToolView` 的
+  `fallback`）。桌面装齐了插件，走的一直是前者。
+
+上一节把「卡内调用」只加在兜底上，所以探针眼里对、桌面上看不见。**这一类错误（改对了模块、
+改错了实现）只有真机实拍、或插件装配态下的渲染测试才抓得到。**
+
+### 改法
+
+- 抽出 `SubCallCount`（行头「N 次调用」）与 `SubCallList`（展开体里的嵌套行）两个组件，
+  放在 `tool-card/factory.tsx`，`ToolCard` 与兜底 `ToolRow` **共用同一份**——不许两处各画一遍，
+  否则「界面长什么样」会取决于这次是谁画的卡。
+- 嵌套行的字段做空串兜底（子调用视图是宿主交来的数据，缺字段不该让整页渲染崩掉）。
+
+### 验证
+
+- 新增两条源码钉（62 → **63**）：`工具卡：渲染卡内调用列表（对话页那张）`、
+  `工具卡：兜底那条用同一份标记与清单（两处不许各画一遍）`。
+- 实拍读数（DOM + 截图双份）：行头「3 次调用」；展开体「卡内调用」三行
+  「读取 D:\dsc\package.json / README.md / src/packages/ptc/index.ts」，11px 小字；
+  组头 `read=3,code=1`；截图 `desktop/shots/ptc-run.png`。
+- `pnpm run typecheck` 0 错；`node scripts/check-ui.mjs` 62/62；`pnpm run build` +
+  `build:ui` 干净；`node scripts/style-check.mjs` 1255 个文件通过。
+
+### 隔离有没有守住
+
+临时 HOME 跑前跑后都对真实 `~/.dsc` 做了「文件数 + 全量 SHA256」指纹比对。最后一次比对出现
+11 行差异，逐条核对后确认是**用户自己正在用的那个 numa 实例**写的（其中一个会话的首条消息是
+「你好」，不含本次实拍的提示词），不是这次实拍漏出去的。
+
+另外：临时 HOME 里有一份复制来的 `credentials.yaml`，脚本在 `finally` 里删掉它，跑完也把整个
+临时目录删了（`desktop/shots/ptc-run-home` 已不存在）。
+
+## 2026-11-07 深夜（四）：超时与重试从环境变量搬进 `config.yaml`
+
+上一节的实拍暴露了一件事：用户撞上「连接超时（30 秒无响应）× 5」时，手上**没有任何可改的地方**。
+三个数（建连时限、流空闲时限、重试次数）当时只能靠环境变量，而环境变量是给自己和自检用的，
+不是给用户改配置用的入口。
+
+### 改法
+
+`~/.dsc/config.yaml` 顶层新增 `llm:` 段：
+
+```yaml
+llm:
+  connectTimeoutMs: 180000   # 建连 + 响应头，1 秒 ~ 10 分钟
+  streamIdleMs: 300000       # 流空闲，5 秒 ~ 10 分钟
+  retryAttempts: 12          # 总尝试次数（含首试），1 ~ 20
+```
+
+优先级三层：**环境变量 → `config.yaml` → 内置默认**（30 s / 180 s / 6 次）。环境变量留在最前，
+是为了自检脚本能临时盖一次而不去动用户那份配置。写离谱的数会被夹进区间；0、负数、非数字
+一律当没写；读坏了（YAML 坏掉）当没有这一段，不让配置问题把对话发不出去。读盘按「文件 + mtime」
+缓存，改完下次请求就生效，不用重启宿主。
+
+顺手把两条时限的解析合到一处（`resolveTimeouts`）：以前建连与流空闲各写一条 `readTimeoutMs(...)`，
+加配置层时很容易只改一处——那种「改了配置没生效」的毛病最难查。
+
+### 为什么不做成「按模式」的旋钮
+
+用户最初的提法是「PTC 的连接超时/重试预算可配」。但 llm 层看不到当前是哪个模式（preset 在
+会话/提示层），把 preset 透传进协议客户端是反向依赖。而且这事的本质是**端点的脾气**：
+opencode 那个网关要等上游模型起完才吐响应头，PTC 只是「最容易把提示词撑大」的那条路。
+端点是用户自己配的，旋钮也跟着端点走比较顺。真需要按模式区分时，再在 `llm:` 段下开一个
+`presets:` 子表不迟——那时才值得把模式透下来。
+
+### 验证
+
+- 新增 `scripts/llm-tuning-test.mjs`（24 条，自动进 `check:core`）：没写段 / 写了 / 写得离谱 /
+  0 与负数 / 改完立刻生效（缓存按 mtime 失效）/ 环境变量优先 / YAML 写坏不抛 / **真 wire**——
+  桩一个永不回应的端点，配 `connectTimeoutMs: 1200`，断到「连接超时（1 秒无响应）」而不是 30 秒。
+- `scripts/llm-timeout-test.mjs`（原有 20 余条，环境变量那条路）仍全过。
+- 实拍脚本改成**只靠 `config.yaml`** 的 llm 段跑（`desktop/shots/_ptc-run-seed.mjs` 把三个数写进
+  隔离配置），跑一轮验证真机也吃这条配置。
+- `pnpm run typecheck` 0 错；`pnpm run build` 干净。
+
+### 没做的
+
+设置界面还没有这三项（现在要手改 `config.yaml`，文件头注释里给了示例）。要放到「模型」分区，
+得过 `config-store` 的读写、`native-bridge` 的通道、契约与中英文案四道，单独一批更稳。
+
+## 市场页 30 秒超时：补描述不该拖住整次浏览（2026-11-07）
+
+现象：技能页切到「市场」，主区一直「正在获取市场清单…」，右下角报「获取失败：调用宿主
+方法超时（30000 毫秒）」，重试也一样。
+
+根因不在这次新加的 ClawHub / skills.sh，而在 GitHub 源原来的做法：`browseGitHub` 拉完
+目录树后，为了给每条技能配一句描述，会**逐个拉 SKILL.md 解析 frontmatter**。这一跳走
+`raw.githubusercontent.com`，不受 GitHub API 的可用性保护。当天 raw 整个域名故障，Node
+侧的表现是**挂起不返回**（不是快速 502），每个请求等满 15 秒；19 个目录按 6 路并发跑 4
+批，整次浏览 61 秒，而界面 invoke 只等 30 秒。
+
+修法（`market.ts`）：
+
+- 补描述独立成一个阶段，带**总预算 6 秒**（`ENRICH_BUDGET_MS`）。到点就保留占位描述
+  返回，剩下的正文留给安装时本地解析——描述只用于展示，不该决定「市场能不能打开」。
+- 单请求超时从 15 秒压到 4 秒（`ENRICH_TIMEOUT_MS`），并且用「预算剩余时间」当这一跳的
+  超时，保证最坏情况卡在 6 秒内收口。
+
+界面侧（`ui.tsx`）：失败时 `market` 仍是 `null`，只看它分不清「还没开始」和「已经失败」，
+于是 30 秒超时后主区一片空白、用户只看到一闪而过的 Toast。现在单独记 `marketError`，
+失败常驻显示原因与重试按钮。
+
+实测（`scripts/_market-speed-check.mjs`，绕过缓存）：
+
+| 源 | 修复前 | 修复后 |
+| --- | --- | --- |
+| anthropics | 61 秒（界面超时） | 6.9 秒 |
+| ClawHub | — | 2.3 秒 |
+| skills.sh | — | 2.2 秒 |
+| dsh | 15 秒超时 | 15 秒超时（未修） |
+
+**还没修**：`dsh` 源指向 `deepseek-harness` 这个大仓库，`git/trees?recursive=1` 15 秒拉不
+完目录树。它的问题是目录树本身太大，不是 raw。要修得把浏览改成用 contents API 只列目标
+目录一层、安装时再补全文件清单——改动比这次大，留作下一批。
+
+## 2026-11-08 凌晨：后台提醒补齐四种结局——失败、超长、提问、审批都能在通知栏看见
+
+现象：窗口不在前台时，一轮跑完只有一条「任务完成」。跑挂了也弹它，正文还取最后一条回复，
+看着像正常结束；模型挂着提问卡或审批卡等人，通知栏一声不响，用户切回来才发现它在等。
+
+改法：把「这一轮怎么结束的」判定抽成纯函数（`src/packages/ui-transcript/ui/turn-notify.ts:102`），
+按条目流里已经落好的标记选文案：
+
+| 这一轮的结局 | 从哪判 | 通知标题 |
+| --- | --- | --- |
+| 正常跑完 | 没有轮尾标记 | 任务完成 |
+| 跑挂了 | `turn-end` 条目 `reason = 'error'`（adapter 只在这种时候落它，见 `src/adapter/transcript.ts:842-864`） | 任务失败 |
+| 输出撞长度上限 | `turn-max-tokens` 条目（`src/adapter/transcript.ts:618-622`） | 输出达到长度上限 |
+| 用户自己按了停止 | `turn-end` 条目 `reason = 'aborted'` | 不提示 |
+
+失败那条的正文取这一轮最后一条 `level: 'error'` 的 system 条目，去掉「错误：」前缀；完成与超长
+取最后一条不带 `process` 标记的正文（调工具前的前言不算收尾）。正文一律压空白、截 120 字
+（`NOTICE_BODY_LIMIT`）。
+
+等人的三张卡另外走一条路（`ui.tsx:224-251`）：审批 → 计划评审 → 模型提问，从快照
+`surfaces.pendingApproval / pendingPlan / pendingQuestion` 读，卡从无到有且窗口不在前台时弹一条
+（「等你确认 / 等你审计划 / 等你回答」），同一张卡只弹一次，切会话清空记忆。前台不弹——卡
+本来就画在输入框上方。
+
+提示音跟通知同一套判定：完成、失败、超长、提问、审批、计划都响，中断不响。开关是设置里的
+「任务提醒音」，关掉就一声不出。
+
+设置页补回三行（`src/packages/ui-settings/ui/ui.tsx:1126-1180`）：这是 0.6.40 文档里写过的
+「任务完成提醒」组，新界面壳一直没搬，偏好字段和读档逻辑都在、就是没有控件。这次补上
+「任务提醒音 / 音色 / 后台系统通知」三行，音色直接取发声表的 14 个名字，选中即试听。
+
+手机推送（`src/packages/remote/index.ts:782-805`）同一个口径：`dsc/turn-end` 的 reason 接进来，
+失败单独一条「Pneuma 任务失败」+ 失败原文，且不受 15 秒门槛限制（短轮跑挂才最该知道）；中断不推。
+
+验证：
+
+- 新增 `scripts/ui-turn-notify-test.mjs`（36 条，已自动进 `check:ui`）：完成 / 失败 / 中断 /
+  超长 / 三张卡 / 空正文 / 截断 / 前缀剥离，全绿。
+- `node scripts/check-ui.mjs` 63/63 全绿；`node scripts/ui-locale-test.mjs` 2912 键通过；
+  `node scripts/style-check.mjs` 1259 文件通过。
+- `pnpm run typecheck`、`pnpm --dir ui-shell run typecheck`、`pnpm --dir desktop run typecheck`
+  三端 0 错；`pnpm run build` 干净。
+- 设置页实拍：`desktop/shots/notify-rows.png`（三行版式与现有行一致）、`notify-rows2.png`
+  （关开关 / 选「柔木琴」都落盘）。
+
+没做的：
+
+- 桌面通知与手机推送的真实弹出没有端到端重跑（要原生桥 + 窗口失焦；改动只到接线层，
+  纯函数与文案由探针兜住）。
+- 快照只暴露当前查看会话的等人卡（`src/packages/ask/index.ts:128-134`），所以切到别的会话之后，
+  原来那条会话在后台提问不会弹通知。要覆盖得先改 surfaces 的投影口径。
+- 设置页截图脚本依赖的 `?settings=` URL 钩子已经不在新壳里了（`sound-notify.ps1` 的实例 B
+  截到聊天页），这次用桌面自检环境变量手动点进设置页截的。
+
+## 2026-11-08 凌晨（二）：双击要等七秒——终端探测有两个在启动路径上
+
+用户报「双击快捷方式启动特别慢」，跑的是打包版。实测同一台机器冷启动到真界面文档加载完成
+要 7.2 秒。按阶段切开，问题全在宿主那一侧：
+
+| 时刻 | 事件 |
+| --- | --- |
+| +0.18s | Electron 主进程跑起来（签名、杀软不是瓶颈） |
+| +0.63s | 过渡页画出、窗口可见 |
+| +4.62s | 宿主才报出界面地址 |
+| +6.46s | 窗口开始加载真界面（中间 1.85 秒在等宿主） |
+| +7.23s | 真界面文档加载完成 |
+
+V8 CPU profile 把宿主那 4.4 秒拆开：`spawnSync` 占 3.36 秒、`session-search` 读索引 0.38 秒、
+界面插件登记 0.75 秒。而 `spawnSync` 只来自一处——终端探测，并且**跑了两遍**：
+
+1. `tools-default` 挂载时注册常驻 shell 工具，参数里有 `shellLabel(readShellChoice())`。
+   用户选了 `pwsh`，`shellLabel` 就走 `detectShells()` 真探一遍（1.73 秒）。这是 11-06
+   那次「持久 shell」（`5ab06c1`）引进来的。
+2. 挂载后 50ms 的预热 `detectShells(true)`：`force` 绕过缓存，再探一遍（1.61 秒）。它落在
+   「宿主刚报出界面地址、桌面正在换票」那一刻，把界面文档硬推后 1.85 秒。
+
+探测本身是七条同步外部命令（`where`、`$PSVersionTable`、`bash --version`、`wsl --status`…），
+这台机器上 1.6 秒，`wsl --status` 冷启动能到 5.7 秒；而结果只缓存在内存里 5 分钟——宿主每次
+启动都是新进程，等于每次开机都重付一遍。
+
+改法（用户批准的 A + A+）：
+
+- `shellLabel` 改成**只读缓存**：缓存里有真版本号就用，没有就给静态名字（`pwsh` → `PowerShell 7`）。
+  它挂在工具描述与提示词环境快照这两条路径上，不能为一句文案起七个进程。
+- 探测结果**落盘**到 `<DSC_HOME>/cache/shells.json`（7 天；内存那份仍是 5 分钟，两层语义不同）。
+  读回来时对可执行文件做一次 `existsSync` 复核，卸载了的当场标成不可用，不让命令指向空气。
+- 预热只在**没有缓存**时排，延迟从 50ms 改成 12 秒，且不再 `force`；「重新检测」按钮仍走
+  `detectShells(true)`，跳过两层缓存并刷新落盘。
+
+验证：
+
+- `node scripts/terminal-env-test.mjs` 59 条全绿（原 47 条，新增 12 条覆盖落盘读写、版本不符、
+  过期、形状坏掉、已卸载复核）；`terminal-env-settings-test.mjs` 25 条全绿。
+- 三端 `typecheck` 0 错，`pnpm run build` 干净。
+- 宿主单跑：`hello` 3.84s → 1.88s，报界面地址 4.58s → 2.67s，首个快照 6.21s → 2.67s；
+  CPU profile 里 `spawnSync` 3.36s → 40ms。
+- 打包版端到端（清掉落盘缓存再启动）：真界面 7.23s → 3.35s，整机 3.56s；宿主报地址到窗口
+  开始加载只隔 46ms（原来 1.85 秒）。
+
+边界（写清楚，免得下次当成坏了）：
+
+- 刚装完或刚清过缓存的那一次启动，界面出来约 5 秒后仍有一次 1.6 秒的同步探测（界面预取设置
+  分区时触发）。那时界面已经画出来了，之后每次启动都读缓存、不再探。
+- 缓存说「没有」的 shell 七天内不重探；装好之后点设置页的「重新检测」强刷。
+- `session-search` 的索引加载（0.38 秒）还在挂载路径上，这次没动——它属于方案 B 的范围。
+
+
+
+
+## 2026-11-08 上午：组头下面那片白是空盒子叠出来的；后台作业通知换成唤醒卡
+
+用户贴了两张红框截图：组头「执行了命令，修改了文件，已读取文件等」与下面那条灰字
+「后台作业 job-1 完成了」之间空出一大块，并问「这个后台作业是什么，dsh 怎么处理，
+我感觉不需要显示」。定为两件事：先把间距查清，再照 dsh 把它画成卡。
+
+### 一、那片白不是行高松，是十个空盒子
+
+不靠肉眼估。把用户真实会话 `4d864aac` 的第 4 轮（轮尾写着「用时 12分54秒」）拷一份到
+临时 HOME，用桌面产物打开、从调试端口逐个量盒子：
+
+| 位置 | 是什么 | 高度 |
+| --- | --- | --- |
+| 408–436 | 组头「执行了命令，修改了文件，已读取文件等」 | 28 |
+| 439 / 442 / … / 463 | 十个空 `.entry-row` | 各 0 |
+| 466 | 「后台作业 job-1 完成了」 | 24 |
+
+十个 0 高的盒子，各吃过程区 `gap: 3px` 一个缝，正好 27px；加上本该有的 3px，就是用户看到
+的那段白。空盒子的来路：宿主每改一个文件就往会话里记一条 `changes` 或 `turnDiff`
+（`src/adapter/transcript.ts:763`、`:789`），界面按设计**不画**它们（改动由轮尾那张
+「已编辑 N 个文件」卡汇总，`render.tsx:380-383` 直接 `return null`），但座位（`seatRow`）
+照样给它建了一个盒子。于是「改的文件越多，组头下面越空」——这条报障只在改过文件的轮里出现，
+原因就在这里。
+
+改法：判据提到渲染之前。新增纯函数 `row-shows.ts` 的 `rowShows(entry)`，口径四条
+（`changes` / `turnDiff` 永不上屏；正常收尾的 `turn-end` 安静；空白正文不占位；其余照旧），
+`render.tsx` 两处消费它——建座位时返回 `null`，分段循环里直接 `continue`（不上屏的行
+还会把一段过程区劈成两段，凭空多两个段间缝）。
+不用 CSS 的 `display: none` 兜：那仍然是一次挂载与一次布局，而这些条目本来就没有可读正文，
+`hidden="until-found"` 那套「Ctrl+F 能命中」的语义对它们没有意义。
+
+### 二、dsh 画的是卡，不是灰行
+
+先读参考实现再动手（用户要求「别看错了」）。`D:\dsh\resources\app.asar` 里
+`TurnTriggerNodeView` 的形状：
+
+- 一张 `<section>`：0.5px 描边、圆角、代码块底色，悬停提一档底色；
+- 头行是按钮：图标 14px + 标题 + 时刻（靠右）+ 箭头（展开时转 180°），`padding: 12px 16px`；
+- **默认收起**，展开后 `padding: 0 16px 12px 40px`（正文与标题左缘对齐）：先一句
+  `message.trigger.explanation`「这条通知触发了本轮回复。」，再摊模型收到的原文
+  （`<pre>`，12px，`max-height: 240px` 可滚）；
+- 标题按来源分档（`tool-jobs` → 「后台任务状态更新」，队友 / 目标 / 定时 / 插件各有各的），
+  图标同样分档（作业用队列图标）。
+
+照它落地，尺寸收一档（对话页过程区一律 12px，不在一堆小字里突然冒出一行 14px）：
+
+- `ui/plugins/transcript/rows/trigger-row.tsx`：卡片组件，默认收起，`aria-expanded` + `aria-controls`，
+  展开才渲染原文；
+- 标题仍用 `rounds.ts` 的 `internalLabel`（「后台作业 job-1 完成了」「队友 sub-a 汇报了运行结果」）。
+  dsh 的标题是类别词，我们这句更具体，信息量只多不少，就不再套一层类别；
+- 图标按 `triggerKind` 分四档：`后台作业 ` → 队列、`<teammate-report` → 智能体树、`（目标自动续跑：` → 火花、
+  其余 → 信息。认法只能靠正文，与 `internalLabel` 同一套判据（界面拿不到「谁发的」这个字段）；
+- 样式写在 `styles.css` 末尾（`.trigger-card`），描边用 `--dsc-stroke-2`——`stroke-1` 掺了品牌蓝，
+  浅色主题下一张灰卡片会泛淡蓝边，像被选中；
+- 旧的 `.entry-system[data-internal='1']` 灰行选择器删掉（留着会让人以为还有一条在别处生效），
+  `data-internal="1"` 属性挪到卡上，探针照旧认它。
+
+### 三、验证
+
+- `node scripts/ui-transcript-render-test.mjs` 149/149（新增 ⑨ 四条：不上屏的条目不出座位、
+  正常收尾的 `turn-end` 安静、空白正文不占位、`render.tsx` 两处都判 `rowShows`；
+  ③ 换成断言唤醒卡：`data-internal="1"`、标题走 `internalLabel`、默认收起、`<pre>` 原文）；
+- `node scripts/check-ui.mjs` 63/63；`node scripts/style-check.mjs` 1261 文件通过；
+  `pnpm run typecheck` 0 错；
+- 端到端（`desktop/shots/_verify-notice-row.mjs`，重放一条 `origin: 'notice'` 的日志）六条口径全过：
+  卡只有一张、`data-trigger="job"`、标题「后台作业 job-3 完成了」、默认 `aria-expanded=false`、
+  点一下变 `true` 且正文是通知原文、卡上没有编辑按钮、与上一行间距 `3px`；
+- 实拍：`desktop/shots/_verify-notice-row.png`（展开态）、`_gap-after.png`（报障那一轮，
+  组头 → 卡 → 组头各 3px）。
+
+### 四、边界与没做的
+
+- `pnpm run build:ui` 的三段里第一段（`ui-shell` 的 `tsc --noEmit`）当前被**另一条在途改动**挡着：
+  `src/packages/ui-status/ui/ui.tsx:106` 引了 `@dsc/ui` 还没转出的 `TeamBoardView`。这次用
+  `pnpm --dir ui-shell exec vite build` + `node ui-shell/build-plugins.mjs` 单独出产物验证，
+  等那条改动落定后 `pnpm run build:ui` 应恢复全绿。
+- 只在浅色主题与标准密度下看过实拍；深色主题靠同一批 token，没单独截图。
+- 卡里的原文按 `<pre>` 原样排（保留换行），超长正文限高 240px 靠滚动——不做 markdown 渲染，
+  理由与 dsh 的 `ModelFacingContent` 一致：读者要核对的是「模型到底收到了什么」。
+
+## 2026-11-08 智能体团队与子智能体：分成两区、按会话隔离、没用到就不画
+
+四条需求是一起提的，起因是同一份队友名册在界面上挂了两处名字：标题旁一颗「智能体团队 1」，
+状态面板里一个「智能体 / 共 1 位 / explorer-35」。真正的团队协作工具 `team_task` 反而没有
+界面；而且队友自己回了一句「本次会话给我的可用工具只有 read、glob、grep」，领不到任务。
+
+### 先对齐 dsh，再定 dsc 的落点
+
+dsh 把这两件事拆得很干脆（源码在 `D:\deepseek-harness\deepseek-harness\packages`）：
+
+- **成员树归 subagent 导航，任务板只画任务**（`client/ui-agent-team/README.zh.md:12`：
+  「Web UI 仅展示任务。普通 subagent 导航负责成员列表」）；
+- **Team 模式是根 Session 的一档持久选择**（`team/agent-team/README.zh.md:28,122`），
+  子会话不显示任务板与开关；工具按调用方的根会话判定（`team/tool-agent-team/src/index.ts:102-116`
+  的 `when: ({ agent }) => enabled(agent)`）；
+- **空目录且没任务就隐藏入口**（`client/ui-subagent/README.zh.md:28,32`）；
+- **团队工具与角色工具白名单正交**：工具由独立插件注册，可用性只看会话模式——这正是 dsc
+  缺的那一条。
+
+用户拍板：入口**统一到状态面板**，里面分两区、不重复；任务板界面**只读**；开关沿用设置里
+那颗「任务板」。于是标题旁那颗按钮与名册模态撤掉，「智能体团队」这个名字留给任务板那一区。
+
+### 根因与改法
+
+- **队友领不到任务**：`toolsFor`（`src/packages/subagent/index.ts:406-419`）按角色工牌白名单
+  筛工具，`explorer.md` 写的是 `tools: read, glob, grep`，`team_task` 被一起筛掉。改法是把
+  协作工具列进 `COLLAB_TOOL_NAMES` 豁免表：白名单表达「能改哪些文件」，任务板是一次协作登记
+  （risk 为 read），不该被文件权限牵连。
+- **板子归属串台**：`runTeamTask` 原先用 `ctx.session.current().meta.id` 决定读写哪块板。
+  后台队友跑着、用户切到别的会话时，「当前会话」已经不是派它的那一条了。改成
+  `runCtx.caller?.sessionId ?? runCtx.sessionId`：队友转发时由 `toolsFor` 塞它派出去的会话，
+  主会话自己的调用回落这次工具调用的会话。
+- **嵌套派活同一条口径**：`runSubagent` 的父会话从 `ctx.session.current()` 改成调用方传进来的
+  `parent`（队友传自己的会话），名册过滤、fork 种子与汇报归属都跟着它走。
+- **界面分两区**：`ui-team` 撤掉标题旁按钮与名册模态（`TeamEntry` 只剩名册轮询与只读层宿主，
+  发话 / 停止 / 移除搬进运行记录页头部的 `ReaderActions`）；`ui-status` 新增「智能体团队」
+  任务板分区（只读 `listTeamBoard`），原「智能体」区改名「子智能体」且一条队友都没有时整区不画。
+- **只读通道**：`listTeamBoard` 从 `contract/snapshot.ts` 的协议面 → `core/host-methods.ts` 与
+  `core/ui-methods.ts` 两份白名单（含实参规格）→ `packages/runtime/index.ts` 实现 →
+  `TeamService.board(sessionId)`。面板不给认领 / 结项按钮，改任务仍旧只走模型的 `team_task`。
+
+### 验证
+
+- `pnpm run typecheck` 0 错；`pnpm -C ui-shell typecheck` 0 错；`pnpm run build` 与
+  `pnpm run build:ui` 通过；
+- `node --test src/packages/subagent/tests/subagent.test.mjs` 10/10（新增协作工具豁免表一条）；
+- `pnpm run check:ui` 63/63。同步更新了两条钉旧结构的探针：`ui-status-panel-test.mjs`
+  改钉「两区分开画、各自隐藏、teamPanel 服务已撤」；`ui-interaction-base-test.mjs` 改钉
+  「标题旁只剩模式钮、名册模态已撤、动作在运行记录页」。
+
+### 没做的与边界
+
+- 任务板界面只读（对齐 dsh：面板不提供修改控件）；要在界面上认领 / 结项，得再开一条写类
+  界面通道并做归属校验，本轮不做。
+- 「其它会话的队友」彻底不出现：切回派出它的那个会话才能管（轮询按 `sessionId` 过滤，列表
+  不再有折叠组）。
+- 队友名序号仍跨会话累计（`explorer-35` 这种），本轮没动——它只是名字，不影响可见性与归属。
+
+## 2026-11-08 上午（二）：直播行恢复「用时」——组头与状态行并存
+
+用户拿 dsh 的截图对回来：红框里是**两行**——上面「准备运行代码」（跑动中的阶段组头），
+下面「深度求索中，用时 1小时22分30秒 ···」。dsc 这边只剩上一行，下面那行 2026-10-30
+被压成了「一句灰字、用时挪到底部状态栏」（见本文件 547 行那条裁决）。这次按用户要求推翻：
+**流末尾那一行恢复成带时长的尾巴，形态对齐 dsh 的 `RunningStatus`**。
+
+### 改了什么
+
+- `src/packages/ui-transcript/ui/rows/foot.tsx`：`TurnStatusLine` 从 `{ text }` 扩成
+  `{ text, startedAt, hint }`。时钟关在组件里（`LIVE_CLOCK_INTERVAL_MS = 1000`），**只有这一行**
+  每秒重排，消息流本身不跟着动；起点拿不到（2026-09 前的老会话没有 `ts`）就只报状态、不报时间。
+  整句挂 `data-shimmer`，扫光复用现成那套（`::after` 复制 `attr(data-shimmer)`）。
+- `src/packages/ui-transcript/ui/ui.tsx`：拆掉「过程区画着未收口组头就不画这条」的禁令
+  （旧条件是 `!stepGrouping.groups.some((g) => !g.closed)`）。行面文案改成通用句
+  `transcript.status.working` = 「Numa 工作中」；等确认 / 等审批时仍说具体话（「等待你的确认」），
+  那会儿说「工作中」是撒谎。当前在调什么收进这一行的悬停提示，不在行面重复组头。
+- `src/packages/ui-transcript/ui/activity.ts`：删掉 `LiveActivity.covered`——它原本只服务那条禁令，
+  禁令拆了就没有消费方，留着会误导下一个人。`liveActivity` 仍然负责「此刻在干什么」那句话。
+- `src/packages/ui-renderer/ui/styles/legacy/views.css`：`.turn-status` 加顶部 0.5px 分隔线
+  （`--dsc-stroke-3`，对齐 dsh 的 `.runningDivider`）、改成 `align-self: stretch` 让线横贯正文列、
+  与上方内容的间距收窄到 12px（父级 gap 16px，这里扣掉差额）、整行提到品牌色；
+  `.turn-status-stage` 加进扫光选择器组与 `prefers-reduced-motion` 的降级列表。
+- 文案：`ui-transcript/locale/ui.zh.json` / `ui.en.json` 新增
+  `transcript.status.working`、`transcript.status.withDuration`。
+
+### 三个坑
+
+- **0.5px 不是 0.5px**：Chromium 按 DPI 缩放，125% 缩放下 computed 是 `0.666667px`。探针里
+  写死 `0.5px` 会假红，判据要写成「小于 1px 的实线」。
+- **它不是 `.chat-inner` 的 lastElementChild**：后面还跟着跟随组件的末尾锚点 `<div>`。
+  「贴没贴在流末尾」要按「它后面还有没有 `.turn-seat` / `.entry-row`」判。
+- **用时现在只有一份**：底部状态栏那截每秒跳的「用时」已撤（同日中午，见下一条），
+  时间只在直播行上报。同期把快照里的 `status.turnStartedAt` 一并删了——它当初就是为
+  「状态栏自己算用时」生的，现在没有消费方。
+
+### 验证
+
+- `pnpm run typecheck`、`pnpm --dir desktop typecheck`、`pnpm run build`、`pnpm run check:style` 全绿；
+- `node --import ./scripts/_i18n-alias.mjs scripts/ui-turn-status-test.mjs` 全绿（改了三条旧断言：
+  原来钉「foot.tsx 里没有 setInterval」「签名只有 text」「有组头就藏」，现在反过来钉）；
+- 新真机探针 `desktop/shots/_verify-live-row.mjs` PASS：真宿主 + 真壳 + 假端点，逐条量到
+  「用时 1→4 秒真的在跳」「扫光动画是 `dsc-think-shimmer`」「顶上有细线」「在输入框上方、后面没有正文」。
+  截图 `desktop/shots/live-row.png`，另用 `step-shots.ps1 -Only step-live` 拍了两行并存的现场
+  （组头「已读取文件」+ 直播行「Numa 工作中，用时 48秒」）。
+
+## 2026-11-08 中午：底部状态栏对齐 dsh——本轮用时只留在直播行
+
+用户贴了 dsh 底栏的截图（`⟳ 6 轮 184 步 · 106 tok/s`｜`33.6M tok · 缓存命中 99%`｜`29%`，
+悬浮卡四行：模型用时 / 工具调用用时 / 首 token 平均 / 输出速度），要求「底部做成这种」。
+dsc 的底栏跟它差的就一处：跑动中多一截每秒跳的「用时」。
+
+### 改了什么
+
+- `src/packages/ui-statusbar/ui/ui.tsx`：`TurnSegment` 去掉 `startedAt`、`useState/useEffect`
+  那一套每秒时钟、主文案里那截「用时」，以及悬浮卡的「本轮用时（进行中）」一行。卡片只留
+  dsh 那四行。分段出现条件回到「步数 > 0」——原来那条「第一轮 steps 还是 0 也要画」的例外，
+  唯一理由就是当时要报用时，现在没有理由了。
+- 同一份删掉 `readTurnStartedAt` 与两条再也没人用的文案键（`statusbar.turn.elapsed`、
+  `statusbar.card.elapsedRunning`）：`node scripts/ui-locale-test.mjs` 会把「没人用的键」判红。
+- 协议层一并收口：`src/contract/runtime.ts` 的 `status.turnStartedAt` 与宿主
+  `src/packages/transcript/index.ts` 的 `turnStartOf()` / 快照填充一起删掉——这个字段当初是
+  为「状态栏自己算用时」生的（状态栏是独立插件，读不到消息流），直播行改用消息流条目的 `ts`
+  之后它没有消费方了。留着一个没人读的协议字段，下一个人会以为它还在生效。
+
+### 为什么不是「两处都留」
+
+同一个数在同一秒里跳两次，用户第一眼会以为是两个不同的计时。dsh 的口径是：**底栏报「这一路
+攒下来的账」（轮/步、token、上下文、模型与工具总耗时），消息流末尾那行报「现在跑到哪了」**。
+两者分工清楚，所以用时只留后者。
+
+### 验证
+
+- `pnpm run typecheck`、`pnpm --dir desktop typecheck`、`pnpm run build`、`pnpm -C ui-shell build` 全绿；
+- `pnpm run check:ui` 63/63 通过（`ui-turn-status-test.mjs` 第 4 节整段改写：从「状态栏要报用时」
+  翻成「状态栏不许报用时、卡片四行还在、契约字段已删」）；
+- 真机截图两张：`desktop/shots/step-live.png`（跑动中：组头「正在分析请求」+ 直播行
+  「Numa 工作中，用时 48秒」，底栏只剩 `2 轮 45 步 · 9.7 tok/s`｜`4.8K tok`｜`0%`）、
+  `desktop/shots/live-row.png`（浅色，第一轮进行中，底栏整段不画——步数还是 0）。

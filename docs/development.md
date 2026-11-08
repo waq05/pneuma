@@ -68,7 +68,7 @@
 | `desktop/electron/` | 7 个文件 ≈2945 行 | main + preload：窗口、托盘、运行时子进程、终端与浏览器 dock |
 | `ui-shell/` | 157 个文件 ≈60812 行（ts 79 / tsx 69 / css 6 / mjs 3） | 桌面与手机共用的界面壳（插件化：布局 + 基元 + 官方界面插件；产物落 `lib/ui/assets`）。**这是唯一的界面**——旧渲染层 21,035 行已于 2026-10-28 整体删除 |
 | `desktop/shots/` | 70 个 `.mjs` ≈11741 行（整个目录受跟踪 163 个文件） | 桌面端实拍与自检脚本（都在临时 HOME 上跑）。根 `shots/` 已不存在；`.gitignore` 先忽略整个目录，再用 13–18 行的反选规则把 `.ps1` / `.mjs` / `.py` / `.sh` / `.md` / `.json` 放回版本库——**脚本进库，只有截图产物被忽略** |
-| `examples/plugins/` | 5 个示例 | 手写插件的参照（上手路径见 [plugin-development.md](plugin-development.md) §0） |
+| `examples/plugins/` | 6 个示例 | 手写插件的参照（上手路径见 [plugin-development.md](plugin-development.md) §0） |
 
 ## 3. 三条启动链路
 
@@ -144,7 +144,7 @@ export const myPlugin: Plugin.Object = {
 
 | 插件 | 默认 | 设置分区 | 干什么 |
 | --- | --- | --- | --- |
-| `subagent` 子智能体与任务板 | 关 | `subagent` | 把能独立完成的活派给队友并行做（`subagent` 工具）；可设层级、人数、轮次与模型，队友按会话隔离。同包还带共享任务看板（`team_task` 工具，看板按会话各一块），设置里可单独关掉 |
+| `subagent` 子智能体与任务板 | 关 | `subagent` | 把能独立完成的活派给队友并行做（`subagent` 工具）；可设层级、人数、轮次与模型，队友按会话隔离。同包还带共享任务看板（`team_task` 工具，看板按会话各一块），设置里可单独关掉。**队友也能用 `team_task`**：协作工具不受角色白名单限制（`COLLAB_TOOL_NAMES`），板子归属按派它的那个会话算；界面在状态面板里分「子智能体」与「智能体团队（只读任务板）」两区 |
 | `computer-use` 操作电脑桌面 | 关 | `computer-use` | 看屏幕可免审批；点击、输入、按键每次都要确认，动作留审计 |
 | `web-search` 联网搜索 | 开 | `web-search` | 提供 `web_search` 工具，经 Tavily / 博查 / Serper 检索网页并附来源 |
 | `approval-floor` 危险命令硬拦截 | 开 | `approval-floor` | 守卫链 order 5 的硬闸：灾难命令、命令黑名单、命令白名单、无人值守 |
@@ -472,7 +472,7 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 | `presets/` | 预设（模式）插件（`src/packages/config-core/presets.ts:41`） | 自定义模式，一份 `<名字>.md`（frontmatter + 提示词正文）；出厂四个模式首次启动会各写一份到这里，之后读盘，用户改过的不覆盖 |
 | `plugins/*.js` | 用户 | 自定义插件 |
 | `skills/` | 技能中心（安装） | 用户级技能目录，每个子目录一份 `SKILL.md` |
-| `cache/` | 技能市场（`src/packages/config-core/market.ts:10`） | 市场条目清单，缓存 1 小时 |
+| `cache/` | 技能市场（`src/packages/config-core/market.ts:10`） | 市场条目清单，缓存 1 小时（skills.sh 这类搜索型源按关键词各存一份） |
 | `cache/session-index.json` | session-search 插件（`src/core/session-index.ts`） | 历史会话搜索的倒排索引，带 `version`；是旁路缓存，删掉只会让下次检索重新回填 |
 | `spill/` | spill 插件（`src/core/spill.ts`） | 工具输出超阈值时落盘的文件，目录 0700、文件 0600；按 mtime 保留 7 天、目录总量超上限从最旧的删 |
 | `lifecycle-hooks.json` | 用户 | codex 形态的十四事件外部命令钩子配置（其中六个在 Pneuma 未接通）（0.9.0 起并进 hooks 插件的「外部命令（codex 事件名）」组，与安全钩子的 `hooks.json` 各读各的） |
@@ -810,7 +810,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | 会话目标缺省轮次上限 / 一次放宽几轮 | 缺省 24 轮 / 8 轮，夹在 1~256 / 1~64；可配 `goal.defaultMaxRounds` / `goal.extendRoundsBy`，设置「会话目标」分区就能改；256 这个硬顶不可配 | `src/packages/goal/index.ts:44`、`src/packages/goal/goal.ts:30` |
 | 说明书（AGENTS.md）字符预算 | 缺省 20000，夹在 4000~200000；可配 `prompt.instructionBudget` | `src/packages/prompt/index.ts`、`src/packages/session-core/prompt.ts:37` |
 | 快照推送节流 | 缺省 80 ms，夹在 16 ms~1 秒；可配 `host-stdio.snapshotThrottleMs` | `src/packages/host-stdio/index.ts` |
-| LLM 连接超时 / 流空闲超时 | 缺省 30 s / 180 s（流空闲：这么久一个字节都没到就判服务端挂起）；可用 `DSC_LLM_CONNECT_TIMEOUT_MS` / `DSC_LLM_STREAM_IDLE_MS` 覆盖（毫秒，夹在 1 秒~10 分钟，每次调用现读）。端点连不上时默认要等 30 s × 3 次重试 ≈ 90 s 才把失败浮上来，网络差的把它调小（如 8000） | `src/core/llm.ts` 的 `readTimeoutMs` |
+| LLM 连接超时 / 流空闲超时 / 重试次数 | 缺省 30 s / 180 s / 6 次尝试（流空闲：这么久一个字节都没到就判服务端挂起）。三层覆盖：环境变量 `DSC_LLM_CONNECT_TIMEOUT_MS` / `DSC_LLM_STREAM_IDLE_MS` / `DSC_LLM_RETRY_ATTEMPTS` → `~/.dsc/config.yaml` 的 `llm:` 段（`connectTimeoutMs` / `streamIdleMs` / `retryAttempts`）→ 内置缺省。毫秒数夹在 1 秒~10 分钟、重试夹在 1~20 次；改完下次请求就生效（按文件 mtime 失效缓存）。**大提示词的网关**（PTC 模式打 opencode 那种：它要等上游模型起完才吐响应头）撞过 30 秒时，把 `connectTimeoutMs` 放到 120000~180000、`retryAttempts` 放到 8~12 | `src/core/llm.ts`（`resolveTimeouts` / `readRetryAttempts`）、`src/core/config.ts`（`readLlmTuning`） |
 | 自动压缩触发线 | 缺省为模型上下文窗口的 80%，夹在 50%~95%；可配 `compact.autoCompactPercent`。实际阈值取 `min(窗口×百分比, 窗口 − 输出预留 − 安全余量)`：输出预留是这条路由的 `maxTokens`，安全余量缺省按窗口 6.4% 算并封顶 65536（可配 `compact.headroomTokens`，0 = 自动），下限 1024 | `src/packages/compact/index.ts`（`thresholdOf`） |
 | 压一次不够时最多再压几次 | 缺省 1 次，夹 0~3；可配 `compact.compactionRetries`。第一次压完复量，仍超阈值才补压；补压会绕开「历史太短」守卫，允许折进上一份摘要本身。手动 `/compact` 与爆窗强压都不循环 | `src/packages/compact/index.ts`（`check`）、`src/packages/session-core/compact.ts` |
 | 压缩摘要的锚点索引预算 | 缺省 6000 字符，夹在 1000~20000；可配 `compact.anchorBudgetChars` | `src/core/compact-anchors.ts:32`、`src/packages/compact/index.ts:46` |
@@ -938,7 +938,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | `approval.ts` | 只有审批通道**接口**，判读在 `src/packages/approval/index.ts` |
 | `tools/` | `bash` 缺省 30 秒、最多 120 秒，输出超 8000 字符截断（累积到 16000 就不再收）——三个值都由 tools-default 插件配置下发（`bashTimeoutMs` / `bashMaxTimeoutMs` / `bashOutputChars`，设置分区「工具预算」可改），代码里的常量只是缺省。Windows 缺省走 `powershell -NoProfile -Command`（`-NoProfile` + UTF-8 输出前置 + 末尾补 `exit $LASTEXITCODE` 带回原生命令退出码），超时和取消都收进程树。**执行器可在「设置 → 终端环境」里换**（2026-10-30）：`bashShell` 存在 `plugins.json` 的 tools-default 条目里，取 `powershell` / `pwsh` / `gitbash` / `wsl` / `sh` / `auto`；四档折成四套 spawn 参数（见 `core/tools/bash.ts` 的 `shellPlan`），工具说明与环境快照里的终端名跟着换，审批地板的结构扫描也按同一条口径切 PowerShell / POSIX 语法（`core/terminal-env.ts` 的 `shellFlavor`）。`wsl` 会用 `-d <发行版>` 钉住探测时挑的那只（跳过 `docker-desktop` 这类没有 bash 的管理发行版）。`read` 单次缺省 2000 行（`tools-default.readLineLimit`）。`glob` / `grep` **边遍历边匹配**：按 `.gitignore`（从 git 根逐层读到搜索根，子目录的规则在进入它时生效，`!` 否定按「后出现的赢」）加内置大目录表（`node_modules`、`.git`、`dist`、`build`、`coverage`、`__pycache__`、`.venv`、`site-packages` 等）跳过，命中够 `limit` 就停，截断时明说「还有更多」；不再有「先收 1 万 / 2 万条再过滤」的全局额度——那会让 `.venv` 吃光额度、把真实结果挤成「无匹配」。`grep` 另外跳过 1 MiB 以上的文件。**没有目录白名单**——路径只按会话工作目录解析 |
 | `skills.ts` | 只认顶层 `<目录>/SKILL.md` 与顶层 `<名字>.md`，不递归（`:165-178`）。`name` 要 kebab-case，非法就退回文件名并记一条问题 |
-| `market.ts` | 缓存 1 小时、拉取超时 15 秒、浏览并发 6、附属文件最多 40 个。GitHub 匿名限额低，403/422 会提示设 `GITHUB_TOKEN` |
+| `market.ts` | 四类源：GitHub 目录（trees + raw）、索引 JSON、ClawHub（`/api/v1/skills` 榜单；安装先换一次 zip 下载地址，整包解开写盘）、skills.sh（**只有搜索**，`q` 少于 2 字符直接报错；安装时在仓库树里找 `<技能名>/SKILL.md` 所在目录）。GitHub 源「补描述」走一个**总预算 6 秒**的独立阶段（`ENRICH_BUDGET_MS`，单请求 4 秒）：描述只用于展示，取不到就保留占位，不让挂掉的文件域名把整次浏览拖过界面 30 秒上限。缓存 1 小时（搜索型源按「源 + 关键词」各存一份）、拉取超时 15 秒、浏览并发 6、附属文件最多 40 个。GitHub 匿名限额低，403/422 会提示设 `GITHUB_TOKEN` |
 | `prefs.ts` | 偏好文件读坏了按默认返回，不崩（`:89-91`）。`closeToTray` 默认 true |
 | `version.ts` | 版本号从包名 `pneuma`（兼容旧名 `dsc-tui`）的 `package.json` 往上找（`:12-13`、`:23`）。**改包名要同步 `PACKAGE_NAMES`**，否则「关于」分区显示 `0.0.0` |
 
@@ -1124,6 +1124,29 @@ Windows 的最小化/最大化/关闭三个按钮由系统画，样式表够不�
 3. 主进程收到后调 `setTitleBarOverlay` 改控件条、`setBackgroundColor` 改窗口底色。
    只收 `#rrggbb`，其它格式直接拒收。
 
+### 回合直播行：流末尾那一行由谁画、改哪里
+
+回合跑动期间，消息流末尾有一行「Numa 工作中，用时 X ···」。它**不是**窗口底部那条状态栏，
+也不是输入框的一部分：
+
+- 位置：`src/packages/ui-transcript/ui/ui.tsx` 里 `TranscriptFlow` 返回的那串节点的末尾——
+  所有 `.turn-seat` 之后、「回到底部」按钮之前。它和正文一起滚，所以贴底时正好在输入框上方。
+- 组件：`rows/foot.tsx` 的 `TurnStatusLine`，三个 props：`text`（行面主句）、`startedAt`
+  （本轮起点，`timing.ts` 的 `turnStartedAt()` 给的）、`hint`（悬停时说的具体活动）。
+- 时钟：关在组件内部的 1 秒 interval（`LIVE_CLOCK_INTERVAL_MS`）。**别再把它提到父组件**——
+  提到上层就是整条消息流每秒重排一次。
+- 文案：行面主句是 `transcript.status.working`（「Numa 工作中」），和时长用
+  `transcript.status.withDuration` 拼成一句；等确认 / 等审批时换成具体那句
+  `transcript.activity.approval`。
+- 扫光：组件挂 `data-shimmer={行文字}`，样式在 `views.css` 里那组共用选择器上；只给跑动的行挂，
+  收口的行不挂（扫光意味着「还在动」）。
+- 什么时候出现：`liveActivity()` 返回非 null（回合没结束）且不在压缩上下文。
+- **不要**再加「过程区有未收口组头就不画这条」的条件：dsh 是组头与这一行**并存**的，
+  重复问题靠文案解决（行面说通用状态、具体工具名收进悬停提示），不靠藏。
+- 底部状态栏**不报**本轮用时（`ui-statusbar/ui/ui.tsx` 的 `TurnSegment`）：它只报「这一路攒下来
+  的账」——轮/步、tok/s、累计 token、上下文占用；悬浮卡里是模型用时与工具调用用时这类**汇总**值。
+  要加回一个每秒跳的读数之前先想清楚：同一个数在两处跳，用户会当成两个计时。
+
 ### 界面文案改在哪（2026-11-04 夜起）
 
 界面里给用户看的字**不再写死在组件里**，每个包自带一份中英对照：
@@ -1166,10 +1189,41 @@ const t = hostT(import.meta.dirname)   // 语言读 config.yaml，字典读本�
 与斜杠命令输出。它们是写进会话记录的内容，翻与不翻是产品口径（翻了新旧记录会混排），
 记在 [docs/plugin-model.md](plugin-model.md) §16.5 末尾。
 
+### 回合提醒：通知栏说什么、提示音什么时候响
+
+窗口不在前台时，一轮结束会弹一条系统通知，并按设置响一声提示音；模型停下来等人（审批 /
+计划评审 / 提问）也走同一条提醒。判定全在纯函数里（`src/packages/ui-transcript/ui/turn-notify.ts`），
+界面只负责弹：
+
+| 结局 | 判据 | 文案键 |
+| --- | --- | --- |
+| 完成 | 这一轮没有 `turn-end` 条目 | `transcript.notify.done` |
+| 失败 | `turn-end` 条目的 `reason = 'error'` | `transcript.notify.failed` |
+| 输出超长 | 这一轮有 `turn-max-tokens` 条目 | `transcript.notify.truncated` |
+| 用户中断 | `turn-end` 条目的 `reason = 'aborted'` | 不提示 |
+| 等审批 / 等计划 / 提问 | 快照 `surfaces.pendingApproval / pendingPlan / pendingQuestion` | `transcript.notify.approval / plan / question` |
+
+`turn-end` 条目只在非 `completed` 时落（`src/adapter/transcript.ts:842-864`），所以「找不到它」
+就是正常完成；失败正文取这一轮最后一条 `level: 'error'` 的 system 条目。
+
+接线位置：
+
+- 桌面通知：`src/packages/ui-transcript/ui/ui.tsx:195-215`（回合结束）与 `:224-251`（等人卡），
+  标题经 `NOTICE_TITLES` 字面量表取译文（`ui-locale-test.mjs` 只认字面量键）；
+- 手机推送：`src/packages/remote/index.ts:782-805`，失败不受 15 秒门槛限制，中断不推；
+- 设置三行：`src/packages/ui-settings/ui/ui.tsx:1126-1180`，字段仍是
+  `turnCompleteSound / turnCompleteSoundVariant / turnCompleteNotify`（设置 → 通用 → 任务提醒）。
+
+加一种新状态要动四处：`turn-notify.ts` 的 `TurnNoticeKind` 与 `TITLE_KEY`、本包两份 locale、
+按需在 `ui.tsx` 加 selector；手机侧要同步就再改 `remote/index.ts` 与它的 locale。探针
+`scripts/ui-turn-notify-test.mjs` 用 Node 的类型剥离直接跑纯函数，改完先跑它。
+
 ### 启动这几秒：过渡页、失败页、首帧底色
 
-一次冷启动的时间线（打包版实测，机器一般）：窗口创建约 0.5 秒 → 过渡页画出、窗口显示约 0.9 秒 →
-宿主报出界面地址约 1.8 秒 → 壳首帧约 2.2 秒 → 占位淡出。这四步里只有一次可见的「换画面」。
+一次冷启动的时间线（打包版实测，2026-11-07 修完终端探测之后）：主进程跑起来约 0.18 秒 →
+过渡页画出、窗口显示约 0.65 秒 → 宿主报出界面地址约 3.1 秒 → 真界面文档加载完成约 3.35 秒
+（整机 3.56 秒）。这四步里只有一次可见的「换画面」。修之前同一台机器要到 7.2 秒，原因见下面
+那条「启动路径上不许有同步子进程」。
 
 - **窗口先隐着**（`show: false`），页面画出第一帧（`ready-to-show`）才上屏，所以点击快捷方式到
   看见东西之间没有白底板；
@@ -1189,6 +1243,22 @@ const t = hostT(import.meta.dirname)   // 语言读 config.yaml，字典读本�
 
 自检截图（`DSC_DESKTOP_SHOT`）不加载过渡页：截图钩子挂在 `did-finish-load` 上，需要一份可预测的
 首个文档。启动期那几行日志带 `+NNNms` 前缀（`bootNote`），排查启动慢时直接看时序。
+
+**启动路径上不许有同步子进程**（2026-11-07）。宿主冷启动时曾经两次同步探测终端
+（`spawnSync` 跑 `where` / `$PSVersionTable` / `wsl --status` 共七条命令，实测两轮合计 3.3 秒）：
+一次在 `tools-default` 挂载时（`shellLabel` 顺着 `detectShells` 真探），一次是挂载 50ms 后的
+`detectShells(true)` 预热。后者正好落在「宿主刚报出界面地址、桌面正在换票」那一刻，把界面文档
+推后 1.85 秒。现在的口径：
+
+- `src/core/terminal-env.ts` 的 `shellLabel` 只读缓存，不探测；没缓存时给静态名字。
+- 探测结果落盘在 `<DSC_HOME>/cache/shells.json`（7 天；读回来时对可执行文件 `existsSync` 复核
+  一次，卸载了就标成不可用）。内存那份仍是 5 分钟——两层管的不是同一件事：内存管「本次进程内
+  别重复探」，落盘管「下次启动别重复探」。
+- 预热只在**没有缓存**时排，12 秒后跑、且不 `force`；「重新检测」按钮走 `detectShells(true)`，
+  跳过两层缓存并刷新落盘。
+- `scripts/terminal-env-test.mjs` 覆盖了落盘写入、版本不符、过期、形状坏掉、已卸载复核五条边界。
+
+新增同步调用之前先问一句：它在启动路径上吗？在的话，代价直接算进「双击到看见界面」的秒数。
 
 **开窗那一帧的颜色**（`desktop/electron/main/index.ts` 的 `THEME_PAINT`）：主进程在创建窗口之前
 自己读一遍 `~/.dsc/settings.json` 的 `ui.themeMode`（`system` 按系统深浅解析），按深 / 浅 / 米白
@@ -1331,9 +1401,13 @@ const t = hostT(import.meta.dirname)   // 语言读 config.yaml，字典读本�
 在模型侧完全是同一条 `user` 消息，差别只在**界面怎么画**：
 
 - 出账前：画在输入框上方的只读「待投递通知」条（人打的字画在下方，可编辑 / 撤掉 / 插话）；
-- 出账后：`origin` 落进 jsonl，`adapter/transcript.ts` 把这条标成 `internal`，界面画成一行
-  内部触发行（`.entry-system[data-internal='1']`，文案见 `ui-shell/.../transcript/rounds.ts` 的
-  `internalLabel`），不是可编辑的用户气泡。
+- 出账后：`origin` 落进 jsonl，`adapter/transcript.ts` 把这条标成 `internal`，界面画成一张
+  可展开的唤醒卡（`.trigger-card`，组件 `ui/plugins/transcript/rows/trigger-row.tsx`），
+  不是可编辑的用户气泡。卡片头行是「图标 + 一句人话 + 时刻 + 箭头」，默认收起；点开先一句
+  「这条通知触发了本轮回复。」，再摊模型收到的原文（`<pre>`，限高 240px 可滚）。标题那句人话
+  由 `ui/plugins/transcript/rounds.ts` 的 `internalLabel` 给（队友名 / 作业号 + 成败），
+  图标按来源分四档（作业 / 队友 / 目标 / 其余，`triggerKind`）。
+  这套版式对照 dsh 的 `TurnTriggerNodeView`（0.5px 描边、头行可点、展开才给原文）。
 
 两个容易踩的点：
 

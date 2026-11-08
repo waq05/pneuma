@@ -200,7 +200,9 @@ order 是刻度，数字小的先跑：灾难地板 5、沙箱 8、协作模式 
   - `settings-demo.js` —— 设置分区 + 虚拟技能来源 + 私有市场源；
   - `dsh-style-clock.js` —— 用 dsh 的工具形状注册，走 `dsh-compat` 并消费 `ctx.logger`；
   - `browser-control.js` —— 经 CDP 驱动浏览器，单工具按 action 分发，截图以图片返回；
-  - `computer-use.js` —— 操控 Windows 桌面，演示图像返回。
+  - `computer-use.js` —— 操控 Windows 桌面，演示图像返回；
+  - `session-title-live.js` —— 回合进行中按进展刷新会话标题：事件跟踪 + 巡检节拍 + 写 `autoTitle`，
+    并演示「用户改过名就收摊」的保护（自测：`node scripts/session-title-live-test.mjs`）。
 - 挂载机制：[development.md](development.md) 第 3 节「插件从哪来」与第 4 节服务清单。
 
 ---
