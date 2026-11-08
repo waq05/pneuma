@@ -14,14 +14,16 @@
  *     其次三个常规安装路径
  *   - WSL：`wsl.exe --status`（`--version` 在旧版 Win10 上不存在，`-l -q` 可能弹安装提示）
  *
- * 探测结果缓存 {@link DETECT_TTL_MS}，设置页每次打开都会现取一份（过期就重探）；
- * 「重新检测」按钮走 {@link detectShells} 的 force 分支。
+ * 探测结果缓存两层：内存 {@link DETECT_TTL_MS}（本次进程内别重复探）与落盘
+ * {@link SHELL_CACHE_TTL_MS}（下次启动别重复探）。设置页每次打开都会现取一份（两层都
+ * 过期才重探）；「重新检测」按钮走 {@link detectShells} 的 force 分支，探完顺带刷新落盘。
  *
  * @module dsc/core/terminal-env
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, isAbsolute, join } from 'node:path'
+import { dscPath } from './path-policy.js'
 import { resolvePluginConfig } from './plugin-registry.js'
 
 /** 可选的命令执行终端。`auto` = 跟平台默认（Windows PowerShell 5.1 / POSIX sh）。 */
@@ -265,17 +267,130 @@ function detectPosixShell(): ShellCandidate {
   }
 }
 
-/** 缓存：探测要起几次子进程，设置页反复打开不该重复付这份钱。 */
+// ── 缓存：内存一份（本次进程）、落盘一份（跨启动） ──────────────────────────
+//
+// 为什么内存缓存不够（2026-11-07 排查「启动特别慢」）：原先只有一个进程内的 5 分钟缓存，
+// 而宿主每次启动都是新进程，于是每次开机都要把七条外部命令同步跑一遍。实测这台机器上
+// 两轮探测合计 3.3 秒（其中 `wsl --status` 冷启动能到 5.7 秒），全部堵在事件循环上
+// （`spawnSync`）——桌面壳连「界面地址」都要等它让路。落盘之后，一次探测的结果七天之内
+// 跨启动复用，启动路径上不再有子进程。
+//
+// 代价与边界：缓存说「没有」的东西（没装 WSL、没装 Git Bash）七天内不重探，装好之后点
+// 设置页的「重新检测」强制重探；缓存里记的可执行文件在读取时按存在性复核一次，卸载了的
+// 当场标成不可用，不至于把命令指向一个不存在的路径。
+
+/** 落盘缓存的结构版本：形状变了就作废重探，不做迁移。 */
+const SHELL_CACHE_VERSION = 1
+
+/**
+ * 落盘缓存的寿命。与 {@link DETECT_TTL_MS} 是两个不同的量：那个管「本次进程内别重复探」，
+ * 这个管「下次启动别重复探」。装 shell 是低频事件，七天足够跟得上。
+ */
+const SHELL_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+/** 落盘缓存的形状（写在 `<DSC_HOME>/cache/shells.json`）。 */
+interface StoredShellCache {
+  version: number
+  /** 探测时刻（epoch 毫秒）。 */
+  at: number
+  /** 探测当时的平台：同一份 DSC_HOME 被两套系统共用时不该复用。 */
+  platform: string
+  list: ShellCandidate[]
+}
+
+/** 落盘缓存文件的绝对路径。与 `cache/review`、市场缓存同一个目录。 */
+function shellCachePath(): string {
+  return dscPath('cache', 'shells.json')
+}
+
+/** 内存缓存：管「本次进程内别重复探」。 */
 let cache: { at: number; list: ShellCandidate[] } | undefined
+
+/** 形状校验：文件被手改坏、被别的版本写过，一律当没有缓存。 */
+function isShellCandidate(value: unknown): value is ShellCandidate {
+  if (value === null || typeof value !== 'object') return false
+  const item = value as Record<string, unknown>
+  if (typeof item['value'] !== 'string' || !(SHELL_CHOICES as readonly string[]).includes(item['value'])) return false
+  if (typeof item['label'] !== 'string' || typeof item['detail'] !== 'string') return false
+  if (typeof item['available'] !== 'boolean') return false
+  const distro = item['distro']
+  return distro === undefined || typeof distro === 'string'
+}
+
+/**
+ * 缓存里的「可用」复核一次：记着的可执行文件可能已经被卸载。
+ *
+ * 只 `existsSync`，不起进程——这是落盘缓存比内存缓存多出来的那点风险。`detail` 不是
+ * 绝对路径的（`auto` 那一项写的是出厂说明）不检验。
+ */
+function stillInstalled(item: ShellCandidate): ShellCandidate {
+  if (!item.available || !isAbsolute(item.detail)) return item
+  if (existsSync(item.detail)) return item
+  return { ...item, available: false }
+}
+
+/** 读落盘缓存；不存在、过期、形状不对、平台不符都给 `undefined`（当没缓存）。 */
+function readShellCache(): ShellCandidate[] | undefined {
+  try {
+    const doc = JSON.parse(readFileSync(shellCachePath(), 'utf8')) as Partial<StoredShellCache>
+    if (doc.version !== SHELL_CACHE_VERSION || doc.platform !== process.platform) return undefined
+    if (typeof doc.at !== 'number' || !Number.isFinite(doc.at)) return undefined
+    const age = Date.now() - doc.at
+    if (age < 0 || age > SHELL_CACHE_TTL_MS) return undefined
+    if (!Array.isArray(doc.list) || !doc.list.every(isShellCandidate)) return undefined
+    return doc.list.map(stillInstalled)
+  } catch {
+    return undefined
+  }
+}
+
+/** 写落盘缓存。写不下去（只读盘、权限不足）不致命：下次启动再探一遍就是了。 */
+function writeShellCache(list: ShellCandidate[]): void {
+  try {
+    const file = shellCachePath()
+    const doc: StoredShellCache = {
+      version: SHELL_CACHE_VERSION,
+      at: Date.now(),
+      platform: process.platform,
+      list,
+    }
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`)
+  } catch {
+    // 缓存只是加速手段，写不下去就退回「每次启动探一遍」
+  }
+}
+
+/**
+ * 只读缓存：内存 → 落盘。**绝不探测**。
+ *
+ * 给「不想为了一句文案去起七个进程」的调用方用（{@link shellLabel}、tools-default 的
+ * 预热判定）。命中的落盘结果顺手灌进内存，后续调用不再读盘。
+ */
+function peekShells(): ShellCandidate[] | undefined {
+  if (cache !== undefined && Date.now() - cache.at < DETECT_TTL_MS) return cache.list
+  const stored = readShellCache()
+  if (stored === undefined) return undefined
+  cache = { at: Date.now(), list: stored }
+  return stored
+}
+
+/** 已经有一份可用缓存（内存或落盘都算）：调用方据此决定还要不要排预热。 */
+export function shellsCached(): boolean {
+  return peekShells() !== undefined
+}
 
 /**
  * 探测这台机器上能用的终端。
  *
- * @param force - true = 跳过缓存重探（设置页的「重新检测」按钮用）
+ * @param force - true = 跳过内存与落盘缓存重探，并把新结果写回落盘（设置页的「重新检测」用）
  * @returns 第一项永远是 `auto`，后面按平台给出各项（不可用的也在里面，界面据此显示"未检测到"）
  */
 export function detectShells(force = false): ShellCandidate[] {
-  if (!force && cache !== undefined && Date.now() - cache.at < DETECT_TTL_MS) return cache.list
+  if (!force) {
+    const hit = peekShells()
+    if (hit !== undefined) return hit
+  }
   const auto: ShellCandidate = {
     value: 'auto',
     label: isWin ? '跟随平台默认（Windows PowerShell 5.1）' : '跟随平台默认（sh）',
@@ -287,10 +402,16 @@ export function detectShells(force = false): ShellCandidate[] {
     : [detectPosixShell()]
   const list = [auto, ...rest]
   cache = { at: Date.now(), list }
+  writeShellCache(list)
   return list
 }
 
-/** 清掉探测缓存（配置改了、装完新 shell 之后调用）。 */
+/**
+ * 清掉**内存**里的探测缓存（配置改了之后重读用）。
+ *
+ * 不动落盘那份：换一个终端选择并不改变「机器上装了哪些 shell」。真要重探走
+ * {@link detectShells} 的 force 分支，它会顺手把落盘结果刷新。
+ */
 export function forgetShellDetection(): void {
   cache = undefined
   choiceCache = undefined
@@ -319,12 +440,34 @@ export function wslDistroName(): string {
   return hit?.distro ?? ''
 }
 
-/** 给提示词/工具描述用的一句话（例如 `Git Bash`、`PowerShell 7.4.6`）。 */
+/**
+ * 每个取值在没拿到探测结果时的静态名字。
+ *
+ * 为什么要有这一张表：{@link shellLabel} 挂在「拼工具描述」「拼提示词环境快照」这些
+ * 高频路径上，不能为了写一句文案去探测。
+ */
+const STATIC_SHELL_LABELS: Readonly<Record<ShellChoice, string>> = {
+  auto: isWin ? 'Windows PowerShell 5.1' : 'sh',
+  powershell: 'PowerShell 5.1',
+  pwsh: 'PowerShell 7',
+  gitbash: 'Git Bash',
+  wsl: 'WSL',
+  sh: 'sh',
+}
+
+/**
+ * 给提示词/工具描述用的一句话（例如 `Git Bash`、`PowerShell 7.4.6`）。
+ *
+ * **只读缓存，不触发探测**（2026-11-07）：原先这里调 {@link detectShells}，而用户在设置里
+ * 选了 pwsh 之后，冷启动挂载 `tools-default` 时就会同步跑完整个探测——实测 1.73 秒全堵在
+ * 启动关键路径上。缓存里有真版本号就用它；没有就给静态名字，模型照样能判断该写
+ * `ls -la` 还是 `Get-ChildItem`。
+ */
 export function shellLabel(choice: ShellChoice): string {
-  if (choice === 'auto') return isWin ? 'Windows PowerShell 5.1' : 'sh'
-  const hit = detectShells().find((item) => item.value === choice)
-  if (hit !== undefined && hit.available) return hit.label
-  return choice
+  if (choice === 'auto') return STATIC_SHELL_LABELS.auto
+  const hit = peekShells()?.find((item) => item.value === choice)
+  if (hit === undefined) return STATIC_SHELL_LABELS[choice]
+  return hit.available ? hit.label : choice
 }
 
 /**

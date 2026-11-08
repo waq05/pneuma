@@ -17,7 +17,7 @@
  *
  * @module dsc/scripts/terminal-env-test
  */
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -75,6 +75,60 @@ console.log('[1] 探测：把机器上真有的 shell 列出来')
   env.forgetShellDetection()
   const again = env.detectShells()
   check('清缓存后重新探测结果一致', again.length === list.length && again[0].value === 'auto')
+}
+
+// ------------------------------------------------- 1b. 落盘缓存（跨启动复用）
+// 2026-11-07：宿主每次启动都是新进程，只有内存缓存时每次开机都要重新起七个子进程
+// （实测 1.6 秒、全堵在事件循环上）。这一批验落盘的读写、作废与强刷。
+console.log('[1b] 探测结果落盘：下次启动不再起子进程')
+{
+  const cacheFile = join(process.env.DSC_HOME, 'cache', 'shells.json')
+  check('探测后落了盘', existsSync(cacheFile), cacheFile)
+  const doc = JSON.parse(readFileSync(cacheFile, 'utf8'))
+  check('落盘带版本与平台', doc.version === 1 && doc.platform === process.platform)
+  check('落盘条目与探测一致', Array.isArray(doc.list) && doc.list.length >= 2 && doc.list[0].value === 'auto')
+  check('落盘记了探测时刻', typeof doc.at === 'number' && Math.abs(Date.now() - doc.at) < 60_000)
+
+  // 清掉内存那份：这次调用只该读文件，不该起子进程（真探一次约 1.6 秒）
+  env.forgetShellDetection()
+  const started = Date.now()
+  const fromDisk = env.detectShells()
+  const diskMs = Date.now() - started
+  check('清内存后从落盘读回（< 100ms）', diskMs < 100, `${diskMs}ms`)
+  check('读回来的内容与文件一致', fromDisk.length === doc.list.length && fromDisk[0].value === 'auto')
+
+  // 版本不符：当没有缓存，重探并重写
+  writeFileSync(cacheFile, JSON.stringify({ ...doc, version: 99 }), 'utf8')
+  env.forgetShellDetection()
+  const afterBadVersion = env.detectShells()
+  check('版本不符的缓存被丢掉并重探', afterBadVersion.length === doc.list.length)
+  check('重探后把版本写回当前值', JSON.parse(readFileSync(cacheFile, 'utf8')).version === 1)
+
+  // 过期（> 7 天）：同样当没有缓存
+  const stale = JSON.parse(readFileSync(cacheFile, 'utf8'))
+  writeFileSync(cacheFile, JSON.stringify({ ...stale, at: Date.now() - 8 * 24 * 60 * 60 * 1000 }), 'utf8')
+  env.forgetShellDetection()
+  env.detectShells()
+  const refreshedAt = JSON.parse(readFileSync(cacheFile, 'utf8')).at
+  check('过期的缓存被丢掉并重探', Date.now() - refreshedAt < 60_000)
+
+  // 形状坏掉（缺字段）：不许抛错，也不许把坏数据当缓存用
+  writeFileSync(cacheFile, '{"version":1,"at":' + String(Date.now()) + ',"platform":"' + process.platform + '","list":[{"value":"pwsh"}]}', 'utf8')
+  env.forgetShellDetection()
+  const afterBroken = env.detectShells()
+  check('形状坏掉的缓存被丢掉并重探', afterBroken.length === doc.list.length && afterBroken[0].value === 'auto')
+
+  // 缓存里记的可执行文件被卸载：读回来时标成不可用，而不是让命令指向空气
+  const present = JSON.parse(readFileSync(cacheFile, 'utf8'))
+  const ghost = present.list.map((item) =>
+    item.value === 'gitbash' ? { ...item, detail: join(process.env.DSC_HOME ?? tmpdir(), 'does-not-exist-bash.exe') } : item,
+  )
+  writeFileSync(cacheFile, JSON.stringify({ ...present, list: ghost }), 'utf8')
+  env.forgetShellDetection()
+  const fromGhost = env.detectShells()
+  const ghostItem = fromGhost.find((item) => item.value === 'gitbash')
+  check('缓存里已卸载的 shell 被标成不可用', ghostItem !== undefined && ghostItem.available === false)
+  check('同一份缓存里其它 shell 不受影响', fromGhost.find((item) => item.value === 'powershell')?.available === true)
 }
 
 // ---------------------------------------------------------------- 2. 取值与语法家族

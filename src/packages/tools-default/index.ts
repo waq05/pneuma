@@ -25,6 +25,7 @@ import {
   readShellChoice,
   shellChoiceLabel,
   shellLabel,
+  shellsCached,
   SHELL_CHOICES,
 } from '@pneuma/runtime/core/terminal-env.js'
 import { hostT } from '@pneuma/runtime/core/i18n.js'
@@ -37,6 +38,15 @@ const t = hostT(import.meta.dirname)
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'tools-default'
+
+/**
+ * 终端探测的预热延迟。
+ *
+ * 为什么要等这么久（2026-11-07）：预热本身是同步探测（七条外部命令，实测 1.6 秒），
+ * 放在挂载后 50ms 跑，正好卡在「宿主刚报出界面地址、桌面壳正在换票」那一刻，
+ * 把界面文档的加载硬生生推后 1.85 秒。挪到窗口早已画出来之后，用户感知不到。
+ */
+const PRIME_DELAY_MS = 12_000
 
 /** 可调值的取值区间：超时太小等于没跑，太大等于占着一轮不放。 */
 const TIMEOUT_RANGE = { min: 5_000, max: 600_000 }
@@ -386,13 +396,20 @@ export const toolsDefaultPlugin: Plugin.Object = {
     const offShellSection = ctx.settings.registerSection(shellSection, { inSettings: true })
     ctx.effect(() => offShellSection, 'tools-default: settings.registerSection #2')
 
-    // 后台预热一次探测（挂载 50ms 之后，不占启动关键路径）：设置页第一次打开时下拉里就该
-    // 已经有选项。不预热的话，`sections()` 会同步跑一次冷探测（四个子进程约 2.5 秒），
-    // 用户点开设置就是一阵卡。
-    const primeTimer = setTimeout(() => {
-      detectShells(true)
-    }, 50)
-    primeTimer.unref?.()
+    // 预热一次探测：设置页第一次打开时下拉里就该已经有选项（不预热的话 `fields()` 会同步
+    // 跑一次冷探测，用户点开设置就是一阵卡）。
+    //
+    // 三条约束（2026-11-07 按「启动特别慢」的实测重写）：
+    //   1. 已经有一份缓存（内存或落盘）就不排——绝大多数启动因此完全不碰这条路径；
+    //   2. 不 force：force 会绕过缓存，等于每次启动都白跑一遍七条外部命令；
+    //   3. 12 秒后再跑：真需要探的那一次（装完新机器/刚清过缓存）落在界面首帧之后，
+    //      不抢启动那几秒，也不挡桌面换票。
+    const primeTimer = shellsCached()
+      ? null
+      : setTimeout(() => {
+          detectShells()
+        }, PRIME_DELAY_MS)
+    primeTimer?.unref?.()
 
     return () => {
       for (const off of disposers) off()
@@ -402,7 +419,7 @@ export const toolsDefaultPlugin: Plugin.Object = {
       noticeTimers.clear()
       shells.closeAll()
       stopAllBackgroundChildren()
-      clearTimeout(primeTimer)
+      if (primeTimer !== null) clearTimeout(primeTimer)
       offSection()
       offShellSection()
     }
