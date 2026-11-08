@@ -508,6 +508,7 @@ export type {
   StatusView,
   SubagentCardView,
   TeammateView,
+  TeamBoardView,
   ThemeMode,
   ThinkingLevel,
   ThinkingParam,

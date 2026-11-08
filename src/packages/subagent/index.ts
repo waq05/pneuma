@@ -55,7 +55,7 @@ import {
   TEAMMATE_REPORT_OPEN,
   type BoardAction,
 } from '@pneuma/runtime/core/team-board.js'
-import type { EffortLevel, SettingsField, SettingsValue, TeammateView, TranscriptEntry } from '@pneuma/runtime/contract.js'
+import type { EffortLevel, SettingsField, SettingsValue, TeammateView, TeamBoardView, TranscriptEntry } from '@pneuma/runtime/contract.js'
 import type { ReviewService, ReviewSpawnRequest, ReviewSpawnResult, SettingsSectionSpec, TeamService } from '@pneuma/runtime/services/types.js'
 import { reviewTaskText, ReviewJournal, REVIEW_CANCELED_TEXT } from '@pneuma/runtime/core/git-info.js'
 import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
@@ -193,7 +193,25 @@ interface Caller {
   name: string
   depth: number
   background: boolean
+  /**
+   * 这次调用归属哪个会话：任务板读写、名册过滤都按它算。
+   *
+   * 队友转发时塞它派出去的那个会话；主会话自己的调用没有这一项，回落工具上下文里的
+   * `sessionId`。**不能看 `ctx.session.current()`**——用户切到别的会话时它就是另一条
+   * 会话了，后台队友的认领会落到别人的板上（2026-11-08 报障）。
+   */
+  sessionId?: string
 }
+
+/**
+ * 协作类工具：不受角色工牌白名单限制。
+ *
+ * 为什么：白名单表达的是「这个角色能改哪些文件、能跑什么命令」，任务板是一次协作登记
+ * （`risk` 声明为 read），不该因为角色写了 `tools: read, glob, grep` 就把它一起关掉。
+ * 2026-11-08 报障：explorer 队友回「本次会话给我的可用工具只有 read、glob、grep」，
+ * 领不到任务——根因就在 `toolsFor` 拿白名单把 team_task 一起筛掉了。
+ */
+export const COLLAB_TOOL_NAMES: readonly string[] = ['team_task']
 
 /** 记录在案的一个队友（`~/.dsc/team/roster.json`，重启后侧栏仍能看到收工的队友）。 */
 interface RosterRecord {
@@ -402,14 +420,25 @@ export const subagentPlugin: Plugin.Object = {
     }
 
     /** 队友的工具表：按工牌白名单筛。subagent 换成它自己的署名；team_task（本包注册的
-     * 共享任务板）保留原实现，只把自己的身份塞进上下文，看板认领人才不会都算成 lead。 */
+     * 共享任务板）保留原实现，只把自己的身份与归属会话塞进上下文，看板认领人才不会都算成
+     * lead，也不会在用户切会话后认到别人的板上。协作类工具（{@link COLLAB_TOOL_NAMES}）
+     * 不参与白名单筛选：那是协作登记，不是文件权限。 */
     const toolsFor = (teammate: Teammate): ToolEntry[] => {
       const all = ctx.tools.list()
-      const allowed = teammate.badge.tools === null ? all : all.filter((entry) => teammate.badge.tools!.includes(entry.name))
-      const self = (): Caller => ({ name: teammate.name, depth: teammate.depth, background: teammate.background })
+      const allowed =
+        teammate.badge.tools === null
+          ? all
+          : all.filter((entry) => teammate.badge.tools!.includes(entry.name) || COLLAB_TOOL_NAMES.includes(entry.name))
+      const self = (): Caller => ({
+        name: teammate.name,
+        depth: teammate.depth,
+        background: teammate.background,
+        sessionId: teammate.parentSession.meta.id,
+      })
       return allowed.map((entry) => {
         if (entry.name === 'subagent') {
-          return { ...entry, run: (args: Record<string, unknown>, runCtx: ToolContext) => runSubagent(args, runCtx, self()) }
+          // 嵌套派活：子队友的父会话是这个队友自己的会话，不是用户正看着的那条。
+          return { ...entry, run: (args: Record<string, unknown>, runCtx: ToolContext) => runSubagent(args, runCtx, self(), teammate.session) }
         }
         if (entry.name === 'team_task') {
           return { ...entry, run: (args: Record<string, unknown>, runCtx: ToolContext) => entry.run(args, { ...runCtx, caller: self() }) }
@@ -557,7 +586,7 @@ ${
               ? `你最多能发 ${teammate.badge.maxTurns} 次模型请求，用完会被自动收手，请把力气花在关键处；最后一轮不再给你工具，那轮直接交结论。`
               : '轮次不设上限，但每轮都要往结论推进，别在同一个问题上打转。'
           }
-${teammate.badge.tools === null ? '' : `你只被授权这些工具：${teammate.badge.tools.join('、')}。用别的办法办不成就在最后一段说清楚，让 ${teammate.parent} 决定。`}
+${teammate.badge.tools === null ? '' : `你只被授权这些工具：${teammate.badge.tools.join('、')}。用别的办法办不成就在最后一段说清楚，让 ${teammate.parent} 决定。${config.board ? '协作类工具（team_task）不受这份名单限制：任务板是团队共用的登记表，认领与结项直接用。' : ''}`}
 ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需要授权的操作会被直接拒绝，不要反复尝试。' : '需要授权的操作可以向用户请求，审批卡上会写明是你（' + teammate.name + '）在请求。'}
 干完活用一段话交结果：做了什么、看到什么证据（文件名:行号）、还有什么没做。`,
           // 设限时的最后一轮：工具表收成空，逼它用文本交结论（否则它会一直调工具直到被掐）
@@ -785,6 +814,23 @@ ${body}
         }
         return views.sort((a, b) => b.startedAt - a.startedAt)
       },
+      board: (sessionId: string): TeamBoardView => {
+        // 只读投影：界面只画「有哪些事、谁负责、可不可以开工」，改任务仍旧只走模型的 team_task。
+        const board = readBoard(sessionId)
+        return {
+          revision: board.revision,
+          tasks: board.tasks.map((task) => ({
+            id: task.id,
+            subject: task.subject,
+            description: task.description,
+            status: task.status,
+            owner: task.owner,
+            blockedBy: task.blockedBy,
+            writeScopes: task.writeScopes,
+            ready: isReady(board, task),
+          })),
+        }
+      },
       peek: async (file: string): Promise<TranscriptEntry[]> => {
         const resolved = resolve(file)
         if (!resolved.startsWith(resolve(teammateRoot()))) {
@@ -978,12 +1024,15 @@ ${body}
       args: Record<string, unknown>,
       runCtx: { cwd: string; signal: AbortSignal },
       caller: Caller,
+      parent: Session,
     ): Promise<string> {
       const action = String(args.action ?? '')
       const roster = listRoles()
       // 名单按会话隔离（对照 dsh 的 parentSession 过滤）：本会话只能看见自己派出的队友，
       // 别的会话的在队名单不外漏；跨会话管理请回到派出它的那个会话。
-      const currentId = ctx.session.current().meta.id
+      // 归属会话来自调用方，不看 `ctx.session.current()`：队友在后台跑、用户切走之后，
+      // 「当前查看的会话」已经不是派它的那一条了。
+      const currentId = parent.meta.id
       const mine = [...teammates.values()].filter((entry) => entry.parentSession.meta.id === currentId)
       if (action === 'list') {
         const lines = mine.map(
@@ -1043,7 +1092,6 @@ ${body}
       const context = String(args.context ?? 'fresh')
       let seed: string[] | null = null
       if (context === 'fork') {
-        const parent = ctx.session.current()
         seed = parent.persisted ? forkSeedLines(parent.filePath) : null
         if (seed === null) {
           return `带不上父会话的内容：这个会话还没有一个完整回合（它得先完整回答过一次），改用 context="fresh" 把背景写进任务描述`
@@ -1060,7 +1108,7 @@ ${body}
         caller,
         background,
         seed,
-        parentSession: ctx.session.current(),
+        parentSession: parent,
       })
 
       if (!background) {
@@ -1103,7 +1151,14 @@ ${body}
         required: ['action'],
       },
       risk: 'read',
-      run: (args, runCtx) => runSubagent(args, runCtx, { name: LEAD, depth: 0, background: false }),
+      // 归属会话按这次调用算：回合可能在后台跑，`ctx.session.current()` 那时未必是它。
+      run: (args, runCtx) =>
+        runSubagent(
+          args,
+          runCtx,
+          { name: LEAD, depth: 0, background: false, sessionId: runCtx.sessionId },
+          ctx.agent.sessionById(runCtx.sessionId) ?? ctx.session.current(),
+        ),
     })
 
     // ── 共享任务板（原「智能体团队」插件，2026-11-06 并入本包）───────────────
@@ -1112,7 +1167,10 @@ ${body}
     // 两个都开时，队友的工具表把 team_task 转发时塞了自己的名字（见 `toolsFor`），
     // 看板认领人才不会都算成 lead。
     async function runTeamTask(args: Record<string, unknown>, runCtx: ToolContext): Promise<string> {
-      const sessionId = ctx.session.current().meta.id
+      // 归属会话：队友转发时由 `toolsFor` 塞它派出去的那个会话；主会话自己的调用回落
+      // 这次工具调用的会话。不看 `ctx.session.current()`——用户切走之后那是另一条会话，
+      // 后台队友的认领会悄悄落到别人的板上（2026-11-08 查账）。
+      const sessionId = runCtx.caller?.sessionId ?? runCtx.sessionId
       const caller = runCtx.caller?.name ?? LEAD
       const action = String(args.action ?? '')
       const board = readBoard(sessionId)

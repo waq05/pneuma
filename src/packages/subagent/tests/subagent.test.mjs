@@ -184,6 +184,16 @@ test('提示段提 team_task，设置分区仍是 subagent 且带任务板分组
   passed += 1
 })
 
+// 协作工具豁免：只读角色（explorer 的工牌只有 read/glob/grep）也要能认领任务，
+// 所以 team_task 必须走这份豁免表，而不是挤进每个角色的 tools 白名单。
+test('协作工具豁免表包含 team_task，且不夹带文件类工具', () => {
+  assert.ok(mod.COLLAB_TOOL_NAMES.includes('team_task'), 'team_task 必须在协作工具豁免表里')
+  for (const name of ['read', 'write', 'edit', 'bash', 'glob', 'grep']) {
+    assert.equal(mod.COLLAB_TOOL_NAMES.includes(name), false, `${name} 不该进协作工具豁免表`)
+  }
+  passed += 1
+})
+
 after(() => {
   console.log('通过 ' + String(passed) + ' 项')
 })

@@ -51,8 +51,18 @@ export interface ToolContext {
   /**
    * 发起这次调用的队友身份。子智能体插件替队友转发团队类工具（team_task）时塞进来，
    * 工具按它署名（任务板认领人、信箱回信）；主会话的调用没有这一项，按「lead」对待。
+   * `sessionId` 是这次调用归属的会话（队友 = 派它的那个会话），任务板按它分块，
+   * 不看「当前查看的会话」——后台队友跑着的时候用户可能已经切走了。
    */
-  caller?: { name: string; depth: number; background: boolean }
+  caller?: { name: string; depth: number; background: boolean; sessionId?: string }
+  /**
+   * 这次顶层调用自己的 callId。
+   *
+   * 谁用：会「在内部再调工具」的工具（如今只有 PTC 的 run_code）。它把这个 id 当父指针，
+   * 让界面把脚本里的每次 sdk.xxx() 收进这张卡里，而不是平铺成十几行独立的工具卡
+   * （dsh 的 run_code 卡就是这么画嵌套调用的）。
+   */
+  callId?: string
 }
 
 /**

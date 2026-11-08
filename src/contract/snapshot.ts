@@ -8,7 +8,7 @@
  */
 import type { ApprovalAnswer } from './approval.js'
 import type { ApprovalPolicy, ApprovalReviewer, CollaborationMode, EffortLevel } from './mode.js'
-import type { MarketBrowseResult, MarketSource, ModelChoiceView, PluginInfoView, SessionForkResult, SkillInfoView, SkillLoadResult, TeammateView, UiCommandView, UiTrustView } from './plugin.js'
+import type { MarketBrowseResult, MarketSource, ModelChoiceView, PluginInfoView, SessionForkResult, SkillInfoView, SkillLoadResult, TeammateView, TeamBoardView, UiCommandView, UiTrustView } from './plugin.js'
 import type { PermissionPresetSurface, PresetDraft, PresetFileView, PresetSurface, RuntimeSurfaces, StatusView, ToolEntryView } from './runtime.js'
 import type { ArchivedPage, SessionSummary, UiPrefsView } from './session.js'
 import type { ConnectionTestView, ModelConfigView, ProviderDraft, SettingsMutation, SettingsSectionView, SettingsValue, SettingsValues } from './settings.js'
@@ -220,6 +220,12 @@ export interface DscRuntime {
    */
   listTeammates(): TeammateView[]
   /**
+   * 本会话的共享任务板（只读）：状态面板「智能体团队」区的数据源。
+   * 板子按会话各一块——切到别的会话就是另一块；「子智能体」清单与它分属两个分区，
+   * 前者说「谁在跑」，后者说「哪些事、谁负责」（对照 dsh 的成员树与共享任务分区）。
+   */
+  listTeamBoard(): TeamBoardView
+  /**
    * 收掉一个队友（用户从界面上动手；等价于 `subagent` 工具的 stop）。
    * 队友名字不存在时返回的那句话就是明确的错误说明，不抛错。
    */
@@ -262,8 +268,11 @@ export interface DscRuntime {
   readSkill(name: string): Promise<SkillLoadResult>
   /** 启停技能（写 ~/.dsc/skills.json，下一次请求生效）。 */
   setSkillEnabled(name: string, enabled: boolean): SettingsMutation
-  /** 浏览技能市场（source 省略时用第一个源）。 */
-  browseMarket(source?: string): Promise<MarketBrowseResult>
+  /**
+   * 浏览技能市场（source 省略时用第一个源）。
+   * `query` 只对搜索型源（skills.sh）有意义：它决定查什么词。
+   */
+  browseMarket(source?: string, query?: string): Promise<MarketBrowseResult>
   /** 从市场源安装一个技能到 ~/.dsc/skills/。 */
   installMarketSkill(source: string, name: string): Promise<SettingsMutation>
   /** 覆盖市场源清单（写 ~/.dsc/settings.json）。 */

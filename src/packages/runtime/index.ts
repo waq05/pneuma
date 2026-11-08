@@ -249,6 +249,14 @@ export const runtimePlugin: Plugin.Object = {
         return team === undefined ? [] : team.list()
       },
 
+      listTeamBoard() {
+        // 状态面板画的是「用户正在看的这条会话」的板：切会话就换一块。
+        // 队友认领走的是另一条口径（派它的那个会话，见 subagent 的 runTeamTask），两边都不看「当前会话」猜。
+        const team = ctx.get('team')
+        if (team === undefined) return { revision: 0, tasks: [] }
+        return team.board(ctx.session.current().meta.id)
+      },
+
       stopTeammate(name) {
         // 与 listTeammates 同一条理由：team 是可选服务，只能 ctx.get
         const team = ctx.get('team')
@@ -417,8 +425,8 @@ export const runtimePlugin: Plugin.Object = {
         return ctx.skills.setEnabled(name, enabled)
       },
 
-      browseMarket(source) {
-        return ctx.skills.browseMarket(source ?? '')
+      browseMarket(source, query) {
+        return ctx.skills.browseMarket(source ?? '', false, query)
       },
 
       installMarketSkill(source, name) {
@@ -620,7 +628,7 @@ export const runtimePlugin: Plugin.Object = {
                               : patch.turnCompleteSound !== undefined ||
                                   patch.turnCompleteSoundVariant !== undefined ||
                                   patch.turnCompleteNotify !== undefined
-                                ? '已保存任务完成提醒设置'
+                                ? '已保存任务提醒设置'
                                 : patch.statusBar !== undefined
                                   ? '已保存状态栏显示设置'
                                   : '已保存工作区名字'

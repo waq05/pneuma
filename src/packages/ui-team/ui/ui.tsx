@@ -1,11 +1,16 @@
 /**
- * 内置插件：智能体团队（2026-11-06 对调后的三处入口）。
+ * 内置插件：智能体团队（界面半，2026-11-08 与状态面板合并后的形态）。
  *
  * | 在哪 | 是什么 |
  * | --- | --- |
- * | 会话标题旁（`shell.header.lead`，order 20） | **「智能体团队」入口**：点开 {@link TeamPanel}（名册：发话 / 停止 / 移除），有队友时带数量 |
- * | 状态面板的「智能体」区 | **子智能体列表**（一行一个：名字 / 角色 / 状态），点一行在正文区只读打开它的完整会话 |
- * | 正文区 | {@link TeammateReader} 的只读视图：`peekTranscript` + 消息流插件的同款行渲染 |
+ * | 状态面板的「子智能体」区（`ui-status`） | **成员清单**：一行一个（名字 / 角色 / 状态），点一行在正文区只读打开它的完整运行记录 |
+ * | 状态面板的「智能体团队」区（`ui-status`） | **共享任务板**（只读）：一行一条任务，谁负责、做到哪一步 |
+ * | 正文区 | {@link TeammateReader} 的只读视图：`peekTranscript` + 消息流插件的同款行渲染，头部带停止 / 发话 / 移除 |
+ * | 右侧栏 | 子智能体页签（工具卡里的子代理卡走它） |
+ *
+ * **标题旁那个「智能体团队」按钮与名册模态已经撤掉**（2026-11-08）：它是同一份名册的
+ * 第二处显示，和状态面板重复。现在成员只在状态面板列一次，「智能体团队」这个名字留给
+ * 任务板那一区（成员 = 谁在跑，团队 = 有哪些事、谁负责，两件事）。
  *
  * 数据走界面通道的 `listTeammates`（常挂载的那条轮询每 3 秒写进共享席位；
  * 页面不可见时轮询停了不发），动作走 `stopTeammate` / `messageTeammate` /
@@ -19,8 +24,7 @@
  * 首行的半截会话，`saveLastSession` 还会把假路径记成「上次会话」。所以这里走
  * 宿主的**只读入口** `peekTranscript`（没有租约、不动文件），正文区整层由只读视图接管。
  *
- * 本会话的队伍按 `mate.sessionId === 当前会话` 过滤（老名册行没有 sessionId，
- * 不归任何会话）；其它会话的收进底部折叠组，只读列出（对照旧界面 matesOf）。
+ * 名册过滤一律按本会话（`mate.sessionId === 当前会话`）；别的会话派出的不列、不给入口。
  *
  * @module dsc-ui-shell/plugins/team
  */
@@ -33,11 +37,8 @@ import {
   readSessionId,
   readSessionPath,
   readSessions,
-  useDialogFocus,
 } from '@dsc/ui-primitives'
 import {
-  IconChevronDown,
-  IconClose,
   IconTree,
   confirmAction,
   createSignal,
@@ -55,7 +56,6 @@ import {
   type DockTabBodyProps,
   type SessionSummary,
   type SlotComponentProps,
-  type SnapshotSelectorHook,
   type StoreHandle,
   type TranscriptEntry,
   type TeammateView,
@@ -75,31 +75,6 @@ const STATE_LABEL: Readonly<Record<string, string>> = {
   idle: t('team.state.idle'),
   stopped: t('team.state.stopped'),
   failed: t('team.state.failed'),
-}
-
-/** 本会话派出的队友（旧界面 matesOf 同款：没 sessionId 的老名册行不归任何会话）。 */
-function matesOf(mates: readonly TeammateView[], sessionId: string | null): TeammateView[] {
-  if (sessionId === null || sessionId === '') return []
-  return mates.filter((mate) => mate.sessionId === sessionId)
-}
-
-// ── 面板开合（模块级：标题旁的入口与正文区的只读层共用同一份）────────────────
-
-/** 团队面板开没开（Modal 本体挂在标题旁那个常挂载的条目里，见 {@link TeamEntry}）。 */
-const panel = createSignal<boolean>(false)
-
-function setPanelOpen(next: boolean): void {
-  if (panel.get() === next) return
-  panel.set(next)
-}
-
-/** 订阅函数提到模块级：`useSyncExternalStore` 要求它的引用稳定（内联箭头会反复重订阅）。 */
-function subscribePanelOpen(listener: () => void): () => void {
-  return panel.subscribe(listener)
-}
-
-function usePanelOpen(): boolean {
-  return useSyncExternalStore(subscribePanelOpen, () => panel.get(), () => false)
 }
 
 // ── 正文区的只读运行记录（任务 3）──────────────────────────────────────────
@@ -170,10 +145,6 @@ const makeMateSeat = (): StoreHandle<MateState, MateActions> =>
     },
   })
 type MateSeatHandle = ReturnType<typeof makeMateSeat>
-/** TeamPanel 从 TeamButton 手里接过的读面（同一份 useStore，不重起订阅）。 */
-interface MateSeatRead {
-  useStore: SnapshotSelectorHook<MateState>
-}
 
 export default defineUiPlugin({
   name: t('team.plugin.name'),
@@ -181,14 +152,7 @@ export default defineUiPlugin({
     // 席位：本插件两处登记共享同一个 handle；跨插件共享经服务表传 handle（不认字符串键）。
     const mates = makeMateSeat()
     ui.provide('teammates', mates)
-    // 团队面板的口子：状态面板的「智能体」区与别的插件都能经它开面板（模态的开合仍归
-    // 本插件自己管；服务缺席时消费方整行不渲染——点了没反应的入口比没有更糟）。
-    ui.provide('teamPanel', {
-      open: (): void => {
-        setPanelOpen(true)
-      },
-    })
-    // 正文区只读运行记录的口子：状态面板 / 团队面板点一行都走它。`working` 的队友在这里
+    // 正文区只读运行记录的口子：状态面板点一行走它。`working` 的队友在这里
     // 直接回绝（不弹窗、不切会话）——它还在写自己那份日志，不能同时被当成一条会话打开。
     ui.provide('teammateReader', {
       open: (mate: TeammateView): void => {
@@ -202,9 +166,10 @@ export default defineUiPlugin({
         closeReader()
       },
     })
-    // 标题旁的一簇：**「智能体团队」入口**（2026-11-06 与状态面板对调：单个队友的行搬进
-    // 状态面板的「智能体」区）。这条目录常挂载——名册轮询、团队面板本体、正文区只读层
-    // 都住在这里；没有任何队友时它照样在（轮询与「派出第一个队友」的入口都靠它）。
+    // 这条目录仍常挂载，但**不再画「智能体团队」按钮**（2026-11-08 与状态面板合并：
+    // 成员只在状态面板的「子智能体」区列一次，标题旁不再重复同一份名册）。
+    // 留着它为两件事：3 秒轮询写共享席位（状态面板与右栏页签读同一份），
+    // 以及承载正文区那层只读运行记录（它要 portal 到正文区）。
     ui.slots.register('shell.header.lead', { id: 'team.entry', order: 20, store: mates }, TeamEntry)
     // 子智能体的运行记录仍可落**右侧栏**（一种 dock 页签，给工具卡里的子代理卡用）：
     // 正文区那条只读视图是「点状态面板一行」的主路，右栏这条是伴读面的旁路，两条共用
@@ -226,13 +191,14 @@ export default defineUiPlugin({
 })
 
 /**
- * 标题旁的「智能体团队」入口：**一个按钮**（有队友时带数量），点开 {@link TeamPanel}。
+ * 常挂载的名册轮询 + 正文区只读层宿主。
  *
- * 组件本身常挂载：名册轮询（3 秒一次写进共享席位，全壳只有这一条 interval）、团队面板
- * 本体与正文区只读层都住在这里——所以它自己哪怕没有任何队友也照常渲染（只是数量不显示）。
+ * 标题旁**不再有「智能体团队」按钮**：成员统一在状态面板的「子智能体」区列（一处，
+ * 不重复）。这条目录留着只为两件事——3 秒轮询把名册写进共享席位（状态面板与右栏
+ * 页签读同一份），以及承载 {@link TeammateReader} 那层只读视图（它要 portal 到正文区）。
+ * 组件本身没有可见产物，所以队列里没队友时它也不占顶栏位置。
  */
 function TeamEntry(props: SlotComponentProps<Record<never, never>, never, never, MateSeatHandle>): ReactNode {
-  const teamOpen = usePanelOpen()
   const channel = useHostChannel()
   const { actions } = props
   useEffect(() => {
@@ -255,140 +221,7 @@ function TeamEntry(props: SlotComponentProps<Record<never, never>, never, never,
       window.clearInterval(timer)
     }
   }, [channel, actions])
-  const mates = props.useStore((state) => state.list)
-  const sessionId = useHostSelector(readSessionId)
-  const mine = matesOf(mates, sessionId)
-  return (
-    <>
-      <button
-        type="button"
-        className={`team-btn${teamOpen ? ' on' : ''}`}
-        data-team-count={mine.length}
-        aria-expanded={teamOpen}
-        aria-label={t('team.panel.aria')}
-        data-tip={t('team.entry.tip')}
-        onClick={() => {
-          setPanelOpen(!teamOpen)
-        }}
-      >
-        <IconTree size={13} />
-        {mine.length === 0 ? t('team.entry.label') : t('team.entry.count', { count: mine.length })}
-      </button>
-      {teamOpen ? <TeamPanel useStore={props.useStore} /> : null}
-      <TeammateReader />
-    </>
-  )
-}
-
-/** 「智能体团队」面板：本会话的队伍为主；其它会话派出的收进底部折叠组，只读。
- *  层级照设置面板那一档（.settings-mask + .settings），Esc 与点遮罩都关。
- *  点一行 = 关掉面板、在正文区只读打开它的运行记录（任务 3；还在跑的当场回绝）。 */
-function TeamPanel({ useStore }: MateSeatRead): ReactNode {
-  const mates = useStore((state) => state.list)
-  const sessionId = useHostSelector(readSessionId)
-  const [othersOpen, setOthersOpen] = useState(false)
-
-  /** 点一行：收工的开正文区只读视图，还在跑的给一句人话（不切会话、不动文件）。 */
-  const openMate = (mate: TeammateView): void => {
-    if (mate.state === 'working') {
-      toastErr(t('team.reader.busy', { name: mate.name }))
-      return
-    }
-    setPanelOpen(false)
-    openReader(mate)
-  }
-
-  // Esc 与焦点走基元：关面板，焦点还给来源。
-  const dialog = useDialogFocus(true, () => {
-    setPanelOpen(false)
-  })
-
-  const mine = matesOf(mates, sessionId)
-  const others = mates.filter((mate) => !mine.includes(mate))
-
-  return (
-    <div
-      className="settings-mask"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) setPanelOpen(false)
-      }}
-    >
-      <div className="settings team-panel" role="dialog" aria-modal="true" aria-label={t('team.panel.aria')} ref={dialog.ref}>
-        <div className="settings-main">
-          <div className="settings-head">
-            <div className="settings-head-text">
-              <h2>{t('team.panel.title')}</h2>
-              <p>{t('team.panel.desc')}</p>
-            </div>
-            <button
-              type="button"
-              className="icon-btn"
-              autoFocus
-              data-tip={t('team.panel.closeTip')}
-              onClick={() => {
-                setPanelOpen(false)
-              }}
-            >
-              <IconClose size={16} />
-            </button>
-          </div>
-
-          <div className="settings-body">
-            {mates === null ? (
-              <div className="settings-empty">{t('team.panel.loading')}</div>
-            ) : (
-              <>
-                {mine.length === 0 ? (
-                  <div className="settings-empty">{t('team.panel.empty')}</div>
-                ) : (
-                  <div className="team-list">
-                    {mine.map((mate) => (
-                      <TeamRow
-                        key={mate.file}
-                        mate={mate}
-                        onOpen={() => {
-                          openMate(mate)
-                        }}
-                      />
-                    ))}
-                  </div>
-                )}
-                {others.length > 0 ? (
-                  <>
-                    <button
-                      type="button"
-                      className="team-others-toggle"
-                      aria-expanded={othersOpen}
-                      onClick={() => {
-                        setOthersOpen((current) => !current)
-                      }}
-                    >
-                      <IconChevronDown size={13} />
-                      {t('team.panel.others', { count: others.length })}
-                    </button>
-                    {othersOpen ? (
-                      <div className="team-list team-others">
-                        {others.map((mate) => (
-                          <TeamRow
-                            key={mate.file}
-                            mate={mate}
-                            onOpen={() => {
-                              openMate(mate)
-                            }}
-                          />
-                        ))}
-                        <p className="team-hint">{t('team.panel.othersHint')}</p>
-                      </div>
-                    ) : null}
-                  </>
-                ) : null}
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  )
+  return <TeammateReader />
 }
 
 /** 订阅函数提到模块级（`useSyncExternalStore` 要求引用稳定）。 */
@@ -521,6 +354,9 @@ function TeammateReader(): ReactNode {
         <span className="team-reader-role">{mate.role}</span>
         <span className={`sub-tab-state ${mate.state}`}>{STATE_LABEL[mate.state] ?? mate.state}</span>
         <span className="team-reader-note">{t('team.reader.note')}</span>
+        {/* 行动作跟着这一位走：停止（在跑）/ 发话 / 移除（收工的）。名册面板撤掉之后，
+            这三个动作只剩这一处落点（见 {@link ReaderActions}）。 */}
+        <ReaderActions mate={mate} />
         <button
           type="button"
           className="text-btn"
@@ -544,17 +380,14 @@ function TeammateReader(): ReactNode {
   )
 }
 
-/** 名册的一行：状态点 + 名称 + 角色 + 任务 + 轮数 + 耗时 + 状态 + 停止/发话/移除。
- *  点击整行 = 打开运行记录（只读）；行尾动作各自 stopPropagation。 */
-function TeamRow({
-  mate,
-  compact = false,
-  onOpen,
-}: {
-  mate: TeammateView
-  compact?: boolean
-  onOpen: () => void
-}): ReactNode {
+/**
+ * 只读运行记录头部的三个动作：停止（在跑的）/ 发话 / 移除（收工的）。
+ *
+ * 为什么搬到这里：标题旁那个名册面板 2026-11-08 撤掉了（成员统一在状态面板列一次，
+ * 不重复），但这三个动作不能丢——详情层是唯一合适的落点：列表不重复，操作跟着那一位走。
+ * 行内动作各自 stopPropagation 的旧约束在这里自然消失（这一层本身没有「整行可点」）。
+ */
+function ReaderActions({ mate }: { mate: TeammateView }): ReactNode {
   const channel = useHostChannel()
   const [writing, setWriting] = useState(false)
   const [draft, setDraft] = useState('')
@@ -570,100 +403,86 @@ function TeamRow({
   }
 
   return (
-    <div className="team-row" role="button" tabIndex={0} onClick={onOpen}>
-      <span className={`tm-dot ${mate.state}`} aria-hidden="true" />
-      <span className="tm-name">{mate.name}</span>
-      <span className="tm-role">{mate.role}</span>
-      <span className="team-task" title={mate.task}>
-        {mate.task}
-      </span>
-      <span className="team-round">{t('team.row.rounds', { count: mate.rounds })}</span>
-      {compact ? null : <UsedTime mate={mate} />}
-      <span className="tm-state">{STATE_LABEL[mate.state] ?? mate.state}</span>
-      <span className="team-acts" onClick={(event) => event.stopPropagation()}>
-        {busy ? (
-          <button
-            type="button"
-            className="text-btn danger"
-            data-tip={t('team.row.stopTip')}
-            onClick={() => {
-              void act('stopTeammate', [mate.name], t('team.row.stopped', { name: mate.name }))
-            }}
-          >
-            {t('team.row.stop')}
-          </button>
-        ) : null}
+    <>
+      {busy ? (
         <button
           type="button"
-          className="text-btn"
-          aria-pressed={writing}
-          data-tip={t('team.row.messageTip')}
+          className="text-btn danger"
+          data-tip={t('team.row.stopTip')}
           onClick={() => {
-            setWriting((current) => !current)
+            void act('stopTeammate', [mate.name], t('team.row.stopped', { name: mate.name }))
           }}
         >
-          {t('team.row.message')}
+          {t('team.row.stop')}
         </button>
-        {busy ? null : (
+      ) : (
+        <button
+          type="button"
+          className="text-btn danger"
+          data-tip={t('team.row.removeTip')}
+          onClick={() => {
+            void (async () => {
+              const ok = await confirmAction({
+                title: t('team.row.removeTitle', { name: mate.name }),
+                detail: t('team.row.removeDetail'),
+                confirmLabel: t('team.row.remove'),
+                danger: true,
+              })
+              if (!ok) return
+              void act('removeTeammate', [mate.name], t('team.row.removed', { name: mate.name }))
+            })()
+          }}
+        >
+          {t('team.row.remove')}
+        </button>
+      )}
+      <button
+        type="button"
+        className="text-btn"
+        aria-pressed={writing}
+        data-tip={t('team.row.messageTip')}
+        onClick={() => {
+          setWriting((current) => !current)
+        }}
+      >
+        {t('team.row.message')}
+      </button>
+      {writing ? (
+        <span className="team-write team-reader-write">
+          <input
+            autoFocus
+            value={draft}
+            placeholder={t('team.row.writePlaceholder', { name: mate.name })}
+            aria-label={t('team.row.writeLabel', { name: mate.name })}
+            onChange={(event) => {
+              setDraft(event.target.value)
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
+              const text = draft.trim()
+              if (text === '') return
+              void act('messageTeammate', [mate.name, text], t('team.row.sent', { name: mate.name }))
+              setDraft('')
+              setWriting(false)
+            }}
+          />
           <button
             type="button"
-            className="text-btn danger"
-            data-tip={t('team.row.removeTip')}
+            className="text-btn"
+            disabled={draft.trim() === ''}
             onClick={() => {
-              void (async () => {
-                const ok = await confirmAction({
-                  title: t('team.row.removeTitle', { name: mate.name }),
-                  detail: t('team.row.removeDetail'),
-                  confirmLabel: t('team.row.remove'),
-                  danger: true,
-                })
-                if (!ok) return
-                void act('removeTeammate', [mate.name], t('team.row.removed', { name: mate.name }))
-              })()
+              const text = draft.trim()
+              if (text === '') return
+              void act('messageTeammate', [mate.name, text], t('team.row.sent', { name: mate.name }))
+              setDraft('')
+              setWriting(false)
             }}
           >
-            {t('team.row.remove')}
+            {t('team.row.send')}
           </button>
-        )}
-      </span>
-      {writing ? (
-        <span className="team-side" onClick={(event) => event.stopPropagation()}>
-          <span className="team-write">
-            <input
-              autoFocus
-              value={draft}
-              placeholder={t('team.row.writePlaceholder', { name: mate.name })}
-              aria-label={t('team.row.writeLabel', { name: mate.name })}
-              onChange={(event) => {
-                setDraft(event.target.value)
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
-                const text = draft.trim()
-                if (text === '') return
-                void act('messageTeammate', [mate.name, text], t('team.row.sent', { name: mate.name }))
-                setDraft('')
-                setWriting(false)
-              }}
-            />
-            <button
-              type="button"
-              className="text-btn"
-              disabled={draft.trim() === ''}
-              onClick={() => {
-                const text = draft.trim()
-                if (text === '') return
-                void act('messageTeammate', [mate.name, text], t('team.row.sent', { name: mate.name }))
-                setDraft('')
-                setWriting(false)
-              }}
-            >
-              {t('team.row.send')}
-            </button>
-          </span>
         </span>
       ) : null}
-    </div>
+    </>
   )
 }
 

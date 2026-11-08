@@ -136,6 +136,34 @@ export interface TeammateView {
   sessionId?: string
 }
 
+/**
+ * 共享任务板上的一个任务（状态面板「智能体团队」区只读展示）。
+ *
+ * 与「子智能体」分区严格分工（对照 dsh：成员树归 subagent 导航，任务板只画任务）：
+ * 这里只说「有哪些事、谁负责、做到哪一步」，不掺队友的运行状态。
+ */
+export interface TeamTaskView {
+  id: string
+  subject: string
+  description: string
+  status: 'pending' | 'in_progress' | 'completed'
+  /** 认领人（队友名或 lead）；null = 没人认领。 */
+  owner: string | null
+  /** 依赖的任务 id。 */
+  blockedBy: string[]
+  /** 打算改的路径前缀（只用于重叠告警，不是锁）。 */
+  writeScopes: string[]
+  /** 依赖都完成了，可以开工。 */
+  ready: boolean
+}
+
+/** 一个会话的共享任务板（每个会话一块，切会话就是另一块）。 */
+export interface TeamBoardView {
+  /** 板子版本号；模型改状态要带的 expected_revision 就是它。 */
+  revision: number
+  tasks: TeamTaskView[]
+}
+
 /** 可切换的模型（/model 补全与校验的数据源）。 */
 export interface ModelChoiceView {
   /** 可直接传给 /model 的完整值：`[端点/]模型名`。 */
@@ -251,6 +279,11 @@ export interface MarketSkillView {
   version?: string
   /** 本地 ~/.dsc/skills 里是否已有同名技能。 */
   installed: boolean
+  /**
+   * 市场侧的统计读数（ClawHub 给下载/安装/星标；其它源没有）。
+   * 只用于展示与排序，缺失就是那个键没有，不是 0。
+   */
+  stats?: { downloads?: number; installs?: number; stars?: number }
 }
 
 /** 一次市场浏览的结果（当前源的条目 + 全部源的状态）。 */

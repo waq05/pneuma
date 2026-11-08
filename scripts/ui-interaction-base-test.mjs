@@ -100,7 +100,6 @@ console.log('[2] 弹层焦点管理')
   const wiring = [
     [resolveUiHalf('settings') + '/ui.tsx', 'settings', '设置面板'],
     [resolveUiHalf('settings') + '/models.tsx', 'models-discover-card', '模型清单弹窗'],
-    [resolveUiHalf('team') + '/ui.tsx', 'team-panel', '智能体团队'],
     ['src/packages/ui-trace/ui/inspector.tsx', 'trace-inspector', '轨迹检查器'],
   ]
   for (const [file, marker, label] of wiring) {
@@ -111,9 +110,10 @@ console.log('[2] 弹层焦点管理')
   const settings = read(resolveUiHalf('settings') + '/ui.tsx')
   check('设置面板撤掉了原来的 window 级 Esc（不与 hook 双触发）', !settings.includes("window.addEventListener('keydown', onKey)"))
   const team = read(resolveUiHalf('team') + '/ui.tsx')
+  // 2026-11-08：名册模态撤了（入口统一到状态面板），只剩正文区那层只读视图——它的 Esc 仍归自己管。
   check(
-    '团队面板的 Esc 仍分两层（只读层先退，面板自己那层由 dialog 基元收）',
-    team.includes("if (event.key === 'Escape') closeReader()") && team.includes('role="dialog"'),
+    '正文区只读层的 Esc 仍是自己那一层（不进对话框基元）',
+    team.includes("if (event.key === 'Escape') closeReader()") && !team.includes('role="dialog"'),
   )
 }
 
@@ -312,27 +312,31 @@ console.log('[7] 命令面板的滚动与翻页')
   check('键盘表那张也有 ✕', palette.includes("t('palette.shortcuts.closeAria')"))
 }
 
-// ── [8] 2026-10-27 第四轮：子智能体下拉出界 + 胶囊悬停分层 ──────────────────
-// 2026-11-06 起标题旁的下拉撤了（换成「智能体团队」入口），出界那套测量随之下线；
-// 这一节改成钉「入口 / 团队面板 / 正文区只读层」的结构与边界。
+// ── [8] 2026-11-08：入口统一到状态面板，标题旁不再挂「智能体团队」按钮 ────────
+// 这一节钉「子智能体 / 智能体团队两个分区分开画、成员只在状态面板列一次」与只读层的边界。
 
-console.log('[8] 智能体团队入口与正文区只读层')
+console.log('[8] 子智能体与智能体团队两分区的界面结构')
 {
   const css = read('src/packages/ui-renderer/ui/styles/styles.css')
   const team = read(resolveUiHalf('team') + '/ui.tsx')
+  const status = read('src/packages/ui-status/ui/ui.tsx')
   const composer = read(resolveUiHalf('composer') + '/ui.tsx')
 
-  check('标题旁是常挂载的团队入口（名册 3 秒轮询跟着它）', /function TeamEntry[\s\S]{0,800}?setInterval\(poll, 3000\)/.test(team))
-  // 标题旁从左到右：新会话 · 标准模式 · 智能体团队（用户 2026-11-06 定的顺序）。
-  // 两个包各自往同一个槽报名，先后只由 order 决定——所以这里量的是两个注册点的数字大小，
-  // 不是 DOM（源码探针量不到真机，这条防的是「哪天有人顺手把某个 order 改成 30」）。
+  // 标题旁只剩模式钮（order 10）。团队入口撤掉之后，这个槽上不该再有 order 20 的条目。
   const presetOrder = Number(/shell\.header\.lead', \{ id: 'composer\.preset', order: (\d+)/.exec(composer)?.[1])
-  const teamOrder = Number(/shell\.header\.lead', \{ id: 'team\.entry', order: (\d+)/.exec(team)?.[1])
-  check('模式钮排在团队钮前面（order 10 < 20）', presetOrder === 10 && teamOrder === 20, `${presetOrder} / ${teamOrder}`)
-  check('团队面板是模态 dialog（role + aria-modal + 标签）', team.includes('role="dialog"') && team.includes('aria-modal="true"') && team.includes("t('team.panel.aria')"))
+  const teamOrder = /shell\.header\.lead', \{ id: 'team\.entry', order: (\d+)/.exec(team)?.[1]
+  check('模式钮仍是标题旁那颗（order 10）', presetOrder === 10, String(presetOrder))
+  check('团队插件在标题旁只剩常挂载的轮询宿主（不画按钮）', team.includes("id: 'team.entry'") && !team.includes('team-btn'))
+  void teamOrder
+  check('名册面板已撤（不再有模态与「其它会话」折叠组）', !team.includes('TeamPanel') && !team.includes('team.panel.others'))
   check('只读层落在正文区（createPortal 到 [data-thread-area]）', team.includes('THREAD_AREA_SELECTOR') && team.includes('createPortal('))
   check('还在跑的队友不许打开（走一句人话，不静默）', team.includes("t('team.reader.busy'"))
   check('换会话自动关掉只读层', /openedFor\.current !== sessionId[\s\S]{0,60}?closeReader\(\)/.test(team))
+  check('运行记录页头部能发话 / 停止 / 移除（名册面板撤掉后的唯一落点）', team.includes('function ReaderActions') && team.includes("act('stopTeammate'") && team.includes("act('messageTeammate'") && team.includes("act('removeTeammate'"))
+
+  // 两个分区是两件事：成员区的标题叫「子智能体」，任务区的标题叫「智能体团队」，各有自己的钩子。
+  check('成员区与任务区是两个独立的 SectionId', status.includes("'agent' | 'team'") && status.includes('<TeamBoardSection'))
+  check('任务行有自己的行钩子与详情块', status.includes('data-sp-task-state') && status.includes('sp-task-detail'))
 
   // ② 行内按钮不再铺第二层底色：整行已经由 .sp-row:hover 上底，叠起来就是「没盖满 / 分层」。
   check('可点行体自己不上底（交给整行）', /\.sp-row-open:hover \{[^}]*background: none;/.test(css))

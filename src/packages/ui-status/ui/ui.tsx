@@ -103,6 +103,7 @@ import {
   type ScheduledTaskView,
   type StoreHandle,
   type TeammateView,
+  type TeamBoardView,
   type TodoItemView,
   type TodoView,
   type UiPluginApi,
@@ -281,12 +282,17 @@ function dragBounds(hostEl: HTMLElement, applied: CapsulePos): DragBounds | null
 }
 
 /**
- * 七个分区各自的开合（顺序照 ZCode：Git 工具 / 目标 / 计划 / 进程 / 终端 / 工作流 / 智能体）。
+ * 八个分区各自的开合（顺序照 ZCode：Git 工具 / 目标 / 计划 / 进程 / 终端 / 工作流 / 子智能体 /
+ * 智能体团队）。
  *
- * 默认：Git 工具 / 目标 / 进程展开；计划、终端、工作流、智能体收起——照 ZCode
+ * 「子智能体」与「智能体团队」是两件事（对照 dsh：成员树归 subagent 导航，共享任务板只画
+ * 任务）：前者一行一个队友，后者一行一条任务。两区各按自己的数据有无决定画不画，
+ * 不互相顶替，也不重复列同一批人。
+ *
+ * 默认：Git 工具 / 目标 / 进程展开；计划、终端、工作流、子智能体、智能体团队收起——照 ZCode
  * 「活动列表默认收起」，回看性的目录（计划）也收起。
  */
-type SectionId = 'git' | 'goal' | 'plan' | 'todo' | 'terminal' | 'workflow' | 'agent'
+type SectionId = 'git' | 'goal' | 'plan' | 'todo' | 'terminal' | 'workflow' | 'agent' | 'team'
 const DEFAULT_SECTION_OPEN: Readonly<Record<SectionId, boolean>> = {
   git: true,
   goal: true,
@@ -295,6 +301,7 @@ const DEFAULT_SECTION_OPEN: Readonly<Record<SectionId, boolean>> = {
   terminal: false,
   workflow: false,
   agent: false,
+  team: false,
 }
 
 /** 队友状态 → 数据属性（样式里靠它上色，与团队面板同一套词）。 */
@@ -428,6 +435,24 @@ function sameMateList(left: readonly TeammateView[], right: readonly TeammateVie
       mate.task === other.task &&
       mate.startedAt === other.startedAt &&
       mate.finishedAt === other.finishedAt
+    )
+  })
+}
+
+/** 任务板的相等判断：轮询每 5 秒换一次引用，版本与每行的状态都没变就别重画。 */
+function sameBoard(left: TeamBoardView | null, right: TeamBoardView): boolean {
+  if (left === null) return false
+  if (left.revision !== right.revision) return false
+  if (left.tasks.length !== right.tasks.length) return false
+  return left.tasks.every((task, index) => {
+    const other = right.tasks[index]
+    return (
+      other !== undefined &&
+      task.id === other.id &&
+      task.subject === other.subject &&
+      task.status === other.status &&
+      task.owner === other.owner &&
+      task.ready === other.ready
     )
   })
 }
@@ -801,6 +826,42 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
   }, [channel, usingShared])
 
   /**
+   * 任务板（只读）：状态面板「智能体团队」分区的数据源。
+   *
+   * 与名册分开取：名册说「谁在跑」，任务板说「哪些事、谁负责、可不可以开工」——两件事，
+   * 两处数据，也各自决定画不画（对照 dsh：成员树归子智能体导航，共享任务只画任务）。
+   * 板子按会话各一块，切会话自然换一块；页面不可见时不问（与名册同一条省心跳规矩）。
+   */
+  const [board, setBoard] = useState<TeamBoardView | null>(null)
+  useEffect(() => {
+    let alive = true
+    const poll = (): void => {
+      if (document.visibilityState === 'hidden') return
+      void channel
+        .invoke<TeamBoardView>('listTeamBoard', [])
+        .then((view) => {
+          if (!alive || view === null || typeof view !== 'object') return
+          setBoard((current) => (sameBoard(current, view) ? current : view))
+        })
+        .catch(() => {
+          // team 服务缺席（子智能体插件没开）时按空板处理：分区自己按「有没有任务」隐藏。
+          if (alive) setBoard((current) => (current === null ? current : null))
+        })
+    }
+    poll()
+    const timer = window.setInterval(poll, POLL_MS)
+    const onVisible = (): void => {
+      if (document.visibilityState === 'visible') poll()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      alive = false
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [channel])
+
+  /**
    * Git 读数：本地轮询（`dock git-status` 是读类 op，界面通道直接放行）。
    *
    * 三档节奏（有改动 12s / 干净 30s / 不是仓库 60s）＋一个慢仓库退让：单拍耗时超过
@@ -1049,25 +1110,30 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
     setSectionOpen((current) => ({ ...current, [id]: !current[id] }))
   }
 
-  // 七处都空时整块不画：浮层不该在无事可报时占着右上角。
-  // 与 ZCode 的一处**有意偏离**：有队友就算「有事」——「智能体」区是子智能体唯一的列表，
-  // 一条队友都没有时它只剩一句人话，没什么可看；有队友（含收工的）才值得露出来
-  // （胶囊链最后那一档 mates-ended 也是为它留的）。
+  // 八处都空时整块不画：浮层不该在无事可报时占着右上角。
+  // 与 ZCode 的一处**有意偏离**：有队友就算「有事」——「子智能体」区是成员唯一的列表，
+  // 有队友（含收工的）才值得露出来（胶囊链最后那一档 mates-ended 也是为它留的）；
+  // 任务板同理，有一条任务才算「有事」。
   const hasData =
     todos !== null ||
     goal !== null ||
     mine.length > 0 ||
+    (board !== null && board.tasks.length > 0) ||
     git !== null ||
     plans.length > 0 ||
     works.length > 0 ||
     scheduled.length > 0
-  // 分区可见性（渲染顺序照 ZCode：Git 工具 / 目标 / 计划 / 进程 / 终端 / 工作流 / 智能体）。
+  // 分区可见性（渲染顺序照 ZCode：Git 工具 / 目标 / 计划 / 进程 / 终端 / 工作流 / 子智能体 /
+  // 智能体团队）。两区各自按数据有无出现：没派子智能体就不画成员区，没任务就不画任务区
+  // （2026-11-08 需求：没用到就隐藏，等用到再展示）。
   const showGit = git !== null
   const showGoal = goal !== null
   const showPlan = plans.length > 0
   const showTodo = todos !== null
   const showTerminal = works.length > 0
   const showWorkflow = scheduled.length > 0
+  const showAgent = mine.length > 0
+  const showTeam = board !== null && board.tasks.length > 0
   // 分割线依据：按渲染顺序算「这个分区之上有没有可显示的分区」（纯算式，不引入状态）。
   const sepGoal = showGit
   const sepPlan = showGit || showGoal
@@ -1075,6 +1141,7 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
   const sepTerminal = sepTodo || showTodo
   const sepWorkflow = sepTerminal || showTerminal
   const sepAgent = sepWorkflow || showWorkflow
+  const sepTeam = sepAgent || showAgent
   const panel =
     hasData && view === 'chat' ? (
       <div
@@ -1248,22 +1315,34 @@ function StatusPanel({ slots }: { slots: UiPluginApi['slots'] }): ReactNode {
                   }}
                 />
               ) : null}
-              <AgentSection
-                mates={mine}
-                runningCount={running.length}
-                open={sectionOpen.agent}
-                separated={sepAgent}
-                onToggle={() => {
-                  toggleSection('agent')
-                }}
-                onStop={stopMate}
-                onOpen={(mate) => {
-                  // 主路：正文区只读打开（team 插件的 `teammateReader`）。服务缺席（team 没装 /
-                  // 被停用）时退回右栏页签——那条也是只读面，比点了没反应强。
-                  if (mateReader === undefined) setDockSubagent({ path: mate.file, label: mate.name })
-                  else mateReader.open(mate)
-                }}
-              />
+              {showAgent ? (
+                <AgentSection
+                  mates={mine}
+                  runningCount={running.length}
+                  open={sectionOpen.agent}
+                  separated={sepAgent}
+                  onToggle={() => {
+                    toggleSection('agent')
+                  }}
+                  onStop={stopMate}
+                  onOpen={(mate) => {
+                    // 主路：正文区只读打开（team 插件的 `teammateReader`）。服务缺席（team 没装 /
+                    // 被停用）时退回右栏页签——那条也是只读面，比点了没反应强。
+                    if (mateReader === undefined) setDockSubagent({ path: mate.file, label: mate.name })
+                    else mateReader.open(mate)
+                  }}
+                />
+              ) : null}
+              {showTeam && board !== null ? (
+                <TeamBoardSection
+                  board={board}
+                  open={sectionOpen.team}
+                  separated={sepTeam}
+                  onToggle={() => {
+                    toggleSection('team')
+                  }}
+                />
+              ) : null}
             </div>
           </div>
         </aside>
@@ -1669,12 +1748,14 @@ function FoldPreviewCard({
 }
 
 /**
- * 智能体节（2026-11-06 起是**子智能体列表**，与标题旁那颗「智能体团队」入口对调）：
- * 一行一个队友——状态点 + 名字 + 角色 + 状态词，整行可点。
+ * 子智能体节：一行一个队友——状态点 + 名字 + 角色 + 状态词，整行可点。
  *
  * 点一行在**正文区**只读打开它的完整运行记录（`teammateReader` 服务；还在跑的由那个
  * 服务当场回绝并给一句人话）。行尾仍留一颗停止钮（在跑的才有），各自 stopPropagation。
- * 一条队友都没有时给一句人话，不留空表：面板在别处有数据时会露出来。
+ *
+ * 一条队友都没有时**整区不画**（判在 StatusPanel 那一层）：没有空态文案，也不留空表——
+ * 2026-11-08 需求「没派就隐藏，等用到再展示」。与「智能体团队」区是两件事：这里说
+ * 「谁在跑」，那里说「哪些事、谁负责」。
  */
 function AgentSection({
   mates,
@@ -1699,59 +1780,143 @@ function AgentSection({
     return rank(left) - rank(right) || left.startedAt - right.startedAt
   })
   const trail =
-    mates.length === 0
-      ? ''
-      : runningCount > 0
-        ? t('status.agent.trailRunning', { n: runningCount, total: mates.length })
-        : t('status.agent.trailCount', { n: mates.length })
+    runningCount > 0
+      ? t('status.agent.trailRunning', { n: runningCount, total: mates.length })
+      : t('status.agent.trailCount', { n: mates.length })
   return (
     <StatusSectionBlock id="agent" title={t('status.section.agent')} open={open} separated={separated} onToggle={onToggle} trail={trail}>
-      {mates.length === 0 ? (
-        <div className="sp-empty" data-sp-agent-empty="1">
-          {t('status.agent.empty')}
-        </div>
-      ) : (
-        <ul className="sp-list">
-          {ordered.map((mate) => (
-            <li className="sp-row sp-row-agent" data-state={MATE_TONE[mate.state]} data-sp-agent-state={mate.state} key={mate.file}>
-              {/* 整行可点：正文区只读打开它的运行记录（行内按钮各自 stopPropagation）。 */}
+      <ul className="sp-list">
+        {ordered.map((mate) => (
+          <li className="sp-row sp-row-agent" data-state={MATE_TONE[mate.state]} data-sp-agent-state={mate.state} key={mate.file}>
+            {/* 整行可点：正文区只读打开它的运行记录（行内按钮各自 stopPropagation）。 */}
+            <button
+              type="button"
+              className="sp-row-open"
+              aria-label={t('status.agent.openAria', { name: mate.name })}
+              data-sp-agent={mate.name}
+              data-tip={t('status.agent.rowTip', { role: mate.role, task: mate.task })}
+              onClick={() => {
+                onOpen(mate)
+              }}
+            >
+              <span className={`tm-dot ${mate.state}`} aria-hidden="true" />
+              <span className="sp-row-text" title={mate.task}>
+                {mate.name}
+              </span>
+              <span className="sp-row-note">{mate.role}</span>
+              <span className="sp-row-time" data-tone={mate.state === 'failed' ? 'danger' : 'plain'}>
+                {MATE_STATE_LABEL[mate.state]}
+              </span>
+            </button>
+            {mate.state === 'working' ? (
+              <button
+                type="button"
+                className="sp-row-stop"
+                aria-label={t('status.agent.stopAria', { name: mate.name })}
+                data-tip={t('status.agent.stopTip')}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onStop(mate)
+                }}
+              >
+                <IconStop size={12} />
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </StatusSectionBlock>
+  )
+}
+
+/**
+ * 任务状态 → 显示词（智能体团队分区那一行行尾的读数）。
+ *
+ * pending 再分两档：依赖没做完的是「等依赖」，否则是「可开工」——这两件事对用户是
+ * 完全不同的下一步（一个要等，一个可以派活）。
+ */
+const TASK_STATE_LABEL: Readonly<Record<TeamBoardView['tasks'][number]['status'], string>> = {
+  pending: t('status.team.statePending'),
+  in_progress: t('status.team.stateInProgress'),
+  completed: t('status.team.stateCompleted'),
+}
+
+/**
+ * 智能体团队区（共享任务板，只读）。
+ *
+ * 与「子智能体」区严格分工（对照 dsh：成员树归子智能体导航，共享任务只画任务）：
+ * 这一区只说「有哪些事、谁负责、做到哪一步」，行里不掺队友的运行状态；没有任务时
+ * 整区不画（判在 StatusPanel 那一层）。
+ *
+ * 只读：面板不提供认领 / 结项按钮，改任务仍旧只走模型的 `team_task` 工具——与 dsh
+ * 「Agent 通过工具修改任务；面板不提供修改控件」同一条边界。
+ */
+function TeamBoardSection({
+  board,
+  open,
+  separated,
+  onToggle,
+}: {
+  board: TeamBoardView
+  open: boolean
+  separated: boolean
+  onToggle(): void
+}): ReactNode {
+  // 一次只展开一条（展开另一条时自动收起上一条），与 dsh 的任务详情同一条规矩。
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const openCount = board.tasks.filter((task) => task.status !== 'completed').length
+  const trail =
+    openCount === 0
+      ? t('status.team.trailDone', { n: board.tasks.length })
+      : t('status.team.trail', { n: openCount, total: board.tasks.length })
+  return (
+    <StatusSectionBlock id="team" title={t('status.section.team')} open={open} separated={separated} onToggle={onToggle} trail={trail}>
+      <ul className="sp-list">
+        {board.tasks.map((task) => {
+          const detailOpen = expanded === task.id
+          // 圆点：完成 = 灰；进行中 = 运行中；待开始里 ready 的是可开工（灰），被依赖挡住的是警戒（橙）。
+          const tone =
+            task.status === 'completed' ? 'idle' : task.status === 'in_progress' ? 'working' : task.ready ? 'stopped' : 'failed'
+          const stateText =
+            task.status === 'pending' && !task.ready
+              ? t('status.team.stateBlocked')
+              : TASK_STATE_LABEL[task.status]
+          return (
+            <li className="sp-row sp-row-task" data-state={tone} data-sp-task-state={task.status} key={task.id}>
               <button
                 type="button"
                 className="sp-row-open"
-                aria-label={t('status.agent.openAria', { name: mate.name })}
-                data-sp-agent={mate.name}
-                data-tip={t('status.agent.rowTip', { role: mate.role, task: mate.task })}
+                aria-expanded={detailOpen}
+                aria-label={t('status.team.openAria', { subject: task.subject })}
+                data-sp-task={task.id}
                 onClick={() => {
-                  onOpen(mate)
+                  setExpanded(detailOpen ? null : task.id)
                 }}
               >
-                <span className={`tm-dot ${mate.state}`} aria-hidden="true" />
-                <span className="sp-row-text" title={mate.task}>
-                  {mate.name}
+                <span className={`tm-dot ${tone}`} aria-hidden="true" />
+                <span className="sp-row-text" title={task.subject}>
+                  {task.subject}
                 </span>
-                <span className="sp-row-note">{mate.role}</span>
-                <span className="sp-row-time" data-tone={mate.state === 'failed' ? 'danger' : 'plain'}>
-                  {MATE_STATE_LABEL[mate.state]}
+                <span className="sp-row-note">{task.owner === null ? t('status.team.unowned') : `@${task.owner}`}</span>
+                <span className="sp-row-time" data-tone={tone === 'failed' ? 'danger' : 'plain'}>
+                  {stateText}
                 </span>
               </button>
-              {mate.state === 'working' ? (
-                <button
-                  type="button"
-                  className="sp-row-stop"
-                  aria-label={t('status.agent.stopAria', { name: mate.name })}
-                  data-tip={t('status.agent.stopTip')}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onStop(mate)
-                  }}
-                >
-                  <IconStop size={12} />
-                </button>
+              {detailOpen ? (
+                <div className="sp-task-detail">
+                  <p>{task.description === '' ? t('status.team.noDetail') : task.description}</p>
+                  {task.blockedBy.length === 0 ? null : (
+                    <p className="sp-task-meta">{t('status.team.blockedBy', { ids: task.blockedBy.join('、') })}</p>
+                  )}
+                  {task.writeScopes.length === 0 ? null : (
+                    <p className="sp-task-meta">{t('status.team.scopes', { scopes: task.writeScopes.join('、') })}</p>
+                  )}
+                </div>
               ) : null}
             </li>
-          ))}
-        </ul>
-      )}
+          )
+        })}
+      </ul>
     </StatusSectionBlock>
   )
 }

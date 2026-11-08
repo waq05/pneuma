@@ -65,6 +65,7 @@ import type {
   RuntimeSnapshot,
   RuntimeSurfaces,
   TeammateView,
+  TeamBoardView,
   TodoView,
   TodoWriteResult,
   TranscriptEntry,
@@ -915,6 +916,13 @@ export interface PromptService {
 export interface TeamService {
   /** 队友清单，含已经收工的（来自 `~/.dsc/team/roster.json`）。 */
   list(): TeammateView[]
+  /**
+   * 一个会话的共享任务板（只读）。
+   *
+   * 为什么按会话要参数：状态面板画的是「用户正在看的那条会话」的板，而队友认领时
+   * 必须落到派它的那条会话（后台跑着时用户可能已经切走）——两边都不能看「当前会话」。
+   */
+  board(sessionId: string): TeamBoardView
   /** 只读重放一个队友的运行记录，返回可渲染的对话条目。 */
   peek(file: string): Promise<TranscriptEntry[]>
   /**
@@ -1018,8 +1026,8 @@ export interface SkillService {
   registerProvider(provider: SkillProvider): () => void
   /** 注册外部市场源；返回退订函数。 */
   registerMarket(market: SkillMarketProvider): () => void
-  /** 市场浏览（内置源 + 插件注册源）。 */
-  browseMarket(source: string, refresh?: boolean): Promise<MarketBrowseResult>
+  /** 市场浏览（内置源 + 插件注册源）。`query` 只对搜索型源（skills.sh）有意义。 */
+  browseMarket(source: string, refresh?: boolean, query?: string): Promise<MarketBrowseResult>
   /** 市场安装。 */
   installMarketSkill(source: string, name: string): Promise<SettingsMutation>
   /** 用户级技能目录（技能中心的导入目标）。 */

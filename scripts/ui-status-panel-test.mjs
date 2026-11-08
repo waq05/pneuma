@@ -197,13 +197,19 @@ console.log('[5] 形态钉（结构约定）')
   check('预览卡开合有延迟（120/80ms）', status.includes('PREVIEW_OPEN_MS') && status.includes('PREVIEW_CLOSE_MS'))
   check('折叠桶行带 data-sp-fold 钩子', status.includes('data-sp-fold'))
   check('子智能体行经 teammateReader 服务（缺服务退回右栏页签）', status.includes("'teammateReader'") && status.includes('data-sp-agent') && status.includes('data-sp-agent-state'))
-  check('team 插件把 teamPanel 服务 provide 出来', team.includes("ui.provide('teamPanel'"))
+  // 2026-11-08：入口统一到状态面板（标题旁不再有「智能体团队」按钮与名册面板），
+  // 所以 teamPanel 服务与它的模态一并撤掉——成员只在这一处列一次。
+  check('team 插件不再提供 teamPanel 服务（名册统一在状态面板）', !team.includes("ui.provide('teamPanel'"))
   check('进程行三态图标（进行中/办完/待办）', status.includes('sp-icon-run') && status.includes('sp-icon-done') && status.includes('sp-icon-wait'))
 
   check(
-    '七个分区的渲染顺序照 ZCode（git → goal → plan → todo → terminal → workflow → agent）',
-    /<GitSection[\s\S]*?<GoalSection[\s\S]*?<PlanSection[\s\S]*?<TodoSection[\s\S]*?<WorkSection[\s\S]*?<WorkflowSection[\s\S]*?<AgentSection/.test(status),
+    '八个分区的渲染顺序（git → goal → plan → todo → terminal → workflow → agent → team）',
+    /<GitSection[\s\S]*?<GoalSection[\s\S]*?<PlanSection[\s\S]*?<TodoSection[\s\S]*?<WorkSection[\s\S]*?<WorkflowSection[\s\S]*?<AgentSection[\s\S]*?<TeamBoardSection/.test(status),
   )
+  // 两个分区分开画、各自按数据有无隐藏：没派子智能体不画成员区，没任务不画任务板区。
+  check('子智能体区按「有没有队友」隐藏（showAgent 判在渲染处）', status.includes('const showAgent = mine.length > 0') && /\{showAgent \? \([\s\S]{0,200}?<AgentSection/.test(status))
+  check('智能体团队区按「有没有任务」隐藏（showTeam 判在渲染处）', status.includes('const showTeam = board !== null && board.tasks.length > 0') && /\{showTeam && board !== null \? \([\s\S]{0,200}?<TeamBoardSection/.test(status))
+  check('任务板是只读轮询（listTeamBoard；改任务仍走模型的 team_task 工具）', status.includes("invoke<TeamBoardView>('listTeamBoard'") && !status.includes("invoke('team_task'"))
   check(
     'Git 读数是本地轮询（三档 + 慢仓库退让）',
     status.includes('GIT_POLL_DIRTY_MS') && status.includes('GIT_POLL_CLEAN_MS') && status.includes('GIT_POLL_IDLE_MS') && status.includes('GIT_SLOW_MS'),
@@ -227,8 +233,10 @@ console.log('[5] 形态钉（结构约定）')
   check('任务条已撤（tasks 插件里没有 TaskDock / tasks.dock）', !stripComments(tasks).includes('TaskDock') && !tasks.includes('tasks.dock'))
   check('清空清单搬进进程区', status.includes('data-sp-clear') && status.includes("invoke('clearTodos'"))
   check('团队钮已撤（team 插件里没有 TeamButton / team.toggle）', !stripComments(team).includes('TeamButton') && !team.includes('team.toggle'))
-  check('名册轮询仍在（跟着标题旁那颗团队入口常挂载）', team.includes("invoke<TeammateView[]>('listTeammates'") && /function TeamEntry[\s\S]*?setInterval\(poll, 3000\)/.test(team))
-  check('团队面板仍由常挂载的那一簇渲染', team.includes('{teamOpen ? <TeamPanel'))
+  check('名册轮询仍在（常挂载的那条目录，3 秒一拍写进共享席位）', team.includes("invoke<TeammateView[]>('listTeammates'") && /function TeamEntry[\s\S]*?setInterval\(poll, 3000\)/.test(team))
+  // 2026-11-08：名册模态整个删掉（成员只在状态面板列一次）。组件名与渲染点都不许回来。
+  check('名册模态已撤（不再渲染 TeamPanel）', !stripComments(team).includes('TeamPanel'))
+  check('运行记录页头部带发话 / 停止 / 移除（ReaderActions）', team.includes('function ReaderActions') && team.includes('<ReaderActions mate={mate} />'))
 }
 
 console.log('[6] 宿主数据面（文本钉）')

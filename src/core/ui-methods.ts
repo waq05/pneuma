@@ -158,6 +158,8 @@ export const UI_METHODS = [
   'runSettingAction',
   // 队友
   'listTeammates',
+  // 任务板（状态面板「智能体团队」分区）：只读；改任务仍旧只走模型的 team_task 工具
+  'listTeamBoard',
   'stopTeammate',
   'messageTeammate',
   'removeTeammate',
@@ -368,7 +370,10 @@ export const UI_ARG_SPECS: Readonly<Record<UiMethod, MethodSpec>> = {
   listSkills: [],
   readSkill: [{ shape: { kind: 'string', max: MAX_NAME } }],
   setSkillEnabled: [{ shape: { kind: 'string', max: MAX_NAME } }, { shape: { kind: 'boolean' } }],
-  browseMarket: [{ shape: { kind: 'string', max: MAX_NAME }, optional: true }],
+  browseMarket: [
+    { shape: { kind: 'string', max: MAX_NAME }, optional: true },
+    { shape: { kind: 'string', max: MAX_NAME }, optional: true },
+  ],
   // ── 模式（预设） ──────────────────────────────────────────────────────────
   listPresets: [],
   readPreset: [{ shape: { kind: 'string', max: MAX_NAME } }],
@@ -389,6 +394,8 @@ export const UI_ARG_SPECS: Readonly<Record<UiMethod, MethodSpec>> = {
   runSettingAction: [{ shape: { kind: 'string', max: MAX_NAME } }, { shape: { kind: 'string', max: MAX_NAME } }],
   // ── 队友 ──────────────────────────────────────────────────────────────────
   listTeammates: [],
+  // 任务板：只读一次当前会话的板（无参数；写仍旧只走模型的 team_task）
+  listTeamBoard: [],
   stopTeammate: [{ shape: { kind: 'string', max: MAX_NAME } }],
   messageTeammate: [{ shape: { kind: 'string', max: MAX_NAME } }, { shape: { kind: 'string', max: MAX_TEXT } }],
   removeTeammate: [{ shape: { kind: 'string', max: MAX_NAME } }],

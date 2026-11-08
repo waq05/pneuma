@@ -6,6 +6,7 @@
 
 - 默认关闭；打开且 `allowDelegation` 为真时，模型多出 `subagent` 工具（spawn / list / message / interrupt / stop）与一段角色目录提示词（index.ts:1086-1107、1255-1264）。
 - `board` 打开时多出 `team_task` 工具与「共享任务板」提示段；两个开关各管一半（index.ts:1236-1275）。
+- **协作工具不受角色白名单限制**：`team_task` 在 `COLLAB_TOOL_NAMES` 里，`toolsFor` 筛队友工具表时对它放行——白名单表达的是「能改哪些文件、能跑什么命令」，任务板是一次协作登记（risk 为 read），不该因为角色写了 `tools: read, glob, grep` 就一起关掉（2026-11-08 修：explorer 队友曾回「只有 read、glob、grep」而领不到任务）。
 - 子智能体的提示段会提一句 `team_task`：两个包分开时子智能体提示不提板子，模型就不会去用（index.ts:1248-1264）。
 - 上下文两档：`fresh` 只知道任务，`fork` 额外带到父会话的上一个完整回合（index.ts:1043-1050）。
 - 后台队友干完的汇报会自动接进 Lead 的下一轮；`quiet` 模式只写进会话，等用户下次说话（index.ts:69、275、731）。
@@ -22,6 +23,8 @@
 - 关掉 `allowDelegation` 只撤 `subagent` 工具与名册提示，已经在跑的队友会把当前这轮跑完，任务板照常；关掉 `board` 只撤 `team_task` 与板子提示，派活、汇报与名册照常（index.ts:1236-1275）。
 - 名册在 `~/.dsc/team/roster.json`，队友会话存在 `sessions/.teammates/` 下，不是普通会话（index.ts:288；core/session.ts:1363-1364）。
 - 任务板每个会话各一块（`~/.dsc/team/boards/<会话 id>.json`），切会话就是另一块板；清空只清当前会话（core/team-board.ts:22-24、85-88）。
+- **板子归属按发起调用的会话算，不看「当前查看的会话」**：队友转发 `team_task` 时由 `toolsFor` 塞 `caller.sessionId`（= 派它的那个会话），主会话自己的调用回落工具上下文的 `sessionId`。后台队友跑着、用户切走之后，认领仍落在自己那块板上（2026-11-08 修）。
+- 嵌套派活同理：队友自己派出的子队友，父会话是这个队友自己的会话（`runSubagent` 的 `parent` 参数由调用方给），名册过滤与汇报都按它算。
 
 ## 行与开关
 
