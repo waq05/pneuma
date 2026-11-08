@@ -1,5 +1,5 @@
 /**
- * @pneuma/subagent 的包级测试：钉 9 条不变量。
+ * @pneuma/subagent 的包级测试：钉 10 条不变量。
  * 为什么只钉这些：入口只有插件对象，派活要会话与模型；能便宜钉住的是装配面、包形态、入口、
  * 文档、agent-roles 里那张不落盘的出厂角色表，以及 2026-11-06 并入的共享任务板
  * （team_task 工具、板子提示段、设置分区里的 board 子开关）装配面。
@@ -191,6 +191,22 @@ test('协作工具豁免表包含 team_task，且不夹带文件类工具', () =
   for (const name of ['read', 'write', 'edit', 'bash', 'glob', 'grep']) {
     assert.equal(mod.COLLAB_TOOL_NAMES.includes(name), false, `${name} 不该进协作工具豁免表`)
   }
+  passed += 1
+})
+
+// 一次性小工（对照 dsh 的 one-shot）：spawn 要有一个开关，模型才选得出来。
+// keep 缺省 = 留用（寻常队友），所以它不能进 required，否则每次派活都得表态。
+test('subagent 工具有 keep 开关，缺省留用，描述里讲清一次性是什么', () => {
+  const { ctx, captured } = fakeContext()
+  mod.subagentPlugin.apply(ctx)
+  const tool = captured.tools.find((entry) => entry.name === 'subagent')
+  assert.notEqual(tool, undefined, '派活工具默认开')
+  const keep = tool.parameters.properties.keep
+  assert.notEqual(keep, undefined, 'spawn 要能选一次性（keep 参数）')
+  assert.equal(keep.type, 'boolean')
+  assert.ok(keep.description.includes('一次性'), 'keep 的描述要说出「一次性」三个字')
+  assert.equal((tool.parameters.required ?? []).includes('keep'), false, 'keep 不填默认留用，不能必填')
+  assert.ok(tool.description.includes('一次性'), '工具描述要讲清 keep=false 的后果')
   passed += 1
 })
 
