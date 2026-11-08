@@ -1787,7 +1787,7 @@ function AgentSection({
     <StatusSectionBlock id="agent" title={t('status.section.agent')} open={open} separated={separated} onToggle={onToggle} trail={trail}>
       <ul className="sp-list">
         {ordered.map((mate) => (
-          <li className="sp-row sp-row-agent" data-state={MATE_TONE[mate.state]} data-sp-agent-state={mate.state} key={mate.file}>
+          <li className="sp-row sp-row-agent" data-state={MATE_TONE[mate.state]} data-sp-agent-state={mate.state} data-sp-agent-mode={mate.mode ?? 'continuable'} key={mate.file}>
             {/* 整行可点：正文区只读打开它的运行记录（行内按钮各自 stopPropagation）。 */}
             <button
               type="button"
@@ -1804,6 +1804,9 @@ function AgentSection({
                 {mate.name}
               </span>
               <span className="sp-row-note">{mate.role}</span>
+              {mate.mode === 'one-shot' ? (
+                <span className="sp-row-mode">{t('status.agent.modeOneShot')}</span>
+              ) : null}
               <span className="sp-row-time" data-tone={mate.state === 'failed' ? 'danger' : 'plain'}>
                 {MATE_STATE_LABEL[mate.state]}
               </span>

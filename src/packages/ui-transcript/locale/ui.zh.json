@@ -195,6 +195,7 @@
   "transcript.sub.stopped": "已中断",
   "transcript.sub.failed": "过程失败",
   "transcript.sub.meta": "{rounds} 轮 · {tools} 次工具",
+  "transcript.sub.oneShot": "一次性",
   "transcript.sub.currentTool": " · 当前 {name}",
   "transcript.changes.title": "已编辑 {count} 个文件",
   "transcript.changes.reviewHint": "点击审查改动",

@@ -353,7 +353,11 @@ function TeammateReader(): ReactNode {
         <span className="team-reader-name">{mate.name}</span>
         <span className="team-reader-role">{mate.role}</span>
         <span className={`sub-tab-state ${mate.state}`}>{STATE_LABEL[mate.state] ?? mate.state}</span>
-        <span className="team-reader-note">{t('team.reader.note')}</span>
+        {/* 头部这句只读说明按类型换：一次性的把「干完就不接后续消息」说在这里。
+            不另起一个元素——头部是单行 flex，多一块就换行，把「返回原会话」挤下去。 */}
+        <span className="team-reader-note">
+          {mate.mode === 'one-shot' ? t('team.reader.oneShotBody') : t('team.reader.note')}
+        </span>
         {/* 行动作跟着这一位走：停止（在跑）/ 发话 / 移除（收工的）。名册面板撤掉之后，
             这三个动作只剩这一处落点（见 {@link ReaderActions}）。 */}
         <ReaderActions mate={mate} />
@@ -392,6 +396,9 @@ function ReaderActions({ mate }: { mate: TeammateView }): ReactNode {
   const [writing, setWriting] = useState(false)
   const [draft, setDraft] = useState('')
   const busy = mate.state === 'working'
+  // 一次性的（spawn 时 keep=false）：干完就结束，不接后续消息。对照 dsh 的
+  // SubagentReadOnlyComposer——那边也是把这个位置换成一句说明，不给输入框。
+  const oneShot = mate.mode === 'one-shot'
 
   const act = async (method: string, args: unknown[], tip: string): Promise<void> => {
     try {
@@ -436,18 +443,20 @@ function ReaderActions({ mate }: { mate: TeammateView }): ReactNode {
           {t('team.row.remove')}
         </button>
       )}
-      <button
-        type="button"
-        className="text-btn"
-        aria-pressed={writing}
-        data-tip={t('team.row.messageTip')}
-        onClick={() => {
-          setWriting((current) => !current)
-        }}
-      >
-        {t('team.row.message')}
-      </button>
-      {writing ? (
+      {oneShot ? null : (
+        <button
+          type="button"
+          className="text-btn"
+          aria-pressed={writing}
+          data-tip={t('team.row.messageTip')}
+          onClick={() => {
+            setWriting((current) => !current)
+          }}
+        >
+          {t('team.row.message')}
+        </button>
+      )}
+      {!oneShot && writing ? (
         <span className="team-write team-reader-write">
           <input
             autoFocus

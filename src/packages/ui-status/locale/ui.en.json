@@ -48,6 +48,7 @@
   "status.agent.trailCount": "{n} total",
   "status.agent.stateWorking": "Running",
   "status.agent.stateIdle": "Done",
+  "status.agent.modeOneShot": "One-shot",
   "status.agent.stateStopped": "Stopped",
   "status.agent.stateFailed": "Failed",
   "status.agent.openAria": "Open the run log for {name}",

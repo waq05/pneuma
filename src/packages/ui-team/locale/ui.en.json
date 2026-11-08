@@ -32,6 +32,7 @@
   "team.reader.back": "Back to the session",
   "team.reader.backTip": "Close this read-only view and return to the session",
   "team.reader.busy": "{name} is still running; its run log opens once it finishes",
+  "team.reader.oneShotBody": "Read-only: one-shot tasks do not accept follow-ups; the full record stays here",
   "team.reader.parentFallback": "Original session",
   "team.tab.roundsTip": "Model request rounds it has started",
   "team.tab.readonly": "Read-only run log"

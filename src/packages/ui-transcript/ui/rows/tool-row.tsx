@@ -286,6 +286,8 @@ export function SubagentRow({ entry }: { entry: Extract<TranscriptEntry, { kind:
       <div className="shell-subagent-head">
         <span className="shell-subagent-name">{sub.name}</span>
         <span className="shell-subagent-role">{sub.role}</span>
+        {/* 一次性的在卡上也标出来：点开只能看记录、传不进话，别等点开才发现。 */}
+        {sub.mode === 'one-shot' ? <span className="shell-subagent-mode">{t('transcript.sub.oneShot')}</span> : null}
         <span className="shell-subagent-state">{SUB_STATE_TEXT[sub.state] ?? sub.state}</span>
       </div>
       <p className="shell-subagent-task">{oneLine(sub.task, 160)}</p>

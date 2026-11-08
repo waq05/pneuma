@@ -48,6 +48,7 @@
   "status.agent.trailCount": "共 {n} 位",
   "status.agent.stateWorking": "在跑",
   "status.agent.stateIdle": "已完成",
+  "status.agent.modeOneShot": "一次性",
   "status.agent.stateStopped": "已停止",
   "status.agent.stateFailed": "失败",
   "status.agent.openAria": "打开 {name} 的运行记录",

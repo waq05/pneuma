@@ -195,6 +195,7 @@
   "transcript.sub.stopped": "Interrupted",
   "transcript.sub.failed": "Failed",
   "transcript.sub.meta": "{rounds} turns · {tools} tools",
+  "transcript.sub.oneShot": "One-shot",
   "transcript.sub.currentTool": " · now {name}",
   "transcript.changes.title": "Edited {count} files",
   "transcript.changes.reviewHint": "Click to review the change",

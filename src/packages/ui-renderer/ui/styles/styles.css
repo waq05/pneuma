@@ -259,6 +259,14 @@
 .shell-subagent-state {
   margin-left: auto;
 }
+/* 一次性标：卡片头里跟在角色后。用浅底片，跟右边那个纯字的状态词分开。 */
+.shell-subagent-mode {
+  background: var(--dsc-fill-2);
+  border-radius: var(--dsc-r-pill);
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-tool);
+  padding: 0 6px;
+}
 .shell-subagent-task {
   color: var(--dsc-text-secondary);
   font-size: var(--dsc-fs-caption);
@@ -3161,6 +3169,18 @@
 .sp-row-time {
   font-family: var(--dsc-font-mono);
   font-variant-numeric: tabular-nums;
+}
+
+/* 「一次性」标记：告诉人这条干完就结束了，点开只能看记录、传不进话。
+   做成小号浅底片，跟角色名（纯灰字）拉开层次，又抢不过状态读数。 */
+.sp-row-mode {
+  background: var(--dsc-fill-2);
+  border-radius: var(--dsc-r-pill);
+  color: var(--dsc-text-tertiary);
+  flex: none;
+  font-size: var(--dsc-fs-tool);
+  margin-top: 3px;
+  padding: 0 6px;
 }
 
 /* 行尾读数的语气（工作流的状态 / 倒计时）：异常两档红、跑着的一档强调色，
