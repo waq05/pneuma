@@ -2956,6 +2956,7 @@
    目标 / 智能体 / 计划 / 终端 / 工作流 12rem；Git 工具只有两行，不限高。 */
 .sp-section[data-sp-section='goal'] .sp-section-scroll,
 .sp-section[data-sp-section='agent'] .sp-section-scroll,
+.sp-section[data-sp-section='team'] .sp-section-scroll,
 .sp-section[data-sp-section='plan'] .sp-section-scroll,
 .sp-section[data-sp-section='terminal'] .sp-section-scroll,
 .sp-section[data-sp-section='workflow'] .sp-section-scroll {
@@ -3000,23 +3001,28 @@
   margin-top: 5px;
 }
 
-/* 「智能体团队」区的任务行：同一套胶囊行，右侧不让停止钮，靠左对齐收起。 */
+/* 「智能体团队」区的任务行：同一套胶囊行，右侧不让停止钮，靠左对齐收起。
+   圆角收成控制级（不是大药丸）：这一行常带展开的详情，药丸圆角会让 hover 底色在
+   两端缩进去，看起来像「没铺满」（2026-11-08 报障）。 */
 .sp-row-task {
-  padding-right: var(--dsc-sp-1);
+  border-radius: var(--dsc-r-control);
   flex-wrap: wrap;
+  padding-right: var(--dsc-sp-1);
 }
 
 .sp-row-task .tm-dot {
   margin-top: 5px;
 }
 
-/* 任务详情：展开后垫在行下面的一小块灰字（描述 / 依赖 / 预计改动路径）。 */
+/* 任务详情：展开后垫在行下面的一小块灰字（描述 / 依赖 / 预计改动路径）。
+   左边不额外留白（与任务标题左对齐），右边只留行内那点空隙——否则描述文字会缩在
+   整行中间，和上面的标题对不齐。 */
 .sp-task-detail {
   color: var(--dsc-text-tertiary);
   flex-basis: 100%;
   font-size: var(--dsc-fs-tool);
   line-height: 1.5;
-  padding: 2px var(--dsc-sp-3) var(--dsc-sp-2);
+  padding: 2px var(--dsc-sp-1) var(--dsc-sp-2) 0;
 }
 
 .sp-task-detail p {
