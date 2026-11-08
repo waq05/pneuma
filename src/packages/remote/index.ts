@@ -73,7 +73,7 @@ import { DSC_VERSION } from '@pneuma/runtime/core/version.js'
 import { readCookie } from '@pneuma/runtime/core/web-http.js'
 import type { UiBootGraph } from '@pneuma/runtime/core/ui-manifest.js'
 import type { RuntimeSnapshot, SettingsField, StatusView } from '@pneuma/runtime/contract.js'
-import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
+import type { SettingsSectionSpec, TurnSignal } from '@pneuma/runtime/services/types.js'
 import { bearerToken, hostHeaderAllowed, isRecord, readLastSeq, sendJson } from './http.js'
 import { createRequestHandler } from './routes.js'
 import {
@@ -110,7 +110,11 @@ const ESCALATE_WAIT_MS = 120_000
 /** T45：升级提醒最多几声（别变成骚扰）。 */
 const ESCALATE_MAX = 3
 
-/** 多短的一轮不值得通报（用过 15 秒以上，或者这一轮出现过审批卡，才发「轮完成」）。 */
+/**
+ * 多短的一轮不值得通报（用过 15 秒以上，或者这一轮出现过审批卡，才发「轮完成」）。
+ *
+ * 只拦「完成」这一条：失败推送不设门槛——短轮跑挂恰恰是最该知道的事。
+ */
 const TURN_NOTIFY_MIN_MS = 15_000
 
 /**
@@ -749,14 +753,53 @@ export const remotePlugin: Plugin.Object = {
     const offTransitions = ctx.transcript.subscribe(watchTransitions)
     ctx.effect(() => offTransitions, 'remote: transcript.subscribe')
 
-    /** 一轮结束：用过 15 秒以上、或者这一轮出现过等人的卡，才值得推一条。 */
-    const onTurnEnd = (): void => {
+    /**
+     * 失败那一轮的详情原文：只认**当前查看的会话**，取最后一条带 `level: 'error'` 的 system 条目。
+     *
+     * 别的会话跑挂了不在这里报——手机上正看着的这个会话才有上下文，拿别处的报错原文
+     * 拼进来只会莫名其妙。没有就返回空串，由调用方用兜底文案。
+     */
+    const failureDetail = (signal: TurnSignal): string => {
+      const current = runtime.getSnapshot()
+      if (signal.sessionPath !== current.status.sessionPath) return ''
+      for (let i = current.entries.length - 1; i >= 0; i -= 1) {
+        const entry = current.entries[i]
+        if (entry.kind !== 'system' || entry.level !== 'error') continue
+        // 「错误：」是 adapter 落条目时加的前缀（见 adapter/transcript.ts 的 system 调用），
+        // 通知栏里不必再重复一遍；换行压成一个空格，最多留 120 字（手机通知栏放不下更多）。
+        const detail = entry.text.replace(/^错误：/, '').replace(/\s+/g, ' ').trim()
+        if (detail !== '') return detail.length > 120 ? `${detail.slice(0, 119)}…` : detail
+      }
+      return ''
+    }
+
+    /**
+     * 一轮结束：完成照旧推一条，失败换标题推一条（正文带失败原文），中断不推。
+     *
+     * 失败**不受 15 秒门槛管**：短轮跑挂恰恰是最该知道的事（长轮失败时人多半还盯着屏幕），
+     * 所以那个门槛只留在「完成」这条路。两条路共用同一个节流键 'turn-end'。
+     */
+    const onTurnEnd = (reason: 'completed' | 'aborted' | 'error', signal: TurnSignal): void => {
       const elapsedMs = turnStartedAt === 0 ? 0 : Date.now() - turnStartedAt
       const hadWaitingCard = turnHadWaitingCard
       turnStartedAt = 0
       turnHadWaitingCard = false
-      if (elapsedMs < TURN_NOTIFY_MIN_MS && !hadWaitingCard) return
+      if (reason === 'aborted') return
+      if (reason === 'completed' && elapsedMs < TURN_NOTIFY_MIN_MS && !hadWaitingCard) return
       const seconds = Math.max(0, Math.round(elapsedMs / 1000))
+      if (reason === 'error') {
+        const detail = failureDetail(signal)
+        void notify(
+          'turn-end',
+          {
+            title: t('notify.turnEnd.failed'),
+            body: t('notify.turnEnd.failedBody', { what: detail === '' ? t('notify.turnEnd.failedFallback') : detail, seconds }),
+            url: addressText(),
+          },
+          true,
+        )
+        return
+      }
       void notify('turn-end', { title: t('notify.turnEnd.title'), body: t('notify.turnEnd.body', { seconds }), url: addressText() }, true)
     }
     ctx.on('dsc/turn-end', onTurnEnd)
