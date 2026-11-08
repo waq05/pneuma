@@ -117,6 +117,12 @@ export interface TeammateView {
   role: string
   /** working = 正在干；idle = 干完待命；stopped = 被打断；failed = 出错。 */
   state: 'working' | 'idle' | 'stopped' | 'failed'
+  /**
+   * 干完之后还能不能接着问（对照 dsh 的 `subagent/descriptor` 里那个 mode）：
+   * continuable = 收工后传话，它能接着干；one-shot = 一次性的，干完就结束，
+   * 只留运行记录供查看。老名册记录没有这一项，按 continuable 处理。
+   */
+  mode?: 'continuable' | 'one-shot'
   /** 派给它的任务（截短了的）。 */
   task: string
   /** 它的运行记录文件（只读查看用）。 */

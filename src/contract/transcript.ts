@@ -265,6 +265,11 @@ export interface SubagentCardView {
   task: string
   /** 运行状态；`idle` = 正常收工，`stopped` = 被打断，`failed` = 过程失败。 */
   state: 'working' | 'idle' | 'failed' | 'stopped'
+  /**
+   * 干完之后还能不能接着问：`one-shot` 的干完就结束、不接后续消息，卡头标「一次性」。
+   * 老快照没有这一项（那时只有一种队友），按可续接处理。
+   */
+  mode?: 'continuable' | 'one-shot'
   /** 用的模型（`端点/模型`；跟随主会话模型时填当时的模型）。 */
   model?: string
   /** 已发起的模型请求轮数。 */

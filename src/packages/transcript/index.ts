@@ -192,6 +192,7 @@ export const transcriptPlugin: Plugin.Object = {
               role: mate.role,
               task: mate.task,
               state: 'working',
+              mode: mate.mode ?? 'continuable',
               rounds: mate.rounds,
               toolCalls: 0,
               startedAt: mate.startedAt,

@@ -131,6 +131,16 @@ const LEAD = 'lead'
 /** 队友的运行状态（`done` 不算一种状态：干完就是 idle，等人再传话）。 */
 type TeammateState = 'working' | 'idle' | 'failed' | 'stopped'
 
+/**
+ * 干完之后还能不能接着问。
+ *
+ * 对照 dsh 的 `subagent/descriptor.mode`（`continuable` / `one-shot`）：dsh 里这一
+ * 项由子代理后端决定——本地 spawn/fork 后端一律可续接，外部 CLI 后端一律一次性，
+ * 模型侧没有开关。numa 只有本地后端，所以这里改成派活时显式要：不填就是寻常队友
+ * （收工后传话能接着干），填了 `keep: false` 的就是一次性小工（干完出队、只留记录）。
+ */
+type TeammateMode = 'continuable' | 'one-shot'
+
 /** 一个在队或收工的队友。 */
 interface Teammate {
   name: string
@@ -155,6 +165,8 @@ interface Teammate {
   depth: number
   /** 谁派的它（主会话是 'lead'）。 */
   parent: string
+  /** 干完之后还能不能接着问；见 {@link TeammateMode}。 */
+  mode: TeammateMode
   background: boolean
   startedAt: number
   finishedAt?: number
@@ -226,6 +238,11 @@ interface RosterRecord {
   rounds: number
   startedAt: number
   finishedAt?: number
+  /**
+   * 干完之后还能不能接着问。老记录没有这一项：那时只有「可续接」一种队友，
+   * 所以读档时缺省按 continuable 处理（跟 dsh 容忍老 catalog 版本一个道理）。
+   */
+  mode?: TeammateMode
   /**
    * 出生会话 id（派它的那个会话）。名册是跨重启的台账，所以这一项让队友永久带着
    * 「它是从哪个会话派出去的」。老记录没有这一项，读档时按 undefined 处理。
@@ -364,6 +381,7 @@ export const subagentPlugin: Plugin.Object = {
         depth: teammate.depth,
         rounds: teammate.rounds,
         startedAt: teammate.startedAt,
+        mode: teammate.mode,
         // 出生会话：队友从哪个会话派出去的，名册上永久记着（用户切走会话也认得出它属于谁）
         sessionId: teammate.parentSession.meta.id,
         ...(teammate.finishedAt !== undefined ? { finishedAt: teammate.finishedAt } : {}),
@@ -417,6 +435,10 @@ export const subagentPlugin: Plugin.Object = {
         teammate.awaitReport = undefined
         reportHome(teammate)
       }
+      // 一次性的（spawn 时 keep=false）干完就出队：名册里那条记录留着供查看，但不再
+      // 占内存、也不再接传话。对照 dsh 的 one-shot：子代理一结束就从 resident 表删掉，
+      // 父会话只剩 catalog 里一行；能续接的那种恰恰相反，收工后还能 send_message 叫醒。
+      if (teammate.mode === 'one-shot') teammates.delete(teammate.name)
     }
 
     /** 队友的工具表：按工牌白名单筛。subagent 换成它自己的署名；team_task（本包注册的
@@ -514,6 +536,8 @@ export const subagentPlugin: Plugin.Object = {
       background: boolean
       seed: string[] | null
       parentSession: Session
+      /** 不填 = 寻常队友（收工后还能传话接着干）。 */
+      mode?: TeammateMode
     }): Teammate {
       const cwd = input.parentSession.meta.cwd
       const file = join(teammateRoot(), cwdSlug(cwd), `${randomUUID()}.jsonl`)
@@ -551,6 +575,7 @@ export const subagentPlugin: Plugin.Object = {
         lastReportedRound: 0,
         depth: input.caller.depth + 1,
         parent: input.caller.name,
+        mode: input.mode ?? 'continuable',
         background: input.background,
         startedAt: Date.now(),
         lastText: '',
@@ -690,6 +715,7 @@ ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需�
             role: teammate.role,
             task: teammate.task,
             state: teammate.state,
+            mode: teammate.mode,
             model: teammate.badge.model ?? ctx.llm.model,
             rounds: teammate.rounds,
             toolCalls: teammate.toolCalls,
@@ -806,6 +832,8 @@ ${body}
             file: live === undefined ? record.file : live.session.filePath,
             parent: record.parent,
             depth: record.depth,
+            // 老名册没有这一项：那时只有可续接的一种，缺省按它算
+            mode: live?.mode ?? record.mode ?? 'continuable',
             rounds: live === undefined ? record.rounds : live.rounds,
             startedAt: record.startedAt,
             ...(finishedAt === undefined ? {} : { finishedAt }),
@@ -994,7 +1022,12 @@ ${body}
      */
     function stopTeammate(name: string, mode: 'interrupt' | 'stop'): string {
       const teammate = teammates.get(name)
-      if (teammate === undefined) return `没有叫 ${name} 的队友（subagent list 看现役名单）`
+      if (teammate === undefined) {
+        // 一次性收工后已经从在队表里摘掉，但名册里还有它那一行：说「没这个队友」是错的。
+        const record = readRoster().find((entry) => entry.name === name)
+        if (record?.mode === 'one-shot') return `${name} 是一次性子智能体，已经结束了，没有在跑的回合可以叫停。`
+        return `没有叫 ${name} 的队友（subagent list 看现役名单）`
+      }
       teammate.agent.cancel()
       // 两种叫停都**保留**这个队友：dsh 的 interrupt_agent 就是这个口径——停当前这一轮，
       // 之后还能用 send_message 接着聊。以前 stop 直接把它从名单里删掉，于是「中断之后
@@ -1011,6 +1044,15 @@ ${body}
       const trimmed = text.trim()
       if (trimmed === '') return 'message 要带上 text（想传的话）'
       const teammate = teammates.get(name)
+      // 一次性的已经收工（settle 时从队里摘掉了）：它不接后续消息。这一步排在写信箱
+      // 之前——否则这句话会投进一个没人读的信箱，界面还回一句「话已投给」，看着像送到了。
+      // 对照 dsh 的 NOT_CONTINUABLE 报错：「does not accept follow-up input」。
+      if (teammate === undefined) {
+        const record = readRoster().find((entry) => entry.name === name)
+        if (record?.mode === 'one-shot') {
+          return `${name} 是一次性子智能体：干完就结束了，不再接后续消息。它的运行记录还在，点开能看完整过程。`
+        }
+      }
       const wrapped = `<message from="${from}"> ${trimmed} </message>`
       inboxAppend(name === '' ? 'unknown' : name, wrapped)
       if (teammate === undefined) return `没有叫 ${name} 的队友，话写进了它的信箱（${join(ctx.settings.about().home, 'team', 'inbox')}）但没人会读`
@@ -1037,7 +1079,7 @@ ${body}
       if (action === 'list') {
         const lines = mine.map(
           (entry) =>
-            `- ${entry.name}（角色 ${entry.role}，${entry.state}，第 ${entry.rounds} 轮，${entry.toolCalls} 次工具调用）派给它的任务：${entry.task.slice(0, 60)}`,
+            `- ${entry.name}（角色 ${entry.role}，${entry.state}${entry.mode === 'one-shot' ? '，一次性' : ''}，第 ${entry.rounds} 轮，${entry.toolCalls} 次工具调用）派给它的任务：${entry.task.slice(0, 60)}`,
         )
         const roles = roster.map((role) => `- ${role.name}${role.enabled ? '' : '（已停用）'}：${role.description || '（没写 description）'}`).join('\n')
         return lines.length === 0
@@ -1101,6 +1143,9 @@ ${body}
       }
 
       const background = args.background === true || args.background === 'true'
+      // 一次性小工：干完就结束，不再接传话。缺省是寻常队友（keep 不填 = true），
+      // 只认显式 false；`"false"` 字符串也当 false，别的值一律按留用处理。
+      const mode: TeammateMode = args.keep === false || args.keep === 'false' ? 'one-shot' : 'continuable'
       const teammate = startTeammate({
         name,
         role,
@@ -1109,6 +1154,7 @@ ${body}
         background,
         seed,
         parentSession: parent,
+        mode,
       })
 
       if (!background) {
@@ -1128,7 +1174,11 @@ ${body}
       }
 
       void waitForIdle(teammate).then(() => reportHome(teammate))
-      return `已派给 ${teammate.name}（角色 ${teammate.role}，${teammate.badge.tools === null ? '不限工具' : `工具 ${teammate.badge.tools.join('、')}`}）。它在后台干，不用等也不用问：干完我会把汇报接进来。你现在可以继续做别的，或者再派一个。`
+      const tail =
+        teammate.mode === 'one-shot'
+          ? '它是一次性的：干完这次就结束，之后不能再传话，只在名册里留一条运行记录。'
+          : '它在后台干，不用等也不用问：干完我会把汇报接进来。你现在可以继续做别的，或者再派一个。'
+      return `已派给 ${teammate.name}（角色 ${teammate.role}，${teammate.badge.tools === null ? '不限工具' : `工具 ${teammate.badge.tools.join('、')}`}）。${tail}`
     }
 
     const subagentTool = (): ToolEntry => ({
@@ -1136,7 +1186,8 @@ ${body}
       description:
         '把一件可以独立完成的活派给一个有明确授权的队友（角色见 ~/.dsc/agents），或者给在队队友传话、打断它。' +
         'background=true 时立刻返回，它干完后汇报会自己接进你的下一轮；background=false 时你这一轮会等它的结果。' +
-        'interrupt / stop 都只是叫停当前这一轮：队友留在名册里，传话（message）就能接着用，别把它当成已经没了。',
+        'interrupt / stop 都只是叫停当前这一轮：队友留在名册里，传话（message）就能接着用，别把它当成已经没了。' +
+        'keep=false 派的是「一次性小工」：只跑这一趟，干完就结束，之后不能再传话——适合跑个命令、查一个事实这种不用追问的活。',
       parameters: {
         type: 'object',
         properties: {
@@ -1146,6 +1197,7 @@ ${body}
           name: { type: 'string', description: '队友名；不填自动生成「角色名-序号」。message/interrupt/stop 用它指定对象' },
           context: { type: 'string', enum: ['fresh', 'fork'], description: 'fresh = 只知道这条任务；fork = 额外带上父会话到上一个完整回合为止的内容' },
           background: { type: 'boolean', description: 'true = 后台干（推荐，可并行多个）；false = 这一轮等它结果' },
+          keep: { type: 'boolean', description: 'spawn 可选：false = 一次性的，干完就结束、不再接传话（只留一条运行记录）；不填 = 寻常队友，收工后传话还能接着干' },
           text: { type: 'string', description: 'message 必填：要传的话' },
         },
         required: ['action'],
