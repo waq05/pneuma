@@ -597,7 +597,7 @@
     },
     {
       "file": "ui-team",
-      "name": "智能体团队（界面）",
+      "name": "子智能体（界面）",
       "enabled": true,
       "toggleable": true,
       "source": "builtin",

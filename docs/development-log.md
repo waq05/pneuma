@@ -15599,3 +15599,85 @@ dsc 的底栏跟它差的就一处：跑动中多一截每秒跳的「用时」�
 - 真机截图两张：`desktop/shots/step-live.png`（跑动中：组头「正在分析请求」+ 直播行
   「Numa 工作中，用时 48秒」，底栏只剩 `2 轮 45 步 · 9.7 tok/s`｜`4.8K tok`｜`0%`）、
   `desktop/shots/live-row.png`（浅色，第一轮进行中，底栏整段不画——步数还是 0）。
+
+## 2026-11-08 下午：一次性子智能体，以及为什么大部分「区分」最后没做
+
+用户的原话是「子代理和队友应该不一样吧？现在没有做区分吗」，并要求「对齐 dsh，开工前先摸清楚
+dsh 的机制，不要有遗漏」。四条线并行只读调研（运行时、工具层、界面、持久化），结论跟预期不一样，
+所以先把结论写清楚，再说 dsc 落成了什么。
+
+### dsh 那边到底怎么分
+
+- **模型侧没有开关**。`subagent` 工具的参数只有 `cwd` / `description` / `name` / `prompt`，
+  加上可选的 `agent_preset`、`provider` / `model` / `reasoning_effort`，没有「一次性」这一档
+  （`packages/subagent/tool-subagent/src/index.ts:218-260`）。
+- **分不分由后端能力决定**。provider 实现了可选方法 `prepareContinuable` 就走本地可续接，
+  没有就只能跑一趟、收不到后续消息
+  （`packages/subagent/subagent/src/types.ts:349-363`，分支在 `.../src/index.ts:279-291`）。
+  工具描述按这个二选一：有就告诉模型「可发消息接着聊」，没有就写「本后端不接受后续消息」
+  （`.../tool-subagent/src/index.ts:211-213`）。
+- **当前生产代码只写一种**。`manager.ts:338-345` 是 descriptor 的唯一构造点，`mode` 写死
+  `'continuable'`；`one-shot` 只剩读路径与老日志兼容（`.../src/descriptor.ts:2-5` 的注释）。
+  外部后端（ACP / Codex / Claude Code / SDK）走 `startExternal`，父会话里记 `mode: 'external'`，
+  它们没有子会话文件，也就打不开。
+- **界面上不分两组**。成员树只有一棵，一行一个子代理，靠行内标签区分：`一次性` / `可继续` /
+  `模式未知` / `外部任务`（`packages/client/ui-subagent/src/client/SubagentHeaderLineage.tsx:293-294`）。
+  一次性点开时输入框换成一句说明：「一次性子智能体记录 / 一次性任务不支持后续消息，可在这里
+  查看完整执行记录。」（`.../SubagentReadOnlyComposer.tsx:22-29`、`.../locales.ts:52-54`）。
+- **模型看得见的目标会被过滤**：`list_agents` 直接不列一次性子代理
+  （`.../tool-subagent-control/src/list-agents.ts:26-37`），`send_message` 打到它身上报
+  `NOT_CONTINUABLE`（`.../subagent/src/activation.ts:113-121`）。
+- **团队不是第二套**。`spawn_teammate` 已删除，升级指南让用 `subagent` 取代
+  （`docs/upgrade-guide/v0.2.1-rc.2/agent-team-subagents/guide.md:14,27`）；团队只剩任务板四张工具，
+  且明确移除了 interrupt / fork 那些（`packages/team/tool-agent-team/src/index.ts:24,96-98`）。
+
+一句话：**dsh 里「队友」就是「子代理」**，没有两个东西；能分的只有「能不能续接」，而这一维
+由后端决定，本地后端一律能续接。所以「严格对齐 dsh」的结果是——什么都不用改，dsc 现状就是对的。
+
+### 那为什么还是改了
+
+用户真正想解决的是「派了一堆只跑一次的小活，它们赖在名册里，跟长期队友混在一起」。dsh 没有这个
+痛点，因为它的本地子代理本来就都能续接、而一次性那类根本没有本地会话。dsc 只有本地后端，
+要满足这个诉求，只能把 dsh 那个已经废弃的 `one-shot` 语义搬回来，做成显式开关。
+
+所以这是一次**有意的偏离**，不是对齐：`keep` 是 dsc 自己的扩展。字段语义照抄 dsh——干完就结束、
+不再接传话、只留一条可查看的记录。
+
+### 改了什么
+
+- 类型：`TeammateMode = 'continuable' | 'one-shot'`（`src/packages/subagent/index.ts:142`），
+  `Teammate` 与名册记录 `RosterRecord` 各加一项；老名册没有这一项，读档时缺省按 `continuable`
+  处理（`:835`），跟 dsh 容忍老 catalog 版本同一个思路。
+- 派活：`subagent` 加 `keep` 参数，只认显式 `false`（`:1142`）。不填 = 寻常队友，所以它不进
+  `required`——每次派活都被迫表态是噪音。
+- 收工：`settle()` 末尾把一次性从在队表里摘掉（`:441`）。名册那条记录留着，界面看得见、点得开。
+- 传话：打到已收工的一次性身上，在**写信箱之前**就拦下并说明（`:1047`）。原来的顺序是先写信箱
+  再判断，这句话会投进一个没人读的信箱，界面还回一句「话已投给」，看着像送到了。
+- 工具输出：`list` 给在队的一次性加一个「一次性」标注；派活回执也按模式换一句话。
+- 界面三处：状态面板那一行在角色后加「一次性」小标（`src/packages/ui-status/ui/ui.tsx`，
+  `<li>` 上带 `data-sp-agent-mode`）；对话流那张队友卡的头行也标（`src/packages/ui-transcript/ui/rows/tool-row.tsx`
+  的 `SubagentRow`）；运行记录页把「发话」按钮**整个换掉**、在头部那句只读说明里写清「一次性的
+  不接后续消息」（`src/packages/ui-team/ui/ui.tsx` 的 `ReaderActions` 与 `TeammateReader`）。
+  原先试过「留一颗置灰的发话钮」，真机上看着像坏了——按钮灰着、点了没反应，还不如没有。
+- 契约：`TeammateView.mode` 与 `SubagentCardView.mode` 都是可选项（`src/contract/plugin.ts:113-143`、
+  `src/contract/transcript.ts:259-272`），老名册与老快照不会因为缺字段报错。
+
+### 验证
+
+- 根 `typecheck`、`ui-shell typecheck` 0 错；`build`、`build:ui` 通过；
+- `node --test src/packages/subagent/tests/subagent.test.mjs` 11/11（新增一条钉 `keep` 的 schema：
+  在、是布尔、不必填、描述里讲清后果）；
+- `check:ui` 63/63、`check:plugin` 86 包全过（顺带补了上一批漏更的 `ui-team.name` 快照）、
+  `check:style` 1261 文件全过；
+- 实机探针 `desktop/shots/_verify-one-shot.mjs` 7/7：种一个一次性 + 一个寻常队友，量出
+  面板那行带「一次性」、寻常那位不带、点开一次性那行能进运行记录、发话钮已消失、
+  说明里写着「不支持后续消息」、移除与返回还在。截图 `_verify-one-shot-row.png`
+  （面板列表）与 `_verify-one-shot-reader.png`（头部说明）。
+
+### 边界
+
+- `keep` 是 dsc 扩展，dsh 没有这个参数。将来若接外部 CLI 后端，那个后端派出的子代理应当直接
+  映射成 `one-shot`，不该再让模型选。
+- 一次性仍然进名册，也会被 `roster.json` 的 200 条上限挤掉。挤掉之后记录文件还在盘上，但界面
+  里就找不到了——这条老问题没动。
+- 一次性的「移除」按钮照旧可用：移除会连运行记录文件一起删。dsh 那边没有删除入口。

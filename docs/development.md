@@ -144,7 +144,7 @@ export const myPlugin: Plugin.Object = {
 
 | 插件 | 默认 | 设置分区 | 干什么 |
 | --- | --- | --- | --- |
-| `subagent` 子智能体与任务板 | 关 | `subagent` | 把能独立完成的活派给队友并行做（`subagent` 工具）；可设层级、人数、轮次与模型，队友按会话隔离。同包还带共享任务看板（`team_task` 工具，看板按会话各一块），设置里可单独关掉。**队友也能用 `team_task`**：协作工具不受角色白名单限制（`COLLAB_TOOL_NAMES`），板子归属按派它的那个会话算；界面在状态面板里分「子智能体」与「共享任务（只读任务板）」两区 |
+| `subagent` 子智能体与任务板 | 关 | `subagent` | 把能独立完成的活派给队友并行做（`subagent` 工具）；可设层级、人数、轮次与模型，队友按会话隔离。派活时给 `keep: false` 要一个**一次性**小工：干完就从在队表里摘掉、不再接传话，名册留一条记录供查看（对照 dsh 的 one-shot；`keep` 是 dsc 自己的扩展）。同包还带共享任务看板（`team_task` 工具，看板按会话各一块），设置里可单独关掉。**队友也能用 `team_task`**：协作工具不受角色白名单限制（`COLLAB_TOOL_NAMES`），板子归属按派它的那个会话算；界面在状态面板里分「子智能体」与「共享任务（只读任务板）」两区 |
 | `computer-use` 操作电脑桌面 | 关 | `computer-use` | 看屏幕可免审批；点击、输入、按键每次都要确认，动作留审计 |
 | `web-search` 联网搜索 | 开 | `web-search` | 提供 `web_search` 工具，经 Tavily / 博查 / Serper 检索网页并附来源 |
 | `approval-floor` 危险命令硬拦截 | 开 | `approval-floor` | 守卫链 order 5 的硬闸：灾难命令、命令黑名单、命令白名单、无人值守 |
