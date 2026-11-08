@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/settings",
+  "version": "0.9.1",
   "description": "设置分区注册表、模型配置与偏好",
-  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

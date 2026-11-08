@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/sandbox",
+  "version": "0.9.1",
   "description": "限定模型能写哪里：越界写、关网时联网当场拒；改动前先把 diff 给你看",
-  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

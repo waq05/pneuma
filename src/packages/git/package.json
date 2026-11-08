@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/git",
+  "version": "0.9.1",
   "description": "只给界面读的分支名与改动条数：不注册任何 git 工具，模型要跑 git 只能走 bash",
-  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

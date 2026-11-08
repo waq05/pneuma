@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/commands",
+  "version": "0.9.1",
   "description": "/ 命令注册与补全",
-  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

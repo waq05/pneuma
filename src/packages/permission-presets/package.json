@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/permission-presets",
+  "version": "0.9.1",
   "description": "把沙箱档位、权限模式与审阅者三根旋钮捆成一颗按钮：切换只写当前会话，预设只调沙箱与审批已有的接口，放宽不了安全",
-  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

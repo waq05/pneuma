@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/session-core",
+  "version": "0.9.1",
   "description": "钩子、上下文压缩、系统提示词装配、ReAct 循环与协作模式五块会话底座；被 hooks / compact / prompt / agent / mode / plan 等功能包共用同一份实现",
-  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/microcompact",
+  "version": "0.9.1",
   "description": "每轮请求把较旧的工具结果正文换成占位符，只改请求体、不动会话日志",
-  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

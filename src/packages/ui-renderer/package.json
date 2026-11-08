@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/ui-renderer",
+  "version": "0.9.1",
   "description": "界面壳的渲染器：取骨架、建宿主通道、按批装插件、画首帧与骨架诊断",
-  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",
@@ -32,7 +32,7 @@
     "description": "界面壳的渲染器：取骨架、建宿主通道、按批装插件、画首帧与骨架诊断",
     "client": {
       "platform": "pneuma",
-      "api": "^0.9.0",
+      "api": "^0.9.1",
       "immediately": true,
       "phase": "early"
     },

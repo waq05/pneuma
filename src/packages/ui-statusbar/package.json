@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/ui-statusbar",
+  "version": "0.9.1",
   "description": "底部状态栏：轮次、token 与上下文三段读数",
-  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",
@@ -32,7 +32,7 @@
     "description": "底部状态栏：轮次、token 与上下文三段读数",
     "client": {
       "platform": "pneuma",
-      "api": "^0.9.0",
+      "api": "^0.9.1",
       "phase": "early"
     },
     "toggleable": true

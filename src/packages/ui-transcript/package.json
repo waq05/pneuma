@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/ui-transcript",
+  "version": "0.9.1",
   "description": "对话页的消息流：一轮一个座位、一行一个条目，过程可整轮折叠或按阶段收组",
-  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",
@@ -32,7 +32,7 @@
     "description": "对话页的消息流：一轮一个座位、一行一个条目，过程可整轮折叠或按阶段收组",
     "client": {
       "platform": "pneuma",
-      "api": "^0.9.0"
+      "api": "^0.9.1"
     },
     "toggleable": true
   },

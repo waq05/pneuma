@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/hooks",
+  "version": "0.9.1",
   "description": "工具动手之前按你自己登记的规则与脚本拦一道；也能按 codex 事件名跑外部命令钩子",
-  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

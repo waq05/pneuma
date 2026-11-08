@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/runtime-adapter",
+  "version": "0.9.1",
   "description": "把服务织成 UI 消费的 DscRuntime",
-  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",

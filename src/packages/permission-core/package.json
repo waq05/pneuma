@@ -1,7 +1,7 @@
 {
   "name": "@pneuma/permission-core",
+  "version": "0.9.1",
   "description": "会话级权限三项（沙箱档位 / 权限模式 / 审阅者）的读写与预设推导；approval / sandbox / settings / permission-presets 四个功能包共用",
-  "version": "0.9.0",
   "private": true,
   "type": "module",
   "main": "./index.js",
