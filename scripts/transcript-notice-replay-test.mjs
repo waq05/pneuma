@@ -136,4 +136,27 @@ restored.close()
   check('老日志不产出重试行', legacy.entries.every((entry) => entry.kind !== 'model-retry'), legacy.entries.map((entry) => entry.kind).join(' / '))
 }
 
+
+// ── [5] 连着重试：同一条行原地更新，不叠成一摞（2026-11-08 报障） ────────────
+{
+  const live = new Transcript()
+  for (const retry of [1, 2, 3]) {
+    live.reduce(
+      { type: 'model/retry', attempt: retry, maxRetries: 5, delayMs: 500 * retry, reason: `HTTP 429 #${String(retry)}` },
+      1000 + retry * 10,
+    )
+  }
+  const rows = live.entries.filter((entry) => entry.kind === 'model-retry')
+  check('三次重试只留下一行', rows.length === 1, String(rows.length))
+  check(
+    '那一行是最新一次的数据（3/5、等了 1500 毫秒）',
+    rows[0]?.attempt === 3 && rows[0]?.delayMs === 1500,
+    JSON.stringify(rows[0]),
+  )
+  // 中间隔了正文（流中断后先落半截回复、或者下一轮请求又失败）：那是新的一段，另起一行
+  live.reduce({ type: 'message', text: '接着干', reasoning: '' }, 1100)
+  live.reduce({ type: 'model/retry', attempt: 1, maxRetries: 5, delayMs: 500, reason: 'HTTP 429' }, 1200)
+  const after = live.entries.filter((entry) => entry.kind === 'model-retry')
+  check('中间隔了正文就另起一行', after.length === 2, String(after.length))
+}
 process.exit(failures === 0 ? 0 : 1)

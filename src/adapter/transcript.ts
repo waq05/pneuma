@@ -36,6 +36,13 @@ interface LiveSegment {
   ts?: number
   /** 这段思考第一口 delta 的时刻（定稿时算耗时用；text 段没有）。 */
   startedAt?: number
+  /**
+   * 这段正文已经确定是「这一步调工具之前的前言」（见 contract 的 text 分支）。
+   *
+   * 由 tool/prepare 当场标上：模型开始吐工具名，就说明它刚写的这段话是在交代接下来要
+   * 干什么。标上之后直播尾当场换成小字灰行，定稿时不会出现「大字正文忽然缩水」的换挡。
+   */
+  process?: boolean
 }
 
 const RESULT_TEXT_LIMIT = 1500
@@ -67,6 +74,14 @@ export class Transcript {
   private list: TranscriptEntry[] = []
   /** callId → 工具条目在 `list` 中的下标（append-only 保证下标稳定）。 */
   private toolIndex = new Map<string, number>()
+  /**
+   * 子调用 callId → 它挂在哪张卡的第几个位置（PTC 的 sdk.xxx()）。
+   *
+   * 为什么不用 toolIndex 一把梭：子调用**没有自己的顶层条目**（它活在父卡的 subCalls 里），
+   * 结果回来时得先找到父条目、再改数组里的那一格。父条目下标稳定（append-only），
+   * 子条目只追加，所以这对下标一次记下就够。
+   */
+  private subCallIndex = new Map<string, { parent: number; child: number }>()
   /** 队友名 → 子代理卡条目在 `list` 中的下标（同名原位更新）。 */
   private subagentIndex = new Map<string, number>()
   /**
@@ -193,6 +208,8 @@ export class Transcript {
         ...(segment.kind === 'thinking' && segment.startedAt !== undefined
           ? { durationMs: Math.max(0, Date.now() - segment.startedAt) }
           : {}),
+        // 过程正文的标记跟着段走：直播时就按小字灰行画，定稿后条目原样继承（见 tool/call）。
+        ...(segment.kind === 'text' && segment.process === true ? { process: true as const } : {}),
       }),
     )
     // 准备中的工具接在直播尾后面，同样发**负 id**：它也是一段「还没定稿、还在长」的内容
@@ -259,6 +276,7 @@ export class Transcript {
   clear(): void {
     this.list = []
     this.toolIndex.clear()
+    this.subCallIndex.clear()
     this.subagentIndex.clear()
     this.prepared = []
     this.seq = 1
@@ -420,9 +438,28 @@ export class Transcript {
     for (let index = this.list.length - 1; index >= 0; index -= 1) {
       const entry = this.list[index]
       if (entry === undefined || entry.kind !== 'tool') continue
-      const status = entry.call.status
-      if (status !== 'running' && status !== 'preparing') continue
-      this.list[index] = { ...entry, call: { ...entry.call, status: 'aborted' } }
+      // 父卡里还在跑的子调用（PTC 脚本被中断时）：它们等不到结果了，一并落成中止态。
+      // 为什么要单独扫：子调用没有顶层条目，只看 entry.call.status 会漏掉它们，
+      // 卡里就会留着几个永远转圈的嵌套行。
+      const subCalls = entry.call.subCalls
+      const moving = subCalls?.some((sub) => sub.status === 'running' || sub.status === 'preparing') === true
+      // 一趟改完再落一次：先落子调用、再判父状态，别让两次替换互相覆盖。
+      let next: ToolEntry = moving && subCalls !== undefined
+        ? {
+            ...entry,
+            call: {
+              ...entry.call,
+              subCalls: subCalls.map((sub) =>
+                sub.status === 'running' || sub.status === 'preparing' ? { ...sub, status: 'aborted' as const } : sub),
+            },
+          }
+        : entry
+      const status = next.call.status
+      if (status === 'running' || status === 'preparing') {
+        next = { ...next, call: { ...next.call, status: 'aborted' } }
+      }
+      if (next === entry) continue
+      this.list[index] = next
       settled.push(index)
     }
     return settled.reverse()
@@ -596,19 +633,35 @@ export class Transcript {
         // `prepared` 的注释——它由 liveEntries() 合成在最后（负 id），`tool/call` 到达时
         // 才正式落进 list 并领一个当刻的正 id。
         this.prepared.push({ name: event.name, ts: this.eventTs })
+        // 模型已经在吐工具名了：刚才那段还在流式的正文，就是这一步的前言——当场降成
+        // 过程行，读者不会看到「大字正文忽然缩成小字」的换挡。只标最后一段：前面若还有
+        // 一段思考，那是思考行的事。
+        const tail = this.segments[this.segments.length - 1]
+        if (tail !== undefined && tail.kind === 'text') tail.process = true
         return true
       }
       case 'model/retry': {
         // 重试发生在 llm 层内部，不报出来的话用户只会觉得界面卡了几秒。
         // 它同时是二级分组的边界（前后两段过程被切开），但整轮折叠仍包含它。
-        this.list.push(this.stamp({
-          kind: 'model-retry',
-          id: this.seq++,
+        //
+        // 同一次请求连着重试时**原地更新同一条行**，不再每条发一行（2026-11-08 报障：
+        // 一次 429 连锁重试，会话里出现四行「已重试模型请求（1/5）…（4/5）」）。
+        // 判据只看「上一条是不是重试行」：重试之间不会有任何别的事件插进来；真有
+        // （比如流中断后先落了半截回复），那本来就是新的一段，另起一行才是对的。
+        // 原地更新顺手保住了 id 与 ts 之外的展开态——用户点开的那条不会因为下一次
+        // 重试被重挂成收起。
+        const fields = {
           attempt: event.attempt,
           maxRetries: event.maxRetries,
           delayMs: event.delayMs,
           text: event.reason,
-        }))
+        }
+        const previous = this.list[this.list.length - 1]
+        if (previous !== undefined && previous.kind === 'model-retry') {
+          this.list[this.list.length - 1] = this.stamp({ ...previous, ...fields })
+          return true
+        }
+        this.list.push(this.stamp({ kind: 'model-retry', id: this.seq++, ...fields }))
         return true
       }
       case 'tool/call': {
@@ -616,6 +669,14 @@ export class Transcript {
         // 工具调用意味着模型输出已定稿，直播尾让位
         const hadLive = this.segments.length > 0
         this.segments = []
+        // 同一步里既有正文又有工具调用：那句正文是「接下来要干什么」的前言，不是阶段收尾。
+        // 补上过程标记（判据见 contract 的 text 分支），界面据此把它留在阶段组里、按小字灰行画。
+        // 只认紧挨着的上一条：一步里第一个 tool/call 才紧跟在正文后面，后面的上一个已经是工具了。
+        // 没真的发出工具调用的那一步不会被标——那种正文仍然是正文。
+        const wrote = this.list[this.list.length - 1]
+        if (wrote !== undefined && wrote.kind === 'text' && wrote.process !== true) {
+          this.list[this.list.length - 1] = { ...wrote, process: true as const }
+        }
         // 发起时刻就是这条条目第一次写入的时刻，只在这里取一次；结果回来时不许覆盖
         // （条目的 ts 是「最后写入时刻」，只留给界面算轮次计时）
         const startedAt = this.eventTs
@@ -626,6 +687,22 @@ export class Transcript {
           status: 'running',
           // 重放老会话（eventTs 为 null）时拿不到发起时刻，干脆不写，界面据此降级
           ...(startedAt === null ? {} : { startedAt }),
+        }
+        // 子调用（PTC 的 sdk.xxx()）：收进父卡，不再各自成为一行顶层工具。
+        // 父卡找不到（父还没落进 list、老日志、父条目已被换掉）就退回普通工具行——
+        // 宁可平铺一行，也不能把这次调用整个吞掉。
+        if (event.parentCallId !== undefined) {
+          const parentIndex = this.toolIndex.get(event.parentCallId)
+          const parent = parentIndex === undefined ? undefined : this.list[parentIndex]
+          if (parentIndex !== undefined && parent !== undefined && parent.kind === 'tool') {
+            const subCalls = [...(parent.call.subCalls ?? []), call]
+            this.list[parentIndex] = this.stamp({
+              ...parent,
+              call: { ...parent.call, subCalls },
+            })
+            this.subCallIndex.set(event.callId, { parent: parentIndex, child: subCalls.length - 1 })
+            return true
+          }
         }
         // 流式期间为它报过「准备中」就接着用那一条的**时刻**：用户看到的是同一张卡从
         // 「准备读取文件」变成「正在读取文件」。dsh 的口径是「准备中的调用使用首个具名
@@ -646,6 +723,25 @@ export class Transcript {
         return true
       }
       case 'tool/result': {
+        // 子调用的结果：改父卡里那一格（它没有自己的顶层条目）。
+        const child = this.subCallIndex.get(event.callId)
+        if (child !== undefined) {
+          const parent = this.list[child.parent]
+          const current = parent?.kind === 'tool' ? parent.call.subCalls?.[child.child] : undefined
+          if (parent !== undefined && parent.kind === 'tool' && current !== undefined) {
+            const subCalls = [...(parent.call.subCalls ?? [])]
+            subCalls[child.child] = {
+              ...current,
+              status: event.error === 'rejected' ? 'rejected' : event.error !== undefined ? 'failed' : 'done',
+              resultText: truncate(event.text),
+              ...(current.startedAt === undefined || this.eventTs === null || this.eventTs < current.startedAt
+                ? {}
+                : { durationMs: this.eventTs - current.startedAt }),
+            }
+            this.list[child.parent] = this.stamp({ ...parent, call: { ...parent.call, subCalls } })
+            return true
+          }
+        }
         const index = this.toolIndex.get(event.callId)
         if (index === undefined) return false
         const previous = this.list[index] as ToolEntry
