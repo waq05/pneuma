@@ -26,6 +26,7 @@ import {
 import {
   browseMarketSource,
   installMarketEntry,
+  isSkillsShSource,
   toMarketSkillView,
   type MarketEntry,
 } from '@pneuma/config-core/market.js'
@@ -229,6 +230,14 @@ export const skillsPlugin: Plugin.Object = {
 
     /** 内置 HTTP 源的条目缓存（安装时按名字回查取文件清单）。 */
     const entriesCache = new Map<string, MarketEntry[]>()
+    /**
+     * 每个源最近一次浏览用的搜索词。
+     *
+     * 为什么留一份：skills.sh 是搜索型源，安装时只有「源名 + 技能名」可用，
+     * 没有关键词就回查不到条目（它会直接报「只提供搜索」）。用户点安装前必然
+     * 刚浏览过，复用那次的词即可，不必让安装接口多背一个参数。
+     */
+    const lastQuery = new Map<string, string>()
 
     const service: SkillService = {
       userDir: DSC_SKILLS_DIR,
@@ -282,12 +291,15 @@ export const skillsPlugin: Plugin.Object = {
           if (markets.get(market.name) === market) markets.delete(market.name)
         }
       },
-      async browseMarket(source, refreshEntries) {
+      async browseMarket(source, refreshEntries, query) {
         const sources = marketSources()
         const target = source === '' ? sources[0] : sources.find((item) => item.source.name === source)
         if (target === undefined) {
           return { sources: sources.map((item) => ({ ...item.source, ok: false })), source: '', items: [], error: '没有配置技能市场源，去设置里加一个' }
         }
+        const needle = (query ?? '').trim()
+        // 记下这次用的搜索词：安装只带「源名 + 技能名」，搜索型源要靠它回查条目
+        if (target.plugin === undefined) lastQuery.set(target.source.name, needle)
         const sourceViews = sources.map((item) => ({ ...item.source, ok: true }))
         const installed = new Set(service.list().map((item) => item.name))
         try {
@@ -319,7 +331,8 @@ export const skillsPlugin: Plugin.Object = {
         const configured = readPrefs().marketSources.find((item) => item.name === source)
         if (configured === undefined) return { ok: false, error: `没有名为 ${source} 的市场源` }
         try {
-          const entries = await browseRemote(configured, false)
+          // 搜索型源（skills.sh）要带着上次的搜索词回查，否则条目列表是空的
+          const entries = await browseRemote(configured, false, lastQuery.get(source) ?? '')
           const entry = entries.find((item) => item.name === name)
           if (entry === undefined) return { ok: false, error: `${source} 里没有 ${name}` }
           const result = await installMarketEntry(entry, DSC_SKILLS_DIR)
@@ -335,15 +348,17 @@ export const skillsPlugin: Plugin.Object = {
     }
 
     /** 浏览内置 HTTP 源（结果按源名缓存，安装时按名字回查）。 */
-    async function browseRemote(source: MarketSource, force: boolean): Promise<MarketEntry[]> {
-      const cached = entriesCache.get(source.name)
+    async function browseRemote(source: MarketSource, force: boolean, query = ''): Promise<MarketEntry[]> {
+      // 搜索型源的缓存键要带关键词：换个词查的是另一批条目
+      const key = isSkillsShSource(source.url) ? `${source.name}\u0000${query}` : source.name
+      const cached = entriesCache.get(key)
       if (cached !== undefined && !force) return cached
-      const entries = await browseMarketSource(source, { refresh: force })
+      const entries = await browseMarketSource(source, { refresh: force, query })
       // 缓存文件按 URL 存（改名字还是同一份），条目里会烙着**上次读时的源名**——
       // 出缓存一律按当前源名重新盖章：改名后浏览列出的行、点安装回查的键
       // 才与清单里的名字对得上（否则安装会报「没有名为 X 的市场源」）。
       const stamped = entries.map((entry) => ({ ...entry, source: source.name }))
-      entriesCache.set(source.name, stamped)
+      entriesCache.set(key, stamped)
       return stamped
     }
 

@@ -20,6 +20,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   IconBolt,
+  IconChevronDown,
+  IconChevronRight,
   IconFolder,
   IconPlus,
   IconRefresh,
@@ -100,6 +102,8 @@ interface MarketSkillView {
   source: string
   version?: string
   installed: boolean
+  /** 市场侧统计（ClawHub 给下载/安装/星标；其它源没有）。 */
+  stats?: { downloads?: number; installs?: number; stars?: number }
 }
 
 /** 市场浏览结果（契约 `MarketBrowseResult`）。 */
@@ -139,12 +143,27 @@ function SkillsView(): ReactNode {
   const [market, setMarket] = useState<MarketBrowseResult | null>(null)
   const [marketSource, setMarketSource] = useState('')
   const [marketLoading, setMarketLoading] = useState(false)
+  /**
+   * 市场获取失败的原文（宿主超时、网络错、源地址坏都记这里）。
+   *
+   * 为什么要单独一个 state：失败时 `market` 仍是 `null`，只看它分不清「还没开始」和
+   * 「已经失败了」——上一版就是这样，30 秒超时后主区一片空白，用户只能看见右下角一闪
+   * 而过的 Toast。有了这条，面板里能常驻显示原因和重试按钮。
+   */
+  const [marketError, setMarketError] = useState('')
   const [sourcesOpen, setSourcesOpen] = useState(false)
   /** 市场源的编辑草稿（展开编辑时从当前清单填「名字, 地址」一行一条）。 */
   const [sourcesText, setSourcesText] = useState('')
   const [savingSources, setSavingSources] = useState(false)
   /** 正在装的条目（`源/名字`；空串 = 没有在装）。装中按钮禁用，防连点。 */
   const [installing, setInstalling] = useState('')
+  /**
+   * 收起的分组（键是发现根目录或 `provider:<源名>`）。
+   *
+   * 为什么要能收：全局技能来自四个目录，平铺一屏几十行，找某一组要一路滚；
+   * 组头点一下收起来，剩下的组就挤在一屏里（dsh 技能面板同款）。
+   */
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 
   const reloadSkills = (): void => {
     void channel
@@ -158,19 +177,29 @@ function SkillsView(): ReactNode {
       })
   }
 
-  const browse = (source: string, refresh: boolean): void => {
+  /** 当前源是不是搜索型（skills.sh）：它的条目取决于搜索词。 */
+  const isSearchSource = (name: string): boolean => {
+    const source = (market?.sources ?? []).find((item) => item.name === name)
+    return source !== undefined && /^https?:\/\/skills\.sh/i.test(source.url)
+  }
+
+  const browse = (source: string, refresh: boolean, search?: string): void => {
+    // 搜索型源必须带关键词：调用方没给就用搜索框里当前的词
+    const needle = search ?? (source !== '' && isSearchSource(source) ? query : undefined)
     setMarketLoading(true)
     void channel
-      .invoke<MarketBrowseResult>('browseMarket', [source])
+      .invoke<MarketBrowseResult>('browseMarket', [source, needle])
       .then((result) => {
         setMarket(result)
         setMarketSource(result.source)
+        setMarketError('')
         // 抓取失败的原因挂在面板里（带重试按钮）；手动刷新额外补一条 Toast 回执。
         if (result.error !== undefined && refresh) toastErr(t('toast.fetchFailed', { error: result.error }))
         else if (refresh) toastOk(t('toast.fetched', { source: result.source, count: result.items.length }))
         maybeAutoInstall()
       })
       .catch((error: unknown) => {
+        setMarketError(text(error))
         toastErr(t('toast.fetchFailed', { error: text(error) }))
       })
       .finally(() => {
@@ -187,6 +216,24 @@ function SkillsView(): ReactNode {
     if (tab === 'market' && market === null && !marketLoading) browse('', false)
     // 只在切到「市场」页签时拉一次：browse 每次渲染都是新函数。
   }, [tab])
+
+  /**
+   * 搜索型源（skills.sh）跟着搜索框走：停手 350ms 再查。
+   *
+   * 为什么不 onChange 就查：那是一个按键一次网络请求，敲十个字就是十次搜索。
+   * 依赖只放搜索词与页签——market / marketSource 的变化不该再触发一轮查询。
+   */
+  useEffect(() => {
+    if (tab !== 'market' || marketSource === '') return
+    const needle = query.trim()
+    if (needle.length < 2 || !isSearchSource(marketSource)) return
+    const timer = setTimeout(() => {
+      browse(marketSource, false, needle)
+    }, 350)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [query, tab, marketSource])
 
   /** 作用域计数（「全部 / 全局 / 项目」三个页签上的读数）。 */
   const scopeCounts = useMemo(() => {
@@ -528,14 +575,39 @@ function SkillsView(): ReactNode {
           )}
           {groups.map((group) => (
             <div className="skills-group" key={group.key}>
-              <div className="skills-group-head">
+              <div
+                className="skills-group-head"
+                role="button"
+                tabIndex={0}
+                aria-expanded={!collapsed.has(group.key)}
+                data-tip={collapsed.has(group.key) ? t('group.expand') : t('group.collapse')}
+                onClick={() => {
+                  setCollapsed((current) => {
+                    const next = new Set(current)
+                    if (next.has(group.key)) next.delete(group.key)
+                    else next.add(group.key)
+                    return next
+                  })
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return
+                  event.preventDefault()
+                  setCollapsed((current) => {
+                    const next = new Set(current)
+                    if (next.has(group.key)) next.delete(group.key)
+                    else next.add(group.key)
+                    return next
+                  })
+                }}
+              >
+                {collapsed.has(group.key) ? <IconChevronRight size={12} /> : <IconChevronDown size={12} />}
                 <span className="skills-group-title">{group.label}</span>
                 <span className="skills-group-count">{t('group.count', { count: group.items.length })}</span>
                 {group.root === undefined ? null : (
                   <span className="mono skills-group-path" data-tip={group.root}>{group.root}</span>
                 )}
               </div>
-              {group.items.map((skill) => (
+              {collapsed.has(group.key) ? null : group.items.map((skill) => (
             <div className={`skill-row${skill.enabled ? '' : ' off'}`} key={`${skill.source}/${skill.name}`}>
               <div className="skill-icon">
                 <IconBolt size={15} />
@@ -675,6 +747,20 @@ function SkillsView(): ReactNode {
           )}
 
           {marketLoading && market === null && <div className="settings-empty">{t('market.loading')}</div>}
+          {!marketLoading && market === null && marketError !== '' && (
+            <div className="settings-note error">
+              {marketError}
+              <button
+                type="button"
+                className="text-btn"
+                onClick={() => {
+                  browse(marketSource, true)
+                }}
+              >
+                {t('market.retry')}
+              </button>
+            </div>
+          )}
           {market?.error !== undefined && market.items.length === 0 && (
             <div className="settings-note error">
               {market.error}
@@ -701,6 +787,23 @@ function SkillsView(): ReactNode {
                   {item.version !== undefined && <span className="tag">v{item.version}</span>}
                 </div>
                 <div className="skill-desc">{item.description}</div>
+                {item.stats !== undefined && (
+                  <div className="skill-stats">
+                    {[
+                      item.stats.downloads === undefined
+                        ? ''
+                        : t('market.downloads', { count: item.stats.downloads.toLocaleString('en-US') }),
+                      item.stats.installs === undefined
+                        ? ''
+                        : t('market.installs', { count: item.stats.installs.toLocaleString('en-US') }),
+                      item.stats.stars === undefined
+                        ? ''
+                        : t('market.stars', { count: item.stats.stars.toLocaleString('en-US') }),
+                    ]
+                      .filter((part) => part !== '')
+                      .join(' · ')}
+                  </div>
+                )}
               </div>
               <button
                 type="button"
