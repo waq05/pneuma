@@ -31,9 +31,9 @@
  * @module dsc-ui-shell/plugins/transcript
  */
 import { Component, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { IconSpark, createT, defineUiPlugin, getHostNative, toastErr, toastOk, useActions, useHostChannel, useHostSelector, useService, ACTIONS_SERVICE, type ActionsHandle, type HostSnapshot, type SlotComponentProps, type TranscriptEntry } from '@dsc/ui'
+import { IconSpark, createT, defineUiPlugin, getHostNative, toastErr, toastOk, useActions, useHostChannel, useHostSelector, useService, ACTIONS_SERVICE, type ActionsHandle, type ApprovalRequestView, type AskUserView, type HostSnapshot, type PlanView, type SlotComponentProps, type TranscriptEntry } from '@dsc/ui'
 import { buildRoundFolds, processFoldPolicy, useFoldMemory, type ProcessFold } from './round-fold'
-import { liveActivity } from './timing'
+import { liveActivity, turnStartedAt } from './timing'
 import { internalLabel, splitRounds } from './rounds'
 import { stepGroupFoldKey, turnFoldKey } from './fold-state'
 import { groupSteps, type StepGrouping } from './process-groups'
@@ -42,6 +42,7 @@ import { pageStartRound } from './paging'
 import { matchTool, playCompletionSound, readCompactingSince, readCwd, readEntries, readLive, readSessions, readSessionPath, readTurnState } from '@dsc/ui-primitives'
 import { registerToolCard } from './tool-card/factory'
 import { EMPTY_STEP_GROUPING, FOLD_PREFS, FlowActionsContext, FoldPrefsContext, ShellCwdContext, ShellSessionContext, TOOLVIEW_SLOT, buildSeats, keyOf, type FoldPrefs, type FlowActions, type Row, type Seat, type ToolViewRender } from './shared'
+import { turnEndNotice, waitingNotice, type WaitingCard } from './turn-notify'
 import { useFollowBottom } from './follow'
 import { RowBody, RowBoundary, SeatBody } from './render'
 import { TurnStatusLine } from './rows/foot'
@@ -55,6 +56,22 @@ import en from '../locale/ui.en.json'
 
 /** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
 const t = createT({ zh, en })
+
+/**
+ * 通知标题的译文表（文案键 → 已经翻好的标题）。
+ *
+ * 为什么不是直接把 `notice.titleKey` 丢给 `t`：`scripts/ui-locale-test.mjs` 只认
+ * `t('字面量键')` 的调用点，动态键它看不见，六个键会被判成「没人用的键」并让闸门判红。
+ * 表里漏了一个键时退回动态取词——取词器对未知键返回键名并告警一次，不会静默吞掉。
+ */
+const NOTICE_TITLES: Readonly<Record<string, string>> = {
+  'transcript.notify.done': t('transcript.notify.done'),
+  'transcript.notify.failed': t('transcript.notify.failed'),
+  'transcript.notify.truncated': t('transcript.notify.truncated'),
+  'transcript.notify.question': t('transcript.notify.question'),
+  'transcript.notify.approval': t('transcript.notify.approval'),
+  'transcript.notify.plan': t('transcript.notify.plan'),
+}
 
 // 本插件对外交出去的那几样仍从 `ui.tsx` 出（槽名、服务形状、行/渲染形状）：
 // 拆分只改文件位置，不动对外面。
@@ -120,6 +137,8 @@ function TranscriptFlow({
   const sessionPath = useHostSelector(readSessionPath)
   const sessionId = useHostSelector(readSessionId)
   const cwd = useHostSelector(readCwd) ?? ''
+  // 挂着的「等人的卡」（审批 → 计划 → 提问）：通知用，界面本身由 ui-prompt 画。
+  const waitingCard = useHostSelector(readWaitingCard, sameWaitingCard)
   const channel = useHostChannel()
   /**
    * 行 key 的会话那一半：优先用会话文件路径，没有就用会话 uuid，都没有就空串
@@ -165,8 +184,10 @@ function TranscriptFlow({
     return () => window.removeEventListener('shell.uiprefs', read)
   }, [channel])
 
-  // 回合完成提醒（桌面端 App 的同款判定）：**同一会话**从跑动变空闲的那一拍，
-  // 按偏好播一声完成提示音；页面不在前台时再弹一条系统通知（只有桌面原生桥有）。
+  // 回合结束提醒（桌面端 App 的同款判定）：**同一会话**从跑动变空闲的那一拍，
+  // 按结局挑一条文案（完成 / 失败 / 输出超长），按偏好播一声提示音；页面不在前台时
+  // 再弹一条系统通知（只有桌面原生桥有）。用户主动中断（aborted）既不响也不弹——
+  // `turnEndNotice` 对那一轮直接给 null，这里照 null 收手就是。
   const prevState = useRef<string>(turnState)
   const behaviorRef = useRef(behavior)
   behaviorRef.current = behavior
@@ -177,20 +198,57 @@ function TranscriptFlow({
     if (was === 'idle' || turnState !== 'idle') return
     // 会话换了不算完成（切走时那个会话跑完是后台事件，侧栏状态点已经说过它）。
     if (sessionRef.current !== sessionPath) return
-    if (behaviorRef.current.sound) playCompletionSound(behaviorRef.current.variant)
+    // 只看刚跑完的这一轮：上一轮的轮尾标记不该替这一轮说话（同一会话里连续跑很多轮）。
+    const rows = seats.rounds[seats.rounds.length - 1]?.rows ?? []
+    const notice = turnEndNotice(rows)
+    if (notice === null) return
+    const behaviorNow = behaviorRef.current
+    if (behaviorNow.sound) playCompletionSound(behaviorNow.variant)
     const background = document.hidden || !document.hasFocus()
     const native = getHostNative()
-    if (background && behaviorRef.current.notify && native.available) {
-      const last = [...entries].reverse().find((entry) => entry.kind === 'text')
-      const body =
-        last !== undefined && last.kind === 'text'
-          ? last.text.replace(/\s+/g, ' ').trim().slice(0, 120)
-          : t('transcript.notify.done')
+    if (background && behaviorNow.notify && native.available) {
+      const title = NOTICE_TITLES[notice.titleKey] ?? t(notice.titleKey)
       void native
-        .invoke('notify', [{ title: t('transcript.notify.done'), body }])
+        .invoke('notify', [{ title, body: notice.body }])
         .catch(() => undefined)
     }
-  }, [turnState, sessionPath, entries])
+  }, [turnState, sessionPath, seats])
+
+  // 等人的卡：审批 / 计划评审 / 模型提问挂上来的那一拍，窗口不在前台才提示。
+  // 前台时这张卡本来就画在输入框上方，再响一声是重复噪音。
+  //
+  // 记忆按「会话 + 卡键」记：同一张卡只提示一次，切会话时先清空——否则切回上次
+  // 那个还挂着审批的会话会被当成「刚冒出来」再响一遍。
+  const waitingSessionRef = useRef(sessionKey)
+  const waitingKeyRef = useRef<string | null>(null)
+  useEffect(() => {
+    const switched = waitingSessionRef.current !== sessionKey
+    if (switched) {
+      waitingSessionRef.current = sessionKey
+      // 从「宿主还没接上」（空串）变成真会话不算切换，照常判一次，别把首帧就挂着的卡吞掉。
+      if (sessionKey !== '') {
+        waitingKeyRef.current = waitingCard?.key ?? null
+        return
+      }
+    }
+    const key = waitingCard?.key ?? null
+    const previous = waitingKeyRef.current
+    waitingKeyRef.current = key
+    // 卡撤了、或者还是同一张（内容变了也不重复喊）。
+    if (key === null || key === previous) return
+    // 窗口在前台：界面上本来就看得到，不响也不弹。
+    if (!document.hidden && document.hasFocus()) return
+    const behaviorNow = behaviorRef.current
+    const native = getHostNative()
+    if (!behaviorNow.notify || !native.available) return
+    const notice = waitingNotice(waitingCard)
+    if (notice === null) return
+    if (behaviorNow.sound) playCompletionSound(behaviorNow.variant)
+    const title = NOTICE_TITLES[notice.titleKey] ?? t(notice.titleKey)
+    void native
+      .invoke('notify', [{ title, body: notice.body }])
+      .catch(() => undefined)
+  }, [waitingCard, sessionKey])
 
   // 分页（口径见 paging.ts）：默认只画尾部一页，更早的点「加载更早」再放出来；一页按
   // 条目数算——「至少 50 条且至少 2 轮，最多 500 条封顶」，边界对齐轮起点。按轮分页
@@ -403,8 +461,10 @@ function TranscriptFlow({
   }
   const actions: FlowActions = { editAndResend, busy: turnState !== 'idle' }
 
-  // 进行中状态行（回合没结束才有）：阶段 + 活动名 + 用时。
+  // 进行中直播行（回合没结束才有）：一句状态 + 用时。
   const activity = useMemo(() => liveActivity([...entries, ...live], turnState), [entries, live, turnState])
+  // 这一轮从哪一刻开始：直播行上的「用时」认它（老会话没有 ts 就是 null，那就不报时间）。
+  const startedAt = useMemo(() => turnStartedAt([...entries, ...live]), [entries, live])
 
   // 右侧刻度条的数据：每轮的题面（用户消息）与回复摘要（该轮最后一条定稿正文）。
   // 含「还没画出来」的早轮——那正是刻度条要先把它们画出来的用途（点击 → onReveal）。
@@ -591,22 +651,27 @@ function TranscriptFlow({
           />
         </div>
       ))}
-      {/* 压缩进行中：与回合状态行同一个位置、同一套动画（0.7.2）。
+      {/* 压缩进行中：与回合直播行同一个位置、同一套动画（0.7.2）。
           压完这条行消失，宿主紧接着写一条「上下文已压缩」的通知，底部的占用百分比也一起刷新。 */}
       {compactingSince !== null ? (
-        <TurnStatusLine text={t('transcript.status.compacting')} />
+        <TurnStatusLine text={t('transcript.status.compacting')} startedAt={null} />
       ) : null}
-      {/* 回合进行中：流末尾一行状态（一句话 + 转圈 + 三点动画），用时在底部状态栏。
-          两种情况不画这条：
+      {/* 回合进行中：流末尾一条直播行（转圈 + 状态 + 用时 + 三点动画），形态对齐 dsh 的
+          `RunningStatus`。三种情况不画这条：
           1. 正在压缩——压缩发生在回合起点（beforeRequest），那一刻 turnState 已经是 thinking，
              两条都画就是两个转圈，压缩优先；
-          2. 过程区此刻画着一个**未结束**的阶段组头——组头已经在说「正在运行命令 · bash」
-             或「正在分析请求」，这条再说一遍就是同一件事说两次。
-             判据从「任意一组存在」改成「有未结束的组」：前者只要历史里折叠过一段就永远成立，
-             会把这一轮的状态行一直压掉；未结束的组只可能出现在正在跑的那一轮（closed=false
-             只由尾组产生），口径才对得上「组头此刻画着」这件事。 */}
-      {activity !== null && compactingSince === null && !stepGrouping.groups.some((group) => !group.closed) ? (
-        <TurnStatusLine text={activity.text} />
+          2. 回合已结束（activity 为 null）；
+          3. 没有这一轮（首轮还没开跑）。
+          2026-11-08 拆掉的旧禁令：以前「过程区画着未收口的组头就不画这条」，理由是组头
+          已经在说「正在运行命令」。但 dsh 是**两行并存**的（组头报阶段、这行报状态与用时），
+          用户要的正是截图里那种「准备运行代码 + 深度求索中，用时 X」的形状。重复问题改用
+          文案解决：行面只说通用状态，具体工具名收进悬停提示（见 rows/foot.tsx 的注释）。 */}
+      {activity !== null && compactingSince === null ? (
+        <TurnStatusLine
+          text={turnState === 'awaiting-approval' ? activity.text : t('transcript.status.working')}
+          startedAt={startedAt}
+          hint={activity.text}
+        />
       ) : null}
       <div ref={follow.setEnd} />
       {/* 暂停跟随时的回头路：只在这一刻出现（跟随中不画），点一下恢复跟随并送回底部。 */}
@@ -638,6 +703,56 @@ function readSessionId(snapshot: HostSnapshot | null): string | null {
   if (typeof status !== 'object' || status === null) return null
   const value = (status as Record<string, unknown>)['sessionId']
   return typeof value === 'string' && value !== '' ? value : null
+}
+
+/**
+ * 快照里挂着的「等人的卡」：审批 → 计划评审 → 模型提问，与 `src/packages/remote/index.ts:692-703`
+ * 的推送优先级同一个口径（同一时刻至多一张在前面挡着）。
+ *
+ * 为什么选择器返回一张「小卡」而不是原视图：通知只需要三样东西——卡种（挑文案）、
+ * 卡键（去重）、一行标题；原视图每帧都是新对象，拖着整份 diff / 计划全文去比等，
+ * 白白多算一遍。
+ */
+function readWaitingCard(snapshot: HostSnapshot | null): WaitingCard | null {
+  const surfaces = snapshot?.['surfaces']
+  if (typeof surfaces !== 'object' || surfaces === null) return null
+  const table = surfaces as Record<string, unknown>
+  // 快照在界面侧是 unknown 树：字段缺失（老宿主 / 半截帧）时宁可给空标题，也不要在
+  // 通知的选择器里抛异常——那会打断整棵树的渲染。
+  const approval = table['pendingApproval']
+  if (typeof approval === 'object' && approval !== null) {
+    const view = approval as Partial<ApprovalRequestView>
+    const summary = typeof view.argsSummary === 'string' ? view.argsSummary.trim() : ''
+    // 参数摘要为空（有些工具没有可读参数）时退回工具名，通知里总得有一行字。
+    const tool = typeof view.toolName === 'string' ? view.toolName.trim() : ''
+    return { kind: 'approval', key: `approval:${String(view.id ?? '')}`, headline: summary !== '' ? summary : tool }
+  }
+  const plan = table['pendingPlan']
+  if (typeof plan === 'object' && plan !== null) {
+    const view = plan as Partial<PlanView>
+    return {
+      kind: 'plan',
+      key: `plan:${String(view.file ?? '')}`,
+      headline: typeof view.title === 'string' ? view.title : '',
+    }
+  }
+  const question = table['pendingQuestion']
+  if (typeof question === 'object' && question !== null) {
+    const view = question as Partial<AskUserView>
+    const header = typeof view.header === 'string' && view.header.trim() !== '' ? view.header : view.question
+    return {
+      kind: 'question',
+      key: `question:${String(view.id ?? '')}`,
+      headline: typeof header === 'string' ? header : '',
+    }
+  }
+  return null
+}
+
+/** 等待卡的逐字段比较：宿主每帧给的都是新对象，按引用比等于每帧都判定「来了一张新卡」。 */
+function sameWaitingCard(previous: WaitingCard | null, next: WaitingCard | null): boolean {
+  if (previous === null || next === null) return previous === next
+  return previous.kind === next.kind && previous.key === next.key && previous.headline === next.headline
 }
 
 /** 一个座位的全部行：整轮总开关 → 过程行（可折）→ 改动卡 + 轮尾。 */

@@ -12,7 +12,7 @@ import { useFoldState } from '../fold-hook'
 import { BAR_MIN_CONTENT_H, expandedContentHeight } from './fold-body'
 import { useIntendedDiff } from '../intended-diff'
 import { FoldPrefsContext, ShellCwdContext, TOOLVIEW_SLOT, type ToolEntry } from '../shared'
-import { ChatStatus, IntendedBody, IntendedPreview, OpenPathButton, TOOLCARD_FACTORY, TraceJumpButton, fileTargetOf } from '../tool-card/factory'
+import { ChatStatus, IntendedBody, IntendedPreview, OpenPathButton, SubCallCount, SubCallList, TOOLCARD_FACTORY, TraceJumpButton, fileTargetOf } from '../tool-card/factory'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 import zh from '../../locale/ui.zh.json'
 import en from '../../locale/ui.en.json'
@@ -191,6 +191,7 @@ export function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matche
             summary
           )}
         </span>
+        <SubCallCount call={call} />
         <span className="status">
           {call.status === 'running' ? <i className="tc-spin" aria-hidden="true" /> : null}
           {/* 定稿不说「完成」：状态点已经绿了，再印一遍是噪声（codex 也只留圆点）。 */}
@@ -252,6 +253,9 @@ export function ToolRow({ entry, matched, storeKey }: { entry: ToolEntry; matche
               )}
             </div>
           ) : null}
+          {/* 卡内调用（PTC）：标记与清单都走 Factory 那份（见 tool-card/factory 的 SubCallList），
+              这里只负责摆位置——两处各画一遍的话，界面长什么样就取决于谁画的卡。 */}
+          <SubCallList call={call} />
           <div className="label">{t('transcript.tool.args')}</div>
           <div className="args">{prettyJson(call.argsText)}</div>
           {call.resultText === undefined || call.resultText === '' ? null : (

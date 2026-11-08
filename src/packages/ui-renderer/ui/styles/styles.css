@@ -3000,8 +3000,39 @@
   margin-top: 5px;
 }
 
-/* 分区空态（「智能体」区没有队友时那一句人话）：一行灰字，跟同区其它行的行高对齐——
-   别用 `.settings-empty`（那是整页空态，上下各 30px 留白，塞进面板里太占地方）。 */
+/* 「智能体团队」区的任务行：同一套胶囊行，右侧不让停止钮，靠左对齐收起。 */
+.sp-row-task {
+  padding-right: var(--dsc-sp-1);
+  flex-wrap: wrap;
+}
+
+.sp-row-task .tm-dot {
+  margin-top: 5px;
+}
+
+/* 任务详情：展开后垫在行下面的一小块灰字（描述 / 依赖 / 预计改动路径）。 */
+.sp-task-detail {
+  color: var(--dsc-text-tertiary);
+  flex-basis: 100%;
+  font-size: var(--dsc-fs-tool);
+  line-height: 1.5;
+  padding: 2px var(--dsc-sp-3) var(--dsc-sp-2);
+}
+
+.sp-task-detail p {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.sp-task-detail .sp-task-meta {
+  color: var(--dsc-text-quaternary);
+  margin-top: 2px;
+}
+
+/* 分区空态：一行灰字，跟同区其它行的行高对齐——别用 `.settings-empty`
+   （那是整页空态，上下各 30px 留白，塞进面板里太占地方）。
+   「子智能体」「智能体团队」两区现在没有队友 / 任务就整区不画，空态只剩别的区在用。 */
 .sp-empty {
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-tool);
@@ -4697,11 +4728,24 @@
 
 .skills-group-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   padding: 2px 2px 0;
   color: var(--dsc-text-tertiary);
   font-size: var(--dsc-fs-caption);
+  /* 组头现在是可点的折叠开关：手型光标 + 悬停提亮，点两下别把文字选中 */
+  cursor: pointer;
+  user-select: none;
+}
+
+.skills-group-head:hover {
+  color: var(--dsc-text-secondary);
+}
+
+.skills-group-head:focus-visible {
+  outline: 1px solid var(--dsc-text-secondary);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .skills-group-title {
@@ -4721,6 +4765,13 @@
   font-size: var(--dsc-fs-tool);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 市场行的统计读数（ClawHub 给下载/安装/星标）：比描述淡一档，只当参考 */
+.skill-stats {
+  margin-top: 2px;
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
 }
 
 /* ══════════ 用量统计：窄屏下的两条硬伤（2026-10-27 报障 3、4） ══════════
@@ -4894,8 +4945,6 @@
   /* 上游报文里有长 URL / 长 JSON，不许把会话撑出横向滚动条 */
   overflow-wrap: anywhere;
 }
-
-
 
 
 /* ══════════ 底部三段：对齐 dsh 的 composer dock（2026-10-28） ══════════
@@ -5249,4 +5298,118 @@ a.user-file-card:hover {
   color: var(--dsc-text-quaternary);
   font-size: var(--dsc-fs-caption);
   font-variant-numeric: tabular-nums;
+}
+
+
+/* ── 唤醒通知那张小卡（2026-11-08，对照 dsh 的 TurnTriggerNodeView）──
+   机器投递进来的消息原来是 .entry-system[data-internal] 那条带竖线的灰行：只说得出一句话、
+   没有时间、也点不开看原文。dsh 把它画成一张独立的可展开卡片，这里照它的几何落地：
+     卡片   0.5px 边框 + 圆角 + 极浅底色，悬停时底色提一档（点得动的暗示）
+     头行   图标 14px + 标题（12px）+ 时间（12px，靠右）+ 箭头，整行可点
+     正文   缩进对齐标题（左 32px），先一句解释，再摊 <pre> 原文（限高 240px 可滚）
+   尺寸比 dsh 收一档：dsh 的正文是 14px，对话页的过程区一律 12px（.step-fold / .entry-note
+   同档），卡片跟着这一档走，不在一堆 12px 的小字里突然冒出一行 14px。 */
+.trigger-card {
+  background: var(--dsc-neutral-card);
+  /* 描边用 stroke-2（写前预览卡、文件卡同一档）：stroke-1 掺了品牌蓝，浅色主题下
+     一张灰卡片会泛出淡蓝边，看着像被选中。 */
+  border: 1px solid var(--dsc-stroke-2);
+  border-radius: var(--dsc-r-block);
+  min-width: 0;
+  overflow: hidden;
+  transition: background var(--dsc-dur) var(--dsc-ease);
+}
+
+@media (hover: hover) {
+  .trigger-card:hover {
+    background: color-mix(in srgb, var(--dsc-stroke-2) 45%, var(--dsc-neutral-card));
+  }
+}
+
+.trigger-head {
+  align-items: center;
+  background: none;
+  border: 0;
+  border-radius: inherit;
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: var(--dsc-fs-caption);
+  gap: 8px;
+  padding: 6px 10px;
+  text-align: left;
+  transition: color var(--dsc-dur) var(--dsc-ease);
+  width: 100%;
+}
+
+@media (hover: hover) {
+  .trigger-head:hover {
+    color: var(--dsc-text-secondary);
+  }
+}
+
+.trigger-head:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
+}
+
+.trigger-icon {
+  color: inherit;
+  display: inline-flex;
+  flex: none;
+}
+
+/* 标题不换行：头行是一句话说明「刚刚发生了什么」，折行会把时间与箭头挤到下一行去。 */
+.trigger-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trigger-time {
+  color: inherit;
+  flex: none;
+  font-size: var(--dsc-fs-caption);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+  opacity: 0.8;
+}
+
+.trigger-chevron {
+  color: inherit;
+  display: inline-flex;
+  flex: none;
+  transition: transform var(--dsc-dur) var(--dsc-ease);
+}
+
+.trigger-head[data-open] .trigger-chevron {
+  transform: rotate(180deg);
+}
+
+/* 左缩进 32px = 头行的 padding(10) + 图标(14) + 间距(8)：正文与标题左缘对齐，
+   不让读者在展开后重新找一列。 */
+.trigger-body {
+  padding: 0 10px 8px 32px;
+}
+
+.trigger-note {
+  color: var(--dsc-text-secondary);
+  font-size: var(--dsc-fs-caption);
+  margin: 4px 0 6px;
+}
+
+/* 原文按模型收到的样子排（pre-wrap 保留换行、不限列宽），限高是因为一条作业通知
+   可能带着整段命令与输出；超出滚动，不把整轮撑长。 */
+.trigger-text {
+  color: var(--dsc-text-tertiary);
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-caption);
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }

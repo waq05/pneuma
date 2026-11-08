@@ -282,6 +282,10 @@ console.log('[7] 分轮口径单点 + internal 条目对齐 dsh（0.6.67 右侧�
   const ui = readPluginSource(UI)
   const timing = read(UI + '/timing.ts')
   const css = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
+  const cardCss = read('src/packages/ui-renderer/ui/styles/styles.css')
+  const triggerSrc = read('src/packages/ui-transcript/ui/rows/trigger-row.tsx')
+  const userRowSrc = read('src/packages/ui-transcript/ui/rows/user-row.tsx')
+  const renderSrc = read(UI + '/render.tsx')
   // 「不该出现」的断言先剥注释：修法的注释里就引着旧写法 / roundInfos，不剥会自己打脸。
   const uiCode = ui.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
 
@@ -416,12 +420,51 @@ console.log('[7] 分轮口径单点 + internal 条目对齐 dsh（0.6.67 右侧�
     /user\.internal === true\s*\?\s*internalLabel\(user\.text\)/.test(ui),
   )
   check(
-    '③ 对话里的触发行带队友名、保留 data-internal="1"（不再写死「子任务状态更新」）',
-    /data-internal="1"[\s\S]{0,200}internalLabel\(entry\.text\)/.test(ui) &&
-      !ui.includes('子任务状态更新') &&
+    '③ 唤醒卡带队友名、保留 data-internal="1"（标题走 internalLabel，不写死类别词）',
+    triggerSrc.includes('data-internal="1"') &&
+      triggerSrc.includes('internalLabel(entry.text)') &&
+      !triggerSrc.includes('子任务状态更新') &&
       internalLabel(teammateBody).includes('队友 mate-1'),
   )
-  check('③ 触发行样式落在 legacy/views.css（.entry-system[data-internal=\'1\']）', css.includes(".entry-system[data-internal='1']"))
+  check(
+    '③ 对话页把 internal 条目交给唤醒卡（不再画 .entry-system 灰行）',
+    userRowSrc.includes('if (entry.internal === true) return <TriggerRow entry={entry} />') &&
+      !userRowSrc.includes('className="entry-system"'),
+  )
+  check(
+    '③ 唤醒卡样式在 styles.css（.trigger-card），旧的灰行选择器已删',
+    cardCss.includes('.trigger-card') && !css.includes(".entry-system[data-internal='1']"),
+  )
+  check(
+    '③ 唤醒卡默认收起、头行可点、原文按 pre 原样排（对照 dsh 的 TurnTriggerNodeView）',
+    triggerSrc.includes('useState(false)') &&
+      triggerSrc.includes('aria-expanded={open}') &&
+      triggerSrc.includes('<pre className="trigger-text">'),
+  )
+
+  // ── ⑨ 不上屏的条目不占座位（2026-11-08 报障：组头下面一片白，才轮到通知行）──
+  // 空盒子不占高度，但过程区是 gap: 3px 的 flex 列，它照样吃一个缝：一轮改五个文件＝
+  // 十条 changes/turnDiff 就叠出 27px 的空白。判据在行渲染之前，不是靠 CSS 藏。
+  {
+    const showsMod = await import(new URL('../' + UI + '/row-shows.ts', import.meta.url).href)
+    const { rowShows } = showsMod
+    check(
+      '⑨ 改动明细（changes / turnDiff）不出座位',
+      !rowShows(e('changes', { file: {} })) && !rowShows(e('turnDiff', { files: [] })),
+    )
+    check(
+      '⑨ 正常收尾的 turn-end 不出座位，中断 / 跑挂的照出',
+      !rowShows(e('turn-end', { reason: 'completed' })) &&
+        rowShows(e('turn-end', { reason: 'aborted' })) &&
+        rowShows(e('turn-end', { reason: 'failed' })),
+    )
+    check('⑨ 空白正文不出座位，真正文照出', !rowShows(e('text', { text: ' \n ' })) && rowShows(e('text', { text: '有字' })))
+    check('⑨ 用户消息 / 工具 / 思考 / 通知一律照出', ['user', 'tool', 'thinking', 'system', 'model-retry'].every((kind) => rowShows(e(kind, { text: 'x' }))))
+    check(
+      '⑨ 座位真的跳过它（render.tsx 两处都判 rowShows）',
+      renderSrc.includes('if (!rowShows(row.entry)) return null') && renderSrc.includes('if (!rowShows(row.entry)) continue'),
+    )
+  }
 
   // ── ④ 老回归闸（段 [1]「每条行恰好出现一次」）对新的分轮产物仍然成立 ──
   {
@@ -574,11 +617,13 @@ console.log('[11] 轮尾的复制 / 分叉：停下之后、鼠标压在输出�
   )
 }
 
-console.log('[12] 机器投递的消息画成触发行，不是用户气泡（2026-11-02 报障：后台作业通知冒成气泡）')
+console.log('[12] 机器投递的消息画成唤醒卡，不是用户气泡（2026-11-02 报障：后台作业通知冒成气泡）')
 {
   // 判据在宿主三处（落库 / 事件 / 重放），界面这一侧只认 `internal` 并给一句话标签。
   // 逐条断言的实测在 scripts/notice-origin-test.mjs（21 项）；这一节钉的是「界面没有绕开它」。
   const userRow = read(UI + '/rows/user-row.tsx')
+  // 2026-11-08：灰行换成一张可展开的小卡（对照 dsh 的 TurnTriggerNodeView）。
+  const triggerRow = read(UI + '/rows/trigger-row.tsx')
   const uiSrc = read(UI + '/ui.tsx')
   const rounds = read(UI + '/rounds.ts')
   const adapter = read('src/adapter/transcript.ts')
@@ -586,7 +631,12 @@ console.log('[12] 机器投递的消息画成触发行，不是用户气泡（20
   const loop = read('src/packages/session-core/loop.ts')
   const llm = read('src/core/llm.ts')
 
-  check('内部行按类型给标签（不再一律说「子任务汇报」）', userRow.includes('{internalLabel(entry.text)}'))
+  check(
+    '内部行按类型给标签（不再一律说「子任务汇报」）',
+    userRow.includes('<TriggerRow entry={entry} />') &&
+      triggerRow.includes('internalLabel(entry.text)') &&
+      triggerRow.includes('{label}'),
+  )
   check('刻度条悬停卡与触发行共用同一句', uiSrc.includes("? internalLabel(user.text)"))
   check('标签函数认得队友汇报 / 后台作业 / 其它三种', ['teammateReportLabel(text)', "'transcript.internal.jobFailed'", "'transcript.internal.runtimeNotice'"].every((piece) => rounds.includes(piece)))
   check('适配器：前缀命中 **或** origin === notice', /event\.origin === 'notice'/.test(adapter) && adapter.includes('startsWith(TEAMMATE_REPORT_OPEN)'))

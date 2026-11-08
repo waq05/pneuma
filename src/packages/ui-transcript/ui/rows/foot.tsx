@@ -5,7 +5,7 @@
  *
  * @module dsc-ui-shell/plugins/transcript/rows/foot
  */
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { IconBranch, IconCopy, createT } from '@dsc/ui'
 import { formatTokens } from '@dsc/ui-primitives'
 import { formatClock, formatDuration, roundDuration, type RoundInfo } from '../timing'
@@ -135,22 +135,46 @@ export function RoundFoot(props: {
 }
 
 /**
- * 助手回合进行中的状态行：**只有一行**——转圈 + 一句话 + 尾部三点动画。
+ * 助手回合进行中的直播行：**只有一行**——转圈 + 一句话 + 用时 + 尾部三点动画。
  *
- * 为什么从两行改成一行（2026-10-30 报障）：原来第一行「正在执行工具」、第二行
- * 「正在调用 bash，用时 10 分 41 秒」说的是同一件事；有过程组头时更是同一条信息出现三处
- * （组头「正在运行命令 · bash」+ 这两行）。现在的分工是：工具在跑时由组头说，这一行只在
- * 没有组头可依的阶段（分析 / 整理回复 / 等确认 / 压缩）露脸（见 timing.liveActivity 的 covered）。
+ * 形态对齐 dsh 的 `RunningStatus`（client-ui-chat 的 `.running`）：贴在流末尾、上面一条
+ * 0.5px 细线、整句带扫光、后面跟着「用时 X」。dsh 那句是固定的「深度求索中，用时 X」——
+ * 不报工具名，所以组头说「正在运行命令」时也不重复（这是 2026-10-30 去重的老教训）。
+ * 这里照同一口径：行面只说状态 + 用时，具体在调什么收进悬停提示。
  *
- * 用时不再挂在这里：它挪到底部状态栏（「N 轮 M 步 · 用时 X」），一轮跑了多久在那儿一直看得见，
- * 不必让消息流末尾的这半句话每秒重排一次。
+ * 用时的时钟关在这个组件里（2026-11-08）：只有这一行每秒重排，消息流本身不跟着动。
+ * 起点拿不到（2026-09 前的老会话没有 ts）就只报状态、不报时间，绝不显示 NaN 或 0 秒。
  */
-export function TurnStatusLine(props: { text: string }): ReactNode {
+export function TurnStatusLine(props: {
+  /** 行面主文案：「Numa 工作中」/「等待你的确认」（等确认时不能谎称在工作）。 */
+  text: string
+  /** 本轮开始时刻（毫秒）：null = 这一轮没有可信起点，不报用时。 */
+  startedAt: number | null
+  /** 悬停提示：此刻具体在干什么（工具名这类细节，行面不重复组头）。 */
+  hint?: string
+}): ReactNode {
+  const running = props.startedAt !== null
+  // 每秒跳一次的「现在」；只在跑动时开 interval（回合结束这一行随之消失）。
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!running) return undefined
+    setNow(Date.now())
+    const timer = setInterval(() => setNow(Date.now()), LIVE_CLOCK_INTERVAL_MS)
+    return () => clearInterval(timer)
+  }, [running, props.startedAt])
+  const used = props.startedAt === null
+    ? null
+    : formatDuration(Math.max(LIVE_CLOCK_INTERVAL_MS, now - props.startedAt))
+  const line = used === null
+    ? props.text
+    : t('transcript.status.withDuration', { label: props.text, duration: used })
   return (
-    <div className="turn-status">
+    <div className="turn-status" title={props.hint}>
       <span className="turn-status-spin" aria-hidden="true" />
-      <span className="turn-status-stage" role="status">
-        {props.text}
+      {/* data-shimmer 的值就是 ::after 要复制的那串文字（见 views.css 里那条共用规则）：
+          扫光盖在整句上，用时跟着一起亮，读起来才是「还在往前走」。 */}
+      <span className="turn-status-stage" data-shimmer={line} role="status">
+        {line}
       </span>
       <span className="turn-status-dots" aria-hidden="true">
         <i />
@@ -160,4 +184,7 @@ export function TurnStatusLine(props: { text: string }): ReactNode {
     </div>
   )
 }
+
+/** 直播行用时跳一拍的间隔（毫秒）：与 dsh 的 `LIVE_RUN_CLOCK_INTERVAL_MS` 同值。 */
+const LIVE_CLOCK_INTERVAL_MS = 1000
 

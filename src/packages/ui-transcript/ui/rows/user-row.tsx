@@ -11,7 +11,7 @@ import { FileIcon, IconEdit, createT, setDockPreview, type TranscriptEntry, type
 // 体积读数与文件树、预览面板、输入区附件同一份实现（壳里唯一一份）。
 import { formatBytes, ImageLightbox, parseReviewFindings, ReviewFindingsCard } from '@dsc/ui-primitives'
 import { FlowActionsContext, ShellCwdContext } from '../shared'
-import { internalLabel } from '../rounds'
+import { TriggerRow } from './trigger-row'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 import zh from '../../locale/ui.zh.json'
 import en from '../../locale/ui.en.json'
@@ -95,16 +95,10 @@ export function UserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'us
     return <ReviewFindingsCard doc={findings} cwd={cwd} onOpenLocation={(path) => setDockPreview({ path })} />
   }
   // 运行时投递进来的消息（队友汇报、后台作业完成通知……）不拿它当人打的字渲染，
-  // 也不压成居中的 system 断句：按 dsh 的 turn-trigger 画成一行「触发行」——一句话说清
-  // 刚刚发生了什么（队友名 / 状态从 body 头里解，作业号从正文里取，见 rounds.ts 的
-  // internalLabel）。`data-internal="1"` 属性留着（样式与探针认它）。全文仍挂在 title 上。
-  if (entry.internal === true) {
-    return (
-      <div className="entry-system" data-internal="1" title={entry.text}>
-        {internalLabel(entry.text)}
-      </div>
-    )
-  }
+  // 也不压成居中的 system 断句：按 dsh 的 TurnTriggerNodeView 画成一张可展开的小卡
+  // （见 trigger-row.tsx）——头行说清「刚刚发生了什么」，点开才看模型收到的原文。
+  // 原来的灰行（`.entry-system[data-internal]`）说得出一句话、没有时间、也点不开，2026-11-08 换掉。
+  if (entry.internal === true) return <TriggerRow entry={entry} />
   return (
     <>
       <div className="user-turn">

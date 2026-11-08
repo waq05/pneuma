@@ -10,6 +10,7 @@ import { MarkdownView, createT, estimateTextTokens, type TranscriptEntry } from 
 import { ReviewNoticeCard, findLast, parseReviewNotice } from '@dsc/ui-primitives'
 import { FoldPrefsContext, ShellCwdContext, ShellSessionContext, TOOLVIEW_SLOT, TURN_INDEPENDENT, keyOf, type Row, type Seat, type ToolViewRender } from './shared'
 import { stepGroupFoldKey, turnFoldKey } from './fold-state'
+import { rowShows } from './row-shows'
 import { turnDefaultOpen, useFoldMemory } from './round-fold'
 import { RowSeat, StepGroupSeat } from './fold-seats'
 import { TurnFoldRow } from './round-fold'
@@ -106,9 +107,11 @@ export function SeatBody({
     answered: true,
   }
   // 这一轮的最终回答（复制与评价都按它算，旧界面 roundAnswer 同口径）：最后一条定稿正文。
+  // 过程正文（entry.process）不算回答：它是「接下来要干什么」的前言，不是这一轮说的话。
   const answer = seat.rows
     .map((row) => row.entry)
-    .filter((entry): entry is Extract<TranscriptEntry, { kind: 'text' }> => entry.kind === 'text' && entry.id >= 0)
+    .filter((entry): entry is Extract<TranscriptEntry, { kind: 'text' }> =>
+      entry.kind === 'text' && entry.id >= 0 && entry.process !== true)
     .at(-1)
   // 整轮的正文估算（页脚的「~N tok」回落）：一轮里的定稿正文加起来；直播尾不算。
   const tokens = seat.rows.reduce(
@@ -124,18 +127,23 @@ export function SeatBody({
    * 一行条目：真盒子（RowSeat：收起时挂 hidden="until-found" 而不是卸载——Ctrl+F 能命中，
    * 键盘焦点不会被抽走）+ 行级错误边界 + 行体。组内成员与过程行都走它。
    */
-  const seatRow = (row: Row, hidden: boolean): ReactNode => (
-    <RowSeat
-      key={keyOf(row, sessionKey)}
-      hidden={hidden}
-      onReveal={reveal}
-      roundIndex={seat.round}
-    >
-      <RowBoundary entry={row.entry}>
-        <RowBody row={row} renderSlot={renderSlot} />
-      </RowBoundary>
-    </RowSeat>
-  )
+  const seatRow = (row: Row, hidden: boolean): ReactNode => {
+    // 画不出东西的条目**不建座位**（判据见 row-shows.ts）：空盒子不占高度，但仍吃过程区
+    // 那一个 3px 的 flex 缝——一轮改五个文件就在组头下面叠出 27px 的白。
+    if (!rowShows(row.entry)) return null
+    return (
+      <RowSeat
+        key={keyOf(row, sessionKey)}
+        hidden={hidden}
+        onReveal={reveal}
+        roundIndex={seat.round}
+      >
+        <RowBoundary entry={row.entry}>
+          <RowBody row={row} renderSlot={renderSlot} />
+        </RowBoundary>
+      </RowSeat>
+    )
+  }
   /** 一组现在展开没有（键：会话 + 轮 + 组序号；默认一律收起——组头承载「现在在干什么」）。 */
   const groupOpen = (group: StepGroup): boolean =>
     foldMemory.open(stepGroupFoldKey(sessionId, group.roundIndex, group.seq), false)
@@ -203,6 +211,8 @@ export function SeatBody({
     }
     const row = rowByAt.get(item.at)
     if (row === undefined) continue
+    // 不上屏的行连「分段」都不该参与：它会把一段过程区劈成两段，凭空多出两个段间缝。
+    if (!rowShows(row.entry)) continue
     pushRow(row)
   }
   /**
@@ -289,6 +299,16 @@ export function RowBody({
     case 'user':
       return <UserRow entry={entry} />
     case 'text':
+      // 过程正文：同一步里调工具之前的那句前言（adapter 在 tool/call 时标上的）。
+      // 它跟思考行同处过程区，只是模型把话写在了正文通道（dsh 的模型写在 reasoning 里，
+      // 屏幕上是一行「思考 · …」）。所以这里按过程行的量级画：小字、灰、不占正文的排场。
+      if (entry.process === true) {
+        return (
+          <div className={row.live ? 'entry-note live' : 'entry-note'} data-process-note>
+            <MarkdownView text={entry.text} path="" streaming={row.live} />
+          </div>
+        )
+      }
       return (
         <div className={row.live ? 'entry-text live' : 'entry-text'}>
           {/* 正文渲染 markdown（与桌面端 MarkdownText 同一能力面：GFM 表格/任务列表等）。

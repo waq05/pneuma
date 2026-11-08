@@ -9,10 +9,12 @@
  *
  * 三段与三张悬浮卡（与 dsh 一一对应）：
  *
- *   1. `seg-turn`：`N 轮 M 步 · 用时 X · Y tok/s`（用时只在回合进行中出现）。轮/步取宿主下发 `status.progress` 的真值
+ *   1. `seg-turn`：`N 轮 M 步 · Y tok/s`。轮/步取宿主下发 `status.progress` 的真值
  *      （轮 = 用户消息数、步 = 助手消息数，口径见 contract.ts）；`步 = 0` 时整段不画
  *      （空会话里「0 轮 0 步」不是读数，dsh 的 ActivityPill 同款）。卡片「会话统计」列
  *      模型用时、工具调用用时、首 token 平均与输出速度。
+ *      **这里不报「本轮用时」**（2026-11-08）：那个每秒跳的活读数在消息流末尾的直播行上，
+ *      dsh 的底栏也没有它——底栏是「这一路攒下来的账」，不是「现在几点」。
  *   2. `seg-tokens`：`12.3K tok · 缓存命中 87%`（累计为 0 时整段不画）。卡片「Token 用量」
  *      列缓存命中、未缓存输入、缓存读取与输出。
  *   3. `seg-context`：`min(100, round(used/window*100))%` 的圆环 + 百分比（分母
@@ -105,7 +107,6 @@ const EMPTY_STATUS: Readonly<Record<string, unknown>> = Object.freeze({})
 function StatusSegments(): ReactNode {
   // 一个字段一个订阅，值没变就不重渲染——为什么这么切见 useStatusField。
   const turnState = useStatusField(readTurnState)
-  const turnStartedAt = useStatusField(readTurnStartedAt)
   const model = useStatusField(readModel)
   const sessionId = useStatusField(readSessionId)
   // 轮数/步数取宿主的会话进度真值（口径见 contract.ts 的 StatusView.progress），"轮/步"字符串稳定。
@@ -139,9 +140,9 @@ function StatusSegments(): ReactNode {
 
   const parts: ReactNode[] = []
   // 步数为 0 时整段不画（dsh 的 ActivityPill 同款）：空会话里「0 轮 0 步」不是读数。
-  // 例外：第一轮正在进行中（有 turnStartedAt）要画——那一刻 steps 还是 0，而「用时」
-  // 恰恰是这时候最该看得见（2026-10-30：状态行的用时撤掉之后，第一轮跑起来就没读数了）。
-  if (turnState !== null && (Number(steps) > 0 || turnStartedAt !== null)) {
+  // 2026-11-08：这条例外曾经是给「用时」开的口子（第一轮跑起来时 steps 还是 0，那一刻
+  // 只有它能报时长）。用时挪回消息流末尾的直播行之后，这个口子没有理由了，重新按纯读数判。
+  if (turnState !== null && Number(steps) > 0) {
     parts.push(
       <TurnSegment
         key="turn"
@@ -151,7 +152,6 @@ function StatusSegments(): ReactNode {
         rounds={Number(rounds)}
         steps={Number(steps)}
         speed={speed}
-        startedAt={turnStartedAt}
         logged={logged}
       />,
     )
@@ -209,26 +209,10 @@ function TurnSegment(props: {
   rounds: number
   steps: number
   speed: number | null
-  /** 本轮开始时刻（毫秒）：只在回合进行中有值，用来报「用时」。 */
-  startedAt: number | null
   logged: SessionUsageView | null
 }): ReactNode {
   const stateText = TURN_TEXT[props.turnState]
   const logged = props.logged
-  // 本轮用时：跑动中每秒跳一次（这个 interval 只在跑动时存在，回合结束随段一起停）。
-  // 为什么放这儿而不是消息流里（2026-10-30 报障）：流末尾那条两行状态与过程组头重复，
-  // 撤掉之后时间在底部一直看得见，也不再让消息流每秒重排。
-  const running = props.turnState !== 'idle' && props.startedAt !== null
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    if (!running) return undefined
-    setNow(Date.now())
-    const timer = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(timer)
-  }, [running])
-  const elapsed = running && props.startedAt !== null
-    ? formatTraceDuration(Math.max(0, now - props.startedAt))
-    : null
   // 首字延迟报平均（累计 ÷ 样本数）：单看累计毫秒没有可比性，请求一多就只见涨。
   const ttft = logged === null ? null : averageTtftMs(logged)
   const ttftText = ttft === null ? null : formatTraceDuration(ttft)
@@ -247,11 +231,7 @@ function TurnSegment(props: {
         <span className={`seg-icon state-${props.turnState}`}>
           <IconActivity size={12} />
         </span>
-        {/* 第一轮进行中时 steps 还是 0：那一档只报用时，不摆「0 轮 0 步」这种假读数 */}
-        {props.steps > 0 ? t('statusbar.turn.counts', { rounds: props.rounds, steps: props.steps }) : null}
-        {elapsed !== null && (
-          <span className="seg-dim">{props.steps > 0 ? ' · ' : ''}{t('statusbar.turn.elapsed', { duration: elapsed })}</span>
-        )}
+        {t('statusbar.turn.counts', { rounds: props.rounds, steps: props.steps })}
         {props.speed !== null && <span className="seg-dim"> · {formatTokensPerSecond(props.speed)} tok/s</span>}
       </button>
       <div className="ctx-card" role="note">
@@ -262,8 +242,10 @@ function TurnSegment(props: {
           </span>
         </div>
         <div className="ctx-rule" />
+        {/* 卡里只留 dsh 那四行（模型用时 / 工具调用用时 / 首 token / 输出速度）。
+            2026-11-08 撤掉「本轮用时（进行中）」：它是一个每秒跳的活读数，dsh 的卡里没有，
+            而且这一个数已经在消息流末尾的直播行上跳着——同一秒在两个地方数两遍。 */}
         <div className="ctx-rows">
-          {elapsed !== null && <CardRow label={t('statusbar.card.elapsedRunning')} value={elapsed} />}
           {llmText !== null && <CardRow label={t('statusbar.card.modelTime')} value={llmText} />}
           {toolText !== null && <CardRow label={t('statusbar.card.toolTime')} value={toolText} />}
           {ttftText !== null && <CardRow label={t('statusbar.card.ttft')} value={ttftText} />}
@@ -492,16 +474,8 @@ function readNumber(record: Record<string, unknown>, key: string): number | null
 }
 
 /**
- * 本轮开始时刻（毫秒）：宿主只在回合进行中给这一项，空闲时是 null。
- *
- * 它是底部这一行「用时」的唯一来源（2026-10-30：消息流末尾那条两行状态撤掉之后，
- * 时间改在这儿报）。拿不到就整段不画——不拿「打开会话的时刻」凑一个数。
+ * 回合状态：不在这四种里（老 mock、将来加了新状态）就当没有状态，这一段不画。
  */
-function readTurnStartedAt(status: Record<string, unknown>): number | null {
-  return readNumber(status, 'turnStartedAt')
-}
-
-/** 回合状态：不在这四种里（老 mock、将来加了新状态）就当没有状态，这一段不画。 */
 function readTurnState(status: Record<string, unknown>): TurnState | null {
   const raw = status['turnState']
   return typeof raw === 'string' && (TURN_STATES as readonly string[]).includes(raw)

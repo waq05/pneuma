@@ -25,7 +25,7 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 const read = (rel) => readFileSync(root + rel, 'utf8')
 
 const {
-  groupSteps, stepGroupTitle, liveTitleOf, STEP_TITLE_SEPARATOR,
+  groupSteps, stepGroupTitle, liveTitleOf, seatPlan, STEP_TITLE_SEPARATOR,
 } = await import(new URL('../src/packages/ui-transcript/ui/process-groups.ts', import.meta.url).href)
 
 let passed = 0
@@ -159,12 +159,154 @@ console.log('[5] 源码钉：渲染体与分组器的接线')
     '分组器：跑动中的尾组以 closed=false 收口',
     /if \(isRunning\(round\.index\)\) \{\s*\n\s*if \(pending\.length >= 2\) flush\(false\)/.test(groups),
   )
-  check('分组器：思考与工具同组（不再遇思考就封组）', /entry\.kind === 'tool' \|\| entry\.kind === 'thinking'/.test(groups))
+  // 2026-11-07 起这条分支多了一类成员（过程正文），条件排成了多行，正则跟着放宽到换行。
+  check('分组器：思考与工具同组（不再遇思考就封组）', /entry\.kind === 'tool'\s*\|\|\s*entry\.kind === 'thinking'/.test(groups))
   check('分组器：system 是边界（不把错误提示裹进组体）', /if \(entry\.kind === 'system'\) \{\s*\n\s*flush\(true\)/.test(groups))
   check('小组按 members 结算，不再用下标区间铺组员', groups.includes('items.push({ kind: \'group\', group: head, members: head.members })'))
   check('分组器：定稿的轮照旧 flush(true)', /\} else \{\s*\n\s*\/\/ 定稿的轮[\s\S]{0,120}?flush\(true\)/.test(groups))
 }
 
+
+console.log('[6] 过程正文：调工具之前那句前言不封组（2026-11-07 报障）')
+{
+  // 模型在同一步里「说一句 + 调工具」：这句正文带 process 标记（adapter 在 tool/call 时补上）。
+  const withNote = [
+    entry('user', { text: '装一下' }),
+    entry('thinking', { text: '先看现场。' }),
+    entry('text', { text: '安装完成，启动做最后验证：', process: true }),
+    tool('bash', 'done', { command: 'node app.js' }),
+    entry('text', { text: '这次真的好了。' }),
+  ]
+  const grouping = groupSteps(
+    withNote,
+    [{ index: 0, startIndex: 0, endIndex: 4, startTs: 1, endTs: 9, answered: true }],
+    () => false,
+  )
+  const group = grouping.groups[0]
+  check('整段过程收成一组（前言不切组）', grouping.groups.length === 1, String(grouping.groups.length))
+  check('组里收着思考 + 前言 + 工具三条', group?.size === 3, JSON.stringify(group?.members))
+  check('成员按出现顺序：思考、前言、工具', group?.members.join(',') === '1,2,3', JSON.stringify(group?.members))
+  check('真正文留在组外（照旧封组）', grouping.at.has(4) === false && grouping.headAt.has(4) === false)
+  check('类别只数工具（前言不是一次调用）', group?.counts.reduce((sum, item) => sum + item.count, 0) === 1, JSON.stringify(group?.counts))
+
+  // 不带标记的正文照旧是边界：模型只说话、没动手的那一步不该被并进上一组。
+  const plainReply = [
+    entry('user', { text: '说说看' }),
+    entry('thinking', { text: '想想。' }),
+    tool('read', 'done', { path: 'a.ts' }),
+    entry('text', { text: '看完了，结论是……' }),
+  ]
+  const split = groupSteps(
+    plainReply,
+    [{ index: 0, startIndex: 0, endIndex: 3, startTs: 1, endTs: 9, answered: true }],
+    () => false,
+  )
+  check('不带标记的正文仍然封组', split.groups.length === 1 && split.groups[0].members.join(',') === '1,2', JSON.stringify(split.groups.map((g) => g.members)))
+
+  // 排布不变量照旧：每条行恰好出一次，前言只在组体里出现。
+  const plan = seatPlan([1, 2, 3, 4], grouping)
+  const flat = plan.flatMap((item) => (item.kind === 'group' ? item.members : [item.at]))
+  check('每条行恰好出一次（前言不重复铺）', flat.join(',') === '1,2,3,4', flat.join(','))
+  check('组头只出在第一条（思考行）上', plan.filter((item) => item.kind === 'group').length === 1)
+}
+
+console.log('[7] 源码钉：过程正文的标记与三处接线')
+{
+  const adapter = read('src/adapter/transcript.ts').replace(/\r\n/g, '\n')
+  const groups = read('src/packages/ui-transcript/ui/process-groups.ts').replace(/\r\n/g, '\n')
+  const render = read('src/packages/ui-transcript/ui/render.tsx').replace(/\r\n/g, '\n')
+  const fold = read('src/packages/ui-transcript/ui/round-fold.tsx').replace(/\r\n/g, '\n')
+  const views = read('src/packages/ui-renderer/ui/styles/legacy/views.css').replace(/\r\n/g, '\n')
+  check('adapter：tool/call 时回标上一条正文', /wrote\.kind === 'text' && wrote\.process !== true[\s\S]{0,120}?process: true as const/.test(adapter))
+  check('adapter：tool/prepare 时提前降级直播尾', /tail\.kind === 'text'\) tail\.process = true/.test(adapter))
+  check('adapter：直播尾把标记带给条目', adapter.includes("segment.process === true ? { process: true as const } : {}"))
+  check('分组器：带 process 的正文进组（不封组）', groups.includes('(entry.kind === \'text\' && entry.process === true)'))
+  check('渲染：过程正文走 .entry-note（小字灰行）', render.includes("className={row.live ? 'entry-note live' : 'entry-note'}") && render.includes('data-process-note'))
+  check('整轮折叠：「全部回复」档不再留下过程正文', fold.includes("keepReplies && entry.kind === 'text' && entry.process !== true"))
+  check('样式：.entry-note 是小字 + 灰', /\.entry-note \{[^}]*font-size: var\(--dsc-fs-caption\)/.test(views) && /\.entry-note \{[^}]*color: var\(--dsc-text-tertiary\)/.test(views))
+  // PTC 的卡内调用（2026-11-07）：事件带父指针、适配器收进父卡、卡里画嵌套行。
+  const events = read('src/core/events.ts').replace(/\r\n/g, '\n')
+  const contract = read('src/contract/transcript.ts').replace(/\r\n/g, '\n')
+  const ptc = read('src/packages/ptc/index.ts').replace(/\r\n/g, '\n')
+  const toolRow = read('src/packages/ui-transcript/ui/rows/tool-row.tsx').replace(/\r\n/g, '\n')
+  // 对话页真的那张卡是 Factory 里的 ToolCard；rows/tool-row 只是没注册 Factory 时的兜底。
+  // 实拍查出来的：第一版把嵌套行只加在兜底上，桌面里根本看不见（2026-11-07 真机跑出来的）。
+  const toolCard = read('src/packages/ui-transcript/ui/tool-card/factory.tsx').replace(/\r\n/g, '\n')
+  check('事件：tool/call 带 parentCallId', /type: 'tool\/call'; callId: string; name: string; args: string; parentCallId\?: string/.test(events))
+  check('契约：工具卡带 subCalls', /subCalls\?: ToolCallView\[\]/.test(contract))
+  check('PTC：子调用事件带上父指针', /parentCallId === undefined \? \{\} : \{ parentCallId \}/.test(ptc))
+  check('PTC：run_code 把 runCtx.callId 交给脚本', ptc.includes('}, runCtx.callId)'))
+  check('适配器：子调用挂进父卡（不 push 顶层条目）', /subCalls = \[\.\.\.\(parent\.call\.subCalls \?\? \[\]\), call\]/.test(adapter))
+  check('工具卡：渲染卡内调用列表（对话页那张）', toolCard.includes('className="sub-calls"') && toolCard.includes("transcript.tool.subCallCount"))
+  check('工具卡：兜底那条用同一份标记与清单（两处不许各画一遍）', toolRow.includes('<SubCallCount call={call} />') && toolRow.includes('<SubCallList call={call} />'))
+  check('样式：卡内调用行有 .sub-call', /\.sub-call \{/.test(views))
+}
+console.log('[8] PTC 的卡内调用：子调用收进父卡、组头按子调用的类别数')
+{
+  const { Transcript } = await import(new URL('../src/adapter/transcript.ts', import.meta.url).href)
+  const t = new Transcript()
+  t.reduce({ type: 'user', text: '跑一下' })
+  t.reduce({
+    type: 'message',
+    text: '先跑一段脚本：',
+    reasoning: '想一下',
+    toolCalls: [{ id: 'root', name: 'run_code', arguments: '{}' }],
+  })
+  t.reduce({ type: 'tool/call', callId: 'root', name: 'run_code', args: '{"code":"..."}' })
+  t.reduce({ type: 'tool/call', callId: 'c1', name: 'grep', args: '{"pattern":"x"}', parentCallId: 'root' })
+  t.reduce({ type: 'tool/call', callId: 'c2', name: 'bash', args: '{"command":"ls"}', parentCallId: 'root' })
+  t.reduce({ type: 'tool/result', callId: 'c1', text: 'ok' })
+  t.reduce({ type: 'tool/call', callId: 'orphan', name: 'read', args: '{"path":"a"}', parentCallId: 'nope' })
+  t.reduce({ type: 'tool/result', callId: 'root', text: 'done' })
+  const roots = t.entries.filter((item) => item.kind === 'tool')
+  const root = roots.find((item) => item.call.callId === 'root')
+  check('子调用不各自成为顶层行（父卡之外只有那条父卡与孤儿）', roots.length === 2, JSON.stringify(roots.map((r) => r.call.name)))
+  check('父卡里收着两次子调用', root?.call.subCalls?.length === 2, JSON.stringify(root?.call.subCalls?.map((s) => s.name)))
+  check('子调用的结果改的是父卡里那一格', root?.call.subCalls?.[0]?.status === 'done' && root?.call.subCalls?.[0]?.resultText === 'ok', JSON.stringify(root?.call.subCalls?.[0]))
+  check('父卡自己的状态照常结算', root?.call.status === 'done', String(root?.call.status))
+  check('父卡找不到时退回一条普通工具行（不吞调用）', roots.some((r) => r.call.callId === 'orphan' && r.call.status === 'done') === false && roots.some((r) => r.call.callId === 'orphan'))
+  check('同一步的正文仍被标成过程正文', t.entries.some((item) => item.kind === 'text' && item.process === true))
+
+  // 组头计数：子调用按自己的类别算（dsh 的 process-activity 口径）
+  const entries = [
+    entry('user', { text: '跑一下' }),
+    entry('tool', {
+      call: {
+        callId: 'root',
+        name: 'run_code',
+        argsText: '{}',
+        status: 'done',
+        subCalls: [
+          { callId: 'c1', name: 'grep', argsText: '{"pattern":"x"}', status: 'done' },
+          { callId: 'c2', name: 'bash', argsText: '{"command":"ls"}', status: 'failed' },
+        ],
+      },
+    }),
+  ]
+  const grouped = groupSteps(entries, [{ index: 0, startIndex: 0, endIndex: 1, startTs: 1, endTs: 9, answered: true }], () => false)
+  const counts = Object.fromEntries((grouped.groups[0]?.counts ?? []).map((item) => [item.kind, item.count]))
+  check('组头计数：父卡算「代码」一次', counts.code === 1, JSON.stringify(counts))
+  check('组头计数：子调用各按自己类别', counts.search === 1 && counts.commands === 1, JSON.stringify(counts))
+  check('失败数把子调用算进去', grouped.groups[0]?.failures === 1, String(grouped.groups[0]?.failures))
+
+  // 实时详情：脚本里正在跑的那次子调用就是组头要报的「现在在干什么」
+  const liveEntries = [
+    entry('user', { text: '跑一下' }),
+    entry('thinking', { text: '写一段脚本批量查。' }),
+    entry('tool', {
+      call: {
+        callId: 'root',
+        name: 'run_code',
+        argsText: '{}',
+        status: 'running',
+        subCalls: [{ callId: 'c1', name: 'read', argsText: '{"file_path":"a.ts"}', status: 'running' }],
+      },
+    }),
+  ]
+  const live = groupSteps(liveEntries, [{ index: 0, startIndex: 0, endIndex: 2, startTs: 1, endTs: null, answered: true }], () => true)
+  check('实时类别取正在跑的子调用（读文件）', live.groups[0]?.running === 'read', String(live.groups[0]?.running))
+  check('实时详情取子调用的参数', live.groups[0]?.runningDetail === 'a.ts', String(live.groups[0]?.runningDetail))
+}
 console.log('')
 console.log(`通过 ${String(passed)}/${String(passed + failures)}`)
 if (failures !== 0) process.exitCode = 1

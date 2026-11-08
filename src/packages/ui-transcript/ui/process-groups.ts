@@ -72,6 +72,8 @@ export interface ActivityCount {
  *
  * 思考行与工具行都在组里（2026-11-07 起，理由见模块头）：一个阶段本来就是「想了什么、
  * 干了什么」两件事交替，组头说的是这一阶段整体干了哪类活。
+ * 同一天又补了第三类成员：**过程正文**（`entry.process`，调工具之前那句前言）也进组，
+ * 且不封组——它和思考是同一个位置的东西，只是模型把它写在了正文通道。
  * 中间那些「阶段性正文」不进组，但仍属于整轮过程范围（整轮收起时它们一起消失）。
  */
 export interface StepGroup {
@@ -572,6 +574,18 @@ export function stepGroupTitle(
  * （process-activity.ts:97-114）。dsc 的 transcript 是 append-only 的，条目顺序就是开始顺序，
  * 所以直接取组内最后一条运行中的工具即可，不必再比 startedAt——那一位在老会话里还可能缺席。
  */
+/**
+ * 一张工具卡里**实际发生过的调用**：它自己，加上卡内的子调用（PTC 的 sdk.xxx()）。
+ *
+ * 为什么要摊平：dsh 的类别计数认的是每一次调用，不认卡片。一段 run_code 脚本里
+ * read + grep + bash 各一次，组头就该报「已读取文件并搜索代码，执行了命令」；
+ * 只数 run_code 本身的话，组头永远是「运行了代码」，读者看不出这一段到底干了什么
+ * （dsh 的 process-activity.ts 也是把子调用各自按名字归类）。
+ */
+function callsOf(entry: Extract<TranscriptEntry, { kind: 'tool' }>): readonly Extract<TranscriptEntry, { kind: 'tool' }>['call'][] {
+  const own = entry.call
+  return own.subCalls === undefined || own.subCalls.length === 0 ? [own] : [own, ...own.subCalls]
+}
 function runningTool(
   entries: readonly TranscriptEntry[],
   indexes: readonly number[],
@@ -580,21 +594,24 @@ function runningTool(
   for (const index of indexes) {
     const entry = entries[index]
     if (entry === undefined || entry.kind !== 'tool') continue
-    const status = entry.call.status
-    // 「准备中」与「运行中」都算「此刻在干什么」：前者是模型刚吐了名字、参数还在路上，
-    // 后者是工具真的开跑了。两者都要占用组头那一行，只是文案不同。
-    if (status !== 'running' && status !== 'preparing') continue
-    const activity = activityOf(entry.call.name)
-    const preparing = status === 'preparing'
-    live = {
-      activity,
-      preparing,
-      // 准备阶段不解析参数（这会儿参数本来就不完整），只有通用类别才补一句工具名——
-      // dsh 的原话是「只有『准备调用工具』在标准模式中追加协议工具名，其他类别不追加」，
-      // 因为「准备读取文件 · read」纯属废话。
-      detail: preparing
-        ? (activity === 'tools' ? normalizeDetail(entry.call.name) : '')
-        : liveToolDetail(entry.call.name, entry.call.argsText),
+    // 卡片里的子调用也要看：PTC 正在跑的那一步，屏幕上在动的是脚本里那次子调用。
+    for (const call of callsOf(entry)) {
+      const status = call.status
+      // 「准备中」与「运行中」都算「此刻在干什么」：前者是模型刚吐了名字、参数还在路上，
+      // 后者是工具真的开跑了。两者都要占用组头那一行，只是文案不同。
+      if (status !== 'running' && status !== 'preparing') continue
+      const activity = activityOf(call.name)
+      const preparing = status === 'preparing'
+      live = {
+        activity,
+        preparing,
+        // 准备阶段不解析参数（这会儿参数本来就不完整），只有通用类别才补一句工具名——
+        // dsh 的原话是「只有『准备调用工具』在标准模式中追加协议工具名，其他类别不追加」，
+        // 因为「准备读取文件 · read」纯属废话。
+        detail: preparing
+          ? (activity === 'tools' ? normalizeDetail(call.name) : '')
+          : liveToolDetail(call.name, call.argsText),
+      }
     }
   }
   return live
@@ -609,8 +626,10 @@ function countActivities(
   for (const index of indexes) {
     const entry = entries[index]
     if (entry === undefined || entry.kind !== 'tool') continue
-    const kind = activityOf(entry.call.name)
-    counts.set(kind, (counts.get(kind) ?? 0) + 1)
+    for (const call of callsOf(entry)) {
+      const kind = activityOf(call.name)
+      counts.set(kind, (counts.get(kind) ?? 0) + 1)
+    }
   }
   // Map 保持插入顺序，sort 是稳定排序：同次数时留下的是「第一次出现」的先后，
   // 与 dsh 的类别排名口径一致（process-activity.ts:124）
@@ -632,7 +651,9 @@ function countFailures(
   let failures = 0
   for (const index of indexes) {
     const entry = entries[index]
-    if (entry !== undefined && entry.kind === 'tool' && entry.call.status === 'failed') failures += 1
+    if (entry === undefined || entry.kind !== 'tool') continue
+    // 子调用的失败也要报：脚本里一次 sdk.bash() 挂了，组头就该亮失败数。
+    for (const call of callsOf(entry)) if (call.status === 'failed') failures += 1
   }
   return failures
 }
@@ -694,15 +715,25 @@ export function groupSteps(
     for (let at = round.startIndex + 1; at <= round.endIndex; at += 1) {
       const entry = entries[at]
       if (entry === undefined) continue
-      // 思考与工具都是这一阶段的内容，一起进组（2026-11-07 改回 dsh 口径，见模块头）。
-      // 两者顺序按出现顺序原样保留：模型先想、再调，组体展开时读到的也是这个顺序。
-      if (entry.kind === 'tool' || entry.kind === 'thinking') {
+      // 思考、工具、以及「调工具之前的那句前言」都是这一阶段的内容，一起进组
+      //（2026-11-07 改回 dsh 口径，见模块头）。顺序按出现顺序原样保留：模型先想、再交代、
+      // 再调，组体展开时读到的也是这个顺序。
+      // 过程正文（entry.process）为什么也进组：它是「接下来要干什么」，不是阶段收尾。
+      // 让它封组的话，模型每调一次工具就切出一组，屏幕就成了「组头 + 大字正文」的节拍器
+      // ——用户 2026-11-07 的报障就是这个。dsh 的模型把同类的话写在 reasoning 通道，
+      // 所以那边天然只有「思考行 + 工具行」；这边靠这个标记把观感对齐。
+      if (
+        entry.kind === 'tool'
+        || entry.kind === 'thinking'
+        || (entry.kind === 'text' && entry.process === true)
+      ) {
         pending.push(at)
         continue
       }
       // 下面这几种都是**独立节点**：封掉前面的组，自己不进组。
       // - 定稿正文：这一阶段到此收口（dsh 的 reply 分支）。直播尾的 text 同样是收口信号——
-      //   模型开始写正文，就说明前一段工具活干完了；
+      //   模型开始写正文，就说明前一段工具活干完了；**带 process 标记的除外**，那种已经在
+      //   上面那条分支里进了组（它后面紧跟工具调用，是前言不是收尾）；
       // - 计划卡：审批流的一部分（「等你点批准」）；
       // - user：轮中途插话（steering），它是这一轮里一个真实的边界；
       // - turn-end / turn-max-tokens：轮尾标记与长度上限提示，都是轮级的独立事件；

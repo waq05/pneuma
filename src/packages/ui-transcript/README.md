@@ -11,8 +11,8 @@
 
 ## 面板与数据
 
-- 快照面：`readEntries` / `readLive` / `readTurnState` / `readCompactingSince` / `readSessionPath` / `readCwd` / `readSessions`（ui/ui.tsx:108-115、447）。
-- 界面通道：`getUiPrefs` 读折叠与提醒偏好，`forkSession` / `openSession` / `refreshSessions` 分叉一轮，`rewindSession` / `submit` 编辑重发（ui/ui.tsx:136-155、323-330、368-375）。
+- 快照面：`readEntries` / `readLive` / `readTurnState` / `readCompactingSince` / `readSessionPath` / `readCwd` / `readSessions` / `readWaitingCard`（ui/ui.tsx:132-141、529）。
+- 界面通道：`getUiPrefs` 读折叠与提醒偏好，`forkSession` / `openSession` / `refreshSessions` 分叉一轮，`rewindSession` / `submit` 编辑重发（ui/ui.tsx:159-185、409-410、454-456）。
 - 服务：`composerDraft` 往输入框写首屏卡片，`actions` 登记四张提示词卡，`transcriptFlow` 把只读子智能体流交给团队右栏（ui/ui.tsx:83-93、423-443）。
 - 分页只切画不画：尾部一页 ≥50 条且 ≥2 轮、最多 500 条，边界对齐轮起点（ui/paging.ts:2-3、24-31）。
 
@@ -23,7 +23,7 @@
 - 跟随贴底的阈值是 24px、落定 180ms，与 dsh 的 25px / 500ms 不完全同档（ui/follow.ts:10-14）。
 - 单轮超过 500 条时整轮放进来，这一页会超上限；轮内靠阶段组限高顶着（ui/paging.ts:47-51）。
 - 编辑重发要求会话已落盘：新会话第一条消息落盘前点编辑，只提示先发一条（ui/ui.tsx:361-363）。
-- 回合完成的通知只在桌面原生桥可用；浏览器里只剩提示音（ui/ui.tsx:169-181）。
+- 回合结束与等人的通知只在桌面原生桥可用；浏览器里只剩提示音（判定在 ui/turn-notify.ts，接线 ui/ui.tsx:195-251）。
 
 ## 行与开关
 

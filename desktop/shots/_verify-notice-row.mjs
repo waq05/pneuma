@@ -1,17 +1,19 @@
 process.on('unhandledRejection', () => {})
 
 /**
- * 后台作业完成通知画成「触发行」，不是用户气泡（2026-11-02 报障的端到端复验）。
+ * 后台作业完成通知画成「唤醒卡」，不是用户气泡（2026-11-02 报障、2026-11-08 换成卡片）。
  *
  * 这条探针走的是**重放**那条路（比「真起一个后台作业」确定得多）：种一份会话日志，
  * 里面有一条 `origin: 'notice'` 的 user 记录（内核收工通知落库后的形状），然后让真宿主
  * 打开它。修的判据正好在重放链路上：日志 → Session 解析 → replayHistory → reduce → 界面。
  *
- * 验收口径（四条，缺一不算过）：
- *   ① 有一条 `.entry-system[data-internal="1"]`，文案是「后台作业 job-3 完成了」；
- *   ② 它的 title 是通知全文（信息没丢，只是不摊开）；
- *   ③ 人打的那条仍是 `.entry-user` 气泡，且**没有任何气泡**的正文含「后台作业」；
- *   ④ 触发行上不挂动作按钮（它不可编辑、不可再发）。
+ * 验收口径（六条，缺一不算过）：
+ *   ① 有一条 `.trigger-card[data-trigger="job"]`（唤醒卡），标题是「后台作业 job-3 完成了」；
+ *   ② 它**默认收起**（aria-expanded=false），点一下展开（true）；
+ *   ③ 展开后正文是通知全文（pre 里那段原文，信息没丢）；
+ *   ④ 人打的那条仍是 `.entry-user` 气泡，且**没有任何气泡**的正文含「后台作业」；
+ *   ⑤ 卡上不挂编辑 / 重发按钮（它不是人说的话，不能改）；
+ *   ⑥ 卡与上一行的间距是过程区的 3px，不是「空盒子叠出来的一片白」。
  *
  * 运行：node desktop/shots/_verify-notice-row.mjs（依赖桌面产物 desktop/out/）
  */
@@ -141,32 +143,53 @@ const shot = async (name) => {
 const ui = await evaluate(`
   const wait = (ms) => new Promise((r) => setTimeout(r, ms))
   for (let i = 0; i < 120; i += 1) {
-    if (document.querySelector('.entry-user, .entry-system') !== null) break
+    if (document.querySelector('.entry-user, .trigger-card') !== null) break
     await wait(250)
   }
   await wait(800)
-  const rows = [...document.querySelectorAll('.entry-system[data-internal="1"]')]
+  const cards = [...document.querySelectorAll('.trigger-card')]
+  const card = cards[0]
+  const head = card === undefined ? null : card.querySelector('.trigger-head')
+  const collapsed = head === null ? null : head.getAttribute('aria-expanded')
+  if (head !== null) head.click()
+  await wait(250)
+  const body = card === null ? null : (card.querySelector('.trigger-text')?.textContent ?? null)
   const bubbles = [...document.querySelectorAll('.entry-user')]
+  // 与上一行的间距：过程区是 gap: 3px 的 flex 列，空盒子会叠出额外的一片白
+  const seat = card === null ? null : card.closest('.turn-seat')
+  const prev = card === null ? null : card.closest('.entry-row')?.previousElementSibling
+  const gap = prev === undefined || prev === null || card === null
+    ? null
+    : Math.round(card.getBoundingClientRect().top - prev.getBoundingClientRect().bottom)
   return {
-    rows: rows.map((node) => node.textContent),
-    rowTitle: rows.length === 0 ? null : rows[0].getAttribute('title'),
-    rowHasAct: rows.some((node) => node.querySelector('.user-act') !== null),
+    count: cards.length,
+    kind: card === undefined ? null : card.getAttribute('data-trigger'),
+    title: card === undefined ? null : (card.querySelector('.trigger-title')?.textContent ?? null),
+    collapsed,
+    expanded: head === null ? null : head.getAttribute('aria-expanded'),
+    body,
+    hasAct: card !== null && card.querySelector('.user-act, .user-edit') !== null,
     bubbles: bubbles.map((node) => node.textContent),
     bubblesWithJob: bubbles.filter((node) => node.textContent.includes('job_output')).length,
-    userActs: document.querySelectorAll('.entry-user .user-act').length,
+    gap,
+    seatCls: seat === null ? null : String(seat.className),
   }
 `)
 console.log('ui', JSON.stringify(ui, null, 1))
 
 const failed = []
-if (ui.rows.length !== 1) failed.push(`触发行应当是 1 条，实际 ${String(ui.rows.length)}`)
-if (ui.rows[0] !== '后台作业 job-3 完成了') failed.push(`触发行文案不对：${String(ui.rows[0])}`)
-if (ui.rowTitle === null || !ui.rowTitle.includes('job_output')) failed.push(`title 不是通知全文：${String(ui.rowTitle)}`)
-if (ui.rowHasAct) failed.push('触发行上挂了动作按钮')
+if (ui.count !== 1) failed.push(`唤醒卡应当是 1 张，实际 ${String(ui.count)}`)
+if (ui.kind !== 'job') failed.push(`来源档位不对：${String(ui.kind)}`)
+if (ui.title !== '后台作业 job-3 完成了') failed.push(`标题不对：${String(ui.title)}`)
+if (ui.collapsed !== 'false') failed.push(`默认应当是收起的，实际 aria-expanded=${String(ui.collapsed)}`)
+if (ui.expanded !== 'true') failed.push('点一下没有展开')
+if (ui.body === null || !ui.body.includes('job_output')) failed.push(`展开后不是通知原文：${String(ui.body)}`)
+if (ui.hasAct) failed.push('唤醒卡上挂了编辑 / 重发按钮')
 if (ui.bubblesWithJob !== 0) failed.push(`仍有 ${String(ui.bubblesWithJob)} 个气泡的正文是通知原文`)
 if (!ui.bubbles.some((text) => text.includes('先起一个后台构建'))) failed.push('人打的那条气泡不见了')
+if (ui.gap !== null && ui.gap !== 3) failed.push(`与上一行的间距应当是 3px，实际 ${String(ui.gap)}px`)
 
-console.log(failed.length === 0 ? 'PASS 四条口径全过' : `FAIL ${failed.join('；')}`)
+console.log(failed.length === 0 ? 'PASS 六条口径全过' : `FAIL ${failed.join('；')}`)
 await shot('_verify-notice-row.png')
 
 try { ws.close() } catch {}

@@ -192,7 +192,10 @@ console.log('7c. 单条组也画组头（2026-11-07 撤掉 10-31 的放平）')
   const row = read(UI + '/step-group-row.tsx')
   check('分组器不再有 needsGroupHeader 这条规则', !groups.includes('needsGroupHeader'))
   check('渲染层不再按条数放平（组一律画组头）', !render.includes('needsGroupHeader'))
-  check('思考与工具一起进组（回到 dsh 的分组口径）', /entry\.kind === 'tool' \|\| entry\.kind === 'thinking'/.test(groups))
+  check(
+  '思考与工具一起进组（回到 dsh 的分组口径）',
+  /entry\.kind === 'tool'\s*\|\|\s*entry\.kind === 'thinking'/.test(groups),
+)
   // 文案进本包字典：钉「提示里不再带条数」，中文原文由 ui-locale-test 判。
   check('开合提示不再报条数（只带失败数）', row.includes("t('transcript.group.collapseTip', { failNote })") && row.includes("t('transcript.group.expandTip', { failNote })"))
 }

@@ -209,7 +209,9 @@ export function buildRoundFolds(
         const entry = entries[at]
         if (entry === undefined) continue
         if (TURN_INDEPENDENT.has(entry.kind)) continue
-        if (keepReplies && entry.kind === 'text') continue
+        // 「全部回复」档留下的是**回复**；过程正文（调工具之前的那句前言）不算回复，
+        // 它跟思考、工具同属过程，收起整轮时一起藏（2026-11-07 起，见 contract 的 text 分支）。
+        if (keepReplies && entry.kind === 'text' && entry.process !== true) continue
         hidden.add(at)
       }
     }
