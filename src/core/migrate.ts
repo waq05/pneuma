@@ -51,7 +51,24 @@ export interface FileConfig {
   temperature?: number
   /** 界面语言；现在只影响插件清单那两行字（见 core/plugin-locale）。 */
   language?: string
+  /**
+   * 模型请求的超时与重试（见 core/config.ts 的 readLlmTuning）。
+   *
+   * 为什么放在配置文件里而不是只留环境变量：端点是用户自己配的，它的脾气（有些网关
+   * 要等上游模型起完才吐响应头）也该写在用户自己那份配置里，而不是要求他改环境变量。
+   */
+  llm?: FileLlm
   providers: Record<string, FileProvider>
+}
+
+/** `config.yaml` 的 `llm:` 段：三个数都可以不写，不写就按内置默认。 */
+export interface FileLlm {
+  /** 建连 + 响应头的最长等待（毫秒，1 秒 ~ 10 分钟）。 */
+  connectTimeoutMs?: number
+  /** 流空闲超时（毫秒，5 秒 ~ 10 分钟）：这么久一个字节都没到就当服务端挂起。 */
+  streamIdleMs?: number
+  /** 一条请求最多发起几次（含首试，1 ~ 20）。 */
+  retryAttempts?: number
 }
 
 export interface MigrationReport {

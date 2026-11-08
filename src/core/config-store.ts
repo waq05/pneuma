@@ -86,7 +86,12 @@ export function writeConfigDoc(doc: FileConfig): void {
     '# Pneuma 模型配置（设置界面「模型」分区可直接编辑，也可手改本文件）\n' +
     '# key 来源顺序：apiKeyEnv 环境变量 → ~/.dsc/credentials.yaml → ~/.dsh/.credentials.yaml\n' +
     '# 模型可选字段：thinkingLevels（支持哪些思考档位）、thinkingParam（档位发 thinking 还是 reasoning_effort）、\n' +
-    '#   effortMap（reasoning_effort 下各档的线上值）、modalities（text/image/video）；不写 = 四档 + thinking 开关 + 只吃文本\n'
+    '#   effortMap（reasoning_effort 下各档的线上值）、modalities（text/image/video）；不写 = 四档 + thinking 开关 + 只吃文本\n' +
+    '# 请求时限（可选，缺省 30 秒建连 / 180 秒流空闲 / 6 次尝试；大提示词的网关容易撞建连超时）：\n' +
+    '#   llm:\n' +
+    '#     connectTimeoutMs: 120000\n' +
+    '#     streamIdleMs: 300000\n' +
+    '#     retryAttempts: 8\n'
   writeFileSync(file, `${header}${YAML.stringify(doc)}`, 'utf8')
 }
 

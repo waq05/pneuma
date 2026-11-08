@@ -7,7 +7,7 @@
  *
  * 重试策略（T33 修订，2026-11-07 放宽）：连接/HTTP 失败在**尚未收到任何流数据**前指数退避重试 5 次
  * （500 → 1000 → 2000 → 4000 → 8000 毫秒，封顶 10 秒，±10% 抖动；次数可用
- * `DSC_LLM_RETRY_ATTEMPTS` 覆盖），
+ * `DSC_LLM_RETRY_ATTEMPTS` 或 `config.yaml` 的 `llm.retryAttempts` 覆盖），
  * 可重试的：fetch 抛出的连接失败（`LlmError.retryable`）、429 / 408 / 5xx 的 HTTP 响应、
  * 以及「流已开始但一个字节都没到」的中断（同样归一成 retryable）。已经收到内容的流中断
  * 打包成 {@link StreamInterruptedError} 交上层落库，不在这一层自动重试（重发是另一条新流，
@@ -15,6 +15,7 @@
  *
  * @module dsc/core/llm
  */
+import { readLlmTuning } from './config.js'
 import { sessionAttributionHeaders } from './request-attribution.js'
 import type { UserFileAttachment } from './attachments.js'
 
@@ -458,8 +459,9 @@ const RETRY_JITTER_RATIO = 0.1
  */
 export function readRetryAttempts(): number {
   const raw = Number(process.env.DSC_LLM_RETRY_ATTEMPTS ?? '')
-  if (!Number.isFinite(raw) || raw <= 0) return MAX_ATTEMPTS
-  return Math.min(Math.max(Math.round(raw), 1), 20)
+  if (Number.isFinite(raw) && raw > 0) return Math.min(Math.max(Math.round(raw), 1), 20)
+  // 环境变量没写就看用户自己的 config.yaml（llm.retryAttempts），再没有才是内置默认。
+  return readLlmTuning().retryAttempts ?? MAX_ATTEMPTS
 }
 
 export function retryDelayMs(retry: number, random: () => number = Math.random): number {
@@ -577,7 +579,8 @@ async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Pro
   const onOuterAbort = (): void => controller.abort()
   if (request.signal?.aborted === true) controller.abort()
   request.signal?.addEventListener('abort', onOuterAbort, { once: true })
-  const connectTimeoutMs = readTimeoutMs('DSC_LLM_CONNECT_TIMEOUT_MS', CONNECT_TIMEOUT_MS)
+  // 两条时限走同一处解析：环境变量 > config.yaml 的 llm 段 > 内置默认。
+  const { connectMs: connectTimeoutMs, idleMs } = resolveTimeouts()
   const connectTimer = setTimeout(
     () => controller.abort(new LlmError(`连接超时（${Math.round(connectTimeoutMs / 1000)} 秒无响应）`, undefined, true)),
     connectTimeoutMs,
@@ -630,7 +633,7 @@ async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Pro
   // 打断时保留已收到的部分内容（半截回复对"取消后接着看"有价值）；
   // 一字节未得的中途取消则照常抛错。
   try {
-    for await (const data of sseData(response.body, readTimeoutMs('DSC_LLM_STREAM_IDLE_MS', STREAM_IDLE_TIMEOUT_MS))) {
+    for await (const data of sseData(response.body, idleMs)) {
       if (data === '[DONE]') break
       let chunk: {
         choices?: {
@@ -780,13 +783,13 @@ export function applyExplicitCache(messages: unknown[]): unknown[] {
   })
 }
 
-/** 连接超时（建连 + 响应头）：卡死的端点不能把整轮拖死。 */
+/** 连接超时（建连 + 响应头）：卡死的端点不能把整轮拖死。可被环境变量或 config.yaml 放大。 */
 const CONNECT_TIMEOUT_MS = 30_000
 /** 流空闲超时：这么久一个字节都没到就判服务端挂起（SSE 心跳也是字节，会重置计时）。 */
 const STREAM_IDLE_TIMEOUT_MS = 180_000
 
 /**
- * 超时可覆盖：`DSC_LLM_CONNECT_TIMEOUT_MS` / `DSC_LLM_STREAM_IDLE_MS`（毫秒）。
+ * 环境变量这一层的超时：`DSC_LLM_CONNECT_TIMEOUT_MS` / `DSC_LLM_STREAM_IDLE_MS`（毫秒）。
  *
  * 为什么可配（「子代理很慢」查出来的那笔账）：端点连不上时，默认要等 30 秒 × 3 次重试
  * ≈ 90 秒，失败才浮到界面上——慢的不是界面，是这个等待。网络差的把他调小（例如 8 秒），
@@ -794,11 +797,28 @@ const STREAM_IDLE_TIMEOUT_MS = 180_000
  *
  * 每次调用现读（不在模块加载时读死）：读一次 `process.env` 是纳秒级，换来「改完环境变量
  * 不用重启内核」。一律夹在 1 秒 ~ 10 分钟之间——写出离谱的数也不会把端点等死或瞬间全失败。
+ *
+ * 配置那一层（`config.yaml` 的 `llm:` 段）在 {@link resolveTimeouts} 里叠上来：这里只管
+ * 「这一次的环境变量说了什么」，没写就把 fallback 原样交回。
  */
 export function readTimeoutMs(name: string, fallback: number): number {
   const raw = Number(process.env[name] ?? '')
   if (!Number.isFinite(raw) || raw <= 0) return fallback
   return Math.min(Math.max(Math.round(raw), 1_000), 600_000)
+}
+
+/**
+ * 这一次请求的两条时限：环境变量 > `config.yaml` 的 `llm:` 段 > 内置默认。
+ *
+ * 为什么合到一处：以前建连与流空闲各写一条 `readTimeoutMs(...)`，加配置层时就会漏掉其中一条
+ * （漏掉的后果是「改了配置没生效」这种最难查的毛病）。两条一起解析，一起用。
+ */
+export function resolveTimeouts(): { connectMs: number; idleMs: number } {
+  const tuning = readLlmTuning()
+  return {
+    connectMs: readTimeoutMs('DSC_LLM_CONNECT_TIMEOUT_MS', tuning.connectTimeoutMs ?? CONNECT_TIMEOUT_MS),
+    idleMs: readTimeoutMs('DSC_LLM_STREAM_IDLE_MS', tuning.streamIdleMs ?? STREAM_IDLE_TIMEOUT_MS),
+  }
 }
 
 /** Retry-After 头：秒数或 HTTP 日期；认不出返回 undefined（封顶 2 分钟，防服务端给个大数）。 */

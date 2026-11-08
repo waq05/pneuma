@@ -9,7 +9,7 @@
  *
  * @module dsc/core/config
  */
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -64,6 +64,76 @@ export interface DscCoreConfig {
    * 见 core/plugin-locale）：`en` 开头取 `locale/en.json`，其余用清单原文。
    */
   language?: string
+}
+
+/**
+ * 模型请求的超时与重试（`config.yaml` 顶层的 `llm:` 段）。
+ *
+ * 为什么要这一层：这三个数以前只能靠环境变量（`DSC_LLM_*`）改，而环境变量只在自检脚本里
+ * 好使——用户撞上「某个网关在大提示词下三十秒吐不出响应头」时，手上没有任何可改的地方
+ * （2026-11-07 的 PTC 实拍就是这么连挂五次）。端点是用户自己配的，它的脾气也该写在用户
+ * 自己那份配置里。
+ *
+ * 优先级：环境变量（自检要能临时盖一次而不动配置文件）→ 这一段 → 内置默认。
+ */
+export interface LlmTuning {
+  /** 建连 + 响应头的最长等待（毫秒）。 */
+  connectTimeoutMs?: number
+  /** 流空闲超时（毫秒）：这么久一个字节都没到就判服务端挂起。 */
+  streamIdleMs?: number
+  /** 一条请求最多发起几次（含首试）。 */
+  retryAttempts?: number
+}
+
+/** 三个数的合法区间：写得离谱也不该把端点等死，或让重试瞬时间全失败。 */
+const TUNING_RANGE = {
+  connectTimeoutMs: { min: 1_000, max: 600_000 },
+  streamIdleMs: { min: 5_000, max: 600_000 },
+  retryAttempts: { min: 1, max: 20 },
+} as const
+
+/** 读一个数：认不出或不是正数就当没写；认得出就夹进区间。 */
+function readTuningNumber(raw: unknown, min: number, max: number): number | undefined {
+  const value = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : Number.NaN
+  if (!Number.isFinite(value) || value <= 0) return undefined
+  return Math.min(Math.max(Math.round(value), min), max)
+}
+
+/** 按「文件 + mtime」缓存：这两个数每次请求都要读，落盘一次就够了。 */
+let tuningCache: { file: string; mtimeMs: number; tuning: LlmTuning } | null = null
+
+/**
+ * 读 `config.yaml` 的 `llm:` 段。文件不在、没这一段、或者写坏了，一律返回空对象
+ * （调用方各自回落到内置默认）——配置读不出来不该让一次对话发不出去。
+ */
+export function readLlmTuning(): LlmTuning {
+  const file = activeConfigFile()
+  let mtimeMs: number
+  try {
+    mtimeMs = statSync(file).mtimeMs
+  } catch {
+    return {}
+  }
+  if (tuningCache !== null && tuningCache.file === file && tuningCache.mtimeMs === mtimeMs) return tuningCache.tuning
+  let tuning: LlmTuning = {}
+  try {
+    const doc = parseTolerantYaml(readFileSync(file, 'utf8')) as unknown as FileConfig
+    const raw = doc.llm as Record<string, unknown> | undefined
+    if (raw !== undefined && raw !== null && typeof raw === 'object') {
+      const connectTimeoutMs = readTuningNumber(raw['connectTimeoutMs'], TUNING_RANGE.connectTimeoutMs.min, TUNING_RANGE.connectTimeoutMs.max)
+      const streamIdleMs = readTuningNumber(raw['streamIdleMs'], TUNING_RANGE.streamIdleMs.min, TUNING_RANGE.streamIdleMs.max)
+      const retryAttempts = readTuningNumber(raw['retryAttempts'], TUNING_RANGE.retryAttempts.min, TUNING_RANGE.retryAttempts.max)
+      tuning = {
+        ...(connectTimeoutMs === undefined ? {} : { connectTimeoutMs }),
+        ...(streamIdleMs === undefined ? {} : { streamIdleMs }),
+        ...(retryAttempts === undefined ? {} : { retryAttempts }),
+      }
+    }
+  } catch {
+    tuning = {}
+  }
+  tuningCache = { file, mtimeMs, tuning }
+  return tuning
 }
 
 const DSC_CONFIG_JSON = dscPath('config.json')
