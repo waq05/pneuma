@@ -31,7 +31,6 @@
   "team.reader.note": "只读：这是子智能体的运行记录",
   "team.reader.back": "返回原会话",
   "team.reader.backTip": "关掉这层只读视图，回到原会话",
-  "team.reader.busy": "{name} 还在跑，结束之后才能打开运行记录",
   "team.reader.oneShotBody": "只读：一次性任务不支持后续消息，可在这里看完整执行记录",
   "team.reader.parentFallback": "原会话",
   "team.tab.roundsTip": "它已经发起的模型请求轮数",

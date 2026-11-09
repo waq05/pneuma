@@ -52,7 +52,7 @@
   "status.agent.stateStopped": "已停止",
   "status.agent.stateFailed": "失败",
   "status.agent.openAria": "打开 {name} 的运行记录",
-  "status.agent.rowTip": "{role} · {task}\n点开在正文区看它的完整运行记录（只读；还在跑的等它收工）",
+  "status.agent.rowTip": "{role} · {task}\n点开在正文区看它的完整运行记录（只读，在跑的也能边跑边看）",
   "status.agent.stopAria": "停掉 {name}",
   "status.agent.stopTip": "停掉这个队友（尽力而为，已跑完的改不了结果）",
   "status.section.team": "共享任务",

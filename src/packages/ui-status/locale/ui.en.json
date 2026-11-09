@@ -52,7 +52,7 @@
   "status.agent.stateStopped": "Stopped",
   "status.agent.stateFailed": "Failed",
   "status.agent.openAria": "Open the run log for {name}",
-  "status.agent.rowTip": "{role} · {task}\nOpens its full read-only run log in the main area (wait for a running one to finish)",
+  "status.agent.rowTip": "{role} · {task}\nOpens its full read-only run log in the main area (read-only; a running one can be watched live)",
   "status.agent.stopAria": "Stop {name}",
   "status.agent.stopTip": "Stop this teammate (best effort; finished runs keep their result)",
   "status.section.team": "Shared tasks",

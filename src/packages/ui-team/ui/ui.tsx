@@ -152,14 +152,15 @@ export default defineUiPlugin({
     // 席位：本插件两处登记共享同一个 handle；跨插件共享经服务表传 handle（不认字符串键）。
     const mates = makeMateSeat()
     ui.provide('teammates', mates)
-    // 正文区只读运行记录的口子：状态面板点一行走它。`working` 的队友在这里
-    // 直接回绝（不弹窗、不切会话）——它还在写自己那份日志，不能同时被当成一条会话打开。
+    // 正文区只读运行记录的口子：状态面板点一行走它。**在跑的队友也直接打开**——
+    // 2026-11-05 那道「还在跑就回绝」的门 2026-11-09 拆了，因为它防的事从来不会发生：
+    // 这里的读法是 `peekTranscript`，宿主侧走 `Session.load(..., { lease: false })`
+    // （`src/packages/subagent/index.ts:862-872`）——队友正写着也读得；解析不了的行
+    // 直接跳过（`src/core/session.ts:596-602`，半截行最多丢一条，下一拍补上），没有租约
+    // 也就不做修复落盘（`src/core/session.ts:734-741`）。所以打开那一刻看到的就是当前
+    // 进度，名册翻成已完成之后跟读自己停（判在 {@link TeammateReader} 的 `working`）。
     ui.provide('teammateReader', {
       open: (mate: TeammateView): void => {
-        if (mate.state === 'working') {
-          toastErr(t('team.reader.busy', { name: mate.name }))
-          return
-        }
         openReader(mate)
       },
       close: (): void => {
@@ -201,13 +202,16 @@ export default defineUiPlugin({
 function TeamEntry(props: SlotComponentProps<Record<never, never>, never, never, MateSeatHandle>): ReactNode {
   const channel = useHostChannel()
   const { actions } = props
+  // 名册从共享席位读（这条目录登记时就带 `store: mates`）：正文区那层只读视图要按名册
+  // 跟住当前这一位的状态，不能只看点下去那一刻的快照（见 {@link TeammateReader}）。
+  const list = props.useStore((state) => state.list)
   useEffect(() => {
     let alive = true
     const poll = (): void => {
       void channel
         .invoke<TeammateView[]>('listTeammates', [])
-        .then((list) => {
-          if (alive) actions.setList(Array.isArray(list) ? list : [])
+        .then((rows) => {
+          if (alive) actions.setList(Array.isArray(rows) ? rows : [])
         })
         .catch(() => {
           // 子智能体能力不在（宿主没开 team 服务）时名册就是空的：保留空态而不是报错条。
@@ -221,7 +225,7 @@ function TeamEntry(props: SlotComponentProps<Record<never, never>, never, never,
       window.clearInterval(timer)
     }
   }, [channel, actions])
-  return <TeammateReader />
+  return <TeammateReader mates={list} />
 }
 
 /** 订阅函数提到模块级（`useSyncExternalStore` 要求引用稳定）。 */
@@ -272,16 +276,27 @@ function parentOf(
  *    原样开着，所以关掉这层就回到原会话；
  *  - **换会话自动关**：别让别人的正文上面顶着一层「上一个会话的队友」。
  */
-function TeammateReader(): ReactNode {
+function TeammateReader({ mates }: { mates: readonly TeammateView[] }): ReactNode {
   const state = useReader()
   const sessions = useHostSelector(readSessions)
   const currentPath = useHostSelector(readSessionPath)
   const sessionId = useHostSelector(readSessionId)
+  // 信号里存的是点下去那一刻的快照（{@link ReaderState}）：队友收工 / 被停 / 失败之后
+  // 它自己不会变，头部的状态词就会一直停在「运行中」。所以按同一个文件（`sameFile`，
+  // 名册与信号里的分隔符可能不同）从名册里找**当前这一位**——名册由 {@link TeamEntry}
+  // 那条 3 秒轮询写进共享席位；找不到（被移除、那一拍还没回来）才回落快照。
+  const snapshot = state === null ? null : state.mate
+  const mate = useMemo(
+    () => (snapshot === null ? null : (mates.find((row) => sameFile(row.file, snapshot.file)) ?? snapshot)),
+    [mates, snapshot],
+  )
+  // 在跑的才跟读（`usePeekTranscript` 里按它决定起不起定时器）；收工后名册一翻，这里
+  // 自己就停了，页面停在最后那份内容上。
+  const working = mate !== null && mate.state === 'working'
   // 消息流插件经服务表交出来的同款行渲染（markdown / 思考 / 工具卡 / 计划卡）；缺席时
   // 退回下面那套简版直排（`PeekView` 不许删——它就是兜底出口）。
   const flow = useService<TranscriptFlowService>(TRANSCRIPT_FLOW_SERVICE)
   const [host, setHost] = useState<HTMLElement | null>(null)
-  const mate = state === null ? null : state.mate
   const file = mate === null ? '' : mate.file
 
   // 落点每次打开现取：换会话 / 换视图会换掉正文区那个元素。
@@ -353,6 +368,9 @@ function TeammateReader(): ReactNode {
         <span className="team-reader-name">{mate.name}</span>
         <span className="team-reader-role">{mate.role}</span>
         <span className={`sub-tab-state ${mate.state}`}>{STATE_LABEL[mate.state] ?? mate.state}</span>
+        {/* 耗时跟着名册走：在跑时每秒跳，收工换成总耗时（`UsedTime` 自己判 `working`）。
+            同一个组件右栏的子智能体页签也在用，两处口径一致。 */}
+        <UsedTime mate={mate} />
         {/* 头部这句只读说明按类型换：一次性的把「干完就不接后续消息」说在这里。
             不另起一个元素——头部是单行 flex，多一块就换行，把「返回原会话」挤下去。 */}
         <span className="team-reader-note">
@@ -374,9 +392,9 @@ function TeammateReader(): ReactNode {
       </div>
       <div className="team-reader-body">
         {flow === undefined ? (
-          <PeekView file={mate.file} />
+          <PeekView file={mate.file} working={working} />
         ) : (
-          <FlowHost flow={flow} file={mate.file} working={false} />
+          <FlowHost flow={flow} file={mate.file} working={working} />
         )}
       </div>
     </div>,

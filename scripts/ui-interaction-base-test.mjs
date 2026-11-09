@@ -330,7 +330,23 @@ console.log('[8] 子智能体与智能体团队两分区的界面结构')
   void teamOrder
   check('名册面板已撤（不再有模态与「其它会话」折叠组）', !team.includes('TeamPanel') && !team.includes('team.panel.others'))
   check('只读层落在正文区（createPortal 到 [data-thread-area]）', team.includes('THREAD_AREA_SELECTOR') && team.includes('createPortal('))
-  check('还在跑的队友不许打开（走一句人话，不静默）', team.includes("t('team.reader.busy'"))
+  // 2026-11-09：那道「在跑的队友等收工才能看」的门拆了（peek 本来就是 lease:false 的
+  // 只读重放）。四条一起钉：门与文案没了、open 直接放行、跟读拿到算出来的 working、
+  // 头部按名册跟住当前这一位。都落在真实代码文本上，不接受「永远为真」的断言。
+  check('在跑的队友也能打开（回绝那条键已从源码消失）', !team.includes('team.reader.busy'))
+  check('open 直接放行（不再按 state 回绝）', /open: \(mate: TeammateView\): void => \{\s*openReader\(mate\)\s*\}/.test(team))
+  check(
+    '跟读拿到算出来的 working（不是字面 false）',
+    team.includes("const working = mate !== null && mate.state === 'working'") &&
+      team.includes('<FlowHost flow={flow} file={mate.file} working={working} />') &&
+      team.includes('<PeekView file={mate.file} working={working} />') &&
+      !team.includes('working={false}'),
+  )
+  check(
+    '运行记录按名册找当前这一位（收工后头部跟着翻）',
+    /mates\.find\(\(row\) => sameFile\(row\.file, snapshot\.file\)\)/.test(team) &&
+      team.includes('<TeammateReader mates={list} />'),
+  )
   check('换会话自动关掉只读层', /openedFor\.current !== sessionId[\s\S]{0,60}?closeReader\(\)/.test(team))
   check('运行记录页头部能发话 / 停止 / 移除（名册面板撤掉后的唯一落点）', team.includes('function ReaderActions') && team.includes("act('stopTeammate'") && team.includes("act('messageTeammate'") && team.includes("act('removeTeammate'"))
 
