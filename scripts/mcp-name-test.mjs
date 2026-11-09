@@ -16,7 +16,7 @@
  *
  * @module dsc/scripts/mcp-name-test
  */
-const { mcpToolName } = await import('../lib/core/mcp.js')
+const { mcpToolName } = await import('../lib/packages/mcp/mcp.js')
 
 let pass = 0
 let fail = 0

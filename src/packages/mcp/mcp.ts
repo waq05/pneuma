@@ -1,7 +1,7 @@
 /**
- * MCP 客户端底座：stdio 与 streamable-http 两种传输上的 JSON-RPC 收发、工具命名、
- * 子进程环境筛选，以及 Windows 上的启动命令解析。挂到 cordis 上的那一层在
- * `src/plugins/mcp.ts`。
+ * MCP 客户端底座：stdio 与 streamable-http 两种传输上的 JSON-RPC 收发、工具命名，
+ * 以及 Windows 上的启动命令解析。子进程环境按 `core/child-env.js` 的白名单筛（与 LSP 共用）。
+ * 挂到 cordis 上的那一层在 `src/plugins/mcp.ts`。
  *
  * 为什么不引 SDK：个人版零新增依赖，而 dsc 用到的线上方法只有 initialize /
  * notifications/initialized / tools/list / tools/call 四条，自己写一遍比拖一条依赖树省事。
@@ -10,10 +10,15 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { buildChildEnv } from '../../core/child-env.js'
 import { errText as errorText } from '../../core/err-text.js'
 import { missingCommandReason, resolveExecutable } from '../../core/executable.js'
 import { asRecord } from '../../core/records.js'
 import { quoteForCmd } from '../../core/shell-quote.js'
+
+// 子进程环境的白名单与拼装搬进了 `core/child-env.js`（lsp 也要用，不必依赖本包）。
+// 这两个名字原先由本模块导出，这里转出去，外部 import 面不变。
+export { BASE_ENV_NAMES, buildChildEnv } from '../../core/child-env.js'
 
 // ── 协议与命名常量（协议常量不随部署变，固定在这里） ──────────────────────────
 
@@ -58,25 +63,6 @@ const MAX_TOOL_PAGES = 100
 
 /** 子进程 stderr 最多留多少字符进错误消息（这个是给人看的原因，不是日志）。 */
 const STDERR_TAIL_MAX = 2000
-
-/**
- * 允许带进子进程的系统环境变量。
- * 其余一律不传：`process.env` 里有用户的模型 key 与各种令牌，MCP server 是第三方程序，
- * 没有理由让它看见。要传的按 server 配置显式声明。
- */
-export const BASE_ENV_NAMES: readonly string[] = [
-  'PATH',
-  'PATHEXT',
-  'COMSPEC',
-  'SYSTEMROOT',
-  'SYSTEMDRIVE',
-  'WINDIR',
-  'TEMP',
-  'TMP',
-  'HOME',
-  'USERPROFILE',
-  'LANG',
-]
 
 // ── 类型 ─────────────────────────────────────────────────────────────────────
 
@@ -227,48 +213,6 @@ export interface McpOpenOptions {
 export interface McpServerList {
   servers: McpServerConfig[]
   problem: string | null
-}
-
-// ── 环境变量筛选 ─────────────────────────────────────────────────────────────
-
-/**
- * 按白名单拼子进程环境。
- *
- * 只放 {@link BASE_ENV_NAMES} 里的系统变量，加上配置里显式声明的名字；
- * 声明了名字但没给值时，从父环境取同名变量（写 `{"GITHUB_TOKEN": ""}` 也能带上宿主的那个）。
- *
- * @param declaredNames - 配置里显式声明的变量名。
- * @param values - 这些名字对应的值（缺了就从 parent 取）。
- * @param parent - 父进程环境，通常是 `process.env`。
- * @returns 交给 spawn 的环境对象（不含任何未声明的变量）。
- */
-export function buildChildEnv(
-  declaredNames: readonly string[],
-  values: Record<string, string>,
-  parent: Record<string, string | undefined>,
-): Record<string, string> {
-  const env: Record<string, string> = {}
-  for (const name of BASE_ENV_NAMES) {
-    const value = readEnv(parent, name)
-    if (value !== undefined && value !== '') env[name] = value
-  }
-  for (const name of declaredNames) {
-    const value = values[name] ?? readEnv(parent, name)
-    if (value !== undefined && value !== '') env[name] = value
-  }
-  return env
-}
-
-/** 按名字读环境变量；Windows 的变量名不分大小写，所以找不到时再比一遍小写。 */
-function readEnv(parent: Record<string, string | undefined>, name: string): string | undefined {
-  const direct = parent[name]
-  if (direct !== undefined) return direct
-  if (process.platform !== 'win32') return undefined
-  const wanted = name.toLowerCase()
-  for (const key of Object.keys(parent)) {
-    if (key.toLowerCase() === wanted) return parent[key]
-  }
-  return undefined
 }
 
 // ── 启动命令解析 ─────────────────────────────────────────────────────────────

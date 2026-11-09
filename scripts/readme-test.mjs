@@ -147,8 +147,12 @@ const offClaim = Number(/默认关 (\d+) 个/.exec(readme)?.[1] ?? '0')
 check('默认关的个数与包清单一致', offClaim === defaultOff, `README ${String(offClaim)} / 包清单 ${String(defaultOff)}`)
 check('默认关是少数（一半以下）', defaultOff < packageIds.length, `${String(defaultOff)}/${String(packageIds.length)}`)
 
-// bash / search-tools 的实现已搬进 tools-default 包，readSource 顺着转发桩读真文件
-const toolModules = ['bash', 'fs-tools', 'search-tools'].map((name) => readSource(`src/core/tools/${name}.ts`))
+// bash / search-tools 的实现已搬进 tools-default 包，旧 core 垫片已删；fs-tools 仍是内核实现
+const toolModules = [
+  'src/packages/tools-default/bash.ts',
+  'src/core/tools/fs-tools.ts',
+  'src/packages/tools-default/search-tools.ts',
+].map((file) => readSource(file))
 const toolNames = new Set(toolModules.flatMap((source) => [...source.matchAll(/^ {2,}name: '([a-z_]+)',$/gm)].map((match) => match[1])))
 const toolsClaim = Number(/## 工具集（(\d+) 件）/.exec(readme)?.[1] ?? '0')
 check('工具数写的是注册表里的数', toolsClaim === toolNames.size, `README ${String(toolsClaim)} / 源码 ${String(toolNames.size)}`)

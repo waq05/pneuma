@@ -38,7 +38,7 @@ import {
   usedChars,
   writeEval,
 } from './memory.js'
-import type { MemoryCell, MemoryConfig, MemoryOperation, MemoryTarget, MemoryType } from './memory.js'
+import type { MemoryCell, MemoryConfig, MemoryOperation, MemoryTarget, MemoryType } from '@pneuma/runtime/contract.js'
 import { evaluateMemory, formatMemoryReport, readingsOf } from './memory-eval.js'
 import type { MemoryEvalEntry, MemoryEvalInput, MemoryEvalReadings, MemoryEvalReport } from './memory-eval.js'
 import type { ToolEntry } from '@pneuma/runtime/core/tools.js'

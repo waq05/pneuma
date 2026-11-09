@@ -23,7 +23,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const search = await import('../lib/core/tools/search-tools.js')
+const search = await import('../lib/packages/tools-default/search-tools.js')
 
 let passed = 0
 let failures = 0

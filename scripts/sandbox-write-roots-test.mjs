@@ -38,7 +38,7 @@ const check = (name, ok, extra = '') => {
   }
 }
 
-const { writeRootsFor } = await import('../lib/core/sandbox/win/backend.js')
+const { writeRootsFor } = await import('../lib/packages/sandbox/win/backend.js')
 
 const wsA = join(home, 'ws-a')
 const wsB = join(home, 'ws-b')

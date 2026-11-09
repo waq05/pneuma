@@ -13,8 +13,8 @@
  *
  * @module dsc/scripts/floor-shell-and-budget-test
  */
-const floorModule = await import('../lib/core/approval-floor.js')
-const bashModule = await import('../lib/core/tools/bash.js')
+const floorModule = await import('../lib/packages/approval-floor/approval-floor.js')
+const bashModule = await import('../lib/packages/tools-default/bash.js')
 const ptcCore = await import('../lib/core/ptc.js')
 const ptcPlugin = await import('../lib/packages/ptc/index.js')
 

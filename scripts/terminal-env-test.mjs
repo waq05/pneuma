@@ -6,9 +6,9 @@
  *
  *   1. **探测**（core/terminal-env.ts）：真去跑 `$PSVersionTable` / `bash --version` /
  *      `wsl.exe --status`，探到才把选项摆出来；探不到的不许出现在下拉里。
- *   2. **执行**（core/tools/bash.ts 的 shellPlan）：四个选择折成四套 file+args，
+ *   2. **执行**（packages/tools-default/bash.ts 的 shellPlan）：四个选择折成四套 file+args，
  *      PowerShell 家族保留 UTF-8 前置与退出码补丁，WSL 用 `--cd` 落工作区。
- *   3. **判定**（core/approval-floor.ts 的 options.shell）：结构扫描要按**实际执行的**
+ *   3. **判定**（packages/approval-floor/approval-floor.ts 的 options.shell）：结构扫描要按**实际执行的**
  *      shell 判——切到 Git Bash 之后仍按 PowerShell 的转义规则判，就会重复 2026-10-30
  *      那次「合法命令被判引号没闭合」的误伤，方向反过来。
  *
@@ -30,8 +30,8 @@ mkdirSync(process.env.DSC_HOME, { recursive: true })
 writeFileSync(join(process.env.DSC_HOME, 'plugins.json'), JSON.stringify({ version: 1, entries: [] }), 'utf8')
 
 const env = await import('../lib/core/terminal-env.js')
-const bash = await import('../lib/core/tools/bash.js')
-const floorModule = await import('../lib/core/approval-floor.js')
+const bash = await import('../lib/packages/tools-default/bash.js')
+const floorModule = await import('../lib/packages/approval-floor/approval-floor.js')
 const prompt = await import('../lib/packages/session-core/prompt.js')
 const registry = await import('../lib/core/plugin-registry.js')
 

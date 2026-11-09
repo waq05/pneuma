@@ -54,7 +54,7 @@ const {
   listAppsScript,
   screensScript,
   killAllPowerShell,
-} = await import('../lib/core/desktop-control.js')
+} = await import('../lib/packages/computer-use/desktop-control.js')
 const { computerUsePlugin, LOOK_ACTIONS, computerToolParameters, computerLookParameters, argProps } = await import(
   '../lib/packages/computer-use/index.js'
 )

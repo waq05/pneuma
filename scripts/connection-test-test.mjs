@@ -40,7 +40,7 @@ const {
   clipReply,
   pickProbeModel,
   testConnection,
-} = await import('../lib/core/connection-test.js')
+} = await import('../lib/packages/settings/connection-test.js')
 const { UI_METHODS, UI_ARG_SPECS } = await import('../lib/core/ui-methods.js')
 const { INVOKABLE_METHODS } = await import('../lib/core/host-methods.js')
 const { createKernel } = await import('../lib/host/kernel.js')

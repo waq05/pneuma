@@ -13,11 +13,11 @@
  *
  * @module dsc/services
  */
-import type { ApprovalDecision, ApprovalHandler, ApprovalRequest } from '../core/approval.js'
+import type { ApprovalDecision, ApprovalHandler, ApprovalRequest } from '../contract/approval.js'
 import type { AuditRecord } from '../core/audit.js'
 import type { HookJudgement, HooksDoc, HookTrust } from '@pneuma/session-core/hooks.js'
 import type { HostBrowserLink } from '../core/host-browser-link.js'
-import type { MemoryCell, MemoryConfig, MemoryOperation, MemoryTarget, MemoryWriteResult, WriteOptions } from '../core/memory.js'
+import type { MemoryCell, MemoryConfig, MemoryOperation, MemoryTarget, MemoryWriteResult, WriteOptions } from '../contract/memory.js'
 import type { ProviderConfig } from '../core/config.js'
 import type { Session, InboxOrigin, SessionNotice } from '../core/session.js'
 import type { UserFileAttachment } from '../core/attachments.js'

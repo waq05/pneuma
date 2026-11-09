@@ -47,7 +47,7 @@ const check = (name, condition, detail = '') => {
 }
 
 const { createKernel } = await import('../lib/host/kernel.js')
-const { DEFAULT_TOOL_SEARCH_CONFIG, shouldDeferTool } = await import('../lib/core/tool-search.js')
+const { DEFAULT_TOOL_SEARCH_CONFIG, shouldDeferTool } = await import('../lib/packages/tool-search/tool-search.js')
 const { gateIdentity } = await import('../lib/core/tools.js')
 
 /** 按延后规则起一份内核（插件配置每次挂载时从 plugins.json 现读，所以可以起两份）。 */

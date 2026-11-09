@@ -15,7 +15,7 @@
  *
  * @module dsc/scripts/call-meaning-test
  */
-const { commandMeaning, callMeaning } = await import('../lib/core/call-meaning.js')
+const { commandMeaning, callMeaning } = await import('../lib/packages/approval/call-meaning.js')
 
 let failures = 0
 const check = (name, condition, detail = '') => {

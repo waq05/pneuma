@@ -135,5 +135,5 @@ dsc 这一版不是。换来的是：脚本能做的事 = 它能调用的工具�
 | `src/packages/ui-settings/ui/presets.tsx` | 设置 → 模式的卡片与就地表单 |
 | `src/packages/ui-composer/ui/ui.tsx` | 输入框下方那颗模式旋钮 |
 | `scripts/sandbox-parity-test.mjs` | 四档模式与权限预设对齐 dsh 的回归（PTC 全量、极简 read_image、顺序、持久化） |
-| `src/core/tools/image-tool.ts` | 极简档专用的 `read_image` |
+| `src/packages/tools-default/image-tool.ts` | 极简档专用的 `read_image` |
 | `desktop/shots/presets-shots.ps1` | 界面截图与 DOM 测量 |

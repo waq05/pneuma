@@ -34,7 +34,7 @@ function realFile(from, specifier) {
 
 /**
  * 读一份源码；若它是转发桩，就跟到真文件。
- * @param {string} rel 相对项目根的路径，如 'src/core/tools/bash.ts'
+ * @param {string} rel 相对项目根的路径，如 'src/packages/tools-default/bash.ts'
  * @returns {string} 真文件全文
  */
 export function readSource(rel) {

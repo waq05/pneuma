@@ -85,7 +85,7 @@ writeFileSync(
 )
 
 const { createKernel } = await import('../lib/host/kernel.js')
-const core = await import('../lib/core/memory.js')
+const core = await import('../lib/packages/memory/memory.js')
 const kernel = await createKernel({ config: {}, resumeSessionPath: sessionFile })
 const memory = kernel.get('memory')
 const prompt = kernel.get('prompt')

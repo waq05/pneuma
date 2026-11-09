@@ -30,7 +30,7 @@ mkdirSync(join(home, '.dsc'), { recursive: true })
 writeFileSync(join(home, '.dsc', 'config.yaml'), 'model:\n  name: test\n', 'utf8')
 
 const { createKernel } = await import('../lib/host/kernel.js')
-const { CLEARED_TOOL_RESULT_PREFIX } = await import('../lib/core/microcompact.js')
+const { CLEARED_TOOL_RESULT_PREFIX } = await import('../lib/packages/microcompact/microcompact.js')
 const { IMAGE_DIET_PLACEHOLDER } = await import('../lib/core/image-diet.js')
 const { TODO_REMINDER_TEXT } = await import('../lib/core/todo-reminder.js')
 const { checkReconstructable, snapshotMessages } = await import('../lib/core/request-invariant.js')

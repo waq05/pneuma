@@ -16,7 +16,7 @@
 import { mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { spawnShell, truncateBashOutput } from '../lib/core/tools/bash.js'
+import { spawnShell, truncateBashOutput } from '../lib/packages/tools-default/bash.js'
 
 let failures = 0
 const check = (name, condition, detail = '') => {

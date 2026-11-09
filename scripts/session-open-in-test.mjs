@@ -172,8 +172,8 @@ console.log('\n[7] 源码钉：进程 cwd 不再当数据用的那几处')
 {
   const read = (p) => readFileSync(join(process.cwd(), p), 'utf8')
   // 这两份实现已搬进包，readSource 会顺着转发桩找到真文件（断言内容不变）
-  const bash = readSource('src/core/tools/bash.ts')
-  const mcpCore = readSource('src/core/mcp.ts')
+  const bash = readSource('src/packages/tools-default/bash.ts')
+  const mcpCore = readSource('src/packages/mcp/mcp.ts')
   const mcpPlugin = read('src/packages/mcp/index.ts')
   const approval = read('src/packages/approval/index.ts')
   const kernel = read('src/host/kernel.ts')

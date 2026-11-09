@@ -326,7 +326,7 @@ console.log('1. A 回合跑动中切到 B')
   // 11. 状态栏子代理 chip 只认当前会话、还在干活的队友（0.6.65 收紧作用域）
   console.log('11. 子代理 chip 作用域：当前会话 + 干活中')
   {
-    const { ensureBuiltinRoles } = await import('../lib/core/agent-roles.js')
+    const { ensureBuiltinRoles } = await import('../lib/packages/subagent/agent-roles.js')
     ensureBuiltinRoles()
     const parent = ctx.session.current() // 第 10 节切走后的新会话 C
     ctx.agent.followup('派队友')

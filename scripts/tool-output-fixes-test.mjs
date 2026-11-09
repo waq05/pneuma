@@ -17,9 +17,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const spill = await import('../lib/core/spill.js')
-const floorModule = await import('../lib/core/approval-floor.js')
-const search = await import('../lib/core/tools/search-tools.js')
-const bashModule = await import('../lib/core/tools/bash.js')
+const floorModule = await import('../lib/packages/approval-floor/approval-floor.js')
+const search = await import('../lib/packages/tools-default/search-tools.js')
+const bashModule = await import('../lib/packages/tools-default/bash.js')
 
 let failures = 0
 const check = (name, condition, detail = '') => {

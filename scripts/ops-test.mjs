@@ -64,9 +64,9 @@ function check(name, ok, extra = '') {
   }
 }
 
-const { resolveOpsWorker, callOpsWorker } = await import('../lib/core/ops/worker.js')
-const { createOpsTools } = await import('../lib/core/ops/tools.js')
-const { renderInspect, renderTable, renderReadFiles, renderDiff } = await import('../lib/core/ops/render.js')
+const { resolveOpsWorker, callOpsWorker } = await import('../lib/packages/ops/worker.js')
+const { createOpsTools } = await import('../lib/packages/ops/tools.js')
+const { renderInspect, renderTable, renderReadFiles, renderDiff } = await import('../lib/packages/ops/render.js')
 
 const found = resolveOpsWorker()
 if (!found.ok) {

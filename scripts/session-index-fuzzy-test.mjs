@@ -58,7 +58,7 @@ writeSession('sess-strict', 'ws-c', ['内存占用过高，已经重启过'])
 writeSession('sess-mixed', 'ws-d', ['内存泄漏比较严重，用 leak 工具查过'])
 writeSession('sess-dup', 'ws-e', ['这里是重复的内容'])
 
-const { defaultSessionIndexOptions, queryGroups, SessionIndex } = await import('../lib/core/session-index.js')
+const { defaultSessionIndexOptions, queryGroups, SessionIndex } = await import('../lib/packages/session-search/session-index.js')
 
 const index = new SessionIndex({ ...defaultSessionIndexOptions(), indexDir: join(dscHome, 'cache') })
 index.load()

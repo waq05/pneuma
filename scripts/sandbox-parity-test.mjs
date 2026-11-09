@@ -39,7 +39,7 @@ function check(name, ok, detail = '') {
 
 // 安全模块之间有相对 `.js` 导入，Node 的类型擦除不认那种写法，所以这一份读编译产物。
 // `check:core` 的其余电池也是这个约定（跑之前先 `pnpm run build`）。
-const execpolicy = await import(new URL('../lib/core/sandbox/execpolicy.js', import.meta.url).href)
+const execpolicy = await import(new URL('../lib/packages/sandbox/execpolicy.js', import.meta.url).href)
 const commandPolicy = await import(new URL('../lib/core/command-policy.js', import.meta.url).href)
 
 const cw = (raw) => ({
@@ -126,7 +126,7 @@ console.log('[4] 模式四档对齐 dsh')
   check('替换式只留模式正文（AGENTS.md 不进）', filterCode.includes("if (preset.replace) return ids.filter((id) => id === 'preset:persona')"))
   check('标准档不替换人格', byName.standard.replace === false)
 
-  const imageTools = await import(new URL('../lib/core/tools/image-tool.js', import.meta.url).href)
+  const imageTools = await import(new URL('../lib/packages/tools-default/image-tool.js', import.meta.url).href)
   check('read_image 工具存在且只挂极简档', imageTools.readImageTool.name === 'read_image' && JSON.stringify(imageTools.readImageTool.presets) === JSON.stringify(['minimal']))
   check('read_image 是只读风险', imageTools.readImageTool.risk === 'read')
 

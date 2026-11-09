@@ -2,7 +2,7 @@
  * 每轮旧工具结果微压缩（WS1）的确定性探针。
  *
  * 契约见 docs/context-token-plan.md 的「### WS1 每轮旧工具结果微压缩」。五段：
- *   [1] 纯函数（直读 src/core/microcompact.ts）：保留窗口 / 最小节省门槛 / 各类跳过 /
+ *   [1] 纯函数（读 lib/packages/microcompact/microcompact.js）：保留窗口 / 最小节省门槛 / 各类跳过 /
  *       幂等 / 不改输入 / 工具名回填——把跳过规则逐条钉成行为；
  *   [1c] 插件接线的两条新策略：清理量不到门槛就一条都不清、队友汇报不翻轮；
  *   [2] 接线：真内核里注册的 `microcompact` 投影落在 env-facts(600) 与 drop-images(900)
@@ -116,7 +116,7 @@ const {
   roundKeyOf,
   DEFAULT_KEEP_RECENT_TOOL_RESULTS,
   DEFAULT_MIN_SAVE_TOKENS,
-} = await import(new URL('../src/core/microcompact.ts', import.meta.url).href)
+} = await import(new URL('../lib/packages/microcompact/microcompact.js', import.meta.url).href)
 
 console.log('[1] 纯函数：保留窗口 / 门槛 / 跳过规则 / 幂等')
 {

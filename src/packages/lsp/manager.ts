@@ -13,7 +13,7 @@
 import { existsSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import { errText } from '../../core/err-text.js'
-import { buildChildEnv } from '../../core/mcp.js'
+import { buildChildEnv } from '../../core/child-env.js'
 import {
   type LspDiagnosticsOutcome,
   type LspManagerOptions,

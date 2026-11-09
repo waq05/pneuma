@@ -3,10 +3,10 @@
  *
  * 边界 ④ 说「记忆的评估机制没做、隐式使用计数的扫回话命中片段只做了代码审查，
  * 没构造带 assistant 消息的真回合去断言计数递增」——本探针把这两件都补上：
- *   A. 纯模块（`src/core/memory-eval.ts`，零依赖，按 Node 类型擦除直读）：
+ *   A. 纯模块（`src/packages/memory/memory-eval.ts`，零依赖，按 Node 类型擦除直读）：
  *      空库 / 全部被引用 / 全部死重 / 被预算挤掉 / grade 三档边界 / UTF-8 字节数 /
  *      排序（count 优先再看时间）/ `formatMemoryReport` 的增量行。
- *   B. 账本对齐 codex（`lib/core/memory.js`）：每条引用 +1、`last` 更新、注入维独立
+ *   B. 账本对齐 codex（`lib/packages/memory/memory.js`）：每条引用 +1、`last` 更新、注入维独立
  *      （不碰引用）、老 `.usage.json` 向后兼容、清理「只移不删」且 `usage_count=0` 优先被移。
  *   C. 真回合（真内核 + 假 SSE，照 `teammate-notice-test.mjs` 的套路）：一次真回合后
  *      `injected` 递增、同回合第二次请求不重复递增（负向锚点）、`citedCount` 只在回话
@@ -66,7 +66,7 @@ const until = async (fn, timeoutMs = 10000) => {
 }
 
 // ── A. 纯模块：memory-eval.ts 直读（Node 类型擦除，零运行期依赖）──────────────────
-const evalMod = await importSource('src/core/memory-eval.ts')
+const evalMod = await importSource('src/packages/memory/memory-eval.ts')
 const { evaluateMemory, formatMemoryReport, readingsOf } = evalMod
 
 /** 造一条评估条目。 */
@@ -238,7 +238,7 @@ async function serve() {
 
 const site = await serve()
 const { createKernel } = await import('../lib/host/kernel.js')
-const core = await import('../lib/core/memory.js')
+const core = await import('../lib/packages/memory/memory.js')
 const ctx = await createKernel({
   config: {
     providers: {
@@ -343,7 +343,7 @@ await ctx.dispose?.()
 await site.close()
 echoTool()
 
-// ── B. 账本对齐 codex（lib/core/memory.js）────────────────────────────────────
+// ── B. 账本对齐 codex（lib/packages/memory/memory.js）────────────────────────
 console.log('\n[B] 账本对齐 codex（count/last/注入维/清理）');
 {
   const k = 'ledger-anchor-key'

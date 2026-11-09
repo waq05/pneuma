@@ -15968,3 +15968,31 @@ dsh 的机制，不要有遗漏」。四条线并行只读调研（运行时、�
   脚本与文档，没动实现文件里的注释。
 
 
+
+## 2026-11-09（续）：旧路径退场（P1 第一期）
+
+### 为什么
+
+插件化改造后，真实实现已经搬进 `src/packages/<id>/`，但 `src/core/**` 还留着 58 个只做
+`export * from '../packages/...'` 的转发垫片。它们让 `src/core` 看起来仍然「拥有」这些实现，
+读代码的人会先读错文件；`src/services/types.ts` 与 `src/packages/lsp/manager.ts` 还经由
+`core` 反过来够 `packages`，依赖箭头是反的。
+
+### 改了什么
+
+- 删掉 36 个零引用垫片、19 个仅测试引用的垫片（21 个脚本 29 处 import 改到
+  `lib/packages/<包>/<文件>.js`），共 55 个。
+- 剩下 3 个源码仍在用的按「类型进契约、函数进共用层」重定向：
+  - approval 的 4 个类型搬进 `src/contract/approval.ts`；
+  - memory 的 7 组纯类型搬进新建 `src/contract/memory.ts`；
+  - `buildChildEnv` / `BASE_ENV_NAMES` / `readEnv` 抽到新建 `src/core/child-env.ts`，
+    lsp 不再经由 `core/mcp` 去依赖 mcp 包。
+  之后删掉 `src/core/approval.ts`、`memory.ts`、`mcp.ts`。
+- 关键操作口径：tsc 不清 outDir，删源码后必须**先删 `lib/` 再构建**，否则旧 `lib/core/*.js`
+  会留下让测试假绿。本轮每步都按这个跑，`lib/core/*.js` 从 167 降到 110。
+
+### 验证
+
+`typecheck`（根 / ui-shell / desktop）0 错；`build` 与 `build:ui` 通过；`check:core` 107/107；
+`check:plugin` 86 包 + 换包 e2e 17/17；`check:ui` 64/64；`check:p0` 16/16；`check:style` 1248 文件；
+`check:dsh` 19/0；`check:remote` 102/102。

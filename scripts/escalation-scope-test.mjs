@@ -101,8 +101,8 @@ check('拒它的是灾难地板那一层，不是沙箱', /灾难地板/.test(ha
 
 // 「放宽了写边界也仍不合法」这一条得绕开地板，直接用纯策略层问：
 // 可写根里带了只读子路径时，把根放宽出去也写不进那个子路径。
-const { checkWrite, createPolicy } = await import('../lib/core/sandbox/policy.js')
-const { sandboxTmpDir } = await import('../lib/core/sandbox/policy.js')
+const { checkWrite, createPolicy } = await import('../lib/packages/sandbox/policy.js')
+const { sandboxTmpDir } = await import('../lib/packages/sandbox/policy.js')
 const base = createPolicy({
   mode: 'workspace-write',
   cwd,

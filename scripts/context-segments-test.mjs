@@ -39,7 +39,7 @@ const check = (label, condition, extra = '') => {
 }
 
 const { estimateRequestSegments, estimateTextTokens } = await import('../lib/core/token-estimate.js')
-const { pruneToolResults, DEFAULT_TOOL_RESULT_PRUNE } = await import('../lib/core/tool-result-prune.js')
+const { pruneToolResults, DEFAULT_TOOL_RESULT_PRUNE } = await import('../lib/packages/prompt/tool-result-prune.js')
 
 console.log('\n[1] 分段：工具定义与工具结果各算各的')
 {
