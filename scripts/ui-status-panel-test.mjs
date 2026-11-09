@@ -12,7 +12,11 @@
  *   3. 宿主数据面的文本钉（新旧 surfaces / stopBackground 与 readBackground 白名单 /
  *      计划目录读会话账「按会话、不扫盘」/ 后台活按会话筛与归属校验 / 输出面读口走 peek）。
  *
- * 运行：node scripts/ui-status-panel-test.mjs
+ * 运行：node --import ./scripts/_i18n-alias.mjs scripts/ui-status-panel-test.mjs
+ *
+ * 为什么要 `--import`：这条探针要直读 `.ts`/`.tsx` 源码，而界面模块会取词（`@dsc/ui` 别名 +
+ * 字典 JSON），裸 Node 两样都解析不了。`check:ui` 的批量壳已经替所有探针带上这条钩子，
+ * 只有单跑时要自己写。
  *
  * @module dsc/scripts/ui-status-panel-test
  */
@@ -375,14 +379,15 @@ console.log('[7] Git 页签（空仓库不报错 + 未跟踪可预览 + 每文�
     changes.includes('git-file-counts') && changes.includes('changes-added') && changes.includes('changes-removed'),
   )
   check(
-    '⑤ 点文件行就地展开该文件的 diff（GitGroup 内联渲染 GitDiffView）',
-    changes.includes('git-diff-inline') &&
-      /isOpen \? \(\s*<GitDiffView[\s\S]{0,160}?inline/.test(changes) &&
-      changes.includes("toggleDiff('untracked', file)"),
+    '⑤ 点文件行在右侧栏开文件预览页签（改动挂成页签里的「改动」视图）',
+    changes.includes("onOpenFile={(file) => openFileView('untracked', file)}") &&
+      changes.includes('setDockFileView({') &&
+      changes.includes("'git-diff', payload"),
   )
+  check('⑤ 不再就地展开 diff（GitGroup 里没有 GitDiffView）', !/isOpen \? \(\s*<GitDiffView/.test(changes))
   check(
-    '⑤ 已暂存组展开走 staged 段（git-diff 带 staged:true）',
-    changes.includes("group === 'staged' ? { file, staged: true }"),
+    '⑤ 已暂存组开预览也走 staged 段（git-diff 带 staged:true）',
+    changes.includes("group === 'staged' ? { file: relative, staged: true }"),
   )
   check(
     '⑤ 提交对话框：列将提交的文件（staged 恒选 + 可选 unstaged），提交仍走 git-commit 审批',
@@ -400,6 +405,7 @@ console.log('[8] 工具卡补丁视图（读 / 写 / 改三类分流）')
 {
   const dockModel = read('src/packages/ui-dockkit/ui/dock-model.ts')
   const dockState = read('src/packages/ui-dockkit/ui/dock-state.ts')
+  const patchSources = read('src/packages/ui-dockkit/ui/patch-sources.ts')
   const dock = read('src/packages/ui-dockkit/ui/dock.tsx')
   const factory = read(UI + '/tool-card/factory.tsx')
   const preview = read('src/packages/ui-preview/ui/ui.tsx')
@@ -416,9 +422,73 @@ console.log('[8] 工具卡补丁视图（读 / 写 / 改三类分流）')
   check('模型：存档解析认得 patch 页签（只存路径）', dockModel.includes("entry.kind === 'patch'") && dockModel.includes("tabs.push({ id: entry.id, kind: 'patch', path: entry.path })"))
   check('chip：patch 用文件彩色图标（走 preview 同一分支）', dock.includes("props.tab.kind === 'preview' || props.tab.kind === 'patch'"))
 
-  // ── dock-state：setDockPreview 的带 patch 形态 + 补丁源表（内存，不落盘）──
-  check('单一入口：setDockPreview 带 patch 就开补丁页签', dockState.includes('patch?: ChangedFileView') && dockState.includes('dockActions.openPatch(target.path)'))
-  check('补丁源只在内存（hunks 不落盘，重启给「已过期」说明）', dockState.includes('const patchSources = new Map<string, ChangedFileView>()') && dockState.includes('export function useDockPatchSource(path: string)'))
+  // ── 补丁快照表：按**页签 id** 记（P0-11：按路径记会让关掉再开的同文件页签捡到上一刀的 hunks）──
+  check(
+    '补丁源是独立纯模块，导出五个口（记 / 读 / 忘一张 / 清死页签 / 订阅）',
+    patchSources.includes('export function rememberPatch(tabId: string, patch: ChangedFileView)') &&
+      patchSources.includes('export function patchOf(tabId: string): ChangedFileView | null') &&
+      patchSources.includes('export function forgetPatch(tabId: string)') &&
+      patchSources.includes('export function forgetDeadPatches(liveTabIds: Iterable<string>): void') &&
+      patchSources.includes('export function subscribePatches(listener: () => void)'),
+    'patch-sources.ts 的导出面变了：dock-state 与预览插件都按这五个名字接，少一个就是编译错或静默掉一条清理路径',
+  )
+  check(
+    '补丁源表按页签 id 存（不是按路径的 Map）',
+    patchSources.includes('const patches = new Map<string, ChangedFileView>()') && !patchSources.includes('patchSources = new Map'),
+    '快照表还是按路径键的话，关掉补丁页签再开同一文件会显示上一刀的 diff（P0-11）',
+  )
+  check(
+    '清死页签以全量布局为存活凭据（forgetDeadPatches 收 id 集合，dock-state 的 liveTabIds 扫全部会话）',
+    patchSources.includes('export function forgetDeadPatches(liveTabIds: Iterable<string>): void') &&
+      patchSources.includes('const live = new Set(liveTabIds)') &&
+      /function liveTabIds\(\): Set<string>[\s\S]{0,400}?for \(const one of Object\.values\(surfaces\)\) collect\(one\)/.test(dockState) &&
+      /for \(const pane of one\.panes\) for \(const tab of pane\.tabs\) live\.add\(tab\.id\)/.test(dockState),
+    '存活集合的来源漂了：只按当前会话布局算的话，切走再切回，那个会话的补丁页签快照已被清掉，只能看到「补丁已过期」',
+  )
+
+  // ── dock-state：两个入口都是「先算布局、按结果布局里的页签 id 记快照」──
+  check(
+    'dock-state 从 patch-sources 取五个口（rememberPatch / patchOf / forgetPatch / forgetDeadPatches / subscribePatches）',
+    dockState.includes("import { forgetDeadPatches, forgetPatch, patchOf, rememberPatch, subscribePatches } from './patch-sources'"),
+    'dock-state 没接上 patch-sources：快照表与布局各活各的，清理与读取都对不上',
+  )
+  check(
+    '单一入口：setDockPreview 带 patch 就在 mutate 里先 modelOpenPatch、再按结果布局取 tab id 记快照',
+    dockState.includes('patch?: ChangedFileView') &&
+      /setDockPreview[\s\S]{0,900}?const next = modelSetExpanded\(modelOpenPatch\(s, target\.path\), true\)[\s\S]{0,400}?const tabId = tabIdOf\(next, 'patch', target\.path\)[\s\S]{0,200}?rememberPatch\(tabId, patch\)/.test(
+        dockState,
+      ),
+    'setDockPreview 没在同一个 mutate 里按新布局的页签 id 记快照：快照会挂到别的页签上，或者干脆没挂上',
+  )
+  check(
+    '文件视图入口：setDockFileView 同样先 modelOpenPreview、再按 tab id 记快照',
+    /export function setDockFileView[\s\S]{0,700}?const next = modelSetExpanded\(modelOpenPreview\(s, target\.path\), true\)[\s\S]{0,400}?const tabId = tabIdOf\(next, 'preview', target\.path\)[\s\S]{0,200}?rememberPatch\(tabId, patch\)/.test(
+      dockState,
+    ),
+    'setDockFileView 还按路径记快照的话，「改动 / 预览」开关会读到别的页签的 hunks',
+  )
+  check(
+    '预览页签：有补丁源时头部给「改动 / 预览」切换（按页签 id 读）',
+    preview.includes('useDockPatchSource(tabId)') && preview.includes("t('preview.patchView.toPatch')"),
+    '预览页签没按 tabId 读快照，或者头部切换入口被删了',
+  )
+  check(
+    '补丁源只在内存（hunks 不落盘，重启给「已过期」说明）',
+    dockState.includes('export function useDockPatchSource(tabId: string): ChangedFileView | null') &&
+      dockState.includes('() => patchOf(tabId)') &&
+      dockState.includes('() => null'),
+    'useDockPatchSource 的服务端快照不给 null 的话，重启后补丁页签会抛而不是显示「已过期」',
+  )
+  check(
+    '布局每次变更后清死页签（mutate / setDockSession / pruneDockKind 三处）',
+    (dockState.match(/forgetDeadPatches\(/g) ?? []).length === 3,
+    `forgetDeadPatches 调用次数 ${(dockState.match(/forgetDeadPatches\(/g) ?? []).length}：mutate / setDockSession / pruneDockKind 各一处，缺一处就有页签快照留在表里`,
+  )
+  check(
+    '预览页签体把页签 id 传给预览本体（PreviewBody 按 tab.id 读快照）',
+    preview.includes('<PreviewBody tabId={tab.id} path={path} cwd={cwd ?? \'\'} />'),
+    'PreviewBody 没拿到 tab.id 就读不到快照，「改动 / 预览」开关永远只有预览一面',
+  )
 
   // ── 工具卡：edit/write 传 patch，read 传 path；挡冒泡不折卡 ──
   check('chip 分流：edit/write 开补丁视图、read 开文件当前内容', factory.includes('data-tc-source={opensPatch ? \'patch\' : \'file\'}') && factory.includes('setDockPreview(opensPatch ? { path: absPath, cwd, patch } : { path: absPath, cwd })'))
@@ -428,8 +498,12 @@ console.log('[8] 工具卡补丁视图（读 / 写 / 改三类分流）')
   // ── preview 插件：patch 页签渲染 unified diff + 「打开原文件」──
   check('preview 插件报名 patch 页签', /registerDockTab\(\{\s*kind: 'patch'/.test(preview))
   check('patch 页签用既有 DiffRows 渲染（不引新依赖）', preview.includes('<DiffRows hunks={source.hunks} path={path} />'))
-  check('patch 页签不再读盘：走 useDockPatchSource 拿快照', preview.includes('const source = useDockPatchSource(path)') && !/PatchTab[\s\S]{0,800}?fs-read/.test(preview))
-  check('补丁视图另给「打开原文件」出口（开的是当前内容预览）', preview.includes('打开原文件') && preview.includes('onClick={() => setDockPreview({ path })}'))
+  check('patch 页签不再读盘：走 useDockPatchSource 拿快照（按 tab.id）', preview.includes('const source = useDockPatchSource(tab.id)') && !/PatchTab[\s\S]{0,800}?fs-read/.test(preview))
+  check(
+    '补丁视图另给「打开原文件」出口（开的是当前内容预览）',
+    preview.includes("t('preview.patch.openTip')") && preview.includes('onClick={() => setDockPreview({ path })}'),
+    '补丁页签少了「打开原文件」这个出口：用户看到 diff 之后没法一键跳到渲染后的当前内容',
+  )
 }
 
 console.log('[9] 面板的落点与宽度锚（落点看页签行，宽度看正文区）')

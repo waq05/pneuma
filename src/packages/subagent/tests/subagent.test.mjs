@@ -62,6 +62,14 @@ function fakeContext() {
     transcript: { touch: () => {} },
     llm: {},
     approval: {},
+    // 队友的会话归属解析登记在 `guards` 上（P0-8 收口）：假 ctx 也要给这两个口，
+    // 否则 apply 里 `ctx.guards.registerSessionResolver` 直接抛，整条装配测不起来。
+    guards: {
+      register: () => () => {},
+      registerSessionResolver: () => () => {},
+      gate: () => ({ action: 'defer' }),
+      observe: () => {},
+    },
     agent: {},
     get: () => undefined,
   }

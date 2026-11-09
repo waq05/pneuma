@@ -93,6 +93,14 @@ function mount(reply, options = {}) {
       if (name === 'interactive') return { reachable: () => true }
       if (name === 'tools') return { list: () => options.tools ?? [] }
       if (name === 'subagent') return options.subagent
+      // 守卫侧按会话身份解析权限档（P0-8 收口）：假宿主也得给一份名册，
+      // 否则 resolveGuardSession 会按「归属会话已结束」拒绝，判官这条路测不到。
+      if (name === 'agent') {
+        return {
+          sessionById: (id) => (id === session.meta.id ? session : undefined),
+          sessionFor: (path) => (path === session.filePath ? session : undefined),
+        }
+      }
       return undefined
     },
     effect: (execute) => {

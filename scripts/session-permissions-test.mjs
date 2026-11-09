@@ -105,7 +105,9 @@ console.log('[4] 接线形态：按会话取值，不写回偏好/全局配置')
   const sandbox = strip(read('src/packages/sandbox/index.ts'))
   check('sandbox 的 setMode 写会话状态', sandbox.includes('writePermissions(ctx.session.current(), { sandbox: next })'))
   check('sandbox 另有 setDefaultMode 写 plugins.json', sandbox.includes('setDefaultMode(next: SandboxMode)') && sandbox.includes("writePluginConfig(SANDBOX_CONFIG_KEY, { mode: next })"))
-  check('沙箱守卫用本次调用的会话取档位', sandbox.includes('modeOf(sessionOf(input.sessionId, input.sessionPath))'))
+  check('沙箱守卫用本次调用的会话取档位', sandbox.includes('sessionOf(input.sessionId, input.sessionPath)') && sandbox.includes('modeOf(session)'))
+  // 归属会话解析不到时按拒，不回落「用户正看着的那条」（P0-8 第二轮收口）。
+  check('沙箱守卫判不清归属就拒绝', /if \(session === null\) \{\s*return \{\s*action: 'deny'/.test(sandbox))
   const presets = strip(read('src/packages/permission-presets/index.ts'))
   // apply 那条路一次 setPrefs 都没有；只有 setDefault（清空 / 设默认两处）写偏好。
   const applyBody = presets.slice(presets.indexOf('const apply ='), presets.indexOf('const service: PermissionPresetService'))

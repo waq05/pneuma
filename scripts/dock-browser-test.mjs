@@ -11,8 +11,9 @@
  *   2. **桌面执行端的五道闸门**（第 3 节）：扫 `sendDockCommand` 的函数体，断言五道闸门
  *      **齐**（缺一道就是越权）且**有序**（顺序反了等于把复检放到白名单前面）。
  *   3. **真跑纯模块 / 真挂插件**（第 4、5、6 节）：`createDockSession` 路由与过滤、没有桌面壳
- *      时的「立刻抛人话」语义、工具面的注册与风险档（`lookWithoutApproval` 关着时
- *      `browser_dock_look` **不许注册**）。
+ *      时的「立刻抛人话」语义、工具面的注册与风险档（两个工具**恒注册**；`browser_dock_look`
+ *      恒为 `read` 档，默认每次调用自己在工具里请求一次审批，只有 `lookWithoutApproval`
+ *      打开才直读）。
  *   4. **壳侧不许手抄漂移**（第 7、8 节）：事件名字面量逐字等于契约常量、页签 id 只能从
  *      实参尾部加、`openBrowserTab` 同 id 只聚焦不新建（用类型擦除直读真源码跑）。
  *   5. **走查抓出来的四处真缺陷**（第 9 节）：动作层读 CDP 应答的层数、壳侧过渡期的几何、
@@ -577,10 +578,16 @@ console.log('\n[6] 工具面：注册、风险档与「没有桌面壳」时的�
 {
   const plain = mountDock(false, undefined)
   const act = plain.tools.find((tool) => tool.name === 'browser_dock')
+  const plainLook = plain.tools.find((tool) => tool.name === 'browser_dock_look')
   check(
-    '免审批关着时只注册 browser_dock（动手那个）',
-    plain.tools.length === 1 && act !== undefined && plain.tools.find((tool) => tool.name === 'browser_dock_look') === undefined,
-    `实际注册了 ${plain.tools.map((tool) => tool.name).join('、')}：dock 视图跑在用户自己的持久分区里（带登录态），只读工具默认注册等于无条件免审批看用户的登录页面`,
+    '免审批关着时两个工具都注册（动手的 + 只读的）',
+    plain.tools.length === 2 && act !== undefined && plainLook !== undefined,
+    `实际注册了 ${plain.tools.map((tool) => tool.name).join('、')}：只读工具必须恒注册——不注册它模型就拿不到 ref，click / hover / type 这三个只收 ref 的动作全成无源之水（工具说明还会让它去调一个不存在的工具）`,
+  )
+  check(
+    '免审批关着时 browser_dock_look 是 read 档，但声明了会等人（默认每次过审批）',
+    plainLook?.risk === 'read' && plainLook?.waitsForHuman === true,
+    `risk=${String(plainLook?.risk)}，waitsForHuman=${String(plainLook?.waitsForHuman)}：dock 视图跑在用户自己的持久分区里（带登录态），看一眼现状也是看他的登录页面；档位写成 exec 会让计划/探索/只读三种档整档拿不到「看」，所以人批这一步放在工具里自己做（默认每次弹卡，waitsForHuman 是给 PTC 时限看的）`,
   )
   check('browser_dock 的风险等级是 exec（每次过审批）', act?.risk === 'exec', `risk=${String(act?.risk)}：risk 不是 exec 就不会弹审批卡，agent 能直接点击/输入用户登录着的页面`)
   check(
@@ -598,11 +605,15 @@ console.log('\n[6] 工具面：注册、风险档与「没有桌面壳」时的�
   const lookMount = mountDock(true, undefined)
   const look = lookMount.tools.find((tool) => tool.name === 'browser_dock_look')
   check(
-    'lookWithoutApproval 打开后才注册 browser_dock_look',
+    'lookWithoutApproval 打开后仍注册两个工具（开关只改档位，不改注册与否）',
     lookMount.tools.length === 2 && look !== undefined,
     `实际注册了 ${lookMount.tools.map((tool) => tool.name).join('、')}：开关翻不动说明设置项与注册不同步（界面切了、工具面没重挂）`,
   )
-  check('browser_dock_look 的风险等级是 read（免审批）', look?.risk === 'read', `risk=${String(look?.risk)}：只读档写错会让「看」每次都弹审批卡，或让「看」绕过审批`)
+  check(
+    'browser_dock_look 在 lookWithoutApproval=true 时仍是 read 档、但不再等人（直读）',
+    look?.risk === 'read' && look?.waitsForHuman === false,
+    `risk=${String(look?.risk)}，waitsForHuman=${String(look?.waitsForHuman)}：risk 恒为 read（登记不看开关），开关只决定工具里那一次审批要不要发；waitsForHuman 没跟着翻成 false 的话，PTC 会按「要等人」给足时限`,
+  )
   check(
     'browser_dock_look 的 action 枚举 === 契约 DOCK_LOOK_ACTIONS',
     JSON.stringify(look?.parameters?.properties?.action?.enum) === JSON.stringify([...DOCK_LOOK_ACTIONS]),
