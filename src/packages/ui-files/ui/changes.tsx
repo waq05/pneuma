@@ -1,6 +1,6 @@
 /**
- * 文件面板的「变更」页签：git 状态三分组 + 每文件增删行数 + 就地展开该文件 diff
- * + 暂存/取消暂存 + 提交对话框 + 提交历史。
+ * 文件面板的「变更」页签：git 状态三分组 + 每文件增删行数 + 「全部未提交改动」的合并 diff
+ * + 暂存/取消暂存 + 提交对话框 + 提交历史。点一行文件在右侧栏开它的预览页签。
  *
  * 读类 op（`git-status` / `git-diff` / `git-log`）直接放行，浏览器里也能用；
  * 写类 op（`git-stage` / `git-unstage` / `git-commit`）在界面通道**过审批**——
@@ -73,12 +73,6 @@ interface DiffData {
   note: string
 }
 
-/** 展开态：`group` 是分组 id（staged / unstaged / untracked / all），`file` 为 null 表示「全部改动」。 */
-interface Expanded {
-  group: string
-  file: string | null
-}
-
 /** git status 行里的状态码前缀剥掉，剩下的才是文件路径（照旧渲染层 fileOf 的字符类：
     unstaged 行以空格开头，字符类里必须带空格，否则剥不掉——带着前缀去查 diff，
     git 只会回空 diff）。未跟踪组给的是裸路径，不走这一步。 */
@@ -91,12 +85,8 @@ export function ChangesPanel(): ReactNode {
   const channel = useHostChannel()
   const [status, setStatus] = useState<GitStatus | null>(null)
   const [error, setError] = useState('')
-  /**
-   * 就地展开的 diff：点文件行在该行下方展开该文件的 diff（再点一次收起）；
-   * `file === null` = 「全部改动」，落在面板底部。
-   * `note` = 宿主对这一段的一句说明（未跟踪的二进制 / 过大 / 目录条目合成不出 diff）。
-   */
-  const [expanded, setExpanded] = useState<Expanded | null>(null)
+  /** 面板底部的「全部未提交改动」diff 是否展开。 */
+  const [allDiffOpen, setAllDiffOpen] = useState(false)
   const [diffData, setDiffData] = useState<DiffData>({ loading: false, text: '', note: '' })
   /** 提交对话框的开合（里面的文件清单与信息草稿由对话框自己持有）。 */
   const [commitOpen, setCommitOpen] = useState(false)
@@ -137,26 +127,25 @@ export function ChangesPanel(): ReactNode {
   }, [refresh])
 
   /**
-   * 展开/收起一个文件（或全部改动）的 diff。
-   * 未跟踪文件也能点：宿主按文件内容合成一段「全是新增行」的 diff（二进制 / 过大
-   * 的合成不出来，回一句 note）；未跟踪的目录整条只有 note。
-   * 已暂存组走 `staged:true`（只取已暂存段），其余组取未暂存 / 合成段。
+   * 展开/收起「全部未提交改动」的 diff（落在面板底部，不就地展开单个文件）。
+   * 已开则收起；未开则开并拉一次 `git-diff`（payload 就是 `{}`，宿主给全量）。
+   * 宿主回的 `note` 是「这一段合成不出来」的说明（未跟踪的二进制 / 过大 / 目录条目），
+   * 单独一行显示，不和 diff 正文混在一起。
    */
-  const toggleDiff = (group: string, file: string | null): void => {
-    if (expanded !== null && expanded.group === group && expanded.file === file) {
-      setExpanded(null)
+  const toggleAllDiff = (): void => {
+    if (allDiffOpen) {
+      setAllDiffOpen(false)
       return
     }
-    setExpanded({ group, file })
+    setAllDiffOpen(true)
     setDiffData({ loading: true, text: '', note: '' })
-    const payload = file === null ? {} : group === 'staged' ? { file, staged: true } : { file }
     void channel
-      .invoke<{ diff: string; note?: string }>('dock', ['git-diff', payload])
+      .invoke<{ diff: string; note?: string }>('dock', ['git-diff', {}])
       .then((data) => {
         setDiffData({ loading: false, text: String(data?.diff ?? ''), note: String(data?.note ?? '') })
       })
       .catch((cause: unknown) => {
-        setExpanded(null)
+        setAllDiffOpen(false)
         setError(cause instanceof Error ? cause.message : String(cause))
       })
   }
@@ -213,7 +202,7 @@ export function ChangesPanel(): ReactNode {
         toastOk(tip)
         refresh()
         // 暂存状态变了，刚展开的 diff 已经过期，收掉它免得误导。
-        setExpanded(null)
+        setAllDiffOpen(false)
       })
       .catch((cause: unknown) =>
         toastErr(
@@ -241,7 +230,7 @@ export function ChangesPanel(): ReactNode {
         toastOk(t('files.commit.done'))
         setCommitOpen(false)
         refresh()
-        setExpanded(null)
+        setAllDiffOpen(false)
       })
       .catch((cause: unknown) => toastErr(t('files.commit.failed', { message: cause instanceof Error ? cause.message : String(cause) })))
       .finally(() => setCommitting(false))
@@ -273,7 +262,7 @@ export function ChangesPanel(): ReactNode {
           className="icon-btn git-diff-all"
           data-tip={t('files.git.allDiffTip')}
           onClick={() => {
-            toggleDiff('all', null)
+            toggleAllDiff()
           }}
         >
           {t('files.git.allDiff')}
@@ -343,15 +332,8 @@ export function ChangesPanel(): ReactNode {
           ))}
         </div>
       )}
-      {/* 「全部改动」的 diff 落在面板底部；单文件的 diff 就地展开在各自分组里。 */}
-      {expanded !== null && expanded.file === null ? (
-        <GitDiffView
-          title={t('files.diff.allTitle')}
-          all
-          diff={diffData}
-          onClose={() => setExpanded(null)}
-        />
-      ) : null}
+      {/* 「全部未提交改动」的 diff 落在面板底部；点文件是在右侧栏开预览页签，不就地展开。 */}
+      {allDiffOpen ? <GitDiffView diff={diffData} onClose={() => setAllDiffOpen(false)} /> : null}
       {commitOpen ? (
         <CommitDialog
           staged={status.staged}
@@ -367,7 +349,7 @@ export function ChangesPanel(): ReactNode {
   )
 }
 
-/** 一组文件行：可点的就近展开该文件的 diff（未跟踪的也点得开——宿主按内容合成）；
+/** 一组文件行：点一行文件在右侧栏开它的预览页签（未跟踪的也点得开——宿主按内容合成）；
     行尾带 +N/−N；给了 onStage 时行尾再带一颗暂存/取消暂存钮（写类 op，走宿主审批）。 */
 function GitGroup(props: {
   id: string
@@ -563,30 +545,14 @@ function CommitDialog(props: {
   )
 }
 
-/** diff 视图：单文件一段、全量（all）按 `diff --git` 切成多段；`inline` 时挂在文件行下方。
+/** 「全部未提交改动」的 diff 视图：按 `diff --git` 切成多段，每段一份路径 + 增删行数 + hunk。
     宿主回的 `note` 是「这一段合成不出来」的说明，单独一行显示，不和 diff 正文混在一起。 */
-function GitDiffView(props: {
-  title: string
-  all: boolean
-  diff: DiffData
-  onClose: () => void
-  inline?: boolean
-}): ReactNode {
-  const sections: UnifiedFileDiff[] = props.diff.loading
-    ? []
-    : props.all
-      ? splitUnifiedDiffByFile(props.diff.text)
-      : (() => {
-          // 单文件：全部 hunk 归一段
-          const hunks = parseUnifiedDiff(props.diff.text)
-          const added = hunks.reduce((sum, hunk) => sum + hunk.lines.filter((line) => line.kind === 'add').length, 0)
-          const removed = hunks.reduce((sum, hunk) => sum + hunk.lines.filter((line) => line.kind === 'remove').length, 0)
-          return hunks.length === 0 ? [] : [{ path: props.title, added, removed, hunks }]
-        })()
+function GitDiffView(props: { diff: DiffData; onClose: () => void }): ReactNode {
+  const sections: UnifiedFileDiff[] = props.diff.loading ? [] : splitUnifiedDiffByFile(props.diff.text)
   return (
-    <div className={`git-diff-view${props.inline === true ? ' git-diff-inline' : ''}`}>
+    <div className="git-diff-view">
       <div className="git-diff-head">
-        <span className="git-diff-title">{props.title}</span>
+        <span className="git-diff-title">{t('files.diff.allTitle')}</span>
         <button
           type="button"
           className="icon-btn"
