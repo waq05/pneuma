@@ -116,6 +116,8 @@ export const askPlugin: Plugin.Object = {
         answers: string[]
         /** 提问会话（后台提问也归属它）：surface 认领与应答只认当前查看会话的那张。 */
         sessionPath: string
+        /** 提问会话 id：`waiting` 按会话登记时用它（路径会被搬动，id 不会）。 */
+        sessionId: string
         /** 收尾：清掉挂起状态、广播快照失效、让 ask 的 Promise 落地。只有它是出口。
          *  wake = 答完之后回合还要继续（状态点翻回 working）；中断/退出路径传 false。 */
         settle(final: string[], wake?: boolean): void
@@ -186,7 +188,7 @@ export const askPlugin: Plugin.Object = {
           resolveDone(final)
         }
         const onAbort = (): void => settle(withRest(questions, answers, INTERRUPTED), false)
-        pendings.set(view.id, { view, answers, sessionPath: path, settle })
+        pendings.set(view.id, { view, answers, sessionPath: path, sessionId: session.meta.id, settle })
         signal.addEventListener('abort', onAbort, { once: true })
         ctx.emit('dsc/agent-status', { sessionId: session.meta.id, path, state: 'awaiting-approval' })
         // 信号进来就已经中断了（abort 事件不会再补发一次）：立刻按「没回答」收尾，别挂死。
@@ -236,7 +238,12 @@ export const askPlugin: Plugin.Object = {
     }
     ctx.provide('ask', service)
     ctx.effect(() => ctx.surfaces.register('pendingQuestion', () => service.pendingQuestion()), 'ask: surfaces.register')
-    ctx.effect(() => ctx.waiting.register('ask', () => pendings.size > 0), 'ask: waiting.register')
+    // 按会话登记（P0-6）：`owner` 缺省 = 全进程有没有卡（界面口径），给了就只算那条会话的卡。
+    ctx.effect(
+      () => ctx.waiting.register('ask', (owner?: string) =>
+        [...pendings.values()].some((card) => owner === undefined || card.sessionId === owner)),
+      'ask: waiting.register',
+    )
 
     const askUserTool: ToolEntry = {
       name: 'ask_user',
