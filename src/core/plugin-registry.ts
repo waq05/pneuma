@@ -379,16 +379,51 @@ export function writePluginConfig(
 }
 
 /**
- * 取一个插件此刻该用的配置：装配时传进来的那份作底，磁盘上那份覆盖它。
- * 为什么要覆盖——设置分区保存走 {@link writePluginConfig} 改的是磁盘，
- * 插件每次用值时现调这个函数，改完配置就不必重启宿主。
+ * 组合包 patch 行给的配置，按行 id 登记（装载器挂载时写进来，见 plugin-loader 的 `mountRow`）。
+ *
+ * 为什么注册表要记住它：挂载口径是「宿主直给 > patch 行 > `plugins.json`」，而运行期插件
+ * 每次取配置都调 {@link resolvePluginConfig} 现读磁盘；两处若各用一套顺序，同一个键就会
+ * 在 apply 里一个值、在 resolve 里另一个值（复审实测：apply 拿到 patch 的 `foo: 1`，
+ * 一调 resolve 变成磁盘里用户旧的 `foo: 0`）。合并只有这一个函数一份。
+ */
+const rowConfigs = new Map<string, Readonly<Record<string, unknown>>>()
+
+/**
+ * 登记（或清除）一行在 patch 里给的配置。
+ * @param file - 行 id
+ * @param config - patch 行的 `config`；undefined = 这一行没有 patch 配置（清掉旧登记）
+ */
+export function registerRowConfig(file: string, config: Record<string, unknown> | undefined): void {
+  if (config === undefined) rowConfigs.delete(file)
+  else rowConfigs.set(file, config)
+}
+
+/**
+ * 取一个插件此刻该用的配置。三档，从强到弱（与挂载口径同一套，见 `registerRowConfig`）：
+ *   1. 宿主直给的那份（装配时由 `passed` 递进来）：整块替换，不在这里合并；
+ *   2. patch 行登记的键：压过磁盘；
+ *   3. 磁盘 `plugins.json` 里这一条的 config：逐键现读。
+ * 为什么磁盘要现读——设置分区保存走 {@link writePluginConfig} 改的是磁盘，插件每次用值时
+ * 现调这个函数，改完配置就不必重启宿主；磁盘独有的新键（patch 没给的）因此照样进得来。
  * @param file - 条目树里的插件 file（内置插件就是插件名，例如 `goal`）。
  * @param passed - 装配时传进来的第二参数；不是对象就当没给。
  */
 export function resolvePluginConfig(file: string, passed?: unknown): Record<string, unknown> {
   const fromDisk = getPluginConfig(file)
-  if (passed === null || typeof passed !== 'object' || Array.isArray(passed)) return fromDisk
-  return { ...(passed as Record<string, unknown>), ...fromDisk }
+  const rowGiven = rowConfigs.get(file)
+  const base =
+    passed === null || typeof passed !== 'object' || Array.isArray(passed)
+      ? undefined
+      : (passed as Record<string, unknown>)
+  if (base === undefined) return rowGiven === undefined ? fromDisk : { ...fromDisk, ...rowGiven }
+  // 先让磁盘逐键盖过装配时那份（保存即生效），再把 patch 行的键按装配时收到的值压回去。
+  const merged = { ...base, ...fromDisk }
+  if (rowGiven !== undefined) {
+    for (const key of Object.keys(rowGiven)) {
+      if (key in base) merged[key] = base[key]
+    }
+  }
+  return merged
 }
 
 /**
@@ -421,13 +456,24 @@ export function isPluginEnabled(file: string): boolean {
 }
 
 /**
+ * 这个插件此刻能不能被用户停用（「运行内核」那一档不行）。
+ *
+ * 为什么单独成一个**纯判定**：`runtime` 的开关入口要先判「能不能停」再决定走哪条路，
+ * 而它不该为了判一下就写盘（写盘只留一处，见 plugin-loader 的 `setPluginEnabledHot`）。
+ * 判据留在这里，是因为它读的是本模块的目录（catalog）；在调用方各抄一份迟早走样。
+ * @returns false = 属于运行内核（`source='builtin'` 且没标 `toggleable`）
+ */
+export function canTogglePlugin(file: string): boolean {
+  const meta = catalog.get(file)
+  return meta === undefined || meta.source === 'external' || meta.toggleable === true
+}
+
+/**
  * 更新条目树的 disabled 标记并写盘。
  * @returns false = 该插件不可停用（属于运行内核，即 source='builtin' 且没标 toggleable）。
  */
 export function writePluginEnabled(file: string, enabled: boolean): boolean {
-  const meta = catalog.get(file)
-  const canToggle = meta === undefined || meta.source === 'external' || meta.toggleable === true
-  if (!canToggle) return false
+  if (!canTogglePlugin(file)) return false
   const entries = readPluginEntries()
   putEntry(entries, file, { disabled: !enabled })
   writePluginEntries(entries)
@@ -475,11 +521,14 @@ export function checkApiVersion(apiVersion: number | undefined): string | null {
 
 /** 目录快照 + 条目树合并成 UI 投影（运行内核那一档恒启用）。 */
 export function listPluginInfos(): PluginInfoView[] {
-  const entries = new Map(readPluginEntries().map((entry) => [entry.file, entry]))
+  // 判定与装载器同一套：`entryIndexOf`（认 0.8.1 的旧键别名）+ `canTogglePlugin`。
+  // 以前这里按精确 file 建一张表，旧键命中时插件中心说「开」、装载器说「关」——正是 P0-4
+  // 那两套判定的第三份。运行内核那一档（canToggle=false）仍恒报启用，它本来没有开关。
+  const entries = readPluginEntries()
   return [...catalog.values()].map((meta) => {
-    const entry = entries.get(meta.file)
-    const canToggle = meta.source === 'external' || meta.toggleable === true
-    const disabled = canToggle ? (entry?.disabled ?? meta.defaultDisabled === true) : false
+    const canToggle = canTogglePlugin(meta.file)
+    const index = entryIndexOf(entries, meta.file)
+    const disabled = canToggle ? (index < 0 ? meta.defaultDisabled === true : entries[index]!.disabled) : false
     return {
       file: meta.file,
       name: meta.name,

@@ -8,7 +8,7 @@
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import { errText } from '@pneuma/runtime/adapter/transcript.js'
-import { listPluginInfos, writePluginEnabled } from '@pneuma/runtime/core/plugin-registry.js'
+import { canTogglePlugin, listPluginInfos, writePluginEnabled } from '@pneuma/runtime/core/plugin-registry.js'
 import { setPluginEnabledHot } from '@pneuma/runtime/core/plugin-loader.js'
 import {
   discoverThirdPartyUiArtifacts,
@@ -176,7 +176,12 @@ export const runtimePlugin: Plugin.Object = {
       },
 
       async setPluginEnabled(file, enabled) {
-        if (!writePluginEnabled(file, enabled)) {
+        // 能不能停只判一次、**不写盘**：以前这里先 writePluginEnabled 判一下并顺手写盘，
+        // 随后 setPluginEnabledHot 里又写一次，点一次开关就把整份 plugins.json
+        // 「读 → 改一条 → 写回」跑两遍；中间任何并发写（界面信任、设置保存）会被后一遍盖掉（P0-3）。
+        // 现在落盘只有下面每一条路径各一处：界面半边自己写（没有宿主光纤可热挂），
+        // 其余宿主行交给 setPluginEnabledHot（唯一持久化点）。
+        if (!canTogglePlugin(file)) {
           ctx.transcript.system('这一档属于运行内核，构成 dsc 本身，不能停用')
           ctx.transcript.touch()
           return
@@ -192,6 +197,8 @@ export const runtimePlugin: Plugin.Object = {
         // 第三方界面插件（<目录名>/ui/client.js）没有宿主半边可挂：写盘之后由 webserver
         // 换图并推一帧，页面按那一帧卸载/装载这一条（与产物热更同一条通道）。
         if (isThirdPartyUiEntry(file)) {
+          // 这一支不走热挂载，落盘就留在这里（一次点击只写这一次）。
+          writePluginEnabled(file, enabled)
           const name = file.split('/')[0] ?? file
           if (!rootEntry) ctx.emit('dsc/ui-plugins-changed', { file, enabled })
           ctx.transcript.system(
@@ -202,6 +209,7 @@ export const runtimePlugin: Plugin.Object = {
         }
         // 组合包的界面半边（<包名>/client）同一条理由：没有宿主半边可热挂。
         if (isPackageUiEntry(file)) {
+          writePluginEnabled(file, enabled)
           const name = file.slice(0, -'/client'.length)
           ctx.transcript.system(`已${enabled ? '启用' : '停用'}组合包的界面半「${name}」，即时生效`)
           ctx.emit('dsc/ui-plugins-changed', { file, enabled })
@@ -209,7 +217,8 @@ export const runtimePlugin: Plugin.Object = {
           return
         }
         const shown = listPluginInfos().find((item) => item.file === file)?.name ?? file
-        // 热启停：即时挂载/卸载，写盘持久化；失败回滚（挂载失败自动停用）
+        // 热启停：即时挂载/卸载，**落盘由 setPluginEnabledHot 负责（宿主行唯一一处）**；
+        // 这里不再自己写盘，写两次就是 P0-3 那个覆盖窗口。失败回滚（挂载失败自动停用）也在它里面。
         const outcome = await setPluginEnabledHot(file, enabled)
         if (!outcome.ok) {
           ctx.transcript.system(`插件「${shown}」没能启用：${outcome.problem ?? '未知原因'}（已经退回停用状态）`)

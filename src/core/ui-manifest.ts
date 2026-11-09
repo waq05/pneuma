@@ -100,7 +100,15 @@ export interface UiPluginEntry {
   rev: string
   /** 依赖的插件 id（见 {@link UiPluginRow.inject}）。 */
   inject?: string[]
-  /** 依赖的服务名（见 {@link UiPluginRow.services}）。 */
+  /**
+   * 依赖的服务名（见 {@link UiPluginRow.services}）。
+   *
+   * 等的是**同一次装载里另一条插件 `ui.provide(name, value)` 登记的服务值**，不是插件 id。
+   * 装载器拿它当 cordis 的 `inject`（`ui-boot` 的 `serviceDepsOf`）并过一遍
+   * `unmetDependencies`：提供者还没装成、或服务表里还没有这个名字，这条插件就不 apply，
+   * 报告里留一行「服务 X 还没有提供者」；提供者后补上来时纤维自己从「待装」转「生效」。
+   * 所以要软降级（有回落实现）的依赖别写这里，用 `ui.consume` 在渲染期读。
+   */
   services?: string[]
   /** 会 require 的基线外模块（见 {@link UiPluginRow.external}）。 */
   external?: string[]
@@ -274,7 +282,7 @@ export function orderUiPlugins<T extends UiPluginRow>(rows: readonly T[]): T[] {
 /**
  * 由「插件 id + 产物版本」拼出启动图。顺序与分批在这里定，地址在这里算。
  *
- * 整图 rev 对**整条 entry**（含 inject / external / immediately）与**批结构**
+ * 整图 rev 对**整条 entry**（含 inject / services / external / immediately）与**批结构**
  * （含每条声明的 phase）做摘要：只改清单里的声明（不动 bundle）时整图 rev 也必须跟着变，
  * 否则「靠 rev 判断要不要重载」的那一侧会漏掉声明类变更。
  *
@@ -297,6 +305,9 @@ export function composeUiBootGraph(
     url: pluginBundleUrl(artifact.id, artifact.rev),
     rev: artifact.rev,
     ...(artifact.inject === undefined ? {} : { inject: artifact.inject }),
+    // 服务依赖必须随图走：装载器只从 entry 读（`serviceDepsOf` / `unmetDependencies`），
+    // 这里漏一项，插件写的 `services` 就等于没写——它会在提供者还没提供时先 apply。
+    ...(artifact.services === undefined ? {} : { services: artifact.services }),
     ...(artifact.external === undefined ? {} : { external: artifact.external }),
     ...(artifact.immediately === true ? { immediately: true } : {}),
   }))

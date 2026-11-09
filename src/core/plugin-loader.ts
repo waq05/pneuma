@@ -31,9 +31,10 @@ import {
   getPluginConfig,
   getPluginMeta,
   isPluginEnabled,
-  readPluginEntries,
   registerPluginAlias,
   registerPluginMeta,
+  registerRowConfig,
+  resolvePluginConfig,
   writePluginEnabled,
   KERNEL_API_VERSION,
   type PluginMeta,
@@ -262,6 +263,34 @@ function mountDetailsOf(root: Context): Map<string, MountedDetail> {
 const builtinMounts = new Map<string, Plugin.Object>()
 
 /**
+ * 行级挂载选项（身份 → inject / 宿主或 patch 给的配置），在 `mountRow` 解析出入口文件之后、
+ * 开关判定与幂等判断**之前**登记。
+ *
+ * 为什么要单独一张表：启动时就停用的行不会挂载，`mountDetails` 里没有它的选项，插件中心
+ * 点「启用」时只能拿到磁盘配置，patch 给的 config 就丢了（与「停用→启用」那条同类）。
+ * 为什么不直接塞进 `mountDetails`：那张表兼着热重挂失败时的回滚材料（`plugin` / `config`），
+ * 没挂过的行放进去会被当成「有旧版本可回滚」。
+ * 重扫（`mountBundlePlugins` / `mountApplicationRows`）每次都重算覆盖；行真的消失时由
+ * `reconcileProfileBundles` 调 {@link forgetRowRegistration} 清掉，防止同一个 id 被别的包
+ * 复用时串味。
+ */
+const rowOptionsOf = new Map<string, RowMountOptions>()
+
+/**
+ * 忘掉一行的登记：行选项、`mountDetails` 里那份、以及 patch 配置登记。
+ *
+ * 只在这一行**真的不存在了**（组合包卸载、profile 的 patch 删掉一条 insert）时调；
+ * 停用只是暂时不挂，插件中心随时会启用，那时还得按同一份行选项重挂（见 `setPluginEnabledHot`）。
+ * @param identity - 行 id（运行时身份）
+ */
+function forgetRowRegistration(identity: string): void {
+  const current = rootRef
+  if (current !== null) mountDetailsOf(current).delete(identity)
+  rowOptionsOf.delete(identity)
+  registerRowConfig(identity, undefined)
+}
+
+/**
  * 登记一个内置官方插件的挂载对象（宿主装配时调用一次）。
  * @param file - 开关键，与 `registerPluginMeta` 用的名字一致。
  */
@@ -373,13 +402,23 @@ export interface RowMountOptions {
    */
   inject?: readonly string[]
   /**
-   * 宿主直接给的那份配置：**整份替代** `plugins.json` 里那一条（不做深合并）。
+   * 这一行用的配置。怎么用由 `configOrigin` 决定（三档优先级，见 {@link configForRow}）：
    *
-   * 为什么需要：llm / session / settings 这几行拿的是宿主现组装的配置
-   * （providers、resume 路径、cwd），plugins.json 里根本没有这些；不整份替代的话，
-   * 包化之后它们的配置会在第一次挂载时就丢掉。
+   * - `host`（宿主直给）：**整份替代** `plugins.json` 里那一条（不做深合并）。
+   *   llm / session / settings 这几行拿的是宿主现组装的配置（providers、resume 路径、cwd），
+   *   plugins.json 里根本没有这些；不整份替代的话，包化之后它们的配置会在第一次挂载时就丢掉。
+   * - `row`（组合包 patch 行）：默认值层。磁盘那条逐键盖在它上面、它独有的键补进去，
+   *   合并只走 `plugin-registry.resolvePluginConfig` 一份（挂载、重挂、运行期同一个函数）。
+   *
+   * patch 行也走这里，是为了让组合包在 `cordis.patch.yml` 里写的 `config` 真的到得了插件：
+   * `applyPatchLayers` 已经把它落到行上，挂载这一侧不看就整块丢了，还不带告警。
    */
   config?: Record<string, unknown>
+  /**
+   * `config` 是哪一档给的：`host` = 宿主直给（整块替换），`row` = 组合包 patch 行（默认值层）。
+   * 热开关重挂与热更重挂都按它重新合并，用户改过的磁盘配置因此跟得上。
+   */
+  configOrigin?: 'host' | 'row'
   /**
    * 这是 Pneuma 自己的功能包（`@pneuma/*`）。
    *
@@ -406,6 +445,24 @@ interface InspectedModule {
 
 /** {@link inspectPluginModule} 的结果：成功给材料，失败给一句人话。 */
 type InspectResult = { ok: true; value: InspectedModule } | { ok: false; problem: string }
+
+/**
+ * 这一行此刻该用的配置（三档，从强到弱，与插件运行期现读配置同一套口径）：
+ *   1. 宿主直给（`configOrigin: 'host'`）：整块替换，不碰磁盘；
+ *   2. `plugins.json` 里这一行的条目（用户设置）：逐键盖过第 3 档；
+ *   3. 组合包 patch 行（`configOrigin: 'row'`）：默认值层。
+ *
+ * 第 2、3 档的合并只走 `resolvePluginConfig`——插件 `apply` 之后自己调它取配置，用的是
+ * 同一个函数，于是「首次挂载 / 热开关重挂 / apply 后 resolve」三处对同一个键给出同一个值。
+ * 每次都现读磁盘而不是留挂载那一刻的快照：用户改过的设置不必重启就生效。
+ * @param identity - 行 id
+ * @param options - 行级覆盖
+ */
+function configForRow(identity: string, options: RowMountOptions): Record<string, unknown> {
+  if (options.config === undefined) return getPluginConfig(identity)
+  if (options.configOrigin === 'row') return resolvePluginConfig(identity, options.config)
+  return options.config
+}
 
 /**
  * 导入一个插件模块并做全部挂载前校验（首次挂载与热重挂共用）。
@@ -491,8 +548,8 @@ async function inspectPluginModule(
   }
 
   // ---- 配置校验（dsh 插件用 schemastery 导出 Config；有就调一次，失败响亮回滚） ----
-  // 宿主给了配置就整份用它（不深合并）：宿主知道的那几项磁盘上根本没有。
-  let configForApply = rowOptions.config ?? getPluginConfig(identity)
+  // 三档优先级见 `configForRow`：宿主直给整块替换，patch 行与磁盘同走一个合并。
+  let configForApply = configForRow(identity, rowOptions)
   const configSchema = mod.Config ?? entry.Config
   if (typeof (configSchema as unknown) === 'function') {
     try {
@@ -512,7 +569,7 @@ async function inspectPluginModule(
  * 自动停用（写盘回滚到可用状态），返回 false。
  * @param file - 入口文件绝对路径
  * @param identity - 运行时身份（行 id）。不传 = 退回文件名（外部单文件插件的老行为）
- * @param rowOptions - 行级覆盖（目前只有 inject）
+ * @param rowOptions - 行级覆盖（inject / 配置 / native）
  */
 export async function mountExternalPlugin(
   file: string,
@@ -532,7 +589,9 @@ export async function mountExternalPlugin(
   if (builtin !== undefined) {
     await unmountExternalPlugin(base)
     try {
-      const config = getPluginConfig(base)
+      // 与外部插件同一个口径（三档，见 `configForRow`）：内置行也走 mountRow 递进来的
+      // RowMountOptions，不看就等于同一份装配里两套规则。
+      const config = configForRow(base, rowOptions)
       const fiber = root.plugin(builtin, config)
       await fiber
       mountedOf(root).set(base, fiber)
@@ -550,6 +609,9 @@ export async function mountExternalPlugin(
 
   // 已经登记过（应用自带行在挂之前先登记了来源与展示文案）就沿用那一份：
   // 覆盖成 external 会把内置包全赶到插件中心的「自定义」组里，连能不能停用也一并丢掉。
+  // `defaultDisabled` 也要带过来：它是「条目树里没有这条记录时默认关」的声明，
+  // 挂载这一趟把 meta 重建一次（下面 registerPluginMeta）若丢掉它，
+  // `readEnabledPlugins` 对同一份 plugins.json 的结论会随「挂过没挂过」变脸（P0-4）。
   const previous = getPluginMeta(base)
   const meta: PluginMeta = {
     file: base,
@@ -557,6 +619,7 @@ export async function mountExternalPlugin(
     description: previous?.description ?? '',
     source: previous?.source ?? 'external',
     ...(previous?.toggleable === true ? { toggleable: true } : {}),
+    ...(previous?.defaultDisabled === true ? { defaultDisabled: true } : {}),
   }
   registerPluginMeta(meta)
 
@@ -740,8 +803,10 @@ async function remountOne(
   const previous = details.get(identity)
   // 失败时连元数据一起还原：新模块可能已经把 name/apiVersion 改成新值，旧 fiber 却还在跑。
   const metaBefore: PluginMeta = { ...meta }
-  // 行级 inject / 宿主配置沿用首次挂载那一份（重挂不是重新装配）。
-  const inspected = await inspectPluginModule(file, identity, previous?.options ?? {}, meta)
+  // 行级 inject / 宿主配置沿用挂载时那一份（重挂不是重新装配）；优先取 `rowOptionsOf`——
+  // 重扫会用它刷新，patch 改过之后重挂拿到的是新配置（与热开关同一条口径）。
+  const options: RowMountOptions = rowOptionsOf.get(identity) ?? previous?.options ?? {}
+  const inspected = await inspectPluginModule(file, identity, options, meta)
   if (!inspected.ok) {
     restoreMeta(meta, metaBefore)
     meta.problem = `热重挂失败：${inspected.problem}（旧版本继续运行）`
@@ -767,7 +832,7 @@ async function remountOne(
     const fiber = root.plugin(pluginObject, configForApply)
     await fiber
     table.set(identity, fiber)
-    details.set(identity, { plugin: pluginObject, config: configForApply, options: previous?.options ?? {} })
+    details.set(identity, { plugin: pluginObject, config: configForApply, options })
     meta.problem = undefined
     return { ok: true, generation }
   } catch (error) {
@@ -913,8 +978,16 @@ export async function setPluginEnabledHot(file: string, enabled: boolean): Promi
       ? file
       : (pluginSources.get(file) ?? resolveEntryPath(file))
     if (entryFile === null) return { ok: false, problem: `找不到插件文件 ${file}（检查 ~/.dsc/plugins/）` }
+    // 重挂不是重新装配：行选项在挂载（或启动时的扫描）那一步就登记了，这里原样取回。
+    // 优先取 `rowOptionsOf`：重扫会刷新它，用户改过 patch 之后再拔一次开关拿到的是新配置；
+    // `mountDetails` 里那份是上一次挂载时的快照，留作兜底。**不能**把 options.config
+    // 直接塞回去：那是快照，用户之后改过磁盘配置，得按同一套三档优先级（见 `configForRow`）
+    // 现读重建。修前这里一个选项都不传，拔一次开关 patch 的 config 就丢了。
+    const current = rootRef
+    const details = current === null ? undefined : mountDetailsOf(current).get(file)
+    const rowOptions = rowOptionsOf.get(file) ?? details?.options ?? {}
     // 身份 = 行 id：文件与 id 不同时才显式传，单文件插件仍走文件名（兼容现状）。
-    const ok = await mountExternalPlugin(entryFile, file === basename(entryFile) ? undefined : file)
+    const ok = await mountExternalPlugin(entryFile, file === basename(entryFile) ? undefined : file, rowOptions)
     if (!ok) return { ok: false, problem: getPluginMeta(file)?.problem ?? '挂载失败' }
     // 挂载成功后确保条目树里是启用状态
     writePluginEnabled(file, true)
@@ -954,7 +1027,10 @@ export async function mountAllExternalPlugins(
 
   const failures: PluginMountFailure[] = []
   for (const [base, file] of files) {
-    if (isDisabledByEntry(base)) continue
+    // 开关判定只走 plugin-registry 的 `isPluginEnabled`（内部 `readEnabledPlugins`）：
+    // 旧键别名、`defaultDisabled`、批版口径都在那里一套写完。这里以前另有一份
+    // 「精确 file 比对」，同一份 plugins.json 会和插件中心得出相反结论（P0-4）。
+    if (!isPluginEnabled(base)) continue
     const ok = await mountExternalPlugin(file)
     if (!ok) {
       const meta = getPluginMeta(base)
@@ -1021,7 +1097,8 @@ export async function adoptPluginsFromDisk(only?: ReadonlySet<string>): Promise<
   }
   for (const name of names) {
     if (only !== undefined && !only.has(name)) continue
-    if (isDisabledByEntry(name)) continue
+    // 同 mountAllExternalPlugins：开关只问 plugin-registry 那一套判定，别再维护第二份。
+    if (!isPluginEnabled(name)) continue
     if (mountedOf(root).has(name)) continue
     const ok = await mountExternalPlugin(join(dir, name))
     if (ok) {
@@ -1250,18 +1327,28 @@ export async function reconcileProfileBundles(
     listed = new Set(mountedNow.rows)
   }
   const unmounted: string[] = []
+  /**
+   * 这一行是不是这份 profile 的：组合包给的行（`meta.bundle` 有值）与 profile 自己那层 patch
+   * 插的行（入口文件落在 profile 目录里）。应用自带行与 `~/.dsc/plugins/*.js` 两样都不占。
+   * 注意**不能**拿新清单的包名判归属：包刚被删掉，它已经不在这份清单里了，那样会漏卸。
+   */
+  const ownedByProfile = (identity: string): boolean =>
+    getPluginMeta(identity)?.bundle !== undefined || fileUnderProfile(identity, profileDir)
   for (const identity of [...table.keys()]) {
-    // 属于这份 profile 的行才算：组合包给的行（meta.bundle 有值）与 profile 自己那层 patch 插的行
-    // （入口文件落在 profile 目录里）。应用自带行与 ~/.dsc/plugins/*.js 两样都不占，一律不动。
-    // 注意**不能**拿新清单的包名判归属：包刚被删掉，它已经不在这份清单里了，那样会漏卸。
-    const bundle = getPluginMeta(identity)?.bundle
-    const owned = bundle !== undefined || fileUnderProfile(identity, profileDir)
-    if (!owned) continue
+    if (!ownedByProfile(identity)) continue
     // 还在这一代的行 id 里就留着。按 id 判，不看它由哪个包给的——profile 自己那层 patch
     // 删掉一条 insert 时，那一行没有包归属，只有 id 能证明它已经不在了。
     if (listed.has(identity)) continue
     await unmountExternalPlugin(identity)
     unmounted.push(identity)
+  }
+  // 停用中的行从来没进 `table`，但它们留着行选项与 patch 配置登记：这一代里没有这个 id 了，
+  // 登记就得一起忘掉——否则同一个 id 后来被别的包复用，会拿到上一份 patch 配置（串味）。
+  const registered = new Set([...rowOptionsOf.keys(), ...mountDetailsOf(root).keys()])
+  for (const identity of registered) {
+    if (listed.has(identity)) continue
+    if (!ownedByProfile(identity)) continue
+    forgetRowRegistration(identity)
   }
   return {
     // 卸载之后再算「新挂上的」：同一轮里被挂上又立刻卸掉的行不该报成成功。
@@ -1520,6 +1607,41 @@ async function mountRow(row: PluginRow, ctx: RowMountContext): Promise<PluginMou
   const file = resolved.file
   // 身份 = 行 id（契约 §4）；没有 id 的行退回文件名，老行为不变。
   const rowId = typeof row.id === 'string' && row.id !== '' ? row.id : basename(file)
+  // 行上的 inject 盖过模块自带的（依赖关系属于装配，不属于包）；
+  // 配置三档，优先级从强到弱（与插件运行期现读配置同一套，见 `configForRow`）：
+  //   宿主直给（ctx.hostConfig）> patch 行（row.config）> plugins.json（逐键）。
+  // 为什么 patch 行一定要在这里接住：`applyPatchLayers` 把组合包 `config:` 整块落到行上之后，
+  // 挂载侧不看就静默丢了——插件拿到的永远是磁盘那一条，用户还查不出为什么「配置没生效」。
+  // 为什么还要登记进注册表：只在这里算一次不够，插件运行期会再调 `resolvePluginConfig`
+  // 现读配置；两边各用一套顺序，就会出现「apply 里是 patch 的值、resolve 里是磁盘旧值」。
+  const hostConfig = ctx.hostConfig === undefined ? undefined : ctx.hostConfig[rowId]
+  const hostGiven =
+    hostConfig !== null && typeof hostConfig === 'object' && !Array.isArray(hostConfig)
+      ? (hostConfig as Record<string, unknown>)
+      : undefined
+  // group 行的 `config` 是子行数组（见 collectRowIds），不能当插件配置递出去。
+  const rowGiven =
+    row.group === true || row.config === null || typeof row.config !== 'object' || Array.isArray(row.config)
+      ? undefined
+      : (row.config as Record<string, unknown>)
+  const rowOptions: RowMountOptions = {
+    inject: rowInjectOf(row),
+    native: typeof row.name === 'string' && row.name.startsWith('@pneuma/'),
+    ...(hostGiven === undefined && rowGiven === undefined
+      ? {}
+      : {
+          config: hostGiven ?? rowGiven,
+          configOrigin: hostGiven === undefined ? ('row' as const) : ('host' as const),
+        }),
+  }
+  // 登记放在开关判定与幂等判断**之前**：启动时就停用的行不会挂载，但插件中心点「启用」时
+  // 要按当初算好的行选项热挂，否则 patch 的 config 只剩磁盘那份，直到重启；已经挂上的行
+  // 也会被重扫刷新（用户改过 patch 之后再拔一次开关，拿到的是新配置）。
+  // 只登记入口文件真在盘上的行：缺包的行走不到这里（上面已 return），这里再兜一次。
+  if (existsSync(file)) {
+    rowOptionsOf.set(rowId, rowOptions)
+    registerRowConfig(rowId, rowGiven)
+  }
   // 幂等：已经挂上的身份直接返回（应用自带行重复调用不该再挂一份）
   if (mountedOf(ctx.root).has(rowId)) return null
   const owner = typeof row.id === 'string' ? ctx.ownerOf.get(row.id) : undefined
@@ -1574,16 +1696,8 @@ async function mountRow(row: PluginRow, ctx: RowMountContext): Promise<PluginMou
     ctx.warnings.push(`${ctx.where}：「${rowName}」的版本闸没过：${problem}`)
     return { file: rowId, name: rowName, problem }
   }
-  // 行上的 inject 盖过模块自带的（依赖关系属于装配，不属于包）；
-  // 宿主直给的配置整份替代 plugins.json（没命中才读磁盘）。
-  const hostConfig = ctx.hostConfig === undefined ? undefined : ctx.hostConfig[rowId]
-  const ok = await mountExternalPlugin(file, rowId, {
-    inject: rowInjectOf(row),
-    native: typeof row.name === 'string' && row.name.startsWith('@pneuma/'),
-    ...(hostConfig !== null && typeof hostConfig === 'object' && !Array.isArray(hostConfig)
-      ? { config: hostConfig as Record<string, unknown> }
-      : {}),
-  })
+  // 行选项（inject / 三档配置）在开关判定之前就算好并登记了，见上面 `rowOptionsOf`。
+  const ok = await mountExternalPlugin(file, rowId, rowOptions)
   const meta = getPluginMeta(rowId)
   if (meta !== undefined) {
     // package.json 是插件中心的显示口径；模块导出只作缺省（外部单文件插件没有清单）。
@@ -1968,10 +2082,6 @@ function readJsonObject(file: string): Record<string, unknown> | null {
   } catch {
     return null
   }
-}
-
-function isDisabledByEntry(file: string): boolean {
-  return readPluginEntries().find((entry) => entry.file === file)?.disabled ?? false
 }
 
 /** 解析条目树里的文件名 → 绝对路径（仅 ~/.dsc/plugins/ 下的外部插件）。 */

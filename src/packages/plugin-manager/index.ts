@@ -17,7 +17,7 @@ import { basename, isAbsolute, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import type { Plugin } from '@deepseek-ai/cordis'
 import { browsePluginMarketSource, installPluginMarketEntry, type MarketEntry } from '@pneuma/config-core/market.js'
-import { listPluginInfos } from '@pneuma/runtime/core/plugin-registry.js'
+import { canTogglePlugin, isPluginEnabled, listPluginInfos } from '@pneuma/runtime/core/plugin-registry.js'
 import { mountExternalPlugin, setPluginEnabledHot } from '@pneuma/runtime/core/plugin-loader.js'
 import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
 import { dscPath } from '@pneuma/runtime/core/path-policy.js'
@@ -73,6 +73,12 @@ export const pluginManagerPlugin: Plugin.Object = {
           case 'disable': {
             const file = String(args.file ?? '')
             if (file === '') return '错误：缺少 file 参数（插件文件名）'
+            // 「运行内核」那几行（`source='builtin'` 且没标 `pneuma.toggleable`）没有可停用的
+            // 说法：它们构成 dsc 本身。不先说清楚，热挂载那条路只会报「找不到插件文件」，
+            // 用户以为文件丢了（0 写盘，但文案误导）。
+            if (!canTogglePlugin(file)) {
+              return `错误：「${file}」属于运行内核（source=builtin 且没标 pneuma.toggleable），不能启用或停用——停了就没有对话能力`
+            }
             const outcome = await setPluginEnabledHot(file, action === 'enable')
             if (!outcome.ok) return `错误：${outcome.problem ?? '操作失败'}`
             return `已${action === 'enable' ? '启用' : '停用'}插件 ${file}（热生效，已写盘持久化）`
@@ -85,15 +91,21 @@ export const pluginManagerPlugin: Plugin.Object = {
             const src = isAbsolute(source) ? source : resolve(dscPath(), source)
             if (!src.endsWith('.js')) return '错误：仅支持 .js 插件文件'
             try {
-              const dest = join(thirdPartyUiRoot(), basename(src))
+              const name = basename(src)
+              const dest = join(thirdPartyUiRoot(), name)
               mkdirSync(thirdPartyUiRoot(), { recursive: true })
               copyFileSync(src, dest)
+              // 停用过的同名插件再装一次不能绕开开关：与插件中心同一个判定（isPluginEnabled），
+              // 否则插件中心显示「关」、实际却在跑——这正是 P0-4 要消掉的两套结论。
+              if (!isPluginEnabled(name)) {
+                return `已复制 ${name} 到 ${dest}；它在插件中心是停用状态，没有自动挂载（在插件中心打开即可生效）`
+              }
               const ok = await mountExternalPlugin(dest)
               if (!ok) {
-                const meta = listPluginInfos().find((info) => info.file === basename(src))
+                const meta = listPluginInfos().find((info) => info.file === name)
                 return `错误：${meta?.problem ?? '挂载失败'}（文件已复制，可修复后重新启用）`
               }
-              return `已安装并热挂载 ${basename(src)}`
+              return `已安装并热挂载 ${name}`
             } catch (error) {
               return `错误：${error instanceof Error ? error.message : String(error)}`
             }
@@ -131,6 +143,10 @@ export const pluginManagerPlugin: Plugin.Object = {
                 files: [],
               }
               const target = await installPluginMarketEntry(entry, thirdPartyUiRoot())
+              // 同 install：停用状态是用户的选择，重装同名文件不该把它偷偷点亮。
+              if (!isPluginEnabled(name)) {
+                return `已下载 ${name} 到 ${target}；它在插件中心是停用状态，没有自动挂载（在插件中心打开即可生效）`
+              }
               const ok = await mountExternalPlugin(target)
               if (!ok) {
                 const meta = listPluginInfos().find((info) => info.file === name)
