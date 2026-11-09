@@ -229,7 +229,8 @@ console.log('[7] 源码钉：过程正文的标记与三处接线')
   const contract = read('src/contract/transcript.ts').replace(/\r\n/g, '\n')
   const ptc = read('src/packages/ptc/index.ts').replace(/\r\n/g, '\n')
   const toolRow = read('src/packages/ui-transcript/ui/rows/tool-row.tsx').replace(/\r\n/g, '\n')
-  // 对话页真的那张卡是 Factory 里的 ToolCard；rows/tool-row 只是没注册 Factory 时的兜底。
+  // 对话页真的那张卡与队友运行记录那张卡，2026-11-09 起是**同一个视图**：渲染体在
+  // `tool-card/factory.tsx` 的 ToolCardView 里，`rows/tool-row` 只剩接线。
   // 实拍查出来的：第一版把嵌套行只加在兜底上，桌面里根本看不见（2026-11-07 真机跑出来的）。
   const toolCard = read('src/packages/ui-transcript/ui/tool-card/factory.tsx').replace(/\r\n/g, '\n')
   check('事件：tool/call 带 parentCallId', /type: 'tool\/call'; callId: string; name: string; args: string; parentCallId\?: string/.test(events))
@@ -238,7 +239,14 @@ console.log('[7] 源码钉：过程正文的标记与三处接线')
   check('PTC：run_code 把 runCtx.callId 交给脚本', ptc.includes('}, runCtx.callId)'))
   check('适配器：子调用挂进父卡（不 push 顶层条目）', /subCalls = \[\.\.\.\(parent\.call\.subCalls \?\? \[\]\), call\]/.test(adapter))
   check('工具卡：渲染卡内调用列表（对话页那张）', toolCard.includes('className="sub-calls"') && toolCard.includes("transcript.tool.subCallCount"))
-  check('工具卡：兜底那条用同一份标记与清单（两处不许各画一遍）', toolRow.includes('<SubCallCount call={call} />') && toolRow.includes('<SubCallList call={call} />'))
+  // 「两处不许各画一遍」现在是真的一句：标记与清单只在共享骨架里画一次，队友那条路
+  // 渲染的就是这个视图，所以它的源码里一个都不该再出现。
+  check(
+    '工具卡：卡内调用的标记与清单只在共享骨架里画一次',
+    toolCard.includes('<SubCallCount call={call} />') &&
+      toolCard.includes('<SubCallList call={call} />') &&
+      !/SubCallCount|SubCallList|sub-calls/.test(toolRow),
+  )
   check('样式：卡内调用行有 .sub-call', /\.sub-call \{/.test(views))
 }
 console.log('[8] PTC 的卡内调用：子调用收进父卡、组头按子调用的类别数')

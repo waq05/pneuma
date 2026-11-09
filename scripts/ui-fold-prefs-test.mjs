@@ -8,7 +8,8 @@
  * 这一条三组断言：
  *   [1] 纯逻辑（fold-state.ts，零 React，Node 直接 import）：
  *       没存档时跟随 fallback、有存档时不动、存档里的 false 也算手动、undefined 键不炸；
- *   [2] 源码钉：三处消费点确实改用 useFoldState，且不再有 useState(() => readFold(...))；
+ *   [2] 源码钉：消费点确实改用 useFoldState（工具卡那一处在共享骨架 ToolCardView 里，
+ *       队友运行记录那条路只把 storeKey 原样递进去），且不再有 useState(() => readFold(...))；
  *       工具卡 preparing 不可展开、思考行直播态不参与初值这两条细节还在；
  *   [3] 四档 policy 表逐字未变（本次只动「默认展开」的跟随，不碰过程折叠策略）。
  *
@@ -114,11 +115,14 @@ console.log('4. 纯逻辑：钩子的生命周期（用同一份 followFallback 
   check('重挂读回的是手动值（收起）', foldStateOf(key, true).open === false)
 }
 
-console.log('5. 源码钉：三处消费点改用钩子')
+console.log('5. 源码钉：消费点改用钩子（渲染体收进共享骨架之后仍是两处）')
 {
+  // 2026-11-09：工具卡的渲染体拆成 `tool-card/factory.tsx` 的 ToolCardView（纯展示），
+  // 对话页（Factory occurrence）与队友运行记录（`rows/tool-row`）渲染的是同一个视图。
+  // 所以「谁持有展开态」从两处变一处，钉的位置跟着走：钩子在共享骨架里，
+  // `rows/tool-row` 只把 storeKey 原样递进去。旧写法（自己 useState 读存档）两边都不许回来。
   const consumers = [
-    [UI + '/tool-card/factory.tsx', 'persistKey'],
-    [UI + '/rows/tool-row.tsx', 'storeKey'],
+    [UI + '/tool-card/factory.tsx', 'storeKey'],
     [UI + '/rows/think-row.tsx', 'storeKey'],
   ]
   for (const [rel, keyName] of consumers) {
@@ -133,7 +137,15 @@ console.log('5. 源码钉：三处消费点改用钩子')
   const toolRow = read(UI + '/rows/tool-row.tsx')
   const thinkRow = read(UI + '/rows/think-row.tsx')
   check('工具卡 preparing 仍不可展开（factory）', /call\.status !== 'preparing'/.test(factory) && /open && expandable/.test(factory))
-  check('工具行 preparing 仍不可展开（tool-row）', /call\.status !== 'preparing'/.test(toolRow) && /open && expandable/.test(toolRow))
+  // 队友运行记录那条路：存档键**原样**交给共享骨架（`subagent-flow` 给的是
+  // `${sessionKey}:${at}`，少会话那一半两个队友就会共用一份展开态），自己不再持有展开态。
+  check('队友那条路把 storeKey 原样交给共享骨架', /<ToolCardView[\s\S]{0,200}?storeKey=\{storeKey\}/.test(toolRow))
+  check(
+    '队友那条路不再自己读 / 写存档（展开态归共享骨架）',
+    !/useFoldState\(/.test(toolRow) && !/readFold\(/.test(toolRow) && !/writeFold\(/.test(toolRow),
+  )
+  // 不可展开判定也就只剩共享骨架那一处：队友那行不再自写行头，自然也不许再有一份 preparing 判定。
+  check('队友那条路不再自写展开判定（渲染共享骨架）', !/preparing/.test(toolRow) && toolRow.includes('<ToolCardView'))
   // 注释里保留着「以前写成 live || prefs.reasoningOpen」的来历说明，所以只看代码本身。
   const thinkCode = stripComments(thinkRow)
   check('思考行初值不再拿 live 当展开理由', !/readFold\(storeKey, live/.test(thinkCode) && !/useFoldState\(storeKey, live/.test(thinkCode))

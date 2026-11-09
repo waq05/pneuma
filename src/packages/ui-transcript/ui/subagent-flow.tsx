@@ -54,6 +54,10 @@ export interface TranscriptFlowService {
  * 被壳当槽条目渲染时由选举链决定谁画。团队插件是直接把组件当值渲染（没有槽渲染上下文），
  * 那时 `renderSlot` 缺席，落到内置工具卡 {@link ToolRow}——与 `RowBody` 自己的兜底
  * （`renderSlot?.(…) ?? <ToolRow …/>`）是同一条路，工具卡照常出得来。
+ *
+ * 2026-11-09 起 `ToolRow` 不再自画一份卡片：它渲染的是对话页那张卡的同一个视图
+ * （`tool-card/factory` 的 ToolCardView），所以两条路的工具行长得一样。`owner.storeKey`
+ * 原样往下传（`${sessionKey}:${at}`，见 `render.tsx` 的 `case 'tool'`），展开态照旧记得住。
  */
 export function SubagentFlow(props: {
   entries?: readonly TranscriptEntry[]

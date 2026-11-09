@@ -384,8 +384,14 @@ console.log('[9] 这一轮的四条')
   check('标题不随状态变形（函数体只 return base，不拼 正在 / 准备 / 了）', /return base/.test(verbBody) && !verbBody.includes('${base}') && !verbBody.includes('了'), verbBody.trim())
   check('认不出的工具用 dsh 的泛称「工具调用」', summary.includes("UNKNOWN_TOOL_TITLE = t('primitives.tool.unknown')") && zhValues.includes('工具调用'))
   // transcriptSrc 是整棵插件子树（tool-card/factory.tsx 已含在内），别再单独加 factorySrc。
+  // 2026-11-09：工具卡的渲染体收成一份共享骨架之后，这个计数从 3 变 2——
+  //   原 3 处 = `rows/tool-row` 的兜底卡 + `tool-card/factory` 的 ToolCard（对话页主路）
+  //            + `ui-trace` 的 TraceToolRow（轨迹页保险丝）；
+  //   现 2 处 = `tool-card/factory` 的 ToolCardView（对话页与队友运行记录共用这一份，
+  //            `rows/tool-row` 不再自画行头）+ `ui-trace` 的降级行。
+  // 少掉的那一处是重复被消除，不是「原名不见了」：两条路都还印着「· <工具名>」。
   const named = (transcriptSrc + traceSrc).split('`· ${call.name}`').length - 1
-  check('原名跟在「 · 」后面（对话页 / 轨迹页 / 工厂三处都改了）', named === 3, String(named))
+  check('原名跟在「 · 」后面（共享骨架一处 + 轨迹页降级行一处，不再有第二份兜底卡）', named === 2, String(named))
 
   // ② 思考块标题照 dsh 的 message.think（「思考」两个字），不再写「思考过程」。
   // 文案进本包字典：钉「标题用了那条键」，中文原文由 ui-locale-test 判。

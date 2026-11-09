@@ -8,7 +8,9 @@
  *     吸附快捷栏）留在本文件；
  *   - **按位置不同的部分**做成**局部槽**，父按 occurrence 选（对话页选 intended 预览 /
  *     中文耗时 / 「将做的改动」/ 「在轨迹中查看」按钮；轨迹页只选轨迹口径的耗时）；
- *   - 没选的位置由定义自己的 fallback 顶上（SummaryPreview / NoBodyExtra / NoTrailing）。
+ *   - 没选的位置由定义自己的 fallback 顶上（SummaryPreview / ChatStatus / IntendedBody / NoTrailing）；
+ *   - **渲染体**是纯展示组件 {@link ToolCardView}：对话页与轨迹页经 Factory occurrence 进来，
+ *     队友运行记录那条拿不到槽上下文的路（`rows/tool-row`）直接渲染它——三份实现收成一份。
  *
  * `children` 仍是**普通槽**（`transcript.toolcard.footer`）：任何插件都能往里加一行，
  * 与工具卡是谁渲染的无关（`examples/ui-plugin-demo` 就是这么用的）。
@@ -26,7 +28,8 @@ import {
   setDockPreview,
   type ChangedFileView,
   type FactoryComponentProps,
-  type FactoryLocalProps,
+  type FactoryLocalInputProps,
+  type FactoryLocalName,
   type ToolCallView,
   type UiPluginApi,
 } from '@dsc/ui'
@@ -69,7 +72,7 @@ declare module '@dsc/ui' {
         entry: ToolEntry
         /** 展开态存档键（对话页给，轨迹页不给：那边展开态是临时的）。 */
         storeKey?: string
-        /** 展开态持久化的键（缺省不持久化）。 */
+        /** 展开态持久化的键：给了就按它存档，缺省时退回 `storeKey`（两个都不给 = 不持久化）。 */
         persistKey?: string
         /** 哪个父在渲染（缺省 chat）：轨迹页不挂吸附快捷栏、不推演 intended。 */
         variant?: 'chat' | 'trace'
@@ -140,7 +143,83 @@ export function registerToolCard(ui: UiPluginApi): void {
 }
 
 /**
- * 工具卡定义：一行头（状态点 + 图标 + 动词 + 摘要 + 状态）+ 展开后的额外块 / 参数 / 结果。
+ * 共享骨架里一个局部组件的形状：它只需要**输入 props** 那半边（`intended` / `call` / `entry`…），
+ * 另一半注册面（`renderSlot` / 席位）由 Factory 出口在渲染时注入，与视图无关。
+ *
+ * 与 `FactoryLocalComponent` 的区别只在这一层：那个类型要求组件收下整份
+ * `FactoryLocalProps`（输入 + 注册面），而本文件这几个组件一个都不用注册面，
+ * 声明得越窄，没有槽上下文的调用方（`rows/tool-row`）才递得进来。
+ */
+type LocalView<K extends FactoryLocalName<typeof TOOLCARD_FACTORY>> = (
+  props: FactoryLocalInputProps<typeof TOOLCARD_FACTORY, K>,
+) => ReactNode
+
+/**
+ * 共享骨架的输入：一条工具调用 + 四个局部组件（缺省就是对话页那三件 + 空尾巴）+ 尾巴。
+ *
+ * `footer` 是 Factory 的 children 槽内容（`transcript.toolcard.footer`）。没有槽上下文的
+ * 调用方（队友运行记录）不传它，所以这一格**必须可选**——缺省就是没有那一行。
+ */
+export interface ToolCardViewProps {
+  /** 这一条工具调用（对话页与轨迹页的条目形状同源）。 */
+  entry: ToolEntry
+  /** 展开态存档键（不给 = 这次挂载里临时展开，重挂即忘）。 */
+  storeKey?: string
+  /** 哪个父在渲染（缺省 chat）：轨迹页不挂吸附快捷栏、不推演 intended。 */
+  variant?: 'chat' | 'trace'
+  /** chain 选举算好的匹配（不传就自己 matchTool）。 */
+  match?: ToolMatch
+  /** 折叠偏好（缺省收起）。 */
+  foldPrefs?: FoldPrefs
+  /** 会话工作目录（intended 推演与相对路径展示的基准）。 */
+  cwd?: string
+  /** 头行摘要区（缺省一句 summary）。 */
+  Preview?: LocalView<'preview'>
+  /** 状态列（缺省对话页的中文口径）。 */
+  StatusDetail?: LocalView<'statusDetail'>
+  /** 展开体里的额外块（缺省「将做的改动 / 这次改动」diff）。 */
+  BodyExtra?: LocalView<'bodyExtra'>
+  /** 头行尾部（缺省不画）。 */
+  Trailing?: LocalView<'trailing'>
+  /** Factory 的尾巴子槽内容（第三方加的那一行）；没有槽上下文时不传。 */
+  footer?: ReactNode
+}
+
+/**
+ * 工具卡定义（Factory）：**只负责选件**——四个局部组件 + 尾巴子槽，然后交给共享视图
+ * {@link ToolCardView}。卡长什么样、展开态怎么存、吸附栏怎么量，全在那一个视图里；
+ * 对话页 / 轨迹页 / 队友运行记录三条路共用它，不再各养一份骨架。
+ */
+function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactNode {
+  // 局部位置（按 occurrence）：父没选就用定义自己的 fallback。
+  const Preview = props.useFactorySlot('preview', SummaryPreview)
+  const StatusDetail = props.useFactorySlot('statusDetail', ChatStatus)
+  // bodyExtra 的 fallback 就是「这次改动」那一块本身：轨迹页不选它，但落地后的 diff
+  // 两边都该看得见（见 IntendedBody 的注释）。
+  const BodyExtra = props.useFactorySlot('bodyExtra', IntendedBody)
+  const Trailing = props.useFactorySlot('trailing', NoTrailing)
+  return (
+    <ToolCardView
+      entry={props.entry}
+      // 存档键：轨迹页两个都不给（展开态只活在这次挂载里）；对话页两个同值。
+      storeKey={props.persistKey ?? props.storeKey}
+      variant={props.variant}
+      match={props.match}
+      foldPrefs={props.foldPrefs}
+      cwd={props.cwd}
+      Preview={Preview}
+      StatusDetail={StatusDetail}
+      BodyExtra={BodyExtra}
+      Trailing={Trailing}
+      // 尾巴是**普通子槽**：任何插件都能给所有工具卡加一行（见文件头）。
+      footer={props.renderSlot(TOOLCARD_FOOTER_SLOT, { entry: props.entry })}
+    />
+  )
+}
+
+/**
+ * 工具卡视图（纯展示）：一行头（状态点 + 图标 + 动词 + 摘要 + 状态）+ 展开后的额外块 /
+ * 参数 / 结果。局部组件由调用方传入；**没有槽上下文的那条路直接渲染它**。
  *
  * 三件与旧实现一致、改的时候别破坏的事（都从 ToolRow 原样搬来）：
  * 1. **展开态存档**（`fold-state`）：会话切换会把条目整表重建，重挂时从存档键读回；
@@ -148,13 +227,12 @@ export function registerToolCard(ui: UiPluginApi): void {
  *    「文件已更改」卡接手，卡上再挂一份就是重复；
  * 3. **吸附快捷栏**：展开内容够长（>400px）才出现，只挂在对话页（variant === 'chat'）。
  */
-function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactNode {
-  const { entry, storeKey, persistKey, match: electedMatch, foldPrefs, cwd = '' } = props
-  const variant = props.variant ?? 'chat'
+export function ToolCardView(props: ToolCardViewProps): ReactNode {
+  const { entry, storeKey, variant = 'chat', match: electedMatch, foldPrefs, cwd = '', footer = null } = props
   const call = entry.call
   // 默认档取设置里的「工具卡默认展开」；钩子让设置变化即时传到已画出的卡上，
-  // 手动调过（有存档）的卡不受影响。轨迹页不给 persistKey，因此只活在本地。
-  const [open, setOpenPersisted] = useFoldState(persistKey, foldPrefs?.toolOpen ?? false)
+  // 手动调过（有存档）的卡不受影响。没给存档键（轨迹页）时只活在本地。
+  const [open, setOpenPersisted] = useFoldState(storeKey, foldPrefs?.toolOpen ?? false)
   const [barVisible, setBarVisible] = useState(false)
   // 参数还没到齐的这一次调用不可展开——展开也看不到东西，还会让「点一下」白点。
   const expandable = call.status !== 'preparing'
@@ -169,13 +247,11 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
   const intended = useIntendedDiff(call, cwd, variant === 'chat')
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const barRef = useRef<HTMLDivElement | null>(null)
-  // 局部位置（按 occurrence）：父没选就用定义自己的 fallback。
-  const Preview = props.useFactorySlot('preview', SummaryPreview)
-  const StatusDetail = props.useFactorySlot('statusDetail', ChatStatus)
-  // bodyExtra 的 fallback 就是「这次改动」那一块本身：轨迹页不选它，但落地后的 diff
-  // 两边都该看得见（见 IntendedBody 的注释）。
-  const BodyExtra = props.useFactorySlot('bodyExtra', IntendedBody)
-  const Trailing = props.useFactorySlot('trailing', NoTrailing)
+  // 局部组件：调用方没传就用定义内建的那一件（缺省正是对话页那三件 + 空尾巴）。
+  const Preview = props.Preview ?? SummaryPreview
+  const StatusDetail = props.StatusDetail ?? ChatStatus
+  const BodyExtra = props.BodyExtra ?? IntendedBody
+  const Trailing = props.Trailing ?? NoTrailing
   /**
    * 展开体里要不要画 diff：进行中按参数推演（intended），落地后由工具结果带来的实际改动
    * （call.change，adapter 按 callId 缝回）接手。有 diff 时**不再摊原始参数 JSON**——
@@ -453,8 +529,9 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
               )}
             </>
           )}
-          {/* Factory 的 children 仍是普通槽：第三方在这里给所有工具卡加行。 */}
-          {props.renderSlot(TOOLCARD_FOOTER_SLOT, { entry })}
+          {/* Factory 的 children 仍是普通槽：第三方在这里给所有工具卡加行。
+              没有槽上下文的那条路（队友运行记录）传不进 footer，这一格就是空的。 */}
+          {footer}
         </div>
       ) : null}
     </div>
@@ -464,9 +541,10 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
 /**
  * 卡内调用（PTC）：脚本里每调一次 `sdk.xxx()` 就是这里的一行。
  *
- * 为什么抽成两个组件而不是各画一遍：对话页的卡走 Factory（{@link ToolCard}），插件没注册
- * Factory 时才落到 `rows/tool-row` 的兜底。同一份数据必须在这两处长得一样——各写一遍的话，
- * 用户在界面上看到什么就取决于「这次是谁画的卡」，改一处漏一处根本看不出来。
+ * 为什么抽成两个组件而不是各画一遍：这两个挂在共享骨架 {@link ToolCardView} 上，
+ * 对话页、轨迹页、队友运行记录三条路渲染的都是同一份，所以用户在界面上看到什么不再取决于
+ * 「这次是谁画的卡」。别再在别的文件里摆一遍同样的标记与清单（那条断言在
+ * `scripts/ui-step-group-live-test.mjs` 里钉着）。
  */
 export function SubCallCount({ call }: { call: ToolCallView }): ReactNode {
   const count = call.subCalls?.length ?? 0
@@ -512,12 +590,12 @@ export function SubCallList({ call }: { call: ToolCallView }): ReactNode {
 // ── 定义自带的 fallback 局部组件 ───────────────────────────────────────────────
 
 /** 头行摘要（fallback）：一句 `toolSummary`；认不出的工具补原名。 */
-function SummaryPreview(props: FactoryLocalProps<typeof TOOLCARD_FACTORY, 'preview'>): ReactNode {
+function SummaryPreview(props: FactoryLocalInputProps<typeof TOOLCARD_FACTORY, 'preview'>): ReactNode {
   return <span className="preview">{props.summary}</span>
 }
 
 /** 状态列（fallback 也是对话页选用的那份）：对话页的中文口径（done 只留状态点，running 转圈 + 「用时 X」）。 */
-export function ChatStatus(props: FactoryLocalProps<typeof TOOLCARD_FACTORY, 'statusDetail'>): ReactNode {
+export function ChatStatus(props: FactoryLocalInputProps<typeof TOOLCARD_FACTORY, 'statusDetail'>): ReactNode {
   const call = props.call
   const duration = formatDuration(call.durationMs ?? null)
   return (
@@ -529,8 +607,13 @@ export function ChatStatus(props: FactoryLocalProps<typeof TOOLCARD_FACTORY, 'st
   )
 }
 
-/** 没有尾部动作的父（轨迹页）用这个顶 trailing。 */
-function NoTrailing(): ReactNode {
+/**
+ * 没有尾部动作的父（轨迹页）用这个顶 trailing。
+ *
+ * 队友运行记录那条路也用它：队友条目的 id 属于**另一份日志**，按它 `openTrace(entry.id)`
+ * 会跳到主会话里错的步骤，所以那一格必须是空的，不能沿用对话页的「在轨迹中查看」。
+ */
+export function NoTrailing(): ReactNode {
   return null
 }
 
@@ -605,7 +688,7 @@ export function OpenPathButton({
  * 否则回落 summary。这是对话页独有的那张脸（轨迹页不选它，用 fallback 的 summary）。
  * 路径渲染成可点按钮：edit / write 开补丁视图，read 开文件当前内容。
  */
-export function IntendedPreview(props: FactoryLocalProps<typeof TOOLCARD_FACTORY, 'preview'>): ReactNode {
+export function IntendedPreview(props: FactoryLocalInputProps<typeof TOOLCARD_FACTORY, 'preview'>): ReactNode {
   const { intended, summary, cwd, targetPath, change } = props
   // 补丁数据两档：还在跑时按参数 + 盘上现值推演（intended），落地后由工具结果带来实际改动
   // （change，adapter 按 callId 缝回的工具卡字段）。两者同形，取先有的一方。
@@ -644,7 +727,7 @@ export function IntendedPreview(props: FactoryLocalProps<typeof TOOLCARD_FACTORY
  * 对话页在 running 期只有 intended、落地后 intended 归 null，于是同一位置从
  * 「将做的改动」平滑换成「这次改动」，不会两个 diff 叠在一起。
  */
-export function IntendedBody(props: FactoryLocalProps<typeof TOOLCARD_FACTORY, 'bodyExtra'>): ReactNode {
+export function IntendedBody(props: FactoryLocalInputProps<typeof TOOLCARD_FACTORY, 'bodyExtra'>): ReactNode {
   const intended = props.intended
   const change = props.change
   if (intended !== null) {
@@ -681,7 +764,7 @@ export function IntendedBody(props: FactoryLocalProps<typeof TOOLCARD_FACTORY, '
 }
 
 /** 「在轨迹中查看」药丸（对话页独有）：切到轨迹页并聚焦这一条。 */
-export function TraceJumpButton(props: FactoryLocalProps<typeof TOOLCARD_FACTORY, 'trailing'>): ReactNode {
+export function TraceJumpButton(props: FactoryLocalInputProps<typeof TOOLCARD_FACTORY, 'trailing'>): ReactNode {
   return (
     <button
       type="button"
