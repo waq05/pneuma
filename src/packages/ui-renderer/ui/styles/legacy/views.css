@@ -1469,6 +1469,16 @@
   font-size: var(--dsc-fs-tool);
 }
 
+/* 「改动」快照挂在这张预览页签时：hunks 命中的块（段落 / 标题 / 列表 / 表格 / 代码块）
+   标色，让「看渲染」和「看改了什么」出现在同一个视图里。精度到块——markdown 渲染后
+   拿不到行内位置（见 ui-primitives/ui/markdown.tsx 的 rehypeSourceLines）。 */
+.file-md .md-changed {
+  background: var(--dsc-diff-add-bg);
+  border-radius: var(--dsc-r-badge);
+  box-shadow: inset 3px 0 0 var(--dsc-green);
+  padding-left: 8px;
+}
+
 .entry-text .markdown > :first-child,
 .file-md > :first-child {
   margin-top: 0;
@@ -4226,6 +4236,79 @@ body.resizing iframe {
   font-size: var(--dsc-fs-tool);
   line-height: 1.55;
   color: var(--dsc-text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ── 会话流里的围栏代码块：头部条（语言 / 折行 / 复制）与代码体同一张卡片 ──
+   卡片自己当框，内层 pre 让出边框与圆角，免得出现「框中框」；头部条常显但低对比，
+   hover 与激活态才提亮。面板预览里的 markdown 也走这套，两处外观一致。 */
+.md-code-block {
+  margin: 0.7em 0;
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-block);
+  background: var(--dsc-fill-quaternary);
+  overflow: hidden;
+}
+
+.md-code-block .file-code-body > pre.shiki {
+  margin: 0;
+  padding: 2px 12px 10px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.md-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 30px;
+  padding: 3px 6px 3px 10px;
+  border-bottom: 1px solid var(--dsc-stroke-4);
+}
+
+.md-code-lang {
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-caption);
+  line-height: 1;
+  color: var(--dsc-text-quaternary);
+}
+
+.md-code-acts {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.md-code-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dsc-r-control);
+  background: transparent;
+  color: var(--dsc-text-quaternary);
+  cursor: pointer;
+}
+
+.md-code-act:hover {
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-secondary);
+}
+
+.md-code-act[aria-pressed='true'],
+.md-code-act[data-copied='true'] {
+  color: var(--dsc-text-primary);
+}
+
+/* 折行态：超长行按可用宽度折行，不再横向滚动（行号只出现在行首，续行靠左） */
+.md-code-block .file-code-body--wrap > pre.shiki {
+  overflow-x: hidden;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

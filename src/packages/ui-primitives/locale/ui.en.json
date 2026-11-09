@@ -1,5 +1,9 @@
 {
   "primitives.code.truncated": "File is large; only the first {n} lines are highlighted",
+  "primitives.code.wrap": "Wrap lines",
+  "primitives.code.unwrap": "No wrap",
+  "primitives.code.copy": "Copy code",
+  "primitives.code.copied": "Copied",
   "primitives.sound.1": "Soft Two-Tone",
   "primitives.sound.2": "Glass Chime",
   "primitives.sound.3": "Soft Marimba",

@@ -154,6 +154,19 @@ export function IconCopy(props: IconProps): JSX.Element {
   )
 }
 
+/** 折行：围栏代码块头部条上的「自动换行」开关（关着时超长行横向滚动）。 */
+export function IconWrapLines(props: IconProps): JSX.Element {
+  return base(
+    <>
+      <path d="M3 6h18" />
+      <path d="M3 12h15a3 3 0 1 1 0 6h-4" />
+      <path d="m16 16-2 2 2 2" />
+      <path d="M3 18h7" />
+    </>,
+    props,
+  )
+}
+
 export function IconSwap(props: IconProps): JSX.Element {
   return base(
     <>

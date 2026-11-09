@@ -30,10 +30,11 @@
  * @module dsc-ui-shell/platform/markdown
  */
 import { createContext, Fragment, memo, useContext, useEffect, useMemo, useRef, useState, type JSX, type ReactNode } from 'react'
-import ReactMarkdown, { type Components } from 'react-markdown'
+import ReactMarkdown, { type Components, type Options } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { createT } from '@dsc/ui-core'
 import { highlightToLines, type HighlightedCodeLine } from './highlight'
+import { IconCheck, IconCopy, IconWrapLines } from './icons'
 import { joinPath } from './paths'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 import zh from '../locale/ui.zh.json'
@@ -73,6 +74,73 @@ const MARKDOWN_ENV = createContext<MarkdownEnv>({ base: '', streaming: false })
 
 /** remark 插件表也提成常量：数组每帧新建会让 react-markdown 重建整条解析管线。 */
 const REMARK_PLUGINS = [remarkGfm]
+
+/**
+ * 挂源行号的块级标签。只有块级挂——改动标记的精度就到块（段落 / 标题 / 列表项 /
+ * 表格 / 代码块），行内元素（strong / em / 行内 code）标不出来也没有合适的视觉位置。
+ */
+const LINE_TAGGED_TAGS = new Set([
+  'p',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'ul',
+  'ol',
+  'li',
+  'table',
+  'thead',
+  'tbody',
+  'tr',
+  'blockquote',
+  'hr',
+  'div',
+  'section',
+  'article',
+  'details',
+  'summary',
+])
+
+/** hast 节点里这个插件要读的那几项（只用到通用形状，不引 unist 类型）。 */
+interface SourceLineNode {
+  tagName?: string
+  properties?: Record<string, unknown>
+  position?: { start?: { line?: number }; end?: { line?: number } } | undefined
+  children?: SourceLineNode[]
+}
+
+/**
+ * rehype 插件：把块级元素的源行区间写成 `data-line-start` / `data-line-end`。
+ *
+ * 为什么需要：react-markdown 渲出来的 DOM 不带「我来自源文件第几行」，而「改动发生在
+ * 第几行」只有 hunks 能给（`DiffLineView.newLine`）。两边要能对上，得先把源行号带进
+ * 渲染结果；下一步由 `MarkdownView` 的 effect 按改动区间给命中的块挂 `.md-changed`。
+ */
+function rehypeSourceLines(): (tree: SourceLineNode) => void {
+  const mark = (node: SourceLineNode): void => {
+    for (const child of node.children ?? []) mark(child)
+    const tag = node.tagName
+    const start = node.position?.start?.line
+    if (typeof tag !== 'string' || !LINE_TAGGED_TAGS.has(tag) || start === undefined) return
+    const end = node.position?.end?.line
+    node.properties = {
+      ...(node.properties ?? {}),
+      'data-line-start': String(start),
+      ...(end === undefined ? {} : { 'data-line-end': String(end) }),
+    }
+  }
+  return (tree): void => {
+    mark(tree)
+  }
+}
+
+/** rehype 插件表：与 remark 一样提成常量，避免每帧新建导致解析管线重建。 */
+const REHYPE_PLUGINS = [rehypeSourceLines] as unknown as Options['rehypePlugins']
+
+/** 没挂改动快照时的空区间表：模块级常量，免得 memo 的入参每帧新引用。 */
+const NO_CHANGED_RANGES: ReadonlyArray<readonly [number, number]> = []
 
 /**
  * 内嵌图片缓存的**字符预算**（约 24 MB 的 base64 文本，也就是 18 MB 上下的原图）。
@@ -263,8 +331,51 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
   }, [code, key, lang, streaming])
   // 只认**这一份**代码的高亮结果：换了代码就先亮纯文本，不拿上一版顶着（那会显示旧内容）。
   const highlighted = lines !== null && lines.key === key ? lines.value : null
+  /** 折行开关：只作用于这一块，默认关（超长行横向滚动，跟编辑器一致）。 */
+  const [wrap, setWrap] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const copyTimer = useRef<number | null>(null)
+  useEffect(() => () => {
+    if (copyTimer.current !== null) window.clearTimeout(copyTimer.current)
+  }, [])
+  const copy = (): void => {
+    // 非安全上下文（http 打开的面板）里剪贴板会被挡：失败就当没点，别把异常抛到界面。
+    void navigator.clipboard
+      .writeText(code)
+      .then(() => {
+        setCopied(true)
+        if (copyTimer.current !== null) window.clearTimeout(copyTimer.current)
+        copyTimer.current = window.setTimeout(() => setCopied(false), 1600)
+      })
+      .catch(() => {})
+  }
   return (
-    <div className="file-code-body">
+    <div className={wrap ? 'file-code-body file-code-body--wrap' : 'file-code-body'}>
+      <div className="md-code-head">
+        <span className="md-code-lang">{lang}</span>
+        <span className="md-code-acts">
+          <button
+            type="button"
+            className="md-code-act"
+            aria-pressed={wrap}
+            title={wrap ? t('primitives.code.unwrap') : t('primitives.code.wrap')}
+            aria-label={wrap ? t('primitives.code.unwrap') : t('primitives.code.wrap')}
+            onClick={() => setWrap((on) => !on)}
+          >
+            <IconWrapLines />
+          </button>
+          <button
+            type="button"
+            className="md-code-act"
+            data-copied={copied ? 'true' : undefined}
+            title={copied ? t('primitives.code.copied') : t('primitives.code.copy')}
+            aria-label={copied ? t('primitives.code.copied') : t('primitives.code.copy')}
+            onClick={copy}
+          >
+            {copied ? <IconCheck /> : <IconCopy />}
+          </button>
+        </span>
+      </div>
       <pre className="shiki">
         <code>
           {highlighted === null
@@ -290,7 +401,7 @@ function CodeBlock({ code, lang, streaming }: { code: string; lang: string; stre
 function MarkdownCode({ className, children, node }: {
   className?: string | undefined
   children?: ReactNode
-  node?: { position?: { start?: { offset?: number } } | undefined } | undefined
+  node?: { position?: { start?: { offset?: number; line?: number } } | undefined } | undefined
 }): JSX.Element {
   const { streaming } = useContext(MARKDOWN_ENV)
   const match = /language-([\w-]+)/.exec(className ?? '')
@@ -299,13 +410,17 @@ function MarkdownCode({ className, children, node }: {
   // key 用这块代码在源文本里的起始偏移：流式增长时前面的块偏移不变，React 才会复用
   // 同一个 CodeBlock 实例（连同已经算好的高亮），而不是按位置重建。
   const offset = node?.position?.start?.offset
+  const line = node?.position?.start?.line
   return (
-    <CodeBlock
-      key={offset === undefined ? undefined : 'code:' + String(offset)}
-      code={raw}
-      lang={match[1] as string}
-      streaming={streaming}
-    />
+    // 外层 div 只为挂源行号（「改动」快照命中时整块标色）；代码块自身的 DOM 骨架不动。
+    <div className="md-code-block" data-line-start={line === undefined ? undefined : String(line)}>
+      <CodeBlock
+        key={offset === undefined ? undefined : 'code:' + String(offset)}
+        code={raw}
+        lang={match[1] as string}
+        streaming={streaming}
+      />
+    </div>
   )
 }
 
@@ -343,20 +458,49 @@ const MARKDOWN_COMPONENTS: Components = {
  * streaming 由调用方给（会话流传这一行是不是直播尾）：只在流式中改变代码块上色的
  * 时机，不影响其余渲染。
  */
-export const MarkdownView = memo(function MarkdownView({ text, path, fsRead, streaming = false }: {
+export const MarkdownView = memo(function MarkdownView({ text, path, fsRead, streaming = false, changedRanges }: {
   text: string
   path: string
   /** 相对路径图片的解析口；缺省时相对路径图片显示占位。 */
   fsRead?: FsRead | undefined
   /** 这段正文还在增长：代码块等它停顿一下再上色（见 CodeBlock 的说明）。 */
   streaming?: boolean
+  /**
+   * 改动覆盖的新文件行区间（1 基、闭区间，来自 hunks 的 `newStart..newStart+newCount-1`）：
+   * 渲染后命中的块挂 `.md-changed`。缺省 / 空数组 = 不标。
+   */
+  changedRanges?: ReadonlyArray<readonly [number, number]> | undefined
 }): JSX.Element {
   const base = path.slice(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')))
   const env = useMemo<MarkdownEnv>(() => ({ base, fsRead, streaming }), [base, fsRead, streaming])
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const ranges = changedRanges ?? NO_CHANGED_RANGES
+  // 渲染完再把「改过」标到块上：DOM 刚生成时还没有类名，这里按 rehypeSourceLines 写下的
+  // data-line-* 与改动区间求交。ranges 为空直接跳过，不白遍历一遍 DOM。
+  useEffect(() => {
+    const root = bodyRef.current
+    if (root === null || ranges.length === 0) return
+    // 已经标上的外层块：内层块命中同一个改动时不再叠一层底色（表格里的行、列表里的段落）。
+    const marked: HTMLElement[] = []
+    for (const node of root.querySelectorAll<HTMLElement>('[data-line-start]')) {
+      const start = Number(node.dataset['lineStart'] ?? '')
+      const end = Number(node.dataset['lineEnd'] ?? '')
+      if (Number.isNaN(start)) continue
+      const tail = Number.isNaN(end) ? start : end
+      const hit = ranges.some(([from, to]) => start <= to && tail >= from)
+      if (!hit) {
+        node.classList.remove('md-changed')
+        continue
+      }
+      if (marked.some((outer) => outer.contains(node))) continue
+      node.classList.add('md-changed')
+      marked.push(node)
+    }
+  }, [text, ranges])
   return (
     <MARKDOWN_ENV.Provider value={env}>
-      <div className="file-md">
-        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
+      <div className="file-md" ref={bodyRef}>
+        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
           {text}
         </ReactMarkdown>
       </div>

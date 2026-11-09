@@ -1,5 +1,9 @@
 {
   "primitives.code.truncated": "文件较大，仅高亮前 {n} 行",
+  "primitives.code.wrap": "自动换行",
+  "primitives.code.unwrap": "取消换行",
+  "primitives.code.copy": "复制代码",
+  "primitives.code.copied": "已复制",
   "primitives.sound.1": "双音轻抚",
   "primitives.sound.2": "玻璃清鸣",
   "primitives.sound.3": "柔木琴",
