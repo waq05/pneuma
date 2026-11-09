@@ -267,6 +267,8 @@ export function onAppearanceRequest(listener: (patch: AppearancePatch) => void):
  */
 export {
   setDockPreview,
+  /** 开预览页签并顺手挂上这道改动的差异快照（页签头部可切「改动」视图）。 */
+  setDockFileView,
   setDockReview,
   /** 把某个子智能体的运行记录开到右侧栏（队友行、状态面板点一行都走它）。 */
   setDockSubagent,

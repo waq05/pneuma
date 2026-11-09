@@ -77,7 +77,9 @@ import zh from '../locale/ui.zh.json'
 import en from '../locale/ui.en.json'
 // 画图的那三块留在这里（它们随布局插件的 bundle 走）；共享状态全在 @dsc/ui-runtime。
 import { UpdateButton } from './update-button'
-import { ReviewPane } from './review-pane'
+// 并排审查面板已停用（2026-11-08）：审查统一走右侧栏的文件预览页签。组件文件先留着，
+// 确认没人再要就整块删。
+// import { ReviewPane } from './review-pane'
 
 /** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
 const t = createT({ zh, en })
@@ -634,7 +636,9 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
                 {review === null ? (
                   <ThreadResizer width={threadWidth} onCommit={commitThreadWidth} onReset={resetThreadWidth} />
                 ) : null}
-                <ReviewPane />
+                {/* 并排审查面板已停用（2026-11-08）：审查与 Git 改动预览统一到右侧栏的文件预览页签
+                    （能按扩展名渲染 markdown / 代码 / 表格 / 图片）。旧入口先留着，确认没人再要就整块删。 */}
+                {/* <ReviewPane /> */}
               </div>
             </>
           ) : (

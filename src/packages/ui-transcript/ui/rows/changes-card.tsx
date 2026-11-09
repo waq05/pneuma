@@ -7,7 +7,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { DiffRows, FileIcon, createT, setDockPreview, setDockReview, type ChangedFileView } from '@dsc/ui'
+import { DiffRows, FileIcon, createT, setDockFileView, setDockPreview, type ChangedFileView } from '@dsc/ui'
 import { baseNameOf, displayPathOf, findLast, useHoverDelay, anchorNameOf, anchorPositioningSupported } from '@dsc/ui-primitives'
 import type { Row } from '../shared'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
@@ -185,9 +185,18 @@ export function ChangesCard({ rows, cwd }: { rows: readonly Row[]; cwd: string }
   const totalRemoved = files.reduce((sum, file) => sum + file.removed, 0)
   const single = files.length === 1 ? files[0] : undefined
   const visible = expanded ? files : files.slice(0, COLLAPSED_ROWS)
-  /** 开审查栏：把这一轮的清单与下标交给它（旧界面：并排右栏定位到该文件）。 */
+  /**
+   * 点「审查」/卡头：在右侧栏开这个文件的预览页签（渲染好的 markdown / 代码 / 表格），
+   * 并把这一刀的差异快照一起挂上——页签头部可以再切回「改动」看 diff。
+   *
+   * 旧实现把整份清单交给并排审查面板（setDockReview），面板只画 hunks、渲染不了文件格式；
+   * 现在统一到右侧栏的预览页签。旧入口先注释保留，等并排面板确认退役再删。
+   */
   const reviewAt = (index: number): void => {
-    setDockReview({ files, index, cwd })
+    const file = files[index]
+    if (file === undefined) return
+    // setDockReview({ files, index, cwd })
+    setDockFileView({ path: file.path, patch: file })
   }
   /** 进文件预览页签（看文件当前内容，审查看的是修改当时的快照）。 */
   const openAt = (path: string): void => {

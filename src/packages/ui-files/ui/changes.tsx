@@ -13,9 +13,22 @@
  * @module dsc-ui-shell/plugins/files/changes
  */
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { DiffRows, HUMAN_WAIT_TIMEOUT_MS, IconChevronDown, IconChevronRight, createT, toastErr, toastOk, useHostChannel } from '@dsc/ui'
+import {
+  DiffRows,
+  HUMAN_WAIT_TIMEOUT_MS,
+  IconChevronDown,
+  IconChevronRight,
+  createT,
+  setDockFileView,
+  setDockPreview,
+  toastErr,
+  toastOk,
+  useHostChannel,
+  useHostSelector,
+} from '@dsc/ui'
 import {
   parseUnifiedDiff,
+  readCwd,
   splitUnifiedDiffByFile,
   useDialogFocus,
   type UnifiedFileDiff,
@@ -90,6 +103,8 @@ export function ChangesPanel(): ReactNode {
   const [committing, setCommitting] = useState(false)
   /** 提交历史（面板第一次打开时读一次；提交/刷新后重读）。 */
   const [log, setLog] = useState<LogLine[] | null>(null)
+  /** 预览页签按绝对路径登记（宿主 git 回的是 cwd 相对路径，fs-read 才接受相对）。 */
+  const cwd = useHostSelector(readCwd) ?? ''
 
   const refresh = useCallback((): void => {
     void channel
@@ -144,6 +159,48 @@ export function ChangesPanel(): ReactNode {
         setExpanded(null)
         setError(cause instanceof Error ? cause.message : String(cause))
       })
+  }
+
+  /** git 的 cwd 相对路径 → 预览页签登记的绝对路径（页签去重与 fs-read 都认绝对路径最稳）。 */
+  const absoluteOf = (relative: string): string => {
+    if (cwd === '') return relative
+    return `${cwd.replace(/[\\/]+$/, '')}/${relative.replace(/^[\\/]+/, '')}`
+  }
+
+  /**
+   * 点一行文件：在右侧栏开这个文件的**预览页签**（渲染好的 markdown / 代码 / 表格），
+   * 并把这一份改动挂成页签里的「改动」视图。
+   *
+   * 宿主合成不出 diff 的情形（二进制 / 超过上限 / 未跟踪目录整条）只开预览页签，
+   * 那句说明留在面板 notice 上——不给出一个空白的 diff。
+   */
+  const openFileView = (group: string, relative: string): void => {
+    const payload = group === 'staged' ? { file: relative, staged: true } : { file: relative }
+    void channel
+      .invoke<{ diff: string; note?: string }>('dock', ['git-diff', payload])
+      .then((data) => {
+        const note = String(data?.note ?? '')
+        const path = absoluteOf(relative)
+        if (note !== '') setError(note)
+        const hunks = parseUnifiedDiff(String(data?.diff ?? ''))
+        if (hunks.length === 0) {
+          setDockPreview({ path })
+          return
+        }
+        let added = 0
+        let removed = 0
+        for (const hunk of hunks) {
+          for (const line of hunk.lines) {
+            if (line.kind === 'add') added += 1
+            else if (line.kind === 'remove') removed += 1
+          }
+        }
+        setDockFileView({
+          path,
+          patch: { path, added, removed, hunks, status: group === 'untracked' ? 'added' : 'modified' },
+        })
+      })
+      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
   }
 
   /** 暂存 / 取消暂存一批文件（写类 op：宿主侧过审批，界面等回执）。 */
@@ -237,9 +294,7 @@ export function ChangesPanel(): ReactNode {
         title={t('files.group.staged', { count: status.staged.length })}
         files={status.staged}
         stats={status.stagedStats}
-        expanded={expanded}
-        diffData={diffData}
-        onShowDiff={(file) => toggleDiff('staged', file)}
+        onOpenFile={(file) => openFileView('staged', file)}
         onStage={(files) => stage('git-unstage', files, t('files.toast.unstaged'))}
         stageTip={t('files.action.unstage')}
       />
@@ -248,9 +303,7 @@ export function ChangesPanel(): ReactNode {
         title={t('files.group.unstaged', { count: status.unstaged.length })}
         files={status.unstaged}
         stats={status.unstagedStats}
-        expanded={expanded}
-        diffData={diffData}
-        onShowDiff={(file) => toggleDiff('unstaged', file)}
+        onOpenFile={(file) => openFileView('unstaged', file)}
         onStage={(files) => stage('git-stage', files, t('files.toast.staged'))}
         stageTip={t('files.action.stage')}
       />
@@ -259,9 +312,7 @@ export function ChangesPanel(): ReactNode {
         title={t('files.group.untracked', { count: status.untracked.length })}
         files={status.untracked}
         stats={status.untrackedStats}
-        expanded={expanded}
-        diffData={diffData}
-        onShowDiff={(file) => toggleDiff('untracked', file)}
+        onOpenFile={(file) => openFileView('untracked', file)}
         bare
       />
       {/* 提交区：打开提交对话框（列出将提交的文件 = 已暂存 + 可选未暂存，走写类 op 的审批）。 */}
@@ -323,9 +374,8 @@ function GitGroup(props: {
   title: string
   files: readonly string[]
   stats?: Record<string, GitFileStat>
-  expanded: Expanded | null
-  diffData: DiffData
-  onShowDiff?: (file: string) => void
+  /** 点一行文件：在右侧栏开它的预览页签（渲染好的文件 + 可切的「改动」视图）。 */
+  onOpenFile?: (file: string) => void
   /** 行尾的暂存/取消暂存动作（未给就不画这颗钮）。 */
   onStage?: (files: string[]) => void
   /** 那颗钮的提示词（「暂存」/「取消暂存」）。 */
@@ -350,17 +400,16 @@ function GitGroup(props: {
         props.files.map((file) => {
           const path = props.bare === true ? file : fileOf(file)
           const stat = props.stats?.[path]
-          const isOpen = props.expanded !== null && props.expanded.group === props.id && props.expanded.file === path
           return (
             <div className="git-file-block" key={file}>
-              <div className="git-file" data-expanded={isOpen || undefined}>
+              <div className="git-file">
                 <button
                   type="button"
                   className="git-file-name"
                   data-tip={file}
-                  disabled={props.onShowDiff === undefined}
+                  disabled={props.onOpenFile === undefined}
                   onClick={() => {
-                    props.onShowDiff?.(path)
+                    props.onOpenFile?.(path)
                   }}
                 >
                   {file}
@@ -383,15 +432,6 @@ function GitGroup(props: {
                   </button>
                 )}
               </div>
-              {isOpen ? (
-                <GitDiffView
-                  title={path}
-                  all={false}
-                  inline
-                  diff={props.diffData}
-                  onClose={() => props.onShowDiff?.(path)}
-                />
-              ) : null}
             </div>
           )
         })}
