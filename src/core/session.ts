@@ -1667,7 +1667,16 @@ export function uuidOf(filePath: string): string {
 
 /** T30：会话库操作撞上「另一个窗口开着它」时的统一说法。 */
 function busyLeaseMessage(filePath: string): string {
-  return `会话正在另一个 Pneuma 窗口使用，先关掉那边再操作：${basename(filePath)}`
+  const text = `会话正在另一个 Pneuma 窗口使用，先关掉那边再操作：${basename(filePath)}`
+  // 锁文件里记着持有者 pid，附上来方便用户去任务管理器里找；读不到就保持原文案。
+  // （后缀必须与 lockfile.ts 的 LOCK_SUFFIX 一致：`.lock`）
+  try {
+    const info = JSON.parse(readFileSync(`${filePath}.lock`, 'utf8')) as { pid?: unknown }
+    if (typeof info.pid === 'number') return `${text}（锁的持有进程 pid ${String(info.pid)}）`
+  } catch {
+    // 读不到锁文件（还没写、已被清、半截 JSON）：用原文案
+  }
+  return text
 }
 
 
