@@ -15681,3 +15681,290 @@ dsh 的机制，不要有遗漏」。四条线并行只读调研（运行时、�
 - 一次性仍然进名册，也会被 `roster.json` 的 200 条上限挤掉。挤掉之后记录文件还在盘上，但界面
   里就找不到了——这条老问题没动。
 - 一次性的「移除」按钮照旧可用：移除会连运行记录文件一起删。dsh 那边没有删除入口。
+
+## 2026-11-08：审查与 Git 改动预览统一到右侧栏的预览页签
+
+### 为什么
+
+「文件已更改」卡点「审查」原来打开并排审查面板（`src/packages/ui-layout/ui/review-pane.tsx`），
+它只渲染宿主算好的 `hunks`。同一份 markdown 在右侧栏的预览页签里是会渲染的文档，在审查面板里
+只是「+ 开头的一串绿行」；Git 变更面板点一行文件同理（`src/packages/ui-files/ui/changes.tsx`
+的就地 `GitDiffView`）。用户的要求是「统一成右侧栏打开文件的那条路，因为它能按扩展名渲染」。
+
+### 改了什么
+
+- 新增 `setDockFileView({ path, patch })`（`src/packages/ui-dockkit/ui/dock-state.ts`）：把补丁源挂进
+  内存那份 `patchSources`，然后开**预览页签**（不是补丁页签）。「重启后快照失效」的边界没变。
+- 预览页签（`src/packages/ui-preview/ui/ui.tsx` 的 `PreviewBody`）读 `useDockPatchSource(path)`：
+  有快照时头部多一组 +N/−N 与「改动 / 预览」切换。默认仍是渲染视图——「统一成文件预览」的
+  字面要求；想看改了什么就点一下「改动」。
+- 轮尾「文件已更改」卡的「审查」（`src/packages/ui-transcript/ui/rows/changes-card.tsx` 的 `reviewAt`）
+  改走 `setDockFileView`；原来的 `setDockReview` 调用注释保留。
+- Git 变更面板单文件行（`src/packages/ui-files/ui/changes.tsx` 的 `openFileView`）：取 `git-diff` 文本
+  →`parseUnifiedDiff` 合成 `ChangedFileView` →`setDockFileView`。路径从 cwd 相对拼成绝对，
+  页签去重与 `fs-read` 都按绝对路径。合成不出 diff 的（二进制 / 过大 / 未跟踪目录整条）只开
+  预览页签，宿主那句说明落到面板 notice。就地展开那一段（`isOpen` / 块）已删。
+- 并排审查面板停用：`src/packages/ui-layout/ui/app.tsx` 的 `<ReviewPane />` 与 import 注释掉；
+  组件文件、`setDockReview` / `DockReview`、`layout.review.*` 词条、`.diff-pane` 样式先留着。
+- 渲染视图里同时标出改过的块：`MarkdownView` 新增 `changedRanges`（hunks 的
+  `newStart..newStart+newCount-1`），`markdown.tsx` 里加 `rehypeSourceLines` 插件把块级元素的源行
+  写进 `data-line-start/end`，effect 按区间给命中块挂 `.md-changed`（样式在
+  `ui-renderer/ui/styles/legacy/views.css`）。嵌套命中只标最外层；代码块在 `MarkdownCode` 外包一层
+  `div.md-code-block` 挂行号（代码块自身的 DOM 骨架不动）。
+- 行内改不动到：markdown 渲染后没有行内锚点，改动的精度只到块（段落 / 标题 / 列表 / 表格 / 代码块）。
+
+### 验证
+
+- 根 `typecheck`、`ui-shell typecheck` 0 错。
+- 根 `build`、`ui-shell build` 通过；`check:style` 1263 个文件全过；`check:ui` 64/64 全过
+  （其中 `ui-status-panel-test` 的「点文件行就地展开 diff」两条断言按新行为改写：改成断言
+  `openFileView` + `setDockFileView`，并反向钉住 GitGroup 里不再有 `GitDiffView`）。
+- 没起桌面壳做截图自查：本轮只改界面逻辑与词条，样式类名都沿用既有的。
+
+### 边界
+
+- 预览读的是**盘上当前内容**；原来审查面板看的是「改那一刻的快照」。同一张页签两样都能看，
+  但不是同一份数据：文件之后被别的工具改过，渲染视图跟着变，diff 仍是快照。
+- `patchSources` 只在内存：重启后预览页签还在，但「改动」按钮消失（没有快照），不报错。
+- Git 面板的绝对路径是前端拼的（`cwd + '/' + relative`）。Windows 下反斜杠与正斜杠混用
+  没问题（`fs-read` 走 `path.resolve`），但页签去重按字符串：与其他入口给的反斜杠绝对路径
+  可能不是同一串，同一文件有机会开两张页签。要彻底治就统一由宿主回绝对路径。
+
+## 2026-11-09：在跑的队友也能看运行记录（拆掉 2026-11-05 的遗留门）
+
+### 报障
+
+在状态面板的「子智能体」里点 `reviewer-1`（一个正在跑的队友），弹出一句「reviewer-1 还在跑，
+结束之后才能打开运行记录」，点不开。用户以为界面坏了：同一个队友，日志就在盘上，TUI 早就能看。
+
+### 门在哪、它防的前提为什么没了
+
+- 门原来在 `src/packages/ui-team/ui/ui.tsx:155-164`（2026-11-05 写的）：`teammateReader.open` 见
+  `state === 'working'` 就 `toastErr` 回绝。当时的顾虑是「那份日志正被它写，不能同时被当
+  成一条会话打开」。
+- 这个顾虑对**会话**成立，对这个入口不成立：`open` 从来不调 `openSession`，走的是宿主的
+  `peekTranscript`，`src/packages/subagent/index.ts:862-872` 用 `Session.load(..., { lease: false })`
+  读，注释自己就写着「队友可能正活着写它」。
+- 半截行也不是问题：`src/core/session.ts:596-602` 解析不了的行直接跳过（最多丢一条，下一拍
+  补上），`src/core/session.ts:734-741` 没有租约就不做修复落盘。
+- TUI 一直是看活的：`src/packages/tui/app/App.tsx:948-969` 打开期间按快照变化重读，节流到
+  每次至少 400ms；右栏的子智能体页签也早就把 `working` 传给跟读（`ui-team/ui/ui.tsx:697,718`）。
+  所以只是正文区这条路多了一道门。
+- 另外两处遗留：就算放行，正文区也不跟读——`working={false}` 写死、`PeekView` 默认也是
+  false；被打开的那位还是点下去那一刻的 `TeammateView` 快照（同文件 `:88-99`），收工后头部
+  的状态词永远停在「运行中」。
+
+### 改了什么
+
+- `src/packages/ui-team/ui/ui.tsx:155-169`：删掉 `state === 'working'` 的回绝分支，`open` 直接
+  `openReader(mate)`；那段注释改成「为什么在跑的也能读」——lease:false 的只读重放、坏行跳过、
+  没有租约不落盘、名册翻成已完成之后跟读自己停。
+- 同文件 `:207`、`:228`：`TeamEntry` 用 `props.useStore((state) => state.list)` 读共享席位里的
+  名册，渲染 `<TeammateReader mates={list} />`。
+- 同文件 `:279-295`：`TeammateReader` 改收 `{ mates }`；新增的 `useMemo`（放在所有提前 return
+  之前）按 `sameFile(row.file, snapshot.file)` 从名册找**当前这一位**，找不到才回落快照；
+  `const working = mate !== null && mate.state === 'working'`。
+- 同文件 `:370-373`：头部补 `<UsedTime mate={mate} />`——在跑每秒跳、收工显示总耗时，与右栏
+  子智能体页签复用同一个组件，没有新增样式。
+- 同文件 `:395-397`：`PeekView` / `FlowHost` 都收到算出来的 `working`（原来一个是缺省 false、
+  一个是写死 false）。
+- `src/packages/ui-team/locale/ui.zh.json` / `ui.en.json`：删掉 `team.reader.busy`（全仓已无
+  引用，`ui-locale-test` 仍绿）。
+- `src/packages/ui-status/locale/ui.zh.json:55` / `ui.en.json:55`：`status.agent.rowTip` 从
+  「还在跑的等它收工」改成「在跑的也能边跑边看」。
+- `scripts/ui-interaction-base-test.mjs:333-349`：把原来那条「还在跑的队友不许打开」翻面，钉
+  四条新契约——源码里没有 `team.reader.busy`、`open` 直接放行、跟读拿到算出来的 `working`
+  （并反向钉住没有 `working={false}`）、按名册 `sameFile` 找当前这一位且 `mates` 真的传进去。
+- 两份 README 的「已知限制」同步改写（`ui-team/README.md:17`、`ui-status/README.md:17`）。
+
+### 验证
+
+- 根 `pnpm run typecheck`：0 错；`pnpm -C ui-shell typecheck`：0 错。
+- `ui-interaction-base-test` 197/197 全过（含新增 4 条）。
+- `ui-status-panel-test` 175/175 全过。
+- `ui-locale-test`：51 个包、2969 个键、3250 处 `t()`，0 条硬编码文案，全过。
+- `check:style`：1263 个文件里 1 处失败，是 `src/packages/ui-primitives/ui/icons.tsx` 行尾
+  混用（660 处 CRLF、13 处 LF）——那是别人工作区里的在途改动，不在本次改动面；本次动的
+  6 个被扫文件单独跑 `style-check` 全过。
+- 这几条探针的命令要带别名钩子：`node --import ./scripts/_i18n-alias.mjs scripts/ui-xxx-test.mjs`。
+  裸 `node scripts/ui-xxx-test.mjs` 会在 `@dsc/ui-core` 这个构建期别名上解析失败，与本次改动无关。
+
+### 边界
+
+- 名册 3 秒一拍，收工到头部翻词最多晚一拍；这期间看到的还是「运行中」，点击行为不受影响。
+- 快照兜底保留：队友被移除（名册里没有这一位）时，已经打开的那份仍能看完，不会被当场关掉。
+- `src/packages/ui-status/ui/ui.tsx:27,350-351,1753-1754` 的注释同步改掉了（主控验收时补的三处）。
+
+## 2026-11-09：审查抓出的 14 条 P0 逐条修掉
+
+### 为什么
+
+`docs/code-review/2026-11-09/` 那份规范与架构审查在 10 个批次里报了 200 条发现，主控核对后
+保留 14 条 P0（批次 04 的「折叠偏好」降为 P1，理由见 `SUMMARY.md`）。留下它们的标准只有一条：
+**已经在出错，或者必然出错**。按性质分四类：
+
+- 对外契约的坑：P0-1（`services` 声明被丢掉）、P0-2（组合包的 `config:` 从未被读取）——仓库里
+  暂时没有使用者，但第三方照着 README 写就是空的。
+- 现网每次点开关都会走到的路：P0-3（`plugins.json` 写两遍）、P0-4（「开没开」两套判定）。
+- 安全链缺口：P0-8（队友没有沙箱 / 地板 / 钩子）、P0-9（`grep` 绕过读禁名单）、P0-10（同一条
+  命令三套分类结论）。
+- 单会话假设撞上多会话常驻：P0-5（费用只在内存）、P0-6（全局「有没有卡」）、P0-7（工具写进
+  用户正看的那条会话）；P0-11 是同一毛病的界面版——补丁快照按路径记，键不是页签。
+- 侧栏浏览器两条断链：P0-12（默认没有快照入口）、P0-13（`alert()` 事件被静默丢掉）；P0-14 是
+  Windows 上 MCP 官方示例 `"command": "npx"` 起不来。
+
+### 改了什么
+
+- **P0-1** 病因：`composeUiBootGraph` 组图时只搬了 `inject / external / immediately`，`services`
+  整项被丢掉，装载器读到空数组，「等提供者就绪再装」从来没等过。修法：那一行补一项透传
+  （`src/core/ui-manifest.ts:310`），并把它算进整图 rev；`services` 的语义（等的是另一次
+  `ui.provide` 登记的服务名，不是插件 id）写进类型注释。
+- **P0-2** 病因：`applyPatchLayers` 把组合包的 `config:` 整块落到行上，挂载侧不看，插件永远拿到
+  `plugins.json` 那一条，还不带告警。修法：`mountRow` 按「宿主直给 > patch 行 > `plugins.json`」
+  取一份传下去（`src/core/plugin-loader.ts:1606`），整块替换、不深合并；group 行的 `config` 是
+  子行数组，单独排除。
+- **P0-3** 病因：`runtime` 先 `writePluginEnabled` 判一下「能不能停」并顺手写盘，随后
+  `setPluginEnabledHot` 再写一次，点一次开关就把整份 `plugins.json`「读 → 改一条 → 写回」跑
+  两遍，中间任何并发写会被盖掉。修法：「能不能停」拆成纯判定 `canTogglePlugin`（不写盘，
+  `src/core/plugin-registry.ts`），落盘只留在唯一一处（`src/packages/runtime/index.ts:184`
+  改判之后交给热挂载那条路写）。
+- **P0-4** 病因：插件中心认旧键别名、认 `defaultDisabled`，装载器另有一份「精确 file 比对」，
+  同一份 `plugins.json` 能得出两个结论。修法：删掉装载器那份（`src/core/plugin-loader.ts:970/1038`），
+  统一走 `isPluginEnabled`；插件中心那张表也改用同一套 `entryIndexOf` + `canTogglePlugin`
+  （`src/core/plugin-registry.ts:156`），并且 `defaultDisabled` 在重建 meta 时带过去，免得结论
+  随「挂过没挂过」变脸。
+- **P0-5** 病因：费用桶是纯内存累计，每次开会话先 `clear()` 换成空 Map，而重放历史明确不重放
+  usage——切走再切回，状态栏那格整段消失。修法：从磁盘 `usage.jsonl` 按会话还原「按模型 × 峰谷」
+  的 token 桶（`src/core/usage-log.ts:439` 的 `readSessionCostBuckets`：按 1 MiB 块扫、先用
+  `"sid"` 原文预筛、半截行跳过，只搬 token 不算钱），开会话时整表替换着种回去
+  （`adapter/transcript.ts` 的 `seedCostBuckets` + `src/packages/transcript/index.ts` 的接线），
+  启动收尾统一成「先重放、再上下文、再费用」（`src/host/startup.ts:88-91`，boot 与 headless
+  同一个入口）。这条会话一行请求都没有时返回 null，不拿 0 元冒充「还没数」。
+- **P0-6** 病因：`waiting.any` 遍历全进程 waiters，goal 的自动续跑与 schedule 的投递都问这同一个
+  全局值——后台会话挂一张没人答的审批卡，眼前这条会话的目标就永久停摆。修法：登记与查询都带
+  会话归属（`src/packages/waiting/index.ts:64/78` 的 `register(owner, …)` 与 `anyFor(owner)`），
+  goal 只问自己那条（`src/packages/goal/index.ts:163`）、schedule 只问目标会话
+  （`src/packages/schedule/index.ts:227`），三个登记方 approval / plan / ask 补上会话参数；
+  `any` 保留，但只给「全进程有没有卡」这类粗口径界面用。
+- **P0-7** 病因：`todo` 全进程一个 `TodoStore`、`goal` 一份 store，工具写的是
+  `ctx.session.current()`——后台会话或队友调一次就会改掉用户眼前那份清单；而且工具写的东西
+  根本没进会话日志，重启就没了。修法：按 `ToolContext.sessionId / sessionPath` 定位调用方会话，
+  两个 store 都按会话分表（`src/packages/todo/index.ts:67-109`、`src/packages/goal/index.ts:81`），
+  写入走那条会话自己的 `appendState`，清单因此跨重启还在。
+- **P0-8** 病因：队友在 `guardsFor` 里 `new` 一条自己的 `ToolGuardRegistry`，主链上 order 5 的
+  灾难地板、8 的沙箱、20/25 的钩子对队友全部不生效。修法：删掉独立链，队友走共享的 `ctx.guards`
+  加一层薄适配器（`src/packages/subagent/index.ts:522`），把入参里的会话归属改写成队友那条，
+  本插件那两位守卫按标记身份分流、对主会话一律 defer。
+- **P0-9** 病因：`grep` 逐文件 `readFile` 全文扫，不调 `readBlockReason`，`risk: 'read'` 又让
+  审批 / 沙箱 / 地板都 defer——一条 `grep({ pattern: "KEY|SECRET" })` 就能把 `.env` 印进对话。
+  修法：搜索的逐文件读取统一过读禁名单（`src/packages/tools-default/search-tools.ts:336/424`），
+  被挡下的写成「已跳过 N 个受保护文件：谁、为什么」，不静默回「无匹配」（静默会逼模型转去 bash
+  再试）；`glob` 只列名字不读内容，按设计不拦，理由写在注释里；判定本身收在
+  `src/core/path-policy.ts` 一处，`read` / `read_image` / `ops_*` 同源。
+- **P0-10** 病因：同一条命令三套分类——审批面 `classifyCommand` 说 ask、围栏面 `evaluateCommand`
+  说 forbidden、地板 `INLINE_FLAGS` 说 deny，`git push --force` 的卡因此根本不弹。修法：提一份
+  共享的命令意图判定 `src/core/command-intent.ts`（命令名、写动词、写目标、网络段、内联 shell、
+  内层脚本），三面都从它取，各自只保留「拿到这份意图怎么判」的差异
+  （`src/core/command-policy.ts:21`、`src/packages/sandbox/execpolicy.ts:29`、
+  `src/packages/approval-floor/approval-floor.ts:34`）。
+- **P0-11** 病因：补丁快照存在一张按**文件路径**建的全局 Map 里，全仓只有 `set` 没有删除——关掉
+  补丁页签、再从文件树点开同一个文件，新页签头上挂着上一刀的 `+N/−N` 和旧 hunks。修法：快照表
+  拆成纯模块 `src/packages/ui-dockkit/ui/patch-sources.ts`（记 / 读 / 忘一张 / 清死页签 / 订阅
+  五个口），键换成**页签 id**；`setDockPreview` 与 `setDockFileView` 在同一个 `mutate` 里先算布局、
+  再按结果布局里那张页签的 id 记快照，`mutate` / `setDockSession` / `pruneDockKind` 算完新布局都
+  调一次 `forgetDeadPatches`；预览页签按 `tab.id` 读，`PreviewBody` 由 `PreviewTab` 传 `tab.id`。
+  顺带说清 2026-11-08 那条记录里「按路径的 `patchSources`」已经不存在了。
+- **P0-12** 病因：`lookWithoutApproval` 默认 false 就不注册 `browser_dock_look`，可
+  `click / hover / type / press / scroll` 五个动作全只收 ref——出厂配置下「有动作、没眼睛」。
+  修法：只读工具**恒注册**，风险档也**恒为 `read`**（登记不看开关），人批那一步放进工具自己
+   手里：默认每次调用请求一次审批卡（`forceAskReason` 跳过所有自动放行档），用户同意才读；
+   打开 `lookWithoutApproval` 才不弹卡直接读，免打扰模式直接拒、不弹卡
+   （`src/packages/dock-browser/index.ts:987-991`）。不走 `risk: 'exec'` 借道审批守卫，是因为
+   `exec` 在没有 `command` 时两头不靠：只读权限档一律拒，计划 / 探索模式只放行只读命令，
+   「看一眼」在那三种档里整档拿不到。设置面文案与中英字典同步改口。
+- **P0-13** 病因：`Page.javascriptDialogOpening / Closed` 在事件白名单里，`switch` 的 `default`
+  却静默忽略——弹窗一出来，这个视图上每条 CDP 命令都被浏览器压住，模型只看到 25 秒超时。修法：
+  照 `browser` 包已验证的形状补 `pendingDialog` 状态、写进结果最前面的提示、`dialog` 动作
+  （`dialogAction=accept|dismiss`，prompt 可带 `promptText`）、25 秒兜底自动 dismiss 并把原因
+  只带一次给模型。
+- **P0-14** 病因：Windows 上 MCP 的候选顺序是「无后缀优先」，命中的 `npx` 是 sh 包装脚本，
+  `spawn(shell: false)` 一定起不来（LSP 那边早修过同一个坑）。修法：候选顺序改成「带 PATHEXT
+  后缀优先、无后缀兜底」，实现从 `mcp` 里搬进 `src/core/executable.ts` 一份（LSP 与 MCP 共用，
+  `packages/mcp/mcp.ts` 只调它），并按 `found` 给出「没装或写错了」而不是「解析失败」的可读错误。
+
+### 第二轮收尾（同日）
+
+第一轮修完之后复审又挖出八处，几乎都落在同一条线上：**这次调用到底属于哪条会话**。有些入口还在
+回落成「用户正看着的那条会话」，于是后台会话与队友的卡会记到别人名下，或者反过来把前台的续跑
+永久钉死。
+
+- **计划僵尸卡**。病因：进程崩在「已提交计划、未获批」那一刻时，会话 jsonl 里留着 `pending`；
+  重启后计划插件把它读成一张卡并登记进 `waiting`，可 `answerPlan` 只认活卡，计划卡又是三类卡里
+  唯一没有超时的——点批准、点拒绝都是空操作，`anyFor(那条会话)` 恒真，这条会话的目标续跑就永久
+  停摆，重启也还在。修法：重启读回来的那张卡也照样能收——点批准/拒绝按用户的答案写终结状态并
+  撤卡；同一会话交来新计划时就地作废它；宿主退出时一并清掉内存。它只挡自己那条会话，全进程
+  口径的 `any` 照旧为真。
+- **四处审批入口补上会话归属**。病因：桌面 dock 的写操作、记忆写入、技能写入、侧栏浏览器
+  「看一眼」这四处只把工具名与参数递给审批，归属缺省就等于「此刻查看的会话」——后台会话的卡
+  记到别人名下，既挡了前台的目标续跑，审计也记错会话。修法：四处调用点都显式带上发起会话的
+  id 与路径。
+- **`anyFor` 进契约**。病因：按会话判卡只在插件内部成立，契约上只有全进程口径的 `register`；
+  第三方照契约实现就只能「不区分会话」，按会话查询会漏掉它们，而且没有任何地方写明这是有意的
+  兼容取舍。修法：等待服务的契约明写 `register` 的判定可以收一个会话归属、并给出 `anyFor`
+  这个按会话的查询，同时把「老式 `() => boolean` 登记对任何会话都算在等」写进注释。
+- **队友会话归属解析**。病因：队友在自己那条临时会话里跑工具，权限档、沙箱档、协作模式却记在
+  派它的会话上；MiniAgent 那条路有适配器改写，`run_code`（PTC）在脚本里直接调守卫链，绕过了
+  改写，沙箱查表落空后回落成「用户正看着的会话」的档位——用户把另一条会话切到完全访问，队友的
+  写操作就跟着免掉围栏。修法：守卫链加一层会话别名，队友启动时登记、出队即失效，问守卫之前先
+  换成归属会话，于是 MiniAgent、PTC、钩子三条路自动吃到同一份改写；归属在派活时算一次就固化，
+  并且一路走到最上层那条会话，父队友一次收工之后嵌套队友仍指得对；hooks 的 ask 卡也带上发起
+  会话。
+- **守卫侧取不到会话就拒**。病因：解析不出归属时回落成「当前会话」等于悄悄放宽，认错会话比
+  认不出更危险。修法：这条链按 fail closed 处理，拿不到归属会话就按拒走——与「守卫抛错一律
+  按拒」同一条规矩。
+- **压缩携带按会话**。病因：压缩入口把登记回调当无参函数调，`todo` / `goal` 的携带回调只能问
+  「当前会话」；后台会话压缩时，用户眼前那条会话的清单与目标被塞进了后台那条的摘要。修法：
+  压缩入口带上被压缩的那条会话，清单与目标的携带、轮尾提醒投影都按它取，调用方没带时才回落
+  到当前会话。
+- **停用行启用后保留 patch config**。病因：启动时就停用的行不挂载，行选项表里就没有它；插件
+  中心点「启用」时只能拿到磁盘那份配置，组合包在 patch 里给的 `config` 整块丢了。修法：行选项
+  在开关判定之前就登记（停用也登记），启用与重挂都按同一套三档优先级现读重建；只有这一行真的
+  不存在了才忘掉登记，免得同一个 id 后来被别的包复用、拿到上一份 patch 配置。
+- **判官用量不计入回填**。病因：判官每次评审都真花钱，落进同一本用量账；但按会话还原费用桶的
+  回填只对应会话循环里的请求，判官不走循环、实时桶里也没有它，两边口径不一致。修法：判官那一行
+  标上行来源，回填按标记跳过它。
+
+### 验证
+
+- `node scripts/check-p0.mjs`：16/16 全过（合计约 5 秒）。这是新加的总闸，按清单依次跑这批 P0
+  各自配的 `<话题>-check.mjs`，任一条红就退非零；`mcp-command-resolve-check.mjs` 只在 Windows
+  上跑，别的平台记一行 SKIP。第二轮把四条新探针挂进同一份清单：`plan-zombie-card-check`（24 条）、
+  `teammate-session-alias-check`（17 条）、`schedule-session-gate-check`（13 条）、
+  `compact-carry-session-check`（20 条）。它**不并入 `check:all`**：这批探针各自要一种本机环境
+  （真起子进程、临时 HOME、按 PATH 找命令），进 `check:all` 会让夜跑与 CI 因环境变红。命名约定
+  与用法写进 `docs/development.md`（`<话题>-check.mjs` 手挂清单、`<话题>-test.mjs` 自动发现）。
+- `command-intent-consistency-check.mjs` 单跑 148 条断言全过（P0-10 那三面的一致性就是它钉的）。
+- `node --import ./scripts/_i18n-alias.mjs scripts/ui-status-panel-test.mjs`：181 条全过（第 8 节
+  按 P0-11 的新形状重写：快照表按页签 id、两个入口都在 `mutate` 里记快照、三处清死页签；第二轮
+  再把「清死页签」那条改成 `liveTabIds()` 口径——存活集合扫全部会话的布局，`dock-state` 从
+  `patch-sources` 取的是五个口，多了 `forgetPatch`）。
+- `node scripts/dock-browser-test.mjs`：93/96，三条红都指向 `lib/` 还是修复前的产物：
+  `lib/packages/dock-browser/index.js:659` 仍是 `if (config.lookWithoutApproval)`（只读工具不是
+  恒注册、没有 `waitsForHuman`），所以「两个工具都注册」「默认 read 档且声明等人」「开关打开后
+  不再等人」这三条现在读不到新形状。同样这两条事实由读源码的 `dock-browser-look-check.mjs`
+  （28 条）覆盖，重建 `lib/` 之后应回到 96/96。
+- 根 `pnpm run typecheck`：0 错。
+- `node scripts/style-check.mjs`：本次动过的文件无告警；全仓只报
+  `src/packages/ui-primitives/ui/icons.tsx` 的行尾混用（别人在途改动，不在本次面）。
+
+### 边界
+
+- 只做 P0：P1 的五个主题（旧路径没退场、同一事实多份状态、上帝文件、同一功能三份、字符串总线）
+  一条没动。
+- P0-9 的处置是「挡住内容、不藏名字」：`glob` 仍然列出 `.env`，只有内容入口才拦。
+- P0-11 的快照仍然只在内存：重启后补丁页签照旧显示「补丁已过期」并给「打开原文件」的出口。
+- 还有一条旧注释写着「`lookWithoutApproval` 决定只读工具注册与否」
+  （`src/packages/dock-browser/index.ts:243`），是注释没跟上 P0-12 的「恒注册」；本次按范围只改
+  脚本与文档，没动实现文件里的注释。
+
+

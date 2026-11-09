@@ -122,9 +122,15 @@ host → runtime：
 - `browser_dock`（risk `exec`，每次审批）：`open` / `navigate` / `click` / `hover` / `type` /
   `press` / `scroll` / `evaluate` / `close`。
 - `browser_dock_look`：`views` / `snapshot` / `screenshot` / `console` / `network` / `wait_for`。
-  按 `computer-use` 那条既有先例决定注册与风险档——默认**不注册**，用户在「设置 → 侧栏浏览器」
-  打开 `lookWithoutApproval` 之后才以 `read` 注册（那张分区由插件自己注册，开关热生效）。
-  理由：dock 视图是用户自己的持久登录态，和 `browser.ts` 那台一次性的 Chrome 不是一回事。
+  注册与风险档按 `computer-use` 那条既有先例定，但**注册与否不跟开关走**——它恒注册，风险档也
+  恒为 `read`；默认每次调用在工具内部请求一次审批卡（`forceAskReason` 跳过所有自动放行档），
+  用户同意才读，只有用户在「设置 → 侧栏浏览器」打开 `lookWithoutApproval` 之后才不弹卡直接读
+  （那张分区由插件自己注册，开关热生效）。免打扰模式下直接拒、不弹卡。
+  为什么恒注册：不注册它模型就拿不到 ref，`click` / `hover` / `type` 这三个只收 ref 的动作全成
+  无源之水（工具说明还会让它去调一个不存在的工具）。为什么默认要审批：dock 视图是用户自己的
+  持久登录态，看一眼现状也是看他的登录页面，和 `browser.ts` 那台一次性的 Chrome 不是一回事。
+  为什么不靠 `risk: 'exec'` 借道审批守卫：`exec` 在没有 `command` 参数时两头不靠——只读权限档
+  一律拒，计划 / 探索模式只放行只读命令，「看一眼」在这三种档里整档拿不到。
 - 审批卡上要带视图 id 与目标地址（`isAgentView` 区分出「agent 自己开的」）。
 - `open` 会**等页面真的落到目标地址**（有界 8s，见第八节第 4 条）：壳那条路是「先建视图、
   再由壳去 load」，不等的话模型紧接着 snapshot 会读到一棵空树。

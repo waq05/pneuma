@@ -5,8 +5,9 @@
 ## Model Experience（模型体验）
 
 - 不注册工具、不写提示词：模型看不到这张登记表（index.ts:14-42 只有 provide 与一个 Map）。
-- 它挡的是自动续跑：goal 插件推下一轮之前问 `ctx.waiting.any`，有人等就返回 null（goal/index.ts:114-117）。
-- 定时任务投递前也问同一句（schedule/index.ts:11、203）。
+- 它挡的是自动续跑：goal 插件推下一轮之前问 `ctx.waiting.anyFor(本条会话 id)`，**这条会话**有人等就返回 null（goal/index.ts:163）。
+- 定时任务投递前问的是目标会话那一句 `anyFor`（schedule/index.ts:227）。
+- `ctx.waiting.any` 仍在，但只给「全进程有没有卡」这类粗口径界面用；判「能不能续跑 / 投递」不许用它——后台会话挂着的卡会让别的会话永久停摆（P0-6）。
 - 因此它间接改变模型体验：界面上挂着审批、计划、提问卡时，模型不会被自动叫醒继续跑（index.ts:4-5、goal/index.ts:114-117）。
 
 ## Known Limitations（已知限制）

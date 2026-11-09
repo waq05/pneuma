@@ -630,6 +630,7 @@ node scripts/plugin-inventory-check.mjs --write   # 确认插件清单的变化�
 pnpm run check:style               # 排版闸门：制表符 / 行尾空白 / BOM / 混用行尾 / 末尾缺换行，2 秒
 pnpm run check:style -- --changed  # 只查本次改动的文件（提交前用这个）
 pnpm run check:all                 # style + plugin + ui + dsh + core + remote 串起来（不含 ui:e2e）
+pnpm run check:p0                  # P0 定点门禁：16 条 <话题>-check.mjs 依次跑，任一条红就退非零（不并入 check:all）
 node scripts/dsh-real-package-e2e.mjs  # 真包验收（要联网：numa plugin add dsh-cost-meter）
 # 老探针已按 scripts/<话题>-test.mjs 命名统一收进门禁（check:ui / check:core / check:dsh
 # 都按文件名自动发现，新探针不用回来登记）。desktop/shots/ 只剩桌面端实拍脚本
@@ -640,6 +641,34 @@ node scripts/composer-test.mjs     # TUI 输入候选面板
 # 打包版实拍
 cd D:\dsc\desktop && pnpm run dist:dir     # → dist/win-unpacked/Pneuma.exe
 ```
+
+**P0 定点门禁（`check:p0`，2026-11-09 起）**：`src/**` 那 14 条 P0 修复、加上第二轮复审挖出的
+几处会话归属问题，各自配了一条 `scripts/<话题>-check.mjs`（清单现在 16 条），
+`node scripts/check-p0.mjs` 依次把它们跑完并打一张总表，任一条红就以非零退出。它也可以点名单跑
+一条（`node scripts/check-p0.mjs dock-browser-look-check.mjs`），也可以 `--list` 只列清单。
+
+这 16 条按挡的东西分四类：内核（`ui-boot-services` 的启动依赖图、`session-cost-restore` 的费用
+回填，以及 `waiting` / `todo` / `plan` / `schedule` / `compact` 五条会话口径——按会话登记、计划
+僵尸卡能被收掉、定时任务的挂卡闸逐条判、压缩携带取自被压缩那条会话）、安全（`grep-read-denylist`
+的读禁名单、`teammate-guard-chain` 的队友共享守卫链、`teammate-session-alias` 的会话归属改写、
+`command-intent-consistency` 的三面命令判定）、界面状态（`dock-patch-invalidate` 的补丁快照按页签
+id 存、存活集合取全部会话）、连接（`plugin-config-enable` 的插件开关与配置、`mcp-command-resolve`
+的命令解析、`dock-browser-look` / `dock-browser-dialog` 的侧栏浏览器链路）。
+
+它**不并入 `check:all`**：这批探针各自要一种本机环境（真起子进程、临时 HOME、按 PATH 找
+命令、真桌面壳），进了 `check:all` 会让夜跑与 CI 因环境给出与代码无关的红。也正因为如此，
+`mcp-command-resolve-check.mjs` 只在 Windows 上跑（验的是 PATH + PATHEXT 的候选顺序），
+别的平台由 `check-p0` 记一行 SKIP 并说明原因，不算失败。
+
+新增探针的命名约定（两条总闸靠命名分流，别抢）：
+
+- `<话题>-check.mjs` —— P0 / 审查期的定点探针。**不按文件名自动发现**，要手动加进
+  `scripts/check-p0.mjs` 的 `PROBES` 清单；代价是多写一行，换来的是 `check:all` 不会因为
+  某台机器缺环境而变红。
+- `<话题>-test.mjs` —— 常规回归。按文件名自动进 `check:ui` / `check:core` / `check:dsh`，
+  不用回来登记（见上面那句「三条汇总入口都按文件名自动发现」）。
+
+批跑入口的判定都只看**退出码**：探针自己打印的「N PASS / M FAIL」写法不统一，只当注释看。
 
 实拍的环境变量钩子（`desktop/electron/main/index.ts`，截图块从 `:1397` 起，
 `captureCaptionStrip` 在 `:1523`，`DSC_DESKTOP_SEARCH` / `DSC_DESKTOP_DEMO` 拼在 `:418-419`）：
@@ -1038,6 +1067,37 @@ dock 的操作名：`term-spawn` / `term-input` / `term-kill` / `fs-list` / `fs-
 
 `Dock.tsx` 四个 tab（terminal / browser / files / git），宽度夹在 300~820，双击复位 420；
 shell 候选 5 个，选中的存 renderer 的 `localStorage['dsc.dockShell']`。
+
+### 审查与 Git 改动预览都走预览页签（2026-11-08 起）
+
+「审查」与「Git 面板点一行文件」过去各自画自己的 diff：前者是并排面板
+（`src/packages/ui-layout/ui/review-pane.tsx`），后者在面板里就地展开
+（`src/packages/ui-files/ui/changes.tsx` 的 `GitDiffView`）。两条路都只认 `hunks`，markdown 到那里
+就是一串绿行。现在统一成右侧栏的**预览页签**：
+
+- 入口用 `setDockFileView({ path, patch })`（`src/packages/ui-dockkit/ui/dock-state.ts`）：先在同一个
+  `mutate` 里算出新布局，再按**结果布局里那张页签的 id** 把差异快照记进内存表
+  （`src/packages/ui-dockkit/ui/patch-sources.ts` 的 `rememberPatch`），然后开 `preview` 页签
+  （不是 `patch` 页签）。
+- 预览页签（`src/packages/ui-preview/ui/ui.tsx` 的 `PreviewBody`）用 `useDockPatchSource(tab.id)` 取快照：
+  有快照时头部多一组 +N/−N 与「改动 / 预览」切换，默认渲染视图。
+- 补丁快照（`hunks`）**按页签 id 存、只在内存**：关页签、被 `PREVIEW_MAX` 淘汰、插件停用撤页签
+  这三种情形都在布局算完之后调 `forgetDeadPatches(liveTabIds())` 清掉，不落 `dsc.dock.surfaces`
+  （重启后读不到，补丁页签显示「补丁已过期」）。存活集合由 `dock-state.ts` 的 `liveTabIds()`
+  算：扫**全部会话**的布局再并上当前 `surface`，所以切会话不会删掉别的会话的快照（只传当前
+  布局的话，从 A 切到 B 时 A 的补丁页签就变成「补丁已过期」）。按路径存的旧表已在 P0-11
+  换掉——同一文件关掉再开是另一张页签，不该捡到上一刀的 diff。
+- 工具卡点文件名那条老路（`setDockPreview({ patch })`）不变：仍开 `patch` 页签、默认 diff。
+- Git 面板回的路径是 cwd 相对，打开前拼成绝对路径（页签去重与 `fs-read` 都按绝对）；
+  合成不出 diff 的（二进制 / 超过上限 / 未跟踪目录整条）只开预览页签，说明落在面板 notice。
+- 并排审查面板已停用（`src/packages/ui-layout/ui/app.tsx` 的 `<ReviewPane />` 与 import 注释掉），
+  组件文件先留着；`layout.review.*` 词条与 `.diff-pane` 样式随组件一起留着。
+- 「全部改动」没有对应单个文件，仍是面板底部的就地 diff（`GitDiffView`）。
+- 渲染视图里同时标出改过的块：`MarkdownView` 的 `changedRanges`（由 hunks 的
+  `newStart..newStart+newCount-1` 算出）配合 `markdown.tsx` 里 `rehypeSourceLines` 插件写下的
+  `data-line-start/end`，命中的块挂 `.md-changed`。精度到块（段落 / 标题 / 列表 / 表格 / 代码块），
+  行内位置拿不到——markdown 渲染器不提供行级锚点。
+
 
 **关掉整块栏最后一张页签才是收起侧栏**（`src/packages/ui-dockkit/ui/dock-model.ts` 的 `closeTab`）：
 以前格被清空只补一张新 guide，画出来一模一样，用户点「开始」旁边的 ✕ 就像没反应。
