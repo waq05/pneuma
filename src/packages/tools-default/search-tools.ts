@@ -18,6 +18,7 @@
  */
 import { promises as fs } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { readBlockReason } from '../../core/path-policy.js'
 import type { ToolEntry } from '../../core/tools.js'
 
 /**
@@ -314,6 +315,26 @@ const displayPath = (root: string, file: string): string => relative(root, file)
 const truncatedNote = (shown: number): string =>
   `\n（只显示前 ${String(shown)} 条，还有更多；把 pattern 或 path 收窄一点再看全部）`
 
+/**
+ * 被读禁名单挡下的文件：说清「跳过了几个、都是谁、为什么」。
+ *
+ * 为什么不能静默跳过（2026-11-09 审查 P0-9）：只回一句「无匹配」，模型会以为文件不存在，
+ * 转头去 bash 里 `cat`/`grep` 再试一次——那正是这条防线要挡的路。名字只列前几个，
+ * 避免一次扫描把几百个路径铺进结果。
+ */
+const skippedNote = (files: readonly string[]): string => {
+  const shown = files.slice(0, 5).join('、')
+  const more = files.length > 5 ? '…' : ''
+  return `\n（已跳过 ${String(files.length)} 个受保护文件：${shown}${more}。凭据、私钥、密钥类文件由路径护栏统一拒读，内容不参与搜索）`
+}
+
+/**
+ * 目录列举：**只给文件名，不读内容**，所以不套读禁名单（`.env` 这个名字可以出现）。
+ *
+ * 为什么按现有设计不拦（2026-11-09 审查 P0-9 的处置）：读禁挡的是「内容进对话」，
+ * 而名字本身不是凭据；把 `.env` 从列表里藏掉反而会让模型以为它不存在。
+ * 内容入口（`grep` / `read` / `read_image` / `ops_*`）共用 `readBlockReason`，那里才是闸门。
+ */
 export const globTool: ToolEntry = {
   name: 'glob',
   description:
@@ -360,7 +381,8 @@ export const grepTool: ToolEntry = {
   name: 'grep',
   description:
     '在目录内按行搜索内容（正则或纯文本），返回 文件:行号: 内容。跳过二进制与大文件，' +
-    '并默认跳过 .gitignore 命中的文件与 node_modules/.venv/__pycache__ 等大目录。',
+    '并默认跳过 .gitignore 命中的文件与 node_modules/.venv/__pycache__ 等大目录；' +
+    '凭据/私钥/密钥类文件（.env、*.pem、id_rsa、dsc 控制文件等）不参与搜索，结果里会写明跳过了几个。',
   parameters: {
     type: 'object',
     properties: {
@@ -385,8 +407,25 @@ export const grepTool: ToolEntry = {
       : ctx.cwd
     const rootStat = await fs.stat(root)
     const lines: string[] = []
+    /**
+     * 被读禁名单挡下的文件（展示路径）。
+     *
+     * `grep` 是**逐文件读全文**的入口，必须和 `read` 共用同一份判定；否则 `risk: 'read'`
+     * 让审批/沙箱/地板三道守卫全 defer，一条 `grep({ pattern: "KEY", path: "." })` 就能
+     * 把 `.env`、私钥正文印进对话（2026-11-09 审查 P0-9 的现网活口）。
+     */
+    const skipped: string[] = []
+    // 单文件搜索时 root 就是 file，`displayPath(root, file)` 会得到空串、输出成 `:1: 内容`；
+    // 这时按 cwd 相对化，和目录搜索的展示口径保持一致。
+    const labelBase = rootStat.isFile() ? ctx.cwd : root
     /** 读一个文件、把命中的行攒进去；返回 false 表示「够数了」。 */
     const scan = async (file: string): Promise<boolean> => {
+      // 读禁判定放在 stat 之前：受保护文件连大小都不必问，更不打开。
+      const blocked = readBlockReason(file)
+      if (blocked !== null) {
+        skipped.push(displayPath(labelBase, file))
+        return true
+      }
       let stat
       try {
         stat = await fs.stat(file)
@@ -405,13 +444,16 @@ export const grepTool: ToolEntry = {
       for (let index = 0; index < split.length; index += 1) {
         if (lines.length >= maxResults) return false
         if (matcher.test(split[index])) {
-          lines.push(`${displayPath(root, file)}:${String(index + 1)}: ${split[index].trim().slice(0, 200)}`)
+          lines.push(`${displayPath(labelBase, file)}:${String(index + 1)}: ${split[index].trim().slice(0, 200)}`)
         }
       }
       return true
     }
     let truncated = false
     if (rootStat.isFile()) {
+      // 单文件搜索：整条报错比「跳过 1 个」清楚，和 read 给的拒绝原因逐字一致。
+      const blocked = readBlockReason(root)
+      if (blocked !== null) throw new Error(blocked)
       await scan(root)
     } else {
       const rules = await loadIgnoreChain(root)
@@ -424,7 +466,9 @@ export const grepTool: ToolEntry = {
         return scan(file)
       })
     }
-    if (lines.length === 0) return `（无匹配：${args.pattern}）`
-    return `${lines.join('\n')}${truncated ? truncatedNote(maxResults) : ''}`
+    const protectedNote = skipped.length === 0 ? '' : skippedNote(skipped)
+    // 「无匹配」也要带上跳过说明：否则模型会把「被拒」读成「文件不存在」。
+    if (lines.length === 0) return `（无匹配：${args.pattern}）${protectedNote}`
+    return `${lines.join('\n')}${truncated ? truncatedNote(maxResults) : ''}${protectedNote}`
   },
 }

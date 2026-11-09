@@ -224,6 +224,11 @@ export const editTool: ToolEntry = {
       )
     }
     const file = absPath(ctx.cwd, args.path)
+    // 读禁先判：edit 要把原文读出来算 diff，`changes`（hunks + baseline）会随结果进对话。
+    // 与 read 同一句提示、同样整条拒——只打码不拒会让模型知道「这文件存在且能改」，
+    // 语义比直接拒更乱（2026-11-09 审查 P0-9：edit 与 grep 是同一条根因）。
+    const blocked = readBlockReason(file)
+    if (blocked !== null) throw new Error(blocked)
     const hard = writeHardBlockReason(file)
     if (hard !== null) throw new Error(hard)
     // T35：模型读过、之后又被第三方改过的文件不许拿旧印象去改（与 write 同一台账，

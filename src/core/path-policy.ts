@@ -59,6 +59,16 @@ const READ_DENIED_EXTENSIONS = [
 /** 命中即拒读的目录片段（路径里出现这一截就整条拒）。 */
 const READ_DENIED_DIR_SEGMENTS = ['.ssh', '.aws', '.gnupg', '.docker', 'credentials', 'vault']
 
+/**
+ * dsc 自己的控制文件（只拦 `DSC_HOME` 下的那一份，别处的同名文件不归这层管）。
+ *
+ * 为什么读也要拦（2026-11-09 审查）：`plugins.json` 的条目树里存着 MCP 服务器的
+ * command / args / env（`GITHUB_TOKEN` 这类就明文写在 env 里），`hooks.json` 与
+ * `hooks-trusted.json` 是钩子配置与脚本批准名单。让模型的文件工具顺手读走、再抄进
+ * 对话与日志，等于把可执行配置连同密钥一起交出去；改它们走设置页。
+ */
+const DSC_CONTROL_BASENAMES = new Set(['plugins.json', 'hooks.json', 'hooks-trusted.json'])
+
 /** `.env.xxx` 这一族（.env.production、.env.staging…）也拒读，只放行 .env.example。 */
 export function isEnvFamily(name: string): boolean {
   const base = name.toLowerCase()
@@ -165,7 +175,18 @@ function policyPaths(target: string): string[] {
   return normalizeKey(real) === normalizeKey(literal) ? [literal] : [literal, real]
 }
 
-/** 读这个路径要不要拒。 */
+/**
+ * 读这个路径要不要拒。
+ *
+ * 这是「文件内容能不能进对话」的**唯一判定**，所有读盘入口共用：`read`、`read_image`、
+ * `ops_*` 的只读工具，以及遍历型搜索 `grep`（`packages/tools-default/search-tools.ts`）。
+ * 新加任何逐文件读内容的工具时也接这里，别在工具里再写一份名单——名单一分为二，
+ * 就会像 2026-11-09 审查里的 `grep` 那样从没人想到的那条路上漏出去。
+ *
+ * 判两遍（字面路径 + 跟到底的真实路径）：软链/junction 指到禁读文件时只判字面路径会漏。
+ * 代价是每个文件一次 `realpathSync`；遍历几万个文件时确实多一次系统调用，但搜索本来
+ * 就要逐个 `stat` + `readFile`，这点开销远小于漏读一份私钥的代价。
+ */
 export function readBlockReason(target: string): PathVerdict {
   for (const candidate of policyPaths(target)) {
     const verdict = readBlockReasonOne(candidate)
@@ -194,6 +215,14 @@ function readBlockReasonOne(target: string): PathVerdict {
   if (lowered === 'config.yaml' || lowered === 'config.yml') {
     if (normalizeKey(target).startsWith(normalizeKey(DSC_HOME))) {
       return '禁止直接读取 dsc 自己的配置：端点清单从设置页看，密钥一律不返回。'
+    }
+  }
+  if (DSC_CONTROL_BASENAMES.has(lowered)) {
+    const key = normalizeKey(target)
+    const home = normalizeKey(DSC_HOME)
+    // 用分隔符收尾，别让 `~/.dsc2/plugins.json` 这类同前缀目录蹭到判定。
+    if (key.startsWith(`${home}\\`)) {
+      return `禁止直接读取 dsc 自己的控制文件 ${name}：插件与钩子配置里可能带密钥，要改请走设置页。`
     }
   }
   return null

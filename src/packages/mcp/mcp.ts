@@ -10,9 +10,8 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync } from 'node:fs'
-import { isAbsolute, join, resolve } from 'node:path'
 import { errText as errorText } from '../../core/err-text.js'
+import { missingCommandReason, resolveExecutable } from '../../core/executable.js'
 import { asRecord } from '../../core/records.js'
 import { quoteForCmd } from '../../core/shell-quote.js'
 
@@ -78,9 +77,6 @@ export const BASE_ENV_NAMES: readonly string[] = [
   'USERPROFILE',
   'LANG',
 ]
-
-/** PATH 里没写 PATHEXT 时按这几个后缀找可执行文件。 */
-const FALLBACK_PATHEXT: readonly string[] = ['.COM', '.EXE', '.BAT', '.CMD']
 
 // ── 类型 ─────────────────────────────────────────────────────────────────────
 
@@ -282,43 +278,27 @@ export interface SpawnPlan {
   file: string
   /** true = 要经 shell 起（`.cmd` / `.bat` 只能这么跑）。 */
   shell: boolean
+  /** false = PATH + PATHEXT 里没找到这条命令（此时 spawn 一定失败，要报可读错误）。 */
+  found: boolean
+  /** 交给 spawn 的 file 参数：`shell` 为真且路径含空格时已加引号。 */
+  spawnFile: string
 }
 
 /**
  * 把配置里的命令解析成 spawn 能用的形式。
  *
- * Windows 上 Node 只执行 PE 文件：`spawn('npx')` 明明 PATH 里有 `npx.cmd`，却会以
- * EINVAL 失败。所以这里按 PATH + PATHEXT 自己找一遍，找到 `.cmd` / `.bat` 就标上要经 shell。
- * 非 Windows 上 Node 自己能找，原样返回。
+ * 实现已经收进 `core/executable.ts`（与 LSP 同款逻辑的唯一一份）：Windows 上 Node 只执行
+ * PE 文件，而 PATH 里无后缀的 `npx` / `npm` 是 sh 包装脚本，所以候选要**带 PATHEXT 后缀的
+ * 排前面、无后缀兜底**，命中 `.cmd` / `.bat` 才标要经 shell。原先这里把无后缀排在前面，
+ * 于是设置页的官方示例 `"command": "npx"` 在 Windows 上必然起不来（P0-14）。
  *
  * @param command - 配置里写的命令（可以是文件名，也可以是路径）。
  * @param env - 已经筛过的子进程环境（从这里读 PATH / PATHEXT）。
  * @param cwd - 解析相对路径的基准目录；空串按当前目录。
  */
 export function resolveCommand(command: string, env: Record<string, string>, cwd: string): SpawnPlan {
-  if (process.platform !== 'win32') return { file: command, shell: false }
-  const declared = (env.PATHEXT ?? '').split(';').filter((suffix) => suffix !== '')
-  const suffixes = declared.length > 0 ? declared : FALLBACK_PATHEXT
-  const roots = /[\\/]/.test(command)
-    ? [isAbsolute(command) ? command : resolve(cwd === '' ? process.cwd() : cwd, command)]
-    : (env.PATH ?? '')
-        .split(';')
-        .filter((dir) => dir !== '')
-        .map((dir) => join(dir, command))
-  for (const root of roots) {
-    for (const candidate of [root, ...suffixes.map((suffix) => root + suffix)]) {
-      if (existsSync(candidate)) return { file: candidate, shell: needsShell(candidate) }
-    }
-  }
-  // 一个都没找到：交给 cmd 自己按 PATHEXT 找，找不到时它会往 stderr 报错，
-  // 那句报错会跟着进程退出一起进 problem，比这里瞎猜一句更准。
-  return { file: command, shell: true }
-}
-
-/** `.cmd` / `.bat` 只能经 cmd.exe 跑（Node 直接 CreateProcess 会拒绝）。 */
-function needsShell(file: string): boolean {
-  const lower = file.toLowerCase()
-  return lower.endsWith('.cmd') || lower.endsWith('.bat')
+  const target = resolveExecutable(command, env, cwd)
+  return { file: target.file, found: target.found, shell: target.shell, spawnFile: target.spawnFile }
 }
 
 // ── 工具命名与风险等级 ───────────────────────────────────────────────────────
@@ -913,6 +893,9 @@ export async function openConnection(server: McpServerConfig, options: McpOpenOp
 /**
  * 按配置起子进程：环境是筛过的，命令是按 PATH + PATHEXT 解析过的。
  *
+ * 命令解析不出来就直接抛一句人话，不把配置里的原文盲交给 cmd：那样用户只看到
+ * 「连不上 / 超时」，分不清是程序没装、命令名写错，还是宿主环境里连 PATH 都没有。
+ *
  * @param fallbackCwd - 配置没写 `cwd` 时用哪个目录起进程（调用方给当前会话的目录）。
  *   两边都为空的极少数情形才交给系统（继承宿主进程目录）——那是兜底，不是常态。
  */
@@ -920,7 +903,8 @@ function spawnStdio(server: McpServerConfig, fallbackCwd: string): ChildProcess 
   const env = buildChildEnv(Object.keys(server.env), server.env, process.env)
   const dir = server.cwd !== '' ? server.cwd : fallbackCwd
   const plan = resolveCommand(server.command, env, dir)
-  return spawn(plan.file, plan.shell ? server.args.map(quoteForCmd) : server.args, {
+  if (!plan.found) throw new Error(missingCommandReason(server.command, env))
+  return spawn(plan.spawnFile, plan.shell ? server.args.map(quoteForCmd) : server.args, {
     env,
     cwd: dir === '' ? undefined : dir,
     stdio: ['pipe', 'pipe', 'pipe'],

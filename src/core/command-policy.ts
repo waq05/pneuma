@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { dscPath } from './path-policy.js'
+import { commandIntent } from './command-intent.js'
 
 /** 单条命令段的判定结果（从严到宽）。 */
 export type CommandDecision = 'allow' | 'ask' | 'deny'
@@ -615,20 +616,6 @@ function isReadOnlyPython(tokens: readonly string[]): boolean {
   return module !== undefined && READONLY_PYTHON_MODULES.has(module)
 }
 
-/**
- * 剥掉「第一个词只是包装」的头部：`env python -c ...` 真正跑的是 python，
- * 后面那串 `KEY=VALUE` 是环境变量，不是命令。
- */
-function unwrapHeads(tokens: readonly string[]): string[] {
-  let index = 0
-  while (index < tokens.length && tokens[index]!.toLowerCase().replace(/\.exe$/, '') === 'env') index += 1
-  const wrapped = index > 0
-  while (index < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index]!)) index += 1
-  // 裸 `env`（后面没有命令）就是打印环境变量，仍然只读。
-  if (wrapped && index >= tokens.length) return ['env']
-  return tokens.slice(index)
-}
-
 /** 「问它自己是谁」的开关：只打印版本或帮助，不动盘。 */
 const INFO_FLAGS = new Set(['--version', '-v', '-V', '--help', '-h', '/?', '--usage', 'version', 'help'])
 
@@ -643,9 +630,13 @@ function isReadOnlySegment(segment: CommandSegment): boolean {
   if (segment.redirect) return false
   // 命令替换（$() 与反引号）会先把替换内容跑一遍再交给外面的命令：头是 echo 也拦不住替换里那把刀。
   if (segment.subst) return false
-  const tokens = unwrapHeads(segment.tokens)
-  const head = tokens[0]?.toLowerCase().replace(/\.exe$/, '')
-  if (head === undefined) return false
+  // 程序名与子命令交给共享的意图判定（与围栏面、地板读同一份事实）。
+  // 这里用的是 `verb`（不剥 sudo）而不是 `effectiveVerb`：`sudo ls` 必须继续走「问人」，
+  // 剥掉包装再判只读等于给提权后的任意命令开免审批。
+  const intent = commandIntent(segment)
+  const tokens = intent.argv
+  const head = intent.verb
+  if (head === '') return false
   // 「问它自己是谁」类的开关（pnpm --version、node -v、eslint --help）：只打印版本或帮助，
   // 不改盘、不联网、不执行脚本。这一条要排在只读名单与解释器判断**之前**——
   // node / pnpm 本身都不在只读名单里，落到后面就变成「每次问你一次版本号」（0.7.1 实况）。
@@ -660,36 +651,10 @@ function isReadOnlySegment(segment: CommandSegment): boolean {
   if (head === 'find' && FIND_WRITES.test(segment.raw)) return false
   if (head === 'sed' || head === 'awk') return !STREAM_EDITOR_WRITES.test(segment.raw)
   if (head === 'git') {
-    const sub = gitSubcommand(tokens)
-    if (sub !== undefined && WRITING_SUBCOMMANDS.has(sub)) return false
+    const sub = intent.subcommand
+    if (sub !== undefined && WRITING_SUBCOMMANDS.has(sub.toLowerCase())) return false
   }
   return true
-}
-
-/**
- * git 真正要跑的子命令（跳过 `-c key=value`、`-C dir`、`--git-dir=…` 这类全局开关）。
- *
- * 为什么不能只看 `tokens[1]`：`git -c core.pager=calc log` 的 tokens[1] 是 `-c`，
- * 不在写操作名单里，整条就被判成只读——而 `git -c x=y reset --hard` 同理，
- * 只读档会直接把未提交改动丢掉（2026-10-28 实测）。
- */
-function gitSubcommand(tokens: readonly string[]): string | undefined {
-  // 带值的全局开关：它们后面那个词是参数，不是子命令。
-  const valueFlags = new Set(['-c', '-C', '--git-dir', '--work-tree', '--namespace', '--exec-path'])
-  let index = 1
-  while (index < tokens.length) {
-    const token = tokens[index]!
-    if (valueFlags.has(token)) {
-      index += 2
-      continue
-    }
-    if (token.startsWith('-')) {
-      index += 1
-      continue
-    }
-    return token.toLowerCase()
-  }
-  return undefined
 }
 
 /** 建议一个可持久化的前缀：取前 2-3 个词，别把整条命令塞进去（抄 Codex 的告诫）。 */

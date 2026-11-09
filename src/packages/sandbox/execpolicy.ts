@@ -6,7 +6,9 @@
  *     结论是 allow/ask/deny，且 deny 是任何权限模式都翻不了的硬地板；
  *   - 本模块回答「这条命令会不会写到可写根之外 / 要不要联网」，它是**围栏面**，
  *     结论是 allow/prompt/forbidden，forbidden 只代表「沙箱不同意」。
- *   两边共用同一套切段结果（`splitSegments`），所以「一段一段判」这件事只有一份实现。
+ *   三处共用同一份「命令意图」（`core/command-intent.ts`：程序名、子命令、内联脚本、联网、写目标），
+ *   切段也只有一份实现。优先级写在那个模块的注释里：地板 → 围栏 → 审批，前两道更严是有意的。
+ *   围栏先拦下时要把审批面的结论写进理由（见 {@link approvalHint}），否则用户只看到「卡没弹」。
  *
  * 规则表是内置的：沙箱的策略值不值得让用户手写 DSL，先看有没有人真的想改；
  * 现在给的是 codex 那批机器级改动（计划任务、注册表、网络、ACL、引导）+
@@ -18,8 +20,18 @@
  *
  * @module dsc/core/sandbox/execpolicy
  */
-import { splitSegments, type CommandSegment } from '../../core/command-policy.js'
+import { classifyCommand, splitSegments, type CommandSegment } from '../../core/command-policy.js'
+import {
+  commandName,
+  innerShellCommand,
+  isNetworkSegment,
+  writeTargetsOf,
+} from '../../core/command-intent.js'
 import type { PathCheck } from './policy.js'
+
+// 写目标、联网与内联脚本的判定在 core/command-intent.ts（三个判定面共用一份事实）；
+// 这里保留同名导出，别处照旧 import。
+export { innerShellCommand, isNetworkSegment, writeTargetsOf }
 
 /** 一次命令判定的三种结论。 */
 export type ExecDecision = 'allow' | 'prompt' | 'forbidden'
@@ -130,30 +142,6 @@ export const BUILTIN_EXEC_RULES: readonly ExecRule[] = [...FORBIDDEN_RULES, ...A
 
 // ---------------------------------------------------------------- 词元工具
 
-/** `sudo rm -rf /` 真正跑的是 rm；这些包装词要剥掉。 */
-const WRAPPERS = new Set(['sudo', 'doas', 'command', 'env', 'nohup'])
-
-/** 取这一段真正要跑的程序名（小写、去 `.exe`、去目录前缀、剥包装词）。 */
-function headOf(tokens: readonly string[]): string {
-  const index = headIndex(tokens)
-  return index < 0 ? '' : tokenName(tokens[index]!)
-}
-
-/** 程序名在词元里的下标（-1 = 认不出）：操作数循环要跳过它，不然命令名自己会被当成路径。 */
-function headIndex(tokens: readonly string[]): number {
-  let index = 0
-  while (index < tokens.length && WRAPPERS.has(tokenName(tokens[index]!))) index += 1
-  // `env FOO=bar cmd`：跳过环境变量赋值
-  while (index < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index]!)) index += 1
-  return index < tokens.length ? index : -1
-}
-
-/** 词元 → 程序名（去路径、去 `.exe`、小写）。 */
-function tokenName(token: string): string {
-  const base = token.split(/[\\/]/).pop() ?? token
-  return base.toLowerCase().replace(/\.exe$/, '')
-}
-
 /** 前缀匹配：`pattern` 是段词元的前缀，末尾 `*` 表示后面随便。 */
 function matchExecRule(rule: ExecRule, segment: CommandSegment): boolean {
   if (segment.tokens.length === 0) return false
@@ -162,248 +150,12 @@ function matchExecRule(rule: ExecRule, segment: CommandSegment): boolean {
     if (want === '*') break
     const got = segment.tokens[i]
     if (got === undefined) return false
-    if (tokenName(got) !== want.toLowerCase()) return false
+    if (commandName(got) !== want.toLowerCase()) return false
   }
   return rule.requires === undefined ? true : rule.requires(segment)
 }
 
-// ---------------------------------------------------------------- 写目标
-
-/** 所有非开关词元都是「被改动的路径」（删/建/截断/写内容：源自己就动手了）。 */
-const FULL_WRITE_HEADS = new Set([
-  'rm', 'del', 'erase', 'rd', 'rmdir', 'remove-item', 'ri',
-  'mkdir', 'md', 'new-item', 'ni', 'touch', 'truncate', 'tee', 'clear-content',
-])
-
-/** 只有**最后一个**非开关词元是写目标（源可能在可写根之外，只是读它）。 */
-const COPY_HEADS = new Set(['cp', 'copy', 'copy-item', 'cpi', 'xcopy', 'robocopy'])
-
-/** 源同样被改动（移走就是删掉），所以所有词元都算目标。 */
-const MOVE_HEADS = new Set(['mv', 'move', 'move-item', 'mi', 'ren', 'rename', 'rename-item', 'rn'])
-
-/** 写目标是 `-Path` 一类的值，没有就给第一个非开关词元。 */
-const CONTENT_HEADS = new Set(['set-content', 'add-content', 'out-file', 'export-csv', 'export-clixml'])
-
-/** `-Path` 这一族（写目标用的）。 */
-const PATH_FLAGS = new Set(['-path', '-filepath', '-literalpath', '-file'])
-/** `-Destination` 这一族。 */
-const DEST_FLAGS = new Set(['-destination', '-dest'])
-
-/**
- * 一个词元是不是开关。
- *
- * Windows 上 `/f`、`/grant`、`/r` 是开关，但 `/tmp/x` 是路径——只把「一个斜杠 +
- * 1~3 个字母且后面没有别的斜杠」当开关。POSIX 上 `/` 开头的都不是开关。
- */
-function isFlag(token: string, win32: boolean): boolean {
-  if (token === '-') return true
-  if (token.startsWith('-')) return true
-  if (win32 && /^\/[A-Za-z]{1,3}$/.test(token)) return true
-  return false
-}
-
-/** 重定向词元 → 写目标（`''` = 目标在下一个词元；null = 不是文件重定向）。 */
-function redirectTarget(token: string): string | null {
-  const match = /^(\d?>>?)(.*)$/.exec(token)
-  if (match === null) return null
-  const rest = match[2] ?? ''
-  // `2>&1`、`>&2` 只是接文件描述符，不落盘
-  if (rest.startsWith('&')) return null
-  return rest
-}
-
-/**
- * 从一段命令里认出所有「会被写到的路径」。
- *
- * 认的是形状，不是语义：`rm`/`mv`/`Set-Content`/`>`/`dd of=` 这些齐了，
- * 但 `bash -c "rm x"`、`node -e "fs.unlinkSync(...)"` 这类藏在参数里的写认不出来——
- * 这正是策略围栏「拦得住工具调用、拦不住命令内部」的那一半。
- *
- * `cp`/`copy` 只算**最后一个**词元（源在可写根之外只是读它，算成写会误拒）；
- * `mv`/`rm` 算全部（源被移走或被删，同样是动手）。
- */
-export function writeTargetsOf(segment: CommandSegment, win32: boolean): string[] {
-  const tokens = segment.tokens
-  const out: string[] = []
-  const push = (value: string | undefined): void => {
-    if (value === undefined) return
-    const trimmed = value.trim()
-    if (trimmed === '') return
-    out.push(trimmed)
-  }
-
-  // 1) 重定向：`> x`、`>>x`、`1> x`；`2>&1` 不算
-  for (let i = 0; i < tokens.length; i += 1) {
-    const target = redirectTarget(tokens[i]!)
-    if (target === null) continue
-    push(target === '' ? tokens[i + 1] : target)
-  }
-
-  // 2) `dd` 的 `of=`（`if=` 是读）
-  for (const token of tokens) {
-    const match = /^of=(.+)$/i.exec(token)
-    if (match !== null) push(match[1])
-  }
-
-  const head = headOf(tokens)
-  if (head === '') return [...new Set(out)]
-
-  // 3) 命令自身的词元（跳过程序名自己）
-  const command = headIndex(tokens)
-  const operands: string[] = []
-  /** 已经用 `-Path`/`-Destination` 指名道姓说过目标了：位置参数不再当路径。 */
-  let explicit = false
-  for (let i = 0; i < tokens.length; i += 1) {
-    if (i === command) continue
-    const token = tokens[i]!
-    const redirect = redirectTarget(token)
-    if (redirect !== null) {
-      // 目标已在第 1 步收过：下一个词元别再当操作数
-      if (redirect === '') i += 1
-      continue
-    }
-    if (/^of=/i.test(token)) continue
-    if (isFlag(token, win32)) {
-      const lowered = token.toLowerCase()
-      const value = tokens[i + 1]
-      if (value !== undefined && !isFlag(value, win32)) {
-        if (DEST_FLAGS.has(lowered)) {
-          push(value)
-          explicit = true
-          i += 1
-          continue
-        }
-        if (PATH_FLAGS.has(lowered)) {
-          // `cp -Path a -Destination b`：a 是源，不算写
-          if (!COPY_HEADS.has(head)) {
-            push(value)
-            explicit = true
-          }
-          i += 1
-          continue
-        }
-      }
-      continue
-    }
-    operands.push(token)
-  }
-
-  // 开关已经指明了目标时，剩下的位置参数多半是别的东西的值（`-Value hello`、`-ItemType Directory`），
-  // 一律不再当路径——宁可漏算一个写目标（还有审批卡兜底），也别凭空造出一个越界判断。
-  if (explicit) return [...new Set(out)]
-
-  if (COPY_HEADS.has(head)) {
-    push(operands[operands.length - 1])
-  } else if (MOVE_HEADS.has(head) || FULL_WRITE_HEADS.has(head)) {
-    for (const operand of operands) push(operand)
-  } else if (CONTENT_HEADS.has(head)) {
-    // 只认位置参数里的第一个（`Set-Content x.txt -Value hello` 的 hello 不是路径）
-    push(operands[0])
-  }
-  return [...new Set(out)]
-}
-
-// ---------------------------------------------------------------- 网络命令
-
-/** 一级词元就是网络工具的。 */
-const NETWORK_HEADS = new Set([
-  'curl', 'wget', 'iwr', 'invoke-webrequest', 'irm', 'invoke-restmethod',
-  'nc', 'ncat', 'netcat', 'telnet', 'ftp', 'ssh', 'scp', 'sftp', 'rsync',
-  'test-netconnection', 'resolve-dnsname', 'gh',
-])
-
-/** 「程序 + 子命令」形态的网络动作。 */
-const NETWORK_SUBCOMMANDS: Readonly<Record<string, ReadonlySet<string>>> = {
-  npm: new Set(['install', 'i', 'ci', 'add', 'create', 'update', 'publish', 'dlx', 'exec', 'x']),
-  npx: new Set(['*']),
-  pnpm: new Set(['install', 'i', 'add', 'update', 'publish', 'dlx', 'create', 'exec']),
-  yarn: new Set(['install', 'add', 'upgrade', 'publish', 'dlx', 'create']),
-  git: new Set(['clone', 'fetch', 'pull', 'push', 'ls-remote', 'submodule', 'archive']),
-  pip: new Set(['install', 'download']),
-  pip3: new Set(['install', 'download']),
-  cargo: new Set(['install', 'add', 'update', 'publish', 'login']),
-  go: new Set(['get', 'install']),
-  docker: new Set(['pull', 'push', 'login', 'run', 'build']),
-  dotnet: new Set(['restore', 'add', 'nuget', 'tool']),
-  apt: new Set(['install', 'update', 'upgrade']),
-  'apt-get': new Set(['install', 'update', 'upgrade']),
-  yum: new Set(['install', 'update']),
-  dnf: new Set(['install', 'update']),
-  apk: new Set(['add', 'update']),
-  brew: new Set(['install', 'update', 'upgrade']),
-  choco: new Set(['install', 'upgrade']),
-  winget: new Set(['install', 'upgrade', 'search']),
-  scoop: new Set(['install', 'update']),
-  nuget: new Set(['install', 'restore']),
-}
-
-/** 这一段要不要联网。 */
-export function isNetworkSegment(segment: CommandSegment, win32 = process.platform === 'win32'): boolean {
-  const head = headOf(segment.tokens)
-  if (head === '') return false
-  if (NETWORK_HEADS.has(head)) return true
-  const subs = NETWORK_SUBCOMMANDS[head]
-  if (subs === undefined) return false
-  if (subs.has('*')) return true
-  const sub = subcommandOf(segment.tokens, win32)
-  if (sub === undefined) return false
-  return subs.has(tokenName(sub))
-}
-
-/** 这些开关后面跟着一个值（目录、配置、registry），值不是子命令。 */
-const VALUE_FLAGS: ReadonlySet<string> = new Set([
-  '-c', '-C', '--git-dir', '--work-tree', '--namespace',
-  '--dir', '--prefix', '--cwd', '--workspace', '-w',
-  '--registry', '--config', '--userconfig', '--cache', '--reporter', '--filter',
-])
-
-/**
- * 取一条命令的子命令（npm 的 install、git 的 clone）：跳过开关与开关的值。
- *
- * 为什么不能简单取「第一个不以 - 开头的词元」：`pnpm --dir . install` 的 `.`
- * 会先被当成子命令，于是整条命令被判成「不联网」——网络开关关着也能装包
- * （2026-10-28 实测）。`git -c x=y clone` 同理。
- */
-function subcommandOf(tokens: readonly string[], win32: boolean): string | undefined {
-  for (let index = 1; index < tokens.length; index += 1) {
-    const token = tokens[index]!
-    if (isFlag(token, win32)) {
-      if (VALUE_FLAGS.has(token.toLowerCase())) index += 1
-      continue
-    }
-    return token
-  }
-  return undefined
-}
-
 // ---------------------------------------------------------------- 判定入口
-
-/** 认得出的「把命令写在参数里」的 shell：它们后面那段要再拆一次判。 */
-const INLINE_SHELL_HEADS = new Set(['powershell', 'pwsh', 'cmd', 'sh', 'bash', 'zsh', 'dash', 'ksh'])
-
-/** 内层命令的开关名（按平台各自习惯，两边都认，宽进严出）。 */
-const INLINE_SHELL_FLAGS = new Set(['-command', '-c', '/c', '/k'])
-
-/**
- * 这一段是不是「跑一段写在参数里的脚本」：是的话把那段脚本原文交出来。
- *
- * 为什么必须拆：`powershell -Command "Set-Content -Path C:\outside\x -Value y"` 的写目标
- * 藏在引号里，只看外层这一个词元（`powershell`）什么都看不出来——这是最常见的绕过写法。
- * 只认开关后面的那段（`sh -c rm x` 这种没加引号的按空格拼回去），认不出就不猜。
- *
- * @returns 内层命令原文；不是这种形态返回 null。
- */
-export function innerShellCommand(segment: CommandSegment, win32: boolean): string | null {
-  const head = headOf(segment.tokens)
-  if (!INLINE_SHELL_HEADS.has(head)) return null
-  const start = headIndex(segment.tokens)
-  for (let i = start + 1; i < segment.tokens.length; i += 1) {
-    if (!INLINE_SHELL_FLAGS.has(segment.tokens[i]!.toLowerCase())) continue
-    const rest = segment.tokens.slice(i + 1)
-    return rest.length === 0 ? null : rest.join(' ')
-  }
-  return null
-}
 
 /**
  * 把命令摊平成待判定的段：外层照旧保留（它的重定向还得看），
@@ -445,6 +197,26 @@ export interface ExecVerdict {
 }
 
 /**
+ * 围栏先拦下时，把审批面的结论作为提示带出来。
+ *
+ * 为什么要有：`git push --force` 在审批面是「问人」，在网络关的沙箱里是硬拒。
+ * 策略上沙箱更严是对的——网络开关是显式关掉的，不该被一张卡绕过去（见
+ * `packages/sandbox/index.ts` 的 `ASKABLE_RULES`）；但用户只看到「沙箱拒绝」，
+ * 会以为审批面也拒了。这里把另一面的结论一并写进理由，**只改文案，不改任何判定**。
+ *
+ * 文案为什么不说死「会弹卡」（2026-11-09 复审）：这一层既拿不到当前权限档，也没把已授权规则
+ * 传进去，答不了「到底弹不弹」。「仅查看」档与无人值守子代理会把 ask 直接拒
+ * （`packages/approval/index.ts:1318-1327`），有 allow 前缀规则时又根本不弹卡；
+ * 写死「会弹卡问人」在这两种情况下都是错的。所以只说审批面要不要人工确认。
+ */
+function approvalHint(command: string): string {
+  const verdict = classifyCommand(command)
+  if (verdict.decision === 'allow') return '（审批面把这条命令判为只读，会直接放行）'
+  if (verdict.decision === 'deny') return '（审批面同样会拒这条命令）'
+  return '（这条命令在审批面需要人工确认；是否真的弹卡取决于当前权限档与已授权规则）'
+}
+
+/**
  * 判一条命令。
  *
  * 逐段判（`|`、`;`、`&&` 切开），任何一段 forbidden 就是整条 forbidden；
@@ -483,7 +255,7 @@ export function evaluateCommand(command: string, options: ExecOptions): ExecVerd
         return {
           decision: 'forbidden',
           rule: 'network-off',
-          reason: `这一段要联网（${segment.raw.trim()}），而沙箱的网络开关是关的`,
+          reason: `这一段要联网（${segment.raw.trim()}），而沙箱的网络开关是关的${approvalHint(command)}；要放行先打开网络开关`,
           writeTargets,
           network,
         }
@@ -497,7 +269,7 @@ export function evaluateCommand(command: string, options: ExecOptions): ExecVerd
         return {
           decision: 'forbidden',
           rule: `write-target:${check.rule}`,
-          reason: `命令里的写目标落不住：${check.reason}`,
+          reason: `命令里的写目标落不住：${check.reason}${approvalHint(command)}`,
           writeTargets,
           network,
         }

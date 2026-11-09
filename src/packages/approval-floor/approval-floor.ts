@@ -19,10 +19,19 @@
  * 地板只判「拒」或「不拒」，「不拒」一律走 defer。自己 return pass 会把后面的安全钩子
  * 一起跳掉，那等于白名单连带免掉了用户自己的闸门。
  *
+ * 内联脚本（`powershell -Command "..."`、`cmd /c ...`、`sh -c ...`）会先拆出真实命令，
+ * 再走上面同一套层（结构 / 灾难 / deny 名单）判一次；但「内层干净」不等于「能放行」：
+ * 内层的每一段还必须**明确只读**，或者是写命令白名单里、且写目标能被静态认出来的字面量路径
+ * （见 {@link inlineWriteReason}）。其余形状（`find -delete`、`for` 循环、`Start-Process` 二层壳、
+ * 管道末端认不出目标的 `Remove-Item`）仍按「判不出」拒——围栏只认命令行上的字面量，
+ * 这些写目标它看不见，而「完全访问」档的审批卡会自动放行。
+ * 拆不出来的（`-EncodedCommand` / `-enc`）同样按「判不出」拒。
+ *
  * @module dsc/core/approval-floor
  */
 import { audit } from '../../core/audit.js'
 import { builtinDangerHit, classifyCommand, splitSegments, type PrefixRule } from '../../core/command-policy.js'
+import { commandIntent, isWriteCommandVerb, writeTargetsOf } from '../../core/command-intent.js'
 import { isInsideCwd } from '../../core/path-policy.js'
 import { argsSummary } from '../../core/tools.js'
 import type { ShellFlavor } from '../../core/terminal-env.js'
@@ -420,38 +429,14 @@ const POWER_HEADS: Readonly<Record<string, (args: readonly string[]) => string |
   kill: (args) => (args.includes('-1') ? 'kill -1 会把信号发给一大批进程' : null),
 }
 
-/** 命令位置上的这些词只是包装，真正的命令在它们后面（`sudo shutdown now` 也是关机）。 */
-const WRAPPERS = new Set(['sudo', 'doas', 'command', 'exec', 'nohup', 'time'])
-
-/**
- * 这些 head 加 `-c` / `/c` / `-Command` 就是把脚本塞在参数里，静态判不出它要干什么。
- * `cmd` 必须在内：Windows 上 `cmd /c 任意命令` 是最常见的包装，漏了它地板就把
- * `cmd /c format C:` 当明文命令审，`/c` 明明已经在 {@link INLINE_FLAGS} 里。
- */
-const SHELL_HEADS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'pwsh', 'powershell', 'cmd'])
-
-/** 上面那类 shell 的「脚本在参数里」开关。 */
-const INLINE_FLAGS = new Set(['-c', '/c', '-command', '--command', '-encodedcommand', '-enc'])
-
 /** 命中这些内置危险模式时，命令内容根本不是明文命令（编码过、或者下载下来直接喂给 shell）。 */
 const OPAQUE_DANGER_NAMES = new Set(['encoded-command', 'download-pipe-shell', 'powerShell-iex'])
 
 /** fork 炸弹：`:(){ :|:& };:` 这类自复制函数会把进程表撑爆。 */
 const FORK_BOMB = /:\s*\(\s*\)\s*\{[^}]*:\s*\|\s*:[^}]*\}/
 
-/** 取词元的命令名：去掉目录部分与 `.exe`，再转小写。 */
-function baseName(token: string): string {
-  return token.toLowerCase().replace(/^.*[\\/]/, '').replace(/\.exe$/, '')
-}
-
-/** 跳过 `sudo` 这类包装器之后的命令名与它的参数。 */
-function effectiveHead(tokens: readonly string[]): { name: string; args: readonly string[] } | null {
-  let index = 0
-  while (index < tokens.length && WRAPPERS.has(baseName(tokens[index]!))) index += 1
-  const head = tokens[index]
-  if (head === undefined) return null
-  return { name: baseName(head), args: tokens.slice(index + 1) }
-}
+/** 内联脚本最多再拆几层（`powershell -Command "bash -c ..."` 这种叠法），超过就按看不清拒。 */
+const MAX_INLINE_DEPTH = 4
 
 /**
  * 黑名单的候选串：从命令里挑出「可能指向一个文件」的词元，黑名单 glob 只拿它们去比。
@@ -494,23 +479,82 @@ function dangerHits(command: string): Array<{ name: string; reason: string }> {
   return [...hits.values()]
 }
 
-/** 命令内容不是明文的那种构造：编码执行、下载下来直接喂 shell、`sh -c`、`eval`。 */
-function opaqueShellReason(command: string): string | null {
+/** 写目标里出现这些字符就不是字面量路径（变量、通配符、延迟展开、子表达式）：判不出它到底写哪。 */
+const NON_LITERAL_TARGET = /[$`*?%!~{}()]/
+
+/**
+ * 内层脚本的写目标判不判得清：判不清返回理由，判得清返回 null。
+ *
+ * 为什么必须有这一道（2026-11-09 复审）：把「内联脚本判不出」放宽成「递归判内层、内层看着干净
+ * 就 defer」之后，地板的递归只看结构 / 灾难 / deny 名单，**不看写目标**，而围栏的写目标识别
+ * 只认命令行上的字面量。两头一夹，`bash -c "find / -delete"`、`cmd /c "for %f in (...) do del %f"`、
+ * `powershell -Command "Get-ChildItem C:\Windows | Remove-Item -Recurse -Force"`、
+ * `powershell -Command "Start-Process cmd -ArgumentList '/c del ...'"` 从硬拒变成审批卡；
+ * 而「完全访问」档的审批卡会自动放行（`packages/approval/index.ts:1332`），该档沙箱也不拦
+ * （`packages/sandbox/index.ts` 的 `check` 首行），于是它们在任何权限模式下都能跑。
+ *
+ * 判据（fail-closed，宁可误拒）：内层的每一段要么是**明确只读**（审批面那套只读判定为 allow），
+ * 要么是**写命令白名单里、且写目标全是字面量路径**——那种情况下围栏也看得见同一个目标，
+ * defer 出去有人接着管。其余一律按「判不出」拒。
+ *
+ * @param command - 内联脚本原文（`InlineShell.command`）。
+ * @param win32 - Windows 口径（`/x` 算开关）。
+ */
+function inlineWriteReason(command: string, win32 = process.platform === 'win32'): string | null {
+  for (const segment of splitSegments(command)) {
+    if (segment.tokens.length === 0) continue
+    const intent = commandIntent(segment, win32)
+    const verb = intent.effectiveVerb
+    if (verb === '') return '内层有一段认不出程序名'
+    // 明确只读：交给审批面同一套只读判定。刻意不传 rules——用户的 allow 规则能免掉审批卡，
+    // 但免不掉「这条命令写哪里判不清」这件事，别让一条前缀规则把这里洗成放行。
+    if (classifyCommand(segment.raw).decision === 'allow') continue
+    if (!isWriteCommandVerb(verb)) return `「${verb}」不在已知写命令名单里`
+    const targets = writeTargetsOf(segment, win32)
+    if (targets.length === 0) return `「${verb}」是写命令，但认不出它的写目标`
+    for (const target of targets) {
+      if (NON_LITERAL_TARGET.test(target)) return `「${verb}」的写目标 ${target} 不是字面量路径`
+    }
+  }
+  return null
+}
+
+/**
+ * 命令内容不是明文的那种构造：编码执行、下载下来直接喂 shell、`eval`。
+ *
+ * 内联脚本（`powershell -Command "..."`、`cmd /c ...`、`sh -c ...`）不再一律按「判不出」拒：
+ * 能拆出真实命令的，用同一套地板规则（结构 / 灾难 / deny 名单）再判一次；判得清的还要过
+ * {@link inlineWriteReason} 那道写目标关，两道都过才交回给后面的层（危险模式 → 审批卡）。
+ * 编码过的命令（`-EncodedCommand` / `-enc`）拆出来是 base64，仍然按「判不出」拒。
+ */
+function opaqueShellReason(
+  command: string,
+  config: FloorConfig,
+  rules: readonly PrefixRule[],
+  shell: ShellFlavor = DEFAULT_SHELL,
+  inlineDepth = 0,
+): string | null {
   for (const hit of dangerHits(command)) {
     if (OPAQUE_DANGER_NAMES.has(hit.name)) return `命令里有「${hit.reason}」这类构造，内容不是明文命令`
   }
   for (const segment of splitSegments(command)) {
-    const head = effectiveHead(segment.tokens)
-    if (head === null) continue
-    if (head.name === 'eval') return 'eval 会把字符串当命令跑，静态判不出它要干什么'
-    if (!SHELL_HEADS.has(head.name)) continue
-    // `sh -c'rm -rf /'` 这种写法在词元化之后 `-c` 会和脚本粘成一个词元，所以还要按前缀认一次。
-    for (const token of head.args) {
-      const lowered = token.toLowerCase()
-      if (INLINE_FLAGS.has(lowered)) return `${head.name} ${lowered} 把脚本塞在参数里，静态判不出它要干什么`
-      if (lowered.startsWith('-c') && lowered.length > 2 && !/^-[a-z]+$/.test(lowered)) {
-        return `${head.name} -c 把脚本塞在参数里，静态判不出它要干什么`
-      }
+    const intent = commandIntent(segment)
+    if (intent.effectiveVerb === 'eval') return 'eval 会把字符串当命令跑，静态判不出它要干什么'
+    const inline = intent.inline
+    if (inline === null) continue
+    // 开关后面没有脚本（`bash -c`、`cmd /c ""`）：跑不出东西，但语义上仍是「判不出」，
+    // 基线上它是硬拒；返回 null 把它当「不是内联形态」等于悄悄放宽。
+    if (inline.command.trim() === '') return `${inline.head} ${inline.flag} 后面没有脚本，静态判不出它要干什么`
+    if (!inline.parseable) return `${inline.head} ${inline.flag} 是编码过的命令，静态判不出它要干什么`
+    if (inlineDepth >= MAX_INLINE_DEPTH) {
+      return `内联脚本嵌套超过 ${MAX_INLINE_DEPTH} 层，静态判不出它要干什么`
+    }
+    const inner = innerDenyReason(inline.command, config, rules, 0, shell, inlineDepth + 1)
+    if (inner !== null) return `${inline.head} ${inline.flag} 里的命令没通过地板判定：${inner}`
+    // 内层没撞上灾难 / 黑名单，不等于它的写目标判得清：判不清就仍然按「判不出」拒。
+    const unjudgeable = inlineWriteReason(inline.command)
+    if (unjudgeable !== null) {
+      return `${inline.head} ${inline.flag} 里的脚本判不清写目标，静态判不出它要干什么：${unjudgeable}`
     }
   }
   return null
@@ -520,9 +564,9 @@ function opaqueShellReason(command: string): string | null {
 function doomReason(command: string): string | null {
   if (FORK_BOMB.test(command)) return 'fork 炸弹会把机器的进程表撑爆，机器直接卡死'
   for (const segment of splitSegments(command)) {
-    const head = effectiveHead(segment.tokens)
-    if (head === null) continue
-    const reason = POWER_HEADS[head.name]?.(head.args) ?? null
+    const intent = commandIntent(segment)
+    if (intent.effectiveVerb === '') continue
+    const reason = POWER_HEADS[intent.effectiveVerb]?.(intent.effectiveArgv.slice(1)) ?? null
     if (reason !== null) return reason
   }
   return null
@@ -725,7 +769,7 @@ function evaluate(
   }
   const structure = inspectStructure(command, shell)
   if (structure.fatal !== null) return { action: 'deny', layer: 'opaque', reason: structure.fatal }
-  const opaque = opaqueShellReason(command)
+  const opaque = opaqueShellReason(command, config, rules, shell)
   if (opaque !== null) return { action: 'deny', layer: 'opaque', reason: opaque }
 
   const verdict = classifyCommand(command, { rules })
@@ -798,6 +842,7 @@ function innerDenyReason(
   rules: readonly PrefixRule[],
   depth: number,
   shell: ShellFlavor = DEFAULT_SHELL,
+  inlineDepth = 0,
 ): string | null {
   const text = command.trim()
   if (text === '') return null
@@ -805,14 +850,14 @@ function innerDenyReason(
   if (text.length > config.maxCommandLength) return `命令替换里的片段太长（${text.length} 个字符）`
   const structure = inspectStructure(text, shell)
   if (structure.fatal !== null) return structure.fatal
-  const opaque = opaqueShellReason(text)
+  const opaque = opaqueShellReason(text, config, rules, shell, inlineDepth)
   if (opaque !== null) return opaque
   const verdict = classifyCommand(text, { rules })
   if (verdict.hardline) return verdict.reason
   const doom = doomReason(text)
   if (doom !== null) return doom
   for (const fragment of structure.substitutions) {
-    const inner = innerDenyReason(fragment, config, rules, depth + 1, shell)
+    const inner = innerDenyReason(fragment, config, rules, depth + 1, shell, inlineDepth)
     if (inner !== null) return inner
   }
   if (structure.substitutions.length > 0) return '片段里还套着命令替换，拼不出实际效果'
