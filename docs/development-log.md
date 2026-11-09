@@ -15996,3 +15996,104 @@ dsh 的机制，不要有遗漏」。四条线并行只读调研（运行时、�
 `typecheck`（根 / ui-shell / desktop）0 错；`build` 与 `build:ui` 通过；`check:core` 107/107；
 `check:plugin` 86 包 + 换包 e2e 17/17；`check:ui` 64/64；`check:p0` 16/16；`check:style` 1248 文件；
 `check:dsh` 19/0；`check:remote` 102/102。
+
+## 2026-11-09（续）：P1 第二期——界面旧路退场、两个入口合流、工具卡收成一份
+
+上一期清的是 `src/core` 的转发垫片，这一期清另外三处「同一件事有两份实现」，都属于审查
+报告 `docs/code-review/2026-11-09/SUMMARY.md` 主题 A 与工具卡调研的第 2 档。
+
+### 一、Git 面板里那条不再走的路
+
+**为什么**：界面改成「点一行文件在右侧栏开预览页签」之后，`ui-files/ui/changes.tsx` 的
+`toggleDiff(group, file)` 已经没有第二个调用方——全仓只有 `toggleDiff('all', null)` 一处。
+于是 `file !== null`（单文件就地展开）和 `group === 'staged'`（只取已暂存段）两条分支
+永远不执行，`GitDiffView` 的 `all` / `inline` / `title` 三个 prop 一个恒为真、一个从没传过、
+一个恒等于同一个标题，`.git-diff-inline` 这条只剩 5 行的样式也没了消费方。
+
+**改了什么**：
+
+- 展开态从 `Expanded { group, file }` 收成一个布尔 `allDiffOpen`，`toggleDiff` 改成无参
+  `toggleAllDiff()`（payload 恒为 `{}`）；
+- `GitDiffView` 的 props 收成 `{ diff, onClose }`，恒走「按 `diff --git` 切段」的全量分支，
+  标题在组件内取 `files.diff.allTitle`；
+- 删 `views.css` 的 `.git-diff-inline`；顺带删同一批失去消费方的
+  `.git-file[data-expanded] .git-file-name`（`data-expanded` 已无任何元素设置）；
+- 删 `core/plugin-loader.ts` 的 `registerBuiltinMount`：全仓零调用，`builtinMounts` 这张表
+  因此没了写入方（四处 `has()` 恒假，留下一个「内置对象挂载」的空壳，见下方遗留）。
+
+**取舍**：`builtinMounts` 的四处读取分支没有一起拆——它们缠在 `mountRow` 的挂载语义里，
+拆错会让行装配少一层兜底，属于独立一批（已记在遗留里）。
+
+### 二、两个启动入口合流
+
+**为什么**：`src/boot.ts`（终端 TUI）与 `src/headless.ts`（桌面壳 spawn 的 stdio 桥）除
+`surface` 一个字面量、注释和报错前缀外逐行相同。`DSC_RESUME_SESSION` 的三种取值
+（未设或空串 → null、`'1'` → `'auto'`、其它 → 原值）是 `bin/dsc.js` 与桌面壳共同的约定，
+抄两份就等于允许它悄悄分叉。
+
+**改了什么**：
+
+- 新建 `src/host/launch.ts`：`launch(surface, failureLabel)` 装整条流程（迁移 → 读配置 →
+  算恢复路径 → `createKernel` → `loadExternalPlugins` → `emitStartupNotes`），自己 catch、
+  自己 `process.exit(1)`；
+- 类型 `LaunchSurface = Extract<ApplicationSurface, 'tui' | 'headless'>`：从契约派生而不是
+  另抄两个字符串，将来 surface 改名或删值会在这里编译报错；
+- 两个入口各剩 12–14 行，只传 surface 与报错前缀；
+- 门禁跟着搬家：`session-cost-restore-check.mjs` 原来只断言「入口里出现
+  `emitStartupNotes(root, migration, config)`」，现在拆成两半——收尾字符串必须在
+  `launch.ts` 里，两个入口必须只调 `launch()` 且全文搜不到 `createKernel(` /
+  `emitStartupNotes(` / `readUiConfig(` / `migrateFromDsh(`；`plugin-model-check.mjs` 的
+  「入口不许静态 import 插件」清单加入 `src/host/launch.ts`，否则流程搬过去之后在
+  `launch.ts` 里直接 import 一个插件，四个入口文件全都干净。
+
+**踩到的坑（值得记）**：`scripts/plugin-library-test.mjs` 会造一个假仓库根（`src/host/kernel.ts`
++ `src/boot.ts` + `src/headless.ts`）再跑 `plugin-model-check`，门禁清单多一个文件之后，
+夹具少造这一份就当场假红（`entry: src/host/launch.ts 不存在`）。**门禁要求的入口文件清单
+变了，所有造假仓库的夹具都要跟着加点**；只跑真仓库的门禁看不出这个问题，是全量 `check:core`
+抓到的。
+
+### 三、工具卡：三份实现收成一份
+
+**为什么**：工具卡有三份实现——Factory 的 `ToolCard`（对话页主路）、`rows/tool-row.tsx` 的
+`ToolRow`（队友运行记录的唯一活路）、`ui-trace` 的 `TraceToolRow`（轨迹页保险丝）。上一期
+把 `TraceToolRow` 压成 13 行降级行，这一期收 `ToolRow`。
+
+**改了什么**：
+
+- `tool-card/factory.tsx` 拆出纯展示组件 `ToolCardView`（`entry` + 四个可选局部组件
+  `Preview` / `StatusDetail` / `BodyExtra` / `Trailing` + 可选 `footer`，缺省就是对话页那三件
+  加空尾巴）；`ToolCard`（Factory 定义）只剩选件与接线；
+- `rows/tool-row.tsx` 从 303 行降到 119 行，`ToolRow` 本体 18 行：直接把同一个
+  `ToolCardView` 渲染出来，`Trailing` 传空——队友条目的 `id` 属于另一份日志，
+  按它 `openTrace(entry.id)` 会跳到主会话里错的步骤；
+- 存档键语义一个字没变：`ToolRow` 把 `subagent-flow` 给的 `${sessionKey}:${at}` 原样递下去，
+  `ToolCard` 用 `persistKey ?? storeKey`（对话页两值相等、轨迹页两个都不给）；
+- 五个导出局部组件的形参类型从 `FactoryLocalProps` 收窄到 `FactoryLocalInputProps`：
+  它们只用输入 props，声明得窄一点，没有槽上下文的调用方才递得进来；
+- 四条源码钉改指新落点（钉逻辑不钉旧文件名）：`ui-fold-prefs-test` 的消费点从 3 条降成
+  2 条并新增「`tool-row` 里不许再自己持有展开态」；`ui-step-group-live-test` 改成
+  「`factory` 里有 `SubCallCount`/`SubCallList`，`tool-row` 里一个都不许出现」；
+  `ui-interaction-base-test` 的 `` `· ${call.name}` `` 计数从 3 改 2。
+
+**取舍（这条要记住）**：`ToolRow` 给的 `variant` 是 `'chat'`，所以队友卡的展开体跟着主路变了
+脸——参数从「原始 JSON」变成「一行一字段」（会改文件的工具还把正文剔出去），结果从「整段
+原文」变成「首行 + 展开更多」。这是「收成一份」的必然代价，换成三份各写各的就不会有这张脸。
+队友运行记录这条路**没有任何 DOM 断言**（`ui-subagent-page-test` 只钉「团队是拿组件当值
+渲染」），所以这一格的正确性只能靠真机看，不能指望门禁。
+
+计数从 3 降到 2 不是「原名丢了」：剩下两处分别是共享视图与轨迹页降级行，少掉的那一处
+正是被消除的重复。
+
+### 验证
+
+`typecheck`（根 / ui-shell）0 错；`build` 与 `build:ui` 通过；`check:ui` 64/64；`check:core`
+107/107；`check:plugin` 通过（含换包 e2e 17/17）；`check:p0` 16/16；`check:style` 1229 文件；
+`check:dsh` 19/0；`check:remote` 102/102。
+
+### 遗留
+
+- `builtinMounts`（`core/plugin-loader.ts:263`）成了无写入方的空表，四处 `has()` 恒假，
+  拆它要动 `mountRow` 的语义，另立一批。
+- 队友运行记录里的工具卡外观没有真机确认（需要一次真实子智能体会话 + 截图）。
+- `shell.subagent.flow` 这条槽（`ui-transcript/ui/ui.tsx:118-123`）至今没有渲染方，
+  团队走的是服务而不是槽；删它要先确认没人打算接。
