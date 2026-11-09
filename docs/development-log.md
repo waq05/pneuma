@@ -16123,3 +16123,70 @@ dsh 的机制，不要有遗漏」。四条线并行只读调研（运行时、�
 
 `typecheck`（根）0 错；`build` 通过；`check:plugin` 通过（含换包 e2e 17/17）；
 `check:core` 107/107；`check:p0` 16/16；`check:style` 1229 文件。
+## 2026-11-09（续）：会话写租约换成 OS 原生互斥
+
+### 为什么
+
+用户归档会话时报「会话正在另一个 Pneuma 窗口使用，先关掉那边再操作：c059b1fb-….jsonl」，
+但机器上根本没有第二个窗口开着它。
+
+根因是租约的存活判定只看 pid。旧实现用 `O_EXCL` 建 `<会话>.jsonl.lock`，锁里记
+`{pid, birth, at}`；判定「主人还在不在」走 `isProcessAlive(pid)`，记下的 `birth`（进程启动
+时刻）只用来认自己，**从不与别人的真实启动时刻比较**。Windows 会回收复用 pid：老进程崩溃
+留下的锁文件配上后来某个无关程序的新 pid，就被当成「另一个窗口还开着」，归档与打开永久被挡。
+
+现场证据（2026-11-09 16:00 实测）：
+
+- `c059b1fb-54b7-498d-b10b-d5fb08790fa3`：锁记 pid 40620 / birth 15:35:08，而现存 pid 40620
+  是 15:58:37 才启动的本次 Pneuma——同 pid、不同进程；
+- `d9731e2f-719b-450d-9de8-329c5726b831`：锁记 pid 9364，现在这个 pid 是 **Typora**；
+- `76dbb4e8-ac26-4e5c-93ff-8e23576f2a2b`：锁记 pid 42880，现在这个 pid 是 **java**。
+
+活动区 183 把锁、113 个 pid，其中只有 4 个现在存活，真正属于本次 Pneuma 的只有 3 把——
+也就是说，只剩「碰巧没被复用」这一层运气在挡。
+
+### 改了什么
+
+- 新增 `src/core/os-lock.ts`：Windows 用命名互斥量（`CreateMutexW`，名字
+  `Local\pneuma-lease-<sha1(规范化路径)>`，`GetLastError()==183` 判「别人握着」；
+  `bInitialOwner=1` 持有，`ReleaseMutex`+`CloseHandle` 放锁），Linux/macOS 用
+  `flock(fd, LOCK_EX|LOCK_NB)`。两条路径都**同步、非阻塞**，拿不到立刻返回。持有者是内核
+  对象，进程一死锁就没了，陈锁在机制上不存在。
+- `src/core/lockfile.ts`：`acquireLock` 先试 OS 锁，`busy` 直接返回 null，`unsupported`
+  静默退回原来的 pid 文件锁；`LOCK_SUFFIX` 挪到 `os-lock.ts` 再由这里 re-export，对外签名
+  零改动（`session.ts` 的 `takeWriteLease` 与四处 `withExclusiveLock` 调用点都没动）。降级
+  路径补一条零成本修复：锁里 pid 等于自己而 `birth` 不等于自己的，是上一代遗留的幽灵锁，
+  直接接管。
+- `src/core/session.ts`：只改 `busyLeaseMessage`，从锁文件里读出持有者 pid 附在原文案后
+  （读不到保持原样），方便下次真撞车时去任务管理器对号。
+- 新增 `scripts/session-lease-test.mjs`（12 条断言）：同进程可重入、跨进程互斥、子进程退出
+  后立刻能拿、两种幽灵锁（本进程旧 birth / 无关活进程 pid）都不挡 load、幽灵锁下归档成功、
+  拿到锁后说明文件被改写成本次持有者。
+
+**故意不删 `.lock` 文件**：它是 POSIX flock 的锚点。谁在释放时 unlink，谁就会让「A 放锁后
+删文件、B 还锁着旧 inode、C 新建文件并锁住新 inode」变成两个持有者。Windows 也保持同一
+行为，两条路径不搞特殊。锁文件里那份 `{pid, birth, how}` 从此只是给人的说明，不参与任何判定。
+
+### 验证
+
+- `typecheck`（根）0 错；`build` 通过（394 个桩、74 个功能包）；`check:style` 通过；
+  `git diff --check` 干净。
+- `node scripts/session-lease-test.mjs`：12 PASS / 0 FAIL；用预加载挡掉 koffi 强制走降级路径
+  再跑一次，11 PASS / 0 FAIL + 1 SKIP（「pid 是无关活进程」这条在文件锁路径无从核实别人的
+  启动时刻，如实跳过）。
+- 压力：同一路径连拿/放 300 次共 23ms（无句柄泄漏迹象）；子进程握锁时连试 50 次，50 次全部
+  正确判 busy（`GetLastError` 判定不抖）。
+- `check-core` 全量 108/108 通过（前台单次上限 10 分钟，分三批跑：129.9s + 268.8s + 276.2s）。
+- 真数据对照：把报障会话 `c059b1fb` 的原件与原锁文件复制到临时 HOME，改前 `Session.load` 与
+  `archiveSession` 双双报「另一个窗口」；改后同一个夹具 load 成功、归档成功。存量 183 把旧锁
+  不需要迁移——新路径不看锁内容，下次打开会话时会把说明改写成 `how:'os'`。
+
+### 遗留
+
+- `src/core/schedule/runner.ts` 的调度锁与 `src/core/remote/owner.ts` 的主控位仍是「只看
+  pid」，同一个坑（pid 被复用 → 调度器永远自认只读 / 远程主控位永远让位）。`os-lock.ts`
+  已经现成，下一批把这两处接过去即可。
+- macOS/Linux 的 flock 路径没有真机验证（开发机只有 Windows），`koffi.load(null)` 与 libc
+  候选顺序只做了静态设计。
+- 桌面端要重新打包（`prepare-runtime` 会把新的 `lib` 与依赖闭包带进去，koffi 本来就在闭包里）
+  才会生效。

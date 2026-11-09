@@ -54,7 +54,7 @@
 
 | 路径 | 规模 | 职责 |
 | --- | --- | --- |
-| `src/core/` | 164 个文件 ≈50561 行 | 纯能力：模型客户端与协议适配器、会话（含写租约）、循环、审批、压缩、溢出落盘、会话检索、MCP 客户端、工具、技能、设置、任务板；token 粗估（`token-estimate.ts`）、错误文案（`err-text.ts`）、数值收敛（`clamp.ts`）、对象判定（`records.ts`）、消息取文（`transcript-text.ts`）、cmd 引号与 shell 选择（`shell-quote.ts`）、默认终端探测（`terminal-env.ts`）、字符串判定（`strings.ts`）、安全序列化（`json-text.ts`）、快照推送节流（`snapshot-throttle.ts`）、git 读数相等判断（`git-surface.ts`）、时间格式化（`clock.ts`）都是全仓库唯一一份 |
+| `src/core/` | 164 个文件 ≈50561 行 | 纯能力：模型客户端与协议适配器、会话（含写租约，底座见 `os-lock.ts`：Windows 命名互斥量 / POSIX flock）、循环、审批、压缩、溢出落盘、会话检索、MCP 客户端、工具、技能、设置、任务板；token 粗估（`token-estimate.ts`）、错误文案（`err-text.ts`）、数值收敛（`clamp.ts`）、对象判定（`records.ts`）、消息取文（`transcript-text.ts`）、cmd 引号与 shell 选择（`shell-quote.ts`）、默认终端探测（`terminal-env.ts`）、字符串判定（`strings.ts`）、安全序列化（`json-text.ts`）、快照推送节流（`snapshot-throttle.ts`）、git 读数相等判断（`git-surface.ts`）、时间格式化（`clock.ts`）都是全仓库唯一一份 |
 | `src/core/tools/` | 7 个文件 ≈2147 行 | 内置六件套 `bash`/`read`/`write`/`edit`/`glob`/`grep`（预算由 tools-default 配置下发）+ 沙箱的一次性升权参数与命令执行器缝 |
 | `src/core/lsp/` | 7 个文件 ≈2422 行 | LSP 代码智能：`client`（连接/实例）、`manager`（池化调度）、`normalize`（应答归并）、`line-shift`（诊断行号对齐）、`framing`/`servers`/`uri` |
 | `src/core/dsh-compat/` | 9 个文件 ≈1949 行 | dsh 插件兼容层的模块解析钩子与工具形状适配 |

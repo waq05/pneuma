@@ -410,6 +410,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。
 - dsc：append 直写无任何跨进程锁（`session.ts:556`）；「打开中的会话不能归档」只查本进程内存（`plugins/session.ts:117-126`）。桌面端（utilityProcess）与 TUI 都从同一份 `.last-session` 取默认会话，同开一个工作区 → 两条对话交错 append 进同一份日志，重放串线；fork/归档的 `renameSync` 可在另一侧持句柄时移动文件。meta.json sidecar 的读改写同样无锁、损坏即被空表覆盖（`session-meta.ts:77-91`，:44-67 注释自认）。**dsc 自己会做锁**：schedule 的 `.lock` 互斥（`schedule/runner.ts:10,328,364`）、sandbox ACL 的 LockFileEx（`sandbox/win/acl.ts:88-117`），唯独会话没有这层。
 - 对标：codex `rollout/writer_lock.rs:43-86`（try_lock + 陈锁清理）；dsh `SessionWriteLease`（`lease.ts:70-116`，Windows 命名信号量 + POSIX flock + inode 校验），恢复时「先拿写所有权再读」。
 - 修法：会话写租约，争用时报「会话已在另一窗口打开」；meta.json 纳入同一把锁。
+- **2026-11-09 续（机制升级）**：租约底座从「`O_EXCL` 建 pid 文件锁」换成 **OS 原生互斥**（`src/core/os-lock.ts`：Windows 命名互斥量 / POSIX `flock`），与 dsh 同路线。原因是 pid 文件锁里的 `birth` 指纹只用来认自己、从不参与「主人还在吗」的判定：Windows 回收复用 pid 后，陈锁会把归档和打开永久挡死（实测 `~/.dsc` 里 183 把，其中 3 把的主人分别是后来的 Pneuma、Typora、java）。koffi 不可用时静默退回文件锁，并补上「pid 撞上自己但 `birth` 不是这一次」的接管规则。详见 development-log 同日条目。
 
 **T31. 会话头行损坏 = 整个会话永久打不开**
 - dsc：首行 meta 半截 JSON 直接 throw「缺少 meta 行」（`session.ts:329`），恢复失败**静默回落开新会话**（`plugins/session.ts:59-64`）——后面 99% 完好的对话再也进不去，用户无感知地丢了整个会话。坏行本可静默跳过（`session.ts:229-241`），唯独 meta 行没有抢救路径。
