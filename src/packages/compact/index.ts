@@ -211,12 +211,17 @@ export const compactPlugin: Plugin.Object = {
       })),
     })
 
-    /** 摘要之外必须原样带过去的文本：由各功能点登记，按登记顺序拼接。 */
-    const carries: Array<() => string> = []
-    /** 拼出压缩时要原样附在摘要后面的文本。 */
-    const carry = (): string =>
+    /**
+     * 摘要之外必须原样带过去的文本：由各功能点登记，按登记顺序拼接。
+     *
+     * 登记回调带 `session`（2026-11-09 P2）：清单/目标要取**被压缩的那条会话**的，
+     * 后台会话压缩时不能把用户眼前那条的清单塞进它的摘要。
+     */
+    const carries: Array<(session?: Session) => string> = []
+    /** 拼出压缩时要原样附在摘要后面的文本（`session` = 这次被压的那条）。 */
+    const carry = (session?: Session): string =>
       carries
-        .map((contribute) => contribute())
+        .map((contribute) => contribute(session))
         .filter((part) => part !== '')
         .join('\n\n')
 
@@ -294,7 +299,8 @@ export const compactPlugin: Plugin.Object = {
     }
 
     const service: CompactService = {
-      registerCarry(contribute) {
+      /** 登记一段原样带过去的文本；回调会收到**这次被压缩的那条会话**（缺省 = 当前查看的）。 */
+      registerCarry(contribute: (session?: Session) => string) {
         carries.push(contribute)
         return () => {
           const at = carries.indexOf(contribute)
@@ -322,7 +328,7 @@ export const compactPlugin: Plugin.Object = {
               ctx.llm.routeForSession(session),
               stream,
               signal ?? new AbortController().signal,
-              carry(),
+              carry(session),
               limits(session),
               attempt > 0 ? true : undefined,
               prune(),
@@ -376,7 +382,7 @@ export const compactPlugin: Plugin.Object = {
             ctx.llm.routeForSession(session),
             stream,
             signal ?? new AbortController().signal,
-            carry(),
+            carry(session),
             limits(session, false),
             true,
             prune(),
@@ -415,7 +421,7 @@ export const compactPlugin: Plugin.Object = {
               ctx.llm.routeForSession(target),
               stream,
               new AbortController().signal,
-              carry(),
+              carry(target),
               limits(target, false),
               undefined,
               prune(),

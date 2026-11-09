@@ -358,7 +358,12 @@ export const selfImprovePlugin: Plugin.Object = {
     }
 
     /** 审批门：拿不到答案一律按拒处理（宁严不松）。 */
-    async function askSkillWrite(summary: string, args: Record<string, unknown>, signal: AbortSignal): Promise<boolean> {
+    async function askSkillWrite(
+      summary: string,
+      args: Record<string, unknown>,
+      signal: AbortSignal,
+      owner?: { sessionId: string; sessionPath: string },
+    ): Promise<boolean> {
       try {
         // 卡片上两段都写：前一段是人话（要动哪个技能、为什么），后一段是参数的机械摘要，
         // 用户想核对「到底写了什么」时不用去翻会话日志。
@@ -368,6 +373,9 @@ export const selfImprovePlugin: Plugin.Object = {
             argsSummary: `${summary} · ${argsSummary(args)}`.slice(0, 160),
             args,
             cwd: cwd(),
+            // 卡跟发起调用的会话走（P0-6）：后台会话 / 队友写技能时，卡不该记到
+            // 用户正看着的那条会话名下（目标续跑会被挡、审计也会记错会话）。
+            ...(owner === undefined ? {} : { sessionId: owner.sessionId, sessionPath: owner.sessionPath }),
           },
           signal,
         )
@@ -635,7 +643,7 @@ export const selfImprovePlugin: Plugin.Object = {
         }
         if (config.requireApproval) {
           const summary = `${action} ${name}：${clip(String(args.description ?? args.old_string ?? args.file_path ?? ''), 60)}`
-          const approved = await askSkillWrite(summary, args, scope.signal)
+          const approved = await askSkillWrite(summary, args, scope.signal, scope)
           if (!approved) return `用户没有批这次技能写入（${action} ${name}）。要改的话请用户当面同意，或者把理由说清楚再来一次。`
         }
         if (action === 'create') {

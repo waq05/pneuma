@@ -180,6 +180,25 @@ export class Transcript {
     this.contextUsed = used
   }
   /**
+   * 会话重新打开时把磁盘账的「按模型 × 峰谷」费用桶种回来（P0-5）。
+   *
+   * 为什么需要：`costBuckets` 是纯内存累计，`clear()` 每次开会话都换成空 Map，而重放
+   * 历史明确不重放 usage——切到别的会话再切回来，状态栏那一格就整段消失。磁盘的
+   * usage.jsonl 按会话记着每笔请求的模型与 token，足够把桶原样还原（见
+   * `core/usage-log.ts` 的 readSessionCostBuckets）。
+   *
+   * 为什么整表替换而不是累加：重复打开同一条会话是「clear → 回填 → 再 clear → 再回填」，
+   * 必须得到同一个数，累加会让费用翻倍。桶是新拷的一份，之后到达的实时增量只改这份拷贝，
+   * 不会回头改调用方手里那张表（读取方常常是共享的缓存或常量）。
+   */
+  seedCostBuckets(buckets: ReadonlyMap<string, CostBuckets>): void {
+    const next = new Map<string, CostBuckets>()
+    for (const [model, bucket] of buckets) {
+      next.set(model, { peak: { ...bucket.peak }, idle: { ...bucket.idle } })
+    }
+    this.costBuckets = next
+  }
+  /**
    * 本会话已经落过几条压缩标记（`clear()` 归零）。新标记的 `count` 就是它加一，
    * 因此这个数就是「第几次压缩」。标记只在真正压过的地方产生，所以不必认识压缩服务。
    */

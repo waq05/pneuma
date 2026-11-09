@@ -13,7 +13,8 @@ import type { DscCoreConfig } from '../core/config.js'
 import { bootNoticeOnce } from '../core/boot-notices.js'
 import { activeConfigFile } from '../core/config-store.js'
 import { parseTolerantYaml, type MigrationReport } from '../core/migrate.js'
-import { readSessionUsage } from '../core/usage-log.js'
+import type { CostBuckets } from '../core/pricing.js'
+import { readSessionCostBuckets, readSessionUsage } from '../core/usage-log.js'
 
 // ── config.yaml 的 plugins 段（外部插件清单） ────────────────────────────────
 
@@ -80,6 +81,14 @@ export function emitStartupNotes(
       ;(root.transcript as unknown as { seedContextUsage(used: number): void }).seedContextUsage(
         usage.lastInputTokens,
       )
+    }
+    // 费用同一套口径（P0-5）：重启后内存里一笔累计都没有，重放也不重放 usage，磁盘的
+    // usage.jsonl 是唯一来源。与前台切会话（packages/transcript）用同一个读取入口，
+    // 修一处等于修两处；这条会话一行请求都没有时不填——显示 0 元等于给没开始的账画结论。
+    const costBuckets = readSessionCostBuckets(root.session.current().meta.id)
+    if (costBuckets !== null) {
+      ;(root.transcript as unknown as { seedCostBuckets(buckets: ReadonlyMap<string, CostBuckets>): void })
+        .seedCostBuckets(costBuckets)
     }
   }
   // 启动提示只展示一次（0.6.64）：同一会话同一模型的开机横幅只在首次见到时写，

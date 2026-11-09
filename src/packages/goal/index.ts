@@ -10,6 +10,8 @@
  *
  * 「有没有卡片挂着等用户」问 `ctx.waiting`——有卡就不许自动往下推，
  * 这条规则原先靠挨个查审批 / 计划 / 提问三个功能点，现在只问登记表。
+ * 0.6.48 起问的是**自己这条会话**（`waiting.anyFor(会话 id)`）：后台会话挂着的审批卡
+ * 不拦这条会话的续跑（P0-6）。目标存储也按会话分表，工具按调用方会话读写（P0-7）。
  *
  * 缺省轮次上限与 `/goal rounds` 每次放宽的幅度是插件配置（`goal.defaultMaxRounds` / `goal.extendRoundsBy`），
  * 也注册成设置分区「会话目标」的两项；保存后本插件立刻重读，下一条目标就用新值。
@@ -19,7 +21,8 @@
 import type { Plugin } from '@deepseek-ai/cordis'
 import { DEFAULT_MAX_GOAL_ROUNDS, GoalStore } from './goal.js'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
-import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
+import { Session } from '@pneuma/runtime/core/session.js'
+import type { GoalView, SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
 import type { GoalService, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { clampInt as clamp } from '@pneuma/runtime/core/clamp.js'
@@ -69,9 +72,62 @@ export const goalPlugin: Plugin.Object = {
       config = readConfig(passed)
     }
     // 缺省轮次交给一个取值函数：设置里改了数值，下一条目标立刻跟着变，不必重启宿主。
-    const goals = new GoalStore({ defaultMaxRounds: () => config.defaultMaxRounds })
-    const restored = ctx.session.current().state('goal')
-    if (restored !== undefined) goals.restore(restored)
+    const newStore = (): GoalStore => new GoalStore({ defaultMaxRounds: () => config.defaultMaxRounds })
+    /**
+     * 会话 id → 目标存储。**一条会话一份**（P0-7）：宿主从 0.6.48 起同时常驻多条会话的
+     * agent，后台会话与队友也会建目标；全进程一个 store 会让两条会话互相覆盖，还会把状态
+     * 写进用户正看着的那条 jsonl。建表时按那条会话自己的日志恢复（恢复后一律卸膛）。
+     */
+    const stores = new Map<string, GoalStore>()
+    const storeFor = (session: Session): GoalStore => {
+      const existing = stores.get(session.meta.id)
+      if (existing !== undefined) return existing
+      const created = newStore()
+      created.restore(session.state('goal') ?? null)
+      stores.set(session.meta.id, created)
+      return created
+    }
+    /** 当前查看会话的目标存储：界面投影、`/goal` 命令、自动续跑都问它。 */
+    const store = (): GoalStore => storeFor(ctx.session.current())
+    /**
+     * 这次工具调用归哪条会话。判定顺序与 `todo` 包同一套（两边各留一份小函数：可写白名单
+     * 只许改这两个文件，不为它单开跨包模块），先按调用方身份、最后才回落到界面：
+     *   1. `sessionPath`：先问 agent 名册（常驻会话在里面，零读盘）；名册里没有的——
+     *      队友会话由 `subagent` 直接 `Session.create/load`，不登记进名册——按路径读一份
+     *      只读视图并缓存，之后的 `appendState` 仍写回这个路径；
+     *   2. `sessionId`：名册里按 id 找；
+     *   3. 都没有才 `ctx.session.current()`：界面、`/命令` 这类非工具调用路径。
+     */
+    const loadedByPath = new Map<string, Session>()
+    const sessionAtPath = (filePath: string): Session | undefined => {
+      const live = ctx.get('agent')?.sessionFor(filePath)
+      if (live !== undefined) return live
+      const cached = loadedByPath.get(filePath)
+      if (cached !== undefined) return cached
+      let loaded: Session
+      try {
+        // keepPath=true：状态要写回读进来的这个路径（队友日志住在 `.teammates` 下）；
+        // lease=false：只读重放，不抢写租约、不修复中断回合、不投递收件箱。文件不存在时
+        // `load` 直接抛错（它从不建空文件），按解析不到处理。
+        loaded = Session.load(filePath, true, { lease: false })
+      } catch {
+        return undefined
+      }
+      loadedByPath.set(filePath, loaded)
+      return loaded
+    }
+    const sessionOf = (runCtx: { sessionId?: string; sessionPath?: string }): Session => {
+      const filePath = runCtx.sessionPath
+      if (filePath !== undefined && filePath !== '') {
+        const byPath = sessionAtPath(filePath)
+        if (byPath !== undefined) return byPath
+      }
+      const sessionId = runCtx.sessionId
+      return (
+        (sessionId !== undefined && sessionId !== '' ? ctx.get('agent')?.sessionById(sessionId) : undefined) ??
+        ctx.session.current()
+      )
+    }
 
     const touch = (): void => ctx.emit('dsc/changed')
     /**
@@ -81,27 +137,40 @@ export const goalPlugin: Plugin.Object = {
      * 日志里上一条真目标；不写的话日志最后一条仍是清空前那份，重启重放又把它读回来
      * （2026-11-02 报障「目标关闭后重启又会出现」）。
      */
-    const persist = (): void => {
-      ctx.session.current().appendState('goal', goals.snapshot)
+    const persist = (session: Session): void => {
+      const goals = storeFor(session)
+      session.appendState('goal', goals.snapshot)
       touch()
+    }
+
+    /**
+     * 某条会话的目标快照（界面投影与压缩携带共用这一份判定）。
+     * 按会话取（P2）：压缩携带传被压缩的那条，不能拿用户眼前那条的目标。
+     */
+    const viewOf = (session: Session): GoalView | null => {
+      const goals = storeFor(session)
+      const snapshot = goals.snapshot
+      if (snapshot === null) return null
+      return {
+        objective: snapshot.objective,
+        phase: snapshot.phase,
+        rounds: snapshot.rounds,
+        maxRounds: snapshot.maxRounds,
+        ...(snapshot.blockedReason !== undefined ? { blockedReason: snapshot.blockedReason } : {}),
+        armed: goals.armed,
+      }
     }
 
     const service: GoalService = {
       goalView() {
-        const snapshot = goals.snapshot
-        if (snapshot === null) return null
-        return {
-          objective: snapshot.objective,
-          phase: snapshot.phase,
-          rounds: snapshot.rounds,
-          maxRounds: snapshot.maxRounds,
-          ...(snapshot.blockedReason !== undefined ? { blockedReason: snapshot.blockedReason } : {}),
-          armed: goals.armed,
-        }
+        return viewOf(ctx.session.current())
       },
-      goals,
+      get goals() {
+        return store()
+      },
       goalAction(action) {
         config = readConfig(passed)
+        const goals = store()
         const result =
           action === 'pause'
             ? goals.pauseByUser()
@@ -111,7 +180,7 @@ export const goalPlugin: Plugin.Object = {
                 ? goals.clearByUser()
                 : goals.editByUser({ maxRounds: (goals.snapshot?.maxRounds ?? config.defaultMaxRounds) + config.extendRoundsBy })
         if (!result.ok) return { ok: false, error: result.error ?? '目标操作失败' }
-        persist()
+        persist(ctx.session.current())
         ctx.emit(
           'dsc/notice',
           `目标：${action === 'pause' ? '已暂停' : action === 'resume' ? '已继续' : action === 'clear' ? '已清空' : '轮次上限已放宽'}`,
@@ -119,11 +188,14 @@ export const goalPlugin: Plugin.Object = {
         return { ok: true }
       },
       takeGoalRound() {
+        const session = ctx.session.current()
+        const goals = storeFor(session)
         if (!goals.shouldContinue) return null
-        // 有任何一张卡在等用户做决定就不许自动往下推：人的决定排在机器前面。
-        if (ctx.waiting.any) return null
+        // 只问**这条会话**有没有卡在等用户做决定：别的会话（后台队友、另一条对话）的
+        // 审批卡不该把这里的目标永久钉死（P0-6）。全进程口径的 `any` 留给界面。
+        if (ctx.waiting.anyFor(session.meta.id)) return null
         const snapshot = goals.countRound()
-        persist()
+        persist(session)
         if (snapshot === null || snapshot.phase !== 'active') {
           ctx.emit('dsc/notice', `目标跑满 ${snapshot?.maxRounds ?? 0} 轮上限，自动停下等用户处理`)
           return null
@@ -159,26 +231,30 @@ export const goalPlugin: Plugin.Object = {
         required: ['action'],
       },
       risk: 'read',
-      async run(args) {
+      async run(args, runCtx) {
+        // 写哪条会话由**发起这次调用的会话**决定（P0-7）：后台会话 / 队友建目标时
+        // `ctx.session.current()` 是用户正看着的别家会话，落盘绝不能跟着它走。
+        const session = sessionOf(runCtx)
+        const goals = storeFor(session)
         const action = String(args.action ?? '')
         if (action === 'create') {
           const result = goals.create(
             String(args.objective ?? ''),
             typeof args.maxRounds === 'number' ? args.maxRounds : undefined,
           )
-          persist()
+          persist(session)
           if (!result.ok) throw new Error(result.error)
           return `目标已建立：${result.snapshot.objective}（上限 ${result.snapshot.maxRounds} 轮，到点自动 blocked）`
         }
         if (action === 'complete') {
           const result = goals.complete()
-          persist()
+          persist(session)
           if (!result.ok) throw new Error(result.error)
           return '目标已标记完成，自动续跑已停止。'
         }
         if (action === 'blocked') {
           const result = goals.block(String(args.reason ?? ''))
-          persist()
+          persist(session)
           if (!result.ok) throw new Error(result.error)
           return '目标已标记阻塞，自动续跑已停止，等用户处理。'
         }
@@ -188,8 +264,9 @@ export const goalPlugin: Plugin.Object = {
     ctx.effect(() => ctx.tools.register(goalTool), 'goal: tools.register')
 
     // 摘要模型会把目标改写成另一句话，所以目标原文要原样带进压缩后的上下文。
-    ctx.effect(() => ctx.compact.registerCarry(() => {
-      const view = service.goalView()
+    // 带会话：按**被压缩的那条**取目标；拿不到会话时才回落当前查看的（兼容老调用方）。
+    ctx.effect(() => ctx.compact.registerCarry((session?: Session) => {
+      const view = viewOf(session ?? ctx.session.current())
       if (view === null) return ''
       return `会话目标：${view.objective}（已跑 ${view.rounds}/${view.maxRounds} 轮，阶段 ${view.phase}）`
     }), 'goal: compact.registerCarry')
@@ -213,12 +290,12 @@ export const goalPlugin: Plugin.Object = {
           if (!result.ok) ui.notice(result.error ?? '目标操作失败')
           return
         }
-        const result = goals.create(args.join(' '))
+        const result = store().create(args.join(' '))
         if (!result.ok) {
           ui.notice(result.error ?? '目标建立失败')
           return
         }
-        persist()
+        persist(ctx.session.current())
         ui.notice(`目标已建立：${result.snapshot.objective}（上限 ${result.snapshot.maxRounds} 轮）`)
       },
     ), 'goal: commands.register')
@@ -232,8 +309,11 @@ export const goalPlugin: Plugin.Object = {
     ctx.on('dsc/turn-end', (reason, signal) => {
       if (reason !== 'completed') return
       // 载荷缺省（老式直接 emit）按当前会话算
-      if (signal !== undefined && signal.sessionId !== ctx.session.current().meta.id) return
+      const target = signal?.sessionId ?? ctx.session.current().meta.id
+      if (target !== ctx.session.current().meta.id) return
       setTimeout(() => {
+        // 这 0ms 里用户可能已经切走：续跑只推它自己那条会话，不隔会话点火。
+        if (ctx.session.current().meta.id !== target) return
         const reminder = service.takeGoalRound()
         if (reminder === null) return
         ctx.transcript.system(`目标自动续跑：继续推进「${service.goalView()?.objective ?? ''}」`)
@@ -243,7 +323,7 @@ export const goalPlugin: Plugin.Object = {
 
     ctx.on('dsc/session-open', ({ session }) => {
       // 切会话：目标跟着新会话回来，自动续跑一律先卸膛（不隔会话点火）。
-      goals.restore(session.state('goal') ?? null)
+      storeFor(session).restore(session.state('goal') ?? null)
       touch()
     })
 

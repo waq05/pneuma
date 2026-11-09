@@ -47,7 +47,7 @@ export const DSH_SERVICE_MAP: Readonly<Record<string, DshServiceVerdict>> = {
   agents: { tier: 'adapted', pneuma: 'agent', note: 'dsh 是 agent 注册表，Pneuma 只有当前回合循环；子智能体走 team' },
   settings: { tier: 'adapted', pneuma: 'settings', note: '同名不同物：dsh 是插件 Config 表单，Pneuma 是应用设置' },
   systemPrompt: { tier: 'adapted', pneuma: 'prompt', note: 'dsh 是结构化 section，Pneuma 是 register(id, text, order)' },
-  goals: { tier: 'adapted', pneuma: 'goal', note: 'dsh 的调用都带 agent，Pneuma 是单例 store' },
+  goals: { tier: 'adapted', pneuma: 'goal', note: 'dsh 的调用都带 agent，Pneuma 的目标按会话分表（`stores` 一份 Map，键是会话 id），不是进程级单例' },
   planMode: { tier: 'adapted', pneuma: 'plan', note: 'dsh 是计划模式开关，Pneuma 是「交计划等批」' },
   sandbox: { tier: 'adapted', pneuma: 'sandbox', note: 'dsh 包进程执行，Pneuma 只判路径能不能写' },
   userQuestions: { tier: 'adapted', pneuma: 'ask', note: '异名近义，按 ask 的接口改写' },

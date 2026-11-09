@@ -19,8 +19,9 @@ import type { Plugin } from '@deepseek-ai/cordis'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { appendTodoReminder } from '@pneuma/runtime/core/todo-reminder.js'
 import { TodoStore } from './todo.js'
+import { Session } from '@pneuma/runtime/core/session.js'
 import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
-import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
+import type { SettingsField, SettingsValues, TodoWriteResult } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec, TodoService } from '@pneuma/runtime/services/types.js'
 import { hostT } from '@pneuma/runtime/core/i18n.js'
 
@@ -54,8 +55,24 @@ function readReminderConfig(): { enabled: boolean; everyRounds: number } {
   }
 }
 
+/**
+ * 清单工具要的三件事：这次调用归哪条会话、那条会话的清单、写进去并落盘。
+ *
+ * 为什么打成一个口子：`todo_write` 以前只写内存里那份全局 `TodoStore`，落盘那一步
+ * （`appendState`）只挂在界面那条 `writeTodos` 上——工具写的东西根本没进会话日志，
+ * 而后台会话/队友调一次又会改掉用户眼前那份清单（P0-7）。
+ */
+interface TodoTarget {
+  /** 这次调用归哪条会话（`ToolContext.sessionId/sessionPath`，缺省按当前查看的）。 */
+  sessionOf(runCtx: { sessionId?: string; sessionPath?: string }): Session
+  /** 那条会话的清单存储（按会话分表）。 */
+  storeFor(session: Session): TodoStore
+  /** 写进那条会话的清单并落盘到它自己的 jsonl。 */
+  writeInto(session: Session, list: readonly unknown[], merge: boolean): TodoWriteResult
+}
+
 /** 任务清单工具：写入即回显整表，模型看到的和用户看到的是同一份。 */
-function todoTool(store: TodoStore, onWrite: () => void): ToolEntry {
+function todoTool(target: TodoTarget, onWrite: () => void): ToolEntry {
   return {
     name: 'todo_write',
     description:
@@ -85,10 +102,12 @@ function todoTool(store: TodoStore, onWrite: () => void): ToolEntry {
       required: ['todos'],
     },
     risk: 'read',
-    async run(args) {
+    async run(args, runCtx) {
       const list = Array.isArray(args.todos) ? args.todos : null
       if (list === null) throw new Error('todos 必须是数组')
-      const result = store.write(list, args.merge === true)
+      const session = target.sessionOf(runCtx)
+      const store = target.storeFor(session)
+      const result = target.writeInto(session, list, args.merge === true)
       onWrite()
       const progress = store.progress()
       const notes = result.notes.length > 0 ? `\n注意：${result.notes.join('；')}` : ''
@@ -103,20 +122,85 @@ export const todoPlugin: Plugin.Object = {
   inject: ['session', 'tools', 'commands', 'surfaces', 'compact', 'prompt', 'settings'],
   provide: 'todo',
   apply(ctx) {
-    const todos = new TodoStore()
-    const restored = ctx.session.current().state('todos')
-    if (restored !== undefined) todos.restore(restored)
+    /**
+     * 会话 id → 清单存储。**一条会话一份**（P0-7）：全进程一个 store 时，后台会话或队友
+     * 写一次就把用户眼前那份清单顶掉，两条会话并行时互相覆盖。建表时按那条会话自己的
+     * 日志恢复（`dsc/session-open` 恢复历史会话也走这条路）。
+     */
+    const stores = new Map<string, TodoStore>()
+    const storeFor = (session: Session): TodoStore => {
+      const existing = stores.get(session.meta.id)
+      if (existing !== undefined) return existing
+      const created = new TodoStore()
+      created.restore(session.state('todos') ?? [])
+      stores.set(session.meta.id, created)
+      return created
+    }
+    /** 当前查看会话的清单存储：界面投影、提示词投影、`/todo` 命令都问它。 */
+    const store = (): TodoStore => storeFor(ctx.session.current())
+    /**
+     * 这次工具调用归哪条会话。判定顺序与 `goal` 包同一套（两边各留一份小函数：可写白名单
+     * 只许改这两个文件，不为它单开跨包模块），先按调用方身份、最后才回落到界面：
+     *   1. `sessionPath`：先问 agent 名册（常驻会话在里面，零读盘）；名册里没有的——
+     *      队友会话由 `subagent` 直接 `Session.create/load`，不登记进名册——按路径读一份
+     *      只读视图并缓存，之后的 `appendState` 仍写回这个路径；
+     *   2. `sessionId`：名册里按 id 找；
+     *   3. 都没有才 `ctx.session.current()`：界面、`/命令` 这类非工具调用路径。
+     */
+    const loadedByPath = new Map<string, Session>()
+    const sessionAtPath = (filePath: string): Session | undefined => {
+      const live = ctx.get('agent')?.sessionFor(filePath)
+      if (live !== undefined) return live
+      const cached = loadedByPath.get(filePath)
+      if (cached !== undefined) return cached
+      let loaded: Session
+      try {
+        // keepPath=true：状态要写回读进来的这个路径（队友日志住在 `.teammates` 下；
+        // 不传会让 keepPath 的默认逻辑把路径重算到会话根目录，状态就落到另一份新文件里）。
+        // lease=false：只读重放，不抢写租约、不修复中断回合、不投递收件箱——解析会话
+        // 这一步不许有副作用。文件不存在时 `load` 直接抛错（它从不建空文件），按解析不到处理。
+        loaded = Session.load(filePath, true, { lease: false })
+      } catch {
+        return undefined
+      }
+      loadedByPath.set(filePath, loaded)
+      return loaded
+    }
+    const sessionOf = (runCtx: { sessionId?: string; sessionPath?: string }): Session => {
+      const filePath = runCtx.sessionPath
+      if (filePath !== undefined && filePath !== '') {
+        const byPath = sessionAtPath(filePath)
+        if (byPath !== undefined) return byPath
+      }
+      const sessionId = runCtx.sessionId
+      return (
+        (sessionId !== undefined && sessionId !== '' ? ctx.get('agent')?.sessionById(sessionId) : undefined) ??
+        ctx.session.current()
+      )
+    }
 
     const touch = (): void => ctx.emit('dsc/changed')
-    const writeTodos = (list: readonly unknown[], merge: boolean) => {
-      const result = todos.write(list, merge)
-      ctx.session.current().appendState('todos', result.items)
+    /** 写进指定会话的清单并落盘到它自己的 jsonl（工具与界面两条入口共用）。 */
+    const writeInto = (session: Session, list: readonly unknown[], merge: boolean): TodoWriteResult => {
+      const result = storeFor(session).write(list, merge)
+      session.appendState('todos', result.items)
       touch()
       return result
+    }
+    const writeTodos = (list: readonly unknown[], merge: boolean) => writeInto(ctx.session.current(), list, merge)
+
+    /**
+     * 某条会话的清单提示词（界面投影、`/todo` 与压缩携带共用这一份口径）。
+     * 按会话取（P2）：压缩携带传被压缩的那条，不能拿用户眼前那条的清单。
+     */
+    const todoPromptOf = (session: Session): string => {
+      const todos = storeFor(session)
+      return todos.empty ? '' : `本次任务清单（当前进度，照它继续，别重建）：\n${todos.formatForPrompt()}`
     }
 
     const service: TodoService = {
       todoView() {
+        const todos = store()
         const progress = todos.progress()
         return {
           items: todos.read(),
@@ -128,22 +212,30 @@ export const todoPlugin: Plugin.Object = {
       },
       writeTodos,
       clearTodos() {
-        todos.clear()
-        ctx.session.current().appendState('todos', [])
+        const session = ctx.session.current()
+        storeFor(session).clear()
+        session.appendState('todos', [])
         ctx.emit('dsc/notice', '任务清单已清空')
         touch()
       },
       todoPrompt() {
-        return todos.empty ? '' : `本次任务清单（当前进度，照它继续，别重建）：\n${todos.formatForPrompt()}`
+        return todoPromptOf(ctx.session.current())
       },
     }
     ctx.provide('todo', service)
 
-    ctx.effect(() => ctx.tools.register(todoTool(todos, () => ctx.emit('dsc/changed'))), 'todo: tools.register')
+    ctx.effect(
+      () => ctx.tools.register(todoTool({ sessionOf, storeFor, writeInto }, () => ctx.emit('dsc/changed'))),
+      'todo: tools.register',
+    )
 
     ctx.effect(() => ctx.surfaces.register('todos', () => service.todoView()), 'todo: surfaces.register')
     // 压缩摘要会把清单改写走样，所以整表要原样带过去（压缩插件只问注册表要文本）。
-    ctx.effect(() => ctx.compact.registerCarry(() => service.todoPrompt()), 'todo: compact.registerCarry')
+    // 带会话：按**被压缩的那条**取清单；拿不到会话时才回落当前查看的（兼容老调用方）。
+    ctx.effect(
+      () => ctx.compact.registerCarry((session?: Session) => todoPromptOf(session ?? ctx.session.current())),
+      'todo: compact.registerCarry',
+    )
 
     // ── 节流提醒投影（默认开）──────────────────────────────────────────────
     // 长会话里模型会把「做完一步就改状态」忘掉，光靠工具说明里的静态叮嘱拉不回来。
@@ -156,12 +248,15 @@ export const todoPlugin: Plugin.Object = {
     }
     const offReminder = ctx.prompt.registerProjection(
       'todo-reminder',
-      (messages) =>
-        appendTodoReminder(messages, {
+      (messages, session) => {
+        // 提醒问**这次请求那条会话**的清单：后台回合的提醒不该报用户眼前那条的进度（P0-7）。
+        const todos = storeFor(session ?? ctx.session.current())
+        return appendTodoReminder(messages, {
           enabled: reminder.enabled,
           everyRounds: reminder.everyRounds,
           hasOpenTodos: todos.read().some((item) => item.status === 'pending' || item.status === 'in_progress'),
-        }),
+        })
+      },
       // order 800：排在 env-facts(600) 之后（提醒要落在环境快照之后，也在 drop-images(900) 之前）
       { order: 800 },
     )
@@ -220,12 +315,13 @@ export const todoPlugin: Plugin.Object = {
           service.clearTodos()
           return
         }
-        const text = todos.formatForPrompt()
+        const text = store().formatForPrompt()
         ui.notice(text === '' ? '当前没有任务清单。' : text)
       },
     ), 'todo: commands.register')
 
     ctx.on('dsc/session-open', ({ session }) => {
+      const todos = storeFor(session)
       const items = session.state('todos')
       todos.clear()
       if (items !== undefined) todos.restore(items)

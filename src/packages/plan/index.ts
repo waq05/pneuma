@@ -42,6 +42,8 @@ interface PendingPlanCard {
   view: PlanView
   /** 提交计划的会话（后台提卡也归属它）：落库、事件归属、surface 认领全靠它。 */
   sessionPath: string
+  /** 提交计划的会话 id：`waiting` 按会话登记时用它（会话路径会被搬动，id 不会）。 */
+  sessionId: string
   /** 拒绝时用户附的反馈原文（answerPlan 带进来，经 exit_plan_mode 的结果文案捎给模型）。 */
   rejectionFeedback?: string
   finish(decision: PlanDecision, quiet?: boolean): void
@@ -58,6 +60,8 @@ export const planPlugin: Plugin.Object = {
       return state?.decision === 'pending' ? state : null
     }
     let restored: PlanView | null = pendingStateOf(ctx.session.current())
+    /** 那张僵尸卡属于哪条会话：`waiting` 按会话登记时用它，别的会话的卡不挡这条会话。 */
+    let restoredSessionId: string | null = restored === null ? null : ctx.session.current().meta.id
     /** 活挂起的评审卡：卡 id → 卡。多卡并存（0.6.49）。 */
     const pendings = new Map<string, PendingPlanCard>()
 
@@ -72,6 +76,44 @@ export const planPlugin: Plugin.Object = {
       return undefined
     }
 
+    /**
+     * 收掉当前查看会话的僵尸卡：把终结状态写回会话的 `plan` 条目，再清内存。
+     *
+     * 为什么必须写状态：僵尸卡是从会话 jsonl 的 `plan` 条目读出来的（`pendingStateOf`），
+     * 只清内存的话下次恢复会话它又回来，`anyFor(那条会话)` 依旧恒真——计划卡又是三类卡里
+     * 唯一没有超时的，这条会话的目标续跑会永久停摆。
+     *
+     * @param decision - 用户点的答案；`quiet` = 「同一会话交来新计划」时的作废，不算决定。
+     */
+    const settleRestored = (decision: PlanDecision, quiet = false): void => {
+      if (restored === null || decision === 'pending') return
+      const here = ctx.session.current()
+      if (restoredSessionId === null || restoredSessionId !== here.meta.id) return
+      const settled: PlanView = { ...restored, decision }
+      // 先写盘、成功之后再清内存：反过来（先清后写）在写盘抛错时会留下「内存已空、
+      // 磁盘仍 pending」的幽灵——重启后僵尸卡又回来了，而这一轮已经切过模式、写过审计。
+      // 写盘失败就让它抛出去，内存保持原状，用户重按一次还能重试。
+      here.appendState('plan', settled)
+      restored = null
+      restoredSessionId = null
+      ctx.emit('dsc/plan', settled, here.filePath)
+      if (quiet) {
+        touch()
+        return
+      }
+      ctx.emit('dsc/notice', decision === 'approved' ? '计划已批准，切回执行模式开工。' : '计划未获批准，留在计划模式。', undefined, here.filePath)
+      // 与活卡同口径：批准之后该由哪一档继续干活，是模式服务自己的事。
+      if (decision === 'approved') ctx.mode.setMode('build')
+      audit({
+        ts: Date.now(),
+        kind: 'mode-change',
+        reason: `计划评审：${decision === 'approved' ? '批准' : '拒绝'}`,
+        sessionId: here.meta.id,
+        cwd: here.meta.cwd,
+      })
+      touch()
+    }
+
     /** 交一份计划等用户批：挂起直到批准 / 拒绝 / 这一轮被打断。 */
     const propose = (next: PlanView, signal: AbortSignal, sessionPath?: string): Promise<PlanOutcome> =>
       new Promise<PlanOutcome>((resolveDone) => {
@@ -80,6 +122,9 @@ export const planPlugin: Plugin.Object = {
         const proposed =
           (sessionPath !== undefined ? ctx.get('agent')?.sessionFor(sessionPath) : undefined) ?? ctx.session.current()
         const path = proposed.filePath
+        // 同一会话交来新计划：上一张僵尸卡已经没人能答（那次评审随进程重启丢了），
+        // 在这里作废它——写终结状态 + 清内存，别让它把新一轮的续跑继续钉着。
+        if (restored !== null && restoredSessionId === proposed.meta.id) settleRestored('rejected', true)
         const id = randomUUID()
         /** 提交时刻：计划目录的账按它排（决定可能隔几分钟才下来，排序得看交的时刻）。 */
         const submittedAt = Date.now()
@@ -89,6 +134,12 @@ export const planPlugin: Plugin.Object = {
           pendings.delete(id)
           const settled: PlanView = { ...next, decision }
           proposed.appendState('plan', settled)
+          // 同一会话的僵尸卡跟活卡一起收：新卡的终结状态已经写进同一个 `plan` 条目
+          // （上一行），内存里那张再留着会让这条会话的 `anyFor` 恒真。
+          if (restored !== null && restoredSessionId === proposed.meta.id) {
+            restored = null
+            restoredSessionId = null
+          }
           // 计划目录的账（状态面板「计划」区按会话出它）：终结就入账——批、拒、
           // 中断清理都算终结（与参考实现「终态计划才进目录」同口径）。待批的不在账里。
           const history = proposed.state('plans')?.items ?? []
@@ -123,7 +174,7 @@ export const planPlugin: Plugin.Object = {
             ...(decision === 'rejected' && feedback !== undefined ? { feedback } : {}),
           })
         }
-        pendings.set(id, { id, view: next, sessionPath: path, finish })
+        pendings.set(id, { id, view: next, sessionPath: path, sessionId: proposed.meta.id, finish })
         ctx.emit('dsc/plan', next, path)
         ctx.emit('dsc/agent-status', { sessionId: proposed.meta.id, path, state: 'awaiting-approval' })
         signal.addEventListener('abort', () => finish('rejected'), { once: true })
@@ -138,7 +189,12 @@ export const planPlugin: Plugin.Object = {
       proposePlan: (input, signal) => propose({ ...input, decision: 'pending' }, signal).then((outcome) => outcome.decision),
       answerPlan(decision, feedback) {
         const card = cardOfCurrent()
-        if (card === undefined) return
+        if (card === undefined) {
+          // 没有活卡，可能是重启前留下的僵尸卡：以前这里直接返回，卡撤不掉、
+          // `anyFor(这条会话)` 恒真（目标续跑永久停摆）。按用户点的答案把它收掉。
+          settleRestored(decision)
+          return
+        }
         if (decision === 'rejected' && typeof feedback === 'string' && feedback.trim() !== '') {
           card.rejectionFeedback = feedback.trim()
         }
@@ -147,7 +203,14 @@ export const planPlugin: Plugin.Object = {
     }
     ctx.provide('plan', service)
     ctx.effect(() => ctx.surfaces.register('pendingPlan', () => service.pendingPlan()), 'plan: surfaces.register')
-    ctx.effect(() => ctx.waiting.register('plan', () => pendings.size > 0 || restored !== null), 'plan: waiting.register')
+    ctx.effect(() => ctx.waiting.register('plan', (owner?: string) => {
+      // 按会话登记（P0-6）：`owner` 缺省 = 全进程有没有卡（界面口径），
+      // 给了就只算那条会话的活卡与僵尸卡，别的会话挂着计划卡不挡这条会话。
+      for (const card of pendings.values()) {
+        if (owner === undefined || card.sessionId === owner) return true
+      }
+      return restored !== null && (owner === undefined || restoredSessionId === owner)
+    }), 'plan: waiting.register')
 
     // ── 「计划」区（状态面板）：本会话提交过的计划目录 ──────────────────────────
     //
@@ -212,6 +275,7 @@ export const planPlugin: Plugin.Object = {
       // 这里只换「当前查看会话」的僵尸计划卡：恢复会话时把计划条目放回会话流，
       // 这张卡用户批过也要看得见批了什么。
       restored = pendingStateOf(session)
+      restoredSessionId = restored === null ? null : session.meta.id
       if (filePath !== undefined && restored !== null) ctx.emit('dsc/plan', restored)
       touch()
     })
@@ -219,6 +283,10 @@ export const planPlugin: Plugin.Object = {
     ctx.on('dsc/exit', () => {
       for (const card of [...pendings.values()]) card.finish('rejected', true)
       pendings.clear()
+      // 僵尸卡也一起收：宿主退出后没人能答它，内存里留着没有意义
+      // （状态条目里的 pending 由下次恢复时的 answerPlan / 新计划作废收尾）。
+      restored = null
+      restoredSessionId = null
     })
   },
 }

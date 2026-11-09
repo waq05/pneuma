@@ -18,8 +18,9 @@
  *   4. **pre-dispatch 校验**照 hermes `cron/scheduler_preflight.py`：凭据解析不出来、
  *      投递目标不知道、沙箱不让写数据目录——这三种情况**一个模型请求都不发**，
  *      直接把任务标 blocked 并写下原因。自动化最贵的浪费是「明知会失败还去烧一次额度」。
- *   5. **投递前问 `waiting.any`**：界面上有审批卡、计划卡、提问卡挂着的时候不隔着一张卡硬推，
- *      整批推迟到下一 tick。人的决定排在机器前面。
+ *   5. **投递前问 `waiting.anyFor(会话)`**：界面上有审批卡、计划卡、提问卡挂着的时候不隔着一张卡硬推，
+ *      推迟到下一 tick。人的决定排在机器前面。判的是**这条任务自己那条会话**（不是整批一个布尔）：
+ *      别的会话挂着卡，不该把这条任务的投递一起拖住（P0-6 的 P2 收口）。
  *   6. **不改 goal 的 rounds、不给 goal 上膛**（`src/packages/goal/goal.ts:224-236`、`:85-87`）。
  *      定时任务和会话目标是两码事：目标是「用户在场、说了一句就跑到完」，定时任务是
  *      「用户不在场、跑一次就收」。给 goal 上膛等于让无人值守的定时任务自己去点着一条
@@ -276,8 +277,15 @@ export interface ScheduleRunnerDeps {
   route: () => { baseUrl: string; apiKey: string; model: string }
   /** 真投递：把文本交给 agent。 */
   deliver: (text: string, task: ScheduleTask, slot: number) => void
-  /** 有卡片正等用户处理吗。 */
-  waiting: () => boolean
+  /**
+   * 这条会话有卡片正等用户处理吗。
+   *
+   * 必须带会话：闸按「这条任务会被投递到的那条会话」逐条判。原来是无参的整批布尔，
+   * 插件侧只能取所有任务目标会话的超集，结果是别人的卡把这条任务也拖住一轮。
+   * 空串 = 定不下目标会话，装配侧按「不挡」处理：这种任务本来就会被 preflight 判成
+   * blocked 并写清原因，不会在没有目标的情况下投出去。
+   */
+  waiting: (sessionId: string) => boolean
   /** 当前会话 id；空串 = 投递目标未知。 */
   sessionId: () => string
   /** 可选：沙箱允许写数据目录吗（没有沙箱插件时返回 null）。 */
@@ -340,6 +348,23 @@ export class ScheduleRunner {
     this.deps.notice?.(text)
   }
 
+  /**
+   * 这条任务的卡闸该问哪条会话。
+   *
+   * 任务自带 `sessionId`（建它的那条会话）就按它——投递目标也是它。老任务没存 `sessionId`，
+   * 投递本来就只能回落到当前会话（`preflight` 里同一处回落），所以卡闸也跟着回落：
+   * 按当前会话问，才不会漏掉它自己要投的那条会话上的卡。
+   * 连当前会话都读不到时返回空串，交给装配侧按「不挡」处理（preflight 会判 blocked）。
+   */
+  private waitingOwnerOf(task: ScheduleTask): string {
+    if (task.sessionId !== '') return task.sessionId
+    try {
+      return this.deps.sessionId()
+    } catch {
+      return ''
+    }
+  }
+
   /** 启动：拿锁 → 先跑一次（宿主启动时的 catch-up 就在这一次里）→ 排下一次唤醒。 */
   start(): void {
     if (this.started) return
@@ -383,7 +408,10 @@ export class ScheduleRunner {
     const found = this.deps.store.findByPrefix(id)
     if (!found.ok) throw new Error(found.error)
     const task = found.task
-    if (this.deps.waiting()) return '现在有卡片在等用户处理：先处理完卡片，或者直接在会话里说一句'
+    // 只被这条任务自己那条会话的卡挡住：别的会话挂着卡，不耽误手动跑这一条。
+    if (this.deps.waiting(this.waitingOwnerOf(task))) {
+      return '这条任务的目标会话有卡片在等用户处理：先处理完卡片，或者直接在会话里说一句'
+    }
     const blocked = this.preflight(task)
     if (blocked !== null) return `投不出去：${blocked}`
     // 手动跑不动周期任务的排期；但一次性任务的意义就是「那一刻跑一次」，手动跑掉就算用过了。
@@ -464,19 +492,27 @@ export class ScheduleRunner {
   private async recoverPending(): Promise<boolean> {
     const pending = this.deps.store.pendingTasks()
     if (pending.length === 0) return false
-    if (this.deps.waiting()) {
-      this.note('有卡片正等用户处理：定时任务的补投推迟到下一轮')
-      return false
-    }
+    let worked = false
+    /** 这一轮被自己那条会话的卡挡住的补投：汇总成一句提示，别每条任务刷一行。 */
+    const deferred: string[] = []
     for (const task of pending) {
       const slot = task.pendingSlot
       if (slot === null) continue
+      // 卡闸逐条判：别的会话挂着卡，不该把这条任务的补投也拖住（这条继续悬空，下一轮再补）。
+      if (this.deps.waiting(this.waitingOwnerOf(task))) {
+        deferred.push(task.title)
+        continue
+      }
       this.note(`任务「${task.title}」的槽位（${formatInstant(slot, task.timeZone)}）推进了却没投出去，补投一次`)
       // 先清 pendingSlot 再投不行（崩了又丢），所以投递路径里 endSlot 一定会清掉它——
       // 无论成功、失败还是阻塞，都不会留着让下一轮再投一次。
       await this.deliver(task, slot, 'recovered', nextRunAt(task.rule, task.timeZone, this.now()))
+      worked = true
     }
-    return true
+    if (deferred.length > 0) {
+      this.note(`任务${deferred.map((title) => `「${title}」`).join('、')}的目标会话有卡片在等用户处理：补投推迟到下一轮`)
+    }
+    return worked
   }
 
   /** 到点的任务：先算要不要跑（catch-up 策略），再决定投不投。 */
@@ -533,15 +569,21 @@ export class ScheduleRunner {
       })
     }
     if (due.length === 0) return worked
-    // 有卡片挂着就把整批推迟：不隔着一张卡硬推。排期一律没动，下一 tick 会重新看见它们。
-    if (this.deps.waiting()) {
-      this.note(`有 ${due.length} 条定时任务到点，但界面有卡片在等用户处理：推迟到下一轮`)
-      return worked
-    }
+    /** 这一轮被自己那条会话的卡挡住的到点任务：汇总成一句提示，别每条任务刷一行。 */
+    const deferred: string[] = []
     for (const item of due) {
+      // 卡闸逐条判：只有这条任务自己要投的那条会话挂着卡，才把它自己推迟到下一轮。
+      // 排期一律没动，下一 tick 会重新看见它。
+      if (this.deps.waiting(this.waitingOwnerOf(item.task))) {
+        deferred.push(item.task.title)
+        continue
+      }
       if (item.kind === 'catch-up') this.note(`定时任务「${item.task.title}」：${item.reason}`)
       await this.deliver(item.task, item.slot, item.kind, item.next)
       worked = true
+    }
+    if (deferred.length > 0) {
+      this.note(`有 ${deferred.length} 条定时任务到点，但它们各自的目标会话有卡片在等用户处理：推迟到下一轮（${deferred.join('、')}）`)
     }
     return worked
   }

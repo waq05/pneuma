@@ -30,7 +30,7 @@ import { errText as errorText } from '@pneuma/runtime/core/err-text.js'
 import { asRecord } from '@pneuma/runtime/core/records.js'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { wrapUntrusted } from '@pneuma/runtime/core/untrusted.js'
-import { argsSummary, type ToolEntry } from '@pneuma/runtime/core/tools.js'
+import { argsSummary, type ToolContext, type ToolEntry } from '@pneuma/runtime/core/tools.js'
 import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { McpServerInfo, McpService, McpToolInfo, SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { hostT } from '@pneuma/runtime/core/i18n.js'
@@ -80,6 +80,12 @@ const TIMEOUT_MAX_MS = 600_000
 const ATTEMPTS_MIN = 1
 const ATTEMPTS_MAX = 50
 
+/** elicitation 卡归属的会话身份（`meta.id` / jsonl 路径；取不到就不带）。 */
+interface SessionOwner {
+  sessionId?: string
+  sessionPath?: string
+}
+
 /** 一个 server 在此刻的运行时状态。 */
 interface ServerState {
   /** 这份配置（含已解析好的 defaultRisk）。 */
@@ -88,6 +94,8 @@ interface ServerState {
   info: McpServerInfo
   /** 当前这条连接；连上之前与掉线之后都是 undefined。 */
   connection: McpConnection | undefined
+  /** 最近一次用这条连接的会话：elicitation 卡按它归属；建连后还没调用过时是建连会话。 */
+  owner: SessionOwner
   /** 这个 server 现在有哪些工具（与有没有注册进 ctx.tools 无关）。 */
   tools: McpToolInfo[]
   /** T24：这个 server 声明的能力（连接握手时读到；没连上全是 false）。 */
@@ -213,8 +221,17 @@ export const mcpPlugin: Plugin.Object = {
     /**
      * 按完整工具名调一次。结果先进围栏再回模型；server 报错时也要包完再抛，
      * 免得把外部文本原样塞进错误消息。
+     *
+     * `session` 是发起这次调用的会话：记到连接上，server 反向要确认时卡按它归属。
+     * `McpService.call`（Tool Search 转发那条路）拿不到会话身份，只能沿用上一位调用者
+     * 或建连会话。
      */
-    async function callTool(name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<string> {
+    async function callTool(
+      name: string,
+      args: Record<string, unknown>,
+      signal: AbortSignal,
+      session?: ToolContext,
+    ): Promise<string> {
       const tool = catalog.get(name)
       if (tool === undefined) throw new Error(`没有这个 MCP 工具：${name}`)
       const state = states.get(tool.server)
@@ -223,6 +240,7 @@ export const mcpPlugin: Plugin.Object = {
         const problem = state?.info.problem
         throw new Error(`MCP server ${tool.server} 现在没连上${problem === undefined ? '' : `：${problem}`}`)
       }
+      if (state !== undefined && session !== undefined) noteOwner(state, session)
       const result = await connection.callTool(tool.tool, args, signal)
       const text = wrapUntrusted(`mcp:${tool.server}`, result.text)
       if (result.isError) throw new Error(text)
@@ -301,13 +319,14 @@ export const mcpPlugin: Plugin.Object = {
     }
 
     /** 列资源 / 读资源。list 不带 server 列全部；read 必须指明 server 与 uri。 */
-    async function runResources(args: Record<string, unknown>, signal: AbortSignal): Promise<string> {
+    async function runResources(args: Record<string, unknown>, signal: AbortSignal, session?: ToolContext): Promise<string> {
       const action = String(args.action ?? 'list')
       if (action === 'list') {
         const targets = pickStates(String(args.server ?? '')).filter((state) => state.capabilities.resources)
         if (targets.length === 0) return '（现在没有任何已连上的 server 声明 resources 能力）'
         const lines: string[] = []
         for (const state of targets) {
+          if (session !== undefined) noteOwner(state, session)
           const listed = await state.connection!.listResources(signal)
           lines.push(`「${state.config.name}」${listed.length} 个资源：`)
           for (const resource of listed) {
@@ -323,6 +342,7 @@ export const mcpPlugin: Plugin.Object = {
         const uri = String(args.uri ?? '')
         if (uri === '') return 'read 要带上 uri（list 里看到的那个）'
         const [state] = pickStates(String(args.server ?? ''))
+        if (session !== undefined) noteOwner(state, session)
         const read = await state.connection!.readResource(uri, signal)
         return wrapUntrusted(`mcp-resource:${state.config.name}`, read.text)
       }
@@ -330,13 +350,14 @@ export const mcpPlugin: Plugin.Object = {
     }
 
     /** 列提示模板 / 取一份模板。get 要 server + name；模板参数按 list 给的名单填。 */
-    async function runPrompts(args: Record<string, unknown>, signal: AbortSignal): Promise<string> {
+    async function runPrompts(args: Record<string, unknown>, signal: AbortSignal, session?: ToolContext): Promise<string> {
       const action = String(args.action ?? 'list')
       if (action === 'list') {
         const targets = pickStates(String(args.server ?? '')).filter((state) => state.capabilities.prompts)
         if (targets.length === 0) return '（现在没有任何已连上的 server 声明 prompts 能力）'
         const lines: string[] = []
         for (const state of targets) {
+          if (session !== undefined) noteOwner(state, session)
           const listed = await state.connection!.listPrompts(signal)
           lines.push(`「${state.config.name}」${listed.length} 个提示模板：`)
           for (const prompt of listed) {
@@ -352,6 +373,7 @@ export const mcpPlugin: Plugin.Object = {
         const name = String(args.name ?? '')
         if (name === '') return 'get 要带上模板名（list 里看到的那个）'
         const [state] = pickStates(String(args.server ?? ''))
+        if (session !== undefined) noteOwner(state, session)
         const rawArguments = asRecord(args.arguments) ?? {}
         const templateArguments: Record<string, string> = {}
         for (const [key, value] of Object.entries(rawArguments)) templateArguments[key] = String(value)
@@ -377,7 +399,7 @@ export const mcpPlugin: Plugin.Object = {
           required: ['action'],
         },
         risk: 'read',
-        run: (args, runCtx) => runResources(args, runCtx.signal),
+        run: (args, runCtx) => runResources(args, runCtx.signal, runCtx),
       }
     }
 
@@ -398,7 +420,7 @@ export const mcpPlugin: Plugin.Object = {
           required: ['action'],
         },
         risk: 'read',
-        run: (args, runCtx) => runPrompts(args, runCtx.signal),
+        run: (args, runCtx) => runPrompts(args, runCtx.signal, runCtx),
       }
     }
 
@@ -417,7 +439,7 @@ export const mcpPlugin: Plugin.Object = {
           description: `（MCP server：${tool.server}）${tool.description}`,
           parameters: tool.parameters,
           risk: tool.risk,
-          run: (args, runCtx) => callTool(tool.name, args, runCtx.signal),
+          run: (args, runCtx) => callTool(tool.name, args, runCtx.signal, runCtx),
         }
         state.disposers.set(tool.name, ctx.tools.register(entry))
       }
@@ -430,6 +452,7 @@ export const mcpPlugin: Plugin.Object = {
         config: server,
         info: { name: server.name, transport: server.transport, tools: 0, state: 'connecting' },
         connection: undefined,
+        owner: {},
         tools: [],
         capabilities: { resources: false, prompts: false },
         disposers: new Map(),
@@ -464,6 +487,21 @@ export const mcpPlugin: Plugin.Object = {
       }
     }
 
+    /** 当前会话的身份（id / jsonl 路径）：elicitation 卡按它归属。取不到就不带（按当前会话兜底）。 */
+    function sessionIdentity(): SessionOwner {
+      try {
+        const session = ctx.session.current()
+        return { sessionId: session.meta.id, sessionPath: session.filePath }
+      } catch {
+        return {}
+      }
+    }
+
+    /** 记下「最近一次用这条连接的会话」：卡按使用者归属，不按建连那一刻（P0-6 复审 4）。 */
+    function noteOwner(state: ServerState, session: ToolContext): void {
+      state.owner = { sessionId: session.sessionId, sessionPath: session.sessionPath }
+    }
+
     async function connect(state: ServerState): Promise<void> {
       if (state.closed) return
       const hadFailed = state.info.state === 'failed'
@@ -472,6 +510,10 @@ export const mcpPlugin: Plugin.Object = {
       // 连接对象要能认出「这条是不是当前这条」，所以先留一个盒子再填
       const box: { value: McpConnection | undefined } = { value: undefined }
       const current = readConfig(passed)
+      // 建连那一刻的会话是这条连接**唯一已知的身份**：先用它垫底，之后每次工具调用都会
+      // 把 owner 覆盖成发起这次调用的会话（见 noteOwner）。连上后一直没被调用过时，
+      // 只能按建连会话归属——那是此刻唯一能确认的身份。
+      state.owner = sessionIdentity()
       try {
         const connection = await openConnection(state.config, {
           connectTimeoutMs: current.connectTimeoutMs,
@@ -485,6 +527,10 @@ export const mcpPlugin: Plugin.Object = {
           // T24：server 反向发起 elicitation 时走审批卡——卡上写明是哪个 server 在要确认、
           // 它说明了什么；同意回 accept，拒绝回 decline。等卡期间连接断了就走 abort。
           onElicitation: async (request) => {
+            // 卡按「最近一次用这条连接的会话」归属：连接可能活很久，用户早切走了（P0-6 复审 4）。
+            // 两条会话并发用同一条连接时做不到按请求分开——MCP 的反向请求不携带「来自哪次调用」，
+            // 只能按最近一次；代价是后发起的那条会把卡算在自己名下。
+            const owner = state.owner
             const schemaText =
               Object.keys(request.requestedSchema).length === 0 ? '' : ` 参数结构：${JSON.stringify(request.requestedSchema)}`
             const decision = await ctx.approval.decide(
@@ -495,6 +541,7 @@ export const mcpPlugin: Plugin.Object = {
                 // 卡上的路径/围栏判定要有基准：会话的目录（拿进程目录判会把
                 // 别的会话的合法目标当成越界）。
                 cwd: sessionCwd(),
+                ...owner,
               },
               AbortSignal.timeout(ELICITATION_TIMEOUT_MS),
             )

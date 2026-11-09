@@ -304,8 +304,8 @@ export const desktopDockPlugin: Plugin.Object = {
      * （只读 / 自动编辑 / 完全访问 / AI 审查）对"文件面板里按一下暂存"同样成立，
      * 不需要给界面另立一套策略。
      *
-     * 不带 `sessionPath`：`ApprovalRequest` 缺它时归到**当前会话**（宿主的 `pathOf` 口径），
-     * 这与界面按钮"点的是我正在看的这个会话"一致。
+     * 带 `sessionId` / `sessionPath`：卡归发起这次操作的会话（P0-6）。缺省时审批会退回
+     * 「此刻查看的会话」，后台会话的卡就会记到别人名下——目标续跑被挡、审计也记错会话。
      *
      * 失败方向：**审批服务没起来就拒**——宁可这次点不动，也不要在没有闸门的情况下改仓库。
      */
@@ -317,8 +317,22 @@ export const desktopDockPlugin: Plugin.Object = {
       const approval = ctx.get('approval')
       if (approval === undefined) throw new Error(`写操作 ${op} 需要审批服务，但它没有起来`)
       const label = DOCK_WRITE_LABEL[op]
+      // 卡跟发起这次操作的会话走（P0-6）：与 `baseCwd()` 读的是同一条会话，
+      // 别让审批按「此刻查看的会话」兜底（后台会话的卡会挡住前台目标，审计也记错会话）。
+      const session = (ctx.get('session') as
+        | { current(): { meta?: { id?: unknown }; filePath?: unknown } }
+        | undefined)?.current()
+      const sessionId = typeof session?.meta?.id === 'string' ? session.meta.id : undefined
+      const sessionPath = typeof session?.filePath === 'string' ? session.filePath : undefined
       const decision = await approval.decide(
-        { toolName: label.toolName, argsSummary: label.summary(payload), args: { ...payload }, cwd },
+        {
+          toolName: label.toolName,
+          argsSummary: label.summary(payload),
+          args: { ...payload },
+          cwd,
+          ...(sessionId === undefined ? {} : { sessionId }),
+          ...(sessionPath === undefined ? {} : { sessionPath }),
+        },
         new AbortController().signal,
       )
       if (decision === 'reject') throw new Error(`已拒绝：${label.toolName}`)

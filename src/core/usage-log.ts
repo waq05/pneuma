@@ -16,9 +16,10 @@
  *
  * @module dsc/core/usage-log
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 import type { SessionUsageView, UsageDayView, UsageModelView, UsageStatsView } from '../contract.js'
 // 计价口径与 TUI 的「本会话花费」同一份（core/pricing.ts）：逐笔按发生时刻分峰谷、
 // 缓存命中与未命中分开算，不在这里另写一套乘法。
@@ -49,6 +50,12 @@ export interface UsageRecord {
   lm?: number
   ft?: number
   d?: number
+  /**
+   * 行来源标记：只有 AI 复核判官那次请求带它（`k: 'judge'`）。判官不走会话 loop，
+   * 拿不到 `transcript.emit`，实时费用桶里从来没有它这一笔；回填时据此跳过，
+   * 切回会话的数字才和切走前一致（复审 P0-5 真问题 2）。
+   */
+  k?: 'judge'
 }
 
 /**
@@ -298,6 +305,7 @@ interface RawUsageRow {
   o?: unknown
   ch?: unknown
   cm?: unknown
+  model?: unknown
   lm?: unknown
   ft?: unknown
   d?: unknown
@@ -406,4 +414,112 @@ export function readSessionUsage(sessionId: string): SessionUsageView | null {
     return null
   }
   return foldSessionUsage(text, sessionId)
+}
+
+/** 按块扫用量日志的块大小：会话切换是同步路径，整份读进来会随文件长到几十 MB。 */
+const COST_SCAN_CHUNK = 1 << 20
+
+/**
+ * 读「某条会话按模型分好的峰谷 token 桶」——会话费用回填的唯一数据源（P0-5）。
+ *
+ * 为什么需要：状态栏那格费用来自 `Transcript.costBuckets`（内存累计），而每次打开会话
+ * 都先 `clear()` 把它换成空 Map；重放历史又明确不重放 usage。于是切走再切回，费用整格
+ * 消失。磁盘这本账（每次请求一行，带模型、token、缓存明细与发生时刻）足够把桶原样还原。
+ *
+ * 为什么不塞进 {@link foldSessionUsage}：`SessionUsageView` 是宿主与壳进程共用的契约
+ * 形状（contract/usage.ts），它只表达折叠后的标量；费用要的是「按模型 × 峰谷」的 token
+ * 原样。这里也只搬 token、不算钱——单价表在 core/pricing 一份，钱由
+ * `estimateSessionCostCny` 算，不在这里另写一遍乘法。
+ *
+ * 为什么自己按块读：usage.jsonl 是跨会话的流水，几十 MB 时全量 `readFileSync` 会把整份
+ * 文件驻留内存。这里按 1 MiB 块扫，只留一行的残尾（用 StringDecoder 处理跨块的多字节
+ * 字符），并且先用 `"sid"` 原文预筛——不含这条会话 id 的行连 JSON 都不解析。
+ *
+ * 口径与内存路径对齐：按每笔的 `t` 判峰谷（与实时按事件到达时刻判是同一时刻，写盘就在
+ * 同一毫秒附近），不按 provider 过滤——usage 事件里没有端点名，内存桶本来就不看端点，
+ * 加了过滤反而会让回填值比切走前小。端点是否计价由快照那一次 `isDeepseekProvider` 判定。
+ *
+ * 只折会话 loop 落的行：判官行（`k: 'judge'`）不算——判官不走会话 loop，实时桶里没有它，
+ * 回填也不折，保持两边一致。
+ *
+ * @returns 模型 → 峰谷桶；这条会话一行请求都没有时返回 null（调用方据此不填，别把没有
+ *          账画成 0 元）。
+ */
+export function readSessionCostBuckets(sessionId: string): Map<string, CostBuckets> | null {
+  if (sessionId === '') return null
+  const file = usageLogFile()
+  let fd: number
+  try {
+    fd = openSync(file, 'r')
+  } catch {
+    // 还没生成 / 正被别的进程占着：没有账可还原
+    return null
+  }
+  const needle = `"${sessionId}"`
+  const byModel = new Map<string, CostBuckets>()
+  let rows = 0
+  const fold = (line: string): void => {
+    // 预筛：绝大部分行属于别的会话，先便宜地排掉，省下 JSON.parse
+    if (line === '' || !line.includes(needle)) return
+    let row: RawUsageRow
+    try {
+      row = JSON.parse(line) as RawUsageRow
+    } catch {
+      return // 半截行（写盘中断）
+    }
+    if (row.sid !== sessionId) return
+    if (row.k === 'tool') return // 工具行没有 token
+    // 判官行（`k: 'judge'`）跳过：判官请求不走会话 loop、没有 transcript.emit，实时桶里
+    // 从来没有这一笔；回填若算进来，切回来的费用就比切走前大。两边都不折，保持一致。
+    if (row.k === 'judge') return
+    const input = readNumber(row.i)
+    const output = readNumber(row.o)
+    if (input === null || output === null) return
+    const model = typeof row.model === 'string' ? row.model : ''
+    let bucket = byModel.get(model)
+    if (bucket === undefined) {
+      bucket = emptyCostBuckets()
+      byModel.set(model, bucket)
+    }
+    const cacheHit = readNumber(row.ch)
+    const cacheMiss = readNumber(row.cm)
+    addUsageToBuckets(
+      bucket,
+      {
+        inputTokens: input,
+        outputTokens: output,
+        ...(cacheHit === null ? {} : { cacheHitTokens: cacheHit }),
+        ...(cacheMiss === null ? {} : { cacheMissTokens: cacheMiss }),
+      },
+      isPeakHour(new Date(readNumber(row.t) ?? 0)),
+    )
+    rows += 1
+  }
+  const decoder = new StringDecoder('utf8')
+  const buffer = Buffer.allocUnsafe(COST_SCAN_CHUNK)
+  let carry = ''
+  try {
+    for (;;) {
+      let read = 0
+      try {
+        read = readSync(fd, buffer, 0, buffer.length, null)
+      } catch {
+        break // 读失败：已经折过的行照样算数，别把半份账抹掉
+      }
+      if (read <= 0) break
+      const text = carry + decoder.write(buffer.subarray(0, read))
+      const lines = text.split('\n')
+      carry = lines.pop() ?? ''
+      for (const line of lines) fold(line)
+    }
+    // 写盘中断可能留下没有换行符的尾巴：与 readSessionUsage 一样，能解析就算数
+    fold(carry + decoder.end())
+  } finally {
+    try {
+      closeSync(fd)
+    } catch {
+      // 关不掉不影响已经读到的账
+    }
+  }
+  return rows === 0 ? null : byModel
 }

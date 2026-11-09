@@ -345,6 +345,10 @@ export const memoryPlugin: Plugin.Object = {
               argsSummary: argsSummary(args).slice(0, 160),
               args,
               cwd: scope.cwd,
+              // 卡跟发起调用的会话走（P0-6）：后台会话写记忆时，别把卡记到
+              // 用户正看着的那条会话名下（目标续跑会被挡、审计也会记错会话）。
+              sessionId: scope.sessionId,
+              sessionPath: scope.sessionPath,
             },
             scope.signal,
           )

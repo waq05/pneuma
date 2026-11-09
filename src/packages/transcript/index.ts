@@ -13,8 +13,8 @@
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import { Transcript } from '@pneuma/runtime/adapter/transcript.js'
-import { estimateSessionCostCny, isDeepseekProvider, isPeakHour } from '@pneuma/runtime/core/pricing.js'
-import { readSessionUsage } from '@pneuma/runtime/core/usage-log.js'
+import { estimateSessionCostCny, isDeepseekProvider, isPeakHour, type CostBuckets } from '@pneuma/runtime/core/pricing.js'
+import { readSessionCostBuckets, readSessionUsage } from '@pneuma/runtime/core/usage-log.js'
 import { emptySegments } from '@pneuma/runtime/core/token-estimate.js'
 import type { NoticeMessageView, PlanView, QueuedMessageView, RuntimeSnapshot, StatusView, TranscriptEntry } from '@pneuma/runtime/contract.js'
 import type { AsyncInboxItem } from '@pneuma/runtime/core/session.js'
@@ -228,6 +228,13 @@ export const transcriptPlugin: Plugin.Object = {
         // 0% 是个读数，不能拿来冒充「还没数」。
         const usage = readSessionUsage(current.meta.id)
         if (usage !== null) transcript.seedContextUsage(usage.lastInputTokens)
+        // 费用同理：clear() 把内存里的费用桶清空，而重放不重放 usage；不从这里补回来，
+        // 切走再切回这条会话，状态栏的「本会话费用」就整格消失（P0-5）。磁盘的
+        // usage.jsonl 按会话记着每笔请求的模型与 token，按它回填桶；整表替换是幂等的，
+        // 重复打开同一条会话不会把费用翻倍。这条会话一行请求都没有时不填——显示 0 元
+        // 等于给一份还没开始的账画上结论。
+        const costBuckets = readSessionCostBuckets(current.meta.id)
+        if (costBuckets !== null) transcript.seedCostBuckets(costBuckets)
         // 不再往转录里写「已恢复会话 xxx」：它落在最后，看着像一句常驻的尾巴，
         // 用户 2026-10-28 要求去掉。恢复这件事本身在侧边栏的选中态里已经说清楚了。
       } else {
@@ -251,11 +258,15 @@ export const transcriptPlugin: Plugin.Object = {
       owner === undefined || owner === ctx.session.current().meta.id
 
     /**
-     * 对外服务面额外带一个回填入口。为什么不写进 TranscriptService 契约：它只服务
-     * 宿主启动恢复这一条路径（会话打开走的是上面直接操作 adapter），把恢复细节
-     * 摊进所有消费者看到的接口，等于让每个插件都以为自己该管上下文读数。
+     * 对外服务面额外带两个回填入口（上下文占用、费用分桶）。为什么不写进
+     * TranscriptService 契约：它们只服务「恢复一条已有会话」这两条路径（前台切会话在
+     * 上面直接操作 adapter，宿主重启走 host/startup.ts 的同一个服务方法），把恢复细节
+     * 摊进所有消费者看到的接口，等于让每个插件都以为自己该管这两份读数。
      */
-    const service: TranscriptService & { seedContextUsage(used: number): void } = {
+    const service: TranscriptService & {
+      seedContextUsage(used: number): void
+      seedCostBuckets(buckets: ReadonlyMap<string, CostBuckets>): void
+    } = {
       emit(event, owner) {
         if (!owned(owner)) return
         if (transcript.reduce(event)) invalidate()
@@ -286,6 +297,10 @@ export const transcriptPlugin: Plugin.Object = {
       },
       seedContextUsage(used) {
         transcript.seedContextUsage(used)
+        invalidate()
+      },
+      seedCostBuckets(buckets) {
+        transcript.seedCostBuckets(buckets)
         invalidate()
       },
       getSnapshot(): RuntimeSnapshot {

@@ -207,7 +207,19 @@ export const schedulePlugin: Plugin.Object = {
         const target = task.sessionId === '' ? undefined : task.sessionId
         ctx.agent.followup(text, undefined, target, 'notice')
       },
-      waiting: () => ctx.waiting.any,
+      /**
+       * 投递前问「这条任务的目标会话有没有卡挂着」——调度器逐条把会话 id 传进来
+       * （`core/schedule/runner.ts:waiting` 的签名是 `(sessionId: string) => boolean`）。
+       *
+       * 目标会话就是 `task.sessionId`（建任务那条会话）；老任务没存才由调度器回落到当前会话。
+       * 所以这里只做一件事：转给 `ctx.waiting.anyFor(sessionId)`。别的会话（后台队友、另一条对话）
+       * 挂着审批卡，不该把这条任务整批推迟——原来取「所有启用任务的目标会话 + 当前会话」求或，
+       * 一条卡能拖住一整批（含手动 fireNow），那是 P0-6 复审记下的 P2。
+       *
+       * 空串 = 调度器连当前会话都定不下来：这种任务投不出去（preflight 会标 blocked 并写清原因），
+       * 这里不再拿全进程口径去挡，免得一条没有目标的旧任务把别人的投递一直卡住。
+       */
+      waiting: (sessionId) => (sessionId === '' ? false : ctx.waiting.anyFor(sessionId)),
       sessionId: () => ctx.session.current().meta.id,
       // 可选服务：读不到就当没有沙箱插件。绝不写 `ctx.sandbox?.`——属性访问本身会抛。
       canWriteDir: () => {
