@@ -36,6 +36,8 @@ import { useFoldState } from '../fold-hook'
 import { resultHead, resultRest, resultTail } from './result-tail'
 import { firstLineOf, flatValueOf, toolDetailArgs } from './tool-detail'
 import { useIntendedDiff, type IntendedDiff } from '../intended-diff'
+// 展开阈值与量高函数与思考栏共用一份，落在 rows/fold-body（那边是叶子模块，不形成环）。
+import { BAR_MIN_CONTENT_H, expandedContentHeight } from '../rows/fold-body'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 import zh from '../../locale/ui.zh.json'
 import en from '../../locale/ui.en.json'
@@ -92,27 +94,6 @@ declare module '@dsc/ui' {
     }
   }
 }
-
-/** 「展开内容超过这个高度才给吸附快捷栏」——小卡不背这条累赘（旧界面同款阈值）。 */
-const BAR_MIN_CONTENT_H = 400
-
-/**
- * 展开区有多长：把每个子块的自然高度加起来。
- *
- * 为什么读 scrollHeight 而不是 offsetHeight：参数与结果两块各被 max-height 夹在
- * --dsc-tool-detail-max-h 里，读 offsetHeight 会把任意长的内容都看成 180px。
- */
-function expandedContentHeight(body: HTMLElement): number {
-  let total = 0
-  for (const child of Array.from(body.children)) {
-    if (!(child instanceof HTMLElement)) continue
-    // 快捷栏自己不算内容（算进去会自我维持：390 + 26 > 400 → 一直显示）。
-    if (child.dataset.tcChrome !== undefined) continue
-    total += Math.max(child.scrollHeight, child.offsetHeight)
-  }
-  return total
-}
-
 
 /**
  * dsh 插件给的 diff 卡片（`presentation.result.card === 'diff'`）→ 卡片用的变更视图。

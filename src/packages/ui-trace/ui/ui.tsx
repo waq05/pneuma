@@ -40,7 +40,7 @@ import {
   type TranscriptEntry,
 } from '@dsc/ui'
 // 时刻/用量/工具摘要口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
-import { ReviewNoticeCard, TOOL_STATUS_TEXT, formatClock, formatTokens, matchTool, parseReviewNotice, prettyJson, readEntries, readLive, readSessionPath, toolSummary, toolVerb, type ReviewNotice, type ToolMatch } from '@dsc/ui-primitives'
+import { ReviewNoticeCard, TOOL_STATUS_TEXT, formatClock, formatTokens, parseReviewNotice, readEntries, readLive, readSessionPath, toolSummary, type ReviewNotice } from '@dsc/ui-primitives'
 import { buildTraceModel, entryUsage, formatTraceDuration, rangeHits, stepMatches, type TraceRange, type TraceRound, type TraceStepEntry } from './trace-format'
 import { TraceTimeline } from './timeline'
 import { TraceInspector } from './inspector'
@@ -763,74 +763,23 @@ function TraceStatus(props: FactoryLocalProps<'transcript.tool-card', 'statusDet
 }
 
 /**
- * 轨迹页里的工具卡：比对话页的轻一档——没有吸附快捷栏与「将做的改动」推演
- * （轨迹页看的是「已经发生了什么」，耗时也是宿主上报的真值而不是现场计时）。
+ * 轨迹页工具行的降级行（D2 的保险丝）：**正常不可达**——轨迹页主路复用 Factory
+ * （`StepRow` 里的 `renderFactorySlot('transcript.tool-card', { variant: 'trace' })`），
+ * 只有 `ui-transcript` 热重装、旧登记已释放而新登记还没上的那一帧，Factory 定义才缺席。
  *
- * 行结构与对话页同一套 class（`.entry.tool-card` / `.tool-head` / `.tool-body`），
- * 摘要、动词、状态词都读平台层同一份口径（`platform/tool-summary`）——两张脸对
- * 同一条调用给同一句话。
+ * 所以这一格只留「状态点 + 工具名 + 一行参数摘要」：不展开、不测量、不另养一套行头，
+ * 主路缺席时轨迹页仍然一行一句，不会跳成一张旧脸。
  */
 function TraceToolRow({ entry }: { entry: Extract<TraceStepEntry, { kind: 'tool' }> }): ReactNode {
   const call = entry.call
-  const [open, setOpen] = useState(false)
-  const expandable = call.status !== 'preparing'
-  const bodyOpen = open && expandable
-  const match: ToolMatch = matchTool(call.name)
-  const Icon = match.Icon
-  const summary = toolSummary(call.name, call.argsText)
-  const duration = formatTraceDuration(call.durationMs ?? null)
-  const statusText = TOOL_STATUS_TEXT[call.status] ?? call.status
-
   return (
-    <div className={`entry tool-card status-${call.status}${bodyOpen ? ' open' : ''}`}>
-      <div
-        className="tool-head"
-        role="button"
-        tabIndex={expandable ? 0 : -1}
-        {...(expandable ? { 'aria-expanded': bodyOpen } : {})}
-        data-tip={expandable ? (bodyOpen ? t('tool.collapse') : t('tool.expand')) : t('tool.preparing')}
-        onClick={() => {
-          if (expandable) setOpen(!open)
-        }}
-        onKeyDown={(event) => {
-          if (!expandable || (event.key !== 'Enter' && event.key !== ' ')) return
-          event.preventDefault()
-          setOpen(!open)
-        }}
-      >
+    <div className={`entry tool-card status-${call.status}`} data-fallback="trace-tool">
+      <div className="tool-head">
         <span className="tool-dot" aria-hidden="true" />
-        <Icon size={14} className="tool-icon" />
-        <span className="verb">{toolVerb(match.base, call.status)}</span>
-        {/* 认不出的工具保留原名：没有它就看不出这是哪家的工具（MCP 那些名字不直观）。
-            分隔点照 dsh 的「工具调用 · <工具名>」。 */}
-        {match.known ? null : <span className="name">{`· ${call.name}`}</span>}
-        <span className="preview">{summary}</span>
-        <span className="status">
-          {call.status === 'running' ? <i className="tc-spin" aria-hidden="true" /> : null}
-          {/* 定稿不说「完成」：状态点已经绿了，再印一遍是噪声。 */}
-          {call.status === 'done' ? '' : statusText}
-          {call.status === 'done'
-            ? duration === null
-              ? ''
-              : duration
-            : duration === null
-              ? ''
-              : t('status.elapsed', { duration })}
-        </span>
-        {expandable ? <IconChevronDown size={11} className="tc-chevron" /> : null}
+        {/* 认不出的工具保留原名：没有它就看不出这是哪家的工具。分隔点照 dsh 的「工具调用 · <工具名>」。 */}
+        {call.name === '' ? null : <span className="name">{`· ${call.name}`}</span>}
+        <span className="preview">{toolSummary(call.name, call.argsText)}</span>
       </div>
-      {bodyOpen ? (
-        <div className="tool-body">
-          <div className="label">{t('tool.args')}</div>
-          <div className="args">{prettyJson(call.argsText)}</div>
-          {call.resultText === undefined || call.resultText === '' ? null : (
-            <>
-              <div className="label">{t('tool.result')}</div>
-              <div className="result">{call.resultText}</div>
-            </>
-          )}
-        </div>
-      ) : null}
     </div>
   )
 }
