@@ -40,9 +40,8 @@ import { subagentEnvironmentText } from '@pneuma/session-core/prompt.js'
 import { activeRules } from '@pneuma/runtime/core/command-policy.js'
 import { modeSpec } from '@pneuma/session-core/modes.js'
 import { REJECTED_TOOL_TEXT, Session, teammateRoot } from '@pneuma/runtime/core/session.js'
-import { redact } from '@pneuma/runtime/core/secrets.js'
 import { argsSummary, type ToolContext, type ToolEntry } from '@pneuma/runtime/core/tools.js'
-import { ToolGuardRegistry, toolApprovalGuard } from '@pneuma/runtime/core/tool-guards.js'
+import { toolApprovalGuard, type ToolGuard, type ToolGuardChain, type ToolGuardInput } from '@pneuma/runtime/core/tool-guards.js'
 import {
   BOARDS_DIR,
   boardCreate,
@@ -158,6 +157,14 @@ interface Teammate {
   agent: MiniAgent
   /** 派它的那一方当时的会话对象：汇报要写回这个文件，而不是「现在界面上打开的那个」。 */
   parentSession: Session
+  /**
+   * 归属会话：派活时算一次并固化（一路走到最上层那条）。
+   *
+   * 为什么固化：父队友一次性收工或被挤出名单后就不再在 `teammates` 里，用时再沿
+   * 往上找会断在中间层——沙箱回落成「用户正看着的会话」、审批卡按中间层路径登记
+   * 而界面上看不见（2026-11-09 复审问题 2）。
+   */
+  ownerSession: Session
   state: TeammateState
   /** 已经发起过的模型请求轮数。 */
   rounds: number
@@ -292,7 +299,7 @@ function forkSeedLines(parentFile: string): string[] | null {
 
 export const subagentPlugin: Plugin.Object = {
   name: 'subagent',
-  inject: ['session', 'tools', 'llm', 'approval', 'transcript', 'prompt', 'settings', 'agent'],
+  inject: ['session', 'tools', 'llm', 'approval', 'guards', 'transcript', 'prompt', 'settings', 'agent'],
   apply(ctx, passed) {
     ensureBuiltinRoles()
 
@@ -470,63 +477,194 @@ export const subagentPlugin: Plugin.Object = {
     }
 
     /**
-     * 队友自己那条工具守卫链：全局上限与角色意愿取更严的那个，通过的请求在卡上署名。
-     * 每条链只有一位审批守卫——队友不共用主会话那条链（模式闸门是另起一条，按父会话判定，
-     * 见下面的 `teammate-mode`），所以主会话换档不会连带改这条链上的其它守卫。
+     * 队友在**共享守卫链**上的两位守卫（2026-11-09，P0-8）。
+     *
+     * 以前每个队友自己 `new` 一条 `ToolGuardRegistry`，只挂模式与审批：
+     * 主链上的灾难地板（5）、沙箱（8）、安全钩子（20）、生命周期钩子（25）、
+     * 改动前预览（25）与溢出（观察者 50）对队友全部不生效——用户在 hooks.json
+     * 里写「本项目禁止碰 migrations/」，主会话守得住，队友照样改。
+     * 现在队友走共享的 `ctx.guards`（只在一层薄适配器里改写会话归属，见 startTeammate
+     * 的 `guards:`），下面两位按**调用方会话归属**分流：只对队友会话说话，对主会话一律 defer。
+     *
+     * 两条链的差集只保留三处，都是「队友特有、主链给不了」的，写在这里防止以后
+     * 又被合并掉：
+     *   1. 模式来源：按**派它的那个会话**的 mode 判，不读队友会话自己的状态。
+     *      队友会话是临时 jsonl，模式记在派它的那个会话上。
+     *   2. 审批等级：全局上限与角色工牌取更严的；后台队友按 foreground 档不许问。
+     *   3. 审批归属：卡上写队友的名字，授权记账挂**父会话**，不落到用户正看着的那条。
+     * 其余一律共享。共享只会让队友多受约束，不会放宽。
      */
-    const guardsFor = (teammate: Teammate): ToolGuardRegistry => {
-      const chain = new ToolGuardRegistry()
-      // 父会话的协作模式对队友同样有效。队友的工具白名单来自角色文件，不经过主会话
-      // order 10 那道模式闸门；少了这一道，计划模式里派一个 writer 就能改工程文件。
-      // 每次判定现读父会话的 mode：中途换档也对在跑的队友生效（与主会话同一条口径）。
-      chain.register({
-        id: `teammate-mode:${teammate.name}`,
-        order: 5,
-        decide(input) {
-          const mode = String(teammate.parentSession.state('mode') ?? 'build')
-          const spec = modeSpec(mode)
-          const gate = spec.gate({
-            toolName: input.toolName,
-            risk: input.risk,
-            cwd: input.cwd,
-            target: input.target,
-            command: input.command,
-            rules: activeRules(),
-          })
-          if (gate.action === 'deny') {
-            return { action: 'deny', reason: `父会话在「${spec.label}」模式：${gate.reason}` }
-          }
-          return gate.action === 'pass' ? { action: 'pass' } : { action: 'defer' }
-        },
-      })
-      chain.register(
-        toolApprovalGuard({
-          id: `teammate:${teammate.name}`,
-          async approve(input) {
-            const rank = Math.min(APPROVAL_RANK[config.approval], APPROVAL_RANK[teammate.badge.approval])
-            const canAsk = rank >= APPROVAL_RANK.foreground && (rank === APPROVAL_RANK.ask || !teammate.background)
-            if (!canAsk) return false
-            const decision = await ctx.approval.decide(
-              {
-                toolName: `队友 ${teammate.name}（${teammate.role}）· ${input.toolName}`,
-                argsSummary: argsSummary(input.args),
-                args: input.args,
-                cwd: input.cwd,
-                // 队友的审批按**派它的那个会话**归属：不能落到「用户正在看的会话」，
-                // 否则权限模式会拿错档（2026-10-28 按会话隔离后这条必须显式给）。
-                sessionId: teammate.parentSession.meta.id,
-                sessionPath: teammate.parentSession.filePath,
-              },
-              input.signal,
-            )
-            return decision !== 'reject'
-          },
-          deniedReason: REJECTED_TOOL_TEXT,
-        }),
-      )
-      chain.registerObserver({ id: 'redact', order: 10, observe: (_toolName, text) => redact(text) })
-      return chain
+
+    /** 适配器给守卫入参打的标记：`teammate` 只给本插件自己的两位守卫认人用。 */
+    type TeammateGuardInput = ToolGuardInput & { teammate?: string }
+
+    /**
+     * 一条会话的「归属会话」：一路走到最上层那个（嵌套队友的父会话可能还是队友）。
+     *
+     * 权限档、沙箱档、协作模式都记在**用户那条会话**上；停在中间层会拿到一条不在
+     * agent 常驻表里的会话，沙箱与审批只能回落成「用户正看着的那条」。
+     *
+     * 只该在**派活时算一次**（结果存进 `Teammate.ownerSession`）：父队友一次性收工
+     * 或被挤出名单后，再沿 `teammates` 往上找会断在中间层（2026-11-09 复审问题 2）。
+     */
+    const ownerOfSession = (from: Session): Session => {
+      let current = from
+      const seen = new Set<string>()
+      while (!seen.has(current.meta.id)) {
+        seen.add(current.meta.id)
+        const parent = [...teammates.values()].find((entry) => entry.session.meta.id === current.meta.id)
+        if (parent === undefined) break
+        current = parent.parentSession
+      }
+      return current
     }
+
+    /** 队友的归属会话：启动时固化，出队后仍指对最上层那条（见 {@link ownerOfSession}）。 */
+    const ownerSession = (teammate: Teammate): Session => teammate.ownerSession
+
+    /**
+     * 把「队友会话」登记成共享守卫链上的会话别名：`gate` 分发前会换成归属会话。
+     *
+     * 为什么在服务层做：MiniAgent 的调用有适配器改写（见 `teammateGuardChain`），但
+     * `run_code`（PTC）在脚本里直接 `ctx.guards.gate`，绕过适配器——沙箱据此按队友
+     * 会话查表落空，回落成「用户正看着的会话」的档位（2026-11-09 复审问题 1）。
+     * 登记在这里，MiniAgent、PTC、钩子三条路自动吃到同一份改写，不用各抄一遍。
+     *
+     * 生命周期跟着 `teammates` 走：队友出队（一次性收工 / 被挤出名单 / 名册移除）后
+     * 表里没了它，解析自然失效；仍在队里的一直指向启动时固化的那条归属会话。
+     * 插件卸载时 `ctx.effect` 收回解析器。
+     */
+    ctx.effect(() => {
+      const off = ctx.guards.registerSessionResolver?.('subagent', (sessionId) => {
+        for (const teammate of teammates.values()) {
+          if (teammate.session.meta.id !== sessionId) continue
+          return {
+            sessionId: teammate.ownerSession.meta.id,
+            sessionPath: teammate.ownerSession.filePath,
+            // 原始执行者：写后诊断这类观察者要记回队友会话，不能记到派活会话上。
+            facts: { teammate: teammate.name, teammateSessionId: teammate.session.meta.id },
+          }
+        }
+        return undefined
+      })
+      return () => off?.()
+    }, 'subagent: guards.registerSessionResolver')
+
+    /** 按会话 id（或适配器标记）找在队队友；找不到 = 这次调用不是队友发起的。 */
+    const teammateOf = (input: ToolGuardInput): Teammate | undefined => {
+      const marked = (input as TeammateGuardInput).teammate
+      if (marked !== undefined) return teammates.get(marked)
+      for (const teammate of teammates.values()) {
+        if (teammate.session.meta.id === input.sessionId) return teammate
+      }
+      return undefined
+    }
+
+    /**
+     * 队友交给 MiniAgent 的守卫链：**就是共享的 `ctx.guards`**，只在入口把调用方
+     * 会话改写成「派它的那个会话」。
+     *
+     * 为什么必须改写：沙箱（8）、模式（10）、审批（30）都按 `input.sessionId` /
+     * `sessionPath` 找会话。队友的运行记录不在 agent 的常驻会话表里（`agent.sessionById`
+     * 只认常驻 agent），不改写就会回落成「用户正看着的那条」——用户切到完全访问档的
+     * 会话时，队友的写操作会跟着免掉沙箱（2026-11-09 复核发现）。改写后队友按父会话
+     * 的档位与策略判，审批卡也仍然落在父会话名下。
+     *
+     * 这不是第二份注册表：链上每一位仍由主会话那条全局链提供，这里只是把
+     * 「这次调用替谁执行」说清楚；`teammate` 标记给本插件自己的两位守卫认人。
+     */
+    const teammateGuardChain = (teammate: Teammate): ToolGuardChain => ({
+      gate: (input) => {
+        const owner = ownerSession(teammate)
+        const marked: TeammateGuardInput = {
+          ...input,
+          sessionId: owner.meta.id,
+          sessionPath: owner.filePath,
+          teammate: teammate.name,
+          // 原始执行者（本适配器直接改写、不经解析器，所以这里也要带上）：LSP 诊断按它归属。
+          teammateSessionId: teammate.session.meta.id,
+        }
+        return ctx.guards.gate(marked)
+      },
+      observe: (toolName, text) => ctx.guards.observe(toolName, text),
+    })
+
+    /**
+     * 队友的协作模式闸门：order 9 夹在沙箱（8）与主模式闸门（10）之间。
+     * 先让沙箱把越界写拦掉，再按**父会话**的档判；判 pass 时与主会话的模式闸门
+     * 同一语义（跳过后面的钩子与审批卡，例如免打扰档的工作区内写），判 defer 时
+     * 主模式闸门随后仍会按队友会话自己的记录跑一遍（通常是 build → defer）。
+     *
+     * 为什么不能放 order 5：守卫链里 `pass` 会让后面的守卫全部跳过。放 5 的话，
+     * 免打扰模式里一次「工作区内写自动放行」会把 order 8 的沙箱也一起跳掉。
+     */
+    const teammateModeGuard: ToolGuard = {
+      id: 'teammate-mode',
+      order: 9,
+      decide(input) {
+        const teammate = teammateOf(input)
+        if (teammate === undefined) return { action: 'defer' }
+        const mode = String(ownerSession(teammate).state('mode') ?? 'build')
+        const spec = modeSpec(mode)
+        const gate = spec.gate({
+          toolName: input.toolName,
+          risk: input.risk,
+          cwd: input.cwd,
+          target: input.target,
+          command: input.command,
+          rules: activeRules(),
+        })
+        if (gate.action === 'deny') {
+          return { action: 'deny', reason: `父会话在「${spec.label}」模式：${gate.reason}` }
+        }
+        return gate.action === 'pass' ? { action: 'pass' } : { action: 'defer' }
+      },
+    }
+    ctx.effect(() => ctx.guards.register(teammateModeGuard), 'subagent: guards.register (teammate-mode)')
+
+    /**
+     * 队友的审批：与主链 order 30 的 `approval` 管同一件事，但**必须排在它前面**（29）。
+     * 主审批只认父会话的权限档，不知道队友的工牌：全局上限与角色意愿取更严、后台队友
+     * 按 foreground 档不许问、卡上要写是谁在请求——这些只有这里知道。排在 29 还能保证
+     * 沙箱（8）、安全钩子（20）、生命周期钩子（25）先说话。
+     */
+    const teammateApproval = toolApprovalGuard({
+      id: 'teammate-approval',
+      async approve(input) {
+        const teammate = teammateOf(input)
+        // 外层 decide 已经筛过：这里找不到只可能是注册后队友被移出表，按拒处理（fail closed）。
+        if (teammate === undefined) return false
+        const rank = Math.min(APPROVAL_RANK[config.approval], APPROVAL_RANK[teammate.badge.approval])
+        const canAsk = rank >= APPROVAL_RANK.foreground && (rank === APPROVAL_RANK.ask || !teammate.background)
+        if (!canAsk) return false
+        const owner = ownerSession(teammate)
+        const decision = await ctx.approval.decide(
+          {
+            toolName: `队友 ${teammate.name}（${teammate.role}）· ${input.toolName}`,
+            argsSummary: argsSummary(input.args),
+            args: input.args,
+            cwd: input.cwd,
+            // 队友的审批按**派它的那个会话**归属：不能落到「用户正在看的会话」，
+            // 否则权限模式会拿错档（2026-10-28 按会话隔离后这条必须显式给）。
+            sessionId: owner.meta.id,
+            sessionPath: owner.filePath,
+          },
+          input.signal,
+        )
+        return decision !== 'reject'
+      },
+      deniedReason: REJECTED_TOOL_TEXT,
+    })
+    const teammateApprovalGuard: ToolGuard = {
+      ...teammateApproval,
+      order: 29,
+      async decide(input) {
+        // 只对队友会话生效；主会话与后台会话的调用照旧交给 order 30 的审批。
+        if (teammateOf(input) === undefined) return { action: 'defer' }
+        return teammateApproval.decide(input)
+      },
+    }
+    ctx.effect(() => ctx.guards.register(teammateApprovalGuard), 'subagent: guards.register (teammate-approval)')
 
     function startTeammate(input: {
       name: string
@@ -569,6 +707,8 @@ export const subagentPlugin: Plugin.Object = {
         },
         session,
         parentSession: input.parentSession,
+        // 归谁管：派活时算一次并固化，父队友后来出队也不影响（见 ownerOfSession）
+        ownerSession: ownerOfSession(input.parentSession),
         state: 'working',
         rounds: 0,
         toolCalls: 0,
@@ -619,7 +759,7 @@ ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需�
             teammate.badge.maxTurns > 0 && teammate.rounds >= teammate.badge.maxTurns - 1
               ? []
               : toolsFor(teammate),
-          guards: guardsFor(teammate),
+          guards: teammateGuardChain(teammate),
           stream: (api, request, handlers) => ctx.llm.stream(api, request, handlers),
           emit: (event) => {
             if (event.type === 'turn/start') {

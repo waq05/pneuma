@@ -34,6 +34,7 @@ import { argsSummary, callFacts, stripBaseline, type ToolEntry } from '@pneuma/r
 import { instructionsText } from '@pneuma/session-core/prompt.js'
 import { summarizeChange } from '@pneuma/runtime/core/tools/fs-tools.js'
 import { SANDBOX_PERMISSION_EFFECT, readSandboxRequest } from '@pneuma/runtime/core/tools/sandbox-args.js'
+import { resolveGuardSession } from '@pneuma/runtime/core/guard-session.js'
 import { REJECTED_TOOL_TEXT } from '@pneuma/runtime/core/session.js'
 import type { Session } from '@pneuma/runtime/core/session.js'
 import { permissionOf, writePermissions } from '@pneuma/permission-core/permission-scope.js'
@@ -715,14 +716,13 @@ export const approvalPlugin: Plugin.Object = {
      * `user` = 弹卡等用户点（出厂默认）；`auto-review` = 先给模型判官，判不出来再落人工卡。
      */
     const defaultReviewer = (): ApprovalReviewer => ctx.get('settings')?.prefs().defaultReviewer ?? 'user'
-    /** 这次判定属于哪个会话：请求带了路径就找那个常驻会话，否则看当前查看的。 */
-    const sessionOf = (sessionPath?: string): Session => {
-      if (sessionPath !== undefined && sessionPath !== '') {
-        const found = ctx.get('agent')?.sessionFor(sessionPath)
-        if (found !== undefined) return found
-      }
-      return ctx.session.current()
-    }
+    /**
+     * 这次判定属于哪个会话：按请求自带的 id/path 找（常驻名册 → 按路径只读加载）。
+     * 找不到返回 null——**不回落「用户正看着的会话」**：归属会话被收摊后，回落等于
+     * 把用户眼前那条的权限档借给这次请求（P0-8 复发）。调用方按拒处理。
+     */
+    const sessionOf = (request: { sessionId?: string; sessionPath?: string }): Session | null =>
+      resolveGuardSession(ctx, request)
     /** 某个会话现在生效的权限模式。 */
     const policyOf = (session: Session): ApprovalPolicy => permissionOf(session, 'policy', defaultPolicy())
     /** 某个会话现在生效的审阅者。 */
@@ -974,13 +974,14 @@ function firstSentence(text: string): string {
       reason: string,
       extra: { rule?: string[]; scope?: 'session' | 'always' } = {},
     ): void => {
+      const owner = sessionOf(request)
       audit({
         ts: Date.now(),
         kind,
         tool: request.toolName,
         summary: redact(request.argsSummary),
         reason,
-        policy: policyOf(sessionOf(request.sessionPath)),
+        policy: owner === null ? undefined : policyOf(owner),
         mode: ctx.get('mode')?.modeFor(sidOf(request)) ?? modeForCard,
         sessionId: sidOf(request),
         cwd: request.cwd,
@@ -1022,7 +1023,10 @@ function firstSentence(text: string): string {
     const aiReview = async (request: ApprovalRequest, signal: AbortSignal): Promise<ReviewVerdict> => {
       try {
         // 判官跑在「发起这次调用的会话」的模型上（后台会话不拿当前视图的模型）
-        const reviewSession = sessionOf(request.sessionPath)
+        const reviewSession = sessionOf(request)
+        // `decide` 已经先把「归属会话解析不到」的请求拒掉，走到这里必然解析得到；
+        // 显式拦一道，免得以后有人插新入口把 null 递进来。
+        if (reviewSession === null) throw new Error('这次调用归属的会话已经结束，判不了')
         const route = ctx.llm.routeForSession(reviewSession)
         // 判官要判断这次调用是不是在推进任务，只给工具名与参数只能猜：把保留的历史
         // （用户指令、历史调用）按来源角色逐条带上，规则见 REVIEW_POLICY。任务状态
@@ -1109,6 +1113,9 @@ function firstSentence(text: string): string {
         try {
           if (result.usage) {
             appendUsageRecord({
+              // 判官这次请求不走会话 loop，没有 transcript.emit：实时费用桶里没有它，
+              // 所以标上行来源，回填（readSessionCostBuckets）据此跳过，两边口径一致。
+              k: 'judge',
               // route 里没有端点名，端点取这条会话现在生效的那一个（与请求实发的一路）
               provider: ctx.llm.providerOf(reviewSession),
               model: route.model,
@@ -1203,7 +1210,26 @@ function firstSentence(text: string): string {
       async decide(request: ApprovalRequest, signal, options): Promise<ApprovalDecision> {
         const cwd = baseCwd(request)
         // 这个请求所属会话的三项权限：卡面、自动放行与审计都按它，不再读进程级变量。
-        const session = sessionOf(request.sessionPath)
+        const session = sessionOf(request)
+        // 名册里没了、日志也读不回来：判不出该按哪一档放行，按拒处理并说明会话已结束。
+        // 绝不回落「用户正看着的会话」——那会把别人那条的权限档借给这次请求（P0-8 复发）。
+        if (session === null) {
+          const reason =
+            `这次 ${request.toolName} 请求归属的会话已经结束（名册里没有、会话日志也读不回来），` +
+            '判不出该按哪一档权限放行，已按拒绝处理。要重试请在还开着的会话里重新发起。'
+          audit({
+            ts: Date.now(),
+            kind: 'auto-deny',
+            tool: request.toolName,
+            summary: redact(request.argsSummary),
+            reason,
+            // 不落 `sidOf`：它认不出归属时会退回当前查看的会话，审计就会记到别人头上。
+            sessionId: request.sessionId,
+            cwd: request.cwd,
+          })
+          ctx.emit('dsc/notice', reason, undefined, request.sessionPath)
+          return 'reject'
+        }
         const policy = permissionOf(session, 'policy', defaultPolicy())
         const reviewer = permissionOf(session, 'reviewer', defaultReviewer())
         // 卡面写「这次属于哪个模式」：按请求会话取，后台会话的卡不会标成当前视图的模式。
@@ -1524,7 +1550,13 @@ function firstSentence(text: string): string {
 
     ctx.effect(() => ctx.surfaces.register('policy', () => service.surface()), 'approval: surfaces.register')
     ctx.effect(() => ctx.surfaces.register('pendingApproval', () => service.pendingView()), 'approval: surfaces.register #2')
-    ctx.effect(() => ctx.waiting.register('approval', () => pendings.size > 0), 'approval: waiting.register')
+    // 按会话登记（P0-6）：别的会话挂着卡，不该把这条会话的目标续跑与定时投递一起挡住。
+    // `owner` 缺省（`any` 那个口径）= 全进程有没有卡，界面与诊断照旧这么问。
+    ctx.effect(
+      () => ctx.waiting.register('approval', (owner?: string) =>
+        [...pendings.values()].some((card) => owner === undefined || card.sessionId === owner)),
+      'approval: waiting.register',
+    )
 
     ctx.on('dsc/mode-changed', (mode) => {
       modeForCard = mode

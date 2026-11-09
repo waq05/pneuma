@@ -38,6 +38,13 @@ export interface ToolGuardInput {
   sessionId: string
   /** 发起调用的会话 jsonl 路径：侧栏跨会话状态点按它定位。 */
   sessionPath: string
+  /**
+   * 原始执行者的会话 id：只有队友调用才有，由 `subagent` 的解析器填。
+   *
+   * 会话归属被改写成派活会话之后，`sessionId` 就不再是「谁真的动了手」。写后诊断这类
+   * 必须记回执行者本人的观察者要同时拿到这一项（2026-11-09 复审真问题 3）。
+   */
+  teammateSessionId?: string
 }
 
 /** 注册进链条的一位守卫。 */
@@ -58,12 +65,42 @@ export interface ToolObserver {
   observe(toolName: string, text: string): string
 }
 
+/**
+ * 一次会话归属改写：把「谁发起的调用」换成「这次调用实际替谁执行」。
+ *
+ * 为什么需要：队友在自己那条临时会话里跑工具（`run_code` 脚本里的调用也一样），而
+ * 权限档、沙箱档、协作模式都记在派它的那条会话上。守卫链若直接按 `sessionId` 查，
+ * 队友会话不在常驻表里，沙箱与审批只能回落成「用户正看着的那条」——用户把另一条
+ * 会话切到完全访问档时，队友的写操作会跟着免掉围栏（2026-11-09 复审问题 1）。
+ */
+export interface ToolGuardSessionAlias {
+  /** 这次调用实际归属的会话 id。 */
+  sessionId: string
+  /** 归属会话的 jsonl 路径（审批卡按它登记）。 */
+  sessionPath: string
+  /** 附加标记：原样并进守卫入参（队友用它带 `teammate` 名字，给认得自己的守卫用）。 */
+  facts?: Record<string, unknown>
+}
+
+/** 会话归属解析器：认得出这是谁的调用就返回归属会话，认不出返回 undefined。 */
+export type ToolGuardSessionResolver = (sessionId: string) => ToolGuardSessionAlias | undefined
+
+/** 归属解析最多跟几跳（队友可嵌套，别名也可能一层套一层）。 */
+const MAX_ALIAS_HOPS = 8
+
 /** 循环用的最小接口：只问结果，不知道链上有谁。 */
 export interface ToolGuardChain {
   /** 依次问完守卫链：第一位给 deny 或 pass 的赢，都没意见就返回 defer。 */
   gate(input: ToolGuardInput): Promise<ToolGuardVerdict>
   /** 依次加工工具结果文本。 */
   observe(toolName: string, text: string): string
+  /**
+   * 登记一位会话归属解析器（可选能力，同 id 顶掉前一位）；返回退订函数。
+   * `gate` 把入参交给守卫之前，先按它改写 `sessionId` / `sessionPath`。
+   */
+  registerSessionResolver?(id: string, resolve: ToolGuardSessionResolver): () => void
+  /** 解析一次归属（诊断与自检用）：没登记过解析器或认不出时原样返回。 */
+  resolveSession?(input: ToolGuardInput): ToolGuardInput
 }
 
 /** 按 order 再按 id 排（同 order 的顺序必须稳定，不然两次判定结果会飘）。 */
@@ -78,6 +115,7 @@ function byOrder<T extends { order: number; id: string }>(items: T[]): T[] {
 export class ToolGuardRegistry implements ToolGuardChain {
   private readonly guards = new Map<string, ToolGuard>()
   private readonly observers = new Map<string, ToolObserver>()
+  private readonly resolvers = new Map<string, ToolGuardSessionResolver>()
 
   /** 注册一位守卫；同 id 再注册会顶掉前一份，返回的退订函数只撤自己这一份。 */
   register(guard: ToolGuard): () => void {
@@ -95,16 +133,54 @@ export class ToolGuardRegistry implements ToolGuardChain {
     }
   }
 
+  /** 登记一位会话归属解析器（同 id 顶掉，退订只撤自己）。 */
+  registerSessionResolver(id: string, resolve: ToolGuardSessionResolver): () => void {
+    this.resolvers.set(id, resolve)
+    return () => {
+      if (this.resolvers.get(id) === resolve) this.resolvers.delete(id)
+    }
+  }
+
+  /**
+   * 把入参的会话身份换成它实际归属的会话。
+   *
+   * 最多跟 {@link MAX_ALIAS_HOPS} 跳，走过的会话不再走（防别名成环）；认不出就
+   * 原样返回**同一个对象**，所以非队友调用不付任何拷贝代价。
+   */
+  resolveSession(input: ToolGuardInput): ToolGuardInput {
+    let current = input
+    const seen = new Set<string>([input.sessionId])
+    for (let hop = 0; hop < MAX_ALIAS_HOPS && this.resolvers.size > 0; hop += 1) {
+      let alias: ToolGuardSessionAlias | undefined
+      for (const resolve of this.resolvers.values()) {
+        alias = resolve(current.sessionId)
+        if (alias !== undefined) break
+      }
+      if (alias === undefined || alias.sessionId === current.sessionId || seen.has(alias.sessionId)) break
+      seen.add(alias.sessionId)
+      // 标记先铺、会话身份后写：解析器改不了这次调用「归谁」这件事
+      current = {
+        ...current,
+        ...(alias.facts ?? {}),
+        sessionId: alias.sessionId,
+        sessionPath: alias.sessionPath,
+      }
+    }
+    return current
+  }
+
   /** 已注册的守卫（排好序，诊断与自检用）。 */
   get chain(): ToolGuard[] {
     return byOrder([...this.guards.values()])
   }
 
   async gate(input: ToolGuardInput): Promise<ToolGuardVerdict> {
+    // 先解析会话归属再问人：队友的 `run_code` 这类不走适配器的调用，也照样按父会话的档位判。
+    const resolved = this.resolveSession(input)
     for (const guard of byOrder([...this.guards.values()])) {
       let verdict: ToolGuardVerdict
       try {
-        verdict = await guard.decide(input)
+        verdict = await guard.decide(resolved)
       } catch (error) {
         // 安全链上抛错一律按拒处理（fail closed）：坏掉的守卫不该等于放行，
         // 原因原样回给模型与用户，比悄悄放过一次危险操作好收拾。

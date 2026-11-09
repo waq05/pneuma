@@ -41,6 +41,7 @@ import { bootNoticeOnce } from '@pneuma/runtime/core/boot-notices.js'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { registerCommandRunner } from '@pneuma/runtime/core/tools/command-runner.js'
 import { readSandboxRequest } from '@pneuma/runtime/core/tools/sandbox-args.js'
+import { resolveGuardSession } from '@pneuma/runtime/core/guard-session.js'
 import { permissionOf, writePermissions } from '@pneuma/permission-core/permission-scope.js'
 import type { Session } from '@pneuma/runtime/core/session.js'
 import type { ToolGuard } from '@pneuma/runtime/core/tool-guards.js'
@@ -171,17 +172,15 @@ export const sandboxPlugin: Plugin.Object = {
      * 默认值来自 plugins.json 的沙箱配置——它只对「还没钉过的会话」与新会话生效。
      */
     const defaultMode = (): SandboxMode => readConfig().config.mode
-    /** 这次判定属于哪个会话：优先按会话 id 找常驻实例，其次按路径，最后看当前查看的。 */
-    const sessionOf = (sessionId?: string, sessionPath?: string): Session => {
-      const agent = ctx.get('agent')
-      const byId = sessionId !== undefined && sessionId !== '' ? agent?.sessionById(sessionId) : undefined
-      if (byId !== undefined) return byId
-      if (sessionPath !== undefined && sessionPath !== '') {
-        const byPath = agent?.sessionFor(sessionPath)
-        if (byPath !== undefined) return byPath
-      }
-      return ctx.session.current()
-    }
+    /** 这次判定属于哪个会话：id → 路径 → 按路径只读加载；解析不到返回 null。 */
+    const sessionOf = (sessionId?: string, sessionPath?: string): Session | null =>
+      resolveGuardSession(ctx, { sessionId, sessionPath })
+    /**
+     * 非守卫路径（提示词段、服务查询）取会话：解析不到就按当前查看的会话，与修前一致。
+     * 守卫本身不许用这个——那里取不到必须按拒（见 decide 开头）。
+     */
+    const sessionOrCurrent = (sessionId?: string, sessionPath?: string): Session =>
+      sessionOf(sessionId, sessionPath) ?? ctx.session.current()
     /** 某个会话现在生效的沙箱档位。 */
     const modeOf = (session: Session): SandboxMode => permissionOf(session, 'sandbox', defaultMode())
 
@@ -282,7 +281,18 @@ export const sandboxPlugin: Plugin.Object = {
       decide(input) {
         // 按这次调用的工作目录算可写根：input.cwd 就是循环传进来的会话目录，
         // 显式优先于会话状态，同进程多工作目录时才不会拿错根。
-        const mode = modeOf(sessionOf(input.sessionId, input.sessionPath))
+        const session = sessionOf(input.sessionId, input.sessionPath)
+        // 判不清这次调用归谁就不动手：回落「用户正看着的那条」等于按别人的档位放行
+        // （P0-8 原症状）。名册里没有、日志也读不回来，说明归属会话已经结束。
+        if (session === null) {
+          return {
+            action: 'deny',
+            reason:
+              `沙箱拒绝这次 ${input.toolName}：这次调用归属的会话已经结束（名册里没有、会话日志也读不回来），` +
+              '判不出该按哪一档沙箱执行。请在还开着的会话里重新发起。',
+          }
+        }
+        const mode = modeOf(session)
         const { config, policy } = snapshot(input.cwd, input.sessionPath, mode)
         // 不设围栏的档位：整档交出去（审批与权限模式照常管）
         if (mode === 'danger-full-access') return { action: 'defer' }
@@ -407,7 +417,7 @@ export const sandboxPlugin: Plugin.Object = {
 
     const promptText = (scope?: { sessionId?: string; cwd?: string }): string => {
       // 这个 agent 自己的档位（后台会话不该拿「你此刻点开的会话」的沙箱说明）。
-      const mode = modeOf(sessionOf(scope?.sessionId))
+      const mode = modeOf(sessionOrCurrent(scope?.sessionId))
       const { config, policy, problems } = snapshot(scope?.cwd, undefined, mode)
       if (mode === 'danger-full-access') {
         return '【沙箱】档位 danger-full-access：沙箱不设围栏，写盘与命令只受权限模式与审批卡约束。'
@@ -958,7 +968,7 @@ export const sandboxPlugin: Plugin.Object = {
       },
       canWrite(path: string, cwd?: string, sessionPath?: string): SandboxCheck {
         // cwd 省略时退回会话工作目录（接口约定见 src/services/types.ts 的 SandboxService）。
-        const { policy } = snapshot(cwd, sessionPath, modeOf(sessionOf(undefined, sessionPath)))
+        const { policy } = snapshot(cwd, sessionPath, modeOf(sessionOrCurrent(undefined, sessionPath)))
         const check = checkWrite(policy, path)
         const out: SandboxCheck = { allowed: check.allowed, reason: check.reason }
         if (check.root !== undefined) out.root = check.root
@@ -970,7 +980,7 @@ export const sandboxPlugin: Plugin.Object = {
        * 自动放行的最后一道，它不能假设「沙箱一定已经判过」。
        */
       check(target: string | undefined, command: string | undefined, cwd?: string, sessionPath?: string): SandboxVerdict {
-        const mode = modeOf(sessionOf(undefined, sessionPath))
+        const mode = modeOf(sessionOrCurrent(undefined, sessionPath))
         const { config, policy } = snapshot(cwd, sessionPath, mode)
         if (mode === 'danger-full-access') return { allowed: true, requestable: false }
         const verdict =

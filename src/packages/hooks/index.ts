@@ -420,8 +420,17 @@ export const hooksPlugin: Plugin.Object = {
         }
         // ask：叫一张必须有人答的卡。权限模式本来会自动放行也照样弹，
         // 因为这条规矩是用户自己加的，比模式档位更具体。
+        // 卡按**发起这次调用的会话**归属：队友或后台会话命中钩子时，不能落到用户正看着的
+        // 那条会话上（档位与授权记账都会错位，切走的会话还看不见这张卡，2026-11-09 复审问题 3）。
         const decision = await ctx.approval.decide(
-          { toolName: input.toolName, argsSummary: argsSummary(input.args), args: input.args, cwd: input.cwd },
+          {
+            toolName: input.toolName,
+            argsSummary: argsSummary(input.args),
+            args: input.args,
+            cwd: input.cwd,
+            sessionId: input.sessionId,
+            sessionPath: input.sessionPath,
+          },
           input.signal,
           { forceAskReason: best.message },
         )

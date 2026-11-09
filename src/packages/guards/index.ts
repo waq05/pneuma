@@ -22,6 +22,10 @@ export const guardsPlugin: Plugin.Object = {
     const service: GuardService = {
       register: (guard) => registry.register(guard),
       registerObserver: (observer) => registry.registerObserver(observer),
+      // 会话归属解析：队友这类「在自己那条临时会话里干活」的调用，由这里统一换成归属会话，
+      // 各调用点（MiniAgent / PTC / 钩子）就不用各改写一遍（2026-11-09 复审问题 1）。
+      registerSessionResolver: (id, resolve) => registry.registerSessionResolver(id, resolve),
+      resolveSession: (input) => registry.resolveSession(input),
       get chain() {
         return registry.chain
       },

@@ -430,7 +430,10 @@ export const lspPlugin: Plugin.Object = {
         lastWrite = {
           path: target,
           cwd: input.cwd,
-          sessionId: input.sessionId,
+          // 诊断挂**真正写这个文件的会话**：队友调用的 `sessionId` 已被改写成派它的父会话，
+          // 按它记会让队友收不到自己的写后诊断、父会话凭空多一段没写过文件的诊断
+          // （2026-11-09 复审真问题 3）。`teammateSessionId` 由 subagent 的解析器填。
+          sessionId: input.teammateSessionId ?? input.sessionId,
           preText,
           baseline: baseline.then((outcome) => ({
             ok: outcome.ok,

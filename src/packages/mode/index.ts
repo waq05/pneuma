@@ -20,6 +20,7 @@ import type { ModeService } from '@pneuma/runtime/services/types.js'
 import { MODES, MODE_IDS, modeSpec, parseModeToken } from '@pneuma/session-core/modes.js'
 import { activeRules } from '@pneuma/runtime/core/command-policy.js'
 import { audit } from '@pneuma/runtime/core/audit.js'
+import { resolveGuardSession } from '@pneuma/runtime/core/guard-session.js'
 import type { ToolGuard } from '@pneuma/runtime/core/tool-guards.js'
 import type { Session } from '@pneuma/runtime/core/session.js'
 
@@ -96,11 +97,13 @@ export const modePlugin: Plugin.Object = {
       decide(input) {
         // 这次调用属于哪个会话就用那个会话的模式：后台会话在计划模式跑，你切到执行模式看它，
         // 也不该把它的写操作放行。
-        const session =
-          input.sessionId === undefined || input.sessionId === ''
-            ? ctx.get('agent')?.sessionFor(input.sessionPath)
-            : ctx.get('agent')?.sessionById(input.sessionId)
-        const mode = modeOf(session ?? ctx.session.current())
+        // 取不到归属会话（名册里没了、日志也读不回来）时按最严的一档「探索」判：宁可只读，
+        // 也不按你当前看着的那条会话的档位放行（P0-8 复发的那条路）。
+        const session = resolveGuardSession(ctx, {
+          sessionId: input.sessionId,
+          sessionPath: input.sessionPath,
+        })
+        const mode = session === null ? 'explore' : modeOf(session)
         const gate = modeSpec(mode).gate({
           toolName: input.toolName,
           risk: input.risk,
