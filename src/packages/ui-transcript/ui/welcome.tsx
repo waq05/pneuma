@@ -1,6 +1,9 @@
 /**
  * 空会话首屏：一句招呼 + 四张能力卡 + 「接着上次」。
  *
+ * 那句招呼不再是固定的一句：按时间段、周末、久未使用、头一回打开分九组，每组五句，
+ * 组与组内第几句怎么挑见 `./greeting`（纯函数，自检能钉边界）。
+ *
  * 从 `transcript/ui.tsx` 拆出来（2026-10-28，只搬不改）：模块头仍见那一份。
  *
  * @module dsc-ui-shell/plugins/transcript/welcome
@@ -8,6 +11,7 @@
 import type { ReactNode } from 'react'
 import { IconClock, IconCode, IconDiff, IconSpark, IconTarget, createT } from '@dsc/ui'
 import { ReviewNoticeCard, parseReviewNotice } from '@dsc/ui-primitives'
+import type { GreetingPick } from './greeting'
 import { keyOf, type Row } from './shared'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 import zh from '../locale/ui.zh.json'
@@ -15,6 +19,84 @@ import en from '../locale/ui.en.json'
 
 /** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
 const t = createT({ zh, en })
+
+/**
+ * 首屏招呼语的文案表：九个组，每组五句。组与组内第几句怎么挑见 `./greeting`。
+ *
+ * 为什么是一张显式的表、而不是 `t('...' + 组 + '.' + 句)` 拼键名：文案闸
+ * （`scripts/ui-locale-test.mjs`）只认字面量 `t('...')`，拼出来的键在它眼里没人用，
+ * 那 45 行文案会被判成死键。而且这样改一句只需要动一行。
+ */
+const GREETING_TEXT: Readonly<Record<GreetingPick['slot'], readonly string[]>> = {
+  earlyMorning: [
+    t('transcript.welcome.hello.earlyMorning.1'),
+    t('transcript.welcome.hello.earlyMorning.2'),
+    t('transcript.welcome.hello.earlyMorning.3'),
+    t('transcript.welcome.hello.earlyMorning.4'),
+    t('transcript.welcome.hello.earlyMorning.5'),
+  ],
+  morning: [
+    t('transcript.welcome.hello.morning.1'),
+    t('transcript.welcome.hello.morning.2'),
+    t('transcript.welcome.hello.morning.3'),
+    t('transcript.welcome.hello.morning.4'),
+    t('transcript.welcome.hello.morning.5'),
+  ],
+  noon: [
+    t('transcript.welcome.hello.noon.1'),
+    t('transcript.welcome.hello.noon.2'),
+    t('transcript.welcome.hello.noon.3'),
+    t('transcript.welcome.hello.noon.4'),
+    t('transcript.welcome.hello.noon.5'),
+  ],
+  afternoon: [
+    t('transcript.welcome.hello.afternoon.1'),
+    t('transcript.welcome.hello.afternoon.2'),
+    t('transcript.welcome.hello.afternoon.3'),
+    t('transcript.welcome.hello.afternoon.4'),
+    t('transcript.welcome.hello.afternoon.5'),
+  ],
+  evening: [
+    t('transcript.welcome.hello.evening.1'),
+    t('transcript.welcome.hello.evening.2'),
+    t('transcript.welcome.hello.evening.3'),
+    t('transcript.welcome.hello.evening.4'),
+    t('transcript.welcome.hello.evening.5'),
+  ],
+  lateNight: [
+    t('transcript.welcome.hello.lateNight.1'),
+    t('transcript.welcome.hello.lateNight.2'),
+    t('transcript.welcome.hello.lateNight.3'),
+    t('transcript.welcome.hello.lateNight.4'),
+    t('transcript.welcome.hello.lateNight.5'),
+  ],
+  weekend: [
+    t('transcript.welcome.hello.weekend.1'),
+    t('transcript.welcome.hello.weekend.2'),
+    t('transcript.welcome.hello.weekend.3'),
+    t('transcript.welcome.hello.weekend.4'),
+    t('transcript.welcome.hello.weekend.5'),
+  ],
+  returning: [
+    t('transcript.welcome.hello.returning.1'),
+    t('transcript.welcome.hello.returning.2'),
+    t('transcript.welcome.hello.returning.3'),
+    t('transcript.welcome.hello.returning.4'),
+    t('transcript.welcome.hello.returning.5'),
+  ],
+  firstRun: [
+    t('transcript.welcome.hello.firstRun.1'),
+    t('transcript.welcome.hello.firstRun.2'),
+    t('transcript.welcome.hello.firstRun.3'),
+    t('transcript.welcome.hello.firstRun.4'),
+    t('transcript.welcome.hello.firstRun.5'),
+  ],
+}
+
+/** 取这一句招呼语：组和序号都已经定好，这里只负责查表。 */
+function greetingLine(pick: GreetingPick): string {
+  return GREETING_TEXT[pick.slot][pick.index] ?? GREETING_TEXT[pick.slot][0]
+}
 
 /**
  * 首屏四张能力卡（对照 Codex UI 的 home cards）：点一下把提示词写进输入框，不直接发送——
@@ -94,6 +176,8 @@ export interface WelcomeResume {
 
 export interface WelcomeStateProps {
   cards: readonly WelcomeCard[]
+  /** 首屏那句招呼语落在哪一组、组里第几句（见 `./greeting`）。 */
+  greeting: GreetingPick
   /** 最近七天内改过、有标题的那条会话；null = 不画这一行。 */
   resume: WelcomeResume | null
   /** 开场区的条目（首屏只画命令输出与写前预览卡，其余不铺）。 */
@@ -113,10 +197,10 @@ export interface WelcomeStateProps {
  * 为什么不放 logo（2026-10-27 用户：中间这个图标有点突兀）：空态的第一眼该落在
  * 「有什么可以帮忙的？」这句话上；品牌声部留给侧栏与收起的窄栏。
  */
-export function WelcomeState({ cards, resume, leading, sessionKey, cwd, composerReady, onResume }: WelcomeStateProps): ReactNode {
+export function WelcomeState({ cards, greeting, resume, leading, sessionKey, cwd, composerReady, onResume }: WelcomeStateProps): ReactNode {
   return (
     <div className="welcome">
-      <h1>{t('transcript.welcome.title')}</h1>
+      <h1>{greetingLine(greeting)}</h1>
       <p>
         {t('transcript.welcome.lead')} <code>/</code> {t('transcript.welcome.leadTail')}
       </p>

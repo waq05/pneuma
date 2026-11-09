@@ -3829,6 +3829,15 @@
   --dsc-thread-max: var(--dsc-thread-user-max, 720px);
 }
 
+/* 首屏那句招呼语不再是固定的一句（按时间段在九组里挑，见 ui-transcript 的 greeting.ts）。
+ * 新文案比原来那句长，英文更长，一行放不下时会折成两行：`text-wrap: balance` 让两行
+ * 字数接近，行高收到 1.25，两行时不至于把下面的说明顶得太远。不设 max-width——这里的
+ * 文字是居中的，一设宽度就得同时补 margin 才不歪，没必要。 */
+.welcome h1 {
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
 /* 首屏的三段（标题、说明、提示）原来只隔 2px，读起来像三行同级的字。
  * 拉开一档，让「标题 → 说明 → 提示」的层次看得出来。 */
 .welcome p {

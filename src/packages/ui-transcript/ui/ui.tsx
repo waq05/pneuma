@@ -48,6 +48,7 @@ import { RowBody, RowBoundary, SeatBody } from './render'
 import { TurnStatusLine } from './rows/foot'
 import { BuiltinToolView } from './rows/tool-row'
 import { WELCOME_CARDS, WELCOME_ICON_BY_ID, WelcomeState } from './welcome'
+import { greetingSlot } from './greeting'
 import { SUBAGENT_FLOW_SLOT, SubagentFlow, type TranscriptFlowService } from './subagent-flow'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 // 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
@@ -79,6 +80,12 @@ export type { FoldPrefs, ToolEntry } from './shared'
 export { TOOLVIEW_SLOT } from './shared'
 export { SUBAGENT_FLOW_SLOT, type TranscriptFlowProps, type TranscriptFlowService } from './subagent-flow'
 const BUILTIN_TOOLVIEW_PRIORITY = 100
+
+/**
+ * 首屏两个读数共用的窗口（七天）：比这更久的东西不抢首屏的位置，但值得在招呼语里
+ * 说一句「有阵子没见了」。「接着上次」和「久未使用」读同一个数，改窗口时不会只改一半。
+ */
+const RECENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 
 export default defineUiPlugin({
   name: t('transcript.plugin.name'),
@@ -538,10 +545,24 @@ function TranscriptFlow({
             session.archivedAt === undefined &&
             session.id !== sessionPath &&
             (session.title ?? '') !== '' &&
-            now - session.updatedAt < 7 * 24 * 60 * 60 * 1000,
+            now - session.updatedAt < RECENT_WINDOW_MS,
         )
         .sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null
     )
+  }, [sessions, sessionPath])
+
+  // 首屏那句招呼语要的两个读数：有没有历史会话、最近一次写入隔了多久。
+  // 「第一次打开」判成 false 的代价只是一句不太贴切的招呼，所以不去看归档列表：把所有
+  // 会话都归档的人会被当成头一回，这个误判可以接受，比多读一次归档面划算。
+  const greeting = useMemo(() => {
+    const now = Date.now()
+    const others = sessions.filter((session) => session.id !== sessionPath && session.archivedAt === undefined)
+    const latest = others.reduce((newest, session) => Math.max(newest, session.updatedAt), 0)
+    return greetingSlot({
+      at: new Date(now),
+      hasHistory: others.length > 0,
+      longAbsence: latest > 0 && now - latest > RECENT_WINDOW_MS,
+    })
   }, [sessions, sessionPath])
 
   // 首屏卡片的两种来源：动作表（常驻，含命令面板里的那几条），或动作表缺席时的内置清单。
@@ -588,6 +609,7 @@ function TranscriptFlow({
     return (
       <WelcomeState
         cards={welcomeCards}
+        greeting={greeting}
         resume={resume}
         leading={seats.leading}
         sessionKey={sessionKey}
