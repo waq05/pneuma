@@ -246,6 +246,9 @@ console.log('── 5. 依赖方向门禁：允许与禁止的文案 ──')
     // 夹具根也要有 package.json：包标准闸的版本项是「等于根版本」，没有根就无从比较。
     writeText(join(dir, 'package.json'), JSON.stringify({ name: 'gate-fixture', version: '0.0.0-fixture' }, null, 2) + '\n')
     writeText(join(dir, 'src', 'host', 'kernel.ts'), 'export const kernel = 1\n')
+    // 入口与共享启动流程：model-check 逐条要求这几个文件存在（少一个就记 entry 缺口），
+    // 夹具必须跟真实仓库同一套文件，否则这里会假红。
+    writeText(join(dir, 'src', 'host', 'launch.ts'), 'export const launch = 1\n')
     writeText(join(dir, 'src', 'boot.ts'), 'export const boot = 1\n')
     writeText(join(dir, 'src', 'headless.ts'), 'export const headless = 1\n')
     for (const pkg of packages) {

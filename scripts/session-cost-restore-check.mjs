@@ -339,10 +339,26 @@ check(
   ),
 )
 check('启动收尾没有请求行时不填（null 判断，不写 0）', /if \(costBuckets !== null\)/.test(startupSource))
-const bootEntries = ['../src/boot.ts', '../src/headless.ts'].map((path) => readFileSync(new URL(path, import.meta.url), 'utf8'))
+// 启动流程 2026-11 起只有一份（host/launch.ts）：入口各自只声明 surface，收尾写在那里。
+// 断言拆成两半，缺一半都算红：① 收尾只能有一处、就在共享模块里；② 两个入口都只调它，
+// 不许再自己拼一份流程（判据是入口里连 createKernel / emitStartupNotes 都搜不到）。
+const launchSource = readFileSync(new URL('../src/host/launch.ts', import.meta.url), 'utf8')
+const bootEntries = [
+  ['../src/boot.ts', 'tui'],
+  ['../src/headless.ts', 'headless'],
+].map(([path, surface]) => ({ surface, source: readFileSync(new URL(path, import.meta.url), 'utf8') }))
 check(
-  '两个入口（boot / headless）都走同一个启动收尾',
-  bootEntries.every((source) => /emitStartupNotes\(root, migration, config\)/.test(source)),
+  '共享启动流程（host/launch.ts）里只有一处启动收尾',
+  /emitStartupNotes\(root, migration, config\)/.test(launchSource),
+)
+check(
+  '两个入口（boot / headless）都只调用同一个共享启动函数，各自只声明 surface',
+  bootEntries.every(
+    ({ surface, source }) =>
+      /^import \{ launch \} from '\.\/host\/launch\.js'$/m.test(source) &&
+      new RegExp(`^void launch\\('${surface}', '[^']*'\\)$`, 'm').test(source) &&
+      !/createKernel\(|emitStartupNotes\(|readUiConfig\(|migrateFromDsh\(/.test(source),
+  ),
 )
 
 console.log('\nPASS ' + (total - failures) + ' / FAIL ' + failures)

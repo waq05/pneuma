@@ -75,12 +75,16 @@
 **TUI**（`numa`）
 
 1. `bin/dsc.js`（bin 键 `numa`）解析 `--resume` / `config` 子命令，spawn `node lib/boot.js`；
-2. `src/boot.ts` 只做装配，按顺序：`migrateFromDsh()`（幂等，只读 dsh）→ `readConfig()` →
-   `readUiConfig()` → `createKernel()` → 装 TUI 插件 → `loadExternalPlugins()` →
-   `emitStartupNotes()`。`readUiConfig()` 读 `config.yaml` 的 `ui` 段与 `plugins` 段，
-   但 boot 是**无条件**挂 TUI 的（`src/boot.ts:29`）——真正起作用的只有 `plugins` 段；
+2. 启动流程只有一份，住在 `src/host/launch.ts` 的 `launch(surface, failureLabel)`：
+   `migrateFromDsh()`（幂等，只读 dsh）→ `readConfig()` → `readUiConfig()` → 读
+   `DSC_RESUME_SESSION` 算恢复路径 → `createKernel({ config, resumeSessionPath, surface })` →
+   `loadExternalPlugins()` → `emitStartupNotes()`。`src/boot.ts` 只传 `'tui'` 和它的报错前缀，
+   `src/headless.ts` 只传 `'headless'` 和它的报错前缀，两个文件里没有第二份流程。
+   `readUiConfig()` 只取 `config.yaml` 的 `plugins` 段（`ui` 段仍被解析，当前没有读者）；
+   界面形态由 `surface` 决定「不挂哪一行」（`SURFACE_ROW_SKIPS`：tui 不挂 `host-stdio`，
+   headless 不挂 `tui`），不是由入口自己挑要 import 哪个插件；
 3. `--resume` 走 `DSC_RESUME_SESSION` 环境变量传给子进程（`bin/dsc.js:77` 裸 `--resume` 写 `1`，
-   boot / headless 再把它译成 `auto` = 看 `.last-session` 指针）。
+   `src/host/launch.ts` 再把它译成 `auto` = 看 `.last-session` 指针；空串 = 开新会话）。
 
 **桌面**（`dist/win-unpacked/Pneuma.exe` 或 `pnpm run dev`）
 
@@ -90,15 +94,16 @@
 2. `requestSingleInstanceLock()`，`DSC_DESKTOP_USER_DATA` 可以换 userData 让并行实例互不干扰
    （`desktop/electron/main/index.ts:1583`）；
 3. `dsc-core.ts` 以 `ELECTRON_RUN_AS_NODE=1` spawn 打包进 `resources/dsc-core/` 的运行时
-   （`src/headless.ts:1-6`：exe 兼作内核的 node 解释器）；
+   （`src/headless.ts:2-4`：exe 兼作内核的 node 解释器）；
 4. 运行时 `hello { protocolVersion }` 握手，版本对不上直接报错；
 5. renderer 通过 `bridge.ts` 调白名单方法，收快照流渲染。
 
 **无头**（桌面端的运行时子进程，也是脚本化调用的入口）
 
 1. `bin/headless.cjs` → `lib/headless.js`，stdin 关闭即退出；
-2. 顺序和 TUI 一样：迁移检查 → 读配置 → `createKernel()`，只是装的插件换成
-   `hostStdioPlugin`（`src/headless.ts`），不装任何界面；
+2. 顺序和 TUI 一样（同一个 `launch()`，只是 surface 传 `'headless'`）：迁移检查 → 读配置 →
+   `createKernel()`；内核按 `SURFACE_ROW_SKIPS.headless` 不挂 `tui` 那行，`host-stdio`
+   那行照常挂，所以这个宿主没有任何界面；
 3. 传输自动探测：`process.parentPort` 存在就用结构化克隆的 MessagePort（Electron
    `utilityProcess` 走这条），否则按「stdio 上一行一条 JSON」通信，不是 JSON 的行直接忽略。
 
@@ -691,7 +696,7 @@ id 存、存活集合取全部会话）、连接（`plugin-config-enable` 的插
 
 **拍图前必须清掉 `ELECTRON_RUN_AS_NODE`**：带着它启动打包 exe，会被当成纯 Node 直接退出，
 退出码 0、无输出、不写文件，看上去像「截图功能坏了」。这个变量在环境里出现是合法的——
-桌面壳启动内核就是靠它把同一份 exe 当 node 用（`src/headless.ts:1-6`），只有当你想让
+桌面壳启动内核就是靠它把同一份 exe 当 node 用（`src/headless.ts:2-4`），只有当你想让
 exe 当**桌面端**跑的时候才要清掉它。
 
 界面参数想自动化，就加 `?xxx=1` 这类一次性钩子，现成的五个是：`skillstab`

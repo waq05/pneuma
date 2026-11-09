@@ -159,8 +159,10 @@ if (!existsSync(kernelFile)) {
   }
 }
 
-// 三个入口都不许静态 import 插件：只查 kernel 会漏掉「表退役了但旁路还在」。
-for (const entry of ['src/host/kernel.ts', 'src/boot.ts', 'src/headless.ts']) {
+// 入口与共享启动流程都不许静态 import 插件：只查 kernel 会漏掉「表退役了但旁路还在」。
+// host/launch.ts 是 2026-11 起两个入口共用的启动序列，入口只剩一行 launch()，流程搬过去
+// 之后这条判据必须跟着搬——否则在 launch.ts 里直接 import 一个插件，四个入口文件全都干净。
+for (const entry of ['src/host/kernel.ts', 'src/host/launch.ts', 'src/boot.ts', 'src/headless.ts']) {
   const file = join(root, ...entry.split('/'))
   if (!existsSync(file)) {
     gap('entry', `${entry} 不存在`)
