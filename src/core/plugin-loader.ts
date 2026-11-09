@@ -257,12 +257,6 @@ function mountDetailsOf(root: Context): Map<string, MountedDetail> {
 }
 
 /**
- * 内置但可停用的官方插件（智能体团队、电脑操作）：这里登记它们的插件对象，
- * 于是「打开开关」不必去找 `~/.dsc/plugins/` 下的文件，热挂载直接挂内置对象。
- */
-const builtinMounts = new Map<string, Plugin.Object>()
-
-/**
  * 行级挂载选项（身份 → inject / 宿主或 patch 给的配置），在 `mountRow` 解析出入口文件之后、
  * 开关判定与幂等判断**之前**登记。
  *
@@ -576,29 +570,6 @@ export async function mountExternalPlugin(
   if (base !== basename(file)) registerPluginAlias(base, basename(file))
   registerPluginSource(base, file)
 
-  // 内置官方插件：对象已在宿主装配时登记，不必读文件；与内核同源，跳过 apiVersion 检查。
-  const builtin = builtinMounts.get(base)
-  if (builtin !== undefined) {
-    await unmountExternalPlugin(base)
-    try {
-      // 与外部插件同一个口径（三档，见 `configForRow`）：内置行也走 mountRow 递进来的
-      // RowMountOptions，不看就等于同一份装配里两套规则。
-      const config = configForRow(base, rowOptions)
-      const fiber = root.plugin(builtin, config)
-      await fiber
-      mountedOf(root).set(base, fiber)
-      mountDetailsOf(root).set(base, { plugin: builtin, config, options: rowOptions })
-      const own = getPluginMeta(base)
-      if (own !== undefined) own.problem = undefined
-      return true
-    } catch (error) {
-      const own = getPluginMeta(base)
-      if (own !== undefined) own.problem = `挂载失败：${err(error)}`
-      await disableSilently(base)
-      return false
-    }
-  }
-
   // 已经登记过（应用自带行在挂之前先登记了来源与展示文案）就沿用那一份：
   // 覆盖成 external 会把内置包全赶到插件中心的「自定义」组里，连能不能停用也一并丢掉。
   // `defaultDisabled` 也要带过来：它是「条目树里没有这条记录时默认关」的声明，
@@ -699,7 +670,7 @@ export async function remountExternalPlugin(identity: string): Promise<RemountRe
  * 代数上，才能拿到同一个库。
  *
  * 失败语义与单行重挂完全一致（复用 {@link remountOne}）：
- *   - 先做前置检查（没挂载 / 内置 / 文件不在）——这些行不参与换代，返回失败；
+ *   - 先做前置检查（没挂载 / 文件不在）——这些行不参与换代，返回失败；
  *   - 有任何一行值得重挂才 bump 一次，再逐行导入、校验、换 fiber；
  *   - 单行导入失败或挂载失败不拖累同批其余行，失败的行保留旧 fiber 与旧元数据。
  * @param identities - 行 id 列表（重复项自动去重；结果按入参顺序返回）
@@ -730,15 +701,6 @@ export async function remountExternalPlugins(
         ok: false,
         generation: currentGeneration(),
         problem: '这一行当前没有挂载，热重挂只对已挂载的行生效',
-      })
-      continue
-    }
-    // 内置官方插件的对象随内核编译，磁盘上没有它的产物：没有新旧版本可言。
-    if (builtinMounts.has(identity)) {
-      results.set(identity, {
-        ok: false,
-        generation: currentGeneration(),
-        problem: '内置插件随内核编译，没有可重挂的磁盘产物',
       })
       continue
     }
@@ -864,8 +826,7 @@ function restoreMeta(meta: PluginMeta, before: PluginMeta): void {
 /**
  * 当前已挂载、且从磁盘加载的行（行 id → 入口文件）。功能包热更轮询用。
  *
- * 内置插件（对象在内存里）与已卸载的行不在名单里；组合包默认关的行虽然登记了来源，
- * 但没挂载，也不该被轮询。
+ * 已卸载的行不在名单里；组合包默认关的行虽然登记了来源，但没挂载，也不该被轮询。
  */
 export function listMountedPluginSources(): Array<{ identity: string; file: string }> {
   const root = rootRef
@@ -874,7 +835,6 @@ export function listMountedPluginSources(): Array<{ identity: string; file: stri
   const sources: Array<{ identity: string; file: string }> = []
   for (const [identity, file] of pluginSources) {
     if (!table.has(identity)) continue
-    if (builtinMounts.has(identity)) continue
     sources.push({ identity, file })
   }
   return sources
@@ -964,11 +924,8 @@ async function disableSilently(file: string): Promise<void> {
  */
 export async function setPluginEnabledHot(file: string, enabled: boolean): Promise<{ ok: boolean; problem?: string }> {
   if (enabled) {
-    // 内置官方插件没有磁盘文件，登记过的对象直接挂；组合包的行按行 id 找回它原来那个入口；
-    // 其余（外部单文件插件）仍按 ~/.dsc/plugins/ 里的文件找。
-    const entryFile = builtinMounts.has(basename(file))
-      ? file
-      : (pluginSources.get(file) ?? resolveEntryPath(file))
+    // 组合包的行按行 id 找回它原来那个入口；其余（外部单文件插件）仍按 ~/.dsc/plugins/ 里的文件找。
+    const entryFile = pluginSources.get(file) ?? resolveEntryPath(file)
     if (entryFile === null) return { ok: false, problem: `找不到插件文件 ${file}（检查 ~/.dsc/plugins/）` }
     // 重挂不是重新装配：行选项在挂载（或启动时的扫描）那一步就登记了，这里原样取回。
     // 优先取 `rowOptionsOf`：重扫会刷新它，用户改过 patch 之后再拔一次开关拿到的是新配置；
