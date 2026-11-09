@@ -21,7 +21,7 @@
  *
  * @module dsc-ui-shell/plugins/preview
  */
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   CodeView,
   createT,
@@ -100,19 +100,23 @@ function PreviewTab({ tab }: DockTabBodyProps): ReactNode {
   if (path === '') {
     return <div className="file-preview-empty">{t('preview.empty.noPath')}</div>
   }
-  return <PreviewBody path={path} cwd={cwd ?? ''} />
+  return <PreviewBody tabId={tab.id} path={path} cwd={cwd ?? ''} />
 }
 
 /** 预览本体：头部（相对路径 + 用系统程序打开）+ 内容。换文件整块重读。 */
-function PreviewBody({ path, cwd }: { path: string; cwd: string }): ReactNode {
+function PreviewBody({ tabId, path, cwd }: { tabId: string; path: string; cwd: string }): ReactNode {
   const channel = useHostChannel()
   const native = getHostNative()
   const [read, setRead] = useState<ReadResult | null>(null)
+  /** 这张页签挂着改动快照时，「改动」视图（unified diff）与「预览」视图（渲染后的文件）互切。 */
+  const patchSource = useDockPatchSource(tabId)
+  const [patchView, setPatchView] = useState(false)
   const [note, setNote] = useState('')
 
   // 换文件就重新读；旧的那一份先清掉，免得一闪而过的是上一个文件的内容。
   useEffect(() => {
     setRead(null)
+    setPatchView(false)
     setNote('')
     if (path === '') return undefined
     let alive = true
@@ -132,6 +136,15 @@ function PreviewBody({ path, cwd }: { path: string; cwd: string }): ReactNode {
   /** markdown 里相对路径图片的解析口：把 dock 的 fs-read 交给平台层。 */
   const fsRead = (file: string): Promise<unknown> => channel.invoke('dock', ['fs-read', { file }])
 
+  /**
+   * 改动覆盖的新文件行区间（hunk 的 `newStart..newStart+newCount-1`，1 基闭区间）。
+   * 渲染视图拿它给 markdown 的块标「改过」；纯删除的 hunk（newCount=0）退化成它落点那一行。
+   */
+  const changedRanges = useMemo<ReadonlyArray<readonly [number, number]>>(() => {
+    if (patchSource === null) return []
+    return patchSource.hunks.map((hunk) => [hunk.newStart, Math.max(hunk.newStart, hunk.newStart + hunk.newCount - 1)] as const)
+  }, [patchSource])
+
   /** 用系统程序打开（原生桥；浏览器里没有桥，按钮禁用并说明原因）。 */
   const openWithSystem = (): void => {
     void native.invoke('openPath', [read?.path ?? path]).catch((error: unknown) => {
@@ -147,6 +160,25 @@ function PreviewBody({ path, cwd }: { path: string; cwd: string }): ReactNode {
           <FileIcon name={read?.path ?? path} size={14} />
           {shortPath(read?.path ?? path, cwd)}
         </span>
+        {patchSource === null ? null : (
+          <>
+            <span className="changes-counts">
+              {patchSource.status === 'added' && <span className="diff-badge">{t('preview.patch.added')}</span>}
+              <span className="changes-added">{`+${String(patchSource.added)}`}</span>
+              <span className="changes-removed">{`-${String(patchSource.removed)}`}</span>
+            </span>
+            <button
+              type="button"
+              className="btn-ghost"
+              data-tip={patchView ? t('preview.patchView.toContentTip') : t('preview.patchView.toPatchTip')}
+              onClick={() => {
+                setPatchView((current) => !current)
+              }}
+            >
+              {patchView ? t('preview.patchView.toContent') : t('preview.patchView.toPatch')}
+            </button>
+          </>
+        )}
         <button
           type="button"
           className="btn-ghost"
@@ -159,12 +191,17 @@ function PreviewBody({ path, cwd }: { path: string; cwd: string }): ReactNode {
       </div>
       <div className="file-preview-body">
         {note === '' ? null : <div className="tree-note">{note}</div>}
-        {read === null ? (
+        {patchView && patchSource !== null ? (
+          <>
+            {patchSource.truncated === true && <p className="diff-note">{t('preview.patch.truncated')}</p>}
+            <DiffRows hunks={patchSource.hunks} path={path} />
+          </>
+        ) : read === null ? (
           note === '' ? (
             <div className="file-preview-empty">{t('preview.reading')}</div>
           ) : null
         ) : (
-          renderBody(read, fsRead)
+          renderBody(read, fsRead, changedRanges)
         )}
       </div>
     </>
@@ -176,7 +213,8 @@ function PatchTab({ tab }: DockTabBodyProps): ReactNode {
   const cwd = useHostSelector(readCwd)
   const path = tab.path ?? ''
   // 补丁源只在内存（hunks 不落盘）：重启/换会话后这里会是 null，页签体给「已过期」的说明。
-  const source = useDockPatchSource(path)
+  // 按**页签 id** 读：关掉这张补丁页签再开同文件是另一张页签，不会捡到上一刀的快照（P0-11）。
+  const source = useDockPatchSource(tab.id)
   if (path === '') {
     return <div className="file-preview-empty">{t('preview.empty.noPatchPath')}</div>
   }
@@ -249,7 +287,12 @@ function PatchBody({ path, cwd, source }: { path: string; cwd: string; source: C
 }
 
 /** 按宿主给的 kind 分流（口径与旧界面 `previewKindFor` 一致）。 */
-function renderBody(read: ReadResult, fsRead: (file: string) => Promise<unknown>): ReactNode {
+function renderBody(
+  read: ReadResult,
+  fsRead: (file: string) => Promise<unknown>,
+  /** 改动覆盖的新文件行区间：markdown 的块标色用；空数组 = 不标。 */
+  changedRanges: ReadonlyArray<readonly [number, number]>,
+): ReactNode {
   if (read.tooLarge) {
     return (
       <div className="file-preview-empty">{t('preview.tooLarge', { size: formatBytes(read.size ?? 0) })}</div>
@@ -279,7 +322,7 @@ function renderBody(read: ReadResult, fsRead: (file: string) => Promise<unknown>
     )
   }
   if (isMarkdown(read.path)) {
-    return <MarkdownView text={read.text ?? ''} path={read.path} fsRead={fsRead} />
+    return <MarkdownView text={read.text ?? ''} path={read.path} fsRead={fsRead} changedRanges={changedRanges} />
   }
   // csv/tsv 走表格视图（papaparse）；其余文本落到代码视图。
   if (isDelimited(read.path)) {

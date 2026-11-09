@@ -28,7 +28,7 @@ import {
 } from '@dsc/ui-primitives'
 // 宿主桥从基元包取（E4 收尾从 `@dsc/ui` 沉下去，见 native.ts 的文件头）。
 import { getHostNative } from '@dsc/ui-primitives'
-import { dockActions, setDockReview, useDockReview } from '@dsc/ui-dockkit'
+import { setDockPreview, setDockReview, useDockReview } from '@dsc/ui-dockkit'
 // 取词器与字典：本文件随布局插件的 bundle 走，`@dsc/ui` 在那个 bundle 里是 external
 // （运行期拿壳里那一份），与 `ui.tsx` 同一理由。
 import { createT } from '@dsc/ui'
@@ -174,7 +174,9 @@ export function ReviewPane(): ReactNode {
                 className="diff-tool"
                 data-tip={t('layout.review.openPreviewTip')}
                 onClick={() => {
-                  dockActions.openPreview(file.path)
+                  // 走 setDockPreview 而不是 dockActions.openPreview：后者不清这张预览页签
+                  // 上一刀挂过的差异快照，点开会看到旧 diff（见 dock-state 那个分支）。
+                  setDockPreview({ path: file.path })
                 }}
               >
                 {t('layout.review.open')}

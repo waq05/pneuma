@@ -56,6 +56,7 @@ import {
   type DockTabKind,
   type DockTabKindMeta,
 } from './dock-model'
+import { forgetDeadPatches, forgetPatch, patchOf, rememberPatch, subscribePatches } from './patch-sources'
 
 export type { DockActions, DockGuideEntry, DockPane, DockSurface, DockTab, DockTabBodyProps, DockTabKind, DockTabKindMeta } from './dock-model'
 
@@ -68,11 +69,33 @@ let surface: DockSurface = surfaces[''] ?? defaultSurface()
 /**
  * 变更通道（`createSignal` 的「值在别处」用法）。
  *
- * 这一个文件里其实有四份状态：布局、页签注册表、审查目标、补丁源。它们共用一条通知通道，
- * 各自的读函数（`dockSurface` / `dockTabKinds` / `dockReview` / `patchSources`）负责取出自己那份。
+ * 这一个文件里其实有三份状态：布局、页签注册表、审查目标。它们共用一条通知通道，
+ * 各自的读函数（`dockSurface` / `dockTabKinds` / `dockReview`）负责取出自己那份。
  * 所以这里不用 `set` 存值，只用 `notify`：谁改完谁喊一声，订阅者各自重读。
+ * （补丁快照不在这条通道上：它按页签 id 记，有自己的订阅，见 `./patch-sources`。）
  */
 const dockChannel = createSignal(0)
+
+/**
+ * 全部会话布局里还活着的页签 id（补丁快照的存活集合）。
+ *
+ * 为什么扫全量而不是「当前会话的布局」（P-1）：切会话只把 {@link surface} 换成另一份，
+ * 原来那个会话的页签仍在 {@link surfaces} 里，切回去还要显示 diff。拿当前布局当存活
+ * 集合，切到 B 就会把 A 里还开着的补丁快照全删掉，切回 A 只看到「补丁已过期」。
+ * 页签 id 在进程内不复用（`dock-model` 的 `makeTab`），放开到全量不会串台。
+ *
+ * 当前 `surface` 单独再并一次：某会话还没改过布局时它只是 `defaultSurface()` 的临时值，
+ * 不在 `surfaces` 里（这个差集里不会有补丁页签，但少一个特例少一处漏网）。
+ */
+function liveTabIds(): Set<string> {
+  const live = new Set<string>()
+  const collect = (one: DockSurface): void => {
+    for (const pane of one.panes) for (const tab of pane.tabs) live.add(tab.id)
+  }
+  for (const one of Object.values(surfaces)) collect(one)
+  collect(surface)
+  return live
+}
 
 /**
  * 切到某个会话的布局（壳从宿主快照的 sessionId 调；没会话时传空串）。
@@ -83,6 +106,10 @@ export function setDockSession(id: string): void {
   if (id === sessionId) return
   sessionId = id
   surface = surfaces[id] ?? defaultSurface()
+  // 补丁快照按页签 id 存：存活集合取**全部会话**的布局，切走的会话页签还在存档里，
+  // 清掉它的快照就等于切回去看到「补丁已过期」（P-1）。换了会话本身不会产生死页签，
+  // 这里只是不动别人的页签。
+  forgetDeadPatches(liveTabIds())
   dockChannel.notify()
 }
 
@@ -93,6 +120,8 @@ function mutate(fn: (s: DockSurface) => DockSurface): void {
   surface = next
   surfaces = { ...surfaces, [sessionId]: next }
   saveSurfaces(surfaces)
+  // 补丁快照跟着页签活：关页签、PREVIEW_MAX 淘汰、插件停用后都在这里顺手清掉（P0-11）。
+  forgetDeadPatches(liveTabIds())
   dockChannel.notify()
 }
 
@@ -241,6 +270,9 @@ function pruneDockKind(kind: DockTabKind): void {
   surfaces = next
   if (!changed) return
   saveSurfaces(surfaces)
+  // 被撤掉的那些页签不在了，挂在它们身上的补丁快照也一起作废（不留幽灵 diff）。
+  // 存活集合同样取全部会话：别的会话里还开着的同类页签没被撤的，快照得留着。
+  forgetDeadPatches(liveTabIds())
 }
 
 // ── 预览 / 审查目标 ──────────────────────────────────────────────────────────
@@ -252,38 +284,63 @@ function pruneDockKind(kind: DockTabKind): void {
  * 页面显示用的相对路径由预览组件自己按当前会话 cwd 裁。
  *
  * 带上 `patch`（write / edit 工具卡点文件名那条路）就开**补丁页签**、并把这份「改了什么」
- * 的差异快照存进 {@link patchSources}，与「文件当前内容」（preview）分开成两个视图。
+ * 的差异快照记到那张页签 id 上（{@link rememberPatch}），与「文件当前内容」（preview）
+ * 分开成两个视图。
  * 单一入口（对齐参考实现的 onOpenCodeViewer(source)）：调用方只说「开这个文件的这种源」，
  * 是内容还是补丁由带没带 patch 决定，页签 kind 由壳挑。
  */
 export function setDockPreview(target: { path: string; cwd?: string; patch?: ChangedFileView }): void {
   if (target.patch !== undefined) {
-    patchSources.set(target.path, target.patch)
-    dockChannel.notify()
-    dockActions.openPatch(target.path)
+    if (!hasDockKind('patch')) return
+    const patch = target.patch
+    mutate((s) => {
+      const next = modelSetExpanded(modelOpenPatch(s, target.path), true)
+      // 快照挂在**结果布局里那张页签**上：同路径已有补丁页签时就是它（聚焦并换成新快照）。
+      const tabId = tabIdOf(next, 'patch', target.path)
+      if (tabId !== undefined) rememberPatch(tabId, patch)
+      return next
+    })
     return
   }
-  dockActions.openPreview(target.path)
+  // 不带 patch（文件树点开某文件）= 「看这个文件现在的内容」：这张页签上一刀挂过的
+  // 差异快照必须清掉，否则页签头还挂着旧的 +N/−N、点「改动」看到旧 hunks（P-3）。
+  // 新建的页签本来没有快照，清一次无害；同文件已有预览页签时 `openPreview` 按路径
+  // 复用那一张，这里取到的正好是它的 id。
+  //
+  // 注意清快照写在 `mutate` 的回调里（与上面 rememberPatch 同一位置）：回调每次都会
+  // 执行，而 `mutate` 在布局原样不变时会跳过落盘与清理，写在外面就漏掉那种情形。
+  // 与 `setDockFileView`（先开页签、再 rememberPatch）方向相反，两者不会互相踩。
+  if (!hasDockKind('preview')) return
+  mutate((s) => {
+    const next = modelSetExpanded(modelOpenPreview(s, target.path), true)
+    const tabId = tabIdOf(next, 'preview', target.path)
+    if (tabId !== undefined) forgetPatch(tabId)
+    return next
+  })
+}
+
+/** 一份布局里某 kind + path 那张页签的 id（刚算完的新布局里找；找不到就是 undefined）。 */
+function tabIdOf(next: DockSurface, kind: DockTabKind, path: string): string | undefined {
+  for (const pane of next.panes) {
+    for (const tab of pane.tabs) {
+      if (tab.kind === kind && tab.path === path) return tab.id
+    }
+  }
+  return undefined
 }
 
 /**
- * 补丁源表（文件绝对路径 → 那份差异快照）：**只在内存**，不落盘。
+ * 读某张页签挂着的补丁源（补丁页签 / 带「改动」开关的预览页签都读它）。
  *
- * 为什么不挂在页签上：hunks 可能很大，落进 localStorage（`dsc.dock.surfaces`）会把存档
- * 撑爆。页签只登记路径（可恢复），差异快照过不了重启——重启后回到补丁页签会提示
- * 「补丁已过期」，并给「打开原文件」的出口（见 preview 插件的 PatchTab）。
+ * 键是**页签 id**：快照的生命周期跟页签走——关掉再开是另一张页签，这里读到的就是
+ * null（P0-11：旧实现按文件路径记，关页签再开同一文件会显示上一刀的 hunks）。
+ * 快照只在内存（hunks 可能很大，不落入 `dsc.dock.surfaces`）：重启后是 null，补丁页签
+ * 提示「补丁已过期」并给「打开原文件」的出口（见 preview 插件的 PatchTab）。
  */
-const patchSources = new Map<string, ChangedFileView>()
-
-/**
- * 读某个文件的补丁源（补丁页签体用）；没开过补丁、或重启后失效就是 null。
- *
- * 与布局订阅同一条通道：setDockPreview 存进来源表后 notify，页签体据此重渲染。
- */
-export function useDockPatchSource(path: string): ChangedFileView | null {
+export function useDockPatchSource(tabId: string): ChangedFileView | null {
   return useSyncExternalStore(
-    subscribeDock,
-    () => patchSources.get(path) ?? null,
+    subscribePatches,
+    () => patchOf(tabId),
     () => null,
   )
 }
@@ -332,6 +389,26 @@ export function dockReview(): DockReview | null {
 export function setDockReview(next: DockReview | null): void {
   review = next
   dockChannel.notify()
+}
+
+/**
+ * 打开一张**文件预览页签**，并顺手把这道改动的差异快照挂上（页签头部因此多一个
+ * 「改动 / 预览」切换）。
+ *
+ * 为什么不是 {@link setDockPreview} 带 patch 那条路：那条开的是**补丁页签**、默认就画 diff；
+ * 轮尾「文件已更改」卡的「审查」与 Git 面板点文件行，要的是「先看渲染好的文件，想看改动
+ * 再切」。两份数据是同一个源（{@link patchSources}），差别只在页签种类与默认视图。
+ */
+export function setDockFileView(target: { path: string; patch: ChangedFileView }): void {
+  if (!hasDockKind('preview')) return
+  const patch = target.patch
+  mutate((s) => {
+    const next = modelSetExpanded(modelOpenPreview(s, target.path), true)
+    // 先开页签、再按**结果布局里那张页签的 id** 记快照：同文件已有预览页签就记在它身上。
+    const tabId = tabIdOf(next, 'preview', target.path)
+    if (tabId !== undefined) rememberPatch(tabId, patch)
+    return next
+  })
 }
 
 // ── React 接线 ───────────────────────────────────────────────────────────────

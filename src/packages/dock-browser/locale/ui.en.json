@@ -2,8 +2,9 @@
   "section.title": "Dock browser",
   "section.subtitle": "Drives the browser in the desktop dock (your persistent signed-in session, not a throwaway Chrome)",
   "field.lookWithoutApproval.label": "Look at the dock browser without approval",
-  "field.lookWithoutApproval.help": "Once on, the “take a look” tools (list views, snapshot, screenshot, console and network, wait for text) stop raising an approval card each time. Note it looks at **the browser you are signed in to**, so pages may hold sessions and private content — turn it on only when you need it. Clicking, typing and evaluating still ask every time.",
+  "field.lookWithoutApproval.help": "When off, the “take a look” tools (list views, snapshot, screenshot, console and network, wait for text) ask you once each time — they look at **the browser you are signed in to**, so pages may hold sessions and private content. When on, that tier stops raising an approval card; clicking, typing and evaluating still ask every time.",
   "field.about.label": "Note",
-  "field.about.text": "This switch only decides whether the “look” tools are registered; acting tools always ask every time.",
+  "field.about.text": "Looking and acting are two tools: browser_dock_look is always available and asks once each time by default (turn the switch on to skip that); browser_dock always asks every time.",
+  "look.approvalReason": "Take a look at the dock browser (the one you are signed in to): pages may hold sessions and private content, so this one asks you first.",
   "save.unknownKey": "This section has no such setting: {key}"
 }

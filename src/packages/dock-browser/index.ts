@@ -22,9 +22,13 @@
  *   这里只做「薄薄一层」——动作映射、ref 代际、事件缓冲与给人看的输出。
  *
  * 信任模型的两条硬约束（详见 `docs/dock-browser-control.md`）：
- *   - `browser_dock_look` **默认不注册**，只有设置里 `lookWithoutApproval` 打开才以 `read` 注册：
- *     这台浏览器跑在用户自己的持久分区里（`persist:dsc-browser`、带登录态），
- *     看一眼现状（快照/截图/控制台）不该无条件免审批——与 `computer-use.ts` 那条先例同口径；
+ *   - `browser_dock_look` **恒注册、恒为 `read` 档**，人批这一步由工具自己在 `run` 里
+ *     每次显式请求一次审批（见 `confirmLook`）：这台浏览器跑在用户自己的持久分区里
+ *     （`persist:dsc-browser`、带登录态），看一眼现状也是看他的登录页面；不注册它则模型
+ *     拿不到 ref，`click / hover / type` 这三个只收 ref 的动作全成无源之水。
+ *     为什么不用 `exec` 借道审批守卫：`exec` 在没有 `command` 参数时两头不靠——只读权限档
+ *     一律拒、计划与探索模式只放行只读命令，「看一眼」在这三种档里整档拿不到。
+ *     只有设置里 `lookWithoutApproval` 打开，才不再逐次确认（与 `computer-use.ts` 同口径）；
  *   - `evaluate` 必须过与 `browser.ts` **同一道敏感原语黑名单**（`actions.scanExpression`）：
  *     换了后端也不许少一道闸。
  *
@@ -32,12 +36,13 @@
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import type { ToolEntry, ToolContext, ToolOutput } from '@pneuma/runtime/core/tools.js'
+import { argsSummary } from '@pneuma/runtime/core/tools.js'
 import type { SettingsField, SettingsValue } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { neutralizeInline, wrapUntrusted } from '@pneuma/runtime/core/untrusted.js'
 import { redact } from '@pneuma/runtime/core/secrets.js'
-import { DOCK_ACTIONS, DOCK_LOOK_ACTIONS, isAgentView } from '@pneuma/runtime/core/dock-browser.js'
+import { DOCK_ACTIONS, DOCK_CALL_TIMEOUT_MS, DOCK_LOOK_ACTIONS, isAgentView } from '@pneuma/runtime/core/dock-browser.js'
 import { HOST_BROWSER_SERVICE, type HostBrowserLink } from '@pneuma/runtime/core/host-browser-link.js'
 import { CLOUD_METADATA_HOSTS } from '@pneuma/cdp/cloud-metadata.js'
 import type { CdpCommandTarget } from '@pneuma/cdp/transport.js'
@@ -81,7 +86,7 @@ const NAVIGATE_TIMEOUT_MS = 20_000
 
 /** 插件配置（存 `~/.dsc/plugins.json` 的 `dock-browser` 条目 config 里）。 */
 interface DockBrowserConfig {
-  /** 看侧栏浏览器免审批：开着才另外注册 `browser_dock_look`（read 档）。 */
+  /** 看侧栏浏览器免审批：关着时每次调用都要用户点一次审批卡（开着就直接读）。 */
   lookWithoutApproval: boolean
   /** 一份快照最多多少字符（按行截断，绝不切碎元素）。 */
   maxSnapshotChars: number
@@ -182,6 +187,45 @@ interface SnapshotOutcome {
   truncated: boolean
 }
 
+/**
+ * 一台视图上挂着的 JS 对话框。
+ *
+ * `alert` / `confirm` / `prompt` / `beforeunload` 都会走 `Page.javascriptDialogOpening`；
+ * 它挂着的时候，这个视图上的每条 CDP 命令都被浏览器压住（不排队、直接不答），
+ * 所以必须记住「有这个东西」并让模型看得见。
+ */
+interface PendingDialog {
+  /** `alert` / `confirm` / `prompt` / `beforeunload`。 */
+  type: string
+  /** 弹窗上那句话。 */
+  message: string
+  /** `prompt()` 输入框里的默认值（别的类型是空串）。 */
+  defaultPrompt: string
+  /** 什么时候弹出来的（结果里报「挂了多久」用）。 */
+  openedAt: number
+}
+
+/**
+ * 审批通道的最小面（形状见 `packages/approval/approval.ts` 的 `ApprovalHandler`）。
+ *
+ * 为什么在这里另立一份而不 import 那个包：`ctx.get('approval')` 的返回值本来就是 any，
+ * 这一层只用得到「问一次、拿一个决定」；多一条跨包 import 只会把两个插件绑在一起。
+ */
+interface LookApproval {
+  decide(
+    request: {
+      toolName: string
+      argsSummary: string
+      args?: Record<string, unknown>
+      cwd?: string
+      sessionId?: string
+      sessionPath?: string
+    },
+    signal: AbortSignal,
+    options?: { forceAskReason?: string },
+  ): Promise<'allow-once' | 'allow-session' | 'allow-always' | 'reject'>
+}
+
 export const dockBrowserPlugin: Plugin.Object = {
   name: 'dock-browser',
   inject: ['tools', 'settings'],
@@ -224,6 +268,101 @@ export const dockBrowserPlugin: Plugin.Object = {
       state.generation += 1
       state.refs.clear()
       state.refsInvalidReason = reason
+    }
+
+    /**
+     * 每台视图上挂着的 JS 对话框，以及它那个 25 秒的兜底定时器。
+     *
+     * 为什么不塞进 `ViewState`：对话框事件可能比第一次工具调用先到（用户自己那台页签
+     * 弹出 `confirm()` 时，我们连会话都还没建），塞进 `ViewState` 就会漏记。
+     */
+    const dialogs = new Map<string, PendingDialog>()
+    const dialogTimers = new Map<string, ReturnType<typeof setTimeout>>()
+    /** 超时自动 dismiss 之后要跟模型交代的那句话：下一次结果把它带出来（只带一次）。 */
+    const dialogNotes = new Map<string, string[]>()
+
+    /** 给对话流补一句提示。没有 transcript 的宿主（自检里的裸 ctx）就只丢一条。 */
+    const notify = (text: string): void => {
+      const transcript = ctx.get('transcript') as { system?: (line: string) => void } | undefined
+      if (transcript !== undefined && typeof transcript.system === 'function') transcript.system(text)
+    }
+
+    /** 清掉一台视图的对话框状态（`Closed` 事件、被处理掉、视图被关，三种都走它）。 */
+    const clearDialog = (viewId: string): void => {
+      const timer = dialogTimers.get(viewId)
+      if (timer !== undefined) {
+        clearTimeout(timer)
+        dialogTimers.delete(viewId)
+      }
+      dialogs.delete(viewId)
+    }
+
+    /**
+     * 兜底：等了 `DOCK_CALL_TIMEOUT_MS`（25 秒，桌面侧掐单条命令的那条预算）还没人处理，
+     * 就自己 dismiss 掉，并把「为什么被关掉」留在下一次结果里。
+     *
+     * 为什么必须自动关：弹窗挂着的时候这台视图上每条命令都过不去，不关就等于把这条视图
+     * 永久挂在「25 秒超时」上——模型看到的只有超时，看不出是弹窗。
+     */
+    const dismissDialogOnTimeout = (viewId: string): void => {
+      dialogTimers.delete(viewId)
+      const current = dialogs.get(viewId)
+      dialogs.delete(viewId)
+      if (current === undefined) return
+      const seconds = Math.round(DOCK_CALL_TIMEOUT_MS / 1000)
+      const note =
+        `⚠ 视图 ${viewId} 上的 ${current.type} 对话框（「${neutralizeInline(current.message, 120)}」）` +
+        `等了 ${seconds} 秒没人处理，已自动关掉（dismiss）：页面上的命令现在能继续跑了；` +
+        '如果那一步本来要点「确定」，请重新做一次'
+      const notes = dialogNotes.get(viewId) ?? []
+      notes.push(note)
+      dialogNotes.set(viewId, notes)
+      notify(`[dock-browser] ${note}`)
+      const link = subscribed
+      if (link === null) return
+      const page = states.get(viewId)?.target ?? link.session(viewId)
+      void actions.handleDialog(page, { accept: false }).catch(() => {})
+    }
+
+    /** `Page.javascriptDialogOpening`：记状态、提示一次、起 25 秒兜底。 */
+    const onDialogOpening = (viewId: string, params: Record<string, unknown>): void => {
+      const type = String(params.type ?? 'alert')
+      const message = String(params.message ?? '')
+      const defaultPrompt = typeof params.defaultPrompt === 'string' ? params.defaultPrompt : ''
+      clearDialog(viewId)
+      dialogs.set(viewId, { type, message, defaultPrompt, openedAt: Date.now() })
+      const timer = setTimeout(() => dismissDialogOnTimeout(viewId), DOCK_CALL_TIMEOUT_MS)
+      timer.unref?.()
+      dialogTimers.set(viewId, timer)
+      notify(
+        `[dock-browser] 视图 ${viewId} 弹出了 ${type} 对话框：「${neutralizeInline(message, 200)}」。` +
+          '它挂着的时候这个页面的其他命令都过不去，用 browser_dock action=dialog ' +
+          `viewId=${viewId} dialogAction=accept|dismiss 处理（${Math.round(DOCK_CALL_TIMEOUT_MS / 1000)} 秒后会自动 dismiss）`,
+      )
+    }
+
+    /**
+     * 待处理对话框的提示，放在结果最前面（没有就返回空串）。
+     *
+     * 「最前面」是刻意的：模型读过一大段无障碍树之后再看到提示，往往已经按旧结构动手了。
+     */
+    const dialogHint = (viewId: string): string => {
+      const lines: string[] = []
+      const notes = dialogNotes.get(viewId)
+      if (notes !== undefined && notes.length > 0) {
+        lines.push(...notes)
+        dialogNotes.delete(viewId)
+      }
+      const current = dialogs.get(viewId)
+      if (current !== undefined) {
+        lines.push(
+          `⚠ 视图 ${viewId} 上有一个 ${current.type} 对话框等着处理：「${neutralizeInline(current.message, 200)}」。` +
+            `它挡着这个页面的所有命令，先 browser_dock action=dialog viewId=${viewId} dialogAction=accept|dismiss` +
+            `（prompt 的默认值${current.defaultPrompt === '' ? '为空' : `是「${neutralizeInline(current.defaultPrompt, 120)}」`}；` +
+            `${Math.round(DOCK_CALL_TIMEOUT_MS / 1000)} 秒后自动 dismiss）`,
+        )
+      }
+      return lines.length === 0 ? '' : `${lines.join('\n')}\n`
     }
 
     /** 订 CDP 事件推送：控制台 / 异常 / 网络进环形缓冲，跳转与文档被换作废 ref。 */
@@ -287,6 +426,14 @@ export const dockBrowserPlugin: Plugin.Object = {
           }
           case 'Runtime.executionContextsCleared':
             invalidate(event.viewId, '页面的文档被换掉了')
+            break
+          case 'Page.javascriptDialogOpening':
+            // 弹窗挂着时这个视图的命令全被压住：记下来，让模型看得见、能处理
+            onDialogOpening(event.viewId, event.params)
+            break
+          case 'Page.javascriptDialogClosed':
+            // 用户自己在界面上点了「确定」/「取消」也走这条，照清
+            clearDialog(event.viewId)
             break
           default:
             // 白名单之外的事件本就不该推过来，静默忽略
@@ -417,14 +564,63 @@ export const dockBrowserPlugin: Plugin.Object = {
       return result.ref
     }
 
-    // ── 工具：browser_dock_look（只读，默认不注册）──────────────────────────
+    // ── 工具：browser_dock_look（只读，默认每次请求一次审批）─────────────────
 
-    async function runLook(args: Record<string, unknown>): Promise<string | ToolOutput> {
+    /**
+     * 「看一眼」前的人工确认：默认档每次都要用户点头（`lookWithoutApproval` 打开才跳过）。
+     *
+     * 为什么确认放在工具里、而不是靠 `risk:'exec'` 借道审批守卫：`exec` 在没有 `command`
+     * 参数时两头不靠——只读权限档一律拒（`approval/index.ts:1318-1327`），计划与探索模式
+     * 只放行只读命令（`session-core/modes.ts:97-129`），「看一眼」在这三种档里整档拿不到。
+     * 所以工具声明 `read`（所有档都放行到执行），再在这里显式请求一次审批：
+     * `forceAskReason` 让审批跳过所有自动放行档（本会话授权、权限模式、AI 复核），每次都弹卡。
+     *
+     * 失败方向一律是「不读」：审批服务没起来、免打扰模式、用户拒绝或没人能回答，都抛一句
+     * 可读的错误——绝不返回任何页面内容。
+     */
+    const confirmLook = async (args: Record<string, unknown>, runCtx: ToolContext): Promise<void> => {
+      if (config.lookWithoutApproval) return
+      const approval = ctx.get('approval') as LookApproval | undefined
+      if (approval === undefined) {
+        throw new Error(
+          '看一眼侧栏浏览器要先过审批，但审批服务没起来（这台宿主没装 approval 插件）：这次不读，也别重试。',
+        )
+      }
+      // 免打扰模式承诺「这一轮不打断用户」，弹卡等于违约：按拒处理，把话说明白。
+      const mode = (ctx.get('mode') as { modeFor?: (sessionId?: string) => string } | undefined)?.modeFor?.(runCtx.sessionId)
+      if (mode === 'quiet') {
+        throw new Error(
+          '免打扰模式不弹审批卡，所以这次没有去读侧栏浏览器。要看请切回「执行」模式，或在设置里打开「看侧栏浏览器免审批」。',
+        )
+      }
+      const decision = await approval.decide(
+        {
+          toolName: TOOL_LOOK,
+          argsSummary: argsSummary(args),
+          args,
+          cwd: runCtx.cwd,
+          sessionId: runCtx.sessionId,
+          sessionPath: runCtx.sessionPath,
+        },
+        runCtx.signal,
+        { forceAskReason: t('look.approvalReason') },
+      )
+      if (decision === 'reject') {
+        throw new Error(
+          '用户没有同意这次「看一眼」（点了拒绝、等到超时，或当前没有界面能回答审批卡）：没有读到任何页面内容。' +
+            '别重试同一件事，先问用户要不要看；要免掉逐次确认，请他在设置里打开「看侧栏浏览器免审批」。',
+        )
+      }
+    }
+
+    async function runLook(args: Record<string, unknown>, runCtx: ToolContext): Promise<string | ToolOutput> {
       const action = String(args.action ?? '')
       if (!DOCK_LOOK_ACTIONS.includes(action)) {
         throw new Error(`未知 action：${action || '(空)'}。可用：${DOCK_LOOK_ACTIONS.join(' / ')}`)
       }
       const link = requireLink()
+      // 先拿链路（只查服务在不在，不碰页面），再问人：没有桌面壳时不该让用户白点一张卡。
+      await confirmLook(args, runCtx)
 
       if (action === 'views') {
         const list = await link.views()
@@ -477,7 +673,7 @@ export const dockBrowserPlugin: Plugin.Object = {
             ? clamp(args.maxChars, 500, 200_000, config.maxSnapshotChars)
             : config.maxSnapshotChars
         const outcome = await takeSnapshot(state, page, { full: args.full === true, maxChars })
-        return report(
+        return dialogHint(viewId) + report(
           `快照完成（${args.full === true ? '完整树' : '只列可交互元素'}）：可交互元素 ${outcome.interactiveCount} 个，ref ${outcome.refCount} 个。`,
           {
             action: 'snapshot',
@@ -614,6 +810,7 @@ export const dockBrowserPlugin: Plugin.Object = {
         // 视图没了：会话状态与缓冲一起清掉，别留在内存里当幽灵。
         states.delete(viewId)
         rings.delete(viewId)
+        clearDialog(viewId)
         return report(`已关掉视图 ${viewId}（连带壳里那张页签）。`, { action: 'close', viewId })
       }
 
@@ -631,7 +828,7 @@ export const dockBrowserPlugin: Plugin.Object = {
           const doc = await actions.waitForPageLoad(page, NAVIGATE_TIMEOUT_MS, runCtx.signal)
           invalidate(viewId, '页面已经跳转到别的地址')
           const snapshot = await takeSnapshot(state, page, { full: false, maxChars: config.maxSnapshotChars })
-          return report(
+          return dialogHint(viewId) + report(
             `视图 ${viewId} 已打开 ${neutralizeInline(doc.url || url, 300)}` +
               `${doc.title === '' ? '' : `（标题「${neutralizeInline(doc.title, 120)}」）`}，加载状态 ${doc.readyState}。下面是这一页的简版快照：`,
             { action: 'navigate', viewId, url: neutralizeInline(doc.url || url, 300), readyState: doc.readyState, interactive: snapshot.interactiveCount },
@@ -729,6 +926,38 @@ export const dockBrowserPlugin: Plugin.Object = {
           return `求值结果（视图 ${viewId}）：\n${wrapUntrusted('browser', outcome.text)}`
         }
 
+        case 'dialog': {
+          const current = dialogs.get(viewId)
+          if (current === undefined) {
+            throw new Error(
+              `视图 ${viewId} 现在没有待处理的对话框（可能已经被处理，或者页面根本没弹）。` +
+                '弹窗会自己出现在快照最前面，没有就是没有，别为这个重试',
+            )
+          }
+          const mode = String(args.dialogAction ?? (args.accept === true ? 'accept' : args.accept === false ? 'dismiss' : ''))
+          if (mode !== 'accept' && mode !== 'dismiss') {
+            throw new Error('dialog 需要 dialogAction=accept（接受）或 dialogAction=dismiss（关掉）')
+          }
+          // prompt() 不填文本等于清空：没给 promptText 就沿用弹窗自带的默认值。
+          const typed =
+            typeof args.promptText === 'string' && args.promptText !== ''
+              ? args.promptText
+              : current.type === 'prompt' && current.defaultPrompt !== ''
+                ? current.defaultPrompt
+                : undefined
+          if (typed !== undefined) {
+            const blocked = typedTextBlockReason(typed)
+            if (blocked !== null) throw new Error(blocked)
+          }
+          clearDialog(viewId)
+          await actions.handleDialog(page, { accept: mode === 'accept', promptText: typed })
+          return report(
+            `已${mode === 'accept' ? '接受' : '关掉'}视图 ${viewId} 的 ${current.type} 对话框` +
+              `（「${neutralizeInline(current.message, 200)}」，挂了 ${Math.round((Date.now() - current.openedAt) / 1000)}s）。`,
+            { action: 'dialog', viewId, dialogAction: mode, type: current.type },
+          )
+        }
+
         default:
           throw new Error(`未知 action：${action}`)
       }
@@ -755,7 +984,8 @@ export const dockBrowserPlugin: Plugin.Object = {
         '动手操作侧栏那台浏览器（用户自己的持久会话，DOM 级）：open 让桌面壳开一张页签并聚焦' +
         '（不带 viewId 时，若已有 agent 开的同址页签就直接复用它；带 viewId 时只聚焦那台已有视图）、navigate 打开地址' +
         '（返回时会附一份简版快照）、click / hover / type / press / scroll 都收 snapshot 里的 ref、' +
-        'evaluate 跑页面 JS（敏感原语会被拒）、close 关掉这张页签。**每一步都要用户点头**（审批卡会带 viewId 与地址），' +
+        'evaluate 跑页面 JS（敏感原语会被拒）、dialog 处理页面弹出的 alert / confirm / prompt' +
+        '（dialogAction=accept|dismiss；不加就等着超时）、close 关掉这张页签。**每一步都要用户点头**（审批卡会带 viewId 与地址），' +
         '别一次铺一堆动作。动手前先 browser_dock_look action=snapshot 拿 ref。',
       parameters: {
         type: 'object',
@@ -763,7 +993,7 @@ export const dockBrowserPlugin: Plugin.Object = {
           action: {
             type: 'string',
             enum: [...DOCK_ACTIONS],
-            description: '要做什么：open / navigate / click / hover / type / press / scroll / evaluate / close',
+            description: '要做什么：open / navigate / click / hover / type / press / scroll / evaluate / dialog / close',
           },
           viewId: sharedProps.viewId,
           url: sharedProps.url,
@@ -777,6 +1007,8 @@ export const dockBrowserPlugin: Plugin.Object = {
           direction: sharedProps.direction,
           deltaY: sharedProps.deltaY,
           expression: { type: 'string', description: 'evaluate：在页面里执行的 JS 表达式（结果 JSON 化后截断 2000 字；敏感原语会被拒）' },
+          dialogAction: { type: 'string', enum: ['accept', 'dismiss'], description: 'dialog：accept = 点「确定」/「好」，dismiss = 点「取消」/关掉' },
+          promptText: { type: 'string', description: 'dialog：prompt() 输入框里填什么；不给就沿用弹窗自带的默认值' },
         },
         required: ['action'],
       },
@@ -784,12 +1016,21 @@ export const dockBrowserPlugin: Plugin.Object = {
       run: (args, runCtx) => runAct(args, runCtx),
     }
 
-    const lookTool: ToolEntry = {
+    /**
+     * 只读工具的条目：**风险档恒为 `read`**，人批那一步在 `run` 里自己做（见 `confirmLook`）。
+     *
+     * 为什么不给 `exec`：`read`/`write`/`exec` 里只有 `read` 是「所有档位都放行到执行」的，
+     * `exec` 在没有 `command` 参数时会被只读权限档与计划/探索模式整档拒掉——那时模型拿不到
+     * ref，「有动作、没眼睛」照旧。而「用户知不知道」不靠档位表达：`confirmLook` 每次带
+     * `forceAskReason` 请求一次审批，跳过所有自动放行档。
+     */
+    const lookTool = (): ToolEntry => ({
       name: TOOL_LOOK,
       description:
-        '看侧栏那台浏览器（只读，免审批）：views 列出现在活着的视图（含用户自己开的页签）、snapshot 取无障碍树快照' +
+        '看侧栏那台浏览器（只读）：views 列出现在活着的视图（含用户自己开的页签）、snapshot 取无障碍树快照' +
         '（每个可交互元素带 [ref=eN]，动作就用它定位）、screenshot 截图（需要视觉模型；视图没露出来会直接报错而不是挂住）、' +
-        'console 看控制台输出、network 看网络请求、wait_for 等文本或选择器出现。动手之前先 snapshot，别凭记忆操作。',
+        'console 看控制台输出、network 看网络请求、wait_for 等文本或选择器出现。动手之前先 snapshot，别凭记忆操作。' +
+        '**默认每次调用都会让用户点一次审批卡**（设置里打开免审批后不再问）；被拒时不要重试，先问用户要不要看。',
       parameters: {
         type: 'object',
         properties: {
@@ -810,8 +1051,10 @@ export const dockBrowserPlugin: Plugin.Object = {
         required: ['action'],
       },
       risk: 'read',
-      run: (args) => runLook(args),
-    }
+      // 默认档会挂在审批卡上等人：声明出来，PTC 脚本的时限才不会把等人的时间算进去。
+      waitsForHuman: !config.lookWithoutApproval,
+      run: (args, runCtx) => runLook(args, runCtx),
+    })
 
     // ── 工具注册（开关一翻就重挂一次）──────────────────────────────────────
 
@@ -820,9 +1063,12 @@ export const dockBrowserPlugin: Plugin.Object = {
       for (const off of toolOffs) off()
       toolOffs = []
       toolOffs.push(ctx.effect(() => ctx.tools.register(actTool), 'dock-browser: tools.register'))
-      // 只读工具默认不注册：dock 视图跑在用户自己的持久分区里（带登录态），
-      // 只有显式打开 lookWithoutApproval 才以 read 档放行（照 computer-use.ts 的先例）。
-      if (config.lookWithoutApproval) toolOffs.push(ctx.effect(() => ctx.tools.register(lookTool), 'dock-browser: tools.register #2'))
+      // 只读工具**恒注册**：不注册的话模型拿不到 ref，`click / hover / type` 这三个只收 ref 的
+      // 动作就成了无源之水（工具说明还会让它去调一个不存在的工具，模型只能反复重试同一个失败）。
+      // 档位恒为 read（所有档位都放行到执行）；人批由 `confirmLook` 每次显式请求一次审批，
+      // 默认关着 `lookWithoutApproval` 时不免——dock 视图跑在用户自己的持久分区里（带登录态）。
+      // 每次设置变了都重挂一次：`waitsForHuman` 跟着这一档现算。
+      toolOffs.push(ctx.effect(() => ctx.tools.register(lookTool()), 'dock-browser: tools.register #2'))
     }
     syncTools()
 
@@ -875,6 +1121,11 @@ export const dockBrowserPlugin: Plugin.Object = {
       subscribed = null
       states.clear()
       rings.clear()
+      // 兜底定时器要一起撤：插件停了还在跑的话，回调里会往一条已经断掉的链路上发命令。
+      for (const timer of dialogTimers.values()) clearTimeout(timer)
+      dialogTimers.clear()
+      dialogs.clear()
+      dialogNotes.clear()
     }
   },
 }

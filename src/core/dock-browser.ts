@@ -160,7 +160,7 @@ export const DOCK_LOOK_ACTIONS: readonly string[] = [
   'wait_for',
 ]
 
-/** `open`/`navigate`/`click`/`hover`/`type`/`press`/`scroll`/`evaluate`/`close`：会改页面。 */
+/** `open`/`navigate`/`click`/`hover`/`type`/`press`/`scroll`/`evaluate`/`dialog`/`close`：会改页面。 */
 export const DOCK_ACTIONS: readonly string[] = [
   'open',
   'navigate',
@@ -170,6 +170,7 @@ export const DOCK_ACTIONS: readonly string[] = [
   'press',
   'scroll',
   'evaluate',
+  'dialog',
   'close',
 ]
 
