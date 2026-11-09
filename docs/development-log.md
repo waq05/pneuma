@@ -16092,8 +16092,34 @@ dsh 的机制，不要有遗漏」。四条线并行只读调研（运行时、�
 
 ### 遗留
 
-- `builtinMounts`（`core/plugin-loader.ts:263`）成了无写入方的空表，四处 `has()` 恒假，
-  拆它要动 `mountRow` 的语义，另立一批。
 - 队友运行记录里的工具卡外观没有真机确认（需要一次真实子智能体会话 + 截图）。
 - `shell.subagent.flow` 这条槽（`ui-transcript/ui/ui.tsx:118-123`）至今没有渲染方，
   团队走的是服务而不是槽；删它要先确认没人打算接。
+
+## 2026-11-09（续）：拆掉内置挂载那张空表
+
+### 为什么
+
+上一条收口删了 `registerBuiltinMount`，`builtinMounts` 因此没了唯一的写入方——没有写入方
+就没有任何 key，四处 `has()` / `get()` 恒假。留着它的代价不是几行代码，而是**读代码的人
+会以为「内置对象挂载」这条路还活着**，照着改就会改到永不执行的代码上；上一轮审查的
+`P0-1-2-3-4 复审` 就为此专门记过一条「这条改动当前是死路径」。
+
+### 改了什么
+
+- `mountExternalPlugin` 里「内置官方插件：对象已在宿主装配时登记」的整块（25 行）；
+- `remountExternalPlugins` 的「内置插件随内核编译，没有可重挂的磁盘产物」拒绝分支；
+- `listMountedPluginSources` 的 `if (builtinMounts.has(identity)) continue`；
+- `setPluginEnabledHot` 里 `builtinMounts.has(basename(file)) ? file : …` 的三元，收成
+  `pluginSources.get(file) ?? resolveEntryPath(file)`；
+- 表本身的声明，以及三处仍在说「内置插件」的注释（重挂的前置检查清单、热启停的取值说明、
+  轮询名单的文档）。
+
+等价性靠构造证明：这张表唯一的写入方是上一批删掉的 `registerBuiltinMount`，删掉之后没有任何
+语句能往里放 key，所以四处判断的「真」分支全部不可达，删除不改变任何一条执行路径。智能体
+团队与电脑操作早已是普通功能包，由 `mountRow` 解析磁盘入口再挂，不再走内置对象。
+
+### 验证
+
+`typecheck`（根）0 错；`build` 通过；`check:plugin` 通过（含换包 e2e 17/17）；
+`check:core` 107/107；`check:p0` 16/16；`check:style` 1229 文件。
