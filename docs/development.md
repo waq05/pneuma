@@ -642,6 +642,10 @@ node scripts/composer-test.mjs     # TUI 输入候选面板
 cd D:\dsc\desktop && pnpm run dist:dir     # → dist/win-unpacked/Pneuma.exe
 ```
 
+**包依赖方向门禁（含相对路径，2026-11-09 起）**：`scripts/plugin-dep-graph.mjs` 现在把 `./`、`../` 也解析成真实文件（`.js` → `.ts` / `.tsx`、目录 → `index.ts`），再按「文件属于哪一层、哪个包」归类；包 → 包的相对导入与 `@pneuma/<id>` 用同一个判据（功能包只许 import 库包）。
+两条硬规则：`src/core/**` 与 `src/services/**` 都不许用相对路径进 `src/packages/**`（要共用类型放 `src/contract`，要调实现走 `@pneuma/runtime/*` 或 inject 的服务），违反就以退出码 1 失败并打印 `文件:行号 → 目标`。
+单独跑 `node scripts/plugin-dep-graph.mjs`；它同时打印跨层相对边的统计（按「源层 → 目标层」分组），以后要收紧哪条方向就先看这张表。
+
 **P0 定点门禁（`check:p0`，2026-11-09 起）**：`src/**` 那 14 条 P0 修复、加上第二轮复审挖出的
 几处会话归属问题，各自配了一条 `scripts/<话题>-check.mjs`（清单现在 16 条），
 `node scripts/check-p0.mjs` 依次把它们跑完并打一张总表，任一条红就以非零退出。它也可以点名单跑
