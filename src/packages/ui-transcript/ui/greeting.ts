@@ -1,18 +1,18 @@
 /**
- * 空会话首屏那句招呼语：先按现场挑一组，再从组里挑一句。
+ * 空会话首屏那句招呼语：只按现在几点挑一句。
  *
- * 为什么单独一个文件：首屏那块是 TSX，Node 侧的自检探针 import 不了。把「挑哪一句」的
- * 判定摘出来放成纯函数，边界（几点算深夜、周末和时段谁优先、隔天换不换句）才能被机器
- * 钉住；文案本身仍留在 `welcome.tsx` 的字面量表里——文案闸只认字面量 `t('...')`。
+ * 为什么不按「周末 / 隔了些天回来 / 头一回打开」再分岔（2026-11-10 用户要求放弃原方案）：
+ * 分岔一多，每个岔口都得凑够句子，凑出来的就是「下午还有一段整时间，够用」这种没话找话。
+ * 对着 zcode 和 codex 各看了一遍之后取中间：zcode 只按时段给一句，codex 干脆不寒暄、
+ * 只告诉你下一步能干什么。这里保留前者，后者交给首屏那行提示和四张卡。
  *
- * 优先级从高到低：第一次用 → 久未使用 → 周末 → 时段。
- * 前三个是「有由头」的组：人刚装好、隔了些天回来、今天周六日，这几件事都比「现在几点」
- * 更值得说一句。时段殿后，因为它天天成立，不该压过头一回和久别重逢。
+ * 判定摘成纯函数：边界（几点算深夜）才能被自检钉住；文案仍留在 `welcome.tsx` 的字面量
+ * 表里——文案闸只认字面量 `t('...')`。
  *
  * @module dsc-ui-shell/plugins/transcript/greeting
  */
 
-/** 招呼语的九个组：六个时段，加周末、久未使用、第一次用。 */
+/** 招呼语的六个时段。 */
 export type GreetingSlot =
   | 'earlyMorning'
   | 'morning'
@@ -20,54 +20,24 @@ export type GreetingSlot =
   | 'afternoon'
   | 'evening'
   | 'lateNight'
-  | 'weekend'
-  | 'returning'
-  | 'firstRun'
-
-/** 每组几句。文案表在 `welcome.tsx`，两边由自检对齐。 */
-export const GREETING_VARIANTS = 5
-
-/**
- * 组的固定次序：组内第几句用它的位置做偏移，同一天里相邻两组的句子因此不重样。
- * 这个次序只影响「第几句」，不影响哪一组被选中，随时可以调。
- */
-const ORDER: readonly GreetingSlot[] = [
-  'earlyMorning',
-  'morning',
-  'noon',
-  'afternoon',
-  'evening',
-  'lateNight',
-  'weekend',
-  'returning',
-  'firstRun',
-]
 
 /** 挑一句招呼语要的现场。 */
 export interface GreetingFacts {
   /** 现在（本机时区）。传进来而不是在函数里现取，自检才能拿固定时刻试边界。 */
   at: Date
-  /** 除当前这条空会话外，还有没有别的会话。false 就是第一次打开。 */
-  hasHistory: boolean
-  /** 有历史，但最近一次写入超过七天：隔了好些天才回来。 */
-  longAbsence: boolean
-}
-
-/** 挑出来的结果：哪一组、组里第几句。 */
-export interface GreetingPick {
-  slot: GreetingSlot
-  index: number
 }
 
 /**
- * 按本机小时判定时段。边界一律左闭右开：05:00 算清晨，08:00 才算上午。
+ * 按本机小时判定时段。边界一律左闭右开，与 zcode 的分档一致：
+ * 05:00 清晨、09:00 上午、12:00 中午、14:00 下午、18:00 晚上、23:00 深夜。
  *
- * 深夜跨零点，所以 0–5 点单独一支——不单独判的话会顺着 `hour < 12` 落进上午，
- * 半夜打开看到「上午时间最整」。
+ * 深夜跨零点（23:00–04:59），所以两支都用 `lateNight`——不单独判的话，
+ * 零点到五点会顺着 `hour < 12` 落进上午，半夜打开看到「上午好」。
  */
-function slotOfHour(hour: number): GreetingSlot {
+export function greetingSlot({ at }: GreetingFacts): GreetingSlot {
+  const hour = at.getHours()
   if (hour < 5) return 'lateNight'
-  if (hour < 8) return 'earlyMorning'
+  if (hour < 9) return 'earlyMorning'
   if (hour < 12) return 'morning'
   if (hour < 14) return 'noon'
   if (hour < 18) return 'afternoon'
@@ -75,26 +45,29 @@ function slotOfHour(hour: number): GreetingSlot {
   return 'lateNight'
 }
 
+/** 换档的整点，与 `greetingSlot` 的分档一一对应。 */
+const BOUNDARY_HOURS = [5, 9, 12, 14, 18, 23] as const
+
 /**
- * 挑一句招呼语。
+ * 距离下一次换档还有多少毫秒。
  *
- * 组内第几句由「当天」决定：同一天同一组永远同一句，隔天换下一句。这样既不会在眼前
- * 跳字，也不至于一年到头看同一行。
+ * 为什么要有这个数：首屏那句招呼语只在重绘时读时钟。窗口挂一晚上不动，过了 18:00 第一位
+ * 还是「下午好」。拿这个数挂一个定时器，到点重绘一次就换过来了——zcode 的首屏是这么做的
+ * （`getNextChatEmptyGreetingDelayMs`）。
  *
- * 为什么用 `Date.UTC(年, 月, 日)` 折算天数、而不是拿 `new Date(y, 0, 1)` 相减算年内
- * 第几天：相减得的是本机时区的毫秒差，在有夏令时的时区会差一小时，除以一天的毫秒再
- * 取整就会错一天。UTC 没有夏令时，当天零点除以一天永远是整数，每过一天必增一。
+ * 返回永远 ≥ 1：正好卡在边界上时给的是**下一个**边界，而不是 0。给 0 的话定时器会原地
+ * 空转，每一帧都重绘一次。
  */
-export function greetingSlot(facts: GreetingFacts): GreetingPick {
-  const { at, hasHistory, longAbsence } = facts
-  const weekday = at.getDay()
-  const slot: GreetingSlot = !hasHistory
-    ? 'firstRun'
-    : longAbsence
-      ? 'returning'
-      : weekday === 0 || weekday === 6
-        ? 'weekend'
-        : slotOfHour(at.getHours())
-  const day = Math.floor(Date.UTC(at.getFullYear(), at.getMonth(), at.getDate()) / 86_400_000)
-  return { slot, index: (day + ORDER.indexOf(slot)) % GREETING_VARIANTS }
+export function nextGreetingBoundaryDelayMs(at: Date): number {
+  const now = at.getTime()
+  const candidates = BOUNDARY_HOURS.map((hour) => {
+    const boundary = new Date(now)
+    boundary.setHours(hour, 0, 0, 0)
+    return boundary.getTime()
+  })
+  const tomorrow = new Date(now)
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  tomorrow.setHours(BOUNDARY_HOURS[0], 0, 0, 0)
+  const next = candidates.find((time) => time > now) ?? tomorrow.getTime()
+  return Math.max(1, next - now)
 }
