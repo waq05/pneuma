@@ -449,9 +449,16 @@ console.log('[11] 跟到底部的滚动逻辑')
    * 的是组体那份，断言看着通过、其实一条也没验到外层。
    */
   const followSrc = read(UI + '/follow.ts')
-  /** 取一段函数体（从 `head` 之后第一个 `{` 起按花括号配平），只在体里找，免得跨函数误命中。 */
-  const bodyOf = (src, head) => {
-    const at = src.indexOf(head)
+  /**
+   * 取一段函数体（从 `const <名字>` 之后第一个 `{` 起按花括号配平），只在体里找，免得跨函数误命中。
+   *
+   * 为什么按**名字**定位、不按整行函数头（2026-11-11，第③阶段）：这里原先钉的是
+   * `'const onPointerDown = (): void => {'` 这种整行字面量，签名一改（加参数、换返回类型）
+   * 就取到空串，断言当场假红——真正要验的是「体里怎么写」，不是「函数头长什么样」。
+   * 现在只认名字，签名怎么变都能取到体，强度不降（取不到体时下面两条照样红）。
+   */
+  const bodyOf = (src, name) => {
+    const at = src.search(new RegExp(`\\bconst\\s+${name}\\b`))
     const open = at < 0 ? -1 : src.indexOf('{', at)
     if (open < 0) return ''
     let depth = 0
@@ -479,7 +486,7 @@ console.log('[11] 跟到底部的滚动逻辑')
   // 触屏拖动）才算读者在读历史；只点一下工具卡/链接没有 scroll，跟随不动。
   // 旧口径是「一个 pointerdown 都不许挂」——那时按下就松手，点开工具卡会把跟随打断；
   // 现在按下的作用反过来了，但「点开工具卡不该断跟随」这条用户可见的行为没变。
-  const pointerDownBody = bodyOf(followSrc, 'const onPointerDown = (): void => {')
+  const pointerDownBody = bodyOf(followSrc, 'onPointerDown')
   check(
     '指针按下只作证、不当场松手（点开工具卡不该断跟随）',
     !transcriptSrc.includes('touchstart') &&
@@ -491,7 +498,7 @@ console.log('[11] 跟到底部的滚动逻辑')
   )
   // 手势一到就清掉跟随。清之前只许有「容器藏着就别改意图」这一道守卫（藏起来时事件可能
   // 来自别处、冒泡上来，见 follow.ts 里的 hidden 说明）；守卫之外不许有任何延后动作。
-  const onGestureBody = bodyOf(followSrc, 'const onGesture = (): void => {')
+  const onGestureBody = bodyOf(followSrc, 'onGesture')
   const clearedAt = onGestureBody.indexOf('following.current = false')
   check(
     '手势里当场 follow=false（不等越过哪条线）',
@@ -504,7 +511,13 @@ console.log('[11] 跟到底部的滚动逻辑')
   check('计时器兜底', transcriptSrc.includes('window.setTimeout(settle, FOLLOW_SETTLE_MS)'))
 
   // ④ 只认自己的写：钉底引发的 scroll 不算读者动了。
-  check('记下自己写到的位置', transcriptSrc.includes('written.current = scroller.scrollTop'))
+  // 2026-11-11（第③阶段）：写 scrollTop 的动作搬进了视口协调器，钉底那一行于是变成
+  // `written.current = viewport.pin()`（pin 返回写完之后的实际位置）。两种写法都认——
+  // 要验的是「每次写完都记下实际位置」，不是那一行由哪个对象执行。
+  check(
+    '记下自己写到的位置',
+    /written\.current = (?:viewport\.pin\(\)|scroller\.scrollTop)/.test(followSrc),
+  )
   check('差 1px 以内当自己滚的', transcriptSrc.includes('Math.abs(top - written.current) <= 1'))
 
   // ⑤ 内容变长只在跟随开着时才追（读者在读时一动不动）。
@@ -512,7 +525,7 @@ console.log('[11] 跟到底部的滚动逻辑')
   // 旧口径钉的是「函数第一句就是 !following 判断」；现在前面多了一道「容器藏着就别追」的
   // 守卫（藏起来时 `floor()` 是「内容高 − 0」，写 scrollTop 没有意义）。要验的行为没变：
   // 读者在读（following 已 false）时提前返回，绝不走到钉底。
-  const resizeBody = bodyOf(followSrc, 'const onResize = (): void => {')
+  const resizeBody = bodyOf(followSrc, 'onResize')
   const bailAt = resizeBody.indexOf('if (!following.current) return')
   check(
     '读者在读时不钉底（内容长了只在跟随态才追）',

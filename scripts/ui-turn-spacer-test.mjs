@@ -1,21 +1,24 @@
 /**
- * 会话区底部占位的探针（视口四阶段 ①，2026-11-10）：只验「元素与口径」备好了，
- * 不验协调器（第③阶段才写它的高度）。
+ * 会话区底部占位的探针（视口四阶段 ① ＋ ③，2026-11-10 / 11-11）：验「元素与口径」备好了，
+ * 并且第③阶段之后「谁在测、谁在写」分得清。
  *
- * 为什么钉源码而不是 import：占位是 JSX 元素、贴底口径藏在 `follow.ts` 的闭包里，
- * Node 里既渲不出 React 树也拿不到 `scrollHeight`。这里用文本钉守住四件事：
+ * 为什么钉源码而不是 import：占位是 JSX 元素，测量与落点在 `viewport.ts` 的类里（跑起来
+ * 才有 `scrollHeight`），Node 里既渲不出 React 树也拿不到滚动几何。这里用文本钉守住五件事：
  *
  *   [1] 元素在哪：`ui-layout` 的 `app.tsx` 里，`.chat` 的**最后一个子元素**、`.chat-inner` **之后**。
  *       为什么不能写进 transcript 的 `ui.tsx`：那整段经 `shell.main` 槽渲在 `.chat-inner` 里面，
  *       写进去必然变成 `.chat-inner` 的 flex 子项——多吃一格 `--dsc-turn-gap`，而且
- *       `follow.ts` 观察的是 `scroller.firstElementChild`（正是 `.chat-inner`），
- *       占位改高度会被当成「内容增长」，被自己的 `onResize` 抵消。
+ *       视口观察的是内容列（`.chat` 的第一个子元素，正是 `.chat-inner`），占位改高度会被
+ *       当成「内容增长」，被自己的 `onResize` 抵消。
  *   [2] 反向钉：`ui.tsx` 里**不许**出现 `data-chat-turn-spacer`。这条守的正是
  *       「占位不在 `.chat-inner` 子树里」——比数 `.chat` 的子元素个数稳：
  *       数个数会被新加的任何兄弟节点弄红，而「transcript 渲染的一切都在列内」是结构事实。
- *   [3] 口径：`follow.ts` 的 `floor()` 从 `scrollHeight` 里减掉了占位高度（读数 + 相减都在源码里），
- *       `pin()` 写的是 `floor()`，而贴底判定仍是 24px（它比「离 floor 多远」，不是离 `scrollHeight`）。
+ *   [3] 谁在测、谁在写（第③阶段立 owner）：占位选择器、`offsetHeight` 读数、
+ *       `scrollHeight − 占位 − clientHeight` 这个算式、写 `scrollTop` 的动作，全在
+ *       `viewport.ts`；`follow.ts` 只留「该不该贴底」的策略（24px、离 floor 多远）。
  *   [4] 样式：`views.css` 有 `.turn-spacer`，`flex: 0 0 auto` 与 `height: 0` 双在（默认恒 0 高）。
+ *   [5] `overflow-anchor` 按时间开关：批次活跃时视口往 `.chat` 上写 `none`，批次结束清成
+ *       空串（落回样式表那条常态口径）。这一段是第③阶段补的——改之前全仓零覆盖。
  *
  * 运行：node --import ./scripts/_i18n-alias.mjs scripts/ui-turn-spacer-test.mjs
  *
@@ -42,13 +45,19 @@ const check = (name, condition, detail = '') => {
 
 const APP = 'src/packages/ui-layout/ui/app.tsx'
 const FOLLOW = 'src/packages/ui-transcript/ui/follow.ts'
+const VIEWPORT = 'src/packages/ui-transcript/ui/viewport.ts'
 const UI = 'src/packages/ui-transcript/ui/ui.tsx'
 const CSS = 'src/packages/ui-renderer/ui/styles/legacy/views.css'
 
 const appSrc = read(APP)
 const followSrc = read(FOLLOW)
+const viewportSrc = read(VIEWPORT)
 const uiSrc = read(UI)
 const css = read(CSS)
+
+/** 去掉块注释（含 JSX 里的花括号注释）与整行 `//` 注释：只查真代码。 */
+const withoutComments = (src) =>
+  src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
 
 /**
  * 从 `openIndex`（一个 `<div` 的起点）往后数 div 的配对，返回 `</div>` 之后的下标。
@@ -129,23 +138,34 @@ console.log('[2] 反向钉：transcript 的 ui.tsx 里没有占位')
   check('ui.tsx 里也没有 .turn-spacer 类名', !uiSrc.includes('turn-spacer'))
 }
 
-// ── [3] 贴底口径：floor() 减占位，pin() 写 floor() ──────────────────────────────
-console.log('[3] follow.ts 的 floor() 减掉占位高度')
+// ── [3] 谁在测、谁在写：测量与落点归 viewport，策略归 follow ─────────────────────
+console.log('[3] 测量与落点在 viewport，策略在 follow')
 {
-  check('follow.ts 读占位元素', followSrc.includes("[data-chat-turn-spacer]"))
-  check('follow.ts 读的是元素实际高度（offsetHeight）', followSrc.includes('.offsetHeight'))
-  check('取不到占位时按 0 算', /spacer\?\.offsetHeight \?\? 0/.test(followSrc))
+  check('viewport.ts 读占位元素', viewportSrc.includes("'[data-chat-turn-spacer]'"))
+  check('viewport.ts 读的是元素实际高度（offsetHeight）', viewportSrc.includes('.offsetHeight'))
+  check('取不到占位时按 0 算', /spacerElement\?\.offsetHeight \?\? 0/.test(viewportSrc))
   check(
-    'floor() 里 scrollHeight 减 spacerHeight 再减 clientHeight',
-    /scrollHeight\s*-\s*spacerHeight\(scroller\)\s*-\s*scroller\.clientHeight/.test(followSrc),
+    'floor() 里 scrollHeight 减占位再减 clientHeight',
+    /Math\.max\(0, this\.scrollHeight\(\) - this\.spacerHeight\(\) - this\.clientHeight\(\)\)/.test(viewportSrc),
+    'viewport.ts 的 floor() 不见了或算式改了',
   )
-  check('pin() 写的是 floor()', /scroller\.scrollTop\s*=\s*floor\(\)/.test(followSrc))
-  check('pin() 不再直接写 scrollHeight', !/scroller\.scrollTop\s*=\s*scroller\.scrollHeight/.test(followSrc))
-  check('贴底判定仍是 24px', /FOLLOW_BOTTOM_PX\s*=\s*24\b/.test(followSrc))
+  check('pin() 落的是 floor()', /return this\.write\(this\.floor\(\)\)/.test(viewportSrc))
+  check(
+    '写 scrollTop 只在 viewport.ts（follow.ts 里没有赋值）',
+    /scroller\.scrollTop = target/.test(viewportSrc) && !/(?:scroller|\bchat)\.scrollTop\s*=/.test(followSrc),
+    'follow.ts 里还留着写 scrollTop 的语句',
+  )
+  check('follow.ts 的钉底走 viewport.pin()', /written\.current = viewport\.pin\(\)/.test(followSrc))
+  check('贴底判定仍是 24px', /FOLLOW_BOTTOM_PX = 24\b/.test(followSrc))
   check(
     '贴底判定比的是 floor() 到 scrollTop 的距离（没改成离 scrollHeight）',
-    /floor\(\)\s*-\s*(scroller\.scrollTop|top)\s*<=\s*FOLLOW_BOTTOM_PX/.test(followSrc),
+    /floor\(\) - viewport\.scrollTop\(\) <= FOLLOW_BOTTOM_PX/.test(followSrc),
   )
+  // 第③阶段的硬口径：`getBoundingClientRect` 只许出现在视口里（follow 与 ui.tsx 都归零）。
+  // 去掉注释再查：注释里提到这个方法名是说明，不是读数。
+  check('follow.ts 里没有 getBoundingClientRect', !withoutComments(followSrc).includes('getBoundingClientRect'))
+  check('ui.tsx 里没有 getBoundingClientRect', !withoutComments(uiSrc).includes('getBoundingClientRect'))
+  check('放页补偿也走视口（ui.tsx 调 restoreAnchor）', /viewport\.restoreAnchor\(/.test(uiSrc))
 }
 
 // ── [4] 样式：默认恒 0 高、不参与伸缩 ───────────────────────────────────────────
@@ -156,10 +176,28 @@ console.log('[4] views.css 的 .turn-spacer')
   const body = block === null ? '' : block[1]
   check('.turn-spacer 不参与伸缩（flex: 0 0 auto）', /flex:\s*0 0 auto/.test(body))
   check('.turn-spacer 默认高度为 0', /height:\s*0(px)?\s*;/.test(body))
+  const note = css.slice(Math.max(0, css.indexOf('.turn-spacer') - 600), css.indexOf('.turn-spacer'))
+  check('注释说明了高度由协调器写内联样式', /高度由/.test(note))
+  // 第③阶段起 owner 有名字了：注释必须点出 viewport.ts，否则下一个人还会去 follow.ts 找高度。
+  check('注释点了 viewport.ts', /viewport\.ts/.test(note))
+}
+
+// ── [5] overflow-anchor 按时间开关（第③阶段新补：改之前全仓零覆盖）───────────────
+console.log('[5] overflow-anchor：批次活跃 none、批次结束还原')
+{
   check(
-    '注释说明了高度由协调器写内联样式',
-    /高度由/.test(css.slice(Math.max(0, css.indexOf('.turn-spacer') - 600), css.indexOf('.turn-spacer'))),
+    'views.css 里 .chat 的常态口径还在（overflow-anchor: none）',
+    /\.chat\s*\{[^}]*overflow-anchor:\s*none/.test(css),
   )
+  check(
+    'viewport.ts 在批次开始时写 none（整区关，不是按元素关）',
+    /scroller\.style\.overflowAnchor = 'none'/.test(viewportSrc),
+  )
+  check(
+    'viewport.ts 在批次结束时清成空串（落回样式表那条口径）',
+    /scroller\.style\.overflowAnchor = ''/.test(viewportSrc),
+  )
+  check('批次有开始 / 结束两个入口', /beginBatch\(/.test(viewportSrc) && /endBatch\(/.test(viewportSrc))
 }
 
 /**

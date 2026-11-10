@@ -13,6 +13,10 @@ process.on('unhandledRejection', () => {})
  *   3. 滚动的每一次 scroll 事件（top、当时还差多少到底）；
  *   4. 对主对话的 scrollTop 做写入拦截，记下写入值 + 三层调用栈（谁在改它）。
  *
+ * **读栈的人注意（2026-11-11 第③阶段起）**：写 `scrollTop` 的动作已经搬进
+ * `src/packages/ui-transcript/ui/viewport.ts`，所以栈顶应当指向那个文件。栈里出现
+ * `viewport.ts` 是**正常**的（它就是唯一的写入口），不是「还有人在绕过协调器写」。
+ *
  * 运行：node desktop/shots/_verify-follow-debug.mjs
  */
 import { spawn } from 'node:child_process'

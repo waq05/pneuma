@@ -3,9 +3,15 @@
  *
  * 从 `transcript/ui.tsx` 拆出来（2026-10-28，只搬不改）：模块头仍见那一份。
  *
+ * 2026-11-10（S5 第③阶段）起这里**只留策略**：该不该贴底、读者动没动手、落定什么时候到，
+ * 全在这里判；量尺寸、写 `scrollTop`、写底部占位、开关 `overflow-anchor` 都归
+ * `viewport.ts`（那个文件是这四件事的唯一 owner，每帧顺序也写在它的模块头）。
+ * 所以本文件里不会再有写滚动位置的赋值，只有 `viewport.pin()`。
+ *
  * @module dsc-ui-shell/plugins/transcript/follow
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { ChatViewport } from './viewport'
 
 /** 贴底判定（px）：与 dsh 的 `use-scroll-follow` 同一档（25px），差别只在取整。 */
 const FOLLOW_BOTTOM_PX = 24
@@ -15,18 +21,6 @@ const FOLLOW_SETTLE_MS = 180
 
 /** 往上翻的键：只有「想回头读」才需要抢在内容增长前松手（往下滚到底不需要）。 */
 const UP_KEYS: ReadonlySet<string> = new Set(['ArrowUp', 'PageUp', 'Home'])
-
-/**
- * 滚动区底部占位的高度（px）。
- *
- * 为什么每次读 DOM 而不缓存：占位的高度由视口协调器按需写内联样式（现阶段恒 0），
- * 缓存一份就得另外维护失效时机；贴底时读一次 `offsetHeight`，代价远小于一次错位。
- * 取不到占位（例如轨迹页、或协调器还没挂上）按 0 算，口径与没有占位时一致。
- */
-const spacerHeight = (scroller: HTMLElement): number => {
-  const spacer = scroller.querySelector<HTMLElement>('[data-chat-turn-spacer]')
-  return spacer?.offsetHeight ?? 0
-}
 
 /**
  * 手势的有效期（ms）：这一下之后多久内的滚动还算「读者在读历史」。
@@ -57,12 +51,18 @@ const GESTURE_TTL_MS = 1500
  * 内容变长（新条目、流式正文、虚拟列表补挂）交给 `ResizeObserver`：只有跟随开着才钉底，
  * 读者在读的时候一个字都不动（dsh 的 `onResize` 也是这条）。
  *
+ * 量尺寸与写滚动都走 `viewport`（见 `viewport.ts` 的模块头）：这里只问「离 floor 还有多远」、
+ * 只决定「要不要钉」，落点由视口执行；视口在折叠批次里自己写滚动时，会经 `reader.wrote`
+ * 回报，于是下面「只认自己的写」那条照样成立。
+ *
  * @param dep 条目数：条目变了要重钉一次（ResizeObserver 之外的第二道保险）
  * @param sessionKey 换会话时重新起算（打开会话即锚在末尾）
+ * @param viewport 视口协调器：测、写 scrollTop、写占位、开关 overflow-anchor 的唯一 owner
  */
 export function useFollowBottom(
   dep: number,
   sessionKey: string,
+  viewport: ChatViewport,
 ): {
   setEnd: (node: HTMLDivElement | null) => void
   /** 末尾那个锚点（滚轮接力的钩子从它找 .chat；调用点不必再拿一次 DOM）。 */
@@ -84,18 +84,18 @@ export function useFollowBottom(
   const pinnedFor = useRef('')
 
   useEffect(() => {
-    const scroller = end?.closest('.chat')
-    if (!(scroller instanceof HTMLElement)) return undefined
+    const scroller = viewport.scroller
+    if (scroller === null) return undefined
     /**
      * 内容真正的底（可滚动的上限）。
      *
+     * 算式在视口那边（`viewport.floor()`）：`scrollHeight − 占位 − clientHeight`。
      * 为什么减掉占位的高度：占位是给滚动留的余量，不是内容。不减的话「贴底」会停在
      * 占位那段空白里——视口里最后一条消息被顶上去，底部胶囊的亮灭判断也跟着错。
      * 贴底判定（24px）比的是「离 floor 还有多远」，口径不变：占位是 0 时 floor 与
      * 改造前逐像素相同，占位长出来时它比的仍是内容底，不会把占位算成内容。
      */
-    const floor = (): number =>
-      Math.max(0, scroller.scrollHeight - spacerHeight(scroller) - scroller.clientHeight)
+    const floor = (): number => viewport.floor()
     /**
      * 上一次钉底时的内容总高度。
      *
@@ -105,7 +105,7 @@ export function useFollowBottom(
      * 不区分的话，每次内容重排都会误判一次「用户在看历史」，暂停跟随又把那颗
      * 「回到底部」胶囊翻出来，下一秒落定再收回去——流式输出时它就一直闪。
      */
-    const pinnedHeight = { current: scroller.scrollHeight }
+    const pinnedHeight = { current: viewport.scrollHeight() }
     /**
      * 滚动区此刻是「藏起来的」（高度 0）。
      *
@@ -116,7 +116,7 @@ export function useFollowBottom(
      * 怎么办：藏起来的时候什么都不写、也绝不改跟随意图；重新露出来的第一条 scroll 事件
      * 认作「浏览器夹回上限」，不是读者动手——保留跟随并补一次钉底。
      */
-    const hidden = (): boolean => scroller.clientHeight === 0
+    const hidden = (): boolean => viewport.hidden()
     /** 刚才是藏着的（下一次可见的测量要按「夹回上限」处理）。 */
     let wasHidden = false
     /** 最近一次「读者手势」的时刻（滚轮往上 / ↑ PgUp Home / 指针按在滚动区上）。 */
@@ -126,10 +126,10 @@ export function useFollowBottom(
         wasHidden = true
         return
       }
-      // 写 floor() 而不是 scrollHeight：占位长出来时也停在内容底，不滚进那段空白。
-      scroller.scrollTop = floor()
-      written.current = scroller.scrollTop
-      pinnedHeight.current = scroller.scrollHeight
+      // 落点在视口：它写 floor() 而不是 scrollHeight，占位长出来时也停在内容底。
+      // 返回值是写完之后的实际位置（可能被浏览器夹过），「只认自己的写」记的就是它。
+      written.current = viewport.pin()
+      pinnedHeight.current = viewport.scrollHeight()
     }
     const clearSettle = (): void => {
       if (settleTimer.current !== null) window.clearTimeout(settleTimer.current)
@@ -149,7 +149,7 @@ export function useFollowBottom(
         pin()
         return
       }
-      if (floor() - scroller.scrollTop <= FOLLOW_BOTTOM_PX) {
+      if (floor() - viewport.scrollTop() <= FOLLOW_BOTTOM_PX) {
         following.current = true
         setPaused(false)
         pin()
@@ -160,31 +160,31 @@ export function useFollowBottom(
       settleTimer.current = window.setTimeout(settle, FOLLOW_SETTLE_MS)
     }
     const onScroll = (): void => {
-      const top = scroller.scrollTop
-      const heightChanged = pinnedHeight.current !== scroller.scrollHeight
+      const top = viewport.scrollTop()
+      const heightChanged = pinnedHeight.current !== viewport.scrollHeight()
       if (hidden()) {
         // 藏起来的这段时间只记账：`scrollTop` 被夹成 0 不代表读者滚了。
         wasHidden = true
         written.current = top
-        if (heightChanged) pinnedHeight.current = scroller.scrollHeight
+        if (heightChanged) pinnedHeight.current = viewport.scrollHeight()
         return
       }
       if (wasHidden) {
         // 重新露出来的第一条：内容是浏览器把 scrollTop 夹回新上限，不是读者动手。
         wasHidden = false
         written.current = top
-        pinnedHeight.current = scroller.scrollHeight
+        pinnedHeight.current = viewport.scrollHeight()
         if (following.current) pin()
         else schedule()
         return
       }
       if (Math.abs(top - written.current) <= 1) {
         written.current = top
-        if (heightChanged) pinnedHeight.current = scroller.scrollHeight
+        if (heightChanged) pinnedHeight.current = viewport.scrollHeight()
         return
       }
       if (heightChanged) {
-        pinnedHeight.current = scroller.scrollHeight
+        pinnedHeight.current = viewport.scrollHeight()
         // 「高度变了」单独不算证据：流式输出时内容一直在长，读者的滚动也落在这个窗口里。
         // 真正的判据是**夹回底部**——内容变矮时浏览器把 scrollTop 夹到新上限，结果一定
         // 贴着新的底；读者往上滚不会贴着底。两条同时成立才认作内容驱动。
@@ -257,7 +257,7 @@ export function useFollowBottom(
         return
       }
       if (!following.current) return
-      if (floor() - scroller.scrollTop > 4) pin()
+      if (floor() - viewport.scrollTop() > 4) pin()
     }
     control.current = {
       pin,
@@ -272,12 +272,23 @@ export function useFollowBottom(
     scroller.addEventListener('wheel', onWheel, { passive: true })
     scroller.addEventListener('keydown', onKey)
     scroller.addEventListener('pointerdown', onPointerDown, { passive: true })
+    // 把「此刻还在不在跟随」借给视口：折叠批次开始时它只问这一次，落点就此定死。
+    // 同时收下视口的写入回报——批次里它每帧都写 scrollTop，不回报的话下一帧
+    // 「只认自己的写」就会把那些写当成读者动了。
+    const releaseReader = viewport.bindReader({
+      following: () => following.current,
+      wrote: (top: number) => {
+        written.current = top
+        pinnedHeight.current = viewport.scrollHeight()
+      },
+    })
     const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(onResize) : undefined
     observer?.observe(scroller)
-    const content = scroller.firstElementChild
+    const content = viewport.column
     if (content !== null) observer?.observe(content)
     return () => {
       clearSettle()
+      releaseReader()
       control.current = null
       scroller.removeEventListener('scroll', onScroll)
       scroller.removeEventListener('scrollend', settle)
@@ -286,7 +297,7 @@ export function useFollowBottom(
       scroller.removeEventListener('pointerdown', onPointerDown)
       observer?.disconnect()
     }
-  }, [end])
+  }, [end, viewport])
 
   // 换会话（含首屏）那一拍先重新钉住底部，再照常跟：这一条声明在上面那个滚动监听
   // 效果**之后**，顺序有讲究——监听效果刚按当前位置（打开会话时是 scrollTop=0）

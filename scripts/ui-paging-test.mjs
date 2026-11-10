@@ -197,7 +197,16 @@ console.log('[7] 形态钉（ui.tsx 里的结构约定）')
   check('按钮读数 = 这一页实际放出的轮数（earlierRounds），不是写死的常数', ui.includes("t('transcript.earlier.label', { shown: earlierRounds") && ui.includes('data-earlier-rounds={firstVisible}') && ui.includes('release(firstVisible - earlierRounds)'))
   check('可见窗口按整轮过滤（seat.round >= firstVisible，天然不拆轮）', ui.includes('seats.rounds.filter((seat) => seat.round >= firstVisible)'))
   check('刻度条仍拿 renderedFrom，点未画出的轮走同一个放页入口', ui.includes('renderedFrom={firstVisible}') && ui.includes('release(round)'))
-  check('放页有滚动补偿：useLayoutEffect 里量锚点位移再补 scrollTop', /useLayoutEffect\([\s\S]{0,700}?scroller\.scrollTop \+= top - anchor\.top/.test(ui))
+  // 2026-11-11（第③阶段）：写 scrollTop 与量尺寸都归了视口协调器，ui.tsx 只剩「把记下的
+  // 锚点交回去」。强度不降：仍然钉「量了锚点位移、再把差值补进 scrollTop」，而且必须是
+  // 在布局效果里补（绘制前补，用户看不到跳一下再弹回来）。
+  const viewport = read(UI + '/viewport.ts')
+  check(
+    '放页有滚动补偿：布局效果里量锚点位移再补 scrollTop（③ 起由视口执行）',
+    /useLayoutEffect\([\s\S]{0,900}?viewport\.restoreAnchor\(/.test(ui) &&
+      /const top = anchor\.element\.getBoundingClientRect\(\)\.top - scroller\.getBoundingClientRect\(\)\.top[\s\S]{0,160}?this\.write\(before \+ \(top - anchor\.top\)\)/.test(viewport),
+    '补偿不在布局效果里，或视口没有「量位移再补」',
+  )
   check('锚点取第一个画出来的座位（不是按钮后的兄弟）', ui.includes("scroller.querySelector<HTMLElement>('[data-round-seat]')"))
   // 返回值还带着末尾锚点（end，滚轮接力要用），所以这里按形状认，不钉死整行字面量。
   check('放页顺带暂停跟随（别让流式内容把视角拽回底部）', ui.includes('follow.pause()') && ui.includes('pause = (): void =>') && /return \{ setEnd,[^}]*paused, resume, pause \}/.test(ui))

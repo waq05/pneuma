@@ -44,6 +44,8 @@ import { registerToolCard } from './tool-card/factory'
 import { EMPTY_STEP_GROUPING, FOLD_PREFS, FlowActionsContext, FoldPrefsContext, ShellCwdContext, ShellSessionContext, TOOLVIEW_SLOT, TRANSCRIPT_NODE_SLOT, TRANSCRIPT_REASONING_BODY_SLOT, buildSeats, keyOf, type FoldPrefs, type FlowActions, type TranscriptChildSlot } from './shared'
 import { turnEndNotice, waitingNotice, type WaitingCard } from './turn-notify'
 import { useFollowBottom } from './follow'
+// 视口协调器（S5 第③阶段）：测尺寸 / 写 scrollTop / 写占位 / 开关 overflow-anchor 的唯一 owner。
+import { useChatViewport, type ScrollAnchor } from './viewport'
 import { SeatFrame, SeatBody } from './render'
 import { createSeatStore } from './seat-store'
 import { TurnStatusLine } from './rows/foot'
@@ -197,7 +199,23 @@ function TranscriptFlow({
   useLayoutEffect(() => {
     seatStore.commit()
   })
-  const follow = useFollowBottom(entries.length + live.length, sessionKey)
+  /**
+   * 视口（先建，再交给跟随策略）：跟随要经它写滚动，所以它必须先存在。
+   *
+   * 两个 hook 的分工见各模块头：`viewport.ts` 是「测 + 写」的唯一 owner，
+   * `follow.ts` 只判「该不该贴底」。把两者的调用顺序写死在这里，是为了让谁也不会
+   * 顺手在别处再拿一次滚动容器。
+   */
+  const { viewport, attach: attachViewport } = useChatViewport()
+  const follow = useFollowBottom(entries.length + live.length, sessionKey, viewport)
+  /** 末尾锚点同时喂给跟随与视口（视口从它往上找 `.chat` 与内容列）。 */
+  const endRef = useCallback(
+    (node: HTMLDivElement | null): void => {
+      follow.setEnd(node)
+      attachViewport(node)
+    },
+    [follow.setEnd, attachViewport],
+  )
 
   // 折叠偏好：mount 时读一次 uiPrefs，设置页改档位时经自定义事件同步进来。
   // 行为偏好（完成提示音/通知）也在这份里：同会话跑动→空闲的那一下要用。
@@ -327,10 +345,8 @@ function TranscriptFlow({
     setEarliest(null)
   }, [sessionKey, cleared])
 
-  /** 「加载更早」那颗按钮（放页的锚点在它所在的滚动容器里找）。 */
-  const earlierRef = useRef<HTMLButtonElement | null>(null)
   /** 放页前的锚点：第一个画出来的座位，记它距滚动容器顶端的位置。 */
-  const pageAnchor = useRef<{ node: HTMLElement; top: number; from: number } | null>(null)
+  const pageAnchor = useRef<{ anchor: ScrollAnchor; from: number } | null>(null)
 
   /**
    * 记锚点（放页前调）：当前画出来的**第一个座位**距滚动容器顶端的位置。
@@ -339,17 +355,13 @@ function TranscriptFlow({
    * 整段插在第一个座位前面——被往下推的就是它。座位之前可能还挂着开场 system 行
    * （`seats.leading`），那几行本来就不动，量它们等于白量，阅读位置照跳。
    * dsh 的 `beginPaging()` 取的就是「DOM 序里第一个可用的 seat」，同一条口径。
+   *
+   * 量尺寸与写滚动都归视口（`viewport.captureAnchor()` / `restoreAnchor()`）：
+   * 读 `getBoundingClientRect` 的地方只许有 `viewport.ts` 一个。
    */
   const beginPaging = (): void => {
-    const button = earlierRef.current
-    if (button === null) return
-    const scroller = button.closest('.chat')
-    if (!(scroller instanceof HTMLElement)) return
-    const seat = scroller.querySelector<HTMLElement>('[data-round-seat]')
-    pageAnchor.current =
-      seat === null
-        ? null
-        : { node: seat, top: seat.getBoundingClientRect().top - scroller.getBoundingClientRect().top, from: firstVisible }
+    const anchor = viewport.captureAnchor()
+    pageAnchor.current = anchor === null ? null : { anchor, from: firstVisible }
   }
 
   /**
@@ -374,17 +386,15 @@ function TranscriptFlow({
    * 只补外层 `.chat`：锚点若是新插入的早轮自己的组内滚动，与本屏阅读位置无关。
    */
   useLayoutEffect(() => {
-    const anchor = pageAnchor.current
-    if (anchor === null) return
+    const pending = pageAnchor.current
+    if (pending === null) return
     pageAnchor.current = null
     // 只有窗口真的往前扩了才补：点了已画出来的轮（值没变）、窗口跟着尾部后移都不是放页。
-    // 锚点还挂在文档里同样是前提——换会话会把旧的那一整棵换掉，那一跳该由贴底逻辑接管。
-    if (firstVisible >= anchor.from || !anchor.node.isConnected) return
-    const scroller = anchor.node.closest('.chat')
-    if (!(scroller instanceof HTMLElement)) return
-    const top = anchor.node.getBoundingClientRect().top - scroller.getBoundingClientRect().top
-    scroller.scrollTop += top - anchor.top
-  }, [firstVisible])
+    // 锚点还挂在文档里同样是前提——换会话会把旧的那一整棵换掉，那一跳该由贴底逻辑接管
+    // （`restoreAnchor` 自己会判连着没有）。
+    if (firstVisible >= pending.from) return
+    viewport.restoreAnchor(pending.anchor)
+  }, [firstVisible, viewport])
 
   // 整轮折叠：四档能力表 + 每轮的折叠预算 + 用户手动开合（双层记忆：当场重画 + 重挂读回）。
   const foldMemory = useFoldMemory()
@@ -722,7 +732,6 @@ function TranscriptFlow({
         <button
           type="button"
           className="chat-earlier"
-          ref={earlierRef}
           data-earlier-rounds={firstVisible}
           data-tip={t('transcript.earlier.tip')}
           onClick={() => {
@@ -786,7 +795,7 @@ function TranscriptFlow({
           hint={activity.text}
         />
       ) : null}
-      <div ref={follow.setEnd} />
+      <div ref={endRef} />
       {/* 暂停跟随时的回头路：只在这一刻出现（跟随中不画），点一下恢复跟随并送回底部。 */}
       {follow.paused ? (
         <button
