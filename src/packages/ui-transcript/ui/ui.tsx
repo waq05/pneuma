@@ -32,23 +32,23 @@
  */
 import { Component, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { IconSpark, createT, defineUiPlugin, getHostNative, toastErr, toastOk, useActions, useHostChannel, useHostSelector, useService, ACTIONS_SERVICE, type ActionsHandle, type ApprovalRequestView, type AskUserView, type HostSnapshot, type PlanView, type SlotComponentProps, type TranscriptEntry } from '@dsc/ui'
-import { buildRoundFolds, processFoldPolicy, useFoldMemory, type ProcessFold } from './round-fold'
+import { buildRoundFolds, processFoldPolicy, turnDefaultOpen, useFoldMemory, type ProcessFold } from './round-fold'
 import { liveActivity, turnStartedAt } from './timing'
 import { internalLabel, splitRounds } from './rounds'
-import { stepGroupFoldKey, turnFoldKey } from './fold-state'
+import { turnFoldKey } from './fold-state'
 import { groupSteps, type StepGrouping } from './process-groups'
 import { JumpRail, previewText } from './jump-rail'
 import { pageStartRound } from './paging'
 import { matchTool, playCompletionSound, readCompactingSince, readCwd, readEntries, readLive, readSessions, readSessionPath, readTurnState } from '@dsc/ui-primitives'
 import { registerToolCard } from './tool-card/factory'
-import { EMPTY_STEP_GROUPING, FOLD_PREFS, FlowActionsContext, FoldPrefsContext, ShellCwdContext, ShellSessionContext, TOOLVIEW_SLOT, buildSeats, keyOf, type FoldPrefs, type FlowActions, type Row, type Seat, type ToolViewRender } from './shared'
+import { EMPTY_STEP_GROUPING, FOLD_PREFS, FlowActionsContext, FoldPrefsContext, ShellCwdContext, ShellSessionContext, TOOLVIEW_SLOT, TRANSCRIPT_NODE_SLOT, TRANSCRIPT_REASONING_BODY_SLOT, buildSeats, keyOf, type FoldPrefs, type FlowActions, type Row, type Seat, type ToolViewRender, type TranscriptChildSlot } from './shared'
 import { turnEndNotice, waitingNotice, type WaitingCard } from './turn-notify'
 import { useFollowBottom } from './follow'
 import { RowBody, RowBoundary, SeatBody } from './render'
 import { TurnStatusLine } from './rows/foot'
 import { BuiltinToolView } from './rows/tool-row'
 import { WELCOME_CARDS, WELCOME_ICON_BY_ID, WelcomeState } from './welcome'
-import { greetingSlot } from './greeting'
+import { greetingSlot, nextGreetingBoundaryDelayMs } from './greeting'
 import { SUBAGENT_FLOW_SLOT, SubagentFlow, type TranscriptFlowService } from './subagent-flow'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 // 构建时 JSON 直接内联进 `client.js`，运行期不需要宿主下发文件。
@@ -93,11 +93,23 @@ export default defineUiPlugin({
     // 工具卡的装配定义（D2）：定义在这里注册，对话页与轨迹页各自渲染——两个父位置
     // 选不同的局部组件（对话页选 intended 预览等四件；轨迹页只选轨迹口径的耗时）。
     registerToolCard(ui)
-    // toolview 是本条目声明出来的 chain 子槽：「谁渲染这条工具调用」由选举决定，
-    // 不在渲染体里写死 if——内置渲染器也只是链上的一条（见下一条注册）。
+    // 本条目声明三个 chain 子槽，行渲染时按需问它们：
+    //   - `transcript.node`（节点级）：一条条目归谁画，dsh 的 conversation.chat.node 等价物；
+    //   - `transcript.toolview`：单条工具调用归谁画（内置工具卡也在链上，只是兜底位）；
+    //   - `transcript.reasoning.body`：思考行的**正文区**单独开一条，因为想换的只是正文排版
+    //     （纯文本 → markdown），而行头、摘要、吸附栏、折叠交互仍归内置 ThinkRow——
+    //     接一条 body 槽不必把整套折叠逻辑重写一遍。
     ui.slots.register(
       'shell.main',
-      { id: 'transcript.flow', order: 1, children: { [TOOLVIEW_SLOT]: 'chain' } },
+      {
+        id: 'transcript.flow',
+        order: 1,
+        children: {
+          [TOOLVIEW_SLOT]: 'chain',
+          [TRANSCRIPT_NODE_SLOT]: 'chain',
+          [TRANSCRIPT_REASONING_BODY_SLOT]: 'chain',
+        },
+      },
       TranscriptFlow,
     )
     ui.slots.register(
@@ -112,13 +124,21 @@ export default defineUiPlugin({
       BuiltinToolView,
     )
     // 只读「子智能体条目流」：与主会话同一套行渲染（RowBody：markdown / 思考 / 工具卡 /
-    // 子代理卡 / 计划卡 / system 行），只读——编辑重发不给。声明成一条独立槽位（带 toolview
-    // 选举链），组件本身经 `transcriptFlow` 服务交出去：团队右栏页签直接渲染它；服务缺席时
-    // 团队那边退回简版 PeekView（兜底仍留着，见 team/ui.tsx）。
+    // 子代理卡 / 计划卡 / system 行），只读——编辑重发不给。声明成一条独立槽位（带同一套
+    // 三个 chain 子槽），组件本身经 `transcriptFlow` 服务交出去：团队右栏页签直接渲染它；
+    // 服务缺席时团队那边退回简版 PeekView（兜底仍留着，见 team/ui.tsx）。
     ui.slots.declare(SUBAGENT_FLOW_SLOT, 'list')
     ui.slots.register(
       SUBAGENT_FLOW_SLOT,
-      { id: 'transcript.subagent.flow', order: 1, children: { [TOOLVIEW_SLOT]: 'chain' } },
+      {
+        id: 'transcript.subagent.flow',
+        order: 1,
+        children: {
+          [TOOLVIEW_SLOT]: 'chain',
+          [TRANSCRIPT_NODE_SLOT]: 'chain',
+          [TRANSCRIPT_REASONING_BODY_SLOT]: 'chain',
+        },
+      },
       SubagentFlow,
     )
     ui.provide<TranscriptFlowService>('transcriptFlow', { Component: SubagentFlow, slot: SUBAGENT_FLOW_SLOT })
@@ -135,7 +155,7 @@ interface ComposerDraftService {
 
 function TranscriptFlow({
   renderSlot,
-}: SlotComponentProps<Record<never, never>, typeof TOOLVIEW_SLOT>): ReactNode {
+}: SlotComponentProps<Record<never, never>, TranscriptChildSlot>): ReactNode {
   const entries = useHostSelector(readEntries)
   const live = useHostSelector(readLive)
   const turnState = useHostSelector(readTurnState)
@@ -372,34 +392,56 @@ function TranscriptFlow({
           ),
     [entries, live, rounds, roundFolds, prefs.policy.stepGrouping],
   )
-  // 轮收尾复位（旧桌面版语义）：一轮从跑动落到定稿的那一刻，把整轮与它下面所有阶段组的
-  // 开合写回默认（收起）——用户点开过的那一组不会在下一轮里弹回去，但同一轮的残留收干净。
-  const runningRounds = useMemo(() => {
+  // 整轮收起 → 复位它内部所有行与阶段组（对齐 dsh 的 disclosureReset）。
+  //
+  // 2026-11-10 改（原来写的是「轮一收尾就把整轮与所有阶段组写回收起」）：那条规则会在
+  // **用户正看着**的时候动手——一轮刚跑完、还没被收起，里面点开的思考/组就被写回了收起，
+  // 等于替用户做了一次手动收起，而且紧接着下一轮进来又恢复不成。参考实现的时机只有一处：
+  // 「这一条是过程成员、它被整轮折叠隐藏、且正处于隐藏/收起动画中」才推进复位版本
+  // （`ChatNodeSeat.tsx:122-131`）。这里照同一条口径：**从展开变成收起的那一拍**清存档。
+  //
+  // 为什么清存档而不是写 false：清掉之后每条行回落到自己的默认档（思考/工具/组都是收起，
+  // 设置里开的默认值也照常生效），写 false 会把「用户手动收起」这个判断钉死。
+  const collapsedRounds = useMemo(() => {
     const set = new Set<number>()
-    for (const fold of roundFolds.values()) if (fold.running) set.add(fold.roundIndex)
-    return set
-  }, [roundFolds])
-  const prevRunningRounds = useRef<Set<number>>(new Set())
-  useEffect(() => {
-    const settled: string[] = []
-    /** 刚收尾的最新一轮（next-input）：抹掉存档回兜底，下一次渲染它就默认摊着。 */
-    const reopened: string[] = []
-    const deferLatest = prefs.collapseTiming === 'next-input'
-    for (const roundIndex of prevRunningRounds.current) {
-      if (runningRounds.has(roundIndex)) continue
-      // 复位写的是什么很关键：completion 档写「收起」，next-input 档的最新一轮**抹掉**存档
-      // ——写 false 等于替用户做了「手动收起」，兜底的「最新一轮摊着」就再也不会生效。
-      if (deferLatest && roundIndex === liveRoundIndex) reopened.push(turnFoldKey(sessionId, roundIndex))
-      else settled.push(turnFoldKey(sessionId, roundIndex))
-      for (const group of stepGrouping.groups) {
-        if (group.roundIndex === roundIndex) settled.push(stepGroupFoldKey(sessionId, roundIndex, group.seq))
-      }
+    for (const fold of roundFolds.values()) {
+      // 与 render.tsx 的 collapsed 同一口径：可折 + 有内容 + 已收尾 + 没被展开。
+      if (!fold.foldable || !fold.hasContent || fold.running || fold.blocked) continue
+      const defaultOpen = turnDefaultOpen(prefs.collapseTiming, fold.latest)
+      if (!foldMemory.open(turnFoldKey(sessionId, fold.roundIndex), defaultOpen)) set.add(fold.roundIndex)
     }
-    foldMemory.clear(reopened)
-    foldMemory.reset(settled)
-    prevRunningRounds.current = runningRounds
-    // foldMemory.clear / reset 是稳定引用（useFoldMemory 里 useCallback 包过），不进依赖清单。
-  }, [runningRounds, stepGrouping, sessionId, prefs.collapseTiming, liveRoundIndex])
+    return set
+  }, [roundFolds, prefs.collapseTiming, sessionId, foldMemory])
+  const prevCollapsedRounds = useRef<Set<number>>(new Set())
+  useEffect(() => {
+    const entering: string[] = []
+    const sid = sessionId ?? ''
+    for (const roundIndex of collapsedRounds) {
+      if (prevCollapsedRounds.current.has(roundIndex)) continue
+      // 行的键是 `会话id:r<轮>:<类型>:<序号>`（工具可能是 `…:call:<id>`），组是
+      // `会话id:step:r<轮>:…`——两条前缀把这一轮扫干净（见 fold-state.ts 的 clearFoldPrefix）。
+      entering.push(`${sid}:r${String(roundIndex)}:`, `${sid}:step:r${String(roundIndex)}:`)
+    }
+    prevCollapsedRounds.current = collapsedRounds
+    if (entering.length === 0) return
+    foldMemory.clearPrefixes(entering)
+    // clearPrefixes 是稳定引用（useFoldMemory 里 useCallback 包过），不进依赖清单。
+  }, [collapsedRounds, sessionId, foldMemory])
+
+  /**
+   * 最新一轮的下一句输入进来时，收掉上一轮「摊着」的默认态（next-input 档的既有语义）：
+   * 那一轮不再是最后一轮，兜底自己会翻成收起，这里只负责把整轮那一格的手动存档抹掉，
+   * 免得它钉在展开上。
+   */
+  const prevTopRound = useRef<number | null>(null)
+  useEffect(() => {
+    const top = liveRoundIndex
+    const previous = prevTopRound.current
+    prevTopRound.current = top
+    if (previous === null || previous === top) return
+    if (prefs.collapseTiming !== 'next-input') return
+    foldMemory.clear([turnFoldKey(sessionId, previous)])
+  }, [liveRoundIndex, prefs.collapseTiming, sessionId, foldMemory])
 
   // 页脚「分叉这一轮」：保留到本轮用户消息（含），从这一轮的回答重来——旧界面同一语义。
   // 第 1 轮不给分（分完还是这一轮，没有意义）。
@@ -441,10 +483,11 @@ function TranscriptFlow({
       toastErr(t('transcript.edit.gone'))
       return
     }
-    // 保留几条 = 这条之前**人打的**用户消息条数。这里不能拿 `rounds` 数：rounds.ts 的规则 3
-    // 让内部汇报（队友回报 / 审查结论）也占一枚刻度，那种会话里会多算几轮，宿主就会截到
-    // 更早的位置。判据与宿主 `src/core/session.ts` 的 isHumanUserMessage 一一对应
-    // （界面上就是 `internal !== true`：机器投递的通知、队友汇报、审查结论都带这个标记）。
+    // 保留几条 = 这条之前**人打的**用户消息条数：宿主 `rewindSession` 的第二个参数就是这个口径
+    // （与 `src/core/session.ts` 的 isHumanUserMessage 一一对应，界面上就是 `internal !== true`：
+    // 机器投递的通知、队友汇报、审查结论都带这个标记）。
+    // 顺带一个用得上的等价关系：`rounds.ts` 规则 3 不让 internal 条目开新轮，所以这个计数也
+    // 正好是这条消息所在轮的序号——下面清折叠存档时直接拿 `keep` 当轮号，不必再数一遍。
     const keep = all.slice(0, at).filter((item) => item.kind === 'user' && item.internal !== true).length
     if (sessionPath === null) {
       toastErr(t('transcript.edit.notSaved'))
@@ -458,6 +501,15 @@ function TranscriptFlow({
           toastErr(result?.error ?? t('transcript.edit.failed'))
           return
         }
+        // 同一轮重答：轮序号不变（rewind 之后新回答还是第 keep 轮），折叠存档的键因此完全一样，
+        // 上一次的展开选择会被新内容继承——包括这一轮里每一行、每个阶段组的键（它们也带轮号）。
+        // 参考实现靠「回答代次」让旧选择自然失效；本仓没有代次，就在重答这一拍把这一轮的存档清掉。
+        // 清的是 keep 这一轮：`keep` 是「这条消息之前有几条人打的用户消息」，也就是它的轮序号。
+        const sid = sessionId ?? ''
+        // 整轮那一格用精确键：`turn:1` 当前缀会把 `turn:10` 一起清掉。
+        foldMemory.clear([turnFoldKey(sid || null, keep)])
+        // 行与阶段组的键按轮内身份拼（`…:r3:…` / `…:step:r3:…`），只能按前缀扫。
+        foldMemory.clearPrefixes([`${sid}:r${String(keep)}:`, `${sid}:step:r${String(keep)}:`])
         await channel.invoke('submit', [text])
         // 标题、排序都跟最后一条消息走：改完重扫一次，侧栏立刻对上（现在这一步是缓存命中）。
         await channel.invoke('refreshSessions', [])
@@ -551,19 +603,15 @@ function TranscriptFlow({
     )
   }, [sessions, sessionPath])
 
-  // 首屏那句招呼语要的两个读数：有没有历史会话、最近一次写入隔了多久。
-  // 「第一次打开」判成 false 的代价只是一句不太贴切的招呼，所以不去看归档列表：把所有
-  // 会话都归档的人会被当成头一回，这个误判可以接受，比多读一次归档面划算。
-  const greeting = useMemo(() => {
-    const now = Date.now()
-    const others = sessions.filter((session) => session.id !== sessionPath && session.archivedAt === undefined)
-    const latest = others.reduce((newest, session) => Math.max(newest, session.updatedAt), 0)
-    return greetingSlot({
-      at: new Date(now),
-      hasHistory: others.length > 0,
-      longAbsence: latest > 0 && now - latest > RECENT_WINDOW_MS,
-    })
-  }, [sessions, sessionPath])
+  // 首屏那句招呼语只看现在几点（2026-11-10：不再按周末 / 久未用 / 头一回分岔）。
+  // 到下一个换档整点（05/09/12/14/18/23）重绘一次：挂一晚上的窗口也会自己从「下午好」
+  // 换成「晚上好」，不用等用户操作。刷新时刻单独存一份，定时器才有东西依赖。
+  const [greetingAt, setGreetingAt] = useState(() => new Date())
+  useEffect(() => {
+    const timer = window.setTimeout(() => setGreetingAt(new Date()), nextGreetingBoundaryDelayMs(greetingAt))
+    return () => window.clearTimeout(timer)
+  }, [greetingAt])
+  const greeting = greetingSlot({ at: greetingAt })
 
   // 首屏卡片的两种来源：动作表（常驻，含命令面板里的那几条），或动作表缺席时的内置清单。
   const registeredActions = useActions()

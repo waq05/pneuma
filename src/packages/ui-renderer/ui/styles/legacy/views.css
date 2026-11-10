@@ -1326,6 +1326,12 @@
   flex: 1;
   overflow-y: auto;
   padding: 12px 0 20px;
+  /* 关掉浏览器的滚动锚定（2026-11-09 报障「任务进行中上下抽搐」）。
+     消息流自己有一套「钉底」逻辑（ui-transcript 的 follow.ts：内容变长就把 scrollTop
+     写到新的 scrollHeight），而 Chromium 的 scroll anchoring 会在「视口上方的元素高度
+     变了」时也去改 scrollTop。两边都在写同一个值，谁后写谁生效，一挤一让就是几十毫秒
+     来回跳一次——流式输出时看着像整段正文在抖。这里只留我们那一套。 */
+  overflow-anchor: none;
 }
 
 .chat-inner {
@@ -1335,6 +1341,35 @@
   margin: 0 auto;
   max-width: var(--dsc-thread-max);
   padding: 0 24px;
+}
+
+/* 短内容贴底（2026-11-10 报障「跑完一轮、过程区一收，下面剩一大片空白」）：
+   消息列不足一屏时，用「顶部 auto 外边距」把整列推到滚动区底部——最后一条就贴在输入框上方，
+   像所有聊天软件那样；内容超过一屏时 auto 外边距算成 0，退回普通流。
+   为什么必须自动算而不能写死：一轮跑动中过程区可能撑到几百像素，跑完又收回去，
+   内容高度在那一秒里会掉一大截。写死居中的话，每次收起都会在下面留一屏空白；
+   贴底这条让「内容变矮」这件事天然没有视觉后果——矮下去的只是上方，视线一直贴着底部。 */
+.chat-wrap > .chat {
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-wrap > .chat > .chat-inner {
+  margin-top: auto;
+  /* 宽度必须显式要回来：`.chat` 换成 flex 列之后，`.chat-inner` 成了 flex 项，它自己的
+     `margin: 0 auto` 在交叉轴上会压过 `align-items: stretch`，列宽于是缩成「内容宽度」，
+     `max-width: var(--dsc-thread-max)` 完全不生效。后果是拖两侧把手时只有输入框变宽，
+     正文纹丝不动（2026-11-10 报障「会话区大小拖不动」）。`width: 100%` 把宽度交还给
+     max-width，剩下的余量再交给 auto 外边距去居中——与空会话态那条 width: 100%
+     （styles.css 的 .thread-main-empty 段）是同一个修法。 */
+  width: 100%;
+}
+
+/* 空会话（欢迎态）不适用贴底：那一态整组是靠 `.chat-wrap` 上下 auto 边距居中的
+   （见 styles.css 的 `.thread-main-empty` 段），正文列自己再贴底就把它顶歪了。
+   选择器写到同样长度（四层类）才能压过上面那条。 */
+.thread-main-empty .chat-wrap > .chat > .chat-inner {
+  margin-top: 0;
 }
 
 /* 自己发的消息：右对齐软填充块，右上角收成直角当「尾巴」，不再是 18px 大泡泡。 */
@@ -1581,6 +1616,38 @@
 .entry-text .markdown a:hover,
 .file-md a:hover {
   text-decoration: underline;
+}
+
+/* 指向本地文件的链接：点一下开右侧预览页签（壳的 MarkdownAnchor 接管）。
+   前面挂一枚小文件字形，和普通外链区分开；hover 时给底色，暗示「这是能点的东西」。 */
+.md-file-link {
+  cursor: pointer;
+  border-radius: var(--dsc-r-badge);
+  padding: 0 2px;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.md-file-link:hover {
+  background: var(--dsc-fill-quaternary);
+}
+
+.md-file-link::before {
+  content: '📄';
+  font-size: 0.85em;
+  margin-right: 3px;
+}
+
+/* 认不出来的链接（href 为空、协议不认识、或者预览插件没开）：画成正文里的一句话，
+   不给指针、不改颜色——它点不动，长得像链接只会让人白点一次（2026-11-09 报障：
+   以前这种链接带着空 href 落到新窗口，一点就多出一个应用窗口）。 */
+.md-link-flat {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--dsc-stroke-3);
+  text-underline-offset: 2px;
 }
 
 .entry-text .markdown hr,
@@ -2408,6 +2475,95 @@
   overflow-wrap: anywhere;
 }
 
+/* ── bash 工具卡的终端块：`$ 命令` / 输出 / 退出码徽章（差距清单 S4） ──
+   外观与 `.file-md pre` 同一档（等宽 + 四级底色 + 三级描边 + 块圆角 + 12px），
+   **不做黑底终端**：本仓的版式与配色以旧桌面端为准，黑底是参考实现自己的视觉语言。
+   色值一律走 `--dsc-*` 令牌。 */
+.tc-bash {
+  background: var(--dsc-fill-quaternary);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-block);
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-caption);
+  margin-top: var(--dsc-sp-1);
+  overflow: hidden;
+}
+
+/* 命令那一行：多行命令按原样折行显示（不压成一长条），提示符与正文留一格。 */
+.tc-bash-cmd {
+  align-items: baseline;
+  border-bottom: 1px solid var(--dsc-stroke-3);
+  display: flex;
+  gap: var(--dsc-sp-1);
+  line-height: 1.6;
+  padding: var(--dsc-sp-2) var(--dsc-sp-5);
+}
+
+.tc-bash-prompt {
+  color: var(--dsc-text-quaternary);
+  flex: 0 0 auto;
+  user-select: none;
+}
+
+.tc-bash-cmd code {
+  background: none;
+  border-radius: 0;
+  font-family: inherit;
+  font-size: inherit;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 0;
+  white-space: pre-wrap;
+}
+
+/* 输出：限高自己滚（一轮几十次命令不能把会话撑爆），保留输出自己的换行与缩进。 */
+.tc-bash-out {
+  color: var(--dsc-text-secondary);
+  line-height: 1.6;
+  margin: 0;
+  max-height: min(240px, 30vh);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: var(--dsc-sp-2) var(--dsc-sp-5);
+  white-space: pre-wrap;
+}
+
+/* 底下那行：退出码徽章（右对齐）+ 用时。 */
+.tc-bash-meta {
+  align-items: center;
+  border-top: 1px solid var(--dsc-stroke-3);
+  display: flex;
+  gap: var(--dsc-sp-2);
+  justify-content: flex-end;
+  padding: var(--dsc-sp-1) var(--dsc-sp-5);
+}
+
+/* 退出码做成小药丸：0 绿、非 0 红、没有数字（运行中 / 被拒 / 中止 / 跑挂）走三级文字色。 */
+.tc-bash-exit {
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-pill);
+  font-size: var(--dsc-fs-tool);
+  line-height: 1;
+  padding: 3px var(--dsc-sp-3);
+}
+
+.tc-bash-exit[data-exit='ok'] {
+  color: var(--dsc-green);
+}
+
+.tc-bash-exit[data-exit='bad'] {
+  color: var(--dsc-red);
+}
+
+.tc-bash-exit[data-exit='none'] {
+  color: var(--dsc-text-tertiary);
+}
+
+.tc-bash-time {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+}
+
 /* ── 工具卡的「将做的改动」（dsh 的 intended diff：write/edit 进行中摊出将产生的 diff） ── */
 .tc-intended {
   margin-top: 4px;
@@ -2680,6 +2836,13 @@
 }
 
 .btn-ghost:hover {
+  background: var(--dsc-row-hover-bg);
+  color: var(--dsc-text-primary);
+}
+
+/* 开关型 ghost 按钮的按下态（预览头的「折行」这类）：与 hover 同一套底色与字色，
+   让人一眼看出这一颗是开着的，而不是一排同款按钮里的装饰。 */
+.btn-ghost[aria-pressed='true'] {
   background: var(--dsc-row-hover-bg);
   color: var(--dsc-text-primary);
 }
@@ -3606,6 +3769,15 @@
   transition: transform 0.2s var(--dsc-ease), margin-right 0.2s var(--dsc-ease);
 }
 
+/* 贴边展示时的宽度上限再收一道（2026-11-09 报障「预览面板不随窗口自适应，会遮挡」）。
+  行内 style 给的是用户拖出来的宽度（「想多宽」），这条是「最多能给多宽」：窗口变窄、
+  或者侧栏被拖宽时，右栏自动让位，正文永远留得住 480px，不会被压成一列竖排字。
+  只写展开态（`:not(.collapsed)`）：收起态靠 `margin-right: -width` 顶出右缘，若这里把
+  元素夹窄了，那段负边距就会比元素本身还宽，收起时反而漏出一条。全屏态整块盖住，也不夹。 */
+.dock:not(.collapsed):not(.mode-fullscreen) {
+  max-width: min(820px, max(300px, calc(100vw - var(--dsc-sidebar-w, 0px) - 480px)));
+}
+
 /* 收起：整块滑出右缘并松开正文轨道（margin 抵消占位），内容不卸载（终端进程存活） */
 .dock.collapsed {
   transform: translateX(100%);
@@ -4153,6 +4325,19 @@ body.resizing iframe {
   font-size: var(--dsc-fs-caption);
 }
 
+/* 头部右组的「折行」开关：图标 + 文字，靠 margin-left: auto 贴右排——
+   头部是 space-between，多一颗按钮会被均分到中间去。 */
+.file-preview-wrap {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.file-preview-wrap svg {
+  flex: none;
+}
+
 .file-preview-path {
   display: inline-flex;
   align-items: center;
@@ -4238,6 +4423,51 @@ body.resizing iframe {
   color: var(--dsc-text-secondary);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* ── 代码视图的折行态（面板预览默认打开）──
+ *
+ * 2026-11-10 报障：右侧栏里的文件预览，超长行不折行，右半截直接被裁在面板外面，
+ * 要把面板拖宽才看得见内容。原因是 shiki 的 <pre> 默认 `white-space: pre` +
+ * 横向滚动（见上一条 .file-code .shiki）。
+ *
+ * 折行之后要做**悬挂缩进**：续行缩到代码列，不压到行号下面。行号列宽记在
+ * --file-code-gutter 上，行首的 ::before（3.2em 数字 + padding-right 8px +
+ * border-right 1px + margin-right 12px）与续行共用这一份，两处改一处就对齐。
+ *
+ * 行要做成块级才能逐行悬挂缩进，而 shiki 的行与行之间是文本换行符——那份换行符
+ * 必须按空白折叠，否则每行后面会多出一个空行。所以：父级 code 用 `white-space:
+ * normal` 收掉换行符，行内再用 `pre-wrap` 把代码自己的缩进还回来。
+ */
+/* 行号列的实际占位 = 数字列 3.2em + 右侧外边距。注意 base.css:11 是全局
+   `box-sizing: border-box`，`width: 3.2em` 已经把 8px 内边距与 1px 分隔线算在里面，
+   这里只需要补 margin-right（普通预览 12px）。 */
+.file-code {
+  --file-code-gutter: calc(3.2em + 12px);
+}
+
+/* 带定位的代码预览（/review 跳转）行号列换了一套 margin，宽度宽 2px */
+.file-code--numbered {
+  --file-code-gutter: calc(3.2em + 14px);
+}
+
+.file-code.file-code--wrap .file-code-body > pre.shiki {
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.file-code.file-code--wrap .file-code-body > pre.shiki > code {
+  display: block;
+  white-space: normal;
+}
+
+.file-code.file-code--wrap .file-code-body .line {
+  display: block;
+  overflow-wrap: anywhere;
+  padding-left: var(--file-code-gutter);
+  text-indent: calc(-1 * var(--file-code-gutter));
+  white-space: pre-wrap;
 }
 
 /* ── 会话流里的围栏代码块：头部条（语言 / 折行 / 复制）与代码体同一张卡片 ──
@@ -9090,8 +9320,8 @@ body.resizing iframe {
    只能一路滚到底再回头点那一行。
    改动后：紧凑行 + 展开区 + 展开超 400px 时顶部吸附的快捷栏，与 ToolCard 的紧凑行保持同一
    规格——行高 --dsc-process-row-h、内距 0 8px、悬停只提文字色（不铺底）、过渡 --dsc-dur、
-   行尾箭头 11px + 180° 旋转、快捷栏 sticky top:0
-   配不透明底色。下面只做新增，颜色/圆角/间距/动效全部走 tokens.css 的现有令牌，
+   行尾箭头 11px + 180° 旋转、展开后行头与快捷栏都吸附且快捷栏落在行头高度之下
+   （顶边仍配不透明底色）。下面只做新增，颜色/圆角/间距/动效全部走 tokens.css 的现有令牌，
    深浅两套主题各核一遍。 */
 
 /* ── 容器：收起时是「过程行」，展开时才是一个盒子 ──
@@ -9136,6 +9366,26 @@ body.resizing iframe {
 .think-head:focus-visible {
   box-shadow: inset 0 0 0 1px var(--dsc-accent);
   outline: none;
+}
+
+/* 展开时行头吸附在组体顶部：思考一长，滚到正文中间还能点到行头收起。
+   参照系是 .step-body（组体，max-height + overflow-y: auto），不是 .chat——
+   再往上的 .turn-process-body 是 overflow: hidden，吸附链到那里就断了。
+   圆角归零：吸住时不会露出圆角外的一角底色。
+
+   底色这里踩过一次：块自己的 --dsc-fill-quinary 是**3% 的透明填充**
+   （`color-mix(… , transparent)`，见 tokens.css），直接拿它当行头底色，滚过去的行会从行头里
+   透出来，看上去像两行字叠在一起。做法是「同一个色调叠一层实底」：linear-gradient 把那点
+   填充色铺满，底下再垫 --dsc-bg-raised（不透明，且与块底色几乎同亮度——.think-bar 那条注释
+   里有同样的取舍）。两层合成出来与块内颜色一致，而吸住时是真能挡住的。 */
+.think-block.open .think-head {
+  background:
+    linear-gradient(var(--dsc-fill-quinary), var(--dsc-fill-quinary)),
+    var(--dsc-bg-raised);
+  border-radius: 0;
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 /* hover 态的截图钩子：真实 :hover 抓不进静态图，沿用仓库既有的 .shot-reveal 约定
@@ -9254,6 +9504,13 @@ body.resizing iframe {
   overflow: hidden;
 }
 
+/* 思考正文走 markdown 排版（2026-11-10，差距清单 S3）。原来这里是 `white-space: pre-wrap`
+   直吐原文——代码块、列表、加粗在思考里全是死字。
+   排版**不新写一套**：`MarkdownView` 的根节点是 `.file-md`，本文件 1517 起那一组
+   `.file-md p / pre / code / ul / table / blockquote` 规则已经在它身上生效（会话正文与
+   文档预览共用同一份）。这里只补「思考里该收的那几档」：段距更紧、标题降级、代码块与
+   表格不许撑宽。所有覆盖都带 `.think-text` 前缀——正文那套 `.file-md` 规则一改会同时
+   波及全部消息与预览页签，不能拿它当思考块的调节旋钮。 */
 .think-text {
   border-left: 2px solid var(--dsc-stroke-2);
   color: var(--dsc-text-tertiary);
@@ -9261,11 +9518,88 @@ body.resizing iframe {
   line-height: 1.7;
   overflow-wrap: anywhere;
   padding: 4px 0 4px 12px;
-  white-space: pre-wrap;
 }
 
 .think-block.live .think-text {
   border-left-color: color-mix(in srgb, var(--dsc-accent) 45%, transparent);
+}
+
+/* `.file-md` 自带的 10px/14px 内距是给预览页签的；思考块横向只有 12px 的引用内距，
+   再叠一层会把正文推出左竖线之外。 */
+.think-text .file-md {
+  padding: 0;
+}
+
+/* 段距收一档：正文是 0.65em，思考比它紧（这块是次要内容，不该一段一段撑开）。
+   首尾两块贴边不空：展开区上下各只有 4px 内距，再留外边距就是一条白带。 */
+.think-text .file-md > :first-child {
+  margin-top: 0;
+}
+
+.think-text .file-md > :last-child {
+  margin-bottom: 0;
+}
+
+.think-text .file-md p {
+  margin: 0.35em 0;
+}
+
+/* 标题降级：思考里的 `#` 只是分节，量级压到正文字号、加粗一档。
+   上限是行头「思考」两个字（--dsc-fs-ui）：`## 结论` 比它还大就抢走了这一行的注意力。 */
+.think-text .file-md h1,
+.think-text .file-md h2,
+.think-text .file-md h3,
+.think-text .file-md h4,
+.think-text .file-md h5,
+.think-text .file-md h6 {
+  font-size: inherit;
+  font-weight: 600;
+  line-height: 1.45;
+  margin: 0.6em 0 0.25em;
+}
+
+/* 列表：标记与左竖线之间留出缩进（1.3em，让「•」「1.」不贴着边框），项间只留一丝缝。 */
+.think-text .file-md ul,
+.think-text .file-md ol {
+  margin: 0.35em 0;
+  padding-left: 1.3em;
+}
+
+.think-text .file-md li {
+  margin: 0.12em 0;
+}
+
+/* 行内代码：等宽与底色由 `.file-md code` 给，这里只管「不许撑破」——
+   `overflow-wrap: anywhere` 从 .think-text 继承下来，长路径与长 hash 在窄栏里折行，
+   而不是把整块正文撑出横向滚动。 */
+.think-text .file-md code {
+  overflow-wrap: anywhere;
+}
+
+/* 代码块：等宽、底色、自身横向滚动在 `.file-md pre` 与 `.md-code-block` 里已经有了，
+   这里补的是**不许撑破 400px 限高的阶段组体**（`.step-body` 的 max-height，见 10749 那条）：
+   min-width: 0 让块在 flex/grid 祖先里按可用宽度缩，max-width: 100% 断开「按内容撑宽」，
+   overflow-x: auto 把超长行关在块内滚。三缺一，一条长命令就能把组体顶出横向滚动条。 */
+.think-text .md-code-block,
+.think-text .file-md pre {
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+/* 表格：列一多就按内容撑宽，右半截会被展开区裁掉。`display: block` 让表格自己成为横向
+   滚动容器（行仍按匿名表格盒排版，边框由 th / td 自带的那条给）。 */
+.think-text .file-md table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* 引用：在思考里已经是第二层引用（外层 .think-text 自己就有左竖线），竖线留给它，
+   内距压回 10px——三层缩进叠起来，一行只剩两三个字。 */
+.think-text .file-md blockquote {
+  margin: 0.45em 0;
+  padding-left: 10px;
 }
 
 /* ── 展开区顶部的吸附快捷栏 ──
@@ -9290,7 +9624,12 @@ body.resizing iframe {
   min-height: var(--dsc-row-h);
   padding: 0 8px;
   position: sticky;
-  top: 0;
+  /* 为什么不写 top: 0：展开态的行头也吸在 0（见上面 `.think-block.open .think-head`），
+     两块原来钉在同一行上互相压住——快捷栏那条不透明底会盖掉行头一半，
+     两边的按钮挤在一起也没法点。挪到行头高度之下，行头 + 快捷栏就上下叠着，谁也不挡谁。
+     值取 --dsc-process-row-h（就是 .think-head 的 min-height），行头长多高这里就跟到哪里，
+     不写 24px 这种魔数。 */
+  top: var(--dsc-process-row-h);
   /* 压住下面滚过去的思考正文：组件内部的叠压用 1，不动浮层层级阶梯。 */
   z-index: 1;
 }
@@ -9830,32 +10169,26 @@ body.resizing iframe {
   width: 1px;
 }
 
-/* ── 展开区的高度过渡 ──
-   收展从「瞬时切换」改成高度长出来。grid-template-rows 从 0fr 到 1fr 是唯一不必预先量
-   内容高度的写法（min-height: 0 + overflow: hidden 由 .think-body-clip 给，见旧段），
-   起始态交给 @starting-style：元素刚插进 DOM 的那一帧按 0fr 算，下一帧回到 1fr，
-   于是这一次开合有高度动画。不支持 @starting-style 的浏览器只是没有这段动画，
-   展开区照样一次显示完整，功能上没有回退。 */
+/* ── 展开区**不做**高度过渡（2026-11-10 撤掉）──
+   原来这里是 `grid-template-rows: 0fr → 1fr` 加 `@starting-style`：元素插进 DOM 的那一帧
+   按 0fr 算，下一帧回到 1fr，于是这次开合有「长出来」的动画。
+   为什么撤掉：
+   1. `1fr` 轨道的终点是按**过渡开始那一刻**的内容高度算的。思考正文在直播中每口 delta 都在
+      长，过渡还没跑完内容就比轨道高了，多出来的部分被 `.think-body-clip` 的 overflow 裁掉
+      ——表现就是「思考展开后底部缺半行、下面一大片空白」（2026-11-10 报障）。
+   2. 参考实现的展开是**条件渲染 + 瞬时出现**，没有高度过渡：DisclosureRow 直接 `{open && children}`
+      （ui-primitives/src/DisclosureRow.tsx:121-122），折叠态靠固定行高 `contain: size layout;
+      height: 24px` 站住（ReasoningRow.module.css:6-9）。对齐它之后这一整类裁剪问题不再存在。
+   现在 `.think-body` 就是普通块（高度按内容），`.think-body-clip` 的 overflow 留着给下面
+   那些「展开区超过一屏」的滚动边界用，不影响高度计算。 */
 .think-body {
-  display: grid;
-  grid-template-rows: 1fr;
-  transition: grid-template-rows var(--dsc-dur-slow) var(--dsc-ease);
+  display: block;
 }
 
-@starting-style {
-  .think-body {
-    grid-template-rows: 0fr;
-  }
-}
-
-/* 系统里说「少动」就真不动：高度瞬时切换，扫光整条撤掉（不是停住——停住会留一道不动的
-   亮带，比没有更奇怪）。旧段里那条 reduced-motion 规则管的是小圈与箭头，两条合起来才是
-   完整降级，信息一条不少。 */
+/* 系统里说「少动」就真不动：扫光整条撤掉（不是停住——停住会留一道不动的亮带，
+   比没有更奇怪）。展开区的高度过渡 2026-11-10 已经整条撤掉（见上面那段注释），
+   这里不再需要单独为它写降级。 */
 @media (prefers-reduced-motion: reduce) {
-  .think-body {
-    transition: none;
-  }
-
   .think-summary-text[data-shimmer]::after,
   .step-fold-label[data-shimmer]::after,
   .step-fold-detail[data-shimmer]::after,
@@ -10566,6 +10899,23 @@ body.resizing iframe {
     #000 calc(100% - 24px),
     transparent 100%
   );
+}
+
+/* 组体顶部有吸附行头时，顶边那条 24px 渐隐要撤掉：遮罩作用在整个滚动盒上，会把吸住的
+   行头自己的字一起淡化（先是文字淡一半，看着像没加载完）。行头的底色已经挡住了从下面
+   滚过的内容，那条渐隐在这里没有作用对象。
+   只撤顶边：组体同时离底（[data-scroll-down]）时底边那条照旧，所以下面还补了一条只留
+   底边的规则——这里直写 `mask-image: none` 会把底边一起撤掉。
+   `:has()` 从 Chromium 105 就有，桌面端与壳里的版本都够。 */
+.step-body[data-scroll-up]:has(.think-block.open) {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+/* 顶边撤、底边留：滚动中段（上下都还能滚）时，组体只剩底边那条渐隐。 */
+.step-body[data-scroll-up][data-scroll-down]:has(.think-block.open) {
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 24px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 24px), transparent 100%);
 }
 
 /* 窄屏：组体本来就只有一列宽，缩进收一档，**只改令牌**——

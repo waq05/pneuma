@@ -83,11 +83,17 @@ export function ThinkRow({
   entry,
   live,
   storeKey,
+  body,
 }: {
   entry: Extract<TranscriptEntry, { kind: 'thinking' }>
   live: boolean
   /** 展开状态的存档键（`会话id:think:条目id`）；不传就不存档。 */
   storeKey?: string
+  /**
+   * 展开区的正文：由外面给（`transcript.reasoning.body` 槽的当选者，落空是 {@link ThinkText}）。
+   * 不给就画原件——团队页签、测试这些不走槽的调用点行为不变。
+   */
+  body?: ReactNode
 }): ReactNode {
   const prefs = useContext(FoldPrefsContext)
   /**
@@ -105,10 +111,13 @@ export function ThinkRow({
    * 行的开合只由用户点击决定（use-disclosure.ts:12-13）。直播的「还活着」由扫光 + 摘要 +
    * 小圈承载（本组件三样都有），不需要把正文摊开。
    */
-  // 默认档取设置里的「定稿的思考行默认展开」，走 useFoldState 是为了让设置一改、
-  // 已经画出来的行立刻跟上；用户手动点过的那一条有存档，钩子不会去翻它。
-  // 直播态照旧不参与初值（上面那条注释说的抽动就是这么来的），只影响摘要取法。
-  const [open, setOpenPersisted] = useFoldState(storeKey, prefs.reasoningOpen)
+  // 默认档取设置里的「思考块默认展开」，**但直播尾一律收起起步**（2026-11-10 对齐 dsh）：
+  // 参考实现的推理行永远是收起态起步，`running` 只改「折叠行右边那句预览」的取法
+  // （ReasoningRow.tsx:64），行的开合只由用户点击决定（use-disclosure.ts:12-13）。
+  // 直播时就自动摊开还有第二个坏处：内容每口 delta 都在长，高度动画跟着重播一次。
+  // 走 useFoldState 是为了让设置一改、已经画出来的定稿行立刻跟上；手动点过的那一条有存档，
+  // 钩子不会去翻它。
+  const [open, setOpenPersisted] = useFoldState(storeKey, !live && prefs.reasoningOpen)
   const [barVisible, setBarVisible] = useState(false)
   const bodyRef = useRef<HTMLDivElement | null>(null)
 
@@ -214,7 +223,9 @@ export function ThinkRow({
       {open ? (
         <div className="think-body" ref={bodyRef}>
           <div className="think-body-clip">
-            <div className="think-text">{entry.text}</div>
+            {/* 正文由外面给（`transcript.reasoning.body` 槽的当选者，落空是 ThinkText）；没给就画原件——
+                团队页签、测试这些不走槽的调用点行为不变。 */}
+            {body ?? <div className="think-text">{entry.text}</div>}
           </div>
         </div>
       ) : null}

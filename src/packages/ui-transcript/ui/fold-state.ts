@@ -76,6 +76,28 @@ export function clearFold(key: string | undefined): void {
 }
 
 /**
+ * 抹掉一批前缀下的存档（按轮清理用，见 ui.tsx 的「整轮收起复位」）。
+ *
+ * 为什么按前缀而不是逐条枚举：一轮里有多少条思考、工具、阶段组是**渲染期才知道**的
+ * （分组是纯函数现算的），发起复位的地方在消息流顶层，手上没有那份清单。而存档键的
+ * 形状是固定的——行是 `会话id:r<轮>:<类型>:<序号>`，组是 `会话id:step:r<轮>:…`——
+ * 按前缀一扫就全清了，也不必让两边共享一份「这一轮有哪些键」的索引。
+ *
+ * @param prefixes - 要抹掉的前缀；空数组是空操作
+ * @returns 实际抹掉了几条（给探针断言用）
+ */
+export function clearFoldPrefix(prefixes: readonly string[]): number {
+  if (prefixes.length === 0) return 0
+  let removed = 0
+  for (const key of [...folds.keys()]) {
+    if (!prefixes.some((prefix) => key.startsWith(prefix))) continue
+    folds.delete(key)
+    removed += 1
+  }
+  return removed
+}
+
+/**
  * 整轮折叠的存档键（旧桌面渲染层同款）：`会话id:turn:轮序号`。
  *
  * 会话 id 可能在宿主落盘前缺席（null）——归一成空串，同一次进程里键仍然唯一。
@@ -85,11 +107,18 @@ export function turnFoldKey(sessionId: string | null, roundIndex: number): strin
 }
 
 /**
- * 阶段组折叠的存档键（旧桌面渲染层同款）：`会话id:step:轮序号:组序号`。
+ * 阶段组折叠的存档键：`会话id:step:<组首行的稳定身份>`。
  *
- * 组序号是「轮内第几个组」（0 基）——直播中尾组吸新工具不换号，用户展开的那一组
- * 不会被新内容重置。
+ * 为什么键是「首行的稳定身份」而不是「轮内第几组」（2026-11-10 改）：
+ * - 跑动中尾组会不断吸收新工具，中途还会因为没有可收的内容而暂时不立组
+ *   （见 process-groups.ts 尾组那段），序号在前面的组消失时会整体前移——
+ *   用户点开的那一组于是被下一组借走，表现出来就是「展开的组自己收起来了」；
+ * - 参考实现（dsh）的组身份同样由首成员派生：
+ *   `conversation-nodes/process-groups.ts` 的 `['process', first.key, first.groupPart]`。
+ *
+ * 首行的稳定身份来自 `shared.ts` 的 `buildSeats`（轮内「第几条同类型条目」，
+ * 工具有 callId 时优先用 callId），它跨得过「直播 → 定稿」那一拍。
  */
-export function stepGroupFoldKey(sessionId: string | null, roundIndex: number, groupSeq: number): string {
-  return `${sessionId ?? ''}:step:${String(roundIndex)}:${String(groupSeq)}`
+export function stepGroupFoldKey(sessionId: string | null, headStable: string): string {
+  return `${sessionId ?? ''}:step:${headStable}`
 }

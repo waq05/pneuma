@@ -10,7 +10,6 @@ import type { TranscriptEntry } from '@dsc/ui'
 import { NO_ENTRIES } from '@dsc/ui-primitives'
 import { FOLD_PREFS, FoldPrefsContext, FlowActionsContext, NO_ACTIONS, ShellCwdContext, ShellSessionContext, type Row, type ToolViewRender } from './shared'
 import { RowBody, RowBoundary } from './render'
-import { ToolRow } from './rows/tool-row'
 import { ReadonlyUserRow } from './rows/user-row'
 
 // ── 只读「子智能体条目流」（右栏页签用）────────────────────────────────────────
@@ -50,10 +49,11 @@ export interface TranscriptFlowService {
  *  - 用户消息走 {@link ReadonlyUserRow}（气泡照画，不画 hover 浮出的编辑钮）；
  *  - 不画轮尾 / 改动卡 / 刻度条 / 分页 / 整轮折叠——右栏是伴读面，不是操作面。
  *
- * 工具行走 `renderSlot(TOOLVIEW_SLOT, …)`：本条目在 SlotMap 里声明了这条 chain 子槽，
- * 被壳当槽条目渲染时由选举链决定谁画。团队插件是直接把组件当值渲染（没有槽渲染上下文），
- * 那时 `renderSlot` 缺席，落到内置工具卡 {@link ToolRow}——与 `RowBody` 自己的兜底
- * （`renderSlot?.(…) ?? <ToolRow …/>`）是同一条路，工具卡照常出得来。
+ * 行渲染走 {@link RowBody}：本条目在 SlotMap 里声明了三条 chain 子槽（节点级 / 工具卡 /
+ * 思考正文），被壳当槽条目渲染时由选举链决定谁画。团队插件是直接把组件当值渲染（没有槽
+ * 渲染上下文），那时 `renderSlot` 缺席——`RowBody` 里 `renderSlot === undefined` 的短路
+ * 直接画内置行体，工具卡照常出得来。**不要**再传一个返回 null 的空函数顶替：`renderSlot`
+ * 一旦存在就会被调用，整条子代理流会白屏。
  *
  * 2026-11-09 起 `ToolRow` 不再自画一份卡片：它渲染的是对话页那张卡的同一个视图
  * （`tool-card/factory` 的 ToolCardView），所以两条路的工具行长得一样。`owner.storeKey`
@@ -63,15 +63,22 @@ export function SubagentFlow(props: {
   entries?: readonly TranscriptEntry[]
   cwd?: string
   sessionKey?: string
-  /** 槽渲染上下文（壳把本条目当槽条目渲染时才有）；缺席时用内置工具卡兜底。 */
+  /** 槽渲染上下文（壳把本条目当槽条目渲染时才有）；缺席时 `RowBody` 直画内置行体。 */
   renderSlot?: ToolViewRender
   childSlots?: readonly string[]
 }): ReactNode {
   const entries = props.entries ?? NO_ENTRIES
   const cwd = props.cwd ?? ''
-  const toolRender: ToolViewRender =
-    props.renderSlot ?? ((_name, owner) => <ToolRow entry={owner.entry} storeKey={owner.storeKey} />)
-  const rows = useMemo<Row[]>(() => entries.map((entry, at) => ({ entry, live: false, at })), [entries])
+  // 队友条目流是只读的、一次给定（不会流式追加），所以「稳定身份」直接用出现序号：
+  // 与主对话流同一个口径（见 shared.ts 的 Row.stable），两条路渲染的是同一套行组件。
+  const rows = useMemo<Row[]>(() => {
+    const counters = new Map<string, number>()
+    return entries.map((entry, at) => {
+      const seen = counters.get(entry.kind) ?? 0
+      counters.set(entry.kind, seen + 1)
+      return { entry, live: false, at, stable: `sub:${entry.kind}:${String(seen)}` }
+    })
+  }, [entries])
   return (
     <ShellSessionContext.Provider value={props.sessionKey ?? null}>
     <ShellCwdContext.Provider value={cwd}>
@@ -81,7 +88,7 @@ export function SubagentFlow(props: {
         {rows.map((row) => (
           <div className="entry-row" key={`sub|${row.entry.kind}|${String(row.entry.id)}`}>
             <RowBoundary entry={row.entry}>
-              {row.entry.kind === 'user' ? <ReadonlyUserRow entry={row.entry} /> : <RowBody row={row} renderSlot={toolRender} />}
+              {row.entry.kind === 'user' ? <ReadonlyUserRow entry={row.entry} /> : <RowBody row={row} renderSlot={props.renderSlot} />}
             </RowBoundary>
           </div>
         ))}

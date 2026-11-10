@@ -15,7 +15,7 @@ import { useCallback, useMemo, useState, type KeyboardEvent as ReactKeyboardEven
 import { createT, type TranscriptEntry } from '@dsc/ui'
 import { IconChevronDown } from '@dsc/ui'
 import { formatDuration, roundDuration, type RoundInfo } from './timing'
-import { clearFold, readFold, writeFold } from './fold-state'
+import { clearFold, clearFoldPrefix, readFold, writeFold } from './fold-state'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 import zh from '../locale/ui.zh.json'
 import en from '../locale/ui.en.json'
@@ -309,18 +309,24 @@ export function TurnFoldRow(props: {
 }
 
 /**
- * 折叠开合的双层记忆（旧桌面版 ChatView 的同款组合）：React state 管「点一下当场重画」，
- * fold-state（进程内的存档）管「重挂后读回来」——键由 turnFoldKey / stepGroupFoldKey
- * 拼（会话 id + 轮 + 组），切会话重挂时展开态原样回来。
+ * 折叠开合的双层记忆：React state 管「点一下当场重画」，fold-state（进程内的存档）管
+ * 「重挂后读回来」——键由 turnFoldKey / stepGroupFoldKey 拼（会话 id + 轮 + 组首行身份），
+ * 切会话重挂时展开态原样回来。
  *
- * reset 是「轮收尾复位」用的：一轮从跑动落到定稿那一刻，把整轮与它下面所有阶段组的
- * 开合写回默认（收起）——旧版语义「收起整轮会重置内部组及推理、工具的开合」。
+ * `clearPrefixes` 是「整轮收起复位」用的（2026-11-10 改，对齐 dsh）：一条轮**从展开变成
+ * 收起**的那一刻，把这一轮里所有行与阶段组的展开存档抹掉，它们于是回到各自的默认收起态。
+ *
+ * 为什么不是「轮一收尾就复位」（改成现在这条之前是那样）：跑动中用户点开的思考/组，在
+ * 一轮正常结束、还没被收起的时候就被写回收起，等于替用户做了一次手动收起；参考实现对
+ * 这件事的口径是「整轮被折叠隐藏时才复位内部」（`ChatNodeSeat.tsx:122-131` 的
+ * disclosureReset 只在 `processHidden && hiddenOrCollapsing` 时推进）。
  */
 export function useFoldMemory(): {
   open(key: string, fallback: boolean): boolean
   set(key: string, open: boolean): void
   reset(keys: readonly string[]): void
   clear(keys: readonly string[]): void
+  clearPrefixes(prefixes: readonly string[]): void
 } {
   const [map, setMap] = useState<Record<string, boolean>>({})
   const open = useCallback(
@@ -364,5 +370,24 @@ export function useFoldMemory(): {
       return next
     })
   }, [])
-  return useMemo(() => ({ open, set, reset, clear }), [open, set, reset, clear])
+  /**
+   * 按前缀抹掉一批（整轮收起时清这一轮里的行与组，见模块注释）。
+   *
+   * 为什么按前缀：一轮里有多少条思考/工具/阶段组是渲染期现算的，发起复位的地方拿不到
+   * 那份清单；而存档键形状固定（`会话id:r<轮>:…` 与 `会话id:step:r<轮>:…`）。
+   */
+  const clearPrefixes = useCallback((prefixes: readonly string[]): void => {
+    if (prefixes.length === 0) return
+    clearFoldPrefix(prefixes)
+    setMap((current) => {
+      let next = current
+      for (const key of Object.keys(current)) {
+        if (!prefixes.some((prefix) => key.startsWith(prefix))) continue
+        if (next === current) next = { ...current }
+        delete next[key]
+      }
+      return next
+    })
+  }, [])
+  return useMemo(() => ({ open, set, reset, clear, clearPrefixes }), [open, set, reset, clear, clearPrefixes])
 }

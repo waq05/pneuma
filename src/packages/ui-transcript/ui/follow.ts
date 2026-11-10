@@ -5,7 +5,7 @@
  *
  * @module dsc-ui-shell/plugins/transcript/follow
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 /** 贴底判定（px）：与 dsh 的 `use-scroll-follow` 同一档（25px），差别只在取整。 */
 const FOLLOW_BOTTOM_PX = 24
@@ -17,9 +17,18 @@ const FOLLOW_SETTLE_MS = 180
 const UP_KEYS: ReadonlySet<string> = new Set(['ArrowUp', 'PageUp', 'Home'])
 
 /**
+ * 手势的有效期（ms）：这一下之后多久内的滚动还算「读者在读历史」。
+ *
+ * 取 1.5 秒而不是「一次手势管一次滚动」：拖滚动条是一次 pointerdown 带一长串 scroll，
+ * 触屏滑动也是一次手势滚很远；反过来，排版慢一拍引起的滚动会落在手势之后很久，那时
+ * 早就过了有效期，不会被误判成读者。
+ */
+const GESTURE_TTL_MS = 1500
+
+/**
  * 跟着底部的自动滚动（对齐 dsh 的 `use-scroll-follow.ts` 与 `use-chat-reading.ts`）。
  *
- * 三条规矩，缺一条就会「粘滞」——明明往上滚了一段，下一口流式内容一到又被拽回底部：
+ * 四条规矩，缺一条就会「粘滞」——明明往上滚了一段，下一口流式内容一到又被拽回底部：
  *
  * 1. **读者往回读就先松手**：往上滚的滚轮、`↑` / `PgUp` / `Home` 一到，跟随当场取消，
  *    不等滚动位置越过哪条线；等位置落定（`scrollend`，或 180ms 内没有新滚动）再按距离重判。
@@ -28,6 +37,10 @@ const UP_KEYS: ReadonlySet<string> = new Set(['ArrowUp', 'PageUp', 'Home'])
  *    记下每次写到哪儿，差在 1px 以内就当自己滚的（dsh 的 `movedByReader` 同一口径）。
  * 3. **贴底的门槛要近**：dsh 用 25px；壳原来写 160px，往上滚一小段仍算「在底部」，
  *    于是内容一长就把人拽回去，手感就是粘。
+ * 4. **松手必须有手势作证**（2026-11-10 加）：位置变了不等于读者动了——排版慢一拍、
+ *    内容重排后的夹持、长文里的滚动校正都会让 `scrollTop` 自己变。只有「刚有手势」
+ *    （往上滚 / 往上翻页 / 指针按在滚动区上）才认作读者在读历史，否则一律补钉底。
+ *    少了这一条，长会话跑到一半跟随会自己关掉，胶囊亮着等人来点（用户报的就是这个）。
  *
  * 内容变长（新条目、流式正文、虚拟列表补挂）交给 `ResizeObserver`：只有跟随开着才钉底，
  * 读者在读的时候一个字都不动（dsh 的 `onResize` 也是这条）。
@@ -72,7 +85,26 @@ export function useFollowBottom(
      * 「回到底部」胶囊翻出来，下一秒落定再收回去——流式输出时它就一直闪。
      */
     const pinnedHeight = { current: scroller.scrollHeight }
+    /**
+     * 滚动区此刻是「藏起来的」（高度 0）。
+     *
+     * 这一态下所有测量都不可信：容器高度是 0，而内容还在、`scrollHeight` 还是几千像素，
+     * 浏览器会把 `scrollTop` 夹成 0 并发一条 scroll 事件——形状和「读者一路滚到顶上」
+     * 一模一样。若不认这一态，跟随会被一条夹持事件松掉，而人一动没动。
+     *
+     * 怎么办：藏起来的时候什么都不写、也绝不改跟随意图；重新露出来的第一条 scroll 事件
+     * 认作「浏览器夹回上限」，不是读者动手——保留跟随并补一次钉底。
+     */
+    const hidden = (): boolean => scroller.clientHeight === 0
+    /** 刚才是藏着的（下一次可见的测量要按「夹回上限」处理）。 */
+    let wasHidden = false
+    /** 最近一次「读者手势」的时刻（滚轮往上 / ↑ PgUp Home / 指针按在滚动区上）。 */
+    let gestureAt = 0
     const pin = (): void => {
+      if (hidden()) {
+        wasHidden = true
+        return
+      }
       scroller.scrollTop = scroller.scrollHeight
       written.current = scroller.scrollTop
       pinnedHeight.current = scroller.scrollHeight
@@ -90,6 +122,7 @@ export function useFollowBottom(
      */
     const settle = (): void => {
       clearSettle()
+      if (hidden()) return
       if (following.current) {
         pin()
         return
@@ -107,6 +140,22 @@ export function useFollowBottom(
     const onScroll = (): void => {
       const top = scroller.scrollTop
       const heightChanged = pinnedHeight.current !== scroller.scrollHeight
+      if (hidden()) {
+        // 藏起来的这段时间只记账：`scrollTop` 被夹成 0 不代表读者滚了。
+        wasHidden = true
+        written.current = top
+        if (heightChanged) pinnedHeight.current = scroller.scrollHeight
+        return
+      }
+      if (wasHidden) {
+        // 重新露出来的第一条：内容是浏览器把 scrollTop 夹回新上限，不是读者动手。
+        wasHidden = false
+        written.current = top
+        pinnedHeight.current = scroller.scrollHeight
+        if (following.current) pin()
+        else schedule()
+        return
+      }
       if (Math.abs(top - written.current) <= 1) {
         written.current = top
         if (heightChanged) pinnedHeight.current = scroller.scrollHeight
@@ -127,13 +176,30 @@ export function useFollowBottom(
       }
       written.current = top
       if (following.current) {
+        // 松手必须有**手势**作证（2026-11-10 报障「自动跟随会中途掉线」）。
+        // 走到这里的 scroll 事件，除了「读者往上滚」，还可能是：排版慢了一拍、内容重排后
+        // 的夹持、以及浏览器在长文里补的滚动校正——它们都没有手势。以前一律当成读者动手，
+        // 于是长会话跑到一半，跟随自己就关了，胶囊亮着，得手点一次才回来。
+        // 现在只有「刚有手势」才算读者在读历史；其余一律补一次钉底，跟随不动。
+        if (performance.now() - gestureAt > GESTURE_TTL_MS) {
+          pin()
+          return
+        }
         following.current = false
-        setPaused(true)
       }
+      // 位置真的离开底部了，就给一颗「回到底部」的回头路。
+      //
+      // 为什么写在 `if (following)` 外面（2026-11-10 修）：滚轮往上读时 `onWheel` 先把
+      // 跟随松掉，等这条 scroll 事件到达 `following` 已经是 false，原来挂在里头的
+      // `setPaused(true)` 永远走不到——胶囊不亮，往上读了一段却没有回到底部的入口。
+      setPaused(true)
       schedule()
     }
     /** 读者动手：先松手，不等这一下手势滚出多远。 */
     const onGesture = (): void => {
+      // 藏起来的容器上收到的滚轮/按键不是「读者在读这段历史」（多半是别处在滚，
+      // 事件被冒泡上来），不改跟随意图。
+      if (hidden()) return
       following.current = false
       schedule()
     }
@@ -141,13 +207,30 @@ export function useFollowBottom(
       // 只认「往上滚」：在底部往下滚时浏览器什么也不做，这时若把跟随松掉，
       // 下一口流式内容就没人追了（点开工具卡、往下翻也一样，不该断跟随）。
       if (event.ctrlKey || event.deltaY >= 0) return
+      gestureAt = performance.now()
       onGesture()
     }
     const onKey = (event: KeyboardEvent): void => {
-      if (UP_KEYS.has(event.key)) onGesture()
+      if (!UP_KEYS.has(event.key)) return
+      gestureAt = performance.now()
+      onGesture()
+    }
+    /**
+     * 指针按在滚动区上（拖滚动条、触屏拖动、点住正文）。
+     *
+     * 为什么必须有这一条：拖滚动条只会发 `scroll`，既没有 wheel 也没有按键。只认后两者
+     * 的话，「拖滚动条往上读」会被当成「没有手势」而被立刻钉回底部，人根本读不了。
+     */
+    const onPointerDown = (): void => {
+      gestureAt = performance.now()
     }
     /** 内容变长：跟随开着才追，读者在读就一动不动。 */
     const onResize = (): void => {
+      // 藏起来了就不追：这一态下 `floor()` 是「内容高 − 0」，写进去的 scrollTop 没有意义。
+      if (hidden()) {
+        wasHidden = true
+        return
+      }
       if (!following.current) return
       if (floor() - scroller.scrollTop > 4) pin()
     }
@@ -163,6 +246,7 @@ export function useFollowBottom(
     scroller.addEventListener('scrollend', settle)
     scroller.addEventListener('wheel', onWheel, { passive: true })
     scroller.addEventListener('keydown', onKey)
+    scroller.addEventListener('pointerdown', onPointerDown, { passive: true })
     const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(onResize) : undefined
     observer?.observe(scroller)
     const content = scroller.firstElementChild
@@ -174,6 +258,7 @@ export function useFollowBottom(
       scroller.removeEventListener('scrollend', settle)
       scroller.removeEventListener('wheel', onWheel)
       scroller.removeEventListener('keydown', onKey)
+      scroller.removeEventListener('pointerdown', onPointerDown)
       observer?.disconnect()
     }
   }, [end])
@@ -181,7 +266,11 @@ export function useFollowBottom(
   // 换会话（含首屏）那一拍先重新钉住底部，再照常跟：这一条声明在上面那个滚动监听
   // 效果**之后**，顺序有讲究——监听效果刚按当前位置（打开会话时是 scrollTop=0）
   // 判过「暂停」，这条要盖住它。
-  useEffect(() => {
+  //
+  // 2026-11-10 从 useEffect 换成 useLayoutEffect：新增内容一提交就钉，钉在浏览器绘制之前。
+  // useEffect 等在绘制之后才跑，那一帧里新内容已经溢出到可视区下方，下一帧才被拽回来；
+  // 换成布局效果后这一帧不存在了（贴底这件事不再依赖下一帧的定时器）。
+  useLayoutEffect(() => {
     if (pinnedFor.current !== sessionKey) {
       pinnedFor.current = sessionKey
       following.current = true

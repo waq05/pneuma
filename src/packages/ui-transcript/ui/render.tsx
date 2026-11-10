@@ -5,10 +5,10 @@
  *
  * @module dsc-ui-shell/plugins/transcript/render
  */
-import { Component, useContext, type ReactNode } from 'react'
+import { Component, memo, useContext, type ReactNode } from 'react'
 import { MarkdownView, createT, estimateTextTokens, type TranscriptEntry } from '@dsc/ui'
 import { ReviewNoticeCard, findLast, parseReviewNotice } from '@dsc/ui-primitives'
-import { FoldPrefsContext, ShellCwdContext, ShellSessionContext, TOOLVIEW_SLOT, TURN_INDEPENDENT, keyOf, type Row, type Seat, type ToolViewRender } from './shared'
+import { FoldPrefsContext, ShellCwdContext, ShellSessionContext, TOOLVIEW_SLOT, TRANSCRIPT_NODE_SLOT, TRANSCRIPT_REASONING_BODY_SLOT, TURN_INDEPENDENT, keyOf, type Row, type Seat, type ToolViewRender } from './shared'
 import { stepGroupFoldKey, turnFoldKey } from './fold-state'
 import { rowShows } from './row-shows'
 import { turnDefaultOpen, useFoldMemory } from './round-fold'
@@ -18,6 +18,7 @@ import { seatPlan, type StepGroup, type StepGrouping } from './process-groups'
 import type { RoundInfo } from './timing'
 import { UserRow } from './rows/user-row'
 import { ThinkRow } from './rows/think-row'
+import { ThinkText } from './rows/think-text'
 import { RetryRow } from './rows/retry-row'
 import { SubagentRow, ToolRow } from './rows/tool-row'
 import { ChangesCard } from './rows/changes-card'
@@ -144,11 +145,22 @@ export function SeatBody({
       </RowSeat>
     )
   }
-  /** 一组现在展开没有（键：会话 + 轮 + 组序号；默认一律收起——组头承载「现在在干什么」）。 */
-  const groupOpen = (group: StepGroup): boolean =>
-    foldMemory.open(stepGroupFoldKey(sessionId, group.roundIndex, group.seq), false)
+  /**
+   * 一组现在展开没有。
+   *
+   * 键用**组里第一条的稳定身份**（`row.stable`，见 shared.ts 的 {@link Row.stable}），不再用
+   * 「轮内第几组」的序号：跑动中尾组会不断吸收新成员，中途还会因为「一条不成组」而从界面上
+   * 消失又出现（见 process-groups.ts 尾组那段），序号在前面的组消失时会整体前移，用户点开的
+   * 那一组于是被下一组借走。dsh 的组身份同样由首成员派生（conversation-nodes/process-groups.ts
+   * 的 `['process', first.key, first.groupPart]`），这里取同一口径。
+   */
+  const groupKeyOf = (group: StepGroup): string => {
+    const first = seat.rows.find((row) => row.at === group.startIndex)
+    return stepGroupFoldKey(sessionId, first?.stable ?? `r${String(group.roundIndex)}:${String(group.seq)}`)
+  }
+  const groupOpen = (group: StepGroup): boolean => foldMemory.open(groupKeyOf(group), false)
   const toggleGroup = (group: StepGroup): void => {
-    foldMemory.set(stepGroupFoldKey(sessionId, group.roundIndex, group.seq), !groupOpen(group))
+    foldMemory.set(groupKeyOf(group), !groupOpen(group))
   }
   const liveDetail = foldPrefs.policy.liveDetail
   // 过程区分块：连续的过程条目收进阶段组（组体是「真盒子」，才有自己的限高与滚动），
@@ -285,15 +297,19 @@ export function SeatBody({
 }
 
 
-export function RowBody({
-  row,
-  renderSlot,
-}: {
-  row: Row
-  renderSlot: ToolViewRender
-}): ReactNode {
-  const sessionId = useContext(ShellSessionContext)
-  const cwd = useContext(ShellCwdContext)
+/**
+ * 内置行体：每种 kind 长什么样。
+ *
+ * 2026-11-10 从 RowBody 拆出来：`transcript.node` 槽的**兜底**就是这一份（链上没人认领
+ * 时画的还是这些分支），拆出来之后「谁画的」与「画成什么样」分成两层，槽那边只管前者。
+ * 逐分支与拆分前一致，不要在这里顺手改行为。
+ */
+function builtinRowBody(
+  row: Row,
+  sessionId: string | null,
+  cwd: string,
+  renderSlot: ToolViewRender | undefined,
+): ReactNode {
   const entry = row.entry
   switch (entry.kind) {
     case 'user':
@@ -305,33 +321,48 @@ export function RowBody({
       if (entry.process === true) {
         return (
           <div className={row.live ? 'entry-note live' : 'entry-note'} data-process-note>
-            <MarkdownView text={entry.text} path="" streaming={row.live} />
+            <MarkdownView text={entry.text} path="" baseDir={cwd} streaming={row.live} />
           </div>
         )
       }
       return (
         <div className={row.live ? 'entry-text live' : 'entry-text'}>
           {/* 正文渲染 markdown（与桌面端 MarkdownText 同一能力面：GFM 表格/任务列表等）。
-              直播尾同样渲染——半截 markdown 短暂错排是流式的固有代价，桌面端也一样。 */}
-          <MarkdownView text={entry.text} path="" streaming={row.live} />
+              直播尾同样渲染——半截 markdown 短暂错排是流式的固有代价，桌面端也一样。
+              baseDir 递的是会话的工作目录：正文里「相对路径」的文件链接要按它拼绝对路径，
+              否则点一下只会得到一个空 href（2026-11-09「点链接弹出新窗口」的成因）。 */}
+          <MarkdownView text={entry.text} path="" baseDir={cwd} streaming={row.live} />
         </div>
       )
-    case 'thinking':
-      // 展开态存档键（`会话id:think:条目id`）：条目原位更新（宿主把同一段思考合并进同一条）
-      // 时 id 不变，键就稳定；用 row.at 会在前面条目入账时漂。
+    case 'thinking': {
+      // 展开态存档键：`会话id:think:<行的稳定身份>`。
+      //
+      // 为什么不是 `entry.id`（2026-11-10 改）：直播思考的 id 是「第几个直播段」的负数，
+      // 段一增删就变；定稿那一刻又换成正数。键跟着 id 换，用户点开的那一段在「新工具进来 /
+      // 这段定稿」时查不到存档、直接收起，而下一段直播思考恰好复用同一个负 id、把那份
+      // 「展开」读走——报障的原话就是「收起旧的、展开新的」。稳定身份见 shared.ts 的 Row.stable。
+      const storeKey = `${sessionId ?? ''}:${row.stable}`
+      // 正文走 `transcript.reasoning.body` 选举：链上有人认领就换排版，全体弃权落回 ThinkText。
+      // 兜底走第三个参数（不是 `??`）：renderSlot 返回的是 outlet 元素、永远不是 null。
+      const fallback = <ThinkText text={entry.text} live={row.live} />
       return (
         <ThinkRow
           entry={entry}
           live={row.live}
-          storeKey={`${sessionId ?? ''}:think:${String(entry.id)}`}
+          storeKey={storeKey}
+          body={renderSlot?.(TRANSCRIPT_REASONING_BODY_SLOT, { entry, live: row.live, storeKey }, fallback) ?? fallback}
         />
       )
+    }
     case 'tool': {
       // 这条工具调用谁画由 toolview 链选举：链上有人认领就归它（matched 一并交给它），
       // 全体弃权（或链上没人）落回内置工具卡——内置渲染器自己也在链上，这只是兜底位。
-      // 展开态存档键（`会话id:条目序号`）顺着 owner 传给当选者：链上有人接管时同一份
-      // 展开态也活得过重挂。
-      const storeKey = `${sessionId ?? ''}:${String(row.at)}`
+      // 展开态存档键顺着 owner 传给当选者：链上有人接管时同一份展开态也活得过重挂。
+      //
+      // 键为什么不再用 `row.at`（0.6.x，2026-11-10 改）：at 是条目在全量数组里的下标，
+      // 直播段增删、历史入账都会让它漂——工具卡展开着，前一条定稿一进来它就「换了个身份」，
+      // 展开态落到别的卡上。改用行的稳定身份（工具优先取 callId，见 shared.ts 的 buildSeats）。
+      const storeKey = `${sessionId ?? ''}:${row.stable}`
       return renderSlot?.(TOOLVIEW_SLOT, { entry, storeKey }) ?? <ToolRow entry={entry} storeKey={storeKey} />
     }
     case 'system': {
@@ -396,6 +427,47 @@ export function RowBody({
     }
   }
 }
+
+/**
+ * 行体：先问节点级槽，落空画内置行体（见上面的 builtinRowBody）。
+ *
+ * 为什么包一层带比较器的 `memo`（2026-11-10，差距清单 S2）：流式时每来一口 delta 都会重跑
+ * `buildSeats`（每帧一次），而 `shared.ts` 的 `rowOf` 返回对象字面量——**每一行的 `Row`
+ * 都是新对象**。所以裸的 `memo(RowBody)` 浅比较必然失败，等于没加。真正决定这一行画面的
+ * 只有三样：`row.entry`（内容没变时是同一个引用）、`row.live`（是不是直播尾那一条）、
+ * `renderSlot`（壳给的渲染函数，正常情况下引用稳定）。
+ *
+ * 不比较 `row` 本身、也不比 `row.at` / `row.stable`：`at` 会随历史分页漂，`stable` 与
+ * `entry` 同源（条目一样就一定一样）；这两个都不进 DOM，比了只会白白让 memo 失效。
+ * 会话与工作目录走 context，React 的 context 变化会穿透 memo，不需要写进比较器。
+ */
+function RowBodyBody({ row, renderSlot }: { row: Row; renderSlot?: ToolViewRender }): ReactNode {
+  const sessionId = useContext(ShellSessionContext)
+  const cwd = useContext(ShellCwdContext)
+  const builtin = builtinRowBody(row, sessionId, cwd, renderSlot)
+  // 没有槽渲染上下文（团队页签直接把组件当值渲染）时直接画内置行体——**不能**用一个
+  // 返回 null 的空函数顶替，否则整条子代理流会白屏（renderSlot 一旦存在就会被调用）。
+  if (renderSlot === undefined) return builtin
+  // 兜底走 renderSlot 的第三个参数，不要写成 `renderSlot(...) ?? builtin`：返回值是渲染出口
+  // 的元素、永远不是 null，`??` 判不出「链上没人」。
+  return renderSlot(TRANSCRIPT_NODE_SLOT, {
+    entry: row.entry, live: row.live, stable: row.stable, sessionId,
+  }, builtin)
+}
+
+/**
+ * `RowBodyBody` 的比较器：只认 `entry` 引用、`live`、`renderSlot` 三样（理由见上面的注释）。
+ */
+function rowBodyUnchanged(
+  previous: { row: Row; renderSlot?: ToolViewRender },
+  next: { row: Row; renderSlot?: ToolViewRender },
+): boolean {
+  return previous.row.entry === next.row.entry
+    && previous.row.live === next.row.live
+    && previous.renderSlot === next.renderSlot
+}
+
+export const RowBody = memo(RowBodyBody, rowBodyUnchanged)
 
 /**
  * 一行一个错误边界。
