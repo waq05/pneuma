@@ -17,8 +17,8 @@
  *
  * @module dsc/plugins/agent
  */
-import { createHash } from 'node:crypto'
 import type { Plugin } from '@deepseek-ai/cordis'
+import type { ContextInjectionView } from '@pneuma/runtime/contract.js'
 import { Session, type InboxOrigin } from '@pneuma/runtime/core/session.js'
 import type { UserFileAttachment } from '@pneuma/runtime/core/attachments.js'
 import { MiniAgent } from '@pneuma/session-core/loop.js'
@@ -28,19 +28,6 @@ import { createDshSessionEventBridge } from '@pneuma/runtime/core/dsh-compat/ses
 import { clearReadLedger } from '@pneuma/runtime/core/path-policy.js'
 import { errText } from '@pneuma/runtime/adapter/transcript.js'
 import type { AgentService, TurnSignal } from '@pneuma/runtime/services/types.js'
-
-/**
- * 系统提示词落盘（Model-visible ⟺ logged 的提示词半边）：系统提示不进 user/assistant
- * 消息流，这里在每次请求组装时把用到的全文写进**这个 agent 自己的会话**的
- * `system-prompt` 状态条目——hash 变了才写（换模型、换模式、改 AGENTS.md 才会变；
- * 环境事实已搬出提示词，由 prompt 插件的 env-facts 投影附在请求末尾），重放会话时
- * 最后一条就是模型当前看到的提示词。
- */
-function noteSystemPrompt(session: Session, text: string): void {
-  const hash = createHash('sha256').update(text).digest('hex').slice(0, 16)
-  if (session.state('system-prompt')?.hash === hash) return
-  session.appendState('system-prompt', { hash, text })
-}
 
 /**
  * 切走之后最多留几个空闲会话（见 {@link rememberIdle}）。
@@ -70,6 +57,13 @@ export const agentPlugin: Plugin.Object = {
     const makeAgent = (session: Session): MiniAgent => {
       /** 工具名按 callId 记着：`tool/result` 事件只带 callId，工具行要写工具名。 */
       const toolNames = new Map<string, string>()
+      /**
+       * 上一次重写里投影报上来的上下文注入（循环取走后清空）。
+       *
+       * 每次重写换一只新数组：invariant 校验会拿同一份输入再跑一遍投影链，那一遍报的
+       * 东西不该混进这一轮，也不该留到下一轮去。
+       */
+      let lastInjections: ContextInjectionView[] = []
       // dsh 插件的广播面：一个会话一座桥，把回合过程按 dsh 的 session/event 形状播出去
       // （为什么要有它、以及哪些不发，见 core/dsh-compat/session-events 的头注释）。
       const dshEvents = createDshSessionEventBridge({
@@ -84,17 +78,15 @@ export const agentPlugin: Plugin.Object = {
           // 这个 agent 自己的模型/档位（后台会话不拿「用户正在看」的那一份）
           route: () => ctx.llm.routeForSession(session),
           // 系统提示每次请求重拼：切模式、改 AGENTS.md、换模型都不用重启。
-          // 拼好的这份同时落进自己会话的 system-prompt 状态条目（hash 去重）。
-          systemPrompt: () => {
+          // 拼好的正文由循环在发请求那一刻落进自己会话的 system-prompt 状态条目
+          //（hash 去重），这里只负责拼——正文与段清单同一次拼出（见 AgentDeps.systemPrompt）。
+          systemPrompt: () =>
             // 带上「这个 agent 的会话」：模式那段话与段的取舍都按它算。不带的话，
             // 后台会话的提示词会跟着「你此刻点开的会话」变（0.6.48 多 agent 的坑）。
-            const text = ctx.prompt.systemPrompt(session.meta.cwd, {
+            ctx.prompt.systemPromptParts(session.meta.cwd, {
               sessionId: session.meta.id,
               cwd: session.meta.cwd,
-            })
-            noteSystemPrompt(session, text)
-            return text
-          },
+            }),
           // 模型面前那份目录走 visible()：模式（预设）在这里做减法，极简档因此只看到 bash。
           // 队友不走这条路——它们按自己的工牌从全量注册表里挑（见 plugins/subagent.ts）。
           // 同样带会话：模式白名单按**这个 agent 的**档算（见 plugins/presets.ts 的 bySession）
@@ -168,7 +160,21 @@ export const agentPlugin: Plugin.Object = {
           beforeRequest: (signal) => ctx.compact.check(signal, session),
           // 请求因爆窗失败时压一次再重试（对齐 dsh 的溢出重试；压不出空间就把原错误抛回去）
           onContextOverflow: (signal) => ctx.compact.forceCompact(signal, session),
-          rewrite: (messages) => ctx.prompt.rewrite(messages, session),
+          rewrite: (messages) => {
+            // 投影往请求里加了什么（环境快照 / 模式 / 沙箱 / 待办提醒），由投影自己报给
+            // 这只录音机；循环随后取走，落一条「上下文注入」卡。每次重写换一只新的：
+            // invariant 的二次派生不会把报告混进这一轮。
+            const collected: ContextInjectionView[] = []
+            const out = ctx.prompt.rewrite(messages, session, (view) => collected.push(view))
+            lastInjections = collected
+            return out
+          },
+          // 循环在请求发出前取走这一轮的注入清单（取走即清空，见 loop 的 takeContextInjections）
+          takeContextInjections: () => {
+            const taken = lastInjections
+            lastInjections = []
+            return taken
+          },
           // 发请求走 llm 服务的适配器表：端点声明什么协议就由谁的适配器去说
           stream: (api, request, handlers) => ctx.llm.stream(api, request, handlers),
           // 完全闲下来又不是当前查看的：就地收摊（释放写租约与内存）。正被查看的

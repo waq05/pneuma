@@ -19,7 +19,7 @@ import type { HookJudgement, HooksDoc, HookTrust } from '@pneuma/session-core/ho
 import type { HostBrowserLink } from '../core/host-browser-link.js'
 import type { MemoryCell, MemoryConfig, MemoryOperation, MemoryTarget, MemoryWriteResult, WriteOptions } from '../contract/memory.js'
 import type { ProviderConfig } from '../core/config.js'
-import type { Session, InboxOrigin, SessionNotice } from '../core/session.js'
+import type { Session, InboxOrigin, SessionNotice, SessionTranscriptMark } from '../core/session.js'
 import type { UserFileAttachment } from '../core/attachments.js'
 import type { ChatMessage, LlmAdapter, LlmRoute, StreamHandlers, StreamRequest, StreamResult } from '../core/llm.js'
 import type { FileChangeSummary, ToolEntry } from '../core/tools.js'
@@ -62,6 +62,8 @@ import type {
   PresetFileView,
   PresetSurface,
   ProviderDraft,
+  ContextInjectionView,
+  PromptSectionView,
   RuntimeSnapshot,
   RuntimeSurfaces,
   TeammateView,
@@ -724,6 +726,13 @@ export interface TranscriptService {
     presentations?: ReadonlyMap<string, ToolPresentationView>,
     /** 回合提示（Session.notices）：模型重试、失败原因，按 ts 插回消息之间。 */
     notices?: readonly SessionNotice[],
+    /**
+     * 转录落位记录（`Session.marks()`）：系统提示卡与上下文注入卡。
+     *
+     * 这两类内容不在消息流里（系统提示是请求头、注入是投影塞进去的），只能靠日志里
+     * 记下的 `after`（写这条时日志里有几条消息）插回原位；没有锚点的老记录落到轮首。
+     */
+    marks?: readonly SessionTranscriptMark[],
   ): boolean
   subscribe(listener: () => void): () => void
   getSnapshot(): RuntimeSnapshot
@@ -835,6 +844,14 @@ export interface AgentService {
 // ── prompt ───────────────────────────────────────────────────────────────────
 
 /**
+ * 投影的「注入录音机」：投影往请求里追加了内容，就报一条摘要（{@link ContextInjectionView}）。
+ *
+ * 为什么由投影自己报、而不是内核去 diff 消息数组：只有注入方知道「这是什么、从哪来的」。
+ * diff 出来的东西只能说「多了一段文本」，说不出它是环境快照还是待办提醒。
+ */
+export type ContextInjectionReporter = (view: ContextInjectionView) => void
+
+/**
  * 请求组装扩展点（内核 API v3）：插件往系统提示里加一段话，或者改写要发给
  * 模型的那份消息。两者的注册都返回 disposer，插件卸载即撤销。
  */
@@ -879,12 +896,20 @@ export interface PromptService {
    * 任何人拿日志都能重建请求。往请求里**加**日志上没有的内容（LSP 诊断、钩子话术）
    * 的投影，必须同时用 `session.appendNote` 把加的东西落进日志。
    *
+   * 第三个参数是「注入录音机」（2026-11 加）：投影往请求里追加了内容，就调它报一条
+   * {@link ContextInjectionView}，转录层据此记一张「上下文注入」卡（只记摘要，不记正文）。
+   * 只在真发出的那次请求里回调——投影自己不必知道是第几轮、也不必碰会话日志。
+   *
    * @param id - 投影名（诊断与文档用）。`fold-system`、`drop-images` 是内核保留名。
    * @param options.order - 应用次序，小的先做。内置刻度：插件投影 60（缺省）、
    *   fold-system 500（多条 system 并进头部一条）、env-facts 600（环境事实快照附在请求末尾）、
    *   image-diet 550（历史里太久/太多的图换成占位）、env-facts 600、drop-images 900（模型没勾照片时兜底）。
    */
-  registerProjection(id: string, fn: (messages: ChatMessage[], session?: Session) => ChatMessage[], options?: { order?: number }): () => void
+  registerProjection(
+    id: string,
+    fn: (messages: ChatMessage[], session?: Session, report?: ContextInjectionReporter) => ChatMessage[],
+    options?: { order?: number },
+  ): () => void
   /**
    * 注册一段「环境事实」：拼进每次请求末尾那条 user 快照（与日期 / 平台 / 工作目录同一格）。
    *
@@ -910,6 +935,14 @@ export interface PromptService {
    */
   systemPrompt(cwd: string, scope?: AgentScope): string
   /**
+   * 拼这一轮的系统提示，**同时**给出分段清单（卡片「系统提示」用的摘要）。
+   *
+   * 为什么与 {@link systemPrompt} 分两个方法而不是改它的返回类型：正文调用方（压缩插件
+   * 拼摘要时的系统提示）只要字符串，改动它等于让每个调用方都去拆包；清单只有转录层要。
+   * 两个方法走同一段拼装逻辑，列表与正文必然同源。
+   */
+  systemPromptParts(cwd: string, scope?: AgentScope): { text: string; sections: PromptSectionView[] }
+  /**
    * 按注册序应用全部投影（含内置 fold-system / drop-images），得到真正发给模型的那份消息。
    * 这条链是纯函数管道：日志原文 + 这份定义 = 模型看见的内容。
    * @param messages - 已经拼好系统提示的那份。
@@ -917,8 +950,11 @@ export interface PromptService {
   /**
    * 应用投影链。第二参数是发起请求的会话（0.6.48 常驻多 agent）：env-facts 这类
    * 按会话取 cwd 的内置投影靠它取对归属；缺省按当前会话算。
+   *
+   * 第三参数是注入录音机：传了就会把「这次请求真注入了什么」逐条报出来（转录层据此
+   * 记卡片）。同一份输入跑两次（校验重建）会各报一遍，调用方按需取第一次的。
    */
-  rewrite(messages: ChatMessage[], session?: Session): ChatMessage[]
+  rewrite(messages: ChatMessage[], session?: Session, report?: ContextInjectionReporter): ChatMessage[]
 }
 
 // ── team ─────────────────────────────────────────────────────────────────────

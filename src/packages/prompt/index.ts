@@ -24,11 +24,12 @@ import type { Plugin } from '@deepseek-ai/cordis'
 import { errText } from '@pneuma/runtime/adapter/transcript.js'
 import { dropImageParts, foldSystemMessages, type ChatMessage } from '@pneuma/runtime/core/llm.js'
 import { pruneImages, readImageDietConfig } from '@pneuma/runtime/core/image-diet.js'
-import { buildSystemPrompt, DEFAULT_INSTRUCTION_BUDGET, environmentText, type PromptContribution } from '@pneuma/session-core/prompt.js'
+import { buildSystemPromptParts, DEFAULT_INSTRUCTION_BUDGET, environmentText, type PromptContribution } from '@pneuma/session-core/prompt.js'
 import { pruneToolResults } from './tool-result-prune.js'
 import { resolvePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
+import { CONTEXT_INJECTION_KINDS, contextInjectionPreview, type PromptSectionView } from '@pneuma/runtime/contract.js'
 import type { Session } from '@pneuma/runtime/core/session.js'
-import type { AgentScope, PromptService } from '@pneuma/runtime/services/types.js'
+import type { AgentScope, ContextInjectionReporter, PromptService } from '@pneuma/runtime/services/types.js'
 
 /** 配置键（`~/.dsc/plugins.json` 条目树里 `file` 等于这个名字那一项的 `config`）。 */
 const CONFIG_KEY = 'prompt'
@@ -40,7 +41,10 @@ const IMAGE_DIET_CONFIG_KEY = 'image-diet'
 const NO_IMAGE_NOTE = '（当前模型没有声明照片输入能力，图像没有随请求发送）'
 
 /** 一条「模型可见投影」：对发给模型的消息做一次纯函数改写。 */
-type Projection = { order: number; fn: (messages: ChatMessage[], session?: Session) => ChatMessage[] }
+type Projection = {
+  order: number
+  fn: (messages: ChatMessage[], session?: Session, report?: ContextInjectionReporter) => ChatMessage[]
+}
 
 /** 内置投影占用的名字：协议护栏不许被外部插件顶掉，同名注册直接报错。 */
 const RESERVED_PROJECTIONS = new Set(['fold-system', 'drop-images'])
@@ -158,18 +162,21 @@ export const promptPlugin: Plugin.Object = {
     const envSent = new Map<string, { text: string; at: number }>()
     projections.set('env-facts', {
       order: 600,
-      fn: (messages) => {
+      fn: (messages, _session, report) => {
         const session = requestSession
+        // 逐片段带名字读：report 要把 mode / sandbox 单独报成一条注入卡，
+        // 只剩拼好的整段快照就分不出「这段是谁写的」了。
+        const fragments: { id: string; text: string }[] = []
+        for (const [id, read] of envFacts) {
+          try {
+            fragments.push({ id, text: read(session) })
+          } catch {
+            // 一个片段崩了不该让整份快照消失：跳过它，其余照发
+          }
+        }
         const snapshot = environmentSnapshot(
           session.meta.cwd,
-          [...envFacts.values()].map((read) => {
-            try {
-              return read(session)
-            } catch {
-              // 一个片段崩了不该让整份快照消失：跳过它，其余照发
-              return ''
-            }
-          }),
+          fragments.map((fragment) => fragment.text),
         )
         const now = Date.now()
         const last = envSent.get(session.meta.id)
@@ -181,6 +188,26 @@ export const promptPlugin: Plugin.Object = {
         // 落一条状态（hash 去重，变了才写）：重放会话时最后一条就是模型当时看到的环境
         //（Model-visible ⟺ logged 的环境半边，与 agent 插件的 system-prompt 条目同套做法）。
         noteEnvFacts(session, snapshot)
+        // 这一轮真注入了什么，报给转录层：整段快照报一条，每个非空片段（mode / sandbox …）
+        // 各报一条——界面上一眼能看出「这轮的上下文里多了哪几样」。只报摘要与字符数，
+        // 正文就在下面这条 user 消息里，卡片不重复存。
+        report?.({
+          kind: CONTEXT_INJECTION_KINDS.envFacts,
+          source: 'env-facts',
+          where: 'user-tail',
+          chars: snapshot.length,
+          preview: contextInjectionPreview(snapshot),
+        })
+        for (const fragment of fragments) {
+          if (fragment.text.trim() === '') continue
+          report?.({
+            kind: fragment.id,
+            source: fragment.id,
+            where: 'user-tail',
+            chars: fragment.text.length,
+            preview: contextInjectionPreview(fragment.text),
+          })
+        }
         return [...messages, { role: 'user', content: snapshot }]
       },
     })
@@ -220,6 +247,56 @@ export const promptPlugin: Plugin.Object = {
       fn: (messages) => (ctx.llm.inputModalities.includes('image') ? messages : dropImageParts(messages, NO_IMAGE_NOTE)),
     })
 
+    /** 已注册段的快照（顺序由各段自己声明，这里只按登记表原样取出）。 */
+    const registeredSections = (scope?: AgentScope): PromptContribution[] => {
+      const out: PromptContribution[] = []
+      for (const [id, entry] of sections) {
+        try {
+          out.push({ id, order: entry.order, text: entry.text(scope), ...(entry.block === undefined ? {} : { block: entry.block }) })
+        } catch {
+          // 一个插件把提示词生成崩了，不该让这一轮请求整个失败：这段本轮跳过。
+          void id
+        }
+      }
+      return out
+    }
+
+    /**
+     * 拼这一轮的系统提示（正文 + 段清单）。
+     *
+     * 为什么段清单与正文同一次拼出：卡片上的段清单要与正文逐段对得上，拼两次可能出现
+     * 两次之间 AGENTS.md 被改过的中间态；而且重复拼装等于每轮多读一遍技能目录。
+     */
+    const buildParts = (cwd: string, scope?: AgentScope): { text: string; sections: PromptSectionView[] } => {
+      budget = readBudget(passed)
+      // 没有过滤器时走 keep=undefined 的那条路：段的清单与顺序与以前完全一样
+      const filters = [...skeletonFilters.entries()]
+      const keep =
+        filters.length === 0
+          ? undefined
+          : (ids: readonly string[]): readonly string[] => {
+              let out = ids
+              for (const [id, fn] of filters) {
+                try {
+                  out = fn(out, scope)
+                } catch (error) {
+                  // 取舍崩了就当这一位不存在（提示词多一段总比整轮请求失败强）
+                  ctx.emit('dsc/notice', `提示词段取舍 ${id} 这轮没跑成，已跳过：${errText(error)}`)
+                }
+              }
+              return out
+            }
+      return buildSystemPromptParts(scope?.cwd ?? cwd, {
+        skills: ctx.skills.catalogText(),
+        instructionBudget: budget,
+        contributions: [
+          ...registeredSections(scope),
+          { id: 'model', order: 890, text: `当前模型：${ctx.llm.model}（provider ${ctx.llm.provider}）` },
+        ],
+        ...(keep === undefined ? {} : { keep }),
+      })
+    }
+
     const service: PromptService = {
       register(id, text, options) {
         sections.set(id, { order: options?.order ?? 60, text, block: options?.block })
@@ -243,16 +320,7 @@ export const promptPlugin: Plugin.Object = {
         }
       },
       sections(scope) {
-        const out: PromptContribution[] = []
-        for (const [id, entry] of sections) {
-          try {
-            out.push({ id, order: entry.order, text: entry.text(scope), ...(entry.block === undefined ? {} : { block: entry.block }) })
-          } catch {
-            // 一个插件把提示词生成崩了，不该让这一轮请求整个失败：这段本轮跳过。
-            void id
-          }
-        }
-        return out
+        return registeredSections(scope)
       },
       registerSkeletonFilter(id, fn) {
         skeletonFilters.set(id, fn)
@@ -261,41 +329,19 @@ export const promptPlugin: Plugin.Object = {
         }
       },
       systemPrompt(cwd, scope) {
-        budget = readBudget(passed)
-        // 没有过滤器时走 keep=undefined 的那条路：段的清单与顺序与以前完全一样
-        const filters = [...skeletonFilters.entries()]
-        const keep =
-          filters.length === 0
-            ? undefined
-            : (ids: readonly string[]): readonly string[] => {
-                let out = ids
-                for (const [id, fn] of filters) {
-                  try {
-                    out = fn(out, scope)
-                  } catch (error) {
-                    // 取舍崩了就当这一位不存在（提示词多一段总比整轮请求失败强）
-                    ctx.emit('dsc/notice', `提示词段取舍 ${id} 这轮没跑成，已跳过：${errText(error)}`)
-                  }
-                }
-                return out
-              }
-        return buildSystemPrompt(scope?.cwd ?? cwd, {
-          skills: ctx.skills.catalogText(),
-          instructionBudget: budget,
-          contributions: [
-            ...service.sections(scope),
-            { id: 'model', order: 890, text: `当前模型：${ctx.llm.model}（provider ${ctx.llm.provider}）` },
-          ],
-          ...(keep === undefined ? {} : { keep }),
-        })
+        return buildParts(cwd, scope).text
       },
-      rewrite(messages, session) {
+      systemPromptParts(cwd, scope) {
+        return buildParts(cwd, scope)
+      },
+      rewrite(messages, session, report) {
         requestSession = session ?? ctx.session.current()
         let out = messages
         for (const [id, projection] of projectionChain()) {
           try {
-            // 把本次请求所属会话交给投影：按会话冻结/取状态的投影（微压缩）要靠它
-            out = projection.fn(out, requestSession)
+            // 把本次请求所属会话交给投影：按会话冻结/取状态的投影（微压缩）要靠它。
+            // 第三个参数是注入录音机：投影往请求里加了什么，由它自己报一条摘要。
+            out = projection.fn(out, requestSession, report)
           } catch (error) {
             // 一个投影崩了不该让这一轮请求整个失败：跳过它（模型本轮看到未投影的
             // 原文），但要把话说出来，别让用户对着莫名其妙的端点报错猜。

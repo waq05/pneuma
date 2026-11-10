@@ -7,7 +7,7 @@
  */
 import type { FileChangeSummary, ToolPresentation } from './tools.js'
 import type { RequestSegments } from './token-estimate.js'
-import type { SubagentCardView } from '../contract.js'
+import type { ContextInjectionView, SubagentCardView, SystemPromptView } from '../contract.js'
 
 /** MiniAgent 事件。 */
 export type CoreEvent =
@@ -135,6 +135,21 @@ export type CoreEvent =
    * 发在流式**之前**，context 条在模型还没吐字时就能画出当前的上下文组成。
    */
   | { type: 'context'; segments: RequestSegments }
+  /**
+   * 这一轮请求实际用的系统提示（摘要 + 段清单，正文不随事件带——见 contract 的
+   * {@link SystemPromptView}）。与 `context` 同一时刻发：请求组装完、流还没开。
+   *
+   * 同时落进会话日志（`state('system-prompt')` 条目，带 `after` 落位锚点）：刷新或重开
+   * 这一轮时，卡片要能回到原来的位置，而不是每次开会话都堆到轮首。
+   */
+  | { type: 'prompt/used'; prompt: SystemPromptView }
+  /**
+   * 这次请求额外注进上下文的内容（环境快照、模式条款、沙箱档位、待办提醒）。
+   *
+   * 一条请求发一次、空清单不发。同样落盘（`state('context-injected')`，同样带
+   * `after`）：投影注入是每轮现算的，不记下来重放就再也说不清「模型当时多看到了什么」。
+   */
+  | { type: 'context/injected'; parts: ContextInjectionView[] }
   /**
    * 子代理活动快照（subagent 插件转发，仅当队友的父会话正被查看）：adapter 按
    * 队友名原位更新内联卡。每次都是全量行，没有增量语义。

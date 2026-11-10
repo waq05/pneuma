@@ -240,6 +240,22 @@ export type TranscriptEntry =
    * 重启恢复后界面回退逐刀合并显示（`kind: 'changes'` 照常重放）。
    */
   | { kind: 'turnDiff'; id: number; files: ChangedFileView[]; ts?: number }
+  /**
+   * 这一轮请求用的系统提示（对照 dsh 的 SystemPromptRow）。
+   *
+   * 同 hash 的连续几轮**不各占一条**：adapter 遇到同 hash 就原地刷新上一条的 `ts`
+   * （见 adapter/transcript.ts 的 `prompt/used` 分支）。所以一个会话里这条卡片的数量
+   * 等于「提示词换过几次」，不是「发过几次请求」。
+   */
+  | { kind: 'system-prompt'; id: number; prompt: SystemPromptView; ts?: number }
+  /**
+   * 这一轮请求额外注进上下文的东西（对照 dsh 的 ContextInjectionRow）：环境快照、
+   * 模式条款、沙箱档位、待办提醒。它们**不是**对话历史（投影注入，不落消息流），
+   * 但确实是模型当时看到的内容，单独记一条卡片。
+   *
+   * 与上一条同 kind 的条目比较 `parts`（浅比较）：一样就只刷 `ts`，不叠新卡。
+   */
+  | { kind: 'context-injection'; id: number; parts: ContextInjectionView[]; ts?: number }
 
 /**
  * 一轮对话为什么结束（口径就是宿主 `turn/end` 事件的 reason，见 core/events.ts）。
@@ -321,6 +337,112 @@ export interface DiffHunkView {
   newStart: number
   newCount: number
   lines: DiffLineView[]
+}
+
+/**
+ * 这一轮请求用的系统提示摘视图。**正文不在这里**，只记「哪一版、多大、由哪些段拼成」。
+ *
+ * 为什么不记全文（这是本卡片的第一条设计约束）：一份系统提示每代 15–25KB——内核三段、
+ * 指令文件（AGENTS.md 有 20k 字符预算）、技能目录都在里面。40 轮就是 800KB，而会话日志
+ * 是每开一次会话就要整份重读的。正文本来就按 hash 去重落在 `state('system-prompt')`
+ * 条目里（每会话只留最后一版全文，写入处在 packages/session-core/loop.ts 的请求组装段），
+ * 卡片要展开全文时去那里取，日志里不再抄一遍。
+ */
+export interface SystemPromptView {
+  /** 正文摘要（sha256 前 16 位），与 state('system-prompt') 的 hash 同一个算法（session-core/prompt.ts 的 promptHash）。 */
+  hash: string
+  /** 正文字符数（UTF-16 code unit，与指令预算同口径）。 */
+  chars: number
+  /** 分段清单，按拼装顺序；**正文不在这里**。 */
+  sections: PromptSectionView[]
+  /** 这一段用的模型名。 */
+  model?: string
+  /** 正文取不回来（老会话没有 state 记录）→ 卡片不画「展开全文」。 */
+  bodyMissing?: boolean
+}
+
+/** 系统提示里的一段（只记身份与体量，不记正文）。 */
+export interface PromptSectionView {
+  /** 段 id：identity / behavior / tool-rules / instructions / skills / preset:persona / mode … */
+  id: string
+  /** 注册时声明的顺序刻度。 */
+  order: number
+  chars: number
+  /**
+   * 来源：内核三段 / 指令文件 / 某个插件登记的段。
+   *
+   * `plugin:` 后面跟的是**注册 id**（`PromptService.register` 的第一个参数，约定就是
+   * 插件名，例如 `plugin:preset:persona`）——注册表里只存得住这个 id，没有单独的
+   * 「谁登记的」字段，所以来源就从它来。
+   */
+  from: 'core' | 'file' | `plugin:${string}`
+}
+
+/**
+ * 一条上下文注入（投影往请求里塞的内容）：环境快照、模式条款、沙箱档位、待办提醒。
+ *
+ * 正文同样不整段记：这类内容每轮都重算、常常每轮都变，全文记下来就是每轮一条几千字的
+ * 日志。卡片要的是「这轮注入了什么、注入到哪儿、多长」，收起时给 200 字预览够认出来。
+ */
+export interface ContextInjectionView {
+  /** env-facts / mode / sandbox / todo-reminder / skill-body / lsp-diagnostics / lifecycle-hooks */
+  kind: string
+  /** 提供方（投影名 / 环境片段名 / 工具名），用于对账。 */
+  source: string
+  where: 'system' | 'user-tail'
+  chars: number
+  /** 前 200 字，够收起时认出来；空串 = 没有正文可给。 */
+  preview?: string
+}
+
+/**
+ * 已知的上下文注入类别（`ContextInjectionView.kind`）。
+ *
+ * 为什么给一张常量表：卡片按 kind 挑标题与配色，界面层不许写裸字符串。以后加新的注入
+ * 类别（技能正文、LSP 诊断……）只要在这里补一行。表外的 kind 仍然允许（字段类型是
+ * string）：认不出来的按通用「上下文注入」画，不丢数据。
+ *
+ * 本批只登记这四类——就是本仓现在**真的每轮都会注**的那些。技能正文与 LSP 诊断故意
+ * 不做：它们命中才发一次，而且已经作为**工具结果**落进了会话日志（工具卡里看得到全文），
+ * 再记一张注入卡等于同一份内容记两遍，卡片还会把「模型读了哪些技能」和「模型调了什么
+ * 工具」搅成两套账。生命周期钩子的话术同理，走的是 `note` 记录。
+ */
+export const CONTEXT_INJECTION_KINDS = {
+  /** 每轮附在请求末尾的环境快照（日期 / 平台 / 工作目录 / git 状态）。 */
+  envFacts: 'env-facts',
+  /** 协作模式条款（`registerEnvFacts('mode')`）。 */
+  mode: 'mode',
+  /** 沙箱档位与可写根（`registerEnvFacts('sandbox')`）。 */
+  sandbox: 'sandbox',
+  /** 待办节流提醒（每 8 轮、且清单里还有未完成项才发）。 */
+  todoReminder: 'todo-reminder',
+} as const
+
+/** 表里的取值联合；表外的新类别仍然可以直接写字符串。 */
+export type ContextInjectionKind = (typeof CONTEXT_INJECTION_KINDS)[keyof typeof CONTEXT_INJECTION_KINDS]
+
+/** 注入预览的字符上限：够在收起态认出「这是哪一段」，又不至于把日志撑大。 */
+export const CONTEXT_INJECTION_PREVIEW_CHARS = 200
+
+/** 取一段注入正文的预览（前 200 字）；空白正文给空串，界面据此不画引号。 */
+export function contextInjectionPreview(text: string): string {
+  return text.trim() === '' ? '' : text.slice(0, CONTEXT_INJECTION_PREVIEW_CHARS)
+}
+
+/**
+ * 两份注入清单是不是同一份。
+ *
+ * 判据是逐项浅比较：条目就五个平铺字段（kind / source / where / chars / preview），
+ * 没有嵌套结构，序列化后的字符串比较与手写逐字段比较等价，且键序由同一段代码产出、
+ * 天然固定。adapter 的去重与 Session 的落盘去重共用这一份判据，两条路径不会漂。
+ */
+export function sameContextInjections(
+  a: readonly ContextInjectionView[],
+  b: readonly ContextInjectionView[],
+): boolean {
+  if (a.length !== b.length) return false
+  if (a.length === 0) return true
+  return JSON.stringify(a) === JSON.stringify(b)
 }
 
 /** 一次成功的 write / edit 的实际改动（轮尾「文件已更改」卡与审查面板的数据）。 */

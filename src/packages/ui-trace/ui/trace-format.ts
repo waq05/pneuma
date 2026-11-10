@@ -106,7 +106,7 @@ export interface TraceModel {
 }
 
 /** 步骤种类的中文名（检查器标题与时间条提示用）。 */
-export const KIND_LABEL: Record<TraceStepKind | 'user' | 'changes' | 'turnDiff', string> = {
+export const KIND_LABEL: Record<TraceStepKind | 'user' | 'changes' | 'turnDiff' | 'system-prompt' | 'context-injection', string> = {
   tool: t('kind.tool'),
   thinking: t('kind.thinking'),
   subagent: t('kind.subagent'),
@@ -119,6 +119,9 @@ export const KIND_LABEL: Record<TraceStepKind | 'user' | 'changes' | 'turnDiff',
   // 对话页轮尾卡的组成数据，轨迹页不渲染它；标签留给检查器兜底（类型上仍可能碰到）
   changes: t('kind.changes'),
   turnDiff: t('kind.turnDiff'),
+  // 这两类不进轨迹时间线（见 buildTrace 里的跳过分支），标签只留给检查器的兜底索引
+  'system-prompt': t('kind.systemPrompt'),
+  'context-injection': t('kind.contextInjection'),
 }
 
 /**
@@ -226,7 +229,12 @@ export function buildTraceModel(entries: readonly TranscriptEntry[]): TraceModel
     }
     if (entry.kind === 'text') continue
     // 文件改动条目同样不进轨迹：它是对话页轮尾卡的组成数据，本身不是一步执行。
-    if (entry.kind === 'changes' || entry.kind === 'turnDiff') continue
+    // 「系统提示」与「上下文注入」也不进：它们是「模型看到了什么」的记账（每轮一份、量还大），
+    // 不是执行步骤；塞进时间线只会把真正的步骤挤掉。对话页有这两类条目自己的卡片。
+    if (
+      entry.kind === 'changes' || entry.kind === 'turnDiff'
+      || entry.kind === 'system-prompt' || entry.kind === 'context-injection'
+    ) continue
     const round = current ?? openRound(null)
     round.steps.push(entry)
     const ts = entryTs(entry)

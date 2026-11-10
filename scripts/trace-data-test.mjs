@@ -260,6 +260,8 @@ const harness = (() => {
     asyncInbox: () => [],
     // 重放要读回合提示（notice 记录）来重建重试行：这个假会话没有提示。
     notices: () => [],
+    // 系统提示卡 / 上下文注入卡的落位记录（2026-11）：这个假会话同样没有。
+    marks: () => [],
     meta: { id: 'aaaaaaaabbbbcccc' },
   }
   const handlers = new Map()

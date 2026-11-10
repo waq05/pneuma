@@ -209,6 +209,8 @@ const makeSession = (id, filePath, text) => ({
   fileChanges: new Map(),
   presentations: new Map(),
   notices: () => [],
+  // 转录层还会读系统提示 / 上下文注入的落位记录（2026-11 新增的两类卡片）：这个假会话没有。
+  marks: () => [],
   asyncInbox: () => [],
 })
 

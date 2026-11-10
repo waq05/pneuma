@@ -22,6 +22,8 @@
 import type { ChatMessage, LlmRoute, StreamHandlers, StreamRequest, StreamResult, ToolCall, ToolSchema } from '@pneuma/runtime/core/llm.js'
 import { LlmError, StreamInterruptedError } from '@pneuma/runtime/core/llm.js'
 import type { CoreEvent } from '@pneuma/runtime/core/events.js'
+import type { ContextInjectionView, PromptSectionView, SystemPromptView } from '@pneuma/runtime/contract.js'
+import { promptHash } from './prompt.js'
 import type { Session, InboxOrigin } from '@pneuma/runtime/core/session.js'
 import type { UserFileAttachment } from '@pneuma/runtime/core/attachments.js'
 import type { ToolGuardChain } from '@pneuma/runtime/core/tool-guards.js'
@@ -34,7 +36,13 @@ import { checkReconstructable, snapshotMessages } from '@pneuma/runtime/core/req
 export interface AgentDeps {
   /** 每次请求时动态读取（支持 /model 热切换）。 */
   route(): LlmRoute
-  systemPrompt(): string
+  /**
+   * 拼这一轮的系统提示：正文 + 分段清单（清单给「系统提示」卡用，正文发给模型）。
+   *
+   * 为什么要一起返回：卡片上的段清单必须与正文同源。分两次拼会在两次之间被改掉的文件
+   * （AGENTS.md）上出现「清单与正文对不上」，而且每轮要多读一遍技能目录。
+   */
+  systemPrompt(): { text: string; sections: PromptSectionView[] }
   tools(): ToolEntry[]
   /**
    * 工具守卫链：一次调用动手之前该问谁，由链上的人自己说。
@@ -71,6 +79,14 @@ export interface AgentDeps {
    * 会话取 cwd 的投影靠它取对归属，不能再看「当前查看的会话」）。
    */
   rewrite?(messages: ChatMessage[], session: Session): ChatMessage[]
+  /**
+   * 取走**上一次重写**里投影报上来的上下文注入清单（没有就是空数组）。
+   *
+   * 为什么用「取走」而不是「读」：注入是每轮现算的，录音机只该装这一轮的东西；
+   * 不排空的话，下一轮会把上一轮的残留一起报进来（校验重建那一次重写也会往里塞）。
+   * 缺省不启用（队友的循环没有投影链，系统提示里自带环境事实）。
+   */
+  takeContextInjections?(): ContextInjectionView[]
   /**
    * 完全闲下来（回合收完、没有排队的下一轮）时调一次。常驻注册表用它决定
    * 「非当前查看的 agent 就地收摊」（释放写租约与内存）；当前查看的 agent 不收。
@@ -419,17 +435,40 @@ export class MiniAgent {
       // 这一刻的目录就是这一轮模型看到的目录，执行也按它解析（见 requestTools）
       this.requestTools = tools
       // 系统提示只拼一次：真请求与 invariant 重建侧用同一份文本（重建比的是投影链，
-      // 不是提示词生成本身）。
-      const systemText = this.deps.systemPrompt()
+      // 不是提示词生成本身）。段清单跟正文同一次拼出（见 AgentDeps.systemPrompt）。
+      const prompt = this.deps.systemPrompt()
+      const systemText = prompt.text
       const assembled: ChatMessage[] = [{ role: 'system', content: systemText }, ...this.session.messages]
       // 投影链跑之前拍一份输入快照：之后比对「投影有没有就地改它拿到的输入」
       //（就地改会污染与会话日志共享的消息对象，比结果不一致更隐蔽）。没有 rewrite 就不必拍。
       const pristine = this.deps.rewrite === undefined ? undefined : snapshotMessages(assembled)
       const messages =
         this.deps.rewrite === undefined ? assembled : this.deps.rewrite(assembled, this.session)
+      // 投影链刚报过「这一轮往请求里加了什么」（环境快照 / 模式 / 沙箱 / 待办提醒）。
+      // 立刻取走：下面 invariant 的二次派生还会重跑一遍投影链，那些报告不该混进这一轮。
+      const injections = this.deps.takeContextInjections?.() ?? []
       // 组装与发送之间：校验「发出去的这份」能不能从日志 + 投影链重建。
       // 只报不杀——不一致也照发，理由见 core/request-invariant。
       if (pristine !== undefined) this.checkRequestInvariant(messages, pristine, assembled, systemText)
+      // 系统提示卡与上下文注入卡：请求组装完、真要发出去的那一刻记一笔。
+      //
+      // 为什么在这个位置（而不是 systemPrompt() 里）：要等投影链跑完才知道这一轮注入了
+      // 什么；而落位锚点要的是「此刻日志里有几条消息」——正好是请求发出前一瞬的条数，
+      // 重放才能把两张卡按原位插回消息之间。落盘与广播同一个视图对象，两条路径同形状。
+      const promptView: SystemPromptView = {
+        hash: promptHash(systemText),
+        chars: systemText.length,
+        sections: prompt.sections,
+        model: route.model,
+      }
+      // 落盘按 hash 去重（同一版提示不重复写），广播每次都发（转录层按 hash 原地刷时刻）
+      this.session.appendSystemPrompt(promptView, systemText)
+      this.deps.emit({ type: 'prompt/used', prompt: promptView })
+      if (injections.length > 0) {
+        // 注入清单按「与上一条相同就不写」落盘，广播同理由转录层去重
+        this.session.appendContextInjections(injections)
+        this.deps.emit({ type: 'context/injected', parts: injections })
+      }
       // context 条的分段在请求组装完、流还没开的时候画出来：模型还没吐字，
       // 界面就能显示这次的上下文由什么组成（每次重算，压缩/滚出自动重置）。
       this.deps.emit({

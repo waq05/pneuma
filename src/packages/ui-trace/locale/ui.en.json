@@ -11,6 +11,8 @@
   "kind.user": "User message",
   "kind.changes": "Files changed",
   "kind.turnDiff": "Turn file changes",
+  "kind.systemPrompt": "System prompt",
+  "kind.contextInjection": "Context injection",
   "kind.text": "Body",
   "common.notRecorded": "Not recorded",
   "empty.body": "This session has no execution trace yet. Send a message or use a tool and the execution steps will show up here.",

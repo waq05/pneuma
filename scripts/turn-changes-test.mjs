@@ -114,7 +114,7 @@ try {
   const agent = new MiniAgent(
     {
       route: () => ({ api: 'test', baseUrl: 'http://localhost:0', apiKey: 'k', model: 'm' }),
-      systemPrompt: () => '',
+      systemPrompt: () => ({ text: '', sections: [] }),
       tools: () => [writeTool, editTool],
       guards: {
         gate: async () => ({ action: 'pass' }),

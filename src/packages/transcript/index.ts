@@ -163,6 +163,7 @@ export const transcriptPlugin: Plugin.Object = {
         current.fileChanges,
         current.presentations,
         current.notices(),
+        current.marks(),
       )
       return sameEntries(
         probe.entries.filter((entry) => entry.kind !== 'system' && entry.kind !== 'subagent'),
@@ -221,6 +222,7 @@ export const transcriptPlugin: Plugin.Object = {
           current.fileChanges,
           current.presentations,
           current.notices(),
+          current.marks(),
         )
         // clear() 会把 contextUsed 归零，而重放不重放 usage；不从这里补回来，
         // 每切一次会话状态栏的上下文就掉成 0%。用量日志按会话记着最后一条请求的
@@ -281,8 +283,8 @@ export const transcriptPlugin: Plugin.Object = {
         transcript.plan(view)
         invalidate()
       },
-      replayHistory(messages, toolErrors, fileChanges, presentations, notices) {
-        const changed = transcript.replayHistory(messages, toolErrors, fileChanges, presentations, notices)
+      replayHistory(messages, toolErrors, fileChanges, presentations, notices, marks) {
+        const changed = transcript.replayHistory(messages, toolErrors, fileChanges, presentations, notices, marks)
         if (changed) invalidate()
         return changed
       },
@@ -410,6 +412,12 @@ export const transcriptPlugin: Plugin.Object = {
  *
  * 压缩标记 `compaction` 不剔：它由条目正文推出来（摘要的 SUMMARY_BANNER 前缀、通知的
  * 类别），两条路径算出的值必然相同，属于「内容」而不是「现场测出来的量」。
+ *
+ * 系统提示卡（`prompt`）与上下文注入卡（`parts`）也不剔：hash / 字符数 / 段清单 / 注入
+ * 摘要全都是同一份输入确定性地算出来的（段清单来自同一次拼装、注入摘要来自投影的现场
+ * 报告），重放从日志里读回的又是同一份视图，两条路径逐字段相同。它们要是带上会变的
+ * 东西（时间戳、按当刻进程状态排出来的顺序），这条比对就会永远判不等——所以新增字段
+ * 必须保持确定性，这是本类型的第二条硬约束。
  *
  * 为什么用 JSON 字符串比而不是逐字段写：条目是纯数据、没有函数与循环引用，
  * 序列化顺序由同一段代码产出，键序天然一致；逐字段写要跟着 contract 的六种条目改，

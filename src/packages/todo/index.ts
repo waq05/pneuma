@@ -17,11 +17,12 @@
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
-import { appendTodoReminder } from '@pneuma/runtime/core/todo-reminder.js'
+import { appendTodoReminder, TODO_REMINDER_TEXT } from '@pneuma/runtime/core/todo-reminder.js'
 import { TodoStore } from './todo.js'
 import { Session } from '@pneuma/runtime/core/session.js'
 import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
 import type { SettingsField, SettingsValues, TodoWriteResult } from '@pneuma/runtime/contract.js'
+import { CONTEXT_INJECTION_KINDS, contextInjectionPreview } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec, TodoService } from '@pneuma/runtime/services/types.js'
 import { hostT } from '@pneuma/runtime/core/i18n.js'
 
@@ -248,14 +249,26 @@ export const todoPlugin: Plugin.Object = {
     }
     const offReminder = ctx.prompt.registerProjection(
       'todo-reminder',
-      (messages, session) => {
+      (messages, session, report) => {
         // 提醒问**这次请求那条会话**的清单：后台回合的提醒不该报用户眼前那条的进度（P0-7）。
         const todos = storeFor(session ?? ctx.session.current())
-        return appendTodoReminder(messages, {
+        const out = appendTodoReminder(messages, {
           enabled: reminder.enabled,
           everyRounds: reminder.everyRounds,
           hasOpenTodos: todos.read().some((item) => item.status === 'pending' || item.status === 'in_progress'),
         })
+        // 真补了才报（appendTodoReminder 没补时原样返回同一个数组）：这条提醒是每 8 轮
+        // 才有一次的注入，卡片上要单独看得见「这一轮多了一句待办提醒」。
+        if (out !== messages) {
+          report?.({
+            kind: CONTEXT_INJECTION_KINDS.todoReminder,
+            source: 'todo-reminder',
+            where: 'user-tail',
+            chars: TODO_REMINDER_TEXT.length,
+            preview: contextInjectionPreview(TODO_REMINDER_TEXT),
+          })
+        }
+        return out
       },
       // order 800：排在 env-facts(600) 之后（提醒要落在环境快照之后，也在 drop-images(900) 之前）
       { order: 800 },

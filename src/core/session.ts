@@ -11,7 +11,8 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { ChatContentPart, ChatMessage, ToolCall } from './llm.js'
-import type { ApprovalPolicy, ApprovalReviewer, CollaborationMode, EffortLevel, GoalSnapshot, PlanHistoryItem, PlanView, SandboxMode, TodoItemView, ToolPresentationView } from '../contract.js'
+import type { ApprovalPolicy, ApprovalReviewer, CollaborationMode, ContextInjectionView, EffortLevel, GoalSnapshot, PlanHistoryItem, PlanView, SandboxMode, SystemPromptView, TodoItemView, ToolPresentationView } from '../contract.js'
+import { sameContextInjections } from '../contract.js'
 import { stripBaseline, type FileChangeSummary } from './tools.js'
 import { summarizeChange } from './tools/fs-tools.js'
 import { dropSessionMeta, patchSessionMeta, readSessionMeta } from './session-meta.js'
@@ -69,6 +70,87 @@ export type TurnNotice =
  * 老日志没有这个字段，重放时落在末尾。
  */
 export type SessionNotice = TurnNotice & { ts?: number; after?: number }
+
+/**
+ * 一条「转录落位记录」：系统提示卡 / 上下文注入卡在**消息流里的位置**。
+ *
+ * 为什么单独存一份而不从消息流推：这两类内容都不是 user/assistant 消息（系统提示是
+ * 请求头、注入是投影往请求里塞的），重放消息流造不出它们。日志里记下「当时日志里有
+ * 几条消息」（`after`，与 notice 同一个锚点口径），重放时按这个锚点插回原位——
+ * 不按时间戳：同一毫秒里写下的几条分不出先后，而且实时是「轮中」写入、重放只有轮首。
+ *
+ * 老日志（2026-11 之前）的 `state('system-prompt')` 没有 `after`：读回来时 `after`
+ * 是 undefined，转录层把这种记录落到轮首，并标 `bodyMissing: true`（没有段清单，
+ * 卡片不画「展开全文」）。
+ */
+export type SessionTranscriptMark =
+  | {
+      kind: 'system-prompt'
+      /** 写这条时日志里有几条消息；老记录没有。 */
+      after?: number
+      /** 卡片视图（摘要 + 段清单，正文见 state 条目的 text）。 */
+      prompt: SystemPromptView
+      /** 写入时刻（老记录没有）。 */
+      ts?: number
+    }
+  | {
+      kind: 'context-injection'
+      after?: number
+      parts: ContextInjectionView[]
+      ts?: number
+    }
+
+/**
+ * 一条 `state` 记录能不能还原成转录落位记录（{@link SessionTranscriptMark}）。
+ *
+ * 只认两个条目名：`system-prompt`（老日志里就有，只是没有 after/view）与
+ * `context-injected`（本次新加）。别的 state 条目与转录无关，返回 undefined。
+ *
+ * 老记录没有 `view`：用 hash + text 长度拼一个最小视图，`sections` 空、
+ * `bodyMissing: true`——段清单当年没记，编不出来；正文在，卡片仍能显示摘要与体量。
+ */
+function transcriptMarkOf(id: string, payload: unknown): SessionTranscriptMark | undefined {
+  if (payload === null || typeof payload !== 'object') return undefined
+  const record = payload as {
+    hash?: unknown
+    text?: unknown
+    after?: unknown
+    view?: unknown
+    parts?: unknown
+    ts?: unknown
+  }
+  const after = typeof record.after === 'number' && Number.isFinite(record.after) ? record.after : undefined
+  const ts = typeof record.ts === 'number' && Number.isFinite(record.ts) ? record.ts : undefined
+  if (id === 'system-prompt') {
+    if (typeof record.hash !== 'string') return undefined
+    const stored = record.view
+    const view =
+      stored !== null && typeof stored === 'object' && Array.isArray((stored as { sections?: unknown }).sections)
+        ? (stored as SystemPromptView)
+        : {
+            hash: record.hash,
+            chars: typeof record.text === 'string' ? record.text.length : 0,
+            sections: [],
+            bodyMissing: true,
+          }
+    return {
+      kind: 'system-prompt',
+      prompt: view,
+      ...(after === undefined ? {} : { after }),
+      ...(ts === undefined ? {} : { ts }),
+    }
+  }
+  if (id === 'context-injected') {
+    if (!Array.isArray(record.parts)) return undefined
+    return {
+      kind: 'context-injection',
+      parts: record.parts as ContextInjectionView[],
+      ...(after === undefined ? {} : { after }),
+      ...(ts === undefined ? {} : { ts }),
+    }
+  }
+  return undefined
+}
 
 /**
  * 收件箱条目的来源（对照 dsh 的「用户消息 vs 带来源的持久消息」）。
@@ -277,11 +359,23 @@ export interface SessionStateMap {
    */
   learnings: unknown
   /**
-   * 最近一次请求使用的系统提示词全文（agent 插件写，hash 去重——变了才写一条）。
-   * 系统提示不进 user/assistant 消息流，靠这条状态记录补上「模型看到的提示词」：
-   * 恢复会话后最后一条就是当前生效的那份（Model-visible ⟺ logged 的提示词半边）。
+   * 最近一次请求使用的系统提示词全文（agent 插件拼、循环在发请求前写，hash 去重——
+   * 变了才写一条）。系统提示不进 user/assistant 消息流，靠这条状态记录补上「模型看到的
+   * 提示词」：恢复会话后最后一条就是当前生效的那份（Model-visible ⟺ logged 的提示词半边）。
+   *
+   * `after` = 写这条时日志里有几条消息（重放落位锚点，口径与 notice 一致）；`view` 是
+   * 给系统提示卡用的摘要（hash / 字符数 / 段清单 / 模型），正文不进卡片。两者都是
+   * 2026-11 加的：老记录没有，重放时那条卡片落到轮首并标 `bodyMissing`。
    */
-  'system-prompt': { hash: string; text: string }
+  'system-prompt': { hash: string; text: string; after?: number; view?: SystemPromptView; ts?: number }
+  /**
+   * 最近一次请求往上下文里注入的内容（投影链里的环境快照 / 模式 / 沙箱 / 待办提醒）。
+   *
+   * 只记摘要（kind / source / where / 字符数 / 前 200 字），不记正文——注入正文每轮重算，
+   * 整段抄进日志等于每轮多几千字。变了才写一条（与上一条 parts 浅比较），重放时按
+   * `after` 插回原位，连续两轮一样就只刷卡片的时刻。
+   */
+  'context-injected': { parts: ContextInjectionView[]; after?: number; ts?: number }
   /**
    * 最近一次请求附给模型的环境快照全文（prompt 插件的 env-facts 投影写，hash 去重）。
    * 2026-10-03 起环境事实不再进系统提示词，这份条目就是「模型当时看到的环境」的留痕。
@@ -531,6 +625,14 @@ export class Session {
   private readonly noteLog: SessionNote[] = []
   /** 回合提示（notice 记录）：模型重试、失败原因；恢复会话时重放回来，经 {@link notices} 读出。 */
   private readonly noticeLog: SessionNotice[] = []
+  /**
+   * 转录落位记录（系统提示卡 / 上下文注入卡），按写入顺序。
+   *
+   * 实时路径由 {@link appendSystemPrompt} / {@link appendContextInjections} 追加；恢复会话时
+   * 从日志里这两个 state 条目还原（见 {@link Session.load} 的 `case 'state'`）。转录层拿它
+   * 把这两类卡片按 `after` 插回消息之间，重放出来的条目才与实时那条一模一样。
+   */
+  private readonly markLog: SessionTranscriptMark[] = []
 
   private constructor(
     meta: SessionMeta,
@@ -541,6 +643,7 @@ export class Session {
     initialNotes: SessionNote[] = [],
     lease: FileLock | null = null,
     initialNotices: SessionNotice[] = [],
+    initialMarks: SessionTranscriptMark[] = [],
   ) {
     this.meta = meta
     this.file = file
@@ -550,6 +653,7 @@ export class Session {
     if (state !== undefined) for (const [id, payload] of state) this.stateById.set(id, payload)
     this.noteLog.push(...initialNotes)
     this.noticeLog.push(...initialNotices)
+    this.markLog.push(...initialMarks)
   }
 
   /**
@@ -593,6 +697,8 @@ export class Session {
     const state = new Map<string, unknown>()
     const notes: SessionNote[] = []
     const notices: SessionNotice[] = []
+    /** 转录落位记录：`state` 里的 system-prompt / context-injected 逐条还原（文件顺序即真顺序）。 */
+    const marks: SessionTranscriptMark[] = []
     for (const line of lines) {
       let record: SessionRecord
       try {
@@ -678,9 +784,15 @@ export class Session {
           messages.push(...tail)
           break
         }
-        case 'state':
+        case 'state': {
           state.set(record.id, record.payload)
+          // 系统提示卡与上下文注入卡的落位记录也藏在 state 里：它们不是「最后一条生效」
+          // 的状态，而是**按条记账**的卡片（每条带 after 锚点），所以这里另收一份。
+          // 文件本身就是 append-only，逐行读下来的顺序就是真实写入顺序，不必再记序号。
+          const mark = transcriptMarkOf(record.id, record.payload)
+          if (mark !== undefined) marks.push(mark)
           break
+        }
         case 'rewind': {
           // 「从这里往后作废」（编辑并重发）：截到第 keep 条人打的用户消息之前。
           // 序号越界（老日志被别的东西改过）就当没看见——宁可多显示一段历史，也不能
@@ -727,6 +839,7 @@ export class Session {
       notes,
       lease,
       notices,
+      marks,
     )
     for (const [callId, error] of toolErrors) session.toolErrors.set(callId, error)
     for (const [callId, change] of fileChanges) session.fileChanges.set(callId, change)
@@ -1115,6 +1228,54 @@ export class Session {
   }
 
   /**
+   * 已记录的转录落位记录（系统提示卡 / 上下文注入卡），按写入顺序。
+   *
+   * 转录层拿它把这两类卡片按 `after` 插回消息之间（见 adapter/transcript 的 replayHistory）：
+   * 消息流里没有它们，不从日志里读回来，重放出来的会话就少了这两类卡。
+   */
+  marks(): readonly SessionTranscriptMark[] {
+    return this.markLog
+  }
+
+  /**
+   * 记一条系统提示卡的落位记录，同时更新 `state('system-prompt')` 里的全文。
+   *
+   * 两个东西写在同一条记录里：卡片视图（hash / 字符数 / 段清单 / 模型）与正文，
+   * 再加一个 `after` 落位锚点（此刻日志里有几条消息）。正文按 hash 去重——同一版提示
+   * 连发几轮不重复写，卡片那头也只在第一次建条目（见 adapter 的 `prompt/used`）。
+   *
+   * @param view - 卡片视图（hash 已经算好，口径见 session-core/prompt 的 promptHash）
+   * @param text - 这一版提示词的全文（卡片「展开全文」读它）
+   */
+  appendSystemPrompt(view: SystemPromptView, text: string): void {
+    if (this.state('system-prompt')?.hash === view.hash) return
+    const ts = Date.now()
+    const after = this.messages.length
+    this.markLog.push({ kind: 'system-prompt', after, prompt: view, ts })
+    this.appendState('system-prompt', { hash: view.hash, text, after, view, ts })
+  }
+
+  /**
+   * 记一条上下文注入卡（这一轮请求额外注入了什么）。
+   *
+   * 与上一条完全相同就不写：注入内容常一轮一变，但「没变的那几轮」不该在日志里重复
+   * 记一遍（界面上也只是原地刷一下卡片的时刻）。判据与 adapter 的去重共用
+   * {@link sameContextInjections}，两条路径不会判出两种结果。
+   *
+   * @param parts - 这次请求的注入清单（按注入顺序；空清单不写）
+   */
+  appendContextInjections(parts: readonly ContextInjectionView[]): void {
+    if (parts.length === 0) return
+    const copy = parts.map((part) => ({ ...part }))
+    const previous = this.state('context-injected')?.parts
+    if (previous !== undefined && sameContextInjections(previous, copy)) return
+    const ts = Date.now()
+    const after = this.messages.length
+    this.markLog.push({ kind: 'context-injection', after, parts: copy, ts })
+    this.appendState('context-injected', { parts: copy, after, ts })
+  }
+
+  /**
    * 记一条回合提示（`notice` 记录）：模型重试、这一轮为什么失败。
    *
    * 写盘时机照 dsh 的「先持久、后等待」：重试提示在退避开始**之前**就落下去，
@@ -1332,8 +1493,9 @@ const TAIL_SCAN_CHARS = 512 * 1024
  * 刚被写过」。权限三项的默认值、模型档位这些记账都会在**打开会话**时补写一条
  * `state`，于是老会话被点开一次，侧栏时间就跳到「刚刚」——可它一个字都没多。
  * 界面要的是「最后一步是什么时候」，所以取最后一条带 `ts` 的对话记录
- * （user / assistant / tool / summary / rewind / note 都带），没有 `ts` 的 state
- * 记账自然被跳过。
+ * （user / assistant / tool / summary / rewind / note 都带；2026-11 起
+ * `system-prompt` / `context-injected` 两条 state 记账也带，它们同样记在「一步」上，
+ * 而且写在同一步的 assistant 之前），没有 `ts` 的 state 记账自然被跳过。
  *
  * 老日志（`ts` 字段引入之前）整份都找不到 ts：回落到 mtime，至少排序不乱。
  * 只扫尾部：append-only 的日志里最后一条记录必定贴着文件尾，单独一段够用；

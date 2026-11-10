@@ -53,7 +53,7 @@ function makeAgent({ tools = [], stream }) {
   const agent = new MiniAgent(
     {
       route: () => ({ api: 'test', baseUrl: 'http://localhost:0', apiKey: 'k', model: 'm' }),
-      systemPrompt: () => '',
+      systemPrompt: () => ({ text: '', sections: [] }),
       tools: () => tools,
       guards: { gate: async () => ({ action: 'pass' }), observe: (_name, text) => text },
       emit: (event) => events.push(event),

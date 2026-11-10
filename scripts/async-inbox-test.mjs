@@ -66,7 +66,7 @@ const textsOf = (session, role) => session.messages.filter((m) => m.role === rol
   const agent = new MiniAgent(
     {
       route: () => ({ api: 'test', baseUrl: 'http://localhost:0', apiKey: 'k', model: 'm' }),
-      systemPrompt: () => '',
+      systemPrompt: () => ({ text: '', sections: [] }),
       tools: () => [
         {
           name: 'slow_thing',
@@ -120,7 +120,7 @@ const textsOf = (session, role) => session.messages.filter((m) => m.role === rol
   const agent = new MiniAgent(
     {
       route: () => ({ api: 'test', baseUrl: 'http://localhost:0', apiKey: 'k', model: 'm' }),
-      systemPrompt: () => '',
+      systemPrompt: () => ({ text: '', sections: [] }),
       tools: () => [],
       guards: { gate: async () => ({ action: 'pass' }), observe: (_name, text) => text },
       emit: (event) => events.push(event),
@@ -170,7 +170,7 @@ const textsOf = (session, role) => session.messages.filter((m) => m.role === rol
   agent = new MiniAgent(
     {
       route: () => ({ api: 'test', baseUrl: 'http://localhost:0', apiKey: 'k', model: 'm' }),
-      systemPrompt: () => '',
+      systemPrompt: () => ({ text: '', sections: [] }),
       tools: () => [],
       guards: { gate: async () => ({ action: 'pass' }), observe: (_name, text) => text },
       emit: (event) => {
@@ -224,7 +224,7 @@ const textsOf = (session, role) => session.messages.filter((m) => m.role === rol
   agent = new MiniAgent(
     {
       route: () => ({ api: 'test', baseUrl: 'http://localhost:0', apiKey: 'k', model: 'm' }),
-      systemPrompt: () => '',
+      systemPrompt: () => ({ text: '', sections: [] }),
       tools: () => [],
       guards: { gate: async () => ({ action: 'pass' }), observe: (_name, text) => text },
       emit: (event) => events.push(event),
@@ -275,7 +275,7 @@ const textsOf = (session, role) => session.messages.filter((m) => m.role === rol
   const agent = new MiniAgent(
     {
       route: () => ({ api: 'test', baseUrl: 'http://localhost:0', apiKey: 'k', model: 'm' }),
-      systemPrompt: () => '',
+      systemPrompt: () => ({ text: '', sections: [] }),
       tools: () => [
         {
           name: 'slow_thing',

@@ -11,6 +11,8 @@
   "kind.user": "用户消息",
   "kind.changes": "文件已更改",
   "kind.turnDiff": "回合文件更改",
+  "kind.systemPrompt": "系统提示",
+  "kind.contextInjection": "上下文注入",
   "kind.text": "正文",
   "common.notRecorded": "未记录",
   "empty.body": "本会话还没有执行轨迹。发送消息或使用工具后，这里会显示执行过程。",

@@ -173,6 +173,8 @@ const makeCtx = (current) => {
     },
     prompt: {
       systemPrompt: () => 'probe system prompt',
+      // 2026-11 起 prompt 服务还提供「正文 + 段清单」的版本（系统提示卡用）；这个假服务只要正文。
+      systemPromptParts: () => ({ text: 'probe system prompt', sections: [] }),
       registerProjection(id, fn) {
         ctx.projections.set(id, fn)
         return () => {}

@@ -72,6 +72,7 @@ export function emitStartupNotes(
       root.session.current().fileChanges,
       root.session.current().presentations,
       root.session.current().notices(),
+      root.session.current().marks(),
     )
     // 重启后的第一帧状态栏也得有上下文读数：用量日志按会话存着最后一条请求的
     // 输入 token，它与前台切会话共用同一条回填口径。日志里没有这条会话就不填，

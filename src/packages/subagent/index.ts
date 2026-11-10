@@ -739,8 +739,8 @@ export const subagentPlugin: Plugin.Object = {
           // 子代理的 deps 没有 rewrite（主会话的 env-facts 投影对子代理不生效），
           // 又没有尾部快照那条路，所以环境/模型事实直接写进它自己的系统提示词。
           // cwd 取派它的那个会话（子代理在父会话的 cwd 下干活），模型取冻结的工牌。
-          systemPrompt: () =>
-            `${input.role.prompt}
+          systemPrompt: () => {
+            const text = `${input.role.prompt}
 
 ${subagentEnvironmentText(input.parentSession.meta.cwd, teammate.badge.model ?? ctx.llm.model)}
 
@@ -753,7 +753,14 @@ ${
           }
 ${teammate.badge.tools === null ? '' : `你只被授权这些工具：${teammate.badge.tools.join('、')}。用别的办法办不成就在最后一段说清楚，让 ${teammate.parent} 决定。${config.board ? '协作类工具（team_task）不受这份名单限制：任务板是团队共用的登记表，认领与结项直接用。' : ''}`}
 ${teammate.badge.approval === 'forbid' ? '你不能向用户请求授权：需要授权的操作会被直接拒绝，不要反复尝试。' : '需要授权的操作可以向用户请求，审批卡上会写明是你（' + teammate.name + '）在请求。'}
-干完活用一段话交结果：做了什么、看到什么证据（文件名:行号）、还有什么没做。`,
+干完活用一段话交结果：做了什么、看到什么证据（文件名:行号）、还有什么没做。`
+            // 队友的提示词不在段注册表里（它是几块直接拼的），给「系统提示」卡一条合成段：
+            // 卡片至少能显示体量与来源，不至于空着一张段清单（队友的日志只在只读浮层里看）。
+            return {
+              text,
+              sections: [{ id: 'teammate', order: 0, chars: text.length, from: 'plugin:subagent' as const }],
+            }
+          },
           // 设限时的最后一轮：工具表收成空，逼它用文本交结论（否则它会一直调工具直到被掐）
           tools: () =>
             teammate.badge.maxTurns > 0 && teammate.rounds >= teammate.badge.maxTurns - 1

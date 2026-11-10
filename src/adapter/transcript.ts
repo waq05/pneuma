@@ -14,10 +14,11 @@
  * @module dsc/adapter/transcript
  */
 import type { CoreEvent } from '../core/events.js'
-import type { SessionNotice } from '../core/session.js'
+import type { SessionNotice, SessionTranscriptMark } from '../core/session.js'
 import { contentImages, contentText, type ChatMessage } from '../core/llm.js'
 import type { FileChangeSummary } from '../core/tools.js'
 import type { ToolPresentationView } from '../contract.js'
+import { sameContextInjections } from '../contract.js'
 import { SUMMARY_BANNER } from '../core/compact-anchors.js'
 import { REVIEW_FINDINGS_OPEN, TEAMMATE_REPORT_OPEN } from '../core/team-board.js'
 import { addUsageToBuckets, emptyCostBuckets, isPeakHour, type CostBuckets } from '../core/pricing.js'
@@ -66,6 +67,21 @@ export function noticeEvent(notice: SessionNotice): CoreEvent {
     }
   }
   return { type: 'error', message: notice.text }
+}
+
+/**
+ * 落位记录 → 转录事件：系统提示卡 / 上下文注入卡。
+ *
+ * 与 {@link noticeEvent} 同一个理由：同一条记录在现场是事件、恢复时也必须是事件，
+ * 两条路才会得到同一个形状（id 发号、去重判据、ts 全一致）。重放靠日志里记的
+ * `after` 插回原位（见 replayHistory）。
+ *
+ * @param mark - 会话日志里读回来的落位记录
+ */
+export function markEvent(mark: SessionTranscriptMark): CoreEvent {
+  return mark.kind === 'system-prompt'
+    ? { type: 'prompt/used', prompt: mark.prompt }
+    : { type: 'context/injected', parts: mark.parts }
 }
 
 /** 把会话事件流折叠成有序 transcript。 */
@@ -326,8 +342,36 @@ export class Transcript {
     fileChanges?: ReadonlyMap<string, readonly FileChangeSummary[]>,
     presentations?: ReadonlyMap<string, ToolPresentationView>,
     notices?: readonly SessionNotice[],
+    marks?: readonly SessionTranscriptMark[],
   ): boolean {
     let changed = false
+    // 系统提示卡与上下文注入卡同样不在消息流里（系统提示是请求头、注入是投影塞进请求的），
+    // 只能靠日志记下的 `after`（写它时日志里有几条消息）插回原位。没有锚点的老记录
+    // （2026-11 之前的 system-prompt 状态条目）落到轮首——它们当年没记位置，与其猜，
+    // 不如放在最前面；`bodyMissing` 已由 Session.load 标好（段清单当年没记）。
+    //
+    // 顺序：同一锚点上，落位记录排在回合提示之前——实时路径里请求组装（记卡片）必然
+    // 早于流式过程中的重试提示，重放照这个先后走，两边的条目顺序才一致。
+    // 按锚点升序处理（同一锚点上保持日志里的写入顺序）：正常情况下日志顺序天然就是升序，
+    // 只有「编辑并重发」把消息截短过之后才会出现回落，那时按号排一遍才不会漏掉后面的记录。
+    const anchoredMarks = (marks ?? [])
+      .filter((mark) => typeof mark.after === 'number')
+      .sort((left, right) => (left.after ?? 0) - (right.after ?? 0))
+    const headMarks = (marks ?? []).filter((mark) => typeof mark.after !== 'number')
+    for (const mark of headMarks) {
+      changed = this.reduce(markEvent(mark), mark.ts ?? null) || changed
+    }
+    let markAt = 0
+    const flushMarks = (index: number | null): boolean => {
+      let flushed = false
+      while (markAt < anchoredMarks.length) {
+        const mark = anchoredMarks[markAt]!
+        if (index !== null && (mark.after ?? 0) > index) break
+        flushed = this.reduce(markEvent(mark), mark.ts ?? null) || flushed
+        markAt += 1
+      }
+      return flushed
+    }
     // 回合提示（重试 / 失败原因）与消息在日志里是两个流，在界面上是一条线：按 notice 记录的
     // `after`（写它时日志里有几条消息）插回原位——重试一定排在它促成的回答之前。
     // 为什么不按时间戳：同一毫秒里写下的几条分不出先后（重试提示与紧接着写的答案就会撞上），
@@ -348,6 +392,7 @@ export class Transcript {
     for (let index = 0; index < messages.length; index += 1) {
       const message = messages[index]!
       const ts = message.ts ?? null
+      changed = flushMarks(index) || changed
       changed = flushNotices(index) || changed
       switch (message.role) {
         case 'user': {
@@ -420,7 +465,9 @@ export class Transcript {
         }
       }
     }
-    // 剩下的提示（还没有下文的那几条）落到末尾：宁可排在最后，也不能丢。
+    // 剩下的落位记录与提示（还没有下文的那几条）落到末尾：宁可排在最后，也不能丢。
+    // 同一锚点上仍是「记录在前、提示在后」（理由见上面 anchoredMarks 的注释）。
+    changed = flushMarks(null) || changed
     changed = flushNotices(null) || changed
     for (const notice of trailing) {
       changed = this.reduce(noticeEvent(notice), notice.ts ?? null) || changed
@@ -487,6 +534,19 @@ export class Transcript {
   /** 给新条目盖时间戳；重放老日志（eventTs 为 null）时不盖。 */
   private stamp(entry: TranscriptEntry): TranscriptEntry {
     return this.eventTs === null ? entry : { ...entry, ts: this.eventTs }
+  }
+
+  /**
+   * 从尾部找最近一条这个 kind 的条目（没有返回 -1）。
+   *
+   * 为什么不是「只看最后一条」：系统提示卡与上下文注入卡的去重对象是「上一条同类的卡」，
+   * 而两条同类卡之间一定隔着正文、工具行这些东西。只看紧邻的那条，等于每轮都新长一张卡。
+   */
+  private lastIndexOfKind(kind: TranscriptEntry['kind']): number {
+    for (let index = this.list.length - 1; index >= 0; index -= 1) {
+      if (this.list[index]?.kind === kind) return index
+    }
+    return -1
   }
 
   /**
@@ -859,6 +919,37 @@ export class Transcript {
         }
         this.list.push(this.stamp({ kind: 'subagent', id: this.seq++, sub: event.row }))
         this.subagentIndex.set(event.row.name, this.list.length - 1)
+        return true
+      }
+      case 'prompt/used': {
+        // 同一版提示连发几轮（一次请求一条事件）不各占一张卡：hash 一样就原地刷时刻。
+        // 比较的是**上一条同 kind 的条目**、不是紧邻的那一条——同一轮里中间会插进正文与
+        // 工具行，只看紧邻的会让每一步都新长一张卡。内容一样就不换视图对象（同一版提示的
+        // 段清单必然一样），只把「最后一次写入」的时刻往前挪，折叠态因此不会重置。
+        const at = this.lastIndexOfKind('system-prompt')
+        const previous = at >= 0 ? this.list[at] : undefined
+        if (previous !== undefined && previous.kind === 'system-prompt' && previous.prompt.hash === event.prompt.hash) {
+          this.list[at] = this.stamp({ ...previous })
+          return true
+        }
+        this.list.push(this.stamp({ kind: 'system-prompt', id: this.seq++, prompt: event.prompt }))
+        return true
+      }
+      case 'context/injected': {
+        // 注入清单与上一条同 kind 的条目一样就只刷时刻（判据与会话日志的落盘去重同一份，
+        // 两条路不会判出两种结果）。空清单不建条目——那只是因为这一轮什么都没注入。
+        if (event.parts.length === 0) return false
+        const at = this.lastIndexOfKind('context-injection')
+        const previous = at >= 0 ? this.list[at] : undefined
+        if (
+          previous !== undefined &&
+          previous.kind === 'context-injection' &&
+          sameContextInjections(previous.parts, event.parts)
+        ) {
+          this.list[at] = this.stamp({ ...previous })
+          return true
+        }
+        this.list.push(this.stamp({ kind: 'context-injection', id: this.seq++, parts: event.parts }))
         return true
       }
       case 'error':

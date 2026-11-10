@@ -20,8 +20,10 @@
  * @module dsc/core/prompt
  */
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import type { PromptSectionView } from '@pneuma/runtime/contract.js'
 import { userHome } from '@pneuma/runtime/core/path-policy.js'
 import { readShellChoice, shellLabel } from '@pneuma/runtime/core/terminal-env.js'
 import { wrapUntrusted } from '@pneuma/runtime/core/untrusted.js'
@@ -76,12 +78,27 @@ const INSTRUCTION_TAIL = 0.2
 const INSTRUCTION_NAMES = ['AGENTS.override.md', 'AGENTS.md', 'CLAUDE.md', 'cursorrules', '.cursorrules']
 
 /** 顺序拼接：先按 order，再按 id。 */
-export function composePrompt(sections: readonly PromptContribution[]): string {
+function orderedSections(sections: readonly PromptContribution[]): PromptContribution[] {
   return [...sections]
     .filter((section) => section.text.trim() !== '')
     .sort((a, b) => (a.order === b.order ? a.id.localeCompare(b.id) : a.order - b.order))
+}
+
+export function composePrompt(sections: readonly PromptContribution[]): string {
+  return orderedSections(sections)
     .map((section) => section.text.trim())
     .join('\n\n')
+}
+
+/**
+ * 系统提示正文的摘要（sha256 前 16 位十六进制）。
+ *
+ * 口径只有这一处：会话日志 `state('system-prompt')` 的去重键、卡片视图上的 `hash`、
+ * 重放时「同一版提示不重复建卡」的判据全用它。2026-11 之前这段算法写在 agent 插件里，
+ * 现在跟着写入处一起搬进循环（见 session-core/loop 的 `prompt/used`）。
+ */
+export function promptHash(text: string): string {
+  return createHash('sha256').update(text).digest('hex').slice(0, 16)
 }
 
 const IDENTITY = `你是 Pneuma，跑在用户桌面里的编程助手。全程用中文回答，称呼用户「兄弟」。
@@ -378,12 +395,29 @@ export interface SystemPromptOptions {
   keep?: (ids: readonly string[]) => readonly string[]
 }
 
+/** 一次系统提示拼装的两个产物：正文 + 卡片用的段清单（正文不重复进清单）。 */
+export interface SystemPromptBuild {
+  /** 真正发给模型的提示词全文。 */
+  text: string
+  /** 分段清单，按拼装顺序（与正文的段序一致）。 */
+  sections: PromptSectionView[]
+}
+
 /**
- * 拼系统提示词。
+ * 拼系统提示词，同时给出分段清单。
+ *
+ * 两者必须同源：卡片上的段清单要与正文逐段对得上，所以清单从**同一份**排好序的段里
+ * 出，不另外再拼一遍（另拼一遍的代价是 AGENTS.md 与技能目录各读两次，还可能读到两次
+ * 之间被改掉的中间态）。
+ *
+ * 字符口径：`text` 是全文长度（UTF-16 code unit）；每段的 `chars` 是**去掉首尾空白后**
+ * 的长度——那才是真正落进提示词的字数。两者差值就是段之间的两个换行，所以
+ * 「段字符加起来」不等于全文长度是正常的。
+ *
  * @param cwd - 当前会话工作目录。
  * @param options - 见 {@link SystemPromptOptions}。
  */
-export function buildSystemPrompt(cwd: string, options: SystemPromptOptions = {}): string {
+export function buildSystemPromptParts(cwd: string, options: SystemPromptOptions = {}): SystemPromptBuild {
   const budget = options.instructionBudget ?? DEFAULT_INSTRUCTION_BUDGET
   const contributions = options.contributions ?? []
   // 段的候选清单先摆出来，再交给 keep 决定留哪些；keep 一个都不去时下面走的
@@ -410,5 +444,42 @@ export function buildSystemPrompt(cwd: string, options: SystemPromptOptions = {}
     if (wants(section.id)) sections.push(section)
   }
   if (wants('skills')) sections.push({ id: 'skills', order: 210, text: (options.skills ?? '').trim() })
-  return composePrompt(sections)
+
+  const ordered = orderedSections(sections)
+  const pluginIds = new Set(contributions.map((section) => section.id))
+  return {
+    text: ordered.map((section) => section.text.trim()).join('\n\n'),
+    sections: ordered.map((section) => ({
+      id: section.id,
+      order: section.order,
+      chars: section.text.trim().length,
+      from: sectionSource(section.id, pluginIds),
+    })),
+  }
+}
+
+/**
+ * 拼系统提示词（正文），保持老调用面不变。
+ * @param cwd - 当前会话工作目录。
+ * @param options - 见 {@link SystemPromptOptions}。
+ */
+export function buildSystemPrompt(cwd: string, options: SystemPromptOptions = {}): string {
+  return buildSystemPromptParts(cwd, options).text
+}
+
+/** 内核自己产出的四段（身份 / 做事方式 / 工具规范 / 技能目录）。 */
+const CORE_SECTION_IDS = new Set(['identity', 'behavior', 'tool-rules', 'skills'])
+
+/**
+ * 一段的来源（卡片上的 `from`）：内核段、指令文件、还是某个插件登记的贡献段。
+ *
+ * 为什么插件段标 `plugin:<注册 id>`：注册表只存得住注册 id（第一个参数，约定就是插件名），
+ * 没有单独的「谁登记的」字段；`preset:persona` 这种自带冒号的 id 会得到
+ * `plugin:preset:persona`，一样能对账。并进 `# agentsMd` 块的那几段（长期记忆索引）不单列，
+ * 它们的字数已经算在 `instructions` 那一段里。
+ */
+function sectionSource(id: string, pluginIds: ReadonlySet<string>): PromptSectionView['from'] {
+  if (CORE_SECTION_IDS.has(id)) return 'core'
+  if (id === 'instructions') return 'file'
+  return pluginIds.has(id) ? `plugin:${id}` : 'core'
 }
