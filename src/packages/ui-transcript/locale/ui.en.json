@@ -66,6 +66,8 @@
   "transcript.entry.failed": "This turn failed",
   "transcript.entry.unknownKind": "Unrecognized entry: {kind}",
   "transcript.entry.renderFailed": "This row could not be displayed: {message}",
+  "transcript.compaction.mark": "History compacted (compaction {count})",
+  "transcript.compaction.tip": "Only the summary is kept; the original text before it is no longer sent to the model",
   "transcript.retry.active": "Retrying model request",
   "transcript.retry.started": "Retried model request",
   "transcript.retry.status": "{label} ({retry}/{maximum}) · {seconds}s",

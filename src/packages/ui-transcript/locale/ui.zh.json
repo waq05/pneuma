@@ -66,6 +66,8 @@
   "transcript.entry.failed": "这一轮过程失败",
   "transcript.entry.unknownKind": "认不出的条目：{kind}",
   "transcript.entry.renderFailed": "这一条没有显示出来：{message}",
+  "transcript.compaction.mark": "历史已压缩（第 {count} 次）",
+  "transcript.compaction.tip": "压缩只保留摘要，这份摘要之前的原文不再发给模型",
   "transcript.retry.active": "正在重试模型请求",
   "transcript.retry.started": "已重试模型请求",
   "transcript.retry.status": "{label}（{retry}/{maximum}） · {seconds}s",

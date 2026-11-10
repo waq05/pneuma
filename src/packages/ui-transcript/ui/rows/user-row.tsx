@@ -11,6 +11,7 @@ import { FileIcon, IconEdit, createT, setDockPreview, type TranscriptEntry, type
 // 体积读数与文件树、预览面板、输入区附件同一份实现（壳里唯一一份）。
 import { formatBytes, ImageLightbox, parseReviewFindings, ReviewFindingsCard } from '@dsc/ui-primitives'
 import { FlowActionsContext, ShellCwdContext } from '../shared'
+import type { CompactionMark } from './compaction-row'
 import { TriggerRow } from './trigger-row'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 import zh from '../../locale/ui.zh.json'
@@ -79,6 +80,36 @@ function FileAttachmentCard({ file }: { file: UserFileAttachment }): ReactNode {
   )
 }
 
+/**
+ * 这条用户消息上带的压缩标记：气泡**上方**一行 16px 的小字（「历史已压缩（第 N 次）」）。
+ *
+ * 什么时候会有：重放出来的压缩摘要本身就是一条 `role: 'user'` 的消息（宿主 compact 造的），
+ * 适配器靠正文前缀认出它、在原 kind 上打 `compaction` 标记（见 `contract` 的 CompactionMark）。
+ * 所以会话流里「压缩落点」有两种画法：实时的 system 通知走 `CompactionRow`（一条分隔线，
+ * 见 render.tsx），重放的摘要走这里——摘要正文本身还要当气泡看，只能在它上面加一枚小标。
+ *
+ * 为什么是气泡外面的一行、而不是塞进气泡：气泡是右对齐的软填充块（`max-width: 78%`），
+ * 往里加一行字会把它撑宽、正文跟着重排。放在 `.user-turn` 的第一行（这一层是
+ * `align-items: flex-end` 的纵列）右对齐、高度固定 16px，气泡的尺寸与对齐一个像素都不动。
+ *
+ * @param props.mark - 压缩标记（次数）
+ * @returns 一行小字
+ */
+function UserCompactionMark({ mark }: { mark: CompactionMark }): ReactNode {
+  // 与 `CompactionRow` 同一条理由：`data-tip` 的气泡层已下线，说明要靠原生 `title` 才看得见。
+  const tip = t('transcript.compaction.tip')
+  return (
+    <span
+      className="entry-user-compaction"
+      data-compaction-count={mark.count}
+      data-tip={tip}
+      title={tip}
+    >
+      {t('transcript.compaction.mark', { count: mark.count })}
+    </span>
+  )
+}
+
 /** 用户消息：气泡 + 贴图条 + hover 浮出的「编辑」钮（编辑重发 = 在当前会话里截断到这条再重发）。 */
 export function UserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'user' }> }): ReactNode {
   const actions = useContext(FlowActionsContext)
@@ -102,6 +133,7 @@ export function UserRow({ entry }: { entry: Extract<TranscriptEntry, { kind: 'us
   return (
     <>
       <div className="user-turn">
+        {entry.compaction === undefined ? null : <UserCompactionMark mark={entry.compaction} />}
         <div className={`entry-user${draft === null ? '' : ' editing'}`}>
           {entry.images === undefined || entry.images.length === 0 ? null : (
             <div className="entry-user-images">
@@ -222,6 +254,7 @@ export function ReadonlyUserRow({ entry }: { entry: Extract<TranscriptEntry, { k
   return (
     <>
       <div className="user-turn">
+        {entry.compaction === undefined ? null : <UserCompactionMark mark={entry.compaction} />}
         <div className="entry-user">
           {entry.images === undefined || entry.images.length === 0 ? null : (
             <div className="entry-user-images">

@@ -12723,3 +12723,53 @@ body.resizing iframe {
 }
 
 /* 追加区：新样式段一律加在这行之下，加完把这行挪到文件末尾（trace-check 的末尾纪律断言认这行） */
+
+/* ── 历史压缩的落点（对照 dsh 的 CompactionItem）──
+   两种画法，都在这一区：
+   - `.entry-compaction`：实时压缩通知那个 system 条目 → 一条两侧细线的分隔行，只说「第几次」，
+     正文压进 data-tip（对话流里不需要再读一遍那条取证用的整句）；
+   - `.entry-user-compaction`：重放出来的压缩摘要仍是 user 条目（正文要能读），
+     标记只能挂在气泡**外面**上方——一行 16px 小字，尺寸与对齐都不碰气泡。 */
+.entry-compaction {
+  align-items: center;
+  display: flex;
+  gap: var(--dsc-sp-2);
+  margin: var(--dsc-sp-2) 0;
+}
+
+.entry-compaction-line {
+  background: var(--dsc-stroke-2);
+  flex: 1;
+  height: 1px;
+}
+
+.entry-compaction-text {
+  color: var(--dsc-text-tertiary);
+  flex: none;
+  font-size: var(--dsc-fs-tool);
+  white-space: nowrap;
+}
+
+/* 气泡上方那一行：高度写死 16px，与 `.user-turn .user-actions` 同一条规矩——位置一直在，
+   出现 / 消失都不顶动下面的内容。宽度由文字自己撑（flex 列是 align-items: flex-end），
+   不占额外横向空间，气泡的 max-width: 78% 仍按这一层的宽算，右缘自然对齐。 */
+.entry-user-compaction {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  font-size: var(--dsc-fs-tool);
+  height: 16px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+/* ── 会话区底部占位（视口协调，第①阶段只备元素）──
+   高度由 `ui-transcript` 的视口协调器（`follow.ts` / 第③阶段）按需写**内联样式**，
+   现阶段恒 0；`ui-layout` 只负责把它放在正确的层级上（`.chat` 里、`.chat-inner` 之后）。
+   这里只管两件事：不参与伸缩（`flex: 0 0 auto`）、默认不占地（`height: 0`）。
+   别拿 CSS 去改它的高度——那会和协调器写内联样式打架。 */
+.turn-spacer {
+  flex: 0 0 auto;
+  height: 0;
+}
+
+/* 追加区：新样式段一律加在这行之下，加完把这行挪到文件末尾（trace-check 的末尾纪律断言认这行） */

@@ -22,6 +22,7 @@ import { ThinkText } from './rows/think-text'
 import { RetryRow } from './rows/retry-row'
 import { SubagentRow, ToolRow } from './rows/tool-row'
 import { ChangesCard } from './rows/changes-card'
+import { CompactionRow } from './rows/compaction-row'
 import { RoundFoot } from './rows/foot'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 import zh from '../locale/ui.zh.json'
@@ -366,6 +367,12 @@ function builtinRowBody(
       return renderSlot?.(TOOLVIEW_SLOT, { entry, storeKey }) ?? <ToolRow entry={entry} storeKey={storeKey} />
     }
     case 'system': {
+      // 压缩落点（对照 dsh 的 CompactionItem）：这条 system 正文是「历史刚被压缩」的取证句，
+      // 给轨迹页切区段用的。对话流里不铺整句，只画一行分隔 + 次数——读者要的是「这里断过」，
+      // 不是再读一遍通知正文（正文里的信息量与「只保留摘要」这层含义一并压进 data-tip）。
+      // **必须排在写前预览前面**：压缩通知从不是 diff 正文，先判标记再解析文本，
+      // 免得以后某句压缩提示里恰好出现 diff 形状时被认成预览卡。
+      if (entry.compaction !== undefined) return <CompactionRow mark={entry.compaction} />
       // 写前预览（宿主 file-review 插件）：这段正文是**多行 unified diff 纯文本**，
       // 走专用卡片（左对齐、等宽、限高滚动）；其余 system 通知（「这一轮被中断」这类
       // 一行短句）保持 `.entry-system` 的居中观感不变。
