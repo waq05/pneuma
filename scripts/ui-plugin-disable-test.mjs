@@ -232,7 +232,9 @@ console.log('[4] 接线：dock 不再硬编码 ask；入口都挂在会随插件
   // 入口卡与两条动作：卡在 apply 里报名；动作与快捷键挂在 header 槽组件（卸载即走）。
   check('ask 在 apply 里报名页签 + 入口卡', /const offTab = registerDockTab\(\{/.test(ask) && /guide: \{/.test(ask))
   check('ask 的 apply 交回页签报名的撤销函数', /return offTab/.test(ask))
-  check('浮钮 / 快捷键 / 动作表挂在 shell.header', /ui\.slots\.register\('shell\.header'/.test(ask))
+  // `\s*`：这条登记在 2026-11-10 加 `children`（选区浮层那条槽）之后被拆成了多行，
+  // 断言要钉的是「挂在 shell.header 上」这件事，不是它在源码里占几行。
+  check('浮钮 / 快捷键 / 动作表挂在 shell.header', /ui\.slots\.register\(\s*'shell\.header'/.test(ask))
   check('两条命令面板动作只在槽组件里登记（apply 里没有）', /id: 'ask\.open'/.test(ask) && /id: 'ask\.selection'/.test(ask) && !/ui\.slots[\s\S]{0,200}id: 'ask\.open'/.test(ask))
   check('动作表的 effect 交回注销函数（组件卸载即从面板消失）', /return actions\.register\('ask', \[/.test(ask))
   check('Ctrl+Shift+K 的监听在同一个组件的 effect 里（卸载即摘）', /window\.addEventListener\('keydown', onKey\)[\s\S]{0,120}?removeEventListener\('keydown', onKey\)/.test(ask))
@@ -314,6 +316,12 @@ console.log('[6] 总闸：任何界面插件的 apply 都要把页签报名交�
             captured.push(meta)
             return registerDockTab(meta)
           },
+          // 文件链接的落地函数：预览插件在 apply 里登记它，并且**存下它交回的注销函数**，
+          // 撤销时再调一次。真实壳里这条经 `@dsc/ui` 整包转出（实现在 `@dsc/ui-primitives`
+          // 的 markdown 那条），交回的是一枚函数；桩这里漏了它的话，兜底那条「怎么取都能
+          // 调用」返回 null，插件撤销时就报 `offFileLink is not a function`——那是桩不齐，
+          // 不是插件没交撤销（下面的断言要测的正是「交没交」）。
+          registerFileLinkOpener: () => () => undefined,
           // 浏览器插件在 apply 里就订阅原生事件：桥缺席时给一份「不可用」的桩，
           // 与浏览器里跑真实壳时的形状一致（available=false，on 返回退订函数）。
           getHostNative: () => ({ available: false, on: () => () => undefined, invoke: async () => null }),
