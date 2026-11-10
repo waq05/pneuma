@@ -220,6 +220,9 @@ export function useFollowBottom(
      *
      * 为什么必须有这一条：拖滚动条只会发 `scroll`，既没有 wheel 也没有按键。只认后两者
      * 的话，「拖滚动条往上读」会被当成「没有手势」而被立刻钉回底部，人根本读不了。
+     *
+     * 只记时刻、不当场松手：点开工具卡、点链接都是「按下但没有滚动」，一旦在这里松手，
+     * 跟随就被这些看内容的点击打断；真正算读者往回读的，是紧随其后的那条 `scroll`。
      */
     const onPointerDown = (): void => {
       gestureAt = performance.now()

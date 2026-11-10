@@ -441,6 +441,29 @@ console.log('[11] 跟到底部的滚动逻辑')
 {
   const transcriptSrc = readPluginSource(UI)
   const seatsSrc = read(UI + '/fold-seats.tsx')
+  /**
+   * follow.ts 单独的全文。
+   *
+   * `readPluginSource` 会把整个插件目录拼起来，而 `fold-seats.tsx` 里也有一个同名的
+   * `onGesture`（组体的那份，按文件名还排在前面）。按函数名取体必须读单文件，否则取到
+   * 的是组体那份，断言看着通过、其实一条也没验到外层。
+   */
+  const followSrc = read(UI + '/follow.ts')
+  /** 取一段函数体（从 `head` 之后第一个 `{` 起按花括号配平），只在体里找，免得跨函数误命中。 */
+  const bodyOf = (src, head) => {
+    const at = src.indexOf(head)
+    const open = at < 0 ? -1 : src.indexOf('{', at)
+    if (open < 0) return ''
+    let depth = 0
+    for (let i = open; i < src.length; i += 1) {
+      if (src[i] === '{') depth += 1
+      else if (src[i] === '}') {
+        depth -= 1
+        if (depth === 0) return src.slice(open + 1, i)
+      }
+    }
+    return ''
+  }
 
   // ① 外层：贴底门槛照 dsh 的 25px（壳取 24），旧的 160px 必须没有了——
   //    往上滚 100px 仍算「在底部」，下一口内容一到就拽回去，就是用户说的粘滞。
@@ -452,8 +475,29 @@ console.log('[11] 跟到底部的滚动逻辑')
   check('滚轮挂上手势', transcriptSrc.includes("scroller.addEventListener('wheel', onWheel, { passive: true })"))
   check('只认往上滚（deltaY < 0）', transcriptSrc.includes('event.deltaY >= 0'))
   check('往上翻的键', transcriptSrc.includes("UP_KEYS.has(event.key)") && transcriptSrc.includes("'PageUp'"))
-  check('不再抢触摸与指针按下（点开工具卡不该断跟随）', !transcriptSrc.includes('touchstart') && !transcriptSrc.includes('pointerdown'))
-  check('手势里当场 follow=false（不等越过哪条线）', /const onGesture = \(\): void => \{\s*following\.current = false/.test(transcriptSrc))
+  // 指针按下只当「手势作证」，不当场松手：按下只记时刻，随后 1.5 秒内的 scroll（拖滚动条、
+  // 触屏拖动）才算读者在读历史；只点一下工具卡/链接没有 scroll，跟随不动。
+  // 旧口径是「一个 pointerdown 都不许挂」——那时按下就松手，点开工具卡会把跟随打断；
+  // 现在按下的作用反过来了，但「点开工具卡不该断跟随」这条用户可见的行为没变。
+  const pointerDownBody = bodyOf(followSrc, 'const onPointerDown = (): void => {')
+  check(
+    '指针按下只作证、不当场松手（点开工具卡不该断跟随）',
+    !transcriptSrc.includes('touchstart') &&
+      followSrc.includes("scroller.addEventListener('pointerdown', onPointerDown") &&
+      pointerDownBody.includes('gestureAt = performance.now()') &&
+      !pointerDownBody.includes('onGesture()') &&
+      !pointerDownBody.includes('following.current = false'),
+    pointerDownBody.replace(/\s+/g, ' ').slice(0, 100),
+  )
+  // 手势一到就清掉跟随。清之前只许有「容器藏着就别改意图」这一道守卫（藏起来时事件可能
+  // 来自别处、冒泡上来，见 follow.ts 里的 hidden 说明）；守卫之外不许有任何延后动作。
+  const onGestureBody = bodyOf(followSrc, 'const onGesture = (): void => {')
+  const clearedAt = onGestureBody.indexOf('following.current = false')
+  check(
+    '手势里当场 follow=false（不等越过哪条线）',
+    clearedAt >= 0 && !/schedule\(\)|setTimeout/.test(onGestureBody.slice(0, clearedAt)),
+    onGestureBody.replace(/\s+/g, ' ').slice(0, 100),
+  )
 
   // ③ 落定：scrollend 立即判，180ms 没有新滚动也判。
   check('落定用 scrollend', transcriptSrc.includes("scroller.addEventListener('scrollend', settle)"))
@@ -465,9 +509,26 @@ console.log('[11] 跟到底部的滚动逻辑')
 
   // ⑤ 内容变长只在跟随开着时才追（读者在读时一动不动）。
   check('用 ResizeObserver 接内容生长', transcriptSrc.includes('new ResizeObserver(onResize)'))
-  check('读者在读时不钉底', /const onResize = \(\): void => \{\s*if \(!following\.current\) return/.test(transcriptSrc))
+  // 旧口径钉的是「函数第一句就是 !following 判断」；现在前面多了一道「容器藏着就别追」的
+  // 守卫（藏起来时 `floor()` 是「内容高 − 0」，写 scrollTop 没有意义）。要验的行为没变：
+  // 读者在读（following 已 false）时提前返回，绝不走到钉底。
+  const resizeBody = bodyOf(followSrc, 'const onResize = (): void => {')
+  const bailAt = resizeBody.indexOf('if (!following.current) return')
+  check(
+    '读者在读时不钉底（内容长了只在跟随态才追）',
+    bailAt >= 0 && resizeBody.indexOf('pin()') > bailAt,
+    resizeBody.replace(/\s+/g, ' ').slice(0, 100),
+  )
 
-  // ⑥ 组体（阶段组的限高滚动）同一套：手势松手 + 落定 + 只认自己的写。
+  // ⑥ 位置变了不等于读者动了（第 4 条规矩）：没有手势作证的 scroll 要补钉底，不许松手，
+  //    否则长会话流式输出到一半，排版慢半拍的那条 scroll 会把跟随自己关掉。
+  check(
+    '没手势作证的滚动补钉底（手势有效期 1.5 秒）',
+    /const GESTURE_TTL_MS = 1500/.test(followSrc) &&
+      /performance\.now\(\) - gestureAt > GESTURE_TTL_MS/.test(followSrc),
+  )
+
+  // ⑦ 组体（阶段组的限高滚动）同一套：手势松手 + 落定 + 只认自己的写。
   check('组体贴底判定收窄到 4px', /const PROCESS_BOTTOM_EPS = 4/.test(seatsSrc))
   check('组体也挂滚轮手势', seatsSrc.includes("body.addEventListener('wheel', onWheel, { passive: true })"))
   check('组体也只认往上滚', seatsSrc.includes('event.deltaY >= 0') && seatsSrc.includes('PROCESS_UP_KEYS.has(event.key)'))
