@@ -30,7 +30,7 @@
  * @module dsc-ui-shell/platform/markdown
  */
 import { createContext, Fragment, memo, useContext, useEffect, useMemo, useRef, useState, type JSX, type ReactNode } from 'react'
-import ReactMarkdown, { type Components, type Options } from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform, type Components, type Options } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { createT } from '@dsc/ui-core'
 import { highlightToLines, type HighlightedCodeLine } from './highlight'
@@ -74,6 +74,106 @@ const MARKDOWN_ENV = createContext<MarkdownEnv>({ base: '', streaming: false })
 
 /** remark 插件表也提成常量：数组每帧新建会让 react-markdown 重建整条解析管线。 */
 const REMARK_PLUGINS = [remarkGfm]
+
+/**
+ * 正文里「指向本地文件」的链接长什么样。
+ *
+ * 只认这三种写法：盘符绝对路径（`D:\dsc\a.ts`）、UNC（`\\server\share`）、
+ * 以 `/` 开头的路径（`/home/me/a.ts`）。带协议的（`http:`、`mailto:`、`file:`、
+ * `javascript:`）一律不接管——外链该走系统浏览器，也不给伪协议留口子。
+ */
+const LOCAL_PATH_HREF = /^(?:[a-zA-Z]:[\\/]|\\\\|\/(?!\/))/
+
+/**
+ * markdown 流水线会把 Windows 路径里的反斜杠百分号编码掉。
+ *
+ * 实测（2026-11-09 报障）：正文写 `[a](D:\dsc\a.ts)`，mdast-util-to-hast 的 normalizeUri
+ * 会把 href 变成 `D:%5Cdsc%5Ca.ts`；再拿它去问「是不是本地路径」，`D:%5C` 对不上
+ * `D:\`，于是被当成「不认识的协议」，`defaultUrlTransform` 把它清成空串——链接点了没反应，
+ * 或者带着空 href 新开一个窗口（就是那个重复的 Pneuma 窗口）。
+ *
+ * @param value markdown 给的 href
+ * @returns 解掉百分号编码之后的字符串（解不开就原样返回）
+ */
+function decodeLocalPath(value: string): string {
+  // 只在「确实是把反斜杠编码掉了」时才解：`%20` 这种编码在网址里是有意义的，
+  // 一律 decodeURIComponent 会把外链里的空格解出来，反而把链接改坏。
+  if (!/%5c/i.test(value)) return value
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
+/**
+ * 这个链接是不是本地文件路径（判断只在渲染时用，不碰磁盘）。
+ * @param href - markdown 链接的 href（可能为空串，也可能是百分号编码过的）
+ * @returns 是本地路径给 true
+ */
+export function isLocalFilePath(href: string): boolean {
+  const value = decodeLocalPath(href.trim())
+  if (value === '') return false
+  const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(value)
+  // 盘符（`D:\`）长得也像协议，先把它排除在「带协议」之外
+  if (hasScheme && !/^[a-zA-Z]:[\\/]/.test(value)) return false
+  return LOCAL_PATH_HREF.test(value)
+}
+
+/**
+ * 是不是「相对于当前工作目录」的路径（`package.json`、`docs/a.md` 这种写法）。
+ *
+ * 认它是因为模型经常把文件名写成人话链接：`[package.json](package.json)`。这种 href
+ * 在浏览器里是**同源相对地址**——一旦落到 `target="_blank"`，就会新开一个窗口把整个
+ * 应用再加载一遍（用户看到的「又弹出一个 Pneuma」，2026-11-09 报障）。所以它也要走
+ * 应用内预览：拿当前工作目录拼成绝对路径，交给预览页签去读。
+ *
+ * @param href - markdown 链接的 href
+ * @returns 像相对路径给 true
+ */
+export function isRelativeFilePath(href: string): boolean {
+  const value = decodeLocalPath(href.trim())
+  if (value === '' || value.startsWith('#') || value.startsWith('/') || value.startsWith('\\\\')) return false
+  // 带协议的（http:、mailto:、file:）不是相对路径；盘符已被 isLocalFilePath 认走
+  return !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(value)
+}
+
+/**
+ * 点正文里的文件链接时，谁负责把它打开（浏览器壳里是预览页签，终端壳里没有）。
+ *
+ * 为什么用模块级注册口而不是直接 import 预览插件：这张组件表必须是模块级常量
+ * （换函数＝换元素类型＝流式输出时整棵子树重挂，见文件头第 1 条硬约束），
+ * 所以组件不能捕获调用方的闭包，只能读这个模块级变量。
+ */
+let fileLinkOpener: ((path: string) => boolean) | null = null
+
+/**
+ * 注册「打开文件链接」的落地函数；没注册时链接退回新窗口。
+ * @param opener - 收到绝对路径，返回 true 表示已接管
+ * @returns 注销函数（只在还是这一枚时才清空，避免后注册的被先注销的顶掉）
+ */
+export function registerFileLinkOpener(opener: ((path: string) => boolean) | null): () => void {
+  fileLinkOpener = opener
+  return () => {
+    if (fileLinkOpener === opener) fileLinkOpener = null
+  }
+}
+
+/**
+ * react-markdown 的 URL 变换：本地路径与相对路径原样放行，其余交回默认规则。
+ *
+ * 默认规则会把 `D:\dsc\a.ts` 当成未知协议（`d:`）丢掉，href 变成空串——
+ * 于是「点文件链接」这件事在渲染阶段就没得点了。相对路径也要过这一道：
+ * 它自己不会被默认规则丢掉，但要先把 `%5C` 这类编码还原成人能看懂的路径。
+ *
+ * @param url - markdown 里写的目标
+ * @returns 保留后的地址
+ */
+function keepLocalHref(url: string): string {
+  if (isLocalFilePath(url) || isRelativeFilePath(url)) return decodeLocalPath(url)
+  return defaultUrlTransform(url)
+}
+
 
 /**
  * 挂源行号的块级标签。只有块级挂——改动标记的精度就到块（段落 / 标题 / 列表项 /
@@ -431,15 +531,66 @@ function MarkdownCode({ className, children, node }: {
  *
  * 这里每一项都允许重渲染，但不允许「换函数」：换函数＝换元素类型＝整棵子树重挂。
  */
+/**
+ * 正文链接：指向本地文件（绝对或相对）的交给应用内预览，外链照旧新窗口。
+ *
+ * 三条硬规矩，都是为了「点一下不能把界面弄坏」：
+ *
+ *   1. 本地路径必须 preventDefault：主窗口是单页应用，裸 `<a href>` 点一下会把整个
+ *      界面导航走（加载不出来就是白屏，还没有后退路）。
+ *   2. 相对路径也要接管：`[package.json](package.json)` 的 href 是同源相对地址，
+ *      落到 `target="_blank"` 就会新开一个窗口把应用再加载一遍（2026-11-09 报障
+ *      「点文件链接弹出一个新窗口」）。有 base 目录时拼成绝对路径交给预览。
+ *   3. **认不出来的链接不画成可点的 `<a>`**：没有 opener、href 为空、协议不认识时
+ *      退回一段纯文本。宁可点不动，也不能一点就多出一个窗口或跳走。
+ *
+ * 写成模块级函数而不是内联箭头：这张组件表一旦换函数，流式输出时整棵子树会重挂
+ * （见文件头第 1 条硬约束）。opener 从模块级变量读，base 从 context 读，都不需要闭包。
+ */
+function MarkdownAnchor({ href, children, title }: JSX.IntrinsicElements['a']): JSX.Element {
+  const { base } = useContext(MARKDOWN_ENV)
+  const raw = decodeLocalPath(href ?? '')
+  const tip = title === undefined ? {} : { title }
+  // 要交给预览的路径：绝对路径直接用；相对路径按当前目录拼（没有 base 就认不出来）。
+  const local =
+    isLocalFilePath(raw)
+      ? raw
+      : base !== '' && isRelativeFilePath(raw)
+        ? joinPath(base, raw)
+        : null
+  if (local === null || fileLinkOpener === null) {
+    // 外链（http / https / mailto）才新窗口；其余一律不画成链接。
+    if (!/^(?:https?:|mailto:)/i.test(raw)) {
+      return <span className="md-link-flat" {...tip}>{children}</span>
+    }
+    return (
+      <a href={raw} {...tip} rel="noreferrer noopener" target="_blank">
+        {children}
+      </a>
+    )
+  }
+  return (
+    <a
+      href={local}
+      className="md-file-link"
+      role="button"
+      {...tip}
+      onClick={(event) => {
+        event.preventDefault()
+        fileLinkOpener?.(local)
+      }}
+    >
+      {children}
+    </a>
+  )
+}
+
 const MARKDOWN_COMPONENTS: Components = {
   // 链接一律新窗口（`target="_blank"`）：主窗口是单页应用，裸 `<a href>` 点一下会把整个
   // 界面导航走——加载不出来就是白屏，还没有后退路（2026-11-02 报障）。走新窗口这条，
   // 原生层按「外链交系统浏览器 / 同源附件照旧开窗」处理，见 desktop 主进程的开窗闸门。
-  a: ({ href, children, title }) => (
-    <a href={href} {...(title === undefined ? {} : { title })} rel="noreferrer noopener" target="_blank">
-      {children}
-    </a>
-  ),
+  // 例外是本地文件路径：有 opener 注册时走应用内预览（见 MarkdownAnchor）。
+  a: MarkdownAnchor,
   img: ({ src, alt }) => {
     const source = typeof src === 'string' ? src : ''
     return source === '' ? (
@@ -458,9 +609,17 @@ const MARKDOWN_COMPONENTS: Components = {
  * streaming 由调用方给（会话流传这一行是不是直播尾）：只在流式中改变代码块上色的
  * 时机，不影响其余渲染。
  */
-export const MarkdownView = memo(function MarkdownView({ text, path, fsRead, streaming = false, changedRanges }: {
+export const MarkdownView = memo(function MarkdownView({ text, path, baseDir, fsRead, streaming = false, changedRanges }: {
   text: string
   path: string
+  /**
+   * 相对路径的解析基准目录；缺省 = `path` 所在的目录。
+   *
+   * 为什么单独给一个口：会话正文没有文件路径（`path=""`），但里面写的
+   * `[package.json](package.json)` 是相对**当前工作目录**的。渲染层把 cwd 从这条口递进来，
+   * 相对链接才拼得出绝对路径（否则只能退回不可点的纯文本）。
+   */
+  baseDir?: string | undefined
   /** 相对路径图片的解析口；缺省时相对路径图片显示占位。 */
   fsRead?: FsRead | undefined
   /** 这段正文还在增长：代码块等它停顿一下再上色（见 CodeBlock 的说明）。 */
@@ -471,7 +630,7 @@ export const MarkdownView = memo(function MarkdownView({ text, path, fsRead, str
    */
   changedRanges?: ReadonlyArray<readonly [number, number]> | undefined
 }): JSX.Element {
-  const base = path.slice(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')))
+  const base = baseDir ?? path.slice(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')))
   const env = useMemo<MarkdownEnv>(() => ({ base, fsRead, streaming }), [base, fsRead, streaming])
   const bodyRef = useRef<HTMLDivElement>(null)
   const ranges = changedRanges ?? NO_CHANGED_RANGES
@@ -500,7 +659,12 @@ export const MarkdownView = memo(function MarkdownView({ text, path, fsRead, str
   return (
     <MARKDOWN_ENV.Provider value={env}>
       <div className="file-md" ref={bodyRef}>
-        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
+        <ReactMarkdown
+          remarkPlugins={REMARK_PLUGINS}
+          rehypePlugins={REHYPE_PLUGINS}
+          components={MARKDOWN_COMPONENTS}
+          urlTransform={keepLocalHref}
+        >
           {text}
         </ReactMarkdown>
       </div>

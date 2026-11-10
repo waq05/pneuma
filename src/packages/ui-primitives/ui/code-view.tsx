@@ -19,8 +19,13 @@ const t = createT({ zh, en })
 /** 预览代码块的截断线数（shiki 高亮大文本很贵，超限截断并提示）。 */
 const CODE_MAX_LINES = 5000
 
-/** 代码视图：`targetLine` 给出时（1 基）挂行号列并把目标行滚进视口。 */
-export function CodeView({ text, path, targetLine }: { text: string; path: string; targetLine?: number }): JSX.Element {
+/**
+ * 代码视图：`targetLine` 给出时（1 基）挂行号列并把目标行滚进视口。
+ *
+ * `wrap` 打开时超长行按可用宽度折行（不再横向滚动），续行缩进到代码列；
+ * 面板预览默认打开它——右侧栏宽度有限，不折行就只能看到每行左边一小截。
+ */
+export function CodeView({ text, path, targetLine, wrap = false }: { text: string; path: string; targetLine?: number; wrap?: boolean }): JSX.Element {
   const lang = useMemo(() => langForPath(path), [path])
   const lines = useMemo(() => text.split('\n'), [text])
   const truncated = lines.length > CODE_MAX_LINES
@@ -57,8 +62,9 @@ export function CodeView({ text, path, targetLine }: { text: string; path: strin
     }
   }, [html, targetLine, shown])
   const numbered = targetLine !== undefined
+  const className = ['file-code', numbered ? 'file-code--numbered' : '', wrap ? 'file-code--wrap' : ''].filter(Boolean).join(' ')
   return (
-    <div className={numbered ? 'file-code file-code--numbered' : 'file-code'}>
+    <div className={className}>
       {truncated && <div className="tree-note" data-tree-note="truncated">{t('primitives.code.truncated', { n: CODE_MAX_LINES })}</div>}
       {html !== null ? (
         <div ref={(node) => { bodyRef.current = node }} className="file-code-body" dangerouslySetInnerHTML={{ __html: html }} />

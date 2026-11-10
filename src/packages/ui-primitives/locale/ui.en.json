@@ -73,6 +73,7 @@
   "primitives.duration.ms": "{m}m{s}s",
   "primitives.duration.s": "{s}s",
   "primitives.toast.close": "Dismiss this notice",
+  "primitives.toast.or": "or",
   "primitives.tool.status.preparing": "Preparing",
   "primitives.tool.status.running": "Running",
   "primitives.tool.status.done": "Done",

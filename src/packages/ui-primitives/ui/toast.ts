@@ -20,6 +20,13 @@ const t = createT({ zh, en })
 
 /** 成功提示停留时长：短到不打断操作，长到能读完一句中文。 */
 const OK_MS = 2200
+/**
+ * 带动作（撤销 / 筛选）的成功提示停留时长。
+ *
+ * 比普通成功提示长得多：这条提示不是「知道了」，而是一个 6 秒的撤销窗口——用户得先
+ * 看见、想明白，再去点那颗链接。2.2 秒连读完一句中文都紧，撤销等于给不出来。
+ */
+const ACTION_MS = 8000
 /** 失败提示停留时长：要能看清原因再动手修，所以久一些，还带关闭按钮。 */
 const ERR_MS = 6000
 /** 同屏最多堆几条，超了就顶掉最早的成功提示。 */
@@ -55,7 +62,30 @@ function dismiss(node: HTMLElement): void {
   window.setTimeout(() => node.remove(), EXIT_MS)
 }
 
-function push(tone: 'success' | 'danger', text: string, ms: number, closable: boolean): void {
+/** 提示里可点的一颗动作（撤销、筛选这类）——点了就执行，并把这条提示收掉。 */
+export interface ToastAction {
+  /** 显示在提示里的字（「撤销」）。 */
+  label: string
+  /** 点击后做什么。抛不抛都不影响提示收掉。 */
+  run: () => void
+}
+
+/**
+ * 把一条提示压进容器。
+ *
+ * @param tone 成功 / 失败
+ * @param text 提示正文
+ * @param ms 自动消失的时长
+ * @param closable 是否给一颗关闭按钮（失败那条给）
+ * @param actions 可点的动作链接；非空时正文与链接之间补一个分隔符
+ */
+function push(
+  tone: 'success' | 'danger',
+  text: string,
+  ms: number,
+  closable: boolean,
+  actions: readonly ToastAction[] = [],
+): void {
   const root = ensureContainer()
   // 堆太满时顶掉最早的一条成功提示，失败的那条不许被挤掉（错误要看清）。
   while (root.children.length >= MAX_STACK) {
@@ -70,6 +100,27 @@ function push(tone: 'success' | 'danger', text: string, ms: number, closable: bo
   node.innerHTML = `${tone === 'success' ? ICON_OK : ICON_ERR}<span class="dsc-toast__text"></span>`
   const textNode = node.querySelector('.dsc-toast__text')
   if (textNode !== null) textNode.textContent = text
+  for (const [index, action] of actions.entries()) {
+    // 两颗以上动作之间补一个「或」：直接排成两个按钮会读成「撤销 筛选已归档会话」，
+    // 中间那个词得有人写出来，不然两件事粘成一件。
+    if (index > 0) {
+      const sep = document.createElement('span')
+      sep.className = 'dsc-toast__sep'
+      sep.textContent = t('primitives.toast.or')
+      node.appendChild(sep)
+    }
+    // 动作是 <button> 而不是 <a href="#">：这里没有任何导航语义，键盘 Tab 与回车都要能用，
+    // 而 href="#" 会把地址栏的 hash 改掉（壳里没有路由，改了就只是脏数据）。
+    const button = document.createElement('button')
+    button.className = 'dsc-toast__act'
+    button.type = 'button'
+    button.textContent = action.label
+    button.addEventListener('click', () => {
+      dismiss(node)
+      action.run()
+    })
+    node.appendChild(button)
+  }
   if (closable) {
     const close = document.createElement('button')
     close.className = 'dsc-toast__close'
@@ -88,6 +139,20 @@ function push(tone: 'success' | 'danger', text: string, ms: number, closable: bo
 /** 成功回执：绿边、约 2.2s 自动消失。 */
 export function toastOk(text: string): void {
   push('success', text, OK_MS, false)
+}
+
+/**
+ * 带动作的成功回执（8 秒窗口）：正文 + 若干可点的链接。
+ *
+ * 用在「这一下已经生效、但用户很可能想反悔」的操作上（归档会话）。以前这种做法是
+ * 先弹一个确认框问一遍：多一次点击，而且点错了没处退。改成先做、再给一个看得见的
+ * 撤销入口——操作变一步，代价是给一个足够长的撤销窗口。
+ *
+ * @param text 正文（例如「会话已归档」）
+ * @param actions 动作链接表
+ */
+export function toastOkAction(text: string, actions: readonly ToastAction[]): void {
+  push('success', text, ACTION_MS, false, actions)
 }
 
 /** 失败回执：红边、停得久，并带关闭按钮。 */

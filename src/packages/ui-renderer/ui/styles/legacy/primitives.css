@@ -383,6 +383,38 @@
 .dsc-toast__text {
   overflow-wrap: anywhere;
 }
+/* 提示里的可点动作（撤销 / 筛选这一档）：长得像正文里的一颗文字链，命中区按整块给。
+   颜色走品牌色——它是这条提示里唯一能改变结果的东西，比正文亮一档才看得出来。 */
+.dsc-toast__act {
+  background: none;
+  border: 0;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-accent);
+  cursor: pointer;
+  flex: none;
+  font: inherit;
+  margin: -2px -4px;
+  padding: 2px 4px;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--dsc-accent) 45%, transparent);
+  text-underline-offset: 2px;
+  transition:
+    background var(--dsc-dur) var(--dsc-ease),
+    color var(--dsc-dur) var(--dsc-ease);
+  white-space: nowrap;
+}
+.dsc-toast__act:hover {
+  background: var(--dsc-control-hover-bg);
+  color: var(--dsc-accent-hover, var(--dsc-accent));
+}
+.dsc-toast__sep {
+  color: var(--dsc-text-tertiary);
+  flex: none;
+}
+.dsc-toast__act:focus-visible {
+  outline: 1px solid var(--dsc-accent);
+  outline-offset: 1px;
+}
 /* 失败那条带关闭按钮：命中区 26×26，不靠图标本身的大小。 */
 .dsc-toast__close {
   align-items: center;
