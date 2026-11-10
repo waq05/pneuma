@@ -32,3 +32,4 @@
 - `dsh.client`：platform `pneuma`、api `^0.9.0`，没有 phase 与 inject（package.json:20-25）。
 - 宿主半 inject 零个服务：`apply` 是空的（index.ts:32）。
 - 停用后对话主区不再画会话流，输入区仍在；团队右栏的 `transcriptFlow` 缺席，退回简版 PeekView（ui/ui.tsx:83-86，ui-team/ui/ui.tsx:745）。
+- 行不重画靠**座位注册表**：`ui/seat-store.ts` 按「会话|行稳定身份」（`keyOf`，与 React key 同串）索引，内容等价的行——`entry` 引用相同**或深度相等**、`live`/`at`/`stable` 一致——复用上一帧那个 `Row` 对象，只把真变了的那几行通知给订阅者；渲染期 `stage`（只写 pending，新挂载的行第一帧就读得到），layout effect 里 `commit`（提交后再通知，绘制前落地）。座位壳 `SeatFrame` 只吃稳定标量，行体 `RowSlot` 自己订阅（ui/seat-store.ts、ui/render.tsx 的 SeatFrame / RowSlot、ui/ui.tsx 的 stage/commit 接线）。

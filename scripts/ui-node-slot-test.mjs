@@ -100,9 +100,11 @@ console.log('[2] 兜底走 ChainOutlet 的第三个参数，不许写成 ?? 硬�
     'ChainOutlet 全体弃权时直接画 fallback（不套 .slot-entry）',
     slotsReact.includes('if (hit === null) return <>{fallback ?? null}</>'),
   )
-  // 2026-11-10（S2 止血）：行体外面包了一层带比较器的 memo，函数体改名 RowBodyBody，
-  // 导出的 `RowBody` 变成 `memo(RowBodyBody, rowBodyUnchanged)`——切片起点跟着改名，判据不变。
-  const rowBody = between(render, 'function RowBodyBody(', '\n}\n')
+  // 行体入口的写法变过两次，切片起点跟着改，判据不变：
+  //   2026-11-10 止血：包一层带比较器的 memo，函数体改名 RowBodyBody；
+  //   2026-11-10 彻底方案：比较器退役，行体回到普通导出函数 `RowBody`（座位壳与逐行订阅
+  //   负责「不重画」，见 `seat-store.ts`）。
+  const rowBody = between(render, 'export function RowBody(', '\n}\n')
   // 节点槽的调用本身：从函数名到右括号（props 对象里没有嵌套括号，第一个 `)` 就是调用结尾）。
   const nodeCall = (rowBody.match(/renderSlot\(TRANSCRIPT_NODE_SLOT,[\s\S]*?\)/) ?? [''])[0]
   check(
@@ -121,10 +123,12 @@ console.log('[2] 兜底走 ChainOutlet 的第三个参数，不许写成 ?? 硬�
 console.log('[3] RowBody 的两层：内置行体 / 节点槽')
 {
   check('render.tsx 有内置行体 builtinRowBody', /\nfunction builtinRowBody\(/.test(render))
-  // 出口形状 2026-11-10 变成 memo 包装（S2 止血）：仍是导出的组件，只是多了比较器。
-  check('render.tsx 有出口 RowBody', /\nexport const RowBody = memo\(/.test(render))
+  // 出口形状变过两次（memo 包装 → 普通导出函数），钉的仍是同一件事：行体是个导出的组件。
+  check('render.tsx 有出口 RowBody', /\nexport function RowBody\(/.test(render))
+  // 反向钉：行体不许再被 memo 包回去——那正是「靠比较器止血」的老写法，已经退役。
+  check('RowBody 不再被 memo 包着（保证换到了座位壳与注册表）', !/export const RowBody = memo\(/.test(render))
 
-  const rowBody = between(render, 'function RowBodyBody(', '\n}\n')
+  const rowBody = between(render, 'export function RowBody(', '\n}\n')
   const shortAt = rowBody.indexOf('renderSlot === undefined')
   const slotAt = rowBody.indexOf('renderSlot(TRANSCRIPT_NODE_SLOT')
   check(
@@ -133,7 +137,7 @@ console.log('[3] RowBody 的两层：内置行体 / 节点槽')
     `${String(shortAt)} / ${String(slotAt)}`,
   )
 
-  const builtin = between(render, 'function builtinRowBody(', 'function RowBodyBody(')
+  const builtin = between(render, 'function builtinRowBody(', 'export function RowBody(')
   check('thinking 分支接了思考正文槽', builtin.includes('TRANSCRIPT_REASONING_BODY_SLOT'))
   check('thinking 分支的兜底是 <ThinkText', builtin.includes('<ThinkText'))
   check(

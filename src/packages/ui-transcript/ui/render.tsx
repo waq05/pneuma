@@ -5,11 +5,12 @@
  *
  * @module dsc-ui-shell/plugins/transcript/render
  */
-import { Component, memo, useContext, type ReactNode } from 'react'
+import { Component, memo, useCallback, useContext, useMemo, useSyncExternalStore, type ReactNode } from 'react'
 import { MarkdownView, createT, estimateTextTokens, type TranscriptEntry } from '@dsc/ui'
 import { ReviewNoticeCard, findLast, parseReviewNotice } from '@dsc/ui-primitives'
 import { FoldPrefsContext, ShellCwdContext, ShellSessionContext, TOOLVIEW_SLOT, TRANSCRIPT_NODE_SLOT, TRANSCRIPT_REASONING_BODY_SLOT, TURN_INDEPENDENT, keyOf, type Row, type Seat, type ToolViewRender } from './shared'
 import { stepGroupFoldKey, turnFoldKey } from './fold-state'
+import type { SeatStore } from './seat-store'
 import { rowShows } from './row-shows'
 import { turnDefaultOpen, useFoldMemory } from './round-fold'
 import { RowSeat, StepGroupSeat } from './fold-seats'
@@ -52,7 +53,8 @@ export function SeatBody({
   foldMemory,
   stepGrouping,
   renderSlot,
-  onFork,
+  store,
+  onForkRound,
 }: {
   seat: Seat
   /**
@@ -75,8 +77,17 @@ export function SeatBody({
   /** 阶段分组（哪些连续条目成一组、组头挂在哪条之前，都从它来；none 档是空表）。 */
   stepGrouping: StepGrouping
   renderSlot: ToolViewRender
-  /** 页脚「分叉这一轮」；undefined = 分不了（没在会话里 / 第 1 轮）。 */
-  onFork?: () => void
+  /** 座位注册表：行体自己按身份从这里订阅（见 seat-store.ts），座位不再把 Row 递下去。 */
+  store: SeatStore
+  /**
+   * 页脚「分叉这一轮」：吃轮号、不吃座位对象。
+   *
+   * 为什么参数换成轮号（2026-11-10，S2 彻底方案）：座位每帧都是新对象，吃座位的回调也只能
+   * 每帧现造；换成数字之后顶层那个回调是稳定的（`ui.tsx` 的 `forkRound` 用 `useCallback`），
+   * 这里再按轮号包一层 memo，轮尾那一行就不会跟着每一口 delta 重造。
+   * undefined = 分不了（没在会话里）。
+   */
+  onForkRound?: (round: number) => void
 }): ReactNode {
   const foldPrefs = useContext(FoldPrefsContext)
   const fold = roundFolds.get(seat.round)
@@ -94,9 +105,20 @@ export function SeatBody({
   /** 整轮收起来没有：可折 + 有内容 + 已收尾 + 没被展开（默认收起；next-input 的最新一轮默认展开）。 */
   const collapsed = foldable && !turnOpen
   /** 把整轮放出来（座位被 Ctrl+F 命中、或焦点落在收起的内容里时由座位自己调）。 */
-  const reveal = (): void => {
+  // 为什么要 useCallback（S2 彻底方案，2026-11-10）：这个回调被递给每一行的座位壳
+  // （`SeatFrame` 的 `onReveal`）。座位壳是 memo 的，回调每帧换引用就会让整屏的壳全部重渲染，
+  // 逐行订阅也就白做了。依赖只有存档对象与这一轮的键，两者都不随 delta 变。
+  const reveal = useCallback((): void => {
     foldMemory.set(turnKey, true)
-  }
+  }, [foldMemory, turnKey])
+  /**
+   * 轮尾那个「分叉」回调：按**轮号**包一层，于是它跨帧是同一个引用（第 1 轮不给分）。
+   * 回调本身稳定，包出来的这一个才稳得住——见上面 `onForkRound` 的注释。
+   */
+  const onFork = useMemo(
+    () => (onForkRound === undefined || seat.round === 0 ? undefined : () => onForkRound(seat.round)),
+    [onForkRound, seat.round],
+  )
   // 总开关行：可折的定稿轮才画（不可折的档位——verbose——连抬头都不画，照旧版）。
   const showFoldRow = fold !== undefined && fold.foldable && !foldRunning
   // roundInfos 与座位是同一次切分出来的，正常一对一；真缺了（宿主刚清空这类中间帧）
@@ -127,24 +149,27 @@ export function SeatBody({
       (row.entry.kind === 'text' || row.entry.kind === 'tool') && row.entry.usage !== undefined,
   )?.entry.usage
   /**
-   * 一行条目：真盒子（RowSeat：收起时挂 hidden="until-found" 而不是卸载——Ctrl+F 能命中，
-   * 键盘焦点不会被抽走）+ 行级错误边界 + 行体。组内成员与过程行都走它。
+   * 一行条目：座位壳（真盒子 + 收起时的 `hidden="until-found"`）+ 行体。
+   *
+   * 2026-11-10（S2 彻底方案）：壳与行体分开——壳只吃**稳定标量**（座位键、藏不藏、轮序号），
+   * 行体自己去注册表订阅（见 {@link SeatFrame}）。所以这一行递下去的不是 `Row` 对象
+   * （那个每帧都是新的），而是一个字符串身份。
    */
   const seatRow = (row: Row, hidden: boolean): ReactNode => {
     // 画不出东西的条目**不建座位**（判据见 row-shows.ts）：空盒子不占高度，但仍吃过程区
     // 那一个 3px 的 flex 缝——一轮改五个文件就在组头下面叠出 27px 的白。
     if (!rowShows(row.entry)) return null
+    const key = keyOf(row, sessionKey)
     return (
-      <RowSeat
-        key={keyOf(row, sessionKey)}
+      <SeatFrame
+        key={key}
+        seatKey={key}
         hidden={hidden}
         onReveal={reveal}
         roundIndex={seat.round}
-      >
-        <RowBoundary entry={row.entry}>
-          <RowBody row={row} renderSlot={renderSlot} />
-        </RowBoundary>
-      </RowSeat>
+        store={store}
+        renderSlot={renderSlot}
+      />
     )
   }
   /**
@@ -454,17 +479,20 @@ function builtinRowBody(
 /**
  * 行体：先问节点级槽，落空画内置行体（见上面的 builtinRowBody）。
  *
- * 为什么包一层带比较器的 `memo`（2026-11-10，差距清单 S2）：流式时每来一口 delta 都会重跑
- * `buildSeats`（每帧一次），而 `shared.ts` 的 `rowOf` 返回对象字面量——**每一行的 `Row`
- * 都是新对象**。所以裸的 `memo(RowBody)` 浅比较必然失败，等于没加。真正决定这一行画面的
- * 只有三样：`row.entry`（内容没变时是同一个引用）、`row.live`（是不是直播尾那一条）、
- * `renderSlot`（壳给的渲染函数，正常情况下引用稳定）。
+ * 这一层**没有 memo**，也不需要——「没变就不重画」的保证在别处（2026-11-10，S2 彻底方案）：
+ *   - 座位里的行走 {@link SeatFrame} + {@link RowSlot}：壳是 memo 的（props 全是稳定标量），
+ *     行体订阅注册表（`seat-store.ts`），只有**自己那一格换了对象**才重渲染；
+ *   - 前导行（开场 system 行、系统提示卡）与只读子代理流仍直接用它：那两处的条目一次给定、
+ *     不是流式热路径，多包一层 `memo` 只会多一层要维护的比较器。
  *
- * 不比较 `row` 本身、也不比 `row.at` / `row.stable`：`at` 会随历史分页漂，`stable` 与
- * `entry` 同源（条目一样就一定一样）；这两个都不进 DOM，比了只会白白让 memo 失效。
- * 会话与工作目录走 context，React 的 context 变化会穿透 memo，不需要写进比较器。
+ * 为什么不再比 `row.entry` 引用 + `row.live` + `renderSlot`（上一轮的止血比较器）：
+ * 那个比较器只省掉**行体函数体**这一层，座位壳（`RowSeat` 里的两个 hook）与元素对账照旧
+ * 每帧各跑一遍；而且宿主每 50 帧发一次全量锚帧（`core/remote/frames.ts` 的
+ * `FULL_ANCHOR_FRAMES`），那一帧每条 `entry` 都是新对象、内容一字不差，比较器当场集体失效
+ * （实测一次 115 行同时重画）。现在等价判断挪进注册表（`sameRow`：引用相同**或深度相等**
+ * 都算没变），一处判断同时管住壳与行体。
  */
-function RowBodyBody({ row, renderSlot }: { row: Row; renderSlot?: ToolViewRender }): ReactNode {
+export function RowBody({ row, renderSlot }: { row: Row; renderSlot?: ToolViewRender }): ReactNode {
   const sessionId = useContext(ShellSessionContext)
   const cwd = useContext(ShellCwdContext)
   const builtin = builtinRowBody(row, sessionId, cwd, renderSlot)
@@ -479,18 +507,72 @@ function RowBodyBody({ row, renderSlot }: { row: Row; renderSlot?: ToolViewRende
 }
 
 /**
- * `RowBodyBody` 的比较器：只认 `entry` 引用、`live`、`renderSlot` 三样（理由见上面的注释）。
+ * 一行的座位壳：`.entry-row` 真盒子 + 收起时的 `hidden="until-found"`。
+ *
+ * props 只有**稳定标量**与稳定引用（座位键、藏不藏、轮序号、放行动作、注册表、槽渲染函数），
+ * 所以 `memo` 的默认浅比较就能挡住「整屏每帧重渲染」：流式期间 delta 只让注册表里的某一格
+ * 换对象，壳一个都不重渲染，只有那一格的行体被通知（见 {@link RowSlot}）。
+ *
+ * 为什么不让壳自己去订阅：壳要画的东西（藏不藏、轮序号）是**父**算出来的，不是注册表里的
+ * 数据；把这两样也塞进注册表，等于每帧都要为所有行生成一份「藏不藏」的状态，反而更贵。
+ *
+ * 为什么 `hidden` 走 prop 而不是 context：它只在折叠/展开那一拍变（一次点击，不是每帧），
+ * 变的次数少到不值得为它单开一条订阅通道。
  */
-function rowBodyUnchanged(
-  previous: { row: Row; renderSlot?: ToolViewRender },
-  next: { row: Row; renderSlot?: ToolViewRender },
-): boolean {
-  return previous.row.entry === next.row.entry
-    && previous.row.live === next.row.live
-    && previous.renderSlot === next.renderSlot
-}
+export const SeatFrame = memo(function SeatFrame(props: {
+  /** 座位键 = `会话|行稳定身份`（与 React key、注册表键是同一个字符串）。 */
+  seatKey: string
+  hidden: boolean
+  roundIndex: number | undefined
+  onReveal(): void
+  store: SeatStore
+  renderSlot?: ToolViewRender
+}): ReactNode {
+  return (
+    <RowSeat hidden={props.hidden} onReveal={props.onReveal} roundIndex={props.roundIndex}>
+      <RowSlot seatKey={props.seatKey} store={props.store} renderSlot={props.renderSlot} />
+    </RowSeat>
+  )
+})
 
-export const RowBody = memo(RowBodyBody, rowBodyUnchanged)
+/**
+ * 行体入口：自己从注册表订阅**这一行**。
+ *
+ * 三层各管一件事，缺一层都会退回到「整树每帧重渲染」：
+ *   1. 壳（{@link SeatFrame}）与它都是 `memo` 的，props 恒为那几个稳定值 → 父组件每帧重渲染
+ *      时它们直接被跳过，连函数体都不进；
+ *   2. 这一层订阅注册表：`useSyncExternalStore` 的快照就是行的 `Row` 对象，注册表在
+ *      `sameRow` 判等通过时复用旧对象 → 快照不变 → 不重渲染；
+ *   3. 真变了（尾行每帧都在变）时，注册表 `commit()` 只通知这一格，React 只重渲染这一行。
+ *
+ * 快照读的是 `store.row(seatKey)`：注册表在**渲染期**就把这一帧的登记表放进 pending
+ * （见 `seat-store.ts` 的 `stage`），所以新挂载的行第一帧就拿得到数据，不会先画一帧空的。
+ */
+const RowSlot = memo(function RowSlot(props: {
+  seatKey: string
+  store: SeatStore
+  renderSlot?: ToolViewRender
+}): ReactNode {
+  const row = useSeatRow(props.store, props.seatKey)
+  if (row === undefined) return null
+  return (
+    <RowBoundary entry={row.entry}>
+      <RowBody row={row} renderSlot={props.renderSlot} />
+    </RowBoundary>
+  )
+})
+
+/**
+ * 订阅注册表里的一格。
+ *
+ * `subscribe` / `getSnapshot` 都按 `seatKey` 包一层 `useCallback`：`useSyncExternalStore`
+ * 会把它们放进依赖里，每帧给新函数等于每帧重订阅一次（退订 + 订阅，白干活）。
+ */
+function useSeatRow(store: SeatStore, seatKey: string): Row | undefined {
+  const subscribe = useCallback((onChange: () => void) => store.subscribe(seatKey, onChange), [store, seatKey])
+  const snapshot = useCallback(() => store.row(seatKey), [store, seatKey])
+  return useSyncExternalStore(subscribe, snapshot, snapshot)
+}
 
 /**
  * 一行一个错误边界。

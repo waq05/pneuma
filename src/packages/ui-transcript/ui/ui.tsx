@@ -30,7 +30,7 @@
  *
  * @module dsc-ui-shell/plugins/transcript
  */
-import { Component, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { IconSpark, createT, defineUiPlugin, getHostNative, toastErr, toastOk, useActions, useHostChannel, useHostSelector, useService, ACTIONS_SERVICE, type ActionsHandle, type ApprovalRequestView, type AskUserView, type HostSnapshot, type PlanView, type SlotComponentProps, type TranscriptEntry } from '@dsc/ui'
 import { buildRoundFolds, processFoldPolicy, turnDefaultOpen, useFoldMemory, type ProcessFold } from './round-fold'
 import { liveActivity, turnStartedAt } from './timing'
@@ -41,10 +41,11 @@ import { JumpRail, previewText } from './jump-rail'
 import { pageStartRound } from './paging'
 import { matchTool, playCompletionSound, readCompactingSince, readCwd, readEntries, readLive, readSessions, readSessionPath, readTurnState } from '@dsc/ui-primitives'
 import { registerToolCard } from './tool-card/factory'
-import { EMPTY_STEP_GROUPING, FOLD_PREFS, FlowActionsContext, FoldPrefsContext, ShellCwdContext, ShellSessionContext, TOOLVIEW_SLOT, TRANSCRIPT_NODE_SLOT, TRANSCRIPT_REASONING_BODY_SLOT, buildSeats, keyOf, type FoldPrefs, type FlowActions, type Row, type Seat, type ToolViewRender, type TranscriptChildSlot } from './shared'
+import { EMPTY_STEP_GROUPING, FOLD_PREFS, FlowActionsContext, FoldPrefsContext, ShellCwdContext, ShellSessionContext, TOOLVIEW_SLOT, TRANSCRIPT_NODE_SLOT, TRANSCRIPT_REASONING_BODY_SLOT, buildSeats, keyOf, type FoldPrefs, type FlowActions, type TranscriptChildSlot } from './shared'
 import { turnEndNotice, waitingNotice, type WaitingCard } from './turn-notify'
 import { useFollowBottom } from './follow'
-import { RowBody, RowBoundary, SeatBody } from './render'
+import { SeatFrame, SeatBody } from './render'
+import { createSeatStore } from './seat-store'
 import { TurnStatusLine } from './rows/foot'
 import { BuiltinToolView } from './rows/tool-row'
 import { WELCOME_CARDS, WELCOME_ICON_BY_ID, WelcomeState } from './welcome'
@@ -80,6 +81,12 @@ export type { FoldPrefs, ToolEntry } from './shared'
 export { TOOLVIEW_SLOT } from './shared'
 export { SUBAGENT_FLOW_SLOT, type TranscriptFlowProps, type TranscriptFlowService } from './subagent-flow'
 const BUILTIN_TOOLVIEW_PRIORITY = 100
+
+/**
+ * 前导行（还没进任何一轮的开场条目）不会整轮收起，所以「被查找命中就放出来」这个动作
+ * 在它们身上是空操作。**必须是模块级常量**：每帧现造一个箭头函数会让座位壳的 memo 失效。
+ */
+const NO_REVEAL = (): void => undefined
 
 /**
  * 首屏两个读数共用的窗口（七天）：比这更久的东西不抢首屏的位置，但值得在招呼语里
@@ -173,6 +180,23 @@ function TranscriptFlow({
    */
   const sessionKey = sessionPath ?? sessionId ?? ''
   const seats = useMemo(() => buildSeats(entries, live), [entries, live])
+  /**
+   * 座位注册表（S2 彻底方案，2026-11-10）：按行的稳定身份索引，「内容没变」的行**沿用上一帧
+   * 那个 `Row` 对象**，于是行体既不用重渲染、也不用碰 DOM（见 `seat-store.ts`）。
+   *
+   * 生命周期：`useState` 只建一次（切换会话不重建——行键里带会话，旧会话的格子会在下一次
+   * `commit` 里被摘掉；重建反而会让两边都在订阅的旧实例留在内存里）。
+   */
+  const [seatStore] = useState(() => createSeatStore(keyOf))
+  // 渲染期登记这一帧的座位（只写 pending，不通知：新挂载的行要能立刻读到这一帧的数据）。
+  seatStore.stage(sessionKey, seats)
+  /**
+   * 提交并通知。**必须是 layout effect**：通知就是让「这一帧被 memo 跳过、但数据变了」的那几行
+   * 重渲染，摆在 layout 阶段才能在浏览器绘制前落地，用户看不到一帧旧内容。
+   */
+  useLayoutEffect(() => {
+    seatStore.commit()
+  })
   const follow = useFollowBottom(entries.length + live.length, sessionKey)
 
   // 折叠偏好：mount 时读一次 uiPrefs，设置页改档位时经自定义事件同步进来。
@@ -445,9 +469,13 @@ function TranscriptFlow({
 
   // 页脚「分叉这一轮」：保留到本轮用户消息（含），从这一轮的回答重来——旧界面同一语义。
   // 第 1 轮不给分（分完还是这一轮，没有意义）。
-  const forkRound = (seat: Seat): void => {
+  //
+  // 2026-11-10（S2 彻底方案）：参数从「座位对象」改成「轮号」。座位每帧是新对象，吃座位的
+  // 回调也只能每帧现造一个；而轮号是数字，这个回调因此拿到了稳定引用（`useCallback`），
+  // 座位里再按轮号包一层 memo，轮尾那一行就不会跟着每一口 delta 重渲染。
+  const forkRound = useCallback((round: number): void => {
     if (sessionPath === null) return
-    const roundNo = seat.round + 1
+    const roundNo = round + 1
     void (async () => {
       try {
         const result = await channel.invoke<{ ok: boolean; path?: string; error?: string }>('forkSession', [sessionPath, roundNo])
@@ -462,7 +490,7 @@ function TranscriptFlow({
         toastErr(t('transcript.fork.failedDetail', { message: reason instanceof Error ? reason.message : String(reason) }))
       }
     })()
-  }
+  }, [channel, sessionPath])
 
   /**
    * 编辑一条用户消息并重发：**在当前会话里**截断到这条之前再重发（2026-11-03 改）。
@@ -704,13 +732,20 @@ function TranscriptFlow({
           {t('transcript.earlier.label', { shown: earlierRounds, total: firstVisible })}
         </button>
       ) : null}
-      {seats.leading.map((row) => (
-        <RowBoundary key={keyOf(row, sessionKey)} entry={row.entry}>
-          <div className="entry-row">
-            <RowBody row={row} renderSlot={renderSlot} />
-          </div>
-        </RowBoundary>
-      ))}
+      {seats.leading.map((row) => {
+        const key = keyOf(row, sessionKey)
+        return (
+          <SeatFrame
+            key={key}
+            seatKey={key}
+            hidden={false}
+            onReveal={NO_REVEAL}
+            roundIndex={undefined}
+            store={seatStore}
+            renderSlot={renderSlot}
+          />
+        )
+      })}
       {visibleSeats.map((seat) => (
         <div className="turn-seat" data-round-seat={seat.round} key={seat.round}>
           <SeatBody
@@ -724,7 +759,8 @@ function TranscriptFlow({
             foldMemory={foldMemory}
             stepGrouping={stepGrouping}
             renderSlot={renderSlot}
-            onFork={sessionPath === null || seat.round === 0 ? undefined : () => forkRound(seat)}
+            store={seatStore}
+            onForkRound={sessionPath === null ? undefined : forkRound}
           />
         </div>
       ))}
