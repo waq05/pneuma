@@ -29,12 +29,14 @@ import {
   DiffRows,
   FileIcon,
   IconCode,
+  IconWrapLines,
   MarkdownView,
   PdfView,
   XlsxView,
   defineUiPlugin,
   getHostNative,
   registerDockTab,
+  registerFileLinkOpener,
   setDockPreview,
   useDockPatchSource,
   useHostChannel,
@@ -84,9 +86,17 @@ export default defineUiPlugin({
       component: PatchTab,
       titleFromPath: true,
     })
+    // 正文里的文件链接（`D:\dsc\a.ts` 这种）点一下开预览页签：壳的 markdown 不认识
+    // 预览插件，只能由这边把落地函数登记进去（见 ui-primitives 的 registerFileLinkOpener）。
+    // 绝对路径不需要 cwd；目录或读不到的文件由页签自己的「读失败」占位兜住。
+    const offFileLink = registerFileLinkOpener((path) => {
+      setDockPreview({ path })
+      return true
+    })
     // 两种页签一起退：只退一个的话，停用预览插件后另一半还会留着（文件预览与补丁预览
     // 是同一份代码的两个视图，生命周期必须同进同出）。
     return () => {
+      offFileLink()
       offPreview()
       offPatch()
     }
@@ -112,6 +122,11 @@ function PreviewBody({ tabId, path, cwd }: { tabId: string; path: string; cwd: s
   const patchSource = useDockPatchSource(tabId)
   const [patchView, setPatchView] = useState(false)
   const [note, setNote] = useState('')
+  /**
+   * 代码视图折行：默认开。右侧栏宽度有限，不折行时超长行会横向溢出、右半截被裁在
+   * 面板外面（2026-11-10 报障），得先把面板拖宽才看得见。想按编辑器原样看横排就关掉。
+   */
+  const [wrap, setWrap] = useState(true)
 
   // 换文件就重新读；旧的那一份先清掉，免得一闪而过的是上一个文件的内容。
   useEffect(() => {
@@ -179,6 +194,20 @@ function PreviewBody({ tabId, path, cwd }: { tabId: string; path: string; cwd: s
             </button>
           </>
         )}
+        {isCodeBody(read) ? (
+          <button
+            type="button"
+            className="btn-ghost file-preview-wrap"
+            aria-pressed={wrap}
+            title={wrap ? t('preview.wrapTip.off') : t('preview.wrapTip.on')}
+            onClick={() => {
+              setWrap((on) => !on)
+            }}
+          >
+            <IconWrapLines />
+            {t('preview.wrap')}
+          </button>
+        ) : null}
         <button
           type="button"
           className="btn-ghost"
@@ -201,7 +230,7 @@ function PreviewBody({ tabId, path, cwd }: { tabId: string; path: string; cwd: s
             <div className="file-preview-empty">{t('preview.reading')}</div>
           ) : null
         ) : (
-          renderBody(read, fsRead, changedRanges)
+          renderBody(read, fsRead, changedRanges, wrap)
         )}
       </div>
     </>
@@ -286,12 +315,23 @@ function PatchBody({ path, cwd, source }: { path: string; cwd: string; source: C
   )
 }
 
+/**
+ * 这个预览体会不会走代码视图（决定头部要不要出「折行」开关）。
+ * 口径与 {@link renderBody} 的分流一致：文本里排掉 markdown 与 csv/tsv。
+ */
+function isCodeBody(read: ReadResult | null): boolean {
+  if (read === null || read.kind !== 'text') return false
+  return !isMarkdown(read.path) && !isDelimited(read.path)
+}
+
 /** 按宿主给的 kind 分流（口径与旧界面 `previewKindFor` 一致）。 */
 function renderBody(
   read: ReadResult,
   fsRead: (file: string) => Promise<unknown>,
   /** 改动覆盖的新文件行区间：markdown 的块标色用；空数组 = 不标。 */
   changedRanges: ReadonlyArray<readonly [number, number]>,
+  /** 代码视图是否折行（头部开关；只对走 CodeView 的文本类文件有意义）。 */
+  wrap: boolean,
 ): ReactNode {
   if (read.tooLarge) {
     return (
@@ -328,7 +368,7 @@ function renderBody(
   if (isDelimited(read.path)) {
     return <CsvView text={read.text ?? ''} path={read.path} />
   }
-  return <CodeView text={read.text ?? ''} path={read.path} />
+  return <CodeView text={read.text ?? ''} path={read.path} wrap={wrap} />
 }
 
 /** csv/tsv 分流（旧界面 previewKindFor 同款）。 */

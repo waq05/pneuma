@@ -68,6 +68,7 @@ import {
   setShellPage,
   toastErr,
   toastOk,
+  toastOkAction,
   useHostChannel,
   useHostSelector,
   useService,
@@ -91,9 +92,6 @@ const t = createT({ zh, en })
 /** 空的会话列表常量：没拿到快照时共用一份，省得每帧新建数组。 */
 /** 每组默认露几条（旧界面同款），「展开剩余」按这个数加量。 */
 const PREVIEW_COUNT = 5
-
-/** 归档确认框的说明文案（旧界面同款：把去向说清楚，不写「确定吗」）。 */
-const ARCHIVE_DETAIL_ONE = t('archive.detail')
 
 export default defineUiPlugin({
   name: t('plugin.name'),
@@ -523,16 +521,72 @@ function SessionList() {
     })()
   }
 
-  /** 归档一条：先过确认框把去向说清楚（旧界面同一句文案），再动手（回执与刷新走 run）。 */
+  /**
+   * 归档一条：**点了就归档**，不弹确认框，改在顶部给一条可撤销的提示。
+   *
+   * 为什么去掉确认框（2026-11-09 报障，对照 dsh 的归档）：归档本身是可逆的（消息一个字
+   * 不删，归档区里能点回来），拿一个模态框去问「你确定吗」，换来的只是一次多余的点击；
+   * 而真正需要的是「点错了怎么退」。所以照 dsh 的做法：立刻归档 → 顶部提示里挂
+   * 「撤销」与「筛选已归档会话」两个入口，8 秒内都能退。
+   *
+   * 为什么直接调 channel.invoke 而不用 run()：run() 只报一句「已完成」，这里的回执要
+   * 带动作按钮，且撤销要拿会话路径回灌 restoreSessions，得自己拼。
+   */
   const archive = (id: string, title: string): void => {
     void (async () => {
-      const ok = await confirmAction({
-        title: t('archive.title', { title }),
-        detail: ARCHIVE_DETAIL_ONE,
-        confirmLabel: t('common.archive'),
-      })
-      if (!ok) return
-      await run('archiveSessions', [[id]])
+      setFault(null)
+      try {
+        const reply = await channel.invoke<unknown>('archiveSessions', [[id]])
+        if (reply !== null && typeof reply === 'object' && (reply as { ok?: unknown }).ok === false) {
+          const reason = (reply as { error?: unknown }).error
+          toastErr(t('toast.opFailed', { message: typeof reason === 'string' ? reason : t('toast.noReason') }))
+          return
+        }
+        await channel.invoke('refreshSessions', [])
+        toastOkAction(t('toast.archived', { title }), [
+          {
+            label: t('toast.undoArchive'),
+            run: () => {
+              void (async () => {
+                try {
+                  // 撤销要拿**归档区里的路径**去恢复：归档是一次 rename，原路径上已经没有文件了
+                  // （宿主 restoreSession 会直接报「归档会话不存在」）。按文件名（uuid.jsonl）在
+                  // 归档列表里认回那一条，再拿它的 `path` 调 restoreSessions（`id` 是 uuid，不是路径）。
+                  const page = await channel.invoke<{ items?: Array<{ path?: unknown }> }>('listArchivedSessions', [])
+                  const uuid = lastSegment(id)
+                  const target = (page.items ?? []).find((item) => {
+                    const path = typeof item.path === 'string' ? item.path : ''
+                    return path !== '' && lastSegment(path) === uuid
+                  })
+                  if (target === undefined || typeof target.path !== 'string') {
+                    toastErr(t('toast.undoArchiveMissing'))
+                    return
+                  }
+                  const reply = await channel.invoke<unknown>('restoreSessions', [[target.path]])
+                  if (reply !== null && typeof reply === 'object' && (reply as { ok?: unknown }).ok === false) {
+                    const reason = (reply as { error?: unknown }).error
+                    toastErr(t('toast.opFailed', { message: typeof reason === 'string' ? reason : t('toast.noReason') }))
+                    return
+                  }
+                  await channel.invoke('refreshSessions', [])
+                  toastOk(t('toast.restored', { title }))
+                } catch (reason) {
+                  toastErr(t('toast.opFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
+                }
+              })()
+            },
+          },
+          {
+            // 「筛选已归档会话」：把侧栏切到「全部对话（显示已归档）」，刚归档的那条就地可见。
+            label: t('toast.showArchived'),
+            run: () => {
+              patchPrefs({ archived: 'show' })
+            },
+          },
+        ])
+      } catch (reason) {
+        toastErr(t('toast.opFailed', { message: reason instanceof Error ? reason.message : String(reason) }))
+      }
     })()
   }
 

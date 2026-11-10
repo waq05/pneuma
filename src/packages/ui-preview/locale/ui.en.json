@@ -22,5 +22,8 @@
   "preview.tooLarge": "File too large ({size}); only files under 10MB can be previewed.",
   "preview.binary": "Binary file ({size}); preview is not supported.",
   "preview.unknownType": "Files like this ({mime}, {size}) cannot be previewed here; use \"Open externally\" to view them.",
-  "preview.unknownMime": "unknown type"
+  "preview.unknownMime": "unknown type",
+  "preview.wrap": "Wrap",
+  "preview.wrapTip.on": "Long lines stay on one line and scroll sideways; click to wrap them to the panel width.",
+  "preview.wrapTip.off": "Long lines wrap to the panel width with the continuation indented under the code column; click to scroll sideways instead."
 }

@@ -22,5 +22,8 @@
   "preview.tooLarge": "文件过大（{size}），仅支持预览 10MB 以内的文件。",
   "preview.binary": "二进制文件（{size}），暂不支持预览。",
   "preview.unknownType": "这类文件（{mime}，{size}）要看内容请用「系统打开」。",
-  "preview.unknownMime": "未知类型"
+  "preview.unknownMime": "未知类型",
+  "preview.wrap": "折行",
+  "preview.wrapTip.on": "长行保持原样，超出面板就横向滚动；点一下改成按面板宽度折行。",
+  "preview.wrapTip.off": "长行按面板宽度折行，续行缩到代码列；点一下改成横向滚动。"
 }
