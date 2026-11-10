@@ -36,6 +36,7 @@ import {
 // 路径/时刻/工具摘要口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
 import { TOOL_STATUS_TEXT, displayPathOf, formatDuration, matchTool, prettyJson, toolArgFields, toolSummary, toolVerb, type ToolMatch } from '@dsc/ui-primitives'
 import { useFoldState } from '../fold-hook'
+import { BashBody, bashCommandOf } from './bash-view'
 import { resultHead, resultRest, resultTail } from './result-tail'
 import { firstLineOf, flatValueOf, toolDetailArgs } from './tool-detail'
 import { useIntendedDiff, type IntendedDiff } from '../intended-diff'
@@ -218,6 +219,19 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
 }
 
 /**
+ * 会走「终端块」的工具名。
+ *
+ * 为什么是三个：`ui-primitives/tool-summary.ts` 里 bash / shell / pwsh 映射的是同一个动词
+ * 与同一个图标，它们都是「跑一条命令」这一件事。本机只注册了 `bash`
+ * （`tools-default/bash.ts` 的 `name: 'bash'`），但兼容层与桌面侧还可能出现另外两个名字；
+ * 界面若只认 `bash`，那台机器上这张卡就永远出不来。
+ *
+ * 名字对得上**之外**还要求参数里有 `command`（见 {@link ToolCardView}）：只有名字符合、
+ * 参数键却是别的，就落回通用卡——宁可少一张终端块，也不画一个没有命令的空壳。
+ */
+const SHELL_TOOL_NAMES = new Set(['bash', 'shell', 'pwsh'])
+
+/**
  * 工具卡视图（纯展示）：一行头（状态点 + 图标 + 动词 + 摘要 + 状态）+ 展开后的额外块 /
  * 参数 / 结果。局部组件由调用方传入；**没有槽上下文的那条路直接渲染它**。
  *
@@ -230,6 +244,20 @@ function ToolCard(props: FactoryComponentProps<typeof TOOLCARD_FACTORY>): ReactN
 export function ToolCardView(props: ToolCardViewProps): ReactNode {
   const { entry, storeKey, variant = 'chat', match: electedMatch, foldPrefs, cwd = '', footer = null } = props
   const call = entry.call
+  /**
+   * 这一条要不要走「终端块」：三条同时成立——名字是 bash / shell / pwsh、参数里真有
+   * `command`、**而且这一页是对话页**。
+   *
+   * 为什么必须带第三条：轨迹页（`variant === 'trace'`）的用途是事后取证，要看到**原样**的
+   * 参数 JSON 与结果原文；换成终端块之后，被格式化掉的那份原文就再也看不到。两个页面是
+   * 两种需求，不该合并。`variant` 的取值只有 `'chat' | 'trace'`，缺省是 `'chat'`
+   * （见 {@link ToolCardViewProps}），所以这里判 `=== 'chat'` 就够，不必同时排掉 trace。
+   *
+   * 别的工具碰巧也有个 `command` 字段不会被误伤，第一道名字判断先把它挡在外面；反过来，
+   * 某个 shell 系工具若换了参数键，这里取不到命令，它就照旧走通用卡，不会画出一个空终端。
+   */
+  const bashCommand = bashCommandOf(call.argsText)
+  const isTerminalCall = SHELL_TOOL_NAMES.has(call.name.toLowerCase()) && bashCommand !== null && variant === 'chat'
   // 默认档取设置里的「工具卡默认展开」；钩子让设置变化即时传到已画出的卡上，
   // 手动调过（有存档）的卡不受影响。没给存档键（轨迹页）时只活在本地。
   const [open, setOpenPersisted] = useFoldState(storeKey, foldPrefs?.toolOpen ?? false)
@@ -431,7 +459,14 @@ export function ToolCardView(props: ToolCardViewProps): ReactNode {
           <BodyExtra intended={intended} change={call.change ?? dshPatch} />
           {/* 卡内调用排在输入/输出之前：这几行是「这张卡到底干了什么」，先读它再读参数。 */}
           <SubCallList call={call} />
-          {variant === 'trace' ? (
+          {isTerminalCall ? (
+            /* bash 系工具（bash / shell / pwsh）在**对话页**换一张终端块：命令、输出、退出码
+               三块。参数表与结果尾巴都不画——命令已经在 `$` 那行、输出在 pre 里、退出码在
+               徽章里，照通用卡再摊一遍同一段文字就是重复。轨迹页不走这一支（取证要看原样
+               的参数 JSON 与结果原文，见上面 isTerminalCall 的注释）。头部与页脚不动，
+               别的工具一个字节都没变。 */
+            <BashBody call={call} />
+          ) : variant === 'trace' ? (
             /* 轨迹页看的是**原始参数与原始结果**（它的职责是取证，不是速读）：这一支
                与改造前逐字一致——标签 + prettyJson + 结果原文。别把对话页那张
                「动作 / 输入 / 输出」的脸搬过来，那会把轨迹页的判读口径改掉。 */
