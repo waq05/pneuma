@@ -775,6 +775,17 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 - **注册即副作用**：每个注册返回清理函数，`apply` 返回合并后的清理函数。
 - **配置错误宁可炸**：能加载时发现的就在加载时报错，绝不静默跳过引用不到的东西。
 - 空 `catch` 必须说明吞了什么、为什么。
+- **展开态的身份要跨得过「直播 → 定稿」**：会话区的行 / 阶段组 / 整轮的展开态存在
+  `ui-transcript/ui/fold-state.ts`，键只能用行在轮内的稳定身份（`Row.stable`，见 `buildSeats`）
+  或轮序号；**不许用 `entry.id`**（直播期是按"第几个直播段"发的负数、定稿又换正数）与
+  `row.at`（条目下标会漂）。用错了的表现是"点开的思考/工具卡被下一行借走"。规则、根因与
+  dsh 的对照见 `docs/ui-design.md` §15.3.3，回归钉在 `ui-transcript-render-test` 的 `[3b]` 段。
+- **chain 子槽的兜底走 `renderSlot` 的第三个参数，不许写 `renderSlot(...) ?? 内置`**：
+  `renderSlot` 返回的是渲染出口的元素、**永远不是 `null`**，所以 `??` 判不出「链上没人认领」。
+  第三个参数就是给 chain 用的（`ui-shell/src/plugin-api.ts` 的 `SlotRenderApi.renderSlot`），
+  兜底**不套** `.slot-entry`，内置内容的 DOM 位置因此与「没有槽」时完全一样。
+  用 `??` 的表现是「插件没装，那一块也画不出来」。同理，没有槽渲染上下文时不要传一个返回
+  `null` 的空函数顶替：它一旦存在就会被调用，整片内容会白屏（见 `ui-transcript` 的 `RowBody`）。
 - **按会话算的东西不许挂在模块级变量上**（`AgentScope`）。宿主同时常驻多个会话的 agent，
   模式、工具目录、系统提示都是**会话的属性**：`ctx.tools.visible(scope)`、
   `ctx.prompt.systemPrompt(cwd, scope)` 与各投影/提示段的回调都得把 `scope` 透传下去。

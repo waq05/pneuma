@@ -4817,7 +4817,7 @@ fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tr
 限高滚动**；它的 notice / system 通道也是左对齐 `<pre>`，不居中任何正文块。
 
 **落地**（壳侧，宿主那段文本一个字没动——TUI 也在读同一份条目）：新增
-`transcript/review-notice.ts`（纯解析：横幅 / 动作 / 路径 / 计数 / 逐行类别）+ 
+`transcript/review-notice.ts`（纯解析：横幅 / 动作 / 路径 / 计数 / 逐行类别）+
 `review-notice-card.tsx`（图标 + 短路径 + 新建/修改徽章 + `+N 行 / -M 行` + 左对齐等宽
 diff 块，`@@` 弱化、增绿删红、限高 260px 滚动）+ `views.css` 的 `.entry-review`；
 对话页与轨迹页都认这段横幅，其余 system 照旧居中。新增
@@ -14915,7 +14915,7 @@ dsh 切组的三条规则（`conversation-nodes/process-groups.ts:147-165`）：
 标准档、展开一轮）：组头是「图标 + 标题 + 箭头」一行，不再拖出半屏。
 ## 2026-11-07 下午（四）：模型重试不再频繁报错，重试提示刷新后还在
 
-用户连着报两件事，同一张图：会话里频繁出现「模型请求失败，正在重试（第 2 次）：HTTP 429 
+用户连着报两件事，同一张图：会话里频繁出现「模型请求失败，正在重试（第 2 次）：HTTP 429
 [prefill_cap_refused] the cell is at capacity; retry shortly (after 30 s)」，而同一个模型在 dsh
 里跑得好好的；另外这条提示刷新一下就没了，事后查不到。随后又补了一张 dsh 的截图：那边是
 「已重试模型请求（3/5） · 2s」，点开是「重试延迟：1847 毫秒 / 失败原因：…」。
@@ -16190,3 +16190,236 @@ dsh 的机制，不要有遗漏」。四条线并行只读调研（运行时、�
   候选顺序只做了静态设计。
 - 桌面端要重新打包（`prepare-runtime` 会把新的 `lib` 与依赖闭包带进去，koffi 本来就在闭包里）
   才会生效。
+
+## 2026-11-10：首屏招呼语收成按时段一句
+
+**为什么改**：原来那版是「九个组、每组五句」——六个时段，加周末、久未使用、头一回打开，
+组内第几句按日期顺移。问题出在「每组五句」这个数量上：每组都得凑满五句，凑出来的就是
+「下午还有一段整时间，够用」「下午过半，把今天的账对一遍」这种话——它不招呼人，在给用户的
+进度打分。当天用户看了截图里那句「下午好，今天还剩几件没动的」，要求整块放弃。
+
+**换成什么**：对着 zcode（`D:\zcode-code\ZCode`）和 codex（`D:\codex\codex`）各看了一遍。
+zcode 按时段一共六句、每段一句，句子的主语全是「你」和「我」（「中午好呀，要不要先休息一下」
+「下午好呀，接下来交给我吧」）；codex 干脆不做问候——首次打开列一次能用的斜杠命令
+（`codex-rs/tui/src/history_cell/session.rs:216`），之后每次从 `assets/tooltips.txt` 里随机
+给一条用法提示。于是取中间：
+
+- 问候语按时段六选一，每段一句。句子的责任只是招呼人，不再提醒进度；
+- 「下一步能干什么」交给首屏那行提示与四张能力卡（codex 的做法），提示语改成
+  「直接说要做什么，或者从下面挑一张 · 输入 / 看全部指令」。
+
+**改了哪些**：`greeting.ts` 只剩一个纯函数 `greetingSlot({ at })`，六段边界对齐 zcode
+（05/09/12/14/18/23，左闭右开，深夜跨零点）；`welcome.tsx` 的文案表从 9 组 × 5 句的数组换成
+6 个字符串；`ui.tsx` 不再传「有没有历史 / 隔了多久」两个读数；两份 locale 删掉 45 个
+`welcome.hello.*.N`、新增 6 个不带序号的键。
+
+**验证**：`ui-welcome-greeting-test` 重写成 24 条断言（文案表、13 个时段边界、接线、老方案
+已撤、换档定时），全绿；根 `tsc -p tsconfig.json --noEmit` 通过；`ui-locale-test` 只剩一条与
+本次无关的 `ui-sessions common.archive` 死键——那是别人在途的改动，没碰。
+
+**到点自动换句**：`greeting.ts` 另给一个纯函数 `nextGreetingBoundaryDelayMs(at)`
+（zcode 的 `getNextChatEmptyGreetingDelayMs` 同款思路），返回距下一个换档整点还有多少毫秒。
+正好卡在整点时返回**下一个**边界而不是 0——给 0 定时器会原地空转、每帧重绘一次。`ui.tsx`
+把它挂成一次 `setTimeout`，到点 `setGreetingAt(new Date())` 重绘。窗口挂一晚上，18:00 一到
+自己从「下午好」换成「晚上好」。
+
+**遗留**：桌面端要重新打包才生效。
+
+## 2026-11-10：会话区折叠展开对齐 dsh（直播思考的展开态不再被抢）
+
+**报障**：任务进行中点开正在跑的思考；模型开始调工具、或开始下一段思考时，**已展开的那一段自己收起，新的那一段自己展开**。收工后再看，同一轮的思考块还会剩一块空白（灰底多出来、正文底部缺半行）。
+
+**根因**（三条，都在"行的身份"上）：
+
+1. 直播条目的 id 是按"第几个直播段"发的负数（`adapter/transcript.ts` 的 `liveEntries`：`id: -(position + 1)`），段一增删就变；定稿那一刻又从负数换成正数（`pushThinking` 的 `this.seq++`）。而行的 React key（`shared.ts` 的 `keyOf`）与展开态存档键（`render.tsx` 的 `storeKey`）都吃 `entry.id`：
+   - 旧思考定稿 → id 换 → key 换 → 组件重挂 → 新键查不到存档 → 回落默认档（收起）；
+   - 下一段直播思考又拿到同一个 `-1` → 读到上一条留下的"展开"存档 → **自动展开**。
+   两条合起来就是用户看到的一收一开。
+2. 工具卡的存档键用的是 `row.at`（条目在全量数组里的下标）：直播段增删、历史入账都会让它漂。
+3. 阶段组的存档键是"轮内第几组"：跑动中尾组会在"一条不成组 / 组消失"之间闪，序号在前面的组消失时整体前移，点开的那一组被下一组借走。
+
+另外那条"灰底多一块、正文缺半行"是 `.think-body` 的 `grid-template-rows: 0fr → 1fr` 高度过渡：`1fr` 的终点按过渡开始那一刻的内容高度算，直播中内容每口 delta 都在长，多出来的部分被 `.think-body-clip` 的 overflow 裁掉。
+
+**对齐参考**（dsh，`D:\\deepseek-harness\\deepseek-harness`）：推理行的 key 是"消息内块索引"（`AssistantMarkdown.tsx:99-109`），展开态是组件本地 state、永远收起起步（`ReasoningRow.tsx:59`、`use-disclosure.ts:11-21`），只有"整轮被折叠隐藏且动画进行中"才复位（`ChatNodeSeat.tsx:122-131`）；展开是条件渲染、没有高度过渡（`DisclosureRow.tsx:121-122`）；组身份由首成员派生（`process-groups.ts:129-144、173-190`）；分组器对首条过程节点就建组（`process-groups.ts:147-165`）。
+
+**改了哪些**：
+
+- `ui-transcript/ui/shared.ts`：`Row` 新增 `stable`（轮内"第几条同类型条目"，工具优先取 `callId`）；`buildSeats` 逐轮算它；`keyOf` 改成 `会话|stable`。
+- `ui-transcript/ui/render.tsx`：思考行与工具卡的 `storeKey` 改用 `row.stable`；阶段组的键改由**首行 stable** 派生（`groupKeyOf`）。
+- `ui-transcript/ui/fold-state.ts`：`stepGroupFoldKey` 改成 `(sessionId, headStable)`；新增 `clearFoldPrefix`（按前缀清一批存档）。
+- `ui-transcript/ui/round-fold.tsx`：`useFoldMemory` 新增 `clearPrefixes`；文档头改口径。
+- `ui-transcript/ui/ui.tsx`：删掉"轮一收尾就把整轮与所有组写回收起"，改成"这一轮从展开变收起的那一拍，按前缀清掉它内部的行与组"（对齐 dsh 的 disclosureReset）；`next-input` 的"上一轮不再是最后一轮"改为独立 effect 抹存档。
+- `ui-transcript/ui/rows/think-row.tsx`：直播尾固定收起起步（`useFoldState(storeKey, !live && prefs.reasoningOpen)`），设置只在定稿后参与。
+- `ui-transcript/ui/process-groups.ts`：运行中尾组**一条也成组**（对齐 dsh 首条即建组），不再有"一条不建组"的特例。
+- `ui-renderer/ui/styles/legacy/views.css`：撤掉 `.think-body` 的 `grid-template-rows` 过渡与 `@starting-style`，改回普通块（瞬时展开，与 dsh 一致）。
+- 探针：`scripts/ui-transcript-render-test.mjs` 新增 `[3b]` 段（8 条稳定身份回归钉子）并同步两条旧断言；`ui-step-group-live-test.mjs`、`ui-fold-combo-test.mjs` 按新语义更新。
+- 新增 `desktop/shots/_verify-think-identity.mjs`：Electron + 假模型复现"思考 → 工具调用 → 第二段思考"，断言点开的第一段跨过定稿仍展开、第二段默认收起。
+
+**验证**：
+
+- 根 `tsc --noEmit`、`desktop` 与 `ui-shell` 的 typecheck 全通过；`ui-shell` 构建通过（21 份插件产物重写）。
+- `ui-transcript-render-test` 158/158、`ui-step-group-live-test` 64/64、`ui-fold-combo-test` 113/113。
+- `desktop/shots/_verify-think-identity.mjs`：PASS——点开第一段后 `open:true`；工具调用到来（第一段定稿）仍是 `open:true`；第二段出现时 `open:false`。
+- `check:ui` 仍有 3 个文件失败：`ui-interaction-base`（follow.ts 手势相关，工作区在途改动）、`ui-locale`（ui-sessions 的 `common.archive` 死键）、`ui-plugin-disable`（预览插件 `offFileLink` 未导出）——三条都来自别人未提交的改动，本次没碰。
+
+**遗留**：
+
+- 整轮过程区仍是 `.turn-process` 的 `grid-template-rows` 动画（整轮那一层没有报障，先留）；dsh 是逐行 JS 动画 + 瞬时隐藏。
+- 其余与 dsh 的差距已逐条记进 `docs/session-parity-gaps.md`（S1–S11，含两边行号、代价与验收方式），
+  下一批按那里的优先级挑。
+- 桌面端要重新打包（或刷新界面）才看得到。
+
+## 2026-11-10：会话区开出三条链 + 思考正文改 Markdown（差距清单 S1 / S3）
+
+**目标**：把 `docs/session-parity-gaps.md` 里那两条「影响以后每个功能」的先做掉——S1（会话区只有工具卡能被插件接管）、S3（思考正文是纯文本，代码块/列表/加粗全是死字）。
+
+**S1：一行条目归谁画，变成一条链**
+
+改之前 `render.tsx` 的 `RowBody` 是一个 `switch (entry.kind)`，插件只能接管工具卡（`transcript.toolview`）。现在多开两条 chain 子槽，三层是**嵌套**关系：
+
+| 槽 | 粒度 | 用来干什么 |
+| --- | --- | --- |
+| `transcript.node` | 整行（选择器按 `entry.kind` 认领） | 换掉某类条目整个外观 |
+| `transcript.toolview` | 一次工具调用 | 工具卡（原地不动，内置那张仍是兜底位） |
+| `transcript.reasoning.body` | 思考行正文区 | 只换排版，折叠交互仍归内置 `ThinkRow` |
+
+两个非显然的点：
+
+1. **`renderSlot(...) ?? 内置` 这种写法不成立**。`renderSlot` 返回的是渲染出口的**元素**，链上没人认领时它不是 `null`，调用点判不出来。于是给壳加了第三个参数 `renderSlot(name, owner, fallback)`（`ui-shell/src/plugin-api.ts` 的 `SlotRenderApi` + `src/packages/ui-slots/ui/slots-react.tsx` 的 `ChainOutlet`）；兜底由出口直接渲染、**不套 `.slot-entry`**，所以内置行的 DOM 位置与「没有槽」时逐字节一样（`.entry-row:has(> .entry-text)` 这类直接子选择器照旧命中）。与 dsh 的 `RenderOpts.fallback` 是同一件事。
+2. **没有槽渲染上下文时不能拿空函数顶替**。团队右栏直接把 `SubagentFlow` 当值渲染，那时 `renderSlot` 是 `undefined`，`RowBody` 走短路画内置行体。第一版写法是传一个返回 `null` 的空函数——它一旦存在就会被调用，整条子代理流会白屏。规矩已写进代码注释与 `docs/development.md` §10。
+
+**S3：思考正文走 `MarkdownView`**
+
+正文搬到 `rows/think-text.tsx`（它就是 `transcript.reasoning.body` 那条槽的落点）：`streaming` 递 `live`、`baseDir` 取会话工作目录（与正文同口径，思考里的相对路径链接可点）。样式**复用** `.file-md` 那一套（会话正文与预览页签共用同一份），只补 12 条带 `.think-text` 前缀的覆盖：段距 0.65em→0.35em、`h1-h6` 降级成 `inherit` + 600、代码块 `min-width:0 / max-width:100% / overflow-x:auto`、表格 `display:block` 自滚。`.think-text` 撤掉 `white-space: pre-wrap`，左竖线与 `--dsc-fs-caption` 保留。
+
+没有把 `.file-md` 的选择器扩成 `.entry-text, .think-text`：思考与正文的量级本来就不同，扩选择器等于把两种排版绑死，改一处会同时动到全部消息与预览页签。
+
+**验证**
+
+- 根 `tsc --noEmit`、`ui-shell` 与 `desktop` typecheck 全通过；`pnpm run build:ui` 21 份产物重写。
+- `ui-node-slot-test` 30/30、`ui-think-markdown-test` 32/32、`ui-transcript-render-test` 158/158、`ui-fold-combo-test` 113/113、`ui-step-group-live-test` 64/64、`ui-fold-prefs-test` 48/48。
+- 新增 `desktop/shots/_verify-think-markdown.mjs`（Electron + 假模型），真机 PASS：代码块排成 `<pre><code>`、列表 2 个 `<li>`、加粗 1 个 `<strong>`、正文里没有三连反引号、代码块外层有横滚、展开区没被顶出右缘（`overflowRight: -8`）、`.entry-row > .slot-entry` 计数为 0。截图 `desktop/shots/_think-markdown.png`。
+- 改过的既有断言只有一条（`ui-transcript-render-test:217`）：thinking 分支把 `storeKey` 从 JSX 内联提成局部常量，断言从「必须内联」放宽成「键值取法不变」。
+
+**探针踩的两个坑**（写进脚本注释，免得下一个人再踩）
+
+1. **不要拿 `element.dispatchEvent` 当「点开」**：它不做命中测试、也不受 `disabled` 影响，探针会得出「点得开」的假结论。真鼠标走 CDP 的 `Input.dispatchMouseEvent`；两者都不生效时先看 `document.elementFromPoint` 落在谁身上——这次就量到真点击落在了 `.turn-status` 上（布局在自动收拢，坐标在动）。
+2. **阶段组默认是收着的，而组体收着时里面的行照样有布局高度**。用高度判「展开了没有」会得到假结论，要看组头自己的 `data-open`。
+
+**遗留**
+
+- S1 还欠一条「第三方插件真的接管一类节点」的端到端实证（现在钉到的是源码形状 + 注册表行为 + 兜底没坏）。
+- 收起态摘要里的行内代码会带出反引号（`think-row.tsx` 只 `replaceAll('**', '')`），一行可修。
+- 剩下 S2 / S4–S10 见 `docs/session-parity-gaps.md`。
+
+## 2026-11-10：思考行头常驻 + 行体比较器止血（差距清单 S10 / S2）
+
+**S10：展开的思考滚到中间，行头还在**
+
+之前只有内容超过 400px 才渲染一条吸附快捷栏（`.think-bar`），短一点的思考展开后滚到正文中间，行头一滚就走，收不起也找不到收起的地方。参考实现 dsh 是把行头本身做成 sticky（`ReasoningRow.module.css:17-22`），照它做：`.think-block.open .think-head { position: sticky; top: 0 }`。
+
+两件必须先弄明白的事：
+
+1. **吸附参照系是阶段组的组体 `.step-body`，不是窗口**。`.step-body` 才是滚动容器（`max-height: min(400px,50vh)` + `overflow-y: auto`）；再往上的 `.turn-process-body` 是 `overflow: hidden`，吸附链到那里就断了，所以「吸到窗口顶」在这个结构里做不到，也不需要。
+2. **`.think-bar` 原来也吸在 `top: 0`**，两块钉在同一行会互相压住（不透明底盖掉行头一半，两边的按钮挤在一起）。改成 `top: var(--dsc-process-row-h)`——那正好是行头的 `min-height`，行头长多高快捷栏就跟到哪，不写魔数。
+
+两个坑都是**看图才发现的**，记在这里：
+
+- `--dsc-fill-quinary` 是 **3% 的透明填充**（`color-mix(…, transparent)`），当成行头底色时滚过去的内容会从行头里透出来，截图上是「两行字叠在一起」。改成 `linear-gradient(var(--dsc-fill-quinary), var(--dsc-fill-quinary)), var(--dsc-bg-raised)`——同一色调铺一层，底下垫不透明实底。
+- 组体顶部那条 **24px 渐隐遮罩作用在整个滚动盒上**，会把吸住的行头自己的字一起淡化（淡淡的，看着像没加载完）。用 `.step-body[data-scroll-up]:has(.think-block.open) { mask-image: none }` 撤掉顶边那条；上下都能滚时另补一条只留底边的版本，否则会把底部渐隐一起撤掉。
+
+**S2 止血：给行体加带比较器的 `memo`**
+
+`RowBody` 原来没有 `memo`。**裸加没用**：流式时每口 delta 都重跑 `buildSeats`，`rowOf` 返回对象字面量，每一行的 `Row` 都是新对象，浅比较必然失败。所以比较器只比三样：`row.entry`（内容没变时是同一引用）、`row.live`、`renderSlot`。
+
+为什么这个比较器不会把流式冻住：`liveEntries()`（`src/adapter/transcript.ts:219-233`）每次 `map` 出新对象，直播行引用每帧都变；定稿条目在结果到达时是 `{ ...previous, ... }` 替换（同文件 `tool/result` 分支），引用也变。两种该重画的情况都盖到了。
+
+**A/B 数字**（`desktop/shots/_perf-stream.mjs`，60 轮 / 126 行 / 约 19 秒流式，同一台机器、同一条脚本、各跑一次）：
+
+| 指标（渲染进程累积） | memo 关 | memo 开 | 差 |
+| --- | --- | --- | --- |
+| TaskDuration | 1796 ms | 1674 ms | −6.8% |
+| **ScriptDuration** | 604 ms | **447 ms** | **−26%** |
+| RecalcStyleDuration | 229 ms | 231 ms | ≈0 |
+| LayoutDuration | 79 ms | 85 ms | ≈0 |
+
+结论要说得准：**脚本活少了四分之一，主线程本来也没被压垮**（两版的帧间隔 p50/p95 都是 6.1/6.2ms，20 秒里只有 1 次长任务）。所以这一条在这个规模上是「省电」，不是「变快」。真正要提速得做彻底方案（座位层稳定身份 + keyed store），`SeatBody` 现在收的 `seat` / `roundFolds` / `stepGrouping` 全是每帧新引用，浅比较必失败。
+
+**验证**
+
+- 根 `tsc --noEmit`、`ui-shell` typecheck 全通过；`pnpm run build:ui` 通过。
+- `ui-row-memo-test` 23/23（新增）、`ui-node-slot-test` 30/30、`ui-transcript-render-test` 158/158、`ui-fold-combo-test` 113/113、`ui-step-group-live-test` 64/64、`ui-fold-prefs-test` 48/48、`ui-think-markdown-test` 32/32。
+- 真机 `desktop/shots/_verify-think-sticky.mjs`：PASS——滚 160px 后行头与组体顶差 0px、块顶已上移 160px（证明是头吸住而不是整块没动）、快捷栏紧贴行头底边、真鼠标点吸住的行头能收起。
+- 真机 `_verify-think-markdown.mjs` 回归通过（S3 没被这次改动带坏）。
+- 新的性能探针 `_perf-stream.mjs` 也进版本库：它读 CDP `Performance.getMetrics` 的累积耗时，比数帧间隔灵敏。
+
+**遗留**
+
+- S2 的彻底方案（keyed store 逐行订阅）没做，见 `docs/session-parity-gaps.md`。
+- 剩下 S4（工具卡族）、S5 + S11（视口协调器与底部占位）、S6（逐行收起动画）、S7（回答代次）、S8（特殊节点卡）、S9（浮层动作改走槽）。
+
+## 2026-11-10：命令类工具换成终端块（差距清单 S4 的第一张专用卡）
+
+**问题**：`bash` 跟别的工具共用一张通用卡——命令缩在参数表里一行 `{"command":"…"}`，输出挤在「结果」那一格，读起来像参数而不是一次命令的执行记录。参考实现给命令行工具一张专用卡。
+
+**退出码只能从文本里解析**：宿主没有结构化退出码。`tools-default/bash.ts:206` 只在**非 0** 时把「退出码 N」写进结果文本第一行（有终止原因时那一行排第二），成功时什么都不写；而且不管退出码是几，工具本身都算 `done`（它把结果当文本交回模型，不抛异常）。所以 `bash-view.tsx` 的 `bashOutcomeOf` 只看前两行、命中 `/退出码 (\d+)/` 就把整行摘掉（正文里再出现一次就是同一句话两遍），解析不到且 `done` 视为 0，`running` 只写「运行中」——**跑动中写「退出码 0」是错的，那时候命令还没跑完**。
+
+**哪些工具走这张卡**：`bash` / `shell` / `pwsh` 三个名字（`tool-summary.ts` 里这三个映射的是同一个动词与图标），**并且**参数里真有 `command` 字段，两条同时成立。只认名字不看参数的话，哪天某个 shell 系工具换了参数键，界面会画出一个没有命令的空终端；只认参数不看名字，别的工具有个碰巧叫 `command` 的字段也会被误伤。
+
+**只换展开体，不动头部页脚**，并且**只在对话页生效**：轨迹页（`variant === 'trace'`）继续摊原始参数 JSON 与结果原文——那一页的职责是取证，格式化会把原文吃掉。这一条是主控在验收时补的：子代理第一版对两页都生效，轨迹页因此丢了原生数据。
+
+**视觉不做黑底**：参考实现那张卡是黑底终端，那是它自己的视觉语言；本仓的口径是「版式与配色 = 旧桌面端、会话区行内风格参考 codex」（`docs/ui-design.md` §6.1）。所以照仓里已有的代码块外观做（等宽 + `--dsc-fill-quaternary` 底 + 1px `--dsc-stroke-3` 描边 + `--dsc-r-block` 圆角），加一行 `$ 命令` 与一枚退出码药丸。颜色全部走令牌。
+
+**两处小口径**（验收时定）：① `running` 且还没有输出时**不画**「（无输出）」——这一格的语义是「跑完了、它什么都没打印」，跑动中写这句等于断言一件还没发生的事，徽章那格已经写着「运行中」；② 展开后命令出现两遍（头部摘要 + `$` 行）是**有意保留**的：收起态必须能看出跑了什么，展开态才给完整命令，参考实现也是这个形状。
+
+**验证**
+
+- `npx tsc -p ui-shell/tsconfig.json --noEmit` → 0；`pnpm run build:ui` 通过。
+- `ui-tool-bash-test` 43 项、`ui-transcript-render-test` 158/158、`ui-row-memo-test` 23/23、`ui-tool-row-flat-test` 51/51、`ui-step-group-live-test` 64/64、`ui-node-slot-test` 30/30、`ui-think-markdown-test` 32/32。
+- 真机 `desktop/shots/_verify-bash-card.mjs`：PASS——真跑 `echo 自检输出; exit 3`，断言 `$` 行有命令原文、输出里有「自检输出」、**正文里没有重复的「退出码 3」**、徽章是 `data-exit="bad"` 且含 3；截图 `desktop/shots/_bash-card.png`。
+- 探针加了一条**可见性**断言：`.tc-bash` 在 DOM 里不等于在屏幕上（阶段组默认收着，收着时所有 DOM 断言全假绿、照片上只有一行组头），所以点开组头后要求终端块在屏幕上真有一定高度。
+
+**遗留**
+
+- `read` 那张没做（只差行号与折叠形态）；dsh 另外 9 个工具视图也没做，逐条见 `docs/session-parity-gaps.md` 的 S4。
+- 另发现一处**与本次无关的可疑现象**：某些截图里会话区背后透出 `P N E U M A` 与「正在启动…」的淡字（欢迎层没完全退场？）。没查，记在这里免得丢。
+
+## 2026-11-10：重答清掉这一轮的折叠存档 + 选区浮层动作改走槽（差距清单 S7 / S9）
+
+**S7：同一轮重答一次，上一次的展开选择要失效**
+
+参考实现给整轮的展开存档带上「回答代次」（`{turn, answerStep}`），重答就换一代，旧选择自然不命中。本仓没有代次，键只有 `会话:turn:轮`，而 `editAndResend`（`ui.tsx`）是 `rewindSession` 把这条消息之后全截掉再 `submit`——**新回答拿到的轮序号与原来一样**，键完全一样，旧选择被新内容继承。
+
+做法是**近似**：rewind 成功之后、submit 之前，把这一轮的存档清掉。三个键：
+
+- 整轮那一格用 `foldMemory.clear([turnFoldKey(sid, keep)])` **精确清**——`turn:1` 当前缀会把 `turn:10` 一起清掉；
+- 行与阶段组的键带轮号（`…:r3:…` / `…:step:r3:…`），按前缀清。不清它们的话，新回答里同位置的行会继承上一版同位置行的展开态（上一版第 0 条思考是展开的，新回答第 0 条思考一出生就是展开的）。
+
+`keep` 能当轮号是因为 `rounds.ts` 规则 3 不让 `internal` 条目开新轮，所以「这条之前人打的用户消息条数」正好是这条消息所在轮的序号。**顺带修了一条反向的旧注释**：`ui.tsx` 原来写着「内部汇报也占一枚刻度」，与规则 3 的现状相反，照着它改会把正确的过滤条件当冗余删掉。
+
+没有抽「回答代次」这个字段出来：那要宿主在 `rewind` 之后给新回答发一个代次并一路传到界面，而清存档这条路在界面上等价、代价小得多。差别记在差距清单里。
+
+**S9：选区浮层的动作从写死改成一条槽**
+
+本仓**本来就有**这个浮层（`ui-ask` 的 `SelectionBubble`），上一版差距清单写「grep 无命中」是因为只 grep 了 `ui-transcript`。真正的差距只是「动作写死成一件、插件加不了」。
+
+改成一条 `list` 槽 `ask.selection.action`（owner `{ text, close }`），内置那颗「问 AI」**也登记到链上**（priority 100 兜底位）。为什么内置的也走槽：浮层只管贴哪儿，动作次序一律由槽的 `order` 决定；内置那颗若绕开槽直画，就把次序写死在渲染代码里，插件没法排到它前面。
+
+两处细节：① 定位从按钮挪到容器 `.ask-sel-actions` 上，多颗动作才排成一行而不是叠在同一坐标；② `mousedown` 的守卫（防点击前选区被撤）也跟着改到容器上，否则插件那颗按钮在 click 之前就被摘掉了。
+
+**验证**
+
+- `npx tsc -p ui-shell/tsconfig.json --noEmit` → 0；`pnpm run build:ui` 通过。
+- `ui-edit-generation-test` 32/32（第 5 节真的 import `fold-state.ts` 演算「精确清不误伤 `turn:10`」「`s:r1:` 不误伤 `s:r10:`」）、`ui-ask-selection-slot-test` 32/32、`ui-side-ask-test` 66/66、`ui-fold-combo-test` 113/113、`ui-transcript-render-test` 158/158、`ui-tool-bash-test` 49、`ui-node-slot-test` 30/30、`ui-think-markdown-test` 32/32、`ui-row-memo-test` 23/23。
+- 真机 `_verify-edit-generation.mjs`：PASS——走界面「编辑并重发」，重答收工后 `.turn-fold` 的 `aria-expanded` 回到 `"false"`（没清的话是 `"true"`），用户消息换成改过的文字、第一版回答消失。截图 `_edit-generation.png`。
+- 真机 `_verify-selection-actions.mjs`：PASS——真实选区 → 浮层从槽里渲染出 1 颗「问 AI」，定位落在 `.ask-sel-actions` 容器上。截图 `_selection-actions.png`。
+- `_verify-bash-card.mjs` 回归通过（上一批的卡没被这轮改动带坏）。
+
+**探针踩的坑（第三次遇到，值得记下来）**
+
+`_verify-edit-generation` 第一版全红，但红的原因不是功能：真鼠标点 `.turn-fold` 落在 `.chat` 上（收拢/展开的过渡帧里坐标一直在动），后面每一步都因为「没展开」而连锁失败。加了一条「真鼠标没点开就补一枪合成事件」之后，五步全过。**探针要验的是功能，不是点击手感**——手感由别的探针覆盖，这里只要能把状态造出来。
+
+**遗留**
+
+- S9 多颗动作时的右边界夹取：`select.ts` 的 `anchorOf` 仍按单颗宽度（`BUBBLE_W=92`）夹，插件挂 2–3 颗时整排可能被 `.app` 的 `overflow-x: clip` 裁掉。改法：容器右对齐到选区右缘（用 `right` 而不是 `left`），或渲染后 measure 再夹。
+- 剩下的 S5 + S11（视口协调器与底部占位）、S6（逐行收起动画）、S8（缺数据源，要先拍板）见 `docs/session-parity-gaps.md`。

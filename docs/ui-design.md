@@ -593,8 +593,11 @@ cd D:\dsc\desktop && pnpm run dist:dir     # → dist/win-unpacked/Pneuma.exe
 一条工具。现在思考与工具同组，「一条思考 + 一次调用」就是一个完整阶段，放平等于把这层结构重新
 摊回平铺——那正是用户报障时看到的画面。规则已删除，所有组一律画组头；dsh 同样不按条数放平。
 
-一轮刚起步、只有一条内容时仍不成组（`groupSteps` 的尾组门槛是两条）：那一刻唯一的一行内容
-不该被组头收走。
+一轮刚起步、只有一条内容时**也成组**（2026-11-10 对齐 dsh；此前门槛是两条）：dsh 的分组器
+对首条过程节点就建组（`conversation-nodes/process-groups.ts:147-165` 的 `pending.push` /
+`flush` 都没有条数门槛）。原来「一条不成组」是怕组头「正在分析请求」压住唯一那一行，现在组头
+常驻实时详情与扫光，本身就是「现在在干什么」的读数；而且组身份改成按首行派生之后，组在这一刻
+出现/消失会让下面所有组的位置抖一次——一条就成组，这一阶段从第一眼起就是一个稳定的盒子。
 
 ### 15.2 三条硬规则
 
@@ -658,12 +661,73 @@ cd D:\dsc\desktop && pnpm run dist:dir     # → dist/win-unpacked/Pneuma.exe
 
 数据侧的前提：这条提示必须**落盘**（会话日志的 `notice` 记录）并且能重放回原位，否则刷新后
 就只剩一段凭空冒出来的答案。落盘与重放的口径见 `docs/development-log.md` 同日那节。
+
+### 15.3.3 展开态跟「行的稳定身份」走，不跟条目 id（2026-11-10）
+
+三层折叠（整轮 / 阶段组 / 单行）的展开态都存在进程内存档里（`fold-state.ts`）。
+存的时候必须用一个**跨得过「直播 → 定稿」那一拍**的身份：
+
+- 单行：`Row.stable` = 这一轮里「第几条同类型条目」（工具优先用 `callId`）。
+  不能用 `entry.id`——直播条目的 id 是「第几个直播段」的负数，段一增删就变，定稿又换正数；
+  拿它当键会让用户点开的那一段在「新工具进来 / 这段定稿」时查不到存档而收起，下一段直播
+  思考又恰好复用同一个负 id、把那份「展开」读走（2026-11-10 报障「收起旧的、展开新的」）。
+- 阶段组：组里**第一条的 `Row.stable`**（对齐 dsh 的 `['process', first.key, groupPart]`）。
+  不能用「轮内第几组」——跑动中尾组会吸收新成员、前面的组可能整体前移，序号会串味。
+- 整轮：轮序号（`会话id:turn:<轮>`），与 dsh 的 `turnProcesses[{turn, answerStep}]` 同口径。
+
+复位只有一个时机：**这一轮从展开变成收起**的那一拍，按前缀清掉这一轮的行与组存档
+（`ui.tsx` 的 `collapsedRounds` + `foldMemory.clearPrefixes`）。不要写成「轮一收尾就复位」——
+那会在用户正读着的时候，把他刚点开的思考/组写回收起。参考实现在整轮被折叠隐藏且收起动画
+进行中才推进 `disclosureReset`（`ChatNodeSeat.tsx:122-131`）。组体自己收起**不**复位组内的行。
+
+另外两条与 dsh 对齐的默认态：
+
+- **直播思考固定收起起步**，设置里的「思考块默认展开」只在定稿后参与（`think-row.tsx`）。
+- **思考展开区不做高度过渡**：`grid-template-rows: 0fr → 1fr` 的终点按过渡开始那一刻的内容
+  高度算，直播中内容每口 delta 都在长，多出来的部分会被裁掉（灰底多一块、正文缺半行）。
+  dsh 是条件渲染、瞬时出现（`DisclosureRow.tsx:121-122`）。
+
+### 15.3.4 会话区的三种节点各有一条链（2026-11-10）
+
+一条条目走到屏幕上会过两次「归谁画」的选举，两层是**嵌套**关系，别合并：
+
+| 槽 | 粒度 | 用来干什么 |
+| --- | --- | --- |
+| `transcript.node` | 一整行（选择器按 `entry.kind` 认领） | 换掉某类条目的整个外观 |
+| `transcript.toolview` | 一次工具调用（按工具名认领） | 工具卡；内置那张也在链上，只是兜底位 |
+| `transcript.reasoning.body` | 思考行的**正文区** | 只换思考正文的排版，行头 / 摘要 / 吸附栏 / 折叠交互仍归内置 `ThinkRow` |
+
+两条约束，写错的表现都很像「插件没装好」：
+
+1. **兜底走 `renderSlot(name, owner, fallback)` 的第三个参数**。写成
+   `renderSlot(...) ?? 内置` 不成立：返回值是渲染出口的元素、永远不是 `null`。
+   兜底不套 `.slot-entry`（`ChainOutlet` 直接渲染它），所以内置行的 DOM 位置与「没有槽」时
+   完全一样——`.entry-row:has(> .entry-text)` 这类直接子选择器照旧命中。
+2. **没有槽渲染上下文时**（团队右栏直接把 `SubagentFlow` 当值渲染）`renderSlot` 是
+   `undefined`，`RowBody` 走短路直接画内置行体。**不要**用一个返回 `null` 的空函数顶替：
+   它一旦存在就会被调用，整条子代理流会白屏。
+
 ### 15.4 验收
 
 ```sh
 node scripts/ui-process-grid-test.mjs   # 令牌、三行同源、首列宽度、组头字号与思考行同档、
                                        # 组头只报类别、禁令、唯一缩进源
-node scripts/ui-transcript-render-test.mjs  # 思考与工具同组、每条行恰好一次、system 不被裹进组
+node scripts/ui-transcript-render-test.mjs  # 思考与工具同组、每条行恰好一次、system 不被裹进组、
+                                       # 稳定身份（[3b] 段）
+node scripts/ui-step-group-live-test.mjs    # 一条也成组、组头实时文案
+node scripts/ui-fold-combo-test.mjs         # 整轮收起才复位
+node scripts/ui-node-slot-test.mjs          # 三种节点各一条链、兜底走第三个参数、无槽上下文走短路
+node scripts/ui-think-markdown-test.mjs     # 思考正文走 MarkdownView、代码块可横滚
+node scripts/ui-row-memo-test.mjs           # 行体比较器只比 entry/live/renderSlot，不许比 Row 本身
+node desktop/shots/_verify-think-identity.mjs  # 真机：点开的直播思考跨过「工具调用 / 下一段思考」仍展开
+node desktop/shots/_verify-think-markdown.mjs  # 真机：思考里的代码块 / 列表 / 加粗排出来，且兜底没套壳
+node desktop/shots/_verify-think-sticky.mjs    # 真机：组体滚 160px 后行头仍吸在顶部，且点它还能收起
+node scripts/ui-tool-bash-test.mjs          # 命令类工具卡：退出码解析、命令解析、只在对话页生效
+node desktop/shots/_verify-bash-card.mjs    # 真机：bash 卡是终端块（$ 命令 / 输出 / 退出码徽章）
+node scripts/ui-edit-generation-test.mjs    # 重答清这一轮的存档：精确键不误伤 turn:10、前缀不误伤 r10
+node desktop/shots/_verify-edit-generation.mjs # 真机：编辑并重发后整轮开关回落收起
+node scripts/ui-ask-selection-slot-test.mjs # 选区浮层动作走 ask.selection.action 槽
+node desktop/shots/_verify-selection-actions.mjs # 真机：真实选区 → 浮层从槽里渲染出「问 AI」
 cd D:\dsc\desktop && pnpm run typecheck
 ```
 
