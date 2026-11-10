@@ -26,7 +26,6 @@
   "toast.needsDesktop": "This capability comes from the desktop shell's native bridge, which a browser does not have",
   "toast.pathCopied": "Workspace path copied",
   "common.delete": "Delete",
-  "common.archive": "Archive",
   "toast.archived": "Session archived, you can",
   "toast.undoArchive": "undo",
   "toast.undoArchiveMissing": "Could not find the session you just archived — restore it from Settings → Archived",

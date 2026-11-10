@@ -26,7 +26,6 @@
   "toast.needsDesktop": "这条能力来自桌面外壳的原生桥，浏览器里没有它",
   "toast.pathCopied": "工作区路径已复制",
   "common.delete": "删除",
-  "common.archive": "归档",
   "toast.archived": "会话已归档，可",
   "toast.undoArchive": "撤销",
   "toast.undoArchiveMissing": "找不到刚归档的那条会话了，去「设置 → 归档」里恢复",
