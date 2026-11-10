@@ -91,7 +91,8 @@ function tsOf(entry: TranscriptEntry): number | null {
  * 于是座位序号与 `RoundInfo` 下标**结构上不可能错开**。
  *
  * 两类条目不参与「这一轮有几条、到哪结束」：开场那条 system 提示、轮次之后冒出来的
- * system 条目（错误、宿主通知）。**轮中途插话**（steering）与**机器投递的条目**（internal）
+ * system 条目（错误、宿主通知），以及两张请求侧的账单卡（`system-prompt` /
+ * `context-injection`，2026-11-10 起）。**轮中途插话**（steering）与**机器投递的条目**（internal）
  * 都不另起一轮，留在原轮里。
  */
 export function splitRounds(entries: readonly TranscriptEntry[]): RoundSplit {
@@ -121,7 +122,14 @@ export function splitRounds(entries: readonly TranscriptEntry[]): RoundSplit {
       return
     }
     const current = rounds[rounds.length - 1]
-    if (current === undefined || entry.kind === 'system') return
+    // 开场 / 轮首冒出来的「请求账单」不推进轮尾，也不改「这一轮答没答」：
+    // - system：错误、宿主通知、「已恢复会话」；
+    // - system-prompt / context-injection（2026-11-10 加）：请求侧的两张卡。它们写在
+    //   请求组装那一刻，**开场第一件事**就可能是发一次请求（一条注入卡），而它们不是回答。
+    //   原来这里只放过 system，于是开场那条注入会把 answered 直接置真、endIndex 也推到它——
+    //   界面据此认为「这一轮已经答完了」，整轮折叠、轮尾用时、跑动状态全都判错。
+    if (current === undefined || entry.kind === 'system' || entry.kind === 'system-prompt'
+      || entry.kind === 'context-injection') return
     current.endIndex = index
     current.answered = true
     const ts = tsOf(entry)

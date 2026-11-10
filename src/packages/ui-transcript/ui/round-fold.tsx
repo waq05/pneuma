@@ -83,6 +83,11 @@ export const TURN_INDEPENDENT: ReadonlySet<TranscriptEntry['kind']> = new Set([
   'system',
   'turn-end',
   'turn-max-tokens',
+  // 系统提示卡与上下文注入卡（2026-11-10）：它们是**请求侧**的读数，不是这一轮的执行步骤。
+  // 不放进这张表的话，一条落在过程区区间里的注入卡会跟着整轮一起被藏掉——而它恰恰是
+  // 「模型当时收到了什么」的唯一线索，收起来之后用户再也找不到（与 system 同一条理由）。
+  'system-prompt',
+  'context-injection',
 ])
 
 /**

@@ -23,6 +23,7 @@ import { RetryRow } from './rows/retry-row'
 import { SubagentRow, ToolRow } from './rows/tool-row'
 import { ChangesCard } from './rows/changes-card'
 import { CompactionRow } from './rows/compaction-row'
+import { ContextInjectionCard, SystemPromptCard } from './rows/prompt-card'
 import { RoundFoot } from './rows/foot'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 import zh from '../locale/ui.zh.json'
@@ -384,6 +385,21 @@ function builtinRowBody(
       ) : (
         <div className="entry-system">{entry.text}</div>
       )
+    }
+    case 'system-prompt': {
+      // 这一轮用的系统提示：只画读数与段清单，正文不画（正文按 hash 去重在会话 state 里，
+      // 条目不携带——这是数据面的决定，界面不去补）。
+      //
+      // 存档键与会话 id + 行的稳定身份拼（与 think / tool 同口径）：切会话重挂时展开态
+      // 能读回来；同一条提示连发几轮时 adapter 原地刷 ts，键不变，所以点开的那张不会自己收起。
+      const storeKey = `${sessionId ?? ''}:${row.stable}`
+      return <SystemPromptCard prompt={entry.prompt} storeKey={storeKey} />
+    }
+    case 'context-injection': {
+      // 这一轮额外注进上下文的东西（环境快照 / 模式 / 沙箱 / 待办提醒）：同样是请求侧内容，
+      // 不进对话正文，只记成一张可展开的账单卡。存档键口径同上。
+      const storeKey = `${sessionId ?? ''}:${row.stable}`
+      return <ContextInjectionCard parts={entry.parts} storeKey={storeKey} />
     }
     case 'turn-max-tokens':
       return (

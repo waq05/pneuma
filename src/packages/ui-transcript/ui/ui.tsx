@@ -651,9 +651,16 @@ function TranscriptFlow({
     toastErr(bootError.text.split('\n')[0] ?? t('transcript.boot.failed'))
   }, [bootError?.id, sessionKey])
 
-  // 空会话欢迎态（与旧桌面界面同一份文案）。
   // 空会话欢迎态（与旧桌面界面同一份文案）：整块在 welcome.tsx，这里只递数据。
-  if (seats.rounds.length === 0 && seats.leading.every((row) => row.entry.kind === 'system')) {
+  // 判据：还没开过轮，且开场区里没有「真内容」。**请求侧的两张账单卡不算内容**（2026-11-10 加）：
+  // 新会话的第一件事就是发一次请求，宿主一开场就会落一条 system-prompt 或 context-injection
+  // （「已恢复会话」那次请求同样会记），原来的 `every(kind === 'system')` 于是当场把欢迎态顶掉——
+  // 用户打开一条空会话，看到的是一张静默的账单卡，而不是「直接说要做什么」。
+  if (
+    seats.rounds.length === 0
+    && seats.leading.every((row) =>
+      row.entry.kind === 'system' || row.entry.kind === 'system-prompt' || row.entry.kind === 'context-injection')
+  ) {
     return (
       <WelcomeState
         cards={welcomeCards}

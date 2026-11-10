@@ -12772,4 +12772,227 @@ body.resizing iframe {
   height: 0;
 }
 
+/* ── 请求侧的两张账单卡：系统提示（⚙）与上下文注入（⊕）──
+   两张卡在会话流里都只占一行「读数」，点开才是清单：
+   - `.entry-prompt`：这一轮用的系统提示——字数、段数、模型；展开是段清单表 + hash 前 8 位；
+   - `.entry-injection`：这一轮额外注进上下文的东西——按类合计的字数；展开是逐条来源 / 位置 / 字数 / 预览。
+   **两张卡都没有正文排版体**：正文不在条目里（见 ui-transcript 的 rows/prompt-card.tsx 模块头），
+   所以这里只有「一行读数 + 一张小表」，将来谁想加正文块，先回去改数据面。 */
+.entry-prompt,
+.entry-injection {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 行头与思考行 / 工具行同一档高度与内距：三者在会话流里是同一层的「一行」，
+   高度差一像素，缩进看着就歪了。 */
+.entry-prompt-head,
+.entry-injection-head {
+  align-items: center;
+  border-radius: var(--dsc-r-control);
+  color: var(--dsc-text-tertiary);
+  cursor: pointer;
+  display: flex;
+  font-size: var(--dsc-fs-tool);
+  gap: var(--proc-gap);
+  min-height: var(--dsc-process-row-h);
+  padding: 0 var(--proc-pad);
+  user-select: none;
+}
+
+/* 悬停只提文字色、不铺底色（与 .think-head / .turn-fold 同一套做法）：
+   铺底色会把这一行读成「一张卡」，而它是开关。 */
+.entry-prompt-head:hover,
+.entry-injection-head:hover {
+  color: var(--dsc-text-secondary);
+}
+
+.entry-prompt-head:focus-visible,
+.entry-injection-head:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsc-accent);
+  outline: none;
+}
+
+/* ⚙ / ⊕ 两个字形走同一个灰档：它们是标识，不是标题。 */
+.entry-prompt-glyph,
+.entry-injection-glyph {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+}
+
+.entry-prompt-label,
+.entry-injection-label {
+  color: var(--dsc-text-secondary);
+  flex: none;
+}
+
+/* 分隔点：3px 小圆点，画不画由 JSX 决定（有内容才画，样式不判空）。 */
+.entry-prompt-dot,
+.entry-injection-dot {
+  background: var(--dsc-stroke-1);
+  border-radius: var(--dsc-r-pill);
+  flex: none;
+  height: 3px;
+  width: 3px;
+}
+
+/* 读数：等宽数字，两行对齐时字数不会左右跳。 */
+.entry-prompt-meta {
+  color: var(--dsc-text-tertiary);
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 模型名可能很长（`端点/模型`）：占剩余宽度、单行省略，不许把箭头挤出行外。 */
+.entry-prompt-model {
+  color: var(--dsc-text-quaternary);
+  flex: 0 1 auto;
+  font-family: var(--dsc-font-mono);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 注入卡的逐类读数吃剩余宽度并单行省略：一张卡里四类以上是常态，
+   全摊开会把箭头那一格顶掉。 */
+.entry-injection-summary {
+  color: var(--dsc-text-tertiary);
+  flex: 1 1 auto;
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entry-prompt-chevron,
+.entry-injection-chevron {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  margin-left: auto;
+  transition: transform var(--dsc-dur) var(--dsc-ease);
+}
+
+/* 展开时箭头翻面（与思考行 / 阶段组头同一个信号）。 */
+.entry-prompt[data-open] .entry-prompt-chevron,
+.entry-injection[data-open] .entry-injection-chevron {
+  transform: rotate(180deg);
+}
+
+/* 展开区：上下各留一缝，左右与行头的文字对齐（18px = 行头内距 proc-pad + ⚙ 那一格）。 */
+.entry-prompt-body,
+.entry-injection-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dsc-sp-1);
+  padding: var(--dsc-sp-1) var(--proc-pad) var(--dsc-sp-2);
+}
+
+/* 段清单表：三列网格（段 id 吃剩余，来源次之，字数靠右贴边）。不用 <table>：
+   行头本身是一行读数、不是数据网格，grid 三列就够，也不带 table 的默认边距。 */
+.entry-prompt-table {
+  display: flex;
+  flex-direction: column;
+  font-size: var(--dsc-fs-tool);
+  gap: 2px;
+  padding-left: 18px;
+}
+
+.entry-prompt-tr {
+  align-items: baseline;
+  display: grid;
+  gap: var(--dsc-sp-3);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr) auto;
+  line-height: 1.6;
+}
+
+/* 表头一档更小、更淡：它是列的标签，不该和内容抢视线。 */
+.entry-prompt-head-row {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-label);
+}
+
+.entry-prompt-head-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 段 id 是标识（identity / tool-rules / plugin:…）：等宽字体，一眼能和「来源」分开。 */
+.entry-prompt-id {
+  color: var(--dsc-text-secondary);
+  font-family: var(--dsc-font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entry-prompt-from {
+  color: var(--dsc-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entry-prompt-num {
+  color: var(--dsc-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* 末行 hash 前 8 位：对账用的小字，等宽，与表的左缘对齐。 */
+.entry-prompt-hash {
+  color: var(--dsc-text-quaternary);
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-label);
+  padding-left: 18px;
+}
+
+/* 老会话（没有段清单）只给这一句，不画空表——空表头看着像界面坏了。 */
+.entry-prompt-missing {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+  padding: var(--dsc-sp-1) var(--proc-pad) var(--dsc-sp-2) 18px;
+}
+
+.entry-injection-row {
+  align-items: baseline;
+  display: flex;
+  font-size: var(--dsc-fs-tool);
+  gap: var(--dsc-sp-2);
+  line-height: 1.6;
+  padding-left: 18px;
+}
+
+/* 来源是投影名 / 环境片段名：等宽，便于与日志对账。 */
+.entry-injection-source {
+  color: var(--dsc-text-secondary);
+  flex: none;
+  font-family: var(--dsc-font-mono);
+}
+
+.entry-injection-where {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+}
+
+.entry-injection-chars {
+  color: var(--dsc-text-tertiary);
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 预览是「认出这是哪一段」的提示，不是正文：灰、单行、省略号收尾。
+   点它没有展开——注入正文本来就没记进日志，要看全文去轨迹页。 */
+.entry-injection-preview {
+  color: var(--dsc-text-quaternary);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* 追加区：新样式段一律加在这行之下，加完把这行挪到文件末尾（trace-check 的末尾纪律断言认这行） */
