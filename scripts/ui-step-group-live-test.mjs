@@ -115,7 +115,7 @@ console.log('[3] 同一份「已定稿」：两档必须完全相同，且照旧
   check('聚合文案与 stepGroupTitle 的旧口径一致', standard === stepGroupTitle(group.counts, true), standard)
 }
 
-console.log('[4] 只有一条内容时不建组（一轮刚起步，唯一的行不该被组头收走）')
+console.log('[4] 一条也成组（2026-11-10 对齐 dsh：首条过程节点就建组）')
 {
   const single = [
     entry('user', { text: '读一眼' }),
@@ -126,8 +126,14 @@ console.log('[4] 只有一条内容时不建组（一轮刚起步，唯一的行
     [{ index: 0, startIndex: 0, endIndex: 1, startTs: 1, endTs: null, answered: true }],
     () => true,
   )
-  check('单条运行中的工具不单独成组', grouping.groups.length === 0, String(grouping.groups.length))
-  check('但它仍是一条可渲染的行（不在任何组里）', grouping.at.size === 0)
+  // 原来这里钉的是「一条不成组」（理由是组头「正在分析请求」会把唯一一行一起收起来）。
+  // 2026-11-10 改成对齐 dsh：dsh 的分组器对首条过程节点就建组
+  // （conversation-nodes/process-groups.ts:147-165 的 pending.push / flush 都没有条数门槛）。
+  // 一条就成组还有个副作用是好的——组身份按首行派生之后，组不会在这一刻凭空出现/消失，
+  // 下面所有组的位置也就不会跟着抖一下。
+  check('单条运行中的工具也成组', grouping.groups.length === 1, String(grouping.groups.length))
+  check('组体里就是那一条（组头画在它自己身上）', grouping.groups[0]?.members.join(',') === '1' && grouping.headAt.has(1) === true)
+  check('它确实在组里（不再作为单独的行平铺）', grouping.at.get(1) !== undefined)
 
   // 一条思考 + 一次调用就必须成组：这是「想一句、调一次」最常见的节奏，也是用户报障里
   // 「每行平铺、没有『运行了代码』这一层」的根源。
@@ -156,8 +162,8 @@ console.log('[5] 源码钉：渲染体与分组器的接线')
   check('实时详情仍然单独占一行（data-shimmer）', /data-shimmer=\{detail\}/.test(row))
   check('详情走 data-step-detail（截图与探针的读数口）', row.includes('data-step-detail={detail === \'\' ? undefined : detail}'))
   check(
-    '分组器：跑动中的尾组以 closed=false 收口',
-    /if \(isRunning\(round\.index\)\) \{\s*\n\s*if \(pending\.length >= 2\) flush\(false\)/.test(groups),
+    '分组器：跑动中的尾组以 closed=false 收口（一条也收，见 2026-11-10 对齐 dsh）',
+    /if \(isRunning\(round\.index\)\) \{\s*\n\s*flush\(false\)/.test(groups),
   )
   // 2026-11-07 起这条分支多了一类成员（过程正文），条件排成了多行，正则跟着放宽到换行。
   check('分组器：思考与工具同组（不再遇思考就封组）', /entry\.kind === 'tool'\s*\|\|\s*entry\.kind === 'thinking'/.test(groups))

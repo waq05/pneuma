@@ -177,7 +177,18 @@ console.log('[3] 源码钉：渲染层确实按这两个返回值走')
   check('界面侧读 value[\'collapseTiming\']', /collapseTiming: value\['collapseTiming'\] === 'next-input' \? 'next-input' : 'completion'/.test(ui))
   check('界面侧读 value[\'foldedReplies\']', /foldedReplies: value\['foldedReplies'\] === 'final' \? 'final' : 'all'/.test(ui))
   check('预算器拿到 foldedReplies', /foldedReplies: prefs\.foldedReplies/.test(ui))
-  check('收尾复位按时机分道：next-input 的最新一轮抹存档而不是写收起', /if \(deferLatest && roundIndex === liveRoundIndex\) reopened\.push\(turnFoldKey/.test(ui) && /foldMemory\.clear\(reopened\)/.test(ui))
+  // 2026-11-10 改口径（对齐 dsh）：复位不再挂在「轮收尾」上，而是挂在「这一轮从展开变成
+  // 收起」那一拍——参考实现在整轮被折叠隐藏、且隐藏动画进行中时才推进 disclosureReset
+  // （ChatNodeSeat.tsx:122-131）。旧断言钉的 `reset(settled)` / `reopened` 已经删掉。
+  check(
+    '整轮收起才复位：按轮算出「正在收起」的集合，再按前缀清掉这一轮的行与组',
+    /const collapsedRounds = useMemo\(/.test(ui) && /foldMemory\.clearPrefixes\(entering\)/.test(ui)
+    && !/foldMemory\.reset\(settled\)/.test(ui),
+  )
+  check(
+    'next-input 的「上一轮不再是最后一轮」仍抹存档（换成独立 effect 处理）',
+    /if \(prefs\.collapseTiming !== 'next-input'\) return/.test(ui) && /foldMemory\.clear\(\[turnFoldKey\(sessionId, previous\)\]\)/.test(ui),
+  )
 }
 
 console.log('')

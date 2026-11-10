@@ -177,11 +177,12 @@ console.log('[3] 形态钉（ui.tsx / factory.tsx / status 的催拍）')
 
   // 「不该出现」的断言先剥注释：修法自己的注释里就引着旧写法，不剥会自己打脸。
   const uiCode = ui.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
-  // 2026-10-29：「默认展开」改成由 useFoldState 负责（设置一改老行跟着变，手动调过的不动），
-  // 这里钉的是「初值只认用户的档位」这条语义，写法换成钩子，断言跟着换。
+  // 2026-10-29：「默认展开」改成由 useFoldState 负责（设置一改老行跟着变，手动调过的不动）。
+  // 2026-11-10：直播尾改成**固定收起起步**（对齐 dsh 的 use-disclosure：初值恒收起），
+  // 设置只在定稿后参与——跑动中自动摊开会让内容每口 delta 都重播一次高度动画。
   check(
-    '③ 直播尾不再强制展开（展开态只认用户的档位）',
-    uiCode.includes('useFoldState(storeKey, prefs.reasoningOpen)') && !uiCode.includes('readFold(storeKey, live ||'),
+    '③ 直播尾不再强制展开（直播收起起步、定稿才认设置档）',
+    uiCode.includes('useFoldState(storeKey, !live && prefs.reasoningOpen)') && !uiCode.includes('readFold(storeKey, live ||'),
   )
   check('③ 直播的「还活着」由扫光/摘要/小圈承载（三样都在）', ui.includes('data-shimmer={live ? summary : undefined}') && ui.includes('think-status') && ui.includes('think-sr'))
 
@@ -197,6 +198,36 @@ console.log('[3] 形态钉（ui.tsx / factory.tsx / status 的催拍）')
   check('⑤ 换工作区催拍（会话路径 / 工作目录）', status.includes('}, [sessionPathKey, cwdKey, nudgeGit])'))
   check('⑤ 回合收工催拍（dsh 的 turn/end 同款）', status.includes("if (was !== 'idle' && turnState === 'idle') nudgeGit()"))
   check('⑤ 催拍有间隔下限（一拍刚跑过就不重拍）', status.includes('GIT_NUDGE_FLOOR_MS') && status.includes('Date.now() - lastGitPollRef.current < GIT_NUDGE_FLOOR_MS'))
+}
+
+console.log('[3b] 行的稳定身份（2026-11-10：直播 → 定稿不换键）')
+{
+  const shared = read(UI + '/shared.ts')
+  const renderSrc = read(UI + '/render.tsx')
+  const uiSrc = read(UI + '/ui.tsx')
+  const pgsSrc = read(UI + '/process-groups.ts')
+  const foldState = read(UI + '/fold-state.ts')
+  const views = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
+
+  // 为什么钉这一条：直播条目的 id 是按「第几个直播段」发的负数、定稿又换正数，拿它当身份
+  // 会让展开态在「新工具进来 / 这段定稿」时被下一行借走——报障原话是「收起旧的、展开新的」。
+  check('Row 带稳定身份字段（轮内第几条同类型条目）', shared.includes('stable: string') && shared.includes('export function buildSeats('))
+  check('buildSeats 真的算稳定身份（同类型序号 + 工具优先 callId）', shared.includes('stableOf(') && shared.includes('nextOrdinal(') && shared.includes(':call:'))
+  check('keyOf 用稳定身份，不再用 entry.id', shared.includes('return `${sessionKey}|${row.stable}`') && !shared.includes('String(row.entry.id)'))
+  // 2026-11-10 改形状：thinking 分支的存档键从「JSX 属性里内联」提成了局部常量
+  // （`transcript.node` 槽的兜底拆分要求把每个分支整理成一支），值没变——钉的仍是
+  // `row.stable` 这个取法，两种写法都算数。
+  check(
+    '思考行的存档键用 row.stable',
+    /(?:storeKey=\{|const storeKey = )`\$\{sessionId \?\? ''\}:\$\{row\.stable\}`/.test(renderSrc),
+  )
+  check('工具卡的存档键不再用 row.at', !renderSrc.includes('${sessionId ?? \'\'}:${String(row.at)}') && renderSrc.includes('const storeKey = `${sessionId ?? \'\'}:${row.stable}`'))
+  check('阶段组的键由首行稳定身份派生', renderSrc.includes('stepGroupFoldKey(sessionId, first?.stable') && foldState.includes('export function stepGroupFoldKey(sessionId: string | null, headStable: string)'))
+  check('整轮收起才复位（不再「轮一收尾就写回收起」）', uiSrc.includes('collapsedRounds') && uiSrc.includes('foldMemory.clearPrefixes(') && !uiSrc.includes('foldMemory.reset(settled)'))
+  check('运行中尾组一条也成组（对齐 dsh 首条即建组）', /if \(isRunning\(round\.index\)\) \{\s*flush\(false\)/.test(pgsSrc))
+  // 注释里还留着「原来用 @starting-style」的解释，判据前先剥注释，免得自己打脸。
+  const viewsCode = views.replace(/\/\*[\s\S]*?\*\//g, '')
+  check('思考展开区不再做高度过渡（grid 0fr/1fr 与 @starting-style 都撤了）', !viewsCode.includes('@starting-style') && !/\.think-body \{[^}]*grid-template-rows/.test(viewsCode))
 }
 
 console.log('[4] 漂移钉：参数表的字段名与宿主工具真定义对得上')
@@ -336,10 +367,13 @@ console.log('[7] 分轮口径单点 + internal 条目对齐 dsh（0.6.67 右侧�
     }),
   )
   // roundInfos 现在住在 timing.ts 里（整个插件都读得到），「不再另算一份」只能按函数体判。
-  const buildSeatsBody = uiCode.slice(uiCode.indexOf('function buildSeats'), uiCode.indexOf('function buildSeats') + 600)
+  // 2026-11-10：buildSeats 搬进 shared.ts 并给每行算稳定身份（Row.stable），函数体变长，
+  // 截取窗口跟着放宽；判据本身不变——分轮只走 splitRounds，不自己按 kind 切。
+  const buildSeatsBody = uiCode.slice(uiCode.indexOf('function buildSeats'), uiCode.indexOf('function buildSeats') + 2600)
   check(
     "① buildSeats 走 splitRounds（不再自己按 kind==='user' 切座位）",
-    buildSeatsBody.includes('const split = splitRounds(all)') && buildSeatsBody.includes('split.seats.map((seat) => ({ round: seat.round') && !buildSeatsBody.includes('roundInfos('),
+    buildSeatsBody.includes('const split = splitRounds(all)') && buildSeatsBody.includes('split.seats.map((seat) =>')
+    && !buildSeatsBody.includes('roundInfos('),
   )
   check(
     "① timing.ts 转出 rounds.ts 的 roundInfos（旧的分轮循环已撤，不留第二份判据）",
