@@ -19,7 +19,15 @@
  *
  * @module dsc-ui-shell/plugins/ask
  */
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react'
 import { createPortal } from 'react-dom'
 import {
   ACTIONS_SERVICE,
@@ -44,7 +52,7 @@ import {
   type SlotRenderApi,
 } from '@dsc/ui'
 import { Select, humanErrorText } from '@dsc/ui-primitives'
-import { anchorOf, normalizeSelection } from './select'
+import { anchorOf, normalizeSelection, type Box } from './select'
 import {
   addBubble,
   appendAnswer,
@@ -265,7 +273,59 @@ function SelectionBubble({
 }: {
   renderSlot?: SlotRenderApi<'ask.selection.action'>['renderSlot']
 }): ReactNode {
-  const [pick, setPick] = useState<{ text: string; left: number; top: number } | null>(null)
+  /**
+   * 选区原文 + 选区框（视口坐标）。位置不在这里存：改视口、改浮层宽度都要重算一遍，
+   * 存下原始框才能重算，否则 resize 之后只能关掉。
+   */
+  const [pick, setPick] = useState<{ text: string; box: Box } | null>(null)
+  /**
+   * 浮层**自己量出来**的尺寸。为什么不按单颗估算：`ask.selection.action` 是 list 槽，
+   * 插件挂 2–3 颗动作时整排会宽出两三倍，按 92px 夹取就让整排伸出右边界被裁掉。
+   * 量到宽度后夹取按实量走：left ∈ [8, innerWidth - width - 8]。
+   * 为什么选「量宽度」而不是 translateX(-100%) 右对齐：量宽度能保住单颗时的
+   * 现有视觉（贴选区右缘、左边界随宽度自然回收），右对齐会让浮层的左边界在
+   * 单颗/多颗之间跟着变，而且宽度超过视口时还得另写一套左对齐兜底。
+   * 代价是多一次布局读——用 useLayoutEffect 在绘制前量，用户看不到中间帧。
+   */
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null)
+  const actions = useRef<HTMLDivElement | null>(null)
+  const [viewport, setViewport] = useState<{ width: number; height: number }>(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }))
+
+  /** 读一次容器的真实尺寸；只有真的变了才 setState（ResizeObserver 会反复回调）。 */
+  const measure = useCallback((): void => {
+    const element = actions.current
+    if (element === null) return
+    // 只读一次布局：width / height 都出自同一个 rect。
+    const rect = element.getBoundingClientRect()
+    const width = rect.width
+    const height = rect.height
+    setSize((prev) =>
+      prev !== null && Math.abs(prev.width - width) < 0.5 && Math.abs(prev.height - height) < 0.5
+        ? prev
+        : { width, height },
+    )
+  }, [])
+
+  // 挂载/内容变化后、浏览器绘制之前量一次：夹取用的是实量宽度，不是常量。
+  useLayoutEffect(() => {
+    measure()
+  })
+
+  // 插件可能异步往槽里加动作（数据到了才渲染），容器宽度会变：观察它自己。
+  useEffect(() => {
+    const element = actions.current
+    if (element === null || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      measure()
+    })
+    observer.observe(element)
+    return () => {
+      observer.disconnect()
+    }
+  }, [measure, pick])
 
   useEffect(() => {
     let timer = 0
@@ -288,11 +348,7 @@ function SelectionBubble({
         return
       }
       const box = range.getBoundingClientRect()
-      const anchor = anchorOf(
-        { left: box.left, top: box.top, right: box.right, bottom: box.bottom },
-        { width: window.innerWidth, height: window.innerHeight },
-      )
-      setPick({ text, ...anchor })
+      setPick({ text, box: { left: box.left, top: box.top, right: box.right, bottom: box.bottom } })
     }
     // 等一帧再读：mouseup 时选区往往还没定下来（浏览器要处理完这次点击）。
     const later = (): void => {
@@ -309,14 +365,21 @@ function SelectionBubble({
     const onScroll = (): void => {
       setPick(null)
     }
+    // 窗口改大小：选区框已经不准了，但不关掉——按新视口和实量宽重夹一次，
+    // 免得用户只是拖了一下窗口，浮层就没了（滚动仍然是关掉，那是真丢了锚点）。
+    const onResize = (): void => {
+      setViewport({ width: window.innerWidth, height: window.innerHeight })
+    }
     document.addEventListener('mouseup', onDown)
     document.addEventListener('keyup', later)
     window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onResize)
     return () => {
       window.clearTimeout(timer)
       document.removeEventListener('mouseup', onDown)
       document.removeEventListener('keyup', later)
       window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', onResize)
     }
   }, [])
 
@@ -324,9 +387,15 @@ function SelectionBubble({
   const close = (): void => {
     setPick(null)
   }
+  // 夹取：优先用浮层实量的尺寸；首帧还没量到时 anchorOf 内部退回单颗兜底值。
+  const anchor = anchorOf(pick.box, viewport, size ?? undefined)
   return createPortal(
     // 定位落在容器上：一排动作共用一个锚点，多颗时才能排成一行（按钮自己只是行内药丸）。
-    <div className="ask-sel-actions" style={{ left: pick.left, top: pick.top }}>
+    <div
+      className="ask-sel-actions"
+      ref={actions}
+      style={{ left: anchor.left, top: anchor.top }}
+    >
       {renderSlot === undefined ? (
         // 兜底：槽上下文缺席时（理论上只有装配坏了才会发生）至少留住内置那一颗，
         // 不至于「插件没装好，连问 AI 都没了」。

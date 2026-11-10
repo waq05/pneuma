@@ -13,6 +13,9 @@
  *   [3] 浮层渲染：`renderSlot('ask.selection.action', { text, close })`，且**有**
  *       `renderSlot === undefined` 的兜底（反向钉：不许只剩一句 renderSlot 调用）。
  *   [4] 样式：定位从按钮挪到 `.ask-sel-actions` 容器（按钮那条规则里不再有 position）。
+ *   [5] 注释留档：为什么内置那一颗也要登记到链上（接续 S9）。
+ *   [6] 夹取用「浮层量出来的宽度」：容器上读 `getBoundingClientRect().width` 交给 `anchorOf`，
+ *       92px 那个常量只剩首帧兜底，不再是唯一依据（多颗动作时整排才不会被裁掉）。
  *
  * 运行：node --import ./scripts/_i18n-alias.mjs scripts/ui-ask-selection-slot-test.mjs
  *
@@ -184,6 +187,50 @@ console.log('[5] 注释留档：为什么内置那一颗也要登记到链上')
   check(
     '兜底分支的理由也留了档（插件没装好时不至于连问 AI 都没了）',
     ask.includes('连问 AI 都没了') || ask.includes('至少留住内置那一颗'),
+  )
+}
+
+console.log('[6] 夹取用「量出来的宽度」：92 那个常量只剩首帧兜底')
+{
+  const select = read('src/packages/ui-ask/ui/select.ts')
+  const selectCode = select.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
+  // anchorOf 的函数体（签名到文件尾）：夹取的全部依据都在这里，剥注释后逐条钉。
+  const anchorBody = selectCode.slice(selectCode.indexOf('export function anchorOf'))
+  // 量尺寸那一段（measure 回调本体）：宽度必须从容器上读，不许出现「猜一颗多宽」。
+  const measureStart = askCode.indexOf('const measure = useCallback')
+  const measureBody = askCode.slice(
+    measureStart,
+    askCode.indexOf('useLayoutEffect', measureStart),
+  )
+  check(
+    '浮层容器上量真实宽度（actions.current -> getBoundingClientRect）',
+    measureBody.length > 0 &&
+      /actions\.current/.test(measureBody) &&
+      /getBoundingClientRect\(\)/.test(measureBody) &&
+      /rect\.width/.test(measureBody),
+    measureBody.replace(/\s+/g, ' ').slice(0, 160),
+  )
+  check(
+    '量到的尺寸交给 anchorOf（size ?? undefined：只有首帧才退回兜底值）',
+    /anchorOf\(pick\.box, viewport, size \?\? undefined\)/.test(askCode),
+  )
+  check(
+    'anchorOf 收第三参「实测尺寸」，默认值只指向首帧兜底',
+    /export function anchorOf\([\s\S]{0,400}?measured: \{ width: number; height: number \} = FALLBACK_SIZE/.test(selectCode),
+  )
+  check(
+    '夹取按 measured.width 算（左界 ANCHOR_GAP / 右界 innerWidth - width - ANCHOR_GAP）',
+    /viewport\.width - measured\.width - ANCHOR_GAP/.test(anchorBody) &&
+      /Math\.min\(Math\.max\(ANCHOR_GAP, rightAligned\), maxLeft\)/.test(anchorBody),
+  )
+  check(
+    '92 那个常量不再是唯一依据（anchorOf 函数体里已不出现 BUBBLE_W）',
+    anchorBody.length > 0 && !anchorBody.includes('BUBBLE_W'),
+    anchorBody.replace(/\s+/g, ' ').slice(0, 160),
+  )
+  check(
+    '也不靠猜倍数（没有 2 * BUBBLE_W / 3 * BUBBLE_W 之类的写法）',
+    !/\d+\s*\*\s*BUBBLE_W/.test(selectCode) && !/\d+\s*\*\s*BUBBLE_W/.test(askCode),
   )
 }
 

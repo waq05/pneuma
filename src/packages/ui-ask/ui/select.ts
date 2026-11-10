@@ -19,9 +19,18 @@ export const MIN_SELECTION_CHARS = 4
 export const MAX_SELECTION_CHARS = 8000
 /** 浮钮与选区之间的间距（px）。 */
 export const ANCHOR_GAP = 8
-/** 浮钮的估算尺寸（px）：只为夹取边界用，真实尺寸由 CSS 决定。 */
+/**
+ * 浮钮的**兜底**尺寸（px）：只在浮层还没上屏、量不到真实宽度时先摆一个位置。
+ *
+ * 为什么不能拿它当唯一依据：`ask.selection.action` 是一条 list 槽，插件往里挂 2–3 颗动作时
+ * 整排宽度由插件决定，按单颗 92px 估就会把整排推出右边界（被 `.app` 的 overflow-x: clip 裁掉）。
+ * 真实宽度由浮层渲染后自己量（getBoundingClientRect），量到了就一律以实量为准。
+ */
 export const BUBBLE_W = 92
 export const BUBBLE_H = 30
+
+/** 首帧兜底：浮层还没上屏时用它先摆位置，量到真实尺寸后立刻替换。 */
+const FALLBACK_SIZE: { width: number; height: number } = { width: BUBBLE_W, height: BUBBLE_H }
 
 /** 视口坐标的框。 */
 export interface Box {
@@ -58,18 +67,26 @@ export function normalizeSelection(raw: string): string | null {
  *
  * 为什么不用「跟着光标走」：跨行选区时末尾光标常常贴着右缘、甚至滚出视口，
  * 贴右下角再夹取一遍，至少保证整颗按钮在视野里。
+ *
+ * 为什么宽度要传进来（而不是读常量）：这条浮层已经改成槽，动作颗数由插件决定，
+ * 「一颗」和「三颗」的宽度差出两三倍。由调用方在容器上量一次 `getBoundingClientRect().width`
+ * 再传进来，夹取就跟着真实宽度走——代价是多一次布局读（多一帧同步测量）。
+ * 没量到（首帧 / 浮层还没上屏）时退回 FALLBACK_SIZE，与只看单颗的老行为一致。
  */
 export function anchorOf(
   selection: Box,
   viewport: { width: number; height: number },
+  measured: { width: number; height: number } = FALLBACK_SIZE,
 ): { left: number; top: number } {
-  const maxLeft = Math.max(ANCHOR_GAP, viewport.width - BUBBLE_W - ANCHOR_GAP)
-  const left = Math.min(Math.max(ANCHOR_GAP, selection.right - BUBBLE_W), maxLeft)
+  // 右缘留 ANCHOR_GAP；左边同样留 ANCHOR_GAP，不贴视口边缘。
+  const maxLeft = Math.max(ANCHOR_GAP, viewport.width - measured.width - ANCHOR_GAP)
+  const rightAligned = selection.right - measured.width
+  const left = Math.min(Math.max(ANCHOR_GAP, rightAligned), maxLeft)
   // 下面放得下就放下面；放不下（选区贴着底边）就翻到选区上方。
   const below = selection.bottom + ANCHOR_GAP
   const top =
-    below + BUBBLE_H <= viewport.height - ANCHOR_GAP
+    below + measured.height <= viewport.height - ANCHOR_GAP
       ? below
-      : Math.max(ANCHOR_GAP, selection.top - BUBBLE_H - ANCHOR_GAP)
+      : Math.max(ANCHOR_GAP, selection.top - measured.height - ANCHOR_GAP)
   return { left, top }
 }
