@@ -92,8 +92,15 @@ export type FactoryStore<F extends FactoryName> = FactoryStoreOfMap<SlotFactoryM
  * 这样 `renderSlot` 只能渲染本条目自己声明过的名字，拼错当场报装配错误。
  */
 export interface SlotRenderApi<ChildKeys extends string = never> {
-  /** 渲染本条目声明过的子槽（没声明过的名字调用会抛装配错误）。 */
-  renderSlot: <K extends ChildKeys & SlotName>(name: K, props?: SlotOwnerOf<K>) => ReactNode
+  /**
+   * 渲染本条目声明过的子槽（没声明过的名字调用会抛装配错误）。
+   *
+   * 第三个参数是 chain 子槽**全体弃权**时的兜底：链上没人认领就画它（不给就画空）。
+   * 为什么不写成 `renderSlot(...) ?? <兜底>`：返回值是渲染出口的元素、不是 null，调用点
+   * 判不出「链上没人」。ChainOutlet 直接渲染这份兜底（不套 `.slot-entry`），所以内置内容
+   * 的 DOM 位置不变；与 dsh 的 `RenderOpts.fallback` 同一件事。
+   */
+  renderSlot: <K extends ChildKeys & SlotName>(name: K, props?: SlotOwnerOf<K>, fallback?: ReactNode) => ReactNode
   /** 本条目声明出来的子槽名（诊断用）。 */
   childSlots: readonly string[]
   /** 渲染一次 Factory occurrence（定义缺席画 fallback）——D2 的复用面。 */

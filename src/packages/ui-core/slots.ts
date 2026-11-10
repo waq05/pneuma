@@ -136,7 +136,16 @@ export type SlotComponentLike<P> = (props: P) => unknown
  * `SlotComponentProps`（ReactNode 返回），不是这里。
  */
 export interface SlotRenderShare<M, D, FM> {
-  renderSlot: <K extends keyof D & keyof M & string>(name: K, props?: SlotOwnerOf<M, K>) => never
+  /**
+   * 渲染一个子槽。
+   *
+   * 第三个参数是 **chain 子槽全体弃权**时的兜底（不给就画空）。为什么兜底要递进这个
+   * 调用而不是在调用点写 `renderSlot(...) ?? <兜底>`：`renderSlot` 返回的是一个渲染出口
+   * （React 元素），不是 null，调用点判不出「链上没人」。浏览器壳的 ChainOutlet 直接画它
+   * （不套 `.slot-entry`），与 dsh 的 `RenderOpts.fallback` 同一件事；终端壳还没有链出口，
+   * 第三个参数当前只被浏览器壳消费。
+   */
+  renderSlot: <K extends keyof D & keyof M & string>(name: K, props?: SlotOwnerOf<M, K>, fallback?: unknown) => never
   childSlots: readonly string[]
   renderFactorySlot: RenderFactorySlotOf<M, FM>
 }

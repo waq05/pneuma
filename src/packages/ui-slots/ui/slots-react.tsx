@@ -60,21 +60,27 @@ export function SlotOutlet({
  * 渲染一个 chain 槽：为这份 owner 值选出渲染者并挂载它。
  *
  * 与 SlotOutlet 的差别：chain 槽每一份 owner 只该由**一个**当选者渲染（选举语义），
- * 全体弃权返回 null——兜底由调用方画（`renderSlot(...) ?? <兜底>`）。
+ * 全体弃权时画调用方递进来的 `fallback`（`renderSlot` 的第三个参数）；没给就是空。
+ * 兜底**不套 `.slot-entry`**：它就是这一格的本体，内置行的 DOM 位置因此与「没有槽」时
+ * 完全一样（`views.css` 里 `.entry-row:has(> .entry-text)` 这类直接子选择器照旧命中）。
+ *
  * 订阅照走 useSlot：登记增减、退位都会换快照引用，选举在下一帧重跑。
  */
 export function ChainOutlet({
   slots,
   slot,
   owner,
+  fallback,
 }: {
   slots: UiSlots
   slot: string
   owner: Record<string, unknown>
+  /** 全体弃权时的兜底内容（调用方在 `renderSlot` 第三个参数里给）。 */
+  fallback?: ReactNode
 }): ReactNode {
   useSlot(slots, slot)
   const hit = slots.elect(slot, owner)
-  if (hit === null) return null
+  if (hit === null) return <>{fallback ?? null}</>
   return (
     <SlotEntryHost
       key={`${hit.entry.cell}|${hit.entry.id}|${String(hit.entry.priority)}|${String(hit.entry.seq)}`}
@@ -99,7 +105,7 @@ function SlotEntryHost({
   // 调用；真正的 props 检查发生在插件作者的 register 调用点。
   const Component_ = entry.component as ComponentType<Record<string, unknown>>
   const renderSlot = useCallback(
-    (name: string, props?: Record<string, unknown>): ReactNode => {
+    (name: string, props?: Record<string, unknown>, fallback?: ReactNode): ReactNode => {
       if (!entry.children.includes(name)) {
         throw new SlotAssemblyError(
           `条目 ${entry.slot}/${entry.id} 没有声明子槽「${name}」` +
@@ -107,8 +113,9 @@ function SlotEntryHost({
         )
       }
       // chain 子槽走选举（一个 owner 只有一个当选者），其余形态全量渲染。
+      // `fallback` 只对 chain 有意义（空链时画它）；非 chain 槽本来就是「有几份画几份」。
       return slots.spec(name) === 'chain' ? (
-        <ChainOutlet slots={slots} slot={name} owner={props ?? NO_OWNER} />
+        <ChainOutlet slots={slots} slot={name} owner={props ?? NO_OWNER} fallback={fallback} />
       ) : (
         <SlotOutlet slots={slots} slot={name} owner={props ?? NO_OWNER} />
       )
@@ -290,7 +297,7 @@ function FactoryOccurrenceBody({
   selections: Readonly<Record<string, ComponentType<Record<string, unknown>>>>
 }): ReactNode {
   const kit = useMemo(() => {
-    const renderSlot = (name: string, props?: Record<string, unknown>): ReactNode => {
+    const renderSlot = (name: string, props?: Record<string, unknown>, fallback?: ReactNode): ReactNode => {
       if (!definition.children.includes(name)) {
         throw new SlotAssemblyError(
           `装配错误：Factory「${definition.name}」没有声明子槽「${name}」` +
@@ -298,7 +305,7 @@ function FactoryOccurrenceBody({
         )
       }
       return slots.spec(name) === 'chain' ? (
-        <ChainOutlet slots={slots} slot={name} owner={props ?? NO_OWNER} />
+        <ChainOutlet slots={slots} slot={name} owner={props ?? NO_OWNER} fallback={fallback} />
       ) : (
         <SlotOutlet slots={slots} slot={name} owner={props ?? NO_OWNER} />
       )
