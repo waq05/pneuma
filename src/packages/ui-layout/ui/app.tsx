@@ -620,6 +620,17 @@ export function App({ slots, boot, serviceRegistry, session, hmr, bootError, all
                         <div className="chat-inner">
                           <SlotOutlet slots={slots} slot={SLOT.main} />
                         </div>
+                        {/* 底部占位：视口协调器用它吃掉折叠/展开带来的高度变化（现阶段恒 0 高）。
+                            归属：**高度由 ui-transcript 的视口协调器（第③阶段）写内联样式**，
+                            这里（ui-layout）只负责把它放在正确的层级上，别当成布局插件的东西。
+                            为什么必须挂在 .chat-inner **外面**：
+                            1. 放进列里会多吃一格 --dsc-turn-gap（.chat-inner 是 gap 列）；
+                            2. follow.ts 观察的是 scroller.firstElementChild（正是 .chat-inner），
+                               占位在里面会让「占位改高度」被当成内容增长，被自己的 onResize 抵消；
+                            3. 列靠 margin-top: auto 贴底，占位挂在它后面才是纯滚动余量。
+                            （transcript 的 ui.tsx 整段经 shell.main 槽渲在 .chat-inner 里面，
+                             所以这个元素只能在这一层出现，不能写进那个插件。） */}
+                        <div className="turn-spacer" data-chat-turn-spacer="" aria-hidden="true" />
                       </div>
                     </div>
                   )}

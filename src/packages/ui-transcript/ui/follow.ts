@@ -17,6 +17,18 @@ const FOLLOW_SETTLE_MS = 180
 const UP_KEYS: ReadonlySet<string> = new Set(['ArrowUp', 'PageUp', 'Home'])
 
 /**
+ * 滚动区底部占位的高度（px）。
+ *
+ * 为什么每次读 DOM 而不缓存：占位的高度由视口协调器按需写内联样式（现阶段恒 0），
+ * 缓存一份就得另外维护失效时机；贴底时读一次 `offsetHeight`，代价远小于一次错位。
+ * 取不到占位（例如轨迹页、或协调器还没挂上）按 0 算，口径与没有占位时一致。
+ */
+const spacerHeight = (scroller: HTMLElement): number => {
+  const spacer = scroller.querySelector<HTMLElement>('[data-chat-turn-spacer]')
+  return spacer?.offsetHeight ?? 0
+}
+
+/**
  * 手势的有效期（ms）：这一下之后多久内的滚动还算「读者在读历史」。
  *
  * 取 1.5 秒而不是「一次手势管一次滚动」：拖滚动条是一次 pointerdown 带一长串 scroll，
@@ -74,7 +86,16 @@ export function useFollowBottom(
   useEffect(() => {
     const scroller = end?.closest('.chat')
     if (!(scroller instanceof HTMLElement)) return undefined
-    const floor = (): number => Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+    /**
+     * 内容真正的底（可滚动的上限）。
+     *
+     * 为什么减掉占位的高度：占位是给滚动留的余量，不是内容。不减的话「贴底」会停在
+     * 占位那段空白里——视口里最后一条消息被顶上去，底部胶囊的亮灭判断也跟着错。
+     * 贴底判定（24px）比的是「离 floor 还有多远」，口径不变：占位是 0 时 floor 与
+     * 改造前逐像素相同，占位长出来时它比的仍是内容底，不会把占位算成内容。
+     */
+    const floor = (): number =>
+      Math.max(0, scroller.scrollHeight - spacerHeight(scroller) - scroller.clientHeight)
     /**
      * 上一次钉底时的内容总高度。
      *
@@ -105,7 +126,8 @@ export function useFollowBottom(
         wasHidden = true
         return
       }
-      scroller.scrollTop = scroller.scrollHeight
+      // 写 floor() 而不是 scrollHeight：占位长出来时也停在内容底，不滚进那段空白。
+      scroller.scrollTop = floor()
       written.current = scroller.scrollTop
       pinnedHeight.current = scroller.scrollHeight
     }
