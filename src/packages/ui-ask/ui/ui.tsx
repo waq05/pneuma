@@ -40,6 +40,8 @@ import {
   type ActionsHandle,
   type DockTabBodyProps,
   type HostSnapshot,
+  type SlotComponentProps,
+  type SlotRenderApi,
 } from '@dsc/ui'
 import { Select, humanErrorText } from '@dsc/ui-primitives'
 import { anchorOf, normalizeSelection } from './select'
@@ -61,6 +63,31 @@ import en from '../locale/ui.en.json'
 
 /** 本包的取词器：语言由启动图的 `host.language` 决定（见 `@dsc/ui` 的 `createT`）。 */
 const t = createT({ zh, en })
+
+/**
+ * 槽名（本插件自己开的扩展点）：选中文字浮层上的那一排动作。
+ *
+ * 它是 `shell.header` 那条登记（`ask.triggers`）的**子槽**，由那条登记的 `children`
+ * 声明出来——所以只有浮层在渲染时才需要它，也没必要在壳的槽名表里占一格。
+ * 谁有渲染能力：`AskTriggers` 拿到的 `renderSlot`，一路传给浮层。
+ */
+const SELECTION_ACTION_SLOT = 'ask.selection.action'
+
+/**
+ * 把本插件开出来的子槽并进 `@dsc/ui` 的槽位契约表（与 transcript 的写法一致）。
+ *
+ * owner 交给每条动作两样东西：选中的**原文**（`text`）和「关掉浮层」的回调（`close`）。
+ * 为什么把 close 交给动作而不是由浮层统一关：插件动作可能要多步（先弹自己的面板、
+ * 再决定关不关），交出去它才有选择权；内置那一颗点完就关。
+ */
+declare module '@dsc/ui' {
+  interface SlotMap {
+    [SELECTION_ACTION_SLOT]: {
+      kind: 'list'
+      owner: { text: string; close: () => void }
+    }
+  }
+}
 
 /** 宿主 `sideAsk` 的回包形状（与 contract.ts 的 SideAskView 一致）。 */
 /** listModels 回来的一项（与 contract.ts 的 ModelChoiceView 同形，只取用得到的列）。 */
@@ -128,13 +155,33 @@ export default defineUiPlugin({
     // 浮钮 / 快捷键 / 动作表都挂在 header 槽：它常驻（设置面板与命令面板也住这儿）。
     // 槽位登记的回收归装载器的账本（cordis 的 effect），这里只把页签报名交回去：
     // 停用后 kind 元数据、开始页入口卡、已经开着的旁问页签一起消失。
-    ui.slots.register('shell.header', { id: 'ask.triggers', order: 80 }, AskTriggers)
+    //
+    // `children` 把选区浮层的那条槽开在**这一条登记名下**：声明与登记同一个生命周期，
+    // 插件卸掉时子槽一起收走，不会在壳里留下一个没人渲染的空位置。
+    ui.slots.register(
+      'shell.header',
+      {
+        id: 'ask.triggers',
+        order: 80,
+        children: { [SELECTION_ACTION_SLOT]: 'list' },
+      },
+      AskTriggers,
+    )
+    // 内置那一颗「问 AI」也走同一条链，**不**由浮层直接画：位置由槽统一排，
+    // 插件动作与它共用一套 order 排序（否则插件要么永远排在内置前面、要么永远在后面，
+    // 想调次序只能改浮层源码）。priority 取大值 = 兜底位，与 transcript 的内置工具卡同一口径：
+    // 别人同 id 抢这个格子时才轮得到它让位。
+    ui.slots.register(
+      SELECTION_ACTION_SLOT,
+      { id: 'ask.selection.builtin', order: 0, priority: 100 },
+      AskSelectionAction,
+    )
     return offTab
   },
 })
 
 /** 三个入口的常驻组件：浮钮画在这里，快捷键与动作表也在这里挂。 */
-function AskTriggers(): ReactNode {
+function AskTriggers({ renderSlot }: SlotComponentProps<Record<never, never>, 'ask.selection.action'>): ReactNode {
   const actions = useService<ActionsHandle>(ACTIONS_SERVICE)
 
   useEffect(() => {
@@ -181,11 +228,43 @@ function AskTriggers(): ReactNode {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  return <SelectionBubble />
+  return <SelectionBubble renderSlot={renderSlot} />
 }
 
-/** 选区浮钮：在 `.chat` 里选中至少 4 个字，贴着选区右下角浮一颗「问 AI」。 */
-function SelectionBubble(): ReactNode {
+/**
+ * 内置动作：「问 AI」——把选中的原文带上，开旁问页签，然后关掉浮层。
+ *
+ * 为什么它也要登记到 `ask.selection.action` 槽上（而不是由浮层直接画一颗）：
+ * 浮层只负责「贴在哪儿、什么时候浮」这一件事，排在上面的动作一律由槽的 order 决定。
+ * 内置那颗若绕开槽直画，它的次序就写死在渲染代码里——插件想排在它前面/后面都做不到。
+ */
+export function AskSelectionAction({ text, close }: { text: string; close: () => void }): ReactNode {
+  return (
+    <button
+      type="button"
+      className="ask-sel-btn"
+      // 按下时不让浏览器撤选区：否则 click 里读到的已经是空的（内置这一颗不读选区，
+      // 但同一条浮层上别的动作可能读，统一在这里挡住）。
+      onMouseDown={(event) => {
+        event.preventDefault()
+      }}
+      onClick={() => {
+        openAsk(text)
+        close()
+      }}
+    >
+      <IconSpark size={13} />
+      {t('ask.selectionBubble')}
+    </button>
+  )
+}
+
+/** 选区浮层：在 `.chat` 里选中至少 4 个字，贴着选区右下角浮出一排动作。 */
+function SelectionBubble({
+  renderSlot,
+}: {
+  renderSlot?: SlotRenderApi<'ask.selection.action'>['renderSlot']
+}): ReactNode {
   const [pick, setPick] = useState<{ text: string; left: number; top: number } | null>(null)
 
   useEffect(() => {
@@ -221,8 +300,10 @@ function SelectionBubble(): ReactNode {
       timer = window.setTimeout(read, 0)
     }
     const onDown = (event: MouseEvent): void => {
-      // 点浮钮自己不算「重新选」：浮钮在 portal 里，mousedown 会先把选区清掉。
-      if (event.target instanceof Element && event.target.closest('.ask-sel-btn') !== null) return
+      // 点浮层自己不算「重新选」：浮层在 portal 里，mousedown 会先把选区清掉。
+      // 判到容器上（不是某一颗按钮）：动作是插件给的，类名不可预知；只要点在浮层里，
+      // 就不该触发「重新读选区」——否则插件按钮还没等到 click 就被摘掉了。
+      if (event.target instanceof Element && event.target.closest('.ask-sel-actions') !== null) return
       later()
     }
     const onScroll = (): void => {
@@ -240,23 +321,20 @@ function SelectionBubble(): ReactNode {
   }, [])
 
   if (pick === null) return null
+  const close = (): void => {
+    setPick(null)
+  }
   return createPortal(
-    <button
-      type="button"
-      className="ask-sel-btn"
-      style={{ left: pick.left, top: pick.top }}
-      // 按下时不让浏览器撤选区：否则 click 里读到的已经是空的。
-      onMouseDown={(event) => {
-        event.preventDefault()
-      }}
-      onClick={() => {
-        openAsk(pick.text)
-        setPick(null)
-      }}
-    >
-      <IconSpark size={13} />
-      {t('ask.selectionBubble')}
-    </button>,
+    // 定位落在容器上：一排动作共用一个锚点，多颗时才能排成一行（按钮自己只是行内药丸）。
+    <div className="ask-sel-actions" style={{ left: pick.left, top: pick.top }}>
+      {renderSlot === undefined ? (
+        // 兜底：槽上下文缺席时（理论上只有装配坏了才会发生）至少留住内置那一颗，
+        // 不至于「插件没装好，连问 AI 都没了」。
+        <AskSelectionAction text={pick.text} close={close} />
+      ) : (
+        renderSlot('ask.selection.action', { text: pick.text, close })
+      )}
+    </div>,
     document.body,
   )
 }

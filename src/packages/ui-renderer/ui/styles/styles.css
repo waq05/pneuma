@@ -1891,7 +1891,19 @@
     animation: none;
   }
 }
-/* 选区浮钮：fixed 贴选区右下角（坐标由 select.ts 夹取）。 */
+/* 选区浮层：一条 list 槽（`ask.selection.action`）渲染出来的一排动作。
+ *
+ * 定位在**容器**上（left/top 由 `ui-ask` 的 `select.ts` 夹取后内联写上），
+ * 按钮只做行内药丸：多颗动作时才排成一行，而不是每颗各自贴同一个坐标叠在一起。
+ * 层级照搬原来那颗按钮的 --dsc-z-menu，不新造一档。 */
+.ask-sel-actions {
+  display: flex;
+  gap: var(--dsc-row-gap);
+  position: absolute;
+  z-index: var(--dsc-z-menu);
+}
+
+/* 浮层里的动作药丸：定位交给外面的 .ask-sel-actions，这里只管长相。 */
 .ask-sel-btn {
   align-items: center;
   background: var(--dsc-bg-popover);
@@ -1904,8 +1916,6 @@
   font-size: var(--dsc-fs-caption);
   gap: 4px;
   padding: 4px 10px;
-  position: fixed;
-  z-index: var(--dsc-z-menu);
 }
 
 .ask-sel-btn:hover {
@@ -4528,9 +4538,15 @@
 }
 
 /* 注意不能写「.chat-inner > .turn-seat」：条目外面还套着一层 .slot-entry（display:contents），
-   直接子选择器打不到；display:contents 的盒子也不接动画，所以动的是座位本身。 */
+   直接子选择器打不到；display:contents 的盒子也不接动画，所以动的是座位本身。
+
+   2026-11-10 起只给「新的一轮」与「自己发的消息」做入场，不再给每条过程行做。
+   原委（用户报障「任务进行中上下抽搐」）：直播中的那条思考/正文是**负 id 的临时条目**，
+   定稿那一刻换成正 id 的新条目、React key 跟着换 → 整个 `.entry-row` 重挂 → 这条
+   `dsc-entry-in` 从头再播一遍（淡入 + 3px 位移）。流式输出时每定稿一条就重播一次，
+   读的人看到的就是内容在上下抽。座位与用户消息的 key 是稳定的，留着这条动画只有好处。 */
 .chat-inner .turn-seat,
-.chat-inner > .slot-entry > .entry-row {
+.chat-inner > .slot-entry > .entry-row:has(> .entry-user) {
   animation: dsc-entry-in var(--dsc-dur-slow) var(--dsc-ease) both;
 }
 
