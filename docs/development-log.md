@@ -16637,5 +16637,35 @@ zcode 按时段一共六句、每段一句，句子的主语全是「你」和�
 - 追踪号只对「有号」的端点有意义，没有号的端点（部分自建网关）依旧查不到。
 - 重放快照的 fixture 只有 6 条记录，覆盖的是「读得回来」，不是「复杂压缩/分叉后的状态」——要覆盖那些得再攒几个 fixture。
 
+## 2026-11-11：四项生产级加固开工（S1 解释器 / S2 验收探针 / 三处口径修正）
+
+**为什么**
+
+用户要求把四件事做到生产级：Windows 操作系统级沙箱、自我改进闭环、影子 git 回滚、三项欠账（PTY / npm 安装 / 多根 @）。动工前先核实现状，发现三件事与文档口径不符：
+
+1. `src/packages/sandbox/win/` 已有约 3000 行受限令牌实现，roadmap 还写着「未做」；
+2. runner 直接拿 `process.execPath` 当 node 用，而桌面宿主是 Electron 的 `utilityProcess`（`desktop/electron/main/protocol.ts:91`），打包版能否跑起来全看环境里有没有 `ELECTRON_RUN_AS_NODE`；
+3. 全仓没有一条自动化用例真实验证「受限令牌拦住了根外写」，`tests/sandbox.test.mjs` 只测策略纯函数。
+
+**做法**
+
+- 新增 `sandbox/win/interpreter.ts`：把「用哪个解释器、带哪些环境」算成纯函数（`DSC_NODE` 覆盖 > Electron 走 `ELECTRON_RUN_AS_NODE=1` > 普通 node），`backend.ts` 的 `plan()` 改用它，并把防重复包裹的判断从 `file` 改成只看 `args[0]`。
+- `probeWindowsToken()` 的 detail 带上解释器形态，用户看 `/sandbox` 就知道当前是哪种宿主。
+- 新增 `scripts/sandbox-win-token-test.mjs`：29 条断言，前半段纯函数（argv 契约、路径包含、引号化），后半段**真建受限令牌 + 真打 ACL + 真 spawn**，断言「工作区内写成、工作区外被拒、runner 自己没挂」。
+- 修掉三处与现状不符的旧断言：包数 74→76、包目录 86→88、todo 提醒改成「消息里不许有、注入标记里必须有」，另把 `doctor` / `log` 的英文描述压到 80 字符以内。
+
+**验证**
+
+- `pnpm run typecheck`、`pnpm run build`（76 包）、`node scripts/package-tests.mjs`（89 用例 / 466 断言）、`pnpm run check:style`（1292 文件）全绿。
+- `node scripts/sandbox-win-token-test.mjs` → 29 通过 / 0 失败；集成段真实跑出 `访问被拒绝`，退出码 42，工作区外文件确实不存在。
+- `plugin-list` 15/15、`readme` 26/26、`plugin-locale` 38/38、`todo-reminder` 全部通过。
+
+**遗留**
+
+- 打包 Electron 宿主下没实跑过 runner（本机探针报「解释器：node」），要等桌面打包件。
+- `tui-subagent-live-test` 的提交率断言红着：实测 85~132 次/秒，期望 ≤25，并伴随 React「Maximum update depth exceeded」。与本批改动无关，按独立缺陷另查。
+- 硬链接别名、读不受限、网络软墙三处结构缺口还没动（S5、S6）。
+
+
 
 
