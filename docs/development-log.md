@@ -17119,6 +17119,27 @@ runner 能建 PTY 了，但没人用它。要让模型显式要一个真终端�
 - TUI 四支回归（subagent live / transcript scroll / scroll model / features）全部退出码 0。
 - `node --test "src/packages/checkpoint/tests/*.test.mjs"` → 16 条全过（新增账本用例）。
 
+## 2026-11-11 收口（二）：把多根 @ 接到 TUI
+
+**为什么**
+
+宿主的根集合、`fs-list` 放行与核心多根遍历都做好了，但界面侧还只有单根一条路——用户在主界面（TUI）里仍然 @ 不到第二个工作区，等于能力没交付。
+
+**做法**
+
+`App` 用 `allowedWorkspaceRoots(snapshot.status.cwd)` 拿宿主授权的根集合（第一个是会话 cwd，其余来自配置的 `workspaceRoots`），传给 `Composer` 的 `roots`；`Composer` 有 `roots` 时走多根遍历，主根给相对路径、其它根给绝对路径（工具能直接打开）。原来的 `lister` 单根路径原样保留，dock 不可用时行为不变。
+
+**验证**
+
+- `pnpm run typecheck`、`pnpm run build`（77 包）通过。
+- TUI 四支回归 `tui-features` / `tui-subagent-live` / `tui-transcript-scroll` / `tui-scroll-model` 全部退出码 0。
+
+**遗留**
+
+- 桌面壳的 mention 面板仍没有“切换根”的入口（宿主侧 `fs-list` 已支持 `root`，差一个面板交互）。
+- 没为这条接线单独写渲染测试：多根遍历本身由 `scripts/mention-multi-root-test.mjs` 的 30 项覆盖。
+
+
 
 
 
