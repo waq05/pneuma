@@ -11,7 +11,7 @@
  *
  * | 档 | op | 走哪条路 | 为什么 |
  * | --- | --- | --- | --- |
- * | 读 | `fs-list` `fs-read` `git-status` `git-branches` `git-log` `git-diff` | 界面 HTTP 通道**直接放行** | 只读，且宿主侧已经限定在 cwd 内 |
+ * | 读 | `fs-list` `fs-roots` `fs-read` `git-status` `git-branches` `git-log` `git-diff` | 界面 HTTP 通道**直接放行** | 只读，且宿主侧已经限定在 cwd 内 |
  * | 写 | `git-stage` `git-unstage` `git-commit` `git-checkout` `git-branch-create` | 界面 HTTP 通道，但**过审批** | 会改仓库状态，交给权限模式那套裁决（与工具调用同一口径） |
  * | 终端 | `term-spawn` `term-input` `term-kill` | **只走桌面窗口的原生桥**，不进 HTTP 面 | 起进程 = 任意命令执行；浏览器里拿到 Cookie 的页面不该有这个能力 |
  *
@@ -27,7 +27,7 @@
  */
 
 /** 读类：只读取工作区现状，宿主侧限定在 cwd 内。 */
-export const DOCK_READ_OPS = ['fs-list', 'fs-read', 'git-status', 'git-branches', 'git-log', 'git-diff'] as const
+export const DOCK_READ_OPS = ['fs-list', 'fs-roots', 'fs-read', 'git-status', 'git-branches', 'git-log', 'git-diff'] as const
 
 /** 写类：会改 git 状态，走审批。 */
 export const DOCK_WRITE_OPS = [

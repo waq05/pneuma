@@ -2,64 +2,168 @@
  * @ 文件提及补全（对照桌面渲染层 Composer.tsx 的同名能力）：
  * 输入 `@` 触发，候选是工作区文件（模糊过滤），↑↓ 选、Tab/Enter 补、Esc 关且同 token 不再弹。
  *
- * 文件清单来自 dock 通道的 `fs-list` **懒递归**（展开才取、深度 4、条目 500 封顶），
- * 结果缓存 60 秒——桌面端是主进程遍历 + 60s 缓存，壳这边把遍历放在界面侧做，
- * 口径一致（都没有「目录树实时监听」，超时后下一次触发重扫）。
+ * 文件清单来自 dock 通道的 `fs-list` **懒递归**：根集合先问 `fs-roots`（会话 cwd 恒在
+ * 首位，后面是配置里的 `workspaceRoots`）。多根共享 500 条 / 深度 4 的预算，并给每个根
+ * 留 100 条最小份额，避免第一个巨根把预算吃光。主根（会话 cwd）候选仍是相对路径，其它根
+ * 给绝对路径（正斜杠，插进正文后工具能直接打开）。结果缓存 60 秒，**缓存键带根集合**——
+ * 根一变就重扫。宿主没有 `fs-roots`（旧版本）或它调用失败时退回单根，行为与从前一致。
  *
  * @module dsc-ui-shell/plugins/composer/mention
  */
 import { useRef, useState } from 'react'
 import type { useHostChannel } from '@dsc/ui'
 
-/** 一次递归列举的规模上限（防大仓库把界面拖死；桌面端遍历同样有预算）。 */
-const MAX_FILES = 500
-const MAX_DEPTH = 4
-/** 清单缓存时长：60 秒内重复触发不再扫盘。 */
+/** 一次多根遍历的总条目上限（防大仓库把界面拖死；桌面端遍历同样有预算）。 */
+export const MAX_FILES = 500
+/** 递归深度上限（根为第 1 层）。 */
+export const MAX_DEPTH = 4
+/**
+ * 每个根的最小候选份额（2026-11，多根预算）。
+ *
+ * 为什么需要它：所有根共用一份预算，第一个根若是个巨仓库就会把它吃满，后面的根一条
+ * 候选都进不来——用户会以为「加了根但 @ 什么也没有」。根多到均分不足 100 时按根数降档。
+ */
+export const MIN_FILES_PER_ROOT = 100
+/** 清单缓存时长：60 秒内根集合没变就不再扫盘。 */
 const CACHE_MS = 60_000
 /** 候选面板最多露几条。 */
 const MAX_CANDIDATES = 8
 
-/** 模块级缓存：60 秒内所有 @ 触发共用一份清单。 */
-let cache: { at: number; files: string[] } | null = null
+/** 一个已授权的工作区根（`main` = 会话 cwd，候选走相对路径）。 */
+export interface MentionRoot {
+  path: string
+  main: boolean
+}
 
-/** 递归列举工作区文件（只收文件，不收目录；路径相对 cwd，正斜杠显示）。 */
-async function listWorkspaceFiles(channel: ReturnType<typeof useHostChannel>): Promise<string[]> {
-  if (cache !== null && Date.now() - cache.at < CACHE_MS) return cache.files
-  const files: string[] = []
-  let truncated = false
+/** 模块级缓存：60 秒内所有 @ 触发共用一份清单；键里带根集合，根变了就重扫。 */
+let cache: { at: number; key: string; files: string[] } | null = null
+
+/** 绝对路径统一成正斜杠（插进正文后 Windows 上也能被工具直接打开）。 */
+function posix(path: string): string {
+  return path.replaceAll('\\', '/')
+}
+
+/** 缓存键：根集合的绝对路径 + 主根标记（顺序敏感）。 */
+function rootsCacheKey(roots: readonly MentionRoot[]): string {
+  return roots.map((root) => `${root.main ? '*' : ''}${posix(root.path)}`).join('\n')
+}
+
+/** `fs-roots` 回包的最小形状（desktop-dock 插件定义，这里只认形状）。 */
+interface RootsReply {
+  cwd?: string
+  roots?: Array<{ path?: unknown; name?: unknown; main?: unknown }>
+}
+
+/**
+ * 问宿主已授权根。旧宿主没有这个 op、或宿主直接抛错时返回 null——调用方退回单根，
+ * 不能因为新 op 不存在就把 @ 补全弄坏。
+ */
+async function listRoots(channel: ReturnType<typeof useHostChannel>): Promise<MentionRoot[] | null> {
+  try {
+    const reply = await channel.invoke<RootsReply>('dock', ['fs-roots'])
+    const rows = Array.isArray(reply?.roots) ? reply.roots : []
+    const roots: MentionRoot[] = []
+    rows.forEach((row, index) => {
+      if (typeof row?.path !== 'string' || row.path === '') return
+      // 契约是「第一个恒为会话 cwd」；`main` 标记兜底，正常两者一致。
+      roots.push({ path: row.path, main: row.main === true || index === 0 })
+    })
+    return roots.length === 0 ? null : roots
+  } catch {
+    return null
+  }
+}
+
+/** 候选路径：主根相对、其它根绝对（正斜杠）；绝对根去掉尾部分隔符再拼。 */
+function candidatePath(root: MentionRoot, rel: string): string {
+  if (root.main) return rel
+  const base = posix(root.path).replace(/\/+$/, '')
+  return base === '' ? `/${rel}` : `${base}/${rel}`
+}
+
+/**
+ * 懒递归一个根，把候选追加进 `files`；最多收 `limit` 条。
+ *
+ * `root === null` 是退回单根时的形态：`fs-list` 不带 `root`，候选是相对 cwd 的路径，
+ * 与 2026-10 版逐字一致。单个目录列举失败只跳过这一层（权限不足不该让整份清单失败）。
+ */
+async function scanRoot(
+  channel: ReturnType<typeof useHostChannel>,
+  root: MentionRoot | null,
+  limit: number,
+  files: string[],
+): Promise<void> {
+  let left = limit
   const walk = async (dir: string, depth: number): Promise<void> => {
-    if (depth > MAX_DEPTH || files.length >= MAX_FILES) {
-      truncated = true
-      return
-    }
+    if (depth > MAX_DEPTH || left <= 0) return
     let entries: Array<{ name: string; dir: boolean }> = []
     try {
       const listing = await channel.invoke<{ entries: Array<{ name: string; dir: boolean }> }>('dock', [
         'fs-list',
-        { dir },
+        root === null ? { dir } : { dir, root: root.path },
       ])
       entries = listing.entries ?? []
     } catch {
       return
     }
     for (const entry of entries) {
+      if (left <= 0) return
       const path = dir === '.' ? entry.name : `${dir}/${entry.name}`
       if (entry.dir) {
         // 目录本身不进清单，但目录名参与过滤（路径里带着它）。
         await walk(path, depth + 1)
-        if (files.length >= MAX_FILES) return
       } else {
-        files.push(path.replaceAll('\\', '/'))
-        if (files.length >= MAX_FILES) {
-          truncated = true
-          return
-        }
+        files.push(root === null ? path.replaceAll('\\', '/') : candidatePath(root, path))
+        left -= 1
       }
     }
   }
   await walk('.', 1)
-  cache = { at: Date.now(), files }
-  void truncated
+}
+
+/** 单根兜底：与旧实现同一套预算与路径形态，`fs-list` 不传 root。 */
+async function listSingleRootFiles(channel: ReturnType<typeof useHostChannel>): Promise<string[]> {
+  const files: string[] = []
+  await scanRoot(channel, null, MAX_FILES, files)
+  return files
+}
+
+/** 多根遍历：所有根共享 MAX_FILES，先给后面的根留足最小份额，再让当前根用剩下的。 */
+async function listMultiRootFiles(
+  channel: ReturnType<typeof useHostChannel>,
+  roots: readonly MentionRoot[],
+): Promise<string[]> {
+  const files: string[] = []
+  let left = MAX_FILES
+  const minPerRoot = Math.max(1, Math.min(MIN_FILES_PER_ROOT, Math.floor(MAX_FILES / roots.length)))
+  for (let index = 0; index < roots.length && left > 0; index += 1) {
+    const remaining = roots.length - index - 1
+    // 先扣掉后面每个根的最小份额，第一个巨根就不能把预算吃光。
+    const reserve = Math.min(minPerRoot * remaining, Math.max(0, left - 1))
+    const allowance = left - reserve
+    const before = files.length
+    await scanRoot(channel, roots[index]!, allowance, files)
+    left -= files.length - before
+  }
+  return files
+}
+
+/**
+ * 列举工作区文件（多根；宿主不支持 `fs-roots` 时退回单根相对路径）。
+ *
+ * 导出是为了让 `scripts/ui-mention-roots-test.mjs` 用假通道直接驱动：界面只通过
+ * {@link useMention} 用它。
+ */
+export async function listWorkspaceFiles(channel: ReturnType<typeof useHostChannel>): Promise<string[]> {
+  const roots = await listRoots(channel)
+  // 拿不到根时用哨兵键走单根：与「只有一个主根」区分开，宿主升级后能立刻换到多根。
+  const key = roots === null ? '\u0000single' : rootsCacheKey(roots)
+  const now = Date.now()
+  if (cache !== null && cache.key === key && now - cache.at < CACHE_MS) return cache.files
+  const files = roots === null
+    ? await listSingleRootFiles(channel)
+    : await listMultiRootFiles(channel, roots)
+  cache = { at: now, key, files }
   return files
 }
 
@@ -144,26 +248,29 @@ export function useMention(options: {
     if (dismissed.current === key) return
     latest.current = { value, caret, ...token }
     setOpen(true)
-    // 首次触发（或缓存过期）才扫盘；已有清单时先就地过滤，扫完再替换。
+    // 已有清单先就地过滤（每敲一个字都重扫会闪），随后再按根集合校验/重扫。
     if (cache === null) {
       setLoading(true)
-      void listWorkspaceFiles(channel)
-        .then((files) => {
-          const ranked = rankFiles(files, token.query)
-          current.current = ranked
-          setItems(ranked)
-          setAt(0)
-          setLoading(false)
-        })
-        .catch(() => {
-          setLoading(false)
-        })
     } else {
       const ranked = rankFiles(cache.files, token.query)
       current.current = ranked
       setItems(ranked)
       setAt(0)
     }
+    void listWorkspaceFiles(channel)
+      .then((files) => {
+        setLoading(false)
+        // 迟到的一帧按**此刻**的 query 过滤：用户可能已经多敲了几个字。
+        const currentToken = latest.current
+        if (currentToken === null) return
+        const ranked = rankFiles(files, currentToken.query)
+        current.current = ranked
+        setItems(ranked)
+        setAt(0)
+      })
+      .catch(() => {
+        setLoading(false)
+      })
   }
 
   const move = (delta: number): void => {

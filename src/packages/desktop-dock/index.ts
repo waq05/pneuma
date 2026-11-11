@@ -14,11 +14,12 @@
  */
 import { spawn } from 'node:child_process'
 import { readFileSync, readdirSync, statSync, type Stats } from 'node:fs'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import type { ChildProcess } from 'node:child_process'
 import { DOCK_WRITE_LABEL, isDockWriteOp, type DockWriteOp } from '@pneuma/runtime/core/dock-ops.js'
 import {
+  allowedWorkspaceRoots,
   matchWorkspaceRoot,
   readWorkspaceRootsConfig,
   writeWorkspaceRootsConfig,
@@ -452,6 +453,16 @@ export const desktopDockPlugin: Plugin.Object = {
           })
           entries.sort((a, b) => (a.dir === b.dir ? NAME_COLLATOR.compare(a.name, b.name) : a.dir ? -1 : 1))
           return { cwd: dir, root, entries, truncated: listed.length > maxEntries }
+        }
+        case 'fs-roots': {
+          // 已授权根的清单（会话 cwd 恒在首位）：只读配置，不读盘、不遍历。
+          // 界面拿它决定 @ 补全扫几个根、哪些候选给绝对路径；根仍然只有写进
+          // `workspaceRoots` 配置的那些，界面无法借这个 op 扩权。
+          const roots = allowedWorkspaceRoots(cwd)
+          return {
+            cwd: roots[0] ?? resolve(cwd),
+            roots: roots.map((path, index) => ({ path, name: basename(path), main: index === 0 })),
+          }
         }
         case 'fs-read': {
           const file = resolve(cwd, safeArg(payload.file ?? '.'))

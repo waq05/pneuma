@@ -17139,6 +17139,30 @@ runner 能建 PTY 了，但没人用它。要让模型显式要一个真终端�
 - 桌面壳的 mention 面板仍没有“切换根”的入口（宿主侧 `fs-list` 已支持 `root`，差一个面板交互）。
 - 没为这条接线单独写渲染测试：多根遍历本身由 `scripts/mention-multi-root-test.mjs` 的 30 项覆盖。
 
+## 2026-11-11 收口（三）：桌面壳 @ 面板接多根
+
+**为什么**
+
+TUI 接通后，桌面端的 @ 面板仍只从会话 cwd 懒递归——同一份能力在两个界面行为不一致，等于没补齐。
+
+**做法**
+
+- 宿主 `desktop-dock` 加 `fs-roots`：返回 `{ cwd, roots: [{ path, name, main }] }`，只读 `allowedWorkspaceRoots(cwd)`，不遍历；`core/dock-ops.ts` 的读类 op 表同步登记。
+- 壳 `ui-composer/ui/mention.ts`：先问 `fs-roots`（抛错就退回原来的单根行为，不能把补全弄坏），再按根分别懒递归（`fs-list` 带 `root`），共享 500 条 / 深度 4 预算并给每根保底 100 条；主根仍给相对路径、其它根给绝对路径；缓存键带上根集合，根一变就重扫。
+- 渲染层零改动：面板仍显示候选字符串，绝对路径长一点可以接受。
+
+**验证**
+
+- `pnpm run typecheck`、`pnpm run build`（77 包）、`pnpm -C ui-shell typecheck` 均退出 0。
+- `node scripts/ui-mention-roots-test.mjs` → 19/19（第二根绝对路径、主根相对、预算保底、`fs-roots` 抛错退回单根、换根重扫）。
+- `mention-multi-root-test` 30/30、`package-tests` 98 用例 / 612 断言、`plugin-standard-check` 0 问题。
+
+**遗留**
+
+- 没起桌面 GUI 截图看 @ 面板真实渲染；长绝对路径的滚动与选中观感未验。
+- `fs-read` / `fs-write` 未加 `root`，桌面文件预览仍限会话 cwd。
+
+
 
 
 
