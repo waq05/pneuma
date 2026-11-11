@@ -558,12 +558,15 @@ export function ChatView({
   viewportRef,
   onAtTailChange,
   compactingSince,
+  conversationKey,
 }: {
   /** 全量条目（窗口切片、行偏移、刻度几何都在 TranscriptViewport 里按行算）。 */
   entries: TranscriptEntry[]
   turnState: 'idle' | 'thinking' | 'working' | 'awaiting-approval'
   /** 正在压缩上下文的开始时刻；undefined = 没在压（压缩期间底部画一行活动提示）。 */
   compactingSince?: number
+  /** 当前会话身份：视口拿它判断「是不是换会话了」，换会话要重新允许一次首屏补排。 */
+  conversationKey?: string
   expandThinking: boolean
   /** 全会话一条都没有（和「窗口恰好翻空」区分开，只有前者画开场提示）。 */
   empty: boolean
@@ -616,6 +619,7 @@ export function ChatView({
     <TranscriptViewport
       ref={viewportRef}
       entries={entries}
+      {...(conversationKey === undefined ? {} : { conversationKey })}
       maxWidth={maxWidth}
       columns={columns}
       {...(railCenterLines === undefined ? {} : { railCenterLines })}

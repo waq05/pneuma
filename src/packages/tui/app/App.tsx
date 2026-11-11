@@ -1753,6 +1753,7 @@ export function App({
           <Box flexDirection="column" flexGrow={1} minHeight={0}>
             <ChatView
               entries={snapshot.entries}
+              conversationKey={snapshot.status.sessionId ?? undefined}
               turnState={snapshot.status.turnState}
               compactingSince={snapshot.status.compactingSince}
               expandThinking={expandThinking}

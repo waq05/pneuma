@@ -123,11 +123,18 @@ export interface TranscriptViewportProps {
   pinned?: (active: TurnMark, layout: ViewportLayout, width: number) => ReactNode
   /** 视口底部固定的内容（提示行、回到底部胶囊）。 */
   footer?: ReactNode
+  /**
+   * 当前会话的身份（切换会话时变化）。
+   *
+   * 为什么不能用首条条目的 id 代替：条目 id 由 adapter 按 `seq` 发号，每个会话都从 1 开始，
+   * 换会话后首条 id 仍然是 1，复位条件永远不成立（审查抓到过）。
+   */
+  conversationKey?: string
 }
 
 export const TranscriptViewport = forwardRef<TranscriptViewportApi, TranscriptViewportProps>(
   function TranscriptViewport(
-    { entries, maxWidth, viewportLines, columns, railCenterLines, expandThinking, renderEntry, showRail = false, registerClick, onAtTailChange, emptyHint, leading, header, pinned, footer },
+    { entries, maxWidth, viewportLines, columns, railCenterLines, expandThinking, renderEntry, showRail = false, registerClick, onAtTailChange, emptyHint, leading, header, pinned, footer, conversationKey },
     ref,
   ): JSX.Element {
     /** 视口顶的**内容锚点**（哪一条的第几行）；null = 跟尾（新内容长出来就一直跟着尾巴）。 */
@@ -317,12 +324,11 @@ export const TranscriptViewport = forwardRef<TranscriptViewportApi, TranscriptVi
      *
      * `fixupDone` 是老死不复位的，而这个组件在聊天区是同一个实例复用（切会话不重建）：
      * 不复位的话，新会话首屏不会再补排，「可视区里半屏空占位」那个老毛病会回来。
-     * 用首条条目的 id 当会话身份：流式追加只改尾部，不会改它。
+     * 复位键用会话身份（条目 id 每个会话都从 1 起，不能拿来判）。
      */
-    const firstEntryId = entries[0]?.id ?? ''
     useEffect(() => {
       fixupDone.current = false
-    }, [firstEntryId])
+    }, [conversationKey])
     useEffect(() => {
       if (viewportLines !== undefined) return
       const measured = measuredHeight(boxRef.current)
