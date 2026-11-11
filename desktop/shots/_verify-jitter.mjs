@@ -77,6 +77,20 @@ const ANTI_THROTTLE = [
   '--disable-renderer-backgrounding',
 ]
 
+/**
+ * 负向自检（`PROBE_MUTATE`）认识的值。**只认这几个精确字符串**。
+ *
+ * 拼错（`shovee`）或写成另一条探针的名字（`no-anchor` / `no-scroll-write`）时以前是直接
+ * 不装那个定时器：变异没打上、日志没有、退出码 0，操作者会以为「判据改完仍能红」。现在
+ * 有值但不认识就当场报错退出（列认识的值）。
+ */
+const MUTATIONS = ['shove']
+const requestedMutation = process.env.PROBE_MUTATE ?? ''
+if (requestedMutation !== '' && !MUTATIONS.includes(requestedMutation)) {
+  console.error(`  FAIL 环境：PROBE_MUTATE=${requestedMutation} 不认识（认识的值：${MUTATIONS.join('、')}；不设 = 不跑变异）`)
+  process.exit(1)
+}
+
 rmSync(home, { recursive: true, force: true })
 mkdirSync(join(dsc, 'sessions', 'demo'), { recursive: true })
 mkdirSync(join(dsc, 'usage'), { recursive: true })
@@ -282,8 +296,11 @@ const started = await evaluate(`
   // 负向自检：PROBE_MUTATE=shove 时每 100ms 把 scrollTop 往回拨 300px，模拟「还有人在写滚动」
   // （与 _verify-follow-debug 的 PROBE_MUTATE=nofollow 同一路数）。跟随没掉的话它会被钉回去；
   // 跟随掉了就会在「收工贴底」上红，抽搐计数也可能捕捉到反向。
-  if (${process.env.PROBE_MUTATE === 'shove' ? 'true' : 'false'}) {
+  // 拨了几次也记下来：变异没真的跑起来（定时器没装上）时全绿是假绿，判据见下面「变异」那条。
+  window.__jitter.mutation = { requested: ${JSON.stringify(process.env.PROBE_MUTATE ?? '')}, shoves: 0 }
+  if (window.__jitter.mutation.requested === 'shove') {
     window.__jitterShove = setInterval(() => {
+      window.__jitter.mutation.shoves += 1
       chat.scrollTop = Math.max(0, chat.scrollTop - 300)
     }, 100)
   }
@@ -375,6 +392,7 @@ const report = await evaluate(`
     statusFrames: list.filter((s) => s.status).length,
     maxGap,
     endStatus: document.querySelector('.turn-status') !== null,
+    mutation: window.__jitter.mutation ?? null,
     end: {
       top: Math.round(chat.scrollTop),
       floor: Math.round(floor),
@@ -407,6 +425,13 @@ const check = (name, condition, detail = '') => {
 const skip = (name, why) => {
   skipped += 1
   console.log(`  skip ${name}（环境未就绪：${why}）`)
+}
+
+// 负向自检先自证：变异没打上（定时器没装、一次都没拨）就红不了，全绿是假绿。
+if (report.mutation?.requested === 'shove') {
+  check('变异：PROBE_MUTATE=shove 真的生效（每 100ms 真的往回拨过 scrollTop）',
+    (report.mutation.shoves ?? 0) > 0,
+    `拨了 ${String(report.mutation.shoves ?? 0)} 次`)
 }
 
 // ── 环境闸：先证明「采样这件事本身可信」，再判产品 ───────────────────────────────

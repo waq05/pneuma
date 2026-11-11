@@ -146,12 +146,30 @@ export function SeatBody({
    * 键盘用户 Tab 一次就再也翻不动这一轮：`collapseTiming` 的兜底失效，切走再切回也还是开着。
    *
    * 值记的是「哪一条会话的哪一轮被放行了」（`sessionKey` 跨会话一定变，`turnKey` 在会话 id
-   * 还缺席时是空串打头、两条会话会撞成同一个键）：用户自己点开关时清空（见 `toggleTurn`）。
-   * 它只活在座位实例里、不落盘——重挂之后只剩存档与兜底说话（参考实现的 `turnProcesses`
-   * 同样只在会话视图的内存 store 里）。
+   * 还缺席时是空串打头、两条会话会撞成同一个键）。它只活在座位实例里、不落盘——重挂之后
+   * 只剩存档与兜底说话（参考实现的 `turnProcesses` 同样只在会话视图的内存 store 里）。
+   *
+   * 什么时候作废（三处，少一处就会带着旧放行重新摊开）：
+   * - 用户自己点开关：见 `toggleTurn`；
+   * - **换会话**：座位是按**轮号**做 React key 的（`ui.tsx` 的 `key={seat.round}`），切会话时
+   *   座位不重挂，`rescued` 跟着留下来。切走时键对不上、切回来又对上了，那一轮就靠旧放行
+   *   摊着，而存档和兜底都说收起。所以下面用 `rescueKeyRef` 记上一份键，键一变就地清掉；
+   * - **同一轮重答**（`editAndResend`）：轮号与键都不变，只清了存档前缀，于是只能靠「这一轮
+   *   又在跑」（`foldRunning`）作证内容已经换过。不清的话新回答一收尾就带着上一版的放行展开。
+   *
+   * 后两处都写成**渲染期派生状态重置**（比较 ref、直接 `setState`），不用 effect：effect 要
+   * 多一帧才清，那一帧里画面已经把这一轮摊开了。
    */
   const rescueKey = `${sessionKey}|${String(seat.round)}`
   const [rescued, setRescued] = useState<string | null>(null)
+  /** 上一份放行键：座位按轮号复用、换会话不重挂，只能靠它发现「键变了」。 */
+  const rescueKeyRef = useRef(rescueKey)
+  if (rescueKeyRef.current !== rescueKey) {
+    rescueKeyRef.current = rescueKey
+    if (rescued !== null) setRescued(null)
+  }
+  // 同一轮重答：轮号与键都不变，只有「这一轮又在跑」能作证内容已经换过一遍（见上面注释）。
+  if (foldRunning && rescued !== null) setRescued(null)
   /** 这一轮此刻要不要摊着：存档 / 兜底说展开，或者刚被焦点保护放行过。 */
   const unfolded = turnOpen || rescued === rescueKey
   /** 整轮收起来没有：可折 + 有内容 + 已收尾 + 没被展开（默认收起；next-input 的最新一轮默认展开）。 */

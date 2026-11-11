@@ -37,7 +37,8 @@ process.on('unhandledRejection', () => {})
  *      等到条件成立（或超时）才停采样，不再猜时长；
  *   3. 判读前先要求「有效帧 ≥ 24、状态采样 ≥ 10」。达不到就只红一条
  *      **「环境：现场可判读」**，后面的产品判据全部跳过（打印 `skip`），
- *      绝不用个位数样本去判产品。
+ *      绝不用个位数样本去判产品。环境闸只管量尺（帧数 / 状态采样点数 / 采样间隔）；
+ *      「点击生效：折面 closed → open」这类是**产品判据**，单独记，坏在机器性能之外。
  *
  * 阈值怎么来的见各条断言旁的注释。
  *
@@ -102,6 +103,20 @@ const NONE_WINDOW_FLOOR = 120
  * 也允许采样刚好落在过渡末帧之前。
  */
 const COMPENSATION_RATIO = 0.8
+
+/**
+ * 负向自检（`PROBE_MUTATE`）认识的值。**只认这几个精确字符串**。
+ *
+ * 拼错（`noanchor`）或写成另一条探针的名字（`shove` / `no-scroll-write`）时以前是直接
+ * `return`：变异没打上、日志没有、退出码 0，操作者会以为「判据改完仍能红」。现在有值但
+ * 不认识就当场报错退出（列认识的值），别让一次拼写错误冒充一次负向自检。
+ */
+const MUTATIONS = ['no-anchor']
+const requestedMutation = process.env.PROBE_MUTATE ?? ''
+if (requestedMutation !== '' && !MUTATIONS.includes(requestedMutation)) {
+  console.error(`  FAIL 环境：PROBE_MUTATE=${requestedMutation} 不认识（认识的值：${MUTATIONS.join('、')}；不设 = 不跑变异）`)
+  process.exit(1)
+}
 
 rmSync(home, { recursive: true, force: true })
 mkdirSync(join(dsc, 'sessions', 'demo'), { recursive: true })
@@ -261,19 +276,33 @@ if (reducedMotion === true) {
  *
  * 批次本身照跑、位置照补，所以补位量与漂移仍然绿——只有「批次活跃期间内联值是 none」
  * 该红。这条用来证明改完的探针没有把产品判据改弱成必然通过。
+ *
+ * 打上变异之后**当场证明它真的生效**：按产品那一下写 `none`，读回来必须是空串（写入被吞）。
+ * 不生效就没法红，看到的全绿是假绿（见文件顶部的值白名单）。
+ *
+ * @returns {{ requested: boolean, applied: boolean, observed: string | null, error?: string }}
  */
 const mutateNoAnchor = async () => {
-  if (process.env.PROBE_MUTATE !== 'no-anchor') return
-  await evaluate(`
+  if (process.env.PROBE_MUTATE !== 'no-anchor') return { requested: false, applied: false, observed: null }
+  const result = await evaluate(`
     const chat = document.querySelector('.chat')
+    if (chat === null) return { applied: false, reason: '没有 .chat' }
     Object.defineProperty(chat.style, 'overflowAnchor', {
       configurable: true,
       get() { return '' },
       set() {},
     })
-    return { mutated: true }
+    chat.style.overflowAnchor = 'none'
+    const after = chat.style.overflowAnchor
+    return { applied: after === '', after }
   `)
-  console.log('[mutate] PROBE_MUTATE=no-anchor：已吞掉 .chat 的 overflowAnchor 写入（模拟产品回归）')
+  console.log(`[mutate] PROBE_MUTATE=no-anchor：${result?.applied === true ? '已吞掉 .chat 的 overflowAnchor 写入（模拟产品回归）' : `没打上：${String(result?.reason ?? JSON.stringify(result))}`}`)
+  return {
+    requested: true,
+    applied: result?.applied === true,
+    observed: result?.after ?? null,
+    ...(result?.reason === undefined ? {} : { error: String(result.reason) }),
+  }
 }
 
 
@@ -439,7 +468,7 @@ if (placed?.error !== undefined) {
   try { electron.kill() } catch {}
   process.exit(1)
 }
-await mutateNoAnchor()
+const mutation = await mutateNoAnchor()
 if (Number.isFinite(cpuThrottle) && cpuThrottle > 1) {
   await send('Emulation.setCPUThrottlingRate', { rate: cpuThrottle })
   console.log(`[probe] PROBE_CPU_THROTTLE=${String(cpuThrottle)}：渲染进程降速 ${String(cpuThrottle)} 倍（摆位之后才降，见注释）`)
@@ -629,9 +658,21 @@ const skip = (name, why) => {
   console.log(`  skip ${name}（环境未就绪：${why}）`)
 }
 
+// 负向自检先自证：变异没打上就红不了，那时候看到的全绿是假绿（值拼错在文件顶部就退出了）。
+if (mutation.requested) {
+  check('变异：PROBE_MUTATE=no-anchor 真的生效（按产品那一下写入 overflow-anchor 后读回空串）',
+    mutation.applied === true,
+    mutation.error ?? `读回 ${JSON.stringify(mutation.observed)}`)
+}
+
 /**
- * 判读前的环境闸。不满足就记一条「环境：现场可判读」失败，并告诉调用方跳过产品判据。
+ * 判读前的环境闸：只问「量尺准不准」——有效帧、16ms 状态采样点数、rAF 采样间隔。
+ * 不满足就记一条「环境：现场可判读」失败，并告诉调用方跳过产品判据。
  * 返回 `{ ok, why }`；`why` 给 `skip` 用。
+ *
+ * 为什么「点下去有没有可见变化」「折面翻没翻」不在这里：那是产品判据（见
+ * {@link checkActuation}）。塞进环境闸的话，产品真坏（按钮没接上、折面不翻）会被记成
+ * 「环境：…」，后面 7 条产品判据全部 skip，排查方向被引去机器性能。
  */
 const envReady = (label, run) => {
   const problems = []
@@ -639,13 +680,6 @@ const envReady = (label, run) => {
     let worst = 0
     for (let at = 1; at < list.length; at += 1) worst = Math.max(worst, list[at].t - list[at - 1].t)
     return worst
-  }
-  if (run?.clicked !== true) problems.push(run?.reason ?? '点击没有发生')
-  else {
-    if (run.actuated !== true) problems.push('点下去之后这一轮没有任何可见状态变化（按钮可能已重挂 / 应用没响应）')
-    if (run.after?.fold !== run.expectedFold) {
-      problems.push(`点完的折面不对：期望 ${JSON.stringify(run.expectedFold)}，实际 ${JSON.stringify(run.after?.fold)}`)
-    }
   }
   if ((run?.frames ?? 0) < FRAME_FLOOR) problems.push(`有效帧 ${String(run?.frames ?? 0)} 帧 < ${String(FRAME_FLOOR)}（页面被节流或掉帧）`)
   if ((run?.tickCount ?? 0) < TICK_FLOOR) problems.push(`状态采样 ${String(run?.tickCount ?? 0)} 次 < ${String(TICK_FLOOR)}`)
@@ -657,6 +691,27 @@ const envReady = (label, run) => {
   check(`环境：${label} 的现场可判读`, false, why)
   return { ok: false, why }
 }
+
+/**
+ * 产品判据：这一下点击真的接上了——(a) 这一轮出现可见状态变化，(b) 折面翻到了期望的那一面。
+ *
+ * 这两条以前塞在 `envReady` 里，于是「按钮没接上 / 折面不翻」会被记成「环境」、把后面 7 条
+ * 产品判据全 skip 掉。现在它们各自记账：环境再差也只红环境那一条，产品坏了就直接红在
+ * 「点击生效」上。
+ *
+ * @param {string} label 场景名（展开 / 收起 / 贴底展开）
+ * @param {any} run `toggleAndWatch` / 贴底那一段的返回值
+ */
+const checkActuation = (label, run) => {
+  const clicked = run?.clicked === true
+  check(`${label}：点击生效（这一轮出现可见状态变化）`,
+    clicked && run?.actuated === true,
+    `${clicked ? '' : `${String(run?.reason ?? '点击没有发生')}；`}actuated=${String(run?.actuated)}，点击前后折面 ${JSON.stringify(run?.before?.fold ?? null)} → ${JSON.stringify(run?.after?.fold ?? null)}`)
+  check(`${label}：点击生效（折面 ${JSON.stringify(run?.before?.fold ?? null)} → ${JSON.stringify(run?.expectedFold ?? null)}）`,
+    clicked && run?.after?.fold === run?.expectedFold,
+    `期望 ${JSON.stringify(run?.expectedFold ?? null)}，实际 ${JSON.stringify(run?.after?.fold ?? null)}${clicked ? '' : `（${String(run?.reason ?? '点击没有发生')}）`}`)
+}
+
 
 /**
  * 一段采样的判读。
@@ -739,6 +794,7 @@ if (expandStart?.error !== undefined) {
 }
 const expandRun = await toggleAndWatch('open')
 const expandEnv = envReady('展开', expandRun)
+checkActuation('展开', expandRun)
 const expand = judge('[expand]', expandRun)
 if (expandEnv.ok) {
   check('展开：第一条可见行的屏幕 top 变化 ≤1px', expand.maxDrift <= 1, `实测 ${expand.maxDrift.toFixed(2)}px`)
@@ -802,6 +858,7 @@ if (collapseStart?.error !== undefined) {
 }
 const collapseRun = await toggleAndWatch('closed')
 const collapseEnv = envReady('收起', collapseRun)
+checkActuation('收起', collapseRun)
 const collapse = judge('[collapse]', collapseRun)
 if (collapseEnv.ok) {
   check('收起：第一条可见行的屏幕 top 变化 ≤1px', collapse.maxDrift <= 1, `实测 ${collapse.maxDrift.toFixed(2)}px`)
@@ -1023,6 +1080,7 @@ if (toBottom?.error === undefined) {
   const tailEnv = tailRun === null
     ? { ok: false, why: '贴底场景的采样没起来' }
     : envReady('贴底展开', tailRun)
+  if (tailRun !== null) checkActuation('贴底展开', tailRun)
   const tailSamples = tailRun?.samples ?? []
   const tailTicks = tailRun?.ticks ?? []
   const slack = tailSamples.map((s) => Math.abs(s.top - s.floor))
@@ -1072,6 +1130,17 @@ if (toBottom?.error === undefined) {
       '贴底：末帧在 floor 上',
     ]) skip(name, tailEnv.why)
   }
+} else {
+  // 贴底场景摆不出来（没有第二个可折的整轮）：以前这里没有 else，后面 4 条贴底判据一条都
+  // 不记，断言总数变少而失败数是 0，脚本照常 exit 0。现在补一条明确失败，与「采样起不来」
+  // 那两处同一写法。
+  check('环境：贴底场景能摆出来（有第二个可折的整轮）', false, String(toBottom?.error))
+  for (const name of [
+    '贴底：批次里每次都停在 floor（离底 ≤2px）',
+    '贴底：批次里 floor 真的变了（不是「本来就在底」）',
+    '贴底：批次活跃期间内联 overflow-anchor 也是 none',
+    '贴底：末帧在 floor 上',
+  ]) skip(name, String(toBottom?.error))
 }
 
 // 收工时的整屏：这时这一轮是收起态（第二次点过），画面里能看出历史位置。

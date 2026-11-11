@@ -50,12 +50,20 @@ process.on('unhandledRejection', () => {})
  *   里没有这一轮的手动存档）、`data-turn-rescue` 是 1（这一轮是靠放行摊着的）；
  *   把焦点挪开再点一次收起，照常收起。
  *
+ * - **P9**（放行不跨会话残留，2026-11-12 补）：座位按**轮号**做 React key（`ui.tsx:747`），
+ *   切会话时座位不重挂，放行的状态（`rescued`）原来只由 `toggleTurn` 清空，于是「动画中途
+ *   焦点 Tab 进某一轮 → 切到另一条会话 → 切回来」之后，那一轮带着 `data-turn-rescue="1"`
+ *   重新摊开，而存档与兜底都说该收起。验收两段：放行成立（前提：`data-turn-rescue` 是 1）
+ *   → 切走再切回 → 这一轮不是靠放行摊着的（`data-turn-rescue` 缺席）、存档里没有手动展开
+ *   （`data-turn-manual` 缺席）、状态与存档 / 兜底一致（折面 closed、开关行收起、座位全挂
+ *   hidden）。修之前结论那条必红（实测切回后 rescue=1、fold=open、hidden=0/3）。
+ *
  * ## 断言数（以实际运行输出为准）
  *
- * 跑下来 **35 条**：P1～P6 与行级复位共 29 条（`assert` 调用点 25 处，其中 3 处在
- * `ROUNDS` 轮循环里各跑两次，加 `requireScene` 记的 1 条场景断言），再加 P7 的 3 条与
- * P8 的 3 条。文档与提交信息都照这个数写，别再按「`assert` 出现几次」或「设计了几条」
- * 另算一套。
+ * 跑下来 **37 条**：P1～P6 与行级复位共 29 条（`assert` 调用点 25 处，其中 3 处在
+ * `ROUNDS` 轮循环里各跑两次，加 `requireScene` 记的 1 条场景断言），再加 P7 的 3 条、
+ * P8 的 3 条与 P9 的 2 条。文档与提交信息都照这个数写，别再按「`assert` 出现几次」或
+ * 「设计了几条」另算一套。
  *
  * 运行：node desktop/shots/_verify-collapse-remount.mjs
  * 产物：desktop/shots/_collapse-remount.png
@@ -1185,6 +1193,127 @@ assert(
     && releaseThenCollapse.collapsed.turnOpen === null
     && releaseThenCollapse.collapsed.fold === 'closed',
   JSON.stringify(releaseThenCollapse),
+)
+
+/* ────── P9：放行不跨会话残留（2026-11-12）────────── */
+
+/**
+ * 缺陷：`rescued` 只活在这份座位实例里，而座位按**轮号**做 React key（`ui.tsx:747` 的
+ * `key={seat.round}`）——切会话时座位不重挂。放行记的键 `会话|轮号` 在切走时对不上、
+ * 切回来又对上了（`render.tsx` 原来的 `rescued === rescueKey`），于是那一轮带着
+ * `data-turn-rescue="1"` 重新摊开，而存档（这一轮是手动收起）与兜底（`completion` 档 =
+ * 收起）都说该收起。修法见 `render.tsx` 的 `rescueKeyRef`：键一变就当场把放行清掉。
+ *
+ * 验收两段（切会话都走真实用户路径：点侧栏那条会话）：
+ * - **P9 前提**：收起动画跑到一半把焦点 Tab 进这一轮 → 被末帧复检放行（`data-turn-rescue`
+ *   是 1、整轮展开）；
+ * - **P9 结论**：切到另一条会话再切回来 → 这一轮**不是**靠放行摊着的（`data-turn-rescue`
+ *   缺席）、存档里没有手动展开（`data-turn-manual` 缺席）、状态与存档 / 兜底一致
+ *   （折面 closed、开关行收起、过程座位全挂 hidden）。
+ */
+const crossSessionRescue = await cdp.evaluate(`
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const seatOf = () => document.querySelector('.turn-seat[data-round-seat="0"]')
+  const titleOf = () => document.querySelector('.turn-seat[data-round-seat]')?.querySelector('.entry-user')?.textContent ?? ''
+  const clickSession = async (label) => {
+    const item = [...document.querySelectorAll('.sess-item')].find((row) =>
+      (row.querySelector('.title-text')?.textContent ?? '').includes(label))
+    if (item === undefined) return false
+    item.click()
+    for (let i = 0; i < 300; i += 1) {
+      if (titleOf().includes(label)) break
+      await wait(100)
+    }
+    await wait(400)
+    return titleOf().includes(label)
+  }
+  /** 第一轮开关行 / 折面 / 过程座位的读数（放行与手动存档各一个属性，见模块头 P8）。 */
+  const readRound = () => {
+    const seat = seatOf()
+    if (seat === null) return null
+    const toggle = seat.querySelector('.turn-fold:not([disabled])')
+    const row = toggle === null ? null : toggle.closest('.entry-row')
+    const segment = seat.querySelector('.turn-process')
+    const owners = [...seat.querySelectorAll('.turn-process > .turn-process-body > *')]
+    return {
+      turnOpen: toggle === null ? null : toggle.getAttribute('data-open'),
+      fold: segment === null ? null : segment.getAttribute('data-fold'),
+      rescue: row === null ? null : row.getAttribute('data-turn-rescue'),
+      manual: row === null ? null : row.getAttribute('data-turn-manual'),
+      owners: owners.length,
+      hidden: owners.filter((owner) => owner.getAttribute('hidden') !== null).length,
+      shown: owners.filter((owner) => owner.getAttribute('hidden') === null && owner.getBoundingClientRect().height > 0).length,
+    }
+  }
+  let seat = seatOf()
+  if (seat === null) return { error: '没有第一轮' }
+  let turn = seat.querySelector('.turn-fold:not([disabled])')
+  if (turn === null) return { error: '第一轮没有整轮开关' }
+  const current = titleOf().includes('甲') ? '甲' : (titleOf().includes('乙') ? '乙' : null)
+  if (current === null) return { error: '认不出当前是哪条会话' }
+  const other = current === '甲' ? '乙' : '甲'
+  // 1. 基线：整轮摊开、组点开；焦点先放整轮开关上（开始收起那一拍的焦点检查不会放行）。
+  if (turn.getAttribute('data-open') !== '1') turn.click()
+  for (let i = 0; i < 80; i += 1) {
+    if (seat.querySelector('.turn-process')?.getAttribute('data-fold') === 'open') break
+    await wait(50)
+  }
+  const group = seat.querySelector('.step-fold:not([disabled])')
+  if (group === null) return { error: '第一轮里没有阶段组' }
+  if (group.getAttribute('data-open') !== '1') group.click()
+  for (let i = 0; i < 80; i += 1) {
+    const body = seat.querySelector('.step-body')
+    if (group.getAttribute('data-open') === '1' && body !== null && !body.hasAttribute('hidden')) break
+    await wait(50)
+  }
+  const head = seat.querySelector('.step-seat .think-head')
+  if (head === null) return { error: '第一轮里找不到可聚焦的思考行头' }
+  turn.focus()
+  turn.click()
+  // 2. 收起动画跑到一半（约 60ms），把焦点 Tab 进这一轮：末帧复检放行，这一轮停在展开，
+  //    存档没有被动过（上一步点收起写的是「手动收起」）。
+  await wait(60)
+  head.focus()
+  await wait(700)
+  const released = readRound()
+  if (released === null) return { error: '放行之后没有第一轮' }
+  // 3. 切走再切回：座位按轮号复用、不重挂，看放行会不会跟着留到下一次打开。
+  const wentAway = await clickSession(other)
+  const cameBack = await clickSession(current)
+  return {
+    current,
+    other,
+    wentAway,
+    cameBack,
+    released,
+    afterBack: readRound(),
+    titleBack: titleOf().slice(0, 24),
+  }
+`)
+process.stdout.write(`  放行跨会话 ${JSON.stringify(crossSessionRescue)}\n`)
+
+assert(
+  'P9 前提：收起动画跑到一半时焦点 Tab 进这一轮，这一轮被放行成展开（`data-turn-rescue` 是 1）',
+  crossSessionRescue.released !== undefined
+    && crossSessionRescue.released !== null
+    && crossSessionRescue.released.rescue === '1'
+    && crossSessionRescue.released.turnOpen === '1'
+    && crossSessionRescue.released.fold === 'open',
+  JSON.stringify({ released: crossSessionRescue.released, error: crossSessionRescue.error }),
+)
+assert(
+  'P9：切走再切回之后，这一轮不是靠放行摊着的（`data-turn-rescue` 缺席），状态与存档/兜底一致（折面 closed、开关行收起、座位全挂 hidden）',
+  crossSessionRescue.wentAway === true
+    && crossSessionRescue.cameBack === true
+    && crossSessionRescue.afterBack !== null
+    && crossSessionRescue.afterBack !== undefined
+    && crossSessionRescue.afterBack.rescue === null
+    && crossSessionRescue.afterBack.manual === null
+    && crossSessionRescue.afterBack.turnOpen === null
+    && crossSessionRescue.afterBack.fold === 'closed'
+    && crossSessionRescue.afterBack.owners > 0
+    && crossSessionRescue.afterBack.hidden === crossSessionRescue.afterBack.owners,
+  JSON.stringify(crossSessionRescue.afterBack ?? crossSessionRescue),
 )
 
 teardown([cdp, desktop, home])

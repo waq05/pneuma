@@ -98,6 +98,20 @@ const ANTI_THROTTLE = [
   '--disable-renderer-backgrounding',
 ]
 
+/**
+ * 负向自检（`PROBE_MUTATE`）认识的值。**只认这几个精确字符串**。
+ *
+ * 拼错（`no-scroll-writ`）或写成另一条探针的名字（`shove` / `no-anchor`）时以前是直接
+ * `return`：变异没打上、日志没有、退出码 0，操作者会以为「判据改完仍能红」。现在有值但
+ * 不认识就当场报错退出（列认识的值）。
+ */
+const MUTATIONS = ['no-scroll-write']
+const requestedMutation = process.env.PROBE_MUTATE ?? ''
+if (requestedMutation !== '' && !MUTATIONS.includes(requestedMutation)) {
+  console.error(`  FAIL 环境：PROBE_MUTATE=${requestedMutation} 不认识（认识的值：${MUTATIONS.join('、')}；不设 = 不跑变异）`)
+  process.exit(1)
+}
+
 rmSync(home, { recursive: true, force: true })
 mkdirSync(join(dsc, 'sessions', 'demo'), { recursive: true })
 mkdirSync(join(dsc, 'usage'), { recursive: true })
@@ -281,24 +295,44 @@ const evaluate = async (expression) => {
  * 「视口协调器补不了位置」的真回归。场景 A 自动收起时补偿写不进去，上面的过程区一收，
  * 答案行就会被顶上去——`收起前后那一行的屏幕 top 漂移 ≤2px` 必须红。
  * 只在内存里改这一次运行，不碰产品源码。
+ *
+ * 打上变异之后**当场证明它真的生效**：按产品那一下写一个明显不同的值，读回来还是原值
+ * （写入被吞），并且 `.chat` 身上确实多了一个 `scrollTop` 访问器。不生效就红在那条
+ * 「变异」断言上（值拼错在文件顶部就报错退出了）。
+ *
+ * @returns {{ requested: boolean, applied: boolean, before: number | null, after: number | null, error?: string }}
  */
 const mutateNoScrollWrite = async () => {
-  if (process.env.PROBE_MUTATE !== 'no-scroll-write') return
+  if (process.env.PROBE_MUTATE !== 'no-scroll-write') {
+    return { requested: false, applied: false, before: null, after: null }
+  }
   const result = await evaluate(`
     const chat = document.querySelector('.chat')
+    if (chat === null) return { applied: false, reason: '没有 .chat' }
     const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop')
     if (descriptor === undefined || descriptor.get === undefined) {
-      return { mutated: false, reason: '拿不到 scrollTop 访问器' }
+      return { applied: false, reason: '拿不到 scrollTop 访问器' }
     }
+    const before = descriptor.get.call(chat)
     Object.defineProperty(chat, 'scrollTop', {
       configurable: true,
       get() { return descriptor.get.call(chat) },
       set() {},
     })
-    return { mutated: true }
+    const own = Object.getOwnPropertyDescriptor(chat, 'scrollTop')
+    chat.scrollTop = before + 240
+    const after = descriptor.get.call(chat)
+    return { applied: own !== undefined && after === before, before, after, ownOwned: own !== undefined }
   `)
   console.log('[mutate] PROBE_MUTATE=no-scroll-write：'
-    + (result?.mutated === true ? '已吞掉 .chat 的 scrollTop 写入（模拟产品回归）' : `失败：${String(result?.reason)}`))
+    + (result?.applied === true ? '已吞掉 .chat 的 scrollTop 写入（模拟产品回归）' : `没打上：${String(result?.reason ?? JSON.stringify(result))}`))
+  return {
+    requested: true,
+    applied: result?.applied === true,
+    before: typeof result?.before === 'number' ? result.before : null,
+    after: typeof result?.after === 'number' ? result.after : null,
+    ...(result?.reason === undefined ? {} : { error: String(result.reason) }),
+  }
 }
 
 // 让页面当自己在前台：遮挡时 Chromium 会降频定时器、停 rAF，逐行动画的中间帧会全丢。
@@ -439,7 +473,7 @@ if (Number.isFinite(cpuThrottle) && cpuThrottle > 1) {
   await send('Emulation.setCPUThrottlingRate', { rate: cpuThrottle })
   console.log(`[probe] PROBE_CPU_THROTTLE=${String(cpuThrottle)}：渲染进程降速 ${String(cpuThrottle)} 倍（发完消息之后才降）`)
 }
-await mutateNoScrollWrite()
+const mutation = await mutateNoScrollWrite()
 
 // 等**条件**而不是等 11 秒：先等回合状态行出现、再等它消失（流式收尾），随后最多再等 3s
 // 让「收尾自动收起」跑完。采样窗口由条件定，不再赌一个固定时长。
@@ -817,6 +851,13 @@ const check = (name, condition, detail = '') => {
 const skip = (name, why) => {
   skipped += 1
   console.log(`  skip ${name}（环境未就绪：${why}）`)
+}
+
+// 负向自检先自证：变异没打上就红不了，那时候看到的全绿是假绿（值拼错在文件顶部就退出了）。
+if (mutation.requested) {
+  check('变异：PROBE_MUTATE=no-scroll-write 真的生效（写入 scrollTop 被吞，读回原值）',
+    mutation.applied === true,
+    mutation.error ?? `写入前后 ${JSON.stringify(mutation.before)} → ${JSON.stringify(mutation.after)}`)
 }
 
 const last = report.after
