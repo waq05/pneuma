@@ -16761,6 +16761,34 @@ zcode 按时段一共六句、每段一句，句子的主语全是「你」和�
 - 缓存目录是**挂载时快照**：挂载之后才新建的 `~/.npm` 不会补授权，要换会话或重算后端才生效。
 - 缓存目录的 ACL 真放行没端到端验证（集成脚本建执行器时没传 `extraRoots`）。
 
+## 2026-11-11：自我改进补上自修订（B3）
+
+**为什么**
+
+闭环三环里，「从经验提炼」和「写入」都在跑，缺的是**用错之后能不能改**：复盘只会 `create`，同类技能已存在就只回 `NONE`；`skill_write` 虽然有 `patch`，但没有任何东西在“用过且失败”之后自动发起修订。另外 `read-before-write` 只认 `skill` 工具调用，靠 `/技能名` 注入正文那条路不算“读过”，会把正常的修订挡在门外。
+
+**做法**
+
+- `skillNamesReadInMessages` 除 assistant 的 `tool_calls` 外，也扫 user 正文里的 `<skill_content name="…">`，同一次去重。
+- `read-before-write` 同时看**本轮消息**（`readSkills` 要到轮尾才写回，同一轮里“先 `/技能名` 再 `skill_write`”光看它会被误判）。
+- `parseDraftAnswer` 新增 `{"action":"patch","name","old_string","new_string","reason"}` 形状：四个字段缺一即 invalid 并点名缺哪项，`old_string === new_string` 判无效；原来的 create 形状原样保留。
+- `dsc/turn-end` 且 `reason === 'error'` 且本轮读过技能 → 起一轮插件自发起的**修订轮**，把失败现场（最后一条 assistant 正文 + 最后一条工具错误，各截 800 字符）拼进提示词，只准回一行 patch JSON 或 NONE。结果**只进候选清单**，`/learnings promote` 才真正落盘（走 `.bak` + 台账 + 审批门）。
+- 顺手补一个安全洞：`patchSkill` / `writeSkillFile` / `archiveSkill` 三个入口此前都没校验名字形状，而新建的「候选 promote」绕开了工具层的入参校验，模型回一个 `name: "../../evil"` 就能写到技能目录外。现在三个入口第一步都走 `validateSkillName`。
+
+**验证**
+
+- `pnpm run typecheck`、`pnpm run build`（76 包）通过。
+- `node --test "src/packages/self-improve/tests/*.test.mjs"` → 17 通过 / 0 失败（新增 11 条：标签识别、去重、patch 四字段、old==new、缺字段点名、create 回归、三条路径越界）。
+- `node scripts/self-improve-single-approval-test.mjs` → 7 PASS / 0 FAIL。
+- 子代理另跑三支临时端到端探针：读技能→报错→自起修订轮→候选带 `revisionOf`（7 PASS）；用户 promote 后补丁真落盘（4 PASS）；同轮 `/技能名` + `skill_write patch` 只弹一张卡（4 PASS）。
+
+**遗留**
+
+- 真实模型会不会稳定只回一行 patch，没验（探针用假模型固定回包）。
+- 模型自己调 `learning promote` 应用修订那条路：审批按“会话已结束”自动拒（既有问题，`landDraft` 同一形状）。
+- L2 复盘轮若回 patch 形状会被拒收、不落盘（刻意）。
+
+
 
 
 

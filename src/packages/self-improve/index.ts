@@ -29,6 +29,11 @@
  * 自动归档只动 `created_by: agent` 的技能；写入后安全扫描不过就还原；
  * 绝不改 `AGENTS.md`（dsc 已把它列为必须当面确认，本插件只写 `~/.dsc/skills/` 与 `~/.dsc/learnings/`）。
  *
+ * 技能自修订（2026-11-11 加，唯一一条触发路径）：这一轮读过技能、又以 `error` 结束时，插件自起
+ * 一轮，模型只准回一行 patch JSON（`{"action":"patch",…}`）或 NONE。结果**只进候选清单**
+ * （`skill-draft`，正文是那段 patch JSON，文本带 `revisionOf=<技能名>`）——
+ * 用户 `/learnings promote` 才真正 patch，插件绝不因为一次失败就自己改技能。
+ *
  * 系统提示那一段（order 43）只报「有几条待审候选」「技能写入要不要审批」这类当前事实，
  * **候选正文绝不拼进提示词**——候选里存的常常是用户原话，而用户原话可能夹着从网页粘进来的
  * 外部文本，拼进去等于给外部文本开一条进模型上下文的直通车。
@@ -42,7 +47,7 @@ import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plu
 import { argsSummary } from '@pneuma/runtime/core/tools.js'
 import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
 import type { ToolGuardInput } from '@pneuma/runtime/core/tool-guards.js'
-import type { ChatMessage } from '@pneuma/runtime/core/llm.js'
+import { contentText, type ChatMessage } from '@pneuma/runtime/core/llm.js'
 import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
 import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 import { errText } from '@pneuma/runtime/core/err-text.js'
@@ -82,6 +87,7 @@ import {
   userTurnIndex,
   usageFile,
   validateSkillDraft,
+  validateSkillName,
   writeSkillFile,
   archiveSkill as archiveSkillOp,
   type SkillDraft,
@@ -176,7 +182,11 @@ const SCHEDULED_MARK = /【定时任务触发】|定时任务触发|不是用户
 type WriteOrigin = 'model' | 'plugin' | 'subagent' | 'scheduled'
 
 /** 待落盘的插件自发起轮次。 */
-type PendingTurn = { mode: 'review' } | { mode: 'learn'; actor: 'model' | 'user' }
+type PendingTurn =
+  | { mode: 'review' }
+  | { mode: 'learn'; actor: 'model' | 'user' }
+  /** 自修订：上一轮用 `skill` 时以 error 结束，起一轮只回一条 patch 的回答。 */
+  | { mode: 'revision'; skill: string }
 
 /** 截断显示用（候选与提示词里都不放整篇原文）。 */
 function clip(text: string, limit: number): string {
@@ -214,8 +224,60 @@ function authorPrompt(goal: string, candidateText: string, descriptionMax: numbe
   ].join('\n')
 }
 
-/** 复盘 / 沉淀那一轮的回答。 */
-type DraftAnswer = { kind: 'none' } | { kind: 'invalid'; error: string } | { kind: 'draft'; draft: SkillDraft }
+/**
+ * 失败现场：最后一条 assistant 正文 + 最后一条工具报错正文（各截 800 字符）。
+ *
+ * 为什么只给这两段：修订轮不该重放整段对话（那是给模型又一次动手的机会），它只需要看到
+ * 「当时我是怎么说的」和「工具是怎么拒绝的」，够判断技能里哪一步写错了。
+ */
+function failureScene(messages: readonly ChatMessage[], toolErrors: ReadonlyMap<string, string>): string {
+  let errorText = ''
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message === undefined || message.role !== 'tool') continue
+    if (toolErrors.get(message.tool_call_id ?? '') !== 'tool-error') continue
+    errorText = contentText(message.content).trim()
+    break
+  }
+  const said = lastAssistantText(messages)
+  return [
+    `最后一条助手输出：${said === '' ? '（没有）' : clip(said, 800)}`,
+    `最后一条工具错误：${errorText === '' ? '（这一轮没有工具报错）' : clip(errorText, 800)}`,
+  ].join('\n')
+}
+
+/** 自修订提示词：只准回一行 patch JSON（或 NONE），只许改失败时用的那个技能。 */
+function revisionPrompt(skill: string, scene: string): string {
+  return [
+    `【技能自修】上一轮你用技能 ${skill} 时失败了。这不是用户的新指令：不要执行任何实际操作，也不要调用任何工具，只回看失败现场，判断这个技能的正文要不要改一处。`,
+    '',
+    '失败现场：',
+    scene,
+    '',
+    `只准改技能 ${skill}：不要新建技能、不要动别的技能、不要写记忆。改的是技能正文里写错的步骤、过期的命令、漏掉的前提；`,
+    '不要改成本次任务的具体参数（报错原文、今天的文件名、这次的编号），那些下次不会一样。',
+    '',
+    '有可改的地方就只输出一行 JSON，不要代码块、不要解释：',
+    '{"action":"patch","name":"' + skill + '","old_string":"要替换的原文","new_string":"替换成","reason":"为什么改（一句话）"}',
+    'old_string 必须是技能正文里原样出现的一段（在正文里唯一命中），new_string 不能和它相同。',
+    '没有可改的就只输出一行：NONE',
+  ].join('\n')
+}
+
+/** 复盘 / 沉淀 / 自修订那一轮的回答。 */
+type DraftAnswer =
+  | { kind: 'none' }
+  | { kind: 'invalid'; error: string }
+  | { kind: 'draft'; draft: SkillDraft }
+  | { kind: 'revision'; revision: SkillRevision }
+
+/** 自修订那一行 patch JSON 的四个字段。 */
+export interface SkillRevision {
+  name: string
+  old_string: string
+  new_string: string
+  reason: string
+}
 
 /**
  * 解析模型那一行 JSON。
@@ -223,6 +285,12 @@ type DraftAnswer = { kind: 'none' } | { kind: 'invalid'; error: string } | { kin
  * 模型有三种常见走法：规规矩矩一行 JSON、套在 ```json 代码块里、先说一句「好的」再给 JSON。
  * 三种都认（从最后一行往前找，取第一个能解析出四个字段的对象），但**只认第一个**——
  * 认第一个能避免把正文里引用的示例 JSON 当成结果。
+ *
+ * 两种回答形状：
+ *   - 新建（没有 `action` 或 `action: "create"`）：name + description + whenToUse + content；
+ *   - 改一处（`action: "patch"`）：name + old_string + new_string + reason，解析成
+ *     {@link SkillRevision}。patch 的四个字段缺一不可，缺了就说清缺哪项；
+ *     `old_string` 与 `new_string` 相同等于什么都没改，也判 invalid。
  */
 export function parseDraftAnswer(text: string, descriptionMax = DEFAULT_SKILL_LIMITS.descriptionMax): DraftAnswer {
   const stripped = text.replace(/```(?:json)?/gi, '').trim()
@@ -253,6 +321,36 @@ export function parseDraftAnswer(text: string, descriptionMax = DEFAULT_SKILL_LI
         if (typeof value === 'string' && value.trim() !== '') return value.trim()
       }
       return ''
+    }
+    const action = typeof raw.action === 'string' ? raw.action.trim().toLowerCase() : ''
+    if (action === 'patch') {
+      // old_string / new_string 留着原样（首尾空白可能是正文的一部分，trim 了就对不上原文），
+      // 只拿 trim 后的值判断「给没给」。
+      const rawText = (...keys: string[]): string => {
+        for (const key of keys) {
+          const value = raw[key]
+          if (typeof value === 'string' && value.trim() !== '') return value
+        }
+        return ''
+      }
+      const revision: SkillRevision = {
+        name: pick('name'),
+        old_string: rawText('old_string', 'oldString'),
+        new_string: rawText('new_string', 'newString'),
+        reason: pick('reason'),
+      }
+      const missing: string[] = []
+      if (revision.name === '') missing.push('name（要改哪个技能）')
+      if (revision.old_string === '') missing.push('old_string（要替换的原文）')
+      if (revision.new_string === '') missing.push('new_string（替换成什么）')
+      if (revision.reason === '') missing.push('reason（为什么改）')
+      if (missing.length > 0) {
+        return { kind: 'invalid', error: `patch 回答缺少 ${missing.join('、')}` }
+      }
+      if (revision.old_string === revision.new_string) {
+        return { kind: 'invalid', error: 'patch 回答里 old_string 与 new_string 相同：这次修订等于什么都没改' }
+      }
+      return { kind: 'revision', revision }
     }
     const name = pick('name')
     const content = pick('content', 'body')
@@ -386,13 +484,34 @@ export const selfImprovePlugin: Plugin.Object = {
       }
     }
 
+    /**
+     * 本轮消息切片：从最后一条 user 消息切到末尾。
+     *
+     * 为什么两条判定都只喂这一段：`skillNamesReadInMessages` 会扫完整个数组，喂全量会让
+     * 前几轮的读法一直生效——命中计数虚高、read-before-write 也会把「很久以前读过」当成
+     * 「这一轮读过」。切到本轮，`/技能名` 注入的 `<skill_content>` 与 `skill` 工具的
+     * tool_calls 都正好在这段里。
+     */
+    function turnMessagesOf(messages: readonly ChatMessage[]): ChatMessage[] {
+      let start = 0
+      for (let index = messages.length - 1; index >= 0; index -= 1) {
+        if (messages[index]?.role === 'user') {
+          start = index
+          break
+        }
+      }
+      return messages.slice(start)
+    }
+
     /** read-before-write 判定：本会话读过这个技能（或它就是本会话建的）才准动。 */
     function readConfirmedOf(name: string): { ok: boolean; error: string } {
       const state = stateOf()
       return readBeforeWriteCheck({
         readSkills: state.readSkills,
         createdSkills: state.createdSkills,
-        messages: ctx.session.current().messages,
+        // 同时看本轮消息：`readSkills` 要到轮尾才写回，同一轮里「先 /技能名 再 skill_write」
+        // 光看它会被误判成没读过（本条复用第 1 步那条判定，`/技能名` 注入的正文也算读过）。
+        messages: turnMessagesOf(ctx.session.current().messages),
         name,
       })
     }
@@ -411,17 +530,9 @@ export const selfImprovePlugin: Plugin.Object = {
 
     /** 本轮的 `skill` 工具读出来的技能名（命中计数与 read-before-write 的记账都靠它）。 */
     function turnReadSkillNames(messages: readonly ChatMessage[]): string[] {
-      // 只把**本轮**那一段消息喂给 skillNamesReadInMessages：它会扫完整个数组，直接喂全量
-      // 会把前几轮读过的技能每一次都再记一遍命中（计数虚高，老化判定跟着失真）。
-      // 从最后一条 user 消息切到末尾就是本轮，切出来的那段里 assistant 的 tool_calls 正好是本轮的调用。
-      let start = 0
-      for (let index = messages.length - 1; index >= 0; index -= 1) {
-        if (messages[index]?.role === 'user') {
-          start = index
-          break
-        }
-      }
-      return skillNamesReadInMessages(messages.slice(start))
+      // 只喂**本轮**那一段消息：理由见 turnMessagesOf（喂全量会把前几轮读过的技能每一次都
+      // 再记一遍命中，计数虚高，老化判定跟着失真）。
+      return skillNamesReadInMessages(turnMessagesOf(messages))
     }
 
     /** 记一条候选，回一句给用户看的话（候选本身绝不进模型上下文）。 */
@@ -505,6 +616,10 @@ export const selfImprovePlugin: Plugin.Object = {
         say(`复盘输出没法解析成技能草稿（${answer.error}），这次不落盘`)
         return
       }
+      if (answer.kind === 'revision') {
+        say(`复盘轮要的是新建草稿，模型回了改 ${answer.revision.name} 的 patch，这次不落盘（改一处走自修订那条路）`)
+        return
+      }
       void landDraft(answer.draft, 'model').then((message) => {
         say(message)
       })
@@ -525,13 +640,70 @@ export const selfImprovePlugin: Plugin.Object = {
         say(`输出没法解析成技能草稿（${answer.error}）`)
         return
       }
+      if (answer.kind === 'revision') {
+        say(`沉淀轮要的是新建草稿，模型回了改 ${answer.revision.name} 的 patch，这次不落盘`)
+        return
+      }
       void landDraft(answer.draft, actor).then((message) => {
         say(message)
       })
     }
 
+    /**
+     * 修订轮结束：只认 patch 一行 JSON，**不直接改技能**，把修订放进候选清单等用户 promote。
+     *
+     * 为什么不自动落盘：失败现场里的「技能写错了」是模型自己的判断，改错了没人看得见；
+     * 候选清单是用户显式 promote 才生效的那道闸，和 L1/L2 走同一条出口。
+     */
+    function finishRevision(skill: string, reason: 'completed' | 'aborted' | 'error'): void {
+      if (reason !== 'completed') {
+        say(`修订轮以 ${reason} 结束，这次不记修订`)
+        return
+      }
+      const answer = parseDraftAnswer(lastAssistantText(ctx.session.current().messages), limits.descriptionMax)
+      if (answer.kind === 'none') {
+        say(`修订看过了：技能 ${skill} 这次没有要改的地方`)
+        return
+      }
+      if (answer.kind === 'invalid') {
+        say(`修订输出没法解析成 patch（${answer.error}），这次不记修订`)
+        return
+      }
+      if (answer.kind === 'draft') {
+        // 修订轮只认 patch：模型改回 create 形状是要绕开「只改这一个技能」，直接不收
+        say(`修订轮只认 patch 形状，模型回了新建草稿（${answer.draft.name}），这次不记修订`)
+        return
+      }
+      const revision = answer.revision
+      if (revision.name !== skill) {
+        say(`修订轮只准改技能 ${skill}，模型回的是 ${revision.name}，这次不记修订`)
+        return
+      }
+      // 正文存那段 patch JSON，并在文本里带上 revisionOf 与被改技能名：
+      // 候选清单里要能一眼看出「这条是什么技能、怎么改」，promote 时才认得出形状。
+      const payload = JSON.stringify({
+        action: 'patch',
+        name: revision.name,
+        old_string: revision.old_string,
+        new_string: revision.new_string,
+        reason: revision.reason,
+        revisionOf: skill,
+      })
+      const saved = recordCandidate(
+        cwd(),
+        { kind: 'skill-draft', text: `revisionOf=${skill} ${payload}`, turnRef: turnRefOf(ctx.session.current().messages) },
+        storeOptions(),
+      )
+      if (saved.error !== '') {
+        say(`修订没能记进候选：${saved.error}`)
+        return
+      }
+      say(`已把对 ${skill} 的修订放进候选：/learnings 里查看，promote 后才会写入`)
+    }
+
     /** 起一轮插件自发起的轮次（复盘 / 沉淀）：先写状态再投递，崩在中间也不会重复发起。 */
     function startPluginTurn(prompt: string, what: PendingTurn): string {
+      const label = what.mode === 'review' ? '复盘' : what.mode === 'revision' ? '技能修订' : '沉淀'
       writeState({ pluginInitiated: true })
       pending = what
       try {
@@ -539,11 +711,13 @@ export const selfImprovePlugin: Plugin.Object = {
       } catch (error) {
         pending = null
         writeState({ pluginInitiated: false })
-        return `${what.mode === 'review' ? '复盘' : '沉淀'}没能启动：${errText(error)}`
+        return `${label}没能启动：${errText(error)}`
       }
-      return what.mode === 'review'
-        ? `已起一轮技能复盘（本轮工具迭代够多）：有值得沉淀的会写成技能草稿，默认停用`
-        : '已起一轮技能沉淀：模型只回一行 JSON，由插件校验后落盘'
+      if (what.mode === 'review') return '已起一轮技能复盘（本轮工具迭代够多）：有值得沉淀的会写成技能草稿，默认停用'
+      if (what.mode === 'revision') {
+        return `已起一轮技能修订（上一轮用 ${what.skill} 时失败）：只回一行 patch JSON，结果进候选清单，promote 后才会写入`
+      }
+      return '已起一轮技能沉淀：模型只回一行 JSON，由插件校验后落盘'
     }
 
     /** 本轮工具迭代数够不够触发复盘。 */
@@ -562,6 +736,22 @@ export const selfImprovePlugin: Plugin.Object = {
       say(message)
     }
 
+    /**
+     * 上一轮读过技能、这一轮又以 error 结束 → 起一轮自修订。
+     *
+     * 只取读过的**第一个**技能（用户拍板只做这一条触发路径，不做定时主动复盘）：一轮里读了
+     * 三个技能，失败到底该算谁的没法从消息里判出来，取第一个是保守选择——改错了还有候选
+     * 清单那道闸挡着，不自动落盘。
+     */
+    function maybeRevision(read: readonly string[]): void {
+      if (!config.enabled || read.length === 0) return
+      const skill = read[0] ?? ''
+      if (skill === '') return
+      const session = ctx.session.current()
+      const scene = failureScene(session.messages, session.toolErrors)
+      say(startPluginTurn(revisionPrompt(skill, scene), { mode: 'revision', skill }))
+    }
+
     // ── 一轮结束的总入口 ───────────────────────────────────────────────────────
 
     function handleTurnEnd(reason: 'completed' | 'aborted' | 'error'): void {
@@ -573,6 +763,7 @@ export const selfImprovePlugin: Plugin.Object = {
         writeState({ pluginInitiated: false })
         if (current === null) return
         if (current.mode === 'review') finishReview(reason)
+        else if (current.mode === 'revision') finishRevision(current.skill, reason)
         else finishLearn(reason, current.actor)
         return
       }
@@ -585,6 +776,8 @@ export const selfImprovePlugin: Plugin.Object = {
       }
       captureCorrections(reason)
       if (reason === 'completed') maybeReview()
+      // 自修订只由「这一轮读过技能 + 这一轮报错」触发；不做定时主动复盘。
+      else if (reason === 'error') maybeRevision(read)
     }
 
     disposers.push(ctx.on('dsc/turn-end', (reason) => { handleTurnEnd(reason) }))
@@ -716,24 +909,80 @@ export const selfImprovePlugin: Plugin.Object = {
 
     // ── L1/L3：learning 工具（候选清单）────────────────────────────────────────
 
+    /**
+     * 应用候选里那条 patch 修订（自修订轮的产物）。
+     *
+     * 为什么放在这里：`finishRevision` 只把修订写进候选，`/learnings promote` 才是用户显式
+     * 点头的那一步；模型自己 promote 时照样过审批门（与 {@link landDraft} 同一条规矩）。
+     */
+    async function applyStoredRevision(
+      candidate: LearningCandidate,
+      raw: Record<string, unknown>,
+      actor: 'model' | 'user',
+    ): Promise<string> {
+      const name = typeof raw.name === 'string' ? raw.name.trim() : ''
+      const oldString = typeof raw.old_string === 'string' ? raw.old_string : ''
+      const newString = typeof raw.new_string === 'string' ? raw.new_string : ''
+      const reason = typeof raw.reason === 'string' ? raw.reason.trim() : ''
+      if (name === '' || oldString === '' || newString === '') {
+        return `候选 ${candidate.id} 里的修订缺字段（name / old_string / new_string），先用 /learnings drop ${candidate.id} 清掉它`
+      }
+      // 名字来自模型输出，先过形状校验再碰文件系统：`skillFileOf` 只是 join，
+      // `{"name":"../../evil"}` 会被拼到技能根之外去。
+      const nameProblem = validateSkillName(name, limits)
+      if (nameProblem !== '') {
+        return `候选 ${candidate.id} 里的技能名不合法：${nameProblem}；先用 /learnings drop ${candidate.id} 清掉它`
+      }
+      if (!existsSync(skillFileOf(name))) {
+        return `候选 ${candidate.id} 要改的技能 ${name} 已经不在本地技能库里，先用 /learnings drop ${candidate.id} 清掉它`
+      }
+      if (isSkillPinned(name)) {
+        return `技能 ${name} 被钉住了（pinned）：先 /skills-ledger unpin ${name} 再来应用这条修订`
+      }
+      if (actor === 'model' && config.requireApproval) {
+        const approved = await askSkillWrite(
+          `按候选 ${candidate.id} 改技能 ${name}：${clip(reason, 60)}`,
+          { action: 'patch', name, old_string: oldString, new_string: newString },
+          pluginAbort.signal,
+        )
+        if (!approved) return `用户没有批这条修订（候选 ${candidate.id} 还留着，promote 可以再试）`
+      }
+      const result = patchSkill({ name, oldString, newString, actor, limits, replaceAll: false, readConfirmed: true })
+      if (!result.ok) return `修订没落盘：${result.error}（候选 ${candidate.id} 还留着）`
+      setCandidateState(cwd(), candidate.id, 'promoted')
+      ctx.emit('dsc/skills-changed')
+      return result.notice
+    }
+
     /** 把候选转成技能（skill-draft 直接落盘，其余起一轮沉淀）。 */
     async function promoteToSkill(candidate: LearningCandidate, actor: 'model' | 'user'): Promise<string> {
       if (candidate.kind === 'skill-draft') {
-        let draft: SkillDraft | null = null
-        try {
-          const parsed = JSON.parse(candidate.text) as Partial<SkillDraft>
-          if (typeof parsed.name === 'string' && typeof parsed.content === 'string') {
-            draft = {
-              name: parsed.name,
-              description: typeof parsed.description === 'string' ? parsed.description : '',
-              whenToUse: typeof parsed.whenToUse === 'string' ? parsed.whenToUse : '',
-              content: parsed.content,
-            }
+        let doc: Record<string, unknown> | null = null
+        // 候选正文可能带着 `revisionOf=<技能名> ` 这段前缀（自修订轮存的形状），
+        // 所以只取第一个 `{` 到最后一个 `}` 那截 JSON 来解析。
+        const head = candidate.text.indexOf('{')
+        const tail = candidate.text.lastIndexOf('}')
+        if (head >= 0 && tail > head) {
+          try {
+            const parsed: unknown = JSON.parse(candidate.text.slice(head, tail + 1))
+            if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) doc = parsed as Record<string, unknown>
+          } catch {
+            doc = null
           }
-        } catch {
-          draft = null
         }
-        if (draft === null) return `候选 ${candidate.id} 里存的草稿读不出来，先用 /learnings drop ${candidate.id} 清掉它`
+        // 自修订轮存的是 patch：promote 就是把它真正落到技能上（改一处，不是新建）
+        if (doc !== null && doc.action === 'patch') return applyStoredRevision(candidate, doc, actor)
+        const storedName = typeof doc?.name === 'string' ? doc.name : ''
+        const storedContent = typeof doc?.content === 'string' ? doc.content : ''
+        if (storedName === '' || storedContent === '') {
+          return `候选 ${candidate.id} 里存的草稿读不出来，先用 /learnings drop ${candidate.id} 清掉它`
+        }
+        const draft: SkillDraft = {
+          name: storedName,
+          description: typeof doc?.description === 'string' ? doc.description : '',
+          whenToUse: typeof doc?.whenToUse === 'string' ? doc.whenToUse : '',
+          content: storedContent,
+        }
         const message = await landDraft(draft, actor)
         setCandidateState(cwd(), candidate.id, 'promoted')
         return message

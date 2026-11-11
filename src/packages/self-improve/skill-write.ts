@@ -23,7 +23,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { basename, dirname, join, normalize, relative, resolve, sep } from 'node:path'
-import type { ChatMessage } from '../../core/llm.js'
+import { contentText, type ChatMessage } from '../../core/llm.js'
 import { lastAssistantText, lastUserText, previousUserText } from '../../core/transcript-text.js'
 import { DSC_SKILLS_DIR, parseSkillMarkdown, scanSkillRoot, splitFrontmatter, writeSkillEnabled } from '../../core/skills.js'
 import { errText } from '../../core/err-text.js'
@@ -421,6 +421,9 @@ export interface PatchSkillInput {
  */
 export function patchSkill(input: PatchSkillInput): SkillOpResult {
   const limits = input.limits ?? DEFAULT_SKILL_LIMITS
+  // 名字先过形状校验：`skillFileOf` 只是 join，`../evil` 会被拼到技能根之外去
+  const nameProblem = validateSkillName(input.name, limits)
+  if (nameProblem !== '') return fail(nameProblem)
   const file = skillFileOf(input.name)
   if (!existsSync(file)) return fail(`技能 ${input.name} 不存在（${file}）：先 create，或者确认名字拼对了`)
   if (!input.readConfirmed) {
@@ -501,6 +504,9 @@ export function validateSkillFilePath(filePath: string): string {
 /** 写一个附属文件（references/scripts 这类）：路径受辖、体积受辖、写后照样过安检。 */
 export function writeSkillFile(input: WriteSkillFileInput): SkillOpResult {
   const limits = input.limits ?? DEFAULT_SKILL_LIMITS
+  // 同上：名字先过形状校验，别让 `../x` 把附属文件写到技能根之外
+  const nameProblem = validateSkillName(input.name, limits)
+  if (nameProblem !== '') return fail(nameProblem)
   const dir = skillDirOf(input.name)
   if (!existsSync(skillFileOf(input.name))) return fail(`技能 ${input.name} 不存在：先 create 再用 write_file 加附属文件`)
   const pathProblem = validateSkillFilePath(input.filePath)
@@ -581,6 +587,9 @@ export function moveToArchive(name: string, now = Date.now(), suffix = ''): { ok
 
 /** 归档一个技能：只搬不删，台账里记一条。 */
 export function archiveSkill(name: string, actor: 'model' | 'user', note = '归档（只搬不删）', now = Date.now()): SkillOpResult {
+  // 名字先过形状校验：归档要 rename 整个目录，`..` 或绝对路径会让它搬错东西
+  const nameProblem = validateSkillName(name, DEFAULT_SKILL_LIMITS)
+  if (nameProblem !== '') return fail(nameProblem)
   const file = skillFileOf(name)
   if (!existsSync(file)) return fail(`技能 ${name} 不存在：没有可归档的东西`)
   const beforeHash = hashText(readFileSync(file, 'utf8'))
@@ -595,10 +604,34 @@ export function archiveSkill(name: string, actor: 'model' | 'user', note = '归�
 
 // ── read-before-write：本会话读过哪些技能 ────────────────────────────────────────
 
-/** 扫会话消息里 `skill` 工具的调用参数，得到本会话读过的技能名。 */
+/**
+ * `/技能名` 那条注入路径在 user 消息正文里留下的标签。
+ *
+ * `packages/skills/index.ts` 的 `runSkillCommand` 把技能正文拼成
+ * `<skill_content name="X">…</skill_content>` 交给 `runtime.submit`，这条路**不产生
+ * `skill` 工具的 tool_call**；不认它的话，「用 /技能名 干活 → 报错 → 想改这个技能」会被
+ * read-before-write 挡在门外。
+ */
+const SKILL_CONTENT_TAG = /<skill_content\s+name\s*=\s*["']([^"']+)["']/giu
+
+/**
+ * 扫会话消息里「这个技能被读出来用过」的证据，得到技能名（同一次里去重）。
+ *
+ * 两种证据都认：
+ *   - assistant 的 `tool_calls` 里 `function.name === 'skill'` 的调用参数（`skill` 工具那条路）；
+ *   - user 消息正文里的 `<skill_content name="X">` 标签（`/技能名` 注入正文那条路）。
+ * 只认传进来的这段消息切片，调用方负责切到「本轮」，别在这里扩大范围。
+ */
 export function skillNamesReadInMessages(messages: readonly ChatMessage[]): string[] {
   const names = new Set<string>()
   for (const message of messages) {
+    if (message.role === 'user') {
+      for (const match of contentText(message.content).matchAll(SKILL_CONTENT_TAG)) {
+        const name = (match[1] ?? '').trim()
+        if (name !== '') names.add(name)
+      }
+      continue
+    }
     if (message.role !== 'assistant' || message.tool_calls === undefined) continue
     for (const call of message.tool_calls) {
       if (call.function.name !== 'skill') continue
