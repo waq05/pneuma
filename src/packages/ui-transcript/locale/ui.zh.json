@@ -84,6 +84,7 @@
   "transcript.injection.label": "上下文注入",
   "transcript.injection.chars": "{chars} 字",
   "transcript.injection.more": "+{count}",
+  "transcript.injection.steps": "共 {count} 步",
   "transcript.injection.whereSystem": "系统提示",
   "transcript.injection.whereTail": "请求末尾",
   "transcript.injection.kind.envFacts": "环境快照",

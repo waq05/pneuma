@@ -458,7 +458,7 @@ function builtinRowBody(
       // 这一轮额外注进上下文的东西（环境快照 / 模式 / 沙箱 / 待办提醒）：同样是请求侧内容，
       // 不进对话正文，只记成一张可展开的账单卡。存档键口径同上。
       const storeKey = `${sessionId ?? ''}:${row.stable}`
-      return <ContextInjectionCard parts={entry.parts} storeKey={storeKey} />
+      return <ContextInjectionCard parts={entry.parts} count={entry.count} storeKey={storeKey} />
     }
     case 'turn-max-tokens':
       return (

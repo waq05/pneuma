@@ -18,7 +18,7 @@ import type { SessionNotice, SessionTranscriptMark } from '../core/session.js'
 import { contentImages, contentText, type ChatMessage } from '../core/llm.js'
 import type { FileChangeSummary } from '../core/tools.js'
 import type { ToolPresentationView } from '../contract.js'
-import { sameContextInjections } from '../contract.js'
+import { sameContextInjections, type ContextInjectionView } from '../contract.js'
 import { SUMMARY_BANNER } from '../core/compact-anchors.js'
 import { REVIEW_FINDINGS_OPEN, TEAMMATE_REPORT_OPEN } from '../core/team-board.js'
 import { addUsageToBuckets, emptyCostBuckets, isPeakHour, type CostBuckets } from '../core/pricing.js'
@@ -539,12 +539,38 @@ export class Transcript {
   /**
    * 从尾部找最近一条这个 kind 的条目（没有返回 -1）。
    *
-   * 为什么不是「只看最后一条」：系统提示卡与上下文注入卡的去重对象是「上一条同类的卡」，
-   * 而两条同类卡之间一定隔着正文、工具行这些东西。只看紧邻的那条，等于每轮都新长一张卡。
+   * 为什么不是「只看最后一条」：系统提示卡的去重对象是「上一条同类的卡」，而两条同类卡
+   * 之间一定隔着正文、工具行这些东西。只看紧邻的那条，等于每轮都新长一张卡。
+   *
+   * 上下文注入卡不走这里：它只在**这一轮**范围内找同类（见 {@link indexOfInjectionInTurn}）。
+   * 原因是注入清单会在一轮里 A / B / A 地交替（B = A 多一条重复调用提醒），而这里返回的
+   * 永远是最近那一张——拿 A 去跟 B 比必然不等，每跳都新长一张（一次 16 步的回合落 8 张）。
    */
   private lastIndexOfKind(kind: TranscriptEntry['kind']): number {
     for (let index = this.list.length - 1; index >= 0; index -= 1) {
       if (this.list[index]?.kind === kind) return index
+    }
+    return -1
+  }
+
+  /**
+   * 本轮里与这份注入清单相同的卡片下标（没有返回 -1）。
+   *
+   * 扫描范围是**这一轮**：从尾部往前，撞上 `user`（新一轮的起点）或 `turn-end`（这一轮的
+   * 终点）就停。为什么边界不是「遇到第一个非注入条目」：多步工具轮里两次请求之间必然夹着
+   * 正文、工具卡与结果行，按它们切会把同一轮切成一跳一段——实测按那种写法改，16 步的回合
+   * 反而落 16 张卡，比修之前还多。工具行属于这一轮的过程，不是轮与轮之间的边界。
+   *
+   * 为什么跨轮不合并：下一轮模型看到的是一段新的上下文，两张卡各自代表各自那一段；
+   * 合起来会把两轮的时间线糊成一条，次数也失去「这一轮重发了几次」的意义。
+   */
+  private indexOfInjectionInTurn(parts: readonly ContextInjectionView[]): number {
+    for (let index = this.list.length - 1; index >= 0; index -= 1) {
+      const entry = this.list[index]
+      if (entry === undefined) continue
+      if (entry.kind === 'user' || entry.kind === 'turn-end') return -1
+      if (entry.kind !== 'context-injection') continue
+      if (sameContextInjections(entry.parts, parts)) return index
     }
     return -1
   }
@@ -936,17 +962,21 @@ export class Transcript {
         return true
       }
       case 'context/injected': {
-        // 注入清单与上一条同 kind 的条目一样就只刷时刻（判据与会话日志的落盘去重同一份，
-        // 两条路不会判出两种结果）。空清单不建条目——那只是因为这一轮什么都没注入。
+        // 注入清单在一轮里会随每一步请求重复上报：同一种组合只留一张卡，重复出现时刷新
+        // 时刻、把次数 +1。空清单不建条目——那只是因为这一轮什么都没注入。
+        //
+        // 为什么合并放在这一层、不去改那些投影（packages/prompt）：投影每跳照旧上报，
+        // 它记的是「这一跳真的往请求里塞了什么」这一条独立事实；「同一份清单在一轮里重复
+        // 了几次」是账本口径，只有看得到整条条目流的地方才算得出来。把两者混进投影，
+        // 事实层就再也回答不了「第 7 跳到底注入了什么」。
         if (event.parts.length === 0) return false
-        const at = this.lastIndexOfKind('context-injection')
+        const at = this.indexOfInjectionInTurn(event.parts)
         const previous = at >= 0 ? this.list[at] : undefined
-        if (
-          previous !== undefined &&
-          previous.kind === 'context-injection' &&
-          sameContextInjections(previous.parts, event.parts)
-        ) {
-          this.list[at] = this.stamp({ ...previous })
+        if (previous !== undefined && previous.kind === 'context-injection') {
+          // 次数不算「内容」（见 packages/transcript 的 sameEntries），所以这里必须换一个
+          // **新对象**：同一个引用会被快照缓存与 React 判成「这一条没变」，界面上的次数
+          // 就不会刷新。id / parts 原样保留，React 的 key 不换、展开态也不重置。
+          this.list[at] = this.stamp({ ...previous, count: (previous.count ?? 1) + 1 })
           return true
         }
         this.list.push(this.stamp({ kind: 'context-injection', id: this.seq++, parts: event.parts }))

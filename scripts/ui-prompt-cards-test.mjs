@@ -12,7 +12,7 @@
  *   [3] 接线：render.tsx 两个 case 直画卡片（不走节点槽）、存档键是 `${sessionId ?? ''}:${row.stable}`
  *   [4] 结构表：round-fold 的 TURN_INDEPENDENT / rounds.ts 的轮尾早退 / ui.tsx 的欢迎态判据
  *   [5] 样式：两份卡用的每一个类名都在 views.css 里有规则（根类名与 CSS 一致）
- *   [6] 文案：24 个键在 zh / en 都在、两份键集一致、英文真译过、占位符两边都留
+ *   [6] 文案：26 个键在 zh / en 都在、两份键集一致、英文真译过、占位符两边都留
  *   [7] 反向钉：展开体里没有正文字段（没偷偷去改契约）、组件里没有中文字面量、没有 import 契约
  *
  * 运行：node --import ./scripts/_i18n-alias.mjs scripts/ui-prompt-cards-test.mjs
@@ -122,7 +122,7 @@ console.log('[3] 接线：render.tsx 两个 case 直画卡片，存档键与 thi
   check('注入那一支的存档键同上', injectionBranch.includes(storeKeyLine))
   check('两张卡都拿到了存档键',
     promptBranch.includes('<SystemPromptCard prompt={entry.prompt} storeKey={storeKey} />')
-    && injectionBranch.includes('<ContextInjectionCard parts={entry.parts} storeKey={storeKey} />'))
+    && injectionBranch.includes('<ContextInjectionCard parts={entry.parts} count={entry.count} storeKey={storeKey} />'))
   // 要求：**别**走节点槽，直接画。走槽的话这一支里会出现 TRANSCRIPT_NODE_SLOT / renderSlot。
   check('两支都不走节点槽（直接画卡片）',
     !promptBranch.includes('renderSlot') && !promptBranch.includes('TRANSCRIPT_NODE_SLOT')
@@ -203,10 +203,10 @@ console.log('[5] 样式：组件用到的每个类名都在 views.css 里有规�
     region !== '' && !/rgba?\(|hsla?\(/.test(region) && !/#[0-9a-fA-F]{3,8}/.test(region), region.slice(0, 80))
 }
 
-console.log('[6] 文案：25 个键在 zh / en 都在，真译过，占位符两边都留')
+console.log('[6] 文案：26 个键在 zh / en 都在，真译过，占位符两边都留')
 {
   const keys = Object.keys(zh).filter((key) => key.startsWith('transcript.prompt.') || key.startsWith('transcript.injection.'))
-  check('两张卡一共 25 个键', keys.length === 25, String(keys.length))
+  check('两张卡一共 26 个键', keys.length === 26, String(keys.length))
   for (const key of keys) {
     check(`zh 有 ${key}`, typeof zh[key] === 'string' && zh[key] !== '')
     check(`en 有 ${key}`, typeof en[key] === 'string' && en[key] !== '')

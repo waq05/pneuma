@@ -222,25 +222,34 @@ export function SystemPromptCard({
 /**
  * 上下文注入卡。
  *
- * 收起：`⊕ 上下文注入 · 环境快照 318 字 · 模式 86 字`（同一 `kind` 合计，超过三类写 `+N`）。
+ * 收起：`⊕ 上下文注入 · 环境快照 318 字 · 模式 86 字`（同一 `kind` 合计，超过三类写 `+N`；
+ * 这一轮里同一份清单重发过几步，末尾再加「共 N 步」）。
  * 展开：每条一行——来源、注入位置（系统提示 / 请求末尾）、字数、前 200 字预览（灰色单行）。
  *
  * `parts` 为空就什么都不画：那只是因为这一轮什么都没注入（adapter 与落盘都先把空清单挡掉了），
  * 画一张「上下文注入（0）」等于在会话流里凭空多一行。
  *
  * @param props.parts - 这一轮请求的注入清单（按注入顺序）
+ * @param props.count - 同一种组合在这一轮里重发了几次（缺省 1；>1 才显示）
  * @param props.storeKey - 展开态的存档键；不传就只活在本次挂载里
  */
 export function ContextInjectionCard({
   parts,
+  count,
   storeKey,
 }: {
   parts: ContextInjectionView[]
+  /**
+   * 同一份注入清单在这一轮里被重发了几次（缺省 1）：多步工具轮每一步都要重发整份上下文，
+   * adapter 把它们并成一张卡、只累加这个数。只有 >1 才显示，1 步时不占位置。
+   */
+  count?: number
   storeKey?: string
 }): ReactNode {
   // 钩子先调、空清单后判：React 要求挂载期内钩子顺序稳定，不能因为清单空了就少调一个。
   const [open, setOpen] = useFoldState(storeKey, false)
   if (parts.length === 0) return null
+  const steps = count ?? 1
   const toggle = (): void => {
     setOpen(!open)
   }
@@ -265,6 +274,14 @@ export function ContextInjectionCard({
         <span className="entry-injection-label">{t('transcript.injection.label')}</span>
         <span className="entry-injection-dot" aria-hidden="true" />
         <span className="entry-injection-summary">{kindSummary(parts)}</span>
+        {/* 次数放在逐类读数之后：先回答「注入了什么」，再回答「这一段上下文重发了几步」。
+            1 步不画——绝大多数请求就是一次，画出来只是噪音。 */}
+        {steps > 1 ? (
+          <>
+            <span className="entry-injection-dot" aria-hidden="true" />
+            <span className="entry-injection-steps">{t('transcript.injection.steps', { count: steps })}</span>
+          </>
+        ) : null}
         <IconChevronDown size={11} className="entry-injection-chevron" />
       </div>
       {open ? (

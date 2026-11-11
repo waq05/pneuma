@@ -84,6 +84,7 @@
   "transcript.injection.label": "Context injections",
   "transcript.injection.chars": "{chars} chars",
   "transcript.injection.more": "+{count}",
+  "transcript.injection.steps": "{count} steps",
   "transcript.injection.whereSystem": "system prompt",
   "transcript.injection.whereTail": "end of request",
   "transcript.injection.kind.envFacts": "Environment snapshot",

@@ -419,11 +419,19 @@ export const transcriptPlugin: Plugin.Object = {
  * 东西（时间戳、按当刻进程状态排出来的顺序），这条比对就会永远判不等——所以新增字段
  * 必须保持确定性，这是本类型的第二条硬约束。
  *
+ * 唯一的例外是上下文注入卡的 `count`：它数的是「同一份清单在这一轮里重发了几次」，实时
+ * 路径按事件累加、重放路径按日志里的落位记录重新数，而日志对连续相同的清单只写一条，
+ * 两边数出来的值可能不同（例如实时 6、重开 3）。它是记账读数，不是「注入了什么」，所以
+ * 从判等里剔掉——留着会让重复打开同一条会话永远判「内容变了」，整表重建、id 从头重发。
+ *
  * 为什么用 JSON 字符串比而不是逐字段写：条目是纯数据、没有函数与循环引用，
  * 序列化顺序由同一段代码产出，键序天然一致；逐字段写要跟着 contract 的六种条目改，
  * 加一个字段就会静静漏比。
+ *
+ * 导出给探针（`scripts/context-injection-merge-test.mjs`）：这条判等要能被单独验证
+ * 「count 不同仍算内容相同」，不必为了测它去搭一整套宿主。
  */
-function sameEntries(left: readonly TranscriptEntry[], right: readonly TranscriptEntry[]): boolean {
+export function sameEntries(left: readonly TranscriptEntry[], right: readonly TranscriptEntry[]): boolean {
   if (left.length !== right.length) return false
   return shape(left) === shape(right)
 }
@@ -440,6 +448,10 @@ function shape(entries: readonly TranscriptEntry[]): string {
       // 思考卡里的耗时是现场测出来的（直播首口 delta → 定稿），重放造不出来，
       // 与 ts 同理剔除——否则恢复会话永远判「内容变了」整表重建。
       delete rest['durationMs']
+      // 注入次数同理由：见同一个函数上方的说明（实时与重放数出来的值可以不同，
+      // 它是记账读数而不是内容）。只删顶层——压缩标记的 `compaction.count` 嵌在里面，
+      // 那个是内容（第几次压缩），必须留着比。
+      delete rest['count']
       // startedAt / durationMs 嵌在工具卡的 call 里而不是条目顶层，所以得进 call 再删
       if (entry.kind === 'tool') {
         const call: Record<string, unknown> = { ...(rest['call'] as Record<string, unknown>) }

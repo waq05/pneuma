@@ -429,6 +429,17 @@ assert('注入记录记了来源与位置',
 // 提醒那张卡有 4 类（环境快照 / 模式 / 沙箱 / 重复调用提醒），收起行只列前三类，第四类收进 `+1`。
 assert('界面上有把第四类收进「+1」的注入卡（这一轮多了一类）',
   (page?.heads ?? []).some((head) => head.includes('+1')), JSON.stringify(page?.heads ?? []))
+// 合并口径（2026-11-11）：同一种注入组合在一轮里只留一张卡，次数写在收起行末尾。
+// 现场 16 步落 6 张而不是 8 张——第一轮 4 张（A 一张 + 3 条正文不同的提醒各一张），
+// 第二轮 2 张（A 一张 + 提醒一张）。为什么不是更少：三条提醒的正文本身不同
+//（温和版 / 「连续调用了 5 次」/「连续调用了 8 次」），并掉就等于抹掉模型真的见过的差异。
+assert('16 步两轮只剩 6 张注入卡（修前是 8 张）', page?.injections === 6, String(page?.injections))
+assert('合并后的 A 卡片写着「共 7 步」（第一轮 10 跳里 7 跳是这份组合）',
+  (page?.heads ?? []).some((head) => head.includes('共 7 步')), JSON.stringify(page?.heads ?? []))
+assert('第二轮的 A 卡片写着「共 5 步」',
+  (page?.heads ?? []).some((head) => head.includes('共 5 步')), JSON.stringify(page?.heads ?? []))
+assert('逐条行数仍是一份清单的长度（合并没把不同类别的注入并掉）',
+  (page?.lastRows ?? []).length === 4, String((page?.lastRows ?? []).length))
 assert('点开最后一张注入卡（第二轮的提醒那张）', page?.lastOpen === true)
 const reminderRow = (page?.lastRows ?? []).find((row) => row.source === 'repeat-reminder')
 assert('展开后逐条行里认得出 repeat-reminder 这一条', reminderRow !== undefined,

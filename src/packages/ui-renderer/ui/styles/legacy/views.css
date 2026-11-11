@@ -13167,6 +13167,15 @@ body.resizing iframe {
   white-space: nowrap;
 }
 
+/* 注入卡的「共 N 步」：同一份清单在这一轮里被重发了几步（多步工具轮每步都重发）。
+   它是时间线上的记账读数，不是内容摘要，所以不吃剩余宽度、也不许被省略号吃掉。 */
+.entry-injection-steps {
+  color: var(--dsc-text-quaternary);
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .entry-prompt-chevron,
 .entry-injection-chevron {
   color: var(--dsc-text-quaternary);

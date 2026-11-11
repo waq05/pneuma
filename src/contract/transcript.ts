@@ -253,9 +253,15 @@ export type TranscriptEntry =
    * 模式条款、沙箱档位、待办提醒。它们**不是**对话历史（投影注入，不落消息流），
    * 但确实是模型当时看到的内容，单独记一条卡片。
    *
-   * 与上一条同 kind 的条目比较 `parts`（浅比较）：一样就只刷 `ts`，不叠新卡。
+   * 同一轮里的多步工具调用每一步都要重发整份上下文，注入清单因此会重复出现：adapter 在
+   * **这一轮**范围内按 `parts` 比对，相同就把那一条的次数 +1，不再叠新卡（跨轮不合并，
+   * 下一轮模型看到的是一段新的上下文）。
+   *
+   * `count` = 这一种注入组合在这一轮里被重发了几次（缺省 1）。它是「同一份清单重复出现」
+   * 的现算结果，不是内容的一部分：内容由 `parts` 决定，所以界面侧的内容判等必须忽略它
+   * （详见 packages/transcript 的条目比对），否则每多一跳都会判「卡片内容变了」。
    */
-  | { kind: 'context-injection'; id: number; parts: ContextInjectionView[]; ts?: number }
+  | { kind: 'context-injection'; id: number; parts: ContextInjectionView[]; count?: number; ts?: number }
 
 /**
  * 一轮对话为什么结束（口径就是宿主 `turn/end` 事件的 reason，见 core/events.ts）。
