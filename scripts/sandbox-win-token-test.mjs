@@ -211,6 +211,42 @@ check('RUNNER_SIGNATURE 是宿主诊断认的那一行', RUNNER_SIGNATURE === 'd
   check('--timeout 重复给抛错', duplicated.ok, duplicated.why)
 }
 
+// ── parseRunnerArgs：--pty / --cols / --rows ────────────────────────────────
+{
+  /** 一份最小合法 argv（read-only 不要可写根），只把 --pty 那一段换掉 */
+  const withPty = (...values) => [
+    '--mode', 'read-only',
+    '--temp', 'C:\\sandbox\\tmp',
+    ...values,
+    '--', 'cmd',
+  ]
+
+  const off = parseRunnerArgs(withPty())
+  check('不给 --pty 时 pty 是 undefined（默认关，走原来三对管道）', off.pty === undefined, JSON.stringify(off.pty))
+
+  const on = parseRunnerArgs(withPty('--pty'))
+  check(
+    '--pty 解析成 {cols:120, rows:30}（默认尺寸）',
+    on.pty?.cols === 120 && on.pty?.rows === 30,
+    JSON.stringify(on.pty),
+  )
+
+  const sized = parseRunnerArgs(withPty('--pty', '--cols', '80', '--rows', '24'))
+  check('--cols 80 --rows 24 生效', sized.pty?.cols === 80 && sized.pty?.rows === 24, JSON.stringify(sized.pty))
+
+  const badCols = throwsWith(() => parseRunnerArgs(withPty('--pty', '--cols', 'abc')), /--cols 只认正整数/)
+  check('--cols abc 抛错（错误信息点名参数）', badCols.ok, badCols.why)
+
+  const zeroCols = throwsWith(() => parseRunnerArgs(withPty('--pty', '--cols', '0')), /--cols 只认正整数/)
+  check('--cols 0 抛错（0 列无意义，也会被按 int16 强转）', zeroCols.ok, zeroCols.why)
+
+  const orphan = throwsWith(() => parseRunnerArgs(withPty('--cols', '80')), /只对 --pty 有效/)
+  check('给了 --cols 但没给 --pty 抛错（不许让人以为它生效了）', orphan.ok, orphan.why)
+
+  const dupPty = throwsWith(() => parseRunnerArgs(withPty('--pty', '--pty')), /--pty 给重复了/)
+  check('--pty 重复给抛错', dupPty.ok, dupPty.why)
+}
+
 // ── strictlyInside：只用文档承诺的语义（大小写不敏感 + 分隔符边界） ──────────
 {
   check('根内的路径为 true', strictlyInside('C:\\a\\b', 'C:\\a') === true)
@@ -392,6 +428,7 @@ if (process.platform !== 'win32') {
     note(`探测结果：${probe.detail}`)
     await runIntegration(backend)
     await runTimeoutCase()
+    await runPtyCases()
   }
 }
 
@@ -593,26 +630,100 @@ async function runTimeoutCase() {
 }
 
 /**
+ * 集成段（PTY）：`--pty` 的三条用例，直接 spawn runner（不套执行器）。
+ *
+ * 三条分别盯三件事：① 真的是 tty（`process.stdout.isTTY === true`，这是「全屏程序能跑」
+ * 的判据）；② 普通命令的输出经 pty 回来（不是走父进程控制台）；③ stdin 送的 0x03 经
+ * conin 翻译成 CTRL_C_EVENT，子进程真的被中断——做不到就如实记 NOTE，不假装通过。
+ */
+async function runPtyCases() {
+  console.log('')
+  console.log('── 集成：--pty（ConPTY）三条用例')
+  const runner = join(ROOT, 'lib/packages/sandbox/win/runner-entry.js')
+  const tempDir = mkdtempSync(join(tmpdir(), 'dsc-win-token-pty-'))
+  /** 直接 spawn runner：被测的就是 runner 自己的 --pty 行为，套执行器只会把范围搅浑 */
+  const plan = (extra, child) => ({
+    file: process.execPath,
+    args: [runner, '--mode', 'read-only', '--temp', tempDir, ...extra, '--', ...child],
+    cwd: sandboxRoot,
+  })
+  try {
+    const tty = await spawnPlan(
+      plan(['--pty'], [process.execPath, '-e', "console.log('isTTY=' + process.stdout.isTTY)"]),
+      { ...process.env },
+    )
+    note(`isTTY 用例：退出码 ${String(tty.code)}，stdout=${JSON.stringify(tty.out.trim())}`)
+    if (tty.err.trim() !== '') note(`isTTY 用例 stderr：${tty.err.trim().slice(0, 200)}`)
+    check(
+      '--pty 下 process.stdout.isTTY 为 true',
+      /isTTY=true/.test(tty.out),
+      `stdout=${JSON.stringify(tty.out.slice(0, 200))}`,
+    )
+    check(
+      'isTTY 用例没超时且退出码 0',
+      tty.timedOut === false && tty.code === 0,
+      `code=${String(tty.code)} timedOut=${String(tty.timedOut)}`,
+    )
+    check('isTTY 用例 stderr 不含 runner 自身失败签名', !tty.err.includes(RUNNER_SIGNATURE), tty.err.slice(0, 200))
+
+    const echo = await spawnPlan(plan(['--pty'], ['cmd', '/c', 'echo', 'pty-ok']), { ...process.env })
+    note(`echo 用例：退出码 ${String(echo.code)}，stdout=${JSON.stringify(echo.out.trim())}`)
+    check('--pty 下 cmd /c echo 的输出经 pty 回来', /pty-ok/.test(echo.out), `stdout=${JSON.stringify(echo.out.slice(0, 200))}`)
+
+    // Ctrl+C：子进程写一个字节后静等 20 秒；1.5 秒时从 stdin 送 0x03，5 秒内必须退出。
+    // 若 0x03 没被翻译成中断，子进程会跑满 20 秒（runner 的 30 秒兜底不会先触发），
+    // 耗时就会远超 5 秒——那不是超时误判，就是中断不生效。
+    const started = Date.now()
+    const interrupted = await spawnPlan(
+      plan(['--pty'], [process.execPath, '-e', "process.stdout.write('x');setTimeout(()=>{},20000)"]),
+      { ...process.env },
+      {
+        stdin: 'pipe',
+        onSpawn: (child) => {
+          setTimeout(() => {
+            child.stdin.write('\x03')
+          }, 1500)
+        },
+      },
+    )
+    const elapsed = Date.now() - started
+    note(`Ctrl+C 用例：耗时 ${String(elapsed)}ms，退出码 ${String(interrupted.code)}，stdout=${JSON.stringify(interrupted.out.trim())}`)
+    check(
+      '0x03 经 conin 中断子进程：5 秒内退出（没等它跑满 20 秒）',
+      interrupted.timedOut === false && elapsed < 5000,
+      `耗时 ${String(elapsed)}ms，退出码 ${String(interrupted.code)}`,
+    )
+    if (elapsed >= 5000) note('这条没做到：ConPTY 下 0x03 没有中断子进程（它跑满了 20 秒）')
+  } finally {
+    removeTree(tempDir)
+  }
+}
+
+/**
  * 按计划 spawn 并收集输出；30 秒超时就杀掉（杀 runner 等于关作业对象，受限子树一起收）。
  *
  * @param {{ file: string, args: string[], cwd: string }} planned 换过执行体的计划。
  * @param {Record<string, string>} env 子进程环境（undefined 已滤掉）。
+ * @param {{ stdin?: 'pipe', onSpawn?: (child: import('node:child_process').ChildProcess) => void }} [hooks]
+ *   可选钩子：`stdin: 'pipe'` 让子进程的 stdin 是管道（PTY 的中断用例要往里写 0x03），
+ *   `onSpawn` 拿到刚起的子进程（写 stdin / 定时作废都在这里做）。不传时行为与原来一致。
  * @returns {Promise<{ code?: number | null, out: string, err: string, timedOut: boolean, error?: string }>}
  */
-function spawnPlan(planned, env) {
+function spawnPlan(planned, env, hooks = {}) {
   return new Promise((done) => {
     let child
     try {
       child = spawn(planned.file, planned.args, {
         cwd: planned.cwd,
         env,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: [hooks.stdin === 'pipe' ? 'pipe' : 'ignore', 'pipe', 'pipe'],
         windowsHide: true,
       })
     } catch (error) {
       done({ out: '', err: '', timedOut: false, error: error instanceof Error ? error.message : String(error) })
       return
     }
+    if (typeof hooks.onSpawn === 'function') hooks.onSpawn(child)
     let out = ''
     let err = ''
     let timedOut = false

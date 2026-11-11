@@ -116,6 +116,21 @@ export function bindAll(ffi: WinFfi) {
     openProcess: bind(k32, 'OpenProcess', 'uintptr_t', ['uint32', 'int', 'uint32']),
     localAlloc: bind(k32, 'LocalAlloc', 'uintptr_t', ['uint32', 'uintptr_t']),
     localFree: bind(k32, 'LocalFree', 'uintptr_t', ['uintptr_t']),
+    // ── kernel32：ConPTY（伪控制台）与进程属性列表（runner 的 --pty 用）──
+    // CreatePseudoConsole 的 COORD 是 4 字节**按值**结构体：x64 调用约定下它与 uint32 走
+    // 同一个整数寄存器，所以按小端打包成 (X | Y<<16) 传（实测：120×30 → 子进程读到 cols=120）。
+    // 返回 HRESULT（不是 BOOL）：0 = 成功，负数 = 失败。
+    createPseudoConsole: bind(k32, 'CreatePseudoConsole', 'int', ['uint32', 'uintptr_t', 'uintptr_t', 'uint32', 'void *']),
+    resizePseudoConsole: bind(k32, 'ResizePseudoConsole', 'int', ['uintptr_t', 'uint32']),
+    closePseudoConsole: bind(k32, 'ClosePseudoConsole', 'void', ['uintptr_t']),
+    // 属性列表：list 是我们自己的 Buffer（`void *` 直接传）；size 是 SIZE_T 出参。
+    initializeProcThreadAttributeList: bind(k32, 'InitializeProcThreadAttributeList', 'int', ['void *', 'uint32', 'uint32', 'void *']),
+    // value 对 PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE 要传「HPCON 值本身」，不是 &HPCON——
+    // HPCON 不是 JS 对象，这里按 `void *` 收数值（koffi 接受 number，已实测）。
+    updateProcThreadAttribute: bind(k32, 'UpdateProcThreadAttribute', 'int', ['void *', 'uint32', 'uintptr_t', 'void *', 'uintptr_t', 'void *', 'void *']),
+    deleteProcThreadAttributeList: bind(k32, 'DeleteProcThreadAttributeList', 'int', ['void *']),
+    // PTY 的输入方向：把 stdin 的字节原样写进 conin（含 0x03，交给控制台翻译成中断）。
+    writeFile: bind(k32, 'WriteFile', 'int', ['uintptr_t', 'void *', 'uint32', 'void *', 'void *']),
     // 命名互斥体：setup 的并发互斥用它。bInitialOwner=1，句柄由 CloseHandle 收。
     // 「同名已存在」不体现在返回值上（照样给句柄），只能读 GetLastError()===ERROR_ALREADY_EXISTS(183)。
     createMutexW: bind(k32, 'CreateMutexW', 'uintptr_t', ['void *', 'int', 'void *']),

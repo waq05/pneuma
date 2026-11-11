@@ -16877,6 +16877,36 @@ zcode 按时段一共六句、每段一句，句子的主语全是「你」和�
 - 冲突时没有“逐个 hunk 让人选”的界面（部分行接受是二期）。
 - 大仓首次还原要物化整棵树，耗时没量。
 
+## 2026-11-11：受限令牌下的 PTY（B7a，runner 层）
+
+**为什么**
+
+沙箱里的命令没有终端：全屏程序跑不了、Ctrl+C 只能硬杀。先试了 `node-pty`，装得上、普通 node 与 Electron 下都能起，**但在受限令牌下必失败**：`EPERM ... \\\\.\\pipe\\conpty-*`——`WRITE_RESTRICTED` 把命名管道也算作“写”。
+
+codex 的做法是拆开：不受限的 launcher 建 ConPTY，受限子进程靠 `STARTUPINFOEXW` 的 `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` 挂上去（`windows-sandbox-rs/src/conpty/mod.rs`）。dsc 照做，发现三处规格与实测不符，按实测改：
+
+1. `UpdateProcThreadAttribute` 的 `lpValue` 必须直接给 **HPCON 值**，不能给 `&hpc`。给地址时 `CreateProcessAsUserW` 照样成功，但子进程挂到的是死控制台：输出写到父控制台、`isTTY=undefined`。
+2. 标准句柄填 `INVALID_HANDLE_VALUE`、`bInheritHandles=0`；把管道当 STD 句柄传给子进程，拿到的还是管道，`isTTY=undefined`。
+3. PTY 模式**不能**调 `SetConsoleCtrlHandler(NULL, TRUE)`：建 pty 的进程一忽略 Ctrl+C，往 conin 写 `0x03` 就不再变成子进程的 `CTRL_C_EVENT`（实测子进程照跑满 20 秒）。另外 `waitForSingleObject` 是同步 FFI，一次等到底会冻住事件循环、输出不流、`0x03` 也写不进去——PTY 路径改成 50ms 一片 + `setImmediate` 让出。
+
+**做法**
+
+- `ffi.ts` 补 7 个绑定：`CreatePseudoConsole`、`ResizePseudoConsole`、`ClosePseudoConsole`、三个属性列表函数、`WriteFile`。
+- `runner-entry.ts` 加 `--pty` / `--cols` / `--rows`，`packStartupInfoEx` 组属性列表，`drainPtyOutput` / `pumpPtyInput` 双向泵，`0x03` 原样写进 conin；句柄登记进既有 `ownedHandles` 由 finally 兜底。
+- 非 PTY 路径零改动（只有 `SetConsoleCtrlHandler` 改成条件执行）。
+
+**验证**
+
+- `pnpm run typecheck` / `pnpm run build`（77 包）/ `package-tests`（89 包 / 93 用例 / 557 断言）全绿。
+- `node scripts/sandbox-win-token-test.mjs` → **67/67**：`--pty` 下 `process.stdout.isTTY=true`；`cmd /c echo pty-ok` 经 pty 回到 stdout；`0x03` 中断 1.6 秒退出、退出码 `0xC000013A`。
+
+**遗留**
+
+- 真·全屏交互程序（vim/htop）没跑，只验了 `isTTY=true` 与双向字节流动。
+- `CreatePseudoConsole` 真失败 → 签名 + 127 的分支只有代码路径，没有实跑证据。
+- resize 只加了绑定，调用方（bash 工具与界面）下一批接。
+
+
 
 
 

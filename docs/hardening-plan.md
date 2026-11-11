@@ -74,7 +74,20 @@
 | S5 强制力补强 | 给可写根外目标加 deny-write / deny-delete ACE（codex 路子）；目录句柄 no-reparse 打开；`CreateHardLink` 指向根外时拒绝并给用例；内部路径统一 `\\?\` | 硬链接用例被拒；>260 长路径在根内可写、根外被拒 |
 | S6 网络与上报 | 白名单代理从「账号分支专属」提到 windows-token 通用；无账号时必须报 `partial` 且系统提示写明「网络未强制」 | 无账号 + 开网：直连被代理拦住；enforcement 上报为 partial |
 
-**默认档位不变**：仍是 `policy`（`policy.ts:88` 的 `DEFAULT_SANDBOX_CONFIG`）。要不要在 koffi 可用时自动升到 `windows-token`，见 §7 第 1 问。
+### 1.4.1 当前状态（2026-11-11 更新）
+
+| 批次 | 状态 | commit | 证据 |
+| --- | --- | --- | --- |
+| S1 解释器 | ✅ | `7ce5eab` | electron.exe 当 node 实测跑通；7 条纯函数断言 |
+| S2 验收探针 | ✅ | `6106004` | 29 条，集成段真跑出“访问被拒绝” |
+| S3 超时与收尾 | ✅ | `838e83f` | 39 条；超时 1205ms / 退出码 124 |
+| S4 清扫并发与卸载 | ✅ | `3adeb88` | 55 条；脚本过 PowerShell Parser、内嵌 C# 可编译 |
+| S5 强制力补强 | ⏸ 本轮不做 | — | 见下 |
+| S6 默认档与缓存 | ✅ | `f4081a3` | 16 条纯函数断言；探针 55/0 |
+
+**S5 为什么先不做**：四项都要新增句柄级 Win32 调用（`CreateFileW` + `SetSecurityInfo` + `GetFileInformationByHandleEx`），其中 deny-read 还会改变产品语义（dsc 现在是“读不受限、写受限”）。更关键的是：**越界写已经由受限令牌 + 能力 SID 交集拦住了**，deny-read 拦的是“读到不该读的东西”，属于另一个安全维度，不该混在“真隔离”这批里赶工。硬链接与长路径目前只在文档里披露、没有自动化用例。建议单独立项。
+
+**默认档已切换**：Windows 上探测到受限令牌可用、且用户没显式选过后端时，自动启用真隔离（`policy.ts:113` 的 `resolveBackendChoice`），说明文字写“可在设置里改回策略围栏”；缓存目录（npm / pnpm / cargo / pip / yarn）默认放行。
 
 ### 1.5 验收断言（机器可判）
 
@@ -164,6 +177,15 @@
 - **降级**：git 不可用 → 只按 ledger 的 blob 还原模型独有文件，不自动合并；单文件 >10MB 或二进制 → 只记 hash 不存内容、回滚时整文件覆盖；库超配额（默认 200MB）停写并提示；一律剥掉继承的 `GIT_*` 变量。
 - **接入点**：回合边界有 `dsc/turn-start` / `dsc/turn-end`（`services/types.ts:1713`，已有 6+ 订阅者）；但"写成功 + 改动清单"的 `tool/changes` 是内核内部事件（`loop.ts:810`、`core/events.ts:85`），插件收不到——**要新增一个插件可见的写操作事件**，否则只能在守卫里自己再读盘算 hash。
 
+### 3.4 状态（2026-11-11 更新）
+
+| 批次 | 状态 | commit | 证据 |
+| --- | --- | --- | --- |
+| B5 快照地基 | ✅ | `2b02056` | 新包 `@pneuma/checkpoint`，回合前后各存一张，3 用例 / 14 断言 |
+| B6 还原与三方合并 | ✅ | `a81033c8` | 12 用例：模型改 A / 用户改 B 互不影响、同文件不同区域合并、同区域冲突不落盘、新建删除双向还原、用户 `.git` 前后一致 |
+
+**还没做**：writer-ledger（记录每个文件最后一次是谁改的）与 per-hunk 部分行接受——前者在“盘上内容 == 回合末”的判定下不是必需，后者是二期。
+
 ### 3.4 验收断言（机器可判）
 
 1. 连改两回合后回滚到第 1 回合末，文件逐字节等于当时版本。
@@ -185,20 +207,18 @@
 
 ### 4.1 PTY（T48）
 
-**现状**：前台命令一条一进程，`shellPlan` 折成 file+args（`tools-default/bash.ts:326`）→ `spawnShell`，stdin 直接关死（`:155`）；结束判定靠子进程 close，没有提示符事件（`:252`）；超时与取消是 SIGTERM / taskkill → 3 秒宽限 → 强杀（`:210`、`:47`）。后台作业复用同一 spawn，超时给 24 小时（`:384`）。`terminal` 工具是管道 stdin/stdout，靠哨兵行判完成（`persistent-shell.ts:99`）。界面那侧有 xterm + FitAddon，但只做前端重排（`ui-terminal/ui/ui.tsx:145`）。
+**2026-11-11 实测结论：PTY 与受限令牌在 Windows 上互斥。**
 
-**缺**：无 tty（全屏程序跑不了）；Ctrl+C 不能真中断；没有 resize，行列数到不了进程（`desktop-dock/index.ts:344`）；前台输出到最后才一次性解码（`:202`）；终端会话存内存，宿主重启就丢（`:904`）；编码靠 UTF-8 / GBK 猜（`:295`）。
+- `node-pty` 1.1.0 装得上（4 秒，自带 `win32-x64` 预编译），普通 node 与 Electron 44 下都能起 PTY。
+- 但在受限令牌下（read-only 与 workspace-write 都试了）报 `EPERM: operation not permitted, open '\\.\pipe\conpty-…-in'`：`WRITE_RESTRICTED` 把命名管道也算作“写”，而这个管道不在任何被授权的能力 SID 覆盖范围内。
 
-**参考**：codex 自建 pty crate，Windows 手写 ConPTY 与 resize（`codex-rs/utils/pty/src/win/conpty.rs:40`）；dsh 用 `node-pty` 1.2 beta，懒加载 + `useConptyDll` + `resize` + Ctrl+C 写 `\x03` + `@xterm/headless` 判结束（`D:\deepseek-harness` 的 subprocess-local / terminal-bash）。
+**codex 的解法（已核实，不是推测）**：不给令牌松绑，把“建 ConPTY”和“把子进程挂上去”拆开——
 
-**方案**：
+- 由**不受限的 launcher** 调 `CreatePseudoConsole`（`codex-rs/windows-sandbox-rs/src/conpty/mod.rs`，文件头写明“shared by legacy restricted-token path and elevated runner when `tty=true`”）；
+- 受限子进程仍用 `CreateProcessAsUserW`（同文件 `:155`），但启动信息换成 `STARTUPINFOEXW`，属性列表里放 `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = <HPCON>`（`proc_thread_attr.rs:19`），子进程一启动就挂上去，自己不需要打开管道；
+- 顺带用 `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` 限定继承句柄。
 
-- **A 接 node-pty（推荐）**：原生依赖 + 按 Electron ABI 重建；收益是 resize / Ctrl+C / 全屏一次到位。风险：1.2 仍是 beta；受限令牌下 ConPTY 可能起不来（codex 也把 PTY 排除在作业对象外）。
-- **B koffi 直调 `CreatePseudoConsole`**：零新原生包，但手写句柄、管道、进程属性约 600–900 行需自己维护；句柄泄漏与杀树都得自理。
-
-**前置探针（必须先跑，不通过就不立项）**：在打包 Electron 运行时下 `require` node-pty，起一个 PTY 跑 `cmd /c echo hi`，在 `windows-token` 后端下再跑一次。跑不通就退 B 或推迟。
-
-**验收**：`send("vim\n")` 后 `read` 含 `\x1b[` 且不再提示"跑不了"；新 resize 动作后 `stty size` / `RawUI.WindowSize` 随参数变；长命令发 `\x03` 后 5 秒内 `status=closed` 且退出码非 0；打包产物里 node-pty 的 `.node` 按 Electron ABI 可 `require`。
+**dsc 的决定（用户 2026-11-11 拍板）：走 C**——在 runner（不受限）里建 ConPTY，受限子进程用属性列表挂上去。分两批：先“能跑全屏 + Ctrl+C 真中断”，再“resize + 界面接线”。
 
 ### 4.2 npm 包形态安装（T49）
 
