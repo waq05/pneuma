@@ -249,6 +249,13 @@ test('apply 挂上命令与服务', async () => {
 | 会话重放快照没做 | `_testkit.replaySession` + `scripts/session-replay-test.mjs` + 快照文件 | 探针 5 条 |
 | 诊断包不含会话正文 | `--with-session` 显式开关，带最后 200 条事件、每条 400 字截断、过 `core/redact` | 包级测试 3 条 + 真机冒烟 |
 
+### 5.2 第二轮补齐（2026-11-11，随差异清单核对一起做）
+
+| 欠缺 | 做法 | 验证 |
+| --- | --- | --- |
+| 成功请求的追踪号只进日志，没进会话 | `packages/llm` 在 `stream()` 里 `appendNote('llm/request-id', …)`：note 只进会话 JSONL，不进提示词、不上界面 | 新探针 `llm-request-note-test.mjs` 5 条（内存 notes + 落盘 jsonl 两处都验） |
+| 重放快照只钉状态键，看不到日志本身 | `replaySession` 增加日志记录序列（`log.records` / `log.types`），并断言「重放不会往日志里追写记录」 | `session-replay-test.mjs` 7 条 |
+
 ## 6. 明确不做
 
 | 不做 | 理由 |

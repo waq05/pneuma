@@ -16608,5 +16608,34 @@ zcode 按时段一共六句、每段一句，句子的主语全是「你」和�
 - 重放快照只钉六个状态键，消息流本身没进快照（工具卡、折叠态这些属于界面层，不在会话状态里）。
 - 工作区里另一条线仍在改 `agent` / `ui-transcript`，本次未触碰。
 
+## 2026-11-11：按差异清单补两处（追踪号进会话 / 重放快照看日志）
+
+**为什么**
+
+提交完之后按 `harness-benchmark-roadmap.md` 与计划书自己的「遗留」核了一遍，还差两处：
+
+1. 成功请求的追踪号只写进了应用日志（debug 级），会话文件里没有——用户说「刚才那次请求不对」，按会话回查时找不到号。
+2. 重放快照只钉了六个状态键，日志本身长什么样没进快照。
+
+**做法**
+
+- `packages/llm` 的 `stream()` 里，拿到追踪号时除了记 debug 日志，再 `session.current().appendNote('llm/request-id', …)`。note 记录只进会话 JSONL，不进提示词、不上界面、不改请求体，一行一个号。
+- `_testkit.replaySession` 增加 `log`：读重放用的那份 `replay.jsonl`，记下记录条数与类型序列。顺带就有一条很强的断言——**重放不会往日志里追写记录**（6 条还是 6 条）。
+
+**又踩了一个坑**
+
+第一版想直接快照 `kernel.transcript.getSnapshot()`（消息流）。结果它读完之后进程不退出：跑完了、打印完了，但事件循环里还挂着一个句柄，`node` 永不返回。`await kernel.dispose()` 也压不住。换成读会话文件里的记录序列就干净了——这条路没有异步句柄，而且「日志有没有被重放多写」本身就更值得钉。
+
+**验证**
+
+- `scripts/llm-request-note-test.mjs` → 5 条：请求成功、`notes()` 里有记录、id 是 `llm/request-id`、带追踪号、400ms 后落进会话 JSONL。
+- `scripts/session-replay-test.mjs` → 7 条（新增两条：记录数仍为 6、类型序列 `meta,state,state,state,state,user`）。
+- 文档侧同步更新 `harness-benchmark-roadmap.md` 的三处记录（可观测性矩阵行、`doctor 体检命令`、`消息评分反馈`、T12 的 otel 条目），把「等插件生态变大再说」改成事实。
+
+**遗留**
+
+- 追踪号只对「有号」的端点有意义，没有号的端点（部分自建网关）依旧查不到。
+- 重放快照的 fixture 只有 6 条记录，覆盖的是「读得回来」，不是「复杂压缩/分叉后的状态」——要覆盖那些得再攒几个 fixture。
+
 
 

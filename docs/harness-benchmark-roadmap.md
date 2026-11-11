@@ -81,7 +81,7 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:93`，`KERNEL_API_VERSION 
 | 子代理级联派生 | ⊘ | ◐ | ● | ● | 有意限 1 层，见 §6 |
 | 细粒度执行策略 | ● | ● | ● | ● | 已补（T2）：权限档位之外加了灾难地板、命令白名单与 deny 黑名单 |
 | 大输出溢出 spill | ● | ◐ | ◐ | ● | 已补（T3） |
-| 可观测性（otel） | ○ | ● | ◐ | ● | 个人版低优先 |
+| 可观测性（otel） | ◐ | ● | ◐ | ● | **本地那半已补**（2026-11-11）：`@pneuma/log` 落盘日志（按天分片、8 MiB 轮转、脱敏、崩溃留现场）、`/doctor` 九项体检、`/doctor --bundle` 诊断包、请求追踪号；**远程 OTel 上报仍不做**（个人版低优先，见 observability-plan.md） |
 | diff 审查链（轮尾聚合卡 / 右栏面板 / 悬停预览 / intended diff / 审批内嵌 / git 页签） | ● | ◐ | — | ● | 0.6.24–0.6.26 三连批补齐（development-log 阶段 42–44）；codex 的形态是 apply_patch diff 预览 + `/diff`，无轮尾聚合卡 |
 | /review 审查命令 | ● | ● | — | ○ | 已升级（T18，0.6.32）：四档范围 + 只读审查队友 + 结构化 findings 卡 + 行号跳转；codex 的形态是独立 review 子线程 |
 | 输入端 @ 文件提及 | ● | ● | — | ● | 已补（T14，0.6.29）：`src/core/mention.ts` 纯模块做定位/排序/插回，终端 TUI 与界面壳各接一层补全 |
@@ -230,7 +230,7 @@ dsc 的插件扩展点（`src/core/plugin-registry.ts:93`，`KERNEL_API_VERSION 
 - **LSP 代码智能**（参照 `dsh/lsp`）：编码体验加成大，中等工程量。
 - **真浏览器自动化**（参照 `dsh/browser-use` 或 hermes `browser_*`）：dsc 现在只有截图级 computer-use，缺 DOM 级操作。
 - **checkpoint / rewind**（参照 `hermes/tools/checkpoint_manager.py` 的 shadow git store + 写者 ledger、`dsh/session-checkpoint-policy` 的三道落盘屏障）：能救「已批准但毁掉未提交工作」的情况；ledger 区分「每个文件最后是 agent 还是人改的」，回滚时保手改、只覆盖 agent 改动，比 `git stash` 强。动内核，建议与 T1 同块评估。
-- **hooks 之外的可观测性 / otel**（参照 `dsh/telemetry`）：个人版低优先。
+- **hooks 之外的可观测性 / otel**（参照 `dsh/telemetry`）：**本地那半已补**（日志落盘、`/doctor`、诊断包、请求追踪号，2026-11-11）；**远程上报仍不做**——个人工具默认把日志传出去是惊吓不是功能。
 
 ---
 
@@ -364,7 +364,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。
 | 轮中途插话 steering / 消息排队 | dsh steering inbox；codex turn steer + `codex queue` | 完整的多端排队不做；**0.6.47 已落最小版**：轮中途输入一律进 `async-inbox` 收件箱、步骤边界落库——这是 400 夹层事故的正确性修复，不是 steering 功能面 |
 | 对外 SDK / 协议面 | dsh SDK（TS+Python）；codex app-server v2 | 个人版没有第三方集成方；host-stdio 协议 v2 内部够用；**已升出立项 T53（§7.8）** |
 | SSH 远程执行 | dsh `packages/ssh/*` | 手机遥控已覆盖「人不在电脑前」的主场景；**已升出立项 T54（§7.8）** |
-| 消息评分反馈 | dsh Like/Dislike + `/feedback` | 无消费方（dsh 的评分喂官方日志上传，dsc 没有这条链路） |
+| 消息评分反馈 | dsh Like/Dislike + `/feedback` | 评分本身仍不做（无消费方）；但「出问题怎么把现场交出来」已有出口：`/doctor --bundle`（2026-11-11） |
 | 快捷键自定义 / Vim 模式 | codex keymap + Vim；dsh shortcuts 持久化 + 冲突检测 | 键位表只有 10 条（`src/packages/ui-palette/ui/ui.tsx`），且硬编码在一处、没有运行期注册表，冲突面小 |
 | GitHub PR 审查 webhook | dsh `webhook-github` 自动建只读审查会话 | 个人版没有 CI 场景 |
 | OAuth 账号 / OS keyring | codex login PKCE + keyring-store；dsh DeepSeek 账号 | dsc 用环境变量/credentials.yaml，个人机器可接受 |
@@ -372,7 +372,7 @@ T1–T6 都已落地，下面就每项给出落点与验收证据。
 | Office 老格式预览管道 | dsh 内置 Office 技能 + 文档预览 tab | 阶段 39 边界①：预览占位提示已够用 |
 | 手机端补齐 | dsh 无对应物 | 团队/模式面板、归档管理操作——手机端定位是遥控不是全功能 |
 | MCP prompts→工具（dynamic tools） | codex `core/src/tools/handlers/extension_tools.rs` | 并入 T24 一起看 |
-| doctor 体检命令 | codex `codex doctor`（安装/配置/auth/网络） | `/plugins`、`/sandbox`、设置页已分散覆盖；等插件生态变大再说 |
+| doctor 体检命令 | codex `codex doctor`（安装/配置/auth/网络） | **已落地（2026-11-11）**：`/doctor` 九项（安装/配置/认证/插件/会话/磁盘/沙箱/连通性/终端），`--json` 与 `--bundle` 两种出口，检查项可被插件注册（`ctx.health.register`）；见 `src/packages/doctor/` |
 
 ### 7.4 dsc 独有/领先项（防止纯「差距叙事」的误读）
 
