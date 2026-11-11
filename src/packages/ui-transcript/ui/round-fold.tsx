@@ -318,13 +318,13 @@ export function TurnFoldRow(props: {
  * 「重挂后读回来」——键由 turnFoldKey / stepGroupFoldKey 拼（会话 id + 轮 + 组首行身份），
  * 切会话重挂时展开态原样回来。
  *
- * `clearPrefixes` 是「整轮收起复位」用的（2026-11-10 改，对齐 dsh）：一条轮**从展开变成
- * 收起**的那一刻，把这一轮里所有行与阶段组的展开存档抹掉，它们于是回到各自的默认收起态。
+ * `clearPrefixes` 只给「同一轮改完重答」用（`ui.tsx` 的 `editAndResend`）：rewind 之后
+ * 新回答拿到的轮号不变，存档键跟上一版完全一样，不清掉就会把上一次的展开选择带进新内容。
  *
- * 为什么不是「轮一收尾就复位」（改成现在这条之前是那样）：跑动中用户点开的思考/组，在
- * 一轮正常结束、还没被收起的时候就被写回收起，等于替用户做了一次手动收起；参考实现对
- * 这件事的口径是「整轮被折叠隐藏时才复位内部」（`ChatNodeSeat.tsx:122-131` 的
- * disclosureReset 只在 `processHidden && hiddenOrCollapsing` 时推进）。
+ * 整轮收起**不**走这里：复位跟着「真的挂上 `hidden`」走——阶段组由座位在自己那一拍关掉
+ * 并抹组内行的存档，不在组里的行由 `RowSeat` 抹自己的（`fold-seats.tsx`）。中央按前缀清
+ * 之所以不能顶替它：那种写法只看「整轮该收起」，不看焦点在不在里面、也不看这一层是不是
+ * 真的已经藏起来，于是会把「焦点保护放行、本该继续开着」的层也关掉。
  */
 export function useFoldMemory(): {
   open(key: string, fallback: boolean): boolean
@@ -376,10 +376,11 @@ export function useFoldMemory(): {
     })
   }, [])
   /**
-   * 按前缀抹掉一批（整轮收起时清这一轮里的行与组，见模块注释）。
+   * 按前缀抹掉一批（同一轮改完重答时用，见模块注释）。
    *
-   * 为什么按前缀：一轮里有多少条思考/工具/阶段组是渲染期现算的，发起复位的地方拿不到
-   * 那份清单；而存档键形状固定（`会话id:r<轮>:…` 与 `会话id:step:r<轮>:…`）。
+   * 为什么按前缀：rewind 之后新回答的轮号不变，而这一轮里有多少条思考/工具/阶段组
+   * 是渲染时才算出来的，发起方拿不到那份清单；存档键形状固定（`会话id:r<轮>:…` 与
+   * `会话id:step:r<轮>:…`），按前缀扫一遍就全清掉。
    */
   const clearPrefixes = useCallback((prefixes: readonly string[]): void => {
     if (prefixes.length === 0) return

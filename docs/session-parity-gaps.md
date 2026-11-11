@@ -209,7 +209,7 @@ S4 漏了 `read-row.tsx` 且本仓已有可点文件路径、S8 缺的是**数�
 | 收起改挂 `hidden="until-found"`（Ctrl+F 可命中、不抽走焦点） | `searchable-hidden.ts:31-43` | `fold-seats.tsx` 的 `useSearchableHidden` |
 | 行身份跨「直播 → 定稿」 | 块索引（`AssistantMarkdown.tsx:99-109`） | `Row.stable`（`shared.ts` 的 `buildSeats`），组取首行身份 |
 | 直播思考收起起步 | `use-disclosure.ts:11-21` | `think-row.tsx`：`useFoldState(storeKey, !live && prefs.reasoningOpen)` |
-| 整轮收起才复位内部行与组 | `ChatNodeSeat.tsx:122-131` 的 `disclosureReset` | `ui.tsx` 的 `collapsedRounds` + `foldMemory.clearPrefixes` |
+| 整轮收起才复位内部行与组 | `ChatNodeSeat.tsx:122-131` 的 `disclosureReset` | 阶段组座位在整轮真藏它那一拍关组并抹组内行的存档（`fold-seats.tsx` 的 `StepGroupSeat`），不在组里的行由 `RowSeat` 抹自己的 |
 | 运行中尾组一条也成组 | `process-groups.ts:147-165` | `process-groups.ts` 尾组 `flush(false)` |
 | 展开不做高度过渡（条件渲染） | `DisclosureRow.tsx:121-122` | `views.css` 的 `.think-body` 已撤 `grid-template-rows` |
 | 思考行 / 工具卡默认展开开关 | 无（dsh 恒收起） | 本仓自己的增量，保留（直播期不生效） |
@@ -468,15 +468,22 @@ S4 漏了 `read-row.tsx` 且本仓已有可点文件路径、S8 缺的是**数�
 >
 > 验收：`_verify-think-collapse` **18 条真断言**（这条探针以前一条断言都没有、恒 `exit 0`，
 > 这一批先把它改真、在旧 grid 代码上跑绿，再在新代码上跑绿）；`_verify-jitter` 8 条（同样从
-> 空转修活）；`_verify-collapse-remount` 14 条（收起一轮后点侧栏切到另一条轮结构相同的会话，
-> 断言每一轮过程行的 `hidden` 数与基线一致、开关行仍是收起态）。
+> 空转修活）；`_verify-collapse-remount` **24 条**（P1 切会话后每轮 `hidden` 数与基线一致、
+> 开关行仍收起；P2 整轮真收起后组关着；P3 焦点在组里时整轮被放行、组不关；P4 收起动画
+> 跑到一半焦点才进来时末帧不藏、焦点不掉；P5 行级存档在整轮真藏那一拍被抹掉，切走再切回
+> 后回到默认收起态）。
 >
-> 负对照两个，都是真跑出来的红：把「第一次见到就同步提交」那一支拆掉，`_verify-collapse-remount`
+> 负对照三个，都是真跑出来的红：把「第一次见到就同步提交」那一支拆掉，`_verify-collapse-remount`
 > 报 10 / 4（第 1 轮 `hidden 2/3`、第 2 轮 `0/3`）；把逐行动画改回「立刻挂 `hidden`」，
-> `_verify-think-collapse` 报「收起中行自己在变矮 0 帧」。
+> `_verify-think-collapse` 报「收起中行自己在变矮 0 帧」；把「末帧焦点复检」与「行存档复位」
+> 两处拆掉，同一条探针报 20 / 4——P4 三条（那一层挂上 `hidden`、`activeElement` 掉回 `BODY`、
+> 整轮停成收起）与「行级复位」一条（切回来 `aria-expanded` 仍是 `true`）。
 >
-> 整轮**真的**开始收起那一拍，组里已经点开的阶段组会被关掉。判据是「已挂 `hidden` 或正在收起」，
-> 不是「应该收起」：焦点在组里时这一轮会被放行展开，那种情况下不该把里层也关掉。
+> 整轮**真的**挂上 `hidden` 那一拍，里层才复位：阶段组把自己关掉，组内行与不在组里的行
+> 各自把展开存档抹掉（`StepGroupSeat` / `RowSeat` 的 `onHidden`）。判据是「已经挂上
+> `hidden`」，不是「应该收起」，也不是「排上了收起队列」：焦点在某一层里、那一层被放行时
+> 根本没有 `hidden`；另一层被放行、整轮最后其实展开时，这一层也还没到提交那一刻——两种
+> 情况下组都不会被关掉。
 >
 > **已知的结构性限制**：定稿轮一律分组，而一轮只有一个阶段组，所以真机上「段里多行同时各缩」
 > 的形态造不出来，量到的是「这一行自己逐帧变矮」（旧实现下它会一直等于满高，所以仍然能红）。
