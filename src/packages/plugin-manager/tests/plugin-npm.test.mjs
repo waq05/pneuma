@@ -119,6 +119,16 @@ test('非法 spec：拒绝且 package.json 逐字节不变', async () => {
   passed += 1
 })
 
+test('以 - 开头的 spec 被拒：那是 pnpm 的选项，不是包名', async () => {
+  const before = readFileSync(join(profileDir, 'package.json'))
+  const outcome = await installNpmBundle('-g', { profileDir })
+  assert.equal(outcome.ok, false)
+  // 要点名「选项」，否则用户会以为只是包名写错了
+  assert.match(outcome.detail, /选项/)
+  assert.deepEqual(readFileSync(join(profileDir, 'package.json')), before)
+  passed += 1
+})
+
 test('找不到 pnpm：报人话，不动 profile', async () => {
   const before = readFileSync(join(profileDir, 'package.json'))
   const outcome = await installNpmBundle('probe-hello', {

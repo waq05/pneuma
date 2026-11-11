@@ -17006,6 +17006,22 @@ runner 能建 PTY 了，但没人用它。要让模型显式要一个真终端�
 - `fs-read` / `fs-write` 未加 root 参数，第二根的文件只能靠工具按绝对路径打开，dock 预览仍限 cwd。
 - 根名撞车的短哈希层实现了但没有断言。
 
+## 2026-11-11：按独立审查修小问题（第一批）
+
+独立审查在本批提交里挑出两批问题。这一批是其中不涉及沙箱运行时的那几条：
+
+- **选项注入**（`core/plugin-npm.ts:116`）：spec 以 `-` 开头会被 pnpm 当选项（`-g` 全局装、`--config.registry=…` 改仓库地址），而它们都能“成功执行”。现在入口直接拒，报错点名「那是选项不是包名」，并配一条断言。
+- **Electron 下回退解释器**（`:223`）：找不到 PATH 里的 node 时退回 `process.execPath`，桌面端那是 `electron.exe`；不置 `ELECTRON_RUN_AS_NODE` 会当图形程序启动，npm 安装必失败。现在回退时显式带上这个变量，与沙箱 runner 的修法一致。
+- **TUI 补排标记不复位**（`tui/app/TranscriptViewport.tsx:314`）：`fixupDone` 老死不复位，而聊天区切会话复用同一实例，新会话首屏不再补排，「半屏空占位」会回来。现在以首条条目 id 当会话身份，变了就复位。
+- **文档对不上**（`checkpoint/README.md`、`plugin-manager/index.ts`）：前者把「退回该回合开始时」写成了整仓回滚，补上「只撤这一回合、后续回合改过按冲突」；后者引用的行号已失效，改成按分支名指路。
+
+**验证**
+
+- `pnpm run typecheck`、`pnpm run build`（77 包）通过。
+- `node --test "src/packages/plugin-manager/tests/*.test.mjs"` 通过（新增 `-g` 一条）。
+- `node scripts/tui-subagent-live-test.mjs` 与五支滚动回归在下一批全量门禁里一起跑。
+
+
 
 
 

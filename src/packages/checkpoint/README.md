@@ -1,6 +1,6 @@
 # checkpoint（回合快照）
 
-一句话：checkpoint 包在每个回合开始前与收工后各拍一张影子 git 快照，仓库放在 `~/.dsc/checkpoints/`，不碰用户工作区里自己的 `.git`；`/checkpoint restore <回合>` 把工作区退回该回合开始时，同时保住用户自己的手改。
+一句话：checkpoint 包在每个回合开始前与收工后各拍一张影子 git 快照，仓库放在 `~/.dsc/checkpoints/`，不碰用户工作区里自己的 `.git`；`/checkpoint restore <回合>` 把工作区退回该回合开始时，同时保住用户自己的手改。**只撤这一回合的改动**：之后回合又改过的同一文件、或模型新建/删除过而用户又动过它，按冲突处理，不自动覆盖。
 
 ## Model Experience（模型体验）
 

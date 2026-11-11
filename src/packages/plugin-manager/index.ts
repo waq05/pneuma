@@ -1,8 +1,7 @@
 /**
  * plugin-manager 插件：AI 参与插件管理（对应 dsh 的 plugin_manager 工具）。
  * 只注册 `plugin_manager` 工具（list/enable/disable/install/browse_remote/install_remote/
- * install_package/remove_package）；`/plugins` 命令自 0.6.63 起由 commands 插件提供
- * （见本文件 152-153 行）。
+ * install_package/remove_package）；`/plugins` 命令自 0.6.63 起由 commands 插件提供。
  *
  * 全部写操作走 core/plugin-loader 的热挂载（即时生效，写盘持久化）；工具
  * risk='write'，执行前经权限模式/审批卡把关。install 仅支持本地 .js 路径

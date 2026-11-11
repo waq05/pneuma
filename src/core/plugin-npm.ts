@@ -96,6 +96,8 @@ interface PnpmResult {
 interface SpawnTarget {
   file: string
   prefix: string[]
+  /** 起子进程时要叠的环境（只有「退回 Electron 当 node」那一路需要）。 */
+  env?: Record<string, string>
 }
 
 /**
@@ -115,6 +117,11 @@ function specProblem(spec: unknown): string | null {
   }
   if (FORBIDDEN_IN_SPEC.test(text)) {
     return '里面有空白或 shell 元字符（; & | > < ` $ 等），不交给 pnpm，也不动盘'
+  }
+  // 以 `-` 开头会被 pnpm 当成选项而不是包名：`-g` 变全局装、`--config.registry=…`
+  // 改掉仓库地址。这两样都不是「装一个包」，但都能成功执行——必须在入口挡住。
+  if (text.startsWith('-')) {
+    return '不能以 - 开头：那会被 pnpm 当成选项（例如 -g、--config.*），不是包名或路径'
   }
   return null
 }
@@ -220,7 +227,16 @@ function pnpmScriptOf(launcher: string): string | null {
 function nodeTarget(script: string): SpawnTarget {
   const node = resolveExecutable('node', process.env, process.cwd())
   // 找到 PATH 里的 node 就用它；找不到时退回当前进程（Node 跑测试时就是 node 本身）。
-  return { file: node.found && !node.shell ? node.file : process.execPath, prefix: [script] }
+  if (node.found && !node.shell) return { file: node.file, prefix: [script] }
+  // 退回当前进程时可能是 Electron（桌面端宿主的 execPath 就是 electron.exe）：
+  // 不显式置 ELECTRON_RUN_AS_NODE 它会当图形程序启动，pnpm 一行都跑不到。
+  // 与沙箱 runner 的解释器解析是同一类坑（7ce5eab），这里同样显式给。
+  const electron = process.versions.electron !== undefined
+  return {
+    file: process.execPath,
+    prefix: [script],
+    ...(electron ? { env: { ELECTRON_RUN_AS_NODE: '1' } } : {}),
+  }
 }
 
 /**
@@ -286,6 +302,8 @@ function runPnpm(args: string[], cwd: string, pnpmPath: string | undefined): Pro
         windowsHide: true,
         timeout: PNPM_TIMEOUT_MS,
         stdio: ['ignore', 'pipe', 'pipe'],
+        // 解释器要额外的环境时只叠那几个键：整份 process.env 照旧传下去。
+        ...(resolved.target.env === undefined ? {} : { env: { ...process.env, ...resolved.target.env } }),
       })
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code ?? 'UNKNOWN'

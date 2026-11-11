@@ -312,6 +312,17 @@ export const TranscriptViewport = forwardRef<TranscriptViewportApi, TranscriptVi
      */
     const [, setPass] = useState(0)
     const fixupDone = useRef(false)
+    /**
+     * 换了会话要重新允许补排一次。
+     *
+     * `fixupDone` 是老死不复位的，而这个组件在聊天区是同一个实例复用（切会话不重建）：
+     * 不复位的话，新会话首屏不会再补排，「可视区里半屏空占位」那个老毛病会回来。
+     * 用首条条目的 id 当会话身份：流式追加只改尾部，不会改它。
+     */
+    const firstEntryId = entries[0]?.id ?? ''
+    useEffect(() => {
+      fixupDone.current = false
+    }, [firstEntryId])
     useEffect(() => {
       if (viewportLines !== undefined) return
       const measured = measuredHeight(boxRef.current)
