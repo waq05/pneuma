@@ -8,7 +8,14 @@
  *   - 第 3 / 5 / 8 次调用之后的那一跳（第 4 / 6 / 9 次请求）里多一条 user 消息；
  *   - 其余每一步都不多（提醒是偶尔一句，不是每步都有的背景音）；
  *   - **调用没有被否决**：9 次调用执行了 9 次，结果都是真读到的正文；
- *   - 会话日志里出现对应的 `context-injected` 记录，界面上那张注入卡认得出这一类别。
+ *   - 会话日志里出现对应的 `context-injected` 记录，界面上那张注入卡认得出这一类别；
+ *   - **重开等于实时**（2026-11-11）：跑完两轮之后先切到另一条会话、再切回来，注入卡的张数
+ *     与每张卡的文字（收起行 + 逐条行）必须与实时**逐字一致**。这是「只记这一跳新增的注入」
+ *     这条记账口径的直接收益——以前实时 6 张、重放对不上，这一条断言只能躲着。
+ *
+ * 注入卡的口径（2026-11-11 起）：卡片记的是「这一跳**新增**了哪些注入」，不是「这一跳注入了
+ * 什么」。环境快照 16 跳一字未变，所以只有第 1 跳长一张三项的卡（环境快照 / 模式 / 沙箱）；
+ * 提醒那 4 跳各长一张只有 `repeat-reminder` 一项的卡。改前是 6 张（环境按轮合并、各带次数）。
  * 第二轮换参数（A, A, B, B, B）：切换参数的那一跳（第 14 次请求）**不该**有提醒（计数清零），
  * 而新参数重新攒到第 3 次（第 16 次请求）又该有——清零不是「一次之后再也不提醒」。
  *
@@ -121,6 +128,25 @@ writeFileSync(
     .join('\n') + '\n',
 )
 
+/**
+ * 另一条会话：只用来把当前查看的会话「挤出去」。
+ *
+ * 为什么必须有它：`openSession` 对「已经在看这条会话」是 no-op（`packages/session/index.ts:91`），
+ * 直接再打开目标路径什么都不会重放——那样「重开等于实时」就成了空转。切到另一条会话再切回来，
+ * 第二下才是一次真正的 `clear()` + `replayHistory()`（目标会话来没来得及收摊时也会走日志重放）。
+ * 这条会话自己只有一句开场白，所以切过去之后注入卡应当归零——那也是「真的切走了」的判据。
+ */
+const otherSessionPath = join(sessionDir, 'repeat-reminder-other.jsonl')
+writeFileSync(
+  otherSessionPath,
+  [
+    { type: 'meta', id: 'repeat-reminder-other', cwd: home.work, createdAt: now - 60000 },
+    { type: 'user', text: '这条会话只用来切走，不跑回合。', ts: now - 50000 },
+  ]
+    .map((line) => JSON.stringify(line))
+    .join('\n') + '\n',
+)
+
 // ── 假端点：按「第几次请求」分派（序号见文件头）──────────────────────────────
 /** 每一跳要回什么：前 9 跳同一个调用，第 10 跳收尾；第二轮 A,A,B,B,B，第 16 跳收尾。 */
 const SAME_ARGS = { path: 'probe.txt' }
@@ -222,7 +248,36 @@ const PAGE_HELPERS = `
     return ''
   }
   const injectionHeads = () => [...document.querySelectorAll('.entry-injection')]
-    .map((card) => textOf(card.querySelector('.entry-injection-head')))`
+    .map((card) => textOf(card.querySelector('.entry-injection-head')))
+  /**
+   * 读全部注入卡：逐张展开，收下收起行与逐条行（来源 / 位置 / 字数 / 预览）。
+   *
+   * 为什么展开而不是只读收起行：三张提醒卡的正文长度一样（5 次与 8 次只差一个数字），
+   * 收起行完全相同；只有逐条行里的预览能证明「重开重放出来的确实是同一批正文」。
+   * 为什么全读而不是只读最后一张：重开对账要的是整份卡片清单，一张都不能多、不能少。
+   */
+  const readInjectionCards = async () => {
+    const cards = [...document.querySelectorAll('.entry-injection')]
+    const out = []
+    for (const card of cards) {
+      const head = card.querySelector('.entry-injection-head')
+      if (head === null) continue
+      if (head.getAttribute('aria-expanded') !== 'true') head.click()
+      for (let i = 0; i < 40 && head.getAttribute('aria-expanded') !== 'true'; i += 1) await wait(50)
+      await wait(80)
+      out.push({
+        head: textOf(head),
+        parts: card.getAttribute('data-injection-count'),
+        rows: [...card.querySelectorAll('.entry-injection-row')].map((row) => ({
+          source: textOf(row.querySelector('.entry-injection-source')),
+          where: textOf(row.querySelector('.entry-injection-where')),
+          chars: textOf(row.querySelector('.entry-injection-chars')),
+          preview: textOf(row.querySelector('.entry-injection-preview')),
+        })),
+      })
+    }
+    return out
+  }`
 
 /** 读会话 jsonl 的全部记录（坏行跳过，与 `Session.load` 同口径）。 */
 const readRecords = () => {
@@ -288,8 +343,9 @@ const secondDone = await waitForFinal(SECOND_DONE, 120000)
 assert('第二轮真的跑完了', secondDone === true, `日志里没有「${SECOND_DONE}」`)
 
 // 收工之后把界面上的注入卡读一遍（先滚到底：会话流是虚拟列表，视口外的卡不在 DOM 里）。
-// 提醒那一张会多出第四类，收起行只列前三类、第四类收进 `+1`——所以要点开它，逐条行里才
-// 看得见 `repeat-reminder` 那一条（来源 / 位置 / 字数 / 预览）。
+// 改口径之后（2026-11-11）卡片记的是「这一跳**新增**了哪些注入」，所以不再点开「第四类
+// 收进 +1」那种卡——环境卡是 3 项，每张提醒卡只有 1 项。逐张卡都读逐条行：
+// 三张提醒卡的收起行一模一样（字数相同），只有预览能证明重放出来的是同一批正文。
 const page = await cdp.evaluate(`
   ${PAGE_HELPERS}
   const scroller = document.querySelector('.chat')
@@ -297,36 +353,53 @@ const page = await cdp.evaluate(`
     scroller.scrollTop = scroller.scrollHeight
     await wait(600)
   }
-  const cards = [...document.querySelectorAll('.entry-injection')]
-  /** 点开一张卡的行头，等它展开。 */
-  const openCard = async (card) => {
-    const head = card.querySelector('.entry-injection-head')
-    if (head === null) return false
-    if (head.getAttribute('aria-expanded') !== 'true') head.click()
-    for (let i = 0; i < 40 && head.getAttribute('aria-expanded') !== 'true'; i += 1) await wait(50)
-    await wait(150)
-    return head.getAttribute('aria-expanded') === 'true'
-  }
-  /** 最后一张卡（第二轮的提醒那一张）与它的逐条行。 */
-  const last = cards[cards.length - 1] ?? null
-  const lastOpen = last === null ? false : await openCard(last)
-  const rows = last === null ? [] : [...last.querySelectorAll('.entry-injection-row')].map((row) => ({
-    source: textOf(row.querySelector('.entry-injection-source')),
-    where: textOf(row.querySelector('.entry-injection-where')),
-    chars: textOf(row.querySelector('.entry-injection-chars')),
-    preview: textOf(row.querySelector('.entry-injection-preview')),
-  }))
+  const cards = await readInjectionCards()
+  const last = [...document.querySelectorAll('.entry-injection')].at(-1) ?? null
   return {
-    heads: injectionHeads(),
+    cards,
+    heads: cards.map((card) => card.head),
     injections: cards.length,
     toolCards: document.querySelectorAll('.tool-card').length,
-    lastOpen,
-    lastRows: rows,
+    lastRows: cards.at(-1)?.rows ?? [],
+    lastOpen: last?.querySelector('.entry-injection-head')?.getAttribute('aria-expanded') === 'true',
     // 请求 invariant 失配会折成一条 system 条目；本投影必须可复算（同一份历史 → 同一份请求）。
     systems: [...document.querySelectorAll('.entry-system')].map((row) => textOf(row)),
   }
 `)
 await cdp.shot(join(shots, '_repeat-reminder.png'))
+
+// ── 2b. 重开等于实时（这次改动的核心收益）──────────────────────────────────────
+// 先切到另一条会话把当前视图挤掉，再打开目标：第二下才是真重放（同一条会话再 open 是 no-op）。
+// 判据不是「卡片还在」，而是**张数与每张卡的文字（收起行 + 逐条行）逐字一致**——
+// 以前实时 6 张、重放 5 张，这一条只能躲着；改完两侧都由同一份「新增了什么」生成。
+const reopened = await cdp.evaluate(`
+  ${PAGE_HELPERS}
+  await window.dsc.invoke('openSession', [${JSON.stringify(otherSessionPath)}])
+  for (let i = 0; i < 200; i += 1) {
+    if (document.querySelectorAll('.entry-injection').length === 0
+      && document.querySelectorAll('.entry-user').length === 1) break
+    await wait(100)
+  }
+  const switched = {
+    injections: document.querySelectorAll('.entry-injection').length,
+    users: document.querySelectorAll('.entry-user').length,
+  }
+  await window.dsc.invoke('openSession', [${JSON.stringify(sessionPath)}])
+  const want = ${String(page?.cards?.length ?? 0)}
+  for (let i = 0; i < 300; i += 1) {
+    if (document.querySelectorAll('.entry-injection').length === want
+      && document.querySelectorAll('.entry-user').length === 3) break
+    await wait(100)
+  }
+  await wait(400)
+  const cards = await readInjectionCards()
+  return {
+    switched,
+    cards,
+    injections: cards.length,
+    users: document.querySelectorAll('.entry-user').length,
+  }
+`)
 
 // ── 3. 判 ───────────────────────────────────────────────────────────────────
 const records = readRecords()
@@ -344,7 +417,13 @@ console.log('report', JSON.stringify({
   toolRecords: toolRecords.length,
   assistantCalls: assistantCalls.length,
   injectionCards: page?.injections,
+  heads: page?.heads,
   lastRows: page?.lastRows,
+  // 重开那半边的读数：切走时归零（证明真的切走了），重开后张数与「逐字一致」的结论。
+  replaySwitched: reopened?.switched,
+  replayInjectionCards: reopened?.injections,
+  replayCardsEqual: JSON.stringify(reopened?.cards) === JSON.stringify(page?.cards),
+  replayUsers: reopened?.users,
   toolSample: String(toolRecords[0]?.text ?? '').slice(0, 200),
 }))
 
@@ -413,36 +492,54 @@ assert('结果里读到了探针文件的正文（工具真的执行了，不是
 assert('没有任何一条调用被拒 / 被取消', toolRecords.every((record) => record.error === undefined),
   JSON.stringify(toolRecords.filter((record) => record.error !== undefined).map((record) => record.error)))
 
-// ④ 会话日志里有对应的注入记录，且界面认得出这一类别。
-assert('日志里出现带 repeat-reminder 的 context-injected 记录（4 条：第 4/6/9/16 跳）',
+// ④ 会话日志与界面：注入卡记的是「这一跳**新增**了什么」，不是「这一跳注入了什么」。
+assert('日志里带 repeat-reminder 的注入记录仍是 4 条（第 4/6/9/16 跳各一次）',
   withReminder.length === 4, `实际 ${String(withReminder.length)}（注入记录共 ${String(contextRecords.length)} 条）`)
-assert('注入记录里 repeat-reminder 排在最后（env-facts 先报，提醒是这一轮最后追加的话）',
+// 改口径后的形态（2026-11-11）：提醒那一跳的注入记录**只有 repeat-reminder 一项**——环境那一跳
+// 也照旧注入，但内容没变就不再记一条。这条替代了旧的「env-facts 排在最前、提醒排在最后」：
+// 旧断言钉的是「每跳都把整份清单重新记一遍」这个形态，形态随口径一起作废；强度没降，现在钉的是
+// 「那条记录里只有什么」——多记一项就不绿。
+assert('提醒那一跳的注入记录只有 repeat-reminder 一项（环境照旧注入，但没变就不记）',
   withReminder.every((record) => {
     const kinds = (record.payload?.parts ?? []).map((part) => part.kind)
-    return kinds[0] === 'env-facts' && kinds[kinds.length - 1] === 'repeat-reminder'
+    return kinds.length === 1 && kinds[0] === 'repeat-reminder'
   }), JSON.stringify(withReminder.map((record) => (record.payload?.parts ?? []).map((part) => part.kind))))
+assert('注入记录一共 5 条：环境那一跳 1 条 + 提醒 4 条（改前是 8 条）',
+  contextRecords.length === 5, String(contextRecords.length))
+assert('第一条注入记录是环境那一跳的三项（env-facts / mode / sandbox）',
+  JSON.stringify((contextRecords[0]?.payload?.parts ?? []).map((part) => part.kind)) === '["env-facts","mode","sandbox"]',
+  JSON.stringify((contextRecords[0]?.payload?.parts ?? []).map((part) => part.kind)))
 assert('注入记录记了来源与位置',
   withReminder.every((record) => {
     const part = (record.payload?.parts ?? []).find((item) => item.kind === 'repeat-reminder')
     return part.source === 'repeat-reminder' && part.where === 'user-tail' && part.chars > 0 && part.preview.length > 0
   }))
-// 提醒那张卡有 4 类（环境快照 / 模式 / 沙箱 / 重复调用提醒），收起行只列前三类，第四类收进 `+1`。
-assert('界面上有把第四类收进「+1」的注入卡（这一轮多了一类）',
-  (page?.heads ?? []).some((head) => head.includes('+1')), JSON.stringify(page?.heads ?? []))
-// 合并口径（2026-11-11）：同一种注入组合在一轮里只留一张卡，次数写在收起行末尾。
-// 现场 16 步落 6 张而不是 8 张——第一轮 4 张（A 一张 + 3 条正文不同的提醒各一张），
-// 第二轮 2 张（A 一张 + 提醒一张）。为什么不是更少：三条提醒的正文本身不同
-//（温和版 / 「连续调用了 5 次」/「连续调用了 8 次」），并掉就等于抹掉模型真的见过的差异。
-assert('16 步两轮只剩 6 张注入卡（修前是 8 张）', page?.injections === 6, String(page?.injections))
-assert('合并后的 A 卡片写着「共 7 步」（第一轮 10 跳里 7 跳是这份组合）',
-  (page?.heads ?? []).some((head) => head.includes('共 7 步')), JSON.stringify(page?.heads ?? []))
-assert('第二轮的 A 卡片写着「共 5 步」',
-  (page?.heads ?? []).some((head) => head.includes('共 5 步')), JSON.stringify(page?.heads ?? []))
-assert('逐条行数仍是一份清单的长度（合并没把不同类别的注入并掉）',
-  (page?.lastRows ?? []).length === 4, String((page?.lastRows ?? []).length))
+const cards = page?.cards ?? []
+// 张数：1 张环境卡（第 1 跳的三项）+ 4 张提醒卡（第 4/6/9/16 跳各一句）。改前是 6 张：
+// 环境卡按「这一轮」合并成 2 张（各带次数），提醒 4 张。现在环境只报第一次，第二轮不再长卡。
+assert('16 步两轮只落 5 张注入卡（1 张环境 + 4 张提醒；改前是 6 张）',
+  page?.injections === 5, String(page?.injections))
+assert('第一张卡是环境那一跳的三项（环境快照 / 模式 / 沙箱）',
+  cards[0]?.parts === '3'
+  && (cards[0]?.rows ?? []).map((row) => row.source).join(',') === 'env-facts,mode,sandbox',
+  JSON.stringify({ parts: cards[0]?.parts, sources: (cards[0]?.rows ?? []).map((row) => row.source) }))
+assert('其余 4 张都是提醒卡，各自的逐条行只有 repeat-reminder 一项',
+  cards.slice(1).every((card) => card.parts === '1'
+    && card.rows.length === 1 && card.rows[0]?.source === 'repeat-reminder'),
+  JSON.stringify(cards.slice(1).map((card) => [card.parts, card.rows.map((row) => row.source)])))
+assert('三张提醒卡的正文各不相同（温和 / 连续 5 次 / 连续 8 次），第四张回到温和版（第二轮重新攒到第 3 次）',
+  cards[1]?.rows[0]?.preview === REPEAT_REMINDER_TEXTS.gentle
+  && String(cards[2]?.rows[0]?.preview).includes('连续调用了 5 次')
+  && String(cards[3]?.rows[0]?.preview).includes('连续调用了 8 次')
+  && cards[4]?.rows[0]?.preview === REPEAT_REMINDER_TEXTS.gentle,
+  JSON.stringify(cards.slice(1).map((card) => card.rows[0]?.preview)))
+assert('没有一张卡还写着「共 N 步」（内容没变就不再上报，重复计数随口径消失）',
+  (page?.heads ?? []).every((head) => !head.includes('共 ')), JSON.stringify(page?.heads ?? []))
+assert('界面上的注入卡张数与日志里的注入记录条数一致',
+  page?.injections === contextRecords.length, `${String(page?.injections)} vs ${String(contextRecords.length)}`)
 assert('点开最后一张注入卡（第二轮的提醒那张）', page?.lastOpen === true)
-const reminderRow = (page?.lastRows ?? []).find((row) => row.source === 'repeat-reminder')
-assert('展开后逐条行里认得出 repeat-reminder 这一条', reminderRow !== undefined,
+const reminderRow = (page?.lastRows ?? [])[0]
+assert('展开后逐条行里认得出 repeat-reminder 这一条', reminderRow?.source === 'repeat-reminder',
   JSON.stringify(page?.lastRows ?? []))
 assert('这一条标着「请求末尾」', reminderRow?.where === '请求末尾', String(reminderRow?.where))
 assert('这一条有字数与预览（预览里就是提醒正文）',
@@ -462,6 +559,21 @@ assert('换参数之后的那一跳（第 14 次请求）没有提醒（计数�
   reminderTextsOf(requests.find((item) => item.index === 14).messages).length === 0)
 assert('新参数重新连续 3 次之后（第 16 次请求）又有提醒（清零不是永不再提醒）',
   reminderTextsOf(requests.find((item) => item.index === 16).messages).length === 1)
+
+// ⑥ 重开等于实时（这次改动的核心收益）：卡片张数与每张卡的文字（收起行 + 逐条行）逐字一致。
+// 这一条以前是躲着的（实时与重放各走各的生成方式，实时 6 张、重放对不上）；改完两侧都从
+// 同一份「这一跳新增了什么」生成，才敢钉「逐字一致」——差一个字就不绿。
+assert('重开前先真的切走了（另一条会话没有任何注入卡、只有 1 条用户消息）',
+  reopened?.switched?.injections === 0 && reopened?.switched?.users === 1,
+  JSON.stringify(reopened?.switched))
+assert('重开后注入卡张数与实时一致',
+  reopened?.injections === page?.injections,
+  `重放 ${String(reopened?.injections)} vs 实时 ${String(page?.injections)}`)
+assert('重开后每张卡的文字与实时逐字一致（收起行 + 来源 / 位置 / 字数 / 预览）',
+  JSON.stringify(reopened?.cards) === JSON.stringify(page?.cards),
+  `实时 ${JSON.stringify(page?.cards)?.slice(0, 400)} / 重放 ${JSON.stringify(reopened?.cards)?.slice(0, 400)}`)
+assert('重开后历史消息也回来了（3 条用户消息：造的那句 + 两轮发的话）',
+  reopened?.users === 3, String(reopened?.users))
 
 server.close()
 teardown([cdp, desktop, home])

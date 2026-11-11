@@ -25,6 +25,7 @@ import { errText } from '@pneuma/runtime/adapter/transcript.js'
 import { dropImageParts, foldSystemMessages, type ChatMessage } from '@pneuma/runtime/core/llm.js'
 import { pruneImages, readImageDietConfig } from '@pneuma/runtime/core/image-diet.js'
 import { buildSystemPromptParts, DEFAULT_INSTRUCTION_BUDGET, environmentText, type PromptContribution } from '@pneuma/session-core/prompt.js'
+import { InjectionReportLedger } from '@pneuma/runtime/core/context-injection-report.js'
 import { pruneToolResults } from './tool-result-prune.js'
 import { resolvePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { CONTEXT_INJECTION_KINDS, contextInjectionPreview, type PromptSectionView } from '@pneuma/runtime/contract.js'
@@ -160,6 +161,15 @@ export const promptPlugin: Plugin.Object = {
     // 上次发过什么按会话记（常驻多 agent 各看各的 cwd），只留内存：进程重启后
     // 一律当「首次」，宁可多发一条，不可让模型拿着过期环境而不自知。
     const envSent = new Map<string, { text: string; at: number }>()
+    /**
+     * 上报台账：这个会话、这一类注入上一次上报过的正文。
+     *
+     * 与上面的 `envSent` **分开记**，因为两件事的判据不同（见 core/context-injection-report
+     * 的文件头）：`envSent` 回答「这一跳还要不要注入」，本台账回答「这一跳还要不要长卡」。
+     * 注入被跳过的那一跳不产生报告，也不该动台账；台账若跟着注入闸一起失效，下一跳就会
+     * 把一份其实从没上报过的正文当成「报过了」，卡上从此少一段。
+     */
+    const envReported = new InjectionReportLedger()
     projections.set('env-facts', {
       order: 600,
       fn: (messages, _session, report) => {
@@ -188,25 +198,41 @@ export const promptPlugin: Plugin.Object = {
         // 落一条状态（hash 去重，变了才写）：重放会话时最后一条就是模型当时看到的环境
         //（Model-visible ⟺ logged 的环境半边，与 agent 插件的 system-prompt 条目同套做法）。
         noteEnvFacts(session, snapshot)
-        // 这一轮真注入了什么，报给转录层：整段快照报一条，每个非空片段（mode / sandbox …）
-        // 各报一条——界面上一眼能看出「这轮的上下文里多了哪几样」。只报摘要与字符数，
+        // 这一跳**新增**了哪些注入，报给转录层：整段快照报一条，每个片段（mode / sandbox …）
+        // 各报一条——界面上一眼能看出「这一跳的上下文里多了哪几样」。只报摘要与字符数，
         // 正文就在下面这条 user 消息里，卡片不重复存。
-        report?.({
-          kind: CONTEXT_INJECTION_KINDS.envFacts,
-          source: 'env-facts',
-          where: 'user-tail',
-          chars: snapshot.length,
-          preview: contextInjectionPreview(snapshot),
-        })
-        for (const fragment of fragments) {
-          if (fragment.text.trim() === '') continue
-          report?.({
-            kind: fragment.id,
-            source: fragment.id,
-            where: 'user-tail',
-            chars: fragment.text.length,
-            preview: contextInjectionPreview(fragment.text),
-          })
+        //
+        // 上报有闸：与上一次上报过的正文逐字相同就不再报（注入照旧，理由见
+        // core/context-injection-report 的文件头）。于是环境没变的那几跳界面上不新增卡；
+        // 变了一样时只新增「变了的那几样」——不再有「同一份环境重复记 N 行 / 共 N 步」这种
+        // 读数。没有录音机的调用方（服务 API 的纯问询）不判也不记账。
+        //
+        // 注意 loop 的 invariant 二次派生也会带录音机把这条链再跑一遍（内容与刚才那次相同，
+        // 通常不会改动台账）。只有两次组装之间环境恰好变了（比如 git 状态在毫秒内翻转），
+        // 台账才会先记下一份其实没上报出去的正文——那一份会在卡上缺席，下一份变化仍如实上报。
+        if (report !== undefined) {
+          const sessionId = session.meta.id
+          if (envReported.take(sessionId, CONTEXT_INJECTION_KINDS.envFacts, snapshot)) {
+            report({
+              kind: CONTEXT_INJECTION_KINDS.envFacts,
+              source: 'env-facts',
+              where: 'user-tail',
+              chars: snapshot.length,
+              preview: contextInjectionPreview(snapshot),
+            })
+          }
+          for (const fragment of fragments) {
+            // 空片段由台账自己判掉（`shouldReport` 对空白返回 false），这里不另写一条：
+            // 台账要把它记成「当前状态」，片段从空重新出现时才不会被误判成「没变」。
+            if (!envReported.take(sessionId, fragment.id, fragment.text)) continue
+            report({
+              kind: fragment.id,
+              source: fragment.id,
+              where: 'user-tail',
+              chars: fragment.text.length,
+              preview: contextInjectionPreview(fragment.text),
+            })
+          }
         }
         return [...messages, { role: 'user', content: snapshot }]
       },

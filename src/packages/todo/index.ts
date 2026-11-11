@@ -18,6 +18,7 @@
 import type { Plugin } from '@deepseek-ai/cordis'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { appendTodoReminder, TODO_REMINDER_TEXT } from '@pneuma/runtime/core/todo-reminder.js'
+import { InjectionReportLedger } from '@pneuma/runtime/core/context-injection-report.js'
 import { TodoStore } from './todo.js'
 import { Session } from '@pneuma/runtime/core/session.js'
 import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
@@ -243,6 +244,17 @@ export const todoPlugin: Plugin.Object = {
     // 这条投影每 N 轮往请求末尾补一条 user 提醒（ZCode 的节流注入思路），
     // 代价是每轮多一条 user 消息的 token，所以只在清单确实有未完成项时才发（默认 8 轮一次）。
     let reminder = readReminderConfig()
+    /**
+     * 提醒上报台账：同一句提醒只在该会话第一次出现时记一张注入卡。
+     *
+     * 为什么要单独一道闸（2026-11-11 核实）：`appendTodoReminder` 的节流读数是
+     * 「距上次 todo_write 之后又发了几次请求」，它不是周期性的——一旦越过 `everyRounds`，
+     * 之后每一跳的 `messages` 里都还没有这条提醒（提醒是投影注入，不落历史），于是**每一跳
+     * 都会再补一次**。注入行为本轮不动（那是模型每轮都要看见的提醒），但卡片不该跟着
+     * 每跳长一张：同一句正文报过一次就够了，判据与 env-facts 同一套
+     * （见 core/context-injection-report）。
+     */
+    const reminderReported = new InjectionReportLedger()
     const applyReminder = (patch: Record<string, unknown | null>): void => {
       writePluginConfig(CONFIG_KEY, patch)
       reminder = readReminderConfig()
@@ -251,16 +263,19 @@ export const todoPlugin: Plugin.Object = {
       'todo-reminder',
       (messages, session, report) => {
         // 提醒问**这次请求那条会话**的清单：后台回合的提醒不该报用户眼前那条的进度（P0-7）。
-        const todos = storeFor(session ?? ctx.session.current())
+        const owner = session ?? ctx.session.current()
+        const todos = storeFor(owner)
         const out = appendTodoReminder(messages, {
           enabled: reminder.enabled,
           everyRounds: reminder.everyRounds,
           hasOpenTodos: todos.read().some((item) => item.status === 'pending' || item.status === 'in_progress'),
         })
-        // 真补了才报（appendTodoReminder 没补时原样返回同一个数组）：这条提醒是每 8 轮
-        // 才有一次的注入，卡片上要单独看得见「这一轮多了一句待办提醒」。
-        if (out !== messages) {
-          report?.({
+        // 真补了才轮到上报（appendTodoReminder 没补时原样返回同一个数组）。再过一道上报闸：
+        // 越过 `everyRounds` 之后提醒是每跳都在补的，同一句正文只在第一次出现时记一张卡，
+        // 否则日志与界面都会变成每跳一行一模一样的提醒（注入本身照旧，见上面的台账注释）。
+        if (out !== messages && report !== undefined
+          && reminderReported.take(owner.meta.id, CONTEXT_INJECTION_KINDS.todoReminder, TODO_REMINDER_TEXT)) {
+          report({
             kind: CONTEXT_INJECTION_KINDS.todoReminder,
             source: 'todo-reminder',
             where: 'user-tail',
