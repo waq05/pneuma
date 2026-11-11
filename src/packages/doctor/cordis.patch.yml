@@ -1,0 +1,4 @@
+# 体检：/doctor 一条命令跑九项，检查项走 ctx.health.register
+- insert:
+    - id: doctor
+      name: '@pneuma/doctor'

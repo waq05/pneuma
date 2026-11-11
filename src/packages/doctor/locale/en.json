@@ -1,0 +1,4 @@
+{
+  "title": "Doctor",
+  "description": "One /doctor runs nine checks: install, config, auth, plugins, sessions, disk, sandbox, reachability, terminal"
+}
