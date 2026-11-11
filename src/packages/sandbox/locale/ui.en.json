@@ -25,6 +25,8 @@
   "field.backend.option.windows-token": "Windows restricted token (Windows only; the system blocks out-of-bounds writes)",
   "field.backend.option.docker": "Container (needs docker on this machine, enforcement full)",
   "field.backend.help": "The restricted-token backend runs commands in a runner subprocess with a restricted token and workspace ACLs (no docker needed; the system refuses out-of-bounds writes inside commands; known gaps: hardlink aliases, reads are unrestricted, real network control needs the one-time elevated setup). The container backend runs commands inside docker (only the workspace is mounted, the network follows the switch above), which suits cross-platform build commands. Commands whose shell shape cannot be recognised keep their executor and still run on the host.",
+  "field.grantCacheRoots.label": "Allow the usual cache folders",
+  "field.grantCacheRoots.help": "When on, the npm / pnpm / cargo / pip / yarn cache folders are added to the restricted-token backend's writable roots; when off, pnpm install and cargo build get refused by the system while writing their cache. Applies to the Windows restricted-token backend only; cache folders that do not exist are skipped.",
   "field.image.label": "Container image",
   "field.image.help": "The image the container backend uses, {image} by default. It has to contain the tools your command needs (node:20-alpine, for example).",
   "field.enforcement.label": "Enforcement level for this session",

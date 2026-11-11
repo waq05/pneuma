@@ -63,16 +63,19 @@ import {
   checkWrite,
   createPolicy,
   describePolicy,
+  existingCacheRoots,
   formatPathList,
   legalWay,
   parseAllowlistText,
   parsePathListText,
+  resolveBackendChoice,
   resolveSandboxConfig,
   sandboxTmpDir,
   SANDBOX_CONFIG_KEY,
   SANDBOX_MODES,
   DEFAULT_SANDBOX_IMAGE,
   type PathCheck,
+  type SandboxBackend,
   type SandboxConfig,
   type SandboxPolicy,
 } from './policy.js'
@@ -147,6 +150,13 @@ export const sandboxPlugin: Plugin.Object = {
     /** 强制执行等级与后端现状：探测/降级都会改它，系统提示与设置页都读它。 */
     let enforcement: SandboxEnforcement = 'partial'
     let backendDetail = '进程内策略围栏（默认后端，不依赖外部进程）'
+    /**
+     * 现在**真正生效**的后端。为什么不直接看 `config.backend`：默认档会自动启用受限令牌
+     * （config 里仍是 `policy`），挂载提示与系统提示必须说的是「实际在跑的那一层」。
+     */
+    let activeBackend: SandboxBackend = 'policy'
+    /** 受限令牌是「没显式选过、按默认档自动升上来」的：说明里要写清楚，还得告诉人怎么改回去。 */
+    let backendAuto = false
     /**
      * 用户要的是外部隔离（docker / windows-token），但它没建起来、而配置又选了 fail-closed
      * ——这时写与执行类一律拒（读照常）。`policy` 后端的 partial 是预期状态，不置这一位。
@@ -430,8 +440,13 @@ export const sandboxPlugin: Plugin.Object = {
           `只读子路径：${policy.readOnlySubpaths.length === 0 ? '（无）' : policy.readOnlySubpaths.join('、')}；` +
           `网络：${config.networkAccess ? '开' : '关（要联网的命令会被直接拒）'}`,
       )
-      if (config.backend === 'windows-token') {
-        lines.push(`当前后端是 Windows 受限令牌：命令内部的越界写（脚本里的 fs.writeFile 这类）会被系统层直接拒绝；读不受限；网络第二级体检 ${networkTier}（明细见 /sandbox）。`)
+      if (activeBackend === 'windows-token') {
+        // 用真正生效的后端，不用 config.backend：自动档时配置里仍是 policy，
+        // 照配置说的话模型会以为只有策略围栏，白白不敢跑正常命令。
+        lines.push(
+          `${backendAuto ? '当前后端是自动启用的 Windows 受限令牌（用户没显式选过后端）：' : '当前后端是 Windows 受限令牌：'}` +
+            `命令内部的越界写（脚本里的 fs.writeFile 这类）会被系统层直接拒绝；读不受限；网络第二级体检 ${networkTier}（明细见 /sandbox）。`,
+        )
       } else {
         lines.push('策略围栏拦得住 dsc 自己发起的工具调用，拦不住命令内部的任意写（脚本里的 fs.writeFile 这类）；要真隔离，请在「插件中心 → 文件与命令围栏」把后端换成 Windows 受限令牌（本机即可，无需 docker）或容器。')
       }
@@ -468,10 +483,12 @@ export const sandboxPlugin: Plugin.Object = {
       offWinDispose?.()
       offWinDispose = null
       degradedFailClosed = false
-      const { config } = readConfig()
+      const { config, explicitBackend } = readConfig()
 
       if (config.mode === 'danger-full-access') {
         enforcement = 'none'
+        activeBackend = 'policy'
+        backendAuto = false
         // 这一档不设围栏，后端与「建不起来就拒」都不参与判定。说清楚，
         // 免得用户以为选了 fail-closed 就一定拒——那和「完全访问」的语义相抵。
         backendDetail =
@@ -481,25 +498,24 @@ export const sandboxPlugin: Plugin.Object = {
         ctx.emit('dsc/changed')
         return backendDetail
       }
-      if (config.backend === 'policy') {
-        enforcement = 'partial'
-        backendDetail = '进程内策略围栏（默认后端，不需要外部进程）'
-        ctx.emit('dsc/changed')
-        return backendDetail
-      }
 
-      if (config.backend === 'windows-token') {
-        const probe = probeWindowsToken()
-        if (!probe.available) {
-          enforcement = 'partial'
-          degradedFailClosed = config.onUnavailable === 'fail-closed'
-          backendDetail = degradedFailClosed
-            ? `Windows 受限令牌后端不可用，且配置选了「后端建不起来就拒」：写与执行类工具一律拒（读照常）。${probe.detail}`
-            : `Windows 受限令牌后端不可用，已降级为策略围栏：${probe.detail}`
-          ctx.transcript.system(`沙箱：${backendDetail}`)
-          ctx.emit('dsc/changed')
-          return backendDetail
-        }
+      // 用纯函数决定真正用哪个后端（优先级与理由见 policy.ts 的 resolveBackendChoice）。
+      // 探测按需做：只有「显式选了受限令牌」或「默认档可能自动升上来」这两条路才值得碰 koffi。
+      const needsTokenProbe =
+        config.backend === 'windows-token' ||
+        (config.backend === 'policy' && !explicitBackend && process.platform === 'win32')
+      const tokenProbe = needsTokenProbe ? probeWindowsToken() : { available: false, detail: '' }
+      const choice = resolveBackendChoice({
+        configured: config.backend,
+        explicit: explicitBackend,
+        platform: process.platform,
+        windowsTokenReady: tokenProbe.available,
+        mode: config.mode,
+      })
+
+      if (choice.backend === 'windows-token') {
+        backendAuto = choice.reason === 'auto'
+        activeBackend = 'windows-token'
         // 账本在 = 提权 setup 成功过：走账号分支（runner 以专用账号跑命令，网络过白名单代理）
         const setupState = readSetupState(DSC_HOME)
         const account = setupState !== null && setupState.ok
@@ -509,7 +525,12 @@ export const sandboxPlugin: Plugin.Object = {
           mode: config.mode === 'read-only' ? 'read-only' : 'workspace-write',
           // 这里只是「挂载时所在会话」的起点；之后每次调用按 run.cwd 现算可写根（常驻多会话）
           cwd: currentCwd(),
-          extraRoots: config.extraWritableRoots,
+          // 附加根之外，还把「只写缓存」的常见目录（npm/pnpm/cargo/pip/yarn）一起放行：
+          // `pnpm install`、`cargo build` 会往这些目录写，不给就被 ACL 当成越界拒掉。
+          extraRoots: [
+            ...config.extraWritableRoots,
+            ...(config.grantCacheRoots ? existingCacheRoots(process.platform, process.env) : []),
+          ],
           networkAccess: () => readConfig().config.networkAccess,
           networkAllowlist: () => readConfig().config.networkAllowlist,
           ...(account === undefined ? {} : { account }),
@@ -522,37 +543,73 @@ export const sandboxPlugin: Plugin.Object = {
         // 如实上报：账号分支在位 = FS 与网络双层锁死（full）；只有受限令牌时
         // 硬链接别名/读不受限是结构性缺口，网络只有软墙（partial），缺口在 detail 说透
         enforcement = handle.networkEnforced ? 'full' : 'partial'
-        backendDetail = account === undefined
+        const baseDetail = account === undefined
           ? `Windows 受限令牌：命令内部越界写被系统层拦截（${handle.describe()}）`
           : `Windows 受限令牌 + 专用账号（${account.name}）：越界写与越界出网都被系统层拦截（${handle.describe()}）`
+        // 自动档要说明「这是替你打开的、在哪改回去」，否则用户会以为自己选过。
+        backendDetail = backendAuto
+          ? `已自动启用系统级隔离（可在设置里改回策略围栏）；${baseDetail}`
+          : baseDetail
         ctx.emit('dsc/changed')
         return backendDetail
       }
 
-      const probe = await probeDocker({})
-      if (disposed || mine !== generation) return '后端被再次切换，这次探测结果作废'
-      if (!probe.available) {
+      if (config.backend === 'windows-token') {
+        // 显式选了受限令牌但探测不可用：回落策略围栏。降级说明只在这里说，
+        // resolveBackendChoice 只负责「选」，不重复编理由。
+        activeBackend = 'policy'
+        backendAuto = false
         enforcement = 'partial'
         degradedFailClosed = config.onUnavailable === 'fail-closed'
         backendDetail = degradedFailClosed
-          ? `容器后端不可用，且配置选了「后端建不起来就拒」：写与执行类工具一律拒（读照常）——${probe.detail}`
-          : `容器后端不可用，已降级为策略围栏：${probe.detail}`
-        ctx.transcript.system(
-          degradedFailClosed
-            ? `沙箱：选的容器后端用不了，按配置 fail-closed 处理，写与执行类工具一律拒——${probe.detail}`
-            : `沙箱：选的容器后端用不了，已降级为策略围栏（强制执行 partial，照常执行 + 审批卡兜底）——${probe.detail}`,
-        )
+          ? `Windows 受限令牌后端不可用，且配置选了「后端建不起来就拒」：写与执行类工具一律拒（读照常）。${tokenProbe.detail}`
+          : `Windows 受限令牌后端不可用，已降级为策略围栏：${tokenProbe.detail}`
+        ctx.transcript.system(`沙箱：${backendDetail}`)
         ctx.emit('dsc/changed')
         return backendDetail
       }
-      const runner = createDockerRunner({
-        image: config.image,
-        networkAccess: () => readConfig().config.networkAccess,
-        readOnly: () => readConfig().config.mode === 'read-only',
-      })
-      offRunner = registerCommandRunner(runner)
-      enforcement = 'full'
-      backendDetail = `容器后端可用（${probe.detail}），命令在 ${config.image} 里跑`
+
+      if (config.backend === 'docker') {
+        const probe = await probeDocker({})
+        if (disposed || mine !== generation) return '后端被再次切换，这次探测结果作废'
+        if (!probe.available) {
+          activeBackend = 'policy'
+          enforcement = 'partial'
+          degradedFailClosed = config.onUnavailable === 'fail-closed'
+          backendDetail = degradedFailClosed
+            ? `容器后端不可用，且配置选了「后端建不起来就拒」：写与执行类工具一律拒（读照常）——${probe.detail}`
+            : `容器后端不可用，已降级为策略围栏：${probe.detail}`
+          ctx.transcript.system(
+            degradedFailClosed
+              ? `沙箱：选的容器后端用不了，按配置 fail-closed 处理，写与执行类工具一律拒——${probe.detail}`
+              : `沙箱：选的容器后端用不了，已降级为策略围栏（强制执行 partial，照常执行 + 审批卡兜底）——${probe.detail}`,
+          )
+          ctx.emit('dsc/changed')
+          return backendDetail
+        }
+        const runner = createDockerRunner({
+          image: config.image,
+          networkAccess: () => readConfig().config.networkAccess,
+          readOnly: () => readConfig().config.mode === 'read-only',
+        })
+        offRunner = registerCommandRunner(runner)
+        enforcement = 'full'
+        activeBackend = 'docker'
+        backendDetail = `容器后端可用（${probe.detail}），命令在 ${config.image} 里跑`
+        ctx.emit('dsc/changed')
+        return backendDetail
+      }
+
+      // 剩下这一档：策略围栏（显式选过 policy，或默认档在本机不满足自动升的条件）。
+      activeBackend = 'policy'
+      backendAuto = false
+      enforcement = 'partial'
+      // 默认档本来该自动升、但受限令牌不可用：把原因说出来（降级必须可见），
+      // 否则用户看到「默认策略围栏」会以为自动档根本没做。
+      backendDetail =
+        needsTokenProbe && config.backend === 'policy' && !tokenProbe.available
+          ? `进程内策略围栏（默认后端）；自动启用系统级隔离没成：${tokenProbe.detail}`
+          : '进程内策略围栏（默认后端，不需要外部进程）'
       ctx.emit('dsc/changed')
       return backendDetail
     }
@@ -563,8 +620,11 @@ export const sandboxPlugin: Plugin.Object = {
       const effective = effectiveEnforcement(modeOf(ctx.session.current()))
       const head = `沙箱已就绪：档位 ${modeOf(ctx.session.current())}｜强制执行 ${effective}｜网络 ${config.networkAccess ? '开' : '关'}`
       const tail = effective === 'partial'
-        ? (config.backend === 'windows-token'
-          ? '。越界写已被系统层拦截；明细见 /sandbox。'
+        ? (activeBackend === 'windows-token'
+          ? (backendAuto
+            // 自动档要说全三件事：真隔离生效了、是替你打开的、在哪关。
+            ? '。已自动启用系统级隔离（可在设置里改回策略围栏），越界写被系统层拦截；明细见 /sandbox。'
+            : '。越界写已被系统层拦截；明细见 /sandbox。')
           : '。策略围栏拦得住工具调用，拦不住命令内部的任意写，要真隔离请在「插件中心 → 文件与命令围栏」换后端。')
         : '。'
       const warn = problems.length === 0 ? '' : ` ⚠ 配置有问题（已按默认值兜底）：${problems.join('；')}`
@@ -605,7 +665,11 @@ export const sandboxPlugin: Plugin.Object = {
       const { config, policy, problems } = snapshot()
       const lines: string[] = []
       lines.push(`沙箱现状：当前会话档位 ${modeOf(ctx.session.current())}｜新会话默认 ${config.mode}｜强制执行 ${effectiveEnforcement(modeOf(ctx.session.current()))}`)
-      lines.push(`后端：${config.backend} —— ${backendDetail}`)
+      // 自动档时 config.backend 仍是 policy：先把「实际生效的」写在前面，再说配置里写的是什么。
+      const backendLine = backendAuto
+        ? `${activeBackend}（已自动启用系统级隔离，可在设置里改回策略围栏；配置里的 backend 仍是 ${config.backend}）`
+        : config.backend
+      lines.push(`后端：${backendLine} —— ${backendDetail}`)
       lines.push(`可写根（${String(policy.roots.length)}）：`)
       if (policy.roots.length === 0) lines.push('  （无：只读档不许写盘）')
       for (const root of policy.roots) lines.push(`  ${root}`)
@@ -712,6 +776,12 @@ export const sandboxPlugin: Plugin.Object = {
               { value: 'docker', label: t('field.backend.option.docker') },
             ],
             help: t('field.backend.help'),
+          },
+          {
+            type: 'switch',
+            key: 'grantCacheRoots',
+            label: t('field.grantCacheRoots.label'),
+            help: t('field.grantCacheRoots.help'),
           },
           {
             type: 'text',
@@ -831,6 +901,7 @@ export const sandboxPlugin: Plugin.Object = {
           extraWritableRoots: formatPathList(config.extraWritableRoots),
           readOnlySubpaths: formatPathList(config.readOnlySubpaths),
           backend: config.backend,
+          grantCacheRoots: config.grantCacheRoots,
           image: config.image,
           onUnavailable: config.onUnavailable,
           // 预览三项：与围栏共用一张值表，所以 key 不能与上面任何一个重名
@@ -889,6 +960,10 @@ export const sandboxPlugin: Plugin.Object = {
             writePluginConfig(SANDBOX_CONFIG_KEY, { image })
             break
           }
+          // 缓存目录开关要重算后端：附加根在 createWindowsTokenRunner 时一次性带进去
+          case 'grantCacheRoots':
+            writePluginConfig(SANDBOX_CONFIG_KEY, { grantCacheRoots: value === true })
+            break
           // ── 改动预览三项：写完就收工，不重算后端 ────────────────────────────
           // 这三项不影响强制执行等级，走下面那次 refreshBackend() 会白白拆一次容器/受限令牌
           // 后端（还会往会话流里补一行「沙箱已就绪」），所以每条都提前 return。

@@ -25,6 +25,8 @@
   "field.backend.option.windows-token": "Windows 受限令牌（仅 Windows，越界写系统层拦截）",
   "field.backend.option.docker": "容器（需要本机 docker，强制执行 full）",
   "field.backend.help": "受限令牌后端把命令换进「受限令牌 + 工作区 ACL」的 runner 子进程里跑（无需 docker，命令内部的越界写会被系统直接拒绝；已知缺口：硬链接别名、读不受限、网络真管控需一次性提权 setup）。容器后端把命令换进 docker 里跑（只挂工作区，网络按上面的开关），适合跨平台构建命令。认不出 shell 形态的命令不会被换执行体，那一句仍会在宿主上跑。",
+  "field.grantCacheRoots.label": "允许写常见缓存目录",
+  "field.grantCacheRoots.help": "开着时，把 npm / pnpm / cargo / pip / yarn 的缓存目录也追加进受限令牌后端的可写根；不开的话 pnpm install、cargo build 会在写缓存那一步被系统层拒掉。只对 Windows 受限令牌后端生效，缓存目录不存在的就跳过。",
   "field.image.label": "容器镜像",
   "field.image.help": "容器后端用的镜像，默认 {image}。镜像里得有你那条命令要用的工具（例如 node:20-alpine）。",
   "field.enforcement.label": "当前会话强制执行等级",

@@ -16735,6 +16735,33 @@ zcode 按时段一共六句、每段一句，句子的主语全是「你」和�
 - 卸载与 setup 的**真提权流程**没在真机跑（UAC + 管理员）：账号、防火墙、WFP 的实际删除结果未确认，只验到脚本可解析、C# 可编译。
 - 互斥体只验了同进程两次，跨进程并发未实测。
 
+## 2026-11-11：沙箱默认档切真隔离 + 缓存目录白名单（S6）
+
+**为什么**
+
+用户拍板「默认就要真隔离」，但同时要求「不把人逼疯」。直接改默认值有两个坑：一是显式把后端改回 `policy` 的用户会被每次 refresh 又悄悄顶回去——默认值与显式选择值相同、意思不同；二是 `pnpm install`、`cargo build`、`pip install` 会写自己家目录下的缓存，不给授权就等于默认坏了。
+
+**做法**
+
+- `policy.ts` 加纯函数 `resolveBackendChoice`：`danger-full-access` 永远策略围栏；显式选受限令牌就尊重；**没显式选过 + Windows + 探测可用**才自动升；其余回落策略围栏。
+- `resolveSandboxConfig` 额外带出 `explicitBackend`（原始配置里出现过 `backend` 键才算显式）。
+- `index.ts` 记录「真正生效的后端」（`activeBackend`）与「是不是自动升上来的」（`backendAuto`）：挂载提示、系统提示、`/sandbox` 都改看实际后端，自动档明确写「可在设置里改回策略围栏」。
+- 配置加 `grantCacheRoots`（默认开）：把 `%LOCALAPPDATA%\npm-cache`、`pnpm\store`、`~/.npm`、`~/.cargo`、`~/.cache`、pip 缓存、Yarn 缓存这些**存在才算**的目录并进可写根。
+
+**验证**
+
+- `pnpm run typecheck`、`pnpm run build`（76 包）通过。
+- `node --test` 三支包内测试：`backend-choice`（16 条断言）、`sandbox`、`interpreter` 全过。
+- `node scripts/sandbox-win-token-test.mjs` → 55/0（集成段真跑：根内写成、根外被拒、超时 124）。
+- `node scripts/ui-locale-test.mjs` → 52 包、0 硬编码、全部通过。
+
+**遗留**
+
+- 自动升档只在纯函数层验证过，真机宿主启动没跑过；挂载提示与设置文案没在 TUI / 桌面里看过。
+- 缓存目录是**挂载时快照**：挂载之后才新建的 `~/.npm` 不会补授权，要换会话或重算后端才生效。
+- 缓存目录的 ACL 真放行没端到端验证（集成脚本建执行器时没传 `extraRoots`）。
+
+
 
 
 

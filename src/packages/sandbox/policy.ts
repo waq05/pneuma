@@ -18,7 +18,7 @@
  *
  * @module dsc/core/sandbox/policy
  */
-import { realpathSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
 import type { SandboxMode } from '../../services/types.js'
@@ -82,6 +82,13 @@ export interface SandboxConfig {
   image: string
   /** 选的后端建不起来时的姿态（见 {@link SandboxOnUnavailable}）。 */
   onUnavailable: SandboxOnUnavailable
+  /**
+   * 把常见的「只写缓存」目录（npm / pnpm / cargo / pip / yarn）也追加进受限令牌后端的可写根。
+   *
+   * 为什么默认开：`pnpm install`、`cargo build`、`pip install` 都会往自己家目录下的缓存目录写，
+   * 关了它这些正常命令会在写缓存那一步被 ACL 拒掉，看起来像「沙箱坏了」。
+   */
+  grantCacheRoots: boolean
 }
 
 /** 默认档就是 workspace-write：正常的工作区读写/bash 全部照常。 */
@@ -94,12 +101,70 @@ export const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
   backend: 'policy',
   image: DEFAULT_SANDBOX_IMAGE,
   onUnavailable: 'degrade',
+  grantCacheRoots: true,
+}
+
+// ---------------------------------------------------------------- 后端选择
+
+/**
+ * 「这一次真正用哪个后端」的纯函数入参：平台与「受限令牌可不可用」都由调用方注入，
+ * 所以自检不必读 process、不必装 koffi、也不必起宿主。
+ */
+export interface BackendChoiceInput {
+  /** 配置里的后端。 */
+  configured: SandboxBackend
+  /** 用户是不是显式选过（resolveSandboxConfig 要把这个信息带出来）。 */
+  explicit: boolean
+  platform: NodeJS.Platform
+  /** 受限令牌后端是否可用（调用方传 probeWindowsToken().available）。 */
+  windowsTokenReady: boolean
+  mode: SandboxMode
+}
+
+/** 选后端的结果：`reason` 只在真用受限令牌时给，`auto` 要在界面上说清楚。 */
+export type BackendChoice =
+  | { backend: 'policy' }
+  | { backend: 'windows-token'; reason: 'explicit' | 'auto' }
+
+/**
+ * 决定这一次真正用哪个后端。四条规则的顺序就是优先级：
+ *
+ *   1. `danger-full-access` 不用执行器（守卫在这一档整档 defer，见 index.ts 的守卫），
+ *      后端与「建不起来就拒」都不参与；
+ *   2. 显式选了 `windows-token`：可用就用，不可用回落策略围栏——降级说明由 index.ts
+ *      现有的「探测失败」分支负责，这里不重复编一句；
+ *   3. 没显式选过（出厂默认 `policy`）+ Windows + 受限令牌可用 → **自动启用真隔离**；
+ *   4. 其余（含 docker）→ 策略围栏；docker 由 index.ts 自己的容器分支接（要走异步探测，
+ *      这个纯函数不掺和）。
+ *
+ * 规则 3 是 2026-11-11 拍的决定：默认档要真隔离，但用户显式选过就尊重用户——
+ * 「显式选过」靠 `explicit` 传，不靠值猜（显式选 policy 与默认 policy 值相同、意思不同）。
+ */
+export function resolveBackendChoice(input: BackendChoiceInput): BackendChoice {
+  if (input.mode === 'danger-full-access') return { backend: 'policy' }
+  if (input.configured === 'windows-token') {
+    return input.windowsTokenReady
+      ? { backend: 'windows-token', reason: 'explicit' }
+      : { backend: 'policy' }
+  }
+  if (input.configured === 'policy' && !input.explicit && input.platform === 'win32' && input.windowsTokenReady) {
+    return { backend: 'windows-token', reason: 'auto' }
+  }
+  return { backend: 'policy' }
 }
 
 /** 读配置的结果：`problems` 非空说明有控件值没通过校验（已回落默认值，不影响挂载）。 */
 export interface SandboxConfigResult {
   config: SandboxConfig
   problems: string[]
+  /**
+   * 原始配置里出现过 `backend` 键 = 用户显式选过后端。
+   *
+   * 为什么要单独带出来：出厂默认就是 `policy`，而「显式把后端改回策略围栏」得到的也是
+   * `policy`——只看值分不出这两件事。自动启用真隔离只该对**没选过**的人生效，
+   * 否则用户手动改回策略围栏会被每次 refresh 又悄悄顶回去。
+   */
+  explicitBackend: boolean
 }
 
 /**
@@ -111,10 +176,12 @@ export interface SandboxConfigResult {
  */
 export function resolveSandboxConfig(raw: unknown): SandboxConfigResult {
   if (raw === null || raw === undefined || typeof raw !== 'object' || Array.isArray(raw)) {
-    return { config: { ...DEFAULT_SANDBOX_CONFIG }, problems: [] }
+    return { config: { ...DEFAULT_SANDBOX_CONFIG }, problems: [], explicitBackend: false }
   }
   const doc = raw as Record<string, unknown>
   const problems: string[] = []
+  // 出现过 `backend` 键就算显式选过（哪怕值不合法：那时有 problems 说清楚，自动档不接管）。
+  const explicitBackend = doc.backend !== undefined
   const config: {
     mode: SandboxMode
     networkAccess: boolean
@@ -124,6 +191,7 @@ export function resolveSandboxConfig(raw: unknown): SandboxConfigResult {
     backend: SandboxBackend
     image: string
     onUnavailable: SandboxOnUnavailable
+    grantCacheRoots: boolean
   } = { ...DEFAULT_SANDBOX_CONFIG }
 
   if (doc.mode !== undefined) {
@@ -172,7 +240,74 @@ export function resolveSandboxConfig(raw: unknown): SandboxConfigResult {
     if ((SANDBOX_ON_UNAVAILABLE as readonly string[]).includes(value)) config.onUnavailable = value as SandboxOnUnavailable
     else problems.push(`「后端建不起来时」只能是 ${SANDBOX_ON_UNAVAILABLE.join(' / ')}，收到「${value}」，已按 degrade 走`)
   }
-  return { config, problems }
+  if (doc.grantCacheRoots !== undefined) {
+    if (typeof doc.grantCacheRoots === 'boolean') config.grantCacheRoots = doc.grantCacheRoots
+    else problems.push(`「缓存目录也放行」要 true/false，收到「${String(doc.grantCacheRoots)}」，已按开放行`)
+  }
+  return { config, problems, explicitBackend }
+}
+
+// ---------------------------------------------------------------- 缓存目录白名单
+
+/**
+ * 常见「只写缓存」的目录候选：按平台给、按环境变量拼，缺对应变量就跳过。
+ * 存在性不在这里判——调用方拿 {@link existingCacheRoots} 再筛一遍，自检才能注入假的 exists。
+ *
+ * 为什么只给 Windows：这份清单唯一的消费者是受限令牌后端（Windows 专属的 ACL 授权）。
+ * 非 Windows 平台给空数组，免得多出一份没人用的「放行清单」，让人误以为策略围栏也跟着放宽了。
+ *
+ * @param platform - 目标平台（自检里显式传，不读 process）。
+ * @param env - 取环境变量的来源（通常是 process.env）。
+ */
+export function cacheRootCandidates(platform: NodeJS.Platform, env: Record<string, string | undefined>): string[] {
+  if (platform !== 'win32') return []
+  const localAppData = env.LOCALAPPDATA?.trim()
+  const appData = env.APPDATA?.trim()
+  const userProfile = env.USERPROFILE?.trim()
+  const out: string[] = []
+  const add = (base: string | undefined, ...segments: string[]): void => {
+    if (base === undefined || base === '') return
+    out.push(join(base, ...segments))
+  }
+  // 顺序就是放行清单的展示顺序：先 npm/pnpm（最常用），再 cargo/pip/yarn。
+  add(localAppData, 'npm-cache')
+  add(localAppData, 'pnpm', 'store')
+  add(appData, 'npm-cache')
+  add(userProfile, '.npm')
+  add(userProfile, '.cargo')
+  add(userProfile, '.cache')
+  add(localAppData, 'pip', 'Cache')
+  add(localAppData, 'Yarn', 'Cache')
+  return out
+}
+
+/**
+ * 候选里**真的存在**的那些目录（去重保序）。
+ *
+ * 为什么要筛存在性：受限令牌后端的 ACL 授权打在真实目录上，给一个不存在的路径打 ACL
+ * 会让整个后端当场降级（`ensureAuthorized` 任一失败即降级），得不偿失。
+ *
+ * @param platform - 目标平台。
+ * @param env - 环境变量来源。
+ * @param exists - 存在性判定，默认 `existsSync`；自检注入假函数，不碰真实文件系统。
+ */
+export function existingCacheRoots(
+  platform: NodeJS.Platform,
+  env: Record<string, string | undefined>,
+  exists: (path: string) => boolean = existsSync,
+): string[] {
+  const win32 = platform === 'win32'
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const path of cacheRootCandidates(platform, env)) {
+    if (!exists(path)) continue
+    // Windows 路径大小写不敏感：`%LOCALAPPDATA%` 与 `%APPDATA%` 指到同一处时会拼出同一个目录。
+    const key = win32 ? path.replace(/[\\/]+$/, '').toLowerCase() : path.replace(/[\\/]+$/, '')
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(path)
+  }
+  return out
 }
 
 /** 设置页那个框（分号或换行分隔）→ 路径数组；去重保序。 */
