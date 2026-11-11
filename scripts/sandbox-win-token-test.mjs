@@ -11,7 +11,10 @@
  *   [集成]   Windows 且 `probeWindowsToken()` 可用时，真造一个 workspace-write 执行器，
  *            让 powershell 同时写工作区内与工作区外，断言「里面写成、外面拒掉」；
  *            外加一条 read-only 的超时用例（`--timeout 1000` 掐掉一个睡 10 秒的
- *            powershell，断言 3 秒内结束、退出码 124、stderr 有超时说明）。
+ *            powershell，断言 3 秒内结束、退出码 124、stderr 有超时说明）；
+ *            再加两条 pty 用例：直接 spawn runner 验 `--pty` 本身（isTTY / echo / Ctrl+C），
+ *            以及经执行器验「计划里的 tty 字段 → runner 的 --pty」这条折法
+ *            （tty:false 时计划里不许出现 --pty；tty:true 真跑出 isTTY=true）。
  *            跑不起来（非 Windows / koffi 缺失 / 授权失败）就 SKIP 并打印确切原因，
  *            绝不把这一段删掉——删掉等于把唯一的实证让出去。
  *
@@ -429,6 +432,7 @@ if (process.platform !== 'win32') {
     await runIntegration(backend)
     await runTimeoutCase()
     await runPtyCases()
+    await runPtyPlanCases(backend)
   }
 }
 
@@ -696,6 +700,119 @@ async function runPtyCases() {
     if (elapsed >= 5000) note('这条没做到：ConPTY 下 0x03 没有中断子进程（它跑满了 20 秒）')
   } finally {
     removeTree(tempDir)
+  }
+}
+
+/**
+ * 集成段（执行器 ↔ pty）：计划里的 `tty` 字段能不能真的折成 runner 的 `--pty`。
+ *
+ * 为什么单独一条：上面 `runPtyCases` 直接 spawn runner，验的是 runner 自己的 `--pty`；
+ * 这一条验的是**中间那层折法**——bash 工具把 `tty` 放进 `SpawnPlan` 之后，执行器
+ * 到底有没有把它翻成 runner 认的参数。两段缺一段，都可能「计划里有 tty、跑起来还是管道」。
+ *
+ * 用 read-only 档建执行器：read-only 刻意不做任何 ACL 授权（`backend.ts` 安装段写明），
+ * 所以这一段快，也不会去改用户工作区的权限。
+ *
+ * 断言：① tty:false（缺省形态）的计划里**没有** `--pty`/`--cols`/`--rows`，且命令仍在
+ * `--` 之后——纯结构断言，不 spawn；② tty:true 补 `--pty` 与缺省 120×30；③ 非法尺寸
+ * 回落缺省；④ 合法尺寸原样传；⑤ 把 tty 计划真 spawn 起来，子进程看到 `isTTY=true`。
+ *
+ * @param {{ createWindowsTokenRunner: Function }} backend 编译产物里的后端导出。
+ */
+async function runPtyPlanCases(backend) {
+  console.log('')
+  console.log('── 集成：执行器把计划的 tty 折成 --pty')
+  const handle = backend.createWindowsTokenRunner({
+    mode: 'read-only',
+    cwd: sandboxRoot,
+    networkAccess: () => false,
+  })
+  try {
+    const childArgv = ['-e', "console.log('isTTY=' + process.stdout.isTTY)"]
+    const run = {
+      command: 'node -e <打印 isTTY>',
+      cwd: sandboxRoot,
+      timeoutMs: 30_000,
+      signal: new AbortController().signal,
+    }
+    /** 计划工厂：base 只有 file/args/env/cwd，tty 相关字段按参数叠上去 */
+    const planOf = (extra) =>
+      handle.runner.plan(run, { file: process.execPath, args: childArgv, env: { ...process.env }, cwd: sandboxRoot, ...extra })
+    /** 取某个 flag 后面的那个值（没有这个 flag 返回 undefined） */
+    const valueOf = (plan, flag) => {
+      const index = plan.args.indexOf(flag)
+      return index < 0 ? undefined : plan.args[index + 1]
+    }
+
+    // ① 纯结构断言：不给 tty 时计划一个字节都不改
+    const plain = await planOf({})
+    if (plain === null) {
+      note('执行器拒绝换执行体（read-only 竟然也会降级），这一段跳过')
+      return
+    }
+    check(
+      'tty:false 的计划里没有 --pty',
+      !plain.args.includes('--pty'),
+      JSON.stringify(plain.args.slice(-6)),
+    )
+    check(
+      'tty:false 的计划里没有 --cols/--rows（孤儿尺寸会让 runner 直接退出 127）',
+      !plain.args.includes('--cols') && !plain.args.includes('--rows'),
+      JSON.stringify(plain.args.slice(-6)),
+    )
+    check(
+      'tty:false 的计划仍把命令原样放在 -- 之后',
+      plain.args.includes('--') && plain.args[plain.args.indexOf('--') + 1] === process.execPath,
+      JSON.stringify(plain.args.slice(-4)),
+    )
+
+    // ② tty:true：补 --pty 与缺省尺寸
+    const pty = await planOf({ tty: true })
+    check('tty:true 的计划里有 --pty', pty.args.includes('--pty'), JSON.stringify(pty.args.slice(-8)))
+    check(
+      'tty:true 且没给尺寸时补 --cols 120 / --rows 30',
+      valueOf(pty, '--cols') === '120' && valueOf(pty, '--rows') === '30',
+      `--cols ${String(valueOf(pty, '--cols'))} / --rows ${String(valueOf(pty, '--rows'))}`,
+    )
+
+    // ③ 非法尺寸：0 列、小数都过不了 runner 的「只认正整数」，执行器必须自己兜住
+    const bad = await planOf({ tty: true, cols: 0, rows: 12.5 })
+    check(
+      '非法尺寸被忽略、按 120×30 兜底',
+      valueOf(bad, '--cols') === '120' && valueOf(bad, '--rows') === '30',
+      `--cols ${String(valueOf(bad, '--cols'))} / --rows ${String(valueOf(bad, '--rows'))}`,
+    )
+
+    // ④ 合法尺寸原样传下去
+    const custom = await planOf({ tty: true, cols: 100, rows: 40 })
+    check(
+      '合法尺寸原样传下去（100×40）',
+      valueOf(custom, '--cols') === '100' && valueOf(custom, '--rows') === '40',
+      `--cols ${String(valueOf(custom, '--cols'))} / --rows ${String(valueOf(custom, '--rows'))}`,
+    )
+
+    // ⑤ 真跑一遍：这一条才证明「折进去的 --pty 真的生效」
+    const env = {}
+    for (const [key, value] of Object.entries(pty.env)) if (value !== undefined) env[key] = value
+    const spawned = await spawnPlan(pty, env)
+    if (spawned.error !== undefined) {
+      note(`tty 计划 spawn 失败：${spawned.error}`)
+      if (skipReason === null) skipReason = `tty 计划的 runner 子进程起不来：${spawned.error}`
+      return
+    }
+    note(`tty 计划真跑：退出码 ${String(spawned.code)}，stdout=${JSON.stringify(spawned.out.trim().slice(0, 120))}`)
+    check(
+      'tty 计划真 spawn 后子进程看到 isTTY=true',
+      /isTTY=true/.test(spawned.out),
+      `stdout=${JSON.stringify(spawned.out.slice(0, 200))}；stderr=${JSON.stringify(spawned.err.slice(0, 200))}`,
+    )
+    check(
+      'isTTY 用例退出码 0，且 stderr 没有 runner 自身失败签名',
+      spawned.code === 0 && !spawned.err.includes(RUNNER_SIGNATURE),
+      `code=${String(spawned.code)}；stderr=${JSON.stringify(spawned.err.slice(0, 200))}`,
+    )
+  } finally {
+    handle.dispose()
   }
 }
 

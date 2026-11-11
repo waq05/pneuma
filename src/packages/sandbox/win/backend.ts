@@ -43,6 +43,28 @@ export const RUNNER_FAILURE_SIGNATURE = 'dsc-sandbox-run: '
 /** 询问顺序：与容器后端同档（策略围栏先问，它之后才轮到换执行体）。 */
 const RUNNER_ORDER = 20
 
+/**
+ * pty 尺寸的兜底值：与 runner 的缺省一致（`runner-entry.ts` 的 `DEFAULT_PTY_COLS/ROWS`）。
+ *
+ * 刻意不从 runner-entry 里 import 那两个常量：那个模块的结尾无条件跑 `main()`，
+ * 宿主 import 它等于让宿主按自己的 argv 去建令牌——所以数值在这里重复一份，
+ * 由集成用例盯住两边不跑偏。
+ */
+const PTY_DEFAULT_COLS = 120
+const PTY_DEFAULT_ROWS = 30
+
+/**
+ * 把计划里的尺寸折成一个 runner 认的正整数。
+ *
+ * runner 的 `--cols/--rows` 只认正整数（`runner-entry.ts` 的解析段），0、负数、小数、
+ * NaN 会让它当场以 127 退出；而且 COORD 只有 16 位，超过 65535 会被静默截断。
+ * 三类非法值一律当「没给」，回落缺省——工具层已经限过 20–500，这里只做最后一道兜底。
+ */
+function ptyDimension(value: number | undefined, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 0xffff) return fallback
+  return value
+}
+
 /** 授权锁文件目录：同目录并发授权要串行化，锁文件落在 dsc 家目录下。 */
 const LOCK_DIR = join(DSC_HOME, 'sandbox', 'locks')
 
@@ -330,6 +352,16 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
         '--temp', sandboxTmpDir(DSC_HOME, run.cwd.replace(/[\\/]+$/, '')),
         ...roots.flatMap((root) => ['--root', `${root.sid}=${root.path}`]),
         ...(options.account === undefined ? [] : ['--account', options.account.name, '--dsc-home', options.account.dscHome]),
+        // 真终端：工具在计划里声明了 tty 才加这三项。runner 的契约是「--cols/--rows
+        // 必须配 --pty」，所以它们只能跟 --pty 一起出现或一起不出现；非 tty 的计划
+        // 在这里一个字节都不改（走原来的三对管道）
+        ...(current.tty === true
+          ? [
+              '--pty',
+              '--cols', String(ptyDimension(current.cols, PTY_DEFAULT_COLS)),
+              '--rows', String(ptyDimension(current.rows, PTY_DEFAULT_ROWS)),
+            ]
+          : []),
         '--',
         current.file,
         ...current.args,

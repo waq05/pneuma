@@ -5,14 +5,18 @@
  * 报错几乎都在末尾，于是模型拿着前几千字进度条，看不到真正的失败原因。现在按
  * 头 60% + 省略标记 + 尾 40% 切，标记里写清省了多少字符。
  *
- * 两段断言：
- *   ① 纯函数 truncateBashOutput 的切法与标记（短输出不动、长输出头尾都在）；
- *   ② 真跑一次子进程，确认 spawnShell 真的走了这条切法（不是只测了没接线的函数）。
+ * 四段断言：
+ *   ① 纯函数 truncateBashOutput：短输出原样返回；
+ *   ② 纯函数的切法与标记（长输出头尾都在、中间写明省了多少字符）；
+ *   ③ 真跑一次子进程，确认 spawnShell 真的走了这条切法（不是只测了没接线的函数）；
+ *   ④ 超过字节上限（outputLimit * 4）真正丢字节时，结果末尾必须补一句「已丢弃 N 字节」
+ *      ——tty 分支跳过了省略标记，不补就等于静默丢尾部；没超上限时不许出现这句。
  *
  * 跑法：node scripts/bash-truncation-test.mjs（先 pnpm run build）
  *
  * @module dsc/scripts/bash-truncation-test
  */
+import { EventEmitter } from 'node:events'
 import { mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -63,7 +67,7 @@ console.log('[2] 纯函数：头 60% + 标记 + 尾 40%')
 console.log('[3] 真跑子进程：spawnShell 走同一条截断')
 {
   const outputLimit = 600
-  // 总量压在 2 倍上限以内：spawnShell 只在 output.length < outputLimit * 2 时继续收，
+  // 总量压在 2 倍上限以内：spawnShell 只在 output.length < outputLimit * 4 时继续收，
   // 超了就会提前停，最后那句报错可能根本没进来——那是另一个问题，这里只测截断切法。
   const script = [
     "const pad = 'x'.repeat(100)",
@@ -77,8 +81,71 @@ console.log('[3] 真跑子进程：spawnShell 走同一条截断')
   check('子进程输出带省略标记与字数', /中间省略 \d+ 字符/.test(result), JSON.stringify(result))
 }
 
+console.log('[4] 超过字节上限丢掉的字节必须说出来（tty 分支尤其不能静默）')
+{
+  /**
+   * 用假执行器（plan.spawn）喂确定的分块：真子进程的分块边界取决于管道缓冲，
+   * 断不出「到底该丢多少字节」；这里自己控制每一次 data 事件，字节数才算得准。
+   * 上限 = outputLimit * 4 = 400 字节。
+   */
+  const outputLimit = 100
+  const chunks = [Buffer.alloc(300, 'a'), Buffer.alloc(300, 'b'), Buffer.alloc(500, 'c'), Buffer.alloc(500, 'd')]
+  const withChunks = (tty) => ({
+    file: 'fake-shell',
+    args: [],
+    cwd,
+    env: {},
+    ...(tty ? { tty: true } : {}),
+    spawn: () => {
+      const child = new EventEmitter()
+      child.stdout = new EventEmitter()
+      child.stderr = new EventEmitter()
+      setImmediate(() => {
+        for (const chunk of chunks) child.stdout.emit('data', chunk)
+        child.emit('close', 0)
+      })
+      return child
+    },
+  })
+
+  // 前两块进缓冲（300 + 300，第二块把 bytes 推过 400），后两块整块丢掉 = 1000 字节
+  const ttyOut = await spawnShell(withChunks(true), 20_000, outputLimit, new AbortController().signal)
+  check('tty 分支：输出里有「已丢弃」提示', ttyOut.includes('已丢弃'), JSON.stringify(ttyOut.slice(-200)))
+  check('tty 分支：提示带具体字节数（1000）', /已丢弃 1000 字节/.test(ttyOut), JSON.stringify(ttyOut.slice(-200)))
+  check('tty 分支：提示写明上限是多少字节', ttyOut.includes('400 字节'), JSON.stringify(ttyOut.slice(-200)))
+  check('tty 分支：不套用 truncateBashOutput 的省略标记（终端流要原样）', !ttyOut.includes('中间省略'), JSON.stringify(ttyOut.slice(-200)))
+  check('tty 分支：丢之前的内容仍然保留', ttyOut.includes('aaa') && ttyOut.includes('bbb'))
+
+  const plainOut = await spawnShell(withChunks(false), 20_000, outputLimit, new AbortController().signal)
+  check('非 tty 分支：同样补一句「已丢弃 1000 字节」', /已丢弃 1000 字节/.test(plainOut), JSON.stringify(plainOut.slice(-200)))
+  check('非 tty 分支：原有「中间省略」提示仍在（两条提示不重复但互补）', /中间省略 \d+ 字符/.test(plainOut), JSON.stringify(plainOut.slice(0, 200)))
+
+  // 回归：没超过上限时不许出现这行
+  const small = {
+    file: 'fake-shell',
+    args: [],
+    cwd,
+    env: {},
+    tty: true,
+    spawn: () => {
+      const child = new EventEmitter()
+      child.stdout = new EventEmitter()
+      child.stderr = new EventEmitter()
+      setImmediate(() => {
+        child.stdout.emit('data', Buffer.from('short-output'))
+        child.emit('close', 0)
+      })
+      return child
+    },
+  }
+  const smallOut = await spawnShell(small, 20_000, outputLimit, new AbortController().signal)
+  check('没超上限时不含「已丢弃」（回归）', !smallOut.includes('已丢弃'), JSON.stringify(smallOut))
+}
+
+
 if (failures > 0) {
   console.log(`\n${String(failures)} 项不通过`)
   process.exit(1)
 }
 console.log('\n全部通过')
+

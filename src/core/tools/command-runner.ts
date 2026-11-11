@@ -47,6 +47,17 @@ export interface SpawnPlan {
   /** 子进程工作目录。 */
   cwd: string
   /**
+   * 要不要一个真终端（pty）：**由工具声明，执行器据此决定要不要真终端**。
+   *
+   * bash 工具的 `tty` 参数折进这里；执行器（受限令牌后端）看到 true 才往 runner
+   * 参数里加 `--pty`。缺省（不给）与 false 同义：走原来的管道，一个字都不改。
+   */
+  tty?: boolean
+  /** pty 列数（只在 `tty` 为真时有意义）；缺省或给了非法值，由执行器兜底 120。 */
+  cols?: number
+  /** pty 行数（只在 `tty` 为真时有意义）；缺省或给了非法值，由执行器兜底 30。 */
+  rows?: number
+  /**
    * 自定义 spawn（可选）：给了它，bash 工具就不走 `spawn(file, args, …)`，
    * 改调这里。`file/args/env/cwd` 此刻只是给后续执行器与诊断看的「计划描述」。
    */

@@ -16906,6 +16906,32 @@ codex 的做法是拆开：不受限的 launcher 建 ConPTY，受限子进程靠
 - `CreatePseudoConsole` 真失败 → 签名 + 127 的分支只有代码路径，没有实跑证据。
 - resize 只加了绑定，调用方（bash 工具与界面）下一批接。
 
+## 2026-11-11：把 tty 接到 bash 工具（B7b）
+
+**为什么**
+
+runner 能建 PTY 了，但没人用它。要让模型显式要一个真终端（跑全屏程序、要进度条、要 Ctrl+C），得把“要不要 tty”从工具一路传到执行器。
+
+**做法**
+
+- `SpawnPlan` 加 `tty? / cols? / rows?`（工具声明，执行器决定怎么用）。
+- `backend.ts` 的 `plan()`：只有 `tty === true` 才追加 `--pty --cols N --rows N`（缺省 120×30，非整数或越界当没给）；非 tty 一个字节不改。
+- `bash.ts`：参数加 `tty`（默认 false）与 `cols` / `rows`（20–500）；tty 时输出按 UTF-8 原样解，不走 GBK 回落、不做省略截断；只接前台，后台作业与 `terminal` 不碰。
+- 顺手补一处“静默丢弃”：到达 `outputLimit × 4` 字节后原本直接不 push、也不提示，大 TUI 会无声丢尾巴。现在累加被丢字节数，收尾时追加一行说明（带上限与实际丢弃量），并且照样过脱敏。
+
+**验证**
+
+- `pnpm run typecheck`、`pnpm run build`（77 包）通过。
+- `node scripts/sandbox-win-token-test.mjs` → 76/76（`tty:false` 的计划里没有 `--pty`；`tty:true` 真跑出 `isTTY=true`）。
+- `node scripts/bash-truncation-test.mjs` → 19 条全过（新增 8 条：tty 超限写明丢弃字节、非 tty 两条提示互补、未超限不出现提示）。
+
+**遗留**
+
+- TUI 里真开 vim/htop 没试；CJK 宽字符与进度条重绘的观感没验。
+- 没有沙箱执行器时 `tty: true` 是空操作（计划里有标记、没人换执行体），模型拿到的仍是普通管道。
+- 后台作业与 `terminal` 会话未接 tty。
+
+
 
 
 

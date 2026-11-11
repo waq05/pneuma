@@ -139,6 +139,10 @@ export interface ShellRunOptions {
  *
  * T15：后台作业复用这一份——不挂 meaningful 超时（给一天的描述值）、
  * 不接取消信号，靠 onChunk 收增量、onExit 收退出码、trackKey 进登记表。
+ *
+ * `plan.tty === true` 时（模型显式要了真终端）：输出**原样保留**——不解码猜测
+ * （GBK 回落）、不截断。终端流里 ANSI 控制序列是渲染指令，按「中文 Windows 用
+ * GBK」那条回落解一次就会把整屏花掉，截断更是把光标定位序列切成半截。
  */
 export function spawnShell(
   plan: SpawnPlan,
@@ -169,6 +173,14 @@ export function spawnShell(
     // 中文 Windows 上 PowerShell 的默认控制台编码是 GBK，按 UTF-8 硬解就是一屏乱码。
     const chunks: Buffer[] = []
     let bytes = 0
+    /**
+     * 超过字节上限、没进缓冲的字节数。
+     *
+     * 上限之后直接不 push（不能无限吃内存），但**必须记数**：tty 分支跳过了
+     * truncateBashOutput 的「省了多少」提示，不记的话大 TUI 会在没有任何提示的情况下
+     * 丢尾部，模型会以为这就是全部输出。收尾时按这个数补一句可读提示。
+     */
+    let dropped = 0
     /** 后台作业的增量预览：流式解 UTF-8，跨块的多字节字符不会被切成半个。 */
     const chunkDecoder = new TextDecoder('utf-8')
     const append = (chunk: Buffer | string): void => {
@@ -177,6 +189,8 @@ export function spawnShell(
       if (bytes < outputLimit * 4) {
         chunks.push(buf)
         bytes += buf.length
+      } else {
+        dropped += buf.length
       }
       if (options?.onChunk !== undefined) options.onChunk(chunkDecoder.decode(buf, { stream: true }))
     }
@@ -199,12 +213,24 @@ export function spawnShell(
       signal.removeEventListener('abort', onAbort)
       untrack()
       options?.onExit?.(code)
-      const truncated = truncateBashOutput(decodeShellOutput(Buffer.concat(chunks)), outputLimit)
-      const body = truncated.trim()
+      // 真终端（plan.tty）直接把收到的字节按 UTF-8 原样解出来：不走 GBK 回落猜测，
+      // 也不截断——见 spawnShell 的注释。两条分支之外与非 tty 路径完全一致
+      const raw = Buffer.concat(chunks)
+      const text = plan.tty === true ? raw.toString('utf8') : truncateBashOutput(decodeShellOutput(raw), outputLimit)
+      const body = text.trim()
       const lines: string[] = []
       if (reason !== null) lines.push(reason)
       if (code !== 0 && reason === null) lines.push(`退出码 ${String(code)}`)
       lines.push(body === '' ? (reason === null ? '（无输出）' : '（进程被终止，没有收到输出）') : body)
+      // 真正丢过字节才补这一行：tty 分支没有 truncateBashOutput 的提示，非 tty 分支的
+      // 提示算的是「已收到文本里省掉多少字符」、并不知道上限外还扔了多少——两者都要说清。
+      // 这一行和正文一起过 redact，不绕过脱敏
+      if (dropped > 0) {
+        lines.push(
+          `[输出超过字节上限（${String(outputLimit * 4)} 字节，即设置里「命令输出封顶」${String(outputLimit)} 字的 4 倍），` +
+            `已丢弃 ${String(dropped)} 字节；要看完整输出就把「命令输出封顶」调大后重跑，或把命令范围缩小分段读]`,
+        )
+      }
       resolvePromise(redact(lines.join('\n')))
     }
     const arm = (why: string): void => {
@@ -353,10 +379,39 @@ export function shellPlan(
   return { file: 'sh', args: ['-c', command], env, cwd }
 }
 
+/** tty 尺寸的合法区间：与工具参数的 minimum/maximum 同一组数（越界当没给，由执行器兜底）。 */
+const TTY_MIN_SIZE = 20
+const TTY_MAX_SIZE = 500
+
+/**
+ * 把模型给的 cols/rows 折成计划里的尺寸：不是数、越界都当「没给」。
+ * 缺省值（120×30）不在这里填——那是执行器的事，没换执行体时也没人真开终端。
+ */
+function ttySize(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  const size = Math.floor(value)
+  if (size < TTY_MIN_SIZE || size > TTY_MAX_SIZE) return undefined
+  return size
+}
+
+/** 模型要了 tty 时的尺寸：只带真的合法的那个（缺的让执行器按 120×30 兜底）。 */
+function ttyPlan(cols: unknown, rows: unknown): { cols?: number; rows?: number } {
+  const size: { cols?: number; rows?: number } = {}
+  const width = ttySize(cols)
+  const height = ttySize(rows)
+  if (width !== undefined) size.cols = width
+  if (height !== undefined) size.rows = height
+  return size
+}
+
 /**
  * 执行一条命令：先问执行器缝拿最终执行计划，再 spawn，最后让改写过的那几位收尾。
  * 没有沙箱插件注册执行器时，计划就是上面的默认那份，行为与以前完全一致。
  * T15：`background` 旁路给后台作业用——同一套计划缝与环境脱敏，回调收增量与退出。
+ *
+ * `tty` 只给**前台**这条路径用（bash 工具显式要真终端时才传）：后台作业
+ * （{@link runShellBackground}）与 terminal 会话（`spawnTerminalShell`）各有自己的
+ * 组装路径，这一批不碰，它们的计划里永远没有 tty 字段。
  */
 async function runShell(
   command: string,
@@ -365,9 +420,15 @@ async function runShell(
   outputLimit: number,
   signal: AbortSignal,
   background?: ShellRunOptions,
+  tty?: { cols?: number; rows?: number },
 ): Promise<string> {
   const { env } = scrubChildEnv(process.env)
   const base: SpawnPlan = shellPlan(readShellChoice(), command, cwd, env)
+  if (tty !== undefined) {
+    base.tty = true
+    if (tty.cols !== undefined) base.cols = tty.cols
+    if (tty.rows !== undefined) base.rows = tty.rows
+  }
   const run = { command, cwd, timeoutMs, signal }
   const { plan, changed } = await planCommand(run, base)
   try {
@@ -464,7 +525,10 @@ export function createBashTool(
       ' 找代码（用 grep/glob），' +
       '不要用 echo 重定向或 heredoc 造文件（用 write），不要用 sed/awk 改文件（用 edit）。' +
       '一条命令里有 | ; && 时会被切成几段分别判定，任何一段危险整条就要问用户；带重定向或变量赋值的段不给走已授权规则。' +
-      '耗时命令设 timeoutMs；构建/测试/起服务这类更长的活传 run_in_background 转后台，立即返回 job id。',
+      '耗时命令设 timeoutMs；构建/测试/起服务这类更长的活传 run_in_background 转后台，立即返回 job id。' +
+      '只有在需要全屏程序或真终端行为（vim/htop、进度条、需要 tty 才肯输出的工具）时才传 tty=true：' +
+      '开了之后子进程的 stdout 是真终端，输出带 ANSI 控制序列，你要按终端渲染着读，而不是当纯文本逐行找关键字；' +
+      '拿不准就别开（默认 false，走普通管道，输出没有控制序列）。',
     parameters: {
       type: 'object',
       properties: {
@@ -472,6 +536,24 @@ export function createBashTool(
         timeoutMs: {
           type: 'number',
           description: `超时毫秒数（默认 ${budgets.timeoutMs}，上限 ${budgets.maxTimeoutMs}）`,
+        },
+        tty: {
+          type: 'boolean',
+          description:
+            'true = 给这条命令一个真终端（pty）。只有全屏程序或「没 tty 就不出彩」的工具才需要；' +
+            '开了以后输出带 ANSI 控制序列，要按终端渲染来读。默认 false',
+        },
+        cols: {
+          type: 'integer',
+          minimum: 20,
+          maximum: 500,
+          description: 'pty 列数（只在 tty=true 时有意义，默认 120）',
+        },
+        rows: {
+          type: 'integer',
+          minimum: 20,
+          maximum: 500,
+          description: 'pty 行数（只在 tty=true 时有意义，默认 30）',
         },
         ...(background !== undefined
           ? {
@@ -500,7 +582,10 @@ export function createBashTool(
       }
       const requested = typeof args.timeoutMs === 'number' ? Math.floor(args.timeoutMs) : budgets.timeoutMs
       const timeoutMs = Math.min(Math.max(requested, 1000), budgets.maxTimeoutMs)
-      const output = await runShell(args.command, ctx.cwd, timeoutMs, budgets.outputChars, ctx.signal)
+      // tty 只在这一条（前台）路径上组装：后台作业与 terminal 会话的组装各有入口，
+      // 这一批不碰（见 runShell 的注释）。
+      const tty = args.tty === true ? ttyPlan(args.cols, args.rows) : undefined
+      const output = await runShell(args.command, ctx.cwd, timeoutMs, budgets.outputChars, ctx.signal, undefined, tty)
       // 下载类命令的输出是外部内容：包裹围栏再进对话（先遮红后包裹，遮红在 spawnShell 里已完成）。
       if (NETWORK_FETCH_RE.test(args.command)) return wrapUntrusted('bash', output)
       return output
