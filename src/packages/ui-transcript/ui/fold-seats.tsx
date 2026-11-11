@@ -15,6 +15,7 @@ import {
   type JSX, type ReactNode, type RefObject,
 } from 'react'
 import { StepGroupRow } from './step-group-row'
+import { clearFold } from './fold-state'
 import type { StepGroup } from './process-groups'
 
 /**
@@ -38,6 +39,21 @@ function useStableCallback<T extends (...args: never[]) => void>(callback: T): T
 }
 
 /**
+ * 一个元素自己的「挂 / 摘 `hidden`」闭包，顺手带着这一层自己的放行动作。
+ *
+ * 为什么要带 `reveal`：末帧提交之前要**再查一次焦点**（见 `fold-motion.ts` 的
+ * `releaseForFocus`）。开始收起那一拍查过一次不算数——一轮收起要跑 200 多毫秒，
+ * 这中间键盘用户完全可能 Tab 进这一行。末帧 `display: none` 落到焦点元素上，焦点就掉回
+ * body 了，正是「自动收起永远不许把键盘用户脚下的地板抽掉」要防的事。查到焦点在，
+ * 调用方要调的就是**这一层自己的**放行动作，所以它得跟着提交闭包一起交出去。
+ */
+export interface HiddenCommit {
+  (): void
+  /** 焦点在这一层里时的放行（把这一轮 / 这一层展开）。 */
+  reveal: () => void
+}
+
+/**
  * 把「藏不藏」交给更外面一层执行的那次操作（对照 dsh 的 `chat/searchable-hidden.ts:9`）。
  *
  * @param element 稳定的子树根
@@ -45,14 +61,17 @@ function useStableCallback<T extends (...args: never[]) => void>(callback: T): T
  * @param commit 由**调用方**提供的「真的挂 / 摘 `hidden`」操作：过渡只决定什么时候调它，
  *   提交这件事始终归元素自己
  */
-export type HiddenTransition = (element: HTMLElement, hidden: boolean, commit: () => void) => void
+export type HiddenTransition = (element: HTMLElement, hidden: boolean, commit: HiddenCommit) => void
 
 /**
  * 一层「被隐藏」的归属：执行隐藏的那次操作 + 「此刻是不是真的在藏」的只读查询。
  *
  * 为什么两样都要：`transition` 决定怎么藏（第一次挂上来的元素同步藏、见过的走动画）；
  * `hiddenOrCollapsing` 给里层（阶段组）判「这一拍真的开始藏了没有」——不是「应该收起」，
- * 是「已经挂上或正在收起」（对照 dsh 的 `flow-motion.ts:104-106`）。
+ * 是「已经挂上或真的在跑」（对照 dsh 的 `flow-motion.ts:104-106`）。
+ *
+ * 注意它**不包括**「刚登记、还等开批」那一段：那一刻还没有任何东西在动，而已开始的
+ * 放行动作要等下一次提交才生效——按它关里层会误伤（见 `StepGroupSeat` 的守卫注释）。
  */
 export interface FoldScope {
   readonly transition: HiddenTransition
@@ -80,12 +99,16 @@ export const FoldScopeContext = createContext<FoldScope | undefined>(undefined)
  *   **不传 = 同步提交**：没有动画的视图（团队页签的子代理流、前导行）走这条路，正好。
  *   传了之后「谁藏、什么时候藏」由它决定，而 `commit` 仍然是本函数的闭包——
  *   于是「元素重挂之后 hidden 由它自己在挂载时补上」这件事不再依赖任何父级。
+ * @param onHidden `hidden` **真的挂上**那一拍的回调（放行时不会调）。整轮收起那一拍
+ *   要按「已经藏了」来复位里层的展开态，而不是按「应该收起」——见 `RowSeat` /
+ *   `StepGroupSeat` 的用法。
  * @returns 挂在被隐藏元素上的 ref
  */
 export function useSearchableHidden(
   hidden: boolean,
   reveal: () => void,
   transition?: HiddenTransition,
+  onHidden?: () => void,
 ): RefObject<HTMLDivElement | null> {
   const ref = useRef<HTMLDivElement | null>(null)
   useLayoutEffect(() => {
@@ -96,13 +119,21 @@ export function useSearchableHidden(
       reveal()
       return
     }
-    const commit = (): void => {
-      if (hidden) element.setAttribute('hidden', 'until-found')
-      else element.removeAttribute('hidden')
-    }
+    // 提交闭包把这一层自己的放行动作一起带上：末帧复检焦点时（fold-motion 的
+    // `releaseForFocus`）要调的就是它。`onHidden` 只在**真的挂上** `hidden` 时跑，
+    // 被焦点保护放行的那次永远不会跑到这里。
+    const commit = ((): void => {
+      if (hidden) {
+        element.setAttribute('hidden', 'until-found')
+        onHidden?.()
+      } else {
+        element.removeAttribute('hidden')
+      }
+    }) as HiddenCommit
+    commit.reveal = reveal
     if (transition === undefined) commit()
     else transition(element, hidden, commit)
-  }, [hidden, reveal, transition])
+  }, [hidden, reveal, transition, onHidden])
   useLayoutEffect(() => {
     const element = ref.current
     if (element === null) return
@@ -279,18 +310,29 @@ export function useProcessScroll(
  * @param props.hidden 整轮收起来了、且这一条在过程区里 → 藏起来（但留着 DOM 供 Ctrl+F 命中）
  * @param props.onReveal 被查找命中时把整轮展开
  * @param props.roundIndex 这一条属于哪一轮（刻度条按它做命中测试）
+ * @param props.foldStoreKey 这一行自己的折叠存档键（只有带展开体的行才有，见 render.tsx
+ *   的 `rowFoldKey`）。整轮**真的**把它藏起来那一拍要把这条存档抹掉：否则整轮收起之后
+ *   切走再切回，行按「会话 + 行身份」整批重挂，会把收起之前手动点开的思考 / 工具卡
+ *   原样带回来。组里的成员行由 `StepGroupSeat` 那一条统一抹（它们的 `.entry-row`
+ *   自己不会被挂 `hidden`）。
  */
 export function RowSeat(props: {
   hidden: boolean
   onReveal(): void
   roundIndex: number | undefined
+  foldStoreKey?: string | undefined
   children: ReactNode
 }): JSX.Element {
   const scope = useContext(FoldScopeContext)
   const reveal = useStableCallback(props.onReveal)
+  // 真的挂上 `hidden` 那一拍才抹（放行时不会跑到这里，见 useSearchableHidden 的 onHidden）：
+  // 用户手动展开的行，在这一轮被自动收起时复位成默认收起态。
+  const forgetFold = useStableCallback((): void => {
+    clearFold(props.foldStoreKey)
+  })
   // 收起时**不在这里**判断隐藏时机：这一条在过程区里，交给这一轮的折叠动画——
   // 见过的元素走逐行收、末帧提交；刚挂上来的元素（切会话按新键重挂）当场就是收起的。
-  const ref = useSearchableHidden(props.hidden, reveal, scope?.transition)
+  const ref = useSearchableHidden(props.hidden, reveal, scope?.transition, forgetFold)
   return (
     <div
       ref={ref}
@@ -316,6 +358,9 @@ export function RowSeat(props: {
  * @param props.turnCollapsed 整轮收起来了没有
  * @param props.open 这一组自己展开了没有
  * @param props.showDetail 组头要不要显示实时详情（档位开关）
+ * @param props.onTurnHidden 整轮**真的**把这一层藏起来了（`hidden` 已挂上）：组里那些行
+ *   自己的展开存档由调用方在这一拍抹掉（行是纯函数现算的，只有渲染层手上有清单）。
+ *   被焦点保护放行的那一拍**不会**调它。
  */
 export function StepGroupSeat(props: {
   group: StepGroup
@@ -325,15 +370,47 @@ export function StepGroupSeat(props: {
   onToggle(): void
   /** 整轮被收起时，浏览器查找命中要把它放出来的动作。 */
   onRevealTurn(): void
+  onTurnHidden(): void
   children: ReactNode
 }): JSX.Element {
   const scope = useContext(FoldScopeContext)
   const revealTurn = useStableCallback(props.onRevealTurn)
+  /**
+   * 这一组现在展开着没有，每次渲染刷新。
+   *
+   * 为什么要一个 ref 而不是直接用 `props.open`：「关这一组」有两个入口（同步提交那一拍、
+   * 动画末帧的 commit），它们可能先后走进来；关的动作必须是**幂等**的，否则 `onToggle`
+   * 第二下会把刚关掉的组翻回来——收起动画底下看不见，但存档里留下「展开」，下次切回来
+   * 就带着它。ref 在第一次关掉时立刻置假，第二个入口看见就退。
+   */
+  const openRef = useRef(props.open)
+  openRef.current = props.open
+  /** 在这一拍把这一组关掉（幂等；不碰展开方向）。 */
+  const closeGroup = (): void => {
+    if (!openRef.current) return
+    openRef.current = false
+    props.onToggle()
+  }
+  /**
+   * 整轮**真的**挂上 `hidden` 的那一拍：关掉这一组，并让调用方抹掉组里行的展开存档
+   * （对照 dsh 的 `ChatGroupSeat.tsx:168-170`）。
+   *
+   * 为什么挂在提交闭包里，而不是在下面那个布局效果里判「这一拍开始藏了没有」：
+   * 收起动画把元素先登记进 `waiting`、批次还要等一个微任务才开。那段窗口里
+   * `hiddenOrCollapsing` 已经为真，而**另一层**的放行（焦点在那一行里）要等下一次提交
+   * 才生效——在窗口里关组，就会出现「整轮最后是展开的、组却被关掉还写进了存档」
+   * （2026-11-11 报障）。提交闭包只在**这一层真的挂上 `hidden`** 时跑，放行时不跑，
+   * 时机与判据合一。
+   */
+  const turnHidden = useStableCallback((): void => {
+    closeGroup()
+    props.onTurnHidden()
+  })
   // 外层（组头 + 组体一起藏）也归整轮逐行动画：它是 `display: none`，早挂一帧就把这一行的
   // 高度抽走、动画等于没跑。刚挂上来的元素（切会话重挂）则在挂载时当场就是收起的。
   // 里层（组体自己）**不走动画**——组体收起走的是 `max-height: 0`，内容留在文档里，
   // 动画本来就是平滑的（见 views.css 的 .step-body），所以那一层不传 transition。
-  const seatRef = useSearchableHidden(props.turnCollapsed, revealTurn, scope?.transition)
+  const seatRef = useSearchableHidden(props.turnCollapsed, revealTurn, scope?.transition, turnHidden)
   // 组体被查找命中（或焦点正在组里）时，把这一组展开
   const revealGroup = useStableCallback(() => {
     if (!props.open) props.onToggle()
@@ -343,19 +420,16 @@ export function StepGroupSeat(props: {
   // 组体自己的滚动与渐隐：跑动中的组贴底跟随，已结束的组从顶部开始（见 useProcessScroll）
   const edges = useProcessScroll(bodyRef, contentRef, props.open, !props.group.closed)
   /**
-   * 整轮**真的**收起了这一拍：把这一组自己的展开态关掉（对照 dsh 的
-   * `ChatGroupSeat.tsx:168-170`）。
+   * 「从展开变收起」那一拍的兜底：没有动画作用域的视图（前导行、团队页签）是同步提交的，
+   * 这一拍 `hidden` 已经挂上，关一次就够。
    *
-   * 判据必须是「此刻已经挂上 `hidden` 或正在收起」，不是「整轮应该收起」：
-   *   - 布局效果按声明顺序跑，上面的 `useSearchableHidden` 先跑——所以这里读到的是
-   *     `hidden` 已经挂上、或这一层已经进了收起批次；
-   *   - 焦点在里面时那一层会被放行（展开），两个条件都不成立，于是**不关**：自动收起
-   *     把键盘用户的位置抽走之后又说他看得见，那一组不该跟着遭殃；
-   *   - 只在「从展开变收起」的那一拍关一次；展开方向什么都不做（用户自己开的才是真的）。
+   * 有作用域时不在这里关：这一刻元素大多只是进了 `waiting`、批次还没开
+   * （`hiddenOrCollapsing` 的说明见 `FoldScope`），真正关的时机在 `turnHidden` 里。
+   * 两个入口都走幂等的 {@link closeGroup}，先后到也只关一次。
    */
   const wasTurnCollapsed = useRef(props.turnCollapsed)
-  const toggleRef = useRef(props.onToggle)
-  toggleRef.current = props.onToggle
+  const toggleRef = useRef<() => void>(closeGroup)
+  toggleRef.current = closeGroup
   useLayoutEffect(() => {
     const entering = !wasTurnCollapsed.current && props.turnCollapsed
     wasTurnCollapsed.current = props.turnCollapsed
@@ -364,6 +438,7 @@ export function StepGroupSeat(props: {
     if (element === null) return
     const hiding = scope === undefined ? element.hasAttribute('hidden') : scope.hiddenOrCollapsing(element)
     if (!hiding) return
+    if (!openRef.current) return
     toggleRef.current()
   }, [props.turnCollapsed, props.open, scope, seatRef])
   return (

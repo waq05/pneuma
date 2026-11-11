@@ -9,7 +9,7 @@ import { Component, memo, useCallback, useContext, useMemo, useRef, useSyncExter
 import { MarkdownView, createT, estimateTextTokens, type TranscriptEntry } from '@dsc/ui'
 import { ReviewNoticeCard, findLast, parseReviewNotice } from '@dsc/ui-primitives'
 import { FoldPrefsContext, ShellCwdContext, ShellSessionContext, TOOLVIEW_SLOT, TRANSCRIPT_NODE_SLOT, TRANSCRIPT_REASONING_BODY_SLOT, TURN_INDEPENDENT, keyOf, type Row, type Seat, type ToolViewRender } from './shared'
-import { stepGroupFoldKey, turnFoldKey } from './fold-state'
+import { stepGroupFoldKey, turnFoldKey, clearFold } from './fold-state'
 import type { SeatStore } from './seat-store'
 import { rowShows } from './row-shows'
 import { turnDefaultOpen, useFoldMemory } from './round-fold'
@@ -42,6 +42,32 @@ const t = createT({ zh, en })
 interface MiddleBlock {
   node: ReactNode
   fold: boolean
+}
+
+/**
+ * 带展开体、会把开合写进 `fold-state` 的那几种行。
+ *
+ * 为什么写成一张表而不是 `switch (kind)`：`scripts/ui-prompt-cards-test.mjs` 按
+ * 「`case` + 类型名」的字面量切 `builtinRowBody` 的分支（`indexOf` 取第一处），
+ * 这里再写一遍 case 会让它切到本函数上，四节点槽那几条断言当场误红。
+ */
+const ROW_FOLD_KEY_KINDS: ReadonlySet<string> = new Set([
+  'thinking', 'tool', 'system-prompt', 'context-injection',
+])
+
+/**
+ * 这一行自己的折叠存档键（没有展开体的行返回 undefined）。
+ *
+ * 键的口径与 {@link builtinRowBody} 各分支里那几句 `storeKey` **必须一模一样**
+ * （`会话id:行稳定身份`）——那边是读写的使用者，这边是整轮收起时负责抹掉的人。
+ *
+ * 为什么要壳也知道这个键：整轮**真的**把这一行藏起来那一拍，要把这条存档抹掉。
+ * 不然一轮被自动收起之后切走再切回，行按「会话 + 行身份」整批重挂，会带着收起之前
+ * 手动点开的思考 / 工具卡状态回来（`RowSeat` 的 `onHidden` 用它）。
+ */
+function rowFoldKey(row: Row, sessionId: string | null): string | undefined {
+  if (!ROW_FOLD_KEY_KINDS.has(row.entry.kind)) return undefined
+  return `${sessionId ?? ''}:${row.stable}`
 }
 
 export function SeatBody({
@@ -202,6 +228,7 @@ export function SeatBody({
         hidden={hidden}
         onReveal={reveal}
         roundIndex={seat.round}
+        foldStoreKey={rowFoldKey(row, sessionId)}
         store={store}
         renderSlot={renderSlot}
       />
@@ -265,6 +292,12 @@ export function SeatBody({
       // 放平的前提是「组里只有一条工具」，而那时组头说的是和工具行同一句话。现在思考也在
       // 组里，一条思考 + 一次调用就是一个完整的阶段，放平等于把这层结构重新摊回平铺——
       // 正是用户报障时看到的画面。dsh 也不按条数放平（ChatGroupSeat 对每个组都画头）。
+      // 组里每一行自己的展开存档：整轮**真的**藏了这一层那一拍一起抹掉。成员行的
+      // `.entry-row` 自己不会被挂 `hidden`（藏的是组座位），所以它们的清理由这里统一做——
+      // 键只有渲染期才知道（成员是纯函数现算的）。
+      const forgetMembers = (): void => {
+        for (const member of members) clearFold(rowFoldKey(member, sessionId))
+      }
       middle.push({
         fold: true,
         node: (
@@ -276,6 +309,7 @@ export function SeatBody({
             showDetail={liveDetail}
             onToggle={() => toggleGroup(head)}
             onRevealTurn={reveal}
+            onTurnHidden={forgetMembers}
           >
             {members.map((member) => seatRow(member, false))}
           </StepGroupSeat>
@@ -564,12 +598,19 @@ export const SeatFrame = memo(function SeatFrame(props: {
   seatKey: string
   hidden: boolean
   roundIndex: number | undefined
+  /** 这一行自己的折叠存档键（见 {@link rowFoldKey}）：整轮真的藏它那一拍要抹掉。 */
+  foldStoreKey?: string | undefined
   onReveal(): void
   store: SeatStore
   renderSlot?: ToolViewRender
 }): ReactNode {
   return (
-    <RowSeat hidden={props.hidden} onReveal={props.onReveal} roundIndex={props.roundIndex}>
+    <RowSeat
+      hidden={props.hidden}
+      onReveal={props.onReveal}
+      roundIndex={props.roundIndex}
+      foldStoreKey={props.foldStoreKey}
+    >
       <RowSlot seatKey={props.seatKey} store={props.store} renderSlot={props.renderSlot} />
     </RowSeat>
   )

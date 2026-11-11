@@ -3,7 +3,7 @@ process.on('unhandledRejection', () => {})
 /**
  * 「整轮收起态在行体重挂之后重新露出来」的真机探针（2026-11-11）。
  *
- * ## 要证的三件事（P1 / P2 / P3 分开报账）
+ * ## 要证的五件事（P1 / P2 / P3 / P4 / P5 分开报账）
  *
  * - **P1**：一轮收起来之后，过程行上挂着 `hidden="until-found"`；切到另一条会话（轮数相同、
  *   于是轮座位按轮号被复用、行按「会话 + 行身份」整批重挂）后，这些行**仍然**挂着 hidden，
@@ -12,9 +12,14 @@ process.on('unhandledRejection', () => {})
  *   `ChatGroupSeat.tsx:168-170`：只有「此刻正在藏」才关，不是「应该收起」就关）。验收：
  *   展开整轮 → 点开一个组 → 收起整轮 → 再展开整轮 → 那个组是关着的。
  * - **P3**：焦点在组里时整轮收起被**放行**（`useSearchableHidden` 的焦点保护），那一组不许
- *   跟着关掉（`fold-seats.tsx:349-353` 的守卫：没挂 hidden、没进收起批次就不关）。验收：
+ *   跟着关掉（`fold-seats.tsx` 的守卫：没挂 hidden、没进收起批次就不关）。验收：
  *   展开整轮 → 点开一个组 → 焦点放到组头 → 点整轮开关 → 整轮仍展开、组仍展开。
  *   中央那段按前缀清存档的逻辑（ui.tsx 旧 `collapsedRounds`）在时会红：它不看焦点，把组关掉。
+ * - **P4**（焦点场景二）：收起**动画跑到一半**再让焦点进来——开始那一拍查不到它。
+ *   验收：末帧那一层没挂 `hidden`、焦点还在原处、整轮被放行成展开。
+ * - **P5**（行级复位）：展开整轮 → 手动展开一条思考行 → 收起整轮（真的藏）→ 切走再切回
+ *   （行整批重挂）→ 再展开整轮 → 那一条行回到默认收起态。整轮收起时没抹行存档的话，
+ *   这里会带着手动展开的状态回来。
  *
  * ## 场景怎么造
  *
@@ -26,6 +31,12 @@ process.on('unhandledRejection', () => {})
  *
  * 收起用真实操作完成：点整轮开关行先展开（基线必须是从展开态收起过来的），再点一次收起，
  * 等行上真的出现 `hidden="until-found"`。切会话也走真实路径：点侧栏那条会话。
+ *
+ * ## 断言数（以实际运行输出为准）
+ *
+ * 跑下来 **24 条**：`assert` 调用点 20 处，其中 3 处在 `ROUNDS` 轮循环里各跑两次
+ * （20 − 3 + 6 = 23），再加 `requireScene` 记的 1 条场景断言。文档与提交信息都照这个数写，
+ * 别再按「`assert` 出现几次」或「设计了几条」另算一套。
  *
  * 运行：node desktop/shots/_verify-collapse-remount.mjs
  * 产物：desktop/shots/_collapse-remount.png
@@ -526,6 +537,190 @@ assert(
     && focusKept.after.bodyHidden === false
     && (focusKept.after.bodyHeight ?? 0) > 0,
   JSON.stringify(focusKept.after ?? focusKept),
+)
+
+/* ───────────── P4：收起动画跑到一半，键盘焦点 Tab 进来 ───────────── */
+
+/**
+ * 焦点场景二：收起**已经开始跑**之后（动画没跑完）把焦点移进某一行。
+ *
+ * 为什么单独要这一条：开始收起那一拍的焦点检查看不到它——那一刻焦点还在整轮开关上。
+ * 末帧 `display: none` 一旦落到后来进来的焦点元素上，焦点就掉回 body；末帧的焦点复检
+ * 就是为这一拍加的（`fold-motion.ts` 的 `releaseForFocus`）。验收三段：
+ * 前提（动画中途焦点真的搬进来了）→ 末帧那一行**没有**被挂 `hidden` → 焦点还在原处，
+ * 并且整轮被放行成展开。
+ */
+const midFlight = await cdp.evaluate(`
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const seat = document.querySelector('.turn-seat[data-round-seat="0"]')
+  if (seat === null) return { error: '没有第一轮' }
+  const turn = seat.querySelector('.turn-fold:not([disabled])')
+  if (turn === null) return { error: '第一轮没有整轮开关' }
+  // 1. 基线：整轮摊开；焦点放在整轮开关上——开始收起那一拍的焦点检查因此不会放行。
+  if (turn.getAttribute('data-open') !== '1') turn.click()
+  for (let i = 0; i < 80; i += 1) {
+    if (seat.querySelector('.turn-process')?.getAttribute('data-fold') === 'open') break
+    await wait(50)
+  }
+  const head = seat.querySelector('.step-seat .think-head')
+  if (head === null) return { error: '第一轮里找不到可聚焦的思考行头' }
+  const owner = head.closest('.step-seat')
+  turn.focus()
+  turn.click()
+  // 2. 等收起批次真的开跑（约 60ms：高度过渡的延迟段刚开始），再把焦点搬进这一行。
+  await wait(60)
+  const during = {
+    fold: seat.querySelector('.turn-process')?.getAttribute('data-fold') ?? null,
+    ownerHeight: owner === null ? null : Math.round(owner.getBoundingClientRect().height),
+  }
+  head.focus()
+  const focusedNow = document.activeElement === head
+  // 3. 等收起跑完（过渡 + 提交余量 + 超时兜底都在 700ms 之内）。
+  await wait(700)
+  return {
+    during,
+    focusedNow,
+    after: {
+      fold: seat.querySelector('.turn-process')?.getAttribute('data-fold') ?? null,
+      turnOpen: turn.getAttribute('data-open'),
+      ownerHidden: owner === null ? null : owner.hasAttribute('hidden'),
+      ownerHeight: owner === null ? null : Math.round(owner.getBoundingClientRect().height),
+      focused: document.activeElement === head,
+      activeTag: document.activeElement === null ? null : document.activeElement.tagName,
+      groupOpen: seat.querySelector('.step-fold')?.getAttribute('data-open') ?? null,
+    },
+  }
+`)
+process.stdout.write(`  P4 动画中途焦点 ${JSON.stringify(midFlight)}\n`)
+
+assert(
+  'P4 前提：收起动画跑到一半时焦点搬进了这一行的思考头（此刻整轮已进入收起）',
+  midFlight.during !== undefined
+    && midFlight.during.fold === 'closed'
+    && (midFlight.during.ownerHeight ?? 0) > 0
+    && midFlight.focusedNow === true,
+  JSON.stringify({ during: midFlight.during, focusedNow: midFlight.focusedNow }),
+)
+assert(
+  'P4：末帧没有把带焦点的那一层挂上 hidden（`display:none` 没落到焦点元素上）',
+  midFlight.after !== undefined
+    && midFlight.after.ownerHidden === false
+    && (midFlight.after.ownerHeight ?? 0) > 0,
+  JSON.stringify(midFlight.after ?? midFlight),
+)
+assert(
+  'P4：焦点还停在原来那个思考头上（没有掉回 body）',
+  midFlight.after !== undefined && midFlight.after.focused === true,
+  JSON.stringify(midFlight.after ?? midFlight),
+)
+assert(
+  'P4：这一轮被末帧复检放行成展开（开关行与 data-fold 都是展开，组也没被顺带关掉）',
+  midFlight.after !== undefined
+    && midFlight.after.turnOpen === '1'
+    && midFlight.after.fold === 'open'
+    && midFlight.after.groupOpen === '1',
+  JSON.stringify(midFlight.after ?? midFlight),
+)
+
+/* ───────── 行级复位：整轮收起时抹掉行自己的展开存档（切走再切回） ───────── */
+
+/**
+ * 缺陷二的验收：整轮收起**真的藏了**这一行那一拍，行自己的展开存档要抹掉。
+ *
+ * 为什么要切走再切回：行的展开态活在行体自己的 state 里，收起 / 展开整轮不重挂行体，
+ * 同一份 DOM 上的行当然还开着——那不是缺陷。缺陷的现场是行按「会话 + 行身份」整批
+ * **重挂**：重挂时行体会从存档读回展开态，存档没抹就带着收起之前手动点开的状态回来。
+ * 所以步骤是：展开整轮 → 手动展开一条思考行 → 收起整轮（真的藏）→ 切走再切回（重挂）
+ * → 再展开整轮 → 那一条行必须回到默认收起态。
+ */
+const rowReset = await cdp.evaluate(`
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const seatOf = () => document.querySelector('.turn-seat[data-round-seat="0"]')
+  let seat = seatOf()
+  if (seat === null) return { error: '没有第一轮' }
+  let turn = seat.querySelector('.turn-fold:not([disabled])')
+  if (turn === null) return { error: '第一轮没有整轮开关' }
+  // 1. 整轮摊开。
+  if (turn.getAttribute('data-open') !== '1') turn.click()
+  for (let i = 0; i < 80; i += 1) {
+    if (seat.querySelector('.turn-process')?.getAttribute('data-fold') === 'open') break
+    await wait(50)
+  }
+  // 2. 点开阶段组（思考行在组里；组体收起时内容仍在文档里，但走真实点击路径）。
+  const group = seat.querySelector('.step-fold:not([disabled])')
+  if (group === null) return { error: '第一轮里没有阶段组' }
+  if (group.getAttribute('data-open') !== '1') group.click()
+  await wait(250)
+  // 3. 手动展开组里的一条思考行。
+  const head = seat.querySelector('.entry-row .think-head')
+  if (head === null) return { error: '第一轮里找不到思考行的头' }
+  if (head.getAttribute('aria-expanded') !== 'true') head.click()
+  await wait(150)
+  const opened = head.getAttribute('aria-expanded')
+  // 4. 焦点放到整轮开关上，收起整轮（不走焦点放行，这一轮真的会藏）。
+  turn.focus()
+  turn.click()
+  let hiddenAt = false
+  for (let i = 0; i < 120; i += 1) {
+    const owners = [...seat.querySelectorAll('.turn-process > .turn-process-body > *')]
+    if (owners.length > 0 && owners.every((owner) => owner.hasAttribute('hidden'))) {
+      hiddenAt = true
+      break
+    }
+    await wait(50)
+  }
+  // 5. 切走再切回：行按「会话 + 行身份」整批重挂，这才是缺陷的现场（当前在乙会话）。
+  const away = [...document.querySelectorAll('.sess-item')].find((row) =>
+    (row.querySelector('.title-text')?.textContent ?? '').includes('甲'))
+  if (away === undefined) return { error: '侧栏里找不到甲会话' }
+  away.click()
+  for (let i = 0; i < 300; i += 1) {
+    const first = document.querySelector('.turn-seat[data-round-seat]')?.querySelector('.entry-user')?.textContent ?? ''
+    if (first.includes('甲')) break
+    await wait(100)
+  }
+  await wait(300)
+  const back = [...document.querySelectorAll('.sess-item')].find((row) =>
+    (row.querySelector('.title-text')?.textContent ?? '').includes('乙'))
+  if (back === undefined) return { error: '侧栏里找不到乙会话' }
+  back.click()
+  for (let i = 0; i < 300; i += 1) {
+    const first = document.querySelector('.turn-seat[data-round-seat]')?.querySelector('.entry-user')?.textContent ?? ''
+    if (first.includes('乙')) break
+    await wait(100)
+  }
+  await wait(400)
+  // 6. 再展开整轮，看那一条行回到默认收起态没有。
+  seat = seatOf()
+  turn = seat.querySelector('.turn-fold:not([disabled])')
+  if (turn === null) return { error: '切回之后第一轮没有整轮开关' }
+  if (turn.getAttribute('data-open') !== '1') turn.click()
+  for (let i = 0; i < 80; i += 1) {
+    if (seat.querySelector('.turn-process')?.getAttribute('data-fold') === 'open') break
+    await wait(50)
+  }
+  await wait(250)
+  const after = seat.querySelector('.entry-row .think-head')
+  return {
+    hiddenAt,
+    opened,
+    after: {
+      expanded: after === null ? null : after.getAttribute('aria-expanded'),
+      text: after === null ? null : (after.textContent ?? '').slice(0, 12),
+    },
+  }
+`)
+process.stdout.write(`  行级复位 ${JSON.stringify(rowReset)}\n`)
+
+assert(
+  '行级复位前提：手动展开的那条思考行当时是开着的，且整轮收起真的落地（座位全挂 hidden）',
+  rowReset.opened === 'true' && rowReset.hiddenAt === true,
+  JSON.stringify({ opened: rowReset.opened, hiddenAt: rowReset.hiddenAt, error: rowReset.error }),
+)
+assert(
+  '行级复位：切走再切回、再展开整轮之后，那一条思考行回到默认收起态（存档已抹掉）',
+  rowReset.after !== undefined && rowReset.after.expanded === 'false',
+  JSON.stringify(rowReset.after ?? rowReset),
 )
 
 teardown([cdp, desktop, home])

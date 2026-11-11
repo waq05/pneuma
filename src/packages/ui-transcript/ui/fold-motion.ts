@@ -15,6 +15,20 @@
  *     提交，而重挂不改变 `collapsed`，新 DOM 于是没人补 `hidden`，收起的一轮整段露出来
  *     （2026-11-11 报障，真机探针 `desktop/shots/_verify-collapse-remount.mjs`）。
  *
+ * ## 末帧要再查一次焦点（2026-11-11 第三次修）
+ *
+ * `useSearchableHidden` 在**开始**收起那一拍查一次焦点，命中就放行；但一轮收起要跑
+ * 200 多毫秒，这中间键盘用户完全可能 Tab 进这一行。末帧 `display: none` 落到焦点元素上，
+ * 焦点就掉回 body 了。所以 {@link settle} 与 {@link finish} 在提交闭包落地**之前**
+ * 再查一次 `element.contains(activeElement)`：
+ *
+ *   - 命中：**不挂** `hidden`，调这一层自己的 `reveal()`（提交闭包上带着，见
+ *     `fold-seats.tsx` 的 `HiddenCommit`）把这一轮 / 这一层放行成展开；
+ *   - 同时把这个元素从这一批里干净退出（`clearElement`，不留内联高度）。
+ *
+ * 放行的顺序是「先开批次（行还写着 0 高，锚点才量得准）→ 再还内联值」，
+ * 与点击展开那条路同一条时序。
+ *
  * ## 为什么还要一个批次
  *
  * 同一轮里所有行同时收，时长一样、必须同一个时钟；滚动补偿也**只能开一次批**
@@ -57,7 +71,7 @@
  */
 import { useLayoutEffect, useMemo, useRef } from 'react'
 import { readSlowMs, type ChatViewport, type FoldBatch } from './viewport'
-import type { FoldScope, HiddenTransition } from './fold-seats'
+import type { FoldScope, HiddenCommit, HiddenTransition } from './fold-seats'
 
 /** 淡出占整段的比例（参考实现 70ms / 160ms）。 */
 const FADE_RATIO = 70 / 160
@@ -83,10 +97,10 @@ export interface FoldMotion extends FoldScope {
   clear(): void
 }
 
-/** 一个正在收起的元素与它自己的末帧提交。 */
+/** 一个正在收起的元素与它自己的末帧提交（提交闭包上还带着这一层自己的 `reveal`）。 */
 interface Moving {
   readonly element: HTMLElement
-  readonly commit: () => void
+  readonly commit: HiddenCommit
   readonly height: number
   readonly marginTop: number
 }
@@ -148,11 +162,39 @@ function createFoldMotion(latest: { current: MotionOptions }): FoldMotion {
   let run: Run | null = null
   let scheduled = false
 
-  /** 元素此刻是不是已经藏好、或正在这一轮里收起（不是「将要收」）。 */
+  /**
+   * 元素此刻是不是**真的**在藏：已经挂上 `hidden`，或者这一批已经真的开跑了。
+   *
+   * **排队等开批的那一段不算**：那时元素只是登记进了 `waiting`，还没有任何东西在动；
+   * 而「另一层被焦点保护放行、整轮其实不藏」要等下一次提交才生效。按「排上队」判，
+   * 里层（阶段组）的守卫会在这个窗口里误把组关掉（2026-11-11 报障，见
+   * `StepGroupSeat` 的 `turnHidden`）。
+   */
   function hiddenOrCollapsing(element: HTMLElement): boolean {
     if (element.hasAttribute('hidden')) return true
-    if (waiting.has(element)) return true
     return run !== null && run.items.has(element)
+  }
+
+  /**
+   * 末帧复检焦点：焦点在这一行里就放行，**不挂** `hidden`。
+   *
+   * 为什么末帧还要查一次（2026-11-11 第三次修）：`useSearchableHidden` 只在**开始**
+   * 收起那一拍查一次焦点，而一轮收起要跑 200 多毫秒；这中间键盘用户完全可能 Tab 进
+   * 这一行。末帧 `display:none` 落到焦点元素上，焦点掉回 body——正是模块头承诺
+   * 「自动收起永远不许把键盘用户脚下的地板抽掉」要防的事：
+   *   - 命中就调**这一层自己的** `reveal()`（展开这一轮 / 这一层），由提交闭包带过来；
+   *   - 调用方负责把这个元素从这一批里干净退出（`clearElement`，别留下内联高度）。
+   *
+   * 顺序：先 `reveal()` 再清内联——放行要在行还写着 0 高的时候开批次，锚点才量得准
+   * （见模块头「两个方向不对称」）。
+   *
+   * @returns 是不是因为焦点而放行
+   */
+  function releaseForFocus(item: Moving): boolean {
+    const element = item.element
+    if (!element.contains(element.ownerDocument.activeElement)) return false
+    item.commit.reveal()
+    return true
   }
 
   /** 一个元素收完了：挂 `hidden` → 清内联；它是最后一个就让整批收工。 */
@@ -163,6 +205,13 @@ function createFoldMotion(latest: { current: MotionOptions }): FoldMotion {
     if (listener !== undefined) {
       element.removeEventListener('transitionend', listener)
       target.listeners.delete(element)
+    }
+    // 末帧复检焦点（见 releaseForFocus）：这一行里要是有键盘焦点，就不挂 `hidden`，
+    // 放行成展开，并把它从这一批里干净退出（内联高度一起还回去）。
+    if (releaseForFocus(item)) {
+      clearElement(element)
+      if (target.items.size === 0) finish(target)
+      return
     }
     // 顺序照旧：先让元素挂上 `hidden`（display:none），再清内联样式，反过来会弹回原高度。
     if (element.isConnected) item.commit()
@@ -181,6 +230,13 @@ function createFoldMotion(latest: { current: MotionOptions }): FoldMotion {
     // 剩下的元素是「过渡被丢掉 / 走到超时兜底」的那些：照同样的顺序补提交。
     for (const [element, listener] of target.listeners) element.removeEventListener('transitionend', listener)
     for (const item of [...target.items.values()]) {
+      // 末帧复检焦点（见 releaseForFocus）：这一行里要是有键盘焦点，就不挂 `hidden`，
+      // 放行成展开，内联高度还回去。放行会让整轮翻成展开，同一批剩下的行会随下一次
+      // 提交摘掉 `hidden`（`transition` 的展开方向），这里不替它们留半截状态。
+      if (releaseForFocus(item)) {
+        clearElement(item.element)
+        continue
+      }
       if (item.element.isConnected) item.commit()
       clearElement(item.element)
     }
@@ -318,7 +374,7 @@ function createFoldMotion(latest: { current: MotionOptions }): FoldMotion {
    * @param element 要收起的行（或阶段组座位）
    * @param commit 这个元素自己的「挂 `hidden`」闭包（末帧由本模块调它）
    */
-  function collapse(element: HTMLElement, commit: () => void): void {
+  function collapse(element: HTMLElement, commit: HiddenCommit): void {
     const height = element.offsetHeight
     const marginTop = Number.parseFloat(globalThis.getComputedStyle(element).marginTop) || 0
     // 已经没高度了（例如组体自己先收了）：没有可过渡的东西，当场提交。
@@ -347,7 +403,9 @@ function createFoldMotion(latest: { current: MotionOptions }): FoldMotion {
     const mounted = seen.has(element)
     seen.add(element)
     if (hidden) {
-      if (hiddenOrCollapsing(element)) return
+      // 已经在藏 / 已经排上队的不用再来一次（`hiddenOrCollapsing` 现在只认「真在跑」，
+      // 排队那一段要单独判，否则同一个元素会被登记两次）。
+      if (hiddenOrCollapsing(element) || waiting.has(element)) return
       if (mounted) collapse(element, commit)
       else commit()
       return
