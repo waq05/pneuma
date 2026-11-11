@@ -17,7 +17,8 @@
  * @module dsc/core/mention
  */
 import { readdirSync } from 'node:fs'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { dedupeContainedWorkspaceRoots, sameWorkspaceRoot } from './config.js'
 
 /** 光标处的 @ 提及查询：token 是 @ 之后的已敲字符（可为空串），start 指向 @ 本身。 */
 export interface MentionQuery {
@@ -106,6 +107,14 @@ export const SKIP_DIR_NAMES = new Set([
 export const WALK_MAX_FILES = 4000
 export const WALK_MAX_DEPTH = 6
 
+/**
+ * 每个根的最小候选配额（2026-11，多根预算）：`WALK_MAX_FILES / 4` 与 200 条取小。
+ *
+ * 为什么需要它：所有根共用一份预算，第一个根若是个巨仓库就会把它吃满，后面的根一条
+ * 候选都进不来，而且没有任何提示——用户会以为「加了根但 @ 什么也没有」。
+ */
+const WALK_MIN_FILES_PER_ROOT = 200
+
 /** fs-list 透传回包的最小形状（desktop-dock 插件定义，这里只认形状）。 */
 export type DirLister = (dir: string) => Promise<{ entries: { name: string; dir: boolean }[] }>
 
@@ -146,6 +155,9 @@ interface WalkBudget {
 /**
  * 深度优先遍历一个根。目录按 SKIP_DIR_NAMES 剪枝，深度到 WALK_MAX_DEPTH 即止；
  * lister 抛错时跳过该目录（权限不足的目录不该让整份清单失败）。
+ *
+ * `skipRoots` 是「已经被别的根收录、这里不要再进」的根：主根被一个更大的额外根包住时，
+ * 外层那个根跳过主根这棵子树，同一批文件就不会以两种路径各列一遍。
  */
 async function walkWorkspaceRoot(
   lister: DirLister,
@@ -155,6 +167,7 @@ async function walkWorkspaceRoot(
   budget: WalkBudget,
   hits: WalkHit[],
   rootIndex: number,
+  skipRoots: readonly string[] = [],
 ): Promise<void> {
   if (budget.left <= 0) return
   let entries: { name: string; dir: boolean }[]
@@ -170,7 +183,9 @@ async function walkWorkspaceRoot(
       // 点开头目录（.mimosa/.zcode 这类工具状态目录）一律跳过：名字按字典序排在
       // 源码前面，历史文件一多就把整个上限吃满，源码目录反而一个都收不进。
       if (depth >= WALK_MAX_DEPTH || SKIP_DIR_NAMES.has(entry.name) || entry.name.startsWith('.')) continue
-      await walkWorkspaceRoot(lister, root, childRel, depth + 1, budget, hits, rootIndex)
+      const abs = join(root, childRel)
+      if (skipRoots.some((other) => sameWorkspaceRoot(abs, other))) continue
+      await walkWorkspaceRoot(lister, root, childRel, depth + 1, budget, hits, rootIndex, skipRoots)
     } else {
       hits.push({ rel: childRel, rootIndex })
       budget.left -= 1
@@ -185,13 +200,27 @@ function shortRootHash(root: string): string {
   return hash.toString(16).padStart(8, '0').slice(0, 4)
 }
 
+/** `child` 是否就是 `parent` 或落在它里面（两边都已是绝对路径）。 */
+function rootContains(parent: string, child: string): boolean {
+  const rel = relative(parent, child)
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+
 /**
  * 给非主根算标签前缀：先只用根目录名；重名时换成 `父目录名-根目录名`；
  * 还重就再挂短哈希。主根（下标 0）不前缀，保持旧行为。
+ *
+ * `mainTopDirs` 是主根的顶层目录名：主根不前缀，但它占着 `proj/...` 这个 label 前缀——
+ * 主根里恰好有个叫 `proj` 的目录、另一个根也叫 `proj` 时，两枚候选的 label 会一模一样
+ * （`proj/README.md`），用户点哪条都分不清，所以主根的顶层目录名也算进撞名集合。
  */
-function rootLabelPrefixes(roots: readonly string[]): string[] {
+function rootLabelPrefixes(roots: readonly string[], mainTopDirs: Iterable<string> = []): string[] {
   const baseNames = roots.map((root) => basename(root))
   const baseCounts = new Map<string, number>()
+  for (const name of mainTopDirs) {
+    const key = name.toLowerCase()
+    baseCounts.set(key, (baseCounts.get(key) ?? 0) + 1)
+  }
   for (let index = 1; index < roots.length; index += 1) {
     const key = baseNames[index]!.toLowerCase()
     baseCounts.set(key, (baseCounts.get(key) ?? 0) + 1)
@@ -243,14 +272,33 @@ export async function collectWorkspaceFiles(
   }
 
   const lister = typeof optionsOrRoot === 'string' ? nodeDirLister : (optionsOrRoot.lister ?? nodeDirLister)
-  const roots = (typeof rootsOrLister === 'string' ? [rootsOrLister] : [...rootsOrLister]).map((root) => resolve(root))
+  const requested = (typeof rootsOrLister === 'string' ? [rootsOrLister] : [...rootsOrLister]).map((root) => resolve(root))
+  // 嵌套的根按 realpath 收成一份：被包含的那条不再单独遍历，同一批文件只列一次。
+  const roots = dedupeContainedWorkspaceRoots(requested)
   if (roots.length === 0) return []
   const hits: WalkHit[] = []
   const budget: WalkBudget = { left: WALK_MAX_FILES }
+  // 每根的最小配额：总预算的 1/4 与 200 条取小；根多到均分不足 1 条时按根数降档。
+  const minPerRoot = Math.max(1, Math.min(WALK_MIN_FILES_PER_ROOT, Math.floor(WALK_MAX_FILES / roots.length)))
   for (let index = 0; index < roots.length && budget.left > 0; index += 1) {
-    await walkWorkspaceRoot(lister, roots[index]!, '', 0, budget, hits, index)
+    const remaining = roots.length - index - 1
+    // 先给后面的每个根留出最小配额，第一个巨根就不能把预算吃光。
+    const reserve = Math.min(minPerRoot * remaining, Math.max(0, budget.left - 1))
+    const allowance = budget.left - reserve
+    const local: WalkBudget = { left: allowance }
+    // 只有主根可能被别的根包住（其余被包含的根已经在收口时丢掉了）：外层根跳过主根子树。
+    const skipRoots = index !== 0 && rootContains(roots[index]!, roots[0]!) ? [roots[0]!] : []
+    await walkWorkspaceRoot(lister, roots[index]!, '', 0, local, hits, index, skipRoots)
+    budget.left -= allowance - Math.max(0, local.left)
   }
-  const prefixes = rootLabelPrefixes(roots)
+  // 主根的顶层目录名也占着 `<名字>/...` 这个 label 前缀，要参与撞名判定（见 rootLabelPrefixes）。
+  const mainTopDirs = new Set<string>()
+  for (const hit of hits) {
+    if (hit.rootIndex !== 0) continue
+    const slash = hit.rel.indexOf('/')
+    if (slash > 0) mainTopDirs.add(hit.rel.slice(0, slash))
+  }
+  const prefixes = rootLabelPrefixes(roots, mainTopDirs)
   return hits.map((hit) => {
     const root = roots[hit.rootIndex]!
     const main = hit.rootIndex === 0

@@ -9,9 +9,9 @@
  *
  * @module dsc/core/config
  */
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { isAbsolute, join, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import {
   DSC_CONFIG_YAML,
   DSC_CREDENTIALS,
@@ -185,6 +185,63 @@ export function sameWorkspaceRoot(left: string, right: string): boolean {
   return workspaceRootKey(left) === workspaceRootKey(right)
 }
 
+/**
+ * 解析符号链接后的比较键：junction / 8.3 短名 / 大小写不同但实际同一个目录的两个根，
+ * 只有走 realpath 才折得到一起（配置里两条写法不同的路径并不罕见）。目录不在时退回
+ * 字面路径——不存在的根反正一个文件也列不出来。
+ */
+function realWorkspaceRootKey(path: string): string {
+  try {
+    return workspaceRootKey(realpathSync(path))
+  } catch {
+    return workspaceRootKey(path)
+  }
+}
+
+/** `child` 与 `parent` 相同，或落在 `parent` 里面（两边都是 {@link workspaceRootKey} 的形态）。 */
+function rootContains(parent: string, child: string): boolean {
+  const rel = relative(parent, child)
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+
+/**
+ * 去掉「被另一个根包含」的根（按 realpath 判，路径写法不同不影响）。
+ *
+ * 为什么保留外层、丢掉内层：外层遍历时内层里的每个文件本来就会列出来，丢掉内层一条候选
+ * 都不少；反过来丢掉外层，内层之外的目录就一条都列不出来。
+ *
+ * 主根（下标 0）是唯一例外，**永远不丢**：它承载「主根用相对路径、其余根用绝对路径」这个
+ * 命名空间，也是会话自己的工作目录，丢了整份清单就没了基准。包住主根的额外根也保留
+ * （它是更大范围的授权，授权层不能因为「已被主根覆盖」就收回）；列清单时由调用方跳过
+ * 主根那棵子树，避免同一批文件算两遍（见 `core/mention.ts`）。
+ *
+ * 只处理「同一批文件被列两遍」这层：授权集合本身按这个清单给，所以清单必须是不重复的。
+ */
+export function dedupeContainedWorkspaceRoots(roots: readonly string[]): string[] {
+  if (roots.length <= 1) return [...roots]
+  const keys = roots.map(realWorkspaceRootKey)
+  // 只从下标 1 开始丢：主根不许消失。
+  const keep = roots.map(() => true)
+  // 完全同一个目录（配置里写了两遍、写法不同）只留靠前的那条。
+  const firstByKey = new Map<string, number>()
+  for (const [index, key] of keys.entries()) {
+    const first = firstByKey.get(key)
+    if (first === undefined) firstByKey.set(key, index)
+    else if (index > 0) keep[index] = false
+  }
+  for (let index = 1; index < roots.length; index += 1) {
+    if (!keep[index]) continue
+    for (let other = 0; other < roots.length; other += 1) {
+      if (other === index || !keep[other]) continue
+      if (rootContains(keys[other]!, keys[index]!)) {
+        keep[index] = false
+        break
+      }
+    }
+  }
+  return roots.filter((_, index) => keep[index])
+}
+
 /** 把原文条目归一成「可用根 + 被丢弃的原文」；不存在/不是目录的条目只进 invalid。 */
 function normalizeWorkspaceRoots(raw: readonly string[]): WorkspaceRootsConfig {
   const roots: string[] = []
@@ -237,6 +294,10 @@ export function readWorkspaceRootsConfig(): WorkspaceRootsConfig {
  * 这是「界面能切到哪些根」的唯一真源：dock 的 `fs-list` 只认这份清单里的值，
  * 渲染进程传来的任意路径都不会被当成根。放在 config 模块而不是每个调用方各拼一份，
  * 是为了让授权集合只有一处定义（改口径只改这里）。
+ *
+ * 互相嵌套的根在这里按 realpath 收成一份（{@link dedupeContainedWorkspaceRoots}）：
+ * 被别的根包含的那条不再单独列，否则拿这份清单去遍历时同一批文件会被列两遍、把
+ * @ 补全的 4000 条预算吃掉一半。主根与「包住主根的根」都保留，见那个函数的说明。
  */
 export function allowedWorkspaceRoots(cwd: string): string[] {
   const main = resolve(cwd)
@@ -248,7 +309,7 @@ export function allowedWorkspaceRoots(cwd: string): string[] {
     seen.add(key)
     out.push(root)
   }
-  return out
+  return dedupeContainedWorkspaceRoots(out)
 }
 
 /**

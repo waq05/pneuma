@@ -17077,6 +17077,28 @@ runner 能建 PTY 了，但没人用它。要让模型显式要一个真终端�
 - `node --test "src/packages/checkpoint/tests/*.test.mjs"` 12 条全过；`package-tests` 89 包 / 98 用例 / 583 断言全过。
 - 快照成本实测：首次从 27.7 秒降到可接受范围，增量 573ms。
 
+## 2026-11-11：第二轮复审的七条（含两条安全洞）
+
+**为什么**
+
+第一轮修完后又做了一次复审，抓出三条阻断、两条安全洞、两条重要问题。其中三条直接推翻了我上一批的修法。
+
+**做法**
+
+1. **超 5MB 排除名单被自己冲掉**（阻断）：`ensureRepo` 每次整文件重写 `info/exclude`，把追加的超大文件行冲掉，而标记文件又挡住重扫。改成按形状合并：基础模式每次按当前版本重写，`/` 开头的锚定行保留。
+2. **`dist*/` 误伤源码目录**（阻断）：会连 `distribution/`、`dists/` 一起排除。改成 `dist-*/`，保留 `dist/`。
+3. **TUI 补排复位键无效**（阻断）：条目 id 由 adapter 按 `seq` 发号，每个会话都从 1 起，`entries[0].id` 永远不变。改成传会话身份：`App` 拿 `snapshot.status.sessionId` 传给 `ChatView`，再到 `TranscriptViewport` 的 `conversationKey`。
+4. **UNC 与 `\\?\` 绕过 `inside()`**（安全）：`relative()` 对这类路径返回绝对路径、首段为空，于是判 true，`fs-list` 能列任意目录。把 `inside` 提成导出纯函数 `workspacePathInside`，算完 `rel` 先 `isAbsolute(rel)` 就拒。
+5. **Cargo 缓存放太宽**（安全）：`~/.cargo/registry` 覆盖到 `registry/src/*/build.rs`，沙箱里改、沙箱外执行。只留 `registry/cache`、`registry/index`、`git/db`。
+6. **多根标签撞车与嵌套根**：主根顶层目录名并入撞名集合；按 `realpath` 去嵌套（保留外层、丢掉被包含的内层，主根永不被丢），每根最小配额 200 条。
+7. 两条测试补强：恒真断言换成真断言；checkpoint 补了 `dist-*` 与 6MB 超大文件的快照用例（连调三次 `ensureRepo` 名单仍在）。
+
+**验证**
+
+- `pnpm run typecheck`、`pnpm run build`（77 包）通过。
+- checkpoint 15 条、desktop-dock 11 条、mention 探针 30 项、`package-tests` 89 包 / 98 用例 / 602 断言、沙箱探针 86/86，全过。
+
+
 
 
 

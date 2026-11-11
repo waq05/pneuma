@@ -27,6 +27,8 @@ mkdirSync(extra, { recursive: true })
 
 // 必须在设置 DSC_HOME 之后才 import：path-policy 的 DSC_HOME 是模块加载时算的。
 const config = await import('../../../../lib/core/config.js')
+// 路径围栏是纯函数，单独导出就是为了在这里钉住 UNC / \\?\ 这类绕过（2026-11 第二次审查）。
+const dock = await import('../../../../lib/packages/desktop-dock/index.js')
 
 let passed = 0
 
@@ -102,6 +104,34 @@ test('不在清单里的 root 被拒，清单里的根与 cwd 放行', () => {
   assert.equal(config.matchWorkspaceRoot(cwd, cwd), resolve(cwd), '会话 cwd 恒放行')
   assert.equal(config.matchWorkspaceRoot(missing, cwd), null, '不在清单里的路径必须拒')
   assert.equal(config.matchWorkspaceRoot(join(extra, 'sub'), cwd), null, '子目录不能借根扩权')
+  passed += 1
+})
+
+test('workspacePathInside：UNC / \\?\ / .. 都不算根内（2026-11 第二次审查的安全洞）', () => {
+  assert.equal(dock.workspacePathInside(join(cwd, 'a.txt'), cwd), true, '根内文件要放行')
+  assert.equal(dock.workspacePathInside(join(cwd, 'sub', 'b.txt'), cwd), true, '根内子目录要放行')
+  assert.equal(dock.workspacePathInside(join(cwd, '..', 'outside.txt'), cwd), false, '.. 越界要拒')
+  // 这三条是这次的洞：`relative()` 对它们返回的是**绝对路径**（首段为空、也不带冒号），
+  // 旧实现只看「首段有没有冒号」，于是判了 true，fs-list / fs-read 能列出、读到任意目录。
+  const outside = ['\\\\srv\\share\\x', '\\\\?\\C:\\Windows', join(cwd, '..', '..', 'x')]
+  for (const path of outside) {
+    assert.equal(dock.workspacePathInside(path, cwd), false, `${path} 不该算根内`)
+  }
+  passed += 1
+})
+
+test('互相嵌套的根按 realpath 收成一份：主根保留，包住主根的根也保留', () => {
+  const nested = join(cwd, 'inner')
+  mkdirSync(nested, { recursive: true })
+  writeConfig([nested, extra])
+  const roots = config.allowedWorkspaceRoots(cwd)
+  assert.deepEqual(roots, [resolve(cwd), resolve(extra)], `被 cwd 包含的根不该单独列：${roots.join(' | ')}`)
+  // 反方向：配置根包住 cwd（父目录）时不丢——它是更大范围的授权，去掉会连带丢掉兄弟目录；
+  // @ 补全列清单时由 core/mention.ts 跳过主根子树，不会把主根文件列两遍。
+  writeConfig([tempHome])
+  const outer = config.allowedWorkspaceRoots(cwd)
+  assert.equal(resolve(outer[0]), resolve(cwd), '主根必须仍在第一位')
+  assert.ok(outer.some((root) => resolve(root) === resolve(tempHome)), `包住 cwd 的根不该被丢：${outer.join(' | ')}`)
   passed += 1
 })
 

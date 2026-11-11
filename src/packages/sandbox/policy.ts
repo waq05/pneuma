@@ -261,7 +261,10 @@ export function resolveSandboxConfig(raw: unknown): SandboxConfigResult {
  *   - `~/.cargo/config.toml` 的 `target.*.runner` 指向任意程序，下次构建就在沙箱外跑代码；
  *   - `~/.cargo/bin` 是 PATH 上的目录，往里丢一个 `cargo.exe` 就够了；
  *   - `~/.npmrc` 的控制项同理。
- * 真正需要写的是下载缓存（registry / git / _cacache / pip、yarn 的 Cache），它们改不出执行路径。
+ * Cargo 只留三个**纯缓存**子目录（2026-11-11 第二次收紧）：`registry/cache`（.crate 包）、
+ * `registry/index`（索引）、`git/db`（裸仓库）。`registry/src` 与 `git/checkouts` 是解包后的
+ * 源码树，里面可能有 `build.rs`——沙箱里改一处，沙箱外下一次 `cargo build` 就执行了。
+ * 其余真正需要写的是下载缓存（_cacache / pip、yarn 的 Cache），它们改不出执行路径。
  *
  * @param platform - 目标平台（自检里显式传，不读 process）。
  * @param env - 取环境变量的来源（通常是 process.env）。
@@ -279,8 +282,10 @@ export function cacheRootCandidates(platform: NodeJS.Platform, env: Record<strin
   add(localAppData, 'npm-cache')
   add(localAppData, 'pnpm', 'store')
   add(userProfile, '.npm', '_cacache')
-  add(userProfile, '.cargo', 'registry')
-  add(userProfile, '.cargo', 'git')
+  // Cargo 只给下载缓存三件套，不给 `registry` / `git` 整目录（那会连带 src / checkouts）。
+  add(userProfile, '.cargo', 'registry', 'cache')
+  add(userProfile, '.cargo', 'registry', 'index')
+  add(userProfile, '.cargo', 'git', 'db')
   add(localAppData, 'pip', 'Cache')
   add(localAppData, 'Yarn', 'Cache')
   add(userProfile, '.cache', 'pip')

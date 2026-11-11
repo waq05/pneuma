@@ -126,13 +126,14 @@ const appData = 'C:\\Users\\me\\AppData\\Roaming'
 const userProfile = 'C:\\Users\\me'
 const baseEnv = { LOCALAPPDATA: localAppData, APPDATA: appData, USERPROFILE: userProfile }
 
-check('cacheRootCandidates：Windows 十个缓存子目录按清单顺序给出，非 Windows 给空', () => {
+check('cacheRootCandidates：Windows 十一个缓存子目录按清单顺序给出，非 Windows 给空', () => {
   assert.deepEqual(policy.cacheRootCandidates('win32', baseEnv), [
     join(localAppData, 'npm-cache'),
     join(localAppData, 'pnpm', 'store'),
     join(userProfile, '.npm', '_cacache'),
-    join(userProfile, '.cargo', 'registry'),
-    join(userProfile, '.cargo', 'git'),
+    join(userProfile, '.cargo', 'registry', 'cache'),
+    join(userProfile, '.cargo', 'registry', 'index'),
+    join(userProfile, '.cargo', 'git', 'db'),
     join(localAppData, 'pip', 'Cache'),
     join(localAppData, 'Yarn', 'Cache'),
     join(userProfile, '.cache', 'pip'),
@@ -156,17 +157,36 @@ check('cacheRootCandidates：不再整目录放行 ~/.cargo、~/.cache、~/.npm�
   }
   // 收窄不是删掉：每个被收窄的目录都必须还有缓存子目录在里面
   const inside = (parent) => list.some((path) => path.startsWith(`${parent.toLowerCase()}\\`))
-  assert.ok(inside(join(userProfile, '.cargo')), '.cargo 至少还得留 registry / git 两个缓存子目录')
+  assert.ok(inside(join(userProfile, '.cargo')), '.cargo 还得留 registry/cache、registry/index、git/db 三个缓存子目录')
   assert.ok(inside(join(userProfile, '.cache')), '.cache 至少还得留 pip / uv / pnpm 三个缓存子目录')
   assert.ok(inside(join(userProfile, '.npm')), '.npm 至少还得留 _cacache 这个缓存子目录')
+})
+
+check('cacheRootCandidates：Cargo 只放行 registry/cache、registry/index、git/db（不放解包后的源码树）', () => {
+  const list = policy.cacheRootCandidates('win32', baseEnv).map((path) => path.toLowerCase())
+  // registry/src 与 git/checkouts 里是解包后的源码，`build.rs` 会在沙箱外的 cargo build 里执行；
+  // 放行它们等于给沙箱留了一个「改了就会在沙箱外跑」的执行点。
+  for (const banned of [
+    join(userProfile, '.cargo', 'registry', 'src'),
+    join(userProfile, '.cargo', 'registry'),
+    join(userProfile, '.cargo', 'git', 'checkouts'),
+    join(userProfile, '.cargo', 'git'),
+  ]) {
+    assert.equal(list.includes(banned.toLowerCase()), false, `不该出现 ${banned}`)
+  }
+  // 三个纯缓存子目录必须原样在清单里。
+  assert.ok(list.includes(join(userProfile, '.cargo', 'registry', 'cache').toLowerCase()), '缺 registry/cache')
+  assert.ok(list.includes(join(userProfile, '.cargo', 'registry', 'index').toLowerCase()), '缺 registry/index')
+  assert.ok(list.includes(join(userProfile, '.cargo', 'git', 'db').toLowerCase()), '缺 git/db')
 })
 
 check('cacheRootCandidates：缺环境变量就跳过（空串也按缺处理）', () => {
   assert.deepEqual(policy.cacheRootCandidates('win32', {}), [])
   assert.deepEqual(policy.cacheRootCandidates('win32', { USERPROFILE: userProfile }), [
     join(userProfile, '.npm', '_cacache'),
-    join(userProfile, '.cargo', 'registry'),
-    join(userProfile, '.cargo', 'git'),
+    join(userProfile, '.cargo', 'registry', 'cache'),
+    join(userProfile, '.cargo', 'registry', 'index'),
+    join(userProfile, '.cargo', 'git', 'db'),
     join(userProfile, '.cache', 'pip'),
     join(userProfile, '.cache', 'uv'),
     join(userProfile, '.cache', 'pnpm'),
@@ -177,19 +197,19 @@ check('cacheRootCandidates：缺环境变量就跳过（空串也按缺处理）
 })
 
 check('existingCacheRoots：只留真的存在的目录', () => {
-  const existing = new Set([join(localAppData, 'npm-cache'), join(userProfile, '.cargo', 'registry')])
+  const existing = new Set([join(localAppData, 'npm-cache'), join(userProfile, '.cargo', 'registry', 'cache')])
   const asked = []
   const kept = policy.existingCacheRoots('win32', baseEnv, (path) => {
     asked.push(path)
     return existing.has(path)
   })
-  assert.deepEqual(kept, [join(localAppData, 'npm-cache'), join(userProfile, '.cargo', 'registry')])
-  assert.equal(asked.length, 10, '十个候选都要问一次存在性，不能偷偷少问')
+  assert.deepEqual(kept, [join(localAppData, 'npm-cache'), join(userProfile, '.cargo', 'registry', 'cache')])
+  assert.equal(asked.length, 11, '十一个候选都要问一次存在性，不能偷偷少问')
 })
 
 check('existingCacheRoots：结果没有重复项（大小写不敏感去重）', () => {
   const kept = policy.existingCacheRoots('win32', baseEnv, () => true)
-  assert.equal(kept.length, 10)
+  assert.equal(kept.length, 11)
   assert.equal(new Set(kept.map((path) => path.toLowerCase())).size, kept.length, '不许有重复项')
 })
 

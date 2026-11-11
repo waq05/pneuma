@@ -8,7 +8,10 @@
  *   3. 两个根里有同名文件时，`label` 能区分（第二根带 `<根名>/` 前缀）；
  *   4. 传字符串（单根）时行为与旧版一致：相对路径、无根名前缀。
  *
- * 另外补一条同名根目录的退化规则：两个根都叫 `proj` 时，前缀退成 `父目录名-proj`。
+ * 另外补几条退化规则：
+ *   - 两个根都叫 `proj` 时，前缀退成 `父目录名-proj`；
+ *   - 主根顶层目录与额外根同名时，label 也不能撞（2026-11 第二次审查）；
+ *   - 根互相嵌套时同一批文件只列一次，且每个根都有最小配额（2026-11 第二次审查）。
  *
  * 跑法：pnpm run build && node scripts/mention-multi-root-test.mjs
  *
@@ -117,7 +120,7 @@ try {
     const legacy = await collectWorkspaceFiles(lister, '.')
     assert.equal(typeof legacy[0], 'string')
     assert.deepEqual([...legacy].sort(), ['README.md', 'src/a.ts'])
-    check('旧签名仍返回相对路径字符串数组', true)
+    check('旧签名仍返回相对路径字符串数组', Array.isArray(legacy) && legacy.every((item) => typeof item === 'string'), String(legacy?.[0]))
   } finally {
     process.chdir(previousCwd)
   }
@@ -133,6 +136,43 @@ try {
     sameLabels.includes(`same-a-proj/same.txt`) && sameLabels.includes(`same-b-proj/same.txt`),
     sameLabels.join(' / '),
   )
+  // ---- 5b) 主根顶层目录与额外根同名：label 不能撞成一样 ----
+  const labelMain = makeRoot(join(work, 'label-main'), {
+    'proj/readme.md': 'main\n',
+    'main.txt': 'm\n',
+  }, 'label-main')
+  const labelExtra = makeRoot(join(work, 'label-extra'), { 'readme.md': 'extra\n' }, 'proj')
+  const labelEntries = await collectWorkspaceFiles([labelMain, labelExtra])
+  const mainProj = labelEntries.find((entry) => resolve(entry.root) === resolve(labelMain) && entry.path === 'proj/readme.md')
+  const extraProj = labelEntries.find((entry) => resolve(entry.root) === resolve(labelExtra))
+  check(
+    '主根顶层目录与额外根同名时 label 不撞车',
+    mainProj !== undefined && extraProj !== undefined && mainProj.label !== extraProj.label,
+    `${mainProj?.label} / ${extraProj?.label}`,
+  )
+  check('撞名时额外根退成 父目录名-根名 前缀', extraProj?.label === 'label-extra-proj/readme.md', extraProj?.label)
+
+  // ---- 5c) 根互相嵌套：同一批文件只列一次 ----
+  const outer = makeRoot(join(work, 'nest-outer'), { 'outer.txt': 'o\n', 'sub/inner.txt': 'i\n' }, 'nest-outer')
+  const inner = join(outer, 'sub')
+  const nested = await collectWorkspaceFiles([outer, inner])
+  check('嵌套根：被包含的根被丢掉，文件只列一次', nested.length === 2, `length=${String(nested.length)}`)
+  check(
+    '嵌套根：条目全部属于外层根',
+    nested.every((entry) => resolve(entry.root) === resolve(outer)),
+    nested.map((entry) => entry.path).join(' / '),
+  )
+  // 反方向：主根被额外根包住。外层根跳过主根子树，两份都不丢、也不重复。
+  const reversed = await collectWorkspaceFiles([inner, outer])
+  check('主根被包住时仍是两个根各一份', reversed.length === 2, `length=${String(reversed.length)}`)
+  check(
+    '主根被包住时父根不重复列主根子树',
+    reversed.some((entry) => entry.path === 'inner.txt' && resolve(entry.root) === resolve(inner)) &&
+      reversed.some((entry) => entry.path === join(outer, 'outer.txt')) &&
+      !reversed.some((entry) => entry.path === join(outer, 'sub', 'inner.txt')),
+    reversed.map((entry) => entry.path).join(' / '),
+  )
+
   // ---- 6) 多根共享 4000 上限（注入 lister，不真的造 4000 个文件） ----
   const floodRoots = [join(work, 'flood-a'), join(work, 'flood-b')]
   const flood = await collectWorkspaceFiles(floodRoots, {
@@ -147,6 +187,17 @@ try {
     floodMain === 2500 && flood.length - floodMain === WALK_MAX_FILES - 2500,
     `first=${String(floodMain)} second=${String(flood.length - floodMain)}`,
   )
+
+  // ---- 7) 每根的最小配额：巨根不能把后面的根饿死（2026-11 第二次审查） ----
+  const quotaRoots = ['quota-a', 'quota-b', 'quota-c'].map((name) => join(work, name))
+  const quota = await collectWorkspaceFiles(quotaRoots, {
+    lister: async () => ({
+      entries: Array.from({ length: 3000 }, (_, index) => ({ name: `q${index}.ts`, dir: false })),
+    }),
+  })
+  const perRoot = quotaRoots.map((root) => quota.filter((entry) => resolve(entry.root) === resolve(root)).length)
+  check('多根时每根都至少有 200 条候选（不被巨根饿死）', perRoot.every((count) => count >= 200), perRoot.join(' / '))
+  check('最小配额不突破总预算', quota.length === WALK_MAX_FILES, `length=${String(quota.length)}`)
 } finally {
   rmSync(work, { recursive: true, force: true })
 }

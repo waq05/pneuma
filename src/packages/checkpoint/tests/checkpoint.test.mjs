@@ -12,7 +12,7 @@
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 import { after, test } from 'node:test'
@@ -23,7 +23,7 @@ process.env.HOME = home
 process.env.USERPROFILE = home
 mkdirSync(process.env.DSC_HOME, { recursive: true })
 
-const { ensureRepo, listSnapshots, repoSizeMB, shadowRoot, snapshot } = await import(
+const { ensureRepo, excludePatterns, listSnapshots, repoSizeMB, shadowRoot, snapshot } = await import(
   new URL('../../../../lib/packages/checkpoint/shadow.js', import.meta.url).href
 )
 
@@ -89,6 +89,71 @@ test('集成：pre/post 两张快照、内容可回看、用户 .git 不受影�
 
     const size = await repoSizeMB(cwd)
     ok(Number.isFinite(size) && size >= 0, `占用应当是一个非负数：${size}`)
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
+})
+
+test('excludePatterns：dist-*/ 在、dist*/ 不在（distribution/、dists/ 是正常源码目录）', () => {
+  const patterns = excludePatterns('D:\\ws')
+  ok(patterns.includes('dist/'), 'dist/ 仍要排除')
+  ok(patterns.includes('dist-*/'), 'dist-next/ 这类并行构建目录仍要排除')
+  ok(!patterns.includes('dist*/'), 'dist*/ 会连 distribution/、dists/ 一起排除，不许出现')
+  // 需求里的三条点名断言：distribution/、dists/ 不在任何排除模式里，dist-next/ 在。
+  const distEntries = patterns.filter((pattern) => pattern.startsWith('dist'))
+  ok(distEntries.join('|') === 'dist/|dist-*/', `dist 条目应当只有 dist/ 与 dist-*/：${distEntries.join(' / ')}`)
+})
+
+test('集成：dist-*/ 只挡并行构建目录，distribution/ 与 dists/ 照常进快照', { skip: !gitAvailable ? 'git 不可用' : false }, async () => {
+  const base = mkdtempSync(join(tmpdir(), 'checkpoint-dist-'))
+  const cwd = join(base, 'ws')
+  mkdirSync(join(cwd, 'distribution'), { recursive: true })
+  mkdirSync(join(cwd, 'dists'), { recursive: true })
+  mkdirSync(join(cwd, 'dist-next'), { recursive: true })
+  writeFileSync(join(cwd, 'distribution', 'index.ts'), 'export {}\n', 'utf8')
+  writeFileSync(join(cwd, 'dists', 'core.ts'), 'export {}\n', 'utf8')
+  writeFileSync(join(cwd, 'dist-next', 'app.asar'), 'packed\n', 'utf8')
+  try {
+    const repo = await ensureRepo(cwd)
+    const shot = await snapshot(cwd, 'pre', 'dist dirs')
+    ok(shot.ok === true, `快照应当成功：${shot.error ?? ''}`)
+    const tree = spawnSync('git', ['--git-dir', repo.repo, 'ls-tree', '-r', '--name-only', 'HEAD'], {
+      encoding: 'utf8',
+    })
+    ok(tree.status === 0, `ls-tree 应当成功：${tree.stderr}`)
+    ok(tree.stdout.includes('distribution/index.ts'), 'distribution/ 是源码目录，必须进快照')
+    ok(tree.stdout.includes('dists/core.ts'), 'dists/ 是源码目录，必须进快照')
+    ok(!tree.stdout.includes('dist-next/app.asar'), 'dist-next/ 是并行构建目录，不该进快照')
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
+})
+
+test('集成：超大文件进了 info/exclude 且活过多次 ensureRepo，也不进快照', { skip: !gitAvailable ? 'git 不可用' : false }, async () => {
+  const base = mkdtempSync(join(tmpdir(), 'checkpoint-big-'))
+  const cwd = join(base, 'ws')
+  mkdirSync(cwd, { recursive: true })
+  writeFileSync(join(cwd, 'big.bin'), Buffer.alloc(6 * 1024 * 1024, 0x41))
+  writeFileSync(join(cwd, 'small.txt'), 'small\n', 'utf8')
+  try {
+    const repo = await ensureRepo(cwd)
+    const excludeFile = join(repo.repo, 'info', 'exclude')
+    const excludeLines = () => readFileSync(excludeFile, 'utf8').split(/\r?\n/).filter((line) => line !== '')
+    ok(excludeLines().includes('/big.bin'), `6MB 文件的排除行应当写进 info/exclude：${excludeLines().join(' | ')}`)
+    // `bumpTurn()` → `snapshot()` 会连着调两次 ensureRepo：第二次不能把追加的超大文件行冲掉。
+    await ensureRepo(cwd)
+    ok(excludeLines().includes('/big.bin'), '第二次 ensureRepo 之后排除行必须还在')
+    await ensureRepo(cwd)
+    ok(excludeLines().includes('/big.bin'), '第三次 ensureRepo 之后排除行也必须还在')
+
+    const shot = await snapshot(cwd, 'pre', 'oversize')
+    ok(shot.ok === true, `快照应当成功：${shot.error ?? ''}`)
+    const tree = spawnSync('git', ['--git-dir', repo.repo, 'ls-tree', '-r', '--name-only', 'HEAD'], {
+      encoding: 'utf8',
+    })
+    ok(tree.status === 0, `ls-tree 应当成功：${tree.stderr}`)
+    ok(!tree.stdout.includes('big.bin'), '超 5MB 的文件不该进快照')
+    ok(tree.stdout.includes('small.txt'), '小文件照常进快照')
   } finally {
     rmSync(base, { recursive: true, force: true })
   }

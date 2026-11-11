@@ -130,7 +130,7 @@ type UntrackedRead =
 
 function readUntracked(cwd: string, file: string, maxBytes: number): UntrackedRead {
   const abs = resolve(cwd, file)
-  if (!inside(abs, cwd)) return { kind: 'outside' }
+  if (!workspacePathInside(abs, cwd)) return { kind: 'outside' }
   let stat: Stats
   try {
     stat = statSync(abs)
@@ -395,7 +395,7 @@ export const desktopDockPlugin: Plugin.Object = {
         case 'term-spawn': {
           const id = `t${++termSeq}`
           const dir = resolve(cwd, safeArg(payload.cwd ?? '.', true))
-          if (!inside(dir, cwd)) throw new Error('路径超出工作目录')
+          if (!workspacePathInside(dir, cwd)) throw new Error('路径超出工作目录')
           // shell 白名单：非白名单值回落 PowerShell
           const shell = ['powershell', 'pwsh', 'cmd', 'bash', 'node'].includes(String(payload.shell ?? ''))
             ? String(payload.shell)
@@ -436,7 +436,7 @@ export const desktopDockPlugin: Plugin.Object = {
           if (root === null) throw new Error('这个目录不在已授权的工作区里')
           const dir = resolve(root, safeArg(payload.dir ?? '.'))
           // 授权之后仍要判一次越界：`dir` 里的 `..` 不能把范围带出这个根。
-          if (!inside(dir, root)) throw new Error('路径超出工作目录')
+          if (!workspacePathInside(dir, root)) throw new Error('路径超出工作目录')
           const maxEntries = typeof payload.maxEntries === 'number' && payload.maxEntries > 0 ? Math.floor(payload.maxEntries) : 2000
           const listed = readdirSync(dir, { withFileTypes: true })
           const entries = listed.slice(0, maxEntries).map((entry) => {
@@ -455,7 +455,7 @@ export const desktopDockPlugin: Plugin.Object = {
         }
         case 'fs-read': {
           const file = resolve(cwd, safeArg(payload.file ?? '.'))
-          if (!inside(file, cwd)) throw new Error('路径超出工作目录')
+          if (!workspacePathInside(file, cwd)) throw new Error('路径超出工作目录')
           const stat = statSync(file)
           const ext = file.slice(file.lastIndexOf('.') + 1).toLowerCase()
           const mime = IMAGE_MIME[ext]
@@ -495,7 +495,7 @@ export const desktopDockPlugin: Plugin.Object = {
           let dirtyFileCount = 0
           for (const { code, file } of parsePorcelainZ(porcelain)) {
             const path = toWorkspacePath(file, prefix)
-            // 工作目录之外的变更整条不列（对齐参考实现，也与 inside() 的安全边界一致）。
+            // 工作目录之外的变更整条不列（对齐参考实现，也与 workspacePathInside() 的安全边界一致）。
             if (path === null) continue
             dirtyFileCount += 1
             if (code === '??') untrackedRepo.push(path)
@@ -710,9 +710,20 @@ export const desktopDockPlugin: Plugin.Object = {
   },
 }
 
-/** 路径是否落在 root 内（Windows 大小写归一）。 */
-function inside(path: string, root: string): boolean {
+/**
+ * 路径是否落在 `root` 之内（Windows 大小写归一）。
+ *
+ * 只判「相对路径首段有没有冒号」不够：`relative('C:\ws', '\\srv\share')` 与
+ * `relative('C:\ws', '\\?\C:\Windows')` 返回的**是绝对路径**（另一个盘 / UNC / 设备
+ * 路径压根拼不出相对段），首段为空、不含冒号，于是旧实现判了 true——`fs-list` /
+ * `fs-read` 能因此列出、读到任意目录。所以先按 `isAbsolute(rel)` 直接拒。
+ *
+ * 导出是为了让 `tests/workspace-roots.test.mjs` 用纯函数钉住这三条绕过路径。
+ */
+export function workspacePathInside(path: string, root: string): boolean {
   if (!isAbsolute(path)) return false
   const rel = relative(resolve(root), resolve(path)).toLowerCase()
+  // rel 仍是绝对路径（UNC `\\srv\share`、`\\?\C:\Windows`、另一个盘符）＝没落在 root 里。
+  if (isAbsolute(rel)) return false
   return rel === '' || (!rel.startsWith('..') && !rel.split(/[\\/]/)[0]!.includes(':'))
 }

@@ -167,7 +167,7 @@ function writeState(cwd: string, state: ShadowState): void {
  * 决定哪些文件不该进版本库；`info/exclude` 只影响这个影子仓库自己。
  * `<DSC_HOME>` 若落在工作区里也排除——否则影子仓库会把自己拍进自己。
  */
-function excludePatterns(cwd: string): string[] {
+export function excludePatterns(cwd: string): string[] {
   const patterns = [
     'node_modules/',
     // 不带斜杠：用户的工作区可能是 git worktree / submodule，那里的 `.git` 是文件不是目录。
@@ -175,7 +175,9 @@ function excludePatterns(cwd: string): string[] {
     'dist/',
     // `dist-next/`、`dist-foo/` 这类并行构建目录：只写 `dist/` 挡不住它们，
     // 而这些目录里常常躺着几百 MB 的安装包（实测本仓 1.1GB），首次快照会把它们全哈希一遍。
-    'dist*/',
+    // 写成 `dist-*/` 而不是 `dist*/`：后者会连 `distribution/`、`dists/` 这类**正常源码目录**
+    // 一起排除，快照静默漏文件、还原时也撤不回来。
+    'dist-*/',
     'release/',
     'build/',
     'out/',
@@ -188,6 +190,35 @@ function excludePatterns(cwd: string): string[] {
   const rel = relative(resolve(cwd), resolve(DSC_HOME)).replace(/\\/g, '/')
   if (rel !== '' && !rel.startsWith('..') && !rel.startsWith('/')) patterns.push(`${rel.replace(/\/+$/, '')}/`)
   return patterns
+}
+
+/**
+ * 写 `info/exclude`：基础模式每次都刷新，`excludeOversize` 追加的超大文件行原样保留。
+ *
+ * 为什么不是直接覆盖：`excludeOversize` 把超大文件逐条追加在这个文件里，覆盖就把它们
+ * 一起冲掉了；而 `info/oversize-done` 标记又让同一趟扫描不再发生，于是「超大文件不进
+ * 快照」从第二次 `ensureRepo` 起整体失效。
+ *
+ * 为什么也不是「文件不存在才写」：基础模式本身会随版本变（例如把 `dist` 那条通配收窄成
+ * `dist-*` 那条），只写一次等于老仓库永远带着一条会误伤 `distribution/` 的旧模式。
+ *
+ * 所以按**形状**合并：这个文件里只有两类行——基础模式（不带前导 `/`）与
+ * `excludeOversize` 追加的锚定路径（一律以 `/` 开头，锚在工作区根）。只保留后者：
+ * 基础模式按当前版本重写（旧模式不会复活），超大文件行也不会丢。
+ */
+function writeExclude(file: string, patterns: readonly string[]): void {
+  const anchored = new Set<string>()
+  if (existsSync(file)) {
+    try {
+      for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
+        const text = line.trim()
+        if (text.startsWith('/')) anchored.add(text)
+      }
+    } catch {
+      // 读不出来就按空处理：基础模式照样写回去，最多把超大文件行丢一次（下次会重扫）
+    }
+  }
+  writeFileSync(file, `${[...patterns, ...anchored].join('\n')}\n`, 'utf8')
 }
 
 /** 指到影子仓库的环境变量：三个一起给才是真隔离。 */
@@ -229,7 +260,9 @@ export async function ensureRepo(cwd: string): Promise<ShadowRepo> {
     await git(cwd, ['init', '--bare', repo], 60_000)
   }
   mkdirSync(join(repo, 'info'), { recursive: true })
-  writeFileSync(join(repo, 'info', 'exclude'), `${excludePatterns(cwd).join('\n')}\n`, 'utf8')
+  // 合并写而不是覆盖：`excludeOversize` 追加的超大文件行必须活过每一次 `ensureRepo`
+  // （`bumpTurn` → `snapshot` 连着调两次，第一次 `add -A` 之前就会被冲掉）。
+  writeExclude(join(repo, 'info', 'exclude'), excludePatterns(cwd))
   await excludeOversize(cwd, repo)
   if (!existsSync(statePath(cwd))) writeState(cwd, { lastTurn: 0 })
   return { root, repo }
