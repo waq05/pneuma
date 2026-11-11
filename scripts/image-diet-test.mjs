@@ -375,7 +375,10 @@ if (typeof server.closeAllConnections === 'function') server.closeAllConnections
 await new Promise((resolve) => server.close(resolve))
 if (failures === 0) {
   console.log('图片按龄卸载自检：全部通过')
-  rmSync(home, { recursive: true, force: true })
+  // 带重试：回合边界上 checkpoint 插件会跑一次 `git add/commit`（后台、不阻塞回合），
+  // 收尾时就可能有 git 子进程短暂占着临时 HOME 里的影子仓库；Windows 上删目录遇
+  // 打开句柄会 EPERM。这是收尾竞态，不是被测行为，重试到子进程退出即可。
+  rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
 } else {
   console.log(`图片按龄卸载自检：${failures} 条失败（临时 HOME 留在 ${home} 供排查）`)
 }

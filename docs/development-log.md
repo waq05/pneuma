@@ -17059,6 +17059,25 @@ runner 能建 PTY 了，但没人用它。要让模型显式要一个真终端�
 - 「让 `GetExitCodeProcess` / `await draining` 抛错进 finally」没有用例能构造，只有代码路径。
 - 清扫失败时「ACE 确实没被摘」需要读 ACL 才能断言，目前只按代码路径确认（用子进程占住目录复现了 EPERM 与 `failed` 记录）。
 
+## 2026-11-11：全量门禁揪出的两处真问题（快照成本 / 测试收尾竞态）
+
+**为什么**
+
+跑 `check-core` 时 `image-diet-test` 失败，报 `EPERM` 删不掉临时 HOME。查下来不是负载抖动，而是新加的 checkpoint 插件在回合边界跑 `git add -A`，而本仓里有 1.1GB 的安装包（`desktop/dist-next*/`）：排除规则只写了 `dist/`，挡不住 `dist-next/`，于是首次快照要哈希 1.1GB，实测 `git add -A` 就要 15.9 秒（增量快照只要 573ms）。
+
+**做法**
+
+- 排除模式补 `dist*/`、`release/`。
+- 再加一条按体积的硬规则：建仓时扫一遍，单个文件超过 5MB 的逐条写进 `info/exclude`（只 `stat` 不读内容，几百毫秒），之后一直跳过。代价是文件后来缩小了也仍然被排除——比每次回合卡十几秒划算。
+- `image-diet-test` 的收尾加 `maxRetries`：后台快照可能还在跑，Windows 上删被句柄占着的目录会 EPERM，这是收尾竞态，不是被测行为。
+
+**验证**
+
+- `node scripts/image-diet-test.mjs` 从 exit 1 变 exit 0（6.1 秒）。
+- `node --test "src/packages/checkpoint/tests/*.test.mjs"` 12 条全过；`package-tests` 89 包 / 98 用例 / 583 断言全过。
+- 快照成本实测：首次从 27.7 秒降到可接受范围，增量 573ms。
+
+
 
 
 

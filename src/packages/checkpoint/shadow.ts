@@ -31,6 +31,7 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import {
+  appendFileSync,
   closeSync,
   copyFileSync,
   existsSync,
@@ -42,6 +43,7 @@ import {
   readSync,
   readlinkSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
@@ -171,6 +173,10 @@ function excludePatterns(cwd: string): string[] {
     // 不带斜杠：用户的工作区可能是 git worktree / submodule，那里的 `.git` 是文件不是目录。
     '.git',
     'dist/',
+    // `dist-next/`、`dist-foo/` 这类并行构建目录：只写 `dist/` 挡不住它们，
+    // 而这些目录里常常躺着几百 MB 的安装包（实测本仓 1.1GB），首次快照会把它们全哈希一遍。
+    'dist*/',
+    'release/',
     'build/',
     'out/',
     'coverage/',
@@ -224,8 +230,49 @@ export async function ensureRepo(cwd: string): Promise<ShadowRepo> {
   }
   mkdirSync(join(repo, 'info'), { recursive: true })
   writeFileSync(join(repo, 'info', 'exclude'), `${excludePatterns(cwd).join('\n')}\n`, 'utf8')
+  await excludeOversize(cwd, repo)
   if (!existsSync(statePath(cwd))) writeState(cwd, { lastTurn: 0 })
   return { root, repo }
+}
+
+/** 单个文件超过这个体积就不进快照（哈希几百 MB 的安装包会让首次快照卡十几秒）。 */
+const MAX_SNAPSHOT_BYTES = 5 * 1024 * 1024
+
+/**
+ * 把超大文件逐条写进 `info/exclude`，只做一次（`info/oversize-done` 当标记）。
+ *
+ * 为什么要单独一趟：`git add -A` 会对每个候选文件算哈希，1GB 的安装包就是十几秒。
+ * 这里只 `stat` 不读内容，代价是几百毫秒；随后 `add -A` 直接跳过它们。
+ * 代价是：文件后来缩小了也仍然被排除——这是可接受的，比每次回合都卡十几秒划算。
+ */
+async function excludeOversize(cwd: string, repo: string): Promise<void> {
+  const marker = join(repo, 'info', 'oversize-done')
+  if (existsSync(marker)) return
+  const big: string[] = []
+  try {
+    const listed = await shadowGit(cwd, ['ls-files', '-z', '-o', '--exclude-standard'], 60_000)
+    const tracked = await shadowGit(cwd, ['ls-files', '-z'], 60_000)
+    const paths = [...new Set([...listed.split('\0'), ...tracked.split('\0')].filter((item) => item !== ''))]
+    for (const path of paths) {
+      try {
+        if (statSync(join(cwd, path)).size > MAX_SNAPSHOT_BYTES) big.push(path)
+      } catch {
+        // 文件刚好被删掉：不管它，下一趟也不会有它
+      }
+    }
+  } catch {
+    // 扫不出来就当没有超大文件：快照照常做，只是可能慢一点
+  }
+  if (big.length > 0) {
+    // 开头加 `/`：锚定在工作区根，避免同名的深层文件被误伤
+    const lines = big.map((path) => `/${path.replace(/\\/g, '/')}`).join('\n')
+    appendFileSync(join(repo, 'info', 'exclude'), `${lines}\n`, 'utf8')
+  }
+  try {
+    writeFileSync(marker, `${String(big.length)}\n`, 'utf8')
+  } catch {
+    // 标记写不进去只是下次再扫一遍，不影响正确性
+  }
 }
 
 /** 当前回合号（0 = 还没开过回合）。 */

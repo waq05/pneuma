@@ -718,6 +718,12 @@
       "builtin": false
     },
     {
+      "id": "desktop-dock-workspaces",
+      "title": "工作区",
+      "order": 42,
+      "builtin": true
+    },
+    {
       "id": "general",
       "title": "通用",
       "order": 0,
