@@ -1,0 +1,11 @@
+{
+  "section.workspaceRoots.title": "工作区",
+  "section.workspaceRoots.subtitle": "会话目录之外，@ 补全与文件面板还能打开的根",
+  "field.workspaceRoots.label": "额外工作区根",
+  "field.workspaceRoots.placeholder": "每行一个绝对路径，也可用分号分隔",
+  "field.workspaceRoots.help": "会话目录始终是第一个根，不必写在这里。不存在或不是目录的条目保存时会丢弃并提示。保存后下一个 @ 就用新根。",
+  "save.unknownKey": "未知设置项：{key}",
+  "save.notText": "这个字段只接受文本",
+  "save.ok": "已保存，下一个 @ 就用新根",
+  "save.dropped": "已保存；这些条目不存在或不是目录，已丢弃：{entries}"
+}

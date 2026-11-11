@@ -1,0 +1,11 @@
+{
+  "section.workspaceRoots.title": "Workspaces",
+  "section.workspaceRoots.subtitle": "Roots beyond the session directory that @ completion and the file panel may open",
+  "field.workspaceRoots.label": "Extra workspace roots",
+  "field.workspaceRoots.placeholder": "One absolute path per line; semicolons also work",
+  "field.workspaceRoots.help": "The session directory is always the first root and does not need to be listed. Entries that do not exist or are not directories are dropped on save with a notice. The next @ uses the new roots.",
+  "save.unknownKey": "Unknown setting: {key}",
+  "save.notText": "This field only accepts text",
+  "save.ok": "Saved; the next @ uses the new roots",
+  "save.dropped": "Saved; these entries do not exist or are not directories and were dropped: {entries}"
+}

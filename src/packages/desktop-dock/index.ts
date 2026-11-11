@@ -18,6 +18,14 @@ import { isAbsolute, join, relative, resolve } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import type { ChildProcess } from 'node:child_process'
 import { DOCK_WRITE_LABEL, isDockWriteOp, type DockWriteOp } from '@pneuma/runtime/core/dock-ops.js'
+import {
+  matchWorkspaceRoot,
+  readWorkspaceRootsConfig,
+  writeWorkspaceRootsConfig,
+} from '@pneuma/runtime/core/config.js'
+import { hostT } from '@pneuma/runtime/core/i18n.js'
+import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
+import type { SettingsSectionSpec } from '@pneuma/runtime/services/types.js'
 // 执行姿势与 porcelains 解析住在 core：git 插件（分支/改动读数那条快照面）读的是同一个
 // 工作区，两处必须共用一份（尤其是 `-z` 的 rename 双记录），见 core/git-exec.ts。
 import { git, parsePorcelainZ, repoPrefix, toWorkspacePath } from '@pneuma/runtime/core/git-exec.js'
@@ -250,6 +258,49 @@ const BINARY_EXTS = new Set([
 /** 文件名的自然序（数字按值、大小写不敏感），移植 dsh orderEntries 的排序器。 */
 const NAME_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
 
+/**
+ * 设置面文案的取词器：语言来自 `config.yaml` 的 `language:`，字典是本包的
+ * `locale/ui.zh.json` / `ui.en.json`（与界面半共用同一套判定，见 core/i18n.ts）。
+ */
+const t = hostT(import.meta.dirname)
+
+/** 「额外工作区根」设置分区的 id（同时是界面导航键）。 */
+const WORKSPACE_ROOTS_SECTION = 'desktop-dock-workspaces'
+
+/**
+ * 设置分区「额外工作区根」：把 `config.yaml` 的 `workspaceRoots` 交给用户编辑。
+ *
+ * 这里是**宿主侧**的授权入口：写进配置的根，`fs-list` 才能切过去；界面本身
+ * 没有任何办法凭空加一个根。分区只渲染一个文本字段（每行一个绝对路径）。
+ */
+function workspaceRootsSection(): SettingsSectionSpec {
+  const fields: SettingsField[] = [
+    {
+      type: 'text',
+      key: 'workspaceRoots',
+      label: t('field.workspaceRoots.label'),
+      placeholder: t('field.workspaceRoots.placeholder'),
+      help: t('field.workspaceRoots.help'),
+      mono: true,
+    },
+  ]
+  return {
+    id: WORKSPACE_ROOTS_SECTION,
+    title: t('section.workspaceRoots.title'),
+    subtitle: t('section.workspaceRoots.subtitle'),
+    order: 42,
+    fields: () => fields,
+    values: (): SettingsValues => ({ workspaceRoots: readWorkspaceRootsConfig().raw.join('\n') }),
+    save: (key, value): string | void => {
+      if (key !== 'workspaceRoots') return t('save.unknownKey', { key })
+      if (typeof value !== 'string') return t('save.notText')
+      const saved = writeWorkspaceRootsConfig(value)
+      if (saved.invalid.length === 0) return t('save.ok')
+      return t('save.dropped', { entries: saved.invalid.join('；') })
+    },
+  }
+}
+
 /** 支持的终端 shell（payload.shell 白名单；spawn 首参必须是字面量——安全扫描静态规则）。 */
 function spawnShell(shell: string, cwd: string): ChildProcess {
   switch (shell) {
@@ -374,10 +425,18 @@ export const desktopDockPlugin: Plugin.Object = {
           return { ok: true }
         }
 
-        // ---- 文件系统（限 cwd 内） ----
+        // ---- 文件系统（限 cwd 或宿主已授权的工作区根之内） ----
         case 'fs-list': {
-          const dir = resolve(cwd, safeArg(payload.dir ?? '.'))
-          if (!inside(dir, cwd)) throw new Error('路径超出工作目录')
+          // 根只能从宿主侧的授权清单里挑（cwd 恒在首位）；payload.root 只是「选哪一个」，
+          // 不是「加一个」——渲染进程传什么路径都要先过这张清单。
+          const requested = payload.root === undefined || payload.root === ''
+            ? cwd
+            : resolve(cwd, safeArg(payload.root))
+          const root = matchWorkspaceRoot(requested, cwd)
+          if (root === null) throw new Error('这个目录不在已授权的工作区里')
+          const dir = resolve(root, safeArg(payload.dir ?? '.'))
+          // 授权之后仍要判一次越界：`dir` 里的 `..` 不能把范围带出这个根。
+          if (!inside(dir, root)) throw new Error('路径超出工作目录')
           const maxEntries = typeof payload.maxEntries === 'number' && payload.maxEntries > 0 ? Math.floor(payload.maxEntries) : 2000
           const listed = readdirSync(dir, { withFileTypes: true })
           const entries = listed.slice(0, maxEntries).map((entry) => {
@@ -392,7 +451,7 @@ export const desktopDockPlugin: Plugin.Object = {
             return { name: entry.name, dir: entry.isDirectory(), size }
           })
           entries.sort((a, b) => (a.dir === b.dir ? NAME_COLLATOR.compare(a.name, b.name) : a.dir ? -1 : 1))
-          return { cwd: dir, entries, truncated: listed.length > maxEntries }
+          return { cwd: dir, root, entries, truncated: listed.length > maxEntries }
         }
         case 'fs-read': {
           const file = resolve(cwd, safeArg(payload.file ?? '.'))
@@ -628,8 +687,17 @@ export const desktopDockPlugin: Plugin.Object = {
     }
 
     ctx.provide('dock', { handle })
+
+    // 设置分区：dock 不声明 inject（见 README），这里现取；settings 没起来就只是没有这块界面。
+    const settings = ctx.get('settings') as
+      | { registerSection(section: SettingsSectionSpec, options?: { inSettings?: boolean }): () => void }
+      | undefined
+    // 额外工作区根是内核级功能，进桌面端设置页而不只是插件中心那张卡。
+    const offWorkspaceRoots = settings?.registerSection(workspaceRootsSection(), { inSettings: true })
+
     // 热卸载必须收干净（2026-09-29 审查）：终端子进程不杀会继续往 dsc/dock-data 吐输出。
     return () => {
+      offWorkspaceRoots?.()
       for (const child of terms.values()) {
         try {
           child.kill()

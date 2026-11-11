@@ -1,9 +1,14 @@
 /**
  * 输入端 @ 文件提及补全（T14）：定位光标处的 @token、给候选排序、把选中路径插回正文。
  *
- * 纯模块：不碰 React、不碰网络，工作区文件清单由调用方注入 lister（dock 的 fs-list
- * 透传），探针在 node 里直测。路径一律 posix 相对形态（插入正文、被 chat/markdown-text
- * 的 matchMentionPath 识别成 chip、被轮尾改动卡按后缀匹配命中）。
+ * 纯逻辑模块：不碰 React、不碰网络。工作区文件清单由调用方注入 lister（dock 的 fs-list
+ * 透传），探针在 node 里直测；不注入时退到本机 fs（TUI 与探针不必各包一层）。
+ * 路径一律 posix 相对形态（插入正文、被 chat/markdown-text 的 matchMentionPath 识别成
+ * chip、被轮尾改动卡按后缀匹配命中）。
+ *
+ * 多工作区（2026-11，T50）：根集合由宿主侧配置决定（`core/config.ts` 的
+ * `allowedWorkspaceRoots`），界面只能在已授权根之间切换。清单可以一次遍历多个根，
+ * 每个条目带 `root` 与 `label`：主根（第一个）沿用相对路径，其它根用 `<根名>/<相对>`。
  *
  * 住在这里的原因：桌面端 renderer 与终端 TUI（src/app）共用同一份逻辑——桌面经
  * vite alias `@dsc/runtime/core/mention.js` 引编译产物，TUI 直接 import 源码。
@@ -11,6 +16,8 @@
  *
  * @module dsc/core/mention
  */
+import { readdirSync } from 'node:fs'
+import { basename, dirname, join, resolve } from 'node:path'
 
 /** 光标处的 @ 提及查询：token 是 @ 之后的已敲字符（可为空串），start 指向 @ 本身。 */
 export interface MentionQuery {
@@ -102,33 +109,155 @@ export const WALK_MAX_DEPTH = 6
 /** fs-list 透传回包的最小形状（desktop-dock 插件定义，这里只认形状）。 */
 export type DirLister = (dir: string) => Promise<{ entries: { name: string; dir: boolean }[] }>
 
+/** 一个工作区文件候选：插入路径、所属根、面板里显示的标签。 */
+export interface WorkspaceFileEntry {
+  /** 插入正文的路径：主根给相对路径（与旧行为一致），其它根给绝对路径（工具能直接打开）。 */
+  path: string
+  /** 所属根的绝对路径。 */
+  root: string
+  /** 候选里显示的路径：主根是相对路径；其它根是 `<根名>/<相对路径>`。 */
+  label: string
+}
+
+/** 多根遍历的选项；不传 lister 时读本机文件系统（自检可注入夹具）。 */
+export interface CollectWorkspaceFilesOptions {
+  lister?: DirLister
+}
+
+/** 默认列举器：直接读本机 fs。目录名保持原样，交给上面的剪枝规则判。 */
+const nodeDirLister: DirLister = async (dir) => ({
+  entries: readdirSync(dir, { withFileTypes: true }).map((entry) => ({
+    name: entry.name,
+    dir: entry.isDirectory(),
+  })),
+})
+
+/** 一次遍历的落点：相对所属根的 posix 路径 + 根下标。 */
+interface WalkHit {
+  rel: string
+  rootIndex: number
+}
+
+/** 遍历预算：所有根共用，保证多根加起来仍不超过 WALK_MAX_FILES。 */
+interface WalkBudget {
+  left: number
+}
+
 /**
- * 深度优先收集工作区的文件相对路径（posix 分隔符，根为 `./` 的形式不带头）。
- * 目录按 SKIP_DIR_NAMES 剪枝，总量到 WALK_MAX_FILES 即止；lister 抛错时跳过该目录。
+ * 深度优先遍历一个根。目录按 SKIP_DIR_NAMES 剪枝，深度到 WALK_MAX_DEPTH 即止；
+ * lister 抛错时跳过该目录（权限不足的目录不该让整份清单失败）。
  */
-export async function collectWorkspaceFiles(lister: DirLister, root = '.'): Promise<string[]> {
-  const files: string[] = []
-  const walk = async (dir: string, depth: number): Promise<void> => {
-    if (files.length >= WALK_MAX_FILES) return
-    let entries: { name: string; dir: boolean }[]
-    try {
-      entries = (await lister(dir)).entries
-    } catch {
-      return
-    }
-    for (const entry of entries) {
-      if (files.length >= WALK_MAX_FILES) return
-      const path = dir === '.' || dir === '' ? entry.name : `${dir}/${entry.name}`
-      if (entry.dir) {
-        // 点开头目录（.mimosa/.zcode 这类工具状态目录）一律跳过：名字按字典序排在
-        // 源码前面，历史文件一多就把整个上限吃满，源码目录反而一个都收不进。
-        if (depth >= WALK_MAX_DEPTH || SKIP_DIR_NAMES.has(entry.name) || entry.name.startsWith('.')) continue
-        await walk(path, depth + 1)
-      } else {
-        files.push(path)
-      }
+async function walkWorkspaceRoot(
+  lister: DirLister,
+  root: string,
+  rel: string,
+  depth: number,
+  budget: WalkBudget,
+  hits: WalkHit[],
+  rootIndex: number,
+): Promise<void> {
+  if (budget.left <= 0) return
+  let entries: { name: string; dir: boolean }[]
+  try {
+    entries = (await lister(rel === '' ? root : join(root, rel))).entries
+  } catch {
+    return
+  }
+  for (const entry of entries) {
+    if (budget.left <= 0) return
+    const childRel = rel === '' ? entry.name : `${rel}/${entry.name}`
+    if (entry.dir) {
+      // 点开头目录（.mimosa/.zcode 这类工具状态目录）一律跳过：名字按字典序排在
+      // 源码前面，历史文件一多就把整个上限吃满，源码目录反而一个都收不进。
+      if (depth >= WALK_MAX_DEPTH || SKIP_DIR_NAMES.has(entry.name) || entry.name.startsWith('.')) continue
+      await walkWorkspaceRoot(lister, root, childRel, depth + 1, budget, hits, rootIndex)
+    } else {
+      hits.push({ rel: childRel, rootIndex })
+      budget.left -= 1
     }
   }
-  await walk(root, 0)
-  return files
+}
+
+/** 根的短哈希：两个根连「父目录名-根目录名」都一样时用它兜底区分。 */
+function shortRootHash(root: string): string {
+  let hash = 5381
+  for (let index = 0; index < root.length; index += 1) hash = ((hash * 33) ^ root.charCodeAt(index)) >>> 0
+  return hash.toString(16).padStart(8, '0').slice(0, 4)
+}
+
+/**
+ * 给非主根算标签前缀：先只用根目录名；重名时换成 `父目录名-根目录名`；
+ * 还重就再挂短哈希。主根（下标 0）不前缀，保持旧行为。
+ */
+function rootLabelPrefixes(roots: readonly string[]): string[] {
+  const baseNames = roots.map((root) => basename(root))
+  const baseCounts = new Map<string, number>()
+  for (let index = 1; index < roots.length; index += 1) {
+    const key = baseNames[index]!.toLowerCase()
+    baseCounts.set(key, (baseCounts.get(key) ?? 0) + 1)
+  }
+  const prefixes = roots.map(() => '')
+  const used = new Map<string, number>()
+  for (let index = 1; index < roots.length; index += 1) {
+    const base = baseNames[index]!
+    let prefix = base
+    if ((baseCounts.get(base.toLowerCase()) ?? 0) > 1) prefix = `${basename(dirname(roots[index]!))}-${base}`
+    const key = prefix.toLowerCase()
+    const seen = used.get(key) ?? 0
+    if (seen > 0) prefix = `${prefix}-${shortRootHash(roots[index]!)}`
+    used.set(key, seen + 1)
+    prefixes[index] = prefix
+  }
+  return prefixes
+}
+
+/**
+ * 旧签名：注入 lister、单根遍历，返回相对路径字符串。
+ *
+ * 保留它是为了 TUI（`tui/app/Composer.tsx`）不被多根改动波及：传 `(lister)` 或
+ * `(lister, root)` 时结果与 2026-10 版逐字一致。
+ */
+export function collectWorkspaceFiles(lister: DirLister, root?: string): Promise<string[]>
+/**
+ * 新签名：一次遍历多个根（或单根字符串），返回带 `root` / `label` 的候选条目。
+ *
+ * - 主根 = 第一个根，`path` 是相对路径、`label` 与 `path` 相同（旧行为）；
+ * - 其它根，`path` 是绝对路径（工具能直接打开），`label` 带 `<根名>/` 前缀；
+ * - 总条数各根共用 WALK_MAX_FILES 上限，同一个文件出现在多个根下按根分别列出。
+ */
+export function collectWorkspaceFiles(
+  roots: string | readonly string[],
+  options?: CollectWorkspaceFilesOptions,
+): Promise<WorkspaceFileEntry[]>
+export async function collectWorkspaceFiles(
+  rootsOrLister: string | readonly string[] | DirLister,
+  optionsOrRoot: CollectWorkspaceFilesOptions | string = {},
+): Promise<string[] | WorkspaceFileEntry[]> {
+  // 旧签名：第一个参数是函数。root 缺省 '.'（TUI 的老调用）。
+  if (typeof rootsOrLister === 'function') {
+    const root = typeof optionsOrRoot === 'string' && optionsOrRoot !== '' ? optionsOrRoot : '.'
+    const hits: WalkHit[] = []
+    await walkWorkspaceRoot(rootsOrLister, root, '', 0, { left: WALK_MAX_FILES }, hits, 0)
+    const prefix = root === '.' ? '' : root.replace(/\\/g, '/').replace(/\/+$/, '')
+    return hits.map((hit) => (prefix === '' ? hit.rel : `${prefix}/${hit.rel}`))
+  }
+
+  const lister = typeof optionsOrRoot === 'string' ? nodeDirLister : (optionsOrRoot.lister ?? nodeDirLister)
+  const roots = (typeof rootsOrLister === 'string' ? [rootsOrLister] : [...rootsOrLister]).map((root) => resolve(root))
+  if (roots.length === 0) return []
+  const hits: WalkHit[] = []
+  const budget: WalkBudget = { left: WALK_MAX_FILES }
+  for (let index = 0; index < roots.length && budget.left > 0; index += 1) {
+    await walkWorkspaceRoot(lister, roots[index]!, '', 0, budget, hits, index)
+  }
+  const prefixes = rootLabelPrefixes(roots)
+  return hits.map((hit) => {
+    const root = roots[hit.rootIndex]!
+    const main = hit.rootIndex === 0
+    return {
+      path: main ? hit.rel : resolve(root, hit.rel),
+      root,
+      label: main ? hit.rel : `${prefixes[hit.rootIndex]}/${hit.rel}`,
+    }
+  })
 }

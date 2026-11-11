@@ -11,7 +11,7 @@
  */
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import {
   DSC_CONFIG_YAML,
   DSC_CREDENTIALS,
@@ -21,10 +21,10 @@ import {
   type FileConfig,
   type FileProvider,
 } from './migrate.js'
-import { activeConfigFile } from './config-store.js'
+import { activeConfigFile, readConfigDoc, writeConfigDoc } from './config-store.js'
 import { readModelCaps, type ModelCaps } from './model-caps.js'
 import { DEFAULT_LANGUAGE, languageOfConfig } from './plugin-locale.js'
-import { dscPath } from './path-policy.js'
+import { dscPath, expandHome } from './path-policy.js'
 
 /** 一个可对话的模型（能力声明见 core/model-caps.ts）。 */
 export interface ModelInfo extends ModelCaps {
@@ -134,6 +134,146 @@ export function readLlmTuning(): LlmTuning {
   }
   tuningCache = { file, mtimeMs, tuning }
   return tuning
+}
+
+// ── 工作区根（多工作区 / 异根 @ 补全的安全边界） ────────────────────────────────
+
+/** `config.yaml` 里工作区根清单的键名。 */
+const WORKSPACE_ROOTS_KEY = 'workspaceRoots'
+
+/** 配置里的工作区根：原文（供设置页回显）、可用根（绝对路径）、被丢弃的原文。 */
+export interface WorkspaceRootsConfig {
+  /** 配置里的条目原文（已按分号/换行拆开、去空白）。 */
+  raw: string[]
+  /** 存在且是目录的根，规范化成绝对路径，按大小写不敏感去重。 */
+  roots: string[]
+  /** 不存在或不是目录的条目原文：留着给设置页提示，不参与授权。 */
+  invalid: string[]
+}
+
+/**
+ * 把配置值拆成条目：认 YAML 数组，也认分号/换行分隔的一段文本；
+ * 非字符串（数字、对象、null）一律当没写，绝不抛。
+ */
+function splitWorkspaceRoots(value: unknown): string[] {
+  const out: string[] = []
+  const take = (item: unknown): void => {
+    if (typeof item !== 'string') return
+    for (const part of item.split(/[;\r\n]/)) {
+      const text = part.trim()
+      if (text !== '') out.push(text)
+    }
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) take(item)
+  } else {
+    take(value)
+  }
+  return out
+}
+
+/** 比较键：大小写不敏感 + 去尾分隔符（Windows 下 `D:\work` 与 `d:\work\` 是同一个根）。 */
+function workspaceRootKey(path: string): string {
+  return resolve(path).replace(/[\\/]+$/, '').toLowerCase()
+}
+
+/**
+ * 两个路径是不是同一个工作区根。只比「同一个目录」，不判包含关系——
+ * 包含关系由调用方（dock 的 `inside`）在授权之后再判一次。
+ */
+export function sameWorkspaceRoot(left: string, right: string): boolean {
+  return workspaceRootKey(left) === workspaceRootKey(right)
+}
+
+/** 把原文条目归一成「可用根 + 被丢弃的原文」；不存在/不是目录的条目只进 invalid。 */
+function normalizeWorkspaceRoots(raw: readonly string[]): WorkspaceRootsConfig {
+  const roots: string[] = []
+  const invalid: string[] = []
+  const seen = new Set<string>()
+  for (const entry of raw) {
+    const text = entry.trim()
+    if (text === '') continue
+    const expanded = expandHome(text)
+    // 相对路径按用户主目录展开：配置文件是用户的，不是某个进程的启动目录。
+    const absolute = isAbsolute(expanded) ? resolve(expanded) : resolve(homedir(), expanded)
+    let directory = false
+    try {
+      directory = statSync(absolute).isDirectory()
+    } catch {
+      directory = false
+    }
+    if (!directory) {
+      invalid.push(text)
+      continue
+    }
+    const key = workspaceRootKey(absolute)
+    if (seen.has(key)) continue
+    seen.add(key)
+    roots.push(absolute)
+  }
+  return { raw: [...raw], roots, invalid }
+}
+
+/**
+ * 读 `config.yaml` 的 `workspaceRoots:`。文件不在、整份写坏、值类型不对都返回空清单，
+ * 不抛——配置读不出来不该让文件面板与 @ 补全起不来。
+ *
+ * 每次现读（不缓存）：这个清单只在打开面板/敲 @ 时用，且用户改完设置应立刻生效。
+ */
+export function readWorkspaceRootsConfig(): WorkspaceRootsConfig {
+  const file = activeConfigFile()
+  let doc: Record<string, unknown> = {}
+  try {
+    doc = parseTolerantYaml(readFileSync(file, 'utf8'))
+  } catch {
+    doc = {}
+  }
+  return normalizeWorkspaceRoots(splitWorkspaceRoots(doc[WORKSPACE_ROOTS_KEY]))
+}
+
+/**
+ * 已授权的工作区根：**会话 cwd 永远第一个**，后面是配置里存在且去重过的根。
+ *
+ * 这是「界面能切到哪些根」的唯一真源：dock 的 `fs-list` 只认这份清单里的值，
+ * 渲染进程传来的任意路径都不会被当成根。放在 config 模块而不是每个调用方各拼一份，
+ * 是为了让授权集合只有一处定义（改口径只改这里）。
+ */
+export function allowedWorkspaceRoots(cwd: string): string[] {
+  const main = resolve(cwd)
+  const out = [main]
+  const seen = new Set([workspaceRootKey(main)])
+  for (const root of readWorkspaceRootsConfig().roots) {
+    const key = workspaceRootKey(root)
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(root)
+  }
+  return out
+}
+
+/**
+ * 把请求的根对到已授权清单里：命中返回清单里的规范路径，不在清单里返回 null。
+ * 只认「等于某个已授权根」，不认子目录——界面切根只能切整根，不能借一个子路径扩权。
+ */
+export function matchWorkspaceRoot(requested: string, cwd: string): string | null {
+  for (const root of allowedWorkspaceRoots(cwd)) {
+    if (sameWorkspaceRoot(root, requested)) return root
+  }
+  return null
+}
+
+/**
+ * 写回 `config.yaml` 的 `workspaceRoots`（设置分区「额外工作区根」的保存路径）。
+ * 原文原样落盘（不存在的条目也留着，用户下回还能看见并改），返回值同读取口径。
+ */
+export function writeWorkspaceRootsConfig(text: string): WorkspaceRootsConfig {
+  const raw = splitWorkspaceRoots(text)
+  const doc = readConfigDoc()
+  const record = doc as unknown as Record<string, unknown>
+  if (raw.length === 0) delete record[WORKSPACE_ROOTS_KEY]
+  else record[WORKSPACE_ROOTS_KEY] = raw
+  writeConfigDoc(doc)
+  return normalizeWorkspaceRoots(raw)
 }
 
 const DSC_CONFIG_JSON = dscPath('config.json')

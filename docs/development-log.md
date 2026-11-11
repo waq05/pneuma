@@ -16981,6 +16981,32 @@ runner 能建 PTY 了，但没人用它。要让模型显式要一个真终端�
 - CLI 的 `runAdd` 仍是独立实现，两条路暂时各有一份逻辑。
 - 装包会跑构建脚本，目前只靠 `risk: 'write'` 的审批卡兜底，没有 dsh 那种单独的 build-approval。
 
+## 2026-11-11：多工作区 / 异根的 @ 补全（B9）
+
+**为什么**
+
+`@` 补全只遍历会话 cwd，参数里写另一个工作区的路径根本补不出来。而 `fs-list` 又只放行 cwd——直接放开等于让渲染进程随便读盘，所以根集合必须由**宿主侧**决定。
+
+**做法**
+
+- 配置加顶层 `workspaceRoots`（分号或换行分隔）；`readWorkspaceRootsConfig` 坏值不抛、不存在的目录丢掉并留原文；`allowedWorkspaceRoots(cwd)` 把会话 cwd 固定在第一位，其余去重。
+- `fs-list` 接受可选 `root`，先过 `allowedWorkspaceRoots` 清单，再 `inside(dir, root)` 判一次 `..` 逃逸；不在清单里报「这个目录不在已授权的工作区里」。
+- `core/mention.ts` 的 `collectWorkspaceFiles` 支持多根：共享 4000 条预算；主根给相对路径（与旧行为一致），其它根给绝对路径；根目录名撞车依次退化成「父目录名-根名」与短哈希。
+- 旧签名保留，TUI 不改也编译。
+
+**验证**
+
+- `pnpm run typecheck`、`pnpm run build`（77 包）通过。
+- `node scripts/mention-multi-root-test.mjs` → 22 项全过（两根基数、主根相对/第二根绝对、同名可区分、共享上限、单根回归）。
+- `node --test "src/packages/desktop-dock/tests/*.test.mjs"` → 9 条通过；`package-tests` 89 包 / 98 用例 / 581 断言。
+
+**遗留**
+
+- 壳侧 mention 面板（`ui-composer`）仍单根：多根的候选能生成，但界面还没有“切换根”的入口。
+- `fs-read` / `fs-write` 未加 root 参数，第二根的文件只能靠工具按绝对路径打开，dock 预览仍限 cwd。
+- 根名撞车的短哈希层实现了但没有断言。
+
+
 
 
 
