@@ -1500,7 +1500,73 @@ export interface WebServerService {
   readonly running: unknown
 }
 
+/** 一项体检的结论等级。`skip` = 这一项当前不适用（例如它依赖的插件没开）。 */
+export type HealthStatus = 'ok' | 'warn' | 'fail' | 'skip'
+
+/** 一项体检的结论。 */
+export interface HealthResult {
+  status: HealthStatus
+  /** 一句话结论，人读版那一行右边写的就是它。 */
+  summary: string
+  /** 多行细节：路径、数量、实测值。人读版默认不展开，`--json` 里原样给出。 */
+  detail?: string
+  /** 怎么修。只在该项 warn / fail 时有意义。 */
+  fix?: string
+}
+
+/**
+ * 一项体检。谁想被查就登记一条——这是 doctor 的插件化落点：
+ * 以后浏览器插件登记「Chromium 能不能起来」、LSP 登记「语言服务器能不能拉起」，
+ * 都不用改 doctor 一行代码。
+ */
+export interface HealthCheck {
+  /** 全局唯一；`-` 与字母数字，建议 `<域>/<项>`，例如 `sandbox/windows`。 */
+  id: string
+  /** 人读版那一行左边的名字。 */
+  title: string
+  /** 排序刻度，小的在前；内置九项占 10–90，插件从 100 起。 */
+  order?: number
+  run(): HealthResult | Promise<HealthResult>
+}
+
+/** 跑完一轮的结果。 */
+export interface HealthReport {
+  at: number
+  entries: Array<HealthResult & { id: string; title: string }>
+  ok: number
+  warn: number
+  fail: number
+  skip: number
+}
+
+/** 体检登记表（doctor 插件提供；被停用时不存在，读它要用 `ctx.get('health')`）。 */
+export interface HealthService {
+  /** 登记一项；返回退订函数。重复 id 当场抛错（撞名比少查一项更难查）。 */
+  register(check: HealthCheck): () => void
+  /** 按 order 跑一遍全部检查。单项抛错只算该项 fail，不拖垮整轮。 */
+  run(): Promise<HealthReport>
+}
+
 // ── cordis 声明合并 ──────────────────────────────────────────────────────────
+
+/**
+ * 结构化日志出口（log 插件提供）。
+ *
+ * 为什么每个能力都是方法而不是一次读出来的快照：改过设置（目录、级别）之后旧值立刻
+ * 作废，调用方（`/log`、体检插件）每次读到的都该是当下那一份。
+ */
+export interface LogService {
+  /** 当前正在写的那个文件；还没落过盘时给出将要写的那份。 */
+  file(): string
+  /** 日志根目录。 */
+  dir(): string
+  /** 当前记录级别；`off` 表示不落盘。 */
+  level(): string
+  /** 最近 n 条（取自 cordis 的 1000 条环形缓冲），已脱敏、已渲染成一行。 */
+  tail(count?: number): string[]
+  /** 立刻把队列刷进文件（崩溃前、退出前调）。 */
+  flush(): void
+}
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -1544,6 +1610,10 @@ declare module '@deepseek-ai/cordis' {
     skills: SkillService
     /** 设置服务（分区注册表 + 模型配置 + 偏好）。 */
     settings: SettingsService
+    /** 结构化日志出口（log 插件提供；被停用时不存在，读它要用 `ctx.get('log')`）。 */
+    log?: LogService
+    /** 体检登记表（doctor 插件提供；被停用时不存在，读它要用 `ctx.get('health')`）。 */
+    health?: HealthService
     /** 安全钩子（用户在工具动手前自己加的规则与脚本）。 */
     hooks: HookService
     /** 长期记忆（跨会话留下的事实，写在 `~/.dsc/memory/`）。 */

@@ -1,0 +1,4 @@
+{
+  "title": "Run log",
+  "description": "Kernel log under ~/.dsc/logs: one directory per day, rotated when full, capped in total, and the crash line still lands"
+}

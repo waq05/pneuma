@@ -1,0 +1,4 @@
+# 运行日志：排在 llm（order 10）之前，才接得住启动期那几行
+- insert:
+    - id: log
+      name: '@pneuma/log'

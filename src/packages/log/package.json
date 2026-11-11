@@ -1,0 +1,41 @@
+{
+  "name": "@pneuma/log",
+  "version": "0.9.1",
+  "description": "内核日志落到 ~/.dsc/logs：按天分片、写满轮转、总量封顶，崩溃那一刻也留得下现场",
+  "private": true,
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./locale/*.json": "./locale/*.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "cordis.patch.yml",
+    "locale/**"
+  ],
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 5,
+    "resolution": "overridable",
+    "title": "运行日志",
+    "description": "内核日志落到 ~/.dsc/logs：按天分片、写满轮转、总量封顶，崩溃那一刻也留得下现场",
+    "settingsSection": "log",
+    "toggleable": true
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.1.0"
+  }
+}
