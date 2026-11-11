@@ -59,6 +59,14 @@ export interface ReadPreview {
   total: number | null
   /** 宿主补的尾注原文（截断说明、还有更多），按出现顺序。 */
   notes: string[]
+  /**
+   * 文件是不是空的（0 行正文）。
+   *
+   * 宿主对空文件不是「只回一行路径」，而是回 `路径\n1\t`（`fs-tools.ts:137` 把
+   * `''.split(/\r?\n/)` 得到的 `['']` 也编号成第 1 行），所以「0 行」得靠这份结果把那个
+   * 空正文行吃掉，不能靠行数组恰好为空。调用方据此说「文件是空的」，不说「第 1 行」。
+   */
+  empty: boolean
 }
 
 /** 一次读取在界面上说的是哪一段。 */
@@ -69,6 +77,8 @@ export interface ReadSpan {
   to: number | null
   /** 文件总行数；不知道就是 null。 */
   total: number | null
+  /** 文件是空的：头行说「（空文件）」，不退回参数的「第 1 行」。 */
+  empty: boolean
 }
 
 /** 结果正文里的一行：行号 + 制表符 + 原文（宿主就是这么写的，制表符后的空白也算内容）。 */
@@ -79,9 +89,6 @@ const NOTE_RE = /^…（/
 
 /** 尾注里的总行数：`…（共 300 行，可用 offset/limit 续读）`。 */
 const TOTAL_RE = /共 (\d+) 行/
-
-/** 一整行就是一个绝对路径（空文件的读取结果就只有这一行）。 */
-const ABSOLUTE_RE = /^(?:\/|[A-Za-z]:[\\/])/
 
 /**
  * 参数是不是一张 read 卡：**名字对得上**且**参数里真有 `path`**。
@@ -140,8 +147,12 @@ function positiveLine(value: unknown): number | null {
  *
  * 判据是**整份形状**，不是首行像不像路径：正文每一行都必须以「数字 + 制表符」开头、其余行
  * 必须是 `…（` 尾注。任一行对不上就整份返回 null——工具报错时结果是散文（「读不到…」），
- * 把它当成「读了 0 行」画出来比不画更坏。空文件例外：宿主只回一行路径，那是合法的
- * （此时 `lines` 是空数组，调用方画「（空文件）」）。
+ * 把它当成「读了 0 行」画出来比不画更坏。
+ *
+ * 空文件的真实形状是 `路径\n1\t`，不是只有一行路径：宿主把 `''.split(/\r?\n/)` 得到的
+ * `['']` 也编成第 1 行（`fs-tools.ts:121-137`），所以「只有一行、行号是 1、正文为空」才是
+ * 空文件；此时 `lines` 清空、`empty` 为真。只有首行路径的结果宿主造不出来（那是 offset
+ * 越过末尾时 `slice` 为空的样子，内容未知），同样返回 null，不猜成空文件。
  *
  * @param resultText 工具结果原文（可能是 undefined：还在跑）
  * @returns 解析结果；不是这份形状时 null
@@ -168,7 +179,12 @@ export function readPreviewOf(resultText: string | undefined): ReadPreview | nul
     // 有一行既不是正文也不是尾注：这份结果不是读取回显（报错散文 / 半截结果）。
     return null
   }
-  if (lines.length === 0 && notes.length === 0 && !ABSOLUTE_RE.test(head)) return null
+  // 空文件：唯一那一行是第 1 行的空正文。有尾注（「共 N 行」）时说明后面还有行，不算空。
+  const empty = lines.length === 1 && lines[0]?.number === 1 && lines[0].text === '' && notes.length === 0
+  if (empty) lines.length = 0
+  // 只有路径、没有正文也没有尾注：offset 越过文件末尾时才是这个形状（内容未知），
+  // 宿主对空文件会写一行 `1\t`，所以这里不猜「空文件」，交回调用方回落原文。
+  if (lines.length === 0 && !empty) return null
   let total: number | null = null
   for (const note of notes) {
     const hit = TOTAL_RE.exec(note)
@@ -177,7 +193,7 @@ export function readPreviewOf(resultText: string | undefined): ReadPreview | nul
       break
     }
   }
-  return { path: head, lines, total, notes }
+  return { path: head, lines, total, notes, empty }
 }
 
 /**
@@ -191,11 +207,15 @@ export function readPreviewOf(resultText: string | undefined): ReadPreview | nul
  * @param preview 结果预览（还没落地时是 null）
  */
 export function readSpanOf(call: ReadCall, preview: ReadPreview | null): ReadSpan {
+  if (preview !== null && preview.empty) {
+    // 空文件不能退回参数算区间：那会画成「第 1 行」，看着像有内容。
+    return { from: 1, to: null, total: preview.total, empty: true }
+  }
   if (preview !== null && preview.lines.length > 0) {
     const first = preview.lines[0]
     const last = preview.lines[preview.lines.length - 1]
     if (first !== undefined && last !== undefined) {
-      return { from: first.number, to: last.number, total: preview.total }
+      return { from: first.number, to: last.number, total: preview.total, empty: false }
     }
   }
   const from = call.offset
@@ -203,5 +223,6 @@ export function readSpanOf(call: ReadCall, preview: ReadPreview | null): ReadSpa
     from,
     to: call.limit === null ? null : from + call.limit - 1,
     total: preview?.total ?? null,
+    empty: false,
   }
 }

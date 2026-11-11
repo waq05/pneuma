@@ -11,8 +11,9 @@
  *  - `grep` 一行一处命中，形状是 `相对路径:行号: 内容`（`search-tools.ts:447`，内容已被宿主
  *    `trim` 并截到 200 字），末尾可能补「只显示前 N 条」与「已跳过 K 个受保护文件」两条；
  *  - 没有命中时宿主回一行 `（无匹配：pattern）`（`search-tools.ts:375` / `:471`），**这不是空卡**：
- *    本模块把它识别成 `empty`，调用方画一句「没有匹配」并把尾注（比如跳过了几个受保护文件）
- *    一起摊出来——静默给一张空卡会让读者以为工具没跑。
+ *    本模块把它识别成 `empty`，调用方画一句「没有匹配：pattern」并把尾注（比如跳过了几个
+ *    受保护文件）一起摊出来——静默给一张空卡会让读者以为工具没跑。那一行本身**不进 `notes`**：
+ *    它和调用方画的那句话是同一件事，留下就会在展开体里说两遍。
  *
  * 路径的基准：结果里的路径相对**检索根**（`path` 参数），不是相对会话工作目录
  * （`search-tools.ts:312` 的 `displayPath(root, file)`）。所以解析结果里不带绝对路径，
@@ -130,8 +131,10 @@ export function searchResultOf(kind: SearchKind, resultText: string | undefined)
     const text = line.trim()
     if (text === '') continue
     if (NO_MATCH_RE.test(text)) {
+      // 只认标记、不搬原文：视图（`search-view.tsx` 的 `searchNone`）已经用同一个 pattern
+      // 画过「没有匹配：pattern」，这一行再进 notes 就会在展开体里变成两句。真正有用的尾注
+      //（跳过受保护文件、只显示前 N 条）走下面那条分支，照旧留下。
       empty = true
-      notes.push(text)
       continue
     }
     if (NOTE_RE.test(text)) {

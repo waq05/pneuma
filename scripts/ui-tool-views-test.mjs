@@ -154,9 +154,16 @@ console.log('[1] read：判据（名字 + path）、行区间（结果优先 / �
   check('尾注原文留着（给展开体作说明）', preview?.notes.length === 1 && preview.notes[0].startsWith('…（'))
   check('工具报错的散文 → 不是预览（不能画成「读了 0 行」）', readPreviewOf('读不到文件：D:\\work\\x.txt') === null)
   check('空结果 → null', readPreviewOf('') === null && readPreviewOf(undefined) === null)
-  check('空文件（只回一行绝对路径）→ 预览存在但 0 行', (() => {
-    const empty = readPreviewOf('D:\\work\\empty.txt')
-    return empty !== null && empty.lines.length === 0
+  // 宿主对空文件的真实输出是「路径 + 一行 1\t」（fs-tools.ts:121-137：''.split(/\r?\n/) 得到
+  // ['']，照样编成第 1 行），不是只有一行路径。
+  check('空文件（宿主真实形状：路径 + 一行 `1\t`）→ 预览存在、0 行、empty 为真', (() => {
+    const empty = readPreviewOf('D:\\work\\empty.txt\n1\t')
+    return empty !== null && empty.lines.length === 0 && empty.empty === true && empty.path === 'D:\\work\\empty.txt'
+  })())
+  check('只有路径一行（offset 越过末尾的形状，宿主对空文件不会这么回）→ 不猜成空文件', readPreviewOf('D:\\work\\empty.txt') === null)
+  check('空正文行后面还有「共 N 行」尾注 → 不是空文件（文件里还有别的行）', (() => {
+    const more = readPreviewOf('D:\\a.txt\n1\t\n…（共 2 行，可用 offset/limit 续读）')
+    return more !== null && more.empty === false && more.lines.length === 1 && more.total === 2
   })())
   check('CRLF 换行也能解析', readPreviewOf('D:\\a.txt\r\n1\t一\r\n2\t二')?.lines.length === 2)
   check('结果末尾的空行不算正文', readPreviewOf('D:\\a.txt\n1\t一\n\n')?.lines.length === 1)
@@ -178,6 +185,11 @@ console.log('[1] read：判据（名字 + path）、行区间（结果优先 / �
     const span = readSpanOf(readCallOf('read', '{"path":"a"}'), one)
     return span.from === 42 && span.to === 42
   })())
+  check('空文件的头行说「文件是空的」，不退回参数算成「第 1 行」', (() => {
+    const empty = readPreviewOf('D:\\work\\empty.txt\n1\t')
+    const span = readSpanOf(readCallOf('read', '{"path":"a","limit":5}'), empty)
+    return span.empty === true && span.total === null
+  })())
   check('结果落地后以真实行数为准（宿主有硬顶，参数可能说大了）', (() => {
     const wide = readPreviewOf('D:\\a.txt\n1\t一\n2\t二')
     const span = readSpanOf(readCallOf('read', '{"path":"a","offset":1,"limit":5000}'), wide)
@@ -190,6 +202,10 @@ console.log('[1] read：判据（名字 + path）、行区间（结果优先 / �
   check('read-view 里区间有三种说法（区间 / 起点 / 单行）', read(READ_VIEW).includes('tc-range') && read(READ_VIEW).includes("t('transcript.tool.readRange'") && read(READ_VIEW).includes("t('transcript.tool.readFrom'") && read(READ_VIEW).includes("t('transcript.tool.readLine'"))
   check('展开体是行号 + 原文两列', read(READ_VIEW).includes('tc-read-line') && read(READ_VIEW).includes('tc-read-no') && read(READ_VIEW).includes('tc-read-text'))
   check('展开体有内容时不会铺原始参数（参数信息已在头行）', !read(READ_VIEW).includes('prettyJson'))
+  check('头行对空文件画「（空文件）」，不画行区间', flat(read(READ_VIEW)).includes("span.empty ? t('transcript.tool.readEmpty')"))
+  // 缺陷三：注释说的「还在跑 → 什么都不画」曾与代码里的 readWaiting 相反。这条钉住两者一致：
+  // 顶部注释必须写到「正在读取」这句（删掉 readWaiting 或把注释退回「什么都不画」都会红）。
+  check('顶部注释与代码一致：还在跑时画一句「正在读取」', read(READ_VIEW).slice(0, read(READ_VIEW).indexOf('@module')).includes('正在读取'))
 }
 
 // ── [2] search ───────────────────────────────────────────────────────────────
@@ -238,15 +254,22 @@ console.log('[2] search：判据（名字 + 非空 pattern）、命中解析、�
 
   const none = searchResultOf('content', '（无匹配：needle）')
   check('「无匹配」识别成 empty（不是空卡）', none?.empty === true && none.total === 0)
-  check('「无匹配」那一行进尾注（要摊给读者看）', none?.notes[0] === '（无匹配：needle）')
+  // 视图（search-view.tsx 的 searchNone）已经用同一个 pattern 画了「没有匹配：needle」，
+  // 这一行再进 notes 就会在展开体里出现两句。只留视图那一处。
+  check('「无匹配」那一行不再进尾注（视图已经说过一遍）', none?.notes.length === 0)
   const skipped = searchResultOf('content', '（无匹配：needle）\n（已跳过 2 个受保护文件：.env、id_rsa）')
-  check('被跳过的受保护文件那句尾注留着', skipped?.notes.length === 2 && skipped.notes[1].includes('已跳过'))
+  check('被跳过的受保护文件那句尾注留着（有用的尾注不能被一起丢掉）', skipped?.notes.length === 1 && skipped.notes[0].includes('已跳过') && !skipped.notes.some((note) => note.startsWith('（无匹配：')))
+  // 展开体 = 视图那句「没有匹配：pattern」+ notes；同一句话只许出现一次（宿主那句是
+  // 「无匹配」、视图那句是「没有匹配」，两种说法都得数进去）。
+  const emptyBody = [zh['transcript.tool.searchNone'].replace('{pattern}', 'needle'), ...(skipped?.notes ?? [])].join(' ')
+  check('展开体上只剩一句「没有匹配」（不画两遍）', (emptyBody.match(/没有匹配|无匹配/g) ?? []).length === 1, emptyBody)
   const truncated = searchResultOf('files', 'src/a.ts\n（只显示前 100 条，还有更多；把 pattern 或 path 收窄一点再看全部）')
   check('截断尾注留着', truncated?.notes.length === 1 && truncated.files.length === 1)
   check('空结果 → null（还在跑，不画空卡）', searchResultOf('content', '') === null && searchResultOf('files', undefined) === null)
   check('有命中就没标记 empty', parsed?.empty === false)
 
   check('模型里两个工具名成对出现（glob / grep）', read(SEARCH_MODEL).includes("glob: 'files'") && read(SEARCH_MODEL).includes("grep: 'content'"))
+  check('「无匹配」只在模型侧过滤一次（视图不重复过滤同一句）', read(SEARCH_MODEL).includes('NO_MATCH_RE') && !code(read(SEARCH_VIEW)).includes('无匹配'))
   check('没有匹配有单独一句（不是空卡）', read(SEARCH_VIEW).includes('tc-search-none') && read(SEARCH_VIEW).includes("t('transcript.tool.searchNone'"))
   check('头行读数按两档分别说（命中处数 / 文件数）', read(SEARCH_VIEW).includes("t('transcript.tool.searchHits'") && read(SEARCH_VIEW).includes("t('transcript.tool.searchFiles'"))
   check('命中文件路径是可点的（同一个 PathButton 外壳）', read(SEARCH_VIEW).includes('<PathButton'))

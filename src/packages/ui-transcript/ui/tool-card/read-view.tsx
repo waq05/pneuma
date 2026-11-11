@@ -10,9 +10,10 @@
  * 外观与终端块同一档（等宽 + 四级底 + 三级描边 + 块圆角，见 `views.css`），不另造视觉语言。
  *
  * 三种「没有正文」的情况分开画，不共用一句占位：
- *  - 解析出了结构、但一行都没有 → 「（空文件）」（宿主只回了一行路径）；
+ *  - 解析出了结构、但文件是空的（宿主回 `路径\n1\t` 这种真实形状，见 `read-model.ts`）→
+ *    头行说「（空文件）」、展开体也只说这一句；
  *  - 解析不出结构、但有结果原文 → 原样摊出来（工具报错时那就是原因，藏起来等于让人猜）；
- *  - 什么都没有、还在跑 → 什么都不画（跑完再说，别提前断言一件还没发生的事）。
+ *  - 什么都没有、还在跑 → 一句「正在读取」（跑完仍没有结果就什么都不画）。
  *
  * @module dsc-ui-shell/plugins/transcript/tool-card/read-view
  */
@@ -34,8 +35,9 @@ const t = createT({ zh, en })
  */
 export function ReadRange({ call, preview }: { call: ReadCall; preview: ReadPreview | null }): ReactNode {
   const span = readSpanOf(call, preview)
-  const text =
-    span.to === null
+  const text = span.empty
+    ? t('transcript.tool.readEmpty')
+    : span.to === null
       ? t('transcript.tool.readFrom', { from: span.from })
       : span.to === span.from
         ? t('transcript.tool.readLine', { line: span.from })
@@ -51,7 +53,7 @@ export function ReadRange({ call, preview }: { call: ReadCall; preview: ReadPrev
  * 展开体的内容预览。
  *
  * @param call 这条工具调用（只读状态与结果原文）
- * @param preview 结果解析（还没落地、或形状认不出时是 null）
+ * @param preview 结果解析（还没落地、或形状认不出时是 null；空文件时 `empty` 为真）
  */
 export function ReadBody({ call, preview }: { call: ToolCallView; preview: ReadPreview | null }): ReactNode {
   if (preview !== null && preview.lines.length > 0) {
@@ -71,9 +73,9 @@ export function ReadBody({ call, preview }: { call: ToolCallView; preview: ReadP
       </div>
     )
   }
-  if (preview !== null) {
+  if (preview !== null && preview.empty) {
     return (
-      <div className="tc-read">
+      <div className="tc-read" data-read-empty="1">
         <p className="tc-read-note">{t('transcript.tool.readEmpty')}</p>
         {preview.notes.length > 0 ? <p className="tc-read-note">{preview.notes.join(' ')}</p> : null}
       </div>
