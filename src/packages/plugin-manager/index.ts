@@ -1,7 +1,8 @@
 /**
  * plugin-manager 插件：AI 参与插件管理（对应 dsh 的 plugin_manager 工具）。
- * 只注册 `plugin_manager` 工具（list/enable/disable/install/browse_remote/install_remote）；
- * `/plugins` 命令自 0.6.63 起由 commands 插件提供（见本文件 152-153 行）。
+ * 只注册 `plugin_manager` 工具（list/enable/disable/install/browse_remote/install_remote/
+ * install_package/remove_package）；`/plugins` 命令自 0.6.63 起由 commands 插件提供
+ * （见本文件 152-153 行）。
  *
  * 全部写操作走 core/plugin-loader 的热挂载（即时生效，写盘持久化）；工具
  * risk='write'，执行前经权限模式/审批卡把关。install 仅支持本地 .js 路径
@@ -9,6 +10,11 @@
  * 照技能市场的两类源（GitHub 目录 / 索引 JSON）远程安装——拉取走
  * core/market 的插件市场函数，源 URL 必须是 https；远程插件是任意代码，
  * 审批卡上写明来源，装不装由用户点头。
+ *
+ * install_package / remove_package 走 npm 包形态（core/plugin-npm）：在生效的 profile
+ * 目录里跑 pnpm add / remove，把包名并进 `dsh.profile.bundles`。为什么不复用 install：
+ * .js 单文件是「外部插件」，组合包是「一个目录 + patch 文件」，两种形态的失败回滚、
+ * 生效路径都不同，混在一个 action 里只会让模型猜。
  *
  * @module dsc/plugins/plugin-manager
  */
@@ -19,6 +25,7 @@ import type { Plugin } from '@deepseek-ai/cordis'
 import { browsePluginMarketSource, installPluginMarketEntry, type MarketEntry } from '@pneuma/config-core/market.js'
 import { canTogglePlugin, isPluginEnabled, listPluginInfos } from '@pneuma/runtime/core/plugin-registry.js'
 import { mountExternalPlugin, setPluginEnabledHot } from '@pneuma/runtime/core/plugin-loader.js'
+import { installNpmBundle, removeNpmBundle } from '@pneuma/runtime/core/plugin-npm.js'
 import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
 import { dscPath } from '@pneuma/runtime/core/path-policy.js'
 import { thirdPartyUiRoot } from '@pneuma/runtime/core/ui-bundles.js'
@@ -45,13 +52,24 @@ export const pluginManagerPlugin: Plugin.Object = {
       description:
         '管理 dsc 插件：列出清单（list）、启用/停用（enable/disable，热生效）、' +
         '安装本地插件文件（install，.js 绝对路径）、浏览远程插件源（browse_remote）、' +
-        '从远程安装插件（install_remote，https 的 .js 直链）。写操作会请求用户批准。',
+        '从远程安装插件（install_remote，https 的 .js 直链）、' +
+        '按 npm 包形态安装插件包（install_package，包名/name@version/file: 路径/https tarball）、' +
+        '卸载 npm 插件包（remove_package）。写操作会请求用户批准。',
       parameters: {
         type: 'object',
         properties: {
           action: {
             type: 'string',
-            enum: ['list', 'enable', 'disable', 'install', 'browse_remote', 'install_remote'],
+            enum: [
+              'list',
+              'enable',
+              'disable',
+              'install',
+              'browse_remote',
+              'install_remote',
+              'install_package',
+              'remove_package',
+            ],
             description: '操作',
           },
           file: {
@@ -59,6 +77,12 @@ export const pluginManagerPlugin: Plugin.Object = {
             description:
               'enable/disable：插件文件名；install：待安装的 .js 绝对路径；' +
               'browse_remote：市场源地址（GitHub 目录链接或 .json 索引）；install_remote：插件 .js 的 https 直链',
+          },
+          spec: {
+            type: 'string',
+            description:
+              'install_package：要装的包（包名、name@version、file:./x.tgz、本地目录或 https tarball）；' +
+              'remove_package：要卸的包名',
           },
         },
         required: ['action'],
@@ -157,8 +181,21 @@ export const pluginManagerPlugin: Plugin.Object = {
               return `错误：${error instanceof Error ? error.message : String(error)}`
             }
           }
+          case 'install_package': {
+            const spec = String(args.spec ?? '')
+            if (spec.trim() === '') return '错误：缺少 spec 参数（包名、name@version、file: 路径或 https tarball）'
+            // 安装失败时函数自己已回滚并带上 pnpm 的输出；这里只把结果如实转给模型。
+            const outcome = await installNpmBundle(spec)
+            return outcome.ok ? outcome.detail : `错误：${outcome.detail}`
+          }
+          case 'remove_package': {
+            const spec = String(args.spec ?? '')
+            if (spec.trim() === '') return '错误：缺少 spec 参数（要卸载的包名）'
+            const outcome = await removeNpmBundle(spec)
+            return outcome.ok ? outcome.detail : `错误：${outcome.detail}`
+          }
           default:
-            return `错误：未知 action ${action}（可用：list / enable / disable / install / browse_remote / install_remote）`
+            return `错误：未知 action ${action}（可用：list / enable / disable / install / browse_remote / install_remote / install_package / remove_package）`
         }
       },
     }

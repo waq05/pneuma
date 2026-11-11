@@ -16954,6 +16954,34 @@ runner 能建 PTY 了，但没人用它。要让模型显式要一个真终端�
 - 真实会话打开仍未端到端触发过（只有源码装配与纯函数断言）。
 - 旧版归档条目（空 hash）仍只能手动从 `.archive` 搬回。
 
+## 2026-11-11：npm 包形态的插件安装（B8）
+
+**为什么**
+
+宿主里的 `plugin_manager` 只能装单个 `.js` 文件或拉一条 `.js` 直链；真能按包名装的是 CLI 的 `numa plugin add`（`pnpm add`）。模型在对话里没法装一个正经的 npm 插件包。
+
+**做法**
+
+- 新增 `src/core/plugin-npm.ts`：`installNpmBundle(spec)` / `removeNpmBundle(name)`。
+  - spec 先做保守校验（空、超 300 字符、含 `; & | > < \` $` 一律拒），不合法不碰盘；
+  - 装前存 `package.json` 与 `pnpm-lock.yaml` 原文，`pnpm add` 非零退出就逐字节还原（锁文件原本不存在就删掉）；
+  - 成功后**重读** `package.json`（不拿装前那份覆盖），把包名并进 `dsh.profile.bundles`，再用 `readBundle` 取版本与 patch 条数；
+  - Windows 上 `pnpm.cmd` 用 `shell: false` 会 `EINVAL`，改成读它指向的 `pnpm.cjs` 交给 node 跑——仍然不经 shell。
+- `plugin_manager` 增加 `install_package` / `remove_package` 两个 action（原有 6 个保留），新参数 `spec`；工具本身 `risk: 'write'`，审批照旧。
+
+**验证**
+
+- `pnpm run typecheck`、`pnpm run build`（77 包）通过。
+- `node --test "src/packages/plugin-manager/tests/*.test.mjs"` → 11 条全过；`package-tests` 89 包 / 97 用例 / 576 断言通过。
+- 三条真实结论：`file:` 本地包装上（`patches=1`、`node_modules` 与 `bundles` 都在）；坏 spec 让 pnpm 失败时 `package.json` 逐字节还原；卸载后两处都不含。
+
+**遗留**
+
+- 只在 Windows 跑过，POSIX 分支与真实 registry（`name@version`、https tarball）没实机验证。
+- CLI 的 `runAdd` 仍是独立实现，两条路暂时各有一份逻辑。
+- 装包会跑构建脚本，目前只靠 `risk: 'write'` 的审批卡兜底，没有 dsh 那种单独的 build-approval。
+
+
 
 
 
