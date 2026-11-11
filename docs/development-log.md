@@ -16423,3 +16423,190 @@ zcode 按时段一共六句、每段一句，句子的主语全是「你」和�
 
 - S9 多颗动作时的右边界夹取：`select.ts` 的 `anchorOf` 仍按单颗宽度（`BUBBLE_W=92`）夹，插件挂 2–3 颗时整排可能被 `.app` 的 `overflow-x: clip` 裁掉。改法：容器右对齐到选区右缘（用 `right` 而不是 `left`），或渲染后 measure 再夹。
 - 剩下的 S5 + S11（视口协调器与底部占位）、S6（逐行收起动画）、S8（缺数据源，要先拍板）见 `docs/session-parity-gaps.md`。
+
+## 2026-11-11：日志落盘插件 `@pneuma/log`（可观测性批 1）
+
+**为什么先做这个**
+
+对标 codex 时看到的第一件事不是它有多少功能，而是它出事之后有东西可查：日志进本地 SQLite、崩溃进 tracing、`codex doctor` 能体检。本仓此时 `ctx.logger` 只有 cordis 自带的内存环（1000 条），进程一退全没——用户说「刚才闪退」时，除了再问一遍细节，什么也拿不到。
+
+计划书见 `docs/observability-plan.md`（同日新建），共四批：批 1 日志、批 2 doctor、批 3 测试层、批 4 request-id 与导出包。批 2 必须等批 1，否则 doctor 只能查配置、查不了「刚才为什么崩」。
+
+**做成什么样**
+
+内置包 `src/packages/log/`，`pneuma.order` = 5（排在 `llm` 的 10 之前，启动期那几行才接得住），`inject: ['commands', 'settings']`。三个文件各管一段：
+
+- `filter.ts` —— 渲染 + 脱敏。级别下标直接对应 cordis 的 `LoggerLevel`（error=0…debug=3）；阈值语义是从实现里读出来的：`(levels[name] ?? levels.default ?? 2) < level` 就丢，所以「放行到 info」写 2。凭据按**外形**抹，不按字段名——日志是 printf 拼出来的字符串，没有「这个字段叫 apiKey」这种结构可用。
+- `sink.ts` —— JSONL 落盘。按天分目录、单文件 8 MiB 轮转到 `.1`、留 10 天、总量 64 MiB，数是从 codex 的 `logs_maintenance.rs` 抄的。用同步写而不是流：崩溃那一刻进程只剩同步 IO，`createWriteStream` 来不及把最后一行送出去，而「最后一行」恰恰最值钱。
+- `index.ts` —— 接管 exporter、注册 `ctx.log` 服务、`/log` 命令、设置分区、崩溃钩子。
+
+**三个踩到的坑（都靠冒烟抓出来的，不是靠读代码想出来的）**
+
+1. **脱敏把 `Bearer` 也吃了**。原来先抹 `Bearer <token>` 再兜底 `Authorization:`，第二次匹配抓到的 `\S+` 是「Bearer」这个词本身，输出成了 `Authorization: *** ***`。改成先吃掉整条 `Authorization:`（到行尾），再抹裸 `Bearer`。
+2. **轮转根本没触发**。第一版把整批日志一次写完，`ensureOpen` 在 `open` 之前判容量，此时 `bytes` 还是 0，永远判不出「要轮转」。改法是把保证顺序改成「先跨天 → 再开文件 → 最后看容量」，并且 `flush` 里**按行**判容量：一批 64 行可能比单文件上限还大，一次写完等于「先超了再说」，上限形同虚设。
+3. **单测数据太小**。`{"i":0}` 每行 8 字节，40 行才 320 字节，压根没超过测试里设的 400 上限，于是「轮转」这条断言红在一个假问题上。把每行加到 60 字节才真的验到东西。
+
+**验证**
+
+- `pnpm typecheck` → 0；`pnpm build` → 75 个功能包、基础包 75 行（原来 74），`log` 是基础包第一行。
+- `pnpm run check:style` → 1266 个文件全过。
+- `pnpm run check:plugin` 硬项 0 条问题（清单字段、exports 键集、行 id、入口导出、依赖方向、order 撞号、文档与测试 8 类全过）。`package-tests.mjs` 在本机因沙箱禁止管道子进程（`spawn EPERM`）跑不了，这是环境限制；`--list` 确认它已发现 `src/packages/log/tests/log.test.mjs`。
+- `node --test --test-isolation=none src/packages/log/tests/log.test.mjs` → 7/7。
+- 真内核冒烟（临时 `DSC_HOME`）：`ctx.log` 已登记、日志文件生成、`sk-…` 落盘为 `sk-***`、`tail()` 读得回、默认级别 `info`。
+- 崩溃冒烟（子进程抛未捕获异常）：退出码 1，且崩溃前那行与 `[uncaughtException] boom-from-probe` 都在文件里。
+- 用途限制（启动早期接不到、只留一份历史、脱敏只认四类外形、桌面三进程各一份、不做 SQLite 索引）写进了包 README 的 Known Limitations，不是留在对话里。
+
+**遗留**
+
+- 批 2 `/doctor` 与批 3 测试层按计划书推进；`scripts/_testkit.mjs` 尚未建，当前包级测试各写各的 fake ctx。
+- `runtime.ts` 里的模块级可变状态检查把 `LEVEL_NAMES` 列进「声明为只读」的提示（只提示不阻塞），与 `lsp`、`memory` 等既有包同一档，暂不处理。
+
+## 2026-11-11：`/doctor` 体检命令（可观测性批 2）
+
+**为什么**
+
+批 1 让日志落了盘，但「日志在哪、出了事看什么」还需要人问。对标 codex 的 `codex doctor`：一条命令把「这台机器现在到底怎么了」合成一句话，用户贴过来就能定位大半。本仓原来的对应物是散着的（`/plugins`、`/sandbox`、设置页），各自都对，但没人合成。
+
+**做成什么样**
+
+内置包 `src/packages/doctor/`，`order` 3450（排在 log 与内核服务之后）。三个检查文件 + 一个入口：
+
+- `checks/environment.ts` —— 安装、配置、认证、终端；
+- `checks/ecosystem.ts` —— 插件、沙箱、连通性；
+- `checks/data.ts` —— 会话、磁盘；
+- `index.ts` —— 登记表 `ctx.health`、`/doctor` 命令、两种渲染。
+
+**关键设计：检查项可注册**。`ctx.health.register({id, title, order, run})`，重复 id 当场抛错，单项抛错只算该项 fail、不拖垮整轮。以后 `browser` 登记「Chromium 起不起得来」、`lsp` 登记「语言服务器拉不拉得起来」，都不用改 doctor 一行。登记表抽成 `createHealthRegistry()` 单独导出，测试不必真去联网或探 shell。
+
+**一个抓错的例子，值得记**
+
+第一版把「见到 `.lock` 就报残留」写成警告。冒烟跑出来 `session=warn`——可那是临时 `DSC_HOME`，一份会话都没有。回头读 `lockfile.ts:19` 才看到：**两条路径都不删 `.lock`**，它是 POSIX flock 的锚点，删了会拆出两个持有者。文件常驻是设计，不是残留。
+
+改成读锁里的 `{pid, birth}` 问「这个 pid 还活着吗」：`process.kill(pid, 0)` 不投递信号只做存在性探测，`ESRCH` 才是真不在，`EPERM` 说明进程在、只是没权限。存活探针做成可注入参数，测试就能不依赖真进程地验三种结论（活着 / 死了 / 认不出）。**这条如果没冒烟，每个开过会话的用户第一次跑 `/doctor` 都会看到一条假警告。**
+
+**另一个：异步命令没有反馈**
+
+`commands.run` 是同步的，处理函数是 async，`/doctor` 会先「点了没反应」。九项里有网络探测与 shell 探测，可能几秒。加了一句「正在体检（9 项）…」先出，结果再出。冒烟里也因此要等一个 tick 才能读到结果——这一条写进了探针注释。
+
+**验证**
+
+- `pnpm typecheck` → 0；`pnpm build` → 76 个功能包、基础包 76 行。
+- `pnpm run check:style` → 1277 个文件全过；`pnpm run check:plugin` 硬项 0 条。
+- `node --test --test-isolation=none src/packages/doctor/tests/doctor.test.mjs` → 9/9（排序、计数、单项抛错不扩散、重复 id、退订、两种渲染、锁三态）。
+- 真内核冒烟（临时 `DSC_HOME`）：九项全部出结论 `install=ok config=warn auth=skip plugins=ok session=ok disk=ok sandbox=ok reachability=skip terminal=ok`；`--json` 九项可解析且家目录已脱敏；`commands.specs()` 里有 `doctor`，`commands.run('/doctor')` 返回 true 并真的输出人读版。
+
+**遗留**
+
+- 会话项只验「目录可写 + 锁主人还在」，不解析 JSONL（截断/老格式归批 4）。
+- 连通性只测默认端点，避免一次体检发一堆请求。
+- 没有图形入口：桌面端设置页那一栏留到后续。
+
+顺便记一笔：工作区里 11:21 出现了 `src/core/repeat-reminder.ts`，是另一条线的在途改动，与本批无关，未动、也未纳入本次改动。
+
+## 2026-11-11：共享测试工具 `_testkit.mjs`（可观测性批 3）
+
+**为什么**
+
+批 1 与批 2 各写了一份「假 ctx」，两份都只铺自己碰过的那几个面。第三个插件来了还得再抄一份，抄少一面就是 `undefined is not a function`——而那种错在测试里表现为「插件坏了」，排查方向一开始就是歪的。
+
+而且当时没有任何共享的快照能力：想钉「落盘记录长什么样」只能写一堆 `assert.equal`，字段一多就没人愿意维护。
+
+**做成什么样**
+
+`scripts/_testkit.mjs`，八个导出：`readPackage` / `loadPlugin` / `createFakeContext` / `mountPlugin` / `expectRegistered` / `runCommand` / `tick` / `snapshotJson`。
+
+三个设计决定：
+
+1. **按形状找插件**，不认固定导出名：遍历模块导出，取第一个带 `apply` 的对象。`logPlugin`、`doctorPlugin`、将来别人的 `xxxPlugin` 都能用。
+2. **假 ctx 一次铺齐常用面**（logger / provide / get / commands / settings / tools / surfaces / waiting / prompt / transcript / effect），全记进 `captured`。`settings.modelConfig` 缺省直接抛——宁可测试当场红，也不要悄悄返回空对象让断言在别处失效。
+3. **`runCommand` 只给 `ui.notice`**：命令里用到 `ui` 的其他方法就会抛。这是有意的——没测到的分支不该被悄悄放过。
+
+**快照这条路踩了个环境坑**
+
+第一版把快照放进 `tests/__snapshots__/`，`node --test` 里 `mkdir` 直接 EPERM。探了一下才知道：这个会话的沙箱里，**Node 进程写不进 `src/packages/log/`**（`fs.writeFileSync` EPERM），但读没问题、`tmp-repro/` 写也没问题——目录权限的事，不是代码的事。
+
+于是把快照改成「生成与更新走编辑器/非沙箱环境，测试只读比对」，文件放在测试旁边（`tests/log-record.snapshot.json`）。`snapshotJson` 在文件缺失且没设 `UPDATE_SNAPSHOTS=1` 时直接 `assert.fail` 并给出生成命令——**不让 CI 在第一次跑时悄悄把错的样子记下来**。
+
+顺带证明它真能红：把快照里的 `lvl` 改成 `level` 跑一次，断言立刻失败并打出「快照不一致」；改回来再跑，绿。
+
+**验证**
+
+- `node --test --test-isolation=none` 跑两个包 → 19/19（原 16 条 + `log` 命令断言 + 记录形状快照 + doctor 装配断言）。
+- 两种跑法都验过：`node <文件>` 直接跑也 0 退出——`scripts/package-tests.mjs` 就是那么调的，所以 `check:plugin` 会自动收进去。
+- `pnpm typecheck` 0；`pnpm run check:style` 通过。
+
+**遗留**
+
+- **会话重放快照没做**：它需要一个稳定的「喂 JSONL → 拿最终状态」接口，现在只有 `createKernel({resumeSessionPath})`，会把整条宿主生命周期带进包级测试。留到批 4 之后单独设计，不在这里硬塞——把「做不到」写进计划书，比塞一个假装是快照的 `assert.deepEqual` 强。
+- 工作区里另一条线正在改 `src/contract/transcript.ts`、`src/packages/agent/index.ts`、`ui-transcript/*`（重复调用提醒），本次未触碰、也未纳入。
+
+## 2026-11-11：请求追踪号 + 诊断包（可观测性批 4）
+
+**为什么**
+
+前三个批次解决的是「本机能查到什么」。这一批解决「用户把问题交给我们时能带什么」：
+
+- 模型接口 500 时，用户手里只有「HTTP 500：{...}」——服务端要定位只能靠时间戳大海捞针。codex 的做法是从响应头捞 `x-request-id` 带进错误与 telemetry（`codex-rs/response-debug-context/src/lib.rs:4-8`）。
+- 让人手动收集日志、会话、配置再打包，等于让人自己决定发什么——多半会连密钥一起发出来。
+
+**做成什么样**
+
+1. **`src/core/http-debug.ts`**：从响应头捞 `x-request-id` / `x-openai-request-id` / `request-id` / `x-amzn-requestid` 与 `cf-ray`，规整后挂到 `LlmError.requestId` 并拼进错误文案（`（request-id xxx）`）。只认这几家，不猜 `x-trace-id` 这类内部链路号；长度超 128 或含非可见字符的一律丢掉。
+2. **`src/packages/doctor/bundle.ts`**：`/doctor --bundle` 把体检结论 + 最近 300 行日志 + 最近 5 份会话路径打成 `~/.dsc/exports/dsc-diag-<时间>.json.gz`。用 `node:zlib` 而不是 zip——仓库零打包依赖，`gzipSync` 是内置的。包里带一个 `excluded` 字段，写明「没收录密钥 / 请求正文 / 工具输出 / 会话内容」。
+
+**三个坑**
+
+1. **`Headers` 构造器会当场拒绝带换行的值**。探针原本想用真 `Headers` 验「带换行的号要丢掉」，结果在构造那一步就 `TypeError`，测试根本没跑到被测代码。改成只依赖 `get()` 的最小接口 + 桩对象——顺带把 `requestDebugContext` 的参数类型从 `Headers` 放宽成 `HeaderReader`，真 `response.headers` 天然满足。
+2. **`process.exit` 撞 libuv 断言**。探针里起过本地 HTTP 服务、发过 fetch，最后硬退时 Windows 上抛 `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`，退出码被改成 1，把 6 条 PASS 全盖掉。改成 `process.exitCode = …` 让事件循环自己收尾，退出码就对了。
+3. **重试会把探针拖慢**：500 属于可重试状态，默认 5 次退避。探针里设 `DSC_LLM_RETRY_ATTEMPTS=1`，只要第一次的结果。
+
+**验证**
+
+- `scripts/http-debug-test.mjs` → 12 条全过（各家的头、`cf-ray`、两个都有、一个都没有、超长、换行、空格、三种文案）。
+- `scripts/llm-request-id-test.mjs` → 6 条全过：本地回环服务真回 500 + `x-request-id: req_probe_500`，断言 `error.requestId` 与文案；另一个服务回 400 不带号，断言不硬凑。
+- 诊断包真机冒烟：真内核跑 `/doctor --bundle`，`gunzip` 后 JSON 可解析、九项检查在、日志尾巴在、`excluded` 在、家目录已抹成 `~`。
+- 包级测试 12/12（新增两条：脱敏与 `excluded`；只留 300 行）。
+- `pnpm typecheck` 0、`pnpm build` 76 包、`check:style` 通过；两个新探针被 `check:core --list` 收录。
+
+**遗留**
+
+- **成功响应里的追踪号没记**：只在非 2xx 时取。想在成功时也留一份，得把号一路带到会话日志，改动面比这一批大，留到需要时再做。
+- **诊断包不含会话正文**：只给路径。要连正文一起带，得先定「哪些事件算正文」以及按会话切片，属于另一件事。
+- 工作区里另一条线仍在改 `agent` / `ui-transcript`，本次未触碰。
+
+## 2026-11-11：补完三条遗留（成功追踪号 / 会话重放快照 / 诊断包带正文）
+
+**三条各自的动机**
+
+1. **成功请求的追踪号**：失败有 `LlmError.requestId` 可挂，成功那半什么都没有。用户说「刚才那次回答不对」，日志里没有号就去不了服务端查。
+2. **会话重放快照**：会话日志是最值钱的现场，但此前没有任何自动断言「同一份日志重放之后状态还是那个状态」。改状态写入顺序、改恢复逻辑，全靠开界面人肉看。
+3. **诊断包带正文**：只给路径有时说不清问题——「它一直重复调同一个工具」这种描述，光看路径谁也没法判。
+
+**做法**
+
+- **`StreamHandlers.onRequestDebug`**：拿到响应头就回调（成功失败都调）。真正记录只放在 `packages/llm/index.ts` 的 `stream()` 一处——所有模型请求（回合、压缩、标题、审批、子 Agent）都从这条缝过，放一处就够，不必让每个调用方各记一遍。
+- **`_testkit.replaySession(fixture)`**：复制 fixture 到临时 `DSC_HOME`、改写 `meta.cwd` 成本机临时目录、`createKernel({resumeSessionPath})` 重放、导出六个状态键；配 `scripts/fixtures/session-replay.jsonl` 与 `scripts/session-replay.snapshot.json`。
+- **`/doctor --bundle --with-session`**：显式开关，带最后 200 条事件、每条截 400 字。同时把脱敏从 `packages/log/filter.ts` 提到 **`src/core/redact.ts`**，日志与诊断包共用一份——两份实现早晚分叉，分叉那天就是「日志抹了、包里没抹」的事故。
+
+**三个坑（都写进了代码注释）**
+
+1. **`DSC_HOME` 必须在 import 内核之前设好**。`core/session.ts` 有模块级 `const LAST_FILE = dscPath('.last-session')`，模块加载那一刻路径就定死了；在 `replaySession` 里先设环境变量再动态 `import()`，顺序反了就会写到真实 `~/.dsc`。
+2. **fixture 的 `cwd` 必须改写**。写死 `D:\w` 的 fixture 在 Linux CI 上根本打不开；会话的目录是它自己的数据，换台机器就该换。
+3. **必须 `dispose`**。内核挂着一堆插件与定时器，不卸载测试进程不退出——`replaySession` 在 `finally` 里做。
+
+**验证**
+
+- `scripts/llm-request-id-test.mjs` → 9 条（新增：失败也回调、成功 SSE 也回调且正文照常解析）。
+- `scripts/session-replay-test.mjs` → 5 条：mode / preset / permissions / todos 按日志恢复，没写过的状态仍是 `undefined`（不能凭空出现在快照里），并比对一个已提交的快照。
+- 诊断包包级测试 → 15/15（新增 3 条：跳过 meta/state、密钥被抹且长文截断、带了摘要就不能再说「不含会话内容」）。
+- 真机冒烟：`/doctor --bundle --with-session` 写出包，解压后摘要里只有 user 事件、密钥已抹、`excluded` 已去掉「会话的完整内容」那一项。
+- `pnpm typecheck` 0、`pnpm build` 76 包。
+
+**遗留**
+
+- 成功请求的追踪号只写进日志（debug 级），没有进会话日志条目；要做「按会话回查某次请求」还得再设计一层。
+- 重放快照只钉六个状态键，消息流本身没进快照（工具卡、折叠态这些属于界面层，不在会话状态里）。
+- 工作区里另一条线仍在改 `agent` / `ui-transcript`，本次未触碰。
+
+
+
