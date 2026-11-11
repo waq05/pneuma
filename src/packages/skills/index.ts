@@ -17,11 +17,13 @@ import {
   DSC_SKILLS_DIR,
   expandSkillDir,
   readDisabledSkills,
+  readSkillLifecycles,
   scanSkillRoot,
   skillRoots,
   toSkillInfoView,
   writeSkillEnabled,
   type SkillDefinition,
+  type SkillLifecycleState,
 } from '@pneuma/runtime/core/skills.js'
 import {
   browseMarketSource,
@@ -45,6 +47,30 @@ const DESCRIPTION_LIMIT = 500
 
 /** 不能占用成命令名的内置命令。 */
 const RESERVED_COMMANDS = new Set(['new', 'resume', 'compact', 'model', 'help', 'exit', 'effort', 'plugins', 'skills'])
+
+/** 不进模型可见目录的档位：stale 只是降级（用户按名字仍能调），archived 已经搬进归档区。 */
+const HIDDEN_IN_CATALOG: ReadonlySet<SkillLifecycleState> = new Set<SkillLifecycleState>(['stale', 'archived'])
+
+/**
+ * 该进 `<available_skills>` 目录的候选：模型可调用、没被停用、生命周期不是 stale/archived。
+ *
+ * 抽成纯函数是为了能直接喂假数据钉住这四条（包测试 `catalog.test.mjs`）：
+ * 效果必须落在目录文本上，而不是落在「谁记得去改 buildCatalog」上。
+ *
+ * 注意：**只影响目录**。stale / archived 的技能仍能被 `skill` 工具按名字读出来——
+ * 用户可能就是要显式用那一条，目录删掉只是不让模型自己撞上去。
+ */
+export function catalogEntries(
+  definitions: readonly SkillDefinition[],
+  disabled: ReadonlySet<string>,
+  lifecycles: ReadonlyMap<string, SkillLifecycleState> = new Map<string, SkillLifecycleState>(),
+): SkillDefinition[] {
+  return definitions.filter((item) => {
+    if (!item.modelInvocable || disabled.has(item.name)) return false
+    const state = lifecycles.get(item.name)
+    return state === undefined || !HIDDEN_IN_CATALOG.has(state)
+  })
+}
 
 function escapeXml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -105,7 +131,9 @@ export const skillsPlugin: Plugin.Object = {
     }
 
     function buildCatalog(definitions: readonly SkillDefinition[]): string {
-      const usable = definitions.filter((item) => item.modelInvocable && !disabled.has(item.name))
+      // 老化降级/归档由 self-improve 写进 .usage.json；这里每次重算都现读一遍，
+      // 技能整理完发 dsc/skills-changed → refresh() → 这里重新拿到最新档位。
+      const usable = catalogEntries(definitions, disabled, readSkillLifecycles())
       if (usable.length === 0) return ''
       const lines = usable.map((item) => {
         const description =

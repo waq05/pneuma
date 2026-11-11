@@ -15,9 +15,9 @@
  * @module dsc/core/learnings/ledger
  */
 import { createHash } from 'node:crypto'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
-import { archiveRoot, skillsRoot, SKILL_FILE } from './skill-write.js'
+import { archiveRoot, readUsage, skillsRoot, SKILL_FILE, writeUsage } from './skill-write.js'
 
 /** 谁动的手：模型（工具调用）还是用户（命令 / 设置按钮 / 老化整理）。 */
 export type LedgerActor = 'model' | 'user'
@@ -206,12 +206,46 @@ function atomicWriteText(file: string, text: string): void {
 }
 
 /**
+ * 按改前指纹在归档区里认出技能那一份。
+ *
+ * 归档目录名带时间戳（`<名字>-20261111…`），光看名字认不出「是哪一次搬走的」，
+ * 只能按内容指纹对号：`curateSkills` / `archiveSkill` 现在都会把真实指纹记进台账，
+ * 回滚就靠它把这份和那一条对上。
+ */
+function findArchivedByHash(skill: string, beforeHash: string): string | null {
+  const root = archiveRoot()
+  if (!existsSync(root)) return null
+  let names: string[] = []
+  try {
+    names = readdirSync(root).sort()
+  } catch {
+    return null
+  }
+  const prefix = `${skill}-`
+  for (const name of names) {
+    if (!name.startsWith(prefix)) continue
+    const dir = join(root, name)
+    try {
+      if (!statSync(dir).isDirectory()) continue
+      const file = join(dir, SKILL_FILE)
+      if (!existsSync(file)) continue
+      if (hashText(readFileSync(file, 'utf8')) === beforeHash) return dir
+    } catch {
+      // 这一份读不出来就跳过去看下一份
+    }
+  }
+  return null
+}
+
+/**
  * 回滚一条变更：把 SKILL.md 恢复成那条变更改之前的内容。
  *
- * 三种情况分开处理：
+ * 四种情况分开处理：
  *   - 台账里记了副本（patch / write_file）→ 用副本内容盖回去，写完核对指纹对不对；
+ *   - `archive` 且记了真实指纹 → 去归档区按指纹找到那一份，整目录搬回技能目录，
+ *     顺便把使用台账的档位改回 `active`（否则文件回来了，目录里照样看不到它）；
  *   - `create` 且没有副本（文件本来不存在）→ 把整个技能目录搬进 `.archive/`，**绝不删**；
- *   - 其余（副本丢了、动作没有可恢复的语义）→ 明确报错，不许假装成功。
+ *   - 其余（副本丢了、旧版归档没记指纹、动作没有可恢复的语义）→ 明确报错，不许假装成功。
  *
  * @param id - 台账 id。
  * @param now - 回滚那条台账的时间戳（自检要造历史时用）。
@@ -249,6 +283,57 @@ export function rollbackEntry(id: string, now = Date.now()): RollbackResult {
       ts: now,
     })
     return { ok: true, error: '', notice: `已把 ${entry.skill}/SKILL.md 还原成 ${entry.id} 之前的内容（${entry.beforeHash}）` }
+  }
+
+  if (entry.action === 'archive' && entry.beforeHash !== EMPTY_HASH) {
+    const dir = join(skillsRoot(), entry.skill)
+    if (existsSync(dir)) {
+      return { ok: false, error: `技能 ${entry.skill} 的目录又出现了（${dir}），不覆盖它：要恢复请先把它挪开`, notice: '' }
+    }
+    const archived = findArchivedByHash(entry.skill, entry.beforeHash)
+    if (archived === null) {
+      return {
+        ok: false,
+        error: `归档区里找不到内容指纹为 ${entry.beforeHash} 的 ${entry.skill}（可能被手动改过或搬走），回滚不了`,
+        notice: '',
+      }
+    }
+    try {
+      mkdirSync(skillsRoot(), { recursive: true })
+      renameSync(archived, dir)
+    } catch (error) {
+      return { ok: false, error: `从归档区搬回来失败：${error instanceof Error ? error.message : String(error)}`, notice: '' }
+    }
+    // 文件回来了，档位也要跟着回来：还挂着 archived 的话，它照样进不了模型可见目录。
+    try {
+      const doc = readUsage()
+      const record = doc.skills[entry.skill]
+      if (record !== undefined) {
+        record.state = 'active'
+        record.archivedAt = null
+        writeUsage(doc)
+      }
+    } catch {
+      // 档位没改回来不影响文件已经回来这件事：下一次命中也会把它拉回 active
+    }
+    appendLedger({
+      actor: 'user',
+      action: 'rollback',
+      skill: entry.skill,
+      beforeHash: EMPTY_HASH,
+      afterHash: entry.beforeHash,
+      note: `回滚 ${entry.id}（archive）：从归档区 ${basename(archived)} 搬回技能目录`,
+      ts: now,
+    })
+    return { ok: true, error: '', notice: `已把 ${entry.skill} 从归档区搬回 ${dir}（内容指纹 ${entry.beforeHash}）` }
+  }
+
+  if (entry.action === 'archive') {
+    return {
+      ok: false,
+      error: '这条归档记录没有改前指纹（旧版只记了空 hash），认不出归档区里是哪一份：去 .archive/ 里按目录名手动搬回',
+      notice: '',
+    }
   }
 
   if (entry.action === 'create' && entry.beforeHash === EMPTY_HASH) {

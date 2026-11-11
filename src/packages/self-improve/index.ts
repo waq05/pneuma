@@ -78,6 +78,7 @@ import {
   localSkillNames,
   patchSkill,
   readBeforeWriteCheck,
+  readLastCuratedAt,
   renderSkillMarkdown,
   setSkillPinned,
   skillFileOf,
@@ -88,8 +89,10 @@ import {
   usageFile,
   validateSkillDraft,
   validateSkillName,
+  writeLastCuratedAt,
   writeSkillFile,
   archiveSkill as archiveSkillOp,
+  type CurateReport,
   type SkillDraft,
   type SkillOpResult,
 } from './skill-write.js'
@@ -366,6 +369,72 @@ export function parseDraftAnswer(text: string, descriptionMax = DEFAULT_SKILL_LI
     return { kind: 'draft', draft }
   }
   return { kind: 'invalid', error: '没找到形如 {"name":…,"description":…,"whenToUse":…,"content":…} 的一行 JSON' }
+}
+
+/** 自动整理的间隔：24 小时（会话打开时顺手做，一天最多一次）。 */
+export const CURATE_INTERVAL_MS = 24 * 60 * 60 * 1000
+
+/**
+ * 这一轮该不该自动整理老化技能。
+ *
+ * `lastAt <= 0`（从没跑过、时间戳读不出来）→ 真：新装的环境第一次开会话就该整理一次；
+ * 否则要等距上次超过 `intervalMs` 才跑。纯函数，包测试直接喂三个数字断言。
+ */
+export function shouldCurate(lastAt: number, now: number, intervalMs: number = CURATE_INTERVAL_MS): boolean {
+  if (!Number.isFinite(lastAt) || lastAt <= 0) return true
+  if (!Number.isFinite(now)) return false
+  return now - lastAt >= intervalMs
+}
+
+/** 自动整理一次的依赖：插件里接真实函数（整理、写时间戳、说一句、通知重算目录）。 */
+export interface AutoCurateDeps {
+  /** 插件总开关。**老化跟着它走**：关掉这一档就不该再发生任何文件搬迁。 */
+  enabled: boolean
+  /** 现在（毫秒）。 */
+  now: number
+  /** 上次自动整理的时间；0 = 从没跑过。 */
+  lastRunAt: number
+  intervalMs?: number
+  /** 真整理一次（插件里是 `curateSkills`）。 */
+  curate: (now: number) => CurateReport
+  /** 记下这次整理的时间。 */
+  saveLastRunAt: (now: number) => void
+  /** 只有真降级/归档了东西才调用。 */
+  announce: (text: string) => void
+  /** 通知技能目录重算。 */
+  changed: () => void
+}
+
+/** 一次自动整理的结果；`ran=false` 表示被开关或节流挡下，什么都没做。 */
+export interface AutoCurateOutcome {
+  ran: boolean
+  /** 说给用户的那句话（没话说就是空串）。 */
+  text: string
+  report: CurateReport | null
+}
+
+/**
+ * 自动整理一次：先看开关，再看 24 小时节流，最后才真动手。
+ *
+ * 顺序与 `handleTurnEnd` 一致（先 `enabled` 再别的事）：用户把自我改进关掉之后，
+ * 会话打开既不该读、也不该搬技能目录——搬目录是写操作，开关关了还做等于开关没关。
+ * 抽成吃依赖的函数是为了测试能换进记录器，直接断言「没调 curate、没写时间戳」。
+ */
+export function autoCurateOnce(deps: AutoCurateDeps): AutoCurateOutcome {
+  if (!deps.enabled) return { ran: false, text: '', report: null }
+  if (!shouldCurate(deps.lastRunAt, deps.now, deps.intervalMs ?? CURATE_INTERVAL_MS)) {
+    return { ran: false, text: '', report: null }
+  }
+  const report = deps.curate(deps.now)
+  deps.saveLastRunAt(deps.now)
+  if (report.stale.length === 0 && report.archived.length === 0) return { ran: true, text: '', report }
+  const parts: string[] = []
+  if (report.stale.length > 0) parts.push(`${String(report.stale.length)} 个降为 stale`)
+  if (report.archived.length > 0) parts.push(`${String(report.archived.length)} 个搬进归档区`)
+  const text = `技能老化：${parts.join('，')}（/skills-ledger 看台账，回滚用 rollback <id>）`
+  deps.announce(text)
+  deps.changed()
+  return { ran: true, text, report }
 }
 
 export const selfImprovePlugin: Plugin.Object = {
@@ -1125,6 +1194,36 @@ export const selfImprovePlugin: Plugin.Object = {
         },
       ), 'self-improve: commands.register #2'),
     )
+
+    /**
+     * 会话打开时顺手整理一次：老化必须自己跑，不能等人去点设置里的按钮。
+     *
+     * **跟着功能开关走**：`config.enabled` 关掉时直接返回，不读不搬——搬技能目录是写操作，
+     * 开关关了还搬等于开关没关。开关逻辑在 {@link autoCurateOnce} 里，这里只接真实依赖。
+     *
+     * 两处节流与克制：
+     *   - 24 小时一次（`~/.dsc/skills/.curated.json` 记 lastRunAt，读写失败都当没跑过）；
+     *   - 只有真的降级/归档了东西才说一句话，没变化不出声——每个会话开一次就刷一条
+     *     「没有需要整理的」纯属噪音。
+     * 任何异常都吞掉并记 debug：整理是维护动作，失败不能拦住用户开会话。
+     */
+    function autoCurate(): void {
+      try {
+        autoCurateOnce({
+          enabled: config.enabled,
+          now: Date.now(),
+          lastRunAt: readLastCuratedAt(),
+          curate: (now) => curateSkills(now, DEFAULT_AGING),
+          saveLastRunAt: (now) => { writeLastCuratedAt(now) },
+          announce: (text) => { ctx.transcript.system(text) },
+          changed: () => { ctx.emit('dsc/skills-changed') },
+        })
+      } catch (error) {
+        ctx.logger.debug('self-improve: 自动整理技能失败：%s', errText(error))
+      }
+    }
+
+    disposers.push(ctx.on('dsc/session-open', () => { autoCurate() }))
 
     /** 整理一次并回一句话（命令与设置按钮共用）。 */
     function runCurate(): string {

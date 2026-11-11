@@ -53,6 +53,14 @@ export interface SkillSummary {
 /** 技能的作用域：项目内发现根 vs 用户主目录下的全局根。 */
 export type SkillScope = 'project' | 'global'
 
+/**
+ * 技能的生命周期档位，与 self-improve 写进 `.usage.json` 的 `state` 同一个口径。
+ *
+ * 放在 core 而不是让 skills 插件去 import self-improve：档位是技能目录自己的属性，
+ * 不该让两个插件互相依赖，也不该因为 self-improve 被关掉就失去这个判定。
+ */
+export type SkillLifecycleState = 'active' | 'stale' | 'archived'
+
 /** 完整技能（含正文）。 */
 export interface SkillDefinition extends SkillSummary {
   content: string
@@ -235,6 +243,32 @@ export function readDisabledSkills(): Set<string> {
   } catch {
     return new Set()
   }
+}
+
+/**
+ * 读每个技能的生命周期档位：`~/.dsc/skills/.usage.json` 里 `skills.<名字>.state`。
+ *
+ * 只读、绝不抛：文件不存在或坏掉都当「没有这份信息」（空 Map，调用方按 active 处理）——
+ * 技能的发现不该被一份遥测文件拖住。写这份文件的是自学习插件，这里只负责读。
+ */
+export function readSkillLifecycles(): Map<string, SkillLifecycleState> {
+  const out = new Map<string, SkillLifecycleState>()
+  const file = join(DSC_SKILLS_DIR, '.usage.json')
+  try {
+    if (!existsSync(file)) return out
+    const doc = JSON.parse(readFileSync(file, 'utf8')) as { skills?: unknown }
+    if (doc === null || typeof doc !== 'object') return out
+    const skills = doc.skills
+    if (skills === null || typeof skills !== 'object' || Array.isArray(skills)) return out
+    for (const [name, value] of Object.entries(skills as Record<string, unknown>)) {
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) continue
+      const state = (value as { state?: unknown }).state
+      if (state === 'active' || state === 'stale' || state === 'archived') out.set(name, state)
+    }
+  } catch {
+    return out
+  }
+  return out
 }
 
 /** 写启停状态；返回写盘后的停用集合。 */

@@ -16931,6 +16931,30 @@ runner 能建 PTY 了，但没人用它。要让模型显式要一个真终端�
 - 没有沙箱执行器时 `tty: true` 是空操作（计划里有标记、没人换执行体），模型拿到的仍是普通管道。
 - 后台作业与 `terminal` 会话未接 tty。
 
+## 2026-11-11：技能老化归档闭环（B4）
+
+**为什么**
+
+老化能力早就写好了（14 天降 stale、30 天归档、只动 `createdBy === 'agent'` 的技能、pin 挡住），但三处没接上：只有手动按钮能触发；`stale` 没有任何后果（照样出现在模型可见的技能目录里）；自动归档写的台账是空 hash，回滚不了。
+
+**做法**
+
+- **自动跑，但 24 小时一次**：`shouldCurate(lastAt, now)` 纯函数 + `~/.dsc/skills/.curated.json` 记上次时间；挂 `dsc/session-open`。**先看功能开关再看节流**——用户关掉自我改进后不读状态、不搬目录、不写时间戳、不说话。
+- **stale / archived 不进目录**：`core/skills.ts` 加只读的 `readSkillLifecycles()`（读 `.usage.json`，坏文件返回空 Map，绝不抛）；`skills` 包的 `catalogEntries()` 纯函数剔除 stale / archived。**`skill` 工具仍能按名字读它们**——只是不让模型自己撞上去。
+- **归档可回滚**：自动归档搬走前读 `SKILL.md` 算真实 `beforeHash`；`ledger.ts` 补 archive 回滚分支（按内容指纹在归档区认目录、整目录搬回、档位改回 active、记一条 rollback）。旧版空 hash 条目明确报错，不假装成功。
+
+**验证**
+
+- `pnpm run typecheck`、`pnpm run build`（77 包）通过。
+- self-improve 23 条、skills 8 条包内断言全过；`package-tests` 89 包 / 96 用例 / 570 断言通过。
+- 新增断言覆盖：从没跑/刚跑/超 24 小时的节流三态；31 天未命中的 agent 技能真搬进 `.archive/` 且台账 beforeHash 非空；用户手写技能不被动；`enabled=false` 时四个副作用全为 0。
+
+**遗留**
+
+- 真实会话打开仍未端到端触发过（只有源码装配与纯函数断言）。
+- 旧版归档条目（空 hash）仍只能手动从 `.archive` 搬回。
+
+
 
 
 

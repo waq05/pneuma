@@ -47,6 +47,31 @@ export function usageFile(): string {
   return join(skillsRoot(), '.usage.json')
 }
 
+/** 自动整理的时间戳文件（`{ lastRunAt }`；只有自动整理会写它）。 */
+export function curatedFile(): string {
+  return join(skillsRoot(), '.curated.json')
+}
+
+/** 上次自动整理的时间；文件不在、读不出来或值不像时间戳，一律返回 0（= 从没跑过）。 */
+export function readLastCuratedAt(): number {
+  try {
+    const doc = JSON.parse(readFileSync(curatedFile(), 'utf8')) as { lastRunAt?: unknown }
+    const last = Number(doc.lastRunAt)
+    return Number.isFinite(last) && last > 0 ? Math.trunc(last) : 0
+  } catch {
+    return 0
+  }
+}
+
+/** 记下这一轮自动整理的时间；写不进去就当没记（下一轮再跑一次，不会更糟）。 */
+export function writeLastCuratedAt(now = Date.now()): void {
+  try {
+    atomicWriteText(curatedFile(), `${JSON.stringify({ lastRunAt: Math.trunc(now) }, null, 2)}\n`)
+  } catch {
+    // 见上：这份时间戳只是节流用的，丢一次最多多整理一次
+  }
+}
+
 /** 技能的硬约束（设置里只暴露体积与描述长度，名字长度按 hermes 固定 64）。 */
 export interface SkillLimits {
   /** description 的字符上限（hermes 的 SKILL_PROMPT_DESC_LIMIT）。 */
@@ -940,6 +965,14 @@ export function curateSkills(now = Date.now(), options: AgingOptions = DEFAULT_A
       report.stale.push(name)
       continue
     }
+    // 搬走之前先把正文指纹读下来：归档后文件不在了，只有这条指纹能让回滚认出
+    // 归档区里哪一份是它（`/skills-ledger rollback <id>` 靠它把技能搬回来）。
+    let beforeHash = EMPTY_HASH
+    try {
+      beforeHash = hashText(readFileSync(skillFileOf(name), 'utf8'))
+    } catch {
+      // 读不出来就退回空 hash：照旧搬走，只是这一条回滚不了（与旧行为一致）
+    }
     const moved = moveToArchive(name, now)
     if (!moved.ok) {
       report.skipped.push(name)
@@ -953,7 +986,7 @@ export function curateSkills(now = Date.now(), options: AgingOptions = DEFAULT_A
         actor: 'user',
         action: 'archive',
         skill: name,
-        beforeHash: EMPTY_HASH,
+        beforeHash,
         afterHash: EMPTY_HASH,
         note: `老化归档：${String(options.archiveAfterDays)} 天没命中 → ${moved.path}`,
         ts: now,
