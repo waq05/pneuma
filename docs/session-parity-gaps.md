@@ -18,10 +18,11 @@ S4 漏了 `read-row.tsx` 且本仓已有可点文件路径、S8 缺的是**数�
 **施工顺序（2026-11-10 的建议，已按此执行完）**：S10 → S4（先做 bash 那张）→ S2（比较器止血）→ S9 → S7 → S8 → S5 → S6。
 排前面的两条理由是「改动小、用户一眼看得见」；S5 与 S6 共用同一套视口机制，所以合成四阶段施工图一起做。
 
-**当前状态（2026-11-11）**：S1、S2、S3、S7、S9、S10、S11 已对齐；S4 只剩「读文件那张卡」的细节；
-S5、S6 按四阶段施工图全部落地（见下一节，四个阶段都有真机读数）；S8 的数据面与两张卡已做完，
-剩下的是命令类节点没按 dsh 细分（差别在信息密度，不在功能）。每条「没做到的」都写在对应小节里，
-**别只看标题就以为全齐了**——S2 的 ScriptDuration 目标没达成，原因在文末「性能线索」。
+**当前状态（2026-11-11）**：S1、S2、S3、S7、S9、S10、S11 已对齐；S5、S6 按四阶段施工图全部落地
+（每个阶段都有真机读数）；S8 的数据面与两张卡已做完；S4 已换四张专用卡（命令类 + 读文件 / 检索 /
+待办），剩下六张逐条写明了「为什么不值得现在做」（两张要改数据面，四张重复或已有等价形态）。
+每条「没做到的」都写在对应小节里，**别只看标题就以为全齐了**——S2 的 ScriptDuration 目标没达成，
+原因在文末「性能线索」。
 
 ### 视口与渲染管线的四阶段施工图（2026-11-10 设计，2026-11-11 四个阶段全部落地）
 
@@ -336,9 +337,9 @@ S5、S6 按四阶段施工图全部落地（见下一节，四个阶段都有真
 - **验收**：摄影一张带代码块的思考展开图；`ui-transcript-render-test` 加一条「思考正文走
   markdown」的形态钉。
 
-### S4 工具卡只有一张通用卡（部分对齐 2026-11-10：命令类已换专用卡）
+### S4 工具卡只有一张通用卡（部分对齐：命令类 + 读文件 / 检索 / 待办共四张已换专用卡）
 
-> **部分对齐（2026-11-10）**：`bash` / `shell` / `pwsh` 三种名字（且参数里真有 `command` 字段）
+> **第一批（2026-11-10）**：`bash` / `shell` / `pwsh` 三种名字（且参数里真有 `command` 字段）
 > 换成一张终端块——`$ 命令` / 输出（限高 `min(240px,30vh)` 内滚）/ 退出码徽章 / 耗时。
 > 判据与实现在 `tool-card/factory.tsx` 的 `isTerminalCall` 与 `tool-card/bash-view.tsx`；
 > **只在对话页生效**，轨迹页（`variant === 'trace'`）继续摊原始参数与结果原文——那一页的
@@ -349,21 +350,44 @@ S5、S6 按四阶段施工图全部落地（见下一节，四个阶段都有真
 > 验收：`scripts/ui-tool-bash-test.mjs` 43 项、`desktop/shots/_verify-bash-card.mjs` 真机通过
 > （真跑 `echo 自检输出; exit 3`，断言命令 / 输出 / 徽章 3 / 正文里没有重复的退出码行 /
 > **阶段组展开后终端块在屏幕上真有高度**）。截图 `desktop/shots/_bash-card.png`。
-> **仍欠**：`read` 那一张（只差行号与折叠形态，本仓已有可点文件路径），以及 dsh 另外 9 个
-> 视图（`search-row` / `web-row` / `file-mutation-row` / `todo-row` / `details-row` /
-> `ask-question-row` / `read-image-row` / `GenericToolCard` / `read-family-row`）。
+>
+> **第二批（2026-11-11，`3339fb3`）**：`read` / `glob`+`grep` / `todo_write` 三张卡落地——
+> read 头行给行区间（结果里真实行号优先，参数兜底；单行写「第 N 行」，只有起点写「第 N 行起」），
+> 展开是行号 + 原文两列；检索头行给「N 处 · M 个文件」、展开按文件分组列命中（路径可点），
+> **没有命中单独画**而不是空卡；待办头行给「d/n 完成」+ 进行中那条，展开是四态勾选清单
+> （只读，数据面没改）。判据与实现在 `tool-card/read-model.ts` + `read-view.tsx`、
+> `search-model.ts` + `search-view.tsx`、`todo-model.ts` + `todo-view.tsx`，装配在
+> `factory.tsx:282-299`（三张卡都要求「名字 + 参数字段 + `variant === 'chat'`」三条），
+> 可点路径的外壳抽到 `path-button.tsx`。
+> 验收：`scripts/ui-tool-views-test.mjs` 187 项、`desktop/shots/_verify-tool-views.mjs` 49 项真机
+> （三条调用一次跑完；路径可点、行号 3–7、检索 2 文件 3 处、待办 1/3；组收起时三张卡不可见、
+> 重新展开可见；**切到轨迹页后三张卡一个都不出现**、原始参数 JSON 与结果原文都在；悬停头行时
+> 「在轨迹中查看」药丸亮、三枚读数淡出）。截图 `_tool-views.png` / `_tool-views-todo.png`。
+>
+> **仍欠的六张，逐条给理由**（不是「没来得及」，是「现在做会做出一张假卡」）：
+> - `web`：本仓 `web_search` / `webfetch` 的结果是纯文本 + URL，画成带标题/站点/摘要的卡
+>   需要宿主先给结构化元数据——**要改数据面**；
+> - `file-mutation`：本仓已有等价形态（write/edit 的「将做的改动 / 这次改动」diff 块 + 可点路径），
+>   再画一张是重复；
+> - `details`：参考实现那张是「一次调用的明细折叠面板」，本仓展开体已是输入字段表 + 输出首行 +
+>   「展开更多」，等价；
+> - `ask-question`：本仓问答有独立卡片（在 `ui-ask`），不走工具卡；
+> - `read-image`：`read_image` 的结果是「已加载图片…」文本 + 图片附件，而 `ToolCallView` 上
+>   **没有附件列表字段**——硬做只能画个空框；
+> - `read-family`：它本身只是「read 与 read_image 共用的一段组装函数」，不是新视图。
 
 - **现象**：`bash` 在 dsh 是一块终端（黑底、退出码徽章），本仓是「执行了命令 · 摘要」。
-- **不成立的那半句**：`read` 在 dsh 里是「可点文件路径 + 行号」，本仓**已经是**可点路径了
-  （`tool-card/factory.tsx:630` 与 `:654` 都在画可点的文件路径）——这条只差行号与折叠形态。
+- **不成立的那半句**：`read` 在 dsh 里是「可点文件路径 + 行号」，本仓**当时已经是**可点路径了
+  （`tool-card/factory.tsx` 一直在画可点的文件路径）——只差行号与折叠形态，2026-11-11 补齐（见上）。
 - **dsh**：11 个视图——`read-family-row`、`read-row`、`search-row`、`web-row`、
   `file-mutation-row`、`bash-sample`、`todo-row`、`details-row`、`ask-question-row`、
   `read-image-row`、`GenericToolCard`（`packages/client/ui-tool/src/client/tool/toolviews/`，
   原文漏了 `read-row.tsx`，这里补上）。
-- **本仓**：一张 `ToolCardView`（`tool-card/factory.tsx:230`）+ 工具名匹配表
-  + 参数表 `toolArgFields` + diff + 结果尾巴。
-- **代价**：中。分批做，第一张先做 `bash`（终端块：命令 + 输出 + 退出码徽章），它的收益最大；
-  `read` 那张只剩「行号 + 折叠」这点增量。
+- **本仓**：通用卡是 `ToolCardView`（`tool-card/factory.tsx`）+ 工具名匹配表 + 参数表
+  `toolArgFields` + diff + 结果尾巴；上面四张专用卡在它前面拦一道。
+- **代价**：第一批 bash 是「中」，第二批三张也是「中」。剩下六张里 `web` 与 `read-image`
+  要**先改数据面**（结构化元数据 / 附件列表），另四张是重复或已有等价形态——所以不是排期问题，
+  是值不值得动数据面的问题。
 - **验收**：每张卡一条隔离截图 + 一条断言；与 dsh 对应截图并排放 `docs/` 里。
 
 ### S5 滚动是「CSS + 钉底」，dsh 是「视口协调器」（已对齐 2026-11-11：一个 owner）
