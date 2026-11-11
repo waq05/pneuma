@@ -15,6 +15,7 @@
 ## Known Limitations（已知限制）
 
 - 策略围栏拦得住 dsc 自己发起的工具调用，拦不住命令内部的任意写（脚本里的 fs.writeFile 这类）；要真隔离得把后端换成 Windows 受限令牌或容器（index.ts:425）。
+- runner 用哪个解释器是**显式算出来的**，不靠环境碰巧对：默认用宿主的 `process.execPath`；检测到 Electron 运行时（桌面端宿主是 `utilityProcess`）就自动置 `ELECTRON_RUN_AS_NODE=1`，否则 `electron.exe` 会按图形程序启动、runner 一行都跑不到；用户可以用 `DSC_NODE` 指定自己的 node 来覆盖（win/interpreter.ts:44-67）。
 - 降级不走 fail-closed：后端建不起来时默认照常执行、由审批卡兜底，这是与 dsh 的明确分歧（文件头 11-12）。
 - read-only 档不拒整个 exec，只在命令里出现写目标时拒；「要不要问」是权限模式与审批的事（文件头 16-17）。
 - 只有两条规则能交给审批卡问一次：`outside-writable-roots` 与 `mode-read-only`，其余硬拒（index.ts:130）。

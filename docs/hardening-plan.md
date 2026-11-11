@@ -41,6 +41,7 @@
 - runner 用 `process.execPath` 当 node 起子进程（`win/backend.ts:313`）。桌面宿主是 Electron 的 `utilityProcess.fork`（`desktop/electron/main/protocol.ts:91`），此时 `process.execPath` 是 `electron.exe`；能不能当 node 用，取决于环境里有没有 `ELECTRON_RUN_AS_NODE=1`。
 - 现在这条路径**靠环境继承**，`win/backend.ts:313` 里没有任何显式设置；全仓 `ELECTRON_RUN_AS_NODE` 只出现在 `src/headless.ts:3` 的注释和一堆截图脚本的 `Remove-Item` 里。`docs/development.md:96` 写着要这么做，代码里没落实。
 - 结论：**不依赖继承，改成显式设置**（`DSC_NODE` 环境变量优先，否则给子进程置 `ELECTRON_RUN_AS_NODE=1`），并在 S1 里用打包件实跑一次验证。这条不修，其余加固都是空谈。
+- **2026-11-11 实测证据**：`D:\dsc\desktop\node_modules\electron\dist\electron.exe` 在 `ELECTRON_RUN_AS_NODE=1` 下跑一段 `.js`，输出 `execPath=electron.exe`、`electron=44.10.0`、`node=24.22.1`，无窗口、正常退出。所以"让 electron 当 node 用"这条路是通的，缺的只是显式设置。
 
 **B. 强制力本身的洞**
 

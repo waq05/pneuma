@@ -28,6 +28,7 @@ import { DSC_HOME } from '../../../core/path-policy.js'
 import type { CommandRunner, SpawnPlan } from '../../../core/tools/command-runner.js'
 import { grantAccountAccess, grantWrite, revokeWrite, type GrantOutcome } from './acl.js'
 import { type BoundWin32, bindAll, tryLoadFfi } from './ffi.js'
+import { resolveRunnerInterpreter } from './interpreter.js'
 import { rootWriteSid, tempWriteSid } from './workspace-sid.js'
 import { createNetProxy, proxyEnvVars, type NetProxy } from '../net-proxy.js'
 import { sandboxTmpDir } from '../policy.js'
@@ -79,7 +80,14 @@ export function probeWindowsToken(): { available: boolean; detail: string } {
   if (!existsSync(entry)) {
     return { available: false, detail: `runner 入口没有构建产物：找不到 ${entry}（先跑 pnpm run build）` }
   }
-  return { available: true, detail: '受限令牌后端可用（koffi FFI + runner 子进程）' }
+  // 解释器形态只作诊断：Electron 宿主下 runner 靠 ELECTRON_RUN_AS_NODE 才能跑，
+  // 用户看到「electron」就该知道这是正常的，「node」则说明宿主是命令行版。
+  const { kind } = resolveRunnerInterpreter({
+    execPath: process.execPath,
+    electron: process.versions.electron !== undefined,
+    env: process.env,
+  })
+  return { available: true, detail: `受限令牌后端可用（koffi FFI + runner 子进程，解释器：${kind}）` }
 }
 
 /** 执行器构造入参（路径都要求是 realpath 规范化后的绝对路径）。 */
@@ -286,12 +294,21 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
       // 再物化授权——顺序反了就会用「上一个会话的工作区」去跑这一条命令。
       scopeOf(run.cwd)
       if (!ensureAuthorized()) return null
-      // 已经是本后端换过的计划（别人套第二次）：不套两层
-      if (current.file === process.execPath && current.args[0] === entry) return null
+      // 已经是本后端换过的计划（别人套第二次）：不套两层。
+      // 只认 args[0] 是我们的入口：`file` 不可靠——Electron 宿主下它是 electron.exe，
+      // 用户设了 DSC_NODE 时又是另一个路径，拿 file 跟 process.execPath 比会漏判。
+      if (current.args[0] === entry) return null
 
+      // 解释器先定：它给出的 env 里可能带着 ELECTRON_RUN_AS_NODE，
+      // 网络变量必须叠在它之上，顺序反了就会把这个变量顶掉、runner 起不来
+      const interpreter = resolveRunnerInterpreter({
+        execPath: process.execPath,
+        electron: process.versions.electron !== undefined,
+        env: current.env,
+      })
       // 网络：账号分支开网走白名单代理（WFP 只给账号留了回环代理口），关网或
       // 没有账号分支时叠一级软墙；不改调用方给的 env 对象，改复制品
-      let env = current.env
+      let env = interpreter.env
       const netOn = options.networkAccess()
       if (options.account !== undefined) {
         env = { ...env, ...(netOn ? (await ensureProxy()) ?? OFFLINE_ENV : OFFLINE_ENV) }
@@ -309,8 +326,10 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
         current.file,
         ...current.args,
       ]
-      // 普通 node 子进程：不需要自定义 spawn，file/args/env/cwd 表达得下
-      return { ...current, file: process.execPath, args, env, cwd: run.cwd }
+      // 普通解释器子进程：不需要自定义 spawn，file/args/env/cwd 表达得下。
+      // file 用解释器算出来的值：Electron 宿主下是 electron.exe（配合 env 里的
+      // ELECTRON_RUN_AS_NODE），设了 DSC_NODE 时是用户指定的 node。
+      return { ...current, file: interpreter.file, args, env, cwd: run.cwd }
     },
   }
 
