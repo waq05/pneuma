@@ -290,3 +290,46 @@
 - Node v24.19.0，pnpm 10.15.0。
 - `sandbox/win/` 共约 3000 行，`self-improve/` 约 2500 行，均已在 0.9.x 提交过（`git log` 可查）。
 - 参考源码：codex 在 `D:\codex\codex\codex-rs`，dsh 在 `D:\deepseek-harness`。
+
+## 9. 总体进度（2026-11-11 收口）
+
+| 批次 | 内容 | commit | 机器可判的证据 |
+| --- | --- | --- | --- |
+| S1 | runner 显式解析解释器 | `7ce5eab` | 7 条纯函数断言；electron.exe 当 node 实测 |
+| S2 | 受限令牌验收探针 | `6106004` | 集成段真跑出“访问被拒绝” |
+| S3 | runner 超时与句柄收尾 | `838e83f` | 超时 1205ms / 退出码 124 |
+| S4 | 残留清扫 / setup 互斥 / 卸载 | `3adeb88` | 脚本过 PowerShell Parser、C# 可编译 |
+| S6 | 默认档自动真隔离 + 缓存白名单 | `f4081a3` | 16 条纯函数断言 |
+| B3 | 自修订环 + 路径穿越修复 | `230b3ee` | 17 条包内断言 |
+| B5 | 影子 git 快照地基 | `2b02056` | 3 用例 / 14 断言 |
+| B6 | 还原 + 三方合并 | `a81033c8` | 12 用例（含冲突不落盘） |
+| B7a | 受限令牌下的 ConPTY | `2c13395` | `isTTY=true`、0x03 中断 1.6 秒 |
+| B7b | `bash` 的 `tty` 参数 | `08d3655` | 76/76，截断探针 19 条 |
+| B4 | 老化归档闭环 | `8a2892d` | 节流三态、归档台账非空 hash |
+| B8 | npm 包形态安装 | `e04113e` | 真装 / 真回滚 / 真卸载 |
+
+**独立审查发现的问题与处理**（见 `docs/development-log.md` 对应批次）：
+
+- 阻断 1：多工作区时 `--root` 混进别的会话 temp 目录，runner 退 127 —— 已修（backend 只传 root，runner 自己补 temp SID）。
+- 阻断 2：非 PTY 路径一次同步等待冻住事件循环，>4KB 输出死锁 —— 已修（50ms 分片 + 让出）。
+- 重要 3–8：PTY 输入泵未在失败路径停、npm 在 Electron 下回退未置 `ELECTRON_RUN_AS_NODE`、spec 可被 `-` 开头注入选项、清扫先 revoke 再删会摘掉活会话权限、缓存白名单过宽（`~/.cargo` 整目录等于留执行点）、TUI 补排标记不复位 —— 已修。
+- 次要 9–12（合并失败归因、`applyOne` 先删后写、`state.json` 无锁、npm 回滚不清理 `node_modules`、无沙箱执行器时 tty 会按 UTF-8 解 GBK）—— 记为已知限制，见各包 README 的 Known Limitations。
+
+### 仍然没做到的（如实登记）
+
+1. **打包 Electron 宿主下没实跑过**沙箱 runner 与 npm 安装（本机只有命令行宿主）。
+2. **PTY 的全屏交互程序没跑过**（vim/htop），只验了 `isTTY=true` 与双向字节流。
+3. **多工作区 @ 的界面选择器未接**（宿主的根集合与 `fs-list` 放行已做）。
+4. **影子 git 的 writer-ledger 与部分行接受**是二期；二进制与 >10MB 文件不合并。
+5. 没有真提权跑过 setup / 卸载（UAC + 管理员）。
+
+### 收口时的全量门禁（2026-11-11 22:30）
+
+| 门禁 | 结果 |
+| --- | --- |
+| `node scripts/check-core.mjs` | **120/120 通过**，退出码 0（843.8s） |
+| `node scripts/package-tests.mjs` | 89 包 / 98 用例 / 583 断言 / 0 失败 |
+| `plugin-model-check --strict` / `plugin-standard-check` / `plugin-compose-check` / `plugin-list-test` / `readme-test` / `plugin-locale-test` / `plugin-inventory-check` | 全部退出码 0；standard 报「0 条问题」 |
+| `node scripts/style-check.mjs` | 1319 个文件通过 |
+| `node scripts/sandbox-win-token-test.mjs` | 86 通过 / 0 失败 |
+| 各包内测试 | sandbox 3 个文件、checkpoint 12 用例、self-improve 23 条、skills 8 条、plugin-manager 12 条、desktop-dock 9 条，全过 |
