@@ -849,3 +849,126 @@ export async function restoreTurn(cwd: string, turn: number): Promise<RestoreRes
     }
   }
 }
+
+// ---------------------------------------------------------------- 写者账本
+
+/**
+ * 写者账本里的一行：这一回合哪个文件被动了、怎么动的。
+ *
+ * 为什么要它：快照本身能回答「改了什么」，但回答不了「谁改的」。回滚冲突时要说清
+ * 「这处是模型改的、那处是你改的」，将来做逐行接受也要按这个归属去合并。回合边界上
+ * 的改动一律记 `model`——用户在同一回合里手改的文件，靠回滚时「盘上内容既不等于
+ * 回合初也不等于回合末」反推出来，不在这里猜。
+ */
+export interface LedgerEntry {
+  /** 第几回合。 */
+  turn: number
+  /** 动作：新增 / 修改 / 删除 / 改名（改名同时给 `from`）。 */
+  action: 'add' | 'modify' | 'delete' | 'rename'
+  path: string
+  /** 改名时的原路径。 */
+  from?: string
+  /** 记这一行的时刻。 */
+  at: number
+}
+
+/** 账本文件（与影子仓库同级，不进仓库）。 */
+function ledgerFile(cwd: string): string {
+  return join(shadowRoot(cwd), 'ledger.jsonl')
+}
+
+/** 账本最多留多少行：只做归属，不做审计，早年的条目没有价值。 */
+const LEDGER_MAX_LINES = 5000
+
+/** 读账本；给了 `turn` 就只要那一回合的。坏行跳过，绝不抛。 */
+export function readLedger(cwd: string, turn?: number): LedgerEntry[] {
+  try {
+    const text = readFileSync(ledgerFile(cwd), 'utf8')
+    const out: LedgerEntry[] = []
+    for (const line of text.split('\n')) {
+      if (line.trim() === '') continue
+      try {
+        const raw = JSON.parse(line) as Partial<LedgerEntry>
+        if (typeof raw.path !== 'string' || typeof raw.turn !== 'number') continue
+        if (turn !== undefined && raw.turn !== turn) continue
+        if (
+          raw.action !== 'add' &&
+          raw.action !== 'modify' &&
+          raw.action !== 'delete' &&
+          raw.action !== 'rename'
+        ) {
+          continue
+        }
+        out.push({
+          turn: raw.turn,
+          action: raw.action,
+          path: raw.path,
+          ...(typeof raw.from === 'string' ? { from: raw.from } : {}),
+          at: typeof raw.at === 'number' ? raw.at : 0,
+        })
+      } catch {
+        // 坏行跳过：账本是归属信息，不该因为一行坏了就读不出来
+      }
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 记一回合的账本：`pre` 与 `post` 两张快照之间的差异，逐条追加。
+ *
+ * 只在 post 快照成功之后调用；失败一律吞掉——账本记不上不影响快照与还原，
+ * 还原时没有账本也能靠两棵树算出同样的判定。
+ * @returns 记了多少条（自检用）
+ */
+export async function recordTurnLedger(cwd: string, turn: number): Promise<number> {
+  try {
+    await ensureRepo(cwd)
+    const pre = `dsc/turn-${String(turn)}-pre`
+    const post = `dsc/turn-${String(turn)}-post`
+    const out = await shadowGit(cwd, ['diff', '--name-status', '-z', pre, post], 60_000)
+    // `-z` 的记录形如 `M\0path\0`；改名是 `R100\0old\0new\0`
+    const tokens = out.split('\0')
+    const rows: Array<{ action: LedgerEntry['action']; path: string; from?: string }> = []
+    for (let index = 0; index < tokens.length; index += 1) {
+      const status = tokens[index] ?? ''
+      if (status === '') continue
+      const kind = status[0]
+      if (kind === 'R' || kind === 'C') {
+        const from = tokens[index + 1] ?? ''
+        const to = tokens[index + 2] ?? ''
+        index += 2
+        if (from !== '' && to !== '') {
+          rows.push(kind === 'R' ? { action: 'rename', path: to, from } : { action: 'add', path: to })
+        }
+        continue
+      }
+      const path = tokens[index + 1] ?? ''
+      index += 1
+      if (path === '') continue
+      if (kind === 'A') rows.push({ action: 'add', path })
+      else if (kind === 'D') rows.push({ action: 'delete', path })
+      else if (kind === 'M' || kind === 'T') rows.push({ action: 'modify', path })
+    }
+    if (rows.length === 0) return 0
+    const at = Date.now()
+    const text = rows
+      .map((row) => JSON.stringify({ turn, action: row.action, path: row.path, ...(row.from === undefined ? {} : { from: row.from }), at }))
+      .join('\n')
+    appendFileSync(ledgerFile(cwd), `${text}\n`, 'utf8')
+    // 超长就只留后半段：读全文再写回，代价只在这条路上
+    try {
+      const lines = readFileSync(ledgerFile(cwd), 'utf8').split('\n').filter((line) => line !== '')
+      if (lines.length > LEDGER_MAX_LINES) {
+        writeFileSync(ledgerFile(cwd), `${lines.slice(-LEDGER_MAX_LINES).join('\n')}\n`, 'utf8')
+      }
+    } catch {
+      // 截断失败只是文件大一点，不影响正确性
+    }
+    return rows.length
+  } catch {
+    return 0
+  }
+}

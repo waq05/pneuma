@@ -23,9 +23,8 @@ process.env.HOME = home
 process.env.USERPROFILE = home
 mkdirSync(process.env.DSC_HOME, { recursive: true })
 
-const { ensureRepo, excludePatterns, listSnapshots, repoSizeMB, shadowRoot, snapshot } = await import(
-  new URL('../../../../lib/packages/checkpoint/shadow.js', import.meta.url).href
-)
+const { bumpTurn, ensureRepo, excludePatterns, listSnapshots, readLedger, recordTurnLedger, repoSizeMB, shadowRoot, snapshot } =
+  await import(new URL('../../../../lib/packages/checkpoint/shadow.js', import.meta.url).href)
 
 let passed = 0
 
@@ -154,6 +153,37 @@ test('集成：超大文件进了 info/exclude 且活过多次 ensureRepo，也�
     ok(tree.status === 0, `ls-tree 应当成功：${tree.stderr}`)
     ok(!tree.stdout.includes('big.bin'), '超 5MB 的文件不该进快照')
     ok(tree.stdout.includes('small.txt'), '小文件照常进快照')
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
+})
+
+test('集成：写者账本记下每回合动了哪些文件', { skip: !gitAvailable ? 'git 不可用' : false }, async () => {
+  const base = mkdtempSync(join(tmpdir(), 'dsc-checkpoint-ledger-'))
+  try {
+    const cwd = join(base, 'ws')
+    mkdirSync(cwd, { recursive: true })
+    writeFileSync(join(cwd, 'a.txt'), 'one\n', 'utf8')
+    await bumpTurn(cwd)
+    ok((await snapshot(cwd, 'pre', 'turn 1 pre')).ok === true, '回合 1 的 pre 快照应当成功')
+    writeFileSync(join(cwd, 'a.txt'), 'two\n', 'utf8')
+    writeFileSync(join(cwd, 'b.txt'), 'new\n', 'utf8')
+    ok((await snapshot(cwd, 'post', 'turn 1 post')).ok === true, '回合 1 的 post 快照应当成功')
+    const first = await recordTurnLedger(cwd, 1)
+    ok(first === 2, `第 1 回合应当记两条（改 a.txt、新增 b.txt），实际 ${String(first)}`)
+    const turn1 = readLedger(cwd, 1)
+    ok(turn1.some((row) => row.path === 'a.txt' && row.action === 'modify'), 'a.txt 记成 modify')
+    ok(turn1.some((row) => row.path === 'b.txt' && row.action === 'add'), 'b.txt 记成 add')
+
+    await bumpTurn(cwd)
+    ok((await snapshot(cwd, 'pre', 'turn 2 pre')).ok === true, '回合 2 的 pre 快照应当成功')
+    rmSync(join(cwd, 'b.txt'), { force: true })
+    ok((await snapshot(cwd, 'post', 'turn 2 post')).ok === true, '回合 2 的 post 快照应当成功')
+    const second = await recordTurnLedger(cwd, 2)
+    ok(second === 1, `第 2 回合应当记一条（删 b.txt），实际 ${String(second)}`)
+    ok(readLedger(cwd, 2).some((row) => row.path === 'b.txt' && row.action === 'delete'), 'b.txt 记成 delete')
+    // 按回合过滤：第 1 回合的两条不该混进第 2 回合
+    ok(readLedger(cwd, 2).length === 1, 'readLedger(turn) 只返回那一回合')
   } finally {
     rmSync(base, { recursive: true, force: true })
   }

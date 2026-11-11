@@ -33,6 +33,7 @@ import {
   bumpTurn,
   currentTurn,
   listSnapshots,
+  recordTurnLedger,
   repoSizeMB,
   restoreTurn,
   shadowRepoPath,
@@ -159,6 +160,8 @@ export const checkpointPlugin: Plugin.Object = {
           return
         }
         if (label === 'post') {
+          // 账本跟着 post 快照一起记：它只做「谁改的」归属，记不上也不影响快照与还原
+          await recordTurnLedger(cwd, turn)
           const sizeMB = await repoSizeMB(cwd)
           if (sizeMB > config.maxRepoMB) {
             stoppedByQuota = true
