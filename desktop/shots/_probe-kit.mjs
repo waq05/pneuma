@@ -13,6 +13,42 @@
  *
  * 它不是框架：没有注册表、没有钩子、没有配置文件。探针该自己写的判据，一条都不能少。
  *
+ * ## 时间敏感的探针：等条件，不等时长（2026-11-12，先看这一节再写探针）
+ *
+ * 这一批真机探针（`_verify-fold-scroll` / `_verify-jitter` / `_verify-think-collapse`）
+ * 都栽过同一个跟头：点一下开关，`await new Promise(r => setTimeout(r, 900))`，然后拿这
+ * 900ms 里的样本判产品。安静时连跑几次都绿，机器上一有并发构建 / 别的探针也在跑 Electron
+ * 就随机红，红在「批次没开」「采样为 0」这种产品断言上——**其实是探针没看见，不是产品坏了**。
+ *
+ * 为什么会看不见，三个原因各自独立：
+ *
+ *   · **窗口被挡**：Chromium 把定时器压到 1Hz、停掉 rAF。`launchDesktop` 的三条开关
+ *     （`--disable-background-timer-throttling` / `--disable-backgrounding-occluded-windows` /
+ *     `--disable-renderer-backgrounding`）与 `connectCdp` 里的
+ *     `Emulation.setFocusEmulationEnabled` **必须两个都用**：少了后者，页面仍可能当自己在后台。
+ *   · **批次窗口只有 240ms 左右**：一次收起 / 展开 = `--dsc-dur-slow`(180ms) + 提交余量(60ms)，
+ *     由点击后的 React 布局效果→微任务开出来。页面一忙，这 240ms 可以整个落在两个采样点之间。
+ *     固定等 900ms 只保证「等了」，不保证「采到了批次」。
+ *   · **点击用的是缓存的 DOM 节点**：React 重挂（历史回填、设置到位、切会话）之后，
+ *     几百毫秒前存下的 `.turn-fold` 已经脱离文档，`.click()` 什么都不做，样本全 0。
+ *
+ * 所以写探针按这四条来：
+ *
+ *   1. **点击前按稳定标识重新解析节点**（例如「轮号 + 座位内行序号」），`isConnected` 为假
+ *      就当场记「环境未就绪」，不要拿空样本去判产品；
+ *   2. **点击后等条件**：`pollPage` / `requireScene` 轮询「批次真的开跑了」的证据
+ *      （`MutationObserver` 盯内联 `overflow-anchor` 进入 `none` 再还原、行上出现内联
+ *      `height`、`data-fold` 翻面），等不到就红在场景 / 环境，不要静默往下走；
+ *   3. **判读前先过环境闸**：有效帧数、采样节奏（两次采样最大间隔）都要够。达不到就只红
+ *      一条「环境：现场可判读」，其余产品判据打印 `skip`——环境不满足时判产品等于掷骰子；
+ *   4. **阈值写清来历**：比如「批次窗口 ≥120ms」后面要跟一句「默认批次 240ms，
+ *      实测 225–259ms」；旧的 `noneFrames >= 4` 就吃过亏——帧率一掉，同样 4 帧
+ *      代表的窗口长度完全不同，它就不再是同一个判据。写不出来历的阈值就是拍脑袋。
+ *
+ * 现成的实现照着抄：`_verify-fold-scroll.mjs` 的 `beginSample` / `toggleAndWatch` /
+ * `envReady`（16ms 状态采样 + MutationObserver + 帧距闸），以及它文件头「为什么不再等
+ * 900ms」那一节。负向自检也在那个文件里（`PROBE_MUTATE=no-anchor`、`PROBE_CPU_THROTTLE`）。
+ *
  * @module desktop/shots/_probe-kit
  */
 import { spawn } from 'node:child_process'
@@ -77,6 +113,10 @@ export function finish(title) {
  *
  * `script` 里可以直接 `await`（外面套了 async IIFE），返回值会 `returnByValue` 带回来。
  * 超时不抛错：返回 `{ ok: false, elapsedMs, last }`，由调用方决定怎么记账。
+ *
+ * 注意：超时是**环境 / 场景**结论，不是产品失败。调用方拿到 `ok:false` 后应当只红一条
+ * 「场景 / 环境」断言，并把依赖这一场景的产品判据打印 `skip`——不要在空样本上判产品。
+ * 固定 `await sleep(...)` 代替不了这一条：它只保证等了，不保证条件成立。
  *
  * @param {(expression: string) => Promise<any>} evaluate CDP 求值器
  * @param {string} script 页面脚本，返回 `{ ok: boolean, ...事实 }`
@@ -224,6 +264,11 @@ export function launchDesktop(opts) {
   const exe = opts.exe ?? process.env.DSC_PROBE_EXE
   // 窗口被挡在后面时 Chromium 会把定时器压到 1Hz、并停掉 rAF——探针于是「采样只有几十帧、
   // 跟随一次都没跑」，看起来像产品坏了。这三条开关把后台节流整个关掉。
+  //
+  // 但**光有这三条还不够**：页面自己仍可能认为不在前台。必须再调 `connectCdp`，它会开
+  // `Emulation.setFocusEmulationEnabled`。2026-11-12 实测：只带开关、不调 focus emulation
+  // 时，窗口被遮住后采样可以掉到个位数帧；两条一起上才稳定在每帧都有样本。
+  // 反过来，只调 focus emulation、不带这三条开关，遮挡时定时器仍被压到 1Hz。
   const throttling = [
     '--disable-background-timer-throttling',
     '--disable-backgrounding-occluded-windows',
@@ -299,6 +344,8 @@ export async function connectCdp(opts) {
   await send('Runtime.enable')
   if (opts.page !== false) await send('Page.enable')
   // 让页面当自己在前台：窗口被挡住时 Chromium 会降频定时器、停 rAF，采样帧数会掉到个位。
+  // 这一条与 `launchDesktop` 的三条开关是**配对**的，缺任一半都会在遮挡时退化成空转；
+  // 时间敏感的探针（折叠 / 抖动 / 逐行收起）必须两条都有。
   try { await send('Emulation.setFocusEmulationEnabled', { enabled: true }) } catch {}
 
   const evaluate = async (expression) => {

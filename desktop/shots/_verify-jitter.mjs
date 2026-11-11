@@ -23,6 +23,28 @@ process.on('unhandledRejection', () => {})
  *   4. **真的在动**：全程锚点行净上移 ≥ 40px（内容真的在长；只证第 3 条的话，界面卡死也能过）；
  *   5. **收工贴底**：结束时回合状态行消失、`scrollTop` 在 floor 上（±2px）。
  *
+ * ## 2026-11-12：收工不再盲等 9 秒
+ *
+ * 旧版发完消息就 `await sleep(9000)`，然后拿这段时间的样本判读。负载下窗口被挡时
+ * Chromium 会把定时器压到 1Hz、停掉 rAF：采样只有个位数帧、内容还没开始长，于是
+ * 「在量」「真的在动」「状态行帧数」一起红——看起来像产品不跟随，其实是页面被节流了。
+ *
+ * 现在：
+ *
+ *   · 起 Electron 时带三条关后台节流的开关，连上 CDP 后开
+ *     `Emulation.setFocusEmulationEnabled`（与 `_probe-kit` 的 `launchDesktop` + `connectCdp`
+ *     同一套；这套配对缺一半，遮挡时仍会退化）；
+ *   · 采样等**条件**：先等回合状态行出现，再等它消失（流式收尾），最多 25s；不再写死 9s；
+ *   · 判读前先过环境闸：帧数 ≥120、锚点行采到、有可滚范围、跑动中状态行 ≥30 帧、
+ *     相邻样本最大间隔 ≤500ms。达不到就只红「环境」那条，产品判据打印 `skip`。
+ *
+ * 阈值来历：采样窗口现在是「发消息 → 流式收尾 → 再补 160 帧」，正常 4–6 秒；30fps 下
+ * 就有 120–180 帧，所以 120 是「至少 30fps 跑满了窗口」的下限。`travel ≥ 40` 来自实测
+ * 841px（8 轮历史 + 30 段流式正文），40px 只要求「确实往上走了」，不锁内容长度。
+ * 相邻样本间隔 500ms 是「页面被冻住」的判据：实测安静环境里也有 184ms 的单次长帧
+ * （流式正文一大段提交时的排版），那一次不该把整轮判成不可读；真正的节流是秒级间隔，
+ * 与 500ms 差一个数量级。
+ *
  * 运行：node desktop/shots/_verify-jitter.mjs [宽] [高]
  * 产物：desktop/shots/_jitter-after.png
  *
@@ -43,6 +65,17 @@ const fakePort = 18993
 const debugPort = 9371
 const width = Number(process.argv[2] ?? 1100)
 const height = Number(process.argv[3] ?? 900)
+
+/**
+ * 关掉 Chromium 的后台节流（与 `_probe-kit.mjs` 的 `launchDesktop` 同一组）。
+ * 配对的是下面的 `Emulation.setFocusEmulationEnabled`：缺任一半，窗口被挡时采样会掉到
+ * 个位数帧，判读就成了掷骰子。
+ */
+const ANTI_THROTTLE = [
+  '--disable-background-timer-throttling',
+  '--disable-backgrounding-occluded-windows',
+  '--disable-renderer-backgrounding',
+]
 
 rmSync(home, { recursive: true, force: true })
 mkdirSync(join(dsc, 'sessions', 'demo'), { recursive: true })
@@ -134,6 +167,7 @@ delete env.ELECTRON_RUN_AS_NODE
 
 const electron = spawn(join(root, 'desktop/node_modules/electron/dist/electron.exe'), [
   join(root, 'desktop/out/main/index.js'), '--remote-debugging-port=' + String(debugPort),
+  ...ANTI_THROTTLE,
 ], { cwd: join(root, 'desktop'), env, stdio: ['ignore', 'pipe', 'pipe'] })
 let log = ''
 electron.stdout.on('data', (d) => { log += String(d) })
@@ -198,6 +232,9 @@ const evaluate = async (expression) => {
   return result.result?.value
 }
 
+// 让页面当自己在前台：遮挡时 Chromium 会降频定时器、停 rAF，采样只剩个位数帧。
+try { await send('Page.enable') } catch {}
+try { await send('Emulation.setFocusEmulationEnabled', { enabled: true }) } catch {}
 await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false })
 await sleep(600)
 
@@ -242,6 +279,14 @@ const started = await evaluate(`
     })
   }
   window.__jitter = { samples, sampling: true, chat, anchorRow }
+  // 负向自检：PROBE_MUTATE=shove 时每 100ms 把 scrollTop 往回拨 300px，模拟「还有人在写滚动」
+  // （与 _verify-follow-debug 的 PROBE_MUTATE=nofollow 同一路数）。跟随没掉的话它会被钉回去；
+  // 跟随掉了就会在「收工贴底」上红，抽搐计数也可能捕捉到反向。
+  if (${process.env.PROBE_MUTATE === 'shove' ? 'true' : 'false'}) {
+    window.__jitterShove = setInterval(() => {
+      chat.scrollTop = Math.max(0, chat.scrollTop - 300)
+    }, 100)
+  }
   const tick = () => {
     if (!window.__jitter.sampling) return
     requestAnimationFrame(tick)
@@ -260,7 +305,46 @@ if (started?.error !== undefined) {
   process.exit(1)
 }
 
-await sleep(9000)
+/**
+ * 诊断用：`PROBE_CPU_THROTTLE=20` 在发完消息之后让渲染进程慢 20 倍，用来验证
+ * 「环境：这次的采样现场可判读」这条闸真的会红（而不是拿个位数样本去判产品）。
+ * 正常跑不要设。
+ */
+const cpuThrottle = Number(process.env.PROBE_CPU_THROTTLE ?? '1')
+if (Number.isFinite(cpuThrottle) && cpuThrottle > 1) {
+  await send('Emulation.setCPUThrottlingRate', { rate: cpuThrottle })
+  console.log(`[probe] PROBE_CPU_THROTTLE=${String(cpuThrottle)}：渲染进程降速 ${String(cpuThrottle)} 倍（发完消息之后才降）`)
+}
+
+// 等**条件**而不是等 9 秒：先等回合状态行出现，再等它消失（流式真的收尾）。
+// 状态行一次都没出现，说明这一轮没跑起来——最多等 8s 就收手，让环境闸去红。
+const finished = await evaluate(`
+  const chat = window.__jitter.chat
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  const startedAt = performance.now()
+  let sawStatus = false
+  let statusGone = false
+  while (performance.now() - startedAt < 25000) {
+    const status = document.querySelector('.turn-status') !== null
+    if (status) sawStatus = true
+    if (sawStatus && !status) { statusGone = true; break }
+    if (!sawStatus && performance.now() - startedAt > 8000) break
+    await wait(50)
+  }
+  if (!statusGone) statusGone = document.querySelector('.turn-status') === null
+  // 收工后再采一小段：末帧（状态行消失、贴底）要有样本可读。
+  const settleDeadline = performance.now() + 2500
+  while (window.__jitter.samples.length < 160 && performance.now() < settleDeadline) await wait(32)
+  window.__jitter.sampling = false
+  return {
+    sawStatus,
+    statusGone,
+    timedOut: !statusGone,
+    elapsedMs: Math.round(performance.now() - startedAt),
+    frames: window.__jitter.samples.length,
+  }
+`)
+console.log('finish', JSON.stringify(finished))
 
 const report = await evaluate(`
   window.__jitter.sampling = false
@@ -274,6 +358,8 @@ const report = await evaluate(`
     if (step !== 0 && dir !== 0 && step !== dir) flips += 1
     if (step !== 0) dir = step
   }
+  let maxGap = 0
+  for (let i = 1; i < list.length; i += 1) maxGap = Math.max(maxGap, list[i].t - list[i - 1].t)
   const slacks = list.map((s) => s.sh - s.ch)
   const spacer = chat.querySelector('[data-chat-turn-spacer]')
   const floor = chat.scrollHeight - (spacer === null ? 0 : spacer.offsetHeight) - chat.clientHeight
@@ -287,6 +373,7 @@ const report = await evaluate(`
     travel: anchors.length === 0 ? 0 : Math.abs(anchors[anchors.length - 1] - anchors[0]),
     slackMax: slacks.length === 0 ? null : Math.max(...slacks),
     statusFrames: list.filter((s) => s.status).length,
+    maxGap,
     endStatus: document.querySelector('.turn-status') !== null,
     end: {
       top: Math.round(chat.scrollTop),
@@ -306,6 +393,7 @@ writeFileSync(join(shots, '_jitter-after.png'), Buffer.from(data.data, 'base64')
 
 let passed = 0
 let failures = 0
+let skipped = 0
 const check = (name, condition, detail = '') => {
   if (condition) {
     passed += 1
@@ -315,17 +403,41 @@ const check = (name, condition, detail = '') => {
     console.log(`  FAIL ${name}${detail === '' ? '' : `：${detail}`}`)
   }
 }
+/** 环境不满足时跳过产品判据：只打印，不计入通过也不计入失败（环境那条已经红了）。 */
+const skip = (name, why) => {
+  skipped += 1
+  console.log(`  skip ${name}（环境未就绪：${why}）`)
+}
 
-check('在量：采样 ≥ 120 帧', report.frames >= 120, `实测 ${String(report.frames)} 帧`)
-check('锚点行被采到（最后一条用户消息；旧版这里一直是 null）', report.anchorFirst !== null && report.anchorLast !== null)
-check('会话真的有可滚范围（旧版 sh == ch，等于什么都没量）', report.slackMax !== null && report.slackMax > 200, `max(sh-ch)=${String(report.slackMax)}`)
-check('位置不抽搐：锚点行反向移动 0 次', report.anchorFlips === 0, `实测 ${String(report.anchorFlips)} 次`)
-check('真的在动：锚点行全程净上移 ≥ 40px', report.travel >= 40, `实测 ${String(report.travel)}px`)
-check('跑动中确实有回合状态行（不然量的是静止画面）', report.statusFrames >= 30, `只有 ${String(report.statusFrames)} 帧`)
-check('收工时回合状态行已经消失', report.endStatus === false)
-check('收工贴底：scrollTop 在 floor 上（±2px）', Math.abs(report.end.top - report.end.floor) <= 2, JSON.stringify(report.end))
+// ── 环境闸：先证明「采样这件事本身可信」，再判产品 ───────────────────────────────
+// 这些数字不是产品指标，是「量尺准不准」。达不到就只红这几条，产品判据全部 skip。
+const envProblems = []
+if (report.frames < 120) envProblems.push(`采样 ${String(report.frames)} 帧 < 120（窗口内不足 30fps）`)
+if (report.anchorFirst === null || report.anchorLast === null) envProblems.push('锚点行没被采到')
+if (report.slackMax === null || report.slackMax <= 200) envProblems.push(`没有可滚范围（max(sh-ch)=${String(report.slackMax)}）`)
+if (report.statusFrames < 30) envProblems.push(`跑动中状态行只有 ${String(report.statusFrames)} 帧 < 30（量的是静止画面）`)
+if (report.maxGap > 500) envProblems.push(`相邻样本最大间隔 ${String(Math.round(report.maxGap))}ms > 500ms（页面被冻住，反向判读不可信）`)
+if (finished.sawStatus !== true) envProblems.push('整段采样里没见到回合状态行（这一轮可能没跑起来）')
+const envOk = envProblems.length === 0
+check('环境：这次的采样现场可判读', envOk, envProblems.join('；'))
 
-console.log(`\n[_verify-jitter] 断言 ${String(passed + failures)} 条，通过 ${String(passed)} 条，失败 ${String(failures)} 条`)
+if (envOk) {
+  check('位置不抽搐：锚点行反向移动 0 次', report.anchorFlips === 0, `实测 ${String(report.anchorFlips)} 次`)
+  // 实测净上移 841px（8 轮历史 + 30 段流式正文）；40px 只要求「确实往上走了」。
+  check('真的在动：锚点行全程净上移 ≥ 40px', report.travel >= 40, `实测 ${String(report.travel)}px`)
+  check('收工时回合状态行已经消失', report.endStatus === false,
+    finished.timedOut === true ? `等了 ${String(finished.elapsedMs)}ms 状态行仍在` : '')
+  check('收工贴底：scrollTop 在 floor 上（±2px）', Math.abs(report.end.top - report.end.floor) <= 2, JSON.stringify(report.end))
+} else {
+  for (const name of [
+    '位置不抽搐：锚点行反向移动 0 次',
+    '真的在动：锚点行全程净上移 ≥ 40px',
+    '收工时回合状态行已经消失',
+    '收工贴底：scrollTop 在 floor 上（±2px）',
+  ]) skip(name, envProblems.join('；'))
+}
+
+console.log(`\n[_verify-jitter] 断言 ${String(passed + failures)} 条，通过 ${String(passed)} 条，失败 ${String(failures)} 条，环境跳过 ${String(skipped)} 条`)
 try { ws.close() } catch {}
 try { electron.kill() } catch {}
 try { server.close() } catch {}

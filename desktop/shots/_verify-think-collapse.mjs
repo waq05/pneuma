@@ -31,8 +31,38 @@
  *   4. 真的在动：过程区最高 > 200px，降到 0 的过程里中间高度 ≥ 5 帧；
  *   5. 末帧没有残留高度：`data-fold === 'closed'`、过程区 0、装载层 0、段里每一行都挂着 `hidden`；
  *   6. 收工后贴底：`scrollTop` 在 floor 上（±2px）、占位回 0；
- *   7. 逐行：收起中段里有行比最高那行矮、且段高在中间；收起末每行高度 0 且都挂了 hidden；
+ *   7. 逐行：收起中段里有行比最高那行矮、且段高在中间；收起末每行高度 0 都挂了 hidden；
  *      展开中每行高度 > 0（行体直接挂回来，没有高度过渡残留）。
+ *
+ * ## 2026-11-12：为什么不再盲等 11 秒 / 90ms / 450ms
+ *
+ * 旧版：发完消息 `await sleep(11000)` 收工；场景 B 里「点开整轮 → 等 500ms → 点开组头 →
+ * 等 600ms → 点收起 → 等 90ms / 450ms 拍三张」。负载下这些固定时长都不保证条件成立：
+ * 流式可能还没收尾，收起批次可能还没开，组体可能还没摊开。表现是
+ * 「过程区最高 <200px」「中间高度帧数 <5」这类产品断言红——但其实是探针没等到状态。
+ *
+ * 现在：
+ *
+ *   · 起 Electron 带三条关后台节流的开关 + `Emulation.setFocusEmulationEnabled`
+ *     （与 `_probe-kit` 的 `launchDesktop` + `connectCdp` 同一套）；
+ *   · 场景 A 等条件：先等回合状态行出现再等它消失（流式收尾，最多 25s），随后最多再等
+ *     3s 让「收尾自动收起」跑完；采样窗口由条件定，不由 11 秒定；
+ *   · 判读前先过环境闸：rAF 帧数、相邻样本最大间隔、答案行帧数、收起窗口里的 rAF 帧数。
+ *     达不到就只红「环境」那条，依赖采样密度的产品判据打印 `skip`；
+ *   · 场景 B 的每步（展开整轮 / 摊开组体 / 收起到底 / 展开完成）都等状态，不再按毫秒猜；
+ *   · 场景 A 的「收起前后漂移」只量**收起开始之后**：答案行刚出现时可能还在排版，负载下
+ *     实测第一批样本差 63px，那不是收起把位置抽走。收起起点按 `data-fold` 翻 closed 找；
+ *   · 「透明度先走、高度后走」按**先后**判（先出现「变淡且高度仍是满高」的一帧，之后才
+ *     出现「高度掉到 80% 以下」的一帧），不按某个固定透明度判：淡出只有 70ms，负载下
+ *     16ms 采样常常只落到 0.63 这一格，用 `< 0.6` 会把采样相位当成产品问题。
+ *
+ * 阈值来历：
+ *   · `frames ≥ 150`：采样窗口现在是「发消息 → 流式 → 收尾收起」约 4–6 秒，25fps 就有
+ *     100–150 帧；150 是「至少 25fps 跑满窗口」的下限（旧版 300 是按 11 秒窗口定的，
+ *     窗口缩短后继续用 300 会把正常跑判红）。
+ *   · `answerFrames ≥ 12`、`midFrames ≥ 5`：收起只有约 240ms；16ms 状态采样能采到 ~15 个点，
+ *     5 个中间高度 = 约 80ms，足以证明「逐帧在收」而不是一帧闪没。
+ *   · `rowMidFrames ≥ 3`、`procH` 中间值 ≥3 帧：同上，逐行动画 240ms 里至少 3 个中间点。
  *
  * 运行：node desktop/shots/_verify-think-collapse.mjs
  * 产物：
@@ -56,6 +86,17 @@ const userData = join(home, 'electron-userdata')
 const work = join(home, 'work')
 const fakePort = 18995
 const debugPort = 9375
+
+/**
+ * 关掉 Chromium 的后台节流（与 `_probe-kit.mjs` 的 `launchDesktop` 同一组）。
+ * 配对的是下面的 `Emulation.setFocusEmulationEnabled`：缺任一半，窗口被挡时 rAF 会停，
+ * 逐行动画的中间高度就一个都采不到。
+ */
+const ANTI_THROTTLE = [
+  '--disable-background-timer-throttling',
+  '--disable-backgrounding-occluded-windows',
+  '--disable-renderer-backgrounding',
+]
 
 rmSync(home, { recursive: true, force: true })
 mkdirSync(join(dsc, 'sessions', 'demo'), { recursive: true })
@@ -170,6 +211,7 @@ delete env.ELECTRON_RUN_AS_NODE
 
 const electron = spawn(join(root, 'desktop/node_modules/electron/dist/electron.exe'), [
   join(root, 'desktop/out/main/index.js'), '--remote-debugging-port=' + String(debugPort),
+  ...ANTI_THROTTLE,
 ], { cwd: join(root, 'desktop'), env, stdio: ['ignore', 'pipe', 'pipe'] })
 let log = ''
 electron.stdout.on('data', (d) => { log += String(d) })
@@ -234,6 +276,34 @@ const evaluate = async (expression) => {
   return result.result?.value
 }
 
+/**
+ * 负向自检：`PROBE_MUTATE=no-scroll-write` 把 `.chat` 的 `scrollTop` 写入吞掉，模拟
+ * 「视口协调器补不了位置」的真回归。场景 A 自动收起时补偿写不进去，上面的过程区一收，
+ * 答案行就会被顶上去——`收起前后那一行的屏幕 top 漂移 ≤2px` 必须红。
+ * 只在内存里改这一次运行，不碰产品源码。
+ */
+const mutateNoScrollWrite = async () => {
+  if (process.env.PROBE_MUTATE !== 'no-scroll-write') return
+  const result = await evaluate(`
+    const chat = document.querySelector('.chat')
+    const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop')
+    if (descriptor === undefined || descriptor.get === undefined) {
+      return { mutated: false, reason: '拿不到 scrollTop 访问器' }
+    }
+    Object.defineProperty(chat, 'scrollTop', {
+      configurable: true,
+      get() { return descriptor.get.call(chat) },
+      set() {},
+    })
+    return { mutated: true }
+  `)
+  console.log('[mutate] PROBE_MUTATE=no-scroll-write：'
+    + (result?.mutated === true ? '已吞掉 .chat 的 scrollTop 写入（模拟产品回归）' : `失败：${String(result?.reason)}`))
+}
+
+// 让页面当自己在前台：遮挡时 Chromium 会降频定时器、停 rAF，逐行动画的中间帧会全丢。
+try { await send('Page.enable') } catch {}
+try { await send('Emulation.setFocusEmulationEnabled', { enabled: true }) } catch {}
 await send('Emulation.setDeviceMetricsOverride', { width: 1100, height: 900, deviceScaleFactor: 1, mobile: false })
 await sleep(600)
 
@@ -287,7 +357,26 @@ const started = await evaluate(`
     }
   }
   const push = () => { if (window.__think.sampling) samples.push(read()) }
-  window.__think = { samples, sampling: true, chat, read, lastSeat }
+  // 另外一条 16ms 状态采样：samples 只在 rAF 上采，掉帧时收起那 240ms 可能只剩两三个点，
+  // 「中间高度 ≥5 帧」就会被误判。ticks 只记段高 / 折面 / 行隐藏数，不判位置，
+  // 给「逐行在动」提供不依赖帧率的证据。
+  const ticks = []
+  const tickState = () => {
+    if (!window.__think.sampling) return
+    const seat = lastSeat()
+    const segment = seat === null ? null : seat.querySelector('.turn-process')
+    const body = segment === null ? null : segment.firstElementChild
+    const rows = body === null ? [] : [...body.children]
+    ticks.push({
+      t: performance.now(),
+      fold: segment === null ? null : (segment.getAttribute('data-fold') ?? 'open'),
+      procH: segment === null ? null : Number(segment.getBoundingClientRect().height.toFixed(1)),
+      rows: rows.length,
+      hiddenRows: rows.filter((row) => row.hasAttribute('hidden')).length,
+    })
+    setTimeout(tickState, 16)
+  }
+  window.__think = { samples, ticks, sampling: true, chat, read, lastSeat }
   const tick = () => {
     if (!window.__think.sampling) return
     requestAnimationFrame(tick)
@@ -295,6 +384,7 @@ const started = await evaluate(`
     setTimeout(push, 0)
   }
   push()
+  tickState()
   requestAnimationFrame(tick)
 
   const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set
@@ -309,7 +399,9 @@ const started = await evaluate(`
   // 要点两次：过程行先被装进**阶段组**（组体默认收起，只有一行组头），所以先点组头
   // 把组体摊开，再点思考行自己。新的一跳可能再起一个组，所以这里每 120ms 复查一次。
   let openedGroups = 0
-  for (let i = 0; i < 18; i += 1) {
+  let segmentHeight = 0
+  const openDeadline = performance.now() + 8000
+  while (performance.now() < openDeadline) {
     await wait(120)
     const seat = lastSeat()
     if (seat === null) continue
@@ -321,12 +413,13 @@ const started = await evaluate(`
     const live = seat.querySelector('.think-block.live .think-head')
     if (live !== null && live.getAttribute('aria-expanded') !== 'true') live.click()
     const segment = seat.querySelector('.turn-process')
-    if (segment !== null && segment.getBoundingClientRect().height > 250) break
+    segmentHeight = segment === null ? 0 : segment.getBoundingClientRect().height
+    if (segmentHeight > 250) break
   }
   // 把焦点从刚点的组头上挪走：点按钮会把焦点留在里面，而「收起时焦点不许被抽走」
   // 是产品有意保留的规则（焦点在子树里就展开整轮）——不挪走它，收尾时这一轮永远不会收。
   if (document.activeElement !== null && document.activeElement.blur !== undefined) document.activeElement.blur()
-  return { sent: true, baseline, openedGroups }
+  return { sent: true, baseline, openedGroups, opened: segmentHeight > 250, openedHeight: Math.round(segmentHeight) }
 `)
 console.log('start', JSON.stringify(started))
 if (started?.error !== undefined) {
@@ -336,32 +429,102 @@ if (started?.error !== undefined) {
   process.exit(1)
 }
 
-await sleep(11000)
+/**
+ * 诊断用：`PROBE_CPU_THROTTLE=20` 让渲染进程慢 20 倍，用来验证「环境：…现场可判读」
+ * 这条闸真的会红（而不是拿个位数样本去判产品）。降速放在发完消息之后，流式与收起都在
+ * 慢速下跑。正常跑不要设。
+ */
+const cpuThrottle = Number(process.env.PROBE_CPU_THROTTLE ?? '1')
+if (Number.isFinite(cpuThrottle) && cpuThrottle > 1) {
+  await send('Emulation.setCPUThrottlingRate', { rate: cpuThrottle })
+  console.log(`[probe] PROBE_CPU_THROTTLE=${String(cpuThrottle)}：渲染进程降速 ${String(cpuThrottle)} 倍（发完消息之后才降）`)
+}
+await mutateNoScrollWrite()
+
+// 等**条件**而不是等 11 秒：先等回合状态行出现、再等它消失（流式收尾），随后最多再等 3s
+// 让「收尾自动收起」跑完。采样窗口由条件定，不再赌一个固定时长。
+const finished = await evaluate(`
+  const chat = window.__think.chat
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  const lastSeat = window.__think.lastSeat
+  const startedAt = performance.now()
+  let sawStatus = false
+  let statusGone = false
+  while (performance.now() - startedAt < 25000) {
+    const status = chat.querySelector('.turn-status') !== null
+    if (status) sawStatus = true
+    if (sawStatus && !status) { statusGone = true; break }
+    if (!sawStatus && performance.now() - startedAt > 8000) break
+    await wait(50)
+  }
+  if (!statusGone) statusGone = chat.querySelector('.turn-status') === null
+  // 收尾自动收起：正常 240ms 跑完；负载下可能晚一两秒，给 3s。等不到就留着现场交给判据。
+  const collapseDeadline = performance.now() + 3000
+  while (performance.now() < collapseDeadline) {
+    const seat = lastSeat()
+    const segment = seat === null ? null : seat.querySelector('.turn-process')
+    if (segment !== null && segment.getAttribute('data-fold') === 'closed'
+      && segment.getBoundingClientRect().height === 0) break
+    await wait(50)
+  }
+  // 末帧判据读「收起已经发生」的那一帧：再等两帧，别读到过渡末值之前。
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+  window.__think.sampling = false
+  return {
+    sawStatus,
+    statusGone,
+    timedOut: !statusGone,
+    elapsedMs: Math.round(performance.now() - startedAt),
+    frames: window.__think.samples.length,
+    ticks: window.__think.ticks.length,
+  }
+`)
+console.log('finish', JSON.stringify(finished))
 
 const report = await evaluate(`
   window.__think.sampling = false
   const list = window.__think.samples
+  const tickList = window.__think.ticks
   const after = window.__think.read()
   // 只认**最后一轮**（跑起来那一轮）的读数：前面的历史轮也挂着 .turn-process，
   // 混在一起会把「这一轮的收起」量成别的轮。
   const liveRound = list.reduce((lastRound, s) => (s.round === null ? lastRound : s.round), null)
   const live = list.filter((s) => s.round === liveRound)
   const answerTops = live.filter((s) => s.answerTop !== null)
-  let recede = 0
-  for (let i = 1; i < answerTops.length; i += 1) {
-    if (answerTops[i].answerTop - answerTops[i - 1].answerTop > 1) recede += 1
-  }
-  const drift = answerTops.length === 0 ? null
-    : Math.max(...answerTops.map((s) => Math.abs(s.answerTop - answerTops[0].answerTop)))
-  const procHs = live.map((s) => s.procH).filter((v) => typeof v === 'number')
+  const procHs = tickList.map((s) => s.procH).filter((v) => typeof v === 'number')
   const procMax = procHs.length === 0 ? 0 : Math.max(...procHs)
   const midFrames = procHs.filter((h) => h > 0.5 && h < procMax - 1).length
+  // 漂移只量**收起这一段**：这一行刚出现时可能还在排版中（负载下实测第一批样本会差 60px），
+  // 那不是「收起把位置抽走」。收起起点用折面翻 closed 找（点击那一刻就翻），找不到再退回
+  // 「段高开始变矮」的第一帧。基线取收起前最后一个有答案行的样本。
+  let collapseAt = live.findIndex((s) => s.fold === 'closed')
+  if (collapseAt < 0) {
+    collapseAt = live.findIndex((s) => typeof s.procH === 'number' && procMax > 0 && s.procH < procMax - 1)
+  }
+  const beforeCollapse = collapseAt > 0 ? live.slice(0, collapseAt).filter((s) => s.answerTop !== null) : []
+  const baseTop = beforeCollapse.length > 0
+    ? beforeCollapse[beforeCollapse.length - 1].answerTop
+    : (answerTops.length > 0 ? answerTops[0].answerTop : null)
+  const collapseTops = collapseAt >= 0
+    ? live.slice(collapseAt).filter((s) => s.answerTop !== null)
+    : answerTops
+  let recede = 0
+  for (let i = 1; i < collapseTops.length; i += 1) {
+    if (collapseTops[i].answerTop - collapseTops[i - 1].answerTop > 1) recede += 1
+  }
+  const drift = baseTop === null || collapseTops.length === 0 ? null
+    : Math.max(...collapseTops.map((s) => Math.abs(s.answerTop - baseTop)))
   const slacks = list.map((s) => s.sh - s.ch)
+  let maxGap = 0
+  for (let i = 1; i < list.length; i += 1) maxGap = Math.max(maxGap, list[i].t - list[i - 1].t)
   return {
     frames: list.length,
+    ticks: tickList.length,
+    maxGap,
     liveRound,
     liveFrames: live.length,
     answerFrames: answerTops.length,
+    collapseAt,
     recede,
     drift: drift === null ? null : Number(drift.toFixed(2)),
     answerFirst: answerTops.length === 0 ? null : answerTops[0].answerTop,
@@ -459,35 +622,68 @@ const prepared = await evaluate(`
   }
   if (best === null) return { error: '没有可折的历史轮' }
   const round = best.seat.getAttribute('data-round-seat')
+  // 点击后 React 可能重挂这一轮的 DOM：之后一律按轮号重新解析，别拿点击前的元素引用。
+  const seatNow = () => chat.querySelector('.turn-seat[data-round-seat="' + round + '"]')
+  const btnNow = () => {
+    const seat = seatNow()
+    return seat === null ? null : seat.querySelector('.turn-fold:not([disabled])')
+  }
   // 这几轮默认是收起态：先摊开，再把每个阶段组点开（组体不点开就只有一行组头）。
-  if (best.segment.getAttribute('data-fold') === 'closed') best.btn.click()
-  await wait(500)
+  if (best.segment.getAttribute('data-fold') === 'closed') {
+    const btn = btnNow()
+    if (btn === null) return { error: '展开前找不到整轮开关' }
+    btn.click()
+  }
+  // 等整轮真的展开（data-fold=open），不再等 500ms。
+  const openDeadline = performance.now() + 5000
+  while (performance.now() < openDeadline) {
+    const seat = seatNow()
+    const segment = seat === null ? null : seat.querySelector('.turn-process')
+    if (segment !== null && segment.getAttribute('data-fold') === 'open') break
+    await wait(50)
+  }
   let openedGroups = 0
-  for (const groupBtn of best.seat.querySelectorAll('.step-fold')) {
+  for (const groupBtn of seatNow().querySelectorAll('.step-fold')) {
     if (groupBtn.getAttribute('data-open') === '1') continue
     groupBtn.click()
     openedGroups += 1
   }
-  await wait(600)
+  // 等组体真的摊开（每个组头 data-open=1 且组体有高度），不再等 600ms。
+  const groupDeadline = performance.now() + 5000
+  while (performance.now() < groupDeadline) {
+    const seat = seatNow()
+    if (seat === null) { await wait(50); continue }
+    const groups = [...seat.querySelectorAll('.step-fold')]
+    const bodies = [...seat.querySelectorAll('.step-body')]
+    const groupsOpen = groups.length > 0 && groups.every((node) => node.getAttribute('data-open') === '1')
+    const bodiesOpen = bodies.length > 0 && bodies.every((body) => body.getBoundingClientRect().height > 0)
+    if (groupsOpen && bodiesOpen) break
+    await wait(50)
+  }
   // 上滚手势松掉跟随（读历史态），再把这一轮顶到可视区上缘附近：收起过程要整个看得见。
   chat.dispatchEvent(new WheelEvent('wheel', { deltaY: -240, bubbles: true, cancelable: true }))
   await wait(200)
-  for (let i = 0; i < 3; i += 1) {
-    const top = best.seat.getBoundingClientRect().top - chat.getBoundingClientRect().top
+  // 等滚动落到目标位置（等条件，最多 3s），别按 3×220ms 猜。
+  const scrollDeadline = performance.now() + 3000
+  while (performance.now() < scrollDeadline) {
+    const seat = seatNow()
+    if (seat === null) break
+    const top = seat.getBoundingClientRect().top - chat.getBoundingClientRect().top
     if (Math.abs(top - 90) <= 4) break
     chat.scrollTop += top - 90
-    await wait(220)
+    await wait(120)
   }
   window.__stage = { round }
-  const seat = document.querySelector('.turn-seat[data-round-seat="' + round + '"]')
-  const segment = seat.querySelector('.turn-process')
+  const seat = seatNow()
+  const segment = seat === null ? null : seat.querySelector('.turn-process')
   const body = segment === null ? null : segment.firstElementChild
   return {
     round,
     openedGroups,
     rows: body === null ? 0 : body.children.length,
     rowHeights: body === null ? [] : [...body.children].map((row) => Math.round(row.getBoundingClientRect().height)),
-    segmentTop: Math.round(segment.getBoundingClientRect().top - chat.getBoundingClientRect().top),
+    segmentTop: segment === null ? null
+      : Math.round(segment.getBoundingClientRect().top - chat.getBoundingClientRect().top),
     scrollTop: Math.round(chat.scrollTop),
     canScrollUp: Math.round(chat.scrollTop),
     canScrollDown: Math.round(chat.scrollHeight - chat.clientHeight - chat.scrollTop),
@@ -512,20 +708,31 @@ const startRecorder = () => evaluate(`
   const seat = document.querySelector('.turn-seat[data-round-seat="' + window.__stage.round + '"]')
   const segment = seat === null ? null : seat.querySelector('.turn-process')
   window.__rec = { on: true, list: [], t0: performance.now() }
-  const tick = () => {
-    if (!window.__rec.on) return
+  const sample = () => {
     const body = segment === null ? null : segment.firstElementChild
-    window.__rec.list.push({
+    return {
       t: Math.round(performance.now() - window.__rec.t0),
       procH: segment === null ? null : Number(segment.getBoundingClientRect().height.toFixed(1)),
       fold: segment === null ? null : segment.getAttribute('data-fold'),
       rowHs: body === null ? [] : [...body.children].map((row) => Number(row.getBoundingClientRect().height.toFixed(1))),
       opacities: body === null ? [] : [...body.children].map((row) => Number(Number(getComputedStyle(row).opacity).toFixed(2))),
       hidden: body === null ? 0 : [...body.children].filter((row) => row.hasAttribute('hidden')).length,
-    })
+    }
+  }
+  const tick = () => {
+    if (!window.__rec.on) return
+    window.__rec.list.push(sample())
     requestAnimationFrame(tick)
   }
+  // 再挂一条 16ms 的定时采样：淡出只有约 70ms，rAF 被 CPU 抢占时可能整个跳过
+  // 「透明度已降、高度还没降」那一瞬（实测负载下出现过 0.63 → 0 的 91ms 跳格）。
+  const tickTimer = () => {
+    if (!window.__rec.on) return
+    window.__rec.list.push(sample())
+    setTimeout(tickTimer, 16)
+  }
   requestAnimationFrame(tick)
+  setTimeout(tickTimer, 16)
   return { ok: true }
 `)
 const readRecorder = async () => {
@@ -550,22 +757,53 @@ const toggleStage = () => evaluate(`
 `)
 
 await startRecorder()
-await toggleStage()
+const collapseClick = await toggleStage()
 const collapsing = await shoot('_fold-motion-1-collapsing.png')
 await sleep(90)
 const mid = await shoot('_fold-motion-2-collapse-mid.png')
-await sleep(450)
+// 等收起真的到底（fold=closed 且段高 0），不再盲等 450ms。等不到就留着现场让判据红。
+const collapseSettled = await evaluate(`
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  const deadline = performance.now() + 5000
+  let state = { fold: null, procH: null }
+  while (performance.now() < deadline) {
+    const seat = document.querySelector('.turn-seat[data-round-seat="' + window.__stage.round + '"]')
+    const segment = seat === null ? null : seat.querySelector('.turn-process')
+    state = {
+      fold: segment === null ? null : segment.getAttribute('data-fold'),
+      procH: segment === null ? null : Number(segment.getBoundingClientRect().height.toFixed(1)),
+    }
+    if (state.fold === 'closed' && state.procH === 0) break
+    await wait(50)
+  }
+  return state
+`)
+console.log('collapseSettled', JSON.stringify(collapseSettled))
 const collapsed = await shoot('_fold-motion-3-collapse-end.png')
 const collapseFrames = await readRecorder()
 console.log('collapseFrames', JSON.stringify(collapseFrames.filter((_f, index) => index % 2 === 0)))
-await toggleStage()
-await sleep(90)
+const expandClick = await toggleStage()
+// 展开是瞬时的：只等 data-fold 翻成 open（不等行高，否则「行体挂回来」这条就自证了）。
+const expandOpened = await evaluate(`
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  const deadline = performance.now() + 5000
+  let fold = null
+  while (performance.now() < deadline) {
+    const seat = document.querySelector('.turn-seat[data-round-seat="' + window.__stage.round + '"]')
+    const segment = seat === null ? null : seat.querySelector('.turn-process')
+    fold = segment === null ? null : segment.getAttribute('data-fold')
+    if (fold === 'open') break
+    await wait(50)
+  }
+  return { fold }
+`)
+console.log('expandOpened', JSON.stringify(expandOpened))
 const expanding = await shoot('_fold-motion-4-expanding.png')
-await sleep(600)
 
 // ── 判据 ───────────────────────────────────────────────────────────────────────────
 let passed = 0
 let failures = 0
+let skipped = 0
 const check = (name, condition, detail = '') => {
   if (condition) {
     passed += 1
@@ -575,60 +813,130 @@ const check = (name, condition, detail = '') => {
     console.log(`  FAIL ${name}${detail === '' ? '' : `：${detail}`}`)
   }
 }
+/** 环境不满足时跳过产品判据：只打印，不计入通过也不计入失败（环境那条已经红了）。 */
+const skip = (name, why) => {
+  skipped += 1
+  console.log(`  skip ${name}（环境未就绪：${why}）`)
+}
 
 const last = report.after
 const floor = last.sh - (last.spacer > 0 ? last.spacer : 0) - last.ch
 const tallest = prepared.rowHeights.length === 0 ? 0 : Math.max(...prepared.rowHeights)
 
-check('采样够多：≥ 300 帧', report.frames >= 300, `实测 ${String(report.frames)} 帧`)
-check('会话真的超过一屏（旧探针这里是 0，等于什么都没量）', report.slackMax !== null && report.slackMax > 300, `max(sh-ch)=${String(report.slackMax)}`)
-check('流式期间摊开了直播过程区（组体 + 思考行），否则收尾时没有一大块可收', started.openedGroups > 0 && report.procMax > 200, `组头点了 ${String(started.openedGroups)} 次、过程区最高 ${String(report.procMax)}px`)
-check('读者眼前那一行被采到（这一轮最终正文）', report.answerFrames >= 12, `只有 ${String(report.answerFrames)} 帧`)
-check('位置回退 0 次（相邻帧 top 增加 > 1px 的次数）', report.recede === 0, `实测回退 ${String(report.recede)} 次`)
-check('收起前后那一行的屏幕 top 漂移 ≤ 2px', report.drift !== null && report.drift <= 2, `实测 ${String(report.drift)}px`)
-check('收尾的过程区真的有一大块：最高 > 200px，中间高度 ≥ 5 帧', report.procMax > 200 && report.midFrames >= 5, `满高 ${String(report.procMax)}px、中间帧 ${String(report.midFrames)}`)
-check('末帧：data-fold 已翻成 closed', last.fold === 'closed', `实际 ${JSON.stringify(last.fold)}`)
-check('末帧没有残留高度：过程区与装载层都是 0', last.procH === 0 && last.bodyH === 0, `procH=${String(last.procH)} bodyH=${String(last.bodyH)}`)
-check('末帧：段里每一行都挂了 hidden', last.rows >= 1 && last.hiddenRows === last.rows, `${String(last.hiddenRows)}/${String(last.rows)}`)
-check('收工后贴底：scrollTop 在 floor 上（±2px）', Math.abs(last.chatTop - floor) <= 2, `top=${String(Math.round(last.chatTop))} floor=${String(Math.round(floor))}`)
-check('收工后占位回 0（空白没有被占位吃住）', last.spacer === 0, `实测 ${String(last.spacer)}`)
-check(
-  '场景 B 现场合格：段里有一段真高度、在读历史的位置、整段在可视区里',
-  prepared.rows >= 1 && tallest > 100 && prepared.canScrollUp > 60 && prepared.canScrollDown > 20
-    && prepared.segmentTop >= 40 && prepared.segmentTop <= 240,
-  JSON.stringify({ rows: prepared.rows, tallest, up: prepared.canScrollUp, down: prepared.canScrollDown, top: prepared.segmentTop }),
-)
-const rowMidFrames = collapseFrames.filter((frame) => frame.rowHs.some((h) => h > 0.5 && h < tallest - 2))
-check(
-  '收起中：**行自己**在变矮（不是整段一刀切——那样行的实测高度会一直等于满高）',
-  rowMidFrames.length >= 3 && collapseFrames.some((frame) => frame.procH > 0),
-  `行高度走中间值的帧 ${String(rowMidFrames.length)} 帧；tallest=${String(tallest)}`,
-)
-check(
-  '收起中：透明度先走、高度后走（淡出约 44%，高度延迟约 31%）',
-  collapseFrames.some((frame) => frame.opacities.length > 0
-    && frame.opacities[0] < 0.6 && frame.rowHs[0] > tallest * 0.8),
-  JSON.stringify(collapseFrames.filter((frame) => frame.opacities.length > 0)
-    .slice(0, 8).map((frame) => [frame.t, frame.rowHs[0], frame.opacities[0]])),
-)
-check(
-  '收起中：段高逐帧下降（不是一帧闪没）',
-  mid.procH <= collapsing.procH && collapsing.procH <= tallest,
-  JSON.stringify({ firstProc: collapsing.procH, midProc: mid.procH, tallest }),
-)
-check(
-  '收起末：段高 0、每一行高度 0 且都挂了 hidden',
-  collapsed.fold === 'closed' && collapsed.procH === 0
-    && collapsed.rowHs.every((h) => h === 0) && collapsed.hiddenRows === collapsed.rowHs.length,
-  JSON.stringify({ fold: collapsed.fold, procH: collapsed.procH, hidden: collapsed.hiddenRows, rowHs: collapsed.rowHs }),
-)
-check(
-  '展开中：行体原样挂回（没有高度过渡残留）',
-  expanding.fold === 'open' && expanding.rowHs.every((h) => h > 0) && expanding.hiddenRows === 0,
-  JSON.stringify({ fold: expanding.fold, hidden: expanding.hiddenRows, rowHs: expanding.rowHs }),
-)
+// ── 环境闸 A：先证明「场景 A 的采样可信」，再判产品 ─────────────────────────────
+const envA = []
+if (report.frames < 150) envA.push(`rAF 样本 ${String(report.frames)} 帧 < 150（窗口内不足 25fps）`)
+if (report.maxGap > 500) envA.push(`相邻样本最大间隔 ${String(Math.round(report.maxGap))}ms > 500ms（页面被冻住）`)
+if (report.answerFrames < 12) envA.push(`答案行只被采到 ${String(report.answerFrames)} 帧 < 12`)
+if (started.opened !== true || report.procMax <= 200) {
+  envA.push(`流式过程区没摊开（opened=${String(started.opened)}，最高 ${String(report.procMax)}px）`)
+}
+if (report.slackMax === null || report.slackMax <= 300) envA.push(`没有可滚范围（max(sh-ch)=${String(report.slackMax)}）`)
+if (finished.sawStatus !== true) envA.push('整段采样里没见到回合状态行（这一轮可能没跑起来）')
+const envAOk = envA.length === 0
+check('环境：场景 A 的采样现场可判读', envAOk, envA.join('；'))
 
-console.log(`\n[_verify-think-collapse] 断言 ${String(passed + failures)} 条，通过 ${String(passed)} 条，失败 ${String(failures)} 条`)
+if (envAOk) {
+  check('位置回退 0 次（相邻帧 top 增加 > 1px 的次数）', report.recede === 0, `实测回退 ${String(report.recede)} 次`)
+  check('收起前后那一行的屏幕 top 漂移 ≤ 2px', report.drift !== null && report.drift <= 2, `实测 ${String(report.drift)}px`)
+  // 16ms 状态采样在 240ms 的收起里能采 ~15 个点；中间高度 ≥5 帧 = 至少 80ms 在过渡中。
+  check('收尾的过程区真的有一大块：最高 > 200px，中间高度 ≥ 5 帧',
+    report.procMax > 200 && report.midFrames >= 5,
+    `满高 ${String(report.procMax)}px、中间帧 ${String(report.midFrames)}（状态采样 ${String(report.ticks)} 次）`)
+  check('末帧：data-fold 已翻成 closed', last.fold === 'closed', `实际 ${JSON.stringify(last.fold)}`)
+  check('末帧没有残留高度：过程区与装载层都是 0', last.procH === 0 && last.bodyH === 0, `procH=${String(last.procH)} bodyH=${String(last.bodyH)}`)
+  check('末帧：段里每一行都挂了 hidden', last.rows >= 1 && last.hiddenRows === last.rows, `${String(last.hiddenRows)}/${String(last.rows)}`)
+  check('收工后贴底：scrollTop 在 floor 上（±2px）', Math.abs(last.chatTop - floor) <= 2, `top=${String(Math.round(last.chatTop))} floor=${String(Math.round(floor))}`)
+  check('收工后占位回 0（空白没有被占位吃住）', last.spacer === 0, `实测 ${String(last.spacer)}`)
+} else {
+  for (const name of [
+    '位置回退 0 次（相邻帧 top 增加 > 1px 的次数）',
+    '收起前后那一行的屏幕 top 漂移 ≤ 2px',
+    '收尾的过程区真的有一大块：最高 > 200px，中间高度 ≥ 5 帧',
+    '末帧：data-fold 已翻成 closed',
+    '末帧没有残留高度：过程区与装载层都是 0',
+    '末帧：段里每一行都挂了 hidden',
+    '收工后贴底：scrollTop 在 floor 上（±2px）',
+    '收工后占位回 0（空白没有被占位吃住）',
+  ]) skip(name, envA.join('；'))
+}
+
+// ── 环境闸 B：场景 B 的现场与采样密度 ────────────────────────────────────────────
+const envB = []
+let maxRecGap = 0
+for (let at = 1; at < collapseFrames.length; at += 1) {
+  maxRecGap = Math.max(maxRecGap, collapseFrames[at].t - collapseFrames[at - 1].t)
+}
+if (collapseClick?.error !== undefined) envB.push(`收起点击无效：${String(collapseClick.error)}`)
+if (expandClick?.error !== undefined) envB.push(`展开点击无效：${String(expandClick.error)}`)
+if (prepared.rows < 1 || tallest <= 100) envB.push(`段里没有真高度（rows=${String(prepared.rows)}, tallest=${String(tallest)}）`)
+if (!(prepared.canScrollUp > 60 && prepared.canScrollDown > 20)) envB.push(`上下滚动空间不够（上 ${String(prepared.canScrollUp)} / 下 ${String(prepared.canScrollDown)}）`)
+if (!(prepared.segmentTop >= 40 && prepared.segmentTop <= 240)) envB.push(`整段不在可视区里（top=${String(prepared.segmentTop)}）`)
+// 收起 240ms；按 60fps 应有 ~14 帧。少于 15 帧说明采样太稀，逐行中间值判不了
+// （阈值 15 是「240ms × 60fps ≈ 14」取整，宁严不松）。
+if (collapseFrames.length < 15) envB.push(`收起窗口只有 ${String(collapseFrames.length)} 帧 rAF 样本 < 15`)
+// 收起 240ms；rAF 间隔 >100ms（<10fps）时，逐行中间值最多采到 2 个点，判不了「行自己在变矮」。
+// 实测正常 5–12ms，降速 20 倍时到 226ms——两者差一个数量级，100ms 不会误伤安静环境。
+if (maxRecGap > 100) envB.push(`收起采样最长间隔 ${String(Math.round(maxRecGap))}ms > 100ms（逐行中间值不可信）`)
+const envBOk = envB.length === 0
+check('环境：场景 B 的现场可判读', envBOk, envB.join('；'))
+
+if (envBOk) {
+  const rowMidFrames = collapseFrames.filter((frame) => frame.rowHs.some((h) => h > 0.5 && h < tallest - 2))
+  check(
+    '收起中：**行自己**在变矮（不是整段一刀切——那样行的实测高度会一直等于满高）',
+    rowMidFrames.length >= 3 && collapseFrames.some((frame) => frame.procH > 0),
+    `行高度走中间值的帧 ${String(rowMidFrames.length)} 帧；tallest=${String(tallest)}`,
+  )
+  // 「透明度先走、高度后走」按**先后**判，不按某个固定透明度判：
+  // 淡出只有 70ms，负载下 16ms 采样可能只落到 0.63 这一格（实测），用 `< 0.6` 会把
+  // 采样相位问题当成产品问题。这里要求：先出现「已经变淡（<0.9）且高度仍是满高」的一帧，
+  // 之后才出现「高度掉到 80% 以下」的一帧。去掉淡出、或高度与透明度同时走，这条都会红。
+  const fadeFrame = collapseFrames.find((frame) => frame.opacities.length > 0 && frame.opacities[0] < 0.9)
+  const shrinkFrame = collapseFrames.find((frame) => frame.rowHs.length > 0 && frame.rowHs[0] < tallest * 0.8)
+  check(
+    '收起中：透明度先走、高度后走（淡出约 44%，高度延迟约 31%）',
+    fadeFrame !== undefined && shrinkFrame !== undefined && fadeFrame.t <= shrinkFrame.t
+      && fadeFrame.rowHs[0] > tallest * 0.8,
+    JSON.stringify({
+      fadeAt: fadeFrame?.t ?? null,
+      fadeOpacity: fadeFrame?.opacities[0] ?? null,
+      fadeRowH: fadeFrame?.rowHs[0] ?? null,
+      shrinkAt: shrinkFrame?.t ?? null,
+      shrinkRowH: shrinkFrame?.rowHs[0] ?? null,
+      tallest,
+    }),
+  )
+  const procMaxSeen = Math.max(0, ...collapseFrames.map((frame) => typeof frame.procH === 'number' ? frame.procH : 0))
+  const procMidFrames = collapseFrames.filter((frame) => typeof frame.procH === 'number'
+    && frame.procH > 0.5 && frame.procH < procMaxSeen - 2).length
+  check(
+    '收起中：段高出现中间值（不是一帧闪没）',
+    procMidFrames >= 3,
+    JSON.stringify({ procMidFrames, procMaxSeen, firstProc: collapsing.procH, midProc: mid.procH }),
+  )
+  check(
+    '收起末：段高 0、每一行高度 0 且都挂了 hidden',
+    collapsed.fold === 'closed' && collapsed.procH === 0
+      && collapsed.rowHs.every((h) => h === 0) && collapsed.hiddenRows === collapsed.rowHs.length,
+    JSON.stringify({ fold: collapsed.fold, procH: collapsed.procH, hidden: collapsed.hiddenRows, rowHs: collapsed.rowHs }),
+  )
+  check(
+    '展开中：行体原样挂回（没有高度过渡残留）',
+    expanding.fold === 'open' && expanding.rowHs.every((h) => h > 0) && expanding.hiddenRows === 0,
+    JSON.stringify({ fold: expanding.fold, hidden: expanding.hiddenRows, rowHs: expanding.rowHs }),
+  )
+} else {
+  for (const name of [
+    '收起中：**行自己**在变矮（不是整段一刀切——那样行的实测高度会一直等于满高）',
+    '收起中：透明度先走、高度后走（淡出约 44%，高度延迟约 31%）',
+    '收起中：段高出现中间值（不是一帧闪没）',
+    '收起末：段高 0、每一行高度 0 且都挂了 hidden',
+    '展开中：行体原样挂回（没有高度过渡残留）',
+  ]) skip(name, envB.join('；'))
+}
+
+console.log(`\n[_verify-think-collapse] 断言 ${String(passed + failures)} 条，通过 ${String(passed)} 条，失败 ${String(failures)} 条，环境跳过 ${String(skipped)} 条`)
 try { ws.close() } catch {}
 try { electron.kill() } catch {}
 try { server.close() } catch {}
