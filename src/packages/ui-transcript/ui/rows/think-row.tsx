@@ -87,7 +87,16 @@ export function ThinkRow({
 }: {
   entry: Extract<TranscriptEntry, { kind: 'thinking' }>
   live: boolean
-  /** 展开状态的存档键（`会话id:think:条目id`）；不传就不存档。 */
+  /**
+   * 展开状态的存档键：`会话id:r<轮>:thinking:<序号>`（例如 `sess_ab:r3:thinking:0`；
+   * 轮号前三行的前导条目用 `lead` 代替 `r<轮>`）；不传就不存档。
+   *
+   * 为什么不用条目 id（2026-11-10 改）：直播思考的 id 是「第几个直播段」的负数，段一增删
+   * 就变，定稿那一刻又换成正数；键跟着 id 换，用户点开的那一段在「新工具进来 / 这段定稿」
+   * 时查不到存档、直接收起，而下一段直播思考恰好复用同一个负 id、把那份「展开」读走
+   * （报障原话是「收起旧的、展开新的」）。序号是轮内同类型的稳定序号，见 `shared.ts`
+   * 的 `stableOf`。
+   */
   storeKey?: string
   /**
    * 展开区的正文：由外面给（`transcript.reasoning.body` 槽的当选者，落空是 {@link ThinkText}）。

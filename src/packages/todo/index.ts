@@ -295,6 +295,10 @@ export const todoPlugin: Plugin.Object = {
         })
         // 没补就原样返回（`appendTodoReminder` 不注入时返回同一个数组），台账不动。
         if (out === messages) return out
+        // 提醒是投影现算的、日志上没有这一句（`session-core/loop.ts:77` 的规矩）：
+        // 注入方自己落一条 note，正文就是注入原文，事后回看能对出模型当时多看了什么。
+        // 写法照 `packages/lsp/index.ts:219` / `packages/hooks/index.ts:552`。
+        owner.appendNote('todo-reminder', TODO_REMINDER_TEXT)
         // 真补了才记账，并且只在「这一跳」记：下一跳轮号 +1，判据就变成「还差 N−1 轮」。
         reminderCadence.mark(owner.meta.id, round)
         // 过一道上报闸：同一句正文只在第一次出现时记一张卡（理由见上面两个台账的注释）。

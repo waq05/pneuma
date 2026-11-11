@@ -19,6 +19,7 @@
  */
 import type { Plugin } from '@deepseek-ai/cordis'
 import { CONTEXT_INJECTION_KINDS, contextInjectionPreview, type ContextInjectionView } from '@pneuma/runtime/contract.js'
+import type { ChatMessage } from '@pneuma/runtime/core/llm.js'
 import { appendRepeatReminder, planRepeatReminder } from '@pneuma/runtime/core/repeat-reminder.js'
 import { Session, type InboxOrigin } from '@pneuma/runtime/core/session.js'
 import type { UserFileAttachment } from '@pneuma/runtime/core/attachments.js'
@@ -207,6 +208,16 @@ export const agentPlugin: Plugin.Object = {
     //
     // order 850：排在 todo-reminder(800) 之后、drop-images(900) 之前——提醒是这一轮最后
     // 追加的话，图该剥的照样在它之后剥，两个投影互不干扰。
+    /**
+     * 已为哪一份历史落过提醒 note：会话 id → 「历史最后一条消息 + 提醒正文」。
+     *
+     * 一次请求组装完，循环会拿同一份日志再跑一遍投影链做校验（`loop.ts:452` 的
+     * checkRequestInvariant）。那一遍算出来的提醒与真发出去的一字不差，但并没有发给模型；
+     * 不挡的话每注入一次会多记一条重复 note。判据用「最后一条消息」而不是历史条数：
+     * 两次真请求之间一定落过新的 assistant / tool 消息，对象引用不同；同一份历史重跑时
+     * 最后一条还是同一个对象。表满整表清（与 `packages/prompt` 的 envSent 同一套）。
+     */
+    const reminderNotes = new Map<string, { last: ChatMessage | undefined; text: string }>()
     const offRepeatReminder = ctx.prompt.registerProjection(
       'repeat-reminder',
       (messages, session, report) => {
@@ -218,6 +229,17 @@ export const agentPlugin: Plugin.Object = {
         // 真补了才报（appendRepeatReminder 没补时原样返回同一个数组）：注入卡只该在
         // 「这一跳真的多了一句提醒」时出现，不是每跳都长一张。
         if (out !== messages) {
+          // 提醒是投影现算的、日志上没有这一句（`session-core/loop.ts:77` 的规矩）：
+          // 注入方自己落一条 note，事后回看日志能逐字对出模型当时多看了什么。写法照
+          // `packages/lsp/index.ts:219` / `packages/hooks/index.ts:552`——正文就是注入原文。
+          // 同一份历史的二次派生（invariant 校验）不重复落，判据见上面 reminderNotes。
+          const last = session.messages[session.messages.length - 1]
+          const noted = reminderNotes.get(session.meta.id)
+          if (noted === undefined || noted.last !== last || noted.text !== plan.text) {
+            if (reminderNotes.size > 64) reminderNotes.clear()
+            reminderNotes.set(session.meta.id, { last, text: plan.text })
+            session.appendNote('repeat-reminder', plan.text)
+          }
           report?.({
             kind: CONTEXT_INJECTION_KINDS.repeatReminder,
             source: 'repeat-reminder',

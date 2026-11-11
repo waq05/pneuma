@@ -329,7 +329,6 @@ export function TurnFoldRow(props: {
 export function useFoldMemory(): {
   open(key: string, fallback: boolean): boolean
   set(key: string, open: boolean): void
-  reset(keys: readonly string[]): void
   clear(keys: readonly string[]): void
   clearPrefixes(prefixes: readonly string[]): void
 } {
@@ -341,19 +340,6 @@ export function useFoldMemory(): {
   const set = useCallback((key: string, next: boolean): void => {
     writeFold(key, next)
     setMap((current) => ({ ...current, [key]: next }))
-  }, [])
-  const reset = useCallback((keys: readonly string[]): void => {
-    if (keys.length === 0) return
-    for (const key of keys) writeFold(key, false)
-    setMap((current) => {
-      let next = current
-      for (const key of keys) {
-        if (next[key] === undefined) continue
-        if (next === current) next = { ...current }
-        delete next[key]
-      }
-      return next
-    })
   }, [])
   /**
    * 抹掉存档而不是写一个值：抹掉之后这一条重新由兜底（设置里的默认态）决定。
@@ -395,5 +381,5 @@ export function useFoldMemory(): {
       return next
     })
   }, [])
-  return useMemo(() => ({ open, set, reset, clear, clearPrefixes }), [open, set, reset, clear, clearPrefixes])
+  return useMemo(() => ({ open, set, clear, clearPrefixes }), [open, set, clear, clearPrefixes])
 }
