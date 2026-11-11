@@ -19,8 +19,8 @@
  *
  * ## 每帧的顺序（第④阶段的逐行动画照这个走）
  *
- *   1. **先让盒子动**：动画侧（将来 `fold-motion.ts`；现在还是 `.turn-process` 的
- *      CSS grid 过渡）改高度 / 外边距 / 透明度；
+ *   1. **先让盒子动**：动画侧（`fold-motion.ts` 的逐行收起；展开方向行体不动画，只有
+ *      阶段组的组体按 `max-height` 长出来）改高度 / 外边距 / 透明度；
  *   2. **再让行落地**：布局跑完。这一步有三个入口，谁先到谁补，补的是同一件事：
  *      `MutationObserver`（微任务，DOM 变完、布局之前，专治同一帧里又提交了一次的情况）、
  *      `ResizeObserver`（布局之后、绘制之前，量得最准）、以及一条 `requestAnimationFrame`
@@ -40,6 +40,13 @@
  * 不用一种落点兼顾两处：贴底的人要的是「永远看到最后一行」，读历史的人要的是
  * 「我正看的那一行别动」，两者的目标位置在每一帧都不同。
  *
+ * ## 谁开批次（第④阶段起）
+ *
+ * 只有 `fold-motion.ts` 一处：收起方向在「行的高度还写着实测值、布局没变」的那一刻开，
+ * 展开方向在**点击回调里、DOM 变之前**开（行体是瞬时挂上去的，晚一步锚点就量错了）。
+ * 本文件不再监听 `data-fold` 翻面自己开窗——那套过渡适配器是第③阶段的临时信号，
+ * 留着就是两套开窗口径，同一帧会补两次位置。
+ *
  * @module dsc-ui-shell/plugins/transcript/viewport
  */
 import { useCallback, useEffect, useState } from 'react'
@@ -50,8 +57,6 @@ const SCROLLER_SELECTOR = '.chat'
 const SPACER_SELECTOR = '[data-chat-turn-spacer]'
 /** 一行：`ui-transcript` 的每个座位都是一个 `.entry-row`（见 ui.tsx 模块头第 2 条）。 */
 const ROW_SELECTOR = '.entry-row'
-/** 整轮折叠那一段翻面的属性；阶段 ④ 会退役它的 CSS 动画，但属性本身继续写。 */
-const FOLD_ATTR = 'data-fold'
 /**
  * 批次比过渡多留的尾巴（ms）。
  *
@@ -95,7 +100,7 @@ export interface ViewportReader {
   wrote(top: number): void
 }
 
-/** 一批会动的盒子（阶段 ④ 传逐行的动画盒子；③ 传翻面的 `.turn-process` 段）。 */
+/** 一批会动的盒子（阶段 ④ 传逐行的动画盒子）。 */
 export interface BatchOptions {
   /**
    * 这一批里正在动、位置不可信的元素。
@@ -107,8 +112,7 @@ export interface BatchOptions {
   /**
    * 这一批最多跑多久（ms）。不给就按样式表的慢档（`--dsc-dur-slow`）加一段尾巴。
    *
-   * 阶段 ④ 的逐行动画自己掌握总时长时传它；届时 `frame()` 由 motion 每帧调，
-   * 本文件那条 `requestAnimationFrame` 只当保险丝（补的是同一件事，重复调用无副作用）。
+   * 逐行动画自己掌握总时长时传它（`fold-motion.ts` 传的是「总时长 + 提交余量」）。
    */
   readonly durationMs?: number
 }
@@ -176,10 +180,11 @@ export interface ChatViewport {
 /**
  * 读样式表里的慢档时长（`--dsc-dur-slow`）。
  *
- * 为什么不写死 180：批次窗口必须和 `.turn-process` 的 `transition` 同源。各写一份，
- * 改令牌的人只会改一处，批次窗口就悄悄短了——短了的样子特别难查：末几帧没人补位置。
+ * 为什么要读而不写死：批次窗口与逐行动画的总时长必须是**同一个数**。各写一份，改令牌
+ * 的人只会改一处，另一处就悄悄短了——短了的样子特别难查：末几帧没人补位置。
+ * `fold-motion.ts` 也经这个函数取总时长，全仓只有这一处读它。
  */
-function readSlowMs(): number {
+export function readSlowMs(): number {
   const raw = globalThis.getComputedStyle(document.documentElement).getPropertyValue('--dsc-dur-slow').trim()
   const value = Number.parseFloat(raw)
   if (!Number.isFinite(value) || value <= 0) return 180
@@ -275,7 +280,6 @@ class ViewportOwner implements ChatViewport {
   private spacerElement: HTMLElement | null = null
   private reader: ViewportReader | null = null
   private batch: Batch | null = null
-  private foldObserver: MutationObserver | null = null
 
   get scroller(): HTMLElement | null {
     return this.container
@@ -308,39 +312,14 @@ class ViewportOwner implements ChatViewport {
     this.detach()
     this.container = scroller
     this.spacerElement = scroller.querySelector<HTMLElement>(SPACER_SELECTOR)
-    this.observeFolds(scroller)
   }
 
   detach(): void {
     this.endBatch()
-    this.foldObserver?.disconnect()
-    this.foldObserver = null
     const scroller = this.container
     if (scroller !== null) scroller.style.overflowAnchor = ''
     this.container = null
     this.spacerElement = null
-  }
-
-  /**
-   * 批次的开窗信号（第③阶段的过渡适配器）。
-   *
-   * `.turn-process` 的收起 / 展开是 CSS grid 过渡，它没有帧回调，也没有「开始 / 结束」事件；
-   * 能拿到的最早信号就是 `data-fold` 翻面那一下（React 提交后、浏览器绘制前）。于是：
-   * 属性一变就开一批，跑满过渡时长再收。阶段 ④ 把逐行动画接上之后，这里换由 motion
-   * 直接调 `beginBatch()` / `endBatch()`，这个观察器随之退场。
-   */
-  private observeFolds(scroller: HTMLElement): void {
-    if (typeof MutationObserver !== 'function') return
-    this.foldObserver = new MutationObserver((records) => {
-      const moving: Element[] = []
-      for (const record of records) {
-        if (record.attributeName !== FOLD_ATTR || !(record.target instanceof Element)) continue
-        moving.push(record.target)
-      }
-      if (moving.length === 0) return
-      this.beginBatch({ moving })
-    })
-    this.foldObserver.observe(scroller, { attributes: true, attributeFilter: [FOLD_ATTR], subtree: true })
   }
 
   scrollTop(): number {

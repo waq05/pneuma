@@ -10798,50 +10798,38 @@ body.resizing iframe {
   margin-top: calc(var(--dsc-block-gap) - var(--dsc-stack-gap));
 }
 
-/* ── 整轮过程区的开合动画（0.6.69）──
-   报障是「点『用时 56秒』展开，下面的内容是硬切出来的，没有动画」。
+/* ── 整轮过程区的外壳（0.6.69 起有动画；0.9.2 起动画搬去逐行）──
+   报障两轮：先是「点『用时 56秒』展开，下面的内容是硬切出来的，没有动画」（0.6.69 借
+   zcode 的 grid 行插值，用 `grid-template-rows: 0fr ↔ 1fr` 的裁剪盒子补上）；后是「整段
+   一起缩、上缘一刀切、正文被切在字中间」（0.9.2 把这套退役）。
 
-   高度动画三条路（dsh 的 Radix 高度关键帧、zcode 的 grid 行插值、JS 量高度的 max-height）里
-   取的是**第二条**：`grid-template-rows: 0fr ↔ 1fr` 是纯 CSS、不用 JS 量内容高，也不用
-   像 max-height 那样要么猜上限要么量一次再写回。内层必须 `min-height: 0` + `overflow: hidden`，
-   否则 0fr 那一行会被内容顶开（grid 轨道的最小尺寸默认是 auto）。
+   现在这一层**不再裁剪、不再做高度动画**，只是「这一段」的边界：
+   - 高度动画搬到 `fold-motion.ts`：每一行（`.entry-row` / `.step-seat`）自己预量高度、
+     自己归零，同一批次时钟，末帧才挂 `hidden`。所以 `.turn-process-body` 上的
+     `min-height: 0` / `overflow: hidden` / `opacity` 过渡**一起退役**——留着它就会把
+     「逐行收」重新裁成「整块收」，那正是要修的观感；
+   - 元素本身**留着**，`data-fold` 继续写：真机探针与诊断脚本读的是「整轮收起来了没有」，
+     与用哪种动画无关。
 
-   **收起态是一个 0 高的盒子，不是 `display: none`**——两条实测换来的：
-   - `1fr` / `0fr` 的用量是**按内容算**的。收起那一帧若把这些行打成 `display: none`
-     （`hidden` 的规则就是它），内容当场没了，两边都是 0 高，动画等于没有；
-   - 所以「挂 hidden」被推迟到动画跑完（见 fold-seats.tsx 的 foldHideDelayMs），
-     而这一格自己也必须一直渲染着——写成 `display: none` 时，实测收起方向会先僵在
-     原位 180ms、再整块消失（比不动画还难看）。留着 0 高盒子，收起就是「内容在原处
-     被上缘一点点收掉」，方向与展开对称。
-
-   留着一个 0 高的 flex 项会多算一格座位 gap（6px），用负的 margin-top 抵掉：
-   收起时「开关行 → 下一行」的距离必须与加动画之前一模一样（12px = gap 6 + 答案行外边距 6）。 */
+   它是一个 0 高的 flex 项，收起后仍会多算一格座位 gap（3px），用负的 margin-top 抵掉：
+   「开关行 → 下一行」的距离必须与加动画之前一模一样。这一条 margin-top 自己仍走过渡
+   （16px 补差 ↔ −3px 抵消），是这一层唯一剩下的动画。 */
 .turn-process {
-  display: grid;
-  grid-template-rows: 1fr;
-  transition:
-    grid-template-rows var(--dsc-dur-slow) var(--dsc-ease),
-    margin-top var(--dsc-dur-slow) var(--dsc-ease);
+  display: block;
+  transition: margin-top var(--dsc-dur-slow) var(--dsc-ease);
 }
 
 .turn-process[data-fold='closed'] {
-  grid-template-rows: 0fr;
   margin-top: calc(-1 * var(--dsc-stack-gap));
 }
 
+/* 行缝与行距在这一层：逐行收起时 `fold-motion.ts` 会把 `row-gap` 一起收到 0
+   （每行归零之后每道 3px 的缝还在，末帧会剩 N×3px 的齐跳）。不裁剪、不限高：
+   这个盒子只负责排，不负责裁。 */
 .turn-process-body {
   display: flex;
   flex-direction: column;
   gap: calc(3px * var(--dsc-density));
-  min-height: 0;
-  overflow: hidden;
-  /* 拉开帘子的同时内容淡进来（zcode 的折叠层就是「高度关键帧 + fade-in-0」这一对）。
-     两头都写在类上，所以收起方向也淡出，不用 @starting-style。 */
-  transition: opacity var(--dsc-dur-slow) var(--dsc-ease);
-}
-
-.turn-process[data-fold='closed'] .turn-process-body {
-  opacity: 0;
 }
 
 /* ── 阶段组的座位：组头 + 组体 ── */
@@ -10999,13 +10987,20 @@ body.resizing iframe {
   white-space: nowrap;
 }
 
+/* 系统说「少动」时：这几处一律不进动画。整轮收起那一套（`.turn-process` 的 margin-top、
+   逐行动画写在行上的内联过渡）原来漏在这里——CSS 归零只解决一半，`hidden` 还得由
+   `fold-motion.ts` 同步提交（它自己读 `prefers-reduced-motion`）。 */
 @media (prefers-reduced-motion: reduce) {
   .turn-fold,
   .turn-fold-chevron,
   .step-fold,
   .step-fold-icon,
   .step-fold-chevron,
-  .round-foot .round-act {
+  .round-foot .round-act,
+  .turn-process,
+  .turn-process-body,
+  .entry-row,
+  .step-seat {
     transition: none;
   }
 }

@@ -5,7 +5,7 @@
  *
  * @module dsc-ui-shell/plugins/transcript/render
  */
-import { Component, memo, useCallback, useContext, useMemo, useSyncExternalStore, type ReactNode } from 'react'
+import { Component, memo, useCallback, useContext, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import { MarkdownView, createT, estimateTextTokens, type TranscriptEntry } from '@dsc/ui'
 import { ReviewNoticeCard, findLast, parseReviewNotice } from '@dsc/ui-primitives'
 import { FoldPrefsContext, ShellCwdContext, ShellSessionContext, TOOLVIEW_SLOT, TRANSCRIPT_NODE_SLOT, TRANSCRIPT_REASONING_BODY_SLOT, TURN_INDEPENDENT, keyOf, type Row, type Seat, type ToolViewRender } from './shared'
@@ -14,6 +14,8 @@ import type { SeatStore } from './seat-store'
 import { rowShows } from './row-shows'
 import { turnDefaultOpen, useFoldMemory } from './round-fold'
 import { RowSeat, StepGroupSeat } from './fold-seats'
+import { useTurnFoldMotion } from './fold-motion'
+import type { ChatViewport } from './viewport'
 import { TurnFoldRow } from './round-fold'
 import { seatPlan, type StepGroup, type StepGrouping } from './process-groups'
 import type { RoundInfo } from './timing'
@@ -54,6 +56,7 @@ export function SeatBody({
   stepGrouping,
   renderSlot,
   store,
+  viewport,
   onForkRound,
 }: {
   seat: Seat
@@ -79,6 +82,13 @@ export function SeatBody({
   renderSlot: ToolViewRender
   /** 座位注册表：行体自己按身份从这里订阅（见 seat-store.ts），座位不再把 Row 递下去。 */
   store: SeatStore
+  /**
+   * 外层视口（`viewport.ts` 那个唯一 owner）：整轮收起 / 展开的批次都要经它开。
+   *
+   * 为什么座位要拿到它（第④阶段）：逐行收起是**按时间**开窗的动画，开窗那一刻必须
+   * 同时定下落点与锚点；这件事只能由视口做（见 viewport.ts 模块头「谁开批次」）。
+   */
+  viewport: ChatViewport
   /**
    * 页脚「分叉这一轮」：吃轮号、不吃座位对象。
    *
@@ -108,9 +118,33 @@ export function SeatBody({
   // 为什么要 useCallback（S2 彻底方案，2026-11-10）：这个回调被递给每一行的座位壳
   // （`SeatFrame` 的 `onReveal`）。座位壳是 memo 的，回调每帧换引用就会让整屏的壳全部重渲染，
   // 逐行订阅也就白做了。依赖只有存档对象与这一轮的键，两者都不随 delta 变。
+  // 第④阶段起它还要在放行之前把批次开好（展开方向的行体是瞬时挂上去的，见下面 revealTurn）。
+  const revealAction = useRef<() => void>(() => {})
   const reveal = useCallback((): void => {
+    revealAction.current()
+  }, [])
+  /**
+   * 整轮收起的逐行动画（第④阶段）。
+   *
+   * 只有一处开窗：收起由这个钩子在布局阶段开（那一刻行的高度还写着实测值、布局没变），
+   * 展开由 {@link revealTurn} 在点击回调里开（DOM 变之前，锚点才量得准）。
+   */
+  const foldMotion = useTurnFoldMotion({ collapsed, viewport, reveal })
+  revealAction.current = () => {
+    foldMotion.prepareExpand()
     foldMemory.set(turnKey, true)
-  }, [foldMemory, turnKey])
+  }
+  /**
+   * 点整轮开关：`foldMemory.set(turnKey, collapsed)` 的字面含义是「把 open 设成 collapsed」——
+   * 此刻收起着就展开、展开着就收起。
+   *
+   * 展开方向要先开批次（`prepareExpand`）：行体的 `hidden` 是在同一次提交里摘掉的，
+   * 那一下是几百像素的瞬时高度；批次晚一步，量到的就是「已经跳完」的位置。
+   */
+  const toggleTurn = (): void => {
+    if (collapsed) foldMotion.prepareExpand()
+    foldMemory.set(turnKey, collapsed)
+  }
   /**
    * 轮尾那个「分叉」回调：按**轮号**包一层，于是它跨帧是同一个引用（第 1 轮不给分）。
    * 回调本身稳定，包出来的这一个才稳得住——见上面 `onForkRound` 的注释。
@@ -256,20 +290,22 @@ export function SeatBody({
   }
   /**
    * 过程区**分段**包一层再折：连续的「要藏」行合成一段 `.turn-process`，收起时这一片
-   * 高度从 0 长回来 / 缩回 0，一段一起动；留在屏幕上的正文不进任何一段，按原顺序夹在
-   * 几段之间（foldedReplies=all 的「中间留几段话在外面」就是这么落地的）。
+   * 逐行缩回 0；留在屏幕上的正文不进任何一段，按原顺序夹在几段之间
+   * （foldedReplies=all 的「中间留几段话在外面」就是这么落地的）。
    *
    * 为什么必须包一层：平铺在座位上折不了——收起的行是 `hidden`（不产生盒子），夹在它们
    * 之间的 6px flex gap 会留下来，几十行的轮收起来就是一片空白的间隙堆。包进一格之后，
-   * 座位的 gap 只算这一格。高度动画本身在 CSS：`.turn-process` 的 grid-template-rows
-   * 0fr↔1fr（不需要 JS 量高度）。
+   * 座位的 gap 只算这一格，而这一层的 `margin-top` 在收起态补偿掉那格缝。
+   *
+   * 高度动画（第④阶段起）在 `fold-motion.ts`：这一层不再是裁剪盒子，只是「这一段」的
+   * 边界（`register` 把段交给 motion，`data-fold` 继续写，供真机读数）。
    */
   const foldBlocks: ReactNode[] = []
   let segment: ReactNode[] = []
   const flushSegment = (): void => {
     if (segment.length === 0) return
     foldBlocks.push(
-      <div className="turn-process" data-fold={collapsed ? 'closed' : 'open'} key={`process-${String(foldBlocks.length)}`}>
+      <div className="turn-process" data-fold={collapsed ? 'closed' : 'open'} ref={foldMotion.register} key={`process-${String(foldBlocks.length)}`}>
         <div className="turn-process-body">{segment}</div>
       </div>,
     )
@@ -296,9 +332,7 @@ export function SeatBody({
             // 照旧版的做法这一行照样画出来，只是点不动——用户得看得见「这一轮收成什么样」。
             disabled={!fold.hasContent || fold.blocked}
             endReason={fold.endReason}
-            onToggle={() => {
-              foldMemory.set(turnKey, collapsed)
-            }}
+            onToggle={toggleTurn}
           />
         </div>
       ) : null}

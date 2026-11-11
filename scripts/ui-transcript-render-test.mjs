@@ -18,7 +18,8 @@
  *   [2] 纯逻辑：`toolArgFields`（会改文件的工具分流 + 正文字段剔除 + 半截参数的降级）
  *   [3] 形态钉：ui.tsx 的 seatPlan 消费点、ThinkRow 不再强制展开、factory 的 diff/参数表
  *   [4] 漂移钉：参数表的字段名与宿主工具真定义对得上（`src/core/tools/fs-tools.ts`）
- *   [5] 开合动画（0.6.69）：过程区包一层 + grid-template-rows 0fr↔1fr + 收起延迟挂 hidden
+ *   [5] 开合动画（0.6.69 起；第④阶段 2026-11-11 改成逐行）：过程区包一层 + `fold-motion.ts`
+ *       逐行量高归零 + `hidden` 末帧提交（三个入口）；组体那一层仍走 `max-height`
  *   [6] 悬停预览的收卡口径（0.6.69 第五轮）：出卡 500ms 照参考实现，**收卡 1s 是壳侧有意分道**，
  *       且卡片自己挂着 mouseleave（只挂 keep 会让卡粘住不走）
  *   [8] 收起态的结果与失败数（对照 codex 的活动流）：工具卡摊 3 行结果尾巴、
@@ -264,21 +265,63 @@ console.log('[5] 整轮过程区的开合动画（0.6.69 第四轮报障）')
   // 折叠时机：最新一轮的兜底展开来自 turnDefaultOpen，用户手点过的存档仍优先。
   check('兜底默认态 = turnDefaultOpen(collapseTiming, latest)', /turnDefaultOpen\(foldPrefs\.collapseTiming, fold\?\.latest === true\)/.test(ui) && /foldMemory\.open\(turnKey, defaultOpen\)/.test(ui))
 
-  // CSS：高度动画走 grid-template-rows 0fr↔1fr（不预先量高度），内层 min-height:0 + overflow:hidden
-  check('高度动画是 grid-template-rows 的两头（0fr ↔ 1fr）', /\.turn-process \{[\s\S]{0,200}grid-template-rows: 1fr/.test(css) && /\.turn-process\[data-fold='closed'\] \{[\s\S]{0,120}grid-template-rows: 0fr/.test(css))
-  check('内层给了 min-height: 0 + overflow: hidden（否则 0fr 会被内容顶开）', /\.turn-process-body \{[\s\S]{0,200}min-height: 0;[\s\S]{0,120}overflow: hidden;/.test(css))
-  check('收起态留的是 0 高盒子而不是 display:none（收起方向才有内容撑住高度）', !/\.turn-process\[data-fold='closed'\] \{[\s\S]{0,160}display: none/.test(css))
+  // ── 第④阶段（2026-11-11）：高度动画从「整段 grid 裁剪」换成「逐行收起」──────────
+  // 三条 grid 形态钉（原 :268 / :272 / :273）与三条猜时长钉（原 :277 / :279 / :280）
+  // 必然失效：它们钉的那串字符已经不存在了。**钉的仍是同一件事**——收起有动画、
+  // 时长取令牌、末帧才挂 hidden、组体那一层不接——只是载体从 CSS 换成 fold-motion.ts。
+  const motion = read(UI + '/fold-motion.ts')
+  check('逐行收起的模块在（fold-motion.ts 的 useTurnFoldMotion）', /export function useTurnFoldMotion\(/.test(motion))
+  check(
+    '每一行动三个值：高度 / 外边距 / 透明度（预量后归零，不做 auto 插值、不读 scrollHeight）',
+    /height: element\.offsetHeight/.test(motion)
+      && /getComputedStyle\(element\)\.marginTop/.test(motion)
+      && /style\.height = '0px'/.test(motion)
+      && /style\.marginTop = '0px'/.test(motion)
+      && /style\.opacity = '0'/.test(motion),
+  )
+  check(
+    '每帧顺序：先写行的 box（预量 + 强制回流）→ 开批次 → 每帧 frame() → 收工 end()',
+    /style\.height = `\$\{String\(box\.height\)\}px`/.test(motion)
+      && /void \(viewport\.scroller\?\.scrollHeight \?\? 0\)/.test(motion)
+      && motion.indexOf('void (viewport.scroller') < motion.indexOf('durationMs: total + COMMIT_TAIL_MS')
+      && /batch\?\.frame\(\)/.test(motion)
+      && /batch\?\.end\(\)/.test(motion),
+  )
+  check(
+    '批次的开窗只由 motion 一处：viewport 不再监听 data-fold 翻面（不留两套开窗信号）',
+    motion.includes('viewport.beginBatch(') && !/observeFolds|FOLD_ATTR/.test(read(UI + '/viewport.ts')),
+  )
+  check(
+    'hidden 只在末帧提交，三个入口共用一个 finish()（transitionend / 批次末帧 / 超时兜底）',
+    /const finish = \(\): void =>/.test(motion)
+      && /if \(event\.propertyName === 'height'\) finish\(\)/.test(motion)
+      && /performance\.now\(\) >= deadline/.test(motion)
+      && /window\.setTimeout\(finish,/.test(motion)
+      && /setAttribute\('hidden', 'until-found'\)/.test(motion),
+  )
+  check('末帧先挂 hidden 再清内联（反过来会弹回原高度，又是一次跳）', /commitHidden\(boxes, reveal\)\s*\n\s*clearStyles\(boxes, bodies\)/.test(motion))
+  check('系统说「少动」时不进动画、同步提交 hidden', /if \(prefersReducedMotion\(\)\) \{/.test(motion) && /'\(prefers-reduced-motion: reduce\)'/.test(motion))
+  // 只查这两条规则自己（`grid-template-rows` 在别处还有用处：七段数码管、别的折叠层）。
+  const turnProcessRule = /\.turn-process \{([^}]*)\}/.exec(css)?.[1] ?? ''
+  const turnProcessBodyRule = /\.turn-process-body \{([^}]*)\}/.exec(css)?.[1] ?? ''
+  check('`.turn-process` 退回普通容器：不再 grid-template-rows、不再裁剪', turnProcessRule.includes('display: block') && !/grid-template-rows|overflow/.test(turnProcessRule), turnProcessRule.trim())
+  check('`.turn-process-body` 不再限高裁剪、透明度过渡一并退役', turnProcessBodyRule.includes('gap: calc(3px') && !/min-height|overflow|transition: opacity/.test(turnProcessBodyRule), turnProcessBodyRule.trim())
+  check('收起态不写 display:none（元素与 data-fold 留着，只退役动画）', !/\.turn-process\[data-fold='closed'\] \{[\s\S]{0,160}display: none/.test(css))
   check('留一格 0 高 flex 项会多算座位 gap，用负 margin 抵掉', /\.turn-process\[data-fold='closed'\] \{[\s\S]{0,200}margin-top: calc\(-1 \* var\(--dsc-stack-gap\)\)/.test(css))
-  check('内容随高度一起淡入淡出（zcode 的「高度关键帧 + fade」那一对）', /\.turn-process-body \{[\s\S]{0,320}transition: opacity/.test(css) && /\.turn-process\[data-fold='closed'\] \.turn-process-body \{\s*\n\s*opacity: 0/.test(css))
-  check('时长取令牌 --dsc-dur-slow（不写死毫秒）', /\.turn-process \{[\s\S]{0,260}grid-template-rows var\(--dsc-dur-slow\) var\(--dsc-ease\)/.test(css))
+  check('时长取令牌：motion 从 viewport 的 readSlowMs 读，模块里没有写死毫秒', /import \{ readSlowMs/.test(motion) && /const total = readSlowMs\(\)/.test(motion) && !/\b(?:const|let)\s+\w+\s*=\s*(?:180|200)\b/.test(motion))
+  check('三段比例照参考实现（淡出 44% / 高度延迟 31% / 高度跑 69%）', motion.includes('70 / 160') && motion.includes('50 / 160'))
+  check('--dsc-dur-slow 两份声明都还在（旧默认值 + 现行设计覆盖，有意保留）', tokens.includes('--dsc-dur-slow: 180ms') && read('src/packages/ui-renderer/ui/styles/styles.css').includes('--dsc-dur-slow: 200ms'))
 
-  // 收起方向要「内容还在、格子先收」：挂 hidden 得晚于动画跑完
+  // 收起方向要「内容还在、行自己先收」：提交 hidden 的时机由 motion 掌握，钩子不许抢先。
   // 工作区是 CRLF：跨行匹配一律 `\s*\n\s*`（写成字面 `\n` 会在 CRLF 工作区上假红）。
-  check('收起时延迟挂 hidden（挂早了内容当场没，两边都是 0 高，动画等于没有）', seats.includes('const timer = globalThis.setTimeout(() => {') && /element\.setAttribute\('hidden', 'until-found'\)\s*\n\s*\}, delay\)/.test(seats))
+  check('猜时长的兜底已删（fold-seats 里没有 foldHideDelayMs，也没有「延时挂 hidden」的定时器）', !seats.includes('foldHideDelayMs') && !/setTimeout\(\(\) => \{\s*\n\s*element\.setAttribute/.test(seats))
   check('展开方向不延迟（放行要立刻看得见）', /if \(!hidden\) \{\s*\n\s*element\.removeAttribute\('hidden'\)/.test(seats))
-  check('延迟时长与 CSS 同源（现读 --dsc-dur-slow，不各写一份）', seats.includes("getPropertyValue('--dsc-dur-slow')") && tokens.includes('--dsc-dur-slow: 180ms'))
-  check('延迟只给「display:none 那一层」：过程行与阶段组的座位', (seats.match(/delayMs: foldHideDelayMs\(\)/g) ?? []).length === 2)
-  check('组体（max-height 那一层）不延迟：内容留在文档里，本来就平滑', /const bodyRef = useSearchableHidden\(!props\.open, revealGroup\)/.test(seats))
+  check('hidden 的提交权交给 motion：两层座位传 owned，别的层不传', (seats.match(/\{ owned: true \}\)/g) ?? []).length === 2)
+  check('组体（max-height 那一层）不传 owned：内容留在文档里，本来就平滑', /const bodyRef = useSearchableHidden\(!props\.open, revealGroup\)/.test(seats))
+  check('焦点在里层、或被查找命中时的放行照旧（Ctrl+F 与键盘都不受影响）', seats.includes('element.contains(element.ownerDocument.activeElement)') && seats.includes("element.addEventListener('beforematch', reveal)"))
+  check('系统说「少动」时整轮收起那套也不进动画（降级块里有 .entry-row / .step-seat）', /@media \(prefers-reduced-motion: reduce\) \{[\s\S]{0,700}\.entry-row,\s*\n\s*\.step-seat \{/.test(css))
+  check('.entry-row[hidden] 仍是 display:none（末帧提交的落点，删了 until-found 就不生效）', /\.entry-row\[hidden\] \{\s*\n\s*display: none;/.test(css))
+  check('.step-body[hidden] 仍是 max-height: 0 + overflow: hidden（组体那一层不走 motion）', /\.step-body\[hidden\] \{[\s\S]{0,160}max-height: 0;/.test(css))
   check('焦点在里层、或被查找命中时的放行照旧（Ctrl+F 与键盘都不受影响）', seats.includes('element.contains(element.ownerDocument.activeElement)') && seats.includes("element.addEventListener('beforematch', reveal)"))
 
   // 阶段组那一级：收起态本来就是 max-height: 0（内容留文档里），补一条过渡即可。

@@ -769,6 +769,7 @@ function TranscriptFlow({
             stepGrouping={stepGrouping}
             renderSlot={renderSlot}
             store={seatStore}
+            viewport={viewport}
             onForkRound={sessionPath === null ? undefined : forkRound}
           />
         </div>
