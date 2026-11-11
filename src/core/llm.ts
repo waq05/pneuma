@@ -16,6 +16,8 @@
  * @module dsc/core/llm
  */
 import { readLlmTuning } from './config.js'
+import { formatRequestDebug, requestDebugContext } from './http-debug.js'
+import type { HttpDebugContext } from './http-debug.js'
 import { sessionAttributionHeaders } from './request-attribution.js'
 import type { UserFileAttachment } from './attachments.js'
 
@@ -334,6 +336,14 @@ export interface StreamHandlers {
    */
   onToolPrepare?(name: string): void
   /**
+   * 拿到响应头之后报一次服务端追踪号（成功与失败都报）。
+   *
+   * 为什么成功时也要：用户说「刚才那次回答不对」时，日志里有 `request-id` 才能去服务端
+   * 查那一次到底回了什么。失败路径另有 {@link LlmError.requestId}，这一条补的是成功那半。
+   * 端点一个号都不给时**不会**调用（不报空）。
+   */
+  onRequestDebug?(debug: HttpDebugContext): void
+  /**
    * 这次请求失败、正要重试。
    *
    * 对照 dsh 的 `model-retry` 节点：它让用户看得见「模型刚重试了一次」。不报的话，
@@ -402,12 +412,18 @@ export class LlmError extends Error {
   readonly retryable: boolean
   /** 服务端 Retry-After 头解析出来的毫秒数（要求等多久再试）；没有就是 undefined。 */
   readonly retryAfterMs?: number
-  constructor(message: string, status?: number, retryable = false, retryAfterMs?: number) {
+  /**
+   * 服务端给的请求追踪号（`x-request-id` 一类）。用户报「接口一直 500」时，
+   * 这个号能让服务端在日志里定位到那一次请求；端点不给就是 undefined。
+   */
+  readonly requestId?: string
+  constructor(message: string, status?: number, retryable = false, retryAfterMs?: number, requestId?: string) {
     super(message)
     this.name = 'LlmError'
     this.status = status
     this.retryable = retryable
     this.retryAfterMs = retryAfterMs
+    this.requestId = requestId
   }
 }
 
@@ -611,13 +627,19 @@ async function streamOnce(request: StreamRequest, handlers: StreamHandlers): Pro
     clearTimeout(connectTimer)
   }
 
+  // 成功与失败都先报一次：成功那半没有 LlmError 可以挂号，只能走这个回调
+  const debug = requestDebugContext(response.headers)
+  if (debug !== undefined) handlers.onRequestDebug?.(debug)
+
   if (!response.ok || response.body === null) {
     const detail = await response.text().catch(() => '')
+    // 报文与追踪号一起给：用户把这一句原样贴过来，服务端就能按号查到那一次请求
     throw new LlmError(
-      `HTTP ${response.status}${detail === '' ? '' : `：${detail.slice(0, 300)}`}`,
+      `HTTP ${response.status}${detail === '' ? '' : `：${detail.slice(0, 300)}`}${formatRequestDebug(debug)}`,
       response.status,
       false,
       retryAfterMs(response.headers.get('retry-after')),
+      debug?.requestId,
     )
   }
 

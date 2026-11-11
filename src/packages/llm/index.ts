@@ -211,7 +211,17 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
         // 不是「当前查看的会话」，见 core/loop）会自己填，填了就听它的。
         return adapter.stream(
           { ...request, sessionId: request.sessionId ?? currentSessionId(ctx) },
-          { ...handlers, onSanitize: (report) => noticeSanitize(ctx, report) },
+          {
+            ...handlers,
+            onSanitize: (report) => noticeSanitize(ctx, report),
+            // 成功请求的追踪号只在这里留下一行：所有模型请求都从这条缝过，
+            // 放在这里一次就够，不必让回合环、压缩、标题各记一遍。
+            onRequestDebug: (debug) => {
+              const id = debug.requestId ?? debug.cfRay ?? '-'
+              ctx.logger.debug('llm %s request-id %s', api, id)
+              handlers.onRequestDebug?.(debug)
+            },
+          },
         )
       },
       setEffort(effort) {
