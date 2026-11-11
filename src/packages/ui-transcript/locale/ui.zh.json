@@ -242,5 +242,20 @@
   "transcript.tool.bashRejected": "已拒绝",
   "transcript.tool.bashAborted": "已中止",
   "transcript.tool.bashFailed": "执行失败",
-  "transcript.tool.bashNoOutput": "（无输出）"
+  "transcript.tool.bashNoOutput": "（无输出）",
+  "transcript.tool.readRange": "第 {from}–{to} 行",
+  "transcript.tool.readFrom": "第 {from} 行起",
+  "transcript.tool.readLine": "第 {line} 行",
+  "transcript.tool.readTotal": "共 {total} 行",
+  "transcript.tool.readEmpty": "（空文件）",
+  "transcript.tool.readWaiting": "正在读取",
+  "transcript.tool.searchFiles": "{count} 个文件",
+  "transcript.tool.searchHits": "{total} 处 · {files} 个文件",
+  "transcript.tool.searchFileHits": "{count} 处",
+  "transcript.tool.searchNoMatch": "没有匹配",
+  "transcript.tool.searchNone": "没有匹配：{pattern}",
+  "transcript.tool.searchWaiting": "正在检索",
+  "transcript.tool.todoProgress": "{done}/{total} 完成",
+  "transcript.tool.todoCleared": "清单已清空",
+  "transcript.tool.todoEmpty": "清单里没有条目"
 }

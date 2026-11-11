@@ -2570,6 +2570,305 @@
   font-size: var(--dsc-fs-tool);
 }
 
+/* ── 头行的三枚读数：read 的行区间 / 检索的命中数 / 待办的进度（差距清单 S4 第二批）──
+   都挂在 `.tool-click` 里、紧跟摘要之后：它们是这次调用的读数，不是独立按钮（点一下整行照旧
+   展开）。颜色比摘要再退一级：一行里最响的应该还是「做了什么」。 */
+.tc-range,
+.tc-hit-count,
+.tc-todo-progress,
+.tc-todo-active {
+  color: var(--dsc-text-tertiary);
+  flex: 0 0 auto;
+  font-size: var(--dsc-fs-tool);
+  white-space: nowrap;
+}
+
+/* 进行中的那一条待办：内容可能很长，头行只给一格，超出省略（悬停看全文）。 */
+.tc-todo-active {
+  max-width: 22ch;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 「没有匹配」也走三级文字色：它是一句读数，不是错误。 */
+.tc-hit-count[data-hit-empty='1'] {
+  color: var(--dsc-text-quaternary);
+}
+
+/* ── read 工具卡的内容预览：行号一列 + 原文一列（差距清单 S4 第二批）──
+   外观与终端块同一档（等宽 + 四级底 + 三级描边 + 块圆角 + 12px）。 */
+.tc-read {
+  background: var(--dsc-fill-quaternary);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-block);
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-caption);
+  margin-top: var(--dsc-sp-1);
+  overflow: hidden;
+}
+
+/* 正文限高内滚：一次 read 可能回来 2000 行，铺进会话流会把上面几十条消息顶出屏幕。
+   卡本身不设 overflow（那会截断吸附栏的行头，见 ui-tool-row-flat-test）。 */
+.tc-read-lines {
+  line-height: 1.6;
+  max-height: min(320px, 40vh);
+  overflow: auto;
+  padding: var(--dsc-sp-2) var(--dsc-sp-5) var(--dsc-sp-2) 0;
+}
+
+.tc-read-line {
+  display: flex;
+  gap: var(--dsc-sp-2);
+  min-width: 0;
+}
+
+/* 行号列：右对齐、等宽数字、不可选（复制正文时不该把行号一起带走）。 */
+.tc-read-no {
+  color: var(--dsc-text-quaternary);
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  min-width: 3.5ch;
+  padding-left: var(--dsc-sp-5);
+  text-align: right;
+  user-select: none;
+}
+
+.tc-read-text {
+  color: var(--dsc-text-secondary);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* 解析不出结构时的兜底（工具报错的原文）：同样的面，但不带行号网格。 */
+.tc-read-raw {
+  color: var(--dsc-text-secondary);
+  line-height: 1.6;
+  margin: 0;
+  max-height: min(240px, 30vh);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: var(--dsc-sp-2) var(--dsc-sp-5);
+  white-space: pre-wrap;
+}
+
+/* 「（空文件）」「正在读取」与宿主补的尾注：一句话，别让它在等宽网格里显得像内容。 */
+.tc-read-note {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-ui);
+  margin: 0;
+  padding: var(--dsc-sp-2) var(--dsc-sp-5);
+}
+
+/* ── 检索工具卡的命中清单：文件分组 + 逐条命中（差距清单 S4 第二批）── */
+.tc-search {
+  background: var(--dsc-fill-quaternary);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-block);
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-caption);
+  margin-top: var(--dsc-sp-1);
+  overflow: hidden;
+}
+
+/* 命中清单限高内滚：grep 一次能回来上百处，全铺开就是一屏代码。 */
+.tc-search-files {
+  max-height: min(320px, 40vh);
+  overflow: auto;
+  padding: var(--dsc-sp-2) 0;
+}
+
+.tc-search-file + .tc-search-file {
+  border-top: 1px solid var(--dsc-stroke-3);
+  margin-top: var(--dsc-sp-2);
+  padding-top: var(--dsc-sp-2);
+}
+
+/* 文件那一行：可点路径 + 「几处」。路径的字体与悬停由 .tc-path 一族管，这里只排位置。 */
+.tc-search-file-head {
+  align-items: baseline;
+  display: flex;
+  gap: var(--dsc-sp-2);
+  justify-content: space-between;
+  min-width: 0;
+  padding: 0 var(--dsc-sp-5);
+}
+
+.tc-search-file-count {
+  color: var(--dsc-text-quaternary);
+  flex: 0 0 auto;
+  font-size: var(--dsc-fs-tool);
+}
+
+.tc-search-hits {
+  list-style: none;
+  margin: var(--dsc-sp-1) 0 0;
+  padding: 0;
+}
+
+.tc-search-hit {
+  align-items: baseline;
+  display: flex;
+  gap: var(--dsc-sp-2);
+  min-width: 0;
+  padding: 0 var(--dsc-sp-5);
+}
+
+.tc-search-hit:hover {
+  background: var(--dsc-fill-tertiary);
+}
+
+/* 行号列：与 read 卡的网格同一档（右对齐、等宽数字、不可选）。 */
+.tc-search-line {
+  color: var(--dsc-text-quaternary);
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  min-width: 3.5ch;
+  text-align: right;
+  user-select: none;
+}
+
+.tc-search-text {
+  color: var(--dsc-text-secondary);
+  flex: 1 1 auto;
+  font-family: inherit;
+  font-size: inherit;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* 「没有匹配：pattern」与宿主尾注。 */
+.tc-search-none {
+  color: var(--dsc-text-secondary);
+  margin: 0;
+  padding: var(--dsc-sp-2) var(--dsc-sp-5) 0;
+}
+
+.tc-search-note {
+  color: var(--dsc-text-tertiary);
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-ui);
+  margin: 0;
+  padding: var(--dsc-sp-1) var(--dsc-sp-5) var(--dsc-sp-2);
+}
+
+/* ── 待办工具卡的清单：四态勾选框 + 条目 + 进度（差距清单 S4 第二批）── */
+.tc-todo {
+  background: var(--dsc-fill-quaternary);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-block);
+  font-size: var(--dsc-fs-ui);
+  margin-top: var(--dsc-sp-1);
+  overflow: hidden;
+}
+
+.tc-todo-list {
+  list-style: none;
+  margin: 0;
+  /* 清单最多 64 条，全铺开能有一屏：同样限高内滚。 */
+  max-height: min(320px, 40vh);
+  overflow: auto;
+  padding: var(--dsc-sp-2) 0;
+}
+
+/* 一条：勾选框 + 正文。层级由内联的 `--tc-todo-depth`（0 起）换算缩进。 */
+.tc-todo-item {
+  align-items: baseline;
+  display: flex;
+  gap: var(--dsc-sp-2);
+  min-width: 0;
+  padding: var(--dsc-sp-0) var(--dsc-sp-5) var(--dsc-sp-0) calc(var(--dsc-sp-5) + var(--tc-todo-depth, 0) * var(--dsc-sp-5));
+}
+
+/* 勾选框：画出来的，不是真的 input——清单只有模型能改，点不动的控件比一个画出来的勾更气人。
+   四态各自的样子：未做空格、进行中实心点、已完成打勾、已取消打叉。 */
+.tc-todo-box {
+  border: 1px solid var(--dsc-stroke-1);
+  border-radius: var(--dsc-r-pill);
+  color: var(--dsc-text-tertiary);
+  flex: 0 0 auto;
+  font-size: var(--dsc-fs-tool);
+  height: 12px;
+  line-height: 12px;
+  position: relative;
+  text-align: center;
+  width: 12px;
+}
+
+.tc-todo-item[data-status='in_progress'] .tc-todo-box {
+  border-color: var(--dsc-accent);
+}
+
+.tc-todo-item[data-status='in_progress'] .tc-todo-box::after {
+  background: var(--dsc-accent);
+  border-radius: var(--dsc-r-pill);
+  content: '';
+  inset: 3px;
+  position: absolute;
+}
+
+.tc-todo-item[data-status='completed'] .tc-todo-box {
+  border-color: var(--dsc-green);
+  color: var(--dsc-green);
+}
+
+.tc-todo-item[data-status='completed'] .tc-todo-box::after {
+  content: '✓';
+  inset: 0;
+  position: absolute;
+}
+
+.tc-todo-item[data-status='cancelled'] .tc-todo-box {
+  border-color: var(--dsc-stroke-1);
+}
+
+.tc-todo-item[data-status='cancelled'] .tc-todo-box::after {
+  content: '×';
+  inset: 0;
+  position: absolute;
+}
+
+.tc-todo-text {
+  color: var(--dsc-text-secondary);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* 进行中的那条加重：整张清单一眼要看出来的就是它。 */
+.tc-todo-item[data-status='in_progress'] .tc-todo-text {
+  color: var(--dsc-text-primary);
+}
+
+/* 取消的那条划掉并退色：字还看得见（不然像丢了一条），但一眼知道它不算数。 */
+.tc-todo-item[data-status='cancelled'] .tc-todo-text {
+  color: var(--dsc-text-quaternary);
+  text-decoration: line-through;
+}
+
+.tc-todo-meta {
+  border-top: 1px solid var(--dsc-stroke-3);
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--dsc-sp-1) var(--dsc-sp-5);
+}
+
+.tc-todo-done {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+  font-variant-numeric: tabular-nums;
+}
+
+.tc-todo-note {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-ui);
+  margin: 0;
+  padding: var(--dsc-sp-2) var(--dsc-sp-5);
+}
+
 /* ── 工具卡的「将做的改动」（dsh 的 intended diff：write/edit 进行中摊出将产生的 diff） ── */
 .tc-intended {
   margin-top: 4px;

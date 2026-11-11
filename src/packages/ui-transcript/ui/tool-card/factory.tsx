@@ -34,9 +34,17 @@ import {
   type UiPluginApi,
 } from '@dsc/ui'
 // 路径/时刻/工具摘要口径从平台种子（`@dsc/ui-primitives`）取：与壳内部同一份实现，不再内联（E6）。
-import { TOOL_STATUS_TEXT, displayPathOf, formatDuration, matchTool, prettyJson, toolArgFields, toolSummary, toolVerb, type ToolMatch } from '@dsc/ui-primitives'
+import { TOOL_STATUS_TEXT, formatDuration, matchTool, prettyJson, toolArgFields, toolSummary, toolVerb, type ToolMatch } from '@dsc/ui-primitives'
 import { useFoldState } from '../fold-hook'
 import { BashBody, bashCommandOf } from './bash-view'
+import { absPathOf } from './file-path'
+import { PathButton } from './path-button'
+import { ReadBody, ReadRange } from './read-view'
+import { readCallOf, readPreviewOf } from './read-model'
+import { SearchBody, SearchCount } from './search-view'
+import { searchCallOf, searchResultOf } from './search-model'
+import { TodoBody, TodoProgress } from './todo-view'
+import { todoCallOf, todoListOf } from './todo-model'
 import { resultHead, resultRest, resultTail } from './result-tail'
 import { firstLineOf, flatValueOf, toolDetailArgs } from './tool-detail'
 import { useIntendedDiff, type IntendedDiff } from '../intended-diff'
@@ -258,6 +266,38 @@ export function ToolCardView(props: ToolCardViewProps): ReactNode {
    */
   const bashCommand = bashCommandOf(call.argsText)
   const isTerminalCall = SHELL_TOOL_NAMES.has(call.name.toLowerCase()) && bashCommand !== null && variant === 'chat'
+  /**
+   * 另外三张专用卡（2026-11-11，差距清单 S4 第二批）：`read` / `glob`+`grep` / `todo_write`。
+   *
+   * 判据与终端块**逐字同一套**，一条都不能少：
+   *   1. **名字对得上**——`readCallOf` / `searchCallOf` / `todoCallOf` 里第一句就是名字判断；
+   *   2. **参数里真有那张卡要的字段**——read 要 `path`、检索要非空 `pattern`、待办要 `todos` 数组。
+   *      只有名字相符、参数键却是别的，就落回通用卡：宁可少一张专用卡，也不画一个没有内容的空壳；
+   *   3. **而且这一页是对话页**（`variant === 'chat'`）——轨迹页的职责是取证，要看到原样的参数
+   *      JSON 与结果原文，换成格式化过的卡就再也看不到那份原文了（见上面 isTerminalCall）。
+   *
+   * 三份参数解析各自 `useMemo` 一次：它们的输入只有「名字 + 参数原文」，会话重渲染时不必重算；
+   * 派生（结果解析）再各自 memo 一层，输入是「这份参数 + 结果原文」。
+   */
+  const readCall = useMemo(() => readCallOf(call.name, call.argsText), [call.name, call.argsText])
+  const searchCall = useMemo(() => searchCallOf(call.name, call.argsText), [call.name, call.argsText])
+  const todoCall = useMemo(() => todoCallOf(call.name, call.argsText), [call.name, call.argsText])
+  const readCard = readCall !== null && variant === 'chat'
+  const searchCard = searchCall !== null && variant === 'chat'
+  const todoCard = todoCall !== null && variant === 'chat'
+  // 结果解析也按卡分流：不是这张卡就一次都不解析（一张普通卡不该为别的卡付解析成本）。
+  const readPreview = useMemo(
+    () => (readCard ? readPreviewOf(call.resultText) : null),
+    [readCard, call.resultText],
+  )
+  const searchResult = useMemo(
+    () => (searchCard && searchCall !== null ? searchResultOf(searchCall.kind, call.resultText) : null),
+    [searchCard, searchCall, call.resultText],
+  )
+  const todoList = useMemo(
+    () => (todoCard && todoCall !== null ? todoListOf(todoCall, call.resultText) : null),
+    [todoCard, todoCall, call.resultText],
+  )
   // 默认档取设置里的「工具卡默认展开」；钩子让设置变化即时传到已画出的卡上，
   // 手动调过（有存档）的卡不受影响。没给存档键（轨迹页）时只活在本地。
   const [open, setOpenPersisted] = useFoldState(storeKey, foldPrefs?.toolOpen ?? false)
@@ -416,10 +456,20 @@ export function ToolCardView(props: ToolCardViewProps): ReactNode {
               分隔点照 dsh 的「工具调用 · <工具名>」：名字是补充说明，不跟标题糊成一串。 */}
           {match.known || call.name === '' ? null : <span className="name">{`· ${call.name}`}</span>}
           <Preview intended={intended} summary={summary} cwd={cwd} targetPath={targetPath} change={call.change ?? null} />
+          {/* 三张专用卡各自的读数，紧跟在摘要后面（都还在 `.tool-click` 里：它们描述这次调用，
+              不是独立按钮，点一下整行照旧展开）：
+                - read：这次读了哪一段（`第 40–79 行`，路径本身已经由上面的 Preview 画成可点的）；
+                - 检索：命中了多少（`3 处 · 2 个文件`，或者「没有匹配」）；
+                - 待办：完成了几条 + 正在做的那一条。 */}
+          {readCard && readCall !== null ? <ReadRange call={readCall} preview={readPreview} /> : null}
+          {searchCard && searchResult !== null ? <SearchCount result={searchResult} /> : null}
+          {todoCard && todoList !== null ? <TodoProgress list={todoList} /> : null}
         </span>
         {/* 还有几行没摊出来：把「点开能看到更多」写在明面上（codex 的「+ N lines」）。
-            只在收起态、且确实有截断时出现；不占焦点，点整行照旧是展开。 */}
-        {tail !== null && tail.hidden > 0 ? (
+            只在收起态、且确实有截断时出现；不占焦点，点整行照旧是展开。
+            三张专用卡不再画它：它们的头行已经有读数（区间 / 命中数 / 进度），
+            再叠一个「+N 行」就是把同一件事说两遍。 */}
+        {tail !== null && tail.hidden > 0 && !readCard && !searchCard && !todoCard ? (
           <span className="tc-more" title={t('transcript.tool.moreTip', { count: tail.hidden })}>
             {t('transcript.tool.moreLines', { count: tail.hidden })}
           </span>
@@ -466,6 +516,20 @@ export function ToolCardView(props: ToolCardViewProps): ReactNode {
                的参数 JSON 与结果原文，见上面 isTerminalCall 的注释）。头部与页脚不动，
                别的工具一个字节都没变。 */
             <BashBody call={call} />
+          ) : readCard && readCall !== null ? (
+            /* read（对话页）：头行已经说了「读了哪个文件的哪一段」（可点路径 + 区间），展开体
+               只画内容预览——行号一列、原文一列，限高自滚。参数表不再摊：`path` / `offset` /
+               `limit` 三个字段的全部信息都在头行那句话里，再列一遍就是同一句话说两次。
+               轨迹页不走这一支（见上面 isTerminalCall 的注释与三张卡的判据）。 */
+            <ReadBody call={call} preview={readPreview} />
+          ) : searchCard && searchCall !== null ? (
+            /* 检索（对话页）：头行说命中了多少，展开体按文件列命中，路径可点直接开预览。
+               没有命中时画一句「没有匹配」+ 宿主的尾注，不是一张空卡。 */
+            <SearchBody call={call} search={searchCall} result={searchResult} cwd={cwd} />
+          ) : todoCard && todoList !== null ? (
+            /* 待办（对话页）：头行说完成了几条，展开体是带四态符号的清单（只读的勾选框）。
+               数据只读参数与结果两样现成的，数据面一处都没改。 */
+            <TodoBody list={todoList} />
           ) : variant === 'trace' ? (
             /* 轨迹页看的是**原始参数与原始结果**（它的职责是取证，不是速读）：这一支
                与改造前逐字一致——标签 + prettyJson + 结果原文。别把对话页那张
@@ -670,10 +734,8 @@ export function fileTargetOf(name: string, argsText: string, cwd: string): strin
       (value): value is string => typeof value === 'string' && value !== '',
     )
     if (raw === undefined) return null
-    if (raw.startsWith('/') || /^[A-Za-z]:[\\/]/.test(raw)) return raw
-    if (cwd === '') return raw
-    const sep = cwd.includes('\\') && !cwd.includes('/') ? '\\' : '/'
-    return `${cwd.replace(/[\\/]+$/, '')}${sep}${raw.replace(/^[\\/]+/, '')}`
+    // 拼绝对路径的口径收在 `file-path.ts`：检索卡的结果路径用的是同一处（那边相对检索根）。
+    return absPathOf(raw, cwd)
   } catch {
     return null
   }
@@ -685,6 +747,9 @@ export function fileTargetOf(name: string, argsText: string, cwd: string): strin
  * read 传 path 开**文件当前内容**（预览页签）；edit / write 带上 `patch` 开**补丁视图**
  * （这次改动改了什么，独立一种页签）——参考实现的编辑卡文件名同款。点它不折卡：
  * 头行整条是展开/收起的开关，鼠标与键盘两条路都要挡住冒泡。
+ *
+ * 外形（类名、`data-tc-*`、悬停提示）在 `path-button.tsx` 里只写一份，检索卡的命中文件列表
+ * 用的是同一个外壳；这里只负责「挡冒泡 + 开预览」这套头行专用的行为。
  */
 export function OpenPathButton({
   absPath,
@@ -698,12 +763,10 @@ export function OpenPathButton({
 }): ReactNode {
   const opensPatch = patch !== null
   return (
-    <button
-      type="button"
-      className="tc-path tc-path-btn"
-      data-tc-open={absPath}
-      data-tc-source={opensPatch ? 'patch' : 'file'}
-      title={opensPatch ? t('transcript.tool.openPatchTip', { path: absPath }) : t('transcript.tool.openFileTip', { path: absPath })}
+    <PathButton
+      absPath={absPath}
+      cwd={cwd}
+      patch={patch}
       onClick={(event) => {
         event.stopPropagation()
         setDockPreview(opensPatch ? { path: absPath, cwd, patch } : { path: absPath, cwd })
@@ -712,9 +775,7 @@ export function OpenPathButton({
         // 只在按键冒泡上挡一层：button 自己的 Enter/Space 激活不受影响。
         event.stopPropagation()
       }}
-    >
-      {displayPathOf(absPath, cwd)}
-    </button>
+    />
   )
 }
 

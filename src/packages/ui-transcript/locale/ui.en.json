@@ -242,5 +242,20 @@
   "transcript.tool.bashRejected": "Rejected",
   "transcript.tool.bashAborted": "Stopped",
   "transcript.tool.bashFailed": "Failed",
-  "transcript.tool.bashNoOutput": "(no output)"
+  "transcript.tool.bashNoOutput": "(no output)",
+  "transcript.tool.readRange": "Lines {from}–{to}",
+  "transcript.tool.readFrom": "From line {from}",
+  "transcript.tool.readLine": "Line {line}",
+  "transcript.tool.readTotal": "{total} lines in this file",
+  "transcript.tool.readEmpty": "(empty file)",
+  "transcript.tool.readWaiting": "Reading",
+  "transcript.tool.searchFiles": "{count} files",
+  "transcript.tool.searchHits": "{total} matches · {files} files",
+  "transcript.tool.searchFileHits": "{count} matches",
+  "transcript.tool.searchNoMatch": "No match",
+  "transcript.tool.searchNone": "No match for {pattern}",
+  "transcript.tool.searchWaiting": "Searching",
+  "transcript.tool.todoProgress": "{done}/{total} done",
+  "transcript.tool.todoCleared": "Task list cleared",
+  "transcript.tool.todoEmpty": "Task list is empty"
 }

@@ -491,7 +491,11 @@ console.log('[8] 工具卡补丁视图（读 / 写 / 改三类分流）')
   )
 
   // ── 工具卡：edit/write 传 patch，read 传 path；挡冒泡不折卡 ──
-  check('chip 分流：edit/write 开补丁视图、read 开文件当前内容', factory.includes('data-tc-source={opensPatch ? \'patch\' : \'file\'}') && factory.includes('setDockPreview(opensPatch ? { path: absPath, cwd, patch } : { path: absPath, cwd })'))
+  // 2026-11-11：可点路径的外壳（类名 + `data-tc-*` + 悬停提示）抽到 `tool-card/path-button.tsx`，
+  // 因为检索卡的命中文件列表要的是同一个外壳、但点击语义不同（卡体里没有冒泡要挡）。
+  // 断言跟着代码走、判据一条没少：分流那颗三元仍在 factory（行为），属性在共用外壳（标记）。
+  const pathButton = read(UI + '/tool-card/path-button.tsx')
+  check('chip 分流：edit/write 开补丁视图、read 开文件当前内容', pathButton.includes('data-tc-source={opensPatch ? \'patch\' : \'file\'}') && factory.includes('setDockPreview(opensPatch ? { path: absPath, cwd, patch } : { path: absPath, cwd })'))
   check('chip 数据来自工具卡自己的 change（或进行中推演的 intended）', factory.includes('intended?.file ?? change ?? null') && factory.includes('change={call.change ?? null}'))
   check('chip 挡冒泡（鼠标 + 键盘两路）', /onClick=\{\(event\) => \{\s*event\.stopPropagation\(\)\s*setDockPreview/.test(factory) && factory.includes('event.stopPropagation()'))
 

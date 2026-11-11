@@ -4698,15 +4698,30 @@
   background: var(--dsc-bg-raised);
 }
 
+/* 三枚专用卡的读数（read 的区间 / 检索的命中数 / 待办的进度）与 `.status` / `.tc-more`
+ * 同一条待遇：那颗「在轨迹中查看」药丸绝对定位压在行尾这几格上，悬停时才亮；读数不淡出
+ * 就会被不透明的药丸盖住半截（2026-11-11 第二批专用卡加进来时补的）。 */
 .tool-card .tool-head .status,
-.tool-card .tool-head .tc-more {
+.tool-card .tool-head .tc-more,
+.tool-card .tool-head .tc-range,
+.tool-card .tool-head .tc-hit-count,
+.tool-card .tool-head .tc-todo-progress,
+.tool-card .tool-head .tc-todo-active {
   transition: opacity var(--dsc-dur) var(--dsc-ease);
 }
 
 .tool-card .tool-head:hover .status,
 .tool-card .tool-head:hover .tc-more,
+.tool-card .tool-head:hover .tc-range,
+.tool-card .tool-head:hover .tc-hit-count,
+.tool-card .tool-head:hover .tc-todo-progress,
+.tool-card .tool-head:hover .tc-todo-active,
 .tool-card .tool-head:focus-within .status,
-.tool-card .tool-head:focus-within .tc-more {
+.tool-card .tool-head:focus-within .tc-more,
+.tool-card .tool-head:focus-within .tc-range,
+.tool-card .tool-head:focus-within .tc-hit-count,
+.tool-card .tool-head:focus-within .tc-todo-progress,
+.tool-card .tool-head:focus-within .tc-todo-active {
   opacity: 0;
 }
 
