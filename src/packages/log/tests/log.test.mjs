@@ -186,3 +186,59 @@ test('设置页改级别/目录/上限，运行中立刻生效（不用重启宿
   assert.ok(body.includes('after-save'), '改级别后下一行 debug 日志仍被丢')
   dispose()
 })
+
+// ── 6. 配置缓存：省钱但不拖延生效 ────────────────────────────────────────────
+
+/** 直接改磁盘上的 `plugins.json`（不经过设置分区），模拟用户手改文件。 */
+function writeLogConfigOnDisk(patch) {
+  const root = process.env['DSC_HOME']
+  mkdirSync(root, { recursive: true })
+  const file = join(root, 'plugins.json')
+  const doc = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : { version: 1, entries: [] }
+  const entries = Array.isArray(doc.entries) ? doc.entries : []
+  const index = entries.findIndex((entry) => entry !== null && typeof entry === 'object' && entry.file === 'log')
+  const previous = index >= 0 ? entries[index] : {}
+  const next = {
+    file: 'log',
+    disabled: false,
+    ...previous,
+    config: { ...(previous.config ?? {}), ...patch },
+  }
+  if (index >= 0) entries[index] = next
+  else entries.push(next)
+  doc.version = doc.version ?? 1
+  doc.entries = entries
+  writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`, 'utf8')
+}
+
+test('配置有缓存：手改盘上的 plugins.json，TTL 内还是旧值，过后才生效', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsc-log-cache-'))
+  // 挂载前把磁盘与行配置都定成 info，这条用例就不依赖前面用例留下的状态
+  writeLogConfigOnDisk({ level: 'info' })
+  const { captured, dispose } = await mountPlugin('log', { config: { dir, level: 'info' } })
+  assert.equal(captured.services['log'].level(), 'info')
+
+  // 绕过 section.save，直接写盘：没有失效事件，只能靠 TTL
+  writeLogConfigOnDisk({ level: 'debug' })
+
+  // 缓存若不存在，这一步会立刻读到 debug 而红
+  assert.equal(captured.services['log'].level(), 'info', 'TTL 内就读到新值：缓存没生效（每条日志仍在读盘）')
+
+  // TTL 是 250 ms；多等 150 ms 给定时器精度留余量
+  await new Promise((resolve) => setTimeout(resolve, 250 + 150))
+  assert.equal(captured.services['log'].level(), 'debug', '过了 TTL 仍是旧值：外部改文件没有兜底')
+  dispose()
+})
+
+test('保存路径不等 TTL：设置分区 save() 之后立刻是新值', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsc-log-save-'))
+  writeLogConfigOnDisk({ level: 'info' })
+  const { captured, dispose } = await mountPlugin('log', { config: { dir, level: 'info' } })
+  // 先读一次，把缓存填上（apply 里建 sink 时已经读过一次）
+  assert.equal(captured.services['log'].level(), 'info')
+
+  captured.sections.get('log').save('level', 'debug')
+  // 若保存路径没有打掉缓存，这里在 TTL 内仍是 info 而红
+  assert.equal(captured.services['log'].level(), 'debug', 'TTL 内仍是旧值：保存路径没接上失效')
+  dispose()
+})

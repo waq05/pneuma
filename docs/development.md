@@ -513,6 +513,9 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 `writePluginConfig` 写它，插件取值走 `resolvePluginConfig(file, passed)`
 （`src/core/plugin-registry.ts:168`）——装配时传进来的那份作底，磁盘上那份覆盖它，
 插件每次用值时现调这个函数，所以改完不必重启宿主。
+`log` 的采集口对这份配置带一层 250 ms 的内存缓存（`src/packages/log/index.ts` 的 `config()`）：
+设置分区保存时先主动失效，下一行日志就按新值走，不依赖计时；人手改 `plugins.json` 没有事件
+可听，最多晚 250 ms 生效。`resolvePluginConfig` 本身不缓存，缓存只在这一层。
 界面上就能改的：`log`（级别、目录、保留天数、单文件与总量上限，保存后下一行日志就按新值走）、`compact`（压缩保留条数、自动压缩触发线、锚点索引与用户原话两个字符预算）、`goal`（缺省轮次、一次加几轮）、`approval-floor`、`spill`、`session-search`、`hooks`（外部命令那一组）、`mcp`、`tool-search`、`subagent`、`computer-use`、`web-search`——插件贡献的分区都排在**插件中心**那个插件的详情页里（功能包在 `package.json` 的 `pneuma.settingsSection` 声明分区 id），设置面板只列内核自己的六个分区。
 只能手写这个文件的：`approval.approvalTimeoutMs`（每次弹卡现读，改完下一张卡生效）、
 `ask.maxQuestions` / `ask.maxOptions`（每次提问现读）、`prompt.instructionBudget`（每次拼提示词现读）、

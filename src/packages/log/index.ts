@@ -12,9 +12,14 @@
  * 而设置页允许运行中改级别。这里把 exporter 阈值放到最宽（debug），过滤挪进 export，
  * 改级别就立刻生效，不必重新注册。
  *
- * **配置为什么每次现读**：`readLogConfig` 走 `resolvePluginConfig`，磁盘上 `plugins.json`
- * 那份会盖过装配时传进来的 `passed`。级别、目录、三个上限都在用时现算，设置页点完保存
- * 下一行日志就按新值走；挂载时那份快照只在磁盘没写这个键时作底。
+ * **配置怎么读：内存缓存 + 保存时主动失效 + 短 TTL 兜底**：`readLogConfig` 走
+ * `resolvePluginConfig`，磁盘上 `plugins.json` 那份会盖过装配时传进来的 `passed`。
+ * 每条日志都要判一次级别，若每次都读盘，钱全花在同步文件 I/O（`existsSync` +
+ * `readFileSync` + `JSON.parse` 整份文件）上，被过滤掉的行也要付。所以这里缓存一份
+ * `LogConfig`：设置分区保存后先打掉缓存，下一行日志就用新值，不依赖计时；外部手改
+ * 文件没有事件可听，靠 250 ms 的 TTL 兜底。挂载时那份快照只在磁盘没写这个键时作底。
+ * core 里的 `readLogConfig` 保持无缓存——它是纯解析，别的消费方要的是最新值；
+ * 缓存只在本插件的采集口这一层。
  *
  * @module pneuma/log
  */
@@ -47,8 +52,35 @@ export const logPlugin: Plugin.Object = {
   inject: ['commands', 'settings'],
   apply(ctx, passed) {
     const t = hostT(import.meta.dirname)
-    // 每次取值都现读：磁盘那份 `plugins.json` 盖过 `passed`，所以设置页保存后立刻生效。
-    const config = (): LogConfig => readLogConfig(passed)
+
+    /**
+     * 配置缓存的有效期：外部手改 `plugins.json`（不经过设置分区）最迟这么久生效。
+     *
+     * 为什么留 TTL 而不只靠主动失效：设置页之外的改动（人直接编辑文件、别的进程写）
+     * 没有事件可听，不设上限就成了「改完要重启」。250 ms 足够短，用户感知不到。
+     */
+    const CONFIG_TTL_MS = 250
+
+    /** 缓存的那份配置；`undefined` = 还没读过或刚被失效。 */
+    let cachedConfig: LogConfig | undefined
+    /** 取到缓存那一刻的 `Date.now()`，用来算 TTL。 */
+    let cachedAt = 0
+
+    /** 打掉缓存：下一次取值重新读盘。 */
+    const invalidateConfig = (): void => {
+      cachedConfig = undefined
+    }
+
+    /**
+     * 当前配置：命中缓存直接用，未命中或过期才 `readLogConfig`。磁盘那份 `plugins.json`
+     * 盖过 `passed`，所以设置页保存后立刻生效（保存路径会先失效，见 `save()`）。
+     */
+    const config = (): LogConfig => {
+      if (cachedConfig !== undefined && Date.now() - cachedAt < CONFIG_TTL_MS) return cachedConfig
+      cachedConfig = readLogConfig(passed)
+      cachedAt = Date.now()
+      return cachedConfig
+    }
 
     /** 当前生效的阈值（数值）。`off` 用一个不存在的负数表示「一条都不发」。 */
     const threshold = (): number => {
@@ -72,6 +104,8 @@ export const logPlugin: Plugin.Object = {
 
     /** 配置里的目录/上限变了就换一个 sink（旧句柄先冲刷）。 */
     const rebuild = (): void => {
+      // 先打掉缓存：这里读到的必须是刚写进磁盘的那份，不能是 250 ms 内的旧值
+      invalidateConfig()
       const cfg = config()
       if (cfg.dir === sink.dirOf() && cfg.maxFileBytes === sink.limitOf()) return
       sink.close()
@@ -269,6 +303,9 @@ export const logPlugin: Plugin.Object = {
         }
       },
       save(key, value): string | void {
+        // 保存路径主动失效：任何键（包括不重建 sink 的 level）保存之后，下一行日志都按
+        // 新值走，不等 TTL。`rebuild()` 开头也打一次，留给将来直接调它的地方。
+        invalidateConfig()
         switch (key) {
           case 'level': {
             const next = String(value)
