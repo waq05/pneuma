@@ -12,10 +12,15 @@
  * 而设置页允许运行中改级别。这里把 exporter 阈值放到最宽（debug），过滤挪进 export，
  * 改级别就立刻生效，不必重新注册。
  *
+ * **配置为什么每次现读**：`readLogConfig` 走 `resolvePluginConfig`，磁盘上 `plugins.json`
+ * 那份会盖过装配时传进来的 `passed`。级别、目录、三个上限都在用时现算，设置页点完保存
+ * 下一行日志就按新值走；挂载时那份快照只在磁盘没写这个键时作底。
+ *
  * @module pneuma/log
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import { dscPath } from '@pneuma/runtime/core/path-policy.js'
+import { LOG_PLUGIN_KEY, readLogConfig } from '@pneuma/runtime/core/log-config.js'
+import type { LogConfig } from '@pneuma/runtime/core/log-config.js'
 import { writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { hostT } from '@pneuma/runtime/core/i18n.js'
 import { formatBytes } from '@pneuma/runtime/core/bytes.js'
@@ -25,8 +30,8 @@ import { LEVEL_NAMES, LEVEL_VALUES, isLevelName, levelNameOf, redact, renderMess
 import type { LevelName } from './filter.js'
 import { LogSink, dayKey } from './sink.js'
 
-/** 插件在条目树里的键，也是设置分区 id。 */
-const CONFIG_KEY = 'log'
+/** 插件在条目树里的键，也是设置分区 id；与 core 里那份同一个名字。 */
+const CONFIG_KEY = LOG_PLUGIN_KEY
 
 /** 设置分区的 order：靠后，排在「关于」前面一档。 */
 const SECTION_ORDER = 880
@@ -37,53 +42,12 @@ const LEVEL_OPTIONS: ReadonlyArray<LevelName | 'off'> = ['off', ...LEVEL_NAMES]
 /** `/log` 一次最多列多少条：再多就该自己去翻文件了。 */
 const TAIL_MAX = 200
 
-/** 解析后的配置。 */
-interface LogConfig {
-  level: LevelName | 'off'
-  dir: string
-  maxFileBytes: number
-  keepDays: number
-  maxTotalBytes: number
-}
-
-/** 数值归一：读到的不是有限数就用缺省值。 */
-function asNumber(value: unknown, fallback: number): number {
-  const num = typeof value === 'number' ? value : Number(value)
-  return Number.isFinite(num) ? num : fallback
-}
-
-/**
- * 从行配置 + 环境变量解析出一份可用配置。
- *
- * `DSC_LOG` 优先于 `plugins.json`：排障时人手敲的命令行不该被上次点过的设置盖掉。
- */
-function readLogConfig(passed: unknown): LogConfig {
-  const raw = (passed ?? {}) as Record<string, unknown>
-  const fromEnv = process.env['DSC_LOG']
-  const level = isLevelName(fromEnv)
-    ? fromEnv
-    : fromEnv === 'off'
-      ? 'off'
-      : isLevelName(raw['level'])
-        ? raw['level']
-        : raw['level'] === 'off'
-          ? 'off'
-          : 'info'
-  const dir = typeof raw['dir'] === 'string' && raw['dir'].trim() !== '' ? raw['dir'].trim() : dscPath('logs')
-  return {
-    level,
-    dir,
-    maxFileBytes: Math.max(64 * 1024, asNumber(raw['maxFileBytes'], 8 * 1024 * 1024)),
-    keepDays: Math.max(1, Math.round(asNumber(raw['keepDays'], 10))),
-    maxTotalBytes: Math.max(256 * 1024, asNumber(raw['maxTotalBytes'], 64 * 1024 * 1024)),
-  }
-}
-
 export const logPlugin: Plugin.Object = {
   name: 'log',
   inject: ['commands', 'settings'],
   apply(ctx, passed) {
     const t = hostT(import.meta.dirname)
+    // 每次取值都现读：磁盘那份 `plugins.json` 盖过 `passed`，所以设置页保存后立刻生效。
     const config = (): LogConfig => readLogConfig(passed)
 
     /** 当前生效的阈值（数值）。`off` 用一个不存在的负数表示「一条都不发」。 */

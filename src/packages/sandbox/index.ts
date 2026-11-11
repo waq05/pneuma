@@ -574,6 +574,9 @@ export const sandboxPlugin: Plugin.Object = {
         if (disposed || mine !== generation) return '后端被再次切换，这次探测结果作废'
         if (!probe.available) {
           activeBackend = 'policy'
+          // 从自动升上来的受限令牌切到 docker、又没建起来：这一路不再是「自动启用」，复位后
+          // /sandbox 才不会拼出「docker（已自动启用系统级隔离）」这种自相矛盾的话。
+          backendAuto = false
           enforcement = 'partial'
           degradedFailClosed = config.onUnavailable === 'fail-closed'
           backendDetail = degradedFailClosed
@@ -595,6 +598,9 @@ export const sandboxPlugin: Plugin.Object = {
         offRunner = registerCommandRunner(runner)
         enforcement = 'full'
         activeBackend = 'docker'
+        // 用户已显式选了 docker：自动档的标记必须清掉，否则 /sandbox 会说「docker（已自动启用
+        // 系统级隔离……配置里的 backend 仍是 docker）」。
+        backendAuto = false
         backendDetail = `容器后端可用（${probe.detail}），命令在 ${config.image} 里跑`
         ctx.emit('dsc/changed')
         return backendDetail

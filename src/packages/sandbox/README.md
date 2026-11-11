@@ -14,7 +14,7 @@
 
 ## Known Limitations（已知限制）
 
-- 策略围栏拦得住 dsc 自己发起的工具调用，拦不住命令内部的任意写（脚本里的 fs.writeFile 这类）；要真隔离得把后端换成 Windows 受限令牌或容器（index.ts:425）。
+- 策略围栏拦得住 dsc 自己发起的工具调用，拦不住命令内部的任意写（脚本里的 fs.writeFile 这类）；要真隔离，Windows 上「没显式选过后端」时默认档会自动启用受限令牌（系统层拒越界写），也可以显式选受限令牌或容器后端（index.ts:425）。
 - runner 用哪个解释器是**显式算出来的**，不靠环境碰巧对：默认用宿主的 `process.execPath`；检测到 Electron 运行时（桌面端宿主是 `utilityProcess`）就自动置 `ELECTRON_RUN_AS_NODE=1`，否则 `electron.exe` 会按图形程序启动、runner 一行都跑不到；用户可以用 `DSC_NODE` 指定自己的 node 来覆盖（win/interpreter.ts:44-67）。
 - 降级不走 fail-closed：后端建不起来时默认照常执行、由审批卡兜底，这是与 dsh 的明确分歧（文件头 11-12）。
 - read-only 档不拒整个 exec，只在命令里出现写目标时拒；「要不要问」是权限模式与审批的事（文件头 16-17）。
@@ -42,4 +42,4 @@
 - 默认开：cordis.patch.yml 里没有 `disabled`，文件头第 2 行也写着「默认开」。
 - inject 六个服务：`guards`、`transcript`、`settings`、`prompt`、`commands`、`session`（index.ts:139）。
 - 两个守卫同住一个插件：order 8 的 `sandbox` 与 order 25 的 `file-review`（index.ts:280-281、363-370）。
-- 默认档位 workspace-write、默认后端 policy（进程内策略围栏）；设置分区 id `sandbox`、order 31，预览在其中的「改动预览」组（index.ts:620-626）；命令 `/sandbox` 看现状与最近 3 次拒绝（index.ts:911-919）。
+- 默认档位 workspace-write；后端出厂写的是 policy，但 Windows 上「没显式选过」时默认档会自动启用受限令牌（`resolveBackendChoice` 的规则 3，policy.ts:143），其他平台或探测不可用时仍是策略围栏；缓存目录（npm/pnpm/cargo/pip/yarn）默认放行，只认已经存在的目录。设置分区 id `sandbox`、order 31，预览在其中的「改动预览」组（index.ts:620-626）；命令 `/sandbox` 看现状与最近 3 次拒绝（index.ts:911-919）。

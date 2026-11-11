@@ -17,6 +17,12 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { expectRegistered, mountPlugin, readPackage, runCommand, snapshotJson } from '../../../../scripts/_testkit.mjs'
 
+// 配置改成每次现读 `plugins.json`（见 index.ts 的 config()），测试必须有自己的 DSC_HOME：
+// 否则会读走开发者真实的 ~/.dsc/plugins.json，断言随人而变，写配置还会碰到真文件。
+// 必须在 import lib/ 之前设好：core/path-policy 的 DSC_HOME 是模块加载那一刻定死的。
+const home = mkdtempSync(join(tmpdir(), 'dsc-log-home-'))
+process.env['DSC_HOME'] = join(home, '.dsc')
+
 const filter = await import('../../../../lib/packages/log/filter.js')
 const { LogSink, dayKey } = await import('../../../../lib/packages/log/sink.js')
 
@@ -133,5 +139,50 @@ test('/log 命令报出文件、级别与条数', async () => {
   assert.equal(notices.length, 1, '应当只 notice 一次')
   assert.ok(notices[0].includes('日志文件'), '没报文件路径')
   assert.ok(notices[0].includes('信息') || notices[0].includes('info'), '没报级别')
+  dispose()
+})
+
+// ── 5. 配置现读：设置页改完立刻生效 ──────────────────────────────────────────
+
+test('readLogConfig 每次现读 plugins.json，不是挂载时的快照', async () => {
+  const { readLogConfig } = await import('../../../../lib/core/log-config.js')
+  const { writePluginConfig } = await import('../../../../lib/core/plugin-registry.js')
+  // passed 代表装配时那份行配置：磁盘没写的键该继续用它作底
+  const passed = { dir: mkdtempSync(join(tmpdir(), 'dsc-log-core-')), level: 'info' }
+  assert.equal(readLogConfig(passed).level, 'info')
+
+  writePluginConfig('log', { level: 'debug', maxFileBytes: 16 * 1024 * 1024 })
+  assert.equal(readLogConfig(passed).level, 'debug', '磁盘上的新级别没有盖过 passed')
+  assert.equal(readLogConfig(passed).maxFileBytes, 16 * 1024 * 1024, '磁盘上的新上限没读到')
+  assert.equal(readLogConfig(passed).dir, passed.dir, '磁盘没写的目录该继续用 passed 作底')
+
+  // 复位，免得这份临时 plugins.json 影响后面的用例
+  writePluginConfig('log', { level: null, maxFileBytes: null })
+})
+
+test('设置页改级别/目录/上限，运行中立刻生效（不用重启宿主）', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsc-log-live-'))
+  const { captured, dispose } = await mountPlugin('log', { config: { dir, level: 'info' } })
+  const section = captured.sections.get('log')
+  assert.equal(captured.services['log'].level(), 'info')
+  assert.equal(section.values().maxFileMB, 8, '缺省单文件上限该是 8 MiB')
+
+  // 设置页点「保存」走的就是 section.save：写 plugins.json，下一次取值立刻按新值算
+  section.save('level', 'debug')
+  assert.equal(captured.services['log'].level(), 'debug', '改级别没立刻生效')
+
+  section.save('maxFileMB', '16')
+  assert.equal(section.values().maxFileMB, 16, '改单文件上限没立刻生效')
+
+  const moved = mkdtempSync(join(tmpdir(), 'dsc-log-live-dir-'))
+  section.save('dir', moved)
+  assert.equal(captured.services['log'].dir(), moved, '改目录没立刻生效')
+  assert.ok(captured.services['log'].file().startsWith(moved), `新日志仍落在旧目录：${captured.services['log'].file()}`)
+
+  // 新级别真的作用在下一行上：debug 现在放行（缺省 info 时会丢掉）
+  captured.exporters[0].export(message('debug', 3, 'after-save'))
+  captured.services['log'].flush()
+  const body = readFileSync(captured.services['log'].file(), 'utf8')
+  assert.ok(body.includes('after-save'), '改级别后下一行 debug 日志仍被丢')
   dispose()
 })

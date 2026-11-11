@@ -16761,6 +16761,38 @@ zcode 按时段一共六句、每段一句，句子的主语全是「你」和�
 - 缓存目录是**挂载时快照**：挂载之后才新建的 `~/.npm` 不会补授权，要换会话或重算后端才生效。
 - 缓存目录的 ACL 真放行没端到端验证（集成脚本建执行器时没传 `extraRoots`）。
 
+## 2026-11-11：沙箱自动档复位 + 日志配置真接线 + 默认行为补文档
+
+**为什么**
+
+一次独立审查提了三处「做了一半」的活：
+
+- 沙箱默认档会自动启用受限令牌，把 `backendAuto` 置 true；用户随后在设置里把后端改成 docker，成功与探测失败两条分支都只重置了 `activeBackend`，没复位 `backendAuto`。于是 `/sandbox` 会拼出「后端：docker（已自动启用系统级隔离，可在设置里改回策略围栏；配置里的 backend 仍是 docker）」——前半句在说受限令牌，后半句在说 docker，用户没法照着改。
+- 日志配置抽到 core 只抽了一半：`core/log-config.ts` 有了 `readLogConfig`（走 `resolvePluginConfig`，能读到 `plugins.json` 的最新值），但 `packages/log/index.ts` 里还留着一份同名实现，读的是挂载时那份 `passed` 快照。结果是设置页改级别、目录、上限要重启宿主才生效，与 `docs/development.md` 写的「每次用值时现调，改完不必重启」相反。core 文件头还写着一个仓库里根本不存在的消费方 `@pneuma/log-panel`。
+- 默认档切真隔离、缓存目录默认放行都是用户能感知的变化，README、沙箱包 README、差距路线图都没跟上，读者会以为「受限令牌是可选项」。
+
+**做法**
+
+- `sandbox/index.ts`：docker 成功分支与「容器探测失败」分支各补一行 `backendAuto = false`（闭包变量，照同一段里策略围栏分支的写法）。现在从自动升上来的受限令牌切到 docker，`/sandbox` 只说「后端：docker —— 容器后端可用……」，不再夹带自动档那句话。
+- `packages/log/index.ts`：删掉本地的 `LogConfig` 接口、`asNumber`、`readLogConfig` 与 `8 MiB / 10 天 / 64 MiB` 三份字面量，改成从 `core/log-config.js` 导入 `readLogConfig` 与 `LogConfig`；插件键 `CONFIG_KEY` 直接取 `LOG_PLUGIN_KEY`，不再另写一个 `'log'`。取值点（`config()`）没变，变的只是它现在每次现读磁盘：级别在 export 里现判、目录与上限在 `values()` / `rebuild()` 里现算。落盘格式、脱敏规则、崩溃留现场那套一行没动。
+- `core/log-config.ts` 文件头改掉「面板包 `@pneuma/log-panel`」那句，写明真实消费方是 `@pneuma/log` 的采集口与 `filter.ts` 的级别映射，默认值只在这里留一份。
+- 文档：README 的「边界要说清楚」、`src/packages/sandbox/README.md` 的已知限制与行开关、`docs/harness-benchmark-roadmap.md` 的红线、`docs/development.md` 的 sandbox 模块清单与「界面上就能改的」清单，按现在的行为重写；`log` 也补进后者（它本来就有设置分区，只是配置一直没真接线）。
+- 包内测试加两条：`readLogConfig` 在 `plugins.json` 改写后立刻读到新值；设置分区 `save()` 之后级别、目录、单文件上限立刻生效，且新级别真的作用在下一行日志上。
+
+**验证**
+
+- `pnpm run typecheck`、`pnpm run build`（运行时适配包 406 个桩 / 功能包 76 个）通过。
+- `node src/packages/log/tests/log.test.mjs` → 11/11 通过（新增 2 条）。
+- 沙箱包内测试：`backend-choice` 16/16、`sandbox` 9/9、`interpreter` 7/7。
+- `node scripts/check-ui.mjs`：改前 74/75、改后 74/75，红的仍是同一条 `ui-bytes-test`「全仓只有这两份实现」（`src/core/bytes.ts`、`src/packages/doctor/checks/util.ts`、`src/packages/ui-primitives/ui/sizes.ts`），不是本批引入；`ui-locale` 52 个包 0 条硬编码。
+- `node scripts/style-check.mjs` → 1301 个文件全部通过；`sandbox-parity-test` 46/0；`sandbox-write-roots-test` 12/0。
+
+**遗留**
+
+- 「设置页改完看下一行日志」只在包级假 ctx 上验过，没起真宿主、没在 TUI / 桌面里点一遍。
+- `readLogConfig` 现在每写一行日志读一次 `plugins.json`（实测约 78 微秒/次）。日常速率下无所谓，高频 debug 日志会多出可感知的开销；要压可以以后在 core 里按 mtime 缓存，本批按审查要求保持「每次现读」。
+- docker 两条分支的复位只做了代码路径检查，本机没在装了 docker 的环境里真切换一次；`sandbox-win-token-test` 要真提权、真改 ACL，按约定没跑。
+
 ## 2026-11-11：自我改进补上自修订（B3）
 
 **为什么**

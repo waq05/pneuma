@@ -513,7 +513,7 @@ system 条目）带 `command: true`：壳的空会话欢迎态原先把首屏 sy
 `writePluginConfig` 写它，插件取值走 `resolvePluginConfig(file, passed)`
 （`src/core/plugin-registry.ts:168`）——装配时传进来的那份作底，磁盘上那份覆盖它，
 插件每次用值时现调这个函数，所以改完不必重启宿主。
-界面上就能改的：`compact`（压缩保留条数、自动压缩触发线、锚点索引与用户原话两个字符预算）、`goal`（缺省轮次、一次加几轮）、`approval-floor`、`spill`、`session-search`、`hooks`（外部命令那一组）、`mcp`、`tool-search`、`subagent`、`computer-use`、`web-search`——插件贡献的分区都排在**插件中心**那个插件的详情页里（功能包在 `package.json` 的 `pneuma.settingsSection` 声明分区 id），设置面板只列内核自己的六个分区。
+界面上就能改的：`log`（级别、目录、保留天数、单文件与总量上限，保存后下一行日志就按新值走）、`compact`（压缩保留条数、自动压缩触发线、锚点索引与用户原话两个字符预算）、`goal`（缺省轮次、一次加几轮）、`approval-floor`、`spill`、`session-search`、`hooks`（外部命令那一组）、`mcp`、`tool-search`、`subagent`、`computer-use`、`web-search`——插件贡献的分区都排在**插件中心**那个插件的详情页里（功能包在 `package.json` 的 `pneuma.settingsSection` 声明分区 id），设置面板只列内核自己的六个分区。
 只能手写这个文件的：`approval.approvalTimeoutMs`（每次弹卡现读，改完下一张卡生效）、
 `ask.maxQuestions` / `ask.maxOptions`（每次提问现读）、`prompt.instructionBudget`（每次拼提示词现读）、
 `host-stdio.snapshotThrottleMs`（只在挂载时读一次，改完要重启）。
@@ -972,7 +972,7 @@ Bypass 2FA 的 granular token，有效期 90 天，**2027-02-01 到期**，到�
 | `compact-anchors.ts` | 摘要的机械加固件：锚点索引（正则抽 PR 号 / commit / 分支 / 文件 / 报错 / 链接）、用户原话逐字引用、细节找回指针。全是纯函数，可以脱离模型单独断言 |
 | `approval-floor.ts` | 灾难地板的判定：结构不可验证 → 灾难命令 → 用户 deny 黑名单 → 危险模式 → 命令白名单 → 无人值守，逐层给结论。配置读不通时守卫照样挂载却一律拒（挂不上等于链上没有地板，是 fail-open）。**只判「拒」或「不拒」**：命中白名单也只 `defer`，由 `approvalFloor` 服务把结论交给审批层免卡放行——地板自己 `pass` 会把 order 20 / 25 的安全钩子一并跳掉 |
 | `spill.ts` | 溢出落盘：建文件（目录 0700、文件 0600）、按整行截断并在文件末尾写明第几行没落盘、生成预览与续读写法、按 mtime 与目录总量扫目录 |
-| `sandbox/` | 沙箱纯逻辑：`policy`（路径规范化 + 可写根/受保护名/NT 前缀判定，**按每次调用的 cwd 算根**，解析失败保守拒）、`execpolicy`（命令前缀 allow/prompt/forbidden，写目标与网络命令识别，内层脚本再拆一层）、`backends`（docker 探测与执行体替换）；Windows 受限令牌后端的可写根按**每次调用的 cwd** 现算（工作区 + 它的私有临时目录），不再钉死挂载时那个会话 |
+| `sandbox/` | 沙箱纯逻辑：`policy`（路径规范化 + 可写根/受保护名/NT 前缀判定，**按每次调用的 cwd 算根**，解析失败保守拒。`resolveBackendChoice` 是「这一次真用哪个后端」的纯函数，规则顺序：danger-full-access → 显式受限令牌 → 默认档在 Windows 自动升 → 其余策略围栏，平台与探测结果都由入参给，所以能脱离 koffi 单测；`resolveSandboxConfig` 额外带出 `explicitBackend`——原始配置里出现过 `backend` 键才算用户显式选过，只看值分不出「默认 policy」与「手动改回 policy」；`grantCacheRoots` 默认开，`cacheRootCandidates` / `existingCacheRoots` 只把**已存在**的 npm/pnpm/cargo/pip/yarn 缓存目录并进可写根）、`execpolicy`（命令前缀 allow/prompt/forbidden，写目标与网络命令识别，内层脚本再拆一层）、`backends`（docker 探测与执行体替换）；Windows 受限令牌后端的可写根按**每次调用的 cwd** 现算（工作区 + 它的私有临时目录），不再钉死挂载时那个会话。包内自检 `tests/backend-choice.test.mjs` 覆盖后端选择六条规则与缓存目录的存在性/去重 |
 | `schedule/` | 定时任务：`rule`（六种选择器 + 时区/DST）、`store`（tasks.json 原子替换 + runs.jsonl 台账 + pendingSlot）、`runner`（自重排 setTimeout + catch-up + pre-dispatch 校验）。**先落盘推进 nextRunAt 再投递** |
 | `lsp/` | 语言服务器客户端：`framing`（Content-Length 分帧，别照抄 mcp.ts 的换行分帧）、`uri`（先解码成路径再比内外）、`servers`（内置表 + marker 找根 + PATHEXT）、`client`（握手/串行队列/idle 回收/破键退避）。挂着的请求结算用本地 settled 闸门——先清表再 settle 会让请求永不落地 |
 | `cdp/` | 浏览器 CDP 底座：`transport`（id 配对 + **按 sessionId 路由** + 事件订阅）、`launch`（探测/参数串/DevToolsActivePort/整树 taskkill）、`snapshot`（无障碍树文本化 + ref 代际）、`actions`（Input/DOM/Runtime 动作） |
