@@ -14,7 +14,10 @@
  *            powershell，断言 3 秒内结束、退出码 124、stderr 有超时说明）；
  *            再加两条 pty 用例：直接 spawn runner 验 `--pty` 本身（isTTY / echo / Ctrl+C），
  *            以及经执行器验「计划里的 tty 字段 → runner 的 --pty」这条折法
- *            （tty:false 时计划里不许出现 --pty；tty:true 真跑出 isTTY=true）。
+ *            （tty:false 时计划里不许出现 --pty；tty:true 真跑出 isTTY=true）；
+ *            以及两条 2026-11-11 阻断修复的回归用例：同一个执行器先后跑两个工作区
+ *            （`--root` 不再混进别的会话 temp，第二次也必须跑通、不许 127），
+ *            和一次输出 20 万字节（非 PTY 等待必须分片，否则管道缓冲填满即死锁）。
  *            跑不起来（非 Windows / koffi 缺失 / 授权失败）就 SKIP 并打印确切原因，
  *            绝不把这一段删掉——删掉等于把唯一的实证让出去。
  *
@@ -162,6 +165,39 @@ check('RUNNER_SIGNATURE 是宿主诊断认的那一行', RUNNER_SIGNATURE === 'd
   )
   // temp 那条 SID 也走一遍派生，确保「两种根不同号」这个前提没变（集成段靠它）
   check('temp 根的能力 SID 与工作区不同号', tempWriteSid(temp) !== sid, `${tempWriteSid(temp)} / ${sid}`)
+}
+
+// ── parseRunnerArgs：--root 只装常驻可写根，temp 只走 --temp（2026-11-11 修） ──
+{
+  const ws1 = 'C:\\sandbox\\multi-a'
+  const ws2 = 'C:\\sandbox\\multi-b'
+  const temp = 'C:\\sandbox\\tmp\\session-a'
+  const both = parseRunnerArgs([
+    '--mode', 'workspace-write',
+    '--temp', temp,
+    '--root', `${rootWriteSid(ws1)}=${ws1}`,
+    '--root', `${rootWriteSid(ws2)}=${ws2}`,
+    '--', 'cmd', '/c', 'echo', 'ok',
+  ])
+  check(
+    '多工作区：两条 --root 都留下，且都是 root 口径的 SID（temp 不再混进来）',
+    both.roots.length === 2 &&
+      both.roots.map((root) => root.sid).join(',') === [rootWriteSid(ws1), rootWriteSid(ws2)].join(','),
+    JSON.stringify(both.roots),
+  )
+  // 旧契约（把 temp 的 SID 当 --root 传）必须响亮地拒：runner 固定按 rootWriteSid 复算，
+  // 静默接受就等于把一个对不上号的 SID 塞进 restricting 列表
+  const tempAsRoot = throwsWith(
+    () =>
+      parseRunnerArgs([
+        '--mode', 'workspace-write',
+        '--temp', temp,
+        '--root', `${tempWriteSid(temp)}=${temp}`,
+        '--', 'cmd',
+      ]),
+    /root 形状的 SID/,
+  )
+  check('把 temp 的 SID 当 --root 传会被拒（SID 与 rootWriteSid 对不上）', tempAsRoot.ok, tempAsRoot.why)
 }
 
 // ── parseRunnerArgs：四条必须抛错的分支 ─────────────────────────────────────
@@ -430,6 +466,8 @@ if (process.platform !== 'win32') {
   } else {
     note(`探测结果：${probe.detail}`)
     await runIntegration(backend)
+    await runMultiWorkspaceCase(backend)
+    await runLargeOutputCase()
     await runTimeoutCase()
     await runPtyCases()
     await runPtyPlanCases(backend)
@@ -576,6 +614,193 @@ async function runIntegration(backend) {
     }
     if (details.length > 0) note(`执行器自述：${details.join(' / ')}`)
     removeTree(outsideRoot)
+  }
+}
+
+/**
+ * 集成：**同一个执行器先后跑两个工作区**（2026-11-11 阻断 1 的回归用例）。
+ *
+ * 修前的形态：`backend.plan` 把累积的 `roots` 全当 `--root` 传，里面含每个会话的私有
+ * temp 目录；runner 只把「等于本次 `--temp`」的那条认成 temp，其余按 root 口径复算 →
+ * 第二个工作区一来就「SID 与路径对不上」，runner 退 127。修后：`--root` 只装
+ * `side === 'root'` 的常驻根，temp 的 SID 由 runner 自己按 `--temp` 派生。
+ *
+ * 三条判据，缺一条都可能让修复看似成立实际没生效：
+ *   ① 两次计划里的 `--root` 值集合就是两个工作区（清单会累积，所以第二次会重复带第一个），
+ *      且没有任何 temp 目录；
+ *   ② 两次 `cmd /c echo ok` 都是退出码 0、输出 ok、没有 runner 签名；
+ *   ③ 每个工作区的命令都能往自己的 `%TEMP%` 写文件——这条才证明 temp 的能力 SID
+ *      真的进了令牌（只去掉 --root 而忘了自己加 SID 的话，写 TMP 会被 ACL 拒）。
+ *
+ * @param {{ createWindowsTokenRunner: Function, writeRootsFor: Function }} backend 编译产物里的后端导出。
+ */
+async function runMultiWorkspaceCase(backend) {
+  console.log('')
+  console.log('── 集成：一个执行器先后跑两个工作区（--root 不许混进别的会话 temp）')
+  const details = []
+  const handleRef = { current: null }
+  try {
+    const workspaces = [join(sandboxRoot, 'multi-a'), join(sandboxRoot, 'multi-b')]
+    /** 每个工作区的私有 temp 目录：真实宿主里由插件建，这里照 writeRootsFor 建 */
+    const temps = []
+    for (const workspace of workspaces) {
+      mkdirSync(workspace, { recursive: true })
+      const temp = backend.writeRootsFor(workspace).find((root) => root.side === 'temp')
+      if (temp === undefined) {
+        skipReason = 'writeRootsFor 没算出私有临时目录（后端接口变了？）'
+        console.log(`  SKIP ${skipReason}`)
+        return
+      }
+      mkdirSync(temp.path, { recursive: true })
+      temps.push(temp.path)
+    }
+
+    const handle = backend.createWindowsTokenRunner({
+      mode: 'workspace-write',
+      cwd: workspaces[0],
+      networkAccess: () => false,
+      onDetail: (message) => details.push(String(message)),
+    })
+    handleRef.current = handle
+
+    /** 按工作区组计划并真跑；返回每条的真实结果，断言放在收集完之后 */
+    const plannedRuns = []
+    for (const workspace of workspaces) {
+      const base = { file: 'cmd', args: ['/c', 'echo', 'ok'], env: { ...process.env }, cwd: workspace }
+      const run = {
+        command: 'cmd /c echo ok',
+        cwd: workspace,
+        timeoutMs: 30_000,
+        signal: new AbortController().signal,
+      }
+      const planned = await handle.runner.plan(run, base)
+      if (planned === null) {
+        skipReason = `执行器拒绝换执行体（已降级）：${details.join(' / ') || '没有给出原因'}`
+        console.log(`  SKIP ${skipReason}`)
+        return
+      }
+      const env = {}
+      for (const [key, value] of Object.entries(planned.env)) if (value !== undefined) env[key] = value
+      plannedRuns.push({ planned, env, workspace })
+    }
+
+    // ① 结构：--root 的值只可能是工作区/附加根，一条 temp 都不许有。
+    //    注意执行器的清单是**累积**的（常驻授权，第二次计划会再把第一个工作区带一遍），
+    //    所以这里断言「集合 ⊆ 两个工作区」而不是「长度正好 2」
+    const rootValues = plannedRuns.flatMap(({ planned }) =>
+      planned.args.flatMap((arg, index) => (planned.args[index - 1] === '--root' ? [arg] : [])),
+    )
+    const expectedRoots = workspaces.map((workspace) => `${rootWriteSid(workspace)}=${workspace}`)
+    const tempPrefix = join(sandboxRoot, '.dsc', 'sandbox', 'tmp').toLowerCase()
+    note(`计划里的 --root 值：${JSON.stringify(rootValues)}`)
+    check(
+      '两次计划的 --root 只有两个工作区（没有任何 temp 目录）',
+      rootValues.every((value) => expectedRoots.includes(value)) &&
+        new Set(rootValues).size === expectedRoots.length &&
+        expectedRoots.every((value) => rootValues.includes(value)) &&
+        rootValues.every((value) => !value.toLowerCase().includes(tempPrefix)),
+      JSON.stringify(rootValues),
+    )
+
+    // ② 两次都必须跑通：第二次 127 就是修复没生效
+    const spawned = []
+    for (const run of plannedRuns) spawned.push(await spawnPlan(run.planned, run.env))
+    for (const [index, result] of spawned.entries()) {
+      const label = `第 ${String(index + 1)} 个工作区`
+      note(`${label}：退出码 ${String(result.code)}${result.timedOut ? '（超时被杀）' : ''}，stdout=${JSON.stringify(result.out.trim())}`)
+      if (result.err.trim() !== '') note(`${label} stderr：${result.err.trim().slice(0, 200)}`)
+      check(
+        `${label}跑通 cmd /c echo ok：退出码 0、输出 ok、没有 127 签名行`,
+        result.timedOut === false &&
+          result.code === 0 &&
+          result.out.trim() === 'ok' &&
+          !result.err.includes(RUNNER_SIGNATURE),
+        `code=${String(result.code)} timedOut=${String(result.timedOut)} stdout=${JSON.stringify(result.out.trim())} stderr=${JSON.stringify(result.err.slice(0, 200))}`,
+      )
+    }
+
+    // ③ 每个工作区都往自己的 TMP 写一次：证明 runner 自己把 tempWriteSid 加进了令牌
+    const script = "require('node:fs').writeFileSync(require('node:path').join(process.env.TEMP, 'probe.txt'), 'ok')"
+    for (const [index, workspace] of workspaces.entries()) {
+      const base = { file: process.execPath, args: ['-e', script], env: { ...process.env }, cwd: workspace }
+      const run = {
+        command: 'node -e <往 TMP 写 probe.txt>',
+        cwd: workspace,
+        timeoutMs: 30_000,
+        signal: new AbortController().signal,
+      }
+      const planned = await handle.runner.plan(run, base)
+      if (planned === null) {
+        note(`第 ${String(index + 1)} 个工作区的 TMP 写用例：执行器已降级，跳过`)
+        continue
+      }
+      const env = {}
+      for (const [key, value] of Object.entries(planned.env)) if (value !== undefined) env[key] = value
+      const result = await spawnPlan(planned, env)
+      const probe = join(temps[index], 'probe.txt')
+      note(`第 ${String(index + 1)} 个工作区 TMP 写：退出码 ${String(result.code)}，probe 存在=${String(existsSync(probe))}`)
+      check(
+        `第 ${String(index + 1)} 个工作区能写自己的 %TEMP%（temp SID 在令牌里）`,
+        result.code === 0 && existsSync(probe),
+        `code=${String(result.code)}；stderr=${JSON.stringify(result.err.slice(0, 200))}`,
+      )
+    }
+  } finally {
+    if (handleRef.current !== null) {
+      try {
+        handleRef.current.dispose()
+      } catch (error) {
+        note(`dispose 抛错：${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+    if (details.length > 0) note(`执行器自述：${details.join(' / ')}`)
+  }
+}
+
+/**
+ * 集成：一次输出远大于管道缓冲（`node -e "process.stdout.write('x'.repeat(200000))"`）。
+ *
+ * 2026-11-11 阻断 2 的回归用例。修前非 PTY 路径用一次同步 `waitForSingleObject(INFINITE)`
+ * 等到底，事件循环被冻住、`drainPipe` 读不到数据；管道缓冲（默认 4KB）填满后子进程
+ * 阻塞在写、永不退出 → 等也永不返回，整条命令死挂。修后按 50ms 一片等、片间
+ * `setImmediate` 让出事件循环，排水持续推进。
+ *
+ * 判据：10 秒内跑完（超 30 秒的 spawnPlan 兜底会杀，但这里要求 10 秒）、输出长度
+ * 正好 200000、退出码 0。**修前这条必挂**（实测挂满 10 秒、输出 0 字节）。
+ */
+async function runLargeOutputCase() {
+  console.log('')
+  console.log('── 集成：一次输出 20 万字节（非 PTY 等待分片，不许死锁）')
+  const tempDir = mkdtempSync(join(tmpdir(), 'dsc-win-token-bigout-'))
+  const size = 200_000
+  try {
+    const planned = {
+      file: process.execPath,
+      args: [
+        join(ROOT, 'lib/packages/sandbox/win/runner-entry.js'),
+        '--mode', 'read-only',
+        '--temp', tempDir,
+        '--', process.execPath, '-e', `process.stdout.write('x'.repeat(${String(size)}))`,
+      ],
+      cwd: sandboxRoot,
+    }
+    const started = Date.now()
+    const spawned = await spawnPlan(planned, { ...process.env })
+    const elapsed = Date.now() - started
+    note(`20 万字节用例耗时 ${String(elapsed)}ms，退出码 ${String(spawned.code)}，收到 ${String(spawned.out.length)} 字节`)
+    check(
+      '20 万字节输出 10 秒内跑完（修前：管道缓冲填满 → 永挂）',
+      spawned.timedOut === false && elapsed < 10_000,
+      `耗时 ${String(elapsed)}ms，timedOut=${String(spawned.timedOut)}`,
+    )
+    check('输出长度对得上（200000 字节，一个不丢）', spawned.out.length === size, `实际 ${String(spawned.out.length)}`)
+    check(
+      '退出码 0，且 stderr 没有 runner 自身失败签名',
+      spawned.code === 0 && !spawned.err.includes(RUNNER_SIGNATURE),
+      `code=${String(spawned.code)}；stderr=${JSON.stringify(spawned.err.slice(0, 200))}`,
+    )
+  } finally {
+    removeTree(tempDir)
   }
 }
 

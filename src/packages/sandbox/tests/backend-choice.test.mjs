@@ -126,56 +126,70 @@ const appData = 'C:\\Users\\me\\AppData\\Roaming'
 const userProfile = 'C:\\Users\\me'
 const baseEnv = { LOCALAPPDATA: localAppData, APPDATA: appData, USERPROFILE: userProfile }
 
-check('cacheRootCandidates：Windows 八条候选按清单顺序给出，非 Windows 给空', () => {
+check('cacheRootCandidates：Windows 十个缓存子目录按清单顺序给出，非 Windows 给空', () => {
   assert.deepEqual(policy.cacheRootCandidates('win32', baseEnv), [
     join(localAppData, 'npm-cache'),
     join(localAppData, 'pnpm', 'store'),
-    join(appData, 'npm-cache'),
-    join(userProfile, '.npm'),
-    join(userProfile, '.cargo'),
-    join(userProfile, '.cache'),
+    join(userProfile, '.npm', '_cacache'),
+    join(userProfile, '.cargo', 'registry'),
+    join(userProfile, '.cargo', 'git'),
     join(localAppData, 'pip', 'Cache'),
     join(localAppData, 'Yarn', 'Cache'),
+    join(userProfile, '.cache', 'pip'),
+    join(userProfile, '.cache', 'uv'),
+    join(userProfile, '.cache', 'pnpm'),
   ])
   assert.deepEqual(policy.cacheRootCandidates('linux', baseEnv), [])
   assert.deepEqual(policy.cacheRootCandidates('darwin', baseEnv), [])
 })
 
+check('cacheRootCandidates：不再整目录放行 ~/.cargo、~/.cache、~/.npm（沙箱外执行点）', () => {
+  const list = policy.cacheRootCandidates('win32', baseEnv).map((path) => path.toLowerCase())
+  // 三个「整目录」都是可执行配置的家：cargo 的 config.toml/bin、npm 的 .npmrc、.cache 里的任意东西
+  for (const banned of [
+    join(userProfile, '.cargo'),
+    join(userProfile, '.cache'),
+    join(userProfile, '.npm'),
+    join(appData, 'npm-cache'),
+  ]) {
+    assert.equal(list.includes(banned.toLowerCase()), false, `不该出现整目录 ${banned}`)
+  }
+  // 收窄不是删掉：每个被收窄的目录都必须还有缓存子目录在里面
+  const inside = (parent) => list.some((path) => path.startsWith(`${parent.toLowerCase()}\\`))
+  assert.ok(inside(join(userProfile, '.cargo')), '.cargo 至少还得留 registry / git 两个缓存子目录')
+  assert.ok(inside(join(userProfile, '.cache')), '.cache 至少还得留 pip / uv / pnpm 三个缓存子目录')
+  assert.ok(inside(join(userProfile, '.npm')), '.npm 至少还得留 _cacache 这个缓存子目录')
+})
+
 check('cacheRootCandidates：缺环境变量就跳过（空串也按缺处理）', () => {
   assert.deepEqual(policy.cacheRootCandidates('win32', {}), [])
   assert.deepEqual(policy.cacheRootCandidates('win32', { USERPROFILE: userProfile }), [
-    join(userProfile, '.npm'),
-    join(userProfile, '.cargo'),
-    join(userProfile, '.cache'),
+    join(userProfile, '.npm', '_cacache'),
+    join(userProfile, '.cargo', 'registry'),
+    join(userProfile, '.cargo', 'git'),
+    join(userProfile, '.cache', 'pip'),
+    join(userProfile, '.cache', 'uv'),
+    join(userProfile, '.cache', 'pnpm'),
   ])
   assert.deepEqual(policy.cacheRootCandidates('win32', { USERPROFILE: '   ' }), [])
+  // APPDATA 已经不再是来源（Windows 上 npm 缓存默认落在 LOCALAPPDATA）
+  assert.deepEqual(policy.cacheRootCandidates('win32', { APPDATA: appData }), [])
 })
 
 check('existingCacheRoots：只留真的存在的目录', () => {
-  const existing = new Set([join(localAppData, 'npm-cache'), join(userProfile, '.cargo')])
+  const existing = new Set([join(localAppData, 'npm-cache'), join(userProfile, '.cargo', 'registry')])
   const asked = []
   const kept = policy.existingCacheRoots('win32', baseEnv, (path) => {
     asked.push(path)
     return existing.has(path)
   })
-  assert.deepEqual(kept, [join(localAppData, 'npm-cache'), join(userProfile, '.cargo')])
-  assert.equal(asked.length, 8, '八个候选都要问一次存在性，不能偷偷少问')
+  assert.deepEqual(kept, [join(localAppData, 'npm-cache'), join(userProfile, '.cargo', 'registry')])
+  assert.equal(asked.length, 10, '十个候选都要问一次存在性，不能偷偷少问')
 })
 
-check('existingCacheRoots：去重保序（LOCALAPPDATA 与 APPDATA 指到同一处时只留一条）', () => {
-  const kept = policy.existingCacheRoots(
-    'win32',
-    { LOCALAPPDATA: localAppData, APPDATA: localAppData, USERPROFILE: userProfile },
-    (path) => path.startsWith(localAppData),
-  )
-  // 候选顺序：npm-cache、pnpm\store、npm-cache（重复）、pip\Cache、Yarn\Cache……
-  // 重复的那条必须落在第一次出现的位置上，不能把后面的提前。
-  assert.deepEqual(kept, [
-    join(localAppData, 'npm-cache'),
-    join(localAppData, 'pnpm', 'store'),
-    join(localAppData, 'pip', 'Cache'),
-    join(localAppData, 'Yarn', 'Cache'),
-  ])
+check('existingCacheRoots：结果没有重复项（大小写不敏感去重）', () => {
+  const kept = policy.existingCacheRoots('win32', baseEnv, () => true)
+  assert.equal(kept.length, 10)
   assert.equal(new Set(kept.map((path) => path.toLowerCase())).size, kept.length, '不许有重复项')
 })
 

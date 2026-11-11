@@ -256,13 +256,19 @@ export function resolveSandboxConfig(raw: unknown): SandboxConfigResult {
  * 为什么只给 Windows：这份清单唯一的消费者是受限令牌后端（Windows 专属的 ACL 授权）。
  * 非 Windows 平台给空数组，免得多出一份没人用的「放行清单」，让人误以为策略围栏也跟着放宽了。
  *
+ * **只放行缓存子目录，绝不放行 `~/.cargo`、`~/.cache`、`~/.npm` 本身**（2026-11-11 收紧）：
+ * 那三个目录里有可执行配置，整目录放行等于在沙箱外留了执行点——
+ *   - `~/.cargo/config.toml` 的 `target.*.runner` 指向任意程序，下次构建就在沙箱外跑代码；
+ *   - `~/.cargo/bin` 是 PATH 上的目录，往里丢一个 `cargo.exe` 就够了；
+ *   - `~/.npmrc` 的控制项同理。
+ * 真正需要写的是下载缓存（registry / git / _cacache / pip、yarn 的 Cache），它们改不出执行路径。
+ *
  * @param platform - 目标平台（自检里显式传，不读 process）。
  * @param env - 取环境变量的来源（通常是 process.env）。
  */
 export function cacheRootCandidates(platform: NodeJS.Platform, env: Record<string, string | undefined>): string[] {
   if (platform !== 'win32') return []
   const localAppData = env.LOCALAPPDATA?.trim()
-  const appData = env.APPDATA?.trim()
   const userProfile = env.USERPROFILE?.trim()
   const out: string[] = []
   const add = (base: string | undefined, ...segments: string[]): void => {
@@ -272,12 +278,14 @@ export function cacheRootCandidates(platform: NodeJS.Platform, env: Record<strin
   // 顺序就是放行清单的展示顺序：先 npm/pnpm（最常用），再 cargo/pip/yarn。
   add(localAppData, 'npm-cache')
   add(localAppData, 'pnpm', 'store')
-  add(appData, 'npm-cache')
-  add(userProfile, '.npm')
-  add(userProfile, '.cargo')
-  add(userProfile, '.cache')
+  add(userProfile, '.npm', '_cacache')
+  add(userProfile, '.cargo', 'registry')
+  add(userProfile, '.cargo', 'git')
   add(localAppData, 'pip', 'Cache')
   add(localAppData, 'Yarn', 'Cache')
+  add(userProfile, '.cache', 'pip')
+  add(userProfile, '.cache', 'uv')
+  add(userProfile, '.cache', 'pnpm')
   return out
 }
 

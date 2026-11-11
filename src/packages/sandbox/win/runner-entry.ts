@@ -41,7 +41,6 @@
  */
 import {
   CREATE_SUSPENDED,
-  INFINITE,
   JOBOBJ_LIMIT_FLAGS_OFFSET,
   JOBOBJECT_EXTENDED_LIMIT_SIZE,
   JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
@@ -71,7 +70,7 @@ import {
   throwWin32,
 } from './ffi.js'
 import { buildRestrictedToken, type RestrictedToken } from './token.js'
-import { verifySidForPath } from './workspace-sid.js'
+import { rootWriteSid, tempWriteSid, verifySidForPath } from './workspace-sid.js'
 import { accountBlobPath, unprotectSecret } from './account.js'
 import { readFileSync } from 'node:fs'
 import { utf16Buffer } from './utf16.js'
@@ -133,21 +132,22 @@ const PTY_DRAIN_QUIET_MS = 100
 /** pty 轮询的让步间隔（毫秒）。 */
 const PTY_POLL_MS = 5
 /**
- * pty 模式下每次 WaitForSingleObject 的等待片长（毫秒）。
+ * 每次 WaitForSingleObject 的等待片长（毫秒），PTY 与非 PTY 两条路共用。
  *
- * 不能像非 PTY 路径那样一次等到底：`waitForSingleObject` 是**同步**的 FFI 调用，等 20 秒
- * 就冻住事件循环 20 秒——排水拿不到 CPU（输出要等进程退出才吐出来）、stdin 泵也收不到
- * 字节（Ctrl+C 永远写不进去，中断等于失效）。切成 50ms 一片、片间把事件循环让出去，
- * 既保持「等到退出 / 到点 124」的语义，又让两个循环真的并行跑。
+ * 不能一次等到底：`waitForSingleObject` 是**同步**的 FFI 调用，等 20 秒就冻住事件循环
+ * 20 秒——排水拿不到 CPU（管道缓冲只有 4KB，填满后子进程阻塞在写、永不退出，`wait`
+ * 也永不返回，这就是 >4KB 输出直接死锁的成因），stdin 泵也收不到字节（Ctrl+C 永远
+ * 写不进去，中断等于失效）。切成 50ms 一片、片间把事件循环让出去，既保持「等到退出 /
+ * 到点 124」的语义，又让两个循环真的并行跑。
  */
-const PTY_WAIT_SLICE_MS = 50
+const WAIT_SLICE_MS = 50
 
 /** 解析后的 runner 入参。 */
 export interface RunnerArgs {
   mode: 'read-only' | 'workspace-write'
   /** 沙箱私有临时目录（runner 会把它设成自己的 TMP/TEMP）。 */
   tempDir: string
-  /** 授权过的可写根：SID ↔ 路径成对（temp 自己也在里面）。 */
+  /** 授权过的可写根：SID ↔ 路径成对（只装 `--root` 的工作区/附加根；temp 的 SID 由 main 另派）。 */
   roots: ReadonlyArray<{ sid: string; path: string }>
   /**
    * 受限命令的墙钟超时（毫秒）；0 = 不限（默认）。
@@ -291,11 +291,17 @@ export function parseRunnerArgs(argv: readonly string[]): RunnerArgs {
   }
 
   // SID ↔ 路径逐对复算：调用方把 SID 拼错就等于凭空多一个可写根（受限令牌的
-  // restricting 列表按 SID 写死），必须在这里拦死
+  // restricting 列表按 SID 写死），必须在这里拦死。
+  //
+  // `--root` 只装工作区 / 附加根，**固定**按 rootWriteSid 口径复算：temp 目录的唯一
+  // 来源是 `--temp`，由 main 自己派 tempWriteSid 加进 restricting 列表。以前这里靠
+  // `samePath(root.path, tempDir)` 猜「这一条是不是 temp」，多工作区时会把它会话的
+  // temp 目录按 root 口径复算 → 「SID 与路径对不上」→ 整条命令退 127
   for (const root of roots) {
-    const kind = samePath(root.path, tempDir) ? 'temp' : 'root'
-    if (!verifySidForPath(root.sid, root.path, kind)) {
-      throw new Error(`--root 的 SID 与路径对不上（${root.path} 该派生 ${kind} 形状的 SID，实际收到 ${root.sid}）`)
+    if (!verifySidForPath(root.sid, root.path, 'root')) {
+      throw new Error(
+        `--root 的 SID 与路径对不上（${root.path} 该派生 root 形状的 SID ${rootWriteSid(root.path)}，实际收到 ${root.sid}）`,
+      )
     }
   }
 
@@ -313,6 +319,11 @@ export function parseRunnerArgs(argv: readonly string[]): RunnerArgs {
     const key = root.path.replace(/[\\/]+$/, '').toLowerCase()
     if (seen.has(key)) throw new Error(`--root 给重复了：「${root.path}」`)
     seen.add(key)
+  }
+  // temp 目录与某条 --root 是同一路径：现在 temp 只走 --temp，还把它写进 --root 说明
+  // 调用方还在按旧契约拼参数——temp 的 SID 会在 main 里另派一份，这里直接拒，不猜
+  if (roots.some((root) => samePath(root.path, tempDir))) {
+    throw new Error(`--root 里不许出现临时目录「${tempDir}」：temp 只走 --temp`)
   }
   // ⚠ account 必须出现在返回值里：漏了它的话账号分支会被「静默跳过」——
   // 命令照常以当前用户受限令牌跑、退出码一切正常，网络第二级等于悄悄失效
@@ -561,6 +572,16 @@ async function runPtyChild(
   if (pseudoResult !== 0) throwWin32(bound, 'CreatePseudoConsole', pseudoResult)
   const hpc = hpcSlot.get()
   let attributeList: Buffer | undefined
+  /**
+   * 停输入泵的收尾函数（建泵后登记）。
+   *
+   * 为什么放在函数作用域、由本函数最外层 `finally` 无条件调用：stdin 只要还 resume 着、
+   * data 监听还挂着，事件循环就永不空，runner 永远退不出去。而 `GetExitCodeProcess` /
+   * `WaitForSingleObject` / `await draining` 抛错的路径都走不到「正常收尾」那一行——
+   * 以前 stop() 只写在正常路径上，失败就是 runner 挂死（Ctrl+C 泵把进程钉住）。
+   * `stop` 是幂等的，正常路径先停一次也没关系。
+   */
+  let stopInputPump: (() => void) | undefined
   try {
     // ③ 属性列表：先问大小（第一次调用必然「失败」，但会把所需字节数写进 size），再分配再初始化
     const sizeSlot = slotUintPtr(bound)
@@ -644,15 +665,16 @@ async function runPtyChild(
     const draining = drainPtyOutput(bound, conoutRead.get(), process.stdout, state)
     draining.catch(() => {})
     const pump = pumpPtyInput(bound, coninWrite.get())
+    stopInputPump = pump.stop
 
-    // 分片等：片间让出事件循环（原因见 PTY_WAIT_SLICE_MS）。语义与一次等到底等价：
+    // 分片等：片间让出事件循环（原因见 WAIT_SLICE_MS）。语义与一次等到底等价：
     // 子进程退出 → WAIT_OBJECT_0；整体超时预算用完 → WAIT_TIMEOUT；其余值照旧当失败抛
     const deadline = args.timeoutMs === 0 ? Number.POSITIVE_INFINITY : Date.now() + args.timeoutMs
     let waited: number
     for (;;) {
       const slice = deadline === Number.POSITIVE_INFINITY
-        ? PTY_WAIT_SLICE_MS
-        : Math.min(PTY_WAIT_SLICE_MS, Math.max(1, deadline - Date.now()))
+        ? WAIT_SLICE_MS
+        : Math.min(WAIT_SLICE_MS, Math.max(1, deadline - Date.now()))
       waited = Number(bound.waitForSingleObject(hProcess, slice)) >>> 0
       if (waited !== WAIT_TIMEOUT) break
       // 片届满了还没退出：整体预算也用完了才算超时，否则先把事件循环让出去（排水的
@@ -687,6 +709,14 @@ async function runPtyChild(
     closeOwned(job)
     return exitCode
   } finally {
+    // 停泵必须在关 pty 之前，而且**无条件**：任何一条提前退出的路径（等待/取退出码/
+    // 排水抛错）都要把 stdin 还原成「不 resume、不挂 data 监听」，否则 runner 退不出去。
+    // 这一步不能抛：收尾失败不许遮住真实错误。
+    try {
+      stopInputPump?.()
+    } catch {
+      /* 同上 */
+    }
     // 属性列表只装了一个 HPCON 值，先删它再关 pty；任何一步失败都不许遮住真实错误
     if (attributeList !== undefined) {
       try {
@@ -755,13 +785,24 @@ async function main(): Promise<number> {
     throwLastError(bound, 'SetEnvironmentVariableW(TEMP)')
   }
 
-  // 令牌：restricting 列表 = [logon, Everyone, …可写根 SID]（temp 的 SID 也在 roots 里）。
+  // 令牌：restricting 列表 = [logon, Everyone, temp 的 SID, …--root 的 SID]。
+  //
+  // temp 的能力 SID 由这里**自己派生**（`--temp` 是它唯一的来源）：宿主只把工作区/附加根
+  // 放进 --root，两边各按自己的口径算，少一次「猜哪条是 temp」——那个猜测在多工作区时
+  // 必错，而且是 127 硬失败。去重是按 SID 串去重，重复的 restricting SID 没有意义。
   // 账号分支（--account）：解密 account.bin → LogonUserW → 在账号令牌上受限化——
   // pass-1 用账号的普通权限（可写根靠账号 ACE），pass-2 照旧走能力 SID 交集
+  const capabilitySids: string[] = []
+  const seenSids = new Set<string>()
+  for (const sid of [tempWriteSid(args.tempDir), ...args.roots.map((root) => root.sid)]) {
+    if (seenSids.has(sid)) continue
+    seenSids.add(sid)
+    capabilitySids.push(sid)
+  }
   const accountToken = args.account === undefined ? undefined : logonAccount(bound, args.account)
   const token: RestrictedToken = buildRestrictedToken(bound, {
     mode: args.mode,
-    rootSids: args.roots.map((root) => root.sid),
+    rootSids: capabilitySids,
     ...(accountToken === undefined ? {} : { accountToken }),
   })
 
@@ -883,8 +924,23 @@ async function main(): Promise<number> {
       drainPipe(bound, stderrRead.get(), process.stderr),
     ])
 
-    const waitMs = args.timeoutMs === 0 ? INFINITE : args.timeoutMs
-    const waited = Number(bound.waitForSingleObject(hProcess, waitMs)) >>> 0
+    // 分片等，与 PTY 分支同一口径（原因见 WAIT_SLICE_MS）：
+    // 同步 FFI 一次等到底会把事件循环冻住，排水一旦停摆，管道缓冲（默认 4KB）填满后
+    // 子进程阻塞在写、永不退出 → `wait` 永不返回 → 整个 runner 死锁。片间必须
+    // `await setImmediate`，排水与 stdin 才有机会跑。`--timeout` 语义不变：
+    // 整体预算用完 → WAIT_TIMEOUT → 124。
+    const deadline = args.timeoutMs === 0 ? Number.POSITIVE_INFINITY : Date.now() + args.timeoutMs
+    let waited: number
+    for (;;) {
+      const slice = deadline === Number.POSITIVE_INFINITY
+        ? WAIT_SLICE_MS
+        : Math.min(WAIT_SLICE_MS, Math.max(1, deadline - Date.now()))
+      waited = Number(bound.waitForSingleObject(hProcess, slice)) >>> 0
+      if (waited !== WAIT_TIMEOUT) break
+      // 单片到点还没退出：整体预算也用完了才算超时，否则先让出事件循环再等下一片
+      if (Date.now() >= deadline) break
+      await new Promise((resolve) => setImmediate(resolve))
+    }
     let exitCode: number
     if (waited === WAIT_TIMEOUT) {
       // 超时分支要有自己的退出码（124）：调用方得能一眼分开「命令自己失败了（原码

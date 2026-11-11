@@ -165,10 +165,12 @@ export interface WindowsTokenRunnerHandle {
   readonly networkEnforced: boolean
 }
 
-/** 一条目录 ↔ 能力 SID 的配对。 */
+/** 一条目录 ↔ 能力 SID 的配对（`side` 决定它进不进 `--root`，见 `plan`）。 */
 interface AuthorizedRoot {
   path: string
   sid: string
+  /** root = 工作区/附加根；temp = 该工作区的私有临时目录。 */
+  side: 'root' | 'temp'
 }
 
 /** 一次调用要授权的目录与它的能力 SID。 */
@@ -218,15 +220,16 @@ export function writeRootsFor(cwd: string, extraRoots: readonly string[] = []): 
  */
 export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): WindowsTokenRunnerHandle {
   // 目录清单：工作目录、私有临时目录、附加可写根（工作区与附加根用 rootWriteSid，
-  // temp 用 tempWriteSid，两种派生前缀不同，永不撞号）
+  // temp 用 tempWriteSid，两种派生前缀不同，永不撞号）。`side` 记着它们该不该进 --root：
+  // temp 只走 --temp，混进 --root 会让 runner 复算失败（见 plan 里那段注释）
   const roots: AuthorizedRoot[] = []
   /** 已经授权过的临时目录（收尾时逐个回收，见 dispose）。 */
   const tempPaths = new Set<string>()
-  const push = (path: string, sid: string, temp: boolean): void => {
+  const push = (path: string, sid: string, side: 'root' | 'temp'): void => {
     const key = path.replace(/[\\/]+$/, '').toLowerCase()
     if (roots.some((root) => root.path.replace(/[\\/]+$/, '').toLowerCase() === key)) return
-    roots.push({ path, sid })
-    if (temp) tempPaths.add(path)
+    roots.push({ path, sid, side })
+    if (side === 'temp') tempPaths.add(path)
   }
   /**
    * 把一次调用的可写根补进清单（常驻多会话：每个会话的工作目录各授权一次）。
@@ -234,7 +237,7 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
    */
   const scopeOf = (cwd: string): void => {
     if (options.mode !== 'workspace-write') return
-    for (const root of writeRootsFor(cwd, options.extraRoots ?? [])) push(root.path, root.sid, root.side === 'temp')
+    for (const root of writeRootsFor(cwd, options.extraRoots ?? [])) push(root.path, root.sid, root.side)
   }
   scopeOf(options.cwd)
   // read-only 刻意不做任何 ACL 授权：该档令牌不含能力 SID，写本来就全拒；
@@ -350,7 +353,11 @@ export function createWindowsTokenRunner(options: WindowsTokenRunnerOptions): Wi
         '--mode', options.mode,
         // 临时目录按这次调用的工作区取（与 roots 里的 temp 同源）
         '--temp', sandboxTmpDir(DSC_HOME, run.cwd.replace(/[\\/]+$/, '')),
-        ...roots.flatMap((root) => ['--root', `${root.sid}=${root.path}`]),
+        // 只把**常驻**可写根（工作区 / 附加根）传 --root。私有临时目录绝不能混进来：
+        // 清单是跨会话累积的，一旦把别的会话的 temp 也当 --root 传过去，runner 会拿
+        // rootWriteSid 去复算那个路径 → 「SID 与路径对不上」→ 第二个工作区直接退 127。
+        // temp 的唯一来源是 --temp，runner 自己按 tempWriteSid 把它加进 restricting 列表
+        ...roots.filter((root) => root.side === 'root').flatMap((root) => ['--root', `${root.sid}=${root.path}`]),
         ...(options.account === undefined ? [] : ['--account', options.account.name, '--dsc-home', options.account.dscHome]),
         // 真终端：工具在计划里声明了 tty 才加这三项。runner 的契约是「--cols/--rows
         // 必须配 --pty」，所以它们只能跟 --pty 一起出现或一起不出现；非 tty 的计划

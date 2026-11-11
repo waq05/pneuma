@@ -17021,6 +17021,45 @@ runner 能建 PTY 了，但没人用它。要让模型显式要一个真终端�
 - `node --test "src/packages/plugin-manager/tests/*.test.mjs"` 通过（新增 `-g` 一条）。
 - `node scripts/tui-subagent-live-test.mjs` 与五支滚动回归在下一批全量门禁里一起跑。
 
+## 2026-11-11：按独立审查修沙箱（第二批，含两条阻断）
+
+独立审查在沙箱里抓出两条阻断、三条重要问题。这一批全修完，并且都补了「修前会红」的用例。
+
+**阻断 1：多工作区时第二条命令必失败**
+
+`backend.ts` 把每个会话的 temp 目录都塞进 `--root`，而 runner 只把「等于本次 `--temp` 的」认成 temp SID，其余按 root 复算 → 第二个工作区一进来就「SID 与路径对不上」，runner 退 127，此后每条 bash 都废，直到重建后端。
+
+修法：backend 只把 `side === 'root'` 的传 `--root`；runner 固定按 `rootWriteSid` 复算，并在组装 restricting 列表时自己派生 `tempWriteSid(args.tempDir)`（按 SID 去重）；`--root` 里若出现 temp 路径直接拒。
+
+用例证据：修前第二个工作区 `code=127` + 「SID 与路径对不上」；修后两次计划都是 `code=0`、输出 `ok`，两个工作区各写自己的 `%TEMP%` 都成功。
+
+**阻断 2：非 PTY 路径超过 4KB 输出会死锁**
+
+`waitForSingleObject` 是同步 FFI，一次等到底会冻住事件循环；`drainPipe` 在这期间读不到数据，管道缓冲（4KB）填满后子进程阻塞在写、`wait` 也永不返回。
+
+修法：照 PTY 分支改成 50ms 一片 + `await setImmediate` 让出；`--timeout` 的 124 语义不变。
+
+用例证据：修前 200000 字节用例挂满 10029ms 被外部杀掉、收到 0 字节；修后 198ms、收到 200000 字节、`code=0`。
+
+**重要 3–5**
+
+- PTY 输入泵的 `stop()` 移到最外层 `finally`，`data` 监听与 `pause()` 一起收，失败路径不再让 runner 挂住。
+- 清扫改为「先删、删成功就不动 ACE；删失败只记一条并留着权限」——原写法先 revoke 再删，删不掉就等于把活会话写自己 TMP 的权限摘了。
+- 缓存白名单收窄到 10 个真正的缓存子目录，删掉 `~/.npm`、`~/.cargo`、`~/.cache` 这类整目录放行：整目录放行等于允许改 `~/.cargo/config.toml` 的 `target.*.runner`，下次构建就在沙箱外执行代码。
+
+**验证**
+
+- `pnpm run typecheck`、`pnpm run build`（77 包）exit 0。
+- `node scripts/sandbox-win-token-test.mjs` → **86 PASS / 0 FAIL**。
+- 三个包内测试文件分别通过：backend-choice 17 条、interpreter 7 条、sandbox 9 条。
+- `node scripts/package-tests.mjs` → 89 包 / 98 用例 / 583 断言 / 0 失败。
+
+**没验证到**
+
+- 「让 `GetExitCodeProcess` / `await draining` 抛错进 finally」没有用例能构造，只有代码路径。
+- 清扫失败时「ACE 确实没被摘」需要读 ACL 才能断言，目前只按代码路径确认（用子进程占住目录复现了 EPERM 与 `failed` 记录）。
+
+
 
 
 

@@ -17,10 +17,8 @@
  *
  * @module dsc/packages/sandbox/win/sweep
  */
-import { mkdirSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { revokeWrite } from './acl.js'
-import { bindAll, tryLoadFfi, type BoundWin32 } from './ffi.js'
+import { readdirSync, realpathSync, rmSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { tempWriteSid } from './workspace-sid.js'
 import { errText as errorText } from '../../../core/err-text.js'
 
@@ -36,8 +34,8 @@ export interface SweepOptions {
   /** 现在（毫秒），默认 Date.now。 */
   now?: () => number
   /**
-   * 真实回收（默认走 acl.ts 的 revokeWrite + rmSync）。自检里换成记录器。
-   * 只在目录确实超龄时调用；抛错会被记进 `failed`。
+   * 真实回收（默认就是 `rmSync`；目录里的 ACE 随目录一起消失，不再单独 revoke）。
+   * 自检里换成记录器。只在目录确实超龄时调用；抛错会被记进 `failed`。
    */
   onSweep?: (entry: { path: string; sid: string; ageMs: number }) => void
 }
@@ -47,22 +45,6 @@ export interface SweepResult {
   swept: string[]
   kept: string[]
   failed: Array<{ path: string; why: string }>
-}
-
-/** 懒加载的绑定表：整轮清扫只初始化一次（koffi 加载不便宜）。 */
-let cachedBound: BoundWin32 | null = null
-
-/** 取（或首次创建）绑定表；FFI 不可用时给 null（非 Windows / koffi 缺失）。 */
-function boundOrNull(): BoundWin32 | null {
-  if (cachedBound !== null) return cachedBound
-  const loaded = tryLoadFfi()
-  if (!loaded.ok) return null
-  try {
-    cachedBound = bindAll(loaded.ffi)
-    return cachedBound
-  } catch {
-    return null
-  }
 }
 
 /**
@@ -81,18 +63,19 @@ function canonical(path: string): string {
 }
 
 /**
- * 默认的回收动作：先摘能力 ACE，再删目录。
+ * 默认的回收动作：**先删目录；删成功就不必再动 ACE**。
  *
- * 顺序有意义：ACE 挂在目录本体上，删目录其实也会带走它；先 revoke 是为了「删目录失败时
- * 授权已经收回」——那正是残留授权的根因。FFI 不可用（非 Windows / koffi 缺失）时跳过
- * revoke：那种环境根本产不出这种 ACE，目录本身还是要删的。
+ * 顺序为什么反过来了（2026-11-11 修）：ACE 挂在目录本体上，目录删掉它随目录一起消失，
+ * 先 revoke 没有任何收益；而「先 revoke 再删」在目录被占用（里面有正在执行的程序、
+ * 有进程握着文件句柄）时会变成灾难——rmSync 失败，但活会话写自己 TMP 的能力 ACE 已经
+ * 被摘掉，那条命令下一次写临时目录立刻被 ACL 拒。所以：
+ *   - 删成功：ACE 随目录消失，本就不需要 revoke；
+ *   - 删失败：一个字节的 ACE 都不动，异常抛给调用方记进 `failed`（理由写明目录被占用、
+ *     下次再试）。最坏结果只是「残留授权再等一轮」，绝不误伤活会话。
+ *
+ * FFI 不可用（非 Windows / koffi 缺失）也不再需要特判：这条路径根本不碰 ACL。
  */
-function realSweep(path: string, sid: string, lockDir: string): void {
-  const bound = boundOrNull()
-  if (bound !== null) {
-    mkdirSync(lockDir, { recursive: true })
-    revokeWrite(bound, path, sid, lockDir)
-  }
+function realSweep(path: string): void {
   rmSync(path, { recursive: true, force: true })
 }
 
@@ -120,8 +103,6 @@ export function sweepSandboxTemps(options: SweepOptions): SweepResult {
 
   // 年龄基准取一次：一轮清扫用同一个「现在」，避免长轮次里先算的目录被算得比后算的年轻
   const at = now()
-  // 授权锁目录与 backend.ts 同口径：`<dscHome>/sandbox/locks`（root 是 `<dscHome>/sandbox/tmp`）
-  const lockDir = join(dirname(root), 'locks')
 
   for (const name of names) {
     const raw = join(root, name)
@@ -145,12 +126,14 @@ export function sweepSandboxTemps(options: SweepOptions): SweepResult {
       if (options.onSweep !== undefined) {
         options.onSweep({ path, sid, ageMs })
       } else {
-        realSweep(path, sid, lockDir)
+        realSweep(path)
       }
       result.swept.push(path)
     } catch (error) {
-      // 单个目录失败（被占用、权限、目录里有正在执行的程序）只记一条，继续下一个
-      result.failed.push({ path, why: errorText(error) })
+      // 单个目录失败（被占用、权限、目录里有正在执行的程序）只记一条，继续下一个。
+      // 删失败时 ACE 原封不动（见 realSweep 的注释）：活会话的写权限不受影响，
+      // 这条残留授权等目录真的空出来、下一轮清扫再收
+      result.failed.push({ path, why: `目录被占用，下次再试：${errorText(error)}` })
     }
   }
 
