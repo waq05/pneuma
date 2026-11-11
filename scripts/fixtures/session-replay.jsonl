@@ -1,0 +1,6 @@
+{"type":"meta","id":"3f2b1c4d-0000-4000-8000-000000000001","cwd":"D:\\w","createdAt":1}
+{"type":"state","id":"mode","payload":"plan"}
+{"type":"state","id":"preset","payload":"build"}
+{"type":"state","id":"permissions","payload":{"sandbox":"workspace-write","policy":"auto-edit","reviewer":"user"}}
+{"type":"state","id":"todos","payload":[{"id":"t1","text":"先看现场","status":"completed"},{"id":"t2","text":"再动手","status":"pending"}]}
+{"type":"user","text":"你好"}

@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "sandbox": "workspace-write",
+    "policy": "auto-edit",
+    "reviewer": "user"
+  },
+  "mode": "plan",
+  "preset": "build",
+  "todos": [
+    {
+      "id": "t1",
+      "text": "先看现场",
+      "status": "completed"
+    },
+    {
+      "id": "t2",
+      "text": "再动手",
+      "status": "pending"
+    }
+  ]
+}
