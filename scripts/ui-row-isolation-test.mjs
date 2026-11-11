@@ -109,9 +109,14 @@ console.log('[1] 注册表本体：按身份索引、内容等价复用、只通
   check('commit 之后行数 = 这一帧登记的行数（1 前导 + 2 座位）', store.size() === 3, String(store.size()))
 
   // 不变的一帧：同样内容、新对象（buildSeats 每帧现造 Row）→ 必须复用旧对象。
+  // 快照必须在 stage 之前取：stage 之后再读两次同一个键，两边都是新表里的同一格，必然相等。
+  const beforeReuse = store.row(firstKey)
   store.stage('s1', seatsOf([rowOf(), rowOf({ stable: 'r0:tool:0', at: 2, entry: second.entry })]))
-  const reused = store.row(firstKey)
-  check('内容没变时复用上一帧的 Row 对象（引用相同 = 行体不重渲染）', reused === store.row(firstKey) && reused?.stable === first.stable)
+  const afterReuse = store.row(firstKey)
+  check(
+    '内容没变时复用上一帧的 Row 对象（引用相同 = 行体不重渲染）',
+    afterReuse === beforeReuse && afterReuse?.stable === first.stable,
+  )
   store.commit()
   check('内容没变的一帧：一行都不通知', store.lastChanged() === 0, String(store.lastChanged()))
 

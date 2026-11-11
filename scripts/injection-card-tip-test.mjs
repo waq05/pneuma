@@ -5,7 +5,17 @@
  * 「这一跳只注入了提醒」——其实环境快照照常注入了，只是没变、没记。卡片标题（「上下文注入」）
  * 是用户认这张卡的锚点，不能动；能加的是头行那个原生 `title`（悬停提示），说清口径。
  *
- * 这里只钉源码与字典（真机读 DOM 属性由 `desktop/shots/_probe-injection-title.mjs` 那一趟负责）：
+ * 这里只钉源码与字典。真机读 DOM 属性那一半由 `desktop/shots/_verify-prompt-cards.mjs` 负责：
+ * 它加载桌面构建产物、打开造好的会话，读 `.entry-injection-head` 的 `title`，对应五条断言
+ * （下面引的是那边的失败文案）：
+ *   - 注入卡头行 .entry-injection-head 上没有原生 title 属性（读到的是空串）
+ *   - 注入卡头行 title 里没有「只列这一跳新增」那句
+ *   - 注入卡收起态 title 里没有展开提示
+ *   - 注入卡展开态 title 没同时保留口径句与收起提示
+ *   - 注入卡头行标题文字不是字典里的「上下文注入」
+ * 两边的期望值都从 `ui.zh.json` 的同一批键取，改字典两边一起红。
+ *
+ * 下面这些断言只覆盖源码与字典：
  *  - 注入卡的头行 `<div className="entry-injection-head">` 上有原生 `title`，且用了
  *    `transcript.injection.newOnlyTip` 这个字典键；
  *  - 中英字典都有这个键、内容非空，中文里那两句口径都在（「只列这一跳新增的注入」

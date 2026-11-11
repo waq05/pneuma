@@ -28,6 +28,9 @@
  *   - 点开提示卡后段清单行数 = 9（表头不算），且第一行是 order 最小的 identity（不是原序的 tool-rules）；
  *   - 末行 hash 是造的那串的前 8 位；
  *   - 点开注入卡后逐条行数 = 4；
+ *   - 注入卡头行 `.entry-injection-head` 有原生 `title`：非空、含「只列这一跳新增的注入」那句
+ *     （`transcript.injection.newOnlyTip`）与开合提示（收起态 `expandTip`、展开态 `collapseTip`），
+ *     期望值全从 `ui.zh.json` 读；卡片标题文字仍是字典里的「上下文注入」（`injection.label`）；
  *   - 截图 `desktop/shots/_prompt-cards.png`。
  *
  * 运行：node desktop/shots/_verify-prompt-cards.mjs
@@ -37,7 +40,7 @@
  * 不是 src。本探针不发任何消息，所以不需要假端点。
  */
 import { spawn } from 'node:child_process'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const root = 'D:/dsc'
@@ -48,6 +51,17 @@ const userData = join(home, 'electron-userdata')
 /** 会话的 cwd：用仓库根，会话文件因此落在 `sessions/<slug('D:/dsc')>`。 */
 const cwd = root
 const debugPort = 9385
+
+/**
+ * 期望文案从字典读，不在探针里写死中文：卡片标题与头行悬停提示都是 `ui.zh.json` 里的键，
+ * 字典改了探针跟着变，才不会出现「文案改了、探针还绿」。
+ * 键名与源码钉 `scripts/injection-card-tip-test.mjs` 用的是同四个。
+ */
+const zh = JSON.parse(readFileSync(join(root, 'src/packages/ui-transcript/locale/ui.zh.json'), 'utf8'))
+const INJECTION_LABEL = zh['transcript.injection.label']
+const INJECTION_NEW_ONLY_TIP = zh['transcript.injection.newOnlyTip']
+const INJECTION_EXPAND_TIP = zh['transcript.injection.expandTip']
+const INJECTION_COLLAPSE_TIP = zh['transcript.injection.collapseTip']
 
 rmSync(home, { recursive: true, force: true })
 mkdirSync(join(dsc, 'sessions', 'D-dsc'), { recursive: true })
@@ -274,6 +288,8 @@ const opened = await evaluate(`
     injectionCount: injection?.getAttribute('data-injection-count') ?? '',
     promptHead: textOf(prompt?.querySelector('.entry-prompt-head')),
     injectionHead: textOf(injection?.querySelector('.entry-injection-head')),
+    // 头行的原生 title（收起态）：悬停提示要先说清卡片记的是「新增」，不是「这一跳注入了什么」。
+    injectionHeadTitle: injection?.querySelector('.entry-injection-head')?.getAttribute('title') ?? '',
     promptBeforeUser: prompt !== null && user !== null
       && prompt.getBoundingClientRect().top < user.getBoundingClientRect().top,
     welcome: document.querySelector('.welcome') !== null,
@@ -308,6 +324,8 @@ const expanded = await evaluate(`
     missingLine: textOf(promptRoot?.querySelector('.entry-prompt-missing')),
     tablePresent: promptRoot?.querySelector('.entry-prompt-table') !== null,
     injectionRows: [...(injectionRoot?.querySelectorAll('.entry-injection-row') ?? [])].length,
+    // 展开态的 title 要换成「收起」提示，同时口径那句不能丢。
+    injectionTitle: injectionRoot?.querySelector('.entry-injection-head')?.getAttribute('title') ?? '',
     sources: [...(injectionRoot?.querySelectorAll('.entry-injection-source') ?? [])].map((cell) => textOf(cell)),
     wheres: [...(injectionRoot?.querySelectorAll('.entry-injection-where') ?? [])].map((cell) => textOf(cell)),
     previews: [...(injectionRoot?.querySelectorAll('.entry-injection-preview') ?? [])].map((cell) => textOf(cell)),
@@ -362,11 +380,33 @@ if (!promptHead.includes('fake-prompt-cards')) failures.push(`提示卡收起行
 if (!promptHead.includes('系统提示')) failures.push(`提示卡收起行里没有「系统提示」（实际「${promptHead}」）`)
 
 const injectionHead = String(opened?.injectionHead ?? '')
-for (const expected of ['上下文注入', '环境快照 318 字', '模式 86 字', '待办提醒 64 字', '+1']) {
+for (const expected of [INJECTION_LABEL, '环境快照 318 字', '模式 86 字', '待办提醒 64 字', '+1']) {
   if (!injectionHead.includes(expected)) failures.push(`注入卡收起行里没有「${expected}」（实际「${injectionHead}」）`)
 }
 // 第四类（沙箱）只该以 `+1` 出现，不该把四类全摊在收起行里。
 if (injectionHead.includes('沙箱')) failures.push(`注入卡收起行摊了第四类（实际「${injectionHead}」）`)
+
+// 头行的原生 title：源码钉（`scripts/injection-card-tip-test.mjs`）只证 JSX 上挂着 title 表达式，
+// 这里补真机那一半——浏览器里确实渲染出了 title 属性，口径句与开合提示都在。
+// 期望值全从字典取，文案改了探针跟着红。
+const injectionTitleClosed = String(opened?.injectionHeadTitle ?? '')
+const injectionTitleOpen = String(expanded?.injectionTitle ?? '')
+if (injectionTitleClosed.trim() === '') {
+  failures.push('注入卡头行 `.entry-injection-head` 上没有原生 title 属性（读到的是空串）')
+}
+if (!injectionTitleClosed.includes(INJECTION_NEW_ONLY_TIP)) {
+  failures.push(`注入卡头行 title 里没有「只列这一跳新增」那句（实际「${injectionTitleClosed}」）`)
+}
+if (!injectionTitleClosed.includes(INJECTION_EXPAND_TIP)) {
+  failures.push(`注入卡收起态 title 里没有展开提示（实际「${injectionTitleClosed}」）`)
+}
+if (!injectionTitleOpen.includes(INJECTION_NEW_ONLY_TIP) || !injectionTitleOpen.includes(INJECTION_COLLAPSE_TIP)) {
+  failures.push(`注入卡展开态 title 没同时保留口径句与收起提示（实际「${injectionTitleOpen}」）`)
+}
+// 标题文字仍是字典里的「上下文注入」：口径只许加在悬停提示里，不许改标题本身。
+if (!injectionHead.includes(INJECTION_LABEL)) {
+  failures.push(`注入卡头行标题文字不是字典里的「${INJECTION_LABEL}」（实际「${injectionHead}」）`)
+}
 
 if (expanded?.promptExpanded !== true) failures.push('提示卡点不开（aria-expanded 没变 true）')
 if (expanded?.sectionRows !== SECTIONS.length) failures.push(`段清单行数不是 ${String(SECTIONS.length)}（实际 ${String(expanded?.sectionRows)}）`)
@@ -397,13 +437,15 @@ if (framed?.bothVisible !== true) log += `\n[framed] 两张卡没能同时进视
 console.log('report', JSON.stringify({
   promptHead,
   injectionHead,
+  injectionTitleClosed,
+  injectionTitleOpen,
   sectionRows: expanded?.sectionRows,
   injectionRows: expanded?.injectionRows,
   hashLine: expanded?.hashLine,
   bothVisible: framed?.bothVisible,
   failures,
 }))
-const pass = 'PASS 两张账单卡进了会话流（系统提示：9 段 + 6.2K 字 + hash 前 8 位 · 上下文注入：前三类 + +1，点开逐条）'
+const pass = 'PASS 两张账单卡进了会话流（系统提示：9 段 + 6.2K 字 + hash 前 8 位 · 上下文注入：前三类 + +1，点开逐条，头行 title 带新增口径与开合提示）'
 console.log(failures.length === 0 ? pass : 'FAIL ' + failures.join('; '))
 
 try { ws.close() } catch {}
