@@ -1,9 +1,9 @@
 /**
- * checkpoint 插件：每个回合前后各拍一份**影子 git 快照**。**默认开**。
+ * checkpoint 插件：每个回合前后各拍一份**影子 git 快照**，并把工作区还原到某一回合之前。**默认开**。
  *
- * 这一批只做「仓库与快照」：回合开始前一张、收工后一张，存进 `~/.dsc/checkpoints/`；
- * `/checkpoint restore` 先只回一句「下一批才可用」——三方合并（保住用户手改的那部分）
- * 是下一批的事，现在假装做了只会让人以为文件已经回去了。
+ * 快照：回合开始前一张、收工后一张，存进 `~/.dsc/checkpoints/`；`/checkpoint restore <回合>`
+ * 把它们变成「退回去」：逐路径判断用户有没有手改，没改的写回起点版本，改过的做三方合并
+ * （保住用户手改的那部分），合并不干净就整次不写盘（判定在 `shadow.ts` 的 `restoreTurn`）。
  *
  * 三条纪律，写在这里免得后来人加功能时踩：
  *   1. **不碰用户的仓库**：`GIT_DIR` / `GIT_WORK_TREE` / `GIT_INDEX_FILE` 全指到影子仓库，
@@ -34,9 +34,11 @@ import {
   currentTurn,
   listSnapshots,
   repoSizeMB,
+  restoreTurn,
   shadowRepoPath,
   shadowRoot,
   snapshot,
+  type RestoreResult,
 } from './shadow.js'
 
 /** 设置分区的 id，也是 `plugins.json` 里这一条的键。 */
@@ -211,10 +213,63 @@ export const checkpointPlugin: Plugin.Object = {
       const lines = [`最近 ${String(entries.length)} 次影子快照（新的在前）：`]
       for (const entry of entries) {
         const when = stampText(entry.at)
+        // 手动快照没有回合号：它是「还原前那一刻」，单独一个说法。
+        if (entry.label === 'manual') {
+          lines.push(`  还原前 · ${when}`)
+          continue
+        }
         const half = entry.label === 'pre' ? '回合前' : '回合后'
         lines.push(`  回合 ${String(entry.turn)} · ${half} · ${when}`)
       }
       return lines.join('\n')
+    }
+
+    /**
+     * `/checkpoint restore` 的说话方式：总数、写回、跳过、冲突四样都要说清。
+     *
+     * 冲突时只列前 10 条——一屏刷不完的清单没人看得完，剩下的交给「另有 N 条」。
+     */
+    const restoreText = (result: RestoreResult, requested: number): string => {
+      if (!result.ok) {
+        if (result.error === 'bad-turn') {
+          return '用法：/checkpoint restore <回合号>，例如 /checkpoint restore 3（回合号见 /checkpoint list）。'
+        }
+        if (result.error === 'missing') {
+          const recent =
+            result.available.length === 0
+              ? '还没有任何回合快照（下一个回合开始时才会存第一张）'
+              : `最近可用的回合：${result.available.join('、')}`
+          return `没有第 ${String(requested)} 个回合的快照。${recent}`
+        }
+        if (result.error === 'missing-post') {
+          return `第 ${String(requested)} 个回合没有回合后快照（那一回合可能被中断），算不出模型改了什么，没有动任何文件。`
+        }
+        if (result.error?.startsWith('safety:') === true) {
+          return `还原前的安全快照没存下来，已取消还原（没有动任何文件）：${result.error.slice('safety:'.length)}`
+        }
+        const tail =
+          result.written > 0
+            ? `已写盘 ${String(result.written)} 处，${result.safetyTag === undefined ? '没有安全快照' : `还原前的现场在 ${result.safetyTag}`}`
+            : '没有动任何文件'
+        return `还原失败：${result.error ?? '未知错误'}（${tail}）`
+      }
+      const counts =
+        `模型改过 ${String(result.changed)} 处，写回 ${String(result.written)} 处，` +
+        `跳过 ${String(result.skipped)} 处，冲突 ${String(result.conflicts.length)} 处`
+      const safety =
+        result.safetyTag === undefined ? '' : `还原前的现场存成了快照 ${result.safetyTag}（还能再还原回来）。`
+      if (result.changed === 0) return `第 ${String(result.turn)} 回合模型没有改动文件，不用还原。`
+      if (result.conflicts.length > 0) {
+        const lines = [
+          `第 ${String(result.turn)} 回合没有写盘：${counts}。`,
+          '这些文件两边都改了同一段，没有自动写盘：',
+        ]
+        for (const path of result.conflicts.slice(0, 10)) lines.push(`  ${path}`)
+        if (result.conflicts.length > 10) lines.push(`  ……另有 ${String(result.conflicts.length - 10)} 条`)
+        if (safety !== '') lines.push(safety)
+        return lines.join('\n')
+      }
+      return `第 ${String(result.turn)} 回合已还原：${counts}。${safety}`
     }
 
     const handleCommand = async (args: string[], ui: CommandContext): Promise<void> => {
@@ -236,8 +291,21 @@ export const checkpointPlugin: Plugin.Object = {
         return
       }
       if (head === 'restore') {
-        // 这一批只有仓库与快照：三方合并（保住用户手改的部分）还没做，先如实说。
-        ui.notice('还原要到下一批才可用：这一批只做仓库与快照，还没做三方合并。')
+        const requested = args[1] === undefined ? Number.NaN : Number(args[1])
+        if (!Number.isFinite(requested) || requested < 1) {
+          ui.notice('用法：/checkpoint restore <回合号>，例如 /checkpoint restore 3（回合号见 /checkpoint list）。')
+          return
+        }
+        const turn = Math.floor(requested)
+        let result: RestoreResult
+        try {
+          result = await restoreTurn(cwd, turn)
+        } catch (error) {
+          // restoreTurn 自己会收错误；这里兜的是「连它都没兜住」的那种，别把命令带崩。
+          ui.notice(`还原失败（没有动任何文件）：${errText(error)}`)
+          return
+        }
+        ui.notice(restoreText(result, turn))
         return
       }
       ui.notice('用法：/checkpoint [status] | /checkpoint list [条数] | /checkpoint restore <回合>')

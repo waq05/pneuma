@@ -11,5 +11,5 @@
   "save.notNumber": "这里要填一个正数",
   "save.unknownKey": "这个分区没有这项：{key}",
   "command.label": "快照",
-  "command.description": "看回合快照的仓库、列出最近几次；还原在下一批"
+  "command.description": "看回合快照的仓库、列出最近几次；restore 把工作区还原到某回合之前，并保住你手改的部分"
 }

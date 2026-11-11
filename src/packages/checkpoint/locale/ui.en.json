@@ -11,5 +11,5 @@
   "save.notNumber": "Enter a positive number here",
   "save.unknownKey": "This section has no such setting: {key}",
   "command.label": "Snapshot",
-  "command.description": "Show the checkpoint repository and recent snapshots; restore comes next batch"
+  "command.description": "Show the checkpoint repository and recent snapshots; restore rewinds the workspace to before a turn while keeping your own edits"
 }
