@@ -90,6 +90,7 @@
   "transcript.injection.kind.mode": "模式",
   "transcript.injection.kind.sandbox": "沙箱",
   "transcript.injection.kind.todoReminder": "待办提醒",
+  "transcript.injection.kind.repeatReminder": "重复调用提醒",
   "transcript.injection.expandTip": "展开这一轮注入了什么",
   "transcript.injection.collapseTip": "收起这一轮注入了什么",
   "transcript.retry.active": "正在重试模型请求",

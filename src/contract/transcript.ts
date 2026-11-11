@@ -385,7 +385,7 @@ export interface PromptSectionView {
  * 日志。卡片要的是「这轮注入了什么、注入到哪儿、多长」，收起时给 200 字预览够认出来。
  */
 export interface ContextInjectionView {
-  /** env-facts / mode / sandbox / todo-reminder / skill-body / lsp-diagnostics / lifecycle-hooks */
+  /** env-facts / mode / sandbox / todo-reminder / repeat-reminder / skill-body / lsp-diagnostics / lifecycle-hooks */
   kind: string
   /** 提供方（投影名 / 环境片段名 / 工具名），用于对账。 */
   source: string
@@ -402,7 +402,7 @@ export interface ContextInjectionView {
  * 类别（技能正文、LSP 诊断……）只要在这里补一行。表外的 kind 仍然允许（字段类型是
  * string）：认不出来的按通用「上下文注入」画，不丢数据。
  *
- * 本批只登记这四类——就是本仓现在**真的每轮都会注**的那些。技能正文与 LSP 诊断故意
+ * 本批登记这五类——就是本仓现在**真的会注**的那些。技能正文与 LSP 诊断故意
  * 不做：它们命中才发一次，而且已经作为**工具结果**落进了会话日志（工具卡里看得到全文），
  * 再记一张注入卡等于同一份内容记两遍，卡片还会把「模型读了哪些技能」和「模型调了什么
  * 工具」搅成两套账。生命周期钩子的话术同理，走的是 `note` 记录。
@@ -416,6 +416,8 @@ export const CONTEXT_INJECTION_KINDS = {
   sandbox: 'sandbox',
   /** 待办节流提醒（每 8 轮、且清单里还有未完成项才发）。 */
   todoReminder: 'todo-reminder',
+  /** 重复调用提醒（同一工具 + 同一份参数连续第 3/5/8 次才发一条，不否决调用）。 */
+  repeatReminder: 'repeat-reminder',
 } as const
 
 /** 表里的取值联合；表外的新类别仍然可以直接写字符串。 */

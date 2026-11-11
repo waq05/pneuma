@@ -90,6 +90,7 @@
   "transcript.injection.kind.mode": "Mode",
   "transcript.injection.kind.sandbox": "Sandbox",
   "transcript.injection.kind.todoReminder": "Todo reminder",
+  "transcript.injection.kind.repeatReminder": "Repeat reminder",
   "transcript.injection.expandTip": "Show what this request injected",
   "transcript.injection.collapseTip": "Hide what this request injected",
   "transcript.retry.active": "Retrying model request",

@@ -18,7 +18,8 @@
  * @module dsc/plugins/agent
  */
 import type { Plugin } from '@deepseek-ai/cordis'
-import type { ContextInjectionView } from '@pneuma/runtime/contract.js'
+import { CONTEXT_INJECTION_KINDS, contextInjectionPreview, type ContextInjectionView } from '@pneuma/runtime/contract.js'
+import { appendRepeatReminder, planRepeatReminder } from '@pneuma/runtime/core/repeat-reminder.js'
 import { Session, type InboxOrigin } from '@pneuma/runtime/core/session.js'
 import type { UserFileAttachment } from '@pneuma/runtime/core/attachments.js'
 import { MiniAgent } from '@pneuma/session-core/loop.js'
@@ -192,6 +193,44 @@ export const agentPlugin: Plugin.Object = {
         session,
       )
     }
+
+    // ── 重复调用提醒（投影，order 850）───────────────────────────────────────
+    // 回合环没有步数上限（`packages/session-core/loop.ts:362`），模型若一直要求调工具，
+    // 这一轮会无限跑下去。加步数上限会斩断正常的长活，所以这里只补一句**建议性**的提醒：
+    // 历史尾部连着用同一份规范化参数调同一个工具、且次数正好命中某一档（默认第 3/5/8 次）
+    // 时，往这一轮请求末尾追加一条 user 消息。不否决、不改写任何调用，工具照常执行。
+    //
+    // 为什么数**会话历史**而不是这一份 `messages`：env-facts(600) 与 todo-reminder(800)
+    // 已经往尾巴上补过 user 消息，拿组装好的那份数会把它们当成「用户又说话了」，计数每次
+    // 都被清零、永远到不了阈值。判定只读日志侧（`session.messages`），注入只落在请求侧，
+    // 这也正好是「模型可见 ⟺ 日志可复算」的形状：重放日志 + 同一条投影链 = 同一份请求。
+    //
+    // order 850：排在 todo-reminder(800) 之后、drop-images(900) 之前——提醒是这一轮最后
+    // 追加的话，图该剥的照样在它之后剥，两个投影互不干扰。
+    const offRepeatReminder = ctx.prompt.registerProjection(
+      'repeat-reminder',
+      (messages, session, report) => {
+        // 拿不到会话（老调用方）时不猜：组装好的那份里带着注入，数出来的次数不可信，
+        // 这一跳就不提醒（宁可不提醒，也不要按错的次数报）。
+        if (session === undefined) return messages
+        const plan = planRepeatReminder(session.messages)
+        const out = appendRepeatReminder(messages, plan)
+        // 真补了才报（appendRepeatReminder 没补时原样返回同一个数组）：注入卡只该在
+        // 「这一跳真的多了一句提醒」时出现，不是每跳都长一张。
+        if (out !== messages) {
+          report?.({
+            kind: CONTEXT_INJECTION_KINDS.repeatReminder,
+            source: 'repeat-reminder',
+            where: 'user-tail',
+            chars: plan.text.length,
+            preview: contextInjectionPreview(plan.text),
+          })
+        }
+        return out
+      },
+      { order: 850 },
+    )
+    ctx.effect(() => offRepeatReminder, 'agent: prompt.registerProjection')
 
     const disposeAgent = (agent: MiniAgent): void => {
       agents.delete(agent.sessionId)

@@ -89,6 +89,7 @@ const KIND_LABEL: Readonly<Record<string, string>> = {
   mode: t('transcript.injection.kind.mode'),
   sandbox: t('transcript.injection.kind.sandbox'),
   'todo-reminder': t('transcript.injection.kind.todoReminder'),
+  'repeat-reminder': t('transcript.injection.kind.repeatReminder'),
 }
 
 /** 一类注入在收起行里的写法（认不出的类别退回原始 kind）。 */

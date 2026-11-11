@@ -203,10 +203,10 @@ console.log('[5] 样式：组件用到的每个类名都在 views.css 里有规�
     region !== '' && !/rgba?\(|hsla?\(/.test(region) && !/#[0-9a-fA-F]{3,8}/.test(region), region.slice(0, 80))
 }
 
-console.log('[6] 文案：24 个键在 zh / en 都在，真译过，占位符两边都留')
+console.log('[6] 文案：25 个键在 zh / en 都在，真译过，占位符两边都留')
 {
   const keys = Object.keys(zh).filter((key) => key.startsWith('transcript.prompt.') || key.startsWith('transcript.injection.'))
-  check('两张卡一共 24 个键', keys.length === 24, String(keys.length))
+  check('两张卡一共 25 个键', keys.length === 25, String(keys.length))
   for (const key of keys) {
     check(`zh 有 ${key}`, typeof zh[key] === 'string' && zh[key] !== '')
     check(`en 有 ${key}`, typeof en[key] === 'string' && en[key] !== '')
