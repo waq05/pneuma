@@ -16,6 +16,8 @@ process.on('unhandledRejection', () => {})
  * 运行：node desktop/shots/_verify-round-actions.mjs（依赖桌面产物 desktop/out/）
  */
 import { spawn } from 'node:child_process'
+
+import { assert, finish } from './_probe-kit.mjs'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -102,41 +104,6 @@ for (let i = 0; i < 80; i += 1) {
       page = candidate
       break
     } catch {
-      // ⑥ 第二轮：分叉钮只从第 2 轮起才有（第 1 轮没有分叉对象），单独验一遍它也在同一套显隐里
-await evaluate(`
-  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
-  const input = document.querySelector('.composer textarea')
-  if (input === null) return { error: 'no textarea' }
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set
-  setter.call(input, '再来一轮，看分叉那颗。')
-  input.dispatchEvent(new Event('input', { bubbles: true }))
-  await wait(120)
-  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }))
-  return { sent: true }
-`)
-const second = await evaluate(`
-  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
-  for (let i = 0; i < 200; i += 1) {
-    if (document.querySelectorAll('.round-foot .user-act').length > 0) break
-    await wait(100)
-  }
-  await wait(600)
-  const acts = [...document.querySelectorAll('.round-foot .round-act, .round-foot .user-act')]
-  return {
-    feet: document.querySelectorAll('.round-foot').length,
-    acts: acts.map((node) => ({ cls: node.className, opacity: getComputedStyle(node).opacity })),
-  }
-`)
-console.log('second-rest', JSON.stringify(second))
-await hover('.entry-text')
-const secondHover = await evaluate(`
-  const acts = [...document.querySelectorAll('.round-foot .round-act, .round-foot .user-act')]
-  return acts.map((node) => ({ cls: node.className, opacity: getComputedStyle(node).opacity }))
-`)
-console.log('second-hover-body', JSON.stringify(secondHover))
-await shot('_verify-round-actions-second.png')
-
-try { ws.close() } catch {}
     }
   }
   await sleep(800)
@@ -229,24 +196,28 @@ const rest = await evaluate(`
   return { ok: document.querySelectorAll('.round-foot .round-act').length > 0 }
 `)
 console.log('rest-ready', JSON.stringify(rest))
-console.log('rest', JSON.stringify(await readFoot()))
+const restActs = await readFoot()
+console.log('rest', JSON.stringify(restActs))
 await shot('_verify-round-actions-rest.png')
 
 // ③ 鼠标压到正文上
 const bodyBox = await hover('.entry-text')
 console.log('hover-body', JSON.stringify(bodyBox))
-console.log('body', JSON.stringify(await readFoot()))
+const bodyActs = await readFoot()
+console.log('body', JSON.stringify(bodyActs))
 await shot('_verify-round-actions-hover-body.png')
 
 // ④ 鼠标压到用户那条提问上（第一块，不算输出）
 const userBox = await hover('.entry-user')
 console.log('hover-user', JSON.stringify(userBox))
-console.log('user', JSON.stringify(await readFoot()))
+const userActs = await readFoot()
+console.log('user', JSON.stringify(userActs))
 
 // ⑤ 鼠标压到页脚这一行上（自己就在按钮边上，得能现）
 const footBox = await hover('.round-foot .round-clock')
 console.log('hover-foot', JSON.stringify(footBox))
-console.log('foot', JSON.stringify(await readFoot()))
+const footActs = await readFoot()
+console.log('foot', JSON.stringify(footActs))
 
 // ⑥ 第二轮：分叉钮只从第 2 轮起才有（第 1 轮没有分叉对象），单独验一遍它也在同一套显隐里
 await evaluate(`
@@ -282,7 +253,32 @@ const secondHover = await evaluate(`
 console.log('second-hover-body', JSON.stringify(secondHover))
 await shot('_verify-round-actions-second.png')
 
+/* ---------------------- 判据（2026-11-11 补：旧版只打印不判定） ---------------------- */
+const opacities = (list) => (Array.isArray(list) ? list.map((item) => (typeof item === 'string' ? item : String(item.opacity))) : [])
+const allZero = (list) => { const values = opacities(list); return values.length > 0 && values.every((item) => item === '0') }
+const allOne = (list) => { const values = opacities(list); return values.length > 0 && values.every((item) => item === '1') }
+
+assert('跑动中页脚一颗轮尾钮都不该有（复制 / 分叉只在收尾后出现）',
+  running.actsInDom === 0, `实跑时有 ${String(running.actsInDom)} 颗`)
+assert('收尾后、鼠标不在任何一轮上：两颗钮在 DOM 里但都是透明的',
+  rest.ok === true && allZero(restActs.opacities), JSON.stringify(restActs))
+assert('鼠标压在正文上：钮现出来（opacity 全是 1）',
+  allOne(bodyActs.opacities), JSON.stringify(bodyActs))
+assert('鼠标压回用户提问上：钮又收回（那不算输出内容）',
+  allZero(userActs.opacities), JSON.stringify(userActs))
+assert('鼠标压在页脚那一行上：钮也现出来',
+  allOne(footActs.opacities), JSON.stringify(footActs))
+assert('第二轮起多出分叉钮（.user-act），两轮各一个页脚',
+  second.feet === 2 && (second.acts ?? []).some((item) => String(item.cls).includes('user-act')),
+  JSON.stringify(second))
+const secondOnes = (secondHover ?? []).filter((item) => String(item.opacity) === '1').length
+const secondZeros = (secondHover ?? []).filter((item) => String(item.opacity) === '0').length
+assert('鼠标压在正文上时显隐按轮独立：被悬停那轮的两颗是 1，另一轮仍是 0',
+  secondOnes === 2 && secondZeros === 1, JSON.stringify({ secondOnes, secondZeros, secondHover }))
+
 try { ws.close() } catch {}
 try { electron.kill() } catch {}
 try { fake.kill() } catch {}
 await sleep(600)
+
+finish('_verify-round-actions')

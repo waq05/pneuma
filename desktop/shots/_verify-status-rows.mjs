@@ -1,44 +1,70 @@
 process.on('unhandledRejection', () => {})
 
 /**
- * 状态面板两处报障的现场复验（2026-11-08）：
- *   ① Git 区 / 进程区还在不在（造出脏仓库 + 任务清单，看它们画不画）；
- *   ② 点「子智能体」一行，正文区只读运行记录打不打得开；
- *   ③ hover 任务行时底色有没有铺满到卡片右缘（量宽度，不靠眼睛）。
+ * 状态面板（页签行那颗胶囊点开的那张卡）的现场复验（2026-11-08 报障，2026-11-11 修活）。
  *
- * 跑法：node desktop/shots/_verify-status-rows.mjs
+ * ## 三条要验的事
+ *
+ *   ① Git 区 / 清单区 / 进程区 / 团队区还在不在（造出脏仓库 + 任务清单 + 三位队友，看它们画不画）；
+ *   ② 点「子智能体」一行，正文区只读运行记录打不打得开；
+ *   ③ hover 任务行时底色有没有铺满到卡片右缘（量盒子，不靠眼睛）。
+ *
+ * ## 修了什么（修之前它是空转）
+ *
+ * 旧版量了卡片 / 行 / 内层按钮 / 列表 / 滚动区的左右缘，也数了四个区与只读记录，
+ * 但一律 `console.log` 之后 `process.exit(0)`：量出什么都是绿的。现在每条读数都配判据：
+ *
+ *   1. **四个区都在**：`[data-sp-section]` 同时出现 `git / todo / agent / team`；
+ *   2. **各区真的有内容**：Git 区文本报出「1 个文件」、清单区 ≥ 2 条任务、团队区 3 位队友；
+ *   3. **任务行铺满**：任务行的右缘 = 列表右缘、宽度 = 列表宽（差 ≤ 1px）——这是「底色没铺满」
+ *      的可量形式（底色铺的是行的 padding box，行比列表窄就会在右端留白）；
+ *   4. **hover 底色真的出现**：鼠标压到任务行上之后，行自己的 `background-color` 由透明变成实底；
+ *   5. **展开的详情不越行**：详情的右缘不超出行右缘，宽度至少是行宽减两侧内距（±2px）；
+ *   6. **只读运行记录打得开**：点「子智能体」行之后 `.team-reader` 在场、正文区有子节点、
+ *      记录里带着那位队友的名字。
+ *
+ * ## 负向自检
+ *
+ * `PROBE_MUTATE=fill` 给任务行加 `margin-right: 24px`（模拟「底色没铺满」）；
+ * `PROBE_MUTATE=hover` 把行底色改成透明（模拟「hover 不上色」）。两种都会让对应判据当场红。
+ *
+ * 运行：node desktop/shots/_verify-status-rows.mjs
+ * 产物：`_verify-status-rows-hover.png` / `_verify-status-rows-click.png`
  */
-import { spawn, execSync } from 'node:child_process'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { execSync } from 'node:child_process'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+
+import {
+  assert, connectCdp, finish, launchDesktop, makeHome, requireScene, sleep, teardown,
+} from './_probe-kit.mjs'
 
 const root = 'D:/dsc'
 const shots = join(root, 'desktop/shots')
-const home = join(shots, '_verify-status-rows-home')
-const dsc = join(home, '.dsc')
-const userData = join(home, 'electron-userdata')
-const work = join(home, 'work')
 const debugPort = 9351
+const fakePort = 18997
 const sessionId = 'status-rows-demo'
 
-rmSync(home, { recursive: true, force: true })
-for (const rel of ['sessions/demo', 'usage', 'team/boards', 'team/inbox', 'agents', 'sessions/.teammates/demo']) {
-  mkdirSync(join(dsc, rel), { recursive: true })
-}
-mkdirSync(work, { recursive: true })
+const home = makeHome({
+  shots,
+  name: '_verify-status-rows-home',
+  dirs: ['sessions/demo', 'usage', 'team/boards', 'team/inbox', 'agents', 'sessions/.teammates/demo'],
+  config: [
+    'default:', '  provider: fake', '  model: fake-rows', 'providers:', '  fake:',
+    '    displayName: 自检假端点',
+    `    baseURL: http://127.0.0.1:${String(fakePort)}/v1`,
+    '    apiKeyEnv: DSC_FAKE_KEY',
+    '    models:', '      - id: fake-rows', '        name: Fake Rows',
+    '        contextWindow: 128000', '        maxTokens: 4096', '',
+  ].join('\n'),
+})
+const dsc = home.dsc
+const work = home.work
 
 // 脏仓库：一次提交之后改一个文件，git-status 才会报「1 个文件」。
 execSync('git init -q && git config user.email t@t && git config user.name t && echo a > a.txt && git add . && git commit -qm init', { cwd: work })
 writeFileSync(join(work, 'a.txt'), 'changed\n')
 
-writeFileSync(join(dsc, 'config.yaml'), [
-  'default:', '  provider: fake', '  model: fake-rows', 'providers:', '  fake:',
-  '    displayName: 自检假端点',
-  '    baseURL: http://127.0.0.1:18997/v1',
-  '    apiKeyEnv: DSC_FAKE_KEY',
-  '    models:', '      - id: fake-rows', '        name: Fake Rows',
-  '        contextWindow: 128000', '        maxTokens: 4096', '',
-].join('\n'))
 writeFileSync(join(dsc, 'plugins.json'), `${JSON.stringify({ version: 1, entries: [{ file: 'subagent', disabled: false, config: {} }] }, null, 2)}\n`)
 
 const now = Date.now()
@@ -84,146 +110,204 @@ writeFileSync(join(dsc, 'team', 'boards', `${sessionId}.json`), `${JSON.stringif
   }],
 }, null, 2)}\n`)
 
-const env = {
-  ...process.env, DSC_HOME: dsc, USERPROFILE: home, HOME: home,
-  DSC_FAKE_KEY: 'sk-selfcheck-fake', DSC_DESKTOP_USER_DATA: userData,
-  DSC_RESUME_SESSION: sessionFile,
-}
-delete env.ELECTRON_RUN_AS_NODE
-const electron = spawn(join(root, 'desktop/node_modules/electron/dist/electron.exe'), [
-  join(root, 'desktop/out/main/index.js'), '--remote-debugging-port=' + debugPort,
-], { cwd: join(root, 'desktop'), env, stdio: ['ignore', 'pipe', 'pipe'] })
-let log = ''
-electron.stdout.on('data', (d) => { log += String(d) })
-electron.stderr.on('data', (d) => { log += String(d) })
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-
-let pages = []
-for (let i = 0; i < 60; i += 1) {
-  try { pages = (await (await fetch('http://127.0.0.1:' + debugPort + '/json/list')).json()).filter((p) => p.type === 'page') } catch { pages = [] }
-  if (pages.length > 0) break
-  await sleep(600)
-}
-if (pages.length === 0) { console.log('LOG', log.slice(-800)); electron.kill(); process.exit(1) }
-
-const ws = new WebSocket(pages[0].webSocketDebuggerUrl)
-await new Promise((res, rej) => { ws.addEventListener('open', res, { once: true }); ws.addEventListener('error', rej, { once: true }) })
-let seq = 0
-const pending = new Map()
-ws.addEventListener('message', (e) => {
-  const m = JSON.parse(String(e.data))
-  const w = pending.get(m.id)
-  if (w) { pending.delete(m.id); m.error ? w.reject(new Error(JSON.stringify(m.error))) : w.resolve(m.result) }
+const desktop = launchDesktop({
+  root,
+  home: home.home,
+  dsc,
+  userData: home.userData,
+  debugPort,
+  extraEnv: { DSC_RESUME_SESSION: sessionFile },
 })
-const send = (method, params) => new Promise((resolve, reject) => { seq += 1; pending.set(seq, { resolve, reject }); ws.send(JSON.stringify({ id: seq, method, params })) })
-await send('Runtime.enable')
-await send('Page.enable')
-const evaluate = async (expression) => {
-  const r = await send('Runtime.evaluate', { expression: '(async () => { ' + expression + ' })()', awaitPromise: true, returnByValue: true })
-  if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails).slice(0, 400))
-  return r.result?.value
-}
-const shot = async (name) => {
-  const data = await send('Page.captureScreenshot', { format: 'png' })
-  writeFileSync(join(shots, name), Buffer.from(data.data, 'base64'))
-}
 
-// 启动图退场 + 数据轮询到齐（名册 3 秒 / 任务板 5 秒 / git 12 秒档）。
-for (let i = 0; i < 200; i += 1) {
-  const ok = await evaluate(`document.getElementById('boot-splash') !== null ? false : document.querySelector('.topbar .tabs .sp-host') !== null`)
-  if (ok) break
-  await sleep(250)
-}
-await sleep(14000)
-await evaluate(`document.querySelector('.topbar .tabs .sp-host .sp-mini')?.click(); true`)
-await sleep(900)
-await evaluate(`
-  for (const id of ['git', 'todo', 'agent', 'team']) document.querySelector('[data-sp-section-trigger="' + id + '"]')?.click()
-  true
-`)
-await sleep(800)
+let cdp = null
+try {
+  cdp = await connectCdp({ port: debugPort, log: desktop.log })
+  const { evaluate, send: cdpSend } = cdp
 
-const measures = await evaluate(`
-  const host = document.querySelector('.topbar .tabs .sp-host')
-  const sp = host.querySelector('.sp')
-  const card = sp.getBoundingClientRect()
-  const pick = (selector) => {
-    const node = document.querySelector(selector)
-    if (node === null) return null
-    const box = node.getBoundingClientRect()
-    return { left: Math.round(box.left), right: Math.round(box.right), width: Math.round(box.width) }
+  const booted = await requireScene(evaluate, {
+    name: '状态胶囊上屏（启动图退场）',
+    timeoutMs: 40000,
+    script: `
+      const splash = document.getElementById('boot-splash') !== null
+      return { ok: !splash && document.querySelector('.topbar .tabs .sp-host .sp-mini') !== null, splash }
+    `,
+  })
+  if (!booted.ok) {
+    teardown([{ close: () => cdp?.close() }, desktop, home])
+    finish('_verify-status-rows')
   }
-  const row = document.querySelector('[data-sp-section="team"] .sp-row')
-  const list = document.querySelector('[data-sp-section="team"] .sp-list')
-  const scroll = document.querySelector('[data-sp-section="team"] .sp-section-scroll')
-  return {
-    card: { left: Math.round(card.left), right: Math.round(card.right), width: Math.round(card.width) },
-    sections: [...document.querySelectorAll('[data-sp-section]')].map((n) => n.getAttribute('data-sp-section')),
-    row: row === null ? null : pick('[data-sp-section="team"] .sp-row'),
-    rowOpen: pick('[data-sp-section="team"] .sp-row .sp-row-open'),
-    detail: pick('[data-sp-section="team"] .sp-task-detail'),
-    list: list === null ? null : { right: Math.round(list.getBoundingClientRect().right), width: Math.round(list.getBoundingClientRect().width) },
-    scroll: scroll === null ? null : { right: Math.round(scroll.getBoundingClientRect().right), width: Math.round(scroll.getBoundingClientRect().width), paddingRight: getComputedStyle(scroll).paddingRight },
-    styleOfRow: row === null ? null : ((s) => ({ paddingRight: s.paddingRight, paddingLeft: s.paddingLeft, width: s.width, display: s.display, flexWrap: s.flexWrap }))(getComputedStyle(row)),
-  }
-`)
-console.log('measures', JSON.stringify(measures, null, 1))
 
-// 展开任务详情，再 hover 任务行：用户报的「底色没铺满」出现在详情展开时。
-await evaluate(`
-  const open = document.querySelector('[data-sp-section="team"] .sp-row [data-sp-task]')
-  open?.click()
-  true
-`)
-await sleep(500)
-const detailMeasures = await evaluate(`
-  const row = document.querySelector('[data-sp-section="team"] .sp-row')
-  const detail = row?.querySelector('.sp-task-detail')
-  const card = document.querySelector('.topbar .tabs .sp-host .sp').getBoundingClientRect()
-  const box = row?.getBoundingClientRect()
-  const detailBox = detail?.getBoundingClientRect()
-  const style = detail === null || detail === undefined ? null : getComputedStyle(detail)
-  return {
-    cardRight: Math.round(card.right),
-    rowRight: box === undefined ? null : Math.round(box.right),
-    rowWidth: box === undefined ? null : Math.round(box.width),
-    detailRight: detailBox === undefined ? null : Math.round(detailBox.right),
-    detailWidth: detailBox === undefined ? null : Math.round(detailBox.width),
-    detailPaddingRight: style === null ? null : style.paddingRight,
-    detailFlexBasis: style === null ? null : style.flexBasis,
-  }
-`)
-console.log('detail', JSON.stringify(detailMeasures, null, 1))
+  // 启动图退场 + 数据轮询到齐（名册 3 秒 / 任务板 5 秒 / git 12 秒档）。
+  await sleep(14000)
+  const opened = await evaluate(`
+    document.querySelector('.topbar .tabs .sp-host .sp-mini')?.click()
+    await new Promise((r) => setTimeout(r, 900))
+    for (const id of ['git', 'todo', 'agent', 'team']) document.querySelector('[data-sp-section-trigger="' + id + '"]')?.click()
+    await new Promise((r) => setTimeout(r, 900))
+    return {
+      sections: [...document.querySelectorAll('[data-sp-section]')].map((node) => node.getAttribute('data-sp-section')),
+      panelPresent: document.querySelector('.topbar .tabs .sp-host .sp') !== null,
+      text: (document.querySelector('.topbar .tabs .sp-host .sp')?.textContent ?? '').trim(),
+    }
+  `)
+  assert('面板打开且四个区都挂了 DOM', opened.panelPresent === true
+    && ['git', 'todo', 'agent', 'team'].every((id) => opened.sections.includes(id)),
+  JSON.stringify(opened.sections))
+  assert('Git 区报出脏仓库（1 个文件）', /1 个文件/.test(opened.text), opened.text.slice(0, 120))
+  assert('清单区有 2 条任务', opened.text.includes('拆开成员区与任务区') && opened.text.includes('补一条回归探针'), opened.text.slice(0, 200))
+  assert('团队区 3 位队友都在', (opened.text.match(/explorer-1|sub-a|team-b/g) ?? []).length >= 3, opened.text.slice(0, 200))
 
-// hover 任务行，再截一张（看底色有没有铺满）
-const hoverPoint = await evaluate(`
-  const row = document.querySelector('[data-sp-section="team"] .sp-row')
-  if (row === null) return null
-  const box = row.getBoundingClientRect()
-  return { x: Math.round((box.left + box.right) / 2), y: Math.round(box.top + 8) }
-`)
-if (hoverPoint !== null) {
-  await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hoverPoint.x, y: hoverPoint.y })
-  await sleep(400)
+  // 负向自检：把「底色没铺满」「hover 不上色」两种坏法注入回去，用来证明下面两条判据真会红。
+  const mutate = process.env.PROBE_MUTATE ?? ''
+  if (mutate === 'fill' || mutate === 'hover') {
+    await evaluate(`
+      const style = document.createElement('style')
+      style.textContent = ${JSON.stringify(mutate === 'fill'
+        ? '.sp-row { margin-right: 24px !important; }'
+        : '.sp-row:hover { background: transparent !important; }')}
+      document.head.appendChild(style)
+      await new Promise((r) => setTimeout(r, 300))
+      return true
+    `)
+    console.log(`负向自检：已注入 ${mutate === 'fill' ? '行右缩进 24px' : 'hover 透明'}（对应判据应当红）`)
+  }
+
+  const measures = await evaluate(`
+    const host = document.querySelector('.topbar .tabs .sp-host')
+    const sp = host.querySelector('.sp')
+    const card = sp.getBoundingClientRect()
+    const pick = (selector) => {
+      const node = document.querySelector(selector)
+      if (node === null) return null
+      const box = node.getBoundingClientRect()
+      return { left: Math.round(box.left), right: Math.round(box.right), width: Math.round(box.width) }
+    }
+    const row = document.querySelector('[data-sp-section="team"] .sp-row')
+    const list = document.querySelector('[data-sp-section="team"] .sp-list')
+    const scroll = document.querySelector('[data-sp-section="team"] .sp-section-scroll')
+    return {
+      card: { left: Math.round(card.left), right: Math.round(card.right), width: Math.round(card.width) },
+      sections: [...document.querySelectorAll('[data-sp-section]')].map((n) => n.getAttribute('data-sp-section')),
+      row: row === null ? null : pick('[data-sp-section="team"] .sp-row'),
+      rowOpen: pick('[data-sp-section="team"] .sp-row .sp-row-open'),
+      detail: pick('[data-sp-section="team"] .sp-task-detail'),
+      list: list === null ? null : { right: Math.round(list.getBoundingClientRect().right), width: Math.round(list.getBoundingClientRect().width) },
+      scroll: scroll === null ? null : { right: Math.round(scroll.getBoundingClientRect().right), width: Math.round(scroll.getBoundingClientRect().width), paddingRight: getComputedStyle(scroll).paddingRight },
+      rowBg: row === null ? null : getComputedStyle(row).backgroundColor,
+      rowMarginRight: row === null ? null : getComputedStyle(row).marginRight,
+      teamRows: document.querySelectorAll('[data-sp-section="team"] .sp-row').length,
+      taskRows: document.querySelectorAll('[data-sp-section="team"] .sp-row-task').length,
+    }
+  `)
+  console.log('measures', JSON.stringify(measures, null, 1))
+
+  // ① 任务行必须铺满列表宽（底色铺的是行的 padding box，行比列表窄就在右端留白）。
+  const rowFillOk = measures.row !== null && measures.list !== null
+    && Math.abs(measures.row.right - measures.list.right) <= 1
+    && Math.abs(measures.row.width - measures.list.width) <= 1
+  assert('任务行的右缘与宽度都跟列表一致（底色铺满到卡片右缘）', rowFillOk,
+    `row=${JSON.stringify(measures.row)} list=${JSON.stringify(measures.list)}`)
+  assert('团队区确实有任务行可量（不是空列表）', measures.taskRows >= 1 && measures.teamRows >= 1,
+    `task=${String(measures.taskRows)} 行=${String(measures.teamRows)}`)
+
+  // ② hover 前读一次底色，鼠标压上去再读一次。
+  const beforeBg = await evaluate(`
+    const row = document.querySelector('[data-sp-section="team"] .sp-row')
+    return row === null ? null : getComputedStyle(row).backgroundColor
+  `)
+  const hoverPoint = await evaluate(`
+    const row = document.querySelector('[data-sp-section="team"] .sp-row')
+    if (row === null) return null
+    const box = row.getBoundingClientRect()
+    return { x: Math.round((box.left + box.right) / 2), y: Math.round(box.top + 8) }
+  `)
+  if (hoverPoint !== null) {
+    await cdpSend('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hoverPoint.x, y: hoverPoint.y })
+    await sleep(500)
+  }
+  const afterBg = await evaluate(`
+    const row = document.querySelector('[data-sp-section="team"] .sp-row')
+    if (row === null) return null
+    const box = row.getBoundingClientRect()
+    return {
+      bg: getComputedStyle(row).backgroundColor,
+      hovered: row.matches(':hover'),
+      left: Math.round(box.left), right: Math.round(box.right), width: Math.round(box.width),
+    }
+  `)
+  const transparent = (value) => value === null || value === undefined
+    || value === 'rgba(0, 0, 0, 0)' || value === 'transparent'
+  assert('鼠标真的压在任务行上（不然底色变化无从谈起）', afterBg?.hovered === true, JSON.stringify(afterBg))
+  assert('hover 底色从透明变成实底', transparent(beforeBg) && !transparent(afterBg?.bg),
+    `前 ${String(beforeBg)} → 后 ${String(afterBg?.bg)}`)
+  assert('hover 之后行仍然铺满到右缘（没有缩进去）',
+    afterBg !== null && (measures.list === null || Math.abs(afterBg.right - measures.list.right) <= 1),
+    JSON.stringify(afterBg))
+
+  const hoverShot = await cdpSend('Page.captureScreenshot', { format: 'png' })
+  writeFileSync(join(shots, '_verify-status-rows-hover.png'), Buffer.from(hoverShot.data, 'base64'))
+
+  // ③ 展开任务详情：用户报的「底色没铺满」出现在详情展开时。
+  const detailInfo = await evaluate(`
+    const open = document.querySelector('[data-sp-section="team"] .sp-row [data-sp-task]')
+    open?.click()
+    await new Promise((r) => setTimeout(r, 600))
+    const row = document.querySelector('[data-sp-section="team"] .sp-row')
+    const detail = row?.querySelector('.sp-task-detail')
+    const card = document.querySelector('.topbar .tabs .sp-host .sp').getBoundingClientRect()
+    if (detail === null || detail === undefined) return { present: false }
+    const rowBox = row.getBoundingClientRect()
+    const detailBox = detail.getBoundingClientRect()
+    return {
+      present: true,
+      cardRight: Math.round(card.right),
+      rowRight: Math.round(rowBox.right),
+      rowWidth: Math.round(rowBox.width),
+      detailRight: Math.round(detailBox.right),
+      detailWidth: Math.round(detailBox.width),
+      detailPaddingRight: getComputedStyle(detail).paddingRight,
+      detailFlexBasis: getComputedStyle(detail).flexBasis,
+      visible: detail.offsetParent !== null,
+    }
+  `)
+  console.log('detail', JSON.stringify(detailInfo, null, 1))
+  assert('任务详情展开后在场且可见', detailInfo.present === true && detailInfo.visible === true, JSON.stringify(detailInfo))
+  assert('详情不越出行右缘（差 > 1px 就是铺出界）',
+    detailInfo.present === true && detailInfo.detailRight <= detailInfo.rowRight + 1,
+    `detailRight=${String(detailInfo.detailRight)} rowRight=${String(detailInfo.rowRight)}`)
+  assert('详情宽度只比行少两侧内距（行内 8 + 4 = 12px，容差 2px）',
+    detailInfo.present === true && (detailInfo.rowWidth - detailInfo.detailWidth) >= 8
+    && (detailInfo.rowWidth - detailInfo.detailWidth) <= 18,
+    `${String(detailInfo.rowWidth)} − ${String(detailInfo.detailWidth)} = ${String(detailInfo.rowWidth - detailInfo.detailWidth)}`)
+
+  // ④ 点子智能体第一行：正文区该出现只读运行记录。
+  const clicked = await evaluate(`
+    const row = document.querySelector('[data-sp-section="agent"] .sp-row [data-sp-agent]')
+    if (row === null) return { found: false }
+    row.click()
+    await new Promise((r) => setTimeout(r, 1800))
+    const reader = document.querySelector('.team-reader')
+    return {
+      found: true,
+      reader: reader !== null,
+      readerText: (reader?.textContent ?? '').trim().slice(0, 200),
+      threadChildren: (document.querySelector('[data-thread-area]')?.children.length ?? -1),
+    }
+  `)
+  console.log('click', JSON.stringify(clicked, null, 1))
+  assert('「子智能体」区有一行可点', clicked.found === true, JSON.stringify(clicked))
+  assert('点开之后正文区出现只读运行记录（.team-reader）', clicked.reader === true, JSON.stringify(clicked))
+  assert('正文区确实有内容（[data-thread-area] 子节点 ≥ 1）', clicked.threadChildren >= 1, `子节点 ${String(clicked.threadChildren)}`)
+  assert('只读记录里带着那位队友的名字', /explorer|sub-a|team-b/.test(clicked.readerText), clicked.readerText.slice(0, 80))
+
+  const clickShot = await cdpSend('Page.captureScreenshot', { format: 'png' })
+  writeFileSync(join(shots, '_verify-status-rows-click.png'), Buffer.from(clickShot.data, 'base64'))
+  assert('两张证据截图都落盘了', (hoverShot.data ?? '').length > 1000 && (clickShot.data ?? '').length > 1000,
+    `${String((hoverShot.data ?? '').length)} / ${String((clickShot.data ?? '').length)} 字节`)
+} finally {
+  if (process.env.PROBE_KEEP_HOME === '1') home.cleanup = () => {}
+  teardown([{ close: () => cdp?.close() }, desktop, home])
+  await sleep(300)
 }
-await shot('_verify-status-rows-hover.png')
 
-// 点子智能体第一行：正文区该出现只读运行记录
-const clicked = await evaluate(`
-  const row = document.querySelector('[data-sp-section="agent"] .sp-row [data-sp-agent]')
-  if (row === null) return { found: false }
-  row.click()
-  await new Promise((r) => setTimeout(r, 1500))
-  return {
-    found: true,
-    reader: document.querySelector('.team-reader') !== null,
-    threadChildren: (document.querySelector('[data-thread-area]')?.children.length ?? -1),
-    bodyText: document.body.innerText.slice(0, 200),
-  }
-`)
-console.log('click', JSON.stringify(clicked, null, 1))
-await shot('_verify-status-rows-click.png')
-
-console.log('LOG-tail', log.slice(-300))
-electron.kill()
-process.exit(0)
+finish('_verify-status-rows')

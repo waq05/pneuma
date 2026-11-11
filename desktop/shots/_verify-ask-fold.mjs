@@ -1,3 +1,4 @@
+// 已弃用：只打印不判定（2026-11-11 审计），用之前先补断言
 
 import { spawn } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'

@@ -1,3 +1,4 @@
+// 已弃用：只打印不判定（2026-11-11 审计），用之前先补断言
 process.on('unhandledRejection', () => {})
 
 /**
@@ -10,7 +11,8 @@ process.on('unhandledRejection', () => {})
  * 运行：node desktop/shots/_probe-gap.mjs
  */
 import { spawn, execSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 const root = 'D:/dsc'
@@ -26,8 +28,41 @@ mkdirSync(join(dsc, 'usage'), { recursive: true })
 mkdirSync(work, { recursive: true })
 mkdirSync(join(home, 'AppData', 'Roaming'), { recursive: true })
 
-const sessionFile = join(dsc, 'sessions', 'demo', '4d864aac-d31b-456f-a92c-2992a9d1aefd.jsonl')
-copyFileSync('C:/Users/waq/.dsc/sessions/D-dsc/4d864aac-d31b-456f-a92c-2992a9d1aefd.jsonl', sessionFile)
+// 这份会话是当初报障时那一轮的真实记录（宿主把它放在 D-dsc 工作区目录下）。
+// 它只在报障那台机器上存在，所以这里**先找，找不到就跳过**：以前这里写死了别人机器上的
+// 绝对路径（C:/Users/waq/...），换台机器一跑就 ENOENT 抛错。
+const gapSessionId = '4d864aac-d31b-456f-a92c-2992a9d1aefd.jsonl'
+const findGapSession = () => {
+  const sessionsRoot = join(homedir(), '.dsc', 'sessions')
+  if (!existsSync(sessionsRoot)) return null
+  const stack = [sessionsRoot]
+  while (stack.length > 0) {
+    const dir = stack.pop()
+    let entries = []
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) stack.push(full)
+      else if (entry.name === gapSessionId) return full
+    }
+  }
+  return null
+}
+const gapSource = findGapSession()
+if (gapSource === null) {
+  console.log(`[_probe-gap] 跳过：本机 ~/.dsc/sessions 下找不到报障那条会话（${gapSessionId}）。`)
+  console.log("[_probe-gap] 这条探针量的是那一轮的具体盒子间距，没有那条记录就没有可量的现场；")
+  console.log("[_probe-gap] 想跑就在报障机器上跑，或把那条 jsonl 放进该目录。真实 ~/.dsc 只读不写。")
+  rmSync(home, { recursive: true, force: true })
+  process.exit(0)
+}
+const sessionFile = join(dsc, 'sessions', 'demo', gapSessionId)
+copyFileSync(gapSource, sessionFile)
+console.log('[_probe-gap] 用的会话副本：' + gapSource)
 
 writeFileSync(join(dsc, 'config.yaml'), [
   'default:', '  provider: fake', '  model: fake-gap', 'providers:', '  fake:',
