@@ -27,6 +27,19 @@
  * 为什么按会话记：常驻多 agent 下每条会话有自己的工作目录、模式与清单，A 会话的环境
  * 没变不代表 B 会话的也没变。
  *
+ * ## 还有第二道闸：留底闸（{@link InjectionNoteLedger}）
+ *
+ * 注入方除了「要不要长卡」，还要决定「要不要往会话日志落一条 note」。规矩是
+ * `session-core/loop.ts:77`：往请求里注入日志上没有的内容，注入方自己留底。可是同一份
+ * 历史会被投影链跑**两遍**——一遍是真正发给模型的请求，另一遍是请求发出前的不变量校验
+ * （`loop.ts:452` 的 `checkRequestInvariant`）。两遍算出来的注入一字不差，但第二遍并没有
+ * 发出去，跟着落 note 就会「每注入一次、日志里多两条」。
+ *
+ * 判据与上报闸不同：上报闸比的是「正文有没有变」（同一句话每 N 轮重注一次，正文没变，
+ * 仍不该画第二张卡）；留底闸比的是「**这一份历史**是不是已经为这句话留过底」。同一份历史
+ * 重跑时最后一条消息还是同一个对象，两次真请求之间一定落过新的 assistant / tool 消息、
+ * 对象引用不同。所以判据 = 会话 id + 历史最后一条消息的对象引用 + 正文。
+ *
  * @module dsc/core/context-injection-report
  */
 
@@ -74,5 +87,47 @@ export class InjectionReportLedger {
     const report = shouldReport(kinds.get(kind), text)
     kinds.set(kind, text)
     return report
+  }
+}
+
+/**
+ * 留底台账：按会话记住「上一次为哪一份历史、哪一句正文落过 note」。
+ *
+ * 投影里固定这么用（先判再落，判与落必须挨在一起）：
+ *
+ * ```ts
+ * if (out === messages) return out
+ * const last = owner.messages[owner.messages.length - 1]
+ * if (noted.take(owner.meta.id, last, text)) owner.appendNote(id, text)
+ * return out
+ * ```
+ *
+ * 同一份历史的二次派生（invariant 校验）拿到同一个 `last` 对象引用与同一句正文，
+ * 第二次 `take` 返回 false，note 不重复落。两次真请求之间日志里一定落过新消息，
+ * 引用不同，照常落。
+ *
+ * 只活在内存里：进程重启后一律当「首次」，宁可让某次注入多一条 note，也不要让一次
+ * 真注入无声无息、事后对不出模型当时多看了什么。表满整表清（与 `envSent`、
+ * {@link InjectionReportLedger} 同一条取舍）。
+ */
+export class InjectionNoteLedger {
+  /** 会话 id → 「上次落 note 时历史的最后一条消息（按引用比）+ 正文」。 */
+  private readonly noted = new Map<string, { last: object | undefined; text: string }>()
+
+  /**
+   * 判一次并记账：这一跳该不该落 note。
+   *
+   * @param sessionId - 会话 id（`session.meta.id`）；不同会话互不影响
+   * @param last - 这一跳对应历史的最后一条消息（`session.messages` 的尾项，没有则为 `undefined`）
+   * @param text - 要落的正文（注入原文）
+   * @returns 该落返回 true；同一份历史、同一句正文已经落过返回 false
+   */
+  take(sessionId: string, last: object | undefined, text: string): boolean {
+    const prev = this.noted.get(sessionId)
+    if (prev !== undefined && prev.last === last && prev.text === text) return false
+    // 只为新会话清表：已有会话刷新自己那条时表并不会变大，顺手清掉会误伤别人的记录。
+    if (this.noted.size >= 64 && prev === undefined) this.noted.clear()
+    this.noted.set(sessionId, { last, text })
+    return true
   }
 }

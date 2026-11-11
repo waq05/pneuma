@@ -9,8 +9,10 @@
  *
  * 断言：
  *   1. 重复调用：前两次同参调用不注入、不落 note；第三次命中阈值，请求末尾多一句，
- *      同时落一条 `repeat-reminder` note，正文与注入原文逐字相同；
+ *      同时落一条 `repeat-reminder` note，正文与注入原文逐字相同；同一份历史再跑一遍
+ *      （二次派生）照样注入，但 note 仍只有 1 条；
  *   2. 待办：间隔调成 1 轮后，第一轮就注入 `todo-reminder`，同时落一条同名 note；
+ *      同一份历史真跑两遍（循环的二次派生）也照常注入，但 note 仍只有 1 条；
  *      请求里已经有这句提醒（幂等拒绝注入）时不重复落；清单清空后不落；
  *   3. 两条 note 都写进了会话 jsonl，且 id 各用自己的名字（没有复用 lsp / hooks 的）。
  *
@@ -93,9 +95,15 @@ console.log('[1] 重复调用提醒：真注入了才落 note')
   check('note 用的是自己的名字，没复用别人的 id', notes[0]?.id === 'repeat-reminder', String(notes[0]?.id))
 
   // 同一份历史再跑一遍（循环在请求发出前拿它做 invariant 校验，`loop.ts:452`）：
-  // 那一次并没有发给模型，不该多记一条 note。
-  kernel.prompt.rewrite(base, session)
-  check('同一份历史的二次派生不重复落 note', notesOf('repeat-reminder').length === 1, String(notesOf('repeat-reminder').length))
+  // 那一次并没有发给模型，不该多记一条 note。先确认它真的又算出了一份注入，
+  // 否则「只有一条 note」可能只是因为这一遍压根没注入（那样这条断言就白测了）。
+  const derivedRepeat = kernel.prompt.rewrite(base, session)
+  check(
+    '二次派生那一遍照样注入了提醒（幂等不是靠省掉注入凑出来的）',
+    derivedRepeat.some((message) => message.role === 'user' && textOf(message) === plan.text),
+    JSON.stringify(derivedRepeat.map(textOf).slice(-2)),
+  )
+  check('同一份历史真跑两遍，repeat-reminder note 仍只有 1 条', notesOf('repeat-reminder').length === 1, String(notesOf('repeat-reminder').length))
 }
 
 console.log('[2] 待办提醒：真注入了才落 note，幂等与清空都不落')
@@ -113,6 +121,19 @@ console.log('[2] 待办提醒：真注入了才落 note，幂等与清空都不�
   check('同时落了一条 todo-reminder note', notes.length === 1, JSON.stringify(session.notes().map((note) => note.id)))
   check('note 正文就是提醒原文', notes[0]?.text === TODO_REMINDER_TEXT, String(notes[0]?.text))
   check('note 用自己的名字，没复用别人的 id', notes[0]?.id === 'todo-reminder', String(notes[0]?.id))
+
+  // 循环的二次派生（`loop.ts:452` 的 checkRequestInvariant）：请求组装完，拿**同一份日志**
+  // 再跑一遍投影链做校验，中间一条消息都不落。那一遍并没有发给模型，note 不许跟着多一条。
+  // 每次重新拼一遍 system 那条，跟循环里「每次 requestOnce 都新拼一份 assembled」一致；
+  // 会话日志部分共用同一批消息对象（引用不变），正是二次派生的情形。
+  const rebuild = () => [{ role: 'system', content: '系统提示（探针，二次派生）' }, ...messages.slice(1)]
+  const derived = kernel.prompt.rewrite(rebuild(), session)
+  check(
+    '二次派生那一遍照样注入了提醒（幂等不是靠省掉注入凑出来的）',
+    derived.some((message) => message.role === 'user' && textOf(message) === TODO_REMINDER_TEXT),
+    JSON.stringify(derived.map(textOf).slice(-3)),
+  )
+  check('同一份历史真跑两遍，todo-reminder note 仍只有 1 条', notesOf('todo-reminder').length === 1, String(notesOf('todo-reminder').length))
 
   // 幂等：请求里已经带着这句提醒 → appendTodoReminder 原样返回，不注入也不再落 note。
   const already = [

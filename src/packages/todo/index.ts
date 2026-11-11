@@ -21,7 +21,7 @@ import type { Plugin } from '@deepseek-ai/cordis'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { appendTodoReminder, TODO_REMINDER_TEXT } from '@pneuma/runtime/core/todo-reminder.js'
 import { TodoReminderCadence, countRounds } from '@pneuma/runtime/core/todo-reminder-cadence.js'
-import { InjectionReportLedger } from '@pneuma/runtime/core/context-injection-report.js'
+import { InjectionNoteLedger, InjectionReportLedger } from '@pneuma/runtime/core/context-injection-report.js'
 import { TodoStore } from './todo.js'
 import { Session } from '@pneuma/runtime/core/session.js'
 import type { ToolEntry } from '@pneuma/runtime/core/tools.js'
@@ -273,6 +273,18 @@ export const todoPlugin: Plugin.Object = {
      * 注入被跳过的那一跳不产生报告，也不该动本台账。
      */
     const reminderReported = new InjectionReportLedger()
+    /**
+     * 留底台账：同一份历史的二次派生（invariant 校验）不重复落 note。
+     *
+     * 一次请求组装完，循环会拿同一份日志再跑一遍投影链做校验（`session-core/loop.ts:452`
+     * 的 `checkRequestInvariant`）。那一遍并没有发给模型，但节流台账在 `round === last`
+     * 时按设计返回「该注入」（`core/todo-reminder-cadence.ts:93`，理由见那边的注释），
+     * 于是又算出一份一模一样的注入；不挡的话每真注入一次，日志里就多两条同样的 note。
+     * 判据与重复调用提醒共用 {@link InjectionNoteLedger}：会话 id + 历史最后一条消息的
+     * 对象引用 + 正文。用「最后一条消息」而不是历史条数——两次真请求之间一定落过新的
+     * assistant / tool 消息，对象引用不同；同一份历史重跑时最后一条还是同一个对象。
+     */
+    const reminderNotes = new InjectionNoteLedger()
     const applyReminder = (patch: Record<string, unknown | null>): void => {
       writePluginConfig(CONFIG_KEY, patch)
       reminder = readReminderConfig()
@@ -298,7 +310,11 @@ export const todoPlugin: Plugin.Object = {
         // 提醒是投影现算的、日志上没有这一句（`session-core/loop.ts:77` 的规矩）：
         // 注入方自己落一条 note，正文就是注入原文，事后回看能对出模型当时多看了什么。
         // 写法照 `packages/lsp/index.ts:219` / `packages/hooks/index.ts:552`。
-        owner.appendNote('todo-reminder', TODO_REMINDER_TEXT)
+        // 同一份历史的二次派生（invariant 校验）不重复落，判据见上面 reminderNotes。
+        const last = owner.messages[owner.messages.length - 1]
+        if (reminderNotes.take(owner.meta.id, last, TODO_REMINDER_TEXT)) {
+          owner.appendNote('todo-reminder', TODO_REMINDER_TEXT)
+        }
         // 真补了才记账，并且只在「这一跳」记：下一跳轮号 +1，判据就变成「还差 N−1 轮」。
         reminderCadence.mark(owner.meta.id, round)
         // 过一道上报闸：同一句正文只在第一次出现时记一张卡（理由见上面两个台账的注释）。
