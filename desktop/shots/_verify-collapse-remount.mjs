@@ -39,11 +39,23 @@ process.on('unhandledRejection', () => {})
  *   靠前那一层的组仍然开着（组体不挂 `hidden`、`data-open` 仍是 `1`），切走再切回也仍然开着
  *   （没有被写进手动存档 false）。修之前这条必红，红的样子就是上面那个组合。
  *
+ * - **P7**（不重挂也复位，2026-11-12 补）：整轮收起时行座位抹的是**存档**，同一次挂载里的
+ *   行自己还开着——收起整轮再展开，那条思考行照样摊着。参考实现的展开态带「复位代次」，
+ *   座位被真藏那一拍推进代次，已挂载的那一条当场收起（`use-disclosure.ts:11-21`）。
+ *   验收：展开整轮 → 点开组 → 手动展开一条思考行 → 收起整轮（真的藏）→ **不切会话**、
+ *   直接再展开整轮 → 那一条行是收起的；再点开组，它仍然收起。修之前这里会红。
+ * - **P8**（放行不写手动存档，2026-11-12 补）：焦点保护放行原来走 `reveal()`，而它等价于
+ *   「用户点了展开」，会把整轮写进手动存档——键盘用户 Tab 一次，`collapseTiming` 的兜底
+ *   之后就不再生效。验收两段：放行之后整轮开关行上的 `data-turn-manual` 缺席（`fold-state`
+ *   里没有这一轮的手动存档）、`data-turn-rescue` 是 1（这一轮是靠放行摊着的）；
+ *   把焦点挪开再点一次收起，照常收起。
+ *
  * ## 断言数（以实际运行输出为准）
  *
- * 跑下来 **29 条**：`assert` 调用点 25 处，其中 3 处在 `ROUNDS` 轮循环里各跑两次
- * （25 − 3 + 6 = 28），再加 `requireScene` 记的 1 条场景断言。文档与提交信息都照这个数写，
- * 别再按「`assert` 出现几次」或「设计了几条」另算一套。
+ * 跑下来 **35 条**：P1～P6 与行级复位共 29 条（`assert` 调用点 25 处，其中 3 处在
+ * `ROUNDS` 轮循环里各跑两次，加 `requireScene` 记的 1 条场景断言），再加 P7 的 3 条与
+ * P8 的 3 条。文档与提交信息都照这个数写，别再按「`assert` 出现几次」或「设计了几条」
+ * 另算一套。
  *
  * 运行：node desktop/shots/_verify-collapse-remount.mjs
  * 产物：desktop/shots/_collapse-remount.png
@@ -886,6 +898,293 @@ assert(
   '行级复位：切走再切回、再展开整轮之后，那一条思考行回到默认收起态（存档已抹掉）',
   rowReset.after !== undefined && rowReset.after.expanded === 'false',
   JSON.stringify(rowReset.after ?? rowReset),
+)
+
+/* ────── P7：不重挂也复位（复位代次，2026-11-12）────────── */
+
+/**
+ * 缺陷：整轮收起时行座位把**存档**抹了，可同一次挂载里的行自己还开着——收起整轮再展开，
+ * 那条思考行照样摊在屏幕上；只有切走再切回（重挂）才回默认收起态。参考实现不是这样：
+ * 它的展开态带一个「复位代次」，座位被真藏那一拍推进代次，**已挂载的**那一条当场收起
+ * （`use-disclosure.ts:11-21`）。
+ *
+ * 修法见 `fold-hook.ts` 模块头「复位代次」：座位实例持有一份代次，真挂上 `hidden` 那一拍
+ * 推进一位；行用 `useSyncExternalStore` 订阅，代次推进只惊动订阅了它的那几行。
+ *
+ * 验收：展开整轮 → 点开组 → 手动展开其中一条思考行 → 收起整轮（真的藏）→ **不切会话**、
+ * 直接把整轮再展开 → 那一条行必须是收起的；再点开那个组，它仍然是收起的（可见时也对）。
+ */
+const mountedReset = await cdp.evaluate(`
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const seatOf = () => document.querySelector('.turn-seat[data-round-seat="0"]')
+  const seat = seatOf()
+  if (seat === null) return { error: '没有第一轮' }
+  const turn = seat.querySelector('.turn-fold:not([disabled])')
+  if (turn === null) return { error: '第一轮没有整轮开关' }
+  const groupOf = () => seat.querySelector('.step-fold:not([disabled])')
+  const headOf = () => seat.querySelector('.step-seat .think-head')
+  const ownersOf = () => [...seat.querySelectorAll('.turn-process > .turn-process-body > *')]
+  // 1. 整轮摊开。
+  if (turn.getAttribute('data-open') !== '1') turn.click()
+  for (let i = 0; i < 80; i += 1) {
+    if (seat.querySelector('.turn-process')?.getAttribute('data-fold') === 'open') break
+    await wait(50)
+  }
+  // 2. 点开阶段组（思考行在组里）。
+  const group = groupOf()
+  if (group === null) return { error: '第一轮里没有阶段组' }
+  if (group.getAttribute('data-open') !== '1') group.click()
+  await wait(250)
+  // 3. 手动展开组里的一条思考行。
+  const head = headOf()
+  if (head === null) return { error: '第一轮里找不到思考行的头' }
+  if (head.getAttribute('aria-expanded') !== 'true') head.click()
+  await wait(150)
+  const opened = head.getAttribute('aria-expanded')
+  // 4. 焦点放在整轮开关上，收起整轮（不走焦点放行，这一轮真的会藏）。
+  turn.focus()
+  turn.click()
+  let hiddenAt = false
+  for (let i = 0; i < 120; i += 1) {
+    const owners = ownersOf()
+    if (owners.length > 0 && owners.every((owner) => owner.hasAttribute('hidden'))) {
+      hiddenAt = true
+      break
+    }
+    await wait(50)
+  }
+  // 5. **不切会话**，直接把整轮再展开，看那一条行有没有当场回到默认收起态。
+  if (turn.getAttribute('data-open') === '1') return { error: '收起没有落地，开关仍展开', opened, hiddenAt }
+  turn.click()
+  for (let i = 0; i < 80; i += 1) {
+    if (seat.querySelector('.turn-process')?.getAttribute('data-fold') === 'open') break
+    await wait(50)
+  }
+  await wait(250)
+  const justReopened = {
+    turnOpen: turn.getAttribute('data-open'),
+    expanded: headOf() === null ? null : headOf().getAttribute('aria-expanded'),
+    groupOpen: groupOf() === null ? null : groupOf().getAttribute('data-open'),
+  }
+  // 6. 再把组点开：这一条行真的看得见的时候，它也得是收起的。
+  const groupAgain = groupOf()
+  if (groupAgain !== null && groupAgain.getAttribute('data-open') !== '1') groupAgain.click()
+  await wait(300)
+  const visibleAgain = {
+    groupOpen: groupOf() === null ? null : groupOf().getAttribute('data-open'),
+    expanded: headOf() === null ? null : headOf().getAttribute('aria-expanded'),
+    // 收起态的那条行**不渲染**展开区（think-row 的条件渲染），所以这里判「展开区在不在」。
+    bodyPresent: (() => {
+      const block = headOf() === null ? null : headOf().closest('.think-block')
+      return block === null ? null : block.querySelector('.think-body') !== null
+    })(),
+  }
+  return { opened, hiddenAt, justReopened, visibleAgain }
+`)
+process.stdout.write(`  不重挂复位 ${JSON.stringify(mountedReset)}\n`)
+
+assert(
+  'P7 前提：手动展开的那条思考行当时是开着的，且整轮收起真的落地（座位全挂 hidden）',
+  mountedReset.opened === 'true' && mountedReset.hiddenAt === true,
+  JSON.stringify({ opened: mountedReset.opened, hiddenAt: mountedReset.hiddenAt, error: mountedReset.error }),
+)
+assert(
+  'P7：不切会话、整轮收起再展开之后，那条思考行当场回到默认收起态（复位代次推进了）',
+  mountedReset.justReopened !== undefined
+    && mountedReset.justReopened.turnOpen === '1'
+    && mountedReset.justReopened.expanded === 'false',
+  JSON.stringify(mountedReset.justReopened ?? mountedReset),
+)
+assert(
+  'P7：再把阶段组点开，那一条思考行仍然是收起的（看得见的那一态也对）',
+  mountedReset.visibleAgain !== undefined
+    && mountedReset.visibleAgain.groupOpen === '1'
+    && mountedReset.visibleAgain.expanded === 'false'
+    && mountedReset.visibleAgain.bodyPresent === false,
+  JSON.stringify(mountedReset.visibleAgain ?? mountedReset),
+)
+
+/* ────── P8：焦点放行不写手动存档（2026-11-12）────────── */
+
+/**
+ * 缺陷：焦点保护放行时走 `reveal()`，而它等价于「用户点了展开」——把整轮写进手动存档。
+ * 键盘用户中途 Tab 一次，`collapseTiming` 的兜底之后就不再生效（切走再切回那一轮也还是开着的）。
+ *
+ * 修法见 `render.tsx` 的 `revealAction`：放行只在**这一份内存**里把这一轮摊着（记的是
+ * 「哪一条会话的哪一轮」），用户点击才写存档；用户自己点开关、换会话，这份放行就作废。
+ *
+ * 验收看的是**存档本身**（`render.tsx` 给整轮开关行留的两个读数）：
+ * - `data-turn-manual`：这一轮的键在 `fold-state` 里有没有用户手动存档（`hasFold`）；
+ * - `data-turn-rescue`：这一轮此刻是不是靠焦点放行摊着的。
+ *
+ * 三段：
+ * - **P8 前提**：焦点在组里点收起 → 被放行（整轮仍展开、组没被关、`data-turn-rescue` 是 1）。
+ * - **P8 结论**：同一时刻 `data-turn-manual` 缺席 —— 放行**没有**被写成手动存档。
+ *   修之前这里会红：`reveal()` 调的是 `foldMemory.set(turnKey, true)`，那一格就是手动存档。
+ * - **P8b**：放行之后把焦点挪到整轮开关（离开组里）再点一次收起，这一轮照常收起
+ *   （放行没有把这一轮钉死在展开上）。
+ */
+const releaseNoArchive = await cdp.evaluate(`
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const seatOf = () => document.querySelector('.turn-seat[data-round-seat="0"]')
+  let seat = seatOf()
+  if (seat === null) return { error: '没有第一轮' }
+  let turn = seat.querySelector('.turn-fold:not([disabled])')
+  if (turn === null) return { error: '第一轮没有整轮开关' }
+  const groupOf = () => seat.querySelector('.step-fold:not([disabled])')
+  /** 这一轮开关行上的三个读数（见模块头 P8 那段）。 */
+  const readOut = () => {
+    const row = turn === null ? null : turn.closest('.entry-row')
+    const owners = [...seat.querySelectorAll('.turn-process > .turn-process-body > *')]
+    return {
+      turnOpen: turn === null ? null : turn.getAttribute('data-open'),
+      rescue: row === null ? null : row.getAttribute('data-turn-rescue'),
+      manual: row === null ? null : row.getAttribute('data-turn-manual'),
+      fold: seat.querySelector('.turn-process')?.getAttribute('data-fold') ?? null,
+      owners: owners.length,
+      hidden: owners.filter((owner) => owner.hasAttribute('hidden')).length,
+    }
+  }
+  // 1. 整轮摊开 + 点开组（焦点保护才有「焦点在里面」这一层可护）。
+  if (turn.getAttribute('data-open') !== '1') turn.click()
+  for (let i = 0; i < 80; i += 1) {
+    if (seat.querySelector('.turn-process')?.getAttribute('data-fold') === 'open') break
+    await wait(50)
+  }
+  let group = groupOf()
+  if (group === null) return { error: '第一轮里没有阶段组' }
+  if (group.getAttribute('data-open') !== '1') group.click()
+  for (let i = 0; i < 80; i += 1) {
+    const body = seat.querySelector('.step-body')
+    if (group.getAttribute('data-open') === '1' && body !== null && !body.hasAttribute('hidden')) break
+    await wait(50)
+  }
+  // 2. 焦点放进组里，程序化点整轮开关：焦点没被搬走，这一轮会被焦点保护放行。
+  group.focus()
+  const before = {
+    turnOpen: turn.getAttribute('data-open'),
+    groupOpen: group.getAttribute('data-open'),
+    focused: document.activeElement === group,
+  }
+  turn.click()
+  for (let i = 0; i < 100; i += 1) {
+    const fold = seat.querySelector('.turn-process')
+    const stepSeat = group.closest('.step-seat')
+    if (fold?.getAttribute('data-fold') === 'open'
+      && turn.getAttribute('data-open') === '1'
+      && stepSeat !== null && !stepSeat.hasAttribute('hidden')) break
+    await wait(50)
+  }
+  await wait(400)
+  const foldRow = seat.querySelector('.turn-process')
+  const stepSeat = group.closest('.step-seat')
+  const released = {
+    turnOpen: turn.getAttribute('data-open'),
+    turnFold: foldRow === null ? null : foldRow.getAttribute('data-fold'),
+    seatHidden: stepSeat === null ? null : stepSeat.hasAttribute('hidden'),
+    groupOpen: group.getAttribute('data-open'),
+  }
+  // 3. 读数：这一轮此刻靠「放行」摊着，存档里没有「手动展开」那一笔。
+  const afterRelease = readOut()
+  return { before, released, afterRelease }
+`)
+process.stdout.write(`  放行不写存档 ${JSON.stringify(releaseNoArchive)}\n`)
+
+assert(
+  'P8 前提：焦点在组里时点整轮收起，这一轮被焦点保护放行了（整轮仍展开、组的座位没挂 hidden，读数是「放行」）',
+  releaseNoArchive.before !== undefined
+    && releaseNoArchive.before.turnOpen === '1'
+    && releaseNoArchive.before.focused === true
+    && releaseNoArchive.released !== undefined
+    && releaseNoArchive.released.turnOpen === '1'
+    && releaseNoArchive.released.turnFold === 'open'
+    && releaseNoArchive.released.seatHidden === false
+    && releaseNoArchive.afterRelease !== undefined
+    && releaseNoArchive.afterRelease.rescue === '1',
+  JSON.stringify({ before: releaseNoArchive.before, released: releaseNoArchive.released, afterRelease: releaseNoArchive.afterRelease, error: releaseNoArchive.error }),
+)
+assert(
+  'P8：放行没有把这一轮写成手动存档（`data-turn-manual` 缺席，`fold-state` 里没有手动展开）',
+  releaseNoArchive.afterRelease !== undefined
+    && releaseNoArchive.afterRelease.turnOpen === '1'
+    && releaseNoArchive.afterRelease.manual === null,
+  JSON.stringify(releaseNoArchive.afterRelease ?? releaseNoArchive),
+)
+
+/* ────── P8b：放行之后把焦点挪开，再点一次收起要照常收起 ────── */
+
+/**
+ * 放行只让这一层**这次**不藏：焦点离开之后（这里放到整轮开关上）再点一次收起，
+ * 必须真的收起来。这条钉的是「放行没有把这一轮钉死在展开上」——只留一份失忆的本地
+ * 放行态、却忘了在用户点击时把它作废，就会在这儿红。
+ */
+const releaseThenCollapse = await cdp.evaluate(`
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const seat = document.querySelector('.turn-seat[data-round-seat="0"]')
+  if (seat === null) return { error: '没有第一轮' }
+  const turn = seat.querySelector('.turn-fold:not([disabled])')
+  if (turn === null) return { error: '第一轮没有整轮开关' }
+  const group = seat.querySelector('.step-fold:not([disabled])')
+  if (group === null) return { error: '第一轮里没有阶段组' }
+  const ownersOf = () => [...seat.querySelectorAll('.turn-process > .turn-process-body > *')]
+  // 1. 整轮摊开 + 点开组。
+  if (turn.getAttribute('data-open') !== '1') turn.click()
+  for (let i = 0; i < 80; i += 1) {
+    if (seat.querySelector('.turn-process')?.getAttribute('data-fold') === 'open') break
+    await wait(50)
+  }
+  if (group.getAttribute('data-open') !== '1') group.click()
+  await wait(250)
+  // 2. 焦点在组里 → 点收起 → 被放行。
+  group.focus()
+  turn.click()
+  for (let i = 0; i < 100; i += 1) {
+    if (seat.querySelector('.turn-process')?.getAttribute('data-fold') === 'open'
+      && turn.getAttribute('data-open') === '1') break
+    await wait(50)
+  }
+  await wait(400)
+  const released = { turnOpen: turn.getAttribute('data-open'), focused: document.activeElement === group }
+  // 3. 焦点挪到整轮开关上（离开里层），再点一次收起：这次要真的收。
+  turn.focus()
+  turn.click()
+  let collapsed = null
+  for (let i = 0; i < 120; i += 1) {
+    const owners = ownersOf()
+    if (owners.length > 0 && owners.every((owner) => owner.hasAttribute('hidden'))) {
+      collapsed = {
+        owners: owners.length,
+        hidden: owners.filter((owner) => owner.hasAttribute('hidden')).length,
+        turnOpen: turn.getAttribute('data-open'),
+        fold: seat.querySelector('.turn-process')?.getAttribute('data-fold') ?? null,
+      }
+      break
+    }
+    await wait(50)
+  }
+  await wait(200)
+  return {
+    released,
+    collapsed: collapsed ?? {
+      owners: ownersOf().length,
+      hidden: ownersOf().filter((owner) => owner.hasAttribute('hidden')).length,
+      turnOpen: turn.getAttribute('data-open'),
+      fold: seat.querySelector('.turn-process')?.getAttribute('data-fold') ?? null,
+    },
+  }
+`)
+process.stdout.write(`  放行后再收起 ${JSON.stringify(releaseThenCollapse)}\n`)
+
+assert(
+  'P8b：放行之后把焦点移开、再点一次收起，这一轮照常收起（放行只让这一层这次不藏）',
+  releaseThenCollapse.released !== undefined
+    && releaseThenCollapse.released.turnOpen === '1'
+    && releaseThenCollapse.collapsed !== undefined
+    && releaseThenCollapse.collapsed.owners > 0
+    && releaseThenCollapse.collapsed.hidden === releaseThenCollapse.collapsed.owners
+    && releaseThenCollapse.collapsed.turnOpen === null
+    && releaseThenCollapse.collapsed.fold === 'closed',
+  JSON.stringify(releaseThenCollapse),
 )
 
 teardown([cdp, desktop, home])

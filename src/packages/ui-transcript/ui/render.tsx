@@ -5,11 +5,11 @@
  *
  * @module dsc-ui-shell/plugins/transcript/render
  */
-import { Component, memo, useCallback, useContext, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react'
+import { Component, memo, useCallback, useContext, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { MarkdownView, createT, estimateTextTokens, type TranscriptEntry } from '@dsc/ui'
 import { ReviewNoticeCard, findLast, parseReviewNotice } from '@dsc/ui-primitives'
 import { FoldPrefsContext, ShellCwdContext, ShellSessionContext, TOOLVIEW_SLOT, TRANSCRIPT_NODE_SLOT, TRANSCRIPT_REASONING_BODY_SLOT, TURN_INDEPENDENT, keyOf, type Row, type Seat, type ToolViewRender } from './shared'
-import { stepGroupFoldKey, turnFoldKey, clearFold } from './fold-state'
+import { stepGroupFoldKey, turnFoldKey, clearFold, hasFold, readFold } from './fold-state'
 import type { SeatStore } from './seat-store'
 import { rowShows } from './row-shows'
 import { turnDefaultOpen, useFoldMemory } from './round-fold'
@@ -138,8 +138,24 @@ export function SeatBody({
    */
   const defaultOpen = turnDefaultOpen(foldPrefs.collapseTiming, fold?.latest === true)
   const turnOpen = foldMemory.open(turnKey, defaultOpen)
+  /**
+   * 焦点保护**放行**出来的展开（不是用户的选择，见下面 `revealAction`）。
+   *
+   * 为什么单独一份而不是写进 `foldMemory`：`foldMemory.set` 会同时把选择写进存档
+   * （`fold-state`），那一格的含义是「用户手动调过」。放行不是用户的决定——写进去之后，
+   * 键盘用户 Tab 一次就再也翻不动这一轮：`collapseTiming` 的兜底失效，切走再切回也还是开着。
+   *
+   * 值记的是「哪一条会话的哪一轮被放行了」（`sessionKey` 跨会话一定变，`turnKey` 在会话 id
+   * 还缺席时是空串打头、两条会话会撞成同一个键）：用户自己点开关时清空（见 `toggleTurn`）。
+   * 它只活在座位实例里、不落盘——重挂之后只剩存档与兜底说话（参考实现的 `turnProcesses`
+   * 同样只在会话视图的内存 store 里）。
+   */
+  const rescueKey = `${sessionKey}|${String(seat.round)}`
+  const [rescued, setRescued] = useState<string | null>(null)
+  /** 这一轮此刻要不要摊着：存档 / 兜底说展开，或者刚被焦点保护放行过。 */
+  const unfolded = turnOpen || rescued === rescueKey
   /** 整轮收起来没有：可折 + 有内容 + 已收尾 + 没被展开（默认收起；next-input 的最新一轮默认展开）。 */
-  const collapsed = foldable && !turnOpen
+  const collapsed = foldable && !unfolded
   /** 把整轮放出来（座位被 Ctrl+F 命中、或焦点落在收起的内容里时由座位自己调）。 */
   // 为什么要 useCallback（S2 彻底方案，2026-11-10）：这个回调被递给每一行的座位壳
   // （`SeatFrame` 的 `onReveal`）。座位壳是 memo 的，回调每帧换引用就会让整屏的壳全部重渲染，
@@ -159,7 +175,9 @@ export function SeatBody({
   const foldMotion = useTurnFoldMotion({ collapsed, viewport })
   revealAction.current = () => {
     foldMotion.prepareExpand()
-    foldMemory.set(turnKey, true)
+    // 放行与用户点击要分开：用户点击走 `toggleTurn`（写存档，从此算手动调过）；
+    // 放行只在内存里记「这一轮这次不藏」，**一个字都不写进存档**（见上面 rescued 的注释）。
+    setRescued(rescueKey)
   }
   /**
    * 点整轮开关：`foldMemory.set(turnKey, collapsed)` 的字面含义是「把 open 设成 collapsed」——
@@ -167,9 +185,13 @@ export function SeatBody({
    *
    * 展开方向要先开批次（`prepareExpand`）：行体的 `hidden` 是在同一次提交里摘掉的，
    * 那一下是几百像素的瞬时高度；批次晚一步，量到的就是「已经跳完」的位置。
+   *
+   * 用户亲手点了，焦点保护留下的那份放行就作废（否则它会一直替用户「摊着」，下一次
+   * 收起点击会被它抵掉）。
    */
   const toggleTurn = (): void => {
     if (collapsed) foldMotion.prepareExpand()
+    setRescued(null)
     foldMemory.set(turnKey, collapsed)
   }
   /**
@@ -310,6 +332,9 @@ export function SeatBody({
             onToggle={() => toggleGroup(head)}
             onRevealTurn={reveal}
             onTurnHidden={forgetMembers}
+            // 整轮真的把它藏起来那一拍关掉这一组：清存档（复位成兜底），**不写**「手动收起」。
+            // 为什么不用 toggleGroup：那是用户点击那条路，写进存档之后这一组的默认态就死了。
+            onTurnClosed={() => { foldMemory.clear([groupKeyOf(head)]) }}
           >
             {members.map((member) => seatRow(member, false))}
           </StepGroupSeat>
@@ -362,8 +387,16 @@ export function SeatBody({
     <FoldScopeContext.Provider value={foldMotion}>
     <>
       {seat.rows.length === 0 ? null : seatRow(seat.rows[0]!, false)}
+      {/* 真机探针的读数（`_verify-collapse-remount` 的 P8）：这一轮此刻开着，是因为
+          **放行**（`data-turn-rescue`）还是因为**用户手动存档**（`data-turn-manual`，
+          存档里明写着展开）。两者都缺席就是收起。 */}
       {showFoldRow && fold !== undefined ? (
-        <div className="entry-row" data-round={seat.round}>
+        <div
+          className="entry-row"
+          data-round={seat.round}
+          data-turn-manual={hasFold(turnKey) && readFold(turnKey, false) ? '1' : undefined}
+          data-turn-rescue={rescued === rescueKey ? '1' : undefined}
+        >
           <TurnFoldRow
             open={!collapsed}
             round={roundInfo}

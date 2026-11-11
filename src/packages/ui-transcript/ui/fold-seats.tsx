@@ -16,6 +16,7 @@ import {
 } from 'react'
 import { StepGroupRow } from './step-group-row'
 import { clearFold } from './fold-state'
+import { FoldResetContext, createFoldReset } from './fold-hook'
 import type { StepGroup } from './process-groups'
 
 /**
@@ -319,6 +320,8 @@ export function useProcessScroll(
  *   切走再切回，行按「会话 + 行身份」整批重挂，会把收起之前手动点开的思考 / 工具卡
  *   原样带回来。组里的成员行由 `StepGroupSeat` 那一条统一抹（它们的 `.entry-row`
  *   自己不会被挂 `hidden`）。
+ *   同一拍还要推进这一行的复位代次（{@link FoldResetContext}）：抹存档只管重挂之后，
+ *   已挂载的那一行要当场回默认态，见 `fold-hook.ts` 模块头「复位代次」。
  */
 export function RowSeat(props: {
   hidden: boolean
@@ -328,23 +331,41 @@ export function RowSeat(props: {
   children: ReactNode
 }): JSX.Element {
   const scope = useContext(FoldScopeContext)
+  /**
+   * 这一行的复位代次（见 `fold-hook.ts` 模块头「复位代次」）。
+   *
+   * 从 context 取「外层座位已经有的那一份」：阶段组里的成员行自己不会被挂 `hidden`
+   * （藏的是组座位），它们的复位只能由组座位推进——那一份由 `StepGroupSeat` 给出来。
+   * 组外的行没有外层代次，就自己造一份。谁真的会被藏，谁持有代次。
+   *
+   * 为什么不用一个全局代次：一轮收起会推进它，整屏所有行都跟着重渲染——本线前面那批
+   * 「流式每帧只重画一行」的成果就白做了。代次只经 `useSyncExternalStore` 订阅，
+   * 推进时只惊动真正订阅它的那几行。
+   */
+  const enclosingReset = useContext(FoldResetContext)
+  const [ownReset] = useState(createFoldReset)
+  const reset = enclosingReset ?? ownReset
   const reveal = useStableCallback(props.onReveal)
-  // 真的挂上 `hidden` 那一拍才抹（放行时不会跑到这里，见 useSearchableHidden 的 onHidden）：
-  // 用户手动展开的行，在这一轮被自动收起时复位成默认收起态。
+  // 真的挂上 `hidden` 那一拍才做（放行时不会跑到这里，见 useSearchableHidden 的 onHidden）：
+  // 先抹掉这一行的手动存档，再推进代次——已挂载的这一行因此当场回默认态，不用等重挂。
+  // 顺序不能反：行读到的是「抹过存档之后」的默认态（`fold-hook.ts` 的复位分支）。
   const forgetFold = useStableCallback((): void => {
     clearFold(props.foldStoreKey)
+    reset.bump()
   })
   // 收起时**不在这里**判断隐藏时机：这一条在过程区里，交给这一轮的折叠动画——
   // 见过的元素走逐行收、末帧提交；刚挂上来的元素（切会话按新键重挂）当场就是收起的。
   const ref = useSearchableHidden(props.hidden, reveal, scope?.transition, forgetFold)
   return (
-    <div
-      ref={ref}
-      className="entry-row"
-      data-round={props.roundIndex === undefined ? undefined : props.roundIndex}
-    >
-      {props.children}
-    </div>
+    <FoldResetContext.Provider value={reset}>
+      <div
+        ref={ref}
+        className="entry-row"
+        data-round={props.roundIndex === undefined ? undefined : props.roundIndex}
+      >
+        {props.children}
+      </div>
+    </FoldResetContext.Provider>
   )
 }
 
@@ -365,6 +386,9 @@ export function RowSeat(props: {
  * @param props.onTurnHidden 整轮**真的**把这一层藏起来了（`hidden` 已挂上）：组里那些行
  *   自己的展开存档由调用方在这一拍抹掉（行是纯函数现算的，只有渲染层手上有清单）。
  *   被焦点保护放行的那一拍**不会**调它。
+ * @param props.onTurnClosed 同一拍把这一组自己的展开态复位（清存档，**不写**「手动收起」）。
+ *   为什么不复用 `onToggle`：那是用户点击那条路，会把手动选择写进存档——自动收起不是
+ *   用户的选择，写成手动之后兜底（以及以后任何默认态）就再也翻不动这一组了。
  */
 export function StepGroupSeat(props: {
   group: StepGroup
@@ -375,10 +399,19 @@ export function StepGroupSeat(props: {
   /** 整轮被收起时，浏览器查找命中要把它放出来的动作。 */
   onRevealTurn(): void
   onTurnHidden(): void
+  onTurnClosed(): void
   children: ReactNode
 }): JSX.Element {
   const scope = useContext(FoldScopeContext)
   const revealTurn = useStableCallback(props.onRevealTurn)
+  /**
+   * 这一组自己的复位代次（见 `fold-hook.ts` 模块头「复位代次」）。
+   *
+   * 组内成员行的 `.entry-row` 自己不会被挂 `hidden`（藏的是这个组座位），所以它们的复位
+   * 只能由这一层推进代次：真挂上 `hidden` 那一拍 `bump()`，订阅了它的成员行当场回默认态。
+   * 组外的行各自持有自己那一份（`RowSeat`）。
+   */
+  const [resetSource] = useState(createFoldReset)
   /**
    * 这一组现在展开着没有，每次渲染刷新。
    *
@@ -393,7 +426,7 @@ export function StepGroupSeat(props: {
   const closeGroup = (): void => {
     if (!openRef.current) return
     openRef.current = false
-    props.onToggle()
+    props.onTurnClosed()
   }
   /**
    * 整轮**真的**挂上 `hidden` 的那一拍：关掉这一组，并让调用方抹掉组里行的展开存档
@@ -409,6 +442,10 @@ export function StepGroupSeat(props: {
   const turnHidden = useStableCallback((): void => {
     closeGroup()
     props.onTurnHidden()
+    // 抹完组内行的手动存档再推进代次（顺序不能反：成员行读到的是「抹过之后」的默认态，
+    // 见 `fold-hook.ts` 的复位分支）。组已经关着也照推——用户手点开过的那几条行
+    // 同样得在这一拍复位。
+    resetSource.bump()
   })
   // 外层（组头 + 组体一起藏）也归整轮逐行动画：它是 `display: none`，早挂一帧就把这一行的
   // 高度抽走、动画等于没跑。刚挂上来的元素（切会话重挂）则在挂载时当场就是收起的。
@@ -446,24 +483,26 @@ export function StepGroupSeat(props: {
     toggleRef.current()
   }, [props.turnCollapsed, props.open, scope, seatRef])
   return (
-    <div ref={seatRef} className="step-seat">
-      <StepGroupRow
-        group={props.group}
-        open={props.open}
-        showDetail={props.showDetail}
-        onToggle={props.onToggle}
-      />
-      <div
-        ref={bodyRef}
-        className="step-body"
-        data-step-body
-        data-scroll-up={edges.up ? '1' : undefined}
-        data-scroll-down={edges.down ? '1' : undefined}
-      >
-        <div ref={contentRef} className="step-content">
-          {props.children}
+    <FoldResetContext.Provider value={resetSource}>
+      <div ref={seatRef} className="step-seat">
+        <StepGroupRow
+          group={props.group}
+          open={props.open}
+          showDetail={props.showDetail}
+          onToggle={props.onToggle}
+        />
+        <div
+          ref={bodyRef}
+          className="step-body"
+          data-step-body
+          data-scroll-up={edges.up ? '1' : undefined}
+          data-scroll-down={edges.down ? '1' : undefined}
+        >
+          <div ref={contentRef} className="step-content">
+            {props.children}
+          </div>
         </div>
       </div>
-    </div>
+    </FoldResetContext.Provider>
   )
 }
