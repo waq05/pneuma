@@ -59,6 +59,12 @@ export interface ComposerProps {
   completionsEnabled?: boolean
   /** 工作区文件清单的来源（@ 提及补全；dock 不可用时可以不传，@ 补全退化为空）。 */
   lister?: DirLister
+  /**
+   * 已授权的工作区根（多根 @ 补全）。给了它就走多根遍历（第一个是会话 cwd，
+   * 其余来自配置的 `workspaceRoots`），不再用 `lister` 逐目录拉；候选里其它根的
+   * 文件以绝对路径插入，工具能直接打开。
+   */
+  roots?: readonly string[]
   /** 补全面板开合变化（App 需要：Esc 打断与「关面板」的分流）。 */
   onPanelOpenChange?: (open: boolean) => void
   /** 草稿变化上报（App 的双击 Esc 撤回要判断输入框是否为空）。 */
@@ -143,6 +149,7 @@ export function Composer({
   placeholder,
   completionsEnabled = true,
   lister,
+  roots,
   onPanelOpenChange,
   onDraftChange,
   preset,
@@ -195,12 +202,17 @@ export function Composer({
 
   /** 第一次需要 @ 候选时才拉工作区文件清单（异步递归，失败当空表——补全只是锦上添花）。 */
   useEffect(() => {
-    if (mention === null || mentionLoaded.current || lister === undefined) return
+    if (mention === null || mentionLoaded.current) return
+    const multi = roots !== undefined && roots.length > 0
+    if (!multi && lister === undefined) return
     mentionLoaded.current = true
-    void collectWorkspaceFiles(lister)
+    const load = multi
+      ? collectWorkspaceFiles(roots).then((entries) => entries.map((entry) => entry.path))
+      : collectWorkspaceFiles(lister as DirLister)
+    void load
       .then((files) => setMentionFiles(files))
       .catch(() => setMentionFiles([]))
-  }, [mention, lister])
+  }, [mention, lister, roots])
 
   // 草稿上报（App 判断「输入框为空」的依据）；preset 灌入（撤回文本回框）。
   useEffect(() => {

@@ -28,6 +28,7 @@
  * @module dsc-tui/app/App
  */
 import { spawn } from 'node:child_process'
+import { allowedWorkspaceRoots } from '@pneuma/runtime/core/config.js'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Box, Text, useInput, useStdout } from 'ink'
 import type { DOMElement } from 'ink'
@@ -279,6 +280,12 @@ export function App({
   const lastCtrlC = useRef(0)
   /** 可切换模型列表：进程内静态，取一次即可。 */
   const models = useMemo(() => runtime.listModels(), [runtime])
+  // 多根 @ 补全：第一个是会话 cwd，其余来自配置的 workspaceRoots（宿主侧那份清单，
+  // 界面不自己拼路径）。配置改动要重开会话才生效，与 `workspaceRoots` 的读取时机一致。
+  const mentionRoots = useMemo(
+    () => (snapshot.status.cwd === undefined ? undefined : allowedWorkspaceRoots(snapshot.status.cwd)),
+    [snapshot.status.cwd],
+  )
   /** @ 提及补全的文件清单来源（dock 的 fs-list；不可用时补全退化为空）。 */
   const dockLister = useCallback<DirLister>(
     (dir) =>
@@ -1834,6 +1841,7 @@ export function App({
               placeholder={planFeedback ? '反馈原话（Enter 退回计划，Esc 取消）' : undefined}
               completionsEnabled={!planFeedback}
               lister={dockLister}
+              roots={mentionRoots}
               onPanelOpenChange={setPanelOpen}
               onDraftChange={handleDraftChange}
               preset={composerPreset}
