@@ -217,8 +217,13 @@ export const llmPlugin: Plugin.Object<DscCoreConfig> = {
             // 成功请求的追踪号只在这里留下一行：所有模型请求都从这条缝过，
             // 放在这里一次就够，不必让回合环、压缩、标题各记一遍。
             onRequestDebug: (debug) => {
-              const id = debug.requestId ?? debug.cfRay ?? '-'
-              ctx.logger.debug('llm %s request-id %s', api, id)
+              const id = debug.requestId ?? debug.cfRay
+              if (id !== undefined) {
+                ctx.logger.debug('llm %s request-id %s', api, id)
+                // 同时落进会话日志（note 记录）：事后按会话回查「那一次请求」靠这一条。
+                // note 不进提示词、不上界面，也不改请求体，只占日志一行。
+                ctx.session.current().appendNote('llm/request-id', `${api} ${id}`)
+              }
               handlers.onRequestDebug?.(debug)
             },
           },
