@@ -16688,6 +16688,28 @@ zcode 按时段一共六句、每段一句，句子的主语全是「你」和�
 
 - 后端还没把 `--timeout` 接上（Bash 工具的超时仍由宿主杀 runner + 作业对象收子树兜底）；等 S6 一起接。
 
+## 2026-11-11：修掉「开子代理就卡」的真因（补排自己喂自己）
+
+**为什么**
+
+`tui-subagent-live-test` 的提交率断言一直红着：队友流式期间 85~132 次/秒，预期 ≤25，控制台还反复打 `Maximum update depth exceeded`。只读诊断把范围收窄到了 `tui/app/TranscriptViewport.tsx`，与同期改的桌面界面无关——那条链路根本不进 TUI 这棵树。
+
+**根因**
+
+- `TranscriptViewport.tsx:165-173` 在**渲染体里**统计「新量到、且与估算不符」的行，写进 `fixups.current`。
+- 紧接着的 `useEffect` 没有依赖数组，每次提交都跑：只要 `fixups > 0` 就 `setPass` 再排一帧。
+- 补排那一帧窗口整体平移，又量到一批新行、又是「与估算不符」→ 再补一帧。补排自己喂自己，一路撞到 React 的嵌套更新上限，提交率比合并窗口（80ms ≈ 12.5 次/秒）高了近十倍。
+
+**做法**
+
+补排只做一次（`fixupDone`）：首屏对齐只需要落地一帧，之后的行高由下一口合并快照带上。同时把那段注释改成事实——原文写「签名只看条目数 + 已量条数」，代码里既没有签名也没有依赖数组，注释在描述一个不存在的实现。
+
+**验证**
+
+- `node scripts/tui-subagent-live-test.mjs`：提交率 **12.0 次/秒**（原 85~132），四条断言全绿，`Maximum update depth exceeded` 不再出现。
+- 回归：`tui-transcript-scroll`（11 段全 PASS）、`tui-scroll-model`、`tui-snapshot-coalesce`、`tui-transcript-style`、`tui-features` 全部 exit 0、零 FAIL。
+
+
 
 
 

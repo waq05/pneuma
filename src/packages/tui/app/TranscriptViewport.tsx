@@ -304,10 +304,14 @@ export const TranscriptViewport = forwardRef<TranscriptViewportApi, TranscriptVi
     /**
      * 量到的真值要「落地一次」：首帧的位置全是估算出来的，排完这一帧才拿到真实行高——
      * 不重排一次，首屏就可能停在错误的行上（试过：可视区里出现半屏空占位）。
-     * 签名只看「条目数 + 已量条数」，所以流式增量不会反复触发（那是同一个签名），
-     * 只有「新条目进来」或「又量到一批」才多排一帧，且必然收敛。
+     *
+     * 补排**只做一次**（`fixupDone`）：这一帧新量到的行会让窗口整体平移，平移又量到
+     * 一批新行，每次都「与估算不符」就每次都再补一帧——补排会自己喂自己，一路撞到
+     * React 的嵌套更新上限（表现为 `Maximum update depth exceeded`，提交率从 ~12 次/秒
+     * 飙到 85 以上）。首屏对齐只需要落地一次，之后的行高由下一口合并快照（≤80ms）带上。
      */
     const [, setPass] = useState(0)
+    const fixupDone = useRef(false)
     useEffect(() => {
       if (viewportLines !== undefined) return
       const measured = measuredHeight(boxRef.current)
@@ -315,7 +319,8 @@ export const TranscriptViewport = forwardRef<TranscriptViewportApi, TranscriptVi
       setSelfLines(measured)
     })
     useEffect(() => {
-      if (fixups.current === 0) return
+      if (fixupDone.current || fixups.current === 0) return
+      fixupDone.current = true
       fixups.current = 0
       setPass((current) => current + 1)
     })
