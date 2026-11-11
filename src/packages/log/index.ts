@@ -203,8 +203,8 @@ export const logPlugin: Plugin.Object = {
       {
         name: 'log',
         args: '[条数]',
-        label: '日志',
-        description: '看日志落在哪、最近几条',
+        label: t('command.label'),
+        description: t('command.description'),
         duringTask: 'allow',
       },
       ({ args, ui }) => {

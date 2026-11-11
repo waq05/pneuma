@@ -24,5 +24,7 @@
   "save.notNumber": "Enter a positive number",
   "save.unknownKey": "Unknown setting: {key}",
   "action.unknown": "Unknown action: {name}",
-  "action.cleanupDone": "Cleaned up: removed {dirs} directories, freed {bytes}"
+  "action.cleanupDone": "Cleaned up: removed {dirs} directories, freed {bytes}",
+  "command.label": "Log",
+  "command.description": "Where the log lives and the latest entries"
 }

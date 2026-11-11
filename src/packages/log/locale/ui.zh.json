@@ -24,5 +24,7 @@
   "save.notNumber": "请输入一个正数",
   "save.unknownKey": "未知的配置项：{key}",
   "action.unknown": "未知的操作：{name}",
-  "action.cleanupDone": "清理完成：删了 {dirs} 个目录，释放 {bytes}"
+  "action.cleanupDone": "清理完成：删了 {dirs} 个目录，释放 {bytes}",
+  "command.label": "日志",
+  "command.description": "看日志落在哪、最近几条"
 }
