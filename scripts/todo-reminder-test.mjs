@@ -271,11 +271,31 @@ console.log('[3] 端到端：默认 8 轮不早发、调小间隔后到点注入
   check('注入的是 user 角色', body4.at(-1)?.role === 'user' && body4.at(-1)?.content === TODO_REMINDER_TEXT, JSON.stringify(body4.at(-1)))
   check('提醒落在请求末尾（env 快照之后）', reminderAt(body4) === body4.length - 1, `at=${reminderAt(body4)}/len=${body4.length}`)
 
-  // 不改日志：内存里的会话消息与磁盘 jsonl 都不该有这条提醒
+  // 不改日志：内存里的会话消息里不该有这条提醒；磁盘上只允许「注入标记」留一条预览。
+  // `state` + `context-injected` 是给界面画「这里注入过一条」用的元数据，不是消息
+  // （2026-11 起就有）。旧断言按整份文本找，会把这条元数据误判成「提醒被写进日志」。
   const inMemory = ctx.session.current().messages.some((m) => m.content === TODO_REMINDER_TEXT)
   check('会话日志（内存）里没有提醒', inMemory === false, '日志被改了')
-  const fileText = readFileSync(ctx.session.current().filePath, 'utf8')
-  check('会话 jsonl 文件里没有提醒', !fileText.includes(TODO_REMINDER_TEXT), ctx.session.current().filePath)
+  const records = readFileSync(ctx.session.current().filePath, 'utf8')
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line)]
+      } catch {
+        return []
+      }
+    })
+  const asMessage = records.some(
+    (record) =>
+      (record.type === 'user' || record.type === 'assistant') && JSON.stringify(record).includes(TODO_REMINDER_TEXT),
+  )
+  check('会话 jsonl 里没有把提醒当成消息落盘', asMessage === false, ctx.session.current().filePath)
+  const marker = records.some(
+    (record) =>
+      record.type === 'state' && record.id === 'context-injected' && JSON.stringify(record).includes(TODO_REMINDER_TEXT),
+  )
+  check('注入标记（context-injected）记下了这一条的预览', marker === true, ctx.session.current().filePath)
 
   // 清空清单：没有未完成项就不该再提醒
   ctx.todo.clearTodos()
