@@ -17,5 +17,16 @@
       "text": "再动手",
       "status": "pending"
     }
-  ]
+  ],
+  "log": {
+    "records": 6,
+    "types": [
+      "meta",
+      "state",
+      "state",
+      "state",
+      "state",
+      "user"
+    ]
+  }
 }

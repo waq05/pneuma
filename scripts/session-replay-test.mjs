@@ -30,6 +30,8 @@ check('preset 按日志恢复', state.preset === 'build', String(state.preset))
 check('permissions 三项都在', state.permissions?.sandbox === 'workspace-write' && state.permissions?.policy === 'auto-edit', JSON.stringify(state.permissions))
 check('todos 整表恢复（含状态）', Array.isArray(state.todos) && state.todos.length === 2 && state.todos[1]?.status === 'pending', JSON.stringify(state.todos))
 check('没写过的状态是 undefined（不能凭空出现在快照里）', state.plan === undefined && state.plans === undefined, JSON.stringify(state.plans))
+check('重放不会往日志里多写记录', state.log?.records === 6, String(state.log?.records))
+check('日志记录类型顺序不变', JSON.stringify(state.log?.types) === JSON.stringify(['meta', 'state', 'state', 'state', 'state', 'user']), JSON.stringify(state.log?.types))
 
 // 快照盯的是「整包形状」：哪天某个插件开始往会话里多写一条状态，这里会红
 snapshotJson(fileURLToPath(new URL('./session-replay.snapshot.json', import.meta.url)), state)

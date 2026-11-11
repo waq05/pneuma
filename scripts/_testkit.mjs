@@ -255,11 +255,35 @@ export async function replaySession(fixture, options = {}) {
     /** @type {Record<string, unknown>} */
     const out = {}
     for (const key of keys) out[key] = session.state(key)
+    // 日志记录序列也要进快照：只钉状态键的话，「重放又往日志里多写了几条」发现不了。
+    // 不用 `transcript.getSnapshot()`——它会留下一个异步句柄，进程跑完不退出（实测）。
+    if (options.includeLog !== false) {
+      let types = []
+      try {
+        // 直接读我们自己写的那份 replay.jsonl：`session.filePath` 的取值随实现走，
+        // 这里只需要「重放之后这份文件长什么样」，用自己手里的路径最稳
+        types = readFileSync(replayFile, 'utf8')
+          .split('\n')
+          .filter((line) => line.trim() !== '')
+          .map((line) => {
+            try {
+              return String(JSON.parse(line).type ?? '?')
+            } catch {
+              return 'broken'
+            }
+          })
+      } catch {
+        types = []
+      }
+      out.log = { records: types.length, types }
+    }
     return out
   } finally {
     if (kernel !== undefined) {
       try {
-        kernel.dispose()
+        // cordis 的 dispose 是异步卸载：不 await 的话，插件里的定时器还挂着，
+        // 测试进程会「跑完了但不退出」（读消息流时尤其明显）
+        await kernel.dispose()
       } catch {
         // 卸载失败不影响已读到的状态
       }
