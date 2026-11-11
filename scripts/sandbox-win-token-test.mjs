@@ -9,7 +9,9 @@
  *   [纯函数] `parseRunnerArgs` / `strictlyInside` / `quoteArgv`：任何平台都跑，
  *            不建令牌、不动 ACL、不要管理员；
  *   [集成]   Windows 且 `probeWindowsToken()` 可用时，真造一个 workspace-write 执行器，
- *            让 powershell 同时写工作区内与工作区外，断言「里面写成、外面拒掉」。
+ *            让 powershell 同时写工作区内与工作区外，断言「里面写成、外面拒掉」；
+ *            外加一条 read-only 的超时用例（`--timeout 1000` 掐掉一个睡 10 秒的
+ *            powershell，断言 3 秒内结束、退出码 124、stderr 有超时说明）。
  *            跑不起来（非 Windows / koffi 缺失 / 授权失败）就 SKIP 并打印确切原因，
  *            绝不把这一段删掉——删掉等于把唯一的实证让出去。
  *
@@ -177,6 +179,38 @@ check('RUNNER_SIGNATURE 是宿主诊断认的那一行', RUNNER_SIGNATURE === 'd
   check('-- 之后没有命令抛错', emptyCommand.ok, emptyCommand.why)
 }
 
+// ── parseRunnerArgs：--timeout 的解析与四种必须抛错的输入 ──────────────────
+{
+  /** 一份最小合法 argv（read-only 不要可写根），只把 --timeout 那一段换掉 */
+  const withTimeout = (...values) => [
+    '--mode', 'read-only',
+    '--temp', 'C:\\sandbox\\tmp',
+    ...values,
+    '--', 'cmd',
+  ]
+
+  const defaulted = parseRunnerArgs(withTimeout())
+  check('不给 --timeout 时是 0（不限）', defaulted.timeoutMs === 0, String(defaulted.timeoutMs))
+
+  const given = parseRunnerArgs(withTimeout('--timeout', '1000'))
+  check('--timeout 1000 解析成 1000', given.timeoutMs === 1000, String(given.timeoutMs))
+
+  const negative = throwsWith(() => parseRunnerArgs(withTimeout('--timeout', '-1')), /--timeout 只认非负十进制整数/)
+  check('--timeout -1 抛错（负数不许静默变成 INFINITE）', negative.ok, negative.why)
+
+  const notNumber = throwsWith(() => parseRunnerArgs(withTimeout('--timeout', 'abc')), /--timeout 只认非负十进制整数/)
+  check('--timeout abc 抛错（错误信息带上收到的值）', notNumber.ok && notNumber.why.includes('abc'), notNumber.why)
+
+  const missingValue = throwsWith(() => parseRunnerArgs(withTimeout('--timeout')), /--timeout 需要一个毫秒数/)
+  check('--timeout 缺值抛错', missingValue.ok, missingValue.why)
+
+  const duplicated = throwsWith(
+    () => parseRunnerArgs(withTimeout('--timeout', '1000', '--timeout', '2000')),
+    /--timeout 给重复了/,
+  )
+  check('--timeout 重复给抛错', duplicated.ok, duplicated.why)
+}
+
 // ── strictlyInside：只用文档承诺的语义（大小写不敏感 + 分隔符边界） ──────────
 {
   check('根内的路径为 true', strictlyInside('C:\\a\\b', 'C:\\a') === true)
@@ -221,6 +255,7 @@ if (process.platform !== 'win32') {
   } else {
     note(`探测结果：${probe.detail}`)
     await runIntegration(backend)
+    await runTimeoutCase()
   }
 }
 
@@ -364,6 +399,60 @@ async function runIntegration(backend) {
     }
     if (details.length > 0) note(`执行器自述：${details.join(' / ')}`)
     removeTree(outsideRoot)
+  }
+}
+
+/**
+ * 超时用例：让 powershell 睡 10 秒，runner 必须在 1 秒后自己把它掐掉。
+ *
+ * 为什么用 read-only 档：这一条测的是 runner 自己的超时与收尾，跟文件系统强制无关，
+ * 少一步 ACL 授权就少一个可能红的边缘因素。
+ *
+ * 断言三件事：3 秒内真的结束（不是等它睡完）、退出码是 124、stderr 那一行以
+ * `RUNNER_SIGNATURE` 开头并带「超时」——少了签名，宿主就分不清这是 runner 说的
+ * 还是被限制的命令自己打出来的。
+ */
+async function runTimeoutCase() {
+  console.log('')
+  console.log('── 集成：--timeout 到点后终止整个作业并退 124')
+  const tempDir = mkdtempSync(join(tmpdir(), 'dsc-win-token-timeout-'))
+  try {
+    // 直接 spawn runner（不走执行器 plan）：这里要验的就是 runner 自己的参数与行为，
+    // 套一层执行器只会把「--timeout 到底有没有传下去」混进被测范围
+    const args = [
+      join(ROOT, 'lib/packages/sandbox/win/runner-entry.js'),
+      '--mode', 'read-only',
+      '--temp', tempDir,
+      '--timeout', '1000',
+      '--', 'powershell', '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 10',
+    ]
+    const started = Date.now()
+    const spawned = await spawnPlan({ file: process.execPath, args, cwd: sandboxRoot }, { ...process.env })
+    const elapsed = Date.now() - started
+    if (spawned.error !== undefined) {
+      note(`runner 子进程起不来：${spawned.error}`)
+      if (skipReason === null) skipReason = `超时用例的 runner 子进程起不来：${spawned.error}`
+      return
+    }
+
+    note(`超时用例耗时 ${String(elapsed)}ms，真实退出码 ${String(spawned.code)}`)
+    if (spawned.err.trim() !== '') note(`stderr：${spawned.err.trim()}`)
+
+    check(
+      '超时用例 3 秒内结束（没等子进程睡完 10 秒）',
+      spawned.timedOut === false && elapsed < 3000,
+      `耗时 ${String(elapsed)}ms，timedOut=${String(spawned.timedOut)}`,
+    )
+    check('超时退出码是 124（与 GNU timeout 同义）', spawned.code === 124, `真实退出码 ${String(spawned.code)}`)
+    check('stderr 里说明了超时', /超时/.test(spawned.err), spawned.err.slice(0, 200))
+    const timeoutLine = spawned.err.split('\n').find((line) => line.startsWith(RUNNER_SIGNATURE))
+    check(
+      'stderr 那一行以 RUNNER_SIGNATURE 开头并带「超时」',
+      timeoutLine !== undefined && /超时/.test(timeoutLine),
+      timeoutLine ?? 'stderr 里没有以签名开头的行',
+    )
+  } finally {
+    removeTree(tempDir)
   }
 }
 

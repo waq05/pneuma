@@ -13,7 +13,12 @@
  *
  * argv 契约（宿主负责拼，runner 负责逐项验）：
  *   node runner-entry.js --mode <read-only|workspace-write> --temp <dir>
- *     [--root <sid>=<dir> …] -- <argv…>
+ *     [--timeout <ms>] [--root <sid>=<dir> …] -- <argv…>
+ *
+ * `--timeout` 是 runner 自己的兜底：宿主那边杀掉 runner 虽然也能靠作业对象收掉整棵
+ * 子树，但那条路要求宿主自己活着、且它拿到的超时时间与这里的一致；命令卡死这件事
+ * 由真正持有子进程的这一层负责，退出码 124（与 GNU timeout 同义）告诉调用方
+ * 「不是命令自己失败，是我们掐的」。
  *
  * 失败语义：runner 自身的问题打一行 `dsc-sandbox-run: …` 到 stderr 并退出 127；
  * 受限命令的退出码按**全宽 uint32** 原样镜像（NTSTATUS 不做有符号重映射）。
@@ -21,7 +26,9 @@
  * 几处踩过坑的硬约束（都别改）：
  *   - 绝不用 CREATE_NO_WINDOW / CREATE_NEW_CONSOLE：受限令牌下 DLL 初始化会死
  *     0xC0000142，只能 STARTF_USESHOWWINDOW + SW_HIDE；
- *   - 先排水后 WaitForSingleObject：管道缓冲填满时先 wait 会双方死锁；
+ *   - 排水必须先启动再 WaitForSingleObject（两者并行）：排水要等对端 EOF，而 EOF
+ *     只在子进程退出后才来；先 await 排水则卡死的命令永远走不到超时分支；反过来说
+ *     排水停下来等 wait 也不行——管道缓冲填满时子进程阻塞在写、永不退出，双方死锁；
  *   - AssignProcessToJobObject 必须在 ResumeThread **之前**：不受作业保护的受限进程
  *     一秒都不许跑。
  *
@@ -67,6 +74,14 @@ import { utf16Buffer } from './utf16.js'
 export const RUNNER_SIGNATURE = 'dsc-sandbox-run: '
 /** runner 自身失败的退出码。 */
 export const RUNNER_EXIT_CODE = 127
+/**
+ * 超时分支的退出码：124 与 GNU `timeout(1)` 同义（命令因超时被终止）。
+ * 不能沿用被杀进程的退出码——那样调用方分不出「命令自己失败了」与「我们把它掐了」。
+ */
+export const TIMEOUT_EXIT_CODE = 124
+
+/** WaitForSingleObject 的「等到超时」返回值（0x102）。 */
+const WAIT_TIMEOUT = 0x102
 
 /** 管道排水每次最多读的字节数（64KB，够填一页还不够撑爆内存）。 */
 const DRAIN_CHUNK = 65536
@@ -82,6 +97,13 @@ export interface RunnerArgs {
   /** 授权过的可写根：SID ↔ 路径成对（temp 自己也在里面）。 */
   roots: ReadonlyArray<{ sid: string; path: string }>
   /**
+   * 受限命令的墙钟超时（毫秒）；0 = 不限（默认）。
+   *
+   * 默认不限是刻意的：长跑的构建/测试本来就可能跑几十分钟，runner 自己猜一个上限
+   * 只会误杀；要不要设、设多少，由调用方一次性决定。
+   */
+  timeoutMs: number
+  /**
    * 网络第二级账号分支（可选）：`--account <名> --dsc-home <目录>` 成对给。
    * 给了就以专用离线账号跑命令：解密 account.bin → LogonUserW → 受限化账号令牌。
    */
@@ -94,6 +116,7 @@ export interface RunnerArgs {
 export function parseRunnerArgs(argv: readonly string[]): RunnerArgs {
   let mode: RunnerArgs['mode'] | undefined
   let tempDir: string | undefined
+  let timeoutMs: number | undefined
   let account: { name: string; dscHome: string } | undefined
   let dscHome: string | undefined
   const roots: Array<{ sid: string; path: string }> = []
@@ -121,6 +144,20 @@ export function parseRunnerArgs(argv: readonly string[]): RunnerArgs {
       // 同一个 flag 给两次是调用方 bug：静默取后者等于悄悄换了 TMP/TEMP 落点
       if (tempDir !== undefined) throw new Error('--temp 给重复了')
       tempDir = value
+      continue
+    }
+    if (flag === '--timeout') {
+      const value = flags[++index]
+      // 缺值与 `--timeout --` 都要拦在这里：`--` 会被当成值（正则不认），报错里带上原值
+      if (value === undefined) throw new Error('--timeout 需要一个毫秒数（0 = 不限）')
+      // 只认非负十进制整数：`-1`、`1e3`、`abc`、`1000ms` 全部拦下。
+      // 放它们过去的话，koffi 会把它当 uint32 强转（-1 → 4294967295 = INFINITE），
+      // 静默变成「不限」，与调用方的意图正好相反
+      if (!/^\d+$/.test(value)) {
+        throw new Error(`--timeout 只认非负十进制整数（毫秒），收到「${value}」`)
+      }
+      if (timeoutMs !== undefined) throw new Error('--timeout 给重复了')
+      timeoutMs = Number(value)
       continue
     }
     if (flag === '--root') {
@@ -189,7 +226,14 @@ export function parseRunnerArgs(argv: readonly string[]): RunnerArgs {
   }
   // ⚠ account 必须出现在返回值里：漏了它的话账号分支会被「静默跳过」——
   // 命令照常以当前用户受限令牌跑、退出码一切正常，网络第二级等于悄悄失效
-  return { mode, tempDir, roots, ...(account === undefined ? {} : { account }), childArgv }
+  return {
+    mode,
+    tempDir,
+    roots,
+    timeoutMs: timeoutMs ?? 0,
+    ...(account === undefined ? {} : { account }),
+    childArgv,
+  }
 }
 
 /** 路径等价判定：大小写不敏感、末尾分隔符不算数（Windows 口径）。 */
@@ -333,109 +377,162 @@ async function main(): Promise<number> {
     ...(accountToken === undefined ? {} : { accountToken }),
   })
 
-  // 三对匿名管道；只给子进程端打继承位（父端要立刻关掉，否则排水永远等不到 EOF）
-  const stdinRead = slotUintPtr(bound)
-  const stdinWrite = slotUintPtr(bound)
-  const stdoutRead = slotUintPtr(bound)
-  const stdoutWrite = slotUintPtr(bound)
-  const stderrRead = slotUintPtr(bound)
-  const stderrWrite = slotUintPtr(bound)
-  for (const pair of [[stdinRead, stdinWrite], [stdoutRead, stdoutWrite], [stderrRead, stderrWrite]] as const) {
-    if (Number(bound.createPipe(pair[0].slot, pair[1].slot, null, 0)) === 0) throwLastError(bound, 'CreatePipe')
+  /**
+   * 本进程自己拿到、必须自己关的句柄：三对管道 + 子进程 + 主线程 + 作业。
+   *
+   * 统一登记在册，正常路径逐根关，`finally` 兜底把漏掉的关掉——CreateProcessAsUserW
+   * 失败、ResumeThread 失败、排水抛错都在函数中途退出，指望每条分支自己记得收尾
+   * 必然漏；而漏掉的管道读端会让排水永远等不到 EOF。
+   */
+  const ownedHandles = new Set<number>()
+  /**
+   * 关一根自己持有的句柄。Set 里已经没有它就说明关过了，直接跳过：句柄值会被系统
+   * 立刻复用，同一个值关两次等于误关别的对象。
+   */
+  const closeOwned = (handle: number): void => {
+    if (!ownedHandles.delete(handle)) return
+    bound.closeHandle(handle)
   }
-  for (const childEnd of [stdinRead.get(), stdoutWrite.get(), stderrWrite.get()]) {
-    if (Number(bound.setHandleInformation(childEnd, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)) === 0) {
-      throwLastError(bound, 'SetHandleInformation')
-    }
-  }
 
-  // 命令行按 CommandLineToArgvW 规则引号化：lpApplicationName 传 NULL，第一个 token 就是程序名
-  const commandLine = Buffer.from(`${args.childArgv.map((arg) => quoteArgv(arg)).join(' ')}\0`, 'utf16le')
-  const startup = packStartupInfo(stdinRead.get(), stdoutWrite.get(), stderrWrite.get())
-  // Buffer 出参直接给 koffi 取地址；它必须活到调用返回（这里是局部变量，满足）
-  const processInfo = Buffer.alloc(PROCESS_INFORMATION_SIZE)
-
-  const created = Number(bound.createProcessAsUserW(
-    token.handle,
-    null, // lpApplicationName：NULL → 从命令行第一个 token 解析
-    commandLine,
-    null, // lpProcessAttributes
-    null, // lpThreadAttributes
-    1, // bInheritHandles：三个子进程端要传下去
-    CREATE_SUSPENDED, // 先挂起：塞进作业前不许跑
-    null, // lpEnvironment：NULL（koffi 传显式块必失败），靠继承 runner 的环境
-    null, // lpCurrentDirectory：NULL = 用 runner 的 cwd（宿主设成的会话目录）
-    startup,
-    processInfo,
-  ))
-  if (created === 0) throwLastError(bound, 'CreateProcessAsUserW')
-  const hProcess = Number(processInfo.readBigUInt64LE(PI_OFFSETS.hProcess))
-  const hThread = Number(processInfo.readBigUInt64LE(PI_OFFSETS.hThread))
-
-  // 作业：KILL_ON_JOB_CLOSE —— runner 死（含被 taskkill）= 整棵子树被内核收掉
-  //
-  // 从 CreateProcessAsUserW 成功到子进程真正入作业之间，它一直处于**挂起**态；
-  // 这段窗口里任何一步失败，都必须当场把它杀掉：一个不受作业保护的受限进程
-  // 一秒都不许活着（否则 runner 退出后会留下一个永远挂起的孤儿）。
-  let job = 0
   try {
-    job = Number(bound.createJobObjectW(null, null))
-    if (job === 0) throwLastError(bound, 'CreateJobObjectW')
-    if (Number(bound.setInformationJobObject(
-      job,
-      JobObjectExtendedLimitInformation,
-      packJobLimits(),
-      JOBOBJECT_EXTENDED_LIMIT_SIZE,
-    )) === 0) {
-      throwLastError(bound, 'SetInformationJobObject')
+    // 三对匿名管道；只给子进程端打继承位（父端要立刻关掉，否则排水永远等不到 EOF）
+    const stdinRead = slotUintPtr(bound)
+    const stdinWrite = slotUintPtr(bound)
+    const stdoutRead = slotUintPtr(bound)
+    const stdoutWrite = slotUintPtr(bound)
+    const stderrRead = slotUintPtr(bound)
+    const stderrWrite = slotUintPtr(bound)
+    for (const pair of [[stdinRead, stdinWrite], [stdoutRead, stdoutWrite], [stderrRead, stderrWrite]] as const) {
+      if (Number(bound.createPipe(pair[0].slot, pair[1].slot, null, 0)) === 0) throwLastError(bound, 'CreatePipe')
+      // 建一对登记一对：建到第三对失败时，前两对也已经拿到句柄了
+      ownedHandles.add(pair[0].get())
+      ownedHandles.add(pair[1].get())
     }
-    if (Number(bound.assignProcessToJobObject(job, hProcess)) === 0) {
+    for (const childEnd of [stdinRead.get(), stdoutWrite.get(), stderrWrite.get()]) {
+      if (Number(bound.setHandleInformation(childEnd, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)) === 0) {
+        throwLastError(bound, 'SetHandleInformation')
+      }
+    }
+
+    // 命令行按 CommandLineToArgvW 规则引号化：lpApplicationName 传 NULL，第一个 token 就是程序名
+    const commandLine = Buffer.from(`${args.childArgv.map((arg) => quoteArgv(arg)).join(' ')}\0`, 'utf16le')
+    const startup = packStartupInfo(stdinRead.get(), stdoutWrite.get(), stderrWrite.get())
+    // Buffer 出参直接给 koffi 取地址；它必须活到调用返回（这里是局部变量，满足）
+    const processInfo = Buffer.alloc(PROCESS_INFORMATION_SIZE)
+
+    const created = Number(bound.createProcessAsUserW(
+      token.handle,
+      null, // lpApplicationName：NULL → 从命令行第一个 token 解析
+      commandLine,
+      null, // lpProcessAttributes
+      null, // lpThreadAttributes
+      1, // bInheritHandles：三个子进程端要传下去
+      CREATE_SUSPENDED, // 先挂起：塞进作业前不许跑
+      null, // lpEnvironment：NULL（koffi 传显式块必失败），靠继承 runner 的环境
+      null, // lpCurrentDirectory：NULL = 用 runner 的 cwd（宿主设成的会话目录）
+      startup,
+      processInfo,
+    ))
+    // 这里以前直接抛，令牌与三对管道就漏了：现在照样抛，收尾由下面的 finally 统一做
+    if (created === 0) throwLastError(bound, 'CreateProcessAsUserW')
+    const hProcess = Number(processInfo.readBigUInt64LE(PI_OFFSETS.hProcess))
+    const hThread = Number(processInfo.readBigUInt64LE(PI_OFFSETS.hThread))
+    ownedHandles.add(hProcess)
+    ownedHandles.add(hThread)
+
+    // 作业：KILL_ON_JOB_CLOSE —— runner 死（含被 taskkill）= 整棵子树被内核收掉
+    //
+    // 从 CreateProcessAsUserW 成功到子进程真正入作业之间，它一直处于**挂起**态；
+    // 这段窗口里任何一步失败，都必须当场把它杀掉：一个不受作业保护的受限进程
+    // 一秒都不许活着（否则 runner 退出后会留下一个永远挂起的孤儿）。
+    // 句柄本身不在这里关：登记过，finally 会收（包括 job 建到一半就失败的情况）
+    let job = 0
+    try {
+      job = Number(bound.createJobObjectW(null, null))
+      if (job === 0) throwLastError(bound, 'CreateJobObjectW')
+      ownedHandles.add(job)
+      if (Number(bound.setInformationJobObject(
+        job,
+        JobObjectExtendedLimitInformation,
+        packJobLimits(),
+        JOBOBJECT_EXTENDED_LIMIT_SIZE,
+      )) === 0) {
+        throwLastError(bound, 'SetInformationJobObject')
+      }
+      if (Number(bound.assignProcessToJobObject(job, hProcess)) === 0) {
+        const code = Number(bound.getLastLastError()) >>> 0
+        throwWin32(bound, 'AssignProcessToJobObject', code)
+      }
+    } catch (error) {
+      bound.terminateProcess(hProcess, 1)
+      throw error
+    }
+    const resumed = Number(bound.resumeThread(hThread)) >>> 0
+    if (resumed === 0xffffffff) {
       const code = Number(bound.getLastLastError()) >>> 0
-      throwWin32(bound, 'AssignProcessToJobObject', code)
+      bound.terminateProcess(hProcess, 1)
+      throwWin32(bound, 'ResumeThread', code)
     }
-  } catch (error) {
-    bound.terminateProcess(hProcess, 1)
-    if (job !== 0) {
+
+    // 父端立刻关掉三个写端/读端（继承副本已在子进程手里）：不关的话读端永远等不到
+    // EOF，排水会一直转，命令跑完也回不来
+    closeOwned(stdinWrite.get())
+    closeOwned(stdoutWrite.get())
+    closeOwned(stderrWrite.get())
+
+    // 排水必须先「启动」再「等待」，不能先 await 排水：排水要等对端 EOF，而 EOF 只有
+    // 子进程退出（或被杀）后才来；先 await 排水的话卡死的命令永远走不到超时分支。
+    // 反过来也不会死锁：排水一直在读，管道缓冲填满时子进程阻塞在写、排水照旧推进
+    const drained = Promise.all([
+      drainPipe(bound, stdoutRead.get(), process.stdout),
+      drainPipe(bound, stderrRead.get(), process.stderr),
+    ])
+
+    const waitMs = args.timeoutMs === 0 ? INFINITE : args.timeoutMs
+    const waited = Number(bound.waitForSingleObject(hProcess, waitMs)) >>> 0
+    let exitCode: number
+    if (waited === WAIT_TIMEOUT) {
+      // 超时分支要有自己的退出码（124）：调用方得能一眼分开「命令自己失败了（原码
+      // 镜像）」与「我们把它掐了」，否则一个被掐死的进程留下什么码就只能认什么码
+      process.stderr.write(`${RUNNER_SIGNATURE}超时 ${String(args.timeoutMs)}ms，已终止整个作业\n`)
+      // 杀整个作业而不是单杀子进程：孙进程同样占着管道写端，只杀子进程的话排水
+      // 等不到 EOF、runner 自己卡在这行；作业终止后所有写端一起关，排水才收得干净
+      bound.terminateJobObject(job, 1)
+      // 再等它真的死（作业已终止，它必然在毫秒级退出；5 秒只是兜底，超了也不再等）
+      bound.waitForSingleObject(hProcess, 5000)
+      exitCode = TIMEOUT_EXIT_CODE
+    } else if (waited === WAIT_OBJECT_0) {
+      const code = slotUint32(bound)
+      if (Number(bound.getExitCodeProcess(hProcess, code.slot)) === 0) throwLastError(bound, 'GetExitCodeProcess')
+      exitCode = code.get() >>> 0
+    } else {
+      // WAIT_FAILED 等：句柄本身出了问题，照旧按 runner 失败抛
+      throwLastError(bound, 'WaitForSingleObject')
+    }
+    // 排水必须等干净再走：读端还在自己手里，此刻直接返回等于把管道里的输出丢掉
+    await drained
+
+    // 收尾顺序：先线程/进程，**作业最后关**。子进程已退出，关作业不会再杀人；
+    // 而 runner 被外部 taskkill 时作业句柄随进程关闭 → 内核按 KILL_ON_JOB_CLOSE
+    // 收掉整棵子树，这就是杀树语义（令牌由 finally 最后 dispose，与杀树无关）
+    closeOwned(hThread)
+    closeOwned(hProcess)
+    closeOwned(job)
+    return exitCode
+  } finally {
+    // 令牌必须在 finally 里关：dispose 收的是三根句柄（受限令牌、原令牌、OpenProcess
+    // 的进程句柄），而「CreateProcessAsUserW 失败」「ResumeThread 失败」「排水抛错」
+    // 这些分支都走不到函数末尾。runner 会被反复 spawn，每次漏三根句柄，
+    // 迟早把「失败也照样干净退出」这个前提吃掉
+    for (const handle of [...ownedHandles]) {
       try {
-        bound.closeHandle(job)
+        closeOwned(handle)
       } catch {
         /* 收尾失败不遮真实错误 */
       }
     }
-    throw error
+    token.dispose()
   }
-  const resumed = Number(bound.resumeThread(hThread)) >>> 0
-  if (resumed === 0xffffffff) {
-    const code = Number(bound.getLastLastError()) >>> 0
-    bound.terminateProcess(hProcess, 1)
-    throwWin32(bound, 'ResumeThread', code)
-  }
-
-  // 父端立刻关掉三个写端/读端（继承副本已在子进程手里）
-  for (const parentEnd of [stdinWrite.get(), stdoutWrite.get(), stderrWrite.get()]) {
-    if (Number(bound.closeHandle(parentEnd)) === 0) throwLastError(bound, 'CloseHandle(父端管道)')
-  }
-
-  // 先排水后等待：不排的话管道缓冲满会双方死锁
-  await Promise.all([
-    drainPipe(bound, stdoutRead.get(), process.stdout),
-    drainPipe(bound, stderrRead.get(), process.stderr),
-  ])
-
-  if (Number(bound.waitForSingleObject(hProcess, INFINITE)) !== WAIT_OBJECT_0) {
-    throwLastError(bound, 'WaitForSingleObject')
-  }
-  const exitCode = slotUint32(bound)
-  if (Number(bound.getExitCodeProcess(hProcess, exitCode.slot)) === 0) throwLastError(bound, 'GetExitCodeProcess')
-
-  // 收尾顺序：先线程/进程/令牌，**作业最后关**。子进程已退出，关作业不会再杀人；
-  // 而 runner 被外部 taskkill 时作业句柄随进程关闭 → 内核按 KILL_ON_JOB_CLOSE
-  // 收掉整棵子树，这就是杀树语义
-  bound.closeHandle(hThread)
-  bound.closeHandle(hProcess)
-  token.dispose()
-  bound.closeHandle(job)
-  return exitCode.get() >>> 0
 }
 
 main().then((code) => {

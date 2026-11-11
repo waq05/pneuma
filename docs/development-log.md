@@ -16666,6 +16666,29 @@ zcode 按时段一共六句、每段一句，句子的主语全是「你」和�
 - `tui-subagent-live-test` 的提交率断言红着：实测 85~132 次/秒，期望 ≤25，并伴随 React「Maximum update depth exceeded」。与本批改动无关，按独立缺陷另查。
 - 硬链接别名、读不受限、网络软墙三处结构缺口还没动（S5、S6）。
 
+## 2026-11-11：runner 补超时与收尾（S3）
+
+**为什么**
+
+上一批把解释器解析补好了，但 runner 自己还有三处会在生产里咬人：命令卡死时 runner 只能等宿主杀它；`CreateProcessAsUserW` 失败那条路会漏掉令牌与三对管道句柄；用户把 `DSC_NODE` 填错要等 spawn 才炸，报错还看不懂。
+
+**做法**
+
+- `runner-entry.ts` 加 `--timeout <ms>`（默认 0 = 不限），值只认非负整数；到点后打一行 `RUNNER_SIGNATURE + 超时 …` 到 stderr、`TerminateJobObject` 收掉整个作业、退出码 **124**（与 GNU timeout 同义，调用方能分清「命令自己失败」与「我们掐的」）。
+- 句柄统一登记进 `ownedHandles`，`finally` 兜底关闭，`token.dispose()` 也移进 finally；正常路径逐根关，关过的从 Set 里删掉，防止句柄值被复用后误关别的对象。
+- 排水顺序改了：先**启动**排水、再带超时等待、最后 await 排水。原来的「先 await 排水再等待」在无限等待时没问题，一旦加了超时就永远走不到超时分支——排水要等 EOF，而 EOF 只在子进程退出后才来。
+- `probeWindowsToken()` 早验 `DSC_NODE`：指向的文件不存在就当场报不可用并点名路径。
+
+**验证**
+
+- `pnpm run build`（76 包）+ `node --test "src/packages/sandbox/tests/*.test.mjs"`（8/8）通过。
+- `node scripts/sandbox-win-token-test.mjs` → 39 通过 / 0 失败；超时用例真实跑出「耗时 1205ms、退出码 124、stderr 带超时行」。
+
+**遗留**
+
+- 后端还没把 `--timeout` 接上（Bash 工具的超时仍由宿主杀 runner + 作业对象收子树兜底）；等 S6 一起接。
+
+
 
 
 

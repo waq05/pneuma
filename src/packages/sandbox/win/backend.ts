@@ -69,7 +69,8 @@ function runnerEntryPath(): string {
 }
 
 /**
- * 探一次受限令牌后端可用性：Windows + koffi 装得上 + runner 构建产物在。
+ * 探一次受限令牌后端可用性：Windows + koffi 装得上 + runner 构建产物在 +
+ * `DSC_NODE`（若设了）真的指向一个存在的文件。
  * 不实际建令牌（探测要快且无副作用），真正的失败在 runner 里响亮报出来。
  */
 export function probeWindowsToken(): { available: boolean; detail: string } {
@@ -79,6 +80,13 @@ export function probeWindowsToken(): { available: boolean; detail: string } {
   const entry = runnerEntryPath()
   if (!existsSync(entry)) {
     return { available: false, detail: `runner 入口没有构建产物：找不到 ${entry}（先跑 pnpm run build）` }
+  }
+  // DSC_NODE 是用户手填的解释器逃生口：指错了只有到 spawn 那一刻才会炸，报错还是
+  // 「spawn 某某 ENOENT」这种看不出根因的形态。探测阶段就点名它，比等第一条命令
+  // 失败再排查便宜得多。空白值等同于没给（与 resolveRunnerInterpreter 的口径一致）
+  const nodeOverride = process.env.DSC_NODE?.trim()
+  if (nodeOverride !== undefined && nodeOverride !== '' && !existsSync(nodeOverride)) {
+    return { available: false, detail: `DSC_NODE 指向的解释器不存在：${nodeOverride}` }
   }
   // 解释器形态只作诊断：Electron 宿主下 runner 靠 ELECTRON_RUN_AS_NODE 才能跑，
   // 用户看到「electron」就该知道这是正常的，「node」则说明宿主是命令行版。
