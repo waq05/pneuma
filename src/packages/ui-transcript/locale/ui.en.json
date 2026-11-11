@@ -94,6 +94,7 @@
   "transcript.injection.kind.repeatReminder": "Repeat reminder",
   "transcript.injection.expandTip": "Show what this request injected",
   "transcript.injection.collapseTip": "Hide what this request injected",
+  "transcript.injection.newOnlyTip": "Lists only the injections this request added; unchanged items are not repeated",
   "transcript.retry.active": "Retrying model request",
   "transcript.retry.started": "Retried model request",
   "transcript.retry.status": "{label} ({retry}/{maximum}) · {seconds}s",

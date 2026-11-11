@@ -12,7 +12,7 @@
  *   [3] 接线：render.tsx 两个 case 直画卡片（不走节点槽）、存档键是 `${sessionId ?? ''}:${row.stable}`
  *   [4] 结构表：round-fold 的 TURN_INDEPENDENT / rounds.ts 的轮尾早退 / ui.tsx 的欢迎态判据
  *   [5] 样式：两份卡用的每一个类名都在 views.css 里有规则（根类名与 CSS 一致）
- *   [6] 文案：26 个键在 zh / en 都在、两份键集一致、英文真译过、占位符两边都留
+ *   [6] 文案：27 个键在 zh / en 都在、两份键集一致、英文真译过、占位符两边都留
  *   [7] 反向钉：展开体里没有正文字段（没偷偷去改契约）、组件里没有中文字面量、没有 import 契约
  *
  * 运行：node --import ./scripts/_i18n-alias.mjs scripts/ui-prompt-cards-test.mjs
@@ -203,10 +203,12 @@ console.log('[5] 样式：组件用到的每个类名都在 views.css 里有规�
     region !== '' && !/rgba?\(|hsla?\(/.test(region) && !/#[0-9a-fA-F]{3,8}/.test(region), region.slice(0, 80))
 }
 
-console.log('[6] 文案：26 个键在 zh / en 都在，真译过，占位符两边都留')
+console.log('[6] 文案：27 个键在 zh / en 都在，真译过，占位符两边都留')
 {
   const keys = Object.keys(zh).filter((key) => key.startsWith('transcript.prompt.') || key.startsWith('transcript.injection.'))
-  check('两张卡一共 26 个键', keys.length === 26, String(keys.length))
+  // 26 → 27（2026-11-11）：注入卡头行多了一句口径提示（`transcript.injection.newOnlyTip`），
+  // 「卡片记的是这一跳新增了哪些注入」这句话得有个正式的字典位。
+  check('两张卡一共 27 个键', keys.length === 27, String(keys.length))
   for (const key of keys) {
     check(`zh 有 ${key}`, typeof zh[key] === 'string' && zh[key] !== '')
     check(`en 有 ${key}`, typeof en[key] === 'string' && en[key] !== '')
@@ -239,8 +241,14 @@ console.log('[7] 反向钉：没有正文字段、没有中文字面量、没有
   check('组件里没有中文字面量（文案只有字典一处）', !CJK.test(code))
   check('没有 import 契约（类型从条目上就地取，而不是另开一条依赖）',
     !/from '\.\.\/\.\.\/\.\.\/contract/.test(code) && !code.includes("@pneuma/runtime/contract"))
+  // 两张卡的说明都走原生 `title`（气泡层已下线，`data-tip` 不再是唯一载体）。
+  // 注入卡的头行是「口径 + 开合提示」拼一句（2026-11-11），所以它不再是 `title={open ? …}` 的三元；
+  // 这里按两张卡各自那一行的**具体形状**钉，强度不降：提示卡仍要求三元，注入卡要求带上
+  // `newOnlyTip` 那句与收起/展开两档。
   check('没有把 data-tip 当唯一说明（气泡层已下线，说明走原生 title）',
-    code.includes('title={open ?') && (code.match(/title=\{open \?/g) ?? []).length === 2)
+    !code.includes('data-tip')
+    && code.includes("title={open ? t('transcript.prompt.collapseTip') : t('transcript.prompt.expandTip')}")
+    && code.includes("title={`${t('transcript.injection.newOnlyTip')} · ${open ? t('transcript.injection.collapseTip') : t('transcript.injection.expandTip')}`}"))
 }
 
 console.log('')

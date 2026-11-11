@@ -94,6 +94,7 @@
   "transcript.injection.kind.repeatReminder": "重复调用提醒",
   "transcript.injection.expandTip": "展开这一轮注入了什么",
   "transcript.injection.collapseTip": "收起这一轮注入了什么",
+  "transcript.injection.newOnlyTip": "只列这一跳新增的注入；内容没变的项不会重复出现",
   "transcript.retry.active": "正在重试模型请求",
   "transcript.retry.started": "已重试模型请求",
   "transcript.retry.status": "{label}（{retry}/{maximum}） · {seconds}s",

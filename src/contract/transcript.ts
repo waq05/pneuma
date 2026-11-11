@@ -420,7 +420,10 @@ export const CONTEXT_INJECTION_KINDS = {
   mode: 'mode',
   /** 沙箱档位与可写根（`registerEnvFacts('sandbox')`）。 */
   sandbox: 'sandbox',
-  /** 待办节流提醒（每 8 轮、且清单里还有未完成项才发）。 */
+  /**
+   * 待办节流提醒（每 8 轮一次：同一会话两次提醒至少隔 `everyRounds` 轮，
+   * 且清单里还有未完成项、距上次写清单也过了这么多轮才发）。
+   */
   todoReminder: 'todo-reminder',
   /** 重复调用提醒（同一工具 + 同一份参数连续第 3/5/8 次才发一条，不否决调用）。 */
   repeatReminder: 'repeat-reminder',

@@ -229,7 +229,9 @@ export function SystemPromptCard({
  * `parts` 为空就什么都不画：那只是因为这一轮什么都没注入（adapter 与落盘都先把空清单挡掉了），
  * 画一张「上下文注入（0）」等于在会话流里凭空多一行。
  *
- * @param props.parts - 这一轮请求的注入清单（按注入顺序）
+ * @param props.parts - 这一轮请求**新增**的注入清单（按注入顺序）：上报闸只记「与上次不同」的项，
+ *   内容没变的不在其中（比如环境快照照旧注入，但没有变化就不记）。这条口径也写在头行的
+ *   `title` 里——光看卡片文字，一张只有「待办提醒」的卡会被误读成「这一跳只注入了提醒」。
  * @param props.count - 同一种组合在这一轮里重发了几次（缺省 1；>1 才显示）
  * @param props.storeKey - 展开态的存档键；不传就只活在本次挂载里
  */
@@ -253,6 +255,10 @@ export function ContextInjectionCard({
   const toggle = (): void => {
     setOpen(!open)
   }
+  // 头行的悬停提示先说清这张卡的口径：卡片记的是「这一跳**新增**了哪些注入」，内容没变的项
+  // 不会再长一条（环境快照几乎每跳都注入、但没变就不记）。不说这一句，一张只有「待办提醒」的
+  // 卡会被读成「这一跳只注入了提醒」，与事实不符。开合提示接在后面：同一个 `title` 挂不下
+  // 两段，拆成两处反而都读不全。
   return (
     <div className="entry-injection" data-injection-count={parts.length} data-open={open ? '1' : undefined}>
       <div
@@ -260,7 +266,7 @@ export function ContextInjectionCard({
         role="button"
         tabIndex={0}
         aria-expanded={open}
-        title={open ? t('transcript.injection.collapseTip') : t('transcript.injection.expandTip')}
+        title={`${t('transcript.injection.newOnlyTip')} · ${open ? t('transcript.injection.collapseTip') : t('transcript.injection.expandTip')}`}
         onClick={toggle}
         onKeyDown={(event) => {
           if (event.key !== 'Enter' && event.key !== ' ') return

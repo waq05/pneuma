@@ -7,8 +7,10 @@
  *   3. 界面快照里的 `todos` 那片投影（注册进 surfaces 注册表）；
  *   4. 会话状态条目 `todos`（恢复历史会话时清单跟着回来）与压缩后要原样带过去的清单文本；
  *   5. 「todo-reminder」节流提醒投影（order 800，默认开）：距上次写清单过了 N 轮、
- *      且还有未完成项时，往请求末尾补一条 user 提醒。逻辑在 `core/todo-reminder.ts`（纯函数，
- *      可被探针直读），配置走本插件的设置分区。
+ *      且还有未完成项时，往请求末尾补一条 user 提醒；提醒本身**每 N 轮才注入一次**，
+ *      由 `core/todo-reminder-cadence.ts` 的按会话台账把关（提醒不落历史，光靠历史判不了重）。
+ *      判定逻辑在 `core/todo-reminder.ts` 与那个台账里（都是纯逻辑，可被探针直读），
+ *      配置走本插件的设置分区。
  *
  * 形状抄三家：整表替换与四态来自 Codex 的 `update_plan`（`protocol/src/plan_tool.rs:9-28`）
  * 与 DSH 的 `todo_write`；id / 子任务 / 单调 revision 来自 Hermes（`tools/todo_tool.py:9-32`）。
@@ -18,6 +20,7 @@
 import type { Plugin } from '@deepseek-ai/cordis'
 import { resolvePluginConfig, writePluginConfig } from '@pneuma/runtime/core/plugin-registry.js'
 import { appendTodoReminder, TODO_REMINDER_TEXT } from '@pneuma/runtime/core/todo-reminder.js'
+import { TodoReminderCadence, countRounds } from '@pneuma/runtime/core/todo-reminder-cadence.js'
 import { InjectionReportLedger } from '@pneuma/runtime/core/context-injection-report.js'
 import { TodoStore } from './todo.js'
 import { Session } from '@pneuma/runtime/core/session.js'
@@ -245,14 +248,29 @@ export const todoPlugin: Plugin.Object = {
     // 代价是每轮多一条 user 消息的 token，所以只在清单确实有未完成项时才发（默认 8 轮一次）。
     let reminder = readReminderConfig()
     /**
+     * 注入节流台账：按会话记住「上一次真的补过提醒的那一轮」。
+     *
+     * 为什么非有这一笔不可（2026-11-11 核实）：`appendTodoReminder` 的幂等判据查的是
+     * **历史里有没有这条提醒**，而提醒是投影注入、不落历史（`core/todo-reminder.ts` 文件头
+     * 写了为什么刻意不落）。于是「距上次写清单已 ≥ `everyRounds` 轮」一旦成立，之后每一跳
+     * 都满足，**每一跳都再补一次同一句提醒**：白烧 token，而且同一句话反复出现会被模型当
+     * 背景音忽略——比不发更糟。判据改成「本轮 − 上次注入的轮 ≥ `everyRounds`」，
+     * 台账按会话记（常驻多 agent 各看各的清单与轮次），写法与 `packages/prompt/index.ts`
+     * 的 `envSent`（约 :163，只活内存、表满整表清）同一套。
+     *
+     * 只有真注入了才记账（`appendTodoReminder` 没补的那一跳不动台账）：开关关着、清单里
+     * 没有未完成项、距上次写清单还不够 N 轮时它什么也没补，若也跟着记账，下一跳就会被
+     * 误判成「刚提醒过」，提醒白白推迟一整个周期。
+     */
+    const reminderCadence = new TodoReminderCadence()
+    /**
      * 提醒上报台账：同一句提醒只在该会话第一次出现时记一张注入卡。
      *
-     * 为什么要单独一道闸（2026-11-11 核实）：`appendTodoReminder` 的节流读数是
-     * 「距上次 todo_write 之后又发了几次请求」，它不是周期性的——一旦越过 `everyRounds`，
-     * 之后每一跳的 `messages` 里都还没有这条提醒（提醒是投影注入，不落历史），于是**每一跳
-     * 都会再补一次**。注入行为本轮不动（那是模型每轮都要看见的提醒），但卡片不该跟着
-     * 每跳长一张：同一句正文报过一次就够了，判据与 env-facts 同一套
-     * （见 core/context-injection-report）。
+     * 与上面的节流台账**分开记**，两件事的判据不同（与 `envSent` / `envReported` 同一套取舍，
+     * 见 `core/context-injection-report.ts` 的文件头）：节流台账回答「这一跳还要不要注入」，
+     * 本台账回答「这一跳还要不要长卡」。节流生效后提醒每 N 轮才注入一次，但正文是一句固定的
+     * 话——第 2 次注入与第 1 次逐字相同，卡片再记一条并不能告诉读者任何新东西。
+     * 注入被跳过的那一跳不产生报告，也不该动本台账。
      */
     const reminderReported = new InjectionReportLedger()
     const applyReminder = (patch: Record<string, unknown | null>): void => {
@@ -265,15 +283,22 @@ export const todoPlugin: Plugin.Object = {
         // 提醒问**这次请求那条会话**的清单：后台回合的提醒不该报用户眼前那条的进度（P0-7）。
         const owner = session ?? ctx.session.current()
         const todos = storeFor(owner)
+        // 轮号取「这条会话已有几条 assistant 消息」：一轮 = 一次模型请求 = 一条 assistant。
+        // 不拿 `countRoundsSinceLastTodoWrite` 当轮号——它在每次 todo_write 之后清零，
+        // 拿它做周期判据会让提醒越拖越稀（写一次清单，下一次提醒要多等整整一个周期）。
+        const round = countRounds(messages)
+        if (!reminderCadence.due(owner.meta.id, round, reminder.everyRounds)) return messages
         const out = appendTodoReminder(messages, {
           enabled: reminder.enabled,
           everyRounds: reminder.everyRounds,
           hasOpenTodos: todos.read().some((item) => item.status === 'pending' || item.status === 'in_progress'),
         })
-        // 真补了才轮到上报（appendTodoReminder 没补时原样返回同一个数组）。再过一道上报闸：
-        // 越过 `everyRounds` 之后提醒是每跳都在补的，同一句正文只在第一次出现时记一张卡，
-        // 否则日志与界面都会变成每跳一行一模一样的提醒（注入本身照旧，见上面的台账注释）。
-        if (out !== messages && report !== undefined
+        // 没补就原样返回（`appendTodoReminder` 不注入时返回同一个数组），台账不动。
+        if (out === messages) return out
+        // 真补了才记账，并且只在「这一跳」记：下一跳轮号 +1，判据就变成「还差 N−1 轮」。
+        reminderCadence.mark(owner.meta.id, round)
+        // 过一道上报闸：同一句正文只在第一次出现时记一张卡（理由见上面两个台账的注释）。
+        if (report !== undefined
           && reminderReported.take(owner.meta.id, CONTEXT_INJECTION_KINDS.todoReminder, TODO_REMINDER_TEXT)) {
           report({
             kind: CONTEXT_INJECTION_KINDS.todoReminder,
