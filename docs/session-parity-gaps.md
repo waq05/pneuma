@@ -33,7 +33,7 @@ S4 漏了 `read-row.tsx` 且本仓已有可点文件路径、S8 缺的是**数�
 | ① S11-a 占位壳 | `.chat` 末尾加一个恒 0 高的 `[data-chat-turn-spacer]`（**放在 `.chat-inner` 外面**）；`follow.ts` 的 `floor()` 改成 `scrollHeight − spacer − clientHeight` | `_verify-jitter` 余量不变、`ui-fold-combo` 全绿 | 若哪条探针数 `.chat` 子元素个数，会红 |
 | ② S2 座位稳定 | 新增 `ui/seat-store.ts`（按 `Row.stable` 索引、只重建尾部变化行）；`SeatBody` 拆成可 memo 的 `SeatFrame` + 自己订阅的 `RowSlot`；`onFork` 提成稳定引用 | 新增 `_verify-row-isolation`（流式 3 秒内非尾行 DOM 变动为 0）；`_perf-stream` 的 ScriptDuration 应低于 447ms | `ui-transcript-render-test` 里钉 `middle.push`/`turn-process` 源码形态的几条；`rowBodyUnchanged` 退役 |
 | ③ S5 视口协调器 | 新增 `ui/viewport.ts`，独占「测尺寸 / 写 scrollTop / 写占位 / 开关 overflow-anchor」；`follow.ts` 只留策略 | 新增 `_verify-fold-scroll`（16ms 采样：第一条可见行的屏幕 top 变化 ≤1px，末帧占位回 0） | `views.css` 里 overflow-anchor 那条的注释；`follow.ts` 的 floor/settle 说明 |
-| ④ S6 逐行收起 | 新增 `ui/fold-motion.ts`；退役 `.turn-process` 的 grid 动画；分段器只留显隐集合；`hidden` 改由 motion 末帧提交 | `_verify-think-collapse`（位置回退 0 次）、`_verify-jitter` | `ui-transcript-render-test` 的 `[5]` 整段、`ui-fold-combo` 的一条、`_verify-think-collapse` 读 `data-fold` 的部分 |
+| ④ S6 逐行收起 | 新增 `ui/fold-motion.ts`；退役 `.turn-process` 的 grid 动画；分段器只留显隐集合；`hidden` 归被隐藏元素自己写（重挂当场同步提交，见过的走动画末帧） | `_verify-think-collapse`（位置回退 0 次）、`_verify-jitter` | `ui-transcript-render-test` 的 `[5]` 整段、`ui-fold-combo` 的一条、`_verify-think-collapse` 读 `data-fold` 的部分 |
 
 **落地后的实际读数（不是预估）**：
 
@@ -452,9 +452,13 @@ S4 漏了 `read-row.tsx` 且本仓已有可点文件路径、S8 缺的是**数�
 > 全批共用进度，要复刻的是「每行自己的盒子」这个形状，不是错开）。
 > `.turn-process` 的 `grid-template-rows` / `overflow: hidden` / `min-height: 0` 全部撤掉，
 > 元素与 `data-fold` 读数保留（`_verify-level3` 与 `_probe-gap` 还在读它）。
-> `hidden="until-found"` 改由**末帧**提交，三个入口走同一个 `finish()`：`transitionend`
-> 且属性是 `height` / 批次末帧 / 「总时长 + 余量 + 保险」的超时兜底——`fold-seats.tsx` 里那个
-> 「猜一个时长再 `setTimeout`」的 `foldHideDelayMs()` 因此删掉（`delayMs` 选项一起收）。
+> `hidden="until-found"` 的提交权归**被隐藏的那个元素自己**：它把自己的 `commit` 交给这一轮的
+> 动画，动画在末帧调它；三个入口（`transitionend` 且属性是 `height` / 批次末帧 / 「总时长 +
+> 余量 + 保险」的超时兜底）落到同一个 `finish()`。第一次见到的元素——也就是刚重挂上来的——
+> 不进动画，当场同步提交：切会话时行按「会话 + 行身份」整批重挂，靠的就是这一条，否则收起轮
+> 的过程行会在新 DOM 上一条 `hidden` 都没有，整段露在屏幕上而开关行还写着已收起。
+> `fold-seats.tsx` 里那个「猜一个时长再 `setTimeout`」的 `foldHideDelayMs()` 也因此删掉
+> （`delayMs` 选项一起收）。
 > 时长从 `--dsc-dur-slow` 的**计算值**读（运行时 200ms，不是 `tokens.css` 写的 180ms），
 > 按 70/160、50/160 切段：淡出 44%、高度延迟 31%、高度 69%。
 >
@@ -464,8 +468,15 @@ S4 漏了 `read-row.tsx` 且本仓已有可点文件路径、S8 缺的是**数�
 >
 > 验收：`_verify-think-collapse` **18 条真断言**（这条探针以前一条断言都没有、恒 `exit 0`，
 > 这一批先把它改真、在旧 grid 代码上跑绿，再在新代码上跑绿）；`_verify-jitter` 8 条（同样从
-> 空转修活）。负对照：把 `owned` 改回 `false`（等于旧的立刻挂 `hidden`），探针当场报
-> 「收起中行自己在变矮 0 帧」等两条红。
+> 空转修活）；`_verify-collapse-remount` 14 条（收起一轮后点侧栏切到另一条轮结构相同的会话，
+> 断言每一轮过程行的 `hidden` 数与基线一致、开关行仍是收起态）。
+>
+> 负对照两个，都是真跑出来的红：把「第一次见到就同步提交」那一支拆掉，`_verify-collapse-remount`
+> 报 10 / 4（第 1 轮 `hidden 2/3`、第 2 轮 `0/3`）；把逐行动画改回「立刻挂 `hidden`」，
+> `_verify-think-collapse` 报「收起中行自己在变矮 0 帧」。
+>
+> 整轮**真的**开始收起那一拍，组里已经点开的阶段组会被关掉。判据是「已挂 `hidden` 或正在收起」，
+> 不是「应该收起」：焦点在组里时这一轮会被放行展开，那种情况下不该把里层也关掉。
 >
 > **已知的结构性限制**：定稿轮一律分组，而一轮只有一个阶段组，所以真机上「段里多行同时各缩」
 > 的形态造不出来，量到的是「这一行自己逐帧变矮」（旧实现下它会一直等于满高，所以仍然能红）。

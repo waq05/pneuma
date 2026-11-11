@@ -174,16 +174,45 @@ console.log('[3] 源码钉：渲染层确实按这两个返回值走')
   check('过程区按段落包层（每段各缩各的）', /if \(block\.fold\) \{\s*\n\s*segment\.push\(block\.node\)/.test(render) && /flushSegment\(\)\s*\n\s*foldBlocks\.push\(block\.node\)/.test(render))
 
   const ui = readFileSync(new URL('../src/packages/ui-transcript/ui/ui.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+  const seats = readFileSync(new URL('../src/packages/ui-transcript/ui/fold-seats.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+  /** 这些片段在同一段源码里按顺序出现吗（少一条、顺序反了都算假）。 */
+  const inOrder = (text, ...needles) => {
+    let previous = -1
+    for (const needle of needles) {
+      const at = text.indexOf(needle, previous + 1)
+      if (at <= previous) return false
+      previous = at
+    }
+    return true
+  }
   check('界面侧读 value[\'collapseTiming\']', /collapseTiming: value\['collapseTiming'\] === 'next-input' \? 'next-input' : 'completion'/.test(ui))
   check('界面侧读 value[\'foldedReplies\']', /foldedReplies: value\['foldedReplies'\] === 'final' \? 'final' : 'all'/.test(ui))
   check('预算器拿到 foldedReplies', /foldedReplies: prefs\.foldedReplies/.test(ui))
-  // 2026-11-10 改口径（对齐 dsh）：复位不再挂在「轮收尾」上，而是挂在「这一轮从展开变成
-  // 收起」那一拍——参考实现在整轮被折叠隐藏、且隐藏动画进行中时才推进 disclosureReset
+  // 2026-11-10 改口径（对齐 dsh）：复位不挂在「轮收尾」上，只挂在「这一轮从展开变成收起」
+  // 那一拍——参考实现在整轮被折叠隐藏、且隐藏动画进行中时才推进 disclosureReset
   // （ChatNodeSeat.tsx:122-131）。旧断言钉的 `reset(settled)` / `reopened` 已经删掉。
+  // 2026-11-11 第二次修：复位权从**父级**下放到**元素自己**。原来那段「整轮从展开变收起就
+  // 按轮前缀把这一轮的行与组存档清掉」的 effect 删了（行级键根本不存在、组的键也盖不全、
+  // 而且它不看焦点、不看这一层是不是真的在藏）。现在由阶段组座位在「整轮真的开始藏」那一拍
+  // 自己关，判据是「已经挂上 hidden 或正在收起」，不是「应该收起」。
   check(
-    '整轮收起才复位：按轮算出「正在收起」的集合，再按前缀清掉这一轮的行与组',
-    /const collapsedRounds = useMemo\(/.test(ui) && /foldMemory\.clearPrefixes\(entering\)/.test(ui)
-    && !/foldMemory\.reset\(settled\)/.test(ui),
+    '整轮收起不靠父级复位：父级不再按前缀清存档，改由阶段组座位在「真的开始藏」那一拍自己关',
+    // ① 父级那套复位没了；`clearPrefixes` 只剩「同一轮改完重答」那一条路（不是全文件禁用）。
+    !ui.includes('collapsedRounds')
+      && !ui.includes('clearPrefixes(entering)')
+      && (ui.match(/foldMemory\.clearPrefixes\(/g) ?? []).length === 1
+      && !/foldMemory\.reset\(settled\)/.test(ui)
+      // ② 替代它的路真的在：只在「展开 → 收起」那一拍、只在组开着时动手；判据取自 scope。
+      && inOrder(
+        seats,
+        'const entering = !wasTurnCollapsed.current && props.turnCollapsed',
+        'if (!entering || !props.open) return',
+        'scope.hiddenOrCollapsing(element)',
+        'if (!hiding) return',
+        'toggleRef.current()',
+      )
+      // 判据不能退回「应该收起」：那样焦点保护放行的组也会被关掉。
+      && !/const hiding = [\s\S]{0,120}?props\.turnCollapsed/.test(seats),
   )
   check(
     'next-input 的「上一轮不再是最后一轮」仍抹存档（换成独立 effect 处理）',

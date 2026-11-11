@@ -11,7 +11,7 @@
  * @module dsc-ui-shell/plugins/transcript/fold-seats
  */
 import {
-  useCallback, useLayoutEffect, useRef, useState,
+  createContext, useCallback, useContext, useLayoutEffect, useRef, useState,
   type JSX, type ReactNode, type RefObject,
 } from 'react'
 import { StepGroupRow } from './step-group-row'
@@ -38,9 +38,34 @@ function useStableCallback<T extends (...args: never[]) => void>(callback: T): T
 }
 
 /**
+ * 把「藏不藏」交给更外面一层执行的那次操作（对照 dsh 的 `chat/searchable-hidden.ts:9`）。
+ *
+ * @param element 稳定的子树根
+ * @param hidden 想要的状态
+ * @param commit 由**调用方**提供的「真的挂 / 摘 `hidden`」操作：过渡只决定什么时候调它，
+ *   提交这件事始终归元素自己
+ */
+export type HiddenTransition = (element: HTMLElement, hidden: boolean, commit: () => void) => void
+
+/**
+ * 一层「被隐藏」的归属：执行隐藏的那次操作 + 「此刻是不是真的在藏」的只读查询。
+ *
+ * 为什么两样都要：`transition` 决定怎么藏（第一次挂上来的元素同步藏、见过的走动画）；
+ * `hiddenOrCollapsing` 给里层（阶段组）判「这一拍真的开始藏了没有」——不是「应该收起」，
+ * 是「已经挂上或正在收起」（对照 dsh 的 `flow-motion.ts:104-106`）。
+ */
+export interface FoldScope {
+  readonly transition: HiddenTransition
+  hiddenOrCollapsing(element: HTMLElement): boolean
+}
+
+/** 整轮折叠的作用域；`undefined` = 这里没有动画（同步挂 `hidden`，与参考实现同一口径）。 */
+export const FoldScopeContext = createContext<FoldScope | undefined>(undefined)
+
+/**
  * 用 `hidden="until-found"` 隐藏一棵子树，而不是把它卸载。
  *
- * 两个好处（对照 dsh 的 useSearchableHidden，chat/searchable-hidden.ts:9-31）：
+ * 两个好处（对照 dsh 的 useSearchableHidden，chat/searchable-hidden.ts:11-45）：
  * 1. **浏览器查找（Ctrl+F）仍能命中**收起来的内容——命中时浏览器在被命中的元素上发
  *    `beforematch` 事件，我们借此把这一层展开，用户直接就看到那一行；
  * 2. **键盘焦点不会被抽走**：隐藏之前先看焦点在不在里面，在就先展开（不隐藏），
@@ -51,38 +76,33 @@ function useStableCallback<T extends (...args: never[]) => void>(callback: T): T
  *
  * @param hidden 这一层现在要不要藏起来
  * @param reveal 焦点在里面、或被查找命中时的放行动作（通常是把它展开）
- * @param options.owned `true` = 这一层的 `hidden` 由**整轮逐行动画**在末帧提交
- *   （见 fold-motion.ts 的三个提交入口）。藏着的时候本钩子只摘不挂：挂早一帧内容
- *   当场没了，那一段动画等于白跑——旧实现在这里「猜一个时长再 setTimeout」，猜错的
- *   那一次正是「内容先消失、动画没跑」的现场。展开方向不受影响：放行永远立刻生效。
- *   不传 = 自己挂（阶段组的组体那一层：它收起走 `max-height: 0`，内容留在文档里，
- *   本来就是平滑的，不需要等任何人）。
+ * @param transition 这一层归哪个折叠动画管（`FoldScopeContext` 里的那个）。
+ *   **不传 = 同步提交**：没有动画的视图（团队页签的子代理流、前导行）走这条路，正好。
+ *   传了之后「谁藏、什么时候藏」由它决定，而 `commit` 仍然是本函数的闭包——
+ *   于是「元素重挂之后 hidden 由它自己在挂载时补上」这件事不再依赖任何父级。
  * @returns 挂在被隐藏元素上的 ref
  */
 export function useSearchableHidden(
   hidden: boolean,
   reveal: () => void,
-  options?: { owned?: boolean },
+  transition?: HiddenTransition,
 ): RefObject<HTMLDivElement | null> {
   const ref = useRef<HTMLDivElement | null>(null)
-  const owned = options?.owned === true
   useLayoutEffect(() => {
     const element = ref.current
     if (element === null) return
-    // 放行永远立刻：展开要马上看得见（行体展开本来就不做高度过渡）。
-    if (!hidden) {
-      element.removeAttribute('hidden')
-      return
-    }
-    // 焦点在这棵子树里：这次不藏（调用方会把这一层展开），否则 Tab 到一半位置就没了
-    if (element.contains(element.ownerDocument.activeElement)) {
+    // 焦点在这棵子树里：这次不藏（调用方会把这一层展开），否则 Tab 到一半位置就没了。
+    if (hidden && element.contains(element.ownerDocument.activeElement)) {
       reveal()
       return
     }
-    // 归整轮逐行动画管：末帧由它挂 hidden（见 fold-motion.ts），这里不许抢先。
-    if (owned) return
-    element.setAttribute('hidden', 'until-found')
-  }, [hidden, reveal, owned])
+    const commit = (): void => {
+      if (hidden) element.setAttribute('hidden', 'until-found')
+      else element.removeAttribute('hidden')
+    }
+    if (transition === undefined) commit()
+    else transition(element, hidden, commit)
+  }, [hidden, reveal, transition])
   useLayoutEffect(() => {
     const element = ref.current
     if (element === null) return
@@ -266,10 +286,11 @@ export function RowSeat(props: {
   roundIndex: number | undefined
   children: ReactNode
 }): JSX.Element {
+  const scope = useContext(FoldScopeContext)
   const reveal = useStableCallback(props.onReveal)
-  // 收起时**不在这里**挂 hidden：这一条在过程区里，整轮收起由 fold-motion 逐行收、
-  // 末帧提交（见 fold-motion.ts 的「hidden 的三个提交入口」）。
-  const ref = useSearchableHidden(props.hidden, reveal, { owned: true })
+  // 收起时**不在这里**判断隐藏时机：这一条在过程区里，交给这一轮的折叠动画——
+  // 见过的元素走逐行收、末帧提交；刚挂上来的元素（切会话按新键重挂）当场就是收起的。
+  const ref = useSearchableHidden(props.hidden, reveal, scope?.transition)
   return (
     <div
       ref={ref}
@@ -306,12 +327,13 @@ export function StepGroupSeat(props: {
   onRevealTurn(): void
   children: ReactNode
 }): JSX.Element {
+  const scope = useContext(FoldScopeContext)
   const revealTurn = useStableCallback(props.onRevealTurn)
   // 外层（组头 + 组体一起藏）也归整轮逐行动画：它是 `display: none`，早挂一帧就把这一行的
-  // 高度抽走、动画等于没跑。里层（组体自己）**自己不挂**——组体收起走的是
-  // `max-height: 0`，内容留在文档里，动画本来就是平滑的（见 views.css 的 .step-body），
-  // 所以那一层不传 owned（第四阶段不接组体）。
-  const seatRef = useSearchableHidden(props.turnCollapsed, revealTurn, { owned: true })
+  // 高度抽走、动画等于没跑。刚挂上来的元素（切会话重挂）则在挂载时当场就是收起的。
+  // 里层（组体自己）**不走动画**——组体收起走的是 `max-height: 0`，内容留在文档里，
+  // 动画本来就是平滑的（见 views.css 的 .step-body），所以那一层不传 transition。
+  const seatRef = useSearchableHidden(props.turnCollapsed, revealTurn, scope?.transition)
   // 组体被查找命中（或焦点正在组里）时，把这一组展开
   const revealGroup = useStableCallback(() => {
     if (!props.open) props.onToggle()
@@ -320,6 +342,30 @@ export function StepGroupSeat(props: {
   const contentRef = useRef<HTMLDivElement | null>(null)
   // 组体自己的滚动与渐隐：跑动中的组贴底跟随，已结束的组从顶部开始（见 useProcessScroll）
   const edges = useProcessScroll(bodyRef, contentRef, props.open, !props.group.closed)
+  /**
+   * 整轮**真的**收起了这一拍：把这一组自己的展开态关掉（对照 dsh 的
+   * `ChatGroupSeat.tsx:168-170`）。
+   *
+   * 判据必须是「此刻已经挂上 `hidden` 或正在收起」，不是「整轮应该收起」：
+   *   - 布局效果按声明顺序跑，上面的 `useSearchableHidden` 先跑——所以这里读到的是
+   *     `hidden` 已经挂上、或这一层已经进了收起批次；
+   *   - 焦点在里面时那一层会被放行（展开），两个条件都不成立，于是**不关**：自动收起
+   *     把键盘用户的位置抽走之后又说他看得见，那一组不该跟着遭殃；
+   *   - 只在「从展开变收起」的那一拍关一次；展开方向什么都不做（用户自己开的才是真的）。
+   */
+  const wasTurnCollapsed = useRef(props.turnCollapsed)
+  const toggleRef = useRef(props.onToggle)
+  toggleRef.current = props.onToggle
+  useLayoutEffect(() => {
+    const entering = !wasTurnCollapsed.current && props.turnCollapsed
+    wasTurnCollapsed.current = props.turnCollapsed
+    if (!entering || !props.open) return
+    const element = seatRef.current
+    if (element === null) return
+    const hiding = scope === undefined ? element.hasAttribute('hidden') : scope.hiddenOrCollapsing(element)
+    if (!hiding) return
+    toggleRef.current()
+  }, [props.turnCollapsed, props.open, scope, seatRef])
   return (
     <div ref={seatRef} className="step-seat">
       <StepGroupRow

@@ -19,7 +19,7 @@
  *   [3] 形态钉：ui.tsx 的 seatPlan 消费点、ThinkRow 不再强制展开、factory 的 diff/参数表
  *   [4] 漂移钉：参数表的字段名与宿主工具真定义对得上（`src/core/tools/fs-tools.ts`）
  *   [5] 开合动画（0.6.69 起；第④阶段 2026-11-11 改成逐行）：过程区包一层 + `fold-motion.ts`
- *       逐行量高归零 + `hidden` 末帧提交（三个入口）；组体那一层仍走 `max-height`
+ *       逐行量高归零 + `hidden` 由元素自己末帧提交（首次见到同步提交）；组体那一层仍走 `max-height`
  *   [6] 悬停预览的收卡口径（0.6.69 第五轮）：出卡 500ms 照参考实现，**收卡 1s 是壳侧有意分道**，
  *       且卡片自己挂着 mouseleave（只挂 keep 会让卡粘住不走）
  *   [8] 收起态的结果与失败数（对照 codex 的活动流）：工具卡摊 3 行结果尾巴、
@@ -208,6 +208,7 @@ console.log('[3b] 行的稳定身份（2026-11-10：直播 → 定稿不换键�
   const uiSrc = read(UI + '/ui.tsx')
   const pgsSrc = read(UI + '/process-groups.ts')
   const foldState = read(UI + '/fold-state.ts')
+  const seatsSrc = read(UI + '/fold-seats.tsx')
   const views = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
 
   // 为什么钉这一条：直播条目的 id 是按「第几个直播段」发的负数、定稿又换正数，拿它当身份
@@ -224,7 +225,21 @@ console.log('[3b] 行的稳定身份（2026-11-10：直播 → 定稿不换键�
   )
   check('工具卡的存档键不再用 row.at', !renderSrc.includes('${sessionId ?? \'\'}:${String(row.at)}') && renderSrc.includes('const storeKey = `${sessionId ?? \'\'}:${row.stable}`'))
   check('阶段组的键由首行稳定身份派生', renderSrc.includes('stepGroupFoldKey(sessionId, first?.stable') && foldState.includes('export function stepGroupFoldKey(sessionId: string | null, headStable: string)'))
-  check('整轮收起才复位（不再「轮一收尾就写回收起」）', uiSrc.includes('collapsedRounds') && uiSrc.includes('foldMemory.clearPrefixes(') && !uiSrc.includes('foldMemory.reset(settled)'))
+  // 2026-11-11 第二次修：整轮收起时**不再由父级统一复位**里层的展开态（旧结构里那段
+  // 「从展开变收起就按轮前缀清存档」的副作用删了：行级键根本不存在、组的键也盖不全，
+  // 而且它不看焦点、不看这一层是不是真的在藏）。现在谁被藏谁自己关，判据是
+  // 「已经挂上 hidden 或正在收起」（hiddenOrCollapsing），不是「应该收起」——
+  // 焦点保护放行的那一层因此不会被跟着关掉。
+  check(
+    '整轮收起不靠父级复位（里层谁被藏谁自己关，判据 hiddenOrCollapsing）',
+    // 父级那套整轮复位已经删干净；剩下的 clearPrefixes 只归「同一轮改完重答」那一条路。
+    !uiSrc.includes('collapsedRounds')
+      && !uiSrc.includes('foldMemory.reset(settled)')
+      && (uiSrc.match(/foldMemory\.clearPrefixes\(/g) ?? []).length === 1
+      // 替代它的路真的在：座位在「整轮真的进入收起那一拍」自己关，判据从 scope 取。
+      && seatsSrc.includes('const entering = !wasTurnCollapsed.current && props.turnCollapsed')
+      && seatsSrc.includes('scope.hiddenOrCollapsing(element)'),
+  )
   check('运行中尾组一条也成组（对齐 dsh 首条即建组）', /if \(isRunning\(round\.index\)\) \{\s*flush\(false\)/.test(pgsSrc))
   // 注释里还留着「原来用 @starting-style」的解释，判据前先剥注释，免得自己打脸。
   const viewsCode = views.replace(/\/\*[\s\S]*?\*\//g, '')
@@ -270,22 +285,71 @@ console.log('[5] 整轮过程区的开合动画（0.6.69 第四轮报障）')
   // 必然失效：它们钉的那串字符已经不存在了。**钉的仍是同一件事**——收起有动画、
   // 时长取令牌、末帧才挂 hidden、组体那一层不接——只是载体从 CSS 换成 fold-motion.ts。
   const motion = read(UI + '/fold-motion.ts')
+  // 2026-11-11 第二次修：`hidden` 的写入权从「父级遍历子节点写」改回「每个被隐藏元素自己写」。
+  // 下面几条钉的是**顺序与归属**，所以先把要用到的函数体切出来再断言（整段源码里找子串
+  // 会被同名变量蒙过去，例如 `commit()` 在三个分支里都出现）。
+  // 从模块里切一个函数体：两格缩进的 `}` 收尾。切不到返回空串，下游断言全假。
+  const bodyOf = (name) => {
+    const at = motion.indexOf(`  function ${name}(`)
+    if (at < 0) return ''
+    const end = motion.indexOf('\n  }\n', at)
+    return end < 0 ? '' : motion.slice(at, end)
+  }
+  const collapseBody = bodyOf('collapse')
+  const flushBody = bodyOf('flush')
+  const settleBody = bodyOf('settle')
+  const finishBody = bodyOf('finish')
+  /**
+   * 这些片段在源码里按给定顺序出现吗（中间可以隔着注释与别的代码）。
+   * 少一条就是假：不许靠 `indexOf` 的 -1 冒充「在前面」。
+   */
+  const inOrder = (text, ...needles) => {
+    let previous = -1
+    for (const needle of needles) {
+      const at = text.indexOf(needle, previous + 1)
+      if (at <= previous) return false
+      previous = at
+    }
+    return true
+  }
   check('逐行收起的模块在（fold-motion.ts 的 useTurnFoldMotion）', /export function useTurnFoldMotion\(/.test(motion))
   check(
     '每一行动三个值：高度 / 外边距 / 透明度（预量后归零，不做 auto 插值、不读 scrollHeight）',
-    /height: element\.offsetHeight/.test(motion)
-      && /getComputedStyle\(element\)\.marginTop/.test(motion)
-      && /style\.height = '0px'/.test(motion)
-      && /style\.marginTop = '0px'/.test(motion)
-      && /style\.opacity = '0'/.test(motion),
+    // collapse 里：预量 offsetHeight / 计算 marginTop，并把**实测值**写死成起始高度。
+    inOrder(
+      collapseBody,
+      'const height = element.offsetHeight',
+      'globalThis.getComputedStyle(element).marginTop',
+      'style.height = `${String(height)}px`',
+      'style.marginTop = `${String(marginTop)}px`',
+    )
+      // flush 里：三个值一起归零（高度 → 外边距 → 透明度）。
+      && inOrder(flushBody, "style.height = '0px'", "style.marginTop = '0px'", "style.opacity = '0'")
+      // 不做 auto 插值、也不读行自己的 scrollHeight（scrollHeight 只允许出现在视口强制回流那一句）。
+      && !motion.includes("style.height = 'auto'")
+      && !/element\.scrollHeight/.test(motion),
   )
   check(
     '每帧顺序：先写行的 box（预量 + 强制回流）→ 开批次 → 每帧 frame() → 收工 end()',
-    /style\.height = `\$\{String\(box\.height\)\}px`/.test(motion)
-      && /void \(viewport\.scroller\?\.scrollHeight \?\? 0\)/.test(motion)
-      && motion.indexOf('void (viewport.scroller') < motion.indexOf('durationMs: total + COMMIT_TAIL_MS')
-      && /batch\?\.frame\(\)/.test(motion)
-      && /batch\?\.end\(\)/.test(motion),
+    // 1) 行的 box：实测高度写死 → 登记 → 排微任务（顺序反了就是「auto → 0」的跳变）。
+    inOrder(
+      collapseBody,
+      'const height = element.offsetHeight',
+      'style.height = `${String(height)}px`',
+      'waiting.set(element, { element, commit, height, marginTop })',
+      'schedule()',
+    )
+      // 2) 强制回流 → 在布局没变的那一刻开批次 → 再归零 → 批次里每帧先 frame() 再判跑完没有。
+      && inOrder(
+        flushBody,
+        'void (viewport.scroller?.scrollHeight ?? 0)',
+        'viewport.beginBatch({ moving, durationMs: total + COMMIT_TAIL_MS })',
+        "style.height = '0px'",
+        'next.batch?.frame()',
+      )
+      && inOrder(flushBody, 'next.batch?.frame()', 'if (performance.now() >= next.deadline)')
+      // 3) 收工：先清中间状态，最后才 end() 把窗口关掉。
+      && inOrder(finishBody, 'if (run === target) run = null', 'target.batch?.end()'),
   )
   check(
     '批次的开窗只由 motion 一处：viewport 不再监听 data-fold 翻面（不留两套开窗信号）',
@@ -293,13 +357,37 @@ console.log('[5] 整轮过程区的开合动画（0.6.69 第四轮报障）')
   )
   check(
     'hidden 只在末帧提交，三个入口共用一个 finish()（transitionend / 批次末帧 / 超时兜底）',
-    /const finish = \(\): void =>/.test(motion)
-      && /if \(event\.propertyName === 'height'\) finish\(\)/.test(motion)
-      && /performance\.now\(\) >= deadline/.test(motion)
-      && /window\.setTimeout\(finish,/.test(motion)
-      && /setAttribute\('hidden', 'until-found'\)/.test(motion),
+    motion.includes('function finish(target: Run): void {')
+      && inOrder(finishBody, 'if (target.done) return', 'target.batch?.end()')
+      // 入口一：transitionend —— 只认高度那一条，且元素还在这一批里，才走 settle（settle 里提交）。
+      && inOrder(
+        flushBody,
+        "if (event.target !== element || event.propertyName !== 'height') return",
+        'if (next.items.get(element) !== item) return',
+        'settle(next, item)',
+      )
+      // 最后一个元素收完 → 整批收工（不是单个元素自己提交完就算）。
+      && settleBody.includes('if (target.items.size === 0) finish(target)')
+      // 入口二：批次跑到末帧。
+      && inOrder(flushBody, 'if (performance.now() >= next.deadline) {', 'finish(next)')
+      // 入口三：过渡被合成器丢掉时的超时兜底。
+      && inOrder(flushBody, 'window.setTimeout(() => {', 'finish(next)')
+      // 提交动作只有三处：settle（每个元素收完）/ finish（剩下的补交）/ 降级分支。
+      // 少一处就是「有人收完了没人挂 hidden」，多一处就是有第二条提交路。
+      && (motion.match(/item\.commit\(\)/g) ?? []).length === 3,
   )
-  check('末帧先挂 hidden 再清内联（反过来会弹回原高度，又是一次跳）', /commitHidden\(boxes, reveal\)\s*\n\s*clearStyles\(boxes, bodies\)/.test(motion))
+  check(
+    '末帧先挂 hidden 再清内联（反过来会弹回原高度，又是一次跳）',
+    // 一个元素收完，settle 里先 commit() 再 clearElement()。
+    inOrder(settleBody, 'if (element.isConnected) item.commit()', 'clearElement(element)')
+      // 收工时剩下的元素（过渡被丢掉 / 走到超时兜底）照同样的顺序补一遍。
+      && inOrder(
+        finishBody,
+        'for (const item of [...target.items.values()]) {',
+        'if (item.element.isConnected) item.commit()',
+        'clearElement(item.element)',
+      ),
+  )
   check('系统说「少动」时不进动画、同步提交 hidden', /if \(prefersReducedMotion\(\)\) \{/.test(motion) && /'\(prefers-reduced-motion: reduce\)'/.test(motion))
   // 只查这两条规则自己（`grid-template-rows` 在别处还有用处：七段数码管、别的折叠层）。
   const turnProcessRule = /\.turn-process \{([^}]*)\}/.exec(css)?.[1] ?? ''
@@ -312,12 +400,40 @@ console.log('[5] 整轮过程区的开合动画（0.6.69 第四轮报障）')
   check('三段比例照参考实现（淡出 44% / 高度延迟 31% / 高度跑 69%）', motion.includes('70 / 160') && motion.includes('50 / 160'))
   check('--dsc-dur-slow 两份声明都还在（旧默认值 + 现行设计覆盖，有意保留）', tokens.includes('--dsc-dur-slow: 180ms') && read('src/packages/ui-renderer/ui/styles/styles.css').includes('--dsc-dur-slow: 200ms'))
 
-  // 收起方向要「内容还在、行自己先收」：提交 hidden 的时机由 motion 掌握，钩子不许抢先。
-  // 工作区是 CRLF：跨行匹配一律 `\s*\n\s*`（写成字面 `\n` 会在 CRLF 工作区上假红）。
+  // 收起方向要「内容还在、行自己先收」：摘 / 挂 hidden 的时刻归 motion 判，钩子不自己抢先。
+  // 工作区按 LF 存，但别写跨行字面量——跨行一律 `\s*\n\s*`，换行风格变了也不会假红。
   check('猜时长的兜底已删（fold-seats 里没有 foldHideDelayMs，也没有「延时挂 hidden」的定时器）', !seats.includes('foldHideDelayMs') && !/setTimeout\(\(\) => \{\s*\n\s*element\.setAttribute/.test(seats))
-  check('展开方向不延迟（放行要立刻看得见）', /if \(!hidden\) \{\s*\n\s*element\.removeAttribute\('hidden'\)/.test(seats))
-  check('hidden 的提交权交给 motion：两层座位传 owned，别的层不传', (seats.match(/\{ owned: true \}\)/g) ?? []).length === 2)
-  check('组体（max-height 那一层）不传 owned：内容留在文档里，本来就平滑', /const bodyRef = useSearchableHidden\(!props\.open, revealGroup\)/.test(seats))
+  // 展开方向（hidden === false）不排批次、不等末帧：先停掉这个元素自己的动画，再立刻提交。
+  // 这两句必须紧挨着、且顺序不能反（先 commit 再 cancel 会留下一个没人清的批次）。
+  const transitionAt = motion.indexOf('const transition: HiddenTransition = (element, hidden, commit) => {')
+  const transitionBody = transitionAt < 0 ? '' : motion.slice(transitionAt, motion.indexOf('\n  }\n', transitionAt))
+  check(
+    '展开方向不延迟（放行要立刻看得见）',
+    transitionBody.includes('if (hidden) {')
+      && inOrder(transitionBody, 'cancelMotion(element)', 'commit()')
+      && !/commit\(\)\s*\n\s*cancelMotion\(element\)/.test(transitionBody),
+  )
+  // 提交权在元素自己手里（2026-11-11 第二次修）：父级不再遍历子节点写 hidden，
+  // 替代它的路是「scope 里带 transition → 座位从 context 取 → 元素在自己的布局效果里提交」。
+  const render = read(UI + '/render.tsx')
+  check(
+    'hidden 的提交权交给 motion：两层座位从 context 取 transition，父级不再遍历子节点写 hidden',
+    // 旧结构那套「父级遍历子节点、统一 commitHidden」已经不存在。
+    !/commitHidden/.test(motion)
+      && seats.includes('export const FoldScopeContext = createContext<FoldScope | undefined>(undefined)')
+      && render.includes('<FoldScopeContext.Provider value={foldMotion}>')
+      // 两个座位（行 / 阶段组外层）各取一次，没有第三处。
+      && (seats.match(/useContext\(FoldScopeContext\)/g) ?? []).length === 2
+      && (seats.match(/scope\?\.transition/g) ?? []).length === 2
+      // 写 hidden 属性这一句在 fold-seats（元素自己的布局效果里），motion 一个字都不碰属性。
+      && seats.includes("element.setAttribute('hidden', 'until-found')")
+      && !motion.includes("setAttribute('hidden'")
+      // 不传 transition 的层（前导行 / 团队页签 / 组体）走同步提交，没有动画可等。
+      && inOrder(seats, 'if (transition === undefined) commit()', 'else transition(element, hidden, commit)')
+      // motion 也不再收 reveal 了：整轮折叠只需要 collapsed 与 viewport。
+      && render.includes('useTurnFoldMotion({ collapsed, viewport })'),
+  )
+  check('组体（max-height 那一层）不传 transition：内容留在文档里，本来就平滑', /const bodyRef = useSearchableHidden\(!props\.open, revealGroup\)/.test(seats))
   check('焦点在里层、或被查找命中时的放行照旧（Ctrl+F 与键盘都不受影响）', seats.includes('element.contains(element.ownerDocument.activeElement)') && seats.includes("element.addEventListener('beforematch', reveal)"))
   check('系统说「少动」时整轮收起那套也不进动画（降级块里有 .entry-row / .step-seat）', /@media \(prefers-reduced-motion: reduce\) \{[\s\S]{0,700}\.entry-row,\s*\n\s*\.step-seat \{/.test(css))
   check('.entry-row[hidden] 仍是 display:none（末帧提交的落点，删了 until-found 就不生效）', /\.entry-row\[hidden\] \{\s*\n\s*display: none;/.test(css))

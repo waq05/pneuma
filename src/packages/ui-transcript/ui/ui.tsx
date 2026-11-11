@@ -32,7 +32,7 @@
  */
 import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { IconSpark, createT, defineUiPlugin, getHostNative, toastErr, toastOk, useActions, useHostChannel, useHostSelector, useService, ACTIONS_SERVICE, type ActionsHandle, type ApprovalRequestView, type AskUserView, type HostSnapshot, type PlanView, type SlotComponentProps, type TranscriptEntry } from '@dsc/ui'
-import { buildRoundFolds, processFoldPolicy, turnDefaultOpen, useFoldMemory, type ProcessFold } from './round-fold'
+import { buildRoundFolds, processFoldPolicy, useFoldMemory, type ProcessFold } from './round-fold'
 import { liveActivity, turnStartedAt } from './timing'
 import { internalLabel, splitRounds } from './rounds'
 import { turnFoldKey } from './fold-state'
@@ -427,41 +427,20 @@ function TranscriptFlow({
           ),
     [entries, live, rounds, roundFolds, prefs.policy.stepGrouping],
   )
-  // 整轮收起 → 复位它内部所有行与阶段组（对齐 dsh 的 disclosureReset）。
+  // 2026-11-11 删（原来是一段「整轮从展开变收起时，按前缀把这一轮的折叠存档清掉」的副作用）：
   //
-  // 2026-11-10 改（原来写的是「轮一收尾就把整轮与所有阶段组写回收起」）：那条规则会在
-  // **用户正看着**的时候动手——一轮刚跑完、还没被收起，里面点开的思考/组就被写回了收起，
-  // 等于替用户做了一次手动收起，而且紧接着下一轮进来又恢复不成。参考实现的时机只有一处：
-  // 「这一条是过程成员、它被整轮折叠隐藏、且正处于隐藏/收起动画中」才推进复位版本
-  // （`ChatNodeSeat.tsx:122-131`）。这里照同一条口径：**从展开变成收起的那一拍**清存档。
+  // 整轮收起时，里层（行、阶段组）的展开态**不在这里统一复位**，谁真的被藏谁自己关——
+  // `fold-seats.tsx:345-368` 的 `StepGroupSeat` 在「整轮真的进入收起那一拍」把自己关掉，
+  // 判据是 `scope.hiddenOrCollapsing(element)`（已挂 `hidden` 或正在收起），不是「应该收起」；
+  // 参考实现 `ChatGroupSeat.tsx:168-170` 就是这一条。这样焦点还在组里、那一层被
+  // `useSearchableHidden` 的焦点保护放行时，守卫不成立，这一组也就不会跟着关。
   //
-  // 为什么清存档而不是写 false：清掉之后每条行回落到自己的默认档（思考/工具/组都是收起，
-  // 设置里开的默认值也照常生效），写 false 会把「用户手动收起」这个判断钉死。
-  const collapsedRounds = useMemo(() => {
-    const set = new Set<number>()
-    for (const fold of roundFolds.values()) {
-      // 与 render.tsx 的 collapsed 同一口径：可折 + 有内容 + 已收尾 + 没被展开。
-      if (!fold.foldable || !fold.hasContent || fold.running || fold.blocked) continue
-      const defaultOpen = turnDefaultOpen(prefs.collapseTiming, fold.latest)
-      if (!foldMemory.open(turnFoldKey(sessionId, fold.roundIndex), defaultOpen)) set.add(fold.roundIndex)
-    }
-    return set
-  }, [roundFolds, prefs.collapseTiming, sessionId, foldMemory])
-  const prevCollapsedRounds = useRef<Set<number>>(new Set())
-  useEffect(() => {
-    const entering: string[] = []
-    const sid = sessionId ?? ''
-    for (const roundIndex of collapsedRounds) {
-      if (prevCollapsedRounds.current.has(roundIndex)) continue
-      // 行的键是 `会话id:r<轮>:<类型>:<序号>`（工具可能是 `…:call:<id>`），组是
-      // `会话id:step:r<轮>:…`——两条前缀把这一轮扫干净（见 fold-state.ts 的 clearFoldPrefix）。
-      entering.push(`${sid}:r${String(roundIndex)}:`, `${sid}:step:r${String(roundIndex)}:`)
-    }
-    prevCollapsedRounds.current = collapsedRounds
-    if (entering.length === 0) return
-    foldMemory.clearPrefixes(entering)
-    // clearPrefixes 是稳定引用（useFoldMemory 里 useCallback 包过），不进依赖清单。
-  }, [collapsedRounds, sessionId, foldMemory])
+  // 别再把「按前缀清这一轮的存档」加回来，三条原因：
+  // - 全仓只有两种折叠存档键（`fold-state.ts:106` 的 `<sid>:turn:<轮>`、`:123` 的
+  //   `<sid>:step:<组首行稳定身份>`），**没有行级键**——`<sid>:r<轮>:` 这个前缀匹配不到任何键；
+  // - `<sid>:step:r<轮>:` 只盖得住首行稳定身份以 `r<轮>:` 开头的组（首行没有 callId 的那部分），
+  //   首行是工具（`call:<id>`）的组清不掉；
+  // - 它不看焦点，也不看这一层是不是真的在藏，会把「焦点保护放行后仍该开着」的组关掉。
 
   /**
    * 最新一轮的下一句输入进来时，收掉上一轮「摊着」的默认态（next-input 档的既有语义）：

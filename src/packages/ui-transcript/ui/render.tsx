@@ -13,7 +13,7 @@ import { stepGroupFoldKey, turnFoldKey } from './fold-state'
 import type { SeatStore } from './seat-store'
 import { rowShows } from './row-shows'
 import { turnDefaultOpen, useFoldMemory } from './round-fold'
-import { RowSeat, StepGroupSeat } from './fold-seats'
+import { FoldScopeContext, RowSeat, StepGroupSeat } from './fold-seats'
 import { useTurnFoldMotion } from './fold-motion'
 import type { ChatViewport } from './viewport'
 import { TurnFoldRow } from './round-fold'
@@ -126,10 +126,11 @@ export function SeatBody({
   /**
    * 整轮收起的逐行动画（第④阶段）。
    *
-   * 只有一处开窗：收起由这个钩子在布局阶段开（那一刻行的高度还写着实测值、布局没变），
-   * 展开由 {@link revealTurn} 在点击回调里开（DOM 变之前，锚点才量得准）。
+   * 这里只建「这一轮的动画归属」：谁要被藏，谁自己在布局效果里来问它（见 fold-motion.ts
+   * 模块头「hidden 归谁写」）。展开方向由 {@link revealTurn} 在点击回调里先开批次
+   * （DOM 变之前，锚点才量得准）。
    */
-  const foldMotion = useTurnFoldMotion({ collapsed, viewport, reveal })
+  const foldMotion = useTurnFoldMotion({ collapsed, viewport })
   revealAction.current = () => {
     foldMotion.prepareExpand()
     foldMemory.set(turnKey, true)
@@ -320,7 +321,11 @@ export function SeatBody({
     foldBlocks.push(block.node)
   }
   flushSegment()
+  // 这一轮里所有「会被整轮藏起来」的元素都从这里拿到同一份动画归属（一份稳定的引用，
+  // 所以每帧重渲染不会惊动下面 memo 过的行）。座位之外的行（前导行、团队页签的子代理流）
+  // 没有这个 provider，于是按「同步挂 hidden」处理——本来就该这样。
   return (
+    <FoldScopeContext.Provider value={foldMotion}>
     <>
       {seat.rows.length === 0 ? null : seatRow(seat.rows[0]!, false)}
       {showFoldRow && fold !== undefined ? (
@@ -354,6 +359,7 @@ export function SeatBody({
         onFork={onFork}
       />
     </>
+    </FoldScopeContext.Provider>
   )
 }
 
