@@ -356,10 +356,11 @@ console.log('[5] 整轮过程区的开合动画（0.6.69 第四轮报障）')
     motion.includes('viewport.beginBatch(') && !/observeFolds|FOLD_ATTR/.test(read(UI + '/viewport.ts')),
   )
   check(
-    'hidden 只在末帧提交，三个入口共用一个 finish()（transitionend / 批次末帧 / 超时兜底）',
+    'hidden 只在末帧提交，三个入口共用一个 finish()（transitionend / 批次末帧 / 超时兜底），判定是批次级的',
     motion.includes('function finish(target: Run): void {')
       && inOrder(finishBody, 'if (target.done) return', 'target.batch?.end()')
-      // 入口一：transitionend —— 只认高度那一条，且元素还在这一批里，才走 settle（settle 里提交）。
+      // 入口一：transitionend —— 只认高度那一条，且元素还在这一批里，才走 settle。
+      // settle 只记账、不提交（见下一条），真正的判定在整批收工那一次。
       && inOrder(
         flushBody,
         "if (event.target !== element || event.propertyName !== 'height') return",
@@ -372,20 +373,41 @@ console.log('[5] 整轮过程区的开合动画（0.6.69 第四轮报障）')
       && inOrder(flushBody, 'if (performance.now() >= next.deadline) {', 'finish(next)')
       // 入口三：过渡被合成器丢掉时的超时兜底。
       && inOrder(flushBody, 'window.setTimeout(() => {', 'finish(next)')
-      // 提交动作只有三处：settle（每个元素收完）/ finish（剩下的补交）/ 降级分支。
-      // 少一处就是「有人收完了没人挂 hidden」，多一处就是有第二条提交路。
-      && (motion.match(/item\.commit\(\)/g) ?? []).length === 3,
-  )
-  check(
-    '末帧先挂 hidden 再清内联（反过来会弹回原高度，又是一次跳）',
-    // 一个元素收完，settle 里先 commit() 再 clearElement()。
-    inOrder(settleBody, 'if (element.isConnected) item.commit()', 'clearElement(element)')
-      // 收工时剩下的元素（过渡被丢掉 / 走到超时兜底）照同样的顺序补一遍。
+      // 提交动作只剩两处：`finish` 的无焦点分支（整批一次提交完，含超时兜底带进来的）
+      // 与 `prefers-reduced-motion` 的降级分支。**`settle` 不再提交**——2026-11-12 起
+      // 元素收完只记账，所以这里是 2 不是 3，别再改回 3 去「补一处」。
+      && (motion.match(/item\.commit\(\)/g) ?? []).length === 2
+      // 批次判定骨架，顺序就是语义（2026-11-12）：先把这一批凑齐（已收完记账的 +
+      // 超时兜底还没收完的），再一次性看焦点——有焦点只放行那一层、整批一个 hidden
+      // 都不挂；没焦点才逐层提交；两条路最后都把内联值还回去。
       && inOrder(
         finishBody,
-        'for (const item of [...target.items.values()]) {',
+        'const items = [...target.settled, ...target.items.values()]',
+        'target.items.clear()',
+        'const focused = items.find(holdsFocus)',
+        'focused.commit.reveal()',
         'if (item.element.isConnected) item.commit()',
-        'clearElement(item.element)',
+        'for (const item of items) clearElement(item.element)',
+      ),
+  )
+  check(
+    '收完只记账，不在 settle 里逐元素提交（顺序依赖不许回来）',
+    // 元素收完（transitionend）只入账、停监听、摘批次；提交与放行的判定归整批收工那次。
+    // 这里出现 `item.commit()` 就是「谁先收完谁先关」，同批兄弟层又会出现
+    // 「整轮展开、靠前的组却被关掉并写进存档」。
+    inOrder(
+      settleBody,
+      'if (!target.items.delete(item.element)) return',
+      'target.settled.push(item)',
+      'if (target.items.size === 0) finish(target)',
+    )
+      && !settleBody.includes('item.commit()')
+      // 记账到收工之间也算「在藏」：不算的话，这段窗口里一次重渲染会把它重新交给
+      // collapse，量到 0 高就当场提交——顺序依赖从另一条路又回来。
+      && inOrder(
+        bodyOf('hiddenOrCollapsing'),
+        'if (run.items.has(element)) return true',
+        'return run.settled.some(',
       ),
   )
   check('系统说「少动」时不进动画、同步提交 hidden', /if \(prefersReducedMotion\(\)\) \{/.test(motion) && /'\(prefers-reduced-motion: reduce\)'/.test(motion))

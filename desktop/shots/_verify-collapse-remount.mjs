@@ -32,10 +32,17 @@ process.on('unhandledRejection', () => {})
  * 收起用真实操作完成：点整轮开关行先展开（基线必须是从展开态收起过来的），再点一次收起，
  * 等行上真的出现 `hidden="until-found"`。切会话也走真实路径：点侧栏那条会话。
  *
+ * - **P6**（兄弟层，2026-11-12 补）：一轮里有**多层**可藏（阶段组 + `model-retry` 独立行 +
+ *   后一个阶段组）。收起动画跑到一半，把焦点搬进**文档顺序靠后**的那一层。此时靠前那一层
+ *   的 `transitionend` 先到——逐元素判定的旧实现会当场提交它、把这一层里的组关掉，随后靠后
+ *   那一层被放行、整轮翻成展开：结果是「整轮展开、组却收起了」。验收：整轮展开，**而且**
+ *   靠前那一层的组仍然开着（组体不挂 `hidden`、`data-open` 仍是 `1`），切走再切回也仍然开着
+ *   （没有被写进手动存档 false）。修之前这条必红，红的样子就是上面那个组合。
+ *
  * ## 断言数（以实际运行输出为准）
  *
- * 跑下来 **24 条**：`assert` 调用点 20 处，其中 3 处在 `ROUNDS` 轮循环里各跑两次
- * （20 − 3 + 6 = 23），再加 `requireScene` 记的 1 条场景断言。文档与提交信息都照这个数写，
+ * 跑下来 **29 条**：`assert` 调用点 25 处，其中 3 处在 `ROUNDS` 轮循环里各跑两次
+ * （25 − 3 + 6 = 28），再加 `requireScene` 记的 1 条场景断言。文档与提交信息都照这个数写，
  * 别再按「`assert` 出现几次」或「设计了几条」另算一套。
  *
  * 运行：node desktop/shots/_verify-collapse-remount.mjs
@@ -620,6 +627,164 @@ assert(
     && midFlight.after.fold === 'open'
     && midFlight.after.groupOpen === '1',
   JSON.stringify(midFlight.after ?? midFlight),
+)
+
+/* ───────── P6：同批多层时，焦点落在靠后那一层，靠前的组不许被关 ───────── */
+
+/**
+ * 焦点场景三（2026-11-12 补，缺陷：同批兄弟层的顺序依赖）。
+ *
+ * 这一轮里有**三层**可藏：前一个阶段组、`model-retry` 独立行、后一个阶段组（见模块头「场景
+ * 怎么造」）。焦点放在整轮开关上点收起，60ms 后搬进**文档顺序最后**的那一层。
+ *
+ * 旧实现逐元素判定「提交还是放行」：靠前那一层的 `transitionend` 先到 → 它当场提交
+ * `hidden` → `StepGroupSeat` 的 `turnHidden` 把这一组关掉并写进存档；紧接着靠后那一层被
+ * 热点放行 → 整轮翻成展开。于是「整轮展开、靠前的组却收起了」，存档里还留着 false。
+ *
+ * 修法是把判定提到批次级：元素收完只记账，整批收工时统一判一次。所以验收三段：
+ * 整轮最后是展开的 → 靠前那一层的组还是开的（组体不挂 `hidden`、`data-open` 仍是 1）→
+ * 切走再切回（组按存档重挂）它仍然是开的（没有把 false 写进手动存档）。
+ */
+const siblingLayers = await cdp.evaluate(`
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const sessionTitle = () => document.querySelector('.turn-seat[data-round-seat]')?.querySelector('.entry-user')?.textContent ?? ''
+  let seat = document.querySelector('.turn-seat[data-round-seat="0"]')
+  if (seat === null) return { error: '没有第一轮' }
+  let turn = seat.querySelector('.turn-fold:not([disabled])')
+  if (turn === null) return { error: '第一轮没有整轮开关' }
+  const owners = () => [...seat.querySelectorAll('.turn-process > .turn-process-body > *')]
+  const groups = () => [...seat.querySelectorAll('.step-seat')]
+  const firstBody = () => {
+    const first = groups()[0]
+    return first === undefined ? null : first.querySelector('.step-body')
+  }
+  // 1. 基线：整轮摊开，且**靠前那个阶段组是点开的**（没点开就分不清「被关掉」与「本来关着」）。
+  if (turn.getAttribute('data-open') !== '1') turn.click()
+  for (let i = 0; i < 80; i += 1) {
+    if (seat.querySelector('.turn-process')?.getAttribute('data-fold') === 'open') break
+    await wait(50)
+  }
+  const group = seat.querySelector('.step-fold:not([disabled])')
+  if (group === null) return { error: '第一轮里没有阶段组' }
+  if (group.getAttribute('data-open') !== '1') group.click()
+  for (let i = 0; i < 80; i += 1) {
+    const body = firstBody()
+    if (group.getAttribute('data-open') === '1' && body !== null && !body.hasAttribute('hidden')
+      && body.getBoundingClientRect().height > 0) break
+    await wait(50)
+  }
+  const before = {
+    owners: owners().length,
+    groups: groups().length,
+    firstGroupOpen: groups()[0]?.querySelector('.step-fold')?.getAttribute('data-open') ?? null,
+    bodyHidden: firstBody() === null ? null : firstBody().hasAttribute('hidden'),
+    bodyHeight: firstBody() === null ? null : Math.round(firstBody().getBoundingClientRect().height),
+  }
+  // 2. 焦点先放在整轮开关上（开始收起那一拍的焦点检查因此不会放行），点收起。
+  turn.focus()
+  turn.click()
+  // 3. 等批次真的开跑，再把焦点搬进**文档顺序最后**的那一层。
+  await wait(60)
+  const all = owners()
+  const laterIndex = all.length - 1
+  const later = all[laterIndex] ?? null
+  const focusTarget = later === null
+    ? null
+    : (later.querySelector('.step-fold:not([disabled])') ?? later.querySelector('.think-head'))
+  if (focusTarget === null) return { error: '靠后那一层里没有可聚焦的控件', before, owners: all.length }
+  const during = {
+    fold: seat.querySelector('.turn-process')?.getAttribute('data-fold') ?? null,
+    owners: all.length,
+    laterIndex,
+    laterTag: later.tagName,
+    laterClass: later.className,
+    focusMoved: false,
+  }
+  focusTarget.focus()
+  during.focusMoved = document.activeElement === focusTarget
+  // 4. 等收起跑完（过渡 + 提交余量 + 超时兜底都在 700ms 之内）。
+  await wait(700)
+  const after = {
+    fold: seat.querySelector('.turn-process')?.getAttribute('data-fold') ?? null,
+    turnOpen: turn.getAttribute('data-open'),
+    firstGroupOpen: groups()[0]?.querySelector('.step-fold')?.getAttribute('data-open') ?? null,
+    bodyHidden: firstBody() === null ? null : firstBody().hasAttribute('hidden'),
+    bodyHeight: firstBody() === null ? null : Math.round(firstBody().getBoundingClientRect().height),
+    focused: document.activeElement === focusTarget,
+    activeTag: document.activeElement === null ? null : document.activeElement.tagName,
+  }
+  // 5. 存档复核：切走再切回，靠前那一组若被写进手动存档 false，就再也回不到展开。
+  const away = [...document.querySelectorAll('.sess-item')].find((row) =>
+    (row.querySelector('.title-text')?.textContent ?? '').includes('甲'))
+  if (away === undefined) return { before, during, after, error: '侧栏里找不到甲会话' }
+  away.click()
+  for (let i = 0; i < 300; i += 1) {
+    if (sessionTitle().includes('甲')) break
+    await wait(100)
+  }
+  await wait(300)
+  const back = [...document.querySelectorAll('.sess-item')].find((row) =>
+    (row.querySelector('.title-text')?.textContent ?? '').includes('乙'))
+  if (back === undefined) return { before, during, after, error: '侧栏里找不到乙会话' }
+  back.click()
+  for (let i = 0; i < 300; i += 1) {
+    if (sessionTitle().includes('乙')) break
+    await wait(100)
+  }
+  await wait(500)
+  seat = document.querySelector('.turn-seat[data-round-seat="0"]')
+  if (seat === null) return { before, during, after, error: '切回之后没有第一轮' }
+  return {
+    before,
+    during,
+    after,
+    remount: {
+      turnOpen: seat.querySelector('.turn-fold:not([disabled])')?.getAttribute('data-open') ?? null,
+      firstGroupOpen: groups()[0]?.querySelector('.step-fold')?.getAttribute('data-open') ?? null,
+      bodyHidden: firstBody() === null ? null : firstBody().hasAttribute('hidden'),
+    },
+  }
+`)
+process.stdout.write(`  P6 兄弟层 ${JSON.stringify(siblingLayers)}\n`)
+
+assert(
+  'P6 前置：第一轮里至少有 2 层可藏（阶段组 + 组外独立行），且靠前那个组是点开的、组体看得见',
+  siblingLayers.before !== undefined
+    && (siblingLayers.before.owners ?? 0) >= 2
+    && siblingLayers.before.firstGroupOpen === '1'
+    && siblingLayers.before.bodyHidden === false
+    && (siblingLayers.before.bodyHeight ?? 0) > 0,
+  JSON.stringify(siblingLayers.before ?? siblingLayers),
+)
+assert(
+  'P6 前提：收起动画跑到一半时焦点搬进了文档顺序靠后的那一层（只剩靠前那层的 transitionend 会先到）',
+  siblingLayers.during !== undefined
+    && siblingLayers.during.fold === 'closed'
+    && siblingLayers.during.focusMoved === true
+    && siblingLayers.during.laterIndex > 0,
+  JSON.stringify(siblingLayers.during ?? siblingLayers),
+)
+assert(
+  'P6：这一轮最后是展开的（靠后那一层被放行，整轮跟着翻成展开）',
+  siblingLayers.after !== undefined
+    && siblingLayers.after.turnOpen === '1'
+    && siblingLayers.after.fold === 'open',
+  JSON.stringify(siblingLayers.after ?? siblingLayers),
+)
+assert(
+  'P6：靠前那一层的组没有被关掉（组体不挂 hidden、高度不为 0、data-open 仍是 1）',
+  siblingLayers.after !== undefined
+    && siblingLayers.after.firstGroupOpen === '1'
+    && siblingLayers.after.bodyHidden === false
+    && (siblingLayers.after.bodyHeight ?? 0) > 0,
+  JSON.stringify(siblingLayers.after ?? siblingLayers),
+)
+assert(
+  'P6：切走再切回之后靠前那一组仍然展开（没有被写进手动存档 false）',
+  siblingLayers.remount !== undefined
+    && siblingLayers.remount.firstGroupOpen === '1'
+    && siblingLayers.remount.bodyHidden === false,
+  JSON.stringify(siblingLayers.remount ?? siblingLayers),
 )
 
 /* ───────── 行级复位：整轮收起时抹掉行自己的展开存档（切走再切回） ───────── */

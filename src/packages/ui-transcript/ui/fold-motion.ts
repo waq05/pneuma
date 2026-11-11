@@ -15,12 +15,11 @@
  *     提交，而重挂不改变 `collapsed`，新 DOM 于是没人补 `hidden`，收起的一轮整段露出来
  *     （2026-11-11 报障，真机探针 `desktop/shots/_verify-collapse-remount.mjs`）。
  *
- * ## 末帧要再查一次焦点（2026-11-11 第三次修）
+ * ## 末帧要再查一次焦点（2026-11-11 第三次修；2026-11-12 改成批次级判定）
  *
  * `useSearchableHidden` 在**开始**收起那一拍查一次焦点，命中就放行；但一轮收起要跑
  * 200 多毫秒，这中间键盘用户完全可能 Tab 进这一行。末帧 `display: none` 落到焦点元素上，
- * 焦点就掉回 body 了。所以 {@link settle} 与 {@link finish} 在提交闭包落地**之前**
- * 再查一次 `element.contains(activeElement)`：
+ * 焦点就掉回 body 了。所以收工时还要再查一次 `element.contains(activeElement)`：
  *
  *   - 命中：**不挂** `hidden`，调这一层自己的 `reveal()`（提交闭包上带着，见
  *     `fold-seats.tsx` 的 `HiddenCommit`）把这一轮 / 这一层放行成展开；
@@ -28,6 +27,29 @@
  *
  * 放行的顺序是「先开批次（行还写着 0 高，锚点才量得准）→ 再还内联值」，
  * 与点击展开那条路同一条时序。
+ *
+ * **判定是批次级的，不是逐元素的**（2026-11-12 修）。一轮里可能同时有多层可藏：多个
+ * 阶段组，或者阶段组 + `model-retry` 这类**组外独立行**。各层的 `transitionend` 先后到达，
+ * 若每层自己判「提交还是放行」，就会出现这样的组合：
+ *
+ *   1. 文档顺序靠前那层先收完 → 当场提交 `hidden` → `StepGroupSeat` 的 `turnHidden`
+ *      把这一层里的组关掉、写进手动存档 false；
+ *   2. 紧接着靠后那层查出焦点在自己里面 → 放行 → 整轮翻成展开。
+ *
+ * 结果是「整轮展开、组却收起着」，而且存档被写成 false，切走再切回也回不来。所以元素
+ * 收完只**记账**（从这一批里摘掉、停监听、内联高度留着），真正的判定推迟到整批收工那次
+ * `finish()`：
+ *
+ *   1. 扫一遍这一批（含已经收完记了账的）各元素，看焦点在不在里面；
+ *   2. 有任何一层带焦点 → **整批一个 `hidden` 都不挂**，只调带焦点那层的 `reveal()`
+ *      （它把整轮放行成展开；其余层跟着整轮的展开状态走，下一拍由展开方向摘 `hidden`），
+ *      各元素的内联高度照旧还回去。别在这里对每层都调一次 `reveal()`——那会把整轮里
+ *      所有组都展开；
+ *   3. 一层都不带焦点 → 整批统一 `commit()`，每层该关的组照常关。
+ *
+ * 顺序依赖由此消失：判定只看收工那一刻的焦点，与「谁先收完」无关。收完到收工之间元素停在
+ * 「内联高度 0 + `overflow: hidden`」，不会露出内容；`display: none` 晚几十毫秒挂，
+ * 而那一层此刻已经是 0 高。
  *
  * ## 为什么还要一个批次
  *
@@ -60,7 +82,7 @@
  *
  * ## 两个方向不对称
  *
- * - **收起**：逐行量高 → 归零 → 末帧各元素自己提交 `hidden`；
+ * - **收起**：逐行量高 → 归零 → 整批收工时统一判定并提交 `hidden`（批次级，见上一节）；
  * - **展开**：行体**不动画**（没有「旧高度」可过渡，直接摘掉 `hidden`），但这一下是瞬时
  *   长高几百像素，所以批次必须在 DOM 变**之前**开（{@link FoldMotion.prepareExpand}，
  *   由点击那一刻调用），否则锚点量到的是「已经跳完」的位置，补不回来。
@@ -108,7 +130,15 @@ interface Moving {
 /** 一批正在跑的收起。 */
 interface Run {
   readonly batch: FoldBatch | null
+  /** 还在动画里的元素。 */
   readonly items: Map<HTMLElement, Moving>
+  /**
+   * 已经收完、等整批收工统一判定的元素（只记了账，内联高度还留着）。
+   *
+   * 为什么不直接提交：同一批里只要有一层还带着键盘焦点，整批都不能挂 `hidden`
+   * （见模块头「末帧要再查一次焦点」的批次级判定）。
+   */
+  readonly settled: Moving[]
   /** 段容器原来的内联 `row-gap`（收工时还回去）。 */
   readonly bodies: Map<HTMLElement, string>
   readonly listeners: Map<HTMLElement, (event: TransitionEvent) => void>
@@ -163,41 +193,47 @@ function createFoldMotion(latest: { current: MotionOptions }): FoldMotion {
   let scheduled = false
 
   /**
-   * 元素此刻是不是**真的**在藏：已经挂上 `hidden`，或者这一批已经真的开跑了。
+   * 元素此刻是不是**真的**在藏：已经挂上 `hidden`，或者这一批已经真的开跑了
+   * （动画里 / 已经缩到 0 高、等整批收工的那些都算）。
    *
    * **排队等开批的那一段不算**：那时元素只是登记进了 `waiting`，还没有任何东西在动；
    * 而「另一层被焦点保护放行、整轮其实不藏」要等下一次提交才生效。按「排上队」判，
    * 里层（阶段组）的守卫会在这个窗口里误把组关掉（2026-11-11 报障，见
    * `StepGroupSeat` 的 `turnHidden`）。
+   *
+   * 「已收完、等收工」那一段（`run.settled`）**要算**：此刻它的内联高度已经是 0，
+   * 只差 `hidden` 没挂。不算的话，这一窗口里的一次重渲染会把它当成「没在藏」重新
+   * 交给 `collapse`，量到 0 高就当场 `commit()`——顺序依赖又回来了。
    */
   function hiddenOrCollapsing(element: HTMLElement): boolean {
     if (element.hasAttribute('hidden')) return true
-    return run !== null && run.items.has(element)
+    if (run === null) return false
+    if (run.items.has(element)) return true
+    return run.settled.some((item) => item.element === element)
   }
 
   /**
-   * 末帧复检焦点：焦点在这一行里就放行，**不挂** `hidden`。
+   * 这一层里此刻有没有键盘焦点。批次收工时用它做**一次性**判定（见 {@link finish}）。
    *
    * 为什么末帧还要查一次（2026-11-11 第三次修）：`useSearchableHidden` 只在**开始**
    * 收起那一拍查一次焦点，而一轮收起要跑 200 多毫秒；这中间键盘用户完全可能 Tab 进
    * 这一行。末帧 `display:none` 落到焦点元素上，焦点掉回 body——正是模块头承诺
-   * 「自动收起永远不许把键盘用户脚下的地板抽掉」要防的事：
-   *   - 命中就调**这一层自己的** `reveal()`（展开这一轮 / 这一层），由提交闭包带过来；
-   *   - 调用方负责把这个元素从这一批里干净退出（`clearElement`，别留下内联高度）。
+   * 「自动收起永远不许把键盘用户脚下的地板抽掉」要防的事。
    *
-   * 顺序：先 `reveal()` 再清内联——放行要在行还写着 0 高的时候开批次，锚点才量得准
-   * （见模块头「两个方向不对称」）。
-   *
-   * @returns 是不是因为焦点而放行
+   * @returns 焦点在不在这一层里
    */
-  function releaseForFocus(item: Moving): boolean {
+  function holdsFocus(item: Moving): boolean {
     const element = item.element
-    if (!element.contains(element.ownerDocument.activeElement)) return false
-    item.commit.reveal()
-    return true
+    return element.contains(element.ownerDocument.activeElement)
   }
 
-  /** 一个元素收完了：挂 `hidden` → 清内联；它是最后一个就让整批收工。 */
+  /**
+   * 一个元素收完了：**只记账**，不提交。
+   *
+   * 为什么推迟（2026-11-12）：同一批里只要还有一层带着键盘焦点，整批都不能挂 `hidden`
+   * （见 {@link finish} 的批次判定）。逐个提交就等于「谁先收完谁先关」，同批兄弟层于是
+   * 会出现「整轮最后展开、先收完那层的组却被关掉并写进存档」。
+   */
   function settle(target: Run, item: Moving): void {
     if (!target.items.delete(item.element)) return
     const element = item.element
@@ -206,20 +242,23 @@ function createFoldMotion(latest: { current: MotionOptions }): FoldMotion {
       element.removeEventListener('transitionend', listener)
       target.listeners.delete(element)
     }
-    // 末帧复检焦点（见 releaseForFocus）：这一行里要是有键盘焦点，就不挂 `hidden`，
-    // 放行成展开，并把它从这一批里干净退出（内联高度一起还回去）。
-    if (releaseForFocus(item)) {
-      clearElement(element)
-      if (target.items.size === 0) finish(target)
-      return
-    }
-    // 顺序照旧：先让元素挂上 `hidden`（display:none），再清内联样式，反过来会弹回原高度。
-    if (element.isConnected) item.commit()
-    clearElement(element)
+    // 内联高度先留着（已经是 0 高 + `overflow: hidden`，不露内容），等收工时统一提交或
+    // 统一还回去。它是最后一个就收工——判定在收工那一刻做，与谁先到无关。
+    target.settled.push(item)
     if (target.items.size === 0) finish(target)
   }
 
-  /** 收工时把一批的末帧、样式、批次一起收干净。重复调用无害。 */
+  /**
+   * 收工时做这一批的**批次级**判定，然后把末帧、样式、批次一起收干净。重复调用无害。
+   *
+   * 判定见模块头「末帧要再查一次焦点」：扫这一批（已收完记账的 + 还没收完、被超时兜底
+   * 带进来的）里有没有键盘焦点——
+   *   - 有：整批一个 `hidden` 都不挂，只放行带焦点的那一层（`reveal` 把整轮翻成展开），
+   *     其余层跟着整轮的展开状态走；各元素的内联高度照旧还回去；
+   *   - 没有：整批统一 `commit()`，每层该关的组照常关。
+   *
+   * 顺序照旧：先让元素挂上 `hidden`（display:none），再清内联样式，反过来会弹回原高度。
+   */
   function finish(target: Run): void {
     if (target.done) return
     target.done = true
@@ -227,21 +266,25 @@ function createFoldMotion(latest: { current: MotionOptions }): FoldMotion {
     target.raf = 0
     if (target.timer !== 0) window.clearTimeout(target.timer)
     target.timer = 0
-    // 剩下的元素是「过渡被丢掉 / 走到超时兜底」的那些：照同样的顺序补提交。
-    for (const [element, listener] of target.listeners) element.removeEventListener('transitionend', listener)
-    for (const item of [...target.items.values()]) {
-      // 末帧复检焦点（见 releaseForFocus）：这一行里要是有键盘焦点，就不挂 `hidden`，
-      // 放行成展开，内联高度还回去。放行会让整轮翻成展开，同一批剩下的行会随下一次
-      // 提交摘掉 `hidden`（`transition` 的展开方向），这里不替它们留半截状态。
-      if (releaseForFocus(item)) {
-        clearElement(item.element)
-        continue
-      }
-      if (item.element.isConnected) item.commit()
-      clearElement(item.element)
-    }
+    // 这一批的全部元素：已经收完记了账的，加上过渡被丢掉 / 走到超时兜底还没收完的。
+    const items = [...target.settled, ...target.items.values()]
+    target.settled.length = 0
     target.items.clear()
+    // 还没收完的那些（超时兜底进来的）把监听停掉；已经收完的在 settle 里停过了。
+    for (const [element, listener] of target.listeners) element.removeEventListener('transitionend', listener)
     target.listeners.clear()
+    // 批次级判定：任何一层带焦点，整批都不提交（否则就是「先收完的那层把组关掉、
+    // 整轮却因为靠后那层被放行而展开」）。只放行带焦点的那一层：它把整轮翻成展开，
+    // 其余层跟着整轮的展开状态走——**别**对每层都调一次 `reveal()`，那会展开整轮的组。
+    const focused = items.find(holdsFocus)
+    if (focused !== undefined) {
+      focused.commit.reveal()
+    } else {
+      for (const item of items) {
+        if (item.element.isConnected) item.commit()
+      }
+    }
+    for (const item of items) clearElement(item.element)
     for (const [body, gap] of target.bodies) {
       body.style.transition = ''
       body.style.rowGap = gap
@@ -259,8 +302,16 @@ function createFoldMotion(latest: { current: MotionOptions }): FoldMotion {
     }
     const target = run
     if (target === null) return
+    // 已经收完、只是还没到收工的元素也要退出去：这一批正在被展开方向打断，
+    // 收工时不该再替它提交 `hidden`（那会把刚放行的行重新藏起来）。
+    const at = target.settled.findIndex((item) => item.element === element)
+    if (at !== -1) target.settled.splice(at, 1)
     const item = target.items.get(element)
-    if (item === undefined) return
+    if (item === undefined) {
+      clearElement(element)
+      if (target.items.size === 0) finish(target)
+      return
+    }
     target.items.delete(element)
     const listener = target.listeners.get(element)
     if (listener !== undefined) {
@@ -285,6 +336,8 @@ function createFoldMotion(latest: { current: MotionOptions }): FoldMotion {
     const moving = items.map((item) => item.element)
     if (prefersReducedMotion()) {
       // 系统说「少动」：不进动画、同步提交 `hidden`。批次仍然开一小段，把这一帧的位置补平。
+      // 这条路上不用再做批次级判定：收起/放行的判定发生在布局效果里，到这一刻还没来得及
+      // 让用户搬焦点（同一个任务里没有输入事件窗口）。
       const batch = viewport.beginBatch({ moving, durationMs: COMMIT_TAIL_MS })
       for (const item of items) {
         if (item.element.isConnected) item.commit()
@@ -305,6 +358,7 @@ function createFoldMotion(latest: { current: MotionOptions }): FoldMotion {
     const next: Run = {
       batch,
       items: new Map(items.map((item) => [item.element, item])),
+      settled: [],
       bodies: new Map(),
       listeners: new Map(),
       deadline: performance.now() + total + COMMIT_TAIL_MS,

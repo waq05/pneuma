@@ -42,10 +42,14 @@ function useStableCallback<T extends (...args: never[]) => void>(callback: T): T
  * 一个元素自己的「挂 / 摘 `hidden`」闭包，顺手带着这一层自己的放行动作。
  *
  * 为什么要带 `reveal`：末帧提交之前要**再查一次焦点**（见 `fold-motion.ts` 的
- * `releaseForFocus`）。开始收起那一拍查过一次不算数——一轮收起要跑 200 多毫秒，
- * 这中间键盘用户完全可能 Tab 进这一行。末帧 `display: none` 落到焦点元素上，焦点就掉回
- * body 了，正是「自动收起永远不许把键盘用户脚下的地板抽掉」要防的事。查到焦点在，
- * 调用方要调的就是**这一层自己的**放行动作，所以它得跟着提交闭包一起交出去。
+ * `holdsFocus` / `finish` 的批次级判定）。开始收起那一拍查过一次不算数——一轮收起要跑
+ * 200 多毫秒，这中间键盘用户完全可能 Tab 进这一行。末帧 `display: none` 落到焦点元素上，
+ * 焦点就掉回 body 了，正是「自动收起永远不许把键盘用户脚下的地板抽掉」要防的事。查到焦点在，
+ * 要调的就是**这一层自己的**放行动作，所以它得跟着提交闭包一起交出去。
+ *
+ * 判定是**批次级**的：同一批里有任何一层带焦点，整批都不挂 `hidden`，只调带焦点那层的
+ * `reveal()`（见 `fold-motion.ts` 的模块头）。所以「这一层的 `reveal` 有没有被调到」不等于
+ * 「这一层是不是被放行」——整批一起被放行，`commit` 一个都没跑。
  */
 export interface HiddenCommit {
   (): void
@@ -120,7 +124,7 @@ export function useSearchableHidden(
       return
     }
     // 提交闭包把这一层自己的放行动作一起带上：末帧复检焦点时（fold-motion 的
-    // `releaseForFocus`）要调的就是它。`onHidden` 只在**真的挂上** `hidden` 时跑，
+    // `holdsFocus`）要调的就是它。`onHidden` 只在**真的挂上** `hidden` 时跑，
     // 被焦点保护放行的那次永远不会跑到这里。
     const commit = ((): void => {
       if (hidden) {
