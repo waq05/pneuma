@@ -15,8 +15,184 @@
 S4 漏了 `read-row.tsx` 且本仓已有可点文件路径、S8 缺的是**数据源**不是卡片、S6 的行号漂了。
 另外从 S5 里拆出 S11（底部占位与折叠期空间补偿）。行号以这次核实为准。
 
-**施工顺序（核实的建议）**：S10 → S4（先做 bash 那张）→ S2（比较器止血）→ S9 → S7 → S8 → S5 → S6。
-排前面的两条理由是「改动小、用户一眼看得见」；S5 与 S6 共用同一套视口机制，必须一起评估，放最后。
+**施工顺序（2026-11-10 的建议，已按此执行完）**：S10 → S4（先做 bash 那张）→ S2（比较器止血）→ S9 → S7 → S8 → S5 → S6。
+排前面的两条理由是「改动小、用户一眼看得见」；S5 与 S6 共用同一套视口机制，所以合成四阶段施工图一起做。
+
+**当前状态（2026-11-11）**：S1、S2、S3、S7、S9、S10、S11 已对齐；S4 只剩「读文件那张卡」的细节；
+S5、S6 按四阶段施工图全部落地（见下一节，四个阶段都有真机读数）；S8 的数据面与两张卡已做完，
+剩下的是命令类节点没按 dsh 细分（差别在信息密度，不在功能）。每条「没做到的」都写在对应小节里，
+**别只看标题就以为全齐了**——S2 的 ScriptDuration 目标没达成，原因在文末「性能线索」。
+
+### 视口与渲染管线的四阶段施工图（2026-11-10 设计，2026-11-11 四个阶段全部落地）
+
+剩下的 S11 / S2 彻底版 / S5 / S6 都动同一片代码（`ui-transcript/ui/` 的 `render.tsx`、`ui.tsx`、`fold-seats.tsx`、`follow.ts`、`views.css`），所以**按下面顺序做，每阶段结束时门禁要能绿**。四段已全部完成（提交 `ef33fcd` / `f8b3180` / `2801529` / `cf13db9`），**表里「验收」那一列就是当时的判据，不是计划口径**：
+
+| 阶段 | 改什么 | 验收 | 会失效的旧断言 |
+| --- | --- | --- | --- |
+| ① S11-a 占位壳 | `.chat` 末尾加一个恒 0 高的 `[data-chat-turn-spacer]`（**放在 `.chat-inner` 外面**）；`follow.ts` 的 `floor()` 改成 `scrollHeight − spacer − clientHeight` | `_verify-jitter` 余量不变、`ui-fold-combo` 全绿 | 若哪条探针数 `.chat` 子元素个数，会红 |
+| ② S2 座位稳定 | 新增 `ui/seat-store.ts`（按 `Row.stable` 索引、只重建尾部变化行）；`SeatBody` 拆成可 memo 的 `SeatFrame` + 自己订阅的 `RowSlot`；`onFork` 提成稳定引用 | 新增 `_verify-row-isolation`（流式 3 秒内非尾行 DOM 变动为 0）；`_perf-stream` 的 ScriptDuration 应低于 447ms | `ui-transcript-render-test` 里钉 `middle.push`/`turn-process` 源码形态的几条；`rowBodyUnchanged` 退役 |
+| ③ S5 视口协调器 | 新增 `ui/viewport.ts`，独占「测尺寸 / 写 scrollTop / 写占位 / 开关 overflow-anchor」；`follow.ts` 只留策略 | 新增 `_verify-fold-scroll`（16ms 采样：第一条可见行的屏幕 top 变化 ≤1px，末帧占位回 0） | `views.css` 里 overflow-anchor 那条的注释；`follow.ts` 的 floor/settle 说明 |
+| ④ S6 逐行收起 | 新增 `ui/fold-motion.ts`；退役 `.turn-process` 的 grid 动画；分段器只留显隐集合；`hidden` 改由 motion 末帧提交 | `_verify-think-collapse`（位置回退 0 次）、`_verify-jitter` | `ui-transcript-render-test` 的 `[5]` 整段、`ui-fold-combo` 的一条、`_verify-think-collapse` 读 `data-fold` 的部分 |
+
+**落地后的实际读数（不是预估）**：
+
+- ①：占位恒 0 高，`floor()` 减掉它；② 之前贴底就已是「离 floor ≤2px」。
+- ②：一帧里真正重跑的行体 3.51 → **2.31**，最坏单帧 115 → **6**（全量锚帧不再整屏重画）；`_verify-row-isolation` 0 违规。**ScriptDuration 没压到 447ms 以下**（469 → 450~457，单次采样 ±3%），原因已用 CPU profile 定位：会话区组件整段 19 秒合计只有 15–20ms，主线程 4 秒里 idle 3684ms，非 idle 的前三项全在轨迹页 bundle 下（见文末「性能线索」）。
+- ③：展开 / 收起时第一条可见行屏幕 top 最大漂移 **0.46px / 0.50px**（限 1px），scrollTop 实际补位 334px，批次期间 `overflow-anchor` 内联与计算值都是 `none`、结束还原空串，末帧占位回 0；贴底态离 floor 最大 0.33px。
+- ④：一次真实收起（段满高 228px）—— t=58ms 透明度已 0.01、高度还是 228px；t=69ms 才开始收高；t=185ms 高度 0；t=213ms 挂 `hidden`。收起过程中行自己在变矮，不再是整段被上缘切走。
+
+四条设计定论（都是查过两边代码才定的，别再走回头路）：
+
+1. **三者（S5/S6/S11）只能有一个 owner**：`viewport.ts` 独占三个 ref（滚动容器 / 内容列 / 占位）与三件事（测、写 scrollTop、写占位高度）。动画侧（`fold-motion.ts`）只写 box 的 `height/margin/opacity`，每帧顺序固定「先写 box → 再让 viewport 写滚动与占位」。分两套定时器必然一抖一抖。
+2. **`overflow-anchor` 不能只关流式尾行**。它当初被关掉要解决的是「同一帧里我们在写 `scrollTop`、浏览器也在写」，只关尾行冲突一模一样；而批次末帧把行打成 `hidden` 时锚点候选会消失、浏览器重选锚点还会跳一下。dsh 是按**时间**开合的：批次活跃时整区设 `none`，批次结束还原。
+3. **占位必须放在 `.chat-inner` 外面**。放里面会多吃一格 `--dsc-turn-gap`，而且 `follow.ts` 观察的是 `scroller.firstElementChild`（正是 `.chat-inner`），占位放里面会让「占位改高度」被当成内容增长、被自己的 `onResize` 抵消掉。
+4. **贴底与读历史是两种落点**，在批次开始时就定：贴底 → 落到 floor；在读历史 → 保住第一条可见行的屏幕位置（前后各量一次 `top`，差值补进 `scrollTop`）。别用一种落点兼顾两处。
+
+#### 阶段 ③④ 会撞到的既有断言（逐条查过，含行号）
+
+查法：把 `scripts/ui-*.mjs` 与 `desktop/shots/_*.mjs` 全读一遍，只留真正读 `follow.ts` / `render.tsx` / `fold-seats.tsx` / `views.css` 的断言，再回源码确认那行还在、还叫这个名。行号是 2026-11-10 未提交状态。
+
+**行号会漂的两个文件**：`render.tsx` 与 `ui.tsx` 在核对的这一小时里正被另一个子代理改（② S2 座位稳定，当时工作树里已经出现 `_probe-tmp.ts` 与 `_perf-rows.mjs`）。本节给的是 23:26 那一版的读数，并且都加了函数锚（`pushRow` / `flushSegment` / 放页补偿那个 `useLayoutEffect`）——② 落地后请按函数名重新定位，别照行号硬找。`follow.ts`、`fold-seats.tsx`、`views.css` 三个文件当时没有未提交改动，行号可直接用。
+
+两个判词的口径先定死，免得后人把「可能」当「必然」：
+
+- **必然失效**：按上面四条设计定论，这条断言钉的那串字符或那条 CSS 规则**必须**消失或改名；
+- **可能失效**：取决于实现细节（留不留别名、wrapper 留不留、函数签名改不改）。
+
+**【更正一条】** 施工图第 ③ 行「会失效的旧断言」写的是「`views.css` 里 overflow-anchor 那条的注释」——**没有任何探针钉它**。全仓 grep `overflow-anchor` 只命中两处：`views.css:1334` 的规则本身，和本文件里这张图。所以 ③ 改那段是自由的，代价是改完**没人守**。
+
+##### 一、阶段 ③（S5 视口协调器）会撞到的
+
+| 断言（探针:行 → 源码:行） | 现在钉的是什么 | ③ 之后 | 建议处置 |
+| --- | --- | --- | --- |
+| `scripts/ui-turn-spacer-test.mjs:135` → `follow.ts:27` | 占位选择器 `[data-chat-turn-spacer]` 写在 `follow.ts` 里 | 必然失效（测量归 `viewport.ts`） | 改：把这条挪去钉 `viewport.ts` 的同一句，强度不变 |
+| `scripts/ui-turn-spacer-test.mjs:136` → `follow.ts:28` | 读的是 `.offsetHeight`（元素真实高度，不是 style） | 必然失效 | 改：同上 |
+| `scripts/ui-turn-spacer-test.mjs:137` → `follow.ts:28` | 取不到占位时 `?? 0` | 必然失效 | 改：同上 |
+| `scripts/ui-turn-spacer-test.mjs:138-141` → `follow.ts:97-98` | `floor()` 的算式 `scrollHeight − spacerHeight(scroller) − clientHeight` | 必然失效（floor 变成 viewport 的测量 API） | 改：钉 viewport 里同一条减法，别只钉 `floor()` 这个名字 |
+| `scripts/ui-turn-spacer-test.mjs:142` → `follow.ts:130` | `pin()` 写的是 `floor()`，不是 `scrollHeight` | 必然失效（写 scrollTop 归 viewport） | 改：钉 viewport 的 `pin()` 写 floor |
+| `scripts/ui-turn-spacer-test.mjs:143` | 否定断言：`pin()` 不再直接写 `scrollHeight` | 不撞 | 留：否定式，只要没人写 `= scroller.scrollHeight` 就永远绿 |
+| `scripts/ui-turn-spacer-test.mjs:144` → `follow.ts:11` | 贴底判定 24px | 不撞 | 留：这是策略，按定论 ① 只留在 `follow.ts` |
+| `scripts/ui-turn-spacer-test.mjs:145-148` → `follow.ts:152`、`:191` | 判据比的是「离 floor 多远」，不是离 `scrollHeight` | 可能失效（`floor()` 改叫 `viewport.floor()` 就当场不匹配） | 改：正则放宽成 `(?:viewport\.)?floor\(\)`，强度不降 |
+| `scripts/ui-turn-spacer-test.mjs:96-119` → `ui-layout/ui/app.tsx` | 占位是 `.chat` 的**最后一个子元素**，且 `chat-inner` 收尾到它、它到 `.chat` 收尾之间没有别的节点 | 不撞（③ 只写内联高度，不搬 DOM） | 留，**但这是硬约束**：③ 别往 `.chat` 里再加兄弟节点（测量探针、遮罩层都算），加了必然红 |
+| `scripts/ui-turn-spacer-test.mjs:125-129` → `ui.tsx` | 反向钉：占位不许出现在 `ui.tsx` 里 | 不撞 | 留 |
+| `scripts/ui-turn-spacer-test.mjs:154-162` → `views.css:12770-12773` | `.turn-spacer` 的 `flex: 0 0 auto` + `height: 0`；`:161` 还要求规则前 600 字符里有「高度由」三个字 | 可能失效（③ 要把注释从「现阶段恒 0」改成「协调器按需写」） | 改：改写注释时抠住「高度由…写内联样式」这句；或把断言改成「注释里点了 viewport.ts」 |
+| `scripts/ui-interaction-base-test.mjs:470` → `follow.ts:11` | 贴底判定 24px | 不撞 | 留 |
+| `scripts/ui-interaction-base-test.mjs:471` | 否定断言：旧的 `clientHeight < 160` 已撤 | 不撞 | 留 |
+| `scripts/ui-interaction-base-test.mjs:472` → `follow.ts:14` | `FOLLOW_SETTLE_MS = 180` | 可能失效（落定等待就是为了补最后几像素，可能整体搬进 viewport） | 改：两种归属都认，或跟常量一起挪 |
+| `scripts/ui-interaction-base-test.mjs:475` → `follow.ts:272` | `wheel` 监听挂在滚动容器上 | 不撞（手势识别是策略） | 留 |
+| `scripts/ui-interaction-base-test.mjs:476` → `follow.ts:231` | 只认往上滚（`deltaY >= 0` 就返回） | 不撞 | 留 |
+| `scripts/ui-interaction-base-test.mjs:477` → `follow.ts:17` | `UP_KEYS` 含 `PageUp` | 不撞 | 留 |
+| `scripts/ui-interaction-base-test.mjs:482-491` → `follow.ts:249-251` | `onPointerDown` 函数体：只记时刻、不当场松手 | 可能失效：`bodyOf(followSrc, 'const onPointerDown = (): void => {')` 按字面函数头取体，③ 一旦给它加参数就取不到体 | 改：函数头改成按 `const onPointerDown` 起头、按花括号配平取体 |
+| `scripts/ui-interaction-base-test.mjs:494-500` → `follow.ts:221-227` | `onGesture` 函数体：清跟随之前不许有任何延后动作 | 可能失效（同上，字面函数头） | 改：同上 |
+| `scripts/ui-interaction-base-test.mjs:503` → `follow.ts:271` | `scrollend` 直接挂 `settle` | 可能失效（settle 若整体搬进 viewport） | 改：两种归属都认 |
+| `scripts/ui-interaction-base-test.mjs:504` → `follow.ts:160` | 180ms 计时器兜底调 settle | 可能失效（同上） | 改：同上 |
+| `scripts/ui-interaction-base-test.mjs:507` → `follow.ts:131`、`:168`、`:175`、`:182`、`:199` | `written.current = scroller.scrollTop`（只认自己的写） | 可能失效：若 viewport 的 pin 直接返回写入值，这行变成 `written.current = viewport.pin()` | 改：写成「两种写法都认」的正则（`viewport.pin()` 与 `scroller.scrollTop` 各一支），强度不降 |
+| `scripts/ui-interaction-base-test.mjs:508` → `follow.ts:181` | 差 1px 以内当自己滚的 | 不撞 | 留 |
+| `scripts/ui-interaction-base-test.mjs:511` → `follow.ts:275` | `new ResizeObserver(onResize)` | 可能失效（观察器算「测尺寸」，可能搬 viewport） | 改：两种归属都认 |
+| `scripts/ui-interaction-base-test.mjs:515-521` → `follow.ts:253-261` | `onResize` 里「读者在读就提前返回、绝不走到 pin」 | 可能失效（同上，字面函数头） | 改：同 482 那两条 |
+| `scripts/ui-interaction-base-test.mjs:525-529` → `follow.ts:38`、`:206` | 手势有效期 1500ms 及那道判定 | 不撞 | 留 |
+| `scripts/ui-interaction-base-test.mjs:532-538` → `fold-seats.tsx:128`、`:253-268` | 组体那 7 条：4px 贴底、wheel、只认往上、scrollend、`written`、跟随才追、不再用 `AT_BOTTOM_EPS` | 不撞 | 留，**列为禁改**：③ 的 viewport 只管外层 `.chat`（滚动容器 / 内容列 / 占位三个 ref），别顺手把 `.step-body` 也纳进去——纳进去这 7 条一起红；组体是限高盒子自己的滚动，与外层贴底不是一套 |
+| `scripts/ui-paging-test.mjs:200` → `ui.tsx:369`（放页补偿那个 `useLayoutEffect` 里的 `scroller.scrollTop += top - anchor.top`） | 放页后把锚点拉回原视口位置 | 可能失效：定论 ④ 要求「贴底/读历史两种落点由协调器定」，③ 若把放页补偿一起收进 viewport，这行会变成 viewport 的调用 | 改：钉「量了锚点位移再补」，别钉那一行字面量 |
+| `scripts/ui-paging-test.mjs:201` → `ui.tsx:331-332`（`pageAnchor.current = …`） | 锚点取第一个画出来的座位 `[data-round-seat]` | 可能失效（同 200 号） | 改：同上 |
+| `views.css:1329-1334` | `.chat` 的 `overflow-anchor: none` 与它上面那段「两边都在写 scrollTop」的注释 | **没有任何探针钉它**（见上面那条更正） | 改：③ 自由改写，但要自补一条断言（批次活跃时 `none`、批次结束还原），否则改完没人守 |
+| `views.css:12766` | 注释里的「`follow.ts` / 第③阶段」 | 不是断言，但与上面 154-162 那条共用同一段注释 | 改：动这段时别把「高度由」三个字弄丢 |
+| `desktop/shots/_verify-jitter.mjs:153`、`:188` | 每 60ms 读 `.chat` 的 scrollTop / scrollHeight / clientHeight 算余量 | 不撞 | 留：占位恒 0 时 `sh − ch` 不变，③ 的验收正是「余量不变」 |
+| `desktop/shots/_verify-follow-debug.mjs:164-180` | 拦截 `scrollTop` 写入、把调用栈记下来给人看 | 不会红，但栈里的函数名会从 `follow.ts` 变 `viewport.ts`，读栈的人会误判「还有人在绕过 viewport 写」 | 改：文件头补一句「③ 起写入栈应指向 viewport.ts」 |
+| `desktop/shots/_verify-follow-pill.mjs:160` | 逐个读 `.chat-inner > *` | 不撞（占位在 `.chat-inner` 外面，它也不数个数） | 留 |
+
+##### 二、阶段 ④（S6 逐行收起）会撞到的
+
+| 断言（探针:行 → 源码:行） | 现在钉的是什么 | ④ 之后 | 建议处置 |
+| --- | --- | --- | --- |
+| `scripts/ui-transcript-render-test.mjs:268` → `views.css:10813-10824` | `.turn-process` 的 `grid-template-rows: 1fr` 与 `[data-fold='closed']` 的 `0fr` | 必然失效 | 改：换成逐行 motion 的形态钉（`fold-motion.ts` 存在、每帧写 height/margin/opacity、按时间开合批次） |
+| `scripts/ui-transcript-render-test.mjs:273` → `views.css:10816-10818` | 时长取 `--dsc-dur-slow`（写在 grid 的 transition 上） | 必然失效（那条 transition 整条退役） | 改：把「时长取令牌、不写死毫秒」这条改钉到 motion 的时长来源上，别顺手丢掉 |
+| `scripts/ui-transcript-render-test.mjs:272` → `views.css:10834-10839` | `.turn-process-body` 的 opacity 过渡与收起态 `opacity: 0` | 必然失效（跟着 grid 一起退役） | 改：逐行 motion 自己写 opacity，断言改钉那里 |
+| `scripts/ui-transcript-render-test.mjs:271` → `views.css:10821-10824` | 收起态用负 margin 抵掉「0 高盒子多算的那一格 gap」 | 可能失效：wrapper 保留（只退动画、不退元素）时这条还要留着；wrapper 一起退场才失效 | 改：跟 wrapper 的取舍一起定 |
+| `scripts/ui-transcript-render-test.mjs:270` | 否定断言：收起态不许写 `display: none` | 不撞 | 留：④ 收尾靠的是 `.entry-row[hidden]` 的 `display:none`，不在这条选择器里，负向钉不会自己打脸 |
+| `scripts/ui-transcript-render-test.mjs:269` → `views.css:10826-10831` | `.turn-process-body` 的 `min-height: 0` + `overflow: hidden` | 可能失效（同 271，看 wrapper 留不留） | 改：同上 |
+| `scripts/ui-transcript-render-test.mjs:277` → `fold-seats.tsx:99-104`（配 `:51-56`） | 用 `setTimeout` 猜 180ms 再挂 `hidden` | 必然失效（`hidden` 改由 motion 末帧提交，这个定时器必须走） | 改：钉「末帧提交」——批次结束时那次调用里才 `setAttribute('hidden','until-found')`，提交前不许挂 |
+| `scripts/ui-transcript-render-test.mjs:279` → `fold-seats.tsx:52` + `tokens.css:376` | `getPropertyValue('--dsc-dur-slow')` 与令牌 `--dsc-dur-slow: 180ms` 同源 | 必然失效（前半截消失，后半截要留） | 改：拆两条——令牌本身还在（留），「motion 的时长读这个令牌」（从 fold-seats 搬到 fold-motion） |
+| `scripts/ui-transcript-render-test.mjs:280` → `fold-seats.tsx:291`、`:332` | `delayMs: foldHideDelayMs()` 出现**恰好两次** | 必然失效（两处参数都没了） | 删：它钉的「延迟只给 display:none 那一层」这个口径仍有效，但载体不存在了；口径改由「末帧提交只作用于 RowSeat 与 StepGroupSeat 外层、组体 max-height 那层不提交」承接 |
+| `scripts/ui-transcript-render-test.mjs:281` → `fold-seats.tsx:337` | 组体那层不传 `delayMs`（内容留在文档里，本来就平滑） | 不撞 | 留，**列为禁改**：④ 明确不接组体，接了这条就红 |
+| `scripts/ui-transcript-render-test.mjs:282` → `fold-seats.tsx:91`、`:110` | 焦点在子树里就 reveal；`beforematch` 放行 | 不撞 | 留，**并建议升格**：这是 ④ 之后唯一还在的「收起不抽走焦点 / Ctrl+F 能命中」的源码证据，真机那条（`_verify-think-collapse`）该加一条按 Ctrl+F 命中收起内容的断言 |
+| `scripts/ui-transcript-render-test.mjs:253-256` → `render.tsx:248-249`（`flushSegment` 里那两层 div） | `.turn-process` + `.turn-process-body` 两层、带 `data-fold` | 可能失效（「分段器只留显隐集合」若把 wrapper 退掉，这两层就不存在） | 改：跟 wrapper 取舍一起定 |
+| `scripts/ui-transcript-render-test.mjs:262` → `render.tsx:197`（`pushRow` 的 else 分支） | 不折的行走 `middle.push({ …, fold: false })` 原地摆 | 可能失效（middle 的形状若从 `{node, fold}` 改成 `{node, hidden}`，这行不匹配） | 改：钉「不折的行原地摆」这条行为，别钉字面量 |
+| `scripts/ui-transcript-render-test.mjs:263` → `render.tsx:255-262`（`for (const block of middle)` 那段） | `segment.push` 攒段 + `flushSegment()` 之后接 `foldBlocks.push` | 可能失效（这正是 ④ 要重写的分段器） | 改：同 262 |
+| `scripts/ui-transcript-render-test.mjs:287` → `views.css:10871` | `.step-body` 的 `transition: max-height` | 不撞 | 留：④ 不动组体这一级；④ 之后它是全仓唯一还剩的高度过渡，别顺手删 |
+| `scripts/ui-transcript-render-test.mjs:291` | `views.css` 里还要出现 `dsh` 与 `zcode` | 不撞 | 留：`zcode` 另有 4 处（`:2953`、`:5627`、`:6142`、`:6686`），删掉 `.turn-process` 那段注释也不会红 |
+| `scripts/ui-fold-combo-test.mjs:173` → `render.tsx:197`（`pushRow` 的 else 分支） | 同 262 号那行字面量 | 可能失效（同上） | 改：与 262 号同批改——两个探针钉同一行，改早了会双红 |
+| `scripts/ui-fold-combo-test.mjs:174` → `render.tsx:255-262` | 同 263 号那两段 | 可能失效（同上） | 改：与 263 号同批改 |
+| `scripts/ui-tool-row-flat-test.mjs:147` → `views.css:10826-10829` | `.turn-process-body` 的 gap 是 3px | 可能失效（同 271 / 269，看 wrapper） | 改：同上 |
+| `scripts/ui-tool-row-flat-test.mjs:64` → `views.css` 的 `.tool-card` 规则 | `.tool-card` 里不许有 `overflow: hidden`（会把里面 sticky 的行头截断） | 可能失效：motion 给盒子做高度动画时通常要 `overflow: hidden`，写进 `.tool-card` 就必然红 | 改：动画盒子一律用座位那层（`RowSeat` 的 `.entry-row` 或专用类），别写进 `.tool-card` |
+| `scripts/ui-process-grid-test.mjs:134` → `views.css` | 裸选择器 `.step-body {` 在 views.css 里只能出现一次 | 可能失效：④ 若给组体加一条裸 `.step-body {` 就红 | 改：新规则用 `.step-body[data-motion]` 这种带属性的选择器，绕开计数 |
+| `desktop/shots/_verify-think-collapse.mjs:210`、`:240` → `render.tsx:248`（`data-fold`） | 轮询读 `.turn-process` 的 `data-fold`，用来找「第一次收起」那一帧 | 可能失效：wrapper 退场后 `querySelector('.turn-process')` 是 null，`fold` 一栏全 null、`firstClosed` 是 −1、`around` 是空数组——报告最关键那段直接没了 | 改：改读 `hidden` 属性（末帧）或 motion 批次的控制属性 |
+| `desktop/shots/_verify-think-collapse.mjs:242-279` | **这个探针现在一条断言都没有**：只 `console.log` 报告然后 `process.exit(0)`，位置回退多少次都算通过 | ④ 的验收「位置回退 0 次」现在是空转 | 改：**开工第一件事**是加断言（回退次数为 0、末帧 `hidden` 已挂、末帧占位回 0），否则新探针写不写一个样 |
+| `desktop/shots/_verify-level3.mjs:179-180` | 读 `.turn-process` 的 `data-fold` | 可能失效（读数变 null；不在门禁里，不会红） | 改：与 210 号同批改 |
+| `desktop/shots/_probe-gap.mjs:164` | 读 `.turn-process-body` 找「段里装着什么」 | 可能失效（`segs` 变空数组，那段诊断没数据） | 改：wrapper 退场就改读段边界 |
+| `desktop/shots/_verify-think-sticky.mjs:321`、`:328` | `.step-fold` 的 `data-open` | 不撞（阶段组组头自己的属性） | 留 |
+| `desktop/shots/_verify-think-markdown.mjs:323`、`:330`；`_verify-bash-card.mjs:304`；`_verify-tool-row-flat.mjs:137` | 同上，都读 `.step-fold[data-open]` | 不撞 | 留 |
+| `desktop/shots/_verify-selection-actions.mjs` | 全文只有 `:231` 的 `scrollIntoView({ block: 'center' })`，**不读** `data-fold`、`data-open`、`data-scroll-up/down`、`scrollTop` | 不撞 | 留：它根本不在撞车名单里（施工图的提示可以划掉） |
+| `views.css:9013-9015` | `.entry-row[hidden] { display: none }` | 不撞，但 ④ 之后它是「末帧才挂 hidden」的落点，规则必须留着（删了 `until-found` 就不生效，UA 的 `display:none` 压不过 `.entry-row { display: flex }`） | 改：现在没有任何探针钉它，④ 顺手补一条 |
+| `views.css:10937-10940` | `.step-body[hidden] { max-height: 0; overflow: hidden }`（组体那一层不走 motion） | 不撞 | 留，也补一条断言 |
+
+**已查、但与 ③④ 无命中**（省得下一批再摸一遍）：`ui-row-memo`、`ui-node-slot`、`ui-compaction-row`、`ui-prompt-cards`、`ui-command-menu`、`ui-step-group-live`、`ui-collapse-prefs`、`ui-fold-prefs`、`ui-round-fold-tail`、`ui-thread-resizer`——它们读了 `views.css` / `render.tsx`，但钉的是别的区块（模型卡、命令提示、入口卡片、缩进栅格），③④ 不碰。
+
+##### 待拍板：`foldHideDelayMs()` 还有没有别的调用方
+
+**答：没有。** 全仓 grep（`src` / `scripts` / `desktop` 源码与探针），这个名字只出现在三处：
+
+- 定义：`fold-seats.tsx:51`；
+- 调用：`fold-seats.tsx:291`（`RowSeat`）、`fold-seats.tsx:332`（`StepGroupSeat` 外层），只有这两处；
+- 探针：`ui-transcript-render-test.mjs:280` 用正则数它出现两次——**不 import、不执行**，只数字符串。
+
+`useSearchableHidden` 的 `delayMs` 参数同样只有上面两处调用传了值；第三处 `fold-seats.tsx:337`（组体那层）根本不传。
+
+三条路：
+
+| 选项 | 做法 | 代价 |
+| --- | --- | --- |
+| **A 直接删（推荐）** | 函数与 `delayMs` 选项一起删，`useSearchableHidden` 收回成两参 | `ui-transcript-render-test.mjs` 的 `:277`、`:279`、`:280` 三条要改（它们本来就必然失效）；`--dsc-dur-slow` 不受影响，`views.css:10871` 的 `.step-body` 过渡还在用 |
+| B 保留兜底 | 留着函数，没人调时挂在 `options.delayMs` 上 | ① 留下一段永远拿不到调用方的死代码，下一个人会以为「还有地方要猜时长」；② `:280` 那条「恰好两次」得改成「零次或两次」，一条有力度的形态钉变成含糊断言；③ 真正的坑：将来谁手滑又传 `delayMs`，`hidden` 会在动画中途提交——正是 ④ 要根除的症状 |
+| C 改名留壳 | 保留同名函数、语义换成「返回一个在末帧执行的提交器」 | 名字带 Delay 却是提交器，名实不符；motion 侧本来就有自己的批次对象，多转一手没收益 |
+
+推荐 A。它存在的唯一目的是「等一个猜出来的时长」，④ 之后这个时长由 motion 自己知道，不需要猜；一段玩具级兜底比没有更危险。
+
+##### 决议清单
+
+**③ 开工前必须先做掉的三件事（按优先级）**
+
+1. 先给「批次活跃时 `.chat` 的 `overflow-anchor` 是 `none`、批次结束还原」写一条断言——现在全仓零覆盖，③ 改完没人守。
+2. 按「测量归 viewport」重写 `ui-turn-spacer-test.mjs` 的 `[3]` 整段（`:135-148`）；顺序上等 `viewport.ts` 真的存在再改，别先删后补。
+3. 把 `ui-interaction-base-test.mjs` 里按字面函数头取体的两处（`:482`、`:494`）和 `:507` 的写法改成签名变化也能命中的正则，否则 ③ 一动就假红。
+
+**④ 开工前必须先做掉的三件事（按优先级）**
+
+1. 先把 `_verify-think-collapse.mjs` 从「只打印」改成真断言——它现在恒 `exit 0`，验收等于空转。
+2. 改掉 `ui-transcript-render-test.mjs` 的 `:268`、`:272`、`:273` 三条（grid 动画那三条必然失效的），换成逐行 motion 的形态钉，否则它们会挡住 ④ 的第一次提交。
+3. 先拍定 `.turn-process` wrapper 留不留，再一次性处理 `:253-256`、`:269`、`:271`、`ui-fold-combo-test.mjs:174`、`ui-tool-row-flat-test.mjs:147` 这 5 条（留就全留、退就全改），别改一半。
+
+##### 主控已拍板（2026-11-10，施工时照这个来）
+
+1. **`foldHideDelayMs()` 按 A 路直接删**：连同 `useSearchableHidden` 的 `delayMs` 选项一起收掉，
+   函数收回两参。理由不是「代码难看」，而是**它猜的那个时长在 ④ 之后由 motion 自己知道**；
+   留一段玩具级兜底的真实代价是「将来谁手滑又传 `delayMs`，`hidden` 才会在动画中途提交」——
+   正是 ④ 要根除的那个症状。`ui-transcript-render-test.mjs:277`/`:279`/`:280` 三条随批改。
+2. **`.turn-process` 那个元素留着，只退役它的 grid 动画**：④ 把它从
+   `grid-template-rows: 1fr → 0fr` 的裁剪盒子改成普通容器（`display: block`、不裁剪），
+   但**元素本身与 `data-fold` 读数继续写**。这样 `_verify-level3.mjs:179-180` 与
+   `_probe-gap.mjs:164` 这两处真机读数不作废（它们查的是「整轮收起来了没有」，与用哪种动画无关），
+   而「整段一起缩」这个观感问题的根源是 grid 裁剪，不是这个 div 存不存在。
+   连带的 5 条断言（`ui-transcript-render-test.mjs:253-256`/`:269`/`:271`、
+   `ui-fold-combo-test.mjs:174`、`ui-tool-row-flat-test.mjs:147`）按「元素留、动画退」的形态同批改。
+3. **③ 的 viewport 只管外层 `.chat`，不许把 `.step-body` 纳进去**：组体自己有一套限高滚动
+   （`fold-seats.tsx` 的 `useProcessScroll`），两套 owner 抢同一件事就是抖的来源。
+   `ui-interaction-base-test.mjs:532-538` 那 7 条钉着组体那一套，破了就是真破。
+4. **④ 不许接组体那一层**：`fold-seats.tsx:337` 不传 `delayMs` 是对的（组体收起走 `max-height: 0`，
+   内容留在文档里，不需要延迟），`ui-transcript-render-test.mjs:281` 钉着它。逐行动画只做
+   外层 `.entry-row` 与整轮那一层。
+5. **动画盒子用 `.entry-row`，不许给 `.tool-card` 写 `overflow: hidden`**：`ui-tool-row-flat-test.mjs:64`
+   钉着「工具卡不许有 overflow hidden」，因为会截断卡里 sticky 的行头。这条不是琐碎规则，
+   它决定 ④ 的 motion 该挂在哪个元素上。
 
 ---
 
@@ -67,9 +243,40 @@ S4 漏了 `read-row.tsx` 且本仓已有可点文件路径、S8 缺的是**数�
 - **验收**：现有 `ui-transcript-render-test` 全绿；新增一条「注册一个 reasoning body 槽能改掉
   思考正文」的测试用插件。
 
-### S2 整树重渲染，没有逐节点订阅（已止血 2026-11-10，彻底方案未做）
+### S2 整树重渲染，没有逐节点订阅（已对齐 2026-11-11：座位注册表 + 逐行订阅）
 
-> **已止血（2026-11-10）**：给 `RowBody` 包了一层**带比较器**的 `memo`
+> **已对齐（2026-11-11，四阶段施工图的第②段，提交 `f8b3180`）**。做了三件事：
+>
+> 1. 新增 `ui/seat-store.ts`：按 `keyOf(row, sessionKey)` 索引（与 React `key` 同一个字符串），
+>    **内容等价就复用上一帧那个 `Row` 对象**（`entry` 引用相同、或手写递归深度相等），
+>    提交时**只对「格子换过对象」的键喊一声**。
+> 2. 座位拆成两半：`SeatFrame`（memo，props 全是稳定标量：座位键 / 藏不藏 / 轮序号 / 稳定回调 /
+>    注册表 / 槽渲染函数）+ `RowSlot`（自己用 `useSyncExternalStore` 订阅自己那一格）。
+>    行体 `RowBody` 于是回到普通函数——**`rowBodyUnchanged` 那个止血比较器退役**。
+> 3. `reveal` 提成 `useCallback`、`onFork` 改成吃**轮号**再按轮号 `useMemo`：这两个回调原来每帧
+>    现造，会让整屏的壳 memo 全部失效——登记表做得再对，回调一换引用就白做。
+>
+> 实测（`_perf-stream.mjs`，60 轮 / 128 行 / 19 秒，同机）：
+>
+> | 指标 | 改前 | 改后 |
+> | --- | --- | --- |
+> | 一帧里真正重跑的行体 | 平均 3.51 / 最坏单帧 **115** | 平均 **2.31** / 最坏 **6** |
+> | 总执行次数 | 596 | 380（−36%） |
+> | 全量锚帧触发重画 | 115 行 | **0 行** |
+> | ScriptDuration | 469 ms | 450~457 ms（−4%，单次采样 ±3%） |
+>
+> 那个 115 是「宿主每 50 帧发一次全量锚帧」造成的：内容一字不差但对象全新建，止血比较器
+> 当场集体失效。现在深度相等就复用旧对象，整屏重画那一拍没了。
+>
+> **没做到的那条**：`ScriptDuration < 447ms` 不成立，原因不在会话区（见文末「性能线索」：
+> 4 秒 profile 里主线 idle 3684ms，会话区组件整段 19 秒只有 15–20ms）。
+>
+> **两条探针的分工，别读错**：`_verify-row-isolation` 守的是**用户可见的不变量**（行被碰 /
+> 被重挂 / 内容被换都会红），它**证明不了**「少重渲染了」——把判等改成恒 `false` 它照样绿，
+> 因为 React 对内容没变的输出根本不写 DOM。真正守住「少重渲染」的是单测
+> `ui-row-isolation-test`（75 条，直接 import 注册表演算复用与通知）。
+
+> **止血阶段（2026-11-10，历史记录）**：给 `RowBody` 包了一层**带比较器**的 `memo`
 > （`render.tsx` 的 `RowBodyBody` + `rowBodyUnchanged`），只比 `row.entry` 引用、`row.live`、
 > `renderSlot` 三样。直播行照旧每帧重画（`liveEntries()` 每次 `map` 出新对象），定稿行不再重画。
 > 实测（`desktop/shots/_perf-stream.mjs`，60 轮 / 126 行 / 约 19 秒流式，同一台机器单次采样）：
@@ -159,11 +366,27 @@ S4 漏了 `read-row.tsx` 且本仓已有可点文件路径、S8 缺的是**数�
   `read` 那张只剩「行号 + 折叠」这点增量。
 - **验收**：每张卡一条隔离截图 + 一条断言；与 dsh 对应截图并排放 `docs/` 里。
 
-### S5 滚动是「CSS + 钉底」，dsh 是「视口协调器」（部分成立）
+### S5 滚动是「CSS + 钉底」，dsh 是「视口协调器」（已对齐 2026-11-11：一个 owner）
 
-- **已经补掉的**（未提交的 `follow.ts` 改动）：藏起来的行不写缓存、手势 1500ms TTL、
-  `pointerdown` 即停跟随、用 `useLayoutEffect` 而不是 `useEffect` 上钉底——这几样已经和文档
-  初稿写的时候不一样了，**接手前先 `git diff` 看一眼它改到哪了**。
+> **已对齐（2026-11-11，四阶段施工图的第③段，提交 `2801529`）**：新增 `ui/viewport.ts`，把
+> 「测尺寸 / 写 `scrollTop` / 写底部占位 / 开关 `overflow-anchor`」收成**唯一 owner**；
+> `follow.ts` 只剩策略（该不该贴底、手势、只认自己的写），全文件 **0 处** `scrollTop` 赋值、
+> **0 处** `getBoundingClientRect`。两种落点在批次开始时定死：跟随态落到 floor、读历史态保住
+> 第一条可见行的屏幕位置。每帧顺序写进 owner 的模块头：先让盒子动 → 再让行落地
+> （MutationObserver 微任务 / ResizeObserver 布局后 / rAF 保险丝）→ 最后测锚点、写滚动、写占位。
+>
+> 真机读数（`_verify-fold-scroll`，22 条）：展开 / 收起时第一条可见行屏幕 top 最大漂移
+> **0.46px / 0.50px**（限 1px），`scrollTop` 实际补位 334px（折叠段 0→331.2px），批次期间
+> `overflow-anchor` 的内联值与计算值都是 `none`、结束清成空串落回样式表，末帧占位回 0；
+> 贴底态离 floor 最大 0.33px。
+>
+> **一个刻意的选择**：样式表的常态口径就是 `overflow-anchor: none`，所以批次结束后**计算值**
+> 仍是 `none`。让浏览器也来锚定就是第二个 owner，正好回到要消灭的病——不改。
+>
+> 这一条以前 `overflow-anchor` **全仓零覆盖**，这一批补了断言（`ui-turn-spacer-test` 的 `[5]`）。
+
+- **已经补掉的**（2026-11-10 之前陆续落地）：藏起来的行不写缓存、手势 1500ms TTL、
+  `pointerdown` 即停跟随、用 `useLayoutEffect` 而不是 `useEffect` 上钉底。
 - **剩下的**：折叠那一拍的**逐帧**位置补偿（现在是「下一帧再钉一次」，所以仍有一两帧位移），
   以及底部占位（见 S11）。
 - **dsh**：`use-chat-viewport.ts` + `use-chat-reading.ts`——折叠期间逐帧同步 `scrollTop`、
@@ -175,7 +398,16 @@ S4 漏了 `read-row.tsx` 且本仓已有可点文件路径、S8 缺的是**数�
   `scrollTop`」这一件，要一个贯穿折叠组件与滚动容器的协调器）。
 - **验收**：`desktop/shots/_verify-think-collapse.mjs` 那种「50ms 采样 + 位置回退计数」的探针。
 
-### S11 没有「底部占位」，折叠时靠外边距兜（2026-11-10 从 S5 拆出）
+### S11 没有「底部占位」，折叠时靠外边距兜（已对齐：占位元素在、owner 在，高度仍恒 0）
+
+> **已对齐（第①段 `ef33fcd` 备元素，第③段 `2801529` 立 owner）**：`.chat` 里、`.chat-inner`
+> **之后**放了一个 `[data-chat-turn-spacer]`，默认 `height: 0`、`flex: 0 0 auto`，内联高度只由
+> `viewport.ts` 写；`floor()` = `scrollHeight − 占位 − clientHeight`。
+> 现在它**恒 0**：逐行动画（第④段）跑完之后位置由批次逐帧补偿，不需要「先加 room」那一步。
+> 留着它是因为贴底口径从此不必再改——占位真长出来时，贴底比的是内容底而不是占位那片空白。
+> 放在 `.chat-inner` 外面是刻意的：放里面会多吃一格 `--dsc-turn-gap`，而且 `follow` 观察的
+> `scroller.firstElementChild` 正是 `.chat-inner`，占位在里面会让「占位改高度」被当成内容增长、
+> 被自己的 `onResize` 抵消掉。
 
 - **现象**：过程区收起 / 展开那一拍，末尾内容会跳一下；贴底时尤其明显。
 - **dsh**：底部有一个 `data-chat-turn-spacer` 占位元素承担高度变化（`use-chat-viewport.ts`），
@@ -189,7 +421,31 @@ S4 漏了 `read-row.tsx` 且本仓已有可点文件路径、S8 缺的是**数�
 
 ## P3：实现方式不同，暂不影响使用
 
-### S6 整轮收起动画是「整段一起缩」
+### S6 整轮收起动画是「整段一起缩」（已对齐 2026-11-11：逐行落下 + 末帧提交 hidden）
+
+> **已对齐（2026-11-11，四阶段施工图的第④段，提交 `cf13db9`）**：新增 `ui/fold-motion.ts`，
+> 每行预量 `offsetHeight` + `marginTop` 后归零（同一个批次时钟，**没有 stagger**——参考实现也是
+> 全批共用进度，要复刻的是「每行自己的盒子」这个形状，不是错开）。
+> `.turn-process` 的 `grid-template-rows` / `overflow: hidden` / `min-height: 0` 全部撤掉，
+> 元素与 `data-fold` 读数保留（`_verify-level3` 与 `_probe-gap` 还在读它）。
+> `hidden="until-found"` 改由**末帧**提交，三个入口走同一个 `finish()`：`transitionend`
+> 且属性是 `height` / 批次末帧 / 「总时长 + 余量 + 保险」的超时兜底——`fold-seats.tsx` 里那个
+> 「猜一个时长再 `setTimeout`」的 `foldHideDelayMs()` 因此删掉（`delayMs` 选项一起收）。
+> 时长从 `--dsc-dur-slow` 的**计算值**读（运行时 200ms，不是 `tokens.css` 写的 180ms），
+> 按 70/160、50/160 切段：淡出 44%、高度延迟 31%、高度 69%。
+>
+> 真机读数（一次真实收起，段满高 228px）：t=58ms 透明度 0.01 而高度仍是 228px → t=69ms 开始
+> 收高 → t=185ms 高度 0 → t=213ms 挂 `hidden`。**先淡出、收高时屏幕上已经没有字**，
+> 所以不存在「文字被切在中间」。
+>
+> 验收：`_verify-think-collapse` **18 条真断言**（这条探针以前一条断言都没有、恒 `exit 0`，
+> 这一批先把它改真、在旧 grid 代码上跑绿，再在新代码上跑绿）；`_verify-jitter` 8 条（同样从
+> 空转修活）。负对照：把 `owned` 改回 `false`（等于旧的立刻挂 `hidden`），探针当场报
+> 「收起中行自己在变矮 0 帧」等两条红。
+>
+> **已知的结构性限制**：定稿轮一律分组，而一轮只有一个阶段组，所以真机上「段里多行同时各缩」
+> 的形态造不出来，量到的是「这一行自己逐帧变矮」（旧实现下它会一直等于满高，所以仍然能红）。
+> 多行形态只在未分组的直播轮存在，而直播轮收尾后才分组——这是产品结构，不是漏做。
 
 - **dsh**：逐行 JS 动画（`flow-motion.ts:383-430`：淡出 70ms → 延迟 50ms → 高度 110ms，
   逐行隐藏、各自可被 Ctrl+F 命中，同时补偿滚动）。
@@ -225,7 +481,30 @@ S4 漏了 `read-row.tsx` 且本仓已有可点文件路径、S8 缺的是**数�
 - **代价**：小。给存档键加上「这一轮第几次回答」（宿主侧要能给出这个代次；没有就退回
   「每次 rewind 时清掉这一轮的 turn 存档」这种近似做法）。
 
-### S8 缺几类特殊节点卡片（部分成立）
+### S8 缺几类特殊节点卡片（已对齐 2026-11-11：数据面 + 两张卡）
+
+> **已对齐（2026-11-11，两次提交）**。这一条当初的判断是「真正缺的是数据源」，于是先补数据面
+> 再补界面：
+>
+> 1. **数据面**（`14ac148`）：契约加 `system-prompt` / `context-injection` 两类条目（只带读数与
+>    摘要，**不带正文**——一份系统提示 15–25KB，条目不携带）；核心加 `prompt/used` 与
+>    `context/injected` 两个事件；会话 state 加两条记录，**每条都带位置锚 `after`**
+>    （写在几条消息之后）。没有这个锚，实时条目落在轮中、重放落在轮首，全字段比对必不相等,
+>    后果是每次打开会话都整表重建、展开态与直播尾全丢。
+> 2. **界面**（`178a468`）：两张可展开的卡。⚙ 系统提示收起一行「字数 · 段数 · 模型」，展开是
+>    段清单（段 id / 来源 / 字数，按声明刻度排序）+ hash 前 8 位；⊕ 上下文注入收起是「按类合计
+>    的字数，超三类收进 +N」，展开逐条给来源 / 注入位置 / 字数 / 前 200 字预览。
+>
+> 顺带修掉三处会静默坏掉的落位：`rounds.ts` 原来只放过 `system`，开场第一条注入卡会被当成
+> 「这一轮已经答完」（answered 置真、endIndex 推到它，整轮折叠与轮尾用时全判错）；
+> `round-fold.tsx` 的 `TURN_INDEPENDENT` 不补两类的话，落在过程区里的卡会跟着整轮被藏掉；
+> `ui.tsx` 的空会话欢迎态原来只认 `system`，新会话第一件事就是发请求，一落卡就把欢迎态顶掉。
+>
+> 验收：`transcript-metadata-test`（含「实时与重放全字段一致」）、`ui-prompt-cards-test` 156 条、
+> `_verify-prompt-cards` 真机通过（9 段按刻度排序、hash 前 8 位、+1 分支）。
+> **仍欠**：压缩落点（`CompactionItem`）已经是卡片（`ae2d3c3`）；命令类节点仍统一画成
+> `.entry-system-command`，没有按 dsh 分出 `ApprovalCommand` / `GenericCommandCard`——差别在
+> 信息密度，不在功能。
 
 - **dsh**：`SystemPromptRow`、`ContextInjectionRow`、`CompactionItem`、`CommandNodeView`、
   `ApprovalCommand`、`GenericCommandCard` 各一张卡。
@@ -235,7 +514,7 @@ S4 漏了 `read-row.tsx` 且本仓已有可点文件路径、S8 缺的是**数�
   所以这条要拆成两件事：先决定「这几类信息本仓要不要进会话流」（数据侧），再谈卡片。
 - **代价**：小到中（卡片本身小），难点在数据侧要不要加节点类型；差别在信息密度，不在功能。
 
-### S9 选中文字后的浮层：动作已改走槽（已对齐 2026-11-10，多颗定位仍欠）
+### S9 选中文字后的浮层：动作已改走槽（已对齐 2026-11-10，多颗定位也做完了）
 
 > **已对齐（2026-11-10）**：浮层动作从写死一颗改成一条 `list` 槽 `ask.selection.action`
 > （`owner: { text, close }`），内置那颗「问 AI」也登记到链上（`id: ask.selection.builtin`，
@@ -245,9 +524,12 @@ S4 漏了 `read-row.tsx` 且本仓已有可点文件路径、S8 缺的是**数�
 > 验收：`scripts/ui-ask-selection-slot-test.mjs` 32 条、`ui-side-ask-test` 66 条、
 > `desktop/shots/_verify-selection-actions.mjs` 真机通过（真实选区 → 浮层从槽里渲染出 1 颗
 > 「问 AI」）。截图 `desktop/shots/_selection-actions.png`。
-> **仍欠**：多颗动作时的右边界夹取——`select.ts` 的 `anchorOf` 仍按单颗宽度（`BUBBLE_W=92`）
-> 夹，插件挂 2–3 颗时整排可能伸出视口被裁。改法是容器右对齐到选区右缘（用 `right` 而不是
-> `left`），或渲染后 measure 再夹。
+> **多颗动作的右边界夹取也做完了（2026-11-10 补记，`6751ea8`）**：上面那句「仍欠」是写在这
+> 一条修完之前的，已过时。`select.ts:76-92` 的 `anchorOf` 现在收第三参 `measured`，按**实量**
+> 宽度夹 `[8, innerWidth − width − 8]`，`BUBBLE_W=92` 只剩「浮层还没上屏」那一帧的兜底；
+> `ui.tsx:313-315` 用 `useLayoutEffect` 在绘制前量一次（用户看不到中间帧），`:318-328` 再挂
+> `ResizeObserver` 管「插件异步往槽里加动作、整排变宽」的情况。`ui-ask-selection-slot-test.mjs`
+> 的 `[6]` 段（`:193-227`）有 8 条钉着这件事，其中一条是「`anchorOf` 函数体里已不出现 `BUBBLE_W`」。
 
 - **原文写「grep 无命中」是错的**：本仓**已经有**这个浮层，在
   `ui-ask/ui/ui.tsx:188-262` 的 `SelectionBubble`——`.chat` 里选中 ≥4 个字就贴选区右下角浮
@@ -289,3 +571,22 @@ S4 漏了 `read-row.tsx` 且本仓已有可点文件路径、S8 缺的是**数�
 - **批量折叠的动画作用域**：dsh 只在 `running || motionTail || pendingInputs` 时挂
   `data-chat-motion`（`ChatView.tsx:228-232`），本仓没有这层「什么时候允许动」的开关，
   动画恒开——`prefers-reduced-motion` 之外没有别的降级路径。
+
+### 性能线索：会话区已经不是瓶颈了（2026-11-11，S2 收工时的 CPU profile）
+
+60 轮 / 128 行 / 19.8 秒流式，`_perf-stream.mjs` 读数 `taskMs 1830 / scriptMs 457 / 帧 p50 6.1`。
+中段取 4 秒 CPU profile：**主线程 idle 3684/4000ms**，非 idle 里最大的三项是
+`measure` 31.9ms、`getClientRects` 23ms、`hidden` 16.2ms，**全挂在轨迹页那个 bundle 的 URL 下**
+（不是 `transcript/client.js`）；会话区自己的组件（SeatBody / 组头 / 组行 / 构建座位 / 折叠钩子
+/ 刻度条）整段 19 秒合计约 15–20ms。
+
+结论有两条，都还没做：
+
+1. **产能已经拿到顶**：座位注册表落地后一帧只重画 2 个左右的真变了行，最坏帧从 115 行降到 6 行，
+   ScriptDuration 卡在 450–460ms 不再动。会话区再 memo 一层的收益是零头，别再加了。
+2. **下一块肥肉在别处**：一个**看不见的页签每帧都在量布局**（`measure` / `getClientRects`
+   在轨迹页的 bundle 下）。这是真的浪费——用户没看那一页，它照样跑。查法：确认轨迹页在
+   对话页签活跃时是卸载还是仅隐藏（若是隐藏，量出来的全是 0，纯烧 CPU），再看
+   `ui-trace/ui/timeline.tsx:95/113/186/200` 四处 `getBoundingClientRect` 是不是挂在
+   「每次数据变化」上。顺带值得查的另一条：**快照广播是否让二十多个插件每帧都重渲染**。
+   这两条都不属于会话区对齐范围，但都直接反映在用户感知的流畅度上，记在这里免得丢。
