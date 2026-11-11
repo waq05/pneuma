@@ -17098,6 +17098,28 @@ runner 能建 PTY 了，但没人用它。要让模型显式要一个真终端�
 - `pnpm run typecheck`、`pnpm run build`（77 包）通过。
 - checkpoint 15 条、desktop-dock 11 条、mention 探针 30 项、`package-tests` 89 包 / 98 用例 / 602 断言、沙箱探针 86/86，全过。
 
+## 2026-11-11 收口：写者账本 + 最终门禁
+
+**为什么补账本**
+
+目标里写的是「影子 git + writer-ledger 三方合并」。前面只做了两棵树的三方合并，能回答「改了什么」，答不了「谁改的」——回滚冲突时用户看到的只是「两边都改了同一段」，不知道哪边是模型的、哪边是自己的。
+
+**做法**
+
+- 每个回合收工、`post` 快照成功后，把 `pre` 与 `post` 两棵树的差异逐条追加到 `<影子目录>/ledger.jsonl`：`{turn, action, path, from?, at}`，`action` 为 add/modify/delete/rename。
+- 只记回合边界上的改动，一律算模型改的；用户在同一回合里手改的文件不进账本，靠回滚时「盘上内容既不等于回合初也不等于回合末」反推——这条规则写在 README 里，避免以后有人误以为账本是审计日志。
+- 账本封顶 5000 行；写失败不影响快照与还原。
+
+**最终门禁（2026-11-11 23:5x）**
+
+- `node scripts/check-core.mjs` → **120/120 通过，退出码 0**（733.3 秒）。
+- 插件八项（model --strict / standard / package-tests / inventory / model-test / list / compose / swap-e2e）全部退出码 0。
+- `node scripts/sandbox-win-token-test.mjs` → 86 通过 / 0 失败。
+- `node scripts/style-check.mjs` → 1319 个文件通过。
+- TUI 四支回归（subagent live / transcript scroll / scroll model / features）全部退出码 0。
+- `node --test "src/packages/checkpoint/tests/*.test.mjs"` → 16 条全过（新增账本用例）。
+
+
 
 
 

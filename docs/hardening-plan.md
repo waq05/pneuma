@@ -170,6 +170,8 @@
 
 ### 3.3 设计（草案，动工前先过一轮评审）
 
+> **实际落地与这份草案有三处不同**：仓库放在 `<DSC_HOME>/checkpoints/<slug>-<hash8>/repo`（不写进用户工作区，见 B5）；标签是 `dsc/turn-<n>-<pre|post>`；账本形状简化为 `{turn, action, path, from?, at}`（见 B6 之后的写者账本）。以下保留草案原文以便对照。
+
 - **布局**：每个工作区 `<cwd>/.dsc/checkpoints/shadow.git`，显式传 `GIT_DIR`、`GIT_WORK_TREE=<cwd>`、`GIT_INDEX_FILE`，绝不写 `<cwd>/.git`、不动用户 index；`.dsc` 先写进 `.git/info/exclude`（不改 tracked 文件）。先例：codex `baseline.rs:213` 用环境变量钉死这两者。
 - **粒度**：首条基线提交（全量可达文件），此后每回合一条，ref 用 `refs/dsc/turns/<n>` 加 `refs/dsc/checkpoint`，提交信息 `dsc turn <n> <iso> <sessionId>`。
 - **writer-ledger**：`<cwd>/.dsc/checkpoints/ledger.jsonl`，一行 `{ts,turn,callId,tool,path,actor,op,preHash,postHash,blob,bytes}`；`actor` 取 `model` / `user`，`user` 由"盘上 hash 既不等于 preHash 也不等于 postHash"推断出来。
@@ -184,7 +186,9 @@
 | B5 快照地基 | ✅ | `2b02056` | 新包 `@pneuma/checkpoint`，回合前后各存一张，3 用例 / 14 断言 |
 | B6 还原与三方合并 | ✅ | `a81033c8` | 12 用例：模型改 A / 用户改 B 互不影响、同文件不同区域合并、同区域冲突不落盘、新建删除双向还原、用户 `.git` 前后一致 |
 
-**还没做**：writer-ledger（记录每个文件最后一次是谁改的）与 per-hunk 部分行接受——前者在“盘上内容 == 回合末”的判定下不是必需，后者是二期。
+**已完成**：writer-ledger（`<影子目录>/ledger.jsonl`，每回合把 pre/post 的差异逐条记 `{turn, action, path, from?, at}`，用于冲突归属；用户同回合手改靠回滚时反推）。
+
+**还没做**：per-hunk 部分行接受（二期，要动审批模型与 diff 面板）。
 
 ### 3.4 验收断言（机器可判）
 
@@ -307,6 +311,8 @@
 | B7b | `bash` 的 `tty` 参数 | `08d3655` | 76/76，截断探针 19 条 |
 | B4 | 老化归档闭环 | `8a2892d` | 节流三态、归档台账非空 hash |
 | B8 | npm 包形态安装 | `e04113e` | 真装 / 真回滚 / 真卸载 |
+| B9 | 多工作区 / 异根 @ | `900f93c` | 22 项探针 + dock 9 条 |
+| 账本 | 写者账本 `ledger.jsonl` | `1492a3d` | 每回合记 add/modify/delete/rename，16 条包内断言 |
 
 **独立审查发现的问题与处理**（见 `docs/development-log.md` 对应批次）：
 
@@ -320,15 +326,15 @@
 1. **打包 Electron 宿主下没实跑过**沙箱 runner 与 npm 安装（本机只有命令行宿主）。
 2. **PTY 的全屏交互程序没跑过**（vim/htop），只验了 `isTTY=true` 与双向字节流。
 3. **多工作区 @ 的界面选择器未接**（宿主的根集合与 `fs-list` 放行已做）。
-4. **影子 git 的 writer-ledger 与部分行接受**是二期；二进制与 >10MB 文件不合并。
+4. **影子 git 的逐行部分行接受**是二期；二进制与 >10MB 文件不合并。写者账本已补（`ledger.jsonl`）。
 5. 没有真提权跑过 setup / 卸载（UAC + 管理员）。
 
 ### 收口时的全量门禁（2026-11-11 22:30）
 
 | 门禁 | 结果 |
 | --- | --- |
-| `node scripts/check-core.mjs` | **120/120 通过**，退出码 0（843.8s） |
-| `node scripts/package-tests.mjs` | 89 包 / 98 用例 / 583 断言 / 0 失败 |
+| `node scripts/check-core.mjs` | **120/120 通过**，退出码 0（733.3s） |
+| `node scripts/package-tests.mjs` | 89 包 / 98 用例 / 602 断言 / 0 失败 |
 | `plugin-model-check --strict` / `plugin-standard-check` / `plugin-compose-check` / `plugin-list-test` / `readme-test` / `plugin-locale-test` / `plugin-inventory-check` | 全部退出码 0；standard 报「0 条问题」 |
 | `node scripts/style-check.mjs` | 1319 个文件通过 |
 | `node scripts/sandbox-win-token-test.mjs` | 86 通过 / 0 失败 |
