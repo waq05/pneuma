@@ -116,6 +116,10 @@ export function bindAll(ffi: WinFfi) {
     openProcess: bind(k32, 'OpenProcess', 'uintptr_t', ['uint32', 'int', 'uint32']),
     localAlloc: bind(k32, 'LocalAlloc', 'uintptr_t', ['uint32', 'uintptr_t']),
     localFree: bind(k32, 'LocalFree', 'uintptr_t', ['uintptr_t']),
+    // 命名互斥体：setup 的并发互斥用它。bInitialOwner=1，句柄由 CloseHandle 收。
+    // 「同名已存在」不体现在返回值上（照样给句柄），只能读 GetLastError()===ERROR_ALREADY_EXISTS(183)。
+    createMutexW: bind(k32, 'CreateMutexW', 'uintptr_t', ['void *', 'int', 'void *']),
+    releaseMutex: bind(k32, 'ReleaseMutex', 'int', ['uintptr_t']),
     // ── advapi32：CreateProcessAsUserW 活在这家（令牌那一家），不在 kernel32 ──
     createProcessAsUserW: bind(adv, 'CreateProcessAsUserW', 'int', ['uintptr_t', 'void *', 'void *', 'void *', 'void *', 'int', 'uint32', 'void *', 'void *', 'void *', 'void *']),
     openProcessToken: bind(adv, 'OpenProcessToken', 'int', ['uintptr_t', 'uint32', 'void *']),

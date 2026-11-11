@@ -38,6 +38,8 @@
   "field.networkTier.label": "Network second tier (elevated setup)",
   "field.setup.label": "Install network control with elevation (one UAC prompt)",
   "field.setup.help": "Creates a dedicated offline account, blocks outbound traffic by that account's SID (5 firewall rules plus 12 persistent WFP filters) and stores the password with DPAPI; the account stays disabled until every step succeeds. You need to click Allow once in the UAC prompt.",
+  "field.uninstall.label": "Uninstall network control (one UAC prompt)",
+  "field.uninstall.help": "Removes what the elevated setup installed: the dedicated account and its group, the 5 firewall rules, the 12 persistent WFP filters (provider and sublayer included), then deletes setup-state.json / account.bin / setup-error.txt. You need to click Allow once in the UAC prompt.",
   "field.doctor.label": "Check the network second tier",
   "field.doctor.help": "Checks item by item: FFI, state file, account, password decryptable, firewall rules, WFP sublayer; all green means full.",
   "field.problems.label": "Config problems (defaults used instead)",
@@ -67,5 +69,8 @@
   "action.setupDone": "Elevated setup finished",
   "action.setupFailed": "Elevated setup did not finish",
   "action.setup": "{verdict}: {detail} | check: {tier} — {findings}",
+  "action.uninstallDone": "Elevated uninstall finished",
+  "action.uninstallFailed": "Elevated uninstall did not finish",
+  "action.uninstall": "{verdict}: {detail} | check: {tier} — {findings}",
   "action.unknown": "This section has no such button: {name}"
 }

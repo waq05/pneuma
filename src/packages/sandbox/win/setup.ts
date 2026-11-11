@@ -29,6 +29,8 @@ import {
   type FirewallRuleSpec,
 } from './net-abi.js'
 import { sandboxDir, setupErrorPath, setupScriptPath, readSetupState } from './account.js'
+import { bindAll, tryLoadFfi, type BoundWin32 } from './ffi.js'
+import { utf16Buffer } from './utf16.js'
 import { errText as errorText } from '../../../core/err-text.js'
 
 /** 固定的离线沙箱账号名（普通本地账号，不是服务账号）。 */
@@ -274,15 +276,139 @@ function assertGuid(guid: string, label: string): void {
   }
 }
 
+// ── 并发互斥：同一个用户点两次「安装」不能并发建账号/装规则 ────────────────────
+
+/**
+ * 互斥体名字：`Local\` 前缀（会话命名空间）。
+ *
+ * 不用 `Global\`：那要 SeCreateGlobalPrivilege，普通提权会话也未必有；而安装本来就是
+ * 「同一个登录会话里的两个 dsc 窗口别撞车」，会话内互斥正好够用。
+ */
+export const SETUP_MUTEX_NAME = 'Local\\dsc-sandbox-setup'
+
+/** 已经有人拿着互斥体时给用户看的那句话（安装与卸载共用）。 */
+export const SETUP_BUSY_DETAIL = '另一个沙箱安装正在运行，等它结束再试'
+
+/** `CreateMutexW` 的「同名已存在」错误码（GetLastError 读到它，句柄其实照样给了）。 */
+const ERROR_ALREADY_EXISTS = 183
+
+/** 拿到的互斥体句柄；`release()` 内部只放行一次，重复调用是安全的空转。 */
+export interface SetupMutex {
+  release(): void
+}
+
+/** 拿不到互斥体的原因（已存在 / 系统调用失败）。 */
+export interface SetupMutexDenied {
+  readonly ok: false
+  readonly why: string
+}
+
+/** 不需要互斥时的空实现（非 Windows / koffi 缺失：那种环境本来也跑不了提权 setup）。 */
+const NOOP_MUTEX: SetupMutex = { release: () => {} }
+
+/**
+ * 拿一把命名互斥体（`acquireSetupMutex` 的返回形状用于 try/finally）。
+ *
+ * 判定「已有别人拿着」靠 `GetLastError() === ERROR_ALREADY_EXISTS(183)`：CreateMutexW
+ * 在重名时**仍然**返回一个有效句柄，只看返回值会把并发安装放过去。
+ * 无论成败，本函数都不泄漏句柄：被拒时立刻关掉自己那份。
+ *
+ * 自检可以直接连调两次：第二次必然被拒（同线程重入也照样返回 183）。
+ */
+export function acquireSetupMutex(
+  name: string = SETUP_MUTEX_NAME,
+): { ok: true; mutex: SetupMutex } | SetupMutexDenied {
+  if (process.platform !== 'win32') return { ok: true, mutex: NOOP_MUTEX }
+  let bound: BoundWin32
+  try {
+    const loaded = tryLoadFfi()
+    // koffi 缺失时退化：这条路径上受限令牌后端本身也起不来，用「锁的问题」挡住安装没有意义
+    if (!loaded.ok) return { ok: true, mutex: NOOP_MUTEX }
+    bound = bindAll(loaded.ffi)
+  } catch {
+    return { ok: true, mutex: NOOP_MUTEX }
+  }
+
+  let handle = 0
+  try {
+    handle = Number(bound.createMutexW(null, 1, utf16Buffer(name)))
+  } catch (error) {
+    return { ok: false, why: `CreateMutexW 调用失败：${errorText(error)}` }
+  }
+  if (handle === 0) {
+    let why = 'CreateMutexW 返回空句柄'
+    try {
+      const code = Number(bound.getLastLastError()) >>> 0
+      why = `CreateMutexW 返回空句柄（Win32 错误码 ${String(code)}）`
+    } catch {
+      /* 拿不到错误码就按空句柄报 */
+    }
+    return { ok: false, why }
+  }
+
+  let existing = false
+  try {
+    existing = (Number(bound.getLastLastError()) >>> 0) === ERROR_ALREADY_EXISTS
+  } catch {
+    // 读不到 GetLastError 时按「没人持有」处理：宁可并发一次，也不让锁的读错误挡住安装
+    existing = false
+  }
+  if (existing) {
+    // 重名时我们拿到的是同一把互斥体的另一个句柄，自己关掉，别顺手把别人的锁放了
+    try {
+      bound.closeHandle(handle)
+    } catch {
+      /* 关不掉也不影响结论 */
+    }
+    return { ok: false, why: SETUP_BUSY_DETAIL }
+  }
+
+  let released = false
+  const mutex: SetupMutex = {
+    release: () => {
+      if (released) return
+      released = true
+      try {
+        bound.releaseMutex(handle)
+      } catch {
+        // 不是本线程持有（或已被系统回收）时 ReleaseMutex 会失败；句柄照关
+      }
+      try {
+        bound.closeHandle(handle)
+      } catch {
+        /* 同上：进程退出时系统也会回收 */
+      }
+    },
+  }
+  return { ok: true, mutex }
+}
+
 /**
  * 落盘脚本并提权执行（会弹一次 UAC：`Start-Process -Verb RunAs`）。
  *
  * 结论取自三处：拉起进程的 exit code、`setup-state.json`（成功账本）、`setup-error.txt`（失败原因）。
  * 三处对不上时按「失败」报，并把能看到的信息都写进 detail —— 提权子进程崩了也不能只回一句「失败」。
  *
+ * 并发：**提权之前**在当前进程先拿命名互斥体；已有安装在跑就直接返回，不弹 UAC。
+ * 成功、失败、抛错三条路都在 finally 里放锁，进程正常活着时锁不会漏。
+ *
  * 注意：本任务里**不调用**它（会弹 UAC，且当前 shell 非管理员）；这里保证的是代码正确。
  */
 export async function runSetupElevated(
+  dscHome: string,
+  options: { readonly proxyPort?: number; readonly timeoutMs?: number } = {},
+): Promise<{ ok: boolean; detail: string }> {
+  const gate = acquireSetupMutex()
+  if (!gate.ok) return { ok: false, detail: gate.why }
+  try {
+    return await installElevated(dscHome, options)
+  } finally {
+    gate.mutex.release()
+  }
+}
+
+/** `runSetupElevated` 的正文（不含互斥）：落盘脚本 → 提权 → 对三处证据下结论。 */
+async function installElevated(
   dscHome: string,
   options: { readonly proxyPort?: number; readonly timeoutMs?: number } = {},
 ): Promise<{ ok: boolean; detail: string }> {
@@ -345,6 +471,241 @@ export async function runSetupElevated(
   }
   return { ok: false, detail: pieces.join('；') }
 }
+
+// ── 卸载：把 setup 装过的东西全部拆掉 ─────────────────────────────────────────
+
+/** `buildUninstallScript` 的入参；不给的项从 setup 账本里取，账本也没有才用默认值。 */
+export interface UninstallScriptOptions {
+  /** dsc 家目录。 */
+  readonly dscHome: string
+  /** 要删的本地账号名（默认 `dsc-sandbox-offline`，脚本的实际值由账本决定）。 */
+  readonly account?: string
+  /** WFP provider 的 GUID（同上）。 */
+  readonly guidProvider?: string
+  /** WFP sublayer 的 GUID（同上）。 */
+  readonly guidSublayer?: string
+  /** 代理端口，只用来复算防火墙规则名（默认 3128）。 */
+  readonly proxyPort?: number
+}
+
+/** `~/.dsc/sandbox/uninstall.ps1`：卸载脚本的落盘位置（与 setup.ps1 同目录，便于审计）。 */
+export function uninstallScriptPath(dscHome: string): string {
+  return join(sandboxDir(dscHome), 'uninstall.ps1')
+}
+
+/**
+ * 生成卸载脚本（纯函数：同样的入参给同样的文本）。
+ *
+ * 四类动作按「先拆对象、最后删账本」排：账号（含组与登录界面隐藏项）→ 防火墙规则 →
+ * WFP filter/sublayer/provider → 状态文件。账本放最后删，这样中途失败时
+ * `readSetupState` 仍然说「装过」，设置页的卸载按钮不会凭空消失、可以重试。
+ *
+ * **失败原因写进 setup-error.txt**（与 setup 同一份口径、同一个函数名），提权窗口一闪而过，
+ * 控制台输出经常来不及看。
+ */
+export function buildUninstallScript(options: UninstallScriptOptions): string {
+  const dscHome = options.dscHome
+  if (typeof dscHome !== 'string' || dscHome === '') {
+    throw new Error('buildUninstallScript：dscHome 必须是非空字符串')
+  }
+  if (dscHome.includes("'") || /[\r\n]/.test(dscHome)) {
+    throw new Error(`buildUninstallScript：dscHome 不能含单引号或换行（会破坏生成的 PowerShell 文本）：${JSON.stringify(dscHome)}`)
+  }
+  const account = options.account ?? DSC_SANDBOX_ACCOUNT
+  if (account.includes("'") || /[\r\n]/.test(account)) {
+    throw new Error(`buildUninstallScript：账号名不能含单引号或换行：${JSON.stringify(account)}`)
+  }
+  const guidProvider = options.guidProvider ?? DSC_WFP_PROVIDER_GUID
+  const guidSublayer = options.guidSublayer ?? DSC_WFP_SUBLAYER_GUID
+  assertGuid(guidProvider, 'guidProvider')
+  assertGuid(guidSublayer, 'guidSublayer')
+
+  const ruleNameList = firewallRuleSpecs(options.proxyPort ?? DSC_SANDBOX_DEFAULT_PROXY_PORT)
+    .map((rule) => `'${rule.name}'`)
+    .join(', ')
+  // filter 的 key 是安装时那批硬编码 GUID（net-abi 里一次生成、永不变），卸载按同一批 key 删
+  const filterKeyList = DSC_WFP_FILTERS.map((spec) => `'${spec.key}'`).join(', ')
+
+  return `# dsc 沙箱「网络管控第二级」卸载脚本。
+# 由 src/packages/sandbox/win/setup.ts 的 buildUninstallScript() 生成 —— 要看改了什么就看那个函数，别手改本文件。
+#
+# 四类动作：删账号（含组与登录界面隐藏项）→ 删防火墙规则 → 删 WFP filter/sublayer/provider → 删状态文件。
+# 任何一步失败都会写 ~/.dsc/sandbox/setup-error.txt 并 exit 1；重跑本脚本幂等。
+\$ErrorActionPreference = 'Stop'
+\$DscHome = '${dscHome}'
+\$DscSandboxDir = Join-Path \$DscHome 'sandbox'
+\$DscAccount = '${account}'
+\$DscGroup = '${DSC_SANDBOX_GROUP}'
+\$DscProviderGuid = '${guidProvider}'
+\$DscSublayerGuid = '${guidSublayer}'
+\$DscScriptPath = Join-Path \$DscSandboxDir 'setup.ps1'
+\$DscStatePath = Join-Path \$DscSandboxDir 'setup-state.json'
+\$DscSecretPath = Join-Path \$DscSandboxDir 'account.bin'
+\$DscErrorPath = Join-Path \$DscSandboxDir 'setup-error.txt'
+\$DscRuleNames = @(${ruleNameList})
+\$DscFilterKeys = @(${filterKeyList})
+
+function Write-DscUninstallError([string]\$Message) {
+  # 与 setup 同口径：失败原因单独落一个文件，提权窗口一闪而过，控制台经常来不及看
+  try {
+    New-Item -ItemType Directory -Force -Path \$DscSandboxDir | Out-Null
+    \$text = ('[{0}] {1}' -f (Get-Date).ToUniversalTime().ToString('o'), \$Message)
+    [System.IO.File]::WriteAllText(\$DscErrorPath, \$text, (New-Object System.Text.UTF8Encoding(\$false)))
+  } catch {
+  }
+}
+
+try {
+  New-Item -ItemType Directory -Force -Path \$DscSandboxDir | Out-Null
+
+  # ── 1. 账号：不存在就跳过（局部删干净也不影响后面的规则清理）──
+  \$DscUser = Get-LocalUser -Name \$DscAccount -ErrorAction SilentlyContinue
+  if (\$null -eq \$DscUser) {
+    Write-Output ('账号 {0} 本就不存在，跳过' -f \$DscAccount)
+  } else {
+    if (\$null -ne (Get-LocalGroup -Name \$DscGroup -ErrorAction SilentlyContinue)) {
+      Remove-LocalGroupMember -Group \$DscGroup -Member \$DscAccount -ErrorAction SilentlyContinue
+    }
+    Remove-LocalUser -Name \$DscAccount -ErrorAction Stop
+    Write-Output ('已删除账号 {0}' -f \$DscAccount)
+  }
+
+  # 登录界面上的隐藏项（SpecialAccounts\\UserList），账号没了它就成了死条目
+  \$DscWinlogonKey = 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\SpecialAccounts\\UserList'
+  if (Test-Path \$DscWinlogonKey) {
+    Remove-ItemProperty -Path \$DscWinlogonKey -Name \$DscAccount -ErrorAction SilentlyContinue
+  }
+
+  # 组：成员都删掉之后再删组
+  if (\$null -ne (Get-LocalGroup -Name \$DscGroup -ErrorAction SilentlyContinue)) {
+    Remove-LocalGroup -Name \$DscGroup -ErrorAction Stop
+    Write-Output ('已删除账号组 {0}' -f \$DscGroup)
+  }
+
+  # ── 2. 防火墙规则：按名字删（生成的 5 条 + 账本里记的），再按显示名前缀兜一遍 ──
+  \$DscFromState = @()
+  if (Test-Path \$DscStatePath) {
+    try { \$DscFromState = @((Get-Content -Raw -Path \$DscStatePath | ConvertFrom-Json).firewallRules) } catch { }
+  }
+  \$DscAllRules = @(@(\$DscRuleNames) + @(\$DscFromState) | Where-Object { \$_ -ne \$null -and "\$_" -ne '' } | Select-Object -Unique)
+  if (\$DscAllRules.Count -gt 0) {
+    Remove-NetFirewallRule -Name \$DscAllRules -ErrorAction SilentlyContinue
+  }
+  Get-NetFirewallRule -ErrorAction SilentlyContinue |
+    Where-Object { \$_.DisplayName -ne \$null -and \$_.DisplayName.StartsWith('[dsc] 沙箱') } |
+    Remove-NetFirewallRule -ErrorAction SilentlyContinue
+  \$DscRulesLeft = @(\$DscAllRules | ForEach-Object { Get-NetFirewallRule -Name \$_ -ErrorAction SilentlyContinue }).Count
+  if (\$DscRulesLeft -ne 0) { throw ('防火墙规则还剩 {0} 条没删掉' -f \$DscRulesLeft) }
+  Write-Output ('已删除防火墙规则 {0} 条' -f \$DscAllRules.Count)
+
+  # ── 3. WFP：filter → sublayer → provider，单事务；不存在的对象跳过（幂等）──
+  \$DscWfpSource = @'
+${WFP_CSHARP_SOURCE}
+'@
+  Add-Type -TypeDefinition \$DscWfpSource -Language CSharp
+  \$DscRemoved = [DscWfp]::Uninstall(\$DscProviderGuid, \$DscSublayerGuid, \$DscFilterKeys)
+  Write-Output ('已删除 WFP 对象 {0} 个' -f \$DscRemoved)
+
+  # ── 4. 状态文件：最后删。删掉 setup-state.json 就等于「这台机器没装过」──
+  foreach (\$DscFile in @(\$DscStatePath, \$DscSecretPath, \$DscErrorPath, \$DscScriptPath)) {
+    Remove-Item -LiteralPath \$DscFile -Force -ErrorAction SilentlyContinue
+  }
+  if (Test-Path \$DscStatePath) { throw 'setup-state.json 还在，卸载没走完' }
+
+  Write-Output 'dsc 沙箱二级网络管控已卸载：账号、防火墙规则、WFP filter 与状态文件都已清掉'
+  exit 0
+} catch {
+  \$message = ('卸载失败：{0} @ {1}' -f \$_.Exception.Message, \$_.InvocationInfo.PositionMessage)
+  Write-DscUninstallError \$message
+  [Console]::Error.WriteLine(\$message)
+  exit 1
+}
+`
+}
+
+/**
+ * 落盘卸载脚本并以管理员身份执行（同样弹一次 UAC）。
+ *
+ * 结论与 setup 同形：退出码 0 **且** `setup-state.json` 已经不在了才算成功——
+ * 只看退出码的话，脚本中途被杀（或某个 cmdlet 静默失败）会误报「已卸载」。
+ *
+ * 与 setup 共用同一把命名互斥体：安装与卸载也不能同时跑。
+ */
+export async function runUninstallElevated(
+  dscHome: string,
+  options: { readonly timeoutMs?: number } = {},
+): Promise<{ ok: boolean; detail: string }> {
+  const gate = acquireSetupMutex()
+  if (!gate.ok) return { ok: false, detail: gate.why }
+  try {
+    return await uninstallElevated(dscHome, options)
+  } finally {
+    gate.mutex.release()
+  }
+}
+
+/** `runUninstallElevated` 的正文（不含互斥）。 */
+async function uninstallElevated(
+  dscHome: string,
+  options: { readonly timeoutMs?: number },
+): Promise<{ ok: boolean; detail: string }> {
+  // 账号名与 GUID 优先取账本：账本记的是「当时真正装了什么」，比默认值可信
+  const state = readSetupState(dscHome)
+  const recorded = state !== null && state.ok ? state.state : null
+  let script: string
+  try {
+    script = buildUninstallScript({
+      dscHome,
+      ...(recorded === null ? {} : {
+        account: recorded.account,
+        guidProvider: recorded.wfpProviderGuid,
+        guidSublayer: recorded.wfpSublayerGuid,
+        proxyPort: recorded.proxyPort,
+      }),
+    })
+  } catch (error) {
+    return { ok: false, detail: `生成卸载脚本失败：${errorText(error)}` }
+  }
+
+  const scriptPath = uninstallScriptPath(dscHome)
+  try {
+    mkdirSync(sandboxDir(dscHome), { recursive: true })
+    // 与 setup 同理：必须带 BOM，否则 PowerShell 5.1 会按 ANSI 代码页读中文
+    writeFileSync(scriptPath, `\uFEFF${script}`, { encoding: 'utf8' })
+  } catch (error) {
+    return { ok: false, detail: `写卸载脚本失败（${scriptPath}）：${errorText(error)}` }
+  }
+  try {
+    rmSync(setupErrorPath(dscHome), { force: true })
+  } catch (error) {
+    return { ok: false, detail: `清理旧 setup-error.txt 失败（${setupErrorPath(dscHome)}）：${errorText(error)}` }
+  }
+
+  let launcher: string
+  try {
+    launcher = buildElevationLauncher(scriptPath)
+  } catch (error) {
+    return { ok: false, detail: `拼提权命令失败：${errorText(error)}` }
+  }
+  const outcome = await runPowerShell(launcher, options.timeoutMs ?? 10 * 60 * 1000)
+  const after = readSetupState(dscHome)
+  const failureText = readSetupErrorText(dscHome)
+
+  if (outcome.timedOut) {
+    return { ok: false, detail: `提权卸载超时未结束（可能在等 UAC 授权，或脚本卡住）：${outcome.stderr.trim()}` }
+  }
+  if (outcome.code === 0 && after === null) {
+    return { ok: true, detail: '提权卸载完成：账号、防火墙规则、WFP filter 与状态文件都已清掉' }
+  }
+  const pieces = [`提权卸载退出码 ${String(outcome.code)}`]
+  if (failureText !== '') pieces.push(`脚本报错：${failureText}`)
+  if (outcome.stderr.trim() !== '') pieces.push(`stderr：${outcome.stderr.trim().slice(0, 500)}`)
+  if (after !== null) {
+    pieces.push(after.ok ? `setup-state.json 还在（${after.state.at}），卸载没走完` : `账本读不动：${after.error}`)
+  }
+  return { ok: false, detail: pieces.join('；') }
+}
+
 
 /** 拼「非提权 PowerShell 拉起提权 PowerShell」的那一行（-Wait -PassThru 后把退出码透传出来）。 */
 function buildElevationLauncher(scriptPath: string): string {
@@ -468,8 +829,11 @@ public static class DscWfp
     private const uint RPC_C_AUTHN_WINNT = 10;
     private const ushort DSC_SUBLAYER_WEIGHT = 0x8000;
     private const uint FWP_E_FILTER_NOT_FOUND = 0x80320003;
+    private const uint FWP_E_PROVIDER_NOT_FOUND = 0x80320005;
+    private const uint FWP_E_SUBLAYER_NOT_FOUND = 0x80320007;
     private const uint FWP_E_NOT_FOUND = 0x80320008;
     private const uint FWP_E_ALREADY_EXISTS = 0x80320009;
+    private const uint FWP_E_IN_USE = 0x8032000a;
     private const int AclSizeInformation = 2;
     private const string ProviderName = "dsc Windows Sandbox WFP";
     private const string SublayerName = "dsc Windows Sandbox WFP";
@@ -655,6 +1019,12 @@ public static class DscWfp
     [DllImport("fwpuclnt.dll", ExactSpelling = true)]
     private static extern uint FwpmFilterDeleteByKey0(IntPtr engineHandle, ref Guid key);
 
+    [DllImport("fwpuclnt.dll", ExactSpelling = true)]
+    private static extern uint FwpmSubLayerDeleteByKey0(IntPtr engineHandle, ref Guid key);
+
+    [DllImport("fwpuclnt.dll", ExactSpelling = true)]
+    private static extern uint FwpmProviderDeleteByKey0(IntPtr engineHandle, ref Guid key);
+
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
     private static extern void BuildExplicitAccessWithNameW(ref EXPLICIT_ACCESS_W pExplicitAccess, IntPtr pTrusteeName, uint accessPermissions, uint accessMode, uint inheritance);
 
@@ -805,6 +1175,75 @@ public static class DscWfp
             for (int i = 0; i < owned.Count; i++) Marshal.FreeHGlobal(owned[i]);
             if (engine != IntPtr.Zero) FwpmEngineClose0(engine);
         }
+    }
+
+    /// <summary>
+    /// 卸掉持久 filter / sublayer / provider（单事务）。filterKeys 与安装时那批 key 同源。
+    /// 不存在的对象跳过（幂等）；返回真正删掉的对象条数。
+    /// </summary>
+    public static int Uninstall(string providerGuid, string sublayerGuid, string[] filterKeys)
+    {
+        if (String.IsNullOrEmpty(providerGuid)) throw new ArgumentException("provider GUID 为空");
+        if (String.IsNullOrEmpty(sublayerGuid)) throw new ArgumentException("sublayer GUID 为空");
+        Guid providerKey = Guid.Parse(providerGuid);
+        Guid sublayerKey = Guid.Parse(sublayerGuid);
+
+        IntPtr engine = IntPtr.Zero;
+        bool inTransaction = false;
+        int removed = 0;
+        try
+        {
+            // 卸持久对象同样要求管理员令牌：这条路径只该从提权 PowerShell 进来
+            uint rc = FwpmEngineOpen0(IntPtr.Zero, RPC_C_AUTHN_WINNT, IntPtr.Zero, IntPtr.Zero, out engine);
+            Fail(rc, "FwpmEngineOpen0（卸 WFP 需要管理员权限）");
+            rc = FwpmTransactionBegin0(engine, 0);
+            Fail(rc, "FwpmTransactionBegin0");
+            inTransaction = true;
+
+            // 顺序即依赖：filter 挂在 sublayer 上，sublayer 又挂在 provider 上
+            if (filterKeys != null)
+            {
+                for (int i = 0; i < filterKeys.Length; i++)
+                {
+                    Guid filterKey = Guid.Parse(filterKeys[i]);
+                    uint del = FwpmFilterDeleteByKey0(engine, ref filterKey);
+                    if (del == 0) removed++;
+                    else if (!IsMissing(del)) Fail(del, "FwpmFilterDeleteByKey0(" + filterKeys[i] + ")");
+                }
+            }
+
+            uint sub = FwpmSubLayerDeleteByKey0(engine, ref sublayerKey);
+            if (sub == 0) removed++;
+            else if (!IsMissing(sub) && sub != FWP_E_IN_USE) Fail(sub, "FwpmSubLayerDeleteByKey0");
+
+            uint prov = FwpmProviderDeleteByKey0(engine, ref providerKey);
+            if (prov == 0) removed++;
+            else if (!IsMissing(prov) && prov != FWP_E_IN_USE) Fail(prov, "FwpmProviderDeleteByKey0");
+
+            rc = FwpmTransactionCommit0(engine);
+            Fail(rc, "FwpmTransactionCommit0");
+            inTransaction = false;
+            return removed;
+        }
+        catch
+        {
+            if (inTransaction)
+            {
+                try { FwpmTransactionAbort0(engine); } catch { }
+            }
+            throw;
+        }
+        finally
+        {
+            if (engine != IntPtr.Zero) FwpmEngineClose0(engine);
+        }
+    }
+
+    /// <summary>「这个对象本就不在」的返回码集合：卸载时一律容忍。</summary>
+    private static bool IsMissing(uint code)
+    {
+        return code == FWP_E_FILTER_NOT_FOUND || code == FWP_E_SUBLAYER_NOT_FOUND
+            || code == FWP_E_PROVIDER_NOT_FOUND || code == FWP_E_NOT_FOUND;
     }
 
     /// <summary>

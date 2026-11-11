@@ -23,7 +23,7 @@
  * @module dsc/scripts/sandbox-win-token-test
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -237,6 +237,142 @@ check('RUNNER_SIGNATURE 是宿主诊断认的那一行', RUNNER_SIGNATURE === 'd
   check('尾反斜杠在收尾引号前翻倍', quoteArgv('C:\\a b\\') === '"C:\\a b\\\\"', quoteArgv('C:\\a b\\'))
   check('空串写成两个引号', quoteArgv('') === '""', quoteArgv(''))
   check('不需要引号的参数原样保留', quoteArgv('cmd') === 'cmd', quoteArgv('cmd'))
+}
+
+// ── 残留清扫：只清超龄目录，活目录进 kept，根不存在不抛 ────────────────────
+console.log('')
+console.log('── 残留清扫：只清超龄目录，活目录进 kept，根不存在不抛')
+
+const sweepMod = await import(pathToFileURL(join(ROOT, 'lib/packages/sandbox/win/sweep.js')).href)
+{
+  const sectionPass = pass
+  const sectionFail = fail
+  const root = mkdtempSync(join(tmpdir(), 'dsc-sweep-'))
+  try {
+    const oldDir = join(root, 'old-session')
+    const liveDir = join(root, 'live-session')
+    mkdirSync(oldDir, { recursive: true })
+    mkdirSync(liveDir, { recursive: true })
+    const now = Date.now()
+    // 25 小时前：超过默认 24 小时门槛；另一个保持当前时间
+    const oldTime = new Date(now - 25 * 60 * 60 * 1000)
+    utimesSync(oldDir, oldTime, oldTime)
+
+    const asked = []
+    const result = sweepMod.sweepSandboxTemps({
+      root,
+      now: () => now,
+      // 注入删除器：不碰真实 ACL、不真删目录
+      onSweep: (entry) => asked.push(entry),
+    })
+    const oldReal = realpathSync.native(oldDir)
+    const liveReal = realpathSync.native(liveDir)
+
+    check(
+      '超龄目录进 swept（只有那一个）',
+      result.swept.length === 1 && result.swept[0] === oldReal,
+      JSON.stringify(result.swept),
+    )
+    check(
+      '活目录进 kept（没被动）',
+      result.kept.length === 1 && result.kept[0] === liveReal,
+      JSON.stringify(result.kept),
+    )
+    check('没有失败项', result.failed.length === 0, JSON.stringify(result.failed))
+    check(
+      'onSweep 收到的 SID 是 tempWriteSid 派生的',
+      asked.length === 1 && asked[0].sid === tempWriteSid(oldReal),
+      JSON.stringify(asked),
+    )
+    check(
+      'onSweep 收到的年龄超过 24 小时',
+      asked.length === 1 && asked[0].ageMs > 24 * 60 * 60 * 1000,
+      JSON.stringify(asked.map((one) => one.ageMs)),
+    )
+    check('注入 onSweep 时目录没有被真删（记录器就是记录器）', existsSync(oldDir) && existsSync(liveDir))
+
+    // 根不存在：首次启动的真实形态，必须空结果且不抛
+    let missing
+    try {
+      missing = sweepMod.sweepSandboxTemps({
+        root: join(root, 'not-there'),
+        onSweep: () => {
+          throw new Error('根不存在时不该调用删除器')
+        },
+      })
+    } catch (error) {
+      missing = `抛了错：${error instanceof Error ? error.message : String(error)}`
+    }
+    check(
+      '根不存在返回空结果且不抛',
+      typeof missing === 'object' &&
+        missing !== null &&
+        missing.swept.length === 0 &&
+        missing.kept.length === 0 &&
+        missing.failed.length === 0,
+      JSON.stringify(missing),
+    )
+  } finally {
+    removeTree(root)
+  }
+  console.log(`  ── 小结：${String(pass - sectionPass)} 通过 / ${String(fail - sectionFail)} 失败`)
+}
+
+// ── setup 并发互斥：同一进程连拿两次，第二次必须被拒 ────────────────────────
+console.log('')
+console.log('── setup 并发互斥：同一进程连拿两次，第二次必须被拒')
+
+const setupMod = await import(pathToFileURL(join(ROOT, 'lib/packages/sandbox/win/setup.js')).href)
+{
+  const sectionPass = pass
+  const sectionFail = fail
+  if (process.platform !== 'win32') {
+    console.log(`  SKIP 非 Windows 平台（${process.platform}）：CreateMutexW 用不了`)
+  } else {
+    const first = setupMod.acquireSetupMutex()
+    if (!first.ok) {
+      check('第一次拿互斥体成功', false, first.why)
+    } else {
+      check('第一次拿互斥体成功', true)
+      const second = setupMod.acquireSetupMutex()
+      check('第二次被拒（同名互斥体已存在）', second.ok === false, '第二次竟然也拿到了')
+      check(
+        '拒绝理由可读（提到另一个安装正在运行）',
+        second.ok === false && /另一个沙箱安装正在运行，等它结束再试/.test(second.why),
+        second.ok ? '' : second.why,
+      )
+      first.mutex.release()
+      const third = setupMod.acquireSetupMutex()
+      check('释放后能再拿到（锁没漏）', third.ok === true, third.ok ? '' : third.why)
+      if (third.ok) third.mutex.release()
+    }
+  }
+  console.log(`  ── 小结：${String(pass - sectionPass)} 通过 / ${String(fail - sectionFail)} 失败`)
+}
+
+// ── 卸载脚本生成：四类动作都在文本里（不真跑）──────────────────────────────
+console.log('')
+console.log('── 卸载脚本生成：四类命令都在文本里，提权流程不真跑')
+
+{
+  const sectionPass = pass
+  const sectionFail = fail
+  const text = setupMod.buildUninstallScript({ dscHome: join(sandboxRoot, '.dsc') })
+  check('脚本里有删账号（Remove-LocalUser）', /Remove-LocalUser/.test(text))
+  check('脚本里有删防火墙规则（Remove-NetFirewallRule）', /Remove-NetFirewallRule/.test(text))
+  check(
+    '脚本里有删 WFP（filter / sublayer / provider 三个删除调用）',
+    /\[DscWfp\]::Uninstall/.test(text) &&
+      /FwpmFilterDeleteByKey0/.test(text) &&
+      /FwpmSubLayerDeleteByKey0/.test(text) &&
+      /FwpmProviderDeleteByKey0/.test(text),
+  )
+  check(
+    '脚本里有删状态文件（setup-state.json / account.bin / setup-error.txt）',
+    ['setup-state.json', 'account.bin', 'setup-error.txt'].every((name) => text.includes(name)),
+  )
+  check('脚本里带错误落盘那一段（Write-DscUninstallError → setup-error.txt）', /Write-DscUninstallError/.test(text))
+  console.log(`  ── 小结：${String(pass - sectionPass)} 通过 / ${String(fail - sectionFail)} 失败`)
 }
 
 // ── 集成：真造受限令牌，真写一次根外 ────────────────────────────────────────

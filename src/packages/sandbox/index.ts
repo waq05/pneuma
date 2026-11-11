@@ -31,7 +31,7 @@
  * @module dsc/plugins/sandbox
  */
 import { mkdirSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { Plugin } from '@deepseek-ai/cordis'
 import type { SettingsField, SettingsValues } from '@pneuma/runtime/contract.js'
 import { clockText } from '@pneuma/runtime/core/clock.js'
@@ -47,8 +47,9 @@ import type { Session } from '@pneuma/runtime/core/session.js'
 import type { ToolGuard } from '@pneuma/runtime/core/tool-guards.js'
 import { createDockerRunner, probeDocker } from './backends.js'
 import { createWindowsTokenRunner, probeWindowsToken, type WindowsTokenRunnerHandle } from './win/backend.js'
-import { readSetupState } from './win/account.js'
-import { runSetupElevated } from './win/setup.js'
+import { readSetupState, sandboxDir } from './win/account.js'
+import { runSetupElevated, runUninstallElevated } from './win/setup.js'
+import { DEFAULT_SWEEP_AGE_MS, sweepSandboxTemps } from './win/sweep.js'
 import { doctorWindowsNetwork } from './win/doctor.js'
 import { evaluateCommand } from './execpolicy.js'
 import {
@@ -588,6 +589,15 @@ export const sandboxPlugin: Plugin.Object = {
       ctx.emit('dsc/changed')
     }
 
+    /**
+     * 这台机器装过网络第二级没有：账本能读通且字段齐才算「装过」。
+     * 半截/坏掉的账本不算——卸载按钮不该因为一个读不通的文件冒出来。
+     */
+    const setupInstalled = (): boolean => {
+      const state = readSetupState(DSC_HOME)
+      return state !== null && state.ok
+    }
+
     // ── 设置分区 ─────────────────────────────────────────────────────────────
 
     /** `/sandbox` 与设置页共用的一份现状文本。 */
@@ -738,14 +748,25 @@ export const sandboxPlugin: Plugin.Object = {
               style: 'ghost',
               help: t('field.setup.help'),
             },
-            {
-              type: 'button',
-              action: 'doctor',
-              label: t('field.doctor.label'),
-              style: 'ghost',
-              help: t('field.doctor.help'),
-            },
           )
+          // 只有「装过」才给卸载入口：账本读不通（半截文件/坏 JSON）不算装过，
+          // 否则这台机器上会多出一个按了也不知道会发生什么的按钮
+          if (setupInstalled()) {
+            list.push({
+              type: 'button',
+              action: 'uninstall',
+              label: t('field.uninstall.label'),
+              style: 'ghost',
+              help: t('field.uninstall.help'),
+            })
+          }
+          list.push({
+            type: 'button',
+            action: 'doctor',
+            label: t('field.doctor.label'),
+            style: 'ghost',
+            help: t('field.doctor.help'),
+          })
         }
         // ── 改动预览（原 @pneuma/file-review 的设置分区，0.9.0 并进这一分区的「改动预览」组）
         // 字段 key 与从前的设置分区一致（enabled / maxLines / contextLines），落盘仍在
@@ -910,6 +931,13 @@ export const sandboxPlugin: Plugin.Object = {
           const verdict = result.ok ? t('action.setupDone') : t('action.setupFailed')
           return t('action.setup', { verdict, detail: result.detail, tier: networkTier, findings: networkTierDetail })
         }
+        if (name === 'uninstall') {
+          if (process.platform !== 'win32') return t('action.windowsOnly')
+          const result = await runUninstallElevated(DSC_HOME)
+          await refreshNetworkTier()
+          const verdict = result.ok ? t('action.uninstallDone') : t('action.uninstallFailed')
+          return t('action.uninstall', { verdict, detail: result.detail, tier: networkTier, findings: networkTierDetail })
+        }
         return t('action.unknown', { name })
       },
     }
@@ -1056,6 +1084,33 @@ export const sandboxPlugin: Plugin.Object = {
       // 换会话清一次预览统计：上一个会话的预览数跟新会话没关系
       review.reset()
       ctx.emit('dsc/changed')
+    })
+
+    // ── 残留授权清扫（每次挂载一次）──────────────────────────────────────────
+
+    /**
+     * 进程被强杀（任务管理器结束、断电）时后端 `dispose()` 不会跑，`<DSC_HOME>/sandbox/tmp/<哈希>`
+     * 上的能力 ACE 就永久留下了。这里扫一遍，只清超过 24 小时的目录。
+     *
+     * 三条纪律：活会话的目录绝不动（按 mtime 判年龄）；失败不打扰用户；任何情况下都不让挂载失败
+     * ——清扫是收尾动作，不是启动前置条件。
+     *
+     * 放到下一拍（`setImmediate`）再做：它要真的 revoke ACE 再删目录，遇上大目录是几百毫秒
+     * 的同步 IO，压在挂载路径上等于白等一段启动时间；而它本来就不影响任何判定。
+     */
+    setImmediate(() => {
+      if (disposed) return
+      try {
+        const outcome = sweepSandboxTemps({ root: join(sandboxDir(DSC_HOME), 'tmp') })
+        if (outcome.swept.length > 0) {
+          const hours = Math.round(DEFAULT_SWEEP_AGE_MS / 3_600_000)
+          ctx.transcript.system(
+            `沙箱：清掉了 ${String(outcome.swept.length)} 个超过 ${String(hours)} 小时的会话临时目录`,
+          )
+        }
+      } catch {
+        // 清扫失败一句都不说：它不影响这次会话的任何判定
+      }
     })
 
     // 挂载后立刻探一次后端，并把现状写进会话流：降级（partial）必须看得见。

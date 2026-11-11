@@ -16709,6 +16709,33 @@ zcode 按时段一共六句、每段一句，句子的主语全是「你」和�
 - `node scripts/tui-subagent-live-test.mjs`：提交率 **12.0 次/秒**（原 85~132），四条断言全绿，`Maximum update depth exceeded` 不再出现。
 - 回归：`tui-transcript-scroll`（11 段全 PASS）、`tui-scroll-model`、`tui-snapshot-coalesce`、`tui-transcript-style`、`tui-features` 全部 exit 0、零 FAIL。
 
+## 2026-11-11：沙箱收尾三件（S4）+ `/log` 文案归位
+
+**为什么**
+
+受限令牌后端还有三处收不干净：宿主被任务管理器强杀时 `dispose()` 不跑，会话临时目录上的能力 ACE 会永久留着；提权 setup 没有互斥，两个人同时点会并发建账号、装防火墙规则；装完没法卸载，账号、防火墙、WFP 过滤器装了就拆不掉。另外 `ui-locale` 闸抓到 `/log` 的命令名与说明是硬编码中文，换英文界面会露馅。
+
+**做法**
+
+- 新增 `win/sweep.ts`：按目录 mtime 判年龄，超过 24 小时的会话临时目录先 `revokeWrite` 再删；不到门槛一律进 `kept`（多会话常驻时别的会话可能正在用）。时钟与删除动作都可注入，自检不碰真实 ACL。
+- 挂载时的清扫放到 `setImmediate` 里：它要真的 revoke ACE 再删目录，压在同步挂载路径上等于白等一段启动时间；清掉了才往会话流说一句，失败一句不说。
+- `setup.ts` 加命名互斥体 `Local\dsc-sandbox-setup`：靠 `GetLastError()==183` 判「已有人在装」（`CreateMutexW` 重名时照样返回有效句柄，只看返回值会放过去），提权之前就拿，`try/finally` 里放。
+- 新增 `runUninstallElevated`：删账号、删防火墙规则、删 WFP 过滤器、删状态文件四段，同样提权执行；设置页加「卸载」按钮，只在 `readSetupState` 说装过时显示。
+- `/log` 的 `label` / `description` 改走 `t()`，中英字典各补两个键。
+
+**验证**
+
+- `pnpm run typecheck`、`pnpm run build`（76 包）、`node --test "src/packages/sandbox/tests/*.test.mjs"`（8/8）通过。
+- `node scripts/sandbox-win-token-test.mjs` → 55 通过 / 0 失败（清扫 7 条、互斥 4 条、卸载脚本 5 条）。
+- `node scripts/ui-locale-test.mjs` → 52 个包、0 条硬编码、全部通过。
+- 子代理另验：生成的 `setup.ps1` / `uninstall.ps1` 过 PowerShell Parser 零错误，内嵌 C# 编译通过，临时目录真跑默认清扫成功。
+
+**遗留**
+
+- 卸载与 setup 的**真提权流程**没在真机跑（UAC + 管理员）：账号、防火墙、WFP 的实际删除结果未确认，只验到脚本可解析、C# 可编译。
+- 互斥体只验了同进程两次，跨进程并发未实测。
+
+
 
 
 

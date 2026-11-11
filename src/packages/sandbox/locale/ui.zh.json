@@ -38,6 +38,8 @@
   "field.networkTier.label": "网络第二级（提权布防）",
   "field.setup.label": "提权安装网络管控（UAC 一次）",
   "field.setup.help": "创建专用离线账号、按账号 SID 出网阻断（防火墙 5 规则 + WFP 12 条持久 filter）、密码 DPAPI 落盘；账号先禁用、布防全部成功才解禁。需要你在 UAC 弹窗点一次允许。",
+  "field.uninstall.label": "卸载网络管控（UAC 一次）",
+  "field.uninstall.help": "拆掉提权 setup 装过的东西：专用账号与账号组、5 条防火墙规则、12 条 WFP 持久 filter（provider 与 sublayer 一并删），最后删掉 setup-state.json / account.bin / setup-error.txt。需要你在 UAC 弹窗点一次允许。",
   "field.doctor.label": "体检网络第二级",
   "field.doctor.help": "逐项核对：FFI、状态文件、账号、密码可解、防火墙规则、WFP 子层；全绿即 full。",
   "field.problems.label": "配置有问题（已按默认值兜底）",
@@ -67,5 +69,8 @@
   "action.setupDone": "提权 setup 完成",
   "action.setupFailed": "提权 setup 未完成",
   "action.setup": "{verdict}：{detail}｜体检：{tier} —— {findings}",
+  "action.uninstallDone": "提权卸载完成",
+  "action.uninstallFailed": "提权卸载未完成",
+  "action.uninstall": "{verdict}：{detail}｜体检：{tier} —— {findings}",
   "action.unknown": "这个分区没有这个按钮：{name}"
 }
