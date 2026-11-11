@@ -1,0 +1,15 @@
+{
+  "section.title": "回合快照",
+  "section.subtitle": "每个回合前后各留一份工作区快照，仓库放在 ~/.dsc，不碰你自己的 .git",
+  "field.enabled.label": "启用回合快照",
+  "field.enabled.help": "关掉后不再存新快照；已经存下的快照不会删除，把开关打开就从下一个回合接着存。",
+  "field.maxRepoMB.label": "影子仓库上限（MB）",
+  "field.maxRepoMB.help": "占用超过这个数就自动停用，并往会话流里说一次；把上限调大后会在下一个回合恢复。",
+  "field.listLimit.label": "/checkpoint list 默认显示几次",
+  "field.listLimit.help": "只影响列出来的条数，不影响存下来的快照（快照不会因为显示上限被删）。",
+  "field.repo.label": "影子仓库位置",
+  "save.notNumber": "这里要填一个正数",
+  "save.unknownKey": "这个分区没有这项：{key}",
+  "command.label": "快照",
+  "command.description": "看回合快照的仓库、列出最近几次；还原在下一批"
+}

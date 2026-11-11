@@ -1,0 +1,4 @@
+{
+  "title": "Turn checkpoints",
+  "description": "Shadow git snapshots before and after each turn; restore lands next batch"
+}

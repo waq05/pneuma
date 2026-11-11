@@ -1,0 +1,15 @@
+{
+  "section.title": "Turn checkpoints",
+  "section.subtitle": "One workspace snapshot before and after each turn, stored under ~/.dsc without touching your own .git",
+  "field.enabled.label": "Enable turn snapshots",
+  "field.enabled.help": "When off, no new snapshots are taken; the ones already stored are kept, and turning it back on resumes from the next turn.",
+  "field.maxRepoMB.label": "Shadow repository limit (MB)",
+  "field.maxRepoMB.help": "Snapshots stop once the repository exceeds this size, and the conversation says so once; raising the limit resumes them on the next turn.",
+  "field.listLimit.label": "Rows shown by /checkpoint list",
+  "field.listLimit.help": "Only affects how many rows are listed, not how many snapshots are kept (nothing is deleted by this limit).",
+  "field.repo.label": "Shadow repository location",
+  "save.notNumber": "Enter a positive number here",
+  "save.unknownKey": "This section has no such setting: {key}",
+  "command.label": "Snapshot",
+  "command.description": "Show the checkpoint repository and recent snapshots; restore comes next batch"
+}

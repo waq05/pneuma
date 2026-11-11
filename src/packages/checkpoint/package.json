@@ -1,0 +1,39 @@
+{
+  "name": "@pneuma/checkpoint",
+  "version": "0.9.1",
+  "description": "每个回合前后各存一份影子 git 快照：能回看，还原下一批再做",
+  "private": true,
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./locale/*.json": "./locale/*.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "cordis.patch.yml",
+    "locale/**"
+  ],
+  "pneuma": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "order": 335,
+    "resolution": "overridable",
+    "title": "回合快照",
+    "description": "每个回合前后各存一份影子 git 快照：能回看，还原下一批再做"
+  },
+  "engines": {
+    "pneuma": ">=1.0.0 <2.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.1.0"
+  }
+}

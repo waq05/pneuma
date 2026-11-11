@@ -16820,6 +16820,34 @@ zcode 按时段一共六句、每段一句，句子的主语全是「你」和�
 - 模型自己调 `learning promote` 应用修订那条路：审批按“会话已结束”自动拒（既有问题，`landDraft` 同一形状）。
 - L2 复盘轮若回 patch 形状会被拒收、不落盘（刻意）。
 
+## 2026-11-11：影子 git 快照地基（B5）
+
+**为什么**
+
+用户要「模型改坏文件后能回到某回合之前，且保留用户手改的部分」。业界做法照 hermes：影子 git 仓库存回合快照 + 写者账本。这一批先做**仓库与快照**，还原放下一批。
+
+**做法**
+
+- 新建 `@pneuma/checkpoint` 包（order 335，默认开）：`dsc/turn-start` 自增回合号并存 `pre` 快照，`dsc/turn-end` 存 `post` 快照，标签 `dsc/turn-<n>-<pre|post>`。
+- 影子仓库放 `<DSC_HOME>/checkpoints/<slug>-<hash8>/repo`，**绝不进用户工作区**；`info/exclude` 排掉 node_modules、dist、build、coverage 这类目录。
+- 隔离靠 `GIT_DIR` / `GIT_WORK_TREE` / `GIT_INDEX_FILE` 三个环境变量：`core/git-exec.ts` 的 `git()` 加第四参 `env`，并且**先把继承来的 `GIT_*` 剥干净**再叠自己的——用户 shell 里设过 `GIT_DIR` 时，只叠不剥会被带到别的仓去。
+- 配额：每次 `post` 后量仓库占用，超过上限（默认 512MB）就停用并说一次；`/checkpoint status|list|restore`，`restore` 本批只回「下一批才可用」，不假装做了。
+- 新增一个功能包后计数口径同步：77 个功能包 / 89 个包目录。
+
+**验证**
+
+- `pnpm run typecheck`、`pnpm run build`（77 包）通过。
+- `node --test "src/packages/checkpoint/tests/*.test.mjs"` → 3 用例 / 14 断言（含 pre 快照内容回看、node_modules 被排除、用户工作区不会长出 `.git`）。
+- `plugin-standard-check` 0 条问题；`package-tests` 89 包 / 92 用例 / 507 断言全过。
+- `plugin-inventory-check` 快照重写成 76 个插件（含新增的 checkpoint），清单一致。
+
+**遗留**
+
+- 真实的 TUI / 桌面回合钩子没跑过，只在 headless 装配里确认挂上；512MB 配额停用没在真大仓触发。
+- 并发：上一张快照没跑完时 `post` 会被跳过（只记 debug 日志），回合末尾可能少一张快照——下一批做还原时要处理。
+- 用户 shell 自带 `GIT_DIR` 的边界没单独实测。
+
+
 
 
 

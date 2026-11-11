@@ -14,15 +14,42 @@
  */
 import { execFile } from 'node:child_process'
 
-/** 受控执行 git（固定首参字面量 + 参数数组；无 shell）。超时由 execFile 自己收进程。 */
-export function git(cwd: string, args: string[], timeoutMs = 15000): Promise<string> {
+/**
+ * 受控执行 git（固定首参字面量 + 参数数组；无 shell）。超时由 execFile 自己收进程。
+ *
+ * @param env - 额外环境变量（影子仓库靠 `GIT_DIR` / `GIT_WORK_TREE` / `GIT_INDEX_FILE`
+ *   隔离，见 `packages/checkpoint/shadow.ts`）。不传 = 与从前完全一致。
+ *
+ * 为什么先剥掉继承来的 `GIT_*`：用户 shell 里只要设过 `GIT_DIR`（git worktree、
+ * 多仓并行时很常见），每条命令都会被带到那个仓去；只叠我们自己的值挡不住没传的那几个。
+ * 剥干净再叠，调用方给什么就是什么，没给的一律按「普通 git」走。
+ */
+export function git(
+  cwd: string,
+  args: string[],
+  timeoutMs = 15000,
+  env?: Record<string, string | undefined>,
+): Promise<string> {
+  // 只把有值的键交给 execFile：`undefined` 在这里表示「这次不覆盖」，不是要写一个
+  // 字符串 "undefined" 进去；显式过滤，子进程拿到的环境只有一种解释。
+  const childEnv: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    // Windows 的环境变量名不区分大小写：`Git_Dir` 一样会影响 git，按大写判才剥得干净。
+    if (key.toUpperCase().startsWith('GIT_') || value === undefined) continue
+    childEnv[key] = value
+  }
+  if (env !== undefined) {
+    for (const [key, value] of Object.entries(env)) {
+      if (value !== undefined) childEnv[key] = value
+    }
+  }
   return new Promise((resolveDone, rejectDone) => {
     execFile(
       'git',
       args,
       // timeout 原来只在自己这层 reject，git 进程继续跑（2026-09-29 审查）：
       // 交给 execFile 的 timeout + killSignal，超时连进程一起收掉。
-      { cwd, maxBuffer: 8 * 1024 * 1024, windowsHide: true, timeout: timeoutMs, killSignal: 'SIGKILL' },
+      { cwd, env: childEnv, maxBuffer: 8 * 1024 * 1024, windowsHide: true, timeout: timeoutMs, killSignal: 'SIGKILL' },
       (error, stdout, stderr) => {
         if (error !== undefined && error !== null) {
           rejectDone(new Error(String(stderr || error.message).slice(0, 800)))

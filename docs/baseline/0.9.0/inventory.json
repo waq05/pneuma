@@ -47,6 +47,15 @@
       "bundle": null
     },
     {
+      "file": "checkpoint",
+      "name": "回合快照",
+      "enabled": true,
+      "toggleable": false,
+      "source": "builtin",
+      "settingsSection": null,
+      "bundle": null
+    },
+    {
       "file": "commands",
       "name": "斜杠命令",
       "enabled": true,
@@ -89,6 +98,15 @@
       "toggleable": true,
       "source": "builtin",
       "settingsSection": "dock-browser",
+      "bundle": null
+    },
+    {
+      "file": "doctor",
+      "name": "体检",
+      "enabled": true,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": null,
       "bundle": null
     },
     {
@@ -161,6 +179,15 @@
       "toggleable": false,
       "source": "builtin",
       "settingsSection": null,
+      "bundle": null
+    },
+    {
+      "file": "log",
+      "name": "运行日志",
+      "enabled": true,
+      "toggleable": true,
+      "source": "builtin",
+      "settingsSection": "log",
       "bundle": null
     },
     {
@@ -679,6 +706,12 @@
       "builtin": true
     },
     {
+      "id": "checkpoint",
+      "title": "回合快照",
+      "order": 39,
+      "builtin": false
+    },
+    {
       "id": "compact",
       "title": "上下文压缩",
       "order": 35,
@@ -706,6 +739,12 @@
       "id": "image-diet",
       "title": "图片卸载",
       "order": 38,
+      "builtin": false
+    },
+    {
+      "id": "log",
+      "title": "运行日志",
+      "order": 880,
       "builtin": false
     },
     {
