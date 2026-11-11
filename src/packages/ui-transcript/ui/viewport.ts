@@ -10,8 +10,25 @@
  *
  * - `follow.ts` 只判**该不该贴底**（手势、落定、只认自己的写这些策略）；
  * - `render.tsx` / `fold-seats.tsx` 只画内容，一律不碰外层 `.chat` 的滚动；
- * - 本文件是唯一读 `getBoundingClientRect` / `offsetHeight`、唯一写 `scrollTop`、
- *   唯一写 `[data-chat-turn-spacer]` 内联高度的地方。
+ * - 本文件是**折叠批次这一套**（贴底判定、底部占位、锚定、逐行动画落地）里唯一读
+ *   `getBoundingClientRect` / `offsetHeight`、唯一写 `scrollTop`、唯一写
+ *   `[data-chat-turn-spacer]` 内联高度的地方。
+ *
+ * 「唯一」的边界要说清，否则读注释的人会以为整只滚动容器只有这里能动。另有两条路径
+ * **不在**这一套里，却仍在读同一只容器、改同一个滚动位置：
+ *
+ * - 刻度条 `jump-rail.tsx`：`:73` / `:82` 读 `getBoundingClientRect`，`:222` 用 `scrollTo`、
+ *   `:244` 用 `scrollIntoView` 跳轮；
+ * - 工具卡 `tool-card/factory.tsx:409`：量 `.chat` 的位置来摆悬浮层。
+ *
+ * 它们没并进来，是因为并进来要重做刻度条的「到底」判定：它现在按
+ * `scrollHeight - clientHeight - scrollTop` 算，没减占位高度；占位恒 0 时与
+ * `viewport.floor()` 等价，占位一旦非 0 就成了两套口径。动这几处之前先读这一段，
+ * 别按「只有一个主人」去推。
+ *
+ * 还要知道探针的盲区：探针拦的是 `scrollTop` 的**属性赋值**，`scrollTo` /
+ * `scrollIntoView` 不走那个 setter，所以「写入栈只指向 ViewportOwner」这条判据
+ * 抓不到上面两条路径——它们能活到现在，正是因为判据看不见它们。
  *
  * 组体（`.step-body` 自己的限高滚动，`fold-seats.tsx` 的 `useProcessScroll`）**不在**
  * 这个 owner 里：那是限高盒子自己的滚动，与外层贴底不是一件事。两套 owner 抢同一件事

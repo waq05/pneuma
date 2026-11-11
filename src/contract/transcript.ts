@@ -258,8 +258,16 @@ export type TranscriptEntry =
    * 下一轮模型看到的是一段新的上下文）。
    *
    * `count` = 这一种注入组合在这一轮里被重发了几次（缺省 1）。它是「同一份清单重复出现」
-   * 的现算结果，不是内容的一部分：内容由 `parts` 决定，所以界面侧的内容判等必须忽略它
-   * （详见 packages/transcript 的条目比对），否则每多一跳都会判「卡片内容变了」。
+   * 的现算结果，不是内容的一部分（内容由 `parts` 决定）。但**两处判等对它的口径相反**，
+   * 弄反任意一处都会坏掉一个功能：
+   *
+   * - **重放判等**（`packages/transcript` 的 `sameEntries` / `shape()`）必须剔掉它：实时
+   *   按事件累加、重放按日志重新数，同一份清单在日志里只写一条，两边数出来的值可以不同
+   *   （实时 6、重开 3）。留着比，每次重开同一条会话都会判「内容变了」，整表重建、条目
+   *   id 从头重发，折叠态与直播尾一起被抹掉。
+   * - **界面重画判等**（`ui-transcript` 的 `sameRow`，走 `sameContent` 深度比）必须比它：
+   *   adapter 在次数 +1 时特意换一个新对象，就是为了让这一行判「变了」重画。剔掉它，
+   *   注入卡上的「共 N 步」会冻在第一次的数上不再刷新。
    */
   | { kind: 'context-injection'; id: number; parts: ContextInjectionView[]; count?: number; ts?: number }
 

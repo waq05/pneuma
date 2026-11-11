@@ -357,7 +357,8 @@ function TranscriptFlow({
    * dsh 的 `beginPaging()` 取的就是「DOM 序里第一个可用的 seat」，同一条口径。
    *
    * 量尺寸与写滚动都归视口（`viewport.captureAnchor()` / `restoreAnchor()`）：
-   * 读 `getBoundingClientRect` 的地方只许有 `viewport.ts` 一个。
+   * 折叠批次这一套里读 `getBoundingClientRect` 的地方只有 `viewport.ts` 一个
+   * （刻度条与工具卡是例外，边界见 `viewport.ts` 头部）。
    */
   const beginPaging = (): void => {
     const anchor = viewport.captureAnchor()
