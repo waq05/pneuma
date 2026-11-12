@@ -41,10 +41,14 @@ import { absPathOf } from './file-path'
 import { PathButton } from './path-button'
 import { ReadBody, ReadRange } from './read-view'
 import { readCallOf, readPreviewOf } from './read-model'
+import { ReadImageBadge, ReadImageBody } from './read-image-view'
+import { readImageCallOf, readImageFactsOf } from './read-image-model'
 import { SearchBody, SearchCount } from './search-view'
 import { searchCallOf, searchResultOf } from './search-model'
 import { TodoBody, TodoProgress } from './todo-view'
 import { todoCallOf, todoListOf } from './todo-model'
+import { WebBody, WebCount } from './web-view'
+import { webCallOf, webResultOf } from './web-model'
 import { resultHead, resultRest, resultTail } from './result-tail'
 import { firstLineOf, flatValueOf, toolDetailArgs } from './tool-detail'
 import { useIntendedDiff, type IntendedDiff } from '../intended-diff'
@@ -282,13 +286,43 @@ export function ToolCardView(props: ToolCardViewProps): ReactNode {
   const readCall = useMemo(() => readCallOf(call.name, call.argsText), [call.name, call.argsText])
   const searchCall = useMemo(() => searchCallOf(call.name, call.argsText), [call.name, call.argsText])
   const todoCall = useMemo(() => todoCallOf(call.name, call.argsText), [call.name, call.argsText])
+  /**
+   * 后两张卡（2026-11-12，差距清单 S4 第三批）：`web`（web_search / webfetch）与 `read_image`。
+   *
+   * 判据与前面四张**逐字同一套**，但两张卡各有一处必须说清的地方：
+   *
+   * - `web` 的判据**不只靠名字**：dsh 的插件也能交来一张 `card: 'web'` 的卡片数据
+   *   （`presentation.result`，见 `web-model.ts`），那种调用名字通常不叫 `web_search`。
+   *   所以「名字 + 参数」与「卡片数据」任一条成立就算这张卡——两条都走同一个模型，
+   *   渲染体不关心数据是解析出来的还是插件给的；
+   * - `read_image` 的头行路径靠 `fileTargetOf` 的白名单（下面加了这个名字），卡片自己
+   *   只画「格式 + 体积」那枚读数与展开体里那张图。
+   *
+   * 与前面四张一样，两条判据都带 `variant === 'chat'`：轨迹页要看原样参数与结果原文。
+   */
+  const readImageCall = useMemo(() => readImageCallOf(call.name, call.argsText), [call.name, call.argsText])
+  const webCall = useMemo(() => webCallOf(call.name, call.argsText), [call.name, call.argsText])
   const readCard = readCall !== null && variant === 'chat'
   const searchCard = searchCall !== null && variant === 'chat'
   const todoCard = todoCall !== null && variant === 'chat'
+  const readImageCard = readImageCall !== null && variant === 'chat'
+  // web 卡：结果一律按「结构化优先、文本兜底」解析一次（模型是纯函数，代价可忽略）。
+  // 轨迹页一次都不解析——那一页的判据与数据面无关。
+  const webResult = useMemo(
+    () => (variant === 'chat' ? webResultOf(webCall, call.presentation, call.resultText) : null),
+    [variant, webCall, call.presentation, call.resultText],
+  )
+  const webCard = variant === 'chat' && (webCall !== null || webResult !== null)
+  /** 这张 web 卡说的是哪一档（fetch 与 search 的展开体不同；卡片数据可能自带 kind）。 */
+  const webKind: 'search' | 'fetch' = webCall?.kind ?? webResult?.kind ?? 'search'
   // 结果解析也按卡分流：不是这张卡就一次都不解析（一张普通卡不该为别的卡付解析成本）。
   const readPreview = useMemo(
     () => (readCard ? readPreviewOf(call.resultText) : null),
     [readCard, call.resultText],
+  )
+  const readImageFacts = useMemo(
+    () => (readImageCard ? readImageFactsOf(call.resultText) : null),
+    [readImageCard, call.resultText],
   )
   const searchResult = useMemo(
     () => (searchCard && searchCall !== null ? searchResultOf(searchCall.kind, call.resultText) : null),
@@ -456,20 +490,24 @@ export function ToolCardView(props: ToolCardViewProps): ReactNode {
               分隔点照 dsh 的「工具调用 · <工具名>」：名字是补充说明，不跟标题糊成一串。 */}
           {match.known || call.name === '' ? null : <span className="name">{`· ${call.name}`}</span>}
           <Preview intended={intended} summary={summary} cwd={cwd} targetPath={targetPath} change={call.change ?? null} />
-          {/* 三张专用卡各自的读数，紧跟在摘要后面（都还在 `.tool-click` 里：它们描述这次调用，
+          {/* 各张专用卡自己的读数，紧跟在摘要后面（都还在 `.tool-click` 里：它们描述这次调用，
               不是独立按钮，点一下整行照旧展开）：
                 - read：这次读了哪一段（`第 40–79 行`，路径本身已经由上面的 Preview 画成可点的）；
                 - 检索：命中了多少（`3 处 · 2 个文件`，或者「没有匹配」）；
-                - 待办：完成了几条 + 正在做的那一条。 */}
+                - 待办：完成了几条 + 正在做的那一条；
+                - web：搜到几条 / 抓取的 HTTP 状态码（卡片数据没回来时是空的，跑完才出现）；
+                - 图片：什么格式、多大（`PNG · 128 KB`，从结果第一句读，不必先把图读进来）。 */}
           {readCard && readCall !== null ? <ReadRange call={readCall} preview={readPreview} /> : null}
           {searchCard && searchResult !== null ? <SearchCount result={searchResult} /> : null}
           {todoCard && todoList !== null ? <TodoProgress list={todoList} /> : null}
+          {webCard ? <WebCount result={webResult} /> : null}
+          {readImageCard ? <ReadImageBadge facts={readImageFacts} /> : null}
         </span>
         {/* 还有几行没摊出来：把「点开能看到更多」写在明面上（codex 的「+ N lines」）。
             只在收起态、且确实有截断时出现；不占焦点，点整行照旧是展开。
-            三张专用卡不再画它：它们的头行已经有读数（区间 / 命中数 / 进度），
+            专用卡不再画它：它们的头行已经有读数（区间 / 命中数 / 进度 / 结果条数 / 图片体积），
             再叠一个「+N 行」就是把同一件事说两遍。 */}
-        {tail !== null && tail.hidden > 0 && !readCard && !searchCard && !todoCard ? (
+        {tail !== null && tail.hidden > 0 && !readCard && !searchCard && !todoCard && !webCard && !readImageCard ? (
           <span className="tc-more" title={t('transcript.tool.moreTip', { count: tail.hidden })}>
             {t('transcript.tool.moreLines', { count: tail.hidden })}
           </span>
@@ -530,6 +568,16 @@ export function ToolCardView(props: ToolCardViewProps): ReactNode {
             /* 待办（对话页）：头行说完成了几条，展开体是带四态符号的清单（只读的勾选框）。
                数据只读参数与结果两样现成的，数据面一处都没改。 */
             <TodoBody list={todoList} />
+          ) : webCard ? (
+            /* web（对话页）：头行说搜到几条 / HTTP 状态码，展开体是来源清单（可点标题 + 摘要）。
+               来源优先取插件交来的卡片数据（`presentation.result`，结构化、刷新会话还在），
+               没有卡片数据的旧会话才回头解析结果文本（见 `web-model.ts`）。 */
+            <WebBody call={call} kind={webKind} result={webResult} />
+          ) : readImageCard && readImageCall !== null ? (
+            /* 图片（对话页）：头行说格式与体积，展开体按路径**现读**这一次的图。
+               字节不进会话快照的理由写在 `read-image-view.tsx` 的文件头（一张图 8MB 的
+               base64 会随每次快照重发一遍），所以这里只可能读到「现在盘上那张」。 */
+            <ReadImageBody call={call} image={readImageCall} cwd={cwd} />
           ) : variant === 'trace' ? (
             /* 轨迹页看的是**原始参数与原始结果**（它的职责是取证，不是速读）：这一支
                与改造前逐字一致——标签 + prettyJson + 结果原文。别把对话页那张
@@ -719,15 +767,19 @@ export function NoTrailing(): ReactNode {
 // ── 对话页按 occurrence 选的局部组件 ──────────────────────────────────────────
 
 /**
- * 文件类工具（read / write / edit）这次调用指向的文件：摘要区那条可点路径的依据。
+ * 文件类工具（read / read_image / write / edit）这次调用指向的文件：摘要区那条可点路径的依据。
  *
  * 参数名两式都认（dsc 的工具用 `path`；`file_path` 是 MCP 系工具的常见写法）。
  * 相对路径按会话工作目录拼成绝对路径——预览页签要绝对的（`fs-read` 以工作目录
  * 为基准做包含校验，本会话的卡都在里面）。认不出（参数没吐全、没有路径字段、
  * 不是文件类工具）就是 null，摘要照旧纯文本。
+ *
+ * 名字白名单里为什么有 `read_image`：它与 read 是同一族（读了哪个文件），头行的那条
+ * 可点路径必须是同一个按钮（`read-family-row` 在参考实现里就是这么共用的）；预览页签
+ * 本来就画得了图（`ui-preview` 的 `kind: 'image'` 分支），点开就是原图。
  */
 export function fileTargetOf(name: string, argsText: string, cwd: string): string | null {
-  if (name !== 'read' && name !== 'write' && name !== 'edit') return null
+  if (name !== 'read' && name !== 'read_image' && name !== 'write' && name !== 'edit') return null
   try {
     const args = JSON.parse(argsText) as Record<string, unknown>
     const raw = [args.file_path, args.path].find(

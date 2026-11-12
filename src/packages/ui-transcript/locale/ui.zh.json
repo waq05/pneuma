@@ -260,5 +260,18 @@
   "transcript.tool.searchWaiting": "正在检索",
   "transcript.tool.todoProgress": "{done}/{total} 完成",
   "transcript.tool.todoCleared": "清单已清空",
-  "transcript.tool.todoEmpty": "清单里没有条目"
+  "transcript.tool.todoEmpty": "清单里没有条目",
+  "transcript.tool.webResultCount": "{count} 条结果",
+  "transcript.tool.webNoResult": "没有结果",
+  "transcript.tool.webTruncated": "只列了前 {count} 条",
+  "transcript.tool.webAnswer": "摘要",
+  "transcript.tool.webHttp": "HTTP {code}",
+  "transcript.tool.webContentTruncated": "内容被截断",
+  "transcript.tool.webSearching": "正在搜索",
+  "transcript.tool.webFetching": "正在抓取",
+  "transcript.tool.imageMeta": "{mime} · {size}",
+  "transcript.tool.imageDims": "{width}×{height}",
+  "transcript.tool.imageLoading": "正在读取图片",
+  "transcript.tool.imageTooLarge": "超过 5MB，卡片不预览；点上方路径在预览页签里用系统程序打开",
+  "transcript.tool.imageUnavailable": "卡片读不到这张图（可能不在工作目录里）；点上方路径在预览页签里用系统程序打开"
 }

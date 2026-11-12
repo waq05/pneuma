@@ -29,7 +29,8 @@
  *
  * 只有 `read`：本机注册的就是它（`core/tools/fs-tools.ts:80`，`tools-default` 插件装配）。
  * `read_file` 是别家（MCP 系）工具的常见名字，本批**不认**——认了它，头行的可点路径却出不来
- * （`fileTargetOf` 只认 read / write / edit），那会变成半张卡；不认它就照旧走通用卡，不丢信息。
+ * （`fileTargetOf` 只认 read / read_image / write / edit），那会变成半张卡；不认它就照旧走
+ * 通用卡，不丢信息。
  */
 const READ_TOOL_NAME = 'read'
 

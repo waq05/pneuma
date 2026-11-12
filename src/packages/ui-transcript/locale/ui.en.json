@@ -260,5 +260,18 @@
   "transcript.tool.searchWaiting": "Searching",
   "transcript.tool.todoProgress": "{done}/{total} done",
   "transcript.tool.todoCleared": "Task list cleared",
-  "transcript.tool.todoEmpty": "Task list is empty"
+  "transcript.tool.todoEmpty": "Task list is empty",
+  "transcript.tool.webResultCount": "{count} results",
+  "transcript.tool.webNoResult": "No results",
+  "transcript.tool.webTruncated": "Only the first {count} shown",
+  "transcript.tool.webAnswer": "Summary",
+  "transcript.tool.webHttp": "HTTP {code}",
+  "transcript.tool.webContentTruncated": "Content truncated",
+  "transcript.tool.webSearching": "Searching",
+  "transcript.tool.webFetching": "Fetching",
+  "transcript.tool.imageMeta": "{mime} · {size}",
+  "transcript.tool.imageDims": "{width}×{height}",
+  "transcript.tool.imageLoading": "Loading image",
+  "transcript.tool.imageTooLarge": "Over the 5MB card limit; open the path above in the preview tab to view it with a system program",
+  "transcript.tool.imageUnavailable": "The card cannot read this image (it may be outside the working directory); open the path above in the preview tab"
 }

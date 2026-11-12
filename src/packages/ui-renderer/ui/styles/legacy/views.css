@@ -2869,6 +2869,171 @@
   padding: var(--dsc-sp-2) var(--dsc-sp-5);
 }
 
+/* ── web 工具卡的来源清单（差距清单 S4 第三批：web_search / webfetch）──
+   外观与检索卡同一档（四级底 + 三级描边 + 块圆角）：两者都是「一列外部结果」，
+   读者在这里做的也是同一件事——扫标题、挑一个点开。 */
+.tc-web {
+  background: var(--dsc-fill-quaternary);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-block);
+  font-size: var(--dsc-fs-caption);
+  margin-top: var(--dsc-sp-1);
+  overflow: hidden;
+}
+
+/* 提供方给的整段摘要（dsh 的 answer）：先读它、再挑来源，所以不加第二层框，只留段距。 */
+.tc-web-answer {
+  color: var(--dsc-text-secondary);
+  line-height: 1.6;
+  margin: 0;
+  padding: var(--dsc-sp-2) var(--dsc-sp-5) 0;
+}
+
+/* 来源清单限高内滚：一次最多 20 条（`web-search` 的 maxResults 上限），全铺开就是一屏。 */
+.tc-web-sources {
+  list-style: none;
+  margin: 0;
+  max-height: min(320px, 40vh);
+  overflow: auto;
+  padding: var(--dsc-sp-2) 0;
+}
+
+.tc-web-source {
+  padding: var(--dsc-sp-1) var(--dsc-sp-5);
+}
+
+.tc-web-source + .tc-web-source {
+  border-top: 1px solid var(--dsc-stroke-3);
+  padding-top: var(--dsc-sp-2);
+}
+
+/* 来源标题行：可点的外链。用强调色而不是常显下划线——十几条链接全带下划线，一屏就糊了。
+   认不出 http(s) 的来源写成 `<span>` 挂同一个类名：样子一样，但没有指针，点不动就别装作能点。 */
+.tc-web-link {
+  color: var(--dsc-accent-text);
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+
+a.tc-web-link:hover {
+  text-decoration: underline;
+}
+
+a.tc-web-link:focus-visible {
+  outline: 1px solid var(--dsc-accent);
+  outline-offset: 2px;
+}
+
+/* 认不出 http(s) 的来源：同一个类名、同一处位置，但退成正文色——不是链接就不该看着像链接
+   （点了没反应，比灰着更让人恼火）。 */
+span.tc-web-link {
+  color: var(--dsc-text-secondary);
+}
+
+/* 摘要是给人扫的：比标题退一级、两行封顶（悬停看全文）。 */
+.tc-web-snippet {
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--dsc-text-tertiary);
+  display: -webkit-box;
+  font-size: var(--dsc-fs-ui);
+  line-height: 1.55;
+  margin-top: 2px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* 抓取卡：一条 URL + 一个状态码，没有清单。 */
+.tc-web-fetch {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--dsc-sp-2) var(--dsc-sp-5);
+}
+
+.tc-web-status {
+  color: var(--dsc-text-quaternary);
+  font-size: var(--dsc-fs-tool);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 「没有结果」「只列了前 N 条」「正在搜索」以及宿主尾注：一句话，别让它看着像内容。 */
+.tc-web-note {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-ui);
+  margin: 0;
+  padding: var(--dsc-sp-1) var(--dsc-sp-5) var(--dsc-sp-2);
+}
+
+/* 卡片数据坏了、文本兜底也放弃了时摊的那份原文：与 read 卡的 `.tc-read-raw` 同一档
+   （等宽、限高内滚、不裁字）。原文里可能有一整段外部内容围栏，所以限高比清单更矮一点。 */
+.tc-web-raw {
+  color: var(--dsc-text-secondary);
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-caption);
+  line-height: 1.6;
+  margin: 0;
+  max-height: min(240px, 30vh);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: var(--dsc-sp-2) var(--dsc-sp-5);
+  white-space: pre-wrap;
+}
+
+/* 第五、第六张卡的头行读数（web 的结果条数 / 图片的格式与体积）：与前四枚同一档。 */
+.tc-web-count,
+.tc-shot-badge {
+  color: var(--dsc-text-tertiary);
+  flex: 0 0 auto;
+  font-size: var(--dsc-fs-tool);
+  white-space: nowrap;
+}
+
+/* ── read_image 工具卡：展开时按路径现读的那张图（差距清单 S4 第三批）──
+   图片字节**不进**会话快照（一张 6MB 的图 base64 后约 8MB，每次快照都要重发一遍），
+   卡片展开时才走 `dock fs-read` 现读一次，所以这里量的是浏览器的自然尺寸。 */
+.tc-shot {
+  background: var(--dsc-fill-quaternary);
+  border: 1px solid var(--dsc-stroke-3);
+  border-radius: var(--dsc-r-block);
+  margin-top: var(--dsc-sp-1);
+  overflow: hidden;
+  padding: var(--dsc-sp-2) var(--dsc-sp-5);
+}
+
+/* 图最宽铺满块、最高 40vh：一张 4K 截图按原始像素铺进来会把上面十几条消息顶出屏幕。
+   透明区域交给页面底色，不额外铺棋盘格（那会把图本身看花）。 */
+.tc-shot-img {
+  border-radius: var(--dsc-r-icon);
+  cursor: pointer;
+  display: block;
+  height: auto;
+  max-height: min(420px, 40vh);
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.tc-shot-img:focus-visible {
+  outline: 1px solid var(--dsc-accent);
+  outline-offset: 2px;
+}
+
+/* 图底下那行「1200×800」：读数，不是内容。 */
+.tc-shot-meta {
+  color: var(--dsc-text-quaternary);
+  font-family: var(--dsc-font-mono);
+  font-size: var(--dsc-fs-tool);
+  font-variant-numeric: tabular-nums;
+  margin-top: var(--dsc-sp-1);
+}
+
+.tc-shot-note {
+  color: var(--dsc-text-tertiary);
+  font-size: var(--dsc-fs-ui);
+  margin: 0;
+  padding: var(--dsc-sp-1) 0;
+}
+
 /* ── 工具卡的「将做的改动」（dsh 的 intended diff：write/edit 进行中摊出将产生的 diff） ── */
 .tc-intended {
   margin-top: 4px;

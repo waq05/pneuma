@@ -38,6 +38,7 @@ export const SUMMARY_FIELDS: Readonly<Record<string, readonly string[]>> = {
   glob: ['pattern', 'path'],
   grep: ['pattern', 'path'],
   webfetch: ['url'],
+  web_fetch: ['url'],
   fetch: ['url'],
   web_search: ['query'],
   session_search: ['query'],
@@ -209,6 +210,9 @@ export const KNOWN_TOOLS: Readonly<
   glob: { verb: t('primitives.tool.glob'), Icon: IconSearch },
   grep: { verb: t('primitives.tool.grep'), Icon: IconSearch },
   webfetch: { verb: t('primitives.tool.fetch'), Icon: IconSearch },
+  // dsh 那边同一个能力叫 `web_fetch`（`process-groups.ts:251` 按它归「访问网页」）。
+  // 少这一行，那张 web 卡的头行会退回「工具调用 · web_fetch」——动作读不出来了。
+  web_fetch: { verb: t('primitives.tool.fetch'), Icon: IconSearch },
   fetch: { verb: t('primitives.tool.fetch'), Icon: IconSearch },
   task: { verb: t('primitives.tool.subagent'), Icon: IconSpark },
   // ── 2026-11-06 补齐：dsh 的 tool.title.* 词表覆盖后台作业、终端、定时、目标、团队、
