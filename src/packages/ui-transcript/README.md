@@ -19,7 +19,7 @@
 ## Known Limitations（已知限制）
 
 - 旧界面的吸附快捷栏没搬；长会话的跨轮跳转由右侧 JumpRail 负责（ui/ui.tsx:18-20，ui/jump-rail.tsx:1-4）。
-- JumpRail 用 portal 挂到 `.chat-wrap`，依赖壳的 DOM 里存在 `.chat`（ui/jump-rail.tsx:16-18）。
+- JumpRail 用 portal 挂到 `.chat-wrap`；它读几何、判断「到底」、跳轮都经 `viewport`——视口由 `TranscriptFlow` 自己用 `useChatViewport()` 建、再传给 JumpRail，attach 时按 `.chat` 找滚动容器。所以壳必须提供 `.chat-wrap > .chat`：少了那一层，视口的 `scroller` 是 null，刻度条测量与跳轮静默失效（ui/viewport.ts 的 attach/detach）。
 - 跟随贴底的阈值是 24px、落定 180ms，与 dsh 的 25px / 500ms 不完全同档（ui/follow.ts:10-14）。
 - 单轮超过 500 条时整轮放进来，这一页会超上限；轮内靠阶段组限高顶着（ui/paging.ts:47-51）。
 - 编辑重发要求会话已落盘：新会话第一条消息落盘前点编辑，只提示先发一条（ui/ui.tsx:361-363）。
