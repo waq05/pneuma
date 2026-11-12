@@ -1,7 +1,7 @@
 /**
  * 正文列宽那条拖拽条（`src/packages/ui-primitives/ui/thread-resizer.tsx` + `panels.ts`）的探针。
  *
- * 三组断言：
+ * 四组断言：
  *
  *   1. **纯逻辑**（`panels.ts`，Node 类型擦除直读；`localStorage` / `getComputedStyle` /
  *      `document` 三个 DOM 面用桩顶上——这几个函数本来就把 DOM 当环境，值得单独钉的是夹取数学
@@ -10,6 +10,9 @@
  *      窄窗口的 `min()` 兜底）与 `--dsc-thread-max` 的消费者没被换掉；
  *   3. **量算契约**：`measure()` 量的是 `.chat-inner` 的真实矩形——所以那条 `width: 100%` 是它的
  *      前提，改一处必须动另一处。这一组把「空态下把手压在输入框上、怎么拖都不动」钉在结构上。
+ *   4. **纵向契约**（2026-11-12 报障）：把手底边停在 `.composer` 上沿——那一层的下半截是输入
+ *      卡片与状态栏，把手铺到那里会画出一条与输入框并排的竖条，看着像输入框的边框。距离必须
+ *      是量出来的（输入框随行数长高、上方还会插进审批卡与队列条），所以也钉住「谁在重量」。
  *
  * 用户报障与实机对照（1440×900，把开场便条改短成用户那台机器的样子）：
  *
@@ -223,6 +226,43 @@ console.log('[3] 量算契约（thread-resizer.tsx 与 app.tsx 的接线）')
   )
   check('两条把手挂在 .thread-zone 里（正文列之外那一层）', app.includes('<ThreadResizer width={threadWidth} onCommit={commitThreadWidth} onReset={resetThreadWidth} />'))
   check('双击复位 = 删存档（回默认列宽）', resizer.includes('onDoubleClick={props.onReset}') && app.includes('writeStoredPx(PANEL_KEYS.threadWidth, null)'))
+}
+
+// ── [4] 纵向契约：把手只铺会话区（2026-11-12 报障）──────────────────────────
+// 报障原话：「这个拖动会话区大小的竖条，不要低于输入框的上沿」。把手原来是 top:0; bottom:0
+// 铺满整个 .thread-zone，而那一层下半截就是输入卡片与状态栏，于是列缘外的高亮竖条画到了
+// 输入框旁边、像它的边框。现在底边停在 .composer 上沿，距离由 measure() 量出来。
+console.log('[4] 纵向契约：把手底边停在输入框上沿')
+{
+  const resizer = read('src/packages/ui-primitives/ui/thread-resizer.tsx')
+  const panelsTs = read('src/packages/ui-primitives/ui/panels.ts')
+  const views = read('src/packages/ui-renderer/ui/styles/legacy/views.css')
+
+  check(
+    '把手的 bottom 读 --dsc-thread-handle-bottom（量不出来时 0 = 老行为）',
+    /\.thread-handle \{[^}]*bottom: var\(--dsc-thread-handle-bottom, 0px\)/.test(views),
+    /\.thread-handle \{[^}]*bottom:[^;]*;/.exec(views)?.[0],
+  )
+  check(
+    '变量名两边一致（样式表与 TS 只写一处真名，另一处引用）',
+    resizer.includes("HANDLE_BOTTOM_VAR = '--dsc-thread-handle-bottom'") && views.includes('var(--dsc-thread-handle-bottom'),
+  )
+  check(
+    '距离是量出来的：层底 − 输入框上沿（不是写死的高度）',
+    resizer.includes("zone.querySelector<HTMLElement>('.composer')") && /zoneBox\.bottom - composerBox\.top/.test(resizer),
+  )
+  check(
+    '输入框自己长高也要重量（ResizeObserver 单独盯住 .composer）',
+    /if \(composer !== null\) observer\.observe\(composer\)/.test(resizer),
+  )
+  check(
+    '抓手留最小高度，兜住「窗口矮到输入框顶满整层」',
+    resizer.includes('zoneBox.height - HANDLE_MIN_H') && /const HANDLE_MIN_H = \d+/.test(resizer),
+  )
+  check(
+    '高亮落点写成百分比并夹在 10%~90%（热区缩短后不会整条落到盒子外）',
+    /--dsc-handle-y/.test(panelsTs) && /Math\.min\(Math\.max\(ratio, 0\.1\), 0\.9\)/.test(panelsTs) && /\$\{String\(pct\)\}%/.test(panelsTs),
+  )
 }
 
 console.log(failures === 0 ? '\n全部通过' : `\n${String(failures)} 条失败`)

@@ -26,10 +26,31 @@ process.on('unhandledRejection', () => {})
  *   6. **窗口没被拉宽**：`window.innerWidth` 不变（±1px）；
  *   7. **选择落进令牌**：拖完 `--dsc-thread-user-max` 有值，且等于 `--dsc-thread-max`。
  *
+ * ## 纵向：把手只铺会话区（2026-11-12 报障）
+ *
+ * 报障原话：「这个拖动会话区大小的竖条，不要低于输入框的上沿」。旧样式里把手是
+ * `top:0; bottom:0`（铺满整个 `.thread-zone`），而那一层下半截就是输入卡片与状态栏，
+ * 于是列缘外那条高亮竖条画到了输入框旁边，看着像输入框的边框。现在底边停在 `.composer`
+ * 上沿，距离由 ThreadResizer 量出来写进 `--dsc-thread-handle-bottom`。这一段补的判据：
+ *
+ *   V1 变量量出来了，且等于「层底到输入框上沿」；
+ *   V2 把手底边不越过输入框上沿（报障那条本身）；
+ *   V3 底边贴着输入框上沿（差 ≤ 2px，不是缩得太高、留出一大段空白）；
+ *   V4 顶边仍在正文区顶上（会话区整段还能拖）；
+ *   V5 把手还有足够长度（≥ 200px，不是被压成一条抓不住）；
+ *   V6 拖动时高亮落点是被夹过的百分比（10%~90%），不会整条落到盒子外；
+ *   V7 高亮竖条的化开区（上下各 36px）也压在输入框上沿之上。
+ *
+ * 产物：`_thread-handle-bottom.png`（把手底边 + 输入框上沿那一段的裁剪截图，拖动中拍的，
+ * 高亮竖条贴着底边亮着）。
+ *
  * ## 负向自检
  *
  * `PROBE_MUTATE=dead`：给 `.thread-handle` 加 `pointer-events: none`（复刻「拖不动」），
  * 判据 1 与「拖动生效」那几条当场红。
+ *
+ * `PROBE_MUTATE=full`：把 `.thread-handle` 的 `bottom` 压回 0（复刻 2026-11-12 报障的铺满整层），
+ * V2 / V3 当场红。
  *
  * 运行：node desktop/shots/_verify-thread-drag.mjs
  *      PROBE_SIZE=2396x1527 node desktop/shots/_verify-thread-drag.mjs   # 复现报障时的窗口尺寸
@@ -180,6 +201,18 @@ try {
     console.log('负向自检：.thread-handle 已改成 pointer-events: none（应当拖不动）')
   }
 
+  // 负向自检：把「铺满整层」注入回去（复刻 2026-11-12 报障），V2/V3 应当当场红。
+  if (process.env.PROBE_MUTATE === 'full') {
+    await evaluate(`
+      const style = document.createElement('style')
+      style.textContent = '.thread-handle { bottom: 0 !important; }'
+      document.head.appendChild(style)
+      await new Promise((r) => setTimeout(r, 300))
+      return true
+    `)
+    console.log('负向自检：.thread-handle 已改回 bottom: 0（把手应当越过输入框上沿）')
+  }
+
   const before = await evaluate(GEOMETRY)
   const handleInfo = await evaluate(HANDLES)
   console.log('G-before', JSON.stringify(before))
@@ -249,6 +282,108 @@ try {
     assert('两张几何截图都落盘了',
       (shotBefore.data ?? '').length > 1000 && (shotAfter.data ?? '').length > 1000,
       `${String((shotBefore.data ?? '').length)} / ${String((shotAfter.data ?? '').length)} 字节`)
+  }
+
+  /* ── V：把手纵向只铺会话区（底边停在输入框上沿） ── */
+  const vertical = await evaluate(`
+    const handle = document.querySelector('.thread-handle[data-side="left"]')
+    const composer = document.querySelector('.composer')
+    const zone = document.querySelector('.thread-zone')
+    const chat = document.querySelector('.chat')
+    if (handle === null || composer === null || zone === null) return { ok: false }
+    const h = handle.getBoundingClientRect()
+    const c = composer.getBoundingClientRect()
+    const z = zone.getBoundingClientRect()
+    const chatBox = chat === null ? null : chat.getBoundingClientRect()
+    return {
+      ok: true,
+      cx: Math.round(h.left + h.width / 2),
+      handle: { top: Math.round(h.top), bottom: Math.round(h.bottom), h: Math.round(h.height) },
+      composerTop: Math.round(c.top),
+      composerLeft: Math.round(c.left),
+      composerW: Math.round(c.width),
+      chatTop: chatBox === null ? null : Math.round(chatBox.top),
+      bottomVar: zone.style.getPropertyValue('--dsc-thread-handle-bottom').trim(),
+      expectVar: Math.round(z.bottom - c.top),
+    }
+  `)
+  console.log('V-geometry', JSON.stringify(vertical))
+  const vOk = vertical.ok === true
+  const vHandle = vertical.handle ?? { top: 0, bottom: 0, h: 0 }
+  assert('V1 底边距离是量出来的：--dsc-thread-handle-bottom = 层底到输入框上沿',
+    vOk && vertical.bottomVar === `${String(vertical.expectVar)}px`,
+    `var=${JSON.stringify(vertical.bottomVar)} 期望=${String(vertical.expectVar)}px`)
+  assert('V2 把手底边不越过输入框上沿（报障那条）',
+    vOk && vHandle.bottom <= vertical.composerTop + 1,
+    `handleBottom=${String(vHandle.bottom)} composerTop=${String(vertical.composerTop)}`)
+  assert('V3 底边贴着输入框上沿（差 ≤ 2px，没有缩出一段空白）',
+    vOk && Math.abs(vertical.composerTop - vHandle.bottom) <= 2,
+    `差 ${String(Math.abs(vertical.composerTop - vHandle.bottom))}px`)
+  assert('V4 顶边仍在正文区顶上（会话区整段还能拖）',
+    vOk && vertical.chatTop !== null && Math.abs(vHandle.top - vertical.chatTop) <= 1,
+    `handleTop=${String(vHandle.top)} chatTop=${String(vertical.chatTop)}`)
+  assert('V5 把手还够长（≥ 200px，没被压成一条抓不住）', vOk && vHandle.h >= 200,
+    `高 ${String(vHandle.h)}px`)
+  assert('V7 高亮竖条的化开区（上下各 36px）也压在输入框上沿之上',
+    vOk && vHandle.h * 0.9 + 36 <= vHandle.h,
+    `0.9×${String(vHandle.h)}+36 = ${String(Math.round(vHandle.h * 0.9 + 36))} vs ${String(vHandle.h)}`)
+
+  /* 拖动中拍一张：指针按在会把热区拖到的最下沿（输入框里面），看高亮竖条停在哪。 */
+  if (vOk) {
+    const pillX = vertical.cx
+    const pillY0 = Math.round((vHandle.top + vHandle.bottom) / 2)
+    const pillY1 = vertical.composerTop + 40
+    await cdpSend('Input.dispatchMouseEvent', { type: 'mouseMoved', x: pillX, y: pillY0 })
+    await cdpSend('Input.dispatchMouseEvent', { type: 'mousePressed', x: pillX, y: pillY0, button: 'left', clickCount: 1 })
+    await sleep(80)
+    await cdpSend('Input.dispatchMouseEvent', { type: 'mouseMoved', x: pillX, y: pillY1, button: 'left', buttons: 1 })
+    await sleep(260)
+    const pill = await evaluate(`
+      const handle = document.querySelector('.thread-handle[data-side="left"]')
+      if (handle === null) return { ok: false }
+      const h = handle.getBoundingClientRect()
+      return {
+        ok: true,
+        y: handle.style.getPropertyValue('--dsc-handle-y').trim(),
+        h: Math.round(h.height),
+      }
+    `)
+    console.log('V-pill', JSON.stringify(pill))
+    const pctValue = Number.parseFloat(String(pill.y).replace('%', ''))
+    assert('V6 拖动时高亮落点夹在热区里侧（10%~90% 的百分比，不会整条落到盒子外）',
+      pill.ok === true && /%$/.test(String(pill.y)) && pctValue >= 10 && pctValue <= 90,
+      JSON.stringify(pill.y))
+
+    const clip = {
+      x: Math.max(0, vertical.composerLeft - 130),
+      y: Math.max(0, vHandle.bottom - 200),
+      width: Math.min(620, vertical.composerW + 170),
+      height: 360,
+      scale: 1,
+    }
+    const shotPlain = await cdpSend('Page.captureScreenshot', { format: 'png', clip })
+    writeFileSync(join(shots, '_thread-handle-bottom.png'), Buffer.from(shotPlain.data, 'base64'))
+    // 第二张只给「把手盒子」描一圈虚线，方便肉眼核对底边与输入框上沿对齐（仅截图用，不留痕）。
+    await evaluate(`
+      const style = document.createElement('style')
+      style.setAttribute('data-probe-annotate', '1')
+      style.textContent = '.thread-handle { outline: 1px dashed #e5484d !important; background: rgb(229 72 77 / 0.06) !important; }'
+      document.head.appendChild(style)
+      await new Promise((r) => setTimeout(r, 120))
+      return true
+    `)
+    const shotMarked = await cdpSend('Page.captureScreenshot', { format: 'png', clip })
+    writeFileSync(join(shots, '_thread-handle-bottom-marked.png'), Buffer.from(shotMarked.data, 'base64'))
+    await evaluate(`
+      const node = document.querySelector('style[data-probe-annotate="1"]')
+      if (node !== null) node.remove()
+      return true
+    `)
+    await cdpSend('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pillX, y: pillY1, button: 'left', clickCount: 1 })
+    await sleep(200)
+    assert('V8 两张裁剪截图都落盘了（原样 + 描边）',
+      (shotPlain.data ?? '').length > 1000 && (shotMarked.data ?? '').length > 1000,
+      `${String((shotPlain.data ?? '').length)} / ${String((shotMarked.data ?? '').length)} 字节`)
   }
 } finally {
   if (process.env.PROBE_KEEP_HOME === '1') home.cleanup = () => {}

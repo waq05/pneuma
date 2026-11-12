@@ -287,7 +287,13 @@ export function useWidthDrag(options: WidthDragOptions): WidthDragHandlers {
     latestX.current = event.clientX
     if (cb.current.trackPointerY === true) {
       const box = event.currentTarget.getBoundingClientRect()
-      event.currentTarget.style.setProperty('--dsc-handle-y', `${event.clientY - box.top}px`)
+      // 落点记成百分比，不记像素：热区会跟着输入框长高而缩短（底边停在输入框上沿，见
+      // thread-resizer 的把手说明），存像素的话热区一缩，上一次的落点就落到盒子外，
+      // 高亮竖条再也亮不起来。10%~90% 的余量是留给它自己上下化开的那 36px
+      // （views.css 的 .thread-handle::after）；指针拖进输入区时靠这个夹不出界。
+      const ratio = box.height === 0 ? 0.5 : (event.clientY - box.top) / box.height
+      const pct = Math.round(Math.min(Math.max(ratio, 0.1), 0.9) * 100)
+      event.currentTarget.style.setProperty('--dsc-handle-y', `${String(pct)}%`)
     }
     frame.current ??= requestAnimationFrame(() => {
       frame.current = null

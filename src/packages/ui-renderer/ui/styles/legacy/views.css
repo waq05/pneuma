@@ -1029,12 +1029,17 @@
    竖条画在条内靠列那一侧（离列 28px），两个控件一眼分得开。
    width 里的 min() 是窄窗口的兜底：除了列缘外那 24px 让位，还要在最外侧留 24px 安全带
    （滚动条那一栏），空间不够时热区自己收窄，不会越到隔壁去；绝对定位的空元素宽度归零时
-   也不会留下一块错位的热区。 */
+   也不会留下一块错位的热区。
+
+   纵向只铺会话区（2026-11-12 报障：把手铺到输入框旁边，高亮竖条看着像输入框的边框）：
+   底边停在输入框上沿，距离由 ThreadResizer 量出来写进 --dsc-thread-handle-bottom（输入框
+   会随行数长高，上方还会插进审批卡与队列条，写死高度必然错位）。量不出来时回落 0，
+   也就是老行为：铺满整层。 */
 .thread-handle {
   cursor: col-resize;
   position: absolute;
   top: 0;
-  bottom: 0;
+  bottom: var(--dsc-thread-handle-bottom, 0px);
   touch-action: none;
   width: 12px;
   z-index: var(--dsc-z-handle);
