@@ -15,11 +15,17 @@
  *
  * 它**portal 到 `.chat-wrap`**（滚动容器 `.chat` 之外）：旧桌面渲染层把刻度条渲染成
  * `.chat` 的兄弟，跨轮跳转时它有自己独立的滚动轨道、不跟消息一起滚。组件自己从
- * 宿主找 `.chat` 做当前轮判定——这样它对壳的 DOM 结构只有一个约定（存在 .chat）。
+ * 宿主找 `.chat-wrap` 当 portal 宿主；滚动容器的几何与「到底」判定**不再自己量**——
+ * 由 `ui.tsx` 传进来的视口（`ChatViewport`）给（见 `viewport.ts` 模块头：`floor()` 是
+ * 全仓唯一的「到底」，占位非 0 时也不许有第二套口径）。
  *
  * 当前轮的判定沿用旧 JumpStrip 的探针口径（它是跟着真实滚动状态量的，比百分比准）：
- * 贴底 → 最后一轮；否则在滚动容器上缘往里 8px 的探针线上做命中测试（条目的
- * `data-round` 认轮），命中不到再用真实 scrollTop 与各轮锚点的实际位置兜底。
+ * 贴底（`viewport.atFloor()`）→ 最后一轮；否则在滚动容器上缘往里 8px 的探针线上做命中
+ * 测试（条目的 `data-round` 认轮），命中不到再用真实 `scrollTop` 与各轮锚点
+ * （`viewport.offsetOf()`）的实际位置兜底。
+ *
+ * 跳轮也不再用 `scrollIntoView`：它会把祖先滚动一起带动、也不经过视口。现在是
+ * 「算出这一轮首行相对内容顶端的偏移 → `viewport.scrollToOffset()`」。
  *
  * @module dsc-ui-shell/plugins/transcript/jump-rail
  */
@@ -27,6 +33,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Reac
 import { createPortal } from 'react-dom'
 import { createT } from '@dsc/ui'
 import { dedupeByRound, pickCurrentRound, type RailAnchor } from './rail-window'
+import type { ChatViewport } from './viewport'
 // 本包自己的中英对照：`locale/ui.zh.json` 是语义真源（中文原文），`ui.en.json` 是译本。
 import zh from '../locale/ui.zh.json'
 import en from '../locale/ui.en.json'
@@ -67,24 +74,31 @@ const REVEAL_TRIES = 40
  * 1. 量锚点：按 `[data-round]` 收（每一轮至少有一条行带这个属性），**不再只认用户气泡**
  *    `.entry-user`。子代理汇报（`internal` 的 user 条目）渲染成一行触发行，没有用户气泡，
  *    旧写法数不到它，滑到底部时"最新一轮"就停在上一个有人说话的轮上（2026-10-28 报障）。
- * 2. 贴底判定：「最新一轮是哪一轮」从轮清单给（`lastRound`），不从 DOM 里数。
+ * 2. 贴底判定：「最新一轮是哪一轮」从轮清单给（`lastRound`），不从 DOM 里数；
+ *    「是不是在底」问视口（`viewport.atFloor()`），不再拿 `scrollHeight − clientHeight`
+ *    自己算——那个算式没减底部占位，占位一旦非 0 就与 `viewport.floor()` 分叉。
+ *
+ * 几何一律经视口：`offsetOf()` 给锚点在内容坐标里的位置，`rect()` 给命中测试要的屏幕坐标。
  */
-function measureCurrent(scroller: HTMLElement, rounds: readonly { round: number }[]): number {
-  const box = scroller.getBoundingClientRect()
-  const { scrollTop } = scroller
-  const maxScroll = scroller.scrollHeight - scroller.clientHeight
+function measureCurrent(viewport: ChatViewport, rounds: readonly { round: number }[]): number {
+  const scroller = viewport.scroller
+  const box = viewport.rect()
+  if (scroller === null || box === null) return -1
+  const scrollTop = viewport.scrollTop()
   const rows: RailAnchor[] = []
   for (const row of scroller.querySelectorAll<HTMLElement>('[data-round]')) {
     const value = Number(row.getAttribute('data-round'))
     if (!Number.isInteger(value) || value < 0) continue
     // 整轮收起时过程行是 hidden（没有盒子）：量出来是 0，会把它当成"在最上面"。
     if (row.getClientRects().length === 0) continue
-    rows.push({ round: value, top: row.getBoundingClientRect().top - box.top + scrollTop })
+    const top = viewport.offsetOf(row)
+    if (top === null) continue
+    rows.push({ round: value, top })
   }
 
   // x 取横向中点：正文列是居中的，固定左缘 + 常量在宽窗口下会落进空白里。
   const probeY = box.top + PROBE_INSET
-  const probeX = box.left + scroller.clientWidth / 2
+  const probeX = box.left + viewport.clientWidth() / 2
   const hit = document.elementFromPoint(probeX, probeY)
   let hitRound: number | null = null
   if (hit !== null && scroller.contains(hit)) {
@@ -94,7 +108,7 @@ function measureCurrent(scroller: HTMLElement, rounds: readonly { round: number 
   }
 
   return pickCurrentRound({
-    atBottom: maxScroll > 0 && maxScroll - scrollTop <= AT_BOTTOM_EPS,
+    atBottom: viewport.atFloor(AT_BOTTOM_EPS),
     lastRound: rounds.at(-1)?.round ?? -1,
     hitRound,
     anchors: dedupeByRound(rows),
@@ -117,20 +131,21 @@ export function previewText(text: string, kind: 'prompt' | 'response'): string {
 }
 
 /**
- * 右侧回合刻度条。先渲染一枚不可见的哨兵，从它找到 `.chat-wrap`（portal 宿主）与
- * `.chat`（滚动容器），再 portal 上去——对壳的 DOM 只依赖这两个类名。
+ * 右侧回合刻度条。先渲染一枚不可见的哨兵，从它找到 `.chat-wrap`（portal 宿主），
+ * 再 portal 上去——对壳的 DOM 只依赖 `.chat-wrap` 与视口给的滚动容器。
  *
  * @param props.rounds     全部轮的预览数据（含还没画出来的轮）
  * @param props.renderedFrom 已画出来的第一轮（更早的轮点了先请求放出来）
  * @param props.onReveal   请求把更早的轮放出来（把分页阈值提到能包含该轮）
+ * @param props.viewport   会话区视口（`ui.tsx` 那个）：量位置、「到底」判定、跳轮都走它
  */
 export function JumpRail(props: {
   rounds: readonly JumpRailRound[]
   renderedFrom: number
   onReveal(round: number): void
+  viewport: ChatViewport
 }): ReactNode {
   const wrapRef = useRef<HTMLDivElement | null>(null)
-  const scrollerRef = useRef<HTMLElement | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [host, setHost] = useState<HTMLElement | null>(null)
   const [current, setCurrent] = useState(-1)
@@ -143,23 +158,22 @@ export function JumpRail(props: {
   /** 指针在轨道里时不自动居中（dsh 的 pointerInsideRef）：别把刻度从手底下挪走。 */
   const pointerInside = useRef(false)
 
-  // 哨兵一上屏就找宿主：portal 目标必须等它先存在。滚动容器是宿主的（间接）子元素。
+  // 哨兵一上屏就找 portal 宿主（`.chat-wrap`）。滚动容器不在这里找：它是视口的（ref
+  // 挂载先于被动效果发生，视口这一拍已经 attach 完了），避免两处各持一个 `.chat` 引用。
   useEffect(() => {
     const wrap = wrapRef.current?.closest('.chat-wrap')
     if (!(wrap instanceof HTMLElement)) return
-    const scroller = wrap.querySelector('.chat')
     setHost(wrap)
-    scrollerRef.current = scroller instanceof HTMLElement ? scroller : null
   }, [])
 
   /** 当前轮判定：滚动/尺寸一变就重测（rAF 合并；观察器补「内容异步撑高」那半）。 */
   useEffect(() => {
-    const scroller = scrollerRef.current
+    const scroller = props.viewport.scroller
     if (host === null || scroller === null) return undefined
     let raf = 0
     const measure = (): void => {
       raf = 0
-      setCurrent(measureCurrent(scroller, props.rounds))
+      setCurrent(measureCurrent(props.viewport, props.rounds))
     }
     const schedule = (): void => {
       if (raf === 0) raf = requestAnimationFrame(measure)
@@ -175,7 +189,7 @@ export function JumpRail(props: {
       observer.disconnect()
       if (raf !== 0) cancelAnimationFrame(raf)
     }
-  }, [host, props.rounds.length, props.renderedFrom])
+  }, [host, props.viewport, props.rounds.length, props.renderedFrom])
 
   /** 窄容器整条收起（dsh 的 900px 规则；用观察器跟着 .chat-wrap 的实际宽度走）。 */
   useEffect(() => {
@@ -207,7 +221,13 @@ export function JumpRail(props: {
     setPreviewCenter(tick.offsetTop + TICK_STEP / 2 - scroll.scrollTop)
   }, [preview])
 
-  /** 当前轮自动居中（dsh：只在刻度跑出「可视带 + 24px 留白」时滚，指针在轨道里不打扰）。 */
+  /**
+   * 当前轮自动居中（dsh：只在刻度跑出「可视带 + 24px 留白」时滚，指针在轨道里不打扰）。
+   *
+   * 这里滚的是刻度**自己的轨道**（`.jump-rail-scroll`），不是 `.chat`：轨道里没有底部占位，
+   * `scrollHeight − clientHeight` 就是它的底，所以不用、也不该走会话视口。会话区的
+   * 「到底」与跳轮在下面 `jump` 里，那条才走 `props.viewport`。
+   */
   useEffect(() => {
     if (current < 0 || pointerInside.current) return
     const scroll = scrollRef.current
@@ -225,7 +245,7 @@ export function JumpRail(props: {
   /** 点刻度跳转：已画出来的直接滚；早轮分页还没画的先请求放出来，等锚点出现再滚。 */
   const jump = useCallback(
     (round: number): void => {
-      const scroller = scrollerRef.current
+      const scroller = props.viewport.scroller
       if (scroller === null) return
       const find = (): HTMLElement | null =>
         scroller.querySelector<HTMLElement>(`[data-round="${String(round)}"] .entry-user`) ??
@@ -241,7 +261,12 @@ export function JumpRail(props: {
           }
           setBusy(null)
         }
-        node?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        if (node === null) return
+        // 落点由视口算：这一行相对内容顶端的偏移 —— 滚到它等于把它顶到容器上缘
+        // （旧写法 `scrollIntoView({ block:'start' })` 的同义动作，但不连带滚祖先、
+        // 也经过视口的写入通道，跟随策略认得出「这是我们自己滚的」）。
+        const offset = props.viewport.offsetOf(node)
+        if (offset !== null) props.viewport.scrollToOffset(offset, 'smooth')
       })()
     },
     [props],

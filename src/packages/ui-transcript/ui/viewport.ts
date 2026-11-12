@@ -14,21 +14,21 @@
  *   `getBoundingClientRect` / `offsetHeight`、唯一写 `scrollTop`、唯一写
  *   `[data-chat-turn-spacer]` 内联高度的地方。
  *
- * 「唯一」的边界要说清，否则读注释的人会以为整只滚动容器只有这里能动。另有两条路径
- * **不在**这一套里，却仍在读同一只容器、改同一个滚动位置：
+ * 「唯一」的边界要说清，否则读注释的人会以为整只滚动容器只有这里能动。2026-11-12 起
+ * 外面只剩**一条**路径还在读这只容器的几何：
  *
- * - 刻度条 `jump-rail.tsx`：`:73` / `:82` 读 `getBoundingClientRect`，`:222` 用 `scrollTo`、
- *   `:244` 用 `scrollIntoView` 跳轮；
- * - 工具卡 `tool-card/factory.tsx:409`：量 `.chat` 的位置来摆悬浮层。
+ * - 工具卡 `tool-card/factory.tsx:409`：量 `.chat` 的位置来摆悬浮层，不写滚动；
  *
- * 它们没并进来，是因为并进来要重做刻度条的「到底」判定：它现在按
- * `scrollHeight - clientHeight - scrollTop` 算，没减占位高度；占位恒 0 时与
- * `viewport.floor()` 等价，占位一旦非 0 就成了两套口径。动这几处之前先读这一段，
- * 别按「只有一个主人」去推。
+ * 刻度条 `jump-rail.tsx` 以前自己算「到底」（`scrollHeight − clientHeight − scrollTop`，
+ * 没减占位），也自己调 `scrollTo` / `scrollIntoView` 跳轮。现在它只经
+ * {@link ChatViewport.atFloor} / {@link ChatViewport.floorSlack} /
+ * {@link ChatViewport.offsetOf} / {@link ChatViewport.scrollToOffset} 说话——于是「到底」
+ * 全仓只有 `floor()` 一个定义，占位非 0 时不会再分叉成两套口径。
  *
  * 还要知道探针的盲区：探针拦的是 `scrollTop` 的**属性赋值**，`scrollTo` /
- * `scrollIntoView` 不走那个 setter，所以「写入栈只指向 ViewportOwner」这条判据
- * 抓不到上面两条路径——它们能活到现在，正是因为判据看不见它们。
+ * `scrollIntoView` 不走那个 setter，所以「写入栈只指向 ViewportOwner」这条判据抓不到
+ * 走浏览器 API 的路径。这条盲区现在只剩备用价值：`.chat` 上已经不剩产品路径用它们
+ * （刻度条自己那条轨道 `.jump-rail-scroll` 是**另一只**滚动容器，不归本 owner 管）。
  *
  * 组体（`.step-body` 自己的限高滚动，`fold-seats.tsx` 的 `useProcessScroll`）**不在**
  * 这个 owner 里：那是限高盒子自己的滚动，与外层贴底不是一件事。两套 owner 抢同一件事
@@ -56,6 +56,22 @@
  *
  * 不用一种落点兼顾两处：贴底的人要的是「永远看到最后一行」，读历史的人要的是
  * 「我正看的那一行别动」，两者的目标位置在每一帧都不同。
+ *
+ * ## 有意不对齐参考实现的两处（是选择，不是遗漏）
+ *
+ * 参考实现是 dsh 的 `packages/client/ui-chat/src/client/chat/use-chat-viewport.ts`。
+ * 下面两处我们**故意**不跟它：
+ *
+ * 1. **底部占位的用法**：它先加 room 再收（`scrollToBottom` 附近把占位撑起来，落定后
+ *    再收回去），我们恒 0，靠折叠批次逐帧补 `scrollTop`。原因在探针：`_verify-fold-scroll`
+ *    钉的就是「批次里 floor 会变、末帧占位回 0」这两条。改成「先加 room 再收」之后，
+ *    批次期间 floor 会被占位垫平，「批次里 floor 真的变了」那条判据永远读不到变化——
+ *    等于把观测面做没了。要改这里，先改那条探针的判据。
+ * 2. **动画放行**：它只在 `running || motionTail || pendingInputs` 时允许动画
+ *    （`ChatView.tsx:245-246` 把 `data-chat-motion` 挂上去），我们恒开。原因是壳里没有
+ *    「空闲就把动画关掉」那套门：滚动与折叠动画由 CSS 过渡加批次帧时钟驱动，恒开让
+ *    点击、跳轮、批次的观感是同一个节奏。代价是空闲时也可能有一帧过渡——探针只判位置
+ *    （每帧读 `scrollTop` 与锚点 `top`），不判帧率，所以这个代价不在判据里。
  *
  * ## 谁开批次（第④阶段起）
  *
@@ -86,6 +102,9 @@ const MOVE_EPS = 0.5
 
 /** 落点：跟随态落到 floor，读历史态保住第一条可见行。批次开始时定死，中途不改。 */
 export type Landing = 'tail' | 'reading'
+
+/** `scrollToOffset` 认的两种行为：瞬移 / 逐帧补过去。 */
+export type ScrollBehaviorKind = 'instant' | 'smooth'
 
 /**
  * 一条可以被「按住」的行：元素本身，加上它此刻相对滚动容器顶端的位置。
@@ -170,10 +189,42 @@ export interface ChatViewport {
   scrollHeight(): number
   /** 可视区高。 */
   clientHeight(): number
+  /** 可视区宽（不含滚动条）；命中测试取横向中点时用它，别用 `rect().width`。 */
+  clientWidth(): number
   /** 占位现在的实际高度（元素真实高度，不是 style 字符串）。 */
   spacerHeight(): number
   /** 内容真正的底：`scrollHeight − 占位 − clientHeight`。占位是给滚动留的余量，不是内容。 */
   floor(): number
+  /**
+   * 此刻离「到底」还有多少像素：`floor() − scrollTop`。
+   *
+   * 正数 = 还在内容底上方，还要往下滚这么多；0 = 停在内容底；负数 = 已经越进占位里
+   * （占位被撤、浏览器还没夹回来那一瞬才会出现）。
+   */
+  floorSlack(): number
+  /**
+   * 此刻算不算「在底」：内容真的能滚（`floor() > 0`）且离底 ≤ `slack` 像素。
+   *
+   * 为什么把「能滚」也算进来：内容比可视区短时 `floor()` 是 0，那一刻谁都在底；
+   * 拿它去判「读者是不是在看最新一轮」会把短会话判成永远贴底。刻度条与跟随共用这一条，
+   * 于是全仓对「到底」只有一个答案。
+   *
+   * @param slack 容差（px），默认 0：只认精确落在 floor 上
+   */
+  atFloor(slack?: number): boolean
+  /** 元素相对滚动内容顶端的偏移（px）；没有容器、元素脱开或它此刻没有盒子时给 null。 */
+  offsetOf(element: Element | null): number | null
+  /** 滚动容器在视口里的矩形（命中测试要用屏幕坐标，调用方别再自己量）。 */
+  rect(): DOMRect | null
+  /**
+   * 改变滚动位置**只经这里**：`top` 先夹到 `[0, floor()]`（占位不是内容，不许滚进去），
+   * 再写下去。
+   *
+   * `'instant'` 直接写 `scrollTop`；`'smooth'` 由本文件逐帧写（不用浏览器的
+   * `scrollTo({ behavior: 'smooth' })`，理由见实现）。返回写完之后的实际 `scrollTop`；
+   * `'smooth'` 返回的是起点（动画还没跑），最终值在帧回调里落定。
+   */
+  scrollToOffset(top: number, behavior?: ScrollBehaviorKind): number
   /** 滚动区此刻是藏起来的（高度 0）：这一态下所有测量都不可信。 */
   hidden(): boolean
   /** 钉到底（写 floor），返回写完之后实际的 `scrollTop`。 */
@@ -297,6 +348,10 @@ class ViewportOwner implements ChatViewport {
   private spacerElement: HTMLElement | null = null
   private reader: ViewportReader | null = null
   private batch: Batch | null = null
+  /** `'smooth'` 那一档的逐帧补间；null = 没有在跑。 */
+  private tween: { readonly from: number; readonly to: number; readonly start: number; readonly duration: number } | null =
+    null
+  private tweenRaf = 0
 
   get scroller(): HTMLElement | null {
     return this.container
@@ -333,6 +388,7 @@ class ViewportOwner implements ChatViewport {
 
   detach(): void {
     this.endBatch()
+    this.stopTween()
     const scroller = this.container
     if (scroller !== null) scroller.style.overflowAnchor = ''
     this.container = null
@@ -351,6 +407,10 @@ class ViewportOwner implements ChatViewport {
     return this.container?.clientHeight ?? 0
   }
 
+  clientWidth(): number {
+    return this.container?.clientWidth ?? 0
+  }
+
   /**
    * 占位高度。
    *
@@ -364,6 +424,74 @@ class ViewportOwner implements ChatViewport {
 
   floor(): number {
     return Math.max(0, this.scrollHeight() - this.spacerHeight() - this.clientHeight())
+  }
+
+  floorSlack(): number {
+    return this.floor() - this.scrollTop()
+  }
+
+  atFloor(slack = 0): boolean {
+    if (this.hidden()) return false
+    // `floor() === 0` = 内容还没撑满可视区（或占位把内容底垫到了 0）：这一态没有「底」
+    // 可分，判它贴底会让短会话永远高亮最后一轮（见接口注释）。
+    if (this.floor() <= 0) return false
+    return this.floorSlack() <= slack
+  }
+
+  offsetOf(element: Element | null): number | null {
+    const scroller = this.container
+    if (scroller === null || element === null || !element.isConnected) return null
+    // 没有盒子（`display:none` / 整轮收起挂 hidden）就没有可信的位置：给 null 让调用方跳过，
+    // 别把一个 0 矩形当成「在最上面」。
+    if (element.getClientRects().length === 0) return null
+    // 内容原点 = 容器上缘在屏幕上的位置 − 已滚过的距离；之后每行只量自己的矩形。
+    const origin = scroller.getBoundingClientRect().top - scroller.scrollTop
+    return element.getBoundingClientRect().top - origin
+  }
+
+  rect(): DOMRect | null {
+    return this.container?.getBoundingClientRect() ?? null
+  }
+
+  scrollToOffset(top: number, behavior: ScrollBehaviorKind = 'instant'): number {
+    const scroller = this.container
+    if (scroller === null) return 0
+    // 藏起来的时候写 scrollTop 会被夹成 0（同 pin）：原样返回，不制造一条假的滚动。
+    if (this.hidden()) return scroller.scrollTop
+    const target = Math.max(0, Math.min(this.floor(), top))
+    // 新手势/新指令到了：先把上一条补间停掉，否则两个 rAF 会互相覆盖。
+    this.stopTween()
+    if (behavior === 'instant') return this.write(target)
+    const from = scroller.scrollTop
+    if (Math.abs(target - from) <= MOVE_EPS) return from
+    // 为什么不用 `scroller.scrollTo({ behavior: 'smooth' })`：中间那几十帧是浏览器在写
+    // `scrollTop`，本文件与 `follow.ts` 都收不到「这是我们自己写的」的回报，follow 的
+    // 「只认自己的写」会把它们当成读者动手，下一帧就钉回底部（跳轮当场被撤销）。
+    // 逐帧写就还是同一条写入通道，每帧都经 `write()` 回报，语义与瞬移完全一致。
+    this.tween = { from, to: target, start: performance.now(), duration: readSlowMs() }
+    this.tweenRaf = requestAnimationFrame(this.stepTween)
+    return from
+  }
+
+  private readonly stepTween = (): void => {
+    const tween = this.tween
+    if (tween === null) return
+    this.tweenRaf = 0
+    const progress = Math.min(1, (performance.now() - tween.start) / tween.duration)
+    // ease-out：起手快、收尾稳，与折叠那套 CSS 过渡的观感一致。
+    const eased = 1 - Math.pow(1 - progress, 3)
+    this.write(tween.from + (tween.to - tween.from) * eased)
+    if (progress >= 1) {
+      this.tween = null
+      return
+    }
+    this.tweenRaf = requestAnimationFrame(this.stepTween)
+  }
+
+  private stopTween(): void {
+    if (this.tweenRaf !== 0) cancelAnimationFrame(this.tweenRaf)
+    this.tweenRaf = 0
+    this.tween = null
   }
 
   hidden(): boolean {

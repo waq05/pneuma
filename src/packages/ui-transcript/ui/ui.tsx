@@ -357,8 +357,10 @@ function TranscriptFlow({
    * dsh 的 `beginPaging()` 取的就是「DOM 序里第一个可用的 seat」，同一条口径。
    *
    * 量尺寸与写滚动都归视口（`viewport.captureAnchor()` / `restoreAnchor()`）：
-   * 折叠批次这一套里读 `getBoundingClientRect` 的地方只有 `viewport.ts` 一个
-   * （刻度条与工具卡是例外，边界见 `viewport.ts` 头部）。
+   * 这一屏里读 `getBoundingClientRect` 的地方只剩 `viewport.ts` 与
+   * `tool-card/factory.tsx:409` 两处（后者量 `.chat` 是为了摆悬浮层，不是滚动）；
+   * 刻度条也已经并进来，只经视口的 `atFloor` / `offsetOf` / `scrollToOffset` 说话。
+   * 完整边界见 `viewport.ts` 头部。
    */
   const beginPaging = (): void => {
     const anchor = viewport.captureAnchor()
@@ -712,8 +714,13 @@ function TranscriptFlow({
     <FoldPrefsContext.Provider value={prefs}>
       <FlowActionsContext.Provider value={actions}>
       {/* 右侧回合刻度条（对照 dsh 的 TurnNavigator）：绝对定位到 .chat-wrap，
-          不参与文档流；它自己找滚动容器做当前轮判定与跳转。 */}
-      <JumpRail rounds={railRounds} renderedFrom={firstVisible} onReveal={revealRound} />
+          不参与文档流；当前轮判定与跳轮都走同一个视口（「到底」只有 floor 一个定义）。 */}
+      <JumpRail
+        rounds={railRounds}
+        renderedFrom={firstVisible}
+        onReveal={revealRound}
+        viewport={viewport}
+      />
       {/* 「加载更早」：上面还有没画出来的轮才有这一行（firstVisible === 0 = 已到顶）。
           文案里的轮数是**这一页实际会放出来的轮数**（同一次纯函数算出来的，不写死常数）。 */}
       {firstVisible > 0 ? (

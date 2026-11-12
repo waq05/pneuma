@@ -1143,6 +1143,302 @@ if (toBottom?.error === undefined) {
   ]) skip(name, String(toBottom?.error))
 }
 
+// ── 口径合并：「到底」只有 floor() 一个定义（2026-11-12）────────────────────────
+//
+// 刻度条以前自己算 `scrollHeight − clientHeight − scrollTop`（没减底部占位）。占位恒 0 时
+// 它与 `viewport.floor()` 逐像素相同，所以两套口径一直没露馅。这条断言把占位临时撑到
+// 2000px，站到一个**两个算式给出不同答案**的位置上，再读刻度条的高亮：
+//   · 旧算式：`scrollHeight − clientHeight − scrollTop` = 2000 > 32 → 判「不在底」，
+//     于是走命中测试，给的是更早的那一轮；
+//   · 视口的 floor：`scrollHeight − 占位 − clientHeight − scrollTop` = 0 → 判「在底」，
+//     给最后一轮。
+// 高亮落在最后一轮 = 刻度条真的改用 floor 了；两套口径若还各自为政，这里会亮在更早的轮上。
+const SPACER_PROBE_PX = 2000
+/** 刻度条的贴底阈值（`jump-rail.tsx` 的 AT_BOTTOM_EPS）。探针复算旧算法时要用同一个数。 */
+const RAIL_AT_BOTTOM_EPS = 32
+const spacerProbe = await evaluate(`
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  const chat = document.querySelector('.chat')
+  if (chat === null) return { error: '没有 .chat' }
+  const spacer = chat.querySelector('[data-chat-turn-spacer]')
+  if (spacer === null) return { error: '没有 [data-chat-turn-spacer]（这条断言要临时把它撑高）' }
+  const floorNow = () => chat.scrollHeight - (spacer.offsetHeight || 0) - chat.clientHeight
+  // 先回到跟随态并落到底：位置要是当前已经在 floor，写同一个值不会发 scroll 事件。
+  const pill = document.querySelector('.chat-to-bottom')
+  if (pill !== null) pill.click()
+  const pinDeadline = performance.now() + 3000
+  while (performance.now() < pinDeadline) {
+    if (Math.abs(chat.scrollTop - floorNow()) <= 2) break
+    await wait(32)
+  }
+  // 把最后一轮收起来：它的盒子变矮之后，可视区顶端才落在更早的轮上——这样「旧算式在这个
+  // 位置会给哪一轮」与「最后一轮」真的分得开，不会出现命中测试也蒙对最后一轮。
+  const seats = [...chat.querySelectorAll('.turn-seat[data-round-seat]')]
+  const lastSeat = seats.length === 0 ? null : seats[seats.length - 1]
+  const lastRound = lastSeat === null ? -1 : Number(lastSeat.getAttribute('data-round-seat'))
+  const foldBtn = lastSeat === null ? null : lastSeat.querySelector('.turn-fold:not([disabled])')
+  const segment = lastSeat === null ? null : lastSeat.querySelector('.turn-process')
+  let collapsed = segment === null ? false : segment.getAttribute('data-fold') === 'closed'
+  if (lastSeat !== null && foldBtn !== null && segment !== null && !collapsed) {
+    foldBtn.click()
+    const foldDeadline = performance.now() + 3000
+    while (performance.now() < foldDeadline) {
+      await wait(32)
+      const seat = chat.querySelector('.turn-seat[data-round-seat="' + String(lastRound) + '"]')
+      const seg = seat === null ? null : seat.querySelector('.turn-process')
+      if (seg === null || seg.getAttribute('data-fold') === 'closed') { collapsed = true; break }
+    }
+  }
+  // 批次收工才会把占位清零（closeBatch 里 setSpacer(0)）：等内联 overflow-anchor 回到空串
+  // 再去撑占位，否则我们写的高度会被它当场清掉。
+  const batchDeadline = performance.now() + 2000
+  while (performance.now() < batchDeadline) {
+    if (chat.style.overflowAnchor === '') break
+    await wait(32)
+  }
+  // 收起改了 floor，跟随态会重新钉底：等它落定，免得读到过渡中间的位置。
+  const settleDeadline = performance.now() + 3000
+  while (performance.now() < settleDeadline) {
+    if (Math.abs(chat.scrollTop - floorNow()) <= 1) break
+    await wait(32)
+  }
+  // 撑高占位只让 scrollHeight 变大，floor 不变、scrollTop 也不动（内容长在下方）。
+  spacer.style.height = '${String(SPACER_PROBE_PX)}px'
+  await wait(80)
+  // 位置没变就不会有 scroll 事件，刻度条不会重测：补一条合成事件（它就是靠 scroll 重测的）。
+  chat.dispatchEvent(new Event('scroll'))
+  await wait(200)
+
+  const floor = floorNow()
+  const top = chat.scrollTop
+  const spacerH = spacer.offsetHeight
+  const oldSlack = chat.scrollHeight - chat.clientHeight - top
+  const box = chat.getBoundingClientRect()
+  // 旧算法（改之前的 measureCurrent）原样复算一遍：它用来证明两套口径真的给出了不同答案。
+  const rows = []
+  for (const row of chat.querySelectorAll('[data-round]')) {
+    const value = Number(row.getAttribute('data-round'))
+    if (!Number.isInteger(value) || value < 0) continue
+    if (row.getClientRects().length === 0) continue
+    rows.push({ round: value, top: row.getBoundingClientRect().top - box.top + top })
+  }
+  const seen = new Set()
+  const anchors = []
+  for (const row of rows) {
+    if (seen.has(row.round)) continue
+    seen.add(row.round)
+    anchors.push(row)
+  }
+  const hit = document.elementFromPoint(box.left + chat.clientWidth / 2, box.top + 8)
+  let hitRound = null
+  if (hit !== null && chat.contains(hit)) {
+    const row = hit.closest('[data-round]')
+    const value = row === null ? Number.NaN : Number(row.getAttribute('data-round'))
+    if (Number.isInteger(value) && value >= 0) hitRound = value
+  }
+  const probeTop = top + 8
+  const oldMaxScroll = chat.scrollHeight - chat.clientHeight
+  const oldAtBottom = oldMaxScroll > 0 && oldMaxScroll - top <= ${String(RAIL_AT_BOTTOM_EPS)}
+  let oldAnswer
+  if (oldAtBottom) oldAnswer = lastRound
+  else if (hitRound !== null) oldAnswer = hitRound
+  else if (anchors.length === 0) oldAnswer = -1
+  else {
+    let current = -1
+    for (const anchor of anchors) {
+      if (anchor.top <= probeTop) current = anchor.round
+      else break
+    }
+    oldAnswer = current === -1 ? anchors[0].round : current
+  }
+  const tick = document.querySelector('.jump-tick[aria-current="true"]')
+  return {
+    lastRound,
+    collapsed,
+    spacerH,
+    spacerInline: spacer.style.height,
+    floor,
+    top,
+    gap: floor - top,
+    oldSlack,
+    oldAtBottom,
+    oldAnswer,
+    hitRound,
+    anchors: anchors.length,
+    railActive: tick === null ? null : Number(tick.getAttribute('data-turn')),
+    tickCount: document.querySelectorAll('.jump-tick').length,
+  }
+`)
+console.log('[spacer]', JSON.stringify(spacerProbe))
+const restoreSpacer = async () => {
+  await evaluate(`
+    const chat = document.querySelector('.chat')
+    const spacer = chat === null ? null : chat.querySelector('[data-chat-turn-spacer]')
+    if (spacer !== null) spacer.style.height = ''
+    if (chat !== null) chat.dispatchEvent(new Event('scroll'))
+    await new Promise((r) => setTimeout(r, 200))
+  `)
+}
+if (spacerProbe?.error !== undefined) {
+  check('环境：占位能临时撑高（这条「两套口径合并」断言的前提）', false, String(spacerProbe.error))
+  await restoreSpacer()
+} else if ((spacerProbe.tickCount ?? 0) < 2 || spacerProbe.lastRound < 0) {
+  check('环境：刻度条已画出（≥2 枚刻度、能读出最后一轮）', false,
+    `刻度 ${String(spacerProbe.tickCount)} 枚、lastRound=${String(spacerProbe.lastRound)}`)
+  await restoreSpacer()
+} else {
+  // 现场可分辨闸：占位必须真的比阈值高，且旧算式在同一位置给出的**不是**最后一轮。
+  // 不满足就说明这个现场证明不了「两套口径已经分开」，宁可红在现场上，也不要一条假绿。
+  const distinguishable = spacerProbe.spacerH > RAIL_AT_BOTTOM_EPS
+    && spacerProbe.oldAtBottom === false
+    && spacerProbe.oldAnswer !== spacerProbe.lastRound
+  check('现场：占位非 0 时旧算式与最后一轮给出不同答案（否则这条断言证明不了口径合并）',
+    distinguishable,
+    JSON.stringify({
+      spacerH: spacerProbe.spacerH,
+      oldSlack: spacerProbe.oldSlack,
+      oldAtBottom: spacerProbe.oldAtBottom,
+      oldAnswer: spacerProbe.oldAnswer,
+      hitRound: spacerProbe.hitRound,
+      lastRound: spacerProbe.lastRound,
+    }))
+  if (distinguishable) {
+    // 核心断言：停在 floor 的那一帧，刻度条判「在底」（高亮最后一轮），并且它用的 floor 与
+    // 视口的 floor 是同一个数——离底 ≤1px。旧算式在同一位置会说「不在底」（差 2000px）。
+    check('占位非 0 时刻度条的「到底」与 viewport.floor() 同一口径（离底 ≤1px、高亮最后一轮）',
+      Math.abs(spacerProbe.gap) <= 1 && spacerProbe.railActive === spacerProbe.lastRound,
+      JSON.stringify({
+        gap: spacerProbe.gap,
+        floor: spacerProbe.floor,
+        scrollTop: spacerProbe.top,
+        railActive: spacerProbe.railActive,
+        lastRound: spacerProbe.lastRound,
+      }))
+    check('刻度条不再沿用旧算式（旧算式在这个位置会给更早的轮）',
+      spacerProbe.railActive !== spacerProbe.oldAnswer,
+      `旧 ${String(spacerProbe.oldAnswer)} / 实际 ${String(spacerProbe.railActive)}`)
+  } else {
+    skip('占位非 0 时刻度条的「到底」与 viewport.floor() 同一口径（离底 ≤1px、高亮最后一轮）',
+      '现场分不开两套口径')
+    skip('刻度条不再沿用旧算式（旧算式在这个位置会给更早的轮）', '现场分不开两套口径')
+  }
+  await restoreSpacer()
+  // 占位收回 0 之后必须还能正确判底（别把现场改坏）：再读一次高亮。
+  const afterRestore = await evaluate(`
+    const chat = document.querySelector('.chat')
+    const spacer = chat === null ? null : chat.querySelector('[data-chat-turn-spacer]')
+    const tick = document.querySelector('.jump-tick[aria-current="true"]')
+    return {
+      spacerInline: spacer === null ? null : spacer.style.height,
+      spacerH: spacer === null ? -1 : spacer.offsetHeight,
+      railActive: tick === null ? null : Number(tick.getAttribute('data-turn')),
+    }
+  `)
+  console.log('[spacer-restored]', JSON.stringify(afterRestore))
+  check('占位收回到 0 之后刻度条仍高亮最后一轮（现场没被改坏）',
+    afterRestore?.spacerH === 0 && afterRestore?.railActive === spacerProbe.lastRound,
+    JSON.stringify(afterRestore))
+}
+
+// ── 跳轮也走视口：`scrollIntoView` → 「算偏移 → scrollToOffset」（2026-11-12）────────
+//
+// 改之前刻度条点一下是 `node.scrollIntoView({ behavior: 'smooth', block: 'start' })`：
+// 它会把祖先一起带动、也不经过视口的写入通道（跟随策略认不出这是我们自己滚的）。
+// 现在是 `offsetOf(行) → scrollToOffset(偏移, 'smooth')`。这一条按真实路径走：先往上读
+// 一段（跟随松手），再点第二轮刻度——落点必须等于「该轮首行在内容坐标里的偏移」（±1px）、
+// 刻度条必须跟着亮到第二轮，而且不能被落定逻辑拽回底部。
+const jumpProbe = await evaluate(`
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  const chat = document.querySelector('.chat')
+  const ticks = [...document.querySelectorAll('.jump-tick')]
+  if (chat === null) return { error: '没有 .chat' }
+  if (ticks.length < 3) return { error: '刻度不足 3 枚（没法从底上跳到更早的轮）' }
+  const seat = [...chat.querySelectorAll('.turn-seat[data-round-seat]')][1] ?? null
+  if (seat === null) return { error: '没有第二轮座位' }
+  const targetRound = Number(seat.getAttribute('data-round-seat'))
+  const tick = ticks.find((node) => Number(node.getAttribute('data-turn')) === targetRound) ?? null
+  if (tick === null) return { error: '找不到第 ' + String(targetRound) + ' 轮的刻度' }
+  const row = seat.querySelector('[data-round]') ?? seat
+  const spacer = chat.querySelector('[data-chat-turn-spacer]')
+  const floorNow = () => chat.scrollHeight - (spacer === null ? 0 : spacer.offsetHeight) - chat.clientHeight
+  // 先确保在底部（跟随态），这样"跳上去"才有方向可验。
+  const pill = document.querySelector('.chat-to-bottom')
+  if (pill !== null) pill.click()
+  const pinDeadline = performance.now() + 3000
+  while (performance.now() < pinDeadline) {
+    if (Math.abs(chat.scrollTop - floorNow()) <= 2) break
+    await wait(32)
+  }
+  const box = chat.getBoundingClientRect()
+  // 真实场景：读者先往上读到历史里，才会去点早轮的刻度。先松跟随——保留「贴底时点早轮」
+  // 那一态的话，tween 收尾的 scrollend 落定会按「还在跟随」把位置钉回底部（这是改动前
+  // 就有的行为，scrollIntoView 更早，第一帧的 scroll 就会被钉回去；follow.ts 不在本次
+  // 改动范围里）。所以这里验的是「读历史时点刻度」这一条真实路径。
+  chat.dispatchEvent(new WheelEvent('wheel', { deltaY: -240, bubbles: true, cancelable: true }))
+  await wait(30)
+  // 手势之后必须真的离开底部：落定（180ms）看的是「离 floor ≤24px」，停在底部会被重新跟随。
+  chat.scrollTop = Math.max(0, floorNow() - 220)
+  await wait(320)
+  const before = chat.scrollTop
+  const expected = row.getBoundingClientRect().top - (box.top - chat.scrollTop)
+  // 诊断：把点击背后的异常抓下来（异步 IIFE 里抛错时页面侧不会有人报）。
+  window.__jumpErrors = []
+  window.addEventListener('error', (event) => { window.__jumpErrors.push(String(event.message)) })
+  window.addEventListener('unhandledrejection', (event) => { window.__jumpErrors.push(String(event.reason)) })
+  const railNode = document.querySelector('.jump-rail')
+  const tickRect = tick.getBoundingClientRect()
+  const userNode = seat.querySelector('.entry-user')
+  tick.click()
+  await wait(120)
+  const afterClick = chat.scrollTop
+  // 等补间落定：连续 3 次采样位置不变（补间是 rAF 逐帧写的，不靠固定时长猜）。
+  let last = chat.scrollTop
+  let stable = 0
+  const settleDeadline = performance.now() + 4000
+  while (performance.now() < settleDeadline) {
+    await wait(50)
+    const now = chat.scrollTop
+    stable = Math.abs(now - last) <= 0.5 ? stable + 1 : 0
+    last = now
+    if (stable >= 3) break
+  }
+  await wait(200)
+  const active = document.querySelector('.jump-tick[aria-current="true"]')
+  return {
+    targetRound,
+    before,
+    afterClick,
+    after: chat.scrollTop,
+    expected,
+    gap: chat.scrollTop - expected,
+    floor: floorNow(),
+    active: active === null ? null : Number(active.getAttribute('data-turn')),
+    spacerH: spacer === null ? -1 : spacer.offsetHeight,
+    jumpedUp: before - chat.scrollTop,
+    railHidden: railNode !== null && railNode.hasAttribute('hidden'),
+    tickRect: [Math.round(tickRect.width), Math.round(tickRect.height)],
+    userNode: userNode !== null && userNode.getClientRects().length > 0,
+    errors: window.__jumpErrors.slice(0, 4),
+  }
+`)
+console.log('[jump]', JSON.stringify(jumpProbe))
+if (jumpProbe?.error !== undefined) {
+  check('环境：跳轮现场摆得出来（≥3 枚刻度、第二轮座位在 DOM 里）', false, String(jumpProbe.error))
+} else {
+  check('跳轮：落到该轮首行在内容坐标里的偏移（±1px）',
+    Math.abs(jumpProbe.gap) <= 1,
+    JSON.stringify({ gap: jumpProbe.gap, expected: jumpProbe.expected, after: jumpProbe.after }))
+  check('跳轮：真的往上跳了一段（不是本来就停在那儿）',
+    jumpProbe.jumpedUp >= 40,
+    `净上移 ${String(Math.round(jumpProbe.jumpedUp))}px`)
+  check('跳轮：刻度条跟着亮到目标轮',
+    jumpProbe.active === jumpProbe.targetRound,
+    `目标 ${String(jumpProbe.targetRound)} / 实际 ${String(jumpProbe.active)}`)
+  check('跳轮：没被跟随策略拽回底部（落点仍在内容区里、不在 floor 上）',
+    jumpProbe.after < jumpProbe.floor - 40,
+    JSON.stringify({ after: jumpProbe.after, floor: jumpProbe.floor }))
+}
+
 // 收工时的整屏：这时这一轮是收起态（第二次点过），画面里能看出历史位置。
 const shot = await send('Page.captureScreenshot', { format: 'png' })
 writeFileSync(join(shots, '_fold-scroll.png'), Buffer.from(shot.data, 'base64'))
