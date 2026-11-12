@@ -97,6 +97,10 @@ console.log('[2] 输出逐档相同（两侧真跑）')
     [1.5 * 1024 * 1024, '1.5 MB'],
     [1024 * 1024 * 1024, '1 GB'],
     [1.5 * 1024 * 1024 * 1024, '1.5 GB'],
+    // TB 这一档是 2026-11-12 加的：doctor 的磁盘占用会真的报到 TB 级，上限停在 GB 时会
+    // 写成「1843 GB」——数字对，读起来却不是人话。
+    [1024 * 1024 * 1024 * 1024, '1 TB'],
+    [1.5 * 1024 * 1024 * 1024 * 1024, '1.5 TB'],
   ]
   for (const [bytes, expected] of cases) {
     check(`${String(bytes)} 字节 → ${expected}`, coreModel.formatBytes(bytes) === expected, coreModel.formatBytes(bytes))

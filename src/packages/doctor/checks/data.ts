@@ -8,9 +8,10 @@
  */
 import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { formatBytes } from '@pneuma/runtime/core/bytes.js'
 import { dscPath } from '@pneuma/runtime/core/path-policy.js'
 import type { HealthCheck } from '@pneuma/runtime/services/types.js'
-import { dirSize, formatBytes, walkFiles } from './util.js'
+import { dirSize, walkFiles } from './util.js'
 
 /** 「这个 pid 还活着吗」的缺省探针：信号 0 不投递，只做存在性探测。 */
 function pidAlive(pid: number): boolean {

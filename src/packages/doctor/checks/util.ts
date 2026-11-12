@@ -93,16 +93,3 @@ export function walkFiles(dir: string, depth: number): string[] {
   }
   return out
 }
-
-/** 字节数转人读。doctor 的输出要一眼看懂，别甩 1073741824。 */
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  const units = ['KB', 'MB', 'GB', 'TB']
-  let value = bytes / 1024
-  let index = 0
-  while (value >= 1024 && index < units.length - 1) {
-    value /= 1024
-    index += 1
-  }
-  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[index]}`
-}

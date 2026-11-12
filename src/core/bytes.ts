@@ -10,12 +10,12 @@
  * @module dsc/core/bytes
  */
 
-/** 1024 进制（KB / MB / GB）：不到 1KB 给整数 B，一位小数但抹掉 `.0`，两位数以上取整；
+/** 1024 进制（KB / MB / GB / TB）：不到 1KB 给整数 B，一位小数但抹掉 `.0`，两位数以上取整；
  *  非有限数或负数给破折号（界面上不显示 NaN）。 */
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return '—'
   if (bytes < 1024) return `${String(Math.round(bytes))} B`
-  const units = ['KB', 'MB', 'GB'] as const
+  const units = ['KB', 'MB', 'GB', 'TB'] as const
   let value = bytes / 1024
   let unit = 0
   while (value >= 1024 && unit < units.length - 1) {
