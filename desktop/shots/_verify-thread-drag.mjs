@@ -28,21 +28,25 @@ process.on('unhandledRejection', () => {})
  *
  * ## 纵向：把手只铺会话区（2026-11-12 报障）
  *
- * 报障原话：「这个拖动会话区大小的竖条，不要低于输入框的上沿」。旧样式里把手是
- * `top:0; bottom:0`（铺满整个 `.thread-zone`），而那一层下半截就是输入卡片与状态栏，
- * 于是列缘外那条高亮竖条画到了输入框旁边，看着像输入框的边框。现在底边停在 `.composer`
- * 上沿，距离由 ThreadResizer 量出来写进 `--dsc-thread-handle-bottom`。这一段补的判据：
+ * 报障原话：「这个拖动会话区大小的竖条，不要低于输入框的上沿」，跟进一句「让开分支按钮」。
+ * 旧样式里把手是 `top:0; bottom:0`（铺满整个 `.thread-zone`），而那一层下半截从分支钮那一行
+ * 起就是输入区（往下还有审批卡、队列条、输入卡片与状态栏），于是列缘外那条高亮竖条画到了
+ * 分支钮与输入框旁边，像它们的一部分。现在底边停在 `.composer-zone` 上沿，距离由
+ * ThreadResizer 量出来写进 `--dsc-thread-handle-bottom`，左右两条读同一个变量。判据：
  *
- *   V1 变量量出来了，且等于「层底到输入框上沿」；
- *   V2 把手底边不越过输入框上沿（报障那条本身）；
- *   V3 底边贴着输入框上沿（差 ≤ 2px，不是缩得太高、留出一大段空白）；
+ *   V1 变量量出来了，且等于「层底到输入区上沿」；
+ *   V2 两条把手的底边都不越过输入区上沿（报障那条本身）；
+ *   V3 底边贴着输入区上沿（差 ≤ 2px，不是缩得太高、留出一大段空白）；
+ *   V3b 左右两条一样高（同一个变量，差 ≤ 1px）；
  *   V4 顶边仍在正文区顶上（会话区整段还能拖）；
- *   V5 把手还有足够长度（≥ 200px，不是被压成一条抓不住）；
- *   V6 拖动时高亮落点是被夹过的百分比（10%~90%），不会整条落到盒子外；
- *   V7 高亮竖条的化开区（上下各 36px）也压在输入框上沿之上。
+ *   V5 两条都还有足够长度（≥ 200px，不是被压成一条抓不住）；
+ *   V6 分支钮那一行也让开了（把手底边在 `.composer-git` 上方）；
+ *   V7 高亮竖条的化开区（上下各 36px）也压在输入区上沿之上；
+ *   V8 拖动时高亮落点是被夹过的百分比（10%~90%），不会整条落到盒子外；
+ *   V9 两张裁剪截图落盘。
  *
- * 产物：`_thread-handle-bottom.png`（把手底边 + 输入框上沿那一段的裁剪截图，拖动中拍的，
- * 高亮竖条贴着底边亮着）。
+ * 产物：`_thread-handle-bottom.png` / `_thread-handle-bottom-marked.png`（把手底边 + 分支钮 +
+ * 输入框上沿那一段，拖动中拍的；带 marked 的那张给把手盒子描了虚线，仅截图用）。
  *
  * ## 负向自检
  *
@@ -286,53 +290,73 @@ try {
 
   /* ── V：把手纵向只铺会话区（底边停在输入框上沿） ── */
   const vertical = await evaluate(`
-    const handle = document.querySelector('.thread-handle[data-side="left"]')
-    const composer = document.querySelector('.composer')
+    const handles = [...document.querySelectorAll('.thread-handle')].map((node) => {
+      const r = node.getBoundingClientRect()
+      return {
+        side: node.getAttribute('data-side'),
+        cx: Math.round(r.left + r.width / 2),
+        cy: Math.round(r.top + r.height / 2),
+        top: Math.round(r.top),
+        bottom: Math.round(r.bottom),
+        h: Math.round(r.height),
+      }
+    })
+    const dock = document.querySelector('.composer-zone')
     const zone = document.querySelector('.thread-zone')
     const chat = document.querySelector('.chat')
-    if (handle === null || composer === null || zone === null) return { ok: false }
-    const h = handle.getBoundingClientRect()
-    const c = composer.getBoundingClientRect()
+    const git = document.querySelector('.composer-git')
+    if (dock === null || zone === null || handles.length !== 2) return { ok: false, handles }
+    const d = dock.getBoundingClientRect()
     const z = zone.getBoundingClientRect()
     const chatBox = chat === null ? null : chat.getBoundingClientRect()
     return {
       ok: true,
-      cx: Math.round(h.left + h.width / 2),
-      handle: { top: Math.round(h.top), bottom: Math.round(h.bottom), h: Math.round(h.height) },
-      composerTop: Math.round(c.top),
-      composerLeft: Math.round(c.left),
-      composerW: Math.round(c.width),
+      handles,
+      dockTop: Math.round(d.top),
+      dockLeft: Math.round(d.left),
+      dockW: Math.round(d.width),
+      gitTop: git === null ? null : Math.round(git.getBoundingClientRect().top),
       chatTop: chatBox === null ? null : Math.round(chatBox.top),
       bottomVar: zone.style.getPropertyValue('--dsc-thread-handle-bottom').trim(),
-      expectVar: Math.round(z.bottom - c.top),
+      expectVar: Math.round(z.bottom - d.top),
     }
   `)
   console.log('V-geometry', JSON.stringify(vertical))
   const vOk = vertical.ok === true
-  const vHandle = vertical.handle ?? { top: 0, bottom: 0, h: 0 }
-  assert('V1 底边距离是量出来的：--dsc-thread-handle-bottom = 层底到输入框上沿',
+  const vHandles = Array.isArray(vertical.handles) ? vertical.handles : []
+  const vLeft = vHandles.find((item) => item.side === 'left') ?? { top: 0, bottom: 0, h: 0, cx: 0, cy: 0 }
+  const vShort = vHandles.reduce((min, item) => Math.min(min, item.h), Number.POSITIVE_INFINITY)
+  const vLowest = vHandles.reduce((max, item) => Math.max(max, item.bottom), 0)
+  assert('V1 底边距离是量出来的：--dsc-thread-handle-bottom = 层底到输入区上沿',
     vOk && vertical.bottomVar === `${String(vertical.expectVar)}px`,
     `var=${JSON.stringify(vertical.bottomVar)} 期望=${String(vertical.expectVar)}px`)
-  assert('V2 把手底边不越过输入框上沿（报障那条）',
-    vOk && vHandle.bottom <= vertical.composerTop + 1,
-    `handleBottom=${String(vHandle.bottom)} composerTop=${String(vertical.composerTop)}`)
-  assert('V3 底边贴着输入框上沿（差 ≤ 2px，没有缩出一段空白）',
-    vOk && Math.abs(vertical.composerTop - vHandle.bottom) <= 2,
-    `差 ${String(Math.abs(vertical.composerTop - vHandle.bottom))}px`)
+  assert('V2 两条把手的底边都不越过输入区上沿（报障那条）',
+    vOk && vHandles.length === 2 && vHandles.every((item) => item.bottom <= vertical.dockTop + 1),
+    `bottom=${JSON.stringify(vHandles.map((item) => item.bottom))} dockTop=${String(vertical.dockTop)}`)
+  assert('V3 底边贴着输入区上沿（差 ≤ 2px，没有缩出一段空白）',
+    vOk && vHandles.length === 2 && vHandles.every((item) => Math.abs(vertical.dockTop - item.bottom) <= 2),
+    `差 ${JSON.stringify(vHandles.map((item) => Math.abs(vertical.dockTop - item.bottom)))}px`)
+  assert('V3b 左右两条一样高（同一个变量，差 ≤ 1px）',
+    vOk && vHandles.length === 2 && vHandles[0].top === vHandles[1].top
+    && Math.abs(vHandles[0].bottom - vHandles[1].bottom) <= 1 && Math.abs(vHandles[0].h - vHandles[1].h) <= 1,
+    JSON.stringify(vHandles.map((item) => ({ side: item.side, top: item.top, bottom: item.bottom, h: item.h }))))
   assert('V4 顶边仍在正文区顶上（会话区整段还能拖）',
-    vOk && vertical.chatTop !== null && Math.abs(vHandle.top - vertical.chatTop) <= 1,
-    `handleTop=${String(vHandle.top)} chatTop=${String(vertical.chatTop)}`)
-  assert('V5 把手还够长（≥ 200px，没被压成一条抓不住）', vOk && vHandle.h >= 200,
-    `高 ${String(vHandle.h)}px`)
-  assert('V7 高亮竖条的化开区（上下各 36px）也压在输入框上沿之上',
-    vOk && vHandle.h * 0.9 + 36 <= vHandle.h,
-    `0.9×${String(vHandle.h)}+36 = ${String(Math.round(vHandle.h * 0.9 + 36))} vs ${String(vHandle.h)}`)
+    vOk && vertical.chatTop !== null && vHandles.every((item) => Math.abs(item.top - vertical.chatTop) <= 1),
+    `top=${JSON.stringify(vHandles.map((item) => item.top))} chatTop=${String(vertical.chatTop)}`)
+  assert('V5 两条都还够长（≥ 200px，没被压成一条抓不住）', vOk && vHandles.length === 2 && vShort >= 200,
+    `最短 ${String(vShort)}px`)
+  assert('V6 分支钮那一行也让开了（把手底边在它上方）',
+    vOk && vertical.gitTop !== null && vLowest <= vertical.gitTop + 1,
+    `把手最低 ${String(vLowest)} vs 分支钮 top ${String(vertical.gitTop)}`)
+  assert('V7 高亮竖条的化开区（上下各 36px）也压在输入区上沿之上',
+    vOk && vShort !== Number.POSITIVE_INFINITY && vShort * 0.9 + 36 <= vShort,
+    `0.9×${String(vShort)}+36 = ${String(Math.round(vShort * 0.9 + 36))} vs ${String(vShort)}`)
 
-  /* 拖动中拍一张：指针按在会把热区拖到的最下沿（输入框里面），看高亮竖条停在哪。 */
+  /* 拖动中拍一张：指针按在会把热区拖到的最下沿（输入区里面），看高亮竖条停在哪。 */
   if (vOk) {
-    const pillX = vertical.cx
-    const pillY0 = Math.round((vHandle.top + vHandle.bottom) / 2)
-    const pillY1 = vertical.composerTop + 40
+    const pillX = vLeft.cx
+    const pillY0 = Math.round((vLeft.top + vLeft.bottom) / 2)
+    const pillY1 = vertical.dockTop + 40
     await cdpSend('Input.dispatchMouseEvent', { type: 'mouseMoved', x: pillX, y: pillY0 })
     await cdpSend('Input.dispatchMouseEvent', { type: 'mousePressed', x: pillX, y: pillY0, button: 'left', clickCount: 1 })
     await sleep(80)
@@ -350,14 +374,14 @@ try {
     `)
     console.log('V-pill', JSON.stringify(pill))
     const pctValue = Number.parseFloat(String(pill.y).replace('%', ''))
-    assert('V6 拖动时高亮落点夹在热区里侧（10%~90% 的百分比，不会整条落到盒子外）',
+    assert('V8 拖动时高亮落点夹在热区里侧（10%~90% 的百分比，不会整条落到盒子外）',
       pill.ok === true && /%$/.test(String(pill.y)) && pctValue >= 10 && pctValue <= 90,
       JSON.stringify(pill.y))
 
     const clip = {
-      x: Math.max(0, vertical.composerLeft - 130),
-      y: Math.max(0, vHandle.bottom - 200),
-      width: Math.min(620, vertical.composerW + 170),
+      x: Math.max(0, vertical.dockLeft - 130),
+      y: Math.max(0, vLeft.bottom - 200),
+      width: Math.min(620, vertical.dockW + 170),
       height: 360,
       scale: 1,
     }
@@ -381,7 +405,7 @@ try {
     `)
     await cdpSend('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pillX, y: pillY1, button: 'left', clickCount: 1 })
     await sleep(200)
-    assert('V8 两张裁剪截图都落盘了（原样 + 描边）',
+    assert('V9 两张裁剪截图都落盘了（原样 + 描边）',
       (shotPlain.data ?? '').length > 1000 && (shotMarked.data ?? '').length > 1000,
       `${String((shotPlain.data ?? '').length)} / ${String((shotMarked.data ?? '').length)} 字节`)
   }

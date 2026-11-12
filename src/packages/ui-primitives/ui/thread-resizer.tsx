@@ -9,10 +9,11 @@
  * 把手贴着正文列（`.chat-inner`）真正渲染出来的左右边缘：量一次真实矩形把左右缘
  * 写进两个变量，样式表只管摆位（在另一层里重算居中等于把布局抄第二遍）。
  *
- * 纵向只铺**会话区**：底边停在输入框（`.composer`）上沿，不伸进输入区。整层的下半截
- * 是输入卡片与状态栏，那一带不能用鼠标拖着改列宽——把手铺到那里会画出一条与输入框
- * 并排的竖条，看着像输入框的边框。距离同样是量出来的（层底到 `.composer` 上沿），
- * 因为输入框会随输入行数长高、上方还会插进审批卡与队列条，高度不是写死的数。
+ * 纵向只铺**会话区**：底边停在输入区（`.composer-zone`）上沿，不伸进输入区。整层的下半截
+ * 从分支钮那一行开始就是输入区（往下还有审批卡、队列条、输入卡片与状态栏），那一带不能用
+ * 鼠标拖着改列宽——把手铺到那里会画出一条与分支钮、输入框并排的竖条，看着像它们的一部分。
+ * 距离同样是量出来的（层底到 `.composer-zone` 上沿），因为输入框会随输入行数长高、
+ * 上方还会插进审批卡与队列条，高度不是写死的数。
  *
  * @module dsc-ui-shell/platform/thread-resizer
  */
@@ -65,10 +66,10 @@ export function ThreadResizer(props: {
   const zoneOf = useCallback((): HTMLElement | null => leftRef.current?.parentElement ?? null, [])
 
   /**
-   * 量一次本层里的两个几何：正文列的左右缘（相对本层左缘）与输入框上沿（相对本层底缘），
+   * 量一次本层里的两个几何：正文列的左右缘（相对本层左缘）与输入区上沿（相对本层底缘），
    * 写进变量给两条把手用。
    *
-   * 两件事互不依赖，所以输入框那一半排在前头：轨迹页没有 `.chat-inner`（它自己画 `.trace-page`），
+   * 两件事互不依赖，所以输入区那一半排在前头：轨迹页没有 `.chat-inner`（它自己画 `.trace-page`），
    * 列缘量不到时也不该把「底边停在哪」一起落下。
    */
   const measure = useCallback((): void => {
@@ -76,14 +77,15 @@ export function ThreadResizer(props: {
     if (zone === null) return
     const zoneBox = zone.getBoundingClientRect()
 
-    // 底边停在输入框上沿：量不出来（页模式没有输入框、或它被隐藏成 0 高）就撤掉变量，
-    // 退回老行为——铺满整层。
-    const composer = zone.querySelector<HTMLElement>('.composer')
-    const composerBox = composer === null ? null : composer.getBoundingClientRect()
-    if (composerBox === null || composerBox.height === 0) {
+    // 底边停在输入区（`.composer-zone`）上沿：那一格里从分支钮那一行开始，往下还有审批卡、
+    // 队列条、输入卡片与状态栏，全都不是「会话区」。量不出来（页模式没有输入区、或它被隐藏成
+    // 0 高）就撤掉变量，退回老行为——铺满整层。
+    const dock = zone.querySelector<HTMLElement>('.composer-zone')
+    const dockBox = dock === null ? null : dock.getBoundingClientRect()
+    if (dockBox === null || dockBox.height === 0) {
       zone.style.removeProperty(HANDLE_BOTTOM_VAR)
     } else {
-      const gap = zoneBox.bottom - composerBox.top
+      const gap = zoneBox.bottom - dockBox.top
       zone.style.setProperty(
         HANDLE_BOTTOM_VAR,
         `${String(Math.round(Math.min(Math.max(gap, 0), zoneBox.height - HANDLE_MIN_H)))}px`,
@@ -107,10 +109,12 @@ export function ThreadResizer(props: {
     observer.observe(zone)
     const column = zone.querySelector<HTMLElement>('.chat-inner')
     if (column !== null) observer.observe(column)
-    // 输入框自己长高（多行输入、审批卡与队列条插进来）时，本层尺寸可以一点不变
+    // 输入区自己长高（多行输入、审批卡与队列条插进来）时，本层尺寸可以一点不变
     // （正文让出高度就够），所以它也得单独盯：不盯的话把手底边停在旧位置，重新压回输入区。
-    const composer = zone.querySelector<HTMLElement>('.composer')
-    if (composer !== null) observer.observe(composer)
+    // 盯的是 `.composer-zone` 而不是里面的 `.composer`：前者把分支钮、审批卡、队列条与状态栏
+    // 一并算进高度，任何一种插进来它都变，一处盯完。
+    const dock = zone.querySelector<HTMLElement>('.composer-zone')
+    if (dock !== null) observer.observe(dock)
     const rootWatcher = new MutationObserver(measure)
     rootWatcher.observe(document.documentElement, { attributeFilter: ['style'], attributes: true })
     window.addEventListener('resize', measure)

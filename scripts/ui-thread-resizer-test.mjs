@@ -229,10 +229,11 @@ console.log('[3] 量算契约（thread-resizer.tsx 与 app.tsx 的接线）')
 }
 
 // ── [4] 纵向契约：把手只铺会话区（2026-11-12 报障）──────────────────────────
-// 报障原话：「这个拖动会话区大小的竖条，不要低于输入框的上沿」。把手原来是 top:0; bottom:0
-// 铺满整个 .thread-zone，而那一层下半截就是输入卡片与状态栏，于是列缘外的高亮竖条画到了
-// 输入框旁边、像它的边框。现在底边停在 .composer 上沿，距离由 measure() 量出来。
-console.log('[4] 纵向契约：把手底边停在输入框上沿')
+// 报障原话：「这个拖动会话区大小的竖条，不要低于输入框的上沿」，跟进一句「让开分支按钮」。
+// 把手原来是 top:0; bottom:0 铺满整个 .thread-zone，而那一层下半截是输入区——于是列缘外的
+// 高亮竖条画到了分支钮与输入框旁边，像它们的一部分。现在底边停在 .composer-zone 上沿
+// （分支钮那一行就在它顶部），距离由 measure() 量出来，左右两条读同一个变量。
+console.log('[4] 纵向契约：把手底边停在输入区上沿')
 {
   const resizer = read('src/packages/ui-primitives/ui/thread-resizer.tsx')
   const panelsTs = read('src/packages/ui-primitives/ui/panels.ts')
@@ -248,12 +249,22 @@ console.log('[4] 纵向契约：把手底边停在输入框上沿')
     resizer.includes("HANDLE_BOTTOM_VAR = '--dsc-thread-handle-bottom'") && views.includes('var(--dsc-thread-handle-bottom'),
   )
   check(
-    '距离是量出来的：层底 − 输入框上沿（不是写死的高度）',
-    resizer.includes("zone.querySelector<HTMLElement>('.composer')") && /zoneBox\.bottom - composerBox\.top/.test(resizer),
+    '距离是量出来的：层底 − 输入区上沿（不是写死的高度）',
+    resizer.includes("zone.querySelector<HTMLElement>('.composer-zone')") && /zoneBox\.bottom - dockBox\.top/.test(resizer),
   )
   check(
-    '输入框自己长高也要重量（ResizeObserver 单独盯住 .composer）',
-    /if \(composer !== null\) observer\.observe\(composer\)/.test(resizer),
+    '锚点是 .composer-zone（分支钮那一行起让开，不只看输入卡片）',
+    !/zone\.querySelector<HTMLElement>\('\.composer'\)/.test(resizer),
+    /querySelector<HTMLElement>\('\.composer'\)/.exec(resizer)?.[0],
+  )
+  check(
+    '输入区自己长高也要重量（ResizeObserver 盯住 .composer-zone）',
+    /const dock = zone\.querySelector<HTMLElement>\('\.composer-zone'\)\s*\n\s*if \(dock !== null\) observer\.observe\(dock\)/.test(resizer),
+  )
+  check(
+    '左右两条读同一个变量（样式表里只有一处 bottom 声明，高度天然一致）',
+    (views.match(/bottom: var\(--dsc-thread-handle-bottom/g) ?? []).length === 1,
+    String((views.match(/bottom: var\(--dsc-thread-handle-bottom/g) ?? []).length),
   )
   check(
     '抓手留最小高度，兜住「窗口矮到输入框顶满整层」',
